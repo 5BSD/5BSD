@@ -62,8 +62,14 @@ Mint a fresh network (primary NetKey and AppKey, IV Index 0) with this node as
 the Provisioner, and begin the manager roster.
 .It Cm list-nodes
 List the network roster (each node's primary address and element count).
-.It Cm provision-scan
-Scan for unprovisioned device beacons.
+.It Cm provision-scan Oo Cm on | Cm off | Cm list Oc
+Control unprovisioned-device discovery: enable
+.Pq Cm on , the default with no argument
+or disable
+.Pq Cm off
+parsing of received Unprovisioned Device Beacons, or
+.Pq Cm list
+report the discovered device UUIDs.
 .It Cm provision Ar uuid-hex32 Op Ar elements
 Provision a remote device (identified by its 16-octet device UUID) over the air
 into the created network, allocating it a unicast address block.
@@ -117,6 +123,24 @@ Get or set per-subnet Node Identity.
 Query a Friend's PollTimeout for a Low Power Node.
 .It Cm cfg hb-pub-set | hb-sub-set Ar dst Ar ...
 Configure Heartbeat publication / subscription.
+.It Cm cfg sar-tx-get | sar-rx-get Ar dst
+Read the node's SAR Transmitter / Receiver state.
+.It Cm cfg sar-tx-set Ar dst Ar segint ucount unoprog uintstep uintinc mcount mintstep
+Set the SAR Transmitter state (seven 4-bit fields).
+.It Cm cfg sar-rx-set Ar dst Ar segthresh ackdelayinc discard rxintstep ackretrans
+Set the SAR Receiver state.
+.It Cm cfg priv-beacon-get Ar dst
+Read the node's Private Beacon state.
+.It Cm cfg priv-beacon-set Ar dst Ar 0 Ns | Ns Ar 1 Op Ar random-update-steps
+Set the node's Private Beacon state.
+.It Cm cfg priv-gatt-proxy Ar dst Op Ar value
+Read or set the node's Private GATT Proxy state.
+.It Cm cfg od-priv-proxy Ar dst Op Ar value
+Read or set the node's On-Demand Private Proxy state.
+.It Cm cfg priv-node-identity-get | priv-node-identity-set Ar dst Ar netidx Op Ar identity
+Read or set the node's Private Node Identity for a subnet.
+.It Cm cfg lcd-get Ar dst Ar page Ar offset
+Large Composition Data Get.
 .It Cm cfg node-reset Ar dst
 Remove the node from the network.
 .El
@@ -138,13 +162,74 @@ and
 .Cm lc-property .
 .Cm lc-property
 takes a 16-bit property ID and a one- to four-octet hex value.
+.Ss Directed Forwarding
+The
+.Cm df
+verbs drive a provisioned node's Directed Forwarding Configuration Server
+(sealed under that node's DevKey, over the same path as
+.Cm cfg ) ,
+plus the local Path Origin path-discovery FSM.
+.Bl -tag -width indent -compact
+.It Cm df get Ar dst Op Ar netidx
+Directed Control Get.
+.It Cm df set Ar dst Cm on Ns | Ns Cm off Op Ar netidx
+Directed Control Set (turns directed forwarding and directed relay on/off).
+.It Cm df control-set Ar dst Ar netidx Ar fwd Ar relay Ar proxy Ar proxydef Ar friend
+Directed Control Set with all five flags.
+.It Cm df metric-get | metric-set Ar dst Ar ...
+Path Metric Get/Set
+.Pf ( Cm metric-set Ar dst Ar type Ar lifetime Op Ar netidx ) .
+.It Cm df lanes-get | lanes-set Ar dst Ar ...
+Directed Wanted Lanes Get/Set.
+.It Cm df two-way-get | two-way-set Ar dst Ar ...
+Two Way Path Get/Set.
+.It Cm df echo-get | echo-set Ar dst Ar ...
+Path Echo Interval Get/Set
+.Pf ( Cm echo-set Ar dst Ar unicast Ar multicast Op Ar netidx ) .
+.It Cm df net-transmit-get | net-transmit-set Ar dst Ar ...
+Directed Network Transmit Get/Set
+.Pf ( Cm net-transmit-set Ar dst Ar count Ar steps ) .
+.It Cm df relay-retransmit-get | relay-retransmit-set Ar dst Ar ...
+Directed Relay Retransmit Get/Set.
+.It Cm df discover Ar target
+Start a local Path Origin path discovery toward
+.Ar target .
+.It Cm df discover-status
+Show the local path-discovery FSM state.
+.El
+.Ss Remote Provisioning
+The
+.Cm remote-prov
+verbs drive the Remote Provisioning Client toward a provisioned Remote
+Provisioning Server node (the RPR models operate under that node's DevKey).
+.Bl -tag -width indent -compact
+.It Cm remote-prov caps Ar dst
+Remote Provisioning Scan Capabilities Get.
+.It Cm remote-prov scan Ar dst Op Ar uuid-hex32 Op Ar limit Ar timeout
+Remote Provisioning Scan Start (a device UUID targets a single device).
+.It Cm remote-prov scan-get | scan-stop Ar dst
+Remote Provisioning Scan Get / Scan Stop.
+.It Cm remote-prov link-get Ar dst
+Remote Provisioning Link Get.
+.It Cm remote-prov link-open Ar dst Ar uuid-hex32 Op Ar timeout
+Open a PB-Remote provisioning link toward the device
+.Ar uuid-hex32
+through the server.
+.It Cm remote-prov provision Ar dst Ar uuid-hex32 Op Ar timeout
+Alias for
+.Cm link-open .
+.It Cm remote-prov link-close Ar dst Op Ar reason
+Remote Provisioning Link Close.
+.It Cm remote-prov status
+Show the Remote Provisioning client scan/link FSM state.
+.El
 .Ss Application sockets
 .Bl -tag -width indent -compact
-.It Cm app-register Ar model Op Ar vendor
+.It Cm app-register Ar element Ar model Op Ar vendor
 Register an application-owned model on this socket.
 .It Cm app-events Op Ar max
 Drain this socket's queued inbound Access events.
-.It Cm app-watch Ar model Op Ar vendor
+.It Cm app-watch Ar element Ar model Op Ar vendor
 Register an application-owned model and keep the connection open, printing the
 initial daemon reply and subsequent asynchronous
 .Ql EVENT

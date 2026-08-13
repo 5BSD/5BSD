@@ -265,7 +265,7 @@ bt_setprotoent(int stayopen)
 void
 bt_endprotoent(void)
 {
-	if (protof != NULL) {
+	if (protof != NULL && proto_stayopen == 0) {
 		(void) fclose(protof);
 		protof = NULL;
 	}

@@ -125,18 +125,27 @@ int	ctl_connparams_update_result(uint8_t adapter_index,
 	    uint16_t interval_min, uint16_t interval_max, uint16_t latency,
 	    uint16_t timeout);
 
-/* ctl_gatt.c — GATT commands */
-int	ctl_gatt_read_result(uint8_t adapter_index, const bdaddr_t *addr,
-	    uint8_t addr_type, uint16_t handle,
+/*
+ * ctl_gatt.c — GATT commands.
+ *
+ * These run on a GATT worker thread over the specific connection the job was
+ * admitted against — passed as job_conn (finding 90).  Operating on job_conn
+ * (which the admission ref-counted and gated with att_ops_active) instead of
+ * re-resolving by address prevents a duplicate-accept second connection for the
+ * same peer from being picked up and driven with no ref / no att_ops_active.
+ */
+int	ctl_gatt_read_result(struct blued_conn *job_conn, uint8_t adapter_index,
+	    const bdaddr_t *addr, uint8_t addr_type, uint16_t handle,
 	    uint8_t *value, size_t value_size, size_t *value_len);
-int	ctl_gatt_write_result(uint8_t adapter_index, const bdaddr_t *addr,
-	    uint8_t addr_type, uint16_t handle,
+int	ctl_gatt_write_result(struct blued_conn *job_conn, uint8_t adapter_index,
+	    const bdaddr_t *addr, uint8_t addr_type, uint16_t handle,
 	    const uint8_t *value, size_t value_len, bool command);
-int	ctl_gatt_subscribe_result(int client_fd, uint64_t client_generation,
-	    uint8_t adapter_index, const bdaddr_t *addr, uint8_t addr_type,
+int	ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
+	    uint64_t client_generation, uint8_t adapter_index,
+	    const bdaddr_t *addr, uint8_t addr_type,
 	    uint16_t handle, bool subscribe);
-int	ctl_gatt_discover_result(uint8_t adapter_index, const bdaddr_t *addr,
-	    uint8_t addr_type,
+int	ctl_gatt_discover_result(struct blued_conn *job_conn,
+	    uint8_t adapter_index, const bdaddr_t *addr, uint8_t addr_type,
 	    ctl_gatt_discover_cb cb, void *arg);
 int	ctl_gatt_read_reply_result(int client_fd, uint16_t handle,
 	    const uint8_t *value, uint16_t value_len);

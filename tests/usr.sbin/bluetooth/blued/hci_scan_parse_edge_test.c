@@ -443,11 +443,59 @@ ATF_TC_BODY(parse_ext_report_anonymous_data_max, tc)
 	ATF_CHECK_EQ(memcmp(&sr, &before, sizeof(sr)), 0);
 }
 
+/*
+ * Finding 46: an incomplete/truncated extended-advertising fragment
+ * (Data_Status 0b01/0b10 in event_type bits 5-6) must NOT be parsed as a
+ * standalone AD structure -- a fragment that begins mid-structure would
+ * yield garbage names/UUIDs.  The report is still consumed (header valid),
+ * but no AD fields are extracted.
+ */
+ATF_TC_WITHOUT_HEAD(parse_ext_report_fragment_not_parsed);
+ATF_TC_BODY(parse_ext_report_fragment_not_parsed, tc)
+{
+	uint8_t buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6];
+	struct ble_scan_result sr;
+	size_t consumed;
+
+	memset(buf, 0, sizeof(buf));
+	/* event_type bits 5-6 = 0b01: incomplete, more data to come. */
+	buf[0] = 0x20;
+	buf[BT_SP_SPEC_PRIMARY_PHY_OFFSET] = BT_SP_SPEC_PRIMARY_PHY_1M;
+	buf[3] = 0xDE; buf[4] = 0xAD; buf[5] = 0xBE;
+	buf[6] = 0xEF; buf[7] = 0x00; buf[8] = 0x11;
+	buf[BT_SP_SPEC_RSSI_OFFSET] = (uint8_t)(int8_t)-71;
+	buf[BT_SP_SPEC_DATA_LEN_OFFSET] = 6;
+	/* A Complete Local Name AD that must NOT be extracted from a fragment. */
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN] = 0x05;
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 1] = AD_COMPLETE_NAME;
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 2] = 'x';
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 3] = 'y';
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 4] = 'z';
+	buf[BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 5] = 'w';
+
+	memset(&sr, 0, sizeof(sr));
+	consumed = hci_parse_ext_adv_report(buf, sizeof(buf), &sr);
+	/* Report still consumed (advances the batch), address still decoded. */
+	ATF_CHECK_EQ(consumed, BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6);
+	ATF_CHECK_EQ(sr.addr[0], 0xDE);
+	/* But the AD payload of a fragment is not parsed. */
+	ATF_CHECK(!sr.has_name);
+
+	/* A complete report (Data_Status 0b00) still parses the same AD. */
+	buf[0] = 0x00;
+	memset(&sr, 0, sizeof(sr));
+	consumed = hci_parse_ext_adv_report(buf, sizeof(buf), &sr);
+	ATF_CHECK_EQ(consumed, BT_SP_SPEC_EXT_REPORT_FIXED_LEN + 6);
+	ATF_CHECK(sr.has_name);
+	ATF_CHECK_STREQ(sr.name, "xyzw");
+}
+
 /* ================================================================
  * ATF test program entry point
  * ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, parse_ext_report_fragment_not_parsed);
 	ATF_TP_ADD_TC(tp, parse_ad_exact_fit);
 	ATF_TP_ADD_TC(tp, parse_fields_manufacturer);
 	ATF_TP_ADD_TC(tp, parse_fields_manufacturer_too_short);

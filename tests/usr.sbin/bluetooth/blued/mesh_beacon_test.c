@@ -529,9 +529,48 @@ ATF_TC_BODY(mesh_private_beacon_tamper, tc)
 	ATF_CHECK_EQ(-1, mesh_private_beacon_parse(netkey, out, outlen, &pb));
 }
 
+/*
+ * Finding 4 regression: reserved Flags bits (2-7) in the Mesh Private beacon
+ * are Reserved for Future Use and, per MshPRT Section 1.3.2, must be processed
+ * as if 0 (ignored), NOT cause the beacon to be rejected.  The defined Key
+ * Refresh (bit 0) and IV Update (bit 1) bits must still decode correctly even
+ * when every reserved bit is also set.
+ */
+ATF_TC_WITHOUT_HEAD(mesh_private_beacon_rfu_ignored);
+ATF_TC_BODY(mesh_private_beacon_rfu_ignored, tc)
+{
+	HEX(netkey, BT_MSHPRT11_SAMPLE_NETKEY_HEX, BT_MSHPRT11_NETKEY_SIZE);
+	HEX(random, BT_MSHPRT11_SAMPLE_PRIVATE_RANDOM_HEX,
+	    BT_MSHPRT11_PRIVATE_BEACON_RANDOM_SIZE);
+	uint8_t pbkey[BT_MSHPRT11_BEACON_KEY_SIZE];
+	uint8_t out[BT_MSHPRT11_PRIVATE_BEACON_SIZE];
+	/* All eight Flags bits set: KR=1, IV=1, and every reserved bit. */
+	uint8_t data[BT_MSHPRT11_PRIVATE_BEACON_DATA_SIZE] = {
+	    0xff, 0x12, 0x34, 0x56, 0x78 };
+	struct mesh_private_beacon pb;
+
+	out[0] = BT_MSHPRT11_BEACON_TYPE_MESH_PRIVATE;
+	memcpy(out + BT_MSHPRT11_PRIVATE_RANDOM_OFFSET, random,
+	    BT_MSHPRT11_PRIVATE_BEACON_RANDOM_SIZE);
+	ATF_REQUIRE_EQ(0, mesh_private_beacon_key(netkey, pbkey));
+	ATF_REQUIRE_EQ(0, mesh_aes_ccm_encrypt(pbkey, random, NULL, 0, data,
+	    sizeof(data), out + BT_MSHPRT11_PRIVATE_DATA_OFFSET,
+	    out + BT_MSHPRT11_PRIVATE_TAG_OFFSET,
+	    BT_MSHPRT11_PRIVATE_BEACON_TAG_SIZE));
+
+	/* Must parse (not reject) and mask the reserved bits to 0. */
+	ATF_REQUIRE_EQ_MSG(0, mesh_private_beacon_parse(netkey, out,
+	    BT_MSHPRT11_PRIVATE_BEACON_SIZE, &pb),
+	    "reserved Flags bits must be ignored, not cause rejection");
+	ATF_CHECK_EQ(1, pb.key_refresh);
+	ATF_CHECK_EQ(1, pb.iv_update);
+	ATF_CHECK_EQ(BT_MSHPRT11_SAMPLE_IV_INDEX, pb.iv_index);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, mesh_private_beacon_rfu_ignored);
 	ATF_TP_ADD_TC(tp, mesh_beacon_network_id);
 	ATF_TP_ADD_TC(tp, mesh_beacon_beaconkey);
 	ATF_TP_ADD_TC(tp, mesh_beacon_authvalue);

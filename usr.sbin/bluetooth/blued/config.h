@@ -24,7 +24,6 @@
 #define BLUED_MIN_KEY_SIZE_DEFAULT	16	/* KNOB-safe */
 #define BLUED_MIN_PAIRING_SECURITY_DEFAULT	2 /* SMP_SEC_AUTH: secure default */
 #define BLUED_RECONNECT_MAX_DEFAULT	60
-#define BLUED_AUTOCONNECT_TRIES_DEFAULT	5	/* bounded startup reconnect budget */
 #define BLUED_RPA_TIMEOUT_DEFAULT	900	/* 15 minutes */
 
 /* LE Secure Connections mode (config `sc`), mirroring the common off/on/only. */
@@ -32,7 +31,12 @@
 #define BLUED_SC_ON	1	/* advertise SC, allow legacy fallback (default) */
 #define BLUED_SC_ONLY	2	/* advertise SC, reject legacy pairing */
 
-/* Default key-distribution mask: LTK + IRK + CSRK (Core Spec Vol 3 Part H §3.6.1). */
+/*
+ * Default key-distribution mask 0x0b = SMP_KEY_DIST_ENC|ID|LINK, i.e.
+ * LTK (EncKey) + IRK (IdKey) + BR/EDR Link Key (LinkKey).  It does NOT
+ * include CSRK (SignKey, 0x04); see smp.h (Core Spec Vol 3 Part H §3.6.1).
+ * (finding 99)
+ */
 #define BLUED_KEY_DIST_DEFAULT	0x0b	/* SMP_KEY_DIST_ENC|ID|LINK */
 
 struct blued_char_conf {
@@ -84,7 +88,6 @@ struct blued_config {
 	bool		reconnect;
 	bool		auto_connect;		/* reconnect known devices at startup */
 	int		reconnect_max_delay;
-	int		auto_connect_max_tries;	/* per-device startup retry budget */
 
 	int		min_key_size;		/* minimum encryption key size (7-16, default 16) */
 	int		rpa_timeout;		/* RPA rotation timeout (1-3600s) */

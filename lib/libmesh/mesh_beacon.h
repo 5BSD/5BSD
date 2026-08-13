@@ -167,8 +167,9 @@ int	mesh_private_beacon_key(const uint8_t netkey[16], uint8_t out[16]);
  * Build / parse+authenticate a Mesh Private beacon (27 octets, Section
  * 3.9.4).  build obfuscates+authenticates the Flags/IV-index under the
  * PrivateBeaconKey with the supplied 13-octet Random; parse recovers them and
- * returns -1 (with *out zeroed) on a bad Authentication Tag, a reserved Flags
- * bit, or malformed input.
+ * returns -1 (with *out zeroed) on a bad Authentication Tag or malformed input.
+ * Reserved Flags bits (2-7) are ignored (processed as 0) per MshPRT Section
+ * 1.3.2, not rejected.
  */
 int	mesh_private_beacon_build(const uint8_t netkey[16], uint8_t key_refresh,
 	    uint8_t iv_update, uint32_t iv_index,

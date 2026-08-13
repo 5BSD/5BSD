@@ -58,6 +58,40 @@
 /* Peripheral GATT database — defined in blued.c */
 extern struct att_db periph_gatt_db;
 
+/*
+ * Initialize ctl_clients_lock as a RECURSIVE mutex (lock-reacquisition class,
+ * findings 30/88).
+ *
+ * The ctl event loop holds ctl_clients_lock across the whole verb dispatch
+ * (blued_ctl_dispatch), but several handlers reach helpers that legitimately
+ * need the same lock again — DISCONNECT -> blued_conn_disconnect ->
+ * blued_ctl_broadcast_conn_event / ctl_gatt_conn_gone / ctl_acquire_conn_gone;
+ * STATUS -> ctl_status_snapshot; POWER-off -> blued_adapter_set_power ->
+ * blued_adapter_controller_invalidated -> blued_conn_disconnect -> (same).
+ * With FreeBSD's default (ERRORCHECK) mutex the inner re-lock returns EDEADLK
+ * (silently ignored) and, worse, the inner *unlock* releases the mutex early,
+ * shredding the dispatch critical section that serialises client txq writes
+ * against the GATT worker threads.  A recursive mutex makes the nested
+ * acquire/release a no-op depth change, so the outermost holder keeps the lock
+ * for the entire critical section regardless of how the call graph re-enters.
+ * All other exclusion contracts are unchanged: it is still a normal mutex to
+ * every other thread.
+ */
+void
+blued_ctl_clients_lock_init(pthread_mutex_t *m)
+{
+	pthread_mutexattr_t attr;
+
+	if (pthread_mutexattr_init(&attr) != 0) {
+		/* Fall back to a default mutex rather than run uninitialised. */
+		(void)pthread_mutex_init(m, NULL);
+		return;
+	}
+	(void)pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+	(void)pthread_mutex_init(m, &attr);
+	(void)pthread_mutexattr_destroy(&attr);
+}
+
 static char	*ctl_sock_path;		/* saved for cleanup unlink */
 
 /* Privilege-tier predicate, defined below but used by the bond export/import
@@ -341,6 +375,36 @@ ctl_queue_fd(struct blued_ctl_client *client, int fd)
 	return (0);
 }
 
+/*
+ * Duplicate fd_to_send and capability-limit the copy for handout to a client,
+ * returning the ready descriptor (caller owns it) or -1.  This is the fallible
+ * part of an fd handout, separated so a caller can perform it BEFORE committing
+ * to a success reply (finding 121).
+ */
+static int
+ctl_dup_capped_fd(int fd_to_send, bool allow_reconfigure)
+{
+	int dup_fd;
+	cap_rights_t rights;
+
+	dup_fd = fcntl(fd_to_send, F_DUPFD_CLOEXEC, 0);
+	if (dup_fd < 0)
+		return (-1);
+
+	if (allow_reconfigure)
+		cap_rights_init(&rights, CAP_SEND, CAP_RECV, CAP_EVENT,
+		    CAP_SETSOCKOPT);
+	else
+		cap_rights_init(&rights, CAP_SEND, CAP_RECV, CAP_EVENT);
+	(void)cap_rights_limit(dup_fd, &rights);
+
+	/* Restrict transfer/inheritance properties */
+	(void)cap_xfer_limit(dup_fd, CAP_XFER_ONCE);
+	(void)cap_cloexec_limit(dup_fd, CAP_CLOEXEC_LOCKED);
+	(void)cap_clofork_limit(dup_fd, CAP_CLOFORK_LOCKED);
+	return (dup_fd);
+}
+
 static int
 ctl_send_fd_with_rights(struct blued_ctl_client *client, int fd_to_send,
     bool allow_reconfigure)
@@ -351,26 +415,9 @@ ctl_send_fd_with_rights(struct blued_ctl_client *client, int fd_to_send,
 		errno = ENOTCONN;
 		return (-1);
 	}
-	dup_fd = fcntl(fd_to_send, F_DUPFD_CLOEXEC, 0);
+	dup_fd = ctl_dup_capped_fd(fd_to_send, allow_reconfigure);
 	if (dup_fd < 0)
 		return (-1);
-
-	/* Capability-limit the sent fd */
-	{
-		cap_rights_t rights;
-
-		if (allow_reconfigure)
-			cap_rights_init(&rights, CAP_SEND, CAP_RECV, CAP_EVENT,
-			    CAP_SETSOCKOPT);
-		else
-			cap_rights_init(&rights, CAP_SEND, CAP_RECV, CAP_EVENT);
-		(void)cap_rights_limit(dup_fd, &rights);
-	}
-
-	/* Restrict transfer/inheritance properties */
-	(void)cap_xfer_limit(dup_fd, CAP_XFER_ONCE);
-	(void)cap_cloexec_limit(dup_fd, CAP_CLOEXEC_LOCKED);
-	(void)cap_clofork_limit(dup_fd, CAP_CLOFORK_LOCKED);
 
 	if (ctl_queue_fd(client, dup_fd) < 0) {
 		close(dup_fd);
@@ -394,9 +441,18 @@ ctl_send_ecbfc_fd_to_client(struct blued_ctl_client *client, int fd_to_send)
 	return (ctl_send_fd_with_rights(client, fd_to_send, true));
 }
 
+/*
+ * Encode a security event body (finding 28).  Wire layout (server->client):
+ *   [event_code u16 LE][adapter_index u8][addr_type u8][addr[6]][payload...]
+ * addr_type is the IPC-domain encoding (0 public / 1 random); adapter_index
+ * identifies the controller.  Both let the client echo the exact
+ * (adapter, addr, addr_type) tuple back in a passkey/numcmp reply so a
+ * random-address peer under LE privacy can be answered.
+ */
 static void
 ctl_send_security_event(struct blued_ctl_client *client, uint16_t event,
-    const bdaddr_t *addr, uint32_t value)
+    uint8_t adapter_index, uint8_t addr_type_ipc, const bdaddr_t *addr,
+    uint32_t value)
 {
 	uint8_t payload[IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE];
 	uint8_t *body = payload + IPC_OP_PREFIX_SIZE;
@@ -405,14 +461,16 @@ ctl_send_security_event(struct blued_ctl_client *client, uint16_t event,
 	memset(payload, 0, sizeof(payload));
 	ipc_op_prefix_encode(payload, 0, IPC_ERR_NONE, 0);
 	ipc_put_le16(body, event);
-	memcpy(body + 3, addr, sizeof(*addr));
+	body[2] = adapter_index;
+	body[3] = addr_type_ipc;
+	memcpy(body + 4, addr, sizeof(*addr));
 	if (event == IPC_SECURITY_EV_PASSKEY_INPUT)
 		payload_len = IPC_OP_PREFIX_SIZE + IPC_SECURITY_INPUT_EVENT_SIZE;
 	else if (event == IPC_SECURITY_EV_KEYPRESS) {
-		body[9] = (uint8_t)value;
+		body[10] = (uint8_t)value;
 		payload_len = IPC_OP_PREFIX_SIZE + IPC_SECURITY_KEYPRESS_EVENT_SIZE;
 	} else {
-		ipc_put_le32(body + 9, value);
+		ipc_put_le32(body + 10, value);
 		payload_len = IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE;
 	}
 	ctl_send_frame(client, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, payload,
@@ -425,13 +483,25 @@ ctl_broadcast_security_event(uint16_t event, const bdaddr_t *addr,
 {
 	struct blued_ctl_client *client;
 	int agent_fd;
+	uint8_t adapter_index = 0, addr_type_internal = BDADDR_LE_PUBLIC;
+	uint8_t addr_type_ipc = 0;
+
+	/*
+	 * Recover the adapter and LE address type of the live connection this
+	 * pairing prompt is for.  Derived before taking ctl_clients_lock to
+	 * avoid nesting it under conns_lock.  A missing connection (non-daemon
+	 * fallback, or a null peer) leaves the public/adapter-0 defaults.
+	 */
+	if (blued_conn_addr_context(addr, &adapter_index, &addr_type_internal))
+		(void)ctl_addr_type_to_ipc(addr_type_internal, &addr_type_ipc);
 
 	agent_fd = atomic_load(&ctl_agent_fd);
 	pthread_mutex_lock(&blued_g.ctl_clients_lock);
 	if (agent_fd >= 0) {
 		LIST_FOREACH(client, &blued_g.ctl_clients, entries) {
 			if (client->fd == agent_fd && client->wants_events) {
-				ctl_send_security_event(client, event, addr, value);
+				ctl_send_security_event(client, event,
+				    adapter_index, addr_type_ipc, addr, value);
 				pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 				return;
 			}
@@ -440,7 +510,8 @@ ctl_broadcast_security_event(uint16_t event, const bdaddr_t *addr,
 	LIST_FOREACH(client, &blued_g.ctl_clients, entries) {
 		if (client->wants_events && client->peer_known &&
 		    client->peer_uid == 0)
-			ctl_send_security_event(client, event, addr, value);
+			ctl_send_security_event(client, event, adapter_index,
+			    addr_type_ipc, addr, value);
 	}
 	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 }
@@ -479,12 +550,23 @@ blued_ctl_send_fd(int client_fd, int fd_to_send)
 {
 	struct blued_ctl_client *client;
 
+	/*
+	 * Finding 87: this runs on the main thread from iso_on_cis_established,
+	 * which does not hold ctl_clients_lock, yet it mutates a client's txq
+	 * (STAILQ_INSERT_TAIL + flush inside ctl_send_fd_to_client).  A GATT
+	 * worker may be appending frames to the same client's txq under the
+	 * lock at the same moment (ctl_gatt_job_send / blued_ctl_notify_value),
+	 * so this writer must take the lock too or the STAILQ corrupts.
+	 * (Recursive: harmless if a caller already holds it.)
+	 */
+	pthread_mutex_lock(&blued_g.ctl_clients_lock);
 	client = NULL;
 	LIST_FOREACH(client, &blued_g.ctl_clients, entries) {
 		if (client->fd == client_fd)
 			break;
 	}
 	(void)ctl_send_fd_to_client(client, fd_to_send);
+	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 }
 
 /*
@@ -581,11 +663,22 @@ blued_ctl_notify_value(struct blued_conn *conn, uint16_t handle,
 		int j;
 
 		for (j = 0; j < client->nsubs; j++) {
-			if ((memcmp(&client->subs[j].addr, addr,
-			    sizeof(*addr)) == 0 ||
-			    memcmp(&client->subs[j].addr, &any, sizeof(any)) == 0) &&
-			    client->subs[j].handle == handle &&
-			    (memcmp(&client->subs[j].addr, &any, sizeof(any)) == 0 ||
+			bool is_wild = memcmp(&client->subs[j].addr, &any,
+			    sizeof(any)) == 0;
+
+			/*
+			 * A wildcard subscription (all-zero address) matches any
+			 * connection; when it also carries handle 0 it is a
+			 * "monitor all connections" registration and matches any
+			 * notification handle (finding 31).  A wildcard with a
+			 * concrete handle still matches only that handle.
+			 */
+			if ((is_wild ||
+			    memcmp(&client->subs[j].addr, addr,
+			    sizeof(*addr)) == 0) &&
+			    (client->subs[j].handle == handle ||
+			    (is_wild && client->subs[j].handle == 0)) &&
+			    (is_wild ||
 			    (client->subs[j].addr_type == conn->addr_type &&
 			    client->subs[j].adapter_index == conn->adapter->index))) {
 				if (client->wants_events) {
@@ -838,6 +931,19 @@ blued_ctl_iso_established(struct blued_adapter *adp, const bdaddr_t *addr,
 {
 	ctl_broadcast_iso_event(adp, IPC_ISO_EV_ESTABLISHED, addr, addr_type,
 	    cis_handle, 0, 0, mtu);
+}
+
+/*
+ * Finding 116: report a CIS establishment failure so a client that issued
+ * ISO_CIS_CREATE (or subscribed to establishment) stops waiting.  The failure
+ * status is carried in the event's u16 field in place of the MTU.
+ */
+void
+blued_ctl_iso_failed(struct blued_adapter *adp, const bdaddr_t *addr,
+    uint8_t addr_type, uint16_t cis_handle, uint8_t status)
+{
+	ctl_broadcast_iso_event(adp, IPC_ISO_EV_FAILED, addr, addr_type,
+	    cis_handle, 0, 0, status);
 }
 
 /* ================================================================
@@ -1383,11 +1489,15 @@ ctl_adv_program(struct blued_adapter *adp, bool scan_rsp, const uint8_t *data,
  * to the characteristic.  The daemon end is pumped by the main kqueue loop, so
  * a high-rate GATT data path bypasses the per-notification IPC event stream.
  *
- * The registry (blued_g.ctl_acquires) is touched only on the main event-loop
- * thread; acquire operations, notification routing (blued_ctl_notify_value), the fd
- * pump and every teardown path all run there — so it needs no lock of its own.
- * (The client-close teardown runs while ctl_clients_lock is already held by the
- * event loop, so these helpers must not take that lock themselves.)
+ * Locking (finding 58): the registry (blued_g.ctl_acquires) is NOT main-thread
+ * only — ctl_acquire_route_notify() iterates it and send()s from
+ * blued_ctl_notify_value(), which a GATT worker thread reaches via
+ * hogp_unsolicited() when a notification arrives mid-operation.  The registry is
+ * therefore serialised by ctl_clients_lock: every list mutation (insert /
+ * teardown) and every traversal (route_notify, find, the fd pump, conn_gone,
+ * client_gone) runs with that lock held.  ctl_clients_lock is a recursive mutex
+ * (see blued_ctl_clients_lock_init), so a helper may take it even when a caller
+ * on the same thread already holds it across dispatch.
  */
 
 /* Registry lookup for the single acquire on a (peer, characteristic, dir). */
@@ -1496,22 +1606,50 @@ ctl_acquire_create(struct blued_ctl_client *client, const bdaddr_t *addr,
 	 */
 	{
 		uint8_t reply[IPC_OP_PREFIX_SIZE + IPC_GATT_ACQUIRE_REPLY_SIZE];
+		int dup_fd;
 
+		/*
+		 * Finding 121: do the fallible descriptor dup/capability-limit
+		 * BEFORE sending the success OP_REPLY.  Previously the reply was
+		 * sent first and a failed SCM_RIGHTS handout then returned -1,
+		 * which the dispatcher turned into a SECOND (error) reply for
+		 * the same request id — the client saw success-then-error and
+		 * never got the promised fd.  Now a dup failure is reported as
+		 * the single OP_ERROR (no reply sent yet); txq room for both
+		 * frames was reserved above, so the ordered reply+fd queueing
+		 * below cannot fail for space.
+		 */
+		dup_fd = ctl_dup_capped_fd(sv[1], false);
+		if (dup_fd < 0) {
+			ctl_acquire_teardown(acq);
+			close(sv[1]);
+			return (-1);
+		}
 		ipc_op_prefix_encode(reply, client->active_request_id,
 		    IPC_ERR_NONE, 0);
 		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE, typed_opcode);
 		ipc_put_le16(reply + IPC_OP_PREFIX_SIZE + 2, mtu);
 		if (ctl_send_frame(client, IPC_T_OP_REPLY, IPC_OP_DOMAIN_GATT,
 		    reply, sizeof(reply)) < 0) {
+			close(dup_fd);
 			ctl_acquire_teardown(acq);
 			close(sv[1]);
 			return (-1);
 		}
-	}
-	if (ctl_send_fd_to_client(client, sv[1]) < 0) {
-		ctl_acquire_teardown(acq);
-		close(sv[1]);
-		return (-1);
+		if (ctl_queue_fd(client, dup_fd) < 0) {
+			/*
+			 * Success reply already delivered; do NOT emit a
+			 * contradictory second reply.  Drop the fd and shut the
+			 * client down so it does not block awaiting an fd that
+			 * will never arrive, and report success to the caller so
+			 * the dispatcher stays silent.
+			 */
+			close(dup_fd);
+			(void)shutdown(client->fd, SHUT_RDWR);
+			ctl_acquire_teardown(acq);
+			close(sv[1]);
+			return (0);
+		}
 	}
 	close(sv[1]);
 	return (0);
@@ -1577,17 +1715,26 @@ ctl_acquire_dispatch(struct kevent *ev)
 	uint8_t buf[ATT_PDU_BUF_SIZE];
 	ssize_t nr;
 
+	/*
+	 * Finding 58: serialise registry access against a GATT worker's
+	 * ctl_acquire_route_notify().  Recursive lock, so nesting under a
+	 * dispatch that already holds it is safe.
+	 */
+	pthread_mutex_lock(&blued_g.ctl_clients_lock);
 	LIST_FOREACH(acq, &blued_g.ctl_acquires, entries) {
 		if (acq->daemon_fd == (int)ev->ident) {
 			found = acq;
 			break;
 		}
 	}
-	if (found == NULL)
+	if (found == NULL) {
+		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		return;
+	}
 
 	if (ev->flags & EV_EOF) {
 		ctl_acquire_teardown(found);
+		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		return;
 	}
 
@@ -1595,10 +1742,13 @@ ctl_acquire_dispatch(struct kevent *ev)
 	if (nr == 0) {
 		/* Peer end closed with no pending data: client-close teardown. */
 		ctl_acquire_teardown(found);
+		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		return;
 	}
-	if (nr < 0)
+	if (nr < 0) {
+		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		return;
+	}
 
 	if (found->dir == CTL_ACQ_WRITE) {
 		struct blued_conn *conn;
@@ -1608,20 +1758,20 @@ ctl_acquire_dispatch(struct kevent *ev)
 		conn = blued_conn_by_peer(
 		    blued_adapter_by_index_powered(found->adapter_index), &found->addr,
 		    found->addr_type);
-		if (conn == NULL || conn->att == NULL)
-			return;
 		/* Bound to the ATT payload budget (mtu-3); never over-send. */
 		cap = (found->mtu > 3) ? (uint16_t)(found->mtu - 3) : 0;
-		if (cap == 0)
-			return;
-		if (dlen > cap)
-			dlen = cap;
-		(void)att_write_cmd(conn->att, found->handle, buf, dlen);
+		if (conn != NULL && conn->att != NULL && cap != 0) {
+			if (dlen > cap)
+				dlen = cap;
+			(void)att_write_cmd(conn->att, found->handle, buf,
+			    dlen);
+		}
 	}
 	/*
 	 * A NOTIFY acquire's client end is receive-only from the daemon's point
 	 * of view; any bytes it writes are drained above and discarded.
 	 */
+	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 }
 
 /* Release every acquire owned by a departing control client. */
@@ -1630,10 +1780,13 @@ ctl_acquire_client_gone(struct blued_ctl_client *client)
 {
 	struct ctl_acquire *acq, *tmp;
 
+	/* Registry serialisation (finding 58); recursive, caller already holds. */
+	pthread_mutex_lock(&blued_g.ctl_clients_lock);
 	LIST_FOREACH_SAFE(acq, &blued_g.ctl_acquires, entries, tmp) {
 		if (acq->client == client)
 			ctl_acquire_teardown(acq);
 	}
+	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 }
 
 /* Release every acquire bound to a peer that has disconnected. */
@@ -1642,12 +1795,15 @@ ctl_acquire_conn_gone(const struct blued_conn *conn)
 {
 	struct ctl_acquire *acq, *tmp;
 
+	/* Registry serialisation (finding 58); recursive, may already be held. */
+	pthread_mutex_lock(&blued_g.ctl_clients_lock);
 	LIST_FOREACH_SAFE(acq, &blued_g.ctl_acquires, entries, tmp) {
 		if (acq->adapter_index == conn->adapter->index &&
 		    acq->addr_type == conn->addr_type &&
 		    memcmp(&acq->addr, &conn->dst, sizeof(conn->dst)) == 0)
 			ctl_acquire_teardown(acq);
 	}
+	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 }
 
 
@@ -2162,6 +2318,47 @@ static bool ctl_gatt_jobs_stopping;
 static struct blued_conn *ctl_gatt_active_conns[CTL_GATT_WORKERS];
 static size_t ctl_gatt_active_count;
 
+/*
+ * Finding 91: make each att_ops_active 0<->1 transition atomic with its
+ * EV_DISABLE/EV_ENABLE side effect.  Without this a worker that decrements
+ * 1->0 can be preempted before it re-enables the ATT read filter while main
+ * admits a new job (0->1) and disables it; the worker then resumes and
+ * re-enables the filter during the new job, leaving a level-triggered readable
+ * event the handler refuses (att_ops_active != 0) — the event loop spins until
+ * the worker drains the fd.  Serialising the {count change + kevent} pair under
+ * one lock keeps the filter state consistent with the count.
+ */
+static pthread_mutex_t ctl_att_ops_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/* Admit an ATT operation on conn: bump att_ops_active, disable the read filter
+ * on the 0->1 edge, as one atomic step. */
+static void
+ctl_att_ops_enter(struct blued_conn *conn)
+{
+
+	pthread_mutex_lock(&ctl_att_ops_lock);
+	if (atomic_fetch_add_explicit(&conn->att_ops_active, 1,
+	    memory_order_acq_rel) == 0)
+		blued_conn_set_att_events(conn, false);
+	pthread_mutex_unlock(&ctl_att_ops_lock);
+}
+
+/* Retire an ATT operation on conn: drop att_ops_active, re-enable the read
+ * filter on the 1->0 edge, as one atomic step.  Returns true on that edge. */
+static bool
+ctl_att_ops_leave(struct blued_conn *conn)
+{
+	bool last;
+
+	pthread_mutex_lock(&ctl_att_ops_lock);
+	last = atomic_fetch_sub_explicit(&conn->att_ops_active, 1,
+	    memory_order_acq_rel) == 1;
+	if (last)
+		blued_conn_set_att_events(conn, true);
+	pthread_mutex_unlock(&ctl_att_ops_lock);
+	return (last);
+}
+
 static bool
 ctl_subscription_equal(const struct ctl_subscription *a,
     const struct ctl_subscription *b)
@@ -2335,32 +2532,33 @@ ctl_gatt_job_run(void *arg)
 		if (!ctl_gatt_cleanup_still_needed(job))
 			error = IPC_ERR_NONE;
 		else
-			error = ctl_gatt_write_result(job->adapter_index,
+			error = ctl_gatt_write_result(job->conn,
+			    job->adapter_index,
 			    &job->addr, job->addr_type, job->handle, job->value,
 			    job->value_len, false);
 		break;
 	case IPC_GATT_DISCOVER:
-		error = ctl_gatt_discover_result(job->adapter_index, &job->addr,
-		    job->addr_type,
+		error = ctl_gatt_discover_result(job->conn, job->adapter_index,
+		    &job->addr, job->addr_type,
 		    ctl_gatt_job_discovery, job);
 		break;
 	case IPC_GATT_READ:
-		error = ctl_gatt_read_result(job->adapter_index, &job->addr,
-		    job->addr_type, job->handle,
+		error = ctl_gatt_read_result(job->conn, job->adapter_index,
+		    &job->addr, job->addr_type, job->handle,
 		    reply + IPC_OP_PREFIX_SIZE + IPC_GATT_READ_REPLY_SIZE,
 		    ATT_PDU_BUF_SIZE, &outlen);
 		break;
 	case IPC_GATT_SUBSCRIBE:
 	case IPC_GATT_UNSUBSCRIBE: {
-		error = ctl_gatt_subscribe_result(job->client_fd,
+		error = ctl_gatt_subscribe_result(job->conn, job->client_fd,
 		    job->client_generation, job->adapter_index,
 		    &job->addr, job->addr_type, job->handle,
 		    job->opcode == IPC_GATT_SUBSCRIBE);
 		break;
 	}
 	default:
-		error = ctl_gatt_write_result(job->adapter_index, &job->addr,
-		    job->addr_type, job->handle,
+		error = ctl_gatt_write_result(job->conn, job->adapter_index,
+		    &job->addr, job->addr_type, job->handle,
 		    job->value, job->value_len,
 		    job->opcode == IPC_GATT_WRITE_CMD);
 		break;
@@ -2399,9 +2597,7 @@ ctl_gatt_job_run(void *arg)
 		    IPC_T_OP_REPLY);
 	}
 
-	if (atomic_fetch_sub_explicit(&job->conn->att_ops_active, 1,
-	    memory_order_acq_rel) == 1)
-		blued_conn_set_att_events(job->conn, true);
+	(void)ctl_att_ops_leave(job->conn);
 	if (atomic_load_explicit(&job->conn->disconnect_pending,
 	    memory_order_acquire) && atomic_load_explicit(
 	    &job->conn->att_ops_active, memory_order_acquire) == 0)
@@ -2420,9 +2616,7 @@ ctl_gatt_job_cancel(struct ctl_gatt_job *job)
 	if (job->opcode == CTL_GATT_CCCD_CLEANUP)
 		ctl_gatt_cleanup_unregister(job);
 
-	if (atomic_fetch_sub_explicit(&job->conn->att_ops_active, 1,
-	    memory_order_acq_rel) == 1)
-		blued_conn_set_att_events(job->conn, true);
+	(void)ctl_att_ops_leave(job->conn);
 	blued_conn_unref(job->conn);
 	explicit_bzero(job, sizeof(*job));
 	free(job);
@@ -2536,6 +2730,19 @@ ctl_gatt_workers_stop(void)
 		pthread_join(ctl_gatt_workers[--ctl_gatt_workers_count], NULL);
 }
 
+/*
+ * Public entry so shutdown can quiesce the GATT worker pool BEFORE it frees
+ * per-connection hogp/att state (finding 93).  A worker mid-job dereferences
+ * conn->att == &hogp->att, which the conn refcount does not cover; joining the
+ * workers here guarantees no worker is touching a hogp when it is freed.
+ */
+void
+blued_ctl_gatt_workers_stop(void)
+{
+
+	ctl_gatt_workers_stop();
+}
+
 static void
 ctl_gatt_jobs_cancel_client(int client_fd)
 {
@@ -2566,7 +2773,6 @@ ctl_gatt_job_start(struct blued_ctl_client *client, uint16_t opcode,
 {
 	struct ctl_gatt_job *job;
 	struct blued_conn *conn;
-	unsigned int prior;
 	uint8_t actual_adapter;
 	bool duplicate;
 	size_t i;
@@ -2593,10 +2799,7 @@ ctl_gatt_job_start(struct blued_ctl_client *client, uint16_t opcode,
 	if (value_len != 0)
 		memcpy(job->value, value, value_len);
 	blued_conn_ref(conn);
-	prior = atomic_fetch_add_explicit(&conn->att_ops_active, 1,
-	    memory_order_acq_rel);
-	if (prior == 0)
-		blued_conn_set_att_events(conn, false);
+	ctl_att_ops_enter(conn);
 	pthread_mutex_lock(&ctl_gatt_jobs_lock);
 	duplicate = false;
 	if (opcode == CTL_GATT_CCCD_CLEANUP) {
@@ -2612,25 +2815,15 @@ ctl_gatt_job_start(struct blued_ctl_client *client, uint16_t opcode,
 	    opcode != CTL_GATT_CCCD_CLEANUP) ||
 	    (opcode == CTL_GATT_CCCD_CLEANUP && !duplicate &&
 	    ctl_gatt_cleanup_count >= CTL_GATT_CLEANUP_MAX)) {
-		bool last;
-
 		pthread_mutex_unlock(&ctl_gatt_jobs_lock);
-		last = atomic_fetch_sub_explicit(&conn->att_ops_active, 1,
-		    memory_order_acq_rel) == 1;
-		if (last)
-			blued_conn_set_att_events(conn, true);
+		(void)ctl_att_ops_leave(conn);
 		blued_conn_unref(conn);
 		free(job);
 		return (IPC_ERR_BUSY);
 	}
 	if (duplicate) {
-		bool last;
-
 		pthread_mutex_unlock(&ctl_gatt_jobs_lock);
-		last = atomic_fetch_sub_explicit(&conn->att_ops_active, 1,
-		    memory_order_acq_rel) == 1;
-		if (last)
-			blued_conn_set_att_events(conn, true);
+		(void)ctl_att_ops_leave(conn);
 		blued_conn_unref(conn);
 		free(job);
 		return (IPC_ERR_NONE);
@@ -2711,15 +2904,61 @@ ctl_gatt_client_gone(struct blued_ctl_client *client)
 	}
 }
 
+/*
+ * Register or remove a wildcard "monitor all connections" subscription
+ * (all-zero address, handle 0) (finding 31).  Unlike a real GATT subscribe it
+ * performs no ATT/CCCD operation: it records a passive route so
+ * blued_ctl_notify_value mirrors every notification to the monitoring client.
+ */
+static int
+ctl_gatt_wildcard_subscribe(struct blued_ctl_client *client, bool subscribe)
+{
+	static const bdaddr_t any = { { 0, 0, 0, 0, 0, 0 } };
+	int i;
+
+	pthread_mutex_lock(&blued_g.ctl_clients_lock);
+	for (i = 0; i < client->nsubs; i++)
+		if (client->subs[i].handle == 0 &&
+		    memcmp(&client->subs[i].addr, &any, sizeof(any)) == 0)
+			break;
+	if (subscribe) {
+		if (i < client->nsubs) {
+			pthread_mutex_unlock(&blued_g.ctl_clients_lock);
+			return (IPC_ERR_NONE);	/* already monitoring */
+		}
+		if (client->nsubs >= CTL_MAX_SUBSCRIPTIONS) {
+			pthread_mutex_unlock(&blued_g.ctl_clients_lock);
+			return (IPC_ERR_BUSY);
+		}
+		memset(&client->subs[client->nsubs], 0,
+		    sizeof(client->subs[client->nsubs]));
+		client->nsubs++;
+	} else {
+		if (i == client->nsubs) {
+			pthread_mutex_unlock(&blued_g.ctl_clients_lock);
+			return (IPC_ERR_NOT_FOUND);
+		}
+		if (i + 1 < client->nsubs)
+			memmove(&client->subs[i], &client->subs[i + 1],
+			    (client->nsubs - i - 1) *
+			    sizeof(client->subs[0]));
+		client->nsubs--;
+	}
+	pthread_mutex_unlock(&blued_g.ctl_clients_lock);
+	return (IPC_ERR_NONE);
+}
+
 static void
 ctl_process_typed_gatt(struct blued_ctl_client *client, const uint8_t *payload,
     size_t plen)
 {
 	uint8_t reply[IPC_OP_PREFIX_SIZE + IPC_GATT_READ_REPLY_SIZE +
 	    ATT_PDU_BUF_SIZE];
+	static const bdaddr_t zero_addr = { { 0, 0, 0, 0, 0, 0 } };
 	bdaddr_t addr;
 	uint16_t opcode, flags, handle, value_len;
 	uint8_t addr_type, adapter_index;
+	bool wildcard;
 	int error;
 
 	if (plen < IPC_GATT_REQ_SIZE) {
@@ -2740,10 +2979,18 @@ ctl_process_typed_gatt(struct blued_ctl_client *client, const uint8_t *payload,
 	memcpy(&addr, payload + 5, sizeof(addr));
 	adapter_index = payload[11];
 	handle = ipc_get_le16(payload + 12);
+	/*
+	 * A (UN)SUBSCRIBE with an all-zero address and handle 0 is the wildcard
+	 * "monitor all connections" registration (finding 31); handle 0 is
+	 * otherwise rejected for these opcodes.
+	 */
+	wildcard = handle == 0 && (opcode == IPC_GATT_SUBSCRIBE ||
+	    opcode == IPC_GATT_UNSUBSCRIBE) &&
+	    memcmp(&addr, &zero_addr, sizeof(addr)) == 0;
 	if (flags != 0 || !ctl_addr_type_from_ipc(addr_type, &addr_type) ||
 	    (adapter_index != UINT8_MAX && adapter_index >= BLUED_MAX_ADAPTERS) ||
 	    (handle == 0 && opcode != IPC_GATT_DISCOVER &&
-	    opcode != IPC_GATT_ADD_SERVICE)) {
+	    opcode != IPC_GATT_ADD_SERVICE && !wildcard)) {
 		ctl_send_op_error(client, IPC_OP_DOMAIN_GATT, IPC_ERR_INVAL,
 		    "invalid typed GATT request");
 		return;
@@ -2912,6 +3159,15 @@ ctl_process_typed_gatt(struct blued_ctl_client *client, const uint8_t *payload,
 	case IPC_GATT_UNSUBSCRIBE:
 		if (plen != IPC_GATT_REQ_SIZE) {
 			error = IPC_ERR_PROTO;
+			break;
+		}
+		if (wildcard) {
+			error = ctl_gatt_wildcard_subscribe(client,
+			    opcode == IPC_GATT_SUBSCRIBE);
+			if (error == IPC_ERR_NONE) {
+				ctl_send_op_ack(client, IPC_OP_DOMAIN_GATT);
+				return;
+			}
 			break;
 		}
 		error = ctl_gatt_job_start(client, opcode, adapter_index, &addr,
@@ -3089,7 +3345,13 @@ ctl_security_rekey_result(uint8_t adapter_index, const bdaddr_t *addr,
 		return (IPC_ERR_NOT_FOUND);
 	if (conn->role != BLUED_ROLE_CENTRAL || conn->hogp == NULL)
 		return (IPC_ERR_PERM);
-	return (blued_central_start_pairing(conn->hogp, conn) < 0 ?
+	/*
+	 * Finding 33: never run the blocking pairing on the dispatch thread;
+	 * hand it to a detached worker.  The reply now means "rekey accepted"
+	 * (the exchange proceeds asynchronously and can be answered by a
+	 * concurrent passkey/numcmp reply).
+	 */
+	return (blued_central_start_pairing_async(conn) < 0 ?
 	    IPC_ERR_IO : IPC_ERR_NONE);
 }
 
@@ -3169,6 +3431,8 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 	if (bad || adp == NULL)
 		return (IPC_ERR_NOT_FOUND);
 	if (opcode == IPC_SECURITY_RESOLV_CLEAR) {
+		/* Serialize shadow + controller mutation (finding 92). */
+		pthread_mutex_lock(&blued_g.reslist_lock);
 		hci_le_set_addr_resolution_enable(adp->hci_fd, 0);
 		if (hci_le_clear_resolving_list(adp->hci_fd) < 0)
 			error = IPC_ERR_IO;
@@ -3176,6 +3440,7 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 			memset(&adp->reslist, 0, sizeof(adp->reslist));
 		hci_le_set_addr_resolution_enable(adp->hci_fd,
 		    blued_cfg.privacy ? 1 : 0);
+		pthread_mutex_unlock(&blued_g.reslist_lock);
 		return (error);
 	}
 	if (opcode == IPC_SECURITY_RESOLV_ADD && !have_irk) {
@@ -3194,18 +3459,29 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 	} else if (have_irk)
 		memcpy(irk, supplied_irk, sizeof(irk));
 	hci_type = addr_type == BDADDR_LE_RANDOM ? 0x01 : 0x00;
+	/* Serialize shadow + controller mutation against setup threads (92). */
+	pthread_mutex_lock(&blued_g.reslist_lock);
 	hci_le_set_addr_resolution_enable(adp->hci_fd, 0);
 	if (opcode == IPC_SECURITY_RESOLV_ADD) {
 		if (hci_le_add_dev_resolving_list(adp->hci_fd, hci_type,
 		    (const uint8_t *)addr, irk, blued_has_local_irk ?
 		    blued_local_irk : zero_irk) < 0)
 			error = IPC_ERR_IO;
-		else {
-			hci_le_set_privacy_mode(adp->hci_fd, hci_type,
-			    (const uint8_t *)addr, blued_cfg.privacy_mode);
+		else if (hci_le_set_privacy_mode(adp->hci_fd, hci_type,
+		    (const uint8_t *)addr, blued_cfg.privacy_mode) < 0) {
+			/*
+			 * Finding 122: the entry is in the controller resolving
+			 * list but Set Privacy Mode was rejected — do not report
+			 * full success.  Roll the entry back so the host shadow
+			 * and the controller stay consistent and the operator
+			 * sees the failure.
+			 */
+			(void)hci_le_remove_dev_resolving_list(adp->hci_fd,
+			    hci_type, (const uint8_t *)addr);
+			error = IPC_ERR_IO;
+		} else
 			(void)blued_reslist_add(&adp->reslist,
 			    (const uint8_t *)addr, addr_type);
-		}
 	} else if (hci_le_remove_dev_resolving_list(adp->hci_fd, hci_type,
 	    (const uint8_t *)addr) < 0)
 		error = IPC_ERR_IO;
@@ -3214,6 +3490,7 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 		    (const uint8_t *)addr, addr_type);
 	hci_le_set_addr_resolution_enable(adp->hci_fd,
 	    blued_cfg.privacy ? 1 : 0);
+	pthread_mutex_unlock(&blued_g.reslist_lock);
 	return (error);
 }
 
@@ -3251,14 +3528,39 @@ ctl_process_typed_security(struct blued_ctl_client *client,
 		goto out;
 	}
 	switch (opcode) {
-	case IPC_SECURITY_PAIR:
+	case IPC_SECURITY_PAIR: {
+		struct blued_conn *conn;
+
 		if (plen != IPC_SECURITY_REQ_SIZE) {
 			error = IPC_ERR_PROTO;
 			break;
 		}
-		error = ctl_security_conn(adapter_index, &addr, addr_type) != NULL ?
-		    IPC_ERR_NONE : IPC_ERR_NOT_CONN;
+		conn = ctl_security_conn(adapter_index, &addr, addr_type);
+		if (conn == NULL) {
+			error = IPC_ERR_NOT_CONN;
+			break;
+		}
+		/*
+		 * Actually initiate SMP pairing rather than reporting a bare
+		 * "connection exists" success (finding 37).  An already-encrypted
+		 * link is reported as success (nothing to do).  Only a Central can
+		 * initiate pairing over an existing link; a Peripheral would have
+		 * to send a Security Request, which this path does not model, so
+		 * it returns a clear IPC_ERR_PERM instead of a false success.
+		 */
+		if (conn->att != NULL && conn->att->encrypted) {
+			error = IPC_ERR_NONE;
+			break;
+		}
+		if (conn->role != BLUED_ROLE_CENTRAL || conn->hogp == NULL) {
+			error = IPC_ERR_PERM;
+			break;
+		}
+		/* Finding 33: run pairing off the dispatch thread. */
+		error = blued_central_start_pairing_async(conn) < 0 ?
+		    IPC_ERR_IO : IPC_ERR_NONE;
 		break;
+	}
 	case IPC_SECURITY_PASSKEY_REPLY:
 		if (plen != IPC_SECURITY_PASSKEY_REQ_SIZE) {
 			error = IPC_ERR_PROTO;
@@ -3542,6 +3844,9 @@ ctl_process_typed_security(struct blued_ctl_client *client,
 		ipc_op_prefix_encode(reply, client->active_request_id, 0, 0);
 		ipc_put_le16(body, opcode);
 		pthread_mutex_lock(&blued_g.bond_db_lock);
+		/* Read the shadow under its lock; a setup thread may be
+		 * mutating it concurrently (finding 92). */
+		pthread_mutex_lock(&blued_g.reslist_lock);
 		if (blued_g.bond_db != NULL) {
 			for (int i = 0; i < blued_g.bond_db->count; i++) {
 				struct smp_bond *bond = &blued_g.bond_db->bonds[i];
@@ -3559,6 +3864,7 @@ ctl_process_typed_security(struct blued_ctl_client *client,
 				count++;
 			}
 		}
+		pthread_mutex_unlock(&blued_g.reslist_lock);
 		pthread_mutex_unlock(&blued_g.bond_db_lock);
 		ipc_put_le16(body + 2, count);
 		ctl_send_frame(client, IPC_T_OP_REPLY, IPC_OP_DOMAIN_SECURITY,
@@ -4726,6 +5032,19 @@ ctl_process_frame(struct blued_ctl_client *client, uint16_t type,
 		uint32_t request_id;
 		uint16_t status, flags;
 
+		/*
+		 * The HELLO handshake is the only defense against struct-layout
+		 * skew (ipc_proto.h): a client that never handshaked, or whose
+		 * version was rejected (ctl_process_hello leaves handshaked
+		 * false), must not have its operation frames dispatched
+		 * (finding 35).
+		 */
+		if (!client->handshaked) {
+			ctl_send_frame(client, IPC_T_ERROR, IPC_ERR_PROTO,
+			    "handshake required",
+			    sizeof("handshake required") - 1);
+			break;
+		}
 		if (plen < IPC_OP_PREFIX_SIZE) {
 			ctl_send_frame(client, IPC_T_ERROR, IPC_ERR_PROTO,
 			    "operation prefix missing",

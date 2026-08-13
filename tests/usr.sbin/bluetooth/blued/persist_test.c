@@ -406,9 +406,91 @@ ATF_TC_BODY(atomic_partial_temp_ignored, tc)
 	close(d);
 }
 
+/* ================================================================
+ * Finding 140: the preferred ATT MTU is persisted in the settings
+ * artifact (v4 schema) and survives a restart round trip.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(settings_preferred_mtu_round_trip);
+ATF_TC_BODY(settings_preferred_mtu_round_trip, tc)
+{
+	struct blued_persist_settings s, r;
+	int d = open_cwd_dir();
+
+	memset(&s, 0, sizeof(s));
+	strlcpy(s.name, "mtu-adapter", sizeof(s.name));
+	s.preferred_mtu = 512;
+	s.conn_interval_min = 6;
+	s.conn_interval_max = 12;
+	s.conn_latency = 4;
+	s.supervision_timeout = 500;
+
+	ATF_REQUIRE_EQ(0, blued_persist_settings_save(d, &s));
+
+	memset(&r, 0xAA, sizeof(r));
+	ATF_REQUIRE_EQ(0, blued_persist_settings_load(d, &r));
+	ATF_CHECK_EQ(512, r.preferred_mtu);
+	ATF_CHECK_EQ(6, r.conn_interval_min);
+	ATF_CHECK_EQ(12, r.conn_interval_max);
+	ATF_CHECK_EQ(500, r.supervision_timeout);
+	close(d);
+}
+
+/* ================================================================
+ * Finding 139/141: multiple advertising sets (not just a single
+ * hardcoded handle-0 record) are persisted, and each set's payload
+ * bytes (adv_data/scan_rsp) round-trip rather than being written as
+ * zeros.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(advconfig_multi_set_round_trip);
+ATF_TC_BODY(advconfig_multi_set_round_trip, tc)
+{
+	struct blued_persist_adv_set in[3], out[BLUED_PERSIST_MAX_ADV_SETS];
+	uint32_t n = 0;
+	int d = open_cwd_dir();
+
+	memset(in, 0, sizeof(in));
+	/* Legacy/primary set 0 with a real advertising payload. */
+	in[0].handle = 0;
+	in[0].enabled = 1;
+	in[0].adv_props = 0x0013;
+	in[0].adv_data_len = 4;
+	in[0].adv_data[0] = 0x03;
+	in[0].adv_data[1] = 0x03;	/* Complete 16-bit UUIDs */
+	in[0].adv_data[2] = 0x12;
+	in[0].adv_data[3] = 0x18;	/* HID (0x1812) */
+	in[0].scan_rsp_len = 2;
+	in[0].scan_rsp[0] = 0x01;
+	in[0].scan_rsp[1] = 0x09;
+	/* Two extended sets on distinct handles. */
+	in[1].handle = 2;
+	in[1].enabled = 1;
+	in[1].adv_props = 0x0000;
+	in[1].own_addr_type = 0x03;
+	in[2].handle = 3;
+	in[2].enabled = 0;
+	in[2].adv_props = 0x0001;
+
+	ATF_REQUIRE_EQ(0, blued_persist_advconfig_save(d, in, 3));
+
+	memset(out, 0, sizeof(out));
+	ATF_REQUIRE_EQ(0, blued_persist_advconfig_load(d, out, &n));
+	ATF_REQUIRE_EQ(3, n);
+	ATF_CHECK_EQ(0, out[0].handle);
+	ATF_CHECK_EQ(4, out[0].adv_data_len);
+	ATF_CHECK_EQ(0, memcmp(out[0].adv_data, in[0].adv_data, 4));
+	ATF_CHECK_EQ(2, out[0].scan_rsp_len);
+	ATF_CHECK_EQ(2, out[1].handle);
+	ATF_CHECK_EQ(0x03, out[1].own_addr_type);
+	ATF_CHECK_EQ(3, out[2].handle);
+	ATF_CHECK_EQ(0, out[2].enabled);
+	close(d);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, settings_preferred_mtu_round_trip);
+	ATF_TP_ADD_TC(tp, advconfig_multi_set_round_trip);
 	ATF_TP_ADD_TC(tp, crc32_known_vector);
 	ATF_TP_ADD_TC(tp, settings_round_trip);
 	ATF_TP_ADD_TC(tp, devcache_round_trip);

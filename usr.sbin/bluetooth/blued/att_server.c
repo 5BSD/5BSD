@@ -134,6 +134,36 @@ val_alloc(struct att_db *db, uint16_t len)
 	return (p);
 }
 
+/*
+ * Reserve value capacity for a writable characteristic declared with an EMPTY
+ * initial value.  Without a reserved buffer the attribute is created
+ * value==NULL / value_maxlen==0 and every client write is rejected
+ * INVALID_ATTR_LEN — permanently unwritable.  Reserve up to the maximum ATT
+ * attribute value length (Core Spec Vol 3 Part F §3.2.9) but never more than
+ * the value arena can currently supply, so declaring an empty writable
+ * attribute never itself fails attribute creation.  On success value/value_len/
+ * value_maxlen are set; if the arena is exhausted they are left zero (the
+ * attribute stays a readable empty value, as before).
+ */
+static void
+attdb_reserve_empty_writable(struct att_db *db, struct att_attr *a)
+{
+	size_t avail = db->val_size - db->val_used;
+	uint16_t cap = ATT_PEND_WVAL_MAX;
+	uint8_t *vv;
+
+	if ((size_t)cap > avail)
+		cap = (uint16_t)avail;
+	if (cap == 0)
+		return;
+	vv = val_alloc(db, cap);
+	if (vv == NULL)
+		return;
+	a->value = vv;
+	a->value_len = 0;
+	a->value_maxlen = cap;
+}
+
 /* ----------------------------------------------------------------
  *  Database construction
  * ---------------------------------------------------------------- */
@@ -291,6 +321,12 @@ attdb_add_characteristic(struct att_db *db, uint16_t uuid16,
 		val_attr->value = vv;
 		val_attr->value_len = len;
 		val_attr->value_maxlen = len;
+	} else if (ATT_PERM_IS_WRITABLE(perms)) {
+		/*
+		 * Writable characteristic declared with an empty initial value
+		 * must still reserve capacity, or it is permanently unwritable.
+		 */
+		attdb_reserve_empty_writable(db, val_attr);
 	}
 	return (val_attr->handle);
 }
@@ -344,6 +380,10 @@ attdb_add_characteristic128(struct att_db *db, const uint8_t uuid128[16],
 		val_attr->value = vv;
 		val_attr->value_len = len;
 		val_attr->value_maxlen = len;
+	} else if (ATT_PERM_IS_WRITABLE(perms)) {
+		/* See attdb_add_characteristic(): empty writable char must
+		 * still reserve capacity or it is permanently unwritable. */
+		attdb_reserve_empty_writable(db, val_attr);
 	}
 	return (val_attr->handle);
 }

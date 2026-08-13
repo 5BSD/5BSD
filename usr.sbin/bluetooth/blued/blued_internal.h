@@ -105,11 +105,6 @@ extern const int _blued_kq_readvertise_tag;
 #define CON_HANDLE_POLL_INIT_USEC	50000	/* 50ms initial */
 #define CON_HANDLE_POLL_RETRIES		5
 
-/* Setup timeout: disconnect if connection setup takes > 60 seconds */
-#define BLUED_SETUP_TIMEOUT_SEC	60
-extern const int _blued_kq_setup_timeout_tag;
-#define BLUED_KQ_SETUP_TIMEOUT	((void *)(uintptr_t)&_blued_kq_setup_timeout_tag)
-
 /* GAP/GATT Service UUIDs */
 #define UUID_GAP_SERVICE		0x1800
 #define UUID_DEVICE_NAME		0x2A00
@@ -294,6 +289,7 @@ bool	blued_oob_take(const uint8_t *addr, struct smp_oob_legacy *lg,
 /* blued_event.c — event loop and connection handling */
 void	blued_event_loop(void);
 void	blued_conn_disconnect(struct blued_conn *conn);
+void	blued_conn_central_teardown(struct blued_conn *conn);
 void	blued_ind_arm_timeout(struct blued_conn *conn);
 void	blued_ind_disarm_timeout(struct blued_conn *conn);
 void	blued_idle_arm(struct blued_conn *conn);

@@ -321,25 +321,75 @@ ATF_TC_BODY(mesh_iv_complete_wrong_state, tc)
  * node's own index already matches the update target, so it starts a
  * same-index update, dwell-gated.
  * ================================================================ */
+/*
+ * Finding 1 regression: a same-index beacon with the IV Update flag set has no
+ * legal transition (MshPRT Section 3.11.5: Normal -> In Progress must INCREMENT
+ * the IV Index; Tables 3.84/3.85 define no same-index start).  The flag must be
+ * ignored; the previous code performed a same-index "start" that regressed the
+ * TX index to iv_index-1 and reused (IV, SEQ) nonces.
+ */
 ATF_TC_WITHOUT_HEAD(mesh_iv_beacon_same_index_start);
 ATF_TC_BODY(mesh_iv_beacon_same_index_start, tc)
 {
 	struct mesh_iv_state st;
 
-	/* Before the dwell: deferred, no change. */
+	/* Before the dwell: ignored. */
 	mesh_iv_init(&st, 100, 1000);
 	ATF_CHECK_EQ_MSG(MESH_IV_NO_CHANGE,
 	    mesh_iv_recv_beacon(&st, 100, 1, 1000),
-	    "same-index start must be deferred before the dwell");
+	    "same-index flag=1 must be ignored (no same-index start)");
 	ATF_CHECK_EQ(st.state, BT_MESH_SPEC_IV_NORMAL);
 	ATF_CHECK_EQ(st.iv_index, 100u);
 
-	/* After the dwell: the same-index update starts (index unchanged). */
+	/*
+	 * Even after the dwell has elapsed, a same-index flag=1 beacon does NOT
+	 * start an update and does NOT regress the TX index.
+	 */
 	mesh_iv_init(&st, 100, 1000);
-	ATF_CHECK_EQ_MSG(MESH_IV_STARTED,
+	ATF_CHECK_EQ_MSG(MESH_IV_NO_CHANGE,
 	    mesh_iv_recv_beacon(&st, 100, 1, 1000 + DWELL),
-	    "same-index start must proceed after the dwell");
+	    "same-index flag=1 must never start an update");
+	ATF_CHECK_EQ(st.state, BT_MESH_SPEC_IV_NORMAL);
+	ATF_CHECK_EQ(st.iv_index, 100u);
+	/* TX index stays at the operating index n, never n-1. */
+	ATF_CHECK_EQ(100u, mesh_iv_tx_index(&st));
+}
+
+/*
+ * Finding 2 regression: an armed IV Index Recovery observing IV = current+1
+ * with the IV Update flag set shall adopt the IV Index and flag WITHOUT the
+ * 96-hour dwell gate (MshPRT Table 3.85, Section 3.11.6), even from Normal or
+ * In Progress.  The previous code returned NO_CHANGE unconditionally when In
+ * Progress and was dwell-gated when Normal, stranding an armed node.
+ */
+ATF_TC_WITHOUT_HEAD(mesh_iv_beacon_recovery_plus1_flag);
+ATF_TC_BODY(mesh_iv_beacon_recovery_plus1_flag, tc)
+{
+	struct mesh_iv_state st;
+
+	/* From Normal, armed, before the dwell: recovery adopts immediately. */
+	mesh_iv_init(&st, 100, 1000);
+	ATF_REQUIRE_EQ(0, mesh_iv_recovery_begin(&st));
+	ATF_CHECK_EQ_MSG(MESH_IV_JUMPED,
+	    mesh_iv_recv_beacon(&st, 101, 1, 1000),
+	    "armed recovery must adopt current+1 with flag, no dwell gate");
+	ATF_CHECK_EQ(st.iv_index, 101u);
 	ATF_CHECK_EQ(st.state, BT_MESH_SPEC_IV_UPDATE_IN_PROGRESS);
+	ATF_CHECK_EQ(st.recovery_active, 0);	/* arm consumed */
+
+	/* From In Progress, armed: still adopts (previously stuck at NO_CHANGE). */
+	mesh_iv_init(&st, 100, 0);
+	st.state = BT_MESH_SPEC_IV_UPDATE_IN_PROGRESS;
+	ATF_REQUIRE_EQ(0, mesh_iv_recovery_begin(&st));
+	ATF_CHECK_EQ(MESH_IV_JUMPED,
+	    mesh_iv_recv_beacon(&st, 101, 1, 0));
+	ATF_CHECK_EQ(st.iv_index, 101u);
+	ATF_CHECK_EQ(st.state, BT_MESH_SPEC_IV_UPDATE_IN_PROGRESS);
+
+	/* Without an armed recovery, current+1 flag-clear is still rejected. */
+	mesh_iv_init(&st, 100, 0);
+	ATF_CHECK_EQ(MESH_IV_REJECT,
+	    mesh_iv_recv_beacon(&st, 101, 0, DWELL));
 	ATF_CHECK_EQ(st.iv_index, 100u);
 }
 
@@ -431,6 +481,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mesh_iv_beacon_complete_before_dwell);
 	ATF_TP_ADD_TC(tp, mesh_iv_beacon_plus1_flag_inprogress);
 	ATF_TP_ADD_TC(tp, mesh_iv_beacon_recovery_jump_flag);
+	ATF_TP_ADD_TC(tp, mesh_iv_beacon_recovery_plus1_flag);
 
 	return (atf_no_error());
 }

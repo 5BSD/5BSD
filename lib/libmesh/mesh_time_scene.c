@@ -24,7 +24,12 @@ mesh_time_state_encode(const struct mesh_time_state *state, uint8_t out[10])
 	out[4] = state->tai_seconds >> 32;
 	out[5] = state->subsecond;
 	out[6] = state->uncertainty;
-	packed = state->tai_utc_delta | ((uint16_t)state->time_authority << 15);
+	/*
+	 * MMDL Section 1.5: Time Authority is bit 0 and TAI-UTC Delta occupies
+	 * bits 1..15 of the little-endian 16-bit word.
+	 */
+	packed = (uint16_t)(state->time_authority & 0x01) |
+	    (uint16_t)(state->tai_utc_delta << 1);
 	out[7] = packed;
 	out[8] = packed >> 8;
 	out[9] = state->time_zone_offset;
@@ -46,8 +51,8 @@ mesh_time_state_decode(const uint8_t *in, size_t inlen,
 	state->subsecond = in[5];
 	state->uncertainty = in[6];
 	packed = (uint16_t)in[7] | ((uint16_t)in[8] << 8);
-	state->tai_utc_delta = packed & 0x7fff;
-	state->time_authority = packed >> 15;
+	state->time_authority = packed & 0x01;
+	state->tai_utc_delta = (packed >> 1) & 0x7fff;
 	state->time_zone_offset = in[9];
 	return (0);
 }
@@ -401,8 +406,14 @@ scene_tid_is_new(struct mesh_scene_srv *srv, uint16_t src, uint16_t dst,
     uint8_t tid, uint64_t now_ms)
 {
 	if (srv->tid_valid && srv->last_src == src && srv->last_dst == dst &&
-	    srv->last_tid == tid && now_ms <= srv->tid_expires_ms)
+	    srv->last_tid == tid && now_ms <= srv->tid_expires_ms) {
+		/*
+		 * MMDL Section 3.1: the 6 s transaction window runs from the
+		 * PREVIOUS same-TID message, so a retransmission refreshes it.
+		 */
+		srv->tid_expires_ms = now_ms + 6000;
 		return (0);
+	}
 	srv->last_src = src;
 	srv->last_dst = dst;
 	srv->last_tid = tid;

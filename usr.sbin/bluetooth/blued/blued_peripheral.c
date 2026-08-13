@@ -307,8 +307,14 @@ blued_periph_setup_fail(struct blued_conn *conn)
  * bonded clients that have enabled indications via the CCCD.
  *
  * The indication carries the affected handle range [start, end].
+ *
+ * Returns 0 when the client has been (or need not be) notified — the
+ * indication was sent, or there is no Service Changed characteristic, or the
+ * client has not subscribed (robust caching / change_aware covers those).
+ * Returns -1 only when the indication was due but att_send_indication() failed,
+ * so the caller must NOT advance the stored db_hash (finding 120).
  */
-static void
+static int
 gatt_send_service_changed(struct blued_conn *pconn, struct att_conn *ac,
     struct att_db *db, uint16_t start, uint16_t end)
 {
@@ -331,7 +337,7 @@ gatt_send_service_changed(struct blued_conn *pconn, struct att_conn *ac,
 
 	if (sc_handle == 0 || cccd_handle == 0) {
 		LOG_GATT(1, "Service Changed: characteristic not found");
-		return;
+		return (0);
 	}
 
 	/* Check if the client has enabled indications via the CCCD */
@@ -348,7 +354,7 @@ gatt_send_service_changed(struct blued_conn *pconn, struct att_conn *ac,
 		if (!ind_enabled) {
 			LOG_GATT(1, "Service Changed: indications not "
 			    "enabled (cccd_handle=%04x)", cccd_handle);
-			return;
+			return (0);
 		}
 	}
 
@@ -362,12 +368,13 @@ gatt_send_service_changed(struct blued_conn *pconn, struct att_conn *ac,
 		    sizeof(val)) < 0) {
 			LOG_GATT(1, "Service Changed indication send "
 			    "failed");
-		} else {
-			LOG_GATT(1, "Service Changed indication sent "
-			    "(range %04x-%04x)", start, end);
-			blued_ind_arm_timeout(pconn);
+			return (-1);
 		}
+		LOG_GATT(1, "Service Changed indication sent "
+		    "(range %04x-%04x)", start, end);
+		blued_ind_arm_timeout(pconn);
 	}
+	return (0);
 }
 
 /*
@@ -557,23 +564,41 @@ blued_conn_setup_peripheral_impl(void *arg)
 						warn("post-pairing encryption "
 						    "timeout");
 					else {
-						struct smp_bond *pb;
+						struct smp_bond pb;
+						bool have_pb = false;
 
 						/*
 						 * Open the ATT gate only if
 						 * the just-completed pairing left
 						 * a real LTK in the bond for this
-						 * peer.
+						 * peer.  Snapshot the bond under
+						 * bond_db_lock (finding 36): an
+						 * unbond racing this read can
+						 * memmove the table and hand back
+						 * a stale key size, like the
+						 * central path's
+						 * hogp_bond_snapshot().
 						 */
-						pb = smp_find_bond(
-						    sc.bond_db,
-						    sc.remote_addr,
-						    sc.remote_addr_type);
+						pthread_mutex_lock(
+						    &blued_g.bond_db_lock);
+						{
+							struct smp_bond *bp =
+							    smp_find_bond(
+							    sc.bond_db,
+							    sc.remote_addr,
+							    sc.remote_addr_type);
+							if (bp != NULL) {
+								pb = *bp;
+								have_pb = true;
+							}
+						}
+						pthread_mutex_unlock(
+						    &blued_g.bond_db_lock);
 						if (!att_conn_apply_encryption(
 						    ac,
-						    pb != NULL && pb->has_ltk,
-						    pb != NULL && pb->is_mitm,
-						    pb != NULL ? pb->key_size : 0,
+						    have_pb && pb.has_ltk,
+						    have_pb && pb.is_mitm,
+						    have_pb ? pb.key_size : 0,
 						    16))
 							LOG_HOGP(1, "post-pairing "
 							    "encryption not backed "
@@ -666,12 +691,23 @@ skip_smp:
 				 * will not.
 				 */
 				ac->change_aware = false;
-				gatt_send_service_changed(conn, ac,
-				    &periph_gatt_db, 0x0001, 0xFFFF);
-				memcpy(bond->db_hash, cur_hash, 16);
-				if (smp_bond_db_commit_bond(blued_g.bond_db,
-				    bond, &previous) != 0)
-					warnx("saving peripheral database hash");
+				/*
+				 * Finding 120: only advance the stored db_hash
+				 * if the Service Changed indication was actually
+				 * delivered.  If the send failed, leave the old
+				 * hash so the next reconnect detects the change
+				 * again and retries — otherwise the peer keeps a
+				 * stale cache forever.
+				 */
+				if (gatt_send_service_changed(conn, ac,
+				    &periph_gatt_db, 0x0001, 0xFFFF) == 0) {
+					memcpy(bond->db_hash, cur_hash, 16);
+					if (smp_bond_db_commit_bond(
+					    blued_g.bond_db, bond,
+					    &previous) != 0)
+						warnx("saving peripheral "
+						    "database hash");
+				}
 			}
 		} else if (bond != NULL && !bond->has_db_hash) {
 			struct smp_bond previous = *bond;
@@ -815,12 +851,19 @@ peripheral_build_gattdb(struct att_db *db, struct att_attr *attrs,
 	 * §12.4.  A dual-role device that also operates as a Central and
 	 * supports LL Privacy (address resolution) shall expose this
 	 * characteristic in its GAP service so a connected peer knows it may
-	 * use Resolvable Private Addresses.  Read-only, value 0x01 = address
-	 * resolution supported.
+	 * use Resolvable Private Addresses.  Read-only: 0x01 = address
+	 * resolution supported, 0x00 = not supported.  Derived from whether LL
+	 * privacy/address resolution is actually enabled on the adapter rather
+	 * than hardcoded (finding 115): advertising 0x01 with resolution off
+	 * would falsely invite a peer to rely on RPA resolution we do not do.
 	 */
-	attdb_add_characteristic(db, 0x2AA6 /* Central Address Resolution */,
-	    GATT_PROP_READ, ATT_PERM_READ,
-	    "\x01", 1);
+	{
+		uint8_t car = blued_cfg.privacy ? 0x01 : 0x00;
+
+		attdb_add_characteristic(db,
+		    0x2AA6 /* Central Address Resolution */,
+		    GATT_PROP_READ, ATT_PERM_READ, &car, 1);
+	}
 
 	/* GATT Service (required) with Service Changed characteristic */
 	attdb_add_service(db, UUID_GATT_SERVICE);
@@ -1127,11 +1170,30 @@ blued_eatt_accept(struct blued_adapter *adp)
 		return;
 	}
 
+	/*
+	 * Finding 95: gate on att_ops_active, exactly as the EATT_OPEN verb
+	 * does.  A GATT worker owning the ATT recv path must not have the EATT
+	 * bearer array mutated under it; reject the inbound bearer (the peer may
+	 * retry) rather than corrupt the array.
+	 */
+	if (atomic_load_explicit(&conn->att_ops_active,
+	    memory_order_acquire) != 0) {
+		LOG_ATT(1, "EATT: connection busy with a GATT operation; "
+		    "rejecting bearer");
+		close(fd);
+		return;
+	}
+
+	/* Serialise the array mutation against the encryption-change teardown
+	 * (att_close_eatt), which also holds att_sec_lock (finding 95). */
+	pthread_mutex_lock(&blued_g.att_sec_lock);
 	if (att_eatt_add_bearer(conn->att, fd) < 0) {
+		pthread_mutex_unlock(&blued_g.att_sec_lock);
 		LOG_ATT(1, "EATT: cannot attach bearer: %s", strerror(errno));
 		close(fd);
 		return;
 	}
+	pthread_mutex_unlock(&blued_g.att_sec_lock);
 
 	{
 		if (blued_conn_register_bearer(conn, fd) < 0) {

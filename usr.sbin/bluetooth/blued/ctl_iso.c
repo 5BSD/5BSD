@@ -100,9 +100,15 @@ ctl_iso_cig_request_valid(const uint8_t *payload, uint8_t count)
 		const uint8_t *p = payload + IPC_ISO_CIG_REQ_HDR_SIZE +
 		    i * IPC_ISO_CIS_PARAM_SIZE;
 
+		/*
+		 * RTN_C_To_P (p[3]) / RTN_P_To_C (p[4]) are full octets in LE Set
+		 * CIG Parameters; the spec-legal range is 0x00-0x1e, matching the
+		 * BIG path (ctl_iso_big_request_valid / hci_misc.c).  0x10-0x1e
+		 * are legal and must not be rejected (finding 57).
+		 */
 		if (p[0] > 0xef || !ctl_iso_phy_mask_valid(p[1]) ||
-		    !ctl_iso_phy_mask_valid(p[2]) || p[3] > 0x0f ||
-		    p[4] > 0x0f || ipc_get_le16(p + 6) > 0x0fff ||
+		    !ctl_iso_phy_mask_valid(p[2]) || p[3] > 0x1e ||
+		    p[4] > 0x1e || ipc_get_le16(p + 6) > 0x0fff ||
 		    ipc_get_le16(p + 8) > 0x0fff)
 			return (false);
 	}

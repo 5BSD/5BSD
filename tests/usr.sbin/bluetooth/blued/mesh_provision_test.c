@@ -39,6 +39,7 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "mesh_crypto.h"
 #include "mesh_provision.h"
 #include "spec_oracles.h"
 
@@ -853,9 +854,11 @@ ATF_TC_BODY(codec_extra, tc)
 	buf[10] |= 0x80;
 	ATF_REQUIRE_EQ(0, mesh_prov_caps_parse(buf, 12, &caps_out));
 	ATF_CHECK_EQ(0, memcmp(&caps_in, &caps_out, sizeof(caps_in)));
+	/* CMAC-only capabilities (HMAC bit clear) are spec-legal (Table 5.21). */
 	ATF_REQUIRE_EQ(0, mesh_prov_caps_build(&caps_in, buf, &outlen));
 	buf[3] &= (uint8_t)~MESH_PROV_ALGO_BIT_P256_HMAC;
-	ATF_CHECK_EQ(-1, mesh_prov_caps_parse(buf, 12, &caps_out));
+	ATF_REQUIRE_EQ(0, mesh_prov_caps_parse(buf, 12, &caps_out));
+	ATF_CHECK_EQ(MESH_PROV_ALGO_BIT_P256_CMAC, caps_out.algorithms);
 	ATF_REQUIRE_EQ(0, mesh_prov_caps_build(&caps_in, buf, &outlen));
 	/* Wrong-type input is rejected. */
 	buf[0] = MESH_PROV_START;
@@ -1542,6 +1545,65 @@ ATF_TC_BODY(pbgatt_reasm_bad_sar, tc)
 	    sizeof(out), &outlen));
 }
 
+/* ================================================================
+ * A Provisionee that advertises only BTM_ECDH_P256_CMAC (algorithm bit 0)
+ * is spec-legal: its Capabilities must validate (MshPRT Table 5.21 /
+ * Section 5.4.1.4).  Regression for the check that wrongly required the
+ * HMAC bit.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(caps_cmac_only_valid);
+ATF_TC_BODY(caps_cmac_only_valid, tc)
+{
+	struct mesh_prov_caps in, out;
+	uint8_t buf[12];
+	size_t outlen;
+
+	memset(&in, 0, sizeof(in));
+	in.num_elements = 1;
+	in.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;	/* bit 0 only, no HMAC */
+
+	/* Build + parse must accept CMAC-only capabilities. */
+	ATF_REQUIRE_EQ(0, mesh_prov_caps_build(&in, buf, &outlen));
+	ATF_REQUIRE_EQ(0, mesh_prov_caps_parse(buf, 12, &out));
+	ATF_CHECK_EQ(MESH_PROV_ALGO_BIT_P256_CMAC, out.algorithms);
+
+	/* A Capabilities advertising no supported algorithm is still invalid. */
+	in.algorithms = 0;
+	ATF_CHECK_EQ(-1, mesh_prov_caps_build(&in, buf, &outlen));
+}
+
+/* ================================================================
+ * ProvisioningSalt for the HMAC-SHA-256 algorithm (0x01) is s1 over the
+ * 32-octet ConfirmationSalt and 32-octet Randoms (a 96-octet input), not the
+ * 48-octet CMAC sizing.  Regression for the primitive that hardcoded 16.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(provisioning_salt_256);
+ATF_TC_BODY(provisioning_salt_256, tc)
+{
+	uint8_t csalt[32], rp[32], rd[32];
+	uint8_t msg[96], expect[16], got[16], got16[16];
+	size_t i;
+
+	for (i = 0; i < 32; i++) {
+		csalt[i] = (uint8_t)(0x10 + i);
+		rp[i] = (uint8_t)(0x40 + i);
+		rd[i] = (uint8_t)(0x80 + i);
+	}
+	/* Reference: s1(ConfirmationSalt(32) || RandProv(32) || RandDev(32)). */
+	memcpy(msg, csalt, 32);
+	memcpy(msg + 32, rp, 32);
+	memcpy(msg + 64, rd, 32);
+	ATF_REQUIRE_EQ(0, mesh_s1(msg, sizeof(msg), expect));
+
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioning_salt_256(csalt, rp, rd, got));
+	ATF_CHECK_EQ_MSG(0, memcmp(got, expect, 16),
+	    "ProvisioningSalt (algorithm 0x01) must be s1 over 96 octets");
+
+	/* The 48-octet (CMAC) sizing yields a different salt: sizes matter. */
+	ATF_REQUIRE_EQ(0, mesh_prov_provisioning_salt(csalt, rp, rd, got16));
+	ATF_CHECK(memcmp(got, got16, 16) != 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1571,6 +1633,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, pbgatt_reasm_multisegment);
 	ATF_TP_ADD_TC(tp, pbgatt_reasm_complete_single);
 	ATF_TP_ADD_TC(tp, pbgatt_reasm_bad_sar);
+	ATF_TP_ADD_TC(tp, caps_cmac_only_valid);
+	ATF_TP_ADD_TC(tp, provisioning_salt_256);
 
 	return (atf_no_error());
 }

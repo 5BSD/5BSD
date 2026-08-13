@@ -266,7 +266,7 @@ mesh_net_decrypt(const uint8_t enckey[16], const uint8_t privkey[16],
 	uint8_t hdr[6];
 	uint8_t pecb[16];
 	uint8_t plain[2 + MESH_NET_MAX_TRANSPORT_PDU];
-	size_t miclen, clen, tlen;
+	size_t miclen, clen, tlen, maxtransport;
 	uint8_t ctl, ttl;
 	uint32_t seq;
 	uint16_t src, dst;
@@ -284,6 +284,14 @@ mesh_net_decrypt(const uint8_t enckey[16], const uint8_t privkey[16],
 	 * NID has matched.)
 	 */
 	if (inlen == 0)
+		return (-1);
+
+	/*
+	 * A well-formed Network PDU never exceeds MESH_NET_MAX_PDU (29) octets
+	 * (MshPRT Section 3.4.4); reject an over-length authenticated PDU before
+	 * it can reach the transport layer.
+	 */
+	if (inlen > MESH_NET_MAX_PDU)
 		return (-1);
 
 	/*
@@ -325,7 +333,15 @@ mesh_net_decrypt(const uint8_t enckey[16], const uint8_t privkey[16],
 		goto out;
 	clen = inlen - 7 - miclen;
 	tlen = clen - 2;
-	if (tlen == 0 || tlen > MESH_NET_MAX_TRANSPORT_PDU)
+	/*
+	 * The Transport PDU bound depends on CTL so the whole PDU fits the
+	 * 29-octet limit (MshPRT Section 3.4.4): 12 octets for a control PDU
+	 * (64-bit NetMIC), 16 for an access PDU (32-bit NetMIC).  Mirrors
+	 * mesh_net_valid().
+	 */
+	maxtransport = ctl ? MESH_NET_MAX_CONTROL_TRANSPORT_PDU :
+	    MESH_NET_MAX_TRANSPORT_PDU;
+	if (tlen == 0 || tlen > maxtransport)
 		goto out;
 
 	mesh_network_nonce(nonce, ctl, ttl, seq, src, iv_index);

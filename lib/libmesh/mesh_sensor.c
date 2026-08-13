@@ -300,6 +300,16 @@ sensor_srv_handler(const struct mesh_access_rx *rx)
 			    reply->params + off) != 0) return (-1);
 			off += 8;
 		}
+		/*
+		 * MMDL Section 4.2.2: a Descriptor Get for an unknown Property
+		 * ID is answered with a Descriptor Status echoing just that
+		 * 2-octet Property ID, not an empty message.
+		 */
+		if (property != 0 && off == 0) {
+			reply->params[0] = (uint8_t)property;
+			reply->params[1] = (uint8_t)(property >> 8);
+			off = 2;
+		}
 	} else if (rx->pdu->opcode == MESH_OP_SENSOR_GET) {
 		reply->opcode = MESH_OP_SENSOR_STATUS;
 		if (property != 0 && (entry = mesh_sensor_srv_find(srv, property)) == NULL) {
@@ -420,7 +430,17 @@ sensor_setup_handler(const struct mesh_access_rx *rx)
 		if (rx->pdu->opcode == MESH_OP_SENSOR_CADENCE_SET && reply != NULL) {
 			reply->have_reply = 1; reply->opcode = MESH_OP_SENSOR_CADENCE_STATUS;
 			reply->params_len = sensor_cadence_encode(e, reply->params,
-			    sizeof(reply->params)); }
+			    sizeof(reply->params));
+			/*
+			 * A Cadence Status shall carry at least the 2-octet
+			 * Property ID (MMDL Section 4.1.3); never emit an empty
+			 * status when the full cadence does not fit the reply.
+			 */
+			if (reply->params_len == 0) {
+				reply->params[0] = (uint8_t)property;
+				reply->params[1] = (uint8_t)(property >> 8);
+				reply->params_len = 2;
+			} }
 		break;
 	case MESH_OP_SENSOR_SETTINGS_GET:
 		if (rx->pdu->params_len != 2) return (-1);

@@ -338,6 +338,25 @@ struct blued_ctx {
 	pthread_rwlock_t	conns_lock;	/* protects conns list */
 	pthread_mutex_t		bond_db_lock;	/* protects bond_db array */
 	pthread_mutex_t		gatt_db_lock;	/* protects periph_gatt_db */
+	/*
+	 * Serializes every mutation of each adapter's resolving-list shadow
+	 * (adapter->reslist) and the paired controller resolving-list HCI
+	 * programming (finding 92).  Setup threads sync the list after pairing
+	 * while the dispatch thread services RESOLV_ADD/REMOVE/CLEAR and UNBOND;
+	 * without this the count/memmove race and the shadow diverges from the
+	 * controller.
+	 */
+	pthread_mutex_t		reslist_lock;
+	/*
+	 * Serializes writes to a connection's ATT security state
+	 * (att->encrypted / authenticated / enc_key_size) and the EATT bearer
+	 * teardown that rides on an encryption transition (finding 95).  Three
+	 * threads write these fields: the HCI Encryption-Change / Key-Refresh
+	 * handlers on the event loop, the GATT worker's ctl_elevate_security(),
+	 * and the setup thread's post-pairing gate.  A read lock on conns_lock
+	 * gives no mutual exclusion between them.
+	 */
+	pthread_mutex_t		att_sec_lock;
 	LIST_HEAD(, blued_ctl_client) ctl_clients;
 	pthread_mutex_t		ctl_clients_lock;	/* protects ctl_clients list */
 	atomic_uint		setup_workers;	/* detached connection workers */
@@ -419,6 +438,15 @@ void	*blued_conn_setup_central(void *arg);
  */
 int	blued_central_start_pairing(struct hogp_device *dev,
 	    struct blued_conn *conn);
+
+/*
+ * Spawn a detached worker that runs blued_central_start_pairing() off the ctl
+ * dispatch thread (finding 33).  Returns 0 if the worker was started (the
+ * pairing then proceeds asynchronously), -1 if it could not be spawned.  Used
+ * by the REKEY and PAIR verbs so a passkey/numcmp prompt can be answered by a
+ * concurrent dispatch call instead of deadlocking the blocked event loop.
+ */
+int	blued_central_start_pairing_async(struct blued_conn *conn);
 
 /*
  * Resolving-list lifecycle (blued.c) — keep the controller resolving list in

@@ -224,9 +224,10 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 		 */
 		if (avail != sizeof(ng_hci_le_periodic_adv_sync_est_ep))
 			return (-1);
+		/* Advertiser_PHY: 0x01=1M, 0x02=2M, 0x03=Coded (finding 124). */
 		if (p[0] == 0 && (blued_le_meta_le16(p + 1) > 0x0eff ||
 		    p[3] > 0x0f || p[4] > 0x03 ||
-		    (p[11] != 0x01 && p[11] != 0x03) ||
+		    (p[11] < 0x01 || p[11] > 0x03) ||
 		    blued_le_meta_le16(p + 12) < 0x0006 || p[14] > 0x07))
 			return (-1);
 		out->has_status = true;
@@ -357,9 +358,10 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 		 */
 		if (avail != sizeof(ng_hci_le_past_received_ep))
 			return (-1);
+		/* Advertiser_PHY: 0x01=1M, 0x02=2M, 0x03=Coded (finding 124). */
 		if (p[0] == 0 && (!blued_le_handle_valid(blued_le_meta_le16(p + 1)) ||
 		    blued_le_meta_le16(p + 5) > 0x0eff || p[7] > 0x0f ||
-		    p[8] > 0x03 || (p[15] != 0x01 && p[15] != 0x03) ||
+		    p[8] > 0x03 || (p[15] < 0x01 || p[15] > 0x03) ||
 		    blued_le_meta_le16(p + 16) < 0x0006 || p[18] > 0x07))
 			return (-1);
 		out->has_status = true;

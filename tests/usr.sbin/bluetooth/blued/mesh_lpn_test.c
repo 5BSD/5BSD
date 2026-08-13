@@ -498,6 +498,103 @@ ATF_TC_BODY(lpn_api_guard_matrix, tc)
 	ATF_CHECK_EQ(0, mesh_lpn_fsm_key_refresh(NULL));
 }
 
+/* ================================================================
+ * Finding 18: no poll storm.  In ESTABLISHED a due Friend Poll must be recorded
+ * in flight so it is not re-emitted every tick; it is only (re)transmitted once
+ * ReceiveDelay + ReceiveWindow elapses or a Friend Update arrives.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(lpn_poll_pacing);
+ATF_TC_BODY(lpn_poll_pacing, tc)
+{
+	struct mesh_lpn_fsm l;
+	struct mesh_lpn_out lo;
+	struct mesh_friend_update up;
+	uint8_t offer[MESH_FRIEND_MSG_MAX];
+	uint8_t upd[MESH_FRIEND_MSG_MAX];
+	size_t olen, ulen;
+	uint64_t now = 0;
+
+	assert_friend_wire_contract();
+	/* ReceiveDelay 10 ms, poll every 5 s, PollTimeout 10 s, Offer window 1 s. */
+	mesh_lpn_fsm_init(&l, LPN_ADDR, 1, 0, 0, 1, 10, 100, 1000, 5000);
+	ATF_REQUIRE_EQ(0, mesh_lpn_fsm_start(&l, now, &lo));
+
+	/* One qualifying Offer with ReceiveWindow 20 ms (establish window 30). */
+	olen = build_offer(offer, 20, 8, 4, -60, 1);
+	ATF_CHECK_EQ(1, mesh_lpn_fsm_recv_offer(&l, offer, olen, FRIEND_ADDR, now));
+
+	now = 1000;			/* window closes: first Poll */
+	ATF_REQUIRE_EQ(0, mesh_lpn_fsm_tick(&l, now, &lo));
+	ATF_REQUIRE_EQ(MESH_LPN_ACT_SEND_POLL, lo.action);
+
+	/* Friend Update establishes the friendship (More Data clear). */
+	memset(&up, 0, sizeof(up));
+	up.iv_index = 0x1000;
+	ATF_REQUIRE_EQ(0, mesh_friend_update_build(&up, upd, &ulen));
+	ATF_REQUIRE_EQ(1, mesh_lpn_fsm_recv_update(&l, upd, ulen, now, &lo));
+	ATF_REQUIRE(mesh_lpn_fsm_established(&l));
+
+	/* The cadence Poll falls due at now + poll_interval (5 s). */
+	now = 6000;
+	ATF_REQUIRE_EQ(0, mesh_lpn_fsm_tick(&l, now, &lo));
+	ATF_CHECK_EQ(MESH_LPN_ACT_SEND_POLL, lo.action);
+
+	/*
+	 * The due Poll is now in flight: re-ticking on the same tick (or any
+	 * tick before ReceiveDelay + ReceiveWindow elapses) must NOT re-emit it.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_lpn_fsm_tick(&l, now, &lo));
+	ATF_CHECK_EQ_MSG(MESH_LPN_ACT_NONE, lo.action,
+	    "due Poll re-emitted on the same tick (poll storm; finding)");
+	ATF_REQUIRE_EQ(0, mesh_lpn_fsm_tick(&l, now + 29, &lo));
+	ATF_CHECK_EQ(MESH_LPN_ACT_NONE, lo.action);
+
+	/* With no response, the Poll is retransmitted once the window elapses. */
+	ATF_REQUIRE_EQ(0, mesh_lpn_fsm_tick(&l, now + 30, &lo));
+	ATF_CHECK_EQ(MESH_LPN_ACT_SEND_POLL, lo.action);
+}
+
+/* ================================================================
+ * Finding 19: duplicate detection.  A Friend Poll's response toggles the FSN
+ * exactly once; a second copy of the same response (no Poll outstanding) must
+ * not toggle the FSN again (Section 3.6.6.4.2).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(lpn_duplicate_response_fsn);
+ATF_TC_BODY(lpn_duplicate_response_fsn, tc)
+{
+	struct mesh_lpn_fsm l;
+	struct mesh_lpn_out lo;
+	struct mesh_friend_update up;
+	uint8_t offer[MESH_FRIEND_MSG_MAX];
+	uint8_t upd[MESH_FRIEND_MSG_MAX];
+	size_t olen, ulen;
+	uint64_t now = 0;
+
+	assert_friend_wire_contract();
+	mesh_lpn_fsm_init(&l, LPN_ADDR, 1, 0, 0, 1, 10, 100, 1000, 5000);
+	ATF_REQUIRE_EQ(0, mesh_lpn_fsm_start(&l, now, &lo));
+	olen = build_offer(offer, 20, 8, 4, -60, 1);
+	ATF_CHECK_EQ(1, mesh_lpn_fsm_recv_offer(&l, offer, olen, FRIEND_ADDR, now));
+
+	now = 1000;			/* first Poll (FSN 0 outstanding) */
+	ATF_REQUIRE_EQ(0, mesh_lpn_fsm_tick(&l, now, &lo));
+	ATF_REQUIRE_EQ(MESH_LPN_ACT_SEND_POLL, lo.action);
+	ATF_CHECK_EQ(0, mesh_lpn_poll_fsn(&l.cadence));
+
+	memset(&up, 0, sizeof(up));
+	up.iv_index = 0x1000;
+	ATF_REQUIRE_EQ(0, mesh_friend_update_build(&up, upd, &ulen));
+
+	/* First copy of the response acknowledges the Poll: FSN toggles 0 -> 1. */
+	ATF_REQUIRE_EQ(1, mesh_lpn_fsm_recv_update(&l, upd, ulen, now, &lo));
+	ATF_CHECK_EQ(1, mesh_lpn_poll_fsn(&l.cadence));
+
+	/* A duplicate copy of the same response must NOT toggle the FSN again. */
+	ATF_REQUIRE_EQ(1, mesh_lpn_fsm_recv_update(&l, upd, ulen, now, &lo));
+	ATF_CHECK_EQ_MSG(1, mesh_lpn_poll_fsn(&l.cadence),
+	    "a duplicate Friend Update toggled the FSN twice (finding)");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -508,6 +605,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, friend_rejects_weak_request);
 	ATF_TP_ADD_TC(tp, lpn_establish_retry);
 	ATF_TP_ADD_TC(tp, lpn_api_guard_matrix);
+	ATF_TP_ADD_TC(tp, lpn_poll_pacing);
+	ATF_TP_ADD_TC(tp, lpn_duplicate_response_fsn);
 
 	return (atf_no_error());
 }

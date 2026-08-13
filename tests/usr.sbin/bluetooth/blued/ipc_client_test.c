@@ -1603,20 +1603,35 @@ ATF_TC_BODY(client_typed_security_ops, tc)
 		ATF_REQUIRE_EQ(domain, IPC_OP_DOMAIN_SECURITY);
 		read_exact(sp[1], payload, plen);
 		ipc_op_prefix_decode(payload, &request_id, &status, &flags);
-		ATF_CHECK_EQ(ipc_get_le16(payload + IPC_OP_PREFIX_SIZE),
-		    opcodes[i]);
-		if (opcodes[i] != IPC_SECURITY_REGISTER_AGENT &&
-		    opcodes[i] != IPC_SECURITY_UNREGISTER_AGENT)
-			ATF_CHECK(memcmp(payload + IPC_OP_PREFIX_SIZE + 5,
-			    addr.addr, sizeof(addr.addr)) == 0);
-		if (opcodes[i] == IPC_SECURITY_PASSKEY_REPLY)
-			ATF_CHECK_EQ(ipc_get_le32(payload + IPC_OP_PREFIX_SIZE + 12),
-			    123456);
-		else if (opcodes[i] == IPC_SECURITY_NUMCMP_REPLY)
-			ATF_CHECK_EQ(payload[IPC_OP_PREFIX_SIZE + 12], 1);
-		else if (opcodes[i] == IPC_SECURITY_REGISTER_AGENT)
-			ATF_CHECK_EQ(payload[IPC_OP_PREFIX_SIZE + 12],
-			    BLE_IO_DISPLAY_YESNO);
+		if (opcodes[i] == IPC_SECURITY_PASSKEY_REPLY ||
+		    opcodes[i] == IPC_SECURITY_NUMCMP_REPLY) {
+			/*
+			 * Findings 28/29 passkey/numcmp reply: the standard
+			 * typed-security header [opcode u16][flags u16]
+			 * [addr_type u8][addr[6]][adapter_index u8][value...].
+			 */
+			const uint8_t *b = payload + IPC_OP_PREFIX_SIZE;
+
+			ATF_CHECK_EQ(ipc_get_le16(b), opcodes[i]);
+			ATF_CHECK_EQ(b[4], addr.addr_type);
+			ATF_CHECK(memcmp(b + 5, addr.addr,
+			    sizeof(addr.addr)) == 0);
+			ATF_CHECK_EQ(b[11], addr.adapter_index);
+			if (opcodes[i] == IPC_SECURITY_PASSKEY_REPLY)
+				ATF_CHECK_EQ(ipc_get_le32(b + 12), 123456);
+			else
+				ATF_CHECK_EQ(b[12], 1);
+		} else {
+			ATF_CHECK_EQ(ipc_get_le16(payload + IPC_OP_PREFIX_SIZE),
+			    opcodes[i]);
+			if (opcodes[i] != IPC_SECURITY_REGISTER_AGENT &&
+			    opcodes[i] != IPC_SECURITY_UNREGISTER_AGENT)
+				ATF_CHECK(memcmp(payload + IPC_OP_PREFIX_SIZE + 5,
+				    addr.addr, sizeof(addr.addr)) == 0);
+			if (opcodes[i] == IPC_SECURITY_REGISTER_AGENT)
+				ATF_CHECK_EQ(payload[IPC_OP_PREFIX_SIZE + 12],
+				    BLE_IO_DISPLAY_YESNO);
+		}
 		ipc_op_prefix_encode(payload, request_id, IPC_ERR_NONE, 0);
 		stage_raw_frame(sp[1], IPC_T_OP_REPLY, IPC_OP_DOMAIN_SECURITY,
 		    payload, IPC_OP_PREFIX_SIZE);
@@ -1718,9 +1733,10 @@ ATF_TC_BODY(client_typed_security_event, tc)
 	memset(payload, 0, sizeof(payload));
 	ipc_op_prefix_encode(payload, 0, 0, 0);
 	ipc_put_le16(body, IPC_SECURITY_EV_NUMCMP);
-	body[2] = 1;
-	memcpy(body + 3, addr, sizeof(addr));
-	ipc_put_le32(body + 9, 654321);
+	body[2] = 0;			/* adapter_index (findings 28/29 layout) */
+	body[3] = 1;			/* addr_type */
+	memcpy(body + 4, addr, sizeof(addr));
+	ipc_put_le32(body + 10, 654321);
 	stage_raw_frame(sp[1], IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY,
 	    payload, sizeof(payload));
 	ATF_REQUIRE_EQ(ble_process(ctx), 0);

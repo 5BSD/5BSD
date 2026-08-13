@@ -107,6 +107,13 @@ blued_central_start_pairing(struct hogp_device *dev __unused,
 	return (-1);
 }
 
+int
+blued_central_start_pairing_async(struct blued_conn *conn __unused)
+{
+
+	return (-1);
+}
+
 void *
 blued_conn_setup_peripheral(void *arg __unused)
 {
@@ -332,7 +339,7 @@ test_init(void)
 	pthread_rwlock_init(&blued_g.conns_lock, NULL);
 	pthread_mutex_init(&blued_g.bond_db_lock, NULL);
 	pthread_mutex_init(&blued_g.gatt_db_lock, NULL);
-	pthread_mutex_init(&blued_g.ctl_clients_lock, NULL);
+	blued_ctl_clients_lock_init(&blued_g.ctl_clients_lock);
 	scan_log_reset();
 }
 

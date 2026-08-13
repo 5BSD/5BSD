@@ -1035,7 +1035,11 @@ ATF_TC_BODY(onoff_get_e2e, tc)
 	ATF_CHECK_EQ(1, cli.last.present);
 }
 
-/* Generic Move Set saturates the Level state to the upper bound. */
+/*
+ * Finding 7: a Generic Move Set whose transition time resolves to 0 (no
+ * Transition Time field, DTT=0) makes NO Generic Level state change (MMDL
+ * Section 3.3.2.2.4); it must not rail the Level to the bound.
+ */
 ATF_TC_WITHOUT_HEAD(level_move_e2e);
 ATF_TC_BODY(level_move_e2e, tc)
 {
@@ -1059,7 +1063,8 @@ ATF_TC_BODY(level_move_e2e, tc)
 	ATF_REQUIRE_EQ(0, mesh_sim_send_access(sim, c, 0x0002,
 	    MESH_OP_GEN_MOVE_SET_UNACK, pdu + 2, plen - 2, 5));
 	mesh_sim_run(sim, 8);
-	ATF_CHECK_EQ_MSG(32767, srv.present, "positive Move saturates to the max");
+	ATF_CHECK_EQ_MSG(0, srv.present,
+	    "Move with transition time 0 must not change the Level");
 }
 
 /* Two Delta Sets sharing a TID form one transaction (single application). */
@@ -1938,6 +1943,353 @@ ATF_TC_BODY(sequence_exhaustion_is_atomic, tc)
 	    NULL, 0, 5));
 }
 
+/* ================================================================
+ * Finding 76: a half-installed Forwarding Table entry carries
+ * MESH_DF_BEARER_NONE (0) for the required direction.  Bearer 0 aliases node
+ * index 0, so the directed path must NOT be taken - the PDU falls back to
+ * managed flooding and still reaches the target rather than being blackholed
+ * to node 0.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(df_half_installed_entry_floods);
+ATF_TC_BODY(df_half_installed_entry_floods, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *a, *b, *d;		/* index 0 == a */
+	struct mesh_gen_onoff_srv srv;
+	struct mesh_gen_onoff_set set;
+	uint8_t pdu[8];
+	size_t plen;
+
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	a = mesh_sim_add_node(sim, 0x0001, 1);		/* node index 0 */
+	b = mesh_sim_add_node(sim, 0x0002, 1);
+	d = mesh_sim_add_node(sim, 0x0004, 1);
+	ATF_REQUIRE(a != NULL && b != NULL && d != NULL);
+	mesh_gen_onoff_srv_init(&srv, 0);
+	ATF_REQUIRE_EQ(0, mesh_sim_add_model(d, 0, mesh_gen_onoff_srv_model(&srv)));
+
+	/* B routes with Directed Forwarding + managed-flooding fallback. */
+	mesh_sim_set_df(b, 1);
+	/* A -- B -- D: the target is reachable only through B. */
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, a, b));
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, b, d));
+
+	/*
+	 * Install a half-installed entry for A->D at B: the bearer toward the
+	 * target is MESH_DF_BEARER_NONE (0).  A message A->D selects that bearer;
+	 * without the guard the sim would unicast to node index 0 (A) and drop
+	 * the PDU, never reaching D.
+	 */
+	ATF_REQUIRE(mesh_df_table_add(&b->df_table, 0x0001, 0x0004, 0,
+	    1 /* bearer_toward_origin */, MESH_DF_BEARER_NONE /* toward target */,
+	    720000, 0) != NULL);
+
+	memset(&set, 0, sizeof(set));
+	set.onoff = 1;
+	set.tid = 1;
+	mesh_gen_onoff_cli_set(&set, 0, pdu, &plen);
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(sim, a, 0x0004,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, pdu + 2, plen - 2, 5));
+	mesh_sim_run(sim, 16);
+
+	ATF_CHECK_EQ_MSG(1, srv.present,
+	    "PDU flooded to D instead of being blackholed to node 0");
+}
+
+/* ================================================================
+ * Finding 22: a Path Reply from a Path Target advertises range_length equal to
+ * its element count, so discovery to a secondary element address is covered by
+ * range_covers() at the origin and the path establishes.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(df_reply_covers_secondary_element);
+ATF_TC_BODY(df_reply_covers_secondary_element, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *a, *d;
+
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	a = mesh_sim_add_node(sim, 0x0001, 1);		/* Path Origin */
+	d = mesh_sim_add_node(sim, 0x0004, 2);		/* Target: elems 4,5 */
+	ATF_REQUIRE(a != NULL && d != NULL);
+
+	mesh_sim_set_df(a, 1);
+	mesh_sim_set_df(d, 1);
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, a, d));
+
+	/*
+	 * Discover a path to the Target's SECONDARY element (0x0005).  The Reply
+	 * ranges from the Target's primary address; only a range_length equal to
+	 * the element count covers 0x0005, so the origin accepts the reply and the
+	 * discovery reaches MESH_DF_DISC_ESTABLISHED (mesh_sim_df_discover == 0).
+	 */
+	ATF_CHECK_EQ_MSG(0, mesh_sim_df_discover(sim, a, 0x0005,
+	    MESH_DF_LIFETIME_12_MIN),
+	    "path to a secondary element established");
+}
+
+/* ================================================================
+ * Finding 23: after an LPN Poll whose response was empty/lost, the Friend
+ * Sequence Number must NOT toggle; otherwise the next Poll's changed FSN is
+ * misread by the Friend as an ack and the still-undelivered head is dropped.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(lpn_poll_lost_response_preserves_fsn);
+ATF_TC_BODY(lpn_poll_lost_response_preserves_fsn, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *c, *f, *l;
+	struct mesh_gen_onoff_srv srv;
+	struct mesh_gen_onoff_set set;
+	uint8_t pdu[8];
+	size_t plen;
+
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	c = mesh_sim_add_node(sim, 0x0001, 1);
+	f = mesh_sim_add_node(sim, 0x0002, 1);
+	l = mesh_sim_add_node(sim, 0x0005, 1);
+	mesh_gen_onoff_srv_init(&srv, 0);
+	mesh_sim_add_model(l, 0, mesh_gen_onoff_srv_model(&srv));
+	mesh_sim_set_relay(f, 1);
+	ATF_REQUIRE_EQ(0, mesh_sim_set_friend(f, 0x0005, 1, 8));
+	ATF_REQUIRE_EQ(0, mesh_sim_set_lpn(l, 0x0002, 0x0000a0));
+	ATF_REQUIRE_EQ(0, mesh_sim_establish_friendship(sim, f, l, 0, 0, 0));
+	mesh_sim_link(sim, c, f);
+	mesh_sim_link(sim, f, l);
+
+	/* First Poll with an EMPTY queue: the Friend answers nothing. */
+	ATF_CHECK_EQ(0, mesh_sim_lpn_poll(sim, l));
+
+	/* Now a message is queued at the Friend for the LPN. */
+	memset(&set, 0, sizeof(set));
+	set.onoff = 1;
+	set.tid = 7;
+	mesh_gen_onoff_cli_set(&set, 0, pdu, &plen);
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(sim, c, 0x0005,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, pdu + 2, plen - 2, 5));
+	mesh_sim_run(sim, 10);
+	ATF_REQUIRE_EQ(1u, mesh_fq_count(&f->fq));
+
+	/*
+	 * The next Poll must still carry the unchanged FSN so the Friend delivers
+	 * the queued head.  If the empty first Poll had toggled the FSN, this Poll
+	 * would look like an ack and the head would be discarded undelivered.
+	 */
+	ATF_CHECK_EQ_MSG(1, mesh_sim_lpn_poll(sim, l),
+	    "queued head delivered, not dropped by a spurious FSN toggle");
+	ATF_CHECK_EQ(1, srv.present);
+}
+
+/* ================================================================
+ * Finding 70: SeqAuth is derived from SeqZero, not (SEQ - SegO).  A compliant
+ * peer may (re)transmit a segment with any SEQ in [SeqAuth, SeqAuth+8191]; such
+ * a segment must still reassemble.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(segmented_seqauth_from_seqzero);
+ATF_TC_BODY(segmented_seqauth_from_seqzero, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *b;
+	uint8_t params[13], access[MESH_ACCESS_PAYLOAD_MAX];
+	uint8_t upper[MESH_UPPER_MAX], aid;
+	struct mesh_seg seg[MESH_SEG_MAX];
+	size_t access_len, upper_len, nseg, i;
+	const uint32_t seq0 = 0x000100;		/* SeqAuth; SeqZero = 0x100 */
+	const uint32_t seq1 = 0x000105;		/* SegO 1 retransmitted later */
+
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	b = mesh_sim_add_node(sim, 0x0002, 1);
+	ATF_REQUIRE(b != NULL);
+	ATF_REQUIRE_EQ(0, mesh_k4(APPKEY, &aid));
+
+	for (i = 0; i < sizeof(params); i++)
+		params[i] = (uint8_t)(0xA0 + i);
+	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(0x8299, params, sizeof(params),
+	    access, &access_len));
+	ATF_REQUIRE_EQ(0, mesh_upper_encrypt(APPKEY, 1, 0, seq0, 0x0001, 0x0002,
+	    0, NULL, access, access_len, upper, &upper_len));
+	ATF_REQUIRE_EQ(0, mesh_sar_segment(1, aid, 0, (uint16_t)(seq0 & 0x1fff),
+	    upper, upper_len, seg, MESH_SEG_MAX, &nseg));
+	ATF_REQUIRE_EQ(2u, nseg);
+
+	/*
+	 * Deliver SegO 0 with SEQ=SeqAuth, then SegO 1 with a LATER SEQ (as if
+	 * three unrelated messages were sent between the original and its
+	 * retransmission).  (SEQ - SegO) no longer equals SeqAuth, so the buggy
+	 * derivation rejects SegO 1 and the message never completes.
+	 */
+	inject_pdu(sim, NETKEY, 0, 0x0001, 0x0002, seq0, seg[0].bytes,
+	    seg[0].len);
+	inject_pdu(sim, NETKEY, 0, 0x0001, 0x0002, seq1, seg[1].bytes,
+	    seg[1].len);
+	mesh_sim_run(sim, 10);
+
+	ATF_CHECK_EQ_MSG(1u, b->rx.count,
+	    "segment with a non-consecutive SEQ still reassembled");
+	ATF_CHECK_EQ(0x8299u, b->rx.opcode);
+	ATF_CHECK_EQ(sizeof(params), b->rx.params_len);
+	ATF_CHECK_EQ(0, memcmp(b->rx.params, params, sizeof(params)));
+}
+
+/* ================================================================
+ * Finding 78: a Friend node must secure a Segment Ack to a THIRD party with the
+ * normal network credential, not the friendship credential (which the third
+ * party cannot decrypt).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(segack_third_party_net_credential);
+ATF_TC_BODY(segack_third_party_net_credential, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *t, *f, *l;
+	uint8_t params[20];
+	size_t i;
+
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	t = mesh_sim_add_node(sim, 0x0001, 1);		/* third-party SAR origin */
+	f = mesh_sim_add_node(sim, 0x0002, 1);		/* Friend (has friend cred) */
+	l = mesh_sim_add_node(sim, 0x0005, 1);		/* LPN */
+	ATF_REQUIRE(t != NULL && f != NULL && l != NULL);
+	ATF_REQUIRE_EQ(0, mesh_sim_set_friend(f, 0x0005, 1, 8));
+	ATF_REQUIRE_EQ(0, mesh_sim_set_lpn(l, 0x0002, 0x0000a0));
+	ATF_REQUIRE_EQ(0, mesh_sim_establish_friendship(sim, f, l, 0, 0, 0));
+
+	for (i = 0; i < sizeof(params); i++)
+		params[i] = (uint8_t)(i + 1);
+
+	/* T sends a segmented message to the Friend's own unicast address. */
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(sim, t, 0x0002, 0x8299,
+	    params, sizeof(params), 5));
+	mesh_sim_run(sim, 20);
+
+	/*
+	 * The Friend acks with the normal network credential, so T decrypts the
+	 * ack and completes its SAR transaction (the outbound session is freed).
+	 * A friendship-credential ack could not be decrypted by T, leaving the
+	 * session pending forever.
+	 */
+	ATF_CHECK_EQ_MSG(0, t->sar_tx[0].used,
+	    "third party received and processed the Segment Ack");
+}
+
+/* ================================================================
+ * Finding 81: a Segment Ack is sent only when the received DST is a unicast
+ * address of this node.  Group/virtual-addressed segmented messages are never
+ * acknowledged (MshPRT_v1.1 3.5.3.4).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(segack_suppressed_for_group_dst);
+ATF_TC_BODY(segack_suppressed_for_group_dst, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *a, *b;
+	uint8_t params[20];
+	size_t i;
+
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	a = mesh_sim_add_node(sim, 0x0001, 1);
+	b = mesh_sim_add_node(sim, 0x0002, 1);
+	ATF_REQUIRE(a != NULL && b != NULL);
+	ATF_REQUIRE_EQ(0, mesh_sim_subscribe(b, 0xC000));
+
+	for (i = 0; i < sizeof(params); i++)
+		params[i] = (uint8_t)(i + 1);
+
+	/* Segmented message to a GROUP address B subscribes to. */
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(sim, a, 0xC000, 0x8299,
+	    params, sizeof(params), 5));
+	mesh_sim_run(sim, 20);
+
+	/*
+	 * B reassembled the group message but must NOT emit a Segment Ack, so it
+	 * originated no control PDU and its SEQ never advanced.
+	 */
+	ATF_CHECK_EQ_MSG(0u, mesh_sim_node_seq(b),
+	    "no Segment Ack originated for a group-addressed segmented message");
+}
+
+/* ================================================================
+ * Finding 82: a Segment Ack is sent with a fresh default TTL, not the residual
+ * (already decremented) received TTL, so it can traverse the same number of
+ * hops back to the SAR origin.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(segack_uses_default_ttl_multihop);
+ATF_TC_BODY(segack_uses_default_ttl_multihop, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *a, *r1, *r2, *b;
+	uint8_t params[20];
+	size_t i;
+
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	a = mesh_sim_add_node(sim, 0x0001, 1);		/* SAR origin */
+	r1 = mesh_sim_add_node(sim, 0x0002, 1);
+	r2 = mesh_sim_add_node(sim, 0x0003, 1);
+	b = mesh_sim_add_node(sim, 0x0004, 1);		/* reassembler */
+	ATF_REQUIRE(a != NULL && r1 != NULL && r2 != NULL && b != NULL);
+	mesh_sim_set_relay(r1, 1);
+	mesh_sim_set_relay(r2, 1);
+	/* A -- R1 -- R2 -- B: three hops each direction. */
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, a, r1));
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, r1, r2));
+	ATF_REQUIRE_EQ(0, mesh_sim_link(sim, r2, b));
+
+	for (i = 0; i < sizeof(params); i++)
+		params[i] = (uint8_t)(i + 1);
+
+	/*
+	 * Send with a small initial TTL (3) so the segments arrive at B with a
+	 * residual TTL of 1.  A residual-TTL ack could not be relayed back; only a
+	 * fresh default TTL lets the ack reach A and complete its SAR session.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(sim, a, 0x0004, 0x8299,
+	    params, sizeof(params), 3));
+	mesh_sim_run(sim, 40);
+
+	ATF_CHECK_EQ_MSG(1u, b->rx.count, "segmented message reached B");
+	ATF_CHECK_EQ_MSG(0, a->sar_tx[0].used,
+	    "the Segment Ack reached the origin three hops back");
+}
+
+/* ================================================================
+ * Finding 85: a Proxy Server hands a PDU received over its GATT bearer to its
+ * own network layer as well as relaying it, so a PDU addressed to the proxy is
+ * delivered locally (MshPRT_v1.1 6.7).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(proxy_gatt_in_local_delivery);
+ATF_TC_BODY(proxy_gatt_in_local_delivery, tc)
+{
+	MESH_HEAP(struct mesh_sim, sim);
+	struct mesh_node *c, *p;
+	struct mesh_gen_onoff_srv srv;
+	struct mesh_gen_onoff_set set;
+	uint8_t pdu[8], wire[MESH_NET_MAX_PDU];
+	size_t plen, wlen;
+
+	ATF_REQUIRE_EQ(0, mesh_sim_init(sim, NETKEY, APPKEY, 0));
+	c = mesh_sim_add_node(sim, 0x0001, 1);
+	p = mesh_sim_add_node(sim, 0x0002, 1);
+	ATF_REQUIRE(c != NULL && p != NULL);
+	mesh_gen_onoff_srv_init(&srv, 0);
+	ATF_REQUIRE_EQ(0, mesh_sim_add_model(p, 0, mesh_gen_onoff_srv_model(&srv)));
+	mesh_sim_set_proxy(p);
+
+	/* Craft a secured PDU addressed to the proxy's own unicast address. */
+	memset(&set, 0, sizeof(set));
+	set.onoff = 1;
+	set.tid = 1;
+	mesh_gen_onoff_cli_set(&set, 0, pdu, &plen);
+	ATF_REQUIRE_EQ(0, mesh_sim_send_access(sim, c, 0x0002,
+	    MESH_OP_GEN_ONOFF_SET_UNACK, pdu + 2, plen - 2, 5));
+	ATF_REQUIRE_EQ(1u, mesh_sim_pending(sim));
+	wlen = sim->tx[0].len;
+	memcpy(wire, sim->tx[0].bytes, wlen);
+	sim->n_tx = 0;			/* do not deliver over the shared medium */
+
+	/* Hand the PDU in over the proxy's GATT bearer. */
+	ATF_REQUIRE_EQ(0, mesh_sim_proxy_gatt_in(sim, p, wire, wlen));
+	mesh_sim_run(sim, 10);
+
+	ATF_CHECK_EQ_MSG(1, srv.present,
+	    "proxy delivered the GATT-received PDU to its own network layer");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1974,6 +2326,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, api_limits);
 	ATF_TP_ADD_TC(tp, secondary_subnet_key_lifecycle);
 	ATF_TP_ADD_TC(tp, sequence_exhaustion_is_atomic);
+	ATF_TP_ADD_TC(tp, df_half_installed_entry_floods);
+	ATF_TP_ADD_TC(tp, df_reply_covers_secondary_element);
+	ATF_TP_ADD_TC(tp, lpn_poll_lost_response_preserves_fsn);
+	ATF_TP_ADD_TC(tp, segmented_seqauth_from_seqzero);
+	ATF_TP_ADD_TC(tp, segack_third_party_net_credential);
+	ATF_TP_ADD_TC(tp, segack_suppressed_for_group_dst);
+	ATF_TP_ADD_TC(tp, segack_uses_default_ttl_multihop);
+	ATF_TP_ADD_TC(tp, proxy_gatt_in_local_delivery);
 
 	return (atf_no_error());
 }

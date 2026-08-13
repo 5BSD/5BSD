@@ -299,11 +299,11 @@ mesh_mgr_node_at(const struct mesh_mgr *mgr, size_t i)
 
 #define	MESH_MGR_MAGIC		"MSHMGR\0\1"	/* 8 octets */
 #define	MESH_MGR_MAGIC_LEN	8
-#define	MESH_MGR_VERSION	1
+#define	MESH_MGR_VERSION	2	/* v2 adds the persisted SEQ high-water mark */
 #define	MESH_MGR_HDR_LEN	20		/* magic..crc32 inclusive */
 
-/* Serialised network/self header (little-endian), 62 octets. */
-#define	MESH_MGR_NETHDR_LEN	62
+/* Serialised network/self header (little-endian), 66 octets. */
+#define	MESH_MGR_NETHDR_LEN	66
 /* Serialised per-node record (little-endian), 43 octets. */
 #define	MESH_MGR_NODEREC_LEN	43
 
@@ -415,7 +415,7 @@ get_u64(const uint8_t **pp)
 	return (v);
 }
 
-/* Serialise the network/self header into a 60-octet buffer. */
+/* Serialise the network/self header into a 66-octet buffer. */
 static void
 encode_nethdr(const struct mesh_mgr *mgr, uint8_t out[MESH_MGR_NETHDR_LEN])
 {
@@ -431,7 +431,14 @@ encode_nethdr(const struct mesh_mgr *mgr, uint8_t out[MESH_MGR_NETHDR_LEN])
 	put_u16(&p, mgr->next_unicast);
 	*p++ = mgr->flags;
 	*p++ = mgr->self_elements;
-	/* p - out == 62 */
+	/*
+	 * Persist the outbound SEQ high-water mark: on reload the manager must
+	 * resume issuing SEQ values above every one it has already used, or
+	 * mesh_mgr_devkey_seal() would re-issue SEQs the peers' RPL discards
+	 * (and it would be (IV, SEQ) nonce reuse).
+	 */
+	put_u32(&p, mgr->seq);
+	/* p - out == 66 */
 }
 
 static void
@@ -449,6 +456,7 @@ decode_nethdr(struct mesh_mgr *mgr, const uint8_t in[MESH_MGR_NETHDR_LEN])
 	mgr->next_unicast = get_u16(&p);
 	mgr->flags = *p++;
 	mgr->self_elements = *p++;
+	mgr->seq = get_u32(&p);
 }
 
 static void
@@ -668,7 +676,7 @@ mesh_mgr_load(struct mesh_mgr *mgr, const char *path)
 
 	tmp.n_nodes = count;
 	tmp.pending.active = 0;
-	tmp.seq = mgr->seq;	/* sequence is runtime state, not persisted */
+	/* tmp.seq was restored from the persisted SEQ high-water mark. */
 	*mgr = tmp;
 	return (0);
 }

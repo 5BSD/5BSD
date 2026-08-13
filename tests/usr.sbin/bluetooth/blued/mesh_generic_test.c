@@ -590,25 +590,35 @@ ATF_TC_BODY(level_server_move, tc)
 	size_t plen;
 	int want;
 
-	/* Positive move -> upper bound. */
+	/*
+	 * Finding 7 regression: a Generic Move Set whose resolved transition
+	 * time is 0 (here: no Transition Time field and DTT=0) shall NOT
+	 * initiate any Generic Level state change (MMDL Section 3.3.2.2.4:
+	 * "If the computed transition time equals 0, the Generic Move Set
+	 * command shall not initiate any Generic Level state change").  The
+	 * previous code slammed the Level to INT16_MAX/INT16_MIN.
+	 */
 	mesh_gen_level_srv_init(&srv, 0);
 	memset(&m, 0, sizeof(m));
-	m.delta = 5;
+	m.delta = 5;			/* positive, transition time resolves to 0 */
 	m.tid = 1;
 	ATF_REQUIRE_EQ(0, mesh_gen_move_set_encode(&m, p, &plen));
 	ATF_REQUIRE_EQ(0, mesh_gen_level_srv_recv(&srv, 0x1201,
 	    MESH_OP_GEN_MOVE_SET, p, plen, &st, &want));
-	ATF_CHECK_EQ(32767, srv.present);
+	ATF_CHECK_EQ_MSG(0, srv.present,
+	    "Move Set with transition time 0 must not change the Level");
+	ATF_CHECK_EQ_MSG(0, st.has_target, "no transition may be started");
 	ATF_CHECK_EQ(1, want);
 
-	/* Negative move -> lower bound. */
+	/* Negative move, transition time 0 -> also unchanged. */
 	mesh_gen_level_srv_init(&srv, 0);
 	m.delta = -5;
 	m.tid = 2;
 	ATF_REQUIRE_EQ(0, mesh_gen_move_set_encode(&m, p, &plen));
 	ATF_REQUIRE_EQ(0, mesh_gen_level_srv_recv(&srv, 0x1201,
 	    MESH_OP_GEN_MOVE_SET_UNACK, p, plen, &st, &want));
-	ATF_CHECK_EQ(-32768, srv.present);
+	ATF_CHECK_EQ_MSG(0, srv.present,
+	    "negative Move Set with transition time 0 must not change the Level");
 	ATF_CHECK_EQ(0, want);
 
 	/* Zero move -> unchanged (movement stops). */
@@ -619,6 +629,23 @@ ATF_TC_BODY(level_server_move, tc)
 	ATF_REQUIRE_EQ(0, mesh_gen_level_srv_recv(&srv, 0x1201,
 	    MESH_OP_GEN_MOVE_SET, p, plen, &st, &want));
 	ATF_CHECK_EQ(123, srv.present);
+
+	/*
+	 * With a non-zero Transition Time the move DOES start: a transition
+	 * toward the INT16_MAX bound is armed (present unchanged at the start).
+	 */
+	mesh_gen_level_srv_init(&srv, 0);
+	memset(&m, 0, sizeof(m));
+	m.delta = 5;
+	m.tid = 4;
+	m.has_transition = 1;
+	m.transition_time = 0x0a;	/* 10 * 100 ms */
+	ATF_REQUIRE_EQ(0, mesh_gen_move_set_encode(&m, p, &plen));
+	ATF_REQUIRE_EQ(0, mesh_gen_level_srv_recv_at(&srv, 0x1201,
+	    MESH_OP_GEN_MOVE_SET, p, plen, &st, &want, 1000));
+	ATF_CHECK_EQ_MSG(1, st.has_target,
+	    "a Move Set with a non-zero transition time must start a transition");
+	ATF_CHECK_EQ(32767, st.target);
 
 	ATF_CHECK_EQ(-1, mesh_gen_level_srv_recv(&srv, 0x1201,
 	    MESH_OP_GEN_MOVE_SET, p, 4, &st, &want));
@@ -939,7 +966,13 @@ ATF_TC_BODY(null_and_boundary, tc)
 			    MESH_OP_GEN_MOVE_SET, p, pl, &lst, &w));
 			ATF_REQUIRE_EQ(0, mesh_gen_level_srv_recv(&ls, 1,
 			    MESH_OP_GEN_MOVE_SET, p, pl, &lst, &w));
-			ATF_CHECK_EQ(32767, ls.present);
+			/*
+			 * Finding 7: this Move resolves to transition time 0
+			 * (no field, DTT=0), so it makes NO state change; the
+			 * Level stays at its initial value (previously railed to
+			 * INT16_MAX).
+			 */
+			ATF_CHECK_EQ(0, ls.present);
 		}
 	}
 
@@ -1492,6 +1525,14 @@ ATF_TC_BODY(timed_transition_and_tid_window, tc)
 	ATF_CHECK_EQ(1000, status.present);
 	ATF_CHECK_EQ(0, status.has_target);
 
+	/*
+	 * Finding 8: the 6 s TID window runs from the PREVIOUS same-TID message
+	 * (MMDL Section 3.1), so a retransmission REFRESHES it.  Same-TID Level
+	 * Sets at t=6 s and t=7.001 s stay ONE transaction even though 7.001 s is
+	 * more than 6 s after the first (t=1 s) message; the previous code
+	 * anchored the window at the first message and misclassified the second
+	 * as new (applying level 2000 early).
+	 */
 	set.level = 2000;
 	set.has_transition = 0;
 	ATF_REQUIRE_EQ(0, mesh_gen_level_set_encode(&set, params, &plen));
@@ -1500,7 +1541,14 @@ ATF_TC_BODY(timed_transition_and_tid_window, tc)
 	ATF_CHECK_EQ(1000, status.present);	/* same transaction */
 	ATF_REQUIRE_EQ(0, mesh_gen_level_srv_recv_at(&srv, 1,
 	    MESH_OP_GEN_LEVEL_SET, params, plen, &status, &want, 7001));
-	ATF_CHECK_EQ(2000, status.present);	/* six-second window expired */
+	ATF_CHECK_EQ_MSG(1000, status.present,
+	    "same-TID retransmission must refresh the 6 s window");
+	/* Once the refreshed window elapses with no traffic, the next same-TID
+	 * message is a new transaction and applies. */
+	ATF_REQUIRE_EQ(0, mesh_gen_level_srv_recv_at(&srv, 1,
+	    MESH_OP_GEN_LEVEL_SET, params, plen, &status, &want, 13002));
+	ATF_CHECK_EQ_MSG(2000, status.present,
+	    "a same-TID message after the window expires is a new transaction");
 
 	/* Move delta is a rate per transition period, not total duration. */
 	mesh_gen_level_srv_init(&srv, 0);
@@ -1614,11 +1662,15 @@ ATF_TC_BODY(server_model_handler_matrix, tc)
 	ATF_CHECK(reply.have_reply);
 	ATF_CHECK_EQ(-1, dispatch_model(&model, MESH_OP_GEN_ONPOWERUP_SET,
 	    params, 0, &reply));
+	/*
+	 * Finding 10: RESTORE reinstates the value present immediately BEFORE
+	 * the power cycle (here Off), not a separately stashed last_onoff value.
+	 */
 	onoff.present = BTMG_OFF;
-	power_onoff.last_onoff = BTMG_ON;
+	power_onoff.last_onoff = BTMG_ON;	/* stale; must be ignored */
 	power_onoff.on_power_up = BTMG_ONPOWERUP_RESTORE;
 	mesh_gen_power_onoff_srv_power_cycle(&power_onoff);
-	ATF_CHECK_EQ(BTMG_ON, onoff.present);
+	ATF_CHECK_EQ(BTMG_OFF, onoff.present);
 
 	mesh_gen_dtt_srv_init(&dtt, 0x0a);
 	model = mesh_gen_dtt_srv_model(&dtt);
@@ -1686,9 +1738,38 @@ ATF_TC_BODY(server_model_handler_matrix, tc)
 	    MESH_OP_GEN_LOCATION_LOCAL_SET_UNACK, params, 9, &reply));
 }
 
+/*
+ * Finding 10 regression: On Power Up = RESTORE must restore the on/off value
+ * the server had immediately BEFORE the power cycle (MMDL Section 3.2.4.3), not
+ * the state captured at init or a previous cycle (which lagged one cycle).
+ */
+ATF_TC_WITHOUT_HEAD(power_onoff_restore_current);
+ATF_TC_BODY(power_onoff_restore_current, tc)
+{
+	struct mesh_gen_onoff_srv onoff;
+	struct mesh_gen_power_onoff_srv srv;
+
+	/* Server initialised Off; last_onoff captured as Off at init. */
+	mesh_gen_onoff_srv_init(&onoff, BTMG_OFF);
+	mesh_gen_power_onoff_srv_init(&srv, &onoff, BTMG_ONPOWERUP_RESTORE);
+
+	/* Device was ON before power-down: RESTORE must bring it back ON. */
+	mesh_gen_onoff_srv_set_present(&onoff, BTMG_ON);
+	mesh_gen_power_onoff_srv_power_cycle(&srv);
+	ATF_CHECK_EQ_MSG(BTMG_ON, onoff.present,
+	    "RESTORE must reinstate the pre-cycle On state, not a stale value");
+
+	/* Device was OFF before the next power-down: RESTORE brings it OFF. */
+	mesh_gen_onoff_srv_set_present(&onoff, BTMG_OFF);
+	mesh_gen_power_onoff_srv_power_cycle(&srv);
+	ATF_CHECK_EQ_MSG(BTMG_OFF, onoff.present,
+	    "RESTORE must not lag one power cycle behind");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, power_onoff_restore_current);
 	ATF_TP_ADD_TC(tp, assigned_numbers_contract);
 	ATF_TP_ADD_TC(tp, onoff_set_codec);
 	ATF_TP_ADD_TC(tp, onoff_set_negative);

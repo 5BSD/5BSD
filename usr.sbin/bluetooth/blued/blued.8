@@ -87,10 +87,9 @@ for operation.
 When launched by
 .Xr serviced 8 ,
 .Nm
-validates and activates every capability token listed in its inherited
-.Ev ORACLED_TOKEN_FDS
-environment variable before opening controllers, Bluetooth sockets, or
-device nodes.
+validates the versioned bootstrap descriptor and activates every inherited
+capability token before opening controllers, Bluetooth sockets, or device
+nodes.
 Failure to initialize the service channel or activate any token is fatal.
 After initialization it selects the external capprotect shield itself;
 .Xr serviced 8

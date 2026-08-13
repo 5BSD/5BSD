@@ -53,6 +53,7 @@ static int meshd_remote_devkey_rx(void *, uint32_t, uint16_t, uint16_t,
     const uint8_t *, size_t);
 static struct meshd_appkey_entry *meshd_find_appkey(struct meshd_node *,
     uint16_t);
+static void meshd_df_rpr_init(struct meshd_node *nd);
 
 static uint64_t
 meshd_pub_period_ms(uint8_t period)
@@ -395,6 +396,9 @@ meshd_setup_node(struct meshd_node *nd, const uint8_t netkey[16],
 
 	/* Seed the config database: models + the provisioning (primary) subnet. */
 	meshd_db_init(nd, netkey, nd->netkey_index);
+
+	/* Directed Forwarding + Remote Provisioning model state (128/129). */
+	meshd_df_rpr_init(nd);
 	return (0);
 }
 
@@ -419,6 +423,11 @@ meshd_node_init(struct meshd_node *nd, const struct meshd_config *cfg)
 	else if (RAND_bytes(nd->local_devkey, sizeof(nd->local_devkey)) != 1)
 		return (-1);
 	nd->have_local_devkey = 1;
+	if (cfg->have_uuid) {
+		memcpy(nd->device_uuid, cfg->device_uuid,
+		    sizeof(nd->device_uuid));
+		nd->have_device_uuid = 1;
+	}
 
 	mesh_cfg_server_init(&nd->cfg);
 	mesh_hlt_server_init(&nd->health, nd->cid);
@@ -1929,7 +1938,7 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
     size_t *reply_len)
 {
 	struct mesh_cfg_appkey in;
-	struct meshd_appkey_entry *e;
+	struct meshd_appkey_entry *e, *added = NULL;
 	uint32_t op;
 	uint8_t status, buf[8];
 	size_t blen, i;
@@ -1960,6 +1969,7 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 				e->net_idx = in.net_idx;
 				memcpy(e->key, in.key, 16);
 				status = MESH_CFG_SUCCESS;
+				added = e;	/* newly committed: rollback candidate */
 			}
 		} else {		/* AppKey Update */
 			if (e == NULL)
@@ -1977,8 +1987,22 @@ h_appkey_add(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		(void)mesh_sim_remove_appkey(nd->self,
 		    nd->self->appkeys[0].app_idx);
 	if (status == MESH_CFG_SUCCESS &&
-	    mesh_sim_add_appkey(nd->self, in.net_idx, in.app_idx, in.key) != 0)
+	    mesh_sim_add_appkey(nd->self, in.net_idx, in.app_idx, in.key) != 0) {
 		status = MESH_CFG_INSUFFICIENT_RESOURCES;
+		/*
+		 * The crypto/sim layer rejected the key.  Roll back the DB entry
+		 * we just committed so AppKey Get does not list a key that model
+		 * traffic can never be decrypted with (finding 117).  Only a
+		 * freshly allocated Add entry is rolled back; an idempotent
+		 * re-Add or an Update of a pre-existing entry is left intact.
+		 */
+		if (added != NULL) {
+			explicit_bzero(added->key, sizeof(added->key));
+			added->valid = 0;
+			added->app_idx = 0;
+			added->net_idx = 0;
+		}
+	}
 	if (mesh_cfg_appkey_status_build(status, in.net_idx, in.app_idx, buf,
 	    &blen) != 0)
 		return (-1);
@@ -2602,6 +2626,13 @@ h_hb_pub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	else {
 		nd->db.hb_pub = in;
 		status = MESH_CFG_SUCCESS;
+		/*
+		 * Load the publication into the sim so the periodic Heartbeat
+		 * timer actually arms; without this the config DB records the
+		 * publication but nothing is ever transmitted (finding 54).
+		 */
+		mesh_sim_hb_set_pub(nd->self, in.dst, in.count_log, in.period_log,
+		    in.ttl, in.features, meshd_features(nd));
 	}
 	if (mesh_hb_pub_status_build(status, &nd->db.hb_pub, buf, &blen) != 0)
 		return (-1);
@@ -2639,6 +2670,12 @@ h_hb_sub_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		return (-1);
 	status = (mesh_hb_sub_apply(&nd->db.hb_sub, &in) == 0) ?
 	    MESH_CFG_SUCCESS : MESH_CFG_INVALID_ADDRESS;
+	if (status == MESH_CFG_SUCCESS)
+		/*
+		 * Arm the sim's subscription counter; without this hb_sub_active
+		 * stays 0 and received Heartbeats are never counted (finding 54).
+		 */
+		mesh_sim_hb_set_sub(nd->self, in.src, in.dst, in.period_log);
 	mesh_hb_sub_snapshot(&nd->db.hb_sub, status, &st);
 	if (mesh_hb_sub_status_build(&st, buf, &blen) != 0)
 		return (-1);
@@ -2745,6 +2782,14 @@ h_hlt_fault_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)ap;
 	if (mesh_hlt_fault_get_parse(pdu, len, &company) != 0)
 		return (-1);
+	/*
+	 * The node holds Health Fault state only for its own Company ID; a Get
+	 * naming any other CID identifies no fault state and MUST be ignored
+	 * with no Status (MshPRT_v1.1 Section 4.4.3.2.2, finding 106).  When it
+	 * matches, the snapshot echoes that same CID.
+	 */
+	if (company != nd->health.company_id)
+		return (0);
 	if (meshd_fault_snapshot(nd, &fs) != 0)
 		return (-1);
 	if (mesh_hlt_fault_status_build(&fs, buf, &blen) != 0)
@@ -2766,6 +2811,9 @@ h_hlt_fault_clear(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)ap;
 	if (mesh_hlt_fault_clear_parse(pdu, len, &op, &company) != 0)
 		return (-1);
+	/* Unknown CID: no fault state to clear, ignore silently (finding 106). */
+	if (company != nd->health.company_id)
+		return (0);
 	mesh_hlt_server_clear_faults(&nd->health);
 	if (op == MESH_HLT_OP_FAULT_CLEAR_UNREL)
 		return (0);		/* unacknowledged: no Status */
@@ -2790,6 +2838,9 @@ h_hlt_fault_test(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 	(void)ap;
 	if (mesh_hlt_fault_test_parse(pdu, len, &op, &test_id, &company) != 0)
 		return (-1);
+	/* Unknown CID: no fault state to test, ignore silently (finding 106). */
+	if (company != nd->health.company_id)
+		return (0);
 	nd->health.test_id = test_id;
 	if (op == MESH_HLT_OP_FAULT_TEST_UNREL)
 		return (0);		/* unacknowledged: no Status */
@@ -3160,6 +3211,408 @@ h_aggregator_seq(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 }
 
 /* ================================================================
+ * Directed Forwarding Configuration Server (finding 129, MshMDL_v1.1
+ * Section 4.4.3).  Each sub-state answers Get with the stored value and Set by
+ * storing the request and echoing a SUCCESS Status, mirroring the node-wide
+ * Configuration states above.  A single primary-subnet instance is kept; the
+ * request's NetKeyIndex is echoed back.
+ * ================================================================ */
+
+static int
+h_df_control_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_directed_control c;
+	uint16_t net_idx;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	c = nd->df.control;
+	c.net_idx = net_idx;
+	if (mesh_cfg_directed_control_status_build(MESH_CFG_STATUS_SUCCESS, &c,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_control_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_directed_control c;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_directed_control_set_parse(pdu, len, &c) != 0)
+		return (-1);
+	nd->df.control = c;
+	if (mesh_cfg_directed_control_status_build(MESH_CFG_STATUS_SUCCESS, &c,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_metric_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_path_metric m;
+	uint16_t net_idx;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	m = nd->df.metric;
+	m.net_idx = net_idx;
+	if (mesh_cfg_path_metric_status_build(MESH_CFG_STATUS_SUCCESS, &m, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_metric_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_path_metric m;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_path_metric_set_parse(pdu, len, &m) != 0)
+		return (-1);
+	nd->df.metric = m;
+	if (mesh_cfg_path_metric_status_build(MESH_CFG_STATUS_SUCCESS, &m, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_lanes_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_wanted_lanes l;
+	uint16_t net_idx;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	l = nd->df.lanes;
+	l.net_idx = net_idx;
+	if (mesh_cfg_wanted_lanes_status_build(MESH_CFG_STATUS_SUCCESS, &l, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_lanes_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_wanted_lanes l;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_wanted_lanes_set_parse(pdu, len, &l) != 0)
+		return (-1);
+	nd->df.lanes = l;
+	if (mesh_cfg_wanted_lanes_status_build(MESH_CFG_STATUS_SUCCESS, &l, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_two_way_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_two_way_path t;
+	uint16_t net_idx;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	t = nd->df.two_way;
+	t.net_idx = net_idx;
+	if (mesh_cfg_two_way_path_status_build(MESH_CFG_STATUS_SUCCESS, &t, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_two_way_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_two_way_path t;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_two_way_path_set_parse(pdu, len, &t) != 0)
+		return (-1);
+	nd->df.two_way = t;
+	if (mesh_cfg_two_way_path_status_build(MESH_CFG_STATUS_SUCCESS, &t, buf,
+	    &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_echo_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_path_echo_interval e;
+	uint16_t net_idx;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_directed_control_get_parse(pdu, len, &net_idx) != 0)
+		return (-1);
+	e = nd->df.echo;
+	e.net_idx = net_idx;
+	if (mesh_cfg_path_echo_interval_status_build(MESH_CFG_STATUS_SUCCESS, &e,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_echo_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_path_echo_interval e;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_path_echo_interval_set_parse(pdu, len, &e) != 0)
+		return (-1);
+	nd->df.echo = e;
+	if (mesh_cfg_path_echo_interval_status_build(MESH_CFG_STATUS_SUCCESS, &e,
+	    buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_transmit_get(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_transmit t;
+	uint32_t status_op;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)pdu; (void)len;
+	if (ap->opcode == MESH_CFG_OP_DIRECTED_NET_TRANSMIT_GET) {
+		t = nd->df.net_transmit;
+		status_op = MESH_CFG_OP_DIRECTED_NET_TRANSMIT_STATUS;
+	} else {
+		t = nd->df.relay_retransmit;
+		status_op = MESH_CFG_OP_DIRECTED_RELAY_RETRANSMIT_STATUS;
+	}
+	if (mesh_cfg_directed_transmit_build(status_op, &t, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+static int
+h_df_transmit_set(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	struct mesh_cfg_transmit t;
+	uint32_t op, status_op;
+	uint8_t buf[16];
+	size_t blen;
+
+	(void)ap;
+	if (mesh_cfg_directed_transmit_parse(pdu, len, &op, &t) != 0)
+		return (-1);
+	if (op == MESH_CFG_OP_DIRECTED_NET_TRANSMIT_SET) {
+		nd->df.net_transmit = t;
+		status_op = MESH_CFG_OP_DIRECTED_NET_TRANSMIT_STATUS;
+	} else if (op == MESH_CFG_OP_DIRECTED_RELAY_RETRANSMIT_SET) {
+		nd->df.relay_retransmit = t;
+		status_op = MESH_CFG_OP_DIRECTED_RELAY_RETRANSMIT_STATUS;
+	} else
+		return (-1);
+	if (mesh_cfg_directed_transmit_build(status_op, &t, buf, &blen) != 0)
+		return (-1);
+	return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+}
+
+/* ================================================================
+ * Remote Provisioning Server model (finding 128, MshPRT_v1.1 Section 5.4.4).
+ * Answers the synchronous Scan / Link control requests via the scan-server and
+ * server-link FSMs.  The PDU-tunnel (PDU Send -> Outbound PDU Report) drives the
+ * server-link FSM in a loopback fashion (meshd-as-server has no separate device
+ * bearer wired), committing the transfer immediately so the FSM numbering and
+ * state transitions are exercised end to end.  Reports (Scan Report, PDU Report,
+ * Link Report) are unsolicited server-originated and are produced by the driver
+ * helpers, not from this synchronous request path.
+ * ================================================================ */
+int
+meshd_rpr_server_recv(struct meshd_node *nd, const struct mesh_access_pdu *ap,
+    const uint8_t *pdu, size_t len, uint8_t *reply, size_t reply_max,
+    size_t *reply_len)
+{
+	uint8_t buf[MESH_RP_MSG_MAX];
+	size_t blen;
+	uint64_t now;
+
+	if (nd == NULL || ap == NULL || pdu == NULL || reply == NULL ||
+	    reply_len == NULL)
+		return (-1);
+	now = nd->sim.now_ms;
+	*reply_len = 0;
+
+	switch (ap->opcode) {
+	case MESH_RP_OP_SCAN_CAPABILITIES_GET: {
+		struct mesh_rp_scan_caps caps;
+
+		mesh_rp_scan_server_caps(&nd->rpr.scan_server, &caps);
+		if (mesh_rp_scan_caps_status_build(&caps, buf, &blen) != 0)
+			return (-1);
+		return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+	}
+	case MESH_RP_OP_SCAN_GET: {
+		struct mesh_rp_scan_status st;
+
+		mesh_rp_scan_server_status(&nd->rpr.scan_server, now, &st);
+		if (mesh_rp_scan_status_build(&st, buf, &blen) != 0)
+			return (-1);
+		return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+	}
+	case MESH_RP_OP_SCAN_START: {
+		struct mesh_rp_scan_start req;
+		struct mesh_rp_scan_status st;
+
+		if (mesh_rp_scan_start_parse(pdu, len, &req) != 0)
+			return (-1);
+		(void)mesh_rp_scan_server_start(&nd->rpr.scan_server, &req, now,
+		    &st);
+		if (mesh_rp_scan_status_build(&st, buf, &blen) != 0)
+			return (-1);
+		return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+	}
+	case MESH_RP_OP_SCAN_STOP: {
+		struct mesh_rp_scan_status st;
+
+		(void)mesh_rp_scan_server_stop(&nd->rpr.scan_server, now, &st);
+		if (mesh_rp_scan_status_build(&st, buf, &blen) != 0)
+			return (-1);
+		return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+	}
+	case MESH_RP_OP_LINK_GET: {
+		struct mesh_rp_link_status st;
+
+		mesh_rp_server_link_status(&nd->rpr.server_link, &st);
+		if (mesh_rp_link_status_build(&st, buf, &blen) != 0)
+			return (-1);
+		return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+	}
+	case MESH_RP_OP_LINK_OPEN: {
+		struct mesh_rp_link_open op;
+		struct mesh_rp_link_status st;
+
+		if (mesh_rp_link_open_parse(pdu, len, &op) != 0)
+			return (-1);
+		(void)mesh_rp_server_link_on_open(&nd->rpr.server_link, &op,
+		    &st);
+		if (mesh_rp_link_status_build(&st, buf, &blen) != 0)
+			return (-1);
+		return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+	}
+	case MESH_RP_OP_LINK_CLOSE: {
+		struct mesh_rp_link_report rp;
+		uint8_t reason;
+
+		if (mesh_rp_link_close_parse(pdu, len, &reason) != 0)
+			return (-1);
+		(void)mesh_rp_server_link_on_close(&nd->rpr.server_link, reason,
+		    &rp);
+		if (mesh_rp_link_report_build(&rp, buf, &blen) != 0)
+			return (-1);
+		return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+	}
+	case MESH_RP_OP_PDU_SEND: {
+		struct mesh_rp_pdu_send snd;
+		uint8_t prov[MESH_RP_PROV_PDU_MAX];
+		size_t plen;
+		uint8_t outrep;
+
+		if (mesh_rp_pdu_send_parse(pdu, len, &snd) != 0)
+			return (-1);
+		/* on_pdu_send returns 0 (new PDU delivered) / 1 (duplicate). */
+		if (mesh_rp_server_link_on_pdu_send(&nd->rpr.server_link, &snd,
+		    prov, &plen, &outrep) != 0 || plen == 0)
+			return (0);		/* duplicate / out of order: no ack */
+		/* Loopback: no downstream device bearer -> commit immediately. */
+		if (mesh_rp_server_link_pdu_delivered(&nd->rpr.server_link, 1,
+		    &outrep, NULL) != 0)
+			return (0);
+		if (mesh_rp_pdu_outbound_report_build(outrep, buf, &blen) != 0)
+			return (-1);
+		return (meshd_emit(buf, blen, reply, reply_max, reply_len));
+	}
+	default:
+		return (0);		/* not a synchronous RPR Server request */
+	}
+}
+
+/* (Re)initialise the DF + RPR model state on (re)provision. */
+static void
+meshd_df_rpr_init(struct meshd_node *nd)
+{
+
+	memset(&nd->df, 0, sizeof(nd->df));
+	nd->df.control.net_idx = nd->netkey_index;
+	nd->df.metric.net_idx = nd->netkey_index;
+	nd->df.metric.metric_type = MESH_DF_METRIC_NODE_COUNT;
+	nd->df.metric.lifetime = MESH_DF_LIFETIME_2_HOUR;
+	nd->df.lanes.net_idx = nd->netkey_index;
+	nd->df.lanes.wanted_lanes = 1;
+	nd->df.two_way.net_idx = nd->netkey_index;
+	nd->df.echo.net_idx = nd->netkey_index;
+	mesh_df_node_init(&nd->df.node, nd->addr, nd->addr,
+	    MESH_DF_LIFETIME_2_HOUR, nd->df.two_way.two_way_path);
+	nd->df.disc_active = 0;
+
+	memset(&nd->rpr, 0, sizeof(nd->rpr));
+	mesh_rp_scan_server_init(&nd->rpr.scan_server, MESH_RP_SCAN_FOUND_MAX, 1);
+	mesh_rp_server_link_init(&nd->rpr.server_link);
+	mesh_rp_scan_client_init(&nd->rpr.scan_client);
+	mesh_rp_client_link_init(&nd->rpr.client_link);
+	nd->rpr.client_active = 0;
+}
+
+/* ================================================================
  * Opcode -> handler dispatch table (MshMDL Section 4.3.4 / 7.2).
  * ================================================================ */
 typedef int (*meshd_cfg_fn)(struct meshd_node *nd,
@@ -3245,6 +3698,21 @@ static const struct meshd_cfg_handler meshd_cfg_table[] = {
 	{ MESH_CFG_OP_LARGE_COMP_DATA_GET,	h_lcd_get },
 	{ MESH_CFG_OP_MODELS_METADATA_GET,	h_lcd_get },
 	{ MESH_CFG_OP_AGGREGATOR_SEQUENCE,	h_aggregator_seq },
+	/* Directed Forwarding Configuration Server (finding 129). */
+	{ MESH_CFG_OP_DIRECTED_CONTROL_GET,	h_df_control_get },
+	{ MESH_CFG_OP_DIRECTED_CONTROL_SET,	h_df_control_set },
+	{ MESH_CFG_OP_PATH_METRIC_GET,		h_df_metric_get },
+	{ MESH_CFG_OP_PATH_METRIC_SET,		h_df_metric_set },
+	{ MESH_CFG_OP_WANTED_LANES_GET,		h_df_lanes_get },
+	{ MESH_CFG_OP_WANTED_LANES_SET,		h_df_lanes_set },
+	{ MESH_CFG_OP_TWO_WAY_PATH_GET,		h_df_two_way_get },
+	{ MESH_CFG_OP_TWO_WAY_PATH_SET,		h_df_two_way_set },
+	{ MESH_CFG_OP_PATH_ECHO_INTERVAL_GET,	h_df_echo_get },
+	{ MESH_CFG_OP_PATH_ECHO_INTERVAL_SET,	h_df_echo_set },
+	{ MESH_CFG_OP_DIRECTED_NET_TRANSMIT_GET, h_df_transmit_get },
+	{ MESH_CFG_OP_DIRECTED_NET_TRANSMIT_SET, h_df_transmit_set },
+	{ MESH_CFG_OP_DIRECTED_RELAY_RETRANSMIT_GET, h_df_transmit_get },
+	{ MESH_CFG_OP_DIRECTED_RELAY_RETRANSMIT_SET, h_df_transmit_set },
 };
 
 int
@@ -3266,6 +3734,11 @@ meshd_foundation_recv(struct meshd_node *nd, const uint8_t *pdu, size_t len,
 			return (meshd_cfg_table[i].fn(nd, &ap, pdu, len, reply,
 			    reply_max, reply_len));
 	}
+	/* Remote Provisioning Server model opcodes (finding 128). */
+	if (ap.opcode >= MESH_RP_OP_SCAN_CAPABILITIES_GET &&
+	    ap.opcode <= MESH_RP_OP_PDU_REPORT)
+		return (meshd_rpr_server_recv(nd, &ap, pdu, len, reply,
+		    reply_max, reply_len));
 	return (-1);		/* not a handled foundation opcode */
 }
 
@@ -3405,6 +3878,80 @@ meshd_beacon_emit(struct meshd_node *nd)
 	return (emitted);
 }
 
+/*
+ * Emit one Unprovisioned Device Beacon (Section 3.9.2) carrying this node's
+ * configured device UUID, so an unprovisioned meshd node is discoverable and
+ * provisionable over PB-ADV.  Only meaningful while the node is unprovisioned
+ * and a device_uuid was configured.  Returns 1 if a beacon was sent, 0 if not,
+ * -1 on a bad argument.
+ */
+int
+meshd_unprov_beacon_emit(struct meshd_node *nd)
+{
+	struct mesh_unprov_beacon ub;
+	uint8_t beacon[MESH_UNPROV_BEACON_MAX_LEN];
+	size_t blen;
+
+	if (nd == NULL)
+		return (-1);
+	if (nd->provisioned || !nd->have_device_uuid ||
+	    nd->bearer == NULL || nd->bearer->tx == NULL)
+		return (0);
+	memset(&ub, 0, sizeof(ub));
+	memcpy(ub.uuid, nd->device_uuid, sizeof(ub.uuid));
+	ub.oob = 0;			/* no OOB capabilities advertised */
+	if (mesh_unprov_beacon_build(&ub, beacon, &blen) != 0)
+		return (0);
+	nd->tx_frames++;
+	if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_BEACON, beacon, blen) != 0) {
+		nd->tx_errors++;
+		return (0);
+	}
+	nd->unprov_beacon_last = nd->sim.now_ms;
+	return (1);
+}
+
+/*
+ * Enable/disable unprovisioned-device discovery.  Enabling clears any prior
+ * results so a fresh scan reflects only currently-heard devices.
+ */
+void
+meshd_provision_scan_set(struct meshd_node *nd, int on)
+{
+
+	if (nd == NULL)
+		return;
+	nd->prov_scanning = on ? 1 : 0;
+	if (on)
+		memset(nd->scan_results, 0, sizeof(nd->scan_results));
+}
+
+/* Record a discovered unprovisioned device (dedup by UUID).  Returns 0/-1. */
+int
+meshd_provision_scan_add(struct meshd_node *nd, const uint8_t uuid[16],
+    uint16_t oob)
+{
+	size_t i, free_slot = MESHD_MAX_SCAN_RESULTS;
+
+	if (nd == NULL || uuid == NULL)
+		return (-1);
+	for (i = 0; i < MESHD_MAX_SCAN_RESULTS; i++) {
+		if (nd->scan_results[i].valid) {
+			if (memcmp(nd->scan_results[i].uuid, uuid, 16) == 0) {
+				nd->scan_results[i].oob = oob;
+				return (0);	/* refresh existing entry */
+			}
+		} else if (free_slot == MESHD_MAX_SCAN_RESULTS)
+			free_slot = i;
+	}
+	if (free_slot == MESHD_MAX_SCAN_RESULTS)
+		return (-1);		/* cache full */
+	memcpy(nd->scan_results[free_slot].uuid, uuid, 16);
+	nd->scan_results[free_slot].oob = oob;
+	nd->scan_results[free_slot].valid = 1;
+	return (0);
+}
+
 int
 meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 {
@@ -3415,8 +3962,23 @@ meshd_beacon_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 	if (nd == NULL || pdu == NULL || nd->self == NULL)
 		return (-1);
 	if (mesh_sim_node_recv_beacon(nd->self, pdu, len, nd->sim.now,
-	    &net_idx) != 0)
+	    &net_idx) != 0) {
+		/*
+		 * Not an authenticated Secure Network beacon.  While a discovery
+		 * scan is active, try to parse it as an Unprovisioned Device
+		 * Beacon and record the device so the operator can list nearby
+		 * provisionable devices (finding 127).
+		 */
+		if (nd->prov_scanning) {
+			struct mesh_unprov_beacon ub;
+
+			if (mesh_unprov_beacon_parse(pdu, len, &ub) == 0) {
+				meshd_provision_scan_add(nd, ub.uuid, ub.oob);
+				return (1);
+			}
+		}
 		return (0);
+	}
 	/* Mirror the authenticated subnet's phase and any settled key. */
 	e = meshd_find_netkey(nd, net_idx);
 	if (e != NULL) {
@@ -3471,11 +4033,18 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	if (nd->sim.n_tx != 0)
 		meshd_drain_tx(nd);
 
-	/* Periodic Heartbeat publication onto the bearer (Section 4.2.18). */
-	if (dt_ms >= 1000) {
-		int n = mesh_sim_hb_publish_periodic(&nd->sim, nd->self,
-		    (uint32_t)(dt_ms / 1000));
+	/*
+	 * Periodic Heartbeat publication onto the bearer (Section 4.2.18).
+	 * dt_ms is the per-tick delta (~10 ms); accumulate it and publish for
+	 * each whole second that elapses, carrying the sub-second remainder.
+	 */
+	nd->hb_accum_ms += dt_ms;
+	if (nd->hb_accum_ms >= 1000) {
+		uint32_t secs = (uint32_t)(nd->hb_accum_ms / 1000);
+		int n;
 
+		nd->hb_accum_ms -= (uint64_t)secs * 1000;
+		n = mesh_sim_hb_publish_periodic(&nd->sim, nd->self, secs);
 		if (n > 0) {
 			hb = n;
 			meshd_drain_tx(nd);
@@ -3517,7 +4086,113 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 	    MESHD_BEACON_INTERVAL * 1000ULL))
 		(void)meshd_beacon_emit(nd);
 
+	/*
+	 * Unprovisioned Device Beacon (Section 3.9.2): while this node is itself
+	 * unprovisioned and a device_uuid was configured, advertise it so it can
+	 * be discovered and provisioned over PB-ADV (finding 131).
+	 */
+	if (!nd->provisioned && nd->have_device_uuid &&
+	    (nd->unprov_beacon_last == 0 || now_ms >= nd->unprov_beacon_last +
+	    MESHD_BEACON_INTERVAL * 1000ULL))
+		(void)meshd_unprov_beacon_emit(nd);
+
+	/*
+	 * Directed Forwarding (finding 129): age out established paths and echo
+	 * deadlines, and fail a Path Origin discovery whose reply budget elapsed.
+	 */
+	(void)mesh_df_table_expire(&nd->df.node.table, now_ms);
+	(void)mesh_df_echo_expire(&nd->df.node, now_ms);
+	if (nd->df.disc_active &&
+	    mesh_df_discovery_timed_out(&nd->df.disc, now_ms)) {
+		if (nd->df.disc.state != MESH_DF_DISC_ESTABLISHED)
+			nd->df.disc_active = 0;
+	}
+
+	/*
+	 * Remote Provisioning (finding 128): expire the Scan Server's timed scan
+	 * and the Client's link-open budget.
+	 */
+	(void)mesh_rp_scan_server_tick(&nd->rpr.scan_server, now_ms);
+	if (nd->rpr.client_active &&
+	    mesh_rp_client_link_tick(&nd->rpr.client_link, now_ms))
+		nd->rpr.client_active = mesh_rp_client_link_is_active(
+		    &nd->rpr.client_link);
+
 	return (hb);
+}
+
+/* ================================================================
+ * Directed Forwarding drive (finding 129, MshPRT_v1.1 Section 3.6.7).
+ *
+ * meshd_df_discover_begin arms the local Path Origin discovery FSM toward a
+ * target; the reply/confirmation exchange and the per-hop relay are driven by
+ * meshd_df_recv_control (the node's relay/target role) and completed by the
+ * FSM.  Full per-hop Network-layer encryption of the emitted transport-control
+ * PDUs over the live bearer is a follow-up; the FSM + forwarding-table state are
+ * driven and observable here (and from the node tick's expiry pass).
+ * ================================================================ */
+int
+meshd_df_discover_begin(struct meshd_node *nd, uint16_t target, uint64_t now)
+{
+	struct mesh_df_path_request req;
+	uint8_t fn;
+
+	if (nd == NULL || nd->self == NULL || !nd->provisioned)
+		return (-1);
+	if (nd->df.disc_active &&
+	    nd->df.disc.state == MESH_DF_DISC_REQUEST_SENT)
+		return (-1);			/* one discovery in flight */
+	fn = mesh_df_fn_next((uint8_t)mesh_sim_node_seq(nd->self));
+	if (mesh_df_discovery_start(&nd->df.disc, nd->addr, target, fn,
+	    nd->df.metric.metric_type, nd->df.metric.lifetime,
+	    nd->df.lanes.wanted_lanes ? nd->df.lanes.wanted_lanes : 1,
+	    nd->df.two_way.two_way_path, 20000, now, &req) != 0)
+		return (-1);
+	nd->df.disc_active = 1;
+	return (0);
+}
+
+int
+meshd_df_recv_control(struct meshd_node *nd, uint16_t src, uint16_t dst,
+    uint8_t ttl, uint8_t bearer, uint8_t opcode, const uint8_t *pdu,
+    size_t len, uint64_t now)
+{
+	struct mesh_df_recv_ctx ctx;
+	struct mesh_df_output out;
+	int rc;
+
+	if (nd == NULL || pdu == NULL)
+		return (-1);
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = src;
+	ctx.dst = dst;
+	ctx.ttl = ttl;
+	ctx.bearer = bearer;
+	ctx.now = now;
+	memset(&out, 0, sizeof(out));
+	rc = mesh_df_recv_control(&nd->df.node, &ctx, opcode, pdu, len, &out);
+
+	/*
+	 * When the local node is the Path Origin, feed a Path Reply into the
+	 * discovery FSM and, if a confirmation is required, advance to
+	 * ESTABLISHED.
+	 */
+	if (nd->df.disc_active && opcode == MESH_DF_OP_PATH_REPLY) {
+		struct mesh_df_path_reply rep;
+		struct mesh_df_path_confirmation conf;
+		int need_confirm = 0;
+
+		if (mesh_df_path_reply_parse(pdu, len, &rep) == 0 &&
+		    mesh_df_discovery_on_reply(&nd->df.disc, &rep,
+		    &need_confirm) == 1) {
+			if (need_confirm)
+				(void)mesh_df_discovery_confirm(&nd->df.disc,
+				    &conf);
+			if (nd->df.disc.state == MESH_DF_DISC_ESTABLISHED)
+				nd->df.disc_active = 0;
+		}
+	}
+	return (rc);
 }
 
 /* ================================================================
@@ -3662,7 +4337,18 @@ meshd_provisioner_begin(struct meshd_node *nd, const uint8_t device_uuid[16],
 	    retry_interval_ms, max_retries);
 	nd->provisioner_active = 1;
 	nd->prov_ack_pending = 0;
-	return (mesh_prov_link_open(&nd->prov_link, now, out, outlen));
+	if (mesh_prov_link_open(&nd->prov_link, now, out, outlen) != 0) {
+		/*
+		 * The link failed to open: undo the active flag and release the
+		 * session, otherwise provisioner_active stays set and blocks
+		 * every later provisioning attempt while the session leaks
+		 * (finding 123).
+		 */
+		mesh_prov_session_free(&nd->prov_sess);
+		nd->provisioner_active = 0;
+		return (-1);
+	}
+	return (0);
 }
 
 int
@@ -3844,6 +4530,7 @@ meshd_provision_ota_begin(struct meshd_node *nd, const uint8_t device_uuid[16],
 	memcpy(nd->prov_target_uuid, device_uuid, sizeof(nd->prov_target_uuid));
 	nd->prov_target_elements = num_elements;
 	nd->prov_target_active = 1;
+	nd->prov_failed = 0;
 	return (0);
 }
 
@@ -3897,9 +4584,44 @@ meshd_provision_ota_commit(struct meshd_node *nd, uint64_t prov_time)
 	n = meshd_provisioner_commit_mgr(nd, nd->mgr, prov_time);
 	if (n != NULL) {
 		nd->prov_target_active = 0;
+		nd->provisioner_active = 0;
+		nd->prov_ack_pending = 0;
+		nd->prov_failed = 0;
 		/* PB-GATT completes by closing its GATT provisioning link. */
 		if (nd->pbgatt.active)
 			meshd_pbgatt_close(nd);
 	}
 	return (n);
+}
+
+int
+meshd_provision_ota_failed(const struct meshd_node *nd)
+{
+
+	if (nd == NULL || !nd->prov_target_active)
+		return (0);
+	if (nd->provisioner_active &&
+	    (nd->prov_link.state == MESH_LINK_FAILED ||
+	    mesh_prov_session_failed(&nd->prov_sess)))
+		return (1);
+	return (0);
+}
+
+void
+meshd_provision_ota_abort(struct meshd_node *nd, int failed)
+{
+
+	if (nd == NULL || (!nd->provisioner_active && !nd->prov_target_active))
+		return;
+	/* Release the manager-reserved unicast address for this target. */
+	if (nd->mgr != NULL)
+		mesh_mgr_provision_abort(nd->mgr);
+	if (nd->provisioner_active)
+		mesh_prov_session_free(&nd->prov_sess);
+	if (nd->pbgatt.active)
+		meshd_pbgatt_close(nd);
+	nd->provisioner_active = 0;
+	nd->prov_target_active = 0;
+	nd->prov_ack_pending = 0;
+	nd->prov_failed = failed ? 1 : 0;
 }

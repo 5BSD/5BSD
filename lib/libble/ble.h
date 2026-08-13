@@ -414,6 +414,14 @@ int		 ble_fd(ble_ctx_t *ctx);
 int		 ble_process(ble_ctx_t *ctx);
 
 /*
+ * Number of correlated operations awaiting their OP_REPLY.  A one-shot client
+ * that issued a fire-and-forget operation (write/disconnect/pair/...) can pump
+ * ble_process() until this reaches 0 to surface the daemon's correlated result
+ * instead of exiting before the reply arrives.
+ */
+size_t		 ble_pending_count(const ble_ctx_t *ctx);
+
+/*
  * Error handling
  *
  * All functions that return int set the error state on failure.
@@ -800,6 +808,15 @@ int	ble_set_scan_response(ble_ctx_t *ctx, const uint8_t *data,
  */
 typedef struct ble_adv_set ble_adv_set_t;
 int	ble_adv_set_create(ble_ctx_t *ctx, ble_adv_set_t **out);
+/*
+ * Wrap an advertising-set handle the daemon already owns (e.g. one printed by
+ * a previous `adv-set-create`) so a fresh client process can drive
+ * ble_adv_set_params/data/enable on it without re-creating it.  Free the
+ * wrapper with ble_adv_set_free() (which does NOT remove the daemon set) or
+ * ble_adv_set_close() (which removes it).
+ */
+int	ble_adv_set_open(ble_ctx_t *ctx, uint8_t handle, ble_adv_set_t **out);
+void	ble_adv_set_free(ble_adv_set_t *set);
 uint8_t ble_adv_set_handle(const ble_adv_set_t *set);
 int	ble_adv_set_params(ble_adv_set_t *set, uint16_t event_properties,
 	    uint32_t interval_min, uint32_t interval_max, uint8_t primary_phy,

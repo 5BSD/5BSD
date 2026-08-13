@@ -80,12 +80,24 @@ scene_capture_oversize(void *arg __unused, uint8_t *out __unused, size_t cap,
 	return (0);
 }
 
+/*
+ * Finding 6 regression: MMDL Section 1.5 packs Time Authority in BIT 0 and
+ * TAI-UTC Delta in BITS 1..15 of the little-endian 16-bit word at octets 7-8.
+ * The previous code put Time Authority in bit 15 and the delta in bits 0..14,
+ * so against a compliant peer every Time Status/Set decoded with the delta
+ * shifted and the authority read from the delta's LSB.
+ */
 ATF_TC_WITHOUT_HEAD(time_codec);
 ATF_TC_BODY(time_codec, tc)
 {
 	struct mesh_time_state a, b;
+	uint16_t word;
+	/*
+	 * TAI-UTC Delta 0x1234 (bits 1..15) and Time Authority 1 (bit 0):
+	 *   packed = (0x1234 << 1) | 1 = 0x2469  ->  LE octets 0x69, 0x24.
+	 */
 	static const uint8_t expected[BT_MMDL11_TIME_STATE_SIZE] = {
-		0x05, 0x04, 0x03, 0x02, 0x01, 0x06, 0x07, 0x34, 0x92, 0x40
+		0x05, 0x04, 0x03, 0x02, 0x01, 0x06, 0x07, 0x69, 0x24, 0x40
 	};
 	uint8_t wire[BT_MMDL11_TIME_STATE_SIZE];
 
@@ -96,10 +108,30 @@ ATF_TC_BODY(time_codec, tc)
 	a.time_authority = 1; a.time_zone_offset = 0x40;
 	ATF_REQUIRE_EQ(0, mesh_time_state_encode(&a, wire));
 	ATF_CHECK_EQ(0, memcmp(expected, wire, sizeof(expected)));
+
+	/* Time Authority is bit 0; TAI-UTC Delta is bits 1..15. */
+	word = (uint16_t)wire[7] | ((uint16_t)wire[8] << 8);
+	ATF_CHECK_EQ_MSG(1u, (unsigned)(word & 0x0001),
+	    "Time Authority must occupy bit 0");
+	ATF_CHECK_EQ_MSG(0x1234u, (unsigned)(word >> 1),
+	    "TAI-UTC Delta must occupy bits 1..15");
+
 	ATF_REQUIRE_EQ(0, mesh_time_state_decode(wire, sizeof(wire), &b));
 	ATF_CHECK_EQ(a.tai_seconds, b.tai_seconds);
 	ATF_CHECK_EQ(a.tai_utc_delta, b.tai_utc_delta);
 	ATF_CHECK_EQ(a.time_authority, b.time_authority);
+
+	/* A max delta with authority 0 must not bleed into the authority bit. */
+	memset(&a, 0, sizeof(a));
+	a.tai_utc_delta = 0x7fff; a.time_authority = 0;
+	ATF_REQUIRE_EQ(0, mesh_time_state_encode(&a, wire));
+	word = (uint16_t)wire[7] | ((uint16_t)wire[8] << 8);
+	ATF_CHECK_EQ(0u, (unsigned)(word & 0x0001));
+	ATF_CHECK_EQ(0x7fffu, (unsigned)(word >> 1));
+	ATF_REQUIRE_EQ(0, mesh_time_state_decode(wire, sizeof(wire), &b));
+	ATF_CHECK_EQ(0x7fffu, b.tai_utc_delta);
+	ATF_CHECK_EQ(0u, b.time_authority);
+
 	a.tai_seconds = BT_MMDL11_TIME_TAI_MAX + 1;
 	ATF_CHECK_EQ(-1, mesh_time_state_encode(&a, wire));
 }
@@ -219,6 +251,58 @@ ATF_TC_BODY(scene_store_failure_atomic, tc)
 	ATF_CHECK_EQ(-1, mesh_scene_srv_store(&srv, 0x5678));
 	ATF_CHECK_EQ_MSG(1u, srv.n_scenes,
 	    "oversized capture inserted a ghost scene");
+}
+
+/*
+ * Finding 8 regression: the 6 s TID transaction window must run from the
+ * PREVIOUS same-TID message (MMDL Section 3.1), i.e. a retransmission refreshes
+ * it.  A slow but continuous stream of same-TID Scene Recalls (t=0, 5 s, 10 s)
+ * must stay ONE transaction; the previous code anchored the window at the first
+ * message, so the t=10 s recall was misclassified as new and re-applied.
+ */
+ATF_TC_WITHOUT_HEAD(scene_tid_window_refreshes);
+ATF_TC_BODY(scene_tid_window_refreshes, tc)
+{
+	struct mesh_scene_srv srv;
+	struct mesh_model models[2];
+	struct mesh_element el;
+	struct mesh_model_reply reply;
+	uint8_t value = 7, pdu[24];
+	uint8_t params[3] = { 0x34, 0x12, 0x22 };	/* scene 0x1234, TID 0x22 */
+	size_t plen;
+
+	assert_time_scene_assigned_contract();
+	mesh_scene_srv_init(&srv, scene_capture, scene_recall, &value);
+	models[0] = mesh_scene_srv_model(&srv);
+	models[1] = mesh_scene_setup_srv_model(&srv);
+	memset(&el, 0, sizeof(el)); el.addr = 2; el.models = models; el.n_models = 2;
+
+	/* Capture scene 0x1234 holding value 7. */
+	ATF_REQUIRE_EQ(0, mesh_scene_srv_store(&srv, 0x1234));
+
+	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(MESH_OP_SCENE_RECALL_UNACK,
+	    params, sizeof(params), pdu, &plen));
+
+	/* t=0: first message of the transaction -> recall applies (value=7). */
+	value = 9;
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
+	    &reply, 0));
+	ATF_CHECK_EQ_MSG(7, value, "first same-TID recall must apply");
+
+	/* t=5 s: retransmission -> ignored, and refreshes the window to 11 s. */
+	value = 9;
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
+	    &reply, 5000));
+	ATF_CHECK_EQ_MSG(9, value, "retransmission at 5 s must be ignored");
+
+	/* t=10 s: still within the refreshed window -> still ignored. */
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
+	    &reply, 10000));
+	ATF_CHECK_EQ_MSG(9, value,
+	    "same-TID recall at 10 s must remain one transaction (not re-applied)");
 }
 
 ATF_TC_WITHOUT_HEAD(scheduler_models);
@@ -479,6 +563,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, time_models_and_client);
 	ATF_TP_ADD_TC(tp, scene_models);
 	ATF_TP_ADD_TC(tp, scene_store_failure_atomic);
+	ATF_TP_ADD_TC(tp, scene_tid_window_refreshes);
 	ATF_TP_ADD_TC(tp, scheduler_models);
 	ATF_TP_ADD_TC(tp, scheduler_zero_month_mask);
 	ATF_TP_ADD_TC(tp, client_status_and_validation_matrix);

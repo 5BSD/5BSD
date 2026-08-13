@@ -312,7 +312,8 @@ out:
  * Parse and authenticate a Mesh Private beacon.  MshPRT_v1.1 Section 3.9.4.
  * Recovers the Flags and IV Index by AES-CCM-decrypting the obfuscated
  * Private Beacon Data under the PrivateBeaconKey with the carried Random as
- * the nonce; a bad Authentication Tag or a set reserved Flags bit fails.
+ * the nonce; a bad Authentication Tag fails.  Reserved Flags bits (2-7) are
+ * ignored (processed as 0) per MshPRT Section 1.3.2, not rejected.
  */
 int
 mesh_private_beacon_parse(const uint8_t netkey[16], const uint8_t *in,
@@ -340,6 +341,12 @@ mesh_private_beacon_parse(const uint8_t netkey[16], const uint8_t *in,
 		goto out;
 
 	flags = data[0];
+	/*
+	 * Only bits 0 (Key Refresh) and 1 (IV Update) are defined.  Bits 2-7 are
+	 * Reserved for Future Use: MshPRT Section 1.3.2 requires a received RFU
+	 * bit set to 1 to be processed as if it were 0, so the reserved bits are
+	 * ignored (masked off) rather than causing the beacon to be rejected.
+	 */
 	out->key_refresh = (uint8_t)(flags & MESH_BEACON_FLAG_KEY_REFRESH);
 	out->iv_update = (uint8_t)((flags & MESH_BEACON_FLAG_IV_UPDATE) >> 1);
 	out->iv_index = ((uint32_t)data[1] << 24) | ((uint32_t)data[2] << 16) |

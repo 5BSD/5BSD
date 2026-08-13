@@ -200,6 +200,17 @@ struct att_conn {
 	uint8_t		min_key_size;	/* minimum acceptable key size (from config) */
 	uint16_t	con_handle;	/* HCI connection handle (for logging) */
 
+	/*
+	 * Per-connection ATT request timeout cap in milliseconds (0 = use the
+	 * 30 s ATT transaction default, Core Spec Vol 3 Part F §3.3.3).  A
+	 * caller running a blocking GATT op on a latency-sensitive thread (the
+	 * ctl event loop) sets a tighter bound via att_conn_set_op_timeout();
+	 * att_request() derives its absolute deadline from min(30 s, this) and
+	 * honours it across any interleaved notification drain, so the cap can
+	 * no longer be silently clobbered back to remaining-of-30 s each loop.
+	 */
+	unsigned int	op_timeout_ms;
+
 	/* GATT Robust Caching (Core Spec Vol 3 Part G §2.5.2.1) */
 	bool		robust_caching;	/* client set Robust Caching bit in 0x2B29 */
 	bool		multi_notify;	/* client set Multiple Handle Value
@@ -214,6 +225,15 @@ struct att_conn {
 	bool		ind_pending;	/* indication sent, awaiting confirmation */
 	uint16_t	ind_handle;	/* value handle of the pending indication */
 	uintptr_t	ind_timer;	/* kqueue EVFILT_TIMER ident, 0 if none */
+	/*
+	 * Self-armed confirmation deadline (CLOCK_MONOTONIC).  att_send_indication
+	 * stamps this 30 s ahead whenever it sets ind_pending, and clears a
+	 * pending indication that blew past it before sending the next one, so a
+	 * caller that forgets to arm the kqueue timer can no longer wedge every
+	 * future indication at EBUSY.  Independent of ind_timer (the optional
+	 * main-loop kqueue timer that still provides timely teardown).
+	 */
+	struct timespec	ind_deadline;
 
 	/* Prepare/Execute Write queue (per-connection) */
 	struct att_prepare_queue	prep_queue;
@@ -283,6 +303,15 @@ int	att_open(struct att_conn *ac, const uint8_t *local_addr,
 int	att_open_fd(struct att_conn *ac, int fd, const uint8_t *local_addr,
 	    uint8_t own_addr_type, const uint8_t *addr, uint8_t addr_type);
 void	att_close(struct att_conn *ac);
+/*
+ * Cap every subsequent att_request() on this connection at `ms` milliseconds
+ * (0 restores the 30 s ATT default).  The bound is a ceiling: the effective
+ * deadline is min(30 s, ms).  This is the supported mechanism for the ctl
+ * layer to impose its 2 s ATT timeout — e.g. att_conn_set_op_timeout(ac, 2000)
+ * — replacing the old SO_RCVTIMEO approach that att_request() overwrote each
+ * loop iteration.
+ */
+void	att_conn_set_op_timeout(struct att_conn *ac, unsigned int ms);
 int	att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu);
 int	att_read(struct att_conn *ac, uint16_t handle,
 	    void *buf, size_t buflen, size_t *outlen);

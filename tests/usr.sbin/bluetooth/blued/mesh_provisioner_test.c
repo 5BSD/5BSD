@@ -575,7 +575,10 @@ ATF_TC_BODY(session_unexpected_pdu_matrix, tc)
 		ATF_CHECK_EQ(MPS_FAILED, s.state);
 	}
 
-	/* Mesh 1.1 requires HMAC support in every Capabilities PDU. */
+	/*
+	 * A Provisionee may advertise only BTM_ECDH_P256_CMAC (Table 5.21):
+	 * the provisioner accepts CMAC-only Capabilities and negotiates CMAC.
+	 */
 	memset(&s, 0, sizeof(s));
 	s.role = MESH_PROV_ROLE_PROVISIONER;
 	s.state = MPS_P_WAIT_CAPS;
@@ -583,9 +586,10 @@ ATF_TC_BODY(session_unexpected_pdu_matrix, tc)
 	pdu[0] = MESH_PROV_CAPABILITIES;
 	pdu[1] = 1;
 	pdu[3] = MESH_PROV_ALGO_BIT_P256_CMAC;
-	ATF_CHECK_EQ(-1, mesh_prov_session_recv(&s, pdu,
+	ATF_CHECK_EQ(0, mesh_prov_session_recv(&s, pdu,
 	    1 + MESH_PROV_CAPS_VAL_LEN));
-	ATF_CHECK_EQ(0x01, s.error);	/* Invalid PDU */
+	ATF_CHECK_EQ(MPS_P_WAIT_PUBKEY, s.state);
+	ATF_CHECK_EQ(MESH_PROV_ALGO_P256_CMAC, s.algorithm);
 
 	/* A device rejects an unsupported/ill-formed Start selection. */
 	memset(&s, 0, sizeof(s));
@@ -626,6 +630,7 @@ ATF_TC_BODY(session_unexpected_pdu_matrix, tc)
 	mesh_prov_link_init_device(&rx, NULL, 10, 1);
 	ATF_REQUIRE_EQ(0, mesh_prov_link_close(&tx, 0, pkt, &pktlen));
 	rx.state = MESH_LINK_OPEN;
+	rx.link_id = 7;		/* the link the Close (and packets) belong to */
 	ATF_CHECK_EQ(0, mesh_prov_link_recv(&rx, pkt, pktlen, 0, NULL, NULL,
 	    NULL, NULL, NULL, NULL));
 	ATF_CHECK_EQ(MESH_LINK_CLOSED, rx.state);
@@ -635,6 +640,161 @@ ATF_TC_BODY(session_unexpected_pdu_matrix, tc)
 	ATF_REQUIRE_EQ(0, mesh_pbadv_build(7, 0, gp, gplen, pkt, &pktlen));
 	ATF_CHECK_EQ(-1, mesh_prov_link_recv(&rx, pkt, pktlen, 0, NULL, NULL,
 	    NULL, NULL, NULL, NULL));
+}
+
+/* ================================================================
+ * A device supports only the No-OOB AuthValue, so a Start selecting Static /
+ * Output / Input OOB (auth_method 1-3) must be rejected at Start with Invalid
+ * PDU rather than dying with Confirmation Failed later (finding 26,
+ * Section 5.4.1.3).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(device_rejects_unsupported_oob_start);
+ATF_TC_BODY(device_rejects_unsupported_oob_start, tc)
+{
+	struct mesh_prov_session s;
+	struct mesh_prov_caps caps;
+	uint8_t pdu[MESH_PROV_PDU_MAX];
+
+	assert_provisioning_wire_contract();
+
+	/* Advertise Static OOB so the OLD code would have accepted method 1. */
+	memset(&caps, 0, sizeof(caps));
+	caps.num_elements = 1;
+	caps.algorithms = MESH_PROV_ALGO_BIT_P256_CMAC;
+	caps.static_oob_type = 0x01;
+	ATF_REQUIRE_EQ(0, mesh_prov_device_init(&s, NULL, NULL, &caps));
+	s.state = MPS_D_WAIT_START;
+
+	memset(pdu, 0, sizeof(pdu));
+	pdu[0] = MESH_PROV_START;
+	pdu[1] = MESH_PROV_ALGO_P256_CMAC;	/* algorithm 0x00 */
+	pdu[2] = 0;				/* No OOB public key */
+	pdu[3] = 1;				/* auth_method = Static OOB */
+	pdu[4] = 0;				/* auth_action */
+	pdu[5] = 0;				/* auth_size */
+	ATF_CHECK_EQ(-1, mesh_prov_session_recv(&s, pdu,
+	    1 + MESH_PROV_START_VAL_LEN));
+	ATF_CHECK(mesh_prov_session_failed(&s));
+	ATF_CHECK_EQ(0x01, s.error);		/* Invalid PDU, not later 0x04 */
+
+	mesh_prov_session_free(&s);
+}
+
+/* ================================================================
+ * PB-ADV Link ID / Device UUID filtering (finding 20, Section 5.2.2 /
+ * 5.3.1.4.1).  A Link Close bearing a foreign Link ID must NOT tear down an
+ * established link, and a Link Open whose Device UUID is not ours must NOT be
+ * adopted.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(link_foreign_link_id_ignored);
+ATF_TC_BODY(link_foreign_link_id_ignored, tc)
+{
+	struct mesh_prov_link pl, dl, foreign, closer, dl2, opener;
+	uint8_t uuid[16], other[16];
+	uint8_t pkt[MESH_PBADV_PKT_MAX], ack[MESH_PBADV_PKT_MAX];
+	size_t pktlen, acklen;
+	int have_ack;
+	uint64_t now = 0;
+
+	assert_provisioning_wire_contract();
+	memset(uuid, 0xAB, sizeof(uuid));
+	memset(other, 0x99, sizeof(other));
+
+	/* Establish a link: link_id 0x11112222, our UUID. */
+	mesh_prov_link_init_provisioner(&pl, 0x11112222, uuid, 1000, 3);
+	mesh_prov_link_init_device(&dl, uuid, 1000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_open(&pl, now, pkt, &pktlen));
+	have_ack = 0;
+	ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&dl, pkt, pktlen, now, NULL, NULL,
+	    NULL, ack, &acklen, &have_ack));
+	ATF_CHECK(have_ack);
+	ATF_CHECK(mesh_prov_link_is_open(&dl));
+	ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&pl, ack, acklen, now, NULL, NULL,
+	    NULL, NULL, NULL, NULL));
+	ATF_CHECK(mesh_prov_link_is_open(&pl));
+
+	/* A Link Close on a DIFFERENT Link ID must be ignored by both ends. */
+	mesh_prov_link_init_provisioner(&foreign, 0x33334444, uuid, 1000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_close(&foreign, 0, pkt, &pktlen));
+	ATF_CHECK_EQ(0, mesh_prov_link_recv(&dl, pkt, pktlen, now, NULL, NULL,
+	    NULL, NULL, NULL, NULL));
+	ATF_CHECK(mesh_prov_link_is_open(&dl));		/* still open */
+	ATF_CHECK_EQ(0, mesh_prov_link_recv(&pl, pkt, pktlen, now, NULL, NULL,
+	    NULL, NULL, NULL, NULL));
+	ATF_CHECK(mesh_prov_link_is_open(&pl));		/* still open */
+
+	/* A Link Close on the MATCHING Link ID does tear the link down. */
+	mesh_prov_link_init_provisioner(&closer, 0x11112222, uuid, 1000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_close(&closer, 0, pkt, &pktlen));
+	ATF_CHECK_EQ(0, mesh_prov_link_recv(&dl, pkt, pktlen, now, NULL, NULL,
+	    NULL, NULL, NULL, NULL));
+	ATF_CHECK(!mesh_prov_link_is_open(&dl));
+
+	/* A Link Open whose Device UUID is not ours must NOT be adopted. */
+	mesh_prov_link_init_device(&dl2, uuid, 1000, 3);
+	mesh_prov_link_init_provisioner(&opener, 0x55556666, other, 1000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_open(&opener, now, pkt, &pktlen));
+	have_ack = 0;
+	ATF_CHECK_EQ(0, mesh_prov_link_recv(&dl2, pkt, pktlen, now, NULL, NULL,
+	    NULL, ack, &acklen, &have_ack));
+	ATF_CHECK_EQ(0, have_ack);			/* no Ack for a foreign UUID */
+	ATF_CHECK(!mesh_prov_link_is_open(&dl2));
+
+	/* A Link Open with our UUID is adopted and Acked. */
+	mesh_prov_link_init_provisioner(&opener, 0x55556666, uuid, 1000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_open(&opener, now, pkt, &pktlen));
+	have_ack = 0;
+	ATF_CHECK_EQ(0, mesh_prov_link_recv(&dl2, pkt, pktlen, now, NULL, NULL,
+	    NULL, ack, &acklen, &have_ack));
+	ATF_CHECK(have_ack);
+	ATF_CHECK(mesh_prov_link_is_open(&dl2));
+	ATF_CHECK_EQ(0x55556666, dl2.link_id);
+}
+
+/* ================================================================
+ * Mandatory 60 s provisioning timers (finding 72, Section 5.3.1.4.1 / 5.4.4).
+ * A peer that goes silent must cause the link to time out and FAIL instead of
+ * hanging forever - both the link timer on an open link and the
+ * link-establishment timer while awaiting the Link Ack.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(link_silent_peer_times_out);
+ATF_TC_BODY(link_silent_peer_times_out, tc)
+{
+	struct mesh_prov_link pl, dl, po;
+	uint8_t uuid[16];
+	uint8_t pkt[MESH_PBADV_PKT_MAX], ack[MESH_PBADV_PKT_MAX];
+	size_t pktlen, acklen;
+	int have_ack;
+
+	assert_provisioning_wire_contract();
+	memset(uuid, 0x5A, sizeof(uuid));
+
+	/* Open link timer: silence on an established link closes it at 60 s. */
+	mesh_prov_link_init_provisioner(&pl, 0x0abcdef0, uuid, 1000, 3);
+	mesh_prov_link_init_device(&dl, uuid, 1000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_open(&pl, 0, pkt, &pktlen));
+	have_ack = 0;
+	ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&dl, pkt, pktlen, 0, NULL, NULL,
+	    NULL, ack, &acklen, &have_ack));
+	ATF_REQUIRE_EQ(0, mesh_prov_link_recv(&pl, ack, acklen, 0, NULL, NULL,
+	    NULL, NULL, NULL, NULL));
+	ATF_REQUIRE(mesh_prov_link_is_open(&pl));
+
+	/* Before 60 s of silence nothing is due and the link stays open. */
+	ATF_CHECK_EQ(0, mesh_prov_link_poll(&pl, 59999, pkt, &pktlen));
+	ATF_CHECK(mesh_prov_link_is_open(&pl));
+	/* At 60 s with no received PDU the link times out. */
+	ATF_CHECK_EQ(-1, mesh_prov_link_poll(&pl, 60000, pkt, &pktlen));
+	ATF_CHECK(!mesh_prov_link_is_open(&pl));
+	ATF_CHECK_EQ(MESH_LINK_FAILED, pl.state);
+
+	/* Link-establishment timer: a Link Open that is never Acked fails at 60 s. */
+	mesh_prov_link_init_provisioner(&po, 0x0fedcba0, uuid, 1000, 100000);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_open(&po, 0, pkt, &pktlen));
+	ATF_CHECK_EQ(1, mesh_prov_link_poll(&po, 1000, pkt, &pktlen));	/* retx */
+	ATF_CHECK_EQ(MESH_LINK_OPENING, po.state);
+	ATF_CHECK_EQ(-1, mesh_prov_link_poll(&po, 60000, pkt, &pktlen));
+	ATF_CHECK_EQ(MESH_LINK_FAILED, po.state);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -647,6 +807,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, link_duplicate_transaction);
 	ATF_TP_ADD_TC(tp, api_and_state_guard_matrix);
 	ATF_TP_ADD_TC(tp, session_unexpected_pdu_matrix);
+	ATF_TP_ADD_TC(tp, device_rejects_unsupported_oob_start);
+	ATF_TP_ADD_TC(tp, link_foreign_link_id_ignored);
+	ATF_TP_ADD_TC(tp, link_silent_peer_times_out);
 
 	return (atf_no_error());
 }

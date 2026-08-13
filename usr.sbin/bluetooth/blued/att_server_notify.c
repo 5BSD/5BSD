@@ -18,6 +18,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "att.h"
 #include "att_server.h"
@@ -92,11 +93,28 @@ att_send_indication(struct att_conn *ac, uint16_t handle,
 	if (rsp == NULL)
 		return (-1);
 
-	/* One indication at a time (Core Spec Vol 3 Part F Section 3.3.2) */
+	/*
+	 * One indication at a time (Core Spec Vol 3 Part F §3.3.2).  Before
+	 * refusing, self-heal a pending indication whose 30 s confirmation
+	 * window (§3.3.3) has already elapsed: if no caller armed the kqueue
+	 * timer, ind_pending would otherwise stay set forever and wedge every
+	 * future indication.  The self-armed ind_deadline below makes this
+	 * function self-sufficient regardless of caller behaviour.
+	 */
 	if (ac->ind_pending) {
-		ATT_RSP_BUF_FREE();
-		errno = EBUSY;
-		return (-1);
+		struct timespec now;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		if (now.tv_sec > ac->ind_deadline.tv_sec ||
+		    (now.tv_sec == ac->ind_deadline.tv_sec &&
+		     now.tv_nsec >= ac->ind_deadline.tv_nsec)) {
+			ac->ind_pending = false;
+			ac->ind_handle = 0;
+		} else {
+			ATT_RSP_BUF_FREE();
+			errno = EBUSY;
+			return (-1);
+		}
 	}
 
 	maxlen = ac->mtu > ATT_PDU_BUF_SIZE ? ac->mtu : ATT_PDU_BUF_SIZE;
@@ -113,26 +131,25 @@ att_send_indication(struct att_conn *ac, uint16_t handle,
 	ret = att_server_send(ac, rsp, pdulen) == pdulen ? 0 : -1;
 	ATT_RSP_BUF_FREE();
 	if (ret == 0) {
+		struct timespec now;
+
 		ac->ind_pending = true;
 		ac->ind_handle = handle;	/* for robust-caching Fig 2.6 */
-		BLUED_PROBE_ATT_INDICATE(handle, pdulen);
 		/*
-		 * Core Spec Vol 3 Part F §3.3.3 / §3.4.7.3: after sending a
-		 * Handle Value Indication the server must start a 30 s
-		 * confirmation timer; if the peer never sends the Handle Value
-		 * Confirmation the bearer must be considered failed, otherwise
-		 * ind_pending stays set forever and wedges every future
-		 * indication (att_send_indication returns EBUSY).  Arming that
-		 * timer requires the kqueue owned by the main event loop
-		 * (blued_g.kq), which the ATT transport layer here has no
-		 * handle to.  The main-loop peripheral GATT server path arms it
-		 * via blued_ind_arm_timeout() (blued_event.c); any OTHER caller
-		 * of att_send_indication() is responsible for arming an
-		 * equivalent confirmation timeout and marking ac->failed / the
-		 * ind_timer on expiry.  See ac->ind_timer (att.h), reserved for
-		 * this purpose.  DEFERRED: wiring an att-layer timer belongs to
-		 * blued_event.c (out of scope for the att*.c files).
+		 * Self-arm the 30 s confirmation deadline (Core Spec Vol 3
+		 * Part F §3.3.3 / §3.4.7.3).  A subsequent att_send_indication()
+		 * clears ind_pending if this instant has passed with no
+		 * confirmation, so indications can never be wedged permanently
+		 * even if a caller forgets to arm an external timer.  The
+		 * main-loop peripheral path additionally arms a kqueue timer via
+		 * blued_ind_arm_timeout() (blued_event.c) for timely teardown;
+		 * that remains the mechanism for failing the bearer on expiry,
+		 * while this deadline is the always-present safety net.
 		 */
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		ac->ind_deadline = now;
+		ac->ind_deadline.tv_sec += 30;
+		BLUED_PROBE_ATT_INDICATE(handle, pdulen);
 	}
 	return (ret);
 }

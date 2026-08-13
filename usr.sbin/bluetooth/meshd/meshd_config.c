@@ -257,7 +257,8 @@ meshd_config_load(struct meshd_config *cfg, const char *path)
 	/* NetKey/AppKey directives turn the configuration into a credential
 	 * store.  Refuse to operate when those long-term network credentials are
 	 * readable by another uid or group. */
-	if ((cfg->have_netkey || cfg->have_appkey) && (sb.st_mode & 077) != 0) {
+	if ((cfg->have_netkey || cfg->have_appkey || cfg->have_device_key) &&
+	    (sb.st_mode & 077) != 0) {
 		errno = EPERM;
 		return (-1);
 	}

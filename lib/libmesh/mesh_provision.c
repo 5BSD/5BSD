@@ -206,8 +206,14 @@ static int
 prov_caps_valid(const struct mesh_prov_caps *c)
 {
 
+	/*
+	 * At least one supported algorithm must be advertised.  A Provisionee
+	 * may advertise only BTM_ECDH_P256_CMAC (bit 0); the HMAC bit is not
+	 * mandatory here (MshPRT Table 5.21 / Section 5.4.1.4).
+	 */
 	if (c->num_elements == 0 ||
-	    (c->algorithms & MESH_PROV_ALGO_BIT_P256_HMAC) == 0 ||
+	    (c->algorithms & (MESH_PROV_ALGO_BIT_P256_CMAC |
+	    MESH_PROV_ALGO_BIT_P256_HMAC)) == 0 ||
 	    (c->algorithms & ~(MESH_PROV_ALGO_BIT_P256_CMAC |
 	    MESH_PROV_ALGO_BIT_P256_HMAC)) != 0 || c->public_key_type > 0x01 ||
 	    c->static_oob_type > 0x03 || c->output_oob_size > 8 ||
@@ -915,6 +921,26 @@ mesh_prov_provisioning_salt(const uint8_t conf_salt[16],
 	memcpy(msg, conf_salt, 16);
 	memcpy(msg + 16, rand_prov, 16);
 	memcpy(msg + 32, rand_dev, 16);
+	rc = mesh_s1(msg, sizeof(msg), salt);
+	explicit_bzero(msg, sizeof(msg));
+	return (rc);
+}
+
+int
+mesh_prov_provisioning_salt_256(const uint8_t conf_salt[32],
+    const uint8_t rand_prov[32], const uint8_t rand_dev[32], uint8_t salt[16])
+{
+	uint8_t msg[96];
+	int rc;
+
+	/*
+	 * HMAC-SHA-256 algorithm (0x01): the ConfirmationSalt and both Randoms
+	 * are 32 octets, so s1 runs over a 96-octet input (MshPRT Section
+	 * 5.4.2.4).  The ProvisioningSalt output is 16 octets either way.
+	 */
+	memcpy(msg, conf_salt, 32);
+	memcpy(msg + 32, rand_prov, 32);
+	memcpy(msg + 64, rand_dev, 32);
 	rc = mesh_s1(msg, sizeof(msg), salt);
 	explicit_bzero(msg, sizeof(msg));
 	return (rc);

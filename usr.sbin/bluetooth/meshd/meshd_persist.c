@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <openssl/rand.h>
@@ -661,7 +662,23 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 	/* Restore the IV Update phase (meshd_node_restore left it Normal). */
 	nd->self->iv.iv_index = iv_index;
 	nd->self->iv.state = iv_state;
-	nd->self->iv.entered_time = iv_entered;
+	/*
+	 * entered_time is a CLOCK_MONOTONIC-seconds timestamp used to gate the
+	 * 96-hour IV Update dwell.  That clock resets on every host reboot, so a
+	 * raw restored value is meaningless against this boot's clock: a value
+	 * far in the future wedges every dwell-gated transition, and a fresh
+	 * node's 0 passes the gate trivially once uptime exceeds 96 h.  Restart
+	 * the dwell from the current monotonic time so the gate is enforced
+	 * relative to a clock that actually exists this boot (finding 71).
+	 */
+	{
+		struct timespec ts;
+
+		(void)iv_entered;
+		nd->self->iv.entered_time =
+		    (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) ?
+		    (uint64_t)ts.tv_sec : 0;
+	}
 
 	nd->db.net_transmit = net_transmit;
 	nd->cfg.relay_retransmit = relay_retransmit;

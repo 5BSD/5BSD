@@ -60,8 +60,8 @@ atomic_int blued_verbose = 0;
 int blued_daemonized = 0;
 
 /*
- * smp_keys.c references these two BTSnoop helpers from smp.c.  We do not
- * link smp.c, so provide inert definitions with the exact signatures.
+ * smp_keys.c references these BTSnoop / timed-recv helpers from smp.c.  We do
+ * not link smp.c, so provide inert definitions with the exact signatures.
  */
 ssize_t
 smp_log_send(struct smp_conn *sc __unused, const void *buf __unused,
@@ -73,6 +73,14 @@ smp_log_send(struct smp_conn *sc __unused, const void *buf __unused,
 
 ssize_t
 smp_log_recv(struct smp_conn *sc __unused, void *buf __unused,
+    size_t len __unused)
+{
+
+	return (-1);
+}
+
+ssize_t
+smp_recv_timed(struct smp_conn *sc __unused, void *buf __unused,
     size_t len __unused)
 {
 

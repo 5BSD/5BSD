@@ -274,7 +274,11 @@ ATF_TC_BODY(node_state_roundtrip, tc)
 
 	a->self->iv.iv_index = 3;
 	a->self->iv.state = MESH_IV_UPDATE_IN_PROGRESS;
-	a->self->iv.entered_time = 12345;
+	/*
+	 * A CLOCK_MONOTONIC-seconds dwell timestamp that will not survive a
+	 * reboot; the loader must clamp it to the current clock (finding 71).
+	 */
+	a->self->iv.entered_time = 4000000000000ULL;
 	a->self->seq = 42;
 	a->app->onoff.present = MESH_GEN_ON;
 	a->app->level.present = (int16_t)(500 - 32768);
@@ -379,7 +383,9 @@ ATF_TC_BODY(node_state_roundtrip, tc)
 	/* IV Index / phase. */
 	ATF_CHECK_EQ(3u, meshd_node_iv(b));
 	ATF_CHECK_EQ(MESH_IV_UPDATE_IN_PROGRESS, b->self->iv.state);
-	ATF_CHECK_EQ(12345u, (unsigned)b->self->iv.entered_time);
+	/* The dwell timestamp is clamped to this boot's monotonic clock, not
+	 * the astronomically large persisted value (finding 71). */
+	ATF_CHECK(b->self->iv.entered_time < 1000000000ULL);
 
 	/* AppKey + model config. */
 	ATF_CHECK_EQ(1, b->db.appkeys[0].valid);

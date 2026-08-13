@@ -45,9 +45,10 @@ security {
     # keypress = true;
 
     # Key-distribution mask: which keys are exchanged during bonding, a
-    # comma list of enc (LTK), id (IRK), sign (CSRK), or "none".
-    # Default: "enc,id,sign" (current behaviour).
-    # key_dist = "enc,id,link"; # "sign" is only for pre-Core-5.1 peers
+    # comma list of enc (LTK), id (IRK), sign (CSRK), link (BR/EDR link
+    # key), or "none".
+    # Default: "enc,id,link" (mask 0x0b; note: this does NOT include sign/CSRK).
+    # key_dist = "enc,id,link"; # add "sign" only for peers that need CSRK
 
     # Minimum pairing security floor: none | enc | auth | sc.  A pairing that
     # cannot reach this level is rejected.  Default: auth.

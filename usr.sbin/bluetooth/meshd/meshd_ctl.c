@@ -1097,7 +1097,13 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		    (nd->cfg.gatt_proxy == 1) ? "true" : "false",
 		    (nd->cfg.friend == 2) ? "unsupported" :
 		    ((nd->cfg.friend == 1) ? "true" : "false"),
-		    "false",
+		    /*
+		     * The Low Power role has a full FSM in libmesh but is not
+		     * wired to the production radio bearer, so it is honestly
+		     * disclosed as unsupported rather than a plain "false"
+		     * (finding 130), mirroring the Friend disclosure above.
+		     */
+		    "unsupported",
 		    nd->cfg.beacon ? "true" : "false",
 		    (nd->self != NULL &&
 		    nd->self->iv.state == MESH_IV_UPDATE_IN_PROGRESS) ?
@@ -1290,23 +1296,75 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		    reply, reply_max));
 
 	/*
+	 * Directed Forwarding (finding 129): "df <sub-verb> <dst> ..." drives the
+	 * DF Configuration Client over the DevKey path, plus the local Path Origin
+	 * discovery FSM.  The sub-verb surface lives in meshd_cfgclient.c.
+	 */
+	if (strcmp(argv[0], "df") == 0)
+		return (meshd_df_client_verb(nd, argc - 1, argv + 1, ctl_now(),
+		    reply, reply_max));
+
+	/*
+	 * Remote Provisioning (finding 128): "remote-prov <sub-verb> <dst> ..."
+	 * drives the Remote Provisioning Client (Scan / Link) over the DevKey path.
+	 */
+	if (strcmp(argv[0], "remote-prov") == 0)
+		return (meshd_rpr_client_verb(nd, argc - 1, argv + 1, ctl_now(),
+		    reply, reply_max));
+
+	/*
 	 * OTA provisioning (MshPRT_v1.1 Section 5): scan for and provision a real
 	 * remote device into the created network (as opposed to provision-local).
 	 */
 	if (strcmp(argv[0], "provision-scan") == 0) {
 		/*
-		 * Unprovisioned Device beacons are captured by the radio bearer
-		 * (skyblued) and surfaced to the operator; with no bearer link the
-		 * cache is empty.  The verb is the discovery entry point for the
-		 * meshctl "provision" workflow.
+		 * provision-scan [on|off|list].  Unprovisioned Device beacons are
+		 * captured by the radio bearer (skyblued) and parsed into the
+		 * discovery cache while scanning is enabled; the operator lists
+		 * the nearby device UUIDs and feeds one to "provision" (finding
+		 * 127).  No arg (or "list") enables scanning and lists the cache.
 		 */
+		size_t i, n, off;
+
 		if (!nd->mgr_active) {
 			snprintf(reply, reply_max, "ERR no network");
 			return (-1);
 		}
-		snprintf(reply, reply_max,
-		    "OK scan active=%d (unprovisioned beacons arrive via the bearer)",
-		    nd->prov_target_active);
+		if (argc == 2 && strcmp(argv[1], "off") == 0) {
+			meshd_provision_scan_set(nd, 0);
+			snprintf(reply, reply_max, "OK scan active=0");
+			return (0);
+		}
+		if (argc > 2 || (argc == 2 && strcmp(argv[1], "on") != 0 &&
+		    strcmp(argv[1], "list") != 0)) {
+			snprintf(reply, reply_max,
+			    "ERR usage: provision-scan [on|off|list]");
+			return (-1);
+		}
+		if (!(argc == 2 && strcmp(argv[1], "list") == 0))
+			meshd_provision_scan_set(nd, 1);
+		n = 0;
+		for (i = 0; i < MESHD_MAX_SCAN_RESULTS; i++)
+			if (nd->scan_results[i].valid)
+				n++;
+		off = (size_t)snprintf(reply, reply_max,
+		    "OK scan active=%d devices=%zu", nd->prov_scanning, n);
+		for (i = 0; i < MESHD_MAX_SCAN_RESULTS && off < reply_max; i++) {
+			const uint8_t *u;
+			int w;
+
+			if (!nd->scan_results[i].valid)
+				continue;
+			u = nd->scan_results[i].uuid;
+			w = snprintf(reply + off, reply_max - off,
+			    " %02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x"
+			    "%02x%02x%02x%02x", u[0], u[1], u[2], u[3], u[4],
+			    u[5], u[6], u[7], u[8], u[9], u[10], u[11], u[12],
+			    u[13], u[14], u[15]);
+			if (w < 0 || (size_t)w >= reply_max - off)
+				break;
+			off += (size_t)w;
+		}
 		return (0);
 	}
 
@@ -1528,7 +1586,19 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 	}
 
 	if (strcmp(argv[0], "provision-status") == 0) {
+		/* An attempt that failed and was torn down is reported once. */
+		if (meshd_provision_ota_failed(nd)) {
+			meshd_provision_ota_abort(nd, 1);
+			snprintf(reply, reply_max, "ERR provisioning failed");
+			return (-1);
+		}
 		if (!nd->prov_target_active) {
+			if (nd->prov_failed) {
+				nd->prov_failed = 0;
+				snprintf(reply, reply_max,
+				    "ERR provisioning failed");
+				return (-1);
+			}
 			snprintf(reply, reply_max, "OK provision idle");
 			return (0);
 		}

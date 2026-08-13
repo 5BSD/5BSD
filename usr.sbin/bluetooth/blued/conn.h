@@ -82,6 +82,16 @@ void			 blued_conn_note_enhanced(struct blued_adapter *adapter,
 struct blued_conn	*blued_conn_by_peer(const struct blued_adapter *adapter,
 			    const bdaddr_t *addr, uint8_t addr_type);
 
+/*
+ * Resolve the adapter index and LE address type of the live connection to a
+ * peer identified by address alone (any adapter, any address type).  Used by
+ * the security-event broadcaster to recover the (adapter, addr_type) a pairing
+ * prompt belongs to so a client can echo the full tuple back in its reply.
+ * Returns true and fills the out-params on the first match, false otherwise.
+ */
+bool			 blued_conn_addr_context(const bdaddr_t *addr,
+			    uint8_t *adapter_index, uint8_t *addr_type);
+
 /* Find a controller-local HCI handle on its owning adapter. */
 struct blued_conn	*blued_conn_by_handle(const struct blued_adapter *adapter,
 			    uint16_t handle);

@@ -104,6 +104,14 @@ struct mesh_lpn_fsm {
 	struct mesh_lpn_state	cadence;	/* FSN + PollTimeout supervision */
 
 	/*
+	 * Set when a Friend Poll has been emitted and its response is still
+	 * outstanding.  The first response for a Poll toggles the FSN; a second
+	 * copy of that response (arriving before the next Poll) is a duplicate
+	 * and must not toggle the FSN again (Section 3.6.6.4.2).
+	 */
+	int			poll_outstanding;
+
+	/*
 	 * Establishment supervision: the first Friend Poll may be lost or its
 	 * Friend Update never arrive, so the Poll is retransmitted each
 	 * establish window (ReceiveDelay + the chosen Offer's ReceiveWindow) up

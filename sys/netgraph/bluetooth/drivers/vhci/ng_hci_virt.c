@@ -73,6 +73,7 @@
 #include <netgraph/netgraph.h>
 
 #include <netgraph/bluetooth/include/ng_bluetooth.h>
+#include <netgraph/bluetooth/include/ng_hci.h>
 #include <netgraph/bluetooth/include/ng_hci_virt.h>
 
 /* Depth of the host->controller queue awaiting read(2), in packets. */
@@ -138,30 +139,90 @@ ng_hci_virt_constructor(node_p node)
 	return (EINVAL);
 }
 
+/* Forward decl: reclaim an instance orphaned by an external ngctl shutdown. */
+static void	vhci_external_reclaim(struct vhci_softc *sc);
+
 static int
 ng_hci_virt_shutdown(node_p node)
 {
 	struct vhci_softc *sc = NG_NODE_PRIVATE(node);
+	bool owned_ref = false;
+	bool external = false;
 
 	/*
 	 * The node dies here whether the teardown was initiated by
 	 * VHCI_DESTROY / module unload (NG_NODE_REALLY_DIE + ng_rmnode_self)
 	 * or by an external `ngctl shutdown vhciN:'.  Sever the softc's back
 	 * pointer under the lock so a later destroy path will not touch a
-	 * freed node; the softc itself is freed by vhci_teardown() once the
-	 * cdev has drained.
+	 * freed node.
 	 */
 	if (sc != NULL) {
 		mtx_lock(&sc->mtx);
-		sc->node = NULL;
+		if (sc->node != NULL) {
+			sc->node = NULL;
+			owned_ref = true;	/* we hold the softc's node ref */
+			/*
+			 * If sc->dying is not yet set, no VHCI_DESTROY /
+			 * unload is reclaiming this instance: we were reached
+			 * by an external `ngctl shutdown' and must reclaim the
+			 * cdev + unit slot ourselves (finding 103).
+			 */
+			external = !sc->dying;
+		}
 		sc->hook = NULL;
 		mtx_unlock(&sc->mtx);
+
+		if (external)
+			vhci_external_reclaim(sc);
 	}
 
 	NG_NODE_SET_PRIVATE(node, NULL);
-	NG_NODE_UNREF(node);
+	if (owned_ref)
+		NG_NODE_UNREF(node);	/* release the softc reference (102) */
+	NG_NODE_UNREF(node);		/* release the existence reference */
 
 	return (0);
+}
+
+/*
+ * Finding 103: an external `ngctl shutdown vhciN' fires this node's shutdown
+ * method without ever passing through vhci_destroy()/vhci_teardown(), so the
+ * cdev and the vhci_units[] slot would otherwise leak — and repeated external
+ * shutdowns would exhaust the unit table (ENOSPC on the next VHCI_CREATE).
+ * Claim the slot (arbitrated against a concurrent destroy/unload by
+ * vhci_gmtx, exactly as those paths do) and, if we win it, tear down the
+ * softc side ourselves.  The node itself is already being destroyed by the
+ * caller, so we touch only the cdev/queue/softc here.
+ */
+static void
+vhci_external_reclaim(struct vhci_softc *sc)
+{
+	bool owned;
+
+	mtx_lock(&vhci_gmtx);
+	owned = (sc->unit >= 0 && sc->unit < NG_HCI_VIRT_MAX_UNITS &&
+	    vhci_units[sc->unit] == sc);
+	if (owned)
+		vhci_units[sc->unit] = NULL;
+	mtx_unlock(&vhci_gmtx);
+	if (!owned)
+		return;			/* VHCI_DESTROY/unload owns this sc */
+
+	/* Release any blocked reader and refuse new opens before destroy_dev. */
+	mtx_lock(&sc->mtx);
+	sc->dying = true;
+	if (sc->waiting) {
+		sc->waiting = false;
+		wakeup(sc);
+	}
+	selwakeup(&sc->rsel);
+	mtx_unlock(&sc->mtx);
+
+	destroy_dev(sc->cdev);
+	mbufq_drain(&sc->rxq);
+	seldrain(&sc->rsel);
+	mtx_destroy(&sc->mtx);
+	free(sc, M_NG_HCI_VIRT);
 }
 
 static int
@@ -244,12 +305,38 @@ ng_hci_virt_rcvdata(hook_p hook, item_p item)
 		return (0);
 	}
 	if (mbufq_enqueue(&sc->rxq, m) != 0) {
-		/* Queue full: drop the oldest to keep the newest command. */
-		struct mbuf *old = mbufq_dequeue(&sc->rxq);
+		/*
+		 * Finding 39: the rxq is full.  An HCI Command
+		 * (NG_HCI_CMD_PKT) must never be silently discarded: its
+		 * Command_Complete / Command_Status would then never be
+		 * generated, so ng_hci's num_cmd_pkts flow-control credit is
+		 * never returned and the command pipeline stalls until reset.
+		 * A blind drop-oldest can evict exactly such a queued command.
+		 * Instead:
+		 *   - drop the NEWEST packet (the incoming one) when it is data,
+		 *     leaving every already-queued packet — including any
+		 *     command — intact;
+		 *   - only when the incoming packet is itself a command do we
+		 *     evict the oldest queued packet to make room, and never
+		 *     when that oldest packet is also a command.
+		 * The packet-type indicator is the first payload octet (the
+		 * drv-hook wire format is a type byte followed by the HCI PDU).
+		 */
+		uint8_t itype = (m->m_len > 0) ? *mtod(m, uint8_t *) : 0;
+		struct mbuf *head = mbufq_first(&sc->rxq);
+		uint8_t htype = (head != NULL && head->m_len > 0) ?
+		    *mtod(head, uint8_t *) : 0;
 
-		if (old != NULL)
-			m_freem(old);
-		(void)mbufq_enqueue(&sc->rxq, m);
+		if (itype == NG_HCI_CMD_PKT && htype != NG_HCI_CMD_PKT) {
+			struct mbuf *old = mbufq_dequeue(&sc->rxq);
+
+			if (old != NULL)
+				m_freem(old);
+			(void)mbufq_enqueue(&sc->rxq, m);
+		} else {
+			/* Drop the newest; keep queued commands intact. */
+			m_freem(m);
+		}
 		error = ENOBUFS;
 	}
 	if (sc->waiting) {
@@ -498,6 +585,17 @@ vhci_create(int *unitp)
 	NG_NODE_SET_PRIVATE(sc->node, sc);
 	NG_NODE_FORCE_WRITER(sc->node);
 
+	/*
+	 * Finding 102: hold an explicit reference for the copy of the node
+	 * pointer cached in sc->node, independent of the node's create-time
+	 * existence reference.  Otherwise an external `ngctl shutdown vhciN'
+	 * running concurrently with VHCI_DESTROY/unload can drop the last ref
+	 * (via ng_hci_virt_shutdown -> NG_NODE_UNREF) and free the node while
+	 * vhci_teardown() still dereferences sc->node.  Whichever path clears
+	 * sc->node (shutdown or teardown) releases this reference.
+	 */
+	NG_NODE_REF(sc->node);
+
 	snprintf(name, sizeof(name), NG_HCI_VIRT_NODE_TYPE "%d", unit);
 	error = ng_name_node(sc->node, name);
 	if (error != 0)
@@ -526,6 +624,7 @@ fail_named:
 	NG_NODE_SET_PRIVATE(sc->node, NULL);
 	NG_NODE_REALLY_DIE(sc->node);
 	ng_rmnode_self(sc->node);
+	NG_NODE_UNREF(sc->node);	/* release the softc reference (finding 102) */
 fail_node:
 	mtx_lock(&vhci_gmtx);
 	vhci_units[unit] = NULL;
@@ -573,8 +672,18 @@ vhci_teardown(struct vhci_softc *sc)
 	sc->node = NULL;
 	mtx_unlock(&sc->mtx);
 	if (node != NULL) {
+		/*
+		 * We observed sc->node non-NULL, so we own the softc's node
+		 * reference (finding 102).  It keeps the node struct valid
+		 * across REALLY_DIE + ng_rmnode_self (which triggers
+		 * ng_hci_virt_shutdown and drops the existence reference);
+		 * release it once we are done touching the node.  If an
+		 * external shutdown cleared sc->node first, it already dropped
+		 * this reference and node is NULL here.
+		 */
 		NG_NODE_REALLY_DIE(node);
 		ng_rmnode_self(node);
+		NG_NODE_UNREF(node);
 	}
 
 	mbufq_drain(&sc->rxq);

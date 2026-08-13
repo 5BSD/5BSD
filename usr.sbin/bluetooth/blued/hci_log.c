@@ -211,14 +211,18 @@ hci_log_l2cap(uint16_t con_handle, uint16_t cid,
 	struct iovec iov[4];
 	ssize_t expected, ret;
 
-	if (len > UINT16_MAX) {
-		warnx("BTSnoop: L2CAP PDU length %zu exceeds uint16_t, "
+	/*
+	 * The BTSnoop L2CAP length field is a uint16_t that must also hold the
+	 * 4-byte L2CAP basic header, so the payload is bounded by UINT16_MAX-4.
+	 * Truncate oversized PDUs rather than dropping the record entirely (the
+	 * previous code clamped to UINT16_MAX then silently returned for
+	 * 65532-65535-byte payloads).  (finding 49)
+	 */
+	if (len > UINT16_MAX - 4) {
+		warnx("BTSnoop: L2CAP PDU length %zu exceeds capture limit, "
 		    "truncating", len);
-		len = UINT16_MAX;
+		len = UINT16_MAX - 4;
 	}
-
-	if (len > UINT16_MAX - 4)
-		return;
 
 	l2cap_len = 4 + len;	/* L2CAP header + payload */
 

@@ -334,6 +334,12 @@ blued_central_start_pairing(struct hogp_device *dev __unused,
 }
 
 int
+blued_central_start_pairing_async(struct blued_conn *conn __unused)
+{
+	return (-1);
+}
+
+int
 smp_bond_db_save(struct smp_bond_db *db __unused)
 {
 	return (0);
@@ -409,7 +415,7 @@ test_init(void)
 	pthread_rwlock_init(&blued_g.conns_lock, NULL);
 	pthread_mutex_init(&blued_g.bond_db_lock, NULL);
 	pthread_mutex_init(&blued_g.gatt_db_lock, NULL);
-	pthread_mutex_init(&blued_g.ctl_clients_lock, NULL);
+	blued_ctl_clients_lock_init(&blued_g.ctl_clients_lock);
 }
 
 /* One active, non-connectable adv adapter so SEND/SUBSCRIBE reach the seam. */
@@ -870,6 +876,94 @@ ATF_TC_BODY(broker_loop_outbound_rejections, tc)
 	LIST_REMOVE(&adp, entries);
 }
 
+/* ================================================================
+ * Finding 77: meshd_blued_pump_rx must keep its frame-reassembly buffer
+ * consistent as it drains several queued frames back-to-back.  The
+ * frame_done: memmove that compacts the buffer between frames is the site of
+ * the size_t underflow the fix guards; draining two concatenated EVENT frames
+ * in one pump exercises that compaction and must dispatch both without
+ * corrupting the buffer.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(broker_loop_pump_multiframe);
+ATF_TC_BODY(broker_loop_pump_multiframe, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	struct meshd_blued bc;
+	struct meshd_config cfg;
+	MESH_HEAP(struct meshd_node, nd);
+	int sv[2], r;
+	static const uint8_t net_ad[] = { 0x04, 0x2A, 0x01, 0x02, 0x03 };
+	static const uint8_t beacon_ad[] = { 0x03, 0x2B, 0xAA, 0xBB };
+
+	test_init();
+	mesh_cap_reset();
+	mesh_adapter_init(&adp, 0);
+	meshd_config_defaults(&cfg);
+	cfg.unicast_addr = 0x0001;
+	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
+	loop_connect(&client, &bc, sv);
+
+	/* Queue two EVENT frames, then drain them with pump calls; the buffer
+	 * compaction between frames must stay consistent (no underflow). */
+	wrap_reset();
+	blued_mesh_demux_report(net_ad, sizeof(net_ad));
+	blued_mesh_demux_report(beacon_ad, sizeof(beacon_ad));
+	do {
+		r = meshd_blued_pump_rx(&bc, nd, 0);
+		ATF_CHECK(r >= 0);
+	} while (r == 1 && wrap_net_calls + wrap_beacon_calls < 2);
+	ATF_CHECK_EQ(1, wrap_net_calls);
+	ATF_CHECK_EQ(1, wrap_beacon_calls);
+	ATF_CHECK_EQ(0, (int)bc.rxn);	/* both frames fully consumed */
+
+	loop_teardown(client, &bc, sv);
+	LIST_REMOVE(&adp, entries);
+}
+
+/* ================================================================
+ * Finding 80: a single failing GATT proxy link must not abort the ADV
+ * broadcast of a mesh PDU.  A subscribed-but-unusable proxy link (its
+ * mbw_proxy_tx fails) must fail only that link; the NET PDU must still reach
+ * the radio bearer.  Before the fix meshd_blued_tx returned -1 on the first
+ * proxy failure, dropping the PDU network-wide.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(broker_loop_proxy_failure_still_broadcasts);
+ATF_TC_BODY(broker_loop_proxy_failure_still_broadcasts, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	struct meshd_blued bc;
+	static const uint8_t pdu[] = { 0x01, 0x02, 0x03 };
+	int sv[2], before;
+
+	test_init();
+	mesh_cap_reset();
+	mesh_adapter_init(&adp, 0);
+	loop_connect(&client, &bc, sv);
+
+	/* A subscribed proxy link whose transmit path is guaranteed to fail
+	 * (an invalid MTU makes mbw_proxy_tx return -1 with no side effects). */
+	strlcpy(bc.proxy[0].addr, "00:11:22:33:44:55", sizeof(bc.proxy[0].addr));
+	bc.proxy[0].addr_type = 0;
+	bc.proxy[0].adapter_index = 0;
+	bc.proxy[0].mtu = 0;			/* < MESHD_PBGATT_MIN_MTU */
+	bc.proxy[0].data_in = 0x0010;
+	bc.proxy[0].subscribed = 1;
+	bc.proxy[0].active = 1;
+
+	before = mesh_cap.burst_calls;
+	ATF_REQUIRE_EQ(0, meshd_blued_tx(&bc, MESHD_PDU_NET, pdu, sizeof(pdu)));
+	ATF_REQUIRE_EQ(0, blued_ctl_dispatch(client));
+	wire_expect_reply(meshd_blued_fd(&bc), IPC_OP_DOMAIN_MESH,
+	    IPC_ERR_NONE);
+	/* The radio ADV burst still happened despite the proxy link failure. */
+	ATF_CHECK_EQ(before + 1, mesh_cap.burst_calls);
+
+	loop_teardown(client, &bc, sv);
+	LIST_REMOVE(&adp, entries);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -879,6 +973,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, broker_loop_inbound_leak_filter);
 	ATF_TP_ADD_TC(tp, broker_loop_outbound_roundtrip);
 	ATF_TP_ADD_TC(tp, broker_loop_outbound_rejections);
+	ATF_TP_ADD_TC(tp, broker_loop_pump_multiframe);
+	ATF_TP_ADD_TC(tp, broker_loop_proxy_failure_still_broadcasts);
 
 	return (atf_no_error());
 }

@@ -539,8 +539,14 @@ wait_for_more:
 
 			ir ++;
 			i ++;
-			num_rsp --;
 		}
+		/*
+		 * Decrement the remaining response budget AFTER the loop:
+		 * num_rsp must not be part of the loop bound while also being
+		 * mutated inside it, or index and bound converge twice as fast
+		 * and half of a multi-response INQUIRY_RESULT is dropped.
+		 */
+		num_rsp -= n;
 		} /* FALLTHROUGH */
 
 	default:

@@ -7,8 +7,6 @@ restart = "on-failure";
 stop_timeout = 10;
 max_failures = 10;
 
-provides = ["org.5bsd.blued"];
-
 capabilities {
     network = [{
         domain = "bluetooth";

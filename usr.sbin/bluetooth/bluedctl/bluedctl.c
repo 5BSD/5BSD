@@ -52,6 +52,7 @@
 
 static volatile sig_atomic_t got_sigint;
 static bool json_mode;			/* -j: machine-readable output */
+static bool interactive_session;	/* true while interactive_mode() runs */
 
 static void
 sigint_handler(int sig __unused)
@@ -596,6 +597,63 @@ error:
 	return (-1);
 }
 
+static void mon_notify_cb(const ble_addr_t *, uint16_t, const uint8_t *,
+    uint16_t, void *);
+
+/*
+ * Finding 34: fire-and-forget operations (write/disconnect/pair/unbond/rekey/
+ * advertise/...) register a correlated request but return before its OP_REPLY
+ * arrives, so a one-shot process would exit 0 even when the daemon rejected the
+ * operation.  Pump ble_process() until every pending operation has resolved,
+ * then report the last error the reply carried.  No-op when nothing is pending
+ * (e.g. commands that already used a synchronous libble call).
+ */
+static int
+drain_pending(ble_ctx_t *ctx)
+{
+	struct pollfd pfd = { .fd = ble_fd(ctx), .events = POLLIN };
+
+	while (ble_pending_count(ctx) > 0 && !got_sigint) {
+		if (poll(&pfd, 1, 5000) <= 0) {
+			warnx("operation timed out");
+			return (-1);
+		}
+		if ((pfd.revents & POLLIN) != 0 && ble_process(ctx) < 0)
+			return (-1);
+		if ((pfd.revents & (POLLERR | POLLHUP)) != 0)
+			return (-1);
+	}
+	return (ble_errno(ctx) == BLE_ERR_NONE ? 0 : -1);
+}
+
+/*
+ * Finding 34: in one-shot mode a bare `subscribe` would arm a subscription and
+ * immediately tear it down at process exit — a guaranteed no-op.  After the
+ * subscribe is acknowledged, stay alive and print notifications until the user
+ * interrupts, so the command actually delivers data.
+ */
+static int
+subscribe_watch(ble_ctx_t *ctx)
+{
+	struct pollfd pfd = { .fd = ble_fd(ctx), .events = POLLIN };
+
+	if (!json_mode) {
+		printf("Subscribed; waiting for notifications (Ctrl-C to stop)...\n");
+		fflush(stdout);
+	}
+	while (!got_sigint) {
+		int rv = poll(&pfd, 1, -1);
+
+		if (rv < 0 && errno == EINTR)
+			continue;
+		if (rv < 0 || (pfd.revents & (POLLERR | POLLHUP)) != 0)
+			return (-1);
+		if ((pfd.revents & POLLIN) != 0 && ble_process(ctx) < 0)
+			return (-1);
+	}
+	return (1);
+}
+
 /* Return 1 when handled, 0 when unknown, and -1 on invalid input/failure. */
 static int
 handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
@@ -694,10 +752,24 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 		if (ble_addr_parse(argv[1], 0, &addr) != 0 ||
 		    parse_u32(argv[2], 1, UINT16_MAX, &a) != 0)
 			goto usage;
-		rc = strcmp(argv[0], "subscribe") == 0 ?
-		    ble_subscribe(ctx, &addr, (uint16_t)a, NULL, NULL) :
-		    ble_unsubscribe(ctx, &addr, (uint16_t)a);
-		goto result;
+		if (strcmp(argv[0], "unsubscribe") == 0) {
+			rc = ble_unsubscribe(ctx, &addr, (uint16_t)a);
+			goto result;
+		}
+		rc = ble_subscribe(ctx, &addr, (uint16_t)a, mon_notify_cb, NULL);
+		if (rc == 0)
+			rc = drain_pending(ctx);
+		if (rc < 0)
+			goto result;
+		/*
+		 * Finding 34: keep a one-shot subscribe alive so notifications
+		 * are actually delivered instead of being torn down at exit.
+		 * Interactive mode returns immediately; its own loop pumps
+		 * events and the subscription persists for the session.
+		 */
+		if (!interactive_session)
+			return (subscribe_watch(ctx));
+		return (1);
 	}
 	if (strcmp(argv[0], "set-value") == 0 && argc == 3) {
 		if (parse_u32(argv[1], 1, UINT16_MAX, &a) != 0 ||
@@ -905,12 +977,103 @@ handle_typed_command(ble_ctx_t *ctx, int argc, char **argv)
 		    ble_eatt_close(ctx, &addr);
 		goto result;
 	}
+	/*
+	 * Finding 134: LE path-loss reporting.  ble_path_loss_reporting() is
+	 * fire-and-forget, so let the generic result path drain its OP_REPLY.
+	 */
+	if (strcmp(argv[0], "path-loss") == 0 && argc == 8) {
+		uint32_t lo, lohys, hi, hihys, mintime;
+
+		if (ble_addr_parse(argv[1], 0, &addr) != 0 ||
+		    parse_u32(argv[2], 0, 0xff, &lo) != 0 ||
+		    parse_u32(argv[3], 0, 0xff, &lohys) != 0 ||
+		    parse_u32(argv[4], 0, 0xff, &hi) != 0 ||
+		    parse_u32(argv[5], 0, 0xff, &hihys) != 0 ||
+		    parse_u32(argv[6], 0, 0xffff, &mintime) != 0 ||
+		    parse_switch(argv[7], &enabled) != 0)
+			goto usage;
+		rc = ble_path_loss_reporting(ctx, &addr, (uint8_t)lo,
+		    (uint8_t)lohys, (uint8_t)hi, (uint8_t)hihys,
+		    (uint16_t)mintime, enabled);
+		goto result;
+	}
+	/*
+	 * Finding 133: operator-facing extended advertising-set commands.  The
+	 * daemon owns the set by handle; adv-set-create prints the handle a
+	 * later invocation passes to params/data/enable/remove.  These libble
+	 * calls are synchronous, so they surface the daemon result directly.
+	 */
+	if (strcmp(argv[0], "adv-set-create") == 0 && argc == 1) {
+		ble_adv_set_t *set = NULL;
+
+		rc = ble_adv_set_create(ctx, &set);
+		if (rc == 0) {
+			printf("adv-set handle=%u\n", ble_adv_set_handle(set));
+			ble_adv_set_free(set);	/* keep the daemon set alive */
+		}
+		goto result;
+	}
+	if ((strcmp(argv[0], "adv-set-params") == 0 && (argc == 5 || argc == 7)) ||
+	    (strcmp(argv[0], "adv-set-data") == 0 && argc == 3) ||
+	    (strcmp(argv[0], "adv-set-enable") == 0 && argc == 3) ||
+	    (strcmp(argv[0], "adv-set-remove") == 0 && argc == 2)) {
+		ble_adv_set_t *set = NULL;
+
+		if (parse_u32(argv[1], 1, 0xef, &a) != 0)
+			goto usage;
+		if (ble_adv_set_open(ctx, (uint8_t)a, &set) != 0) {
+			rc = -1;
+			goto result;
+		}
+		if (strcmp(argv[0], "adv-set-params") == 0) {
+			uint32_t props, min, max, prim = 1, sec = 1;
+
+			if (parse_u32(argv[2], 0, 0xffff, &props) != 0 ||
+			    parse_u32(argv[3], 0x20, 0xffffff, &min) != 0 ||
+			    parse_u32(argv[4], 0x20, 0xffffff, &max) != 0 ||
+			    (argc == 7 &&
+			    (parse_u32(argv[5], 1, 3, &prim) != 0 ||
+			    parse_u32(argv[6], 1, 3, &sec) != 0))) {
+				ble_adv_set_free(set);
+				goto usage;
+			}
+			rc = ble_adv_set_params(set, (uint16_t)props, min, max,
+			    (uint8_t)prim, (uint8_t)sec);
+		} else if (strcmp(argv[0], "adv-set-data") == 0) {
+			if (parse_hex_value(argv[2], value, 251, &value_len) != 0) {
+				ble_adv_set_free(set);
+				goto usage;
+			}
+			rc = ble_adv_set_data(set, value, (uint8_t)value_len);
+		} else if (strcmp(argv[0], "adv-set-enable") == 0) {
+			if (parse_switch(argv[2], &enabled) != 0) {
+				ble_adv_set_free(set);
+				goto usage;
+			}
+			rc = ble_adv_set_enable(set, enabled);
+		} else {
+			ble_adv_set_close(set);	/* removes the daemon set + frees */
+			set = NULL;
+			rc = ble_errno(ctx) == BLE_ERR_NONE ? 0 : -1;
+		}
+		if (set != NULL)
+			ble_adv_set_free(set);
+		goto result;
+	}
 	return (0);
 
 usage:
 	warnx("invalid arguments for '%s'", argv[0]);
 	return (-1);
 result:
+	/*
+	 * Finding 34: await the correlated OP_REPLY for fire-and-forget
+	 * operations so a failed write/disconnect/pair/... reports the error
+	 * instead of exiting 0.  drain_pending() is a no-op when the command
+	 * already completed synchronously (nothing pending).
+	 */
+	if (rc == 0)
+		rc = drain_pending(ctx);
 	if (rc < 0) {
 	result_error:
 		warnx("%s", ble_strerror(ctx));
@@ -943,13 +1106,11 @@ print_help(void)
 	printf("  disconnect <addr>           "
 	    "Disconnect device\n");
 	printf("  pair <addr>                 "
-	    "Check bond status\n");
+	    "Initiate pairing\n");
 	printf("  bonds                       "
 	    "List bonded devices\n");
 	printf("  unbond <addr>               "
 	    "Remove bond\n");
-	printf("  services                    "
-	    "List local GATT database\n");
 	printf("  discover <addr>             "
 	    "Discover remote GATT services\n");
 	printf("  read <addr> <handle>        "
@@ -972,24 +1133,29 @@ print_help(void)
 	    "Add GATT characteristic\n");
 	printf("  remove-service <handle>     "
 	    "Remove GATT service\n");
-	printf("  loglevel [level]            "
-	    "Get/set log level\n");
 	printf("  phy                         "
 	    "Show PHY info\n");
-	printf("  hogp-read <addr> <id>       "
-	    "Read HOGP Feature report\n");
-	printf("  hogp-write <addr> <id> <hex>"
-	    " Write HOGP Feature report\n");
 	printf("  passkey <addr> <passkey>    "
 	    "Reply to passkey request\n");
 	printf("  confirm <addr> yes|no       "
 	    "Reply to numeric comparison\n");
-	printf("  ecbfc-connect <addr> <psm> <count>\n"
+	printf("  path-loss <addr> <low> <low-hyst> <high> <high-hyst> "
+	    "<min-time> on|off\n"
 	    "                              "
-	    "Open ECBFC channels\n");
-	printf("  ecbfc-reconfig <addr> <mtu> <mps>\n"
+	    "Configure LE path-loss reporting\n");
+	printf("  adv-set-create              "
+	    "Allocate an extended advertising set\n");
+	printf("  adv-set-params <handle> <props-hex> <min> <max> "
+	    "[primary secondary]\n"
 	    "                              "
-	    "Reconfigure ECBFC params\n");
+	    "Configure an advertising set\n");
+	printf("  adv-set-data <handle> <hex> "
+	    "Set advertising-set data\n");
+	printf("  adv-set-enable <handle> on|off\n"
+	    "                              "
+	    "Enable/disable an advertising set\n");
+	printf("  adv-set-remove <handle>     "
+	    "Remove an advertising set\n");
 	printf("  eatt-open <addr> <count>   Open daemon-owned EATT bearers\n");
 	printf("  eatt-close <addr>          Close daemon-owned EATT bearers\n");
 	printf("  bond-export                 "
@@ -1034,6 +1200,7 @@ interactive_mode(ble_ctx_t *ctx)
 	char inputbuf[SEND_BUF_SIZE];
 	int ret = 0;
 
+	interactive_session = true;
 	printf("bluedctl> ");
 	fflush(stdout);
 
@@ -1798,33 +1965,27 @@ static const struct {
 	const char	*args;
 	const char	*desc;
 } cmd_help[] = {
+	/*
+	 * Findings 38/142: this table lists ONLY commands bluedctl actually
+	 * dispatches.  Entries with no handler (per-adv-*, past-*, iso-*,
+	 * security, io-cap, oob-*, register-agent, rpa-timeout, loglevel,
+	 * hogp-*, services, read-reply/reject, authorize, set-adv-params,
+	 * adv-struct, resolv add/remove/clear) were removed, and the working
+	 * eatt-* and profile shortcuts were added, to keep `help` consistent
+	 * with dispatch.
+	 */
 	{ "scan",		"",			"Scan for BLE devices (~5s)" },
 	{ "list",		"",			"List connected devices" },
 	{ "status",		"",			"Daemon status summary" },
 	{ "adapters",		"",			"List HCI adapters" },
 	{ "adapter-caps",	"[index]",		"Show controller LE feature bitmap" },
-	{ "per-adv-params", "<min> <max> [props]", "Configure periodic advertising" },
-	{ "per-adv-data", "<hex>", "Set periodic advertising data" },
-	{ "per-adv-enable", "on|off", "Enable periodic advertising" },
-	{ "per-sync-create", "<addr> <public|random> <sid> [skip] [timeout]", "Synchronize to periodic advertiser" },
-	{ "per-sync-cancel", "", "Cancel pending periodic synchronization" },
-	{ "per-sync-terminate", "<handle>", "Terminate periodic synchronization" },
-	{ "per-adv-list-add", "<addr> <public|random> <sid>", "Add a periodic advertiser" },
-	{ "per-adv-list-remove", "<addr> <public|random> <sid>", "Remove a periodic advertiser" },
-	{ "per-adv-list-clear", "", "Clear the periodic advertiser list" },
-	{ "per-adv-list-size", "", "Read periodic advertiser-list capacity" },
-	{ "past-transfer", "<peer> <service-data> <sync-handle>", "Transfer periodic sync to a peer" },
-	{ "past-receive-enable", "<sync-handle> on|off", "Accept or reject received PAST" },
-	{ "past-set-info-transfer", "<peer> <service-data> <adv-handle>", "Transfer local periodic-set info" },
-	{ "past-params", "<peer> <mode> <skip> <timeout> <cte-type>", "Set per-peer PAST receive policy" },
-	{ "past-default-params", "<mode> <skip> <timeout> <cte-type>", "Set default PAST receive policy" },
 	{ "connect",		"<addr> [public|random]", "Connect to a device (async; watch 'monitor')" },
 	{ "connect-name",	"<name>",		"Scan for a device by name, then connect" },
 	{ "disconnect",		"<addr>",		"Disconnect a device" },
-	{ "pair",		"<addr>",		"Report bond status for a device" },
+	{ "pair",		"<addr>",		"Initiate pairing with a device" },
 	{ "bonds",		"",			"List bonded devices" },
 	{ "unbond",		"<addr>",		"Remove a bond" },
-	{ "services",		"",			"Dump the local GATT database" },
+	{ "rekey",		"<addr>",		"Rotate a bonded peer's keys (re-pair)" },
 	{ "discover",		"<addr>",		"Discover a device's GATT services" },
 	{ "read",		"<addr> <handle>",	"Read a characteristic value" },
 	{ "write",		"<addr> <handle> <hex>", "Write a characteristic (with response)" },
@@ -1833,33 +1994,17 @@ static const struct {
 	{ "unsubscribe",	"<addr> <handle>",	"Unsubscribe from notifications" },
 	{ "set-value",		"<handle> <hex>",	"Set a local attribute value" },
 	{ "add-service",	"<uuid>",		"Add a local GATT service" },
-	{ "add-char",		"<svc> <uuid> <props> <perms> [value] [dynamic] [authorize]", "Add a local characteristic" },
+	{ "add-char",		"<svc> <uuid> <props> <perms> [value]", "Add a local characteristic" },
 	{ "gatt-begin",		"",			"Begin an atomic GATT update" },
 	{ "gatt-commit",	"",			"Commit an atomic GATT update" },
 	{ "gatt-rollback",	"",			"Abort an atomic GATT update" },
-	{ "read-reply",		"<handle> <hex>",	"Supply a value for a deferred dynamic read" },
-	{ "read-reject",	"<handle> <att_error>",	"Decline a deferred dynamic read" },
-	{ "authorize",		"<handle> allow|deny",	"Answer a per-access authorization prompt" },
 	{ "serve",		"<handle> <hex>",	"Back a characteristic live (dynamic read + authorize)" },
 	{ "remove-service",	"<handle>",		"Remove a local GATT service" },
-	{ "loglevel",		"[level]",		"Get or set the daemon log level" },
 	{ "phy",		"",			"Show per-connection PHY" },
-	{ "hogp-read",		"<addr> <id>",		"Read a HOGP Feature report" },
-	{ "hogp-write",		"<addr> <id> <hex>",	"Write a HOGP Feature report" },
 	{ "passkey",		"<addr> <passkey>",	"Answer a passkey-input prompt" },
 	{ "confirm",		"<addr> yes|no",	"Answer a numeric-comparison prompt" },
-	{ "bond-export",	"",			"Export bond metadata" },
-	{ "rekey",		"<addr>",		"Rotate a bonded peer's keys (re-pair)" },
-	{ "security",		"[key=val ...]",	"Show or set SMP pairing/security policy" },
-	{ "secinfo",		"[addr]",		"Per-connection security (key size/level/auth)" },
-	{ "io-cap",		"<DisplayOnly|DisplayYesNo|KeyboardOnly|NoInputNoOutput|KeyboardDisplay>", "Set pairing IO capability" },
-	{ "register-agent",	"<io-cap>",		"Register as the runtime pairing agent" },
-	{ "unregister-agent",	"",			"Unregister the runtime pairing agent" },
-	{ "rpa-timeout",	"<1-3600>",		"Set RPA rotation timeout (seconds)" },
-	{ "oob-generate",	"",			"Generate local SC OOB data to publish" },
-	{ "oob-inject",		"<addr> sc <confirm> <random> | <addr> legacy <tk>", "Supply a peer's OOB pairing data" },
-	{ "oob-clear",		"[addr]",		"Drop pending OOB data" },
-	{ "resolv",		"add <addr> [type] [irk] | remove <addr> | list | clear", "Manage the LE privacy resolving list" },
+	{ "bond-export",	"<addr>",		"Export bond metadata" },
+	{ "resolv",		"list",			"List the LE privacy resolving list" },
 	{ "connparams",		"[addr]",		"Show connection parameters" },
 	{ "connparams-update",	"<addr> <min> <max> <latency> <timeout>", "Request LE connection update" },
 	{ "conninfo",		"[addr]",		"Show handle/role/MTU/encryption" },
@@ -1869,9 +2014,7 @@ static const struct {
 	{ "adv-set-data",	"<handle> <hex>",	"Set owned advertising-set data" },
 	{ "adv-set-enable",	"<handle> on|off",	"Enable or disable an owned set" },
 	{ "adv-set-remove",	"<handle>",		"Remove an owned advertising set" },
-	{ "set-adv-params",	"[key=val ...]",	"Set advertising parameters" },
 	{ "adv-data",		"<hex>",		"Set advertising data (<=31 bytes)" },
-	{ "adv-struct",		"[field[=value] ...]",	"Build structured advertising data" },
 	{ "scan-resp",		"<hex>",		"Set scan-response data (<=31 bytes)" },
 	{ "power",		"on|off [adapter=N]",	"Power an adapter" },
 	{ "discoverable",	"on [timeout] [general|limited] | off", "Set discoverable mode" },
@@ -1882,16 +2025,14 @@ static const struct {
 	{ "set-phy",		"<addr> <tx-mask> <rx-mask>", "Request LE Set PHY" },
 	{ "set-data-len",	"<addr> <octets> <time>", "Request LE Set Data Length" },
 	{ "path-loss", "<addr> <low> <low-hyst> <high> <high-hyst> <min-time> <on|off>", "Configure LE path-loss reporting" },
-	{ "iso-cig",		"<cig-id> key=val ... cis=...", "Configure a Connected Isochronous Group" },
-	{ "iso-cis",		"<addr> <cig-id> <cis-id> [push]", "Create a Connected Isochronous Stream" },
-	{ "iso-big",		"<big> <adv> key=val ...", "Create a Broadcast Isochronous Group" },
-	{ "iso-big-sync",	"<big> <sync> bis=... [key=val ...]", "Synchronize to a Broadcast Isochronous Group" },
-	{ "iso-teardown-cis",	"<handle> [reason]",	"Teardown a CIS" },
-	{ "iso-remove-cig",	"<cig-id>",		"Remove a configured CIG" },
-	{ "iso-accept",		"<handle>",		"Accept a pending peripheral CIS request" },
-	{ "iso-reject",		"<handle> [reason]",	"Reject a pending peripheral CIS request" },
-	{ "iso-terminate-big",	"<big> [reason]",	"Terminate a local BIG" },
-	{ "iso-big-terminate-sync", "<big>",		"Terminate BIG synchronization" },
+	{ "eatt-open",		"<addr> <count>",	"Open daemon-owned EATT bearers" },
+	{ "eatt-close",		"<addr>",		"Close daemon-owned EATT bearers" },
+	{ "battery",		"<addr>",		"Read the Battery Level characteristic" },
+	{ "devinfo",		"<addr>",		"Discover the Device Information service" },
+	{ "heart-rate",		"<addr>",		"Read the Heart Rate Measurement" },
+	{ "thermometer",	"<addr>",		"Read the Temperature Measurement" },
+	{ "time",		"<addr>",		"Read the Current Time characteristic" },
+	{ "find",		"<addr>",		"Write Immediate Alert (find device)" },
 	{ "monitor",		"",			"Watch connect/disconnect/pairing/notify events" },
 	{ "keyboard",		"<addr>",		"Pair a keyboard end-to-end (handles passkey)" },
 	{ NULL, NULL, NULL },
@@ -1947,10 +2088,9 @@ usage(void)
 	    "  connect <addr> [public|random] Connect to device\n"
 	    "  connect-name <name>            Scan and connect by name\n"
 	    "  disconnect <addr>              Disconnect device\n"
-	    "  pair <addr>                    Check bond status\n"
+	    "  pair <addr>                    Initiate pairing\n"
 	    "  bonds                          List bonded devices\n"
 	    "  unbond <addr>                  Remove bond\n"
-	    "  services                       List local GATT database\n"
 	    "  discover <addr>                Discover remote services\n"
 	    "  read <addr> <handle>           Read characteristic\n"
 	    "  write <addr> <handle> <hex>    Write characteristic\n"
@@ -1964,14 +2104,9 @@ usage(void)
 	    "  gatt-begin|gatt-commit|gatt-rollback\n"
 	    "                                 Atomic GATT application update\n"
 	    "  remove-service <handle>        Remove GATT service\n"
-	    "  loglevel [level]               Get/set log level\n"
 	    "  phy                            Show PHY info\n"
-	    "  hogp-read <addr> <id>          Read HOGP Feature report\n"
-	    "  hogp-write <addr> <id> <hex>   Write HOGP Feature report\n"
 	    "  passkey <addr> <passkey>       Reply to passkey request\n"
 	    "  confirm <addr> yes|no          Numeric comparison reply\n"
-	    "  ecbfc-connect <addr> <psm> <count>  Open ECBFC channels\n"
-	    "  ecbfc-reconfig <addr> <mtu> <mps>   Reconfig ECBFC params\n"
 	    "  eatt-open <addr> <count>             Open EATT bearers\n"
 	    "  eatt-close <addr>                    Close EATT bearers\n"
 	    "  bond-export                    Export bond database\n"
@@ -1980,22 +2115,18 @@ usage(void)
 	    "                                 Request LE connection update\n"
 	    "  conninfo [addr]                Show handle/role/MTU/encryption\n"
 	    "  advertise on|off               Enable/disable advertising\n"
-	    "  set-adv-params [key=val ...]   Set advertising parameters\n"
 	    "  adv-data <hex>                 Set advertising data (<=31 bytes)\n"
-	    "  adv-struct [field[=value] ...] Build structured advertising data\n"
 	    "  scan-resp <hex>                Set scan-response data\n"
+	    "  adv-set-create                 Allocate an extended advertising set\n"
+	    "  adv-set-params <handle> <props-hex> <min> <max> [primary secondary]\n"
+	    "                                 Configure an advertising set\n"
+	    "  adv-set-data <handle> <hex>    Set advertising-set data\n"
+	    "  adv-set-enable <handle> on|off Enable/disable an advertising set\n"
+	    "  adv-set-remove <handle>        Remove an advertising set\n"
 	    "  set-phy <addr> <tx> <rx>       Request LE Set PHY\n"
 	    "  set-data-len <addr> <octets> <time>  Request LE Set Data Length\n"
-	    "  iso-cig <cig-id> key=val ... cis=...\n"
-	    "                                 Configure a CIG\n"
-	    "  iso-cis <addr> <cig-id> <cis-id> [push]\n"
-	    "                                 Create a CIS\n"
-	    "  iso-big <big> <adv> key=val ...\n"
-	    "                                 Create a BIG\n"
-	    "  iso-big-sync <big> <sync> bis=... [key=val ...]\n"
-	    "                                 Synchronize to a BIG\n"
-	    "  iso-teardown-cis|iso-remove-cig|iso-accept|iso-reject\n"
-	    "                                 ISO lifecycle controls\n"
+	    "  path-loss <addr> <low> <low-hyst> <high> <high-hyst> <min-time> on|off\n"
+	    "                                 Configure LE path-loss reporting\n"
 	    "  set-mtu <23-517>               Set preferred ATT MTU\n"
 	    "  privacy on|off                 Toggle LE privacy\n"
 	    "  power on|off [adapter=N]       Power an adapter\n"

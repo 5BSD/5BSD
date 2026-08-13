@@ -184,6 +184,7 @@ struct mesh_hb_sub {
 	uint16_t	count;		/* received count (saturates at 0xFFFF) */
 	uint8_t		min_hops;	/* smallest observed hop count */
 	uint8_t		max_hops;	/* largest observed hop count */
+	uint32_t	remaining;	/* seconds left in the period (0 => expired) */
 };
 
 /*
@@ -221,14 +222,20 @@ int	mesh_hb_sub_status_parse(const uint8_t *in, size_t inlen,
  * Subscription receive state machine (Sections 3.6.7.3 and 4.3.2.65).
  * mesh_hb_sub_init() clears it.  mesh_hb_sub_apply() applies a Subscription
  * Set: a zero Source, zero Destination or zero PeriodLog disables the
- * subscription; otherwise it (re)arms it and resets Count/MinHops/MaxHops
- * (Count=0, MinHops=0x7F, MaxHops=0x00).  mesh_hb_sub_receive() ingests one
- * received Heartbeat: when (src,dst) match the active subscription it counts
- * it (saturating at 0xFFFF) and folds hops = InitTTL - RxTTL + 1 into
- * Min/Max Hops.  Returns 1 if counted, 0 if ignored.
+ * subscription; otherwise it (re)arms it, resets Count/MinHops/MaxHops
+ * (Count=0, MinHops=0x7F, MaxHops=0x00) and loads the Subscription Period
+ * countdown with 2^(PeriodLog-1) seconds.  mesh_hb_sub_tick() decrements that
+ * countdown by secs seconds; when it reaches zero the subscription period has
+ * expired and receiving is disabled (Section 4.2.19.4).  mesh_hb_sub_receive()
+ * ingests one received Heartbeat: when the period is still running and (src,dst)
+ * match the active subscription it counts it (saturating at 0xFFFF) and folds
+ * hops = InitTTL - RxTTL + 1 into Min/Max Hops.  Returns 1 if counted, 0 if
+ * ignored.  The snapshot reports the REMAINING PeriodLog, not the configured
+ * one.
  */
 void	mesh_hb_sub_init(struct mesh_hb_sub *s);
 int	mesh_hb_sub_apply(struct mesh_hb_sub *s, const struct mesh_hb_sub_set *in);
+void	mesh_hb_sub_tick(struct mesh_hb_sub *s, uint32_t secs);
 int	mesh_hb_sub_receive(struct mesh_hb_sub *s, uint16_t src, uint16_t dst,
 	    uint8_t init_ttl, uint8_t rx_ttl);
 /* Snapshot the subscription as a Status structure. */

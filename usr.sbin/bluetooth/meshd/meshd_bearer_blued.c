@@ -830,13 +830,24 @@ meshd_blued_tx(void *arg, enum meshd_pdu_class cls, const uint8_t *pdu,
 	if (cls == MESHD_PDU_NET || cls == MESHD_PDU_BEACON) {
 		size_t i;
 
+		/*
+		 * Push to every subscribed GATT proxy link.  A single link's
+		 * failure (e.g. a stalled client returning ENOBUFS) must fail
+		 * only its owning link, not abort delivery to the remaining
+		 * proxy links or the radio ADV bearer below (finding 80).  A
+		 * fatal per-link error already tears the link (or the whole
+		 * bearer) down inside mbw_proxy_tx; if that dropped the bearer
+		 * the ADV send below fails on its own.
+		 */
 		for (i = 0; i < MESHD_MAX_PROXY_GATT; i++)
 			if (bc->proxy[i].active && bc->proxy[i].subscribed &&
-			    bc->proxy[i].data_in != 0 &&
-			    mbw_proxy_tx(bc, &bc->proxy[i], cls == MESHD_PDU_NET ?
-			    MESH_PROXY_TYPE_NETWORK : MESH_PROXY_TYPE_BEACON,
-			    pdu, len) != 0)
-				return (-1);
+			    bc->proxy[i].data_in != 0)
+				(void)mbw_proxy_tx(bc, &bc->proxy[i],
+				    cls == MESHD_PDU_NET ?
+				    MESH_PROXY_TYPE_NETWORK :
+				    MESH_PROXY_TYPE_BEACON, pdu, len);
+		if (!mbw_ready(bc))
+			return (-1);		/* a fatal proxy error closed us */
 	}
 	if (len > MBW_ADV_MAX)
 		return (-1);			/* will not fit a legacy AD field */
@@ -1809,10 +1820,17 @@ meshd_blued_pump_rx(struct meshd_blued *bc, struct meshd_node *nd, uint64_t now)
 		}
 
 	frame_done:
-		memmove(bc->rx, bc->rx + framelen, bc->rxn - framelen);
-		bc->rxn -= framelen;
+		/*
+		 * Frame processing can synchronously close the connection (e.g. a
+		 * NOTIFY -> proxy drain -> send() EPIPE -> transport-failed ->
+		 * close), which resets bc->rxn to 0.  The memmove below would then
+		 * compute (0 - framelen) as a size_t and copy ~SIZE_MAX bytes, so
+		 * the closed-socket guard MUST precede it (finding 77).
+		 */
 		if (bc->fd < 0)
 			return (dispatched);
+		memmove(bc->rx, bc->rx + framelen, bc->rxn - framelen);
+		bc->rxn -= framelen;
 	}
 	if (transport_eof)
 		mbw_transport_failed(bc, nd);

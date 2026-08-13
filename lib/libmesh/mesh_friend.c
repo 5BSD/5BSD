@@ -855,7 +855,7 @@ friend_poll_timeout_ms(const struct mesh_friend_fsm *f)
  */
 static int
 friend_build_update_entry(const struct mesh_friend_fsm *f, uint8_t key_refresh,
-    uint8_t iv_update, uint32_t iv_index, struct mesh_fq_entry *e)
+    uint8_t iv_update, uint32_t iv_index, int more_data, struct mesh_fq_entry *e)
 {
 	struct mesh_friend_update up;
 	uint8_t pdu[MESH_FRIEND_UPDATE_LEN];
@@ -865,7 +865,15 @@ friend_build_update_entry(const struct mesh_friend_fsm *f, uint8_t key_refresh,
 	up.key_refresh = key_refresh ? 1 : 0;
 	up.iv_update = iv_update ? 1 : 0;
 	up.iv_index = iv_index;
-	up.md = mesh_fq_count(&f->queue) > 0 ? 1 : 0;
+	/*
+	 * More Data reflects the queue state AFTER this Poll's FSN ack-discard
+	 * and excludes the entry being returned; the caller computes it (see
+	 * mesh_friend_fsm_recv_poll).  Computing it from the pre-discard queue
+	 * count leaves the already-delivered head counted, so every empty-queue
+	 * Update would carry MD=1 forever and livelock the LPN in an immediate
+	 * re-poll loop (Section 3.6.6.4.2).
+	 */
+	up.md = more_data ? 1 : 0;
 	if (mesh_friend_update_build(&up, pdu, &plen) != 0)
 		return (-1);
 
@@ -917,6 +925,15 @@ mesh_friend_fsm_recv_request(struct mesh_friend_fsm *f, const uint8_t *pdu,
 	/* SRC is the LPN primary unicast address; its element range must fit. */
 	if (lpn_addr == 0 || lpn_addr > 0x7fff ||
 	    (uint32_t)lpn_addr + req.num_elements > 0x8000)
+		return (-1);
+
+	/*
+	 * While a friendship is established, ignore a Friend Request from a
+	 * different LPN: it must not overwrite the live friendship and silently
+	 * discard the queued messages (finding).  A Request from the same LPN
+	 * re-arms a fresh Offer (Section 3.6.5).
+	 */
+	if (f->state == MESH_FRIEND_ST_ESTABLISHED && lpn_addr != f->lpn_addr)
 		return (-1);
 
 	/* Acceptance policy (Section 3.6.6.3): signal floor + serveable queue. */
@@ -999,7 +1016,20 @@ mesh_friend_fsm_tick(struct mesh_friend_fsm *f, uint64_t now,
 		/* The value in this Offer is the current counter; increment only
 		 * after the Offer has actually been emitted (Section 3.6.6.3.1). */
 		f->friend_counter++;
+		f->offer_sent_ms = now;
 		f->state = MESH_FRIEND_ST_ESTABLISHING;
+		return (0);
+	}
+
+	/*
+	 * The friendship is established only if the first Friend Poll arrives
+	 * within the establishment window of the Offer (Section 3.6.6.3.1).
+	 * Expire ESTABLISHING back to IDLE so a Poll replayed far later cannot
+	 * "establish" a friendship the LPN abandoned (finding).
+	 */
+	if (f->state == MESH_FRIEND_ST_ESTABLISHING &&
+	    now - f->offer_sent_ms >= MESH_FRIEND_ESTABLISH_TIMEOUT_MS) {
+		f->state = MESH_FRIEND_ST_IDLE;
 		return (0);
 	}
 
@@ -1019,7 +1049,8 @@ mesh_friend_fsm_recv_poll(struct mesh_friend_fsm *f, const uint8_t *pdu,
 {
 	struct mesh_friend_poll poll;
 	struct mesh_fq_entry empty_update;
-	int rc;
+	size_t qcount, remaining;
+	int rc, will_discard;
 
 	if (f == NULL || pdu == NULL || out == NULL)
 		return (-1);
@@ -1032,12 +1063,33 @@ mesh_friend_fsm_recv_poll(struct mesh_friend_fsm *f, const uint8_t *pdu,
 	if (mesh_friend_poll_parse(pdu, len, &poll) != 0)
 		return (-1);
 
+	/*
+	 * A first Poll that arrives more than the establishment window after the
+	 * Offer does not establish the friendship (Section 3.6.6.3.1): the LPN
+	 * has abandoned it.  Drop to IDLE and reject.
+	 */
+	if (f->state == MESH_FRIEND_ST_ESTABLISHING &&
+	    now - f->offer_sent_ms >= MESH_FRIEND_ESTABLISH_TIMEOUT_MS) {
+		f->state = MESH_FRIEND_ST_IDLE;
+		return (-1);
+	}
+
 	/* The first Poll establishes the friendship (Section 3.6.6.4.1). */
 	f->state = MESH_FRIEND_ST_ESTABLISHED;
 	f->last_poll_ms = now;
 
+	/*
+	 * Compute More Data as the queue will look after this Poll's FSN
+	 * ack-discard, excluding the entry returned as the response.  A changed
+	 * FSN discards the previously delivered head (mirrors mesh_fq_poll), so
+	 * the empty-queue Friend Update carries MD=0 once the last message has
+	 * been acked instead of a stale MD=1 (Section 3.6.6.4.2, finding).
+	 */
+	qcount = mesh_fq_count(&f->queue);
+	will_discard = (f->queue.last_fsn != -1 && poll.fsn != f->queue.last_fsn);
+	remaining = (will_discard && qcount > 0) ? qcount - 1 : qcount;
 	if (friend_build_update_entry(f, key_refresh, iv_update, iv_index,
-	    &empty_update) != 0)
+	    remaining > 0 ? 1 : 0, &empty_update) != 0)
 		return (-1);
 	rc = mesh_fq_poll(&f->queue, poll.fsn, &empty_update, &out->msg);
 	if (rc <= 0)

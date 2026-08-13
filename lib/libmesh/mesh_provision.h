@@ -316,6 +316,15 @@ int	mesh_prov_provisioning_salt(const uint8_t conf_salt[16],
 	    const uint8_t rand_prov[16], const uint8_t rand_dev[16],
 	    uint8_t salt[16]);
 
+/*
+ * ProvisioningSalt for the HMAC-SHA-256 algorithm (0x01): identical to the
+ * above but the ConfirmationSalt and both Randoms are 32 octets (a 96-octet
+ * s1 input).  The 16-octet salt output is the same for both algorithms.
+ */
+int	mesh_prov_provisioning_salt_256(const uint8_t conf_salt[32],
+	    const uint8_t rand_prov[32], const uint8_t rand_dev[32],
+	    uint8_t salt[16]);
+
 /* SessionKey = k1(ECDHSecret, ProvisioningSalt, "prsk"). */
 int	mesh_prov_session_key(const uint8_t ecdh[32], const uint8_t prov_salt[16],
 	    uint8_t key[16]);

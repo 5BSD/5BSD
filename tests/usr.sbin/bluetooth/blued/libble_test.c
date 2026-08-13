@@ -858,6 +858,8 @@ struct event_matrix_state {
 	uint8_t cig_id;
 	uint8_t cis_id;
 	uint8_t adapter_index;
+	uint8_t sec_adapter_index;
+	uint8_t sec_addr_type;
 	uint8_t value[4];
 	uint16_t value_len;
 };
@@ -875,29 +877,35 @@ record_notification(const ble_addr_t *addr __unused, uint16_t handle,
 }
 
 static void
-record_display(const ble_addr_t *addr __unused, uint32_t passkey, void *arg)
+record_display(const ble_addr_t *addr, uint32_t passkey, void *arg)
 {
 	struct event_matrix_state *state = arg;
 
 	state->display_calls++;
 	state->passkey = passkey;
+	state->sec_adapter_index = addr->adapter_index;
+	state->sec_addr_type = addr->addr_type;
 }
 
 static void
-record_input(const ble_addr_t *addr __unused, void *arg)
+record_input(const ble_addr_t *addr, void *arg)
 {
 	struct event_matrix_state *state = arg;
 
 	state->input_calls++;
+	state->sec_adapter_index = addr->adapter_index;
+	state->sec_addr_type = addr->addr_type;
 }
 
 static void
-record_keypress(const ble_addr_t *addr __unused, uint8_t type, void *arg)
+record_keypress(const ble_addr_t *addr, uint8_t type, void *arg)
 {
 	struct event_matrix_state *state = arg;
 
 	state->keypress_calls++;
 	state->keypress = type;
+	state->sec_adapter_index = addr->adapter_index;
+	state->sec_addr_type = addr->addr_type;
 }
 
 static void
@@ -981,32 +989,43 @@ ATF_TC_BODY(typed_event_callback_matrix, tc)
 	ATF_CHECK_EQ(3, state.value_len);
 	ATF_CHECK_EQ(0, memcmp(state.value, "ble", 3));
 
-	/* Exercise every security event callback, including payload decoding. */
+	/*
+	 * Exercise every security event callback with the finding 28/29
+	 * coordinated body layout: [event u16][adapter_index u8][addr_type u8]
+	 * [addr[6]][payload...].  Verify the decoded ble_addr_t carries the
+	 * adapter_index and addr_type from their fixed offsets (finding 29:
+	 * previously adapter_index was left uninitialized).
+	 */
 	memset(event, 0, sizeof(event));
 	ipc_op_prefix_encode(event, 0, IPC_ERR_NONE, 0);
 	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_DISPLAY);
-	body[2] = addr.addr_type;
-	memcpy(body + 3, addr.addr, sizeof(addr.addr));
-	ipc_put_le32(body + 9, 654321);
+	body[2] = addr.adapter_index;
+	body[3] = addr.addr_type;
+	memcpy(body + 4, addr.addr, sizeof(addr.addr));
+	ipc_put_le32(body + 10, 654321);
 	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
 	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE);
 	ATF_REQUIRE_EQ(0, ble_process(ctx));
 	ATF_CHECK_EQ(1, state.display_calls);
 	ATF_CHECK_EQ(654321, state.passkey);
+	ATF_CHECK_EQ(addr.adapter_index, state.sec_adapter_index);
+	ATF_CHECK_EQ(addr.addr_type, state.sec_addr_type);
 
 	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_INPUT);
 	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
 	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_INPUT_EVENT_SIZE);
 	ATF_REQUIRE_EQ(0, ble_process(ctx));
 	ATF_CHECK_EQ(1, state.input_calls);
+	ATF_CHECK_EQ(addr.adapter_index, state.sec_adapter_index);
 
 	ipc_put_le16(body, IPC_SECURITY_EV_KEYPRESS);
-	body[9] = 4;
+	body[10] = 4;
 	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
 	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_KEYPRESS_EVENT_SIZE);
 	ATF_REQUIRE_EQ(0, ble_process(ctx));
 	ATF_CHECK_EQ(1, state.keypress_calls);
 	ATF_CHECK_EQ(4, state.keypress);
+	ATF_CHECK_EQ(addr.adapter_index, state.sec_adapter_index);
 
 	/* Exercise both ISO asynchronous event variants. */
 	memset(event, 0, sizeof(event));
@@ -1173,9 +1192,10 @@ ATF_TC_BODY(typed_malformed_event_matrix, tc)
 	ATF_REQUIRE_EQ(0, ble_process(ctx));
 	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
 
+	/* Invalid addr_type (body[3], findings 28/29 layout) fails closed. */
 	memset(body, 0, IPC_SECURITY_PASSKEY_EVENT_SIZE);
 	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_DISPLAY);
-	body[2] = 2;
+	body[3] = 2;
 	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
 	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE);
 	ATF_REQUIRE_EQ(0, ble_process(ctx));
@@ -1197,9 +1217,10 @@ ATF_TC_BODY(typed_malformed_event_matrix, tc)
 	ATF_CHECK_EQ(BLE_ERR_PROTO, ble_errno(ctx));
 
 	/* A syntactically valid passkey event still enforces the value range. */
+	memset(body, 0, IPC_SECURITY_PASSKEY_EVENT_SIZE);
 	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_DISPLAY);
-	body[2] = 1;
-	ipc_put_le32(body + 9, 1000000);
+	body[3] = 1;
+	ipc_put_le32(body + 10, 1000000);
 	send_frame(daemon_fd, IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY, event,
 	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE);
 	ATF_REQUIRE_EQ(0, ble_process(ctx));
@@ -1644,8 +1665,203 @@ ATF_TC_BODY(battery_discovery_chains_read, tc)
 	ble_close(ctx);
 }
 
+/*
+ * Finding 28/29: ble_passkey_reply()/ble_numcmp_reply() encode the coordinated
+ * body layout [adapter_index u8][addr_type u8][addr[6]][value...] so the daemon
+ * can route the reply by (adapter, addr, addr_type).
+ */
+ATF_TC_WITHOUT_HEAD(security_reply_encoding);
+ATF_TC_BODY(security_reply_encoding, tc)
+{
+	ble_addr_t addr = {
+		.addr = { 0x11, 0x22, 0x33, 0x44, 0x55, 0x66 },
+		.addr_type = 1,
+		.adapter_index = 3,
+	};
+	ble_ctx_t *ctx;
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_MAX_PAYLOAD];
+	const uint8_t *b;
+	uint16_t type, domain;
+	size_t request_len;
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_features(ctx, daemon_fd, IPC_FEATURE_EVENTS);
+
+	ATF_REQUIRE_EQ(0, ble_passkey_reply(ctx, &addr, 424242));
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ATF_CHECK_EQ(IPC_T_OP_REQ, type);
+	ATF_CHECK_EQ(IPC_OP_DOMAIN_SECURITY, domain);
+	ATF_CHECK_EQ(IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_REQ_SIZE,
+	    request_len);
+	b = request + IPC_OP_PREFIX_SIZE;
+	ATF_CHECK_EQ(IPC_SECURITY_PASSKEY_REPLY, ipc_get_le16(b));
+	ATF_CHECK_EQ(addr.addr_type, b[4]);
+	ATF_CHECK_EQ(0, memcmp(b + 5, addr.addr, sizeof(addr.addr)));
+	ATF_CHECK_EQ(addr.adapter_index, b[11]);
+	ATF_CHECK_EQ(424242u, ipc_get_le32(b + 12));
+
+	ATF_REQUIRE_EQ(0, ble_numcmp_reply(ctx, &addr, true));
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ATF_CHECK_EQ(IPC_OP_PREFIX_SIZE + IPC_SECURITY_DECISION_REQ_SIZE,
+	    request_len);
+	b = request + IPC_OP_PREFIX_SIZE;
+	ATF_CHECK_EQ(IPC_SECURITY_NUMCMP_REPLY, ipc_get_le16(b));
+	ATF_CHECK_EQ(addr.addr_type, b[4]);
+	ATF_CHECK_EQ(0, memcmp(b + 5, addr.addr, sizeof(addr.addr)));
+	ATF_CHECK_EQ(1, b[12]);
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+/*
+ * Finding 34: ble_pending_count() lets a one-shot client await the correlated
+ * OP_REPLY of a fire-and-forget operation and observe its error, instead of
+ * exiting 0 unconditionally.
+ */
+ATF_TC_WITHOUT_HEAD(pending_count_drains_reply);
+ATF_TC_BODY(pending_count_drains_reply, tc)
+{
+	ble_addr_t addr = { .addr = { 1, 2, 3, 4, 5, 6 }, .addr_type = 0 };
+	ble_ctx_t *ctx;
+	uint8_t request[IPC_OP_PREFIX_SIZE + IPC_MAX_PAYLOAD];
+	uint32_t request_id;
+	uint16_t type, domain, status, flags;
+	size_t request_len;
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_features(ctx, daemon_fd, IPC_FEATURE_EVENTS);
+
+	/* A fire-and-forget disconnect leaves exactly one pending operation. */
+	ATF_REQUIRE_EQ(0, ble_disconnect(ctx, &addr));
+	ATF_CHECK_EQ(1u, ble_pending_count(ctx));
+	read_frame(daemon_fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ipc_op_prefix_decode(request, &request_id, &status, &flags);
+
+	/* A failing reply resolves the pending op and surfaces the error. */
+	ipc_op_prefix_encode(request, request_id, IPC_ERR_NOT_CONN, 0);
+	send_frame(daemon_fd, IPC_T_OP_REPLY, domain, request,
+	    IPC_OP_PREFIX_SIZE);
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(0u, ble_pending_count(ctx));
+	ATF_CHECK_EQ(BLE_ERR_NOTCONN, ble_errno(ctx));
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
+struct passkey_capture {
+	int calls;
+	uint32_t value;
+};
+
+static void
+drain_passkey_cb(const ble_addr_t *a __unused, uint32_t v, void *arg)
+{
+	struct passkey_capture *c = arg;
+
+	c->calls++;
+	c->value = v;
+}
+
+struct drain_daemon_args {
+	int fd;
+	const uint8_t *event_tail;
+	size_t event_tail_len;
+	uint16_t reply_domain;
+};
+
+static void *
+drain_daemon_thread(void *arg)
+{
+	struct drain_daemon_args *a = arg;
+	uint8_t request[256];
+	uint32_t request_id;
+	uint16_t type, domain, status, flags;
+	size_t request_len;
+
+	/* Read the synchronous request, then flush the partial event + reply. */
+	read_frame(a->fd, &type, &domain, request, sizeof(request),
+	    &request_len);
+	ipc_op_prefix_decode(request, &request_id, &status, &flags);
+	(void)send(a->fd, a->event_tail, a->event_tail_len, 0);
+	ipc_op_prefix_encode(request, request_id, IPC_ERR_NONE, 0);
+	send_frame(a->fd, IPC_T_OP_REPLY, a->reply_domain, request,
+	    IPC_OP_PREFIX_SIZE);
+	return (NULL);
+}
+
+/*
+ * Finding 32: a synchronous libble operation must drain bytes already buffered
+ * by a prior ble_process() before reading the socket.  Here ble_process()
+ * leaves a partial security event in the rx buffer; the following synchronous
+ * ble_eatt_open() must reassemble that event (firing its callback) and then
+ * read its own reply, rather than starting mid-frame and desyncing.
+ */
+ATF_TC_WITHOUT_HEAD(sync_op_drains_partial_frame);
+ATF_TC_BODY(sync_op_drains_partial_frame, tc)
+{
+	ble_addr_t addr = { .addr = { 9, 8, 7, 6, 5, 4 }, .addr_type = 0 };
+	ble_ctx_t *ctx;
+	struct passkey_capture cap = { 0, 0 };
+	uint8_t frame[IPC_HDR_SIZE + IPC_OP_PREFIX_SIZE +
+	    IPC_SECURITY_PASSKEY_EVENT_SIZE];
+	uint8_t *payload = frame + IPC_HDR_SIZE;
+	uint8_t *body = payload + IPC_OP_PREFIX_SIZE;
+	const size_t split = 12;	/* header + partial payload: leaves a partial */
+	struct drain_daemon_args args;
+	pthread_t thr;
+	int daemon_fd;
+
+	ctx = make_mock_ctx(&daemon_fd);
+	enable_features(ctx, daemon_fd, IPC_FEATURE_EVENTS);
+	ble_on_passkey_display(ctx, drain_passkey_cb, &cap);
+
+	/* Build a full PASSKEY_DISPLAY event frame (findings 28/29 layout). */
+	memset(frame, 0, sizeof(frame));
+	ipc_hdr_encode(frame, IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE,
+	    IPC_T_OP_EVENT, IPC_OP_DOMAIN_SECURITY);
+	ipc_op_prefix_encode(payload, 0, IPC_ERR_NONE, 0);
+	ipc_put_le16(body, IPC_SECURITY_EV_PASSKEY_DISPLAY);
+	body[2] = 0;			/* adapter_index */
+	body[3] = 0;			/* addr_type */
+	ipc_put_le32(body + 10, 246810);
+
+	/* Deliver only the first `split` bytes; ble_process buffers a partial. */
+	ATF_REQUIRE_EQ((ssize_t)split, send(daemon_fd, frame, split, 0));
+	ATF_REQUIRE_EQ(0, ble_process(ctx));
+	ATF_CHECK_EQ(0, cap.calls);	/* not yet complete */
+
+	/* The daemon completes the event and answers the sync request. */
+	args.fd = daemon_fd;
+	args.event_tail = frame + split;
+	args.event_tail_len = sizeof(frame) - split;
+	args.reply_domain = IPC_OP_DOMAIN_L2CAP;
+	ATF_REQUIRE_EQ(0, pthread_create(&thr, NULL, drain_daemon_thread,
+	    &args));
+
+	/* Synchronous op: must drain the buffered partial event first. */
+	ATF_REQUIRE_EQ(0, ble_eatt_open(ctx, &addr, 1));
+	ATF_REQUIRE_EQ(0, pthread_join(thr, NULL));
+
+	/* The buffered event was reassembled and dispatched, not lost/desynced. */
+	ATF_CHECK_EQ(1, cap.calls);
+	ATF_CHECK_EQ(246810u, cap.value);
+
+	close(daemon_fd);
+	ble_close(ctx);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, security_reply_encoding);
+	ATF_TP_ADD_TC(tp, pending_count_drains_reply);
+	ATF_TP_ADD_TC(tp, sync_op_drains_partial_frame);
 	ATF_TP_ADD_TC(tp, acquire_notify_typed);
 	ATF_TP_ADD_TC(tp, acquire_requires_fdpass);
 	ATF_TP_ADD_TC(tp, acquire_write_typed);

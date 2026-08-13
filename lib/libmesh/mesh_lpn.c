@@ -43,6 +43,7 @@ lpn_build_request(struct mesh_lpn_fsm *l, uint64_t now, struct mesh_lpn_out *out
 
 	l->lpn_counter++;
 	l->n_offers = 0;
+	l->poll_outstanding = 0;
 	l->offer_start_ms = now;
 	l->offer_deadline_ms = now + l->offer_window_ms;
 	l->state = MESH_LPN_ST_REQUESTING;
@@ -64,6 +65,7 @@ lpn_build_poll(struct mesh_lpn_fsm *l, struct mesh_lpn_out *out)
 	out->pdu_len = olen;
 	out->friend_addr = l->friend_addr;
 	out->action = MESH_LPN_ACT_SEND_POLL;
+	l->poll_outstanding = 1;		/* awaiting this Poll's response */
 	return (0);
 }
 
@@ -183,8 +185,22 @@ mesh_lpn_fsm_tick(struct mesh_lpn_fsm *l, uint64_t now, struct mesh_lpn_out *out
 			return (0);
 		}
 		if (now - l->next_poll_start_ms >=
-		    l->next_poll_ms - l->next_poll_start_ms)
+		    l->next_poll_ms - l->next_poll_start_ms) {
+			/*
+			 * Emit the due Poll and pace the next (re)transmission by
+			 * ReceiveDelay + ReceiveWindow so a due Poll is not
+			 * re-emitted every tick (poll storm; finding).  A
+			 * received Friend Update reschedules next_poll_ms to the
+			 * normal cadence; if no response arrives within the
+			 * window the Poll is retransmitted.
+			 */
+			uint32_t window = l->establish_window_ms != 0 ?
+			    l->establish_window_ms : 1;
+
+			l->next_poll_start_ms = now;
+			l->next_poll_ms = now + window;
 			return (lpn_build_poll(l, out));
+		}
 		return (0);
 
 	case MESH_LPN_ST_IDLE:
@@ -198,7 +214,7 @@ mesh_lpn_fsm_recv_update(struct mesh_lpn_fsm *l, const uint8_t *pdu, size_t len,
     uint64_t now, struct mesh_lpn_out *out)
 {
 	struct mesh_friend_update up;
-	int first;
+	int first, is_duplicate;
 
 	if (l == NULL || pdu == NULL || out == NULL)
 		return (-1);
@@ -220,8 +236,14 @@ mesh_lpn_fsm_recv_update(struct mesh_lpn_fsm *l, const uint8_t *pdu, size_t len,
 	l->iv_index = up.iv_index;
 	l->more_data = up.md ? 1 : 0;
 
-	/* The Update acknowledges the Poll: toggle FSN, advance supervision. */
-	(void)mesh_lpn_on_response(&l->cadence, 0, now);
+	/*
+	 * The Update acknowledges the outstanding Poll: toggle FSN and advance
+	 * supervision.  A second copy of the same response (no Poll outstanding)
+	 * is a duplicate and must not toggle the FSN again (Section 3.6.6.4.2).
+	 */
+	is_duplicate = !l->poll_outstanding;
+	l->poll_outstanding = 0;
+	(void)mesh_lpn_on_response(&l->cadence, is_duplicate, now);
 	l->next_poll_start_ms = now;
 	l->next_poll_ms = up.md ? now : now + l->poll_interval_ms;
 
@@ -239,7 +261,16 @@ mesh_lpn_fsm_on_message(struct mesh_lpn_fsm *l, int more_data, uint64_t now)
 	if (l->state != MESH_LPN_ST_ESTABLISHED)
 		return (-1);
 	l->more_data = more_data ? 1 : 0;
-	(void)mesh_lpn_on_response(&l->cadence, 0, now);
+	/*
+	 * A delivered message acknowledges the outstanding Poll (toggle FSN); a
+	 * duplicate copy arriving with no Poll outstanding does not (finding).
+	 */
+	{
+		int is_duplicate = !l->poll_outstanding;
+
+		l->poll_outstanding = 0;
+		(void)mesh_lpn_on_response(&l->cadence, is_duplicate, now);
+	}
 	l->next_poll_start_ms = now;
 	l->next_poll_ms = more_data ? now : now + l->poll_interval_ms;
 	return (0);

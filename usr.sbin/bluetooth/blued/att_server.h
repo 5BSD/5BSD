@@ -46,6 +46,11 @@ struct att_prepare_queue {
 #define ATT_PERM_READ_AUTHEN	0x10	/* requires authenticated encryption */
 #define ATT_PERM_WRITE_AUTHEN	0x20	/* requires authenticated encryption */
 
+/* Any write permission (plain / encrypted / authenticated). */
+#define ATT_PERM_IS_WRITABLE(p)	\
+	(((p) & (ATT_PERM_WRITE | ATT_PERM_WRITE_ENCRYPT | \
+	    ATT_PERM_WRITE_AUTHEN)) != 0)
+
 /*
  * Per-attribute application-backing flags (set at ADD_CHAR time).
  *

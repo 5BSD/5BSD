@@ -21,7 +21,9 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
+#include <time.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -11113,8 +11115,289 @@ ATF_TC_BODY(test_attdb_set_char_value, tc)
 	ATF_CHECK_EQ(-1, attdb_set_char_value(&db, 0x2A99, "x", 1));
 }
 
+/* ================================================================
+ * Round-2 client-path regression tests (findings 56, 62, 63, 64)
+ * ================================================================ */
+
+/* Shared capture for the unsolicited-PDU callback (finding 63). */
+static uint8_t	g_unsol_buf[ATT_MAX_MTU];
+static size_t	g_unsol_len;
+static int	g_unsol_calls;
+
+static void
+capture_unsolicited(struct att_conn *ac __unused, int fd __unused,
+    const uint8_t *pdu, size_t len, void *arg __unused)
+{
+
+	g_unsol_calls++;
+	g_unsol_len = len;
+	if (len > sizeof(g_unsol_buf))
+		len = sizeof(g_unsol_buf);
+	memcpy(g_unsol_buf, pdu, len);
+}
+
+/*
+ * Finding 62: att_conn_set_op_timeout() must cap att_request()'s deadline so a
+ * blocking ctl GATT op cannot stall for the full 30 s ATT transaction timeout
+ * against an unresponsive peer.  With a 300 ms cap the read must fail fast.
+ */
+ATF_TC_WITHOUT_HEAD(test_att_op_timeout_cap);
+ATF_TC_BODY(test_att_op_timeout_cap, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t val[16];
+	size_t outlen = 0;
+	struct timespec t0, t1;
+	double elapsed;
+	int ret;
+
+	signal(SIGPIPE, SIG_IGN);
+	att_mock_pair(&ac, &peer);
+	ac.mtu = ATT_DEFAULT_MTU;
+
+	att_conn_set_op_timeout(&ac, 300);	/* 300 ms cap */
+
+	clock_gettime(CLOCK_MONOTONIC, &t0);
+	ret = att_read(&ac, 0x0003, val, sizeof(val), &outlen);
+	clock_gettime(CLOCK_MONOTONIC, &t1);
+
+	ATF_CHECK_EQ(-1, ret);
+	elapsed = (t1.tv_sec - t0.tv_sec) + (t1.tv_nsec - t0.tv_nsec) / 1e9;
+	ATF_CHECK_MSG(elapsed < 5.0,
+	    "att_read must honour the 300 ms op-timeout cap, took %.2f s",
+	    elapsed);
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/*
+ * Finding 63: a notification arriving during att_exchange_mtu() must reach the
+ * unsolicited callback intact, not truncated to a 5-byte MTU-response buffer.
+ */
+ATF_TC_WITHOUT_HEAD(test_att_mtu_exchange_notification_intact);
+ATF_TC_BODY(test_att_mtu_exchange_notification_intact, tc)
+{
+	struct att_conn ac;
+	int peer;
+	pid_t pid;
+	int ret, status;
+
+	signal(SIGPIPE, SIG_IGN);
+	att_mock_pair(&ac, &peer);
+	ac.mtu = ATT_DEFAULT_MTU;
+	ac.unsolicited_cb = capture_unsolicited;
+	g_unsol_calls = 0;
+	g_unsol_len = 0;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		uint8_t req[16], ntf[20], rsp[3];
+
+		close(ac.fd);
+		if (recv(peer, req, sizeof(req), 0) < 3 ||
+		    req[0] != ATT_OP_MTU_REQ) {
+			close(peer);
+			_exit(1);
+		}
+		/* 20-byte notification FIRST — the old 5-byte buffer truncated
+		 * it; then the MTU response so the exchange still completes. */
+		ntf[0] = ATT_OP_HANDLE_NOTIFY;
+		ntf[1] = 0x05;
+		ntf[2] = 0x00;
+		memset(ntf + 3, 0xA5, sizeof(ntf) - 3);
+		if (send(peer, ntf, sizeof(ntf), MSG_EOR) != (ssize_t)sizeof(ntf)) {
+			close(peer);
+			_exit(2);
+		}
+		rsp[0] = ATT_OP_MTU_RSP;
+		rsp[1] = 0x17;		/* server MTU 23 */
+		rsp[2] = 0x00;
+		if (send(peer, rsp, sizeof(rsp), MSG_EOR) != (ssize_t)sizeof(rsp)) {
+			close(peer);
+			_exit(3);
+		}
+		close(peer);
+		_exit(0);
+	}
+
+	close(peer);
+	ret = att_exchange_mtu(&ac, ATT_DEFAULT_MTU);
+	ATF_CHECK_EQ_MSG(0, ret, "MTU exchange should still complete");
+	ATF_CHECK_MSG(g_unsol_calls >= 1,
+	    "notification should reach the unsolicited callback");
+	ATF_CHECK_EQ_MSG(20, g_unsol_len,
+	    "notification must not be truncated to the 5-byte buffer (got %zu)",
+	    g_unsol_len);
+
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	close(ac.fd);
+	free(ac.buf);
+}
+
+/*
+ * Finding 64: a legitimate burst of >16 notifications must fail only the one
+ * in-flight request, NOT permanently mark the primary bearer failed — the next
+ * request on the healthy link must succeed.
+ */
+ATF_TC_WITHOUT_HEAD(test_att_notification_burst_keeps_bearer);
+ATF_TC_BODY(test_att_notification_burst_keeps_bearer, tc)
+{
+	struct att_conn ac;
+	int peer;
+	pid_t pid;
+	uint8_t val[16];
+	size_t outlen = 0;
+	int r1, r2, status;
+
+	signal(SIGPIPE, SIG_IGN);
+	att_mock_pair(&ac, &peer);
+	ac.mtu = ATT_DEFAULT_MTU;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		uint8_t req[16], ntf[6], rsp[5];
+		int i;
+
+		close(ac.fd);
+		/* First request: bury it under 16 notifications, no response. */
+		if (recv(peer, req, sizeof(req), 0) < 3) {
+			close(peer);
+			_exit(1);
+		}
+		ntf[0] = ATT_OP_HANDLE_NOTIFY;
+		ntf[1] = 0x05;
+		ntf[2] = 0x00;
+		memset(ntf + 3, 0x11, 3);
+		for (i = 0; i < 16; i++) {
+			if (send(peer, ntf, sizeof(ntf), MSG_EOR) !=
+			    (ssize_t)sizeof(ntf)) {
+				close(peer);
+				_exit(2);
+			}
+		}
+		/* Second request: answer normally. */
+		if (recv(peer, req, sizeof(req), 0) < 3 ||
+		    req[0] != ATT_OP_READ_REQ) {
+			close(peer);
+			_exit(3);
+		}
+		rsp[0] = ATT_OP_READ_RSP;
+		rsp[1] = 0xDE;
+		rsp[2] = 0xAD;
+		rsp[3] = 0xBE;
+		rsp[4] = 0xEF;
+		if (send(peer, rsp, sizeof(rsp), MSG_EOR) != (ssize_t)sizeof(rsp)) {
+			close(peer);
+			_exit(4);
+		}
+		close(peer);
+		_exit(0);
+	}
+
+	close(peer);
+	errno = 0;
+	r1 = att_read(&ac, 0x0003, val, sizeof(val), &outlen);
+	ATF_CHECK_EQ_MSG(-1, r1, "burst request should fail");
+	ATF_CHECK_MSG(!ac.failed,
+	    "benign notification burst must not permanently fail the bearer");
+
+	outlen = 0;
+	errno = 0;
+	r2 = att_read(&ac, 0x0003, val, sizeof(val), &outlen);
+	ATF_CHECK_EQ_MSG(0, r2,
+	    "bearer must remain usable after a burst (errno=%d)", errno);
+	ATF_CHECK_EQ(4, outlen);
+
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	close(ac.fd);
+	free(ac.buf);
+}
+
+/*
+ * Finding 56: an EATT bearer with a larger negotiated MTU must be received at
+ * that MTU — a response longer than the small fixed-channel MTU must not be
+ * truncated to the fixed MTU.
+ */
+ATF_TC_WITHOUT_HEAD(test_att_eatt_response_not_truncated);
+ATF_TC_BODY(test_att_eatt_response_not_truncated, tc)
+{
+	struct att_conn ac;
+	int primary_fds[2], eatt_fds[2];
+	pid_t pid;
+	uint8_t val[600];
+	size_t outlen = 0;
+	int ret, status;
+
+	signal(SIGPIPE, SIG_IGN);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, primary_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, eatt_fds) == 0);
+
+	memset(&ac, 0, sizeof(ac));
+	ac.fd = primary_fds[0];
+	ac.bearer_fd = -1;
+	ac.mtu = 64;				/* small fixed-channel MTU */
+	ac.buf = malloc(ATT_MAX_MTU);
+	ATF_REQUIRE(ac.buf != NULL);
+	ac.eatt[0].fd = eatt_fds[0];		/* larger EATT CoC MTU */
+	ac.eatt[0].mtu = 512;
+	ac.eatt[0].active = true;
+	ac.eatt[0].pending = 0;
+	ac.eatt_count = 1;
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		uint8_t req[16], rsp[300];
+		ssize_t n;
+
+		close(primary_fds[0]);
+		close(eatt_fds[0]);
+		/* The request must be issued on the preferred EATT bearer. */
+		n = recv(eatt_fds[1], req, sizeof(req), 0);
+		if (n < 3 || req[0] != ATT_OP_READ_REQ) {
+			close(eatt_fds[1]);
+			_exit(1);
+		}
+		/* 300-byte Read Response — longer than the fixed MTU (64). */
+		rsp[0] = ATT_OP_READ_RSP;
+		memset(rsp + 1, 0x7E, sizeof(rsp) - 1);
+		if (send(eatt_fds[1], rsp, sizeof(rsp), MSG_EOR) !=
+		    (ssize_t)sizeof(rsp)) {
+			close(eatt_fds[1]);
+			_exit(2);
+		}
+		close(eatt_fds[1]);
+		close(primary_fds[1]);
+		_exit(0);
+	}
+
+	close(primary_fds[1]);
+	close(eatt_fds[1]);
+	errno = 0;
+	ret = att_read(&ac, 0x0003, val, sizeof(val), &outlen);
+	ATF_CHECK_EQ_MSG(0, ret, "EATT read should succeed (errno=%d)", errno);
+	ATF_CHECK_EQ_MSG(299, outlen,
+	    "EATT response must not be truncated to the fixed MTU (got %zu)",
+	    outlen);
+
+	waitpid(pid, &status, 0);
+	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	close(ac.fd);
+	close(eatt_fds[0]);
+	free(ac.buf);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, test_att_op_timeout_cap);
+	ATF_TP_ADD_TC(tp, test_att_mtu_exchange_notification_intact);
+	ATF_TP_ADD_TC(tp, test_att_notification_burst_keeps_bearer);
+	ATF_TP_ADD_TC(tp, test_att_eatt_response_not_truncated);
 	ATF_TP_ADD_TC(tp, test_att_bearer_failed_refuses_reuse);
 
 	/* ATT Client tests */

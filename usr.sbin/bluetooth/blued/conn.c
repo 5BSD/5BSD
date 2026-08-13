@@ -535,6 +535,32 @@ blued_conn_by_peer(const struct blued_adapter *adapter, const bdaddr_t *addr,
 	return (NULL);
 }
 
+bool
+blued_conn_addr_context(const bdaddr_t *addr, uint8_t *adapter_index,
+    uint8_t *addr_type)
+{
+	struct blued_conn *conn;
+	bool found = false;
+
+	if (addr == NULL)
+		return (false);
+	pthread_rwlock_rdlock(&blued_g.conns_lock);
+	LIST_FOREACH(conn, &blued_g.conns, entries) {
+		if (conn->adapter != NULL &&
+		    memcmp(&conn->dst, addr, sizeof(*addr)) == 0) {
+			if (adapter_index != NULL)
+				*adapter_index =
+				    (uint8_t)conn->adapter->index;
+			if (addr_type != NULL)
+				*addr_type = conn->addr_type;
+			found = true;
+			break;
+		}
+	}
+	pthread_rwlock_unlock(&blued_g.conns_lock);
+	return (found);
+}
+
 struct blued_conn *
 blued_conn_by_handle(const struct blued_adapter *adapter, uint16_t handle)
 {

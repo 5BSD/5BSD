@@ -861,6 +861,21 @@ blued_central_start_pairing(struct hogp_device *dev __unused,
 	return (ctl_test_start_pairing_rc);
 }
 
+/*
+ * Finding 33: REKEY/PAIR now dispatch pairing to a worker via
+ * blued_central_start_pairing_async().  The stub drives the sync stub inline so
+ * the existing REKEY/PAIR assertions (start_pairing_rc -> IPC_ERR_IO/NONE) keep
+ * their meaning; the real daemon runs it on a detached thread.
+ */
+int
+blued_central_start_pairing_async(struct blued_conn *conn)
+{
+
+	if (conn == NULL || conn->hogp == NULL)
+		return (-1);
+	return (blued_central_start_pairing(conn->hogp, conn));
+}
+
 int
 smp_bond_db_save(struct smp_bond_db *db __unused)
 {
@@ -882,6 +897,8 @@ static int	ctl_test_reslist_add_calls;
 static int	ctl_test_resolv_clear_rc;
 static int	ctl_test_resolv_add_rc;
 static int	ctl_test_resolv_remove_rc;
+static int	ctl_test_set_privacy_mode_rc;	/* finding 122 */
+static int	ctl_test_resolv_remove_calls;	/* finding 122: rollback counter */
 static int	ctl_test_oob_generate_rc;
 
 size_t
@@ -1052,6 +1069,7 @@ hci_le_remove_dev_resolving_list(int hci_fd __unused,
     uint8_t addr_type __unused, const uint8_t addr[6] __unused)
 {
 
+	ctl_test_resolv_remove_calls++;
 	return (ctl_test_resolv_remove_rc);
 }
 
@@ -1060,7 +1078,7 @@ hci_le_set_privacy_mode(int hci_fd __unused, uint8_t addr_type __unused,
     const uint8_t addr[6] __unused, uint8_t mode __unused)
 {
 
-	return (0);
+	return (ctl_test_set_privacy_mode_rc);
 }
 
 int
@@ -1111,7 +1129,7 @@ test_init(void)
 	pthread_rwlock_init(&blued_g.conns_lock, NULL);
 	pthread_mutex_init(&blued_g.bond_db_lock, NULL);
 	pthread_mutex_init(&blued_g.gatt_db_lock, NULL);
-	pthread_mutex_init(&blued_g.ctl_clients_lock, NULL);
+	blued_ctl_clients_lock_init(&blued_g.ctl_clients_lock);
 	ctl_test_smp_open_rc = -1;
 	ctl_test_smp_pair_rc = -1;
 	ctl_test_wait_encryption_rc = -1;
@@ -1759,7 +1777,7 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 	    sizeof(read_auth), read_ok, sizeof(read_ok) };
 	ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
 	    ctl_att_retry_responder, &exchange));
-	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_read_result(0, &addr, 1, 0x25,
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_read_result(conn, 0, &addr, 1, 0x25,
 	    value, sizeof(value), &value_len));
 	ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
 	ATF_CHECK_EQ(2, value_len);
@@ -1772,7 +1790,7 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 	    sizeof(write_auth), write_ok, sizeof(write_ok) };
 	ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
 	    ctl_att_retry_responder, &exchange));
-	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_write_result(0, &addr, 1, 0x25,
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_write_result(conn, 0, &addr, 1, 0x25,
 	    value, 2, false));
 	ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
 
@@ -1786,7 +1804,7 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 	    sizeof(read_auth), read_ok, sizeof(read_ok) };
 	ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
 	    ctl_att_retry_responder, &exchange));
-	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_read_result(0, &addr, 1, 0x25,
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_read_result(conn, 0, &addr, 1, 0x25,
 	    value, sizeof(value), &value_len));
 	ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
 	ATF_CHECK(att.encrypted);
@@ -1799,7 +1817,7 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 	ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
 	    ctl_att_retry_responder, &exchange));
 	ctl_test_discovery_records = 0;
-	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_discover_result(0, &addr, 1,
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_gatt_discover_result(conn, 0, &addr, 1,
 	    ctl_test_discovery_cb, NULL));
 	ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
 	ATF_CHECK_EQ(0, ctl_test_discovery_records);
@@ -1810,7 +1828,7 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 	    sizeof(discover_invalid), NULL, 0 };
 	ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
 	    ctl_att_retry_responder, &exchange));
-	ATF_CHECK_EQ(IPC_ERR_IO, ctl_gatt_discover_result(0, &addr, 1,
+	ATF_CHECK_EQ(IPC_ERR_IO, ctl_gatt_discover_result(conn, 0, &addr, 1,
 	    ctl_test_discovery_cb, NULL));
 	ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
 
@@ -1818,7 +1836,7 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 	ctl_test_smp_open_rc = -1;
 	ATF_REQUIRE_EQ((ssize_t)sizeof(read_auth),
 	    send(att_pair[1], read_auth, sizeof(read_auth), 0));
-	ATF_CHECK_EQ(IPC_ERR_IO, ctl_gatt_read_result(0, &addr, 1, 0x25,
+	ATF_CHECK_EQ(IPC_ERR_IO, ctl_gatt_read_result(conn, 0, &addr, 1, 0x25,
 	    value, sizeof(value), &value_len));
 	/* Every elevation stage may fail independently.  In each case the first
 	 * ATT security error is returned as a bounded control I/O failure and no
@@ -1827,21 +1845,22 @@ ATF_TC_BODY(test_ctl_gatt_security_retry, tc)
 	ctl_test_smp_pair_rc = -1;
 	ATF_REQUIRE_EQ((ssize_t)sizeof(read_auth),
 	    send(att_pair[1], read_auth, sizeof(read_auth), 0));
-	ATF_CHECK_EQ(IPC_ERR_IO, ctl_gatt_read_result(0, &addr, 1, 0x25,
+	ATF_CHECK_EQ(IPC_ERR_IO, ctl_gatt_read_result(conn, 0, &addr, 1, 0x25,
 	    value, sizeof(value), &value_len));
 	ctl_test_smp_pair_rc = 0;
 	ctl_test_wait_encryption_rc = -1;
 	ATF_REQUIRE_EQ((ssize_t)sizeof(read_auth),
 	    send(att_pair[1], read_auth, sizeof(read_auth), 0));
-	ATF_CHECK_EQ(IPC_ERR_IO, ctl_gatt_read_result(0, &addr, 1, 0x25,
+	ATF_CHECK_EQ(IPC_ERR_IO, ctl_gatt_read_result(conn, 0, &addr, 1, 0x25,
 	    value, sizeof(value), &value_len));
 	ctl_test_wait_encryption_rc = 0;
-	conn->adapter = NULL;
-	ATF_REQUIRE_EQ((ssize_t)sizeof(read_auth),
-	    send(att_pair[1], read_auth, sizeof(read_auth), 0));
-	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, ctl_gatt_read_result(0, &addr, 1, 0x25,
-	    value, sizeof(value), &value_len));
-	conn->adapter = &adp;
+	/*
+	 * Finding 90: the worker operates on the admitted conn, not an address
+	 * re-lookup, so a NULL job_conn (or one whose att is gone) is the
+	 * NOT_CONN case.
+	 */
+	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, ctl_gatt_read_result(NULL, 0, &addr, 1,
+	    0x25, value, sizeof(value), &value_len));
 
 	conn->att = NULL;
 	blued_conn_free(conn);
@@ -2694,6 +2713,8 @@ dispatch_domain_request(struct blued_ctl_client *client, int peer_fd,
 	uint16_t type, got_domain, status, flags;
 	size_t plen;
 
+	/* Operations require a completed HELLO handshake (finding 35). */
+	client->handshaked = true;
 	ATF_REQUIRE(body_len <= sizeof(req) - IPC_OP_PREFIX_SIZE);
 	request_id = ++ipc_test_request_id;
 	ipc_op_prefix_encode(req, request_id, 0, 0);
@@ -2720,6 +2741,8 @@ dispatch_gatt_handle_request(struct blued_ctl_client *client, int peer_fd,
 	uint16_t type, domain, status, flags;
 	size_t plen;
 
+	/* Operations require a completed HELLO handshake (finding 35). */
+	client->handshaked = true;
 	ATF_REQUIRE(body_len <= sizeof(req) - IPC_OP_PREFIX_SIZE);
 	request_id = ++ipc_test_request_id;
 	ipc_op_prefix_encode(req, request_id, 0, 0);
@@ -4223,31 +4246,32 @@ ATF_TC_BODY(test_ctl_gatt_result_matrix, tc)
 	memset(&client, 0, sizeof(client));
 	memset(&addr, 0, sizeof(addr));
 
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_read_result(0, NULL, 0, 1,
+	/* Finding 90: job_conn is the first argument; NULL is the NOT_CONN case. */
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_read_result(NULL, 0, NULL, 0, 1,
 	    value, sizeof(value), &value_len));
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_read_result(0, &addr, 0, 0,
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_read_result(NULL, 0, &addr, 0, 0,
 	    value, sizeof(value), &value_len));
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_read_result(0, &addr, 0, 1,
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_read_result(NULL, 0, &addr, 0, 1,
 	    NULL, sizeof(value), &value_len));
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_read_result(0, &addr, 0, 1,
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_read_result(NULL, 0, &addr, 0, 1,
 	    value, sizeof(value), NULL));
-	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, ctl_gatt_read_result(0, &addr, 0, 1,
+	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, ctl_gatt_read_result(NULL, 0, &addr, 0, 1,
 	    value, sizeof(value), &value_len));
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_write_result(0, NULL, 0, 1,
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_write_result(NULL, 0, NULL, 0, 1,
 	    value, sizeof(value), false));
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_write_result(0, &addr, 0, 0,
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_write_result(NULL, 0, &addr, 0, 0,
 	    value, sizeof(value), false));
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_write_result(0, &addr, 0, 1,
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_write_result(NULL, 0, &addr, 0, 1,
 	    NULL, 1, false));
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_write_result(0, &addr, 0, 1,
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_write_result(NULL, 0, &addr, 0, 1,
 	    oversized_value, sizeof(oversized_value), false));
-	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, ctl_gatt_write_result(0, &addr, 0, 1,
+	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, ctl_gatt_write_result(NULL, 0, &addr, 0, 1,
 	    value, sizeof(value), false));
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_discover_result(0, NULL, 0,
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_discover_result(NULL, 0, NULL, 0,
 	    NULL, NULL));
 
-	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_subscribe_result(-1, 0, 0, NULL,
-	    0, 1, true));
+	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_gatt_subscribe_result(NULL, -1, 0, 0,
+	    NULL, 0, 1, true));
 
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_gatt_commit_result(10));
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_gatt_rollback_result(10));
@@ -4943,8 +4967,8 @@ ATF_TC_BODY(test_ctl_gatt_subscribe_routes_before_cccd_response, tc)
 	exchange.conn = conn;
 	ATF_REQUIRE_EQ(0, pthread_create(&responder, NULL,
 	    ctl_cccd_notify_responder, &exchange));
-	status = ctl_gatt_subscribe_result(client->fd, client->generation, 0,
-	    &peer, BDADDR_LE_PUBLIC, 3, true);
+	status = ctl_gatt_subscribe_result(conn, client->fd, client->generation,
+	    0, &peer, BDADDR_LE_PUBLIC, 3, true);
 	ATF_REQUIRE_EQ_MSG(IPC_ERR_NONE, status, "subscribe status=%d", status);
 	ATF_REQUIRE_EQ(0, pthread_join(responder, NULL));
 	ATF_CHECK(exchange.injected);
@@ -5595,6 +5619,17 @@ ATF_TC_BODY(test_typed_security_valid_matrix, tc)
 	ATF_CHECK_EQ(IPC_ERR_IO, dispatch_domain_request(client, sp[1],
 	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_RESOLV_REQ_SIZE));
 	ctl_test_resolv_add_rc = 0;
+	/*
+	 * Finding 122: RESOLV_ADD whose Set Privacy Mode step fails must NOT be
+	 * reported as success, and the just-added resolving-list entry must be
+	 * rolled back (removed) so the shadow and controller stay consistent.
+	 */
+	ctl_test_set_privacy_mode_rc = -1;
+	ctl_test_resolv_remove_calls = 0;
+	ATF_CHECK_EQ(IPC_ERR_IO, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, IPC_SECURITY_RESOLV_REQ_SIZE));
+	ATF_CHECK(ctl_test_resolv_remove_calls > 0);
+	ctl_test_set_privacy_mode_rc = 0;
 	body[12] = 0;
 	ipc_put_le16(body, IPC_SECURITY_RESOLV_REMOVE);
 	ctl_test_resolv_remove_rc = -1;
@@ -7108,6 +7143,8 @@ ATF_TC_BODY(test_ipc_framing_guard_matrix, tc)
 
 	test_init();
 	client = make_client(sp);
+	/* Operations require a completed HELLO handshake (finding 35). */
+	client->handshaked = true;
 
 	/* A short operation envelope and every invalid prefix field fail closed. */
 	ipc_send_raw(sp[1], IPC_T_OP_REQ, IPC_OP_DOMAIN_CTL, NULL, 0);
@@ -7315,9 +7352,378 @@ ATF_TC_BODY(test_ctl_internal_whitebox_completion, tc)
 	ATF_CHECK_EQ(0, ptap_ctl_internal_completion());
 }
 
+/*
+ * finding 35: an OP_REQ from a client that never completed the HELLO
+ * handshake is rejected with IPC_T_ERROR/IPC_ERR_PROTO and never dispatched;
+ * after a successful handshake the same request is accepted.
+ */
+ATF_TC_WITHOUT_HEAD(test_finding35_handshake_gate);
+ATF_TC_BODY(test_finding35_handshake_gate, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	char feat[128], reply[128];
+	uint8_t req[IPC_OP_PREFIX_SIZE + IPC_CTL_REQ_SIZE];
+	uint16_t type, arg;
+	int sp[2];
+
+	test_init();
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	adp.active = true;
+	adp.powered = true;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	client = make_client(sp);
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+	ATF_CHECK(!client->handshaked);
+
+	/* Unhandshaked OP_REQ (STATUS) is rejected before dispatch. */
+	memset(req, 0, sizeof(req));
+	ipc_op_prefix_encode(req, 0x11111111u, 0, 0);
+	ipc_ctl_req_encode(req + IPC_OP_PREFIX_SIZE, IPC_CTL_STATUS, 0, 0, 0);
+	ipc_send_raw(sp[1], IPC_T_OP_REQ, IPC_OP_DOMAIN_CTL, req, sizeof(req));
+	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
+	(void)ipc_recv(sp[1], &type, &arg, reply, sizeof(reply));
+	ATF_CHECK_EQ(type, IPC_T_ERROR);
+	ATF_CHECK_EQ(arg, IPC_ERR_PROTO);
+	ATF_CHECK(!client->handshaked);
+
+	/* After a HELLO handshake, the same request is dispatched. */
+	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	    feat, sizeof(feat));
+	ipc_op_prefix_encode(req, 0x22222222u, 0, 0);
+	ipc_ctl_req_encode(req + IPC_OP_PREFIX_SIZE, IPC_CTL_STATUS, 0, 0, 0);
+	ipc_send_raw(sp[1], IPC_T_OP_REQ, IPC_OP_DOMAIN_CTL, req, sizeof(req));
+	ATF_CHECK_EQ(blued_ctl_dispatch(client), 0);
+	(void)ipc_recv(sp[1], &type, &arg, reply, sizeof(reply));
+	ATF_CHECK_EQ(type, IPC_T_OP_REPLY);
+	ATF_CHECK_EQ(arg, IPC_OP_DOMAIN_CTL);
+
+	LIST_REMOVE(client, entries);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
+/*
+ * finding 28: the security event body carries the adapter index and the peer
+ * address type, derived from the live connection, so a random-address peer can
+ * be answered.  Layout: [event u16][adapter u8][addr_type u8][addr[6]][value].
+ */
+ATF_TC_WITHOUT_HEAD(test_finding28_security_event_layout);
+ATF_TC_BODY(test_finding28_security_event_layout, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	struct blued_conn *conn;
+	char feat[128], pl[128];
+	bdaddr_t addr;
+	uint16_t type, arg;
+	size_t plen;
+	int sp[2];
+
+	test_init();
+	ATF_REQUIRE(bt_aton("aa:bb:cc:dd:ee:ff", &addr));
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 3;
+	adp.active = true;
+	adp.powered = true;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->adapter = &adp;
+	conn->dst = addr;
+	conn->addr_type = BDADDR_LE_RANDOM;
+
+	client = make_client(sp);
+	client->wants_events = true;
+	client->peer_known = true;
+	client->peer_uid = 0;
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	    feat, sizeof(feat));
+
+	blued_ctl_passkey_display(&addr, 123456);
+
+	plen = ipc_recv(sp[1], &type, &arg, pl, sizeof(pl));
+	ATF_CHECK_EQ(type, IPC_T_OP_EVENT);
+	ATF_CHECK_EQ(arg, IPC_OP_DOMAIN_SECURITY);
+	ATF_REQUIRE_EQ(plen,
+	    IPC_OP_PREFIX_SIZE + IPC_SECURITY_PASSKEY_EVENT_SIZE);
+	{
+		const uint8_t *body = (const uint8_t *)pl + IPC_OP_PREFIX_SIZE;
+
+		ATF_CHECK_EQ(ipc_get_le16(body), IPC_SECURITY_EV_PASSKEY_DISPLAY);
+		ATF_CHECK_EQ(body[2], 3);	/* adapter_index */
+		ATF_CHECK_EQ(body[3], 1);	/* addr_type: random -> IPC 1 */
+		ATF_CHECK(memcmp(body + 4, &addr, sizeof(addr)) == 0);
+		ATF_CHECK_EQ(ipc_get_le32(body + 10), 123456u);
+	}
+
+	LIST_REMOVE(client, entries);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
+/*
+ * finding 31: a wildcard SUBSCRIBE (all-zero address, handle 0) registers a
+ * "monitor all connections" route, and blued_ctl_notify_value then mirrors a
+ * notification of any handle to the monitoring client.
+ */
+ATF_TC_WITHOUT_HEAD(test_finding31_wildcard_subscribe);
+ATF_TC_BODY(test_finding31_wildcard_subscribe, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	struct blued_conn conn;
+	uint8_t body[IPC_GATT_REQ_SIZE], val[3] = { 0x01, 0x02, 0x03 };
+	char feat[128], pl[128];
+	bdaddr_t addr;
+	uint16_t type, arg;
+	size_t plen;
+	int sp[2];
+
+	test_init();
+	ATF_REQUIRE(bt_aton("01:02:03:04:05:06", &addr));
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	client = make_client(sp);
+	client->wants_events = true;
+	client->peer_known = true;
+	client->peer_uid = 0;
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+	ipc_handshake(client, sp[1], IPC_PROTO_VERSION, IPC_FEATURE_EVENTS,
+	    feat, sizeof(feat));
+
+	/* Wildcard subscribe: opcode only, address and handle all zero. */
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_GATT_SUBSCRIBE);
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_GATT, body, sizeof(body)));
+	ATF_CHECK_EQ(client->nsubs, 1);
+	ATF_CHECK_EQ(client->subs[0].handle, 0);
+
+	/* A notification of an arbitrary handle reaches the monitor. */
+	memset(&conn, 0, sizeof(conn));
+	conn.adapter = &adp;
+	conn.dst = addr;
+	conn.addr_type = BDADDR_LE_PUBLIC;
+	blued_ctl_notify_value(&conn, 0x0020, val, sizeof(val), 23);
+
+	plen = ipc_recv(sp[1], &type, &arg, pl, sizeof(pl));
+	ATF_CHECK_EQ(type, IPC_T_OP_EVENT);
+	ATF_CHECK_EQ(arg, IPC_OP_DOMAIN_GATT);
+	ATF_REQUIRE_EQ(plen, IPC_OP_PREFIX_SIZE + IPC_GATT_NOTIFY_EVENT_SIZE +
+	    sizeof(val));
+	ATF_CHECK_EQ(ipc_get_le16((const uint8_t *)pl + IPC_OP_PREFIX_SIZE + 9),
+	    0x0020);
+
+	/* Wildcard unsubscribe removes the monitor route. */
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_GATT_UNSUBSCRIBE);
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_GATT, body, sizeof(body)));
+	ATF_CHECK_EQ(client->nsubs, 0);
+
+	LIST_REMOVE(client, entries);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
+/*
+ * finding 37: IPC_SECURITY_PAIR initiates pairing rather than reporting a bare
+ * "connection exists" success.  No connection -> NOT_CONN; an unencrypted
+ * peripheral link cannot self-initiate -> PERM; an already-encrypted link ->
+ * NONE (already secure).
+ */
+ATF_TC_WITHOUT_HEAD(test_finding37_pair_initiates);
+ATF_TC_BODY(test_finding37_pair_initiates, tc)
+{
+	struct blued_ctl_client *client;
+	struct blued_adapter adp;
+	struct blued_conn *conn;
+	struct att_conn att;
+	uint8_t body[IPC_SECURITY_REQ_SIZE];
+	bdaddr_t addr;
+	int sp[2];
+
+	test_init();
+	ATF_REQUIRE(bt_aton("0a:0b:0c:0d:0e:0f", &addr));
+	memset(&adp, 0, sizeof(adp));
+	adp.index = 0;
+	adp.active = true;
+	adp.powered = true;
+	LIST_INSERT_HEAD(&blued_g.adapters, &adp, entries);
+	client = make_client(sp);
+	client->peer_known = true;
+	client->peer_uid = 0;
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+
+	/* No connection for this peer: NOT_CONN. */
+	memset(body, 0, sizeof(body));
+	ipc_put_le16(body, IPC_SECURITY_PAIR);
+	memcpy(body + 5, &addr, sizeof(addr));
+	ATF_CHECK_EQ(IPC_ERR_NOT_CONN, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, sizeof(body)));
+
+	/* Unencrypted peripheral link cannot self-initiate pairing: PERM. */
+	memset(&att, 0, sizeof(att));
+	att.fd = -1;
+	att.encrypted = false;
+	conn = blued_conn_alloc();
+	ATF_REQUIRE(conn != NULL);
+	conn->adapter = &adp;
+	conn->dst = addr;
+	conn->addr_type = BDADDR_LE_PUBLIC;
+	conn->role = BLUED_ROLE_PERIPHERAL;
+	conn->att = &att;
+	ATF_CHECK_EQ(IPC_ERR_PERM, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, sizeof(body)));
+
+	/* Already-encrypted link: nothing to do, reported as success. */
+	att.encrypted = true;
+	ATF_CHECK_EQ(IPC_ERR_NONE, dispatch_domain_request(client, sp[1],
+	    IPC_OP_DOMAIN_SECURITY, body, sizeof(body)));
+
+	conn->att = NULL;
+	LIST_REMOVE(client, entries);
+	close(sp[0]);
+	close(sp[1]);
+	free(client);
+}
+
+/*
+ * Finding 30/88 (lock-reacquisition class).  ctl_clients_lock is initialised
+ * recursive so a dispatch that holds it across the verb handler survives a
+ * helper that re-acquires it (DISCONNECT/STATUS/POWER paths).  These wrappers
+ * carry no_thread_safety_analysis because the whole point is an intentional
+ * same-thread nested lock the static analyser would otherwise reject.
+ */
+static int tsa_lock(void) __attribute__((no_thread_safety_analysis));
+static int
+tsa_lock(void)
+{
+	return (pthread_mutex_lock(&blued_g.ctl_clients_lock));
+}
+
+static int tsa_unlock(void) __attribute__((no_thread_safety_analysis));
+static int
+tsa_unlock(void)
+{
+	return (pthread_mutex_unlock(&blued_g.ctl_clients_lock));
+}
+
+static void *ctl_lock_trylock_probe(void *arg)
+    __attribute__((no_thread_safety_analysis));
+static void *
+ctl_lock_trylock_probe(void *arg)
+{
+	int *rc = arg;
+
+	*rc = pthread_mutex_trylock(&blued_g.ctl_clients_lock);
+	if (*rc == 0)
+		(void)pthread_mutex_unlock(&blued_g.ctl_clients_lock);
+	return (NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(dispatch_lock_recursive_holds_across_reacquire);
+ATF_TC_BODY(dispatch_lock_recursive_holds_across_reacquire, tc)
+{
+	pthread_t probe;
+	int rc;
+
+	test_init();
+
+	/* Outer acquire (as dispatch does before running a verb handler). */
+	ATF_REQUIRE_EQ(0, tsa_lock());
+	/*
+	 * Inner re-acquire (as a DISCONNECT/STATUS/POWER helper does).  On a
+	 * plain ERRORCHECK mutex this would return EDEADLK; recursion returns 0.
+	 */
+	ATF_CHECK_EQ(0, tsa_lock());
+	/* The inner unlock must NOT release the mutex — the original bug. */
+	ATF_CHECK_EQ(0, tsa_unlock());
+
+	rc = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&probe, NULL,
+	    ctl_lock_trylock_probe, &rc));
+	ATF_REQUIRE_EQ(0, pthread_join(probe, NULL));
+	/* Still held by this thread: another thread's trylock must fail. */
+	ATF_CHECK(rc != 0);
+
+	/* Outer unlock now truly releases it. */
+	ATF_CHECK_EQ(0, tsa_unlock());
+	rc = -1;
+	ATF_REQUIRE_EQ(0, pthread_create(&probe, NULL,
+	    ctl_lock_trylock_probe, &rc));
+	ATF_REQUIRE_EQ(0, pthread_join(probe, NULL));
+	ATF_CHECK_EQ(0, rc);
+}
+
+/*
+ * Finding 30/88: a dispatch-reachable helper that re-acquires ctl_clients_lock
+ * (here blued_ctl_broadcast_conn_event, on the DISCONNECT path) must complete
+ * and deliver its frame while the caller already holds the lock — proving the
+ * critical section is not shredded by the inner lock/unlock.
+ */
+ATF_TC_WITHOUT_HEAD(dispatch_broadcast_under_held_lock);
+ATF_TC_BODY(dispatch_broadcast_under_held_lock, tc)
+{
+	struct blued_ctl_client *client;
+	int sp[2];
+	uint8_t feat[8] = { 0 };
+	bdaddr_t addr;
+	uint8_t payload[IPC_MAX_PAYLOAD];
+	uint16_t type, arg;
+	ssize_t len;
+
+	test_init();
+	memset(&addr, 0x11, sizeof(addr));
+	client = make_client(sp);
+	client->peer_uid = 0;
+	LIST_INSERT_HEAD(&blued_g.ctl_clients, client, entries);
+	ipc_handshake(client, sp[1], IPC_PROTO_VERSION,
+	    IPC_FEATURE_EVENTS, feat, sizeof(feat));
+
+	/* Simulate dispatch holding the lock across the verb handler. */
+	ATF_REQUIRE_EQ(0, tsa_lock());
+	blued_ctl_broadcast_conn_event(&addr, BLUED_ROLE_CENTRAL, 1, 0,
+	    0x40, 0, false, 0x13);
+	/* The lock must still be held (recursion preserved it). */
+	{
+		int trc;
+		pthread_t probe;
+
+		trc = 0;
+		ATF_REQUIRE_EQ(0, pthread_create(&probe, NULL,
+		    ctl_lock_trylock_probe, &trc));
+		ATF_REQUIRE_EQ(0, pthread_join(probe, NULL));
+		ATF_CHECK(trc != 0);
+	}
+	ATF_REQUIRE_EQ(0, tsa_unlock());
+
+	/* The DISCONNECTED event was actually delivered to the subscriber. */
+	len = ipc_recv(sp[1], &type, &arg, payload, sizeof(payload));
+	ATF_CHECK(len > 0);
+	ATF_CHECK_EQ(IPC_T_OP_EVENT, type);
+	ATF_CHECK_EQ(IPC_OP_DOMAIN_GAP, arg);
+	ATF_CHECK_EQ(IPC_GAP_EV_DISCONNECTED,
+	    ipc_get_le16((uint8_t *)payload + IPC_OP_PREFIX_SIZE));
+
+	LIST_REMOVE(client, entries);
+	close(sp[0]);
+	close(sp[1]);
+	blued_ctl_client_fini(client);
+	free(client);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, dispatch_lock_recursive_holds_across_reacquire);
+	ATF_TP_ADD_TC(tp, dispatch_broadcast_under_held_lock);
 	ATF_TP_ADD_TC(tp, test_ipc_hello_match);
 	ATF_TP_ADD_TC(tp, test_ipc_hello_version_mismatch);
 	ATF_TP_ADD_TC(tp, test_ipc_feature_negotiation);
@@ -7418,6 +7824,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_ipc_framing_guard_matrix);
 	ATF_TP_ADD_TC(tp, test_typed_adv_periodic_l2cap_guards);
 	ATF_TP_ADD_TC(tp, test_ctl_internal_whitebox_completion);
+	ATF_TP_ADD_TC(tp, test_finding35_handshake_gate);
+	ATF_TP_ADD_TC(tp, test_finding28_security_event_layout);
+	ATF_TP_ADD_TC(tp, test_finding31_wildcard_subscribe);
+	ATF_TP_ADD_TC(tp, test_finding37_pair_initiates);
 
 	return (atf_no_error());
 }

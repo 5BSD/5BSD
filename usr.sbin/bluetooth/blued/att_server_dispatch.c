@@ -310,8 +310,22 @@ handle_read_by_type(struct att_conn *ac, struct att_db *db,
 		return att_send_error(ac, ATT_OP_READ_BY_TYPE_REQ, 0,
 		    ATT_ERR_INVALID_PDU);
 	}
-	if (uuid16 == 0)
+	/*
+	 * att_extract_uuid() reports uuid16 == 0 for BOTH a genuine 16-octet
+	 * UUID (uuid128 populated) AND a 2-octet Attribute Type whose value is
+	 * literally 0x0000 (uuid128 left uninitialised).  Only the former is a
+	 * 128-bit compare; a real 0x0000 2-octet type is malformed and must be
+	 * rejected as Invalid PDU (like the sibling group-type handler) instead
+	 * of matching against an uninitialised stack uuid128.
+	 */
+	if (uuid16 == 0) {
+		if (uuid_len == 2) {
+			ATT_RSP_BUF_FREE();
+			return att_send_error(ac, ATT_OP_READ_BY_TYPE_REQ, 0,
+			    ATT_ERR_INVALID_PDU);
+		}
 		use_uuid128 = true;
+	}
 
 	if (start == 0 || start > end) {
 		ATT_RSP_BUF_FREE();
@@ -932,6 +946,24 @@ handle_write(struct att_conn *ac, struct att_db *db,
 	    a->uuid16 != GATT_UUID_CCCD) {
 		int rc;
 
+		/*
+		 * The deferred-write holding buffer is ATT_PEND_WVAL_MAX octets,
+		 * which is also the maximum ATT attribute value length (Core Spec
+		 * Vol 3 Part F §3.2.9).  A write longer than that cannot be
+		 * retained for authorization; truncating it and then returning a
+		 * success Write Response would silently store fewer octets than
+		 * the client sent.  Reject with Invalid Attribute Value Length
+		 * instead (this fires only if a characteristic registered a
+		 * value_maxlen above ATT_PEND_WVAL_MAX and the write passed that
+		 * larger maxlen check above).
+		 */
+		if (vlen > ATT_PEND_WVAL_MAX) {
+			if (with_response)
+				return att_send_error(ac, ATT_OP_WRITE_REQ,
+				    handle, ATT_ERR_INVALID_ATTR_LEN);
+			return (0);
+		}
+
 		rc = att_begin_defer(ac, ATT_PEND_AUTH_WRITE,
 		    with_response ? ATT_OP_WRITE_REQ : ATT_OP_WRITE_CMD,
 		    handle, 0, a->owner_fd);
@@ -939,8 +971,7 @@ handle_write(struct att_conn *ac, struct att_db *db,
 			struct att_pending *p = &ac->pending;
 
 			p->with_response = with_response;
-			p->wlen = vlen > ATT_PEND_WVAL_MAX ?
-			    ATT_PEND_WVAL_MAX : vlen;
+			p->wlen = vlen;
 			memcpy(p->wval, pdu + 3, p->wlen);
 			blued_ctl_notify_authorize(a->owner_fd, handle, true,
 			    ac);

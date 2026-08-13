@@ -461,6 +461,13 @@ int	mesh_lpn_select_offer(const struct mesh_friend_offer *offers, size_t n,
  * in time.  It owns one struct mesh_friend_queue (Section 3.6.6.4).
  * ================================================================ */
 
+/*
+ * Establishment window (MshPRT_v1.1 Section 3.6.6.3.1): the friendship is
+ * established only if the first Friend Poll arrives within 1 s of the Friend
+ * Offer.  ESTABLISHING expires after this with no established friendship.
+ */
+#define	MESH_FRIEND_ESTABLISH_TIMEOUT_MS	1000u
+
 /* Friendship phase (Section 3.6.5 / 3.6.6.4.1). */
 enum mesh_friend_fsm_state {
 	MESH_FRIEND_ST_IDLE = 0,	/* no friendship, no pending offer */
@@ -514,6 +521,7 @@ struct mesh_friend_fsm {
 	uint64_t			offer_start_ms;
 	uint32_t			offer_delay_ms;
 	uint64_t			offer_at_ms;	/* when to emit the Offer */
+	uint64_t			offer_sent_ms;	/* Offer emitted; ESTABLISHING start */
 	uint64_t			last_poll_ms;	/* last Poll received */
 
 	struct mesh_friend_offer	offer;		/* the pending Offer contents */

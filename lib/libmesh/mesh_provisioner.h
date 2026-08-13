@@ -175,8 +175,19 @@ enum mesh_prov_link_state {
 	MESH_LINK_CLOSED = 0,
 	MESH_LINK_OPENING,	/* provisioner: Link Open sent, awaiting Link Ack */
 	MESH_LINK_OPEN,		/* link established */
-	MESH_LINK_FAILED,	/* retransmission budget exhausted */
+	MESH_LINK_FAILED,	/* retransmission budget exhausted / timed out */
 };
+
+/*
+ * Mandatory PB-ADV provisioning timers (MshPRT_v1.1 Section 5.3.1.4.1 /
+ * 5.4.4).  All three are 60 s: the link-establishment timer (Provisioner:
+ * Link Open to Link Ack), the link timer (no bearer PDU received on an open
+ * link) and the provisioning protocol timer (no Provisioning PDU delivered).
+ * A silent peer trips one of these and the link is declared FAILED.
+ */
+#define	MESH_PROV_LINK_ESTABLISH_TIMEOUT_MS	60000
+#define	MESH_PROV_LINK_TIMEOUT_MS		60000
+#define	MESH_PROV_PROTOCOL_TIMEOUT_MS		60000
 
 struct mesh_prov_link {
 	enum mesh_prov_role	role;
@@ -195,6 +206,9 @@ struct mesh_prov_link {
 	int			awaiting_ack;	/* full transaction sent, need Ack */
 	int			open_pending;	/* provisioner: Link Open to (re)send */
 	uint64_t		last_tx_ms;
+	uint64_t		last_rx_ms;	/* last bearer PDU received (link timer) */
+	uint64_t		link_start_ms;	/* Link Open sent (establishment timer) */
+	uint64_t		proto_start_ms;	/* last Provisioning PDU delivered */
 	uint32_t		retry_interval_ms;
 	unsigned		retries;
 	unsigned		max_retries;

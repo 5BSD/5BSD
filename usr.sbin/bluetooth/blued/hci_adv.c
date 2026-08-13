@@ -824,6 +824,15 @@ hci_mesh_adv_burst(int hci_fd, uint64_t le_features, const uint8_t *ad,
 	}
 
 	if (have_ext) {
+		/*
+		 * Set Extended Advertising Parameters is Command Disallowed
+		 * (§7.8.53) while the set is enabled, so the previous burst
+		 * would permanently wedge the mesh bearer.  Disable the set
+		 * first; an Unknown Advertising Identifier error on the very
+		 * first burst (set not yet created) is expected and ignored.
+		 * (finding 42)
+		 */
+		(void)hci_le_set_ext_adv_enable(hci_fd, 0x00, MESH_ADV_HANDLE);
 		if (hci_le_set_ext_adv_params_full(hci_fd, MESH_ADV_HANDLE,
 		    MESH_ADV_EXT_PROPS, MESH_ADV_INTERVAL, MESH_ADV_INTERVAL,
 		    0x00 /* public own address */, 0x00 /* no allowlist */,
@@ -1210,7 +1219,7 @@ hci_le_periodic_adv_create_sync(int hci_fd, uint8_t options,
 {
 	struct bt_devreq r;
 	ng_hci_le_periodic_adv_create_sync_cp cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	if ((options & ~0x07) != 0 || adv_sid > 0x0f ||
 	    addr_type > 0x01 || addr == NULL ||

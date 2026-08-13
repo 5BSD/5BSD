@@ -129,16 +129,28 @@ ctl_elevate_security(struct blued_conn *conn)
 		return (false);
 	}
 
-	conn->att->encrypted = true;
-	conn->att->enc_key_size = 16;
+	/*
+	 * Finding 95: serialise these security-state writes against the HCI
+	 * Encryption-Change / Key-Refresh handlers on the event loop, which
+	 * write the same fields under only a conns_lock read lock.
+	 */
 	{
 		struct smp_bond *pb;
+		bool mitm = false;
+
 		pthread_mutex_lock(&blued_g.bond_db_lock);
 		pb = smp_find_bond(blued_g.bond_db,
 		    (const uint8_t *)&conn->dst, conn->addr_type);
 		if (pb != NULL && pb->is_mitm)
-			conn->att->authenticated = true;
+			mitm = true;
 		pthread_mutex_unlock(&blued_g.bond_db_lock);
+
+		pthread_mutex_lock(&blued_g.att_sec_lock);
+		conn->att->encrypted = true;
+		conn->att->enc_key_size = 16;
+		if (mitm)
+			conn->att->authenticated = true;
+		pthread_mutex_unlock(&blued_g.att_sec_lock);
 	}
 	smp_close(&sc);
 	return (true);
@@ -158,7 +170,8 @@ ctl_att_needs_security(int err)
 }
 
 int
-ctl_gatt_read_result(uint8_t adapter_index, const bdaddr_t *addr,
+ctl_gatt_read_result(struct blued_conn *job_conn, uint8_t adapter_index,
+    const bdaddr_t *addr,
     uint8_t addr_type, uint16_t handle, uint8_t *value, size_t value_size,
     size_t *value_len)
 {
@@ -166,10 +179,12 @@ ctl_gatt_read_result(uint8_t adapter_index, const bdaddr_t *addr,
 	struct timeval old_tv;
 	int ret;
 
+	(void)adapter_index;
+	(void)addr_type;
 	if (addr == NULL || handle == 0 || value == NULL || value_len == NULL)
 		return (IPC_ERR_INVAL);
-	conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index), addr,
-	    addr_type);
+	/* Finding 90: operate on the admitted, ref'd conn, not an address re-lookup. */
+	conn = job_conn;
 	if (conn == NULL || conn->att == NULL)
 		return (IPC_ERR_NOT_CONN);
 	ctl_set_att_timeout(conn->att->fd, &old_tv);
@@ -185,7 +200,8 @@ ctl_gatt_read_result(uint8_t adapter_index, const bdaddr_t *addr,
 }
 
 int
-ctl_gatt_write_result(uint8_t adapter_index, const bdaddr_t *addr,
+ctl_gatt_write_result(struct blued_conn *job_conn, uint8_t adapter_index,
+    const bdaddr_t *addr,
     uint8_t addr_type, uint16_t handle, const uint8_t *value,
     size_t value_len, bool command)
 {
@@ -193,11 +209,13 @@ ctl_gatt_write_result(uint8_t adapter_index, const bdaddr_t *addr,
 	struct timeval old_tv;
 	int ret;
 
+	(void)adapter_index;
+	(void)addr_type;
 	if (addr == NULL || handle == 0 || (value == NULL && value_len != 0) ||
 	    value_len > ATT_PDU_BUF_SIZE)
 		return (IPC_ERR_INVAL);
-	conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index), addr,
-	    addr_type);
+	/* Finding 90: operate on the admitted, ref'd conn. */
+	conn = job_conn;
 	if (conn == NULL || conn->att == NULL)
 		return (IPC_ERR_NOT_CONN);
 	if (command)
@@ -318,7 +336,8 @@ ctl_gatt_service_for_handle(struct att_conn *att, uint16_t handle,
 }
 
 int
-ctl_gatt_subscribe_result(int client_fd, uint64_t client_generation,
+ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
+    uint64_t client_generation,
     uint8_t adapter_index, const bdaddr_t *addr, uint8_t addr_type,
     uint16_t handle, bool subscribe)
 {
@@ -345,8 +364,8 @@ ctl_gatt_subscribe_result(int client_fd, uint64_t client_generation,
 		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		return (IPC_ERR_NOT_FOUND);
 	}
-	conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index), addr,
-	    addr_type);
+	/* Finding 90: operate on the admitted, ref'd conn, not a re-lookup. */
+	conn = job_conn;
 	if (conn == NULL || conn->att == NULL) {
 		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		return (IPC_ERR_NOT_CONN);
@@ -493,6 +512,14 @@ ctl_gatt_subscribe_result(int client_fd, uint64_t client_generation,
 					ret = gatt_discover_characteristics(conn->att,
 					    chars[j].decl_handle + 1,
 					    service.end_handle, &next_char, 1, &nnext);
+					/*
+					 * A swallowed discovery error must not fall
+					 * back to service.end_handle: that over-wide
+					 * range can latch a later characteristic's
+					 * CCCD onto this subscription (finding 66).
+					 */
+					if (ret != 0)
+						break;
 					desc_end = nnext == 1 ? next_char.decl_handle - 1 :
 					    service.end_handle;
 				}
@@ -730,7 +757,8 @@ ctl_gatt_subscribe_result(int client_fd, uint64_t client_generation,
 }
 
 int
-ctl_gatt_discover_result(uint8_t adapter_index, const bdaddr_t *addr,
+ctl_gatt_discover_result(struct blued_conn *job_conn, uint8_t adapter_index,
+    const bdaddr_t *addr,
     uint8_t addr_type, ctl_gatt_discover_cb cb, void *arg)
 {
 	struct gatt_service services[GATT_MAX_SERVICES];
@@ -739,10 +767,12 @@ ctl_gatt_discover_result(uint8_t adapter_index, const bdaddr_t *addr,
 	uint16_t service_start;
 	int nservices, ret;
 
+	(void)adapter_index;
+	(void)addr_type;
 	if (addr == NULL || cb == NULL)
 		return (IPC_ERR_INVAL);
-	conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index), addr,
-	    addr_type);
+	/* Finding 90: operate on the admitted, ref'd conn. */
+	conn = job_conn;
 	if (conn == NULL || conn->att == NULL)
 		return (IPC_ERR_NOT_CONN);
 	ctl_set_att_timeout(conn->att->fd, &old_tv);

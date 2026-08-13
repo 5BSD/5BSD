@@ -244,8 +244,20 @@ is the number of elements, and
 is the 16-octet Device Key.
 .It Cm delete-remote-node Ar primary Ar count
 Delete a remote node record from the local Provisioner roster.
-.It Cm provision-scan
-Scan for unprovisioned device beacons.
+.It Cm provision-scan Oo Cm on | Cm off | Cm list Oc
+Control unprovisioned-device discovery.
+With
+.Cm on
+(the default when no argument is given) discovery is enabled and the result
+cache is cleared; Unprovisioned Device Beacons received on the bearer are then
+parsed and their device UUIDs recorded.
+.Cm list
+reports the currently discovered UUIDs without disturbing the scan, and
+.Cm off
+disables discovery.
+The reply lists the active flag, the device count and each discovered UUID; feed
+a UUID to
+.Cm provision .
 .It Cm provision Ar uuid-hex32 Op Ar elements
 Provision an unprovisioned peer over PB-ADV.
 .It Cm provision-status
@@ -285,6 +297,167 @@ The optional adapter selector has the same meaning as for
 .Cm provision-gatt .
 .It Cm reset
 Return the node to the unprovisioned state.
+.It Cm key-refresh Cm begin | advance | finish | status | network | network-status
+Drive Key Refresh on the primary subnet.
+.Cm begin
+starts a refresh (distributing a new NetKey),
+.Cm advance
+moves to the next phase,
+.Cm finish
+completes it, and
+.Cm status
+reports the current phase.
+.Cm network
+and
+.Cm network-status
+operate the network-wide refresh the local Provisioner coordinates across the
+roster.
+.El
+.Ss Config Client
+The
+.Cm cfg
+family drives a provisioned roster node's Configuration Server by sending
+acknowledged Configuration messages sealed under that node's Device Key and
+surfacing the returned Config Status.
+Every sub-verb takes the destination node's primary unicast address as its first
+argument.
+A network must exist
+.Pq Cm create-network
+first.
+.Bl -tag -width indent
+.It Cm cfg comp-get Ar dst Op Ar page
+Composition Data Get.
+.It Cm cfg appkey-add | appkey-update | appkey-delete Ar dst
+AppKey Add, Update or Delete (primary AppKey).
+.It Cm cfg appkey-get Ar dst Ar netidx
+AppKey Get.
+.It Cm cfg model-bind | model-unbind | model-app-get Ar dst Ar elem Ar model Op Ar company
+Model AppKey Bind, Unbind or Get.
+.It Cm cfg sub-add | sub-delete | sub-overwrite Ar dst Ar elem Ar group Ar model Op Ar company
+Model Subscription Add, Delete or Overwrite.
+.It Cm cfg sub-delete-all Ar dst Ar elem Ar model Op Ar company
+Model Subscription Delete All.
+.It Cm cfg sub-va-add | sub-va-delete | sub-va-overwrite Ar dst Ar elem Ar label-hex32 Ar model Op Ar company
+Model Subscription Virtual Address Add, Delete or Overwrite.
+.It Cm cfg sub-get Ar dst Ar elem Ar model Op Ar company
+Model Subscription Get.
+.It Cm cfg pub-set Ar dst Ar elem Ar pubaddr Ar ttl Ar period Ar rtx Ar model Op Ar company
+Model Publication Set.
+.It Cm cfg pub-va-set Ar dst Ar elem Ar label-hex32 Ar ttl Ar period Ar rtx Ar model Op Ar company
+Model Publication Virtual Address Set.
+.It Cm cfg pub-get Ar dst Ar elem Ar model Op Ar company
+Model Publication Get.
+.It Cm cfg netkey-add | netkey-update Ar dst Ar netidx Ar key-hex32
+NetKey Add or Update.
+.It Cm cfg netkey-delete Ar dst Ar netidx
+NetKey Delete.
+.It Cm cfg kr-phase-get Ar dst Ar netidx
+Key Refresh Phase Get.
+.It Cm cfg kr-phase-set Ar dst Ar netidx Ar transition
+Key Refresh Phase Set.
+.It Cm cfg beacon | gatt-proxy | friend | ttl | relay | nettransmit Ar dst Op Ar value ...
+Get or Set the named node-wide state (omit the value to Get).
+.It Cm cfg node-identity-get Ar dst Ar netidx
+Node Identity Get.
+.It Cm cfg node-identity-set Ar dst Ar netidx Ar identity
+Node Identity Set.
+.It Cm cfg lpn-polltimeout-get Ar dst Ar lpn-addr
+Low Power Node PollTimeout Get.
+.It Cm cfg hb-pub-get Ar dst
+Heartbeat Publication Get.
+.It Cm cfg hb-pub-set Ar dst Ar hbdst Ar countlog Ar periodlog Ar ttl Ar netidx
+Heartbeat Publication Set.
+.It Cm cfg hb-sub-get Ar dst
+Heartbeat Subscription Get.
+.It Cm cfg hb-sub-set Ar dst Ar src Ar hbdst Ar periodlog
+Heartbeat Subscription Set.
+.It Cm cfg sar-tx-get | sar-rx-get Ar dst
+SAR Transmitter or Receiver Get.
+.It Cm cfg sar-tx-set Ar dst Ar segint Ar ucount Ar unoprog Ar uintstep Ar uintinc Ar mcount Ar mintstep
+SAR Transmitter Set (seven 4-bit fields).
+.It Cm cfg sar-rx-set Ar dst Ar segthresh Ar ackdelayinc Ar discard Ar rxintstep Ar ackretrans
+SAR Receiver Set.
+.It Cm cfg priv-beacon-get Ar dst
+Private Beacon Get.
+.It Cm cfg priv-beacon-set Ar dst Ar 0 Ns | Ns Ar 1 Op Ar random-update-steps
+Private Beacon Set.
+.It Cm cfg priv-gatt-proxy Ar dst Op Ar value
+Private GATT Proxy Get or Set.
+.It Cm cfg od-priv-proxy Ar dst Op Ar value
+On-Demand Private Proxy Get or Set.
+.It Cm cfg priv-node-identity-get Ar dst Ar netidx
+Private Node Identity Get.
+.It Cm cfg priv-node-identity-set Ar dst Ar netidx Ar identity
+Private Node Identity Set.
+.It Cm cfg lcd-get Ar dst Ar page Ar offset
+Large Composition Data Get.
+.It Cm cfg node-reset Ar dst
+Node Reset: remove the node from the network and clear its provisioning.
+.El
+.Ss Directed Forwarding
+.Nm
+registers a Directed Forwarding Configuration Server (answering the
+Directed Control, Path Metric, Directed Wanted Lanes, Two Way Path,
+Path Echo Interval and Directed Network Transmit / Relay Retransmit states)
+and drives a Path Origin path-discovery FSM.
+The
+.Cm df
+verbs operate a remote node's DF Configuration Server over its DevKey and drive
+the local discovery FSM
+.Pq MshMDL_v1.1 Section 4.4.3 :
+.Bl -tag -width indent -compact
+.It Cm df get Ar dst Op Ar netidx
+Directed Control Get.
+.It Cm df set Ar dst Cm on Ns | Ns Cm off Op Ar netidx
+Directed Control Set (directed forwarding + directed relay).
+.It Cm df control-set Ar dst Ar netidx Ar fwd Ar relay Ar proxy Ar proxydef Ar friend
+Directed Control Set with all five flags.
+.It Cm df metric-get | metric-set Ar dst Ar ...
+Path Metric Get/Set.
+.It Cm df lanes-get | lanes-set Ar dst Ar ...
+Directed Wanted Lanes Get/Set.
+.It Cm df two-way-get | two-way-set Ar dst Ar ...
+Two Way Path Get/Set.
+.It Cm df echo-get | echo-set Ar dst Ar ...
+Path Echo Interval Get/Set.
+.It Cm df net-transmit-get | net-transmit-set Ar dst Ar ...
+Directed Network Transmit Get/Set.
+.It Cm df relay-retransmit-get | relay-retransmit-set Ar dst Ar ...
+Directed Relay Retransmit Get/Set.
+.It Cm df discover Ar target
+Start a local Path Origin path discovery toward
+.Ar target ;
+the reply/confirmation exchange advances the FSM to established and the node
+tick ages the forwarding table and fails a timed-out discovery.
+.It Cm df discover-status
+Report the local path-discovery FSM state.
+.El
+.Ss Remote Provisioning
+.Nm
+registers a Remote Provisioning Server (the Scan and Link control of the
+Remote Provisioning Server model) and drives a Remote Provisioning Client.
+The
+.Cm remote-prov
+verbs operate a remote Remote Provisioning Server over its DevKey
+.Pq MshPRT_v1.1 Section 5.4.4 :
+.Bl -tag -width indent -compact
+.It Cm remote-prov caps Ar dst
+Scan Capabilities Get.
+.It Cm remote-prov scan Ar dst Op Ar uuid-hex32 Op Ar limit Ar timeout
+Scan Start (a device UUID targets a single device).
+.It Cm remote-prov scan-get | scan-stop Ar dst
+Scan Get / Scan Stop.
+.It Cm remote-prov link-get Ar dst
+Link Get.
+.It Cm remote-prov link-open Ar dst Ar uuid-hex32 Op Ar timeout
+Open a PB-Remote provisioning link toward a device through the server.
+.It Cm remote-prov provision Ar dst Ar uuid-hex32 Op Ar timeout
+Alias for
+.Cm link-open .
+.It Cm remote-prov link-close Ar dst Op Ar reason
+Link Close.
+.It Cm remote-prov status
+Report the Remote Provisioning client scan/link FSM state.
 .El
 .Sh BEARER INTEGRATION
 .Nm

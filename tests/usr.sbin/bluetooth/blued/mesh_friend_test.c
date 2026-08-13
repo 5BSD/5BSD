@@ -1424,12 +1424,227 @@ ATF_TC_BODY(friend_enqueue_while_establishing, tc)
 	ATF_CHECK_EQ(0xB2, out.msg.pdu[0]);
 }
 
+/* ================================================================
+ * Finding 16: the empty-queue Friend Update's More Data bit must be computed
+ * AFTER the Poll's FSN ack-discard, excluding the entry returned as the
+ * response.  After the last queued message is acked the queue is empty, so the
+ * synthesized Friend Update must report MD=0 - not a stale MD=1 that livelocks
+ * the LPN in an immediate re-poll loop (Section 3.6.6.4.2).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(friend_fsm_md_after_ack);
+ATF_TC_BODY(friend_fsm_md_after_ack, tc)
+{
+	struct mesh_friend_fsm f;
+	struct mesh_friend_out out;
+	struct mesh_friend_request req;
+	struct mesh_friend_poll poll;
+	struct mesh_friend_update up;
+	struct mesh_fq_entry msg;
+	uint8_t rpdu[MESH_FRIEND_REQUEST_LEN];
+	uint8_t ppdu[MESH_FRIEND_POLL_LEN];
+	size_t rlen, plen;
+	uint64_t now = 0;
+
+	mesh_friend_fsm_init(&f, 0x2345, 20, 8, 4, -90, 4);
+
+	/* Establish a friendship (PollTimeout 100 units = 10 s). */
+	memset(&req, 0, sizeof(req));
+	req.min_queue_size_log = 1;
+	req.recv_delay = 100;
+	req.poll_timeout = 100;
+	req.num_elements = 1;
+	req.lpn_counter = 0x0001;
+	ATF_REQUIRE_EQ(0, mesh_friend_request_build(&req, rpdu, &rlen));
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_recv_request(&f, rpdu, rlen, 0x1201,
+	    -60, now, &out));
+	now = 300;
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_tick(&f, now, &out));
+	ATF_REQUIRE_EQ(MESH_FRIEND_ACT_SEND_CONTROL, out.action);
+
+	memset(&poll, 0, sizeof(poll));
+	poll.fsn = 0;
+	ATF_REQUIRE_EQ(0, mesh_friend_poll_build(&poll, ppdu, &plen));
+	ATF_REQUIRE_EQ(1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
+	    now, &out));
+	ATF_REQUIRE(mesh_friend_fsm_established(&f));
+
+	/* Deliver exactly one queued message. */
+	memset(&msg, 0, sizeof(msg));
+	msg.ttl = 5;
+	msg.seq = 0x20;
+	msg.src = 0x0009;
+	msg.dst = 0x1201;
+	msg.pdu[0] = 0x5a;
+	msg.pdu_len = 1;
+	ATF_CHECK_EQ(1, mesh_friend_fsm_enqueue(&f, &msg));
+
+	/* Poll (FSN toggled to 1): the message is delivered, not yet acked. */
+	poll.fsn = 1;
+	ATF_REQUIRE_EQ(0, mesh_friend_poll_build(&poll, ppdu, &plen));
+	ATF_REQUIRE_EQ(1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
+	    now, &out));
+	ATF_CHECK_EQ(0, out.msg.is_update);
+	ATF_CHECK_EQ(0x5a, out.msg.pdu[0]);
+
+	/*
+	 * Poll (FSN toggled back to 0): acks and discards the delivered message,
+	 * leaving the queue empty.  The synthesized Friend Update must carry
+	 * MD=0.
+	 */
+	poll.fsn = 0;
+	ATF_REQUIRE_EQ(0, mesh_friend_poll_build(&poll, ppdu, &plen));
+	ATF_REQUIRE_EQ(1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
+	    now, &out));
+	ATF_CHECK_EQ(MESH_FRIEND_ACT_SEND_MSG, out.action);
+	ATF_CHECK_EQ(1, out.msg.is_update);
+	ATF_REQUIRE_EQ(0, mesh_friend_update_parse(out.msg.pdu, out.msg.pdu_len,
+	    &up));
+	ATF_CHECK_EQ_MSG(0, up.md,
+	    "empty-queue Friend Update after ack must carry MD=0 (finding)");
+}
+
+/* ================================================================
+ * Finding 17: while ESTABLISHED with LPN A, a Friend Request from a DIFFERENT
+ * LPN must be ignored - it must not overwrite the friendship or discard A's
+ * queued messages.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(friend_fsm_request_from_other_lpn_ignored);
+ATF_TC_BODY(friend_fsm_request_from_other_lpn_ignored, tc)
+{
+	struct mesh_friend_fsm f;
+	struct mesh_friend_out out;
+	struct mesh_friend_request req;
+	struct mesh_friend_poll poll;
+	struct mesh_fq_entry msg;
+	uint8_t rpdu[MESH_FRIEND_REQUEST_LEN];
+	uint8_t ppdu[MESH_FRIEND_POLL_LEN];
+	size_t rlen, plen;
+	uint64_t now = 0;
+
+	mesh_friend_fsm_init(&f, 0x2345, 20, 8, 4, -90, 4);
+
+	/* Establish a friendship with LPN A = 0x1201. */
+	memset(&req, 0, sizeof(req));
+	req.min_queue_size_log = 1;
+	req.recv_delay = 100;
+	req.poll_timeout = 100;
+	req.num_elements = 1;
+	req.lpn_counter = 0x0001;
+	ATF_REQUIRE_EQ(0, mesh_friend_request_build(&req, rpdu, &rlen));
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_recv_request(&f, rpdu, rlen, 0x1201,
+	    -60, now, &out));
+	now = 300;
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_tick(&f, now, &out));
+	memset(&poll, 0, sizeof(poll));
+	poll.fsn = 0;
+	ATF_REQUIRE_EQ(0, mesh_friend_poll_build(&poll, ppdu, &plen));
+	ATF_REQUIRE_EQ(1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
+	    now, &out));
+	ATF_REQUIRE(mesh_friend_fsm_established(&f));
+
+	/* Queue a message for LPN A. */
+	memset(&msg, 0, sizeof(msg));
+	msg.ttl = 5;
+	msg.seq = 0x30;
+	msg.src = 0x0009;
+	msg.dst = 0x1201;
+	msg.pdu[0] = 0xC3;
+	msg.pdu_len = 1;
+	ATF_CHECK_EQ(1, mesh_friend_fsm_enqueue(&f, &msg));
+
+	/* A Friend Request from a DIFFERENT LPN B = 0x1301 must be ignored. */
+	ATF_CHECK_EQ_MSG(-1, mesh_friend_fsm_recv_request(&f, rpdu, rlen, 0x1301,
+	    -60, now, &out),
+	    "a Friend Request from a different LPN must be ignored while "
+	    "established");
+	ATF_CHECK_MSG(mesh_friend_fsm_established(&f),
+	    "the established friendship must survive a foreign Friend Request");
+	ATF_CHECK_EQ(0x1201, f.lpn_addr);
+	ATF_CHECK_EQ(0x1201, f.queue.lpn_addr);
+
+	/* A's queued message is intact and still delivered. */
+	poll.fsn = 1;
+	ATF_REQUIRE_EQ(0, mesh_friend_poll_build(&poll, ppdu, &plen));
+	ATF_REQUIRE_EQ(1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
+	    now, &out));
+	ATF_CHECK_EQ(0, out.msg.is_update);
+	ATF_CHECK_EQ(0xC3, out.msg.pdu[0]);
+	ATF_CHECK_EQ(0x1201, out.msg.dst);
+}
+
+/* ================================================================
+ * Finding 75: the friendship is established only if the first Friend Poll
+ * arrives within the establishment window (1 s) of the Friend Offer (Section
+ * 3.6.6.3.1).  ESTABLISHING must expire (tick), and a Poll arriving after the
+ * window must not establish a friendship the LPN abandoned.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(friend_fsm_establishing_timeout);
+ATF_TC_BODY(friend_fsm_establishing_timeout, tc)
+{
+	struct mesh_friend_fsm f;
+	struct mesh_friend_out out;
+	struct mesh_friend_request req;
+	struct mesh_friend_poll poll;
+	uint8_t rpdu[MESH_FRIEND_REQUEST_LEN];
+	uint8_t ppdu[MESH_FRIEND_POLL_LEN];
+	size_t rlen, plen;
+
+	memset(&req, 0, sizeof(req));
+	req.min_queue_size_log = 1;
+	req.recv_delay = 100;
+	req.poll_timeout = 100;
+	req.num_elements = 1;
+	req.lpn_counter = 0x0001;
+	ATF_REQUIRE_EQ(0, mesh_friend_request_build(&req, rpdu, &rlen));
+	memset(&poll, 0, sizeof(poll));
+	ATF_REQUIRE_EQ(0, mesh_friend_poll_build(&poll, ppdu, &plen));
+
+	/* 1. tick expires ESTABLISHING once the 1 s window closes with no Poll. */
+	mesh_friend_fsm_init(&f, 0x2345, 20, 8, 4, -90, 4);
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_recv_request(&f, rpdu, rlen, 0x1201,
+	    -60, 0, &out));
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_tick(&f, 300, &out));
+	ATF_REQUIRE_EQ(MESH_FRIEND_ACT_SEND_CONTROL, out.action);
+	ATF_CHECK_EQ(MESH_FRIEND_ST_ESTABLISHING, f.state);
+	/* Just before the window closes: still ESTABLISHING. */
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_tick(&f,
+	    300 + MESH_FRIEND_ESTABLISH_TIMEOUT_MS - 1, &out));
+	ATF_CHECK_EQ(MESH_FRIEND_ST_ESTABLISHING, f.state);
+	/* At the window: expire back to IDLE. */
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_tick(&f,
+	    300 + MESH_FRIEND_ESTABLISH_TIMEOUT_MS, &out));
+	ATF_CHECK_EQ_MSG(MESH_FRIEND_ST_IDLE, f.state,
+	    "ESTABLISHING must expire 1 s after the Offer (finding)");
+
+	/* 2. A Poll inside the window still establishes. */
+	mesh_friend_fsm_init(&f, 0x2345, 20, 8, 4, -90, 4);
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_recv_request(&f, rpdu, rlen, 0x1201,
+	    -60, 0, &out));
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_tick(&f, 300, &out));
+	ATF_REQUIRE_EQ(1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
+	    300 + MESH_FRIEND_ESTABLISH_TIMEOUT_MS - 1, &out));
+	ATF_CHECK(mesh_friend_fsm_established(&f));
+
+	/* 3. A Poll arriving after the window does not establish (finding). */
+	mesh_friend_fsm_init(&f, 0x2345, 20, 8, 4, -90, 4);
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_recv_request(&f, rpdu, rlen, 0x1201,
+	    -60, 0, &out));
+	ATF_REQUIRE_EQ(0, mesh_friend_fsm_tick(&f, 300, &out));
+	ATF_CHECK_EQ(-1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
+	    300 + MESH_FRIEND_ESTABLISH_TIMEOUT_MS, &out));
+	ATF_CHECK_MSG(!mesh_friend_fsm_established(&f),
+	    "a Poll after the 1 s window must not establish the friendship");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, friend_fsm_flow);
 	ATF_TP_ADD_TC(tp, friend_fsm_clear_replay_guard);
 	ATF_TP_ADD_TC(tp, friend_enqueue_while_establishing);
+	ATF_TP_ADD_TC(tp, friend_fsm_md_after_ack);
+	ATF_TP_ADD_TC(tp, friend_fsm_request_from_other_lpn_ignored);
+	ATF_TP_ADD_TC(tp, friend_fsm_establishing_timeout);
 
 	ATF_TP_ADD_TC(tp, friend_credentials_kat);
 	ATF_TP_ADD_TC(tp, friend_p_input_kat);

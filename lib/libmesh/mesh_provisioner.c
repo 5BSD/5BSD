@@ -104,7 +104,7 @@ static int
 sess_derive_session(struct mesh_prov_session *s)
 {
 	const uint8_t *rand_prov, *rand_dev;
-	uint8_t prov_salt[16], salt_input[96];
+	uint8_t prov_salt[16];
 
 	if (s->role == MESH_PROV_ROLE_PROVISIONER) {
 		rand_prov = s->random;
@@ -114,10 +114,8 @@ sess_derive_session(struct mesh_prov_session *s)
 		rand_dev = s->random;
 	}
 	if (s->algorithm == MESH_PROV_ALGO_P256_HMAC) {
-		memcpy(salt_input, s->conf_salt, 32);
-		memcpy(salt_input + 32, rand_prov, 32);
-		memcpy(salt_input + 64, rand_dev, 32);
-		if (mesh_s1(salt_input, sizeof(salt_input), prov_salt) != 0)
+		if (mesh_prov_provisioning_salt_256(s->conf_salt, rand_prov,
+		    rand_dev, prov_salt) != 0)
 			return (-1);
 	} else if (mesh_prov_provisioning_salt(s->conf_salt, rand_prov,
 	    rand_dev, prov_salt) != 0)
@@ -417,16 +415,17 @@ dev_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		if (s->algorithm > MESH_PROV_ALGO_P256_HMAC ||
 		    (s->caps.algorithms & (1U << s->algorithm)) == 0)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
+		/*
+		 * Only the No-OOB authentication method is supported: the engine
+		 * installs the No-OOB AuthValue.  Reject a Static/Output/Input
+		 * OOB selection (auth_method 1-3) at Start rather than failing
+		 * Confirmation later (MshPRT Section 5.4.1.3).
+		 */
+		if (st.auth_method != 0)
+			return (sess_fail(s, PROV_ERR_INVALID_PDU));
 		if ((st.public_key != 0 &&
 		    (s->caps.public_key_type & 0x01) == 0) ||
-		    (st.auth_method == 0 &&
-		    (s->caps.static_oob_type & 0x02) != 0) ||
-		    (st.auth_method == 1 &&
-		    (s->caps.static_oob_type & 0x01) == 0) ||
-		    (st.auth_method == 2 && (st.auth_size > s->caps.output_oob_size ||
-		    (s->caps.output_oob_action & (1U << st.auth_action)) == 0)) ||
-		    (st.auth_method == 3 && (st.auth_size > s->caps.input_oob_size ||
-		    (s->caps.input_oob_action & (1U << st.auth_action)) == 0)))
+		    (s->caps.static_oob_type & 0x02) != 0)
 			return (sess_fail(s, PROV_ERR_INVALID_PDU));
 		s->state = MPS_D_WAIT_PUBKEY;
 		return (0);
@@ -660,6 +659,9 @@ mesh_prov_link_open(struct mesh_prov_link *l, uint64_t now, uint8_t *out,
 		return (-1);
 	l->state = MESH_LINK_OPENING;
 	l->last_tx_ms = now;
+	l->link_start_ms = now;
+	l->last_rx_ms = now;
+	l->proto_start_ms = now;
 	l->retries = 0;
 	return (0);
 }
@@ -715,6 +717,11 @@ mesh_prov_link_poll(struct mesh_prov_link *l, uint64_t now, uint8_t *out,
 
 	/* Provisioner: retransmit the Link Open until a Link Ack. */
 	if (l->state == MESH_LINK_OPENING) {
+		/* 60 s link-establishment timer (Section 5.3.1.4.1). */
+		if (now - l->link_start_ms >= MESH_PROV_LINK_ESTABLISH_TIMEOUT_MS) {
+			l->state = MESH_LINK_FAILED;
+			return (-1);
+		}
 		if (now - l->last_tx_ms < l->retry_interval_ms)
 			return (0);
 		if (l->retries >= l->max_retries) {
@@ -726,6 +733,18 @@ mesh_prov_link_poll(struct mesh_prov_link *l, uint64_t now, uint8_t *out,
 		if (mesh_gp_link_open_build(l->device_uuid, gp, &gplen) != 0)
 			return (-1);
 		return (link_wrap(l, 0x00, gp, gplen, out, outlen) == 0 ? 1 : -1);
+	}
+
+	/*
+	 * Open link: the 60 s link timer (no bearer PDU received) and the 60 s
+	 * provisioning protocol timer (no Provisioning PDU delivered) close a
+	 * link whose peer has gone silent (Section 5.3.1.4.1 / 5.4.4).
+	 */
+	if (l->state == MESH_LINK_OPEN &&
+	    (now - l->last_rx_ms >= MESH_PROV_LINK_TIMEOUT_MS ||
+	    now - l->proto_start_ms >= MESH_PROV_PROTOCOL_TIMEOUT_MS)) {
+		l->state = MESH_LINK_FAILED;
+		return (-1);
 	}
 
 	if (l->state != MESH_LINK_OPEN || l->nseg == 0)
@@ -785,9 +804,20 @@ mesh_prov_link_recv(struct mesh_prov_link *l, const uint8_t *pkt, size_t len,
 	if (gp.gpcf == MESH_GPCF_CONTROL) {
 		switch (gp.opcode) {
 		case MESH_BEARER_LINK_OPEN:
-			if (l->role == MESH_PROV_ROLE_DEVICE) {
+			/*
+			 * Adopt the link only if we are an unopened device and
+			 * the Device UUID matches ours (Section 5.3.1.4.1); a
+			 * Link Open for a different device is ignored rather
+			 * than tearing down / re-adopting our link.
+			 */
+			if (l->role == MESH_PROV_ROLE_DEVICE &&
+			    gp.payload_len == sizeof(l->device_uuid) &&
+			    memcmp(gp.payload, l->device_uuid,
+			    sizeof(l->device_uuid)) == 0) {
 				l->link_id = link_id;
 				l->state = MESH_LINK_OPEN;
+				l->last_rx_ms = now;
+				l->proto_start_ms = now;
 				if (ack != NULL && acklen != NULL &&
 				    have_ack != NULL) {
 					uint8_t g[MESH_GP_PDU_MAX];
@@ -802,17 +832,36 @@ mesh_prov_link_recv(struct mesh_prov_link *l, const uint8_t *pkt, size_t len,
 			}
 			return (0);
 		case MESH_BEARER_LINK_ACK:
+			/* Ignore an Ack bearing a foreign Link ID (Section 5.2.2). */
+			if (link_id != l->link_id)
+				return (0);
+			l->last_rx_ms = now;
 			if (l->role == MESH_PROV_ROLE_PROVISIONER &&
-			    l->state == MESH_LINK_OPENING)
+			    l->state == MESH_LINK_OPENING) {
 				l->state = MESH_LINK_OPEN;
+				l->proto_start_ms = now;
+			}
 			return (0);
 		case MESH_BEARER_LINK_CLOSE:
+			/* Ignore a Close bearing a foreign Link ID (Section 5.2.2). */
+			if (link_id != l->link_id)
+				return (0);
+			l->last_rx_ms = now;
 			l->state = MESH_LINK_CLOSED;
 			return (0);
 		default:
 			return (-1);
 		}
 	}
+
+	/*
+	 * Segments and Transaction Acks on a foreign Link ID are not ours
+	 * (Section 5.2.2): ignore them so a nearby concurrent provisioning
+	 * link cannot corrupt or advance our transaction.
+	 */
+	if (link_id != l->link_id)
+		return (0);
+	l->last_rx_ms = now;
 
 	if (gp.gpcf == MESH_GPCF_ACK) {
 		if (l->awaiting_ack && txn == l->tx_txn) {
@@ -850,8 +899,9 @@ mesh_prov_link_recv(struct mesh_prov_link *l, const uint8_t *pkt, size_t len,
 	rc = mesh_gp_reasm_input(&l->reasm, gp_pdu, gp_len);
 	if (rc < 0)
 		return (-1);
-	(void)now;
 	if (rc == 1) {
+		/* A delivered Provisioning PDU resets the protocol timer. */
+		l->proto_start_ms = now;
 		if (pdu != NULL && pdu_len != NULL && have_pdu != NULL) {
 			if (mesh_gp_reasm_get(&l->reasm, pdu, pdu_len) != 0)
 				return (-1);

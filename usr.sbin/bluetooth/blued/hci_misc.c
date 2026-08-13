@@ -853,7 +853,7 @@ hci_le_create_cis(int hci_fd, uint8_t cis_count,
 {
 	struct bt_devreq r;
 	uint8_t cmd[1 + 31 * 4];	/* count + up to 31 pairs */
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 	size_t cmdlen;
 
 	if (cis_count == 0 || cis_count > 31 || cis_handles == NULL ||
@@ -948,7 +948,7 @@ hci_le_accept_cis_request(int hci_fd, uint16_t con_handle)
 {
 	struct bt_devreq r;
 	ng_hci_le_accept_cis_request_cp cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	if (con_handle > 0x0EFF) {
 		errno = EINVAL;
@@ -1049,7 +1049,7 @@ hci_le_create_big(int hci_fd, uint8_t big_handle, uint8_t adv_handle,
 {
 	struct bt_devreq r;
 	uint8_t cmd[31];	/* fixed 31-byte command */
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	if (big_handle > 0xEF || adv_handle > 0xEF ||
 	    num_bis < 0x01 || num_bis > 0x1F ||
@@ -1122,7 +1122,7 @@ hci_le_create_big_test(int hci_fd, uint8_t big_handle, uint8_t adv_handle,
 {
 	struct bt_devreq r;
 	uint8_t cmd[36];
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	if (big_handle > 0xEF || adv_handle > 0xEF ||
 	    num_bis < 0x01 || num_bis > 0x1F ||
@@ -1197,7 +1197,7 @@ hci_le_terminate_big(int hci_fd, uint8_t big_handle, uint8_t reason)
 {
 	struct bt_devreq r;
 	ng_hci_le_terminate_big_cp cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	if (big_handle > 0xEF) {
 		errno = EINVAL;
@@ -1244,7 +1244,7 @@ hci_le_big_create_sync(int hci_fd, uint8_t big_handle,
 {
 	struct bt_devreq r;
 	uint8_t cmd[256];	/* 24-byte header + up to 31 BIS indices */
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 	size_t cmdlen;
 
 	if (big_handle > 0xEF || sync_handle > 0x0EFF ||
@@ -1469,7 +1469,7 @@ hci_le_request_peer_sca(int hci_fd, uint16_t con_handle)
 {
 	struct bt_devreq r;
 	ng_hci_le_request_peer_sca_cp cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	memset(&cp, 0, sizeof(cp));
 	cp.connection_handle = htole16(con_handle);

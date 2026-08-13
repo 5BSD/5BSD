@@ -480,6 +480,17 @@ ble_dispatch_frame(ble_ctx_t *ctx, uint16_t type, uint16_t arg,
 		uint16_t status, flags, event;
 		size_t i;
 
+		/*
+		 * Finding 29: fully initialize the stack address so every
+		 * callback path (security, GATT-authorize, notify, ISO) hands
+		 * the app a deterministic ble_addr_t.  Paths that carry an
+		 * adapter_index on the wire overwrite it below; paths that do
+		 * not (e.g. GATT-authorize) leave it at the default 0 rather
+		 * than exposing an uninitialized adapter index that would be
+		 * echoed back into a passkey/numcmp reply as garbage.
+		 */
+		memset(&addr, 0, sizeof(addr));
+
 		if (plen < IPC_OP_PREFIX_SIZE + 2) {
 			ble_set_error(ctx, BLE_ERR_PROTO, "malformed operation event");
 			break;
@@ -645,22 +656,29 @@ ble_dispatch_frame(ble_ctx_t *ctx, uint16_t type, uint16_t arg,
 				    "unknown security event");
 				break;
 			}
+			/*
+			 * Finding 28/29 coordinated layout:
+			 * body[0..1]=event, body[2]=adapter_index,
+			 * body[3]=addr_type, body[4..9]=addr,
+			 * body[10..]=payload.
+			 */
 			if (request_id != 0 ||
 			    plen != IPC_OP_PREFIX_SIZE + event_len ||
-			    body[2] > 1) {
+			    body[3] > 1) {
 				ble_set_error(ctx, BLE_ERR_PROTO,
 				    "malformed security event");
 				break;
 			}
-			addr.addr_type = body[2];
-			memcpy(addr.addr, body + 3, sizeof(addr.addr));
+			addr.adapter_index = body[2];
+			addr.addr_type = body[3];
+			memcpy(addr.addr, body + 4, sizeof(addr.addr));
 			if (event == IPC_SECURITY_EV_PASSKEY_INPUT) {
 				if (ctx->passkey_input_cb != NULL)
 					ctx->passkey_input_cb(&addr,
 					    ctx->passkey_input_arg);
 			} else if ((event == IPC_SECURITY_EV_PASSKEY_DISPLAY ||
 			    event == IPC_SECURITY_EV_NUMCMP)) {
-				value = ipc_get_le32(body + 9);
+				value = ipc_get_le32(body + 10);
 				if (value > 999999) {
 					ble_set_error(ctx, BLE_ERR_PROTO,
 					    "invalid security event value");
@@ -676,7 +694,7 @@ ble_dispatch_frame(ble_ctx_t *ctx, uint16_t type, uint16_t arg,
 					    ctx->numcmp_arg);
 			} else if (event == IPC_SECURITY_EV_KEYPRESS) {
 				if (ctx->keypress_cb != NULL)
-					ctx->keypress_cb(&addr, body[9],
+					ctx->keypress_cb(&addr, body[10],
 					    ctx->keypress_arg);
 			}
 			break;
@@ -835,44 +853,63 @@ ble_poll_until(int fd, short events, int64_t deadline_ms)
 	}
 }
 
+/*
+ * Read exactly `need` bytes into dst, consuming any bytes already sitting in
+ * the async receive buffer (ctx->rxbuf/ctx->rxlen) BEFORE touching the socket.
+ *
+ * Finding 32: a prior ble_process() can leave a partial (or whole trailing)
+ * frame buffered in ctx->rxbuf.  A synchronous read that went straight to
+ * recv() would skip those bytes and start mid-frame, desyncing the connection
+ * until reconnect.  Draining the buffer first keeps the byte stream contiguous.
+ */
+static int
+ble_read_exact_buffered(ble_ctx_t *ctx, uint8_t *dst, size_t need,
+    int64_t deadline_ms)
+{
+	size_t got = 0;
+
+	if (ctx->rxlen > 0) {
+		size_t take = ctx->rxlen < need ? ctx->rxlen : need;
+
+		memcpy(dst, ctx->rxbuf, take);
+		if (ctx->rxlen > take)
+			memmove(ctx->rxbuf, ctx->rxbuf + take,
+			    ctx->rxlen - take);
+		ctx->rxlen -= take;
+		got = take;
+	}
+	while (got < need) {
+		ssize_t n;
+
+		if (ble_poll_until(ctx->fd, POLLIN, deadline_ms) != 1)
+			return (-1);
+		n = recv(ctx->fd, dst + got, need - got, 0);
+		if (n < 0 && errno == EINTR)
+			continue;
+		if (n <= 0)
+			return (-1);
+		got += (size_t)n;
+	}
+	return (0);
+}
+
 static int
 ble_read_one_frame_until(ble_ctx_t *ctx, uint16_t *type, uint16_t *arg,
     uint8_t *payload, size_t *plen, int64_t deadline_ms)
 {
 	uint8_t hdr[IPC_HDR_SIZE];
 	uint32_t need;
-	size_t got = 0;
 
-	/* Read the fixed header. */
-	while (got < IPC_HDR_SIZE) {
-		ssize_t n;
-
-		if (ble_poll_until(ctx->fd, POLLIN, deadline_ms) != 1)
-			return (-1);
-		n = recv(ctx->fd, hdr + got, IPC_HDR_SIZE - got, 0);
-		if (n < 0 && errno == EINTR)
-			continue;
-		if (n <= 0)
-			return (-1);
-		got += (size_t)n;
-	}
+	/* Read the fixed header (buffered bytes first). */
+	if (ble_read_exact_buffered(ctx, hdr, IPC_HDR_SIZE, deadline_ms) < 0)
+		return (-1);
 	ipc_hdr_decode(hdr, &need, type, arg);
 	if (need > IPC_MAX_PAYLOAD)
 		return (-1);
 
-	got = 0;
-	while (got < need) {
-		ssize_t n;
-
-		if (ble_poll_until(ctx->fd, POLLIN, deadline_ms) != 1)
-			return (-1);
-		n = recv(ctx->fd, payload + got, need - got, 0);
-		if (n < 0 && errno == EINTR)
-			continue;
-		if (n <= 0)
-			return (-1);
-		got += (size_t)n;
-	}
+	if (need > 0 &&
+	    ble_read_exact_buffered(ctx, payload, need, deadline_ms) < 0)
+		return (-1);
 	*plen = need;
 	return (0);
 }
@@ -1020,6 +1057,13 @@ ble_fd(ble_ctx_t *ctx)
 	return (ctx->fd);
 }
 
+size_t
+ble_pending_count(const ble_ctx_t *ctx)
+{
+
+	return (ctx->pending_count);
+}
+
 /*
  * Framed protocol receive path: drain the socket and dispatch every complete
  * length-prefixed frame.
@@ -1140,6 +1184,15 @@ ble_recv_fd(ble_ctx_t *ctx, int timeout_ms, int *out_fd)
 	cmsg = CMSG_FIRSTHDR(&msg);
 	if (cmsg == NULL || cmsg->cmsg_level != SOL_SOCKET ||
 	    cmsg->cmsg_type != SCM_RIGHTS)
+		return (-1);
+	/*
+	 * Finding 105: validate that the control message actually carries a
+	 * descriptor before extracting one.  A buggy/hostile daemon can send an
+	 * SCM_RIGHTS message with zero descriptors (cmsg_len == CMSG_LEN(0)); the
+	 * memcpy below would then read past the payload and hand back a garbage
+	 * integer that may alias an unrelated open fd.
+	 */
+	if (cmsg->cmsg_len < CMSG_LEN(sizeof(int)))
 		return (-1);
 	memcpy(out_fd, CMSG_DATA(cmsg), sizeof(int));
 	return (0);
@@ -2840,7 +2893,7 @@ ble_passkey_reply(ble_ctx_t *ctx, const ble_addr_t *addr,
 		return (-1);
 	}
 	ble_security_req_encode(payload, IPC_SECURITY_PASSKEY_REPLY, addr);
-	ipc_put_le32(payload + 12, passkey);
+	ipc_put_le32(payload + IPC_SECURITY_REQ_SIZE, passkey);
 	return (ble_send_operation(ctx, IPC_OP_DOMAIN_SECURITY,
 	    IPC_SECURITY_PASSKEY_REPLY, payload, sizeof(payload), NULL,
 	    NULL, NULL));
@@ -2857,7 +2910,7 @@ ble_numcmp_reply(ble_ctx_t *ctx, const ble_addr_t *addr, bool accept)
 		return (-1);
 	}
 	ble_security_req_encode(payload, IPC_SECURITY_NUMCMP_REPLY, addr);
-	payload[12] = accept ? 1 : 0;
+	payload[IPC_SECURITY_REQ_SIZE] = accept ? 1 : 0;
 	return (ble_send_operation(ctx, IPC_OP_DOMAIN_SECURITY,
 	    IPC_SECURITY_NUMCMP_REPLY, payload, sizeof(payload), NULL,
 	    NULL, NULL));
@@ -3527,6 +3580,34 @@ ble_adv_set_create(ble_ctx_t *ctx, ble_adv_set_t **out)
 	set->handle = (uint8_t)handle;
 	*out = set;
 	return (0);
+}
+
+int
+ble_adv_set_open(ble_ctx_t *ctx, uint8_t handle, ble_adv_set_t **out)
+{
+	ble_adv_set_t *set;
+
+	ble_clear_error(ctx);
+	if (out == NULL || handle == 0 || handle > 0xef) {
+		ble_set_error(ctx, BLE_ERR_INVAL, "invalid advertising set handle");
+		return (-1);
+	}
+	set = calloc(1, sizeof(*set));
+	if (set == NULL) {
+		ble_set_error(ctx, BLE_ERR_NOMEM, "out of memory");
+		return (-1);
+	}
+	set->ctx = ctx;
+	set->handle = handle;
+	*out = set;
+	return (0);
+}
+
+void
+ble_adv_set_free(ble_adv_set_t *set)
+{
+
+	free(set);
 }
 
 uint8_t

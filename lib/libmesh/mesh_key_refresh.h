@@ -89,8 +89,8 @@ int	mesh_kr_beacon(struct mesh_key_refresh *st, int key_refresh_flag);
 
 /*
  * Key Refresh Flag a node should advertise in its own Secure Network beacon
- * for the current phase: SET in Phase 2 and Phase 3 (new keys in use),
- * CLEAR otherwise, including Phase 3.  Sections 3.11.4.2-3.11.4.3.
+ * for the current phase: SET only in Phase 2, CLEAR otherwise (including
+ * Phase 1 and Phase 3).  Sections 3.11.4.2-3.11.4.3.
  */
 int	mesh_kr_beacon_flag(const struct mesh_key_refresh *st);
 

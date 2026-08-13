@@ -931,7 +931,13 @@ ATF_TC_BODY(adv_config_and_mesh_burst_matrix, tc)
 		mock_xport_fail_at(ordinal, EIO);
 		ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD, 0, ad, sizeof(ad)));
 		mock_xport_fail_at(ordinal, EIO);
-		ATF_CHECK_EQ(-1, hci_mesh_adv_burst(FD,
+		/*
+		 * The ext path issues a leading Set-Ext-Adv-Enable(disable)
+		 * that is best-effort (finding 42: the set may not exist yet),
+		 * so a failure of that first command is ignored and only
+		 * ordinals >= 2 (params/data/enable) abort the burst.
+		 */
+		ATF_CHECK_EQ(ordinal == 1 ? 0 : -1, hci_mesh_adv_burst(FD,
 		    LE_FEAT_EXT_ADVERTISING, ad, sizeof(ad)));
 	}
 	mock_ok();

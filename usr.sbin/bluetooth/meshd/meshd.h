@@ -51,6 +51,8 @@
 #include "mesh_lpn.h"
 #include "mesh_provisioner.h"
 #include "mesh_manager.h"
+#include "mesh_df.h"
+#include "mesh_remote_prov.h"
 
 /* Mesh unicast address range (MshPRT_v1.1 Section 3.4.2): 0x0001..0x7FFF. */
 #define	MESHD_UNICAST_MIN	0x0001u
@@ -70,6 +72,7 @@
 
 #define	MESHD_MAX_APP_CLIENTS	16
 #define	MESHD_MAX_PROXY_GATT	4
+#define	MESHD_MAX_SCAN_RESULTS	16	/* unprovisioned-device discovery cache */
 
 /* ================================================================
  * Configuration.
@@ -322,7 +325,7 @@ struct meshd_app_surface {
 struct meshd_app_client {
 	int			active;
 	int			fd;
-	char			rxbuf[256];
+	char			rxbuf[2048];
 	size_t			rxlen;
 	char			txbuf[2048];
 	size_t			txlen;
@@ -334,6 +337,44 @@ struct meshd_app_client {
  * The node.
  * ================================================================ */
 
+/*
+ * Directed Forwarding state (finding 129 / MshMDL_v1.1 Section 4.4.3 + MshPRT
+ * Section 3.6.7).  The DF Configuration Server sub-states (one per subnet; here
+ * a single primary-subnet instance, sufficient for the operability surface)
+ * are held by value and answered by the foundation dispatch table; the
+ * relay/target node role (forwarding table + echo) and the Path Origin
+ * discovery FSM are driven from the node tick and the "df discover" verb.
+ */
+struct meshd_df_state {
+	struct mesh_cfg_directed_control	control;
+	struct mesh_cfg_path_metric		metric;
+	struct mesh_cfg_wanted_lanes		lanes;
+	struct mesh_cfg_two_way_path		two_way;
+	struct mesh_cfg_path_echo_interval	echo;
+	struct mesh_cfg_transmit		net_transmit;
+	struct mesh_cfg_transmit		relay_retransmit;
+	struct mesh_df_node			node;	/* relay/target role */
+	struct mesh_df_discovery		disc;	/* Path Origin FSM */
+	int					disc_active;
+};
+
+/*
+ * Remote Provisioning state (finding 128 / MshPRT_v1.1 Section 5.4.4).  The
+ * Server role (the Remote Provisioning Server model surfaced through the
+ * foundation dispatch table) answers Scan / Link / PDU control messages via the
+ * scan-server and server-link FSMs.  The Client/manager role (the Remote
+ * Provisioning Client model) is driven by the "remote-prov" verbs over the
+ * DevKey Config-Client transaction engine.
+ */
+struct meshd_rpr_state {
+	struct mesh_rp_scan_server	scan_server;	/* Server model */
+	struct mesh_rp_server_link	server_link;	/* Server model */
+	struct mesh_rp_scan_client	scan_client;	/* Client model */
+	struct mesh_rp_client_link	client_link;	/* Client model */
+	uint16_t			server_addr;	/* remote RPR Server */
+	int				client_active;
+};
+
 struct meshd_node {
 	/* mesh_sim is first; all consumers must share its composition limits. */
 	struct mesh_sim			sim;
@@ -344,6 +385,29 @@ struct meshd_node {
 	uint8_t			local_devkey[16];
 	int				have_local_devkey;
 	int				devkey_migrated;
+
+	/*
+	 * Device UUID advertised in the Unprovisioned Device Beacon while this
+	 * node is itself unprovisioned (from the device_uuid config knob).  When
+	 * have_device_uuid is set and the node is unprovisioned, meshd_node_tick
+	 * emits the beacon so the node can be discovered/provisioned over PB-ADV.
+	 */
+	uint8_t			device_uuid[16];
+	int				have_device_uuid;
+	uint64_t			unprov_beacon_last;
+
+	/*
+	 * Unprovisioned-device discovery cache.  While prov_scanning is set,
+	 * Unprovisioned Device Beacons received on the bearer are parsed and
+	 * their UUIDs recorded here (dedup by UUID) so the operator can list
+	 * nearby provisionable devices via the provision-scan verb.
+	 */
+	int				prov_scanning;
+	struct meshd_scan_entry {
+		uint8_t		uuid[16];
+		uint16_t	oob;
+		int		valid;
+	}				scan_results[MESHD_MAX_SCAN_RESULTS];
 
 	/*
 	 * Application models.  All per-model server/client state lives in one
@@ -408,6 +472,15 @@ struct meshd_node {
 	struct mesh_mgr_txn		cfg_txn;
 
 	/*
+	 * Directed Forwarding (finding 129) and Remote Provisioning (finding 128)
+	 * state.  DF holds the Configuration Server sub-states + relay/origin FSMs;
+	 * RPR holds the Server and Client model FSMs.  Both are (re)initialised in
+	 * meshd_setup_node() on every (re)provision.
+	 */
+	struct meshd_df_state		df;
+	struct meshd_rpr_state		rpr;
+
+	/*
 	 * OTA provisioning: the device UUID and element count of the unprovisioned
 	 * device currently being provisioned via meshd_provisioner_begin_mgr, held
 	 * so meshd_provisioner_commit_mgr can be issued when the session completes.
@@ -415,6 +488,14 @@ struct meshd_node {
 	uint8_t				prov_target_uuid[16];
 	uint8_t				prov_target_elements;
 	int				prov_target_active;
+	/*
+	 * Sticky "the last OTA provisioning attempt failed" flag.  A failed
+	 * attempt (PB-ADV link FAILED or session error) is torn down eagerly so
+	 * the reserved unicast address is released and a new attempt can begin;
+	 * this flag preserves the failure for the operator's provision-status
+	 * poll.  Cleared when the next attempt starts.
+	 */
+	int				prov_failed;
 
 	const struct meshd_bearer	*bearer;
 
@@ -430,6 +511,14 @@ struct meshd_node {
 	 * 0 until the first is due.  Drives the Section 3.9.3 beacon cadence.
 	 */
 	uint64_t			beacon_last;
+
+	/*
+	 * Fractional-second remainder accumulated toward the next whole second
+	 * fed to the periodic Heartbeat publisher.  Ticks arrive every ~10 ms,
+	 * so the per-tick delta must be accumulated rather than compared to a
+	 * one-second threshold directly.
+	 */
+	uint64_t			hb_accum_ms;
 
 	/* Counters (observability / test hooks). */
 	uint32_t			rx_delivered;	/* access msgs to models */
@@ -518,6 +607,10 @@ int	meshd_bearer_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len);
  * 0 if none was (bearer down / build failure), -1 on a bad argument.
  */
 int	meshd_beacon_emit(struct meshd_node *nd);
+int	meshd_unprov_beacon_emit(struct meshd_node *nd);
+void	meshd_provision_scan_set(struct meshd_node *nd, int on);
+int	meshd_provision_scan_add(struct meshd_node *nd, const uint8_t uuid[16],
+	    uint16_t oob);
 
 /*
  * Deliver a Secure Network beacon received from the bearer to the node: apply
@@ -808,8 +901,15 @@ void	meshd_drain_tx(struct meshd_node *nd);
  * daemon's transmit / receive seams.
  * ================================================================ */
 
-/* Retransmit cadence (clock ticks) and bounded attempt budget for a txn. */
-#define	MESHD_CFG_RETRY_TICKS	6
+/*
+ * Retransmit cadence and bounded attempt budget for a Config Client txn.
+ * mesh_mgr_txn_begin() arms its deadline in the transaction clock's units,
+ * which is CLOCK_MONOTONIC milliseconds here, so the interval must be a real
+ * millisecond value (not a small "tick" count).  800 ms per attempt gives a
+ * ~3.2 s overall budget, enough for a segmented Config Status from a remote
+ * (possibly multi-hop) node to arrive before the transaction times out.
+ */
+#define	MESHD_CFG_RETRY_MS	800
 #define	MESHD_CFG_MAX_ATTEMPTS	4
 
 /*
@@ -889,6 +989,83 @@ int	meshd_provision_gatt_begin(struct meshd_node *nd, const char *addr,
 	    uint8_t addr_type, uint8_t adapter_index,
 	    const uint8_t device_uuid[16],
 	    uint8_t num_elements);
+
+/*
+ * Report whether an in-flight OTA provisioning attempt has failed: the PB-ADV
+ * link exhausted its retransmission budget (FAILED) or the provisioning session
+ * hit a protocol error.  Returns 1 if failed, 0 otherwise.
+ */
+int	meshd_provision_ota_failed(const struct meshd_node *nd);
+
+/*
+ * Tear down an in-flight (or failed) OTA provisioning attempt: release the
+ * manager-reserved unicast address, free the session, and clear the
+ * provisioner/target-active flags so a new attempt can begin.  Sets the sticky
+ * prov_failed flag when failed is non-zero.  Safe to call when nothing is
+ * active.
+ */
+void	meshd_provision_ota_abort(struct meshd_node *nd, int failed);
+
+/* ================================================================
+ * Directed Forwarding (finding 129, MshMDL_v1.1 Section 4.4.3).
+ * ================================================================ */
+
+/*
+ * Execute a "df" control sub-verb (argv[0] is the sub-verb, e.g. "get"/"set"/
+ * "metric"/"lanes"/"two-way"/"echo"/"net-transmit"/"relay-retransmit").  The
+ * DF Configuration Client sub-verbs build a Directed-Forwarding Configuration
+ * message and drive it over the DevKey Config-Client transaction engine exactly
+ * like "cfg"; "discover" drives the local Path Origin discovery FSM.  now is the
+ * injected clock.  Returns 0 on success, -1 on a bad argument/operation.
+ */
+int	meshd_df_client_verb(struct meshd_node *nd, int argc, char **argv,
+	    uint64_t now, char *reply, size_t reply_max);
+
+/*
+ * Start a Path Origin path discovery toward target on the primary subnet: arms
+ * the discovery FSM (-> REQUEST_SENT) and, if a bearer is attached, emits the
+ * Path Request as a directed-control PDU.  Returns 0, -1 on a bad argument or if
+ * a discovery is already in flight.
+ */
+int	meshd_df_discover_begin(struct meshd_node *nd, uint16_t target,
+	    uint64_t now);
+
+/*
+ * Feed a received Directed-Forwarding transport-control PDU (opcode is a 7-bit
+ * MESH_DF_OP_*) to the relay/target node role, and, when the local node is the
+ * Path Origin, to the discovery FSM.  Any PDU the DF library asks to be
+ * forwarded/answered is transmitted over the bearer.  Returns the mesh_df
+ * receive disposition (>=0), -1 on a bad argument.
+ */
+int	meshd_df_recv_control(struct meshd_node *nd, uint16_t src, uint16_t dst,
+	    uint8_t ttl, uint8_t bearer, uint8_t opcode, const uint8_t *pdu,
+	    size_t len, uint64_t now);
+
+/* ================================================================
+ * Remote Provisioning (finding 128, MshPRT_v1.1 Section 5.4.4).
+ * ================================================================ */
+
+/*
+ * Execute a "remote-prov" control sub-verb (argv[0] is the sub-verb, e.g.
+ * "scan"/"scan-stop"/"caps"/"link-open"/"link-close"/"status").  The client
+ * sub-verbs build a Remote Provisioning message and drive it over the DevKey
+ * Config-Client transaction engine (the RPR models use the device key); the
+ * client scan/link FSMs record the correlated Status.  Returns 0, -1 on error.
+ */
+int	meshd_rpr_client_verb(struct meshd_node *nd, int argc, char **argv,
+	    uint64_t now, char *reply, size_t reply_max);
+
+/*
+ * Remote Provisioning Server (the Remote Provisioning Server model): dispatch a
+ * received RPR access opcode (MESH_RP_OP_*) to the scan-server / server-link
+ * FSMs and build the synchronous Status/Report reply.  Called from the
+ * foundation dispatch when the opcode is not a Configuration/Health opcode.
+ * Returns 1 with a reply, 0 if no reply is due, -1 if the opcode is not an RPR
+ * Server opcode or on a decode error.
+ */
+int	meshd_rpr_server_recv(struct meshd_node *nd,
+	    const struct mesh_access_pdu *ap, const uint8_t *pdu, size_t len,
+	    uint8_t *reply, size_t reply_max, size_t *reply_len);
 
 /* ================================================================
  * Control surface.

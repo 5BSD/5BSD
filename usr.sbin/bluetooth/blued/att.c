@@ -105,7 +105,7 @@ att_bearers_unlock(struct att_conn *ac)
  * fixed bearer, matching att_eatt_select_bearer()'s established policy.
  */
 static int
-att_select_bearer_for_pdu(struct att_conn *ac, size_t pdulen)
+att_select_bearer_for_pdu(struct att_conn *ac, size_t pdulen, uint16_t *mtu_out)
 {
 	bool has_capacity;
 	int fd, i;
@@ -121,6 +121,14 @@ att_select_bearer_for_pdu(struct att_conn *ac, size_t pdulen)
 			continue;
 		ac->eatt[i].pending = 1;
 		fd = ac->eatt[i].fd;
+		/*
+		 * Report the selected bearer's independently negotiated CoC
+		 * MTU so the caller sizes its recv to this bearer, not to the
+		 * fixed-channel ac->mtu (which may be smaller): an EATT response
+		 * up to this MTU must not be truncated.
+		 */
+		if (mtu_out != NULL)
+			*mtu_out = ac->eatt[i].mtu;
 		att_bearers_unlock(ac);
 		return (fd);
 	}
@@ -130,6 +138,8 @@ att_select_bearer_for_pdu(struct att_conn *ac, size_t pdulen)
 		if (ac->primary_pending == 0) {
 			ac->primary_pending = 1;
 			fd = ac->fd;
+			if (mtu_out != NULL)
+				*mtu_out = ac->mtu;
 			att_bearers_unlock(ac);
 			return (fd);
 		}
@@ -407,6 +417,20 @@ att_close(struct att_conn *ac)
 }
 
 /*
+ * Cap subsequent att_request() deadlines on this connection (finding 62).
+ * See att.h: 0 restores the 30 s ATT default; any value is clamped to 30 s
+ * inside att_request().  A single plain scalar store — att_request reads the
+ * field once at entry, so there is no lock ordering concern.
+ */
+void
+att_conn_set_op_timeout(struct att_conn *ac, unsigned int ms)
+{
+
+	if (ac != NULL)
+		ac->op_timeout_ms = ms;
+}
+
+/*
  * Release a bearer previously selected by att_eatt_select_bearer():
  * decrement its outstanding-request count.  att_eatt_select_bearer()
  * does pending++ when it hands out an EATT bearer; that increment models a
@@ -472,6 +496,9 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 	int max_skip = 16;
 	int fd;
 	uint8_t opcode;
+	uint16_t bearer_mtu = ac->mtu;
+	size_t recvlen;
+	unsigned int cap_ms;
 	struct timespec deadline, now;
 	struct timeval tv_remaining;
 
@@ -480,20 +507,49 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 
 	/*
 	 * Record an absolute deadline so that interleaved notifications
-	 * cannot reset the 30-second wall-clock timeout.  On each loop
-	 * iteration, SO_RCVTIMEO is adjusted to the remaining time.
+	 * cannot reset the wall-clock timeout.  On each loop iteration,
+	 * SO_RCVTIMEO is adjusted to the remaining time.
+	 *
+	 * The default cap is the ATT transaction ceiling of 30 s (Core Spec
+	 * Vol 3 Part F §3.3.3).  A caller (e.g. the ctl layer processing a
+	 * blocking GATT op on the shared event-loop thread) may install a
+	 * tighter per-connection cap via att_conn_set_op_timeout(); it is
+	 * honoured here so the whole request — across any interleaved
+	 * notification drain — completes within that bound rather than being
+	 * clobbered back to remaining-of-30 s each iteration.
 	 */
+	cap_ms = ac->op_timeout_ms;
+	if (cap_ms == 0 || cap_ms > 30000)
+		cap_ms = 30000;
 	clock_gettime(CLOCK_MONOTONIC, &deadline);
-	deadline.tv_sec += 30;
+	deadline.tv_sec += cap_ms / 1000;
+	deadline.tv_nsec += (long)(cap_ms % 1000) * 1000000L;
+	if (deadline.tv_nsec >= 1000000000L) {
+		deadline.tv_sec++;
+		deadline.tv_nsec -= 1000000000L;
+	}
 
 	/*
 	 * Select the best available bearer.  Prefer EATT bearers when
 	 * available — they allow ATT multiplexing (Core Spec Vol 3
 	 * Part G §5.3).  Fall back to the primary bearer on CID 0x0004.
 	 */
-	fd = att_select_bearer_for_pdu(ac, reqlen);
+	fd = att_select_bearer_for_pdu(ac, reqlen, &bearer_mtu);
 	if (fd < 0)
 		return (-1);
+
+	/*
+	 * Size the receive to the selected bearer's MTU rather than to the
+	 * caller-supplied rsplen (which is the fixed-channel ac->mtu).  An
+	 * EATT bearer's CoC MTU is negotiated independently and can exceed the
+	 * fixed MTU; capping recv at rsplen would silently truncate a longer
+	 * EATT response.  The response buffer (att_client_rsp / att_exchange_mtu)
+	 * is always ATT_MAX_MTU, an upper bound on any bearer MTU, so a full
+	 * bearer-MTU recv never overruns it.  Never shrink below rsplen.
+	 */
+	recvlen = bearer_mtu;
+	if (recvlen < rsplen)
+		recvlen = rsplen;
 
 	n = send(fd, req, reqlen, MSG_EOR);
 	if (n < 0) {
@@ -551,7 +607,7 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		    &tv_remaining, sizeof(tv_remaining));
 
 		do {
-			n = recv(fd, rsp, rsplen, 0);
+			n = recv(fd, rsp, recvlen, 0);
 		} while (n < 0 && errno == EINTR);
 		if (n < 0) {
 			int save = errno;
@@ -581,14 +637,19 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 			if (--max_skip <= 0) {
 				warnx("ATT: too many unsolicited PDUs while waiting for response");
 				/*
-				 * Not an ATT Error Response, so 'ae' is not
-				 * populated -- use a distinct errno so callers
-				 * (errno == EPROTO ? ae.code : -1) return a
-				 * clean -1 transport failure, not uninitialised
-				 * ae.code.  EPROTO is reserved for a real Error
-				 * Response below.
+				 * A legitimate high-rate notification burst (e.g.
+				 * a fast mouse) can exceed this per-request guard
+				 * while the link is perfectly healthy.  Fail only
+				 * THIS request — release the bearer's pending slot
+				 * WITHOUT marking ac->failed — so subsequent
+				 * requests still use the bearer instead of every
+				 * later request returning EPIPE forever.  Not an
+				 * ATT Error Response, so 'ae' is left unpopulated;
+				 * a distinct errno (EBADMSG, not the EPROTO
+				 * reserved for a real Error Response) gives callers
+				 * a clean -1 transport failure.
 				 */
-				att_bearer_fail(ac, fd);
+				att_eatt_bearer_release(ac, fd);
 				errno = EBADMSG;
 				return (-1);
 			}
@@ -607,14 +668,11 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 			if (--max_skip <= 0) {
 				warnx("ATT: too many unsolicited PDUs while waiting for response");
 				/*
-				 * Not an ATT Error Response, so 'ae' is not
-				 * populated -- use a distinct errno so callers
-				 * (errno == EPROTO ? ae.code : -1) return a
-				 * clean -1 transport failure, not uninitialised
-				 * ae.code.  EPROTO is reserved for a real Error
-				 * Response below.
+				 * As above: a benign burst must not permanently
+				 * kill the bearer.  Release the pending slot
+				 * without ac->failed and fail only this request.
 				 */
-				att_bearer_fail(ac, fd);
+				att_eatt_bearer_release(ac, fd);
 				errno = EBADMSG;
 				return (-1);
 			}
@@ -664,7 +722,16 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 int
 att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 {
-	uint8_t req[3], rsp[5]; /* 5 bytes to hold ATT_ERROR_RSP */
+	uint8_t req[3];
+	/*
+	 * Receive into the full-size thread-local response buffer, not a
+	 * 5-byte MTU-Response-sized stack buffer: att_request()'s drain loop
+	 * can surface an unsolicited notification/indication (the unsolicited
+	 * handler is registered before the exchange) that is larger than the
+	 * MTU Response, and a short buffer would truncate it — corrupting the
+	 * PDU handed to the unsolicited callback.
+	 */
+	uint8_t *rsp = att_client_rsp;
 	struct att_error ae;
 	ssize_t n;
 	uint16_t server_mtu;
@@ -680,7 +747,7 @@ att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 	req[0] = ATT_OP_MTU_REQ;
 	put_le16(req + 1, client_mtu);
 
-	n = att_request(ac, req, sizeof(req), rsp, sizeof(rsp), &ae);
+	n = att_request(ac, req, sizeof(req), rsp, ATT_MAX_MTU, &ae);
 	if (n < 0)
 		return (-1);
 
@@ -1576,7 +1643,7 @@ int
 att_eatt_select_bearer(struct att_conn *ac)
 {
 
-	return (att_select_bearer_for_pdu(ac, 0));
+	return (att_select_bearer_for_pdu(ac, 0, NULL));
 }
 
 /*

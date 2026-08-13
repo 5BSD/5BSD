@@ -301,15 +301,16 @@ ATF_TC_BODY(log_l2cap_length_guards, tc)
 	/* len 70000 > 65535: truncate branch, then 65535 > 65531: early ret. */
 	hci_log_l2cap(BT_TEST_ACL_CONNECTION_HANDLE, BT_CORE63_L2CAP_CID_ATT,
 	    big, bigsz, false);
-	/* len 65532 in (65531, 65535]: first guard false, second true. */
+	/* len 65532 in (65531, 65535]: truncated to UINT16_MAX-4 and written
+	 * (finding 49: the record is truncated, not silently dropped). */
 	hci_log_l2cap(BT_TEST_ACL_CONNECTION_HANDLE, BT_CORE63_L2CAP_CID_ATT,
 	    big, (size_t)(UINT16_MAX - 3), false);
 
 	hci_log_close();
 
-	/* No record should have been written past the 16-byte file header. */
+	/* A truncated record is written past the 16-byte file header. */
 	ATF_REQUIRE_EQ(stat(path, &st), 0);
-	ATF_CHECK_EQ(st.st_size, BT_BTSNOOP_FILE_HEADER_SIZE);
+	ATF_CHECK(st.st_size > BT_BTSNOOP_FILE_HEADER_SIZE);
 
 	(void)unlink(path);
 	free(big);

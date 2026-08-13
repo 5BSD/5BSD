@@ -29,6 +29,7 @@ ATF_TESTS_C+=	gatt_test
 ATF_TESTS_C+=	hci_log_test
 ATF_TESTS_C+=	hci_offline_test
 ATF_TESTS_C+=	hci_conform_test
+ATF_TESTS_C+=	hci_findings_test
 ATF_TESTS_C+=	spec_wire_contract_test
 ATF_TESTS_C+=	ctl_adv_conn_test
 ATF_TESTS_C+=	ctl_adapter_scan_test
@@ -134,6 +135,7 @@ ATF_TESTS_C+=	meshd_fault_test
 ATF_TESTS_C+=	meshd_security_test
 ATF_TESTS_C+=	mesh_cfgsrv_test
 ATF_TESTS_C+=	mesh_cfg_v11_test
+ATF_TESTS_C+=	mesh_findings_meshd_test
 ATF_TESTS_C+=	mesh_df_test
 ATF_TESTS_C+=	mesh_remote_prov_test
 ATF_TESTS_C+=	smp_scenario_test
@@ -437,7 +439,7 @@ MESHD_ENGINE_NO_NODE=	meshd_models.c meshd_config.c meshd_ctl.c \
 			mesh_sim.c mesh_generic.c mesh_sensor.c mesh_lighting.c \
 			mesh_lighting_lc.c mesh_time_scene.c \
 		mesh_access.c mesh_cfg_model.c mesh_cfg_v11.c mesh_health_model.c \
-		mesh_heartbeat.c mesh_df.c \
+		mesh_heartbeat.c mesh_df.c mesh_remote_prov.c \
 		mesh_provision.c mesh_provisioner.c mesh_manager.c mesh_lpn.c \
 		mesh_net.c mesh_transport.c mesh_crypto.c mesh_rpl.c mesh_relay.c \
 		mesh_iv.c mesh_key_refresh.c mesh_beacon.c mesh_friend.c mesh_proxy.c
@@ -464,6 +466,16 @@ ATF_TESTS_C+=	mesh_cfgclient_test
 SRCS.mesh_cfgclient_test=	mesh_cfgclient_test.c ptap_meshd_cfgclient.c \
 		${MESHD_ENGINE:Nmeshd_cfgclient.c}
 CFLAGS.mesh_cfgclient_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
+# meshd Directed Forwarding wiring (finding 129): DF Configuration Server model
+# registration, "df" Config-Client verbs, and the Path Origin discovery FSM.
+ATF_TESTS_C+=	meshd_df_test
+SRCS.meshd_df_test=	meshd_df_test.c ${MESHD_ENGINE}
+CFLAGS.meshd_df_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
+# meshd Remote Provisioning wiring (finding 128): RPR Server model registration,
+# "remote-prov" Client verbs, and the scan/link client FSM transitions.
+ATF_TESTS_C+=	meshd_rpr_test
+SRCS.meshd_rpr_test=	meshd_rpr_test.c ${MESHD_ENGINE}
+CFLAGS.meshd_rpr_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
 # meshd persistent node-state store: SEQ block reservation (no regress across
 # restart), RPL survives restart, keys/IV/config round-trip, clock tick.
 ATF_TESTS_C+=	meshd_persist_test
@@ -478,6 +490,14 @@ LDFLAGS.meshd_persist_fault_test+=	-Wl,--wrap=write -Wl,--wrap=fsync \
 	-Wl,--wrap=rename
 SRCS.meshd_fault_test=	meshd_fault_test.c ${MESHD_ENGINE}
 CFLAGS.meshd_fault_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
+# Regression tests for the meshd/meshctl correctness + completeness findings
+# (bluetooth-bugs.md 52-55, 69, 71, 73, 106, 107, 126, 127, 130, 131).
+SRCS.mesh_findings_meshd_test=	mesh_findings_meshd_test.c ${MESHD_ENGINE}
+CFLAGS.mesh_findings_meshd_test+=	-I${SRCTOP}/lib/libmesh \
+		-I${SRCTOP}/usr.sbin/bluetooth/meshd
+# Force the (otherwise unreachable) PB-ADV link-open failure path for finding
+# 123's regression test; the wrapper passes through unless a flag is set.
+LDFLAGS.mesh_findings_meshd_test+=	-Wl,--wrap=mesh_prov_link_open
 # Configuration Server dispatch runtime + node config database end-to-end.
 SRCS.mesh_cfgsrv_test=	mesh_cfgsrv_test.c ${MESHD_ENGINE}
 CFLAGS.mesh_cfgsrv_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
@@ -537,6 +557,11 @@ SRCS.hci_conform_test=	hci_conform_test.c hci_util.c hci_adv.c hci_scan.c \
 			hci_conn.c hci_privacy.c hci_misc.c hci_log.c
 LDFLAGS.hci_conform_test+=	-Wl,--wrap=bt_devreq
 LIBADD.hci_conform_test+=	pthread
+
+SRCS.hci_findings_test=	hci_findings_test.c hci_util.c hci_adv.c hci_scan.c \
+			hci_conn.c hci_privacy.c hci_misc.c hci_log.c
+LDFLAGS.hci_findings_test+=	-Wl,--wrap=bt_devreq
+LIBADD.hci_findings_test+=	pthread
 
 # Advertising / connection parameter HCI emission via the bt_devreq wrap seam:
 # hci_adv_configure() (SET_ADV_PARAMS) + LE Connection Update / Set PHY / Set

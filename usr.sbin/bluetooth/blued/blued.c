@@ -20,6 +20,7 @@
 #include "blued_internal.h"
 #include "iso.h"
 #include "hci_internal.h"	/* hci_set_event_mask_page2 (adapter init) */
+#include "hci_util.h"		/* hci_fd_closed (adapter teardown) */
 #include "blued_persist.h"	/* operational-state persistence across restart */
 #include "blued_devmgr.h"	/* device-manager policy over persisted state */
 #include "smp_internal.h"
@@ -27,6 +28,8 @@
 #include <sys/file.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+
+#include <time.h>	/* time(3) for device-cache last_seen (finding 67) */
 
 /* ---- Global state (defined here, declared extern in blued_internal.h) ---- */
 
@@ -49,7 +52,6 @@ const int _blued_kq_vhid_output_tag;
 const int _blued_kq_acquire_tag;	/* AcquireNotify/Write daemon-side fds */
 const int _blued_kq_idle_timeout_tag;
 const int _blued_kq_readvertise_tag;
-const int _blued_kq_setup_timeout_tag;
 
 /*
  * Operator runtime pairing gate (the common adapter pairable control); default accept.
@@ -182,6 +184,14 @@ static struct blued_persist_gatt_device
 static uint32_t blued_gattcache_count;
 static struct blued_persist_adv_set blued_adv_restore;
 static bool blued_adv_restore_valid;
+/*
+ * Snapshot of the device cache as loaded at startup, retained so metadata the
+ * daemon has no live store for (notably GAP Appearance) is carried forward
+ * across a restart instead of being wiped on every flush (finding 67).
+ */
+static struct blued_persist_device
+    blued_devcache_snapshot[BLUED_PERSIST_MAX_DEVICES];
+static uint32_t blued_devcache_snapshot_count;
 static uintptr_t blued_rpa_timer;
 uintptr_t blued_rpa_retry_timer;
 static void	usage(void) __dead2;
@@ -647,33 +657,50 @@ passkey_display(uint32_t *passkey, bool display, void *arg)
 		struct timespec ts;
 		int ret;
 
+		if (conn == NULL)
+			return (-1);
+
+		/*
+		 * Finding 94: ARM the reply slot (status = 0) BEFORE emitting
+		 * the PASSKEY_INPUT event.  The replier only accepts a reply
+		 * while status == 0; if we emit first, an automated agent's
+		 * immediate reply lands in the window before the slot is armed,
+		 * is rejected NOT_FOUND, and this thread then blocks the full
+		 * 30 s timedwait for an answer that already came.  We must not
+		 * hold pairing_lock across the emit (it takes ctl_clients_lock,
+		 * the reverse of the dispatch order pairing replies use — an
+		 * AB/BA inversion), so arm, unlock, emit, then re-check the
+		 * predicate: a reply that raced in between simply sets status
+		 * to 1 and the wait loop observes it without sleeping.
+		 */
+		pthread_mutex_lock(&conn->pairing_lock);
+		conn->passkey_reply_status = 0;
+		pthread_mutex_unlock(&conn->pairing_lock);
+
 		blued_ctl_passkey_input(addr);
 
 		/* Wait for PASSKEY_REPLY with 30-second timeout */
-			if (conn == NULL)
-				return (-1);
-			pthread_mutex_lock(&conn->pairing_lock);
-			conn->passkey_reply_status = 0;
-			clock_gettime(CLOCK_REALTIME, &ts);
+		pthread_mutex_lock(&conn->pairing_lock);
+		clock_gettime(CLOCK_REALTIME, &ts);
 		ts.tv_sec += 30;
 
-			while (conn->passkey_reply_status == 0) {
-				ret = pthread_cond_timedwait(&conn->pairing_cond,
-				    &conn->pairing_lock, &ts);
-				if (ret != 0) {
-					conn->passkey_reply_status = -1;
+		while (conn->passkey_reply_status == 0) {
+			ret = pthread_cond_timedwait(&conn->pairing_cond,
+			    &conn->pairing_lock, &ts);
+			if (ret != 0) {
+				conn->passkey_reply_status = -1;
 				break;
 			}
 		}
 
-			if (conn->passkey_reply_status == 1) {
-				*passkey = conn->passkey_reply;
-				conn->passkey_reply_status = -1;
-				pthread_mutex_unlock(&conn->pairing_lock);
-				return (0);
-			}
+		if (conn->passkey_reply_status == 1) {
+			*passkey = conn->passkey_reply;
 			conn->passkey_reply_status = -1;
 			pthread_mutex_unlock(&conn->pairing_lock);
+			return (0);
+		}
+		conn->passkey_reply_status = -1;
+		pthread_mutex_unlock(&conn->pairing_lock);
 		return (-1);
 	}
 
@@ -712,13 +739,23 @@ numcmp_confirm(uint32_t value, void *arg)
 		struct timespec ts;
 		int ret;
 
+		if (conn == NULL)
+			return (-1);
+
+		/*
+		 * Finding 94: arm the reply slot before emitting the NUMCMP
+		 * event so an immediate reply is not lost (see passkey_display).
+		 * pairing_lock is not held across the emit to avoid the
+		 * pairing_lock/ctl_clients_lock order inversion.
+		 */
+		pthread_mutex_lock(&conn->pairing_lock);
+		conn->numcmp_reply_status = 0;
+		pthread_mutex_unlock(&conn->pairing_lock);
+
 		blued_ctl_numcmp_request(addr, value);
 
 		/* Wait for NUMCMP_REPLY with 30-second timeout */
-		if (conn == NULL)
-			return (-1);
 		pthread_mutex_lock(&conn->pairing_lock);
-		conn->numcmp_reply_status = 0;
 		clock_gettime(CLOCK_REALTIME, &ts);
 		ts.tv_sec += 30;
 
@@ -1630,9 +1667,14 @@ blued_reslist_sync_add(int hci_fd, const struct smp_bond *bond)
 	if (bond == NULL || hci_fd < 0 || !bond->has_irk)
 		return;
 	adp = blued_adapter_by_fd(hci_fd);
-	if (adp == NULL ||
-	    !blued_reslist_add(&adp->reslist, bond->addr, bond->addr_type))
+	if (adp == NULL)
+		return;
+	/* Serialize shadow + controller mutation against dispatch (finding 92). */
+	pthread_mutex_lock(&blued_g.reslist_lock);
+	if (!blued_reslist_add(&adp->reslist, bond->addr, bond->addr_type)) {
+		pthread_mutex_unlock(&blued_g.reslist_lock);
 		return;		/* already present or list full */
+	}
 
 	local_irk = blued_has_local_irk ? blued_local_irk : blued_zero_irk;
 	at = (bond->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
@@ -1645,6 +1687,7 @@ blued_reslist_sync_add(int hci_fd, const struct smp_bond *bond)
 		(void)blued_reslist_remove(&adp->reslist, bond->addr,
 		    bond->addr_type);	/* keep shadow == controller */
 	hci_le_set_addr_resolution_enable(hci_fd, blued_cfg.privacy ? 1 : 0);
+	pthread_mutex_unlock(&blued_g.reslist_lock);
 }
 
 /*
@@ -1661,14 +1704,20 @@ blued_reslist_sync_remove(int hci_fd, const uint8_t addr[6], uint8_t addr_type)
 	if (hci_fd < 0)
 		return;
 	adp = blued_adapter_by_fd(hci_fd);
-	if (adp == NULL ||
-	    !blued_reslist_remove(&adp->reslist, addr, addr_type))
+	if (adp == NULL)
+		return;
+	/* Serialize shadow + controller mutation against dispatch (finding 92). */
+	pthread_mutex_lock(&blued_g.reslist_lock);
+	if (!blued_reslist_remove(&adp->reslist, addr, addr_type)) {
+		pthread_mutex_unlock(&blued_g.reslist_lock);
 		return;		/* not programmed */
+	}
 
 	at = (addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
 	hci_le_set_addr_resolution_enable(hci_fd, 0);
 	(void)hci_le_remove_dev_resolving_list(hci_fd, at, addr);
 	hci_le_set_addr_resolution_enable(hci_fd, blued_cfg.privacy ? 1 : 0);
+	pthread_mutex_unlock(&blued_g.reslist_lock);
 }
 
 static void
@@ -1746,6 +1795,20 @@ blued_devenum_cb(int s __unused, struct bt_devinfo const *di, void *arg)
 	struct blued_adapter *adp;
 	int fd;
 
+	/*
+	 * Cap the live adapter set at BLUED_MAX_ADAPTERS.  Several routines
+	 * (blued_set_rpa_timeout, the SIGHUP privacy transition) collect
+	 * changed adapters into a fixed BLUED_MAX_ADAPTERS-sized stack array
+	 * while iterating this list, and the per-fd HCI lock/scan-state tables
+	 * are also 8-slot; an unbounded adapter count would overflow them.
+	 * (finding 96)
+	 */
+	if (*nfound >= BLUED_MAX_ADAPTERS) {
+		LOG_HCI(0, "ignoring %s: adapter limit (%d) reached",
+		    di->devname, BLUED_MAX_ADAPTERS);
+		return (0);
+	}
+
 	/* Skip nodes not connected to a transport (phantom netgraph nodes) */
 	if (!(di->state & NG_HCI_UNIT_CONNECTED)) {
 		if (blued_verbose >= 2)
@@ -1787,6 +1850,13 @@ blued_enumerate_adapters(struct blued_config *cfg)
 		/* Use explicitly configured adapters */
 		for (i = 0; i < cfg->nadapters; i++) {
 			int fd;
+
+			/* Cap the live adapter set (finding 96). */
+			if (nfound >= BLUED_MAX_ADAPTERS) {
+				warnx("ignoring adapter %s: limit (%d) reached",
+				    cfg->adapters[i], BLUED_MAX_ADAPTERS);
+				break;
+			}
 
 			fd = hci_open(cfg->adapters[i]);
 			if (fd < 0) {
@@ -1853,7 +1923,9 @@ blued_adapter_init(struct blued_adapter *adp)
 	adp->powered = false;
 	adp->random_addr_valid = false;
 	memset(&adp->random_addr, 0, sizeof(adp->random_addr));
+	pthread_mutex_lock(&blued_g.reslist_lock);	/* finding 92 */
 	memset(&adp->reslist, 0, sizeof(adp->reslist));
+	pthread_mutex_unlock(&blued_g.reslist_lock);
 	blued_adapter_rpa_clear(adp);
 	/*
 	 * Post-reset settle time: the kernel's ng_hci Reset Complete
@@ -1922,6 +1994,27 @@ blued_adapter_init(struct blued_adapter *adp)
 	if (adp->le_features & LE_FEAT_2M_PHY)
 		hci_le_set_default_phy(adp->hci_fd, 0x00 /* no preference */,
 		    0x02 /* prefer 2M TX */, 0x02 /* prefer 2M RX */);
+
+	/*
+	 * Announce host support for the optional LE procedures the daemon
+	 * actually drives, so the controller will permit them (LE Set Host
+	 * Feature, Core Vol 4 Part E §7.8.115).  Without these the peer never
+	 * sees the corresponding host-support feature bit and rejects/omits
+	 * the procedure.  Feature bit numbers per Core Vol 6 Part B Table 4.4:
+	 * 32 = Connected Isochronous Stream (Host Support),
+	 * 38 = Connection Subrating (Host Support).  Gated on controller
+	 * support so an unsupported bit is not toggled.  (finding 143)
+	 */
+#define HCI_LE_HOSTFEAT_CIS		32
+#define HCI_LE_HOSTFEAT_CONN_SUBRATING	38
+	if (adp->le_features & (LE_FEAT_CIS_CENTRAL | LE_FEAT_CIS_PERIPH))
+		(void)hci_le_set_host_feature(adp->hci_fd,
+		    HCI_LE_HOSTFEAT_CIS, 0x01);
+	if (adp->le_features & LE_FEAT_CONN_SUBRATING)
+		(void)hci_le_set_host_feature(adp->hci_fd,
+		    HCI_LE_HOSTFEAT_CONN_SUBRATING, 0x01);
+#undef HCI_LE_HOSTFEAT_CIS
+#undef HCI_LE_HOSTFEAT_CONN_SUBRATING
 
 	/*
 	 * Query controller buffer sizes for flow control awareness.
@@ -2041,7 +2134,9 @@ blued_adapter_controller_invalidated(struct blued_adapter *adp)
 	adp->privacy = false;
 	adp->random_addr_valid = false;
 	memset(&adp->random_addr, 0, sizeof(adp->random_addr));
+	pthread_mutex_lock(&blued_g.reslist_lock);	/* finding 92 */
 	memset(&adp->reslist, 0, sizeof(adp->reslist));
+	pthread_mutex_unlock(&blued_g.reslist_lock);
 	blued_adapter_rpa_clear(adp);
 	adp->powered = false;
 	adp->power_quiescing = false;
@@ -2248,6 +2343,22 @@ blued_adapter_set_discoverable(struct blued_adapter *adp, bool enable,
 		goto overlay_fail;
 	adp->adv_enabled = false;
 	if (ext) {
+		/*
+		 * On extended-advertising controllers the connectable set 0
+		 * must be created with Set Extended Advertising Parameters
+		 * before Set Extended Advertising Data, otherwise the data
+		 * command fails with Unknown Advertising Identifier and
+		 * DISCOVERABLE always returns -1.  Issue params for the
+		 * connectable+scannable legacy set now (the set is disabled
+		 * above, so this is allowed).  (finding 44)
+		 */
+		if (hci_le_set_ext_adv_params_phy(adp->hci_fd, 0x00,
+		    0x0013 /* conn+scan legacy ADV_IND */,
+		    ADV_INTERVAL_100MS, ADV_INTERVAL_100MS,
+		    adp->privacy ? BLUED_HCI_OWN_ADDR_RPA_RANDOM_FALLBACK :
+		    BLUED_HCI_OWN_ADDR_PUBLIC, 0x00 /* no allowlist */,
+		    0x01 /* primary PHY 1M */, 0x01 /* secondary PHY 1M */) < 0)
+			goto overlay_fail;
 		if (hci_le_set_ext_adv_data(adp->hci_fd, 0x00, adv_data,
 		    (uint8_t)dlen) < 0)
 			goto overlay_fail;
@@ -2459,7 +2570,9 @@ blued_adapter_set_power(struct blued_adapter *adp, bool on)
 			adp->powered = false;
 			adp->privacy = false;
 			adp->random_addr_valid = false;
+			pthread_mutex_lock(&blued_g.reslist_lock);	/* 92 */
 			memset(&adp->reslist, 0, sizeof(adp->reslist));
+			pthread_mutex_unlock(&blued_g.reslist_lock);
 			blued_adapter_rpa_clear(adp);
 			blued_rpa_retry_reconcile();
 			return (-1);
@@ -2741,6 +2854,17 @@ blued_reload_config(void)
 	if (newcfg.eatt != old->eatt)
 		LOG_HOGP(1, "config reload: eatt changed "
 		    "(restart required)");
+	/*
+	 * privacy_mode (device vs network) is programmed per-bond into the
+	 * controller's resolving list at startup; changing it at runtime would
+	 * require reprogramming every resolving-list entry, which SIGHUP does
+	 * not do.  Emit the same "restart required" diagnostic as the other
+	 * non-reloadable keys instead of silently dropping the edit.
+	 * (finding 98)
+	 */
+	if (newcfg.privacy_mode != old->privacy_mode)
+		LOG_HOGP(1, "config reload: privacy_mode changed "
+		    "(restart required)");
 	if (strcmp(newcfg.logfile, old->logfile) != 0)
 		LOG_HOGP(1, "config reload: logfile changed "
 		    "(restart required)");
@@ -2779,6 +2903,17 @@ blued_persist_settings_from_cfg(struct blued_persist_settings *s,
 	s->sc_mode = c->sc_mode;
 	s->min_key_size = c->min_key_size;
 	s->rpa_timeout = c->rpa_timeout;
+	/*
+	 * Persist the default connection parameters (finding 67: previously
+	 * dead schema) and the runtime preferred ATT MTU (finding 140: had no
+	 * persisted field and reverted on restart).  The conn-param defaults
+	 * mirror the CONNECT fallback (6/12/4/500).
+	 */
+	s->conn_interval_min = 6;
+	s->conn_interval_max = 12;
+	s->conn_latency = 4;
+	s->supervision_timeout = 500;
+	s->preferred_mtu = blued_g.att_preferred_mtu;
 }
 
 static void
@@ -2800,6 +2935,16 @@ blued_persist_settings_to_cfg(const struct blued_persist_settings *s,
 		c->min_key_size = s->min_key_size;
 	if (s->rpa_timeout >= 1 && s->rpa_timeout <= 3600)
 		c->rpa_timeout = s->rpa_timeout;
+	/*
+	 * Restore the runtime discoverable state (finding 67: previously saved
+	 * but never restored) so a peripheral that was made discoverable comes
+	 * back discoverable, and the preferred ATT MTU (finding 140) into the
+	 * live global the central MTU-exchange path already consults.
+	 */
+	if (s->discoverable)
+		c->peripheral_mode = true;
+	if (s->preferred_mtu >= 23 && s->preferred_mtu <= 517)
+		blued_g.att_preferred_mtu = s->preferred_mtu;
 }
 
 /*
@@ -2838,6 +2983,15 @@ blued_persist_restore(struct blued_config *cfg)
 	    &ndev) == 0) {
 		int applied = blued_devtable_apply(&blued_devtable, devs, ndev);
 
+		/*
+		 * Retain the loaded records so fields with no live store (GAP
+		 * Appearance) survive the next flush (finding 67).
+		 */
+		if (ndev > BLUED_PERSIST_MAX_DEVICES)
+			ndev = BLUED_PERSIST_MAX_DEVICES;
+		memcpy(blued_devcache_snapshot, devs,
+		    ndev * sizeof(blued_devcache_snapshot[0]));
+		blued_devcache_snapshot_count = ndev;
 		LOG_HOGP(1, "persist: applied %d cached device(s) to live "
 		    "table", applied);
 	}
@@ -2882,7 +3036,7 @@ blued_persist_flush(const struct blued_config *cfg)
 	struct blued_persist_settings s;
 	static struct blued_persist_device devs[BLUED_PERSIST_MAX_DEVICES];
 	static struct blued_persist_gatt_device gatt[BLUED_PERSIST_MAX_GATT_DEVICES];
-	struct blued_persist_adv_set adv;
+	struct blued_persist_adv_set *adv;
 	uint32_t ndev = 0, ngatt = 0;
 	int rc = 0;
 
@@ -2902,16 +3056,71 @@ blued_persist_flush(const struct blued_config *cfg)
 			const struct smp_bond *b = &blued_g.bond_db->bonds[i];
 			struct blued_persist_device *pd = &devs[ndev++];
 
+			const struct blued_known_device *kd;
+			const struct blued_persist_device *snap;
+
 			memset(pd, 0, sizeof(*pd));
 			memcpy(pd->addr, b->addr, 6);
 			pd->addr_type = b->addr_type;
 			pd->bonded = 1;
-			pd->auto_connect = 1;
+			/*
+			 * auto_connect reflects the operator reconnect policy
+			 * rather than being hardcoded to 1 (finding 67).
+			 */
+			pd->auto_connect = (cfg->auto_connect &&
+			    cfg->reconnect) ? 1 : 0;
 			if (b->has_name) {
 				pd->has_name = 1;
 				strlcpy(pd->name, b->name, sizeof(pd->name));
 			}
 			pd->is_hogp = b->has_handle_cache ? 1 : 0;
+			/*
+			 * A bonded peer's stored address is its identity
+			 * address when it distributed an IRK; record it so an
+			 * RPA-using peer is still recognised after restart
+			 * (finding 67).
+			 */
+			if (b->has_irk) {
+				pd->has_identity = 1;
+				memcpy(pd->identity_addr, b->addr, 6);
+				pd->identity_addr_type = b->addr_type;
+			}
+			/*
+			 * Populate last_seen and the resolved identity from the
+			 * live known-device table (finding 67: previously the
+			 * save path left these zero, wiping them every restart).
+			 */
+			kd = blued_devtable_find(&blued_devtable, b->addr,
+			    b->addr_type);
+			if (kd != NULL) {
+				pd->last_seen = kd->last_seen;
+				if ((kd->flags & BLUED_KNOWN_IDENTITY) != 0) {
+					pd->has_identity = 1;
+					memcpy(pd->identity_addr,
+					    kd->identity_addr, 6);
+					pd->identity_addr_type =
+					    kd->identity_addr_type;
+				}
+				if (!pd->has_name && kd->name[0] != '\0') {
+					pd->has_name = 1;
+					strlcpy(pd->name, kd->name,
+					    sizeof(pd->name));
+				}
+			}
+			if (pd->last_seen == 0)
+				pd->last_seen = (int64_t)time(NULL);
+			/*
+			 * Carry GAP Appearance forward from the loaded snapshot
+			 * (the daemon keeps no live Appearance store), finding 67.
+			 */
+			snap = blued_persist_devcache_find(
+			    blued_devcache_snapshot,
+			    blued_devcache_snapshot_count, b->addr,
+			    b->addr_type);
+			if (snap != NULL && snap->has_appearance) {
+				pd->has_appearance = 1;
+				pd->appearance = snap->appearance;
+			}
 
 			if (b->has_db_hash && ngatt < BLUED_PERSIST_MAX_GATT_DEVICES) {
 				struct blued_persist_gatt_device *pg =
@@ -2932,16 +3141,74 @@ blued_persist_flush(const struct blued_config *cfg)
 	if (blued_persist_gattcache_save(blued_g.persist_dirfd, gatt, ngatt) != 0)
 		rc = -1;
 
-	/* Persist the current peripheral advertising configuration. */
-	memset(&adv, 0, sizeof(adv));
-	adv.handle = 0;
-	adv.enabled = cfg->peripheral_mode ? 1 : 0;
-	adv.own_addr_type = cfg->privacy ? 0x03 : 0x00;
-	adv.adv_props = 0x0013;		/* connectable+scannable legacy ADV_IND */
-	adv.interval_min = ADV_INTERVAL_100MS;
-	adv.interval_max = ADV_INTERVAL_100MS;
-	if (blued_persist_advconfig_save(blued_g.persist_dirfd, &adv, 1) != 0)
-		rc = -1;
+	/*
+	 * Persist the peripheral advertising configuration.  Record 0 is the
+	 * legacy/primary set; the daemon's primary adv payload and scan
+	 * response are captured (finding 141: these fields were reserved but
+	 * always written as zeros), and every configured extended advertising
+	 * set is persisted rather than only a single hardcoded handle-0 record
+	 * (finding 139).
+	 */
+	{
+		struct blued_persist_adv_set advset[BLUED_PERSIST_MAX_ADV_SETS];
+		uint32_t nset = 0;
+		struct blued_adapter *pa = NULL, *ai;
+
+		LIST_FOREACH(ai, &blued_g.adapters, entries)
+			if (ai->active) {
+				pa = ai;
+				break;
+			}
+
+		memset(advset, 0, sizeof(advset));
+		adv = &advset[nset++];
+		adv->handle = 0;
+		adv->enabled = cfg->peripheral_mode ? 1 : 0;
+		adv->own_addr_type = cfg->privacy ? 0x03 : 0x00;
+		adv->adv_props = 0x0013;	/* conn+scan legacy ADV_IND */
+		adv->interval_min = ADV_INTERVAL_100MS;
+		adv->interval_max = ADV_INTERVAL_100MS;
+		if (pa != NULL && pa->primary_adv_data_valid &&
+		    pa->primary_adv_data_len <= sizeof(adv->adv_data)) {
+			adv->adv_data_len = pa->primary_adv_data_len;
+			memcpy(adv->adv_data, pa->primary_adv_data,
+			    pa->primary_adv_data_len);
+		}
+		if (pa != NULL && pa->primary_scan_rsp_valid &&
+		    pa->primary_scan_rsp_len <= sizeof(adv->scan_rsp)) {
+			adv->scan_rsp_len = pa->primary_scan_rsp_len;
+			memcpy(adv->scan_rsp, pa->primary_scan_rsp,
+			    pa->primary_scan_rsp_len);
+		}
+
+		/* Persist each configured extended advertising set. */
+		if (pa != NULL) {
+			int si;
+
+			for (si = 0; si < BLUED_EXT_ADV_SET_MAX &&
+			    nset < BLUED_PERSIST_MAX_ADV_SETS; si++) {
+				const struct blued_ext_adv_set *es =
+				    &pa->ext_adv_sets[si];
+
+				if (!es->used || !es->configured ||
+				    es->handle == 0)
+					continue;
+				adv = &advset[nset++];
+				adv->handle = es->handle;
+				adv->enabled = es->enabled ? 1 : 0;
+				adv->own_addr_type = es->own_addr_type;
+				adv->adv_props = es->event_props;
+				adv->interval_min =
+				    (uint16_t)es->interval_min;
+				adv->interval_max =
+				    (uint16_t)es->interval_max;
+			}
+		}
+
+		if (blued_persist_advconfig_save(blued_g.persist_dirfd,
+		    advset, nset) != 0)
+			rc = -1;
+	}
 
 	if (rc == 0)
 		LOG_HOGP(1, "persist: flushed state (%u dev, %u gatt)", ndev,
@@ -3036,9 +3303,11 @@ main(int argc, char *argv[])
 	pthread_rwlock_init(&blued_g.conns_lock, NULL);
 	pthread_mutex_init(&blued_g.bond_db_lock, NULL);
 	pthread_mutex_init(&blued_g.gatt_db_lock, NULL);
+	pthread_mutex_init(&blued_g.reslist_lock, NULL);
+	pthread_mutex_init(&blued_g.att_sec_lock, NULL);
 	LIST_INIT(&blued_g.ctl_clients);
 	LIST_INIT(&blued_g.ctl_acquires);
-	pthread_mutex_init(&blued_g.ctl_clients_lock, NULL);
+	blued_ctl_clients_lock_init(&blued_g.ctl_clients_lock);
 	blued_g.kq = -1;
 	blued_g.ctl_fd = -1;
 	blued_g.bond_fd = -1;
@@ -3093,6 +3362,7 @@ main(int argc, char *argv[])
 
 		LIST_FOREACH_SAFE(adp, &blued_g.adapters, entries, adp_tmp) {
 			if (blued_adapter_init(adp) < 0) {
+				hci_fd_closed(adp->hci_fd);
 				close(adp->hci_fd);
 				LIST_REMOVE(adp, entries);
 				free(adp);
@@ -3122,8 +3392,11 @@ main(int argc, char *argv[])
 			memset(&flt, 0, sizeof(flt));
 			bt_devfilter_pkt_set(&flt, NG_HCI_EVENT_PKT);
 			bt_devfilter_evt_set(&flt, NG_HCI_EVENT_LE);
-			bt_devfilter_evt_set(&flt, 0x08);
-			bt_devfilter_evt_set(&flt, 0x57);
+			bt_devfilter_evt_set(&flt, 0x05); /* Disconnection Complete */
+			bt_devfilter_evt_set(&flt, 0x08); /* Encryption Change */
+			bt_devfilter_evt_set(&flt, 0x30); /* Encryption Key Refresh */
+			bt_devfilter_evt_set(&flt, 0x57); /* Auth Payload Timeout */
+			bt_devfilter_evt_set(&flt, 0x59); /* Encryption Change v2 */
 			bt_devfilter(a->hci_fd, &flt, NULL);
 
 			EV_SET(&kev, a->hci_fd, EVFILT_READ,
@@ -3256,11 +3529,27 @@ main(int argc, char *argv[])
 		{
 			uint16_t uuids[] = { UUID_DIS_SERVICE,
 			    UUID_CUSTOM_SERVICE };
-			adv_len = ble_build_adv_data(adv_data,
-			    sizeof(adv_data), blued_peripheral_name,
-			    uuids, 2);
-			if (adv_len < 0)
-				err(1, "build advertising data");
+
+			/*
+			 * Reapply the exact advertising payload persisted from
+			 * the previous run when available (finding 141: the
+			 * persisted adv_data was previously never reapplied);
+			 * otherwise build the default payload.
+			 */
+			if (blued_adv_restore_valid &&
+			    blued_adv_restore.adv_data_len > 0 &&
+			    blued_adv_restore.adv_data_len <=
+			    sizeof(adv_data)) {
+				adv_len = blued_adv_restore.adv_data_len;
+				memcpy(adv_data, blued_adv_restore.adv_data,
+				    blued_adv_restore.adv_data_len);
+			} else {
+				adv_len = ble_build_adv_data(adv_data,
+				    sizeof(adv_data), blued_peripheral_name,
+				    uuids, 2);
+				if (adv_len < 0)
+					err(1, "build advertising data");
+			}
 		}
 
 		/*
@@ -3709,6 +3998,7 @@ main(int argc, char *argv[])
 
 			LIST_FOREACH_SAFE(sa, &blued_g.adapters, entries,
 			    sa_tmp) {
+				hci_fd_closed(sa->hci_fd);
 				close(sa->hci_fd);
 				LIST_REMOVE(sa, entries);
 				free(sa);
@@ -4061,6 +4351,16 @@ main(int argc, char *argv[])
 			usleep(10000);
 
 		/*
+		 * Finding 93: quiesce the GATT worker pool BEFORE freeing any
+		 * hogp/att below.  The setup_workers wait above covers only the
+		 * connection setup threads, not the GATT workers, which may be
+		 * mid-job on conn->att == &hogp->att.  Joining them here closes
+		 * the use-after-free window when SIGTERM lands during an
+		 * in-flight client GATT operation.
+		 */
+		blued_ctl_gatt_workers_stop();
+
+		/*
 		 * Send HCI Disconnect to all active connections
 		 * so the remote side gets a clean termination
 		 * (reason 0x13 = Remote User Terminated).
@@ -4090,16 +4390,8 @@ main(int argc, char *argv[])
 				if (smp_bond_db_save(blued_g.bond_db) != 0)
 					warn("saving bond database");
 				pthread_mutex_unlock(&blued_g.bond_db_lock);
-				att_close(&sc->hogp->att);
-				if (sc->hogp->smp.fd >= 0)
-					smp_close(&sc->hogp->smp);
-				if (sc->hogp->vhid_fd >= 0) {
-					close(sc->hogp->vhid_fd);
-					sc->hogp->vhid_fd = -1;
-				}
-				free(sc->hogp->report_map);
-				free(sc->hogp);
-				sc->hogp = NULL;
+				/* Single central teardown (unregister + free). */
+				blued_conn_central_teardown(sc);
 			}
 			blued_conn_free(sc);
 		}
@@ -4170,8 +4462,10 @@ main(int argc, char *argv[])
 		while ((adp_tmp = LIST_FIRST(&blued_g.adapters)) != NULL) {
 			blued_periph_readvertise_cancel(adp_tmp);
 			LIST_REMOVE(adp_tmp, entries);
-			if (adp_tmp->hci_fd >= 0)
+			if (adp_tmp->hci_fd >= 0) {
+				hci_fd_closed(adp_tmp->hci_fd);
 				close(adp_tmp->hci_fd);
+			}
 			free(adp_tmp->adv_config);
 			free(adp_tmp);
 		}

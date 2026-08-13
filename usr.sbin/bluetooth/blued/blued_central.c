@@ -213,8 +213,15 @@ blued_central_start_pairing(struct hogp_device *dev, struct blued_conn *conn)
 	explicit_bzero(&oob_sc, sizeof(oob_sc));
 
 	if (hci_wait_encryption(dev->hci_fd, dev->con_handle, 10) < 0) {
+		/*
+		 * Finding 119: a completed SMP exchange whose encryption never
+		 * turns on is NOT a successful (re)pairing — the ATT security
+		 * gate stays closed and the rotated IRK is not programmed into
+		 * the controller resolving list.  Report failure so the caller
+		 * (REKEY / the reactive retry) does not map this to success.
+		 */
 		warn("post-pairing encryption timeout");
-		return (0);
+		return (-1);
 	}
 
 	/*
@@ -232,6 +239,55 @@ blued_central_start_pairing(struct hogp_device *dev, struct blued_conn *conn)
 		blued_reslist_sync_remove(dev->hci_fd, pb.addr, pb.addr_type);
 		blued_reslist_sync_add(dev->hci_fd, &pb);
 	}
+	return (0);
+}
+
+/*
+ * Finding 33: run an operator-driven (re)pairing on a detached worker instead
+ * of on the ctl dispatch thread.
+ *
+ * blued_central_start_pairing() calls the blocking smp_pair() +
+ * hci_wait_encryption().  Invoked directly from the REKEY / PAIR verb handler
+ * it stalls the whole event loop — and if the pairing needs a passkey/numcmp,
+ * the reply can only be delivered by another dispatch call on that very
+ * (blocked) event-loop thread, so it can never complete: a daemon-wide hang
+ * until the 30 s SMP timeout.  Every other pairing path already runs on a
+ * setup thread; funnel REKEY/PAIR through one too.  The worker holds a conn
+ * reference for its lifetime so the connection cannot be freed under it.
+ */
+static void *
+blued_central_pairing_worker(void *arg)
+{
+	struct blued_conn *conn = arg;
+
+	if (conn->hogp != NULL)
+		(void)blued_central_start_pairing(conn->hogp, conn);
+	blued_setup_worker_finish(conn);
+	blued_conn_unref(conn);
+	return (NULL);
+}
+
+int
+blued_central_start_pairing_async(struct blued_conn *conn)
+{
+	pthread_t tid;
+	pthread_attr_t attr;
+
+	if (conn == NULL || conn->hogp == NULL)
+		return (-1);
+	if (pthread_attr_init(&attr) != 0)
+		return (-1);
+	(void)pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	blued_conn_ref(conn);
+	blued_setup_worker_start(conn);
+	if (pthread_create(&tid, &attr, blued_central_pairing_worker,
+	    conn) != 0) {
+		blued_setup_worker_finish(conn);
+		blued_conn_unref(conn);
+		(void)pthread_attr_destroy(&attr);
+		return (-1);
+	}
+	(void)pthread_attr_destroy(&attr);
 	return (0);
 }
 
@@ -501,7 +557,8 @@ blued_conn_setup_central_impl(void *arg)
 	/* Handle auth errors -- pair and retry */
 	{
 		if (ret == ATT_ERR_INSUFF_AUTHEN ||
-		    ret == ATT_ERR_INSUFF_ENCRYPTION) {
+		    ret == ATT_ERR_INSUFF_ENCRYPTION ||
+		    ret == ATT_ERR_INSUFF_ENC_KEY_SIZE) {
 			LOG_HOGP(1, "device requires pairing");
 
 			if (blued_central_start_pairing(dev, conn) < 0) {
@@ -594,22 +651,6 @@ blued_conn_setup_central_impl(void *arg)
 		BLUED_PROBE_CONN_OPEN(addr_str, 0 /* central */);
 	}
 
-	/*
-	 * Register vhid fd for Output reports (LED state etc.).
-	 * The kernel vhid driver sends Output reports via read() on
-	 * the vhid fd when applications set HID output state.
-	 */
-	if (dev->vhid_fd >= 0) {
-		struct kevent vkev;
-
-		EV_SET(&vkev, dev->vhid_fd, EVFILT_READ,
-		    EV_ADD | EV_ENABLE, 0, 0, BLUED_KQ_VHID_OUTPUT);
-		if (kevent(blued_g.kq, &vkev, 1, NULL, 0, NULL) < 0)
-			warn("kevent vhid output (non-fatal)");
-		else
-			LOG_HOGP(1, "vhid output reports enabled");
-	}
-
 	/* Reset backoff on successful connection */
 	conn->reconnect_delay = 0;
 
@@ -644,9 +685,18 @@ blued_conn_setup_central_impl(void *arg)
 	if (blued_cfg.eatt && dev->att.encrypted && !cap_sandboxed()) {
 		int eatt_opened;
 
+		/*
+		 * Finding 95: this conn is already on blued_g.conns with a valid
+		 * con_handle, so the event loop's Encryption-Change/Key-Refresh
+		 * handler can find it and call att_close_eatt() concurrently.
+		 * Serialise the bearer append against that teardown with
+		 * att_sec_lock so the eatt array is never mutated by both.
+		 */
+		pthread_mutex_lock(&blued_g.att_sec_lock);
 		eatt_opened = att_open_eatt(&dev->att,
 		    (const uint8_t *)&conn->local_addr,
 		    dev->addr, dev->addr_type, 2);
+		pthread_mutex_unlock(&blued_g.att_sec_lock);
 		if (eatt_opened > 0)
 			LOG_ATT(1, "opened %d EATT bearer(s)", eatt_opened);
 	}
@@ -668,6 +718,28 @@ blued_conn_setup_central_impl(void *arg)
 		warnx("blued_conn_register failed");
 		blued_central_setup_fail(conn);
 		return (NULL);
+	}
+
+	/*
+	 * Register the vhid Output-report fd (LED state etc.) only now, as the
+	 * final handoff step (finding 89).  Registering it earlier exposed
+	 * conn to the main loop's vhid handler (hogp_handle_vhid_output ->
+	 * att_write_cmd) while this setup thread was still operating on the
+	 * same att_conn (att_open_eatt above), racing two writers on one ATT
+	 * bearer.  By this point the setup thread performs no further dev/att
+	 * access, so there is no concurrent user of conn->hogp->att.  On the
+	 * failure paths the fd is deregistered/closed by blued_conn_central_
+	 * teardown, so it can never be leaked while registered.
+	 */
+	if (dev->vhid_fd >= 0) {
+		struct kevent vkev;
+
+		EV_SET(&vkev, dev->vhid_fd, EVFILT_READ,
+		    EV_ADD | EV_ENABLE, 0, 0, BLUED_KQ_VHID_OUTPUT);
+		if (kevent(blued_g.kq, &vkev, 1, NULL, 0, NULL) < 0)
+			warn("kevent vhid output (non-fatal)");
+		else
+			LOG_HOGP(1, "vhid output reports enabled");
 	}
 
 	LOG_HOGP(1, "setup complete, entering event loop");
@@ -741,6 +813,15 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 				break;
 			total += len;
 		}
+		/*
+		 * The buffer filled while a full MTU-sized blob was still coming:
+		 * the Report Map is longer than rmbuf_sz and has been truncated.
+		 * A truncated HID descriptor yields a malformed vhid, so surface
+		 * it rather than attaching it silently (finding 68).
+		 */
+		if (total >= rmbuf_sz && len == (size_t)(dev->att.mtu - 1))
+			warnx("Report Map exceeds %zu bytes; truncated",
+			    rmbuf_sz);
 
 		if (dev->report_map == NULL) {
 			dev->report_map = malloc(total);
@@ -959,6 +1040,18 @@ hogp_cache_save(struct hogp_device *dev, struct smp_bond *bond)
 
 	if (bond == NULL || dev->nreports == 0)
 		return;
+	/*
+	 * Only persist the handle cache when hid_disc was actually populated by
+	 * a full discovery (finding 118).  On a cache-hit reconnect hid_disc is
+	 * empty (nchars == 0) even though dev->nreports > 0 (restored from the
+	 * cache); saving here would zero report_map_handle/hid_info_handle/etc.
+	 * and the NEXT reconnect would read a bogus (zero) Report Map handle and
+	 * discard the cache with ENOENT.
+	 */
+	if (dev->hid_disc.nchars == 0) {
+		LOG_HOGP(1, "handle cache save skipped: no fresh discovery");
+		return;
+	}
 
 	bond->hid_svc_start = dev->hid_disc.service.start_handle;
 	bond->hid_svc_end = dev->hid_disc.service.end_handle;
@@ -1026,6 +1119,12 @@ hogp_cache_restore(struct hogp_device *dev, struct smp_bond *bond)
 	dev->report_map = NULL;
 	dev->report_map_len = 0;
 	dev->nreports = 0;
+	/*
+	 * A cache-hit restore does NOT populate hid_disc (it is a full-discovery
+	 * artifact).  Clear it so hogp_cache_save() can tell this path apart and
+	 * refuse to overwrite the persisted metadata with zeros (finding 118).
+	 */
+	memset(&dev->hid_disc, 0, sizeof(dev->hid_disc));
 	dev->hid_ctrl_handle = 0;
 	dev->hid_bcdHID = 0;
 	dev->idVendor = 0;
@@ -1083,6 +1182,9 @@ hogp_cache_restore(struct hogp_device *dev, struct smp_bond *bond)
 				break;
 			total += len;
 		}
+		if (total >= rmbuf_sz && len == (size_t)(dev->att.mtu - 1))
+			warnx("cache: Report Map exceeds %zu bytes; truncated",
+			    rmbuf_sz);
 
 		dev->report_map = malloc(total);
 		if (dev->report_map == NULL) {
@@ -1403,6 +1505,16 @@ hogp_discover(struct hogp_device *dev)
 	dev->idVendor = 0;
 	dev->idProduct = 0;
 	dev->svc_changed_handle = 0;
+	/*
+	 * Reset the primary HID-service discovery on every (re)discovery
+	 * (finding 61).  dev survives reconnects, so a stale hid_disc with a
+	 * non-zero service.start_handle would keep the OLD characteristic
+	 * layout: the primary-instance assignment below only fires when HID is
+	 * the first service or hid_disc.service.start_handle is still zero, and
+	 * hogp_cache_save() would then persist stale Report Map / HID
+	 * Information / Protocol Mode handles alongside a fresh DB hash.
+	 */
+	memset(&dev->hid_disc, 0, sizeof(dev->hid_disc));
 
 	/* Discover all primary services */
 	ret = gatt_discover_primary_services(&dev->att, svcs,

@@ -897,6 +897,47 @@ ATF_TC_BODY(test_config_reconnect_max_delay_clamp, tc)
 	ATF_CHECK_EQ(cfg.reconnect_max_delay, 3600);
 }
 
+/* ================================================================
+ * Finding 99: the default key-distribution mask 0x0b is LTK+IRK+LINK,
+ * NOT LTK+IRK+CSRK.  Guard against the doc/mask drift regressing.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_config_key_dist_default_is_enc_id_link);
+ATF_TC_BODY(test_config_key_dist_default_is_enc_id_link, tc)
+{
+	struct blued_config cfg;
+
+	ATF_CHECK_EQ_MSG(SMP_KEY_DIST_ENC_KEY | SMP_KEY_DIST_ID_KEY |
+	    SMP_KEY_DIST_LINK_KEY, BLUED_KEY_DIST_DEFAULT,
+	    "default mask must be ENC|ID|LINK (0x0b)");
+	ATF_CHECK_MSG((BLUED_KEY_DIST_DEFAULT & SMP_KEY_DIST_LEGACY_SIGN_KEY)
+	    == 0, "default mask must NOT include CSRK/sign");
+
+	blued_config_defaults(&cfg);
+	ATF_CHECK_EQ(cfg.key_dist, BLUED_KEY_DIST_DEFAULT);
+}
+
+/* ================================================================
+ * Finding 97: auto_connect_max_tries was a silent no-op knob and has
+ * been removed.  A config that still specifies it must load cleanly
+ * (the unknown key is ignored), with auto_connect unaffected.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_config_auto_connect_max_tries_removed);
+ATF_TC_BODY(test_config_auto_connect_max_tries_removed, tc)
+{
+	struct blued_config cfg;
+	char pbuf[PATH_MAX];
+	const char *path = cfg_path(pbuf, sizeof(pbuf), "actries.conf");
+
+	write_config(path,
+	    "features {\n"
+	    "  auto_connect = true;\n"
+	    "  auto_connect_max_tries = 1;\n"
+	    "}\n");
+	blued_config_defaults(&cfg);
+	ATF_REQUIRE_EQ(blued_config_load(&cfg, path), 0);
+	ATF_CHECK(cfg.auto_connect);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -932,6 +973,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, test_config_io_capability_all);
 	ATF_TP_ADD_TC(tp, test_config_min_pairing_security);
 	ATF_TP_ADD_TC(tp, test_config_reconnect_max_delay_clamp);
+	ATF_TP_ADD_TC(tp, test_config_key_dist_default_is_enc_id_link);
+	ATF_TP_ADD_TC(tp, test_config_auto_connect_max_tries_removed);
 
 	/* Service/characteristic config parsing */
 	ATF_TP_ADD_TC(tp, test_config_service_with_char);

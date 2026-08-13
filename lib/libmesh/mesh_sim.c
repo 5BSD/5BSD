@@ -31,8 +31,12 @@ static const uint8_t k2_p_managed[1] = { 0x00 };
 #define	SIM_SAR_RETRANS_MS	200
 #define	SIM_SAR_DISCARD_MS	10000
 #define	SIM_SAR_RETRIES		4
+/* Default TTL used for locally originated Segment Acks (MshPRT_v1.1 3.5.3.4). */
+#define	SIM_DEFAULT_TTL		5
 
 static struct mesh_sim_subnet_key *find_subnet(struct mesh_node *, uint16_t);
+static void node_recv_net(struct mesh_sim *, struct mesh_node *,
+    const uint8_t *, size_t, int);
 
 /* ================================================================
  * Small helpers.
@@ -708,6 +712,14 @@ mesh_sim_proxy_gatt_in(struct mesh_sim *sim, struct mesh_node *proxy,
 
 	if (sim == NULL || proxy == NULL || net_pdu == NULL || !proxy->is_proxy)
 		return (-1);
+	/*
+	 * MshPRT_v1.1 Section 6.7: the Proxy Server both relays the PDU onto the
+	 * advertising bearer (reinject) and hands it to its own network layer.
+	 * mesh_sim_step() skips delivery back to the transmitting node, so a PDU
+	 * addressed to the proxy (or a group it subscribes to) would never be
+	 * delivered locally; deliver it here.
+	 */
+	node_recv_net(sim, proxy, net_pdu, len, -1);
 	return (mesh_sim_reinject(sim, proxy->index, net_pdu, len));
 }
 
@@ -829,7 +841,7 @@ node_originate(struct mesh_sim *sim, struct mesh_node *node, uint16_t src_addr,
 
 static int
 node_tx_control(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
-    const uint8_t *lt, size_t lt_len, uint8_t ttl)
+    const uint8_t *lt, size_t lt_len, uint8_t ttl, int friend_cred)
 {
 	struct mesh_net_pdu np;
 	uint8_t nid;
@@ -837,11 +849,12 @@ node_tx_control(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 	uint32_t iv;
 
 	/*
-	 * A control message on an established friendship (e.g. the LPN's Friend
-	 * Poll) is secured with the friendship credential (Section 3.6.6.2);
-	 * otherwise the managed-flooding subnet credential is used.
+	 * The friendship credential is reserved for actual Friend<->LPN traffic
+	 * (e.g. the LPN's Friend Poll): only such PDUs (friend_cred) may use it
+	 * (Section 3.6.6.2).  Every other control PDU (e.g. a Segment Ack to a
+	 * third party) uses the managed-flooding subnet credential.
 	 */
-	if (node->have_friend_cred) {
+	if (friend_cred && node->have_friend_cred) {
 		nid = node->friend_nid;
 		enc = node->friend_enckey;
 		priv = node->friend_privkey;
@@ -900,7 +913,7 @@ send_seg_ack(struct mesh_sim *sim, struct mesh_node *node, uint16_t dst,
 	ack.seqzero = seqzero;
 	ack.blockack = blockack;
 	if (mesh_seg_ack_build(&ack, lt, &len) == 0)
-		(void)node_tx_control(sim, node, dst, lt, len, ttl);
+		(void)node_tx_control(sim, node, dst, lt, len, ttl, 0);
 }
 
 int
@@ -1428,7 +1441,7 @@ df_handle_control(struct mesh_sim *sim, struct mesh_node *node,
 			rep.forwarding_number = req.forwarding_number;
 			rep.path_origin = req.origin.range_start;
 			rep.target.range_start = node->addr;
-			rep.target.range_length = 1;
+			rep.target.range_length = node->n_elements;
 			if (mesh_df_path_reply_build(&rep, rp, &rl) == 0)
 				(void)node_tx_df(sim, node, prev_hop,
 				    req.origin.range_start, MESH_DF_OP_PATH_REPLY,
@@ -1593,8 +1606,19 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				bearer = m->bearer_toward_target;
 			else
 				bearer = m->bearer_toward_origin;
-			if (enqueue_net_to(sim, node->index, bearer, nid, enc,
-			    priv, iv, &rp) == 0) {
+			/*
+			 * A half-installed entry may carry MESH_DF_BEARER_NONE
+			 * (0) for the selected direction.  Bearer 0 also aliases
+			 * node index 0, so unicasting there would blackhole the
+			 * PDU; fall back to managed flooding instead (consistent
+			 * with mesh_df_forward_decide()).
+			 */
+			if (bearer == MESH_DF_BEARER_NONE) {
+				if (enqueue_relay(sim, node, nid, enc, priv, iv,
+				    &rp) == 0)
+					node->relay_count++;
+			} else if (enqueue_net_to(sim, node->index, bearer, nid,
+			    enc, priv, iv, &rp) == 0) {
 				node->relay_count++;
 				node->df_directed_fwd++;
 			}
@@ -1681,11 +1705,18 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			 * (Network SEQ - SegO) and SeqZero.  Check underflow as well as
 			 * the 13-bit relationship before touching SAR/RPL state.
 			 */
-			if (pdu.seq < lower.sego)
-				return;
-			seqauth = pdu.seq - lower.sego;
-			if ((seqauth & 0x1fff) != lower.seqzero ||
-			    seqauth > 0xffffff - lower.segn)
+			/*
+			 * MshPRT_v1.1 Section 3.5.3.1: SeqAuth is derived from
+			 * SeqZero, not from (SEQ - SegO).  A compliant peer may
+			 * (re)transmit any segment with any SEQ in the window
+			 * [SeqAuth, SeqAuth + 8191], so reconstruct the upper
+			 * SEQ bits and borrow one 0x2000 block if SeqZero maps
+			 * above this segment's SEQ.
+			 */
+			seqauth = (pdu.seq & ~(uint32_t)0x1fff) | lower.seqzero;
+			if (seqauth > pdu.seq)
+				seqauth -= 0x2000;
+			if (seqauth > 0xffffff - lower.segn)
 				return;
 
 			sess = reasm_session(sim, node, pdu.src, seqauth, iv, 0);
@@ -1722,8 +1753,16 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			if (r < 0)
 				return;
 			sess->deadline_ms = sim->now_ms + SIM_SAR_DISCARD_MS;
-			send_seg_ack(sim, node, pdu.src, lower.seqzero,
-			    sess->r.blockack, pdu.ttl);
+			/*
+			 * MshPRT_v1.1 Section 3.5.3.4: acknowledge only a
+			 * segmented message addressed to a unicast address of
+			 * this node - never a group/virtual DST - and send the
+			 * ack with a fresh default TTL rather than the residual
+			 * (already decremented) received TTL.
+			 */
+			if (local_unicast(node, pdu.dst))
+				send_seg_ack(sim, node, pdu.src, lower.seqzero,
+				    sess->r.blockack, SIM_DEFAULT_TTL);
 			if (r == 1) {
 				/* Advance the persistent RPL past every SEQ consumed by
 				 * this transaction.  If a newer message already advanced
@@ -1754,11 +1793,18 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			size_t data_len;
 			int r;
 
-			if (pdu.seq < lower.sego)
-				return;
-			seqauth = pdu.seq - lower.sego;
-			if ((seqauth & 0x1fff) != lower.seqzero ||
-			    seqauth > 0xffffff - lower.segn)
+			/*
+			 * MshPRT_v1.1 Section 3.5.3.1: SeqAuth is derived from
+			 * SeqZero, not from (SEQ - SegO).  A compliant peer may
+			 * (re)transmit any segment with any SEQ in the window
+			 * [SeqAuth, SeqAuth + 8191], so reconstruct the upper
+			 * SEQ bits and borrow one 0x2000 block if SeqZero maps
+			 * above this segment's SEQ.
+			 */
+			seqauth = (pdu.seq & ~(uint32_t)0x1fff) | lower.seqzero;
+			if (seqauth > pdu.seq)
+				seqauth -= 0x2000;
+			if (seqauth > 0xffffff - lower.segn)
 				return;
 			sess = reasm_session(sim, node, pdu.src, seqauth, iv, 1);
 			if (sess == NULL)
@@ -1783,8 +1829,16 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			if (r < 0)
 				return;
 			sess->deadline_ms = sim->now_ms + SIM_SAR_DISCARD_MS;
-			send_seg_ack(sim, node, pdu.src, lower.seqzero,
-			    sess->r.blockack, pdu.ttl);
+			/*
+			 * MshPRT_v1.1 Section 3.5.3.4: acknowledge only a
+			 * segmented message addressed to a unicast address of
+			 * this node - never a group/virtual DST - and send the
+			 * ack with a fresh default TTL rather than the residual
+			 * (already decremented) received TTL.
+			 */
+			if (local_unicast(node, pdu.dst))
+				send_seg_ack(sim, node, pdu.src, lower.seqzero,
+				    sess->r.blockack, SIM_DEFAULT_TTL);
 			if (r == 0)
 				return;
 			maxseq = sess->seqauth + sess->r.segn;
@@ -1956,12 +2010,19 @@ mesh_sim_lpn_poll(struct mesh_sim *sim, struct mesh_node *lpn)
 		lpn->awake = 0;
 		return (-1);
 	}
-	if (node_tx_control(sim, lpn, lpn->lpn_friend, lt, lt_len, 0) != 0) {
+	if (node_tx_control(sim, lpn, lpn->lpn_friend, lt, lt_len, 0, 1) != 0) {
 		lpn->awake = 0;
 		return (-1);
 	}
 	(void)mesh_sim_run(sim, 8);
-	(void)mesh_lpn_on_response(&lpn->lpn, 0, sim->now * 1000);
+	/*
+	 * Only toggle the Friend Sequence Number when the Friend actually
+	 * responded (a queued message was delivered).  Advancing the FSN after a
+	 * lost/empty response would make the next Poll's changed FSN look like an
+	 * ack to mesh_fq_poll() and drop the still-undelivered head.
+	 */
+	if (lpn->rx.count > before)
+		(void)mesh_lpn_on_response(&lpn->lpn, 0, sim->now * 1000);
 	lpn->awake = 0;
 	return (lpn->rx.count > before ? 1 : 0);
 }

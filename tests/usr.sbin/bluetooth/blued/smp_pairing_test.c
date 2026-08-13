@@ -1512,6 +1512,15 @@ ATF_TC_BODY(test_bond_store_inplace_preserves_metadata, tc)
 	fresh.addr_type = BLUED_BOND_ADDR_PUBLIC;
 	memset(fresh.ltk, 0x99, 16);
 	fresh.has_ltk = true;
+	/*
+	 * A legitimate in-place key refresh carries at least the stored bond's
+	 * security level; match it so the §2.4.2.4 downgrade guard in
+	 * smp_bond_db_store() (which now refuses replacing a stronger bond with
+	 * a weaker one) does not reject this metadata-preservation refresh.
+	 */
+	fresh.is_sc = true;
+	fresh.is_mitm = true;
+	fresh.key_size = 16;
 	smp_bond_db_store(&db, &fresh);
 
 	ATF_CHECK_EQ(db.count, 1);
@@ -5703,10 +5712,386 @@ ATF_TC_BODY(test_smp_recv_keypress_flood_is_bounded, tc)
 }
 
 /* ================================================================
+ * Finding 50: the legacy responder must consume a Keypress Notification that
+ * arrives before the initiator's Pairing Confirm (Core Spec Vol 3 Part H
+ * §3.5.8) instead of mistaking the 2-byte keypress for a truncated Confirm and
+ * aborting.  Keypress support is advertised by default.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_smp_respond_legacy_keypress_before_confirm);
+ATF_TC_BODY(test_smp_respond_legacy_keypress_before_confirm, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	char bond_path[] = "/tmp/blued_test_resp_kp.XXXXXX";
+	int bond_fd;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	bond_fd = mkstemp(bond_path);
+	ATF_REQUIRE(bond_fd >= 0);
+
+	setup_conn(&sc, &db, bond_fd, smp_fds, hci_fds,
+	    periph_addr, BDADDR_LE_PUBLIC, central_addr, BDADDR_LE_PUBLIC);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int peer_fd = smp_fds[1];
+		uint8_t preq[7], pres[7], pdu[65];
+		uint8_t tk[16], mrand[16], mconfirm[16], sconfirm[16];
+		uint8_t iat = 0, rat = 0;
+		ssize_t n;
+		struct timeval tv = { .tv_sec = SMP_TEST_IO_TIMEO_SEC, .tv_usec = 0 };
+
+		close(smp_fds[0]);
+		close(hci_fds[0]);
+		setsockopt(peer_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+		memset(tk, 0, sizeof(tk));
+
+		preq[0] = BTPR_SMP_PAIRING_REQUEST;
+		preq[1] = BTPR_SMP_IO_NO_INPUT_NO_OUTPUT;
+		preq[2] = 0x00;
+		preq[3] = BTPR_SMP_AUTH_BONDING;
+		preq[4] = 16;
+		preq[5] = 0x00;
+		preq[6] = BTPR_SMP_KEY_DIST_ENC_KEY;
+		if (send(peer_fd, preq, sizeof(preq), MSG_EOR) < 0)
+			_exit(1);
+		n = recv(peer_fd, pres, sizeof(pres), 0);
+		if (n < 7 || pres[0] != BTPR_SMP_PAIRING_RESPONSE)
+			_exit(2);
+
+		arc4random_buf(mrand, sizeof(mrand));
+		reference_c1(tk, mrand, preq, pres, iat, central_addr,
+		    rat, periph_addr, mconfirm);
+
+		/*
+		 * Send a Keypress Notification BEFORE the Pairing Confirm.  A
+		 * responder using a non-keypress-aware recv would treat this
+		 * 2-byte PDU as a short Confirm and abort with EPROTO.
+		 */
+		pdu[0] = BTPR_SMP_PAIRING_KEYPRESS_NOTIFY;
+		pdu[1] = BTPR_SMP_KEYPRESS_DIGIT_ENTERED;
+		if (send(peer_fd, pdu, 2, MSG_EOR) < 0)
+			_exit(3);
+
+		pdu[0] = BTPR_SMP_PAIRING_CONFIRM;
+		memcpy(pdu + 1, mconfirm, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(4);
+
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_CONFIRM)
+			_exit(5);
+		memcpy(sconfirm, pdu + 1, 16);
+
+		pdu[0] = BTPR_SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, mrand, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(6);
+
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_RANDOM)
+			_exit(7);
+		{
+			uint8_t srand[16], verify[16];
+			memcpy(srand, pdu + 1, 16);
+			reference_c1(tk, srand, preq, pres, iat, central_addr,
+			    rat, periph_addr, verify);
+			if (memcmp(verify, sconfirm, 16) != 0)
+				_exit(8);
+		}
+
+		/* Drain the responder's key distribution (Enc Info + Central Id). */
+		if (pres[6] & BTPR_SMP_KEY_DIST_ENC_KEY) {
+			(void)recv(peer_fd, pdu, sizeof(pdu), 0);
+			(void)recv(peer_fd, pdu, sizeof(pdu), 0);
+		}
+		close(peer_fd);
+		_exit(0);
+	}
+
+	close(smp_fds[1]);
+	close(hci_fds[1]);
+
+	int ret = smp_respond(&sc);
+	ATF_CHECK_EQ_MSG(0, ret,
+	    "responder must skip the keypress and complete (ret=%d errno=%d)",
+	    ret, errno);
+	ATF_CHECK_MSG(db.count > 0, "expected a bond stored");
+
+	wait_child(pid);
+	close(smp_fds[0]);
+	close(hci_fds[0]);
+	close(bond_fd);
+	unlink(bond_path);
+}
+
+/* ================================================================
+ * Finding 110: a legacy peripheral must persist ITS OWN distributed
+ * LTK/EDIV/Rand, not the initiator's Encryption Information.  Otherwise the
+ * LTK-request handler compares an incoming EDIV/Rand against the wrong key
+ * material and every reconnection fails.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_smp_respond_legacy_keeps_own_ltk);
+ATF_TC_BODY(test_smp_respond_legacy_keeps_own_ltk, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	int smp_fds[2], hci_fds[2];
+	char bond_path[] = "/tmp/blued_test_resp_ownltk.XXXXXX";
+	int bond_fd;
+	pid_t pid;
+	static const uint8_t init_ltk[16] = {
+		0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+		0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA
+	};
+	static const uint16_t init_ediv = 0xBBBB;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	bond_fd = mkstemp(bond_path);
+	ATF_REQUIRE(bond_fd >= 0);
+
+	setup_conn(&sc, &db, bond_fd, smp_fds, hci_fds,
+	    periph_addr, BDADDR_LE_PUBLIC, central_addr, BDADDR_LE_PUBLIC);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int peer_fd = smp_fds[1];
+		uint8_t preq[7], pres[7], pdu[65];
+		uint8_t tk[16], mrand[16], mconfirm[16], sconfirm[16];
+		uint8_t iat = 0, rat = 0;
+		ssize_t n;
+		struct timeval tv = { .tv_sec = SMP_TEST_IO_TIMEO_SEC, .tv_usec = 0 };
+
+		close(smp_fds[0]);
+		close(hci_fds[0]);
+		setsockopt(peer_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+		memset(tk, 0, sizeof(tk));
+
+		/* Both sides distribute EncKey (the LE-legacy default). */
+		preq[0] = BTPR_SMP_PAIRING_REQUEST;
+		preq[1] = BTPR_SMP_IO_NO_INPUT_NO_OUTPUT;
+		preq[2] = 0x00;
+		preq[3] = BTPR_SMP_AUTH_BONDING;
+		preq[4] = 16;
+		preq[5] = BTPR_SMP_KEY_DIST_ENC_KEY;	/* initiator distributes */
+		preq[6] = BTPR_SMP_KEY_DIST_ENC_KEY;	/* responder distributes */
+		if (send(peer_fd, preq, sizeof(preq), MSG_EOR) < 0)
+			_exit(1);
+		n = recv(peer_fd, pres, sizeof(pres), 0);
+		if (n < 7 || pres[0] != BTPR_SMP_PAIRING_RESPONSE)
+			_exit(2);
+
+		arc4random_buf(mrand, sizeof(mrand));
+		reference_c1(tk, mrand, preq, pres, iat, central_addr,
+		    rat, periph_addr, mconfirm);
+		pdu[0] = BTPR_SMP_PAIRING_CONFIRM;
+		memcpy(pdu + 1, mconfirm, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(3);
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_CONFIRM)
+			_exit(4);
+		memcpy(sconfirm, pdu + 1, 16);
+		pdu[0] = BTPR_SMP_PAIRING_RANDOM;
+		memcpy(pdu + 1, mrand, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) < 0)
+			_exit(5);
+		n = recv(peer_fd, pdu, 17, 0);
+		if (n < 17 || pdu[0] != BTPR_SMP_PAIRING_RANDOM)
+			_exit(6);
+		{
+			uint8_t srand[16], verify[16];
+			memcpy(srand, pdu + 1, 16);
+			reference_c1(tk, srand, preq, pres, iat, central_addr,
+			    rat, periph_addr, verify);
+			if (memcmp(verify, sconfirm, 16) != 0)
+				_exit(7);
+		}
+
+		/* Responder distributes first: consume its Enc Info + Central Id. */
+		if (recv(peer_fd, pdu, sizeof(pdu), 0) < 17 ||
+		    pdu[0] != BTPR_SMP_ENCRYPTION_INFORMATION)
+			_exit(8);
+		if (recv(peer_fd, pdu, sizeof(pdu), 0) < 11 ||
+		    pdu[0] != BTPR_SMP_CENTRAL_IDENTIFICATION)
+			_exit(9);
+
+		/* Now the initiator distributes ITS key material. */
+		pdu[0] = BTPR_SMP_ENCRYPTION_INFORMATION;
+		memcpy(pdu + 1, init_ltk, 16);
+		if (send(peer_fd, pdu, 17, MSG_EOR) != 17)
+			_exit(10);
+		pdu[0] = BTPR_SMP_CENTRAL_IDENTIFICATION;
+		pdu[1] = (uint8_t)(init_ediv & 0xFF);
+		pdu[2] = (uint8_t)(init_ediv >> 8);
+		memset(pdu + 3, 0xCC, 8);
+		if (send(peer_fd, pdu, 11, MSG_EOR) != 11)
+			_exit(11);
+		close(peer_fd);
+		_exit(0);
+	}
+
+	close(smp_fds[1]);
+	close(hci_fds[1]);
+
+	int ret = smp_respond(&sc);
+	ATF_CHECK_EQ_MSG(0, ret, "legacy responder must succeed (errno=%d)",
+	    errno);
+	ATF_REQUIRE_MSG(db.count > 0, "expected a bond stored");
+	ATF_CHECK(db.bonds[0].has_ltk);
+	/*
+	 * The persisted LTK/EDIV must be the peripheral's OWN distributed
+	 * material, NOT the initiator's Encryption Information (init_ltk /
+	 * init_ediv).  Before the fix, smp_receive_peer_keys clobbered them.
+	 */
+	ATF_CHECK_MSG(memcmp(db.bonds[0].ltk, init_ltk, 16) != 0,
+	    "peripheral must persist its OWN LTK, not the initiator's");
+	ATF_CHECK_MSG(db.bonds[0].ediv != init_ediv,
+	    "peripheral must persist its OWN EDIV, not the initiator's");
+
+	wait_child(pid);
+	close(smp_fds[0]);
+	close(hci_fds[0]);
+	close(bond_fd);
+	unlink(bond_path);
+}
+
+/* ================================================================
+ * Finding 111: smp_bond_db_store() must refuse to replace a stronger stored
+ * bond with a weaker re-pairing (Core Spec Vol 3 Part H §2.4.2.4), and must
+ * preserve a CTKD-derived BR/EDR link key across a pure-LE refresh.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_smp_bond_store_refuses_downgrade);
+ATF_TC_BODY(test_smp_bond_store_refuses_downgrade, tc)
+{
+	struct smp_bond_db db;
+	struct smp_bond strong, weak, refresh;
+	static const uint8_t a[6] = { 9, 9, 9, 9, 9, 9 };
+
+	memset(&db, 0, sizeof(db));
+	db.fd = -1;
+
+	/* Store a strong bond: SC + MITM + full key size + CTKD link key. */
+	memset(&strong, 0, sizeof(strong));
+	memcpy(strong.addr, a, 6);
+	strong.addr_type = BLUED_BOND_ADDR_PUBLIC;
+	memset(strong.ltk, 0x11, 16);
+	strong.has_ltk = true;
+	strong.is_sc = true;
+	strong.is_mitm = true;
+	strong.key_size = 16;
+	memset(strong.link_key, 0x22, 16);
+	strong.has_link_key = true;
+	ATF_REQUIRE_EQ(0, smp_bond_db_store(&db, &strong));
+
+	/* Weaker re-pair (legacy Just Works, 7-octet key): must be refused. */
+	memset(&weak, 0, sizeof(weak));
+	memcpy(weak.addr, a, 6);
+	weak.addr_type = BLUED_BOND_ADDR_PUBLIC;
+	memset(weak.ltk, 0x99, 16);
+	weak.has_ltk = true;
+	weak.is_sc = false;
+	weak.is_mitm = false;
+	weak.key_size = 7;
+	ATF_CHECK_EQ_MSG(-1, smp_bond_db_store(&db, &weak),
+	    "weaker re-pair must be refused");
+	ATF_CHECK_EQ(1, db.count);
+	ATF_CHECK_EQ_MSG(0x11, db.bonds[0].ltk[0], "strong LTK must survive");
+	ATF_CHECK(db.bonds[0].is_sc);
+	ATF_CHECK(db.bonds[0].is_mitm);
+	ATF_CHECK_EQ(16, db.bonds[0].key_size);
+	ATF_CHECK(db.bonds[0].has_link_key);
+
+	/*
+	 * Equal-strength SC/MITM refresh with no CTKD this time: accepted, and
+	 * the previously derived BR/EDR link key must be preserved.
+	 */
+	memset(&refresh, 0, sizeof(refresh));
+	memcpy(refresh.addr, a, 6);
+	refresh.addr_type = BLUED_BOND_ADDR_PUBLIC;
+	memset(refresh.ltk, 0x55, 16);
+	refresh.has_ltk = true;
+	refresh.is_sc = true;
+	refresh.is_mitm = true;
+	refresh.key_size = 16;
+	ATF_CHECK_EQ_MSG(0, smp_bond_db_store(&db, &refresh),
+	    "equal-strength refresh must be accepted");
+	ATF_CHECK_EQ(0x55, db.bonds[0].ltk[0]);
+	ATF_CHECK_MSG(db.bonds[0].has_link_key,
+	    "CTKD link key must survive a pure-LE refresh");
+	ATF_CHECK_EQ(0x22, db.bonds[0].link_key[0]);
+}
+
+/* ================================================================
+ * Finding 112: the key-distribution receive must honour the cumulative §3.4
+ * pairing deadline, aborting (and dropping the link) instead of waiting out
+ * the per-PDU SO_RCVTIMEO when the 30 s budget has already been spent.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_smp_keydist_honors_pairing_deadline);
+ATF_TC_BODY(test_smp_keydist_honors_pairing_deadline, tc)
+{
+	struct smp_conn sc;
+	struct smp_bond_db db;
+	struct smp_bond bond;
+	int smp_fds[2], hci_fds[2];
+	uint8_t hbuf[64];
+	ssize_t hn;
+	int ret;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, hci_fds) == 0);
+	setup_conn(&sc, &db, -1, smp_fds, hci_fds,
+	    periph_addr, BDADDR_LE_PUBLIC, central_addr, BDADDR_LE_PUBLIC);
+
+	/* Arm the cumulative timer, then jump the frozen clock past 30 s. */
+	smp_test_now = 1000;
+	smp_pairing_arm(&sc);
+	smp_test_now = 1000 + 31;
+
+	memset(&bond, 0, sizeof(bond));
+	memcpy(bond.addr, central_addr, 6);
+	bond.addr_type = BDADDR_LE_PUBLIC;
+
+	/*
+	 * The peer sends nothing.  With the deadline already blown, the
+	 * deadline-aware recv must abort immediately rather than block on the
+	 * per-PDU timeout, and smp_pairing_timed_out() drops the link.
+	 */
+	errno = 0;
+	ret = smp_receive_peer_keys(&sc, &bond, SMP_KEY_DIST_ENC_KEY, false);
+	ATF_CHECK_EQ_MSG(-1, ret,
+	    "key-dist recv must fail on the cumulative §3.4 deadline");
+
+	/* The deadline abort force-drops the link via an HCI Disconnect. */
+	hn = recv(hci_fds[1], hbuf, sizeof(hbuf), MSG_DONTWAIT);
+	ATF_CHECK_MSG(hn >= 4,
+	    "cumulative-deadline abort must issue an HCI Disconnect (got %zd)",
+	    hn);
+
+	smp_test_now = 1000;	/* restore for any later test in this program */
+	close(smp_fds[0]);
+	close(smp_fds[1]);
+	close(hci_fds[0]);
+	close(hci_fds[1]);
+}
+
+/* ================================================================
  * ATF test program entry point
  * ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
+
+	/* Round-1/Round-4 SMP regression tests (findings 50, 110, 111, 112) */
+	ATF_TP_ADD_TC(tp, test_smp_respond_legacy_keypress_before_confirm);
+	ATF_TP_ADD_TC(tp, test_smp_respond_legacy_keeps_own_ltk);
+	ATF_TP_ADD_TC(tp, test_smp_bond_store_refuses_downgrade);
+	ATF_TP_ADD_TC(tp, test_smp_keydist_honors_pairing_deadline);
 
 	/* SR1 minimum-security-for-pairing policy */
 	ATF_TP_ADD_TC(tp, test_smp_policy_permits);

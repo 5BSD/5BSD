@@ -102,7 +102,6 @@ blued_config_defaults(struct blued_config *cfg)
 	cfg->reconnect = true;
 	cfg->auto_connect = true;
 	cfg->reconnect_max_delay = BLUED_RECONNECT_MAX_DEFAULT;
-	cfg->auto_connect_max_tries = BLUED_AUTOCONNECT_TRIES_DEFAULT;
 
 	cfg->min_key_size = BLUED_MIN_KEY_SIZE_DEFAULT;
 	cfg->rpa_timeout = BLUED_RPA_TIMEOUT_DEFAULT;
@@ -397,10 +396,13 @@ config_parse_features(struct blued_config *cfg, const ucl_object_t *root)
 	if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
 		cfg->auto_connect = ucl_object_toboolean(obj);
 
-	obj = ucl_object_lookup(root, "auto_connect_max_tries");
-	if (obj != NULL && ucl_object_type(obj) == UCL_INT)
-		cfg->auto_connect_max_tries = MAX(1,
-		    MIN((int)ucl_object_toint(obj), 100));
+	/*
+	 * auto_connect_max_tries removed (finding 97): the reconnect retry
+	 * budget was parsed and clamped but never consulted by the reconnect
+	 * path, so it was a silent no-op.  Rather than keep a misleading knob,
+	 * the field is gone; an unbounded retry is still bounded by the
+	 * reconnect_max_delay backoff.
+	 */
 
 	/* subrate_factor: reserved for BT 5.3, not parsed */
 

@@ -792,10 +792,24 @@ mesh_df_forward_decide(struct mesh_df_fwd_table *t,
 	if (directed_enabled && t != NULL) {
 		e = mesh_df_table_lookup(t, src, dst, now);
 		if (e != NULL) {
-			e->last_used_ms = now;
-			if (matched != NULL)
-				*matched = e;
-			return (MESH_DF_FORWARD_DIRECTED);
+			uint8_t bearer;
+
+			/*
+			 * Take the directed path only when the bearer for the
+			 * required direction is installed.  A half-installed
+			 * (reverse-only) entry has bearer MESH_DF_BEARER_NONE
+			 * toward the target; it must fall through to managed
+			 * flooding instead of forwarding to bearer 0.
+			 */
+			bearer = (dst == e->path_target ||
+			    entry_has_dep(e->dep_target, e->dep_target_n, dst)) ?
+			    e->bearer_toward_target : e->bearer_toward_origin;
+			if (bearer != MESH_DF_BEARER_NONE) {
+				e->last_used_ms = now;
+				if (matched != NULL)
+					*matched = e;
+				return (MESH_DF_FORWARD_DIRECTED);
+			}
 		}
 	}
 
@@ -913,7 +927,7 @@ recv_path_request(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 	 */
 	e = mesh_df_table_add(&node->table, origin, req.destination,
 	    req.forwarding_number, ctx->bearer, MESH_DF_BEARER_NONE,
-	    mesh_df_lifetime_ms[node->lifetime], ctx->now);
+	    mesh_df_lifetime_ms[req.lifetime], ctx->now);
 	if (e == NULL)
 		return (MESH_DF_RECV_DROP);		/* table full */
 	e->backward_validated = 0;
@@ -936,8 +950,9 @@ recv_path_request(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 		    (uint8_t)(node->addr_last - node->addr + 1);
 		if (mesh_df_path_reply_build(&rep, rbuf, &rlen) != 0)
 			return (MESH_DF_RECV_DROP);
-		if (out_set(out, MESH_DF_OP_PATH_REPLY, ctx->bearer, ctx->ttl,
-		    node->addr, origin, rbuf, rlen) != 0)
+		/* Originate the reply with a fresh TTL for the full return trip. */
+		if (out_set(out, MESH_DF_OP_PATH_REPLY, ctx->bearer,
+		    MESH_DF_DEFAULT_TTL, node->addr, origin, rbuf, rlen) != 0)
 			return (MESH_DF_RECV_DROP);
 		return (MESH_DF_RECV_FOR_TARGET);
 	}
@@ -953,8 +968,14 @@ recv_path_request(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 
 		if (mesh_df_path_request_build(&req, rbuf, &rlen) != 0)
 			return (MESH_DF_RECV_DROP);
+		/*
+		 * Re-flood toward the all-directed-forwarding-nodes group with
+		 * this node re-originating the network SRC; the Path Origin is
+		 * carried in the PDU's Origin range, not the network SRC.
+		 */
 		if (out_set(out, MESH_DF_OP_PATH_REQUEST, MESH_DF_BEARER_FLOOD,
-		    new_ttl, ctx->src, req.destination, rbuf, rlen) != 0)
+		    new_ttl, node->addr, MESH_DF_ADDR_ALL_DIRECTED, rbuf,
+		    rlen) != 0)
 			return (MESH_DF_RECV_DROP);
 	}
 	return (MESH_DF_RECV_FORWARD);
@@ -972,14 +993,34 @@ recv_path_reply(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 	struct mesh_df_path_reply rep;
 	struct mesh_df_fwd_entry *e;
 	uint8_t new_ttl;
+	size_t i;
 
 	if (mesh_df_path_reply_parse(pdu, pdulen, &rep) != 0)
 		return (MESH_DF_RECV_DROP);
 
-	/* A reply is only actionable against a reverse entry we created. */
-	e = entry_find(&node->table, rep.path_origin, rep.target.range_start);
-	if (e == NULL || !mesh_df_entry_reverse_valid(e) ||
-	    e->forwarding_number != rep.forwarding_number)
+	/*
+	 * A reply is only actionable against a reverse entry we created, keyed
+	 * on (Path Origin, Forwarding Number).  The reverse entry's Path Target
+	 * is the request's Destination, which may be a secondary element or a
+	 * group; the reply carries the Path Target's element range.  Match by
+	 * range coverage (as mesh_df_discovery_on_reply() does), and accept a
+	 * non-unicast Destination on the fn/origin key alone.  Section 3.6.6.5.2.
+	 */
+	e = NULL;
+	for (i = 0; i < MESH_DF_MAX_ENTRIES; i++) {
+		struct mesh_df_fwd_entry *c = &node->table.entries[i];
+
+		if (!c->valid || !mesh_df_entry_reverse_valid(c) ||
+		    c->path_origin != rep.path_origin ||
+		    c->forwarding_number != rep.forwarding_number)
+			continue;
+		if (range_covers(rep.target.range_start, rep.target.range_length,
+		    c->path_target) || !addr_is_unicast(c->path_target)) {
+			e = c;
+			break;
+		}
+	}
+	if (e == NULL)
 		return (MESH_DF_RECV_DROP);
 
 	/* Dedup a duplicate reply once the forward path is already installed. */
@@ -1063,8 +1104,9 @@ recv_path_echo_request(struct mesh_df_node *node,
 	if (node_covers(node, ctx->dst)) {
 		if (mesh_df_path_echo_reply_build(node->addr, rbuf, &rlen) != 0)
 			return (MESH_DF_RECV_DROP);
+		/* Originate the reply with a fresh TTL for the full return trip. */
 		if (out_set(out, MESH_DF_OP_PATH_ECHO_REPLY, ctx->bearer,
-		    ctx->ttl, node->addr, ctx->src, rbuf, rlen) != 0)
+		    MESH_DF_DEFAULT_TTL, node->addr, ctx->src, rbuf, rlen) != 0)
 			return (MESH_DF_RECV_DROP);
 		return (MESH_DF_RECV_FOR_TARGET);
 	}
@@ -1102,12 +1144,29 @@ recv_path_echo_reply(struct mesh_df_node *node,
 	if (mesh_df_path_echo_reply_parse(pdu, pdulen, &dest) != 0)
 		return (MESH_DF_RECV_DROP);
 
-	/* Match the path the reply validates (the far endpoint is dest). */
+	/*
+	 * Match the path the reply actually traverses: the echoed endpoint
+	 * (dest) is on one end and the node the reply is headed to (ctx->dst,
+	 * the echo initiator) is on the other.  Selecting only on dest would
+	 * pick the wrong entry at a node that both originates a path to dest
+	 * and relays another path to the same dest.  Section 3.6.6.5.5.
+	 */
 	e = NULL;
 	for (i = 0; i < MESH_DF_MAX_ENTRIES; i++) {
 		struct mesh_df_fwd_entry *c = &node->table.entries[i];
+		int dest_tgt, dest_org, dst_tgt, dst_org;
 
-		if (c->valid && (c->path_target == dest || c->path_origin == dest)) {
+		if (!c->valid)
+			continue;
+		dest_tgt = (dest == c->path_target ||
+		    entry_has_dep(c->dep_target, c->dep_target_n, dest));
+		dest_org = (dest == c->path_origin ||
+		    entry_has_dep(c->dep_origin, c->dep_origin_n, dest));
+		dst_tgt = (ctx->dst == c->path_target ||
+		    entry_has_dep(c->dep_target, c->dep_target_n, ctx->dst));
+		dst_org = (ctx->dst == c->path_origin ||
+		    entry_has_dep(c->dep_origin, c->dep_origin_n, ctx->dst));
+		if ((dest_tgt && dst_org) || (dest_org && dst_tgt)) {
 			e = c;
 			break;
 		}

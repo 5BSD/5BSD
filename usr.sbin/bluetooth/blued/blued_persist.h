@@ -54,8 +54,11 @@
  * Artifact 1: adapter settings (single record).
  * ================================================================ */
 #define BLUED_PERSIST_SETTINGS_MAGIC	"BLUEDSET"
-/* v1 = initial format; v2 adds default connection parameters + rpa_timeout. */
-#define BLUED_PERSIST_SETTINGS_VERSION	3
+/*
+ * v1 = initial format; v2 adds default connection parameters + rpa_timeout;
+ * v4 adds the preferred ATT MTU (finding 140).
+ */
+#define BLUED_PERSIST_SETTINGS_VERSION	4
 
 struct blued_persist_settings {
 	char		name[64];		/* local device name */
@@ -74,6 +77,9 @@ struct blued_persist_settings {
 	uint16_t	conn_latency;
 	uint16_t	supervision_timeout;	/* units of 10ms */
 	int32_t		rpa_timeout;		/* RPA rotation timeout (s) */
+	/* --- fields below appended in v4 (finding 140) --- */
+	uint16_t	preferred_mtu;		/* preferred ATT MTU, 0 = default */
+	uint16_t	_pad1;
 };
 
 /* ================================================================

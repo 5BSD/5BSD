@@ -329,7 +329,19 @@ smp_receive_peer_keys(struct smp_conn *sc, struct smp_bond *bond,
 		expected[count++] = SMP_LEGACY_SIGNING_INFORMATION;
 
 	for (i = 0; i < count; i++) {
-		n = smp_log_recv(sc, pdu, sizeof(pdu));
+		/*
+		 * Use the timeout-aware recv so the authoritative cumulative
+		 * §3.4 30 s pairing deadline is enforced across the whole
+		 * key-distribution phase.  The per-PDU 5 s SO_RCVTIMEO above
+		 * bounds a single stalled read, but a peer answering each of up
+		 * to five key PDUs just under 5 s could otherwise stretch key
+		 * distribution ~25 s past budget; smp_recv_timed() checks the
+		 * cumulative deadline before and after each read and drops the
+		 * link on expiry.
+		 */
+		n = smp_recv_timed(sc, pdu, sizeof(pdu));
+		if (n == SMP_RECV_TIMED_OUT)
+			goto fail;
 		if (n < 1 || pdu[0] != expected[i])
 			goto fail;
 		if (pdu[0] == SMP_ENCRYPTION_INFORMATION && n == 17) {
@@ -407,6 +419,31 @@ smp_bond_copy_keys(struct smp_bond *dst, const struct smp_bond *src)
 }
 
 /*
+ * Bond-overwrite downgrade guard (Core Spec Vol 3 Part H §2.4.2.4: a stronger
+ * key shall not be replaced by a weaker one).  Returns true when replacing the
+ * stored bond `old` with `nw` would lower the security level of the LE bond:
+ * dropping Secure Connections, dropping MITM authentication, or shrinking the
+ * negotiated encryption key size.  A benign re-pair at equal-or-greater
+ * strength returns false and proceeds normally.  The CTKD-derived BR/EDR link
+ * key is preserved separately by the caller rather than gated here (a pure-LE
+ * re-pair legitimately carries no link key).
+ */
+static bool
+smp_bond_is_downgrade(const struct smp_bond *old, const struct smp_bond *nw)
+{
+
+	if (old->is_sc && !nw->is_sc)
+		return (true);
+	if (old->is_mitm && !nw->is_mitm)
+		return (true);
+	/* key_size 0 means "unknown"; only a known smaller size is a downgrade. */
+	if (nw->key_size != 0 && old->key_size != 0 &&
+	    nw->key_size < old->key_size)
+		return (true);
+	return (false);
+}
+
+/*
  * Store or update a bond in the database.
  * If a bond for this device already exists, refresh its key material in place
  * (preserving peer metadata via smp_bond_copy_keys).  Otherwise append a new
@@ -429,8 +466,37 @@ smp_bond_db_store(struct smp_bond_db *db, const struct smp_bond *bond)
 	for (i = 0; i < db->count; i++) {
 		if (db->bonds[i].addr_type == bond->addr_type &&
 		    memcmp(db->bonds[i].addr, bond->addr, 6) == 0) {
+			/*
+			 * Refuse to overwrite a stronger stored bond with a
+			 * weaker re-pairing (§2.4.2.4).  The already-stored
+			 * strong keys survive untouched; the caller's pairing
+			 * is rejected.
+			 */
+			if (smp_bond_is_downgrade(&db->bonds[i], bond)) {
+				BLUED_LOG_SECURITY("bond downgrade refused "
+				    "addr=%02x:%02x:%02x:%02x:%02x:%02x "
+				    "old(sc=%d mitm=%d ks=%d) new(sc=%d mitm=%d ks=%d)",
+				    bond->addr[5], bond->addr[4], bond->addr[3],
+				    bond->addr[2], bond->addr[1], bond->addr[0],
+				    db->bonds[i].is_sc, db->bonds[i].is_mitm,
+				    db->bonds[i].key_size, bond->is_sc,
+				    bond->is_mitm, bond->key_size);
+				if (db->lock != NULL)
+					pthread_mutex_unlock(db->lock);
+				return (-1);
+			}
 			old = db->bonds[i];
 			smp_bond_copy_keys(&db->bonds[i], bond);
+			/*
+			 * Preserve a previously CTKD-derived BR/EDR link key
+			 * that a pure-LE re-pair would otherwise zero, keeping
+			 * the cross-transport bond intact (§2.4.2.4).
+			 */
+			if (old.has_link_key && !db->bonds[i].has_link_key) {
+				memcpy(db->bonds[i].link_key, old.link_key,
+				    sizeof(db->bonds[i].link_key));
+				db->bonds[i].has_link_key = true;
+			}
 			rc = smp_bond_db_flush(db);
 			if (rc != 0) {
 				if (smp_bond_db_uncommitted(rc))

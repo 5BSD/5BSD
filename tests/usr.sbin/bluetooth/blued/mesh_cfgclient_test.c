@@ -451,22 +451,22 @@ ATF_TC_BODY(cfg_engine_and_argument_guards, tc)
 	ATF_REQUIRE_EQ(0, meshd_cfg_client_send(client, node->addr, req, req_len,
 	    BT_MESH_CFG_OP_DEFAULT_TTL_STATUS, 0, NULL, NULL, NULL));
 	ATF_CHECK_EQ(0, meshd_cfg_client_tick(client,
-	    MESHD_CFG_RETRY_TICKS - 1));
-	ATF_CHECK_EQ(1, meshd_cfg_client_tick(client, MESHD_CFG_RETRY_TICKS));
+	    MESHD_CFG_RETRY_MS - 1));
+	ATF_CHECK_EQ(1, meshd_cfg_client_tick(client, MESHD_CFG_RETRY_MS));
 	ATF_CHECK_EQ(MESH_MGR_TXN_WAITING,
 	    meshd_cfg_client_status(client, NULL, NULL));
 	/* A vanished roster target leaves a waiting transaction untouched. */
 	client->cfg_txn.node_addr = 0x0099;
 	ATF_CHECK_EQ(0, meshd_cfg_client_tick(client,
-	    MESHD_CFG_RETRY_TICKS * 2));
+	    MESHD_CFG_RETRY_MS * 2));
 	ATF_CHECK_EQ(0, meshd_cfg_client_rx(client, 0, 0, 0, &byte, 1));
 	client->cfg_txn.node_addr = node->addr;
 	ATF_CHECK_EQ(1, meshd_cfg_client_tick(client,
-	    MESHD_CFG_RETRY_TICKS * 2));
+	    MESHD_CFG_RETRY_MS * 2));
 	ATF_CHECK_EQ(1, meshd_cfg_client_tick(client,
-	    MESHD_CFG_RETRY_TICKS * 3));
+	    MESHD_CFG_RETRY_MS * 3));
 	ATF_CHECK_EQ(0, meshd_cfg_client_tick(client,
-	    MESHD_CFG_RETRY_TICKS * 4));
+	    MESHD_CFG_RETRY_MS * 4));
 	ATF_CHECK_EQ(MESH_MGR_TXN_TIMEOUT,
 	    meshd_cfg_client_status(client, NULL, NULL));
 

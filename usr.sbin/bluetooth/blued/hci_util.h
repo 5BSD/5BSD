@@ -323,7 +323,12 @@ int	hci_le_remove_adv_set(int hci_fd, uint8_t handle);
  * controllers.  Returns 0 on success, -1 on a controller error.  The caller
  * (ctl.c) has already validated the AD type; this is a dumb transmit.
  */
-#define MESH_ADV_HANDLE		0x01	/* mesh adv set; blued's own is 0x00 */
+/*
+ * Dedicated mesh adv set handle.  Must not collide with blued's own
+ * connectable set (0x00) or the peripheral Coded-PHY set (0x01); see
+ * blued.c Coded-PHY advertising.  Uses 0x02 (finding 42).
+ */
+#define MESH_ADV_HANDLE		0x02	/* mesh adv set; 0x00/0x01 are in use */
 int	hci_mesh_adv_burst(int hci_fd, uint64_t le_features,
 	    const uint8_t *ad, uint8_t adlen);
 
@@ -580,5 +585,13 @@ int	ble_ecbfc_reconfig(int fd, uint16_t new_mtu, uint16_t new_mps);
 /* hci_util.c — ISO (CIS/BIS) data-path socket for an established stream */
 int	ble_iso_connect(const uint8_t *src, const uint8_t *addr,
 	    uint8_t addr_type, uint16_t cis_handle, uint16_t mtu);
+
+/*
+ * Invalidate the per-fd HCI lock slot and scan-state slot when an adapter's
+ * raw HCI socket is closed, so a later reused fd number does not inherit stale
+ * state.  Call immediately before close(hci_fd).  (finding 48)
+ */
+void	hci_fd_closed(int fd);
+void	hci_scan_forget_fd(int hci_fd);
 
 #endif /* _BLUED_HCI_UTIL_H_ */

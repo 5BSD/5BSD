@@ -39,8 +39,14 @@ lighting_tid_is_new(uint16_t *last_src, uint16_t *last_dst,
     uint16_t dst, uint8_t tid, uint64_t now_ms)
 {
 	if (*valid && *last_src == src && *last_dst == dst && *last_tid == tid &&
-	    now_ms <= *expires_ms)
+	    now_ms <= *expires_ms) {
+		/*
+		 * MMDL Section 3.1: the 6 s transaction window runs from the
+		 * PREVIOUS same-TID message, so a retransmission refreshes it.
+		 */
+		*expires_ms = now_ms + 6000;
 		return (0);
+	}
 	*last_src = src;
 	*last_dst = dst;
 	*last_tid = tid;
@@ -94,7 +100,12 @@ isqrt32(uint32_t value) {
 
 uint16_t
 mesh_light_lightness_linear(uint16_t actual) {
-        return ((uint32_t) actual * actual / UINT16_MAX);
+        /*
+         * MMDL Section 6.1.2.2.1: Linear = Ceil(65535 * (Actual/65535)^2)
+         * = Ceil(Actual^2 / 65535).  Round up so a non-zero Actual never
+         * maps to Linear 0.
+         */
+        return (((uint32_t) actual * actual + (UINT16_MAX - 1)) / UINT16_MAX);
 }
 
 static void
@@ -113,6 +124,22 @@ lightness_value_valid(const struct mesh_light_lightness_srv *srv,
 {
 	return (srv != NULL && (lightness == 0 ||
 	    (lightness >= srv->range_min && lightness <= srv->range_max)));
+}
+
+/*
+ * MMDL Section 6.1.2.2.5: a non-zero Lightness outside [Range Min, Range Max]
+ * is clamped to the nearer limit (0 stays 0 = off), never rejected.
+ */
+static uint16_t
+lightness_clamp(const struct mesh_light_lightness_srv *srv, uint16_t lightness)
+{
+	if (lightness == 0)
+		return (0);
+	if (lightness < srv->range_min)
+		return (srv->range_min);
+	if (lightness > srv->range_max)
+		return (srv->range_max);
+	return (lightness);
 }
 
 void
@@ -263,26 +290,30 @@ lightness_srv_handler(const struct mesh_access_rx *rx)
 		    &srv->last_tid,
 		    &srv->tid_valid, &srv->tid_expires_ms, rx->src,
 		    rx->dst, rx->pdu->params[2], rx->now_ms)) {
+			uint16_t target;
+
 			transition_time = lighting_effective_transition(srv,
 			    rx->pdu->params_len == 5,
 			    rx->pdu->params_len == 5 ? rx->pdu->params[3] : 0);
+			/*
+			 * Resolve the target in Actual space (Linear Set
+			 * converts first) and clamp an out-of-range value to
+			 * the Range rather than dropping the message
+			 * (MMDL Section 6.1.2.2.5).
+			 */
+			target = linear ?
+			    isqrt32((uint32_t)value * UINT16_MAX) : value;
+			target = lightness_clamp(srv, target);
 			if ((rx->pdu->params_len == 5 &&
 			    rx->pdu->params[4] != 0) ||
 			    mesh_transition_time_ms(transition_time) != 0) {
-				uint16_t target = linear ?
-				    isqrt32((uint32_t)value * UINT16_MAX) : value;
-				if (!lightness_value_valid(srv, target))
-					return (-1);
 				mesh_transition_start(&srv->transition, srv->actual,
 				    target, transition_time,
 				    rx->pdu->params_len == 5 ? rx->pdu->params[4] : 0,
 				    rx->now_ms);
 			} else {
 				srv->transition.active = 0;
-				if ((linear ? mesh_light_lightness_set_linear(srv,
-				    value) : mesh_light_lightness_set_actual(srv,
-				    value)) != 0)
-					return (-1);
+				(void)mesh_light_lightness_set_actual(srv, target);
 			}
                 }
                 if (!ack) {
@@ -314,8 +345,11 @@ lightness_setup_handler(const struct mesh_access_rx *rx)
             rx->pdu->opcode == MESH_OP_LIGHT_LIGHTNESS_DEFAULT_SET_UNACK) {
 		if (rx->pdu->params_len != 2)
 			return (-1);
-		if (!lightness_value_valid(srv, get_u16(rx->pdu->params)))
-			return (-1);
+		/*
+		 * MMDL Section 6.1.2.4: the Light Lightness Default is a plain
+		 * 0x0000-0xFFFF value (0 = use Last) with no Range binding, so
+		 * it is not validated against Range Min/Max.
+		 */
 		srv->default_lightness = get_u16(rx->pdu->params);
                 if (!ack) {
                         memset(reply, 0, sizeof(*reply));
@@ -544,6 +578,20 @@ mesh_light_ctl_srv_init(struct mesh_light_ctl_srv *srv,
         srv->lightness = lightness;
 }
 
+/*
+ * MMDL Section 6.1.3.1.3: a CTL Temperature outside [Range Min, Range Max] is
+ * clamped to the nearer limit, not rejected (same binding as CTL Set).
+ */
+static uint16_t
+ctl_temp_clamp(const struct mesh_light_ctl_srv *srv, uint16_t temperature)
+{
+	if (temperature < srv->range_min)
+		return (srv->range_min);
+	if (temperature > srv->range_max)
+		return (srv->range_max);
+	return (temperature);
+}
+
 static int16_t
 ctl_level_from_temperature(const struct mesh_light_ctl_srv *srv)
 {
@@ -652,9 +700,13 @@ ctl_handler(const struct mesh_access_rx *rx)
 			put_u16(reply->params + 2, srv->temperature);
 			if (ctl_transition_active(srv, 0)) {
 				put_u16(reply->params + 4,
-				    (uint16_t)srv->lightness->transition.target);
+				    srv->lightness->transition.active ?
+				    (uint16_t)srv->lightness->transition.target :
+				    srv->lightness->actual);
 				put_u16(reply->params + 6,
-				    (uint16_t)srv->temperature_transition.target);
+				    srv->temperature_transition.active ?
+				    (uint16_t)srv->temperature_transition.target :
+				    srv->temperature);
 				reply->params[8] = lighting_remaining(rx->now_ms,
 				    &srv->lightness->transition,
 				    &srv->temperature_transition,
@@ -683,6 +735,14 @@ ctl_handler(const struct mesh_access_rx *rx)
         }
         ack = rx->pdu->opcode == MESH_OP_LIGHT_CTL_SET ||
                 rx->pdu->opcode == MESH_OP_LIGHT_CTL_TEMPERATURE_SET;
+	/*
+	 * Clamp out-of-range components to their Range rather than dropping the
+	 * whole message (MMDL Section 6.1.3.1.3 for Temperature, 6.1.2.2.5 for
+	 * Lightness); this also keeps in-range composite components applied.
+	 */
+	temperature = ctl_temp_clamp(srv, temperature);
+	if (!temp_only)
+		lightness = lightness_clamp(srv->lightness, lightness);
 	if (lighting_tid_is_new(&srv->last_src, &srv->last_dst, &srv->last_tid,
 	    &srv->tid_valid, &srv->tid_expires_ms, rx->src,
 	    rx->dst, rx->pdu->params[temp_only ? 4 : 6], rx->now_ms)) {
@@ -693,11 +753,6 @@ ctl_handler(const struct mesh_access_rx *rx)
 		delay = rx->pdu->params_len == (temp_only ? 7 : 9) ?
 		    rx->pdu->params[temp_only ? 6 : 8] : 0;
 		if (delay != 0 || mesh_transition_time_ms(transition_time) != 0) {
-			if (temperature < srv->range_min ||
-			    temperature > srv->range_max ||
-			    (!temp_only && !lightness_value_valid(srv->lightness,
-			    lightness)))
-				return (-1);
 			if (!temp_only)
 				mesh_transition_start(&srv->lightness->transition,
 				    srv->lightness->actual, lightness,
@@ -730,9 +785,13 @@ ctl_handler(const struct mesh_access_rx *rx)
 		put_u16(reply->params + 2, (uint16_t) srv->delta_uv);
 		if (ctl_transition_active(srv, 1)) {
 			put_u16(reply->params + 4,
-			    (uint16_t)srv->temperature_transition.target);
+			    srv->temperature_transition.active ?
+			    (uint16_t)srv->temperature_transition.target :
+			    srv->temperature);
 			put_u16(reply->params + 6,
-			    (uint16_t)srv->delta_uv_transition.target);
+			    srv->delta_uv_transition.active ?
+			    (uint16_t)srv->delta_uv_transition.target :
+			    (uint16_t)srv->delta_uv);
 			reply->params[8] = lighting_remaining(rx->now_ms,
 			    &srv->temperature_transition, &srv->delta_uv_transition,
 			    NULL);
@@ -1003,6 +1062,33 @@ hsl_hue_in_range(const struct mesh_light_hsl_srv *srv, uint16_t hue)
 	return (hue >= srv->hue_min || hue <= srv->hue_max);
 }
 
+/*
+ * MMDL Section 6.1.4.6.2: an out-of-range Hue is clamped to the nearer
+ * configured boundary, not rejected.  A wrapping range (Min > Max) clamps to
+ * whichever boundary is nearer within the excluded (Max, Min) gap.
+ */
+static uint16_t
+hsl_hue_clamp(const struct mesh_light_hsl_srv *srv, uint16_t hue)
+{
+	if (hsl_hue_in_range(srv, hue))
+		return (hue);
+	if (srv->hue_min <= srv->hue_max)
+		return (hue < srv->hue_min ? srv->hue_min : srv->hue_max);
+	return ((uint16_t)(srv->hue_min - hue) <= (uint16_t)(hue - srv->hue_max) ?
+	    srv->hue_min : srv->hue_max);
+}
+
+/* MMDL Section 6.1.4.7.2: an out-of-range Saturation is clamped to Range. */
+static uint16_t
+hsl_saturation_clamp(const struct mesh_light_hsl_srv *srv, uint16_t saturation)
+{
+	if (saturation < srv->saturation_min)
+		return (srv->saturation_min);
+	if (saturation > srv->saturation_max)
+		return (srv->saturation_max);
+	return (saturation);
+}
+
 static uint16_t
 hsl_hue_transition_sample(struct mesh_light_hsl_srv *srv, uint64_t now_ms)
 {
@@ -1150,6 +1236,14 @@ hsl_handler(const struct mesh_access_rx *rx)
                 hue = get_u16(rx->pdu->params);
         if (op == MESH_OP_LIGHT_HSL_SATURATION_SET || op == MESH_OP_LIGHT_HSL_SATURATION_SET_UNACK)
                 saturation = get_u16(rx->pdu->params);
+	/*
+	 * Clamp out-of-range components to their Range rather than dropping the
+	 * whole message (MMDL Section 6.1.4); this keeps in-range composite
+	 * components applied.
+	 */
+	lightness = lightness_clamp(srv->lightness, lightness);
+	hue = hsl_hue_clamp(srv, hue);
+	saturation = hsl_saturation_clamp(srv, saturation);
         ack = op == MESH_OP_LIGHT_HSL_SET || op == MESH_OP_LIGHT_HSL_HUE_SET || op == MESH_OP_LIGHT_HSL_SATURATION_SET;
 	if (lighting_tid_is_new(&srv->last_src, &srv->last_dst, &srv->last_tid,
 	    &srv->tid_valid, &srv->tid_expires_ms, rx->src,
@@ -1161,11 +1255,6 @@ hsl_handler(const struct mesh_access_rx *rx)
 		delay = rx->pdu->params_len == (component ? 5 : 9) ?
 		    rx->pdu->params[component ? 4 : 8] : 0;
 		if (delay != 0 || mesh_transition_time_ms(transition_time) != 0) {
-			if (!lightness_value_valid(srv->lightness, lightness) ||
-			    !hsl_hue_in_range(srv, hue) ||
-			    saturation < srv->saturation_min ||
-			    saturation > srv->saturation_max)
-				return (-1);
 			if (!component)
 				mesh_transition_start(&srv->lightness->transition,
 				    srv->lightness->actual, lightness,
@@ -1490,6 +1579,17 @@ void    mesh_light_xyl_srv_init(struct mesh_light_xyl_srv *s, struct mesh_light_
         s->y_max = UINT16_MAX;
         s->lightness = l;
 }
+/* MMDL Section 6.1.5: an out-of-range xyL x/y is clamped to Range, not dropped. */
+static uint16_t
+xyl_clamp(uint16_t value, uint16_t min, uint16_t max)
+{
+	if (value < min)
+		return (min);
+	if (value > max)
+		return (max);
+	return (value);
+}
+
 int
 mesh_light_xyl_set(struct mesh_light_xyl_srv *s, uint16_t l, uint16_t x, uint16_t y)
 {
@@ -1551,6 +1651,13 @@ static int xyl_handler(const struct mesh_access_rx *rx){
         l = get_u16(rx->pdu->params);
         x = get_u16(rx->pdu->params + 2);
         y = get_u16(rx->pdu->params + 4);
+	/*
+	 * Clamp out-of-range components to their Range rather than dropping the
+	 * whole message (MMDL Section 6.1.5), keeping in-range components.
+	 */
+	l = lightness_clamp(s->lightness, l);
+	x = xyl_clamp(x, s->x_min, s->x_max);
+	y = xyl_clamp(y, s->y_min, s->y_max);
         ack = op == MESH_OP_LIGHT_XYL_SET;
 	if (lighting_tid_is_new(&s->last_src, &s->last_dst, &s->last_tid,
 	    &s->tid_valid, &s->tid_expires_ms, rx->src, rx->dst,
@@ -1560,10 +1667,6 @@ static int xyl_handler(const struct mesh_access_rx *rx){
 		    rx->pdu->params_len == 9 ? rx->pdu->params[7] : 0);
 		delay = rx->pdu->params_len == 9 ? rx->pdu->params[8] : 0;
 		if (delay != 0 || mesh_transition_time_ms(transition_time) != 0) {
-			if (!lightness_value_valid(s->lightness, l) ||
-			    x < s->x_min || x > s->x_max || y < s->y_min ||
-			    y > s->y_max)
-				return (-1);
 			mesh_transition_start(&s->lightness->transition,
 			    s->lightness->actual, l, transition_time, delay,
 			    rx->now_ms);

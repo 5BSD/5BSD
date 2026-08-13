@@ -4,7 +4,6 @@
 
 SUBDIR= \
 	bluetooth-config \
-	bluectl \
 	blued \
 	bluedctl \
 	btpand \

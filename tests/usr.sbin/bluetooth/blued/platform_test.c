@@ -694,8 +694,80 @@ ATF_TC_BODY(static_read_unchanged, tc)
 	fx_teardown(&fx);
 }
 
+/*
+ * Finding 51: an authorize-gated Write Request longer than the deferred-write
+ * holding buffer (ATT_PEND_WVAL_MAX == 512, the maximum ATT attribute value
+ * length) must be REJECTED with Invalid Attribute Value Length, not silently
+ * truncated to 512 and acked.  A characteristic can register value_maxlen above
+ * 512 (up to 517), so a >512 write can pass the maxlen check yet not fit the
+ * pending buffer.  The reject happens before any authorize event is emitted.
+ */
+ATF_TC_WITHOUT_HEAD(authorize_write_over_pend_max_rejected);
+ATF_TC_BODY(authorize_write_over_pend_max_rejected, tc)
+{
+	struct fixture fx;
+	uint8_t big_init[513];
+	uint8_t wval[513];
+	uint8_t pdu[3 + 513];
+	uint16_t h;
+	uint8_t rsp[64];
+	ssize_t n;
+
+	fx_setup(&fx);
+
+	/*
+	 * Register a writable, authorize-gated characteristic whose reserved
+	 * capacity exceeds ATT_PEND_WVAL_MAX (value_maxlen == 513 via a 513-byte
+	 * initial value).  The fixture MTU is ATT_PDU_BUF_SIZE (517) so a 513-B
+	 * value fits in one Write Request.
+	 */
+	memset(big_init, 0x5A, sizeof(big_init));
+	h = attdb_add_characteristic(&fx.db, 0x2B01,
+	    GATT_PROP_READ | GATT_PROP_WRITE, ATT_PERM_READ | ATT_PERM_WRITE,
+	    big_init, sizeof(big_init));
+	ATF_REQUIRE(h != 0);
+	set_flags_owner(&fx.db, h, ATT_ATTR_F_AUTHORIZE);
+
+	/* Write 513 octets: passes value_maxlen (513) but exceeds 512. */
+	memset(wval, 0xC3, sizeof(wval));
+	pdu[0] = ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, h);
+	memcpy(pdu + 3, wval, sizeof(wval));
+	srv_recv(&fx, pdu, sizeof(pdu));
+
+	/* Rejected up front: an Error Response, no authorize event, no pending. */
+	n = srv_drain(&fx, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(5, n, "expected 5-byte error response, got %zd", n);
+	ATF_CHECK_EQ(ATT_OP_ERROR_RSP, rsp[0]);
+	ATF_CHECK_EQ(ATT_OP_WRITE_REQ, rsp[1]);
+	ATF_CHECK_EQ_MSG(ATT_ERR_INVALID_ATTR_LEN, rsp[4],
+	    "over-max authorize write must be rejected, not truncated");
+	ATF_CHECK_EQ(0, cap.auth_calls);
+	ATF_CHECK(!att_server_pending_active(&fx.ac));
+
+	/* A ≤512 authorize write to the same char still defers normally. */
+	pdu[0] = ATT_OP_WRITE_REQ;
+	put_le16(pdu + 1, h);
+	srv_recv(&fx, pdu, (size_t)3 + 512);
+	ATF_CHECK_EQ(0, srv_drain(&fx, rsp, sizeof(rsp)));
+	ATF_CHECK_EQ(1, cap.auth_calls);
+	ATF_REQUIRE(att_server_pending_active(&fx.ac));
+	ATF_REQUIRE_EQ(0, att_server_complete_authorize(&fx.ac, &fx.db, true));
+	n = srv_drain(&fx, rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ(1, n);
+	ATF_CHECK_EQ(ATT_OP_WRITE_RSP, rsp[0]);
+	{
+		struct att_attr *a = attdb_find_by_handle(&fx.db, h);
+		ATF_REQUIRE(a != NULL);
+		ATF_CHECK_EQ(512, a->value_len);
+	}
+
+	fx_teardown(&fx);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, authorize_write_over_pend_max_rejected);
 
 	ATF_TP_ADD_TC(tp, dynamic_read_roundtrip);
 	ATF_TP_ADD_TC(tp, dynamic_read_blob_offset);

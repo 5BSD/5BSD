@@ -178,9 +178,40 @@ ATF_TC_BODY(mesh_kr_beacon_invalid_phase, tc)
 	    "an unknown phase must be left unchanged by a beacon");
 }
 
+/*
+ * Finding 5 regression: the beacon Key Refresh flag a node advertises is SET
+ * only in Phase 2 and CLEAR in every other phase (0, 1, and 3), matching
+ * MshPRT Sections 3.11.4.2-3.11.4.3.  Locks the corrected header contract,
+ * which previously claimed the flag was set in Phase 3 as well.
+ */
+ATF_TC_WITHOUT_HEAD(mesh_kr_beacon_flag_by_phase);
+ATF_TC_BODY(mesh_kr_beacon_flag_by_phase, tc)
+{
+	struct mesh_key_refresh st;
+
+	/* Phase 0 (Normal): CLEAR. */
+	mesh_kr_init(&st);
+	ATF_CHECK_EQ(BT_MSHPRT11_KR_FLAG_CLEAR, mesh_kr_beacon_flag(&st));
+
+	/* Phase 1 (distributing): CLEAR. */
+	ATF_REQUIRE_EQ(0, mesh_kr_begin(&st));
+	ATF_CHECK_EQ(BT_MSHPRT11_KR_FLAG_CLEAR, mesh_kr_beacon_flag(&st));
+
+	/* Phase 2 (using new keys): SET. */
+	ATF_REQUIRE_EQ(BT_MSHPRT11_KR_STATE_PHASE_2,
+	    mesh_kr_beacon(&st, BT_MSHPRT11_KR_FLAG_SET));
+	ATF_CHECK_EQ(BT_MSHPRT11_KR_FLAG_SET, mesh_kr_beacon_flag(&st));
+
+	/* Phase 3 (revoking): CLEAR, not SET. */
+	ATF_REQUIRE_EQ(BT_MSHPRT11_KR_TRANSITION_PHASE_3,
+	    mesh_kr_beacon(&st, BT_MSHPRT11_KR_FLAG_CLEAR));
+	ATF_CHECK_EQ(BT_MSHPRT11_KR_FLAG_CLEAR, mesh_kr_beacon_flag(&st));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, mesh_kr_beacon_flag_by_phase);
 	ATF_TP_ADD_TC(tp, mesh_kr_phase_walk);
 	ATF_TP_ADD_TC(tp, mesh_kr_flag_stability);
 	ATF_TP_ADD_TC(tp, mesh_kr_key_selection);

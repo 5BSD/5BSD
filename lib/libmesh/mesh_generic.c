@@ -349,8 +349,14 @@ gen_tid_is_new(struct mesh_gen_tid *t, uint16_t src, uint16_t dst, uint8_t tid,
 {
 
 	if (t->valid && t->src == src && t->dst == dst && t->tid == tid &&
-	    now_ms <= t->expires_ms)
+	    now_ms <= t->expires_ms) {
+		/*
+		 * MMDL Section 3.1: the 6 s transaction window runs from the
+		 * PREVIOUS same-TID message, so a retransmission refreshes it.
+		 */
+		t->expires_ms = now_ms + 6000;
 		return (0);
+	}
 	t->valid = 1;
 	t->src = src;
 	t->dst = dst;
@@ -614,9 +620,8 @@ mesh_gen_level_srv_recv_at_dst(struct mesh_gen_level_srv *srv, uint16_t src,
 		if (gen_tid_is_new(&srv->txn, src, dst, mset.tid, now_ms)) {
 			transition_time = gen_effective_transition(srv->dtt,
 			    mset.has_transition, mset.transition_time);
-			if (mset.delta != 0 && ((mset.has_transition &&
-			    mset.delay != 0) ||
-			    mesh_transition_time_ms(transition_time) != 0)) {
+			if (mset.delta != 0 &&
+			    mesh_transition_time_ms(transition_time) != 0) {
 				uint64_t distance, duration, period;
 				int32_t target;
 
@@ -631,14 +636,15 @@ mesh_gen_level_srv_recv_at_dst(struct mesh_gen_level_srv *srv, uint16_t src,
 				mesh_transition_start_ms(&srv->transition, srv->present,
 				    target, duration,
 				    mset.has_transition ? mset.delay : 0, now_ms);
-			}
-			else if (mset.delta > 0)
-				mesh_gen_level_srv_set_present(srv, INT16_MAX);
-			else if (mset.delta < 0)
-				mesh_gen_level_srv_set_present(srv, INT16_MIN);
-			else
+			} else
+				/*
+				 * MMDL Section 3.3.2.2.4: a resolved transition
+				 * time of 0 (or a zero delta) means the server
+				 * shall NOT initiate any Generic Level state
+				 * change; stop any ongoing movement and leave the
+				 * Level unchanged.  Do not rail to INT16_MIN/MAX.
+				 */
 				srv->transition.active = 0;
-			/* delta == 0: movement stops, Level unchanged. */
 			srv->txn_base = srv->present;
 		}
 		if (opcode == MESH_OP_GEN_MOVE_SET)
@@ -706,7 +712,12 @@ mesh_gen_power_onoff_srv_power_cycle(struct mesh_gen_power_onoff_srv *srv)
 		mesh_gen_onoff_srv_set_present(srv->bound_onoff, MESH_GEN_ON);
 		break;
 	case MESH_GEN_ONPOWERUP_RESTORE:
-		mesh_gen_onoff_srv_set_present(srv->bound_onoff, srv->last_onoff);
+		/*
+		 * MMDL Section 3.2.4.3: restore the on/off value the server
+		 * had immediately before this power cycle (the persisted
+		 * present value), not the state saved a cycle earlier.
+		 */
+		mesh_gen_onoff_srv_set_present(srv->bound_onoff, previous);
 		break;
 	}
 	srv->last_onoff = previous;

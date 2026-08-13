@@ -858,6 +858,16 @@ main(int argc, char *argv[])
 		(void)meshd_provisioner_drain(&nd, now);
 
 		/*
+		 * A failed provisioning attempt (PB-ADV retransmit budget
+		 * exhausted, or a session protocol error) otherwise wedges
+		 * provisioning forever and leaks the reserved unicast address.
+		 * Tear it down eagerly so a later attempt can proceed; the
+		 * failure is retained for the operator's provision-status poll.
+		 */
+		if (meshd_provision_ota_failed(&nd))
+			meshd_provision_ota_abort(&nd, 1);
+
+		/*
 		 * Commit an OTA provisioning that has completed since the last
 		 * tick, recording the new node + DevKey and persisting the roster.
 		 */

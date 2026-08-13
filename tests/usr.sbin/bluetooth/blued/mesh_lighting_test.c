@@ -575,8 +575,15 @@ ATF_TC_BODY(xyl_models, tc)
 	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(
 	    TEST_ASSIGNED_MESH_OP_LIGHT_XYL_SET, raw,
 	    BT_MMDL111_XYL_SET_TRANSITION_LEN, pdu, &plen));
-	ATF_CHECK_EQ(-1, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
-	    &reply, 3100));
+	/*
+	 * Finding 9: an out-of-range xyL x is CLAMPED to the x Range (MMDL
+	 * Section 6.1.5), not dropped, so the composite Set is accepted rather
+	 * than discarding its in-range Lightness and y components.
+	 */
+	memset(&reply, 0, sizeof(reply));
+	ATF_CHECK_EQ_MSG(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
+	    &reply, 3100),
+	    "out-of-range xyL x must be clamped, not dropped");
 	/* MMDL §3.2.9.2: 0x3F selects DTT or an immediate transition. */
 	raw[2] = TEST_XYL_UNACK_X & 0xff;
 	raw[3] = TEST_XYL_UNACK_X >> 8;
@@ -1229,6 +1236,12 @@ ATF_TC_BODY(lightness_getters_and_unacknowledged_sets, tc)
 		ATF_CHECK_EQ(-1, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
 		    plen, &reply, 1000));
 	}
+	/*
+	 * Finding 9: a non-zero Lightness below Range Min is CLAMPED to Range
+	 * Min (MMDL Section 6.1.2.2.5), not dropped.  With range_min = 2, a Set
+	 * to Lightness 1 is accepted and clamped to 2 (previously returned -1
+	 * with no state change or Status).
+	 */
 	memset(raw, 0, sizeof(raw));
 	raw[0] = TEST_LIGHTNESS_INVALID_BELOW_RANGE & 0xff;
 	raw[1] = TEST_LIGHTNESS_INVALID_BELOW_RANGE >> 8;
@@ -1237,14 +1250,20 @@ ATF_TC_BODY(lightness_getters_and_unacknowledged_sets, tc)
 	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(
 	    TEST_ASSIGNED_MESH_OP_LIGHT_LIGHTNESS_SET, raw,
 	    BT_MMDL111_LIGHTNESS_SET_TRANSITION_LEN, pdu, &plen));
-	ATF_CHECK_EQ(-1, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
-	    plen, &reply, 1100));
+	memset(&reply, 0, sizeof(reply));
+	ATF_CHECK_EQ_MSG(0, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
+	    plen, &reply, 1100),
+	    "below-range Lightness Set must be clamped, not dropped");
+	ATF_CHECK(reply.have_reply);
 	raw[2] = TEST_LIGHTNESS_TID_INVALID_BASE;
 	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(
 	    TEST_ASSIGNED_MESH_OP_LIGHT_LIGHTNESS_SET, raw,
 	    BT_MMDL111_LIGHTNESS_SET_BASE_LEN, pdu, &plen));
-	ATF_CHECK_EQ(-1, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
+	memset(&reply, 0, sizeof(reply));
+	ATF_CHECK_EQ(0, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
 	    plen, &reply, 1200));
+	ATF_CHECK_EQ_MSG(TEST_LIGHTNESS_RANGE_MIN, server.actual,
+	    "below-range Lightness Set must clamp Actual to Range Min");
 	/* MMDL §3.2.9.2: 0x3F selects DTT or an immediate transition. */
 	raw[0] = TEST_LIGHTNESS_VALID_IN_RANGE & 0xff;
 	raw[1] = TEST_LIGHTNESS_VALID_IN_RANGE >> 8;
@@ -1604,6 +1623,12 @@ ATF_TC_BODY(ctl_temperature_transition_matrix, tc)
 	    BT_MMDL111_CTL_TEMPERATURE_SET_TRANSITION_LEN, pdu, &plen));
 	ATF_CHECK_EQ(0, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
 	    plen, &reply, 5000));
+	/*
+	 * Finding 9: a CTL Temperature below Range Min is CLAMPED to Range Min
+	 * (MMDL Section 6.1.3.1.3), not dropped.  Both the transition and
+	 * immediate forms are accepted and clamped to the minimum (previously
+	 * returned -1 with no state change or Status).
+	 */
 	raw[0] = (BT_MMDL111_CTL_TEMPERATURE_MIN - 1) & 0xff;
 	raw[1] = (BT_MMDL111_CTL_TEMPERATURE_MIN - 1) >> 8;
 	raw[4] = TEST_CTL_TID_BELOW_RANGE_TRANSITION;
@@ -1611,8 +1636,11 @@ ATF_TC_BODY(ctl_temperature_transition_matrix, tc)
 	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(
 	    TEST_ASSIGNED_MESH_OP_LIGHT_CTL_TEMPERATURE_SET, raw,
 	    BT_MMDL111_CTL_TEMPERATURE_SET_TRANSITION_LEN, pdu, &plen));
-	ATF_CHECK_EQ(-1, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
-	    plen, &reply, 5000));
+	memset(&reply, 0, sizeof(reply));
+	ATF_CHECK_EQ_MSG(0, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
+	    plen, &reply, 5000),
+	    "below-range CTL Temperature Set must be clamped, not dropped");
+	/* A malformed length is still rejected. */
 	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(
 	    TEST_ASSIGNED_MESH_OP_LIGHT_CTL_TEMPERATURE_SET, raw,
 	    BT_MMDL111_CTL_TEMPERATURE_SET_BASE_LEN + 1, pdu, &plen));
@@ -1624,8 +1652,11 @@ ATF_TC_BODY(ctl_temperature_transition_matrix, tc)
 	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(
 	    TEST_ASSIGNED_MESH_OP_LIGHT_CTL_TEMPERATURE_SET, raw,
 	    BT_MMDL111_CTL_TEMPERATURE_SET_BASE_LEN, pdu, &plen));
-	ATF_CHECK_EQ(-1, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
+	memset(&reply, 0, sizeof(reply));
+	ATF_CHECK_EQ(0, mesh_access_dispatch_at(&element, 1, 1, 2, pdu,
 	    plen, &reply, 5100));
+	ATF_CHECK_EQ_MSG(BT_MMDL111_CTL_TEMPERATURE_MIN, ctl.temperature,
+	    "below-range CTL Temperature Set must clamp to Range Min");
 	raw[0] = 0;
 	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(
 	    TEST_ASSIGNED_MESH_OP_LIGHT_CTL_TEMPERATURE_GET, raw, 1, pdu,
@@ -1921,8 +1952,176 @@ ATF_TC_BODY(lc_transition_and_setup_matrix, tc)
 	    plen, &reply, 3000));
 }
 
+/*
+ * Finding 13 regression: MMDL Section 6.1.2.2.1 defines Linear =
+ * Ceil(65535 * (Actual/65535)^2).  A small non-zero Actual must round UP,
+ * never truncate to 0 (the previous floor division lost it).
+ */
+ATF_TC_WITHOUT_HEAD(lightness_linear_ceil);
+ATF_TC_BODY(lightness_linear_ceil, tc)
+{
+	ATF_CHECK_EQ(0, mesh_light_lightness_linear(0));
+	ATF_CHECK_EQ_MSG(1, mesh_light_lightness_linear(1),
+	    "Actual 1 must round up to Linear 1, not floor to 0");
+	/* 256^2 = 65536; 65536/65535 = 1.0000152 -> Ceil 2 (floor would be 1). */
+	ATF_CHECK_EQ_MSG(2, mesh_light_lightness_linear(256),
+	    "Linear must round up, not truncate");
+	ATF_CHECK_EQ(BT_MMDL111_LIGHTNESS_ACTUAL_MAX,
+	    mesh_light_lightness_linear(BT_MMDL111_LIGHTNESS_ACTUAL_MAX));
+}
+
+/*
+ * Finding 15 regression: the Light Lightness Default is a plain 0x0000-0xFFFF
+ * value with NO Range binding (MMDL Section 6.1.2.4), so a Default Set outside
+ * [Range Min, Range Max] must be accepted, not dropped.
+ */
+ATF_TC_WITHOUT_HEAD(lightness_default_no_range_binding);
+ATF_TC_BODY(lightness_default_no_range_binding, tc)
+{
+	struct mesh_light_lightness_srv srv;
+	struct mesh_gen_onoff_srv onoff;
+	struct mesh_gen_level_srv level;
+	struct mesh_model models[2];
+	struct mesh_element el;
+	struct mesh_model_reply reply;
+	uint8_t pdu[16];
+	size_t plen;
+
+	mesh_gen_onoff_srv_init(&onoff, MESH_GEN_OFF);
+	mesh_gen_level_srv_init(&level, 0);
+	mesh_light_lightness_srv_init(&srv, &onoff, &level);
+	srv.range_min = 100;
+	srv.range_max = 200;
+	models[0] = mesh_light_lightness_srv_model(&srv);
+	models[1] = mesh_light_lightness_setup_srv_model(&srv);
+	memset(&el, 0, sizeof(el)); el.addr = 2; el.models = models; el.n_models = 2;
+
+	/* Default 5000 is well outside [100,200] but must still be accepted. */
+	ATF_REQUIRE_EQ(0, mesh_light_lightness_cli_default_set(5000, 1, pdu,
+	    &plen));
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch(&el, 1, 1, 2, pdu, plen, &reply));
+	ATF_CHECK_EQ(TEST_ASSIGNED_MESH_OP_LIGHT_LIGHTNESS_DEFAULT_STATUS,
+	    reply.opcode);
+	ATF_CHECK_EQ_MSG(5000, srv.default_lightness,
+	    "out-of-range Default must be accepted (no Range binding)");
+}
+
+/*
+ * Finding 8 regression (lighting): the 6 s TID window runs from the PREVIOUS
+ * same-TID message (MMDL Section 3.1), so a Light Lightness Set retransmission
+ * refreshes it; a slow same-TID stream stays one transaction.
+ */
+ATF_TC_WITHOUT_HEAD(lightness_tid_window_refreshes);
+ATF_TC_BODY(lightness_tid_window_refreshes, tc)
+{
+	struct mesh_light_lightness_srv srv;
+	struct mesh_gen_onoff_srv onoff;
+	struct mesh_gen_level_srv level;
+	struct mesh_light_lightness_set set;
+	struct mesh_model models[2];
+	struct mesh_element el;
+	struct mesh_model_reply reply;
+	uint8_t pdu[16];
+	size_t plen;
+
+	mesh_gen_onoff_srv_init(&onoff, MESH_GEN_OFF);
+	mesh_gen_level_srv_init(&level, 0);
+	mesh_light_lightness_srv_init(&srv, &onoff, &level);	/* range 1..65535 */
+	models[0] = mesh_light_lightness_srv_model(&srv);
+	models[1] = mesh_light_lightness_setup_srv_model(&srv);
+	memset(&el, 0, sizeof(el)); el.addr = 2; el.models = models; el.n_models = 2;
+
+	memset(&set, 0, sizeof(set));
+	set.lightness = 1000;
+	set.tid = 7;
+	ATF_REQUIRE_EQ(0, mesh_light_lightness_cli_actual_set(&set, 0, pdu, &plen));
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
+	    &reply, 0));
+	ATF_CHECK_EQ(1000, srv.actual);
+
+	/* Same TID at t=5 s: retransmission (ignored) refreshes the window. */
+	set.lightness = 2000;			/* different value, same TID */
+	ATF_REQUIRE_EQ(0, mesh_light_lightness_cli_actual_set(&set, 0, pdu, &plen));
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
+	    &reply, 5000));
+	ATF_CHECK_EQ_MSG(1000, srv.actual, "same-TID retransmission is ignored");
+
+	/* t=10 s: still one transaction because the window was refreshed. */
+	ATF_REQUIRE_EQ(0, mesh_light_lightness_cli_actual_set(&set, 0, pdu, &plen));
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
+	    &reply, 10000));
+	ATF_CHECK_EQ_MSG(1000, srv.actual,
+	    "same-TID Set at 10 s must remain one transaction (window refreshed)");
+}
+
+/*
+ * Finding 14 regression: when only the shared lightness transition is active,
+ * a CTL Status must report the PRESENT Temperature as the Target Temperature,
+ * not a never-set temperature_transition.target of 0x0000 (a prohibited CTL
+ * Temperature value).
+ */
+ATF_TC_WITHOUT_HEAD(ctl_status_target_temp_lightness_only);
+ATF_TC_BODY(ctl_status_target_temp_lightness_only, tc)
+{
+	struct mesh_gen_onoff_srv onoff;
+	struct mesh_gen_level_srv level;
+	struct mesh_light_lightness_srv lightness;
+	struct mesh_light_ctl_srv ctl;
+	struct mesh_light_lightness_set set;
+	struct mesh_model models[4];
+	struct mesh_element el;
+	struct mesh_model_reply reply;
+	uint8_t pdu[16];
+	size_t plen;
+	uint16_t target_temp;
+
+	mesh_gen_onoff_srv_init(&onoff, MESH_GEN_OFF);
+	mesh_gen_level_srv_init(&level, 0);
+	mesh_light_lightness_srv_init(&lightness, &onoff, &level);
+	mesh_light_ctl_srv_init(&ctl, &lightness);	/* temperature = 0x0320 */
+	models[0] = mesh_light_lightness_srv_model(&lightness);
+	models[1] = mesh_light_lightness_setup_srv_model(&lightness);
+	models[2] = mesh_light_ctl_srv_model(&ctl);
+	models[3] = mesh_light_ctl_temp_srv_model(&ctl);
+	memset(&el, 0, sizeof(el)); el.addr = 2; el.models = models; el.n_models = 4;
+
+	/* Start ONLY a lightness transition via a Light Lightness Set. */
+	memset(&set, 0, sizeof(set));
+	set.lightness = 1000;
+	set.tid = 1;
+	set.transition.has_transition = 1;
+	set.transition.transition_time = BT_MMDL111_TRANSITION_ONE_SECOND_100MS;
+	ATF_REQUIRE_EQ(0, mesh_light_lightness_cli_actual_set(&set, 0, pdu, &plen));
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
+	    &reply, 1000));
+	ATF_REQUIRE(lightness.transition.active);
+	ATF_REQUIRE(!ctl.temperature_transition.active);
+
+	/* CTL Get -> Status carries target fields (a transition is active). */
+	ATF_REQUIRE_EQ(0, mesh_light_ctl_cli_get(
+	    TEST_ASSIGNED_MESH_OP_LIGHT_CTL_GET, pdu, &plen));
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch_at(&el, 1, 1, 2, pdu, plen,
+	    &reply, 1200));
+	ATF_CHECK_EQ(TEST_ASSIGNED_MESH_OP_LIGHT_CTL_STATUS, reply.opcode);
+	ATF_CHECK_EQ(9u, reply.params_len);
+	target_temp = (uint16_t)(reply.params[6] |
+	    ((uint16_t)reply.params[7] << 8));
+	ATF_CHECK_EQ_MSG(BT_MMDL111_CTL_TEMPERATURE_MIN, target_temp,
+	    "Target CTL Temperature must be the present value, not 0x0000");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, lightness_linear_ceil);
+	ATF_TP_ADD_TC(tp, lightness_default_no_range_binding);
+	ATF_TP_ADD_TC(tp, lightness_tid_window_refreshes);
+	ATF_TP_ADD_TC(tp, ctl_status_target_temp_lightness_only);
 	ATF_TP_ADD_TC(tp, assigned_opcode_contract);
 	ATF_TP_ADD_TC(tp, lightness_models);
 	ATF_TP_ADD_TC(tp, ctl_models);

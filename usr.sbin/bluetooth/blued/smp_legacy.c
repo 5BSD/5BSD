@@ -104,8 +104,16 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 	 */
 	sc->neg_key_size = (preq[4] < pres[4]) ? preq[4] : pres[4];
 
-	/* Receive initiator's Pairing Confirm */
-	n = smp_recv_timed(sc, pdu, 17);
+	/*
+	 * Receive initiator's Pairing Confirm.  In legacy Passkey Entry the
+	 * inputting peer emits Keypress Notifications (opcode 0x0E) before its
+	 * Pairing Confirm (Core Spec Vol 3 Part H §3.5.8); Keypress support is
+	 * advertised by default, so use the keypress-consuming recv here to
+	 * match every other passkey path (smp.c/smp_sc.c).  A plain
+	 * smp_recv_timed() would see the 2-byte keypress, fail the n < 17 gate
+	 * and abort an otherwise-valid pairing with EPROTO.
+	 */
+	n = smp_recv_timed_kp(sc, pdu, 17);
 	if (n == SMP_RECV_TIMED_OUT)
 		goto resp_legacy_cleanup;
 	if (n < 17 || pdu[0] != SMP_PAIRING_CONFIRM) {
@@ -325,13 +333,37 @@ smp_respond_legacy(struct smp_conn *sc, const uint8_t preq[7],
 			}
 		}
 
-		/* Receive initiator's keys based on negotiated
-		 * Initiator Key Distribution (pres[5]) */
-		if (smp_receive_peer_keys(sc, &bond, pres[5], false) != 0) {
-			explicit_bzero(our_ltk, sizeof(our_ltk));
-			explicit_bzero(&bond, sizeof(bond));
-			ret = -1;
-			goto resp_legacy_cleanup;
+		/*
+		 * Receive initiator's keys based on negotiated Initiator Key
+		 * Distribution (pres[5]).
+		 *
+		 * The peripheral's OWN distributed LTK/EDIV/Rand (generated
+		 * above) is what the central stores and later presents in its
+		 * LL encryption request, and what our LTK-request handler
+		 * matches against on reconnect.  If the initiator also
+		 * distributes EncKey (the LE-legacy default), smp_receive_peer_keys
+		 * would overwrite bond.ltk/ediv/rand with the *initiator's*
+		 * material via `*bond = pending`.  Snapshot ours and restore it
+		 * afterwards so the peripheral persists its own key material and
+		 * reconnection keeps working (Core Spec Vol 3 Part H §2.4.1 —
+		 * each device stores the keys it distributed for the direction it
+		 * is a peripheral on).  The initiator's LTK is not needed by a
+		 * peripheral and is intentionally dropped.
+		 */
+		{
+			uint64_t own_rand = bond.rand;
+			uint16_t own_ediv = bond.ediv;
+
+			if (smp_receive_peer_keys(sc, &bond, pres[5], false) != 0) {
+				explicit_bzero(our_ltk, sizeof(our_ltk));
+				explicit_bzero(&bond, sizeof(bond));
+				ret = -1;
+				goto resp_legacy_cleanup;
+			}
+			memcpy(bond.ltk, our_ltk, sizeof(bond.ltk));
+			bond.rand = own_rand;
+			bond.ediv = own_ediv;
+			bond.has_ltk = true;
 		}
 
 		/* Legacy pairing cannot negotiate the Core 6.3 LinkKey bit. */

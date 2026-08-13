@@ -221,6 +221,61 @@ ATF_TC_BODY(roster_persist, tc)
 }
 
 /* ================================================================
+ * Persistence of the outbound SEQ high-water mark (regression: finding 24).
+ * Before the fix mesh_mgr_save/load dropped mgr->seq, so a reloaded manager
+ * re-issued already-used SEQ values: every node's RPL discarded its Config
+ * traffic (and it was (IV, SEQ) nonce reuse).  The SEQ persisted on save must
+ * be restored so the reloaded manager resumes above every SEQ it has used.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(seq_persist);
+ATF_TC_BODY(seq_persist, tc)
+{
+	MESH_HEAP(struct mesh_mgr, mgr);
+	MESH_HEAP(struct mesh_mgr, loaded);
+	struct mesh_mgr_node *node;
+	uint8_t uuid[16], devkey[16];
+	uint8_t access[20], upper[64];
+	size_t alen, ulen;
+	const char *path = "mesh_mgr_seq.tmp";
+	uint32_t hw, seq;
+	int i;
+
+	ATF_REQUIRE_EQ(0, mesh_mgr_create_network(mgr, NULL, NULL));
+	memset(uuid, 0xD4, sizeof(uuid));
+	memset(devkey, 0x5A, sizeof(devkey));
+	node = mesh_mgr_add_node(mgr, uuid, 0x0002, 1, devkey, 0);
+	ATF_REQUIRE(node != NULL);
+
+	/* Consume several SEQ values so the high-water mark is non-zero. */
+	for (i = 0; i < 5; i++) {
+		alen = sizeof(access);
+		ATF_REQUIRE_EQ(0, mesh_mgr_cfg_appkey_add_pdu(mgr, access, &alen));
+		ATF_REQUIRE_EQ(0, mesh_mgr_devkey_seal(mgr, node, access, alen,
+		    &seq, upper, &ulen));
+	}
+	hw = mgr->seq;			/* next unused SEQ (the high-water mark) */
+	ATF_REQUIRE_EQ(5u, hw);
+
+	ATF_REQUIRE_EQ(0, mesh_mgr_save(mgr, path));
+
+	/* The reloaded manager must resume at or above the pre-save high-water. */
+	ATF_REQUIRE_EQ(0, mesh_mgr_load(loaded, path));
+	ATF_CHECK_EQ_MSG(hw, loaded->seq, "reloaded SEQ equals the persisted mark");
+	ATF_CHECK_MSG(loaded->seq >= hw, "reloaded SEQ never regresses");
+
+	/* The next seal after reload must NOT re-issue an already-used SEQ. */
+	node = mesh_mgr_find_by_addr(loaded, 0x0002);
+	ATF_REQUIRE(node != NULL);
+	alen = sizeof(access);
+	ATF_REQUIRE_EQ(0, mesh_mgr_cfg_appkey_add_pdu(loaded, access, &alen));
+	ATF_REQUIRE_EQ(0, mesh_mgr_devkey_seal(loaded, node, access, alen, &seq,
+	    upper, &ulen));
+	ATF_CHECK_MSG(seq >= hw, "post-reload seal issues a fresh (unused) SEQ");
+
+	ATF_REQUIRE_EQ(0, unlink(path));
+}
+
+/* ================================================================
  * MPROV4 - Config Client PDU spec bytes.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(cfg_client_bytes);
@@ -1908,6 +1963,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, alloc_unicast);
 	ATF_TP_ADD_TC(tp, roster_ops);
 	ATF_TP_ADD_TC(tp, roster_persist);
+	ATF_TP_ADD_TC(tp, seq_persist);
 	ATF_TP_ADD_TC(tp, cfg_client_bytes);
 	ATF_TP_ADD_TC(tp, devkey_roundtrip);
 	ATF_TP_ADD_TC(tp, comp_data_discovery);

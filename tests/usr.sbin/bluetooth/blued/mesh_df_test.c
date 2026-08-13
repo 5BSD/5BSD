@@ -1482,6 +1482,303 @@ ATF_TC_BODY(codec_guard_matrix, tc)
 	    MESH_CFG_OP_DIRECTED_RELAY_RETRANSMIT_GET, buf, &len));
 }
 
+/* ================================================================
+ * Regression tests for verified correctness findings (MshPRT_v1.1
+ * Section 3.6.6).  Each fails against the pre-fix behavior.
+ * ================================================================ */
+
+/*
+ * Finding 76: a half-installed (reverse-only) forwarding entry, whose bearer
+ * toward the target is MESH_DF_BEARER_NONE, must not yield a DIRECTED decision.
+ * mesh_df_forward_decide() has to fall through to managed flooding so the PDU
+ * is not misdelivered to "bearer 0".
+ */
+ATF_TC_WITHOUT_HEAD(forward_decide_half_installed_floods);
+ATF_TC_BODY(forward_decide_half_installed_floods, tc)
+{
+	struct mesh_df_fwd_table t;
+	struct mesh_df_features feat;
+	struct mesh_df_fwd_entry *matched;
+	uint8_t new_ttl;
+	uint64_t now = 100;
+
+	mesh_df_table_init(&t);
+	memset(&feat, 0, sizeof(feat));
+	feat.directed_relay = 1;
+	feat.managed_flood_relay = 1;
+
+	/* Reverse-only entry: bearer toward origin known (1), toward target NONE. */
+	ATF_REQUIRE(mesh_df_table_add(&t, 0x0001, 0x0005, 0x2A, 1,
+	    MESH_DF_BEARER_NONE, mesh_df_lifetime_ms[MESH_DF_LIFETIME_2_HOUR],
+	    now) != NULL);
+
+	/*
+	 * A PDU toward the target 0x0005 has no installed target-facing bearer,
+	 * so the decision must be FLOOD (not DIRECTED with bearer 0).
+	 */
+	matched = NULL;
+	ATF_REQUIRE_EQ(MESH_DF_FORWARD_FLOOD,
+	    mesh_df_forward_decide(&t, &feat, 0x0001, 0x0005, 5, &new_ttl, now,
+	    &matched));
+	ATF_REQUIRE(matched == NULL);
+
+	/* Toward the origin 0x0001 the bearer IS installed: still directed. */
+	ATF_REQUIRE_EQ(MESH_DF_FORWARD_DIRECTED,
+	    mesh_df_forward_decide(&t, &feat, 0x0005, 0x0001, 5, &new_ttl, now,
+	    &matched));
+	ATF_REQUIRE(matched != NULL);
+}
+
+/*
+ * Finding 79: a relay must install the reverse Forwarding Table entry with the
+ * Path_Lifetime carried in the received Path Request, not the relay's local
+ * lifetime.
+ */
+ATF_TC_WITHOUT_HEAD(request_uses_received_lifetime);
+ATF_TC_BODY(request_uses_received_lifetime, tc)
+{
+	struct mesh_df_node relay;
+	struct mesh_df_recv_ctx ctx;
+	struct mesh_df_output out;
+	struct mesh_df_path_request req;
+	struct mesh_df_fwd_entry *e;
+	uint8_t reqbuf[16];
+	size_t reqlen;
+	uint64_t now = 0;
+	uint64_t local = mesh_df_lifetime_ms[MESH_DF_LIFETIME_12_MIN];
+	uint64_t rxlife = mesh_df_lifetime_ms[MESH_DF_LIFETIME_24_HOUR];
+
+	/* Relay configured for a 12-minute local lifetime. */
+	mesh_df_node_init(&relay, 0x0002, 0x0002, MESH_DF_LIFETIME_12_MIN, 0);
+
+	/* The request asks for a 24-hour Path_Lifetime. */
+	memset(&req, 0, sizeof(req));
+	req.lifetime = MESH_DF_LIFETIME_24_HOUR;
+	req.forwarding_number = 0x60;
+	req.destination = 0x0005;
+	req.origin.range_start = 0x0001;
+	req.origin.range_length = 1;
+	ATF_REQUIRE_EQ(0, mesh_df_path_request_build(&req, reqbuf, &reqlen));
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = 0x0001; ctx.dst = 0x0005; ctx.ttl = 5; ctx.bearer = 1;
+	ctx.now = now;
+	ATF_REQUIRE_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&relay, &ctx,
+	    MESH_DF_OP_PATH_REQUEST, reqbuf, reqlen, &out));
+
+	e = mesh_df_table_lookup(&relay.table, 0x0001, 0x0005, now);
+	ATF_REQUIRE(e != NULL);
+	/* The entry must carry the received 24h lifetime, not the local 12min. */
+	ATF_REQUIRE(rxlife > local);
+	ATF_REQUIRE_EQ(rxlife, e->lifetime_ms);
+	/* Still valid long after the local default would have expired. */
+	ATF_REQUIRE(mesh_df_table_lookup(&relay.table, 0x0001, 0x0005,
+	    local + 1) != NULL);
+}
+
+/*
+ * Finding 21: a discovery whose Destination is a secondary element or a group
+ * keys the reverse entry on that address, but the Path Reply carries the Path
+ * Target's element range / primary address.  The reply must be matched to the
+ * reverse entry by range coverage, not primary-address equality.
+ */
+ATF_TC_WITHOUT_HEAD(reply_matches_secondary_or_group);
+ATF_TC_BODY(reply_matches_secondary_or_group, tc)
+{
+	struct mesh_df_node relay;
+	struct mesh_df_recv_ctx ctx;
+	struct mesh_df_output out;
+	struct mesh_df_path_request req;
+	struct mesh_df_path_reply rep;
+	struct mesh_df_fwd_entry *e;
+	uint8_t reqbuf[16], repbuf[16];
+	size_t reqlen, replen;
+	uint64_t now = 1000;
+
+	/* --- secondary-element destination 0x0006 (target primary 0x0005) --- */
+	mesh_df_node_init(&relay, 0x0002, 0x0002, MESH_DF_LIFETIME_2_HOUR, 0);
+	memset(&req, 0, sizeof(req));
+	req.forwarding_number = 0x50;
+	req.destination = 0x0006;		/* a secondary element */
+	req.origin.range_start = 0x0001;
+	req.origin.range_length = 1;
+	ATF_REQUIRE_EQ(0, mesh_df_path_request_build(&req, reqbuf, &reqlen));
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = 0x0001; ctx.dst = 0x0006; ctx.ttl = 5; ctx.bearer = 1;
+	ctx.now = now;
+	ATF_REQUIRE_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&relay, &ctx,
+	    MESH_DF_OP_PATH_REQUEST, reqbuf, reqlen, &out));
+
+	/* The target replies with element range 0x0005..0x0006 (primary 0x0005). */
+	memset(&rep, 0, sizeof(rep));
+	rep.forwarding_number = 0x50;
+	rep.path_origin = 0x0001;
+	rep.target.range_start = 0x0005;
+	rep.target.range_length = 2;		/* covers 0x0005 and 0x0006 */
+	ATF_REQUIRE_EQ(0, mesh_df_path_reply_build(&rep, repbuf, &replen));
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = 0x0005; ctx.dst = 0x0001; ctx.ttl = 5; ctx.bearer = 2;
+	ctx.now = now;
+	/* Old behavior looked up (0x0001, 0x0005) and dropped; must FORWARD now. */
+	ATF_REQUIRE_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&relay, &ctx,
+	    MESH_DF_OP_PATH_REPLY, repbuf, replen, &out));
+	e = mesh_df_table_lookup(&relay.table, 0x0001, 0x0006, now);
+	ATF_REQUIRE(e != NULL);
+	ATF_REQUIRE(mesh_df_entry_forward_valid(e));
+	ATF_REQUIRE_EQ(2, e->bearer_toward_target);
+
+	/* --- group destination 0xC000 --- */
+	mesh_df_node_init(&relay, 0x0002, 0x0002, MESH_DF_LIFETIME_2_HOUR, 0);
+	memset(&req, 0, sizeof(req));
+	req.forwarding_number = 0x51;
+	req.destination = 0xC000;		/* group target */
+	req.origin.range_start = 0x0001;
+	req.origin.range_length = 1;
+	ATF_REQUIRE_EQ(0, mesh_df_path_request_build(&req, reqbuf, &reqlen));
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = 0x0001; ctx.dst = 0xC000; ctx.ttl = 5; ctx.bearer = 1;
+	ctx.now = now;
+	ATF_REQUIRE_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&relay, &ctx,
+	    MESH_DF_OP_PATH_REQUEST, reqbuf, reqlen, &out));
+
+	/* A group member replies with its own unicast address. */
+	memset(&rep, 0, sizeof(rep));
+	rep.forwarding_number = 0x51;
+	rep.path_origin = 0x0001;
+	rep.target.range_start = 0x0009;
+	rep.target.range_length = 1;
+	ATF_REQUIRE_EQ(0, mesh_df_path_reply_build(&rep, repbuf, &replen));
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = 0x0009; ctx.dst = 0x0001; ctx.ttl = 5; ctx.bearer = 2;
+	ctx.now = now;
+	ATF_REQUIRE_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&relay, &ctx,
+	    MESH_DF_OP_PATH_REPLY, repbuf, replen, &out));
+	e = mesh_df_table_lookup(&relay.table, 0x0001, 0xC000, now);
+	ATF_REQUIRE(e != NULL);
+	ATF_REQUIRE(mesh_df_entry_forward_valid(e));
+}
+
+/*
+ * Finding 25: a Path/Echo Reply must be originated with a fresh TTL, not the
+ * received request's residual TTL, or a request that arrives with a small TTL
+ * yields a reply that dies before completing the return trip.
+ */
+ATF_TC_WITHOUT_HEAD(reply_uses_fresh_ttl);
+ATF_TC_BODY(reply_uses_fresh_ttl, tc)
+{
+	struct mesh_df_node target;
+	struct mesh_df_recv_ctx ctx;
+	struct mesh_df_output out;
+	struct mesh_df_path_request req;
+	uint8_t reqbuf[16];
+	size_t reqlen;
+
+	mesh_df_node_init(&target, 0x0005, 0x0005, MESH_DF_LIFETIME_2_HOUR, 0);
+	memset(&req, 0, sizeof(req));
+	req.forwarding_number = 0x70;
+	req.destination = 0x0005;
+	req.origin.range_start = 0x0001;
+	req.origin.range_length = 1;
+	ATF_REQUIRE_EQ(0, mesh_df_path_request_build(&req, reqbuf, &reqlen));
+
+	/* Request arrives with a low residual TTL (2). */
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = 0x0001; ctx.dst = 0x0005; ctx.ttl = 2; ctx.bearer = 9;
+	ctx.now = 0;
+	ATF_REQUIRE_EQ(MESH_DF_RECV_FOR_TARGET, mesh_df_recv_control(&target,
+	    &ctx, MESH_DF_OP_PATH_REQUEST, reqbuf, reqlen, &out));
+	ATF_REQUIRE_EQ(MESH_DF_OP_PATH_REPLY, out.opcode);
+	/* Reply originates with a fresh TTL, not the request residual (2). */
+	ATF_REQUIRE_EQ(MESH_DF_DEFAULT_TTL, out.ttl);
+
+	/* The echo endpoint reply is likewise originated with a fresh TTL. */
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = 0x0001; ctx.dst = 0x0005; ctx.ttl = 2; ctx.bearer = 9;
+	ctx.now = 0;
+	ATF_REQUIRE_EQ(MESH_DF_RECV_FOR_TARGET, mesh_df_recv_control(&target,
+	    &ctx, MESH_DF_OP_PATH_ECHO_REQUEST, NULL, 0, &out));
+	ATF_REQUIRE_EQ(MESH_DF_OP_PATH_ECHO_REPLY, out.opcode);
+	ATF_REQUIRE_EQ(MESH_DF_DEFAULT_TTL, out.ttl);
+}
+
+/*
+ * Finding 83: when a node both originates a path to T and relays another path
+ * (O2, T) to the same target, a Path Echo Reply must refresh/forward the entry
+ * for the path it actually traverses, disambiguated by both endpoints.
+ */
+ATF_TC_WITHOUT_HEAD(echo_reply_disambiguates_shared_target);
+ATF_TC_BODY(echo_reply_disambiguates_shared_target, tc)
+{
+	struct mesh_df_node node;
+	struct mesh_df_recv_ctx ctx;
+	struct mesh_df_output out;
+	struct mesh_df_fwd_entry *a, *b;
+	uint8_t rbuf[4];
+	size_t rlen;
+	uint64_t now = 1000;
+	uint64_t life = mesh_df_lifetime_ms[MESH_DF_LIFETIME_2_HOUR];
+
+	mesh_df_node_init(&node, 0x0002, 0x0002, MESH_DF_LIFETIME_2_HOUR, 0);
+
+	/* Entry A: a path this node ORIGINATES to target 0x0005 (slot 0). */
+	a = mesh_df_table_add(&node.table, 0x0002, 0x0005, 0x10,
+	    MESH_DF_BEARER_NONE, 2, life, now);
+	ATF_REQUIRE(a != NULL);
+	/* Entry B: a path (O2=0x0001, T=0x0005) this node RELAYS (slot 1). */
+	b = mesh_df_table_add(&node.table, 0x0001, 0x0005, 0x11, 1, 2, life,
+	    now);
+	ATF_REQUIRE(b != NULL);
+	ATF_REQUIRE(a != b);
+
+	/* An Echo Reply travelling O2's path back toward 0x0001 (dest = T). */
+	ATF_REQUIRE_EQ(0, mesh_df_path_echo_reply_build(0x0005, rbuf, &rlen));
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = 0x0005; ctx.dst = 0x0001; ctx.ttl = 5; ctx.bearer = 2;
+	ctx.now = now + 400;
+	ATF_REQUIRE_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&node, &ctx,
+	    MESH_DF_OP_PATH_ECHO_REPLY, rbuf, rlen, &out));
+	/* Forwarded toward O2 (0x0001) on entry B's origin-facing bearer. */
+	ATF_REQUIRE_EQ(1, out.bearer);
+	ATF_REQUIRE_EQ(0x0001, out.dst);
+	/* Only entry B (the traversed path) is refreshed; entry A is untouched. */
+	ATF_REQUIRE_EQ(now + 400, b->install_ms);
+	ATF_REQUIRE_EQ(now, a->install_ms);
+}
+
+/*
+ * Finding 84: a re-flooded Path Request must be addressed to the
+ * all-directed-forwarding-nodes group (0xFFFB) with the network SRC
+ * re-originated by the relay, not carried through as the unicast destination.
+ */
+ATF_TC_WITHOUT_HEAD(reflood_request_addressing);
+ATF_TC_BODY(reflood_request_addressing, tc)
+{
+	struct mesh_df_node relay;
+	struct mesh_df_recv_ctx ctx;
+	struct mesh_df_output out;
+	struct mesh_df_path_request req;
+	uint8_t reqbuf[16];
+	size_t reqlen;
+
+	mesh_df_node_init(&relay, 0x0002, 0x0002, MESH_DF_LIFETIME_2_HOUR, 0);
+	memset(&req, 0, sizeof(req));
+	req.forwarding_number = 0x80;
+	req.destination = 0x0005;
+	req.origin.range_start = 0x0001;
+	req.origin.range_length = 1;
+	ATF_REQUIRE_EQ(0, mesh_df_path_request_build(&req, reqbuf, &reqlen));
+	memset(&ctx, 0, sizeof(ctx));
+	ctx.src = 0x0001; ctx.dst = MESH_DF_ADDR_ALL_DIRECTED; ctx.ttl = 5;
+	ctx.bearer = 1;
+	ctx.now = 0;
+	ATF_REQUIRE_EQ(MESH_DF_RECV_FORWARD, mesh_df_recv_control(&relay, &ctx,
+	    MESH_DF_OP_PATH_REQUEST, reqbuf, reqlen, &out));
+	ATF_REQUIRE_EQ(MESH_DF_OP_PATH_REQUEST, out.opcode);
+	ATF_REQUIRE_EQ(MESH_DF_BEARER_FLOOD, out.bearer);
+	/* Re-flood to the all-directed group, SRC re-originated as this relay. */
+	ATF_REQUIRE_EQ(MESH_DF_ADDR_ALL_DIRECTED, out.dst);
+	ATF_REQUIRE_EQ(0x0002, out.src);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1513,6 +1810,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, remaining_forwarding_paths);
 	ATF_TP_ADD_TC(tp, nonorigin_truncated_pdus);
 	ATF_TP_ADD_TC(tp, codec_guard_matrix);
+	ATF_TP_ADD_TC(tp, forward_decide_half_installed_floods);
+	ATF_TP_ADD_TC(tp, request_uses_received_lifetime);
+	ATF_TP_ADD_TC(tp, reply_matches_secondary_or_group);
+	ATF_TP_ADD_TC(tp, reply_uses_fresh_ttl);
+	ATF_TP_ADD_TC(tp, echo_reply_disambiguates_shared_target);
+	ATF_TP_ADD_TC(tp, reflood_request_addressing);
 
 	return (atf_no_error());
 }

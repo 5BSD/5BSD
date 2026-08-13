@@ -315,6 +315,83 @@ ATF_TC_BODY(hb_subscription_receive, tc)
 /* ================================================================
  * Publish-on-feature-change (Section 3.6.7.2).
  * ================================================================ */
+/* ================================================================
+ * Subscription Period countdown (Section 4.2.19.4): the period is a
+ * countdown timer; once it expires heartbeats are no longer processed and
+ * the Status reports the REMAINING (decreasing) PeriodLog, not the
+ * configured one.  (Regression: finding 74 - period was never counted down.)
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(hb_subscription_period_countdown);
+ATF_TC_BODY(hb_subscription_period_countdown, tc)
+{
+	struct mesh_hb_sub sub;
+	struct mesh_hb_sub_set set;
+	struct mesh_hb_sub_status snap;
+
+	assert_heartbeat_assigned_contract();
+
+	/* PeriodLog 0x03 -> 4-second remaining period. */
+	mesh_hb_sub_init(&sub);
+	memset(&set, 0, sizeof(set));
+	set.src = 0x0002;
+	set.dst = 0xc001;
+	set.period_log = 0x03;
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_apply(&sub, &set));
+
+	/* A matching heartbeat is counted while the period runs. */
+	ATF_CHECK_EQ(1, mesh_hb_sub_receive(&sub, 0x0002, 0xc001, 0x05, 0x05));
+	ATF_CHECK_EQ(1, sub.count);
+
+	/* Snapshot before any countdown reports the full remaining PeriodLog. */
+	mesh_hb_sub_snapshot(&sub, MESH_CFG_SUCCESS, &snap);
+	ATF_CHECK_EQ_MSG(0x03, snap.period_log, "remaining PeriodLog starts at 0x03");
+
+	/*
+	 * Advance time and watch the reported PeriodLog decrease as the
+	 * remaining period shrinks (4s -> 2s -> 1s).  Heartbeats keep counting
+	 * while the period is non-zero.
+	 */
+	mesh_hb_sub_tick(&sub, 2);		/* 4s -> 2s remaining */
+	ATF_CHECK_EQ(1, mesh_hb_sub_receive(&sub, 0x0002, 0xc001, 0x05, 0x05));
+	ATF_CHECK_EQ(2, sub.count);
+	mesh_hb_sub_snapshot(&sub, MESH_CFG_SUCCESS, &snap);
+	ATF_CHECK_EQ_MSG(0x02, snap.period_log, "2s remaining -> PeriodLog 0x02");
+
+	mesh_hb_sub_tick(&sub, 1);		/* 2s -> 1s remaining */
+	mesh_hb_sub_snapshot(&sub, MESH_CFG_SUCCESS, &snap);
+	ATF_CHECK_EQ_MSG(0x01, snap.period_log, "1s remaining -> PeriodLog 0x01");
+
+	/*
+	 * Advance past the end of the period: it expires, heartbeats are no
+	 * longer processed, and the reported PeriodLog reaches 0x00.
+	 */
+	mesh_hb_sub_tick(&sub, 5);		/* well past 1s remaining */
+	mesh_hb_sub_snapshot(&sub, MESH_CFG_SUCCESS, &snap);
+	ATF_CHECK_EQ_MSG(0x00, snap.period_log, "expired period -> PeriodLog 0x00");
+	ATF_CHECK_EQ_MSG(0, mesh_hb_sub_receive(&sub, 0x0002, 0xc001, 0x05, 0x05),
+	    "an expired subscription no longer counts heartbeats");
+	ATF_CHECK_EQ_MSG(2, sub.count, "Count frozen after the period expired");
+	/* Source/Destination remain configured; only the period is exhausted. */
+	ATF_CHECK_EQ(0x0002, snap.src);
+	ATF_CHECK_EQ(0xc001, snap.dst);
+
+	/* PeriodLog 0x01 (1s): a single tick expires it. */
+	set.period_log = 0x01;
+	ATF_REQUIRE_EQ(0, mesh_hb_sub_apply(&sub, &set));
+	mesh_hb_sub_snapshot(&sub, MESH_CFG_SUCCESS, &snap);
+	ATF_CHECK_EQ(0x01, snap.period_log);
+	ATF_CHECK_EQ(1, mesh_hb_sub_receive(&sub, 0x0002, 0xc001, 0x05, 0x05));
+	mesh_hb_sub_tick(&sub, 1);
+	ATF_CHECK_EQ(0, mesh_hb_sub_receive(&sub, 0x0002, 0xc001, 0x05, 0x05));
+	mesh_hb_sub_snapshot(&sub, MESH_CFG_SUCCESS, &snap);
+	ATF_CHECK_EQ(0x00, snap.period_log);
+
+	/* tick() is a no-op on an unsubscribed state. */
+	mesh_hb_sub_init(&sub);
+	mesh_hb_sub_tick(&sub, 10);
+	mesh_hb_sub_tick(NULL, 10);
+}
+
 ATF_TC_WITHOUT_HEAD(hb_publish_on_feature_change);
 ATF_TC_BODY(hb_publish_on_feature_change, tc)
 {
@@ -539,6 +616,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, hb_publication);
 	ATF_TP_ADD_TC(tp, hb_subscription_codec);
 	ATF_TP_ADD_TC(tp, hb_subscription_receive);
+	ATF_TP_ADD_TC(tp, hb_subscription_period_countdown);
 	ATF_TP_ADD_TC(tp, hb_publish_on_feature_change);
 	ATF_TP_ADD_TC(tp, hb_periodic_publish);
 	ATF_TP_ADD_TC(tp, guard_and_boundary_completion);

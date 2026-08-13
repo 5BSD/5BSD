@@ -174,13 +174,31 @@ blued_handle_hci_event(struct blued_adapter *adp)
 {
 	uint8_t buf[3 + NG_HCI_EVENT_PKT_SIZE];
 	ssize_t n;
+	pthread_mutex_t *hci_mtx;
 
 	if (adp == NULL)
 		return;
 
+	/*
+	 * Finding 43: the event loop and detached setup threads (bt_devreq /
+	 * hci_wait_encryption) both recv() this one raw HCI fd; whichever wins
+	 * steals the other's packet — spurious devreq timeouts, pairing stalls.
+	 * Serialise the read through the same per-fd mutex the devreq callers
+	 * use.  trylock (not lock): if a devreq owns the fd right now, leave the
+	 * event pending — EVFILT_READ is level-triggered, so kqueue re-notifies
+	 * once the devreq releases — rather than block the whole event loop.
+	 * The mutex is dropped immediately after the read so the event handlers
+	 * below (which issue their own devreq-locking HCI commands) do not
+	 * self-deadlock on it.
+	 */
+	hci_mtx = hci_devreq_mutex(adp->hci_fd);
+	if (hci_mtx != NULL && pthread_mutex_trylock(hci_mtx) != 0)
+		return;
 	do {
 		n = recv(adp->hci_fd, buf, sizeof(buf), MSG_DONTWAIT);
 	} while (n < 0 && errno == EINTR);
+	if (hci_mtx != NULL)
+		pthread_mutex_unlock(hci_mtx);
 	if (n < 3 || buf[0] != NG_HCI_EVENT_PKT ||
 	    (size_t)n != (size_t)buf[2] + 3)
 		return;
@@ -821,7 +839,11 @@ blued_handle_hci_event(struct blued_adapter *adp)
 					 * conn->att is owned by the connection.  Keep the
 					 * registry read lock through this write so teardown
 					 * cannot unlink and free it between lookup and use.
+					 * att_sec_lock serialises the security-state write
+					 * against ctl_elevate_security / the setup thread
+					 * (finding 95).
 					 */
+					pthread_mutex_lock(&blued_g.att_sec_lock);
 					if (conn->att != NULL &&
 					    !att_conn_apply_encryption(conn->att,
 					    have_key_material, bond_is_mitm, 0,
@@ -830,6 +852,7 @@ blued_handle_hci_event(struct blued_adapter *adp)
 						    "handle=%04x not backed by known "
 						    "key material; ATT gate stays "
 						    "closed", handle);
+					pthread_mutex_unlock(&blued_g.att_sec_lock);
 					break;
 				}
 			}
@@ -852,10 +875,14 @@ blued_handle_hci_event(struct blued_adapter *adp)
 				if (conn->adapter != adp || !conn->con_handle_valid ||
 				    conn->con_handle != handle || conn->att == NULL)
 					continue;
+				/* Serialise the security-state clear + EATT teardown
+				 * against other att writers (finding 95). */
+				pthread_mutex_lock(&blued_g.att_sec_lock);
 				conn->att->encrypted = false;
 				conn->att->authenticated = false;
 				conn->att->enc_key_size = 0;
 				att_close_eatt(conn->att);
+				pthread_mutex_unlock(&blued_g.att_sec_lock);
 				break;
 			}
 			pthread_rwlock_unlock(&blued_g.conns_lock);
@@ -875,10 +902,12 @@ blued_handle_hci_event(struct blued_adapter *adp)
 			if (conn->adapter != adp || !conn->con_handle_valid ||
 			    conn->con_handle != handle || conn->att == NULL)
 				continue;
+			pthread_mutex_lock(&blued_g.att_sec_lock);	/* finding 95 */
 			conn->att->encrypted = false;
 			conn->att->authenticated = false;
 			conn->att->enc_key_size = 0;
 			att_close_eatt(conn->att);
+			pthread_mutex_unlock(&blued_g.att_sec_lock);
 			break;
 		}
 		pthread_rwlock_unlock(&blued_g.conns_lock);
@@ -1017,6 +1046,38 @@ blued_handle_readable(struct kevent *ev)
 		 * setup thread failure helpers.
 		 */
 		LIST_FOREACH_SAFE(c, &blued_g.conns, entries, tmp) {
+			/*
+			 * needs_cleanup is terminal (APTO / non-reconnect setup
+			 * failure): tear the conn down now and free it.  Handle
+			 * it FIRST so a coincident disconnect_pending can't
+			 * `continue` past it and strand a conn that no longer
+			 * has a setup thread to re-signal the pipe.  For a
+			 * central conn this releases the hogp/att/vhid that
+			 * blued_conn_free alone leaks (findings 59, 60).
+			 */
+			if (atomic_load_explicit(&c->needs_cleanup,
+			    memory_order_acquire)) {
+				(void)atomic_exchange_explicit(
+				    &c->disconnect_pending, false,
+				    memory_order_acq_rel);
+				/*
+				 * If the link had been announced up, tell the
+				 * push-events clients it is gone before the
+				 * conn disappears (finding 59).
+				 */
+				if (c->announced) {
+					c->announced = false;
+					blued_ctl_broadcast_conn_event(&c->dst,
+					    c->role, c->addr_type,
+					    (uint8_t)c->adapter->index,
+					    c->con_handle, 0, false, 0);
+				}
+				ctl_acquire_conn_gone(c);
+				ctl_gatt_conn_gone(c);
+				blued_conn_central_teardown(c);
+				blued_conn_free(c);
+				continue;
+			}
 			if (atomic_exchange_explicit(&c->disconnect_pending, false,
 			    memory_order_acq_rel)) {
 				blued_conn_disconnect(c);
@@ -1031,12 +1092,9 @@ blued_handle_readable(struct kevent *ev)
 			 * A setup thread transitioned this connection to ACTIVE
 			 * (findings C1/C2): push EVENT CONNECTED once, now that
 			 * the LE link + ATT channel are really up, carrying the
-			 * negotiated MTU (finding C5).  Skip if it is also
-			 * flagged for cleanup (setup failed after going ACTIVE).
+			 * negotiated MTU (finding C5).
 			 */
-			if (!atomic_load_explicit(&c->needs_cleanup,
-			    memory_order_acquire) &&
-			    !c->announced && c->con_handle_valid &&
+			if (!c->announced && c->con_handle_valid &&
 			    atomic_load_explicit(&c->state,
 			    memory_order_acquire) == BLUED_CONN_ACTIVE) {
 				c->announced = true;
@@ -1046,9 +1104,6 @@ blued_handle_readable(struct kevent *ev)
 				    c->att != NULL ? c->att->mtu : 0,
 				    true, 0);
 			}
-			if (atomic_load_explicit(&c->needs_cleanup,
-			    memory_order_acquire))
-				blued_conn_free(c);
 		}
 		return;
 	}
@@ -1544,6 +1599,56 @@ blued_event_loop(void)
 }
 
 /*
+ * Central-role teardown (findings 59, 60, 89, 93).
+ *
+ * blued_conn_free()/blued_conn_destroy() (conn.c) only know how to release a
+ * peripheral connection's att_owned server bearer.  A CENTRAL connection's ATT
+ * transport, SMP, report map and vhid live in conn->hogp, which conn.c never
+ * touches — so every path that reaches conn teardown through blued_conn_free
+ * (the APTO sweep, non-reconnect setup failure, shutdown) leaks the whole
+ * hogp_device and, worse, leaves conn->att_fd and hogp->vhid_fd registered in
+ * the kqueue with udata pointing at the freed conn: the stale registration
+ * fires forever ("unhandled kqueue event" spin / 100% CPU).  This helper is the
+ * single central-role teardown: it removes those registrations, closes the fds
+ * and frees the hogp.  Idempotent and a no-op for a peripheral conn (hogp NULL).
+ */
+void
+blued_conn_central_teardown(struct blued_conn *conn)
+{
+	struct hogp_device *dev;
+	struct kevent kev;
+
+	if (conn == NULL || conn->hogp == NULL)
+		return;
+	dev = conn->hogp;
+
+	/* Drop the fixed + EATT kqueue registrations before the fds close. */
+	blued_conn_unregister_att(conn);
+
+	/* Deregister and close the vhid fd (kernel Output-report source). */
+	if (dev->vhid_fd >= 0) {
+		if (blued_g.kq >= 0) {
+			EV_SET(&kev, dev->vhid_fd, EVFILT_READ, EV_DELETE,
+			    0, 0, NULL);
+			(void)kevent(blued_g.kq, &kev, 1, NULL, 0, NULL);
+		}
+	}
+
+	att_close(&dev->att);
+	if (dev->smp.fd >= 0)
+		smp_close(&dev->smp);
+	if (dev->vhid_fd >= 0) {
+		close(dev->vhid_fd);
+		dev->vhid_fd = -1;
+	}
+	conn->att = NULL;
+	conn->att_fd = -1;
+	free(dev->report_map);
+	free(dev);
+	conn->hogp = NULL;
+}
+
+/*
  * Handle device disconnection detected by kqueue EV_EOF.
  * For peripheral: save CCCDs, free resources, re-enable advertising.
  * For central: if reconnect enabled, schedule reconnect timer.
@@ -1556,6 +1661,31 @@ blued_conn_disconnect(struct blued_conn *conn)
 
 	/* Guard against double-disconnect (EV_EOF + timer, etc.) */
 	if (atomic_load(&conn->state) == BLUED_CONN_IDLE)
+		return;
+	/*
+	 * Finding 86: a CONNECTING conn is owned by a detached setup thread
+	 * that is still dereferencing conn/hogp through blocking discovery and
+	 * pairing.  Tearing it down here (adapter loss, POWER-off, duplicate
+	 * accept, the peripheral setup thread's own indication timeout) would
+	 * free state under that thread — a use-after-free on the non-refcounted
+	 * hogp_device.  Defer: flag the disconnect and let the setup thread
+	 * observe it at its handoff barrier.
+	 */
+	if (atomic_load(&conn->state) == BLUED_CONN_CONNECTING) {
+		atomic_store_explicit(&conn->disconnect_pending, true,
+		    memory_order_release);
+		return;
+	}
+	/*
+	 * Finding 45: a central conn already awaiting its reconnect timer is
+	 * fully torn down and scheduled to retry.  A second disconnect trigger
+	 * in the same kevent batch must not overwrite reconnect_timer (leaking
+	 * the armed ONESHOT) nor spawn a second setup thread over the same
+	 * non-refcounted hogp_device.  A reconnect=false teardown (adapter
+	 * loss) is still allowed through to finalize the conn.
+	 */
+	if (atomic_load(&conn->state) == BLUED_CONN_RECONNECTING &&
+	    conn->reconnect)
 		return;
 	if (atomic_load_explicit(&conn->att_ops_active, memory_order_acquire) != 0) {
 		atomic_store_explicit(&conn->disconnect_pending, true,
@@ -1677,19 +1807,8 @@ blued_conn_disconnect(struct blued_conn *conn)
 				    "accelerate", blued_reconnect_max_delay);
 			}
 		} else {
-			/* No reconnect -- clean up */
-			if (conn->hogp != NULL) {
-				att_close(&conn->hogp->att);
-				if (conn->hogp->smp.fd >= 0)
-					smp_close(&conn->hogp->smp);
-				if (conn->hogp->vhid_fd >= 0) {
-					close(conn->hogp->vhid_fd);
-					conn->hogp->vhid_fd = -1;
-				}
-				free(conn->hogp->report_map);
-				free(conn->hogp);
-				conn->hogp = NULL;
-			}
+			/* No reconnect -- clean up (single central teardown). */
+			blued_conn_central_teardown(conn);
 			blued_conn_free(conn);
 		}
 	}

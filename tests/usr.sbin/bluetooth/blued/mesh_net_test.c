@@ -741,9 +741,44 @@ ATF_TC_BODY(mesh_net_src_unicast, tc)
 	    &pdu), "cleartext parse accepted an oversized control transport PDU");
 }
 
+/*
+ * Finding 3 regression: mesh_net_decrypt() must reject any input longer than
+ * MESH_NET_MAX_PDU (29 octets) up front (MshPRT Section 3.4.4).  This also
+ * bounds the recovered control Transport PDU at 12 octets: a control PDU with a
+ * 13..16-octet Transport PDU is 30..33 octets total and is now rejected, where
+ * the previous code (capping only at the 16-octet access maximum with no total
+ * check) would have let an authenticated 33-octet control PDU through.
+ */
+ATF_TC_WITHOUT_HEAD(mesh_net_decrypt_overlong);
+ATF_TC_BODY(mesh_net_decrypt_overlong, tc)
+{
+	HEX(enckey, ENCKEY_HEX, 16);
+	HEX(privkey, PRIVKEY_HEX, 16);
+	/* Message #1 is a valid 28-octet control (CTL=1) PDU. */
+	HEX(ctlpdu, "68eca487516765b5e5bfdacbaf6cb7fb6bff871f035444ce83a670df",
+	    28);
+	uint8_t ext[MESH_NET_MAX_PDU + 8];
+	struct mesh_net_pdu out;
+	size_t n;
+
+	/* The canonical 28-octet control PDU still decrypts. */
+	ATF_CHECK_EQ_MSG(0, mesh_net_decrypt(enckey, privkey, NET_NID,
+	    NET_IVINDEX, ctlpdu, 28, &out),
+	    "a valid 28-octet control PDU must still decrypt");
+
+	/* Any length 30..33 (control tlen 13..16) must be rejected. */
+	memcpy(ext, ctlpdu, 28);
+	memset(ext + 28, 0x00, sizeof(ext) - 28);
+	for (n = MESH_NET_MAX_PDU + 1; n <= MESH_NET_MAX_PDU + 4; n++)
+		ATF_CHECK_EQ_MSG(-1, mesh_net_decrypt(enckey, privkey, NET_NID,
+		    NET_IVINDEX, ext, n, &out),
+		    "a Network PDU longer than 29 octets must be rejected");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, mesh_net_decrypt_overlong);
 	ATF_TP_ADD_TC(tp, mesh_net_encrypt_message1);
 	ATF_TP_ADD_TC(tp, mesh_net_decrypt_message1);
 	ATF_TP_ADD_TC(tp, mesh_net_encrypt_message6);

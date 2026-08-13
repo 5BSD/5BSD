@@ -97,6 +97,28 @@ hci_devreq_mutex(int fd)
 }
 
 /*
+ * Release the per-fd lock slot when an adapter closes so a reused fd number
+ * does not inherit a stale mapping (which after 8 distinct fds degrades the
+ * lock table to shared hashed mutexes).  Also forgets the scan-state slot.
+ * (finding 48)
+ */
+void
+hci_fd_closed(int fd)
+{
+	int i;
+
+	if (fd < 0)
+		return;
+	hci_scan_forget_fd(fd);
+	pthread_once(&hci_locks_once, hci_locks_init);
+	pthread_mutex_lock(&hci_locks_guard);
+	for (i = 0; i < HCI_LOCK_SLOTS; i++)
+		if (hci_locks[i].fd == fd)
+			hci_locks[i].fd = -1;
+	pthread_mutex_unlock(&hci_locks_guard);
+}
+
+/*
  * Internal bt_devreq wrapper with BTSnoop logging.  Caller must hold hci_mtx.
  */
 int
@@ -346,7 +368,7 @@ hci_disconnect(int hci_fd, uint16_t con_handle, uint8_t reason)
 {
 	struct bt_devreq r;
 	ng_hci_discon_cp cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	memset(&cp, 0, sizeof(cp));
 	cp.con_handle = htole16(con_handle);

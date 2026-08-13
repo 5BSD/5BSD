@@ -23,7 +23,7 @@ static int
 proxy_config_recv(struct meshd_node *nd, struct meshd_proxy_gatt *session,
     const uint8_t *pdu, size_t len)
 {
-	struct proxy_key_candidate keys[MESH_SIM_MAX_SUBNETS * 2 + 1];
+	struct proxy_key_candidate keys[MESH_SIM_MAX_SUBNETS * 2 + 2];
 	struct mesh_proxy_cfg cfg;
 	uint8_t msg[16];
 	uint32_t ivs[2], seq;

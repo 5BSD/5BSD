@@ -119,6 +119,28 @@ hci_scan_set_own_address_type(int hci_fd, uint8_t own_addr_type)
 }
 
 /*
+ * Release the scan-state slot for a closing adapter fd.  Without this a
+ * later reused fd number inherits this adapter's stale own_addr_type.
+ * (finding 48)
+ */
+void
+hci_scan_forget_fd(int hci_fd)
+{
+	int i;
+
+	if (hci_fd < 0)
+		return;
+	pthread_once(&hci_scan_state_once, hci_scan_state_init);
+	pthread_mutex_lock(&hci_scan_state_lock);
+	for (i = 0; i < HCI_SCAN_STATE_SLOTS; i++)
+		if (hci_scan_state[i].fd == hci_fd) {
+			hci_scan_state[i].fd = -1;
+			hci_scan_state[i].own_addr_type = 0;
+		}
+	pthread_mutex_unlock(&hci_scan_state_lock);
+}
+
+/*
  * Monotonic wall-independent seconds for scan-duration deadlines.
  * Using CLOCK_MONOTONIC keeps a scan window stable across a wall-clock
  * step (e.g. an NTP correction), which time(NULL) would not.
@@ -865,7 +887,17 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 	sr->mfr_id = 0xFFFF;
 	sr->num_svc_uuids = 0;
 
-	hci_parse_ad_fields(p + EXT_ADV_REPORT_HDR_LEN, data_len, sr);
+	/*
+	 * Data_Status is event_type bits 5-6: 0b00 complete, 0b01 incomplete
+	 * (more fragments to come), 0b10 incomplete truncated.  A fragment
+	 * that does not begin at an AD-structure boundary parses into garbage
+	 * names/UUIDs, so only decode AD fields for a complete report; the
+	 * fragment header (address/rssi) is still consumed and returned so the
+	 * remaining reports in the batch are not lost.  Reassembly of >229-byte
+	 * payloads is not attempted.  (finding 46)
+	 */
+	if (((event_type >> 5) & 0x03u) == 0x00u)
+		hci_parse_ad_fields(p + EXT_ADV_REPORT_HDR_LEN, data_len, sr);
 
 	return ((size_t)(EXT_ADV_REPORT_HDR_LEN + data_len));
 }

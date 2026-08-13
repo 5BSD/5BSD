@@ -268,6 +268,31 @@ blued_ctl_iso_established(struct blued_adapter *adp __unused,
 	    0, 0, mtu);
 }
 
+/* Finding 116: capture the CIS-failure event (status carried in the mtu slot). */
+void
+blued_ctl_iso_failed(struct blued_adapter *adp __unused,
+    const bdaddr_t *addr, uint8_t addr_type,
+    uint16_t cis_handle, uint8_t status)
+{
+	capture_iso_event(IPC_ISO_EV_FAILED, addr, addr_type, cis_handle,
+	    0, 0, status);
+}
+
+/* iso_lifecycle_test does not link ctl.c; provide the lock initialiser. */
+void
+blued_ctl_clients_lock_init(pthread_mutex_t *m)
+{
+	pthread_mutexattr_t attr;
+
+	if (pthread_mutexattr_init(&attr) != 0) {
+		(void)pthread_mutex_init(m, NULL);
+		return;
+	}
+	(void)pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+	(void)pthread_mutex_init(m, &attr);
+	(void)pthread_mutexattr_destroy(&attr);
+}
+
 void
 ctl_send_op_ack(struct blued_ctl_client *client, uint16_t domain)
 {
@@ -489,7 +514,7 @@ env_init(void)
 	LIST_INIT(&blued_g.conns);
 	LIST_INIT(&blued_g.ctl_clients);
 	pthread_rwlock_init(&blued_g.conns_lock, NULL);
-	pthread_mutex_init(&blued_g.ctl_clients_lock, NULL);
+	blued_ctl_clients_lock_init(&blued_g.ctl_clients_lock);
 	reset();
 	memset(&event_client, 0, sizeof(event_client));
 	event_client.wants_events = true;
@@ -622,6 +647,49 @@ ATF_TC_BODY(cis_partial_setup_failure, tc)
 	iso_on_cis_established(&test_adp, h, 0x3E /* connection failed */);
 	ATF_CHECK_EQ(0, blued_iso_stream_count());
 	ATF_CHECK(idx_of(C_REMOVE_CIG) >= 0);
+}
+
+/*
+ * Finding 116: a CIS establishment failure must emit an ISO failure event to
+ * the requester, not just silently drop the stream — otherwise a client that
+ * issued ISO_CIS_CREATE waits forever.  The last frame the daemon pushed must
+ * be IPC_ISO_EV_FAILED carrying the HCI status.
+ */
+ATF_TC_WITHOUT_HEAD(cis_establish_failure_emits_event);
+ATF_TC_BODY(cis_establish_failure_emits_event, tc)
+{
+	uint16_t h;
+
+	env_init();
+	h = make_cig();
+	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
+	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+
+	iso_on_cis_established(&test_adp, h, 0x3E /* connection failed */);
+	ATF_CHECK(frame_is_iso_event(IPC_ISO_EV_FAILED));
+	/* Status 0x3E is carried in the u16 field at body[11]. */
+	ATF_CHECK_EQ(0x3E, ipc_get_le16(frame_buf + IPC_OP_PREFIX_SIZE + 11));
+}
+
+/*
+ * Finding 116 (data-path branch): a CIS the controller established but whose
+ * host data path could not be brought up is also a failed establishment for
+ * the requester and must emit the failure event (status 0).
+ */
+ATF_TC_WITHOUT_HEAD(cis_datapath_failure_emits_event);
+ATF_TC_BODY(cis_datapath_failure_emits_event, tc)
+{
+	uint16_t h;
+
+	env_init();
+	h = make_cig();
+	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
+	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+
+	setup_paths_override = 0;	/* host data path fails to come up */
+	iso_on_cis_established(&test_adp, h, 0 /* controller says OK */);
+	setup_paths_override = -1;
+	ATF_CHECK(frame_is_iso_event(IPC_ISO_EV_FAILED));
 }
 
 /* A failed CIS only removes its CIG after the last sibling CIS is gone. */
@@ -2011,13 +2079,64 @@ ATF_TC_BODY(typed_iso_spec_range_rejections, tc)
 	ATF_CHECK_EQ(0, blued_iso_stream_count());
 }
 
+/*
+ * finding 57: CIG CIS RTN is a full octet in LE Set CIG Parameters; values
+ * 0x10-0x1e are spec-legal (matching the BIG path) and must not be rejected
+ * with IPC_ERR_INVAL.  0x1f (> 0x1e) is out of range and still rejected.
+ */
+ATF_TC_WITHOUT_HEAD(typed_iso_cig_rtn_range);
+ATF_TC_BODY(typed_iso_cig_rtn_range, tc)
+{
+	struct blued_ctl_client client;
+	uint8_t body[64], *cis;
+	size_t len;
+
+	env_init();
+	memset(&client, 0, sizeof(client));
+	client.fd = 9;
+	client.peer_known = true;
+	client.peer_uid = 0;
+	client.active_request_id = 0x1;
+	test_adp.active = true;
+
+	len = IPC_ISO_CIG_REQ_HDR_SIZE + IPC_ISO_CIS_PARAM_SIZE;
+	memset(body, 0, len);
+	ipc_put_le16(body, IPC_ISO_CIG_CREATE);
+	body[4] = 1;			/* CIG id */
+	body[5] = 1;			/* CIS count */
+	ipc_put_le16(body + 10, 5);	/* max transport latency c->p */
+	ipc_put_le16(body + 12, 5);	/* max transport latency p->c */
+	ipc_put_le32(body + 14, 10000);	/* SDU interval c->p */
+	ipc_put_le32(body + 18, 10000);	/* SDU interval p->c */
+	cis = body + IPC_ISO_CIG_REQ_HDR_SIZE;
+	cis[0] = 2;			/* CIS id */
+	cis[1] = 1;			/* PHY c->p */
+	cis[2] = 1;			/* PHY p->c */
+	cis[3] = 0x14;			/* RTN c->p = 20 (legal, <= 0x1e) */
+	cis[4] = 0x14;			/* RTN p->c = 20 (legal, <= 0x1e) */
+	ipc_put_le16(cis + 6, 120);
+	ipc_put_le16(cis + 8, 120);
+	/* Legal RTN must pass validation (no longer IPC_ERR_INVAL). */
+	ATF_CHECK(typed_iso_status(&client, body, len) != IPC_ERR_INVAL);
+
+	/* RTN 0x1f is out of range and rejected at validation. */
+	cis[3] = 0x1f;
+	ATF_CHECK_EQ(IPC_ERR_INVAL, typed_iso_status(&client, body, len));
+	cis[3] = 0x14;
+	cis[4] = 0x1f;
+	ATF_CHECK_EQ(IPC_ERR_INVAL, typed_iso_status(&client, body, len));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, typed_iso_cig_rtn_range);
 	ATF_TP_ADD_TC(tp, cis_central_full_lifecycle);
 	ATF_TP_ADD_TC(tp, cis_central_push_on_establish);
 	ATF_TP_ADD_TC(tp, cis_push_handout_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, cis_partial_setup_failure);
+	ATF_TP_ADD_TC(tp, cis_establish_failure_emits_event);
+	ATF_TP_ADD_TC(tp, cis_datapath_failure_emits_event);
 	ATF_TP_ADD_TC(tp, cis_failure_keeps_cig_for_configured_sibling);
 	ATF_TP_ADD_TC(tp, cis_create_command_error);
 	ATF_TP_ADD_TC(tp, cis_peer_disconnect);

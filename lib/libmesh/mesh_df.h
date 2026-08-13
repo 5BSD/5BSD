@@ -432,6 +432,23 @@ enum mesh_df_forward mesh_df_forward_decide(struct mesh_df_fwd_table *t,
 #define	MESH_DF_BEARER_FLOOD		0
 
 /*
+ * The all-directed-forwarding-nodes fixed group address (MshPRT_v1.1 Section
+ * 3.4.1).  A re-flooded Path Request is addressed to this group so that only
+ * directed-forwarding nodes accept it; a conformant receiver filters on the
+ * network DST.
+ */
+#define	MESH_DF_ADDR_ALL_DIRECTED	0xFFFBu
+
+/*
+ * TTL used when originating a Path Reply or Path Echo Reply (Section
+ * 3.6.6.5.2 / 3.6.6.5.5).  A reply has to travel back over as many hops as the
+ * request travelled, so it is originated with a fresh maximum TTL rather than
+ * the request's residual TTL (which can be too small to complete the return
+ * trip).
+ */
+#define	MESH_DF_DEFAULT_TTL		0x7F
+
+/*
  * A node's directed-forwarding identity and state.  addr..addr_last is this
  * node's element unicast-address range (addr_last == addr for a single-element
  * node).  lifetime selects the Forwarding Table entry lifetime for paths this

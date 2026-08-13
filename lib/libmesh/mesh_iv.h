@@ -134,10 +134,12 @@ int	mesh_iv_recovery_begin(struct mesh_iv_state *st);
  *
  *   recv_iv <  current            -> MESH_IV_REJECT (never go backwards)
  *   recv_iv >  current + 42       -> MESH_IV_REJECT (outside recovery bound)
- *   recv_iv == current, flag set, state Normal   -> MESH_IV_STARTED*
+ *   recv_iv == current, flag set                 -> MESH_IV_NO_CHANGE (flag
+ *                                                   ignored: no same-index start)
  *   recv_iv == current, flag clear, state Update -> MESH_IV_COMPLETED*
+ *   recv_iv == current+1, any flag, recovery     -> MESH_IV_JUMPED  (adopt)
  *   recv_iv == current+1, flag set               -> MESH_IV_STARTED* (adopt)
- *   recv_iv == current+1, flag clear, recovery   -> MESH_IV_JUMPED  (adopt)
+ *   recv_iv == current+1, flag clear, no recovery-> MESH_IV_REJECT
  *   current+1 < recv_iv <= current+42, recovery  -> MESH_IV_JUMPED
  *   otherwise                                    -> MESH_IV_NO_CHANGE
  *

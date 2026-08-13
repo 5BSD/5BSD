@@ -561,8 +561,103 @@ ATF_TC_BODY(sensor_server_request_matrix, tc)
 	}
 }
 
+/*
+ * Finding 11 regression: a Sensor Descriptor Get for a Property ID the server
+ * does not have must be answered with a Descriptor Status echoing that 2-octet
+ * Property ID (MMDL Section 4.2.2), not an empty (0-length) status.
+ */
+ATF_TC_WITHOUT_HEAD(sensor_descriptor_get_unknown);
+ATF_TC_BODY(sensor_descriptor_get_unknown, tc)
+{
+	struct mesh_sensor_srv srv;
+	struct mesh_sensor_descriptor d = {
+	    TEST_SENSOR_PROPERTY_ID, 0, 0, 1, 0, 0
+	};
+	struct mesh_model models[2];
+	struct mesh_element el;
+	struct mesh_model_reply reply;
+	uint8_t pdu[16], params[2], raw[] = { 1, 2 };
+	size_t plen;
+
+	assert_sensor_assigned_contract();
+	mesh_sensor_srv_init(&srv);
+	ATF_REQUIRE_EQ(0, mesh_sensor_srv_set(&srv, &d, raw, sizeof(raw)));
+	models[0] = mesh_sensor_srv_model(&srv);
+	models[1] = mesh_sensor_setup_srv_model(&srv);
+	memset(&el, 0, sizeof(el)); el.addr = 2; el.models = models; el.n_models = 2;
+
+	/* Query a Property ID the server does not expose. */
+	params[0] = 0xcd; params[1] = 0xab;	/* property 0xABCD, unknown */
+	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(MESH_OP_SENSOR_DESCRIPTOR_GET,
+	    params, 2, pdu, &plen));
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch(&el, 1, 1, 2, pdu, plen, &reply));
+	ATF_CHECK_EQ(MESH_OP_SENSOR_DESCRIPTOR_STATUS, reply.opcode);
+	ATF_CHECK_EQ_MSG(2u, reply.params_len,
+	    "unknown Descriptor Get must echo the 2-octet Property ID");
+	ATF_CHECK_EQ(0xcd, reply.params[0]);
+	ATF_CHECK_EQ(0xab, reply.params[1]);
+}
+
+/*
+ * Finding 12 regression: a Cadence Set that is accepted but whose full Cadence
+ * Status will not fit the reply (a large-raw sensor with a non-percentage
+ * trigger) must still be acknowledged with at least the 2-octet Property ID,
+ * never a zero-length (invalid) Cadence Status.
+ */
+ATF_TC_WITHOUT_HEAD(sensor_cadence_set_status_min);
+ATF_TC_BODY(sensor_cadence_set_status_min, tc)
+{
+	struct mesh_sensor_srv srv;
+	/* value raw_len 16 -> trigger 0 Cadence Status is 4 + 4*16 = 68 > 64. */
+	struct mesh_sensor_descriptor d = {
+	    TEST_SENSOR_PROPERTY_ID, 0, 0, 1, 0, 0
+	};
+	struct mesh_model models[2];
+	struct mesh_element el;
+	struct mesh_model_reply reply;
+	uint8_t pdu[128], params[128], raw[16];
+	size_t plen, off;
+	unsigned int i;
+
+	assert_sensor_assigned_contract();
+	mesh_sensor_srv_init(&srv);
+	memset(raw, 0xa5, sizeof(raw));
+	ATF_REQUIRE_EQ(0, mesh_sensor_srv_set(&srv, &d, raw, sizeof(raw)));
+	models[0] = mesh_sensor_srv_model(&srv);
+	models[1] = mesh_sensor_setup_srv_model(&srv);
+	memset(&el, 0, sizeof(el)); el.addr = 2; el.models = models; el.n_models = 2;
+
+	/*
+	 * Build a valid Cadence Set: Property (2) + control (trigger 0,
+	 * divisor 2) + delta_down(16) + delta_up(16) + min_interval + fast_low(16)
+	 * + fast_high(16) = 68 octets of access parameters.
+	 */
+	off = 0;
+	params[off++] = (uint8_t)TEST_SENSOR_PROPERTY_ID;
+	params[off++] = (uint8_t)(TEST_SENSOR_PROPERTY_ID >> 8);
+	params[off++] = 0x02;			/* trigger_type 0, divisor 2 */
+	for (i = 0; i < 16; i++) params[off++] = 1;	/* delta_down */
+	for (i = 0; i < 16; i++) params[off++] = 2;	/* delta_up */
+	params[off++] = 3;				/* min_interval (<=26) */
+	for (i = 0; i < 16; i++) params[off++] = 4;	/* fast_low */
+	for (i = 0; i < 16; i++) params[off++] = 5;	/* fast_high */
+	ATF_REQUIRE_EQ(68u, off);
+	ATF_REQUIRE_EQ(0, mesh_access_pdu_build(MESH_OP_SENSOR_CADENCE_SET,
+	    params, off, pdu, &plen));
+	memset(&reply, 0, sizeof(reply));
+	ATF_REQUIRE_EQ(0, mesh_access_dispatch(&el, 1, 1, 2, pdu, plen, &reply));
+	ATF_CHECK_EQ(MESH_OP_SENSOR_CADENCE_STATUS, reply.opcode);
+	ATF_CHECK_EQ_MSG(2u, reply.params_len,
+	    "an un-encodable Cadence Status must still carry the Property ID");
+	ATF_CHECK_EQ((uint8_t)TEST_SENSOR_PROPERTY_ID, reply.params[0]);
+	ATF_CHECK_EQ((uint8_t)(TEST_SENSOR_PROPERTY_ID >> 8), reply.params[1]);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, sensor_descriptor_get_unknown);
+	ATF_TP_ADD_TC(tp, sensor_cadence_set_status_min);
 	ATF_TP_ADD_TC(tp, sensor_wire_and_registry);
 	ATF_TP_ADD_TC(tp, sensor_setup_and_series);
 	ATF_TP_ADD_TC(tp, sensor_client_procedures);

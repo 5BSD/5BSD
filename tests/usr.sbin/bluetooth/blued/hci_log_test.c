@@ -262,10 +262,60 @@ ATF_TC_BODY(test_hci_log_disabled, tc)
 }
 
 /* ================================================================
+ * Finding 49: an oversized L2CAP PDU is truncated into a record, not
+ * silently dropped.  The BTSnoop L2CAP length is a uint16_t that must
+ * also hold the 4-byte basic header, so the payload is capped at
+ * UINT16_MAX-4 and a record is still emitted.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_hci_log_l2cap_oversized_truncated);
+ATF_TC_BODY(test_hci_log_l2cap_oversized_truncated, tc)
+{
+	char path[] = "/tmp/blued_hci_log_big.XXXXXX";
+	int fd;
+	uint8_t *big;
+	struct stat sb;
+	size_t expect_payload = (size_t)UINT16_MAX - 4;
+	off_t expect_size;
+
+	assert_hci_log_wire_contract();
+	big = malloc(UINT16_MAX);
+	ATF_REQUIRE(big != NULL);
+	memset(big, 0xA5, UINT16_MAX);
+
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	close(fd);
+
+	hci_log_open(path);
+	ATF_REQUIRE(hci_log_enabled());
+
+	/* 65535-byte PDU: previously dropped, now truncated + written. */
+	hci_log_l2cap(0x0040, 0x0004, big, UINT16_MAX, false);
+	hci_log_close();
+
+	ATF_REQUIRE_EQ(0, stat(path, &sb));
+	/*
+	 * file header + record header + H4 type(1) + ACL(4) + L2CAP(4)
+	 * + truncated payload.
+	 */
+	expect_size = (off_t)(BT_BTSNOOP_FILE_HEADER_SIZE +
+	    BT_BTSNOOP_RECORD_HEADER_SIZE + 1 + 8 + expect_payload);
+	ATF_CHECK_MSG(sb.st_size == expect_size,
+	    "record must be truncated+written (size=%jd, expected %jd)",
+	    (intmax_t)sb.st_size, (intmax_t)expect_size);
+	ATF_CHECK_MSG(sb.st_size > (off_t)BT_BTSNOOP_FILE_HEADER_SIZE,
+	    "record must not be dropped");
+
+	free(big);
+	unlink(path);
+}
+
+/* ================================================================
  * ATF test program entry point
  * ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, test_hci_log_l2cap_oversized_truncated);
 
 	ATF_TP_ADD_TC(tp, test_hci_log_open_close);
 	ATF_TP_ADD_TC(tp, test_hci_log_packet);

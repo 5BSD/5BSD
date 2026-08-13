@@ -103,7 +103,7 @@ hci_le_connection_update(int hci_fd, uint16_t handle,
 {
 	struct bt_devreq r;
 	ng_hci_le_connection_update_cp cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	/*
 	 * Host-side parameter validation per Core Spec Vol 4
@@ -443,7 +443,7 @@ hci_le_set_phy(int hci_fd, uint16_t con_handle, uint8_t all_phys,
 {
 	struct bt_devreq r;
 	ng_hci_le_set_phy_cp cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	if (con_handle > 0x0EFF ||
 	    !hci_le_phy_params_valid(all_phys, tx_phys, rx_phys) ||
@@ -664,7 +664,7 @@ hci_le_subrate_request(int hci_fd, uint16_t con_handle,
 {
 	struct bt_devreq r;
 	ng_hci_le_subrate_request_cp cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	if (con_handle > 0x0EFF ||
 	    !hci_le_subrate_params_valid(min_subrate, max_subrate,
@@ -774,7 +774,7 @@ hci_le_read_remote_tx_power_level(int hci_fd, uint16_t con_handle,
 {
 	struct bt_devreq r;
 	ng_hci_le_read_remote_tx_power_cp cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 
 	/*
 	 * PHY is an enumerated field: 0x01=1M, 0x02=2M, 0x03=Coded S=8,
@@ -999,7 +999,7 @@ hci_le_ext_create_connection(int hci_fd, uint8_t filter,
 	uint8_t buf[sizeof(ng_hci_le_ext_create_connection_cp) +
 	    3 * sizeof(ng_hci_le_ext_create_conn_phy_t)];
 	ng_hci_le_ext_create_connection_cp *cp;
-	ng_hci_status_rp rp;
+	ng_hci_command_status_ep rp;	/* 4-byte Command Status event (finding 40) */
 	size_t cplen, expected_phy_len;
 	unsigned int phy_count;
 

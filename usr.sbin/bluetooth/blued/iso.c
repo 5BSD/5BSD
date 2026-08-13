@@ -977,6 +977,8 @@ iso_on_cis_established(struct blued_adapter *adp, uint16_t cis_handle,
 	if (status != 0) {
 		bool central = s->role == ISO_ROLE_CIS_CENTRAL;
 		uint8_t cig_id = s->cig_id;
+		bdaddr_t peer = s->peer;
+		uint8_t peer_type = s->peer_type;
 
 		LOG_ISO(1, "CIS Established 0x%04x failed status=0x%02x",
 		    cis_handle, status);
@@ -985,12 +987,20 @@ iso_on_cis_established(struct blued_adapter *adp, uint16_t cis_handle,
 		iso_unref(s);
 		if (central && iso_cig_refs(adp, cig_id) == 0)
 			(void)hci_le_remove_cig(adp->hci_fd, cig_id);
+		/*
+		 * Finding 116: tell the requester the CIS failed so it does not
+		 * wait forever for the fd handout / ESTABLISHED event.
+		 */
+		blued_ctl_iso_failed(adp, &peer, peer_type, cis_handle, status);
 		return;
 	}
 
 	s->state = ISO_ST_ESTABLISHED;
 	up = iso_setup_paths(s, HCI_ISO_STREAM_CIS, NULL);
 	if (up <= 0) {
+		bdaddr_t peer = s->peer;
+		uint8_t peer_type = s->peer_type;
+
 		/* The CIS exists in the Controller even though its host data path
 		 * failed.  Keep ownership until Disconnection Complete rather than
 		 * freeing a live connection handle. */
@@ -999,6 +1009,8 @@ iso_on_cis_established(struct blued_adapter *adp, uint16_t cis_handle,
 		    ISO_TEARDOWN_REASON) == 0)
 			s->state = ISO_ST_TEARDOWN;
 		iso_unref(s);
+		/* Finding 116: data-path failure is also a failed establishment. */
+		blued_ctl_iso_failed(adp, &peer, peer_type, cis_handle, 0);
 		return;
 	}
 	s->state = ISO_ST_PATHS_UP;

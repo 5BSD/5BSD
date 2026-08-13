@@ -149,19 +149,6 @@ mesh_iv_recv_beacon(struct mesh_iv_state *st, uint32_t recv_iv,
 	MESH_PROBE_IV_BEACON(recv_iv, 1);
 
 	if (recv_iv == cur) {
-		if (flag && st->state == MESH_IV_NORMAL) {
-			/*
-			 * Beacon still advertises index n but signals an
-			 * update: this happens when our own index already
-			 * matches the update target.  Treat as a same-index
-			 * start, dwell-gated.
-			 */
-			if (!mesh_iv_dwell_elapsed(st, now))
-				return (MESH_IV_NO_CHANGE);
-			st->state = MESH_IV_UPDATE_IN_PROGRESS;
-			st->entered_time = now;
-			return (MESH_IV_STARTED);
-		}
 		if (!flag && st->state == MESH_IV_UPDATE_IN_PROGRESS) {
 			if (!mesh_iv_dwell_elapsed(st, now))
 				return (MESH_IV_NO_CHANGE);
@@ -169,10 +156,33 @@ mesh_iv_recv_beacon(struct mesh_iv_state *st, uint32_t recv_iv,
 			st->entered_time = now;
 			return (MESH_IV_COMPLETED);
 		}
+		/*
+		 * A same-index beacon with the IV Update flag set carries no
+		 * legal transition: MshPRT Section 3.11.5 requires Normal ->
+		 * In Progress to increment the IV Index, and Tables 3.84/3.85
+		 * define no same-index start.  Ignore the flag rather than
+		 * regressing the TX index (which would reuse (IV, SEQ) nonces).
+		 */
 		return (MESH_IV_NO_CHANGE);
 	}
 
 	if (recv_iv == cur + 1) {
+		/*
+		 * Table 3.85: an armed IV Index Recovery observing a newer
+		 * index adopts the IV Index and flag without the 96-hour dwell
+		 * gate (Section 3.11.6 exempts recovery), resetting SEQ if the
+		 * update is In Progress.  This must be checked before the
+		 * ordinary same-step rules below, which would otherwise strand
+		 * an armed node until a flag=0 beacon arrives.
+		 */
+		if (st->recovery_active) {
+			st->iv_index = recv_iv;
+			st->state = flag ? MESH_IV_UPDATE_IN_PROGRESS :
+			    MESH_IV_NORMAL;
+			st->entered_time = now;
+			st->recovery_active = 0;
+			return (MESH_IV_JUMPED);
+		}
 		if (flag) {
 			/* Network started an update to n+1; adopt and update. */
 			if (st->state == MESH_IV_UPDATE_IN_PROGRESS)
@@ -185,13 +195,7 @@ mesh_iv_recv_beacon(struct mesh_iv_state *st, uint32_t recv_iv,
 			return (MESH_IV_STARTED);
 		}
 		/* Table 3.85 permits this jump only during IV Index Recovery. */
-		if (!st->recovery_active)
-			return (MESH_IV_REJECT);
-		st->iv_index = recv_iv;
-		st->state = MESH_IV_NORMAL;
-		st->entered_time = now;
-		st->recovery_active = 0;
-		return (MESH_IV_JUMPED);
+		return (MESH_IV_REJECT);
 	}
 
 	/*

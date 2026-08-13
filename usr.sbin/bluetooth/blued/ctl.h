@@ -17,6 +17,16 @@ struct blued_ctl_client;
 struct blued_conn;
 struct blued_adapter;
 
+#include <pthread.h>
+
+/*
+ * Initialize ctl_clients_lock as a recursive mutex.  The ctl dispatch path
+ * holds this lock across the whole verb handler and several handlers re-enter
+ * it through connection-teardown / status helpers; recursion keeps the
+ * outermost critical section intact (lock-reacquisition class, findings 30/88).
+ */
+void	blued_ctl_clients_lock_init(pthread_mutex_t *m);
+
 int	blued_ctl_init(const char *path);
 void	blued_ctl_accept(void);
 int	blued_ctl_dispatch(struct blued_ctl_client *client);
@@ -24,6 +34,13 @@ int	blued_ctl_flush(struct blued_ctl_client *client);
 void	blued_ctl_client_fini(struct blued_ctl_client *client);
 void	blued_ctl_send_fd(int client_fd, int fd);
 void	blued_ctl_cleanup(void);
+
+/*
+ * Quiesce and join the GATT worker pool.  Call before freeing per-connection
+ * hogp/att state at shutdown so no worker dereferences a freed hogp (finding
+ * 93).  Idempotent; blued_ctl_cleanup() also calls it.
+ */
+void	blued_ctl_gatt_workers_stop(void);
 
 /* Push notification: send characteristic value changes to subscribed clients */
 void	blued_ctl_notify_value(struct blued_conn *conn, uint16_t handle,
@@ -47,6 +64,9 @@ void	blued_ctl_iso_cis_request(struct blued_adapter *adp,
 void	blued_ctl_iso_established(struct blued_adapter *adp,
 	    const bdaddr_t *addr, uint8_t addr_type,
 	    uint16_t cis_handle, uint16_t mtu);
+void	blued_ctl_iso_failed(struct blued_adapter *adp,
+	    const bdaddr_t *addr, uint8_t addr_type,
+	    uint16_t cis_handle, uint8_t status);
 
 /* Push notification: forward GATT write to the ctl client that owns the attr */
 void	blued_ctl_notify_write(int owner_fd, uint16_t handle,

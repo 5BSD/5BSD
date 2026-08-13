@@ -180,6 +180,13 @@
 #define	IPC_SECURITY_BOND_EXPORT 20
 #define	IPC_SECURITY_BOND_IMPORT 21
 #define	IPC_SECURITY_REQ_SIZE	12
+/*
+ * Passkey/numcmp reply (client -> server) uses the standard typed-security
+ * header (findings 28/29): [opcode u16][flags u16][addr_type u8][addr[6]]
+ * [adapter_index u8][value...]; value = passkey le32 (PASSKEY_REPLY, offset 12)
+ * or accept u8 (NUMCMP_REPLY, offset 12).  The header matches every other typed
+ * request so the daemon routes by (adapter, addr, addr_type) uniformly.
+ */
 #define	IPC_SECURITY_PASSKEY_REQ_SIZE 16
 #define	IPC_SECURITY_DECISION_REQ_SIZE 13
 #define	IPC_SECURITY_AGENT_REQ_SIZE 13
@@ -223,9 +230,15 @@
 #define	IPC_SECURITY_EV_PASSKEY_INPUT 2
 #define	IPC_SECURITY_EV_NUMCMP	3
 #define	IPC_SECURITY_EV_KEYPRESS 4
-#define	IPC_SECURITY_PASSKEY_EVENT_SIZE 13
-#define	IPC_SECURITY_INPUT_EVENT_SIZE 9
-#define	IPC_SECURITY_KEYPRESS_EVENT_SIZE 10
+/*
+ * Security event (server -> client) body layout (findings 28/29):
+ *   [event_code u16 LE][adapter_index u8][addr_type u8][addr[6]][payload...]
+ * payload = passkey le32 (DISPLAY/NUMCMP), keypress type u8 (KEYPRESS),
+ * or empty (PASSKEY_INPUT).
+ */
+#define	IPC_SECURITY_PASSKEY_EVENT_SIZE 14
+#define	IPC_SECURITY_INPUT_EVENT_SIZE 10
+#define	IPC_SECURITY_KEYPRESS_EVENT_SIZE 11
 
 #define	IPC_ADV_SET_PARAMS	1
 #define	IPC_ADV_SET_NAME	2
@@ -302,6 +315,13 @@
 #define	IPC_ISO_ACQUIRE_REPLY_SIZE 4
 #define	IPC_ISO_EV_CIS_REQUEST	1
 #define	IPC_ISO_EV_ESTABLISHED	2
+/*
+ * CIS establishment failed (finding 116).  Same 14-byte event layout as
+ * ESTABLISHED; the [11..12] u16 field carries the HCI failure status (or 0 for
+ * a host data-path failure) instead of the MTU, so a client that issued
+ * ISO_CIS_CREATE or is subscribed to establishment does not wait forever.
+ */
+#define	IPC_ISO_EV_FAILED	3
 #define	IPC_ISO_EVENT_SIZE	14
 
 #define	IPC_STATUS_REPLY_SIZE	8

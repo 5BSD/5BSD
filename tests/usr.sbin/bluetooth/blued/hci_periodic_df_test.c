@@ -615,6 +615,55 @@ ATF_TC_BODY(decode_past_received, tc)
 	ATF_CHECK_EQ(0x0C80, rep.periodic_adv_interval);
 }
 
+/*
+ * Finding 124: Advertiser_PHY = LE 2M (0x02) is valid (0x01=1M, 0x02=2M,
+ * 0x03=Coded) and a genuine sync/PAST on a 2M periodic train must decode,
+ * not be rejected as malformed.
+ */
+ATF_TC_WITHOUT_HEAD(decode_sync_established_2m_phy);
+ATF_TC_BODY(decode_sync_established_2m_phy, tc)
+{
+	uint8_t pkt[] = {
+		0x04, BT_PDF_EVENT_LE_META, 16, BT_PDF_SUBEVENT_SYNC_ESTABLISHED,
+		0x00,			/* status = success */
+		0x02, 0x00,		/* sync_handle */
+		0x05,			/* advertising_sid */
+		0x01,			/* advertiser_addr_type */
+		0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
+		0x02,			/* advertiser_phy = 2M (finding 124) */
+		0x80, 0x0C,		/* periodic_adv_interval */
+		0x00,			/* clock accuracy */
+	};
+	struct blued_le_meta_report rep;
+
+	ATF_CHECK_EQ_MSG(0, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep),
+	    "a 2M periodic-adv sync must not be rejected");
+	ATF_CHECK_EQ(0x02, rep.advertiser_phy);
+}
+
+ATF_TC_WITHOUT_HEAD(decode_past_received_2m_phy);
+ATF_TC_BODY(decode_past_received_2m_phy, tc)
+{
+	uint8_t pkt[] = {
+		0x04, BT_PDF_EVENT_LE_META, 20, BT_PDF_SUBEVENT_PAST_RECEIVED,
+		0x00,			/* status = success */
+		0x40, 0x00,		/* connection_handle */
+		0x34, 0x12,		/* service_data */
+		0x05, 0x00,		/* sync_handle */
+		0x03,			/* advertising_sid */
+		0x00,			/* advertiser_addr_type */
+		0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF,
+		0x02,			/* advertiser_phy = 2M (finding 124) */
+		0x80, 0x0C,		/* periodic_adv_interval */
+		0x00,			/* clock accuracy */
+	};
+	struct blued_le_meta_report rep;
+
+	ATF_CHECK_EQ_MSG(0, blued_parse_le_meta_event(pkt, sizeof(pkt), &rep),
+	    "a 2M PAST must not be rejected");
+	ATF_CHECK_EQ(0x02, rep.advertiser_phy);
+}
+
 ATF_TC_WITHOUT_HEAD(decode_not_owned_subevent);
 ATF_TC_BODY(decode_not_owned_subevent, tc)
 {
@@ -786,6 +835,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, decode_connection_iq_report);
 	ATF_TP_ADD_TC(tp, decode_cte_request_failed);
 	ATF_TP_ADD_TC(tp, decode_past_received);
+	ATF_TP_ADD_TC(tp, decode_sync_established_2m_phy);
+	ATF_TP_ADD_TC(tp, decode_past_received_2m_phy);
 	ATF_TP_ADD_TC(tp, decode_not_owned_subevent);
 	ATF_TP_ADD_TC(tp, decode_all_owned_boundary_matrix);
 

@@ -468,6 +468,24 @@ mesh_hb_sub_init(struct mesh_hb_sub *s)
 	s->max_hops = 0x00;
 }
 
+/*
+ * Encode a remaining-period in seconds to a PeriodLog (Section 4.2.19.4,
+ * Table 4.1): 0 -> 0x00, else the smallest n in 1..0x11 with 2^(n-1) >= secs.
+ */
+static uint8_t
+hb_period_log_encode(uint32_t secs)
+{
+	uint8_t n;
+
+	if (secs == 0)
+		return (0x00);
+	for (n = 1; n < 0x11; n++) {
+		if (((uint32_t)1 << (n - 1)) >= secs)
+			return (n);
+	}
+	return (0x11);
+}
+
 int
 mesh_hb_sub_apply(struct mesh_hb_sub *s, const struct mesh_hb_sub_set *in)
 {
@@ -495,7 +513,27 @@ mesh_hb_sub_apply(struct mesh_hb_sub *s, const struct mesh_hb_sub_set *in)
 	s->src = in->src;
 	s->dst = in->dst;
 	s->period_log = in->period_log;
+	/* Load the countdown timer with the configured period (Section 4.2.19.4). */
+	s->remaining = mesh_hb_period_log_decode(in->period_log);
 	return (0);
+}
+
+void
+mesh_hb_sub_tick(struct mesh_hb_sub *s, uint32_t secs)
+{
+
+	if (s == NULL)
+		return;
+	if (s->src == MESH_ADDR_UNASSIGNED || s->dst == MESH_ADDR_UNASSIGNED)
+		return;				/* not subscribed */
+	/*
+	 * Section 4.2.19.4: the Subscription Period is a countdown timer; once
+	 * it reaches zero the receiving of Heartbeat messages is disabled.
+	 */
+	if (secs >= s->remaining)
+		s->remaining = 0;
+	else
+		s->remaining -= secs;
 }
 
 int
@@ -508,6 +546,8 @@ mesh_hb_sub_receive(struct mesh_hb_sub *s, uint16_t src, uint16_t dst,
 		return (0);
 	if (s->src == MESH_ADDR_UNASSIGNED || s->dst == MESH_ADDR_UNASSIGNED)
 		return (0);			/* not subscribed */
+	if (s->remaining == 0)
+		return (0);			/* period expired: not processed */
 	if (src != s->src || dst != s->dst)
 		return (0);			/* not our (src,dst) pair */
 	if (rx_ttl > init_ttl)
@@ -537,7 +577,8 @@ mesh_hb_sub_snapshot(const struct mesh_hb_sub *s, uint8_t status,
 	out->status = status;
 	out->src = s->src;
 	out->dst = s->dst;
-	out->period_log = s->period_log;
+	/* Section 4.2.19.4: report the REMAINING period, not the configured one. */
+	out->period_log = hb_period_log_encode(s->remaining);
 	out->count_log = mesh_hb_count_log(s->count);
 	out->min_hops = s->min_hops;
 	out->max_hops = s->max_hops;

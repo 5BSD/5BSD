@@ -954,11 +954,127 @@ ATF_TC_BODY(test_neg_fixed_request_overlong, tc)
 }
 
 /* ================================================================
+ * Finding 104: READ_BY_TYPE_REQ with a 2-octet Attribute Type of 0x0000
+ * is malformed and must be rejected Invalid PDU — not treated as a 128-bit
+ * type sentinel (which would compare against an uninitialised uuid128).
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_neg_read_by_type_zero_uuid16);
+ATF_TC_BODY(test_neg_read_by_type_zero_uuid16, tc)
+{
+	DB_SETUP(ac, peer, db, attrs, val);
+	uint8_t pdu[7];
+
+	pdu[0] = ATT_OP_READ_BY_TYPE_REQ;
+	spec_put16(pdu + 1, 0x0001);	/* start */
+	spec_put16(pdu + 3, 0xFFFF);	/* end */
+	spec_put16(pdu + 5, 0x0000);	/* 2-octet Attribute Type == 0x0000 */
+	expect_err(&ac, &db, peer, pdu, 7, ATT_OP_READ_BY_TYPE_REQ,
+	    ATT_ERR_INVALID_PDU);
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * Finding 113: a writable characteristic declared with an EMPTY initial
+ * value must still be writable (reserve capacity), not permanently rejected
+ * with INVALID_ATTR_LEN against a NULL value / zero value_maxlen.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_neg_empty_writable_char_is_writable);
+ATF_TC_BODY(test_neg_empty_writable_char_is_writable, tc)
+{
+	struct att_conn ac;
+	int peer;
+	struct att_db db;
+	struct att_attr attrs[TEST_DB_MAX_ATTRS];
+	/* An empty writable char reserves the max ATT attribute value length
+	 * (512); give the arena room for that plus the declarations. */
+	uint8_t val[1024];
+	uint8_t pdu[3 + 8];
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	struct att_attr *a;
+	uint16_t vh;
+	ssize_t n;
+
+	att_mock_pair(&ac, &peer);
+	attdb_init(&db, attrs, TEST_DB_MAX_ATTRS, val, sizeof(val));
+	attdb_add_service(&db, 0xFFF0);
+	vh = attdb_add_characteristic(&db, 0xFFF1, GATT_PROP_WRITE,
+	    ATT_PERM_WRITE, NULL, 0);	/* empty initial value */
+	ATF_REQUIRE(vh != 0);
+
+	a = attdb_find_by_handle(&db, vh);
+	ATF_REQUIRE(a != NULL);
+	ATF_CHECK_MSG(a->value != NULL,
+	    "empty writable char must reserve a value buffer");
+	ATF_CHECK_MSG(a->value_maxlen > 0,
+	    "empty writable char must have nonzero value_maxlen");
+
+	pdu[0] = ATT_OP_WRITE_REQ;
+	spec_put16(pdu + 1, vh);
+	memset(pdu + 3, 0xAB, 8);
+	n = srv_exchange(&ac, &db, peer, pdu, sizeof(pdu), rsp, sizeof(rsp));
+	ATF_REQUIRE_EQ_MSG(1, n, "expected Write Response, got %zd", n);
+	ATF_CHECK_EQ(ATT_OP_WRITE_RSP, rsp[0]);
+
+	a = attdb_find_by_handle(&db, vh);
+	ATF_CHECK_EQ(8, a->value_len);
+	ATF_CHECK_EQ(0, memcmp(a->value, pdu + 3, 8));
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
+ * Finding 114: att_send_indication self-arms its 30 s confirmation deadline
+ * so a caller that never arms an external timer cannot wedge every future
+ * indication at EBUSY.  A pending indication past its deadline is auto-cleared
+ * before the next indication is sent.
+ * ================================================================ */
+ATF_TC_WITHOUT_HEAD(test_neg_indication_self_heals_timeout);
+ATF_TC_BODY(test_neg_indication_self_heals_timeout, tc)
+{
+	struct att_conn ac;
+	int peer;
+	uint8_t rsp[ATT_PDU_BUF_SIZE];
+	uint8_t v = 0x01;
+	ssize_t n;
+
+	att_mock_pair(&ac, &peer);
+
+	/* First indication: sent, ind_pending set, deadline self-armed. */
+	ATF_REQUIRE_EQ(0, att_send_indication(&ac, 0x0005, &v, 1));
+	ATF_CHECK(ac.ind_pending);
+	n = recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT);
+	ATF_CHECK_EQ(4, n);
+	ATF_CHECK_EQ(ATT_OP_HANDLE_IND, rsp[0]);
+
+	/* Second while still within the window: refused EBUSY (§3.3.2). */
+	errno = 0;
+	ATF_CHECK_EQ(-1, att_send_indication(&ac, 0x0005, &v, 1));
+	ATF_CHECK_EQ(EBUSY, errno);
+
+	/* Simulate the confirmation window elapsing with no confirmation. */
+	ac.ind_deadline.tv_sec -= 60;
+	ATF_REQUIRE_EQ_MSG(0, att_send_indication(&ac, 0x0006, &v, 1),
+	    "stale pending indication must self-heal, not wedge (errno=%d)",
+	    errno);
+	ATF_CHECK(ac.ind_pending);
+	ATF_CHECK_EQ(0x0006, ac.ind_handle);
+	n = recv(peer, rsp, sizeof(rsp), MSG_DONTWAIT);
+	ATF_CHECK_EQ(4, n);
+	ATF_CHECK_EQ(ATT_OP_HANDLE_IND, rsp[0]);
+
+	att_mock_cleanup(&ac, peer);
+}
+
+/* ================================================================
  * ATF TEST PLAN
  * ================================================================ */
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, test_neg_read_by_type_zero_uuid16);
+	ATF_TP_ADD_TC(tp, test_neg_empty_writable_char_is_writable);
+	ATF_TP_ADD_TC(tp, test_neg_indication_self_heals_timeout);
 	ATF_TP_ADD_TC(tp, test_neg_zero_length);
 	ATF_TP_ADD_TC(tp, test_neg_mtu);
 	ATF_TP_ADD_TC(tp, test_neg_find_info);
