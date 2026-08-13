@@ -497,23 +497,40 @@ ATF_TC_BODY(f127_provision_scan, tc)
 	meshd_node_fini(nd);		/* frees nd->mgr */
 }
 
-/* ---- Finding 130: LowPower disclosed as unsupported -------------------- */
+/*
+ * ---- Finding 130: LowPower / Friend role now wired to the bearer --------
+ *
+ * The Friend and Low Power node engines are driven over the bearer, so the
+ * features verb reports the live enable state (true/false) rather than the old
+ * honest "unsupported" disclosure.
+ */
 ATF_TC_WITHOUT_HEAD(f130_lowpower_unsupported);
 ATF_TC_BODY(f130_lowpower_unsupported, tc)
 {
 	struct meshd_config cfg;
 	MESH_HEAP(struct meshd_node, nd);
 	char reply[256];
-	char *av[1];
+	char *av[2];
 
 	base_config(&cfg);
 	ATF_REQUIRE_EQ(0, meshd_node_init(nd, &cfg));
 
+	/* Off by default: reported as false, never "unsupported". */
 	av[0] = __DECONST(char *, "features");
 	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, NULL, 1, av, reply,
 	    sizeof(reply)));
-	ATF_CHECK_MSG(strstr(reply, "LowPower=unsupported") != NULL, "%s",
-	    reply);
+	ATF_CHECK_MSG(strstr(reply, "LowPower=false") != NULL, "%s", reply);
+	ATF_CHECK_MSG(strstr(reply, "unsupported") == NULL, "%s", reply);
+
+	/* Enable the Low Power role -> reported true. */
+	av[0] = __DECONST(char *, "low-power");
+	av[1] = __DECONST(char *, "on");
+	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, NULL, 2, av, reply,
+	    sizeof(reply)));
+	av[0] = __DECONST(char *, "features");
+	ATF_CHECK_EQ(0, meshd_ctl_exec_client(nd, NULL, 1, av, reply,
+	    sizeof(reply)));
+	ATF_CHECK_MSG(strstr(reply, "LowPower=true") != NULL, "%s", reply);
 
 	meshd_node_fini(nd);
 }

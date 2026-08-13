@@ -54,6 +54,11 @@ static int meshd_remote_devkey_rx(void *, uint32_t, uint16_t, uint16_t,
 static struct meshd_appkey_entry *meshd_find_appkey(struct meshd_node *,
     uint16_t);
 static void meshd_df_rpr_init(struct meshd_node *nd);
+static void meshd_friendship_rx(struct meshd_node *nd, const uint8_t *pdu,
+    size_t len);
+static void meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
+    struct mesh_friend_out *out);
+static void meshd_lpn_emit(struct meshd_node *nd, struct mesh_lpn_out *out);
 
 static uint64_t
 meshd_pub_period_ms(uint8_t period)
@@ -438,16 +443,23 @@ meshd_node_init(struct meshd_node *nd, const struct meshd_config *cfg)
 	if (cfg->features & MESH_CFG_FEATURE_PROXY)
 		nd->cfg.gatt_proxy = 1;
 	/*
-	 * Friend control messages are not connected to the authenticated
-	 * production bearer yet.  Report the feature as unsupported instead of
-	 * advertising a capability that cannot interoperate with an LPN.
+	 * Friendship roles (MshPRT_v1.1 Section 3.6.5 / 3.6.6).  The Friend and
+	 * Low Power node engines are now driven over the bearer: meshd_bearer_rx
+	 * routes inbound friendship control PDUs (identified by their Transport
+	 * Control opcode) to the engines, and the node tick drives the LPN poll
+	 * cadence and the Friend Offer / PollTimeout timers.  The Config Server
+	 * Friend state reflects whether the Friend role is enabled.
 	 */
-	nd->cfg.friend = 2;
+	nd->cfg.friend = (cfg->features & MESH_CFG_FEATURE_FRIEND) ? 1 : 0;
 
 	if (meshd_setup_node(nd, cfg->netkey, cfg->appkey, cfg->iv_index,
 	    cfg->unicast_addr) != 0)
 		return (-1);
 	mesh_sim_set_relay(nd->self, nd->cfg.relay == 1);
+	if (cfg->features & MESH_CFG_FEATURE_FRIEND)
+		(void)meshd_friend_role_enable(nd);
+	if (cfg->features & MESH_CFG_FEATURE_LOW_POWER)
+		(void)meshd_lpn_role_enable(nd);
 
 	/* A node whose provisioning data was supplied comes up provisioned. */
 	nd->provisioned = cfg->have_netkey ? 1 : 0;
@@ -627,6 +639,16 @@ meshd_bearer_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 
 	/* Any Status reply / relay the node produced is now queued: send it. */
 	meshd_drain_tx(nd);
+
+	/*
+	 * Friendship (MshPRT_v1.1 Section 3.6.5): decrypt the inbound PDU with
+	 * the managed-flooding credential and route any friendship control
+	 * message (or a message destined for our LPN) to the Friend/LPN engines,
+	 * transmitting the resulting control/queued PDUs over the bearer.  The
+	 * sim step above ignores these opcodes, so this is additive.
+	 */
+	if (nd->friend_enabled || nd->lpn_enabled)
+		meshd_friendship_rx(nd, pdu, len);
 
 	if (nd->self->rx.count > before) {
 		meshd_app_queue_rx(nd);
@@ -1260,8 +1282,10 @@ meshd_features(const struct meshd_node *nd)
 		f |= MESH_CFG_FEATURE_RELAY;
 	if (nd->cfg.gatt_proxy == 1)
 		f |= MESH_CFG_FEATURE_PROXY;
-	if (nd->cfg.friend == 1)
+	if (nd->cfg.friend == 1 || nd->friend_enabled)
 		f |= MESH_CFG_FEATURE_FRIEND;
+	if (nd->lpn_enabled)
+		f |= MESH_CFG_FEATURE_LOW_POWER;
 	return (f);
 }
 
@@ -4358,6 +4382,32 @@ meshd_node_tick(struct meshd_node *nd, uint64_t now_ms, int *iv_changed)
 		nd->rpr.client_active = mesh_rp_client_link_is_active(
 		    &nd->rpr.client_link);
 
+	/*
+	 * Friendship (MshPRT_v1.1 Section 3.6.5 / 3.6.6).  Drive the Low Power
+	 * node cadence (Friend Request on first tick, offer selection, cadence
+	 * Polls, re-establishment) and the Friend timers (emit a due Offer,
+	 * supervise the PollTimeout), transmitting the resulting control PDUs
+	 * over the bearer.
+	 */
+	if (nd->lpn_enabled) {
+		struct mesh_lpn_out lout;
+
+		memset(&lout, 0, sizeof(lout));
+		if (nd->lpn_fsm.state == MESH_LPN_ST_IDLE) {
+			if (nd->bearer != NULL && nd->bearer->tx != NULL &&
+			    mesh_lpn_fsm_start(&nd->lpn_fsm, now_ms, &lout) == 0)
+				meshd_lpn_emit(nd, &lout);
+		} else if (mesh_lpn_fsm_tick(&nd->lpn_fsm, now_ms, &lout) == 0)
+			meshd_lpn_emit(nd, &lout);
+	}
+	if (nd->friend_enabled) {
+		struct mesh_friend_out fout;
+
+		memset(&fout, 0, sizeof(fout));
+		if (mesh_friend_fsm_tick(&nd->friend_fsm, now_ms, &fout) == 0)
+			meshd_friend_emit(nd, nd->friend_fsm.lpn_addr, &fout);
+	}
+
 	return (hb);
 }
 
@@ -4581,6 +4631,290 @@ meshd_lpn_tick(struct meshd_node *nd, uint64_t now, struct mesh_lpn_out *out)
 	if (nd == NULL || out == NULL || !nd->lpn_enabled)
 		return (-1);
 	return (mesh_lpn_fsm_tick(&nd->lpn_fsm, now, out));
+}
+
+/* ================================================================
+ * Friendship drive over the bearer (MshPRT_v1.1 Section 3.6.5 / 3.6.6).
+ *
+ * The Friend and Low Power node engines (mesh_friend.c / mesh_lpn.c) emit a
+ * single action per step (a control PDU or a queued message).  These helpers
+ * secure each emitted PDU as a managed-flooding Network PDU and hand it to the
+ * bearer - the same wire form a peer's mesh_net_decrypt recovers - and route
+ * inbound friendship control PDUs (decrypted at meshd_bearer_rx) back to the
+ * engines.  Friendship control messages travel single-hop (TTL 0) between the
+ * LPN and its Friend.
+ * ================================================================ */
+
+/* Fixed all-friends group address (MshPRT_v1.1 Section 3.4.2.4). */
+#ifndef	MESH_ADDR_ALL_FRIENDS
+#define	MESH_ADDR_ALL_FRIENDS	0xFFFDu
+#endif
+
+#define	MESHD_FRIEND_CTL_TTL	0	/* LPN<->Friend is a single hop */
+#define	MESHD_FRIEND_RX_RSSI	(-40)	/* synthesised RSSI for a Request */
+
+/* Friend role local Offer parameters + acceptance policy (defaults). */
+#define	MESHD_FRIEND_RECV_WINDOW	20	/* our ReceiveWindow, ms */
+#define	MESHD_FRIEND_QUEUE_SIZE		8
+#define	MESHD_FRIEND_SUBLIST_SIZE	8
+#define	MESHD_FRIEND_MIN_RSSI		(-100)	/* accept all but the weakest */
+#define	MESHD_FRIEND_MAX_QSIZE_LOG	4	/* serve up to N = 16 */
+
+/* Low Power node Friend Request criteria + cadence (defaults). */
+#define	MESHD_LPN_RSSI_FACTOR		0
+#define	MESHD_LPN_RXWIN_FACTOR		0
+#define	MESHD_LPN_MIN_QSIZE_LOG		1	/* need N >= 2 */
+#define	MESHD_LPN_RECV_DELAY_MS		100
+#define	MESHD_LPN_POLL_TIMEOUT		100	/* units of 100 ms => 10 s */
+#define	MESHD_LPN_OFFER_WINDOW_MS	500
+#define	MESHD_LPN_POLL_INTERVAL_MS	2000
+
+/*
+ * Network-encrypt a built friendship control PDU (opcode octet + parameters)
+ * under the primary subnet's managed-flooding credential and hand it to the
+ * bearer.  Reuses meshd_df_send_control, which advances the node SEQ.
+ */
+static int
+meshd_friend_send_control(struct meshd_node *nd, uint16_t dst,
+    const uint8_t *pdu, size_t len)
+{
+
+	if (nd == NULL || pdu == NULL || len == 0)
+		return (-1);
+	return (meshd_df_send_control(nd, (uint8_t)(pdu[0] & 0x7f), dst,
+	    MESHD_FRIEND_CTL_TTL, len > 1 ? pdu + 1 : NULL, len - 1));
+}
+
+/*
+ * Deliver a Friend Queue entry (a stored Lower Transport PDU) to the LPN.  The
+ * entry is re-secured as a managed-flooding Network PDU preserving the original
+ * SRC / SEQ / DST and the queue-decremented TTL, so the LPN decrypts and
+ * delivers it exactly like any received message.  Only unsegmented deliveries
+ * fit a single advertising-bearer frame; a segmented queue entry is dropped.
+ */
+static int
+meshd_friend_send_msg(struct meshd_node *nd, const struct mesh_fq_entry *e)
+{
+	const struct mesh_node *self;
+	struct mesh_net_pdu np;
+	uint8_t frame[MESH_NET_MAX_PDU];
+	size_t flen;
+	uint32_t iv;
+
+	if (nd == NULL || e == NULL || nd->self == NULL ||
+	    nd->bearer == NULL || nd->bearer->tx == NULL)
+		return (-1);
+	if (e->pdu_len == 0 || e->pdu_len > MESH_NET_MAX_TRANSPORT_PDU)
+		return (-1);			/* unsegmented delivery only */
+	self = nd->self;
+	iv = mesh_iv_tx_index(&self->iv);
+	memset(&np, 0, sizeof(np));
+	np.ivi = (uint8_t)(iv & 1);
+	np.nid = self->nid;
+	np.ctl = e->ctl;
+	np.ttl = e->ttl;
+	np.seq = e->seq;
+	np.src = e->src;
+	np.dst = e->dst;
+	memcpy(np.transport, e->pdu, e->pdu_len);
+	np.transport_len = e->pdu_len;
+	if (mesh_net_encrypt(self->enckey, self->privkey, self->nid, iv,
+	    &np, frame, &flen) != 0)
+		return (-1);
+	nd->tx_frames++;
+	if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_NET, frame, flen) != 0) {
+		nd->tx_errors++;
+		return (-1);
+	}
+	return (0);
+}
+
+/* Transmit the action a Friend FSM step produced.  dst is our LPN. */
+static void
+meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
+    struct mesh_friend_out *out)
+{
+
+	switch (out->action) {
+	case MESH_FRIEND_ACT_SEND_CONTROL:
+		(void)meshd_friend_send_control(nd, dst, out->pdu, out->pdu_len);
+		break;
+	case MESH_FRIEND_ACT_SEND_MSG:
+		(void)meshd_friend_send_msg(nd, &out->msg);
+		break;
+	default:
+		break;
+	}
+}
+
+/* Transmit the action an LPN FSM step produced. */
+static void
+meshd_lpn_emit(struct meshd_node *nd, struct mesh_lpn_out *out)
+{
+
+	switch (out->action) {
+	case MESH_LPN_ACT_SEND_REQUEST:
+		(void)meshd_friend_send_control(nd, MESH_ADDR_ALL_FRIENDS,
+		    out->pdu, out->pdu_len);
+		break;
+	case MESH_LPN_ACT_SEND_POLL:
+	case MESH_LPN_ACT_SEND_SUBLIST:
+		(void)meshd_friend_send_control(nd, out->friend_addr, out->pdu,
+		    out->pdu_len);
+		break;
+	default:
+		break;
+	}
+}
+
+/*
+ * Route an inbound Network PDU to the friendship engines.  The PDU is decrypted
+ * with the node's managed-flooding credential (over the current and previous IV
+ * Index); a Transport Control friendship message is dispatched by opcode to the
+ * Friend engine (Request / Poll / Subscription List / Clear) or the LPN engine
+ * (Offer / Update), and any resulting control/queued PDU is transmitted.  An
+ * access message destined for our LPN is offered to the Friend Queue.
+ */
+static void
+meshd_friendship_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
+{
+	struct mesh_net_pdu np;
+	uint32_t ivc[2], iv;
+	uint64_t now;
+	size_t ni, niv;
+	uint8_t op, ivu;
+	int ok = 0;
+
+	if (nd->self == NULL)
+		return;
+	iv = mesh_iv_tx_index(&nd->self->iv);
+	ivc[0] = iv;
+	niv = 1;
+	if (iv > 0) {
+		ivc[1] = iv - 1;
+		niv = 2;
+	}
+	for (ni = 0; ni < niv && !ok; ni++)
+		if (mesh_net_decrypt(nd->self->enckey, nd->self->privkey,
+		    nd->self->nid, ivc[ni], pdu, len, &np) == 0)
+			ok = 1;
+	if (!ok || np.transport_len == 0)
+		return;
+
+	now = nd->tick_last;
+	ivu = (nd->self->iv.state == MESH_IV_UPDATE_IN_PROGRESS) ? 1 : 0;
+
+	if (np.ctl == 1) {
+		op = (uint8_t)(np.transport[0] & 0x7f);
+		if (nd->friend_enabled &&
+		    (op == MESH_FRIEND_OP_REQUEST || op == MESH_FRIEND_OP_POLL ||
+		    op == MESH_FRIEND_OP_SUBLIST_ADD ||
+		    op == MESH_FRIEND_OP_SUBLIST_REMOVE ||
+		    op == MESH_FRIEND_OP_CLEAR)) {
+			struct mesh_friend_out out;
+
+			memset(&out, 0, sizeof(out));
+			if (meshd_friend_input(nd, np.src, np.transport,
+			    np.transport_len, MESHD_FRIEND_RX_RSSI, 0, ivu, iv,
+			    now, &out) >= 0)
+				meshd_friend_emit(nd, nd->friend_fsm.lpn_addr,
+				    &out);
+		}
+		if (nd->lpn_enabled && op == MESH_FRIEND_OP_OFFER)
+			(void)meshd_lpn_recv_offer(nd, np.transport,
+			    np.transport_len, np.src, now);
+		if (nd->lpn_enabled && op == MESH_FRIEND_OP_UPDATE) {
+			struct mesh_lpn_out lout;
+
+			memset(&lout, 0, sizeof(lout));
+			(void)meshd_lpn_recv_update(nd, np.transport,
+			    np.transport_len, now, &lout);
+		}
+	} else if (np.ctl == 0 && nd->friend_enabled &&
+	    np.transport_len <= MESH_FQ_PDU_MAX) {
+		struct mesh_fq_entry e;
+
+		/*
+		 * A message off the network destined for our LPN: offer it to
+		 * the Friend Queue (Section 3.5.5).  mesh_fq_enqueue applies the
+		 * DST / TTL / duplicate filter, so a message for anyone else is
+		 * silently dropped here.
+		 */
+		memset(&e, 0, sizeof(e));
+		e.ctl = np.ctl;
+		e.ttl = np.ttl;
+		e.seq = np.seq;
+		e.src = np.src;
+		e.dst = np.dst;
+		memcpy(e.pdu, np.transport, np.transport_len);
+		e.pdu_len = np.transport_len;
+		(void)meshd_friend_enqueue(nd, &e);
+	}
+}
+
+/*
+ * Enable the Friend role: initialise the Friend engine with the local Offer
+ * parameters and acceptance policy and reflect the state in the Config Server.
+ * The Friend Queue is bound to an LPN when the first Friend Request is accepted.
+ */
+int
+meshd_friend_role_enable(struct meshd_node *nd)
+{
+
+	if (nd == NULL || nd->self == NULL)
+		return (-1);
+	if (meshd_friend_enable(nd, MESHD_FRIEND_RECV_WINDOW,
+	    MESHD_FRIEND_QUEUE_SIZE, MESHD_FRIEND_SUBLIST_SIZE,
+	    MESHD_FRIEND_MIN_RSSI, MESHD_FRIEND_MAX_QSIZE_LOG) != 0)
+		return (-1);
+	nd->cfg.friend = 1;
+	return (0);
+}
+
+/* Disable the Friend role. */
+void
+meshd_friend_role_disable(struct meshd_node *nd)
+{
+
+	if (nd == NULL)
+		return;
+	nd->friend_enabled = 0;
+	if (nd->cfg.friend == 1)
+		nd->cfg.friend = 0;
+}
+
+/*
+ * Enable the Low Power node role: initialise the LPN engine with the Friend
+ * Request criteria and poll cadence.  The Friend Request is originated on the
+ * first node tick once a bearer is attached (mesh_lpn_fsm_start from IDLE), and
+ * the cadence Polls / re-establishment run from later ticks.
+ */
+int
+meshd_lpn_role_enable(struct meshd_node *nd)
+{
+	uint32_t poll_timeout;
+
+	if (nd == NULL || nd->self == NULL)
+		return (-1);
+	poll_timeout = nd->db.lpn_poll_timeout != 0 ? nd->db.lpn_poll_timeout :
+	    MESHD_LPN_POLL_TIMEOUT;
+	mesh_lpn_fsm_init(&nd->lpn_fsm, nd->addr, nd->self->n_elements,
+	    MESHD_LPN_RSSI_FACTOR, MESHD_LPN_RXWIN_FACTOR,
+	    MESHD_LPN_MIN_QSIZE_LOG, MESHD_LPN_RECV_DELAY_MS, poll_timeout,
+	    MESHD_LPN_OFFER_WINDOW_MS, MESHD_LPN_POLL_INTERVAL_MS);
+	nd->lpn_enabled = 1;
+	nd->db.lpn_poll_timeout = poll_timeout;
+	return (0);
+}
+
+/* Disable the Low Power node role. */
+void
+meshd_lpn_role_disable(struct meshd_node *nd)
+{
+
+	if (nd == NULL)
+		return;
+	nd->lpn_enabled = 0;
 }
 
 /* ================================================================

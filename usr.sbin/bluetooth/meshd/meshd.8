@@ -312,6 +312,23 @@ and
 .Cm network-status
 operate the network-wide refresh the local Provisioner coordinates across the
 roster.
+.It Cm friend Oo Cm on | off | status Oc
+Toggle the Friend role.
+When enabled, the node accepts a Friend Request from a neighbouring Low Power
+node, answers it with a Friend Offer, maintains a Friend Queue of messages
+destined for that node, and delivers the queued messages (and Friend Updates)
+in response to each Friend Poll, all over the advertising bearer
+.Pq Xr MshPRT 1.1 Sx 3.6.6 .
+With no argument (or
+.Cm status )
+the current role state is reported.
+.It Cm low-power Oo Cm on | off | status Oc
+Toggle the Low Power node role.
+When enabled, the node originates a Friend Request on its next tick, selects a
+Friend from the returned Offers, establishes the friendship, and thereafter
+polls the Friend on a fixed cadence to retrieve queued messages, re-establishing
+if the PollTimeout lapses
+.Pq Xr MshPRT 1.1 Sx 3.6.5 .
 .El
 .Ss Config Client
 The
@@ -563,8 +580,9 @@ Its fixed lighting composition has four elements: the primary element, CTL
 Temperature, HSL Hue, and HSL Saturation.
 It accepts up to 16 local application clients and four concurrent Mesh Proxy
 GATT connections.
-The Friend feature is reported as unsupported because its state machine is not
-connected to the production radio bearer.
+The Friend and Low Power node roles are wired to the bearer and serve a single
+friendship at a time; the queued-message delivery path carries unsegmented
+messages (a segmented queue entry is not re-segmented onto the bearer).
 .Sh CAVEATS
 The node runs the
 .Vt mesh_sim

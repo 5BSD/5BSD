@@ -309,9 +309,16 @@ ATF_TC_BODY(config_parse_lines, tc)
 	ATF_CHECK_EQ(0, meshd_config_parse_line(&cfg, "proxy 1"));
 	ATF_CHECK(cfg.features & MESH_CFG_FEATURE_PROXY);
 	ATF_CHECK_EQ(0, meshd_config_parse_line(&cfg, "proxy 0"));
-	ATF_CHECK_EQ(-1, meshd_config_parse_line(&cfg, "friend 1"));
-	ATF_CHECK(!(cfg.features & MESH_CFG_FEATURE_FRIEND));
+	/* The Friend role is now wired to the bearer: "friend 1" is accepted. */
+	ATF_CHECK_EQ(0, meshd_config_parse_line(&cfg, "friend 1"));
+	ATF_CHECK(cfg.features & MESH_CFG_FEATURE_FRIEND);
 	ATF_CHECK_EQ(0, meshd_config_parse_line(&cfg, "friend 0"));
+	ATF_CHECK(!(cfg.features & MESH_CFG_FEATURE_FRIEND));
+	/* The Low Power node role too. */
+	ATF_CHECK_EQ(0, meshd_config_parse_line(&cfg, "low_power 1"));
+	ATF_CHECK(cfg.features & MESH_CFG_FEATURE_LOW_POWER);
+	ATF_CHECK_EQ(0, meshd_config_parse_line(&cfg, "low_power 0"));
+	ATF_CHECK(!(cfg.features & MESH_CFG_FEATURE_LOW_POWER));
 }
 
 ATF_TC_WITHOUT_HEAD(config_parse_errors);
@@ -489,8 +496,9 @@ ATF_TC_BODY(node_init, tc)
 	ATF_CHECK_EQ(INT16_MIN, meshd_node_level(nd));
 	ATF_CHECK_EQ(1, nd->cfg.relay);
 	ATF_CHECK_EQ(1, nd->cfg.gatt_proxy);
-	ATF_CHECK_EQ(2, nd->cfg.friend);
-	ATF_CHECK_EQ(0, nd->friend_enabled);
+	/* The Friend role is wired to the bearer and enabled from the feature. */
+	ATF_CHECK_EQ(1, nd->cfg.friend);
+	ATF_CHECK_EQ(1, nd->friend_enabled);
 
 	/* Unprovisioned node (no netkey). */
 	base_config(&cfg);

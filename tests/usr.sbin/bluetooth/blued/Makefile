@@ -476,6 +476,12 @@ CFLAGS.meshd_df_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/me
 ATF_TESTS_C+=	meshd_rpr_test
 SRCS.meshd_rpr_test=	meshd_rpr_test.c ${MESHD_ENGINE}
 CFLAGS.meshd_rpr_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
+# meshd Friendship wiring (MshPRT_v1.1 Section 3.6.5/3.6.6): the Friend and Low
+# Power node roles driven over the bearer (Request/Offer/Poll/Update handshake +
+# queued-message delivery on Poll) plus the "friend"/"low-power" control verbs.
+ATF_TESTS_C+=	meshd_friendship_test
+SRCS.meshd_friendship_test=	meshd_friendship_test.c ${MESHD_ENGINE}
+CFLAGS.meshd_friendship_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
 # meshd persistent node-state store: SEQ block reservation (no regress across
 # restart), RPL survives restart, keys/IV/config round-trip, clock tick.
 ATF_TESTS_C+=	meshd_persist_test

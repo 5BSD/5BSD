@@ -39,6 +39,7 @@
 #define MESHD_PERSIST_FEAT_PROXY	0x02
 #define MESHD_PERSIST_FEAT_FRIEND	0x04
 #define MESHD_PERSIST_FEAT_BEACON	0x08
+#define MESHD_PERSIST_FEAT_LOW_POWER	0x10
 
 /*
  * Comfortably bounds the fixed node header + every counted section.  The model
@@ -291,10 +292,12 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 		features |= MESHD_PERSIST_FEAT_RELAY;
 	if (nd->cfg.gatt_proxy == 1)
 		features |= MESHD_PERSIST_FEAT_PROXY;
-	if (nd->cfg.friend == 1)
+	if (nd->cfg.friend == 1 || nd->friend_enabled)
 		features |= MESHD_PERSIST_FEAT_FRIEND;
 	if (nd->cfg.beacon == 1)
 		features |= MESHD_PERSIST_FEAT_BEACON;
+	if (nd->lpn_enabled)
+		features |= MESHD_PERSIST_FEAT_LOW_POWER;
 	put_u8(c, features);
 	put_u16(c, nd->cid);
 	put_u16(c, nd->pid);
@@ -654,9 +657,9 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 	nd->cfg.default_ttl = default_ttl;
 	nd->cfg.relay = (features & MESHD_PERSIST_FEAT_RELAY) ? 1 : 0;
 	nd->cfg.gatt_proxy = (features & MESHD_PERSIST_FEAT_PROXY) ? 1 : 0;
-	/* Friend is not exposed until its FSM is wired to the real bearer. */
-	nd->cfg.friend = 2;
+	nd->cfg.friend = 0;
 	nd->friend_enabled = 0;
+	nd->lpn_enabled = 0;
 	nd->cfg.beacon = (features & MESHD_PERSIST_FEAT_BEACON) ? 1 : 0;
 
 	/* Restore the IV Update phase (meshd_node_restore left it Normal). */
@@ -689,6 +692,17 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 	    &nd->self->relay.net_tx_count, &nd->self->relay.net_tx_steps);
 	mesh_relay_unpack(nd->cfg.relay_retransmit,
 	    &nd->self->relay.relay_rx_count, &nd->self->relay.relay_rx_steps);
+
+	/*
+	 * Friendship roles (MshPRT_v1.1 Section 3.6.5 / 3.6.6).  Re-enable the
+	 * Friend / Low Power node engines from the restored feature bits; the LPN
+	 * re-originates its Friend Request on the next node tick.  The restored
+	 * lpn_poll_timeout (above) seeds the LPN cadence.
+	 */
+	if (features & MESHD_PERSIST_FEAT_FRIEND)
+		(void)meshd_friend_role_enable(nd);
+	if (features & MESHD_PERSIST_FEAT_LOW_POWER)
+		(void)meshd_lpn_role_enable(nd);
 
 	/* Subnets. */
 	n_netkeys = get_u16(c);

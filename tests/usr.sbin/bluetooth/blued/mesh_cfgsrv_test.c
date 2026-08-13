@@ -486,13 +486,13 @@ ATF_TC_BODY(zero_param_gets, tc)
 	ATF_REQUIRE_EQ(sizeof(bt_mesh_cfgsrv_proxy_status_off), rlen);
 	ATF_CHECK_EQ(0, memcmp(reply, bt_mesh_cfgsrv_proxy_status_off, rlen));
 
-	/* Friend Get -> Status 0x02, Not Supported by this node composition. */
+	/* Friend Get -> Status 0x00, Disabled (the node supports Friend). */
 	ATF_REQUIRE_EQ(0, mesh_cfg_empty_build(BT_MESH_CFGSRV_OP_FRIEND_GET, msg,
 	    &mlen));
 	rlen = deliver(nd, msg, mlen, reply, sizeof(reply));
-	ATF_REQUIRE_EQ(sizeof(bt_mesh_cfgsrv_friend_status_not_supported), rlen);
+	ATF_REQUIRE_EQ(sizeof(bt_mesh_cfgsrv_friend_status_disabled), rlen);
 	ATF_CHECK_EQ(0, memcmp(reply,
-	    bt_mesh_cfgsrv_friend_status_not_supported, rlen));
+	    bt_mesh_cfgsrv_friend_status_disabled, rlen));
 
 	/* Network Transmit Get (0x8023) -> Status (0x8025) value 0. */
 	ATF_REQUIRE_EQ(0, mesh_cfg_net_transmit_get_build(msg, &mlen));

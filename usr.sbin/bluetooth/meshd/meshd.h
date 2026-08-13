@@ -743,6 +743,17 @@ int	meshd_friend_enable(struct meshd_node *nd, uint8_t recv_window,
 	    uint8_t max_queue_size_log);
 
 /*
+ * Enable/disable the Friend and Low Power node roles with meshd's default
+ * parameters and wire them to the bearer-driven receive path and node tick.
+ * meshd_friend_role_enable also sets the Config Server Friend state.  The LPN
+ * originates its Friend Request on the first tick once a bearer is attached.
+ */
+int	meshd_friend_role_enable(struct meshd_node *nd);
+void	meshd_friend_role_disable(struct meshd_node *nd);
+int	meshd_lpn_role_enable(struct meshd_node *nd);
+void	meshd_lpn_role_disable(struct meshd_node *nd);
+
+/*
  * Feed a friendship control PDU (opcode octet + parameters) received from src
  * to the Friend engine, routing by opcode: Friend Request (binding src as the
  * LPN), Poll, Subscription List Add/Remove and Clear.  key_refresh/iv_update/

@@ -1095,15 +1095,15 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		    "Addresses=[0x%04x] SequenceNumber=%u",
 		    (nd->cfg.relay == 1) ? "true" : "false",
 		    (nd->cfg.gatt_proxy == 1) ? "true" : "false",
-		    (nd->cfg.friend == 2) ? "unsupported" :
-		    ((nd->cfg.friend == 1) ? "true" : "false"),
 		    /*
-		     * The Low Power role has a full FSM in libmesh but is not
-		     * wired to the production radio bearer, so it is honestly
-		     * disclosed as unsupported rather than a plain "false"
-		     * (finding 130), mirroring the Friend disclosure above.
+		     * Friend and Low Power roles are wired to the bearer
+		     * (meshd_bearer_rx routes friendship control PDUs to the
+		     * engines; the node tick drives them).  Report the live
+		     * enable state rather than the old "unsupported" disclosure.
 		     */
-		    "unsupported",
+		    (nd->friend_enabled || nd->cfg.friend == 1) ? "true" :
+		    "false",
+		    nd->lpn_enabled ? "true" : "false",
 		    nd->cfg.beacon ? "true" : "false",
 		    (nd->self != NULL &&
 		    nd->self->iv.state == MESH_IV_UPDATE_IN_PROGRESS) ?
@@ -1284,6 +1284,60 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		nd->provisioned = 0;
 		snprintf(reply, reply_max, "OK reset");
 		return (0);
+	}
+
+	/*
+	 * Friendship roles (MshPRT_v1.1 Section 3.6.5 / 3.6.6): "friend
+	 * [on|off|status]" toggles the Friend role and "low-power [on|off|status]"
+	 * the Low Power node role.  Enabling the LPN role arms the Friend Request,
+	 * which is originated on the next node tick over the bearer.
+	 */
+	if (strcmp(argv[0], "friend") == 0) {
+		if (argc == 1 || strcmp(argv[1], "status") == 0) {
+			snprintf(reply, reply_max, "OK friend %s",
+			    (nd->friend_enabled || nd->cfg.friend == 1) ?
+			    "on" : "off");
+			return (0);
+		}
+		if (argc == 2 && strcmp(argv[1], "on") == 0) {
+			if (meshd_friend_role_enable(nd) != 0) {
+				snprintf(reply, reply_max, "ERR friend enable");
+				return (-1);
+			}
+			snprintf(reply, reply_max, "OK friend on");
+			return (0);
+		}
+		if (argc == 2 && strcmp(argv[1], "off") == 0) {
+			meshd_friend_role_disable(nd);
+			snprintf(reply, reply_max, "OK friend off");
+			return (0);
+		}
+		snprintf(reply, reply_max, "ERR usage: friend [on|off|status]");
+		return (-1);
+	}
+
+	if (strcmp(argv[0], "low-power") == 0) {
+		if (argc == 1 || strcmp(argv[1], "status") == 0) {
+			snprintf(reply, reply_max, "OK low-power %s",
+			    nd->lpn_enabled ? "on" : "off");
+			return (0);
+		}
+		if (argc == 2 && strcmp(argv[1], "on") == 0) {
+			if (meshd_lpn_role_enable(nd) != 0) {
+				snprintf(reply, reply_max, "ERR low-power enable");
+				return (-1);
+			}
+			snprintf(reply, reply_max, "OK low-power on");
+			return (0);
+		}
+		if (argc == 2 && strcmp(argv[1], "off") == 0) {
+			meshd_lpn_role_disable(nd);
+			snprintf(reply, reply_max, "OK low-power off");
+			return (0);
+		}
+		snprintf(reply, reply_max,
+		    "ERR usage: low-power [on|off|status]");
+		return (-1);
 	}
 
 	/*

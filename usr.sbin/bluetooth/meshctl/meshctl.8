@@ -85,6 +85,13 @@ provisioning, recording the node and its DevKey.
 Self-provision this node without an over-the-air exchange.
 .It Cm key-refresh Ar sub-verb
 Operate Key Refresh on the primary subnet.
+.It Cm friend Oo Cm on | off | status Oc
+Toggle the Friend role: serve a neighbouring Low Power node by accepting its
+Friend Request, offering friendship, and delivering queued messages on each
+Friend Poll over the bearer.
+.It Cm low-power Oo Cm on | off | status Oc
+Toggle the Low Power node role: befriend a neighbouring Friend and poll it on a
+fixed cadence for messages.
 .It Cm reset
 Clear this node's provisioning.
 .El

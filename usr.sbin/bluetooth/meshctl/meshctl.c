@@ -150,6 +150,10 @@ static const struct verb verbs[] = {
 	    "poll / commit an in-flight OTA provisioning" },
 	{ "key-refresh",	"begin|advance|finish|status|network|network-status",
 	    "operate Key Refresh on the primary subnet" },
+	{ "friend",		"[on|off|status]",
+	    "toggle the Friend role (serve a Low Power node over the bearer)" },
+	{ "low-power",		"[on|off|status]",
+	    "toggle the Low Power node role (befriend a neighbouring Friend)" },
 	{ "reset",		"",
 	    "clear this node's provisioning" },
 	/* Config Client (cfg <sub-verb> <dst> ...). */

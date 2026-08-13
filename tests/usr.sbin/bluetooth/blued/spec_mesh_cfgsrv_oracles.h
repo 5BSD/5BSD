@@ -85,6 +85,10 @@ static const uint8_t bt_mesh_cfgsrv_proxy_status_off[] = {
 static const uint8_t bt_mesh_cfgsrv_friend_status_not_supported[] = {
 	0x80, 0x11, 0x02
 };
+/* 0x00 = Friend feature Disabled (the node supports Friend, it is just off). */
+static const uint8_t bt_mesh_cfgsrv_friend_status_disabled[] = {
+	0x80, 0x11, 0x00
+};
 static const uint8_t bt_mesh_cfgsrv_net_tx_status_zero[] = {
 	0x80, 0x25, 0x00
 };

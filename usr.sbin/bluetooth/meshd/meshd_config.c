@@ -180,9 +180,17 @@ meshd_config_parse_line(struct meshd_config *cfg, const char *line)
 	} else if (strcmp(key, "friend") == 0) {
 		if (parse_u32(val, &u) != 0 || u > 1)
 			return (-1);
-		if (u != 0)
-			return (-1);		/* production bearer has no Friend path */
-		cfg->features &= ~MESH_CFG_FEATURE_FRIEND;
+		if (u)
+			cfg->features |= MESH_CFG_FEATURE_FRIEND;
+		else
+			cfg->features &= ~MESH_CFG_FEATURE_FRIEND;
+	} else if (strcmp(key, "low_power") == 0) {
+		if (parse_u32(val, &u) != 0 || u > 1)
+			return (-1);
+		if (u)
+			cfg->features |= MESH_CFG_FEATURE_LOW_POWER;
+		else
+			cfg->features &= ~MESH_CFG_FEATURE_LOW_POWER;
 	} else if (strcmp(key, "blued_socket") == 0) {
 		if (strlcpy(cfg->blued_socket, val,
 		    sizeof(cfg->blued_socket)) >= sizeof(cfg->blued_socket))
