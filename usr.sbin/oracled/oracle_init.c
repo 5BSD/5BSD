@@ -99,6 +99,7 @@
 #include "oracled.h"
 #include "oracled_ctl.h"
 #include "oracle_init.h"
+#include "mac_capability_priv.h"
 
 #define	_PATH_INITLOG		"/var/log/init.log"
 #define	_PATH_RUNCOM		"/etc/rc"
@@ -1101,19 +1102,54 @@ static void
 oi_ctl_try_setup(void)
 {
 	struct kevent kev;
+	struct stat sb;
 
-	if (oi_ctl_up)
-		return;
+	/*
+	 * On a read-write root (ZFS root images) the early-boot bind
+	 * SUCCEEDS — and then rc.d/cleanvar wipes /var/run, unlinking the
+	 * socket path out from under the live listener.  A path check is
+	 * therefore mandatory on the post-convergence retry: a listener
+	 * whose filesystem name is gone is unreachable by every client
+	 * and equivalent to no socket at all (this was half of the
+	 * 2026-08-14 unshutdownable-guest wedge).  Tear it down and
+	 * rebind on the now-stable /var/run.
+	 */
+	if (oi_ctl_up) {
+		if (stat(od.cfg.control_socket, &sb) == 0) {
+			/*
+			 * Socket healthy (bound early, survived rc).  The
+			 * post-convergence call still owes the deferred
+			 * signal shield; apply_signal_shield is idempotent.
+			 */
+			if (oi_engine_up && apply_signal_shield() == -1)
+				warning("signal shield not raised; "
+				    "signal ABI stays open");
+			return;
+		}
+		warning("control socket path vanished (rc cleanup?); "
+		    "rebinding");
+		ctl_teardown();
+		oi_ctl_up = false;
+	}
 	/* control.c registers connection events on event_kq. */
 	event_kq = oi_kq;
 	if (ctl_setup() == -1) {
-		warning("oracle control socket unavailable (will retry)");
+		warning("oracle control socket unavailable (will retry): %m");
 		return;
 	}
 	oi_ctl_up = true;
 	EV_SET(&kev, ctl_fd(), EVFILT_READ, EV_ADD, 0, 0, NULL);
 	if (kevent(oi_kq, &kev, 1, NULL, 0, NULL) == -1)
 		warning("kevent control socket: %m");
+	/*
+	 * The signal ABI is now redundant: the control socket is the
+	 * authenticated lifecycle path, so the deferred CP_SF_SIGNAL
+	 * shield can go up.  Until this point shutdown(8)'s fallback
+	 * kill(1, SIGINT) must keep working, or a boot that never binds
+	 * the socket is unshutdownable.
+	 */
+	if (oi_engine_up && apply_signal_shield() == -1)
+		warning("signal shield not raised; signal ABI stays open");
 }
 
 static void
@@ -2036,6 +2072,7 @@ multi_user(void)
 {
 	static bool inmultiuser = false;
 	struct kevent kev;
+	struct timespec ctl_ts;
 	pid_t pid;
 	session_t *sp;
 	int nev;
@@ -2079,7 +2116,20 @@ multi_user(void)
 				collect_child(pid);
 			continue;
 		}
-		nev = kevent(oi_kq, NULL, 0, &kev, 1, NULL);
+		/*
+		 * Wake periodically to self-heal the control socket: the
+		 * one-shot post-convergence bind can fail (or the bound
+		 * path can be unlinked by rc) and a PID 1 with neither
+		 * socket nor retry is a lifecycle dead end.  The check is
+		 * one stat(2) every 30s when healthy.
+		 */
+		ctl_ts.tv_sec = 30;
+		ctl_ts.tv_nsec = 0;
+		nev = kevent(oi_kq, NULL, 0, &kev, 1, &ctl_ts);
+		if (nev == 0) {
+			oi_ctl_try_setup();
+			continue;
+		}
 		if (nev == -1) {
 			if (errno == EINTR) {
 				/* A transition signal or SIGALRM. */

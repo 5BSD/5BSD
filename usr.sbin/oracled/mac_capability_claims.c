@@ -393,17 +393,27 @@ apply_integrity(void)
 	flags = od.cfg.integrity_flags | ORACLED_REQUIRED_INTEGRITY_FLAGS;
 
 	/*
-	 * The full signal shield applies even when Oracle is PID 1.
-	 * shutdown(8)/reboot(8)/halt(8) no longer signal init; they use
-	 * the authenticated control socket (CTL_OP_REBOOT etc., see
-	 * docs/oracle-control-abi-design.md), so nothing needs the signal
-	 * ABI.  Kernel-internal signals are unaffected by the shield
-	 * (the MAC proc_check_signal hook fires only on the kill(2) user
-	 * path), so SIGCHLD reaping, SIGALRM timeouts, and oracled's own
-	 * pdkill authority over serviced continue to work.  The init
-	 * signal handlers remain installed only for the early-boot window
-	 * before this shield is applied and the control socket exists.
+	 * When Oracle is PID 1 the CP_SF_SIGNAL shield is DEFERRED until
+	 * the lifecycle control socket is actually listening (see
+	 * apply_signal_shield(), called from oi_ctl_try_setup()).
+	 * shutdown(8)/reboot(8)/halt(8) prefer the authenticated control
+	 * socket (CTL_OP_REBOOT etc., see docs/oracle-control-abi-design.md)
+	 * and fall back to the signal ABI when the socket is absent.  If the
+	 * signal shield goes up before the socket exists — e.g. a boot where
+	 * serviced fails to converge and PID 1 drops to recovery — the
+	 * fallback kill(1, SIGINT) is silently denied and the machine
+	 * becomes unshutdownable (observed as a hard wedge after
+	 * shutdown(8)'s wall message, 2026-08-14).  Shield-without-socket
+	 * must therefore never occur: signal protection is raised only
+	 * once the socket replacement for the signal ABI is reachable.
+	 * The KILL/CONT shields and all other integrity flags still apply
+	 * from engine start.  Kernel-internal signals are unaffected by
+	 * the shield either way (the MAC proc_check_signal hook fires only
+	 * on the kill(2) user path), so SIGCHLD reaping, SIGALRM timeouts,
+	 * and oracled's own pdkill authority over serviced always work.
 	 */
+	if (getpid() == 1)
+		flags &= ~CP_SF_SIGNAL;
 	od.cfg.integrity_flags = flags;
 
 	memset(&req, 0, sizeof(req));
@@ -419,6 +429,44 @@ apply_integrity(void)
 	mac_capability_capprotect_fd = cp_fd;
 	ORACLED_PROBE_INTEGRITY(flags);
 	log_integrity_flags(flags);
+	return (0);
+}
+
+/*
+ * Raise the deferred CP_SF_SIGNAL shield once the control socket is
+ * listening.  The kernel's shield table refcounts flags per nonce, so a
+ * second capprotect connection adding CP_SF_SIGNAL composes with the
+ * shield applied at engine start; the connection is kept open for the
+ * lifetime of PID 1 so the flag never drops.  Idempotent.
+ */
+int
+apply_signal_shield(void)
+{
+	static int signal_shield_fd = -1;
+	struct cp_request req;
+	int cp_fd;
+
+	if (signal_shield_fd != -1 ||
+	    (od.cfg.integrity_flags & CP_SF_SIGNAL) != 0)
+		return (0);
+
+	cp_fd = mac_capability_svc_connect("capprotect");
+	if (cp_fd == -1)
+		return (-1);
+
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_SHIELD;
+	req.flags = CP_SF_SIGNAL;
+	if (mac_capability_do_call(cp_fd, &req, sizeof(req), NULL, 0) == -1) {
+		syslog(LOG_ERR, "capprotect signal shield: %m");
+		close(cp_fd);
+		return (-1);
+	}
+
+	signal_shield_fd = cp_fd;
+	od.cfg.integrity_flags |= CP_SF_SIGNAL;
+	ORACLED_PROBE_INTEGRITY(od.cfg.integrity_flags);
+	log_integrity_flags(od.cfg.integrity_flags);
 	return (0);
 }
 

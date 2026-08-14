@@ -475,11 +475,26 @@ die_you_gravy_sucking_pig_dog(void)
 			BOOTTRACE("lifecycle op %u to oracle-init...", op);
 		} else {
 			BOOTTRACE("signal to init(8)...");
-			(void)kill(1, doreboot ? SIGINT :	/* reboot */
+			if (kill(1, doreboot ? SIGINT :		/* reboot */
 				      dohalt ? SIGUSR1 :	/* halt */
 				      dopower ? SIGUSR2 :	/* power-down */
 				      docycle ? SIGWINCH :	/* power-cycle */
-				      SIGTERM);			/* single-user */
+				      SIGTERM) == -1) {		/* single-user */
+				/*
+				 * Both lifecycle paths failed: the control
+				 * socket is absent AND init is signal-
+				 * shielded.  Exiting quietly here leaves the
+				 * operator believing shutdown is underway
+				 * when nothing will happen.
+				 */
+				syslog(LOG_ERR, "shutdown: control socket "
+				    "unavailable and signal to init "
+				    "refused: %m");
+				errx(1, "cannot reach init: control socket "
+				    "unavailable and kill(1) refused "
+				    "(errno %d); system is NOT shutting "
+				    "down", errno);
+			}
 		}
 	} else {
 		if (doreboot) {

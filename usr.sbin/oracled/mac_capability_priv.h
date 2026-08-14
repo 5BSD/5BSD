@@ -37,6 +37,7 @@ int	mac_capability_do_call_fds(int fd, const void *req, size_t reqlen,
 /* Claims lifecycle (mac_capability_claims.c), called from mac_capability_setup.c. */
 int	isolate_resources(void);
 int	apply_integrity(void);
+int	apply_signal_shield(void);
 int	claim_system_gates(void);
 
 /* Claim/release primitives (mac_capability_claims.c). */

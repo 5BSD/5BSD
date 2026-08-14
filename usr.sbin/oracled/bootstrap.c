@@ -27,6 +27,7 @@
 #include <unistd.h>
 
 #include "oracled.h"
+#include "oracled_ctl.h"
 #include "oracled_svc_proto.h"
 #include "probes.h"
 
@@ -286,6 +287,16 @@ bootstrap_start(int kq)
 		    od.cfg.service_manager);
 		return (-1);
 	}
+
+	/*
+	 * A persistent root (ZFS) carries the previous boot's convergence
+	 * marker across reboot.  If it survives here, oi_await_convergence
+	 * returns instantly and the post-convergence control-socket retry
+	 * runs before /etc/rc has prepared /var — one of the two legs of
+	 * the 2026-08-14 no-control-socket boots.  Convergence must be
+	 * proven by *this* serviced instance.
+	 */
+	(void)unlink(SERVICED_READY_PATH);
 
 	/* Create channel. */
 	if (mac_capability_create_channel(&oracle_end, &child_end) == -1) {
