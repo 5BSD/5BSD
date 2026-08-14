@@ -1094,7 +1094,8 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		return (-1);
 	}
 	expected_tokens = m->ncap_paths + m->ncap_files + m->ncap_net +
-	    m->ncap_jail + m->ncap_vsock + (m->cap_system != 0 ? 1u : 0u);
+	    m->ncap_jail + m->ncap_vsock + m->ncap_storage +
+	    (m->cap_system != 0 ? 1u : 0u);
 	if (expected_tokens > SVC_MAX_TOKENS) {
 		syslog(LOG_ERR, "svc_exec %s: too many capability tokens: %u",
 		    m->label, expected_tokens);
@@ -1359,6 +1360,19 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		token_fds[ntokens++] = tfd;
 		minted_manifest.cap_vsock[minted_manifest.ncap_vsock++] =
 		    m->cap_vsock[i];
+		MINT_CHECK_DEADLINE();
+	}
+	for (i = 0; i < m->ncap_storage; i++) {
+		int tfd = oracle_mint_storage(sd.oracle_channel_fd,
+		    &m->cap_storage[i]);
+		if (tfd == -1) {
+			SERVICED_PROBE_CAP_MINT(m->label, "storage", -1);
+			goto fail_tokens;
+		}
+		SERVICED_PROBE_CAP_MINT(m->label, "storage", 0);
+		token_fds[ntokens++] = tfd;
+		minted_manifest.cap_storage[minted_manifest.ncap_storage++] =
+		    m->cap_storage[i];
 		MINT_CHECK_DEADLINE();
 	}
 	if (m->cap_system != 0) {
