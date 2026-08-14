@@ -187,13 +187,20 @@ semantics.
 
 | Verb | Right | Notes |
 |------|-------|-------|
-| `ZFD_GET_PROPS` / `ZFD_STAT` / `ZFD_LIST_CHILDREN` / `ZFD_LIST_SNAPS` | `PROPS_READ` | STAT is the cheap fixed-size subset for monitors |
+| `ZFD_GET_PROPS` / `ZFD_STAT` | `PROPS_READ` | STAT is the cheap fixed-size subset for monitors |
+| `ZFD_GET_ONE_PROP(name)` | `PROPS_READ` | single property; native props resolve even at default value |
+| `ZFD_LIST_CHILDREN` / `ZFD_LIST_SNAPS` | `PROPS_READ` | packed name-set nvlist; LIST_CHILDREN needs a subtree handle; kernel iterates so no userland cursor |
 | `ZFD_SET_PROP(name, val)` | `PROPS_WRITE` | honors per-prop allowlist |
+| `ZFD_INHERIT(name)` | `PROPS_WRITE` | clear a property to inherited/received source |
 | `ZFD_SNAPSHOT(name)` | `SNAPSHOT` | atomic across a subtree handle (one txg, as `zfs snapshot -r`) |
 | `ZFD_SNAP_DESTROY(name)` | `SNAP_DESTROY` | |
 | `ZFD_ROLLBACK(snap)` | `ROLLBACK` | |
+| `ZFD_PROMOTE` | `CREATE` | promote a clone above its origin |
 | `ZFD_HOLD(snap, tag)` / `ZFD_RELEASE` | `HOLD` | pins snapshots against concurrent pruners mid-send |
-| `ZFD_SEND(snap, from_snap, out_fd, flags)` | `SEND` | stream to a plain fd (pipe/socket/vsock); fd checked via access-aware `zfs_file_get` |
+| `ZFD_HOLDS` | `PROPS_READ` | enumerate a snapshot's user holds |
+| `ZFD_BOOKMARK(snap, book)` / `ZFD_DESTROY_BOOKMARK` | `SNAPSHOT` / `SNAP_DESTROY` | persistent incremental-send anchors |
+| `ZFD_LIST_BOOKMARKS` | `PROPS_READ` | packed name-set of full `fs#name` bookmarks |
+| `ZFD_SEND(snap, from_snap, out_fd, flags)` | `SEND` | stream to a plain fd (pipe/socket/vsock); fd checked via access-aware `zfs_file_get`. `flags` includes send-once (see below) |
 | `ZFD_RECV(in_fd, reltarget, flags)` | `RECV` | target relative to handle, never absolute |
 | `ZFD_CREATE(relname, props)` | `CREATE` | returns new zfd for the child |
 | `ZFD_DESTROY(relname)` | `DESTROY` | |
@@ -201,6 +208,17 @@ semantics.
 | `ZFD_CLONE(origin_fd, relname)` | `CREATE` here, `CLONE_SRC` on origin | the deliberately two-handle verb: called on the destination parent, origin passed as an fd. "CI can clone the template into its workspace and nowhere else" falls out of the rights with no policy code |
 | `ZFD_MOUNT(flags)` / `ZFD_UNMOUNT` | `MOUNT` | returns a **dirfd of an anonymous mount** — see §5.3 |
 | `ZFD_BLKOPEN(flags)` | `MOUNT` | zvol handles: returns a block-device fd |
+| `ZFD_WAIT(activity)` | implicit | block until background activity (deleteq) drains |
+
+**Send-once (`ZFD_SEND` flags).** A survey of the send path confirmed the
+kernel never closes the caller's output fd — it drops only its own
+`zfs_file_get` reference — so "close after send" was only ever a userland
+convention. The send-once semantics therefore govern the SEND *right on
+the handle*, enforced in kernel handle state so they survive SCM_RIGHTS:
+`ZFD_SEND_ONCE` makes the handle refuse further sends after one stream
+(`EALREADY`); `ZFD_SEND_CONSUME` additionally invalidates the handle
+(`ENXIO`). This gives serviced/tzfsd an unforgeable "one backup stream,
+then spent" grant. The output fd's lifetime remains the caller's business.
 
 Events: kqueue on the handle. v1 fires `INVALIDATED` (EVFILT_READ-style
 readiness); richer notes (`SNAP_CREATED`, `CHILD_CREATED`, `PROP_CHANGED`,
@@ -210,7 +228,20 @@ code (§8).
 ### 4.4 Pool handle verbs
 
 `ZPD_STAT`, `ZPD_GET_PROPS`/`ZPD_SET_PROP` (allowlist), `ZPD_SCRUB`,
-`ZPD_ROOT_OPEN(rights)`, kqueue events per §3.3.
+`ZPD_ROOT_OPEN(rights)`, `ZPD_WAIT(activity)`, kqueue events per §3.3.
+
+### 4.5 Coverage against zfs(8)/zpool(8)
+
+The handle verb set was checked against a full inventory of every
+`zfs`/`zpool` subcommand.  Deliberately **out of scope** (they reshape
+the pool or re-create the ambient policy the handle replaces):
+`zpool import/export/upgrade/add/remove/attach/detach/replace/split/
+online/offline/create/destroy/labelclear/checkpoint/reguid`,
+`zfs allow`/`unallow` (the handle *is* the delegation), and
+`zfs jail`/`unjail`/`zone` (replaced by passing handles into jails).
+Not yet implemented but in-scope for a later batch: encryption keys
+(`load-key`/`unload-key`/`change-key`, wants a dedicated `ZH_KEY`
+right), `zfs diff`, and the `userspace`/`groupspace` accounting family.
 
 ## 5. Implementation (code-grounded)
 
@@ -342,6 +373,71 @@ storage exclusively through granted dirfds; the global namespace becomes a
 compatibility view rather than the security boundary — the same
 trajectory as the rest of the Oracle work.
 
+## 6a. Storage integration: the `[TZFS]` grant path (design, not yet built)
+
+The flagship consumer is the service manager granting storage the same
+way it grants every other capability.  Grounded in a survey of the
+serviced manifest and mint machinery, the design is:
+
+**Naming.** Every system daemon carries a distinguishable bracket tag so
+`ps`/`procstat`/capability inspectors can tell them apart: `[ORACLE]`
+(oracled / oracle-init), `[SERVICE]` (serviced), `[TZFS]` (the storage
+grant broker, `tzfsd`).  One tag each.
+
+**Manifest stanza (UCL, matches the existing `capabilities {}` style).**
+A service declares storage the way it declares `files`/`network`:
+```ucl
+capabilities {
+    storage = [{
+        dataset  = "tank/svc/mydata";
+        rights   = ["mount", "snapshot", "props_read"];
+        lifetime = "persistent";   # or "ephemeral"
+    }];
+}
+```
+Parsed by `lib/libcapbundle/libcapbundle_parse.c` (add `storage` to the
+`capkeys[]` allow-list + a `storagekeys[]`/`parse_storage_rights()`
+mirror of `parse_file_actions`), landing in a POD `serviced_storage_claim`
+(`cap_storage[N]`/`ncap_storage`) in `serviced_manifest.h` — embedded
+`[N][NAME_MAX]`-style so `svc_manifest` stays memcpy-safe like the other
+claim arrays.
+
+**Grant delivery (push at exec, like every other token).** serviced mints
+one handle per storage claim over its oracle channel
+(`ORACLE_OP_MINT_STORAGE`, new in `oracled_svc_proto.h`; `handle_mint_
+storage()` in oracled calling `ZFS_IOC_DATASET_OPEN`), remaps the handle
+fd into the child's `SVC_TOKEN_BASE` range, and describes it in the
+existing `struct service_bootstrap` (`token_fds[]` already generic — no
+transport ABI break).  `persistent` datasets are materialized once and
+kept; `ephemeral` ones are cloned/created at start and destroyed at stop
+(the handle's `DESTROY`/`SNAP_DESTROY` rights make teardown self-service).
+
+**Who owns it.** Two viable shapes, both compatible with the manifest
+above: (a) serviced holds the subtree handle on `tank/svc` and derives
+per-service handles directly — least new machinery; or (b) a dedicated
+`tzfsd` broker in the capability bundle holds `tank/svc`, and serviced (or
+the service) asks it — decouples storage authority from the service
+manager and gives storage its own `[TZFS]` audit identity.  Recommended:
+design the config schema so (a) can become (b) without a manifest change.
+
+**Getting storage before the capability world is up.** The one net-new
+protocol piece: a `SVC_OP_STORAGE_REQUEST` on the service↔serviced
+channel (`serviced_svc_proto.h`, modeled on the existing
+`SVC_OP_WORKER_CHANNEL` reply-with-fds path), so a service that needs
+storage it did not statically declare can obtain a handle at runtime as
+`reply_fds[0]`.  This is what lets a service acquire a dataset handle
+before — or independent of — its full capability grant being installed.
+
+**Files this touches** (from the survey, for when it is built):
+`lib/libcapbundle/{libcapbundle_parse.c,libcapbundle.c,
+libcapbundle_internal.h}`, `lib/libcapbundle/serviced_manifest.h`,
+`lib/liboraclert/{oraclert.h,oracled_svc_proto.h,serviced_svc_proto.h}`,
+`usr.sbin/serviced/{oracle_client.c,execute.c,svc_proto.c}`,
+`usr.sbin/oracled/{oracle_proto.c,mac_capability_mint.c}`, and
+optionally a new `usr.sbin/tzfsd/` + its `.cap` bundle.  Send-once
+(`ZFD_SEND_ONCE`) is the natural grant shape for a backup service's
+stanza.
+
 ## 7. Observability
 
 House pattern per `mac_capability`: SDT providers + canned D scripts in
@@ -439,11 +535,21 @@ rollback needs Phase 1 + the `bootfs` sliver.
 
 ## 9a. Implementation status (2026-08-14)
 
-**All four phases are implemented and validated in the bhyve guest**:
-Phase 1 12/12, Phase 2 5/5, Phase 3 anonymous mounts 4/4, Phase 4 pool
-handles 5/5, security model (capsicum asymmetry, per-fd ioctl
-allowlists, SCM_RIGHTS delegation with narrowing, dup/fork semantics)
-4/4, all 7 SDT probes live.  Two latent VFS contract details were found
+**All four phases plus the extended verb set are implemented, committed,
+and validated in the bhyve guest** — a full ATF sweep across all eight
+suites passes 36/36 on the shipping module.  Committed on `dev`:
+
+- `08539165` — phases 1-4 (handles, library, tests, DTrace, procstat).
+- `f81f9f05` — extended verbs: enumeration (children/snaps/holds/
+  bookmarks), single-property get, inherit, promote, bookmarks, wait,
+  and send-once (`ZFD_SEND_ONCE`/`_CONSUME`).  Suite: 6/6.
+- `05f99b2a` — the oracled boot-health / shutdown-wedge fix this work
+  surfaced (deferred signal shield, control-socket rebind, stale
+  serviced.ready unlink, 30s self-heal, loud shutdown(8) failure).
+
+Per-suite: rights 4, derive 4, pin 4, phase2 5, mount 4, pool 5,
+security 4, verbs 6 = 36/36.  All 7 SDT probes live.  Two latent VFS
+contract details were found
 by the Phase 3 tests and are load-bearing knowledge for anyone touching
 mounts: `vfs_mount_alloc()` returns the mount BOTH busied (mnt_lockref)
 and in vfs_ops mode (mnt_vfs_ops == 1); a mounter must release both
