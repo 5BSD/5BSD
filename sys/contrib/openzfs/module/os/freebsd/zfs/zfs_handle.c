@@ -57,6 +57,7 @@
 #include <sys/dsl_pool.h>
 #include <sys/dsl_prop.h>
 #include <sys/dsl_scan.h>
+#include <sys/dsl_userhold.h>
 #include <sys/freebsd_event.h>
 #include <sys/metaslab.h>
 #include <sys/fs/zfs.h>
@@ -67,6 +68,7 @@
 #include <sys/zvol.h>
 
 #include "zfs_namecheck.h"
+#include "zfs_prop.h"
 
 SDT_PROVIDER_DEFINE(trustedzfs);
 SDT_PROBE_DEFINE3(trustedzfs, , , mint,
@@ -98,6 +100,7 @@ typedef struct zfshandle {
 	uint64_t	zh_rights;
 	uint32_t	zh_flags;
 	boolean_t	zh_invalid;
+	boolean_t	zh_send_spent;		/* ZFD_SEND_ONCE consumed */
 	kmutex_t	zh_lock;		/* struct sx underneath */
 	struct selinfo	zh_sel;
 	struct mount	*zh_anon_mp;		/* anonymous mount anchor */
@@ -1275,6 +1278,15 @@ zfshandle_op_send(zfshandle_t *zh, struct zfd_send_args *args)
 
 	args->zs_snapname[sizeof (args->zs_snapname) - 1] = '\0';
 	args->zs_fromsnap[sizeof (args->zs_fromsnap) - 1] = '\0';
+
+	/* A spent send-once handle refuses further sends. */
+	mutex_enter(&zh->zh_lock);
+	if (zh->zh_send_spent) {
+		mutex_exit(&zh->zh_lock);
+		return (SET_ERROR(EALREADY));
+	}
+	mutex_exit(&zh->zh_lock);
+
 	error = zfshandle_snapref(zh, args->zs_snapname, full,
 	    sizeof (full));
 	if (error != 0)
@@ -1306,6 +1318,24 @@ zfshandle_op_send(zfshandle_t *zh, struct zfd_send_args *args)
 
 	error = zfshandle_ioc(ZFS_IOC_SEND_NEW, full, NULL, 0, innvl, NULL);
 	nvlist_free(innvl);
+
+	/*
+	 * Apply send-once policy only on a stream that actually started.
+	 * ONCE marks the SEND right spent (further sends -> EALREADY);
+	 * ONCE|CONSUME additionally invalidates the whole handle.  The
+	 * output fd is never touched here — the kernel send path releases
+	 * only its own reference (see the survey in commit log / design
+	 * doc), so the caller still owns and must close its fd.
+	 */
+	if (error == 0 && (args->zs_flags & ZFD_SEND_ONCE) != 0) {
+		if ((args->zs_flags & ZFD_SEND_CONSUME) != 0) {
+			zfshandle_invalidate(zh, ZH_INVAL_DESTROYED);
+		} else {
+			mutex_enter(&zh->zh_lock);
+			zh->zh_send_spent = B_TRUE;
+			mutex_exit(&zh->zh_lock);
+		}
+	}
 	return (error);
 }
 
@@ -1386,6 +1416,348 @@ zfshandle_op_hold(zfshandle_t *zh, struct zfd_hold_args *args,
 		    NULL);
 	}
 	nvlist_free(innvl);
+	return (error);
+}
+
+/* Pack an nvlist into the caller's GET_PROPS-style buffer and free it. */
+static int
+zfshandle_nvl_copyout(nvlist_t *nv, struct zfd_get_props_args *args)
+{
+	char *packed;
+	size_t size;
+	int error;
+
+	packed = fnvlist_pack(nv, &size);
+	nvlist_free(nv);
+	args->zgp_size = size;
+	if (args->zgp_buflen < size)
+		error = SET_ERROR(ENOMEM);
+	else
+		error = copyout(packed, (void *)(uintptr_t)args->zgp_buf,
+		    size);
+	fnvlist_pack_free(packed, size);
+	return (error);
+}
+
+/*
+ * Enumerate children (want_snaps == B_FALSE) or snapshots (B_TRUE) of the
+ * handle's dataset into a name-set nvlist.  The kernel walks the whole set
+ * so userland needs no cursor; each key is the full child/snapshot name.
+ */
+static int
+zfshandle_op_list(zfshandle_t *zh, struct zfd_get_props_args *args,
+    boolean_t want_snaps)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	char child[ZFS_MAX_DATASET_NAME_LEN];
+	char full[ZFS_MAX_DATASET_NAME_LEN];
+	objset_t *os;
+	nvlist_t *nv;
+	uint64_t cookie, id;
+	int error, len;
+
+	error = zfshandle_resolve_name(zh, name, sizeof (name));
+	if (error != 0)
+		return (error);
+	error = dmu_objset_hold(name, FTAG, &os);
+	if (error != 0)
+		return (error);
+
+	nv = fnvlist_alloc();
+	cookie = 0;
+	for (;;) {
+		if (want_snaps)
+			error = dmu_snapshot_list_next(os,
+			    sizeof (child), child, &id, &cookie, NULL);
+		else
+			error = dmu_dir_list_next(os,
+			    sizeof (child), child, &id, &cookie);
+		if (error == ENOENT) {
+			error = 0;
+			break;
+		}
+		if (error != 0)
+			break;
+		len = snprintf(full, sizeof (full), "%s%c%s", name,
+		    want_snaps ? '@' : '/', child);
+		if (len < (int)sizeof (full))
+			fnvlist_add_boolean(nv, full);
+	}
+	dmu_objset_rele(os, FTAG);
+	if (error != 0) {
+		nvlist_free(nv);
+		return (error);
+	}
+	return (zfshandle_nvl_copyout(nv, args));
+}
+
+static int
+zfshandle_op_get_one_prop(zfshandle_t *zh, struct zfd_get_one_prop_args *args)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	char setpoint[ZFS_MAX_DATASET_NAME_LEN];
+	zfs_prop_t prop;
+	int error;
+
+	args->zgo_name[sizeof (args->zgo_name) - 1] = '\0';
+	if (args->zgo_name[0] == '\0')
+		return (SET_ERROR(EINVAL));
+	error = zfshandle_resolve_name(zh, name, sizeof (name));
+	if (error != 0)
+		return (error);
+
+	prop = zfs_name_to_prop(args->zgo_name);
+	if (prop == ZPROP_USERPROP) {
+		/*
+		 * User property (or unknown): these exist only when set, so
+		 * the get-all nvlist is authoritative.
+		 */
+		objset_t *os;
+		nvlist_t *nv, *propval;
+		const char *strval;
+		dsl_pool_t *dp;
+		dsl_dataset_t *ds;
+
+		error = zfshandle_hold(zh, FTAG, &dp, &ds);
+		if (error != 0)
+			return (error);
+		error = dmu_objset_from_ds(ds, &os);
+		if (error == 0)
+			error = dsl_prop_get_all(os, &nv);
+		zfshandle_rele(dp, ds, FTAG);
+		if (error != 0)
+			return (error);
+		if (nvlist_lookup_nvlist(nv, args->zgo_name, &propval) != 0 ||
+		    nvlist_lookup_string(propval, ZPROP_VALUE, &strval) != 0) {
+			nvlist_free(nv);
+			return (SET_ERROR(ENOENT));
+		}
+		(void) strlcpy(args->zgo_strval, strval,
+		    sizeof (args->zgo_strval));
+		args->zgo_is_string = 1;
+		args->zgo_source = ZPROP_SRC_LOCAL;
+		nvlist_free(nv);
+		return (0);
+	}
+
+	/* Native property: resolves even at its default value. */
+	setpoint[0] = '\0';
+	if (zfs_prop_get_type(prop) == PROP_TYPE_STRING) {
+		error = dsl_prop_get(name, args->zgo_name, 1,
+		    sizeof (args->zgo_strval), args->zgo_strval, setpoint);
+		if (error != 0)
+			return (error);
+		args->zgo_is_string = 1;
+	} else {
+		error = dsl_prop_get_integer(name, args->zgo_name,
+		    &args->zgo_intval, setpoint);
+		if (error != 0)
+			return (error);
+		args->zgo_is_string = 0;
+	}
+	args->zgo_source = setpoint[0] == '\0' ? ZPROP_SRC_DEFAULT :
+	    (strcmp(setpoint, name) == 0 ? ZPROP_SRC_LOCAL :
+	    ZPROP_SRC_INHERITED);
+	return (0);
+}
+
+static int
+zfshandle_op_holds(zfshandle_t *zh, struct zfd_get_props_args *args)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	nvlist_t *nv;
+	int error;
+
+	error = zfshandle_resolve_name(zh, name, sizeof (name));
+	if (error != 0)
+		return (error);
+	if (strchr(name, '@') == NULL)
+		return (SET_ERROR(EINVAL));	/* holds are on snapshots */
+	nv = fnvlist_alloc();
+	error = dsl_dataset_get_holds(name, nv);
+	if (error != 0) {
+		nvlist_free(nv);
+		return (error);
+	}
+	return (zfshandle_nvl_copyout(nv, args));
+}
+
+static int
+zfshandle_op_inherit(zfshandle_t *zh, struct zfd_inherit_args *args)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	int error;
+
+	args->zin_name[sizeof (args->zin_name) - 1] = '\0';
+	if (args->zin_name[0] == '\0')
+		return (SET_ERROR(EINVAL));
+	error = zfshandle_resolve_name(zh, name, sizeof (name));
+	if (error != 0)
+		return (error);
+	return (dsl_prop_inherit(name, args->zin_name,
+	    args->zin_received ? ZPROP_SRC_NONE : ZPROP_SRC_INHERITED));
+}
+
+static int
+zfshandle_op_promote(zfshandle_t *zh)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	char conflict[ZFS_MAX_DATASET_NAME_LEN];
+	int error;
+
+	error = zfshandle_resolve_name(zh, name, sizeof (name));
+	if (error != 0)
+		return (error);
+	conflict[0] = '\0';
+	return (dsl_dataset_promote(name, conflict));
+}
+
+/* Compose "<fs>#<bookmark>" from a bookmark component. */
+static int
+zfshandle_bookname(const char *fsname, const char *component, char *buf,
+    size_t buflen)
+{
+	if (component[0] == '\0' ||
+	    zfs_component_namecheck(component, NULL, NULL) != 0)
+		return (SET_ERROR(EINVAL));
+	if (snprintf(buf, buflen, "%s#%s", fsname, component) >= (int)buflen)
+		return (SET_ERROR(ENAMETOOLONG));
+	return (0);
+}
+
+static int
+zfshandle_op_bookmark(zfshandle_t *zh, struct zfd_bookmark_args *args)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	char snap[ZFS_MAX_DATASET_NAME_LEN];
+	char book[ZFS_MAX_DATASET_NAME_LEN];
+	char pool[ZFS_MAX_DATASET_NAME_LEN];
+	nvlist_t *innvl;
+	char *slash;
+	int error;
+
+	args->zbm_snapname[sizeof (args->zbm_snapname) - 1] = '\0';
+	args->zbm_bookname[sizeof (args->zbm_bookname) - 1] = '\0';
+	error = zfshandle_snapref(zh, args->zbm_snapname, snap,
+	    sizeof (snap));
+	if (error != 0)
+		return (error);
+	/* The bookmark lives on the snapshot's filesystem. */
+	(void) strlcpy(name, snap, sizeof (name));
+	*strchr(name, '@') = '\0';
+	error = zfshandle_bookname(name, args->zbm_bookname, book,
+	    sizeof (book));
+	if (error != 0)
+		return (error);
+	(void) strlcpy(pool, name, sizeof (pool));
+	if ((slash = strchr(pool, '/')) != NULL)
+		*slash = '\0';
+
+	innvl = fnvlist_alloc();
+	fnvlist_add_string(innvl, book, snap);
+	error = zfshandle_ioc(ZFS_IOC_BOOKMARK, pool, NULL, 0, innvl, NULL);
+	nvlist_free(innvl);
+	return (error);
+}
+
+static int
+zfshandle_op_list_bookmarks(zfshandle_t *zh, struct zfd_get_props_args *args)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	char full[ZFS_MAX_DATASET_NAME_LEN];
+	nvlist_t *innvl, *raw = NULL, *out;
+	nvpair_t *elem;
+	int error, len;
+
+	error = zfshandle_resolve_name(zh, name, sizeof (name));
+	if (error != 0)
+		return (error);
+	if (strchr(name, '@') != NULL)
+		return (SET_ERROR(EINVAL));
+	innvl = fnvlist_alloc();		/* no props requested: names only */
+	error = zfshandle_ioc(ZFS_IOC_GET_BOOKMARKS, name, NULL, 0, innvl,
+	    &raw);
+	nvlist_free(innvl);
+	if (error != 0)
+		return (error);
+
+	/*
+	 * The ioctl keys results by short bookmark name; rewrite to full
+	 * "fs#bookmark" names to match ZFD_LIST_SNAPS / ZFD_LIST_CHILDREN.
+	 */
+	out = fnvlist_alloc();
+	if (raw != NULL) {
+		for (elem = nvlist_next_nvpair(raw, NULL); elem != NULL;
+		    elem = nvlist_next_nvpair(raw, elem)) {
+			len = snprintf(full, sizeof (full), "%s#%s", name,
+			    nvpair_name(elem));
+			if (len < (int)sizeof (full))
+				fnvlist_add_boolean(out, full);
+		}
+		nvlist_free(raw);
+	}
+	return (zfshandle_nvl_copyout(out, args));
+}
+
+static int
+zfshandle_op_destroy_bookmark(zfshandle_t *zh, struct zfd_bookmark_args *args)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	char book[ZFS_MAX_DATASET_NAME_LEN];
+	char pool[ZFS_MAX_DATASET_NAME_LEN];
+	nvlist_t *innvl;
+	char *slash;
+	int error;
+
+	args->zbm_bookname[sizeof (args->zbm_bookname) - 1] = '\0';
+	error = zfshandle_resolve_name(zh, name, sizeof (name));
+	if (error != 0)
+		return (error);
+	if (strchr(name, '@') != NULL)
+		return (SET_ERROR(EINVAL));
+	error = zfshandle_bookname(name, args->zbm_bookname, book,
+	    sizeof (book));
+	if (error != 0)
+		return (error);
+	(void) strlcpy(pool, name, sizeof (pool));
+	if ((slash = strchr(pool, '/')) != NULL)
+		*slash = '\0';
+
+	innvl = fnvlist_alloc();
+	fnvlist_add_boolean(innvl, book);
+	error = zfshandle_ioc(ZFS_IOC_DESTROY_BOOKMARKS, pool, NULL, 0,
+	    innvl, NULL);
+	nvlist_free(innvl);
+	return (error);
+}
+
+static int
+zfshandle_op_wait(zfshandle_t *zh, struct zfd_wait_args *args,
+    boolean_t pool_scope)
+{
+	char name[ZFS_MAX_DATASET_NAME_LEN];
+	nvlist_t *innvl, *outnvl = NULL;
+	int error;
+
+	if (pool_scope)
+		error = zfshandle_pool_name(zh, name, sizeof (name));
+	else
+		error = zfshandle_resolve_name(zh, name, sizeof (name));
+	if (error != 0)
+		return (error);
+
+	innvl = fnvlist_alloc();
+	fnvlist_add_int32(innvl, pool_scope ? ZPOOL_WAIT_ACTIVITY :
+	    ZFS_WAIT_ACTIVITY, (int32_t)args->zw_activity);
+	error = zfshandle_ioc(pool_scope ? ZFS_IOC_WAIT : ZFS_IOC_WAIT_FS,
+	    name, NULL, 0, innvl, &outnvl);
+	nvlist_free(innvl);
+	if (error == 0) {
+		args->zw_waited = (outnvl != NULL &&
+		    nvlist_exists(outnvl, pool_scope ? ZPOOL_WAIT_WAITED :
+		    ZFS_WAIT_WAITED)) ? 1 : 0;
+	}
+	nvlist_free(outnvl);
 	return (error);
 }
 
@@ -1700,6 +2072,7 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 		case ZPD_SET_PROP:
 		case ZPD_SCRUB:
 		case ZPD_ROOT_OPEN:
+		case ZPD_WAIT:
 			break;
 		default:
 			SDT_PROBE3(trustedzfs, , , op__return,
@@ -1713,6 +2086,7 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 		case ZPD_SET_PROP:
 		case ZPD_SCRUB:
 		case ZPD_ROOT_OPEN:
+		case ZPD_WAIT:
 			SDT_PROBE3(trustedzfs, , , op__return,
 			    zh->zh_ds_guid, (int)cmd, EINVAL);
 			return (SET_ERROR(EINVAL));
@@ -1750,6 +2124,9 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 		break;
 	case ZPD_ROOT_OPEN:
 		error = zfshandle_op_pool_root_open(zh, data, td);
+		break;
+	case ZPD_WAIT:
+		error = zfshandle_op_wait(zh, data, B_TRUE);
 		break;
 	case ZFD_OPENAT:
 		error = zfshandle_op_openat(zh, data, td);
@@ -1819,6 +2196,48 @@ zfshandle_ioctl(struct file *fp, u_long cmd, void *data,
 		error = zfshandle_require(zh, cmd, ZH_HOLD);
 		if (error == 0)
 			error = zfshandle_op_hold(zh, data, B_FALSE);
+		break;
+	case ZFD_LIST_CHILDREN:
+		/* Enumerating descendants needs a subtree grant. */
+		if ((zh->zh_flags & ZHF_SUBTREE) == 0)
+			error = SET_ERROR(ENOTCAPABLE);
+		else
+			error = zfshandle_op_list(zh, data, B_FALSE);
+		break;
+	case ZFD_LIST_SNAPS:
+		error = zfshandle_op_list(zh, data, B_TRUE);
+		break;
+	case ZFD_GET_ONE_PROP:
+		error = zfshandle_op_get_one_prop(zh, data);
+		break;
+	case ZFD_HOLDS:
+		error = zfshandle_op_holds(zh, data);
+		break;
+	case ZFD_INHERIT:
+		error = zfshandle_require(zh, cmd, ZH_PROPS_WRITE);
+		if (error == 0)
+			error = zfshandle_op_inherit(zh, data);
+		break;
+	case ZFD_PROMOTE:
+		error = zfshandle_require(zh, cmd, ZH_CREATE);
+		if (error == 0)
+			error = zfshandle_op_promote(zh);
+		break;
+	case ZFD_BOOKMARK:
+		error = zfshandle_require(zh, cmd, ZH_SNAPSHOT);
+		if (error == 0)
+			error = zfshandle_op_bookmark(zh, data);
+		break;
+	case ZFD_LIST_BOOKMARKS:
+		error = zfshandle_op_list_bookmarks(zh, data);
+		break;
+	case ZFD_DESTROY_BOOKMARK:
+		error = zfshandle_require(zh, cmd, ZH_SNAP_DESTROY);
+		if (error == 0)
+			error = zfshandle_op_destroy_bookmark(zh, data);
+		break;
+	case ZFD_WAIT:
+		error = zfshandle_op_wait(zh, data, B_FALSE);
 		break;
 	case ZFD_BLKOPEN:
 		error = zfshandle_require(zh, cmd, ZH_MOUNT);

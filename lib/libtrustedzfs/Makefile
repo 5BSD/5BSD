@@ -30,6 +30,25 @@ MLINKS+=	trustedzfs.3 tzfs_open.3 \
 		trustedzfs.3 tzfs_clone.3 \
 		trustedzfs.3 tzfs_send.3 \
 		trustedzfs.3 tzfs_recv.3 \
-		trustedzfs.3 tzfs_blkopen.3
+		trustedzfs.3 tzfs_blkopen.3 \
+		trustedzfs.3 tzfs_mount.3 \
+		trustedzfs.3 tzfs_unmount.3 \
+		trustedzfs.3 tzfs_pool_open.3 \
+		trustedzfs.3 tzfs_pool_stat.3 \
+		trustedzfs.3 tzfs_pool_get_props.3 \
+		trustedzfs.3 tzfs_pool_set_prop_string.3 \
+		trustedzfs.3 tzfs_pool_scrub.3 \
+		trustedzfs.3 tzfs_pool_root_open.3 \
+		trustedzfs.3 tzfs_list_children.3 \
+		trustedzfs.3 tzfs_list_snapshots.3 \
+		trustedzfs.3 tzfs_holds.3 \
+		trustedzfs.3 tzfs_list_bookmarks.3 \
+		trustedzfs.3 tzfs_get_one_prop.3 \
+		trustedzfs.3 tzfs_inherit.3 \
+		trustedzfs.3 tzfs_promote.3 \
+		trustedzfs.3 tzfs_bookmark.3 \
+		trustedzfs.3 tzfs_destroy_bookmark.3 \
+		trustedzfs.3 tzfs_wait.3 \
+		trustedzfs.3 tzfs_pool_wait.3
 
 .include <bsd.lib.mk>

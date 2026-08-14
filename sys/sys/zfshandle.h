@@ -156,6 +156,44 @@ struct zfd_get_props_args {
 	uint64_t	zgp_size;		/* out: packed nvlist size */
 };
 
+/*
+ * Enumeration (implicit ZH_PROPS_READ).  LIST_CHILDREN and LIST_SNAPS
+ * return a packed nvlist whose keys are the full dataset/snapshot names
+ * (values are boolean_t present), via the same buffer protocol as
+ * GET_PROPS: the kernel iterates the whole set, cursor-free from the
+ * caller's view.  LIST_CHILDREN requires a subtree handle.  HOLDS and
+ * LIST_BOOKMARKS reuse the same struct and protocol.
+ */
+
+/* Single-property read: the cheap monitor primitive next to STAT. */
+struct zfd_get_one_prop_args {
+	char		zgo_name[ZFSHANDLE_NAME_MAX];	/* in: property */
+	char		zgo_strval[ZFSHANDLE_NAME_MAX];	/* out: string form */
+	uint64_t	zgo_intval;			/* out: numeric form */
+	uint32_t	zgo_is_string;			/* out: which is live */
+	uint32_t	zgo_source;			/* out: zprop_source_t */
+};
+
+struct zfd_inherit_args {
+	char		zin_name[ZFSHANDLE_NAME_MAX];	/* in: property */
+	uint32_t	zin_received;			/* in: revert to recv'd */
+	uint32_t	zin_pad;
+};
+
+struct zfd_bookmark_args {
+	char		zbm_snapname[ZFSHANDLE_NAME_MAX]; /* in: source snap
+			    component; "" if handle is a snapshot handle */
+	char		zbm_bookname[ZFSHANDLE_NAME_MAX]; /* in: bookmark
+			    component (the part after '#') */
+};
+
+#define	ZFD_WAIT_DELETEQ	0	/* == ZFS_WAIT_DELETEQ */
+
+struct zfd_wait_args {
+	uint32_t	zw_activity;		/* in: ZFD_WAIT_* */
+	uint32_t	zw_waited;		/* out: did we block? */
+};
+
 struct zfd_set_prop_args {
 	char		zsp_name[ZFSHANDLE_NAME_MAX];	/* in: property name */
 	char		zsp_strval[ZFSHANDLE_NAME_MAX];	/* in: string value */
@@ -203,6 +241,18 @@ struct zfd_clone_args {
 #define	ZFD_SEND_LARGEBLOCK	0x02
 #define	ZFD_SEND_COMPRESS	0x04
 #define	ZFD_SEND_RAW		0x08
+/*
+ * Send-once semantics (enforced in kernel handle state, so they survive
+ * SCM_RIGHTS and cannot be evaded by a non-cooperating holder).  The
+ * output fd is never touched by the kernel — closing it is the caller's
+ * business; these flags govern the SEND right on the handle itself:
+ *   ZFD_SEND_ONCE      after this send, refuse further sends (EALREADY).
+ *   ZFD_SEND_CONSUME   with ONCE, fully invalidate the handle afterward
+ *                      (ENXIO on everything) rather than leaving it open
+ *                      and merely unsendable.
+ */
+#define	ZFD_SEND_ONCE		0x10
+#define	ZFD_SEND_CONSUME	0x20
 
 struct zfd_send_args {
 	char		zs_snapname[ZFSHANDLE_NAME_MAX]; /* in: snap component;
@@ -271,6 +321,18 @@ struct zfd_mount_args {
 #define	ZFD_BLKOPEN	_IOWR('z', 0x12, struct zfd_blkopen_args)
 #define	ZFD_MOUNT	_IOWR('z', 0x13, struct zfd_mount_args)
 #define	ZFD_UNMOUNT	_IO('z', 0x14)
+/* 0x15-0x19 reserved for the ZPD_* pool verbs above. */
+#define	ZFD_LIST_CHILDREN _IOWR('z', 0x1a, struct zfd_get_props_args)
+#define	ZFD_LIST_SNAPS	_IOWR('z', 0x1b, struct zfd_get_props_args)
+#define	ZFD_GET_ONE_PROP _IOWR('z', 0x1c, struct zfd_get_one_prop_args)
+#define	ZFD_HOLDS	_IOWR('z', 0x1d, struct zfd_get_props_args)
+#define	ZFD_INHERIT	_IOW('z', 0x1e, struct zfd_inherit_args)
+#define	ZFD_PROMOTE	_IO('z', 0x1f)
+#define	ZFD_BOOKMARK	_IOW('z', 0x20, struct zfd_bookmark_args)
+#define	ZFD_LIST_BOOKMARKS _IOWR('z', 0x21, struct zfd_get_props_args)
+#define	ZFD_DESTROY_BOOKMARK _IOW('z', 0x22, struct zfd_bookmark_args)
+#define	ZFD_WAIT	_IOWR('z', 0x23, struct zfd_wait_args)
+#define	ZPD_WAIT	_IOWR('z', 0x24, struct zfd_wait_args)
 
 #ifdef _KERNEL
 struct thread;

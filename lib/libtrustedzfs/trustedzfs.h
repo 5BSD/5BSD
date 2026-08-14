@@ -53,6 +53,37 @@ int	tzfs_hold(int zfd, const char *snap, const char *tag);
 int	tzfs_release(int zfd, const char *snap, const char *tag);
 
 /*
+ * Enumeration.  Each returns all names as a packed native-encoded nvlist
+ * (name -> boolean present) in a malloc(3)ed buffer; iterate with
+ * nvlist_next_nvpair(3).  list_children needs a subtree handle.  holds
+ * and list_bookmarks return the same shape.
+ */
+int	tzfs_list_children(int zfd, void **bufp, size_t *lenp);
+int	tzfs_list_snapshots(int zfd, void **bufp, size_t *lenp);
+int	tzfs_holds(int zfd, void **bufp, size_t *lenp);
+int	tzfs_list_bookmarks(int zfd, void **bufp, size_t *lenp);
+
+/* Single-property read; source is a zprop_source_t. */
+int	tzfs_get_one_prop(int zfd, const char *prop, char *strval,
+	    size_t strvallen, uint64_t *intval, int *is_string,
+	    uint32_t *source);
+
+/* Property inherit/clear (the write-side complement to set). */
+int	tzfs_inherit(int zfd, const char *prop, bool received);
+
+/* Clone lifecycle: promote a clone above its origin. */
+int	tzfs_promote(int zfd);
+
+/* Bookmarks (incremental-send anchors).  Components: no '@' / '#'. */
+int	tzfs_bookmark(int zfd, const char *snap, const char *bookmark);
+int	tzfs_destroy_bookmark(int zfd, const char *bookmark);
+
+/* Wait for background activity (currently deleteq for datasets). */
+#define	TZFS_WAIT_DELETEQ	0
+int	tzfs_wait(int zfd, uint32_t activity, bool *waited);
+int	tzfs_pool_wait(int zpd, uint32_t activity, bool *waited);
+
+/*
  * Dataset lifecycle.  Relative names resolve under the handle (subtree
  * grants); NULL/"" means the handle's own dataset where noted.  Creation
  * calls return a handle fd for the new dataset.
@@ -70,6 +101,12 @@ int	tzfs_clone(int zfd, int origin_zfd, const char *origin_snap,
  * snapshot to out_fd (which needs CAP_WRITE).  tzfs_recv() reads the
  * stream's BEGIN record from in_fd itself, then receives the remainder
  * into reltarget ("child@snap" or "@snap"); in_fd needs CAP_READ.
+ *
+ * The kernel never closes the output fd -- that is the caller's business.
+ * The send-once flags govern the SEND right on the handle, not the fd:
+ *   ZFD_SEND_ONCE     after this send, further sends fail with EALREADY.
+ *   ZFD_SEND_CONSUME  with ONCE, also invalidate the handle (ENXIO after).
+ * These are enforced in kernel handle state, so they survive SCM_RIGHTS.
  */
 int	tzfs_send(int zfd, const char *snap, const char *fromsnap,
 	    int out_fd, uint32_t flags);

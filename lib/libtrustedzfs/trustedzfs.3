@@ -187,6 +187,50 @@ and therefore fails with
 .Er ECAPMODE
 in capability mode; open before
 .Xr cap_enter 2 .
+.Pp
+.Fn tzfs_list_children ,
+.Fn tzfs_list_snapshots ,
+.Fn tzfs_holds ,
+and
+.Fn tzfs_list_bookmarks
+enumerate a subtree, a dataset's snapshots, a snapshot's user holds, or a
+dataset's bookmarks, returning all names as a packed native-encoded nvlist
+in a
+.Xr malloc 3 Ns ed
+buffer (iterate with
+.Xr nvlist_next_nvpair 3 ) .
+.Fn tzfs_list_children
+requires a
+.Dv ZHF_SUBTREE
+handle.
+.Fn tzfs_get_one_prop
+reads a single property (native properties resolve even at their default
+value);
+.Fn tzfs_inherit
+clears a property back to its inherited or received source.
+.Fn tzfs_promote
+promotes a clone above its origin snapshot.
+.Fn tzfs_bookmark
+and
+.Fn tzfs_destroy_bookmark
+manage bookmarks, the persistent incremental-send anchors.
+.Fn tzfs_wait
+and
+.Fn tzfs_pool_wait
+block until background activity of the given kind drains.
+.Pp
+The send-once flags to
+.Fn tzfs_send
+are enforced in kernel handle state and so survive being passed to another
+process:
+.Dv ZFD_SEND_ONCE
+makes the handle refuse further sends after the stream
+.Pq Er EALREADY ,
+and
+.Dv ZFD_SEND_CONSUME
+additionally invalidates the handle.
+The output descriptor is never closed by the kernel; that remains the
+caller's responsibility.
 .Sh RETURN VALUES
 Functions documented as returning a handle or file descriptor return a
 non-negative descriptor on success.

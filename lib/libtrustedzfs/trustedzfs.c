@@ -202,6 +202,159 @@ tzfs_rollback(int zfd, const char *snap)
 	return (ioctl(zfd, ZFD_ROLLBACK, &args));
 }
 
+/* Shared buffer-growing wrapper for the nvlist-returning list verbs. */
+static int
+tzfs_list_ioctl(int zfd, unsigned long cmd, void **bufp, size_t *lenp)
+{
+	struct zfd_get_props_args args;
+	void *buf;
+	size_t len;
+	int saved;
+
+	len = 64 * 1024;
+	for (;;) {
+		buf = malloc(len);
+		if (buf == NULL)
+			return (-1);
+		memset(&args, 0, sizeof(args));
+		args.zgp_buf = (uint64_t)(uintptr_t)buf;
+		args.zgp_buflen = len;
+		if (ioctl(zfd, cmd, &args) == 0) {
+			*bufp = buf;
+			*lenp = args.zgp_size;
+			return (0);
+		}
+		saved = errno;
+		free(buf);
+		if (saved != ENOMEM || args.zgp_size <= len) {
+			errno = saved;
+			return (-1);
+		}
+		len = args.zgp_size;
+	}
+}
+
+int
+tzfs_list_children(int zfd, void **bufp, size_t *lenp)
+{
+	return (tzfs_list_ioctl(zfd, ZFD_LIST_CHILDREN, bufp, lenp));
+}
+
+int
+tzfs_list_snapshots(int zfd, void **bufp, size_t *lenp)
+{
+	return (tzfs_list_ioctl(zfd, ZFD_LIST_SNAPS, bufp, lenp));
+}
+
+int
+tzfs_holds(int zfd, void **bufp, size_t *lenp)
+{
+	return (tzfs_list_ioctl(zfd, ZFD_HOLDS, bufp, lenp));
+}
+
+int
+tzfs_list_bookmarks(int zfd, void **bufp, size_t *lenp)
+{
+	return (tzfs_list_ioctl(zfd, ZFD_LIST_BOOKMARKS, bufp, lenp));
+}
+
+int
+tzfs_get_one_prop(int zfd, const char *prop, char *strval, size_t strvallen,
+    uint64_t *intval, int *is_string, uint32_t *source)
+{
+	struct zfd_get_one_prop_args args;
+
+	memset(&args, 0, sizeof(args));
+	if (tzfs_str_arg(args.zgo_name, sizeof(args.zgo_name), prop,
+	    true) == -1)
+		return (-1);
+	if (ioctl(zfd, ZFD_GET_ONE_PROP, &args) == -1)
+		return (-1);
+	if (is_string != NULL)
+		*is_string = args.zgo_is_string ? 1 : 0;
+	if (source != NULL)
+		*source = args.zgo_source;
+	if (args.zgo_is_string) {
+		if (strval != NULL && strvallen > 0)
+			strlcpy(strval, args.zgo_strval, strvallen);
+	} else if (intval != NULL) {
+		*intval = args.zgo_intval;
+	}
+	return (0);
+}
+
+int
+tzfs_inherit(int zfd, const char *prop, bool received)
+{
+	struct zfd_inherit_args args;
+
+	memset(&args, 0, sizeof(args));
+	if (tzfs_str_arg(args.zin_name, sizeof(args.zin_name), prop,
+	    true) == -1)
+		return (-1);
+	args.zin_received = received ? 1 : 0;
+	return (ioctl(zfd, ZFD_INHERIT, &args));
+}
+
+int
+tzfs_promote(int zfd)
+{
+	return (ioctl(zfd, ZFD_PROMOTE));
+}
+
+int
+tzfs_bookmark(int zfd, const char *snap, const char *bookmark)
+{
+	struct zfd_bookmark_args args;
+
+	memset(&args, 0, sizeof(args));
+	if (tzfs_str_arg(args.zbm_snapname, sizeof(args.zbm_snapname), snap,
+	    false) == -1)
+		return (-1);
+	if (tzfs_str_arg(args.zbm_bookname, sizeof(args.zbm_bookname),
+	    bookmark, true) == -1)
+		return (-1);
+	return (ioctl(zfd, ZFD_BOOKMARK, &args));
+}
+
+int
+tzfs_destroy_bookmark(int zfd, const char *bookmark)
+{
+	struct zfd_bookmark_args args;
+
+	memset(&args, 0, sizeof(args));
+	if (tzfs_str_arg(args.zbm_bookname, sizeof(args.zbm_bookname),
+	    bookmark, true) == -1)
+		return (-1);
+	return (ioctl(zfd, ZFD_DESTROY_BOOKMARK, &args));
+}
+
+static int
+tzfs_wait_ioctl(int fd, unsigned long cmd, uint32_t activity, bool *waited)
+{
+	struct zfd_wait_args args;
+
+	memset(&args, 0, sizeof(args));
+	args.zw_activity = activity;
+	if (ioctl(fd, cmd, &args) == -1)
+		return (-1);
+	if (waited != NULL)
+		*waited = args.zw_waited ? true : false;
+	return (0);
+}
+
+int
+tzfs_wait(int zfd, uint32_t activity, bool *waited)
+{
+	return (tzfs_wait_ioctl(zfd, ZFD_WAIT, activity, waited));
+}
+
+int
+tzfs_pool_wait(int zpd, uint32_t activity, bool *waited)
+{
+	return (tzfs_wait_ioctl(zpd, ZPD_WAIT, activity, waited));
+}
+
 static int
 tzfs_hold_op(int zfd, unsigned long cmd, const char *snap, const char *tag)
 {
