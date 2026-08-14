@@ -15,5 +15,6 @@ ${PACKAGE}FILES+=	zfs_send_002_pos.ksh
 ${PACKAGE}FILES+=	zfs_send.cfg
 ${PACKAGE}FILES+=	zfs_send_001_pos.ksh
 ${PACKAGE}FILES+=	zfs_send_004_neg.ksh
+${PACKAGE}FILES+=	zfs_send_005_neg.ksh
 
 .include <bsd.test.mk>

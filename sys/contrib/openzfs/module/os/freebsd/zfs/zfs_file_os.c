@@ -313,15 +313,19 @@ zfs_file_deallocate(zfs_file_t *fp, loff_t offset, loff_t len)
 	return (0);
 }
 
-zfs_file_t *
-zfs_file_get(int fd)
+int
+zfs_file_get(int fd, zfs_file_access_t access, zfs_file_t **fpp)
 {
-	struct file *fp;
-
-	if (fget(curthread, fd, &cap_no_rights, &fp))
-		return (NULL);
-
-	return (fp);
+	switch (access) {
+	case ZFS_FILE_ACCESS_NONE:
+		return (fget(curthread, fd, &cap_no_rights, fpp));
+	case ZFS_FILE_ACCESS_READ:
+		return (fget_read(curthread, fd, &cap_read_rights, fpp));
+	case ZFS_FILE_ACCESS_WRITE:
+		return (fget_write(curthread, fd, &cap_write_rights, fpp));
+	default:
+		return (EINVAL);
+	}
 }
 
 void

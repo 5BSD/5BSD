@@ -395,15 +395,17 @@ zfs_file_unlink(const char *path)
  *
  * fd - input file descriptor
  *
- * Returns pointer to file struct or NULL.
+ * Returns 0 on success or an errno on failure.
  * Unsupported in user space.
  */
-zfs_file_t *
-zfs_file_get(int fd)
+int
+zfs_file_get(int fd, zfs_file_access_t access, zfs_file_t **fpp)
 {
 	(void) fd;
+	(void) access;
+	(void) fpp;
 	abort();
-	return (NULL);
+	return (ENOTSUP);
 }
 /*
  * Drop reference to file pointer

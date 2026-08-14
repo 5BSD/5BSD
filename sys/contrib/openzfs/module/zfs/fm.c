@@ -281,8 +281,9 @@ zfs_zevent_minor_to_state(minor_t minor, zfs_zevent_t **ze)
 zfs_file_t *
 zfs_zevent_fd_hold(int fd, minor_t *minorp, zfs_zevent_t **ze)
 {
-	zfs_file_t *fp = zfs_file_get(fd);
-	if (fp == NULL)
+	zfs_file_t *fp;
+
+	if (zfs_file_get(fd, ZFS_FILE_ACCESS_NONE, &fp) != 0)
 		return (NULL);
 
 	int error = zfsdev_getminor(fp, minorp);

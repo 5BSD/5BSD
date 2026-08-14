@@ -341,12 +341,39 @@ zfs_file_unlink(const char *path)
  *
  * fd - input file descriptor
  *
- * Returns pointer to file struct or NULL
+ * Returns 0 on success or an errno on failure.
  */
-zfs_file_t *
-zfs_file_get(int fd)
+int
+zfs_file_get(int fd, zfs_file_access_t access, zfs_file_t **fpp)
 {
-	return (fget(fd));
+	zfs_file_t *fp;
+
+	fp = fget(fd);
+	if (fp == NULL)
+		return (EBADF);
+
+	switch (access) {
+	case ZFS_FILE_ACCESS_NONE:
+		break;
+	case ZFS_FILE_ACCESS_READ:
+		if ((fp->f_mode & FMODE_READ) == 0)
+			goto badf;
+		break;
+	case ZFS_FILE_ACCESS_WRITE:
+		if ((fp->f_mode & FMODE_WRITE) == 0)
+			goto badf;
+		break;
+	default:
+		fput(fp);
+		return (EINVAL);
+	}
+
+	*fpp = fp;
+	return (0);
+
+badf:
+	fput(fp);
+	return (EBADF);
 }
 
 /*

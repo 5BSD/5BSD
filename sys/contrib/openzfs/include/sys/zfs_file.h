@@ -52,6 +52,12 @@ typedef struct zfs_file_attr {
 	mode_t		zfa_mode;	/* file type */
 } zfs_file_attr_t;
 
+typedef enum zfs_file_access {
+	ZFS_FILE_ACCESS_NONE,
+	ZFS_FILE_ACCESS_READ,
+	ZFS_FILE_ACCESS_WRITE,
+} zfs_file_access_t;
+
 int zfs_file_open(const char *path, int flags, int mode, zfs_file_t **fp);
 void zfs_file_close(zfs_file_t *fp);
 
@@ -69,7 +75,7 @@ int zfs_file_deallocate(zfs_file_t *fp, loff_t offset, loff_t len);
 loff_t zfs_file_off(zfs_file_t *fp);
 int zfs_file_unlink(const char *);
 
-zfs_file_t *zfs_file_get(int fd);
+int zfs_file_get(int fd, zfs_file_access_t access, zfs_file_t **fpp);
 void zfs_file_put(zfs_file_t *fp);
 void *zfs_file_private(zfs_file_t *fp);
 

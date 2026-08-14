@@ -120,6 +120,30 @@ zfs_send_004_neg_cleanup()
 }
 
 
+atf_test_case zfs_send_005_neg cleanup
+zfs_send_005_neg_head()
+{
+	atf_set "descr" "ZFS send honors Capsicum rights on its output descriptor."
+	atf_set "require.progs" "ksh93 zfs zfs_send_capsicum"
+}
+zfs_send_005_neg_body()
+{
+	. $(atf_get_srcdir)/../../../include/default.cfg
+	. $(atf_get_srcdir)/zfs_send.cfg
+
+	verify_disk_count "$DISKS" 1
+	ksh93 $(atf_get_srcdir)/setup.ksh || atf_fail "Setup failed"
+	ksh93 $(atf_get_srcdir)/zfs_send_005_neg.ksh || atf_fail "Testcase failed"
+}
+zfs_send_005_neg_cleanup()
+{
+	. $(atf_get_srcdir)/../../../include/default.cfg
+	. $(atf_get_srcdir)/zfs_send.cfg
+
+	ksh93 $(atf_get_srcdir)/cleanup.ksh || atf_fail "Cleanup failed"
+}
+
+
 atf_init_test_cases()
 {
 
@@ -127,4 +151,5 @@ atf_init_test_cases()
 	atf_add_test_case zfs_send_002_pos
 	atf_add_test_case zfs_send_003_pos
 	atf_add_test_case zfs_send_004_neg
+	atf_add_test_case zfs_send_005_neg
 }

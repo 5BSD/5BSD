@@ -5669,8 +5669,9 @@ zfs_ioc_recv_impl(char *tofs, char *tosnap, const char *origin,
 	*errors = fnvlist_alloc();
 	off = 0;
 
-	if ((input_fp = zfs_file_get(input_fd)) == NULL)
-		return (SET_ERROR(EBADF));
+	error = zfs_file_get(input_fd, ZFS_FILE_ACCESS_READ, &input_fp);
+	if (error != 0)
+		return (SET_ERROR(error));
 
 	noff = off = zfs_file_off(input_fp);
 	error = dmu_recv_begin(tofs, tosnap, begin_record, force, heal,
@@ -6228,9 +6229,12 @@ dump_bytes(objset_t *os, void *buf, int len, void *arg)
 static int
 dump_bytes_init(dump_bytes_arg_t *dba, int fd, dmu_send_outparams_t *out)
 {
-	zfs_file_t *fp = zfs_file_get(fd);
-	if (fp == NULL)
-		return (SET_ERROR(EBADF));
+	zfs_file_t *fp;
+	int error;
+
+	error = zfs_file_get(fd, ZFS_FILE_ACCESS_WRITE, &fp);
+	if (error != 0)
+		return (SET_ERROR(error));
 
 	dba->dba_fp = fp;
 #ifdef USE_SEND_TASKQ
@@ -6945,8 +6949,9 @@ zfs_ioc_diff(zfs_cmd_t *zc)
 	offset_t off;
 	int error;
 
-	if ((fp = zfs_file_get(zc->zc_cookie)) == NULL)
-		return (SET_ERROR(EBADF));
+	error = zfs_file_get(zc->zc_cookie, ZFS_FILE_ACCESS_WRITE, &fp);
+	if (error != 0)
+		return (SET_ERROR(error));
 
 	off = zfs_file_off(fp);
 	error = dmu_diff(zc->zc_name, zc->zc_value, fp, &off);
