@@ -28,6 +28,8 @@ SCRIPTS=	blued-att \
 		mac_capability-shield \
 		mac_capability-summary \
 		mac_capability-who \
+		trustedzfs-handles \
+		trustedzfs-denials \
 		procdesc-lifecycle \
 		disklatency \
 		disklatencycmd \

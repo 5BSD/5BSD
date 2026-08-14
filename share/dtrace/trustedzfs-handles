@@ -1,0 +1,51 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * trustedzfs-handles -- live TrustedZFS handle activity: mints, derives,
+ * openats, and invalidations, with rights lineage.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-16s %-20s %-18s %s\n",
+	    "PID", "EVENT", "DATASET/GUID", "RIGHTS", "DETAIL");
+}
+
+trustedzfs:::mint
+{
+	printf("%-6d %-16s %-20s 0x%-16x guid=0x%x\n",
+	    pid, "mint", stringof(arg0), arg2, arg1);
+	@mints[execname] = count();
+}
+
+trustedzfs:::derive
+{
+	printf("%-6d %-16s 0x%-18x 0x%-16x parent-rights=0x%x\n",
+	    pid, "derive", arg0, arg2, arg1);
+	@derives[execname] = count();
+}
+
+trustedzfs:::handle-openat
+{
+	printf("%-6d %-16s %-20s 0x%-16x parent-guid=0x%x child-guid=0x%x\n",
+	    pid, "openat", stringof(arg1), arg3, arg0, arg2);
+	@derives[execname] = count();
+}
+
+trustedzfs:::invalidate
+{
+	printf("%-6d %-16s 0x%-18x %-18s reason=%s\n",
+	    pid, "INVALIDATE", arg0, "-",
+	    arg1 == 1 ? "guid-miss" : arg1 == 2 ? "destroyed" : "?");
+	@invalidations[execname] = count();
+}
+
+dtrace:::END
+{
+	printa("mints    %-20s %@d\n", @mints);
+	printa("derives  %-20s %@d\n", @derives);
+	printa("invalid  %-20s %@d\n", @invalidations);
+}

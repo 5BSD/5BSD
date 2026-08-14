@@ -271,6 +271,7 @@ struct user {
 #define	KF_TYPE_JAILDESC	16
 #define	KF_TYPE_MAC_CAPABILITY	17
 #define	KF_TYPE_ENVFD		18
+#define	KF_TYPE_ZFSHANDLE	19
 #define	KF_TYPE_UNKNOWN	255
 
 #define	KF_VTYPE_VNON	0
@@ -479,6 +480,13 @@ struct kinfo_file {
 				uint32_t	kf_envfd_flags;
 				uint32_t	kf_envfd_state;
 			} kf_envfd;
+			struct {
+				uint64_t	kf_zh_ds_guid;
+				uint64_t	kf_zh_pool_guid;
+				uint64_t	kf_zh_rights;
+				uint32_t	kf_zh_flags;
+				uint32_t	kf_zh_valid;
+			} kf_zfshandle;
 		} kf_un;
 	};
 	uint16_t	kf_status;		/* Status flags. */

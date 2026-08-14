@@ -1,0 +1,51 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * trustedzfs-denials -- storage operations refused across the three layers
+ * that can say no: the TrustedZFS rights mask, Capsicum command
+ * allowlists, and mac_capability policy.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-6s %-16s %-16s %-12s %-18s %s\n",
+	    "PID", "LAYER", "EXEC", "CMD", "GUID", "DETAIL");
+}
+
+trustedzfs:::denied
+{
+	printf("%-6d %-16s %-16s 0x%-10x 0x%-16x required=0x%x held=0x%x\n",
+	    pid, "rights-mask", execname, arg1, arg0, arg2, arg3);
+	@denied["rights-mask", execname] = count();
+}
+
+trustedzfs:::op-return
+/arg2 != 0/
+{
+	@errors["op-error", execname] = count();
+}
+
+capsicum:::ioctl-deny,
+capsicum:::check-deny
+{
+	printf("%-6d %-16s %-16s %-12s %-18s errno=%d\n",
+	    pid, "capsicum", execname, "-", "-", arg0);
+	@denied["capsicum", execname] = count();
+}
+
+mac_capability:::error
+/arg5 != 0/
+{
+	printf("%-6d %-16s %-16s cmd=%-8d %-18s errno=%d\n",
+	    pid, "mac_capability", execname, arg2, "-", arg5);
+	@denied["mac_capability", execname] = count();
+}
+
+dtrace:::END
+{
+	printa("%-16s %-20s %@d denials\n", @denied);
+	printa("%-16s %-20s %@d op errors\n", @errors);
+}

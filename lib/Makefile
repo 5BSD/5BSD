@@ -113,6 +113,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libtacplus \
 	libthr \
 	libthread_db \
+	libtrustedzfs \
 	libucl \
 	libufs \
 	libugidfw \

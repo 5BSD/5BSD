@@ -728,6 +728,7 @@ kinfo_type2fst(int kftype)
 		{ KF_TYPE_INOTIFY, PS_FST_TYPE_INOTIFY },
 		{ KF_TYPE_MAC_CAPABILITY, PS_FST_TYPE_MAC_CAPABILITY },
 		{ KF_TYPE_ENVFD, PS_FST_TYPE_ENVFD },
+		{ KF_TYPE_ZFSHANDLE, PS_FST_TYPE_ZFSHANDLE },
 		{ KF_TYPE_UNKNOWN, PS_FST_TYPE_UNKNOWN }
 	};
 #define NKFTYPES	(sizeof(kftypes2fst) / sizeof(*kftypes2fst))

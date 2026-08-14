@@ -197,6 +197,7 @@ SRCS+=	abd_os.c \
 	zfs_debug.c \
 	zfs_dir.c \
 	zfs_file_os.c \
+	zfs_handle.c \
 	zfs_ioctl_compat.c \
 	zfs_ioctl_os.c \
 	zfs_racct.c \

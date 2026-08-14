@@ -1,0 +1,214 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 5BSD Project
+.Dd August 14, 2026
+.Dt TRUSTEDZFS 3
+.Os
+.Sh NAME
+.Nm trustedzfs ,
+.Nm tzfs_open ,
+.Nm tzfs_derive ,
+.Nm tzfs_openat ,
+.Nm tzfs_info ,
+.Nm tzfs_stat ,
+.Nm tzfs_get_props ,
+.Nm tzfs_set_prop_string ,
+.Nm tzfs_set_prop_uint64 ,
+.Nm tzfs_snapshot ,
+.Nm tzfs_snap_destroy ,
+.Nm tzfs_rollback ,
+.Nm tzfs_hold ,
+.Nm tzfs_release ,
+.Nm tzfs_create ,
+.Nm tzfs_create_volume ,
+.Nm tzfs_destroy ,
+.Nm tzfs_rename ,
+.Nm tzfs_clone ,
+.Nm tzfs_send ,
+.Nm tzfs_recv ,
+.Nm tzfs_blkopen
+.Nd capability file descriptors over the ZFS management plane
+.Sh LIBRARY
+.Lb libtrustedzfs
+.Sh SYNOPSIS
+.In sys/zfshandle.h
+.In trustedzfs.h
+.Ft int
+.Fn tzfs_open "const char *dataset" "uint64_t rights" "uint32_t flags"
+.Ft int
+.Fn tzfs_derive "int zfd" "uint64_t rights"
+.Ft int
+.Fn tzfs_openat "int zfd" "const char *relname" "uint64_t rights" "uint32_t flags"
+.Ft int
+.Fn tzfs_info "int zfd" "struct zfd_info_args *info"
+.Ft int
+.Fn tzfs_stat "int zfd" "struct zfd_stat_args *st"
+.Ft int
+.Fn tzfs_get_props "int zfd" "void **bufp" "size_t *lenp"
+.Ft int
+.Fn tzfs_set_prop_string "int zfd" "const char *prop" "const char *val"
+.Ft int
+.Fn tzfs_set_prop_uint64 "int zfd" "const char *prop" "uint64_t val"
+.Ft int
+.Fn tzfs_snapshot "int zfd" "const char *snap"
+.Ft int
+.Fn tzfs_snap_destroy "int zfd" "const char *snap"
+.Ft int
+.Fn tzfs_rollback "int zfd" "const char *snap"
+.Ft int
+.Fn tzfs_hold "int zfd" "const char *snap" "const char *tag"
+.Ft int
+.Fn tzfs_release "int zfd" "const char *snap" "const char *tag"
+.Ft int
+.Fn tzfs_create "int zfd" "const char *relname" "uint32_t handle_flags"
+.Ft int
+.Fn tzfs_create_volume "int zfd" "const char *relname" "uint64_t volsize" "uint64_t volblocksize"
+.Ft int
+.Fn tzfs_destroy "int zfd" "const char *relname"
+.Ft int
+.Fn tzfs_rename "int zfd" "const char *from" "const char *to"
+.Ft int
+.Fn tzfs_clone "int zfd" "int origin_zfd" "const char *origin_snap" "const char *relname"
+.Ft int
+.Fn tzfs_send "int zfd" "const char *snap" "const char *fromsnap" "int out_fd" "uint32_t flags"
+.Ft int
+.Fn tzfs_recv "int zfd" "const char *reltarget" "int in_fd" "bool force"
+.Ft int
+.Fn tzfs_blkopen "int zfd" "bool writable"
+.Sh DESCRIPTION
+The
+.Nm
+library operates on TrustedZFS dataset handles: file descriptors that
+denote one ZFS dataset (or, with
+.Dv ZHF_SUBTREE ,
+a dataset and its descendants) and carry an immutable rights mask.
+A handle pins its dataset by guid, so it follows renames and reports
+.Er ENXIO
+once the dataset is destroyed.
+Handles pass over
+.Xr unix 4
+sockets, survive
+.Xr fork 2 ,
+and may be confined further with
+.Xr cap_rights_limit 2
+and per-command
+.Xr cap_ioctls_limit 2 .
+.Pp
+.Fn tzfs_open
+mints a handle by dataset name via
+.Pa /dev/zfs
+and is the only name-based call; minting requires the corresponding
+.Xr zfs-allow 8
+delegations (or root) and, in a jail, dataset visibility.
+All other calls operate purely through descriptors and work inside
+.Xr capsicum 4
+capability mode, with the exception of
+.Fn tzfs_blkopen .
+.Pp
+The rights bits are
+.Dv ZH_PROPS_READ , ZH_PROPS_WRITE , ZH_SNAPSHOT , ZH_SNAP_DESTROY ,
+.Dv ZH_ROLLBACK , ZH_CLONE_SRC , ZH_CREATE , ZH_DESTROY , ZH_SEND ,
+.Dv ZH_RECV , ZH_MOUNT ,
+and
+.Dv ZH_HOLD ;
+.Dv ZH_PROPS_READ
+and
+.Dv ZH_EVENT
+are implicit on every handle.
+.Fn tzfs_derive
+returns a new handle for the same dataset with a subset of the rights;
+requesting rights not held fails with
+.Er ENOTCAPABLE .
+.Fn tzfs_openat
+opens a descendant dataset (or
+.Dq @snapshot
+of the handle itself) with a subset of the rights; descending requires a
+.Dv ZHF_SUBTREE
+handle and relative names may not escape the grant.
+.Pp
+.Fn tzfs_get_props
+returns all properties as a packed native-encoded nvlist in a
+.Xr malloc 3 Ns ed
+buffer; use
+.Xr nvlist_unpack 3
+for structured access.
+.Pp
+.Fn tzfs_create
+and
+.Fn tzfs_create_volume
+create a child filesystem or volume and return a handle for it carrying
+the parent handle's rights.
+.Fn tzfs_destroy
+with a
+.Dv NULL
+.Fa relname
+destroys the handle's own dataset.
+.Fn tzfs_clone
+creates
+.Fa relname
+under
+.Fa zfd
+(which needs
+.Dv ZH_CREATE )
+from the origin handle's snapshot; the origin handle needs
+.Dv ZH_CLONE_SRC .
+.Pp
+.Fn tzfs_send
+writes a replication stream for the named snapshot (or the handle itself,
+if it is a snapshot handle and
+.Fa snap
+is
+.Dv NULL )
+to
+.Fa out_fd ;
+.Fa flags
+is a combination of
+.Dv ZFD_SEND_EMBED , ZFD_SEND_LARGEBLOCK , ZFD_SEND_COMPRESS ,
+and
+.Dv ZFD_SEND_RAW .
+.Fn tzfs_recv
+consumes the stream's BEGIN record from
+.Fa in_fd
+and receives the remainder into
+.Fa reltarget .
+The stream descriptors are ordinary file descriptors
+.Pq pipes, sockets, files
+and are checked for
+.Dv CAP_WRITE
+or
+.Dv CAP_READ
+respectively.
+.Pp
+.Fn tzfs_blkopen
+opens the handle's volume as a block-device file descriptor suitable for
+handing to a hypervisor or filesystem tools.
+It currently resolves through
+.Xr devfs 4
+and therefore fails with
+.Er ECAPMODE
+in capability mode; open before
+.Xr cap_enter 2 .
+.Sh RETURN VALUES
+Functions documented as returning a handle or file descriptor return a
+non-negative descriptor on success.
+All others return 0 on success.
+On error, \-1 is returned and
+.Va errno
+is set.
+Operations on a handle whose dataset has been destroyed, or whose pool is
+exported, fail with
+.Er ENXIO ;
+kevent
+.Dv EVFILT_READ
+on the handle reports invalidation.
+.Sh SEE ALSO
+.Xr cap_rights_limit 2 ,
+.Xr kqueue 2 ,
+.Xr capsicum 4 ,
+.Xr zfs 8
+.Pp
+.Pa docs/trustedzfs-design.md
+in the source tree for the full design.
+.Sh HISTORY
+The
+.Nm
+library first appeared in 5BSD in 2026.

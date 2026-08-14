@@ -323,6 +323,9 @@ print_file_info(struct procstat *procstat, struct filestat *fst,
 	case PS_FST_TYPE_ENVFD:
 		printf(" [envfd]");
 		break;
+	case PS_FST_TYPE_ZFSHANDLE:
+		printf(" [zfshandle]");
+		break;
 	default:	
 		if (vflg)
 			fprintf(stderr,

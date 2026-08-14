@@ -1027,6 +1027,8 @@
         ..
         vmm
         ..
+        zfshandle
+        ..
     ..
     usr.bin
         apply

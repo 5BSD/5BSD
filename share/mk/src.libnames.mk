@@ -248,6 +248,7 @@ _LIBRARIES=	\
 		tacplus \
 		termcapw \
 		tinfow \
+		trustedzfs \
 		ufs \
 		ugidfw \
 		ulog \

@@ -74,6 +74,7 @@
 #define	PS_FST_TYPE_INOTIFY	16
 #define	PS_FST_TYPE_MAC_CAPABILITY		17
 #define	PS_FST_TYPE_ENVFD			18
+#define	PS_FST_TYPE_ZFSHANDLE			19
 
 /*
  * Special descriptor numbers.
