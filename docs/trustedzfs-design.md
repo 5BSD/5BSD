@@ -373,7 +373,22 @@ storage exclusively through granted dirfds; the global namespace becomes a
 compatibility view rather than the security boundary — the same
 trajectory as the rest of the Oracle work.
 
-## 6a. Storage integration: the `[TZFS]` grant path (design, not yet built)
+## 6a. Storage integration: the `[TZFS]` grant path
+
+**Status (2026-08-14): manifest → mint → exec-grant built and committed.**
+- Manifest `capabilities.storage` stanza parses to `ort_storage_claim`
+  (dataset, ZH_* rights, lifetime); libcapbundle test passes.
+- `ORACLE_OP_MINT_STORAGE`: serviced `oracle_mint_storage()` →
+  oracled `handle_mint_storage()` opens `/dev/zfs` and
+  `ZFS_IOC_DATASET_OPEN`, passing the rights-limited handle fd back.
+- serviced grants the handle at exec, in the token-bootstrap range,
+  for datasets that already exist (persistent case).
+- **Remaining**: ephemeral lifecycle (create-on-start, destroy-on-stop);
+  the `SVC_OP_STORAGE_REQUEST` runtime path; the optional `tzfsd` broker.
+
+Design below.
+
+
 
 The flagship consumer is the service manager granting storage the same
 way it grants every other capability.  Grounded in a survey of the
