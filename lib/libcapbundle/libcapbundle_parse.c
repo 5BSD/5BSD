@@ -151,7 +151,9 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "max_failures", "arguments", "environment",
 	    "components", "jail" };
 	static const char *const capkeys[] = { "paths", "files", "network",
-	    "jails", "vsock", "services", "system" };
+	    "jails", "vsock", "services", "system", "storage" };
+	static const char *const storagekeys[] = { "dataset", "rights",
+	    "lifetime" };
 	static const char *const service_names[] = { "mount", "node",
 	    "accounting", "identity" };
 	static const char *const filekeys[] = { "path", "actions" };
@@ -424,6 +426,7 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	VALIDATE_CAP_ARRAY("jails", CAPBUNDLE_MAX_CAP_JAIL);
 	VALIDATE_CAP_ARRAY("vsock", CAPBUNDLE_MAX_CAP_VSOCK);
 	VALIDATE_CAP_ARRAY("services", CAPBUNDLE_MAX_CAP_SERVICES);
+	VALIDATE_CAP_ARRAY("storage", CAPBUNDLE_MAX_CAP_STORAGE);
 	VALIDATE_CAP_ARRAY("system", nitems(gate_names));
 #undef VALIDATE_CAP_ARRAY
 
@@ -497,6 +500,36 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		    strlen(ucl_object_tostring(x)) >= PATH_MAX ||
 		    parse_file_actions(ucl_object_lookup(v, "actions"), &actions) != 0) {
 			snprintf(errbuf, errlen, "invalid capabilities.files entry");
+			return (-1);
+		}
+	}
+
+	arr = ucl_object_lookup(caps, "storage");
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
+		uint64_t rights;
+		uint8_t lifetime;
+		const ucl_object_t *lt;
+
+		if (validate_keys(v, "capabilities.storage entry", storagekeys,
+		    nitems(storagekeys), errbuf, errlen) != 0)
+			return (-1);
+		x = ucl_object_lookup(v, "dataset");
+		if (x == NULL || ucl_object_type(x) != UCL_STRING ||
+		    ucl_object_tostring(x)[0] == '\0' ||
+		    strlen(ucl_object_tostring(x)) >= ORT_STORAGE_DATASET_MAX ||
+		    parse_storage_rights(ucl_object_lookup(v, "rights"),
+		    &rights) != 0) {
+			snprintf(errbuf, errlen,
+			    "invalid capabilities.storage entry");
+			return (-1);
+		}
+		lt = ucl_object_lookup(v, "lifetime");
+		if (lt != NULL && (ucl_object_type(lt) != UCL_STRING ||
+		    parse_storage_lifetime_string(ucl_object_tostring(lt),
+		    &lifetime) != 0)) {
+			snprintf(errbuf, errlen,
+			    "invalid capabilities.storage lifetime");
 			return (-1);
 		}
 	}
@@ -1531,6 +1564,46 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 				}
 			}
 
+			{
+				const ucl_object_t *stors, *selem, *sv;
+				ucl_object_iter_t sit = NULL;
+				stors = ucl_object_lookup(caps, "storage");
+				while (stors != NULL && svc->ncap_storage <
+				    CAPBUNDLE_MAX_CAP_STORAGE &&
+				    (selem = ucl_object_iterate(stors, &sit,
+				    true)) != NULL) {
+					struct ort_storage_claim *sc =
+					    &svc->cap_storage[svc->ncap_storage];
+					const char *dsname;
+
+					if (ucl_object_type(selem) != UCL_OBJECT)
+						continue;
+					memset(sc, 0, sizeof(*sc));
+					sc->lifetime = ORT_STORAGE_PERSISTENT;
+					sv = ucl_object_lookup(selem, "dataset");
+					if (sv == NULL ||
+					    ucl_object_type(sv) != UCL_STRING)
+						continue;
+					dsname = ucl_object_tostring(sv);
+					if (strlcpy(sc->dataset, dsname,
+					    sizeof(sc->dataset)) >=
+					    sizeof(sc->dataset))
+						continue;
+					if (parse_storage_rights(
+					    ucl_object_lookup(selem, "rights"),
+					    &sc->rights) != 0)
+						continue;
+					sv = ucl_object_lookup(selem,
+					    "lifetime");
+					if (sv != NULL &&
+					    parse_storage_lifetime_string(
+					    ucl_object_tostring(sv),
+					    &sc->lifetime) != 0)
+						continue;
+					svc->ncap_storage++;
+				}
+			}
+
 			parse_string_array_n(caps, "services", svc->cap_services,
 			    sizeof(svc->cap_services[0]),
 			    CAPBUNDLE_MAX_CAP_SERVICES, &svc->ncap_services);
@@ -1594,6 +1667,7 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 		CHECK_CAP_COUNT("network", ncap_net);
 		CHECK_CAP_COUNT("jails", ncap_jail);
 		CHECK_CAP_COUNT("vsock", ncap_vsock);
+		CHECK_CAP_COUNT("storage", ncap_storage);
 		CHECK_CAP_COUNT("services", ncap_services);
 #undef CHECK_CAP_COUNT
 	}

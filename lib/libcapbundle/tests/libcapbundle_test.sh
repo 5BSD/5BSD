@@ -398,6 +398,56 @@ file_capabilities_cleanup() {
 }
 
 # ---------------------------------------------------------------
+# Test: TrustedZFS storage capabilities (dataset, rights, lifetime)
+# ---------------------------------------------------------------
+atf_test_case storage_capabilities cleanup
+storage_capabilities_head() {
+	atf_set "descr" "Parse TrustedZFS storage capabilities; reject a bad right name"
+}
+storage_capabilities_body() {
+	TMPDIR=$(atf_get_srcdir)/work.$$
+	mkdir -p "${TMPDIR}/Store.cap/etc" "${TMPDIR}/Store.cap/bin"
+	printf '#!/bin/sh\nsleep 3600\n' > "${TMPDIR}/Store.cap/bin/stored"
+	chmod 755 "${TMPDIR}/Store.cap/bin/stored"
+
+	cat > "${TMPDIR}/Store.cap/etc/stored.ucl" <<'UCL'
+bundle_id = "org.test.store";
+version = "1.0";
+author = "test";
+program = "stored";
+provides = ["org.test.storage"];
+capabilities {
+    storage = [
+        {dataset = "tank/svc/pgsql"; rights = ["mount", "snapshot",
+          "props_read"]; lifetime = "persistent";},
+        {dataset = "tank/svc/scratch"; rights = "all"; lifetime = "ephemeral";},
+    ];
+}
+UCL
+	atf_check -s exit:0 -o match:"Verification: PASSED" \
+	    servicectl verify "${TMPDIR}/Store.cap"
+
+	# An unknown right name must be rejected at parse time.
+	cat > "${TMPDIR}/Store.cap/etc/stored.ucl" <<'UCL'
+bundle_id = "org.test.store";
+version = "1.0";
+author = "test";
+program = "stored";
+provides = ["org.test.storage"];
+capabilities {
+    storage = [
+        {dataset = "tank/svc/x"; rights = ["mount", "bogus_right"];},
+    ];
+}
+UCL
+	atf_check -s not-exit:0 -o not-match:"Verification: PASSED" \
+	    servicectl verify "${TMPDIR}/Store.cap"
+}
+storage_capabilities_cleanup() {
+	rm -rf "$(atf_get_srcdir)/work.$$"
+}
+
+# ---------------------------------------------------------------
 # Test: Jail capabilities with object form (name, actions)
 # ---------------------------------------------------------------
 atf_test_case jail_capabilities cleanup
@@ -991,6 +1041,7 @@ atf_init_test_cases() {
 	atf_add_test_case activation_derived
 	atf_add_test_case network_capabilities
 	atf_add_test_case file_capabilities
+	atf_add_test_case storage_capabilities
 	atf_add_test_case jail_capabilities
 	atf_add_test_case all_system_gates
 	atf_add_test_case invalid_port_range

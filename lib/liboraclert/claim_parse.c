@@ -25,6 +25,8 @@
 
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
 
+#include <sys/zfshandle.h>
+
 #include "claim_parse.h"
 #include "oraclert.h"
 
@@ -344,4 +346,83 @@ parse_file_actions(const ucl_object_t *v, uint64_t *actionsp)
 			return (-1);
 	}
 	return (*actionsp != 0 ? 0 : -1);
+}
+
+/*
+ * TrustedZFS storage rights: map manifest right names to the ZH_* mask a
+ * dataset handle is minted with (see <sys/zfshandle.h> and
+ * docs/trustedzfs-design.md).  PROPS_READ/EVENT are implicit on every
+ * handle, so a claim need not name them.
+ */
+int
+parse_storage_right_string(const char *s, uint64_t *rightsp)
+{
+
+	if (strcmp(s, "*") == 0 || strcmp(s, "all") == 0)
+		*rightsp |= ZH_ALL_RIGHTS;
+	else if (strcmp(s, "props_read") == 0)
+		*rightsp |= ZH_PROPS_READ;
+	else if (strcmp(s, "props_write") == 0)
+		*rightsp |= ZH_PROPS_WRITE;
+	else if (strcmp(s, "snapshot") == 0)
+		*rightsp |= ZH_SNAPSHOT;
+	else if (strcmp(s, "snap_destroy") == 0)
+		*rightsp |= ZH_SNAP_DESTROY;
+	else if (strcmp(s, "rollback") == 0)
+		*rightsp |= ZH_ROLLBACK;
+	else if (strcmp(s, "clone_src") == 0)
+		*rightsp |= ZH_CLONE_SRC;
+	else if (strcmp(s, "create") == 0)
+		*rightsp |= ZH_CREATE;
+	else if (strcmp(s, "destroy") == 0)
+		*rightsp |= ZH_DESTROY;
+	else if (strcmp(s, "send") == 0)
+		*rightsp |= ZH_SEND;
+	else if (strcmp(s, "recv") == 0)
+		*rightsp |= ZH_RECV;
+	else if (strcmp(s, "mount") == 0)
+		*rightsp |= ZH_MOUNT;
+	else if (strcmp(s, "hold") == 0)
+		*rightsp |= ZH_HOLD;
+	else
+		return (-1);
+	return (0);
+}
+
+int
+parse_storage_rights(const ucl_object_t *v, uint64_t *rightsp)
+{
+	const ucl_object_t *elem;
+	ucl_object_iter_t it;
+
+	*rightsp = 0;
+	if (v == NULL)
+		return (-1);		/* a storage claim must name rights */
+	if (ucl_object_type(v) == UCL_STRING)
+		return (parse_storage_right_string(ucl_object_tostring(v),
+		    rightsp));
+	if (ucl_object_type(v) != UCL_ARRAY)
+		return (-1);
+	it = NULL;
+	while ((elem = ucl_object_iterate(v, &it, true)) != NULL) {
+		if (ucl_object_type(elem) != UCL_STRING)
+			return (-1);
+		if (parse_storage_right_string(ucl_object_tostring(elem),
+		    rightsp) != 0)
+			return (-1);
+	}
+	return (*rightsp != 0 ? 0 : -1);
+}
+
+int
+parse_storage_lifetime_string(const char *s, uint8_t *lifetimep)
+{
+
+	if (s == NULL || strcmp(s, "persistent") == 0)
+		*lifetimep = ORT_STORAGE_PERSISTENT;
+	else if (strcmp(s, "ephemeral") == 0)
+		*lifetimep = ORT_STORAGE_EPHEMERAL;
+	else
+		return (-1);
+	return (0);
 }

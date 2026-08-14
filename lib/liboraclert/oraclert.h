@@ -52,6 +52,22 @@ struct ort_vsock_claim {
 	uint8_t		direction;	/* ORT_NET_DIR_* */
 };
 
+/*
+ * TrustedZFS storage claim: a dataset the service is granted a capability
+ * handle to.  rights is a ZH_* mask (see <sys/zfshandle.h>); lifetime is
+ * whether the dataset persists across restarts or is created/destroyed
+ * with the service.  POD, embedded by value like the other claim arrays.
+ */
+#define	ORT_STORAGE_DATASET_MAX	256	/* == ZFS_MAX_DATASET_NAME_LEN */
+#define	ORT_STORAGE_PERSISTENT	0
+#define	ORT_STORAGE_EPHEMERAL	1
+
+struct ort_storage_claim {
+	char		dataset[ORT_STORAGE_DATASET_MAX];
+	uint64_t	rights;		/* ZH_* mask */
+	uint8_t		lifetime;	/* ORT_STORAGE_* */
+};
+
 static inline const char *
 ort_net_domain_name(int domain)
 {

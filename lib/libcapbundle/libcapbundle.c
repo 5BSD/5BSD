@@ -378,6 +378,9 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->ncap_vsock = s->ncap_vsock;
 	for (i = 0; i < m->ncap_vsock; i++)
 		m->cap_vsock[i] = s->cap_vsock[i];
+	m->ncap_storage = s->ncap_storage;
+	for (i = 0; i < m->ncap_storage; i++)
+		m->cap_storage[i] = s->cap_storage[i];
 	m->ncap_services = s->ncap_services;
 	for (i = 0; i < m->ncap_services; i++)
 		if (manifest_copy(s->cap_services[i], m->cap_services[i],

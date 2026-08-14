@@ -25,6 +25,7 @@
 #define	CAPBUNDLE_MAX_CAP_NET		16
 #define	CAPBUNDLE_MAX_CAP_JAIL		16
 #define	CAPBUNDLE_MAX_CAP_VSOCK		16
+#define	CAPBUNDLE_MAX_CAP_STORAGE	SERVICED_MAX_CAP_STORAGE
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 #define	CAPBUNDLE_MAX_KMOD_REQUIRES	8
 /* Internal service representation. */
@@ -64,6 +65,8 @@ struct capbundle_service {
 	unsigned ncap_jail;
 	struct ort_vsock_claim cap_vsock[CAPBUNDLE_MAX_CAP_VSOCK];
 	unsigned ncap_vsock;
+	struct ort_storage_claim cap_storage[CAPBUNDLE_MAX_CAP_STORAGE];
+	unsigned ncap_storage;
 	char	cap_services[CAPBUNDLE_MAX_CAP_SERVICES]
 		    [SERVICED_CAP_SERVICE_NAME_MAX];
 	unsigned ncap_services;
