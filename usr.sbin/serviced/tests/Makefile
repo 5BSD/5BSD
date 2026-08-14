@@ -57,6 +57,8 @@ SRCS.rc_ingest_test=	rc_ingest_test.c rc_ingest.c
 CFLAGS.rc_ingest_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.rc_ingest_test+=	-I${SRCTOP}/lib/libcapbundle
 
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/liboraclert
+
 LIBADD.capd_service_fixture+=	capability channel service pthread
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapability
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libchannel
@@ -64,11 +66,6 @@ CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/sys
 
-LIBADD.capd_protocol_fixture+=	service
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/liboraclert
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libkldmgr
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/librebootctl
 
 LIBADD.component_fixture+=	filesystemcmp logcmp networkcmp notifycmp tracecmp service pthread
 CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libservice

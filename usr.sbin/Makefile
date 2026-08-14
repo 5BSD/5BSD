@@ -50,8 +50,6 @@ SUBDIR=	adduser \
 	mpsutil \
 	mptutil \
 	mtest \
-	kldmgrd \
-	kldmgrctl \
 	logd \
 	logctl \
 	localnetwork \
@@ -83,8 +81,6 @@ SUBDIR=	adduser \
 	pwm \
 	quot \
 	rarpd \
-	rebootd \
-	rebootctl \
 	rmt \
 	rpcbind \
 	rpc.lockd \

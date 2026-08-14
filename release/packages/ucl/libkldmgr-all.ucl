@@ -1,5 +1,0 @@
-comment = "Kernel module manager typed client library"
-
-desc = <<EOD
-Typed global-service client API and validated protocol for kldmgrd.
-EOD

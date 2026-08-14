@@ -33,11 +33,7 @@ CFLAGS.transport_test+=	-ffunction-sections -fdata-sections
 LDFLAGS.transport_test+=	-Wl,--gc-sections
 NO_SHARED.transport_test=	yes
 
-LIBADD.capd_protocol_fixture+=	service
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/liboraclert
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libkldmgr
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/librebootctl
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
 

@@ -1,9 +1,0 @@
-comment = "libkldmgr tests"
-
-desc = <<EOD
-ABI, malformed-frame, boundary, and API tests for libkldmgr.
-EOD
-
-annotations = {
-	set = "tests"
-}

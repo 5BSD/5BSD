@@ -95,7 +95,6 @@ pkgbase_component_metadata_body()
 
 	for package in auditbrokerd auditbrokerd-tests \
 	    localfilesystem localfilesystem-tests logd logd-tests \
-	    kldmgrd kldmgrd-tests rebootd rebootd-tests \
 	    bsdnotify bsdnotify-tests \
 	    traced traced-tests \
 	    localnetwork \
@@ -104,7 +103,6 @@ pkgbase_component_metadata_body()
 	    libchannel libchannel-tests \
 	    libservice libservice-tests \
 	    libfilesystemcmp libfilesystemcmp-tests \
-	    libkldmgr libkldmgr-tests librebootctl librebootctl-tests \
 	    liblogcmp liblogcmp-tests \
 	    libnotifycmp libnotifycmp-tests \
 	    libtracecmp libtracecmp-tests \
@@ -123,13 +121,11 @@ pkgbase_component_metadata_body()
 	atf_check -s exit:0 -o match:'PKG_SETS=.*tests' \
 	    grep '^PKG_SETS' "${src}/packages/liboraclectl-tests/Makefile"
 	for package in auditbrokerd-tests localfilesystem-tests logd-tests \
-	    kldmgrd-tests rebootd-tests \
 	    traced-tests \
 	    bsdnotify-tests \
 	    localnetwork-tests \
 	    libauditcmp-tests libcapability-tests libchannel-tests \
 	    libservice-tests \
-	    libkldmgr-tests librebootctl-tests \
 	    liblogcmp-tests \
 	    libtracecmp-tests \
 	    libnotifycmp-tests \
@@ -142,17 +138,16 @@ pkgbase_component_metadata_body()
 
 	# Every packaged Kyua suite needs an install root in BSD.tests.dist.
 	mtree="${src}/etc/mtree/BSD.tests.dist"
-	for testdir in libauditcmp libkldmgr liboraclectl liboraclert \
-	    librebootctl \
-	    auditbrokerd filesystemcmpctl kldmgrctl kldmgrd logctl \
-	    networkcmpctl notifyctl rebootctl rebootd tracectl
+	for testdir in libauditcmp liboraclectl liboraclert \
+	    auditbrokerd filesystemcmpctl logctl \
+	    networkcmpctl notifyctl tracectl
 	do
 		atf_check -s exit:0 -o ignore grep -E \
 		    "^[[:space:]]{8}${testdir}$" "${mtree}"
 	done
 
 	for provider in localfilesystem localnetwork logd bsdnotify \
-	    traced auditbrokerd rebootd kldmgrd; do
+	    traced auditbrokerd; do
 		atf_check -s exit:0 -o match:"PACKAGE=.*${provider}" \
 		    grep '^PACKAGE' "${src}/usr.sbin/${provider}/Makefile"
 	done
@@ -172,14 +167,10 @@ pkgbase_component_metadata_body()
 	    grep '^PACKAGE' "${src}/lib/libtracecmp/Makefile"
 	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
 	    grep '^PACKAGE' "${src}/lib/libnotifycmp/Makefile"
-	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
-	    grep '^PACKAGE' "${src}/lib/libkldmgr/Makefile"
-	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
-	    grep '^PACKAGE' "${src}/lib/librebootctl/Makefile"
 	for package in libauditcmp libchannel libshmring libfilesystemcmp \
-	    libnetworkcmp libkldmgr librebootctl \
+	    libnetworkcmp \
 	    liblogcmp libnotifycmp libtracecmp localfilesystem localnetwork \
-	    auditbrokerd logd bsdnotify traced kldmgrd rebootd
+	    auditbrokerd logd bsdnotify traced
 	do
 		atf_check -s exit:0 -o match:"WORLDPACKAGE=.*${package}" \
 		    grep '^WORLDPACKAGE' \
@@ -189,9 +180,9 @@ pkgbase_component_metadata_body()
 		    "${src}/packages/Makefile"
 	done
 	for package in libauditcmp libchannel libshmring libfilesystemcmp \
-	    libnetworkcmp libkldmgr librebootctl \
+	    libnetworkcmp \
 	    liblogcmp libnotifycmp libtracecmp localfilesystem localnetwork \
-	    auditbrokerd logd bsdnotify traced kldmgrd rebootd
+	    auditbrokerd logd bsdnotify traced
 	do
 		atf_check -s exit:0 \
 		    -o match:"WORLDPACKAGE=.*${package}-tests" \
@@ -207,14 +198,6 @@ pkgbase_component_metadata_body()
 	atf_check -s exit:0 -o match:'PKG_DEPS.auditbrokerd.*libauditcmp' \
 	    grep 'PKG_DEPS.auditbrokerd.*libauditcmp' \
 	    "${src}/packages/auditbrokerd/Makefile"
-	for provider in kldmgrd rebootd; do
-		atf_check -s exit:0 -o match:"PKG_DEPS.${provider}.*audit" \
-		    grep "PKG_DEPS.${provider}.*audit" \
-		    "${src}/packages/${provider}/Makefile"
-		atf_check -s exit:0 -o match:"PKG_DEPS.${provider}.*serviced" \
-		    grep "PKG_DEPS.${provider}.*serviced" \
-		    "${src}/packages/${provider}/Makefile"
-	done
 	for provider in localfilesystem localnetwork logd bsdnotify; do
 		atf_check -s exit:0 -o match:"PKG_DEPS.${provider}.*auditbrokerd" \
 		    grep "PKG_DEPS.${provider}.*auditbrokerd" \
@@ -269,8 +252,7 @@ pkgbase_component_metadata_body()
 		atf_check -s exit:1 -o empty grep 'service_protocol.h' \
 		    "${src}/lib/lib${typed}/${typed}_protocol.h"
 	done
-	for typed in auditcmp filesystemcmp networkcmp logcmp notifycmp tracecmp \
-	    kldmgr rebootctl; do
+	for typed in auditcmp filesystemcmp networkcmp logcmp notifycmp tracecmp; do
 		atf_check -s exit:0 -o match:'STATIC_CFLAGS.*PICFLAG' \
 		    grep 'STATIC_CFLAGS.*PICFLAG' \
 		    "${src}/lib/lib${typed}/Makefile"
@@ -395,8 +377,6 @@ pkgbase_component_metadata_body()
 	    "${src}/usr.sbin/logd/logd_provider.d" \
 	    "${src}/usr.sbin/traced/traced_provider.d" \
 	    "${src}/usr.sbin/bsdnotify/bsdnotify_provider.d" \
-	    "${src}/usr.sbin/rebootd/rebootd_provider.d" \
-	    "${src}/usr.sbin/kldmgrd/kldmgrd_provider.d" \
 	    "${src}/lib/libnetworkcmp/networkcmp_provider.d" \
 	    "${src}/lib/libfilesystemcmp/filesystemcmp_provider.d" \
 	    "${src}/lib/liblogcmp/logcmp_provider.d" \
@@ -407,20 +387,6 @@ pkgbase_component_metadata_body()
 	do
 		test -s "${provider}" ||
 		    atf_fail "missing DTrace provider ${provider}"
-	done
-	for daemon in rebootd kldmgrd; do
-		for probe in session__start session__end request malformed; do
-			atf_check -s exit:0 -o match:"probe ${probe}" \
-			    grep "probe ${probe}" \
-			    "${src}/usr.sbin/${daemon}/${daemon}_provider.d"
-		done
-		case ${daemon} in
-		rebootd) source=rebootd_main.c ;;
-		kldmgrd) source=kldmgrd_main.c ;;
-		esac
-		atf_check -s exit:0 -o match:'audit_submit' \
-		    grep audit_submit \
-		    "${src}/usr.sbin/${daemon}/${source}"
 	done
 }
 
@@ -513,7 +479,7 @@ operational_name_contract_body()
 	    grep -E '^(trailbossd_enable|trailbossd_flags|wranglerd_enable|wranglerd_flags)=' "${rcconf}"
 
 	for daemon in oracled serviced localfilesystem localnetwork logd \
-	    bsdnotify traced auditbrokerd rebootd kldmgrd; do
+	    bsdnotify traced auditbrokerd; do
 		makefile="${src}/usr.sbin/${daemon}/Makefile"
 		atf_check -s exit:0 -o match:"^PROG[[:space:]]*=.*${daemon}$" \
 		    grep '^PROG' "${makefile}"
@@ -533,9 +499,7 @@ operational_name_contract_body()
 	    'logd:Log.cap' \
 	    'bsdnotify:BsdNotify.cap' \
 	    'traced:Trace.cap' \
-	    'auditbrokerd:Audit.cap' \
-	    'rebootd:Reboot.cap' \
-	    'kldmgrd:Kldmgr.cap'; do
+	    'auditbrokerd:Audit.cap'; do
 		daemon=${mapping%%:*}
 		bundle=${mapping#*:}
 		atf_check -s exit:0 -o match:"/Capabilities/System/${bundle}" \
@@ -558,12 +522,7 @@ operational_name_contract_body()
 	    "${src}/lib/liblogcmp/liblogcmp.3" \
 	    "${src}/lib/libnotifycmp/libnotifycmp.3" \
 	    "${src}/lib/libtracecmp/libtracecmp.3" \
-	    "${src}/lib/libauditcmp/libauditcmp.3" \
-	    "${src}/lib/libkldmgr/libkldmgr.3" \
-	    "${src}/lib/librebootctl/librebootctl.3"
-	atf_check -s exit:0 -o match:'org.5bsd.system.reboot/rebootd' \
-	    grep 'org.5bsd.system.reboot/rebootd' \
-	    "${src}/usr.sbin/bsdnotify/capbundle/bsdnotify.conf"
+	    "${src}/lib/libauditcmp/libauditcmp.3"
 	atf_check -s exit:1 -o empty -e empty grep -E \
 	    '@OBJTOP@/usr.sbin/(filesystemcmp|networkcmp|logcmp|notifycmp|tracecmp|auditcmp)/' \
 	    "${src}/usr.sbin/serviced/tests/component_integration_test.sh"
@@ -583,7 +542,7 @@ typed_header_boundaries_body()
 	src="@SRCTOP@"
 
 	for library in filesystemcmp networkcmp logcmp notifycmp tracecmp \
-	    auditcmp kldmgr rebootctl
+	    auditcmp
 	do
 		client="${src}/lib/lib${library}/${library}.h"
 		server="${src}/lib/lib${library}/${library}_server.h"

@@ -1,8 +1,0 @@
-comment = "Capability-mode reboot control service"
-
-desc = <<EOD
-rebootd is the root global service for validated reboot, shutdown, and status
-operations.  It authenticates serviced client labels, applies a default-deny
-allow list, confines one worker per session, and records security-relevant
-operations through OpenBSM and DTrace.
-EOD

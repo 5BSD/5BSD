@@ -25,8 +25,6 @@ SUBDIR=	blocklist \
 	ctl \
 	oracled \
 	oraclectl \
-	kldmgrd \
-	rebootd \
 	serviced \
 	servicectl \
 	localfilesystem \
@@ -51,11 +49,9 @@ SUBDIR=	blocklist \
 	libcapbundle \
 	libchannel \
 	libfilesystemcmp \
-	libkldmgr \
 	liblogcmp \
 	libnetworkcmp \
 	libnotifycmp \
-	librebootctl \
 	liboraclectl \
 	liboraclert \
 	libservice \
@@ -187,8 +183,6 @@ SUBDIR.${MK_TESTS}+=		libauditcmp-tests auditbrokerd-tests
 SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
 SUBDIR.${MK_TESTS}+=		libfilesystemcmp-tests libnetworkcmp-tests
 SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotifycmp-tests
-SUBDIR.${MK_TESTS}+=		libkldmgr-tests librebootctl-tests
-SUBDIR.${MK_TESTS}+=		kldmgrd-tests rebootd-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
 SUBDIR.${MK_TESTS}+=		liboraclectl-tests liboraclert-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
