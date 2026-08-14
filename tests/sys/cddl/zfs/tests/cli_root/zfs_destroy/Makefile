@@ -16,6 +16,7 @@ ${PACKAGE}FILES+=	zfs_destroy_005_neg.ksh
 ${PACKAGE}FILES+=	zfs_destroy_common.kshlib
 ${PACKAGE}FILES+=	zfs_destroy_002_pos.ksh
 ${PACKAGE}FILES+=	zfs_destroy_007_neg.ksh
+${PACKAGE}FILES+=	zfs_destroy_008_neg.ksh
 ${PACKAGE}FILES+=	setup.ksh
 ${PACKAGE}FILES+=	zfs_destroy_003_pos.ksh
 ${PACKAGE}FILES+=	zfs_destroy_006_neg.ksh

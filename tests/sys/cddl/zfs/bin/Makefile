@@ -50,6 +50,7 @@ PROGS+=		randfree_file
 PROGS+=		readmmap
 PROGS+=		rename_dir
 PROGS+=		rm_lnkcnt_zero_file
+PROGS+=		zfs_destroy_snaps
 PROGS+=		zfs_send_capsicum
 
 .for p in ${PROGS}
@@ -58,8 +59,9 @@ SRCS.$p=	$p.c
 
 LIBADD.mmapwrite+=	pthread
 LIBADD.rm_lnkcnt_zero_file+=	pthread
-LIBADD.zfs_send_capsicum+=	zfs_core
-CFLAGS.zfs_send_capsicum+= \
+.for p in zfs_destroy_snaps zfs_send_capsicum
+LIBADD.$p+=	zfs_core
+CFLAGS.$p+= \
 	-DIN_BASE \
 	-I${ZFSTOP}/include \
 	-I${ZFSTOP}/include/os/freebsd \
@@ -69,5 +71,7 @@ CFLAGS.zfs_send_capsicum+= \
 	-I${SRCTOP}/cddl/compat/opensolaris/include \
 	-include ${ZFSTOP}/include/os/freebsd/spl/sys/ccompile.h \
 	-DHAVE_ISSETUGID
+.endfor
+LIBADD.zfs_destroy_snaps+=	nvpair
 
 .include <bsd.progs.mk>

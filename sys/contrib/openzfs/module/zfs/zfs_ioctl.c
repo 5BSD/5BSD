@@ -940,8 +940,11 @@ zfs_secpolicy_destroy_perms(const char *name, cred_t *cr)
 		    cr);
 	}
 #ifdef MAC
-	if (error == 0)
+	if (error == 0) {
 		error = mac_zfs_check_dataset_destroy(cr, name);
+		if (error == 0 && strchr(name, '@') != NULL)
+			error = mac_mount_check_snapshot_delete(cr, name);
+	}
 #endif
 	return (error);
 }
@@ -971,11 +974,6 @@ zfs_secpolicy_destroy_snaps(zfs_cmd_t *zc, nvlist_t *innvl, cred_t *cr)
 	    pair = nextpair) {
 		nextpair = nvlist_next_nvpair(snaps, pair);
 		error = zfs_secpolicy_destroy_perms(nvpair_name(pair), cr);
-#ifdef MAC
-		if (error == 0 || error == ENOENT)
-			error = mac_mount_check_snapshot_delete(cr,
-			    nvpair_name(pair));
-#endif
 		if (error == ENOENT) {
 			/*
 			 * Ignore any snapshots that don't exist (we consider

@@ -213,6 +213,38 @@ zfs_destroy_007_neg_cleanup()
 }
 
 
+atf_test_case zfs_destroy_008_neg cleanup
+zfs_destroy_008_neg_head()
+{
+	atf_set "descr" "Verify ZFS snapshot destruction honors MAC policy hooks."
+	atf_set "require.progs" "ksh93 su sysctl zfs zfs_destroy_snaps"
+	atf_set "require.kmods" "mac_test_hooks"
+	atf_set "timeout" 3600
+}
+zfs_destroy_008_neg_body()
+{
+	. $(atf_get_srcdir)/../../../include/default.cfg
+	. $(atf_get_srcdir)/zfs_destroy_common.kshlib
+	. $(atf_get_srcdir)/zfs_destroy.cfg
+
+	verify_disk_count "$DISKS" 1
+	ksh93 $(atf_get_srcdir)/setup.ksh || atf_fail "Setup failed"
+	ksh93 $(atf_get_srcdir)/zfs_destroy_008_neg.ksh || atf_fail "Testcase failed"
+}
+zfs_destroy_008_neg_cleanup()
+{
+	. $(atf_get_srcdir)/../../../include/default.cfg
+	. $(atf_get_srcdir)/zfs_destroy_common.kshlib
+	. $(atf_get_srcdir)/zfs_destroy.cfg
+
+	sysctl security.mac.test_hooks.deny.zfs_check_dataset_destroy=0 \
+	    >/dev/null 2>&1 || true
+	sysctl security.mac.test_hooks.deny.mount_check_snapshot_delete=0 \
+	    >/dev/null 2>&1 || true
+	ksh93 $(atf_get_srcdir)/cleanup.ksh || atf_fail "Cleanup failed"
+}
+
+
 atf_init_test_cases()
 {
 
@@ -223,4 +255,5 @@ atf_init_test_cases()
 	atf_add_test_case zfs_destroy_005_neg
 	atf_add_test_case zfs_destroy_006_neg
 	atf_add_test_case zfs_destroy_007_neg
+	atf_add_test_case zfs_destroy_008_neg
 }
