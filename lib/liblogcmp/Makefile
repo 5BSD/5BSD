@@ -10,6 +10,7 @@ MLINKS+=liblogcmp.3 logcmp_logger_destroy.3
 MLINKS+=liblogcmp.3 logcmp_emit.3
 MLINKS+=liblogcmp.3 logcmp_flush.3
 MLINKS+=liblogcmp.3 logcmp_stats.3
+MLINKS+=liblogcmp.3 logcmp_query_next.3
 MLINKS+=liblogcmp.3 logcmp_client_close.3
 
 SRCS=	logcmp.c logcmp_wakeup.c
