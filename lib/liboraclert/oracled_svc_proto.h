@@ -42,6 +42,7 @@
 #define	ORACLE_OP_MINT_FILE		8	/* mint narrowed file token */
 #define	ORACLE_OP_MINT_JAIL		9	/* mint jail isolation token */
 #define	ORACLE_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
+#define	ORACLE_OP_MINT_STORAGE		24	/* mint TrustedZFS dataset handle */
 
 /*
  * Common request header — used for operations with no extra parameters
@@ -183,6 +184,26 @@ struct oracle_vsock_req {
 	uint32_t	port_max;
 	uint8_t		direction;
 	uint8_t		_reserved[7];
+};
+
+/*
+ * ORACLE_OP_MINT_STORAGE
+ *   req:  oracle_storage_req
+ *   reply: oracle_reply { .status }
+ *   reply_fds[0] = TrustedZFS dataset handle fd (on success)
+ *
+ * Mints a dataset handle (ZFS_IOC_DATASET_OPEN) for the named dataset
+ * with the requested ZH_* rights and ZHF_* flags, and passes the handle
+ * fd back over the channel.  oracled holds the /dev/zfs privilege; the
+ * service receives only the rights-limited handle.  The dataset must
+ * already exist (serviced materializes ephemeral datasets before
+ * requesting the mint).
+ */
+struct oracle_storage_req {
+	uint32_t	op;		/* ORACLE_OP_MINT_STORAGE */
+	uint32_t	flags;		/* ZHF_* */
+	uint64_t	rights;		/* ZH_* mask */
+	char		dataset[256];	/* == ORT_STORAGE_DATASET_MAX */
 };
 
 /*

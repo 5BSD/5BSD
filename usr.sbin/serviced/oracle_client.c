@@ -372,6 +372,25 @@ oracle_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc)
 }
 
 int
+oracle_mint_storage(int channel_fd, const struct ort_storage_claim *sc)
+{
+	struct oracle_storage_req req;
+	int handle_fd, status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_MINT_STORAGE;
+	req.rights = sc->rights;
+	if (strlcpy(req.dataset, sc->dataset, sizeof(req.dataset)) >=
+	    sizeof(req.dataset)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	status = oracle_rpc(channel_fd, &req, sizeof(req), &handle_fd, 1,
+	    NULL);
+	return (check_status_fd(status, handle_fd));
+}
+
+int
 oracle_create_jail(int channel_fd, const char *name, const char *path,
     const char *hostname, const char *ip4_addr)
 {

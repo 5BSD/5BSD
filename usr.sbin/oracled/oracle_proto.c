@@ -19,8 +19,12 @@
 #include <sys/linker.h>
 #include <sys/module.h>
 
+#include <sys/zfshandle.h>
+
 #include <dev/mac_capability/mac_capability_ioctl.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
+
+#include <fcntl.h>
 
 #include <arpa/inet.h>
 
@@ -361,6 +365,56 @@ handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
 	ORACLED_PROBE_MINT_VSOCK(vc.cid, vc.port_min, vc.port_max, 0);
 	proto_reply(0, reply_token, &token_fd, 1);
 	close(token_fd);
+}
+
+/*
+ * Mint a TrustedZFS dataset handle for the requested dataset and rights
+ * and pass the handle fd back to the service.  oracled holds the /dev/zfs
+ * privilege (it runs unsandboxed as the capability engine); the service
+ * receives only the rights-limited descriptor.  The dataset must already
+ * exist — serviced materializes ephemeral datasets before requesting.
+ */
+static void
+handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_storage_req *req;
+	struct zfs_dataset_open_args args;
+	int devfd, handle_fd, serrno;
+
+	if (len != sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
+	    req->dataset[0] == '\0' ||
+	    (req->rights & ~ZH_ALL_RIGHTS) != 0 ||
+	    (req->flags & ~ZHF_SUBTREE) != 0) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	devfd = open("/dev/zfs", O_RDWR | O_CLOEXEC);
+	if (devfd == -1) {
+		proto_reply(errno, reply_token, NULL, 0);
+		return;
+	}
+	memset(&args, 0, sizeof(args));
+	strlcpy(args.zdo_name, req->dataset, sizeof(args.zdo_name));
+	args.zdo_rights = req->rights;
+	args.zdo_flags = req->flags;
+	args.zdo_fd = -1;
+	if (ioctl(devfd, ZFS_IOC_DATASET_OPEN, &args) == -1) {
+		serrno = errno;
+		close(devfd);
+		proto_reply(serrno, reply_token, NULL, 0);
+		return;
+	}
+	close(devfd);
+
+	handle_fd = args.zdo_fd;
+	proto_reply(0, reply_token, &handle_fd, 1);
+	close(handle_fd);
 }
 
 static void
@@ -751,6 +805,9 @@ proto_dispatch_one(void)
 		break;
 	case ORACLE_OP_MINT_VSOCK:
 		handle_mint_vsock(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_MINT_STORAGE:
+		handle_mint_storage(&buf, ra.payload_len, ra.reply_token);
 		break;
 	case ORACLE_OP_MINT_SYSTEM:
 		handle_mint_system(&buf, ra.payload_len, ra.reply_token);
