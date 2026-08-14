@@ -19,6 +19,10 @@
 #include "ipc_proto.h"
 #include "blued_devmgr.h"
 
+struct service_context;		/* libservice provider handles (opaque) */
+struct service_provider;
+struct service_listener;
+
 extern atomic_int blued_verbose;
 extern atomic_bool blued_shutting_down;
 
@@ -379,6 +383,11 @@ struct blued_ctx {
 	int			config_fd;	/* pre-opened config file for SIGHUP reload */
 	int			capprotect_fd;	/* /dev/cap_rt capprotect instance */
 	int			persist_dirfd;	/* pre-opened state dir for blued_persist (openat/renameat) */
+
+	/* serviced integration (provider libservice API). */
+	struct service_context	*svc_ctx;
+	struct service_provider	*svc_provider;
+	struct service_listener	*svc_listener;	/* exposed name; dormant */
 
 };
 

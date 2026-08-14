@@ -574,8 +574,21 @@ blued_harden_fd_inheritance(void)
 static void
 atexit_cleanup(void)
 {
-	if (blued_serviced)
-		service_unregister("org.5bsd.blued");
+	if (blued_serviced) {
+		/*
+		 * The provider exists only in central mode (peripheral mode
+		 * acquires the context but returns before registering); the
+		 * context is released either way.
+		 */
+		if (blued_g.svc_provider != NULL) {
+			service_provider_destroy(blued_g.svc_provider);
+			blued_g.svc_provider = NULL;
+		}
+		if (blued_g.svc_ctx != NULL) {
+			service_release(blued_g.svc_ctx);
+			blued_g.svc_ctx = NULL;
+		}
+	}
 	/*
 	 * ISO streams are live-session-only and never persisted; closing the
 	 * HCI socket resets the controller's isochronous state, so a best-effort
@@ -3469,9 +3482,9 @@ main(int argc, char *argv[])
 
 	/* 0. serviced integration: if launched by serviced, init service lib */
 	if (getenv("ORACLED_CHANNEL_FD") != NULL) {
-		if (service_init() == -1)
+		if (service_acquire(&blued_g.svc_ctx) == -1)
 			err(1, "initialize serviced channel");
-		if (service_authorize_capabilities() == -1)
+		if (service_authorize_capabilities(blued_g.svc_ctx) == -1)
 			err(1, "activate serviced capabilities");
 		blued_serviced = 1;
 	}
@@ -4384,28 +4397,41 @@ main(int argc, char *argv[])
 	if (blued_ctl_init(cfg.ctlsock) < 0)
 		warn("control socket init failed (non-fatal)");
 
-	/* 15. serviced: register channel fd with kqueue, report ready */
+	/*
+	 * 15. serviced: create the provider, expose the name, and watch the
+	 * supervisor fd for lifecycle.  Readiness is reported below, after
+	 * cap_enter(): the provider API requires the explicit
+	 * capability-mode transition before service_provider_ready().
+	 */
 	if (blued_serviced) {
-		int channel_fd;
+		int sup_fd;
 
-		channel_fd = service_channel_fd();
-		if (channel_fd >= 0) {
-			struct kevent kev;
-
-			EV_SET(&kev, channel_fd, EVFILT_READ,
-			    EV_ADD | EV_ENABLE, 0, 0, NULL);
-			if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
-				warn("kevent service_channel_fd");
-		}
 		/* The daemon chooses its external shield after initialization.
 		 * serviced retains stop authority through its procdesc; pdkill
 		 * deliberately bypasses ambient signal checks. */
-		if (service_protect(SERVICE_PROTECT_EXTERNAL) == -1)
+		if (service_provider_create(&blued_g.svc_provider) == -1)
+			err(1, "create serviced provider");
+		if (service_provider_protect(blued_g.svc_provider,
+		    SERVICE_PROTECT_EXTERNAL) == -1)
 			err(1, "protect serviced process");
-		if (service_register("org.5bsd.blued") == -1)
-			err(1, "register serviced name");
-		if (service_ready() == -1)
-			err(1, "report serviced readiness");
+		if (service_provider_expose(blued_g.svc_provider,
+		    "org.5bsd.blued", &blued_g.svc_listener) == -1)
+			err(1, "expose serviced name");
+		/*
+		 * The supervisor fd (successor to the old service_channel_fd)
+		 * becomes readable only when the serviced connection is lost;
+		 * the real stop path is SIGTERM/pdkill.  Nothing connects to
+		 * the exposed name, so the listener is left dormant.
+		 */
+		sup_fd = service_supervisor_fd(blued_g.svc_ctx);
+		if (sup_fd >= 0) {
+			struct kevent kev;
+
+			EV_SET(&kev, sup_fd, EVFILT_READ,
+			    EV_ADD | EV_ENABLE, 0, 0, NULL);
+			if (kevent(blued_g.kq, &kev, 1, NULL, 0, NULL) < 0)
+				warn("kevent service_supervisor_fd");
+		}
 	}
 
 	/*
@@ -4516,6 +4542,20 @@ main(int argc, char *argv[])
 	if (cap_enter() < 0)
 		err(1, "cap_enter (central)");
 	LOG_HOGP(1, "entered Capsicum sandbox (central)");
+
+	/*
+	 * Report serviced readiness now that we are in capability mode
+	 * (service_provider_ready() requires it).  enter_capability_mode
+	 * is idempotent with the cap_enter() above — it observes we are
+	 * already sandboxed and only records the transition.
+	 */
+	if (blued_serviced) {
+		if (service_provider_enter_capability_mode(
+		    blued_g.svc_provider) == -1)
+			err(1, "enter serviced capability mode");
+		if (service_provider_ready(blued_g.svc_provider) == -1)
+			err(1, "report serviced readiness");
+	}
 
 	/* Now spawn setup threads inside the sandbox */
 	{

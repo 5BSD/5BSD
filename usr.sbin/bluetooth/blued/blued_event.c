@@ -169,7 +169,13 @@ blued_idle_disarm(struct blued_conn *conn)
  *
  * Also handles Authenticated Payload Timeout Expired (0x57).
  */
-void
+/*
+ * The raw-HCI read is guarded by a conditional trylock (held iff the
+ * per-fd devreq mutex exists and was free); clang's thread-safety
+ * analysis cannot follow the NULL-guarded trylock/unlock pair, as with
+ * the other conditional-lock helpers in this daemon (see smp_keys.c).
+ */
+void __attribute__((no_thread_safety_analysis))
 blued_handle_hci_event(struct blued_adapter *adp)
 {
 	uint8_t buf[3 + NG_HCI_EVENT_PKT_SIZE];
