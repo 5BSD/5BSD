@@ -43,6 +43,7 @@
 #define	ORACLE_OP_MINT_JAIL		9	/* mint jail isolation token */
 #define	ORACLE_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
 #define	ORACLE_OP_MINT_STORAGE		24	/* mint TrustedZFS dataset handle */
+#define	ORACLE_OP_DESTROY_STORAGE	25	/* destroy an ephemeral dataset */
 
 /*
  * Common request header — used for operations with no extra parameters
@@ -200,11 +201,25 @@ struct oracle_vsock_req {
  * requesting the mint).
  */
 struct oracle_storage_req {
-	uint32_t	op;		/* ORACLE_OP_MINT_STORAGE */
+	uint32_t	op;		/* ORACLE_OP_MINT_STORAGE / DESTROY */
 	uint32_t	flags;		/* ZHF_* */
-	uint64_t	rights;		/* ZH_* mask */
+	uint64_t	rights;		/* ZH_* mask (mint only) */
+	uint8_t		lifetime;	/* ORT_STORAGE_* */
+	uint8_t		_reserved[7];
 	char		dataset[256];	/* == ORT_STORAGE_DATASET_MAX */
 };
+
+/*
+ * ORACLE_OP_DESTROY_STORAGE
+ *   req:  oracle_storage_req (op, dataset; rights/flags ignored)
+ *   reply: oracle_reply { .status }
+ *
+ * Destroy an ephemeral dataset created for a service, on service stop.
+ * Only leaf datasets under a provisioned storage root are destroyable
+ * this way (oracled opens the parent with ZH_DESTROY and removes the
+ * named child); a non-empty or non-existent target is a no-op success
+ * so stop paths are idempotent.
+ */
 
 /*
  * ORACLE_OP_ENSURE_KMOD

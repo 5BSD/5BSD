@@ -162,6 +162,8 @@ int	oracle_mint_net(int channel_fd, const struct ort_net_claim *nc);
 int	oracle_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
 int	oracle_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc);
 int	oracle_mint_storage(int channel_fd, const struct ort_storage_claim *sc);
+int	oracle_destroy_storage(int channel_fd,
+	    const struct ort_storage_claim *sc);
 int	oracle_mint_system(int channel_fd, uint32_t gates);
 int	oracle_create_jail(int channel_fd, const char *name, const char *path,
 	    const char *hostname, const char *ip4_addr);

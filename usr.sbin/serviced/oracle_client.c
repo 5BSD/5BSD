@@ -380,6 +380,7 @@ oracle_mint_storage(int channel_fd, const struct ort_storage_claim *sc)
 	memset(&req, 0, sizeof(req));
 	req.op = ORACLE_OP_MINT_STORAGE;
 	req.rights = sc->rights;
+	req.lifetime = sc->lifetime;
 	if (strlcpy(req.dataset, sc->dataset, sizeof(req.dataset)) >=
 	    sizeof(req.dataset)) {
 		errno = ENAMETOOLONG;
@@ -388,6 +389,27 @@ oracle_mint_storage(int channel_fd, const struct ort_storage_claim *sc)
 	status = oracle_rpc(channel_fd, &req, sizeof(req), &handle_fd, 1,
 	    NULL);
 	return (check_status_fd(status, handle_fd));
+}
+
+int
+oracle_destroy_storage(int channel_fd, const struct ort_storage_claim *sc)
+{
+	struct oracle_storage_req req;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_DESTROY_STORAGE;
+	if (strlcpy(req.dataset, sc->dataset, sizeof(req.dataset)) >=
+	    sizeof(req.dataset)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	status = oracle_rpc(channel_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status > 0) {
+		errno = status;
+		return (-1);
+	}
+	return (status);
 }
 
 int
@@ -743,6 +765,24 @@ oracle_release_manifest(int channel_fd, const struct svc_manifest *m)
 
 		fill_system_req(&req, ORACLE_OP_RELEASE_SYSTEM,
 		    m->cap_system);
+		if (oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
+			nsent++;
+	}
+	/*
+	 * Ephemeral storage is destroyed at stop; persistent storage is
+	 * left in place (nothing to release — the handle fd closing in the
+	 * stopped service is the only teardown it needs).
+	 */
+	for (i = 0; i < m->ncap_storage; i++) {
+		struct oracle_storage_req req;
+
+		if (m->cap_storage[i].lifetime != ORT_STORAGE_EPHEMERAL)
+			continue;
+		memset(&req, 0, sizeof(req));
+		req.op = ORACLE_OP_DESTROY_STORAGE;
+		if (strlcpy(req.dataset, m->cap_storage[i].dataset,
+		    sizeof(req.dataset)) >= sizeof(req.dataset))
+			continue;
 		if (oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}

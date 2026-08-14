@@ -367,18 +367,93 @@ handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
 	close(token_fd);
 }
 
+/* Mint a dataset handle by name.  Returns fd, or -1 with errno set. */
+static int
+storage_open_handle(int devfd, const char *dataset, uint64_t rights,
+    uint32_t flags)
+{
+	struct zfs_dataset_open_args args;
+
+	memset(&args, 0, sizeof(args));
+	strlcpy(args.zdo_name, dataset, sizeof(args.zdo_name));
+	args.zdo_rights = rights;
+	args.zdo_flags = flags;
+	args.zdo_fd = -1;
+	if (ioctl(devfd, ZFS_IOC_DATASET_OPEN, &args) == -1)
+		return (-1);
+	return (args.zdo_fd);
+}
+
+/*
+ * Split "pool/a/b/leaf" into parent "pool/a/b" and leaf "leaf".  Returns
+ * 0 on success; -1 if the dataset has no parent (a bare pool name, which
+ * cannot be an ephemeral leaf).
+ */
+static int
+storage_split(const char *dataset, char *parent, size_t plen,
+    const char **leafp)
+{
+	const char *slash;
+
+	slash = strrchr(dataset, '/');
+	if (slash == NULL || slash == dataset)
+		return (-1);
+	if ((size_t)(slash - dataset) >= plen)
+		return (-1);
+	memcpy(parent, dataset, slash - dataset);
+	parent[slash - dataset] = '\0';
+	*leafp = slash + 1;
+	return (0);
+}
+
+/*
+ * Create the leaf dataset of an ephemeral storage claim, through a
+ * capability handle on its parent (which the operator must have
+ * provisioned).  Tolerates EEXIST so a crash-leftover leaf is reused.
+ */
+static int
+storage_create_ephemeral(int devfd, const char *dataset)
+{
+	char parent[256];
+	const char *leaf;
+	struct zfd_create_args ca;
+	int parent_fd;
+
+	if (storage_split(dataset, parent, sizeof(parent), &leaf) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	parent_fd = storage_open_handle(devfd, parent, ZH_CREATE,
+	    ZHF_SUBTREE);
+	if (parent_fd == -1)
+		return (-1);
+	memset(&ca, 0, sizeof(ca));
+	strlcpy(ca.zc_relname, leaf, sizeof(ca.zc_relname));
+	ca.zc_type = ZFD_TYPE_FILESYSTEM;
+	ca.zc_fd = -1;
+	if (ioctl(parent_fd, ZFD_CREATE, &ca) == -1 && errno != EEXIST) {
+		int serrno = errno;
+		close(parent_fd);
+		errno = serrno;
+		return (-1);
+	}
+	if (ca.zc_fd >= 0)
+		close(ca.zc_fd);
+	close(parent_fd);
+	return (0);
+}
+
 /*
  * Mint a TrustedZFS dataset handle for the requested dataset and rights
  * and pass the handle fd back to the service.  oracled holds the /dev/zfs
  * privilege (it runs unsandboxed as the capability engine); the service
- * receives only the rights-limited descriptor.  The dataset must already
- * exist — serviced materializes ephemeral datasets before requesting.
+ * receives only the rights-limited descriptor.  For an ephemeral claim
+ * the leaf dataset is created first (under its provisioned parent).
  */
 static void
 handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct oracle_storage_req *req;
-	struct zfs_dataset_open_args args;
 	int devfd, handle_fd, serrno;
 
 	if (len != sizeof(*req)) {
@@ -389,7 +464,8 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
 	    req->dataset[0] == '\0' ||
 	    (req->rights & ~ZH_ALL_RIGHTS) != 0 ||
-	    (req->flags & ~ZHF_SUBTREE) != 0) {
+	    (req->flags & ~ZHF_SUBTREE) != 0 ||
+	    req->lifetime > ORT_STORAGE_EPHEMERAL) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
@@ -399,12 +475,16 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 		proto_reply(errno, reply_token, NULL, 0);
 		return;
 	}
-	memset(&args, 0, sizeof(args));
-	strlcpy(args.zdo_name, req->dataset, sizeof(args.zdo_name));
-	args.zdo_rights = req->rights;
-	args.zdo_flags = req->flags;
-	args.zdo_fd = -1;
-	if (ioctl(devfd, ZFS_IOC_DATASET_OPEN, &args) == -1) {
+	if (req->lifetime == ORT_STORAGE_EPHEMERAL &&
+	    storage_create_ephemeral(devfd, req->dataset) == -1) {
+		serrno = errno;
+		close(devfd);
+		proto_reply(serrno, reply_token, NULL, 0);
+		return;
+	}
+	handle_fd = storage_open_handle(devfd, req->dataset, req->rights,
+	    req->flags);
+	if (handle_fd == -1) {
 		serrno = errno;
 		close(devfd);
 		proto_reply(serrno, reply_token, NULL, 0);
@@ -412,9 +492,61 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 	close(devfd);
 
-	handle_fd = args.zdo_fd;
 	proto_reply(0, reply_token, &handle_fd, 1);
 	close(handle_fd);
+}
+
+/*
+ * Destroy an ephemeral leaf dataset on service stop, through a ZH_DESTROY
+ * handle on its parent.  A missing target is success (idempotent stop).
+ */
+static void
+handle_destroy_storage(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct oracle_storage_req *req;
+	char parent[256];
+	const char *leaf;
+	struct zfd_destroy_args da;
+	int devfd, parent_fd, serrno;
+
+	if (len != sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
+	    storage_split(req->dataset, parent, sizeof(parent), &leaf) != 0) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+
+	devfd = open("/dev/zfs", O_RDWR | O_CLOEXEC);
+	if (devfd == -1) {
+		proto_reply(errno, reply_token, NULL, 0);
+		return;
+	}
+	parent_fd = storage_open_handle(devfd, parent, ZH_DESTROY,
+	    ZHF_SUBTREE);
+	if (parent_fd == -1) {
+		serrno = errno;
+		close(devfd);
+		/* Parent gone => the leaf is gone too; idempotent success. */
+		proto_reply(serrno == ENOENT ? 0 : serrno, reply_token,
+		    NULL, 0);
+		return;
+	}
+	memset(&da, 0, sizeof(da));
+	strlcpy(da.zd_relname, leaf, sizeof(da.zd_relname));
+	if (ioctl(parent_fd, ZFD_DESTROY, &da) == -1 && errno != ENOENT) {
+		serrno = errno;
+		close(parent_fd);
+		close(devfd);
+		proto_reply(serrno, reply_token, NULL, 0);
+		return;
+	}
+	close(parent_fd);
+	close(devfd);
+	proto_reply(0, reply_token, NULL, 0);
 }
 
 static void
@@ -808,6 +940,9 @@ proto_dispatch_one(void)
 		break;
 	case ORACLE_OP_MINT_STORAGE:
 		handle_mint_storage(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case ORACLE_OP_DESTROY_STORAGE:
+		handle_destroy_storage(&buf, ra.payload_len, ra.reply_token);
 		break;
 	case ORACLE_OP_MINT_SYSTEM:
 		handle_mint_system(&buf, ra.payload_len, ra.reply_token);
