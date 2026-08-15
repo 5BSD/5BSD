@@ -12,6 +12,9 @@ TESTSDIR=	${TESTSBASE}/sys/security/oes
 # ABI header: <security/oes/oes.h>.
 CFLAGS+=	-I${SRCTOP}/sys
 
+# Several tests spawn client threads (multi-client auth/notify, stress).
+LIBADD+=	pthread
+
 # Unit-ish coverage that exercises the wire ABI and harness without the module
 # is still a plain test; module-dependent tests fail fast if /dev/oes is absent.
 PLAIN_TESTS_C=	\
