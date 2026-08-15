@@ -73,7 +73,7 @@ ATF_TC_BODY(valid_profiles, tc)
 	require_valid(&generate);
 
 	generate = request(CRYPTO_AES_NIST_GCM_16, 0, 32, 0,
-	    CRYPTODESC_RIGHT_ALL, 12, 16);
+	    CRYPTODESC_RIGHT_SESSION, 12, 16);
 	require_valid(&generate);
 	generate = request(CRYPTO_CHACHA20_POLY1305, 0, 32, 0,
 	    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_AUTH, 12, 16);
@@ -87,6 +87,78 @@ ATF_TC_BODY(valid_profiles, tc)
 	generate = request(CRYPTO_DEFLATE_COMP, 0, 0, 0,
 	    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT, 0, 0);
 	require_valid(&generate);
+}
+
+ATF_TC(key_profiles);
+ATF_TC_HEAD(key_profiles, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "[CRYPTO] accepts only typed asymmetric capability requests");
+}
+
+ATF_TC(approved_only_profiles);
+ATF_TC_HEAD(approved_only_profiles, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "[CRYPTO] approved-only policy admits its narrow AES/SHA-2 suite");
+}
+ATF_TC_BODY(approved_only_profiles, tc)
+{
+	struct cryptocmp_generate generate;
+
+	generate = request(CRYPTO_AES_NIST_GCM_16, 0, 32, 0,
+	    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_AUTH, 12, 16);
+	generate.flags = CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY;
+	require_valid(&generate);
+
+	generate = request(0, CRYPTO_SHA2_512_HMAC, 0, 64,
+	    CRYPTODESC_RIGHT_AUTH | CRYPTODESC_RIGHT_VERIFY, 0, 0);
+	generate.flags = CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY;
+	require_valid(&generate);
+
+	generate = request(CRYPTO_CHACHA20_POLY1305, 0, 32, 0,
+	    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_AUTH, 12, 16);
+	generate.flags = CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_policy_validate(&generate) == -1);
+
+	generate = request(CRYPTO_AES_XTS, 0, 64, 0,
+	    CRYPTODESC_RIGHT_ENCRYPT, 16, 0);
+	generate.flags = CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_policy_validate(&generate) == -1);
+
+	generate = request(CRYPTO_AES_CBC, 0, 16, 0,
+	    CRYPTODESC_RIGHT_ENCRYPT, 16, 0);
+	generate.flags = 0x80000000U;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_policy_validate(&generate) == -1);
+}
+ATF_TC_BODY(key_profiles, tc)
+{
+	struct cryptocmp_key_generate key;
+
+	memset(&key, 0, sizeof(key));
+	key.type = CRYPTODESC_KEY_X25519;
+	key.rights = CRYPTODESC_RIGHT_EXCHANGE;
+	key.ttl = 60;
+	ATF_REQUIRE(cryptocmp_key_policy_validate(&key) == 0);
+	key.type = CRYPTODESC_KEY_ED25519;
+	key.rights = CRYPTODESC_RIGHT_SIGN | CRYPTODESC_RIGHT_VERIFY;
+	ATF_REQUIRE(cryptocmp_key_policy_validate(&key) == 0);
+	key.rights = CRYPTODESC_RIGHT_ENCRYPT;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_key_policy_validate(&key) == -1);
+	key.type = 99;
+	key.rights = CRYPTODESC_RIGHT_SIGN;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPROTONOSUPPORT,
+	    cryptocmp_key_policy_validate(&key) == -1);
+	key.type = CRYPTODESC_KEY_X25519;
+	key.rights = CRYPTODESC_RIGHT_EXCHANGE;
+	key.ttl = 86401;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_key_policy_validate(&key) == -1);
 }
 
 ATF_TC(rejects_invalid_profiles);
@@ -133,6 +205,11 @@ ATF_TC_BODY(rejects_invalid_profiles, tc)
 	    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_AUTH, 16, 33);
 	errno = 0;
 	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_policy_validate(&generate) == -1);
+	generate = request(CRYPTO_AES_CBC, 0, 16, 0,
+	    CRYPTODESC_RIGHT_ENCRYPT, 16, 0);
+	generate.ttl = 86401;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_policy_validate(&generate) == -1);
 }
 
 ATF_TC(driver_selection);
@@ -163,6 +240,8 @@ ATF_TC_BODY(driver_selection, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, valid_profiles);
+	ATF_TP_ADD_TC(tp, key_profiles);
+	ATF_TP_ADD_TC(tp, approved_only_profiles);
 	ATF_TP_ADD_TC(tp, rejects_invalid_profiles);
 	ATF_TP_ADD_TC(tp, driver_selection);
 	return (atf_no_error());

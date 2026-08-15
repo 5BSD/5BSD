@@ -22,56 +22,79 @@ struct crypto_worker { int terminal_error; };
 static void
 request(struct channel *c __unused, struct channel_message *m, void *arg __unused)
 {
-	const struct { struct cryptocmp_msg msg; struct cryptocmp_generate generate; } *in;
+	const struct cryptocmp_msg *in;
+	const struct cryptocmp_generate *generate;
+	const struct cryptocmp_key_generate *key_generate;
 	struct cryptocmp_msg out;
+	struct cryptocmp_key_reply key_out;
 	struct session2_op session;
-	unsigned char key[64], mackey[64];
+	uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE];
 	int fd, error;
 
 	fd = -1;
 	error = EPROTO;
 	in = channel_message_data(m);
 	memset(&out, 0, sizeof(out));
-	if (channel_message_length(m) == sizeof(*in) &&
+	memset(&key_out, 0, sizeof(key_out));
+	memset(public_key, 0, sizeof(public_key));
+	if (channel_message_length(m) >= sizeof(*in) &&
 	    channel_message_fd_count(m) == 0 &&
-	    in->msg.magic == CRYPTOCMP_MAGIC &&
-	    in->msg.version == CRYPTOCMP_VERSION &&
-	    in->msg.opcode == CRYPTOCMP_OP_GENERATE &&
-	    in->generate.keylen <= sizeof(key) &&
-	    in->generate.mackeylen <= sizeof(mackey) &&
-	    cryptocmp_policy_validate(&in->generate) == 0) {
-		if (in->generate.keylen != 0)
-			arc4random_buf(key, in->generate.keylen);
-		if (in->generate.mackeylen != 0)
-			arc4random_buf(mackey, in->generate.mackeylen);
+	    in->magic == CRYPTOCMP_MAGIC &&
+	    in->version == CRYPTOCMP_VERSION &&
+	    (in->opcode == CRYPTOCMP_OP_GENERATE ||
+	    in->opcode == CRYPTOCMP_OP_GENERATE_KEY)) {
+		out.opcode = in->opcode;
+		if (in->opcode == CRYPTOCMP_OP_GENERATE &&
+		    channel_message_length(m) == sizeof(*in) + sizeof(*generate)) {
+			generate = (const struct cryptocmp_generate *)(in + 1);
+			if (cryptocmp_policy_validate(generate) != 0)
+				goto reply;
 		memset(&session, 0, sizeof(session));
-		session.cipher = in->generate.cipher;
-		session.mac = in->generate.mac;
-		session.keylen = in->generate.keylen;
-		session.key = in->generate.keylen == 0 ? NULL : key;
-		session.mackeylen = in->generate.mackeylen;
-		session.mackey = in->generate.mackeylen == 0 ? NULL : mackey;
-		session.crid = in->generate.crid;
-		session.ivlen = in->generate.ivlen;
-		session.maclen = in->generate.maclen;
-		if (cryptodesc_mint(control_fd, &session, in->generate.rights,
-		    &fd) == 0)
+		session.cipher = generate->cipher;
+		session.mac = generate->mac;
+		session.keylen = generate->keylen;
+		session.key = NULL;
+		session.mackeylen = generate->mackeylen;
+		session.mackey = NULL;
+		session.crid = generate->crid;
+		session.ivlen = generate->ivlen;
+		session.maclen = generate->maclen;
+		if (cryptodesc_mint_generated(control_fd, &session,
+		    generate->rights, generate->ttl, &fd) == 0)
 			error = 0;
 		else
 			error = errno;
+		} else if (in->opcode == CRYPTOCMP_OP_GENERATE_KEY &&
+		    channel_message_length(m) == sizeof(*in) + sizeof(*key_generate)) {
+			key_generate = (const struct cryptocmp_key_generate *)(in + 1);
+			if (cryptocmp_key_policy_validate(key_generate) != 0)
+				goto reply;
+			if (cryptodesc_mint_key(control_fd, key_generate->type,
+			    key_generate->rights, key_generate->ttl, public_key, &fd) == 0)
+				error = 0;
+			else
+				error = errno;
+		}
 	}
-	explicit_bzero(key, sizeof(key));
-	explicit_bzero(mackey, sizeof(mackey));
+
+reply:
 	out.magic = CRYPTOCMP_MAGIC;
 	out.version = CRYPTOCMP_VERSION;
-	out.opcode = CRYPTOCMP_OP_GENERATE;
 	out.status = error == 0 ? 0 : -error;
+	key_out.msg = out;
+	if (out.opcode == CRYPTOCMP_OP_GENERATE_KEY)
+		memcpy(key_out.public_key, public_key, sizeof(key_out.public_key));
 	(void)channel_send_reply(m, &(struct channel_outgoing){
-	    .size = sizeof(struct channel_outgoing), .data = &out,
-	    .length = sizeof(out), .fds = error == 0 ? &fd : NULL,
+	    .size = sizeof(struct channel_outgoing),
+	    .data = out.opcode == CRYPTOCMP_OP_GENERATE_KEY ?
+	    (const void *)&key_out : (const void *)&out,
+	    .length = out.opcode == CRYPTOCMP_OP_GENERATE_KEY ?
+	    sizeof(key_out) : sizeof(out), .fds = error == 0 ? &fd : NULL,
 	    .nfds = error == 0 ? 1 : 0 });
 	if (fd >= 0)
 		close(fd);
+	explicit_bzero(public_key, sizeof(public_key));
+	explicit_bzero(&key_out, sizeof(key_out));
 	channel_message_free(m);
 }
 

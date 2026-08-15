@@ -41,3 +41,49 @@ cryptocmp_generate(struct cryptocmp_client *client, const struct cryptocmp_gener
 	if (reply.status != 0) return (errno = -reply.status, -1);
 	*descriptor = fd; return (0);
 }
+
+int
+cryptocmp_generate_key(struct cryptocmp_client *client,
+    const struct cryptocmp_key_generate *request, uint8_t public_key[32],
+    int *descriptor)
+{
+	struct { struct cryptocmp_msg msg; struct cryptocmp_key_generate key; } wire;
+	struct cryptocmp_key_reply reply;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd = -1;
+
+	if (client == NULL || request == NULL || public_key == NULL ||
+	    descriptor == NULL || client->owner != getpid())
+		return (errno = EINVAL, -1);
+	memset(&wire, 0, sizeof(wire));
+	wire.msg.magic = CRYPTOCMP_MAGIC;
+	wire.msg.version = CRYPTOCMP_VERSION;
+	wire.msg.opcode = CRYPTOCMP_OP_GENERATE_KEY;
+	wire.key = *request;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &wire;
+	outgoing.length = sizeof(wire);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 1;
+	options.timeout_ms = 30000;
+	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC ||
+	    reply.msg.version != CRYPTOCMP_VERSION ||
+	    reply.msg.opcode != CRYPTOCMP_OP_GENERATE_KEY ||
+	    incoming.nfds != (reply.msg.status == 0 ? 1 : 0))
+		return (errno = EPROTO, -1);
+	if (reply.msg.status != 0)
+		return (errno = -reply.msg.status, -1);
+	memcpy(public_key, reply.public_key, sizeof(reply.public_key));
+	*descriptor = fd;
+	return (0);
+}

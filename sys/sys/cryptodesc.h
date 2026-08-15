@@ -25,10 +25,17 @@
 #define	CRYPTODESC_RIGHT_DECRYPT	0x00000002U
 #define	CRYPTODESC_RIGHT_AUTH		0x00000004U
 #define	CRYPTODESC_RIGHT_VERIFY		0x00000008U
-#define	CRYPTODESC_RIGHT_ALL		(CRYPTODESC_RIGHT_ENCRYPT | \
+#define	CRYPTODESC_RIGHT_SIGN		0x00000010U
+#define	CRYPTODESC_RIGHT_EXCHANGE	0x00000020U
+#define	CRYPTODESC_RIGHT_DERIVE		0x00000040U
+#define	CRYPTODESC_RIGHT_SESSION	(CRYPTODESC_RIGHT_ENCRYPT | \
 					 CRYPTODESC_RIGHT_DECRYPT | \
 					 CRYPTODESC_RIGHT_AUTH | \
-					 CRYPTODESC_RIGHT_VERIFY)
+					 CRYPTODESC_RIGHT_VERIFY | \
+					 CRYPTODESC_RIGHT_DERIVE)
+#define	CRYPTODESC_RIGHT_ALL		(CRYPTODESC_RIGHT_SESSION | \
+					 CRYPTODESC_RIGHT_SIGN | \
+					 CRYPTODESC_RIGHT_EXCHANGE)
 
 /*
  * Issued only by the /dev/crypto control descriptor.  The key pointers in
@@ -39,6 +46,78 @@ struct cryptodesc_create {
 	struct session2_op	session;
 	uint32_t		cd_rights;
 	int32_t			cd_fd;		/* out */
+};
+
+/*
+ * Mint a descriptor with a kernel-generated key.  The session's key and
+ * mackey pointers must be NULL; their lengths select the generated material.
+ * cd_ttl is in seconds (zero means no expiry).  The key never enters the
+ * component or consumer address space.
+ */
+struct cryptodesc_generate {
+	struct session2_op	session;
+	uint32_t		cd_rights;
+	uint32_t		cd_ttl;
+	int32_t			cd_fd;
+};
+
+#define	CRYPTODESC_HKDF_SHA256	1
+#define	CRYPTODESC_HKDF_SHA512	2
+#define	CRYPTODESC_MAX_DERIVE_SALT	1024
+#define	CRYPTODESC_MAX_DERIVE_INFO	1024
+
+/*
+ * Derive a kernel-generated child session from a descriptor's secret.  The
+ * child session key pointers must be NULL.  The output key is retained only
+ * by the resulting DTYPE_CRYPTO descriptor.
+ */
+struct cryptodesc_derive {
+	struct session2_op	session;
+	const void		*cd_salt;
+	size_t			cd_salt_len;
+	const void		*cd_info;
+	size_t			cd_info_len;
+	uint32_t		cd_hash;
+	uint32_t		cd_rights;
+	uint32_t		cd_ttl;
+	int32_t			cd_fd;
+};
+
+#define	CRYPTODESC_KEY_X25519	1
+#define	CRYPTODESC_KEY_ED25519	2
+#define	CRYPTODESC_X25519_SIZE	32
+#define	CRYPTODESC_ED25519_PUBLIC_SIZE	32
+#define	CRYPTODESC_ED25519_SIGNATURE_SIZE	64
+
+/* Mint a kernel-generated X25519 or Ed25519 key descriptor. */
+struct cryptodesc_key_create {
+	uint32_t		cd_type;
+	uint32_t		cd_rights;
+	uint32_t		cd_ttl;
+	uint32_t		cd_flags;	/* must be zero */
+	uint8_t			cd_public[CRYPTODESC_ED25519_PUBLIC_SIZE];
+	int32_t			cd_fd;
+};
+
+struct cryptodesc_x25519 {
+	const void		*cd_peer_public;
+	size_t			cd_peer_public_len;
+	void			*cd_shared_secret;
+	size_t			cd_shared_secret_len;
+};
+
+struct cryptodesc_sign {
+	const void		*cd_data;
+	size_t			cd_data_len;
+	void			*cd_signature;
+	size_t			cd_signature_len;
+};
+
+struct cryptodesc_verify {
+	const void		*cd_data;
+	size_t			cd_data_len;
+	const void		*cd_signature;
+	size_t			cd_signature_len;
 };
 
 /*
@@ -57,5 +136,11 @@ struct cryptodesc_revoke {
 #define	CIOCGCRYPTODESC	_IOWR('c', 110, struct cryptodesc_create)
 #define	CIOCSCRYPTODESCRIGHTS	_IOW('c', 111, struct cryptodesc_restrict)
 #define	CIOCCRYPTODESCREVOKE	_IOW('c', 112, struct cryptodesc_revoke)
+#define	CIOCGCRYPTODESCGENERATE	_IOWR('c', 113, struct cryptodesc_generate)
+#define	CIOCCRYPTODESCDERIVE	_IOWR('c', 114, struct cryptodesc_derive)
+#define	CIOCGCRYPTOKEYDESC	_IOWR('c', 115, struct cryptodesc_key_create)
+#define	CIOCCRYPTX25519	_IOWR('c', 116, struct cryptodesc_x25519)
+#define	CIOCCRYPTOSIGN	_IOWR('c', 117, struct cryptodesc_sign)
+#define	CIOCCRYPTOVERIFY	_IOW('c', 118, struct cryptodesc_verify)
 
 #endif /* !_SYS_CRYPTODESC_H_ */

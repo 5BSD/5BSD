@@ -55,7 +55,7 @@ paired_rights_valid(uint32_t rights)
 	const uint32_t decrypt = CRYPTODESC_RIGHT_DECRYPT |
 	    CRYPTODESC_RIGHT_VERIFY;
 
-	return (rights_allowed(rights, CRYPTODESC_RIGHT_ALL) &&
+	return (rights_allowed(rights, CRYPTODESC_RIGHT_SESSION) &&
 	    ((rights & encrypt) == 0 || (rights & encrypt) == encrypt) &&
 	    ((rights & decrypt) == 0 || (rights & decrypt) == decrypt));
 }
@@ -69,6 +69,19 @@ aead_cipher(uint32_t cipher)
 	    cipher == CRYPTO_XCHACHA20_POLY1305);
 }
 
+static bool
+nist_approved_profile(const struct cryptocmp_generate *request)
+{
+
+	/* A narrow algorithm selector, not evidence of provider validation. */
+	if (request->cipher == 0)
+		return (request->mac == CRYPTO_SHA2_256_HMAC ||
+		    request->mac == CRYPTO_SHA2_384_HMAC ||
+		    request->mac == CRYPTO_SHA2_512_HMAC);
+	return (request->cipher == CRYPTO_AES_CBC ||
+	    request->cipher == CRYPTO_AES_NIST_GCM_16);
+}
+
 int
 cryptocmp_policy_validate(const struct cryptocmp_generate *request)
 {
@@ -77,6 +90,8 @@ cryptocmp_policy_validate(const struct cryptocmp_generate *request)
 	if (request == NULL || !driver_allowed(request->crid) ||
 	    request->keylen > CRYPTOCMP_MAX_CIPHER_KEY_BYTES ||
 	    request->mackeylen > CRYPTOCMP_MAX_MAC_KEY_BYTES ||
+	    request->ttl > 86400 ||
+	    (request->flags & ~CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY) != 0 ||
 	    request->ivlen < 0 || request->maclen < 0) {
 		errno = EINVAL;
 		return (-1);
@@ -104,7 +119,8 @@ cryptocmp_policy_validate(const struct cryptocmp_generate *request)
 	case 0:
 		if (request->mac == 0 || request->keylen != 0 ||
 		    request->ivlen != 0 || !rights_allowed(request->rights,
-		    CRYPTODESC_RIGHT_AUTH | CRYPTODESC_RIGHT_VERIFY))
+		    CRYPTODESC_RIGHT_AUTH | CRYPTODESC_RIGHT_VERIFY |
+		    CRYPTODESC_RIGHT_DERIVE))
 			goto invalid;
 		break;
 	case CRYPTO_AES_CBC:
@@ -112,7 +128,8 @@ cryptocmp_policy_validate(const struct cryptocmp_generate *request)
 			goto invalid;
 		if (request->mac == 0) {
 			if (!rights_allowed(request->rights,
-			    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT))
+			    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT |
+			    CRYPTODESC_RIGHT_DERIVE))
 				goto invalid;
 		} else if (!paired_rights_valid(request->rights))
 			goto invalid;
@@ -139,22 +156,54 @@ cryptocmp_policy_validate(const struct cryptocmp_generate *request)
 		if (request->mac != 0 || (request->keylen != 32 &&
 		    request->keylen != 64) || request->ivlen != 16 ||
 		    !rights_allowed(request->rights,
-		    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT))
+		    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT |
+		    CRYPTODESC_RIGHT_DERIVE))
 			goto invalid;
 		break;
 	case CRYPTO_DEFLATE_COMP:
 		if (request->mac != 0 || request->keylen != 0 ||
 		    request->ivlen != 0 || !rights_allowed(request->rights,
-		    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT))
+		    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT |
+		    CRYPTODESC_RIGHT_DERIVE))
 			goto invalid;
 		break;
 	default:
 		errno = EPROTONOSUPPORT;
 		return (-1);
 	}
+	if ((request->flags & CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY) != 0 &&
+	    !nist_approved_profile(request))
+		goto invalid;
 	return (0);
 
 invalid:
 	errno = EINVAL;
 	return (-1);
+}
+
+int
+cryptocmp_key_policy_validate(const struct cryptocmp_key_generate *request)
+{
+	uint32_t allowed;
+
+	if (request == NULL || request->flags != 0 || request->ttl > 86400) {
+		errno = EINVAL;
+		return (-1);
+	}
+	switch (request->type) {
+	case CRYPTODESC_KEY_X25519:
+		allowed = CRYPTODESC_RIGHT_EXCHANGE;
+		break;
+	case CRYPTODESC_KEY_ED25519:
+		allowed = CRYPTODESC_RIGHT_SIGN | CRYPTODESC_RIGHT_VERIFY;
+		break;
+	default:
+		errno = EPROTONOSUPPORT;
+		return (-1);
+	}
+	if (!rights_allowed(request->rights, allowed)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (0);
 }

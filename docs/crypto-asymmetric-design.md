@@ -10,8 +10,8 @@ ABI.  It is not a second capability component or a KeyVault service.
 
 The component owns policy-mediated access to:
 
-* RSA-PSS and ECDSA/EdDSA signing and verification;
-* X25519/ECDH key agreement;
+* RSA-PSS and ECDSA signing and verification;
+* Ed25519 signing/verification and X25519 key agreement;
 * public-key import/export and certificate/chain parsing; and
 * certificate-chain and trust-anchor validation.
 
@@ -29,7 +29,9 @@ service identity, `[CRYPTO]` key version, and expiration.  Signing and key
 agreement rights must be distinct.  Certificate validation must make hostname,
 time source, EKU, path-building, revocation, and trust-anchor policy explicit.
 
-Before implementation, add kernel and component tests for known-answer
-vectors, invalid signatures, malformed DER, chain/path failures, unsupported
-curves and sizes, rights denial, cross-service lease isolation, descriptor
-passing, concurrency, key rotation/revocation, and audit completeness.
+The initial Ed25519/X25519 implementation has kernel tests for operation,
+rights attenuation, invalid signatures, and concurrent use; RFC 5869 provides
+the opaque-HKDF known-answer vector.  Remaining work needs tests for RSA/ECDSA
+vectors, malformed DER, chain/path failures, unsupported curves and sizes,
+cross-service lease isolation, descriptor passing, key rotation/revocation,
+and audit completeness.

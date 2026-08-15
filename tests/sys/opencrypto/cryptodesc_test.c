@@ -8,6 +8,7 @@
 #include <sys/cryptodesc.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -30,6 +31,24 @@ static const uint8_t chacha_key[32] = {
 	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
 	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+};
+static const uint8_t hkdf_ikm[22] = {
+	0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+	0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+	0x0b, 0x0b, 0x0b, 0x0b, 0x0b, 0x0b,
+};
+static const uint8_t hkdf_salt[13] = {
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06,
+	0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c,
+};
+static const uint8_t hkdf_info[10] = {
+	0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7, 0xf8, 0xf9,
+};
+static const uint8_t hkdf_hmac[32] = {
+	0x7c, 0xd7, 0xda, 0x31, 0x0a, 0xb0, 0x0b, 0x02,
+	0xf4, 0x92, 0x0b, 0x71, 0x4e, 0xe4, 0xde, 0x15,
+	0xf4, 0x12, 0xac, 0x47, 0xe2, 0xae, 0x8a, 0x02,
+	0x26, 0x21, 0xc3, 0xc2, 0x61, 0xcf, 0xb7, 0xc6,
 };
 static const uint8_t aes_iv[16] = {
 	0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
@@ -89,6 +108,30 @@ mint_descriptor(int control, uint32_t cipher, uint32_t mac, int ivlen,
 
 	return (mint_descriptor_key(control, cipher, mac, aes_key,
 	    sizeof(aes_key), ivlen, maclen, rights));
+}
+
+static int
+mint_generated_descriptor(int control, uint32_t cipher, uint32_t mac,
+    uint32_t keylen, uint32_t mackeylen, int ivlen, int maclen,
+    uint32_t rights, uint32_t ttl)
+{
+	struct cryptodesc_generate create;
+
+	memset(&create, 0, sizeof(create));
+	create.session.cipher = cipher;
+	create.session.mac = mac;
+	create.session.keylen = keylen;
+	create.session.mackeylen = mackeylen;
+	create.session.crid = CRYPTO_FLAG_SOFTWARE;
+	create.session.ivlen = ivlen;
+	create.session.maclen = maclen;
+	create.cd_rights = rights;
+	create.cd_ttl = ttl;
+	create.cd_fd = -1;
+	ATF_REQUIRE_MSG(ioctl(control, CIOCGCRYPTODESCGENERATE, &create) == 0,
+	    "CIOCGCRYPTODESCGENERATE: %s", strerror(errno));
+	ATF_REQUIRE(create.cd_fd >= 0);
+	return (create.cd_fd);
 }
 
 static void
@@ -398,6 +441,218 @@ ATF_TC_BODY(digest_and_eta_rights, tc)
 	close(control);
 }
 
+ATF_TC(kernel_generated_and_expiry);
+ATF_TC_HEAD(kernel_generated_and_expiry, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(kernel_generated_and_expiry, tc)
+{
+	uint8_t ciphertext[sizeof(cbc_plaintext)];
+	struct crypt_op cop;
+	int control, fd;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+	fd = mint_generated_descriptor(control, CRYPTO_AES_CBC, 0, 16, 0,
+	    sizeof(aes_iv), 0, CRYPTODESC_RIGHT_ENCRYPT, 1);
+	crypt_cbc(fd, COP_ENCRYPT, cbc_plaintext, ciphertext);
+	sleep(2);
+	memset(&cop, 0, sizeof(cop));
+	cop.op = COP_ENCRYPT;
+	cop.len = sizeof(cbc_plaintext);
+	cop.src = cbc_plaintext;
+	cop.dst = ciphertext;
+	cop.iv = aes_iv;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(ESTALE, ioctl(fd, CIOCCRYPT, &cop) == -1);
+	close(fd);
+	close(control);
+}
+
+ATF_TC(hkdf_opaque_derivation);
+ATF_TC_HEAD(hkdf_opaque_derivation, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(hkdf_opaque_derivation, tc)
+{
+	static const uint8_t message[] = "test message";
+	uint8_t output[32];
+	struct cryptodesc_create create;
+	struct cryptodesc_derive derive;
+	struct crypt_op cop;
+	int child, control, parent;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+	memset(&create, 0, sizeof(create));
+	create.session.mac = CRYPTO_SHA2_256_HMAC;
+	create.session.mackey = hkdf_ikm;
+	create.session.mackeylen = sizeof(hkdf_ikm);
+	create.session.crid = CRYPTO_FLAG_SOFTWARE;
+	create.cd_rights = CRYPTODESC_RIGHT_DERIVE;
+	ATF_REQUIRE_MSG(ioctl(control, CIOCGCRYPTODESC, &create) == 0,
+	    "mint HKDF parent: %s", strerror(errno));
+	parent = create.cd_fd;
+	memset(&derive, 0, sizeof(derive));
+	derive.session.mac = CRYPTO_SHA2_256_HMAC;
+	derive.session.mackeylen = sizeof(output);
+	derive.session.crid = CRYPTO_FLAG_SOFTWARE;
+	derive.cd_salt = hkdf_salt;
+	derive.cd_salt_len = sizeof(hkdf_salt);
+	derive.cd_info = hkdf_info;
+	derive.cd_info_len = sizeof(hkdf_info);
+	derive.cd_hash = CRYPTODESC_HKDF_SHA256;
+	derive.cd_rights = CRYPTODESC_RIGHT_AUTH;
+	ATF_REQUIRE_MSG(ioctl(parent, CIOCCRYPTODESCDERIVE, &derive) == 0,
+	    "RFC 5869 derivation: %s", strerror(errno));
+	child = derive.cd_fd;
+	memset(&cop, 0, sizeof(cop));
+	cop.op = COP_ENCRYPT;
+	cop.len = sizeof(message) - 1;
+	cop.src = message;
+	cop.mac = output;
+	ATF_REQUIRE_MSG(ioctl(child, CIOCCRYPT, &cop) == 0,
+	    "derived HMAC: %s", strerror(errno));
+	ATF_REQUIRE_MSG(memcmp(output, hkdf_hmac, sizeof(output)) == 0,
+	    "derived HMAC starts %02x%02x%02x%02x (expected %02x%02x%02x%02x)",
+	    output[0], output[1], output[2], output[3], hkdf_hmac[0],
+	    hkdf_hmac[1], hkdf_hmac[2], hkdf_hmac[3]);
+	close(child);
+	close(parent);
+	close(control);
+}
+
+ATF_TC(asymmetric_capabilities);
+ATF_TC_HEAD(asymmetric_capabilities, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(asymmetric_capabilities, tc)
+{
+	static const uint8_t message[] = "opaque asymmetric descriptor";
+	uint8_t alice_shared[CRYPTODESC_X25519_SIZE];
+	uint8_t bob_shared[CRYPTODESC_X25519_SIZE];
+	uint8_t signature[CRYPTODESC_ED25519_SIGNATURE_SIZE];
+	struct cryptodesc_key_create alice, bob, signer;
+	struct cryptodesc_restrict attenuation;
+	struct cryptodesc_sign sign;
+	struct cryptodesc_verify verify;
+	struct cryptodesc_x25519 exchange;
+	int control;
+
+	control = open_control();
+	memset(&alice, 0, sizeof(alice));
+	alice.cd_type = CRYPTODESC_KEY_X25519;
+	alice.cd_rights = CRYPTODESC_RIGHT_EXCHANGE;
+	ATF_REQUIRE_MSG(ioctl(control, CIOCGCRYPTOKEYDESC, &alice) == 0,
+	    "mint Alice X25519 descriptor: %s", strerror(errno));
+	memset(&bob, 0, sizeof(bob));
+	bob.cd_type = CRYPTODESC_KEY_X25519;
+	bob.cd_rights = CRYPTODESC_RIGHT_EXCHANGE;
+	ATF_REQUIRE_MSG(ioctl(control, CIOCGCRYPTOKEYDESC, &bob) == 0,
+	    "mint Bob X25519 descriptor: %s", strerror(errno));
+	memset(&exchange, 0, sizeof(exchange));
+	exchange.cd_peer_public = bob.cd_public;
+	exchange.cd_peer_public_len = sizeof(bob.cd_public);
+	exchange.cd_shared_secret = alice_shared;
+	exchange.cd_shared_secret_len = sizeof(alice_shared);
+	ATF_REQUIRE_MSG(ioctl(alice.cd_fd, CIOCCRYPTX25519, &exchange) == 0,
+	    "Alice exchange: %s", strerror(errno));
+	exchange.cd_peer_public = alice.cd_public;
+	exchange.cd_shared_secret = bob_shared;
+	ATF_REQUIRE_MSG(ioctl(bob.cd_fd, CIOCCRYPTX25519, &exchange) == 0,
+	    "Bob exchange: %s", strerror(errno));
+	ATF_REQUIRE_EQ(memcmp(alice_shared, bob_shared, sizeof(alice_shared)), 0);
+	attenuation.cd_rights = 0;
+	ATF_REQUIRE(ioctl(alice.cd_fd, CIOCSCRYPTODESCRIGHTS, &attenuation) == 0);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPERM, ioctl(alice.cd_fd, CIOCCRYPTX25519,
+	    &exchange) == -1);
+
+	memset(&signer, 0, sizeof(signer));
+	signer.cd_type = CRYPTODESC_KEY_ED25519;
+	signer.cd_rights = CRYPTODESC_RIGHT_SIGN | CRYPTODESC_RIGHT_VERIFY;
+	ATF_REQUIRE_MSG(ioctl(control, CIOCGCRYPTOKEYDESC, &signer) == 0,
+	    "mint Ed25519 descriptor: %s", strerror(errno));
+	memset(&sign, 0, sizeof(sign));
+	sign.cd_data = message;
+	sign.cd_data_len = sizeof(message) - 1;
+	sign.cd_signature = signature;
+	sign.cd_signature_len = sizeof(signature);
+	ATF_REQUIRE_MSG(ioctl(signer.cd_fd, CIOCCRYPTOSIGN, &sign) == 0,
+	    "Ed25519 sign: %s", strerror(errno));
+	memset(&verify, 0, sizeof(verify));
+	verify.cd_data = message;
+	verify.cd_data_len = sizeof(message) - 1;
+	verify.cd_signature = signature;
+	verify.cd_signature_len = sizeof(signature);
+	ATF_REQUIRE_MSG(ioctl(signer.cd_fd, CIOCCRYPTOVERIFY, &verify) == 0,
+	    "Ed25519 verify: %s", strerror(errno));
+	signature[0] ^= 1;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EBADMSG, ioctl(signer.cd_fd, CIOCCRYPTOVERIFY,
+	    &verify) == -1);
+	signature[0] ^= 1;
+	attenuation.cd_rights = CRYPTODESC_RIGHT_VERIFY;
+	ATF_REQUIRE(ioctl(signer.cd_fd, CIOCSCRYPTODESCRIGHTS, &attenuation) == 0);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPERM, ioctl(signer.cd_fd, CIOCCRYPTOSIGN, &sign) == -1);
+	ATF_REQUIRE(ioctl(signer.cd_fd, CIOCCRYPTOVERIFY, &verify) == 0);
+	close(signer.cd_fd);
+	close(bob.cd_fd);
+	close(alice.cd_fd);
+	close(control);
+}
+
+ATF_TC(concurrent_descriptor_use);
+ATF_TC_HEAD(concurrent_descriptor_use, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(concurrent_descriptor_use, tc)
+{
+	uint8_t ciphertext[sizeof(cbc_plaintext)], output[sizeof(cbc_plaintext)];
+	struct crypt_op cop;
+	int child, control, fd, i, status;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+	fd = mint_generated_descriptor(control, CRYPTO_AES_CBC, 0, 16, 0,
+	    sizeof(aes_iv), 0, CRYPTODESC_RIGHT_ENCRYPT |
+	    CRYPTODESC_RIGHT_DECRYPT, 0);
+	for (child = 0; child < 8; child++) {
+		ATF_REQUIRE((i = fork()) >= 0);
+		if (i == 0) {
+			for (i = 0; i < 64; i++) {
+				memset(&cop, 0, sizeof(cop));
+				cop.op = COP_ENCRYPT;
+				cop.len = sizeof(cbc_plaintext);
+				cop.src = cbc_plaintext;
+				cop.dst = ciphertext;
+				cop.iv = aes_iv;
+				if (ioctl(fd, CIOCCRYPT, &cop) != 0)
+					_exit(1);
+				cop.op = COP_DECRYPT;
+				cop.src = ciphertext;
+				cop.dst = output;
+				if (ioctl(fd, CIOCCRYPT, &cop) != 0 ||
+				    memcmp(output, cbc_plaintext, sizeof(output)) != 0)
+					_exit(1);
+			}
+			_exit(0);
+		}
+	}
+	for (child = 0; child < 8; child++) {
+		ATF_REQUIRE(wait(&status) >= 0);
+		ATF_REQUIRE(WIFEXITED(status));
+		ATF_REQUIRE_EQ(WEXITSTATUS(status), 0);
+	}
+	close(fd);
+	close(control);
+}
+
 ATF_TC(passable_descriptor);
 ATF_TC_HEAD(passable_descriptor, tc)
 {
@@ -533,6 +788,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cbc_rights_and_metadata);
 	ATF_TP_ADD_TC(tp, descriptor_lifecycle);
 	ATF_TP_ADD_TC(tp, digest_and_eta_rights);
+	ATF_TP_ADD_TC(tp, kernel_generated_and_expiry);
+	ATF_TP_ADD_TC(tp, hkdf_opaque_derivation);
+	ATF_TP_ADD_TC(tp, asymmetric_capabilities);
+	ATF_TP_ADD_TC(tp, concurrent_descriptor_use);
 	ATF_TP_ADD_TC(tp, passable_descriptor);
 	ATF_TP_ADD_TC(tp, aead_rights_and_integrity);
 	return (atf_no_error());

@@ -66,6 +66,10 @@
 #include <opencrypto/cryptodev.h>
 #include <sys/cryptodesc.h>
 #include <opencrypto/xform.h>
+#include <crypto/curve25519.h>
+
+#include "cryptodesc_ed25519.h"
+#include "cryptodesc_kdf.h"
 
 SDT_PROVIDER_DECLARE(opencrypto);
 
@@ -301,8 +305,14 @@ struct cryptodesc {
 	struct csession	*cd_session;
 	struct mtx	cd_lock;
 	uint32_t	cd_rights;
+	uint32_t	cd_type;
+	time_t		cd_expires;
 	bool		cd_revoked;
+	uint8_t		cd_private[CRYPTODESC_ED25519_SECRET_SIZE];
+	uint8_t		cd_public[CRYPTODESC_ED25519_PUBLIC_SIZE];
 };
+
+#define	CRYPTODESC_MAX_ASYMMETRIC_DATA	(1024 * 1024)
 
 static fo_ioctl_t cryptodesc_ioctl;
 static fo_stat_t cryptodesc_stat;
@@ -319,6 +329,8 @@ cryptodesc_check_rights(struct cryptodesc *cd, uint32_t required)
 	mtx_lock(&cd->cd_lock);
 	if (cd->cd_revoked)
 		error = EACCES;
+	else if (cd->cd_expires != 0 && time_second >= cd->cd_expires)
+		error = ESTALE;
 	else if ((cd->cd_rights & required) != required)
 		error = EPERM;
 	else
@@ -384,7 +396,8 @@ checkforsoftware(int *cridp)
 }
 
 static int
-cse_create_session(struct session2_op *sop, struct csession **csep)
+cse_create_session(struct session2_op *sop, struct csession **csep,
+    bool user_keys)
 {
 	struct crypto_session_params csp;
 	struct csession *cse;
@@ -480,7 +493,13 @@ cse_create_session(struct session2_op *sop, struct csession **csep)
 		}
 
 		key = malloc(csp.csp_cipher_klen, M_CRYPTODEV, M_WAITOK);
-		error = copyin(sop->key, key, csp.csp_cipher_klen);
+		if (user_keys)
+			error = copyin(sop->key, key, csp.csp_cipher_klen);
+		else if (sop->key != NULL) {
+			memcpy(key, sop->key, csp.csp_cipher_klen);
+			error = 0;
+		} else
+			error = EINVAL;
 		if (error) {
 			CRYPTDEB("invalid key");
 			SDT_PROBE1(opencrypto, dev, ioctl, error, __LINE__);
@@ -501,7 +520,14 @@ cse_create_session(struct session2_op *sop, struct csession **csep)
 		if (csp.csp_auth_klen != 0) {
 			mackey = malloc(csp.csp_auth_klen, M_CRYPTODEV,
 			    M_WAITOK);
-			error = copyin(sop->mackey, mackey, csp.csp_auth_klen);
+			if (user_keys)
+				error = copyin(sop->mackey, mackey,
+				    csp.csp_auth_klen);
+			else if (sop->mackey != NULL) {
+				memcpy(mackey, sop->mackey, csp.csp_auth_klen);
+				error = 0;
+			} else
+				error = EINVAL;
 			if (error) {
 				CRYPTDEB("invalid mac key");
 				SDT_PROBE1(opencrypto, dev, ioctl, error,
@@ -598,7 +624,7 @@ cse_create(struct fcrypt *fcr, struct session2_op *sop)
 	struct csession *cse;
 	int error;
 
-	error = cse_create_session(sop, &cse);
+	error = cse_create_session(sop, &cse, true);
 	if (error != 0)
 		return (error);
 	mtx_lock(&fcr->lock);
@@ -646,29 +672,36 @@ cse_free(struct csession *cse)
 }
 
 static int
-cryptodesc_mint(struct thread *td, struct cryptodesc_create *create)
+cryptodesc_install(struct thread *td, struct csession *cse, uint32_t type,
+    const uint8_t *private_key, size_t private_key_len,
+    const uint8_t *public_key, size_t public_key_len, uint32_t rights,
+    uint32_t ttl, int32_t *descriptor_fd)
 {
 	struct cryptodesc *cd;
-	struct csession *cse;
 	struct file *fp;
 	int error, fd;
 
-	if ((create->cd_rights & ~CRYPTODESC_RIGHT_ALL) != 0 ||
-	    create->cd_rights == 0 || create->session.ses != 0) {
+	if ((rights & ~CRYPTODESC_RIGHT_ALL) != 0 || rights == 0 ||
+	    private_key_len > sizeof(cd->cd_private) ||
+	    public_key_len > sizeof(cd->cd_public) ||
+	    (ttl != 0 && (time_second > INT64_MAX - ttl)))
 		return (EINVAL);
-	}
-	create->cd_fd = -1;
-	error = cse_create_session(&create->session, &cse);
-	if (error != 0)
-		return (error);
 	cd = malloc(sizeof(*cd), M_CRYPTODEV, M_WAITOK | M_ZERO);
 	cd->cd_session = cse;
 	mtx_init(&cd->cd_lock, "cryptodesc", NULL, MTX_DEF);
-	cd->cd_rights = create->cd_rights;
+	cd->cd_rights = rights;
+	cd->cd_type = type;
+	cd->cd_expires = ttl == 0 ? 0 : time_second + ttl;
+	if (private_key_len != 0)
+		memcpy(cd->cd_private, private_key, private_key_len);
+	if (public_key_len != 0)
+		memcpy(cd->cd_public, public_key, public_key_len);
 	error = falloc_noinstall(td, &fp);
 	if (error != 0) {
-		cse_free(cse);
+		if (cse != NULL)
+			cse_free(cse);
 		mtx_destroy(&cd->cd_lock);
+		explicit_bzero(cd, sizeof(*cd));
 		free(cd, M_CRYPTODEV);
 		return (error);
 	}
@@ -676,19 +709,307 @@ cryptodesc_mint(struct thread *td, struct cryptodesc_create *create)
 	error = finstall(td, fp, &fd, 0, NULL);
 	fdrop(fp, td);
 	if (error == 0)
-		create->cd_fd = fd;
+		*descriptor_fd = fd;
+	return (error);
+}
+
+static int
+cryptodesc_mint(struct thread *td, struct cryptodesc_create *create)
+{
+	struct csession *cse;
+	int error;
+
+	if (create->session.ses != 0)
+		return (EINVAL);
+	create->cd_fd = -1;
+	error = cse_create_session(&create->session, &cse, true);
+	if (error != 0)
+		return (error);
+	return (cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
+	    create->cd_rights, 0, &create->cd_fd));
+}
+
+static int
+cryptodesc_mint_generated(struct thread *td, struct cryptodesc_generate *create)
+{
+	struct session2_op session;
+	struct csession *cse;
+	uint8_t *key, *mackey;
+	int error;
+
+	if (create->session.ses != 0 || create->session.key != NULL ||
+	    create->session.mackey != NULL || create->session.keylen > 128 ||
+	    create->session.mackeylen > 128)
+		return (EINVAL);
+	create->cd_fd = -1;
+	key = create->session.keylen == 0 ? NULL : malloc(create->session.keylen,
+	    M_CRYPTODEV, M_WAITOK);
+	mackey = create->session.mackeylen == 0 ? NULL :
+	    malloc(create->session.mackeylen, M_CRYPTODEV, M_WAITOK);
+	if (key != NULL)
+		arc4random_buf(key, create->session.keylen);
+	if (mackey != NULL)
+		arc4random_buf(mackey, create->session.mackeylen);
+	session = create->session;
+	session.key = key;
+	session.mackey = mackey;
+	error = cse_create_session(&session, &cse, false);
+	if (key != NULL) {
+		explicit_bzero(key, create->session.keylen);
+		free(key, M_CRYPTODEV);
+	}
+	if (mackey != NULL) {
+		explicit_bzero(mackey, create->session.mackeylen);
+		free(mackey, M_CRYPTODEV);
+	}
+	if (error != 0)
+		return (error);
+	return (cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
+	    create->cd_rights, create->cd_ttl, &create->cd_fd));
+}
+
+static int
+cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
+    struct cryptodesc_derive *derive)
+{
+	struct session2_op session;
+	struct csession *cse;
+	uint8_t *salt, *info, *output;
+	const uint8_t *ikm;
+	size_t ikm_len, output_len;
+	uint32_t ttl;
+	int error;
+
+	if (cd->cd_type != 0 || derive->session.ses != 0 ||
+	    derive->session.key != NULL || derive->session.mackey != NULL ||
+	    derive->cd_salt_len > CRYPTODESC_MAX_DERIVE_SALT ||
+	    derive->cd_info_len > CRYPTODESC_MAX_DERIVE_INFO ||
+	    derive->session.keylen > 128 || derive->session.mackeylen > 128 ||
+	    derive->session.keylen > SIZE_MAX - derive->session.mackeylen ||
+	    derive->cd_rights == 0 ||
+	    (derive->cd_rights & ~(CRYPTODESC_RIGHT_ENCRYPT |
+	    CRYPTODESC_RIGHT_DECRYPT | CRYPTODESC_RIGHT_AUTH |
+	    CRYPTODESC_RIGHT_VERIFY | CRYPTODESC_RIGHT_DERIVE)) != 0)
+		return (EINVAL);
+	error = cryptodesc_check_rights(cd, CRYPTODESC_RIGHT_DERIVE);
+	if (error != 0)
+		return (error);
+	if (cd->cd_session->key != NULL) {
+		ikm = cd->cd_session->key;
+		ikm_len = cd->cd_session->keylen;
+	} else {
+		ikm = cd->cd_session->mackey;
+		ikm_len = cd->cd_session->mackeylen;
+	}
+	output_len = derive->session.keylen + derive->session.mackeylen;
+	if (ikm == NULL || ikm_len == 0 || output_len == 0)
+		return (EINVAL);
+	salt = info = output = NULL;
+	if (derive->cd_salt_len != 0) {
+		if (derive->cd_salt == NULL)
+			return (EINVAL);
+		salt = malloc(derive->cd_salt_len, M_CRYPTODEV, M_WAITOK);
+		error = copyin(derive->cd_salt, salt, derive->cd_salt_len);
+		if (error != 0)
+			goto out;
+	}
+	if (derive->cd_info_len != 0) {
+		if (derive->cd_info == NULL) {
+			error = EINVAL;
+			goto out;
+		}
+		info = malloc(derive->cd_info_len, M_CRYPTODEV, M_WAITOK);
+		error = copyin(derive->cd_info, info, derive->cd_info_len);
+		if (error != 0)
+			goto out;
+	}
+	output = malloc(output_len, M_CRYPTODEV, M_WAITOK);
+	error = cryptodesc_hkdf(derive->cd_hash, output, output_len, salt,
+	    derive->cd_salt_len, ikm, ikm_len, info, derive->cd_info_len);
+	if (error != 0)
+		goto out;
+	session = derive->session;
+	session.key = derive->session.keylen == 0 ? NULL : output;
+	session.mackey = derive->session.mackeylen == 0 ? NULL :
+	    output + derive->session.keylen;
+	error = cse_create_session(&session, &cse, false);
+	if (error != 0)
+		goto out;
+	ttl = derive->cd_ttl;
+	if (cd->cd_expires != 0 &&
+	    (ttl == 0 || time_second + ttl > cd->cd_expires))
+		ttl = cd->cd_expires - time_second;
+	error = cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
+	    derive->cd_rights, ttl, &derive->cd_fd);
+out:
+	if (salt != NULL) {
+		explicit_bzero(salt, derive->cd_salt_len);
+		free(salt, M_CRYPTODEV);
+	}
+	if (info != NULL) {
+		explicit_bzero(info, derive->cd_info_len);
+		free(info, M_CRYPTODEV);
+	}
+	if (output != NULL) {
+		explicit_bzero(output, output_len);
+		free(output, M_CRYPTODEV);
+	}
+	return (error);
+}
+
+static int
+cryptodesc_mint_key(struct thread *td, struct cryptodesc_key_create *create)
+{
+	uint8_t private_key[CRYPTODESC_ED25519_SECRET_SIZE], public_key[32];
+	uint32_t allowed;
+	int error;
+
+	if (create->cd_flags != 0)
+		return (EINVAL);
+	create->cd_fd = -1;
+	memset(private_key, 0, sizeof(private_key));
+	memset(public_key, 0, sizeof(public_key));
+	switch (create->cd_type) {
+	case CRYPTODESC_KEY_X25519:
+		allowed = CRYPTODESC_RIGHT_EXCHANGE;
+		curve25519_generate_secret(private_key);
+		if (!curve25519_generate_public(public_key, private_key)) {
+			error = EIO;
+			goto out;
+		}
+		break;
+	case CRYPTODESC_KEY_ED25519:
+		allowed = CRYPTODESC_RIGHT_SIGN | CRYPTODESC_RIGHT_VERIFY;
+		cryptodesc_ed25519_keypair(public_key, private_key);
+		break;
+	default:
+		return (EINVAL);
+	}
+	if (create->cd_rights == 0 || (create->cd_rights & ~allowed) != 0) {
+		error = EINVAL;
+		goto out;
+	}
+	error = cryptodesc_install(td, NULL, create->cd_type, private_key,
+	    create->cd_type == CRYPTODESC_KEY_X25519 ? CRYPTODESC_X25519_SIZE :
+	    CRYPTODESC_ED25519_SECRET_SIZE, public_key, sizeof(public_key),
+	    create->cd_rights, create->cd_ttl, &create->cd_fd);
+	if (error == 0)
+		memcpy(create->cd_public, public_key, sizeof(create->cd_public));
+out:
+	explicit_bzero(private_key, sizeof(private_key));
+	explicit_bzero(public_key, sizeof(public_key));
+	return (error);
+}
+
+static int
+cryptodesc_x25519(struct cryptodesc *cd, struct cryptodesc_x25519 *request)
+{
+	uint8_t peer[CRYPTODESC_X25519_SIZE], shared[CRYPTODESC_X25519_SIZE];
+	int error;
+
+	if (cd->cd_type != CRYPTODESC_KEY_X25519 ||
+	    request->cd_peer_public == NULL || request->cd_shared_secret == NULL ||
+	    request->cd_peer_public_len != sizeof(peer) ||
+	    request->cd_shared_secret_len != sizeof(shared))
+		return (EINVAL);
+	error = cryptodesc_check_rights(cd, CRYPTODESC_RIGHT_EXCHANGE);
+	if (error != 0)
+		return (error);
+	error = copyin(request->cd_peer_public, peer, sizeof(peer));
+	if (error == 0 && !curve25519(shared, cd->cd_private, peer))
+		error = EINVAL;
+	if (error == 0)
+		error = copyout(shared, request->cd_shared_secret, sizeof(shared));
+	explicit_bzero(peer, sizeof(peer));
+	explicit_bzero(shared, sizeof(shared));
+	return (error);
+}
+
+static int
+cryptodesc_sign(struct cryptodesc *cd, struct cryptodesc_sign *request)
+{
+	uint8_t signature[CRYPTODESC_ED25519_SIGNATURE_SIZE];
+	uint8_t *data;
+	int error;
+
+	if (cd->cd_type != CRYPTODESC_KEY_ED25519 ||
+	    request->cd_data_len > CRYPTODESC_MAX_ASYMMETRIC_DATA ||
+	    request->cd_signature == NULL ||
+	    request->cd_signature_len != sizeof(signature) ||
+	    (request->cd_data_len != 0 && request->cd_data == NULL))
+		return (EINVAL);
+	error = cryptodesc_check_rights(cd, CRYPTODESC_RIGHT_SIGN);
+	if (error != 0)
+		return (error);
+	data = request->cd_data_len == 0 ? NULL : malloc(request->cd_data_len,
+	    M_CRYPTODEV, M_WAITOK);
+	if (data != NULL) {
+		error = copyin(request->cd_data, data, request->cd_data_len);
+		if (error != 0)
+			goto out;
+	}
+	error = cryptodesc_ed25519_sign(signature, data, request->cd_data_len,
+	    cd->cd_private);
+	if (error == 0)
+		error = copyout(signature, request->cd_signature, sizeof(signature));
+out:
+	if (data != NULL) {
+		explicit_bzero(data, request->cd_data_len);
+		free(data, M_CRYPTODEV);
+	}
+	explicit_bzero(signature, sizeof(signature));
+	return (error);
+}
+
+static int
+cryptodesc_verify(struct cryptodesc *cd, struct cryptodesc_verify *request)
+{
+	uint8_t signature[CRYPTODESC_ED25519_SIGNATURE_SIZE];
+	uint8_t *data;
+	int error;
+
+	if (cd->cd_type != CRYPTODESC_KEY_ED25519 ||
+	    request->cd_data_len > CRYPTODESC_MAX_ASYMMETRIC_DATA ||
+	    request->cd_signature == NULL ||
+	    request->cd_signature_len != sizeof(signature) ||
+	    (request->cd_data_len != 0 && request->cd_data == NULL))
+		return (EINVAL);
+	error = cryptodesc_check_rights(cd, CRYPTODESC_RIGHT_VERIFY);
+	if (error != 0)
+		return (error);
+	data = request->cd_data_len == 0 ? NULL : malloc(request->cd_data_len,
+	    M_CRYPTODEV, M_WAITOK);
+	if (data != NULL) {
+		error = copyin(request->cd_data, data, request->cd_data_len);
+		if (error != 0)
+			goto out;
+	}
+	error = copyin(request->cd_signature, signature, sizeof(signature));
+	if (error == 0)
+		error = cryptodesc_ed25519_verify(signature, data,
+		    request->cd_data_len, cd->cd_public);
+out:
+	if (data != NULL) {
+		explicit_bzero(data, request->cd_data_len);
+		free(data, M_CRYPTODEV);
+	}
+	explicit_bzero(signature, sizeof(signature));
 	return (error);
 }
 
 static int
 cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
-    struct ucred *active_cred __unused, struct thread *td __unused)
+    struct ucred *active_cred __unused, struct thread *td)
 {
 	struct cryptodesc *cd;
 	struct crypt_op *cop;
 	struct crypt_aead *caead;
 	struct cryptodesc_restrict *attenuation;
 	struct cryptodesc_revoke *revoke;
+	struct cryptodesc_derive *derive;
+	struct cryptodesc_x25519 *x25519;
+	struct cryptodesc_sign *sign;
+	struct cryptodesc_verify *verify;
 	const struct crypto_session_params *csp;
 	uint32_t required;
 	int error;
@@ -718,7 +1039,22 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 		}
 		mtx_unlock(&cd->cd_lock);
 		return (error);
+	case CIOCCRYPTODESCDERIVE:
+		derive = data;
+		derive->cd_fd = -1;
+		return (cryptodesc_derive(td, cd, derive));
+	case CIOCCRYPTX25519:
+		x25519 = data;
+		return (cryptodesc_x25519(cd, x25519));
+	case CIOCCRYPTOSIGN:
+		sign = data;
+		return (cryptodesc_sign(cd, sign));
+	case CIOCCRYPTOVERIFY:
+		verify = data;
+		return (cryptodesc_verify(cd, verify));
 	case CIOCCRYPT:
+		if (cd->cd_type != 0)
+			return (EPROTONOSUPPORT);
 		cop = data;
 		csp = crypto_get_params(cd->cd_session->cses);
 		if (csp->csp_mode == CSP_MODE_DIGEST)
@@ -739,6 +1075,8 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 			return (error);
 		return (cryptodev_op(cd->cd_session, cop));
 	case CIOCCRYPTAEAD:
+		if (cd->cd_type != 0)
+			return (EPROTONOSUPPORT);
 		caead = data;
 		required = caead->op == COP_ENCRYPT ?
 		    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_AUTH :
@@ -776,7 +1114,8 @@ cryptodesc_close(struct file *fp, struct thread *td __unused)
 	cd = fp->f_data;
 	fp->f_ops = &badfileops;
 	fp->f_data = NULL;
-	cse_free(cd->cd_session);
+	if (cd->cd_session != NULL)
+		cse_free(cd->cd_session);
 	mtx_destroy(&cd->cd_lock);
 	explicit_bzero(cd, sizeof(*cd));
 	free(cd, M_CRYPTODEV);
@@ -793,16 +1132,22 @@ cryptodesc_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 	uint32_t rights;
 
 	cd = fp->f_data;
-	csp = crypto_get_params(cd->cd_session->cses);
 	mtx_lock(&cd->cd_lock);
 	rights = cd->cd_rights;
 	revoked = cd->cd_revoked;
 	mtx_unlock(&cd->cd_lock);
 	kif->kf_type = KF_TYPE_CRYPTO;
-	snprintf(kif->kf_path, sizeof(kif->kf_path),
-	    "crypto:mode=%d:cipher=%d:auth=%d:rights=%#x:revoked=%d",
-	    csp->csp_mode, csp->csp_cipher_alg, csp->csp_auth_alg, rights,
-	    revoked);
+	if (cd->cd_type == 0) {
+		csp = crypto_get_params(cd->cd_session->cses);
+		snprintf(kif->kf_path, sizeof(kif->kf_path),
+		    "crypto:mode=%d:cipher=%d:auth=%d:rights=%#x:revoked=%d",
+		    csp->csp_mode, csp->csp_cipher_alg, csp->csp_auth_alg, rights,
+		    revoked);
+	} else {
+		snprintf(kif->kf_path, sizeof(kif->kf_path),
+		    "crypto:keytype=%u:rights=%#x:revoked=%d", cd->cd_type,
+		    rights, revoked);
+	}
 	return (0);
 }
 
@@ -1364,6 +1709,8 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	struct crypt_op *cop;
 	struct crypt_aead *caead;
 	struct cryptodesc_create *create;
+	struct cryptodesc_generate *generate;
+	struct cryptodesc_key_create *key_create;
 	uint32_t ses;
 	int error = 0;
 	union {
@@ -1465,6 +1812,14 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	case CIOCGCRYPTODESC:
 		create = (struct cryptodesc_create *)data;
 		error = cryptodesc_mint(td, create);
+		break;
+	case CIOCGCRYPTODESCGENERATE:
+		generate = (struct cryptodesc_generate *)data;
+		error = cryptodesc_mint_generated(td, generate);
+		break;
+	case CIOCGCRYPTOKEYDESC:
+		key_create = (struct cryptodesc_key_create *)data;
+		error = cryptodesc_mint_key(td, key_create);
 		break;
 	case CIOCCRYPTAEAD:
 		caead = (struct crypt_aead *)data;

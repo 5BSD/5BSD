@@ -14,12 +14,13 @@ manifest_body()
 	bundle="${PWD}/Crypto.cap"
 
 	test -x "${servicectl}" || atf_skip "source-built servicectl is required"
-	mkdir -p "${bundle}/bin" "${bundle}/etc"
-	cp "${objdir}/localcrypto" "${bundle}/bin/localcrypto"
-	cp "${manifest}" "${bundle}/etc/crypto.ucl"
-	chmod 0555 "${bundle}" "${bundle}/bin" "${bundle}/etc" \
+	test ! -e "${bundle}" || atf_fail "stale test bundle: ${bundle}"
+	atf_check -s exit:0 mkdir -p "${bundle}/bin" "${bundle}/etc"
+	atf_check -s exit:0 cp "${objdir}/localcrypto" "${bundle}/bin/localcrypto"
+	atf_check -s exit:0 cp "${manifest}" "${bundle}/etc/crypto.ucl"
+	atf_check -s exit:0 chmod 0555 "${bundle}" "${bundle}/bin" "${bundle}/etc" \
 	    "${bundle}/bin/localcrypto"
-	chmod 0444 "${bundle}/etc/crypto.ucl"
+	atf_check -s exit:0 chmod 0444 "${bundle}/etc/crypto.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${servicectl}" verify "${bundle}"

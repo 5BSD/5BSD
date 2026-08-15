@@ -4,9 +4,10 @@
 
 `[CRYPTO]` is the only component and `DTYPE_CRYPTO` is the only descriptor
 surface.  There is no KeyVault provider, client library, bundle, daemon, or
-`/dev/keyvault` device in this tree.  `[CRYPTO]` currently creates
-session-scoped random keys and returns only a `DTYPE_CRYPTO` descriptor; it
-does not yet implement named or persistent keys.  A file, database, or
+`/dev/keyvault` device in this tree.  `[CRYPTO]` creates session-scoped random
+symmetric, X25519, and Ed25519 keys in the kernel and returns only
+`DTYPE_CRYPTO` descriptors; it does not yet implement named or persistent
+keys.  A file, database, or
 UCL-backed store in a separate KeyVault service would create a second key
 authority and expose recoverable plaintext key material outside the kernel
 boundary.
@@ -14,12 +15,12 @@ boundary.
 The upstream KeyVault reference (revision `172e3d6`) was evaluated as a source
 of implementation patterns.  Its useful per-file capability attenuation and
 revocation semantics are now implemented directly by `DTYPE_CRYPTO` through
-`CIOCSCRYPTODESCRIGHTS` and `CIOCCRYPTODESCREVOKE`.  Its standalone module
+`CIOCSCRYPTODESCRIGHTS` and `CIOCCRYPTODESCREVOKE`; its HKDF, expiry, X25519,
+and Ed25519 primitives have been reworked under the same descriptor ABI.  Its standalone module
 must not be imported: it has a separate device ABI, repeats OpenCrypto session
 ownership, and failed runtime evaluation in this environment.  The remaining
-useful primitives (kernel-resident key objects, HKDF, Ed25519, X25519, expiry,
-and auditing) must be reworked as `[CRYPTO]` extensions, not copied as a
-parallel authority.
+remaining useful primitives (named kernel key objects and auditing) must be
+reworked as `[CRYPTO]` extensions, not copied as a parallel authority.
 
 ## Required `[CRYPTO]` key-lifecycle contract
 
