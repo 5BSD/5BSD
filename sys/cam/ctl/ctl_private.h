@@ -385,6 +385,7 @@ struct ctl_thread {
 };
 
 struct tpc_token;
+struct ctl_lun_event_subscriber;
 struct ctl_softc {
 	struct mtx		ctl_lock;
 	struct cdev		*dev;
@@ -422,6 +423,8 @@ struct ctl_softc {
 	TAILQ_HEAD(tpc_tokens, tpc_token)	tpc_tokens;
 	struct callout		tpc_timeout;
 	struct mtx		tpc_lock;
+	LIST_HEAD(, ctl_lun_event_subscriber) lun_event_subscribers;
+	uint64_t		lun_event_sequence;
 };
 
 #ifdef _KERNEL

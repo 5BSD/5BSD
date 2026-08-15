@@ -46,7 +46,7 @@ provides the kernel portion of the
 .Xr bhyve 4
 hypervisor.
 The following platforms are supported:
-.Bl -bullet -compat
+.Bl -bullet -compact
 .It
 amd64: An Intel CPU with VT-x/EPT or AMD CPU with SVM support is required.
 .It
@@ -137,6 +137,17 @@ prompt before booting the kernel or stored in
 .It Va hw.vmm.maxcpu
 Maximum number of virtual CPUs.
 The default is the number of physical CPUs in the system.
+.It Va hw.vmm.pvclock.enabled
+Advertise the KVM paravirtual clock interface to guests.
+The default value is 0, in which case the guest-visible hypervisor identity is
+the historical bhyve one and the paravirtual clock is not offered.
+When set to 1, the host advertises the KVM paravirtual clock, so that the
+FreeBSD kvm_clock or Linux kvm-clock guest driver attaches and uses it.
+Because the KVM signature then takes the primary hypervisor CPUID identity,
+enabling this tunable causes guests to report KVM, rather than bhyve, as the
+detected hypervisor; it is therefore opt-in.
+Even when advertised, the interface stays inert until a guest enables it by
+writing the KVM system-time MSR.
 .El
 .Sh FILES
 .Bl -tag -width /dev/vmm.io/* -compact
@@ -146,6 +157,7 @@ control interface for creating and destroying virtual machines.
 device interface for individual virtual machines.
 .It Pa /dev/vmm.io/*
 device interface for device memory mapped into virtual machines.
+.El
 .Sh EXAMPLES
 Reserve three PCI devices for use by the hypervisor: bus 10 slot 0 function 0,
 bus 6 slot 5 function 0, and bus 6 slot 5 function 1.

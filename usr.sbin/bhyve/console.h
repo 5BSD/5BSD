@@ -41,13 +41,22 @@ void console_set_fbaddr(void *fbaddr);
 
 struct bhyvegc_image *console_get_image(void);
 
-void console_fb_register(fb_render_func_t render_cb, void *arg);
+/*
+ * The framebuffer renderer is a process-wide presentation resource.  Require
+ * an explicit owner so a second display device cannot silently replace the
+ * active producer.  The owner string and argument must remain valid until
+ * unregister.
+ */
+int console_fb_register(const char *owner, fb_render_func_t render_cb,
+    void *arg);
+int console_fb_unregister(const char *owner, void *arg);
 void console_refresh(void);
 
 void console_kbd_register(kbd_event_func_t event_cb, void *arg, int pri);
 void console_key_event(int down, uint32_t keysym, uint32_t keycode);
 
 void console_ptr_register(ptr_event_func_t event_cb, void *arg, int pri);
+int console_ptr_unregister(ptr_event_func_t event_cb, void *arg);
 void console_ptr_event(uint8_t button, int x, int y);
 
 #endif /* _CONSOLE_H_ */

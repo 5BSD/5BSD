@@ -37,6 +37,11 @@
 #endif
 
 #include <dev/vmm/vmm_dev.h>
+#include <dev/vmm/vmm_dirty_log_collector.h>
+#include <dev/vmm/vmm_dirty_log_machdep.h>
+#include <dev/vmm/vmm_dirty_log_request.h>
+#include <dev/vmm/vmm_event_checkpoint.h>
+#include <dev/vmm/vmm_event_wait.h>
 #include <dev/vmm/vmm_mem.h>
 #include <dev/vmm/vmm_stat.h>
 #include <dev/vmm/vmm_vm.h>
@@ -102,6 +107,41 @@ static struct sx vmmdev_mtx;
 SX_SYSINIT(vmmdev_mtx, &vmmdev_mtx, "vmm device mutex");
 
 static MALLOC_DEFINE(M_VMMDEV, "vmmdev", "vmmdev");
+
+struct vmmdev_fdpriv {
+	struct vm *vm;
+	struct sx lock;
+#ifdef __amd64__
+	struct vmm_startup_controller_ticket startup_controller;
+#endif
+	struct vmm_event_checkpoint checkpoint;
+	struct vmm_event_checkpoint_entry *entries;
+	uint32_t *instances;
+	vmm_event_deferred_apply_t *apply;
+	void *apply_arg;
+	uint64_t session_id;
+#ifdef __amd64__
+	uint64_t startup_controller_id;
+#endif
+	size_t count;
+	uint16_t maxcpus;
+	bool active;
+#ifdef __amd64__
+	bool startup_active;
+#endif
+};
+
+static struct mtx vmmdev_snapshot_session_id_lock;
+MTX_SYSINIT(vmmdev_snapshot_session_id_lock,
+    &vmmdev_snapshot_session_id_lock, "vmm snapshot session id", MTX_DEF);
+static uint64_t vmmdev_snapshot_session_next_id = 1;
+
+#ifdef __amd64__
+static struct mtx vmmdev_startup_controller_id_lock;
+MTX_SYSINIT(vmmdev_startup_controller_id_lock,
+    &vmmdev_startup_controller_id_lock, "vmm startup controller id", MTX_DEF);
+static uint64_t vmmdev_startup_controller_next_id = 1;
+#endif
 
 SYSCTL_DECL(_hw_vmm);
 
@@ -177,6 +217,116 @@ vcpu_unlock_all(struct vmmdev_softc *sc)
 		vcpu_unlock_one(vcpu);
 	}
 	vm_unlock_vcpus(sc->vm);
+}
+
+static int
+vmmdev_dirty_log_abort(struct vm *vm,
+    const struct vmm_dirty_log_ticket *ticket, int original_error)
+{
+	int error;
+
+	error = vm_mem_dirty_log_abort(vm, ticket);
+	if (error == 0)
+		return (original_error);
+	/* A transaction which cannot be rolled back must not remain reusable. */
+	(void)vm_mem_dirty_log_invalidate(vm);
+	return (EPROTO);
+}
+
+static int
+vmmdev_dirty_log_request(struct vm *vm,
+    struct vmm_dirty_log_request *request)
+{
+	struct vmm_dirty_log_leaf probe;
+	struct vmm_dirty_log_request input;
+	struct vmm_dirty_log_result *result;
+	struct vmm_dirty_log_range range;
+	struct vmm_dirty_log_ticket ticket;
+	enum vmm_dirty_log_collect_mode mode;
+	uint8_t *bitmap, *publication, *staging;
+	void *user_output;
+	size_t bitmap_bytes, output_bytes;
+	int error;
+
+	if (vm == NULL || request == NULL)
+		return (EINVAL);
+	input = *request;
+	if ((error = vmm_dirty_log_request_validate(&input)) != 0)
+		return (error);
+	range = (struct vmm_dirty_log_range) {
+		.gpa = input.gpa,
+		.length = input.length,
+	};
+	switch (input.operation) {
+	case VMM_DIRTY_LOG_REQUEST_ENABLE:
+		/* Fail at enable time when this architecture cannot track CPU writes. */
+		error = vmm_dirty_log_machdep_collector.query(vm, range.gpa,
+		    &probe);
+		if (error != 0)
+			return (error);
+		return (vm_mem_dirty_log_enable(vm, &range));
+	case VMM_DIRTY_LOG_REQUEST_DISABLE:
+		return (vm_mem_dirty_log_invalidate(vm));
+	case VMM_DIRTY_LOG_REQUEST_OBSERVE:
+		mode = VMM_DIRTY_LOG_COLLECT_OBSERVE;
+		break;
+	case VMM_DIRTY_LOG_REQUEST_CLEAR:
+		mode = VMM_DIRTY_LOG_COLLECT_CLEAR;
+		break;
+	default:
+		return (EINVAL);
+	}
+
+	error = vmm_dirty_log_request_output_bytes(&input, &bitmap_bytes,
+	    &output_bytes);
+	if (error != 0)
+		return (error);
+	user_output = (void *)(uintptr_t)input.output_address;
+	/* Do not sleep with every vCPU frozen and the memory map xlocked. */
+	staging = malloc(bitmap_bytes, M_VMMDEV, M_NOWAIT | M_ZERO);
+	publication = malloc(output_bytes, M_VMMDEV, M_NOWAIT | M_ZERO);
+	if (staging == NULL || publication == NULL) {
+		error = ENOMEM;
+		goto done;
+	}
+	result = (struct vmm_dirty_log_result *)publication;
+	bitmap = publication + sizeof(*result);
+	error = vm_mem_dirty_log_begin(vm, &range, mode, &ticket);
+	if (error != 0)
+		goto done;
+	error = vmm_dirty_log_result_encode(&input, ticket.identity,
+	    ticket.map_generation, ticket.dirty_generation, result);
+	if (error != 0) {
+		error = vmmdev_dirty_log_abort(vm, &ticket, error);
+		goto done;
+	}
+	error = vm_mem_dirty_log_collect(vm, &ticket,
+	    &vmm_dirty_log_machdep_collector, vm, staging,
+	    bitmap_bytes, bitmap, bitmap_bytes);
+	if (error != 0) {
+		error = vmmdev_dirty_log_abort(vm, &ticket, error);
+		goto done;
+	}
+	/* Publish one self-describing result before changing hardware state. */
+	error = copyout(publication, user_output, output_bytes);
+	if (error != 0) {
+		error = vmmdev_dirty_log_abort(vm, &ticket, error);
+		goto done;
+	}
+	if (mode == VMM_DIRTY_LOG_COLLECT_CLEAR) {
+		error = vm_mem_dirty_log_clear(vm, &ticket,
+		    &vmm_dirty_log_machdep_collector, vm);
+		if (error != 0) {
+			/* A partially-cleared hardware generation is not retryable. */
+			(void)vm_mem_dirty_log_invalidate(vm);
+			goto done;
+		}
+	}
+	error = vm_mem_dirty_log_finish(vm, &ticket);
+done:
+	free(publication, M_VMMDEV);
+	free(staging, M_VMMDEV);
+	return (error);
 }
 
 static struct vmmdev_softc *
@@ -390,8 +540,482 @@ vm_set_register_set(struct vcpu *vcpu, unsigned int count, int *regnum,
 }
 
 static int
+vmmdev_snapshot_session_id_allocate(uint64_t *session_id)
+{
+
+	mtx_lock(&vmmdev_snapshot_session_id_lock);
+	if (vmmdev_snapshot_session_next_id == UINT64_MAX) {
+		mtx_unlock(&vmmdev_snapshot_session_id_lock);
+		return (EOVERFLOW);
+	}
+	*session_id = vmmdev_snapshot_session_next_id++;
+	mtx_unlock(&vmmdev_snapshot_session_id_lock);
+	return (0);
+}
+
+#ifdef __amd64__
+/*
+ * The private startup ABI is intentionally build-staged before its consumer.
+ * Do not permit it to select kernel ownership until the machine-dependent
+ * LAPIC path applies INIT and SIPI, including the frozen-target finalizer,
+ * without returning either operation to userspace.
+ */
+static bool
+vmmdev_startup_kernel_actions_ready(void)
+{
+	return (vmmops_startup_kernel_actions_ready());
+}
+
+static int
+vmmdev_startup_controller_id_allocate(uint64_t *controller_id)
+{
+
+	if (controller_id == NULL || *controller_id != 0)
+		return (EINVAL);
+	mtx_lock(&vmmdev_startup_controller_id_lock);
+	if (vmmdev_startup_controller_next_id == UINT64_MAX) {
+		mtx_unlock(&vmmdev_startup_controller_id_lock);
+		return (EOVERFLOW);
+	}
+	*controller_id = vmmdev_startup_controller_next_id++;
+	mtx_unlock(&vmmdev_startup_controller_id_lock);
+	return (0);
+}
+
+static int
+vmmdev_startup_status_encode(struct vmmdev_fdpriv *priv,
+    struct vmm_startup_request *request)
+{
+	struct vmm_startup_handshake_status status;
+	int error;
+
+	memset(&status, 0, sizeof(status));
+	error = vm_startup_status(priv->vm, &priv->startup_controller,
+	    &status);
+	if (error == 0)
+		error = vmm_startup_request_encode_status(request,
+		    priv->maxcpus, &status, request);
+	explicit_bzero(&status, sizeof(status));
+	return (error);
+}
+
+static int
+vmmdev_startup_request(struct vm *vm, struct vmm_startup_request *request)
+{
+	struct vmm_event_wait_ticket wait_ticket;
+	struct vmmdev_fdpriv *priv;
+	uint64_t generation;
+	bool claimed;
+	int error, release_error;
+
+	if (vm == NULL || request == NULL)
+		return (EINVAL);
+	error = devfs_get_cdevpriv((void **)&priv);
+	if (error != 0)
+		return (error);
+	if (priv->vm != vm)
+		return (EXDEV);
+	error = vmm_startup_request_validate(request, priv->maxcpus);
+	if (error != 0)
+		return (error);
+
+	switch (request->operation) {
+	case VMM_STARTUP_REQUEST_CONFIGURE:
+		if (!vmmdev_startup_kernel_actions_ready())
+			return (EOPNOTSUPP);
+		claimed = false;
+		generation = 0;
+		sx_xlock(&priv->lock);
+		if (priv->startup_active) {
+			error = EBUSY;
+			goto configure_out;
+		}
+		if (priv->startup_controller_id == 0) {
+			error = vmmdev_startup_controller_id_allocate(
+			    &priv->startup_controller_id);
+			if (error != 0)
+				goto configure_out;
+		}
+		memset(&priv->startup_controller, 0,
+		    sizeof(priv->startup_controller));
+		error = vm_startup_controller_claim(vm,
+		    &priv->startup_controller, priv->startup_controller_id);
+		if (error != 0)
+			goto configure_out;
+		claimed = true;
+		error = vm_startup_configure_kernel(vm,
+		    &priv->startup_controller, request->expected_vcpus,
+		    &generation);
+		if (error == 0) {
+			priv->startup_active = true;
+			error = vmmdev_startup_status_encode(priv, request);
+		}
+		if (error != 0 && claimed) {
+			release_error = vm_startup_controller_release(vm,
+			    &priv->startup_controller);
+			if (release_error == 0) {
+				priv->startup_active = false;
+			} else {
+				/* Preserve the exact ticket for final-close retry. */
+				priv->startup_active = true;
+				error = release_error;
+			}
+		}
+configure_out:
+		sx_xunlock(&priv->lock);
+		return (error);
+	case VMM_STARTUP_REQUEST_WAIT_READY:
+	case VMM_STARTUP_REQUEST_COMMIT:
+	case VMM_STARTUP_REQUEST_STATUS:
+		sx_xlock(&priv->lock);
+		if (!priv->startup_active) {
+			sx_xunlock(&priv->lock);
+			return (ENOENT);
+		}
+		/*
+		 * A device method holds the open file description alive, so final
+		 * close cannot run its cdevpriv destructor while this operation uses
+		 * the immutable embedded ticket.  Drop the sx before any wait.
+		 */
+		sx_xunlock(&priv->lock);
+		break;
+	default:
+		return (EINVAL);
+	}
+
+	if (request->operation == VMM_STARTUP_REQUEST_WAIT_READY) {
+		memset(&wait_ticket, 0, sizeof(wait_ticket));
+		error = vm_startup_wait_ready(vm, &priv->startup_controller,
+		    request->generation, &wait_ticket, "vmstart", 0);
+		explicit_bzero(&wait_ticket, sizeof(wait_ticket));
+	} else if (request->operation == VMM_STARTUP_REQUEST_COMMIT) {
+		error = vm_startup_commit(vm, &priv->startup_controller,
+		    request->generation);
+	} else {
+		error = 0;
+	}
+	if (error == 0)
+		error = vmmdev_startup_status_encode(priv, request);
+	return (error);
+}
+
+int
+vmmdev_startup_run_enter(struct vm *vm, struct vcpu *vcpu,
+    uint64_t generation)
+{
+	struct vmm_event_wait_ticket wait_ticket;
+	struct vmmdev_fdpriv *priv;
+	bool bootstrap_processor;
+	int error;
+
+	if (vm == NULL || vcpu == NULL || generation == 0)
+		return (EINVAL);
+	if (!vmmdev_startup_kernel_actions_ready())
+		return (EOPNOTSUPP);
+	error = devfs_get_cdevpriv((void **)&priv);
+	if (error != 0)
+		return (error);
+	if (priv->vm != vm)
+		return (EXDEV);
+
+	error = vmmdev_machdep_startup_classify(vcpu, &bootstrap_processor);
+	if (error != 0)
+		return (error);
+	sx_slock(&priv->lock);
+	if (!priv->startup_active) {
+		sx_sunlock(&priv->lock);
+		return (ENOENT);
+	}
+	error = vm_startup_enter(vm, &priv->startup_controller,
+	    vcpu_vcpuid(vcpu), generation, bootstrap_processor);
+	sx_sunlock(&priv->lock);
+	if (error != 0)
+		return (error);
+
+	memset(&wait_ticket, 0, sizeof(wait_ticket));
+	error = vm_startup_wait_committed(vm, &priv->startup_controller,
+	    generation, &wait_ticket, "vmcommit", 0);
+	explicit_bzero(&wait_ticket, sizeof(wait_ticket));
+	return (error);
+}
+#endif
+
+static void
+vmmdev_snapshot_session_clear(struct vmmdev_fdpriv *priv)
+{
+
+	if (priv->count != 0) {
+		explicit_bzero(priv->entries,
+		    priv->count * sizeof(*priv->entries));
+		explicit_bzero(priv->instances,
+		    priv->count * sizeof(*priv->instances));
+	}
+	explicit_bzero(&priv->checkpoint, sizeof(priv->checkpoint));
+	priv->apply = NULL;
+	priv->apply_arg = NULL;
+	priv->session_id = 0;
+	priv->count = 0;
+	priv->active = false;
+}
+
+static void
+vmmdev_snapshot_session_notify(struct vmmdev_fdpriv *priv)
+{
+	struct vcpu *vcpu;
+	size_t i;
+
+	/*
+	 * The deferred apply callback runs while the coordinator retains every
+	 * selected ingress spin lock.  Notify only after the coordinator returns
+	 * and releases those locks: a running vCPU can hold its run-state spin
+	 * lock while entering an event publisher, so reversing that order here
+	 * would deadlock close-time cleanup.  A spurious notification for a
+	 * member without deferred work is harmless and keeps this MI adapter
+	 * independent of architecture-specific deferred-mask values.
+	 */
+	for (i = 0; i < priv->count; i++) {
+		vcpu = vm_vcpu(priv->vm, priv->instances[i]);
+		if (vcpu == NULL)
+			panic("%s: missing checkpoint vCPU %u", __func__,
+			    priv->instances[i]);
+		vcpu_notify_event(vcpu);
+	}
+}
+
+static void
+vmmdev_fdpriv_dtor(void *arg)
+{
+	struct vmmdev_fdpriv *priv;
+	int cancel_error, error;
+
+	priv = arg;
+	sx_xlock(&priv->lock);
+	if (priv->active && priv->count != 0) {
+		error = vmm_event_coordinator_checkpoint_abort(
+		    vm_event_coordinator(priv->vm), &priv->checkpoint,
+		    priv->apply, priv->apply_arg);
+		if (error != 0)
+			panic("%s: checkpoint session abort failed: %d",
+			    __func__, error);
+		vmmdev_snapshot_session_notify(priv);
+	}
+	vmmdev_snapshot_session_clear(priv);
+#ifdef __amd64__
+	if (priv->startup_active) {
+		error = vm_startup_controller_release(priv->vm,
+		    &priv->startup_controller);
+		if (error != 0) {
+			/*
+			 * Do not free the only credential while leaving admission
+			 * live.  An exact release has no expected failure, but a
+			 * defensive close must still force the whole event domain
+			 * closed before discarding cdevpriv storage.
+			 */
+			cancel_error = vmm_event_coordinator_cancel(
+			    vm_event_coordinator(priv->vm));
+			printf("%s: startup release failed: %d; "
+			    "fail-closed cancellation: %d\n", __func__, error,
+			    cancel_error);
+		}
+		priv->startup_active = false;
+	}
+	explicit_bzero(&priv->startup_controller,
+	    sizeof(priv->startup_controller));
+#endif
+	sx_xunlock(&priv->lock);
+	sx_destroy(&priv->lock);
+	if (priv->entries != NULL)
+		explicit_bzero(priv->entries,
+		    (size_t)priv->maxcpus * sizeof(*priv->entries));
+	if (priv->instances != NULL)
+		explicit_bzero(priv->instances,
+		    (size_t)priv->maxcpus * sizeof(*priv->instances));
+	free(priv->entries, M_VMMDEV);
+	free(priv->instances, M_VMMDEV);
+	explicit_bzero(priv, sizeof(*priv));
+	free(priv, M_VMMDEV);
+}
+
+int
+vmmdev_snapshot_session_begin(struct vm *vm,
+    vmm_event_deferred_apply_t *apply, void *apply_arg,
+    uint64_t *session_id)
+{
+	struct vmm_event_wait_ticket ticket;
+	struct vmmdev_fdpriv *priv;
+	struct vcpu *vcpu;
+	size_t count;
+	uint16_t i;
+	bool begun;
+	int abort_error, error;
+
+	if (vm == NULL || session_id == NULL || *session_id != 0 ||
+	    !sx_xlocked(&vm->vcpus_init_lock))
+		return (EINVAL);
+	error = devfs_get_cdevpriv((void **)&priv);
+	if (error != 0)
+		return (error);
+	if (priv->vm != vm)
+		return (EXDEV);
+
+	sx_xlock(&priv->lock);
+	if (priv->active) {
+		error = EBUSY;
+		goto out;
+	}
+	if (priv->entries == NULL) {
+		priv->entries = mallocarray(priv->maxcpus,
+		    sizeof(*priv->entries), M_VMMDEV, M_NOWAIT | M_ZERO);
+		priv->instances = mallocarray(priv->maxcpus,
+		    sizeof(*priv->instances), M_VMMDEV, M_NOWAIT | M_ZERO);
+		if (priv->entries == NULL || priv->instances == NULL) {
+			free(priv->entries, M_VMMDEV);
+			free(priv->instances, M_VMMDEV);
+			priv->entries = NULL;
+			priv->instances = NULL;
+			error = ENOMEM;
+			goto out;
+		}
+	}
+	begun = false;
+	count = 0;
+	for (i = 0; i < priv->maxcpus; i++) {
+		vcpu = vm_vcpu(vm, i);
+		if (vcpu == NULL)
+			continue;
+		if (vcpu_get_state(vcpu, NULL) != VCPU_FROZEN) {
+			error = EBUSY;
+			priv->count = count;
+			goto failed;
+		}
+		if (count >= priv->maxcpus)
+			panic("%s: vCPU session capacity exceeded", __func__);
+		priv->instances[count++] = i;
+	}
+	if (count == 0) {
+		error = EINVAL;
+		priv->count = 0;
+		goto failed;
+	}
+
+	priv->apply = apply;
+	priv->apply_arg = apply_arg;
+	priv->count = count;
+	error = vmm_event_coordinator_checkpoint_begin(
+	    vm_event_coordinator(vm), &priv->checkpoint, priv->entries,
+	    priv->instances, count);
+	if (error != 0)
+		goto failed;
+	begun = true;
+	memset(&ticket, 0, sizeof(ticket));
+	error = vmm_event_coordinator_checkpoint_wait_ready(
+	    vm_event_coordinator(vm), &priv->checkpoint, &ticket,
+	    "vmsess", 0);
+	if (error != 0)
+		goto failed;
+	error = vmmdev_snapshot_session_id_allocate(&priv->session_id);
+	if (error != 0)
+		goto failed;
+	priv->active = true;
+	*session_id = priv->session_id;
+	goto out;
+
+failed:
+	if (begun) {
+		abort_error = vmm_event_coordinator_checkpoint_abort(
+		    vm_event_coordinator(vm), &priv->checkpoint, priv->apply,
+		    priv->apply_arg);
+		if (abort_error != 0)
+			panic("%s: failed begin rollback: %d", __func__,
+			    abort_error);
+		vmmdev_snapshot_session_notify(priv);
+	}
+	vmmdev_snapshot_session_clear(priv);
+out:
+	sx_xunlock(&priv->lock);
+	return (error);
+}
+
+static int
+vmmdev_snapshot_session_finish_locked(struct vmmdev_fdpriv *priv,
+    bool aborting)
+{
+	int error;
+
+	sx_assert(&priv->lock, SA_XLOCKED);
+	if (!priv->active || priv->count == 0)
+		return (EPROTO);
+	if (aborting)
+		error = vmm_event_coordinator_checkpoint_abort(
+		    vm_event_coordinator(priv->vm), &priv->checkpoint,
+		    priv->apply, priv->apply_arg);
+	else
+		error = vmm_event_coordinator_checkpoint_finish(
+		    vm_event_coordinator(priv->vm), &priv->checkpoint,
+		    priv->apply, priv->apply_arg);
+	if (error == 0) {
+		vmmdev_snapshot_session_notify(priv);
+		vmmdev_snapshot_session_clear(priv);
+	}
+	return (error);
+}
+
+int
+vmmdev_snapshot_session_finish(struct vm *vm, uint64_t session_id,
+    bool aborting)
+{
+	struct vmmdev_fdpriv *priv;
+	int error;
+
+	if (vm == NULL || session_id == 0 ||
+	    !sx_xlocked(&vm->vcpus_init_lock))
+		return (EINVAL);
+	error = devfs_get_cdevpriv((void **)&priv);
+	if (error != 0)
+		return (error);
+	if (priv->vm != vm)
+		return (EXDEV);
+
+	sx_xlock(&priv->lock);
+	if (!priv->active || priv->session_id != session_id) {
+		error = ESTALE;
+		goto out;
+	}
+	error = vmmdev_snapshot_session_finish_locked(priv, aborting);
+out:
+	sx_xunlock(&priv->lock);
+	return (error);
+}
+
+int
+vmmdev_snapshot_session_abort_current(struct vm *vm)
+{
+	struct vmmdev_fdpriv *priv;
+	int error;
+
+	if (vm == NULL || !sx_xlocked(&vm->vcpus_init_lock))
+		return (EINVAL);
+	error = devfs_get_cdevpriv((void **)&priv);
+	if (error != 0)
+		return (error);
+	if (priv->vm != vm)
+		return (EXDEV);
+
+	/* Recover only this open file description's currently active session. */
+	sx_xlock(&priv->lock);
+	if (!priv->active)
+		error = ESTALE;
+	else
+		error = vmmdev_snapshot_session_finish_locked(priv, true);
+	sx_xunlock(&priv->lock);
+	return (error);
+}
+
+static int
 vmmdev_open(struct cdev *dev, int flags, int fmt, struct thread *td)
 {
+	struct vmmdev_fdpriv *priv;
+	struct vmmdev_softc *sc;
 	int error;
 
 	/*
@@ -401,17 +1025,41 @@ vmmdev_open(struct cdev *dev, int flags, int fmt, struct thread *td)
 	error = vmm_jail_priv_check(td->td_ucred);
 	if (error != 0)
 		return (error);
+	sc = vmmdev_lookup2(dev);
+	if (sc == NULL)
+		return (ENXIO);
+	priv = malloc(sizeof(*priv), M_VMMDEV, M_WAITOK | M_ZERO);
+	priv->maxcpus = vm_get_maxcpus(sc->vm);
+	if (priv->maxcpus == 0) {
+		free(priv, M_VMMDEV);
+		return (EINVAL);
+	}
+	priv->vm = sc->vm;
+	sx_init(&priv->lock, "vmm snapshot session");
+	error = devfs_set_cdevpriv(priv, vmmdev_fdpriv_dtor);
+	if (error != 0) {
+		sx_destroy(&priv->lock);
+		free(priv, M_VMMDEV);
+		return (error);
+	}
 
 	return (0);
 }
 
 static const struct vmmdev_ioctl vmmdev_ioctls[] = {
+#ifdef __amd64__
+	VMMDEV_IOCTL(VM_STARTUP_REQUEST, 0),
+#endif
 	VMMDEV_IOCTL(VM_GET_REGISTER, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_SET_REGISTER, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_GET_REGISTER_SET, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_SET_REGISTER_SET, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_GET_CAPABILITY, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_SET_CAPABILITY, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+#ifdef __amd64__
+	VMMDEV_IOCTL(VM_GET_CPUID, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(VM_GET_CPU_COMPAT, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+#endif
 	VMMDEV_IOCTL(VM_ACTIVATE_CPU, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_INJECT_EXCEPTION, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 	VMMDEV_IOCTL(VM_STATS, VMMDEV_IOCTL_LOCK_ONE_VCPU),
@@ -434,6 +1082,8 @@ static const struct vmmdev_ioctl vmmdev_ioctls[] = {
 	VMMDEV_IOCTL(VM_MUNMAP_MEMSEG,
 	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
 	VMMDEV_IOCTL(VM_REINIT,
+	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
+	VMMDEV_IOCTL(VM_DIRTY_LOG_REQUEST,
 	    VMMDEV_IOCTL_XLOCK_MEMSEGS | VMMDEV_IOCTL_LOCK_ALL_VCPUS),
 
 #ifdef __amd64__
@@ -574,6 +1224,12 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	}
 
 	switch (cmd) {
+#ifdef __amd64__
+	case VM_STARTUP_REQUEST:
+		error = vmmdev_startup_request(sc->vm,
+		    (struct vmm_startup_request *)data);
+		break;
+#endif
 	case VM_SUSPEND: {
 		struct vm_suspend *vmsuspend;
 
@@ -583,6 +1239,10 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 	}
 	case VM_REINIT:
 		error = vm_reinit(sc->vm);
+		break;
+	case VM_DIRTY_LOG_REQUEST:
+		error = vmmdev_dirty_log_request(sc->vm,
+		    (struct vmm_dirty_log_request *)data);
 		break;
 	case VM_STAT_DESC: {
 		struct vm_stat_desc *statdesc;
@@ -769,6 +1429,27 @@ vmmdev_ioctl(struct cdev *cdev, u_long cmd, caddr_t data, int fflag,
 		error = vm_get_capability(vcpu, vmcap->captype, &vmcap->capval);
 		break;
 	}
+#ifdef __amd64__
+	case VM_GET_CPUID: {
+		struct vm_cpuid *vmcpuid;
+
+		vmcpuid = (struct vm_cpuid *)data;
+		error = vm_get_cpuid(vcpu, vmcpuid->flags, &vmcpuid->eax,
+		    &vmcpuid->ebx, &vmcpuid->ecx, &vmcpuid->edx);
+		break;
+	}
+	case VM_GET_CPU_COMPAT: {
+		struct vm_cpu_compat_query *query;
+
+		query = (struct vm_cpu_compat_query *)data;
+		if (query->reserved != 0) {
+			error = EINVAL;
+			break;
+		}
+		error = vm_get_cpu_compat(vcpu, &query->compat);
+		break;
+	}
+#endif
 	case VM_SET_CAPABILITY: {
 		struct vm_capability *vmcap;
 
@@ -927,10 +1608,12 @@ static void
 vmmdev_destroy(struct vmmdev_softc *sc)
 {
 	struct devmem_softc *dsc;
-	int error __diagused;
+	int error;
 
-	KASSERT(sc->cdev == NULL, ("%s: cdev not free", __func__));
-	KASSERT(sc->ucred != NULL, ("%s: missing ucred", __func__));
+	if (sc->cdev != NULL)
+		panic("%s: cdev not free", __func__);
+	if (sc->ucred == NULL)
+		panic("%s: missing ucred", __func__);
 
 	/*
 	 * Destroy all cdevs:
@@ -940,17 +1623,20 @@ vmmdev_destroy(struct vmmdev_softc *sc)
 	 * - the 'devmem' cdevs are destroyed before the virtual machine 'cdev'
 	 */
 	SLIST_FOREACH(dsc, &sc->devmem, link) {
-		KASSERT(dsc->cdev != NULL, ("devmem cdev already destroyed"));
+		if (dsc->cdev == NULL)
+			panic("%s: devmem cdev already destroyed", __func__);
 		devmem_destroy(dsc);
 	}
 
 	vm_disable_vcpu_creation(sc->vm);
 	error = vcpu_lock_all(sc);
-	KASSERT(error == 0, ("%s: error %d freezing vcpus", __func__, error));
+	if (error != 0)
+		panic("%s: error %d freezing vcpus", __func__, error);
 	vm_unlock_vcpus(sc->vm);
 
 	while ((dsc = SLIST_FIRST(&sc->devmem)) != NULL) {
-		KASSERT(dsc->cdev == NULL, ("%s: devmem not free", __func__));
+		if (dsc->cdev != NULL)
+			panic("%s: devmem not free", __func__);
 		SLIST_REMOVE_HEAD(&sc->devmem, link);
 		free(dsc->name, M_VMMDEV);
 		free(dsc, M_VMMDEV);
@@ -1338,7 +2024,7 @@ vmmdev_cleanup(void)
 static int
 vmm_handler(module_t mod, int what, void *arg)
 {
-	int error;
+	int error, maxcpu;
 
 	switch (what) {
 	case MOD_LOAD:
@@ -1346,14 +2032,15 @@ vmm_handler(module_t mod, int what, void *arg)
 		if (error != 0)
 			break;
 
-		vm_maxcpu = mp_ncpus;
-		TUNABLE_INT_FETCH("hw.vmm.maxcpu", &vm_maxcpu);
-		if (vm_maxcpu > VM_MAXCPU) {
+		maxcpu = mp_ncpus;
+		TUNABLE_INT_FETCH("hw.vmm.maxcpu", &maxcpu);
+		if (maxcpu > VM_MAXCPU) {
 			printf("vmm: vm_maxcpu clamped to %u\n", VM_MAXCPU);
-			vm_maxcpu = VM_MAXCPU;
+			maxcpu = VM_MAXCPU;
 		}
-		if (vm_maxcpu == 0)
-			vm_maxcpu = 1;
+		if (maxcpu <= 0)
+			maxcpu = 1;
+		vm_maxcpu = (u_int)maxcpu;
 		vm_maxvmms = 4 * mp_ncpus;
 		error = vmm_modinit();
 		if (error == 0)

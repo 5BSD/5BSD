@@ -65,7 +65,11 @@ if [ "$(id -u)" -eq 0 ]; then
 		exit 1
 	fi
 else
-	echo "WARNING: not running as root; privileged cases will SKIP or fail" >&2
+	echo "ERROR: this wrapper must run as root." >&2
+	echo "It invokes ATF cases directly, so require.user metadata cannot" >&2
+	echo "turn privileged cases into skips.  Use" >&2
+	echo "vsock_e2e/virtio-host-regression.sh for the rootless VM-free gate." >&2
+	exit 1
 fi
 
 PASS=0

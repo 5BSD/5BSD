@@ -37,6 +37,7 @@
 #include <vmmapi.h>
 
 #include <stdio.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -49,7 +50,11 @@
 #include "debug.h"
 #include "console.h"
 #include "pci_emul.h"
+#include "pci_fbuf_model.h"
 #include "rfb.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #ifdef __amd64__
 #include "amd64/vga.h"
 #endif
@@ -71,7 +76,7 @@ static int fbuf_debug = 1;
 #define	KB	(1024UL)
 #define	MB	(1024 * 1024UL)
 
-#define	DMEMSZ	128
+#define	DMEMSZ	PCI_FBUF_REG_SIZE
 
 #define	FB_SIZE		(32*MB)
 
@@ -86,14 +91,7 @@ static int fbuf_debug = 1;
 
 struct pci_fbuf_softc {
 	struct pci_devinst *fsc_pi;
-	struct {
-		uint32_t fbsize;
-		uint16_t width;
-		uint16_t height;
-		uint16_t depth;
-		uint16_t refreshrate;
-		uint8_t  reserved[116];
-	} __packed memregs;
+	uint8_t memregs[PCI_FBUF_REG_SIZE];
 
 	/* rfb server */
 	sa_family_t rfb_family;
@@ -103,6 +101,7 @@ struct pci_fbuf_softc {
 	int       rfb_wait;
 	int       vga_enabled;
 	int	  vga_full;
+	int	  external_source;
 
 	uint32_t  fbaddr;
 	char      *fb_base;
@@ -116,12 +115,47 @@ static struct pci_fbuf_softc *fbuf_sc;
 
 #define	PCI_FBUF_MSI_MSGS	 4
 
+static uint16_t
+pci_fbuf_get_u16(const struct pci_fbuf_softc *sc, uint64_t offset)
+{
+	uint64_t value;
+
+	if (!pci_fbuf_register_read(sc->memregs, offset, 2, &value))
+		return (0);
+	return ((uint16_t)value);
+}
+
 static void
-pci_fbuf_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
+pci_fbuf_set_u16(struct pci_fbuf_softc *sc, uint64_t offset, uint16_t value)
+{
+
+	(void)pci_fbuf_register_write(sc->memregs, offset, 2, value);
+}
+
+static void
+pci_fbuf_update_mode(struct pci_fbuf_softc *sc)
+{
+	uint16_t height, width;
+
+	height = pci_fbuf_get_u16(sc, PCI_FBUF_REG_HEIGHT);
+	width = pci_fbuf_get_u16(sc, PCI_FBUF_REG_WIDTH);
+	if (!sc->gc_image->vgamode && width == 0 && height == 0) {
+		DPRINTF(DEBUG_INFO, ("switching to VGA mode"));
+		sc->gc_image->vgamode = 1;
+		sc->gc_width = 0;
+		sc->gc_height = 0;
+	} else if (sc->gc_image->vgamode && width != 0 && height != 0) {
+		DPRINTF(DEBUG_INFO, ("switching to VESA mode"));
+		sc->gc_image->vgamode = 0;
+	}
+}
+
+static void
+pci_fbuf_write(struct pci_devinst *pi, int baridx __unused, uint64_t offset,
+    int size,
     uint64_t value)
 {
 	struct pci_fbuf_softc *sc;
-	uint8_t *p;
 
 	assert(baridx == 0);
 
@@ -131,50 +165,19 @@ pci_fbuf_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
 	    ("fbuf wr: offset 0x%lx, size: %d, value: 0x%lx",
 	    offset, size, value));
 
-	if (offset + size > DMEMSZ) {
+	if (!pci_fbuf_register_write(sc->memregs, offset, size, value)) {
 		printf("fbuf: write too large, offset %ld size %d\n",
 		       offset, size);
 		return;
 	}
-
-	p = (uint8_t *)&sc->memregs + offset;
-
-	switch (size) {
-	case 1:
-		*p = value;
-		break;
-	case 2:
-		*(uint16_t *)p = value;
-		break;
-	case 4:
-		*(uint32_t *)p = value;
-		break;
-	case 8:
-		*(uint64_t *)p = value;
-		break;
-	default:
-		printf("fbuf: write unknown size %d\n", size);
-		break;
-	}
-
-	if (!sc->gc_image->vgamode && sc->memregs.width == 0 &&
-	    sc->memregs.height == 0) {
-		DPRINTF(DEBUG_INFO, ("switching to VGA mode"));
-		sc->gc_image->vgamode = 1;
-		sc->gc_width = 0;
-		sc->gc_height = 0;
-	} else if (sc->gc_image->vgamode && sc->memregs.width != 0 &&
-	    sc->memregs.height != 0) {
-		DPRINTF(DEBUG_INFO, ("switching to VESA mode"));
-		sc->gc_image->vgamode = 0;
-	}
+	pci_fbuf_update_mode(sc);
 }
 
 static uint64_t
-pci_fbuf_read(struct pci_devinst *pi, int baridx, uint64_t offset, int size)
+pci_fbuf_read(struct pci_devinst *pi, int baridx __unused, uint64_t offset,
+    int size)
 {
 	struct pci_fbuf_softc *sc;
-	uint8_t *p;
 	uint64_t value;
 
 	assert(baridx == 0);
@@ -182,30 +185,10 @@ pci_fbuf_read(struct pci_devinst *pi, int baridx, uint64_t offset, int size)
 	sc = pi->pi_arg;
 
 
-	if (offset + size > DMEMSZ) {
+	if (!pci_fbuf_register_read(sc->memregs, offset, size, &value)) {
 		printf("fbuf: read too large, offset %ld size %d\n",
 		       offset, size);
 		return (0);
-	}
-
-	p = (uint8_t *)&sc->memregs + offset;
-	value = 0;
-	switch (size) {
-	case 1:
-		value = *p;
-		break;
-	case 2:
-		value = *(uint16_t *)p;
-		break;
-	case 4:
-		value = *(uint32_t *)p;
-		break;
-	case 8:
-		value = *(uint64_t *)p;
-		break;
-	default:
-		printf("fbuf: read unknown size %d\n", size);
-		break;
 	}
 
 	DPRINTF(DEBUG_VERBOSE,
@@ -245,6 +228,7 @@ static int
 pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 {
 	const char *value;
+	uint16_t height, width;
 	char *cp;
 
 	sc->rfb_wait = get_config_bool_node_default(nvl, "wait", false);
@@ -269,6 +253,8 @@ pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 				return (-1);
 			}
 			sc->rfb_host = strndup(value + 1, cp - (value + 1));
+			if (sc->rfb_host == NULL)
+				return (-1);
 			cp++;
 			if (*cp == ':') {
 				cp++;
@@ -296,6 +282,8 @@ pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 			} else {
 				sc->rfb_family = AF_UNIX;
 				sc->rfb_host = strdup(value + 5);
+				if (sc->rfb_host == NULL)
+					return (-1);
 			}
 		} else {
 			sc->rfb_family = AF_UNSPEC;
@@ -304,6 +292,8 @@ pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 				sc->rfb_port = atoi(value);
 			} else {
 				sc->rfb_host = strndup(value, cp - value);
+				if (sc->rfb_host == NULL)
+					return (-1);
 				cp++;
 				if (*cp == '\0') {
 					EPRINTLN(
@@ -332,29 +322,50 @@ pci_fbuf_parse_config(struct pci_fbuf_softc *sc, nvlist_t *nvl)
 		}
 	}
 
+	value = get_config_value_node(nvl, "source");
+	if (value != NULL) {
+		if (strcmp(value, "fbuf") == 0)
+			sc->external_source = 0;
+		else if (strcmp(value, "external") == 0)
+			sc->external_source = 1;
+		else {
+			EPRINTLN("fbuf: Invalid source: \"%s\"", value);
+			return (-1);
+		}
+	}
+	if (sc->external_source && sc->vga_enabled) {
+		EPRINTLN("fbuf: source=external requires vga=off");
+		return (-1);
+	}
+
 	value = get_config_value_node(nvl, "w");
 	if (value != NULL)
-		sc->memregs.width = strtol(value, NULL, 10);
+		pci_fbuf_set_u16(sc, PCI_FBUF_REG_WIDTH,
+		    strtol(value, NULL, 10));
 
 	value = get_config_value_node(nvl, "h");
 	if (value != NULL)
-		sc->memregs.height = strtol(value, NULL, 10);
+		pci_fbuf_set_u16(sc, PCI_FBUF_REG_HEIGHT,
+		    strtol(value, NULL, 10));
 
-	if (sc->memregs.width > COLS_MAX ||
-	    sc->memregs.height > ROWS_MAX) {
+	width = pci_fbuf_get_u16(sc, PCI_FBUF_REG_WIDTH);
+	height = pci_fbuf_get_u16(sc, PCI_FBUF_REG_HEIGHT);
+	if (width > COLS_MAX || height > ROWS_MAX) {
 		EPRINTLN("fbuf: max resolution is %ux%u", COLS_MAX, ROWS_MAX);
 		return (-1);
 	}
-	if (sc->memregs.width < COLS_MIN ||
-	    sc->memregs.height < ROWS_MIN) {
+	if (width < COLS_MIN || height < ROWS_MIN) {
 		EPRINTLN("fbuf: minimum resolution is %ux%u",
 		    COLS_MIN, ROWS_MIN);
 		return (-1);
 	}
 
 	value = get_config_value_node(nvl, "password");
-	if (value != NULL)
+	if (value != NULL) {
 		sc->rfb_password = strdup(value);
+		if (sc->rfb_password == NULL)
+			return (-1);
+	}
 
 	return (0);
 }
@@ -363,6 +374,8 @@ static void
 pci_fbuf_render(struct bhyvegc *gc, void *arg)
 {
 	struct pci_fbuf_softc *sc;
+	size_t pixels;
+	uint16_t height, width;
 
 	sc = arg;
 
@@ -373,11 +386,23 @@ pci_fbuf_render(struct bhyvegc *gc, void *arg)
 		vga_render(gc, sc->vgasc);
 		return;
 	}
-	if (sc->gc_width != sc->memregs.width ||
-	    sc->gc_height != sc->memregs.height) {
-		bhyvegc_resize(gc, sc->memregs.width, sc->memregs.height);
-		sc->gc_width = sc->memregs.width;
-		sc->gc_height = sc->memregs.height;
+	/*
+	 * BAR0 is guest writable.  Never let an invalid guest-selected geometry
+	 * turn the fixed-size framebuffer BAR into an out-of-bounds host read by
+	 * the renderer or RFB encoder.
+	 */
+	width = pci_fbuf_get_u16(sc, PCI_FBUF_REG_WIDTH);
+	height = pci_fbuf_get_u16(sc, PCI_FBUF_REG_HEIGHT);
+	if (width < COLS_MIN || width > COLS_MAX || height < ROWS_MIN ||
+	    height > ROWS_MAX)
+		return;
+	pixels = (size_t)width * height;
+	if (pixels > FB_SIZE / sizeof(uint32_t))
+		return;
+	if (sc->gc_width != width || sc->gc_height != height) {
+		bhyvegc_resize(gc, width, height);
+		sc->gc_width = width;
+		sc->gc_height = height;
 	}
 }
 
@@ -385,6 +410,7 @@ static int
 pci_fbuf_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	int error;
+	bool renderer_registered;
 	struct pci_fbuf_softc *sc;
 
 	if (fbuf_sc != NULL) {
@@ -393,6 +419,10 @@ pci_fbuf_init(struct pci_devinst *pi, nvlist_t *nvl)
 	}
 
 	sc = calloc(1, sizeof(struct pci_fbuf_softc));
+	if (sc == NULL)
+		return (-1);
+	renderer_registered = false;
+	error = -1;
 
 	pi->pi_arg = sc;
 
@@ -418,10 +448,11 @@ pci_fbuf_init(struct pci_devinst *pi, nvlist_t *nvl)
 	error = pci_emul_add_msicap(pi, PCI_FBUF_MSI_MSGS);
 	assert(error == 0);
 
-	sc->memregs.fbsize = FB_SIZE;
-	sc->memregs.width  = COLS_DEFAULT;
-	sc->memregs.height = ROWS_DEFAULT;
-	sc->memregs.depth  = 32;
+	(void)pci_fbuf_register_write(sc->memregs, PCI_FBUF_REG_FBSIZE, 4,
+	    FB_SIZE);
+	pci_fbuf_set_u16(sc, PCI_FBUF_REG_WIDTH, COLS_DEFAULT);
+	pci_fbuf_set_u16(sc, PCI_FBUF_REG_HEIGHT, ROWS_DEFAULT);
+	pci_fbuf_set_u16(sc, PCI_FBUF_REG_DEPTH, 32);
 
 	sc->vga_enabled = 1;
 	sc->vga_full = 0;
@@ -435,42 +466,118 @@ pci_fbuf_init(struct pci_devinst *pi, nvlist_t *nvl)
 	/* XXX until VGA rendering is enabled */
 	if (sc->vga_full != 0) {
 		EPRINTLN("pci_fbuf: VGA rendering not enabled");
+		error = -1;
 		goto done;
 	}
 
 	DPRINTF(DEBUG_INFO, ("fbuf frame buffer base: %p [sz %lu]",
 	        sc->fb_base, FB_SIZE));
 
-	console_init(sc->memregs.width, sc->memregs.height, sc->fb_base);
-	console_fb_register(pci_fbuf_render, sc);
+	console_init(pci_fbuf_get_u16(sc, PCI_FBUF_REG_WIDTH),
+	    pci_fbuf_get_u16(sc, PCI_FBUF_REG_HEIGHT), sc->fb_base);
+	if (!sc->external_source) {
+		error = console_fb_register("fbuf", pci_fbuf_render, sc);
+		if (error != 0) {
+			EPRINTLN("fbuf: framebuffer renderer already owned");
+			goto done;
+		}
+		renderer_registered = true;
+	}
 
-	if (sc->vga_enabled)
+	if (sc->vga_enabled) {
 		sc->vgasc = vga_init(!sc->vga_full);
+		if (sc->vgasc == NULL) {
+			error = ENXIO;
+			goto done;
+		}
+	}
 	sc->gc_image = console_get_image();
-
-	fbuf_sc = sc;
 
 	memset((void *)sc->fb_base, 0, FB_SIZE);
 
 	error = rfb_init(sc->rfb_family, sc->rfb_host, sc->rfb_port,
 	    sc->rfb_wait, sc->rfb_password);
+	if (error == 0)
+		fbuf_sc = sc;
 done:
-	if (error)
+	if (error) {
+		if (renderer_registered)
+			(void)console_fb_unregister("fbuf", sc);
+		pi->pi_arg = NULL;
+		free(sc->rfb_password);
+		free(sc->rfb_host);
 		free(sc);
+	}
 
 	return (error);
 }
 
 #ifdef BHYVE_SNAPSHOT
+#define	PCI_FBUF_SNAPSHOT_MAGIC	UINT32_C(0x31424650) /* "PFB1" */
+
 static int
 pci_fbuf_snapshot(struct vm_snapshot_meta *meta)
 {
+	struct pci_devinst *pi;
+	struct pci_fbuf_softc *sc;
+	uint32_t magic;
+	uint8_t registers[PCI_FBUF_REG_SIZE];
 	int ret;
 
-	SNAPSHOT_BUF_OR_LEAVE(fbuf_sc->fb_base, FB_SIZE, meta, ret, err);
+	if (meta == NULL || meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	sc = pi->pi_arg;
+	if (sc == NULL)
+		return (EINVAL);
+	magic = PCI_FBUF_SNAPSHOT_MAGIC;
+	if (meta->op == VM_SNAPSHOT_SAVE)
+		memcpy(registers, sc->memregs, sizeof(registers));
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, err);
+	if (vm_snapshot_is_loading(meta) &&
+	    magic != PCI_FBUF_SNAPSHOT_MAGIC) {
+		ret = EINVAL;
+		goto err;
+	}
+	SNAPSHOT_BUF_OR_LEAVE(registers, sizeof(registers), meta, ret, err);
+	SNAPSHOT_BUF_OR_LEAVE(sc->fb_base, FB_SIZE, meta, ret, err);
+	if (vm_snapshot_is_restoring(meta)) {
+		memcpy(sc->memregs, registers, sizeof(registers));
+		pci_fbuf_update_mode(sc);
+	}
 
 err:
 	return (ret);
+}
+
+static int
+pci_fbuf_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	uint8_t registers[PCI_FBUF_REG_SIZE], scratch[4096];
+	uint32_t magic;
+	size_t remaining, chunk;
+	int error;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE)
+		return (EINVAL);
+	magic = 0;
+	error = vm_snapshot_le32(&magic, meta);
+	if (error != 0)
+		return (error);
+	if (magic != PCI_FBUF_SNAPSHOT_MAGIC)
+		return (EINVAL);
+	error = vm_snapshot_buf(registers, sizeof(registers), meta);
+	if (error != 0)
+		return (error);
+	remaining = FB_SIZE;
+	while (remaining != 0) {
+		chunk = MIN(remaining, sizeof(scratch));
+		error = vm_snapshot_buf(scratch, chunk, meta);
+		if (error != 0)
+			return (error);
+		remaining -= chunk;
+	}
+	return (0);
 }
 #endif
 
@@ -482,6 +589,10 @@ static const struct pci_devemu pci_fbuf = {
 	.pe_baraddr =	pci_fbuf_baraddr,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	pci_fbuf_snapshot,
+	.pe_snapshot_validate = pci_fbuf_snapshot_validate,
+	.pe_migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
+	    PCI_MIGRATION_F_QUIESCE_NONE,
 #endif
 };
 PCI_EMUL_SET(pci_fbuf);

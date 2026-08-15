@@ -55,6 +55,8 @@
 #define VIRTIO_NET_F_GUEST_ANNOUNCE	 (1ULL << 21) /* Announce device on network */
 #define VIRTIO_NET_F_MQ			 (1ULL << 22) /* Device supports Receive Flow Steering */
 #define VIRTIO_NET_F_CTRL_MAC_ADDR	 (1ULL << 23) /* Set MAC address */
+#define VIRTIO_NET_F_HASH_REPORT	 (1ULL << 57) /* Report receive hash */
+#define VIRTIO_NET_F_RSS		 (1ULL << 60) /* Configurable RSS */
 #define VIRTIO_NET_F_SPEED_DUPLEX	 (1ULL << 63) /* Device set linkspeed and duplex */
 
 /* virtio net feature flag descriptions for use with printf(9) %b identifier. */
@@ -63,7 +65,7 @@
     "\207GUEST_TSO4\210GUEST_TSO6\211GUEST_ECN\212GUEST_UFO\213HOST_TSO4" \
     "\214HOST_TSO6\215HOST_ECN\216HOST_UFO\217MRG_RXBUF\220STATUS\221CTRL_VQ" \
     "\222CTRL_RX\223CTRL_VLAN\224CTRL_RX_EXTRA\225GUEST_ANNOUNCE\226MQ" \
-    "\227CTRL_MAC_ADDR\277SPEED_DUPLEX"
+    "\227CTRL_MAC_ADDR\271HASH_REPORT\274RSS\277SPEED_DUPLEX"
 
 #define VIRTIO_NET_S_LINK_UP	1	/* Link is up */
 #define VIRTIO_NET_S_ANNOUNCE	2	/* Announcement is needed */
@@ -91,6 +93,10 @@ struct virtio_net_config {
 	 * Any other value stands for unknown.
 	 */
 	uint8_t		duplex;
+	/* Maximum RSS key and indirection table sizes. */
+	uint8_t		rss_max_key_size;
+	uint16_t	rss_max_indirection_table_length;
+	uint32_t	supported_hash_types;
 } __packed;
 
 /*
@@ -116,6 +122,25 @@ struct virtio_net_hdr_v1 {
 	uint16_t csum_offset;	/* Offset after that to place checksum */
 	uint16_t num_buffers;	/* Number of merged rx buffers */
 };
+
+/* VIRTIO_NET_F_HASH_REPORT extends the modern receive header to 20 bytes. */
+struct virtio_net_hdr_hash_report {
+	struct virtio_net_hdr_v1 hdr;
+	uint32_t hash_value;
+	uint16_t hash_report;
+	uint16_t padding;
+} __packed;
+
+#define VIRTIO_NET_HASH_REPORT_NONE	0
+#define VIRTIO_NET_HASH_REPORT_IPV4	1
+#define VIRTIO_NET_HASH_REPORT_TCPV4	2
+#define VIRTIO_NET_HASH_REPORT_UDPV4	3
+#define VIRTIO_NET_HASH_REPORT_IPV6	4
+#define VIRTIO_NET_HASH_REPORT_TCPV6	5
+#define VIRTIO_NET_HASH_REPORT_UDPV6	6
+#define VIRTIO_NET_HASH_REPORT_IPV6_EX	7
+#define VIRTIO_NET_HASH_REPORT_TCPV6_EX	8
+#define VIRTIO_NET_HASH_REPORT_UDPV6_EX	9
 
 /*
  * This header comes first in the scatter-gather list.
@@ -242,8 +267,43 @@ struct virtio_net_ctrl_mq {
 
 #define VIRTIO_NET_CTRL_MQ	4
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET		0
+#define VIRTIO_NET_CTRL_MQ_RSS_CONFIG		1
+#define VIRTIO_NET_CTRL_MQ_HASH_CONFIG		2
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MIN		1
 #define VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MAX		0x8000
+
+#define VIRTIO_NET_RSS_HASH_TYPE_IPV4		(1U << 0)
+#define VIRTIO_NET_RSS_HASH_TYPE_TCPV4		(1U << 1)
+#define VIRTIO_NET_RSS_HASH_TYPE_UDPV4		(1U << 2)
+#define VIRTIO_NET_RSS_HASH_TYPE_IPV6		(1U << 3)
+#define VIRTIO_NET_RSS_HASH_TYPE_TCPV6		(1U << 4)
+#define VIRTIO_NET_RSS_HASH_TYPE_UDPV6		(1U << 5)
+#define VIRTIO_NET_RSS_HASH_TYPES_BASIC		((1U << 6) - 1)
+#define VIRTIO_NET_RSS_HASH_TYPE_IPV6_EX	(1U << 6)
+#define VIRTIO_NET_RSS_HASH_TYPE_TCPV6_EX	(1U << 7)
+#define VIRTIO_NET_RSS_HASH_TYPE_UDPV6_EX	(1U << 8)
+#define VIRTIO_NET_RSS_HASH_TYPES_ALL		((1U << 9) - 1)
+#define VIRTIO_NET_RSS_KEY_SIZE			40
+#define VIRTIO_NET_RSS_TABLE_SIZE		128
+
+/* Command-specific bytes following struct virtio_net_ctrl_hdr. */
+struct virtio_net_ctrl_rss {
+	uint32_t hash_types;
+	uint16_t indirection_table_mask;
+	uint16_t unclassified_queue;
+	uint16_t indirection_table[VIRTIO_NET_RSS_TABLE_SIZE];
+	uint16_t max_tx_vq;
+	uint8_t hash_key_length;
+	uint8_t hash_key[VIRTIO_NET_RSS_KEY_SIZE];
+} __packed;
+
+/* HASH_CONFIG is wire-compatible with RSS_CONFIG's fixed header/trailer. */
+struct virtio_net_ctrl_hash {
+	uint32_t hash_types;
+	uint16_t reserved[4];
+	uint8_t hash_key_length;
+	uint8_t hash_key[VIRTIO_NET_RSS_KEY_SIZE];
+} __packed;
 
 /*
  * Control network offloads

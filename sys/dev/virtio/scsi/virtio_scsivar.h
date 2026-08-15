@@ -31,9 +31,15 @@
 
 struct vtscsi_softc;
 struct vtscsi_request;
+struct virtqueue;
 
 typedef void vtscsi_request_cb_t(struct vtscsi_softc *,
     struct vtscsi_request *);
+
+struct vtscsi_vq {
+	struct vtscsi_softc	*vsv_softc;
+	struct virtqueue	*vsv_vq;
+};
 
 struct vtscsi_statistics {
 	unsigned long		scsi_cmd_timeouts;
@@ -51,6 +57,7 @@ struct vtscsi_softc {
 #define VTSCSI_FLAG_HOTPLUG		0x0004
 #define VTSCSI_FLAG_RESET		0x0008
 #define VTSCSI_FLAG_DETACH		0x0010
+#define VTSCSI_FLAG_CHANGE		0x0020
 
 	uint16_t		 vtscsi_frozen;
 #define VTSCSI_FROZEN_NO_REQUESTS	0x01
@@ -60,7 +67,9 @@ struct vtscsi_softc {
 
 	struct virtqueue	*vtscsi_control_vq;
 	struct virtqueue	*vtscsi_event_vq;
-	struct virtqueue	*vtscsi_request_vq;
+	struct vtscsi_vq	*vtscsi_request_vqs;
+	int			 vtscsi_num_request_vqs;
+	int			 vtscsi_next_request_vq;
 
 	struct cam_sim		*vtscsi_sim;
 	struct cam_path		*vtscsi_path;
@@ -68,7 +77,7 @@ struct vtscsi_softc {
 	int			 vtscsi_debug;
 	int			 vtscsi_nrequests;
 	int			 vtscsi_max_nsegs;
-	int			 vtscsi_event_buf_size;
+	uint32_t		 vtscsi_event_buf_size;
 
 	TAILQ_HEAD(,vtscsi_request)
 				 vtscsi_req_free;
@@ -78,8 +87,8 @@ struct vtscsi_softc {
 	uint32_t		 vtscsi_max_lun;
 
 #define VTSCSI_NUM_EVENT_BUFS	4
-	struct virtio_scsi_event
-				 vtscsi_event_bufs[VTSCSI_NUM_EVENT_BUFS];
+#define VTSCSI_MAX_EVENT_SIZE	(1024 * 1024)
+	uint8_t			*vtscsi_event_bufs;
 
 	struct vtscsi_statistics vtscsi_stats;
 };
@@ -95,6 +104,7 @@ struct vtscsi_request {
 	struct vtscsi_softc			*vsr_softc;
 	union ccb				*vsr_ccb;
 	vtscsi_request_cb_t			*vsr_complete;
+	struct virtqueue			*vsr_vq;
 
 	void					*vsr_ptr0;
 /* Request when aborting a timedout command. */
@@ -103,9 +113,7 @@ struct vtscsi_request {
 	enum vtscsi_request_state		 vsr_state;
 
 	uint16_t				 vsr_flags;
-#define VTSCSI_REQ_FLAG_POLLED		0x01
-#define VTSCSI_REQ_FLAG_COMPLETE	0x02
-#define VTSCSI_REQ_FLAG_TIMEOUT_SET	0x04
+#define VTSCSI_REQ_FLAG_TIMEOUT_SET	0x01
 
 	union {
 		struct virtio_scsi_cmd_req	 cmd;
@@ -139,6 +147,8 @@ struct vtscsi_request {
 /* Features desired/implemented by this driver. */
 #define VTSCSI_FEATURES \
     (VIRTIO_SCSI_F_HOTPLUG		| \
+     VIRTIO_SCSI_F_CHANGE		| \
+     VIRTIO_F_RING_PACKED		| \
      VIRTIO_RING_F_INDIRECT_DESC)
 
 #define VTSCSI_MTX(_sc)			&(_sc)->vtscsi_mtx
@@ -201,11 +211,5 @@ struct vtscsi_request {
  * as TM commands (e.g. aborting timedout commands).
  */
 #define VTSCSI_RESERVED_REQUESTS	10
-
-/*
- * How to wait (or not) for request completion.
- */
-#define VTSCSI_EXECUTE_ASYNC	0
-#define VTSCSI_EXECUTE_POLL	1
 
 #endif /* _VIRTIO_SCSIVAR_H */

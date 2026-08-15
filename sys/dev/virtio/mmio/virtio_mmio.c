@@ -61,6 +61,9 @@ struct vtmmio_virtqueue {
 	int			 vtv_no_intr;
 };
 
+#define	VIRTIO_MMIO_SUSPEND_POLL_INTERVAL	SBT_1MS
+#define	VIRTIO_MMIO_SUSPEND_TIMEOUT		SBT_1S
+
 static int	vtmmio_detach(device_t);
 static int	vtmmio_suspend(device_t);
 static int	vtmmio_resume(device_t);
@@ -77,7 +80,9 @@ static void	vtmmio_set_virtqueue(struct vtmmio_softc *sc,
 static int	vtmmio_alloc_virtqueues(device_t, int,
 		    struct vq_alloc_info *);
 static int	vtmmio_setup_intr(device_t, enum intr_type);
+static void	vtmmio_teardown_intr(device_t);
 static void	vtmmio_stop(device_t);
+static void	vtmmio_fail(device_t);
 static int	vtmmio_reinit(device_t, uint64_t);
 static void	vtmmio_reinit_complete(device_t);
 static int	vtmmio_reset_virtqueue(device_t, struct virtqueue *);
@@ -86,6 +91,8 @@ static void	vtmmio_notify_virtqueue(device_t, uint16_t, bus_size_t,
 static int	vtmmio_config_generation(device_t);
 static uint8_t	vtmmio_get_status(device_t);
 static void	vtmmio_set_status(device_t, uint8_t);
+static int	vtmmio_wait_lifecycle(struct vtmmio_softc *, bool);
+static int	vtmmio_suspend_rollback(struct vtmmio_softc *, int);
 static void	vtmmio_read_dev_config(device_t, bus_size_t, void *, int);
 static uint64_t	vtmmio_read_dev_config_8(struct vtmmio_softc *, bus_size_t);
 static void	vtmmio_write_dev_config(device_t, bus_size_t, const void *, int);
@@ -140,7 +147,9 @@ static device_method_t vtmmio_methods[] = {
 	DEVMETHOD(virtio_bus_with_feature,	  vtmmio_with_feature),
 	DEVMETHOD(virtio_bus_alloc_virtqueues,	  vtmmio_alloc_virtqueues),
 	DEVMETHOD(virtio_bus_setup_intr,	  vtmmio_setup_intr),
+	DEVMETHOD(virtio_bus_teardown_intr,	  vtmmio_teardown_intr),
 	DEVMETHOD(virtio_bus_stop,		  vtmmio_stop),
+	DEVMETHOD(virtio_bus_fail,		  vtmmio_fail),
 	DEVMETHOD(virtio_bus_reinit,		  vtmmio_reinit),
 	DEVMETHOD(virtio_bus_reinit_complete,	  vtmmio_reinit_complete),
 	DEVMETHOD(virtio_bus_reset_vq,		  vtmmio_reset_virtqueue),
@@ -309,14 +318,43 @@ vtmmio_detach(device_t dev)
 static int
 vtmmio_suspend(device_t dev)
 {
+	struct vtmmio_softc *sc;
+	int error;
 
-	return (bus_generic_suspend(dev));
+	sc = device_get_softc(dev);
+	error = bus_generic_suspend(dev);
+	if (error != 0 || !vtmmio_with_feature(dev, VIRTIO_F_SUSPEND) ||
+	    !virtio_device_suspend_request_allowed(vtmmio_get_status(dev)))
+		return (error);
+
+	vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_SUSPEND);
+	error = vtmmio_wait_lifecycle(sc, true);
+	if (error != 0) {
+		device_printf(dev, "device did not complete suspend: %d\n",
+		    error);
+		error = vtmmio_suspend_rollback(sc, error);
+	} else
+		sc->vtmmio_host_suspend_handshake = true;
+	return (error);
 }
 
 static int
 vtmmio_resume(device_t dev)
 {
+	struct vtmmio_softc *sc;
+	int error;
 
+	sc = device_get_softc(dev);
+	if (sc->vtmmio_host_suspend_handshake) {
+		vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_DRIVER_OK);
+		error = vtmmio_wait_lifecycle(sc, false);
+		if (error != 0) {
+			device_printf(dev,
+			    "device did not complete resume: %d\n", error);
+			return (error);
+		}
+		sc->vtmmio_host_suspend_handshake = false;
+	}
 	return (bus_generic_resume(dev));
 }
 
@@ -431,11 +469,6 @@ vtmmio_negotiate_features(device_t dev, uint64_t child_features)
 
 	sc = device_get_softc(dev);
 
-	if (sc->vtmmio_version > 1) {
-		child_features |= VIRTIO_F_VERSION_1;
-		child_features |= VIRTIO_F_NOTIFICATION_DATA;
-	}
-
 	vtmmio_write_config_4(sc, VIRTIO_MMIO_HOST_FEATURES_SEL, 1);
 	host_features = vtmmio_read_config_4(sc, VIRTIO_MMIO_HOST_FEATURES);
 	host_features <<= 32;
@@ -444,6 +477,8 @@ vtmmio_negotiate_features(device_t dev, uint64_t child_features)
 	host_features |= vtmmio_read_config_4(sc, VIRTIO_MMIO_HOST_FEATURES);
 
 	vtmmio_describe_features(sc, "host", host_features);
+	child_features = virtio_mmio_requested_transport_features(
+	    sc->vtmmio_version, child_features, host_features);
 
 	/*
 	 * Limit negotiated features to what the driver, virtqueue, and
@@ -574,15 +609,13 @@ vtmmio_alloc_virtqueues(device_t dev, int nvqs,
 		vtmmio_select_virtqueue(sc, idx);
 		size = vtmmio_read_config_4(sc, VIRTIO_MMIO_QUEUE_NUM_MAX);
 
-		/*
-		 * QueueNumMax is a 32-bit MMIO register, while the split-ring
-		 * queue size is a 16-bit parameter capped at 32768 by VirtIO
-		 * 1.4 section 2.7.  Validate before narrowing it.
-		 */
-		if (size != 0 && !virtio_split_queue_size_valid(size)) {
+		/* Validate the 32-bit QueueNumMax before narrowing it. */
+		if (size != 0 && !virtio_queue_size_valid(
+		    vtmmio_with_feature(dev, VIRTIO_F_RING_PACKED), size)) {
 			device_printf(dev,
-			    "virtqueue %d has invalid split-ring size: %u\n",
-			    idx, size);
+			    "virtqueue %d has invalid %s-ring size: %u\n", idx,
+			    vtmmio_with_feature(dev, VIRTIO_F_RING_PACKED) ?
+			    "packed" : "split", size);
 			error = ENXIO;
 			break;
 		}
@@ -616,6 +649,13 @@ vtmmio_stop(device_t dev)
 {
 
 	vtmmio_reset(device_get_softc(dev));
+}
+
+static void
+vtmmio_fail(device_t dev)
+{
+
+	vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_FAILED);
 }
 
 static int
@@ -692,8 +732,8 @@ static int
 vtmmio_reset_virtqueue(device_t dev, struct virtqueue *vq)
 {
 	struct vtmmio_softc *sc;
+	uint32_t count;
 	uint16_t idx;
-	int count;
 
 	sc = device_get_softc(dev);
 	if (sc->vtmmio_version == 1 ||
@@ -706,7 +746,7 @@ vtmmio_reset_virtqueue(device_t dev, struct virtqueue *vq)
 
 	vtmmio_select_virtqueue(sc, idx);
 	vtmmio_write_config_4(sc, VIRTIO_MMIO_QUEUE_RESET, 1);
-	for (count = 0; count < VIRTIO_QUEUE_RESET_POLLS; count++) {
+	for (count = 0; count < VIRTIO_QUEUE_RESET_PROBES; count++) {
 		if (vtmmio_read_config_4(sc, VIRTIO_MMIO_QUEUE_RESET) == 0) {
 			if (vtmmio_read_config_4(sc,
 			    VIRTIO_MMIO_QUEUE_READY) != 0)
@@ -717,7 +757,8 @@ vtmmio_reset_virtqueue(device_t dev, struct virtqueue *vq)
 		 * The bus reset method may be called with a child-driver mutex
 		 * held (vtrnd_detach() does this), so it must not sleep here.
 		 */
-		DELAY(VIRTIO_RESET_POLL_DELAY_US);
+		if (virtio_queue_reset_probe_should_delay(count))
+			DELAY(VIRTIO_RESET_POLL_DELAY_US);
 	}
 
 	return (ETIMEDOUT);
@@ -784,6 +825,72 @@ vtmmio_set_status(device_t dev, uint8_t status)
 		status |= vtmmio_get_status(dev);
 
 	vtmmio_write_config_4(sc, VIRTIO_MMIO_STATUS, status);
+}
+
+/*
+ * Device suspend has no completion interrupt in the MMIO transport.  Use a
+ * short, bounded status poll rather than an unbounded wait: the device must
+ * complete the transition or report NEEDS_RESET, and one second prevents a
+ * broken implementation from hanging system suspend indefinitely.
+ */
+static int
+vtmmio_wait_lifecycle(struct vtmmio_softc *sc, bool suspend)
+{
+	sbintime_t deadline;
+	uint8_t status;
+
+	deadline = sbinuptime() + VIRTIO_MMIO_SUSPEND_TIMEOUT;
+	for (;;) {
+		status = vtmmio_get_status(sc->dev);
+		if ((status & (VIRTIO_CONFIG_S_NEEDS_RESET |
+		    VIRTIO_CONFIG_STATUS_FAILED)) != 0)
+			return (EIO);
+		if (suspend ? virtio_device_suspend_complete(status) :
+		    virtio_device_resume_complete(status))
+			return (0);
+		if (sbinuptime() >= deadline)
+			return (ETIMEDOUT);
+		pause_sbt("vmmsusp", VIRTIO_MMIO_SUSPEND_POLL_INTERVAL, 0,
+		    C_HARDCLOCK);
+	}
+}
+
+/* See vtpci_modern_suspend_rollback() for the shared lifecycle contract. */
+static int
+vtmmio_suspend_rollback(struct vtmmio_softc *sc, int suspend_error)
+{
+	device_t dev;
+	enum virtio_device_lifecycle_state state;
+	uint8_t status;
+	int error;
+
+	dev = sc->dev;
+	status = vtmmio_get_status(dev);
+	state = virtio_device_lifecycle_state(status);
+	if (state == VIRTIO_DEVICE_LIFECYCLE_FAILED)
+		return (suspend_error);
+	if (state == VIRTIO_DEVICE_LIFECYCLE_RUNNING) {
+		error = bus_generic_resume(dev);
+		if (error != 0)
+			device_printf(dev, "child suspend rollback failed: %d\n",
+			    error);
+		return (error != 0 ? error : suspend_error);
+	}
+	if (state == VIRTIO_DEVICE_LIFECYCLE_SUSPENDED) {
+		vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_DRIVER_OK);
+		error = vtmmio_wait_lifecycle(sc, false);
+		if (error == 0) {
+			error = bus_generic_resume(dev);
+			if (error != 0)
+				device_printf(dev,
+				    "child suspend rollback failed: %d\n", error);
+			return (error != 0 ? error : suspend_error);
+		}
+		device_printf(dev, "device suspend rollback failed: %d\n",
+		    error);
+	}
+	vtmmio_set_status(dev, VIRTIO_CONFIG_STATUS_FAILED);
+	return (suspend_error);
 }
 
 static void
@@ -1085,10 +1192,12 @@ vtmmio_reinit_virtqueue(struct vtmmio_softc *sc, int idx)
 
 	vtmmio_select_virtqueue(sc, idx);
 	size = vtmmio_read_config_4(sc, VIRTIO_MMIO_QUEUE_NUM_MAX);
-	if (!virtio_split_queue_size_valid(size)) {
+	if (!virtio_queue_size_valid(
+	    vtmmio_with_feature(sc->dev, VIRTIO_F_RING_PACKED), size)) {
 		device_printf(sc->dev,
-		    "virtqueue %d has invalid split-ring size after reset: %u\n",
-		    idx, size);
+		    "virtqueue %d has invalid %s-ring size after reset: %u\n",
+		    idx, vtmmio_with_feature(sc->dev, VIRTIO_F_RING_PACKED) ?
+		    "packed" : "split", size);
 		return (ENXIO);
 	}
 
@@ -1112,6 +1221,13 @@ vtmmio_free_interrupts(struct vtmmio_softc *sc)
 	if (sc->res[1] != NULL)
 		bus_release_resource(sc->dev, SYS_RES_IRQ, 0, sc->res[1]);
 	sc->res[1] = NULL;
+}
+
+static void
+vtmmio_teardown_intr(device_t dev)
+{
+
+	vtmmio_free_interrupts(device_get_softc(dev));
 }
 
 static void
@@ -1169,6 +1285,7 @@ vtmmio_reset(struct vtmmio_softc *sc)
 	} else
 		(void)vtmmio_get_status(sc->dev);
 	sc->vtmmio_device_config_failed = false;
+	sc->vtmmio_host_suspend_handshake = false;
 }
 
 static void

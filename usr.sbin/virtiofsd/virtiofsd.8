@@ -1,0 +1,97 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd August 1, 2026
+.Dt VIRTIOFSD 8
+.Os
+.Sh NAME
+.Nm virtiofsd
+.Nd capability-confined non-DAX virtio-fs backend for bhyve
+.Sh SYNOPSIS
+.Nm
+.Fl r Ar export
+.Fl s Ar socket
+.Op Fl U Ar uid
+.Op Fl G Ar gid
+.Op Fl n Ar nodes
+.Op Fl h Ar handles
+.Op Fl i Ar inflight
+.Op Fl m Ar message-bytes
+.Op Fl b Ar pending-bytes
+.Op Fl w Ar workers
+.Sh DESCRIPTION
+.Nm
+serves a directory through the private, versioned VFSB
+.Dv SOCK_SEQPACKET
+protocol used by
+.Xr bhyve 8 .
+It opens the export and listening socket before entering capability mode.
+Before entering, it limits each retained descriptor to the rights needed for
+read-only export traversal, authenticated socket transport, removal of its
+owned socket, or signal-event delivery.
+All guest pathname operations are single-component, descriptor-relative
+lookups constrained beneath the pre-opened export.
+Peer credentials must match the configured user and group.
+.Pp
+The current implementation is deliberately read-only and non-DAX.
+It supports FUSE initialization, lookup, attribute and filesystem-statistics
+queries, access checks, symbolic-link reads, file and directory open, file
+read, directory enumeration, file flush and sync, single and batched forget,
+typed release, cancellation, and backend quiesce/thaw.
+Directory enumeration exposes regular files, directories, and symbolic links;
+host device nodes, sockets, and FIFOs are omitted.
+Unsupported mutating FUSE operations return
+.Er EROFS
+or
+.Er ENOSYS .
+Backend state transfer uses versioned, bounded, little-endian records.
+The original fixed-size record represents an idle connection.
+When nodes or handles are live, a variable-size record preserves their exact
+opaque guest identifiers and relative identities beneath the export.
+Restore validates and reopens the complete replacement graph before publishing
+any of it, and an open handle remains reconstructible after its node lookup is
+forgotten.
+No host descriptor, pointer, lock, native structure, host byte order, host page
+size, or architecture-specific state is serialized.
+Regular-file size and type are revalidated; file contents remain an external
+read-only export responsibility.
+.Dv FUSE_DESTROY
+reclaims all handles and non-root lookup nodes even when the guest omitted
+individual forget requests.
+.Pp
+The daemon remains in the foreground for supervision.
+It refuses to replace an existing socket path.
+.Sh OPTIONS
+.Bl -tag -width Ds
+.It Fl r Ar export
+Directory to export.
+.It Fl s Ar socket
+Absolute VFSB listening socket path.
+.It Fl U Ar uid
+Required effective user ID of the connecting bhyve process.
+.It Fl G Ar gid
+Required effective group ID of the connecting bhyve process.
+.It Fl n Ar nodes
+Maximum tracked FUSE nodes.
+.It Fl h Ar handles
+Maximum open file handles.
+.It Fl i Ar inflight
+Maximum backend requests.
+.It Fl m Ar message-bytes
+Maximum FUSE request or response size.
+.It Fl b Ar pending-bytes
+Maximum queued response payload bytes.
+.It Fl w Ar workers
+Number of filesystem workers.
+.El
+.Sh SEE ALSO
+.Xr capsicum 4 ,
+.Xr bhyve 8
+.Sh SECURITY CONSIDERATIONS
+The export descriptor, listening socket, and socket-parent descriptor are the
+only namespace capabilities retained after startup.
+Symlinks are visible as objects but are never followed while resolving or
+reopening nodes.
+Special files are not exported, and encoded device identifiers are always
+zero.
+Wire byte order, structure layout, reserved fields, Linux FUSE errno values,
+and guest open flags are decoded explicitly rather than using host-native
+structures or constants.

@@ -9,14 +9,20 @@
 #ifndef	_DEV_VMM_DEV_H_
 #define	_DEV_VMM_DEV_H_
 
+#include <sys/param.h>
 #include <sys/types.h>
+#include <sys/conf.h>
 #include <sys/ioccom.h>
 
 #include <machine/vmm_dev.h>
 
 #include <dev/vmm/vmm_param.h>
+#include <dev/vmm/vmm_startup_request.h>
+#include <dev/vmm/vmm_startup_run_request.h>
 
 #ifdef _KERNEL
+#include <dev/vmm/vmm_event_coordinator.h>
+
 struct thread;
 struct vm;
 struct vcpu;
@@ -26,8 +32,16 @@ int	vmm_modcleanup(void);
 
 int	vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd,
 	    caddr_t data, int fflag, struct thread *td);
+#ifdef __amd64__
+int	vmmdev_machdep_startup_classify(struct vcpu *, bool *);
+int	vmmdev_startup_run_enter(struct vm *, struct vcpu *, uint64_t);
+#endif
 void	vmmdev_ppt_get_bdf(u_long cmd, caddr_t data, int *bus, int *slot,
 	    int *func);
+int	vmmdev_snapshot_session_begin(struct vm *,
+	    vmm_event_deferred_apply_t *, void *, uint64_t *);
+int	vmmdev_snapshot_session_finish(struct vm *, uint64_t, bool);
+int	vmmdev_snapshot_session_abort_current(struct vm *);
 
 /*
  * Entry in an ioctl handler table.  A number of generic ioctls are defined,
@@ -88,5 +102,19 @@ struct vmmctl_vm_destroy {
 
 #define	VMMCTL_VM_CREATE	_IOWR('V', 0, struct vmmctl_vm_create)
 #define	VMMCTL_VM_DESTROY	_IOWR('V', 1, struct vmmctl_vm_destroy)
+
+/*
+ * Versioned startup-controller management.  The command number is outside
+ * every existing machine vmm_dev.h namespace and the payload is fixed-width.
+ * Keep this private command aligned with its amd64-only dispatcher and
+ * libvmmapi wrappers; it is not a machine-independent VMM contract.
+ */
+#ifdef __amd64__
+#define	VM_STARTUP_REQUEST	\
+	_IOWR('v', VMM_STARTUP_REQUEST_IOCNUM, struct vmm_startup_request)
+#define	VM_RUN_GENERATION	\
+	_IOW('v', VMM_STARTUP_RUN_REQUEST_IOCNUM, \
+	    struct vmm_startup_run_request)
+#endif
 
 #endif /* _DEV_VMM_DEV_H_ */

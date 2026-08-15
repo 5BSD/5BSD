@@ -37,6 +37,17 @@ static ssize_t test_readv(int, const struct iovec *, int);
 #undef read
 #undef readv
 
+#include "bhyve/virtio_packed.c"
+
+vm_paddr_t vm_rev_map_gpa(struct vmctx *, void *);
+
+vm_paddr_t
+vm_rev_map_gpa(struct vmctx *ctx __unused, void *mapping __unused)
+{
+
+	return ((vm_paddr_t)-1);
+}
+
 #include "virtio.c"
 #include "virtio_1_4_spec.h"
 
@@ -166,10 +177,12 @@ pci_emul_msix_tread(struct pci_devinst *pi __unused, uint64_t offset __unused,
 	return (0);
 }
 
-void
+int
 pci_emul_msix_twrite(struct pci_devinst *pi __unused,
     uint64_t offset __unused, int size __unused, uint64_t value __unused)
 {
+
+	return (0);
 }
 
 void

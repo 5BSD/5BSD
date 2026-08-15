@@ -29,8 +29,6 @@
 #include <sys/types.h>
 
 #include <time.h>
-#include <assert.h>
-
 #include <machine/vmm.h>
 #include <vmmapi.h>
 
@@ -68,7 +66,7 @@ rtc_time(void)
 	return (t);
 }
 
-void
+int
 rtc_init(struct vmctx *ctx)
 {
 	size_t himem;
@@ -85,20 +83,24 @@ rtc_init(struct vmctx *ctx)
 	 */
 	lomem = (vm_get_lowmem_size(ctx) - m_16MB) / m_64KB;
 	err = vm_rtc_write(ctx, RTC_LMEM_LSB, lomem);
-	assert(err == 0);
+	if (err != 0)
+		return (err);
 	err = vm_rtc_write(ctx, RTC_LMEM_MSB, lomem >> 8);
-	assert(err == 0);
+	if (err != 0)
+		return (err);
 
 	himem = vm_get_highmem_size(ctx) / m_64KB;
 	err = vm_rtc_write(ctx, RTC_HMEM_LSB, himem);
-	assert(err == 0);
+	if (err != 0)
+		return (err);
 	err = vm_rtc_write(ctx, RTC_HMEM_SB, himem >> 8);
-	assert(err == 0);
+	if (err != 0)
+		return (err);
 	err = vm_rtc_write(ctx, RTC_HMEM_MSB, himem >> 16);
-	assert(err == 0);
+	if (err != 0)
+		return (err);
 
-	err = vm_rtc_settime(ctx, rtc_time());
-	assert(err == 0);
+	return (vm_rtc_settime(ctx, rtc_time()));
 }
 
 static void

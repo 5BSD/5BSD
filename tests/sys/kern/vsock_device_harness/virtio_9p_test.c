@@ -9,14 +9,21 @@
 #include <sys/uio.h>
 
 #include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <atf-c.h>
 
+#include "virtio_config_read_test_support.h"
+#define	BHYVE_SNAPSHOT
+#define	VT9P_QUIESCE_TIMEOUT_SECONDS	1
 #include "pci_virtio_9p.c"
 #include "virtio_1_4_spec.h"
 
@@ -26,6 +33,8 @@
 #define	VIRTIO_9P_F_MOUNT_TAG		VIRTIO14_9P_F_MOUNT_TAG
 #undef VIRTIO_F_RING_RESET
 #define	VIRTIO_F_RING_RESET		VIRTIO14_F_RING_RESET
+#undef VIRTIO_F_SUSPEND
+#define	VIRTIO_F_SUSPEND		VIRTIO14_F_SUSPEND
 struct nvlist {
 	int unused;
 };
@@ -55,7 +64,195 @@ static uint64_t g_qreset_complete_generation;
 static int g_qreset_complete_error;
 static struct pci_vt9p_softc *g_notify_during_close;
 static bool g_drop_during_close;
+static bool g_has_fid;
 static struct l9p_connection g_connection;
+static uint8_t g_config[VT9P_CONFIGSPACESZ];
+static int g_snapshot_validate_calls;
+static bool g_snapshot_validate_mutex_owned;
+
+int
+vi_pci_snapshot(struct vm_snapshot_meta *meta)
+{
+	struct pci_vt9p_softc *sc;
+
+	sc = ((struct pci_devinst *)meta->dev_data)->pi_arg;
+	g_snapshot_validate_calls++;
+	g_snapshot_validate_mutex_owned = pthread_mutex_isowned_np(&sc->vsc_mtx);
+	return (0);
+}
+
+ATF_TC_WITHOUT_HEAD(export_root_resolve_beneath);
+ATF_TC_BODY(export_root_resolve_beneath, tc)
+{
+	char base[] = "/tmp/virtio-9p-beneath.XXXXXX";
+	char export_path[PATH_MAX], inside_path[PATH_MAX];
+	char outside_path[PATH_MAX], escape_path[PATH_MAX];
+	int fd, rootfd;
+
+	ATF_REQUIRE(mkdtemp(base) != NULL);
+	ATF_REQUIRE(snprintf(export_path, sizeof(export_path), "%s/export",
+	    base) > 0);
+	ATF_REQUIRE(snprintf(inside_path, sizeof(inside_path), "%s/inside",
+	    export_path) > 0);
+	ATF_REQUIRE(snprintf(outside_path, sizeof(outside_path), "%s/outside",
+	    base) > 0);
+	ATF_REQUIRE(snprintf(escape_path, sizeof(escape_path), "%s/escape",
+	    export_path) > 0);
+	ATF_REQUIRE(mkdir(export_path, 0700) == 0);
+
+	fd = open(inside_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(close(fd) == 0);
+	fd = open(outside_path, O_WRONLY | O_CREAT | O_EXCL, 0600);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(close(fd) == 0);
+	ATF_REQUIRE(symlink("..", escape_path) == 0);
+
+	rootfd = open(export_path, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(rootfd >= 0);
+	ATF_REQUIRE(pci_vt9p_confine_rootfd(rootfd) == 0);
+	ATF_CHECK((fcntl(rootfd, F_GETFD) & FD_RESOLVE_BENEATH) != 0);
+
+	fd = openat(rootfd, "inside", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE(close(fd) == 0);
+
+	errno = 0;
+	fd = openat(rootfd, "escape/outside", O_RDONLY);
+	ATF_CHECK(fd == -1);
+	ATF_CHECK(errno == ENOTCAPABLE);
+	if (fd >= 0)
+		(void)close(fd);
+
+	ATF_REQUIRE(close(rootfd) == 0);
+	ATF_REQUIRE(unlink(escape_path) == 0);
+	ATF_REQUIRE(unlink(inside_path) == 0);
+	ATF_REQUIRE(unlink(outside_path) == 0);
+	ATF_REQUIRE(rmdir(export_path) == 0);
+	ATF_REQUIRE(rmdir(base) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(readonly_export_root_rights);
+ATF_TC_BODY(readonly_export_root_rights, tc)
+{
+	cap_rights_t readonly, writable;
+
+	pci_vt9p_root_cap_rights(&readonly, true);
+	pci_vt9p_root_cap_rights(&writable, false);
+	ATF_CHECK(cap_rights_is_set(&readonly, CAP_LOOKUP));
+	ATF_CHECK(cap_rights_is_set(&readonly, CAP_READ));
+	ATF_CHECK(cap_rights_is_set(&readonly, CAP_FSTAT));
+	ATF_CHECK(!cap_rights_is_set(&readonly, CAP_WRITE));
+	ATF_CHECK(!cap_rights_is_set(&readonly, CAP_CREATE));
+	ATF_CHECK(!cap_rights_is_set(&readonly, CAP_UNLINKAT));
+	ATF_CHECK(!cap_rights_is_set(&readonly, CAP_RENAMEAT_TARGET));
+	ATF_CHECK(!cap_rights_is_set(&readonly, CAP_EXTATTR_SET));
+	ATF_CHECK(cap_rights_is_set(&writable, CAP_WRITE));
+	ATF_CHECK(cap_rights_is_set(&writable, CAP_CREATE));
+	ATF_CHECK(cap_rights_is_set(&writable, CAP_UNLINKAT));
+	ATF_CHECK(cap_rights_is_set(&writable, CAP_RENAMEAT_TARGET));
+	ATF_CHECK(cap_rights_is_set(&writable, CAP_EXTATTR_SET));
+}
+
+void
+vm_snapshot_buf_err(const char *name __unused,
+    const enum vm_snapshot_op op __unused)
+{
+}
+
+int
+vm_snapshot_buf(void *data, size_t size, struct vm_snapshot_meta *meta)
+{
+
+	if (size > meta->buffer.buf_rem)
+		return (E2BIG);
+	if (meta->op == VM_SNAPSHOT_SAVE)
+		memcpy(meta->buffer.buf, data, size);
+	else if (vm_snapshot_is_loading(meta))
+		memcpy(data, meta->buffer.buf, size);
+	else
+		return (EINVAL);
+	meta->buffer.buf += size;
+	meta->buffer.buf_rem -= size;
+	return (0);
+}
+
+int
+vm_snapshot_u8(uint8_t *value, struct vm_snapshot_meta *meta)
+{
+
+	return (vm_snapshot_buf(value, 1, meta));
+}
+
+int
+vm_snapshot_le16(uint16_t *value, struct vm_snapshot_meta *meta)
+{
+	uint8_t bytes[2];
+	int error;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		bytes[0] = *value;
+		bytes[1] = *value >> 8;
+	}
+	error = vm_snapshot_buf(bytes, sizeof(bytes), meta);
+	if (error == 0 && vm_snapshot_is_loading(meta))
+		*value = (uint16_t)bytes[0] | (uint16_t)bytes[1] << 8;
+	return (error);
+}
+
+int
+vm_snapshot_le32(uint32_t *value, struct vm_snapshot_meta *meta)
+{
+	uint8_t bytes[4];
+	int error;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			bytes[i] = *value >> (i * 8);
+	}
+	error = vm_snapshot_buf(bytes, sizeof(bytes), meta);
+	if (error == 0 && vm_snapshot_is_loading(meta)) {
+		*value = 0;
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			*value |= (uint32_t)bytes[i] << (i * 8);
+	}
+	return (error);
+}
+
+int
+vm_snapshot_le64(uint64_t *value, struct vm_snapshot_meta *meta)
+{
+	uint8_t bytes[8];
+	int error;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			bytes[i] = *value >> (i * 8);
+	}
+	error = vm_snapshot_buf(bytes, sizeof(bytes), meta);
+	if (error == 0 && vm_snapshot_is_loading(meta)) {
+		*value = 0;
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			*value |= (uint64_t)bytes[i] << (i * 8);
+	}
+	return (error);
+}
+
+void
+ht_iter(struct ht *h, struct ht_iter *iter)
+{
+
+	memset(iter, 0, sizeof(*iter));
+	iter->htit_parent = h;
+}
+
+void *
+ht_next(struct ht_iter *iter __unused)
+{
+	static int fid;
+
+	return (g_has_fid ? &fid : NULL);
+}
 
 static void
 init_recursive_mutex(pthread_mutex_t *mtx)
@@ -95,6 +292,7 @@ reset_mocks(void)
 	g_qreset_complete_error = 0;
 	g_notify_during_close = NULL;
 	g_drop_during_close = false;
+	g_has_fid = false;
 }
 
 const char *
@@ -258,10 +456,56 @@ vi_pci_modern_queue_reset_complete(struct vqueue_info *vq __unused,
 static void
 setup_softc(struct pci_vt9p_softc *sc)
 {
+	pthread_condattr_t attr;
+
 	memset(sc, 0, sizeof(*sc));
 	init_recursive_mutex(&sc->vsc_mtx);
-	ATF_REQUIRE(pthread_cond_init(&sc->vsc_reset_cv, NULL) == 0);
+	ATF_REQUIRE_EQ(pthread_condattr_init(&attr), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_setclock(&attr, CLOCK_MONOTONIC), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc->vsc_reset_cv, &attr), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_destroy(&attr), 0);
 	sc->vsc_conn = &g_connection;
+	sc->vsc_vq.vq_qsize = VT9P_RINGSZ;
+}
+
+static void
+setup_snapshot_softc(struct pci_vt9p_softc *sc)
+{
+
+	setup_softc(sc);
+	memset(g_config, 0, sizeof(g_config));
+	sc->vsc_config = (struct pci_vt9p_config *)(void *)g_config;
+	sc->vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	pci_vt9p_set_tag(sc, "hostshare");
+	sc->vsc_rootpath = __DECONST(char *, "/host/share");
+	sc->vsc_rootdev = 12;
+	sc->vsc_rootino = 34;
+	sc->vsc_readonly = true;
+	sc->vsc_features = UINT64_C(0x1122334455667788);
+	sc->vsc_vs.vs_negotiated_caps = sc->vsc_features;
+	sc->vsc_generation = 9;
+	sc->vsc_conn->lc_version = L9P_2000L;
+	sc->vsc_conn->lc_msize = 8192;
+	sc->vsc_conn->lc_max_io_size = 8192 - 24;
+}
+
+static int
+run_snapshot(struct pci_vt9p_softc *sc, uint8_t *image, size_t size,
+    enum vm_snapshot_op op, size_t *used)
+{
+	struct vm_snapshot_meta meta = {
+		.buffer = {
+			.buf = image,
+			.buf_rem = size,
+		},
+		.op = op,
+	};
+	int error;
+
+	error = pci_vt9p_snapshot(sc, &meta);
+	if (used != NULL)
+		*used = size - meta.buffer.buf_rem;
+	return (error);
 }
 
 static void
@@ -294,6 +538,7 @@ ATF_TC_BODY(config_bounds, tc)
 	ATF_CHECK(pci_vt9p_cfgread(&sc, 0, 0, &value) == EINVAL);
 	ATF_CHECK(pci_vt9p_cfgread(&sc, 0, 3, &value) == EINVAL);
 	ATF_CHECK(pci_vt9p_cfgread(&sc, 0, 8, &value) == EINVAL);
+	ATF_CHECK(pci_vt9p_cfgread(&sc, 0, 1, NULL) == EINVAL);
 }
 
 ATF_TC_WITHOUT_HEAD(option_parser);
@@ -303,8 +548,8 @@ ATF_TC_BODY(option_parser, tc)
 
 	reset_mocks();
 	ATF_REQUIRE(pci_vt9p_legacy_config(&nvl,
-	    "hostshare=/tmp/share,ro,transport=modern") == 0);
-	ATF_REQUIRE(g_set_count == 4);
+	    "hostshare=/tmp/share,ro,transport=modern,packed=true") == 0);
+	ATF_REQUIRE(g_set_count == 5);
 	ATF_CHECK(strcmp(g_names[0], "sharename") == 0);
 	ATF_CHECK(strcmp(g_values[0], "hostshare") == 0);
 	ATF_CHECK(strcmp(g_names[1], "path") == 0);
@@ -313,6 +558,8 @@ ATF_TC_BODY(option_parser, tc)
 	ATF_CHECK(strcmp(g_values[2], "true") == 0);
 	ATF_CHECK(strcmp(g_names[3], "transport") == 0);
 	ATF_CHECK(strcmp(g_values[3], "modern") == 0);
+	ATF_CHECK(strcmp(g_names[4], "packed") == 0);
+	ATF_CHECK(strcmp(g_values[4], "true") == 0);
 	ATF_CHECK(pci_vt9p_legacy_config(&nvl, "a=/a,b=/b") == -1);
 
 	reset_mocks();
@@ -390,7 +637,6 @@ ATF_TC_BODY(reset_discards_stale_notify, tc)
 	ATF_CHECK(g_connection_closes == 1);
 	ATF_CHECK(g_connection_inits == 1);
 	ATF_CHECK(g_recv_calls == 0);
-	ATF_CHECK(!sc.vsc_notify_pending);
 	ATF_CHECK_EQ(sc.vsc_features, 0);
 	destroy_softc(&sc);
 }
@@ -442,7 +688,7 @@ ATF_TC_BODY(stale_completion, tc)
 	preq = calloc(1, sizeof(*preq));
 	ATF_REQUIRE(preq != NULL);
 	preq->vsr_sc = &sc;
-	preq->vsr_idx = 7;
+	preq->vsr_req.idx = 7;
 	preq->vsr_generation = sc.vsc_generation;
 	memset(&req, 0, sizeof(req));
 	req.lr_aux = preq;
@@ -587,6 +833,15 @@ finish_prior_reset(void *arg)
 	return ((void *)(uintptr_t)error);
 }
 
+static void *
+finish_suspended_request(void *arg)
+{
+	struct l9p_request *req;
+
+	req = arg;
+	return ((void *)(uintptr_t)pci_vt9p_send(req, NULL, 0, 17, NULL));
+}
+
 ATF_TC_WITHOUT_HEAD(full_reset_waits_for_prior_reconnect);
 ATF_TC_BODY(full_reset_waits_for_prior_reconnect, tc)
 {
@@ -658,13 +913,218 @@ ATF_TC_BODY(queue_reset_contract, tc)
 
 	ATF_CHECK(vt9p_vi_consts.vc_qreset == pci_vt9p_qreset);
 	ATF_CHECK(vt9p_vi_consts.vc_qenable == pci_vt9p_qenable);
+	ATF_CHECK(vt9p_vi_consts.vc_suspend == pci_vt9p_suspend_device);
+	ATF_CHECK(vt9p_vi_consts.vc_resume_device ==
+	    pci_vt9p_resume_device);
 	ATF_CHECK((vt9p_vi_consts.vc_hv_caps & VIRTIO_F_RING_RESET) != 0);
 	ATF_CHECK_EQ(vt9p_vi_consts.vc_hv_caps,
-	    VIRTIO14_9P_F_MOUNT_TAG | VIRTIO14_F_RING_RESET);
+	    VIRTIO14_9P_F_MOUNT_TAG | VIRTIO14_F_RING_RESET |
+	    VIRTIO14_F_SUSPEND);
+}
+
+ATF_TC_WITHOUT_HEAD(suspend_drains_and_preserves_session);
+ATF_TC_BODY(suspend_drains_and_preserves_session, tc)
+{
+	struct pci_vt9p_softc sc;
+	struct l9p_request req;
+	pthread_t thread;
+	void *thread_result;
+
+	reset_mocks();
+	setup_softc(&sc);
+	pci_vt9p_notify(&sc, &sc.vsc_vq);
+	ATF_REQUIRE(g_recv_aux != NULL);
+	ATF_REQUIRE_EQ(sc.vsc_active_requests, 1);
+	memset(&req, 0, sizeof(req));
+	req.lr_aux = g_recv_aux;
+	ATF_REQUIRE_EQ(pthread_create(&thread, NULL, finish_suspended_request,
+	    &req), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(pci_vt9p_suspend_device(&sc), 0);
+	ATF_CHECK_EQ(sc.vsc_active_requests, 0);
+	ATF_CHECK(sc.vsc_conn == &g_connection);
+	ATF_CHECK_EQ(g_connection_closes, 0);
+	ATF_CHECK_EQ(g_connection_inits, 0);
+	ATF_CHECK_EQ(pci_vt9p_resume_device(&sc), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_join(thread, &thread_result), 0);
+	ATF_CHECK_EQ((uintptr_t)thread_result, 0);
+
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	sc.vsc_conn = NULL;
+	ATF_CHECK_EQ(pci_vt9p_suspend_device(&sc), EIO);
+	ATF_CHECK_EQ(pci_vt9p_resume_device(&sc), EIO);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_identity_and_atomicity);
+ATF_TC_BODY(snapshot_identity_and_atomicity, tc)
+{
+	struct pci_vt9p_softc destination, source;
+	uint8_t image[1024];
+	size_t used;
+
+	reset_mocks();
+	setup_snapshot_softc(&source);
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE(used > 16);
+	/* Internal save-state magic is a fixed little-endian "V9P2". */
+	ATF_CHECK_EQ(image[0], (uint8_t)'V');
+	ATF_CHECK_EQ(image[1], (uint8_t)'9');
+	ATF_CHECK_EQ(image[2], (uint8_t)'P');
+	ATF_CHECK_EQ(image[3], (uint8_t)'2');
+	source.vsc_features ^= UINT64_C(1);
+	ATF_CHECK_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EINVAL);
+	source.vsc_features ^= UINT64_C(1);
+	source.vsc_conn->lc_max_io_size++;
+	ATF_CHECK_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EINVAL);
+	source.vsc_conn->lc_max_io_size--;
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+
+	setup_snapshot_softc(&destination);
+	destination.vsc_features = 7;
+	destination.vsc_generation = 41;
+	destination.vsc_conn->lc_version = L9P_2000;
+	destination.vsc_conn->lc_msize = 1024;
+	destination.vsc_conn->lc_max_io_size = 512;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_CHECK_EQ(destination.vsc_features, 7);
+	ATF_CHECK_EQ(destination.vsc_generation, 41);
+	ATF_CHECK_EQ(destination.vsc_conn->lc_version, L9P_2000);
+	ATF_CHECK_EQ(destination.vsc_conn->lc_msize, 1024);
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used - 1,
+	    VM_SNAPSHOT_VALIDATE, NULL), E2BIG);
+	ATF_CHECK_EQ(destination.vsc_generation, 41);
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used - 1,
+	    VM_SNAPSHOT_RESTORE, NULL), E2BIG);
+	ATF_CHECK_EQ(destination.vsc_features, 7);
+	ATF_CHECK_EQ(destination.vsc_generation, 41);
+	ATF_CHECK_EQ(destination.vsc_conn->lc_version, L9P_2000);
+	ATF_CHECK_EQ(destination.vsc_conn->lc_msize, 1024);
+
+	destination.vsc_rootino++;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	ATF_CHECK_EQ(destination.vsc_features, 7);
+	ATF_CHECK_EQ(destination.vsc_generation, 41);
+	destination.vsc_rootino--;
+
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK_EQ(destination.vsc_features, source.vsc_features);
+	ATF_CHECK_EQ(destination.vsc_generation, 42);
+	ATF_CHECK_EQ(destination.vsc_conn->lc_version, L9P_2000L);
+	ATF_CHECK_EQ(destination.vsc_conn->lc_msize, 8192);
+	ATF_CHECK_EQ(destination.vsc_conn->lc_max_io_size, 8192 - 24);
+
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK_EQ(destination.vsc_generation, 43);
+
+	destination.vsc_generation = UINT64_MAX;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EOVERFLOW);
+	ATF_CHECK_EQ(destination.vsc_generation, UINT64_MAX);
+
+	destroy_softc(&destination);
+	destroy_softc(&source);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_preflight_is_locally_serialized);
+ATF_TC_BODY(snapshot_preflight_is_locally_serialized, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vt9p_softc sc;
+	struct vm_snapshot_meta meta = {
+		.dev_data = &pi,
+		.op = VM_SNAPSHOT_VALIDATE,
+	};
+
+	memset(&pi, 0, sizeof(pi));
+	memset(&sc, 0, sizeof(sc));
+	/* Production 9P uses this recursive mutex across pause and preflight. */
+	init_recursive_mutex(&sc.vsc_mtx);
+	pi.pi_arg = &sc;
+	g_snapshot_validate_calls = 0;
+	g_snapshot_validate_mutex_owned = false;
+	ATF_CHECK_EQ(pci_de_v9p.pe_snapshot_validate, pci_vt9p_snapshot_validate);
+	ATF_REQUIRE_EQ(pci_vt9p_snapshot_validate(&meta), 0);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 1);
+	ATF_CHECK(g_snapshot_validate_mutex_owned);
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	g_snapshot_validate_mutex_owned = false;
+	ATF_REQUIRE_EQ(pci_vt9p_snapshot_validate(&meta), 0);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 2);
+	ATF_CHECK(g_snapshot_validate_mutex_owned);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	meta.dev_data = NULL;
+	ATF_CHECK_EQ(pci_vt9p_snapshot_validate(&meta), EINVAL);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 2);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(suspend_timeout_preserves_session);
+ATF_TC_BODY(suspend_timeout_preserves_session, tc)
+{
+	struct pci_vt9p_softc sc;
+	struct timespec before, after;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_active_requests = 1;
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &before), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(pci_vt9p_suspend_device(&sc), ETIMEDOUT);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &after), 0);
+	ATF_CHECK(after.tv_sec > before.tv_sec ||
+	    (after.tv_sec == before.tv_sec &&
+	    after.tv_nsec >= before.tv_nsec));
+	ATF_CHECK_EQ(sc.vsc_active_requests, 1);
+	ATF_CHECK(sc.vsc_conn == &g_connection);
+	ATF_CHECK_EQ(g_connection_closes, 0);
+	sc.vsc_active_requests = 0;
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(checkpoint_rejects_live_session);
+ATF_TC_BODY(checkpoint_rejects_live_session, tc)
+{
+	struct pci_vt9p_softc sc;
+
+	reset_mocks();
+	setup_snapshot_softc(&sc);
+	ATF_REQUIRE_EQ(pci_vt9p_pause(&sc), 0);
+	ATF_REQUIRE_EQ(pci_vt9p_resume(&sc), 0);
+
+	sc.vsc_active_requests = 1;
+	ATF_CHECK_EQ(pci_vt9p_pause(&sc), EBUSY);
+	sc.vsc_active_requests = 0;
+	g_has_fid = true;
+	sc.vsc_conn->lc_files.ht_entries = (void *)(uintptr_t)1;
+	ATF_CHECK_EQ(pci_vt9p_pause(&sc), EBUSY);
+	sc.vsc_conn->lc_files.ht_entries = NULL;
+	g_has_fid = false;
+	sc.vsc_qreset_pending = true;
+	ATF_CHECK_EQ(pci_vt9p_pause(&sc), EBUSY);
+	sc.vsc_qreset_pending = false;
+	sc.vsc_resetting = true;
+	ATF_CHECK_EQ(pci_vt9p_pause(&sc), EBUSY);
+	sc.vsc_resetting = false;
+
+	destroy_softc(&sc);
 }
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, export_root_resolve_beneath);
+	ATF_TP_ADD_TC(tp, readonly_export_root_rights);
 	ATF_TP_ADD_TC(tp, config_bounds);
 	ATF_TP_ADD_TC(tp, option_parser);
 	ATF_TP_ADD_TC(tp, descriptor_lifetime);
@@ -681,5 +1141,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	ATF_TP_ADD_TC(tp, modern_mount_tag_wire_bytes);
 	ATF_TP_ADD_TC(tp, queue_reset_contract);
+	ATF_TP_ADD_TC(tp, suspend_drains_and_preserves_session);
+	ATF_TP_ADD_TC(tp, suspend_timeout_preserves_session);
+	ATF_TP_ADD_TC(tp, snapshot_identity_and_atomicity);
+	ATF_TP_ADD_TC(tp, snapshot_preflight_is_locally_serialized);
+	ATF_TP_ADD_TC(tp, checkpoint_rejects_live_session);
 	return (atf_no_error());
 }

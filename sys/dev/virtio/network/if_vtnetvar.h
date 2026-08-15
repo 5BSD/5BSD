@@ -73,6 +73,8 @@ struct vtnet_rxq_stats {
 	uint64_t	vrxs_csum;
 	uint64_t	vrxs_csum_failed;
 	uint64_t	vrxs_host_lro;
+	uint64_t	vrxs_hash;
+	uint64_t	vrxs_hash_invalid;
 	uint64_t	vrxs_rescheduled;
 };
 
@@ -88,7 +90,7 @@ struct vtnet_rxq {
 	struct lro_ctrl		 vtnrx_lro;
 #ifdef DEV_NETMAP
 	uint32_t		 vtnrx_nm_refill;
-	struct virtio_net_hdr_mrg_rxbuf vtnrx_shrhdr;
+	struct virtio_net_hdr_hash_report vtnrx_shrhdr;
 #endif  /* DEV_NETMAP */
 	char			 vtnrx_name[16];
 } __aligned(CACHE_LINE_SIZE);
@@ -123,7 +125,7 @@ struct vtnet_txq {
 	struct task		 vtntx_intrtask;
 	struct task		 vtntx_defrtask;
 #ifdef DEV_NETMAP
-	struct virtio_net_hdr_mrg_rxbuf vtntx_shrhdr;
+	struct virtio_net_hdr_hash_report vtntx_shrhdr;
 #endif  /* DEV_NETMAP */
 	char			 vtntx_name[16];
 } __aligned(CACHE_LINE_SIZE);
@@ -160,6 +162,8 @@ struct vtnet_softc {
 #define VTNET_FLAG_SUSPENDED	 0x1000
 #define VTNET_FLAG_FIXUP_NEEDS_CSUM 0x2000
 #define VTNET_FLAG_SW_LRO	 0x4000
+#define VTNET_FLAG_RSS		 0x8000
+#define VTNET_FLAG_HASH_REPORT	 0x10000
 
 	u_int			 vtnet_hdr_size;
 	int			 vtnet_rx_nmbufs;
@@ -173,6 +177,7 @@ struct vtnet_softc {
 	int			 vtnet_tx_nsegs;
 	int			 vtnet_if_flags;
 	u_int			 vtnet_max_mtu;
+	uint32_t		 vtnet_rss_hash_types;
 	int			 vtnet_lro_entry_count;
 	int			 vtnet_lro_mbufq_depth;
 
@@ -195,7 +200,7 @@ struct vtnet_softc {
 #define VTNET_FLAGS_BITS \
     "\20\1MODERN\2MAC\3CTRL_VQ\4CTRL_RX\5CTRL_MAC\6VLAN_FILTER\7TSO_ECN" \
     "\10MRG_RXBUFS\11LRO_NOMRG\12MQ\13INDIRECT\14EVENT_IDX\15SUSPENDED" \
-    "\16FIXUP_NEEDS_CSUM\17SW_LRO"
+    "\16FIXUP_NEEDS_CSUM\17SW_LRO\20RSS\21HASH_REPORT"
 
 static bool
 vtnet_modern(struct vtnet_softc *sc)
@@ -244,6 +249,16 @@ CTASSERT(sizeof(struct virtio_net_hdr_v1) == 12);
 CTASSERT(sizeof(struct virtio_net_hdr) == 10);
 CTASSERT(sizeof(struct virtio_net_hdr_mrg_rxbuf) ==
     sizeof(struct virtio_net_hdr_v1));
+CTASSERT(sizeof(struct virtio_net_hdr_hash_report) == 20);
+CTASSERT(sizeof(struct virtio_net_config) == 24);
+CTASSERT(sizeof(struct virtio_net_ctrl_hash) == 53);
+CTASSERT(sizeof(struct virtio_net_ctrl_rss) == 307);
+#ifdef DEV_NETMAP
+CTASSERT(sizeof(((struct vtnet_rxq *)0)->vtnrx_shrhdr) >=
+    sizeof(struct virtio_net_hdr_hash_report));
+CTASSERT(sizeof(((struct vtnet_txq *)0)->vtntx_shrhdr) >=
+    sizeof(struct virtio_net_hdr_hash_report));
+#endif
 
 /*
  * In legacy VirtIO when mergeable buffers are not negotiated, this structure
@@ -270,6 +285,7 @@ struct vtnet_tx_header {
 		struct virtio_net_hdr		hdr;
 		struct virtio_net_hdr_mrg_rxbuf	mhdr;
 		struct virtio_net_hdr_v1	v1hdr;
+		struct virtio_net_hdr_hash_report hashhdr;
 	} vth_uhdr;
 
 	struct mbuf *vth_mbuf;
@@ -336,7 +352,17 @@ CTASSERT(sizeof(struct vtnet_mac_filter) <= PAGE_SIZE);
      VIRTIO_RING_F_EVENT_IDX		| \
      VIRTIO_RING_F_INDIRECT_DESC)
 
-#define VTNET_MODERN_FEATURES (VTNET_COMMON_FEATURES)
+/*
+ * Modern (VirtIO 1.x) devices may offer a packed virtqueue layout.  The packed
+ * ring is implemented entirely by the shared virtqueue layer, so the network
+ * driver is layout-transparent and needs no packed-specific code; it only has
+ * to advertise that it can drive a packed ring.  Requesting the bit explicitly
+ * keeps activation robust even if the transport stops force-adding it to every
+ * modern child, and preserves the split-ring fallback when the host does not
+ * offer VIRTIO_F_RING_PACKED.
+ */
+#define VTNET_MODERN_FEATURES (VTNET_COMMON_FEATURES | VIRTIO_NET_F_RSS | \
+    VIRTIO_NET_F_HASH_REPORT | VIRTIO_F_RING_PACKED)
 #define VTNET_LEGACY_FEATURES (VTNET_COMMON_FEATURES | VIRTIO_NET_F_GSO)
 
 /*

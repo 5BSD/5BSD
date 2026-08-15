@@ -51,6 +51,8 @@ struct svm_vcpu {
 	struct svm_softc *sc;
 	struct vcpu	*vcpu;
 	struct vmcb	*vmcb;	 /* hardware saved vcpu context */
+	/* Frozen-restore candidate; never used for VMRUN residency. */
+	struct vmcb	*snapshot_vmcb;
 	struct svm_regctx swctx; /* software saved vcpu context */
 	uint64_t	vmcb_pa; /* VMCB physical address */
 	uint64_t	nextrip; /* next instruction to be executed by guest */
@@ -64,6 +66,26 @@ struct svm_vcpu {
 	int		caps;	 /* optional vm capabilities */
 };
 
+#ifdef BHYVE_SNAPSHOT
+/*
+ * Restore records are decoded one vCPU at a time because the established wire
+ * format is sequential.  Keep their results unpublished until the common
+ * VMM snapshot dispatcher reaches its one VM-wide completion boundary.
+ */
+struct svm_snapshot_vcpu_stage {
+	struct svm_vcpu	*vcpu;
+	struct svm_regctx swctx;
+	uint64_t	nextrip;
+	struct vm_mtrr	mtrr;
+	bool		valid;
+};
+
+struct svm_snapshot_restore {
+	struct svm_snapshot_vcpu_stage *vcpus;
+	uint16_t	maxcpus;
+};
+#endif
+
 /*
  * SVM softc, one per virtual machine.
  */
@@ -72,6 +94,9 @@ struct svm_softc {
 	uint8_t		*iopm_bitmap;    /* shared by all vcpus */
 	uint8_t		*msr_bitmap;    /* shared by all vcpus */
 	struct vm	*vm;
+#ifdef BHYVE_SNAPSHOT
+	struct svm_snapshot_restore *snapshot_restore;
+#endif
 };
 
 #define	SVM_CTR0(vcpu, format)						\

@@ -22,10 +22,40 @@
 #include <vm/vm_page.h>
 
 #include <dev/vmm/vmm_dev.h>
+#include <dev/vmm/vmm_address_range.h>
+#include <dev/vmm/vmm_dirty_log.h>
+#include <dev/vmm/vmm_dirty_log_collector.h>
+#include <dev/vmm/vmm_dirty_log_map.h>
 #include <dev/vmm/vmm_mem.h>
 #include <dev/vmm/vmm_vm.h>
 
 static void vm_free_memmap(struct vm *vm, int ident);
+
+/*
+ * A wrapped generation must never make an old dirty-log ticket valid again.
+ * Mapping changes still work after exhaustion; only future dirty-log capture
+ * is withheld until a new VM supplies a fresh map identity.
+ */
+static void
+vm_mem_dirty_log_map_changed(struct vm *vm)
+{
+	struct vm_mem *mem;
+	uint64_t next;
+	int error __diagused;
+
+	vm_assert_memseg_xlocked(vm);
+	mem = vm_mem(vm);
+	if (mem->mem_map_generation == 0 ||
+	    vmm_dirty_log_generation_next(mem->mem_map_generation, &next) != 0) {
+		mem->mem_map_generation = 0;
+	} else {
+		mem->mem_map_generation = next;
+	}
+	/* A map change revokes a live ticket even if its generation wrapped. */
+	error = vmm_dirty_log_owner_invalidate(&mem->mem_dirty_log_owner);
+	KASSERT(error == 0 || error == EOVERFLOW,
+	    ("%s: invalid dirty-log owner state %d", __func__, error));
+}
 
 int
 vm_mem_init(struct vm_mem *mem, vm_offset_t lo, vm_offset_t hi)
@@ -34,6 +64,8 @@ vm_mem_init(struct vm_mem *mem, vm_offset_t lo, vm_offset_t hi)
 	if (mem->mem_vmspace == NULL)
 		return (ENOMEM);
 	sx_init(&mem->mem_segs_lock, "vm_mem_segs");
+	mem->mem_map_generation = 1;
+	bzero(&mem->mem_dirty_log_owner, sizeof(mem->mem_dirty_log_owner));
 	return (0);
 }
 
@@ -67,6 +99,9 @@ vm_mem_cleanup(struct vm *vm)
 	struct vm_mem *mem;
 
 	mem = vm_mem(vm);
+	vm_assert_memseg_xlocked(vm);
+	/* Reset/destroy revokes tickets even when the sysmem map is unchanged. */
+	(void)vm_mem_dirty_log_invalidate(vm);
 
 	/*
 	 * System memory is removed from the guest address space only when
@@ -301,13 +336,15 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 		return (ENOSPC);
 
 	vmmap = &mem->mem_vmspace->vm_map;
+	vm_object_reference(seg->object);
 	vm_map_lock(vmmap);
 	error = vm_map_insert(vmmap, seg->object, first, gpa, gpa + len,
 	    prot, prot, 0);
 	vm_map_unlock(vmmap);
-	if (error != KERN_SUCCESS)
+	if (error != KERN_SUCCESS) {
+		vm_object_deallocate(seg->object);
 		return (vm_mmap_to_errno(error));
-	vm_object_reference(seg->object);
+	}
 
 	if (flags & VM_MEMMAP_F_WIRED) {
 		error = vm_map_wire(vmmap, gpa, gpa + len,
@@ -325,6 +362,7 @@ vm_mmap_memseg(struct vm *vm, vm_paddr_t gpa, int segid, vm_ooffset_t first,
 	map->segid = segid;
 	map->prot = prot;
 	map->flags = flags;
+	vm_mem_dirty_log_map_changed(vm);
 	return (0);
 }
 
@@ -388,6 +426,196 @@ vm_mmap_getnext(struct vm *vm, vm_paddr_t *gpa, int *segid,
 	}
 }
 
+int
+vm_mem_dirty_log_map_snapshot(struct vm *vm,
+    struct vmm_dirty_log_map_entry *entries, size_t capacity,
+    size_t *nentries, uint64_t *generation)
+{
+	struct vmm_dirty_log_map_entry candidate, staging[VM_MAX_MEMMAPS];
+	struct vm_mem *mem;
+	struct vm_mem_map *map;
+	size_t count, i, j;
+	int error;
+
+	if (vm == NULL || entries == NULL || nentries == NULL ||
+	    generation == NULL)
+		return (EINVAL);
+	/*
+	 * mem_segs_lock makes the mapping table stable.  The higher-level dirty
+	 * collection path freezes vCPUs before it retains this generation; that
+	 * lifecycle condition intentionally remains outside this common memory
+	 * helper so non-VMX backends can share it.
+	 */
+	vm_assert_memseg_locked(vm);
+	mem = vm_mem(vm);
+	if (mem->mem_map_generation == 0)
+		return (EOVERFLOW);
+	count = 0;
+	for (i = 0; i < VM_MAX_MEMMAPS; i++) {
+		map = &mem->mem_maps[i];
+		if (map->len == 0)
+			continue;
+		if (map->segid < 0 || map->segid >= VM_MAX_MEMSEGS)
+			return (EPROTO);
+		if (map->gpa > UINT64_MAX || map->len > UINT64_MAX)
+			return (EOVERFLOW);
+		candidate = (struct vmm_dirty_log_map_entry) {
+			.range = {
+				.gpa = map->gpa,
+				.length = map->len,
+			},
+			.flags = mem->mem_segs[map->segid].sysmem ?
+			    VMM_DIRTY_LOG_MAP_F_COLLECTABLE : 0,
+		};
+		for (j = count; j != 0 &&
+		    staging[j - 1].range.gpa > candidate.range.gpa; j--)
+			staging[j] = staging[j - 1];
+		staging[j] = candidate;
+		count++;
+	}
+	if (count == 0 || capacity < count)
+		return (count == 0 ? ENOENT : ENOSPC);
+	if (!vmm_address_range_valid(entries, count * sizeof(*entries)) ||
+	    !vmm_address_range_valid(nentries, sizeof(*nentries)) ||
+	    !vmm_address_range_valid(generation, sizeof(*generation)) ||
+	    vmm_address_ranges_overlap(entries, count * sizeof(*entries), mem,
+	    sizeof(*mem)) ||
+	    vmm_address_ranges_overlap(nentries, sizeof(*nentries), mem,
+	    sizeof(*mem)) ||
+	    vmm_address_ranges_overlap(generation, sizeof(*generation), mem,
+	    sizeof(*mem)) ||
+	    vmm_address_ranges_overlap(entries, count * sizeof(*entries),
+	    nentries, sizeof(*nentries)) ||
+	    vmm_address_ranges_overlap(entries, count * sizeof(*entries),
+	    generation, sizeof(*generation)) ||
+	    vmm_address_ranges_overlap(nentries, sizeof(*nentries), generation,
+	    sizeof(*generation)))
+		return (EINVAL);
+	if ((error = vmm_dirty_log_map_validate(staging, count)) != 0)
+		return (error == E2BIG ? EPROTO : error);
+	memcpy(entries, staging, count * sizeof(*entries));
+	*nentries = count;
+	*generation = mem->mem_map_generation;
+	return (0);
+}
+
+int
+vm_mem_dirty_log_enable(struct vm *vm, const struct vmm_dirty_log_range *range)
+{
+	struct vmm_dirty_log_map_entry entries[VM_MAX_MEMMAPS];
+	struct vm_mem *mem;
+	size_t nentries;
+	uint64_t generation;
+	int error;
+
+	if (vm == NULL || range == NULL)
+		return (EINVAL);
+	vm_assert_memseg_xlocked(vm);
+	if ((error = vm_mem_dirty_log_map_snapshot(vm, entries,
+	    nitems(entries), &nentries, &generation)) != 0)
+		return (error);
+	mem = vm_mem(vm);
+	return (vmm_dirty_log_owner_enable(&mem->mem_dirty_log_owner, entries,
+	    nentries, generation, range));
+}
+
+int
+vm_mem_dirty_log_begin(struct vm *vm, const struct vmm_dirty_log_range *range,
+    enum vmm_dirty_log_collect_mode mode,
+    struct vmm_dirty_log_ticket *ticket)
+{
+	struct vmm_dirty_log_map_entry entries[VM_MAX_MEMMAPS];
+	struct vm_mem *mem;
+	size_t nentries;
+	uint64_t generation;
+	int error;
+
+	if (vm == NULL || range == NULL || ticket == NULL)
+		return (EINVAL);
+	vm_assert_memseg_xlocked(vm);
+	if ((error = vm_mem_dirty_log_map_snapshot(vm, entries,
+	    nitems(entries), &nentries, &generation)) != 0)
+		return (error);
+	mem = vm_mem(vm);
+	return (vmm_dirty_log_owner_begin(&mem->mem_dirty_log_owner, entries,
+	    nentries, generation, range, mode, ticket));
+}
+
+int
+vm_mem_dirty_log_ticket_check(struct vm *vm,
+    const struct vmm_dirty_log_ticket *ticket)
+{
+
+	if (vm == NULL || ticket == NULL)
+		return (EINVAL);
+	vm_assert_memseg_xlocked(vm);
+	return (vmm_dirty_log_owner_ticket_check(
+	    &vm_mem(vm)->mem_dirty_log_owner, ticket));
+}
+
+int
+vm_mem_dirty_log_collect(struct vm *vm,
+    const struct vmm_dirty_log_ticket *ticket,
+    const struct vmm_dirty_log_collector *collector, void *arg,
+    uint8_t *staging, size_t staging_bytes, uint8_t *bitmap,
+    size_t bitmap_bytes)
+{
+
+	if (vm == NULL)
+		return (EINVAL);
+	vm_assert_memseg_xlocked(vm);
+	return (vmm_dirty_log_collect(&vm_mem(vm)->mem_dirty_log_owner,
+	    ticket, collector, arg, staging, staging_bytes, bitmap,
+	    bitmap_bytes));
+}
+
+int
+vm_mem_dirty_log_clear(struct vm *vm,
+    const struct vmm_dirty_log_ticket *ticket,
+    const struct vmm_dirty_log_collector *collector, void *arg)
+{
+
+	if (vm == NULL)
+		return (EINVAL);
+	vm_assert_memseg_xlocked(vm);
+	return (vmm_dirty_log_clear(&vm_mem(vm)->mem_dirty_log_owner, ticket,
+	    collector, arg));
+}
+
+int
+vm_mem_dirty_log_finish(struct vm *vm,
+    const struct vmm_dirty_log_ticket *ticket)
+{
+
+	if (vm == NULL || ticket == NULL)
+		return (EINVAL);
+	vm_assert_memseg_xlocked(vm);
+	return (vmm_dirty_log_owner_finish(&vm_mem(vm)->mem_dirty_log_owner,
+	    ticket));
+}
+
+int
+vm_mem_dirty_log_abort(struct vm *vm,
+    const struct vmm_dirty_log_ticket *ticket)
+{
+
+	if (vm == NULL || ticket == NULL)
+		return (EINVAL);
+	vm_assert_memseg_xlocked(vm);
+	return (vmm_dirty_log_owner_abort(&vm_mem(vm)->mem_dirty_log_owner,
+	    ticket));
+}
+
+int
+vm_mem_dirty_log_invalidate(struct vm *vm)
+{
+
+	if (vm == NULL)
+		return (EINVAL);
+	vm_assert_memseg_xlocked(vm);
+	return (vmm_dirty_log_owner_invalidate(&vm_mem(vm)->mem_dirty_log_owner));
+}
+
 static void
 vm_free_memmap(struct vm *vm, int ident)
 {
@@ -401,6 +629,7 @@ vm_free_memmap(struct vm *vm, int ident)
 		KASSERT(error == KERN_SUCCESS, ("%s: vm_map_remove error %d",
 		    __func__, error));
 		bzero(mm, sizeof(struct vm_mem_map));
+		vm_mem_dirty_log_map_changed(vm);
 	}
 }
 
@@ -486,4 +715,74 @@ vm_gpa_release(void *cookie)
 	vm_page_t m = cookie;
 
 	vm_page_unwire(m, PQ_ACTIVE);
+}
+
+/*
+ * Map a page-aligned range from the VM's guest-physical address space into a
+ * private secondary vmspace.  The source memory map is stable while the
+ * caller's vCPU is frozen: changing it requires every vCPU to be frozen.
+ *
+ * The destination map owns its own object reference.  This is intentionally
+ * an object alias rather than a raw physical mapping so normal RAM cache
+ * attributes and object lifetime remain under the VM system's control.
+ */
+int
+vm_gpa_map_alias(struct vcpu *vcpu, struct vmspace *dst_vmspace,
+    vm_paddr_t dst_gpa, vm_paddr_t src_gpa, size_t len, int prot)
+{
+	struct vm_mem_map *mm;
+	struct vm_mem_seg *seg;
+	struct vm_map *dst_map;
+	vm_ooffset_t offset;
+	int error;
+
+	if (vcpu == NULL || dst_vmspace == NULL || len == 0 ||
+	    ((dst_gpa | src_gpa | len) & PAGE_MASK) != 0 ||
+	    dst_gpa + len < dst_gpa || src_gpa + len < src_gpa ||
+	    prot == 0 || (prot & ~VM_PROT_ALL) != 0)
+		return (EINVAL);
+#ifdef INVARIANTS
+	KASSERT(vcpu_get_state(vcpu, NULL) == VCPU_FROZEN,
+	    ("%s: vCPU is not frozen", __func__));
+#endif
+
+	mm = NULL;
+	for (int i = 0; i < VM_MAX_MEMMAPS; i++) {
+		struct vm_mem_map *candidate;
+		vm_paddr_t relative;
+
+		candidate = &vm_mem(vcpu_vm(vcpu))->mem_maps[i];
+		if (candidate->len == 0 || src_gpa < candidate->gpa)
+			continue;
+		relative = src_gpa - candidate->gpa;
+		if (relative >= candidate->len ||
+		    len > candidate->len - relative)
+			continue;
+		mm = candidate;
+		break;
+	}
+	if (mm == NULL || (prot & mm->prot) != prot)
+		return (EFAULT);
+	seg = &vm_mem(vcpu_vm(vcpu))->mem_segs[mm->segid];
+	if (seg->object == NULL)
+		return (EFAULT);
+	offset = mm->segoff + (src_gpa - mm->gpa);
+	if (offset < mm->segoff || offset + len < offset ||
+	    offset + len > seg->len)
+		return (EOVERFLOW);
+
+	dst_map = &dst_vmspace->vm_map;
+	if (dst_gpa < vm_map_min(dst_map) ||
+	    dst_gpa + len > vm_map_max(dst_map))
+		return (EFAULT);
+	vm_object_reference(seg->object);
+	vm_map_lock(dst_map);
+	error = vm_map_insert(dst_map, seg->object, offset, dst_gpa,
+	    dst_gpa + len, prot, prot, 0);
+	vm_map_unlock(dst_map);
+	if (error != KERN_SUCCESS) {
+		vm_object_deallocate(seg->object);
+		return (vm_mmap_to_errno(error));
+	}
+	return (0);
 }

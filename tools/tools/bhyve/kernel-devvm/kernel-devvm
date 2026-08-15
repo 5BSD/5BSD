@@ -1,0 +1,356 @@
+#!/bin/sh
+# Lifecycle and access wrapper for an isolated bhyve kernel-development VM.
+set -eu
+
+config=${DEVVM_CONFIG:-/etc/kernel-devvm.conf}
+[ -f "$config" ] || {
+	echo "configuration not found: $config" >&2
+	echo "install kernel-devvm.conf.sample as /etc/kernel-devvm.conf" >&2
+	exit 1
+}
+
+# This file is sourced by root for privileged operations; reject a config an
+# unprivileged account could rewrite.
+config_uid=$(stat -f %u "$config")
+config_mode=$(stat -f %Lp "$config")
+config_group_digit=$(printf '%s\n' "$config_mode" | sed 's/.*\(.\).$/\1/')
+config_other_digit=$(printf '%s\n' "$config_mode" | sed 's/.*\(.\)$/\1/')
+case "$config_group_digit$config_other_digit" in
+[2367]*|?[2367])
+	echo "configuration must not be group/world writable: $config" >&2
+	exit 1
+	;;
+esac
+[ "$config_uid" -eq 0 ] || {
+	echo "configuration must be owned by root: $config" >&2
+	exit 1
+}
+. "$config"
+
+: "${VM_NAME:?}" "${VM_CPUS:?}" "${VM_MEMORY:?}" "${VM_BASE_IMAGE:?}"
+: "${VM_DATASET:?}" "${VM_DIR:?}" "${VM_IMAGE:?}" "${VM_DISK_SIZE:?}"
+: "${VM_DUMP_IMAGE:?}" "${VM_DUMP_SIZE:?}"
+: "${VM_OWNER:?}" "${VM_SSH_PORT:?}" "${VM_SSH_USER:?}"
+: "${VM_SSH_KEY:?}" "${VM_SSH_PUBKEY:?}" "${VM_KNOWN_HOSTS:?}"
+: "${VM_MAC:?}" "${VM_CONSOLE_UNIT:?}" "${VM_STATE_DIR:?}" "${VM_LOG:?}"
+: "${BHYVE:?}" "${BHYVELOAD:?}" "${BHYVECTL:?}"
+: "${CRASH_SETUP:?}"
+
+console_a="/dev/nmdm${VM_CONSOLE_UNIT}A"
+console_b="/dev/nmdm${VM_CONSOLE_UNIT}B"
+pidfile="$VM_STATE_DIR/bhyve.pid"
+
+need_root()
+{
+	[ "$(id -u)" -eq 0 ] || {
+		echo "$1 must run as root" >&2
+		exit 1
+	}
+}
+
+validate()
+{
+	case "$VM_NAME" in *[!A-Za-z0-9_.-]*|'')
+		echo "invalid VM_NAME: $VM_NAME" >&2; exit 2;; esac
+	case "$VM_CPUS" in ''|*[!0-9]*) echo "VM_CPUS must be numeric" >&2; exit 2;; esac
+	[ "$VM_CPUS" -gt 0 ] || { echo "VM_CPUS must be positive" >&2; exit 2; }
+	case "$VM_SSH_PORT" in ''|*[!0-9]*) echo "VM_SSH_PORT must be numeric" >&2; exit 2;; esac
+	[ "$VM_SSH_PORT" -gt 0 ] && [ "$VM_SSH_PORT" -le 65535 ] || {
+		echo "invalid VM_SSH_PORT: $VM_SSH_PORT" >&2; exit 2
+	}
+	case "$VM_MAC" in
+	[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]:[0-9A-Fa-f][0-9A-Fa-f]) ;;
+	*) echo "invalid VM_MAC: $VM_MAC" >&2; exit 2;;
+	esac
+}
+
+ssh_base()
+{
+	ssh -i "$VM_SSH_KEY" -p "$VM_SSH_PORT" \
+	    -o IdentitiesOnly=yes \
+	    -o UserKnownHostsFile="$VM_KNOWN_HOSTS" \
+	    -o StrictHostKeyChecking=accept-new \
+	    -o ConnectTimeout=5 "$VM_SSH_USER@127.0.0.1" "$@"
+}
+
+running()
+{
+	[ -f "$pidfile" ] || return 1
+	pid=$(cat "$pidfile" 2>/dev/null || true)
+	case "$pid" in ''|*[!0-9]*) return 1;; esac
+	kill -0 "$pid" 2>/dev/null
+}
+
+create_vm()
+{
+	need_root create
+	[ -f "$VM_BASE_IMAGE" ] && [ ! -L "$VM_BASE_IMAGE" ] || {
+		echo "base image missing or unsafe: $VM_BASE_IMAGE" >&2; exit 1
+	}
+	for image in "$VM_IMAGE" "$VM_DUMP_IMAGE"; do
+		[ ! -e "$image" ] || {
+			echo "refusing to overwrite existing VM image: $image" >&2
+			exit 1
+		}
+	done
+	if ! zfs list -H -o name "$VM_DATASET" >/dev/null 2>&1; then
+		zfs create -o mountpoint="$VM_DIR" -o compression=zstd \
+		    -o atime=off -o recordsize=1M "$VM_DATASET"
+	fi
+	actual_mount=$(zfs get -H -o value mountpoint "$VM_DATASET")
+	[ "$actual_mount" = "$VM_DIR" ] || {
+		echo "$VM_DATASET is mounted at $actual_mount, expected $VM_DIR" >&2
+		exit 1
+	}
+	install -d -o "$VM_OWNER" -g "$VM_OWNER" -m 0750 "$VM_DIR"
+	tmp="$VM_IMAGE.new.$$"
+	trap 'rm -f "$tmp"' EXIT INT TERM
+	cp -p "$VM_BASE_IMAGE" "$tmp"
+	truncate -s "$VM_DISK_SIZE" "$tmp"
+	chown "$VM_OWNER:$VM_OWNER" "$tmp"
+	chmod 0640 "$tmp"
+	mv "$tmp" "$VM_IMAGE"
+	trap - EXIT INT TERM
+	truncate -s "$VM_DUMP_SIZE" "$VM_DUMP_IMAGE"
+	chown "$VM_OWNER:$VM_OWNER" "$VM_DUMP_IMAGE"
+	chmod 0640 "$VM_DUMP_IMAGE"
+	if ! zfs list -H -t snapshot -o name "$VM_DATASET@created" \
+	    >/dev/null 2>&1; then
+		zfs snapshot "$VM_DATASET@created"
+	fi
+	echo "Created $VM_IMAGE ($VM_DISK_SIZE sparse)"
+	echo "Created $VM_DUMP_IMAGE ($VM_DUMP_SIZE dedicated guest panic disk)"
+	echo "Next: kernel-devvm provision"
+}
+
+provision_vm()
+{
+	need_root provision
+	[ -f "$VM_IMAGE" ] && [ ! -L "$VM_IMAGE" ] || {
+		echo "VM image missing or unsafe: $VM_IMAGE" >&2; exit 1
+	}
+	[ -f "$VM_SSH_PUBKEY" ] || {
+		echo "SSH public key not found: $VM_SSH_PUBKEY" >&2; exit 1
+	}
+	key=$(sed -n '1p' "$VM_SSH_PUBKEY")
+	case "$key" in ssh-*' '*) ;; *) echo "invalid SSH public key" >&2; exit 1;; esac
+	md=
+	mnt=$(mktemp -d)
+	cleanup_provision()
+	{
+		mount | grep -q " on $mnt " && umount "$mnt" || true
+		[ -z "$md" ] || mdconfig -d -u "${md#md}" || true
+		rmdir "$mnt" 2>/dev/null || true
+	}
+	trap cleanup_provision EXIT INT TERM
+	md=$(mdconfig -a -t vnode -f "$VM_IMAGE")
+	part=$(gpart show -p "$md" | awk '$4 == "freebsd-ufs" { print $3 }')
+	set -- $part
+	[ "$#" -eq 1 ] || {
+		echo "expected exactly one UFS partition in $VM_IMAGE" >&2; exit 1
+	}
+	fsck -p "/dev/$1"
+	mount "/dev/$1" "$mnt"
+	[ -d "$mnt/etc" ] && [ -d "$mnt/root" ] || {
+		echo "mounted partition does not look like a root filesystem" >&2; exit 1
+	}
+	sysrc -R "$mnt" hostname="kernel-dev" sshd_enable="YES" \
+	    ifconfig_vtnet0="DHCP" growfs_enable="YES" growfs_swap_size="0"
+	install -d -o root -g wheel -m 0700 "$mnt/root/.ssh"
+	printf '%s\n' "$key" > "$mnt/root/.ssh/authorized_keys"
+	chown root:wheel "$mnt/root/.ssh/authorized_keys"
+	chmod 0600 "$mnt/root/.ssh/authorized_keys"
+	sshd_config="$mnt/etc/ssh/sshd_config"
+	sshd_tmp="$mnt/etc/ssh/sshd_config.kernel-devvm.$$"
+	awk '
+	    !/^[[:space:]]*PermitRootLogin[[:space:]]/ &&
+	    !/^[[:space:]]*PasswordAuthentication[[:space:]]/ &&
+	    !/^[[:space:]]*KbdInteractiveAuthentication[[:space:]]/' \
+	    "$sshd_config" > "$sshd_tmp"
+	printf '%s\n' \
+	    '' \
+	    '# Key-only loopback access for the kernel development VM.' \
+	    'PermitRootLogin prohibit-password' \
+	    'PasswordAuthentication no' \
+	    'KbdInteractiveAuthentication no' \
+	    >> "$sshd_tmp"
+	install -o root -g wheel -m 0600 "$sshd_tmp" "$sshd_config"
+	rm -f "$sshd_tmp"
+	[ -x "$CRASH_SETUP" ] || {
+		echo "crash setup helper missing: $CRASH_SETUP" >&2; exit 1
+	}
+	install -o root -g wheel -m 0555 \
+	    "$CRASH_SETUP" \
+	    "$mnt/root/kernel-crashdump-setup.sh"
+	touch "$mnt/firstboot"
+	sync
+	cleanup_provision
+	trap - EXIT INT TERM
+	if ! zfs list -H -t snapshot -o name "$VM_DATASET@provisioned" \
+	    >/dev/null 2>&1; then
+		zfs snapshot "$VM_DATASET@provisioned"
+	fi
+	echo "Provisioned key-only root SSH and first-boot disk growth"
+}
+
+start_vm()
+{
+	need_root start
+	for image in "$VM_IMAGE" "$VM_DUMP_IMAGE"; do
+		[ -f "$image" ] && [ ! -L "$image" ] || {
+			echo "VM image missing or unsafe: $image" >&2; exit 1
+		}
+	done
+	[ -x "$BHYVE" ] && [ -x "$BHYVELOAD" ] && [ -x "$BHYVECTL" ] || {
+		echo "bhyve tools are missing" >&2; exit 1
+	}
+	[ -x /usr/libexec/bhyve-slirp-helper ] || {
+		echo "bhyve slirp helper is missing" >&2; exit 1
+	}
+	ldconfig -r 2>/dev/null | grep -q 'libslirp\.so\.0' || {
+		echo "libslirp.so.0 is missing; install the libslirp package" >&2
+		exit 1
+	}
+	if running; then
+		echo "$VM_NAME is already running (pid $(cat "$pidfile"))" >&2
+		exit 1
+	fi
+	if pgrep -f "bhyve.*[[:space:]]$VM_NAME([[:space:]]|$)" >/dev/null 2>&1; then
+		echo "a bhyve process already owns VM name $VM_NAME" >&2
+		exit 1
+	fi
+	if nc -z 127.0.0.1 "$VM_SSH_PORT" >/dev/null 2>&1; then
+		echo "SSH forwarding port is already in use: $VM_SSH_PORT" >&2
+		exit 1
+	fi
+	kldload -n vmm
+	kldload -n nmdm
+	install -d -o root -g wheel -m 0755 "$VM_STATE_DIR"
+	: > "$VM_LOG"
+	chown "$VM_OWNER:$VM_OWNER" "$VM_LOG"
+	chmod 0640 "$VM_LOG"
+	"$BHYVELOAD" -c /dev/null -m "$VM_MEMORY" -d "$VM_IMAGE" \
+	    "$VM_NAME" >> "$VM_LOG" 2>&1
+	daemon -f -p "$pidfile" -o "$VM_LOG" "$BHYVE" \
+	    -c "$VM_CPUS" -m "$VM_MEMORY" -A -H -M -P -w \
+	    -s 0,hostbridge \
+	    -s "3,virtio-blk,$VM_IMAGE" \
+	    -s "4,virtio-net,slirp,open,hostfwd=tcp:127.0.0.1:${VM_SSH_PORT}-:22,mac=$VM_MAC" \
+	    -s "5,virtio-blk,$VM_DUMP_IMAGE" \
+	    -s 31,lpc -l "com1,$console_a" \
+	    "$VM_NAME"
+	sleep 1
+	running || {
+		echo "bhyve exited during startup; see $VM_LOG" >&2
+		tail -n 40 "$VM_LOG" >&2
+		"$BHYVECTL" --vm="$VM_NAME" --destroy >/dev/null 2>&1 || true
+		exit 1
+	}
+	echo "$VM_NAME started with $VM_CPUS vCPUs and $VM_MEMORY RAM"
+	echo "console: cu -l $console_b -s 115200"
+	echo "SSH will become available at 127.0.0.1:$VM_SSH_PORT after boot"
+}
+
+stop_vm()
+{
+	need_root stop
+	if ! running; then
+		echo "$VM_NAME is not running"
+		return
+	fi
+	ssh_base shutdown -p now >/dev/null 2>&1 || true
+	i=0
+	while running && [ "$i" -lt 60 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	if running; then
+		pid=$(cat "$pidfile")
+		kill -TERM "$pid" 2>/dev/null || true
+		sleep 2
+	fi
+	if running; then
+		"$BHYVECTL" --vm="$VM_NAME" --destroy >/dev/null 2>&1 || true
+	fi
+	rm -f "$pidfile"
+	echo "$VM_NAME stopped"
+}
+
+snapshot_vm()
+{
+	need_root snapshot
+	running && { echo "stop the VM before taking a consistent snapshot" >&2; exit 1; }
+	name=${1:-}
+	case "$name" in ''|*[!A-Za-z0-9_.-]*)
+		echo "snapshot name must contain only letters, digits, dot, dash, underscore" >&2
+		exit 2;;
+	esac
+	zfs snapshot "$VM_DATASET@$name"
+	echo "created $VM_DATASET@$name"
+}
+
+destroy_stale_vm()
+{
+	need_root destroy-stale
+	running && { echo "refusing: $VM_NAME has a live managed process" >&2; exit 1; }
+	if pgrep -f "bhyve.*[[:space:]]$VM_NAME([[:space:]]|$)" >/dev/null 2>&1; then
+		echo "refusing: a live bhyve process still owns $VM_NAME" >&2
+		exit 1
+	fi
+	"$BHYVECTL" --vm="$VM_NAME" --destroy
+	rm -f "$pidfile"
+	echo "destroyed stale VMM context $VM_NAME"
+}
+
+list_snapshots()
+{
+	need_root snapshots
+	zfs list -t snapshot -o name,used,refer,creation -s creation -r "$VM_DATASET"
+}
+
+status_vm()
+{
+	if running; then
+		echo "$VM_NAME running pid=$(cat "$pidfile") vcpus=$VM_CPUS memory=$VM_MEMORY"
+		if nc -z 127.0.0.1 "$VM_SSH_PORT" >/dev/null 2>&1; then
+			echo "ssh ready on 127.0.0.1:$VM_SSH_PORT"
+		else
+			echo "ssh not ready"
+		fi
+	else
+		echo "$VM_NAME stopped"
+	fi
+}
+
+validate
+command=${1:-help}
+[ "$#" -eq 0 ] || shift
+case "$command" in
+create) create_vm "$@" ;;
+provision) provision_vm "$@" ;;
+start) start_vm "$@" ;;
+stop) stop_vm "$@" ;;
+status) status_vm "$@" ;;
+ssh) ssh_base "$@" ;;
+console) exec cu -l "$console_b" -s 115200 ;;
+snapshot) snapshot_vm "$@" ;;
+snapshots) list_snapshots "$@" ;;
+destroy-stale) destroy_stale_vm "$@" ;;
+help|-h|--help)
+	cat <<EOF
+usage: kernel-devvm command [arguments]
+
+  create             clone and sparsely expand the base image
+  provision          inject host SSH key and enable first-boot growth
+  start              start the isolated 8-vCPU bhyve VM
+  stop               cleanly power off, then enforce shutdown if needed
+  status             report VM and forwarded-SSH status
+  ssh [command ...]  enter the VM or execute a command as root
+  console             attach to the nmdm serial console (~. exits cu)
+  snapshot NAME      take a stopped, consistent ZFS snapshot
+  snapshots          list VM dataset snapshots
+  destroy-stale      destroy only an unowned, stale VMM context
+EOF
+	;;
+*) echo "unknown command: $command" >&2; exit 2;;
+esac

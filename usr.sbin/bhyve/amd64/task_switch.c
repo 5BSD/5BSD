@@ -103,6 +103,8 @@ GETREG(struct vcpu *vcpu, int reg)
 	int error;
 
 	error = vm_get_register(vcpu, reg, &val);
+	if (error != 0)
+		abort();
 	assert(error == 0);
 	return (val);
 }
@@ -113,6 +115,8 @@ SETREG(struct vcpu *vcpu, int reg, uint64_t val)
 	int error;
 
 	error = vm_set_register(vcpu, reg, val);
+	if (error != 0)
+		abort();
 	assert(error == 0);
 }
 
@@ -178,6 +182,8 @@ desc_table_limit_check(struct vcpu *vcpu, uint16_t sel)
 
 	reg = ISLDT(sel) ? VM_REG_GUEST_LDTR : VM_REG_GUEST_GDTR;
 	error = vm_get_desc(vcpu, reg, &base, &limit, &access);
+	if (error != 0)
+		return (-1);
 	assert(error == 0);
 
 	if (reg == VM_REG_GUEST_LDTR) {
@@ -469,6 +475,8 @@ update_seg_desc(struct vcpu *vcpu, int reg, struct seg_desc *sd)
 	int error;
 
 	error = vm_set_desc(vcpu, reg, sd->base, sd->limit, sd->access);
+	if (error != 0)
+		abort();
 	assert(error == 0);
 }
 
@@ -638,6 +646,8 @@ push_errcode(struct vcpu *vcpu, struct vm_guest_paging *paging,
 
 	error = vm_get_desc(vcpu, VM_REG_GUEST_SS, &seg_desc.base,
 	    &seg_desc.limit, &seg_desc.access);
+	if (error != 0)
+		return (error);
 	assert(error == 0);
 
 	/*
@@ -815,9 +825,19 @@ vmexit_task_switch(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 	/* Get the old TSS base and limit from the guest's task register */
 	error = vm_get_desc(vcpu, VM_REG_GUEST_TR, &ot_base, &ot_lim,
 	    &access);
+	if (error != 0)
+		return (VMEXIT_ABORT);
 	assert(error == 0);
+	if (SEG_DESC_UNUSABLE(access) || !SEG_DESC_PRESENT(access)) {
+		sel_exception(vcpu, IDT_TS, ot_sel, task_switch->ext);
+		goto done;
+	}
 	assert(!SEG_DESC_UNUSABLE(access) && SEG_DESC_PRESENT(access));
 	ot_type = SEG_DESC_TYPE(access);
+	if (ot_type != SDT_SYS386BSY && ot_type != SDT_SYS286BSY) {
+		sel_exception(vcpu, IDT_TS, ot_sel, task_switch->ext);
+		goto done;
+	}
 	assert(ot_type == SDT_SYS386BSY || ot_type == SDT_SYS286BSY);
 
 	/* Fetch the old TSS descriptor */
@@ -878,6 +898,8 @@ vmexit_task_switch(struct vmctx *ctx, struct vcpu *vcpu, struct vm_run *vmrun)
 	 * the saved instruction pointer will belong to the new task.
 	 */
 	error = vm_set_register(vcpu, VM_REG_GUEST_RIP, newtss.tss_eip);
+	if (error != 0)
+		return (VMEXIT_ABORT);
 	assert(error == 0);
 
 	/* Load processor state from new TSS */

@@ -88,7 +88,7 @@ struct p9_client {
 	unsigned char proto_version;		/* 9P version to use */
 	struct unrhdr fidpool;			/* fid handle accounting for session */
 	struct unrhdr tagpool;			/* transaction id accounting for session */
-	enum transport_status trans_status;	/* tranport instance state */
+	volatile u_int trans_status;		/* enum transport_status */
 };
 
 /* The main fid structure which keeps track of the file.*/
@@ -151,6 +151,8 @@ void p9_client_cb(struct p9_client *c, struct p9_req_t *req);
 int p9stat_read(struct p9_client *clnt, char *data, size_t len, struct p9_wstat *st);
 void p9_client_disconnect(struct p9_client *clnt);
 void p9_client_begin_disconnect(struct p9_client *clnt);
+void p9_client_connect(struct p9_client *clnt);
+enum transport_status p9_client_status(struct p9_client *clnt);
 int p9_create_symlink(struct p9_fid *fid, char *name, char *symtgt, gid_t gid);
 int p9_create_hardlink(struct p9_fid *dfid, struct p9_fid *oldfid, char *name);
 int p9_readlink(struct p9_fid *fid, char **target);

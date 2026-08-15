@@ -1,0 +1,144 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd August 13, 2026
+.Dt VIRTIO_MEM 4
+.Os
+.Sh NAME
+.Nm virtio_mem
+.Nd VirtIO memory device driver
+.Sh SYNOPSIS
+To compile this driver into the kernel,
+place the following lines in your
+kernel configuration file:
+.Bd -ragged -offset indent
+.Cd "device virtio_mem"
+.Ed
+.Pp
+Alternatively, to load the driver as a
+module at boot time, place the following line in
+.Xr loader.conf 5 :
+.Bd -literal -offset indent
+virtio_mem_load="YES"
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+device driver provides support for VirtIO memory (virtio-mem) devices, the
+modern-only VirtIO facility through which a hypervisor dynamically offers
+memory to, or reclaims memory from, a running guest.
+.Pp
+A virtio-mem device exposes a contiguous guest-physical region divided into
+fixed-size blocks.
+The device tells the driver, through its
+.Va requested_size
+configuration field, how many bytes it wants
+.Em plugged
+(made available to the guest); the driver reconciles the plugged amount by
+issuing PLUG and UNPLUG requests on the device's request virtqueue and
+re-evaluates whenever the device raises a configuration-change interrupt.
+The driver implements the complete guest side of that protocol: feature
+negotiation, generation-consistent configuration parsing, the
+PLUG / UNPLUG / UNPLUG_ALL / STATE request state machine with full response-code
+handling, a per-block plugged bitmap, and plugged-size accounting.
+.Ss Memory hotplug boundary
+The
+.Nm
+driver negotiates the protocol and plugs and unplugs blocks per the device
+contract, but it does
+.Em not
+online plugged memory into the
+.Fx
+page allocator.
+Unlike Linux, which hands freshly plugged blocks to its memory-hotplug
+subsystem,
+.Fx
+has no supported runtime memory-add path: the physical-segment and
+.Vt vm_page
+arrays are sized once at boot and cannot be grown at run time.
+Consequently plugging memory only consumes host backing without making usable
+memory available to the guest.
+For this reason the driver defaults to protocol-only operation and does not
+issue PLUG requests toward
+.Va requested_size
+unless explicitly enabled with the
+.Va hw.virtio_mem.allow_plug
+tunable described below.
+The driver is structured so that a future
+.Fx
+runtime memory-add facility can hook in at a single, clearly marked seam
+without changing the protocol core.
+.Sh LOADER TUNABLES
+Tunables can be set at the
+.Xr loader 8
+prompt before booting the kernel or stored in
+.Xr loader.conf 5 .
+.Bl -tag -width indent
+.It Va hw.virtio_mem.allow_plug
+Gate whether the driver issues PLUG requests toward the device's requested
+size.
+The default value is 0, meaning the driver negotiates, accounts for, and
+answers configuration and STATE requests but never plugs memory, because
+plugged memory cannot be onlined into the page allocator.
+Setting the value to 1 lets the driver exercise the full PLUG / UNPLUG
+contract; this is intended for testing the device protocol, not for making
+memory available to the guest.
+.El
+.Sh SYSCTL VARIABLES
+The following read-only variables are available as
+.Xr sysctl 8
+variables, per attached device.
+.Bl -tag -width indent
+.It Va dev.vtmem. Ns Ar X Ns Va .block_size
+The plug/unplug block size in bytes.
+.It Va dev.vtmem. Ns Ar X Ns Va .region_size
+The total size of the device's guest-physical region in bytes.
+.It Va dev.vtmem. Ns Ar X Ns Va .usable_region_size
+The size of the currently usable sub-region in bytes.
+.It Va dev.vtmem. Ns Ar X Ns Va .requested_size
+The number of bytes the device currently requests be plugged.
+.It Va dev.vtmem. Ns Ar X Ns Va .plugged_size
+The number of bytes currently plugged.
+.It Va dev.vtmem. Ns Ar X Ns Va .plugged_blocks
+The number of blocks currently plugged.
+.El
+.Sh SEE ALSO
+.Xr virtio 4 ,
+.Xr virtio_balloon 4
+.Sh HISTORY
+The
+.Nm
+driver first appeared in
+.Fx 15.0 .
+.Sh AUTHORS
+The
+.Nm
+driver was written by
+.An Kory Heard .
+.Sh BUGS
+Plugged memory is not onlined into the kernel page allocator, so this driver
+cannot yet be used to add usable memory to a running guest; see the
+.Sx DESCRIPTION .

@@ -29,6 +29,8 @@
 #ifndef _X86_H_
 #define	_X86_H_
 
+struct vcpu;
+
 #define CPUID_0000_0000 (0x0)
 #define CPUID_0000_0001	(0x1)
 #define CPUID_0000_0002 (0x2)
@@ -66,6 +68,8 @@
 
 int x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
     uint64_t *rcx, uint64_t *rdx);
+int x86_emulate_cpuid_baseline(struct vcpu *vcpu, uint64_t *rax,
+    uint64_t *rbx, uint64_t *rcx, uint64_t *rdx);
 
 enum vm_cpuid_capability {
 	VCC_NONE,
@@ -82,10 +86,10 @@ enum vm_cpuid_capability {
 bool vm_cpuid_capability(struct vcpu *vcpu, enum vm_cpuid_capability);
 
 #define VMM_MTRR_VAR_MAX 10
+#define VMM_MTRR_PHYS_ADDR_WIDTH_MIN 32U
+#define VMM_MTRR_PHYS_ADDR_WIDTH_MAX 52U
 #define VMM_MTRR_DEF_MASK \
 	(MTRR_DEF_ENABLE | MTRR_DEF_FIXED_ENABLE | MTRR_DEF_TYPE)
-#define VMM_MTRR_PHYSBASE_MASK (MTRR_PHYSBASE_PHYSBASE | MTRR_PHYSBASE_TYPE)
-#define VMM_MTRR_PHYSMASK_MASK (MTRR_PHYSMASK_PHYSMASK | MTRR_PHYSMASK_VALID)
 struct vm_mtrr {
 	uint64_t def_type;
 	uint64_t fixed4k[8];
@@ -98,6 +102,9 @@ struct vm_mtrr {
 };
 
 int vm_rdmtrr(struct vm_mtrr *mtrr, u_int num, uint64_t *val);
-int vm_wrmtrr(struct vm_mtrr *mtrr, u_int num, uint64_t val);
+int vm_wrmtrr(struct vm_mtrr *mtrr, u_int num, uint64_t val,
+    u_int phys_addr_width);
+bool vm_mtrr_validate(const struct vm_mtrr *mtrr, u_int phys_addr_width);
+u_int vm_mtrr_maxphyaddr(u_int host_phys_addr_width);
 
 #endif

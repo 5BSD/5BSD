@@ -6,12 +6,15 @@
  */
 
 #include <sys/types.h>
+#include <sys/endian.h>
 
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <malloc_np.h>
+#include <stddef.h>
 #include <stdlib.h>
+#include <string.h>
 #include <unistd.h>
 
 #include "config.h"
@@ -39,11 +42,18 @@ tpm_passthru_init(void **sc, nvlist_t *nvl)
 		warnx("%s: failed to allocate tpm passthru", __func__);
 		return (ENOMEM);
 	}
+	tpm->fd = -1;
 
 	path = get_config_value_node(nvl, "path");
+	if (path == NULL) {
+		warnx("%s: no TPM device path specified", __func__);
+		free(tpm);
+		return (EINVAL);
+	}
 	tpm->fd = open(path, O_RDWR);
 	if (tpm->fd < 0) {
 		warnx("%s: unable to open tpm device \"%s\"", __func__, path);
+		free(tpm);
 		return (ENOENT);
 	}
 
@@ -57,6 +67,7 @@ tpm_passthru_execute_cmd(void *sc, void *cmd, uint32_t cmd_size, void *rsp,
     uint32_t rsp_size)
 {
 	struct tpm_passthru *tpm;
+	uint32_t response_size;
 	ssize_t len;
 
 	if (rsp_size < (ssize_t)sizeof(struct tpm_resp_hdr)) {
@@ -66,19 +77,29 @@ tpm_passthru_execute_cmd(void *sc, void *cmd, uint32_t cmd_size, void *rsp,
 
 	tpm = sc;
 
-	len = write(tpm->fd, cmd, cmd_size);
+	do {
+		len = write(tpm->fd, cmd, cmd_size);
+	} while (len < 0 && errno == EINTR);
 	if (len != cmd_size) {
 		warn("%s: cmd write failed (bytes written: %zd / %d)", __func__,
 		    len, cmd_size);
 		return (EFAULT);
 	}
 
-	len = read(tpm->fd, rsp, rsp_size);
+	do {
+		len = read(tpm->fd, rsp, rsp_size);
+	} while (len < 0 && errno == EINTR);
 	if (len < (ssize_t)sizeof(struct tpm_resp_hdr)) {
 		warn("%s: rsp read failed (bytes read: %zd / %d)", __func__,
 		    len, rsp_size);
 		return (EFAULT);
 	}
+	response_size = be32dec((uint8_t *)rsp +
+	    offsetof(struct tpm_resp_hdr, len));
+	if (response_size < sizeof(struct tpm_resp_hdr) ||
+	    response_size > (uint32_t)len)
+		return (EFAULT);
+	memset((uint8_t *)rsp + response_size, 0, rsp_size - response_size);
 
 	return (0);
 }

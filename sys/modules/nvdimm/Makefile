@@ -11,6 +11,9 @@ SRCS=	nvdimm.c \
 SRCS+=	acpi_if.h bus_if.h device_if.h
 SRCS+=	opt_acpi.h opt_ddb.h
 
+# Transport-backed persistent ranges use the generic SPA/GEOM lifecycle.
+EXPORT_SYMS=	nvdimm_spa_dev_init nvdimm_spa_dev_fini
+
 .include <bsd.kmod.mk>
 
 # Mute spurious Clang warning.

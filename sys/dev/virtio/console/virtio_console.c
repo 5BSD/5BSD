@@ -109,6 +109,7 @@ struct vtcon_softc {
 #define VTCON_FLAG_DETACHED	0x01
 #define VTCON_FLAG_SIZE		0x02
 #define VTCON_FLAG_MULTIPORT	0x04
+#define VTCON_FLAG_FAILED	0x08
 
 	/*
 	 * Ports can be added and removed during runtime, but we have
@@ -169,7 +170,7 @@ static void	 vtcon_stop(struct vtcon_softc *);
 static int	 vtcon_ctrl_event_enqueue(struct vtcon_softc *,
 		     struct virtio_console_control *);
 static int	 vtcon_ctrl_event_create(struct vtcon_softc *);
-static void	 vtcon_ctrl_event_requeue(struct vtcon_softc *,
+static int	 vtcon_ctrl_event_requeue(struct vtcon_softc *,
 		     struct virtio_console_control *);
 static int	 vtcon_ctrl_event_populate(struct vtcon_softc *);
 static void	 vtcon_ctrl_event_drain(struct vtcon_softc *);
@@ -396,7 +397,20 @@ vtcon_detach(device_t dev)
 	sc->vtcon_flags |= VTCON_FLAG_DETACHED;
 	if (device_is_attached(dev))
 		vtcon_stop(sc);
+	else
+		/*
+		 * Attach-failure unwind: newbus has not set DF_ATTACHED yet, so
+		 * device_is_attached() is false, but RX buffers posted during
+		 * attach (vtcon_ctrl_init/vtcon_port_create -> *_populate) may
+		 * still be owned by the device.  Reset it before
+		 * vtcon_destroy_ports() drains and frees those buffers, or the
+		 * device retains descriptors pointing into freed memory -- a
+		 * DMA-after-free.  virtio_stop() is safe even if no virtqueue was
+		 * ever allocated.
+		 */
+		virtio_stop(dev);
 	VTCON_UNLOCK(sc);
+	virtio_teardown_intr(dev);
 
 	if (sc->vtcon_flags & VTCON_FLAG_MULTIPORT) {
 		taskqueue_drain(taskqueue_thread, &sc->vtcon_ctrl_task);
@@ -646,17 +660,14 @@ vtcon_ctrl_event_create(struct vtcon_softc *sc)
 	return (error);
 }
 
-static void
+static int
 vtcon_ctrl_event_requeue(struct vtcon_softc *sc,
     struct virtio_console_control *control)
 {
-	int error __diagused;
 
 	bzero(control, VTCON_CTRL_BUFSZ);
 
-	error = vtcon_ctrl_event_enqueue(sc, control);
-	KASSERT(error == 0,
-	    ("%s: cannot requeue control buffer %d", __func__, error));
+	return (vtcon_ctrl_event_enqueue(sc, control));
 }
 
 static int
@@ -908,7 +919,7 @@ vtcon_ctrl_task_cb(void *xsc, int pending)
 	struct virtio_console_control *control;
 	void *data;
 	size_t data_len;
-	int detached;
+	int error;
 	uint32_t len;
 
 	sc = xsc;
@@ -916,11 +927,29 @@ vtcon_ctrl_task_cb(void *xsc, int pending)
 
 	VTCON_LOCK(sc);
 
-	while ((detached = (sc->vtcon_flags & VTCON_FLAG_DETACHED)) == 0) {
+	while ((sc->vtcon_flags &
+	    (VTCON_FLAG_DETACHED | VTCON_FLAG_FAILED)) == 0) {
 		control = virtqueue_dequeue(vq, &len);
 		if (control == NULL)
 			break;
 
+		if (!virtio_console_control_used_len_valid(len,
+		    VTCON_CTRL_BUFSZ)) {
+			device_printf(sc->vtcon_dev,
+			    "control event returned invalid response length %u\n",
+			    len);
+			/*
+			 * The descriptor is now driver-owned and therefore will not be
+			 * found by vtcon_ctrl_event_drain().  Do not return it to a
+			 * device which has already violated the published buffer shape:
+			 * doing so permits an unbounded completion and log loop.  Reset
+			 * the device before releasing any remaining posted buffers.
+			 */
+			free(control, M_DEVBUF);
+			sc->vtcon_flags |= VTCON_FLAG_FAILED;
+			vtcon_stop(sc);
+			break;
+		}
 		if (len > sizeof(struct virtio_console_control)) {
 			data = (void *) &control[1];
 			data_len = len - sizeof(struct virtio_console_control);
@@ -932,10 +961,29 @@ vtcon_ctrl_task_cb(void *xsc, int pending)
 		VTCON_UNLOCK(sc);
 		vtcon_ctrl_process_event(sc, control, data, data_len);
 		VTCON_LOCK(sc);
-		vtcon_ctrl_event_requeue(sc, control);
+		/*
+		 * Processing may sleep while detach closes admission and resets
+		 * the device.  The dequeued buffer remains owned by this task and
+		 * must not be published into the stopped queue.
+		 */
+		if ((sc->vtcon_flags &
+		    (VTCON_FLAG_DETACHED | VTCON_FLAG_FAILED)) != 0) {
+			free(control, M_DEVBUF);
+			break;
+		}
+		error = vtcon_ctrl_event_requeue(sc, control);
+		if (error != 0) {
+			device_printf(sc->vtcon_dev,
+			    "cannot requeue control buffer: %d\n", error);
+			free(control, M_DEVBUF);
+			sc->vtcon_flags |= VTCON_FLAG_FAILED;
+			vtcon_stop(sc);
+			break;
+		}
 	}
 
-	if (!detached) {
+	if ((sc->vtcon_flags &
+	    (VTCON_FLAG_DETACHED | VTCON_FLAG_FAILED)) == 0) {
 		virtqueue_notify(vq);
 		if (virtqueue_enable_intr(vq) != 0)
 			taskqueue_enqueue(taskqueue_thread,

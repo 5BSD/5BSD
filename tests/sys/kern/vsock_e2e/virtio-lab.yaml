@@ -10,6 +10,96 @@ defaults:
     REBOOT_TEST: "no"
     CHECKPOINT_TEST: "no"
     VM_FREE_GATES: "no"
+    VIRTIO_IOMMU: "no"
+    IOMMU_PACKED: "no"
+    SOUND_PACKED: "no"
+    SOUND_BACKEND: "null"
+    SOUND_PLAY: "/dev/dsp"
+    SOUND_RECORD: "/dev/dsp"
+    FS_PACKED: "no"
+    FS_QUEUES: "2"
+    FIVEBSD_NET_TEST: "no"
+    FIVEBSD_NET_QUEUES: "2"
+    FIVEBSD_NET_PACKED: "no"
+    FIVEBSD_BLOCK_PACKED: "no"
+    FIVEBSD_BLOCK_QUEUES: "1"
+    FIVEBSD_BLOCK_DISCARD: "no"
+    FIVEBSD_BLOCK_READONLY: "no"
+    FIVEBSD_BLOCK_WCE: "no"
+    FIVEBSD_SCSI_QUEUES: "0"
+    FIVEBSD_SCSI_PACKED: "no"
+    FIVEBSD_SCSI_EVENTS: "no"
+    FIVEBSD_RNG_PACKED: "no"
+    FIVEBSD_VSOCK_PACKED: "no"
+    FIVEBSD_NOTIFICATION_DATA: "no"
+    FIVEBSD_RNG_RESET_ITERATIONS: "0"
+    FIVEBSD_DEVICE_SUSPEND: "no"
+    FIVEBSD_CONSOLE_TEST: "no"
+    FIVEBSD_CONSOLE_PACKED: "no"
+    FIVEBSD_CONSOLE_PORTS: "1"
+    FIVEBSD_BALLOON_STATS_INTERVAL: "0"
+    FIVEBSD_BALLOON_DEFLATE_ON_OOM: "no"
+    FIVEBSD_BALLOON_PAGE_POISON: "no"
+    FIVEBSD_GPU_TEST: "no"
+    FIVEBSD_GPU_PACKED: "no"
+    FIVEBSD_GPU_WIDTH: "1024"
+    FIVEBSD_GPU_HEIGHT: "768"
+    FIVEBSD_RTC_TEST: "no"
+    FIVEBSD_RTC_PACKED: "no"
+    FIVEBSD_INPUT_TEST: "no"
+    FIVEBSD_INPUT_PACKED: "no"
+    FIVEBSD_INPUT_DEVICES: "1"
+    FIVEBSD_NINEP_TEST: "no"
+    FIVEBSD_NINEP_PACKED: "no"
+    FIVEBSD_SOUND_TEST: "no"
+    FIVEBSD_SOUND_PACKED: "no"
+    FIVEBSD_MEM_TEST: "no"
+    FIVEBSD_PMEM_TEST: "no"
+    FIVEBSD_IOMMU_TEST: "no"
+    CONSOLE_MULTIPORT: "no"
+    CHECKPOINT_ACTIVE_9P_REJECT: "no"
+    CHECKPOINT_ACTIVE_FS: "no"
+    CHECKPOINT_REPEAT_FS_RESTORE: "no"
+    CHECKPOINT_ACTIVE_VSOCK_REJECT: "no"
+    CHECKPOINT_ACTIVE_CONSOLE_REJECT: "no"
+    CHECKPOINT_ACTIVE_MEM: "no"
+    INPUT_DEVICES: "1"
+    GPU_WIDTH: "1024"
+    GPU_HEIGHT: "768"
+    GPU_BLOB: "no"
+    GPU_DISPLAY: "no"
+    BALLOON_STATS_INTERVAL: "0"
+    BALLOON_DEFLATE_ON_OOM: "no"
+    BALLOON_FREE_PAGE_HINTING: "no"
+    BALLOON_FREE_PAGE_REPORTING: "no"
+    BALLOON_PAGE_POISON: "no"
+    RTC_ALARM: "no"
+    RTC_CHECKPOINT_ALARM_SECONDS: "20"
+    MEM_REGION_MB: "256"
+    MEM_REQUESTED_MB: "128"
+    MEM_CHECKPOINT_ALLOC_MB: "0"
+    PMEM_PACKED: "no"
+    PMEM_IMAGE_MB: "64"
+    PMEM_IDENTITY: "waspnest-pmem"
+    VM_MEMORY_MB: "2048"
+    SCSI_EVENTS: "no"
+    # Internal coverage marker.  This is intentionally absent from
+    # allowed_overrides: only the reviewed nested hardware case may satisfy
+    # the full-qualification nested-VMX coverage contract.
+    NESTED_VMX_LIVE_GATE: "no"
+    # A separate boot proves the VPID qualification policy remains off.
+    NESTED_VMX_DEFAULT_POLICY_GATE: "no"
+
+# Qualification is the definition-of-done profile.  Profile composition keeps
+# every release, checkpoint, and soak case authoritative in one place and
+# de-duplicates cases that belong to more than one constituent profile.
+profile_groups:
+  qualification: [release, checkpoint, soak]
+  intel-qualification: [release, checkpoint, soak, nested]
+  audio-qualification: [audio, checkpoint-audio]
+  # One explicit promotion gate for the Intel development host.  Portable
+  # and audio-only hosts retain the narrower profiles above.
+  full-qualification: [release, checkpoint, soak, nested, audio, checkpoint-audio]
 
 # Deliberate command-line API for `--set`.  Allocation variables are included
 # for single-case debugging, but the orchestrator rejects global allocation
@@ -37,7 +127,9 @@ allowed_overrides:
   - VM_FREE_GATES
   - VSOCK_DEBUG
   - VIRTIO_DEBUG
+  - VERIFY_NOTIFICATION_DATA
   - INPUT_DEBUG
+  - INPUT_DEVICES
   - SCSI_DEBUG
   - VIRTIO_MSIX
   - RESET_TEST
@@ -47,21 +139,116 @@ allowed_overrides:
   - BLOCK_IMAGE_MB
   - BLOCK_QUEUES
   - NET_QUEUES
+  - NET_PACKED
   - SCSI_TEST_MB
   - SCSI_IMAGE_MB
   - SCSI_QUEUES
+  - RNG_PACKED
+  - BALLOON_PACKED
+  - BALLOON_STATS_INTERVAL
+  - FIVEBSD_BALLOON_STATS_INTERVAL
+  - FIVEBSD_BALLOON_DEFLATE_ON_OOM
+  - FIVEBSD_BALLOON_PAGE_POISON
+  - BALLOON_DEFLATE_ON_OOM
+  - BALLOON_FREE_PAGE_HINTING
+  - BALLOON_FREE_PAGE_REPORTING
+  - BALLOON_PAGE_POISON
+  - NESTED_L1_RUNNER
+  - NESTED_L1_IMAGE
+  - NESTED_LINUX_L2_IMAGE
+  - NESTED_FIVEBSD_L2_IMAGE
+  - NESTED_LIVE_TIMEOUT
+  - NESTED_SNAPSHOT_SESSION_TIMEOUT
+  - NESTED_SNAPSHOT_SESSION_TEST
+  - NESTED_STARTUP_STAGING_TEST
+  - RTC_PACKED
+  - RTC_ALARM
+  - RTC_CHECKPOINT_ALARM_SECONDS
+  - BLOCK_PACKED
+  - BLOCK_READONLY
+  - BLOCK_DISCARD
+  - SCSI_PACKED
+  - SCSI_EVENTS
+  - CONSOLE_PACKED
+  - CONSOLE_MULTIPORT
+  - CHECKPOINT_ACTIVE_9P_REJECT
+  - CHECKPOINT_ACTIVE_FS
+  - CHECKPOINT_REPEAT_FS_RESTORE
+  - CHECKPOINT_ACTIVE_VSOCK_REJECT
+  - CHECKPOINT_ACTIVE_CONSOLE_REJECT
+  - CHECKPOINT_ACTIVE_MEM
+  - INPUT_PACKED
+  - NINEP_PACKED
+  - FS_PACKED
+  - FS_QUEUES
+  - VSOCK_PACKED
+  - GPU_PACKED
+  - GPU_BLOB
+  - GPU_DISPLAY
+  - GPU_WIDTH
+  - GPU_HEIGHT
+  - MEM_PACKED
+  - PMEM_PACKED
+  - PMEM_IMAGE_MB
+  - PMEM_IDENTITY
+  - SOUND_PACKED
+  - SOUND_BACKEND
+  - SOUND_PLAY
+  - SOUND_RECORD
+  - MEM_REGION_MB
+  - MEM_REQUESTED_MB
+  - MEM_CHECKPOINT_ALLOC_MB
+  - VM_MEMORY_MB
+  - FIVEBSD_NET_TEST
+  - FIVEBSD_NET_QUEUES
+  - FIVEBSD_NET_PACKED
+  - FIVEBSD_BLOCK_PACKED
+  - FIVEBSD_BLOCK_QUEUES
+  - FIVEBSD_BLOCK_DISCARD
+  - FIVEBSD_BLOCK_READONLY
+  - FIVEBSD_BLOCK_WCE
+  - FIVEBSD_SCSI_QUEUES
+  - FIVEBSD_SCSI_PACKED
+  - FIVEBSD_SCSI_EVENTS
+  - FIVEBSD_RNG_PACKED
+  - FIVEBSD_VSOCK_PACKED
+  - FIVEBSD_NOTIFICATION_DATA
+  - FIVEBSD_RNG_RESET_ITERATIONS
+  - FIVEBSD_DEVICE_SUSPEND
+  - FIVEBSD_CONSOLE_TEST
+  - FIVEBSD_CONSOLE_PACKED
+  - FIVEBSD_CONSOLE_PORTS
+  - FIVEBSD_GPU_TEST
+  - FIVEBSD_GPU_PACKED
+  - FIVEBSD_GPU_WIDTH
+  - FIVEBSD_GPU_HEIGHT
+  - FIVEBSD_RTC_TEST
+  - FIVEBSD_RTC_PACKED
+  - FIVEBSD_INPUT_TEST
+  - FIVEBSD_INPUT_PACKED
+  - FIVEBSD_INPUT_DEVICES
+  - FIVEBSD_NINEP_TEST
+  - FIVEBSD_NINEP_PACKED
+  - VIRTIO_IOMMU
+  - IOMMU_PACKED
+  - BALLOON_TARGET_MB
   - VSOCK_SOAK_ITERATIONS
+  - VSOCK_SOAK_CONNECTIONS
   - VSOCK_SOAK_RESET_EVERY
   - VSOCK_SOAK_MAX_FD_GROWTH
   - VSOCK_SOAK_MAX_RSS_KB
   - VIRTIO_RESET_SOAK_ITERATIONS
+  - VIRTIO_RESET_SOAK_VERIFY_EVERY
   - VIRTIO_RESET_SOAK_MAX_FD_GROWTH
   - VIRTIO_RESET_SOAK_MAX_RSS_KB
   - BRIDGE
   - UPLINK
 
 # These settings change the VirtIO-visible behavior or a lifecycle contract.
-# Every entry must be the variable of a release coverage contract.
+# Every entry must be the variable of a release coverage contract.  Host
+# resource identities such as SOUND_PLAY and SOUND_RECORD remain allowed
+# overrides, but the SOUND_BACKEND contract covers their observable backend
+# class; arbitrary local pathnames are not a finite behavior domain.
 behavior_overrides:
   - DEVICES
   - TRANSPORTS
@@ -72,12 +259,85 @@ behavior_overrides:
   - CHECKPOINT_TEST
   - BLOCK_QUEUES
   - NET_QUEUES
+  - NET_PACKED
   - SCSI_QUEUES
+  - RNG_PACKED
+  - BALLOON_PACKED
+  - BALLOON_STATS_INTERVAL
+  - FIVEBSD_BALLOON_STATS_INTERVAL
+  - FIVEBSD_BALLOON_DEFLATE_ON_OOM
+  - FIVEBSD_BALLOON_PAGE_POISON
+  - BALLOON_DEFLATE_ON_OOM
+  - BALLOON_FREE_PAGE_HINTING
+  - BALLOON_FREE_PAGE_REPORTING
+  - BALLOON_PAGE_POISON
+  - RTC_PACKED
+  - RTC_ALARM
+  - BLOCK_PACKED
+  - BLOCK_READONLY
+  - BLOCK_DISCARD
+  - SCSI_PACKED
+  - SCSI_EVENTS
+  - CONSOLE_PACKED
+  - CONSOLE_MULTIPORT
+  - INPUT_DEVICES
+  - INPUT_PACKED
+  - NINEP_PACKED
+  - VSOCK_PACKED
+  - GPU_PACKED
+  - GPU_BLOB
+  - GPU_DISPLAY
+  - GPU_WIDTH
+  - GPU_HEIGHT
+  - MEM_PACKED
+  - PMEM_PACKED
+  - PMEM_IMAGE_MB
+  - MEM_REGION_MB
+  - MEM_REQUESTED_MB
+  - SOUND_PACKED
+  - SOUND_BACKEND
+  - FIVEBSD_NET_TEST
+  - FIVEBSD_NET_QUEUES
+  - FIVEBSD_NET_PACKED
+  - FIVEBSD_BLOCK_PACKED
+  - FIVEBSD_BLOCK_QUEUES
+  - FIVEBSD_BLOCK_DISCARD
+  - FIVEBSD_BLOCK_READONLY
+  - FIVEBSD_BLOCK_WCE
+  - FIVEBSD_SCSI_QUEUES
+  - FIVEBSD_SCSI_PACKED
+  - FIVEBSD_SCSI_EVENTS
+  - FIVEBSD_RNG_PACKED
+  - FIVEBSD_VSOCK_PACKED
+  - FIVEBSD_NOTIFICATION_DATA
+  - FIVEBSD_RNG_RESET_ITERATIONS
+  - FIVEBSD_DEVICE_SUSPEND
+  - FIVEBSD_CONSOLE_TEST
+  - FIVEBSD_CONSOLE_PACKED
+  - FIVEBSD_CONSOLE_PORTS
+  - FIVEBSD_RTC_TEST
+  - FIVEBSD_RTC_PACKED
+  - FIVEBSD_INPUT_TEST
+  - FIVEBSD_INPUT_PACKED
+  - FIVEBSD_INPUT_DEVICES
+  - FIVEBSD_NINEP_TEST
+  - FIVEBSD_NINEP_PACKED
+  - VIRTIO_IOMMU
+  - IOMMU_PACKED
+  - BALLOON_TARGET_MB
 
 # A release profile must demonstrate every value in these public test/device
 # option domains.  Adding an exported option requires adding a contract here
 # and cases which cover its meaningful boundaries.
 coverage:
+  - id: nested-vmx-default-policy-live-gate
+    profiles: [nested-default]
+    variable: NESTED_VMX_DEFAULT_POLICY_GATE
+    values: ["yes"]
+  - id: nested-vmx-live-gate
+    profiles: [nested]
+    variable: NESTED_VMX_LIVE_GATE
+    values: ["yes"]
   - id: guest-operating-systems
     profiles: [release]
     variable: GUEST_OS
@@ -85,7 +345,23 @@ coverage:
   - id: devices
     profiles: [release]
     variable: DEVICES
-    values: [net, vsock, rng, block, scsi, console, 9p, input]
+    values: [net, vsock, rng, balloon, rtc, block, scsi, console, 9p, fs, input, gpu, mem, pmem, sound]
+  - id: iommu-fabric
+    profiles: [release]
+    variable: VIRTIO_IOMMU
+    selector: { TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: iommu-ring-formats
+    profiles: [release]
+    variable: IOMMU_PACKED
+    selector: { VIRTIO_IOMMU: "yes", TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: iommu-endpoint-devices
+    profiles: [release]
+    variable: DEVICES
+    tokens: true
+    selector: { VIRTIO_IOMMU: "yes", TRANSPORTS: modern }
+    values: [net, vsock, rng, rtc, block, scsi, console, 9p, fs, input, gpu, mem, sound]
   - id: pci-transports
     profiles: [release]
     variable: TRANSPORTS
@@ -100,6 +376,242 @@ coverage:
     variable: NET_QUEUES
     selector: { DEVICES: net, TRANSPORTS: modern }
     values: ["1", "2", "8"]
+  - id: fivebsd-net-multiqueue
+    profiles: [release]
+    variable: FIVEBSD_NET_QUEUES
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_NET_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["2"]
+  - id: fivebsd-net-testing
+    profiles: [release]
+    variable: FIVEBSD_NET_TEST
+    selector: { GUEST_OS: 5bsd }
+    values: ["no", "yes"]
+  - id: fivebsd-net-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_NET_PACKED
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_NET_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-block-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_BLOCK_PACKED
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-block-multiqueue
+    profiles: [release]
+    variable: FIVEBSD_BLOCK_QUEUES
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["1", "2"]
+  - id: fivebsd-block-discard
+    profiles: [release]
+    variable: FIVEBSD_BLOCK_DISCARD
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-block-write-zeroes-toggle
+    profiles: [release]
+    variable: FIVEBSD_BLOCK_WRITE_ZEROES
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+    # WRITE_ZEROES is deliberately opt-in.  Its absent value is the normal
+    # DISCARD-only baseline exercised by the ordinary 5BSD block lanes; the
+    # distinct release obligation is the enabled sysctl transition and wire
+    # type-13 request below.
+    values: ["yes"]
+  - id: fivebsd-block-readonly
+    profiles: [release]
+    variable: FIVEBSD_BLOCK_READONLY
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-block-wce
+    profiles: [release]
+    variable: FIVEBSD_BLOCK_WCE
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-scsi-multiqueue
+    profiles: [release]
+    variable: FIVEBSD_SCSI_QUEUES
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["0", "2"]
+  - id: fivebsd-scsi-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_SCSI_PACKED
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_SCSI_QUEUES: "2"
+    values: ["no", "yes"]
+  - id: fivebsd-scsi-asynchronous-events
+    profiles: [release]
+    variable: FIVEBSD_SCSI_EVENTS
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_SCSI_QUEUES: "2"
+    values: ["no", "yes"]
+  - id: fivebsd-rng-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_RNG_PACKED
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-vsock-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_VSOCK_PACKED
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-notification-data
+    profiles: [release]
+    variable: FIVEBSD_NOTIFICATION_DATA
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-rng-selective-reset
+    profiles: [release]
+    variable: FIVEBSD_RNG_RESET_ITERATIONS
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["0", "10"]
+  - id: fivebsd-device-suspend
+    profiles: [release]
+    variable: FIVEBSD_DEVICE_SUSPEND
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-console-testing
+    profiles: [release]
+    variable: FIVEBSD_CONSOLE_TEST
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-console-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_CONSOLE_PACKED
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_CONSOLE_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-console-port-counts
+    profiles: [release]
+    variable: FIVEBSD_CONSOLE_PORTS
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_CONSOLE_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["1", "2"]
+  - id: fivebsd-balloon-ring-formats
+    profiles: [release]
+    variable: BALLOON_PACKED
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-balloon-target-boundaries
+    profiles: [release]
+    variable: BALLOON_TARGET_MB
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+    values: ["1", "64"]
+  - id: fivebsd-balloon-statistics
+    profiles: [release]
+    variable: FIVEBSD_BALLOON_STATS_INTERVAL
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+    values: ["0", "1"]
+  - id: fivebsd-balloon-deflate-on-oom
+    profiles: [release]
+    variable: FIVEBSD_BALLOON_DEFLATE_ON_OOM
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-balloon-page-poison
+    profiles: [release]
+    variable: FIVEBSD_BALLOON_PAGE_POISON
+    selector:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_BALLOON_DEFLATE_ON_OOM: "yes"
+    values: ["no", "yes"]
+  - id: fivebsd-gpu-testing
+    profiles: [release]
+    variable: FIVEBSD_GPU_TEST
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-gpu-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_GPU_PACKED
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_GPU_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-rtc-testing
+    profiles: [release]
+    variable: FIVEBSD_RTC_TEST
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-rtc-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_RTC_PACKED
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_RTC_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-input-testing
+    profiles: [release]
+    variable: FIVEBSD_INPUT_TEST
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-input-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_INPUT_PACKED
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_INPUT_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: fivebsd-input-device-counts
+    profiles: [release]
+    variable: FIVEBSD_INPUT_DEVICES
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_INPUT_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["1", "2"]
+  - id: fivebsd-ninep-testing
+    profiles: [release]
+    variable: FIVEBSD_NINEP_TEST
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-ninep-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_NINEP_PACKED
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_NINEP_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["no", "yes"]
+  - id: net-ring-formats
+    profiles: [release]
+    variable: NET_PACKED
+    selector: { DEVICES: net, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: net-packed-interrupt-modes
+    profiles: [release]
+    variable: VIRTIO_MSIX
+    selector: { DEVICES: net, TRANSPORTS: modern, NET_PACKED: "yes" }
+    values: ["yes", "no"]
   - id: block-queue-boundaries
     profiles: [release]
     variable: BLOCK_QUEUES
@@ -110,6 +622,266 @@ coverage:
     variable: SCSI_QUEUES
     selector: { DEVICES: scsi, TRANSPORTS: modern }
     values: ["1", "2", "8"]
+  - id: rng-ring-formats
+    profiles: [release]
+    variable: RNG_PACKED
+    selector: { DEVICES: rng, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: rng-packed-interrupt-modes
+    profiles: [release]
+    variable: VIRTIO_MSIX
+    selector: { DEVICES: rng, TRANSPORTS: modern, RNG_PACKED: "yes" }
+    values: ["yes", "no"]
+  - id: balloon-ring-formats
+    profiles: [release]
+    variable: BALLOON_PACKED
+    selector: { DEVICES: balloon, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: balloon-target-boundaries
+    profiles: [release]
+    variable: BALLOON_TARGET_MB
+    selector: { DEVICES: balloon, TRANSPORTS: modern }
+    values: ["1", "64"]
+  - id: balloon-statistics
+    profiles: [release]
+    variable: BALLOON_STATS_INTERVAL
+    selector: { DEVICES: balloon, TRANSPORTS: modern }
+    values: ["0", "1"]
+  - id: balloon-deflate-on-oom
+    profiles: [release]
+    variable: BALLOON_DEFLATE_ON_OOM
+    selector: { DEVICES: balloon, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: balloon-free-page-reporting
+    profiles: [release]
+    variable: BALLOON_FREE_PAGE_REPORTING
+    selector: { DEVICES: balloon, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: balloon-free-page-hinting
+    profiles: [release]
+    variable: BALLOON_FREE_PAGE_HINTING
+    selector: { DEVICES: balloon, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: balloon-page-poison
+    profiles: [release]
+    variable: BALLOON_PAGE_POISON
+    selector: { DEVICES: balloon, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: rtc-ring-formats
+    profiles: [release]
+    variable: RTC_PACKED
+    selector: { DEVICES: rtc, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: rtc-alarm-feature
+    profiles: [release]
+    variable: RTC_ALARM
+    selector: { DEVICES: rtc, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: rtc-alarm-reset-lifecycle
+    profiles: [release]
+    variable: RESET_TEST
+    selector: { DEVICES: rtc, RTC_ALARM: "yes", TRANSPORTS: modern }
+    values: ["yes"]
+  - id: rtc-alarm-checkpoint-lifecycle
+    profiles: [checkpoint]
+    variable: CHECKPOINT_TEST
+    selector: { DEVICES: rtc, RTC_ALARM: "yes", TRANSPORTS: modern }
+    values: ["yes"]
+  - id: block-ring-formats
+    profiles: [release]
+    variable: BLOCK_PACKED
+    selector: { DEVICES: block, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: block-readonly-media
+    profiles: [release]
+    variable: BLOCK_READONLY
+    selector: { DEVICES: block, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: block-discard
+    profiles: [release]
+    variable: BLOCK_DISCARD
+    selector: { DEVICES: block, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: scsi-ring-formats
+    profiles: [release]
+    variable: SCSI_PACKED
+    selector: { DEVICES: scsi, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: scsi-asynchronous-events
+    profiles: [release]
+    variable: SCSI_EVENTS
+    selector: { DEVICES: scsi, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: console-ring-formats
+    profiles: [release]
+    variable: CONSOLE_PACKED
+    selector: { DEVICES: console, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: console-port-counts
+    profiles: [release]
+    variable: CONSOLE_MULTIPORT
+    selector: { DEVICES: console, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: ninep-active-checkpoint-policy
+    profiles: [checkpoint]
+    variable: CHECKPOINT_ACTIVE_9P_REJECT
+    selector: { DEVICES: 9p, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["yes"]
+  - id: fs-active-checkpoint-policy
+    profiles: [checkpoint]
+    variable: CHECKPOINT_ACTIVE_FS
+    selector: { DEVICES: fs, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["yes"]
+  - id: fs-checkpoint-ring-formats
+    profiles: [checkpoint]
+    variable: FS_PACKED
+    selector:
+      DEVICES: fs
+      TRANSPORTS: modern
+      CHECKPOINT_ACTIVE_FS: "yes"
+    values: ["no", "yes"]
+  - id: fs-checkpoint-queue-boundaries
+    profiles: [checkpoint]
+    variable: FS_QUEUES
+    selector:
+      DEVICES: fs
+      TRANSPORTS: modern
+      CHECKPOINT_ACTIVE_FS: "yes"
+    values: ["2", "8"]
+  - id: vsock-active-checkpoint-policy
+    profiles: [checkpoint]
+    variable: CHECKPOINT_ACTIVE_VSOCK_REJECT
+    selector: { DEVICES: vsock, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["yes"]
+  - id: console-active-checkpoint-policy
+    profiles: [checkpoint]
+    variable: CHECKPOINT_ACTIVE_CONSOLE_REJECT
+    selector: { DEVICES: console, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["yes"]
+  - id: input-ring-formats
+    profiles: [release]
+    variable: INPUT_PACKED
+    selector: { DEVICES: input, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: input-device-counts
+    profiles: [release]
+    variable: INPUT_DEVICES
+    selector: { DEVICES: input, TRANSPORTS: modern }
+    values: ["1", "2"]
+  - id: 9p-ring-formats
+    profiles: [release]
+    variable: NINEP_PACKED
+    selector: { DEVICES: 9p, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fs-ring-formats
+    profiles: [release]
+    variable: FS_PACKED
+    selector: { DEVICES: fs, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fs-queue-boundaries
+    profiles: [release]
+    variable: FS_QUEUES
+    selector: { DEVICES: fs, TRANSPORTS: modern }
+    values: ["1", "2", "8"]
+  - id: vsock-ring-formats
+    profiles: [release]
+    variable: VSOCK_PACKED
+    selector: { DEVICES: vsock, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: gpu-ring-formats
+    profiles: [release]
+    variable: GPU_PACKED
+    selector: { DEVICES: gpu, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: gpu-resource-blob
+    profiles: [release]
+    variable: GPU_BLOB
+    selector: { DEVICES: gpu, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: gpu-blob-reset-lifecycle
+    profiles: [release]
+    variable: RESET_TEST
+    selector: { DEVICES: gpu, GPU_BLOB: "yes", TRANSPORTS: modern }
+    values: ["yes"]
+  - id: gpu-blob-checkpoint-lifecycle
+    profiles: [checkpoint]
+    variable: CHECKPOINT_TEST
+    selector: { DEVICES: gpu, GPU_BLOB: "yes", TRANSPORTS: modern }
+    values: ["yes"]
+  - id: gpu-presentation-checkpoint-lifecycle
+    profiles: [qualification]
+    variable: GPU_DISPLAY
+    selector: { DEVICES: gpu, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: gpu-presentation-backends
+    profiles: [release]
+    variable: GPU_DISPLAY
+    selector: { DEVICES: gpu, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: gpu-scanout-widths
+    profiles: [release]
+    variable: GPU_WIDTH
+    selector: { DEVICES: gpu, TRANSPORTS: modern }
+    values: ["1024", "1920"]
+  - id: gpu-scanout-heights
+    profiles: [release]
+    variable: GPU_HEIGHT
+    selector: { DEVICES: gpu, TRANSPORTS: modern }
+    values: ["768", "1080"]
+  - id: mem-ring-formats
+    profiles: [release]
+    variable: MEM_PACKED
+    selector: { DEVICES: mem, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: mem-region-boundaries
+    profiles: [release]
+    variable: MEM_REGION_MB
+    selector: { DEVICES: mem, TRANSPORTS: modern }
+    values: ["128", "256"]
+  - id: mem-request-boundaries
+    profiles: [release]
+    variable: MEM_REQUESTED_MB
+    selector: { DEVICES: mem, TRANSPORTS: modern }
+    values: ["128", "256"]
+  - id: pmem-ring-formats
+    profiles: [release]
+    variable: PMEM_PACKED
+    selector: { DEVICES: pmem, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: pmem-capacity-boundaries
+    profiles: [release]
+    variable: PMEM_IMAGE_MB
+    selector: { DEVICES: pmem, TRANSPORTS: modern }
+    values: ["4", "64"]
+  - id: sound-ring-formats
+    profiles: [release]
+    variable: SOUND_PACKED
+    selector: { DEVICES: sound, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: sound-backends
+    profiles: [release]
+    variable: SOUND_BACKEND
+    selector: { DEVICES: sound, TRANSPORTS: modern }
+    values: ["null"]
+  - id: sound-host-audio-backends
+    profiles: [audio]
+    variable: SOUND_BACKEND
+    selector: { DEVICES: sound, TRANSPORTS: modern }
+    values: ["oss"]
+  - id: sound-host-audio-ring-formats
+    profiles: [audio]
+    variable: SOUND_PACKED
+    selector: { DEVICES: sound, TRANSPORTS: modern, SOUND_BACKEND: oss }
+    values: ["no", "yes"]
+  - id: sound-host-audio-checkpoint-ring-formats
+    profiles: [checkpoint-audio]
+    variable: SOUND_PACKED
+    selector:
+      DEVICES: sound
+      TRANSPORTS: modern
+      SOUND_BACKEND: oss
+      CHECKPOINT_TEST: "yes"
+    values: ["no", "yes"]
   - id: vsock-backends
     profiles: [release]
     variable: VSOCK_BACKEND
@@ -119,6 +891,16 @@ coverage:
     profiles: [release]
     variable: RESET_TEST
     values: ["yes", "no"]
+  - id: reset-devices
+    profiles: [release]
+    variable: DEVICES
+    selector: { RESET_TEST: "yes" }
+    values: [net, rng, balloon, rtc, block, scsi, vsock, console, input, 9p, fs, gpu, mem, pmem, sound]
+  - id: iommu-reset-lifecycle
+    profiles: [release]
+    variable: RESET_TEST
+    selector: { VIRTIO_IOMMU: "yes", TRANSPORTS: modern }
+    values: ["yes"]
   - id: reboot-lifecycle
     profiles: [release]
     variable: REBOOT_TEST
@@ -127,22 +909,408 @@ coverage:
     profiles: [release]
     variable: CHECKPOINT_TEST
     values: ["yes", "no"]
+  - id: checkpoint-restore-compatibility-rejection
+    profiles: [checkpoint, release]
+    variable: CHECKPOINT_NEGATIVE_QUEUE_RESTORE
+    selector: { DEVICES: net, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", NET_QUEUES: "2" }
+    values: ["yes"]
+  - id: checkpoint-restore-feature-rejection
+    profiles: [checkpoint]
+    variable: CHECKPOINT_NEGATIVE_FEATURE_RESTORE
+    selector: { DEVICES: net, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", NET_PACKED: "yes" }
+    values: ["yes"]
+  - id: checkpoint-pmem-backend-rejection
+    profiles: [checkpoint]
+    variable: CHECKPOINT_NEGATIVE_PMEM_RESTORE
+    selector: { DEVICES: pmem, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["yes"]
+  - id: checkpoint-pmem-repeated-restore
+    profiles: [checkpoint]
+    variable: CHECKPOINT_REPEAT_PMEM_RESTORE
+    selector: { DEVICES: pmem, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["yes"]
+  - id: checkpoint-fs-repeated-restore
+    profiles: [checkpoint]
+    variable: CHECKPOINT_REPEAT_FS_RESTORE
+    selector: { DEVICES: fs, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", CHECKPOINT_ACTIVE_FS: "yes" }
+    values: ["yes"]
   - id: checkpoint-devices
     profiles: [checkpoint]
     variable: DEVICES
     selector: { CHECKPOINT_TEST: "yes" }
-    values: [net, rng, block, vsock]
+    values: [net, rng, balloon, rtc, block, scsi, vsock, console, input, 9p, fs, gpu, mem, pmem, sound]
+  - id: checkpoint-net-ring-formats
+    profiles: [checkpoint]
+    variable: NET_PACKED
+    selector: { DEVICES: net, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-net-multiqueue
+    profiles: [checkpoint]
+    variable: NET_QUEUES
+    selector: { DEVICES: net, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["2"]
+  - id: checkpoint-iommu-ring-formats
+    profiles: [checkpoint]
+    variable: IOMMU_PACKED
+    selector: { VIRTIO_IOMMU: "yes", TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-iommu-endpoint-devices
+    profiles: [checkpoint]
+    variable: DEVICES
+    tokens: true
+    selector: { VIRTIO_IOMMU: "yes", TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: [net, vsock, rng, rtc, block, scsi, console, 9p, fs, input, gpu, mem, sound]
+  - id: checkpoint-rng-ring-formats
+    profiles: [checkpoint]
+    variable: RNG_PACKED
+    selector: { DEVICES: rng, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-balloon-ring-formats
+    profiles: [checkpoint]
+    variable: BALLOON_PACKED
+    selector: { DEVICES: balloon, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-balloon-deflate-on-oom
+    profiles: [checkpoint]
+    variable: BALLOON_DEFLATE_ON_OOM
+    selector: { DEVICES: balloon, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-balloon-free-page-hinting
+    profiles: [checkpoint]
+    variable: BALLOON_FREE_PAGE_HINTING
+    selector: { DEVICES: balloon, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-balloon-free-page-reporting
+    profiles: [checkpoint]
+    variable: BALLOON_FREE_PAGE_REPORTING
+    selector: { DEVICES: balloon, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-balloon-page-poison
+    profiles: [checkpoint]
+    variable: BALLOON_PAGE_POISON
+    selector: { DEVICES: balloon, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-rtc-ring-formats
+    profiles: [checkpoint]
+    variable: RTC_PACKED
+    selector: { DEVICES: rtc, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-block-ring-formats
+    profiles: [checkpoint]
+    variable: BLOCK_PACKED
+    selector: { DEVICES: block, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-block-multiqueue
+    profiles: [checkpoint]
+    variable: BLOCK_QUEUES
+    selector: { DEVICES: block, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["2"]
+  - id: checkpoint-block-discard
+    profiles: [checkpoint]
+    variable: BLOCK_DISCARD
+    selector: { DEVICES: block, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-block-readonly
+    profiles: [checkpoint]
+    variable: BLOCK_READONLY
+    selector: { DEVICES: block, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-scsi-ring-formats
+    profiles: [checkpoint]
+    variable: SCSI_PACKED
+    selector: { DEVICES: scsi, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-scsi-multiqueue
+    profiles: [checkpoint]
+    variable: SCSI_QUEUES
+    selector: { DEVICES: scsi, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["2"]
+  - id: checkpoint-scsi-events
+    profiles: [checkpoint]
+    variable: SCSI_EVENTS
+    selector: { DEVICES: scsi, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-vsock-ring-formats
+    profiles: [checkpoint]
+    variable: VSOCK_PACKED
+    selector: { DEVICES: vsock, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-vsock-backends
+    profiles: [checkpoint]
+    variable: VSOCK_BACKEND
+    selector: { DEVICES: vsock, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: [userspace, kernel]
+  - id: checkpoint-vsock-multi-provider
+    profiles: [checkpoint]
+    variable: CHECKPOINT_MULTI_PROVIDER
+    selector: { CHECKPOINT_TEST: "yes", VSOCK_BACKEND: kernel }
+    values: ["yes"]
+  - id: checkpoint-console-ring-formats
+    profiles: [checkpoint]
+    variable: CONSOLE_PACKED
+    selector: { DEVICES: console, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-console-port-counts
+    profiles: [checkpoint]
+    variable: CONSOLE_MULTIPORT
+    selector: { DEVICES: console, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-input-ring-formats
+    profiles: [checkpoint]
+    variable: INPUT_PACKED
+    selector: { DEVICES: input, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-input-device-counts
+    profiles: [checkpoint]
+    variable: INPUT_DEVICES
+    selector: { DEVICES: input, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["1", "2"]
+  - id: checkpoint-9p-ring-formats
+    profiles: [checkpoint]
+    variable: NINEP_PACKED
+    selector: { DEVICES: 9p, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-gpu-ring-formats
+    profiles: [checkpoint]
+    variable: GPU_PACKED
+    selector: { DEVICES: gpu, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-mem-ring-formats
+    profiles: [checkpoint]
+    variable: MEM_PACKED
+    selector: { DEVICES: mem, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-pmem-ring-formats
+    profiles: [checkpoint]
+    variable: PMEM_PACKED
+    selector: { DEVICES: pmem, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: checkpoint-pmem-active-io
+    profiles: [checkpoint]
+    variable: CHECKPOINT_TEST
+    selector: { DEVICES: pmem, TRANSPORTS: modern }
+    values: ["yes"]
+  - id: checkpoint-sound-ring-formats
+    profiles: [checkpoint]
+    variable: SOUND_PACKED
+    selector: { DEVICES: sound, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    values: ["no", "yes"]
+  - id: soak-vsock-backends
+    profiles: [soak]
+    variable: VSOCK_BACKEND
+    selector: { DEVICES: vsock }
+    values: [userspace, kernel]
+  - id: soak-vsock-iterations
+    profiles: [soak]
+    variable: VSOCK_SOAK_ITERATIONS
+    selector: { DEVICES: vsock }
+    values: ["100"]
+  # Keep the bounded screen separate from the 100-cycle endurance profile.
+  # It exercises the same concurrent traffic and rebind paths, but is a
+  # practical pre-commit/root-qualification gate rather than release soak
+  # evidence.
+  - id: soak-smoke-vsock-backends
+    profiles: [soak-smoke]
+    variable: VSOCK_BACKEND
+    selector: { DEVICES: vsock }
+    values: [userspace, kernel]
+  - id: soak-smoke-vsock-iterations
+    profiles: [soak-smoke]
+    variable: VSOCK_SOAK_ITERATIONS
+    selector: { DEVICES: vsock }
+    values: ["3"]
+  - id: soak-smoke-vsock-connections
+    profiles: [soak-smoke]
+    variable: VSOCK_SOAK_CONNECTIONS
+    selector: { DEVICES: vsock }
+    values: ["4"]
+  - id: soak-smoke-vsock-reset-interval
+    profiles: [soak-smoke]
+    variable: VSOCK_SOAK_RESET_EVERY
+    selector: { DEVICES: vsock, VSOCK_BACKEND: kernel }
+    values: ["3"]
+  - id: soak-smoke-reset-iterations
+    profiles: [soak-smoke]
+    variable: VIRTIO_RESET_SOAK_ITERATIONS
+    selector:
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p"
+    values: ["3"]
+  - id: soak-smoke-reset-validation-interval
+    profiles: [soak-smoke]
+    variable: VIRTIO_RESET_SOAK_VERIFY_EVERY
+    selector:
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p"
+    values: ["1"]
+  - id: soak-smoke-optional-reset-iterations
+    profiles: [soak-smoke]
+    variable: VIRTIO_RESET_SOAK_ITERATIONS
+    selector:
+      DEVICES: "input gpu mem pmem sound fs"
+    values: ["3"]
+  - id: soak-smoke-optional-reset-validation-interval
+    profiles: [soak-smoke]
+    variable: VIRTIO_RESET_SOAK_VERIFY_EVERY
+    selector:
+      DEVICES: "input gpu mem pmem sound fs"
+    values: ["1"]
+  - id: soak-smoke-iommu-reset-iterations
+    profiles: [soak-smoke]
+    variable: VIRTIO_RESET_SOAK_ITERATIONS
+    selector:
+      DEVICES: "net rng block"
+      VIRTIO_IOMMU: "yes"
+    values: ["3"]
+  - id: soak-smoke-iommu-reset-validation-interval
+    profiles: [soak-smoke]
+    variable: VIRTIO_RESET_SOAK_VERIFY_EVERY
+    selector:
+      DEVICES: "net rng block"
+      VIRTIO_IOMMU: "yes"
+    values: ["1"]
+  - id: soak-vsock-connections
+    profiles: [soak]
+    variable: VSOCK_SOAK_CONNECTIONS
+    selector: { DEVICES: vsock }
+    values: ["8"]
+  - id: soak-reset-iterations
+    profiles: [soak]
+    variable: VIRTIO_RESET_SOAK_ITERATIONS
+    selector:
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p"
+    values: ["100"]
+  - id: soak-reset-validation-interval
+    profiles: [soak]
+    variable: VIRTIO_RESET_SOAK_VERIFY_EVERY
+    selector:
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p"
+    values: ["10"]
+  - id: soak-optional-reset-iterations
+    profiles: [soak]
+    variable: VIRTIO_RESET_SOAK_ITERATIONS
+    selector:
+      DEVICES: "input gpu mem pmem sound fs"
+    values: ["20"]
+  - id: soak-optional-reset-validation-interval
+    profiles: [soak]
+    variable: VIRTIO_RESET_SOAK_VERIFY_EVERY
+    selector:
+      DEVICES: "input gpu mem pmem sound fs"
+    values: ["5"]
+  - id: soak-fs-ring-format
+    profiles: [soak]
+    variable: FS_PACKED
+    selector:
+      DEVICES: "input gpu mem pmem sound fs"
+    values: ["yes"]
+  - id: soak-fs-queue-count
+    profiles: [soak]
+    variable: FS_QUEUES
+    selector:
+      DEVICES: "input gpu mem pmem sound fs"
+    values: ["8"]
+  - id: soak-iommu-reset-iterations
+    profiles: [soak]
+    variable: VIRTIO_RESET_SOAK_ITERATIONS
+    selector:
+      DEVICES: "net rng block"
+      VIRTIO_IOMMU: "yes"
+    values: ["20"]
+  - id: soak-iommu-reset-validation-interval
+    profiles: [soak]
+    variable: VIRTIO_RESET_SOAK_VERIFY_EVERY
+    selector:
+      DEVICES: "net rng block"
+      VIRTIO_IOMMU: "yes"
+    values: ["5"]
 
 cases:
   # This gate is deliberately first and exclusive.  A failure prevents every
   # expensive VM case from starting.
   - id: host-regression
     executor: host-regression
-    profiles: [release]
+    profiles: [release, soak, soak-smoke, nested, nested-default, audio, checkpoint-audio]
     timeout: 1800
     exclusive: true
     gate: true
     resources: [compiler]
+
+  # Compile the real 5BSD guest drivers before accepting any live feature
+  # evidence.  The live image remains a separate activation requirement.
+  - id: fivebsd-module-build
+    executor: fivebsd-module-build
+    profiles: [vmfree, smoke, release, soak, soak-smoke, nested, audio, checkpoint-audio]
+    timeout: 900
+    exclusive: true
+    gate: true
+    resources: [compiler]
+
+  # Nested architectural models must be accompanied by a clean build of the
+  # production kernel module that will execute them.  Keep this VM-free so a
+  # compiler or linker regression fails before the four-hour hardware case.
+  - id: vmm-module-build
+    executor: vmm-module-build
+    profiles: [vmfree, nested, nested-default]
+    timeout: 900
+    exclusive: true
+    gate: true
+    resources: [compiler]
+
+  # Exercise the independently built, sanitizer-capable nested architectural
+  # model before a root-only hardware run.  This is intentionally not a
+  # substitute for `nested-vmx-live`: the model validates state and ABI
+  # contracts only, while the live case validates Intel VMX execution.
+  - id: vmfree-nested-vmx-model
+    executor: nested-vmx-model
+    profiles: [vmfree, smoke, nested, nested-default]
+    timeout: 1800
+    exclusive: true
+    gate: true
+    resources: [compiler]
+
+  # Compile and execute the same pointer-free state/ABI model under both
+  # AddressSanitizer and UndefinedBehaviorSanitizer in an isolated object
+  # tree.  It is a separate case so resume can retain the ordinary model
+  # evidence when only sanitizer instrumentation or toolchain behavior
+  # changes.  As above, neither result exposes VMX to an L1 guest.
+  - id: vmfree-nested-vmx-model-sanitized
+    executor: nested-vmx-model
+    profiles: [vmfree, smoke, nested, nested-default]
+    timeout: 3600
+    exclusive: true
+    gate: true
+    resources: [compiler]
+    env:
+      SANITIZERS: address,undefined
+
+  # Hardware qualification is deliberately a separate profile while nested
+  # VMX remains default-off.  The reviewed L1 driver must boot the pinned
+  # Linux/KVM L1 twice, once for each L2 operating system, and publish all twelve
+  # feature-group assertions through the strict evidence contract.
+  - id: nested-vmx-live
+    executor: nested-vmx-live
+    profiles: [nested]
+    timeout: 14400
+    exclusive: true
+    gate: true
+    resources: [compiler, nested-vmx]
+    env:
+      NESTED_VMX_LIVE_GATE: "yes"
+      NESTED_VPID_QUALIFICATION: "1"
+      NESTED_LIVE_TIMEOUT: "13800"
+
+  # The loader-only VPID policy cannot be zero and one in the same boot.
+  # Preserve this default-off proof as its own immutable result transaction.
+  - id: nested-vmx-default-policy-live
+    executor: nested-vmx-live
+    profiles: [nested-default]
+    timeout: 14400
+    exclusive: true
+    gate: true
+    resources: [compiler, nested-vmx]
+    env:
+      NESTED_VMX_DEFAULT_POLICY_GATE: "yes"
+      NESTED_VPID_QUALIFICATION: "0"
+      NESTED_LIVE_TIMEOUT: "13800"
 
   # The immutable base image is copied sparsely per transport.  The resource
   # lock keeps concurrent attempts from racing while reading or validating it.
@@ -154,6 +1322,414 @@ cases:
     env:
       GUEST_OS: 5bsd
       TRANSPORTS: "modern legacy"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-balloon-packed
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      BALLOON_PACKED: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      FIVEBSD_CONSOLE_TEST: "yes"
+      FIVEBSD_CONSOLE_PACKED: "no"
+      FIVEBSD_CONSOLE_PORTS: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-balloon-statistics
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_BALLOON_STATS_INTERVAL: "1"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-balloon-deflate-on-oom
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_BALLOON_DEFLATE_ON_OOM: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "2"
+      VIRTIO_DEBUG: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-balloon-page-poison
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_BALLOON_DEFLATE_ON_OOM: "yes"
+      FIVEBSD_BALLOON_PAGE_POISON: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "2"
+      VIRTIO_DEBUG: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-gpu-modern
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_GPU_TEST: "yes"
+      FIVEBSD_GPU_PACKED: "no"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-gpu-packed
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_GPU_TEST: "yes"
+      FIVEBSD_GPU_PACKED: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-rtc-modern
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_RTC_TEST: "yes"
+      FIVEBSD_RTC_PACKED: "no"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-rtc-packed
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_RTC_TEST: "yes"
+      FIVEBSD_RTC_PACKED: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-input-modern
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image, uinput]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_INPUT_TEST: "yes"
+      FIVEBSD_INPUT_PACKED: "no"
+      FIVEBSD_INPUT_DEVICES: "1"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-input-packed
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image, uinput]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_INPUT_TEST: "yes"
+      FIVEBSD_INPUT_PACKED: "yes"
+      FIVEBSD_INPUT_DEVICES: "2"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-ninep-modern
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_NINEP_TEST: "yes"
+      FIVEBSD_NINEP_PACKED: "no"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-ninep-packed
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_NINEP_TEST: "yes"
+      FIVEBSD_NINEP_PACKED: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  # Stock-5BSD activation lanes for the guest drivers added this session.
+  # Each drives probe/attach/feature-negotiation and one protocol operation
+  # of the new driver and fails closed (host queue-enable / notify
+  # correlation) if that path is not reached.  They are pending, not
+  # exercised: promotion requires a live pass on the Intel qualification host.
+  - id: fivebsd-sound-modern
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_SOUND_TEST: "yes"
+      FIVEBSD_SOUND_PACKED: "no"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      VIRTIO_DEBUG: "2"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-sound-packed
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_SOUND_TEST: "yes"
+      FIVEBSD_SOUND_PACKED: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      VIRTIO_DEBUG: "2"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-mem-modern
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_MEM_TEST: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      VIRTIO_DEBUG: "2"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-pmem-modern
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_PMEM_TEST: "yes"
+      PMEM_IMAGE_MB: "64"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      VIRTIO_DEBUG: "2"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-iommu-modern
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_IOMMU_TEST: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      VIRTIO_DEBUG: "2"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-packed-core
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_BLOCK_PACKED: "yes"
+      FIVEBSD_BLOCK_QUEUES: "2"
+      FIVEBSD_RNG_PACKED: "yes"
+      FIVEBSD_VSOCK_PACKED: "yes"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-block-modern-q2
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_BLOCK_QUEUES: "2"
+      VIRTIO_DEBUG: "2"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-block-write-zeroes
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_BLOCK_WRITE_ZEROES: "yes"
+      VIRTIO_DEBUG: "2"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-scsi-modern-q2
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image, ctl]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_SCSI_QUEUES: "2"
+      FIVEBSD_SCSI_EVENTS: "yes"
+      FIVEBSD_DEVICE_SUSPEND: "yes"
+      VIRTIO_DEBUG: "2"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-scsi-packed-modern-q2
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image, ctl]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_SCSI_QUEUES: "2"
+      FIVEBSD_SCSI_PACKED: "yes"
+      VIRTIO_DEBUG: "2"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-net-modern-q1
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_NET_TEST: "yes"
+      FIVEBSD_NET_QUEUES: "1"
+      FIVEBSD_RING_TRACE: "yes"
+      VIRTIO_DEBUG: "2"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-net-modern-q2
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_NET_TEST: "yes"
+      FIVEBSD_NET_QUEUES: "2"
+      FIVEBSD_DEVICE_SUSPEND: "yes"
+      FIVEBSD_RING_TRACE: "yes"
+      VIRTIO_DEBUG: "2"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-net-packed-modern-q2
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_NET_TEST: "yes"
+      FIVEBSD_NET_QUEUES: "2"
+      FIVEBSD_NET_PACKED: "yes"
+      FIVEBSD_RING_TRACE: "yes"
+      VIRTIO_DEBUG: "2"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-modern-common-lifecycle
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_NOTIFICATION_DATA: "yes"
+      FIVEBSD_BLOCK_DISCARD: "yes"
+      FIVEBSD_BLOCK_READONLY: "yes"
+      FIVEBSD_BLOCK_WCE: "yes"
+      BALLOON_PACKED: "no"
+      BALLOON_TARGET_MB: "64"
+      FIVEBSD_DEVICE_SUSPEND: "yes"
+      FIVEBSD_RING_TRACE: "yes"
+      FIVEBSD_RNG_RESET_ITERATIONS: "10"
+      FIVEBSD_CONSOLE_TEST: "yes"
+      FIVEBSD_CONSOLE_PACKED: "yes"
+      FIVEBSD_CONSOLE_PORTS: "2"
+      BULK_MB: "1"
       VM_FREE_GATES: "no"
 
   - id: vmfree-requirements
@@ -182,12 +1758,23 @@ cases:
   - id: net-modern-q1
     executor: alpine-auto
     profiles: [release]
-    env: { DEVICES: net, TRANSPORTS: modern, NET_QUEUES: "1" }
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NET_QUEUES: "1"
+      NET_PACKED: "no"
 
   - id: net-modern-q2
     executor: alpine-auto
     profiles: [smoke, release]
-    env: { DEVICES: net, TRANSPORTS: modern, NET_QUEUES: "2" }
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NET_QUEUES: "2"
+      NET_PACKED: "no"
+      RESET_TEST: "yes"
+      VERIFY_RING_ACTIVITY: "yes"
+      VIRTIO_DEBUG: "2"
 
   - id: net-modern-q8-msi
     executor: alpine-auto
@@ -196,7 +1783,34 @@ cases:
       DEVICES: net
       TRANSPORTS: modern
       NET_QUEUES: "8"
+      NET_PACKED: "no"
       VIRTIO_MSIX: "no"
+      VIRTIO_DEBUG: "2"
+
+  - id: net-packed-modern-q2
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NET_QUEUES: "2"
+      NET_PACKED: "yes"
+      VERIFY_RING_ACTIVITY: "yes"
+      VERIFY_DEVICE_RING_NAME: vtnet
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      VIRTIO_DEBUG: "2"
+
+  - id: net-packed-modern-q8-msi
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NET_QUEUES: "8"
+      NET_PACKED: "yes"
+      VIRTIO_MSIX: "no"
+      VERIFY_DEVICE_RING_NAME: vtnet
+      VERIFY_DEVICE_RING_LAYOUT: packed
       VIRTIO_DEBUG: "2"
 
   - id: net-legacy
@@ -211,6 +1825,18 @@ cases:
       DEVICES: vsock
       TRANSPORTS: modern
       VSOCK_BACKEND: userspace
+      VSOCK_PACKED: "no"
+
+  - id: vsock-userspace-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      VSOCK_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtvsock
+      VERIFY_DEVICE_RING_LAYOUT: packed
 
   - id: vsock-userspace-legacy
     executor: alpine-auto
@@ -229,8 +1855,22 @@ cases:
       DEVICES: vsock
       TRANSPORTS: modern
       VSOCK_BACKEND: kernel
+      VSOCK_PACKED: "no"
       RESET_TEST: "yes"
       REBOOT_TEST: "yes"
+
+  - id: vsock-kernel-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [kernel-vsock]
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: kernel
+      VSOCK_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtvsock
+      VERIFY_DEVICE_RING_LAYOUT: packed
 
   - id: vsock-kernel-multi
     executor: alpine-multi-vsock
@@ -242,27 +1882,285 @@ cases:
   - id: rng-modern
     executor: alpine-auto
     profiles: [smoke, release]
-    env: { DEVICES: rng, TRANSPORTS: modern }
+    env: { DEVICES: rng, TRANSPORTS: modern, RNG_PACKED: "no" }
+
+  - id: rng-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: rng
+      TRANSPORTS: modern
+      RNG_PACKED: "yes"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtrnd
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: rng-packed-modern-msi
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: rng
+      TRANSPORTS: modern
+      RNG_PACKED: "yes"
+      VIRTIO_MSIX: "no"
+      VERIFY_DEVICE_RING_NAME: vtrnd
+      VERIFY_DEVICE_RING_LAYOUT: packed
 
   - id: rng-legacy
     executor: alpine-auto
     profiles: [release]
     env: { DEVICES: rng, TRANSPORTS: legacy }
 
+  - id: iommu-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: "net block"
+      TRANSPORTS: modern
+      VIRTIO_IOMMU: "yes"
+      IOMMU_PACKED: "no"
+      VERIFY_RING_ACTIVITY: "yes"
+
+  - id: iommu-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: "net block"
+      TRANSPORTS: modern
+      VIRTIO_IOMMU: "yes"
+      IOMMU_PACKED: "yes"
+      RESET_TEST: "yes"
+      VERIFY_RING_ACTIVITY: "yes"
+      VERIFY_DEVICE_RING_NAME: vtiommu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: iommu-combined-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    timeout: 3600
+    resources: [ctl, uinput]
+    env:
+      DEVICES: "net vsock rng rtc block scsi console 9p fs input gpu mem sound"
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      VIRTIO_IOMMU: "yes"
+      IOMMU_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtiommu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      NET_PACKED: "yes"
+      VSOCK_PACKED: "yes"
+      RNG_PACKED: "yes"
+      RTC_PACKED: "yes"
+      BLOCK_PACKED: "yes"
+      SCSI_PACKED: "yes"
+      CONSOLE_PACKED: "yes"
+      NINEP_PACKED: "yes"
+      FS_PACKED: "yes"
+      FS_QUEUES: "8"
+      INPUT_PACKED: "yes"
+      GPU_PACKED: "yes"
+      GPU_BLOB: "yes"
+      MEM_PACKED: "yes"
+      SOUND_PACKED: "yes"
+      VERIFY_RING_ACTIVITY: "yes"
+      RESET_TEST: "yes"
+
+  - id: balloon-modern
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "no"
+      BALLOON_TARGET_MB: "64"
+
+  - id: balloon-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "yes"
+      BALLOON_TARGET_MB: "1"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtballoon
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: balloon-statistics-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "no"
+      BALLOON_TARGET_MB: "64"
+      BALLOON_STATS_INTERVAL: "1"
+
+  - id: balloon-deflate-on-oom-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "no"
+      BALLOON_TARGET_MB: "64"
+      BALLOON_DEFLATE_ON_OOM: "yes"
+
+  - id: balloon-free-page-reporting-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "no"
+      BALLOON_TARGET_MB: "64"
+      BALLOON_FREE_PAGE_REPORTING: "yes"
+      BALLOON_PAGE_POISON: "no"
+
+  - id: balloon-free-page-hint-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "no"
+      BALLOON_TARGET_MB: "64"
+      BALLOON_FREE_PAGE_HINTING: "yes"
+
+  - id: balloon-page-poison-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "no"
+      BALLOON_TARGET_MB: "64"
+      BALLOON_FREE_PAGE_REPORTING: "yes"
+      BALLOON_PAGE_POISON: "yes"
+
+  - id: balloon-optional-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "yes"
+      BALLOON_TARGET_MB: "64"
+      BALLOON_DEFLATE_ON_OOM: "yes"
+      BALLOON_FREE_PAGE_HINTING: "yes"
+      BALLOON_FREE_PAGE_REPORTING: "yes"
+      BALLOON_PAGE_POISON: "yes"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtballoon
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: rtc-modern
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env:
+      DEVICES: rtc
+      TRANSPORTS: modern
+      RTC_PACKED: "no"
+
+  - id: rtc-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: rtc
+      TRANSPORTS: modern
+      RTC_PACKED: "yes"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtrtc
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: rtc-alarm-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: rtc
+      TRANSPORTS: modern
+      RTC_PACKED: "no"
+      RTC_ALARM: "yes"
+      RESET_TEST: "yes"
+
+  - id: rtc-alarm-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: rtc
+      TRANSPORTS: modern
+      RTC_PACKED: "yes"
+      RTC_ALARM: "yes"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtrtc
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
   - id: block-modern-q1
     executor: alpine-auto
     profiles: [release]
-    env: { DEVICES: block, TRANSPORTS: modern, BLOCK_QUEUES: "1" }
+    env:
+      DEVICES: block
+      TRANSPORTS: modern
+      BLOCK_QUEUES: "1"
+      BLOCK_READONLY: "no"
+      BLOCK_DISCARD: "no"
+
+  - id: block-discard-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: block
+      TRANSPORTS: modern
+      BLOCK_QUEUES: "1"
+      BLOCK_READONLY: "no"
+      BLOCK_DISCARD: "yes"
+
+  - id: notification-data-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: block
+      TRANSPORTS: modern
+      BLOCK_QUEUES: "1"
+      VIRTIO_DEBUG: "2"
+      VERIFY_NOTIFICATION_DATA: "yes"
+
+  - id: block-readonly-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: block
+      TRANSPORTS: modern
+      BLOCK_QUEUES: "1"
+      BLOCK_READONLY: "yes"
+      BLOCK_DISCARD: "no"
+      RESET_TEST: "yes"
 
   - id: block-modern-q2
     executor: alpine-auto
     profiles: [smoke, release]
-    env: { DEVICES: block, TRANSPORTS: modern, BLOCK_QUEUES: "2" }
+    env:
+      DEVICES: block
+      TRANSPORTS: modern
+      BLOCK_QUEUES: "2"
+      BLOCK_PACKED: "no"
 
   - id: block-modern-q8
     executor: alpine-auto
     profiles: [release]
     env: { DEVICES: block, TRANSPORTS: modern, BLOCK_QUEUES: "8" }
+
+  - id: block-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: block
+      TRANSPORTS: modern
+      BLOCK_QUEUES: "2"
+      BLOCK_PACKED: "yes"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtblk
+      VERIFY_DEVICE_RING_LAYOUT: packed
 
   - id: block-legacy
     executor: alpine-auto
@@ -279,13 +2177,40 @@ cases:
     executor: alpine-auto
     profiles: [release]
     resources: [ctl]
-    env: { DEVICES: scsi, TRANSPORTS: modern, SCSI_QUEUES: "2" }
+    env:
+      DEVICES: scsi
+      TRANSPORTS: modern
+      SCSI_QUEUES: "2"
+      SCSI_PACKED: "no"
+
+  - id: scsi-modern-events
+    executor: alpine-auto
+    profiles: [release]
+    resources: [ctl]
+    env:
+      DEVICES: scsi
+      TRANSPORTS: modern
+      SCSI_QUEUES: "2"
+      SCSI_EVENTS: "yes"
 
   - id: scsi-modern-q8
     executor: alpine-auto
     profiles: [release]
     resources: [ctl]
     env: { DEVICES: scsi, TRANSPORTS: modern, SCSI_QUEUES: "8" }
+
+  - id: scsi-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    resources: [ctl]
+    env:
+      DEVICES: scsi
+      TRANSPORTS: modern
+      SCSI_QUEUES: "2"
+      SCSI_PACKED: "yes"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtscsi
+      VERIFY_DEVICE_RING_LAYOUT: packed
 
   - id: scsi-legacy
     executor: alpine-auto
@@ -296,7 +2221,22 @@ cases:
   - id: console-modern
     executor: alpine-auto
     profiles: [release]
-    env: { DEVICES: console, TRANSPORTS: modern }
+    env:
+      DEVICES: console
+      TRANSPORTS: modern
+      CONSOLE_PACKED: "no"
+      CONSOLE_MULTIPORT: "yes"
+
+  - id: console-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: console
+      TRANSPORTS: modern
+      CONSOLE_PACKED: "yes"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtcon
+      VERIFY_DEVICE_RING_LAYOUT: packed
 
   - id: console-legacy
     executor: alpine-auto
@@ -307,17 +2247,275 @@ cases:
     executor: alpine-auto
     profiles: [release]
     resources: [uinput]
-    env: { DEVICES: input, TRANSPORTS: modern }
+    env:
+      DEVICES: input
+      TRANSPORTS: modern
+      INPUT_PACKED: "no"
+      INPUT_DEVICES: "2"
+
+  - id: input-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    resources: [uinput]
+    env:
+      DEVICES: input
+      TRANSPORTS: modern
+      INPUT_PACKED: "yes"
+      INPUT_DEVICES: "1"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtinput
+      VERIFY_DEVICE_RING_LAYOUT: packed
 
   - id: 9p-modern
     executor: alpine-auto
     profiles: [release]
-    env: { DEVICES: 9p, TRANSPORTS: modern }
+    env: { DEVICES: 9p, TRANSPORTS: modern, NINEP_PACKED: "no" }
+
+  - id: 9p-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: 9p
+      TRANSPORTS: modern
+      NINEP_PACKED: "yes"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vt9p
+      VERIFY_DEVICE_RING_LAYOUT: packed
 
   - id: 9p-legacy
     executor: alpine-auto
     profiles: [release]
     env: { DEVICES: 9p, TRANSPORTS: legacy }
+
+  - id: fs-modern-q1
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: fs
+      TRANSPORTS: modern
+      FS_PACKED: "no"
+      FS_QUEUES: "1"
+
+  - id: fs-modern-q2
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env:
+      DEVICES: fs
+      TRANSPORTS: modern
+      FS_PACKED: "no"
+      FS_QUEUES: "2"
+
+  - id: fs-packed-modern-q8
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: fs
+      TRANSPORTS: modern
+      FS_PACKED: "yes"
+      FS_QUEUES: "8"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtfs
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: gpu-modern
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env: { DEVICES: gpu, TRANSPORTS: modern, GPU_PACKED: "no" }
+
+  - id: gpu-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "yes"
+      GPU_WIDTH: "1920"
+      GPU_HEIGHT: "1080"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtgpu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: gpu-display-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "no"
+      GPU_DISPLAY: "yes"
+
+  - id: gpu-blob-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "no"
+      GPU_BLOB: "yes"
+      VERIFY_GPU_BLOB_ACTIVITY: "yes"
+
+  - id: gpu-blob-iommu-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "no"
+      GPU_BLOB: "yes"
+      VIRTIO_IOMMU: "yes"
+      IOMMU_PACKED: "no"
+      VERIFY_GPU_BLOB_ACTIVITY: "yes"
+      VERIFY_RING_ACTIVITY: "yes"
+
+  - id: gpu-blob-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "yes"
+      GPU_BLOB: "yes"
+      VERIFY_GPU_BLOB_ACTIVITY: "yes"
+      GPU_WIDTH: "1920"
+      GPU_HEIGHT: "1080"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtgpu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: mem-modern
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env:
+      DEVICES: mem
+      TRANSPORTS: modern
+      MEM_PACKED: "no"
+      MEM_REGION_MB: "256"
+      MEM_REQUESTED_MB: "128"
+      VIRTIO_DEBUG: "1"
+
+  - id: mem-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: mem
+      TRANSPORTS: modern
+      MEM_PACKED: "yes"
+      MEM_REGION_MB: "256"
+      MEM_REQUESTED_MB: "256"
+      RESET_TEST: "yes"
+      VIRTIO_DEBUG: "1"
+      VERIFY_DEVICE_RING_NAME: vtmem
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: mem-small-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: mem
+      TRANSPORTS: modern
+      MEM_PACKED: "no"
+      MEM_REGION_MB: "128"
+      MEM_REQUESTED_MB: "128"
+      VIRTIO_DEBUG: "1"
+
+  - id: pmem-modern
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env:
+      DEVICES: pmem
+      TRANSPORTS: modern
+      PMEM_PACKED: "no"
+      PMEM_IMAGE_MB: "4"
+      RESET_TEST: "yes"
+
+  - id: pmem-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: pmem
+      TRANSPORTS: modern
+      PMEM_PACKED: "yes"
+      PMEM_IMAGE_MB: "64"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtpmem
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: sound-modern
+    executor: alpine-auto
+    profiles: [smoke, release]
+    env:
+      DEVICES: sound
+      TRANSPORTS: modern
+      SOUND_PACKED: "no"
+      VIRTIO_DEBUG: "2"
+
+  - id: sound-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: sound
+      TRANSPORTS: modern
+      SOUND_PACKED: "yes"
+      RESET_TEST: "yes"
+      VIRTIO_DEBUG: "2"
+      VERIFY_DEVICE_RING_NAME: vtsnd
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  # Host-audio qualification is separate from the portable release profile.
+  # It requires representative OSS playback and capture endpoints and fails
+  # closed when those endpoints cannot support the advertised PCM geometry.
+  - id: sound-oss-modern
+    executor: alpine-auto
+    profiles: [audio]
+    resources: [audio]
+    env:
+      DEVICES: sound
+      TRANSPORTS: modern
+      SOUND_PACKED: "no"
+      SOUND_BACKEND: oss
+      VIRTIO_DEBUG: "2"
+
+  - id: sound-oss-packed-modern
+    executor: alpine-auto
+    profiles: [audio]
+    resources: [audio]
+    env:
+      DEVICES: sound
+      TRANSPORTS: modern
+      SOUND_PACKED: "yes"
+      SOUND_BACKEND: oss
+      RESET_TEST: "yes"
+      VIRTIO_DEBUG: "2"
+      VERIFY_DEVICE_RING_NAME: vtsnd
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
+  - id: checkpoint-sound-oss-modern
+    executor: alpine-auto
+    profiles: [checkpoint-audio]
+    resources: [audio]
+    timeout: 2400
+    env:
+      DEVICES: sound
+      TRANSPORTS: modern
+      SOUND_PACKED: "no"
+      SOUND_BACKEND: oss
+      VIRTIO_DEBUG: "2"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-sound-oss-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint-audio]
+    resources: [audio]
+    timeout: 2400
+    env:
+      DEVICES: sound
+      TRANSPORTS: modern
+      SOUND_PACKED: "yes"
+      SOUND_BACKEND: oss
+      VIRTIO_DEBUG: "2"
+      VERIFY_DEVICE_RING_NAME: vtsnd
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
 
   - id: combined-modern
     executor: alpine-auto
@@ -325,7 +2523,7 @@ cases:
     resources: [ctl, uinput]
     timeout: 3000
     env:
-      DEVICES: "net vsock rng block scsi console 9p input"
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p input gpu mem sound"
       TRANSPORTS: modern
       VSOCK_BACKEND: userspace
 
@@ -347,13 +2545,337 @@ cases:
       DEVICES: net
       TRANSPORTS: modern
       NET_QUEUES: "2"
+      NET_PACKED: "no"
+      CHECKPOINT_TEST: "yes"
+      CHECKPOINT_NEGATIVE_QUEUE_RESTORE: "yes"
+
+  - id: checkpoint-net-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NET_QUEUES: "2"
+      NET_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtnet
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+      CHECKPOINT_NEGATIVE_FEATURE_RESTORE: "yes"
+
+  - id: checkpoint-iommu-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: "net block"
+      TRANSPORTS: modern
+      VIRTIO_IOMMU: "yes"
+      IOMMU_PACKED: "no"
+      VERIFY_RING_ACTIVITY: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-iommu-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: "net block"
+      TRANSPORTS: modern
+      VIRTIO_IOMMU: "yes"
+      IOMMU_PACKED: "yes"
+      VERIFY_RING_ACTIVITY: "yes"
+      VERIFY_DEVICE_RING_NAME: vtiommu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-iommu-combined-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 4800
+    resources: [ctl, uinput]
+    env:
+      DEVICES: "net vsock rng rtc block scsi console 9p fs input gpu mem sound"
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      VIRTIO_IOMMU: "yes"
+      IOMMU_PACKED: "yes"
+      NET_PACKED: "yes"
+      VSOCK_PACKED: "yes"
+      RNG_PACKED: "yes"
+      RTC_PACKED: "yes"
+      BLOCK_PACKED: "yes"
+      SCSI_PACKED: "yes"
+      CONSOLE_PACKED: "yes"
+      NINEP_PACKED: "yes"
+      FS_PACKED: "yes"
+      FS_QUEUES: "8"
+      FS_IDENTITY: waspnest-iommu-readonly
+      INPUT_PACKED: "yes"
+      GPU_PACKED: "yes"
+      GPU_BLOB: "yes"
+      MEM_PACKED: "yes"
+      SOUND_PACKED: "yes"
+      VERIFY_RING_ACTIVITY: "yes"
+      VERIFY_DEVICE_RING_NAME: vtiommu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
+      CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
+      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+      CHECKPOINT_ACTIVE_FS: "yes"
       CHECKPOINT_TEST: "yes"
 
   - id: checkpoint-rng-modern
     executor: alpine-auto
     profiles: [checkpoint]
     timeout: 2400
-    env: { DEVICES: rng, TRANSPORTS: modern, CHECKPOINT_TEST: "yes" }
+    env:
+      DEVICES: rng
+      TRANSPORTS: modern
+      RNG_PACKED: "no"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-rng-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: rng
+      TRANSPORTS: modern
+      RNG_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtrnd
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-balloon-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "no"
+      BALLOON_TARGET_MB: "64"
+      BALLOON_STATS_INTERVAL: "1"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-balloon-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: balloon
+      TRANSPORTS: modern
+      BALLOON_PACKED: "yes"
+      BALLOON_TARGET_MB: "1"
+      BALLOON_STATS_INTERVAL: "1"
+      BALLOON_DEFLATE_ON_OOM: "yes"
+      BALLOON_FREE_PAGE_HINTING: "yes"
+      BALLOON_FREE_PAGE_REPORTING: "yes"
+      BALLOON_PAGE_POISON: "yes"
+      VERIFY_DEVICE_RING_NAME: vtballoon
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-rtc-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: rtc
+      TRANSPORTS: modern
+      RTC_PACKED: "no"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-rtc-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: rtc
+      TRANSPORTS: modern
+      RTC_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtrtc
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-rtc-alarm-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: rtc
+      TRANSPORTS: modern
+      RTC_PACKED: "no"
+      RTC_ALARM: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-rtc-alarm-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: rtc
+      TRANSPORTS: modern
+      RTC_PACKED: "yes"
+      RTC_ALARM: "yes"
+      VERIFY_DEVICE_RING_NAME: vtrtc
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-gpu-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "no"
+      GPU_DISPLAY: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-gpu-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "yes"
+      GPU_WIDTH: "1920"
+      GPU_HEIGHT: "1080"
+      VERIFY_DEVICE_RING_NAME: vtgpu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-gpu-blob-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "no"
+      GPU_BLOB: "yes"
+      VERIFY_GPU_BLOB_ACTIVITY: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-gpu-blob-iommu-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "no"
+      GPU_BLOB: "yes"
+      VIRTIO_IOMMU: "yes"
+      IOMMU_PACKED: "no"
+      VERIFY_GPU_BLOB_ACTIVITY: "yes"
+      VERIFY_RING_ACTIVITY: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-gpu-blob-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: gpu
+      TRANSPORTS: modern
+      GPU_PACKED: "yes"
+      GPU_BLOB: "yes"
+      VERIFY_GPU_BLOB_ACTIVITY: "yes"
+      GPU_WIDTH: "1920"
+      GPU_HEIGHT: "1080"
+      VERIFY_DEVICE_RING_NAME: vtgpu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-mem-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: mem
+      TRANSPORTS: modern
+      MEM_PACKED: "no"
+      MEM_REGION_MB: "256"
+      MEM_REQUESTED_MB: "128"
+      VM_MEMORY_MB: "512"
+      MEM_CHECKPOINT_ALLOC_MB: "480"
+      CHECKPOINT_ACTIVE_MEM: "yes"
+      VIRTIO_DEBUG: "1"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-mem-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: mem
+      TRANSPORTS: modern
+      MEM_PACKED: "yes"
+      MEM_REGION_MB: "256"
+      MEM_REQUESTED_MB: "128"
+      VM_MEMORY_MB: "512"
+      MEM_CHECKPOINT_ALLOC_MB: "480"
+      CHECKPOINT_ACTIVE_MEM: "yes"
+      VIRTIO_DEBUG: "1"
+      VERIFY_DEVICE_RING_NAME: vtmem
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-pmem-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: pmem
+      TRANSPORTS: modern
+      PMEM_PACKED: "no"
+      PMEM_IMAGE_MB: "64"
+      CHECKPOINT_NEGATIVE_PMEM_RESTORE: "yes"
+      CHECKPOINT_REPEAT_PMEM_RESTORE: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-pmem-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: pmem
+      TRANSPORTS: modern
+      PMEM_PACKED: "yes"
+      PMEM_IMAGE_MB: "64"
+      CHECKPOINT_NEGATIVE_PMEM_RESTORE: "yes"
+      CHECKPOINT_REPEAT_PMEM_RESTORE: "yes"
+      VERIFY_DEVICE_RING_NAME: vtpmem
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-sound-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: sound
+      TRANSPORTS: modern
+      SOUND_PACKED: "no"
+      VIRTIO_DEBUG: "2"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-sound-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: sound
+      TRANSPORTS: modern
+      SOUND_PACKED: "yes"
+      VIRTIO_DEBUG: "2"
+      VERIFY_DEVICE_RING_NAME: vtsnd
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
 
   - id: checkpoint-block-modern
     executor: alpine-auto
@@ -363,6 +2885,52 @@ cases:
       DEVICES: block
       TRANSPORTS: modern
       BLOCK_QUEUES: "2"
+      BLOCK_PACKED: "no"
+      BLOCK_READONLY: "no"
+      BLOCK_DISCARD: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-block-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: block
+      TRANSPORTS: modern
+      BLOCK_QUEUES: "2"
+      BLOCK_PACKED: "yes"
+      BLOCK_READONLY: "yes"
+      BLOCK_DISCARD: "no"
+      VERIFY_DEVICE_RING_NAME: vtblk
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-scsi-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    resources: [ctl]
+    timeout: 2400
+    env:
+      DEVICES: scsi
+      TRANSPORTS: modern
+      SCSI_QUEUES: "2"
+      SCSI_PACKED: "no"
+      SCSI_EVENTS: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-scsi-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    resources: [ctl]
+    timeout: 2400
+    env:
+      DEVICES: scsi
+      TRANSPORTS: modern
+      SCSI_QUEUES: "2"
+      SCSI_PACKED: "yes"
+      SCSI_EVENTS: "no"
+      VERIFY_DEVICE_RING_NAME: vtscsi
+      VERIFY_DEVICE_RING_LAYOUT: packed
       CHECKPOINT_TEST: "yes"
 
   - id: checkpoint-vsock-userspace
@@ -373,37 +2941,359 @@ cases:
       DEVICES: vsock
       TRANSPORTS: modern
       VSOCK_BACKEND: userspace
+      VSOCK_PACKED: "no"
+      CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-vsock-userspace-packed
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      VSOCK_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtvsock
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-vsock-kernel
+    executor: alpine-auto
+    profiles: [checkpoint]
+    resources: [kernel-vsock]
+    timeout: 2400
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: kernel
+      VSOCK_PACKED: "no"
+      CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-vsock-kernel-packed
+    executor: alpine-auto
+    profiles: [checkpoint]
+    resources: [kernel-vsock]
+    timeout: 2400
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: kernel
+      VSOCK_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtvsock
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-vsock-kernel-multi
+    executor: alpine-multi-vsock
+    profiles: [checkpoint]
+    resources: [kernel-vsock]
+    timeout: 3000
+    env:
+      TRANSPORT: modern
+      VSOCK_BACKEND: kernel
+      CHECKPOINT_MULTI_PROVIDER: "yes"
+      CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
+      CHECKPOINT_TEST: "yes"
+      RESET_TEST: "no"
+
+  - id: checkpoint-console-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: console
+      TRANSPORTS: modern
+      CONSOLE_PACKED: "no"
+      CONSOLE_MULTIPORT: "yes"
+      CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-console-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: console
+      TRANSPORTS: modern
+      CONSOLE_PACKED: "yes"
+      CONSOLE_MULTIPORT: "no"
+      VERIFY_DEVICE_RING_NAME: vtcon
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-input-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    resources: [uinput]
+    timeout: 2400
+    env:
+      DEVICES: input
+      TRANSPORTS: modern
+      INPUT_PACKED: "no"
+      INPUT_DEVICES: "2"
+      INPUT_DEBUG: "1"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-input-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    resources: [uinput]
+    timeout: 2400
+    env:
+      DEVICES: input
+      TRANSPORTS: modern
+      INPUT_PACKED: "yes"
+      INPUT_DEVICES: "1"
+      INPUT_DEBUG: "1"
+      VERIFY_DEVICE_RING_NAME: vtinput
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-9p-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: 9p
+      TRANSPORTS: modern
+      NINEP_PACKED: "no"
+      CHECKPOINT_TEST: "yes"
+      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+
+  - id: checkpoint-9p-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: 9p
+      TRANSPORTS: modern
+      NINEP_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vt9p
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-fs-active-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: fs
+      TRANSPORTS: modern
+      FS_PACKED: "no"
+      FS_QUEUES: "2"
+      FS_IDENTITY: waspnest-readonly
+      CHECKPOINT_ACTIVE_FS: "yes"
+      CHECKPOINT_REPEAT_FS_RESTORE: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-fs-active-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: fs
+      TRANSPORTS: modern
+      FS_PACKED: "yes"
+      FS_QUEUES: "8"
+      VERIFY_DEVICE_RING_NAME: vtfs
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      FS_IDENTITY: waspnest-readonly
+      CHECKPOINT_ACTIVE_FS: "yes"
+      CHECKPOINT_REPEAT_FS_RESTORE: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-fs-idle-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: fs
+      TRANSPORTS: modern
+      FS_PACKED: "no"
+      FS_QUEUES: "2"
+      FS_IDENTITY: waspnest-readonly
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-fs-idle-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: fs
+      TRANSPORTS: modern
+      FS_PACKED: "yes"
+      FS_QUEUES: "8"
+      FS_IDENTITY: waspnest-readonly
+      VERIFY_DEVICE_RING_NAME: vtfs
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-combined-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    resources: [ctl, uinput]
+    timeout: 3000
+    env:
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p input mem"
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      NET_QUEUES: "2"
+      BLOCK_QUEUES: "2"
+      SCSI_QUEUES: "2"
+      BALLOON_STATS_INTERVAL: "1"
+      CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
+      CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
+      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
       CHECKPOINT_TEST: "yes"
 
   - id: soak-vsock-userspace
     executor: alpine-auto
     profiles: [soak]
-    timeout: 21600
+    timeout: 2400
     env:
       DEVICES: vsock
       TRANSPORTS: modern
       VSOCK_BACKEND: userspace
       VSOCK_SOAK_ITERATIONS: "100"
+      VSOCK_SOAK_CONNECTIONS: "8"
 
   - id: soak-vsock-kernel
     executor: alpine-auto
     profiles: [soak]
     resources: [kernel-vsock]
-    timeout: 21600
+    timeout: 2400
     env:
       DEVICES: vsock
       TRANSPORTS: modern
       VSOCK_BACKEND: kernel
       VSOCK_SOAK_ITERATIONS: "100"
+      VSOCK_SOAK_CONNECTIONS: "8"
       VSOCK_SOAK_RESET_EVERY: "10"
 
   - id: soak-reset-devices
     executor: alpine-auto
     profiles: [soak]
     resources: [ctl]
-    timeout: 21600
+    timeout: 2400
     env:
-      DEVICES: "net vsock rng block scsi console 9p"
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p"
       TRANSPORTS: modern
       VSOCK_BACKEND: userspace
       VIRTIO_RESET_SOAK_ITERATIONS: "100"
+      VIRTIO_RESET_SOAK_VERIFY_EVERY: "10"
+
+  - id: soak-reset-optional-devices
+    executor: alpine-auto
+    profiles: [soak]
+    resources: [uinput]
+    timeout: 1800
+    env:
+      DEVICES: "input gpu mem pmem sound fs"
+      TRANSPORTS: modern
+      INPUT_PACKED: "yes"
+      GPU_PACKED: "yes"
+      GPU_BLOB: "yes"
+      MEM_PACKED: "yes"
+      PMEM_PACKED: "yes"
+      SOUND_PACKED: "yes"
+      FS_PACKED: "yes"
+      FS_QUEUES: "8"
+      VIRTIO_RESET_SOAK_ITERATIONS: "20"
+      VIRTIO_RESET_SOAK_VERIFY_EVERY: "5"
+
+  - id: soak-reset-iommu-fabric
+    executor: alpine-auto
+    profiles: [soak]
+    timeout: 1800
+    env:
+      DEVICES: "net rng block"
+      TRANSPORTS: modern
+      VIRTIO_IOMMU: "yes"
+      NET_PACKED: "yes"
+      RNG_PACKED: "yes"
+      BLOCK_PACKED: "yes"
+      IOMMU_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtiommu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      VIRTIO_RESET_SOAK_ITERATIONS: "20"
+      VIRTIO_RESET_SOAK_VERIFY_EVERY: "5"
+
+  # Bounded operational screen: every lane has the same real data-path and
+  # rebind checks as `soak`, including post-reset validation on every cycle.
+  - id: soak-smoke-vsock-userspace
+    executor: alpine-auto
+    profiles: [soak-smoke]
+    timeout: 1800
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      VSOCK_SOAK_ITERATIONS: "3"
+      VSOCK_SOAK_CONNECTIONS: "4"
+
+  - id: soak-smoke-vsock-kernel
+    executor: alpine-auto
+    profiles: [soak-smoke]
+    resources: [kernel-vsock]
+    timeout: 1800
+    env:
+      DEVICES: vsock
+      TRANSPORTS: modern
+      VSOCK_BACKEND: kernel
+      VSOCK_SOAK_ITERATIONS: "3"
+      VSOCK_SOAK_CONNECTIONS: "4"
+      VSOCK_SOAK_RESET_EVERY: "3"
+
+  - id: soak-smoke-reset-devices
+    executor: alpine-auto
+    profiles: [soak-smoke]
+    resources: [ctl]
+    timeout: 1800
+    env:
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p"
+      TRANSPORTS: modern
+      VSOCK_BACKEND: userspace
+      VIRTIO_RESET_SOAK_ITERATIONS: "3"
+      VIRTIO_RESET_SOAK_VERIFY_EVERY: "1"
+
+  - id: soak-smoke-reset-optional-devices
+    executor: alpine-auto
+    profiles: [soak-smoke]
+    resources: [uinput]
+    timeout: 1800
+    env:
+      DEVICES: "input gpu mem pmem sound fs"
+      TRANSPORTS: modern
+      INPUT_PACKED: "yes"
+      GPU_PACKED: "yes"
+      GPU_BLOB: "yes"
+      MEM_PACKED: "yes"
+      PMEM_PACKED: "yes"
+      SOUND_PACKED: "yes"
+      FS_PACKED: "yes"
+      FS_QUEUES: "8"
+      VIRTIO_RESET_SOAK_ITERATIONS: "3"
+      VIRTIO_RESET_SOAK_VERIFY_EVERY: "1"
+
+  - id: soak-smoke-reset-iommu-fabric
+    executor: alpine-auto
+    profiles: [soak-smoke]
+    timeout: 1800
+    env:
+      DEVICES: "net rng block"
+      TRANSPORTS: modern
+      VIRTIO_IOMMU: "yes"
+      NET_PACKED: "yes"
+      RNG_PACKED: "yes"
+      BLOCK_PACKED: "yes"
+      IOMMU_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtiommu
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      VIRTIO_RESET_SOAK_ITERATIONS: "3"
+      VIRTIO_RESET_SOAK_VERIFY_EVERY: "1"

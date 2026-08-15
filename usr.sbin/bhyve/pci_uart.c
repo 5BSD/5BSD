@@ -27,6 +27,9 @@
  */
 
 #include <sys/types.h>
+#ifdef BHYVE_SNAPSHOT
+#include <machine/vmm_snapshot.h>
+#endif
 
 #include <stdio.h>
 
@@ -64,8 +67,8 @@ static void
 pci_uart_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
     uint64_t value)
 {
-	assert(baridx == 0);
-	assert(size == 1);
+	if (baridx != 0 || size != 1 || offset >= UART_NS16550_IO_BAR_SIZE)
+		return;
 
 	uart_ns16550_write(pi->pi_arg, offset, value);
 }
@@ -75,8 +78,8 @@ pci_uart_read(struct pci_devinst *pi, int baridx, uint64_t offset, int size)
 {
 	uint8_t val;
 
-	assert(baridx == 0);
-	assert(size == 1);
+	if (baridx != 0 || size != 1 || offset >= UART_NS16550_IO_BAR_SIZE)
+		return (UINT64_MAX);
 
 	val = uart_ns16550_read(pi->pi_arg, offset);
 	return (val);
@@ -109,6 +112,8 @@ pci_uart_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	sc = uart_ns16550_init(pci_uart_intr_assert, pci_uart_intr_deassert,
 	    pi);
+	if (sc == NULL)
+		return (-1);
 	pi->pi_arg = sc;
 
 	device = get_config_value_node(nvl, "path");
@@ -121,11 +126,54 @@ pci_uart_init(struct pci_devinst *pi, nvlist_t *nvl)
 	return (0);
 }
 
+#ifdef BHYVE_SNAPSHOT
+static int
+pci_uart_snapshot(struct vm_snapshot_meta *meta)
+{
+	struct pci_devinst *pi;
+
+	if (meta == NULL || meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	return (uart_ns16550_snapshot(pi->pi_arg, meta));
+}
+
+/*
+ * The host tty/socket connection is live external state.  Follow the LPC COM
+ * port policy: never serialize backend descriptors; pause parks the receive
+ * event and retains the softc lock, and a restore destination reconstructs
+ * its backend identity from its own "path" configuration.  Only the
+ * guest-visible 16550 register file and receive FIFO travel in the record.
+ */
+static int
+pci_uart_pause(struct pci_devinst *pi)
+{
+
+	return (uart_ns16550_pause(pi->pi_arg));
+}
+
+static int
+pci_uart_resume(struct pci_devinst *pi)
+{
+
+	return (uart_ns16550_resume(pi->pi_arg));
+}
+#endif
+
 static const struct pci_devemu pci_de_com = {
 	.pe_emu =	"uart",
 	.pe_init =	pci_uart_init,
 	.pe_legacy_config = pci_uart_legacy_config,
 	.pe_barwrite =	pci_uart_write,
-	.pe_barread =	pci_uart_read
+	.pe_barread =	pci_uart_read,
+#ifdef BHYVE_SNAPSHOT
+	.pe_snapshot =	pci_uart_snapshot,
+	.pe_snapshot_validate = pci_uart_snapshot,
+	.pe_pause =	pci_uart_pause,
+	.pe_resume =	pci_uart_resume,
+	.pe_migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
+	    PCI_MIGRATION_F_QUIESCE_CALLBACK,
+#endif
 };
 PCI_EMUL_SET(pci_de_com);

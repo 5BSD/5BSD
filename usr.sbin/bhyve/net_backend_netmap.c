@@ -39,6 +39,8 @@
 #include "net_backends.h"
 #include "net_backends_priv.h"
 
+static void netmap_cleanup(struct net_backend *be);
+
 /* The virtio-net features supported by netmap. */
 #define NETMAP_FEATURES (VIRTIO_NET_F_CSUM | VIRTIO_NET_F_HOST_TSO4 | \
 		VIRTIO_NET_F_HOST_TSO6 | VIRTIO_NET_F_HOST_UFO | \
@@ -148,6 +150,7 @@ netmap_init(struct net_backend *be, const char *devname,
 	priv->mevp = mevent_add_disabled(be->fd, EVF_READ, cb, param);
 	if (priv->mevp == NULL) {
 		EPRINTLN("Could not register event");
+		netmap_cleanup(be);
 		return (-1);
 	}
 
@@ -160,10 +163,12 @@ netmap_cleanup(struct net_backend *be)
 	struct netmap_priv *priv = NET_BE_PRIV(be);
 
 	if (priv->mevp) {
-		mevent_delete(priv->mevp);
+		(void)mevent_delete_sync(priv->mevp);
+		priv->mevp = NULL;
 	}
 	if (priv->nmd) {
 		nm_close(priv->nmd);
+		priv->nmd = NULL;
 	}
 	be->fd = -1;
 }

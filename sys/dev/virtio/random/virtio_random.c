@@ -47,6 +47,7 @@
 #include <dev/random/random_harvestq.h>
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtqueue.h>
+#include <dev/virtio/random/virtio_random_var.h>
 
 struct vtrnd_softc {
 	device_t		 vtrnd_dev;
@@ -59,6 +60,7 @@ struct vtrnd_softc {
 	bool			 source_registered;
 	struct sglist		 *vtrnd_sg;
 	uint32_t		 *vtrnd_value;
+	size_t			 vtrnd_value_len;
 };
 
 static int	vtrnd_modevent(module_t, int, void *);
@@ -72,7 +74,7 @@ static int	vtrnd_negotiate_features(struct vtrnd_softc *);
 static int	vtrnd_setup_features(struct vtrnd_softc *);
 static int	vtrnd_alloc_virtqueue(struct vtrnd_softc *);
 static int	vtrnd_harvest(struct vtrnd_softc *, void *, size_t *);
-static void	vtrnd_enqueue(struct vtrnd_softc *sc);
+static int	vtrnd_enqueue(struct vtrnd_softc *sc);
 static unsigned	vtrnd_read(void *, unsigned);
 
 #define VTRND_FEATURES	VIRTIO_F_RING_RESET
@@ -156,6 +158,7 @@ vtrnd_attach(device_t dev)
 	virtio_set_feature_desc(dev, vtrnd_feature_desc);
 
 	len = sizeof(*sc->vtrnd_value) * HARVESTSIZE;
+	sc->vtrnd_value_len = len;
 	sc->vtrnd_value = malloc_aligned(len, len, M_DEVBUF, M_WAITOK);
 	sc->vtrnd_sg = sglist_build(sc->vtrnd_value, len, M_WAITOK);
 
@@ -186,7 +189,12 @@ vtrnd_attach(device_t dev)
 		goto fail;
 	}
 
-	vtrnd_enqueue(sc);
+	error = vtrnd_enqueue(sc);
+	if (error != 0) {
+		device_printf(dev, "cannot initialize request virtqueue: %d\n",
+		    error);
+		goto fail;
+	}
 	random_source_register(&random_vtrnd);
 	sc->source_registered = true;
 	atomic_store_explicit(&sc->inactive, false, memory_order_release);
@@ -251,6 +259,7 @@ vtrnd_detach(device_t dev)
 		zfree(sc->vtrnd_value, M_DEVBUF);
 		sc->vtrnd_value = NULL;
 	}
+	sc->vtrnd_value_len = 0;
 	if (sc->mtx_initialized) {
 		mtx_unlock(&sc->vtrnd_mtx);
 		mtx_destroy(&sc->vtrnd_mtx);
@@ -309,21 +318,22 @@ vtrnd_alloc_virtqueue(struct vtrnd_softc *sc)
 	return (virtio_alloc_virtqueues(dev, 1, &vq_info));
 }
 
-static void
+static int
 vtrnd_enqueue(struct vtrnd_softc *sc)
 {
 	struct virtqueue *vq;
-	int error __diagused;
+	int error;
 
 	vq = sc->vtrnd_vq;
 
-	KASSERT(virtqueue_empty(vq), ("%s: non-empty queue", __func__));
+	if (!virtqueue_empty(vq))
+		return (EBUSY);
 
 	error = virtqueue_enqueue(vq, sc, sc->vtrnd_sg, 0, 1);
-	KASSERT(error == 0, ("%s: virtqueue_enqueue returned error: %d",
-	    __func__, error));
+	if (error == 0)
+		virtqueue_notify(vq);
 
-	virtqueue_notify(vq);
+	return (error);
 }
 
 static int
@@ -342,11 +352,29 @@ vtrnd_harvest(struct vtrnd_softc *sc, void *buf, size_t *sz)
 	if (cookie == NULL)
 		return (EAGAIN);
 	KASSERT(cookie == sc, ("%s: cookie mismatch", __func__));
+	if (!virtio_random_used_len_valid(rdlen, sc->vtrnd_value_len)) {
+		/* VIRTIO_ACTIVATION_ASSERTION: bounded-rng-used-length */
+		device_printf(sc->vtrnd_dev,
+		    "device returned invalid entropy length %u\n", rdlen);
+		atomic_store_explicit(&sc->inactive, true,
+		    memory_order_release);
+		return (EIO);
+	}
 
 	*sz = MIN(rdlen, *sz);
 	memcpy(buf, sc->vtrnd_value, *sz);
 
-	vtrnd_enqueue(sc);
+	if (vtrnd_enqueue(sc) != 0) {
+		/*
+		 * Stop advertising progress if the request buffer cannot be
+		 * replenished.  Detach resets and drains the queue before the
+		 * DMA buffer is released.
+		 */
+		device_printf(sc->vtrnd_dev,
+		    "cannot replenish request virtqueue\n");
+		atomic_store_explicit(&sc->inactive, true, memory_order_release);
+		return (EIO);
+	}
 
 	return (0);
 }

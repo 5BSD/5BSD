@@ -74,7 +74,8 @@ reset_handler(struct vmctx *ctx __unused, int in,
 		/* Treat hard and soft resets the same. */
 		if (reset_control & 0x4) {
 			error = vm_suspend(ctx, VM_SUSPEND_RESET);
-			assert(error == 0 || errno == EALREADY);
+			if (error != 0 && errno != EALREADY)
+				return (-1);
 		}
 	}
 	return (0);
@@ -257,7 +258,8 @@ pm1_control_handler(struct vmctx *ctx, int in,
 		if (*eax & PM1_SLP_EN) {
 			if ((pm1_control & PM1_SLP_TYP) >> 10 == 5) {
 				error = vm_suspend(ctx, VM_SUSPEND_POWEROFF);
-				assert(error == 0 || errno == EALREADY);
+				if (error != 0 && errno != EALREADY)
+					return (-1);
 			}
 		}
 	}
@@ -334,8 +336,7 @@ smi_cmd_handler(struct vmctx *ctx, int in, int port __unused,
     int bytes, uint32_t *eax, void *arg __unused)
 {
 
-	assert(!in);
-	if (bytes != 1)
+	if (in || bytes != 1)
 		return (-1);
 
 	pthread_mutex_lock(&pm_lock);

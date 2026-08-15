@@ -74,21 +74,23 @@ int	vmcs_snapshot_any(struct vmcs *vmcs, int running, int ident,
 static __inline uint64_t
 vmcs_read(uint32_t encoding)
 {
-	int error __diagused;
+	int error;
 	uint64_t val;
 
 	error = vmread(encoding, &val);
-	KASSERT(error == 0, ("vmcs_read(%u) error %d", encoding, error));
+	if (error != 0)
+		panic("vmcs_read(%u) error %d", encoding, error);
 	return (val);
 }
 
 static __inline void
 vmcs_write(uint32_t encoding, uint64_t val)
 {
-	int error __diagused;
+	int error;
 
 	error = vmwrite(encoding, val);
-	KASSERT(error == 0, ("vmcs_write(%u) error %d", encoding, error));
+	if (error != 0)
+		panic("vmcs_write(%u) error %d", encoding, error);
 }
 #endif	/* _VMX_CPUFUNC_H_ */
 
@@ -155,6 +157,7 @@ vmcs_write(uint32_t encoding, uint64_t val)
 #define	VMCS_EOI_EXIT2			0x00002020
 #define	VMCS_EOI_EXIT3			0x00002022
 #define	VMCS_EOI_EXIT(vector)		(VMCS_EOI_EXIT0 + ((vector) / 64) * 2)
+#define	VMCS_TSC_MULTIPLIER		0x00002032
 
 /* 64-bit read-only fields */
 #define	VMCS_GUEST_PHYSICAL_ADDRESS	0x00002400
@@ -357,6 +360,23 @@ vmcs_write(uint32_t encoding, uint64_t val)
 #define	EXIT_REASON_PM_LOG_FULL		62
 #define	EXIT_REASON_XSAVES		63
 #define	EXIT_REASON_XRSTORS		64
+#define	EXIT_REASON_PCONFIG		65
+#define	EXIT_REASON_SPP_EVENT		66
+#define	EXIT_REASON_UMWAIT		67
+#define	EXIT_REASON_TPAUSE		68
+#define	EXIT_REASON_LOADIWKEY		69
+#define	EXIT_REASON_ENQCMD_PASID	72
+#define	EXIT_REASON_ENQCMDS_PASID	73
+#define	EXIT_REASON_BUS_LOCK		74
+#define	EXIT_REASON_INSTRUCTION_TIMEOUT	75
+#define	EXIT_REASON_SEAMCALL		76
+#define	EXIT_REASON_TDCALL		77
+#define	EXIT_REASON_RDMSRLIST		78
+#define	EXIT_REASON_WRMSRLIST		79
+#define	EXIT_REASON_URDMSR		80
+#define	EXIT_REASON_UWRMSR		81
+#define	EXIT_REASON_RDMSR_IMM		84
+#define	EXIT_REASON_WRMSR_IMM		85
 
 /*
  * NMI unblocking due to IRET.

@@ -32,6 +32,10 @@ PROGS+=		vsock-pipe
 PROGS+=		vsh-connect
 PROGS+=		vsh-connect-test-server
 PROGS+=		uinput-inject
+PROGS+=		freebsd-input-check
+NO_SHARED.freebsd-input-check=	yes
+PROGS+=		gpu-rfb-check
+NO_SHARED.gpu-rfb-check=	yes
 
 # Driver scripts (keep the .sh suffix; SCRIPTS strips it by default).
 # run.sh drives a 5BSD guest; run-linux.sh drives a Linux guest via gvsock.py.
@@ -63,6 +67,10 @@ SCRIPTS+=	host-tools-selftest.sh
 SCRIPTSNAME_host-tools-selftest.sh=	host-tools-selftest.sh
 SCRIPTS+=	virtio-host-regression.sh
 SCRIPTSNAME_virtio-host-regression.sh=	virtio-host-regression.sh
+SCRIPTS+=	build-5bsd-virtio-modules.sh
+SCRIPTSNAME_build-5bsd-virtio-modules.sh=	build-5bsd-virtio-modules.sh
+SCRIPTS+=	build-vmm-module.sh
+SCRIPTSNAME_build-vmm-module.sh=	build-vmm-module.sh
 SCRIPTS+=	virtio-lab.lua
 SCRIPTSNAME_virtio-lab.lua=	virtio-lab
 SCRIPTS+=	virtio-lab-selftest.sh
@@ -71,6 +79,10 @@ SCRIPTS+=	virtio-lab-probe.sh
 SCRIPTSNAME_virtio-lab-probe.sh=	virtio-lab-probe.sh
 SCRIPTS+=	virtio-lab-case.sh
 SCRIPTSNAME_virtio-lab-case.sh=	virtio-lab-case.sh
+SCRIPTS+=	run-waspnest-qualification.sh
+SCRIPTSNAME_run-waspnest-qualification.sh=	run-waspnest-qualification.sh
+SCRIPTS+=	virtio-ring-trace.sh
+SCRIPTSNAME_virtio-ring-trace.sh=	virtio-ring-trace.sh
 
 # Guest-side tool sources (shipped for in-guest compilation / use).  Use the
 # ${PACKAGE}FILES filegroup that bsd.test.mk wires into the test package
@@ -82,11 +94,18 @@ ${PACKAGE}FILES+=	vsock-recrx.c
 ${PACKAGE}FILES+=	gvsock.py
 ${PACKAGE}FILES+=	ginput.py
 ${PACKAGE}FILES+=	grng.py
+${PACKAGE}FILES+=	gballoon.py
+${PACKAGE}FILES+=	grtc.py
 ${PACKAGE}FILES+=	gblock.py
 ${PACKAGE}FILES+=	gnet.py
 ${PACKAGE}FILES+=	gscsi.py
 ${PACKAGE}FILES+=	gconsole.py
 ${PACKAGE}FILES+=	g9p.py
+${PACKAGE}FILES+=	ggpu.py
+${PACKAGE}FILES+=	gmem.py
+${PACKAGE}FILES+=	giommu.py
+${PACKAGE}FILES+=	gsnd.py
+${PACKAGE}FILES+=	gpmem.py
 ${PACKAGE}FILES+=	ALPINE.md
 ${PACKAGE}FILES+=	FIVEBSD.md
 ${PACKAGE}FILES+=	FRAMEWORK.md

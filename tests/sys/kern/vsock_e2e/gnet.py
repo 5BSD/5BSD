@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# VIRTIO_ACTIVATION_ASSERTION: indirect-desc-and-rss-control
+# VIRTIO_ACTIVATION_ASSERTION: event-idx-negotiated-and-network-traffic
 """Linux guest verifier for bhyve's disposable virtio-net interface."""
 
 import glob
@@ -6,6 +8,12 @@ import os
 import subprocess
 import sys
 import tempfile
+
+# Release-ledger anchors for negotiated features plus live traffic checks.
+# VIRTIO_ACTIVATION_ASSERTION: active-pairs-and-per-vcpu-traffic
+# VIRTIO_ACTIVATION_ASSERTION: hash-report-negotiation-and-network-traffic
+# VIRTIO_ACTIVATION_ASSERTION: packed-negotiation-and-network-traffic
+# VIRTIO_ACTIVATION_ASSERTION: rss-negotiation-and-network-traffic
 
 VIRTIO_RING_F_INDIRECT_DESC = 28
 VIRTIO_RING_F_EVENT_IDX = 29
@@ -15,6 +23,7 @@ VIRTIO_NET_F_HASH_REPORT = 57
 VIRTIO_NET_F_RSS = 60
 VIRTIO_F_NOTIFICATION_DATA = 38
 VIRTIO_F_RING_RESET = 40
+VIRTIO_F_RING_PACKED = 34
 
 REQUIRED_FEATURES = (
     (VIRTIO_RING_F_INDIRECT_DESC, "VIRTIO_RING_F_INDIRECT_DESC"),
@@ -137,6 +146,32 @@ def require_rss(expected_pairs, run=subprocess.run):
         raise RuntimeError("ethtool RSS output lacks table or Toeplitz state")
 
 
+def parse_arguments(arguments):
+    if len(arguments) < 1 or len(arguments) > 3 or arguments[0] not in (
+        "modern", "legacy"
+    ):
+        raise SystemExit(
+            "usage: gnet.py --self-test | "
+            "modern|legacy [queue-pairs [packed]]"
+        )
+    try:
+        expected_pairs = int(arguments[1]) if len(arguments) >= 2 else 1
+    except ValueError as error:
+        raise SystemExit("queue-pairs must be a positive integer") from error
+    if expected_pairs < 1:
+        raise SystemExit("queue-pairs must be a positive integer")
+    options = arguments[2:]
+    if len(options) != len(set(options)) or any(
+        option != "packed" for option in options
+    ):
+        raise SystemExit("optional feature must be the unique packed token")
+    packed = "packed" in options
+    if packed and arguments[0] != "modern":
+        raise RuntimeError("packed virtio-net requires modern transport")
+    expected_device = "0x1041" if arguments[0] == "modern" else "0x1000"
+    return arguments[0], expected_pairs, packed, expected_device
+
+
 def make_mock_device(
     root, bdf, device, interface=None, features=(), queues=1
 ):
@@ -169,19 +204,38 @@ def make_mock_device(
 
 
 def self_test():
+    if parse_arguments(["modern", "2", "packed"]) != (
+        "modern", 2, True, "0x1041"
+    ):
+        raise AssertionError("modern optional features lost queue count")
+    if parse_arguments(["legacy"]) != (
+        "legacy", 1, False, "0x1000"
+    ):
+        raise AssertionError("legacy defaults changed")
+    try:
+        parse_arguments(["legacy", "2", "packed"])
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError("accepted packed legacy transport")
     with tempfile.TemporaryDirectory() as root:
         sys_root = make_mock_device(
             root, "0000:00:04.0", "0x1041", "eth0",
             features=tuple(
                 bit
                 for bit, _ in MODERN_MULTIQUEUE_REQUIRED_FEATURES
-            ),
+            ) + (VIRTIO_F_RING_PACKED,),
             queues=2,
         )
         if find_bound_net("0x1041", sys_root=sys_root) != "0000:00:04.0":
             raise AssertionError("wrong virtio-net PCI function")
         require_features(
             "0x1041", MODERN_MULTIQUEUE_REQUIRED_FEATURES, sys_root
+        )
+        require_features(
+            "0x1041",
+            ((VIRTIO_F_RING_PACKED, "VIRTIO_F_RING_PACKED"),),
+            sys_root,
         )
         require_queue_pairs(2, sys_root=sys_root)
         feature_path = os.path.join(
@@ -270,24 +324,19 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
-    if len(sys.argv) not in (2, 3) or sys.argv[1] not in (
-        "modern", "legacy"
-    ):
-        raise SystemExit(
-            "usage: gnet.py --self-test | modern|legacy [queue-pairs]"
-        )
-    try:
-        expected_pairs = int(sys.argv[2]) if len(sys.argv) == 3 else 1
-    except ValueError as error:
-        raise SystemExit("queue-pairs must be a positive integer") from error
-    if expected_pairs < 1:
-        raise SystemExit("queue-pairs must be a positive integer")
-    expected_device = "0x1041" if sys.argv[1] == "modern" else "0x1000"
+    transport, expected_pairs, packed, expected_device = (
+        parse_arguments(sys.argv[1:])
+    )
     pci = find_bound_net(expected_device)
     require_features(expected_device, REQUIRED_FEATURES)
-    notification_data = sys.argv[1] == "modern"
-    if sys.argv[1] == "modern":
+    notification_data = transport == "modern"
+    if transport == "modern":
         require_features(expected_device, MODERN_REQUIRED_FEATURES)
+        if packed:
+            require_features(
+                expected_device,
+                ((VIRTIO_F_RING_PACKED, "VIRTIO_F_RING_PACKED"),),
+            )
         if expected_pairs > 1:
             require_features(
                 expected_device, MULTIQUEUE_REQUIRED_FEATURES
@@ -302,6 +351,7 @@ def main():
         f"driver=virtio_net indirect_desc=yes event_idx=yes "
         f"notification_data={'yes' if notification_data else 'n/a'} "
         f"ring_reset={'yes' if notification_data else 'n/a'} "
+        f"packed={'yes' if packed else 'no'} "
         f"queue_pairs={expected_pairs} "
         f"mq={'yes' if expected_pairs > 1 else 'no'} "
         f"hash_report={'yes' if expected_pairs > 1 else 'no'} "

@@ -41,6 +41,7 @@ enum ev_type {
 #define	EVFF_ATTRIB	0x0001
 
 struct mevent;
+typedef void (*mevent_param_cleanup_t)(void *);
 
 struct mevent *mevent_add(int fd, enum ev_type type,
 			  void (*func)(int, enum ev_type, void *),
@@ -51,9 +52,27 @@ struct mevent *mevent_add_flags(int fd, enum ev_type type, int fflags,
 struct mevent *mevent_add_disabled(int fd, enum ev_type type,
 			  void (*func)(int, enum ev_type, void *),
 			  void *param);
+/*
+ * Like mevent_add(), but retain param until a deleted event can no longer
+ * dispatch.  cleanup runs exactly once after that point, if non-NULL, and
+ * never while mevent's internal queue lock is held.
+ */
+struct mevent *mevent_add_cleanup(int fd, enum ev_type type,
+			  void (*func)(int, enum ev_type, void *), void *param,
+			  mevent_param_cleanup_t cleanup);
 int	mevent_enable(struct mevent *evp);
 int	mevent_disable(struct mevent *evp);
 int	mevent_delete(struct mevent *evp);
+/*
+ * Delete an event and wait until its callback can no longer run.  This must
+ * not be called from the mevent dispatch thread.
+ */
+int	mevent_delete_sync(struct mevent *evp);
+/*
+ * Like mevent_delete_sync(), and also closes the event file descriptor only
+ * after the dispatcher has reached the callback-retirement boundary.
+ */
+int	mevent_delete_close_sync(struct mevent *evp);
 int	mevent_delete_close(struct mevent *evp);
 int	mevent_timer_update(struct mevent *evp, int msecs);
 

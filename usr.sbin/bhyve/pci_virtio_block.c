@@ -43,6 +43,16 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+
+/*
+ * Release-ledger anchors for queue workers, write-zeroes, and save-state.
+ * VIRTIO_ACTIVATION_ASSERTION: multiple-worker-queues
+ * VIRTIO_ACTIVATION_ASSERTION: snapshot-restore
+ * VIRTIO_ACTIVATION_ASSERTION: write-zeroes-request
+ * VIRTIO_ACTIVATION_ASSERTION: discard-request
+ * VIRTIO_ACTIVATION_ASSERTION: cache-mode-transition
+ * VIRTIO_ACTIVATION_ASSERTION: readonly-write-rejection
+ */
 #include <strings.h>
 #include <unistd.h>
 #include <assert.h>
@@ -56,6 +66,9 @@
 #include "pci_emul.h"
 #include "virtio.h"
 #include "block_if.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 #define	VTBLK_BSIZE	512
 #define	VTBLK_RINGSZ	128
@@ -113,6 +126,13 @@ _Static_assert(VTBLK_MAXREQ <= BLOCKIF_RING_MAX,
 #define	VTBLK_MAX_WRITE_ZEROES_SECT \
 	((16 << 20) / VTBLK_BSIZE)	/* 16 MiB */
 #define	VTBLK_MAX_WRITE_ZEROES_SEG	1
+
+/*
+ * A host backend can fail to complete a request even after cancellation.
+ * Reset must remain event-driven, but it must not hold a guest vCPU forever
+ * waiting for that broken backend.  Late callbacks remain generation-fenced.
+ */
+#define	VTBLK_RESET_DRAIN_TIMEOUT_SECONDS	5
 
 /*
  * Config space "registers"
@@ -182,8 +202,8 @@ struct pci_vtblk_ioreq {
 	bool				io_is_write;
 	bool				io_stabilizing;
 	bool				io_active;
-	uint16_t			io_idx;
 	struct vqueue_info		*io_vq;
+	struct vi_req			io_vreq;
 	uint64_t			io_device_generation;
 	uint64_t			io_queue_generation;
 };
@@ -210,7 +230,9 @@ struct pci_vtblk_softc {
 	uint16_t vbsc_nqueues;
 	uint64_t vbsc_generation;
 	uint64_t vbsc_qreset_generation;
+	uint64_t vbsc_pending_capacity;
 	struct vqueue_info *vbsc_qreset_vq;
+	bool vbsc_capacity_pending;
 	bool vbsc_qreset_pending;
 	bool vbsc_resetting;
 	bool vbsc_reset_waiting;
@@ -223,6 +245,9 @@ static int pci_vtblk_cancel_request_locked(struct pci_vtblk_softc *,
 static void pci_vtblk_reset_enter(struct pci_vtblk_softc *);
 static void pci_vtblk_reset_leave(struct pci_vtblk_softc *);
 static bool pci_vtblk_requests_drained(const struct pci_vtblk_softc *);
+static bool pci_vtblk_wait_requests_drained(struct pci_vtblk_softc *);
+static bool pci_vtblk_wait_requests_drained_until(struct pci_vtblk_softc *,
+    const struct timespec *);
 static bool pci_vtblk_queue_requests_drained(
     const struct pci_vtblk_softc *, const struct vqueue_info *);
 static bool pci_vtblk_write_needs_stabilization(
@@ -240,11 +265,14 @@ static int pci_vtblk_cfgread(void *, int, int, uint32_t *);
 static int pci_vtblk_cfgwrite(void *, int, int, uint32_t);
 static int pci_vtblk_suspend_device(void *);
 static int pci_vtblk_resume_device(void *);
-static int pci_vtblk_restore_suspended(void *);
+static void pci_vtblk_resume_complete(void *);
+static void pci_vtblk_restore_suspended(void *);
+static void pci_vtblk_restore_resumed(void *);
 #ifdef BHYVE_SNAPSHOT
 static int pci_vtblk_pause(void *);
 static int pci_vtblk_resume(void *);
 static int pci_vtblk_snapshot(void *, struct vm_snapshot_meta *);
+static int pci_vtblk_snapshot_validate(struct vm_snapshot_meta *);
 #endif
 
 static struct virtio_consts vtblk_vi_consts = {
@@ -259,7 +287,9 @@ static struct virtio_consts vtblk_vi_consts = {
 	.vc_qreset =	pci_vtblk_qreset,
 	.vc_suspend =	pci_vtblk_suspend_device,
 	.vc_resume_device = pci_vtblk_resume_device,
+	.vc_resume_complete = pci_vtblk_resume_complete,
 	.vc_restore_suspended = pci_vtblk_restore_suspended,
+	.vc_restore_resumed = pci_vtblk_restore_resumed,
 	.vc_hv_caps =	VTBLK_S_HOSTCAPS | VIRTIO_F_RING_RESET |
 	    VIRTIO_F_SUSPEND,
 #ifdef BHYVE_SNAPSHOT
@@ -307,7 +337,35 @@ pci_vtblk_resume_device(void *vsc)
 	return (0);
 }
 
-static int
+static void
+pci_vtblk_resume_complete(void *vsc)
+{
+	struct pci_vtblk_softc *sc;
+	struct virtio_softc *vs;
+	bool already_locked;
+
+	sc = vsc;
+	vs = &sc->vbsc_vs;
+	/*
+	 * Guest resume invokes this callback from the status-write path with
+	 * the VirtIO mutex held.  Checkpoint resume invokes it after the
+	 * backend callback has released that mutex.  Publish a resize only
+	 * after the common suspend/checkpoint fences have opened in either
+	 * case.
+	 */
+	already_locked = pthread_mutex_isowned_np(&sc->vsc_mtx);
+	if (!already_locked)
+		VS_LOCK(vs);
+	if (sc->vbsc_capacity_pending) {
+		sc->vbsc_cfg.vbc_capacity = sc->vbsc_pending_capacity;
+		sc->vbsc_capacity_pending = false;
+		vi_pci_config_changed(vs);
+	}
+	if (!already_locked)
+		VS_UNLOCK(vs);
+}
+
+static void
 pci_vtblk_restore_suspended(void *vsc)
 {
 	struct pci_vtblk_softc *sc;
@@ -316,9 +374,33 @@ pci_vtblk_restore_suspended(void *vsc)
 	/*
 	 * Restore begins with checkpoint ownership already held.  Add the
 	 * restored guest owner so vi_pci_resume() drops only the checkpoint
-	 * reference and leaves the backend quiesced.
+	 * reference and leaves the backend quiesced.  The existing checkpoint
+	 * owner has already drained and flushed the backend, so retaining an
+	 * owner is infallible and cannot invalidate an otherwise accepted
+	 * restore transaction.
 	 */
-	return (blockif_suspend(sc->bc));
+	blockif_suspend_retain(sc->bc);
+}
+
+static void
+pci_vtblk_restore_resumed(void *vsc)
+{
+	struct pci_vtblk_softc *sc;
+	bool already_locked;
+
+	sc = vsc;
+	/*
+	 * The destination was guest-suspended before checkpoint pause added its
+	 * own blockif owner.  A runnable image supersedes that old guest state.
+	 * blockif_resume() can synchronously publish deferred resize state, so
+	 * release vsc_mtx just as the ordinary guest-resume path does.
+	 */
+	already_locked = pthread_mutex_isowned_np(&sc->vsc_mtx);
+	if (already_locked)
+		pthread_mutex_unlock(&sc->vsc_mtx);
+	blockif_resume(sc->bc);
+	if (already_locked)
+		pthread_mutex_lock(&sc->vsc_mtx);
 }
 
 static uint16_t
@@ -369,11 +451,8 @@ pci_vtblk_reset(void *vsc)
 		if (error != 0 && error != EBUSY)
 			vi_set_needs_reset(&sc->vbsc_vs);
 	}
-	while (!pci_vtblk_requests_drained(sc)) {
-		sc->vbsc_reset_waiting = true;
-		pthread_cond_wait(&sc->vbsc_reset_cond, &sc->vsc_mtx);
-	}
-	sc->vbsc_reset_waiting = false;
+	if (!pci_vtblk_wait_requests_drained(sc))
+		vi_set_needs_reset(&sc->vbsc_vs);
 	/*
 	 * A full device reset is also the recovery operation after a failed
 	 * resume.  Drop the guest-suspend reference before the common layer
@@ -429,8 +508,10 @@ pci_vtblk_cancel_request_locked(struct pci_vtblk_softc *sc,
 	pthread_mutex_unlock(&sc->vsc_mtx);
 	error = blockif_cancel(sc->bc, &io->io_req);
 	pthread_mutex_lock(&sc->vsc_mtx);
-	if (error == 0 || error == EINVAL)
+	if ((error == 0 || error == EINVAL) && io->io_active) {
 		io->io_active = false;
+		vq_discard_req(io->io_vq, &io->io_vreq);
+	}
 	return (error);
 }
 
@@ -488,6 +569,48 @@ pci_vtblk_requests_drained(const struct pci_vtblk_softc *sc)
 		if (sc->vbsc_ios[i].io_active)
 			return (false);
 	}
+	return (true);
+}
+
+/*
+ * The cancellation callback signals vbsc_reset_cond after it retires an I/O
+ * slot.  Use one absolute monotonic deadline paired with the condition
+ * variable's monotonic clock.  A host wall-clock adjustment must not shorten
+ * or extend the ownership fence.  A timeout is not a successful
+ * drain: the caller keeps the generation fence and marks the device broken,
+ * so a delayed callback can only discard its old descriptor ownership.
+ */
+static bool
+pci_vtblk_wait_requests_drained(struct pci_vtblk_softc *sc)
+{
+	struct timespec deadline;
+
+	if (pci_vtblk_requests_drained(sc))
+		return (true);
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		return (false);
+	deadline.tv_sec += VTBLK_RESET_DRAIN_TIMEOUT_SECONDS;
+	return (pci_vtblk_wait_requests_drained_until(sc, &deadline));
+}
+
+static bool
+pci_vtblk_wait_requests_drained_until(struct pci_vtblk_softc *sc,
+    const struct timespec *deadline)
+{
+	int error;
+
+	if (deadline == NULL)
+		return (false);
+	sc->vbsc_reset_waiting = true;
+	while (!pci_vtblk_requests_drained(sc)) {
+		error = pthread_cond_timedwait(&sc->vbsc_reset_cond, &sc->vsc_mtx,
+		    deadline);
+		if (error != 0) {
+			sc->vbsc_reset_waiting = false;
+			return (false);
+		}
+	}
+	sc->vbsc_reset_waiting = false;
 	return (true);
 }
 
@@ -582,7 +705,9 @@ pci_vtblk_done_locked(struct pci_vtblk_ioreq *io, int err)
 	if (io->io_writes_data && io->io_req.br_resid >= 0 &&
 	    (uint64_t)io->io_req.br_resid <= io->io_data_len)
 		used_len += io->io_data_len - io->io_req.br_resid;
-	vq_relchain(io->io_vq, io->io_idx, used_len);
+	DPRINTF(("virtio-block: q=%u completed status=%u used=%u",
+	    io->io_vq->vq_num, *io->io_status, used_len));
+	vq_relchain_req(io->io_vq, &io->io_vreq, used_len);
 	vq_endchains(io->io_vq, 0);
 }
 
@@ -623,6 +748,76 @@ pci_vtblk_restore_state_valid(const struct pci_vtblk_softc *sc,
 }
 
 #ifdef BHYVE_SNAPSHOT
+#define	VTBLK_SNAPSHOT_MAGIC	0x314b4c42U	/* "BLK1" on disk */
+#define	VTBLK_SNAPSHOT_VERSION	3U
+
+/*
+ * Serialize logical configuration fields, not the native in-memory struct.
+ * The latter contains host-endian integers and reserved bytes and therefore
+ * is neither an architecture-neutral record nor the guest-visible PCI byte
+ * string.  Reserved bytes are reconstructed from the destination's canonical
+ * zero-initialized configuration.
+ */
+static int
+pci_vtblk_snapshot_config(struct vtblk_config *config,
+    struct vm_snapshot_meta *meta)
+{
+	uint64_t value64;
+	uint32_t value32;
+	uint16_t value16;
+	uint8_t value8;
+	int error;
+
+#define	VTBLK_SNAPSHOT_FIELD(fn, temporary, field) do {			\
+	temporary = (field);						\
+	error = fn(&temporary, meta);					\
+	if (error != 0)							\
+		return (error);						\
+	if (vm_snapshot_is_loading(meta))				\
+		(field) = temporary;					\
+} while (0)
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le64, value64,
+	    config->vbc_capacity);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le32, value32,
+	    config->vbc_size_max);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le32, value32,
+	    config->vbc_seg_max);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le16, value16,
+	    config->vbc_geometry.cylinders);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_u8, value8,
+	    config->vbc_geometry.heads);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_u8, value8,
+	    config->vbc_geometry.sectors);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le32, value32,
+	    config->vbc_blk_size);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_u8, value8,
+	    config->vbc_topology.physical_block_exp);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_u8, value8,
+	    config->vbc_topology.alignment_offset);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le16, value16,
+	    config->vbc_topology.min_io_size);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le32, value32,
+	    config->vbc_topology.opt_io_size);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_u8, value8,
+	    config->vbc_writeback);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le16, value16,
+	    config->num_queues);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le32, value32,
+	    config->max_discard_sectors);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le32, value32,
+	    config->max_discard_seg);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le32, value32,
+	    config->discard_sector_alignment);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le32, value32,
+	    config->max_write_zeroes_sectors);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_le32, value32,
+	    config->max_write_zeroes_seg);
+	VTBLK_SNAPSHOT_FIELD(vm_snapshot_u8, value8,
+	    config->write_zeroes_may_unmap);
+#undef VTBLK_SNAPSHOT_FIELD
+	return (0);
+}
+
 static int
 pci_vtblk_pause(void *vsc)
 {
@@ -661,25 +856,76 @@ pci_vtblk_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	struct vtblk_config config, destination_config;
 	char destination_ident[VTBLK_BLK_ID_BYTES];
 	char ident[VTBLK_BLK_ID_BYTES];
+	uint32_t magic, version;
 
+	magic = VTBLK_SNAPSHOT_MAGIC;
+	version = VTBLK_SNAPSHOT_VERSION;
 	destination_config = sc->vbsc_cfg;
 	memcpy(destination_ident, sc->vbsc_ident, sizeof(destination_ident));
 	config = destination_config;
 	memcpy(ident, destination_ident, sizeof(ident));
-	SNAPSHOT_VAR_OR_LEAVE(config, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
+	if (magic != VTBLK_SNAPSHOT_MAGIC ||
+	    version != VTBLK_SNAPSHOT_VERSION) {
+		ret = ENOTSUP;
+		goto done;
+	}
+	ret = pci_vtblk_snapshot_config(&config, meta);
+	if (ret != 0)
+		goto done;
 	SNAPSHOT_BUF_OR_LEAVE(ident, sizeof(ident), meta, ret, done);
-	if (meta->op == VM_SNAPSHOT_RESTORE) {
+	if (vm_snapshot_is_loading(meta)) {
 		if (!pci_vtblk_restore_state_valid(sc, &config, ident,
 		    &destination_config, destination_ident)) {
 			ret = EINVAL;
 			goto done;
 		}
+	}
+	ret = vm_snapshot_identity_string(
+	    blockif_checkpoint_identity(sc->bc),
+	    BLOCKIF_CHECKPOINT_ID_MAX, meta);
+	if (ret != 0)
+		goto done;
+	if (vm_snapshot_is_restoring(meta)) {
 		sc->vbsc_cfg = config;
 		memcpy(sc->vbsc_ident, ident, sizeof(sc->vbsc_ident));
 	}
 
 done:
 	return (ret);
+}
+
+/*
+ * Checkpoint pause drains blockif before retaining vsc_mtx, whereas direct
+ * validation only inspects the device-private configuration and backend
+ * identity.  Serialize the latter against completion and resize callbacks,
+ * while reusing the pause-held non-recursive mutex for the normal checkpoint
+ * path.
+ */
+static int
+pci_vtblk_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	struct pci_devinst *pi;
+	struct pci_vtblk_softc *sc;
+	bool acquired;
+	int error;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE ||
+	    meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	sc = pi->pi_arg;
+	if (sc == NULL)
+		return (EINVAL);
+
+	acquired = !pthread_mutex_isowned_np(&sc->vsc_mtx);
+	if (acquired)
+		pthread_mutex_lock(&sc->vsc_mtx);
+	error = vi_pci_snapshot(meta);
+	if (acquired)
+		pthread_mutex_unlock(&sc->vsc_mtx);
+	return (error);
 }
 #endif
 
@@ -706,7 +952,7 @@ pci_vtblk_done(struct blockif_req *br, int err)
 		if (err == 0 && io->io_is_write && !io->io_stabilizing &&
 		    pci_vtblk_write_needs_stabilization(sc)) {
 			io->io_stabilizing = true;
-			err = blockif_flush(sc->bc, &io->io_req);
+			err = blockif_flush_stability(sc->bc, &io->io_req);
 			if (err == 0)
 				complete = false;
 		}
@@ -715,6 +961,8 @@ pci_vtblk_done(struct blockif_req *br, int err)
 			pci_vtblk_done_locked(io, err);
 		}
 	} else {
+		if (io->io_active)
+			vq_discard_req(io->io_vq, &io->io_vreq);
 		io->io_active = false;
 		io->io_stabilizing = false;
 	}
@@ -735,7 +983,7 @@ pci_vtblk_done(struct blockif_req *br, int err)
 }
 
 static void
-pci_vtblk_complete_invalid(struct vqueue_info *vq, const struct vi_req *req,
+pci_vtblk_complete_invalid(struct vqueue_info *vq, struct vi_req *req,
     struct iovec *iov, int n)
 {
 	uint8_t *status;
@@ -756,7 +1004,7 @@ pci_vtblk_complete_invalid(struct vqueue_info *vq, const struct vi_req *req,
 			break;
 		}
 	}
-	vq_relchain(vq, req->idx, len);
+	vq_relchain_req(vq, req, len);
 	vq_endchains(vq, 0);
 }
 
@@ -906,6 +1154,7 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 		return;
 	}
 	io->io_vq = vq;
+	io->io_vreq = req;
 	io->io_data_len = 0;
 	io->io_writes_data = false;
 	io->io_full_transfer = false;
@@ -1000,6 +1249,17 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 		pci_vtblk_done_locked(io, EINVAL);
 		return;
 	}
+	/*
+	 * FLUSH is available only when VIRTIO_BLK_F_FLUSH was negotiated.
+	 * Validate the common request shape first so malformed requests remain
+	 * malformed rather than being mistaken for a well-formed unsupported
+	 * operation, then keep the unnegotiated command away from the backend.
+	 */
+	if ((type == VBH_OP_FLUSH || type == VBH_OP_FLUSH_OUT) &&
+	    (sc->vbsc_vs.vs_negotiated_caps & VTBLK_F_FLUSH) == 0) {
+		pci_vtblk_done_locked(io, EOPNOTSUPP);
+		return;
+	}
 
 	if (data_len > SSIZE_MAX) {
 		pci_vtblk_done_locked(io, EINVAL);
@@ -1033,8 +1293,8 @@ pci_vtblk_proc(struct pci_vtblk_softc *sc, struct vqueue_info *vq)
 	if (io->io_writes_data)
 		io->io_data_len = (uint32_t)iolen;
 
-	DPRINTF(("virtio-block: q=%u %s op, %zd bytes, %d segs, "
-	    "offset %ld", vq->vq_num,
+	DPRINTF(("virtio-block: q=%u type=%u %s op, %zd bytes, %d segs, "
+	    "offset %ld", vq->vq_num, type,
 	    writeop ? "write/discard" : "read/ident", iolen,
 	    io->io_req.br_iovcnt, io->io_req.br_offset));
 
@@ -1144,25 +1404,47 @@ static void
 pci_vtblk_notify(void *vsc, struct vqueue_info *vq)
 {
 	struct pci_vtblk_softc *sc = vsc;
+	uint16_t budget;
 
-	while (vq_has_descs(vq))
+	budget = vq->vq_qsize;
+	while (budget-- != 0 && vq_has_descs(vq))
 		pci_vtblk_proc(sc, vq);
-	vq_endchains(vq, 1);
+	vq_endchains(vq, !vq_has_descs(vq));
 }
 
 static void
 pci_vtblk_resized(struct blockif_ctxt *bctxt __unused, void *arg,
-    size_t new_size)
+    off_t new_size)
 {
 	struct pci_vtblk_softc *sc;
 	struct virtio_softc *vs;
 
 	sc = arg;
 	vs = &sc->vbsc_vs;
+	/* VirtIO block capacity is expressed in whole 512-byte sectors. */
+	if (new_size < 0 || new_size % VTBLK_BSIZE != 0) {
+		EPRINTLN("ignoring invalid virtio-blk resize: %jd",
+		    (intmax_t)new_size);
+		return;
+	}
 
 	VS_LOCK(vs);
-	sc->vbsc_cfg.vbc_capacity = new_size / VTBLK_BSIZE; /* 512-byte units */
-	vi_pci_config_changed(vs);
+	if (vs->vs_suspended || vs->vs_checkpoint_paused ||
+	    atomic_load_explicit(&vs->vs_quiescing, memory_order_acquire) !=
+	    0) {
+		sc->vbsc_pending_capacity =
+		    (uint64_t)new_size / VTBLK_BSIZE; /* 512-byte units */
+		sc->vbsc_capacity_pending = true;
+		/*
+		 * Latch the notification now, but leave the guest-visible
+		 * configuration unchanged until resume_complete().
+		 */
+		vi_pci_config_changed(vs);
+	} else {
+		sc->vbsc_cfg.vbc_capacity =
+		    (uint64_t)new_size / VTBLK_BSIZE; /* 512-byte units */
+		vi_pci_config_changed(vs);
+	}
 	VS_UNLOCK(vs);
 }
 
@@ -1225,18 +1507,36 @@ pci_vtblk_parse_queues(const char *value, uint16_t *nqueues,
 }
 
 static int
+pci_vtblk_configure_ring_format(struct pci_vtblk_softc *sc, bool packed)
+{
+
+	if (packed && !vi_pci_is_modern(&sc->vbsc_vs))
+		return (EINVAL);
+	if (packed)
+		sc->vbsc_consts.vc_hv_caps |= VIRTIO_F_RING_PACKED;
+	else
+		sc->vbsc_consts.vc_hv_caps &= ~VIRTIO_F_RING_PACKED;
+	return (0);
+}
+
+static int
 pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	char bident[sizeof("XXX:XXX")];
 	struct blockif_ctxt *bctxt;
 	const char *errstr, *path, *queues_value, *serial;
 	MD5_CTX mdctx;
+	pthread_condattr_t condattr;
 	u_char digest[16];
 	struct pci_vtblk_softc *sc;
-	bool intr_initialized;
+	bool intr_initialized, packed, resize;
 	off_t size;
 	uint16_t nqueues;
-	int i, sectsz, sts, sto;
+	int error, i, sectsz, sts, sto;
+
+	path = getenv("BHYVE_VTBLK_DEBUG");
+	if (path != NULL && atoi(path) > 0)
+		pci_vtblk_debug = atoi(path);
 
 	/*
 	 * The supplied backing file has to exist
@@ -1246,6 +1546,15 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 		EPRINTLN("virtio-blk queues is %s: %s", errstr, queues_value);
 		return (1);
 	}
+	packed = get_config_bool_node_default(nvl, "packed", false);
+	/*
+	 * A backing-file size change is not part of normal block I/O.  In
+	 * particular, publishing one to a guest booted from a partitioned root
+	 * disk can make GEOM tear down and recreate providers while that root is
+	 * mounted.  Keep runtime capacity changes opt-in; operators that resize
+	 * media must explicitly request the corresponding VirtIO notification.
+	 */
+	resize = get_config_bool_node_default(nvl, "resize", false);
 	snprintf(bident, sizeof(bident), "%u:%u", pi->pi_slot, pi->pi_func);
 	bctxt = blockif_open(nvl, bident);
 	if (bctxt == NULL) {
@@ -1274,7 +1583,6 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 		io->io_req.br_callback = pci_vtblk_done;
 		io->io_req.br_param = io;
 		io->io_sc = sc;
-		io->io_idx = i % VTBLK_RINGSZ;
 	}
 
 	bcopy(&vtblk_vi_consts, &sc->vbsc_consts, sizeof (vtblk_vi_consts));
@@ -1287,13 +1595,23 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 		free(sc);
 		return (1);
 	}
-	if (pthread_cond_init(&sc->vbsc_reset_cond, NULL) != 0) {
+	if (pthread_condattr_init(&condattr) != 0) {
 		pthread_mutex_destroy(&sc->vsc_mtx);
 		blockif_close(sc->bc);
 		free(sc->vbsc_ios);
 		free(sc);
 		return (1);
 	}
+	if (pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC) != 0 ||
+	    pthread_cond_init(&sc->vbsc_reset_cond, &condattr) != 0) {
+		(void)pthread_condattr_destroy(&condattr);
+		pthread_mutex_destroy(&sc->vsc_mtx);
+		blockif_close(sc->bc);
+		free(sc->vbsc_ios);
+		free(sc);
+		return (1);
+	}
+	(void)pthread_condattr_destroy(&condattr);
 
 	/* init virtio softc and virtqueues */
 	vi_softc_linkup(&sc->vbsc_vs, &sc->vbsc_consts, sc, pi,
@@ -1307,6 +1625,10 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 		goto failed;
 	if (sc->vbsc_nqueues > 1 && !vi_pci_is_modern(&sc->vbsc_vs)) {
 		EPRINTLN("virtio-blk queues requires transport=modern");
+		goto failed;
+	}
+	if (pci_vtblk_configure_ring_format(sc, packed) != 0) {
+		EPRINTLN("virtio-blk packed queues require transport=modern");
 		goto failed;
 	}
 	if (sc->vbsc_nqueues > 1)
@@ -1387,7 +1709,15 @@ pci_vtblk_init(struct pci_devinst *pi, nvlist_t *nvl)
 		perror("Invalid boot device");
 		goto failed;
 	}
-	blockif_register_resize_callback(sc->bc, pci_vtblk_resized, sc);
+	if (resize) {
+		error = blockif_register_resize_callback(sc->bc,
+		    pci_vtblk_resized, sc);
+		if (error != 0) {
+			EPRINTLN("cannot monitor virtio-blk backing resize: %s",
+			    strerror(error));
+			goto failed;
+		}
+	}
 	return (0);
 
 failed:
@@ -1433,9 +1763,9 @@ pci_vtblk_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vtblk_softc *sc = vsc;
 	struct vtblk_config wire;
-	void *ptr;
 
-	*retval = 0;
+	if (retval != NULL)
+		*retval = 0;
 	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
 	    (size_t)offset > sizeof(sc->vbsc_cfg) ||
 	    (size_t)size > sizeof(sc->vbsc_cfg) - (size_t)offset)
@@ -1462,9 +1792,7 @@ pci_vtblk_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 	    pci_vtblk_encode32(sc, wire.max_write_zeroes_sectors);
 	wire.max_write_zeroes_seg =
 	    pci_vtblk_encode32(sc, wire.max_write_zeroes_seg);
-	ptr = (uint8_t *)&wire + offset;
-	memcpy(retval, ptr, size);
-	return (0);
+	return (vi_config_read_le(&wire, sizeof(wire), offset, size, retval));
 }
 
 static const struct pci_devemu pci_de_vblk = {
@@ -1477,8 +1805,12 @@ static const struct pci_devemu pci_de_vblk = {
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	vi_pci_snapshot,
+	.pe_snapshot_validate = pci_vtblk_snapshot_validate,
+	.pe_snapshot_compat = vi_pci_snapshot_compat,
 	.pe_pause =     vi_pci_pause,
 	.pe_resume =    vi_pci_resume,
+	/* blockif_suspend() drains requests before the final state cut. */
+	.pe_migration_flags = PCI_MIGRATION_VIRTIO_FLAGS,
 #endif
 };
 PCI_EMUL_SET(pci_de_vblk);

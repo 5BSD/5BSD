@@ -52,6 +52,9 @@
 #include "pci_lpc.h"
 #include "ps2kbd.h"
 #include "ps2mouse.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 #define	KBD_DATA_PORT		0x60
 
@@ -102,6 +105,11 @@
 #define	RAMSZ			32
 #define	FIFOSZ			15
 #define	CTRL_CMD_FLAG		0x8000
+
+#ifdef BHYVE_SNAPSHOT
+#define	ATKBDC_SNAPSHOT_MAGIC	0x3144424bU	/* "KBD1" on disk */
+#define	ATKBDC_SNAPSHOT_VERSION	1U
+#endif
 
 struct kbd_dev {
 	bool	irq_active;
@@ -318,6 +326,7 @@ atkbdc_data_handler(struct vmctx *ctx __unused, int in,
 
 	pthread_mutex_lock(&sc->mtx);
 	if (in) {
+		buf = 0;
 		sc->curcmd = 0;
 		if (sc->ctrlbyte != 0) {
 			*eax = sc->ctrlbyte & 0xff;
@@ -465,7 +474,8 @@ atkbdc_sts_ctl_handler(struct vmctx *ctx, int in,
 		break;
 	case KBDC_RESET:		/* Pulse "reset" line */
 		error = vm_suspend(ctx, VM_SUSPEND_RESET);
-		assert(error == 0 || errno == EALREADY);
+		if (error != 0 && errno != EALREADY)
+			retval = -1;
 		break;
 	default:
 		if (*eax >= 0x21 && *eax <= 0x3f) {
@@ -477,8 +487,6 @@ atkbdc_sts_ctl_handler(struct vmctx *ctx, int in,
 		}
 		break;
 	}
-
-	pthread_mutex_unlock(&sc->mtx);
 
 	if (sc->ctrlbyte != 0) {
 		sc->status |= KBDS_KBD_BUFFER_FULL;
@@ -492,6 +500,7 @@ atkbdc_sts_ctl_handler(struct vmctx *ctx, int in,
 		sc->status |= KBDS_KBD_BUFFER_FULL;
 		atkbdc_assert_kbd_intr(sc);
 	}
+	pthread_mutex_unlock(&sc->mtx);
 
 	return (retval);
 }
@@ -530,6 +539,7 @@ atkbdc_init(struct vmctx *ctx)
 
 	error = register_inout(&iop);
 	assert(error == 0);
+	(void)error;
 
 	bzero(&iop, sizeof(struct inout_port));
 	iop.name = "atkdbc";
@@ -541,6 +551,7 @@ atkbdc_init(struct vmctx *ctx)
 
 	error = register_inout(&iop);
 	assert(error == 0);
+	(void)error;
 
 	pci_irq_reserve(KBD_DEV_IRQ);
 	sc->kbd.irq = KBD_DEV_IRQ;
@@ -558,37 +569,87 @@ atkbdc_init(struct vmctx *ctx)
 }
 
 #ifdef BHYVE_SNAPSHOT
+static bool
+atkbdc_snapshot_curcmd_valid(uint32_t curcmd)
+{
+
+	return (curcmd == 0 || curcmd == KBDC_SET_COMMAND_BYTE ||
+	    curcmd == KBDC_WRITE_OUTPORT ||
+	    curcmd == KBDC_WRITE_KBD_OUTBUF ||
+	    curcmd == KBDC_WRITE_AUX_OUTBUF ||
+	    curcmd == KBDC_WRITE_TO_AUX);
+}
+
 int
 atkbdc_snapshot(struct vm_snapshot_meta *meta)
 {
+	uint8_t buffer[FIFOSZ], outport, ram[RAMSZ], status;
+	uint32_t bcnt, brd, bwr, ctrlbyte, curcmd, magic, version;
 	int ret;
 
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->status, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->outport, meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(atkbdc_sc->ram,
-			      sizeof(atkbdc_sc->ram), meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->curcmd, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->ctrlbyte, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->kbd, meta, ret, done);
+	if (atkbdc_sc == NULL || meta == NULL)
+		return (EINVAL);
+	pthread_mutex_lock(&atkbdc_sc->mtx);
+	magic = ATKBDC_SNAPSHOT_MAGIC;
+	version = ATKBDC_SNAPSHOT_VERSION;
+	status = atkbdc_sc->status;
+	outport = atkbdc_sc->outport;
+	memcpy(ram, atkbdc_sc->ram, sizeof(ram));
+	curcmd = atkbdc_sc->curcmd;
+	ctrlbyte = atkbdc_sc->ctrlbyte;
+	memcpy(buffer, atkbdc_sc->kbd.buffer, sizeof(buffer));
+	brd = atkbdc_sc->kbd.brd;
+	bwr = atkbdc_sc->kbd.bwr;
+	bcnt = atkbdc_sc->kbd.bcnt;
 
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->kbd.irq_active, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->kbd.irq, meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(atkbdc_sc->kbd.buffer,
-			      sizeof(atkbdc_sc->kbd.buffer), meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->kbd.brd, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->kbd.bwr, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->kbd.bcnt, meta, ret, done);
-
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->aux.irq_active, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(atkbdc_sc->aux.irq, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
+	    (magic != ATKBDC_SNAPSHOT_MAGIC ||
+	    version != ATKBDC_SNAPSHOT_VERSION)) {
+		ret = ENOTSUP;
+		goto done;
+	}
+	SNAPSHOT_U8_OR_LEAVE(status, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(outport, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(ram, sizeof(ram), meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(curcmd, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(ctrlbyte, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(buffer, sizeof(buffer), meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(brd, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(bwr, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(bcnt, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
+	    (brd >= FIFOSZ || bwr >= FIFOSZ || bcnt > FIFOSZ ||
+	    bwr != (brd + bcnt) % FIFOSZ ||
+	    !atkbdc_snapshot_curcmd_valid(curcmd) ||
+	    (ctrlbyte != 0 &&
+	    (ctrlbyte & ~(uint32_t)UINT8_MAX) != CTRL_CMD_FLAG))) {
+		ret = EINVAL;
+		goto done;
+	}
+	if (vm_snapshot_is_restoring(meta)) {
+		atkbdc_sc->status = status;
+		atkbdc_sc->outport = outport;
+		memcpy(atkbdc_sc->ram, ram, sizeof(ram));
+		atkbdc_sc->curcmd = curcmd;
+		atkbdc_sc->ctrlbyte = ctrlbyte;
+		memcpy(atkbdc_sc->kbd.buffer, buffer, sizeof(buffer));
+		atkbdc_sc->kbd.brd = brd;
+		atkbdc_sc->kbd.bwr = bwr;
+		atkbdc_sc->kbd.bcnt = bcnt;
+	}
 
 	ret = ps2kbd_snapshot(atkbdc_sc->ps2kbd_sc, meta);
 	if (ret != 0)
 		goto done;
 
 	ret = ps2mouse_snapshot(atkbdc_sc->ps2mouse_sc, meta);
+	if (ret == 0 && vm_snapshot_is_restoring(meta))
+		atkbdc_poll(atkbdc_sc);
 
 done:
+	pthread_mutex_unlock(&atkbdc_sc->mtx);
 	return (ret);
 }
 #endif
@@ -626,4 +687,3 @@ atkbdc_dsdt(void)
 	dsdt_line("}");
 }
 LPC_DSDT(atkbdc_dsdt);
-

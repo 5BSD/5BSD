@@ -12,6 +12,10 @@ import tempfile
 import threading
 import time
 
+# Release-ledger anchors for protocol and packed-ring data-path checks.
+# VIRTIO_ACTIVATION_ASSERTION: bidirectional-stream-and-seqpacket
+# VIRTIO_ACTIVATION_ASSERTION: packed-negotiation-and-bidirectional-data
+
 
 AF_VSOCK = getattr(socket, "AF_VSOCK", 40)
 VMADDR_CID_ANY = getattr(socket, "VMADDR_CID_ANY", 0xFFFFFFFF)
@@ -23,8 +27,16 @@ IOCTL_VM_SOCKETS_GET_LOCAL_CID = 0x7B9
 VIRTIO_VSOCK_F_STREAM = 0
 VIRTIO_VSOCK_F_SEQPACKET = 1
 VIRTIO_VSOCK_F_NO_IMPLIED_STREAM = 2
+VIRTIO_F_RING_PACKED = 34
 VIRTIO_F_NOTIFICATION_DATA = 38
 VIRTIO_F_RING_RESET = 40
+
+# PCI identities are a separate contract from the device feature bitmap.
+# The modern value follows VirtIO 1.4 section 4.1.2.1 (0x1040 + device ID
+# 19).  The legacy value is bhyve's documented compatibility extension;
+# VirtIO assigns vsock no transitional identity.
+VIRTIO_PCI_MODERN_VSOCK_DEVICE = "0x1053"
+BHYVE_COMPAT_VIRTIO_VSOCK_LEGACY_DEVICE = "0x1013"
 
 MODERN_REQUIRED_FEATURES = (
     (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
@@ -159,8 +171,12 @@ def get_local_cid(path="/dev/vsock", ioctl_fn=fcntl.ioctl):
     return cid[0]
 
 
-def preflight(transport, expected_cid):
-    expected = "0x1053" if transport == "modern" else "0x1013"
+def preflight(transport, expected_cid, require_packed=False):
+    expected = (
+        VIRTIO_PCI_MODERN_VSOCK_DEVICE
+        if transport == "modern"
+        else BHYVE_COMPAT_VIRTIO_VSOCK_LEGACY_DEVICE
+    )
     probe = make_socket("stream")
     probe.close()
     local_cid = get_local_cid()
@@ -174,11 +190,20 @@ def preflight(transport, expected_cid):
         if transport == "modern"
         else validate_socket_features(child)
     )
+    packed = (
+        transport == "modern"
+        and negotiated_feature(child, VIRTIO_F_RING_PACKED)
+    )
+    if require_packed and not packed:
+        raise RuntimeError(
+            "virtio-vsock did not negotiate VIRTIO_F_RING_PACKED"
+        )
     print(
         f"PASS preflight transport={transport} pci={expected} "
         f"guest_cid={expected_cid} features={features} "
         f"notification_data={'yes' if transport == 'modern' else 'n/a'} "
-        f"ring_reset={'yes' if transport == 'modern' else 'n/a'}"
+        f"ring_reset={'yes' if transport == 'modern' else 'n/a'} "
+        f"packed={'yes' if packed else ('no' if transport == 'modern' else 'n/a')}"
     )
 
 
@@ -399,20 +424,29 @@ def self_test():
 
     with tempfile.TemporaryDirectory() as root:
         make_fake_device(
-            root, "0000:00:05.0", "0x1053", features=(1, 38, 40)
+            root,
+            "0000:00:05.0",
+            VIRTIO_PCI_MODERN_VSOCK_DEVICE,
+            features=(1, 38, 40),
         )
-        child = find_bound_vsock(root, "0x1053")
+        child = find_bound_vsock(root, VIRTIO_PCI_MODERN_VSOCK_DEVICE)
         if validate_modern_features(child) != "stream-implied,seqpacket":
             raise AssertionError("Linux-compatible implied STREAM was rejected")
         explicit = make_fake_device(
-            root, "0000:00:08.0", "0x1013", features=(0, 1, 2)
+            root,
+            "0000:00:08.0",
+            BHYVE_COMPAT_VIRTIO_VSOCK_LEGACY_DEVICE,
+            features=(0, 1, 2),
         )
         if validate_socket_features(explicit) != (
             "stream,seqpacket,no-implied-stream"
         ):
             raise AssertionError("explicit VirtIO 1.4 socket features failed")
         invalid = make_fake_device(
-            root, "0000:00:09.0", "0x1013", features=(1, 2)
+            root,
+            "0000:00:09.0",
+            BHYVE_COMPAT_VIRTIO_VSOCK_LEGACY_DEVICE,
+            features=(1, 2),
         )
         try:
             validate_socket_features(invalid)
@@ -445,16 +479,21 @@ def self_test():
                 raise AssertionError(
                     f"missing vsock feature {missing_name} was accepted"
                 )
-        make_fake_device(root, "0000:00:06.0", "0x1013", "wrong_driver")
+        make_fake_device(
+            root,
+            "0000:00:06.0",
+            BHYVE_COMPAT_VIRTIO_VSOCK_LEGACY_DEVICE,
+            "wrong_driver",
+        )
         try:
-            find_bound_vsock(root, "0x1013")
+            find_bound_vsock(root, BHYVE_COMPAT_VIRTIO_VSOCK_LEGACY_DEVICE)
         except RuntimeError:
             pass
         else:
             raise AssertionError("device bound to wrong driver was accepted")
-        make_fake_device(root, "0000:00:07.0", "0x1053")
+        make_fake_device(root, "0000:00:07.0", VIRTIO_PCI_MODERN_VSOCK_DEVICE)
         try:
-            find_bound_vsock(root, "0x1053")
+            find_bound_vsock(root, VIRTIO_PCI_MODERN_VSOCK_DEVICE)
         except RuntimeError:
             pass
         else:
@@ -618,17 +657,19 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
-    if len(sys.argv) == 4 and sys.argv[1] == "preflight" and sys.argv[2] in (
+    if len(sys.argv) in (4, 5) and sys.argv[1] == "preflight" and sys.argv[2] in (
         "modern",
         "legacy",
     ):
+        if len(sys.argv) == 5 and sys.argv[4] != "packed":
+            raise SystemExit("optional preflight feature must be packed")
         try:
             expected_cid = int(sys.argv[3], 0)
         except ValueError as exc:
             raise SystemExit("preflight guest CID must be an integer") from exc
         if expected_cid < 3 or expected_cid >= VMADDR_CID_ANY:
             raise SystemExit("preflight guest CID must be in [3, 0xfffffffe]")
-        preflight(sys.argv[2], expected_cid)
+        preflight(sys.argv[2], expected_cid, len(sys.argv) == 5)
         return
     if sys.argv[1:] == ["reserved-cids"]:
         reserved_cid_connects()
@@ -636,10 +677,10 @@ def main():
     if len(sys.argv) < 4:
         raise SystemExit(
             "usage: gvsock.py --self-test | "
-            "preflight modern|legacy guest-cid | "
+            "preflight modern|legacy guest-cid [packed] | "
             "reserved-cids | refused-storm stream|seq port attempts | "
             "parallel-echo-l|parallel-send-echo stream|seq base-port count | "
-            "echo-l|recv-l|close-l|close|abrupt-l|send|send-echo "
+            "echo-l|hold-l|recv-l|close-l|close|abrupt-l|send|send-echo "
             "stream|seq port [value]"
         )
     command, sock_type, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
@@ -652,6 +693,8 @@ def main():
     elif command == "parallel-send-echo" and len(sys.argv) == 5:
         parallel_echo_clients(sock_type, port, int(sys.argv[4]))
     elif command == "echo-l" and len(sys.argv) == 4:
+        echo_listener(sock_type, port)
+    elif command == "hold-l" and len(sys.argv) == 4:
         echo_listener(sock_type, port)
     elif command == "recv-l" and len(sys.argv) == 4:
         receive_listener(sock_type, port)
@@ -668,9 +711,6 @@ def main():
             conn.connect((2, port))
             send_data(conn, sock_type, b"G" * size)
             conn.shutdown(socket.SHUT_WR)
-            # Give the guest transport time to consume its queued close after
-            # the payload; the host drain still independently verifies bytes.
-            time.sleep(0.6)
         print(f"sent {size}", flush=True)
     elif command == "send-echo" and len(sys.argv) == 5:
         payload = sys.argv[4].encode()

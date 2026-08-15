@@ -47,6 +47,7 @@
 #include <machine/vmm_snapshot.h>
 
 #include <dev/vmm/vmm_ktr.h>
+#include <dev/vmm/vmm_startup_mode.h>
 #include <dev/vmm/vmm_vm.h>
 
 #include "vmm_lapic.h"
@@ -196,16 +197,17 @@ vlapic_dump_lvt(uint32_t offset, uint32_t *lvt)
 #endif
 
 static uint32_t
-vlapic_get_ccr(struct vlapic *vlapic)
+vlapic_get_ccr_locked(struct vlapic *vlapic)
 {
 	struct bintime bt_now, bt_rem;
 	struct LAPIC *lapic __diagused;
 	uint32_t ccr;
 
+	KASSERT(VLAPIC_TIMER_LOCKED(vlapic),
+	    ("%s: timer is not locked", __func__));
 	ccr = 0;
 	lapic = vlapic->apic_page;
 
-	VLAPIC_TIMER_LOCK(vlapic);
 	if (callout_active(&vlapic->callout)) {
 		/*
 		 * If the timer is scheduled to expire in the future then
@@ -223,6 +225,16 @@ vlapic_get_ccr(struct vlapic *vlapic)
 	    "icr_timer is %#x", ccr, lapic->icr_timer));
 	VLAPIC_CTR2(vlapic, "vlapic ccr_timer = %#x, icr_timer = %#x",
 	    ccr, lapic->icr_timer);
+	return (ccr);
+}
+
+static uint32_t
+vlapic_get_ccr(struct vlapic *vlapic)
+{
+	uint32_t ccr;
+
+	VLAPIC_TIMER_LOCK(vlapic);
+	ccr = vlapic_get_ccr_locked(vlapic);
 	VLAPIC_TIMER_UNLOCK(vlapic);
 	return (ccr);
 }
@@ -835,7 +847,8 @@ vlapic_calcdest(struct vm *vm, cpuset_t *dmask, uint32_t dest, bool phys,
 		CPU_ZERO(dmask);
 		vcpuid = vm_apicid2vcpuid(vm, dest);
 		amask = vm_active_cpus(vm);
-		if (vcpuid < vm_get_maxcpus(vm) && CPU_ISSET(vcpuid, &amask))
+		if (vcpuid >= 0 && vcpuid < vm_get_maxcpus(vm) &&
+		    CPU_ISSET(vcpuid, &amask))
 			CPU_SET(vcpuid, dmask);
 	} else {
 		/*
@@ -1123,7 +1136,7 @@ vlapic_icrlo_write_handler(struct vlapic *vlapic, bool *retu)
 				break;
 
 			i = vm_apicid2vcpuid(vlapic->vm, dest);
-			if (i >= vm_get_maxcpus(vlapic->vm) ||
+			if (i < 0 || i >= vm_get_maxcpus(vlapic->vm) ||
 			    i == vlapic->vcpuid)
 				break;
 
@@ -1155,8 +1168,17 @@ static void
 vlapic_handle_init(struct vcpu *vcpu, void *arg)
 {
 	struct vlapic *vlapic = vm_lapic(vcpu);
+	bool waiting;
 
 	vlapic_reset(vlapic);
+	/*
+	 * Intel SDM 11.11.1 requires only an AP to enter wait-for-SIPI after
+	 * INIT.  The BSP restarts at the reset vector and remains runnable.
+	 * APICBASE_BSP is immutable in this vLAPIC, so it is the architectural
+	 * source of BSP provenance rather than an assumed vCPU number.
+	 */
+	waiting = (vlapic_get_apicbase(vlapic) & APICBASE_BSP) == 0;
+	vm_publish_startup_wait_rendezvous(vcpu, waiting);
 }
 
 int
@@ -1165,26 +1187,91 @@ vm_handle_ipi(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 	struct vlapic *vlapic = vm_lapic(vcpu);
 	cpuset_t *dmask = vm_exitinfo_cpuset(vcpu);
 	uint8_t vec = vme->u.ipi.vector;
+	int error;
 
 	*retu = true;
 	switch (vme->u.ipi.mode) {
 	case APIC_DELMODE_INIT: {
-		cpuset_t active, reinit;
+		struct vm *vm;
+		struct vcpu *target;
+		struct vmm_startup_delivery delivery;
+		cpuset_t active, reinit, waiting;
+		int target_id;
 
-		active = vm_active_cpus(vcpu_vm(vcpu));
-		CPU_AND(&reinit, &active, dmask);
-		if (!CPU_EMPTY(&reinit)) {
-			vm_smp_rendezvous(vcpu, reinit, vlapic_handle_init,
-			    NULL);
+		vm = vcpu_vm(vcpu);
+		/*
+		 * Select the committed startup owner for the whole INIT target
+		 * set before any side effect.  A kernel owner atomically
+		 * publishes every target under the coordinator transaction
+		 * lock; a routing error returns without falling back, because
+		 * the coordinator may already own the event and the historical
+		 * userspace exit would deliver it a second time.  The default
+		 * userspace decision publishes nothing and the historical exit
+		 * path below is unchanged.
+		 */
+		error = vm_startup_route_init_set(vm, dmask, &delivery);
+		if (error != 0)
+			return (error);
+		if (delivery.owner == VMM_STARTUP_OWNER_KERNEL) {
+			/*
+			 * The published events are now coordinator-owned and
+			 * are consumed by the frozen kernel dispatch path;
+			 * nothing is reported to userspace.
+			 */
+			*retu = false;
+			break;
 		}
-		vm_await_start(vcpu_vm(vcpu), dmask);
+		active = vm_active_cpus(vm);
+		CPU_AND(&reinit, &active, dmask);
+		CPU_ZERO(&waiting);
+		CPU_FOREACH_ISSET(target_id, dmask) {
+			target = vm_vcpu(vm, target_id);
+			KASSERT(target != NULL,
+			    ("%s: missing INIT target %d", __func__, target_id));
+			if ((vlapic_get_apicbase(vm_lapic(target)) &
+			    APICBASE_BSP) == 0)
+				CPU_SET(target_id, &waiting);
+		}
+		/*
+		 * Cover inactive destinations and active-to-inactive transitions
+		 * before rendezvous.  Publish the exact target state so a stale BSP
+		 * bit is cleared as well as AP bits being set.  Each active target
+		 * republishes its architectural state after reset, so a racing earlier
+		 * SIPI is correctly superseded by INIT.
+		 */
+		vm_publish_startup_wait(vm, dmask, &waiting);
+		if (!CPU_EMPTY(&reinit)) {
+			error = vm_smp_rendezvous(vcpu, reinit, vlapic_handle_init,
+			    NULL);
+			if (error != 0)
+				return (error);
+		}
 
 		if (!vlapic->ipi_exit)
 			*retu = false;
 
 		break;
 	}
-	case APIC_DELMODE_STARTUP:
+	case APIC_DELMODE_STARTUP: {
+		struct vmm_startup_delivery delivery;
+
+		/*
+		 * Route the SIPI target set exactly as INIT above.  A kernel
+		 * owner publishes the whole set atomically; targets not in
+		 * wait-for-SIPI discard the event at dispatch, matching the
+		 * architectural acceptance rule.  A routing error fails closed
+		 * without the historical exit.  The default userspace decision
+		 * leaves the path below unchanged.
+		 */
+		error = vm_startup_route_sipi_set(vcpu_vm(vcpu), dmask, vec,
+		    &delivery);
+		if (error != 0)
+			return (error);
+		if (delivery.owner == VMM_STARTUP_OWNER_KERNEL) {
+			*retu = false;
+			break;
+		}
+
 		/*
 		 * Ignore SIPIs in any state other than wait-for-SIPI
 		 */
@@ -1206,6 +1293,7 @@ vm_handle_ipi(struct vcpu *vcpu, struct vm_exit *vme, bool *retu)
 		}
 
 		break;
+	}
 	default:
 		__assert_unreachable();
 	}
@@ -1565,6 +1653,19 @@ vlapic_reset(struct vlapic *vlapic)
 {
 	struct LAPIC *lapic;
 
+	/*
+	 * INIT resets the architectural timer state.  Cancel the host timer
+	 * before clearing that state so a callout armed by the pre-INIT guest
+	 * cannot inject an interrupt after reset.  Taking the timer lock also
+	 * serializes with a callback which has begun dispatch but has not yet
+	 * inspected callout_active().
+	 */
+	VLAPIC_TIMER_LOCK(vlapic);
+	callout_stop(&vlapic->callout);
+	bzero(&vlapic->timer_fire_bt, sizeof(vlapic->timer_fire_bt));
+	bzero(&vlapic->timer_period_bt, sizeof(vlapic->timer_period_bt));
+	VLAPIC_TIMER_UNLOCK(vlapic);
+
 	lapic = vlapic->apic_page;
 	bzero(lapic, sizeof(struct LAPIC));
 
@@ -1580,6 +1681,16 @@ vlapic_reset(struct vlapic *vlapic)
 	vlapic_dcr_write_handler(vlapic);
 
 	vlapic->svr_last = lapic->svr;
+}
+
+void
+vlapic_reset_startup(struct vcpu *vcpu)
+{
+
+	KASSERT(vcpu != NULL, ("%s: missing vCPU", __func__));
+	KASSERT(vcpu_get_state(vcpu, NULL) == VCPU_FROZEN,
+	    ("%s: vCPU is not frozen", __func__));
+	vlapic_reset(vm_lapic(vcpu));
 }
 
 void
@@ -1800,7 +1911,7 @@ vlapic_set_tmr_level(struct vlapic *vlapic, uint32_t dest, bool phys,
 
 #ifdef BHYVE_SNAPSHOT
 static void
-vlapic_reset_callout(struct vlapic *vlapic, uint32_t ccr)
+vlapic_reset_callout_locked(struct vlapic *vlapic, uint32_t ccr)
 {
 	/* The implementation is similar to the one in the
 	 * `vlapic_icrtmr_write_handler` function
@@ -1808,7 +1919,8 @@ vlapic_reset_callout(struct vlapic *vlapic, uint32_t ccr)
 	sbintime_t sbt;
 	struct bintime bt;
 
-	VLAPIC_TIMER_LOCK(vlapic);
+	KASSERT(VLAPIC_TIMER_LOCKED(vlapic),
+	    ("%s: timer is not locked", __func__));
 
 	bt = vlapic->timer_freq_bt;
 	bintime_mul(&bt, ccr);
@@ -1832,7 +1944,154 @@ vlapic_reset_callout(struct vlapic *vlapic, uint32_t ccr)
 		}
 	}
 
-	VLAPIC_TIMER_UNLOCK(vlapic);
+}
+
+/*
+ * This mirrors one fixed STRUCT_VLAPIC per-vCPU record.  It is only staging:
+ * preserve the existing individual field operations in vlapic_snapshot().
+ */
+CTASSERT(sizeof(struct LAPIC) <= PAGE_SIZE);
+struct vlapic_snapshot_state {
+	union {
+		uint8_t		apic_page[PAGE_SIZE];
+		struct LAPIC	lapic;
+	} apic;
+	uint32_t	esr_pending;
+	struct bintime	timer_freq_bt;
+	uint8_t		isrvec_stk[ISRVEC_STK_SIZE];
+	int		isrvec_stk_top;
+	uint32_t	lvt_last[VLAPIC_MAXLVT_INDEX + 1];
+	uint32_t	ccr;
+};
+
+static void
+vlapic_snapshot_capture_locked(struct vlapic *vlapic,
+    struct vlapic_snapshot_state *state)
+{
+	int i;
+
+	KASSERT(VLAPIC_TIMER_LOCKED(vlapic),
+	    ("%s: timer is not locked", __func__));
+	memcpy(state->apic.apic_page, vlapic->apic_page,
+	    sizeof(state->apic.apic_page));
+	state->esr_pending = vlapic->esr_pending;
+	state->timer_freq_bt = vlapic->timer_freq_bt;
+	memcpy(state->isrvec_stk, vlapic->isrvec_stk,
+	    sizeof(state->isrvec_stk));
+	state->isrvec_stk_top = vlapic->isrvec_stk_top;
+	/* lvt_last is read by the callout path without the timer lock. */
+	for (i = 0; i <= VLAPIC_MAXLVT_INDEX; i++)
+		state->lvt_last[i] = atomic_load_acq_32(&vlapic->lvt_last[i]);
+	state->ccr = vlapic_get_ccr_locked(vlapic);
+}
+
+static bool
+vlapic_snapshot_lvt_state_valid(const struct vlapic_snapshot_state *state)
+{
+	const struct LAPIC *lapic;
+
+	lapic = &state->apic.lapic;
+	return (state->lvt_last[APIC_LVT_CMCI] == lapic->lvt_cmci &&
+	    state->lvt_last[APIC_LVT_TIMER] == lapic->lvt_timer &&
+	    state->lvt_last[APIC_LVT_THERMAL] == lapic->lvt_thermal &&
+	    state->lvt_last[APIC_LVT_PMC] == lapic->lvt_pcint &&
+	    state->lvt_last[APIC_LVT_LINT0] == lapic->lvt_lint0 &&
+	    state->lvt_last[APIC_LVT_LINT1] == lapic->lvt_lint1 &&
+	    state->lvt_last[APIC_LVT_ERROR] == lapic->lvt_error);
+}
+
+static bool
+vlapic_snapshot_isr_stack_valid(const struct vlapic_snapshot_state *state)
+{
+	const struct LAPIC *lapic;
+	const uint32_t *isrptr;
+	int i, idx, lastprio, vector;
+
+	if (state->isrvec_stk_top < 0 ||
+	    state->isrvec_stk_top >= ISRVEC_STK_SIZE ||
+	    state->isrvec_stk[0] != 0)
+		return (false);
+
+	lastprio = -1;
+	for (i = 1; i <= state->isrvec_stk_top; i++) {
+		if (PRIO(state->isrvec_stk[i]) <= lastprio)
+			return (false);
+		lastprio = PRIO(state->isrvec_stk[i]);
+	}
+
+	lapic = &state->apic.lapic;
+	isrptr = &lapic->isr0;
+	i = 1;
+	for (vector = 0; vector < 256; vector++) {
+		idx = (vector / 32) * 4;
+		if ((isrptr[idx] & (UINT32_C(1) << (vector % 32))) == 0)
+			continue;
+		if (i > state->isrvec_stk_top ||
+		    state->isrvec_stk[i] != vector)
+			return (false);
+		i++;
+	}
+	return (i == state->isrvec_stk_top + 1);
+}
+
+static bool
+vlapic_snapshot_state_valid(const struct vlapic_snapshot_state *state)
+{
+	struct bintime expected;
+	int divisor;
+
+	if (!vlapic_snapshot_lvt_state_valid(state) ||
+	    !vlapic_snapshot_isr_stack_valid(state))
+		return (false);
+	/* Only bits 0, 1, and 3 are architecturally defined in the TDCR. */
+	if ((state->apic.lapic.dcr_timer & ~UINT32_C(0xb)) != 0 ||
+	    state->ccr > state->apic.lapic.icr_timer)
+		return (false);
+	if (state->timer_freq_bt.sec == 0 && state->timer_freq_bt.frac == 0)
+		return (false);
+
+	divisor = vlapic_timer_divisor(state->apic.lapic.dcr_timer);
+	FREQ2BT(VLAPIC_BUS_FREQ / divisor, &expected);
+	return (bintime_cmp(&state->timer_freq_bt, &expected, ==));
+}
+
+static void
+vlapic_snapshot_restore_locked(struct vlapic *vlapic,
+    const struct vlapic_snapshot_state *state)
+{
+	int i;
+
+	KASSERT(VLAPIC_TIMER_LOCKED(vlapic),
+	    ("%s: timer is not locked", __func__));
+	/* Deadlines are source-host-relative; restore from the saved CCR instead. */
+	callout_stop(&vlapic->callout);
+	memcpy(vlapic->apic_page, state->apic.apic_page,
+	    sizeof(state->apic.apic_page));
+	/*
+	 * 'svr_last' is deliberately not part of the wire record.  It is a
+	 * shadow read only by vlapic_svr_write_handler() to detect the next
+	 * APIC_SVR_ENABLE edge (which stops/starts the LVT timer and masks
+	 * the LVTs).  Every writer of the SVR updates the shadow immediately
+	 * after the register, so in any quiesced (checkpointable) state the
+	 * invariant svr_last == apic_page->svr holds on the source.
+	 * Recomputing it from the restored page reestablishes that invariant
+	 * deterministically and touches nothing but the shadow itself, so
+	 * serialization would add a record field with no extra information.
+	 */
+	vlapic->svr_last = vlapic->apic_page->svr;
+	vlapic->esr_pending = state->esr_pending;
+	vlapic->timer_freq_bt = state->timer_freq_bt;
+	vlapic->timer_period_bt = state->timer_freq_bt;
+	bintime_mul(&vlapic->timer_period_bt,
+	    vlapic->apic_page->icr_timer);
+	memcpy(vlapic->isrvec_stk, state->isrvec_stk,
+	    sizeof(vlapic->isrvec_stk));
+	vlapic->isrvec_stk_top = state->isrvec_stk_top;
+	for (i = 0; i <= VLAPIC_MAXLVT_INDEX; i++)
+		atomic_store_rel_32(&vlapic->lvt_last[i], state->lvt_last[i]);
+
+	if (vlapic_enabled(vlapic) && vlapic->apic_page->icr_timer != 0)
+		vlapic_reset_callout_locked(vlapic, state->ccr);
 }
 
 int
@@ -1841,68 +2100,74 @@ vlapic_snapshot(struct vm *vm, struct vm_snapshot_meta *meta)
 	int ret;
 	struct vcpu *vcpu;
 	struct vlapic *vlapic;
-	struct LAPIC *lapic;
-	uint32_t ccr;
+	struct vlapic_snapshot_state *state, *states;
 	uint16_t i, maxcpus;
 
 	KASSERT(vm != NULL, ("%s: arg was NULL", __func__));
 
-	ret = 0;
-
 	maxcpus = vm_get_maxcpus(vm);
+	if (maxcpus == 0)
+		return (0);
+	states = mallocarray(maxcpus, sizeof(*states), M_TEMP, M_WAITOK | M_ZERO);
+	ret = 0;
 	for (i = 0; i < maxcpus; i++) {
 		vcpu = vm_vcpu(vm, i);
 		if (vcpu == NULL)
 			continue;
 		vlapic = vm_lapic(vcpu);
-
-		/* snapshot the page first; timer period depends on icr_timer */
-		lapic = vlapic->apic_page;
-		SNAPSHOT_BUF_OR_LEAVE(lapic, PAGE_SIZE, meta, ret, done);
-
-		SNAPSHOT_VAR_OR_LEAVE(vlapic->esr_pending, meta, ret, done);
-
-		SNAPSHOT_VAR_OR_LEAVE(vlapic->timer_freq_bt.sec,
-				      meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(vlapic->timer_freq_bt.frac,
-				      meta, ret, done);
-
-		/*
-		 * Timer period is equal to 'icr_timer' ticks at a frequency of
-		 * 'timer_freq_bt'.
-		 */
-		if (meta->op == VM_SNAPSHOT_RESTORE) {
-			vlapic->timer_period_bt = vlapic->timer_freq_bt;
-			bintime_mul(&vlapic->timer_period_bt, lapic->icr_timer);
+		state = &states[i];
+		if (meta->op == VM_SNAPSHOT_SAVE) {
+			VLAPIC_TIMER_LOCK(vlapic);
+			vlapic_snapshot_capture_locked(vlapic, state);
+			VLAPIC_TIMER_UNLOCK(vlapic);
 		}
 
-		SNAPSHOT_BUF_OR_LEAVE(vlapic->isrvec_stk,
-				      sizeof(vlapic->isrvec_stk),
+		/* snapshot the page first; timer period depends on icr_timer */
+		SNAPSHOT_BUF_OR_LEAVE(state->apic.apic_page,
+		    sizeof(state->apic.apic_page), meta, ret, done);
+
+		SNAPSHOT_VAR_OR_LEAVE(state->esr_pending, meta, ret, done);
+
+		SNAPSHOT_VAR_OR_LEAVE(state->timer_freq_bt.sec,
 				      meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(vlapic->isrvec_stk_top, meta, ret, done);
-
-		SNAPSHOT_BUF_OR_LEAVE(vlapic->lvt_last,
-				      sizeof(vlapic->lvt_last),
+		SNAPSHOT_VAR_OR_LEAVE(state->timer_freq_bt.frac,
 				      meta, ret, done);
 
-		if (meta->op == VM_SNAPSHOT_SAVE)
-			ccr = vlapic_get_ccr(vlapic);
+		SNAPSHOT_BUF_OR_LEAVE(state->isrvec_stk,
+				      sizeof(state->isrvec_stk),
+				      meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(state->isrvec_stk_top, meta, ret, done);
 
-		SNAPSHOT_VAR_OR_LEAVE(ccr, meta, ret, done);
+		SNAPSHOT_BUF_OR_LEAVE(state->lvt_last,
+				      sizeof(state->lvt_last),
+				      meta, ret, done);
 
-		if (meta->op == VM_SNAPSHOT_RESTORE &&
-		    vlapic_enabled(vlapic) && lapic->icr_timer != 0) {
-			/* Reset the value of the 'timer_fire_bt' and the vlapic
-			 * callout based on the value of the current count
-			 * register saved when the VM snapshot was created.
-			 * If initial count register is 0, timer is not used.
-			 * Look at "10.5.4 APIC Timer" in Software Developer Manual.
-			 */
-			vlapic_reset_callout(vlapic, ccr);
+		SNAPSHOT_VAR_OR_LEAVE(state->ccr, meta, ret, done);
+
+	}
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		/* Validate every record before changing any destination vCPU. */
+		for (i = 0; i < maxcpus; i++) {
+			if (vm_vcpu(vm, i) != NULL &&
+			    !vlapic_snapshot_state_valid(&states[i])) {
+				ret = EINVAL;
+				goto done;
+			}
+		}
+		for (i = 0; i < maxcpus; i++) {
+			vcpu = vm_vcpu(vm, i);
+			if (vcpu == NULL)
+				continue;
+			vlapic = vm_lapic(vcpu);
+			VLAPIC_TIMER_LOCK(vlapic);
+			vlapic_snapshot_restore_locked(vlapic, &states[i]);
+			VLAPIC_TIMER_UNLOCK(vlapic);
 		}
 	}
 
 done:
+	explicit_bzero(states, maxcpus * sizeof(*states));
+	free(states, M_TEMP);
 	return (ret);
 }
 #endif

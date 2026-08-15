@@ -28,6 +28,8 @@ static ssize_t test_readv(int, const struct iovec *, int);
 
 #undef VIRTIO_F_IN_ORDER
 #define	VIRTIO_F_IN_ORDER	VIRTIO14_F_IN_ORDER
+#undef VIRTIO_F_RING_PACKED
+#define	VIRTIO_F_RING_PACKED	VIRTIO14_F_RING_PACKED
 #undef VIRTIO_F_SUSPEND
 #define	VIRTIO_F_SUSPEND	VIRTIO14_F_SUSPEND
 
@@ -36,8 +38,10 @@ static ssize_t test_readv(int, const struct iovec *, int);
 struct nvlist { int unused; };
 
 static int g_open_result, g_read_calls, g_close_calls;
+static bool g_packed, g_modern;
 static ssize_t g_read_result;
 static int g_read_errno;
+static bool g_read_eintr_once;
 static bool g_readv_eintr_once;
 static size_t g_readv_bytes;
 static int g_descs, g_chain_n, g_readable, g_writable;
@@ -60,8 +64,11 @@ static void
 reset_mocks(void)
 {
 	g_open_result = 10;
+	g_packed = false;
+	g_modern = false;
 	g_read_result = 1;
 	g_read_errno = EIO;
+	g_read_eintr_once = false;
 	g_readv_eintr_once = false;
 	g_readv_bytes = 0;
 	g_read_calls = g_close_calls = 0;
@@ -73,6 +80,16 @@ reset_mocks(void)
 	g_rel_len = UINT32_MAX;
 	memset(g_rel_idx, 0, sizeof(g_rel_idx));
 	g_next_idx = 7;
+}
+
+bool
+get_config_bool_node_default(const nvlist_t *nvl __unused,
+    const char *name, bool default_value)
+{
+
+	if (strcmp(name, "packed") == 0)
+		return (g_packed);
+	return (default_value);
 }
 
 static int
@@ -94,6 +111,11 @@ static ssize_t
 test_read(int fd __unused, void *buf, size_t len)
 {
 	g_read_calls++;
+	if (g_read_eintr_once) {
+		g_read_eintr_once = false;
+		errno = EINTR;
+		return (-1);
+	}
 	if (g_read_result < 0) {
 		errno = g_read_errno;
 		return (-1);
@@ -196,7 +218,8 @@ vi_pci_select_transport(struct virtio_softc *vs, const nvlist_t *nvl __unused,
     enum virtio_pci_transport_policy policy)
 {
 	ATF_CHECK(policy == VIRTIO_PCI_LEGACY_DEFAULT);
-	vs->vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	vs->vs_transport = g_modern ? VIRTIO_PCI_TRANSPORT_MODERN :
+	    VIRTIO_PCI_TRANSPORT_LEGACY;
 	return (0);
 }
 
@@ -232,8 +255,11 @@ ATF_TC_BODY(hostile_descriptors, tc)
 	struct pci_vtrnd_softc sc;
 	struct vqueue_info vq;
 
+	/* Private host service policy, not a VirtIO request-size constant. */
+	ATF_REQUIRE_EQ(VTRND_MAX_BYTES, 65536U);
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTRND_RINGSZ;
 	sc.vrsc_fd = 10;
 	for (int kind = 0; kind < 6; kind++) {
 		reset_mocks();
@@ -250,6 +276,7 @@ ATF_TC_BODY(hostile_descriptors, tc)
 		ATF_CHECK(g_rel_calls == (kind >= 4 ? 0 : 1));
 		if (g_rel_calls != 0)
 			ATF_CHECK(g_rel_len == 0);
+		ATF_CHECK_EQ(g_needs_reset, kind == 5 ? 0 : 1);
 		ATF_CHECK(g_end_calls == 1);
 	}
 }
@@ -262,6 +289,7 @@ ATF_TC_BODY(scatter_gather, tc)
 
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTRND_RINGSZ;
 	sc.vrsc_fd = 10;
 	reset_mocks();
 	g_chain_n = 2;
@@ -284,6 +312,7 @@ ATF_TC_BODY(random_read_failures, tc)
 
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTRND_RINGSZ;
 	sc.vrsc_fd = 10;
 	for (int result = -1; result <= 0; result++) {
 		reset_mocks();
@@ -324,6 +353,7 @@ ATF_TC_BODY(read_is_bounded, tc)
 
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTRND_RINGSZ;
 	sc.vrsc_fd = 10;
 	reset_mocks();
 	g_chain_n = 2;
@@ -356,6 +386,40 @@ ATF_TC_BODY(init_failures, tc)
 	ATF_CHECK(g_read_calls == 1 && g_close_calls == 1);
 }
 
+ATF_TC_WITHOUT_HEAD(source_lifecycle);
+ATF_TC_BODY(source_lifecycle, tc)
+{
+	struct pci_vtrnd_softc *sc;
+	struct pci_vtrnd_softc badsc;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct nvlist nvl;
+
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_read_eintr_once = true;
+	ATF_REQUIRE_EQ(0, pci_vtrnd_init(&pi, &nvl));
+	ATF_CHECK_EQ(2, g_read_calls);
+	ATF_CHECK_EQ(0, g_close_calls);
+	sc = (struct pci_vtrnd_softc *)pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_REQUIRE_EQ(0, test_close(sc->vrsc_fd));
+	ATF_REQUIRE_EQ(0, pthread_mutex_destroy(&sc->vrsc_mtx));
+	free(sc);
+
+	memset(&badsc, 0, sizeof(badsc));
+	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTRND_RINGSZ;
+	reset_mocks();
+	badsc.vrsc_fd = -1;
+	pci_vtrnd_notify(&badsc, &vq);
+	ATF_CHECK_EQ(0, g_read_calls);
+	ATF_CHECK_EQ(0, g_rel_calls);
+	ATF_CHECK_EQ(0, g_ret_calls);
+	ATF_CHECK_EQ(1, g_needs_reset);
+	ATF_CHECK_EQ(1, g_end_calls);
+}
+
 ATF_TC_WITHOUT_HEAD(in_order_completions);
 ATF_TC_BODY(in_order_completions, tc)
 {
@@ -364,12 +428,14 @@ ATF_TC_BODY(in_order_completions, tc)
 
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTRND_RINGSZ;
 	sc.vrsc_fd = 10;
 	reset_mocks();
 	g_descs = 3;
 	pci_vtrnd_notify(&sc, &vq);
 
 	ATF_CHECK((vtrnd_vi_consts.vc_hv_caps & VIRTIO_F_IN_ORDER) != 0);
+	ATF_CHECK((vtrnd_vi_consts.vc_hv_caps & VIRTIO_F_RING_PACKED) == 0);
 	ATF_CHECK((vtrnd_vi_consts.vc_hv_caps & VIRTIO_F_SUSPEND) != 0);
 	ATF_CHECK(vtrnd_vi_consts.vc_suspend == vi_pci_lifecycle_noop);
 	ATF_CHECK(vtrnd_vi_consts.vc_resume_device ==
@@ -384,6 +450,66 @@ ATF_TC_BODY(in_order_completions, tc)
 	ATF_CHECK_EQ(g_end_calls, 1);
 }
 
+ATF_TC_WITHOUT_HEAD(packed_requires_explicit_modern_opt_in);
+ATF_TC_BODY(packed_requires_explicit_modern_opt_in, tc)
+{
+	struct pci_vtrnd_softc *sc;
+	struct pci_devinst pi;
+	struct nvlist nvl;
+
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_packed = true;
+	ATF_CHECK_EQ(1, pci_vtrnd_init(&pi, &nvl));
+	ATF_CHECK_EQ(1, g_close_calls);
+
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_packed = true;
+	g_modern = true;
+	ATF_REQUIRE_EQ(0, pci_vtrnd_init(&pi, &nvl));
+	sc = (struct pci_vtrnd_softc *)pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK((sc->vrsc_consts.vc_hv_caps &
+	    VIRTIO_F_RING_PACKED) != 0);
+	ATF_CHECK((vtrnd_vi_consts.vc_hv_caps &
+	    VIRTIO_F_RING_PACKED) == 0);
+	ATF_REQUIRE_EQ(0, test_close(sc->vrsc_fd));
+	ATF_REQUIRE_EQ(0, pthread_mutex_destroy(&sc->vrsc_mtx));
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(save_state_uses_common_queue_only);
+ATF_TC_BODY(save_state_uses_common_queue_only, tc)
+{
+
+	/*
+	 * The entropy source and bytes are host-local, non-replayable state.
+	 * This device therefore has no private configuration payload and uses
+	 * only the common transport/queue snapshot codec.
+	 */
+	ATF_CHECK_EQ(vtrnd_vi_consts.vc_cfgsize, 0);
+	ATF_CHECK_EQ(vtrnd_vi_consts.vc_snapshot, NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(notification_budget_is_queue_bounded);
+ATF_TC_BODY(notification_budget_is_queue_bounded, tc)
+{
+	struct pci_vtrnd_softc sc;
+	struct vqueue_info vq;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = 2;
+	sc.vrsc_fd = 10;
+	reset_mocks();
+	g_descs = 3;
+	pci_vtrnd_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_read_calls, 2);
+	ATF_CHECK_EQ(g_rel_calls, 2);
+	ATF_CHECK_EQ(g_descs, 1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, hostile_descriptors);
@@ -391,6 +517,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, random_read_failures);
 	ATF_TP_ADD_TC(tp, read_is_bounded);
 	ATF_TP_ADD_TC(tp, init_failures);
+	ATF_TP_ADD_TC(tp, source_lifecycle);
 	ATF_TP_ADD_TC(tp, in_order_completions);
+	ATF_TP_ADD_TC(tp, packed_requires_explicit_modern_opt_in);
+	ATF_TP_ADD_TC(tp, save_state_uses_common_queue_only);
+	ATF_TP_ADD_TC(tp, notification_budget_is_queue_bounded);
 	return (atf_no_error());
 }

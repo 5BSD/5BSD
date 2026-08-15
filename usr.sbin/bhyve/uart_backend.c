@@ -52,16 +52,21 @@
 
 #include "debug.h"
 #include "mevent.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "uart_backend.h"
+#include "uart_backend_model.h"
 
 struct ttyfd {
 	bool	opened;
 	bool	is_socket;
+	bool	is_stdio;
 	int	rfd;		/* fd for reading */
 	int	wfd;		/* fd for writing, may be == rfd */
 };
 
-#define	FIFOSZ	16
+#define	FIFOSZ	((int)UART_RXFIFO_CAPACITY)
 
 struct fifo {
 	uint8_t	buf[FIFOSZ];
@@ -87,6 +92,7 @@ struct uart_socket_softc {
 };
 
 static bool uart_stdio;		/* stdio in use for i/o */
+static bool uart_stdio_tty;
 static struct termios tio_stdio_orig;
 
 static void uart_tcp_disconnect(struct uart_softc *);
@@ -94,24 +100,31 @@ static void uart_tcp_disconnect(struct uart_softc *);
 static void
 ttyclose(void)
 {
-	tcsetattr(STDIN_FILENO, TCSANOW, &tio_stdio_orig);
+	if (uart_stdio_tty)
+		(void)tcsetattr(STDIN_FILENO, TCSANOW, &tio_stdio_orig);
 }
 
-static void
+static int
 ttyopen(struct ttyfd *tf)
 {
 	struct termios orig, new;
 
-	tcgetattr(tf->rfd, &orig);
+	if (!isatty(tf->rfd))
+		return (0);
+	if (tcgetattr(tf->rfd, &orig) != 0)
+		return (-1);
 	new = orig;
 	cfmakeraw(&new);
 	new.c_cflag |= CLOCAL;
-	tcsetattr(tf->rfd, TCSANOW, &new);
-	if (uart_stdio) {
+	if (tcsetattr(tf->rfd, TCSANOW, &new) != 0)
+		return (-1);
+	if (tf->is_stdio) {
 		tio_stdio_orig = orig;
+		uart_stdio_tty = true;
 		atexit(ttyclose);
 	}
 	raw_stdio = 1;
+	return (0);
 }
 
 static int
@@ -156,7 +169,8 @@ uart_rxfifo_getchar(struct uart_softc *sc)
 		if (wasfull) {
 			if (sc->tty.opened) {
 				error = mevent_enable(sc->mev);
-				assert(error == 0);
+				if (error != 0)
+					warnc(error, "uart: cannot enable receive event");
 			}
 		}
 		return (c);
@@ -188,7 +202,8 @@ rxfifo_putchar(struct uart_softc *sc, uint8_t ch)
 				 * Disable mevent callback if the FIFO is full.
 				 */
 				error = mevent_disable(sc->mev);
-				assert(error == 0);
+				if (error != 0)
+					warnc(error, "uart: cannot disable receive event");
 			}
 		}
 		return (0);
@@ -231,12 +246,18 @@ uart_rxfifo_putchar(struct uart_softc *sc, uint8_t ch, bool loopback)
 	 * before considering the socket.  This is unconditional so the full
 	 * console stream is captured even when no client is attached.
 	 */
-	if (sc->log_fd >= 0)
-		(void)write(sc->log_fd, &ch, 1);
+	if (sc->log_fd >= 0) {
+		ssize_t n;
+
+		do {
+			n = write(sc->log_fd, &ch, 1);
+		} while (n < 0 && errno == EINTR);
+	}
 
 	if (sc->tty.opened) {
 		/* write returning -1 means disconnected. */
-		if (ttywrite(&sc->tty, ch) == -1 && sc->tty.is_socket)
+		if (ttywrite(&sc->tty, ch) == -1 && sc->tty.is_socket &&
+		    errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)
 			uart_tcp_disconnect(sc);
 		return (0);
 	} else {
@@ -254,6 +275,10 @@ uart_rxfifo_reset(struct uart_softc *sc, int size)
 	int error;
 
 	fifo = &sc->rxfifo;
+	if (size < 1)
+		size = 1;
+	else if (size > FIFOSZ)
+		size = FIFOSZ;
 	bzero(fifo, sizeof(struct fifo));
 	fifo->size = size;
 
@@ -272,7 +297,8 @@ uart_rxfifo_reset(struct uart_softc *sc, int size)
 		 * on the tty fd.
 		 */
 		error = mevent_enable(sc->mev);
-		assert(error == 0);
+		if (error != 0)
+			warnc(error, "uart: cannot enable receive event");
 	}
 }
 
@@ -286,17 +312,71 @@ uart_rxfifo_size(struct uart_softc *sc __unused)
 int
 uart_rxfifo_snapshot(struct uart_softc *sc, struct vm_snapshot_meta *meta)
 {
+	uint32_t rindex, windex, num, size;
+	uint8_t buf[FIFOSZ];
 	int ret;
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->rxfifo.rindex, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rxfifo.windex, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rxfifo.num, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rxfifo.size, meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(sc->rxfifo.buf, sizeof(sc->rxfifo.buf),
-	    meta, ret, done);
+	if (sc == NULL || meta == NULL)
+		return (EINVAL);
+	rindex = (uint32_t)sc->rxfifo.rindex;
+	windex = (uint32_t)sc->rxfifo.windex;
+	num = (uint32_t)sc->rxfifo.num;
+	size = (uint32_t)sc->rxfifo.size;
+	memcpy(buf, sc->rxfifo.buf, sizeof(buf));
+	SNAPSHOT_LE32_OR_LEAVE(rindex, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(windex, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(num, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(size, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(buf, sizeof(buf), meta, ret, done);
+	if (!uart_rxfifo_state_valid(rindex, windex, num, size)) {
+		ret = EINVAL;
+		goto done;
+	}
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		sc->rxfifo.rindex = (int)rindex;
+		sc->rxfifo.windex = (int)windex;
+		sc->rxfifo.num = (int)num;
+		sc->rxfifo.size = (int)size;
+		memcpy(sc->rxfifo.buf, buf, sizeof(buf));
+	}
 
 done:
 	return (ret);
+}
+
+int
+uart_snapshot_pause(struct uart_softc *sc)
+{
+	int error;
+
+	if (sc == NULL)
+		return (EINVAL);
+	pthread_mutex_lock(&sc->mtx);
+	error = 0;
+	if (sc->tty.opened && sc->mev != NULL)
+		error = mevent_disable(sc->mev);
+	if (error != 0)
+		pthread_mutex_unlock(&sc->mtx);
+	return (error);
+}
+
+int
+uart_snapshot_resume(struct uart_softc *sc)
+{
+	int error;
+
+	if (sc == NULL)
+		return (EINVAL);
+	error = 0;
+	if (sc->tty.opened && sc->mev != NULL && rxfifo_available(sc))
+		error = mevent_enable(sc->mev);
+	/*
+	 * Preserve pause ownership on failure so the caller can retry resume.
+	 * The mutex was intentionally retained by uart_snapshot_pause().
+	 */
+	if (error == 0)
+		pthread_mutex_unlock(&sc->mtx);
+	return (error);
 }
 #endif
 
@@ -312,11 +392,8 @@ uart_tcp_listener(int fd, enum ev_type type __unused, void *arg)
 	struct uart_softc *sc = socket_softc->softc;
 	int conn_fd;
 
-	conn_fd = accept(fd, NULL, NULL);
+	conn_fd = accept4(fd, NULL, NULL, SOCK_NONBLOCK | SOCK_CLOEXEC);
 	if (conn_fd == -1)
-		goto clean;
-
-	if (fcntl(conn_fd, F_SETFL, O_NONBLOCK) != 0)
 		goto clean;
 
 	pthread_mutex_lock(&sc->mtx);
@@ -330,6 +407,12 @@ uart_tcp_listener(int fd, enum ev_type type __unused, void *arg)
 		sc->tty.opened = true;
 		sc->mev = mevent_add(sc->tty.rfd, EVF_READ, socket_softc->drain,
 		    socket_softc->arg);
+		if (sc->mev == NULL) {
+			sc->tty.opened = false;
+			sc->tty.rfd = sc->tty.wfd = -1;
+			pthread_mutex_unlock(&sc->mtx);
+			goto clean;
+		}
 	}
 
 	pthread_mutex_unlock(&sc->mtx);
@@ -350,7 +433,10 @@ clean:
 static void
 uart_tcp_disconnect(struct uart_softc *sc)
 {
-	mevent_delete_close(sc->mev);
+	if (sc->mev != NULL)
+		(void)mevent_delete_close(sc->mev);
+	else if (sc->tty.rfd >= 0)
+		(void)close(sc->tty.rfd);
 	sc->mev = NULL;
 	sc->tty.opened = false;
 	sc->tty.rfd = sc->tty.wfd = -1;
@@ -363,6 +449,7 @@ uart_stdio_backend(struct uart_softc *sc)
 	cap_rights_t rights;
 	cap_ioctl_t cmds[] = { TIOCGETA, TIOCSETA, TIOCGWINSZ };
 #endif
+	int rflags, wflags;
 
 	if (uart_stdio)
 		return (-1);
@@ -370,11 +457,18 @@ uart_stdio_backend(struct uart_softc *sc)
 	sc->tty.rfd = STDIN_FILENO;
 	sc->tty.wfd = STDOUT_FILENO;
 	sc->tty.opened = true;
+	sc->tty.is_stdio = true;
 
-	if (fcntl(sc->tty.rfd, F_SETFL, O_NONBLOCK) != 0)
+	rflags = fcntl(sc->tty.rfd, F_GETFL);
+	if (rflags == -1 ||
+	    fcntl(sc->tty.rfd, F_SETFL, rflags | O_NONBLOCK) != 0)
 		return (-1);
-	if (fcntl(sc->tty.wfd, F_SETFL, O_NONBLOCK) != 0)
+	wflags = fcntl(sc->tty.wfd, F_GETFL);
+	if (wflags == -1 ||
+	    fcntl(sc->tty.wfd, F_SETFL, wflags | O_NONBLOCK) != 0) {
+		(void)fcntl(sc->tty.rfd, F_SETFL, rflags);
 		return (-1);
+	}
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_init(&rights, CAP_EVENT, CAP_IOCTL, CAP_READ);
@@ -450,7 +544,7 @@ uart_tcp_backend(struct uart_softc *sc, const char *path,
 		goto clean;
 	}
 
-	bind_fd = socket(domain, SOCK_STREAM, 0);
+	bind_fd = socket(domain, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (bind_fd < 0)
 		goto clean;
 
@@ -478,7 +572,8 @@ uart_tcp_backend(struct uart_softc *sc, const char *path,
 	freeaddrinfo(src_addr);
 	src_addr = NULL;
 
-	if (fcntl(bind_fd, F_SETFL, O_NONBLOCK) == -1)
+	int flags = fcntl(bind_fd, F_GETFL);
+	if (flags == -1 || fcntl(bind_fd, F_SETFL, flags | O_NONBLOCK) == -1)
 		goto clean;
 
 	if (listen(bind_fd, 1) == -1) {
@@ -535,7 +630,11 @@ uart_init(void)
 		return (NULL);
 
 	sc->log_fd = -1;
-	pthread_mutex_init(&sc->mtx, NULL);
+	sc->tty.rfd = sc->tty.wfd = -1;
+	if (pthread_mutex_init(&sc->mtx, NULL) != 0) {
+		free(sc);
+		return (NULL);
+	}
 
 	return (sc);
 }
@@ -581,6 +680,9 @@ uart_tty_open(struct uart_softc *sc, const char *path,
 	 * Peel off an optional ",log=<path>" suffix before dispatching, so the
 	 * backends see only their own path syntax.  Works for any backend.
 	 */
+	if (sc == NULL || path == NULL || drain == NULL || sc->tty.opened ||
+	    sc->mev_listen != NULL)
+		return (-1);
 	cleanpath = strdup(path);
 	if (cleanpath == NULL)
 		return (-1);
@@ -600,15 +702,49 @@ uart_tty_open(struct uart_softc *sc, const char *path,
 		retval = uart_tcp_backend(sc, path, drain, arg);
 	else
 		retval = uart_tty_backend(sc, path);
+	if (retval != 0) {
+		if (sc->tty.is_stdio) {
+			uart_stdio = false;
+			uart_stdio_tty = false;
+		} else if (sc->tty.opened && sc->tty.rfd >= 0) {
+			(void)close(sc->tty.rfd);
+		}
+		sc->tty.opened = false;
+		sc->tty.is_socket = false;
+		sc->tty.is_stdio = false;
+		sc->tty.rfd = sc->tty.wfd = -1;
+		if (sc->log_fd >= 0) {
+			(void)close(sc->log_fd);
+			sc->log_fd = -1;
+		}
+	}
 
 	/*
 	 * A connection-oriented protocol should wait for a connection,
 	 * so it may not listen to anything during initialization.
 	 */
 	if (retval == 0 && !sc->tty.is_socket) {
-		ttyopen(&sc->tty);
-		sc->mev = mevent_add(sc->tty.rfd, EVF_READ, drain, arg);
-		assert(sc->mev != NULL);
+		if (ttyopen(&sc->tty) != 0 ||
+		    (sc->mev = mevent_add(sc->tty.rfd, EVF_READ, drain,
+		    arg)) == NULL) {
+			if (sc->tty.is_stdio) {
+				if (uart_stdio_tty)
+					(void)tcsetattr(STDIN_FILENO, TCSANOW,
+					    &tio_stdio_orig);
+				uart_stdio = false;
+				uart_stdio_tty = false;
+				raw_stdio = 0;
+			} else if (sc->tty.rfd >= 0) {
+				(void)close(sc->tty.rfd);
+			}
+			sc->tty.opened = false;
+			sc->tty.rfd = sc->tty.wfd = -1;
+			if (sc->log_fd >= 0) {
+				(void)close(sc->log_fd);
+				sc->log_fd = -1;
+			}
+			retval = -1;
+		}
 	}
 
 	free(cleanpath);

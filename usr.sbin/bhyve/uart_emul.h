@@ -49,6 +49,8 @@ int	uart_ns16550_tty_open(struct uart_ns16550_softc *sc,
 #ifdef BHYVE_SNAPSHOT
 int	uart_ns16550_snapshot(struct uart_ns16550_softc *sc,
 	    struct vm_snapshot_meta *meta);
+int	uart_ns16550_pause(struct uart_ns16550_softc *sc);
+int	uart_ns16550_resume(struct uart_ns16550_softc *sc);
 #endif
 
 uint32_t uart_pl011_read(struct uart_pl011_softc *sc, int offset);

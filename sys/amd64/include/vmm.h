@@ -33,6 +33,8 @@
 #include <sys/sdt.h>
 #include <x86/segments.h>
 
+#include <dev/vmm/vmm_startup_mode.h>
+
 struct vcpu;
 struct vm_snapshot_meta;
 
@@ -112,6 +114,21 @@ enum x2apic_state {
 	X2APIC_STATE_LAST
 };
 
+#define	VM_CPU_COMPAT_VERSION		1U
+#define	VM_CPU_COMPAT_F_NESTED_VMX	0x00000001U
+#define	VM_CPU_COMPAT_F_VALID		VM_CPU_COMPAT_F_NESTED_VMX
+struct vm_cpu_compat {
+	uint32_t	version;
+	uint32_t	flags;
+	uint64_t	xcr0_allowed;
+	uint32_t	xsave_max_size;
+	uint32_t	x2apic_state;
+	uint64_t	tsc_frequency;
+	uint64_t	nested_capability_signature;
+	uint64_t	nested_schema_signature;
+};
+_Static_assert(sizeof(struct vm_cpu_compat) == 48, "ABI");
+
 #define	VM_INTINFO_VECTOR(info)	((info) & 0xff)
 #define	VM_INTINFO_DEL_ERRCODE	0x800
 #define	VM_INTINFO_RSVD		0x7ffff000
@@ -122,17 +139,33 @@ enum x2apic_state {
 #define	VM_INTINFO_HWEXCEPTION	(3 << 8)
 #define	VM_INTINFO_SWINTR	(4 << 8)
 
+/*
+ * Kernel-owned provenance for a pending x86 exception.  The numeric values
+ * are private value semantics, not a VM-entry encoding or snapshot ABI.
+ */
+enum vm_exception_class {
+	VM_EXCEPTION_NONE = 0,
+	VM_EXCEPTION_FAULT,
+	VM_EXCEPTION_TRAP,
+	VM_EXCEPTION_ICEBP,
+	VM_EXCEPTION_TASK_SWITCH,
+	VM_EXCEPTION_CLASS_LAST,
+};
+
 #ifdef _KERNEL
 #define	VMM_VCPU_MD_FIELDS						\
 	struct vlapic	*vlapic;	/* (i) APIC device model */	\
 	enum x2apic_state x2apic_state;	/* (i) APIC mode */		\
-	uint64_t	exitintinfo;	/* (i) events pending at VM exit */ \
-	int		nmi_pending;	/* (i) NMI pending */		\
-	int		extint_pending;	/* (i) INTR pending */		\
-	int		exception_pending; /* (i) exception pending */	\
-	int		exc_vector;	/* (x) exception collateral */	\
-	int		exc_errcode_valid;				\
-	uint32_t	exc_errcode;					\
+	struct mtx	event_mtx;	/* (o) pending-event ownership */ \
+	uint64_t	exitintinfo;	/* (i) [e] events at VM exit */ \
+	int		nmi_pending;	/* (i) [e] NMI pending */	\
+	int		extint_pending;	/* (i) [e] INTR pending */	\
+	int		exception_pending; /* (i) [e] exception pending */ \
+	int		exception_injecting; /* (x) [e] reserved producer */ \
+	int		exc_vector;	/* (x) [e] exception collateral */ \
+	enum vm_exception_class exc_class; /* (x) [e] provenance */ \
+	int		exc_errcode_valid;	/* (x) [e] */		\
+	uint32_t	exc_errcode;	/* (x) [e] */			\
 	struct savefpu	*guestfpu;	/* (a,i) guest fpu state */	\
 	uint64_t	guest_xcr0;	/* (i) guest %xcr0 register */	\
 	struct vm_exit	exitinfo;	/* (x) exit reason and collateral */ \
@@ -141,13 +174,14 @@ enum x2apic_state {
 	uint64_t	tsc_offset	/* (o) TSC offsetting */
 
 #define	VMM_VM_MD_FIELDS						\
-	cpuset_t	startup_cpus;	/* (i) [r] waiting for startup */ \
+	volatile uint64_t event_generation; /* (o) all-vCPU event epoch */ \
 	void		*iommu;		/* (x) iommu-specific data */	\
 	struct vioapic	*vioapic;	/* (i) virtual ioapic */	\
 	struct vatpic	*vatpic;	/* (i) virtual atpic */		\
 	struct vatpit	*vatpit;	/* (i) virtual atpit */		\
 	struct vpmtmr	*vpmtmr;	/* (i) virtual ACPI PM timer */	\
 	struct vrtc	*vrtc;		/* (o) virtual RTC */		\
+	struct vpvclock	*vpvclock;	/* (o) KVM paravirtual clock */	\
 	struct vhpet	*vhpet		/* (i) virtual HPET */
 
 struct vm;
@@ -156,6 +190,11 @@ struct vm_mem;
 struct seg_desc;
 struct vm_exit;
 struct vm_run;
+struct vmm_event_state;
+struct vmm_startup_entry_owner;
+struct vmm_snapshot_x86_transaction;
+struct vmm_snapshot_x86_vcpu_stage;
+struct vmm_snapshot_x86_restore_plan;
 struct vhpet;
 struct vioapic;
 struct vlapic;
@@ -176,10 +215,17 @@ DECLARE_VMMOPS_FUNC(void, modresume, (void));
 DECLARE_VMMOPS_FUNC(void, modsuspend, (void));
 DECLARE_VMMOPS_FUNC(void *, init, (struct vm *vm, struct pmap *pmap));
 DECLARE_VMMOPS_FUNC(int, run, (void *vcpui, register_t pc,
-    struct pmap *pmap, struct vm_eventinfo *info));
+    struct pmap *pmap, struct vm_eventinfo *info,
+    struct vmm_startup_entry_owner *entry_owner));
+DECLARE_VMMOPS_FUNC(int, handle_internal_exit, (void *vcpui));
 DECLARE_VMMOPS_FUNC(void, cleanup, (void *vmi));
 DECLARE_VMMOPS_FUNC(void *, vcpu_init, (void *vmi, struct vcpu *vcpu,
     int vcpu_id));
+DECLARE_VMMOPS_FUNC(bool, startup_kernel_actions_ready, (void));
+DECLARE_VMMOPS_FUNC(int, vcpu_startup_event_step, (void *vcpui,
+    enum vmm_startup_dispatch_result *result));
+DECLARE_VMMOPS_FUNC(int, vcpu_event_cleanup_check, (void *vcpui));
+DECLARE_VMMOPS_FUNC(int, vcpu_event_cleanup, (void *vcpui));
 DECLARE_VMMOPS_FUNC(void, vcpu_cleanup, (void *vcpui));
 DECLARE_VMMOPS_FUNC(int, getreg, (void *vcpui, int num, uint64_t *retval));
 DECLARE_VMMOPS_FUNC(int, setreg, (void *vcpui, int num, uint64_t val));
@@ -189,13 +235,19 @@ DECLARE_VMMOPS_FUNC(int, setdesc, (void *vcpui, int num,
     struct seg_desc *desc));
 DECLARE_VMMOPS_FUNC(int, getcap, (void *vcpui, int num, int *retval));
 DECLARE_VMMOPS_FUNC(int, setcap, (void *vcpui, int num, int val));
+DECLARE_VMMOPS_FUNC(int, get_cpu_compat, (void *vcpui,
+    struct vm_cpu_compat *compat));
 DECLARE_VMMOPS_FUNC(struct vmspace *, vmspace_alloc,
     (vm_offset_t min, vm_offset_t max));
 DECLARE_VMMOPS_FUNC(void, vmspace_free, (struct vmspace *vmspace));
 DECLARE_VMMOPS_FUNC(struct vlapic *, vlapic_init, (void *vcpui));
 DECLARE_VMMOPS_FUNC(void, vlapic_cleanup, (struct vlapic *vlapic));
+DECLARE_VMMOPS_FUNC(int, vm_snapshot, (void *vmi,
+    struct vm_snapshot_meta *meta));
 DECLARE_VMMOPS_FUNC(int, vcpu_snapshot, (void *vcpui,
     struct vm_snapshot_meta *meta));
+DECLARE_VMMOPS_FUNC(int, vm_snapshot_complete, (void *vmi,
+    struct vm_snapshot_meta *meta, int status));
 DECLARE_VMMOPS_FUNC(int, restore_tsc, (void *vcpui, uint64_t now));
 
 struct vmm_ops {
@@ -206,8 +258,13 @@ struct vmm_ops {
 
 	vmmops_init_t		init;		/* vm-specific initialization */
 	vmmops_run_t		run;
+	vmmops_handle_internal_exit_t handle_internal_exit;
 	vmmops_cleanup_t	cleanup;
 	vmmops_vcpu_init_t	vcpu_init;
+	vmmops_startup_kernel_actions_ready_t startup_kernel_actions_ready;
+	vmmops_vcpu_startup_event_step_t vcpu_startup_event_step;
+	vmmops_vcpu_event_cleanup_check_t vcpu_event_cleanup_check;
+	vmmops_vcpu_event_cleanup_t vcpu_event_cleanup;
 	vmmops_vcpu_cleanup_t	vcpu_cleanup;
 	vmmops_getreg_t		getreg;
 	vmmops_setreg_t		setreg;
@@ -215,13 +272,16 @@ struct vmm_ops {
 	vmmops_setdesc_t	setdesc;
 	vmmops_getcap_t		getcap;
 	vmmops_setcap_t		setcap;
+	vmmops_get_cpu_compat_t	get_cpu_compat;
 	vmmops_vmspace_alloc_t	vmspace_alloc;
 	vmmops_vmspace_free_t	vmspace_free;
 	vmmops_vlapic_init_t	vlapic_init;
 	vmmops_vlapic_cleanup_t	vlapic_cleanup;
 
 	/* checkpoint operations */
+	vmmops_vm_snapshot_t	vm_snapshot;
 	vmmops_vcpu_snapshot_t	vcpu_snapshot;
+	vmmops_vm_snapshot_complete_t	vm_snapshot_complete;
 	vmmops_restore_tsc_t	restore_tsc;
 };
 
@@ -235,6 +295,9 @@ int vm_unassign_pptdev(struct vm *vm, int bus, int slot, int func);
 
 int vm_get_register(struct vcpu *vcpu, int reg, uint64_t *retval);
 int vm_set_register(struct vcpu *vcpu, int reg, uint64_t val);
+void vm_set_nextrip(struct vcpu *vcpu, uint64_t val);
+int vm_get_instruction_completion(struct vcpu *vcpu, uint64_t *rip,
+    uint32_t *inst_length, uint64_t *nextrip);
 int vm_get_seg_desc(struct vcpu *vcpu, int reg,
 		    struct seg_desc *ret_desc);
 int vm_set_seg_desc(struct vcpu *vcpu, int reg,
@@ -251,6 +314,9 @@ struct vioapic *vm_ioapic(struct vm *vm);
 struct vhpet *vm_hpet(struct vm *vm);
 int vm_get_capability(struct vcpu *vcpu, int type, int *val);
 int vm_set_capability(struct vcpu *vcpu, int type, int val);
+int vm_get_cpuid(struct vcpu *vcpu, uint32_t flags, uint32_t *eax,
+    uint32_t *ebx, uint32_t *ecx, uint32_t *edx);
+int vm_get_cpu_compat(struct vcpu *vcpu, struct vm_cpu_compat *compat);
 int vm_get_x2apic_state(struct vcpu *vcpu, enum x2apic_state *state);
 int vm_set_x2apic_state(struct vcpu *vcpu, enum x2apic_state state);
 int vm_apicid2vcpuid(struct vm *vm, int apicid);
@@ -263,11 +329,25 @@ void vm_exit_rendezvous(struct vcpu *vcpu, uint64_t rip);
 void vm_exit_astpending(struct vcpu *vcpu, uint64_t rip);
 void vm_exit_reqidle(struct vcpu *vcpu, uint64_t rip);
 int vm_snapshot_req(struct vm *vm, struct vm_snapshot_meta *meta);
+void vm_event_checkpoint_deferred_apply(void *, uint16_t, uint64_t);
+int vm_snapshot_x86_capture_all(struct vm *,
+    struct vmm_snapshot_x86_vcpu_stage *, size_t,
+    struct vmm_snapshot_x86_transaction *);
+int vm_snapshot_x86_restore_plan_create(struct vm *,
+    const struct vmm_snapshot_x86_transaction *,
+    const struct vmm_snapshot_x86_vcpu_stage *, size_t,
+    struct vmm_snapshot_x86_restore_plan **);
+int vm_snapshot_x86_restore_plan_commit(struct vm *,
+    struct vmm_snapshot_x86_restore_plan *);
+void vm_snapshot_x86_restore_plan_free(
+    struct vmm_snapshot_x86_restore_plan *);
 int vm_restore_time(struct vm *vm);
 
 #ifdef _SYS__CPUSET_H_
 cpuset_t vm_start_cpus(struct vm *vm, const cpuset_t *tostart);
-void vm_await_start(struct vm *vm, const cpuset_t *waiting);
+void vm_publish_startup_wait(struct vm *vm, const cpuset_t *targets,
+    const cpuset_t *waiting);
+void vm_publish_startup_wait_rendezvous(struct vcpu *vcpu, bool waiting);
 #endif	/* _SYS__CPUSET_H_ */
 
 /*
@@ -285,6 +365,7 @@ struct vatpic *vm_atpic(struct vm *vm);
 struct vatpit *vm_atpit(struct vm *vm);
 struct vpmtmr *vm_pmtmr(struct vm *vm);
 struct vrtc *vm_rtc(struct vm *vm);
+struct vpvclock *vm_pvclock(struct vm *vm);
 
 /*
  * Inject exception 'vector' into the guest vcpu. This function returns 0 on
@@ -299,6 +380,9 @@ struct vrtc *vm_rtc(struct vm *vm);
  */
 int vm_inject_exception(struct vcpu *vcpu, int vector, int err_valid,
     uint32_t errcode, int restart_instruction);
+int vm_inject_exception_class(struct vcpu *vcpu, int vector, int err_valid,
+    uint32_t errcode, int restart_instruction,
+    enum vm_exception_class exception_class);
 
 /*
  * This function is called after a VM-exit that occurred during exception or
@@ -328,11 +412,50 @@ int vm_entry_intinfo(struct vcpu *vcpu, uint64_t *info);
 int vm_get_intinfo(struct vcpu *vcpu, uint64_t *info1, uint64_t *info2);
 
 /*
+ * Transactional event-delivery boundary.  peek computes double/triple-fault
+ * folding without consuming either source.  commit succeeds only if both
+ * raw sources still match, then consumes them and performs any planned
+ * triple-fault suspension.  This lets an architecture backend program a
+ * private entry image before making event consumption visible.
+ */
+struct vm_intinfo_snapshot {
+	uint64_t	exitintinfo;
+	uint64_t	exception;
+	uint64_t	entry;
+	enum vm_exception_class exception_class;
+	bool		valid;
+	bool		triple_fault;
+};
+
+int vm_entry_intinfo_peek(struct vcpu *vcpu,
+    struct vm_intinfo_snapshot *snapshot);
+int vm_entry_intinfo_commit(struct vcpu *vcpu,
+    const struct vm_intinfo_snapshot *snapshot);
+
+/*
+ * Capture, conditionally clear, or replace the complete pending-event value
+ * of a frozen vCPU.  Conditional clear compares named fields so native
+ * structure padding is neither identity nor observable state.  The caller
+ * retains the frozen target and supplies stable, caller-owned, disjoint input
+ * storage for the duration of each operation.
+ * These are kernel-internal checkpoint adapters, not a serialized ABI.
+ * Restore validates the candidate before publishing any field.
+ */
+int vm_event_state_capture(struct vcpu *vcpu, struct vmm_event_state *state);
+int vm_event_state_compare_clear(struct vcpu *,
+    const struct vmm_event_state *);
+int vm_event_state_restore(struct vcpu *vcpu,
+    const struct vmm_event_state *state);
+int vm_event_state_capture_all(struct vm *, uint32_t *,
+    struct vmm_event_state *, size_t, size_t *);
+
+/*
  * Function used to keep track of the guest's TSC offset. The
  * offset is used by the virtualization extensions to provide a consistent
  * value for the Time Stamp Counter to the guest.
  */
 void vm_set_tsc_offset(struct vcpu *vcpu, uint64_t offset);
+uint64_t vm_get_tsc_offset(struct vcpu *vcpu);
 
 enum vm_reg_name vm_segment_name(int seg_encoding);
 
@@ -383,6 +506,7 @@ enum vm_cap_type {
 	VM_CAP_IPI_EXIT,
 	VM_CAP_MASK_HWINTR,
 	VM_CAP_RFLAGS_TF,
+	VM_CAP_NESTED_VMX,
 	VM_CAP_MAX
 };
 
@@ -532,6 +656,11 @@ enum vm_exitcode {
 	VM_EXITCODE_BPT,
 	VM_EXITCODE_IPI,
 	VM_EXITCODE_DB,
+	/*
+	 * Internal exit consumed by the frozen-vCPU kernel dispatcher.  It
+	 * must never be returned to userspace.
+	 */
+	VM_EXITCODE_VMM_INTERNAL,
 	VM_EXITCODE_MAX
 };
 

@@ -50,9 +50,17 @@
 #define	VIRTIO_QUEUE_RESET_TIMEOUT_US	1000000U
 #define	VIRTIO_QUEUE_RESET_POLLS					\
 	(VIRTIO_QUEUE_RESET_TIMEOUT_US / VIRTIO_RESET_POLL_DELAY_US)
+#define	VIRTIO_QUEUE_RESET_PROBES	(VIRTIO_QUEUE_RESET_POLLS + 1U)
 #if VIRTIO_QUEUE_RESET_TIMEOUT_US % VIRTIO_RESET_POLL_DELAY_US != 0
 #error "VirtIO queue reset timeout must be an integral number of polls"
 #endif
+
+static inline bool
+virtio_queue_reset_probe_should_delay(uint32_t probe)
+{
+
+	return (probe < VIRTIO_QUEUE_RESET_POLLS);
+}
 
 static inline bool
 virtio_features_subset(uint64_t available, uint64_t requested)
@@ -78,6 +86,20 @@ virtio_pci_queue_notify_size(bool notification_data)
 }
 
 /*
+ * VirtIO 1.4 sections 4.1.4.3 and 4.1.5.2.  NotificationConfigData changes
+ * only the low 16-bit notification identifier; it is independent of whether
+ * NotificationData widens the PCI transaction and supplies ring cursor data
+ * in the high 16 bits.
+ */
+static inline uint16_t
+virtio_pci_notification_identifier(uint16_t queue,
+    uint16_t queue_notif_config_data, bool notif_config_data)
+{
+
+	return (notif_config_data ? queue_notif_config_data : queue);
+}
+
+/*
  * NotificationData is implemented by the transport.  A child driver's
  * feature mask cannot override validation of the device notification window.
  */
@@ -94,10 +116,12 @@ virtio_modern_notification_data_features(uint64_t child_features,
 
 /* VirtIO 1.4 sections 2.9 and 4.1.5.2, split-ring notification data. */
 static inline uint32_t
-virtio_split_notification_data(uint16_t queue, uint16_t avail_idx)
+virtio_split_notification_data(uint16_t notification_identifier,
+    uint16_t avail_idx)
 {
 
-	return ((uint32_t)queue | (uint32_t)avail_idx << 16);
+	return ((uint32_t)notification_identifier |
+	    (uint32_t)avail_idx << 16);
 }
 
 static inline bool
@@ -151,7 +175,7 @@ virtio_config_write64_parts(bool modern, uint64_t value, uint32_t *low,
 
 /*
  * Keep only document-assigned device and legacy bits plus transport features
- * implemented by the common split-ring driver.
+ * implemented by the common virtqueue driver.
  */
 static inline uint64_t
 virtio_supported_transport_features(uint64_t features)
@@ -173,12 +197,31 @@ virtio_supported_transport_features(uint64_t features)
 	mask |= VIRTIO_RING_F_INDIRECT_DESC;
 	mask |= VIRTIO_RING_F_EVENT_IDX;
 	mask |= VIRTIO_F_VERSION_1;
+	mask |= VIRTIO_F_RING_PACKED;
 	mask |= VIRTIO_F_IN_ORDER;
 	mask |= VIRTIO_F_NOTIFICATION_DATA;
+	mask |= VIRTIO_F_NOTIF_CONFIG_DATA;
 	mask |= VIRTIO_F_RING_RESET;
 	mask |= VIRTIO_F_SUSPEND;
 
 	return (features & mask);
+}
+
+#define	VIRTIO_PACKED_QUEUE_SIZE_MAX	32768U
+
+static inline bool
+virtio_packed_queue_size_valid(uint32_t size)
+{
+
+	return (size >= 1 && size <= VIRTIO_PACKED_QUEUE_SIZE_MAX);
+}
+
+static inline bool
+virtio_queue_size_valid(bool packed, uint32_t size)
+{
+
+	return (packed ? virtio_packed_queue_size_valid(size) :
+	    virtio_split_queue_size_valid(size));
 }
 
 /*
@@ -208,6 +251,21 @@ virtio_device_suspend_complete(uint8_t status)
 	    VIRTIO_CONFIG_STATUS_SUSPEND);
 }
 
+/*
+ * VirtIO 1.4 section 3.4.1 says that a driver should not request suspend
+ * before DRIVER_OK.  Treat a device that already reports a terminal failure
+ * as ineligible too: there is no useful lifecycle handshake to start, and
+ * preserving its reset-required state is safer than adding SUSPEND to it.
+ */
+static inline bool
+virtio_device_suspend_request_allowed(uint8_t status)
+{
+
+	return ((status & (VIRTIO_CONFIG_STATUS_DRIVER_OK |
+	    VIRTIO_CONFIG_S_NEEDS_RESET | VIRTIO_CONFIG_STATUS_FAILED)) ==
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+}
+
 static inline bool
 virtio_device_resume_complete(uint8_t status)
 {
@@ -217,10 +275,42 @@ virtio_device_resume_complete(uint8_t status)
 	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
 }
 
+enum virtio_device_lifecycle_state {
+	VIRTIO_DEVICE_LIFECYCLE_FAILED,
+	VIRTIO_DEVICE_LIFECYCLE_RUNNING,
+	VIRTIO_DEVICE_LIFECYCLE_SUSPENDED,
+	VIRTIO_DEVICE_LIFECYCLE_TRANSITION
+};
+
 /*
- * The legacy MMIO register layout has no QueueReset register.  Filter the
- * feature before negotiation so a version 1 transport cannot promise a
- * queue-reset operation it has no way to perform.
+ * Classify a status sample for suspend rollback.  Failure has precedence:
+ * DRIVER_OK does not make a device usable after it requested reset or after
+ * the driver gave up.  The two completion predicates intentionally ignore
+ * unrelated cumulative status bits.
+ */
+static inline enum virtio_device_lifecycle_state
+virtio_device_lifecycle_state(uint8_t status)
+{
+
+	if ((status & (VIRTIO_CONFIG_S_NEEDS_RESET |
+	    VIRTIO_CONFIG_STATUS_FAILED)) != 0)
+		return (VIRTIO_DEVICE_LIFECYCLE_FAILED);
+	if (virtio_device_resume_complete(status))
+		return (VIRTIO_DEVICE_LIFECYCLE_RUNNING);
+	if (virtio_device_suspend_complete(status))
+		return (VIRTIO_DEVICE_LIFECYCLE_SUSPENDED);
+	return (VIRTIO_DEVICE_LIFECYCLE_TRANSITION);
+}
+
+/*
+ * The legacy MMIO register layout has no QueueReset register and predates
+ * VERSION_1-only lifecycle features.  Filter those features before
+ * negotiation so a version 1 transport cannot promise operations it has no
+ * way to perform.  NotificationConfigData is also transport-specific: MMIO
+ * has no register through which a device can provide its per-queue identifier
+ * (VirtIO 1.4 section 2.9), so it is unsupported for every MMIO version.
+ * Version 2 and later use the common modern transport and virtqueue
+ * implementations, including packed rings and device suspend.
  */
 static inline uint64_t
 virtio_mmio_supported_transport_features(uint32_t version, uint64_t features)
@@ -231,14 +321,29 @@ virtio_mmio_supported_transport_features(uint32_t version, uint64_t features)
 	else {
 		features = virtio_supported_transport_features(features);
 		features &= ~VIRTIO_F_RING_RESET;
+		features &= ~VIRTIO_F_SUSPEND;
 	}
-	/*
-	 * The MMIO transport does not yet implement the device suspend status
-	 * handshake in its bus suspend/resume methods.  Never let a child opt
-	 * into a transport feature whose lifecycle this bus cannot complete.
-	 */
-	features &= ~VIRTIO_F_SUSPEND;
+	features &= ~VIRTIO_F_NOTIF_CONFIG_DATA;
 	return (features);
+}
+
+/*
+ * Function drivers describe device-specific features.  A modern MMIO bus
+ * must add the transport features implemented by the common virtqueue and
+ * lifecycle layers before intersecting that request with the device offer.
+ */
+static inline uint64_t
+virtio_mmio_requested_transport_features(uint32_t version,
+    uint64_t child_features, uint64_t host_features)
+{
+
+	if (version <= 1)
+		return (child_features);
+	child_features |= VIRTIO_F_VERSION_1;
+	/* NotificationConfigData has no MMIO delivery/register definition. */
+	child_features |= host_features & (VIRTIO_F_RING_PACKED |
+	    VIRTIO_F_NOTIFICATION_DATA | VIRTIO_F_SUSPEND);
+	return (child_features);
 }
 
 #ifdef _KERNEL
@@ -317,6 +422,7 @@ int	 virtio_finalize_features(device_t dev);
 int	 virtio_alloc_virtqueues(device_t dev, int nvqs,
 	     struct vq_alloc_info *info);
 int	 virtio_setup_intr(device_t dev, enum intr_type type);
+void	 virtio_teardown_intr(device_t dev);
 bool	 virtio_with_feature(device_t dev, uint64_t feature);
 void	 virtio_stop(device_t dev);
 int	 virtio_config_generation(device_t dev);

@@ -4,6 +4,20 @@ Status: design proposal
 Target: FreeBSD/5BSD `bhyve` and `vmm`
 Primary architecture: amd64, with interfaces that do not prevent later arm64 work
 
+Current nested-virtualization implementation target: Intel VMX on the
+available Intel qualification host.  Shared lifecycle, validation,
+guest-memory, interrupt, DMA, and save-state interfaces must remain
+vendor-neutral.  AMD SVM is a later hardware-qualified backend; Intel-only
+VMCS fields and instructions must not leak into the portable state ABI.
+
+The active-L2 restore transaction treats a software VMCS registry as an
+owning aggregate rather than only its fixed header.  Destination-local MSR
+plan, rollback, and generation storage must be disjoint from every registry
+entry allocation on both sides of the publication exchange.  One bounded
+registry-owned overlap predicate is shared by portable checkpoint encoding
+and restore validation, and malformed registry bookkeeping fails closed
+before any workspace is acquired.
+
 ## Purpose
 
 This document describes a clean architecture for three related projects:
@@ -67,30 +81,53 @@ bhyve currently implements these Virtio PCI devices:
 | 9P transport | `usr.sbin/bhyve/pci_virtio_9p.c` |
 | Input | `usr.sbin/bhyve/pci_virtio_input.c` |
 | Vsock | `usr.sbin/bhyve/pci_virtio_vsock.c` |
+| Balloon | `usr.sbin/bhyve/pci_virtio_balloon.c` |
+| GPU 2D | `usr.sbin/bhyve/pci_virtio_gpu.c` |
+| Filesystem | `usr.sbin/bhyve/pci_virtio_fs.c` |
+| IOMMU | `usr.sbin/bhyve/pci_virtio_iommu.c` |
+| Memory | `usr.sbin/bhyve/pci_virtio_mem.c` |
+| RTC | `usr.sbin/bhyve/pci_virtio_rtc.c` |
+| Sound | `usr.sbin/bhyve/pci_virtio_snd.c` |
 
 The common split-ring implementation is in `usr.sbin/bhyve/virtio.c` and
 `virtio.h`. Modern PCI transport support is in
 `usr.sbin/bhyve/virtio_pci_modern.c`.
 
 The modern transport exposes `VIRTIO_F_VERSION_1` and allows device models to
-opt into `INDIRECT_DESC` and `RING_RESET`.  Queue reset now has a common
-generation-fenced lifecycle and device-specific quiesce callbacks for every
-existing bhyve Virtio model.  `EVENT_IDX` interrupt suppression exists in the
-split-ring core, but the available-buffer notification-suppression half is not
-complete, so no production device advertises it.  The transport does not yet
-provide a packed-ring engine, notification data, an IOMMU/access-platform
-path, or admin virtqueues.
+opt into `INDIRECT_DESC`, `EVENT_IDX`, `NOTIFICATION_DATA`, and `RING_RESET`.
+Queue reset has a common generation-fenced lifecycle and device-specific
+quiesce callbacks for every existing bhyve Virtio model.  The split-ring core
+implements both EVENT_IDX directions, including the arm-and-recheck race
+closure exercised by Linux control queues.  A provisional VirtIO-IOMMU,
+VIOT topology, per-request DMA lease, and common ACCESS_PLATFORM mapper now
+exist, but endpoint devices remain gated on end-to-end live translation
+qualification.  The modern PCI transport has a tested shared-memory
+capability builder and immutable restore topology.  The optional VirtIO-GPU
+blob aperture is its first production consumer: sparse BAR accesses are
+resolved through a bounded handler, hold the common device-private DMA lease,
+and reject an unbound alias without hiding another valid capability for the
+same BAR bytes.  Transport-neutral administration, resource, device-parts,
+group, and SR-IOV lifecycle foundations exist but are intentionally
+unadvertised until a real PCI owner/member model and administration
+virtqueues consume them.  A common packed-ring engine is implemented behind
+explicit modern-device opt-in, including indirect descriptors, event
+suppression, ordered asynchronous completion, queue reset, and versioned
+cursor/wrap state.  It remains disabled by default until the full Linux and
+5BSD live qualification matrix passes.
 
 Device feature depth is uneven. For example:
 
-- virtio-net has a single RX/TX pair, no control virtqueue, and no Virtio
-  multiqueue or RSS;
-- virtio-blk has flush, topology, indirect descriptors, optional discard, and
-  bounded single-segment write-zeroes, but not multiqueue;
+- virtio-net has a control virtqueue, one through eight RX/TX pairs,
+  multiqueue, RSS, hash reporting, MTU enforcement, and backend-qualified
+  checksum/segmentation offloads;
+- virtio-blk has flush, topology, indirect descriptors, one through eight
+  request queues, write-cache configuration, optional discard, and bounded
+  single-segment write-zeroes;
 - virtio-scsi has a working command path but advertises few optional features;
-- console, RNG, 9P, input, and vsock have modern transport coverage and the
-  common reset lifecycle; they still need a versioned save/restore state
-  contract.
+- console, RNG, 9P, input, and vsock have modern transport coverage, the
+  common reset lifecycle, and fixed-width versioned save/restore contracts.
+  Live checkpoint cases remain mandatory because source serializers cannot
+  prove external-backend reconstruction or event-source rearming.
 
 ### Save and restore
 
@@ -108,35 +145,101 @@ explicitly says that the format is unstable. The current format consists of a
 memory file, a `.kern` file, and JSON metadata containing offsets into raw
 serialized data.
 
-The main architectural limitations are:
+The current checkpoint publication manifest is version 3.  It identifies the
+source architecture and a machine ABI before naming the atomically published
+data, kernel, and metadata members.  The current machine ABI is
+`bhyve-virtio-v2`.  Since this format has not been released, restore accepts
+only the current manifest and machine ABI and rejects every obsolete version,
+unknown architecture, and architecture/machine mismatch.  This is an initial
+compatibility gate, not
+the final migration header described below.  The metadata device-section list
+and kernel-state section lists are also now treated as exact compatibility
+manifests: restore rejects empty or duplicate names and any missing, changed,
+or extra source/destination section before publishing that class of state.
+Device ordering may differ because fabric restore phases deliberately reorder
+publication.
 
-- no stable top-level or per-device version contract;
-- serialization is closely coupled to C structure layout;
-- no machine type or CPU compatibility contract;
-- modern Virtio explicitly returns `EOPNOTSUPP` from
-  `vi_pci_snapshot()`;
-- only a subset of devices has pause, resume, and snapshot callbacks;
+Versioned basic metadata also records the exact guest-visible NUMA identity:
+each memory-domain size and each vCPU-to-domain assignment.  Its canonical
+fixed-width text codec is independent of host byte order and word size.
+Restore validates the complete tuple transactionally before guest memory is
+allocated or ACPI affinity is published.  Destination host domain-set policy
+remains a local allocation choice and is not serialized as guest identity.
+The complete NUMA tuple is mandatory; absent, partial, or unknown-version
+metadata fails closed.  Live multi-domain checkpoint/restore remains a release
+gate.
+
+New checkpoints also record a canonical, architecture-tagged CPU contract.
+On amd64, bhyve asks the kernel for the CPUID values its guest emulation
+actually exposes instead of executing host CPUID in userspace.  The
+introspection form removes mutable OSXSAVE and x2APIC execution state,
+canonicalizes the current-size XSAVE field, and derives both Intel topology
+leaves 0x0b and 0x1f from the configured guest topology.  Separate fixed records bind the
+maximum XCR0/XSAVE policy, configured x2APIC mode, guest-visible TSC
+frequency, and, when nested VMX is enabled, exact virtual-VMX capability and
+portable VMCS-schema signatures.  Restore compares the complete mandatory
+contract after platform policy is configured and before any vCPU runs;
+absent, malformed, or partially encoded contracts fail closed.  The initial policy is
+an intentionally conservative exact match.  Future named CPU models or TSC
+scaling must introduce an explicit compatibility policy instead of
+reinterpreting these records.
+
+The remaining architectural limitations are:
+
+- the top-level format is still explicitly experimental, although new VirtIO
+  records have per-device magic/version fields and fixed-width little-endian
+  encoding;
+- older non-VirtIO records remain closely coupled to C structure layout;
+- the initial machine ABI is a single exact-match identifier rather than a
+  user-selectable, versioned machine type;
+- the compatibility manifest now includes exact guest-memory granule,
+  low/high GPA geometry, an exact architecture-tagged CPU baseline, and a
+  canonical whole-machine topology seal.  Per-section feature requirements
+  and backend reconstruction remain explicit device contracts rather than
+  being collapsed into that immutable topology seal;
 - no dirty-memory API for incremental checkpoints;
 - no stream abstraction for migration;
-- limited validation of restore input and backend identity.
+- backend identity validation is device-specific and still needs fault and
+  cross-version fixtures for every backend.
 
 The existing implementation is valuable scaffolding, but should not become
 the permanent external format.
 
 ### Nested virtualization
 
-Nested virtualization is not implemented:
+The design began from a tree with no nested-virtualization implementation.
+The current Intel branch now contains an experimental, default-off nested-VMX
+path: a software VMCS12 registry, VMX instruction emulation and architectural
+failure publication, VMCS01/VMCS12-to-VMCS02 composition, nested EPT and VPID
+ownership, exit reflection, interrupt/timer/TSC composition, versioned nested
+state, and active-L2 freeze/rebuild/thaw transactions.  Exposure requires both
+the boot-time `hw.vmm.vmx.nested=1` policy and explicit per-guest
+`x86.nested_vmx=true`.
 
-- `sys/amd64/vmm/x86.c` hides AMD SVM from guest CPUID;
-- `usr.sbin/bhyve/amd64/xmsr.c` reports SVM disabled through `MSR_VM_CR`;
-- Intel VMX instructions exit as `VM_EXITCODE_VMINSN`, but there is no VMCS12
-  model or L2 execution;
-- SVM has the hardware intercept definitions needed to recognize `VMRUN` and
-  related instructions, but no VMCB12/VMCB02 implementation.
+VPID/INVVPID is additionally isolated behind the boot-time
+`hw.vmm.vmx.nested_vpid=1` qualification tunable.  It remains off by default
+even when nested VMX is enabled.  The virtual policy requires host VPID and
+INVVPID single-context support, then exposes all four architectural INVVPID
+types because each is conservatively implemented by invalidating the one
+destination-local effective VPID02 context.  This mirrors the Linux/KVM
+architecture without copying its implementation: virtual capabilities describe
+the model, while host capabilities need only support the primitive actually
+executed.  Saved capability signatures bind the setting, so a destination
+which omits the qualification tunable rejects VPID-bearing nested state.
 
-The existing EPT and NPT code refers to "nested page faults" in the ordinary
-hardware sense: translating a guest physical address through L0's second-level
-page tables. That is not support for an L1 hypervisor running an L2.
+That code is not release-qualified merely because its rootless architectural
+models and kernel build pass.  The remaining Intel gates are real VMX
+execution with Linux/KVM as L1, both Linux and rebuilt-5BSD L2 guests,
+instruction and VM-entry failure comparison against the pinned Intel SDM,
+interrupt/APIC/timer/EPT/VPID/invalidation and exit-reflection evidence,
+active-L2 save/restore, repeated create/destroy, concurrency, fault, and soak
+runs.  The `nested` virtio-lab profile records those as distinct evidence
+groups and refuses to infer a pass from a generic boot.
+
+AMD SVM remains unimplemented beyond architecture-neutral state/build
+scaffolding and ordinary NPT operation.  References to "nested page faults" in
+the existing NPT code describe L0's second-level translation, not an
+L1-controlled VMCB12/VMCB02 nested-SVM implementation.
 
 ## Design principles
 
@@ -187,26 +290,31 @@ agents without configuring guest networking.
 
 ### Priority 1: common operational features
 
-5. **virtio-balloon** — memory reclamation and guest memory statistics.
-   FreeBSD has a guest driver, but bhyve needs a host device model.
-6. **virtio-fs** — modern host/guest filesystem sharing. Existing Virtio 9P
-   should remain for compatibility, but new production shared-filesystem work
-   should target virtio-fs.
+5. **virtio-balloon** — a bounded traditional balloon, statistics queue, and
+   free-page reporting model are implemented; Linux/5BSD pressure and live
+   checkpoint qualification remain.
+6. **virtio-fs** — a modern PCI model and authenticated, reconnectable backend
+   protocol are implemented without DAX. Existing Virtio 9P remains for
+   compatibility. Production daemon, namespace, live restore, and soak gates
+   remain; DAX waits for a shared-memory consumer contract.
 
 ### Priority 2: workload dependent
 
-7. **virtio-gpu** — important for desktop and graphical appliance guests.
+7. **virtio-gpu** — a bounded provisional 2D resource/scanout model exists;
+   production display integration and live Linux/5BSD qualification remain.
 8. **virtio-input** — keyboard, pointer, tablet, and automated input.
-9. **virtio-iommu** — important for protected DMA, nested use cases, and a
-   principled implementation of `VIRTIO_F_ACCESS_PLATFORM`, but not required
-   for the first server conformance milestone.
+9. **virtio-iommu** — the provisional PCI model, topology, translation,
+   invalidation, fault, and state foundations exist. It remains a release
+   gate because every endpoint DMA path must be proven translated before
+   `VIRTIO_F_ACCESS_PLATFORM` is advertised.
 
 ### Lower initial priority
 
-Crypto, sound, memory/pmem, CAN, GPIO, I2C, SCMI, RPMB, SPI, media, and
-Bluetooth should be driven by an identified consumer. Implementing every
-device in the specification is not necessary to claim conformance for the
-devices bhyve actually exposes.
+Sound and memory now have bounded provisional devices, and RTC has a baseline
+clock/alarm device, because identified test consumers exist. Crypto, pmem,
+CAN, GPIO, I2C, SCMI, RPMB, SPI, media, and Bluetooth remain consumer-driven.
+Implementing every device in the specification is not necessary to claim
+conformance for the devices bhyve actually exposes.
 
 ## Which features matter most
 
@@ -216,11 +324,11 @@ devices bhyve actually exposes.
 |---|---|---|
 | P0 | `VIRTIO_F_VERSION_1` | Mandatory foundation for modern devices |
 | P0 | `VIRTIO_F_INDIRECT_DESC` | Reduces descriptor pressure for block, SCSI, and network I/O |
-| P0 | Complete `VIRTIO_F_EVENT_IDX` | Reduces interrupt and notification overhead; advertise only after both directions are implemented |
+| Done | Complete `VIRTIO_F_EVENT_IDX` | Both interrupt and available-buffer notification suppression are implemented and tested |
 | Done | `VIRTIO_F_RING_RESET` | Lets Linux recover or reconfigure one queue without resetting the entire device |
 | P0 | Correct `DEVICE_NEEDS_RESET` behavior | Required fault containment for malformed rings and backend failure |
 | P1 | `VIRTIO_F_RING_PACKED` | Better cache behavior and lower ring overhead at high I/O rates |
-| P1 | `VIRTIO_F_NOTIFICATION_DATA` | More efficient and precise queue notification |
+| Done | `VIRTIO_F_NOTIFICATION_DATA` | Modern queue notifications carry and validate queue notification data |
 | P1 | `VIRTIO_F_IN_ORDER` | Useful when a backend can guarantee ordered completion |
 | P2 | `VIRTIO_F_ACCESS_PLATFORM` | Needed with a virtual IOMMU; must not be advertised before DMA translation exists |
 | P3 | Admin virtqueue/device-resource features | Valuable for advanced management and scalable devices, but not before core queue lifecycle is complete |
@@ -281,6 +389,92 @@ support.
   with saved memory;
 - virtio-fs: start without DAX. DAX complicates dirty tracking, revocation,
   and migration and should be a later feature.
+
+## Retained production-qualification backlog
+
+Passing the model harness does not remove any item in this section.  A feature
+is production-qualified only when its advertised path has independent
+normative tests, negative and lifecycle tests, and a real guest-driver
+activation result.  Linux and 5BSD results are recorded separately; discovery
+or feature negotiation alone is not activation evidence.
+
+### Common infrastructure
+
+- Qualify split and packed rings on every supported device with indirect
+  descriptors, event suppression, notification data, selective queue reset,
+  wrap boundaries, malformed and looping chains, MSI/MSI-X, interrupt
+  suppression, and checkpoint at significant cursor states.
+- Route every DMA operation through the architecture-neutral mapper.  An
+  endpoint may advertise `VIRTIO_F_ACCESS_PLATFORM` only after request,
+  configuration, event, and indirect-table traffic have all been observed
+  through translated mappings.
+- Complete VirtIO-IOMMU endpoint attach/detach, permissions, map/unmap,
+  invalidation, bounded fault reporting, active-DMA concurrency, and
+  checkpoint/restore.
+- Retain shared-memory regions, device suspend/resume, administration
+  virtqueues, device groups, and feature-compatibility manifests as common
+  infrastructure.  Do not replace them with device-local save-state
+  exceptions.
+- Keep portable state independent of host endianness, pointer width, page
+  size, native structure padding, file descriptors, and x86-only interrupt or
+  DMA representations.
+
+### Existing devices
+
+- Network: activate every configured queue in Linux and 5BSD; qualify RSS and
+  hash-report failures, active queue-local reset, repeated active-I/O restore,
+  translated DMA, and concurrent traffic/reset soak.
+- Block: activate multiqueue in both guests; qualify discard, write-zeroes
+  boundaries, WCE transitions, backend identity/replacement, active restore,
+  packed rings, and translated DMA.  Secure erase remains off until a backend
+  can guarantee secure-erasure semantics.
+- SCSI: activate multiqueue in both guests; add ordered HOTPLUG/CHANGE events
+  and loss-aware `EVENTS_MISSED` only with a trustworthy CTL inventory source;
+  qualify LUN races, active-command checkpoint, backend identity, packed
+  rings, and translated DMA.
+- Console: qualify multiple active ports, guest/host close races, blocked I/O
+  queue reset, backend reconnect, packed rings, and active-port restore.
+- 9P: define active fid/request checkpoint and export identity; qualify reset
+  during requests, reconnect, path confinement, packed rings, and long fid
+  soak.
+- Input: qualify active event restore, configuration-change delivery,
+  saturation/drop policy, reset during injection, multiple devices, and
+  packed rings.
+- RNG: qualify source failure, reset/rebind soak, packed Linux/5BSD operation,
+  and a restore policy which never replays entropy bytes.
+- Vsock: qualify active userspace and kernel backend reconstruction, multiple
+  providers, CID collision/destination validation, namespace/VNET policy,
+  per-CID limits, connection migration policy, packed rings, and concurrent-VM
+  soak.
+
+### New and provisional devices
+
+- Balloon: qualify statistics, free-page reporting, poisoning,
+  pressure/OOM recovery, invalid/duplicate PFNs, packed rings, and active
+  restore in real Linux and 5BSD drivers.
+- GPU 2D: add a production presentation backend and qualify resource/backing,
+  scanout, EDID, cursor, rectangles, saturation, reset, active restore, packed
+  rings, and translated DMA.
+- Virtio-fs without DAX: finish the sandboxed backend service, FUSE validation,
+  credentials and namespace confinement, cancellation, reconnect, object
+  lifetime, active restore, and Linux live operation.  DAX waits for qualified
+  shared-memory regions; 5BSD requires a real guest driver.
+- Virtio-mem: qualify Linux plug/unplug, busy and partial requests, alignment,
+  changed destination capacity, active restore, and packed rings.  A 5BSD
+  claim requires a guest driver which actually changes memory ownership.
+- Virtio-RTC: qualify alarms across forward/backward clock steps, suspend,
+  missed-alarm prevention, repeated restore, Linux activation, and a future
+  5BSD driver.
+- Virtio-sound: introduce a bounded asynchronous production audio backend
+  before adding playback/capture ownership, underrun/overrun, and active-PCM
+  policy beyond the current null backend.  Qualify Linux packed operation; a
+  5BSD claim requires a real driver.
+
+Virtio-crypto is conditional on a concrete acceleration or isolation
+workload.  Virtio-video requires a production media backend, and Virtio-SCMI
+belongs to an ARM/platform-management milestone.  These devices start with a
+normative ledger and backend contract; placeholder PCI functions are not a
+completion metric.
 
 ## Clean Virtio architecture
 
@@ -420,13 +614,21 @@ guest-controlled interfaces.
 ## Virtio implementation phases
 
 1. **Done:** freeze a requirements matrix for the devices currently exposed.
-2. Refactor split rings behind `virtio_ring_ops` without behavior changes.
+2. **Done:** route layout-neutral device requests through the common split
+   and packed queue interface.
 3. **Done:** implement the queue/device lifecycle and `RING_RESET`.
 4. Complete Priority 0 device features and conformance.
-5. Add versioned Virtio state and modern-transport restore.
-6. Add packed rings and notification data.
-7. Add balloon, then virtio-fs without DAX.
-8. Consider virtio-iommu and admin virtqueues when a consumer requires them.
+5. **Done for existing devices:** add versioned Virtio state and
+   modern-transport restore; cross-release migration remains a later gate.
+6. **Implemented, live qualification pending:** add packed rings and
+   notification data.
+7. **Traditional balloon implemented, live qualification pending:** add
+   balloon, then virtio-fs without DAX.
+8. **Foundation implemented, exposure pending:** VirtIO-IOMMU,
+   ACCESS_PLATFORM, shared-memory capabilities, administration commands,
+   resources, device parts, groups, and SR-IOV lifecycle.  Keep all of these
+   unadvertised until a production consumer and its live negative,
+   checkpoint, and cross-guest qualification gates exist.
 
 ---
 
@@ -521,10 +723,10 @@ overflow, and excessive sizes are rejected before vCPU execution.
 
 ### Machine types
 
-Introduce explicit versioned machine types, for example:
+Introduce an explicit machine type for the sole current development ABI, for
+example:
 
 ```text
-bhyve-x86_64-v1
 bhyve-x86_64-v2
 ```
 
@@ -538,8 +740,9 @@ A machine type freezes:
 - timer semantics;
 - state-schema compatibility defaults.
 
-New bhyve releases can default to a new machine type without silently changing
-the virtual hardware of an old saved VM.
+After the first release, a later bhyve release can add a new machine type
+without silently changing the virtual hardware of an old saved VM.  Before
+that release there is no reason to retain the superseded development type.
 
 ### CPU compatibility
 
@@ -634,6 +837,11 @@ Host file descriptors are not state. Save recipes and validate them:
 - vsock: active host connections and Unix/native provider FDs cannot be
   reconstructed transparently. Initially require no active connections or
   explicitly reset them and expose the disconnect to the guest on restore.
+  For the kernel backend, freeze the empty destination provider, replay the
+  restored device-feature epoch while it remains fenced, and thaw only after
+  that replay succeeds.  A feature or thaw failure retains the fence for a
+  safe retry; restoring bhyve's feature field without reconstructing the
+  provider is not sufficient.
 
 ### Storage consistency
 
@@ -712,7 +920,8 @@ runtime capability.
 - timers, wall clock, monotonic clock, and TSC behavior;
 - SMP with vCPU hot/idle states;
 - malformed, truncated, duplicated, reordered, and oversized state sections;
-- restore across one supported old-to-new state-version transition;
+- reject every superseded development state version.  Until the first
+  published checkpoint ABI, restore accepts only the exact current schema;
 - backend identity mismatch and changed disk size;
 - forced allocation, write, fsync, and destination-acknowledgement failures;
 - 100+ repeated checkpoint/restore cycles under INVARIANTS and sanitizers.
@@ -967,10 +1176,14 @@ Save:
 Do not save VMCS02/VMCB02 or combined EPT02/NPT02 as authoritative state.
 They are host-derived caches and must be rebuilt on restore.
 
-Initially it is acceptable to mark active-L2 checkpoint unsupported while
-ordinary nested execution is stabilized. The state format and kernel API
-should still be designed from the beginning so active-L2 support can be added
-without another incompatible ABI.
+The initial implementation was permitted to reject active-L2 checkpoint while
+ordinary nested execution was stabilized.  The current implementation no
+longer relies on that staging exception: it freezes an active L2 into portable
+architectural state, rebuilds destination-local VMCS02/EPT02/VPID resources,
+publishes the VM-wide replacement transactionally, and thaws execution only
+after commit.  Rootless model and build evidence cover that transaction, while
+live save/restore with Linux/KVM as L1 remains a mandatory Intel qualification
+gate.
 
 ## Security requirements
 
@@ -1056,8 +1269,8 @@ not the initial definition of correctness.
 
 ### Milestone 4: performance and operations
 
-- packed rings;
-- net/block multiqueue;
+- packed rings (implemented for explicit opt-in; live qualification pending);
+- net/block multiqueue (implemented and live-tested);
 - dirty logging;
 - pre-copy migration;
 - balloon and virtio-fs.
@@ -1084,9 +1297,221 @@ L0, architectural instruction tests pass, Linux KVM and bhyve work as L1, SMP
 L2 stress is stable, and nested state can be saved or is explicitly rejected
 before checkpoint commit.
 
+The doubled kernel and non-standard review adds an explicit final-entry gate
+to that definition.  Startup publications and claim releases advance a
+per-vCPU notification epoch before wakeup/IPI delivery, and a pointer-free
+runtime handoff detects changes between frozen dispatch and the final
+interrupt-disabled machine-entry check.  Admission captures the epoch before
+and after dispatch: idle or retained dispatch permits no change, while consumed
+dispatch permits exactly the claim-release notification it generates.  A
+missing or extra transition returns `EAGAIN` without arming the handoff, closing
+the otherwise silent FROZEN dispatch-to-capture window.  The epoch is neither
+portable state nor public ABI.  Its value transitions are rootless-tested, but
+the production run-loop and VMX/SVM consumers remain withheld until exact
+FPU/state unwind, bounded event-driven replay, and installed Intel timing races
+pass.
+
+The coordinator token and notification handoff are independent observations of
+the same publication, so both may legitimately report `EAGAIN`.  The common
+runtime model composes those results without check-order dependence: one or two
+`EAGAIN` results request replay, a terminal error dominates `EAGAIN`, matching
+terminal errors retain their identity, and conflicting terminal errors become
+`EPROTO`.  Every non-entry result still follows the identical RUNNING-to-FROZEN
+and guest-FPU-to-host-FPU unwind before it is returned or replayed.
+
+The final entry guard is not one-shot.  A machine backend can handle a guest
+exit and execute another hardware entry before `vmmops_run()` returns.  The
+same coordinator token and notification handoff therefore remain armed for
+the complete synchronous run interval and are rechecked inside the backend's
+interrupt-disabled window before every hardware entry.  Repeated successful
+checks leave the runtime in CHECKED state.  Drift after any backend-internal
+exit forces the same common refreeze and FPU unwind before INIT/SIPI dispatch;
+otherwise an interrupt raised for a newly published startup event could be
+observed as an ordinary handled exit and followed by an incorrect re-entry.
+An independent backend-loop value machine enforces this mechanically:
+NEED_CHECK can become CHECKED only through a canonical guard result, CHECKED
+can enter hardware once, an internally handled exit returns to NEED_CHECK,
+and replay, terminal drift, or an unhandled exit becomes RETURNABLE.  Exact
+check and entry counts reject a missing recheck, malformed ordering, or
+counter exhaustion without changing the owner.
+
+RETURNABLE also owns its return identity.  The loop snapshots a validated
+replay or terminal error when the guard rejects entry and retains a canonical
+normal disposition for an unhandled hardware exit.  NEED_CHECK, CHECKED, and
+IN_GUEST cannot carry a non-normal disposition.  Completion validates the
+owned value and publishes it only to a disjoint non-null output, so mutation
+of an earlier guard-result object cannot redirect common replay or error
+handling.  This remains transient private control state and is neither
+serialized nor exposed as a machine or guest ABI.
+
+Guard admission and backend return deliberately use different action domains.
+`ENTER_GUEST` is only a successful guard decision.  An ordinary unhandled
+hardware exit is `RETURN_VMEXIT`; retry and positive terminal errors are
+translated into the corresponding backend-loop actions.  This prevents a
+future common consumer from treating a normal VM exit as permission for
+another hardware entry.
+
+### Nested-VMX ownership review record
+
+The value-only VM-exit planners reject result storage overlapping their input
+descriptors, host state, L2 runtime state, or frozen VMCS12 state.  The
+hardware exit-capture transaction likewise keeps its callback descriptor
+immutable and publishes only a completely captured, width-checked result.
+Focused negative tests verify byte-for-byte preservation.  These model and
+compile gates do not replace the pending root-only Intel VMX, Linux/KVM L1,
+Linux/5BSD L2, active-L2 checkpoint, concurrency, and soak qualification.
+The same ownership rule applies to VM-exit MSR loading: the immutable list and
+base state, rollback workspace, processor/software results, outcome, and
+failed-entry index use checked, pairwise-disjoint extents before any callback
+or mutation is allowed.
+Production Intel environment capture, final programming, portable rebind, and
+VMCS02 resource acquisition apply the same rule before touching VMCS01 or a
+destination-local lease.  This adapter coverage currently has a clean kernel
+`-Werror` build; it remains explicitly pending live Intel execution tests.
+The second ownership pass extended that invariant across execution-control
+composition, EPT fault/reflection planning, EPT walks with accessed/dirty
+updates, PDPTE validation, VMCS02 programming callbacks, staged thaw, portable
+freeze, hardware entry, late-entry resolution, and cross-domain refreeze.
+Every side-effecting callback now follows complete range validation, including
+pairwise checks among mutable state machines and their rollback/result
+publications.
+
+VM-entry validation and frozen entry-MSR capture now reject output storage that
+overlaps the capability policy, VMCS12 input wrapper, any pointed architectural
+state, or the memory/policy callback descriptors.  Entry arrays, counts, and
+results must also be pairwise disjoint and have representable extents before a
+guest-memory read.  Frozen-context APIs apply the same rule to IDs, handoff
+requests, resolutions, and results before consuming a handoff or changing the
+running nested phase.  The model exercises representative aliases and verifies
+that the entire retryable owner remains byte-for-byte unchanged.
+The same audit was applied to pure architectural planners: invalidation and
+VPID translation, exit provenance/routing, run-loop residency selection,
+portable L2 capture/apply, and L1 restoration all reject typed output aliases.
+This is intentionally a common ABI rule rather than a collection of
+device-specific exceptions, which also keeps these value-only paths portable
+to future non-x86 hosts.
+
+### Incremental checkpoint dirty-log prerequisite
+
+Pre-copy migration requires a guest-RAM dirty-log contract that is distinct
+from CPU state-cache "dirty" bits and guest page-table accessed/dirty
+emulation.  The contract belongs in the common VMM memory/memseg layer, with a
+generic `vmmops` operation and a versioned libvmmapi/ioctl representation;
+VMX/EPT and SVM/NPT implement it below that boundary.  It must describe a
+range in guest physical address space, a fixed bitmap granularity, a
+generation, and whether retrieval is observing or atomically clearing the
+generation.  It may not expose EPT entries, NPT entries, host virtual
+addresses, native word width, or host page-size assumptions.
+
+The first implementation must be stop-and-copy safe before it is used for
+pre-copy: validate mapped ranges and bitmap capacity without mutation; reject
+overflow, holes, aliasing output, unsupported memory backends, and an active
+checkpoint conflict; freeze or otherwise establish the documented collection
+boundary; then return a canonical little-endian bitmap and generation.  Clear
+on successful collection only, never on a failed copyout.  Reset, memseg
+unmap, snapshot abort, restore, destroy, and backend detach must invalidate
+old generations.  A destination restore must not inherit source dirty bits.
+
+Required independent tests include every bit boundary, unaligned range,
+overlapping and disjoint mappings, repeated observe/clear, clear-after-copyout
+failure, reset/unmap/destroy races, generation overflow, cross-endian fixture
+decoding, VMX/SVM parity, and an active-I/O stop-and-copy checkpoint.  Linux
+and 5BSD guest tests can validate migration behavior, but dirty-log ABI tests
+must not derive expected bitmap layout from the implementation.  Incremental
+or live migration remains unavailable until these common, backend, and live
+qualification gates pass.
+
+The first committed foundation is intentionally smaller than a tracking ABI:
+`vmm_dirty_log_range_validate()` and its byte-bitmap helpers define only the
+portable logical range, canonical low-GPA/low-bit ordering, and non-wrapping
+generation arithmetic.  `vmm_dirty_log_map_validate()` and
+`vmm_dirty_log_map_covers()` add the next value-only seam: a caller that has
+already frozen the VMM map can represent its relevant mappings as an ordered,
+pointer-free list bounded by the common `VM_MAX_MEMMAPS` capacity.  The helper
+distinguishes a map hole (`EFAULT`) from a
+valid mapping that cannot be collected (`EOPNOTSUPP`), such as MMIO.  It does
+not inspect `vm_mem_map`, retain the list, decide when a VM is frozen, enable
+tracking, or expose an ioctl.  Segment identities, objects, permissions, host
+addresses, host page size, EPT, and NPT remain below this seam.
+
+The next layer must bind this validated frozen-map value to an
+architecture-neutral backend operation and a generation-invalidation owner
+before VMX/EPT or SVM/NPT-specific collection can be added.
+
+That owner is now a value-only `vmm_dirty_log_owner` transaction.  Enabling
+it validates a caller-owned frozen map and retains only the requested logical
+range, a caller-owned non-reused map generation, and dirty generation one.
+`begin` revalidates the current frozen map and returns an immutable ticket for
+either observation or clear-after-publication.  At most one ticket may be
+live.  A clear ticket advances the dirty generation only after the caller has
+published its canonical bitmap and the future architecture backend has
+atomically cleared that exact generation; abort retains the generation.  Map
+change, reset, snapshot abort, restore, destroy, and backend detach use the
+same invalidation operation, which revokes every outstanding ticket.  The
+owner stores no pointers, EPT/NPT state, host page size, backend callback, or
+user ABI data.  Generation exhaustion fails closed and permanently disables
+the owner rather than reusing a ticket identity.
+
+This is still not an exposed dirty-log API or a backend implementation.  The
+common `vm_mem` layer now supplies a nonwrapping map generation and a
+lock-stable, by-value snapshot of the logical map.  The snapshot carries only
+GPA range and collectability, rejects aliases to the live `vm_mem` object, and
+fails closed if its generation is exhausted.  It owns the private transaction
+owner: map, reset, and destroy paths revoke outstanding tickets; owner
+operations require exclusive `mem_segs_lock`, while a snapshot remains a
+shared-lock inspection operation.  A collection lifecycle additionally freezes
+vCPUs before it retains a generation.  Kernel snapshot dispatch now validates
+its selector before changing transaction state, then revokes a ticket before a
+real save or restore callback; the map lock is released before arbitrary
+architecture/device callbacks.  The common collector is now deliberately
+limited to an all-or-nothing *observation* pass: it accepts a ticket plus
+architecture-neutral dirty-leaf values, builds into a caller-supplied staging
+bitmap, and copies to the result only after every leaf validates and the
+complete scan succeeds.  It has no pmap, VMX, SVM, clear, ioctl, or
+publication-policy dependency.  A backend clear remains a separate future
+transaction, because it may proceed only after the completed bitmap is durably
+published and must have matched EPT and NPT semantics.  No dirty-log ioctl,
+pre-copy advertisement, or migration claim is enabled by this foundation.
+
+### Hardware nested-page dirty-bit seam
+
+The amd64 pmap layer now exposes only an internal, by-value
+`pmap_guest_query_dirty()` helper for a *single nested-page-table leaf*.  It
+accepts EPT or NPT pmaps using hardware accessed/dirty support, returns the
+actual 4 KiB, 2 MiB, or 1 GiB leaf containing the requested GPA, and can clear
+that leaf only after the caller has frozen the relevant vCPUs.  A successful
+clear invalidates the nested translation context before returning.  EPT with
+software-emulated A/D is rejected: there its writable bit is a permission
+mechanism, not evidence that the guest wrote the page.
+
+This is intentionally below the common dirty-log contract.  A future
+collector must expand a dirty superpage into canonical logical 4 KiB bitmap
+units.  `vmm_dirty_log_bitmap_mark_range()` now provides that expansion as a
+pure value operation: it validates both ranges before changing a bit, clips a
+hardware leaf to the tracked range, and preserves the low-GPA/low-bit bitmap
+ordering without consulting host page size or native bitmap words.  A future
+collector must bind that operation to a `vmm_dirty_log_owner` ticket and provide
+equivalent VMX/EPT and SVM/NPT behavior.  The helper exposes neither hardware
+entries nor host pages, and it creates no ioctl, snapshot field, migration
+feature, or claim that pre-copy is available.  Root-only qualification still
+must exercise clean/dirty/clear/rewrite behavior for 4 KiB, 2 MiB, and 1 GiB
+leaves, verify rejection under emulated A/D, and prove that clearing while
+vCPUs are frozen does not lose writes across the nested-context invalidation.
+
+The common owner now has a read-only `ticket_check` boundary.  A backend must
+check that ticket while the common map and vCPU-freeze boundary are still
+held, immediately before observing or clearing hardware A/D bits.  A stale
+ticket has no side effects and means reset, map change, snapshot cancellation,
+or another collection revoked the attempt.  This keeps map/collection
+generations in common code while EPT and NPT retain their different
+page-table mechanics.  Malformed arguments remain `EINVAL`; only a valid
+ticket revoked by lifecycle change is `ESTALE`.  It remains a private kernel
+seam, reached through the lock-asserting `vm_mem` wrapper rather than by
+inspecting `vm_mem` storage, and is not an ioctl or migration capability.
+
 ## References
 
-- [OASIS Virtio 1.4 Committee Specification 01](https://docs.oasis-open.org/virtio/virtio/v1.4/cs01/virtio-v1.4-cs01.html)
+- [OASIS Virtio 1.4 Committee Specification 01](https://docs.oasis-open.org/virtio/virtio/v1.4/cs01/virtio-v1.4-cs01.pdf)
 - [QEMU migration framework](https://qemu.readthedocs.io/en/master/devel/migration/main.html)
 - [QEMU Virtio device migration](https://qemu.readthedocs.io/en/master/devel/migration/virtio.html)
 - [Linux KVM nested VMX documentation](https://www.kernel.org/doc/html/latest/virt/kvm/x86/nested-vmx.html)

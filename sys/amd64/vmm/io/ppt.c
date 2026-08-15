@@ -478,7 +478,7 @@ int
 ppt_unassign_all(struct vm *vm)
 {
 	struct pptdev *ppt;
-	int bus, slot, func;
+	int bus, error, slot, func;
 	device_t dev;
 
 	TAILQ_FOREACH(ppt, &pptdev_list, next) {
@@ -487,7 +487,9 @@ ppt_unassign_all(struct vm *vm)
 			bus = pci_get_bus(dev);
 			slot = pci_get_slot(dev);
 			func = pci_get_function(dev);
-			vm_unassign_pptdev(vm, bus, slot, func);
+			error = vm_unassign_pptdev(vm, bus, slot, func);
+			if (error != 0)
+				return (error);
 		}
 	}
 
@@ -577,7 +579,7 @@ ppt_unmap_mmio(struct vm *vm, int bus, int slot, int func,
 	}
 out:
 	PPT_UNLOCK();
-	return (ENOENT);
+	return (error);
 }
 
 static int

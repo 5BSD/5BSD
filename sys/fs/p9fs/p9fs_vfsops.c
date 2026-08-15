@@ -182,7 +182,7 @@ p9fs_unmount(struct mount *mp, int mntflags)
 	return (error);
 out:
 	/* Restore the flag in case of error */
-	vses->clnt->trans_status = P9FS_CONNECT;
+	p9_client_connect(vses->clnt);
 	return (error);
 }
 
@@ -423,7 +423,7 @@ p9_mount(struct mount *mp)
 
 	/* Extract NULL terminated mount tag from mount options */
 	error = vfs_getopt(mp->mnt_optnew, "from", (void **)&from, &len);
-	if (error != 0 || from[len - 1] != '\0')
+	if (error != 0 || len <= 1 || from[len - 1] != '\0')
 		return (EINVAL);
 
 	/* Allocate and initialize the private mount structure. */
@@ -526,7 +526,8 @@ p9fs_root(struct mount *mp, int lkflags, struct vnode **vpp)
 		 * This is used while unmounting as root when non-root
 		 * user has mounted p9fs
 		 */
-		if (vfid == NULL && clnt->trans_status == P9FS_BEGIN_DISCONNECT)
+		if (vfid == NULL &&
+		    p9_client_status(clnt) == P9FS_BEGIN_DISCONNECT)
 			vfid = vmp->p9fs_session.mnt_fid;
 		else {
 			*vpp = NULL;

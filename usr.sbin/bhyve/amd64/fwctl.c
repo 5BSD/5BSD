@@ -563,6 +563,7 @@ fwctl_init(void)
 	
 	error = register_inout(&iop);
 	assert(error == 0);
+	(void)error;
 
 	bzero(&iop, sizeof(iop));
 	iop.name = "fwctl_rreg";
@@ -573,6 +574,7 @@ fwctl_init(void)
 
 	error = register_inout(&iop);
 	assert(error == 0);
+	(void)error;
 
 	ops[OP_GET_LEN] = &fgetlen_info;
 	ops[OP_GET]     = &fgetval_info;

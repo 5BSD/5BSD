@@ -2366,7 +2366,7 @@
 		    int flags
 		);
 	}
-445	AUE_AUDIT	STD {
+445	AUE_AUDIT	STD|CAPENABLED {
 		int audit(
 		    _In_reads_bytes_(length) const void *record,
 		    u_int length

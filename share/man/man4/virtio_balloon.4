@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd January 22, 2012
+.Dd August 13, 2026
 .Dt VIRTIO_BALLOON 4
 .Os
 .Sh NAME
@@ -51,6 +51,32 @@ The memory balloon allows the guest to, at the request of the
 hypervisor, return memory allocated to the hypervisor so it can
 be made available to other guests.
 The hypervisor can later signal the balloon to return the memory.
+.Pp
+When the device negotiates the page-poison feature, pages returned to the
+guest allocator on deflation are first initialized to the device-supplied
+poison value, and the driver reports the poison value it uses to the device.
+When the device negotiates the free-page-hint feature, the driver answers a
+host-initiated reporting round by allocating a bounded sample of currently
+free pages, reporting their physical ranges to the device, and immediately
+returning them to the allocator; it reports a bounded sample rather than every
+free page.
+The continuous free-page reporting feature is deliberately not negotiated.
+.Sh SYSCTL VARIABLES
+The following read-only variables are available as
+.Xr sysctl 8
+variables, per attached device.
+.Bl -tag -width indent
+.It Va dev.vtballoon. Ns Ar X Ns Va .desired
+The balloon size requested by the hypervisor, in 4096-byte units.
+.It Va dev.vtballoon. Ns Ar X Ns Va .current
+The current balloon size, in 4096-byte units.
+.It Va dev.vtballoon. Ns Ar X Ns Va .poisoned
+The number of pages initialized to the poison value after acknowledged
+deflation, when the page-poison feature is negotiated.
+.It Va dev.vtballoon. Ns Ar X Ns Va .free_page_hint_reported
+The number of free pages reported in the last free-page-hint round, when the
+free-page-hint feature is negotiated.
+.El
 .Sh SEE ALSO
 .Xr virtio 4
 .Sh HISTORY

@@ -4,6 +4,7 @@
  * exercised without an evdev device or VM.
  */
 #include <sys/types.h>
+#include <sys/stat.h>
 #include <sys/uio.h>
 
 #include <dev/evdev/input.h>
@@ -19,20 +20,27 @@
 
 #include <atf-c.h>
 
+int pthread_mutex_isowned_np(pthread_mutex_t *);
+
 static int test_open(const char *, int, ...);
 static int test_close(int);
+static int test_fstat(int, struct stat *);
 static int test_ioctl(int, unsigned long, ...);
 static ssize_t test_read(int, void *, size_t);
 static ssize_t test_write(int, const void *, size_t);
 
 #define open test_open
 #define close test_close
+#define fstat test_fstat
 #define ioctl test_ioctl
 #define read test_read
 #define write test_write
+#define	BHYVE_SNAPSHOT
 #include "pci_virtio_input.c"
+#include "virtio_config_read_test_support.h"
 #undef open
 #undef close
+#undef fstat
 #undef ioctl
 #undef read
 #undef write
@@ -44,6 +52,10 @@ static ssize_t test_write(int, const void *, size_t);
 #define	VIRTIO_CONFIG_STATUS_DRIVER_OK	VIRTIO14_STATUS_DRIVER_OK
 #undef VIRTIO_F_IN_ORDER
 #define	VIRTIO_F_IN_ORDER		VIRTIO14_F_IN_ORDER
+#undef VIRTIO_F_RING_PACKED
+#define	VIRTIO_F_RING_PACKED		VIRTIO14_F_RING_PACKED
+#undef VIRTIO_F_SUSPEND
+#define	VIRTIO_F_SUSPEND		VIRTIO14_F_SUSPEND
 #undef VIRTIO_ID_INPUT
 #define	VIRTIO_ID_INPUT			VIRTIO14_DEVICE_INPUT
 #undef VTINPUT_CFG_ABS_INFO
@@ -74,6 +86,7 @@ struct mevent {
 };
 
 static const char *g_transport;
+static bool g_packed;
 static int g_modern_init;
 static int g_modern_identity;
 static int g_io_bar;
@@ -90,16 +103,17 @@ static int g_getchain_calls;
 static bool g_require_queue_lock;
 static int g_bad_chain_call;
 static int g_bad_chain_n;
-static uint8_t g_iov_buf[64][VIRTIO14_INPUT_EVENT_SIZE];
+static uint8_t g_iov_buf[64][VIRTIO14_INPUT_EVENT_SIZE + 1];
 static int g_rel_calls;
 static uint32_t g_rel_len[64];
 static uint16_t g_rel_idx[64];
 static int g_end_calls;
+static int g_end_all;
 static int g_ret_calls;
 static uint16_t g_ret_count;
 static int g_host_write_calls;
 static struct input_event g_host_write_event;
-static struct input_event g_read_events[64];
+static struct input_event g_read_events[VTINPUT_HOST_EVENT_BUDGET + 1];
 static int g_read_event_count;
 static int g_read_event_index;
 static char g_config_path[128];
@@ -111,11 +125,103 @@ static bool g_ioctl_devids_success;
 static bool g_ioctl_prop_success;
 static bool g_ioctl_ev_success;
 static unsigned long g_last_ioctl;
+static int g_mevent_enable_calls;
+static int g_mevent_disable_calls;
+static int g_mevent_enable_error;
+static int g_mevent_disable_error;
+static int g_snapshot_validate_calls;
+static int g_snapshot_validate_result;
+static bool g_snapshot_validate_saw_lock;
+
+void
+vm_snapshot_buf_err(const char *name __unused,
+    const enum vm_snapshot_op op __unused)
+{
+}
+
+int
+vm_snapshot_buf(void *data, size_t size, struct vm_snapshot_meta *meta)
+{
+
+	if (size > meta->buffer.buf_rem)
+		return (E2BIG);
+	if (meta->op == VM_SNAPSHOT_SAVE)
+		memcpy(meta->buffer.buf, data, size);
+	else if (vm_snapshot_is_loading(meta))
+		memcpy(data, meta->buffer.buf, size);
+	else
+		return (EINVAL);
+	meta->buffer.buf += size;
+	meta->buffer.buf_rem -= size;
+	return (0);
+}
+
+int
+vm_snapshot_u8(uint8_t *value, struct vm_snapshot_meta *meta)
+{
+
+	return (vm_snapshot_buf(value, 1, meta));
+}
+
+int
+vm_snapshot_le16(uint16_t *value, struct vm_snapshot_meta *meta)
+{
+	uint8_t bytes[2];
+	int error;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		bytes[0] = *value;
+		bytes[1] = *value >> 8;
+	}
+	error = vm_snapshot_buf(bytes, sizeof(bytes), meta);
+	if (error == 0 && vm_snapshot_is_loading(meta))
+		*value = (uint16_t)bytes[0] | (uint16_t)bytes[1] << 8;
+	return (error);
+}
+
+int
+vm_snapshot_le32(uint32_t *value, struct vm_snapshot_meta *meta)
+{
+	uint8_t bytes[4];
+	int error;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			bytes[i] = *value >> (i * 8);
+	}
+	error = vm_snapshot_buf(bytes, sizeof(bytes), meta);
+	if (error == 0 && vm_snapshot_is_loading(meta)) {
+		*value = 0;
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			*value |= (uint32_t)bytes[i] << (i * 8);
+	}
+	return (error);
+}
+
+int
+vm_snapshot_le64(uint64_t *value, struct vm_snapshot_meta *meta)
+{
+	uint8_t bytes[8];
+	int error;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			bytes[i] = *value >> (i * 8);
+	}
+	error = vm_snapshot_buf(bytes, sizeof(bytes), meta);
+	if (error == 0 && vm_snapshot_is_loading(meta)) {
+		*value = 0;
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			*value |= (uint64_t)bytes[i] << (i * 8);
+	}
+	return (error);
+}
 
 static void
 reset_mocks(void)
 {
 	g_transport = NULL;
+	g_packed = false;
 	g_modern_init = 0;
 	g_modern_identity = -1;
 	g_io_bar = 0;
@@ -137,6 +243,7 @@ reset_mocks(void)
 	memset(g_rel_len, 0, sizeof(g_rel_len));
 	memset(g_rel_idx, 0, sizeof(g_rel_idx));
 	g_end_calls = 0;
+	g_end_all = -1;
 	g_ret_calls = 0;
 	g_ret_count = 0;
 	g_host_write_calls = 0;
@@ -152,6 +259,13 @@ reset_mocks(void)
 	g_ioctl_prop_success = false;
 	g_ioctl_ev_success = false;
 	g_last_ioctl = 0;
+	g_mevent_enable_calls = 0;
+	g_mevent_disable_calls = 0;
+	g_mevent_enable_error = 0;
+	g_mevent_disable_error = 0;
+	g_snapshot_validate_calls = 0;
+	g_snapshot_validate_result = 0;
+	g_snapshot_validate_saw_lock = false;
 }
 
 const char *
@@ -162,6 +276,16 @@ get_config_value_node(const nvlist_t *nvl __unused, const char *name)
 	if (strcmp(name, "transport") == 0)
 		return (g_transport);
 	return (NULL);
+}
+
+bool
+get_config_bool_node_default(const nvlist_t *nvl __unused,
+    const char *name, bool default_value)
+{
+
+	if (strcmp(name, "packed") == 0)
+		return (g_packed);
+	return (default_value);
 }
 
 void
@@ -191,6 +315,15 @@ test_open(const char *path __unused, int flags __unused, ...)
 static int
 test_close(int fd __unused)
 {
+	return (0);
+}
+
+static int
+test_fstat(int fd __unused, struct stat *st)
+{
+
+	memset(st, 0, sizeof(*st));
+	st->st_rdev = 42;
 	return (0);
 }
 
@@ -252,29 +385,33 @@ test_ioctl(int fd __unused, unsigned long request, ...)
 		return (0);
 	}
 	if (request == EVIOCGPROP(prop_count)) {
-		uint8_t *bitmap;
+		unsigned long *bitmap;
+		const size_t bit = 31;
 
 		if (!g_ioctl_prop_success) {
 			errno = EINVAL;
 			return (-1);
 		}
 		va_start(ap, request);
-		bitmap = va_arg(ap, uint8_t *);
+		bitmap = va_arg(ap, unsigned long *);
 		va_end(ap);
-		bitmap[3] = 0x80;
+		bitmap[bit / (sizeof(*bitmap) * CHAR_BIT)] |=
+		    1UL << (bit % (sizeof(*bitmap) * CHAR_BIT));
 		return (0);
 	}
 	if (request == EVIOCGBIT(EV_KEY, key_count)) {
-		uint8_t *bitmap;
+		unsigned long *bitmap;
+		const size_t bit = 138;
 
 		if (!g_ioctl_ev_success) {
 			errno = EINVAL;
 			return (-1);
 		}
 		va_start(ap, request);
-		bitmap = va_arg(ap, uint8_t *);
+		bitmap = va_arg(ap, unsigned long *);
 		va_end(ap);
-		bitmap[17] = 0x04;
+		bitmap[bit / (sizeof(*bitmap) * CHAR_BIT)] |=
+		    1UL << (bit % (sizeof(*bitmap) * CHAR_BIT));
 		return (0);
 	}
 	return (0);
@@ -317,15 +454,23 @@ mevent_delete(struct mevent *ev __unused)
 }
 
 int
-mevent_enable(struct mevent *ev __unused)
+mevent_delete_sync(struct mevent *ev __unused)
 {
 	return (0);
 }
 
 int
+mevent_enable(struct mevent *ev __unused)
+{
+	g_mevent_enable_calls++;
+	return (g_mevent_enable_error);
+}
+
+int
 mevent_disable(struct mevent *ev __unused)
 {
-	return (0);
+	g_mevent_disable_calls++;
+	return (g_mevent_disable_error);
 }
 
 int
@@ -499,9 +644,10 @@ vq_retchains(struct vqueue_info *vq __unused, uint16_t count)
 }
 
 void
-vq_endchains(struct vqueue_info *vq __unused, int all_avail __unused)
+vq_endchains(struct vqueue_info *vq __unused, int all_avail)
 {
 	g_end_calls++;
+	g_end_all = all_avail;
 }
 
 void
@@ -554,6 +700,7 @@ ATF_TC_BODY(transport_compatibility, tc)
 	struct pci_devinst pi;
 	struct nvlist nvl;
 	uint16_t value;
+	uint8_t revision;
 
 	reset_mocks();
 	memset(&pi, 0, sizeof(pi));
@@ -578,6 +725,15 @@ ATF_TC_BODY(transport_compatibility, tc)
 	 * value because section 4.1.2 defines no transitional input ID.
 	 */
 	ATF_CHECK(value == BHYVE_COMPAT_VIRTIO_INPUT_LEGACY_DEVICE_ID);
+	revision = pi.pi_cfgdata[PCIR_REVID];
+	ATF_CHECK(revision ==
+	    BHYVE_COMPAT_VIRTIO_INPUT_LEGACY_REVISION);
+	memcpy(&value, &pi.pi_cfgdata[PCIR_SUBVEND_0], sizeof(value));
+	ATF_CHECK(value ==
+	    BHYVE_COMPAT_VIRTIO_INPUT_LEGACY_SUBVENDOR);
+	memcpy(&value, &pi.pi_cfgdata[PCIR_SUBDEV_0], sizeof(value));
+	ATF_CHECK(value ==
+	    BHYVE_COMPAT_VIRTIO_INPUT_LEGACY_SUBDEVICE);
 	free_input_softc(&pi);
 
 	reset_mocks();
@@ -590,6 +746,23 @@ ATF_TC_BODY(transport_compatibility, tc)
 	ATF_CHECK(pci_de_vinput.pe_cfgread == vi_pci_modern_cfgread);
 	ATF_CHECK(pci_de_vinput.pe_cfgwrite == vi_pci_modern_cfgwrite);
 	free_input_softc(&pi);
+
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_transport = "modern";
+	g_packed = true;
+	ATF_REQUIRE(pci_vtinput_init(&pi, &nvl) == 0);
+	ATF_CHECK((((struct pci_vtinput_softc *)pi.pi_arg)->
+	    vsc_consts.vc_hv_caps & VIRTIO_F_RING_PACKED) != 0);
+	ATF_CHECK((vtinput_vi_consts.vc_hv_caps &
+	    VIRTIO_F_RING_PACKED) == 0);
+	free_input_softc(&pi);
+
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_transport = "legacy";
+	g_packed = true;
+	ATF_CHECK(pci_vtinput_init(&pi, &nvl) != 0);
 }
 
 ATF_TC_WITHOUT_HEAD(command_line_config);
@@ -622,6 +795,7 @@ ATF_TC_BODY(eventqueue_growth, tc)
 	struct input_event event;
 
 	reset_mocks();
+	ATF_REQUIRE_EQ(VTINPUT_MAX_FRAME_EVENTS, 4096);
 	memset(&queue, 0, sizeof(queue));
 	memset(&event, 0, sizeof(event));
 	for (int i = 0; i < 1000; i++) {
@@ -669,15 +843,113 @@ ATF_TC_BODY(syn_report_flushes_frame, tc)
 	g_read_events[1].type = EV_SYN;
 	g_read_events[1].code = SYN_REPORT;
 	g_read_event_count = 2;
-	g_descs = 2;
+	g_descs = 3;
 	vtinput_read_event(10, EVF_READ, &sc);
 	ATF_CHECK(g_read_event_index == 2);
 	ATF_CHECK(g_rel_calls == 2);
 	ATF_CHECK(g_rel_len[0] == VIRTIO14_INPUT_EVENT_SIZE);
 	ATF_CHECK(g_rel_len[1] == VIRTIO14_INPUT_EVENT_SIZE);
 	ATF_CHECK(g_end_calls == 1);
+	ATF_CHECK_EQ(g_end_all, 0);
+	ATF_CHECK_EQ(g_descs, 1);
 	ATF_CHECK(sc.vsc_eventqueue.idx == 0);
 	free(sc.vsc_eventqueue.events);
+	pthread_mutex_destroy(&mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(complete_frame_retries_on_guest_kick);
+ATF_TC_BODY(complete_frame_retries_on_guest_kick, tc)
+{
+	struct pci_vtinput_softc sc;
+	struct vtinput_event delivered;
+	pthread_mutex_t mtx;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	ATF_REQUIRE_EQ(pthread_mutex_init(&mtx, NULL), 0);
+	sc.vsc_vs.vs_mtx = &mtx;
+	sc.vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_qsize = VTINPUT_RINGSZ;
+	vq_set_allocated(&sc.vsc_queues[VTINPUT_EVENTQ], true);
+	sc.vsc_eventqueue.size = VTINPUT_MAX_PKT_LEN;
+	sc.vsc_eventqueue.events = calloc(sc.vsc_eventqueue.size,
+	    sizeof(*sc.vsc_eventqueue.events));
+	ATF_REQUIRE(sc.vsc_eventqueue.events != NULL);
+
+	g_read_events[0].type = EV_KEY;
+	g_read_events[0].code = KEY_A;
+	g_read_events[0].value = 1;
+	g_read_events[1].type = EV_SYN;
+	g_read_events[1].code = SYN_REPORT;
+	g_read_event_count = 2;
+	g_descs = 1;
+	vtinput_read_event(10, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_read_event_index, 2);
+	ATF_CHECK_EQ(g_getchain_calls, 1);
+	ATF_CHECK_EQ(g_ret_calls, 1);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(g_end_calls, 0);
+	ATF_CHECK_EQ(sc.vsc_eventqueue.idx, 2);
+	ATF_CHECK(vtinput_eventqueue_frame_complete(&sc.vsc_eventqueue));
+
+	/* Posting the missing buffers must deliver the retained frame. */
+	g_descs = 2;
+	pci_vtinput_notify_eventq(&sc, &sc.vsc_queues[VTINPUT_EVENTQ]);
+	ATF_CHECK_EQ(g_getchain_calls, 3);
+	ATF_CHECK_EQ(g_rel_calls, 2);
+	ATF_CHECK_EQ(g_rel_len[0], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(g_rel_len[1], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(g_end_calls, 1);
+	ATF_CHECK_EQ(sc.vsc_eventqueue.idx, 0);
+	memcpy(&delivered, g_iov_buf[1], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(le16toh(delivered.type), EV_KEY);
+	ATF_CHECK_EQ(le16toh(delivered.code), KEY_A);
+	ATF_CHECK_EQ((int32_t)le32toh(delivered.value), 1);
+	memcpy(&delivered, g_iov_buf[2], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(le16toh(delivered.type), EV_SYN);
+	ATF_CHECK_EQ(le16toh(delivered.code), SYN_REPORT);
+
+	free(sc.vsc_eventqueue.events);
+	pthread_mutex_destroy(&mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(host_event_dispatch_is_bounded);
+ATF_TC_BODY(host_event_dispatch_is_bounded, tc)
+{
+	struct pci_vtinput_softc sc;
+	struct mevent event;
+	pthread_mutex_t mtx;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	ATF_REQUIRE(pthread_mutex_init(&mtx, NULL) == 0);
+	sc.vsc_vs.vs_mtx = &mtx;
+	g_read_event_count = (int)nitems(g_read_events);
+
+	/*
+	 * An inactive queue is deliberately drained, but a permanently readable
+	 * host descriptor must not monopolize the mevent thread.  Level-triggered
+	 * readiness schedules the remainder on a later dispatch.
+	 */
+	vtinput_read_event(10, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_read_event_index, VTINPUT_HOST_EVENT_BUDGET);
+	vtinput_read_event(10, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_read_event_index, (int)nitems(g_read_events));
+
+	/* Reset-time generation isolation is bounded by the same dispatch cap. */
+	g_read_event_index = 0;
+	memset(&event, 0, sizeof(event));
+	sc.vsc_evp = &event;
+	ATF_CHECK(!vtinput_drain_host_events(&sc));
+	ATF_CHECK_EQ(g_read_event_index, VTINPUT_HOST_EVENT_BUDGET);
+	sc.vsc_discard_host_events = true;
+	vtinput_read_event(10, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_read_event_index, (int)nitems(g_read_events));
+	ATF_CHECK(!sc.vsc_discard_host_events);
+
 	pthread_mutex_destroy(&mtx);
 }
 
@@ -689,9 +961,10 @@ ATF_TC_BODY(hostile_status_descriptors, tc)
 
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTINPUT_RINGSZ;
 	sc.vsc_fd = 10;
 
-	for (int kind = 0; kind < 5; kind++) {
+	for (int kind = 0; kind < 6; kind++) {
 		reset_mocks();
 		g_descs = 1;
 		g_getchain_readable = 1;
@@ -704,6 +977,9 @@ ATF_TC_BODY(hostile_status_descriptors, tc)
 			break;
 		case 3: g_getchain_null = true; break;
 		case 4: g_getchain_n = -1; break;
+		case 5:
+			g_getchain_len = VIRTIO14_INPUT_EVENT_SIZE + 1;
+			break;
 		}
 		pci_vtinput_notify_statusq(&sc, &vq);
 		ATF_CHECK(g_host_write_calls == 0);
@@ -722,6 +998,7 @@ ATF_TC_BODY(hostile_event_descriptors, tc)
 	struct input_event event;
 
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTINPUT_RINGSZ;
 	memset(&event, 0, sizeof(event));
 	for (int kind = 0; kind < 4; kind++) {
 		reset_mocks();
@@ -759,6 +1036,7 @@ ATF_TC_BODY(scatter_gather_events, tc)
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTINPUT_RINGSZ;
 	sc.vsc_fd = 10;
 	memcpy(g_iov_buf[0], status_wire, sizeof(status_wire));
 	g_descs = 1;
@@ -802,6 +1080,7 @@ ATF_TC_BODY(status_error_finishes_completions, tc)
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTINPUT_RINGSZ;
 	sc.vsc_fd = 10;
 	g_descs = 2;
 	g_getchain_readable = 1;
@@ -828,6 +1107,7 @@ ATF_TC_BODY(in_order_completion, tc)
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTINPUT_RINGSZ;
 	sc.vsc_fd = 10;
 	g_descs = nitems(events);
 	g_getchain_readable = 1;
@@ -877,6 +1157,7 @@ ATF_TC_BODY(partial_frame_rollback, tc)
 	reset_mocks();
 	memset(&queue, 0, sizeof(queue));
 	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTINPUT_RINGSZ;
 	memset(&event, 0, sizeof(event));
 	ATF_REQUIRE(vtinput_eventqueue_add_event(&queue, &event) == 0);
 	ATF_REQUIRE(vtinput_eventqueue_add_event(&queue, &event) == 0);
@@ -898,22 +1179,132 @@ ATF_TC_WITHOUT_HEAD(oversized_frame_dropped);
 ATF_TC_BODY(oversized_frame_dropped, tc)
 {
 	struct pci_vtinput_softc sc;
+	struct vtinput_event delivered;
 
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
 	sc.vsc_fd = 10;
 	sc.vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
 	sc.vsc_queues[VTINPUT_EVENTQ].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_qsize = VTINPUT_RINGSZ;
 	vq_set_allocated(&sc.vsc_queues[VTINPUT_EVENTQ], true);
 	sc.vsc_eventqueue.size = VTINPUT_MAX_FRAME_EVENTS;
 	sc.vsc_eventqueue.idx = VTINPUT_MAX_FRAME_EVENTS;
+	sc.vsc_eventqueue.events = calloc(sc.vsc_eventqueue.size,
+	    sizeof(*sc.vsc_eventqueue.events));
+	ATF_REQUIRE(sc.vsc_eventqueue.events != NULL);
+	/* Model an oversized partial frame, not a completed SYN_REPORT. */
+	sc.vsc_eventqueue.events[sc.vsc_eventqueue.idx - 1].event.type =
+	    htole16(EV_KEY);
+	sc.vsc_eventqueue.events[sc.vsc_eventqueue.idx - 1].event.code =
+	    htole16(KEY_A);
+	g_descs = 2;
 	g_read_events[0].type = EV_SYN;
 	g_read_events[0].code = SYN_REPORT;
 	g_read_event_count = 1;
 	vtinput_read_event(10, EVF_READ, &sc);
 	ATF_CHECK(sc.vsc_eventqueue.idx == 0);
 	ATF_CHECK(!sc.vsc_drop_frame);
-	ATF_CHECK(g_rel_calls == 0);
+	ATF_CHECK_EQ(g_rel_calls, 2);
+	memcpy(&delivered, g_iov_buf[0], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(le16toh(delivered.type), VIRTIO14_INPUT_EV_SYN);
+	ATF_CHECK_EQ(le16toh(delivered.code),
+	    VIRTIO14_INPUT_SYN_DROPPED);
+	memcpy(&delivered, g_iov_buf[1], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(le16toh(delivered.type), VIRTIO14_INPUT_EV_SYN);
+	ATF_CHECK_EQ(le16toh(delivered.code), VIRTIO14_INPUT_SYN_REPORT);
+	free(sc.vsc_eventqueue.events);
+}
+
+ATF_TC_WITHOUT_HEAD(frame_larger_than_guest_ring_reports_loss);
+ATF_TC_BODY(frame_larger_than_guest_ring_reports_loss, tc)
+{
+	struct pci_vtinput_softc sc;
+	struct vtinput_event delivered;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_qsize = 4;
+	vq_set_allocated(&sc.vsc_queues[VTINPUT_EVENTQ], true);
+	for (size_t i = 0; i < 5; i++) {
+		g_read_events[i].type = EV_KEY;
+		g_read_events[i].code = KEY_A;
+		g_read_events[i].value = (int32_t)i;
+	}
+	g_read_events[5].type = EV_SYN;
+	g_read_events[5].code = SYN_REPORT;
+	g_read_event_count = 6;
+	g_descs = 2;
+	vtinput_read_event(10, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_getchain_calls, 2);
+	ATF_CHECK_EQ(g_rel_calls, 2);
+	ATF_CHECK_EQ(sc.vsc_eventqueue.idx, 0);
+	ATF_CHECK(!sc.vsc_drop_frame);
+	memcpy(&delivered, g_iov_buf[0], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(le16toh(delivered.type), VIRTIO14_INPUT_EV_SYN);
+	ATF_CHECK_EQ(le16toh(delivered.code),
+	    VIRTIO14_INPUT_SYN_DROPPED);
+	memcpy(&delivered, g_iov_buf[1], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(le16toh(delivered.type), VIRTIO14_INPUT_EV_SYN);
+	ATF_CHECK_EQ(le16toh(delivered.code), VIRTIO14_INPUT_SYN_REPORT);
+	free(sc.vsc_eventqueue.events);
+}
+
+ATF_TC_WITHOUT_HEAD(syn_dropped_resynchronizes_guest);
+ATF_TC_BODY(syn_dropped_resynchronizes_guest, tc)
+{
+	struct pci_vtinput_softc sc;
+	struct vtinput_event delivered;
+	pthread_mutex_t mtx;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	ATF_REQUIRE_EQ(pthread_mutex_init(&mtx, NULL), 0);
+	sc.vsc_vs.vs_mtx = &mtx;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_vs = &sc.vsc_vs;
+	vq_set_allocated(&sc.vsc_queues[VTINPUT_EVENTQ], true);
+	g_descs = 2;
+
+	/* Staged and post-overrun state must not reach the guest. */
+	g_read_events[0].type = EV_KEY;
+	g_read_events[0].code = KEY_A;
+	g_read_events[0].value = 1;
+	g_read_events[1].type = VIRTIO14_INPUT_EV_SYN;
+	g_read_events[1].code = VIRTIO14_INPUT_SYN_DROPPED;
+	g_read_events[2].type = EV_KEY;
+	g_read_events[2].code = KEY_A;
+	g_read_events[2].value = 0;
+	g_read_events[3].type = EV_ABS;
+	g_read_events[3].code = ABS_X;
+	g_read_events[3].value = 1234;
+	g_read_events[4].type = VIRTIO14_INPUT_EV_SYN;
+	g_read_events[4].code = VIRTIO14_INPUT_SYN_REPORT;
+	g_read_event_count = 5;
+
+	vtinput_read_event(10, EVF_READ, &sc);
+
+	ATF_CHECK_EQ(g_read_event_index, 5);
+	ATF_CHECK_EQ(g_rel_calls, 2);
+	ATF_CHECK_EQ(g_rel_len[0], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(g_rel_len[1], VIRTIO14_INPUT_EVENT_SIZE);
+	memcpy(&delivered, g_iov_buf[0], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(le16toh(delivered.type), VIRTIO14_INPUT_EV_SYN);
+	ATF_CHECK_EQ(le16toh(delivered.code),
+	    VIRTIO14_INPUT_SYN_DROPPED);
+	memcpy(&delivered, g_iov_buf[1], VIRTIO14_INPUT_EVENT_SIZE);
+	ATF_CHECK_EQ(le16toh(delivered.type), VIRTIO14_INPUT_EV_SYN);
+	ATF_CHECK_EQ(le16toh(delivered.code), VIRTIO14_INPUT_SYN_REPORT);
+	ATF_CHECK_EQ(sc.vsc_eventqueue.idx, 0);
+	ATF_CHECK(!sc.vsc_drop_frame);
+	ATF_CHECK(!sc.vsc_resync_frame);
+
+	free(sc.vsc_eventqueue.events);
+	pthread_mutex_destroy(&mtx);
 }
 
 ATF_TC_WITHOUT_HEAD(reset_discards_stale_events);
@@ -927,11 +1318,13 @@ ATF_TC_BODY(reset_discards_stale_events, tc)
 	sc.vsc_fd = 10;
 	sc.vsc_eventqueue.idx = 2;
 	sc.vsc_drop_frame = true;
+	sc.vsc_resync_frame = true;
 	memset(&sc.vsc_config, 0xa5, sizeof(sc.vsc_config));
 	sc.vsc_config_valid = 1;
 	pci_vtinput_reset(&sc);
 	ATF_CHECK(sc.vsc_eventqueue.idx == 0);
 	ATF_CHECK(!sc.vsc_drop_frame);
+	ATF_CHECK(!sc.vsc_resync_frame);
 	ATF_CHECK(!sc.vsc_config_valid);
 	for (size_t i = 0; i < sizeof(sc.vsc_config); i++)
 		ATF_CHECK_EQ(((uint8_t *)&sc.vsc_config)[i], 0);
@@ -976,6 +1369,39 @@ ATF_TC_BODY(queue_reset_drops_host_events, tc)
 	pthread_mutex_destroy(&mtx);
 }
 
+ATF_TC_WITHOUT_HEAD(queue_reset_drains_before_fast_reenable);
+ATF_TC_BODY(queue_reset_drains_before_fast_reenable, tc)
+{
+	struct pci_vtinput_softc sc;
+	pthread_mutex_t mtx;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_evp = (struct mevent *)(uintptr_t)1;
+	sc.vsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	ATF_REQUIRE(pthread_mutex_init(&mtx, NULL) == 0);
+	sc.vsc_vs.vs_mtx = &mtx;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[VTINPUT_EVENTQ].vq_num = VTINPUT_EVENTQ;
+	g_read_events[0].type = EV_KEY;
+	g_read_events[1].type = EV_SYN;
+	g_read_events[1].code = SYN_REPORT;
+	g_read_event_count = 2;
+
+	ATF_REQUIRE_EQ(pci_vtinput_qreset(&sc,
+	    &sc.vsc_queues[VTINPUT_EVENTQ], 1), 0);
+	ATF_CHECK_EQ(g_read_event_index, 2);
+
+	/* Model an immediate replacement queue before mevent dispatch. */
+	vq_set_allocated(&sc.vsc_queues[VTINPUT_EVENTQ], true);
+	vtinput_read_event(10, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_getchain_calls, 0);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(g_end_calls, 0);
+	pthread_mutex_destroy(&mtx);
+}
+
 ATF_TC_WITHOUT_HEAD(queue_reset_isolated);
 ATF_TC_BODY(queue_reset_isolated, tc)
 {
@@ -987,20 +1413,53 @@ ATF_TC_BODY(queue_reset_isolated, tc)
 	sc.vsc_queues[VTINPUT_STATUSQ].vq_num = VTINPUT_STATUSQ;
 	sc.vsc_eventqueue.idx = 2;
 	sc.vsc_drop_frame = true;
+	sc.vsc_resync_frame = true;
 
 	ATF_CHECK_EQ(pci_vtinput_qreset(&sc,
 	    &sc.vsc_queues[VTINPUT_STATUSQ], 1), 0);
 	ATF_CHECK_EQ(sc.vsc_eventqueue.idx, 2);
 	ATF_CHECK(sc.vsc_drop_frame);
+	ATF_CHECK(sc.vsc_resync_frame);
 
 	ATF_CHECK_EQ(pci_vtinput_qreset(&sc,
 	    &sc.vsc_queues[VTINPUT_EVENTQ], 2), 0);
 	ATF_CHECK_EQ(sc.vsc_eventqueue.idx, 0);
 	ATF_CHECK(!sc.vsc_drop_frame);
+	ATF_CHECK(!sc.vsc_resync_frame);
 
 	sc.vsc_queues[VTINPUT_EVENTQ].vq_num = VTINPUT_MAXQ;
 	ATF_CHECK_EQ(pci_vtinput_qreset(&sc,
 	    &sc.vsc_queues[VTINPUT_EVENTQ], 3), EINVAL);
+}
+
+ATF_TC_WITHOUT_HEAD(suspend_discards_partial_frame);
+ATF_TC_BODY(suspend_discards_partial_frame, tc)
+{
+	struct pci_vtinput_softc sc;
+	struct input_event event;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&event, 0, sizeof(event));
+	event.type = EV_KEY;
+	event.code = KEY_A;
+	event.value = 1;
+	ATF_REQUIRE_EQ(vtinput_eventqueue_add_event(&sc.vsc_eventqueue,
+	    &event), 0);
+	sc.vsc_drop_frame = true;
+	sc.vsc_resync_frame = true;
+
+	ATF_CHECK((vtinput_vi_consts.vc_hv_caps &
+	    VIRTIO14_F_SUSPEND) != 0);
+	ATF_CHECK(vtinput_vi_consts.vc_suspend ==
+	    pci_vtinput_suspend_device);
+	ATF_CHECK(vtinput_vi_consts.vc_resume_device ==
+	    pci_vtinput_resume_device);
+	ATF_REQUIRE_EQ(pci_vtinput_suspend_device(&sc), 0);
+	ATF_CHECK_EQ(sc.vsc_eventqueue.idx, 0);
+	ATF_CHECK(!sc.vsc_drop_frame);
+	ATF_CHECK(!sc.vsc_resync_frame);
+
+	free(sc.vsc_eventqueue.events);
 }
 
 ATF_TC_WITHOUT_HEAD(config_bounds);
@@ -1021,6 +1480,7 @@ ATF_TC_BODY(config_bounds, tc)
 	ATF_CHECK(pci_vtinput_cfgread(&sc, INT_MAX, INT_MAX, &value) == 0);
 	ATF_CHECK(value == 0);
 	ATF_CHECK(pci_vtinput_cfgread(&sc, 0, 3, &value) == 0);
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc, 0, 1, NULL), EINVAL);
 	ATF_CHECK(pci_vtinput_cfgwrite(&sc, -1, 1, 0) == 1);
 	ATF_CHECK(pci_vtinput_cfgwrite(&sc, INT_MAX, INT_MAX, 0) == 1);
 	ATF_CHECK(pci_vtinput_cfgwrite(&sc, 1, 2, 0) == 1);
@@ -1145,6 +1605,33 @@ ATF_TC_BODY(config_selector_matrix, tc)
 	ATF_CHECK_EQ(sc.vsc_config.u.bitmap[17], 0x04);
 	ATF_CHECK_EQ(sc.vsc_config.u.bitmap[18], 0);
 
+	/*
+	 * Output sound and repeat capabilities use the same byte-stream
+	 * bitmap protocol.  An empty host bitmap is a supported empty response,
+	 * not an unrecognized selector.
+	 */
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_config.select = VIRTIO14_INPUT_CFG_EV_BITS;
+	sc.vsc_config.subsel = EV_SND;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, 0);
+	ATF_CHECK_EQ(g_last_ioctl, EVIOCGBIT(EV_SND,
+	    howmany(SND_CNT, sizeof(long) * 8) * sizeof(long)));
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_fd = 10;
+	sc.vsc_config.select = VIRTIO14_INPUT_CFG_EV_BITS;
+	sc.vsc_config.subsel = EV_REP;
+	ATF_CHECK_EQ(pci_vtinput_cfgread(&sc,
+	    VIRTIO14_INPUT_CONFIG_SIZE_OFF, 1, &value), 0);
+	ATF_CHECK_EQ(value, 0);
+	ATF_CHECK_EQ(g_last_ioctl, EVIOCGBIT(EV_REP,
+	    howmany(REP_CNT, sizeof(long) * 8) * sizeof(long)));
+
 	/* Unsupported event types must return an empty, scrubbed response. */
 	reset_mocks();
 	memset(&sc, 0xa5, sizeof(sc));
@@ -1158,6 +1645,302 @@ ATF_TC_BODY(config_selector_matrix, tc)
 	ATF_CHECK_EQ(g_last_ioctl, 0);
 	for (size_t i = 0; i < VIRTIO14_INPUT_CONFIG_UNION_SIZE; i++)
 		ATF_CHECK_EQ(sc.vsc_config.u.bitmap[i], 0);
+}
+
+static void
+setup_snapshot_softc(struct pci_vtinput_softc *sc, struct mevent *event)
+{
+	struct input_event host_event;
+	pthread_mutexattr_t attr;
+
+	memset(sc, 0, sizeof(*sc));
+	ATF_REQUIRE_EQ(pthread_mutexattr_init(&attr), 0);
+	ATF_REQUIRE_EQ(pthread_mutexattr_settype(&attr,
+	    PTHREAD_MUTEX_RECURSIVE), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc->vsc_mtx, &attr), 0);
+	ATF_REQUIRE_EQ(pthread_mutexattr_destroy(&attr), 0);
+	sc->vsc_mtx_initialized = true;
+	sc->vsc_evp = event;
+	sc->vsc_evdev = __DECONST(char *, "/dev/input/event-test");
+	sc->vsc_evdev_rdev = 42;
+	sc->vsc_eventqueue.size = VTINPUT_MAX_PKT_LEN;
+	sc->vsc_eventqueue.events = calloc(sc->vsc_eventqueue.size,
+	    sizeof(*sc->vsc_eventqueue.events));
+	ATF_REQUIRE(sc->vsc_eventqueue.events != NULL);
+	sc->vsc_queues[VTINPUT_EVENTQ].vq_qsize = VTINPUT_RINGSZ;
+	memset(&host_event, 0, sizeof(host_event));
+	host_event.type = EV_KEY;
+	host_event.code = KEY_A;
+	host_event.value = 1;
+	ATF_REQUIRE_EQ(vtinput_eventqueue_add_event(
+	    &sc->vsc_eventqueue, &host_event), 0);
+	sc->vsc_config.select = VIRTIO14_INPUT_CFG_EV_BITS;
+	sc->vsc_config.subsel = EV_KEY;
+	sc->vsc_config.size = 2;
+	sc->vsc_config.u.bitmap[1] = 0x40;
+	sc->vsc_config_valid = 1;
+}
+
+static void
+destroy_snapshot_softc(struct pci_vtinput_softc *sc)
+{
+
+	free(sc->vsc_eventqueue.events);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc->vsc_mtx), 0);
+}
+
+int
+vi_pci_snapshot(struct vm_snapshot_meta *meta)
+{
+	struct pci_devinst *pi;
+	struct pci_vtinput_softc *sc;
+
+	pi = meta->dev_data;
+	if (pi == NULL || pi->pi_arg == NULL)
+		return (EINVAL);
+	sc = pi->pi_arg;
+	g_snapshot_validate_saw_lock =
+	    pthread_mutex_isowned_np(&sc->vsc_mtx);
+	g_snapshot_validate_calls++;
+	return (g_snapshot_validate_result);
+}
+
+static int
+run_snapshot(struct pci_vtinput_softc *sc, uint8_t *image, size_t size,
+    enum vm_snapshot_op op, size_t *used)
+{
+	struct vm_snapshot_meta meta = {
+		.buffer = {
+			.buf = image,
+			.buf_rem = size,
+		},
+		.op = op,
+	};
+	int error;
+
+	error = pci_vtinput_snapshot(sc, &meta);
+	if (used != NULL)
+		*used = size - meta.buffer.buf_rem;
+	return (error);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_staged_frame_and_atomicity);
+ATF_TC_BODY(snapshot_staged_frame_and_atomicity, tc)
+{
+	struct pci_vtinput_softc destination, source;
+	struct mevent destination_event, source_event;
+	uint8_t image[2048], obsolete[2048];
+	uint8_t saved_tail;
+	size_t used;
+
+	reset_mocks();
+	setup_snapshot_softc(&source, &source_event);
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE(used > VIRTIO14_INPUT_CONFIG_SIZE);
+	ATF_CHECK_EQ(image[0], (uint8_t)'I');
+	ATF_CHECK_EQ(image[1], (uint8_t)'N');
+	ATF_CHECK_EQ(image[2], (uint8_t)'P');
+	ATF_CHECK_EQ(image[3], (uint8_t)'1');
+
+	setup_snapshot_softc(&destination, &destination_event);
+	destination.vsc_config.select = VIRTIO14_INPUT_CFG_ID_NAME;
+	destination.vsc_eventqueue.idx = 0;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_CHECK_EQ(destination.vsc_config.select,
+	    VIRTIO14_INPUT_CFG_ID_NAME);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 0);
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used - 1,
+	    VM_SNAPSHOT_VALIDATE, NULL), E2BIG);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 0);
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used - 1,
+	    VM_SNAPSHOT_RESTORE, NULL), E2BIG);
+	ATF_CHECK_EQ(destination.vsc_config.select,
+	    VIRTIO14_INPUT_CFG_ID_NAME);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 0);
+
+	destination.vsc_evdev_rdev++;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	ATF_CHECK_EQ(destination.vsc_config.select,
+	    VIRTIO14_INPUT_CFG_ID_NAME);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 0);
+	destination.vsc_evdev_rdev--;
+
+	/*
+	 * INP1 fields through size consume 27 bytes.  The source advertises a
+	 * two-byte selector payload, so byte 29 is the first guest-readable tail
+	 * byte and must retain the live path's zero value.
+	 */
+	saved_tail = image[29];
+	image[29] = 0xa5;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	ATF_CHECK_EQ(destination.vsc_config.select,
+	    VIRTIO14_INPUT_CFG_ID_NAME);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 0);
+	image[29] = saved_tail;
+
+	/* A staged frame can never exceed the event virtqueue capacity. */
+	memcpy(obsolete, image, used);
+	obsolete[155] = VTINPUT_RINGSZ + 1;
+	obsolete[156] = 0;
+	obsolete[157] = 0;
+	obsolete[158] = 0;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, obsolete, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	ATF_REQUIRE_EQ(run_snapshot(&destination, obsolete, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 0);
+
+	/* Unreleased obsolete versions are rejected without changing state. */
+	memcpy(obsolete, image, used);
+	obsolete[4] = 1;
+	obsolete[5] = 0;
+	obsolete[6] = 0;
+	obsolete[7] = 0;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, obsolete, used,
+	    VM_SNAPSHOT_RESTORE, NULL), ENOTSUP);
+	ATF_CHECK_EQ(destination.vsc_config.select,
+	    VIRTIO14_INPUT_CFG_ID_NAME);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 0);
+
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK_EQ(destination.vsc_config.select,
+	    VIRTIO14_INPUT_CFG_EV_BITS);
+	ATF_CHECK_EQ(destination.vsc_config.subsel, EV_KEY);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 1);
+	ATF_CHECK_EQ(le16toh(
+	    destination.vsc_eventqueue.events[0].event.type), EV_KEY);
+	ATF_CHECK_EQ(le16toh(
+	    destination.vsc_eventqueue.events[0].event.code), KEY_A);
+	ATF_CHECK_EQ(le32toh(
+	    destination.vsc_eventqueue.events[0].event.value), 1);
+
+	destroy_snapshot_softc(&destination);
+	destroy_snapshot_softc(&source);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_resynchronization_state);
+ATF_TC_BODY(snapshot_resynchronization_state, tc)
+{
+	struct pci_vtinput_softc destination, source;
+	struct input_event host_event;
+	struct mevent destination_event, source_event;
+	uint8_t image[2048], saved_resync;
+	size_t used;
+
+	reset_mocks();
+	setup_snapshot_softc(&source, &source_event);
+	vtinput_eventqueue_clear(&source.vsc_eventqueue);
+	memset(&host_event, 0, sizeof(host_event));
+	host_event.type = VIRTIO14_INPUT_EV_SYN;
+	host_event.code = VIRTIO14_INPUT_SYN_DROPPED;
+	ATF_REQUIRE_EQ(vtinput_eventqueue_add_event(
+	    &source.vsc_eventqueue, &host_event), 0);
+	source.vsc_resync_frame = true;
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_CHECK_EQ(image[4], 2);
+
+	setup_snapshot_softc(&destination, &destination_event);
+	destination.vsc_eventqueue.idx = 0;
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	saved_resync = image[18];
+	image[18] = 2;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), EINVAL);
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 0);
+	ATF_CHECK(!destination.vsc_resync_frame);
+	image[18] = saved_resync;
+
+	ATF_REQUIRE_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK(destination.vsc_resync_frame);
+	ATF_CHECK(!destination.vsc_drop_frame);
+	ATF_CHECK_EQ(destination.vsc_eventqueue.idx, 1);
+	ATF_CHECK_EQ(le16toh(
+	    destination.vsc_eventqueue.events[0].event.type),
+	    VIRTIO14_INPUT_EV_SYN);
+	ATF_CHECK_EQ(le16toh(
+	    destination.vsc_eventqueue.events[0].event.code),
+	    VIRTIO14_INPUT_SYN_DROPPED);
+
+	destroy_snapshot_softc(&destination);
+	destroy_snapshot_softc(&source);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_preflight_is_locally_serialized);
+ATF_TC_BODY(snapshot_preflight_is_locally_serialized, tc)
+{
+	struct mevent event;
+	struct pci_devinst pi;
+	struct pci_vtinput_softc sc;
+	struct vm_snapshot_meta meta = {
+		.op = VM_SNAPSHOT_VALIDATE,
+	};
+
+	reset_mocks();
+	setup_snapshot_softc(&sc, &event);
+	memset(&pi, 0, sizeof(pi));
+	pi.pi_arg = &sc;
+	meta.dev_data = &pi;
+
+	ATF_REQUIRE_EQ(pci_vtinput_snapshot_validate(&meta), 0);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 1);
+	ATF_CHECK(g_snapshot_validate_saw_lock);
+	ATF_CHECK_EQ(pthread_mutex_trylock(&sc.vsc_mtx), 0);
+	pthread_mutex_unlock(&sc.vsc_mtx);
+
+	/* The recursive serializer composes with checkpoint pause ownership. */
+	pthread_mutex_lock(&sc.vsc_mtx);
+	g_snapshot_validate_saw_lock = false;
+	ATF_REQUIRE_EQ(pci_vtinput_snapshot_validate(&meta), 0);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 2);
+	ATF_CHECK(g_snapshot_validate_saw_lock);
+	pthread_mutex_unlock(&sc.vsc_mtx);
+
+	meta.dev_data = NULL;
+	ATF_CHECK_EQ(pci_vtinput_snapshot_validate(&meta), EINVAL);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 2);
+	destroy_snapshot_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(checkpoint_event_source_lifecycle);
+ATF_TC_BODY(checkpoint_event_source_lifecycle, tc)
+{
+	struct pci_vtinput_softc sc;
+	struct mevent event;
+
+	reset_mocks();
+	setup_snapshot_softc(&sc, &event);
+	g_mevent_disable_error = EIO;
+	ATF_CHECK_EQ(pci_vtinput_pause(&sc), EIO);
+	ATF_CHECK_EQ(g_mevent_disable_calls, 1);
+
+	g_mevent_disable_error = 0;
+	ATF_REQUIRE_EQ(pci_vtinput_pause(&sc), 0);
+	ATF_CHECK_EQ(pci_vtinput_pause(&sc), EBUSY);
+	ATF_CHECK_EQ(g_mevent_disable_calls, 2);
+	g_mevent_enable_error = EBUSY;
+	ATF_CHECK_EQ(pci_vtinput_resume(&sc), EBUSY);
+	/* A failed resume is retryable without retaining the private mutex. */
+	ATF_REQUIRE_EQ(pthread_mutex_trylock(&sc.vsc_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	g_mevent_enable_error = 0;
+	ATF_REQUIRE_EQ(pci_vtinput_resume(&sc), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_trylock(&sc.vsc_mtx), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(g_mevent_enable_calls, 2);
+
+	destroy_snapshot_softc(&sc);
 }
 
 ATF_TC_WITHOUT_HEAD(virtio_1_4_wire_layout);
@@ -1195,6 +1978,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, command_line_config);
 	ATF_TP_ADD_TC(tp, eventqueue_growth);
 	ATF_TP_ADD_TC(tp, syn_report_flushes_frame);
+	ATF_TP_ADD_TC(tp, complete_frame_retries_on_guest_kick);
+	ATF_TP_ADD_TC(tp, host_event_dispatch_is_bounded);
 	ATF_TP_ADD_TC(tp, hostile_status_descriptors);
 	ATF_TP_ADD_TC(tp, hostile_event_descriptors);
 	ATF_TP_ADD_TC(tp, scatter_gather_events);
@@ -1202,11 +1987,19 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, in_order_completion);
 	ATF_TP_ADD_TC(tp, partial_frame_rollback);
 	ATF_TP_ADD_TC(tp, oversized_frame_dropped);
+	ATF_TP_ADD_TC(tp, frame_larger_than_guest_ring_reports_loss);
+	ATF_TP_ADD_TC(tp, syn_dropped_resynchronizes_guest);
 	ATF_TP_ADD_TC(tp, reset_discards_stale_events);
 	ATF_TP_ADD_TC(tp, queue_reset_drops_host_events);
+	ATF_TP_ADD_TC(tp, queue_reset_drains_before_fast_reenable);
 	ATF_TP_ADD_TC(tp, queue_reset_isolated);
+	ATF_TP_ADD_TC(tp, suspend_discards_partial_frame);
 	ATF_TP_ADD_TC(tp, config_bounds);
 	ATF_TP_ADD_TC(tp, config_responses);
 	ATF_TP_ADD_TC(tp, config_selector_matrix);
+	ATF_TP_ADD_TC(tp, snapshot_staged_frame_and_atomicity);
+	ATF_TP_ADD_TC(tp, snapshot_resynchronization_state);
+	ATF_TP_ADD_TC(tp, snapshot_preflight_is_locally_serialized);
+	ATF_TP_ADD_TC(tp, checkpoint_event_source_lifecycle);
 	return (atf_no_error());
 }

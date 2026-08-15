@@ -23,7 +23,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 24, 2026
+.Dd August 1, 2026
 .Dt BHYVE_CONFIG 5
 .Os
 .Sh NAME
@@ -233,6 +233,28 @@ This value is used for the guest's System Management BIOS System Information str
 Generate an MPTable.
 .It Va x86.x2apic Ta bool Ta false Ta
 Configure guest's local APICs in x2APIC mode.
+.It Va x86.nested_vmx Ta bool Ta false Ta
+Expose Intel VMX as a VM-wide guest CPU-model feature.
+This is available only on an Intel host whose nested-VMX implementation
+passes its complete capability predicate and only when the boot-time
+.Va hw.vmm.vmx.nested
+tunable was set to
+.Ql 1
+before
+.Nm vmm
+was loaded.
+The host tunable and this per-guest setting are both required so that enabling
+qualification on a host does not silently change the CPU model of unrelated
+guests.
+Nested VPID and INVVPID remain a separate qualification feature.
+They are exposed only when the boot-time
+.Va hw.vmm.vmx.nested_vpid
+tunable is also set to
+.Ql 1 .
+This second tunable is disabled by default and is intended for the VPID
+lifecycle, invalidation, migration, reset, and restore qualification matrix;
+it changes the nested guest CPU model and requires
+.Va hw.vmm.vmx.nested=1 .
 .It Va x86.strictio Ta bool Ta false Ta
 Exit if a guest accesses an I/O port that is not emulated.
 By default, writes are ignored and reads return all bits set.
@@ -282,6 +304,16 @@ AHCI storage controller.
 Intel e82545 network interface.
 .It Li fbuf
 VGA framebuffer device attached to VNC server.
+The optional
+.Va source
+variable is either
+.Li fbuf
+(the default) or
+.Li external .
+The latter makes this device a VNC/storage consumer for another display
+device, requires
+.Va vga=off ,
+and does not claim framebuffer-producer ownership.
 .It Li lpc
 LPC PCI-ISA bridge with COM1-COM4 16550 serial ports,
 a boot ROM, and, optionally, a TPM module, a fw_cfg type,
@@ -317,6 +349,38 @@ to preserve the existing PCI identity and interface.
 The
 .Li modern
 value selects the non-transitional VirtIO PCI transport and device ID 0x1049.
+.It Li virtio-fs
+Modern-only, non-DAX VirtIO filesystem interface using non-transitional
+device ID 0x105a.
+Requires
+.Va path
+and
+.Va tag
+configuration variables.
+The backend at
+.Va path
+must be a local
+.Dv SOCK_SEQPACKET
+service speaking the versioned VFSB protocol and running with the same
+effective user and group identity as
+.Nm bhyve .
+The optional
+.Va queues
+variable selects 1 through 64 request queues and defaults to one.
+The optional
+.Va packed
+boolean selects packed virtqueues and defaults to false.
+The optional
+.Va display
+boolean registers the scanout and alpha cursor as the process-wide
+framebuffer producer and defaults to false.
+VNC presentation uses a matching
+.Li fbuf
+device configured with
+.Va source=external
+and
+.Va vga=off .
+Producer ownership is exclusive and conflicting display configurations fail.
 .It Li virtio-blk
 VirtIO block storage interface.
 .It Li virtio-console
@@ -363,6 +427,120 @@ to preserve the existing PCI identity and interface.
 The
 .Li modern
 value selects the non-transitional VirtIO PCI transport and device ID 0x1044.
+.It Li virtio-pmem
+Modern-only VirtIO persistent-memory interface using non-transitional device
+ID 0x105b.
+The required
+.Va path
+variable names a nonempty regular file that supplies the persistent bytes.
+The file is opened read-write without following a final symbolic link and is
+locked exclusively for the lifetime of the virtual machine.
+The required
+.Va id
+variable is a stable operator-assigned backend identity, limited to 255 bytes.
+Checkpoint restore requires the same identity and exact backing size; the
+pathname, descriptor, mapping address, and host inode number are not portable
+state.
+The optional
+.Va packed
+boolean selects packed virtqueues and defaults to false.
+.It Li virtio-iommu
+Modern-only VirtIO IOMMU interface with request and event queues.
+The optional
+.Va packed
+boolean selects packed virtqueues and defaults to false.
+.It Li virtio-balloon
+VirtIO traditional memory-balloon interface.
+The optional
+.Va target
+configuration variable selects the startup balloon target size.
+The optional
+.Va stats_interval
+integer enables the memory-statistics virtqueue and selects an event-driven
+refresh interval from 1 through 3600 seconds.
+It is disabled when omitted.
+The optional
+.Va deflate_on_oom
+boolean permits a conforming guest to return ballooned pages for guest
+stability without a lower host target.
+The optional
+.Va free_page_reporting
+boolean exposes the free-page reporting virtqueue.
+Both default to false.
+.It Li virtio-rtc
+VirtIO RTC interface.
+The optional
+.Va alarm
+boolean exposes the standard alarm feature and notification queue.
+.Va transport
+and
+.Va packed
+options use the same semantics as other VirtIO PCI devices.
+.It Li virtio-gpu
+Modern-only VirtIO GPU 2D interface with one headless-capable scanout.
+The optional
+.Va width
+and
+.Va height
+variables select its dimensions and default to 1024 by 768.
+The pair must be representable by the deterministic EDID 1.4 detailed timing
+returned to the guest.
+The optional
+.Va packed
+boolean selects packed virtqueues and defaults to false.
+.It Li virtio-mem
+Modern-only VirtIO memory hotplug interface.
+The required
+.Va size
+variable selects the device-memory region size.
+The optional
+.Va requested
+variable selects the initial requested size and defaults to zero.
+The optional
+.Va block-size
+variable selects the power-of-two device block size and defaults to 2 MiB.
+All three sizes must be block aligned, and
+.Va requested
+cannot exceed
+.Va size .
+The optional
+.Va packed
+boolean selects packed virtqueues and defaults to false.
+.It Li virtio-snd
+Modern-only VirtIO sound interface using the non-transitional device ID
+0x1059.
+It exposes one stereo playback stream and one stereo capture stream at
+44.1 or 48 kHz with signed 16-bit samples.
+The current deterministic
+.Dq null
+backend discards playback and returns zero-filled capture data; it does not
+route audio to host hardware.
+The optional
+.Va backend
+variable defaults to
+.Dq null .
+The provisional
+.Dq oss
+backend connects the output and input streams to nonblocking OSS devices.
+Its optional
+.Va play
+and
+.Va record
+variables default to
+.Pa /dev/dsp ;
+they are rejected for the
+.Dq null
+backend.
+Backend identity is an operational and checkpoint-compatibility contract;
+restore requires the same backend name and exact configured playback and
+capture paths.
+The OSS backend is event driven and retains at most one bounded request per
+stream while waiting for host readiness.
+It remains provisional pending live Linux playback, capture, reset, and
+checkpoint qualification with representative host audio devices.
+The optional
+.Va packed
+boolean selects packed virtqueues and defaults to false.
 .It Li virtio-vsock
 VirtIO vsock interface for host-guest socket transport.
 Requires a
@@ -818,6 +996,26 @@ The path of a directory on the host to export to the guest.
 .It Va ro Ta bool Ta false Ta
 If true, the guest filesystem is read-only.
 .El
+.Ss VirtIO Filesystem Settings
+The modern-only, non-DAX VirtIO filesystem device supports the following
+settings:
+.Bl -column "queues" "integer" "Default"
+.It Sy Name Ta Sy Format Ta Sy Default Ta Sy Description
+.It Va path Ta path Ta Ta
+Absolute pathname of the authenticated local VFSB backend socket.
+.It Va tag Ta string Ta Ta
+UTF-8 mount tag of at most 36 bytes exposed to the guest.
+.It Va queues Ta integer Ta 1 Ta
+Number of request queues, from 1 through 64.
+One additional high-priority queue is always present.
+.It Va packed Ta bool Ta false Ta
+Use packed virtqueues.
+.El
+The backend must negotiate cancellation support, which permits the device to
+advertise selective queue reset.
+Notifications, DAX, and shared-memory regions are not exposed.
+The base system currently contains the device-side protocol but does not
+install a production filesystem backend daemon.
 .Ss VirtIO Block Device Settings
 In addition to the block device settings described above, each
 VirtIO block device supports the following settings:
@@ -827,6 +1025,11 @@ VirtIO block device supports the following settings:
 Serial number of up to twenty characters.
 A default serial number is generated using a hash of the backing
 store's pathname.
+.It Va resize Ta bool Ta false Ta
+Monitor the backing store for capacity changes and send a VirtIO
+configuration-change notification when its size changes.  This is disabled by
+default.  Do not enable it for a partitioned root disk unless the guest is
+prepared to handle provider reconfiguration while the disk is mounted.
 .El
 .Ss VirtIO Console Device Settings
 Each VirtIO Console device contains one or more console ports.
@@ -852,6 +1055,10 @@ Each port supports the following settings:
 The name of the port exposed to the guest.
 .It Va path Ta path Ta Ta
 The path of a UNIX domain socket providing the host connection for the port.
+.It Va console Ta boolean Ta false Ta
+Nominate this port to the guest as a text console port after the guest
+acknowledges the port.
+More than one port may be nominated.
 .El
 .Ss VirtIO Input Interface Settings
 Each VirtIO Input device contains one input event device.
@@ -892,6 +1099,12 @@ VirtIO PCI transport to expose, either
 .Dq legacy
 or
 .Dq modern .
+.It Va queues Ta integer Ta 1 Ta
+Number of receive/transmit queue pairs, from 1 through 8.
+Values greater than one require the modern transport.
+.It Va packed Ta bool Ta false Ta
+Use packed virtqueues.
+This requires the modern transport.
 .El
 .Ss VirtIO SCSI Settings
 .Bl -column "Name" "integer" "Default"

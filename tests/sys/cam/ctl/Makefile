@@ -11,6 +11,7 @@ ATF_TESTS_SH+=	persist
 ATF_TESTS_SH+=	prevent
 ATF_TESTS_SH+=	read_buffer
 ATF_TESTS_SH+=	start_stop_unit
+ATF_TESTS_C+=	lun_event_test
 
 PROGS+=	prout_register_huge_cdb
 LIBADD+=	cam

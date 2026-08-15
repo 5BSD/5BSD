@@ -40,6 +40,7 @@
 #include <machine/bus.h>
 #include <machine/resource.h>
 #include <sys/bus.h>
+#include <sys/condvar.h>
 
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtqueue.h>
@@ -62,6 +63,9 @@ struct vtscmi_queue {
 	struct vtscmi_pdu			*pdus;
 	SLIST_HEAD(pdus_head, vtscmi_pdu)	p_head;
 	struct mtx				p_mtx;
+	struct mtx				cb_mtx;
+	struct cv				cb_cv;
+	u_int					cb_inflight;
 	virtio_scmi_rx_callback_t		*rx_callback;
 	void					*priv;
 };
@@ -73,9 +77,12 @@ struct vtscmi_softc {
 	struct vtscmi_queue	vtscmi_queues[VIRTIO_SCMI_CHAN_MAX];
 	bool		has_p2a;
 	bool		has_shared;
+	u_int		quiesced;
 };
 
 static device_t vtscmi_dev;
+static bool vtscmi_attaching;
+static struct mtx vtscmi_global_mtx;
 
 static int vtscmi_modevent(module_t, int, void *);
 
@@ -128,8 +135,18 @@ vtscmi_modevent(module_t mod, int type, void *unused)
 
 	switch (type) {
 	case MOD_LOAD:
+		mtx_init(&vtscmi_global_mtx, "vtscmi global", NULL, MTX_DEF);
+		error = 0;
+		break;
 	case MOD_QUIESCE:
+		mtx_lock(&vtscmi_global_mtx);
+		error = vtscmi_dev != NULL || vtscmi_attaching ? EBUSY : 0;
+		mtx_unlock(&vtscmi_global_mtx);
+		break;
 	case MOD_UNLOAD:
+		mtx_destroy(&vtscmi_global_mtx);
+		error = 0;
+		break;
 	case MOD_SHUTDOWN:
 		error = 0;
 		break;
@@ -153,9 +170,14 @@ vtscmi_attach(device_t dev)
 	struct vtscmi_softc *sc;
 	int error;
 
-	/* Only one SCMI device per-agent */
-	if (vtscmi_dev != NULL)
+	/* Reserve the singleton while attach may sleep without the global lock. */
+	mtx_lock(&vtscmi_global_mtx);
+	if (vtscmi_dev != NULL || vtscmi_attaching) {
+		mtx_unlock(&vtscmi_global_mtx);
 		return (EEXIST);
+	}
+	vtscmi_attaching = true;
+	mtx_unlock(&vtscmi_global_mtx);
 
 	sc = device_get_softc(dev);
 	sc->vtscmi_dev = dev;
@@ -186,10 +208,12 @@ vtscmi_attach(device_t dev)
 		goto fail;
 	}
 
-	/* Save unique device */
-	vtscmi_dev = sc->vtscmi_dev;
-
 fail:
+	mtx_lock(&vtscmi_global_mtx);
+	if (error == 0)
+		vtscmi_dev = sc->vtscmi_dev;
+	vtscmi_attaching = false;
+	mtx_unlock(&vtscmi_global_mtx);
 
 	return (error);
 }
@@ -201,11 +225,17 @@ vtscmi_detach(device_t dev)
 
 	sc = device_get_softc(dev);
 
-	/* These also disable related interrupts */
-	virtio_scmi_channel_callback_set(dev, VIRTIO_SCMI_CHAN_A2P, NULL, NULL);
-	virtio_scmi_channel_callback_set(dev, VIRTIO_SCMI_CHAN_P2A, NULL, NULL);
+	mtx_lock(&vtscmi_global_mtx);
+	if (vtscmi_dev == dev)
+		vtscmi_dev = NULL;
+	mtx_unlock(&vtscmi_global_mtx);
 
 	virtio_stop(dev);
+	virtio_teardown_intr(dev);
+
+	/* Interrupt drain makes callback unregister non-racing at detach. */
+	virtio_scmi_channel_callback_set(dev, VIRTIO_SCMI_CHAN_A2P, NULL, NULL);
+	virtio_scmi_channel_callback_set(dev, VIRTIO_SCMI_CHAN_P2A, NULL, NULL);
 
 	vtscmi_free_queues(sc);
 
@@ -288,6 +318,8 @@ vtscmi_alloc_queues(struct vtscmi_softc *sc)
 
 		mtx_init(&q->p_mtx, "vtscmi_pdus", "VTSCMI", MTX_SPIN);
 		mtx_init(&q->vq_mtx, "vtscmi_vq", "VTSCMI", MTX_SPIN);
+		mtx_init(&q->cb_mtx, "vtscmi_cb", "VTSCMI", MTX_DEF);
+		cv_init(&q->cb_cv, "vtscmicb");
 	}
 
 	return (0);
@@ -309,6 +341,8 @@ vtscmi_free_queues(struct vtscmi_softc *sc)
 			continue;
 
 		free(q->pdus, M_DEVBUF);
+		cv_destroy(&q->cb_cv);
+		mtx_destroy(&q->cb_mtx);
 		mtx_destroy(&q->p_mtx);
 		mtx_destroy(&q->vq_mtx);
 	}
@@ -327,6 +361,8 @@ vtscmi_vq_intr(void *arg)
 	 */
 	for (;;) {
 		struct vtscmi_pdu *pdu;
+		virtio_scmi_rx_callback_t *callback;
+		void *priv;
 		uint32_t rx_len;
 
 		mtx_lock_spin(&q->vq_mtx);
@@ -335,11 +371,26 @@ vtscmi_vq_intr(void *arg)
 		if (!pdu)
 			return;
 
-		if (q->rx_callback)
-			q->rx_callback(pdu->buf, rx_len, q->priv);
+		mtx_lock(&q->cb_mtx);
+		callback = q->rx_callback;
+		priv = q->priv;
+		if (callback != NULL)
+			q->cb_inflight++;
+		mtx_unlock(&q->cb_mtx);
+
+		if (callback != NULL)
+			callback(pdu->buf, rx_len, priv);
 
 		/* Note that this only frees the PDU, NOT the buffer itself */
 		virtio_scmi_pdu_put(q->dev, pdu);
+		if (callback != NULL) {
+			mtx_lock(&q->cb_mtx);
+			if (q->cb_inflight == 0)
+				panic("SCMI callback count underflow");
+			if (--q->cb_inflight == 0)
+				cv_broadcast(&q->cb_cv);
+			mtx_unlock(&q->cb_mtx);
+		}
 	}
 }
 
@@ -421,7 +472,69 @@ virtio_scmi_pdu_put(device_t dev, struct vtscmi_pdu *pdu)
 device_t
 virtio_scmi_transport_get(void)
 {
-	return (vtscmi_dev);
+	device_t dev;
+
+	mtx_lock(&vtscmi_global_mtx);
+	dev = vtscmi_dev;
+	if (dev != NULL)
+		device_busy(dev);
+	mtx_unlock(&vtscmi_global_mtx);
+	return (dev);
+}
+
+void
+virtio_scmi_transport_put(device_t dev)
+{
+
+	if (dev != NULL)
+		device_unbusy(dev);
+}
+
+int
+virtio_scmi_transport_start(device_t dev)
+{
+	struct vtscmi_softc *sc;
+	int error;
+
+	sc = device_get_softc(dev);
+	if (atomic_load_acq_int(&sc->quiesced) == 0)
+		return (0);
+
+	error = virtio_reinit(dev, sc->vtscmi_features);
+	if (error != 0)
+		return (error);
+	virtio_reinit_complete(dev);
+	atomic_store_rel_int(&sc->quiesced, 0);
+	return (0);
+}
+
+void
+virtio_scmi_transport_quiesce(device_t dev)
+{
+	struct vtscmi_softc *sc;
+	struct vtscmi_pdu *pdu;
+	struct vtscmi_queue *q;
+	int last;
+
+	sc = device_get_softc(dev);
+	if (atomic_load_acq_int(&sc->quiesced) != 0)
+		return;
+
+	/*
+	 * Reset first to revoke device ownership of every descriptor.  Merely
+	 * disabling callbacks is insufficient: P2A descriptors still contain
+	 * consumer-owned buffers which the device may write asynchronously.
+	 */
+	atomic_store_rel_int(&sc->quiesced, 1);
+	virtio_stop(dev);
+	for (int chan = 0; chan < sc->vtscmi_vqs_cnt; chan++) {
+		q = &sc->vtscmi_queues[chan];
+		last = 0;
+		mtx_lock_spin(&q->vq_mtx);
+		while ((pdu = virtqueue_drain(q->vq, &last)) != NULL)
+			virtio_scmi_pdu_put(dev, pdu);
+		mtx_unlock_spin(&q->vq_mtx);
+	}
 }
 
 int
@@ -441,25 +554,28 @@ virtio_scmi_channel_callback_set(device_t dev, enum vtscmi_chan chan,
     virtio_scmi_rx_callback_t *cb, void *priv)
 {
 	struct vtscmi_softc *sc;
+	struct vtscmi_queue *q;
 
 	sc = device_get_softc(dev);
 	if (chan >= sc->vtscmi_vqs_cnt)
 		return (1);
+	if (atomic_load_acq_int(&sc->quiesced) != 0)
+		return (ENXIO);
+	q = &sc->vtscmi_queues[chan];
 
-	if (cb == NULL)
-		virtqueue_disable_intr(sc->vtscmi_queues[chan].vq);
+	/* Close admission before waiting for callbacks using the old private. */
+	virtqueue_disable_intr(q->vq);
 
-	sc->vtscmi_queues[chan].rx_callback = cb;
-	sc->vtscmi_queues[chan].priv = priv;
+	mtx_lock(&q->cb_mtx);
+	while (q->cb_inflight != 0)
+		cv_wait(&q->cb_cv, &q->cb_mtx);
+	q->rx_callback = cb;
+	q->priv = priv;
+	mtx_unlock(&q->cb_mtx);
 
 	/* Enable Interrupt on VQ once the callback is set */
-	if (cb != NULL)
-		/*
-		 * TODO
-		 * Does this need a taskqueue_ task to process already pending
-		 * messages ?
-		 */
-		virtqueue_enable_intr(sc->vtscmi_queues[chan].vq);
+	if (cb != NULL && virtqueue_enable_intr(q->vq) != 0)
+		vtscmi_vq_intr(q);
 
 	device_printf(dev, "%sabled interrupts on VQ[%d].\n",
 	    cb ? "En" : "Dis", chan);
@@ -486,11 +602,17 @@ virtio_scmi_message_enqueue(device_t dev, enum vtscmi_chan chan,
 		return (ENXIO);
 
 	mtx_lock_spin(&q->vq_mtx);
-	ret = virtqueue_enqueue(q->vq, pdu, &pdu->sg,
-	    chan == VIRTIO_SCMI_CHAN_A2P ? 1 : 0, 1);
+	if (atomic_load_acq_int(&sc->quiesced) != 0)
+		ret = ECANCELED;
+	else
+		ret = virtqueue_enqueue(q->vq, pdu, &pdu->sg,
+		    chan == VIRTIO_SCMI_CHAN_A2P ? 1 : 0, 1);
 	if (ret == 0)
 		virtqueue_notify(q->vq);
 	mtx_unlock_spin(&q->vq_mtx);
+	/* virtqueue_enqueue() takes ownership only after a successful enqueue. */
+	if (ret != 0)
+		virtio_scmi_pdu_put(dev, pdu);
 
 	return (ret);
 }

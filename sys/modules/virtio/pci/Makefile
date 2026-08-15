@@ -30,4 +30,7 @@ SRCS+=	virtio_pci_if.c virtio_pci_if.h
 SRCS+=	virtio_bus_if.h virtio_if.h
 SRCS+=	bus_if.h device_if.h pci_if.h
 
+# Shared-memory capabilities are consumed by modern PCI child drivers.
+EXPORT_SYMS=	virtio_pci_get_shmem_region
+
 .include <bsd.kmod.mk>

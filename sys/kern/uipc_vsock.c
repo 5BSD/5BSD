@@ -177,6 +177,8 @@ static LIST_HEAD(, vtvsock_pcb) vtvsock_bound =
 static LIST_HEAD(, vtvsock_pcb) vtvsock_conn[VTVSOCK_CONNHASH_SIZE];
 static u_int vtvsock_conn_count;
 static u_int vtvsock_max_conn = VTVSOCK_DEFAULT_MAX_CONN;
+static u_int vtvsock_max_conn_per_cid =
+    VTVSOCK_DEFAULT_MAX_CONN_PER_CID;
 
 static u_int
 vtvsock_connhash(uint64_t lcid, uint32_t lport, uint64_t rcid, uint32_t rport)
@@ -206,6 +208,7 @@ static u_int vtvsock_seqpacket_frag_max = VTVSOCK_DEFAULT_SEQPACKET_FRAG_MAX;
 
 counter_u64_t vtvsock_cnt_tx_packets;
 counter_u64_t vtvsock_cnt_tx_bytes;
+counter_u64_t vtvsock_cnt_tx_drops;
 counter_u64_t vtvsock_cnt_rx_packets;
 counter_u64_t vtvsock_cnt_rx_bytes;
 counter_u64_t vtvsock_cnt_rx_drops;
@@ -238,8 +241,39 @@ SYSCTL_PROC(_kern_vsock, OID_AUTO, guest_cid,
     sysctl_vsock_guest_cid, "QU", "VSOCK guest CID");
 SYSCTL_UINT(_kern_vsock, OID_AUTO, cur_connections, CTLFLAG_RD,
     &vtvsock_conn_count, 0, "Current number of connected VSOCK PCBs");
-SYSCTL_UINT(_kern_vsock, OID_AUTO, max_connections, CTLFLAG_RW | CTLFLAG_MPSAFE,
-    &vtvsock_max_conn, 0, "Maximum simultaneously connected VSOCK PCBs");
+
+/*
+ * Connection admission reads these limits while holding vtvsock_mtx and
+ * performs subtraction after comparing the current count.  Serialize sysctl
+ * updates with the same mutex so a concurrent reduction cannot change the
+ * limit between those operations and turn the subtraction into an unsigned
+ * underflow.
+ */
+static int
+sysctl_vsock_connection_limit(SYSCTL_HANDLER_ARGS)
+{
+	u_int val;
+	int error;
+
+	mtx_lock(&vtvsock_mtx);
+	val = *(u_int *)arg1;
+	mtx_unlock(&vtvsock_mtx);
+	error = sysctl_handle_int(oidp, &val, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	mtx_lock(&vtvsock_mtx);
+	*(u_int *)arg1 = val;
+	mtx_unlock(&vtvsock_mtx);
+	return (0);
+}
+SYSCTL_PROC(_kern_vsock, OID_AUTO, max_connections,
+    CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_MPSAFE, &vtvsock_max_conn, 0,
+    sysctl_vsock_connection_limit, "IU",
+    "Maximum simultaneously connected VSOCK PCBs");
+SYSCTL_PROC(_kern_vsock, OID_AUTO, max_connections_per_cid,
+    CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    &vtvsock_max_conn_per_cid, 0, sysctl_vsock_connection_limit, "IU",
+    "Maximum connected VSOCK PCBs for one remote CID (0 = unlimited)");
 
 /*
  * Parameterized sysctl handler for vtvsock_buf_{default,min,max}.
@@ -251,31 +285,38 @@ SYSCTL_UINT(_kern_vsock, OID_AUTO, max_connections, CTLFLAG_RW | CTLFLAG_MPSAFE,
 static int
 sysctl_vsock_buf(SYSCTL_HANDLER_ARGS)
 {
-	u_int val = *(u_int *)arg1;
+	u_int val;
 	int error;
 
+	mtx_lock(&vtvsock_mtx);
+	val = *(u_int *)arg1;
+	mtx_unlock(&vtvsock_mtx);
 	error = sysctl_handle_int(oidp, &val, 0, req);
 	if (error != 0 || req->newptr == NULL)
 		return (error);
 
+	mtx_lock(&vtvsock_mtx);
 	switch (arg2) {
 	case 0:	/* buf_default */
 		if (val < vtvsock_buf_min || val > vtvsock_buf_max)
-			return (EINVAL);
+			error = EINVAL;
 		break;
 	case 1:	/* buf_min */
 		if (val > vtvsock_buf_max || val > vtvsock_buf_default)
-			return (EINVAL);
+			error = EINVAL;
 		break;
 	case 2:	/* buf_max */
 		if (val < vtvsock_buf_min || val < vtvsock_buf_default)
-			return (EINVAL);
+			error = EINVAL;
 		break;
 	default:
-		return (EINVAL);
+		error = EINVAL;
+		break;
 	}
-	*(u_int *)arg1 = val;
-	return (0);
+	if (error == 0)
+		atomic_store_rel_int((u_int *)arg1, val);
+	mtx_unlock(&vtvsock_mtx);
+	return (error);
 }
 SYSCTL_PROC(_kern_vsock, OID_AUTO, buf_default,
     CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_MPSAFE,
@@ -289,13 +330,16 @@ SYSCTL_PROC(_kern_vsock, OID_AUTO, buf_max,
     CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_MPSAFE,
     &vtvsock_buf_max, 2, sysctl_vsock_buf, "IU",
     "Maximum buffer size for new VSOCK sockets (bytes)");
-SYSCTL_UINT(_kern_vsock, OID_AUTO, seqpacket_frag_max,
-    CTLFLAG_RW | CTLFLAG_MPSAFE, &vtvsock_seqpacket_frag_max, 0,
+SYSCTL_PROC(_kern_vsock, OID_AUTO, seqpacket_frag_max,
+    CTLTYPE_UINT | CTLFLAG_RW | CTLFLAG_MPSAFE,
+    &vtvsock_seqpacket_frag_max, 0, sysctl_vsock_connection_limit, "IU",
     "Maximum SEQPACKET fragments before RST (0 = unlimited)");
 SYSCTL_COUNTER_U64(_kern_vsock, OID_AUTO, tx_packets, CTLFLAG_RD,
     &vtvsock_cnt_tx_packets, "Packets sent");
 SYSCTL_COUNTER_U64(_kern_vsock, OID_AUTO, tx_bytes, CTLFLAG_RD,
     &vtvsock_cnt_tx_bytes, "Payload bytes sent");
+SYSCTL_COUNTER_U64(_kern_vsock, OID_AUTO, tx_drops, CTLFLAG_RD,
+    &vtvsock_cnt_tx_drops, "Packets dropped before transmit");
 SYSCTL_COUNTER_U64(_kern_vsock, OID_AUTO, rx_packets, CTLFLAG_RD,
     &vtvsock_cnt_rx_packets, "Packets received");
 SYSCTL_COUNTER_U64(_kern_vsock, OID_AUTO, rx_bytes, CTLFLAG_RD,
@@ -585,10 +629,10 @@ vtvsock_pcb_alloc(struct socket *so)
 	pcb->state = VTVSOCK_CLOSED;
 	pcb->on_boundlist = false;
 	pcb->on_connlist = false;
-	pcb->buffer_min = vtvsock_buf_min;
-	pcb->buffer_max = vtvsock_buf_max;
+	pcb->buffer_min = atomic_load_acq_int(&vtvsock_buf_min);
+	pcb->buffer_max = atomic_load_acq_int(&vtvsock_buf_max);
 	pcb->connect_timeout = 0;  /* 0 means use default VTVSOCK_CONNECT_TIMEOUT */
-	pcb->buf_alloc = vtvsock_buf_default;
+	pcb->buf_alloc = atomic_load_acq_int(&vtvsock_buf_default);
 	pcb->peer_shutdown = 0;
 	pcb->seqpacket_partial = NULL;
 	callout_init_mtx(&pcb->close_callout, &vtvsock_mtx, 0);
@@ -650,6 +694,44 @@ vtvsock_pcb_insert_connected_locked(struct vtvsock_pcb *pcb)
 	LIST_INSERT_HEAD(&vtvsock_conn[idx], pcb, connlink);
 	pcb->on_connlist = true;
 	vtvsock_conn_count++;
+}
+
+/*
+ * Check connection-table admission while holding vtvsock_mtx.
+ *
+ * Count both CONNECTING and ESTABLISHED PCBs because either consumes the
+ * hash-table and timeout/callout resources protected by these ceilings.
+ * Admission is not on the packet hot path, so scanning the bounded table is
+ * preferable to maintaining another lifetime-sensitive per-CID index.
+ */
+static bool
+vtvsock_connection_slots_available_locked(u_int slots)
+{
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	return (slots == 0 ||
+	    (vtvsock_conn_count <= vtvsock_max_conn &&
+	    slots <= vtvsock_max_conn - vtvsock_conn_count));
+}
+
+static bool
+vtvsock_cid_slots_available_locked(uint64_t remote_cid, u_int slots)
+{
+	struct vtvsock_pcb *pcb;
+	u_int count;
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	if (slots == 0 || vtvsock_max_conn_per_cid == 0)
+		return (true);
+	count = 0;
+	for (u_int i = 0; i < VTVSOCK_CONNHASH_SIZE; i++) {
+		LIST_FOREACH(pcb, &vtvsock_conn[i], connlink) {
+			if (pcb->remote.svm_cid == remote_cid)
+				count++;
+		}
+	}
+	return (count <= vtvsock_max_conn_per_cid &&
+	    slots <= vtvsock_max_conn_per_cid - count);
 }
 
 /*
@@ -975,7 +1057,7 @@ vsock_attach(struct socket *so, int proto, struct thread *td)
 	 * drives accept on the virtio path.
 	 */
 	if (so->so_rcv.sb_hiwat == 0) {
-		error = soreserve(so, vtvsock_buf_default, vtvsock_buf_default);
+		error = soreserve(so, pcb->buf_alloc, pcb->buf_alloc);
 		if (error != 0) {
 			so->so_pcb = NULL;
 			vtvsock_pcb_free(pcb);
@@ -1314,6 +1396,21 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 			error = ECONNRESET;
 			goto fail;
 		}
+		/*
+		 * A loopback connection creates two connected PCBs.  Account
+		 * for both before sonewconn() allocates the child so neither
+		 * the global ceiling nor either remote-CID ceiling can be
+		 * crossed by local traffic.
+		 */
+		if (!vtvsock_connection_slots_available_locked(2) ||
+		    !vtvsock_cid_slots_available_locked(
+		    dst->svm_cid, dst->svm_cid == pcb->local.svm_cid ? 2 : 1) ||
+		    (dst->svm_cid != pcb->local.svm_cid &&
+		    !vtvsock_cid_slots_available_locked(
+		    pcb->local.svm_cid, 1))) {
+			error = ECONNRESET;
+			goto fail;
+		}
 
 		/*
 		 * sonewconn() -> soattach() asserts curvnet == the child's
@@ -1388,6 +1485,11 @@ vsock_connect(struct socket *so, struct sockaddr *nam, struct thread *td)
 	 */
 	if (pcb->bound_local && pcb->local.svm_cid != vtvsock_guest_cid) {
 		error = EADDRNOTAVAIL;
+		goto fail;
+	}
+	if (!vtvsock_connection_slots_available_locked(1) ||
+	    !vtvsock_cid_slots_available_locked(dst->svm_cid, 1)) {
+		error = ENOBUFS;
 		goto fail;
 	}
 
@@ -3001,7 +3103,8 @@ vsock_rx_packet(const void *owner, void *buf, uint32_t len)
 			 * enforces below).  Reject with RST once the connected
 			 * table is at its ceiling.
 			 */
-			if (vtvsock_conn_count >= vtvsock_max_conn) {
+			if (!vtvsock_connection_slots_available_locked(1) ||
+			    !vtvsock_cid_slots_available_locked(hdr_src_cid, 1)) {
 				if (vtvsock_remote_transport != NULL)
 					(void)vtvsock_remote_transport->send_rst(
 					    vtvsock_guest_cid, hdr_dst_port,
@@ -3527,6 +3630,25 @@ vsock_transport_reset_cid_locked(
 	vsock_transport_reset_matching_locked(transport, remote_cid, true);
 }
 
+u_int
+vsock_transport_connection_count_cid_locked(
+    const struct vtvsock_transport *transport, uint64_t remote_cid)
+{
+	struct vtvsock_pcb *pcb;
+	u_int count;
+
+	mtx_assert(&vtvsock_mtx, MA_OWNED);
+	count = 0;
+	for (u_int i = 0; i < VTVSOCK_CONNHASH_SIZE; i++) {
+		LIST_FOREACH(pcb, &vtvsock_conn[i], connlink) {
+			if (pcb->transport == transport &&
+			    pcb->remote.svm_cid == remote_cid)
+				count++;
+		}
+	}
+	return (count);
+}
+
 /* -----------------------------------------------------------------------
  * Transport registration
  *
@@ -3634,6 +3756,7 @@ vsock_modevent(module_t mod, int type, void *data)
 	case MOD_LOAD:
 		vtvsock_cnt_tx_packets = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_tx_bytes = counter_u64_alloc(M_WAITOK);
+		vtvsock_cnt_tx_drops = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_rx_packets = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_rx_bytes = counter_u64_alloc(M_WAITOK);
 		vtvsock_cnt_rx_drops = counter_u64_alloc(M_WAITOK);
@@ -3641,6 +3764,7 @@ vsock_modevent(module_t mod, int type, void *data)
 		if (vsock_cdev_create() != 0) {
 			counter_u64_free(vtvsock_cnt_tx_packets);
 			counter_u64_free(vtvsock_cnt_tx_bytes);
+			counter_u64_free(vtvsock_cnt_tx_drops);
 			counter_u64_free(vtvsock_cnt_rx_packets);
 			counter_u64_free(vtvsock_cnt_rx_bytes);
 			counter_u64_free(vtvsock_cnt_rx_drops);

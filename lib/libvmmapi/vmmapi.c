@@ -52,15 +52,30 @@
 #include <libutil.h>
 
 #include <vm/vm.h>
+/*
+ * Keep a source-tree libvmmapi build coupled to the source vmm ioctl ABI.
+ * The installed headers may intentionally describe the running kernel while
+ * this library is being rebuilt for the next kernel.
+ */
+#ifdef __amd64__
+#include <amd64/include/vmm.h>
+#ifdef WITH_VMMAPI_SNAPSHOT
+#include <amd64/include/vmm_snapshot.h>
+#endif
+#include <amd64/include/vmm_dev.h>
+#else
 #include <machine/vmm.h>
 #ifdef WITH_VMMAPI_SNAPSHOT
 #include <machine/vmm_snapshot.h>
+#endif
+#include <machine/vmm_dev.h>
 #endif
 
 #include <dev/vmm/vmm_dev.h>
 
 #include "vmmapi.h"
 #include "internal.h"
+#include "vmmapi_memory.h"
 
 #define	MB	(1024 * 1024UL)
 #define	GB	(1024 * 1024 * 1024UL)
@@ -492,33 +507,50 @@ int
 vm_setup_memory_domains(struct vmctx *ctx, enum vm_mmap_style vms,
     struct vm_mem_domain *doms, int ndoms)
 {
-	size_t low_len, len, totalsize;
+	size_t domain_sizes[VM_MAXMEMDOM], low_len, len;
+	bool existing[VM_MAXMEMDOM];
 	struct vm_mem_domain *dom;
 	struct vm_memseg memseg;
+	struct vmmapi_memory_layout layout;
 	char *baseaddr, *ptr;
 	int error, i, segid;
 	vm_paddr_t gpa;
 
-	/* Sanity checks. */
-	assert(vms == VM_MMAP_ALL);
-	if (doms == NULL || ndoms <= 0 || ndoms > VM_MAXMEMDOM) {
+	/* Sanity checks.  Public API validation must survive -DNDEBUG. */
+	if (vms != VM_MMAP_ALL || doms == NULL || ndoms <= 0 ||
+	    ndoms > VM_MAXMEMDOM) {
 		errno = EINVAL;
 		return (-1);
 	}
 
-	/* Calculate total memory size. */
-	totalsize = 0;
-	for (i = 0; i < ndoms; i++)
-		totalsize += doms[i].size;
-
-	if (totalsize > VM_LOWMEM_LIMIT)
-		totalsize = VM_HIGHMEM_BASE + (totalsize - VM_LOWMEM_LIMIT);
+	memset(existing, 0, sizeof(existing));
+	for (i = 0; i < ndoms; i++) {
+		segid = VM_SYSMEM + i;
+		error = vm_get_memseg(ctx, segid, &len, memseg.name,
+		    sizeof(memseg.name));
+		if (error == 0 && len != 0) {
+			if (ndoms != 1) {
+				errno = EEXIST;
+				return (-1);
+			}
+			doms[i].size = len;
+			existing[i] = true;
+		}
+		domain_sizes[i] = doms[i].size;
+	}
+	error = vmmapi_memory_layout_calculate(domain_sizes, (size_t)ndoms,
+	    VM_LOWMEM_LIMIT, VM_HIGHMEM_BASE, VM_MMAP_GUARD_SIZE, SIZE_MAX,
+	    &layout);
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
 
 	/*
 	 * Stake out a contiguous region covering the guest physical memory
 	 * and the adjoining guard regions.
 	 */
-	len = VM_MMAP_GUARD_SIZE + totalsize + VM_MMAP_GUARD_SIZE;
+	len = (size_t)layout.reservation_size;
 	ptr = mmap(NULL, len, PROT_NONE, MAP_GUARD | MAP_ALIGNED_SUPER, -1, 0);
 	if (ptr == MAP_FAILED)
 		return (-1);
@@ -535,25 +567,12 @@ vm_setup_memory_domains(struct vmctx *ctx, enum vm_mmap_style vms,
 		dom = &doms[i];
 
 		/*
-		 * Check if the memory segment already exists.
-		 * If 'ndoms' is greater than one, refuse to proceed if the
-		 * memseg already exists. If only one domain was requested, use
-		 * the existing segment to preserve the behaviour of the previous
-		 * implementation.
-		 *
-		 * Splitting existing memory segments is tedious and
-		 * error-prone, which is why we don't support NUMA
-		 * domains for bhyveload(8)-loaded VMs.
+		 * Existing segments were resolved before reserving host virtual
+		 * memory, so the reservation and every subsequent GPA calculation
+		 * use the authoritative size.  Multiple-domain restore remains
+		 * unsupported when any segment already exists.
 		 */
-		error = vm_get_memseg(ctx, segid, &len, memseg.name,
-		    sizeof(memseg.name));
-		if (error == 0 && len != 0) {
-			if (ndoms != 1) {
-				errno = EEXIST;
-				return (-1);
-			} else
-				doms[0].size = len;
-		} else {
+		if (!existing[i]) {
 			error = vm_alloc_memseg(ctx, segid, dom->size, NULL,
 			    dom->ds_policy, dom->ds_mask, dom->ds_size);
 			if (error)
@@ -566,7 +585,7 @@ vm_setup_memory_domains(struct vmctx *ctx, enum vm_mmap_style vms,
 		 * and one above VM_HIGHMEM_BASE.
 		 */
 		if (gpa <= VM_LOWMEM_LIMIT &&
-		    gpa + dom->size > VM_LOWMEM_LIMIT) {
+		    dom->size > VM_LOWMEM_LIMIT - gpa) {
 			low_len = VM_LOWMEM_LIMIT - gpa;
 			error = map_memory_segment(ctx, segid, gpa, low_len, 0,
 			    baseaddr);
@@ -695,9 +714,15 @@ vm_create_devmem(struct vmctx *ctx, int segid, const char *name, size_t len)
 	int fd, error, flags;
 
 	fd = -1;
+	base = MAP_FAILED;
 	ptr = MAP_FAILED;
-	if (name == NULL || strlen(name) == 0) {
+	if (ctx == NULL || !vmmapi_devmem_segid_valid(segid) ||
+	    name == NULL || name[0] == '\0' || len == 0) {
 		errno = EINVAL;
+		goto done;
+	}
+	if (len > SIZE_MAX - 2 * VM_MMAP_GUARD_SIZE) {
+		errno = EOVERFLOW;
 		goto done;
 	}
 
@@ -730,10 +755,106 @@ vm_create_devmem(struct vmctx *ctx, int segid, const char *name, size_t len)
 
 	/* mmap the devmem region in the host address space */
 	ptr = mmap(base + VM_MMAP_GUARD_SIZE, len, PROT_RW, flags, fd, 0);
+	if (ptr != MAP_FAILED && vmmapi_devmem_segid_valid(segid)) {
+		ctx->memsegs[segid].host_base = ptr;
+		ctx->memsegs[segid].size = len;
+	}
 done:
+	if (ptr == MAP_FAILED && base != MAP_FAILED)
+		(void)munmap(base, len2);
 	if (fd >= 0)
 		close(fd);
 	return (ptr);
+}
+
+void *
+vm_create_devmem_auto(struct vmctx *ctx, const char *name, size_t len,
+    int *segidp)
+{
+	char existing[VM_MAX_SUFFIXLEN + 1];
+	void *ptr;
+	size_t existing_len;
+	int saved_errno;
+
+	if (ctx == NULL || name == NULL || name[0] == '\0' || len == 0 ||
+	    segidp == NULL) {
+		errno = EINVAL;
+		return (MAP_FAILED);
+	}
+
+	/*
+	 * Device-memory names form part of the /dev/vmm.io node name and must
+	 * be unique within a VM.  Detect duplicates before allocating a new
+	 * kernel segment; otherwise cdev creation would fail after allocation
+	 * and strand the segment.
+	 */
+	for (int segid = VM_BOOTROM; segid < VM_MEMSEG_END; segid++) {
+		if (vm_get_memseg(ctx, segid, &existing_len, existing,
+		    sizeof(existing)) != 0)
+			return (MAP_FAILED);
+		if (existing_len != 0 && strcmp(existing, name) == 0) {
+			errno = EEXIST;
+			return (MAP_FAILED);
+		}
+	}
+
+	for (int segid = VM_DEVMEM_START; segid < VM_DEVMEM_END; segid++) {
+		if (vm_get_memseg(ctx, segid, &existing_len, existing,
+		    sizeof(existing)) != 0)
+			return (MAP_FAILED);
+		if (existing_len != 0)
+			continue;
+
+		ptr = vm_create_devmem(ctx, segid, name, len);
+		if (ptr != MAP_FAILED) {
+			*segidp = segid;
+			return (ptr);
+		}
+
+		/*
+		 * VM initialization is normally serialized.  Still tolerate a
+		 * competing allocator winning this identifier between the
+		 * query and allocation rather than making the API race-prone.
+		 * vm_alloc_memseg() reports a mismatched pre-existing segment as
+		 * EINVAL, so re-query the slot instead of classifying by errno.
+		 */
+		saved_errno = errno;
+		if (vm_get_memseg(ctx, segid, &existing_len, existing,
+		    sizeof(existing)) != 0)
+			return (MAP_FAILED);
+		if (existing_len == 0) {
+			errno = saved_errno;
+			return (MAP_FAILED);
+		}
+	}
+
+	errno = ENOSPC;
+	return (MAP_FAILED);
+}
+
+int
+vm_get_devmem_info(struct vmctx *ctx, int segid, void **host_base,
+    size_t *lenp, char *name, size_t namesiz)
+{
+	size_t len;
+	int error;
+
+	if (ctx == NULL || !vmmapi_devmem_segid_valid(segid) ||
+	    host_base == NULL || lenp == NULL || name == NULL || namesiz == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	error = vm_get_memseg(ctx, segid, &len, name, namesiz);
+	if (error != 0)
+		return (error);
+	if (len == 0 || ctx->memsegs[segid].host_base == NULL ||
+	    ctx->memsegs[segid].size != len) {
+		errno = ENOENT;
+		return (-1);
+	}
+	*host_base = ctx->memsegs[segid].host_base;
+	*lenp = len;
+	return (0);
 }
 
 int
@@ -814,6 +935,31 @@ vm_run(struct vcpu *vcpu, struct vm_run *vmrun)
 	return (vcpu_ioctl(vcpu, VM_RUN, vmrun));
 }
 
+#ifdef __amd64__
+int
+vm_startup_request(struct vmctx *ctx, struct vmm_startup_request *request)
+{
+
+	if (ctx == NULL || request == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (ioctl(ctx->fd, VM_STARTUP_REQUEST, request));
+}
+
+int
+vm_run_generation(struct vcpu *vcpu,
+    struct vmm_startup_run_request *request)
+{
+
+	if (vcpu == NULL || request == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (vcpu_ioctl(vcpu, VM_RUN_GENERATION, request));
+}
+#endif
+
 int
 vm_suspend(struct vmctx *ctx, enum vm_suspend_how how)
 {
@@ -829,6 +975,18 @@ vm_reinit(struct vmctx *ctx)
 {
 
 	return (ioctl(ctx->fd, VM_REINIT, 0));
+}
+
+int
+vm_dirty_log_request(struct vmctx *ctx,
+    const struct vmm_dirty_log_request *request)
+{
+
+	if (ctx == NULL || request == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (ioctl(ctx->fd, VM_DIRTY_LOG_REQUEST, request));
 }
 
 int
@@ -879,6 +1037,53 @@ vm_set_capability(struct vcpu *vcpu, enum vm_cap_type cap, int val)
 
 	return (vcpu_ioctl(vcpu, VM_SET_CAPABILITY, &vmcap));
 }
+
+#ifdef __amd64__
+int
+vm_get_cpuid(struct vcpu *vcpu, uint32_t flags, uint32_t *eax, uint32_t *ebx,
+    uint32_t *ecx, uint32_t *edx)
+{
+	struct vm_cpuid vmcpuid;
+	int error;
+
+	if (vcpu == NULL || eax == NULL || ebx == NULL || ecx == NULL ||
+	    edx == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	bzero(&vmcpuid, sizeof(vmcpuid));
+	vmcpuid.flags = flags;
+	vmcpuid.eax = *eax;
+	vmcpuid.ebx = *ebx;
+	vmcpuid.ecx = *ecx;
+	vmcpuid.edx = *edx;
+	error = vcpu_ioctl(vcpu, VM_GET_CPUID, &vmcpuid);
+	if (error == 0) {
+		*eax = vmcpuid.eax;
+		*ebx = vmcpuid.ebx;
+		*ecx = vmcpuid.ecx;
+		*edx = vmcpuid.edx;
+	}
+	return (error);
+}
+
+int
+vm_get_cpu_compat(struct vcpu *vcpu, struct vm_cpu_compat *compat)
+{
+	struct vm_cpu_compat_query query;
+	int error;
+
+	if (vcpu == NULL || compat == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	bzero(&query, sizeof(query));
+	error = vcpu_ioctl(vcpu, VM_GET_CPU_COMPAT, &query);
+	if (error == 0)
+		*compat = query.compat;
+	return (error);
+}
+#endif
 
 uint64_t *
 vm_get_stats(struct vcpu *vcpu, struct timeval *ret_tv,
@@ -1236,6 +1441,13 @@ vm_snapshot_req(struct vmctx *ctx, struct vm_snapshot_meta *meta)
 		return (-1);
 	}
 	return (0);
+}
+
+int
+vm_snapshot_session(struct vmctx *ctx, struct vm_snapshot_session *session)
+{
+
+	return (ioctl(ctx->fd, VM_SNAPSHOT_SESSION, session));
 }
 
 int

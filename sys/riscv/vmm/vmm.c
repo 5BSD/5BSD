@@ -207,19 +207,23 @@ vm_create(const char *name, struct vm **retvm)
 	int error;
 
 	vm = malloc(sizeof(struct vm), M_VMM, M_WAITOK | M_ZERO);
+	vm->sockets = 1;
+	vm->cores = 1;			/* XXX backwards compatibility */
+	vm->threads = 1;		/* XXX backwards compatibility */
+	error = vm_event_coordinator_init(vm, vm_maxcpu);
+	if (error != 0) {
+		free(vm, M_VMM);
+		return (error);
+	}
 	error = vm_mem_init(&vm->mem, 0, 1ul << 39);
 	if (error != 0) {
+		vm_event_coordinator_cleanup(vm);
 		free(vm, M_VMM);
 		return (error);
 	}
 	strcpy(vm->name, name);
 	mtx_init(&vm->rendezvous_mtx, "vm rendezvous lock", 0, MTX_DEF);
 	sx_init(&vm->vcpus_init_lock, "vm vcpus");
-
-	vm->sockets = 1;
-	vm->cores = 1;			/* XXX backwards compatibility */
-	vm->threads = 1;		/* XXX backwards compatibility */
-	vm->maxcpus = vm_maxcpu;
 
 	vm->vcpu = malloc(sizeof(*vm->vcpu) * vm->maxcpus, M_VMM,
 	    M_WAITOK | M_ZERO);
@@ -261,15 +265,22 @@ vm_cleanup(struct vm *vm, bool destroy)
 void
 vm_destroy(struct vm *vm)
 {
+	vm_event_coordinator_cleanup(vm);
 	vm_cleanup(vm, true);
 	free(vm, M_VMM);
 }
 
-void
+int
 vm_reset(struct vm *vm)
 {
+	int error;
+
+	error = vm_event_coordinator_reset(vm);
+	if (error != 0)
+		return (error);
 	vm_cleanup(vm, false);
 	vm_init(vm, false);
+	return (0);
 }
 
 int

@@ -34,12 +34,10 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <assert.h>
-
 #include "bhyverun.h"
 #include "spinup_ap.h"
 
-static void
+static int
 spinup_ap_realmode(struct vcpu *newcpu, uint64_t rip)
 {
 	int vector, error;
@@ -54,31 +52,36 @@ spinup_ap_realmode(struct vcpu *newcpu, uint64_t rip)
 	 * executing real mode code at 'vector << 12'.
 	 */
 	error = vm_set_register(newcpu, VM_REG_GUEST_RIP, 0);
-	assert(error == 0);
+	if (error != 0)
+		return (error);
 
 	error = vm_get_desc(newcpu, VM_REG_GUEST_CS, &desc_base,
 			    &desc_limit, &desc_access);
-	assert(error == 0);
+	if (error != 0)
+		return (error);
 
 	desc_base = vector << PAGE_SHIFT;
 	error = vm_set_desc(newcpu, VM_REG_GUEST_CS,
 			    desc_base, desc_limit, desc_access);
-	assert(error == 0);
+	if (error != 0)
+		return (error);
 
 	cs = (vector << PAGE_SHIFT) >> 4;
-	error = vm_set_register(newcpu, VM_REG_GUEST_CS, cs);
-	assert(error == 0);
+	return (vm_set_register(newcpu, VM_REG_GUEST_CS, cs));
 }
 
-void
+int
 spinup_ap(struct vcpu *newcpu, uint64_t rip)
 {
 	int error;
 
 	error = vcpu_reset(newcpu);
-	assert(error == 0);
+	if (error != 0)
+		return (error);
 
-	spinup_ap_realmode(newcpu, rip);
+	error = spinup_ap_realmode(newcpu, rip);
+	if (error != 0)
+		return (error);
 
-	vm_resume_cpu(newcpu);
+	return (vm_resume_cpu(newcpu));
 }

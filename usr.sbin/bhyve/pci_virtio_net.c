@@ -43,6 +43,13 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+
+/*
+ * Release-ledger anchors for multiqueue, RSS, and live save-state paths.
+ * VIRTIO_ACTIVATION_ASSERTION: mq-control-and-every-tx-queue
+ * VIRTIO_ACTIVATION_ASSERTION: rss-control-apply
+ * VIRTIO_ACTIVATION_ASSERTION: snapshot-restore-and-rss-reapply
+ */
 #include <strings.h>
 #include <unistd.h>
 #include <assert.h>
@@ -58,6 +65,10 @@
 #include "net_utils.h"
 #include "net_backends.h"
 #include "iov.h"
+#include "virtio_pci_modern_probes.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 #define VTNET_RINGSZ	1024
 
@@ -71,6 +82,10 @@
 #define	VTNET_MAX_PAIRS	8
 #define	VTNET_FLOW_ENTRIES	1024
 #define	VTNET_TX_BUDGET	64
+#define	VTNET_RX_BUDGET	64
+#ifndef VTNET_QUIESCE_TIMEOUT_SECONDS
+#define	VTNET_QUIESCE_TIMEOUT_SECONDS	30
+#endif
 #define	VTNET_RSS_KEY_SIZE	40
 #define	VTNET_RSS_TABLE_SIZE	128
 #define	VTNET_TCP_HEADER_MIN	20
@@ -258,6 +273,8 @@ struct pci_vtnet_softc {
 	int		tx_in_progress;
 	struct vqueue_info *tx_current_vq;
 	bool		tx_control_pause;
+	bool		ctl_pending;
+	bool		tx_last_control;
 	uint16_t	tx_active_pairs;
 	uint16_t	tx_next_pair;
 
@@ -278,6 +295,7 @@ struct pci_vtnet_softc {
 			    sizeof(struct virtio_net_rxhdr) +
 			    sizeof(struct virtio_net_hash_report)];
 	size_t		rx_staged_len;
+	uint64_t	rx_bad_backend_records;
 
 	size_t		vhdrlen;
 	size_t		be_vhdrlen;
@@ -285,6 +303,23 @@ struct pci_vtnet_softc {
 	struct virtio_net_config vsc_config;
 	struct virtio_consts vsc_consts;
 };
+
+static bool
+pci_vtnet_bad_backend_record_report(struct pci_vtnet_softc *sc)
+{
+	uint64_t count;
+
+	/*
+	 * A broken or hostile backend can keep a level-triggered descriptor
+	 * readable forever.  Retain a lifetime counter, but emit only the first
+	 * and power-of-two occurrences so diagnostics stay useful without
+	 * turning the mevent thread into a log producer.
+	 */
+	if (sc->rx_bad_backend_records != UINT64_MAX)
+		sc->rx_bad_backend_records++;
+	count = sc->rx_bad_backend_records;
+	return (count != 0 && (count & (count - 1)) == 0);
+}
 
 /*
  * Modern virtio-net always includes num_buffers in the 12-byte header.
@@ -323,6 +358,35 @@ pci_vtnet_ctlq_index(const struct pci_vtnet_softc *sc)
 {
 
 	return (sc->vsc_max_pairs * 2);
+}
+
+static bool
+pci_vtnet_has_ctlq(const struct pci_vtnet_softc *sc)
+{
+
+	return (pci_vtnet_ctlq_index(sc) < sc->vsc_consts.vc_nvq);
+}
+
+static void
+pci_vtnet_configure_transport_features(struct pci_vtnet_softc *sc,
+    bool modern)
+{
+	uint64_t net_caps;
+
+	net_caps = VIRTIO_NET_F_CTRL_VQ | VIRTIO_NET_F_MQ |
+	    VIRTIO_NET_F_HASH_REPORT | VIRTIO_NET_F_RSS;
+	sc->vsc_consts.vc_hv_caps &= ~net_caps;
+	sc->vsc_consts.vc_nvq = 2;
+	if (!modern)
+		return;
+
+	/* HASH_CONFIG is valid with one RX/TX pair and needs queue 2. */
+	sc->vsc_consts.vc_nvq = sc->vsc_max_pairs * 2 + 1;
+	sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_CTRL_VQ |
+	    VIRTIO_NET_F_HASH_REPORT;
+	if (sc->vsc_max_pairs > 1)
+		sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_MQ |
+		    VIRTIO_NET_F_RSS;
 }
 
 static bool pci_vtnet_iov_read(const struct iovec *, int, size_t, void *,
@@ -657,10 +721,13 @@ static int pci_vtnet_neg_features(void *, uint64_t);
 static int pci_vtnet_suspend_device(void *);
 static int pci_vtnet_resume_device(void *);
 static void pci_vtnet_resume_complete(void *);
+static bool pci_vtnet_process_ctlq(struct pci_vtnet_softc *,
+    struct vqueue_info *);
 #ifdef BHYVE_SNAPSHOT
 static int pci_vtnet_pause(void *);
 static int pci_vtnet_resume(void *);
 static int pci_vtnet_snapshot(void *, struct vm_snapshot_meta *);
+static int pci_vtnet_snapshot_validate(struct vm_snapshot_meta *);
 #endif
 
 static struct virtio_consts vtnet_vi_consts = {
@@ -691,17 +758,30 @@ static struct virtio_consts vtnet_vi_consts = {
  * worker from selecting the queue again (device reset, control pause, queue
  * reset, or snapshot pause).
  */
-static void
+static int
 pci_vtnet_wait_tx_idle_locked(struct pci_vtnet_softc *sc,
-    const struct vqueue_info *vq)
+    const struct vqueue_info *vq, bool bounded)
 {
+	struct timespec deadline;
 	int error;
 
+	if (bounded) {
+		if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+			return (errno);
+		deadline.tv_sec += VTNET_QUIESCE_TIMEOUT_SECONDS;
+	}
 	while (sc->tx_in_progress &&
 	    (vq == NULL || sc->tx_current_vq == vq)) {
-		error = pthread_cond_wait(&sc->tx_cond, &sc->tx_mtx);
-		assert(error == 0);
+		if (bounded)
+			error = pthread_cond_timedwait(&sc->tx_cond,
+			    &sc->tx_mtx, &deadline);
+		else
+			error = pthread_cond_wait(&sc->tx_cond, &sc->tx_mtx);
+		if (error != 0 && sc->tx_in_progress &&
+		    (vq == NULL || sc->tx_current_vq == vq))
+			return (error);
 	}
+	return (0);
 }
 
 static void
@@ -711,8 +791,16 @@ pci_vtnet_reset(void *vsc)
 
 	DPRINTF(("vtnet: device reset requested !"));
 
-	/* Acquire the RX lock to block RX processing. */
-	pthread_mutex_lock(&sc->rx_mtx);
+	/*
+	 * Stop the shared TX/control worker before taking rx_mtx.  A control
+	 * command can be inside a queue-topology update which itself needs
+	 * rx_mtx, so waiting while holding that mutex would deadlock.
+	 */
+	pthread_mutex_lock(&sc->tx_mtx);
+	sc->tx_features_negotiated = false;
+	sc->resetting = 1;
+	(void)pci_vtnet_wait_tx_idle_locked(sc, NULL, false);
+	pthread_mutex_unlock(&sc->tx_mtx);
 
 	/*
 	 * Make sure receive operation is disabled at least until we
@@ -722,15 +810,16 @@ pci_vtnet_reset(void *vsc)
 	 * Receive operation will be enabled again once the guest adds
 	 * the first receive buffers and kicks us.
 	 */
+	pthread_mutex_lock(&sc->rx_mtx);
 	sc->features_negotiated = false;
 	if (sc->vsc_be != NULL)
 		netbe_rx_disable(sc->vsc_be);
 
-	/* Set sc->resetting and give a chance to the TX thread to stop. */
+	/*
+	 * The worker remains fenced by resetting while the common queues and
+	 * negotiated state are returned to their initial values.
+	 */
 	pthread_mutex_lock(&sc->tx_mtx);
-	sc->tx_features_negotiated = false;
-	sc->resetting = 1;
-	pci_vtnet_wait_tx_idle_locked(sc, NULL);
 
 	/*
 	 * Now reset rings, MSI-X vectors, and negotiated capabilities.
@@ -747,6 +836,8 @@ pci_vtnet_reset(void *vsc)
 	sc->tx_next_pair = 0;
 	sc->tx_current_vq = NULL;
 	sc->tx_control_pause = false;
+	sc->ctl_pending = false;
+	sc->tx_last_control = false;
 	sc->rss_enabled = false;
 	sc->hash_configured = false;
 	sc->rss_hash_types = 0;
@@ -808,8 +899,15 @@ pci_vtnet_qreset(void *vsc, struct vqueue_info *vq,
 	if (vq->vq_num >= sc->vsc_consts.vc_nvq ||
 	    vq != &sc->vsc_queues[vq->vq_num])
 		return (EINVAL);
-	if (vq->vq_num == pci_vtnet_ctlq_index(sc))
-		return (0);
+	if (vq->vq_num == pci_vtnet_ctlq_index(sc)) {
+		int error;
+
+		pthread_mutex_lock(&sc->tx_mtx);
+		sc->ctl_pending = false;
+		error = pci_vtnet_wait_tx_idle_locked(sc, vq, true);
+		pthread_mutex_unlock(&sc->tx_mtx);
+		return (error);
+	}
 	pair = vq->vq_num / 2;
 	if ((vq->vq_num & 1) == 0) {
 		/*
@@ -846,14 +944,16 @@ pci_vtnet_qreset(void *vsc, struct vqueue_info *vq,
 		return (0);
 	}
 	if ((vq->vq_num & 1) != 0) {
+		int error;
+
 		/*
 		 * Stop after the current synchronous send from this queue.
 		 * Other active transmit queues remain available to the worker.
 		 */
 		pthread_mutex_lock(&sc->tx_mtx);
-		pci_vtnet_wait_tx_idle_locked(sc, vq);
+		error = pci_vtnet_wait_tx_idle_locked(sc, vq, true);
 		pthread_mutex_unlock(&sc->tx_mtx);
-		return (0);
+		return (error);
 	}
 	return (EINVAL);
 }
@@ -1163,7 +1263,7 @@ pci_vtnet_frame_within_mtu(const struct pci_vtnet_softc *sc,
 }
 
 struct virtio_mrg_rxbuf_info {
-	uint16_t idx;
+	struct vi_req req;
 	size_t len;
 };
 
@@ -1247,6 +1347,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 	struct virtio_mrg_rxbuf_info info[VTNET_MAXSEGS];
 	struct iovec iov[VTNET_MAXSEGS + 1];
 	struct vi_req req;
+	unsigned int backend_budget;
 
 	if (sc->vsc_be == NULL)
 		return;
@@ -1290,6 +1391,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		return;
 	}
 
+	backend_budget = VTNET_RX_BUDGET;
 	for (;;) {
 		struct virtio_net_rxhdr hdr;
 		struct virtio_net_hash_report hash_hdr;
@@ -1303,6 +1405,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		uint32_t ulen;
 		int riov_len;
 		int n_chains;
+		uint16_t chain_budget;
 		ssize_t backend_len;
 		ssize_t rlen;
 		uint32_t packet_hash;
@@ -1310,6 +1413,17 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		bool drop;
 
 		if (sc->rx_staged_len == 0) {
+			/*
+			 * This callback runs on the shared mevent thread while the
+			 * device and RX locks are held.  A continuously readable tap
+			 * must not prevent reset, timers, or another device callback
+			 * from making progress.  Charge only acquisition of a new host
+			 * record: an already staged record must remain processable even
+			 * after the batch is exhausted, and level-triggered backend
+			 * readiness will schedule the remaining host records.
+			 */
+			if (backend_budget-- == 0)
+				return;
 			backend_len = netbe_peek_recvlen(sc->vsc_be);
 			if (backend_len <= 0) {
 				/*
@@ -1325,14 +1439,24 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 				 * Do not leave an impossible record permanently
 				 * at the head of the backend queue.
 				 */
-				WPRINTF(("vtnet: dropping oversized backend "
-				    "packet (%zd bytes)", backend_len));
+				if (pci_vtnet_bad_backend_record_report(sc))
+					WPRINTF(("vtnet: dropping oversized backend "
+					    "packet (%zd bytes, count %ju)",
+					    backend_len,
+					    (uintmax_t)sc->rx_bad_backend_records));
+				VIRTIO_PROBE_ERROR(sc->vsc_vs.vs_vc->vc_name,
+				    "oversized-backend-record");
 				(void)netbe_rx_discard(sc->vsc_be);
 				continue;
 			}
 			if ((size_t)backend_len < sc->be_vhdrlen) {
-				WPRINTF(("vtnet: dropping truncated backend "
-				    "header (%zd bytes)", backend_len));
+				if (pci_vtnet_bad_backend_record_report(sc))
+					WPRINTF(("vtnet: dropping truncated backend "
+					    "header (%zd bytes, count %ju)",
+					    backend_len,
+					    (uintmax_t)sc->rx_bad_backend_records));
+				VIRTIO_PROBE_ERROR(sc->vsc_vs.vs_vc->vc_name,
+				    "truncated-backend-header");
 				(void)netbe_rx_discard(sc->vsc_be);
 				continue;
 			}
@@ -1400,6 +1524,9 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			hash_hdr.padding = 0;
 			memcpy(sc->vsc_rx_buf + sizeof(hdr), &hash_hdr,
 			    sizeof(hash_hdr));
+			VIRTIO_PROBE_NET_RX_HASH(sc->vsc_vs.vs_vc->vc_name,
+			    vq->vq_num, packet_hash, hash_report,
+			    (uint32_t)(plen - sc->vhdrlen));
 		}
 
 		/*
@@ -1412,7 +1539,10 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 		riov_len = 0;
 		riov = iov;
 		n_chains = 0;
-		do {
+		chain_budget = vq->vq_qsize;
+		while (chain_budget != 0 && riov_bytes < plen &&
+		    riov_len < VTNET_MAXSEGS) {
+			chain_budget--;
 			int n = vq_getchain(vq, riov, VTNET_MAXSEGS - riov_len,
 			    &req);
 
@@ -1430,14 +1560,14 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 					continue;
 				}
 				for (int i = 0; i < n_chains; i++)
-					vq_relchain(vq, info[i].idx, 0);
+					vq_relchain_req(vq, &info[i].req, 0);
 				vq_endchains(vq, /*used_all_avail=*/1);
 				netbe_rx_disable(sc->vsc_be);
 				return;
 			}
 			if (n < 0) {
 				for (int i = 0; i < n_chains; i++)
-					vq_relchain(vq, info[i].idx, 0);
+					vq_relchain_req(vq, &info[i].req, 0);
 				vq_endchains(vq, 0);
 				netbe_rx_disable(sc->vsc_be);
 				return;
@@ -1445,10 +1575,10 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			if (n > VTNET_MAXSEGS - riov_len ||
 			    req.readable != 0 || req.writable != n) {
 				DPRINTF(("vtnet: invalid receive descriptor chain"));
-				vq_relchain(vq, req.idx, 0);
+				vq_relchain_req(vq, &req, 0);
 				continue;
 			}
-			info[n_chains].idx = req.idx;
+			info[n_chains].req = req;
 			info[n_chains].len = count_iov(riov, n);
 			riov_bytes += info[n_chains].len;
 			riov_len += n;
@@ -1458,15 +1588,16 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			}
 			riov += n;
 			n_chains++;
-		} while (riov_bytes < plen &&
-		    riov_len < VTNET_MAXSEGS);
+		}
 		if (riov_bytes < plen ||
 		    (sc->rx_merge && info[0].len < sc->vhdrlen)) {
-			DPRINTF(("vtnet: receive buffers too small"));
+			WPRINTF(("vtnet: receive descriptor capacity is too small"));
 			for (int i = 0; i < n_chains; i++)
-				vq_relchain(vq, info[i].idx, 0);
+				vq_relchain_req(vq, &info[i].req, 0);
 			vq_endchains(vq, 0);
-			continue;
+			netbe_rx_disable(sc->vsc_be);
+			vi_set_needs_reset(&sc->vsc_vs);
+			return;
 		}
 
 		ulen = (uint32_t)plen;
@@ -1490,12 +1621,14 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			}
 			if (buf_to_iov(sc->vsc_rx_buf, plen, iov,
 			    riov_len) != plen) {
-				vq_relchain(vq, info[0].idx, 0);
+				vq_relchain_req(vq, &info[0].req, 0);
 				vq_endchains(vq, 0);
 				continue;
 			}
-			vq_relchain(vq, info[0].idx, ulen);
+			vq_relchain_req(vq, &info[0].req, ulen);
 		} else {
+			struct vi_req complete_reqs[VTNET_MAXSEGS];
+			uint32_t complete_lens[VTNET_MAXSEGS];
 			uint32_t iolen, remaining;
 			uint16_t num_buffers;
 			int i = 0;
@@ -1517,7 +1650,7 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 			    riov_len) != plen) {
 				WPRINTF(("vtnet: receive header accounting error"));
 				for (i = 0; i < n_chains; i++)
-					vq_relchain(vq, info[i].idx, 0);
+					vq_relchain_req(vq, &info[i].req, 0);
 				vq_endchains(vq, 0);
 				continue;
 			}
@@ -1526,10 +1659,11 @@ pci_vtnet_rx(struct pci_vtnet_softc *sc)
 				iolen = MIN(info[i].len, (size_t)UINT32_MAX);
 				if (iolen > remaining)
 					iolen = remaining;
-				vq_relchain_prepare(vq, info[i].idx, iolen);
+				complete_reqs[i] = info[i].req;
+				complete_lens[i] = iolen;
 				remaining -= iolen;
 			}
-			vq_relchain_publish(vq);
+			vq_relchain_group(vq, complete_reqs, complete_lens, i);
 			if (remaining != 0)
 				WPRINTF(("vtnet: receive chain accounting error"));
 		}
@@ -1620,13 +1754,13 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 		return;
 	if (n > VTNET_MAXSEGS || req.writable != 0 || req.readable != n) {
 		DPRINTF(("vtnet: invalid transmit descriptor chain"));
-		vq_relchain(vq, req.idx, 0);
+		vq_relchain_req(vq, &req, 0);
 		return;
 	}
 	total_len = count_iov(iov, n);
 	if (total_len < sc->vhdrlen) {
 		DPRINTF(("vtnet: short transmit header"));
-		vq_relchain(vq, req.idx, 0);
+		vq_relchain_req(vq, &req, 0);
 		return;
 	}
 	memset(&hdr, 0, sizeof(hdr));
@@ -1635,7 +1769,7 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	    !pci_vtnet_tx_header_valid(sc, &hdr,
 	    total_len - sc->vhdrlen)) {
 		DPRINTF(("vtnet: invalid transmit offload metadata"));
-		vq_relchain(vq, req.idx, 0);
+		vq_relchain_req(vq, &req, 0);
 		return;
 	}
 	gso_type = hdr.vrh_gso_type;
@@ -1675,7 +1809,7 @@ pci_vtnet_proctx(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 	 * number of bytes written by the device, which is zero for an
 	 * entirely device-readable transmit chain.
 	 */
-	vq_relchain(vq, req.idx, 0);
+	vq_relchain_req(vq, &req, 0);
 }
 
 /* Called on TX kick. */
@@ -1720,6 +1854,42 @@ pci_vtnet_tx_find_work_locked(struct pci_vtnet_softc *sc)
 }
 
 /*
+ * Control work shares the TX worker so guest kicks remain nonblocking without
+ * adding another per-device thread.  Alternate a bounded control batch with
+ * packet work whenever both are continuously available.
+ */
+static struct vqueue_info *
+pci_vtnet_find_work_locked(struct pci_vtnet_softc *sc)
+{
+	struct vqueue_info *ctlq, *txq;
+	bool control_ready;
+
+	txq = pci_vtnet_tx_find_work_locked(sc);
+	control_ready = false;
+	ctlq = NULL;
+	if (pci_vtnet_has_ctlq(sc) && sc->ctl_pending) {
+		ctlq = &sc->vsc_queues[pci_vtnet_ctlq_index(sc)];
+		control_ready = !vq_is_resetting(ctlq) &&
+		    vq_ring_ready(ctlq);
+	}
+	if (control_ready && (txq == NULL || !sc->tx_last_control)) {
+		sc->ctl_pending = false;
+		sc->tx_last_control = true;
+		return (ctlq);
+	}
+	if (txq != NULL) {
+		sc->tx_last_control = false;
+		return (txq);
+	}
+	if (control_ready) {
+		sc->ctl_pending = false;
+		sc->tx_last_control = true;
+		return (ctlq);
+	}
+	return (NULL);
+}
+
+/*
  * Arm guest notifications only for mapped, active queues, then close the
  * EVENT_IDX race by checking for work again before the worker sleeps.
  */
@@ -1736,7 +1906,7 @@ pci_vtnet_tx_arm_locked(struct pci_vtnet_softc *sc)
 		if (vq_ring_ready(vq))
 			vq_kick_enable(vq);
 	}
-	return (pci_vtnet_tx_find_work_locked(sc));
+	return (pci_vtnet_find_work_locked(sc));
 }
 
 /*
@@ -1747,12 +1917,12 @@ pci_vtnet_tx_thread(void *param)
 {
 	struct pci_vtnet_softc *sc = param;
 	struct vqueue_info *vq;
-	bool used_all;
+	bool control, more, used_all;
 	int budget, error;
 
 	pthread_mutex_lock(&sc->tx_mtx);
 	for (;;) {
-		vq = pci_vtnet_tx_find_work_locked(sc);
+		vq = pci_vtnet_find_work_locked(sc);
 		while (sc->resetting || sc->tx_control_pause ||
 		    !sc->tx_features_negotiated || vq == NULL) {
 			sc->tx_in_progress = 0;
@@ -1763,49 +1933,60 @@ pci_vtnet_tx_thread(void *param)
 				break;
 			error = pthread_cond_wait(&sc->tx_cond, &sc->tx_mtx);
 			assert(error == 0);
-			vq = pci_vtnet_tx_find_work_locked(sc);
+			(void)error;
+			vq = pci_vtnet_find_work_locked(sc);
 		}
 		vq_kick_disable(vq);
+		control = pci_vtnet_has_ctlq(sc) &&
+		    vq->vq_num == pci_vtnet_ctlq_index(sc);
 		sc->tx_in_progress = 1;
 		sc->tx_current_vq = vq;
 		pthread_mutex_unlock(&sc->tx_mtx);
 
-		budget = VTNET_TX_BUDGET;
-		do {
-			/*
-			 * Run through entries, placing them into
-			 * iovecs and sending when an end-of-packet
-			 * is found
-			 */
-			pci_vtnet_proctx(sc, vq);
-		} while (--budget != 0 && !vq_is_resetting(vq) &&
-		    vq_ring_ready(vq) &&
-		    vq_has_descs(vq));
+		more = false;
+		if (control)
+			more = pci_vtnet_process_ctlq(sc, vq);
+		else {
+			budget = VTNET_TX_BUDGET;
+			do {
+				/*
+				 * Run through entries, placing them into
+				 * iovecs and sending when an end-of-packet
+				 * is found.
+				 */
+				pci_vtnet_proctx(sc, vq);
+			} while (--budget != 0 && !vq_is_resetting(vq) &&
+			    vq_ring_ready(vq) && vq_has_descs(vq));
 
-		/*
-		 * Generate an interrupt if needed.  A bounded batch keeps one
-		 * continuously busy queue from starving the other active
-		 * transmit pairs.
-		 */
-		if (!vq_is_resetting(vq)) {
-			used_all = !vq_has_descs(vq);
-			vq_endchains(vq, used_all);
+			/*
+			 * Generate an interrupt if needed.  A bounded batch
+			 * keeps one continuously busy queue from starving the
+			 * other active transmit pairs.
+			 */
+			if (!vq_is_resetting(vq)) {
+				used_all = !vq_has_descs(vq);
+				vq_endchains(vq, used_all);
+			}
 		}
 
 		pthread_mutex_lock(&sc->tx_mtx);
+		if (control && more && !sc->resetting &&
+		    !sc->tx_control_pause)
+			sc->ctl_pending = true;
 		sc->tx_in_progress = 0;
 		sc->tx_current_vq = NULL;
 		pthread_cond_broadcast(&sc->tx_cond);
 	}
 }
 
-static void
+static int
 pci_vtnet_set_queue_state(struct pci_vtnet_softc *sc, uint16_t tx_pairs,
     uint16_t rx_mask, uint16_t automatic_pairs,
     const struct pci_vtnet_rss_config *rss)
 {
 	struct vqueue_info *vq;
 	uint16_t old_pairs;
+	int error;
 
 	pthread_mutex_lock(&sc->rx_mtx);
 	pthread_mutex_lock(&sc->tx_mtx);
@@ -1819,7 +2000,24 @@ pci_vtnet_set_queue_state(struct pci_vtnet_softc *sc, uint16_t tx_pairs,
 		 */
 		sc->tx_control_pause = true;
 		pthread_cond_signal(&sc->tx_cond);
-		pci_vtnet_wait_tx_idle_locked(sc, NULL);
+		/*
+		 * Control commands execute on the TX worker.  That worker is
+		 * already the sole queue consumer, so it must not wait for its
+		 * own control request while changing the data-queue topology.
+		 */
+		if (sc->tx_in_progress &&
+		    sc->tx_current_vq ==
+		    &sc->vsc_queues[pci_vtnet_ctlq_index(sc)])
+			error = 0;
+		else
+			error = pci_vtnet_wait_tx_idle_locked(sc, NULL, true);
+		if (error != 0) {
+			sc->tx_control_pause = false;
+			pthread_cond_signal(&sc->tx_cond);
+			pthread_mutex_unlock(&sc->tx_mtx);
+			pthread_mutex_unlock(&sc->rx_mtx);
+			return (error);
+		}
 		pthread_mutex_unlock(&sc->tx_mtx);
 		for (uint16_t i = tx_pairs; i < old_pairs; i++) {
 			uint16_t budget;
@@ -1886,6 +2084,7 @@ pci_vtnet_set_queue_state(struct pci_vtnet_softc *sc, uint16_t tx_pairs,
 		}
 	}
 	pthread_mutex_unlock(&sc->rx_mtx);
+	return (0);
 }
 
 static void
@@ -1902,11 +2101,12 @@ pci_vtnet_set_hash_config(struct pci_vtnet_softc *sc,
 	pthread_mutex_unlock(&sc->rx_mtx);
 }
 
-static void
+static int
 pci_vtnet_set_active_pairs(struct pci_vtnet_softc *sc, uint16_t pairs)
 {
 
-	pci_vtnet_set_queue_state(sc, pairs, (1U << pairs) - 1, pairs, NULL);
+	return (pci_vtnet_set_queue_state(sc, pairs, (1U << pairs) - 1,
+	    pairs, NULL));
 }
 
 static bool
@@ -2008,10 +2208,9 @@ pci_vtnet_parse_hash_config(const uint8_t *command, size_t command_size,
 	return (true);
 }
 
-static void
-pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
+static bool
+pci_vtnet_process_ctlq(struct pci_vtnet_softc *sc, struct vqueue_info *vq)
 {
-	struct pci_vtnet_softc *sc;
 	struct iovec iov[VTNET_MAXSEGS];
 	struct vi_req req;
 	struct pci_vtnet_hash_config hash;
@@ -2022,18 +2221,23 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 	bool command_valid;
 	int budget, n;
 
-	sc = vsc;
 	if (vq->vq_num != pci_vtnet_ctlq_index(sc) ||
 	    vq != &sc->vsc_queues[vq->vq_num] ||
 	    (sc->vsc_features & VIRTIO_NET_F_CTRL_VQ) == 0)
-		return;
-	DPRINTF(("vtnet: control notify q=%u avail=%u last-avail=%u "
-	    "next-used=%u", vq->vq_num,
-	    atomic_load_acq_16(&vq->vq_avail->idx),
-	    vq->vq_last_avail, vq->vq_next_used));
-	for (;;) {
-		budget = vq->vq_qsize;
-		while (budget-- != 0 && vq_has_descs(vq)) {
+		return (false);
+	DPRINTF(("vtnet: control notify q=%u layout=%s avail=%u "
+	    "last-avail=%u next-used=%u", vq->vq_num,
+	    vq->vq_layout == VIRTIO_QUEUE_PACKED ? "packed" : "split",
+	    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+	    vq->vq_packed_next_avail :
+	    vi16_to_cpu(vq->vq_vs,
+	    atomic_load_acq_16(&vq->vq_avail->idx)),
+	    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+	    vq->vq_packed_next_avail : vq->vq_last_avail,
+	    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+	    vq->vq_packed_next_used : vq->vq_next_used));
+	budget = vq->vq_qsize;
+	while (budget-- != 0 && vq_has_descs(vq)) {
 			n = vq_getchain(vq, iov, nitems(iov), &req);
 			DPRINTF(("vtnet: control getchain n=%d last-avail=%u",
 			    n, vq->vq_last_avail));
@@ -2043,7 +2247,7 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 			    req.readable == 0 || req.writable == 0 ||
 			    req.readable + req.writable != n) {
 				DPRINTF(("vtnet: invalid control descriptor chain"));
-				vq_relchain(vq, req.idx, 0);
+				vq_relchain_req(vq, &req, 0);
 				continue;
 			}
 			insize = count_iov(iov, req.readable);
@@ -2073,8 +2277,9 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 				    sizeof(pairs));
 				pairs = le16toh(pairs);
 				if (pairs >= 1 && pairs <= sc->vsc_max_pairs) {
-					pci_vtnet_set_active_pairs(sc, pairs);
-					ack = VTNET_CTRL_OK;
+					if (pci_vtnet_set_active_pairs(sc,
+					    pairs) == 0)
+						ack = VTNET_CTRL_OK;
 				}
 			} else if (command_valid &&
 			    command[VTNET_CTRL_CLASS_OFFSET] == VTNET_CTRL_MQ &&
@@ -2087,10 +2292,12 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 				    "pairs=%u mask=%#x key=%u", insize,
 				    rss.max_tx_vq, rss.enabled_mask,
 				    rss.key_length));
-				pci_vtnet_set_queue_state(sc, rss.max_tx_vq,
-				    rss.enabled_mask, 0, &rss);
-				ack = VTNET_CTRL_OK;
-				DPRINTF(("vtnet: RSS control applied"));
+				if (pci_vtnet_set_queue_state(sc,
+				    rss.max_tx_vq, rss.enabled_mask, 0,
+				    &rss) == 0) {
+					ack = VTNET_CTRL_OK;
+					DPRINTF(("vtnet: RSS control applied"));
+				}
 			} else if (command_valid &&
 			    command[VTNET_CTRL_CLASS_OFFSET] == VTNET_CTRL_MQ &&
 			    command[VTNET_CTRL_COMMAND_OFFSET] ==
@@ -2106,31 +2313,48 @@ pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
 			if (outsize < sizeof(ack) ||
 			    !pci_vtnet_iov_write(&iov[req.readable],
 			    req.writable, 0, &ack, sizeof(ack))) {
-				vq_relchain(vq, req.idx, 0);
+				vq_relchain_req(vq, &req, 0);
 				continue;
 			}
-			vq_relchain(vq, req.idx, sizeof(ack));
+			vq_relchain_req(vq, &req, sizeof(ack));
 			DPRINTF(("vtnet: control complete idx=%u ack=%u used=%u "
 			    "published=%u", req.idx, ack, vq->vq_next_used,
-			    atomic_load_acq_16(&vq->vq_used->idx)));
-		}
-
-		/*
-		 * Linux sends control commands synchronously.  With EVENT_IDX,
-		 * leaving avail_event at its reset value suppresses the kick for
-		 * the next command and leaves the driver spinning forever.  Ask
-		 * for the next available entry, then recheck after the full
-		 * barrier in vq_kick_enable() so a command published across this
-		 * transition cannot be stranded.
-		 */
-		vq_kick_enable(vq);
-		if (!vq_has_descs(vq)) {
-			vq_endchains(vq, 1);
-			break;
-		}
-		vq_kick_disable(vq);
-		vq_endchains(vq, 0);
+			    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+			    vq->vq_packed_next_used :
+			    vi16_to_cpu(vq->vq_vs,
+			    atomic_load_acq_16(&vq->vq_used->idx))));
 	}
+
+	/*
+	 * Linux sends control commands synchronously.  With EVENT_IDX, leaving
+	 * avail_event at its reset value suppresses the kick for the next
+	 * command.  Arm and recheck after the full barrier, but return after
+	 * this bounded batch so data queues get a scheduling turn.
+	 */
+	vq_kick_enable(vq);
+	if (!vq_has_descs(vq)) {
+		vq_endchains(vq, 1);
+		return (false);
+	}
+	vq_kick_disable(vq);
+	vq_endchains(vq, 0);
+	return (true);
+}
+
+static void
+pci_vtnet_ping_ctlq(void *vsc, struct vqueue_info *vq)
+{
+	struct pci_vtnet_softc *sc;
+
+	sc = vsc;
+	if (vq->vq_num != pci_vtnet_ctlq_index(sc) ||
+	    vq != &sc->vsc_queues[vq->vq_num] ||
+	    (sc->vsc_features & VIRTIO_NET_F_CTRL_VQ) == 0)
+		return;
+	pthread_mutex_lock(&sc->tx_mtx);
+	sc->ctl_pending = true;
+	pthread_cond_signal(&sc->tx_cond);
+	pthread_mutex_unlock(&sc->tx_mtx);
 }
 
 static bool
@@ -2182,11 +2406,25 @@ pci_vtnet_parse_queues(const char *value, uint16_t *pairs,
 }
 
 static int
+pci_vtnet_configure_ring_format(struct pci_vtnet_softc *sc, bool packed)
+{
+
+	if (packed && !vi_pci_is_modern(&sc->vsc_vs))
+		return (EINVAL);
+	if (packed)
+		sc->vsc_consts.vc_hv_caps |= VIRTIO_F_RING_PACKED;
+	else
+		sc->vsc_consts.vc_hv_caps &= ~VIRTIO_F_RING_PACKED;
+	return (0);
+}
+
+static int
 pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtnet_softc *sc;
+	pthread_condattr_t condattr;
 	uint64_t backend_features;
-	bool intr_initialized;
+	bool intr_initialized, packed;
 	const char *errstr, *value;
 	char tname[MAXCOMLEN + 1];
 	unsigned long mtu = ETHERMTU;
@@ -2198,6 +2436,7 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		EPRINTLN("virtio-net queues is %s: %s", errstr, value);
 		return (EINVAL);
 	}
+	packed = get_config_bool_node_default(nvl, "packed", false);
 	value = getenv("BHYVE_VIRTIO_DEBUG");
 	if (value != NULL) {
 		pci_vtnet_debug = atoi(value);
@@ -2217,7 +2456,13 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 
 	sc->vsc_consts = vtnet_vi_consts;
 	sc->vsc_max_pairs = pairs;
-	sc->vsc_consts.vc_nvq = pairs > 1 ? pairs * 2 + 1 : 2;
+	/*
+	 * Modern HASH_REPORT has an independent HASH_CONFIG command and does
+	 * not require MQ or RSS.  Reserve the control queue even for one pair;
+	 * legacy transport narrows the visible topology after transport
+	 * selection below.
+	 */
+	sc->vsc_consts.vc_nvq = pairs * 2 + 1;
 	if (pthread_mutex_init(&sc->vsc_mtx, NULL) != 0) {
 		free(sc);
 		return (ENOMEM);
@@ -2233,13 +2478,23 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		free(sc);
 		return (ENOMEM);
 	}
-	if (pthread_cond_init(&sc->tx_cond, NULL) != 0) {
+	if (pthread_condattr_init(&condattr) != 0) {
 		pthread_mutex_destroy(&sc->tx_mtx);
 		pthread_mutex_destroy(&sc->rx_mtx);
 		pthread_mutex_destroy(&sc->vsc_mtx);
 		free(sc);
 		return (ENOMEM);
 	}
+	if (pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC) != 0 ||
+	    pthread_cond_init(&sc->tx_cond, &condattr) != 0) {
+		pthread_condattr_destroy(&condattr);
+		pthread_mutex_destroy(&sc->tx_mtx);
+		pthread_mutex_destroy(&sc->rx_mtx);
+		pthread_mutex_destroy(&sc->vsc_mtx);
+		free(sc);
+		return (ENOMEM);
+	}
+	pthread_condattr_destroy(&condattr);
 
 	for (uint16_t i = 0; i < pairs; i++) {
 		sc->vsc_queues[pci_vtnet_rxq_index(i)].vq_qsize =
@@ -2251,12 +2506,9 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		sc->vsc_queues[pci_vtnet_txq_index(i)].vq_notify =
 		    pci_vtnet_ping_txq;
 	}
-	if (pairs > 1) {
-		sc->vsc_queues[pci_vtnet_ctlq_index(sc)].vq_qsize =
-		    VTNET_RINGSZ;
-		sc->vsc_queues[pci_vtnet_ctlq_index(sc)].vq_notify =
-		    pci_vtnet_ping_ctlq;
-	}
+	sc->vsc_queues[pci_vtnet_ctlq_index(sc)].vq_qsize = VTNET_RINGSZ;
+	sc->vsc_queues[pci_vtnet_ctlq_index(sc)].vq_notify =
+	    pci_vtnet_ping_ctlq;
 
 	value = get_config_value_node(nvl, "mac");
 	if (value != NULL) {
@@ -2326,11 +2578,13 @@ pci_vtnet_init(struct pci_devinst *pi, nvlist_t *nvl)
 		err = EINVAL;
 		goto failed;
 	}
-	if (pairs > 1)
-		sc->vsc_consts.vc_hv_caps |= VIRTIO_NET_F_CTRL_VQ |
-		    VIRTIO_NET_F_MQ | VIRTIO_NET_F_HASH_REPORT |
-		    VIRTIO_NET_F_RSS;
-
+	pci_vtnet_configure_transport_features(sc,
+	    vi_pci_is_modern(&sc->vsc_vs));
+	if (pci_vtnet_configure_ring_format(sc, packed) != 0) {
+		EPRINTLN("virtio-net packed queues require transport=modern");
+		err = EINVAL;
+		goto failed;
+	}
 	/* initialize config space */
 	if (vi_pci_is_modern(&sc->vsc_vs))
 		vi_pci_modern_set_identity(&sc->vsc_vs, VIRTIO_ID_NETWORK);
@@ -2418,16 +2672,11 @@ static int
 pci_vtnet_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vtnet_softc *sc = vsc;
-	void *ptr;
 
-	*retval = 0;
-	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
-	    (size_t)offset > sizeof(sc->vsc_config) ||
-	    (size_t)size > sizeof(sc->vsc_config) - (size_t)offset)
-		return (EINVAL);
-	ptr = (uint8_t *)&sc->vsc_config + offset;
-	memcpy(retval, ptr, size);
-	return (0);
+	if (retval != NULL)
+		*retval = 0;
+	return (vi_config_read_le(&sc->vsc_config, sizeof(sc->vsc_config),
+	    offset, size, retval));
 }
 
 /*
@@ -2555,16 +2804,23 @@ static int
 pci_vtnet_suspend_device(void *vsc)
 {
 	struct pci_vtnet_softc *sc;
+	int error;
 
 	sc = vsc;
-	pthread_mutex_lock(&sc->rx_mtx);
-	if (sc->vsc_be != NULL)
-		netbe_rx_disable(sc->vsc_be);
 	pthread_mutex_lock(&sc->tx_mtx);
 	sc->tx_control_pause = true;
 	pthread_cond_signal(&sc->tx_cond);
-	pci_vtnet_wait_tx_idle_locked(sc, NULL);
+	error = pci_vtnet_wait_tx_idle_locked(sc, NULL, true);
+	if (error != 0) {
+		sc->tx_control_pause = false;
+		pthread_cond_signal(&sc->tx_cond);
+		pthread_mutex_unlock(&sc->tx_mtx);
+		return (error);
+	}
 	pthread_mutex_unlock(&sc->tx_mtx);
+	pthread_mutex_lock(&sc->rx_mtx);
+	if (sc->vsc_be != NULL)
+		netbe_rx_disable(sc->vsc_be);
 	pthread_mutex_unlock(&sc->rx_mtx);
 	return (0);
 }
@@ -2597,9 +2853,17 @@ pci_vtnet_resume_complete(void *vsc)
 	pthread_mutex_unlock(&sc->rx_mtx);
 
 	pthread_mutex_lock(&sc->tx_mtx);
-	if (!sc->tx_control_pause && sc->tx_features_negotiated &&
-	    pci_vtnet_tx_find_work_locked(sc) != NULL)
-		pthread_cond_signal(&sc->tx_cond);
+	if (!sc->tx_control_pause && sc->tx_features_negotiated) {
+		if (pci_vtnet_has_ctlq(sc)) {
+			vq = &sc->vsc_queues[pci_vtnet_ctlq_index(sc)];
+			if (!vq_is_resetting(vq) && vq_ring_ready(vq) &&
+			    vq_has_descs(vq))
+				sc->ctl_pending = true;
+		}
+		if (sc->ctl_pending ||
+		    pci_vtnet_tx_find_work_locked(sc) != NULL)
+			pthread_cond_signal(&sc->tx_cond);
+	}
 	pthread_mutex_unlock(&sc->tx_mtx);
 }
 
@@ -2618,23 +2882,38 @@ pci_vtnet_resume_device(void *vsc)
 }
 
 #ifdef BHYVE_SNAPSHOT
+#define	VTNET_SNAPSHOT_MAGIC	0x3154454eU	/* "NET1" on disk */
+#define	VTNET_SNAPSHOT_VERSION	2U
+
 static int
 pci_vtnet_pause(void *vsc)
 {
 	struct pci_vtnet_softc *sc = vsc;
+	int error;
 
 	DPRINTF(("vtnet: device pause requested !\n"));
 
-	/* Acquire the RX lock to block RX processing. */
-	pthread_mutex_lock(&sc->rx_mtx);
-	if (sc->vsc_be != NULL)
-		netbe_rx_disable(sc->vsc_be);
-
-	/* Wait for the transmit thread to finish its processing. */
+	/* Stop the shared TX/control worker before acquiring the RX lock. */
 	pthread_mutex_lock(&sc->tx_mtx);
 	sc->tx_control_pause = true;
 	pthread_cond_signal(&sc->tx_cond);
-	pci_vtnet_wait_tx_idle_locked(sc, NULL);
+	error = pci_vtnet_wait_tx_idle_locked(sc, NULL, true);
+	if (error != 0) {
+		sc->tx_control_pause = sc->vsc_vs.vs_suspended;
+		pthread_cond_signal(&sc->tx_cond);
+		pthread_mutex_unlock(&sc->tx_mtx);
+		return (error);
+	}
+	pthread_mutex_unlock(&sc->tx_mtx);
+
+	/*
+	 * Snapshot callbacks retain both locks through serialization.  Reacquire
+	 * them in the established rx-then-tx order after the worker is fenced.
+	 */
+	pthread_mutex_lock(&sc->rx_mtx);
+	if (sc->vsc_be != NULL)
+		netbe_rx_disable(sc->vsc_be);
+	pthread_mutex_lock(&sc->tx_mtx);
 	return (0);
 }
 
@@ -2658,6 +2937,101 @@ pci_vtnet_resume(void *vsc)
 	return (0);
 }
 
+struct pci_vtnet_snapshot_backup {
+	struct virtio_net_config config;
+	uint64_t features;
+	uint64_t flow_map[VTNET_FLOW_ENTRIES];
+	size_t vhdrlen;
+	size_t be_vhdrlen;
+	size_t rx_staged_len;
+	uint32_t rss_hash_types;
+	int rx_merge;
+	uint16_t tx_active_pairs;
+	uint16_t tx_next_pair;
+	uint16_t rx_active_pairs;
+	uint16_t rx_enabled_mask;
+	uint16_t rss_indirection_mask;
+	uint16_t rss_unclassified_queue;
+	uint16_t rss_indirection_table[VTNET_RSS_TABLE_SIZE];
+	uint16_t rss_max_tx_vq;
+	uint8_t rss_key_length;
+	uint8_t rss_key[VTNET_RSS_KEY_SIZE];
+	uint8_t rx_buf[VTNET_MAX_PKT_LEN + sizeof(struct virtio_net_rxhdr) +
+	    sizeof(struct virtio_net_hash_report)];
+	bool features_negotiated;
+	bool tx_features_negotiated;
+	bool tx_control_pause;
+	bool rss_enabled;
+	bool hash_configured;
+	struct vqueue_info *tx_current_vq;
+};
+
+static void
+pci_vtnet_snapshot_backup(struct pci_vtnet_softc *sc,
+    struct pci_vtnet_snapshot_backup *backup)
+{
+
+	backup->config = sc->vsc_config;
+	backup->features = sc->vsc_features;
+	memcpy(backup->flow_map, sc->vsc_flow_map, sizeof(backup->flow_map));
+	backup->vhdrlen = sc->vhdrlen;
+	backup->be_vhdrlen = sc->be_vhdrlen;
+	backup->rx_staged_len = sc->rx_staged_len;
+	backup->rss_hash_types = sc->rss_hash_types;
+	backup->rx_merge = sc->rx_merge;
+	backup->tx_active_pairs = sc->tx_active_pairs;
+	backup->tx_next_pair = sc->tx_next_pair;
+	backup->rx_active_pairs = sc->rx_active_pairs;
+	backup->rx_enabled_mask = sc->rx_enabled_mask;
+	backup->rss_indirection_mask = sc->rss_indirection_mask;
+	backup->rss_unclassified_queue = sc->rss_unclassified_queue;
+	memcpy(backup->rss_indirection_table, sc->rss_indirection_table,
+	    sizeof(backup->rss_indirection_table));
+	backup->rss_max_tx_vq = sc->rss_max_tx_vq;
+	backup->rss_key_length = sc->rss_key_length;
+	memcpy(backup->rss_key, sc->rss_key, sizeof(backup->rss_key));
+	memcpy(backup->rx_buf, sc->vsc_rx_buf, sizeof(backup->rx_buf));
+	backup->features_negotiated = sc->features_negotiated;
+	backup->tx_features_negotiated = sc->tx_features_negotiated;
+	backup->tx_control_pause = sc->tx_control_pause;
+	backup->rss_enabled = sc->rss_enabled;
+	backup->hash_configured = sc->hash_configured;
+	backup->tx_current_vq = sc->tx_current_vq;
+}
+
+static void
+pci_vtnet_snapshot_restore_backup(struct pci_vtnet_softc *sc,
+    const struct pci_vtnet_snapshot_backup *backup)
+{
+
+	sc->vsc_config = backup->config;
+	sc->vsc_features = backup->features;
+	memcpy(sc->vsc_flow_map, backup->flow_map, sizeof(sc->vsc_flow_map));
+	sc->vhdrlen = backup->vhdrlen;
+	sc->be_vhdrlen = backup->be_vhdrlen;
+	sc->rx_staged_len = backup->rx_staged_len;
+	sc->rss_hash_types = backup->rss_hash_types;
+	sc->rx_merge = backup->rx_merge;
+	sc->tx_active_pairs = backup->tx_active_pairs;
+	sc->tx_next_pair = backup->tx_next_pair;
+	sc->rx_active_pairs = backup->rx_active_pairs;
+	sc->rx_enabled_mask = backup->rx_enabled_mask;
+	sc->rss_indirection_mask = backup->rss_indirection_mask;
+	sc->rss_unclassified_queue = backup->rss_unclassified_queue;
+	memcpy(sc->rss_indirection_table, backup->rss_indirection_table,
+	    sizeof(sc->rss_indirection_table));
+	sc->rss_max_tx_vq = backup->rss_max_tx_vq;
+	sc->rss_key_length = backup->rss_key_length;
+	memcpy(sc->rss_key, backup->rss_key, sizeof(sc->rss_key));
+	memcpy(sc->vsc_rx_buf, backup->rx_buf, sizeof(sc->vsc_rx_buf));
+	sc->features_negotiated = backup->features_negotiated;
+	sc->tx_features_negotiated = backup->tx_features_negotiated;
+	sc->tx_control_pause = backup->tx_control_pause;
+	sc->rss_enabled = backup->rss_enabled;
+	sc->hash_configured = backup->hash_configured;
+	sc->tx_current_vq = backup->tx_current_vq;
+}
+
 static int
 pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 {
@@ -2665,11 +3039,22 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	struct iovec frame_iov;
 	struct virtio_net_rxhdr hdr;
 	struct pci_vtnet_softc *sc = vsc;
+	struct pci_vtnet_snapshot_backup *backup;
 	struct virtio_net_config config, destination_config;
 	uint8_t features_negotiated, hash_configured, rss_enabled;
-	int rx_merge;
+	uint8_t rx_merge;
+	bool backend_touched;
+	uint32_t be_vhdrlen, magic, rx_staged_len, version, vhdrlen;
 
 	DPRINTF(("vtnet: device snapshot requested !\n"));
+	backup = NULL;
+	backend_touched = false;
+	if (vm_snapshot_is_loading(meta)) {
+		backup = malloc(sizeof(*backup));
+		if (backup == NULL)
+			return (ENOMEM);
+		pci_vtnet_snapshot_backup(sc, backup);
+	}
 
 	/*
 	 * Queues and consts should have been saved by the more generic
@@ -2677,9 +3062,23 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	 * config.
 	 */
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->vsc_features, meta, ret, done);
+	magic = VTNET_SNAPSHOT_MAGIC;
+	version = VTNET_SNAPSHOT_VERSION;
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
+	if (magic != VTNET_SNAPSHOT_MAGIC ||
+	    version != VTNET_SNAPSHOT_VERSION) {
+		ret = ENOTSUP;
+		goto done;
+	}
+	ret = vm_snapshot_identity_string(
+	    netbe_checkpoint_identity(sc->vsc_be),
+	    NETBE_CHECKPOINT_ID_MAX, meta);
+	if (ret != 0)
+		goto done;
+	SNAPSHOT_LE64_OR_LEAVE(sc->vsc_features, meta, ret, done);
 	features_negotiated = sc->features_negotiated;
-	SNAPSHOT_VAR_OR_LEAVE(features_negotiated, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(features_negotiated, meta, ret, done);
 
 	/*
 	 * Deserialize into a temporary object.  Validation must precede
@@ -2688,35 +3087,50 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	 */
 	destination_config = sc->vsc_config;
 	config = destination_config;
-	SNAPSHOT_VAR_OR_LEAVE(config, meta, ret, done);
-	if (meta->op == VM_SNAPSHOT_RESTORE &&
+	/*
+	 * This packed configuration is the exact guest-visible byte string.
+	 * Its multibyte fields were encoded for the selected transport before
+	 * checkpoint and therefore remain portable as bytes.
+	 */
+	SNAPSHOT_BUF_OR_LEAVE(&config, sizeof(config), meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
 	    !pci_vtnet_restore_config_valid(sc, &config,
 	    &destination_config)) {
 		ret = EINVAL;
 		goto done;
 	}
 	sc->vsc_config = config;
-	rx_merge = sc->rx_merge;
-	SNAPSHOT_VAR_OR_LEAVE(rx_merge, meta, ret, done);
-
-	SNAPSHOT_VAR_OR_LEAVE(sc->vhdrlen, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->be_vhdrlen, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rx_active_pairs, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rx_enabled_mask, meta, ret, done);
+	rx_merge = (uint8_t)sc->rx_merge;
+	SNAPSHOT_U8_OR_LEAVE(rx_merge, meta, ret, done);
+	vhdrlen = (uint32_t)sc->vhdrlen;
+	be_vhdrlen = (uint32_t)sc->be_vhdrlen;
+	SNAPSHOT_LE32_OR_LEAVE(vhdrlen, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(be_vhdrlen, meta, ret, done);
+	sc->vhdrlen = vhdrlen;
+	sc->be_vhdrlen = be_vhdrlen;
+	SNAPSHOT_LE16_OR_LEAVE(sc->rx_active_pairs, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->rx_enabled_mask, meta, ret, done);
 	rss_enabled = sc->rss_enabled;
 	hash_configured = sc->hash_configured;
-	SNAPSHOT_VAR_OR_LEAVE(rss_enabled, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(hash_configured, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rss_hash_types, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rss_indirection_mask, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rss_unclassified_queue, meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(sc->rss_indirection_table,
-	    sizeof(sc->rss_indirection_table), meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rss_max_tx_vq, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rss_key_length, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(rss_enabled, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(hash_configured, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->rss_hash_types, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->rss_indirection_mask, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->rss_unclassified_queue, meta, ret, done);
+	for (size_t i = 0; i < nitems(sc->rss_indirection_table); i++)
+		SNAPSHOT_LE16_OR_LEAVE(sc->rss_indirection_table[i], meta, ret,
+		    done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->rss_max_tx_vq, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(sc->rss_key_length, meta, ret, done);
 	SNAPSHOT_BUF_OR_LEAVE(sc->rss_key, sizeof(sc->rss_key), meta, ret,
 	    done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->rx_staged_len, meta, ret, done);
+	if (sc->rx_staged_len > UINT32_MAX) {
+		ret = EOVERFLOW;
+		goto done;
+	}
+	rx_staged_len = (uint32_t)sc->rx_staged_len;
+	SNAPSHOT_LE32_OR_LEAVE(rx_staged_len, meta, ret, done);
+	sc->rx_staged_len = rx_staged_len;
 	if (sc->rx_staged_len > sizeof(sc->vsc_rx_buf)) {
 		ret = EINVAL;
 		goto done;
@@ -2731,10 +3145,11 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	 * also overwrites the saved derived header fields with values verified
 	 * against the current backend.
 	 */
-	if (meta->op == VM_SNAPSHOT_RESTORE) {
+	if (vm_snapshot_is_loading(meta)) {
 		uint16_t valid_mask;
+		size_t expected_backend_vhdrlen, expected_vhdrlen;
 
-		if (features_negotiated > 1 || rx_merge < 0 || rx_merge > 1 ||
+		if (features_negotiated > 1 || rx_merge > 1 ||
 		    rss_enabled > 1 || hash_configured > 1) {
 			ret = EINVAL;
 			goto done;
@@ -2743,6 +3158,13 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		sc->rx_merge = rx_merge;
 		sc->rss_enabled = rss_enabled;
 		sc->hash_configured = hash_configured;
+		expected_vhdrlen = pci_vtnet_header_len(sc,
+		    sc->vsc_features);
+		expected_backend_vhdrlen =
+		    sc->vsc_be != NULL &&
+		    (sc->vsc_features & VTNET_BACKEND_CAPS) != 0 ?
+		    pci_vtnet_header_len(sc, sc->vsc_features &
+		    ~VIRTIO_NET_F_HASH_REPORT) : 0;
 		valid_mask = (1U << sc->vsc_max_pairs) - 1;
 		/*
 		 * vsc_features is a device-private cache of the generic transport
@@ -2751,6 +3173,10 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		 * driver after restore.
 		 */
 		if (sc->vsc_features != sc->vsc_vs.vs_negotiated_caps ||
+		    sc->vhdrlen != expected_vhdrlen ||
+		    sc->be_vhdrlen != expected_backend_vhdrlen ||
+		    sc->rx_merge !=
+		    ((sc->vsc_features & VIRTIO_NET_F_MRG_RXBUF) != 0) ||
 		    sc->rx_enabled_mask == 0 ||
 		    (sc->rx_enabled_mask & ~valid_mask) != 0 ||
 		    (sc->hash_configured &&
@@ -2813,14 +3239,25 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 		    sc->rss_max_tx_vq : sc->rx_active_pairs;
 		sc->tx_next_pair = 0;
 		sc->tx_current_vq = NULL;
-		sc->tx_control_pause = false;
+		/*
+		 * Common VirtIO state is restored before this device-private record.
+		 * Preserve a restored guest suspend through the entire transaction,
+		 * rather than opening the TX-admission latch until the later generic
+		 * resume callback happens to close it again.  The checkpoint locks are
+		 * held here, but keeping this invariant local also makes an early
+		 * restore failure and future callback ordering safe by construction.
+		 */
+		sc->tx_control_pause = sc->vsc_vs.vs_suspended;
 		memset(sc->vsc_flow_map, 0, sizeof(sc->vsc_flow_map));
-		if (sc->features_negotiated) {
+		if (sc->features_negotiated &&
+		    vm_snapshot_is_restoring(meta)) {
+			backend_touched = true;
 			if (!pci_vtnet_apply_features(sc, sc->vsc_features)) {
 				ret = EINVAL;
 				goto done;
 			}
-		} else
+		} else if (!sc->features_negotiated &&
+		    vm_snapshot_is_restoring(meta))
 			sc->tx_features_negotiated = false;
 
 		/*
@@ -2872,7 +3309,72 @@ pci_vtnet_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 	}
 
 done:
+	if (vm_snapshot_is_loading(meta) &&
+	    (ret != 0 || meta->op == VM_SNAPSHOT_VALIDATE)) {
+		/*
+		 * Parsing is transactional.  If feature application reached the
+		 * external backend, restore its previous framing contract before
+		 * publishing the destination's original in-memory state.
+		 */
+		if (backend_touched && sc->vsc_be != NULL) {
+			uint64_t backend_features;
+			size_t backend_vhdrlen;
+
+			backend_features = backup->features_negotiated ?
+			    backup->features & VTNET_BACKEND_CAPS : 0;
+			backend_vhdrlen = backup->features_negotiated ?
+			    backup->be_vhdrlen : 0;
+			if (netbe_set_cap(sc->vsc_be, backend_features,
+			    backend_vhdrlen) != 0) {
+				vi_snapshot_restore_incomplete(&sc->vsc_vs);
+				ret = EIO;
+			}
+		}
+		pci_vtnet_snapshot_restore_backup(sc, backup);
+	}
+	free(backup);
 	return (ret);
+}
+
+/*
+ * Restore preflight is backend-side-effect free, but its private codec reads
+ * receive staging and TX/control state that independent backend and worker
+ * callbacks update.  Checkpoint pause retains rx_mtx followed by tx_mtx
+ * through serialization; direct preflight takes that same pair locally.
+ *
+ * Partial ownership is not a valid snapshot boundary.  Acquiring the missing
+ * mutex would invert the established order or serialize only half the record,
+ * so reject it without stopping or starting the backend.
+ */
+static int
+pci_vtnet_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	struct pci_devinst *pi;
+	struct pci_vtnet_softc *sc;
+	bool rx_owned, tx_owned;
+	int error;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE ||
+	    meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	sc = pi->pi_arg;
+	if (sc == NULL)
+		return (EINVAL);
+	rx_owned = pthread_mutex_isowned_np(&sc->rx_mtx);
+	tx_owned = pthread_mutex_isowned_np(&sc->tx_mtx);
+	if (rx_owned != tx_owned)
+		return (EBUSY);
+	if (!rx_owned) {
+		pthread_mutex_lock(&sc->rx_mtx);
+		pthread_mutex_lock(&sc->tx_mtx);
+	}
+	error = vi_pci_snapshot(meta);
+	if (!rx_owned) {
+		pthread_mutex_unlock(&sc->tx_mtx);
+		pthread_mutex_unlock(&sc->rx_mtx);
+	}
+	return (error);
 }
 #endif
 
@@ -2886,8 +3388,12 @@ static const struct pci_devemu pci_de_vnet = {
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	vi_pci_snapshot,
+	.pe_snapshot_validate = pci_vtnet_snapshot_validate,
+	.pe_snapshot_compat = vi_pci_snapshot_compat,
 	.pe_pause =	vi_pci_pause,
 	.pe_resume =	vi_pci_resume,
+	/* Common VirtIO DMA leases plus the net backend drain fence. */
+	.pe_migration_flags = PCI_MIGRATION_VIRTIO_FLAGS,
 #endif
 };
 PCI_EMUL_SET(pci_de_vnet);

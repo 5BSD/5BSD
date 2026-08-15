@@ -60,6 +60,15 @@ struct virtio_console_control {
 	uint16_t value;		/* Extra information for the key */
 };
 
+static inline int
+virtio_console_control_used_len_valid(uint32_t used_len,
+    uint32_t buffer_len)
+{
+
+	return (used_len >= sizeof(struct virtio_console_control) &&
+	    used_len <= buffer_len);
+}
+
 /* Some events for control messages */
 #define VIRTIO_CONSOLE_DEVICE_READY	0
 #define VIRTIO_CONSOLE_PORT_ADD		1

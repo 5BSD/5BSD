@@ -17,6 +17,17 @@
 #include <dev/vmm/vmm_mem.h>
 
 struct vcpu;
+struct vmm_event_coordinator;
+struct vmm_startup_controller_ticket;
+struct vmm_startup_delivery;
+struct vmm_startup_handshake_status;
+struct vmm_startup_event_claim;
+struct vmm_startup_event_run_token;
+struct vmm_startup_entry_loop_result;
+struct vmm_startup_entry_owner;
+struct vmm_startup_entry_runtime_result;
+struct vmm_startup_entry_snapshot;
+struct vmm_event_wait_ticket;
 
 enum vcpu_state {
 	VCPU_IDLE,
@@ -38,6 +49,7 @@ struct vcpu {
 	int		vcpuid;		/* (o) */
 	int		hostcpu;	/* (o) vcpu's host cpu */
 	int		reqidle;	/* (i) request vcpu to idle */
+	uint64_t	startup_notify_generation; /* (o) startup wake epoch */
 	struct vm	*vm;		/* (o) */
 	void		*cookie;	/* (i) cpu-specific data */
 	void		*stats;		/* (a,i) statistics */
@@ -60,6 +72,32 @@ int vcpu_set_state_all(struct vm *vm, enum vcpu_state state);
 enum vcpu_state vcpu_get_state(struct vcpu *vcpu, int *hostcpu);
 void vcpu_notify_event(struct vcpu *vcpu);
 void vcpu_notify_event_locked(struct vcpu *vcpu);
+uint64_t vcpu_startup_notify_generation_capture(struct vcpu *vcpu);
+int vcpu_startup_entry_snapshot(struct vcpu *,
+    struct vmm_startup_entry_snapshot *);
+int vcpu_startup_entry_observation(struct vcpu *,
+    struct vmm_startup_entry_snapshot *, uint64_t *);
+int vcpu_startup_entry_owner_guard_before(struct vcpu *,
+    struct vmm_startup_entry_owner *,
+    struct vmm_startup_entry_runtime_result *);
+/*
+ * Deferred pre-entry form.  This is the only deferred-owner operation that
+ * samples the live vCPU startup observations; resolution is deliberately a
+ * pure cleanup result and must use the common owner API directly.
+ */
+int vcpu_startup_entry_owner_guard_before_defer(struct vcpu *,
+    struct vmm_startup_entry_owner *,
+    struct vmm_startup_entry_runtime_result *);
+/*
+ * Final live-observation wrapper for an architecture entry attempt whose
+ * execution classification is reported only after the instruction returns.
+ * Commit/abort are intentionally pure common-owner operations.
+ */
+int vcpu_startup_entry_owner_guard_before_attempt(struct vcpu *,
+    struct vmm_startup_entry_owner *,
+    struct vmm_startup_entry_runtime_result *);
+int vcpu_startup_entry_owner_retire(struct vcpu *,
+    struct vmm_startup_entry_owner *, struct vmm_startup_entry_loop_result *);
 int vcpu_debugged(struct vcpu *vcpu);
 
 static inline void *
@@ -132,14 +170,16 @@ struct vm {
 
 	char		name[VM_MAX_NAMELEN + 1]; /* (o) virtual machine name */
 	struct sx	vcpus_init_lock;	/* (o) */
+	struct vmm_event_coordinator *event_coordinator; /* (o) event fence */
 
 	bool		dying;			/* (o) is dying */
-	int		suspend;		/* (i) stop VM execution */
+	u_int		suspend;		/* (i) stop VM execution */
 
 	volatile cpuset_t active_cpus;		/* (i) active vcpus */
 	volatile cpuset_t debug_cpus;		/* (i) vcpus stopped for debug */
 	volatile cpuset_t suspended_cpus; 	/* (i) suspended vcpus */
 	volatile cpuset_t halted_cpus;		/* (x) cpus in a hard halt */
+	cpuset_t	startup_cpus;		/* (i) [r] waiting for startup */
 
 	cpuset_t	rendezvous_req_cpus;	/* (x) [r] rendezvous requested */
 	cpuset_t	rendezvous_done_cpus;	/* (x) [r] rendezvous finished */
@@ -159,7 +199,55 @@ int vm_create(const char *name, struct vm **retvm);
 struct vcpu *vm_alloc_vcpu(struct vm *vm, int vcpuid);
 void vm_destroy(struct vm *vm);
 int vm_reinit(struct vm *vm);
-void vm_reset(struct vm *vm);
+int vm_reset(struct vm *vm);
+
+int vm_event_coordinator_init(struct vm *vm, u_int maxcpus);
+int vm_event_coordinator_reset(struct vm *vm);
+void vm_event_coordinator_cleanup(struct vm *vm);
+struct vmm_event_coordinator *vm_event_coordinator(struct vm *vm);
+int vm_startup_lock_default(struct vm *, uint64_t *);
+int vm_startup_controller_claim(struct vm *,
+    struct vmm_startup_controller_ticket *, uint64_t);
+int vm_startup_controller_release(struct vm *,
+    struct vmm_startup_controller_ticket *);
+int vm_startup_configure_kernel(struct vm *,
+    const struct vmm_startup_controller_ticket *, uint16_t, uint64_t *);
+int vm_startup_execution_status(struct vm *,
+    struct vmm_startup_handshake_status *);
+int vm_startup_enter(struct vm *,
+    const struct vmm_startup_controller_ticket *, uint16_t, uint64_t, bool);
+int vm_startup_wait_ready(struct vm *,
+    const struct vmm_startup_controller_ticket *, uint64_t,
+    struct vmm_event_wait_ticket *, const char *, int);
+int vm_startup_wait_committed(struct vm *,
+    const struct vmm_startup_controller_ticket *, uint64_t,
+    struct vmm_event_wait_ticket *, const char *, int);
+int vm_startup_commit(struct vm *,
+    const struct vmm_startup_controller_ticket *, uint64_t);
+int vm_startup_status(struct vm *,
+    const struct vmm_startup_controller_ticket *,
+    struct vmm_startup_handshake_status *);
+int vcpu_startup_event_publish_init(struct vcpu *vcpu);
+int vcpu_startup_event_publish_sipi(struct vcpu *vcpu, uint8_t vector);
+int vcpu_startup_event_claim_begin(struct vcpu *vcpu,
+    struct vmm_startup_event_claim *claim);
+int vcpu_startup_event_claim_check(struct vcpu *vcpu,
+    const struct vmm_startup_event_claim *claim);
+int vcpu_startup_event_claim_finish(struct vcpu *vcpu,
+    struct vmm_startup_event_claim *claim);
+int vcpu_startup_event_claim_abort(struct vcpu *vcpu,
+    struct vmm_startup_event_claim *claim);
+int vcpu_startup_event_run_token_capture(struct vcpu *vcpu,
+    struct vmm_startup_event_run_token *token);
+int vcpu_startup_event_run_token_check(struct vcpu *vcpu,
+    const struct vmm_startup_event_run_token *token);
+int vm_startup_event_publish_init_set(struct vm *vm, const cpuset_t *targets);
+int vm_startup_event_publish_sipi_set(struct vm *vm, const cpuset_t *targets,
+    uint8_t vector);
+int vm_startup_route_init_set(struct vm *vm, const cpuset_t *targets,
+    struct vmm_startup_delivery *delivery);
+int vm_startup_route_sipi_set(struct vm *vm, const cpuset_t *targets,
+    uint8_t vector, struct vmm_startup_delivery *delivery);
 
 void vm_lock_vcpus(struct vm *vm);
 void vm_unlock_vcpus(struct vm *vm);
@@ -200,7 +288,7 @@ vm_vcpu(struct vm *vm, int vcpuid)
 
 struct vm_eventinfo {
 	cpuset_t *rptr;		/* rendezvous cookie */
-	int	*sptr;		/* suspend cookie */
+	u_int	*sptr;		/* suspend cookie */
 	int	*iptr;		/* reqidle cookie */
 };
 

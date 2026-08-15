@@ -29,6 +29,8 @@
 #ifndef	_BHYVERUN_H_
 #define	_BHYVERUN_H_
 
+#include <sys/types.h>
+
 #include <stdbool.h>
 
 #define	VMEXIT_CONTINUE		(0)
@@ -84,6 +86,12 @@ void bhyve_parse_gdb_options(const char *opt);
 int bhyve_pincpu_parse(const char *opt);
 int bhyve_topology_parse(const char *opt);
 int bhyve_numa_parse(const char *opt);
+#ifdef BHYVE_SNAPSHOT
+int bhyve_numa_checkpoint_export(uint64_t *, size_t, uint16_t *, size_t,
+    size_t *);
+int bhyve_numa_restore_apply(const uint64_t *, size_t, const uint16_t *,
+    size_t, uint64_t);
+#endif
 
 void bhyve_init_vcpu(struct vcpu *vcpu);
 void bhyve_start_vcpu(struct vcpu *vcpu, bool bsp);

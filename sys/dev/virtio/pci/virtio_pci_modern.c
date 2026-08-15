@@ -49,6 +49,7 @@
 #include <dev/virtio/virtqueue.h>
 #include <dev/virtio/pci/virtio_pci.h>
 #include <dev/virtio/pci/virtio_pci_modern_var.h>
+#include <dev/virtio/pci/virtio_pci_shmem.h>
 
 #define	VIRTIO_SUSPEND_POLL_INTERVAL	SBT_1MS
 #define	VIRTIO_SUSPEND_TIMEOUT		SBT_1S
@@ -81,6 +82,8 @@ struct vtpci_modern_softc {
 	int				 vtpci_msix_pba_rid;
 	struct resource			*vtpci_msix_pba_res;
 	bool				 vtpci_device_config_failed;
+	/* Set only after this host suspend completed the VirtIO handshake. */
+	bool				 vtpci_host_suspend_handshake;
 
 	struct vtpci_modern_resource_map vtpci_common_res_map;
 	struct vtpci_modern_resource_map vtpci_notify_res_map;
@@ -121,10 +124,13 @@ static uint64_t	vtpci_modern_negotiate_features(device_t, uint64_t);
 static int	vtpci_modern_finalize_features(device_t);
 static bool	vtpci_modern_with_feature(device_t, uint64_t);
 static int	vtpci_modern_wait_lifecycle(struct vtpci_modern_softc *, bool);
+static int	vtpci_modern_suspend_rollback(struct vtpci_modern_softc *, int);
 static int	vtpci_modern_alloc_virtqueues(device_t, int,
 		    struct vq_alloc_info *);
 static int	vtpci_modern_setup_interrupts(device_t, enum intr_type);
+static void	vtpci_modern_teardown_interrupts(device_t);
 static void	vtpci_modern_stop(device_t);
+static void	vtpci_modern_fail(device_t);
 static int	vtpci_modern_reinit(device_t, uint64_t);
 static void	vtpci_modern_reinit_complete(device_t);
 static int	vtpci_modern_reset_vq(device_t, struct virtqueue *);
@@ -244,7 +250,9 @@ static device_method_t vtpci_modern_methods[] = {
 	DEVMETHOD(virtio_bus_with_feature,	  vtpci_modern_with_feature),
 	DEVMETHOD(virtio_bus_alloc_virtqueues,	  vtpci_modern_alloc_virtqueues),
 	DEVMETHOD(virtio_bus_setup_intr,	  vtpci_modern_setup_interrupts),
+	DEVMETHOD(virtio_bus_teardown_intr,	  vtpci_modern_teardown_interrupts),
 	DEVMETHOD(virtio_bus_stop,		  vtpci_modern_stop),
+	DEVMETHOD(virtio_bus_fail,		  vtpci_modern_fail),
 	DEVMETHOD(virtio_bus_reinit,		  vtpci_modern_reinit),
 	DEVMETHOD(virtio_bus_reinit_complete,	  vtpci_modern_reinit_complete),
 	DEVMETHOD(virtio_bus_reset_vq,		  vtpci_modern_reset_vq),
@@ -366,7 +374,8 @@ vtpci_modern_suspend(device_t dev)
 	sc = device_get_softc(dev);
 	error = bus_generic_suspend(dev);
 	if (error != 0 ||
-	    !vtpci_modern_with_feature(dev, VIRTIO_F_SUSPEND))
+	    !vtpci_modern_with_feature(dev, VIRTIO_F_SUSPEND) ||
+	    !virtio_device_suspend_request_allowed(vtpci_modern_get_status(sc)))
 		return (error);
 
 	vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_SUSPEND);
@@ -374,8 +383,9 @@ vtpci_modern_suspend(device_t dev)
 	if (error != 0) {
 		device_printf(dev, "device did not complete suspend: %d\n",
 		    error);
-		(void)bus_generic_resume(dev);
-	}
+		error = vtpci_modern_suspend_rollback(sc, error);
+	} else
+		sc->vtpci_host_suspend_handshake = true;
 	return (error);
 }
 
@@ -386,7 +396,7 @@ vtpci_modern_resume(device_t dev)
 	int error;
 
 	sc = device_get_softc(dev);
-	if (vtpci_modern_with_feature(dev, VIRTIO_F_SUSPEND)) {
+	if (sc->vtpci_host_suspend_handshake) {
 		vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_DRIVER_OK);
 		error = vtpci_modern_wait_lifecycle(sc, false);
 		if (error != 0) {
@@ -394,6 +404,7 @@ vtpci_modern_resume(device_t dev)
 			    error);
 			return (error);
 		}
+		sc->vtpci_host_suspend_handshake = false;
 	}
 	return (bus_generic_resume(dev));
 }
@@ -489,8 +500,18 @@ vtpci_modern_negotiate_features(device_t dev, uint64_t child_features)
 	 * add transport features implemented by this bus.
 	 */
 	child_features |= VIRTIO_F_VERSION_1;
+	/*
+	 * Packed rings are implemented by the common virtqueue layer rather
+	 * than individual function drivers.  Offer the transport capability
+	 * to every modern child when the device provides it; the same abstract
+	 * enqueue/dequeue API is used by all functions.
+	 */
+	if ((host_features & VIRTIO_F_RING_PACKED) != 0)
+		child_features |= VIRTIO_F_RING_PACKED;
 	if ((host_features & VIRTIO_F_SUSPEND) != 0)
 		child_features |= VIRTIO_F_SUSPEND;
+	if ((host_features & VIRTIO_F_NOTIF_CONFIG_DATA) != 0)
+		child_features |= VIRTIO_F_NOTIF_CONFIG_DATA;
 	child_features =
 	    virtio_modern_supported_transport_features(child_features);
 	notification_data_valid = vtpci_modern_notification_data_valid(sc);
@@ -500,6 +521,13 @@ vtpci_modern_negotiate_features(device_t dev, uint64_t child_features)
 	    !notification_data_valid)
 		device_printf(dev, "ignoring NotificationData feature "
 		    "with invalid NOTIFY_CFG layout\n");
+	if ((host_features & VIRTIO_F_NOTIF_CONFIG_DATA) != 0 &&
+	    sc->vtpci_common_res_map.vtrm_length <
+	    VIRTIO_PCI_COMMON_Q_NDATA + sizeof(uint16_t)) {
+		child_features &= ~VIRTIO_F_NOTIF_CONFIG_DATA;
+		device_printf(dev, "ignoring NotificationConfigData feature "
+		    "with short COMMON_CFG layout\n");
+	}
 	if ((host_features & VIRTIO_F_RING_RESET) != 0 &&
 	    sc->vtpci_common_res_map.vtrm_length <
 	    VIRTIO_PCI_COMMON_Q_RESET + sizeof(uint16_t)) {
@@ -522,7 +550,7 @@ vtpci_modern_wait_lifecycle(struct vtpci_modern_softc *sc, bool suspend)
 	uint8_t status;
 
 	deadline = sbinuptime() + VIRTIO_SUSPEND_TIMEOUT;
-	do {
+	for (;;) {
 		status = vtpci_modern_get_status(sc);
 		if ((status & (VIRTIO_CONFIG_S_NEEDS_RESET |
 		    VIRTIO_CONFIG_STATUS_FAILED)) != 0)
@@ -530,11 +558,58 @@ vtpci_modern_wait_lifecycle(struct vtpci_modern_softc *sc, bool suspend)
 		if (suspend ? virtio_device_suspend_complete(status) :
 		    virtio_device_resume_complete(status))
 			return (0);
+		if (sbinuptime() >= deadline)
+			return (ETIMEDOUT);
 		pause_sbt("vtsusp", VIRTIO_SUSPEND_POLL_INTERVAL, 0,
 		    C_HARDCLOCK);
-	} while (sbinuptime() < deadline);
+	}
+}
 
-	return (ETIMEDOUT);
+/*
+ * bus_generic_suspend() has already fenced the function driver.  If the
+ * device completed suspend at the timeout boundary, undo the transport
+ * transition before reopening that child.  A device which explicitly asks
+ * for reset is no longer safe for the function driver's ordinary resume
+ * path: current children can enqueue I/O before performing any reset.  Keep
+ * that child fenced, and likewise leave it suspended after an indeterminate
+ * status or failed resume handshake.  Mark only an otherwise unclassified
+ * protocol failure as driver FAILED; preserve device-owned NEEDS_RESET.
+ */
+static int
+vtpci_modern_suspend_rollback(struct vtpci_modern_softc *sc, int suspend_error)
+{
+	device_t dev;
+	enum virtio_device_lifecycle_state state;
+	uint8_t status;
+	int error;
+
+	dev = sc->vtpci_dev;
+	status = vtpci_modern_get_status(sc);
+	state = virtio_device_lifecycle_state(status);
+	if (state == VIRTIO_DEVICE_LIFECYCLE_FAILED)
+		return (suspend_error);
+	if (state == VIRTIO_DEVICE_LIFECYCLE_RUNNING) {
+		error = bus_generic_resume(dev);
+		if (error != 0)
+			device_printf(dev, "child suspend rollback failed: %d\n",
+			    error);
+		return (error != 0 ? error : suspend_error);
+	}
+	if (state == VIRTIO_DEVICE_LIFECYCLE_SUSPENDED) {
+		vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_DRIVER_OK);
+		error = vtpci_modern_wait_lifecycle(sc, false);
+		if (error == 0) {
+			error = bus_generic_resume(dev);
+			if (error != 0)
+				device_printf(dev,
+				    "child suspend rollback failed: %d\n", error);
+			return (error != 0 ? error : suspend_error);
+		}
+		device_printf(dev, "device suspend rollback failed: %d\n",
+		    error);
+	}
+	vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_FAILED);
+	return (suspend_error);
 }
 
 static int
@@ -636,9 +711,27 @@ vtpci_modern_setup_interrupts(device_t dev, enum intr_type type)
 }
 
 static void
+vtpci_modern_teardown_interrupts(device_t dev)
+{
+	struct vtpci_modern_softc *sc;
+
+	sc = device_get_softc(dev);
+	vtpci_teardown_interrupts(&sc->vtpci_common);
+}
+
+static void
 vtpci_modern_stop(device_t dev)
 {
 	vtpci_modern_reset(device_get_softc(dev));
+}
+
+static void
+vtpci_modern_fail(device_t dev)
+{
+	struct vtpci_modern_softc *sc;
+
+	sc = device_get_softc(dev);
+	vtpci_modern_set_status(sc, VIRTIO_CONFIG_STATUS_FAILED);
 }
 
 static int
@@ -726,8 +819,8 @@ vtpci_modern_reset_vq(device_t dev, struct virtqueue *vq)
 {
 	struct vtpci_modern_softc *sc;
 	struct vtpci_common *cn;
+	uint32_t count;
 	uint16_t idx;
-	int count;
 
 	sc = device_get_softc(dev);
 	cn = &sc->vtpci_common;
@@ -740,7 +833,7 @@ vtpci_modern_reset_vq(device_t dev, struct virtqueue *vq)
 
 	vtpci_modern_select_virtqueue(sc, idx);
 	vtpci_modern_write_common_2(sc, VIRTIO_PCI_COMMON_Q_RESET, 1);
-	for (count = 0; count < VIRTIO_QUEUE_RESET_POLLS; count++) {
+	for (count = 0; count < VIRTIO_QUEUE_RESET_PROBES; count++) {
 		if (vtpci_modern_read_common_2(sc,
 		    VIRTIO_PCI_COMMON_Q_RESET) == 0) {
 			if (vtpci_modern_read_common_2(sc,
@@ -752,7 +845,8 @@ vtpci_modern_reset_vq(device_t dev, struct virtqueue *vq)
 		 * The bus reset method may be called with a child-driver mutex
 		 * held (vtrnd_detach() does this), so it must not sleep here.
 		 */
-		DELAY(VIRTIO_RESET_POLL_DELAY_US);
+		if (virtio_queue_reset_probe_should_delay(count))
+			DELAY(VIRTIO_RESET_POLL_DELAY_US);
 	}
 
 	return (ETIMEDOUT);
@@ -764,17 +858,26 @@ vtpci_modern_notify_vq(device_t dev, uint16_t queue, bus_size_t offset,
 {
 	struct vtpci_modern_softc *sc;
 	uint32_t notification;
+	uint16_t notify_data;
 
 	sc = device_get_softc(dev);
+	if (vtpci_modern_with_feature(dev, VIRTIO_F_NOTIF_CONFIG_DATA)) {
+		MPASS(queue < sc->vtpci_common.vtpci_nvqs);
+	}
+	notify_data = virtio_pci_notification_identifier(queue,
+	    queue < sc->vtpci_common.vtpci_nvqs ?
+	    sc->vtpci_common.vtpci_vqs[queue].vtv_notify_data : 0,
+	    vtpci_modern_with_feature(dev, VIRTIO_F_NOTIF_CONFIG_DATA));
 
 	if (vtpci_modern_with_feature(dev, VIRTIO_F_NOTIFICATION_DATA)) {
 		MPASS(virtio_pci_queue_notify_size(true) ==
 		    sizeof(notification));
-		notification = virtio_split_notification_data(queue, avail_idx);
+		notification = virtio_split_notification_data(notify_data,
+		    avail_idx);
 		vtpci_modern_write_notify_4(sc, offset, notification);
 	} else {
 		MPASS(virtio_pci_queue_notify_size(false) == sizeof(queue));
-		vtpci_modern_write_notify_2(sc, offset, queue);
+		vtpci_modern_write_notify_2(sc, offset, notify_data);
 	}
 }
 
@@ -990,6 +1093,82 @@ vtpci_modern_find_cap(device_t dev, uint8_t cfg_type, int *cap_offset)
 	}
 
 	return (error);
+}
+
+/*
+ * A shared-memory capability is consumed by a VirtIO child, but it belongs
+ * to the PCI transport.  Keep discovery here so every child performs the
+ * same bounds and BAR-type validation instead of open-coding PCI capability
+ * walks.  The capability format is little-endian on the wire; PCI config
+ * accessors return its scalar fields in host order.
+ */
+int
+virtio_pci_get_shmem_region(device_t child, uint8_t id,
+    struct virtio_pci_shmem_region *region)
+{
+	device_t dev;
+	rman_res_t bar_addr, bar_size;
+	uint64_t address, length, offset;
+	uint32_t length_hi, length_lo, offset_hi, offset_lo;
+	uint32_t bar_value;
+	uint8_t bar, cap_length, cfg_type, cap_id;
+	int cap_offset, error, found;
+
+	if (child == NULL || region == NULL || !virtio_bus_is_modern(child))
+		return (EINVAL);
+	dev = device_get_parent(child);
+	if (dev == NULL)
+		return (ENXIO);
+
+	found = 0;
+	for (error = pci_find_cap(dev, PCIY_VENDOR, &cap_offset);
+	     error == 0;
+	     error = pci_find_next_cap(dev, PCIY_VENDOR, cap_offset,
+	     &cap_offset)) {
+		cfg_type = pci_read_config(dev, cap_offset +
+		    offsetof(struct virtio_pci_cap, cfg_type), 1);
+		cap_id = pci_read_config(dev, cap_offset +
+		    offsetof(struct virtio_pci_cap, id), 1);
+		if (cfg_type != VIRTIO_PCI_CAP_SHARED_MEMORY_CFG || cap_id != id)
+			continue;
+		found = 1;
+		cap_length = pci_read_config(dev, cap_offset +
+		    offsetof(struct virtio_pci_cap, cap_len), 1);
+		if (cap_length < sizeof(struct virtio_pci_cap64))
+			continue;
+		bar = pci_read_config(dev, cap_offset +
+		    offsetof(struct virtio_pci_cap, bar), 1);
+		if (!VIRTIO_PCI_CAP_BAR_VALID(bar))
+			continue;
+		bar_value = pci_read_config(dev, PCIR_BAR(bar), 4);
+		if (PCI_BAR_IO(bar_value))
+			continue;
+		offset_lo = pci_read_config(dev, cap_offset +
+		    offsetof(struct virtio_pci_cap, offset), 4);
+		length_lo = pci_read_config(dev, cap_offset +
+		    offsetof(struct virtio_pci_cap, length), 4);
+		offset_hi = pci_read_config(dev, cap_offset +
+		    offsetof(struct virtio_pci_cap64, offset_hi), 4);
+		length_hi = pci_read_config(dev, cap_offset +
+		    offsetof(struct virtio_pci_cap64, length_hi), 4);
+		offset = ((uint64_t)offset_hi << 32) | offset_lo;
+		length = ((uint64_t)length_hi << 32) | length_lo;
+		if (bus_get_resource(dev, SYS_RES_MEMORY, PCIR_BAR(bar),
+		    &bar_addr, &bar_size) != 0 || length == 0 ||
+		    offset > bar_size || length > bar_size - offset ||
+		    (uint64_t)bar_addr > UINT64_MAX - offset)
+			continue;
+		address = (uint64_t)bar_addr + offset;
+		/* Do not truncate a capability when this port has narrow bus types. */
+		if ((uint64_t)(bus_addr_t)address != address ||
+		    (uint64_t)(bus_size_t)length != length)
+			continue;
+		region->addr = (bus_addr_t)address;
+		region->length = (bus_size_t)length;
+		return (0);
+	}
+
+	return (found != 0 ? ENXIO : ENOENT);
 }
 
 static int
@@ -1603,6 +1782,7 @@ vtpci_modern_reset(struct vtpci_modern_softc *sc)
 	while (vtpci_modern_get_status(sc) != VIRTIO_CONFIG_STATUS_RESET)
 		DELAY(VIRTIO_RESET_POLL_DELAY_US);
 	sc->vtpci_device_config_failed = false;
+	sc->vtpci_host_suspend_handshake = false;
 }
 
 static void
@@ -1641,6 +1821,12 @@ vtpci_modern_get_vq_notify_off(device_t dev, int idx,
 
 	vtpci_modern_select_virtqueue(sc, idx);
 	q_notify_off = vtpci_modern_read_common_2(sc, VIRTIO_PCI_COMMON_Q_NOFF);
+	if (vtpci_modern_with_feature(dev, VIRTIO_F_NOTIF_CONFIG_DATA))
+		sc->vtpci_common.vtpci_vqs[idx].vtv_notify_data =
+		    vtpci_modern_read_common_2(sc,
+		    VIRTIO_PCI_COMMON_Q_NDATA);
+	else
+		sc->vtpci_common.vtpci_vqs[idx].vtv_notify_data = idx;
 	multiplier = sc->vtpci_notify_offset_multiplier;
 	length = sc->vtpci_notify_res_map.vtrm_length;
 	width = virtio_pci_queue_notify_size(vtpci_modern_with_feature(dev,

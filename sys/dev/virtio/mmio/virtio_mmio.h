@@ -44,6 +44,8 @@ struct vtmmio_softc {
 	uint64_t			vtmmio_reinit_features;
 	bool				vtmmio_reinit_features_valid;
 	bool				vtmmio_device_config_failed;
+	/* Set only after this host suspend completed the VirtIO handshake. */
+	bool				vtmmio_host_suspend_handshake;
 	uint32_t			vtmmio_flags;
 	uint32_t			vtmmio_version;
 

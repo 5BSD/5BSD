@@ -8,13 +8,14 @@
 #define	__VMMAPI_INTERNAL_H__
 
 #include <sys/types.h>
+#include <dev/vmm/vmm_dev.h>
 #include <dev/vmm/vmm_mem.h>
 
 struct vmctx {
 	int	fd;		/* device file descriptor */
 	int	ctlfd;		/* vmm control descriptor */
 	struct {
-		vm_paddr_t base;
+		void *host_base;
 		vm_size_t size;
 	} memsegs[VM_MAX_MEMSEGS];
 	size_t 	lowmem_size;
@@ -28,6 +29,13 @@ struct vcpu {
 	struct vmctx *ctx;
 	int vcpuid;
 };
+
+#ifdef __amd64__
+#define	VM_ARCH_IOCTLS	VM_GET_CPUID, VM_GET_CPU_COMPAT, VM_STARTUP_REQUEST, \
+	VM_RUN_GENERATION,
+#else
+#define	VM_ARCH_IOCTLS
+#endif
 
 int	vcpu_ioctl(struct vcpu *vcpu, u_long cmd, void *arg);
 
@@ -43,6 +51,7 @@ extern const char *vm_capstrmap[];
 	VM_MMAP_MEMSEG,		\
 	VM_MMAP_GETNEXT,	\
 	VM_MUNMAP_MEMSEG,	\
+	VM_DIRTY_LOG_REQUEST,	\
 	VM_SET_REGISTER,	\
 	VM_GET_REGISTER,	\
 	VM_SET_REGISTER_SET,	\
@@ -50,6 +59,7 @@ extern const char *vm_capstrmap[];
 	VM_INJECT_EXCEPTION,	\
 	VM_SET_CAPABILITY,	\
 	VM_GET_CAPABILITY,	\
+	VM_ARCH_IOCTLS		\
 	VM_STATS,		\
 	VM_STAT_DESC,		\
 	VM_GLA2GPA_NOFAULT,	\

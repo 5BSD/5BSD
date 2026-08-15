@@ -39,6 +39,14 @@
 VMM_STAT_DECLARE(VCPU_MIGRATIONS);
 VMM_STAT_DECLARE(VMEXIT_COUNT);
 VMM_STAT_DECLARE(VMEXIT_EXTINT);
+/*
+ * External-interrupt exits whose VMCS interruption-information valid bit is
+ * clear.  VMX normally supplies valid information for these exits, but the
+ * VMX compatibility path deliberately treats this specific malformed record
+ * as handled so the host can continue.  Keep it distinct from a normal
+ * external interrupt: it is an operational diagnostic, not guest state.
+ */
+VMM_STAT_DECLARE(VMEXIT_EXTINT_INVALID);
 VMM_STAT_DECLARE(VMEXIT_HLT);
 VMM_STAT_DECLARE(VMEXIT_CR_ACCESS);
 VMM_STAT_DECLARE(VMEXIT_RDMSR);

@@ -30,11 +30,17 @@
  * VirtIO filesystem passthrough using 9p protocol.
  */
 
+/*
+ * Release-ledger anchor for pci_vt9p_notify()/pci_vt9p_send().
+ * VIRTIO_ACTIVATION_ASSERTION: request-and-reply
+ */
+
 #include <sys/param.h>
 #include <sys/linker_set.h>
 #include <sys/uio.h>
 #include <sys/capsicum.h>
 #include <sys/endian.h>
+#include <sys/stat.h>
 
 #include <assert.h>
 #include <errno.h>
@@ -42,8 +48,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <pthread_np.h>
 
 #include <lib9p.h>
 #include <backend/fs.h>
@@ -52,13 +60,25 @@
 #include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "virtio.h"
 
 #define	VT9P_MAX_IOV	128
 #define VT9P_RINGSZ	256
 #define	VT9P_MAXTAGSZ	256
+/*
+ * Protocol/resource limit, not a host-page calculation.  Keeping the
+ * historical amd64 limit explicit makes negotiation and saved state stable
+ * on hosts with a different page size.
+ */
+#define	VT9P_MAX_MSIZE	(512U * 1024U)
 #define	VT9P_CONFIGSPACESZ	(VT9P_MAXTAGSZ + sizeof(uint16_t))
 #define	VIRTIO_9P_F_MOUNT_TAG	(1ULL << 0)
+#ifndef VT9P_QUIESCE_TIMEOUT_SECONDS
+#define	VT9P_QUIESCE_TIMEOUT_SECONDS	30
+#endif
 
 static int pci_vt9p_debug;
 #define DPRINTF(params) if (pci_vt9p_debug) printf params
@@ -69,12 +89,15 @@ static int pci_vt9p_debug;
  */
 struct pci_vt9p_softc {
 	struct virtio_softc      vsc_vs;
+	struct virtio_consts     vsc_consts;
 	struct vqueue_info       vsc_vq;
 	pthread_mutex_t          vsc_mtx;
 	pthread_cond_t           vsc_reset_cv;
-	uint64_t                 vsc_cfg;
 	uint64_t                 vsc_features;
 	char *                   vsc_rootpath;
+	dev_t                    vsc_rootdev;
+	ino_t                    vsc_rootino;
+	bool                     vsc_readonly;
 	struct pci_vt9p_config * vsc_config;
 	struct l9p_backend *     vsc_fs_backend;
 	struct l9p_server *      vsc_server;
@@ -86,7 +109,6 @@ struct pci_vt9p_softc {
 	bool                     vsc_resetting;
 	bool                     vsc_queue_reset;
 	bool                     vsc_qreset_pending;
-	bool                     vsc_notify_pending;
 };
 
 struct pci_vt9p_request {
@@ -95,7 +117,7 @@ struct pci_vt9p_request {
 	size_t			vsr_niov;
 	size_t			vsr_respidx;
 	size_t			vsr_iolen;
-	uint16_t		vsr_idx;
+	struct vi_req		vsr_req;
 	uint64_t		vsr_generation;
 	bool			vsr_active;
 };
@@ -117,13 +139,21 @@ static int pci_vt9p_qreset(void *, struct vqueue_info *, uint64_t);
 static void pci_vt9p_notify(void *, struct vqueue_info *);
 static int pci_vt9p_cfgread(void *, int, int, uint32_t *);
 static int pci_vt9p_neg_features(void *, uint64_t);
+static int pci_vt9p_suspend_device(void *);
+static int pci_vt9p_resume_device(void *);
 static void pci_vt9p_set_tag(struct pci_vt9p_softc *, const char *);
+#ifdef BHYVE_SNAPSHOT
+static int pci_vt9p_pause(void *);
+static int pci_vt9p_resume(void *);
+static int pci_vt9p_snapshot(void *, struct vm_snapshot_meta *);
+static int pci_vt9p_snapshot_validate(struct vm_snapshot_meta *);
+#endif
 
 static void
 pci_vt9p_configure_connection(struct l9p_connection *conn)
 {
 
-	conn->lc_msize = L9P_MAX_IOV * PAGE_SIZE;
+	conn->lc_msize = VT9P_MAX_MSIZE;
 	conn->lc_lt.lt_get_response_buffer = pci_vt9p_get_buffer;
 	conn->lc_lt.lt_send_response = pci_vt9p_send;
 	conn->lc_lt.lt_drop_response = pci_vt9p_drop;
@@ -150,7 +180,15 @@ static struct virtio_consts vt9p_vi_consts = {
 	.vc_apply_features = pci_vt9p_neg_features,
 	.vc_qenable =	pci_vt9p_qenable,
 	.vc_qreset =	pci_vt9p_qreset,
-	.vc_hv_caps =	VIRTIO_9P_F_MOUNT_TAG | VIRTIO_F_RING_RESET,
+	.vc_suspend =	pci_vt9p_suspend_device,
+	.vc_resume_device = pci_vt9p_resume_device,
+	.vc_hv_caps =	VIRTIO_9P_F_MOUNT_TAG | VIRTIO_F_RING_RESET |
+	    VIRTIO_F_SUSPEND,
+#ifdef BHYVE_SNAPSHOT
+	.vc_pause =	pci_vt9p_pause,
+	.vc_resume =	pci_vt9p_resume,
+	.vc_snapshot =	pci_vt9p_snapshot,
+#endif
 };
 
 static int
@@ -198,7 +236,6 @@ pci_vt9p_reconnect(struct pci_vt9p_softc *sc)
 	 * against the replacement connection; the driver must kick the newly
 	 * enabled queue.
 	 */
-	sc->vsc_notify_pending = false;
 	pthread_cond_broadcast(&sc->vsc_reset_cv);
 	if (newconn == NULL) {
 		WPRINTF(("vt9p: cannot reinitialize 9P connection\n"));
@@ -234,7 +271,6 @@ pci_vt9p_qenable(void *vsc, struct vqueue_info *vq)
 	    sc->vsc_qreset_pending)
 		return (EINVAL);
 	sc->vsc_queue_reset = false;
-	sc->vsc_notify_pending = false;
 	return (0);
 }
 
@@ -257,7 +293,6 @@ pci_vt9p_qreset(void *vsc, struct vqueue_info *vq, uint64_t generation)
 	 */
 	sc->vsc_generation++;
 	sc->vsc_queue_reset = true;
-	sc->vsc_notify_pending = false;
 	if (sc->vsc_active_requests == 0)
 		return (0);
 	sc->vsc_qreset_vq = vq;
@@ -276,19 +311,53 @@ pci_vt9p_neg_features(void *vsc, uint64_t negotiated_features)
 }
 
 static int
+pci_vt9p_suspend_device(void *vsc)
+{
+	struct pci_vt9p_softc *sc;
+	struct timespec deadline;
+	int error;
+
+	sc = vsc;
+	assert(pthread_mutex_isowned_np(&sc->vsc_mtx));
+
+	/*
+	 * The common VirtIO layer has already fenced the queue, so the active
+	 * count can only decrease.  Preserve the lib9p connection and its fid
+	 * namespace across guest suspend, but do not acknowledge SUSPEND until
+	 * every request accepted before the fence has completed.  Reset and
+	 * queue-reset paths use the same condition variable and may temporarily
+	 * drop vsc_mtx while draining callbacks.
+	 */
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		return (errno);
+	deadline.tv_sec += VT9P_QUIESCE_TIMEOUT_SECONDS;
+	while (sc->vsc_active_requests != 0 || sc->vsc_resetting ||
+	    sc->vsc_qreset_pending) {
+		error = pthread_cond_timedwait(&sc->vsc_reset_cv, &sc->vsc_mtx,
+		    &deadline);
+		if (error != 0)
+			return (error);
+	}
+	return (sc->vsc_conn == NULL ? EIO : 0);
+}
+
+static int
+pci_vt9p_resume_device(void *vsc)
+{
+	struct pci_vt9p_softc *sc;
+
+	sc = vsc;
+	assert(pthread_mutex_isowned_np(&sc->vsc_mtx));
+	return (sc->vsc_conn == NULL ? EIO : 0);
+}
+
+static int
 pci_vt9p_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vt9p_softc *sc = vsc;
-	void *ptr;
 
-	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
-	    (size_t)offset > VT9P_CONFIGSPACESZ ||
-	    (size_t)size > VT9P_CONFIGSPACESZ - (size_t)offset)
-		return (EINVAL);
-	*retval = 0;
-	ptr = (uint8_t *)sc->vsc_config + offset;
-	memcpy(retval, ptr, size);
-	return (0);
+	return (vi_config_read_le(sc->vsc_config, VT9P_CONFIGSPACESZ,
+	    offset, size, retval));
 }
 
 static int
@@ -314,6 +383,7 @@ pci_vt9p_finish_request_locked(struct pci_vt9p_softc *sc,
 		preq->vsr_active = false;
 		assert(sc->vsc_active_requests > 0);
 		sc->vsc_active_requests--;
+		pthread_cond_broadcast(&sc->vsc_reset_cv);
 	}
 	if (!sc->vsc_qreset_pending || sc->vsc_active_requests != 0)
 		return (false);
@@ -321,6 +391,7 @@ pci_vt9p_finish_request_locked(struct pci_vt9p_softc *sc,
 	*generation = sc->vsc_qreset_generation;
 	sc->vsc_qreset_pending = false;
 	sc->vsc_qreset_vq = NULL;
+	pthread_cond_broadcast(&sc->vsc_reset_cv);
 	return (true);
 }
 
@@ -340,9 +411,11 @@ pci_vt9p_send(struct l9p_request *req, const struct iovec *iov __unused,
 
 	pthread_mutex_lock(&sc->vsc_mtx);
 	if (preq->vsr_generation == sc->vsc_generation) {
-		vq_relchain(&sc->vsc_vq, preq->vsr_idx, preq->vsr_iolen);
+		vq_relchain_req(&sc->vsc_vq, &preq->vsr_req,
+		    preq->vsr_iolen);
 		vq_endchains(&sc->vsc_vq, 1);
-	}
+	} else
+		vq_discard_req(&sc->vsc_vq, &preq->vsr_req);
 	reset_complete = pci_vt9p_finish_request_locked(sc, preq, &reset_vq,
 	    &generation);
 	pthread_mutex_unlock(&sc->vsc_mtx);
@@ -366,9 +439,10 @@ pci_vt9p_drop(struct l9p_request *req, const struct iovec *iov __unused,
 	generation = 0;
 	pthread_mutex_lock(&sc->vsc_mtx);
 	if (preq->vsr_generation == sc->vsc_generation) {
-		vq_relchain(&sc->vsc_vq, preq->vsr_idx, 0);
+		vq_relchain_req(&sc->vsc_vq, &preq->vsr_req, 0);
 		vq_endchains(&sc->vsc_vq, 1);
-	}
+	} else
+		vq_discard_req(&sc->vsc_vq, &preq->vsr_req);
 	reset_complete = pci_vt9p_finish_request_locked(sc, preq, &reset_vq,
 	    &generation);
 	pthread_mutex_unlock(&sc->vsc_mtx);
@@ -384,33 +458,33 @@ pci_vt9p_notify(void *vsc, struct vqueue_info *vq)
 	struct pci_vt9p_softc *sc;
 	struct pci_vt9p_request *preq;
 	struct vi_req req;
+	uint16_t budget;
 	int n;
 
 	sc = vsc;
 	if (sc->vsc_resetting || sc->vsc_queue_reset ||
-	    sc->vsc_conn == NULL) {
-		sc->vsc_notify_pending = true;
+	    sc->vsc_conn == NULL)
 		return;
-	}
 
-	while (vq_has_descs(vq)) {
+	budget = vq->vq_qsize;
+	while (budget-- != 0 && vq_has_descs(vq)) {
 		n = vq_getchain(vq, iov, VT9P_MAX_IOV, &req);
 		if (n <= 0)
 			break;
 		if (n > VT9P_MAX_IOV || !req.ordered || req.readable == 0 ||
 		    req.writable == 0 || req.readable + req.writable != n) {
 			DPRINTF(("vt9p: invalid descriptor chain\n"));
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 		preq = calloc(1, sizeof(*preq));
 		if (preq == NULL) {
 			WPRINTF(("vt9p: cannot allocate request\n"));
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 		preq->vsr_sc = sc;
-		preq->vsr_idx = req.idx;
+		preq->vsr_req = req;
 		memcpy(preq->vsr_iov, iov, n * sizeof(iov[0]));
 		preq->vsr_niov = n;
 		preq->vsr_respidx = req.readable;
@@ -430,12 +504,196 @@ pci_vt9p_notify(void *vsc, struct vqueue_info *vq)
 			preq->vsr_active = false;
 			assert(sc->vsc_active_requests > 0);
 			sc->vsc_active_requests--;
-			vq_relchain(vq, preq->vsr_idx, 0);
+			pthread_cond_broadcast(&sc->vsc_reset_cv);
+			vq_relchain_req(vq, &preq->vsr_req, 0);
 			free(preq);
 		}
 	}
-	vq_endchains(vq, 1);
+	vq_endchains(vq, !vq_has_descs(vq));
 }
+
+#ifdef BHYVE_SNAPSHOT
+#define	VT9P_SNAPSHOT_MAGIC		0x32503956U	/* "V9P2" on disk */
+#define	VT9P_SNAPSHOT_VERSION		2U
+#define	VT9P_SNAPSHOT_STRING_MAX	(1024U * 1024U)
+
+static bool
+pci_vt9p_has_fids(struct pci_vt9p_softc *sc)
+{
+	struct ht_iter iter;
+
+	if (sc->vsc_conn == NULL ||
+	    sc->vsc_conn->lc_files.ht_entries == NULL)
+		return (false);
+	ht_iter(&sc->vsc_conn->lc_files, &iter);
+	return (ht_next(&iter) != NULL);
+}
+
+static int
+pci_vt9p_pause(void *vsc)
+{
+	struct pci_vt9p_softc *sc;
+
+	sc = vsc;
+	pthread_mutex_lock(&sc->vsc_mtx);
+	/*
+	 * lib9p fids contain backend-private host descriptors and credentials.
+	 * They are not portable state.  Refuse the checkpoint rather than
+	 * silently restoring a broken mount or serializing host pointers.
+	 * VIRTIO_ACTIVATION_ASSERTION: active-fid-checkpoint-rejected
+	 */
+	if (sc->vsc_conn == NULL || sc->vsc_resetting ||
+	    sc->vsc_qreset_pending ||
+	    sc->vsc_active_requests != 0 || pci_vt9p_has_fids(sc)) {
+		pthread_mutex_unlock(&sc->vsc_mtx);
+		return (EBUSY);
+	}
+	return (0);
+}
+
+static int
+pci_vt9p_resume(void *vsc)
+{
+	struct pci_vt9p_softc *sc;
+
+	sc = vsc;
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	return (0);
+}
+
+static int
+pci_vt9p_snapshot(void *vsc, struct vm_snapshot_meta *meta)
+{
+	struct pci_vt9p_softc *sc;
+	uint64_t features, restore_generation, rootdev, rootino;
+	uint32_t magic, max_io_size, msize, version;
+	uint16_t current_tag_len, saved_tag_len;
+	uint8_t connection_version, readonly;
+	char saved_tag[VT9P_MAXTAGSZ];
+	int error;
+
+	sc = vsc;
+	if (sc->vsc_conn == NULL || sc->vsc_resetting ||
+	    sc->vsc_qreset_pending || sc->vsc_active_requests != 0 ||
+	    pci_vt9p_has_fids(sc))
+		return (EBUSY);
+	restore_generation = 0;
+	if (vm_snapshot_is_loading(meta)) {
+		if (sc->vsc_generation == UINT64_MAX)
+			return (EOVERFLOW);
+		restore_generation = sc->vsc_generation + 1;
+	}
+	magic = VT9P_SNAPSHOT_MAGIC;
+	version = VT9P_SNAPSHOT_VERSION;
+	features = sc->vsc_features;
+	rootdev = (uint64_t)sc->vsc_rootdev;
+	rootino = (uint64_t)sc->vsc_rootino;
+	readonly = sc->vsc_readonly;
+	connection_version = sc->vsc_conn->lc_version;
+	msize = sc->vsc_conn->lc_msize;
+	max_io_size = sc->vsc_conn->lc_max_io_size;
+	current_tag_len = vi_pci_is_modern(&sc->vsc_vs) ?
+	    le16toh(sc->vsc_config->tag_len) : sc->vsc_config->tag_len;
+	saved_tag_len = current_tag_len;
+	/*
+	 * The device-private mirror is established only by feature negotiation.
+	 * Do not emit a self-inconsistent image which import will correctly
+	 * reject against the common negotiated-feature state.
+	 */
+	if (meta->op == VM_SNAPSHOT_SAVE &&
+	    features != sc->vsc_vs.vs_negotiated_caps) {
+		error = EINVAL;
+		goto done;
+	}
+
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, error, done);
+	if (magic != VT9P_SNAPSHOT_MAGIC ||
+	    version != VT9P_SNAPSHOT_VERSION) {
+		error = ENOTSUP;
+		goto done;
+	}
+	SNAPSHOT_LE64_OR_LEAVE(features, meta, error, done);
+	SNAPSHOT_LE64_OR_LEAVE(rootdev, meta, error, done);
+	SNAPSHOT_LE64_OR_LEAVE(rootino, meta, error, done);
+	SNAPSHOT_U8_OR_LEAVE(readonly, meta, error, done);
+	SNAPSHOT_U8_OR_LEAVE(connection_version, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(msize, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(max_io_size, meta, error, done);
+	SNAPSHOT_LE16_OR_LEAVE(saved_tag_len, meta, error, done);
+	if (readonly > 1 || connection_version > L9P_2000L ||
+	    msize == 0 || msize > VT9P_MAX_MSIZE ||
+	    (connection_version == L9P_INVALID_VERSION ?
+	    max_io_size != 0 :
+	    (msize <= 24 || max_io_size != msize - 24)) ||
+	    saved_tag_len > VT9P_MAXTAGSZ) {
+		error = EINVAL;
+		goto done;
+	}
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		SNAPSHOT_BUF_OR_LEAVE(sc->vsc_config->tag, saved_tag_len,
+		    meta, error, done);
+	} else {
+		SNAPSHOT_BUF_OR_LEAVE(saved_tag, saved_tag_len, meta, error,
+		    done);
+		if (saved_tag_len != current_tag_len ||
+		    memcmp(saved_tag, sc->vsc_config->tag,
+		    saved_tag_len) != 0) {
+			error = EINVAL;
+			goto done;
+		}
+	}
+	error = vm_snapshot_identity_string(sc->vsc_rootpath,
+	    VT9P_SNAPSHOT_STRING_MAX, meta);
+	if (error != 0)
+		goto done;
+	if (vm_snapshot_is_loading(meta) &&
+	    (features != sc->vsc_vs.vs_negotiated_caps ||
+	    rootdev != (uint64_t)sc->vsc_rootdev ||
+	    rootino != (uint64_t)sc->vsc_rootino ||
+	    readonly != sc->vsc_readonly)) {
+		error = EINVAL;
+		goto done;
+	}
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		sc->vsc_features = features;
+		sc->vsc_generation = restore_generation;
+		sc->vsc_conn->lc_version = connection_version;
+		sc->vsc_conn->lc_msize = msize;
+		sc->vsc_conn->lc_max_io_size = max_io_size;
+	}
+	error = 0;
+done:
+	return (error);
+}
+
+/*
+ * Preflight parses an untrusted restore record before the common restore
+ * transaction is allowed to publish anything.  Serialize that parse with
+ * lib9p completion/reset state, but do not take the commit-time pause path:
+ * validation must be side-effect free with respect to the export backend.
+ */
+static int
+pci_vt9p_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	struct pci_devinst *pi;
+	struct pci_vt9p_softc *sc;
+	int error;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE ||
+	    meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	sc = pi->pi_arg;
+	if (sc == NULL)
+		return (EINVAL);
+
+	pthread_mutex_lock(&sc->vsc_mtx);
+	error = vi_pci_snapshot(meta);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	return (error);
+}
+#endif
 
 static int
 pci_vt9p_legacy_config(nvlist_t *nvl, const char *opts)
@@ -452,6 +710,11 @@ pci_vt9p_legacy_config(nvlist_t *nvl, const char *opts)
 		if (strncmp(token, "transport=", sizeof("transport=") - 1) == 0) {
 			set_config_value_node(nvl, "transport",
 			    token + sizeof("transport=") - 1);
+			continue;
+		}
+		if (strncmp(token, "packed=", sizeof("packed=") - 1) == 0) {
+			set_config_value_node(nvl, "packed",
+			    token + sizeof("packed=") - 1);
 			continue;
 		}
 		if (strchr(token, '=') != NULL) {
@@ -473,20 +736,64 @@ pci_vt9p_legacy_config(nvlist_t *nvl, const char *opts)
 }
 
 static int
+pci_vt9p_confine_rootfd(int rootfd)
+{
+	int flags;
+
+	/*
+	 * lib9p resolves fid names relative to this descriptor.  Make the
+	 * FreeBSD namei confinement sticky on the descriptor so that every
+	 * later *at(2) operation inherits O_RESOLVE_BENEATH, including calls
+	 * made by lib9p that do not carry the flag explicitly.  Capsicum
+	 * limits the operations available through rootfd; this independently
+	 * prevents an intermediate symlink or ".." lookup from escaping the
+	 * exported subtree.
+	 */
+	flags = fcntl(rootfd, F_GETFD);
+	if (flags < 0)
+		return (-1);
+	if (fcntl(rootfd, F_SETFD, flags | FD_RESOLVE_BENEATH) < 0)
+		return (-1);
+	return (0);
+}
+
+static void
+pci_vt9p_root_cap_rights(cap_rights_t *rights, bool readonly)
+{
+
+	cap_rights_init(rights, CAP_LOOKUP, CAP_ACL_CHECK, CAP_ACL_GET,
+	    CAP_READ, CAP_SEEK, CAP_FSTAT, CAP_PREAD, CAP_EXTATTR_GET,
+	    CAP_EXTATTR_LIST, CAP_FSTATFS, CAP_FPATHCONF);
+	if (!readonly) {
+		cap_rights_set(rights, CAP_ACL_DELETE, CAP_ACL_SET, CAP_WRITE,
+		    CAP_CREATE, CAP_FCHMODAT, CAP_FCHOWNAT, CAP_FTRUNCATE,
+		    CAP_LINKAT_SOURCE, CAP_LINKAT_TARGET, CAP_MKDIRAT,
+		    CAP_MKNODAT, CAP_PWRITE, CAP_RENAMEAT_SOURCE,
+		    CAP_RENAMEAT_TARGET, CAP_SYMLINKAT, CAP_UNLINKAT,
+		    CAP_EXTATTR_DELETE, CAP_EXTATTR_SET, CAP_FUTIMES,
+		    CAP_FSYNC);
+	}
+}
+
+static int
 pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vt9p_softc *sc;
 	const char *value;
 	const char *sharename;
+	struct stat rootstat;
+	pthread_condattr_t cond_attr;
 	pthread_mutexattr_t mtx_attr;
 	int rootfd;
+	bool cond_attr_initialized;
 	bool intr_initialized, mtx_attr_initialized, mtx_initialized;
 	bool reset_cv_initialized;
-	bool ro;
+	bool packed, ro;
 	cap_rights_t rootcap;
 
 	sc = NULL;
 	intr_initialized = false;
+	cond_attr_initialized = false;
 	mtx_attr_initialized = false;
 	mtx_initialized = false;
 	reset_cv_initialized = false;
@@ -511,10 +818,23 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 		    strerror(errno));
 		return (-1);
 	}
+	if (fstat(rootfd, &rootstat) != 0)
+		goto fail;
+	if (pci_vt9p_confine_rootfd(rootfd) != 0) {
+		EPRINTLN("virtio-9p: failed to confine '%s': %s", value,
+		    strerror(errno));
+		goto fail;
+	}
 
 	sc = calloc(1, sizeof(*sc));
 	if (sc == NULL)
 		goto fail;
+	sc->vsc_rootpath = strdup(value);
+	if (sc->vsc_rootpath == NULL)
+		goto fail;
+	sc->vsc_rootdev = rootstat.st_dev;
+	sc->vsc_rootino = rootstat.st_ino;
+	sc->vsc_readonly = ro;
 	sc->vsc_config = calloc(1, sizeof(struct pci_vt9p_config) +
 	    VT9P_MAXTAGSZ);
 	if (sc->vsc_config == NULL)
@@ -528,31 +848,37 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (pthread_mutex_init(&sc->vsc_mtx, &mtx_attr) != 0)
 		goto fail;
 	mtx_initialized = true;
-	if (pthread_cond_init(&sc->vsc_reset_cv, NULL) != 0)
+	if (pthread_condattr_init(&cond_attr) != 0)
+		goto fail;
+	cond_attr_initialized = true;
+	if (pthread_condattr_setclock(&cond_attr, CLOCK_MONOTONIC) != 0 ||
+	    pthread_cond_init(&sc->vsc_reset_cv, &cond_attr) != 0)
 		goto fail;
 	reset_cv_initialized = true;
+	pthread_condattr_destroy(&cond_attr);
+	cond_attr_initialized = false;
 	pthread_mutexattr_destroy(&mtx_attr);
 	mtx_attr_initialized = false;
 
-	cap_rights_init(&rootcap,
-	    CAP_LOOKUP, CAP_ACL_CHECK, CAP_ACL_DELETE, CAP_ACL_GET,
-	    CAP_ACL_SET, CAP_READ, CAP_WRITE, CAP_SEEK, CAP_FSTAT,
-	    CAP_CREATE, CAP_FCHMODAT, CAP_FCHOWNAT, CAP_FTRUNCATE,
-	    CAP_LINKAT_SOURCE, CAP_LINKAT_TARGET, CAP_MKDIRAT, CAP_MKNODAT,
-	    CAP_PREAD, CAP_PWRITE, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET,
-	    CAP_SEEK, CAP_SYMLINKAT, CAP_UNLINKAT, CAP_EXTATTR_DELETE,
-	    CAP_EXTATTR_GET, CAP_EXTATTR_LIST, CAP_EXTATTR_SET,
-	    CAP_FUTIMES, CAP_FSTATFS, CAP_FSYNC, CAP_FPATHCONF);
+	pci_vt9p_root_cap_rights(&rootcap, ro);
 
 	if (cap_rights_limit(rootfd, &rootcap) != 0)
 		goto fail;
 
-	vi_softc_linkup(&sc->vsc_vs, &vt9p_vi_consts, sc, pi, &sc->vsc_vq);
+	memcpy(&sc->vsc_consts, &vt9p_vi_consts, sizeof(sc->vsc_consts));
+	vi_softc_linkup(&sc->vsc_vs, &sc->vsc_consts, sc, pi, &sc->vsc_vq);
 	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
 	sc->vsc_vq.vq_qsize = VT9P_RINGSZ;
 	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
 	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
 		goto fail;
+	packed = get_config_bool_node_default(nvl, "packed", false);
+	if (packed && !vi_pci_is_modern(&sc->vsc_vs)) {
+		EPRINTLN("virtio-9p packed queues require transport=modern");
+		goto fail;
+	}
+	if (packed)
+		sc->vsc_consts.vc_hv_caps |= VIRTIO_F_RING_PACKED;
 	pci_vt9p_set_tag(sc, sharename);
 
 	if (vi_pci_is_modern(&sc->vsc_vs))
@@ -594,6 +920,8 @@ pci_vt9p_init(struct pci_devinst *pi, nvlist_t *nvl)
 	return (0);
 
 fail:
+	if (cond_attr_initialized)
+		pthread_condattr_destroy(&cond_attr);
 	if (mtx_attr_initialized)
 		pthread_mutexattr_destroy(&mtx_attr);
 	if (rootfd >= 0)
@@ -607,6 +935,7 @@ fail:
 		if (mtx_initialized)
 			pthread_mutex_destroy(&sc->vsc_mtx);
 		free(sc->vsc_config);
+		free(sc->vsc_rootpath);
 		free(sc);
 	}
 	return (-1);
@@ -620,5 +949,12 @@ static const struct pci_devemu pci_de_v9p = {
 	.pe_cfgread =	vi_pci_modern_cfgread,
 	.pe_barwrite =	vi_pci_write,
 	.pe_barread =	vi_pci_read,
+#ifdef BHYVE_SNAPSHOT
+	.pe_snapshot =	vi_pci_snapshot,
+	.pe_snapshot_validate = pci_vt9p_snapshot_validate,
+	.pe_snapshot_compat = vi_pci_snapshot_compat,
+	.pe_pause =	vi_pci_pause,
+	.pe_resume =	vi_pci_resume,
+#endif
 };
 PCI_EMUL_SET(pci_de_v9p);

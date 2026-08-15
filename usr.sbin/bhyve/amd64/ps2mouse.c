@@ -32,6 +32,7 @@
 #include <machine/vmm_snapshot.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -44,6 +45,9 @@
 #include "console.h"
 #include "debug.h"
 #include "ps2mouse.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 /* mouse device commands */
 #define	PS2MC_RESET_DEV		0xff
@@ -418,22 +422,83 @@ ps2mouse_init(struct atkbdc_softc *atkbdc_sc)
 }
 
 #ifdef BHYVE_SNAPSHOT
+static bool
+ps2mouse_snapshot_curcmd_valid(uint8_t curcmd)
+{
+
+	return (curcmd == 0 || curcmd == PS2MC_SET_SAMPLING_RATE ||
+	    curcmd == PS2MC_SET_RESOLUTION);
+}
+
 int
 ps2mouse_snapshot(struct ps2mouse_softc *sc, struct vm_snapshot_meta *meta)
 {
+	struct fifo fifo;
+	uint8_t ctrlenable, curcmd, resolution, sampling_rate, status;
+	uint32_t cur_x, cur_y, delta_x, delta_y;
+	uint32_t num, rindex, size, windex;
 	int ret;
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->status, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->resolution, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->sampling_rate, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->ctrlenable, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->curcmd, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->cur_x, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->cur_y, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->delta_x, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->delta_y, meta, ret, done);
+	if (sc == NULL || meta == NULL)
+		return (EINVAL);
+	pthread_mutex_lock(&sc->mtx);
+	status = sc->status;
+	resolution = sc->resolution;
+	sampling_rate = sc->sampling_rate;
+	ctrlenable = sc->ctrlenable != 0 ? 1 : 0;
+	curcmd = sc->curcmd;
+	cur_x = (uint32_t)(int32_t)sc->cur_x;
+	cur_y = (uint32_t)(int32_t)sc->cur_y;
+	delta_x = (uint32_t)(int32_t)sc->delta_x;
+	delta_y = (uint32_t)(int32_t)sc->delta_y;
+	fifo = sc->fifo;
+	rindex = fifo.rindex;
+	windex = fifo.windex;
+	num = fifo.num;
+	size = fifo.size;
+
+	SNAPSHOT_U8_OR_LEAVE(status, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(resolution, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(sampling_rate, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(ctrlenable, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(curcmd, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(cur_x, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(cur_y, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(delta_x, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(delta_y, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(fifo.buf, sizeof(fifo.buf), meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(rindex, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(windex, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(num, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(size, meta, ret, done);
+	if (vm_snapshot_is_loading(meta)) {
+		if (ctrlenable > 1 || !ps2mouse_snapshot_curcmd_valid(curcmd) ||
+		    size != PS2MOUSE_FIFOSZ ||
+		    rindex >= size || windex >= size || num > size ||
+		    windex != (rindex + num) % size) {
+			ret = EINVAL;
+			goto done;
+		}
+		if (vm_snapshot_is_restoring(meta)) {
+			fifo.rindex = rindex;
+			fifo.windex = windex;
+			fifo.num = num;
+			fifo.size = size;
+			sc->status = status;
+			sc->resolution = resolution;
+			sc->sampling_rate = sampling_rate;
+			sc->ctrlenable = ctrlenable != 0;
+			sc->curcmd = curcmd;
+			sc->cur_x = (int32_t)cur_x;
+			sc->cur_y = (int32_t)cur_y;
+			sc->delta_x = (int32_t)delta_x;
+			sc->delta_y = (int32_t)delta_y;
+			sc->fifo = fifo;
+		}
+	}
 
 done:
+	pthread_mutex_unlock(&sc->mtx);
 	return (ret);
 }
 #endif

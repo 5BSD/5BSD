@@ -73,6 +73,12 @@ SDT_PROBE_DEFINE1(vsock, , , provider__reset,
 SDT_PROBE_DEFINE2(vsock, , , provider__features,
     "uint32_t",	/* guest CID */
     "uint64_t");	/* negotiated device features */
+SDT_PROBE_DEFINE3(vsock, , , provider__freeze,
+    "uint32_t",	/* guest CID */
+    "uint32_t",	/* queued packets */
+    "uint32_t");	/* active connections */
+SDT_PROBE_DEFINE1(vsock, , , provider__thaw,
+    "uint32_t");	/* guest CID */
 SDT_PROBE_DEFINE4(vsock, , , provider__enqueue,
     "uint32_t",	/* guest CID */
     "uint16_t",	/* packet operation */
@@ -129,11 +135,15 @@ struct vsock_user_provider {
 	uint64_t features;
 	bool write_reserved;
 	bool registered;
+	bool frozen;
 #ifdef MAC
 	struct label *provider_label;
 	struct ucred *attach_cred;
 #endif
 };
+
+/* Bound management operations if a provider copy is stalled by user memory. */
+#define	VSOCK_USER_OPERATION_TIMEOUT_SECONDS	30
 
 LIST_HEAD(vsock_user_provider_head, vsock_user_provider);
 /*
@@ -391,6 +401,8 @@ vsock_user_build_locked(struct vsock_user_provider *provider,
 		return (EHOSTUNREACH);
 	if (!provider->registered)
 		return (ENXIO);
+	if (provider->frozen)
+		return (EWOULDBLOCK);
 	if (vsock_user_check_transport_access(provider) != 0)
 		return (EACCES);
 	if (op != VIRTIO_VSOCK_OP_RST &&
@@ -476,7 +488,7 @@ vsock_user_tx_ready(struct vtvsock_pcb *pcb)
 
 	mtx_assert(&vtvsock_mtx, MA_OWNED);
 	provider = vsock_user_lookup_locked(pcb->remote.svm_cid);
-	return (provider != NULL && provider->registered &&
+	return (provider != NULL && provider->registered && !provider->frozen &&
 	    vsock_user_check_transport_access(provider) == 0 &&
 	    vsock_user_supports_type(provider,
 	    pcb->so->so_type == SOCK_SEQPACKET ?
@@ -542,7 +554,7 @@ vsock_user_send_seqpacket(struct vtvsock_pcb *pcb, bool nonblocking,
 		}
 		packet->len = sizeof(*hdr) + chunk;
 		m_copydata(m, (int)offset, (int)chunk,
-		    packet->data + sizeof(*hdr));
+		    (caddr_t)(void *)(packet->data + sizeof(*hdr)));
 		STAILQ_INSERT_TAIL(&packets, packet, link);
 		offset += chunk;
 	}
@@ -577,7 +589,8 @@ vsock_user_send_seqpacket(struct vtvsock_pcb *pcb, bool nonblocking,
 			error = EMSGSIZE;
 			break;
 		}
-		capacity = provider->queue_count + nfrags <=
+		capacity = !provider->frozen &&
+		    provider->queue_count + nfrags <=
 		    VSOCK_USER_QUEUE_DATA_HIWAT;
 		credit = 0;
 		if (capacity) {
@@ -756,7 +769,8 @@ vsock_user_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 			error = ENOMEM;
 			break;
 		}
-		m_copydata(m, (int)offset, (int)chunk, payload);
+		m_copydata(m, (int)offset, (int)chunk,
+		    (caddr_t)(void *)payload);
 		packet_flags = 0;
 		error = vsock_user_build_locked(provider,
 		    pcb->local.svm_cid, pcb->local.svm_port,
@@ -998,7 +1012,7 @@ vsock_dev_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 		 * delivers packet 2; putting packet 1 back afterward would violate
 		 * the complete-packet FIFO contract.
 		 */
-		if (provider->read_inflight == 0 &&
+		if (!provider->frozen && provider->read_inflight == 0 &&
 		    (packet = STAILQ_FIRST(&provider->queue)) != NULL)
 			break;
 		if (!provider->registered) {
@@ -1119,7 +1133,7 @@ vsock_dev_write(struct cdev *dev __unused, struct uio *uio, int ioflag)
 		return (error);
 	}
 	generation = provider->generation;
-	while (provider->write_thread != NULL ||
+	while (provider->frozen || provider->write_thread != NULL ||
 	    provider->queue_count >= VSOCK_USER_QUEUE_MAX) {
 		if ((ioflag & O_NONBLOCK) != 0) {
 			mtx_unlock(&vtvsock_mtx);
@@ -1193,6 +1207,8 @@ vsock_dev_write(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	 */
 	if (!provider->registered || provider->generation != generation)
 		error = ECANCELED;
+	else if (provider->frozen)
+		error = EWOULDBLOCK;
 	else
 		error = vsock_user_check_access(provider,
 		    uio->uio_td->td_ucred);
@@ -1246,8 +1262,13 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
     int fflag __unused, struct thread *td)
 {
 	struct vsock_transport_attach *attach;
+	struct vsock_transport_checkpoint *checkpoint;
+	struct vsock_transport_features *feature_request;
 	struct vsock_user_provider *provider;
+	sbintime_t operation_deadline;
 	uint64_t features, old_features;
+	u_int connection_count;
+	bool was_frozen;
 	int error;
 
 	/*
@@ -1353,9 +1374,18 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		return (0);
 	}
 	if (cmd == VSOCK_IOC_TRANSPORT_SET_FEATURES) {
-		features = *(uint64_t *)data;
+		feature_request = (struct vsock_transport_features *)data;
+		if (feature_request->version !=
+		    VSOCK_TRANSPORT_FEATURES_VERSION ||
+		    feature_request->flags != 0 ||
+		    feature_request->reserved[0] != 0 ||
+		    feature_request->reserved[1] != 0)
+			return (EINVAL);
+		features = feature_request->features;
 		if (!vsock_user_features_valid(features))
 			return (EINVAL);
+		/* Leave error paths that never acquired the fence unchanged. */
+		was_frozen = true;
 		error = devfs_get_cdevpriv((void **)&provider);
 		if (error != 0)
 			return (ENXIO);
@@ -1365,10 +1395,25 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 			error = ENXIO;
 		if (error == 0) {
 			AUDIT_ARG_VALUE((long)provider->guest_cid);
+			/*
+			 * A feature epoch changes the accepted socket types and resets
+			 * this CID.  Close both provider directions before waiting for
+			 * copies already beyond the mutex; otherwise new reads or writes
+			 * can replace each completion until the policy timeout expires.
+			 * Preserve an outer checkpoint fence when restore calls this
+			 * operation on an already frozen provider.
+			 */
+			was_frozen = provider->frozen;
+			provider->frozen = true;
+			vsock_user_notify_locked(provider);
+			wakeup(provider);
+			wakeup(vsock_user_send_channel(provider->guest_cid));
+			operation_deadline = sbinuptime() +
+			    VSOCK_USER_OPERATION_TIMEOUT_SECONDS * SBT_1S;
 			while (provider->write_thread != NULL ||
 			    provider->read_inflight != 0) {
-				error = msleep(provider, &vtvsock_mtx, PCATCH,
-				    "vsockuf", 0);
+				error = msleep_sbt(provider, &vtvsock_mtx, PCATCH,
+				    "vsockuf", operation_deadline, 0, C_ABSOLUTE);
 				if (error != 0 || !provider->registered)
 					break;
 			}
@@ -1408,10 +1453,109 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 				provider->features = old_features;
 			}
 		}
+		if (!was_frozen && provider->registered) {
+			provider->frozen = false;
+			vsock_user_notify_locked(provider);
+			wakeup(provider);
+			vsock_transport_tx_wakeup_cid_locked(
+			    &vsock_user_transport, provider->guest_cid);
+		}
 		mtx_unlock(&vtvsock_mtx);
 		if (error == 0)
 			SDT_PROBE2(vsock, , , provider__features,
 			    provider->guest_cid, features);
+		return (error);
+	}
+	if (cmd == VSOCK_IOC_TRANSPORT_FREEZE) {
+		checkpoint = (struct vsock_transport_checkpoint *)data;
+		if (checkpoint->version !=
+		    VSOCK_TRANSPORT_CHECKPOINT_VERSION ||
+		    checkpoint->flags != 0 ||
+		    checkpoint->reserved[0] != 0 ||
+		    checkpoint->reserved[1] != 0)
+			return (EINVAL);
+		error = devfs_get_cdevpriv((void **)&provider);
+		if (error != 0)
+			return (ENXIO);
+		mtx_lock(&vtvsock_mtx);
+		error = vsock_user_check_access(provider, td->td_ucred);
+		if (error == 0 && !provider->registered)
+			error = ENXIO;
+		/*
+		 * Close admission before waiting for copies which already crossed the
+		 * provider boundary.  Setting this only after the wait allowed a busy
+		 * VMM to replace each completing read or write with another operation,
+		 * so FREEZE was neither an atomic fence nor reliably bounded.
+		 */
+		was_frozen = provider->frozen;
+		if (error == 0) {
+			provider->frozen = true;
+			vsock_user_notify_locked(provider);
+			wakeup(provider);
+			wakeup(vsock_user_send_channel(provider->guest_cid));
+		}
+		operation_deadline = sbinuptime() +
+		    VSOCK_USER_OPERATION_TIMEOUT_SECONDS * SBT_1S;
+		while (error == 0 && (provider->write_thread != NULL ||
+		    provider->read_inflight != 0)) {
+			error = msleep_sbt(provider, &vtvsock_mtx, PCATCH,
+			    "vsockufz", operation_deadline, 0, C_ABSOLUTE);
+			if (error == 0 && !provider->registered)
+				error = ENXIO;
+		}
+		if (error == 0)
+			error = vsock_user_check_access(provider, td->td_ucred);
+		connection_count = error == 0 ?
+		    vsock_transport_connection_count_cid_locked(
+		    &vsock_user_transport, provider->guest_cid) : 0;
+		if (error == 0 && (provider->queue_count != 0 ||
+		    connection_count != 0))
+			error = EBUSY;
+		if (error == 0) {
+			checkpoint->flags =
+			    VSOCK_TRANSPORT_CHECKPOINT_F_FROZEN;
+			checkpoint->queue_count = provider->queue_count;
+			checkpoint->connection_count = connection_count;
+			checkpoint->generation = provider->generation;
+			vsock_user_notify_locked(provider);
+			wakeup(provider);
+			wakeup(vsock_user_send_channel(provider->guest_cid));
+		} else if (!was_frozen && provider->registered) {
+			/* Failed freeze leaves the source operating as it was. */
+			provider->frozen = false;
+			vsock_user_notify_locked(provider);
+			wakeup(provider);
+			wakeup(vsock_user_send_channel(provider->guest_cid));
+			vsock_transport_tx_wakeup_cid_locked(
+			    &vsock_user_transport, provider->guest_cid);
+		}
+		mtx_unlock(&vtvsock_mtx);
+		if (error == 0)
+			SDT_PROBE3(vsock, , , provider__freeze,
+			    provider->guest_cid, checkpoint->queue_count,
+			    checkpoint->connection_count);
+		return (error);
+	}
+	if (cmd == VSOCK_IOC_TRANSPORT_THAW) {
+		error = devfs_get_cdevpriv((void **)&provider);
+		if (error != 0)
+			return (ENXIO);
+		mtx_lock(&vtvsock_mtx);
+		error = vsock_user_check_access(provider, td->td_ucred);
+		if (error == 0 && !provider->registered)
+			error = ENXIO;
+		if (error == 0) {
+			provider->frozen = false;
+			vsock_user_notify_locked(provider);
+			wakeup(provider);
+			wakeup(vsock_user_send_channel(provider->guest_cid));
+			vsock_transport_tx_wakeup_cid_locked(
+			    &vsock_user_transport, provider->guest_cid);
+		}
+		mtx_unlock(&vtvsock_mtx);
+		if (error == 0)
+			SDT_PROBE1(vsock, , , provider__thaw,
+			    provider->guest_cid);
 		return (error);
 	}
 	if (cmd == VSOCK_IOC_TRANSPORT_RESET) {
@@ -1430,18 +1574,28 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		}
 		AUDIT_ARG_VALUE((long)provider->guest_cid);
 		/*
-		 * Reads and writes drop the domain lock while copying packets.  Wait
-		 * for both directions so reset neither admits a pre-reset inbound
-		 * packet nor returns while an old outbound packet is still being
-		 * copied to the provider.
+		 * Reads and writes drop the domain lock while copying packets.  Close
+		 * both admission directions before waiting: otherwise a completing
+		 * copy can be replaced indefinitely by a new read, write, or AF_VSOCK
+		 * packet.  Preserve an outer checkpoint fence if the pre-commit wait
+		 * or authorization check fails.
 		 */
+		was_frozen = provider->frozen;
+		provider->frozen = true;
+		vsock_user_notify_locked(provider);
+		wakeup(provider);
+		wakeup(vsock_user_send_channel(provider->guest_cid));
+		operation_deadline = sbinuptime() +
+		    VSOCK_USER_OPERATION_TIMEOUT_SECONDS * SBT_1S;
 		while (provider->write_thread != NULL ||
 		    provider->read_inflight != 0) {
-			error = msleep(provider, &vtvsock_mtx, PCATCH,
-			    "vsockur", 0);
-			if (error != 0) {
-				mtx_unlock(&vtvsock_mtx);
-				return (error);
+			error = msleep_sbt(provider, &vtvsock_mtx, PCATCH,
+			    "vsockur", operation_deadline, 0, C_ABSOLUTE);
+			if (error != 0)
+				goto reset_precommit_error;
+			if (!provider->registered) {
+				error = ENXIO;
+				goto reset_precommit_error;
 			}
 		}
 		/*
@@ -1449,10 +1603,8 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		 * in-flight copy.  Revalidate at the state-changing commit point.
 		 */
 		error = vsock_user_check_access(provider, td->td_ucred);
-		if (error != 0) {
-			mtx_unlock(&vtvsock_mtx);
-			return (error);
-		}
+		if (error != 0)
+			goto reset_precommit_error;
 		/*
 		 * Invalidate writers that entered before this reset but were
 		 * sleeping for queue capacity or the serialized writer slot.
@@ -1460,6 +1612,7 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 		 * now either queued (and purged below) or completed.
 		 */
 		provider->generation++;
+		provider->frozen = false;
 		vsock_user_purge_locked(provider);
 		vsock_user_notify_locked(provider);
 		vsock_transport_reset_cid_locked(&vsock_user_transport,
@@ -1481,6 +1634,18 @@ vsock_dev_ioctl(struct cdev *dev __unused, u_long cmd, caddr_t data,
 			SDT_PROBE1(vsock, , , provider__reset,
 			    provider->guest_cid);
 		return (error);
+
+reset_precommit_error:
+		if (!was_frozen && provider->registered) {
+			provider->frozen = false;
+			vsock_user_notify_locked(provider);
+			wakeup(provider);
+			wakeup(vsock_user_send_channel(provider->guest_cid));
+			vsock_transport_tx_wakeup_cid_locked(
+			    &vsock_user_transport, provider->guest_cid);
+		}
+		mtx_unlock(&vtvsock_mtx);
+		return (error);
 	}
 	return (ENOTTY);
 }
@@ -1500,13 +1665,14 @@ vsock_dev_poll(struct cdev *dev __unused, int events, struct thread *td)
 		return (POLLERR);
 	}
 	if ((events & (POLLIN | POLLRDNORM)) != 0) {
-		if ((!STAILQ_EMPTY(&provider->queue) &&
+		if ((!provider->frozen && !STAILQ_EMPTY(&provider->queue) &&
 		    provider->read_inflight == 0) || !provider->registered)
 			revents |= events & (POLLIN | POLLRDNORM);
 		else
 			selrecord(td, &provider->sel);
 	}
 	if ((events & (POLLOUT | POLLWRNORM)) != 0 && provider->registered &&
+	    !provider->frozen &&
 	    provider->write_thread == NULL &&
 	    provider->queue_count < VSOCK_USER_QUEUE_MAX)
 		revents |= events & (POLLOUT | POLLWRNORM);
@@ -1578,7 +1744,7 @@ vsock_dev_kqwrite(struct knote *kn, long hint __unused)
 	kn->kn_data = 0;
 	if (vsock_user_check_access(provider, ctx->cred) != 0)
 		return (0);
-	return (provider->registered &&
+	return (provider->registered && !provider->frozen &&
 	    provider->write_thread == NULL &&
 	    provider->queue_count < VSOCK_USER_QUEUE_MAX);
 }
@@ -1595,7 +1761,7 @@ vsock_dev_kqread(struct knote *kn, long hint __unused)
 		kn->kn_data = 0;
 		return (0);
 	}
-	packet = STAILQ_FIRST(&provider->queue);
+	packet = provider->frozen ? NULL : STAILQ_FIRST(&provider->queue);
 	kn->kn_data = packet != NULL && provider->read_inflight == 0 ?
 	    packet->len : 0;
 	return ((packet != NULL && provider->read_inflight == 0) ||

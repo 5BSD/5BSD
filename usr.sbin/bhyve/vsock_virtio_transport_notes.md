@@ -451,7 +451,7 @@ device models can later become genuinely transitional.
 
    | BAR offset | Structure | Length |
    |---|---|---|
-   | 0x0000 | common cfg | 56 (through `queue_device`; gated fields omitted — they exist only if NOTIF_CONFIG_DATA / RING_RESET / ADMIN_VQ negotiated, which we don't offer) |
+   | 0x0000 | common cfg | 60 (through negotiated `queue_notif_config_data` and `queue_reset`; administration fields remain gated) |
    | 0x1000 | ISR status | 1 |
    | 0x2000 | device-specific cfg | `vc_cfgsize` |
    | 0x3000 | notify | 4 |
@@ -488,9 +488,11 @@ device models can later become genuinely transitional.
    The transport adds these three transport features independently of each
    device model's `vc_hv_caps`; device models only list their device-specific
    features.
-5. Not offered initially (all optional): RING_PACKED (34),
-   NOTIFICATION_DATA (38), NOTIF_CONFIG_DATA (39), RING_RESET (40),
-   ACCESS_PLATFORM (33), SUSPEND (43), ADMIN_VQ (41).
+5. The current modern transport offers RING_PACKED (34),
+   NOTIFICATION_DATA (38), NOTIF_CONFIG_DATA (39), RING_RESET (40), and
+   SUSPEND (43) when the device lifecycle supports them.  ACCESS_PLATFORM
+   (33) and ADMIN_VQ (41) remain gated on production IOMMU and owner/member
+   composition.
 
 ### 8.2 PCI config space: capabilities to emit
 

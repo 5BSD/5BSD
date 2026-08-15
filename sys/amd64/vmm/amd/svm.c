@@ -55,9 +55,11 @@
 
 #include <dev/vmm/vmm_ktr.h>
 #include <dev/vmm/vmm_mem.h>
+#include <dev/vmm/vmm_startup_entry_owner.h>
 #include <dev/vmm/vmm_vm.h>
 
 #include "vmm_lapic.h"
+#include "vmm_exception.h"
 #include "vmm_stat.h"
 #include "vmm_ioport.h"
 #include "vatpic.h"
@@ -654,6 +656,8 @@ svm_vcpu_init(void *vmi, struct vcpu *vcpu1, int vcpuid)
 	vcpu->vcpuid = vcpuid;
 	vcpu->vmcb = malloc_aligned(sizeof(struct vmcb), PAGE_SIZE, M_SVM,
 	    M_WAITOK | M_ZERO);
+	vcpu->snapshot_vmcb = malloc_aligned(sizeof(struct vmcb), PAGE_SIZE,
+	    M_SVM, M_WAITOK | M_ZERO);
 	vcpu->nextrip = ~0;
 	vcpu->lastcpu = NOCPU;
 	vcpu->vmcb_pa = vtophys(vcpu->vmcb);
@@ -905,7 +909,7 @@ svm_handle_inst_emul(struct vmcb *vmcb, uint64_t gpa, struct vm_exit *vmexit)
 {
 	struct vm_guest_paging *paging;
 	struct vmcb_ctrl *ctrl;
-	char *inst_bytes;
+	const char *inst_bytes;
 	int inst_len;
 
 	ctrl = &vmcb->ctrl;
@@ -924,7 +928,7 @@ svm_handle_inst_emul(struct vmcb *vmcb, uint64_t gpa, struct vm_exit *vmexit)
 	 */
 	if (decode_assist() && !disable_npf_assist) {
 		inst_len = ctrl->inst_len;
-		inst_bytes = ctrl->inst_bytes;
+		inst_bytes = (const char *)(const void *)ctrl->inst_bytes;
 	} else {
 		inst_len = 0;
 		inst_bytes = NULL;
@@ -1353,7 +1357,8 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 	struct vmcb_state *state;
 	struct vmcb_ctrl *ctrl;
 	struct svm_regctx *ctx;
-	uint64_t code, info1, info2, val;
+	enum vm_exception_class exception_class;
+	uint64_t code, dr6, dr7, info1, info2, val;
 	uint32_t eax, ecx, edx;
 	int error __diagused, errcode_valid, handled, idtvec, reflect;
 	bool retu;
@@ -1417,6 +1422,7 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 	case 0x40 ... 0x5F:
 		vmm_stat_incr(vcpu->vcpu, VMEXIT_EXCEPTION, 1);
 		reflect = 1;
+		exception_class = VM_EXCEPTION_FAULT;
 		idtvec = code - 0x40;
 		switch (idtvec) {
 		case IDT_MC:
@@ -1451,9 +1457,11 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			 * and bounce vmexit to userland.
 			 */
 			bool stepped = 0;
-			uint64_t dr6 = 0;
-
+			dr6 = 0;
 			svm_getreg(vcpu, VM_REG_GUEST_DR6, &dr6);
+			dr7 = 0;
+			svm_getreg(vcpu, VM_REG_GUEST_DR7, &dr7);
+			exception_class = vm_debug_exception_class(dr6, dr7);
 			stepped = !!(dr6 & DBREG_DR6_BS);
 			if (stepped && (vcpu->caps & (1 << VM_CAP_RFLAGS_TF))) {
 				vmexit->exitcode = VM_EXITCODE_DB;
@@ -1509,6 +1517,7 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			break;
 		}
 		case IDT_BP:
+			exception_class = VM_EXCEPTION_TRAP;
 			vmexit->exitcode = VM_EXITCODE_BPT;
 			vmexit->u.bpt.inst_length = vmexit->inst_length;
 			vmexit->inst_length = 0;
@@ -1516,7 +1525,11 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			reflect = 0;
 			break;
 		case IDT_OF:
+			exception_class = VM_EXCEPTION_TRAP;
+			goto software_exception;
 		case IDT_BR:
+			exception_class = VM_EXCEPTION_FAULT;
+software_exception:
 			/*
 			 * The 'nrip' field is populated for INT3, INTO and
 			 * BOUND exceptions and this also implies that
@@ -1545,8 +1558,8 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 			/* Reflect the exception back into the guest */
 			SVM_CTR2(vcpu, "Reflecting exception "
 			    "%d/%#x into the guest", idtvec, (int)info1);
-			error = vm_inject_exception(vcpu->vcpu, idtvec,
-			    errcode_valid, info1, 0);
+			error = vm_inject_exception_class(vcpu->vcpu, idtvec,
+			    errcode_valid, info1, 0, exception_class);
 			KASSERT(error == 0, ("%s: vm_inject_exception error %d",
 			    __func__, error));
 			handled = 1;
@@ -1591,11 +1604,22 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 		vmm_stat_incr(vcpu->vcpu, VMEXIT_INOUT, 1);
 		break;
 	case VMCB_EXIT_CPUID:
+	{
+		uint64_t rax, rbx, rcx, rdx;
+
 		vmm_stat_incr(vcpu->vcpu, VMEXIT_CPUID, 1);
-		handled = x86_emulate_cpuid(vcpu->vcpu,
-		    &state->rax, &ctx->sctx_rbx, &ctx->sctx_rcx,
-		    &ctx->sctx_rdx);
+		rax = state->rax;
+		rbx = ctx->sctx_rbx;
+		rcx = ctx->sctx_rcx;
+		rdx = ctx->sctx_rdx;
+		handled = x86_emulate_cpuid(vcpu->vcpu, &rax, &rbx, &rcx,
+		    &rdx);
+		state->rax = rax;
+		ctx->sctx_rbx = rbx;
+		ctx->sctx_rcx = rcx;
+		ctx->sctx_rdx = rdx;
 		break;
+	}
 	case VMCB_EXIT_HLT:
 		vmm_stat_incr(vcpu->vcpu, VMEXIT_HLT, 1);
 		vmexit->exitcode = VM_EXITCODE_HLT;
@@ -2122,7 +2146,8 @@ svm_dr_leave_guest(struct svm_regctx *gctx)
  * Start vcpu with specified RIP.
  */
 static int
-svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
+svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo,
+    struct vmm_startup_entry_owner *entry_owner)
 {
 	struct svm_regctx *gctx;
 	struct svm_softc *svm_sc;
@@ -2131,9 +2156,12 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 	struct vmcb_ctrl *ctrl;
 	struct vm_exit *vmexit;
 	struct vlapic *vlapic;
+	struct vmm_startup_entry_loop_result owner_result;
+	struct vmm_startup_entry_runtime_result owner_runtime;
 	uint64_t vmcb_pa;
-	int handled;
+	int error, handled;
 	uint16_t ldt_sel;
+	bool migrated;
 
 	vcpu = vcpui;
 	svm_sc = vcpu->sc;
@@ -2145,7 +2173,8 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 	gctx = svm_get_guest_regctx(vcpu);
 	vmcb_pa = vcpu->vmcb_pa;
 
-	if (vcpu->lastcpu != curcpu) {
+	migrated = vcpu->lastcpu != curcpu;
+	if (migrated) {
 		/*
 		 * Force new ASID allocation by invalidating the generation.
 		 */
@@ -2156,20 +2185,9 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		 */
 		svm_set_dirty(vcpu, 0xffffffff);
 
-		/*
-		 * XXX
-		 * Setting 'vcpu->lastcpu' here is bit premature because
-		 * we may return from this function without actually executing
-		 * the VMRUN  instruction. This could happen if a rendezvous
-		 * or an AST is pending on the first time through the loop.
-		 *
-		 * This works for now but any new side-effects of vcpu
-		 * migration should take this case into account.
-		 */
-		vcpu->lastcpu = curcpu;
-		vmm_stat_incr(vcpu->vcpu, VCPU_MIGRATIONS, 1);
 	}
 
+	error = 0;
 	svm_msr_guest_enter(vcpu);
 
 	/* Update Guest RIP */
@@ -2188,18 +2206,27 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		if (vcpu_suspended(evinfo)) {
 			enable_gintr();
 			vm_exit_suspended(vcpu->vcpu, state->rip);
+			if (entry_owner != NULL)
+				error = vmm_startup_entry_owner_software_exit(entry_owner,
+				    &owner_result);
 			break;
 		}
 
 		if (vcpu_rendezvous_pending(vcpu->vcpu, evinfo)) {
 			enable_gintr();
 			vm_exit_rendezvous(vcpu->vcpu, state->rip);
+			if (entry_owner != NULL)
+				error = vmm_startup_entry_owner_software_exit(entry_owner,
+				    &owner_result);
 			break;
 		}
 
 		if (vcpu_reqidle(evinfo)) {
 			enable_gintr();
 			vm_exit_reqidle(vcpu->vcpu, state->rip);
+			if (entry_owner != NULL)
+				error = vmm_startup_entry_owner_software_exit(entry_owner,
+				    &owner_result);
 			break;
 		}
 
@@ -2207,12 +2234,18 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		if (vcpu_should_yield(vcpu->vcpu)) {
 			enable_gintr();
 			vm_exit_astpending(vcpu->vcpu, state->rip);
+			if (entry_owner != NULL)
+				error = vmm_startup_entry_owner_software_exit(entry_owner,
+				    &owner_result);
 			break;
 		}
 
 		if (vcpu_debugged(vcpu->vcpu)) {
 			enable_gintr();
 			vm_exit_debug(vcpu->vcpu, state->rip);
+			if (entry_owner != NULL)
+				error = vmm_startup_entry_owner_software_exit(entry_owner,
+				    &owner_result);
 			break;
 		}
 
@@ -2240,8 +2273,36 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 		/* Launch Virtual Machine. */
 		SVM_CTR1(vcpu, "Resume execution at %#lx", state->rip);
 		svm_dr_enter_guest(gctx);
+		if (entry_owner != NULL) {
+			error = vcpu_startup_entry_owner_guard_before(vcpu->vcpu,
+			    entry_owner, &owner_runtime);
+			if (error != 0 || owner_runtime.action !=
+			    VMM_STARTUP_ENTRY_RUNTIME_ENTER_GUEST) {
+				svm_dr_leave_guest(gctx);
+				svm_pmap_deactivate(pmap);
+				/*
+				 * ctrl->vmcb_clean and dirty were prepared for a VMRUN
+				 * that did not happen.  Do not let the next real entry
+				 * describe those unconsumed VMCB changes as hardware-clean.
+				 */
+				svm_set_dirty(vcpu, 0xffffffff);
+				enable_gintr();
+				break;
+			}
+		}
 		svm_launch(vmcb_pa, gctx, get_pcpu());
 		svm_dr_leave_guest(gctx);
+		/*
+		 * Publish CPU residency only after VMRUN has actually executed.
+		 * The pre-entry lifecycle checks above can return without entering
+		 * the guest; treating those paths as a migration suppresses the
+		 * mandatory ASID/cache refresh on their next real entry.
+		 */
+		if (migrated) {
+			vcpu->lastcpu = curcpu;
+			vmm_stat_incr(vcpu->vcpu, VCPU_MIGRATIONS, 1);
+			migrated = false;
+		}
 
 		svm_pmap_deactivate(pmap);
 
@@ -2263,11 +2324,17 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo)
 
 		/* Handle #VMEXIT and if required return to user space. */
 		handled = svm_vmexit(svm_sc, vcpu, vmexit);
+		if (entry_owner != NULL) {
+			error = vmm_startup_entry_owner_guard_after(entry_owner,
+			    handled != 0, 0, handled != 0 ? NULL : &owner_result);
+			if (error != 0)
+				panic("%s: invalid startup owner after VMRUN", __func__);
+		}
 	} while (handled);
 
 	svm_msr_guest_exit(vcpu);
 
-	return (0);
+	return (error);
 }
 
 static void
@@ -2276,14 +2343,64 @@ svm_vcpu_cleanup(void *vcpui)
 	struct svm_vcpu *vcpu = vcpui;
 
 	free(vcpu->vmcb, M_SVM);
+	free(vcpu->snapshot_vmcb, M_SVM);
 	free(vcpu, M_SVM);
 }
+
+static int
+svm_vcpu_event_cleanup_check(void *vcpui __unused)
+{
+
+	return (0);
+}
+
+static bool
+svm_startup_kernel_actions_ready(void)
+{
+
+	return (false);
+}
+
+static int
+svm_vcpu_startup_event_step(void *vcpui __unused,
+    enum vmm_startup_dispatch_result *result __unused)
+{
+
+	return (EOPNOTSUPP);
+}
+
+static int
+svm_vcpu_event_cleanup(void *vcpui __unused)
+{
+
+	return (0);
+}
+
+#ifdef BHYVE_SNAPSHOT
+static void
+svm_snapshot_restore_free(struct svm_snapshot_restore *stage)
+{
+
+	if (stage == NULL)
+		return;
+	if (stage->vcpus != NULL) {
+		explicit_bzero(stage->vcpus,
+		    (size_t)stage->maxcpus * sizeof(*stage->vcpus));
+		free(stage->vcpus, M_SVM);
+	}
+	explicit_bzero(stage, sizeof(*stage));
+	free(stage, M_SVM);
+}
+#endif
 
 static void
 svm_cleanup(void *vmi)
 {
 	struct svm_softc *sc = vmi;
 
+#ifdef BHYVE_SNAPSHOT
+	svm_snapshot_restore_free(sc->snapshot_restore);
+#endif
 	free(sc->iopm_bitmap, M_SVM);
 	free(sc->msr_bitmap, M_SVM);
 	free(sc, M_SVM);
@@ -2392,12 +2509,6 @@ svm_setreg(void *vcpui, int ident, uint64_t val)
 		/* Ignore. */
 		return (0);
 	}
-
-	/*
-	 * XXX deal with CR3 and invalidate TLB entries tagged with the
-	 * vcpu's ASID. This needs to be treated differently depending on
-	 * whether 'running' is true/false.
-	 */
 
 	SVM_CTR1(vcpu, "svm_setreg: unknown register %#x", ident);
 	return (EINVAL);
@@ -2614,12 +2725,132 @@ svm_vlapic_cleanup(struct vlapic *vlapic)
 
 #ifdef BHYVE_SNAPSHOT
 static int
-svm_vcpu_snapshot(void *vcpui, struct vm_snapshot_meta *meta)
+svm_vm_snapshot(void *vmi, struct vm_snapshot_meta *meta)
 {
-	struct svm_vcpu *vcpu;
+	struct svm_snapshot_restore *stage;
+	struct svm_softc *sc;
+
+	if (vmi == NULL || meta == NULL)
+		return (EINVAL);
+	if (meta->op != VM_SNAPSHOT_RESTORE)
+		return (0);
+	sc = vmi;
+	if (sc->snapshot_restore != NULL)
+		return (EBUSY);
+	stage = malloc(sizeof(*stage), M_SVM, M_NOWAIT | M_ZERO);
+	if (stage == NULL)
+		return (ENOMEM);
+	stage->maxcpus = vm_get_maxcpus(sc->vm);
+	stage->vcpus = mallocarray(stage->maxcpus, sizeof(*stage->vcpus),
+	    M_SVM, M_NOWAIT | M_ZERO);
+	if (stage->vcpus == NULL) {
+		svm_snapshot_restore_free(stage);
+		return (ENOMEM);
+	}
+	sc->snapshot_restore = stage;
+	return (0);
+}
+
+static int
+svm_vm_snapshot_complete(void *vmi, struct vm_snapshot_meta *meta, int status)
+{
+	struct svm_snapshot_restore *stage;
+	struct svm_snapshot_vcpu_stage *vcpu_stage;
+	struct svm_softc *sc;
+	struct vcpu *generic_vcpu;
+	uint16_t i;
+
+	if (vmi == NULL || meta == NULL)
+		return (EINVAL);
+	if (meta->op != VM_SNAPSHOT_RESTORE)
+		return (0);
+	sc = vmi;
+	stage = sc->snapshot_restore;
+	sc->snapshot_restore = NULL;
+	if (status != 0) {
+		svm_snapshot_restore_free(stage);
+		return (0);
+	}
+	if (stage == NULL)
+		return (EPROTO);
+
+	/* Complete all topology and frozen-state checks before first publication. */
+	for (i = 0; i < stage->maxcpus; i++) {
+		generic_vcpu = vm_vcpu(sc->vm, i);
+		vcpu_stage = &stage->vcpus[i];
+		if (generic_vcpu == NULL) {
+			if (vcpu_stage->valid) {
+				svm_snapshot_restore_free(stage);
+				return (EPROTO);
+			}
+			continue;
+		}
+		if (!vcpu_stage->valid || vcpu_stage->vcpu == NULL ||
+		    vcpu_stage->vcpu->sc != sc ||
+		    vcpu_stage->vcpu->vcpu != generic_vcpu ||
+		    vcpu_stage->vcpu->vcpuid != i ||
+		    vcpu_get_state(generic_vcpu, NULL) != VCPU_FROZEN) {
+			svm_snapshot_restore_free(stage);
+			return (EPROTO);
+		}
+	}
+
+	/*
+	 * Every remaining publication is a bounded, non-failing write to a frozen
+	 * vCPU.  There are no allocations or fallible setters here, so a late
+	 * per-vCPU failure cannot expose a partially restored VM.
+	 */
+	for (i = 0; i < stage->maxcpus; i++) {
+		vcpu_stage = &stage->vcpus[i];
+		if (!vcpu_stage->valid)
+			continue;
+		bcopy(vcpu_stage->vcpu->snapshot_vmcb,
+		    vcpu_stage->vcpu->vmcb, sizeof(*vcpu_stage->vcpu->vmcb));
+		vcpu_stage->vcpu->swctx = vcpu_stage->swctx;
+		vcpu_stage->vcpu->nextrip = vcpu_stage->nextrip;
+		vcpu_stage->vcpu->mtrr = vcpu_stage->mtrr;
+		/* Destination CPU residency and translation caches start empty. */
+		vcpu_stage->vcpu->lastcpu = NOCPU;
+		vcpu_stage->vcpu->eptgen = 0;
+		vcpu_stage->vcpu->asid.gen = 0;
+		vcpu_stage->vcpu->asid.num = 0;
+		svm_set_dirty(vcpu_stage->vcpu, 0xffffffff);
+	}
+	svm_snapshot_restore_free(stage);
+	return (0);
+}
+
+static int
+svm_vcpu_snapshot_apply(struct svm_vcpu *vcpu,
+    struct vm_snapshot_meta *meta)
+{
 	int err, running, hostcpu;
 
-	vcpu = vcpui;
+/*
+ * Keep decoding and application in lockstep.  A failed field must stop this
+ * ordered VMCB record immediately; continuing used to consume and potentially
+ * apply later fields after an earlier error.  Full candidate-state staging is
+ * deliberately handled by the architecture-record restore phase.
+ */
+#define	SVM_SNAPSHOT_CALL_OR_LEAVE(CALL) do { \
+	err = (CALL); \
+	if (err != 0) \
+		goto done; \
+} while (0)
+
+	/*
+	 * The common snapshot session freezes every vCPU before invoking the
+	 * architecture callback.  Keep that boundary explicit here as well:
+	 * the VMCB and its derived residency fields are not a coherent image
+	 * while the vCPU is runnable, even if it happens to be running locally.
+	 */
+	if (vcpu == NULL || meta == NULL)
+		return (EINVAL);
+	if (vcpu_get_state(vcpu->vcpu, NULL) != VCPU_FROZEN)
+		return (EBUSY);
+	if (meta->op == VM_SNAPSHOT_SAVE && !vm_mtrr_validate(&vcpu->mtrr,
+	    vm_mtrr_maxphyaddr(cpu_maxphyaddr)))
+		return (EINVAL);
 	err = 0;
 
 	running = vcpu_is_running(vcpu->vcpu, &hostcpu);
@@ -2629,147 +2860,175 @@ svm_vcpu_snapshot(void *vcpui, struct vm_snapshot_meta *meta)
 		return (EINVAL);
 	}
 
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_CR0, meta);
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_CR2, meta);
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_CR3, meta);
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_CR4, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_CR0, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_CR2, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_CR3, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_CR4, meta));
 
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_DR6, meta);
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_DR7, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_DR6, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_DR7, meta));
 
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_RAX, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_RAX, meta));
 
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_RSP, meta);
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_RIP, meta);
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_RFLAGS, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_RSP, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_RIP, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_RFLAGS, meta));
 
 	/* Guest segments */
 	/* ES */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_ES, meta);
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_ES, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_ES, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_ES, meta));
 
 	/* CS */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_CS, meta);
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_CS, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_CS, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_CS, meta));
 
 	/* SS */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_SS, meta);
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_SS, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_SS, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_SS, meta));
 
 	/* DS */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_DS, meta);
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_DS, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_DS, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_DS, meta));
 
 	/* FS */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_FS, meta);
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_FS, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_FS, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_FS, meta));
 
 	/* GS */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_GS, meta);
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_GS, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_GS, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_GS, meta));
 
 	/* TR */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_TR, meta);
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_TR, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_TR, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_TR, meta));
 
 	/* LDTR */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_LDTR, meta);
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_LDTR, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_LDTR, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_LDTR, meta));
 
 	/* EFER */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_EFER, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_EFER, meta));
 
 	/* IDTR and GDTR */
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_IDTR, meta);
-	err += vmcb_snapshot_desc(vcpu, VM_REG_GUEST_GDTR, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_IDTR, meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_desc(vcpu,
+	    VM_REG_GUEST_GDTR, meta));
 
 	/* Specific AMD registers */
-	err += svm_snapshot_reg(vcpu, VM_REG_GUEST_INTR_SHADOW, meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(svm_snapshot_reg(vcpu,
+	    VM_REG_GUEST_INTR_SHADOW, meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_CR_INTERCEPT, 4), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_DR_INTERCEPT, 4), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_EXC_INTERCEPT, 4), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_INST1_INTERCEPT, 4), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_INST2_INTERCEPT, 4), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_CR_INTERCEPT, 4), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_DR_INTERCEPT, 4), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_EXC_INTERCEPT, 4), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_INST1_INTERCEPT, 4), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_INST2_INTERCEPT, 4), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_PAUSE_FILTHRESH, 2), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_PAUSE_FILCNT, 2), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_PAUSE_FILTHRESH, 2), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_PAUSE_FILCNT, 2), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_ASID, 4), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_ASID, 4), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_TLB_CTRL, 4), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_TLB_CTRL, 4), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_VIRQ, 8), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_VIRQ, 8), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_EXIT_REASON, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_EXITINFO1, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_EXITINFO2, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_EXITINTINFO, 8), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_EXIT_REASON, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_EXITINFO1, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_EXITINFO2, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_EXITINTINFO, 8), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_NP_ENABLE, 1), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_NP_ENABLE, 1), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_AVIC_BAR, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_AVIC_PAGE, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_AVIC_LT, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_AVIC_PT, 8), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_AVIC_BAR, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_AVIC_PAGE, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_AVIC_LT, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_AVIC_PT, 8), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_CPL, 1), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_CPL, 1), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_STAR, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_LSTAR, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_CSTAR, 8), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_STAR, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_LSTAR, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_CSTAR, 8), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_SFMASK, 8), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_SFMASK, 8), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_KERNELGBASE, 8), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_KERNELGBASE, 8), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_SYSENTER_CS, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_SYSENTER_ESP, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_SYSENTER_EIP, 8), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_SYSENTER_CS, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_SYSENTER_ESP, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_SYSENTER_EIP, 8), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_GUEST_PAT, 8), meta);
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_GUEST_PAT, 8), meta));
 
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_DBGCTL, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_BR_FROM, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_BR_TO, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_INT_FROM, 8), meta);
-	err += vmcb_snapshot_any(vcpu,
-				VMCB_ACCESS(VMCB_OFF_INT_TO, 8), meta);
-	if (err != 0)
-		goto done;
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_DBGCTL, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_BR_FROM, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_BR_TO, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_INT_FROM, 8), meta));
+	SVM_SNAPSHOT_CALL_OR_LEAVE(vmcb_snapshot_any(vcpu,
+	    VMCB_ACCESS(VMCB_OFF_INT_TO, 8), meta));
 
 	/* Snapshot swctx for virtual cpu */
 	SNAPSHOT_VAR_OR_LEAVE(vcpu->swctx.sctx_rbp, meta, err, done);
@@ -2791,29 +3050,64 @@ svm_vcpu_snapshot(void *vcpui, struct vm_snapshot_meta *meta)
 	SNAPSHOT_VAR_OR_LEAVE(vcpu->swctx.sctx_dr2, meta, err, done);
 	SNAPSHOT_VAR_OR_LEAVE(vcpu->swctx.sctx_dr3, meta, err, done);
 
-	/* Restore other svm_vcpu struct fields */
-
-	/* Restore NEXTRIP field */
+	/* Restore the remaining guest architectural field. */
 	SNAPSHOT_VAR_OR_LEAVE(vcpu->nextrip, meta, err, done);
 
-	/* Restore lastcpu field */
-	SNAPSHOT_VAR_OR_LEAVE(vcpu->lastcpu, meta, err, done);
-	SNAPSHOT_VAR_OR_LEAVE(vcpu->dirty, meta, err, done);
-
-	/* Restore EPTGEN field - EPT is Extended Page Table */
-	SNAPSHOT_VAR_OR_LEAVE(vcpu->eptgen, meta, err, done);
-
-	SNAPSHOT_VAR_OR_LEAVE(vcpu->asid.gen, meta, err, done);
-	SNAPSHOT_VAR_OR_LEAVE(vcpu->asid.num, meta, err, done);
-
 	SNAPSHOT_BUF_OR_LEAVE(&vcpu->mtrr, sizeof(vcpu->mtrr), meta, err, done);
-
-	/* Set all caches dirty */
-	if (meta->op == VM_SNAPSHOT_RESTORE)
-		svm_set_dirty(vcpu, 0xffffffff);
+	if (!vm_mtrr_validate(&vcpu->mtrr,
+	    vm_mtrr_maxphyaddr(cpu_maxphyaddr)))
+		err = EINVAL;
 
 done:
+#undef SVM_SNAPSHOT_CALL_OR_LEAVE
 	return (err);
+}
+
+static int
+svm_vcpu_snapshot(void *vcpui, struct vm_snapshot_meta *meta)
+{
+	struct svm_vcpu candidate, *vcpu;
+	struct svm_snapshot_restore *stage;
+	struct svm_snapshot_vcpu_stage *vcpu_stage;
+	int error;
+
+	if (vcpui == NULL || meta == NULL)
+		return (EINVAL);
+	vcpu = vcpui;
+	if (vcpu_get_state(vcpu->vcpu, NULL) != VCPU_FROZEN)
+		return (EBUSY);
+	if (meta->op != VM_SNAPSHOT_RESTORE)
+		return (svm_vcpu_snapshot_apply(vcpu, meta));
+	stage = vcpu->sc->snapshot_restore;
+	if (stage == NULL || vcpu->vcpuid < 0 ||
+	    vcpu->vcpuid >= stage->maxcpus ||
+	    vm_vcpu(vcpu->sc->vm, vcpu->vcpuid) != vcpu->vcpu)
+		return (EPROTO);
+	vcpu_stage = &stage->vcpus[vcpu->vcpuid];
+	if (vcpu_stage->valid)
+		return (EPROTO);
+
+	/*
+	 * The VMCB is software-owned memory while this vCPU is frozen.  Decode
+	 * the complete fixed-order record into a private copy and make the live
+	 * VMCB visible only after all record reads and architectural setters have
+	 * succeeded.  This avoids relying on best-effort per-field rollback.
+	 */
+	if (vcpu->snapshot_vmcb == NULL)
+		return (ENOMEM);
+	candidate = *vcpu;
+	bcopy(vcpu->vmcb, vcpu->snapshot_vmcb, sizeof(*vcpu->vmcb));
+	candidate.vmcb = vcpu->snapshot_vmcb;
+	error = svm_vcpu_snapshot_apply(&candidate, meta);
+	if (error != 0)
+		return (error);
+
+	vcpu_stage->vcpu = vcpu;
+	vcpu_stage->swctx = candidate.swctx;
+	vcpu_stage->nextrip = candidate.nextrip;
+	vcpu_stage->mtrr = candidate.mtrr;
+	vcpu_stage->valid = true;
+	return (0);
 }
 
 static int
@@ -2827,6 +3121,22 @@ svm_restore_tsc(void *vcpui, uint64_t offset)
 }
 #endif
 
+static int
+svm_handle_internal_exit(void *vcpui __unused)
+{
+
+	return (ENOTSUP);
+}
+
+static int
+svm_get_cpu_compat(void *vcpui __unused, struct vm_cpu_compat *compat)
+{
+
+	if (compat == NULL)
+		return (EINVAL);
+	return (0);
+}
+
 const struct vmm_ops vmm_ops_amd = {
 	.modinit	= svm_modinit,
 	.modcleanup	= svm_modcleanup,
@@ -2834,8 +3144,13 @@ const struct vmm_ops vmm_ops_amd = {
 	.modsuspend	= svm_modsuspend,
 	.init		= svm_init,
 	.run		= svm_run,
+	.handle_internal_exit = svm_handle_internal_exit,
 	.cleanup	= svm_cleanup,
 	.vcpu_init	= svm_vcpu_init,
+	.startup_kernel_actions_ready = svm_startup_kernel_actions_ready,
+	.vcpu_startup_event_step = svm_vcpu_startup_event_step,
+	.vcpu_event_cleanup_check = svm_vcpu_event_cleanup_check,
+	.vcpu_event_cleanup = svm_vcpu_event_cleanup,
 	.vcpu_cleanup	= svm_vcpu_cleanup,
 	.getreg		= svm_getreg,
 	.setreg		= svm_setreg,
@@ -2843,12 +3158,15 @@ const struct vmm_ops vmm_ops_amd = {
 	.setdesc	= svm_setdesc,
 	.getcap		= svm_getcap,
 	.setcap		= svm_setcap,
+	.get_cpu_compat = svm_get_cpu_compat,
 	.vmspace_alloc	= svm_vmspace_alloc,
 	.vmspace_free	= svm_vmspace_free,
 	.vlapic_init	= svm_vlapic_init,
 	.vlapic_cleanup	= svm_vlapic_cleanup,
 #ifdef BHYVE_SNAPSHOT
+	.vm_snapshot	= svm_vm_snapshot,
 	.vcpu_snapshot	= svm_vcpu_snapshot,
+	.vm_snapshot_complete = svm_vm_snapshot_complete,
 	.restore_tsc	= svm_restore_tsc,
 #endif
 };

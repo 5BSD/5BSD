@@ -467,4 +467,5 @@ nvdimm_find_by_handle(nfit_handle_t nv_handle)
 }
 
 DRIVER_MODULE(nvdimm, nvdimm_acpi_root, nvdimm_driver, NULL, NULL);
+MODULE_VERSION(nvdimm, 1);
 MODULE_DEPEND(nvdimm, acpi, 1, 1, 1);

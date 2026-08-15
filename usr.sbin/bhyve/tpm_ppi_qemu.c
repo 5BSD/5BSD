@@ -15,6 +15,7 @@
 #include <assert.h>
 #include <err.h>
 #include <errno.h>
+#include <pthread.h>
 #include <vmmapi.h>
 
 #include "acpi.h"
@@ -52,60 +53,80 @@ struct tpm_ppi_fwcfg {
 	uint8_t ppi_version;
 } __packed;
 
+struct tpm_ppi_softc {
+	uint8_t regs[TPM_PPI_SIZE];
+	pthread_mutex_t mutex;
+	struct mem_range mmio;
+};
+
 static int
 tpm_ppi_mem_handler(struct vcpu *const vcpu __unused, const int dir,
     const uint64_t addr, const int size, uint64_t *const val, void *const arg1,
     const long arg2 __unused)
 {
-	struct tpm_ppi_qemu *ppi;
+	struct tpm_ppi_softc *sc;
 	uint8_t *ptr;
 	uint64_t off;
 
+	if (!(size == 1 || size == 2 || size == 4 || size == 8))
+		return (EINVAL);
 	if ((addr & (size - 1)) != 0) {
 		warnx("%s: unaligned %s access @ %16lx [size = %x]", __func__,
 		    (dir == MEM_F_READ) ? "read" : "write", addr, size);
-	}
-
-	ppi = arg1;
-
-	off = addr - TPM_PPI_ADDRESS;
-	ptr = (uint8_t *)ppi + off;
-
-	if (off > TPM_PPI_SIZE || off + size > TPM_PPI_SIZE) {
 		return (EINVAL);
 	}
 
-	assert(size == 1 || size == 2 || size == 4 || size == 8);
+	sc = arg1;
+	if (sc == NULL || addr < TPM_PPI_ADDRESS)
+		return (EINVAL);
+
+	off = addr - TPM_PPI_ADDRESS;
+	if (off > TPM_PPI_SIZE || (uint64_t)size > TPM_PPI_SIZE - off) {
+		return (EINVAL);
+	}
+	ptr = sc->regs + off;
+
+	pthread_mutex_lock(&sc->mutex);
 	if (dir == MEM_F_READ) {
 		memcpy(val, ptr, size);
 	} else {
 		memcpy(ptr, val, size);
 	}
+	pthread_mutex_unlock(&sc->mutex);
 
 	return (0);
 }
 
-static struct mem_range ppi_mmio = {
-	.name = "ppi-mmio",
-	.base = TPM_PPI_ADDRESS,
-	.size = TPM_PPI_SIZE,
-	.flags = MEM_F_RW,
-	.handler = tpm_ppi_mem_handler,
-};
-
 static int
 tpm_ppi_init(void **sc)
 {
-	struct tpm_ppi_qemu *ppi = NULL;
+	struct tpm_ppi_softc *ppi = NULL;
 	struct tpm_ppi_fwcfg *fwcfg = NULL;
+	bool mmio_registered = false;
+	bool mutex_initialized = false;
 	int error;
 
-	ppi = calloc(1, TPM_PPI_SIZE);
+	if (sc == NULL)
+		return (EINVAL);
+	*sc = NULL;
+	ppi = calloc(1, sizeof(*ppi));
 	if (ppi == NULL) {
 		warnx("%s: failed to allocate acpi region for ppi", __func__);
 		error = ENOMEM;
 		goto err_out;
 	}
+	error = pthread_mutex_init(&ppi->mutex, NULL);
+	if (error != 0)
+		goto err_out;
+	mutex_initialized = true;
+	ppi->mmio = (struct mem_range) {
+		.name = "ppi-mmio",
+		.base = TPM_PPI_ADDRESS,
+		.size = TPM_PPI_SIZE,
+		.flags = MEM_F_RW,
+		.arg1 = ppi,
+		.handler = tpm_ppi_mem_handler,
+	};
 
 	fwcfg = calloc(1, sizeof(struct tpm_ppi_fwcfg));
 	if (fwcfg == NULL) {
@@ -118,23 +139,23 @@ tpm_ppi_init(void **sc)
 	fwcfg->tpm_version = 2;
 	fwcfg->ppi_version = 1;
 
-	error = qemu_fwcfg_add_file(TPM_PPI_FWCFG_FILE,
-	    sizeof(struct tpm_ppi_fwcfg), fwcfg);
-	if (error) {
-		warnx("%s: failed to add fwcfg file", __func__);
-		goto err_out;
-	}
-
 	/*
 	 * We would just need to create some guest memory for the PPI region.
 	 * Sadly, bhyve has a strange memory interface. We can't just add more
 	 * memory to the VM. So, create a trap instead which reads and writes to
 	 * the ppi region. It's very slow but ppi shouldn't be used frequently.
 	 */
-	ppi_mmio.arg1 = ppi;
-	error = register_mem(&ppi_mmio);
+	error = register_mem(&ppi->mmio);
 	if (error) {
 		warnx("%s: failed to create trap for ppi accesses", __func__);
+		goto err_out;
+	}
+	mmio_registered = true;
+
+	error = qemu_fwcfg_add_file(TPM_PPI_FWCFG_FILE,
+	    sizeof(struct tpm_ppi_fwcfg), fwcfg);
+	if (error) {
+		warnx("%s: failed to add fwcfg file", __func__);
 		goto err_out;
 	}
 
@@ -143,7 +164,11 @@ tpm_ppi_init(void **sc)
 	return (0);
 
 err_out:
+	if (mmio_registered)
+		(void)unregister_mem(&ppi->mmio);
 	free(fwcfg);
+	if (mutex_initialized)
+		(void)pthread_mutex_destroy(&ppi->mutex);
 	free(ppi);
 
 	return (error);
@@ -152,7 +177,7 @@ err_out:
 static void
 tpm_ppi_deinit(void *sc)
 {
-	struct tpm_ppi_qemu *ppi;
+	struct tpm_ppi_softc *ppi;
 	int error;
 
 	if (sc == NULL)
@@ -160,9 +185,11 @@ tpm_ppi_deinit(void *sc)
 
 	ppi = sc;
 
-	error = unregister_mem(&ppi_mmio);
-	assert(error == 0);
+	error = unregister_mem(&ppi->mmio);
+	if (error != 0)
+		warnc(error, "%s: failed to unregister PPI MMIO", __func__);
 
+	(void)pthread_mutex_destroy(&ppi->mutex);
 	free(ppi);
 }
 

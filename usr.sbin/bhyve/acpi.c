@@ -62,6 +62,8 @@
 #include "acpi.h"
 #include "basl.h"
 #include "pci_emul.h"
+#include "pci_virtio_iommu.h"
+#include "virtio_iommu_viot.h"
 #include "vmgenc.h"
 
 #define	BHYVE_ASL_TEMPLATE	"bhyve.XXXXXXX"
@@ -708,6 +710,64 @@ build_mcfg(struct vmctx *const ctx)
 }
 
 static int
+build_viot(struct vmctx *const ctx)
+{
+	struct basl_table *table;
+	struct pci_devinst *pi;
+	const uint16_t *endpoints;
+	uint8_t *payload;
+	uint16_t iommu_bdf;
+	size_t endpoint_count, payload_size;
+	int error;
+
+	pi = NULL;
+	payload = NULL;
+	endpoints = NULL;
+	endpoint_count = 0;
+	while ((pi = pci_next(pi)) != NULL) {
+		error = pci_vtiommu_viot_info(pi, &iommu_bdf, &endpoints,
+		    &endpoint_count);
+		if (error == ENODEV)
+			continue;
+		if (error != 0)
+			return (error);
+		break;
+	}
+	if (pi == NULL)
+		return (0);
+
+	error = virtio_iommu_viot_size(endpoint_count, &payload_size);
+	if (error != 0)
+		return (error);
+	payload = malloc(payload_size);
+	if (payload == NULL)
+		return (ENOMEM);
+	error = virtio_iommu_viot_encode(iommu_bdf, endpoints,
+	    endpoint_count, payload, payload_size);
+	if (error != 0)
+		goto done;
+
+	error = basl_table_create(&table, ctx, ACPI_SIG_VIOT,
+	    BASL_TABLE_ALIGNMENT);
+	if (error != 0)
+		goto done;
+	/*
+	 * ACPI VIOT is the first table format revision, whose ACPI header
+	 * Revision field is zero (the document itself is version 1).
+	 */
+	error = basl_table_append_header(table, ACPI_SIG_VIOT, 0, 1);
+	if (error != 0)
+		goto done;
+	error = basl_table_append_bytes(table, payload, payload_size);
+	if (error != 0)
+		goto done;
+	error = basl_table_register_to_rsdt(table);
+done:
+	free(payload);
+	return (error);
+}
+
+static int
 build_rsdp(struct vmctx *const ctx)
 {
 	ACPI_TABLE_RSDP rsdp;
@@ -886,6 +946,7 @@ acpi_build(struct vmctx *ctx, int ncpu)
 	BASL_EXEC(build_hpet(ctx));
 #endif
 	BASL_EXEC(build_mcfg(ctx));
+	BASL_EXEC(build_viot(ctx));
 	BASL_EXEC(build_facs(ctx));
 	BASL_EXEC(build_spcr(ctx));
 	BASL_EXEC(build_srat(ctx));

@@ -822,6 +822,51 @@ struct ctl_nvmf {
 						/* passed to userland */
 };
 
+/*
+ * Ordered LUN inventory notifications.
+ *
+ * A subscriber first issues CTL_LUN_EVENT_SUBSCRIBE, then obtains events with
+ * CTL_LUN_EVENT_NEXT after poll(2) or kqueue(2) reports readability.  The
+ * initial RESCAN event is a barrier: callers subscribe before taking a
+ * CTL_LUN_LIST snapshot, discard that initial event, and then apply every
+ * later event in sequence order.  MISSED requires another complete snapshot.
+ *
+ * The ABI contains only fixed-width fields and all reserved fields must be
+ * zero.  device_type is the five-bit SCSI peripheral device type, or
+ * CTL_LUN_EVENT_DEVICE_TYPE_UNKNOWN for RESCAN.  It intentionally does not
+ * expose kernel pointers or native enum widths.
+ */
+#define	CTL_LUN_EVENT_VERSION		2U
+#define	CTL_LUN_EVENT_QUEUE_MIN		16U
+#define	CTL_LUN_EVENT_QUEUE_DEFAULT	128U
+#define	CTL_LUN_EVENT_QUEUE_MAX		1024U
+
+#define	CTL_LUN_EVENT_RESCAN		0U
+#define	CTL_LUN_EVENT_ADDED		1U
+#define	CTL_LUN_EVENT_REMOVED		2U
+#define	CTL_LUN_EVENT_CHANGED		3U
+
+#define	CTL_LUN_EVENT_F_MISSED		0x00000001U
+#define	CTL_LUN_EVENT_DEVICE_TYPE_UNKNOWN	UINT32_MAX
+
+struct ctl_lun_event_subscribe {
+	uint32_t	version;
+	uint32_t	flags;
+	uint32_t	queue_depth;
+	uint32_t	reserved;
+	uint64_t	sequence;
+};
+
+struct ctl_lun_event {
+	uint32_t	version;
+	uint32_t	type;
+	uint32_t	flags;
+	uint32_t	lun_id;
+	uint64_t	sequence;
+	uint32_t	device_type;
+	uint32_t	reserved;
+};
+
 #define	CTL_IO			_IOWR(CTL_MINOR, 0x00, union ctl_io)
 #define	CTL_ENABLE_PORT		_IOW(CTL_MINOR, 0x04, struct ctl_port_entry)
 #define	CTL_DISABLE_PORT	_IOW(CTL_MINOR, 0x05, struct ctl_port_entry)
@@ -840,6 +885,9 @@ struct ctl_nvmf {
 #define	CTL_GET_LUN_STATS	_IOWR(CTL_MINOR, 0x29, struct ctl_get_io_stats)
 #define	CTL_GET_PORT_STATS	_IOWR(CTL_MINOR, 0x2a, struct ctl_get_io_stats)
 #define	CTL_NVMF		_IOWR(CTL_MINOR, 0x2b, struct ctl_nvmf)
+#define	CTL_LUN_EVENT_SUBSCRIBE	_IOWR(CTL_MINOR, 0x2c, \
+				    struct ctl_lun_event_subscribe)
+#define	CTL_LUN_EVENT_NEXT	_IOWR(CTL_MINOR, 0x2d, struct ctl_lun_event)
 
 #endif /* _CTL_IOCTL_H_ */
 

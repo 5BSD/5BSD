@@ -135,6 +135,7 @@ static inline uint64_t counter_u64_fetch(counter_u64_t c) { return (c ? *c : 0);
 #define CTLFLAG_RW	0
 #define CTLFLAG_MPSAFE	0
 #define CTLTYPE_ULONG	0
+#define CTLTYPE_UINT	0
 #define CTLTYPE_U64	0
 /* sysctl handler machinery: the DUT defines handler functions but the harness
  * never invokes them, so provide the signature + a stub sysctl_handle_int. */
@@ -152,6 +153,10 @@ static inline int
 sysctl_wire_old_buffer(struct sysctl_req *r __unused, size_t l __unused)
 { return (0); }
 #define SYSCTL_OUT(r, p, l)	((void)(r), (void)(p), (void)(l), 0)
+
+/* Single-threaded harness equivalents of the kernel's acquire/release API. */
+#define atomic_load_acq_int(p)	(*(p))
+#define atomic_store_rel_int(p, v)	(*(p) = (v))
 
 /* ---- mutex ---- */
 #ifdef VSOCK_REAL_SLEEP

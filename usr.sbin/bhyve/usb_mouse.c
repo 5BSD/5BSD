@@ -31,6 +31,7 @@
 
 #include <machine/vmm_snapshot.h>
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -43,6 +44,10 @@
 #include "console.h"
 #include "bhyvegc.h"
 #include "debug.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
+#include "usb_mouse_model.h"
 
 static int umouse_debug = 0;
 #define	DPRINTF(params) if (umouse_debug) PRINTLN params
@@ -59,6 +64,9 @@ static int umouse_debug = 0;
 #define	UMOUSE_SET_REPORT	0x09
 #define	UMOUSE_SET_IDLE		0x0A
 #define	UMOUSE_SET_PROTOCOL	0x0B
+
+#define	UMOUSE_SNAPSHOT_MAGIC	UINT32_C(0x31534d55) /* "UMS1" */
+#define	UMOUSE_SNAPSHOT_VERSION	UINT32_C(1)
 
 #define HSETW(ptr, val)   ptr = { (uint8_t)(val), (uint8_t)((val) >> 8) }
 
@@ -97,8 +105,8 @@ struct umouse_config_desc {
 	struct usb_endpoint_ss_comp_descriptor	sscompd;
 } __packed;
 
-#define MOUSE_MAX_X	0x8000
-#define MOUSE_MAX_Y	0x8000
+#define MOUSE_MAX_X	UMOUSE_AXIS_MAX
+#define MOUSE_MAX_Y	UMOUSE_AXIS_MAX
 
 static const uint8_t umouse_report_desc[] = {
 	0x05, 0x01,		/* USAGE_PAGE (Generic Desktop)		*/
@@ -250,7 +258,6 @@ struct umouse_softc {
 	pthread_mutex_t	mtx;
 	pthread_mutex_t	ev_mtx;
 	int		polling;
-	struct timeval	prev_evt;
 };
 
 static void
@@ -284,8 +291,8 @@ umouse_event(uint8_t button, int x, int y, void *arg)
 		sc->um_report.z = -1;
 
 	/* scale coords to mouse resolution */
-	sc->um_report.x = MOUSE_MAX_X * x / gc->width;
-	sc->um_report.y = MOUSE_MAX_Y * y / gc->height;
+	sc->um_report.x = umouse_scale_axis(x, gc->width);
+	sc->um_report.y = umouse_scale_axis(y, gc->height);
 	sc->newdata = 1;
 	pthread_mutex_unlock(&sc->mtx);
 
@@ -300,6 +307,8 @@ umouse_probe(struct usb_hci *hci, nvlist_t *nvl __unused)
 	struct umouse_softc *sc;
 
 	sc = calloc(1, sizeof(struct umouse_softc));
+	if (sc == NULL)
+		return (NULL);
 	sc->hci = hci;
 
 	return (sc);
@@ -309,10 +318,17 @@ static int
 umouse_init(void *scarg)
 {
 	struct umouse_softc *sc = (struct umouse_softc *)scarg;
+	int error;
 
 	sc->hid.protocol = 1;	/* REPORT protocol */
-	pthread_mutex_init(&sc->mtx, NULL);
-	pthread_mutex_init(&sc->ev_mtx, NULL);
+	error = pthread_mutex_init(&sc->mtx, NULL);
+	if (error != 0)
+		return (error);
+	error = pthread_mutex_init(&sc->ev_mtx, NULL);
+	if (error != 0) {
+		pthread_mutex_destroy(&sc->mtx);
+		return (error);
+	}
 
 	console_ptr_register(umouse_event, sc, 10);
 
@@ -782,14 +798,22 @@ umouse_reset(void *scarg)
 
 	sc = scarg;
 
+	pthread_mutex_lock(&sc->mtx);
 	sc->newdata = 0;
+	pthread_mutex_unlock(&sc->mtx);
 
 	return (0);
 }
 
 static int
-umouse_remove(void *scarg __unused)
+umouse_remove(void *scarg)
 {
+	struct umouse_softc *sc;
+
+	sc = scarg;
+	(void)console_ptr_unregister(umouse_event, sc);
+	pthread_mutex_destroy(&sc->ev_mtx);
+	pthread_mutex_destroy(&sc->mtx);
 	return (0);
 }
 
@@ -803,22 +827,73 @@ umouse_stop(void *scarg __unused)
 static int
 umouse_snapshot(void *scarg, struct vm_snapshot_meta *meta)
 {
+	struct umouse_report report;
+	uint32_t magic, version;
+	uint16_t x, y;
+	uint8_t feature, idle, newdata, polling, protocol;
+	uint8_t buttons, z;
 	int ret;
 	struct umouse_softc *sc;
 
+	if (scarg == NULL || meta == NULL)
+		return (EINVAL);
 	sc = scarg;
+	pthread_mutex_lock(&sc->mtx);
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->um_report, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->newdata, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->hid.idle, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->hid.protocol, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->hid.feature, meta, ret, done);
-
-	SNAPSHOT_VAR_OR_LEAVE(sc->polling, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->prev_evt.tv_sec, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->prev_evt.tv_usec, meta, ret, done);
+	magic = UMOUSE_SNAPSHOT_MAGIC;
+	version = UMOUSE_SNAPSHOT_VERSION;
+	report = sc->um_report;
+	buttons = report.buttons;
+	x = (uint16_t)report.x;
+	y = (uint16_t)report.y;
+	z = (uint8_t)report.z;
+	newdata = (uint8_t)sc->newdata;
+	idle = sc->hid.idle;
+	protocol = sc->hid.protocol;
+	feature = sc->hid.feature;
+	polling = (uint8_t)sc->polling;
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
+	    (magic != UMOUSE_SNAPSHOT_MAGIC ||
+	    version != UMOUSE_SNAPSHOT_VERSION)) {
+		ret = ENOTSUP;
+		goto done;
+	}
+	SNAPSHOT_U8_OR_LEAVE(buttons, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(x, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(y, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(z, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(newdata, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(idle, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(protocol, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(feature, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(polling, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
+	    (newdata > 1 || polling != 0 || protocol > 1 ||
+	    (feature != 0 && feature != UF_DEVICE_REMOTE_WAKEUP) ||
+	    (buttons & ~UINT8_C(0x07)) != 0 ||
+	    (int8_t)z < -1 || (int8_t)z > 1 ||
+	    (int16_t)x < 0 || (int16_t)x > MOUSE_MAX_X ||
+	    (int16_t)y < 0 || (int16_t)y > MOUSE_MAX_Y)) {
+		ret = EINVAL;
+		goto done;
+	}
+	if (vm_snapshot_is_restoring(meta)) {
+		report.buttons = buttons;
+		report.x = (int16_t)x;
+		report.y = (int16_t)y;
+		report.z = (int8_t)z;
+		sc->um_report = report;
+		sc->newdata = newdata;
+		sc->hid.idle = idle;
+		sc->hid.protocol = protocol;
+		sc->hid.feature = feature;
+		sc->polling = polling;
+	}
 
 done:
+	pthread_mutex_unlock(&sc->mtx);
 	return (ret);
 }
 #endif

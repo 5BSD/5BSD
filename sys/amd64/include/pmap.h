@@ -343,9 +343,28 @@ struct pmap {
 #define	PMAP_EMULATE_AD_BITS	(1 << 9)	/* needs A/D bits emulation */
 #define	PMAP_SUPPORTS_EXEC_ONLY	(1 << 10)	/* execute only mappings ok */
 
+#define	PMAP_EPT_PERM_READ	0x01
+#define	PMAP_EPT_PERM_WRITE	0x02
+#define	PMAP_EPT_PERM_EXECUTE	0x04
+#define	PMAP_EPT_PERM_MASK	0x07
+
 typedef struct pmap	*pmap_t;
 
 #ifdef _KERNEL
+
+/*
+ * A by-value result for one hardware guest-page-table leaf.  This is a
+ * machine-private building block for VMM dirty-log collection, not a guest
+ * ABI.  pgl_base and pgl_size describe the leaf containing the requested
+ * guest physical address; a dirty 2 MiB or 1 GiB leaf must be expanded by a
+ * higher layer into its canonical 4 KiB reporting units.
+ */
+struct pmap_guest_dirty_leaf {
+	vm_offset_t	pgl_base;
+	vm_size_t	pgl_size;
+	bool		pgl_dirty;
+};
+
 extern struct pmap	kernel_pmap_store;
 #define kernel_pmap	(&kernel_pmap_store)
 
@@ -362,6 +381,10 @@ extern struct pmap	kernel_pmap_store;
 
 int	pmap_pinit_type(pmap_t pmap, enum pmap_type pm_type, int flags);
 int	pmap_emulate_accessed_dirty(pmap_t pmap, vm_offset_t va, int ftype);
+int	pmap_ept_set_permissions(pmap_t pmap, vm_offset_t va,
+	    u_int permissions);
+int	pmap_guest_query_dirty(pmap_t pmap, vm_offset_t va, bool clear,
+	    struct pmap_guest_dirty_leaf *leaf);
 
 extern caddr_t	CADDR1;
 extern pt_entry_t *CMAP1;

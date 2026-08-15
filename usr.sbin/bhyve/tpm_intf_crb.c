@@ -8,6 +8,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/linker_set.h>
+#include <sys/endian.h>
 
 #include <machine/vmm.h>
 
@@ -27,6 +28,7 @@
 #include "qemu_fwcfg.h"
 #include "tpm_device.h"
 #include "tpm_intf.h"
+#include "tpm_intf_crb_model.h"
 
 #define TPM_CRB_ADDRESS 0xFED40000
 #define TPM_CRB_REGS_SIZE 0x1000
@@ -38,8 +40,6 @@
 #define TPM_CRB_DATA_BUFFER_ADDRESS \
 	(TPM_CRB_ADDRESS + offsetof(struct tpm_crb_regs, data_buffer))
 #define TPM_CRB_DATA_BUFFER_SIZE 0xF80
-
-#define TPM_CRB_LOCALITIES_MAX 5
 
 #define TPM_CRB_LOG_AREA_MINIMUM_SIZE (64 * 1024)
 
@@ -177,14 +177,90 @@ struct tpm_cmd_hdr {
 struct tpm_crb {
 	struct tpm_emul *emul;
 	void *emul_sc;
-	uint8_t tpm_log_area[TPM_CRB_LOG_AREA_MINIMUM_SIZE];
+	uint8_t *tpm_log_area;
 	struct tpm_crb_regs regs;
 	pthread_t thread;
 	pthread_mutex_t mutex;
 	pthread_cond_t cond;
 	bool closing;
+	bool mmio_registered;
+	bool mutex_initialized;
+	bool cond_initialized;
+	bool thread_started;
 };
 
+static void
+tpm_crb_fail_locked(struct tpm_crb *crb)
+{
+
+	memset(crb->regs.data_buffer, 0, sizeof(crb->regs.data_buffer));
+	crb->regs.ctrl_sts.tpm_sts = true;
+	crb->regs.ctrl_start.start = false;
+}
+
+static void
+tpm_crb_execute_locked(struct tpm_crb *crb)
+{
+	uint8_t cmd[TPM_CRB_DATA_BUFFER_SIZE];
+	uint8_t rsp[TPM_CRB_DATA_BUFFER_SIZE] = { 0 };
+	uint64_t cmd_addr, rsp_addr, cmd_off, rsp_off;
+	uint32_t cmd_size, rsp_size, request_size;
+	int error;
+
+	cmd_addr = CRB_CMD_ADDR_READ(crb->regs);
+	rsp_addr = CRB_RSP_ADDR_READ(crb->regs);
+	cmd_size = CRB_CMD_SIZE_READ(crb->regs);
+	rsp_size = CRB_RSP_SIZE_READ(crb->regs);
+
+	if (cmd_addr < TPM_CRB_DATA_BUFFER_ADDRESS ||
+	    cmd_addr > TPM_CRB_DATA_BUFFER_ADDRESS + TPM_CRB_DATA_BUFFER_SIZE ||
+	    cmd_size < sizeof(struct tpm_cmd_hdr) ||
+	    cmd_size > TPM_CRB_DATA_BUFFER_SIZE ||
+	    cmd_size > TPM_CRB_DATA_BUFFER_ADDRESS + TPM_CRB_DATA_BUFFER_SIZE -
+	    cmd_addr || rsp_addr < TPM_CRB_DATA_BUFFER_ADDRESS ||
+	    rsp_addr > TPM_CRB_DATA_BUFFER_ADDRESS + TPM_CRB_DATA_BUFFER_SIZE ||
+	    rsp_size < sizeof(struct tpm_cmd_hdr) ||
+	    rsp_size > TPM_CRB_DATA_BUFFER_SIZE ||
+	    rsp_size > TPM_CRB_DATA_BUFFER_ADDRESS + TPM_CRB_DATA_BUFFER_SIZE -
+	    rsp_addr) {
+		warnx("%s: invalid command/response buffer", __func__);
+		tpm_crb_fail_locked(crb);
+		return;
+	}
+
+	cmd_off = cmd_addr - TPM_CRB_DATA_BUFFER_ADDRESS;
+	rsp_off = rsp_addr - TPM_CRB_DATA_BUFFER_ADDRESS;
+	memcpy(cmd, &crb->regs.data_buffer[cmd_off], cmd_size);
+	request_size = be32dec(cmd + offsetof(struct tpm_cmd_hdr, len));
+	if (request_size < sizeof(struct tpm_cmd_hdr) ||
+	    request_size > cmd_size) {
+		warnx("%s: invalid TPM request header", __func__);
+		tpm_crb_fail_locked(crb);
+		return;
+	}
+
+	/* The backend may block for seconds.  It no longer needs guest state. */
+	pthread_mutex_unlock(&crb->mutex);
+	error = crb->emul->execute_cmd(crb->emul_sc, cmd, request_size, rsp,
+	    rsp_size);
+	pthread_mutex_lock(&crb->mutex);
+
+	if (error != 0) {
+		/* Return a well-formed TPM2 failure response when the transport
+		 * failed, while also exposing the CRB error status. */
+		memset(rsp, 0, rsp_size);
+		be16enc(rsp, 0x8001); /* TPM_ST_NO_SESSIONS */
+		be32enc(rsp + 2, sizeof(struct tpm_cmd_hdr));
+		be32enc(rsp + 6, 0x101); /* TPM_RC_FAILURE */
+		crb->regs.ctrl_sts.tpm_sts = true;
+	} else {
+		crb->regs.ctrl_sts.tpm_sts = false;
+	}
+
+	memset(crb->regs.data_buffer, 0, sizeof(crb->regs.data_buffer));
+	memcpy(&crb->regs.data_buffer[rsp_off], rsp, rsp_size);
+	crb->regs.ctrl_start.start = false;
+}
 
 static void *
 tpm_crb_thread(void *const arg)
@@ -193,99 +269,11 @@ tpm_crb_thread(void *const arg)
 
 	pthread_mutex_lock(&crb->mutex);
 	for (;;) {
-		/*
-		 * We're releasing the lock after wake up. Therefore, we have to
-		 * check the closing condition before and after going to sleep.
-		 */
+		while (!crb->closing && !crb->regs.ctrl_start.start)
+			pthread_cond_wait(&crb->cond, &crb->mutex);
 		if (crb->closing)
 			break;
-
-		pthread_cond_wait(&crb->cond, &crb->mutex);
-
-		if (crb->closing)
-			break;
-
-		const uint64_t cmd_addr = CRB_CMD_ADDR_READ(crb->regs);
-		const uint64_t rsp_addr = CRB_RSP_ADDR_READ(crb->regs);
-		const uint32_t cmd_size = CRB_CMD_SIZE_READ(crb->regs);
-		const uint32_t rsp_size = CRB_RSP_SIZE_READ(crb->regs);
-
-		if ((cmd_addr < TPM_CRB_DATA_BUFFER_ADDRESS) ||
-		    (cmd_size < sizeof (struct tpm_cmd_hdr)) ||
-		    (cmd_size > TPM_CRB_DATA_BUFFER_SIZE) ||
-		    (cmd_addr + cmd_size >
-		     TPM_CRB_DATA_BUFFER_ADDRESS + TPM_CRB_DATA_BUFFER_SIZE)) {
-			warnx("%s: invalid cmd [%16lx/%8x] outside of TPM "
-			    "buffer", __func__, cmd_addr, cmd_size);
-			break;
-		}
-
-		if ((rsp_addr < TPM_CRB_DATA_BUFFER_ADDRESS) ||
-		    (rsp_size < sizeof (struct tpm_cmd_hdr)) ||
-		    (rsp_size > TPM_CRB_DATA_BUFFER_SIZE) ||
-		    (rsp_addr + rsp_size >
-		     TPM_CRB_DATA_BUFFER_ADDRESS + TPM_CRB_DATA_BUFFER_SIZE)) {
-			warnx("%s: invalid rsp [%16lx/%8x] outside of TPM "
-			    "buffer", __func__, rsp_addr, rsp_size);
-			break;
-		}
-
-		const uint64_t cmd_off = cmd_addr - TPM_CRB_DATA_BUFFER_ADDRESS;
-		const uint64_t rsp_off = rsp_addr - TPM_CRB_DATA_BUFFER_ADDRESS;
-
-		if (cmd_off > TPM_CRB_DATA_BUFFER_SIZE ||
-		    cmd_off + cmd_size > TPM_CRB_DATA_BUFFER_SIZE ||
-		    rsp_off > TPM_CRB_DATA_BUFFER_SIZE ||
-		    rsp_off + rsp_size > TPM_CRB_DATA_BUFFER_SIZE) {
-			warnx(
-			    "%s: invalid cmd [%16lx, %16lx] --> [%16lx, %16lx]\n\r",
-			    __func__, cmd_addr, cmd_addr + cmd_size, rsp_addr,
-			    rsp_addr + rsp_size);
-			break;
-		}
-
-		uint8_t cmd[TPM_CRB_DATA_BUFFER_SIZE];
-		memcpy(cmd, crb->regs.data_buffer, TPM_CRB_DATA_BUFFER_SIZE);
-
-		/*
-		 * Do a basic sanity check of the TPM request header. We'll need
-		 * the TPM request length for execute_cmd() below.
-		 */
-		struct tpm_cmd_hdr *req = (struct tpm_cmd_hdr *)&cmd[cmd_off];
-		if (be32toh(req->len) < sizeof (struct tpm_cmd_hdr) ||
-		    be32toh(req->len) > cmd_size) {
-			warnx("%s: invalid TPM request header", __func__);
-			break;
-		}
-
-		/*
-		 * A TPM command can take multiple seconds to execute. As we've
-		 * copied all required values and buffers at this point, we can
-		 * release the mutex.
-		 */
-		pthread_mutex_unlock(&crb->mutex);
-
-		/*
-		 * The command response buffer interface uses a single buffer
-		 * for sending a command to and receiving a response from the
-		 * tpm. To avoid reading old data from the command buffer which
-		 * might be a security issue, we zero out the command buffer
-		 * before writing the response into it. The rsp_size parameter
-		 * is controlled by the guest and it's not guaranteed that the
-		 * response has a size of rsp_size (e.g. if the tpm returned an
-		 * error, the response would have a different size than
-		 * expected). For that reason, use a second buffer for the
-		 * response.
-		 */
-		uint8_t rsp[TPM_CRB_DATA_BUFFER_SIZE] = { 0 };
-		(void) crb->emul->execute_cmd(crb->emul_sc, req,
-		    be32toh(req->len), &rsp[rsp_off], rsp_size);
-
-		pthread_mutex_lock(&crb->mutex);
-		memset(crb->regs.data_buffer, 0, TPM_CRB_DATA_BUFFER_SIZE);
-		memcpy(&crb->regs.data_buffer[rsp_off], &rsp[rsp_off], rsp_size);
-
-		crb->regs.ctrl_start.start = false;
+		tpm_crb_execute_locked(crb);
 	}
 	pthread_mutex_unlock(&crb->mutex);
 
@@ -309,9 +297,12 @@ tpm_crb_mem_handler(struct vcpu *vcpu __unused, const int dir,
 {
 	struct tpm_crb *crb;
 	uint8_t *ptr;
-	uint64_t off, shift;
+	uint64_t off;
+	uint32_t decoded;
 	int error = 0;
 
+	if (!(size == 1 || size == 2 || size == 4 || size == 8))
+		return (EINVAL);
 	if ((addr & (size - 1)) != 0) {
 		warnx("%s: unaligned %s access @ %16lx [size = %x]", __func__,
 		    (dir == MEM_F_READ) ? "read" : "write", addr, size);
@@ -320,29 +311,34 @@ tpm_crb_mem_handler(struct vcpu *vcpu __unused, const int dir,
 
 	crb = arg1;
 
+	if (addr < TPM_CRB_ADDRESS)
+		return (EINVAL);
 	off = addr - TPM_CRB_ADDRESS;
-	if (off > TPM_CRB_REGS_SIZE || off + size >= TPM_CRB_REGS_SIZE) {
+	if (off > TPM_CRB_REGS_SIZE ||
+	    (uint64_t)size > TPM_CRB_REGS_SIZE - off) {
 		return (EINVAL);
 	}
 
-	shift = 8 * (off & 3);
 	ptr = (uint8_t *)&crb->regs + off;
 
 	if (dir == MEM_F_READ) {
+		*val = 0;
+		pthread_mutex_lock(&crb->mutex);
 		error = tpm_crb_mmiocpy(val, ptr, size);
+		pthread_mutex_unlock(&crb->mutex);
 		if (error)
 			goto err_out;
 	} else {
 		switch (off & ~0x3) {
 		case offsetof(struct tpm_crb_regs, loc_ctrl): {
-			union tpm_crb_reg_loc_ctrl loc_ctrl;
+			union tpm_crb_reg_loc_ctrl loc_ctrl = { 0 };
 
-			if ((size_t)size > sizeof(loc_ctrl))
+			if (tpm_crb_control_write_decode(*val, off & 3, size,
+			    &decoded) != 0)
 				goto err_out;
+			loc_ctrl.val = decoded;
 
-			*val = *val << shift;
-			tpm_crb_mmiocpy(&loc_ctrl, val, size);
-
+			pthread_mutex_lock(&crb->mutex);
 			if (loc_ctrl.relinquish) {
 				crb->regs.loc_sts.granted = false;
 				crb->regs.loc_state.loc_assigned = false;
@@ -350,23 +346,26 @@ tpm_crb_mem_handler(struct vcpu *vcpu __unused, const int dir,
 				crb->regs.loc_sts.granted = true;
 				crb->regs.loc_state.loc_assigned = true;
 			}
+			pthread_mutex_unlock(&crb->mutex);
 
 			break;
 		}
 		case offsetof(struct tpm_crb_regs, ctrl_req): {
-			union tpm_crb_reg_ctrl_req req;
+			union tpm_crb_reg_ctrl_req req = { 0 };
 
-			if ((size_t)size > sizeof(req))
+			if (tpm_crb_control_write_decode(*val, off & 3, size,
+			    &decoded) != 0)
 				goto err_out;
+			req.val = decoded;
 
-			*val = *val << shift;
-			tpm_crb_mmiocpy(&req, val, size);
-
+			pthread_mutex_lock(&crb->mutex);
 			if (req.cmd_ready && !req.go_idle) {
 				crb->regs.ctrl_sts.tpm_idle = false;
+				crb->regs.ctrl_sts.tpm_sts = false;
 			} else if (!req.cmd_ready && req.go_idle) {
 				crb->regs.ctrl_sts.tpm_idle = true;
 			}
+			pthread_mutex_unlock(&crb->mutex);
 
 			break;
 		}
@@ -383,16 +382,14 @@ tpm_crb_mem_handler(struct vcpu *vcpu __unused, const int dir,
 			break;
 
 		case offsetof(struct tpm_crb_regs, ctrl_start): {
-			union tpm_crb_reg_ctrl_start start;
+			union tpm_crb_reg_ctrl_start start = { 0 };
 
-			if ((size_t)size > sizeof(start))
+			if (tpm_crb_control_write_decode(*val, off & 3, size,
+			    &decoded) != 0)
 				goto err_out;
-
-			*val = *val << shift;
+			start.val = decoded;
 
 			pthread_mutex_lock(&crb->mutex);
-			tpm_crb_mmiocpy(&start, val, size);
-
 			if (!start.start || crb->regs.ctrl_start.start) {
 				pthread_mutex_unlock(&crb->mutex);
 				break;
@@ -451,7 +448,7 @@ tpm_crb_modify_mmio_registration(const bool registration, void *const arg1)
 	struct mem_range crb_mmio = {
 		.name = "crb-mmio",
 		.base = TPM_CRB_ADDRESS,
-		.size = TPM_CRB_LOCALITIES_MAX * TPM_CRB_CONTROL_AREA_SIZE,
+		.size = TPM_CRB_CONTROL_AREA_SIZE,
 		.flags = MEM_F_RW,
 		.arg1 = arg1,
 		.handler = tpm_crb_mem_handler,
@@ -484,6 +481,11 @@ tpm_crb_init(void **sc, struct tpm_emul *emul, void *emul_sc,
 
 	crb->emul = emul;
 	crb->emul_sc = emul_sc;
+	crb->tpm_log_area = calloc(1, TPM_CRB_LOG_AREA_MINIMUM_SIZE);
+	if (crb->tpm_log_area == NULL) {
+		error = ENOMEM;
+		goto err_out;
+	}
 
 	crb->regs.loc_state.tpm_req_valid_sts = true;
 	crb->regs.loc_state.tpm_established = true;
@@ -509,51 +511,72 @@ tpm_crb_init(void **sc, struct tpm_emul *emul, void *emul_sc,
 	CRB_RSP_SIZE_WRITE(crb->regs, TPM_CRB_DATA_BUFFER_SIZE);
 	CRB_RSP_ADDR_WRITE(crb->regs, TPM_CRB_DATA_BUFFER_ADDRESS);
 
-	error = qemu_fwcfg_add_file(TPM_CRB_LOG_AREA_FWCFG_NAME,
-	    TPM_CRB_LOG_AREA_MINIMUM_SIZE, crb->tpm_log_area);
-	if (error) {
-		warnx("%s: failed to add fwcfg file", __func__);
-		goto err_out;
-	}
-
-	error = acpi_device_add_res_fixed_memory32(acpi_dev, false,
-	    TPM_CRB_ADDRESS, TPM_CRB_CONTROL_AREA_SIZE);
-	if (error) {
-		warnx("%s: failed to add acpi resources\n", __func__);
-		goto err_out;
-	}
-
-	error = tpm_crb_modify_mmio_registration(true, crb);
-	if (error) {
-		warnx("%s: failed to register crb mmio", __func__);
-		goto err_out;
-	}
-
 	error = pthread_mutex_init(&crb->mutex, NULL);
 	if (error) {
 		warnc(error, "%s: failed to init mutex", __func__);
 		goto err_out;
 	}
+	crb->mutex_initialized = true;
 
 	error = pthread_cond_init(&crb->cond, NULL);
 	if (error) {
 		warnc(error, "%s: failed to init cond", __func__);
 		goto err_out;
 	}
+	crb->cond_initialized = true;
+
+	error = tpm_crb_modify_mmio_registration(true, crb);
+	if (error) {
+		warnx("%s: failed to register crb mmio", __func__);
+		goto err_out;
+	}
+	crb->mmio_registered = true;
 
 	error = pthread_create(&crb->thread, NULL, tpm_crb_thread, crb);
 	if (error) {
-		warnx("%s: failed to create thread\n", __func__);
+		warnc(error, "%s: failed to create thread", __func__);
+		goto err_out;
+	}
+	crb->thread_started = true;
+
+	pthread_set_name_np(crb->thread, "tpm_intf_crb");
+
+	error = acpi_device_add_res_fixed_memory32(acpi_dev, false,
+	    TPM_CRB_ADDRESS, TPM_CRB_CONTROL_AREA_SIZE);
+	if (error) {
+		warnx("%s: failed to add acpi resources", __func__);
 		goto err_out;
 	}
 
-	pthread_set_name_np(crb->thread, "tpm_intf_crb");
+	error = qemu_fwcfg_add_file(TPM_CRB_LOG_AREA_FWCFG_NAME,
+	    TPM_CRB_LOG_AREA_MINIMUM_SIZE, crb->tpm_log_area);
+	if (error) {
+		warnx("%s: failed to add fwcfg file", __func__);
+		goto err_out;
+	}
+	/* qemu_fwcfg owns the backing allocation after publication. */
+	crb->tpm_log_area = NULL;
 
 	*sc = crb;
 
 	return (0);
 
 err_out:
+	if (crb != NULL && crb->thread_started) {
+		pthread_mutex_lock(&crb->mutex);
+		crb->closing = true;
+		pthread_cond_signal(&crb->cond);
+		pthread_mutex_unlock(&crb->mutex);
+		(void)pthread_join(crb->thread, NULL);
+	}
+	if (crb != NULL && crb->mmio_registered)
+		(void)tpm_crb_modify_mmio_registration(false, NULL);
+	if (crb != NULL && crb->cond_initialized)
+		(void)pthread_cond_destroy(&crb->cond);
+	if (crb != NULL && crb->mutex_initialized)
+		(void)pthread_mutex_destroy(&crb->mutex);
+	if (crb != NULL)
+		free(crb->tpm_log_area);
 	free(crb);
 
 	return (error);
@@ -571,15 +594,18 @@ tpm_crb_deinit(void *sc)
 
 	crb = sc;
 
+	pthread_mutex_lock(&crb->mutex);
 	crb->closing = true;
 	pthread_cond_signal(&crb->cond);
-	pthread_join(crb->thread, NULL);
+	pthread_mutex_unlock(&crb->mutex);
+	(void)pthread_join(crb->thread, NULL);
 
 	pthread_cond_destroy(&crb->cond);
 	pthread_mutex_destroy(&crb->mutex);
 
 	error = tpm_crb_modify_mmio_registration(false, NULL);
-	assert(error == 0);
+	if (error != 0)
+		warnc(error, "%s: failed to unregister CRB MMIO", __func__);
 
 	free(crb);
 }

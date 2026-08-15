@@ -230,7 +230,7 @@ l9p_socket_readmsg(struct l9p_socket_softc *sc, void **buf, size_t *size)
 	ret = xread(fd, buffer, sizeof(uint32_t));
 	if (ret < 0) {
 		L9P_LOG(L9P_ERROR, "read(): %s", strerror(errno));
-		return (-1);
+		goto fail;
 	}
 
 	if (ret != sizeof(uint32_t)) {
@@ -240,23 +240,47 @@ l9p_socket_readmsg(struct l9p_socket_softc *sc, void **buf, size_t *size)
 			L9P_LOG(L9P_ERROR,
 			    "short read: %zd bytes of %zd expected",
 			    ret, sizeof(uint32_t));
-		return (-1);
+		goto fail;
 	}
 
 	msize = le32toh(*(uint32_t *)buffer);
+	/*
+	 * The wire size includes the 4-byte size field itself.  Reject a
+	 * frame that cannot contain even that field before the unsigned
+	 * subtraction below wraps and drives an unbounded read into a
+	 * short buffer.
+	 */
+	if (msize < sizeof(uint32_t)) {
+		L9P_LOG(L9P_ERROR, "invalid message size: %u", msize);
+		goto fail;
+	}
+	/*
+	 * Bound the frame by the connection's maximum message size before
+	 * allocating.  lc_msize is the negotiated maximum after Tversion and
+	 * the server's advertised default (L9P_DEFAULT_MSIZE) before it, so a
+	 * legitimate peer never exceeds it (the initial Tversion is tiny and
+	 * negotiation can only lower msize).  Rejecting here stops a malicious
+	 * peer from using a forged size field to force a multi-gigabyte
+	 * l9p_realloc(), which would abort() the server on failure.
+	 */
+	if (msize > sc->ls_conn->lc_msize) {
+		L9P_LOG(L9P_ERROR, "message size %u exceeds max %u", msize,
+		    sc->ls_conn->lc_msize);
+		goto fail;
+	}
 	toread = msize - sizeof(uint32_t);
 	buffer = l9p_realloc(buffer, msize);
 
 	ret = xread(fd, (char *)buffer + sizeof(uint32_t), toread);
 	if (ret < 0) {
 		L9P_LOG(L9P_ERROR, "read(): %s", strerror(errno));
-		return (-1);
+		goto fail;
 	}
 
 	if (ret != (ssize_t)toread) {
 		L9P_LOG(L9P_ERROR, "short read: %zd bytes of %zd expected",
 		    ret, toread);
-		return (-1);
+		goto fail;
 	}
 
 	*size = msize;
@@ -265,6 +289,15 @@ l9p_socket_readmsg(struct l9p_socket_softc *sc, void **buf, size_t *size)
 	    (void *)sc->ls_conn, buffer, msize);
 
 	return (0);
+
+fail:
+	/*
+	 * The caller only frees the buffer on success (it receives it via
+	 * *buf).  Release it here on every error/EOF path so a connection
+	 * that closes -- the normal case -- does not leak its read buffer.
+	 */
+	free(buffer);
+	return (-1);
 }
 
 static int

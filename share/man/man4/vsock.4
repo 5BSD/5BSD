@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 24, 2026
+.Dd July 29, 2026
 .Dt VSOCK 4
 .Os
 .Sh NAME
@@ -297,7 +297,9 @@ The
 .Dv VSOCK_IOC_TRANSPORT_ATTACH
 and
 .Dv VSOCK_IOC_TRANSPORT_SET_FEATURES
-feature fields contain only
+requests use versioned, reserved-zero structures so future revisions cannot
+silently reinterpret the current ABI.
+The feature fields contain only
 .Dv VIRTIO_VSOCK_F_*
 device-specific bits.
 Common VirtIO transport and ring bits, such as
@@ -330,6 +332,54 @@ guest CID; other attached guests remain active.
 Changing a provider's negotiated socket-type features also resets existing
 connections to that CID before publishing the new feature set.
 The
+.Dv VSOCK_IOC_TRANSPORT_RESET
+operation advances the provider epoch, discards queued packets, resets only
+connections for that provider CID, clears negotiated socket-type features,
+and releases a checkpoint fence.
+Both reset and
+.Dv VSOCK_IOC_TRANSPORT_SET_FEATURES
+wait for copies that already crossed the provider boundary, but the wait is
+bounded to 30 seconds.
+If a copy remains stalled, the ioctl returns
+.Er EWOULDBLOCK
+without publishing the requested reset or feature change and may be retried.
+.Pp
+A VMM preparing a save-state operation uses
+.Dv VSOCK_IOC_TRANSPORT_FREEZE
+with a zeroed
+.Vt vsock_transport_checkpoint
+whose version is
+.Dv VSOCK_TRANSPORT_CHECKPOINT_VERSION .
+The ioctl waits for in-flight provider copies and atomically fences new
+provider traffic.
+This wait is also bounded to 30 seconds and returns
+.Er EWOULDBLOCK
+if an in-flight copy does not drain; a failed first freeze reopens admission.
+It succeeds only when both the provider packet queue and the set of
+connections for that guest CID are empty; otherwise it returns
+.Er EBUSY
+without freezing the provider.
+While frozen,
+.Xr poll 2
+and
+.Xr kqueue 2
+report no provider read or write readiness.
+The owning VMM may issue
+.Dv VSOCK_IOC_TRANSPORT_SET_FEATURES
+while the empty provider remains frozen.
+Its zeroed
+.Vt vsock_transport_features
+request has version
+.Dv VSOCK_TRANSPORT_FEATURES_VERSION .
+This permits restore to reconstruct the destination provider's negotiated
+socket-type feature epoch before packet and connection admission reopen.
+The usual privilege and provider-ownership checks still apply, and changing
+the feature set advances the provider epoch exactly as it does while running.
+.Dv VSOCK_IOC_TRANSPORT_THAW
+is idempotent, releases the fence, and wakes blocked operations.
+Reserved request fields must be zero.
+This contract deliberately does not serialize active kernel socket state.
+The
 .Xr bhyve 8
 .Cm virtio-vsock
 device selects this interface with
@@ -340,7 +390,7 @@ The following
 variables control default parameters for the
 .Dv AF_VSOCK
 domain:
-.Bl -tag -width "kern.vsock.seqpacket_frag_max"
+.Bl -tag -width "kern.vsock.max_connections_per_cid"
 .It Va kern.vsock.buf_default
 Default buffer size in bytes for new sockets.
 This is the initial value advertised to the peer for credit-based flow control.
@@ -371,10 +421,24 @@ by the per-connection buffer capacity
 Default: 256.
 .It Va kern.vsock.max_connections
 Maximum number of simultaneously connected PCBs.
-Inbound connection requests that would exceed this ceiling are refused with a
-reset, providing a fleet-safe backstop against connection-table growth driven
-by a malicious peer, independent of per-listener backlog limits.
+Connecting and established inbound, outbound, and loopback PCBs all consume
+this budget.
+Loopback connections reserve two entries before creating the accepted socket.
+Inbound requests that would exceed the ceiling are refused with a reset;
+locally initiated remote connections fail with
+.Er ENOBUFS .
+This provides a fleet-safe backstop against connection-table growth,
+independent of per-listener backlog limits.
 Default: 16384.
+.It Va kern.vsock.max_connections_per_cid
+Maximum number of connecting and established PCBs whose remote endpoint has
+the same CID.
+The limit is enforced together with
+.Va kern.vsock.max_connections
+for inbound and outbound connections and for both sides of a loopback
+connection.
+A value of 0 disables the per-CID limit without disabling the global ceiling.
+Default: 1024.
 .It Va kern.vsock.userspace_providers
 Read-only count of guest-CID providers currently attached through
 .Pa /dev/vsock .
@@ -492,6 +556,11 @@ The VMM transport reset its guest-facing state (arg: guest CID).
 .It Li provider-features
 The VMM updated its negotiated device features
 (args: guest CID, features).
+.It Li provider-freeze
+The VMM established an empty-provider checkpoint fence
+(args: guest CID, queued packets, active connections).
+.It Li provider-thaw
+The VMM released a checkpoint fence (arg: guest CID).
 .It Li provider-enqueue
 The kernel queued a complete packet for the VMM to read
 (args: guest CID, operation, payload length, queue depth).

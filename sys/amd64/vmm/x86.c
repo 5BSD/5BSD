@@ -44,16 +44,36 @@
 
 #include "vmm_host.h"
 #include "vmm_util.h"
+#include "vpvclock.h"
 #include "x86.h"
+#include "x86_cpuid.h"
 
 SYSCTL_DECL(_hw_vmm);
 static SYSCTL_NODE(_hw_vmm, OID_AUTO, topology, CTLFLAG_RD | CTLFLAG_MPSAFE, 0,
     NULL);
 
 #define CPUID_VM_SIGNATURE	0x40000000
-#define	CPUID_VM_HIGH		CPUID_BHYVE_FEATURES
+
+/*
+ * When the KVM paravirtual clock interface is advertised, the KVM signature
+ * occupies the base hypervisor leaf (0x40000000) with its feature leaf at
+ * 0x40000001 -- the fixed locations the guest kvm_clock driver assumes.  The
+ * bhyve signature is also written to a secondary block (0x40000100), mirroring
+ * how QEMU lays out multiple paravirtual interfaces, but that block is NOT
+ * actually discoverable by a stock guest: identify_hypervisor_cpuid_base() in
+ * sys/x86/x86/identcpu.c stops scanning at the first signature it recognizes --
+ * which is KVM at 0x40000000 -- and never advances to 0x40000100.  bhyve's
+ * EXT_DEST_ID capability is therefore preserved for the guest not through the
+ * secondary block but through the KVM feature bit KVM_FEATURE_MSI_EXT_DEST_ID
+ * advertised in the KVM feature leaf (see vpvclock_kvm_features()).  When the
+ * interface is disabled the historical single-block bhyve layout is used
+ * unchanged.
+ */
+#define	CPUID_BHYVE_SIGNATURE_ALT	0x40000100
+#define	CPUID_BHYVE_FEATURES_ALT	0x40000101
 
 static const char bhyve_id[12] = "bhyve bhyve ";
+static const char kvm_id[12] = "KVMKVMKVM";	/* "KVMKVMKVM\0\0\0" */
 
 static uint64_t bhyve_xcpuids;
 SYSCTL_ULONG(_hw_vmm, OID_AUTO, bhyve_xcpuids, CTLFLAG_RW, &bhyve_xcpuids, 0,
@@ -73,19 +93,28 @@ log2(u_int x)
 	return (x == 0 ? -1 : order_base_2(x));
 }
 
-int
-x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
-    uint64_t *rcx, uint64_t *rdx)
+static int
+x86_emulate_cpuid_impl(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
+    uint64_t *rcx, uint64_t *rdx, bool baseline)
 {
 	struct vm *vm = vcpu_vm(vcpu);
 	int vcpu_id = vcpu_vcpuid(vcpu);
 	const struct xsave_limits *limits;
 	uint64_t cr4;
 	int error, enable_invpcid, enable_rdpid, enable_rdtscp, level,
-	    width, x2apic_id;
+	    nested_vmx, width;
 	unsigned int func, regs[4], logical_cpus, param;
 	enum x2apic_state x2apic_state;
 	uint16_t cores, maxcpus, sockets, threads;
+	bool pvclock;
+	u_int vm_high;
+
+	/*
+	 * Whether to advertise the KVM paravirtual clock interface, which also
+	 * determines the layout of the hypervisor CPUID leaves (see above).
+	 */
+	pvclock = vpvclock_capable();
+	vm_high = pvclock ? CPUID_BHYVE_FEATURES_ALT : CPUID_BHYVE_FEATURES;
 
 	/*
 	 * The function of CPUID is controlled through the provided value of
@@ -104,8 +133,8 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 		if (func > cpu_exthigh)
 			func = cpu_exthigh;
 	} else if (func >= CPUID_VM_SIGNATURE) {
-		if (func > CPUID_VM_HIGH)
-			func = CPUID_VM_HIGH;
+		if (func > vm_high)
+			func = vm_high;
 	} else if (func > cpu_high) {
 		func = cpu_high;
 	}
@@ -131,6 +160,13 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			break;
 		case CPUID_8000_0008:
 			cpuid_count(func, param, regs);
+			/*
+			 * Variable MTRR address fields currently expose at most 52
+			 * physical-address bits.  Keep the guest's MAXPHYADDR in
+			 * lockstep with the width enforced by its emulated MSRs.
+			 */
+			regs[0] = (regs[0] & ~0xffU) |
+			    vm_mtrr_maxphyaddr(regs[0] & 0xffU);
 			if (vmm_is_svm()) {
 				/*
 				 * As on Intel (0000_0007:0, EDX), mask out
@@ -303,10 +339,14 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 		case CPUID_0000_0001:
 			do_cpuid(1, regs);
 
-			error = vm_get_x2apic_state(vcpu, &x2apic_state);
-			if (error) {
-				panic("x86_emulate_cpuid: error %d "
-				      "fetching x2apic state", error);
+			if (baseline)
+				x2apic_state = X2APIC_DISABLED;
+			else {
+				error = vm_get_x2apic_state(vcpu, &x2apic_state);
+				if (error) {
+					panic("x86_emulate_cpuid: error %d "
+					    "fetching x2apic state", error);
+				}
 			}
 
 			/*
@@ -316,10 +356,22 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			regs[1] |= (vcpu_id << CPUID_0000_0001_APICID_SHIFT);
 
 			/*
-			 * Don't expose VMX, SpeedStep, TME or SMX capability.
+			 * VMX is exposed only through the explicit backend
+			 * capability.  The Intel backend additionally requires
+			 * the boot-time host policy and its complete nested
+			 * implementation predicate; AMD reports this capability
+			 * unsupported.
+			 */
+			error = vm_get_capability(vcpu, VM_CAP_NESTED_VMX,
+			    &nested_vmx);
+			if (error != 0 || nested_vmx == 0)
+				regs[2] &= ~CPUID2_VMX;
+
+			/*
+			 * Don't expose SpeedStep, TME or SMX capability.
 			 * Advertise x2APIC capability and Hypervisor guest.
 			 */
-			regs[2] &= ~(CPUID2_VMX | CPUID2_EST | CPUID2_TM2);
+			regs[2] &= ~(CPUID2_EST | CPUID2_TM2);
 			regs[2] &= ~(CPUID2_SMX);
 
 			regs[2] |= CPUID2_HV;
@@ -342,7 +394,7 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			 * CPUID2_OSXSAVE.
 			 */
 			regs[2] &= ~CPUID2_OSXSAVE;
-			if (regs[2] & CPUID2_XSAVE) {
+			if (!baseline && (regs[2] & CPUID2_XSAVE)) {
 				error = vm_get_register(vcpu,
 				    VM_REG_GUEST_CR4, &cr4);
 				if (error)
@@ -448,13 +500,7 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 				    CPUID_STDEXT_AVX512BW |
 				    CPUID_STDEXT_AVX512VL |
 				    CPUID_STDEXT_AVX512IFMA;
-				regs[2] &= CPUID_STDEXT2_VAES |
-				    CPUID_STDEXT2_VPCLMULQDQ |
-				    CPUID_STDEXT2_AVX512VBMI |
-				    CPUID_STDEXT2_AVX512VBMI2 |
-				    CPUID_STDEXT2_AVX512VNNI |
-				    CPUID_STDEXT2_AVX512BITALG |
-				    CPUID_STDEXT2_AVX512VPOPCNTDQ;
+				regs[2] = x86_cpuid_guest_stdext2(regs[2]);
 				regs[3] &= CPUID_STDEXT3_MD_CLEAR |
 				    CPUID_STDEXT3_AVX5124VNNIW |
 				    CPUID_STDEXT3_AVX5124FMAPS |
@@ -493,37 +539,21 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			break;
 
 		case CPUID_0000_000B:
+		case 0x1f:
 			/*
-			 * Intel processor topology enumeration
+			 * Intel processor topology enumeration.  Newer
+			 * guests prefer V2 leaf 0x1f when the basic CPUID
+			 * range contains it, so both leaves must describe
+			 * the virtual topology rather than the host.
 			 */
 			if (vmm_is_intel()) {
 				vm_get_topology(vm, &sockets, &cores, &threads,
 				    &maxcpus);
-				if (param == 0) {
-					logical_cpus = threads;
-					width = log2(logical_cpus);
-					level = CPUID_TYPE_SMT;
-					x2apic_id = vcpu_id;
-				}
-
-				if (param == 1) {
-					logical_cpus = threads * cores;
-					width = log2(logical_cpus);
-					level = CPUID_TYPE_CORE;
-					x2apic_id = vcpu_id;
-				}
-
-				if (!cpuid_leaf_b || param >= 2) {
-					width = 0;
-					logical_cpus = 0;
-					level = 0;
-					x2apic_id = 0;
-				}
-
-				regs[0] = width & 0x1f;
-				regs[1] = logical_cpus & 0xffff;
-				regs[2] = (level << 8) | (param & 0xff);
-				regs[3] = x2apic_id;
+				error = x86_cpuid_topology(func, param, cores,
+				    threads, vcpu_id, cpuid_leaf_b, regs);
+				KASSERT(error == 0,
+				    ("invalid virtual CPUID topology: %d",
+				    error));
 			} else {
 				regs[0] = 0;
 				regs[1] = 0;
@@ -551,14 +581,18 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 				 * %xcr0.  Also, claim that the
 				 * maximum save area size is
 				 * equivalent to the host's current
-				 * save area size.  Since this runs
-				 * "inside" of vmrun(), it runs with
-				 * the guest's xcr0, so the current
-				 * save area size is correct as-is.
+				 * save area size.  A compatibility
+				 * query is not a guest CPUID
+				 * execution, so canonicalize EBX to
+				 * the maximum instead of exposing
+				 * whichever XCR0 happened to be active
+				 * on the calling thread.
 				 */
 				regs[0] &= limits->xcr0_allowed;
 				regs[2] = limits->xsave_max_size;
 				regs[3] &= (limits->xcr0_allowed >> 32);
+				if (baseline)
+					regs[1] = limits->xsave_max_size;
 				break;
 			case 1:
 				/* Only permit XSAVEOPT. */
@@ -614,13 +648,52 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 			break;
 
 		case CPUID_VM_SIGNATURE:
-			regs[0] = CPUID_VM_HIGH;
+			if (pvclock) {
+				/*
+				 * KVM occupies the base leaf; %eax is the
+				 * highest leaf in the KVM block (its feature
+				 * leaf at 0x40000001).
+				 */
+				regs[0] = VPVCLOCK_CPUID_KVM_FEATURES;
+				bcopy(kvm_id, &regs[1], 4);
+				bcopy(kvm_id + 4, &regs[2], 4);
+				bcopy(kvm_id + 8, &regs[3], 4);
+			} else {
+				regs[0] = CPUID_BHYVE_FEATURES;
+				bcopy(bhyve_id, &regs[1], 4);
+				bcopy(bhyve_id + 4, &regs[2], 4);
+				bcopy(bhyve_id + 8, &regs[3], 4);
+			}
+			break;
+
+		case CPUID_BHYVE_FEATURES:
+			if (pvclock) {
+				/* KVM feature leaf (0x40000001). */
+				regs[0] = vpvclock_kvm_features();
+				regs[1] = 0;
+				regs[2] = 0;
+				regs[3] = 0;
+			} else {
+				regs[0] = CPUID_BHYVE_FEAT_EXT_DEST_ID;
+				regs[1] = 0;
+				regs[2] = 0;
+				regs[3] = 0;
+			}
+			break;
+
+		case CPUID_BHYVE_SIGNATURE_ALT:
+			/*
+			 * Preserved bhyve signature at the secondary block;
+			 * only reachable when the KVM interface is advertised
+			 * (otherwise clamped away by 'vm_high').
+			 */
+			regs[0] = CPUID_BHYVE_FEATURES_ALT;
 			bcopy(bhyve_id, &regs[1], 4);
 			bcopy(bhyve_id + 4, &regs[2], 4);
 			bcopy(bhyve_id + 8, &regs[3], 4);
 			break;
 
-		case CPUID_BHYVE_FEATURES:
+		case CPUID_BHYVE_FEATURES_ALT:
 			regs[0] = CPUID_BHYVE_FEAT_EXT_DEST_ID;
 			regs[1] = 0;
 			regs[2] = 0;
@@ -630,11 +703,28 @@ x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
 		default:
 default_leaf:
 			/*
+			 * An unhandled leaf inside the hypervisor CPUID range
+			 * (e.g. a gap between the KVM and bhyve blocks) reports
+			 * zeros rather than leaking host CPUID data.
+			 */
+			if (func >= CPUID_VM_SIGNATURE && func <= vm_high) {
+				regs[0] = 0;
+				regs[1] = 0;
+				regs[2] = 0;
+				regs[3] = 0;
+				break;
+			}
+
+			/*
 			 * The leaf value has already been clamped so
 			 * simply pass this through, keeping count of
 			 * how many unhandled leaf values have been seen.
+			 * A compatibility-baseline query is introspection,
+			 * not a guest CPUID execution, and must not perturb
+			 * that operational counter.
 			 */
-			atomic_add_long(&bhyve_xcpuids, 1);
+			if (!baseline)
+				atomic_add_long(&bhyve_xcpuids, 1);
 			cpuid_count(func, param, regs);
 			break;
 	}
@@ -648,6 +738,22 @@ default_leaf:
 	*rdx = regs[3];
 
 	return (1);
+}
+
+int
+x86_emulate_cpuid(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
+    uint64_t *rcx, uint64_t *rdx)
+{
+
+	return (x86_emulate_cpuid_impl(vcpu, rax, rbx, rcx, rdx, false));
+}
+
+int
+x86_emulate_cpuid_baseline(struct vcpu *vcpu, uint64_t *rax, uint64_t *rbx,
+    uint64_t *rcx, uint64_t *rdx)
+{
+
+	return (x86_emulate_cpuid_impl(vcpu, rax, rbx, rcx, rdx, true));
 }
 
 bool
@@ -679,86 +785,4 @@ vm_cpuid_capability(struct vcpu *vcpu, enum vm_cpuid_capability cap)
 		panic("%s: unknown vm_cpu_capability %d", __func__, cap);
 	}
 	return (rv);
-}
-
-int
-vm_rdmtrr(struct vm_mtrr *mtrr, u_int num, uint64_t *val)
-{
-	switch (num) {
-	case MSR_MTRRcap:
-		*val = MTRR_CAP_WC | MTRR_CAP_FIXED | VMM_MTRR_VAR_MAX;
-		break;
-	case MSR_MTRRdefType:
-		*val = mtrr->def_type;
-		break;
-	case MSR_MTRR4kBase ... MSR_MTRR4kBase + 7:
-		*val = mtrr->fixed4k[num - MSR_MTRR4kBase];
-		break;
-	case MSR_MTRR16kBase ... MSR_MTRR16kBase + 1:
-		*val = mtrr->fixed16k[num - MSR_MTRR16kBase];
-		break;
-	case MSR_MTRR64kBase:
-		*val = mtrr->fixed64k;
-		break;
-	case MSR_MTRRVarBase ... MSR_MTRRVarBase + (VMM_MTRR_VAR_MAX * 2) - 1: {
-		u_int offset = num - MSR_MTRRVarBase;
-		if (offset % 2 == 0) {
-			*val = mtrr->var[offset / 2].base;
-		} else {
-			*val = mtrr->var[offset / 2].mask;
-		}
-		break;
-	}
-	default:
-		return (-1);
-	}
-
-	return (0);
-}
-
-int
-vm_wrmtrr(struct vm_mtrr *mtrr, u_int num, uint64_t val)
-{
-	switch (num) {
-	case MSR_MTRRcap:
-		/* MTRRCAP is read only */
-		return (-1);
-	case MSR_MTRRdefType:
-		if (val & ~VMM_MTRR_DEF_MASK) {
-			/* generate #GP on writes to reserved fields */
-			return (-1);
-		}
-		mtrr->def_type = val;
-		break;
-	case MSR_MTRR4kBase ... MSR_MTRR4kBase + 7:
-		mtrr->fixed4k[num - MSR_MTRR4kBase] = val;
-		break;
-	case MSR_MTRR16kBase ... MSR_MTRR16kBase + 1:
-		mtrr->fixed16k[num - MSR_MTRR16kBase] = val;
-		break;
-	case MSR_MTRR64kBase:
-		mtrr->fixed64k = val;
-		break;
-	case MSR_MTRRVarBase ... MSR_MTRRVarBase + (VMM_MTRR_VAR_MAX * 2) - 1: {
-		u_int offset = num - MSR_MTRRVarBase;
-		if (offset % 2 == 0) {
-			if (val & ~VMM_MTRR_PHYSBASE_MASK) {
-				/* generate #GP on writes to reserved fields */
-				return (-1);
-			}
-			mtrr->var[offset / 2].base = val;
-		} else {
-			if (val & ~VMM_MTRR_PHYSMASK_MASK) {
-				/* generate #GP on writes to reserved fields */
-				return (-1);
-			}
-			mtrr->var[offset / 2].mask = val;
-		}
-		break;
-	}
-	default:
-		return (-1);
-	}
-
-	return (0);
 }

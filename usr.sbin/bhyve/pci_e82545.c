@@ -30,6 +30,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/endian.h>
 #ifndef WITHOUT_CAPSICUM
 #include <sys/capsicum.h>
 #endif
@@ -52,6 +53,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
+#include <time.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <pthread_np.h>
@@ -66,10 +68,12 @@
 #include "pci_emul.h"
 #ifdef BHYVE_SNAPSHOT
 #include "snapshot.h"
+#include "snapshot_identity.h"
 #endif
 #include "mevent.h"
 #include "net_utils.h"
 #include "net_backends.h"
+#include "pci_e82545_model.h"
 
 /* Hardware/register definitions XXX: move some to common code. */
 #define E82545_VENDOR_ID_INTEL			0x8086
@@ -77,6 +81,14 @@
 #define E82545_SUBDEV_ID			0x1008
 
 #define E82545_REVISION_4			4
+
+#ifdef BHYVE_SNAPSHOT
+#define	E82545_SNAPSHOT_MAGIC		0x31353445U	/* "E451" on disk */
+#define	E82545_SNAPSHOT_VERSION		2U
+#ifndef E82545_CHECKPOINT_DRAIN_TIMEOUT_SECONDS
+#define	E82545_CHECKPOINT_DRAIN_TIMEOUT_SECONDS	30
+#endif
+#endif
 
 #define E82545_MDIC_DATA_MASK			0x0000FFFF
 #define E82545_MDIC_OP_MASK			0x0c000000
@@ -279,6 +291,7 @@ struct e82545_softc {
 	pthread_cond_t	esc_tx_cond;
 	int		esc_tx_enabled;
 	int		esc_tx_active;
+	bool		esc_checkpoint_paused;
 	uint32_t	esc_TXCW;	/* x0178 transmit config */
 	uint32_t	esc_TCTL;	/* x0400 transmit ctl */
 	uint32_t	esc_TIPG;	/* x0410 inter-packet gap */
@@ -735,8 +748,8 @@ e82545_rx_update_rdba(struct e82545_softc *sc)
 	    sc->esc_RDBAL;
 
 	/* Cache host mapping of guest descriptor array */
-	sc->esc_rxdesc = paddr_guest2host(sc->esc_ctx,
-	    sc->esc_rdba, sc->esc_RDLEN);
+	sc->esc_rxdesc = pci_emul_map_dma(sc->esc_pi, sc->esc_rdba,
+	    sc->esc_RDLEN, PCI_DMA_BIDIRECTIONAL);
 }
 
 static void
@@ -765,6 +778,11 @@ e82545_rx_ctl(struct e82545_softc *sc, uint32_t val)
 			}
 
 			e82545_rx_update_rdba(sc);
+			if (sc->esc_RDLEN < sizeof(struct e1000_rx_desc) ||
+			    sc->esc_rxdesc == NULL) {
+				WPRINTF("invalid receive descriptor ring");
+				return;
+			}
 			e82545_rx_enable(sc);
 		} else {
 			e82545_rx_disable(sc);
@@ -783,23 +801,36 @@ e82545_tx_update_tdba(struct e82545_softc *sc)
 	sc->esc_tdba = (uint64_t)sc->esc_TDBAH << 32 | sc->esc_TDBAL;
 
 	/* Cache host mapping of guest descriptor array */
-	sc->esc_txdesc = paddr_guest2host(sc->esc_ctx, sc->esc_tdba,
-            sc->esc_TDLEN);
+	sc->esc_txdesc = pci_emul_map_dma(sc->esc_pi, sc->esc_tdba,
+	    sc->esc_TDLEN, PCI_DMA_BIDIRECTIONAL);
 }
 
 static void
 e82545_tx_ctl(struct e82545_softc *sc, uint32_t val)
 {
 	int on;
+	uint32_t tctl;
 
 	on = ((val & E1000_TCTL_EN) == E1000_TCTL_EN);
+	tctl = pci_e82545_tctl_value(val);
 
-	/* ignore TCTL_EN settings that don't change state */
-	if (on == sc->esc_tx_enabled)
+	/*
+	 * EN controls the cached ring mapping, but the remaining writable TCTL
+	 * fields are independent register state.  Guests commonly update them
+	 * with read-modify-write operations while transmission remains enabled.
+	 */
+	if (on == sc->esc_tx_enabled) {
+		sc->esc_TCTL = tctl;
 		return;
+	}
 
 	if (on) {
 		e82545_tx_update_tdba(sc);
+		if (sc->esc_TDLEN < sizeof(union e1000_tx_udesc) ||
+		    sc->esc_txdesc == NULL) {
+			WPRINTF("invalid transmit descriptor ring");
+			return;
+		}
 		e82545_tx_enable(sc);
 	} else {
 		e82545_tx_disable(sc);
@@ -807,8 +838,8 @@ e82545_tx_ctl(struct e82545_softc *sc, uint32_t val)
 		sc->esc_txdesc = NULL;
 	}
 
-	/* Save TCTL value after stripping reserved bits 31:25,23,2,0 */
-	sc->esc_TCTL = val & ~0xFE800005;
+	/* Save TCTL value after stripping reserved bits 31:25,23,2,0. */
+	sc->esc_TCTL = tctl;
 }
 
 static int
@@ -837,7 +868,8 @@ e82545_rx_callback(int fd __unused, enum ev_type type __unused, void *param)
 	ssize_t len;
 	int left, lim, maxpktsz, maxpktdesc, bufsz, i, n, size;
 	uint32_t cause = 0;
-	uint16_t *tp, tag, head;
+	uint8_t *tp;
+	uint16_t tag, head;
 
 	pthread_mutex_lock(&sc->esc_mtx);
 	DPRINTF("rx_run: head %x, tail %x", sc->esc_RDH, sc->esc_RDT);
@@ -871,8 +903,15 @@ e82545_rx_callback(int fd __unused, enum ev_type type __unused, void *param)
 		/* Grab rx descriptor pointed to by the head pointer */
 		for (i = 0; i < maxpktdesc; i++) {
 			rxd = &sc->esc_rxdesc[(head + i) % size];
-			vec[i].iov_base = paddr_guest2host(sc->esc_ctx,
-			    rxd->buffer_addr, bufsz);
+			vec[i].iov_base = pci_emul_map_dma(sc->esc_pi,
+			    rxd->buffer_addr, bufsz, PCI_DMA_DEVICE_WRITE);
+			if (vec[i].iov_base == NULL) {
+				WPRINTF("invalid receive buffer address "
+				    "-- packet(s) dropped");
+				while (netbe_rx_discard(sc->esc_be) > 0) {
+				}
+				goto done;
+			}
 			vec[i].iov_len = bufsz;
 		}
 		len = netbe_recv(sc->esc_be, vec, maxpktdesc);
@@ -890,16 +929,25 @@ e82545_rx_callback(int fd __unused, enum ev_type type __unused, void *param)
 			len = ETHER_MIN_LEN - ETHER_CRC_LEN;
 		if (!(sc->esc_RCTL & E1000_RCTL_SECRC))
 			len += ETHER_CRC_LEN;
-		n = (len + bufsz - 1) / bufsz;
+
+		/*
+		 * Only maxpktdesc buffers were mapped into vec[] and only
+		 * maxpktdesc descriptors were verified available, but adding
+		 * the stripped CRC back to len can push the segment count one
+		 * past maxpktdesc.  Cap it so we neither read past vec[] nor
+		 * advance RDH beyond RDT.
+		 */
+		n = pci_e82545_rx_descriptor_count((uint32_t)len, bufsz,
+		    maxpktdesc);
 
 		DPRINTF("packet read %zd bytes, %d segs, head %d",
 		    len, n, head);
 
 		/* Apply VLAN filter. */
-		tp = (uint16_t *)vec[0].iov_base + 6;
+		tp = (uint8_t *)vec[0].iov_base + ETHER_ADDR_LEN * 2;
 		if ((sc->esc_RCTL & E1000_RCTL_VFE) &&
-		    (ntohs(tp[0]) == sc->esc_VET)) {
-			tag = ntohs(tp[1]) & 0x0fff;
+		    (be16dec(tp) == sc->esc_VET)) {
+			tag = be16dec(tp + sizeof(uint16_t)) & 0x0fff;
 			if ((sc->esc_fvlan[tag >> 5] &
 			    (1 << (tag & 0x1f))) != 0) {
 				DPRINTF("known VLAN %d", tag);
@@ -927,6 +975,13 @@ e82545_rx_callback(int fd __unused, enum ev_type type __unused, void *param)
 		/* XXX signal no checksum for now */
 		rxd->status = E1000_RXD_STAT_PIF | E1000_RXD_STAT_IXSM |
 		    E1000_RXD_STAT_EOP | E1000_RXD_STAT_DD;
+		for (i = 0; i < n; i++) {
+			pci_emul_mark_dma_dirty_mapping(sc->esc_pi,
+			    vec[i].iov_base, vec[i].iov_len);
+			rxd = &sc->esc_rxdesc[(head + i) % size];
+			pci_emul_mark_dma_dirty_mapping(sc->esc_pi, rxd,
+			    sizeof(*rxd));
+		}
 
 		/* Schedule receive interrupts. */
 		if ((uint32_t)len <= sc->esc_RSRPD) {
@@ -943,7 +998,7 @@ e82545_rx_callback(int fd __unused, enum ev_type type __unused, void *param)
 done:
 	pthread_mutex_lock(&sc->esc_mtx);
 	sc->esc_rx_active = 0;
-	if (sc->esc_rx_enabled == 0)
+	if (sc->esc_rx_enabled == 0 || sc->esc_checkpoint_paused)
 		pthread_cond_signal(&sc->esc_rx_cond);
 
 	sc->esc_RDH = head;
@@ -1039,14 +1094,16 @@ e82545_txdesc_type(uint32_t lower)
 static void
 e82545_transmit_checksum(struct iovec *iov, int iovcnt, struct ck_info *ck)
 {
-	uint16_t cksum;
+	uint16_t cksum, wire_cksum;
 	unsigned int cklen;
 
 	DPRINTF("tx cksum: iovcnt/s/off/len %d/%d/%d/%d",
 	    iovcnt, ck->ck_start, ck->ck_off, ck->ck_len);
 	cklen = ck->ck_len ? ck->ck_len - ck->ck_start + 1U : UINT_MAX;
 	cksum = e82545_iov_checksum(iov, iovcnt, ck->ck_start, cklen);
-	*(uint16_t *)((uint8_t *)iov[0].iov_base + ck->ck_off) = ~cksum;
+	wire_cksum = ~cksum;
+	memcpy((uint8_t *)iov[0].iov_base + ck->ck_off, &wire_cksum,
+	    sizeof(wire_cksum));
 }
 
 static void
@@ -1069,6 +1126,8 @@ e82545_transmit_done(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 		dsc = &sc->esc_txdesc[head];
 		if (dsc->td.lower.data & E1000_TXD_CMD_RS) {
 			dsc->td.upper.data |= E1000_TXD_STAT_DD;
+			pci_emul_mark_dma_dirty_mapping(sc->esc_pi, dsc,
+			    sizeof(*dsc));
 			*tdwb = 1;
 		}
 	}
@@ -1085,10 +1144,11 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 	struct ck_info ckinfo[2];
 	struct iovec *iov;
 	union  e1000_tx_udesc *dsc;
-	int desc, dtype, ntype, iovcnt, tcp, tso, paylen, seg, tiovcnt, pv;
-	unsigned hdrlen, vlen, pktlen, len, left, mss, now, nnow, nleft, pvoff;
+	int desc, dtype, ntype, iovcnt, tcp, tso, seg, tiovcnt, pv;
+	unsigned hdrlen, vlen, pktlen, len, left, mss, now, nnow, nleft,
+	    paylen, pvoff;
 	uint32_t tcpsum, tcpseq;
-	uint16_t ipcs, tcpcs, ipid, ohead;
+	uint16_t ipcs, tcpcs, ipid, ohead, partial_cksum;
 	bool invalid;
 
 	ckinfo[0].ck_valid = ckinfo[1].ck_valid = 0;
@@ -1139,7 +1199,10 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 			}
 		} else {
 			/* Descriptor type must be consistent */
-			assert(dtype == ntype);
+			if (dtype != ntype) {
+				WPRINTF("inconsistent transmit descriptor type");
+				invalid = true;
+			}
 			DPRINTF("tx next desc idx %d: %08x%08x",
 			    head, dsc->td.upper.data, dsc->td.lower.data);
 		}
@@ -1158,9 +1221,25 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 				len -= 2;
 		}
 
-		if (len > 0 && iovcnt < I82545_MAX_TXSEGS) {
-			iov[iovcnt].iov_base = paddr_guest2host(sc->esc_ctx,
-			    dsc->td.buffer_addr, len);
+		if (len > 0) {
+			if (iovcnt >= I82545_MAX_TXSEGS) {
+				WPRINTF("tx too many descriptors (%d >= %d) -- "
+				    "dropped", iovcnt, I82545_MAX_TXSEGS);
+				invalid = true;
+				break;
+			}
+			if (len > UINT_MAX - pktlen) {
+				WPRINTF("transmit packet length overflow -- dropped");
+				invalid = true;
+				break;
+			}
+			iov[iovcnt].iov_base = pci_emul_map_dma(sc->esc_pi,
+			    dsc->td.buffer_addr, len, PCI_DMA_DEVICE_READ);
+			if (iov[iovcnt].iov_base == NULL) {
+				WPRINTF("invalid transmit buffer address");
+				invalid = true;
+				break;
+			}
 			iov[iovcnt].iov_len = len;
 			iovcnt++;
 			pktlen += len;
@@ -1213,12 +1292,6 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 
 	if (invalid)
 		goto done;
-
-	if (iovcnt > I82545_MAX_TXSEGS) {
-		WPRINTF("tx too many descriptors (%d > %d) -- dropped",
-		    iovcnt, I82545_MAX_TXSEGS);
-		goto done;
-	}
 
 	hdrlen = vlen = 0;
 	/* Estimate writable space for VLAN header insertion. */
@@ -1281,7 +1354,9 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 		 * TCP    | flags | 13     | 1
 		 * UDP    | len   | 4      | 4
 		 */
-		if (hdrlen < ckinfo[0].ck_start + 6U ||
+		if (!pci_e82545_tso_ip_header_valid(hdrlen,
+		    ckinfo[0].ck_start,
+		    (sc->esc_txctx.cmd_and_length & E1000_TXD_CMD_IP) != 0) ||
 		    hdrlen < ckinfo[0].ck_off + 2U) {
 			WPRINTF("TSO hdrlen too small for IP fields (%d) "
 			    "-- dropped", hdrlen);
@@ -1303,6 +1378,17 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 		if (ckinfo[1].ck_valid && hdrlen < ckinfo[1].ck_off + 2U) {
 			WPRINTF("TSO hdrlen too small for TCP/UDP fields "
 			    "(%d) -- dropped", hdrlen);
+			goto done;
+		}
+	}
+	if (tso) {
+		mss = sc->esc_txctx.tcp_seg_setup.fields.mss;
+		paylen = sc->esc_txctx.cmd_and_length & 0x000fffff;
+		if (!pci_e82545_tso_lengths_valid(pktlen, hdrlen, paylen,
+		    mss)) {
+			WPRINTF("invalid TSO lengths packet/header/payload/mss "
+			    "%u/%u/%u/%u -- dropped", pktlen, hdrlen, paylen,
+			    mss);
 			goto done;
 		}
 	}
@@ -1369,18 +1455,16 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 
 	/* Doing TSO. */
 	tcp = (sc->esc_txctx.cmd_and_length & E1000_TXD_CMD_TCP) != 0;
-	mss = sc->esc_txctx.tcp_seg_setup.fields.mss;
-	paylen = (sc->esc_txctx.cmd_and_length & 0x000fffff);
 	DPRINTF("tx %s segmentation offload %d+%d/%u bytes %d iovs",
 	    tcp ? "TCP" : "UDP", hdrlen, paylen, mss, iovcnt);
-	ipid = ntohs(*(uint16_t *)&hdr[ckinfo[0].ck_start + 4]);
+	ipid = be16dec(&hdr[ckinfo[0].ck_start + 4]);
 	tcpseq = 0;
 	if (tcp)
-		tcpseq = ntohl(*(uint32_t *)&hdr[ckinfo[1].ck_start + 4]);
-	ipcs = *(uint16_t *)&hdr[ckinfo[0].ck_off];
+		tcpseq = be32dec(&hdr[ckinfo[1].ck_start + 4]);
+	memcpy(&ipcs, &hdr[ckinfo[0].ck_off], sizeof(ipcs));
 	tcpcs = 0;
 	if (ckinfo[1].ck_valid)	/* Save partial pseudo-header checksum. */
-		tcpcs = *(uint16_t *)&hdr[ckinfo[1].ck_off];
+		memcpy(&tcpcs, &hdr[ckinfo[1].ck_off], sizeof(tcpcs));
 	pv = 1;
 	pvoff = 0;
 	for (seg = 0, left = paylen; left > 0; seg++, left -= now) {
@@ -1409,15 +1493,13 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 		/* Update IP header. */
 		if (sc->esc_txctx.cmd_and_length & E1000_TXD_CMD_IP) {
 			/* IPv4 -- set length and ID */
-			*(uint16_t *)&hdr[ckinfo[0].ck_start + 2] =
-			    htons(hdrlen - ckinfo[0].ck_start + now);
-			*(uint16_t *)&hdr[ckinfo[0].ck_start + 4] =
-			    htons(ipid + seg);
+			be16enc(&hdr[ckinfo[0].ck_start + 2],
+			    hdrlen - ckinfo[0].ck_start + now);
+			be16enc(&hdr[ckinfo[0].ck_start + 4], ipid + seg);
 		} else {
 			/* IPv6 -- set length */
-			*(uint16_t *)&hdr[ckinfo[0].ck_start + 4] =
-			    htons(hdrlen - ckinfo[0].ck_start - 40 +
-				  now);
+			be16enc(&hdr[ckinfo[0].ck_start + 4],
+			    hdrlen - ckinfo[0].ck_start - 40 + now);
 		}
 
 		/* Update pseudo-header checksum. */
@@ -1427,26 +1509,27 @@ e82545_transmit(struct e82545_softc *sc, uint16_t head, uint16_t tail,
 		/* Update TCP/UDP headers. */
 		if (tcp) {
 			/* Update sequence number and FIN/PUSH flags. */
-			*(uint32_t *)&hdr[ckinfo[1].ck_start + 4] =
-			    htonl(tcpseq + paylen - left);
+			be32enc(&hdr[ckinfo[1].ck_start + 4],
+			    tcpseq + paylen - left);
 			if (now < left) {
 				hdr[ckinfo[1].ck_start + 13] &=
 				    ~(TH_FIN | TH_PUSH);
 			}
 		} else {
 			/* Update payload length. */
-			*(uint32_t *)&hdr[ckinfo[1].ck_start + 4] =
-			    hdrlen - ckinfo[1].ck_start + now;
+			be16enc(&hdr[ckinfo[1].ck_start + 4],
+			    hdrlen - ckinfo[1].ck_start + now);
 		}
 
 		/* Calculate checksums and transmit. */
 		if (ckinfo[0].ck_valid) {
-			*(uint16_t *)&hdr[ckinfo[0].ck_off] = ipcs;
+			memcpy(&hdr[ckinfo[0].ck_off], &ipcs, sizeof(ipcs));
 			e82545_transmit_checksum(tiov, tiovcnt, &ckinfo[0]);
 		}
 		if (ckinfo[1].ck_valid) {
-			*(uint16_t *)&hdr[ckinfo[1].ck_off] =
-			    e82545_carry(tcpsum);
+			partial_cksum = e82545_carry(tcpsum);
+			memcpy(&hdr[ckinfo[1].ck_off], &partial_cksum,
+			    sizeof(partial_cksum));
 			e82545_transmit_checksum(tiov, tiovcnt, &ckinfo[1]);
 		}
 		e82545_transmit_backend(sc, tiov, tiovcnt);
@@ -1479,7 +1562,13 @@ e82545_tx_run(struct e82545_softc *sc)
 	pthread_mutex_unlock(&sc->esc_mtx);
 	rhead = head;
 	tdwb = 0;
-	for (lim = size / 4; sc->esc_tx_enabled && lim > 0; lim -= sent) {
+	for (lim = size / 4; lim > 0; lim -= sent) {
+		pthread_mutex_lock(&sc->esc_mtx);
+		if (!sc->esc_tx_enabled || sc->esc_checkpoint_paused) {
+			pthread_mutex_unlock(&sc->esc_mtx);
+			break;
+		}
+		pthread_mutex_unlock(&sc->esc_mtx);
 		sent = e82545_transmit(sc, head, tail, size, &rhead, &tdwb);
 		if (sent == 0)
 			break;
@@ -1508,11 +1597,14 @@ e82545_tx_thread(void *param)
 
 	pthread_mutex_lock(&sc->esc_mtx);
 	for (;;) {
-		while (!sc->esc_tx_enabled || sc->esc_TDHr == sc->esc_TDT) {
+		while (sc->esc_checkpoint_paused || !sc->esc_tx_enabled ||
+		    sc->esc_TDHr == sc->esc_TDT) {
 			if (sc->esc_tx_enabled && sc->esc_TDHr != sc->esc_TDT)
-				break;
+				if (!sc->esc_checkpoint_paused)
+					break;
 			sc->esc_tx_active = 0;
-			if (sc->esc_tx_enabled == 0)
+			if (sc->esc_tx_enabled == 0 ||
+			    sc->esc_checkpoint_paused)
 				pthread_cond_signal(&sc->esc_tx_cond);
 			pthread_cond_wait(&sc->esc_tx_cond, &sc->esc_mtx);
 		}
@@ -1570,7 +1662,7 @@ e82545_write_ra(struct e82545_softc *sc, int reg, uint32_t wval)
 	int idx;
 
 	idx = reg >> 1;
-	assert(idx < 15);
+	assert(idx >= 0 && idx < (int)nitems(sc->esc_uni));
 
 	eu = &sc->esc_uni[idx];
 
@@ -1597,22 +1689,22 @@ e82545_read_ra(struct e82545_softc *sc, int reg)
 	int idx;
 
 	idx = reg >> 1;
-	assert(idx < 15);
+	assert(idx >= 0 && idx < (int)nitems(sc->esc_uni));
 
 	eu = &sc->esc_uni[idx];
 
 	if (reg & 0x1) {
 		/* RAH */
-		retval = (eu->eu_valid << 31) |
-			 (eu->eu_addrsel << 16) |
-			 (eu->eu_eth.octet[5] << 8) |
-			 eu->eu_eth.octet[4];
+		retval = ((uint32_t)eu->eu_valid << 31) |
+			 ((uint32_t)eu->eu_addrsel << 16) |
+			 ((uint32_t)eu->eu_eth.octet[5] << 8) |
+			 (uint32_t)eu->eu_eth.octet[4];
 	} else {
 		/* RAL */
-		retval = (eu->eu_eth.octet[3] << 24) |
-			 (eu->eu_eth.octet[2] << 16) |
-			 (eu->eu_eth.octet[1] << 8) |
-			 eu->eu_eth.octet[0];
+		retval = ((uint32_t)eu->eu_eth.octet[3] << 24) |
+			 ((uint32_t)eu->eu_eth.octet[2] << 16) |
+			 ((uint32_t)eu->eu_eth.octet[1] << 8) |
+			 (uint32_t)eu->eu_eth.octet[0];
 	}
 
 	return (retval);
@@ -1672,18 +1764,24 @@ e82545_write_register(struct e82545_softc *sc, uint32_t offset, uint32_t value)
 		sc->esc_FCRTH = value & ~0xFFFF0007;
 		break;
 	case E1000_RDBAL(0):
-		sc->esc_RDBAL = value & ~0xF;
 		if (sc->esc_rx_enabled) {
-			/* Apparently legal: update cached address */
-			e82545_rx_update_rdba(sc);
+			WPRINTF("ignoring RDBAL write while receive enabled");
+			break;
 		}
+		sc->esc_RDBAL = value & ~0xF;
 		break;
 	case E1000_RDBAH(0):
-		assert(!sc->esc_rx_enabled);
+		if (sc->esc_rx_enabled) {
+			WPRINTF("ignoring RDBAH write while receive enabled");
+			break;
+		}
 		sc->esc_RDBAH = value;
 		break;
 	case E1000_RDLEN(0):
-		assert(!sc->esc_rx_enabled);
+		if (sc->esc_rx_enabled) {
+			WPRINTF("ignoring RDLEN write while receive enabled");
+			break;
+		}
 		sc->esc_RDLEN = value & ~0xFFF0007F;
 		break;
 	case E1000_RDH(0):
@@ -1723,19 +1821,25 @@ e82545_write_register(struct e82545_softc *sc, uint32_t offset, uint32_t value)
 		sc->esc_AIT = value;
 		break;
 	case E1000_TDBAL(0):
+		if (sc->esc_tx_enabled) {
+			WPRINTF("ignoring TDBAL write while transmit enabled");
+			break;
+		}
 		sc->esc_TDBAL = value & ~0xF;
-		if (sc->esc_tx_enabled)
-			e82545_tx_update_tdba(sc);
 		break;
 	case E1000_TDBAH(0):
+		if (sc->esc_tx_enabled) {
+			WPRINTF("ignoring TDBAH write while transmit enabled");
+			break;
+		}
 		sc->esc_TDBAH = value;
-		if (sc->esc_tx_enabled)
-			e82545_tx_update_tdba(sc);
 		break;
 	case E1000_TDLEN(0):
+		if (sc->esc_tx_enabled) {
+			WPRINTF("ignoring TDLEN write while transmit enabled");
+			break;
+		}
 		sc->esc_TDLEN = value & ~0xFFF0007F;
-		if (sc->esc_tx_enabled)
-			e82545_tx_update_tdba(sc);
 		break;
 	case E1000_TDH(0):
 		if (sc->esc_tx_enabled) {
@@ -2307,24 +2411,19 @@ static int
 e82545_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	char nstr[80];
+	pthread_condattr_t condattr;
 	struct e82545_softc *sc;
 	const char *mac;
-	int err;
+	int condattr_initialized, err;
 
 	/* Setup our softc */
 	sc = calloc(1, sizeof(*sc));
+	if (sc == NULL)
+		return (ENOMEM);
 
 	pi->pi_arg = sc;
 	sc->esc_pi = pi;
 	sc->esc_ctx = pi->pi_vmctx;
-
-	pthread_mutex_init(&sc->esc_mtx, NULL);
-	pthread_cond_init(&sc->esc_rx_cond, NULL);
-	pthread_cond_init(&sc->esc_tx_cond, NULL);
-	pthread_create(&sc->esc_tx_tid, NULL, e82545_tx_thread, sc);
-	snprintf(nstr, sizeof(nstr), "e82545-%d:%d tx", pi->pi_slot,
-	    pi->pi_func);
-        pthread_set_name_np(sc->esc_tx_tid, nstr);
 
 	pci_set_cfgdata16(pi, PCIR_DEVICE, E82545_DEV_ID_82545EM_COPPER);
 	pci_set_cfgdata16(pi, PCIR_VENDOR, E82545_VENDOR_ID_INTEL);
@@ -2350,18 +2449,40 @@ e82545_init(struct pci_devinst *pi, nvlist_t *nvl)
 	mac = get_config_value_node(nvl, "mac");
 	if (mac != NULL) {
 		err = net_parsemac(mac, sc->esc_mac.octet);
-		if (err) {
-			free(sc);
-			return (err);
-		}
+		if (err)
+			goto fail;
 	} else
 		net_genmac(pi, sc->esc_mac.octet);
 
 	err = netbe_init(&sc->esc_be, nvl, e82545_rx_callback, sc);
-	if (err) {
-		free(sc);
-		return (err);
-	}
+	if (err)
+		goto fail;
+
+	condattr_initialized = 0;
+	err = pthread_mutex_init(&sc->esc_mtx, NULL);
+	if (err != 0)
+		goto fail_backend;
+	err = pthread_condattr_init(&condattr);
+	if (err != 0)
+		goto fail_mutex;
+	condattr_initialized = 1;
+	err = pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC);
+	if (err != 0)
+		goto fail_condattr;
+	err = pthread_cond_init(&sc->esc_rx_cond, &condattr);
+	if (err != 0)
+		goto fail_condattr;
+	err = pthread_cond_init(&sc->esc_tx_cond, &condattr);
+	if (err != 0)
+		goto fail_rx_cond;
+	(void)pthread_condattr_destroy(&condattr);
+	condattr_initialized = 0;
+	err = pthread_create(&sc->esc_tx_tid, NULL, e82545_tx_thread, sc);
+	if (err != 0)
+		goto fail_tx_cond;
+	snprintf(nstr, sizeof(nstr), "e82545-%d:%d tx", pi->pi_slot,
+	    pi->pi_func);
+	(void)pthread_set_name_np(sc->esc_tx_tid, nstr);
 
 	netbe_rx_enable(sc->esc_be);
 
@@ -2369,41 +2490,100 @@ e82545_init(struct pci_devinst *pi, nvlist_t *nvl)
 	e82545_reset(sc, 0);
 
 	return (0);
+
+fail_tx_cond:
+	(void)pthread_cond_destroy(&sc->esc_tx_cond);
+fail_rx_cond:
+	(void)pthread_cond_destroy(&sc->esc_rx_cond);
+fail_condattr:
+	if (condattr_initialized != 0)
+		(void)pthread_condattr_destroy(&condattr);
+fail_mutex:
+	(void)pthread_mutex_destroy(&sc->esc_mtx);
+fail_backend:
+	netbe_cleanup(sc->esc_be);
+fail:
+	pi->pi_arg = NULL;
+	free(sc);
+	return (err);
 }
 
 #ifdef BHYVE_SNAPSHOT
 static int
+e82545_snapshot_int(int *value, struct vm_snapshot_meta *meta)
+{
+	uint32_t wire_value;
+	int error;
+
+	wire_value = meta->op == VM_SNAPSHOT_SAVE ? (uint32_t)*value : 0;
+	error = vm_snapshot_le32(&wire_value, meta);
+	if (error != 0)
+		return (error);
+	if (vm_snapshot_is_loading(meta) && wire_value > INT_MAX)
+		return (EINVAL);
+	if (vm_snapshot_is_loading(meta))
+		*value = (int)wire_value;
+	return (0);
+}
+
+static int
 e82545_snapshot(struct vm_snapshot_meta *meta)
 {
+	int active_value;
 	int i;
 	int ret;
+	uint32_t magic, version;
 	struct e82545_softc *sc;
 	struct pci_devinst *pi;
-	uint64_t bitmap_value;
+	uint8_t bitmap_value;
 
 	pi = meta->dev_data;
 	sc = pi->pi_arg;
+	magic = E82545_SNAPSHOT_MAGIC;
+	version = E82545_SNAPSHOT_VERSION;
+
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
+	    (magic != E82545_SNAPSHOT_MAGIC ||
+	    version != E82545_SNAPSHOT_VERSION)) {
+		ret = ENOTSUP;
+		goto done;
+	}
+	ret = vm_snapshot_identity_string(
+	    netbe_checkpoint_identity(sc->esc_be), NETBE_CHECKPOINT_ID_MAX,
+	    meta);
+	if (ret != 0)
+		goto done;
 
 	/* esc_mevp and esc_mevpitr should be reinitiated at init. */
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_mac, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(&sc->esc_mac, sizeof(sc->esc_mac), meta, ret,
+	    done);
 
 	/* General */
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_CTRL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_FCAL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_FCAH, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_FCT, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_VET, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_FCTTV, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_LEDCTL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_PBA, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_CTRL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_FCAL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_FCAH, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_FCT, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_VET, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_FCTTV, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_LEDCTL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_PBA, meta, ret, done);
 
 	/* Interrupt control */
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_irq_asserted, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_ICR, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_ITR, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_ICS, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_IMS, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_IMC, meta, ret, done);
+	ret = e82545_snapshot_int(&sc->esc_irq_asserted, meta);
+	if (ret != 0)
+		goto done;
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_ICR, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_ITR, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_ICS, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_IMS, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_IMC, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
+	    (sc->esc_irq_asserted < 0 || sc->esc_irq_asserted > 1)) {
+		ret = EINVAL;
+		goto done;
+	}
 
 	/*
 	 * Transmit
@@ -2412,116 +2592,281 @@ e82545_snapshot(struct vm_snapshot_meta *meta)
 	 * bytes in the larger uint variables.
 	 * e.g., ip_config = [ipcss|ipcso|ipcse0|ipcse1]
 	 */
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_txctx.lower_setup.ip_config, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_txctx.upper_setup.tcp_config, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_txctx.cmd_and_length, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_txctx.tcp_seg_setup.data, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_txctx.lower_setup.ip_config, meta, ret,
+	    done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_txctx.upper_setup.tcp_config, meta, ret,
+	    done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_txctx.cmd_and_length, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_txctx.tcp_seg_setup.data, meta, ret,
+	    done);
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_tx_enabled, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_tx_active, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TXCW, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TCTL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TIPG, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_AIT, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_tdba, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TDBAL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TDBAH, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TDLEN, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TDH, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TDHr, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TDT, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TIDV, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TXDCTL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_TADV, meta, ret, done);
+	ret = e82545_snapshot_int(&sc->esc_tx_enabled, meta);
+	if (ret != 0)
+		goto done;
+	active_value = sc->esc_tx_active;
+	ret = e82545_snapshot_int(&active_value, meta);
+	if (ret != 0)
+		goto done;
+	if (meta->op != VM_SNAPSHOT_SAVE &&
+	    (sc->esc_tx_enabled < 0 || sc->esc_tx_enabled > 1 ||
+	    active_value != 0)) {
+		ret = EINVAL;
+		goto done;
+	}
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_TXCW, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_TCTL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_TIPG, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->esc_AIT, meta, ret, done);
+	SNAPSHOT_LE64_OR_LEAVE(sc->esc_tdba, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_TDBAL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_TDBAH, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_TDLEN, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->esc_TDH, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->esc_TDHr, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->esc_TDT, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_TIDV, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_TXDCTL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_TADV, meta, ret, done);
 
 	/* Has dependency on esc_TDLEN; reoreder of fields from struct. */
 	SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(pi->pi_vmctx, sc->esc_txdesc,
 	    sc->esc_TDLEN, true, meta, ret, done);
+	if (meta->op != VM_SNAPSHOT_SAVE &&
+	    ((sc->esc_TDLEN & 0xfff0007fU) != 0 ||
+	    (sc->esc_tx_enabled != 0 &&
+	    (sc->esc_TDLEN < sizeof(union e1000_tx_udesc) ||
+	    sc->esc_TDH >= sc->esc_TDLEN / sizeof(union e1000_tx_udesc) ||
+	    sc->esc_TDHr >= sc->esc_TDLEN / sizeof(union e1000_tx_udesc) ||
+	    sc->esc_TDT >= sc->esc_TDLEN / sizeof(union e1000_tx_udesc) ||
+	    sc->esc_tdba != ((uint64_t)sc->esc_TDBAH << 32 |
+	    sc->esc_TDBAL) || sc->esc_txdesc == NULL)) ||
+	    (sc->esc_tx_enabled == 0 &&
+	    (sc->esc_tdba != 0 || sc->esc_txdesc != NULL)))) {
+		ret = EINVAL;
+		goto done;
+	}
 
 	/* L2 frame acceptance */
 	for (i = 0; i < (int)nitems(sc->esc_uni); i++) {
-		SNAPSHOT_VAR_OR_LEAVE(sc->esc_uni[i].eu_valid, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(sc->esc_uni[i].eu_addrsel, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(sc->esc_uni[i].eu_eth, meta, ret, done);
+		ret = e82545_snapshot_int(&sc->esc_uni[i].eu_valid, meta);
+		if (ret != 0)
+			goto done;
+		ret = e82545_snapshot_int(&sc->esc_uni[i].eu_addrsel, meta);
+		if (ret != 0)
+			goto done;
+		if (vm_snapshot_is_loading(meta) &&
+		    (sc->esc_uni[i].eu_valid < 0 ||
+		    sc->esc_uni[i].eu_valid > 1 ||
+		    sc->esc_uni[i].eu_addrsel < 0 ||
+		    sc->esc_uni[i].eu_addrsel > 3)) {
+			ret = EINVAL;
+			goto done;
+		}
+		SNAPSHOT_BUF_OR_LEAVE(&sc->esc_uni[i].eu_eth,
+		    sizeof(sc->esc_uni[i].eu_eth), meta, ret, done);
 	}
 
-	SNAPSHOT_BUF_OR_LEAVE(sc->esc_fmcast, sizeof(sc->esc_fmcast),
-			      meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(sc->esc_fvlan, sizeof(sc->esc_fvlan),
-			      meta, ret, done);
+	for (i = 0; i < (int)nitems(sc->esc_fmcast); i++)
+		SNAPSHOT_LE32_OR_LEAVE(sc->esc_fmcast[i], meta, ret, done);
+	for (i = 0; i < (int)nitems(sc->esc_fvlan); i++)
+		SNAPSHOT_LE32_OR_LEAVE(sc->esc_fvlan[i], meta, ret, done);
 
 	/* Receive */
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_rx_enabled, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_rx_active, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_rx_loopback, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RCTL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_FCRTL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_FCRTH, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_rdba, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RDBAL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RDBAH, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RDLEN, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RDH, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RDT, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RDTR, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RXDCTL, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RADV, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RSRPD, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->esc_RXCSUM, meta, ret, done);
+	ret = e82545_snapshot_int(&sc->esc_rx_enabled, meta);
+	if (ret != 0)
+		goto done;
+	active_value = sc->esc_rx_active;
+	ret = e82545_snapshot_int(&active_value, meta);
+	if (ret != 0)
+		goto done;
+	if (meta->op != VM_SNAPSHOT_SAVE &&
+	    (sc->esc_rx_enabled < 0 || sc->esc_rx_enabled > 1 ||
+	    active_value != 0)) {
+		ret = EINVAL;
+		goto done;
+	}
+	ret = e82545_snapshot_int(&sc->esc_rx_loopback, meta);
+	if (ret != 0)
+		goto done;
+	if (vm_snapshot_is_loading(meta) &&
+	    (sc->esc_rx_loopback < 0 || sc->esc_rx_loopback > 1)) {
+		ret = EINVAL;
+		goto done;
+	}
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_RCTL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_FCRTL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_FCRTH, meta, ret, done);
+	SNAPSHOT_LE64_OR_LEAVE(sc->esc_rdba, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_RDBAL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_RDBAH, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_RDLEN, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->esc_RDH, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->esc_RDT, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_RDTR, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_RXDCTL, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_RADV, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_RSRPD, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->esc_RXCSUM, meta, ret, done);
 
 	/* Has dependency on esc_RDLEN; reoreder of fields from struct. */
 	SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(pi->pi_vmctx, sc->esc_rxdesc,
-	    sc->esc_TDLEN, true, meta, ret, done);
+	    sc->esc_RDLEN, true, meta, ret, done);
+	if (meta->op != VM_SNAPSHOT_SAVE &&
+	    ((sc->esc_RDLEN & 0xfff0007fU) != 0 ||
+	    (sc->esc_rx_enabled != 0 &&
+	    (sc->esc_RDLEN < sizeof(struct e1000_rx_desc) ||
+	    sc->esc_RDH >= sc->esc_RDLEN / sizeof(struct e1000_rx_desc) ||
+	    sc->esc_RDT >= sc->esc_RDLEN / sizeof(struct e1000_rx_desc) ||
+	    sc->esc_rdba != ((uint64_t)sc->esc_RDBAH << 32 |
+	    sc->esc_RDBAL) || sc->esc_rxdesc == NULL)) ||
+	    (sc->esc_rx_enabled == 0 &&
+	    (sc->esc_rdba != 0 || sc->esc_rxdesc != NULL)))) {
+		ret = EINVAL;
+		goto done;
+	}
 
 	/* IO Port register access */
-	SNAPSHOT_VAR_OR_LEAVE(sc->io_addr, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->io_addr, meta, ret, done);
 
 	/* Shadow copy of MDIC */
-	SNAPSHOT_VAR_OR_LEAVE(sc->mdi_control, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->mdi_control, meta, ret, done);
 
 	/* Shadow copy of EECD */
-	SNAPSHOT_VAR_OR_LEAVE(sc->eeprom_control, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->eeprom_control, meta, ret, done);
 
 	/* Latest NVM in/out */
-	SNAPSHOT_VAR_OR_LEAVE(sc->nvm_data, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->nvm_opaddr, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->nvm_data, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(sc->nvm_opaddr, meta, ret, done);
 
 	/* Stats */
-	SNAPSHOT_VAR_OR_LEAVE(sc->missed_pkt_count, meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(sc->pkt_rx_by_size, sizeof(sc->pkt_rx_by_size),
-			      meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(sc->pkt_tx_by_size, sizeof(sc->pkt_tx_by_size),
-			      meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->good_pkt_rx_count, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->bcast_pkt_rx_count, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->mcast_pkt_rx_count, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->good_pkt_tx_count, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->bcast_pkt_tx_count, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->mcast_pkt_tx_count, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->oversize_rx_count, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->tso_tx_count, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->good_octets_rx, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->good_octets_tx, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->missed_octets, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->missed_pkt_count, meta, ret, done);
+	for (i = 0; i < (int)nitems(sc->pkt_rx_by_size); i++)
+		SNAPSHOT_LE32_OR_LEAVE(sc->pkt_rx_by_size[i], meta, ret, done);
+	for (i = 0; i < (int)nitems(sc->pkt_tx_by_size); i++)
+		SNAPSHOT_LE32_OR_LEAVE(sc->pkt_tx_by_size[i], meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->good_pkt_rx_count, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->bcast_pkt_rx_count, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->mcast_pkt_rx_count, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->good_pkt_tx_count, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->bcast_pkt_tx_count, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->mcast_pkt_tx_count, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->oversize_rx_count, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->tso_tx_count, meta, ret, done);
+	SNAPSHOT_LE64_OR_LEAVE(sc->good_octets_rx, meta, ret, done);
+	SNAPSHOT_LE64_OR_LEAVE(sc->good_octets_tx, meta, ret, done);
+	SNAPSHOT_LE64_OR_LEAVE(sc->missed_octets, meta, ret, done);
 
 	if (meta->op == VM_SNAPSHOT_SAVE)
 		bitmap_value = sc->nvm_bits;
-	SNAPSHOT_VAR_OR_LEAVE(bitmap_value, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(bitmap_value, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) && bitmap_value > 0x3f) {
+		ret = EINVAL;
+		goto done;
+	}
 	if (meta->op == VM_SNAPSHOT_RESTORE)
 		sc->nvm_bits = bitmap_value;
 
 	if (meta->op == VM_SNAPSHOT_SAVE)
-		bitmap_value = sc->nvm_bits;
-	SNAPSHOT_VAR_OR_LEAVE(bitmap_value, meta, ret, done);
+		bitmap_value = sc->nvm_mode;
+	SNAPSHOT_U8_OR_LEAVE(bitmap_value, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
+	    bitmap_value > E82545_NVM_MODE_DATAOUT) {
+		ret = EINVAL;
+		goto done;
+	}
 	if (meta->op == VM_SNAPSHOT_RESTORE)
-		sc->nvm_bits = bitmap_value;
+		sc->nvm_mode = bitmap_value;
 
 	/* EEPROM data */
-	SNAPSHOT_BUF_OR_LEAVE(sc->eeprom_data, sizeof(sc->eeprom_data),
-			      meta, ret, done);
+	for (i = 0; i < (int)nitems(sc->eeprom_data); i++)
+		SNAPSHOT_LE16_OR_LEAVE(sc->eeprom_data[i], meta, ret, done);
 
 done:
 	return (ret);
+}
+
+static int
+e82545_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	struct e82545_softc candidate;
+	struct pci_devinst candidate_pi;
+	struct pci_devinst *pi;
+	int error;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE ||
+	    meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	candidate = *(struct e82545_softc *)pi->pi_arg;
+	candidate_pi = *pi;
+	candidate_pi.pi_arg = &candidate;
+	struct vm_snapshot_meta decode = {
+		.dev_name = meta->dev_name,
+		.dev_data = &candidate_pi,
+		.dev_req = meta->dev_req,
+		.buffer = {
+			.buf_start = meta->buffer.buf_start,
+			.buf_size = meta->buffer.buf_size,
+			.buf = meta->buffer.buf,
+			.buf_rem = meta->buffer.buf_rem,
+		},
+		.op = VM_SNAPSHOT_RESTORE,
+	};
+	error = e82545_snapshot(&decode);
+	meta->buffer.buf = decode.buffer.buf;
+	meta->buffer.buf_rem = decode.buffer.buf_rem;
+	return (error);
+}
+
+static int
+e82545_pause(struct pci_devinst *pi)
+{
+	struct e82545_softc *sc;
+	struct timespec deadline;
+	int error;
+
+	sc = pi->pi_arg;
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		return (errno);
+	deadline.tv_sec += E82545_CHECKPOINT_DRAIN_TIMEOUT_SECONDS;
+	netbe_rx_disable(sc->esc_be);
+	pthread_mutex_lock(&sc->esc_mtx);
+	if (sc->esc_checkpoint_paused) {
+		pthread_mutex_unlock(&sc->esc_mtx);
+		netbe_rx_enable(sc->esc_be);
+		return (EBUSY);
+	}
+	sc->esc_checkpoint_paused = true;
+	pthread_cond_signal(&sc->esc_tx_cond);
+	error = 0;
+	while (sc->esc_tx_active && error == 0)
+		error = pthread_cond_timedwait(&sc->esc_tx_cond, &sc->esc_mtx,
+		    &deadline);
+	while (sc->esc_rx_active && error == 0)
+		error = pthread_cond_timedwait(&sc->esc_rx_cond, &sc->esc_mtx,
+		    &deadline);
+	if (error != 0) {
+		sc->esc_checkpoint_paused = false;
+		pthread_cond_signal(&sc->esc_tx_cond);
+		pthread_mutex_unlock(&sc->esc_mtx);
+		netbe_rx_enable(sc->esc_be);
+		return (error);
+	}
+	return (0);
+}
+
+static int
+e82545_resume(struct pci_devinst *pi)
+{
+	struct e82545_softc *sc;
+	sc = pi->pi_arg;
+	if (!sc->esc_checkpoint_paused)
+		return (EINVAL);
+	sc->esc_checkpoint_paused = false;
+	pthread_cond_signal(&sc->esc_tx_cond);
+	pthread_mutex_unlock(&sc->esc_mtx);
+	netbe_rx_enable(sc->esc_be);
+	return (0);
 }
 #endif
 
@@ -2533,6 +2878,12 @@ static const struct pci_devemu pci_de_e82545 = {
 	.pe_barread =	e82545_read,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	e82545_snapshot,
+	.pe_snapshot_validate = e82545_snapshot_validate,
+	.pe_pause =	e82545_pause,
+	.pe_resume =	e82545_resume,
+	.pe_migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_TRACKED |
+	    PCI_MIGRATION_F_QUIESCE_CALLBACK,
 #endif
 };
 PCI_EMUL_SET(pci_de_e82545);

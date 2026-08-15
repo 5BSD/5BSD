@@ -80,6 +80,9 @@ int vlapic_set_apicbase(struct vlapic *vlapic, uint64_t val);
 void vlapic_set_x2apic_state(struct vcpu *vcpu, enum x2apic_state s);
 bool vlapic_enabled(struct vlapic *vlapic);
 
+/* Private frozen-vCPU finalizer used by the staged x86 startup transaction. */
+void vlapic_reset_startup(struct vcpu *vcpu);
+
 void vlapic_deliver_intr(struct vm *vm, bool level, uint32_t dest, bool phys,
     int delmode, int vec);
 

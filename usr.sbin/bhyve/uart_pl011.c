@@ -136,7 +136,7 @@ static int
 uart_rx_trigger_level(struct uart_pl011_softc *sc)
 {
 	/* If the FIFO is disabled trigger when we have any data */
-	if ((sc->lcr_h & UARTLCR_H_FEN) != 0)
+	if ((sc->lcr_h & UARTLCR_H_FEN) == 0)
 		return (1);
 
 	/* Trigger base on how full the fifo is */
@@ -247,7 +247,7 @@ uart_pl011_write(struct uart_pl011_softc *sc, int offset, uint32_t value)
 		sc->cr = value & UARTCR_MASK;
 		break;
 	case UARTIFLS:
-		sc->ifls = value & UARTCR_MASK;
+		sc->ifls = value & UARTIFLS_MASK;
 		break;
 	case UARTIMSC:
 		sc->imsc = value & UARTIMSC_MASK;
@@ -371,12 +371,20 @@ uart_pl011_init(uart_intr_func_t intr_assert, uart_intr_func_t intr_deassert,
 {
 	struct uart_pl011_softc *sc;
 
+	if (intr_assert == NULL || intr_deassert == NULL)
+		return (NULL);
 	sc = calloc(1, sizeof(struct uart_pl011_softc));
+	if (sc == NULL)
+		return (NULL);
 
 	sc->arg = arg;
 	sc->intr_assert = intr_assert;
 	sc->intr_deassert = intr_deassert;
 	sc->backend = uart_init();
+	if (sc->backend == NULL) {
+		free(sc);
+		return (NULL);
+	}
 
 	uart_reset(sc);
 

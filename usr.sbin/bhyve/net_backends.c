@@ -66,6 +66,31 @@
 #include "mevent.h"
 #include "net_backends.h"
 #include "net_backends_priv.h"
+
+static int
+netbe_make_checkpoint_identity(char *identity, size_t identity_size,
+    const char *configured, const char *type, const char *backend)
+{
+	size_t configured_length;
+	int length;
+
+	if (identity == NULL || identity_size == 0 || type == NULL ||
+	    backend == NULL)
+		return (EINVAL);
+	if (configured != NULL) {
+		configured_length = strlen(configured);
+		if (configured_length == 0 ||
+		    configured_length >= identity_size)
+			return (EINVAL);
+		memcpy(identity, configured, configured_length + 1);
+		return (0);
+	}
+	length = snprintf(identity, identity_size, "local:%s:%s", type,
+	    backend);
+	if (length < 0 || (size_t)length >= identity_size)
+		return (E2BIG);
+	return (0);
+}
 #include "pci_emul.h"
 
 #define	NET_BE_SIZE(be)		(sizeof(*be) + (be)->priv_size)
@@ -76,7 +101,9 @@ tap_cleanup(struct net_backend *be)
 	struct tap_priv *priv = NET_BE_PRIV(be);
 
 	if (priv->mevp) {
-		mevent_delete(priv->mevp);
+		(void)mevent_delete_close_sync(priv->mevp);
+		priv->mevp = NULL;
+		be->fd = -1;
 	}
 	if (be->fd != -1) {
 		close(be->fd);
@@ -101,8 +128,11 @@ tap_init(struct net_backend *be, const char *devname,
 		return (-1);
 	}
 
-	strcpy(tbuf, "/dev/");
-	strlcat(tbuf, devname, sizeof(tbuf));
+	if (snprintf(tbuf, sizeof(tbuf), "/dev/%s", devname) >=
+	    (int)sizeof(tbuf)) {
+		EPRINTLN("tap device name is too long");
+		return (ENAMETOOLONG);
+	}
 
 	be->fd = open(tbuf, O_RDWR);
 	if (be->fd == -1) {
@@ -307,6 +337,8 @@ netbe_legacy_config(nvlist_t *nvl, const char *opts)
 		return (0);
 	}
 	backend = strndup(opts, cp - opts);
+	if (backend == NULL)
+		return (ENOMEM);
 	set_config_value_node(nvl, "backend", backend);
 	free(backend);
 	return (pci_parse_legacy_config(nvl, cp + 1));
@@ -329,7 +361,7 @@ netbe_init(struct net_backend **ret, nvlist_t *nvl, net_be_rxeof_t cb,
     void *param)
 {
 	struct net_backend **pbe, *nbe, *tbe = NULL;
-	const char *value, *type;
+	const char *checkpoint_identity, *value, *type;
 	char *devname;
 	int err;
 
@@ -338,6 +370,8 @@ netbe_init(struct net_backend **ret, nvlist_t *nvl, net_be_rxeof_t cb,
 		return (-1);
 	}
 	devname = strdup(value);
+	if (devname == NULL)
+		return (ENOMEM);
 
 	/*
 	 * Use the type given by configuration if exists; otherwise
@@ -372,11 +406,26 @@ netbe_init(struct net_backend **ret, nvlist_t *nvl, net_be_rxeof_t cb,
 	}
 
 	nbe = calloc(1, NET_BE_SIZE(tbe));
+	if (nbe == NULL) {
+		free(devname);
+		return (ENOMEM);
+	}
 	*nbe = *tbe;	/* copy the template */
 	nbe->fd = -1;
 	nbe->sc = param;
 	nbe->be_vnet_hdr_len = 0;
 	nbe->fe_vnet_hdr_len = 0;
+	nbe->fe_features = 0;
+	checkpoint_identity = get_config_value_node(nvl,
+	    "checkpoint_identity");
+	err = netbe_make_checkpoint_identity(nbe->checkpoint_identity,
+	    sizeof(nbe->checkpoint_identity), checkpoint_identity,
+	    tbe->prefix, value);
+	if (err != 0) {
+		free(devname);
+		free(nbe);
+		return (err);
+	}
 
 	/* Initialize the backend. */
 	err = nbe->init(nbe, devname, nvl, cb, param);
@@ -414,6 +463,8 @@ int
 netbe_set_cap(struct net_backend *be, uint64_t features,
 	      unsigned vnet_hdr_len)
 {
+	uint64_t old_features;
+	unsigned int old_vnet_hdr_len;
 	int ret;
 
 	assert(be != NULL);
@@ -423,16 +474,27 @@ netbe_set_cap(struct net_backend *be, uint64_t features,
 		&& vnet_hdr_len != (VNET_HDR_LEN - sizeof(uint16_t)))
 		return (-1);
 
-	be->fe_vnet_hdr_len = vnet_hdr_len;
-
+	old_features = be->fe_features;
+	old_vnet_hdr_len = be->fe_vnet_hdr_len;
 	ret = be->set_cap(be, features, vnet_hdr_len);
-	if (ret == 0 && be->be_vnet_hdr_len != be->fe_vnet_hdr_len) {
+	if (ret != 0)
+		return (ret);
+	if (be->be_vnet_hdr_len != vnet_hdr_len) {
 		EPRINTLN("network backend installed header length %u, expected %u",
-		    be->be_vnet_hdr_len, be->fe_vnet_hdr_len);
+		    be->be_vnet_hdr_len, vnet_hdr_len);
+		/*
+		 * A successful backend callback with the wrong framing is not a
+		 * partially acceptable result.  Restore the previous contract so
+		 * feature negotiation and snapshot restore remain transactional.
+		 */
+		if (be->set_cap(be, old_features, old_vnet_hdr_len) != 0 ||
+		    be->be_vnet_hdr_len != old_vnet_hdr_len)
+			return (EIO);
 		return (EPROTO);
 	}
-
-	return (ret);
+	be->fe_features = features;
+	be->fe_vnet_hdr_len = vnet_hdr_len;
+	return (0);
 }
 
 ssize_t
@@ -505,4 +567,11 @@ netbe_get_vnet_hdr_len(struct net_backend *be)
 {
 
 	return (be->be_vnet_hdr_len);
+}
+
+const char *
+netbe_checkpoint_identity(struct net_backend *be)
+{
+
+	return (be == NULL ? NULL : be->checkpoint_identity);
 }

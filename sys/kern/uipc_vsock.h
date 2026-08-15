@@ -60,6 +60,11 @@
  * independent of those; tunable via kern.vsock.max_connections.
  */
 #define	VTVSOCK_DEFAULT_MAX_CONN		16384
+/*
+ * A single remote CID must not consume the complete global connection table.
+ * Zero disables this secondary limit; the global ceiling still applies.
+ */
+#define	VTVSOCK_DEFAULT_MAX_CONN_PER_CID	1024
 #define	VTVSOCK_CLOSE_TIMEOUT		(hz * 8)
 /*
  * Default blocking-connect timeout.  Matches Linux's
@@ -196,6 +201,7 @@ extern uint64_t		vtvsock_guest_cid;
 
 extern counter_u64_t	vtvsock_cnt_tx_packets;
 extern counter_u64_t	vtvsock_cnt_tx_bytes;
+extern counter_u64_t	vtvsock_cnt_tx_drops;
 extern counter_u64_t	vtvsock_cnt_rx_packets;
 extern counter_u64_t	vtvsock_cnt_rx_bytes;
 extern counter_u64_t	vtvsock_cnt_rx_drops;
@@ -224,6 +230,8 @@ int	vsock_transport_register_locked(const struct vtvsock_transport *ops,
 void	vsock_transport_unregister_locked(const void *owner);
 void	vsock_transport_reset_locked(void);
 void	vsock_transport_reset_cid_locked(
+	    const struct vtvsock_transport *transport, uint64_t remote_cid);
+u_int	vsock_transport_connection_count_cid_locked(
 	    const struct vtvsock_transport *transport, uint64_t remote_cid);
 void	vsock_tx_wakeup_locked(struct vtvsock_pcb *);
 void	vsock_transport_tx_wakeup_locked(

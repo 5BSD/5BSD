@@ -28,12 +28,21 @@
  */
 
 #include <sys/cdefs.h>
+#include <errno.h>
+#include <stdatomic.h>
 #include <pthread.h>
 #include <pthread_np.h>
 #include <unistd.h>
+#ifdef BHYVE_SNAPSHOT
+#include <machine/vmm_snapshot.h>
+#endif
 
 #include "pci_hda.h"
+#include "pci_hda_model.h"
 #include "audio.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 /*
  * HDA Codec defines
@@ -48,11 +57,15 @@
 #define HDA_CODEC_AUDIO_INPUT_NID		0x04
 #define HDA_CODEC_PIN_INPUT_NID			0x05
 
+#define HDA_CODEC_NODES_COUNT			(HDA_CODEC_PIN_INPUT_NID + 1)
+
 #define HDA_CODEC_STREAMS_COUNT			0x02
 #define HDA_CODEC_STREAM_OUTPUT			0x00
 #define HDA_CODEC_STREAM_INPUT			0x01
 
 #define HDA_CODEC_PARAMS_COUNT			0x14
+_Static_assert(HDA_CODEC_PARAMS_COUNT == HDA_CODEC_MODEL_PARAMS_COUNT,
+    "codec parameter table width must match the model bound");
 #define HDA_CODEC_CONN_LIST_COUNT		0x01
 #define HDA_CODEC_RESPONSE_EX_UNSOL		0x10
 #define HDA_CODEC_RESPONSE_EX_SOL		0x00
@@ -117,7 +130,7 @@
 #define HDA_CODEC_SET_AMP_GAIN_MUTE_MUTE	0x80
 #define HDA_CODEC_SET_AMP_GAIN_MUTE_GAIN_MASK	0x7f
 
-#define HDA_CODEC_PIN_SENSE_PRESENCE_PLUGGED	(1 << 31)
+#define HDA_CODEC_PIN_SENSE_PRESENCE_PLUGGED	(1U << 31)
 #define HDA_CODEC_PIN_WIDGET_CTRL_OUT_ENABLE				\
 	(1 << HDA_CMD_GET_PIN_WIDGET_CTRL_OUT_ENABLE_SHIFT)
 #define HDA_CODEC_PIN_WIDGET_CTRL_IN_ENABLE				\
@@ -144,6 +157,7 @@ struct hda_audio_ctxt {
 	char name[64];
 	uint8_t run;
 	uint8_t started;
+	uint8_t shutdown;
 	void *priv;
 	pthread_t tid;
 	pthread_mutex_t mtx;
@@ -161,6 +175,7 @@ static int hda_audio_ctxt_init(struct hda_audio_ctxt *actx, const char *tname,
     transfer_func_t do_transfer, setup_func_t do_setup, void *priv);
 static int hda_audio_ctxt_start(struct hda_audio_ctxt *actx);
 static int hda_audio_ctxt_stop(struct hda_audio_ctxt *actx);
+static void hda_audio_ctxt_fini(struct hda_audio_ctxt *actx);
 
 /*
  * HDA Codec data structures
@@ -174,8 +189,8 @@ typedef uint32_t (*verb_func_t)(struct hda_codec_softc *sc, uint16_t verb,
 struct hda_codec_stream {
 	uint8_t buf[HDA_CODEC_BUF_SIZE];
 	uint8_t channel;
-	uint16_t fmt;
-	uint8_t stream;
+	_Atomic(uint16_t) fmt;
+	_Atomic(uint8_t) stream;
 
 	uint8_t left_gain;
 	uint8_t right_gain;
@@ -329,28 +344,26 @@ static uint32_t hda_codec_audio_inout_nid(struct hda_codec_stream *st,
 	},								\
 
 static const uint32_t
-hda_codec_output_parameters[][HDA_CODEC_PARAMS_COUNT] = {
+hda_codec_output_parameters[HDA_CODEC_NODES_COUNT][HDA_CODEC_PARAMS_COUNT] = {
 	HDA_CODEC_ROOT_DESC
 	HDA_CODEC_FG_OUTPUT_DESC
 	HDA_CODEC_OUTPUT_DESC
 };
 
 static const uint32_t
-hda_codec_input_parameters[][HDA_CODEC_PARAMS_COUNT] = {
+hda_codec_input_parameters[HDA_CODEC_NODES_COUNT][HDA_CODEC_PARAMS_COUNT] = {
 	HDA_CODEC_ROOT_DESC
 	HDA_CODEC_FG_INPUT_DESC
 	HDA_CODEC_INPUT_DESC
 };
 
 static const uint32_t
-hda_codec_duplex_parameters[][HDA_CODEC_PARAMS_COUNT] = {
+hda_codec_duplex_parameters[HDA_CODEC_NODES_COUNT][HDA_CODEC_PARAMS_COUNT] = {
 	HDA_CODEC_ROOT_DESC
 	HDA_CODEC_FG_DUPLEX_DESC
 	HDA_CODEC_OUTPUT_DESC
 	HDA_CODEC_INPUT_DESC
 };
-
-#define HDA_CODEC_NODES_COUNT	(ARRAY_SIZE(hda_codec_duplex_parameters))
 
 static const uint8_t
 hda_codec_conn_list[HDA_CODEC_NODES_COUNT][HDA_CODEC_CONN_LIST_COUNT] = {
@@ -395,7 +408,7 @@ hda_codec_init(struct hda_codec_inst *hci, const char *play,
 	struct hda_codec_stream *st = NULL;
 	int err;
 
-	if (!(play || rec))
+	if (hci == NULL || (play == NULL && rec == NULL))
 		return (-1);
 
 	sc = calloc(1, sizeof(*sc));
@@ -416,6 +429,7 @@ hda_codec_init(struct hda_codec_inst *hci, const char *play,
 	sc->conf_default = hda_codec_conf_default;
 	sc->pin_ctrl_default = hda_codec_pin_ctrl_default;
 	sc->verb_handlers = hda_codec_verb_handlers;
+	sc->hci = hci;
 	DPRINTF("HDA Codec nodes: %d", sc->no_nodes);
 
 	/*
@@ -423,17 +437,16 @@ hda_codec_init(struct hda_codec_inst *hci, const char *play,
 	 */
 	if (play) {
 		st = &sc->streams[HDA_CODEC_STREAM_OUTPUT];
-
-		err = hda_audio_ctxt_init(&st->actx, "hda-audio-output",
-			hda_codec_audio_output_do_transfer,
-			hda_codec_audio_output_do_setup, sc);
-		assert(!err);
-
 		st->aud = audio_init(play, 1);
 		if (!st->aud) {
 			DPRINTF("Fail to init the output audio player");
-			return (-1);
+			goto fail;
 		}
+		err = hda_audio_ctxt_init(&st->actx, "hda-audio-output",
+		    hda_codec_audio_output_do_transfer,
+		    hda_codec_audio_output_do_setup, sc);
+		if (err != 0)
+			goto fail;
 	}
 
 	/*
@@ -441,23 +454,31 @@ hda_codec_init(struct hda_codec_inst *hci, const char *play,
 	 */
 	if (rec) {
 		st = &sc->streams[HDA_CODEC_STREAM_INPUT];
-
-		err = hda_audio_ctxt_init(&st->actx, "hda-audio-input",
-			hda_codec_audio_input_do_transfer,
-			hda_codec_audio_input_do_setup, sc);
-		assert(!err);
-
 		st->aud = audio_init(rec, 0);
 		if (!st->aud) {
 			DPRINTF("Fail to init the input audio player");
-			return (-1);
+			goto fail;
 		}
+		err = hda_audio_ctxt_init(&st->actx, "hda-audio-input",
+		    hda_codec_audio_input_do_transfer,
+		    hda_codec_audio_input_do_setup, sc);
+		if (err != 0)
+			goto fail;
 	}
 
-	sc->hci = hci;
 	hci->priv = sc;
 
 	return (0);
+
+fail:
+	for (size_t i = 0; i < HDA_CODEC_STREAMS_COUNT; i++) {
+		st = &sc->streams[i];
+		hda_audio_ctxt_fini(&st->actx);
+		audio_destroy(st->aud);
+		st->aud = NULL;
+	}
+	free(sc);
+	return (-1);
 }
 
 static int
@@ -478,6 +499,10 @@ hda_codec_reset(struct hda_codec_inst *hci)
 
 	for (i = 0; i < HDA_CODEC_STREAMS_COUNT; i++) {
 		st = &sc->streams[i];
+		(void)hda_audio_ctxt_stop(&st->actx);
+		atomic_store_explicit(&st->stream, 0, memory_order_relaxed);
+		atomic_store_explicit(&st->fmt, 0, memory_order_relaxed);
+		st->channel = 0;
 		st->left_gain = HDA_CODEC_AMP_NUMSTEPS;
 		st->right_gain = HDA_CODEC_AMP_NUMSTEPS;
 		st->left_mute = HDA_CODEC_SET_AMP_GAIN_MUTE_MUTE;
@@ -542,7 +567,7 @@ hda_codec_command(struct hda_codec_inst *hci, uint32_t cmd_data)
 
 	switch (verb) {
 	case HDA_CMD_VERB_GET_PARAMETER:
-		if (payload < HDA_CODEC_PARAMS_COUNT)
+		if (hda_codec_get_parameter_valid(nid, sc->no_nodes, payload))
 			res = sc->get_parameters[nid][payload];
 		break;
 	case HDA_CMD_VERB_GET_CONN_LIST_ENTRY:
@@ -595,14 +620,18 @@ hda_codec_notify(struct hda_codec_inst *hci, uint8_t run,
 	st = &sc->streams[i];
 
 	DPRINTF("run: %d, stream: 0x%x, st->stream: 0x%x dir: %d",
-	    run, stream, st->stream, dir);
+	    run, stream,
+	    atomic_load_explicit(&st->stream, memory_order_relaxed), dir);
 
-	if (stream != st->stream) {
+	if (stream != atomic_load_explicit(&st->stream,
+	    memory_order_relaxed)) {
 		DPRINTF("Stream not found");
 		return (0);
 	}
 
 	actx = &st->actx;
+	if (!actx->started)
+		return (-1);
 
 	if (run)
 		err = hda_audio_ctxt_start(actx);
@@ -694,12 +723,17 @@ hda_codec_audio_output_do_transfer(void *arg)
 	st = &sc->streams[HDA_CODEC_STREAM_OUTPUT];
 	aud = st->aud;
 
-	err = hops->transfer(hci, st->stream, 1, st->buf, sizeof(st->buf));
-	if (err)
+	err = hops->transfer(hci,
+	    atomic_load_explicit(&st->stream, memory_order_relaxed), 1,
+	    st->buf, sizeof(st->buf));
+	if (err) {
+		(void)hda_audio_ctxt_stop(&st->actx);
 		return;
+	}
 
 	err = audio_playback(aud, st->buf, sizeof(st->buf));
-	assert(!err);
+	if (err != 0)
+		(void)hda_audio_ctxt_stop(&st->actx);
 }
 
 static int
@@ -714,7 +748,8 @@ hda_codec_audio_output_do_setup(void *arg)
 	st = &sc->streams[HDA_CODEC_STREAM_OUTPUT];
 	aud = st->aud;
 
-	err = hda_codec_parse_format(st->fmt, &params);
+	err = hda_codec_parse_format(
+	    atomic_load_explicit(&st->fmt, memory_order_relaxed), &params);
 	if (err)
 		return (-1);
 
@@ -756,9 +791,15 @@ hda_codec_audio_input_do_transfer(void *arg)
 	aud = st->aud;
 
 	err = audio_record(aud, st->buf, sizeof(st->buf));
-	assert(!err);
+	if (err != 0) {
+		(void)hda_audio_ctxt_stop(&st->actx);
+		return;
+	}
 
-	hops->transfer(hci, st->stream, 0, st->buf, sizeof(st->buf));
+	if (hops->transfer(hci,
+	    atomic_load_explicit(&st->stream, memory_order_relaxed), 0, st->buf,
+	    sizeof(st->buf)) != 0)
+		(void)hda_audio_ctxt_stop(&st->actx);
 }
 
 static int
@@ -773,7 +814,8 @@ hda_codec_audio_input_do_setup(void *arg)
 	st = &sc->streams[HDA_CODEC_STREAM_INPUT];
 	aud = st->aud;
 
-	err = hda_codec_parse_format(st->fmt, &params);
+	err = hda_codec_parse_format(
+	    atomic_load_explicit(&st->fmt, memory_order_relaxed), &params);
 	if (err)
 		return (-1);
 
@@ -795,10 +837,10 @@ hda_codec_audio_inout_nid(struct hda_codec_stream *st, uint16_t verb,
 
 	switch (verb) {
 	case HDA_CMD_VERB_GET_CONV_FMT:
-		res = st->fmt;
+		res = atomic_load_explicit(&st->fmt, memory_order_relaxed);
 		break;
 	case HDA_CMD_VERB_SET_CONV_FMT:
-		st->fmt = payload;
+		atomic_store_explicit(&st->fmt, payload, memory_order_relaxed);
 		break;
 	case HDA_CMD_VERB_GET_AMP_GAIN_MUTE:
 		if (payload & HDA_CMD_GET_AMP_GAIN_MUTE_LEFT) {
@@ -828,14 +870,17 @@ hda_codec_audio_inout_nid(struct hda_codec_stream *st, uint16_t verb,
 		}
 		break;
 	case HDA_CMD_VERB_GET_CONV_STREAM_CHAN:
-		res = (st->stream << 4) | st->channel;
+		res = (atomic_load_explicit(&st->stream,
+		    memory_order_relaxed) << 4) | st->channel;
 		break;
 	case HDA_CMD_VERB_SET_CONV_STREAM_CHAN:
 		st->channel = payload & 0x0f;
-		st->stream = (payload >> 4) & 0x0f;
+		atomic_store_explicit(&st->stream, (payload >> 4) & 0x0f,
+		    memory_order_relaxed);
 		DPRINTF("st->channel: 0x%x st->stream: 0x%x",
-		    st->channel, st->stream);
-		if (!st->stream)
+		    st->channel, atomic_load_explicit(&st->stream,
+		    memory_order_relaxed));
+		if (atomic_load_explicit(&st->stream, memory_order_relaxed) == 0)
 			hda_audio_ctxt_stop(&st->actx);
 		break;
 	default:
@@ -846,12 +891,130 @@ hda_codec_audio_inout_nid(struct hda_codec_stream *st, uint16_t verb,
 	return (res);
 }
 
+#ifdef BHYVE_SNAPSHOT
+#define	HDA_CODEC_SNAPSHOT_MAGIC	0x31434448U	/* "HDC1" on disk */
+#define	HDA_CODEC_SNAPSHOT_VERSION	1U
+
+#define	HDA_CODEC_SNAPSHOT_SHAPE_OUTPUT	0U
+#define	HDA_CODEC_SNAPSHOT_SHAPE_INPUT	1U
+#define	HDA_CODEC_SNAPSHOT_SHAPE_DUPLEX	2U
+
+static uint8_t
+hda_codec_snapshot_shape(const struct hda_codec_softc *sc)
+{
+
+	if (sc->get_parameters == hda_codec_duplex_parameters)
+		return (HDA_CODEC_SNAPSHOT_SHAPE_DUPLEX);
+	if (sc->get_parameters == hda_codec_input_parameters)
+		return (HDA_CODEC_SNAPSHOT_SHAPE_INPUT);
+	return (HDA_CODEC_SNAPSHOT_SHAPE_OUTPUT);
+}
+
+/*
+ * The audio backend (an open OSS device) is live external state: neither its
+ * in-kernel sample buffer nor its descriptor identity is serialized.  A
+ * restore destination reconstructs the backend from its own play/rec
+ * configuration, and the controller restart path replays the restored
+ * converter format into the backend via the stream setup callback.  Only
+ * guest-programmed converter state travels in the record; in-flight samples
+ * are transient (bounded by one FIFO) and are dropped, exactly as a real
+ * codec loses in-flight samples across a power transition.
+ */
+static int
+hda_codec_snapshot(struct hda_codec_inst *hci, struct vm_snapshot_meta *meta)
+{
+	struct {
+		uint8_t channel;
+		uint16_t fmt;
+		uint8_t stream;
+		uint8_t left_gain;
+		uint8_t right_gain;
+		uint8_t left_mute;
+		uint8_t right_mute;
+	} candidate[HDA_CODEC_STREAMS_COUNT];
+	struct hda_codec_softc *sc;
+	struct hda_codec_stream *st;
+	uint32_t magic, version;
+	uint8_t shape;
+	int i, ret;
+
+	if (hci == NULL || hci->priv == NULL || meta == NULL)
+		return (EINVAL);
+	sc = hci->priv;
+
+	magic = HDA_CODEC_SNAPSHOT_MAGIC;
+	version = HDA_CODEC_SNAPSHOT_VERSION;
+	shape = hda_codec_snapshot_shape(sc);
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(shape, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
+	    (magic != HDA_CODEC_SNAPSHOT_MAGIC ||
+	    version != HDA_CODEC_SNAPSHOT_VERSION ||
+	    shape != hda_codec_snapshot_shape(sc))) {
+		ret = ENOTSUP;
+		goto done;
+	}
+
+	for (i = 0; i < HDA_CODEC_STREAMS_COUNT; i++) {
+		st = &sc->streams[i];
+		candidate[i].channel = st->channel;
+		candidate[i].fmt = atomic_load_explicit(&st->fmt,
+		    memory_order_relaxed);
+		candidate[i].stream = atomic_load_explicit(&st->stream,
+		    memory_order_relaxed);
+		candidate[i].left_gain = st->left_gain;
+		candidate[i].right_gain = st->right_gain;
+		candidate[i].left_mute = st->left_mute;
+		candidate[i].right_mute = st->right_mute;
+
+		SNAPSHOT_U8_OR_LEAVE(candidate[i].channel, meta, ret, done);
+		SNAPSHOT_LE16_OR_LEAVE(candidate[i].fmt, meta, ret, done);
+		SNAPSHOT_U8_OR_LEAVE(candidate[i].stream, meta, ret, done);
+		SNAPSHOT_U8_OR_LEAVE(candidate[i].left_gain, meta, ret, done);
+		SNAPSHOT_U8_OR_LEAVE(candidate[i].right_gain, meta, ret, done);
+		SNAPSHOT_U8_OR_LEAVE(candidate[i].left_mute, meta, ret, done);
+		SNAPSHOT_U8_OR_LEAVE(candidate[i].right_mute, meta, ret, done);
+		if (vm_snapshot_is_loading(meta) &&
+		    !hda_codec_snapshot_stream_valid(candidate[i].channel,
+		    candidate[i].stream, candidate[i].left_gain,
+		    candidate[i].right_gain, candidate[i].left_mute,
+		    candidate[i].right_mute)) {
+			ret = EINVAL;
+			goto done;
+		}
+	}
+
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		for (i = 0; i < HDA_CODEC_STREAMS_COUNT; i++) {
+			st = &sc->streams[i];
+			st->channel = candidate[i].channel;
+			atomic_store_explicit(&st->fmt, candidate[i].fmt,
+			    memory_order_relaxed);
+			atomic_store_explicit(&st->stream,
+			    candidate[i].stream, memory_order_relaxed);
+			st->left_gain = candidate[i].left_gain;
+			st->right_gain = candidate[i].right_gain;
+			st->left_mute = candidate[i].left_mute;
+			st->right_mute = candidate[i].right_mute;
+		}
+	}
+	ret = 0;
+
+done:
+	return (ret);
+}
+#endif	/* BHYVE_SNAPSHOT */
+
 static const struct hda_codec_class hda_codec = {
 	.name		= "hda_codec",
 	.init		= hda_codec_init,
 	.reset		= hda_codec_reset,
 	.command	= hda_codec_command,
 	.notify		= hda_codec_notify,
+#ifdef BHYVE_SNAPSHOT
+	.snapshot	= hda_codec_snapshot,
+#endif
 };
 HDA_EMUL_SET(hda_codec);
 
@@ -868,14 +1031,16 @@ hda_audio_ctxt_thr(void *arg)
 
 	pthread_mutex_lock(&actx->mtx);
 	while (1) {
-		while (!actx->run)
+		while (!actx->run && !actx->shutdown)
 			pthread_cond_wait(&actx->cond, &actx->mtx);
-
+		if (actx->shutdown)
+			break;
+		pthread_mutex_unlock(&actx->mtx);
 		actx->do_transfer(actx->priv);
+		pthread_mutex_lock(&actx->mtx);
 	}
 	pthread_mutex_unlock(&actx->mtx);
 
-	pthread_exit(NULL);
 	return (NULL);
 }
 
@@ -885,11 +1050,9 @@ hda_audio_ctxt_init(struct hda_audio_ctxt *actx, const char *tname,
 {
 	int err;
 
-	assert(actx);
-	assert(tname);
-	assert(do_transfer);
-	assert(do_setup);
-	assert(priv);
+	if (actx == NULL || tname == NULL || do_transfer == NULL ||
+	    do_setup == NULL || priv == NULL)
+		return (EINVAL);
 
 	memset(actx, 0, sizeof(*actx));
 
@@ -903,13 +1066,21 @@ hda_audio_ctxt_init(struct hda_audio_ctxt *actx, const char *tname,
 		strcpy(actx->name, "unknown");
 
 	err = pthread_mutex_init(&actx->mtx, NULL);
-	assert(!err);
+	if (err != 0)
+		return (err);
 
 	err = pthread_cond_init(&actx->cond, NULL);
-	assert(!err);
+	if (err != 0) {
+		pthread_mutex_destroy(&actx->mtx);
+		return (err);
+	}
 
 	err = pthread_create(&actx->tid, NULL, hda_audio_ctxt_thr, actx);
-	assert(!err);
+	if (err != 0) {
+		pthread_cond_destroy(&actx->cond);
+		pthread_mutex_destroy(&actx->mtx);
+		return (err);
+	}
 
 	pthread_set_name_np(actx->tid, tname);
 
@@ -923,14 +1094,15 @@ hda_audio_ctxt_start(struct hda_audio_ctxt *actx)
 {
 	int err = 0;
 
-	assert(actx);
-	assert(actx->started);
-
-	/* The stream is supposed to be stopped */
-	if (actx->run)
+	if (actx == NULL || !actx->started)
 		return (-1);
 
 	pthread_mutex_lock(&actx->mtx);
+	/* The stream is supposed to be stopped. */
+	if (actx->run || actx->shutdown) {
+		pthread_mutex_unlock(&actx->mtx);
+		return (-1);
+	}
 	err = (* actx->do_setup)(actx->priv);
 	if (!err) {
 		actx->run = 1;
@@ -944,6 +1116,27 @@ hda_audio_ctxt_start(struct hda_audio_ctxt *actx)
 static int
 hda_audio_ctxt_stop(struct hda_audio_ctxt *actx)
 {
+	if (actx == NULL || !actx->started)
+		return (0);
+	pthread_mutex_lock(&actx->mtx);
 	actx->run = 0;
+	pthread_mutex_unlock(&actx->mtx);
 	return (0);
+}
+
+static void
+hda_audio_ctxt_fini(struct hda_audio_ctxt *actx)
+{
+	if (actx == NULL || !actx->started)
+		return;
+
+	pthread_mutex_lock(&actx->mtx);
+	actx->run = 0;
+	actx->shutdown = 1;
+	pthread_cond_signal(&actx->cond);
+	pthread_mutex_unlock(&actx->mtx);
+	(void)pthread_join(actx->tid, NULL);
+	pthread_cond_destroy(&actx->cond);
+	pthread_mutex_destroy(&actx->mtx);
+	actx->started = 0;
 }

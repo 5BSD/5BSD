@@ -49,6 +49,7 @@
 #include "pci_irq.h"
 #include "pci_lpc.h"
 #include "pctestdev.h"
+#include "pvpanic.h"
 #include "tpm_device.h"
 #include "uart_emul.h"
 
@@ -146,6 +147,10 @@ lpc_device_parse(const char *opts)
 			error = 0;
 			goto done;
 		}
+		if (strcasecmp(lpcdev, pvpanic_getname()) == 0) {
+			error = pvpanic_parse(str);
+			goto done;
+		}
 		for (unit = 0; unit < LPC_UART_NUM; unit++) {
 			if (strcasecmp(lpcdev, lpc_uart_names[unit]) == 0) {
 				asprintf(&node_name, "lpc.%s.path",
@@ -181,6 +186,7 @@ lpc_print_supported_devices(void)
 		printf("%s\n", lpc_uart_names[i]);
 	printf("tpm\n");
 	printf("%s\n", pctestdev_getname());
+	printf("%s\n", pvpanic_getname());
 }
 
 const char *
@@ -265,8 +271,11 @@ lpc_init(struct vmctx *ctx)
 
 		sc->uart_softc = uart_ns16550_init(lpc_uart_intr_assert,
 		    lpc_uart_intr_deassert, sc);
+		if (sc->uart_softc == NULL)
+			return (-1);
 
-		asprintf(&node_name, "lpc.%s.path", name);
+		if (asprintf(&node_name, "lpc.%s.path", name) < 0)
+			return (-1);
 		backend = get_config_value(node_name);
 		free(node_name);
 		if (backend != NULL &&
@@ -285,7 +294,11 @@ lpc_init(struct vmctx *ctx)
 		iop.arg = sc;
 
 		error = register_inout(&iop);
-		assert(error == 0);
+		if (error != 0) {
+			EPRINTLN("Unable to register I/O ports for LPC device %s",
+			    name);
+			return (-1);
+		}
 		sc->enabled = 1;
 	}
 
@@ -293,6 +306,15 @@ lpc_init(struct vmctx *ctx)
 	asprintf(&node_name, "lpc.%s", pctestdev_getname());
 	if (get_config_bool_default(node_name, false)) {
 		error = pctestdev_init(ctx);
+		if (error)
+			return (error);
+	}
+	free(node_name);
+
+	/* pvpanic */
+	asprintf(&node_name, "lpc.%s.enabled", pvpanic_getname());
+	if (get_config_bool_default(node_name, false)) {
+		error = pvpanic_init(ctx);
 		if (error)
 			return (error);
 	}
@@ -601,8 +623,54 @@ pci_lpc_snapshot(struct vm_snapshot_meta *meta)
 			goto done;
 	}
 
+	ret = pvpanic_snapshot(meta);
+
 done:
 	return (ret);
+}
+
+static int
+pci_lpc_pause(struct pci_devinst *pi __unused)
+{
+	int error, unit;
+
+	for (unit = 0; unit < LPC_UART_NUM; unit++) {
+		error = uart_ns16550_pause(lpc_uart_softc[unit].uart_softc);
+		if (error != 0)
+			goto rollback;
+	}
+	return (0);
+
+rollback:
+	while (--unit >= 0)
+		(void)uart_ns16550_resume(lpc_uart_softc[unit].uart_softc);
+	return (error);
+}
+
+static int
+pci_lpc_resume(struct pci_devinst *pi __unused)
+{
+	int error, rollback_error, unit;
+
+	for (unit = LPC_UART_NUM - 1; unit >= 0; unit--) {
+		error = uart_ns16550_resume(lpc_uart_softc[unit].uart_softc);
+		if (error == 0)
+			continue;
+		/*
+		 * Keep the LPC bridge as one retryable lifecycle unit.  UARTs with a
+		 * larger index have already resumed; reacquire their pause ownership
+		 * before reporting the failed resume to the generic checkpoint layer.
+		 */
+		for (int rollback = unit + 1; rollback < LPC_UART_NUM;
+		    rollback++) {
+			rollback_error = uart_ns16550_pause(
+			    lpc_uart_softc[rollback].uart_softc);
+			if (rollback_error != 0)
+				return (rollback_error);
+		}
+		return (error);
+	}
+	return (0);
 }
 #endif
 
@@ -615,6 +683,12 @@ static const struct pci_devemu pci_de_lpc = {
 	.pe_barread =	pci_lpc_read,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	pci_lpc_snapshot,
+	.pe_snapshot_validate = pci_lpc_snapshot,
+	.pe_pause =	pci_lpc_pause,
+	.pe_resume =	pci_lpc_resume,
+	.pe_migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
+	    PCI_MIGRATION_F_QUIESCE_CALLBACK,
 #endif
 };
 PCI_EMUL_SET(pci_de_lpc);

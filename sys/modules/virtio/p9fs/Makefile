@@ -27,6 +27,6 @@
 KMOD=	virtio_p9fs
 SRCS=	virtio_p9fs.c
 SRCS+=	virtio_bus_if.h virtio_if.h
-SRCS+=	bus_if.h device_if.h
+SRCS+=	bus_if.h device_if.h vnode_if.h
 
 .include <bsd.kmod.mk>

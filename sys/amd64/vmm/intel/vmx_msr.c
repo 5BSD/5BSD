@@ -39,6 +39,7 @@
 
 #include "vmx.h"
 #include "vmx_msr.h"
+#include "vpvclock.h"
 #include "x86.h"
 
 static bool
@@ -102,24 +103,24 @@ vmx_set_ctlreg(int ctl_reg, int true_ctl_reg, uint32_t ones_mask,
 			 "truectl 0x%0x\n", i, ctl_reg, true_ctl_reg));
 
 		if (zero_allowed && !one_allowed) {		/* b(i),c(i) */
-			if (ones_mask & (1 << i))
+			if (ones_mask & (UINT32_C(1) << i))
 				return (EINVAL);
-			*retval &= ~(1 << i);
+			*retval &= ~(UINT32_C(1) << i);
 		} else if (one_allowed && !zero_allowed) {	/* b(i),c(i) */
-			if (zeros_mask & (1 << i))
+			if (zeros_mask & (UINT32_C(1) << i))
 				return (EINVAL);
-			*retval |= 1 << i;
+			*retval |= UINT32_C(1) << i;
 		} else {
-			if (zeros_mask & (1 << i))	/* b(ii),c(ii) */
-				*retval &= ~(1 << i);
-			else if (ones_mask & (1 << i)) /* b(ii), c(ii) */
-				*retval |= 1 << i;
+			if (zeros_mask & (UINT32_C(1) << i)) /* b(ii),c(ii) */
+				*retval &= ~(UINT32_C(1) << i);
+			else if (ones_mask & (UINT32_C(1) << i)) /* b(ii), c(ii) */
+				*retval |= UINT32_C(1) << i;
 			else if (!true_ctls_avail)
-				*retval &= ~(1 << i);	/* b(iii) */
+				*retval &= ~(UINT32_C(1) << i); /* b(iii) */
 			else if (vmx_ctl_allows_zero_setting(val, i))/* c(iii)*/
-				*retval &= ~(1 << i);
+				*retval &= ~(UINT32_C(1) << i);
 			else if (vmx_ctl_allows_one_setting(val, i)) /* c(iv) */
-				*retval |= 1 << i;
+				*retval |= UINT32_C(1) << i;
 			else {
 				panic("vmx_set_ctlreg: unable to determine "
 				      "correct value of ctl bit %d for msr "
@@ -434,6 +435,9 @@ vmx_rdmsr(struct vmx_vcpu *vcpu, u_int num, uint64_t *val, bool *retu)
 		*val = vcpu->guest_msrs[IDX_MSR_PAT];
 		break;
 	default:
+		/* KVM paravirtual clock MSRs (no-op unless the guest opted in). */
+		if (vpvclock_rdmsr(vcpu->vcpu, num, val) == 0)
+			break;
 		error = EINVAL;
 		break;
 	}
@@ -443,6 +447,7 @@ vmx_rdmsr(struct vmx_vcpu *vcpu, u_int num, uint64_t *val, bool *retu)
 int
 vmx_wrmsr(struct vmx_vcpu *vcpu, u_int num, uint64_t val, bool *retu)
 {
+	enum vmx_nested_tsc_aux_guest_bank tsc_aux_bank;
 	uint64_t changed;
 	int error;
 
@@ -458,7 +463,8 @@ vmx_wrmsr(struct vmx_vcpu *vcpu, u_int num, uint64_t val, bool *retu)
 	case MSR_MTRR16kBase ... MSR_MTRR16kBase + 1:
 	case MSR_MTRR64kBase:
 	case MSR_MTRRVarBase ... MSR_MTRRVarBase + (VMM_MTRR_VAR_MAX * 2) - 1:
-		if (vm_wrmtrr(&vcpu->mtrr, num, val) != 0) {
+		if (vm_wrmtrr(&vcpu->mtrr, num, val,
+		    vm_mtrr_maxphyaddr(cpu_maxphyaddr)) != 0) {
 			vm_inject_gp(vcpu->vcpu);
 		}
 		break;
@@ -483,26 +489,78 @@ vmx_wrmsr(struct vmx_vcpu *vcpu, u_int num, uint64_t val, bool *retu)
 
 		break;
 	case MSR_PAT:
-		if (pat_valid(val))
+		if (pat_valid(val)) {
+			/*
+			 * VMCS02 always loads the effective L2 PAT on entry.
+			 * An intercepted L2 WRMSR therefore has two owners:
+			 * bhyve's architectural software value and the live
+			 * VMCS02 guest field.  Update hardware first so a
+			 * failed VMWRITE cannot publish a value that will not
+			 * take effect on VMRESUME.
+			 */
+			if (vcpu->nested_tsc_aux_residency ==
+			    VMX_NESTED_TSC_AUX_L2_PAUSED) {
+				error =
+				    vmx_nested_vmcs02_intel_write_guest_pat(
+				    &vcpu->nested_vmcs02_intel,
+				    &vcpu->nested_vmcs02_plan.id,
+				    vcpu->nested_entry_runtime.
+				    resource_generation, val);
+				if (error != 0)
+					break;
+			} else if (vcpu->nested_tsc_aux_residency !=
+			    VMX_NESTED_TSC_AUX_L1) {
+				error = EPROTO;
+				break;
+			}
 			vcpu->guest_msrs[IDX_MSR_PAT] = val;
-		else
+		} else
 			vm_inject_gp(vcpu->vcpu);
 		break;
 	case MSR_TSC:
-		error = vmx_set_tsc_offset(vcpu, val - rdtsc());
+		if (vcpu->nested_tsc_aux_residency ==
+		    VMX_NESTED_TSC_AUX_L2_PAUSED)
+			error = vmx_nested_write_tsc(vcpu, val);
+		else if (vcpu->nested_tsc_aux_residency ==
+		    VMX_NESTED_TSC_AUX_L1)
+			error = vmx_set_tsc_offset(vcpu, val - rdtsc());
+		else
+			error = EPROTO;
+		/*
+		 * The guest just moved its TSC; republish the paravirtual clock
+		 * page so its computed time tracks the new offset.  No-op unless
+		 * the guest enabled pvclock on this vCPU.
+		 */
+		if (error == 0)
+			vpvclock_vcpu_update(vcpu->vcpu);
 		break;
 	case MSR_TSC_AUX:
-		if (vmx_have_msr_tsc_aux)
+		if (vmx_have_msr_tsc_aux &&
+		    vmx_nested_tsc_aux_value_validate(val) == 0) {
 			/*
 			 * vmx_msr_guest_enter_tsc_aux() will apply this
 			 * value when it is called immediately before guest
-			 * entry.
+			 * entry.  A paused nested exit physically carries the
+			 * per-CPU host value, but the emulated WRMSR still
+			 * belongs to L2 and must update its retained bank.
 			 */
-			vcpu->guest_msrs[IDX_MSR_TSC_AUX] = val;
-		else
+			error = vmx_nested_tsc_aux_guest_bank(
+			    vcpu->nested_tsc_aux_residency, &tsc_aux_bank);
+			if (error != 0)
+				break;
+			if (tsc_aux_bank ==
+			    VMX_NESTED_TSC_AUX_GUEST_L2)
+				vcpu->nested_l2_software_msrs.tsc_aux = val;
+			else
+				vcpu->guest_msrs[IDX_MSR_TSC_AUX] = val;
+		} else {
 			vm_inject_gp(vcpu->vcpu);
+		}
 		break;
 	default:
+		/* KVM paravirtual clock MSRs (no-op unless the guest opted in). */
+		if (vpvclock_wrmsr(vcpu->vcpu, num, val) == 0)
+			break;
 		error = EINVAL;
 		break;
 	}

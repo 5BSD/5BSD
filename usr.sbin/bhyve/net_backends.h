@@ -36,6 +36,7 @@
 
 /* Opaque type representing a network backend. */
 typedef struct net_backend net_backend_t;
+#define	NETBE_CHECKPOINT_ID_MAX	255
 
 /* Interface between network frontends and the network backends. */
 typedef void (*net_be_rxeof_t)(int, enum ev_type, void *param);
@@ -47,6 +48,7 @@ uint64_t netbe_get_cap(net_backend_t *be);
 int	 netbe_set_cap(net_backend_t *be, uint64_t cap,
              unsigned vnet_hdr_len);
 size_t	netbe_get_vnet_hdr_len(net_backend_t *be);
+const char *netbe_checkpoint_identity(net_backend_t *be);
 ssize_t	netbe_send(net_backend_t *be, const struct iovec *iov, int iovcnt);
 ssize_t	netbe_peek_recvlen(net_backend_t *be);
 ssize_t	netbe_recv(net_backend_t *be, const struct iovec *iov, int iovcnt);

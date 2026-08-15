@@ -1,0 +1,149 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd August 14, 2026
+.Dt VIRTIO_IOMMU 4
+.Os
+.Sh NAME
+.Nm virtio_iommu
+.Nd VirtIO IOMMU driver
+.Sh SYNOPSIS
+To compile this driver into the kernel,
+place the following lines in your
+kernel configuration file:
+.Bd -ragged -offset indent
+.Cd "device virtio_iommu"
+.Ed
+.Pp
+Alternatively, to load the driver as a
+module at boot time, place the following line in
+.Xr loader.conf 5 :
+.Bd -literal -offset indent
+virtio_iommu_load="YES"
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+device driver provides support for VirtIO IOMMU (virtio-iommu) devices, the
+paravirtual input/output memory management unit defined by the VirtIO
+specification.
+.Pp
+The driver implements the guest side of the virtio-iommu protocol.
+It owns a request virtqueue, over which it issues the
+ATTACH, DETACH, MAP, UNMAP and PROBE commands with full status handling, and
+an event virtqueue, on which it receives asynchronous fault reports from the
+device.
+It maintains a domain, endpoint and mapping model reflecting the state it has
+programmed into the device.
+Both split and packed virtqueues are supported transparently by the shared
+VirtIO transport layer.
+.Ss Translation boundary
+The complete, exercised deliverable of this driver is the virtio-iommu
+.Em protocol .
+The driver does
+.Em not
+yet reprogram other devices'
+.Xr busdma 9
+so that their DMA is transparently translated through this IOMMU.
+In
+.Fx
+that transparency is provided by the busdma/IOMMU framework driven from
+firmware topology tables; for virtio-iommu specifically it requires an ACPI
+VIOT table parser that binds endpoint identifiers to this unit and a
+busdma back end whose map and unmap operations call into this driver's request
+queue.
+Those components live in the shared framework and are not provided here, so
+real host translation is not yet wired up.
+The driver exposes a lookup seam that resolves an endpoint identifier to its
+protocol engine, so a future in-tree VIOT and busdma back end can drive real
+translation without changing the protocol core.
+.Pp
+Because a non-translating IOMMU provides a guest no isolation, this guest
+driver is
+.Em disabled by default
+and declines the device unless the operator opts in with
+.Va hw.virtio_iommu.enable Ns = Ns 1 .
+It is intended for exercising the virtio-iommu protocol and the in-tree
+.Xr bhyve 8
+host model, not as a guest DMA-isolation capability.
+The production deliverable is the host-side virtio-iommu model, which presents
+a functional IOMMU
+.Pq with an ACPI VIOT table binding its endpoints
+to guests whose operating system can consume one, such as Linux;
+.Fx
+guests are limited by the absence of the VIOT and
+.Xr busdma 9
+back end described above.
+.Sh LOADER TUNABLES
+The following
+.Xr loader 8
+tunable, read at boot, controls the driver:
+.Bl -tag -width indent
+.It Va hw.virtio_iommu.enable
+When set to a non-zero value, the driver attaches to virtio-iommu devices.
+The default value is 0: the driver declines the device and does not attach,
+because it implements the protocol but does not provide transparent
+.Xr busdma 9
+translation for other devices.
+Set it to 1 to exercise the protocol against a virtio-iommu device.
+.El
+.Sh SYSCTL VARIABLES
+The following read-only variables are available as
+.Xr sysctl 8
+variables, per attached device, and count protocol activity.
+.Bl -tag -width indent
+.It Va dev.vtiommu. Ns Ar X Ns Va .attach_reqs
+The number of ATTACH requests issued.
+.It Va dev.vtiommu. Ns Ar X Ns Va .detach_reqs
+The number of DETACH requests issued.
+.It Va dev.vtiommu. Ns Ar X Ns Va .map_reqs
+The number of MAP requests issued.
+.It Va dev.vtiommu. Ns Ar X Ns Va .unmap_reqs
+The number of UNMAP requests issued.
+.It Va dev.vtiommu. Ns Ar X Ns Va .probe_reqs
+The number of PROBE requests issued.
+.It Va dev.vtiommu. Ns Ar X Ns Va .faults
+The number of fault events received on the event virtqueue.
+.El
+.Sh SEE ALSO
+.Xr virtio 4 ,
+.Xr busdma 9
+.Sh HISTORY
+The
+.Nm
+driver first appeared in
+.Fx 15.0 .
+.Sh AUTHORS
+The
+.Nm
+driver was written by
+.An Kory Heard .
+.Sh BUGS
+The driver implements the virtio-iommu protocol but does not yet provide
+transparent
+.Xr busdma 9
+translation for other devices; see the
+.Sx DESCRIPTION .

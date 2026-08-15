@@ -1,0 +1,35 @@
+# Host-side configuration for kernel-devvm.
+# Install as /etc/kernel-devvm.conf, owned by root and not group/world writable.
+
+VM_NAME="kernel-dev"
+VM_CPUS="8"
+VM_MEMORY="16G"
+
+# The source image is copied once by `kernel-devvm create`.  The destination
+# is expanded sparsely; growfs runs on the guest's first boot.
+VM_BASE_IMAGE="/home/koryheard/vm/bsd-guest.img"
+VM_DATASET="zroot/home/koryheard/kernel-devvm"
+VM_DIR="/home/koryheard/vm/kernel-devvm"
+VM_IMAGE="/home/koryheard/vm/kernel-devvm/disk.img"
+VM_DISK_SIZE="96G"
+VM_DUMP_IMAGE="/home/koryheard/vm/kernel-devvm/dump.img"
+VM_DUMP_SIZE="20G"
+VM_OWNER="koryheard"
+
+# slirp provides DHCP/DNS/outbound NAT.  SSH is reachable only from this host.
+VM_SSH_PORT="2242"
+VM_SSH_USER="root"
+VM_SSH_KEY="/home/koryheard/.ssh/id_ed25519"
+VM_SSH_PUBKEY="/home/koryheard/.ssh/id_ed25519.pub"
+VM_KNOWN_HOSTS="/home/koryheard/.ssh/kernel-devvm_known_hosts"
+VM_MAC="58:9c:fc:42:00:01"
+
+VM_CONSOLE_UNIT="42"
+VM_STATE_DIR="/var/run/kernel-devvm"
+VM_LOG="/home/koryheard/vm/kernel-devvm/bhyve.log"
+
+BHYVE="/usr/sbin/bhyve"
+BHYVELOAD="/usr/sbin/bhyveload"
+BHYVECTL="/usr/sbin/bhyvectl"
+CRASH_SETUP="/usr/local/sbin/kernel-crashdump-setup"
+CRASH_SETUP="/usr/local/sbin/kernel-crashdump-setup"

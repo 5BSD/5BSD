@@ -67,6 +67,7 @@ vm_inject_fault(struct vcpu *vcpu, int vector, int errcode_valid,
 	error = vm_inject_exception(vcpu, vector, errcode_valid, errcode,
 	    restart_instruction);
 	assert(error == 0);
+	(void)error;
 }
 
 static int
@@ -293,7 +294,7 @@ vmexit_svm(struct vmctx *ctx __unused, struct vcpu *vcpu, struct vm_run *vmrun)
 
 static int
 vmexit_bogus(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
-    struct vm_run *vmrun)
+    struct vm_run *vmrun __unused)
 {
 	assert(vmrun->vm_exit->inst_length == 0);
 
@@ -302,7 +303,7 @@ vmexit_bogus(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
 
 static int
 vmexit_reqidle(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
-    struct vm_run *vmrun)
+    struct vm_run *vmrun __unused)
 {
 	assert(vmrun->vm_exit->inst_length == 0);
 
@@ -330,7 +331,7 @@ vmexit_pause(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
 
 static int
 vmexit_mtrap(struct vmctx *ctx __unused, struct vcpu *vcpu,
-    struct vm_run *vmrun)
+    struct vm_run *vmrun __unused)
 {
 	assert(vmrun->vm_exit->inst_length == 0);
 
@@ -492,11 +493,15 @@ vmexit_ipi(struct vmctx *ctx __unused, struct vcpu *vcpu __unused,
 		}
 		break;
 	case APIC_DELMODE_STARTUP:
-		CPU_FOREACH_ISSET(i, dmask) {
-			spinup_ap(fbsdrun_vcpu(i),
-			    vme->u.ipi.vector << PAGE_SHIFT);
-		}
 		error = 0;
+		CPU_FOREACH_ISSET(i, dmask) {
+			error = spinup_ap(fbsdrun_vcpu(i),
+			    vme->u.ipi.vector << PAGE_SHIFT);
+			if (error != 0) {
+				warnx("failed to start cpu %d", i);
+				break;
+			}
+		}
 		break;
 	default:
 		break;

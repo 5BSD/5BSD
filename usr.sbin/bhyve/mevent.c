@@ -38,6 +38,7 @@
 #endif
 #include <err.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -61,9 +62,10 @@
 #define	MEVENT_MAX	64
 
 static pthread_t mevent_tid;
+static bool mevent_dispatching;
 static pthread_once_t mevent_once = PTHREAD_ONCE_INIT;
 static int mevent_timid = 43;
-static int mevent_pipefd[2];
+static int mevent_pipefd[2] = { -1, -1 };
 static int mfd;
 static pthread_mutex_t mevent_lmutex = PTHREAD_MUTEX_INITIALIZER;
 
@@ -78,7 +80,15 @@ struct mevent {
 	int	me_state; /* Desired kevent flags. */
 	int	me_closefd;
 	int	me_fflags;
+	mevent_param_cleanup_t me_cleanup;
+	struct mevent_delete_waiter *me_delete_waiter;
 	LIST_ENTRY(mevent) me_list;
+};
+
+struct mevent_delete_waiter {
+	pthread_mutex_t	mdw_mtx;
+	pthread_cond_t	mdw_cond;
+	bool		mdw_done;
 };
 
 enum mevent_update_type {
@@ -105,28 +115,39 @@ static void
 mevent_pipe_read(int fd, enum ev_type type __unused, void *param __unused)
 {
 	char buf[MEVENT_MAX];
-	int status;
+	ssize_t status;
 
 	/*
 	 * Drain the pipe read side. The fd is non-blocking so this is
 	 * safe to do.
 	 */
-	do {
+	for (;;) {
 		status = read(fd, buf, sizeof(buf));
-	} while (status == MEVENT_MAX);
+		if (status > 0)
+			continue;
+		if (status == -1 && errno == EINTR)
+			continue;
+		break;
+	}
 }
 
 static void
 mevent_notify(void)
 {
 	char c = '\0';
+	ssize_t n;
 
 	/*
 	 * If calling from outside the i/o thread, write a byte on the
 	 * pipe to force the i/o thread to exit the blocking kevent call.
 	 */
-	if (mevent_pipefd[1] != 0 && pthread_self() != mevent_tid) {
-		write(mevent_pipefd[1], &c, 1);
+	if (mevent_pipefd[1] >= 0 && pthread_self() != mevent_tid) {
+		do {
+			n = write(mevent_pipefd[1], &c, 1);
+		} while (n == -1 && errno == EINTR);
+		/* EAGAIN means a prior byte already guarantees a wakeup. */
+		if (n == -1 && errno != EAGAIN && errno != EWOULDBLOCK)
+			warn("could not notify event thread");
 	}
 }
 
@@ -138,7 +159,8 @@ mevent_init(void)
 #endif
 
 	mfd = kqueue();
-	assert(mfd > 0);
+	if (mfd == -1)
+		err(EX_OSERR, "kqueue");
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_init(&rights, CAP_KQUEUE);
@@ -230,37 +252,65 @@ static int
 mevent_build(struct kevent *kev)
 {
 	struct mevent *mevp, *tmpp;
-	int i;
+	LIST_HEAD(, mevent) retire_head;
+	struct mevent_delete_waiter *waiter;
+	struct kevent delete_kev;
+	int error, i;
 
 	i = 0;
+	LIST_INIT(&retire_head);
 
 	mevent_qlock();
 
 	LIST_FOREACH_SAFE(mevp, &change_head, me_list, tmpp) {
-		if (mevp->me_closefd) {
+		if (mevp->me_state & EV_DELETE) {
 			/*
-			 * A close of the file descriptor will remove the
-			 * event
+			 * A synchronous deleter may reclaim udata as soon as its waiter is
+			 * signalled.  Apply EV_DELETE (or close the descriptor) before
+			 * moving the object to retire_head; merely returning it in a
+			 * changelist would acknowledge deletion too early.
 			 */
-			close(mevp->me_fd);
-		} else {
-			mevent_populate(mevp, &kev[i]);
-			i++;
+			if (mevp->me_closefd) {
+				(void)close(mevp->me_fd);
+			} else {
+				mevent_populate(mevp, &delete_kev);
+				error = kevent(mfd, &delete_kev, 1, NULL, 0, NULL);
+				if (error == -1 && errno != ENOENT)
+					err(EX_OSERR, "could not delete event");
+			}
+			mevp->me_cq = 0;
+			LIST_REMOVE(mevp, me_list);
+			LIST_INSERT_HEAD(&retire_head, mevp, me_list);
+			continue;
 		}
+		/* Leave excess changes queued for the next dispatch iteration. */
+		if (i == MEVENT_MAX)
+			break;
+		mevent_populate(mevp, &kev[i]);
+		i++;
 
 		mevp->me_cq = 0;
 		LIST_REMOVE(mevp, me_list);
+		LIST_INSERT_HEAD(&global_head, mevp, me_list);
 
-		if (mevp->me_state & EV_DELETE) {
-			free(mevp);
-		} else {
-			LIST_INSERT_HEAD(&global_head, mevp, me_list);
-		}
-
-		assert(i < MEVENT_MAX);
+		assert(i <= MEVENT_MAX);
 	}
 
 	mevent_qunlock();
+
+	LIST_FOREACH_SAFE(mevp, &retire_head, me_list, tmpp) {
+		LIST_REMOVE(mevp, me_list);
+		waiter = mevp->me_delete_waiter;
+		if (mevp->me_cleanup != NULL)
+			mevp->me_cleanup(mevp->me_param);
+		free(mevp);
+		if (waiter != NULL) {
+			pthread_mutex_lock(&waiter->mdw_mtx);
+			waiter->mdw_done = true;
+			pthread_cond_signal(&waiter->mdw_cond);
+			pthread_mutex_unlock(&waiter->mdw_mtx);
+		}
+	}
 
 	return (i);
 }
@@ -283,7 +333,7 @@ mevent_handle(struct kevent *kev, int numev)
 static struct mevent *
 mevent_add_state(int tfd, enum ev_type type,
 	   void (*func)(int, enum ev_type, void *), void *param,
-	   int state, int fflags)
+	   int state, int fflags, mevent_param_cleanup_t cleanup)
 {
 	struct kevent kev;
 	struct mevent *lp, *mevp;
@@ -332,6 +382,7 @@ mevent_add_state(int tfd, enum ev_type type,
 	mevp->me_type = type;
 	mevp->me_func = func;
 	mevp->me_param = param;
+	mevp->me_cleanup = cleanup;
 	mevp->me_state = state;
 	mevp->me_fflags = fflags;
 
@@ -361,7 +412,7 @@ mevent_add(int tfd, enum ev_type type,
 	   void (*func)(int, enum ev_type, void *), void *param)
 {
 
-	return (mevent_add_state(tfd, type, func, param, EV_ADD, 0));
+	return (mevent_add_state(tfd, type, func, param, EV_ADD, 0, NULL));
 }
 
 struct mevent *
@@ -369,7 +420,7 @@ mevent_add_flags(int tfd, enum ev_type type, int fflags,
 		 void (*func)(int, enum ev_type, void *), void *param)
 {
 
-	return (mevent_add_state(tfd, type, func, param, EV_ADD, fflags));
+	return (mevent_add_state(tfd, type, func, param, EV_ADD, fflags, NULL));
 }
 
 struct mevent *
@@ -377,7 +428,17 @@ mevent_add_disabled(int tfd, enum ev_type type,
 		    void (*func)(int, enum ev_type, void *), void *param)
 {
 
-	return (mevent_add_state(tfd, type, func, param, EV_ADD | EV_DISABLE, 0));
+	return (mevent_add_state(tfd, type, func, param, EV_ADD | EV_DISABLE,
+	    0, NULL));
+}
+
+struct mevent *
+mevent_add_cleanup(int tfd, enum ev_type type,
+    void (*func)(int, enum ev_type, void *), void *param,
+    mevent_param_cleanup_t cleanup)
+{
+
+	return (mevent_add_state(tfd, type, func, param, EV_ADD, 0, cleanup));
 }
 
 static int
@@ -479,6 +540,100 @@ mevent_delete(struct mevent *evp)
 	return (mevent_delete_event(evp, 0));
 }
 
+static int
+mevent_delete_sync_event(struct mevent *evp, int closefd)
+{
+	struct mevent_delete_waiter waiter;
+	struct kevent kev;
+	int error;
+
+	error = pthread_mutex_init(&waiter.mdw_mtx, NULL);
+	if (error != 0)
+		return (error);
+	error = pthread_cond_init(&waiter.mdw_cond, NULL);
+	if (error != 0) {
+		pthread_mutex_destroy(&waiter.mdw_mtx);
+		return (error);
+	}
+	waiter.mdw_done = false;
+
+	mevent_qlock();
+	if (!mevent_dispatching) {
+		/*
+		 * Before dispatch starts there can be no callback in flight, so
+		 * deletion can be completed directly without an acknowledgement.
+		 * The event was installed synchronously by mevent_add_state(), so
+		 * remove its kernel registration before releasing the udata object.
+		 */
+		evp->me_state = EV_DELETE;
+		mevent_populate(evp, &kev);
+		if (kevent(mfd, &kev, 1, NULL, 0, NULL) == -1 &&
+		    errno != ENOENT) {
+			error = errno;
+			mevent_qunlock();
+			goto out;
+		}
+		LIST_REMOVE(evp, me_list);
+		mevent_qunlock();
+		if (closefd)
+			close(evp->me_fd);
+		if (evp->me_cleanup != NULL)
+			evp->me_cleanup(evp->me_param);
+		free(evp);
+		error = 0;
+		goto out;
+	}
+	/*
+	 * The dispatch thread applies deletions between callback batches.  It
+	 * cannot wait for itself to reach that boundary.
+	 */
+	if (pthread_equal(pthread_self(), mevent_tid)) {
+		mevent_qunlock();
+		error = EDEADLK;
+		goto out;
+	}
+	if (evp->me_delete_waiter != NULL) {
+		mevent_qunlock();
+		error = EALREADY;
+		goto out;
+	}
+	evp->me_delete_waiter = &waiter;
+	if (evp->me_cq == 0) {
+		evp->me_cq = 1;
+		LIST_REMOVE(evp, me_list);
+		LIST_INSERT_HEAD(&change_head, evp, me_list);
+		mevent_notify();
+	}
+	evp->me_state = EV_DELETE;
+	if (closefd)
+		evp->me_closefd = 1;
+	mevent_qunlock();
+
+	pthread_mutex_lock(&waiter.mdw_mtx);
+	while (!waiter.mdw_done)
+		pthread_cond_wait(&waiter.mdw_cond, &waiter.mdw_mtx);
+	pthread_mutex_unlock(&waiter.mdw_mtx);
+	error = 0;
+out:
+	pthread_cond_destroy(&waiter.mdw_cond);
+	pthread_mutex_destroy(&waiter.mdw_mtx);
+	return (error);
+}
+
+int
+mevent_delete_sync(struct mevent *evp)
+{
+
+	return (mevent_delete_sync_event(evp, 0));
+}
+
+int
+mevent_delete_close_sync(struct mevent *evp)
+{
+
+	return (mevent_delete_sync_event(evp, 1));
+}
+
 int
 mevent_delete_close(struct mevent *evp)
 {
@@ -499,6 +654,7 @@ mevent_dispatch(void)
 	struct kevent changelist[MEVENT_MAX];
 	struct kevent eventlist[MEVENT_MAX];
 	struct mevent *pipev;
+	int pipefd[2];
 	int numev;
 	int ret;
 #ifndef WITHOUT_CAPSICUM
@@ -515,40 +671,61 @@ mevent_dispatch(void)
 	 * the blocking kqueue call to exit by writing to it. Set the
 	 * descriptor to non-blocking.
 	 */
-	ret = pipe(mevent_pipefd);
+	ret = pipe2(pipefd, O_NONBLOCK | O_CLOEXEC);
 	if (ret < 0) {
-		perror("pipe");
+		perror("pipe2");
 		exit(BHYVE_EXIT_ERROR);
 	}
 
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_init(&rights, CAP_EVENT, CAP_READ, CAP_WRITE);
-	if (caph_rights_limit(mevent_pipefd[0], &rights) == -1)
+	if (caph_rights_limit(pipefd[0], &rights) == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
-	if (caph_rights_limit(mevent_pipefd[1], &rights) == -1)
+	if (caph_rights_limit(pipefd[1], &rights) == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
 #endif
+	mevent_qlock();
+	mevent_pipefd[0] = pipefd[0];
+	mevent_pipefd[1] = pipefd[1];
+	mevent_qunlock();
 
 	/*
 	 * Add internal event handler for the pipe write fd
 	 */
 	pipev = mevent_add(mevent_pipefd[0], EVF_READ, mevent_pipe_read, NULL);
-	assert(pipev != NULL);
+	if (pipev == NULL)
+		errx(EX_OSERR, "could not register event wakeup pipe");
+
+	/*
+	 * Publish dispatch readiness only after the wakeup pipe exists and its
+	 * read event is installed.  A synchronous deletion which observes this
+	 * flag is permitted to enqueue a change and notify the event thread, so
+	 * setting it earlier would expose uninitialized pipe descriptors during
+	 * dispatcher startup.
+	 */
+	mevent_qlock();
+	mevent_dispatching = true;
+	mevent_qunlock();
 
 	for (;;) {
 		/*
-		 * Build changelist if required.
+		 * Build every pending changelist batch before sleeping.  The wakeup
+		 * pipe may already have been drained while more than MEVENT_MAX
+		 * changes remain queued; blocking after only the first batch would
+		 * strand synchronous deletions indefinitely.
 		 * XXX the changelist can be put into the blocking call
 		 * to eliminate the extra syscall. Currently better for
 		 * debug.
 		 */
-		numev = mevent_build(changelist);
-		if (numev) {
-			ret = kevent(mfd, changelist, numev, NULL, 0, NULL);
-			if (ret == -1) {
-				perror("Error return from kevent change");
+		do {
+			numev = mevent_build(changelist);
+			if (numev) {
+				ret = kevent(mfd, changelist, numev, NULL, 0,
+				    NULL);
+				if (ret == -1)
+					perror("Error return from kevent change");
 			}
-		}
+		} while (numev == MEVENT_MAX);
 
 		/*
 		 * Block awaiting events

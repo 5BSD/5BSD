@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd June 24, 2012
+.Dd August 13, 2026
 .Dt VIRTIO_SCSI 4
 .Os
 .Sh NAME
@@ -79,6 +79,29 @@ Enable informational prints.
 Enable prints for driver errors.
 .It 0x04
 Enable tracing prints.
+.El
+.Sh SYSCTL VARIABLES
+The following per-device variables are available as
+.Xr sysctl 8
+variables.
+.Bl -tag -width indent
+.It Va dev.vtscsi. Ns Ar X Ns Va .num_queues
+The number of active request virtqueues.
+This is greater than one only when the device advertises multiple request
+queues, in which case the driver spreads commands across up to one request
+queue per CPU.
+This variable is read-only.
+.It Va dev.vtscsi. Ns Ar X Ns Va .debug_level
+The debug level described in
+.Sx DEBUGGING ;
+this variable is read-write.
+.It Va dev.vtscsi. Ns Ar X Ns Va .scsi_cmd_timeouts
+The number of SCSI commands that have timed out.
+This variable is read-only.
+.It Va dev.vtscsi. Ns Ar X Ns Va .dequeue_no_requests
+The number of times a request could not be dequeued because none were
+available.
+This variable is read-only.
 .El
 .Sh SEE ALSO
 .Xr virtio 4

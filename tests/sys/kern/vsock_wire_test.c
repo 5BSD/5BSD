@@ -51,6 +51,45 @@ ATF_TC_BODY(aux_struct_sizes, tc)
 }
 
 /*
+ * /dev/vsock provider control is a private host ABI, not a VirtIO wire ABI.
+ * Pin its versioned layouts independently so adding a field cannot silently
+ * change an ioctl number or make an old VMM's 8-byte command ambiguous.
+ */
+ATF_TC_WITHOUT_HEAD(provider_control_abi_layout);
+ATF_TC_BODY(provider_control_abi_layout, tc)
+{
+	ATF_CHECK_EQ(1, VSOCK_TRANSPORT_VERSION);
+	ATF_CHECK_EQ(1, VSOCK_TRANSPORT_FEATURES_VERSION);
+	ATF_CHECK_EQ(1, VSOCK_TRANSPORT_CHECKPOINT_VERSION);
+
+	ATF_CHECK_EQ(32, sizeof(struct vsock_transport_attach));
+	ATF_CHECK_EQ(0, offsetof(struct vsock_transport_attach, version));
+	ATF_CHECK_EQ(4, offsetof(struct vsock_transport_attach, guest_cid));
+	ATF_CHECK_EQ(8, offsetof(struct vsock_transport_attach, features));
+	ATF_CHECK_EQ(16, offsetof(struct vsock_transport_attach, reserved));
+
+	ATF_CHECK_EQ(32, sizeof(struct vsock_transport_features));
+	ATF_CHECK_EQ(0, offsetof(struct vsock_transport_features, version));
+	ATF_CHECK_EQ(4, offsetof(struct vsock_transport_features, flags));
+	ATF_CHECK_EQ(8, offsetof(struct vsock_transport_features, features));
+	ATF_CHECK_EQ(16, offsetof(struct vsock_transport_features, reserved));
+
+	ATF_CHECK_EQ(40, sizeof(struct vsock_transport_checkpoint));
+	ATF_CHECK_EQ(0, offsetof(struct vsock_transport_checkpoint, version));
+	ATF_CHECK_EQ(4, offsetof(struct vsock_transport_checkpoint, flags));
+	ATF_CHECK_EQ(8, offsetof(struct vsock_transport_checkpoint, queue_count));
+	ATF_CHECK_EQ(12,
+	    offsetof(struct vsock_transport_checkpoint, connection_count));
+	ATF_CHECK_EQ(16,
+	    offsetof(struct vsock_transport_checkpoint, generation));
+	ATF_CHECK_EQ(24,
+	    offsetof(struct vsock_transport_checkpoint, reserved));
+
+	ATF_CHECK_EQ(32,
+	    IOCPARM_LEN(VSOCK_IOC_TRANSPORT_SET_FEATURES));
+}
+
+/*
  * Encode a header with distinct per-field values and assert the raw bytes are
  * little-endian at the spec offsets.  This exercises the same htole*() the
  * three implementations use, so on a big-endian host it verifies the swap and
@@ -300,6 +339,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, hdr_layout);
 	ATF_TP_ADD_TC(tp, aux_struct_sizes);
+	ATF_TP_ADD_TC(tp, provider_control_abi_layout);
 	ATF_TP_ADD_TC(tp, hdr_little_endian_encode);
 	ATF_TP_ADD_TC(tp, hdr_little_endian_decode);
 	ATF_TP_ADD_TC(tp, protocol_constants);

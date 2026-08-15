@@ -82,7 +82,22 @@ struct vm_snapshot_buffer {
 enum vm_snapshot_op {
 	VM_SNAPSHOT_SAVE,
 	VM_SNAPSHOT_RESTORE,
+	/*
+	 * Userspace-only, side-effect-free restore validation.  bhyve never
+	 * sends this operation through VM_SNAPSHOT_REQ; keeping it in the
+	 * common metadata type lets device codecs consume the exact restore
+	 * wire representation without inventing a second parser.
+	 */
+	VM_SNAPSHOT_VALIDATE,
 };
+
+/* Operations accepted by the kernel VM_SNAPSHOT_REQ ABI. */
+static __inline int
+vm_snapshot_op_is_kernel(enum vm_snapshot_op op)
+{
+
+	return (op == VM_SNAPSHOT_SAVE || op == VM_SNAPSHOT_RESTORE);
+}
 
 struct vm_snapshot_meta {
 	void *dev_data;
@@ -93,6 +108,33 @@ struct vm_snapshot_meta {
 
 	enum vm_snapshot_op op;
 };
+
+/*
+ * Private bhyve checkpoint publication session ABI.  This is deliberately
+ * separate from vm_snapshot_meta: a session owns transient kernel admission
+ * state across multiple record ioctls and the userspace durability boundary,
+ * but none of that state is part of a checkpoint image.
+ */
+#define	VM_SNAPSHOT_SESSION_VERSION	1U
+
+enum vm_snapshot_session_op {
+	VM_SNAPSHOT_SESSION_BEGIN = 1,
+	VM_SNAPSHOT_SESSION_COMMIT = 2,
+	VM_SNAPSHOT_SESSION_ABORT = 3,
+	/* Descriptor-scoped recovery after an ambiguous BEGIN copyout. */
+	VM_SNAPSHOT_SESSION_ABORT_CURRENT = 4,
+};
+
+struct vm_snapshot_session {
+	uint32_t version;
+	uint32_t op;
+	uint64_t session_id;
+	uint64_t flags;
+	uint64_t reserved[2];
+};
+
+_Static_assert(sizeof(struct vm_snapshot_session) == 40,
+    "vm_snapshot_session ABI");
 
 void vm_snapshot_buf_err(const char *bufname, const enum vm_snapshot_op op);
 int vm_snapshot_buf(void *data, size_t data_size,

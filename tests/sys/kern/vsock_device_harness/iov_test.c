@@ -92,9 +92,35 @@ ATF_TC_BODY(scsi_packed_data_descriptor, tc)
 	ATF_CHECK(iov_out->iov_len == sizeof(response));
 }
 
+ATF_TC_WITHOUT_HEAD(length_overflow_saturates);
+ATF_TC_BODY(length_overflow_saturates, tc)
+{
+	uint8_t byte;
+	struct iovec iov[2] = {
+		{ .iov_base = &byte, .iov_len = SIZE_MAX },
+		{ .iov_base = &byte, .iov_len = 1 },
+	};
+
+	ATF_CHECK_EQ(count_iov(iov, 1), SIZE_MAX);
+	ATF_CHECK_EQ(count_iov(iov, 2), SIZE_MAX);
+	ATF_CHECK(check_iov_len(iov, 2, SIZE_MAX));
+
+	iov[0].iov_len = SIZE_MAX - 4;
+	iov[1].iov_len = 8;
+	ATF_CHECK_EQ(count_iov(iov, 2), SIZE_MAX);
+	ATF_CHECK(check_iov_len(iov, 2, SIZE_MAX));
+
+	iov[0].iov_len = 3;
+	iov[1].iov_len = 4;
+	ATF_CHECK_EQ(count_iov(iov, 2), 7);
+	ATF_CHECK(check_iov_len(iov, 2, 7));
+	ATF_CHECK(!check_iov_len(iov, 2, 8));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, split_preserves_tail);
 	ATF_TP_ADD_TC(tp, scsi_packed_data_descriptor);
+	ATF_TP_ADD_TC(tp, length_overflow_saturates);
 	return (atf_no_error());
 }

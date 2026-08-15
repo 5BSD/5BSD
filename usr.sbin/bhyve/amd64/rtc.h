@@ -29,6 +29,6 @@
 #ifndef _RTC_H_
 #define _RTC_H_
 
-void	rtc_init(struct vmctx *ctx);
+int	rtc_init(struct vmctx *ctx);
 
 #endif /* _RTC_H_ */

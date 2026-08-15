@@ -56,12 +56,19 @@
 #include "pci_emul.h"
 #ifdef BHYVE_SNAPSHOT
 #include "snapshot.h"
+#include "snapshot_identity.h"
 #endif
 #include "ahci.h"
 #include "block_if.h"
+#include "pci_ahci_model.h"
 
 #define	DEF_PORTS	6	/* Intel ICH8 AHCI supports 6 ports */
 #define	MAX_PORTS	32	/* AHCI supports 32 ports */
+
+#ifdef BHYVE_SNAPSHOT
+#define	AHCI_SNAPSHOT_MAGIC	0x31494341U	/* "ACI1" on disk */
+#define	AHCI_SNAPSHOT_VERSION	1U
+#endif
 
 #define	PxSIG_ATA	0x00000101 /* ATA drive */
 #define	PxSIG_ATAPI	0xeb140101 /* ATAPI drive */
@@ -177,6 +184,11 @@ struct ahci_port {
 	int ioqsz;
 	STAILQ_HEAD(ahci_fhead, ahci_ioreq) iofhd;
 	TAILQ_HEAD(ahci_bhead, ahci_ioreq) iobhd;
+	/*
+	 * Split-transfer/TRIM continuations parked while the block
+	 * backends quiesce; resubmitted by pci_ahci_resume().
+	 */
+	struct ahci_fhead iodhd;
 };
 
 struct ahci_cmd_hdr {
@@ -210,13 +222,43 @@ struct pci_ahci_softc {
 	uint32_t cap2;
 	uint32_t bohc;
 	uint32_t lintr;
+	/*
+	 * Set (under mtx) while the block backends are quiescing for a
+	 * suspend.  Completion callbacks then defer continuations and
+	 * command dispatch instead of submitting new blockif requests
+	 * into the quiesce fence's EBUSY.
+	 */
+	int paused;
 	struct ahci_port port[MAX_PORTS];
 };
 #define	ahci_ctx(sc)	((sc)->asc_pi->pi_vmctx)
 
+static void
+ahci_mark_cmd_header_dirty(struct ahci_port *p, struct ahci_cmd_hdr *hdr)
+{
+
+	pci_emul_mark_dma_dirty_mapping(p->pr_sc->asc_pi, hdr, sizeof(*hdr));
+}
+
+static void
+ahci_mark_iov_dirty(struct ahci_port *p, const struct blockif_req *breq)
+{
+	int i;
+
+	for (i = 0; i < breq->br_iovcnt; i++)
+		pci_emul_mark_dma_dirty_mapping(p->pr_sc->asc_pi,
+		    breq->br_iov[i].iov_base, breq->br_iov[i].iov_len);
+}
+
 static void ahci_handle_next_trim(struct ahci_port *p, int slot, uint8_t *cfis,
     uint8_t *buf, uint32_t len, uint32_t done);
 static void ahci_handle_port(struct ahci_port *p);
+static void ahci_check_stopped(struct ahci_port *p);
+static void ahci_write_fis_sdb(struct ahci_port *p, int slot, uint8_t *cfis,
+    uint32_t tfd);
+static void ahci_write_fis_d2h(struct ahci_port *p, int slot, uint8_t *cfis,
+    uint32_t tfd);
+static void ahci_write_fis_d2h_ncq(struct ahci_port *p, int slot);
 
 static inline void lba_to_msf(uint8_t *buf, int lba)
 {
@@ -241,7 +283,7 @@ ahci_generate_intr(struct pci_ahci_softc *sc, uint32_t mask)
 	for (i = 0; i < sc->ports; i++) {
 		p = &sc->port[i];
 		if (p->is & p->ie)
-			sc->is |= (1 << i);
+			sc->is |= (UINT32_C(1) << i);
 	}
 	DPRINTF("%s(%08x) %08x", __func__, mask, sc->is);
 
@@ -267,7 +309,7 @@ ahci_generate_intr(struct pci_ahci_softc *sc, uint32_t mask)
 	/* Assert respective MSIs for ports that were touched. */
 	for (i = 0; i < nmsg; i++) {
 		if (sc->ports <= nmsg || i < nmsg - 1)
-			mmask = 1 << i;
+			mmask = UINT32_C(1) << i;
 		else
 			mmask = 0xffffffff << i;
 		if (sc->is & mask && mmask & mask)
@@ -295,7 +337,7 @@ ahci_port_intr(struct ahci_port *p)
 	/* In case of non-shared MSI always generate interrupt. */
 	nmsg = pci_msi_maxmsgnum(pi);
 	if (sc->ports <= nmsg || p->port < nmsg - 1) {
-		sc->is |= (1 << p->port);
+		sc->is |= (UINT32_C(1) << p->port);
 		if ((sc->ghc & AHCI_GHC_IE) == 0)
 			return;
 		pci_generate_msi(pi, p->port);
@@ -303,10 +345,10 @@ ahci_port_intr(struct ahci_port *p)
 	}
 
 	/* If IS for this port is already set -- do nothing. */
-	if (sc->is & (1 << p->port))
+	if (sc->is & (UINT32_C(1) << p->port))
 		return;
 
-	sc->is |= (1 << p->port);
+	sc->is |= (UINT32_C(1) << p->port);
 
 	/* If interrupts are enabled -- generate one. */
 	if ((sc->ghc & AHCI_GHC_IE) == 0)
@@ -316,6 +358,40 @@ ahci_port_intr(struct ahci_port *p)
 	} else if (!sc->lintr) {
 		sc->lintr = 1;
 		pci_lintr_assert(pi);
+	}
+}
+
+static void
+ahci_host_bus_error(struct ahci_port *p, uint32_t error)
+{
+
+	if ((p->is & error) == 0) {
+		p->is |= error;
+		ahci_port_intr(p);
+	}
+}
+
+static void
+ahci_abort_command(struct ahci_port *p, int slot, uint8_t *cfis, bool ncq)
+{
+
+	/*
+	 * A command-level abort (malformed TRIM, a blockif refusal during the
+	 * suspend quiesce, etc.) is a task-file error, not a host-bus error.
+	 * The D2H/SDB FIS below carries ATA_S_ERROR|ATA_E_ABORT, which makes
+	 * ahci_write_fis() set PxIS.TFES and update PxTFD -- exactly what a
+	 * stock ahci(4)/libata driver expects for a per-command abort.  Do not
+	 * additionally raise PxIS.HBDS: that is a fatal host-bus data-error
+	 * class which escalates the driver to a full port COMRESET, tearing
+	 * down every other outstanding command on the port.
+	 */
+	if (ncq) {
+		ahci_write_fis_d2h_ncq(p, slot);
+		ahci_write_fis_sdb(p, slot, cfis,
+		    (ATA_E_ABORT << 8) | ATA_S_READY | ATA_S_ERROR);
+	} else {
+		ahci_write_fis_d2h(p, slot, cfis,
+		    (ATA_E_ABORT << 8) | ATA_S_READY | ATA_S_ERROR);
 	}
 }
 
@@ -352,6 +428,8 @@ ahci_write_fis(struct ahci_port *p, enum sata_fis_type ft, uint8_t *fis)
 		irq |= AHCI_P_IX_TFE;
 	}
 	memcpy(p->rfis + offset, fis, len);
+	pci_emul_mark_dma_dirty_mapping(p->pr_sc->asc_pi, p->rfis + offset,
+	    len);
 	if (irq) {
 		if (~p->is & irq) {
 			p->is |= irq;
@@ -376,8 +454,8 @@ ahci_write_fis_sdb(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t tfd)
 	uint8_t fis[8];
 	uint8_t error;
 
-	error = (tfd >> 8) & 0xff;
-	tfd &= 0x77;
+	error = pci_ahci_fis_error(tfd);
+	tfd = pci_ahci_sdb_status(tfd);
 	memset(fis, 0, sizeof(fis));
 	fis[0] = FIS_TYPE_SETDEVBITS;
 	fis[1] = (1 << 6);
@@ -389,8 +467,8 @@ ahci_write_fis_sdb(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t tfd)
 		p->err_cfis[3] = error;
 		memcpy(&p->err_cfis[4], cfis + 4, 16);
 	} else {
-		*(uint32_t *)(fis + 4) = (1 << slot);
-		p->sact &= ~(1 << slot);
+		*(uint32_t *)(fis + 4) = (UINT32_C(1) << slot);
+		p->sact &= ~(UINT32_C(1) << slot);
 	}
 	p->tfd &= ~0x77;
 	p->tfd |= tfd;
@@ -403,7 +481,7 @@ ahci_write_fis_d2h(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t tfd)
 	uint8_t fis[20];
 	uint8_t error;
 
-	error = (tfd >> 8) & 0xff;
+	error = pci_ahci_fis_error(tfd);
 	memset(fis, 0, sizeof(fis));
 	fis[0] = FIS_TYPE_REGD2H;
 	fis[1] = (1 << 6);
@@ -425,7 +503,7 @@ ahci_write_fis_d2h(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t tfd)
 		p->err_cfis[3] = error;
 		memcpy(&p->err_cfis[4], cfis + 4, 16);
 	} else
-		p->ci &= ~(1 << slot);
+		p->ci &= ~(UINT32_C(1) << slot);
 	p->tfd = tfd;
 	ahci_write_fis(p, FIS_TYPE_REGD2H, fis);
 }
@@ -441,7 +519,7 @@ ahci_write_fis_d2h_ncq(struct ahci_port *p, int slot)
 	fis[1] = 0;			/* No interrupt */
 	fis[2] = p->tfd;		/* Status */
 	fis[3] = 0;			/* No error */
-	p->ci &= ~(1 << slot);
+	p->ci &= ~(UINT32_C(1) << slot);
 	ahci_write_fis(p, FIS_TYPE_REGD2H, fis);
 }
 
@@ -504,14 +582,14 @@ ahci_port_stop(struct ahci_port *p)
 		if (cfis[2] == ATA_WRITE_FPDMA_QUEUED ||
 		    cfis[2] == ATA_READ_FPDMA_QUEUED ||
 		    cfis[2] == ATA_SEND_FPDMA_QUEUED)
-			p->sact &= ~(1 << slot);	/* NCQ */
+			p->sact &= ~(UINT32_C(1) << slot);	/* NCQ */
 		else
-			p->ci &= ~(1 << slot);
+			p->ci &= ~(UINT32_C(1) << slot);
 
 		/*
 		 * This command is now done.
 		 */
-		p->pending &= ~(1 << slot);
+		p->pending &= ~(UINT32_C(1) << slot);
 
 		/*
 		 * Delete the blockif request from the busy list
@@ -608,7 +686,7 @@ atapi_string(uint8_t *dest, const char *src, int len)
 /*
  * Build up the iovec based on the PRDT, 'done' and 'len'.
  */
-static void
+static bool
 ahci_build_iov(struct ahci_port *p, struct ahci_ioreq *aior,
     struct ahci_prdt_entry *prdt, uint16_t prdtl)
 {
@@ -633,8 +711,13 @@ ahci_build_iov(struct ahci_port *p, struct ahci_ioreq *aior,
 		dbcsz -= skip;
 		if (dbcsz > left)
 			dbcsz = left;
-		breq->br_iov[j].iov_base = paddr_guest2host(ahci_ctx(p->pr_sc),
-		    prdt->dba + skip, dbcsz);
+		if (!pci_ahci_prdt_dba_valid(prdt->dba, skip))
+			return (false);
+		breq->br_iov[j].iov_base = pci_emul_map_dma(p->pr_sc->asc_pi,
+		    prdt->dba + skip, dbcsz, aior->readop ?
+		    PCI_DMA_DEVICE_WRITE : PCI_DMA_DEVICE_READ);
+		if (breq->br_iov[j].iov_base == NULL)
+			return (false);
 		breq->br_iov[j].iov_len = dbcsz;
 		todo += dbcsz;
 		left -= dbcsz;
@@ -661,6 +744,7 @@ ahci_build_iov(struct ahci_port *p, struct ahci_ioreq *aior,
 	breq->br_resid = todo;
 	aior->done += todo;
 	aior->more = (aior->done < aior->len && i < prdtl);
+	return (true);
 }
 
 static void
@@ -732,10 +816,14 @@ ahci_handle_rw(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t done)
 	aior->readop = readop;
 	breq = &aior->io_req;
 	breq->br_offset = lba + done;
-	ahci_build_iov(p, aior, prdt, hdr->prdtl);
+	if (!ahci_build_iov(p, aior, prdt, hdr->prdtl)) {
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+		ahci_abort_command(p, slot, cfis, ncq != 0);
+		return;
+	}
 
 	/* Mark this command in-flight. */
-	p->pending |= 1 << slot;
+	p->pending |= UINT32_C(1) << slot;
 
 	/* Stuff request onto busy list. */
 	TAILQ_INSERT_HEAD(&p->iobhd, aior, io_blist);
@@ -747,7 +835,20 @@ ahci_handle_rw(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t done)
 		err = blockif_read(p->bctx, breq);
 	else
 		err = blockif_write(p->bctx, breq);
-	assert(err == 0);
+	if (err != 0) {
+		/*
+		 * blockif refused the request (e.g. EBUSY from the
+		 * suspend quiesce fence).  Fail the command back to the
+		 * guest instead of aborting bhyve; deferral in the
+		 * completion callbacks keeps this path off the normal
+		 * suspend flow.
+		 */
+		TAILQ_REMOVE(&p->iobhd, aior, io_blist);
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+		p->pending &= ~(UINT32_C(1) << slot);
+		ahci_abort_command(p, slot, cfis, ncq != 0);
+		ahci_check_stopped(p);
+	}
 }
 
 static void
@@ -768,12 +869,14 @@ ahci_handle_flush(struct ahci_port *p, int slot, uint8_t *cfis)
 	aior->len = 0;
 	aior->done = 0;
 	aior->more = 0;
+	aior->readop = 0;
 	breq = &aior->io_req;
+	breq->br_iovcnt = 0;
 
 	/*
 	 * Mark this command in-flight.
 	 */
-	p->pending |= 1 << slot;
+	p->pending |= UINT32_C(1) << slot;
 
 	/*
 	 * Stuff request onto busy list
@@ -781,7 +884,14 @@ ahci_handle_flush(struct ahci_port *p, int slot, uint8_t *cfis)
 	TAILQ_INSERT_HEAD(&p->iobhd, aior, io_blist);
 
 	err = blockif_flush(p->bctx, breq);
-	assert(err == 0);
+	if (err != 0) {
+		/* Fail the command back to the guest; see ahci_handle_rw(). */
+		TAILQ_REMOVE(&p->iobhd, aior, io_blist);
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+		p->pending &= ~(UINT32_C(1) << slot);
+		ahci_abort_command(p, slot, cfis, false);
+		ahci_check_stopped(p);
+	}
 }
 
 static inline unsigned int
@@ -804,8 +914,11 @@ read_prdt(struct ahci_port *p, int slot, uint8_t *cfis, void *buf,
 		unsigned int sublen;
 
 		dbcsz = (prdt->dbc & DBCMASK) + 1;
-		ptr = paddr_guest2host(ahci_ctx(p->pr_sc), prdt->dba, dbcsz);
 		sublen = MIN(len, dbcsz);
+		ptr = pci_emul_map_dma(p->pr_sc->asc_pi, prdt->dba, sublen,
+		    PCI_DMA_DEVICE_READ);
+		if (ptr == NULL)
+			break;
 		memcpy(to, ptr, sublen);
 		len -= sublen;
 		to += sublen;
@@ -839,6 +952,8 @@ ahci_handle_dsm_trim(struct ahci_port *p, int slot, uint8_t *cfis)
 	}
 
 	buf = malloc(len);
+	if (buf == NULL)
+		goto invalid_command;
 	nread = read_prdt(p, slot, cfis, buf, len);
 	if (nread != len) {
 		goto invalid_command;
@@ -848,14 +963,7 @@ ahci_handle_dsm_trim(struct ahci_port *p, int slot, uint8_t *cfis)
 
 invalid_command:
 	free(buf);
-	if (ncq) {
-		ahci_write_fis_d2h_ncq(p, slot);
-		ahci_write_fis_sdb(p, slot, cfis,
-		    (ATA_E_ABORT << 8) | ATA_S_READY | ATA_S_ERROR);
-	} else {
-		ahci_write_fis_d2h(p, slot, cfis,
-		    (ATA_E_ABORT << 8) | ATA_S_READY | ATA_S_ERROR);
-	}
+	ahci_abort_command(p, slot, cfis, ncq != 0);
 }
 
 static void
@@ -905,7 +1013,7 @@ ahci_handle_next_trim(struct ahci_port *p, int slot, uint8_t *cfis,
 			    ATA_S_READY | ATA_S_DSC);
 		}
 		if (!first) {
-			p->pending &= ~(1 << slot);
+			p->pending &= ~(UINT32_C(1) << slot);
 			ahci_check_stopped(p);
 			ahci_handle_port(p);
 		}
@@ -924,15 +1032,17 @@ ahci_handle_next_trim(struct ahci_port *p, int slot, uint8_t *cfis,
 	aior->done = done;
 	aior->dsm = buf;
 	aior->more = (len != done);
+	aior->readop = 0;
 
 	breq = &aior->io_req;
+	breq->br_iovcnt = 0;
 	breq->br_offset = elba * blockif_sectsz(p->bctx);
 	breq->br_resid = elen * blockif_sectsz(p->bctx);
 
 	/*
 	 * Mark this command in-flight.
 	 */
-	p->pending |= 1 << slot;
+	p->pending |= UINT32_C(1) << slot;
 
 	/*
 	 * Stuff request onto busy list
@@ -943,7 +1053,16 @@ ahci_handle_next_trim(struct ahci_port *p, int slot, uint8_t *cfis,
 		ahci_write_fis_d2h_ncq(p, slot);
 
 	err = blockif_delete(p->bctx, breq);
-	assert(err == 0);
+	if (err != 0) {
+		/* Fail the command back to the guest; see ahci_handle_rw(). */
+		TAILQ_REMOVE(&p->iobhd, aior, io_blist);
+		aior->dsm = NULL;
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+		p->pending &= ~(UINT32_C(1) << slot);
+		free(buf);
+		ahci_abort_command(p, slot, cfis, ncq);
+		ahci_check_stopped(p);
+	}
 }
 
 static inline void
@@ -966,14 +1085,36 @@ write_prdt(struct ahci_port *p, int slot, uint8_t *cfis, void *buf,
 		int sublen;
 
 		dbcsz = (prdt->dbc & DBCMASK) + 1;
-		ptr = paddr_guest2host(ahci_ctx(p->pr_sc), prdt->dba, dbcsz);
 		sublen = MIN(len, dbcsz);
+		ptr = pci_emul_map_dma(p->pr_sc->asc_pi, prdt->dba, sublen,
+		    PCI_DMA_DEVICE_WRITE);
+		if (ptr == NULL) {
+			/*
+			 * The guest programmed a PRD whose data base address
+			 * does not map to guest RAM.  That is a bad software
+			 * pointer -- a host-bus *fatal* error (PxIS.HBFS), not a
+			 * data-transfer error (PxIS.HBDS) -- so signal it with
+			 * the same idiom used for an unmappable command table
+			 * (see ahci_handle_slot()): raise HBFS and stop the
+			 * command engine.  The caller's trailing success FIS is
+			 * then superseded by the driver's mandatory fatal-error
+			 * recovery (clear PxIS, restart PxCMD.ST / COMRESET),
+			 * rather than leaving the engine running behind a
+			 * self-contradictory "success + host-bus error" state.
+			 */
+			ahci_host_bus_error(p, AHCI_P_IX_HBF);
+			p->cmd &= ~AHCI_P_CMD_ST;
+			ahci_check_stopped(p);
+			break;
+		}
 		memcpy(ptr, from, sublen);
+		pci_emul_mark_dma_dirty_mapping(p->pr_sc->asc_pi, ptr, sublen);
 		len -= sublen;
 		from += sublen;
 		prdt++;
 	}
 	hdr->prdbc = size - len;
+	ahci_mark_cmd_header_dirty(p, hdr);
 }
 
 static void
@@ -1467,6 +1608,7 @@ atapi_read(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t done)
 	if (len == 0) {
 		cfis[4] = (cfis[4] & ~7) | ATA_I_CMD | ATA_I_IN;
 		ahci_write_fis_d2h(p, slot, cfis, ATA_S_READY | ATA_S_DSC);
+		return;
 	}
 	lba *= 2048;
 	len *= 2048;
@@ -1484,16 +1626,27 @@ atapi_read(struct ahci_port *p, int slot, uint8_t *cfis, uint32_t done)
 	aior->readop = 1;
 	breq = &aior->io_req;
 	breq->br_offset = lba + done;
-	ahci_build_iov(p, aior, prdt, hdr->prdtl);
+	if (!ahci_build_iov(p, aior, prdt, hdr->prdtl)) {
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+		ahci_abort_command(p, slot, cfis, false);
+		return;
+	}
 
 	/* Mark this command in-flight. */
-	p->pending |= 1 << slot;
+	p->pending |= UINT32_C(1) << slot;
 
 	/* Stuff request onto busy list. */
 	TAILQ_INSERT_HEAD(&p->iobhd, aior, io_blist);
 
 	err = blockif_read(p->bctx, breq);
-	assert(err == 0);
+	if (err != 0) {
+		/* Fail the command back to the guest; see ahci_handle_rw(). */
+		TAILQ_REMOVE(&p->iobhd, aior, io_blist);
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+		p->pending &= ~(UINT32_C(1) << slot);
+		ahci_abort_command(p, slot, cfis, false);
+		ahci_check_stopped(p);
+	}
 }
 
 static void
@@ -1877,6 +2030,12 @@ ahci_handle_slot(struct ahci_port *p, int slot)
 #endif
 	cfis = paddr_guest2host(ahci_ctx(sc), hdr->ctba,
 			0x80 + hdr->prdtl * sizeof(struct ahci_prdt_entry));
+	if (cfis == NULL) {
+		ahci_host_bus_error(p, AHCI_P_IX_HBF);
+		p->cmd &= ~AHCI_P_CMD_ST;
+		ahci_check_stopped(p);
+		return;
+	}
 #ifdef AHCI_DEBUG
 	prdt = (struct ahci_prdt_entry *)(cfis + 0x80);
 
@@ -1908,7 +2067,7 @@ ahci_handle_slot(struct ahci_port *p, int slot)
 			p->reset = 0;
 			ahci_port_reset(p);
 		}
-		p->ci &= ~(1 << slot);
+		p->ci &= ~(UINT32_C(1) << slot);
 	}
 }
 
@@ -1920,6 +2079,20 @@ ahci_handle_port(struct ahci_port *p)
 		return;
 
 	/*
+	 * The block backends are quiescing for a suspend; new commands
+	 * would bounce off the quiesce fence with EBUSY.  Leave them on
+	 * the command list; pci_ahci_resume() re-runs the ports.
+	 */
+	if (p->pr_sc->paused)
+		return;
+	if (p->cmd_lst == NULL) {
+		ahci_host_bus_error(p, AHCI_P_IX_HBF);
+		p->cmd &= ~AHCI_P_CMD_ST;
+		ahci_check_stopped(p);
+		return;
+	}
+
+	/*
 	 * Search for any new commands to issue ignoring those that
 	 * are already in-flight.  Stop if device is busy or in error.
 	 */
@@ -1928,7 +2101,7 @@ ahci_handle_port(struct ahci_port *p)
 			break;
 		if (p->waitforclear)
 			break;
-		if ((p->ci & ~p->pending & (1 << p->ccs)) != 0) {
+		if ((p->ci & ~p->pending & (UINT32_C(1) << p->ccs)) != 0) {
 			p->cmd &= ~AHCI_P_CMD_CCS_MASK;
 			p->cmd |= p->ccs << AHCI_P_CMD_CCS_SHIFT;
 			ahci_handle_slot(p, p->ccs);
@@ -1975,15 +2148,26 @@ ata_ioreq_cb(struct blockif_req *br, int err)
 	 */
 	TAILQ_REMOVE(&p->iobhd, aior, io_blist);
 
-	/*
-	 * Move the blockif request back to the free list
-	 */
-	STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
-
-	if (!err)
+	if (!err && aior->readop)
+		ahci_mark_iov_dirty(p, br);
+	if (!err) {
 		hdr->prdbc = aior->done;
+		ahci_mark_cmd_header_dirty(p, hdr);
+	}
 
 	if (!err && aior->more) {
+		if (sc->paused) {
+			/*
+			 * The block backend is quiescing for a suspend;
+			 * submitting the next chunk now would bounce off
+			 * the quiesce fence with EBUSY.  Park the
+			 * continuation; pci_ahci_resume() resubmits it.
+			 */
+			aior->dsm = dsm;
+			STAILQ_INSERT_TAIL(&p->iodhd, aior, io_flist);
+			goto out;
+		}
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
 		if (dsm != NULL)
 			ahci_handle_next_trim(p, slot, cfis, dsm,
 			    aior->len, aior->done);
@@ -1991,6 +2175,11 @@ ata_ioreq_cb(struct blockif_req *br, int err)
 			ahci_handle_rw(p, slot, cfis, aior->done);
 		goto out;
 	}
+
+	/*
+	 * Move the blockif request back to the free list
+	 */
+	STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
 
 	if (!err)
 		tfd = ATA_S_READY | ATA_S_DSC;
@@ -2004,7 +2193,7 @@ ata_ioreq_cb(struct blockif_req *br, int err)
 	/*
 	 * This command is now complete.
 	 */
-	p->pending &= ~(1 << slot);
+	p->pending &= ~(UINT32_C(1) << slot);
 
 	ahci_check_stopped(p);
 	ahci_handle_port(p);
@@ -2041,18 +2230,28 @@ atapi_ioreq_cb(struct blockif_req *br, int err)
 	 */
 	TAILQ_REMOVE(&p->iobhd, aior, io_blist);
 
+	if (!err && aior->readop)
+		ahci_mark_iov_dirty(p, br);
+	if (!err) {
+		hdr->prdbc = aior->done;
+		ahci_mark_cmd_header_dirty(p, hdr);
+	}
+
+	if (!err && aior->more) {
+		if (sc->paused) {
+			/* Park the continuation; see ata_ioreq_cb(). */
+			STAILQ_INSERT_TAIL(&p->iodhd, aior, io_flist);
+			goto out;
+		}
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+		atapi_read(p, slot, cfis, aior->done);
+		goto out;
+	}
+
 	/*
 	 * Move the blockif request back to the free list
 	 */
 	STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
-
-	if (!err)
-		hdr->prdbc = aior->done;
-
-	if (!err && aior->more) {
-		atapi_read(p, slot, cfis, aior->done);
-		goto out;
-	}
 
 	if (!err) {
 		tfd = ATA_S_READY | ATA_S_DSC;
@@ -2067,7 +2266,7 @@ atapi_ioreq_cb(struct blockif_req *br, int err)
 	/*
 	 * This command is now complete.
 	 */
-	p->pending &= ~(1 << slot);
+	p->pending &= ~(UINT32_C(1) << slot);
 
 	ahci_check_stopped(p);
 	ahci_handle_port(p);
@@ -2085,6 +2284,7 @@ pci_ahci_ioreq_init(struct ahci_port *pr)
 	pr->ioqsz = blockif_queuesz(pr->bctx);
 	pr->ioreq = calloc(pr->ioqsz, sizeof(struct ahci_ioreq));
 	STAILQ_INIT(&pr->iofhd);
+	STAILQ_INIT(&pr->iodhd);
 
 	/*
 	 * Add all i/o request entries to the free queue
@@ -2154,6 +2354,10 @@ pci_ahci_port_write(struct pci_ahci_softc *sc, uint64_t offset, uint64_t value)
 			clb = (uint64_t)p->clbu << 32 | p->clb;
 			p->cmd_lst = paddr_guest2host(ahci_ctx(sc), clb,
 					AHCI_CL_SIZE * AHCI_MAX_SLOTS);
+			if (p->cmd_lst == NULL) {
+				ahci_host_bus_error(p, AHCI_P_IX_HBF);
+				p->cmd &= ~(AHCI_P_CMD_ST | AHCI_P_CMD_CR);
+			}
 		}
 
 		if (value & AHCI_P_CMD_FRE) {
@@ -2163,6 +2367,10 @@ pci_ahci_port_write(struct pci_ahci_softc *sc, uint64_t offset, uint64_t value)
 			fb = (uint64_t)p->fbu << 32 | p->fb;
 			/* we don't support FBSCP, so rfis size is 256Bytes */
 			p->rfis = paddr_guest2host(ahci_ctx(sc), fb, 256);
+			if (p->rfis == NULL) {
+				ahci_host_bus_error(p, AHCI_P_IX_HBF);
+				p->cmd &= ~AHCI_P_CMD_FR;
+			}
 		} else {
 			p->cmd &= ~AHCI_P_CMD_FR;
 		}
@@ -2247,8 +2455,8 @@ pci_ahci_write(struct pci_devinst *pi, int baridx, uint64_t offset, int size,
 {
 	struct pci_ahci_softc *sc = pi->pi_arg;
 
-	assert(baridx == 5);
-	assert((offset % 4) == 0 && size == 4);
+	if (!pci_ahci_mmio_access_valid(baridx, offset, size, true))
+		return;
 
 	pthread_mutex_lock(&sc->mtx);
 
@@ -2342,9 +2550,8 @@ pci_ahci_read(struct pci_devinst *pi, int baridx, uint64_t regoff, int size)
 	uint64_t offset;
 	uint32_t value;
 
-	assert(baridx == 5);
-	assert(size == 1 || size == 2 || size == 4);
-	assert((regoff & (size - 1)) == 0);
+	if (!pci_ahci_mmio_access_valid(baridx, regoff, size, false))
+		return (UINT64_MAX);
 
 	pthread_mutex_lock(&sc->mtx);
 
@@ -2573,7 +2780,7 @@ pci_ahci_init(struct pci_devinst *pi, nvlist_t *nvl)
 		 */
 		pci_ahci_ioreq_init(&sc->port[p]);
 
-		sc->pi |= (1 << p);
+		sc->pi |= (UINT32_C(1) << p);
 		if (sc->port[p].ioqsz < slots)
 			slots = sc->port[p].ioqsz;
 	}
@@ -2600,7 +2807,7 @@ pci_ahci_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pci_set_cfgdata8(pi, PCIR_PROGIF, PCIP_STORAGE_SATA_AHCI_1_0);
 	p = MIN(sc->ports, 16);
 	p = flsl(p) - ((p & (p - 1)) ? 0 : 1);
-	pci_emul_add_msicap(pi, 1 << p);
+	pci_emul_add_msicap(pi, UINT32_C(1) << p);
 	pci_emul_alloc_bar(pi, 5, PCIBAR_MEM32,
 	    AHCI_OFFSET + sc->ports * AHCI_STEP);
 
@@ -2622,43 +2829,76 @@ open_fail:
 static int
 pci_ahci_snapshot(struct vm_snapshot_meta *meta)
 {
+	int expected_atapi, expected_ioqsz;
 	int i, ret;
-	void *bctx;
+	uint32_t magic, version;
+	uint64_t backend_present;
+	uint64_t cmd_lst_gpa, rfis_gpa;
+	int expected_ports;
+	uint32_t ccs;
+	uint32_t expected_cap, expected_cap2, expected_pi, expected_vs;
 	struct pci_devinst *pi;
 	struct pci_ahci_softc *sc;
 	struct ahci_port *port;
 
 	pi = meta->dev_data;
 	sc = pi->pi_arg;
+	expected_ports = sc->ports;
+	expected_cap = sc->cap;
+	expected_cap2 = sc->cap2;
+	expected_pi = sc->pi;
+	expected_vs = sc->vs;
+	magic = AHCI_SNAPSHOT_MAGIC;
+	version = AHCI_SNAPSHOT_VERSION;
 
-	/* TODO: add mtx lock/unlock */
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
+	if (vm_snapshot_is_loading(meta) &&
+	    (magic != AHCI_SNAPSHOT_MAGIC ||
+	    version != AHCI_SNAPSHOT_VERSION)) {
+		ret = ENOTSUP;
+		goto done;
+	}
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->ports, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->cap, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->ghc, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->is, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->pi, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->vs, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->ccc_ctl, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->ccc_pts, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->em_loc, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->em_ctl, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->cap2, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->bohc, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->lintr, meta, ret, done);
+	SNAPSHOT_NONNEGATIVE_INT_OR_LEAVE(sc->ports, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->cap, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->ghc, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->is, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->pi, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->vs, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->ccc_ctl, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->ccc_pts, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->em_loc, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->em_ctl, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->cap2, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->bohc, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(sc->lintr, meta, ret, done);
+	if (meta->op != VM_SNAPSHOT_SAVE &&
+	    (sc->ports != expected_ports || sc->cap != expected_cap ||
+	    sc->cap2 != expected_cap2 || sc->pi != expected_pi ||
+	    sc->vs != expected_vs || (sc->lintr != 0 && sc->lintr != 1))) {
+		ret = EINVAL;
+		goto done;
+	}
 
 	for (i = 0; i < MAX_PORTS; i++) {
 		port = &sc->port[i];
+		expected_atapi = port->atapi;
+		expected_ioqsz = port->ioqsz;
 
 		if (meta->op == VM_SNAPSHOT_SAVE)
-			bctx = port->bctx;
+			backend_present = port->bctx != NULL;
 
-		SNAPSHOT_VAR_OR_LEAVE(bctx, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->port, meta, ret, done);
+		/* Encode backend identity as data, never as a host pointer. */
+		SNAPSHOT_LE64_OR_LEAVE(backend_present, meta, ret, done);
+		if (meta->op != VM_SNAPSHOT_SAVE && backend_present > 1) {
+			ret = EINVAL;
+			goto done;
+		}
+		SNAPSHOT_NONNEGATIVE_INT_OR_LEAVE(port->port, meta, ret, done);
 
 		/* Mostly for restore; save is ensured by the lines above. */
-		if (((bctx == NULL) && (port->bctx != NULL)) ||
-		    ((bctx != NULL) && (port->bctx == NULL))) {
+		if ((backend_present != 0) != (port->bctx != NULL)) {
 			EPRINTLN("%s: ports not matching", __func__);
 			ret = EINVAL;
 			goto done;
@@ -2666,6 +2906,11 @@ pci_ahci_snapshot(struct vm_snapshot_meta *meta)
 
 		if (port->bctx == NULL)
 			continue;
+		ret = vm_snapshot_identity_string(
+		    blockif_checkpoint_identity(port->bctx),
+		    BLOCKIF_CHECKPOINT_ID_MAX, meta);
+		if (ret != 0)
+			goto done;
 
 		if (port->port != i) {
 			EPRINTLN("%s: ports not matching: "
@@ -2675,45 +2920,153 @@ pci_ahci_snapshot(struct vm_snapshot_meta *meta)
 		}
 
 		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(pi->pi_vmctx, port->cmd_lst,
-			AHCI_CL_SIZE * AHCI_MAX_SLOTS, false, meta, ret, done);
+			AHCI_CL_SIZE * AHCI_MAX_SLOTS, true, meta, ret, done);
 		SNAPSHOT_GUEST2HOST_ADDR_OR_LEAVE(pi->pi_vmctx, port->rfis, 256,
-		    false, meta, ret, done);
+		    true, meta, ret, done);
 
-		SNAPSHOT_VAR_OR_LEAVE(port->ata_ident, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->atapi, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->reset, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->waitforclear, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->mult_sectors, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->xfermode, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->err_cfis, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->sense_key, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->asc, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->ccs, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->pending, meta, ret, done);
+		SNAPSHOT_BUF_OR_LEAVE(&port->ata_ident,
+		    sizeof(port->ata_ident), meta, ret, done);
+		SNAPSHOT_NONNEGATIVE_INT_OR_LEAVE(port->atapi, meta, ret, done);
+		SNAPSHOT_NONNEGATIVE_INT_OR_LEAVE(port->reset, meta, ret, done);
+		SNAPSHOT_NONNEGATIVE_INT_OR_LEAVE(port->waitforclear, meta, ret,
+		    done);
+		SNAPSHOT_NONNEGATIVE_INT_OR_LEAVE(port->mult_sectors, meta, ret,
+		    done);
+		SNAPSHOT_U8_OR_LEAVE(port->xfermode, meta, ret, done);
+		SNAPSHOT_BUF_OR_LEAVE(port->err_cfis, sizeof(port->err_cfis),
+		    meta, ret, done);
+		SNAPSHOT_U8_OR_LEAVE(port->sense_key, meta, ret, done);
+		SNAPSHOT_U8_OR_LEAVE(port->asc, meta, ret, done);
+		ccs = port->ccs;
+		SNAPSHOT_LE32_OR_LEAVE(ccs, meta, ret, done);
+		if (vm_snapshot_is_loading(meta))
+			port->ccs = ccs;
+		SNAPSHOT_LE32_OR_LEAVE(port->pending, meta, ret, done);
 
-		SNAPSHOT_VAR_OR_LEAVE(port->clb, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->clbu, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->fb, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->fbu, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->ie, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->cmd, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->unused0, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->tfd, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->sig, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->ssts, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->sctl, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->serr, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->sact, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->ci, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->sntf, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->fbs, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(port->ioqsz, meta, ret, done);
-
-		assert(TAILQ_EMPTY(&port->iobhd));
+		SNAPSHOT_LE32_OR_LEAVE(port->clb, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->clbu, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->fb, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->fbu, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->is, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->ie, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->cmd, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->unused0, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->tfd, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->sig, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->ssts, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->sctl, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->serr, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->sact, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->ci, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->sntf, meta, ret, done);
+		SNAPSHOT_LE32_OR_LEAVE(port->fbs, meta, ret, done);
+		SNAPSHOT_NONNEGATIVE_INT_OR_LEAVE(port->ioqsz, meta, ret, done);
+		if (vm_snapshot_is_loading(meta)) {
+			cmd_lst_gpa = (uint64_t)port->clbu << 32 | port->clb;
+			rfis_gpa = (uint64_t)port->fbu << 32 | port->fb;
+			if ((port->atapi != 0 && port->atapi != 1) ||
+			    port->atapi != expected_atapi ||
+			    (port->reset != 0 && port->reset != 1) ||
+			    (port->waitforclear != 0 && port->waitforclear != 1) ||
+			    port->ccs >= AHCI_MAX_SLOTS || port->pending != 0 ||
+			    port->ioqsz != expected_ioqsz || port->ioqsz <= 0 ||
+			    ((port->cmd & AHCI_P_CMD_CR) != 0 &&
+			    port->cmd_lst == NULL) ||
+			    ((port->cmd & AHCI_P_CMD_FR) != 0 &&
+			    port->rfis == NULL) ||
+			    (port->cmd_lst != NULL &&
+			    (uint64_t)paddr_host2guest(pi->pi_vmctx,
+			    port->cmd_lst) != cmd_lst_gpa) ||
+			    (port->rfis != NULL &&
+			    (uint64_t)paddr_host2guest(pi->pi_vmctx,
+			    port->rfis) != rfis_gpa) ||
+			    !TAILQ_EMPTY(&port->iobhd)) {
+				ret = EINVAL;
+				goto done;
+			}
+		}
 	}
 
 done:
 	return (ret);
+}
+
+static int
+pci_ahci_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	struct pci_ahci_softc candidate;
+	struct pci_devinst candidate_pi;
+	struct pci_devinst *pi;
+	int error, i;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE ||
+	    meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	candidate = *(struct pci_ahci_softc *)pi->pi_arg;
+	candidate_pi = *pi;
+	candidate_pi.pi_arg = &candidate;
+	candidate.asc_pi = &candidate_pi;
+	for (i = 0; i < MAX_PORTS; i++)
+		candidate.port[i].pr_sc = &candidate;
+	struct vm_snapshot_meta decode = {
+		.dev_name = meta->dev_name,
+		.dev_data = &candidate_pi,
+		.dev_req = meta->dev_req,
+		.buffer = {
+			.buf_start = meta->buffer.buf_start,
+			.buf_size = meta->buffer.buf_size,
+			.buf = meta->buffer.buf,
+			.buf_rem = meta->buffer.buf_rem,
+		},
+		.op = VM_SNAPSHOT_RESTORE,
+	};
+	error = pci_ahci_snapshot(&decode);
+	meta->buffer.buf = decode.buffer.buf;
+	meta->buffer.buf_rem = decode.buffer.buf_rem;
+	return (error);
+}
+
+/*
+ * Resubmit the split-transfer/TRIM continuations that the completion
+ * callbacks parked while the block backends were quiescing, then re-run
+ * command dispatch on each port.  Called with the backends resumed.
+ */
+static void
+pci_ahci_resubmit_deferred(struct pci_ahci_softc *sc)
+{
+	struct ahci_ioreq *aior;
+	struct ahci_port *p;
+	uint8_t *cfis, *dsm;
+	uint32_t done, len;
+	int i, slot;
+
+	pthread_mutex_lock(&sc->mtx);
+	sc->paused = 0;
+	for (i = 0; i < MAX_PORTS; i++) {
+		p = &sc->port[i];
+		if (p->bctx == NULL)
+			continue;
+		while ((aior = STAILQ_FIRST(&p->iodhd)) != NULL) {
+			STAILQ_REMOVE_HEAD(&p->iodhd, io_flist);
+			slot = aior->slot;
+			cfis = aior->cfis;
+			dsm = aior->dsm;
+			len = aior->len;
+			done = aior->done;
+			aior->dsm = NULL;
+			STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+			if (p->atapi)
+				atapi_read(p, slot, cfis, done);
+			else if (dsm != NULL)
+				ahci_handle_next_trim(p, slot, cfis, dsm,
+				    len, done);
+			else
+				ahci_handle_rw(p, slot, cfis, done);
+		}
+		ahci_handle_port(p);
+	}
+	pthread_mutex_unlock(&sc->mtx);
 }
 
 static int
@@ -2724,6 +3077,16 @@ pci_ahci_pause(struct pci_devinst *pi)
 	int error, i;
 
 	sc = pi->pi_arg;
+
+	/*
+	 * Tell the completion callbacks to defer continuations and
+	 * command dispatch before the quiesce fence goes up, so that a
+	 * mid-flight split transfer or multi-range TRIM cannot race a
+	 * blockif submission into an EBUSY.
+	 */
+	pthread_mutex_lock(&sc->mtx);
+	sc->paused = 1;
+	pthread_mutex_unlock(&sc->mtx);
 
 	for (i = 0; i < MAX_PORTS; i++) {
 		bctxt = sc->port[i].bctx;
@@ -2747,6 +3110,7 @@ rollback:
 		if (bctxt != NULL)
 			blockif_resume(bctxt);
 	}
+	pci_ahci_resubmit_deferred(sc);
 	return (error);
 }
 
@@ -2767,6 +3131,8 @@ pci_ahci_resume(struct pci_devinst *pi)
 		blockif_resume(bctxt);
 	}
 
+	pci_ahci_resubmit_deferred(sc);
+
 	return (0);
 }
 #endif	/* BHYVE_SNAPSHOT */
@@ -2782,8 +3148,12 @@ static const struct pci_devemu pci_de_ahci = {
 	.pe_barread =	pci_ahci_read,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	pci_ahci_snapshot,
+	.pe_snapshot_validate = pci_ahci_snapshot_validate,
 	.pe_pause =	pci_ahci_pause,
 	.pe_resume =	pci_ahci_resume,
+	.pe_migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_TRACKED |
+	    PCI_MIGRATION_F_QUIESCE_CALLBACK,
 #endif
 };
 PCI_EMUL_SET(pci_de_ahci);

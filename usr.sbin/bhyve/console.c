@@ -28,6 +28,11 @@
 
 #include <sys/types.h>
 
+#include <errno.h>
+#include <err.h>
+#include <pthread.h>
+#include <string.h>
+
 #include "bhyvegc.h"
 #include "console.h"
 
@@ -36,6 +41,7 @@ static struct {
 
 	fb_render_func_t	fb_render_cb;
 	void			*fb_arg;
+	const char		*fb_owner;
 
 	kbd_event_func_t	kbd_event_cb;
 	void			*kbd_arg;
@@ -44,12 +50,19 @@ static struct {
 	ptr_event_func_t	ptr_event_cb;
 	void			*ptr_arg;
 	int			ptr_priority;
+	ptr_event_func_t	ptr_fallback_cb;
+	void			*ptr_fallback_arg;
+	int			ptr_fallback_priority;
 } console;
+
+static pthread_rwlock_t console_lock = PTHREAD_RWLOCK_INITIALIZER;
 
 void
 console_init(int w, int h, void *fbaddr)
 {
 	console.gc = bhyvegc_init(w, h, fbaddr);
+	if (console.gc == NULL)
+		err(1, "failed to initialize graphical console");
 }
 
 void
@@ -68,50 +81,174 @@ console_get_image(void)
 	return (bhyvegc_image);
 }
 
-void
-console_fb_register(fb_render_func_t render_cb, void *arg)
+int
+console_fb_register(const char *owner, fb_render_func_t render_cb, void *arg)
 {
+	int error;
+
+	if (owner == NULL || owner[0] == '\0' || render_cb == NULL)
+		return (EINVAL);
+	pthread_rwlock_wrlock(&console_lock);
+	if (console.fb_render_cb != NULL) {
+		if (console.fb_render_cb == render_cb && console.fb_arg == arg &&
+		    strcmp(console.fb_owner, owner) == 0)
+			error = 0;
+		else
+			error = EBUSY;
+		goto done;
+	}
+	console.fb_owner = owner;
 	console.fb_render_cb = render_cb;
 	console.fb_arg = arg;
+	error = 0;
+done:
+	pthread_rwlock_unlock(&console_lock);
+	return (error);
+}
+
+int
+console_fb_unregister(const char *owner, void *arg)
+{
+	int error;
+
+	if (owner == NULL || owner[0] == '\0')
+		return (EINVAL);
+	pthread_rwlock_wrlock(&console_lock);
+	if (console.fb_render_cb == NULL) {
+		error = ENOENT;
+		goto done;
+	}
+	if (console.fb_arg != arg || strcmp(console.fb_owner, owner) != 0) {
+		error = EPERM;
+		goto done;
+	}
+	console.fb_render_cb = NULL;
+	console.fb_arg = NULL;
+	console.fb_owner = NULL;
+	error = 0;
+done:
+	pthread_rwlock_unlock(&console_lock);
+	return (error);
 }
 
 void
 console_refresh(void)
 {
+	/*
+	 * A render callback may resize or replace the graphical-console image.
+	 * Pointer callbacks read that image's geometry while holding the same
+	 * console lock.  Use exclusive ownership here so a mode change cannot
+	 * race an absolute-coordinate conversion (or expose a half-published
+	 * framebuffer update to another console callback).
+	 */
+	pthread_rwlock_wrlock(&console_lock);
 	if (console.fb_render_cb)
 		(*console.fb_render_cb)(console.gc, console.fb_arg);
+	pthread_rwlock_unlock(&console_lock);
 }
 
 void
 console_kbd_register(kbd_event_func_t event_cb, void *arg, int pri)
 {
+	pthread_rwlock_wrlock(&console_lock);
 	if (pri > console.kbd_priority) {
 		console.kbd_event_cb = event_cb;
 		console.kbd_arg = arg;
 		console.kbd_priority = pri;
 	}
+	pthread_rwlock_unlock(&console_lock);
 }
 
 void
 console_ptr_register(ptr_event_func_t event_cb, void *arg, int pri)
 {
-	if (pri > console.ptr_priority) {
+	ptr_event_func_t old_cb;
+	void *old_arg;
+	int old_priority;
+
+	if (event_cb == NULL)
+		return;
+	pthread_rwlock_wrlock(&console_lock);
+	if (console.ptr_event_cb == event_cb && console.ptr_arg == arg) {
+		console.ptr_priority = pri;
+		goto done;
+	} else if (console.ptr_fallback_cb == event_cb &&
+	    console.ptr_fallback_arg == arg) {
+		if (pri <= console.ptr_priority) {
+			console.ptr_fallback_priority = pri;
+			goto done;
+		}
+		console.ptr_fallback_cb = NULL;
+		console.ptr_fallback_arg = NULL;
+		console.ptr_fallback_priority = 0;
+	}
+	if (pri > console.ptr_priority || console.ptr_event_cb == NULL) {
+		old_cb = console.ptr_event_cb;
+		old_arg = console.ptr_arg;
+		old_priority = console.ptr_priority;
 		console.ptr_event_cb = event_cb;
 		console.ptr_arg = arg;
 		console.ptr_priority = pri;
+		if (old_cb != NULL && (console.ptr_fallback_cb == NULL ||
+		    old_priority > console.ptr_fallback_priority)) {
+			console.ptr_fallback_cb = old_cb;
+			console.ptr_fallback_arg = old_arg;
+			console.ptr_fallback_priority = old_priority;
+		}
+	} else if (console.ptr_fallback_cb == NULL ||
+	    pri > console.ptr_fallback_priority) {
+		console.ptr_fallback_cb = event_cb;
+		console.ptr_fallback_arg = arg;
+		console.ptr_fallback_priority = pri;
 	}
+done:
+	pthread_rwlock_unlock(&console_lock);
+}
+
+int
+console_ptr_unregister(ptr_event_func_t event_cb, void *arg)
+{
+	int error;
+
+	if (event_cb == NULL)
+		return (EINVAL);
+	pthread_rwlock_wrlock(&console_lock);
+	if (console.ptr_event_cb == NULL)
+		error = ENOENT;
+	else if (console.ptr_event_cb == event_cb && console.ptr_arg == arg) {
+		console.ptr_event_cb = console.ptr_fallback_cb;
+		console.ptr_arg = console.ptr_fallback_arg;
+		console.ptr_priority = console.ptr_fallback_priority;
+		console.ptr_fallback_cb = NULL;
+		console.ptr_fallback_arg = NULL;
+		console.ptr_fallback_priority = 0;
+		error = 0;
+	} else if (console.ptr_fallback_cb == event_cb &&
+	    console.ptr_fallback_arg == arg) {
+		console.ptr_fallback_cb = NULL;
+		console.ptr_fallback_arg = NULL;
+		console.ptr_fallback_priority = 0;
+		error = 0;
+	} else
+		error = EPERM;
+	pthread_rwlock_unlock(&console_lock);
+	return (error);
 }
 
 void
 console_key_event(int down, uint32_t keysym, uint32_t keycode)
 {
+	pthread_rwlock_rdlock(&console_lock);
 	if (console.kbd_event_cb)
 		(*console.kbd_event_cb)(down, keysym, keycode, console.kbd_arg);
+	pthread_rwlock_unlock(&console_lock);
 }
 
 void
 console_ptr_event(uint8_t button, int x, int y)
 {
+	pthread_rwlock_rdlock(&console_lock);
 	if (console.ptr_event_cb)
 		(*console.ptr_event_cb)(button, x, y, console.ptr_arg);
+	pthread_rwlock_unlock(&console_lock);
 }

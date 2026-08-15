@@ -42,10 +42,18 @@ valid_sysname(const char *name)
 static bool
 valid_command(const char *command, size_t length)
 {
-	static const char expected[] = "tap\n";
+	static const char *const expected[] = {
+		"tap\n",
+		"down\n",
+		"finish\n",
+	};
+	size_t i;
 
-	return (length == sizeof(expected) - 1 &&
-	    memcmp(command, expected, sizeof(expected) - 1) == 0);
+	for (i = 0; i < nitems(expected); i++)
+		if (length == strlen(expected[i]) &&
+		    memcmp(command, expected[i], length) == 0)
+			return (true);
+	return (false);
 }
 
 static bool
@@ -99,7 +107,9 @@ self_test(void)
 	const char *invalid_names[] = {
 		"", "event", "eventx", "mouse0", "../event0", "event1/x"
 	};
-	const char *invalid_commands[] = { "", "tap", "tap\r\n", "tap\nmore" };
+	const char *invalid_commands[] = {
+		"", "tap", "down", "finish", "tap\r\n", "tap\nmore", "up\n"
+	};
 	size_t i;
 
 	if (!valid_sysname("event0") || !valid_sysname("event123"))
@@ -108,7 +118,8 @@ self_test(void)
 		if (valid_sysname(invalid_names[i]))
 			errx(1, "invalid event sysname accepted: %s",
 			    invalid_names[i]);
-	if (!valid_command("tap\n", 4))
+	if (!valid_command("tap\n", 4) || !valid_command("down\n", 5) ||
+	    !valid_command("finish\n", 7))
 		errx(1, "valid control command rejected");
 	for (i = 0; i < nitems(invalid_commands); i++)
 		if (valid_command(invalid_commands[i],
@@ -151,17 +162,92 @@ write_event(int fd, uint16_t type, uint16_t code, int32_t value)
 	}
 }
 
+static void
+wait_for_caps_led(int fd, int event_fd, int expected_led)
+{
+	struct input_event events[16];
+	struct pollfd pfd;
+	ssize_t n;
+	int elapsed, i;
+	bool led_seen;
+
+	led_seen = false;
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+	for (elapsed = 0; elapsed < 20000 && !led_seen; elapsed += 250) {
+		/*
+		 * bhyve exclusively grabs the evdev client, so another client
+		 * cannot receive its output events.  EVIOCGLED reads the device's
+		 * global output state and remains valid while grabbed.  This is the
+		 * actual effect a keyboard provider needs to observe.
+		 */
+		if (get_caps_led(event_fd) == expected_led) {
+			fprintf(stderr, "uinput-inject: observed LED_CAPSL=%d "
+			    "through evdev state\n", expected_led);
+			led_seen = true;
+			break;
+		}
+		i = poll(&pfd, 1, 250);
+		if (i < 0) {
+			if (errno == EINTR)
+				continue;
+			err(1, "poll LED response");
+		}
+		if (i == 0)
+			continue;
+		n = read(fd, events, sizeof(events));
+		if (n < 0) {
+			if (errno == EAGAIN)
+				continue;
+			err(1, "read LED response");
+		}
+		if (n % sizeof(events[0]) != 0)
+			errx(1, "partial LED event from uinput: %zd", n);
+		for (size_t j = 0; j < (size_t)n / sizeof(events[0]); j++)
+			fprintf(stderr, "uinput-inject: output type=%u code=%u "
+			    "value=%d\n", events[j].type, events[j].code,
+			    events[j].value);
+		led_seen = has_caps_led(events,
+		    (size_t)n / sizeof(events[0]), expected_led);
+	}
+	if (!led_seen)
+		errx(1, "guest LED response timed out");
+}
+
+static void
+reset_caps_led(int fd, int event_fd)
+{
+	/*
+	 * Force the guest's value=1 status write to be a real transition on
+	 * every normal and checkpoint-soak iteration.
+	 */
+	if (get_caps_led(event_fd) != 0)
+		write_event(event_fd, EV_LED, LED_CAPSL, 0);
+	if (get_caps_led(event_fd) != 0)
+		errx(1, "could not reset Caps Lock LED state");
+	drain_output_events(fd);
+}
+
+static void
+write_frame_tail(int fd)
+{
+	write_event(fd, EV_SYN, SYN_REPORT, 0);
+	write_event(fd, EV_REL, REL_X, 7);
+	write_event(fd, EV_ABS, ABS_X, 321);
+	write_event(fd, EV_KEY, KEY_A, 0);
+	write_event(fd, EV_SYN, SYN_REPORT, 0);
+}
+
 int
 main(int argc, char **argv)
 {
 	struct uinput_setup setup;
 	struct uinput_abs_setup abs_setup;
-	struct pollfd pfd;
-	struct input_event events[16];
 	char command[32], event_path[PATH_MAX], sysname[32];
 	ssize_t n;
-	int control, event_fd, expected_led, fd, elapsed, i;
-	bool kernel_selftest, led_seen;
+	unsigned long command_count;
+	int control, event_fd, expected_led, fd;
+	bool kernel_selftest, partial_frame;
 
 	if (argc == 2 && strcmp(argv[1], "--self-test") == 0)
 		return (self_test());
@@ -239,62 +325,54 @@ main(int argc, char **argv)
 		control = open(argv[1], O_RDWR);
 		if (control < 0)
 			err(1, "open control fifo");
-		n = read(control, command, sizeof(command) - 1);
-		if (n < 0)
-			err(1, "read control fifo");
-		command[n] = '\0';
-		if (!valid_command(command, (size_t)n))
-			errx(1, "unexpected command: %s", command);
-
-		write_event(fd, EV_KEY, KEY_A, 1);
-		write_event(fd, EV_SYN, SYN_REPORT, 0);
-		write_event(fd, EV_REL, REL_X, 7);
-		write_event(fd, EV_ABS, ABS_X, 321);
-		write_event(fd, EV_KEY, KEY_A, 0);
-		write_event(fd, EV_SYN, SYN_REPORT, 0);
 	}
 
-	led_seen = false;
-	pfd.fd = fd;
-	pfd.events = POLLIN;
-	for (elapsed = 0; elapsed < 20000 && !led_seen; elapsed += 250) {
-		/*
-		 * bhyve exclusively grabs the evdev client, so another client
-		 * cannot receive its output events.  EVIOCGLED reads the device's
-		 * global output state and remains valid while grabbed.  This is the
-		 * actual effect a keyboard provider needs to observe.
-		 */
-		if (get_caps_led(event_fd) == expected_led) {
-			fprintf(stderr, "uinput-inject: observed LED_CAPSL=%d "
-			    "through evdev state\n", expected_led);
-			led_seen = true;
-			break;
+	if (kernel_selftest) {
+		wait_for_caps_led(fd, event_fd, expected_led);
+	} else {
+		partial_frame = false;
+		for (command_count = 1;; command_count++) {
+			n = read(control, command, sizeof(command) - 1);
+			if (n < 0) {
+				if (errno == EINTR)
+					continue;
+				err(1, "read control fifo");
+			}
+			if (n == 0)
+				errx(1, "control fifo closed");
+			command[n] = '\0';
+			if (!valid_command(command, (size_t)n))
+				errx(1, "unexpected command: %s", command);
+
+			if (strcmp(command, "down\n") == 0) {
+				if (partial_frame)
+					errx(1, "input frame is already staged");
+				reset_caps_led(fd, event_fd);
+				write_event(fd, EV_KEY, KEY_A, 1);
+				partial_frame = true;
+				fprintf(stderr, "STAGED down=%lu\n",
+				    command_count);
+			} else if (strcmp(command, "finish\n") == 0) {
+				if (!partial_frame)
+					errx(1, "no input frame is staged");
+				write_frame_tail(fd);
+				wait_for_caps_led(fd, event_fd, 1);
+				partial_frame = false;
+				fprintf(stderr, "PASS finish=%lu\n",
+				    command_count);
+			} else {
+				if (partial_frame)
+					errx(1, "cannot tap with a staged frame");
+				reset_caps_led(fd, event_fd);
+				write_event(fd, EV_KEY, KEY_A, 1);
+				write_frame_tail(fd);
+				wait_for_caps_led(fd, event_fd, 1);
+				fprintf(stderr, "PASS tap=%lu\n",
+				    command_count);
+			}
+			fflush(stderr);
 		}
-		i = poll(&pfd, 1, 250);
-		if (i < 0) {
-			if (errno == EINTR)
-				continue;
-			err(1, "poll LED response");
-		}
-		if (i == 0)
-			continue;
-		n = read(fd, events, sizeof(events));
-		if (n < 0) {
-			if (errno == EAGAIN)
-				continue;
-			err(1, "read LED response");
-		}
-		if (n % sizeof(events[0]) != 0)
-			errx(1, "partial LED event from uinput: %zd", n);
-		for (size_t j = 0; j < (size_t)n / sizeof(events[0]); j++)
-			fprintf(stderr, "uinput-inject: output type=%u code=%u "
-			    "value=%d\n", events[j].type, events[j].code,
-			    events[j].value);
-		led_seen = has_caps_led(events,
-		    (size_t)n / sizeof(events[0]), expected_led);
 	}
-	if (!led_seen)
-		errx(1, "guest LED response timed out");
 	close(event_fd);
 	event_fd = -1;
 	if (ioctl(fd, UI_DEV_DESTROY) < 0)

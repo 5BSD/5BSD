@@ -102,6 +102,10 @@ static const struct pci_devemu pci_de_hostbridge = {
 	.pe_init = pci_hostbridge_init,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	pci_de_snapshot,
+	.pe_snapshot_validate = pci_de_snapshot,
+	.pe_migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+	    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
+	    PCI_MIGRATION_F_QUIESCE_NONE,
 #endif
 };
 PCI_EMUL_SET(pci_de_hostbridge);

@@ -2804,6 +2804,7 @@ dev/pty/pty.c			optional pty
 dev/puc/puc.c			optional puc
 dev/puc/puc_cfg.c		optional puc
 dev/puc/puc_pci.c		optional puc pci
+dev/pvpanic/pvpanic.c		optional pvpanic acpi
 dev/pwm/pwmc.c			optional pwm | pwmc
 dev/pwm/pwmbus.c		optional pwm | pwmbus
 dev/pwm/pwmbus_if.m		optional pwm | pwmbus
@@ -3519,11 +3520,17 @@ dev/virtio/network/if_vtnet.c		optional	vtnet
 dev/virtio/balloon/virtio_balloon.c	optional	virtio_balloon
 dev/virtio/block/virtio_blk.c		optional	virtio_blk
 dev/virtio/console/virtio_console.c	optional	virtio_console
+dev/virtio/fs/virtio_fs.c		optional	virtio_fs fusefs
 dev/virtio/gpu/virtio_gpu.c		optional	virtio_gpu
+dev/virtio/iommu/virtio_iommu.c		optional	virtio_iommu
+dev/virtio/mem/virtio_mem.c		optional	virtio_mem
+dev/virtio/input/virtio_input.c		optional	virtio_input evdev
 dev/virtio/p9fs/virtio_p9fs.c		optional	virtio_p9fs
 dev/virtio/random/virtio_random.c	optional	virtio_random
+dev/virtio/rtc/virtio_rtc.c		optional	virtio_rtc
 dev/virtio/scmi/virtio_scmi.c		optional	virtio_scmi
 dev/virtio/scsi/virtio_scsi.c		optional	virtio_scsi
+dev/virtio/sound/virtio_snd.c		optional	virtio_snd sound
 dev/virtio/vsock/virtio_vsock.c		optional	virtio_vsock
 dev/vkbd/vkbd.c			optional vkbd
 dev/vmgenc/vmgenc_acpi.c	optional acpi

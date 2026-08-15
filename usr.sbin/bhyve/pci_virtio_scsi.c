@@ -30,6 +30,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/ioctl.h>
 #include <sys/linker_set.h>
 #include <sys/types.h>
 #include <sys/uio.h>
@@ -42,6 +43,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+
+/*
+ * Release-ledger anchors for request workers and REPORT LUNS discovery.
+ * VIRTIO_ACTIVATION_ASSERTION: snapshot-restore-and-backend-identity
+ * VIRTIO_ACTIVATION_ASSERTION: multiple-request-workers
+ * VIRTIO_ACTIVATION_ASSERTION: report-luns-and-request-io
+ * VIRTIO_ACTIVATION_ASSERTION: loss-aware-ctl-event-queue
+ */
 #include <stddef.h>
 #include <string.h>
 #include <unistd.h>
@@ -62,17 +71,28 @@
 #include "bhyverun.h"
 #include "config.h"
 #include "debug.h"
+#include "mevent.h"
 #include "pci_emul.h"
 #include "virtio.h"
+#include "virtio_pci_modern_probes.h"
+#include "virtio_scsi_event.h"
 #include "iov.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 #define VTSCSI_RINGSZ		64
 #define	VTSCSI_DEFAULT_REQUESTQ	1
 #define	VTSCSI_MAX_REQUESTQ	8
 #define	VTSCSI_TOTAL_THR	16
 #define	VTSCSI_MIN_THR_PER_Q	2
+#ifndef VTSCSI_QUIESCE_TIMEOUT_SECONDS
+#define	VTSCSI_QUIESCE_TIMEOUT_SECONDS	30
+#endif
 #define	VTSCSI_MAXQ		(VTSCSI_MAX_REQUESTQ + 2)
 #define	VTSCSI_MAXSEG		64
+#define	VTSCSI_EVENT_CAPACITY	128
+#define	VTSCSI_HOST_EVENT_BUDGET	VTSCSI_EVENT_CAPACITY
 
 #define	VTSCSI_IN_HEADER_LEN(_sc)	\
 	(sizeof(struct pci_vtscsi_req_cmd_rd) + _sc->vss_config.cdb_size)
@@ -184,6 +204,7 @@ struct pci_vtscsi_request {
 	size_t                    vsr_data_niov_in;
 	size_t                    vsr_data_niov_out;
 	uint32_t                  vsr_idx;
+	struct vi_req             vsr_vreq;
 	STAILQ_ENTRY(pci_vtscsi_request) vsr_link;
 };
 
@@ -197,9 +218,16 @@ struct pci_vtscsi_softc {
 	pthread_mutex_t          vss_mtx;
 	int                      vss_iid;
 	int                      vss_ctl_fd;
+	struct mevent *          vss_ctl_event;
 	bool                     vss_mtx_initialized;
+	bool                     vss_event_source;
+	bool                     vss_checkpoint_resume[VTSCSI_MAX_REQUESTQ];
+	bool                     vss_suspend_resume[VTSCSI_MAX_REQUESTQ];
 	uint16_t                 vss_nrequestq;
-	uint32_t                 vss_features;
+	uint64_t                 vss_features;
+	struct virtio_scsi_event_state vss_event_state;
+	struct virtio_scsi_event_record
+	                         vss_event_records[VTSCSI_EVENT_CAPACITY];
 	struct pci_vtscsi_config vss_config;
 	struct virtio_consts     vss_consts;
 };
@@ -257,6 +285,13 @@ struct pci_vtscsi_ctrl_an {
 #define	VIRTIO_SCSI_S_FAILURE			9
 #define	VIRTIO_SCSI_S_INCORRECT_LUN		12
 
+#define	VIRTIO_SCSI_T_NO_EVENT			0
+#define	VIRTIO_SCSI_T_TRANSPORT_RESET		1
+#define	VIRTIO_SCSI_T_PARAM_CHANGE		3
+#define	VIRTIO_SCSI_EVT_RESET_RESCAN		1
+#define	VIRTIO_SCSI_EVT_RESET_REMOVED		2
+#define	VIRTIO_SCSI_EVT_CAPACITY_CHANGED	0x092a
+
 /* task_attr */
 #define	VIRTIO_SCSI_S_SIMPLE			0
 #define	VIRTIO_SCSI_S_ORDERED			1
@@ -296,7 +331,8 @@ static int pci_vtscsi_cfgread(void *, int, int, uint32_t *);
 static int pci_vtscsi_cfgwrite(void *, int, int, uint32_t);
 
 static inline bool pci_vtscsi_check_lun(const uint8_t *);
-static inline int pci_vtscsi_get_lun(const uint8_t *);
+static inline bool pci_vtscsi_report_luns_well_known(const uint8_t *);
+static inline uint32_t pci_vtscsi_get_lun(const uint8_t *);
 
 static size_t pci_vtscsi_control_handle(struct pci_vtscsi_softc *, void *,
     size_t, size_t);
@@ -304,8 +340,8 @@ static void pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *,
     struct pci_vtscsi_ctrl_tmf *);
 static uint8_t pci_vtscsi_tmf_response(uint8_t);
 static bool pci_vtscsi_tmf_affects_commands(uint32_t);
-static void pci_vtscsi_tmf_pause(struct pci_vtscsi_softc *);
-static void pci_vtscsi_tmf_complete(struct pci_vtscsi_softc *, uint32_t,
+static void pci_vtscsi_tmf_pause(struct pci_vtscsi_softc *, bool *);
+static int pci_vtscsi_tmf_complete(struct pci_vtscsi_softc *, uint32_t,
     const uint8_t *, uint64_t);
 static void pci_vtscsi_an_handle(struct pci_vtscsi_softc *,
     struct pci_vtscsi_ctrl_an *);
@@ -321,7 +357,9 @@ static bool pci_vtscsi_queue_request(struct pci_vtscsi_softc *,
     struct vqueue_info *);
 static void pci_vtscsi_recycle_request(struct pci_vtscsi_queue *,
     struct pci_vtscsi_request *);
-static void pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *, bool);
+static int pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *, bool, bool);
+static int pci_vtscsi_quiesce_queue_until(struct pci_vtscsi_queue *, bool,
+    const struct timespec *);
 static void pci_vtscsi_resume_queue(struct pci_vtscsi_queue *);
 static void pci_vtscsi_return_request(struct pci_vtscsi_queue *,
     struct pci_vtscsi_request *, uint32_t);
@@ -330,11 +368,24 @@ static uint32_t pci_vtscsi_request_handle(struct pci_vtscsi_softc *,
 
 static void pci_vtscsi_controlq_notify(void *, struct vqueue_info *);
 static void pci_vtscsi_eventq_notify(void *, struct vqueue_info *);
+static void pci_vtscsi_ctl_event(int, enum ev_type, void *);
+static void pci_vtscsi_drain_events(struct pci_vtscsi_softc *);
 static void pci_vtscsi_requestq_notify(void *, struct vqueue_info *);
 static int  pci_vtscsi_init_queue(struct pci_vtscsi_softc *,
     struct pci_vtscsi_queue *, int);
 static void pci_vtscsi_destroy_queue(struct pci_vtscsi_queue *);
 static int pci_vtscsi_init(struct pci_devinst *, nvlist_t *);
+static int pci_vtscsi_suspend_device(void *);
+static int pci_vtscsi_resume_device(void *);
+static void pci_vtscsi_resume_complete(void *);
+static void pci_vtscsi_restore_suspended(void *);
+static void pci_vtscsi_restore_resumed(void *);
+#ifdef BHYVE_SNAPSHOT
+static int pci_vtscsi_pause(void *);
+static int pci_vtscsi_resume(void *);
+static int pci_vtscsi_snapshot(void *, struct vm_snapshot_meta *);
+static int pci_vtscsi_snapshot_validate(struct vm_snapshot_meta *);
+#endif
 
 static struct virtio_consts vtscsi_vi_consts = {
 	.vc_name =	"vtscsi",
@@ -346,14 +397,23 @@ static struct virtio_consts vtscsi_vi_consts = {
 	.vc_apply_features = pci_vtscsi_neg_features,
 	.vc_qenable =	pci_vtscsi_qenable,
 	.vc_qreset =	pci_vtscsi_qreset,
+	.vc_suspend =	pci_vtscsi_suspend_device,
+	.vc_resume_device = pci_vtscsi_resume_device,
+	.vc_resume_complete = pci_vtscsi_resume_complete,
+	.vc_restore_suspended = pci_vtscsi_restore_suspended,
+	.vc_restore_resumed = pci_vtscsi_restore_resumed,
+#ifdef BHYVE_SNAPSHOT
+	.vc_pause =	pci_vtscsi_pause,
+	.vc_resume =	pci_vtscsi_resume,
+	.vc_snapshot =	pci_vtscsi_snapshot,
+#endif
 	/*
-	 * HOTPLUG and CHANGE require a loss-aware asynchronous CTL event
-	 * source.  CTL's userspace interface currently provides commands and
-	 * snapshots, but no subscription which can preserve add, remove, and
-	 * parameter-change ordering.  Keep both bits clear until such an
-	 * interface exists; polling would create silent event-loss races.
+	 * HOTPLUG and CHANGE are added per instance only after the loss-aware
+	 * CTL event subscription succeeds.  Keep them out of this template so
+	 * a host without that interface cannot advertise events it may lose.
 	 */
-	.vc_hv_caps =	VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_F_RING_RESET,
+	.vc_hv_caps =	VIRTIO_RING_F_INDIRECT_DESC | VIRTIO_F_RING_RESET |
+	    VIRTIO_F_SUSPEND,
 };
 
 /*
@@ -417,7 +477,7 @@ pci_vtscsi_proc(void *arg)
 		if (req == NULL)
 			continue;
 
-		DPRINTF("I/O request lun %d, data_niov_in %zu, data_niov_out "
+		DPRINTF("I/O request lun %u, data_niov_in %zu, data_niov_out "
 		    "%zu", pci_vtscsi_get_lun(req->vsr_cmd_rd->lun),
 		    req->vsr_data_niov_in, req->vsr_data_niov_out);
 
@@ -437,16 +497,52 @@ static void
 pci_vtscsi_reset(void *vsc)
 {
 	struct pci_vtscsi_softc *sc;
+	struct timespec deadline;
+	int error;
 
 	sc = vsc;
 
 	DPRINTF("device reset requested");
-	for (int i = 0; i < sc->vss_nrequestq; i++)
-		pci_vtscsi_quiesce_queue(&sc->vss_queues[i], true);
+	/*
+	 * Request queues drain concurrently behind the common admission fence.
+	 * Give the complete device reset one monotonic budget, rather than one
+	 * full timeout for every configured queue.
+	 */
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) {
+		vi_reset_dev(&sc->vss_vs);
+		vi_set_needs_reset(&sc->vss_vs);
+		return;
+	}
+	deadline.tv_sec += VTSCSI_QUIESCE_TIMEOUT_SECONDS;
+	for (int i = 0; i < sc->vss_nrequestq; i++) {
+		error = pci_vtscsi_quiesce_queue_until(&sc->vss_queues[i], true,
+		    &deadline);
+		if (error != 0) {
+			/*
+			 * Do not leave a vCPU in reset forever behind an unresponsive
+			 * CTL command.  Reset the common queue incarnation before
+			 * advertising the failure, so a late worker completion cannot
+			 * publish into any replacement queue.  Keep the private queue
+			 * quiesced: only a later successful full reset may reopen it.
+			 */
+			vi_reset_dev(&sc->vss_vs);
+			vi_set_needs_reset(&sc->vss_vs);
+			return;
+		}
+	}
 	vi_reset_dev(&sc->vss_vs);
-	for (int i = 0; i < sc->vss_nrequestq; i++)
+	for (int i = 0; i < sc->vss_nrequestq; i++) {
 		pci_vtscsi_resume_queue(&sc->vss_queues[i]);
+		sc->vss_checkpoint_resume[i] = false;
+		sc->vss_suspend_resume[i] = false;
+	}
 	sc->vss_features = 0;
+	/*
+	 * A full device reset makes the driver rediscover the complete LUN
+	 * inventory.  Do not manufacture an EVENTS_MISSED notification for
+	 * source records observed while the device is deliberately inactive.
+	 */
+	virtio_scsi_event_state_reset(&sc->vss_event_state, false);
 
 	/* initialize config structure */
 	sc->vss_config = (struct pci_vtscsi_config){
@@ -507,8 +603,11 @@ pci_vtscsi_qreset(void *vsc, struct vqueue_info *vq,
 	 * until the replacement queue is enabled.
 	 */
 	if (vq->vq_num >= 2)
-		pci_vtscsi_quiesce_queue(&sc->vss_queues[vq->vq_num - 2],
-		    false);
+		return (pci_vtscsi_quiesce_queue(
+		    &sc->vss_queues[vq->vq_num - 2], false, true));
+	if (vq->vq_num == 1)
+		virtio_scsi_event_state_reset(&sc->vss_event_state,
+		    sc->vss_event_source);
 	return (0);
 }
 
@@ -526,9 +625,9 @@ pci_vtscsi_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vtscsi_softc *sc = vsc;
 	struct pci_vtscsi_config wire;
-	void *ptr;
 
-	*retval = 0;
+	if (retval != NULL)
+		*retval = 0;
 	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
 	    (size_t)offset > sizeof(sc->vss_config) ||
 	    (size_t)size > sizeof(sc->vss_config) - (size_t)offset)
@@ -545,9 +644,7 @@ pci_vtscsi_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 	wire.max_channel = pci_vtscsi_encode16(sc, wire.max_channel);
 	wire.max_target = pci_vtscsi_encode16(sc, wire.max_target);
 	wire.max_lun = pci_vtscsi_encode32(sc, wire.max_lun);
-	ptr = (uint8_t *)&wire + offset;
-	memcpy(retval, ptr, size);
-	return (0);
+	return (vi_config_read_le(&wire, sizeof(wire), offset, size, retval));
 }
 
 static int
@@ -602,23 +699,29 @@ pci_vtscsi_cfgwrite(void *vsc, int offset, int size, uint32_t val)
  * Level 1: 0xC1, 0x01: Extended LUN Adressing, Well-Known LUN 1 (REPORT_LUNS)
  * Level 2, 3, and 4: not used, MBZ
  *
- * The virtio spec says that we SHOULD implement the REPORT_LUNS well-known
- * logical unit  but we currently don't.
- *
  * According to the virtio spec, these are the only LUNS address formats to be
  * used with virtio-scsi.
  */
 
+static inline bool
+pci_vtscsi_report_luns_well_known(const uint8_t *lun)
+{
+	static const uint8_t report_luns[8] =
+	    { 0xc1, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };
+
+	return (memcmp(lun, report_luns, sizeof(report_luns)) == 0);
+}
+
 /*
  * Check that the given LUN address conforms to the virtio spec, does not
- * address an unknown target, and especially does not address the REPORT_LUNS
- * well-known logical unit.
+ * address an unknown target, and is either an ordinary target-zero LUN or the
+ * exact REPORT LUNS well-known logical unit.
  */
 static inline bool
 pci_vtscsi_check_lun(const uint8_t *lun)
 {
 	if (lun[0] == 0xC1)
-		return (false);
+		return (pci_vtscsi_report_luns_well_known(lun));
 
 	if (lun[0] != 0x01)
 		return (false);
@@ -641,9 +744,12 @@ pci_vtscsi_check_lun(const uint8_t *lun)
  * Every code path using this function must have called pci_vtscsi_check_lun()
  * before to make sure the LUN address is valid.
  */
-static inline int
+static inline uint32_t
 pci_vtscsi_get_lun(const uint8_t *lun)
 {
+	if (pci_vtscsi_report_luns_well_known(lun))
+		return (UINT32_MAX);
+
 	assert(lun[0] == 0x01);
 	assert(lun[1] == 0x00);
 	assert(lun[2] == 0x00 || (lun[2] & 0xc0) == 0x40);
@@ -724,10 +830,12 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
 	uint32_t subtype;
 	uint8_t response;
 	uint64_t id;
-	bool paused;
+	bool resume[VTSCSI_MAX_REQUESTQ];
+	bool drain_failed, paused;
 	int err;
 
-	if (pci_vtscsi_check_lun(tmf->lun) == false) {
+	if (pci_vtscsi_check_lun(tmf->lun) == false ||
+	    pci_vtscsi_report_luns_well_known(tmf->lun)) {
 		DPRINTF("TMF request to invalid LUN %.2hhx%.2hhx-%.2hhx%.2hhx-"
 		    "%.2hhx%.2hhx-%.2hhx%.2hhx", tmf->lun[0], tmf->lun[1],
 		    tmf->lun[2], tmf->lun[3], tmf->lun[4], tmf->lun[5],
@@ -795,8 +903,10 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
 		return;
 	}
 	paused = pci_vtscsi_tmf_affects_commands(subtype);
+	drain_failed = false;
+	memset(resume, 0, sizeof(resume));
 	if (paused)
-		pci_vtscsi_tmf_pause(sc);
+		pci_vtscsi_tmf_pause(sc, resume);
 
 	if (pci_vtscsi_debug) {
 		struct sbuf *sb = sbuf_new_auto();
@@ -814,10 +924,28 @@ pci_vtscsi_tmf_handle(struct pci_vtscsi_softc *sc,
 		response = pci_vtscsi_tmf_response(io->taskio.task_status);
 	if (paused) {
 		if (response == VIRTIO_SCSI_S_FUNCTION_COMPLETE ||
-		    response == VIRTIO_SCSI_S_FUNCTION_SUCCEEDED)
-			pci_vtscsi_tmf_complete(sc, subtype, tmf->lun, id);
-		for (int i = 0; i < sc->vss_nrequestq; i++)
-			pci_vtscsi_resume_queue(&sc->vss_queues[i]);
+		    response == VIRTIO_SCSI_S_FUNCTION_SUCCEEDED) {
+			err = pci_vtscsi_tmf_complete(sc, subtype, tmf->lun,
+			    id);
+			if (err != 0) {
+				WPRINTF("timed out draining commands after TMF: "
+				    "err=%d (%s)", err, strerror(err));
+				response = VIRTIO_SCSI_S_FAILURE;
+				drain_failed = true;
+				vi_set_needs_reset(&sc->vss_vs);
+			}
+		}
+		/*
+		 * A failed post-TMF drain leaves every request queue parked.
+		 * CTL may still own an old request, so only a full device reset
+		 * may recover it.  Other TMF outcomes did not alter active
+		 * commands and can safely reopen admission.
+		 */
+		if (!drain_failed)
+			for (int i = 0; i < sc->vss_nrequestq; i++)
+				if (resume[i])
+					pci_vtscsi_resume_queue(
+					    &sc->vss_queues[i]);
 	}
 	tmf->response = response;
 	ctl_scsi_free_io(io);
@@ -854,7 +982,7 @@ pci_vtscsi_tmf_affects_commands(uint32_t subtype)
 }
 
 static void
-pci_vtscsi_tmf_pause(struct pci_vtscsi_softc *sc)
+pci_vtscsi_tmf_pause(struct pci_vtscsi_softc *sc, bool *resume)
 {
 	struct pci_vtscsi_queue *q;
 
@@ -863,6 +991,7 @@ pci_vtscsi_tmf_pause(struct pci_vtscsi_softc *sc)
 		if (q->vsq_sc == NULL)
 			continue;
 		pthread_mutex_lock(&q->vsq_rmtx);
+		resume[i] = !q->vsq_quiescing;
 		q->vsq_quiescing = true;
 		pthread_mutex_unlock(&q->vsq_rmtx);
 	}
@@ -889,26 +1018,37 @@ pci_vtscsi_tmf_matches(struct pci_vtscsi_softc *sc,
  * which bhyve had consumed from the available ring but had not submitted to
  * CTL.  The controlq response is published only after this function returns.
  */
-static void
+static int
 pci_vtscsi_tmf_complete(struct pci_vtscsi_softc *sc, uint32_t subtype,
     const uint8_t *lun, uint64_t id)
 {
 	struct pci_vtscsi_req_queue keep;
 	struct pci_vtscsi_request *req;
 	struct pci_vtscsi_queue *q;
+	struct timespec deadline;
 	uint8_t response;
+	int error;
 
 	response = subtype == VIRTIO_SCSI_T_TMF_I_T_NEXUS_RESET ||
 	    subtype == VIRTIO_SCSI_T_TMF_LOGICAL_UNIT_RESET ?
 	    VIRTIO_SCSI_S_RESET : VIRTIO_SCSI_S_ABORTED;
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		return (errno);
+	deadline.tv_sec += VTSCSI_QUIESCE_TIMEOUT_SECONDS;
 	for (int i = 0; i < sc->vss_nrequestq; i++) {
 		q = &sc->vss_queues[i];
 		if (q->vsq_sc == NULL)
 			continue;
 		STAILQ_INIT(&keep);
 		pthread_mutex_lock(&q->vsq_rmtx);
-		while (q->vsq_active != 0)
-			pthread_cond_wait(&q->vsq_cv, &q->vsq_rmtx);
+		while (q->vsq_active != 0) {
+			error = pthread_cond_timedwait(&q->vsq_cv,
+			    &q->vsq_rmtx, &deadline);
+			if (error != 0 && q->vsq_active != 0) {
+				pthread_mutex_unlock(&q->vsq_rmtx);
+				return (error);
+			}
+		}
 		while ((req = pci_vtscsi_get_request(&q->vsq_requests)) != NULL) {
 			if (!pci_vtscsi_tmf_matches(sc, req, subtype, lun, id)) {
 				pci_vtscsi_put_request(&keep, req);
@@ -920,6 +1060,7 @@ pci_vtscsi_tmf_complete(struct pci_vtscsi_softc *sc, uint32_t subtype,
 		STAILQ_CONCAT(&q->vsq_requests, &keep);
 		pthread_mutex_unlock(&q->vsq_rmtx);
 	}
+	return (0);
 }
 
 static void
@@ -1027,12 +1168,14 @@ pci_vtscsi_queue_request(struct pci_vtscsi_softc *sc, struct vqueue_info *vq)
 	    vireq.writable < 1 || vireq.readable + vireq.writable != n) {
 		WPRINTF("ignoring invalid request descriptor chain");
 		req->vsr_idx = vireq.idx;
+		req->vsr_vreq = vireq;
 		req->vsr_queue = q;
 		pci_vtscsi_return_request(q, req, 0);
 		return (true);
 	}
 
 	req->vsr_idx = vireq.idx;
+	req->vsr_vreq = vireq;
 	req->vsr_queue = q;
 	req->vsr_iov_in = &req->vsr_iov[0];
 	req->vsr_niov_in = vireq.readable;
@@ -1160,27 +1303,73 @@ pci_vtscsi_recycle_request(struct pci_vtscsi_queue *q,
  * A selective queue reset instead discards them because the old queue
  * incarnation must not receive further used entries or notifications.
  */
-static void
-pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *q, bool complete)
+static int
+pci_vtscsi_quiesce_queue(struct pci_vtscsi_queue *q, bool complete,
+    bool bounded)
+{
+	struct timespec deadline;
+
+	if (!bounded)
+		return (pci_vtscsi_quiesce_queue_until(q, complete, NULL));
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		return (errno);
+	deadline.tv_sec += VTSCSI_QUIESCE_TIMEOUT_SECONDS;
+	return (pci_vtscsi_quiesce_queue_until(q, complete, &deadline));
+}
+
+static int
+pci_vtscsi_quiesce_queue_until(struct pci_vtscsi_queue *q, bool complete,
+    const struct timespec *deadline)
 {
 	struct pci_vtscsi_request *req;
+	int error;
 
 	/* The initial device reset runs before request queues are initialized. */
 	if (q->vsq_sc == NULL)
-		return;
+		return (0);
 
 	pthread_mutex_lock(&q->vsq_rmtx);
 	q->vsq_quiescing = true;
-	while (q->vsq_active != 0)
-		pthread_cond_wait(&q->vsq_cv, &q->vsq_rmtx);
+	while (q->vsq_active != 0) {
+		if (deadline != NULL)
+			error = pthread_cond_timedwait(&q->vsq_cv, &q->vsq_rmtx,
+			    deadline);
+		else
+			error = pthread_cond_wait(&q->vsq_cv, &q->vsq_rmtx);
+		if (error != 0 && q->vsq_active != 0)
+			goto fail;
+	}
 	while ((req = pci_vtscsi_get_request(&q->vsq_requests)) != NULL) {
 		if (complete) {
 			req->vsr_cmd_wr->response = VIRTIO_SCSI_S_RESET;
 			pci_vtscsi_return_request(q, req, 0);
-		} else
+		} else {
+			/*
+			 * Selective reset invalidates this queue incarnation.  Retire
+			 * the common request owner before clearing the device-private
+			 * request object: vq_getchain() may have retained a packed owner
+			 * and an ACCESS_PLATFORM lease even though this request had not
+			 * yet reached CTL.  There is deliberately no used-ring write for
+			 * the old incarnation.
+			 */
+			pthread_mutex_lock(&q->vsq_qmtx);
+			vq_discard_req(q->vsq_vq, &req->vsr_vreq);
+			pthread_mutex_unlock(&q->vsq_qmtx);
 			pci_vtscsi_recycle_request(q, req);
+		}
 	}
 	pthread_mutex_unlock(&q->vsq_rmtx);
+	return (0);
+
+fail:
+	/*
+	 * Keep the queue quiesced and retain every queued request.  The common
+	 * queue-reset layer will mark this incarnation failed and require a
+	 * full device reset; restarting it here would let an old CTL command
+	 * publish into guest memory after reset failure.
+	 */
+	pthread_mutex_unlock(&q->vsq_rmtx);
+	return (error);
 }
 
 static void
@@ -1196,21 +1385,495 @@ pci_vtscsi_resume_queue(struct pci_vtscsi_queue *q)
 	pthread_mutex_unlock(&q->vsq_rmtx);
 }
 
+/*
+ * Acquire a lifecycle owner for every live request queue.  The common VirtIO
+ * fence prevents new queue callbacks while workers finish requests already
+ * consumed from the available ring.  A queue quiesced by selective reset
+ * belongs to that old queue incarnation and is not resumed by this owner.
+ */
+static int
+pci_vtscsi_acquire_queues(struct pci_vtscsi_softc *sc, bool *resume)
+{
+	struct pci_vtscsi_queue *q;
+	struct timespec deadline;
+	int error, i;
+
+	/*
+	 * This is one lifecycle operation, so bound the complete device drain
+	 * rather than granting every request queue a fresh timeout.  The common
+	 * VirtIO admission fence is already published before this callback,
+	 * which lets all queues make progress concurrently toward this single
+	 * monotonic deadline.
+	 */
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		return (errno);
+	deadline.tv_sec += VTSCSI_QUIESCE_TIMEOUT_SECONDS;
+	for (i = 0; i < sc->vss_nrequestq; i++) {
+		q = &sc->vss_queues[i];
+		pthread_mutex_lock(&q->vsq_rmtx);
+		resume[i] = !q->vsq_quiescing;
+		if (q->vsq_quiescing) {
+			if (q->vsq_active != 0 ||
+			    !STAILQ_EMPTY(&q->vsq_requests)) {
+				error = EBUSY;
+				pthread_mutex_unlock(&q->vsq_rmtx);
+				goto fail;
+			}
+		} else {
+			while (q->vsq_active != 0 ||
+			    !STAILQ_EMPTY(&q->vsq_requests)) {
+				error = pthread_cond_timedwait(&q->vsq_cv,
+				    &q->vsq_rmtx, &deadline);
+				if (error != 0 &&
+				    (q->vsq_active != 0 ||
+				    !STAILQ_EMPTY(&q->vsq_requests))) {
+					resume[i] = false;
+					pthread_mutex_unlock(&q->vsq_rmtx);
+					goto fail;
+				}
+			}
+			q->vsq_quiescing = true;
+		}
+		pthread_mutex_unlock(&q->vsq_rmtx);
+	}
+	return (0);
+
+fail:
+	while (i-- > 0) {
+		if (resume[i])
+			pci_vtscsi_resume_queue(&sc->vss_queues[i]);
+		resume[i] = false;
+	}
+	return (error);
+}
+
+static void
+pci_vtscsi_release_queues(struct pci_vtscsi_softc *sc, bool *resume)
+{
+
+	for (int i = 0; i < sc->vss_nrequestq; i++) {
+		if (resume[i])
+			pci_vtscsi_resume_queue(&sc->vss_queues[i]);
+		resume[i] = false;
+	}
+}
+
+static int
+pci_vtscsi_suspend_device(void *vsc)
+{
+	struct pci_vtscsi_softc *sc;
+	int error;
+
+	sc = vsc;
+	assert(pthread_mutex_isowned_np(&sc->vss_mtx));
+	pthread_mutex_unlock(&sc->vss_mtx);
+	error = pci_vtscsi_acquire_queues(sc, sc->vss_suspend_resume);
+	pthread_mutex_lock(&sc->vss_mtx);
+	return (error);
+}
+
+static int
+pci_vtscsi_resume_device(void *vsc)
+{
+	struct pci_vtscsi_softc *sc;
+
+	sc = vsc;
+	assert(pthread_mutex_isowned_np(&sc->vss_mtx));
+	pthread_mutex_unlock(&sc->vss_mtx);
+	pci_vtscsi_release_queues(sc, sc->vss_suspend_resume);
+	pthread_mutex_lock(&sc->vss_mtx);
+	return (0);
+}
+
+static void
+pci_vtscsi_resume_complete(void *vsc)
+{
+	struct pci_vtscsi_softc *sc;
+	bool already_locked;
+
+	sc = vsc;
+	/*
+	 * CTL can report a LUN change while guest queues are fenced.  The source
+	 * callback records it in vss_event_state but must not inspect the guest
+	 * event queue until both guest suspend and checkpoint ownership have
+	 * ended.  Guest resume invokes this hook with vss_mtx held, whereas
+	 * checkpoint resume invokes it without the lock.
+	 */
+	already_locked = pthread_mutex_isowned_np(&sc->vss_mtx);
+	if (!already_locked)
+		pthread_mutex_lock(&sc->vss_mtx);
+	pci_vtscsi_drain_events(sc);
+	if (!already_locked)
+		pthread_mutex_unlock(&sc->vss_mtx);
+}
+
+static void
+pci_vtscsi_restore_suspended(void *vsc)
+{
+	struct pci_vtscsi_softc *sc;
+	bool already_locked;
+
+	sc = vsc;
+	already_locked = pthread_mutex_isowned_np(&sc->vss_mtx);
+	if (!already_locked)
+		pthread_mutex_lock(&sc->vss_mtx);
+	/*
+	 * Restore occurs under checkpoint ownership.  Transfer queues parked
+	 * by checkpoint pause to guest-suspend ownership, preventing checkpoint
+	 * resume from restarting them before the driver clears SUSPEND.
+	 */
+	for (int i = 0; i < sc->vss_nrequestq; i++) {
+		if (sc->vss_checkpoint_resume[i]) {
+			sc->vss_checkpoint_resume[i] = false;
+			sc->vss_suspend_resume[i] = true;
+		}
+	}
+	if (!already_locked)
+		pthread_mutex_unlock(&sc->vss_mtx);
+}
+
+static void
+pci_vtscsi_restore_resumed(void *vsc)
+{
+	struct pci_vtscsi_softc *sc;
+	bool already_locked;
+
+	sc = vsc;
+	already_locked = pthread_mutex_isowned_np(&sc->vss_mtx);
+	/*
+	 * A destination already suspended before checkpoint may have request
+	 * queues marked only by vss_suspend_resume: checkpoint pause observes
+	 * those queues as already quiesced and deliberately does not claim a
+	 * second per-queue resume marker.  A runnable restored image must reopen
+	 * precisely those old guest-owned queues.  The common checkpoint fence
+	 * is still active, so no new guest descriptor can enter until resume.
+	 */
+	if (already_locked)
+		pthread_mutex_unlock(&sc->vss_mtx);
+	pci_vtscsi_release_queues(sc, sc->vss_suspend_resume);
+	if (already_locked)
+		pthread_mutex_lock(&sc->vss_mtx);
+}
+
+#ifdef BHYVE_SNAPSHOT
+#define	VTSCSI_SNAPSHOT_MAGIC		0x31534353U	/* "SCS1" on disk */
+#define	VTSCSI_SNAPSHOT_VERSION		1U
+#define	VTSCSI_LUN_INVENTORY_INITIAL	4096U
+#define	VTSCSI_LUN_INVENTORY_MAX	(16U * 1024U * 1024U)
+
+/*
+ * The CTL frontend exposes every CTL LUN through this device, so the complete
+ * LUN inventory is the external-backend identity.  CTL produces the document
+ * while holding its LUN-list locks.  Comparing the complete document catches
+ * changed media geometry, identifiers, backend types, and backend options.
+ *
+ * This XML is an opaque identity record, not native serialized device state.
+ * A future contract which understands a new CTL schema must replace this
+ * exact-current snapshot version.  This unreleased format does not retain a
+ * fallback reader for superseded development images.
+ */
+static int
+pci_vtscsi_lun_inventory(struct pci_vtscsi_softc *sc, char **inventoryp,
+    uint32_t *lengthp)
+{
+	struct ctl_lun_list list;
+	char *inventory;
+	uint32_t alloc_len;
+	int error;
+
+	*inventoryp = NULL;
+	*lengthp = 0;
+	alloc_len = VTSCSI_LUN_INVENTORY_INITIAL;
+	for (;;) {
+		inventory = calloc(1, alloc_len);
+		if (inventory == NULL)
+			return (ENOMEM);
+
+		memset(&list, 0, sizeof(list));
+		list.alloc_len = alloc_len;
+		list.lun_xml = inventory;
+		if (ioctl(sc->vss_ctl_fd, CTL_LUN_LIST, &list) != 0) {
+			error = errno;
+			free(inventory);
+			return (error);
+		}
+		if (list.status == CTL_LUN_LIST_NEED_MORE_SPACE) {
+			free(inventory);
+			if (alloc_len > VTSCSI_LUN_INVENTORY_MAX / 2)
+				return (E2BIG);
+			alloc_len *= 2;
+			continue;
+		}
+		if (list.status != CTL_LUN_LIST_OK || list.fill_len == 0 ||
+		    list.fill_len > alloc_len ||
+		    inventory[list.fill_len - 1] != '\0') {
+			free(inventory);
+			return (EIO);
+		}
+
+		/* The terminating NUL is an implementation detail, not identity. */
+		*lengthp = list.fill_len - 1;
+		*inventoryp = inventory;
+		return (0);
+	}
+}
+
+/*
+ * Checkpoint pause differs from reset.  The common VirtIO fence has already
+ * stopped new queue callbacks, so let workers drain every consumed request
+ * normally and only then park them.  Remember queues which were already
+ * quiesced by selective queue reset; resume must not accidentally re-enable
+ * those old queue incarnations.
+ */
+static int
+pci_vtscsi_pause(void *vsc)
+{
+	struct pci_vtscsi_softc *sc;
+	int error;
+
+	sc = vsc;
+	if ((error = pci_vtscsi_acquire_queues(sc,
+	    sc->vss_checkpoint_resume)) != 0)
+		return (error);
+	pthread_mutex_lock(&sc->vss_mtx);
+	return (0);
+}
+
+static int
+pci_vtscsi_resume(void *vsc)
+{
+	struct pci_vtscsi_softc *sc;
+
+	sc = vsc;
+	pthread_mutex_unlock(&sc->vss_mtx);
+	pci_vtscsi_release_queues(sc, sc->vss_checkpoint_resume);
+	return (0);
+}
+
+static bool
+pci_vtscsi_config_compatible(const struct pci_vtscsi_config *saved,
+    const struct pci_vtscsi_config *destination)
+{
+	struct pci_vtscsi_config expected;
+
+	expected = *destination;
+	expected.sense_size = saved->sense_size;
+	expected.cdb_size = saved->cdb_size;
+	return (saved->sense_size <= SSD_FULL_SIZE &&
+	    saved->cdb_size != 0 && saved->cdb_size <= CTL_MAX_CDBLEN &&
+	    memcmp(saved, &expected, sizeof(*saved)) == 0);
+}
+
+static int
+pci_vtscsi_snapshot_config(struct pci_vtscsi_config *config,
+    struct vm_snapshot_meta *meta)
+{
+	uint32_t value32;
+	uint16_t value16;
+	int ret;
+
+#define	VTSCSI_SNAPSHOT_CONFIG32(field) do {				\
+	value32 = config->field;						\
+	SNAPSHOT_LE32_OR_LEAVE(value32, meta, ret, done);		\
+	if (vm_snapshot_is_loading(meta))				\
+		config->field = value32;					\
+} while (0)
+#define	VTSCSI_SNAPSHOT_CONFIG16(field) do {				\
+	value16 = config->field;						\
+	SNAPSHOT_LE16_OR_LEAVE(value16, meta, ret, done);		\
+	if (vm_snapshot_is_loading(meta))				\
+		config->field = value16;					\
+} while (0)
+
+	VTSCSI_SNAPSHOT_CONFIG32(num_queues);
+	VTSCSI_SNAPSHOT_CONFIG32(seg_max);
+	VTSCSI_SNAPSHOT_CONFIG32(max_sectors);
+	VTSCSI_SNAPSHOT_CONFIG32(cmd_per_lun);
+	VTSCSI_SNAPSHOT_CONFIG32(event_info_size);
+	VTSCSI_SNAPSHOT_CONFIG32(sense_size);
+	VTSCSI_SNAPSHOT_CONFIG32(cdb_size);
+	VTSCSI_SNAPSHOT_CONFIG16(max_channel);
+	VTSCSI_SNAPSHOT_CONFIG16(max_target);
+	VTSCSI_SNAPSHOT_CONFIG32(max_lun);
+	ret = 0;
+
+done:
+#undef VTSCSI_SNAPSHOT_CONFIG32
+#undef VTSCSI_SNAPSHOT_CONFIG16
+	return (ret);
+}
+
+static int
+pci_vtscsi_snapshot(void *vsc, struct vm_snapshot_meta *meta)
+{
+	struct pci_vtscsi_softc *sc;
+	struct pci_vtscsi_config config, destination_config;
+	char *current_inventory, *saved_inventory;
+	uint64_t features;
+	uint32_t current_inventory_len, iid, inventory_len, magic, version;
+	uint16_t nrequestq;
+	int ret;
+
+	sc = vsc;
+	current_inventory = NULL;
+	saved_inventory = NULL;
+	current_inventory_len = 0;
+	/*
+	 * Saving needs the backend identity before any bytes are published, so a
+	 * failed CTL query leaves the output untouched.  Loading is deliberately
+	 * ordered differently: decode the complete untrusted private record and
+	 * reject local topology mismatches before asking the destination backend
+	 * for its inventory.  This keeps malformed input from invoking an
+	 * external reconstruction dependency or obscuring its canonical error.
+	 */
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		ret = pci_vtscsi_lun_inventory(sc, &current_inventory,
+		    &current_inventory_len);
+		if (ret != 0)
+			goto done;
+	}
+
+	magic = VTSCSI_SNAPSHOT_MAGIC;
+	version = VTSCSI_SNAPSHOT_VERSION;
+	iid = (uint32_t)sc->vss_iid;
+	nrequestq = sc->vss_nrequestq;
+	features = sc->vss_features;
+	config = sc->vss_config;
+	destination_config = sc->vss_config;
+	/*
+	 * vss_features is a device-private cache of the common negotiated
+	 * features.  Saving divergent values would produce an image that this
+	 * same implementation rejects at restore, so fail before publishing it.
+	 */
+	if (meta->op == VM_SNAPSHOT_SAVE &&
+	    features != sc->vss_vs.vs_negotiated_caps) {
+		ret = EINVAL;
+		goto done;
+	}
+
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
+	if (magic != VTSCSI_SNAPSHOT_MAGIC ||
+	    version != VTSCSI_SNAPSHOT_VERSION) {
+		ret = ENOTSUP;
+		goto done;
+	}
+	SNAPSHOT_LE32_OR_LEAVE(iid, meta, ret, done);
+	SNAPSHOT_LE16_OR_LEAVE(nrequestq, meta, ret, done);
+	SNAPSHOT_LE64_OR_LEAVE(features, meta, ret, done);
+	ret = pci_vtscsi_snapshot_config(&config, meta);
+	if (ret != 0)
+		goto done;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		inventory_len = current_inventory_len;
+		SNAPSHOT_LE32_OR_LEAVE(inventory_len, meta, ret, done);
+		SNAPSHOT_BUF_OR_LEAVE(current_inventory, inventory_len, meta,
+		    ret, done);
+		goto done;
+	}
+
+	/*
+	 * Deserialize into temporary storage.  Do not alter device state until
+	 * the complete record and destination backend have been validated.
+	 */
+	inventory_len = 0;
+	SNAPSHOT_LE32_OR_LEAVE(inventory_len, meta, ret, done);
+	if (inventory_len > VTSCSI_LUN_INVENTORY_MAX) {
+		ret = E2BIG;
+		goto done;
+	}
+	saved_inventory = malloc(MAX(inventory_len, 1));
+	if (saved_inventory == NULL) {
+		ret = ENOMEM;
+		goto done;
+	}
+	SNAPSHOT_BUF_OR_LEAVE(saved_inventory, inventory_len, meta, ret, done);
+	if (iid != (uint32_t)sc->vss_iid ||
+	    nrequestq != sc->vss_nrequestq ||
+	    features != sc->vss_vs.vs_negotiated_caps ||
+	    !pci_vtscsi_config_compatible(&config, &destination_config)) {
+		ret = EINVAL;
+		goto done;
+	}
+	ret = pci_vtscsi_lun_inventory(sc, &current_inventory,
+	    &current_inventory_len);
+	if (ret != 0)
+		goto done;
+	if (inventory_len != current_inventory_len ||
+	    memcmp(saved_inventory, current_inventory, inventory_len) != 0) {
+		ret = EINVAL;
+		goto done;
+	}
+	if (vm_snapshot_is_restoring(meta)) {
+		sc->vss_features = features;
+		sc->vss_config = config;
+		/*
+		 * CTL subscriptions are destination-local and are not serialized.
+		 * Force one loss-aware rescan after backend reconstruction.
+		 */
+		virtio_scsi_event_state_reset(&sc->vss_event_state,
+		    sc->vss_event_source);
+	}
+
+done:
+	free(saved_inventory);
+	free(current_inventory);
+	return (ret);
+}
+
+/*
+ * A normal checkpoint calls the private codec while pci_vtscsi_pause()
+ * retains vss_mtx after every request queue has drained.  Validation does not
+ * need to take ownership of, or drain, those queues: it only reads the
+ * private configuration and event state.  Direct validation still needs the
+ * same serialization, however.  Reuse the pause-held non-recursive mutex
+ * when present rather than recursively acquiring it.
+ */
+static int
+pci_vtscsi_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	struct pci_devinst *pi;
+	struct pci_vtscsi_softc *sc;
+	bool acquired;
+	int error;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE ||
+	    meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	sc = pi->pi_arg;
+	if (sc == NULL)
+		return (EINVAL);
+
+	acquired = !pthread_mutex_isowned_np(&sc->vss_mtx);
+	if (acquired)
+		pthread_mutex_lock(&sc->vss_mtx);
+	error = vi_pci_snapshot(meta);
+	if (acquired)
+		pthread_mutex_unlock(&sc->vss_mtx);
+	return (error);
+}
+#endif
+
 static void
 pci_vtscsi_return_request(struct pci_vtscsi_queue *q,
     struct pci_vtscsi_request *req, uint32_t iolen)
 {
-	int idx = req->vsr_idx;
+	struct vi_req vireq;
+	int idx;
 
-	DPRINTF("request <idx=%d> completed, response %d", idx,
-	    req->vsr_cmd_wr->response);
+	idx = req->vsr_idx;
+	vireq = req->vsr_vreq;
+	DPRINTF("q=%u request <idx=%d> completed, response %d",
+	    q->vsq_vq->vq_num, idx, req->vsr_cmd_wr->response);
 
 	iolen += buf_to_iov(req->vsr_cmd_wr, VTSCSI_OUT_HEADER_LEN(q->vsq_sc),
 	    req->vsr_iov_out, req->vsr_niov_out);
 	pci_vtscsi_recycle_request(q, req);
 
 	pthread_mutex_lock(&q->vsq_qmtx);
-	vq_relchain(q->vsq_vq, idx, iolen);
+	vq_relchain_req(q->vsq_vq, &vireq, iolen);
 	vq_endchains(q->vsq_vq, 0);
 	pthread_mutex_unlock(&q->vsq_qmtx);
 }
@@ -1389,18 +2052,20 @@ pci_vtscsi_controlq_notify(void *vsc, struct vqueue_info *vq)
 		struct pci_vtscsi_ctrl_an an;
 	} buf;
 	size_t insize, outsize, off, written;
+	uint16_t budget;
 	int n;
 
 	sc = vsc;
 
-	while (vq_has_descs(vq)) {
+	budget = vq->vq_qsize;
+	while (budget-- != 0 && vq_has_descs(vq)) {
 		n = vq_getchain(vq, iov, VTSCSI_MAXSEG, &req);
 		if (n <= 0)
 			break;
 		if (n > VTSCSI_MAXSEG || !req.ordered || req.readable < 1 ||
 		    req.writable < 1 || req.readable + req.writable != n) {
 			WPRINTF("ignoring invalid control descriptor chain");
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 
@@ -1408,7 +2073,7 @@ pci_vtscsi_controlq_notify(void *vsc, struct vqueue_info *vq)
 		outsize = count_iov(&iov[req.readable], req.writable);
 		if (insize > sizeof(buf)) {
 			WPRINTF("ignoring oversized control request");
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 		memset(&buf, 0, sizeof(buf));
@@ -1426,27 +2091,234 @@ pci_vtscsi_controlq_notify(void *vsc, struct vqueue_info *vq)
 		/*
 		 * Release this chain and handle more
 		 */
-		vq_relchain(vq, req.idx, written);
+		vq_relchain_req(vq, &req, written);
 	}
-	vq_endchains(vq, 1);	/* Generate interrupt if appropriate. */
+	vq_endchains(vq, !vq_has_descs(vq));
 }
 
 static void
-pci_vtscsi_eventq_notify(void *vsc __unused, struct vqueue_info *vq)
+pci_vtscsi_drain_events(struct pci_vtscsi_softc *sc)
 {
-	vq_kick_disable(vq);
+	struct virtio_scsi_event_record record;
+	struct pci_vtscsi_event event;
+	struct vqueue_info *vq;
+	struct iovec iov[VTSCSI_MAXSEG];
+	struct vi_req req;
+	size_t written;
+	uint32_t type;
+	uint16_t budget;
+	int n;
+	bool completed;
+
+	/*
+	 * The guest queue notify path enters through the common VirtIO device
+	 * lock, and the CTL callback takes the same lock before it mutates the
+	 * loss-aware event state.  Keep that relationship explicit: the event
+	 * state and the guest descriptor are one transaction, so draining without
+	 * vss_mtx could otherwise race a source-side push or reset.
+	 */
+	if (sc->vss_mtx_initialized)
+		assert(pthread_mutex_isowned_np(&sc->vss_mtx));
+	vq = &sc->vss_vq[1];
+	completed = false;
+	/*
+	 * A guest can replenish event buffers while this callback runs.  Bound one
+	 * dispatch by the negotiated queue size, just as the request-queue path
+	 * does, so a continuously ready event queue cannot monopolize mevent.
+	 */
+	budget = vq->vq_qsize;
+	while (budget-- != 0 &&
+	    virtio_scsi_event_state_pending(&sc->vss_event_state) &&
+	    vq_has_descs(vq)) {
+		n = vq_getchain(vq, iov, VTSCSI_MAXSEG, &req);
+		if (n <= 0)
+			break;
+		if (n > VTSCSI_MAXSEG || !req.ordered || req.readable != 0 ||
+		    req.writable < 1 || req.writable != n ||
+		    !check_iov_len(iov, req.writable, sizeof(event))) {
+			WPRINTF("ignoring invalid event descriptor chain");
+			vq_relchain_req(vq, &req, 0);
+			completed = true;
+			continue;
+		}
+		if (!virtio_scsi_event_state_pop(&sc->vss_event_state,
+		    &record)) {
+			/*
+			 * The pending predicate and pop are serialized by
+			 * vss_mtx, so this indicates corrupt local state.  Do
+			 * not strand a consumed descriptor in the virtqueue.
+			 */
+			vq_relchain_req(vq, &req, 0);
+			vi_set_needs_reset(&sc->vss_vs);
+			completed = true;
+			break;
+		}
+
+		memset(&event, 0, sizeof(event));
+		event.event = pci_vtscsi_encode32(sc, record.event);
+		event.reason = pci_vtscsi_encode32(sc, record.reason);
+		type = record.event & ~BHYVE_VTSCSI_EVENT_MISSED;
+		if (type != VIRTIO_SCSI_T_NO_EVENT)
+			memcpy(event.lun, record.lun, sizeof(event.lun));
+		written = buf_to_iov(&event, sizeof(event), iov, req.writable);
+		vq_relchain_req(vq, &req, written);
+		VIRTIO_PROBE_SCSI_EVENT("vtscsi", "deliver", record.event,
+		    record.source_sequence, 0);
+		completed = true;
+	}
+	if (completed)
+		vq_endchains(vq, !vq_has_descs(vq));
+}
+
+static void
+pci_vtscsi_eventq_notify(void *vsc, struct vqueue_info *vq __unused)
+{
+	struct pci_vtscsi_softc *sc = vsc;
+
+	pci_vtscsi_drain_events(sc);
+}
+
+static void
+pci_vtscsi_ctl_event(int fd, enum ev_type type __unused, void *arg)
+{
+	struct pci_vtscsi_softc *sc = arg;
+	struct virtio_scsi_event_record record;
+	struct ctl_lun_event event;
+	uint32_t feature;
+	unsigned int budget;
+
+	pthread_mutex_lock(&sc->vss_mtx);
+	budget = VTSCSI_HOST_EVENT_BUDGET;
+	/*
+	 * CTL_LUN_EVENT_NEXT does not wait for a new record: after the
+	 * readiness indication it returns EAGAIN when the subscription queue
+	 * has been drained.  Keep this bounded drain under vss_mtx so that an
+	 * event callback cannot race a queue kick, reset, or snapshot fence.
+	 */
+	while (budget-- != 0) {
+		memset(&event, 0, sizeof(event));
+		event.version = CTL_LUN_EVENT_VERSION;
+		if (ioctl(fd, CTL_LUN_EVENT_NEXT, &event) != 0) {
+			if (errno != EAGAIN) {
+				WPRINTF("CTL event stream failed: %s",
+				    strerror(errno));
+				virtio_scsi_event_state_reset(
+				    &sc->vss_event_state, true);
+				vi_set_needs_reset(&sc->vss_vs);
+			}
+			break;
+		}
+		if (event.version != CTL_LUN_EVENT_VERSION ||
+		    event.reserved != 0 ||
+		    (event.flags & ~CTL_LUN_EVENT_F_MISSED) != 0 ||
+		    event.type < CTL_LUN_EVENT_RESCAN ||
+		    event.type > CTL_LUN_EVENT_CHANGED ||
+		    (event.type == CTL_LUN_EVENT_RESCAN ?
+		    (event.lun_id != UINT32_MAX ||
+		    event.device_type != CTL_LUN_EVENT_DEVICE_TYPE_UNKNOWN) :
+		    (event.sequence == 0 ||
+		    event.lun_id > VIRTIO_SCSI_MAX_LUN ||
+		    event.device_type > 0x1f))) {
+			WPRINTF("CTL event stream returned invalid record");
+			virtio_scsi_event_state_reset(&sc->vss_event_state,
+			    true);
+			continue;
+		}
+		VIRTIO_PROBE_SCSI_EVENT("vtscsi", "source", event.type,
+		    event.sequence, 0);
+		if ((event.flags & CTL_LUN_EVENT_F_MISSED) != 0)
+			virtio_scsi_event_state_reset(&sc->vss_event_state,
+			    true);
+		if (event.type == CTL_LUN_EVENT_RESCAN)
+			continue;
+
+		memset(&record, 0, sizeof(record));
+		record.source_sequence = event.sequence;
+		record.lun[0] = 1;
+		if (event.lun_id >= 256)
+			record.lun[2] =
+			    (uint8_t)((event.lun_id >> 8) | 0x40);
+		record.lun[3] = (uint8_t)event.lun_id;
+		switch (event.type) {
+		case CTL_LUN_EVENT_ADDED:
+			feature = VIRTIO_SCSI_F_HOTPLUG;
+			record.event = VIRTIO_SCSI_T_TRANSPORT_RESET;
+			record.reason = VIRTIO_SCSI_EVT_RESET_RESCAN;
+			break;
+		case CTL_LUN_EVENT_REMOVED:
+			feature = VIRTIO_SCSI_F_HOTPLUG;
+			record.event = VIRTIO_SCSI_T_TRANSPORT_RESET;
+			record.reason = VIRTIO_SCSI_EVT_RESET_REMOVED;
+			break;
+		case CTL_LUN_EVENT_CHANGED:
+			/*
+			 * VirtIO 1.4 section 5.6.6.3.3 prohibits parameter-change
+			 * events for multimedia devices.  Treat the source record
+			 * as deliberately filtered after DRIVER_OK so it still
+			 * advances source continuity.
+			 */
+			feature = event.device_type == T_CDROM ? 0 :
+			    VIRTIO_SCSI_F_CHANGE;
+			record.event = VIRTIO_SCSI_T_PARAM_CHANGE;
+			record.reason = VIRTIO_SCSI_EVT_CAPACITY_CHANGED;
+			break;
+		default:
+			virtio_scsi_event_state_reset(&sc->vss_event_state,
+			    true);
+			continue;
+		}
+		/*
+		 * Events before DRIVER_OK, or for a feature the driver declined,
+		 * are outside the promised stream.  The driver's initialization
+		 * scan observes the current inventory, so pre-ready events are
+		 * discarded rather than misreported as loss caused by a missing
+		 * event buffer.
+		 */
+		if ((sc->vss_vs.vs_status &
+		    VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0)
+			continue;
+		if (feature == 0 || (sc->vss_features & feature) == 0) {
+			if (virtio_scsi_event_state_skip(&sc->vss_event_state,
+			    event.sequence) != 0)
+				virtio_scsi_event_state_reset(
+				    &sc->vss_event_state, true);
+			continue;
+		}
+		if (virtio_scsi_event_state_push(&sc->vss_event_state,
+		    &record) != 0) {
+			VIRTIO_PROBE_SCSI_EVENT("vtscsi", "queue", record.event,
+			    record.source_sequence, ENOSPC);
+			DPRINTF("event stream overflow at sequence %ju",
+			    (uintmax_t)event.sequence);
+		}
+	}
+	/*
+	 * Unlike a guest kick, this host callback is not routed through
+	 * vi_pci_notify_queue().  Preserve source ordering while lifecycle
+	 * ownership is fenced, but never acquire or complete a guest descriptor
+	 * behind that fence.  resume_complete drains the retained records after
+	 * the final owner has reopened queue access.
+	 */
+	if (atomic_load_explicit(&sc->vss_vs.vs_quiescing,
+	    memory_order_acquire) == 0 && !sc->vss_vs.vs_suspended &&
+	    !sc->vss_vs.vs_checkpoint_paused &&
+	    (sc->vss_vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0)
+		pci_vtscsi_drain_events(sc);
+	pthread_mutex_unlock(&sc->vss_mtx);
 }
 
 static void
 pci_vtscsi_requestq_notify(void *vsc, struct vqueue_info *vq)
 {
 	struct pci_vtscsi_softc *sc;
+	uint16_t budget;
 
 	sc = vsc;
 	if (vq->vq_num < 2 || vq->vq_num >= sc->vss_nrequestq + 2 ||
 	    vq != &sc->vss_vq[vq->vq_num])
 		return;
-	while (vq_has_descs(vq)) {
+	budget = vq->vq_qsize;
+	while (budget-- != 0 && vq_has_descs(vq)) {
 		if (!pci_vtscsi_queue_request(sc, vq))
 			break;
 	}
@@ -1456,7 +2328,9 @@ static int
 pci_vtscsi_init_queue(struct pci_vtscsi_softc *sc,
     struct pci_vtscsi_queue *queue, int num)
 {
+	pthread_condattr_t condattr;
 	char tname[MAXCOMLEN + 1];
+	bool condattr_initialized;
 	int error, i, nworkers;
 
 	if (sc->vss_nrequestq < 1 ||
@@ -1468,6 +2342,7 @@ pci_vtscsi_init_queue(struct pci_vtscsi_softc *sc,
 	queue->vsq_vq = &sc->vss_vq[num + 2];
 	STAILQ_INIT(&queue->vsq_requests);
 	STAILQ_INIT(&queue->vsq_free_requests);
+	condattr_initialized = false;
 
 	error = pthread_mutex_init(&queue->vsq_rmtx, NULL);
 	if (error != 0)
@@ -1481,10 +2356,19 @@ pci_vtscsi_init_queue(struct pci_vtscsi_softc *sc,
 	if (error != 0)
 		goto fail;
 	queue->vsq_qmtx_initialized = true;
-	error = pthread_cond_init(&queue->vsq_cv, NULL);
+	error = pthread_condattr_init(&condattr);
+	if (error != 0)
+		goto fail;
+	condattr_initialized = true;
+	error = pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC);
+	if (error != 0)
+		goto fail;
+	error = pthread_cond_init(&queue->vsq_cv, &condattr);
 	if (error != 0)
 		goto fail;
 	queue->vsq_cv_initialized = true;
+	(void)pthread_condattr_destroy(&condattr);
+	condattr_initialized = false;
 
 	for (i = 0; i < VTSCSI_RINGSZ; i++) {
 		struct pci_vtscsi_request *req;
@@ -1522,6 +2406,8 @@ pci_vtscsi_init_queue(struct pci_vtscsi_softc *sc,
 	return (0);
 
 fail:
+	if (condattr_initialized)
+		(void)pthread_condattr_destroy(&condattr);
 	pci_vtscsi_destroy_queue(queue);
 
 	return (-1);
@@ -1615,27 +2501,55 @@ pci_vtscsi_parse_queues(const char *value, uint16_t *nrequestq,
 }
 
 static int
+pci_vtscsi_parse_iid(const char *value, int *iid, const char **errstr)
+{
+	long long parsed;
+
+	*errstr = NULL;
+	if (value == NULL) {
+		*iid = 0;
+		return (0);
+	}
+	parsed = strtonum(value, 0, CTL_MAX_INIT_PER_PORT - 1, errstr);
+	if (*errstr != NULL)
+		return (EINVAL);
+	*iid = (int)parsed;
+	return (0);
+}
+
+static int
+pci_vtscsi_configure_ring_format(struct pci_vtscsi_softc *sc, bool packed)
+{
+
+	if (packed && !vi_pci_is_modern(&sc->vss_vs))
+		return (EINVAL);
+	if (packed)
+		sc->vss_consts.vc_hv_caps |= VIRTIO_F_RING_PACKED;
+	else
+		sc->vss_consts.vc_hv_caps &= ~VIRTIO_F_RING_PACKED;
+	return (0);
+}
+
+static int
 pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtscsi_softc *sc;
-	bool intr_initialized;
+	bool intr_initialized, packed;
 	const char *devname, *errstr, *value;
 	uint16_t nrequestq;
 	int err;
 	int i;
 
 	value = getenv("BHYVE_VTSCSI_DEBUG");
-	if (value != NULL) {
+	if (value != NULL && atoi(value) > 0)
 		pci_vtscsi_debug = atoi(value);
-		if (pci_vtscsi_debug < 1)
-			pci_vtscsi_debug = 1;
-	}
 
 	value = get_config_value_node(nvl, "queues");
 	if (pci_vtscsi_parse_queues(value, &nrequestq, &errstr) != 0) {
 		EPRINTLN("virtio-scsi queues is %s: %s", errstr, value);
 		return (-1);
 	}
+	packed = get_config_bool_node_default(nvl, "packed", false);
 
 	sc = calloc(1, sizeof(struct pci_vtscsi_softc));
 	if (sc == NULL)
@@ -1645,10 +2559,15 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	sc->vss_nrequestq = nrequestq;
 	sc->vss_consts = vtscsi_vi_consts;
 	sc->vss_consts.vc_nvq = sc->vss_nrequestq + 2;
+	if (virtio_scsi_event_state_init(&sc->vss_event_state,
+	    sc->vss_event_records, nitems(sc->vss_event_records)) != 0)
+		goto fail;
 
 	value = get_config_value_node(nvl, "iid");
-	if (value != NULL)
-		sc->vss_iid = strtoul(value, NULL, 10);
+	if (pci_vtscsi_parse_iid(value, &sc->vss_iid, &errstr) != 0) {
+		EPRINTLN("virtio-scsi iid is %s: %s", errstr, value);
+		goto fail;
+	}
 
 	value = get_config_value_node(nvl, "bootindex");
 	if (value != NULL) {
@@ -1665,6 +2584,22 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (sc->vss_ctl_fd < 0) {
 		WPRINTF("cannot open %s: %s", devname, strerror(errno));
 		goto fail;
+	}
+	{
+		struct ctl_lun_event_subscribe subscribe;
+
+		memset(&subscribe, 0, sizeof(subscribe));
+		subscribe.version = CTL_LUN_EVENT_VERSION;
+		subscribe.queue_depth = VTSCSI_EVENT_CAPACITY;
+		if (ioctl(sc->vss_ctl_fd, CTL_LUN_EVENT_SUBSCRIBE,
+		    &subscribe) == 0) {
+			sc->vss_event_source = true;
+			sc->vss_consts.vc_hv_caps |= VIRTIO_SCSI_F_HOTPLUG |
+			    VIRTIO_SCSI_F_CHANGE;
+		} else if (errno != ENOTTY && errno != EOPNOTSUPP) {
+			WPRINTF("cannot subscribe to CTL LUN events: %s; "
+			    "HOTPLUG and CHANGE disabled", strerror(errno));
+		}
 	}
 
 	if (pthread_mutex_init(&sc->vss_mtx, NULL) != 0)
@@ -1692,6 +2627,10 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 		goto fail;
 	if (sc->vss_nrequestq > 1 && !vi_pci_is_modern(&sc->vss_vs)) {
 		EPRINTLN("virtio-scsi queues requires transport=modern");
+		goto fail;
+	}
+	if (pci_vtscsi_configure_ring_format(sc, packed) != 0) {
+		EPRINTLN("virtio-scsi packed queues require transport=modern");
 		goto fail;
 	}
 
@@ -1725,6 +2664,15 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pci_vtscsi_reset(sc);
 	pthread_mutex_unlock(&sc->vss_mtx);
 
+	if (sc->vss_event_source) {
+		sc->vss_ctl_event = mevent_add(sc->vss_ctl_fd, EVF_READ,
+		    pci_vtscsi_ctl_event, sc);
+		if (sc->vss_ctl_event == NULL) {
+			WPRINTF("cannot register CTL event source");
+			goto fail;
+		}
+	}
+
 	/* Start workers only after every fallible PCI transport operation. */
 	for (i = 2; i < sc->vss_nrequestq + 2; i++) {
 		err = pci_vtscsi_init_queue(sc, &sc->vss_queues[i - 2], i - 2);
@@ -1735,6 +2683,8 @@ pci_vtscsi_init(struct pci_devinst *pi, nvlist_t *nvl)
 	return (0);
 
 fail:
+	if (sc->vss_ctl_event != NULL)
+		(void)mevent_delete_sync(sc->vss_ctl_event);
 	for (i = 2; i < sc->vss_nrequestq + 2; i++)
 		pci_vtscsi_destroy_queue(&sc->vss_queues[i - 2]);
 
@@ -1758,6 +2708,13 @@ static const struct pci_devemu pci_de_vscsi = {
 	.pe_cfgwrite =	vi_pci_modern_cfgwrite,
 	.pe_cfgread =	vi_pci_modern_cfgread,
 	.pe_barwrite =	vi_pci_write,
-	.pe_barread =	vi_pci_read
+	.pe_barread =	vi_pci_read,
+#ifdef BHYVE_SNAPSHOT
+	.pe_snapshot =	vi_pci_snapshot,
+	.pe_snapshot_validate = pci_vtscsi_snapshot_validate,
+	.pe_snapshot_compat = vi_pci_snapshot_compat,
+	.pe_pause =	vi_pci_pause,
+	.pe_resume =	vi_pci_resume,
+#endif
 };
 PCI_EMUL_SET(pci_de_vscsi);

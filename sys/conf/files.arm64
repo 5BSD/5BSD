@@ -165,6 +165,23 @@ arm64/vmm/io/vgic_v3.c				optional vmm
 arm64/vmm/io/vgic_if.m				optional vmm
 arm64/vmm/io/vtimer.c				optional vmm
 dev/vmm/vmm_dev.c				optional vmm
+dev/vmm/vmm_event_checkpoint.c		optional vmm
+dev/vmm/vmm_event_coordinator.c		optional vmm
+dev/vmm/vmm_event_ingress.c			optional vmm
+dev/vmm/vmm_startup_event.c			optional vmm
+dev/vmm/vmm_startup_mode.c			optional vmm
+dev/vmm/vmm_startup_entry_owner.c		optional vmm
+dev/vmm/vmm_startup_handshake.c		optional vmm
+dev/vmm/vmm_startup_controller.c		optional vmm
+dev/vmm/vmm_startup_request.c		optional vmm
+dev/vmm/vmm_startup_run_request.c		optional vmm
+dev/vmm/vmm_event_wait.c			optional vmm
+dev/vmm/vmm_dirty_log.c			optional vmm
+dev/vmm/vmm_dirty_log_collector.c		optional vmm
+arm64/vmm/vmm_dirty_log_machdep.c		optional vmm
+dev/vmm/vmm_dirty_log_map.c		optional vmm
+dev/vmm/vmm_dirty_log_owner.c		optional vmm
+dev/vmm/vmm_dirty_log_request.c		optional vmm
 dev/vmm/vmm_mem.c				optional vmm
 dev/vmm/vmm_stat.c				optional vmm
 

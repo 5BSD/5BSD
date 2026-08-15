@@ -175,11 +175,33 @@ ept_pinit(pmap_t pmap)
 	return (pmap_pinit_type(pmap, PT_EPT, ept_pmap_flags));
 }
 
+/*
+ * EPT02 permissions must not be conflated with hardware accessed/dirty
+ * state.  Keep each leaf at 4 KiB and use software A/D bookkeeping so the
+ * nested fault resolver can install an exact R/W/X permission set.
+ */
+static int
+ept_nested_pinit(pmap_t pmap)
+{
+	int flags;
+
+	flags = (ept_pmap_flags & (PMAP_NESTED_IPIMASK |
+	    PMAP_SUPPORTS_EXEC_ONLY)) | PMAP_EMULATE_AD_BITS;
+	return (pmap_pinit_type(pmap, PT_EPT, flags));
+}
+
 struct vmspace *
 ept_vmspace_alloc(vm_offset_t min, vm_offset_t max)
 {
 
 	return (vmspace_alloc(min, max, ept_pinit));
+}
+
+struct vmspace *
+ept_nested_vmspace_alloc(vm_offset_t min, vm_offset_t max)
+{
+
+	return (vmspace_alloc(min, max, ept_nested_pinit));
 }
 
 void
@@ -190,11 +212,18 @@ ept_vmspace_free(struct vmspace *vmspace)
 }
 
 uint64_t
+eptp_without_ad(uint64_t pml4)
+{
+
+	return (pml4 | (EPT_PWLEVELS - 1) << 3 | PAT_WRITE_BACK);
+}
+
+uint64_t
 eptp(uint64_t pml4)
 {
 	uint64_t eptp_val;
 
-	eptp_val = pml4 | (EPT_PWLEVELS - 1) << 3 | PAT_WRITE_BACK;
+	eptp_val = eptp_without_ad(pml4);
 	if (ept_enable_ad_bits)
 		eptp_val |= EPT_ENABLE_AD_BITS;
 

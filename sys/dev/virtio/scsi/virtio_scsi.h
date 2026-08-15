@@ -65,6 +65,23 @@ struct virtio_scsi_cmd_resp {
 	uint8_t sense[VIRTIO_SCSI_SENSE_SIZE];
 } __packed;
 
+static inline uint32_t
+virtio_scsi_sense_copy_len(uint32_t reported_len, uint32_t destination_len)
+{
+
+	if (reported_len > VIRTIO_SCSI_SENSE_SIZE)
+		reported_len = VIRTIO_SCSI_SENSE_SIZE;
+	return (reported_len < destination_len ? reported_len :
+	    destination_len);
+}
+
+static inline int
+virtio_scsi_resid_valid(uint32_t residual, uint32_t transfer_len)
+{
+
+	return (residual <= transfer_len);
+}
+
 /* Task Management Request */
 struct virtio_scsi_ctrl_tmf_req {
 	uint32_t type;
@@ -94,6 +111,14 @@ struct virtio_scsi_event {
 	uint8_t lun[8];
 	uint32_t reason;
 } __packed;
+
+static inline int
+virtio_scsi_event_used_len_valid(uint32_t used_len, uint32_t buffer_len)
+{
+
+	return (used_len >= sizeof(struct virtio_scsi_event) &&
+	    used_len <= buffer_len);
+}
 
 struct virtio_scsi_config {
 	uint32_t num_queues;

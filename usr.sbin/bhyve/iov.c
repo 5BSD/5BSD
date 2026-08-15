@@ -33,7 +33,6 @@
 #include <sys/types.h>
 #include <sys/uio.h>
 
-#include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -88,7 +87,8 @@ count_iov(const struct iovec *iov, size_t niov)
 	size_t i;
 
 	for (i = 0; i < niov; i++) {
-		assert(total <= SIZE_MAX - iov[i].iov_len);
+		if (iov[i].iov_len > SIZE_MAX - total)
+			return (SIZE_MAX);
 		total += iov[i].iov_len;
 	}
 
@@ -102,7 +102,14 @@ check_iov_len(const struct iovec *iov, size_t niov, size_t len)
 	size_t i;
 
 	for (i = 0; i < niov; i++) {
-		assert(total <= SIZE_MAX - iov[i].iov_len);
+		/*
+		 * The mathematical length already exceeds every representable
+		 * size_t length.  Treat the requested length as present instead
+		 * of turning guest descriptor geometry into a process abort on
+		 * narrower hosts.
+		 */
+		if (iov[i].iov_len > SIZE_MAX - total)
+			return (true);
 		total += iov[i].iov_len;
 		if (total >= len)
 			return (true);

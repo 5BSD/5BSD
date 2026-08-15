@@ -17,6 +17,9 @@ CONSOLE_PORT1=${CONSOLE_PORT1:-4480}
 CONSOLE_PORT2=${CONSOLE_PORT2:-4481}
 BRIDGE=${BRIDGE:-bridge0}
 UPLINK=${UPLINK:-}
+RESET_TEST=${RESET_TEST:-yes}
+CHECKPOINT_TEST=${CHECKPOINT_TEST:-no}
+CHECKPOINT_ACTIVE_VSOCK_REJECT=${CHECKPOINT_ACTIVE_VSOCK_REJECT:-no}
 
 [ "$(id -u)" -eq 0 ] || {
 	echo "run-alpine-multi-vsock.sh must run as root" >&2
@@ -36,6 +39,18 @@ case "$TRANSPORT" in
 modern|legacy) ;;
 *) echo "TRANSPORT must be modern or legacy" >&2; exit 2 ;;
 esac
+for value in "$RESET_TEST" "$CHECKPOINT_TEST" \
+    "$CHECKPOINT_ACTIVE_VSOCK_REJECT"; do
+	case "$value" in
+	yes|no) ;;
+	*) echo "reset and checkpoint controls must be yes or no" >&2; exit 2 ;;
+	esac
+done
+[ "$CHECKPOINT_ACTIVE_VSOCK_REJECT" = no ] || \
+    [ "$CHECKPOINT_TEST" = yes ] || {
+	echo "CHECKPOINT_ACTIVE_VSOCK_REJECT requires CHECKPOINT_TEST=yes" >&2
+	exit 2
+}
 for value in "$CID1" "$CID2" "$PORT_OFFSET1" "$PORT_OFFSET2" \
     "$CONSOLE_PORT1" "$CONSOLE_PORT2"; do
 	case "$value" in
@@ -98,7 +113,8 @@ barrier_dir="$WORKDIR/provider-barrier"
 mkdir -p -m 0700 "$barrier_dir"
 chmod 0700 "$barrier_dir"
 rm -f "$barrier_dir"/initial-cid-* "$barrier_dir"/pre-reset-cid-* \
-    "$barrier_dir"/post-reset-cid-*
+    "$barrier_dir"/post-reset-cid-* "$barrier_dir"/pre-checkpoint-cid-* \
+    "$barrier_dir"/post-checkpoint-cid-*
 
 if [ -f "$here/Makefile" ]; then
 	case "${VM_FREE_GATES:-yes}" in
@@ -127,6 +143,8 @@ pid1=
 pid2=
 cleanup()
 {
+	status=${1:-$?}
+	trap - EXIT HUP INT TERM
 	for pid in "$pid1" "$pid2"; do
 		[ -z "$pid" ] || kill "$pid" 2>/dev/null || true
 	done
@@ -136,8 +154,12 @@ cleanup()
 	if [ "$bridge_created" = yes ]; then
 		ifconfig "$BRIDGE" destroy >/dev/null 2>&1 || true
 	fi
+	exit "$status"
 }
-trap cleanup EXIT INT TERM HUP
+trap 'cleanup $?' EXIT
+trap 'cleanup 129' HUP
+trap 'cleanup 130' INT
+trap 'cleanup 143' TERM
 
 run_one()
 {
@@ -151,7 +173,9 @@ run_one()
 	    PORT_OFFSET="$offset" CONSOLE_PORT="$console" \
 	    VSOCK_BARRIER_DIR="$barrier_dir" \
 	    VSOCK_BARRIER_CIDS="$CID1 $CID2" \
-	    RESET_TEST=yes REBOOT_TEST=no BRIDGE="$BRIDGE" \
+	    RESET_TEST="$RESET_TEST" CHECKPOINT_TEST="$CHECKPOINT_TEST" \
+	    CHECKPOINT_ACTIVE_VSOCK_REJECT="$CHECKPOINT_ACTIVE_VSOCK_REJECT" \
+	    REBOOT_TEST=no BRIDGE="$BRIDGE" \
 	    WORKDIR="$WORKDIR/$name" \
 	    sh "$here/run-alpine-auto.sh"
 }

@@ -56,6 +56,7 @@
 #include <net/debugnet.h>
 #include <net/ethernet.h>
 #include <net/pfil.h>
+#include <net/rss_config.h>
 #include <net/if.h>
 #include <net/if_var.h>
 #include <net/if_arp.h>
@@ -146,7 +147,7 @@ static void	vtnet_rxq_discard_merged_bufs(struct vtnet_rxq *, int);
 static void	vtnet_rxq_discard_buf(struct vtnet_rxq *, struct mbuf *);
 static int	vtnet_rxq_merged_eof(struct vtnet_rxq *, struct mbuf *, int);
 static void	vtnet_rxq_input(struct vtnet_rxq *, struct mbuf *,
-		    struct virtio_net_hdr *);
+		    struct virtio_net_hdr *, uint32_t, uint16_t);
 static int	vtnet_rxq_eof(struct vtnet_rxq *);
 static void	vtnet_rx_vq_process(struct vtnet_rxq *rxq, int tries);
 static void	vtnet_rx_vq_intr(void *);
@@ -213,6 +214,8 @@ static void	vtnet_exec_ctrl_cmd(struct vtnet_softc *, void *,
 static int	vtnet_ctrl_mac_cmd(struct vtnet_softc *, uint8_t *);
 static int	vtnet_ctrl_guest_offloads(struct vtnet_softc *, uint64_t);
 static int	vtnet_ctrl_mq_cmd(struct vtnet_softc *, uint16_t);
+static int	vtnet_ctrl_rss_cmd(struct vtnet_softc *, uint16_t);
+static int	vtnet_ctrl_hash_cmd(struct vtnet_softc *);
 static int	vtnet_ctrl_rx_cmd(struct vtnet_softc *, uint8_t, bool);
 static int	vtnet_set_promisc(struct vtnet_softc *, bool);
 static int	vtnet_set_allmulti(struct vtnet_softc *, bool);
@@ -344,6 +347,8 @@ static struct virtio_feature_desc vtnet_feature_desc[] = {
 	{ VIRTIO_NET_F_CTRL_RX_EXTRA,		"CtrlRxModeExtra"	},
 	{ VIRTIO_NET_F_GUEST_ANNOUNCE,		"GuestAnnounce"		},
 	{ VIRTIO_NET_F_MQ,			"Multiqueue"		},
+	{ VIRTIO_NET_F_HASH_REPORT,		"HashReport"		},
+	{ VIRTIO_NET_F_RSS,			"RSS"			},
 	{ VIRTIO_NET_F_CTRL_MAC_ADDR,		"CtrlMacAddr"		},
 	{ VIRTIO_NET_F_SPEED_DUPLEX,		"SpeedDuplex"		},
 
@@ -513,12 +518,14 @@ vtnet_detach(device_t dev)
 		VTNET_CORE_LOCK(sc);
 		vtnet_stop(sc);
 		VTNET_CORE_UNLOCK(sc);
+		virtio_teardown_intr(dev);
 
 		callout_drain(&sc->vtnet_tick_ch);
 		vtnet_drain_taskqueues(sc);
 
 		ether_ifdetach(ifp);
-	}
+	} else
+		virtio_teardown_intr(dev);
 
 #ifdef DEV_NETMAP
 	netmap_detach(ifp);
@@ -660,6 +667,20 @@ vtnet_negotiate_features(struct vtnet_softc *sc)
 
 	negotiated_features = virtio_negotiate_features(dev, features);
 
+	/* RSS_CONFIG and HASH_CONFIG both use the control virtqueue. */
+	if ((negotiated_features &
+	    (VIRTIO_NET_F_RSS | VIRTIO_NET_F_HASH_REPORT)) != 0 &&
+	    (negotiated_features & VIRTIO_NET_F_CTRL_VQ) == 0) {
+		features &= ~(VIRTIO_NET_F_RSS | VIRTIO_NET_F_HASH_REPORT);
+		negotiated_features = virtio_negotiate_features(dev, features);
+	}
+	/* RSS steering additionally depends on multiqueue. */
+	if ((negotiated_features & VIRTIO_NET_F_RSS) != 0 &&
+	    (negotiated_features & VIRTIO_NET_F_MQ) == 0) {
+		features &= ~VIRTIO_NET_F_RSS;
+		negotiated_features = virtio_negotiate_features(dev, features);
+	}
+
 	if (virtio_with_feature(dev, VIRTIO_NET_F_MTU)) {
 		uint16_t mtu;
 
@@ -683,9 +704,41 @@ vtnet_negotiate_features(struct vtnet_softc *sc)
 		    npairs > VIRTIO_NET_CTRL_MQ_VQ_PAIRS_MAX) {
 			device_printf(dev, "Invalid max_virtqueue_pairs value: "
 			    "%d. Multiqueue feature disabled.\n", npairs);
-			features &= ~VIRTIO_NET_F_MQ;
+			features &= ~(VIRTIO_NET_F_MQ | VIRTIO_NET_F_RSS);
 			negotiated_features =
 			    virtio_negotiate_features(dev, features);
+		}
+	}
+
+	if (virtio_with_feature(dev, VIRTIO_NET_F_RSS) ||
+	    virtio_with_feature(dev, VIRTIO_NET_F_HASH_REPORT)) {
+		uint8_t key_size;
+		uint16_t table_size;
+		uint32_t hash_types;
+
+		key_size = virtio_read_dev_config_1(dev,
+		    offsetof(struct virtio_net_config, rss_max_key_size));
+		hash_types = virtio_read_dev_config_4(dev,
+		    offsetof(struct virtio_net_config, supported_hash_types));
+		if (key_size < VIRTIO_NET_RSS_KEY_SIZE ||
+		    (hash_types & VIRTIO_NET_RSS_HASH_TYPES_ALL) == 0) {
+			device_printf(dev, "invalid hash configuration; disabling "
+			    "RSS and hash reporting\n");
+			features &= ~(VIRTIO_NET_F_RSS |
+			    VIRTIO_NET_F_HASH_REPORT);
+			negotiated_features =
+			    virtio_negotiate_features(dev, features);
+		} else if (virtio_with_feature(dev, VIRTIO_NET_F_RSS)) {
+			table_size = virtio_read_dev_config_2(dev,
+			    offsetof(struct virtio_net_config,
+			    rss_max_indirection_table_length));
+			if (table_size < VIRTIO_NET_RSS_TABLE_SIZE) {
+				device_printf(dev, "invalid RSS table limit; "
+				    "disabling RSS\n");
+				features &= ~VIRTIO_NET_F_RSS;
+				negotiated_features =
+				    virtio_negotiate_features(dev, features);
+			}
 		}
 	}
 
@@ -747,14 +800,18 @@ vtnet_setup_features(struct vtnet_softc *sc)
 	} else
 		sc->vtnet_max_mtu = VTNET_MAX_MTU;
 
-	if (virtio_with_feature(dev, VIRTIO_NET_F_MRG_RXBUF)) {
-		sc->vtnet_flags |= VTNET_FLAG_MRG_RXBUFS;
+	if (virtio_with_feature(dev, VIRTIO_NET_F_HASH_REPORT)) {
+		sc->vtnet_flags |= VTNET_FLAG_HASH_REPORT;
+		sc->vtnet_hdr_size = sizeof(struct virtio_net_hdr_hash_report);
+	} else if (virtio_with_feature(dev, VIRTIO_NET_F_MRG_RXBUF)) {
 		sc->vtnet_hdr_size = sizeof(struct virtio_net_hdr_mrg_rxbuf);
 	} else if (vtnet_modern(sc)) {
 		/* This is identical to the mergeable header. */
 		sc->vtnet_hdr_size = sizeof(struct virtio_net_hdr_v1);
 	} else
 		sc->vtnet_hdr_size = sizeof(struct virtio_net_hdr);
+	if (virtio_with_feature(dev, VIRTIO_NET_F_MRG_RXBUF))
+		sc->vtnet_flags |= VTNET_FLAG_MRG_RXBUFS;
 
 	if (vtnet_modern(sc) || sc->vtnet_flags & VTNET_FLAG_MRG_RXBUFS)
 		sc->vtnet_rx_nsegs = VTNET_RX_SEGS_HDR_INLINE;
@@ -795,6 +852,16 @@ vtnet_setup_features(struct vtnet_softc *sc)
 			sc->vtnet_max_vq_pairs = virtio_read_dev_config_2(dev,
 			    offsetof(struct virtio_net_config,
 			    max_virtqueue_pairs));
+		}
+		if (virtio_with_feature(dev, VIRTIO_NET_F_RSS)) {
+			sc->vtnet_flags |= VTNET_FLAG_RSS;
+		}
+		if (virtio_with_feature(dev, VIRTIO_NET_F_RSS) ||
+		    virtio_with_feature(dev, VIRTIO_NET_F_HASH_REPORT)) {
+			sc->vtnet_rss_hash_types = virtio_read_dev_config_4(dev,
+			    offsetof(struct virtio_net_config,
+			    supported_hash_types)) &
+			    VIRTIO_NET_RSS_HASH_TYPES_ALL;
 		}
 	}
 
@@ -1218,8 +1285,10 @@ vtnet_rx_cluster_size(struct vtnet_softc *sc, int mtu)
 	 * but that would only matter for very small queues.
 	 */
 	if (vtnet_modern(sc)) {
-		MPASS(sc->vtnet_hdr_size == sizeof(struct virtio_net_hdr_v1));
-		framesz = sizeof(struct virtio_net_hdr_v1);
+		MPASS(sc->vtnet_hdr_size == sizeof(struct virtio_net_hdr_v1) ||
+		    sc->vtnet_hdr_size ==
+		    sizeof(struct virtio_net_hdr_hash_report));
+		framesz = sc->vtnet_hdr_size;
 	} else
 		framesz = sizeof(struct vtnet_rx_header);
 	framesz += sizeof(struct ether_vlan_header) + mtu;
@@ -1987,7 +2056,7 @@ vtnet_lro_rx(struct vtnet_rxq *rxq, struct mbuf *m)
 
 static void
 vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
-    struct virtio_net_hdr *hdr)
+    struct virtio_net_hdr *hdr, uint32_t hash_value, uint16_t hash_report)
 {
 	struct vtnet_softc *sc;
 	if_t ifp;
@@ -2008,7 +2077,42 @@ vtnet_rxq_input(struct vtnet_rxq *rxq, struct mbuf *m,
 		}
 	}
 
-	if (sc->vtnet_act_vq_pairs == 1) {
+	if ((sc->vtnet_flags & VTNET_FLAG_HASH_REPORT) != 0 &&
+	    hash_report != VIRTIO_NET_HASH_REPORT_NONE) {
+		m->m_pkthdr.flowid = hash_value;
+		switch (hash_report) {
+		case VIRTIO_NET_HASH_REPORT_IPV4:
+			M_HASHTYPE_SET(m, M_HASHTYPE_RSS_IPV4);
+			break;
+		case VIRTIO_NET_HASH_REPORT_TCPV4:
+			M_HASHTYPE_SET(m, M_HASHTYPE_RSS_TCP_IPV4);
+			break;
+		case VIRTIO_NET_HASH_REPORT_UDPV4:
+			M_HASHTYPE_SET(m, M_HASHTYPE_RSS_UDP_IPV4);
+			break;
+		case VIRTIO_NET_HASH_REPORT_IPV6:
+			M_HASHTYPE_SET(m, M_HASHTYPE_RSS_IPV6);
+			break;
+		case VIRTIO_NET_HASH_REPORT_TCPV6:
+			M_HASHTYPE_SET(m, M_HASHTYPE_RSS_TCP_IPV6);
+			break;
+		case VIRTIO_NET_HASH_REPORT_UDPV6:
+			M_HASHTYPE_SET(m, M_HASHTYPE_RSS_UDP_IPV6);
+			break;
+		case VIRTIO_NET_HASH_REPORT_IPV6_EX:
+			M_HASHTYPE_SET(m, M_HASHTYPE_RSS_IPV6_EX);
+			break;
+		case VIRTIO_NET_HASH_REPORT_TCPV6_EX:
+			M_HASHTYPE_SET(m, M_HASHTYPE_RSS_TCP_IPV6_EX);
+			break;
+		case VIRTIO_NET_HASH_REPORT_UDPV6_EX:
+			M_HASHTYPE_SET(m, M_HASHTYPE_RSS_UDP_IPV6_EX);
+			break;
+		default:
+			M_HASHTYPE_CLEAR(m);
+			break;
+		}
+	} else if (sc->vtnet_act_vq_pairs == 1) {
 		/*
 		 * When RSS is not needed (one active rx queue), let the upper
 		 * layer know and react.
@@ -2076,7 +2180,8 @@ vtnet_rxq_eof(struct vtnet_rxq *rxq)
 	CURVNET_SET(if_getvnet(ifp));
 	while (count-- > 0) {
 		struct mbuf *m;
-		uint32_t len, nbufs, adjsz;
+		uint32_t hash_value, len, nbufs, adjsz;
+		uint16_t hash_report;
 
 		m = virtqueue_dequeue(vq, &len);
 		if (m == NULL)
@@ -2089,15 +2194,18 @@ vtnet_rxq_eof(struct vtnet_rxq *rxq)
 			continue;
 		}
 
+		hash_value = 0;
+		hash_report = VIRTIO_NET_HASH_REPORT_NONE;
 		if (sc->vtnet_flags & VTNET_FLAG_MRG_RXBUFS) {
 			struct virtio_net_hdr_mrg_rxbuf *mhdr =
 			    mtod(m, struct virtio_net_hdr_mrg_rxbuf *);
-			kmsan_mark(mhdr, sizeof(*mhdr), KMSAN_STATE_INITED);
+			kmsan_mark(mhdr, sc->vtnet_hdr_size,
+			    KMSAN_STATE_INITED);
 			nbufs = vtnet_htog16(sc, mhdr->num_buffers);
-			adjsz = sizeof(struct virtio_net_hdr_mrg_rxbuf);
+			adjsz = sc->vtnet_hdr_size;
 		} else if (vtnet_modern(sc)) {
 			nbufs = 1; /* num_buffers is always 1 */
-			adjsz = sizeof(struct virtio_net_hdr_v1);
+			adjsz = sc->vtnet_hdr_size;
 		} else {
 			nbufs = 1;
 			adjsz = sizeof(struct vtnet_rx_header);
@@ -2135,6 +2243,20 @@ vtnet_rxq_eof(struct vtnet_rxq *rxq)
 		 * so use the standard header.
 		 */
 		hdr = mtod(m, struct virtio_net_hdr *);
+		if (sc->vtnet_flags & VTNET_FLAG_HASH_REPORT) {
+			struct virtio_net_hdr_hash_report *hhdr;
+
+			hhdr = mtod(m, struct virtio_net_hdr_hash_report *);
+			hash_value = vtnet_htog32(sc, hhdr->hash_value);
+			hash_report = vtnet_htog16(sc, hhdr->hash_report);
+			if (vtnet_htog16(sc, hhdr->padding) != 0 ||
+			    hash_report > VIRTIO_NET_HASH_REPORT_UDPV6_EX) {
+				hash_value = 0;
+				hash_report = VIRTIO_NET_HASH_REPORT_NONE;
+				rxq->vtnrx_stats.vrxs_hash_invalid++;
+			} else if (hash_report != VIRTIO_NET_HASH_REPORT_NONE)
+				rxq->vtnrx_stats.vrxs_hash++;
+		}
 		lhdr.flags = hdr->flags;
 		lhdr.gso_type = hdr->gso_type;
 		lhdr.hdr_len = vtnet_htog16(sc, hdr->hdr_len);
@@ -2157,7 +2279,7 @@ vtnet_rxq_eof(struct vtnet_rxq *rxq)
 			}
 		}
 
-		vtnet_rxq_input(rxq, m, &lhdr);
+		vtnet_rxq_input(rxq, m, &lhdr, hash_value, hash_report);
 	}
 
 	if (deq > 0) {
@@ -3345,22 +3467,36 @@ static void
 vtnet_set_active_vq_pairs(struct vtnet_softc *sc)
 {
 	device_t dev;
-	int npairs;
+	bool rss_configured;
+	int error, npairs;
 
 	dev = sc->vtnet_dev;
 
-	if ((sc->vtnet_flags & VTNET_FLAG_MQ) == 0) {
+	if ((sc->vtnet_flags & (VTNET_FLAG_MQ | VTNET_FLAG_RSS |
+	    VTNET_FLAG_HASH_REPORT)) == 0) {
 		sc->vtnet_act_vq_pairs = 1;
 		return;
 	}
 
 	npairs = sc->vtnet_req_vq_pairs;
-
-	if (vtnet_ctrl_mq_cmd(sc, npairs) != 0) {
+	rss_configured = false;
+	if ((sc->vtnet_flags & VTNET_FLAG_RSS) != 0) {
+		error = vtnet_ctrl_rss_cmd(sc, npairs);
+		rss_configured = error == 0;
+	} else if ((sc->vtnet_flags & VTNET_FLAG_MQ) != 0)
+		error = vtnet_ctrl_mq_cmd(sc, npairs);
+	else {
+		npairs = 1;
+		error = 0;
+	}
+	if (error != 0) {
 		device_printf(dev, "cannot set active queue pairs to %d, "
 		    "falling back to 1 queue pair\n", npairs);
 		npairs = 1;
 	}
+	if ((sc->vtnet_flags & VTNET_FLAG_HASH_REPORT) != 0 &&
+	    !rss_configured && vtnet_ctrl_hash_cmd(sc) != 0)
+		device_printf(dev, "cannot configure receive hash reporting\n");
 
 	sc->vtnet_act_vq_pairs = npairs;
 }
@@ -3616,7 +3752,7 @@ vtnet_ctrl_mq_cmd(struct vtnet_softc *sc, uint16_t npairs)
 	int error;
 
 	error = 0;
-	MPASS(sc->vtnet_flags & VTNET_FLAG_MQ);
+	MPASS(sc->vtnet_features & VIRTIO_NET_F_MQ);
 
 	s.hdr.class = VIRTIO_NET_CTRL_MQ;
 	s.hdr.cmd = VIRTIO_NET_CTRL_MQ_VQ_PAIRS_SET;
@@ -3633,6 +3769,85 @@ vtnet_ctrl_mq_cmd(struct vtnet_softc *sc, uint16_t npairs)
 		vtnet_exec_ctrl_cmd(sc, &s.ack, &sg, sg.sg_nseg - 1, 1);
 
 	return (s.ack == VIRTIO_NET_OK ? 0 : EIO);
+}
+
+static int
+vtnet_ctrl_rss_cmd(struct vtnet_softc *sc, uint16_t npairs)
+{
+	struct sglist_seg segs[3];
+	struct sglist sg;
+	struct virtio_net_ctrl_hdr hdr;
+	struct virtio_net_ctrl_rss *rss;
+	uint8_t ack;
+	int error;
+
+	MPASS(sc->vtnet_flags & VTNET_FLAG_RSS);
+	MPASS(npairs >= 1 && npairs <= sc->vtnet_max_vq_pairs);
+
+	rss = malloc(sizeof(*rss), M_DEVBUF, M_NOWAIT | M_ZERO);
+	if (rss == NULL)
+		return (ENOMEM);
+
+	hdr.class = VIRTIO_NET_CTRL_MQ;
+	hdr.cmd = VIRTIO_NET_CTRL_MQ_RSS_CONFIG;
+	rss->hash_types = vtnet_gtoh32(sc, sc->vtnet_rss_hash_types);
+	rss->indirection_table_mask = vtnet_gtoh16(sc,
+	    VIRTIO_NET_RSS_TABLE_SIZE - 1);
+	rss->unclassified_queue = 0;
+	for (u_int i = 0; i < VIRTIO_NET_RSS_TABLE_SIZE; i++) {
+#ifdef RSS
+		u_int queue = rss_get_indirection_to_bucket(i) % npairs;
+#else
+		u_int queue = i % npairs;
+#endif
+		rss->indirection_table[i] = vtnet_gtoh16(sc, queue);
+	}
+	rss->max_tx_vq = vtnet_gtoh16(sc, npairs);
+	rss->hash_key_length = VIRTIO_NET_RSS_KEY_SIZE;
+	rss_getkey(rss->hash_key);
+	ack = VIRTIO_NET_ERR;
+
+	sglist_init(&sg, nitems(segs), segs);
+	error = sglist_append(&sg, &hdr, sizeof(hdr));
+	error |= sglist_append(&sg, rss, sizeof(*rss));
+	error |= sglist_append(&sg, &ack, sizeof(ack));
+	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
+	if (error == 0)
+		vtnet_exec_ctrl_cmd(sc, &ack, &sg, sg.sg_nseg - 1, 1);
+
+	free(rss, M_DEVBUF);
+	return (ack == VIRTIO_NET_OK ? 0 : EIO);
+}
+
+static int
+vtnet_ctrl_hash_cmd(struct vtnet_softc *sc)
+{
+	struct sglist_seg segs[3];
+	struct sglist sg;
+	struct virtio_net_ctrl_hdr hdr;
+	struct virtio_net_ctrl_hash hash;
+	uint8_t ack;
+	int error;
+
+	MPASS(sc->vtnet_flags & VTNET_FLAG_HASH_REPORT);
+
+	bzero(&hash, sizeof(hash));
+	hdr.class = VIRTIO_NET_CTRL_MQ;
+	hdr.cmd = VIRTIO_NET_CTRL_MQ_HASH_CONFIG;
+	hash.hash_types = vtnet_gtoh32(sc, sc->vtnet_rss_hash_types);
+	hash.hash_key_length = VIRTIO_NET_RSS_KEY_SIZE;
+	rss_getkey(hash.hash_key);
+	ack = VIRTIO_NET_ERR;
+
+	sglist_init(&sg, nitems(segs), segs);
+	error = sglist_append(&sg, &hdr, sizeof(hdr));
+	error |= sglist_append(&sg, &hash, sizeof(hash));
+	error |= sglist_append(&sg, &ack, sizeof(ack));
+	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
+	if (error == 0)
+		vtnet_exec_ctrl_cmd(sc, &ack, &sg, sg.sg_nseg - 1, 1);
+
+	return (ack == VIRTIO_NET_OK ? 0 : EIO);
 }
 
 static int
@@ -4106,6 +4321,12 @@ vtnet_setup_rxq_sysctl(struct sysctl_ctx_list *ctx,
 	SYSCTL_ADD_UQUAD(ctx, list, OID_AUTO, "host_lro",
 	    CTLFLAG_RD | CTLFLAG_STATS,
 	    &stats->vrxs_host_lro, "Receive host segmentation offloaded");
+	SYSCTL_ADD_UQUAD(ctx, list, OID_AUTO, "hash",
+	    CTLFLAG_RD | CTLFLAG_STATS,
+	    &stats->vrxs_hash, "Receive packets with valid hash metadata");
+	SYSCTL_ADD_UQUAD(ctx, list, OID_AUTO, "hash_invalid",
+	    CTLFLAG_RD | CTLFLAG_STATS,
+	    &stats->vrxs_hash_invalid, "Invalid receive hash metadata");
 	SYSCTL_ADD_UQUAD(ctx, list, OID_AUTO, "rescheduled",
 	    CTLFLAG_RD | CTLFLAG_STATS,
 	    &stats->vrxs_rescheduled,
@@ -4356,15 +4577,16 @@ vtnet_setup_stat_sysctl(struct sysctl_ctx_list *ctx,
 static int
 vtnet_sysctl_features(SYSCTL_HANDLER_ARGS)
 {
-	struct sbuf sb;
+	struct sbuf *sb;
 	struct vtnet_softc *sc = (struct vtnet_softc *)arg1;
 	int error;
 
-	sbuf_new_for_sysctl(&sb, NULL, 0, req);
-	sbuf_printf(&sb, "%b", (uint32_t)sc->vtnet_features,
-	    VIRTIO_NET_FEATURE_BITS);
-	error = sbuf_finish(&sb);
-	sbuf_delete(&sb);
+	sb = sbuf_new_for_sysctl(NULL, NULL, 256, req);
+	if (sb == NULL)
+		return (ENOMEM);
+	error = virtio_describe_sbuf(sb, sc->vtnet_features,
+	    vtnet_feature_desc);
+	sbuf_delete(sb);
 	return (error);
 }
 

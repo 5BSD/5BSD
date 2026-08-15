@@ -46,6 +46,8 @@ int	uart_rxfifo_size(struct uart_softc *sc);
 #ifdef BHYVE_SNAPSHOT
 int	uart_rxfifo_snapshot(struct uart_softc *sc,
 	    struct vm_snapshot_meta *meta);
+int	uart_snapshot_pause(struct uart_softc *sc);
+int	uart_snapshot_resume(struct uart_softc *sc);
 #endif
 
 struct uart_softc *uart_init(void);

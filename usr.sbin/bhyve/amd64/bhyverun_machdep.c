@@ -64,6 +64,13 @@ bhyve_init_config(void)
 	set_config_value("memory.size", "256M");
 	set_config_bool("x86.strictmsr", true);
 	set_config_bool("x86.verbosemsr", false);
+	/*
+	 * Kernel-owned INIT/SIPI delivery is an explicit opt-in until installed
+	 * Intel qualification has completed.  The common bhyve run loop owns the
+	 * management handshake when this is enabled; ordinary VM_RUN and the
+	 * historical userspace IPI exits remain the default.
+	 */
+	set_config_bool("x86.kernel_startup", false);
 	set_config_value("lpc.fwcfg", "bhyve");
 }
 
@@ -119,7 +126,7 @@ bhyve_optparse(int argc, char **argv)
 	int c;
 
 #ifdef BHYVE_SNAPSHOT
-	optstr = "aehuwxACDHIMPSWYk:f:o:p:G:c:s:m:n:l:K:U:r:";
+	optstr = "aehuwxACDHIMPSWYk:f:o:p:G:c:s:m:n:l:K:U:r:R:";
 #else
 	optstr = "aehuwxACDHIMPSWYk:f:o:p:G:c:s:m:n:l:K:U:";
 #endif
@@ -180,6 +187,16 @@ bhyve_optparse(int argc, char **argv)
 #ifdef BHYVE_SNAPSHOT
 		case 'r':
 			restore_file = optarg;
+			break;
+		case 'R':
+			/*
+			 * Stand up as an inbound live-migration destination on an
+			 * already-connected stream descriptor (the operator/
+			 * monitor passes the accepted socket fd).  The guest is
+			 * configured normally but held fenced until the migration
+			 * commits and releases it.
+			 */
+			set_config_value("migrate.receive_fd", optarg);
 			break;
 #endif
 		case 's':
@@ -274,11 +291,11 @@ bhyve_optparse(int argc, char **argv)
 void
 bhyve_init_vcpu(struct vcpu *vcpu)
 {
-	int err, tmp;
+	int error, nested_cap, tmp;
 
 	if (get_config_bool_default("x86.vmexit_on_hlt", false)) {
-		err = vm_get_capability(vcpu, VM_CAP_HALT_EXIT, &tmp);
-		if (err < 0) {
+		error = vm_get_capability(vcpu, VM_CAP_HALT_EXIT, &tmp);
+		if (error < 0) {
 			EPRINTLN("VM exit on HLT not supported");
 			exit(BHYVE_EXIT_ERROR);
 		}
@@ -289,8 +306,8 @@ bhyve_init_vcpu(struct vcpu *vcpu)
 		/*
 		 * pause exit support required for this mode
 		 */
-		err = vm_get_capability(vcpu, VM_CAP_PAUSE_EXIT, &tmp);
-		if (err < 0) {
+		error = vm_get_capability(vcpu, VM_CAP_PAUSE_EXIT, &tmp);
+		if (error < 0) {
 			EPRINTLN("SMP mux requested, no pause support");
 			exit(BHYVE_EXIT_ERROR);
 		}
@@ -298,19 +315,37 @@ bhyve_init_vcpu(struct vcpu *vcpu)
 	}
 
 	if (get_config_bool_default("x86.x2apic", false))
-		err = vm_set_x2apic_state(vcpu, X2APIC_ENABLED);
+		error = vm_set_x2apic_state(vcpu, X2APIC_ENABLED);
 	else
-		err = vm_set_x2apic_state(vcpu, X2APIC_DISABLED);
+		error = vm_set_x2apic_state(vcpu, X2APIC_DISABLED);
 
-	if (err) {
-		EPRINTLN("Unable to set x2apic state (%d)", err);
+	if (error) {
+		EPRINTLN("Unable to set x2apic state (%d)", error);
 		exit(BHYVE_EXIT_ERROR);
 	}
 
 	vm_set_capability(vcpu, VM_CAP_ENABLE_INVPCID, 1);
 
-	err = vm_set_capability(vcpu, VM_CAP_IPI_EXIT, 1);
-	assert(err == 0);
+	if (get_config_bool_default("x86.nested_vmx", false)) {
+		/*
+		 * Keep the userspace device model source-compatible with an
+		 * installed vmm.h from immediately before nested-VMX support.
+		 * libvmmapi owns the stable name-to-kernel-enum mapping, so a
+		 * source-only component build need not duplicate that enum.
+		 */
+		nested_cap = vm_capability_name2type("nested_vmx");
+		error = nested_cap < 0 ? ENOTSUP :
+		    vm_set_capability(vcpu, (enum vm_cap_type)nested_cap, 1);
+		if (error != 0) {
+			EPRINTLN("Nested VMX requested but unavailable (%d)", error);
+			exit(BHYVE_EXIT_ERROR);
+		}
+	}
+
+	error = vm_set_capability(vcpu, VM_CAP_IPI_EXIT, 1);
+	if (error != 0)
+		err(EX_OSERR, "could not enable IPI exits for CPU %d",
+		    vcpu_id(vcpu));
 }
 
 void
@@ -327,7 +362,9 @@ bhyve_start_vcpu(struct vcpu *vcpu, bool bsp)
 				    "capability not available");
 			}
 			error = vcpu_reset(vcpu);
-			assert(error == 0);
+			if (error != 0)
+				err(EX_OSERR, "could not reset bootstrap CPU %d",
+				    vcpu_id(vcpu));
 		}
 	} else {
 		bhyve_init_vcpu(vcpu);
@@ -338,7 +375,9 @@ bhyve_start_vcpu(struct vcpu *vcpu, bool bsp)
 		 * APs startup in power-on 16-bit mode.
 		 */
 		error = vm_set_capability(vcpu, VM_CAP_UNRESTRICTED_GUEST, 1);
-		assert(error == 0);
+		if (error != 0)
+			err(EX_OSERR, "could not enable unrestricted guest for CPU %d",
+			    vcpu_id(vcpu));
 	}
 
 	fbsdrun_addcpu(vcpu_id(vcpu));
@@ -357,7 +396,9 @@ bhyve_init_platform(struct vmctx *ctx, struct vcpu *bsp __unused)
 	atkbdc_init(ctx);
 	pci_irq_init(ctx);
 	ioapic_init(ctx);
-	rtc_init(ctx);
+	error = rtc_init(ctx);
+	if (error != 0)
+		return (error);
 	sci_init(ctx);
 	error = e820_init(ctx);
 	if (error != 0)
@@ -391,7 +432,8 @@ bhyve_init_platform_late(struct vmctx *ctx, struct vcpu *bsp __unused)
 
 	if (get_config_bool("acpi_tables")) {
 		error = acpi_build(ctx, guest_ncpus);
-		assert(error == 0);
+		if (error != 0)
+			return (error);
 	}
 
 	return (0);

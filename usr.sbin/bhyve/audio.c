@@ -57,17 +57,8 @@ struct audio {
 	char dev_name[64];
 };
 
-/*
- * Audio Player module function definitions
- */
-
-/*
- * audio_init - initialize an instance of audio player
- * @dev_name - the backend sound device used to play / capture
- * @dir - dir = 1 for write mode, dir = 0 for read mode
- */
-struct audio *
-audio_init(const char *dev_name, uint8_t dir)
+static struct audio *
+audio_init_flags(const char *dev_name, uint8_t dir, int flags)
 {
 	struct audio *aud = NULL;
 #ifndef WITHOUT_CAPSICUM
@@ -99,7 +90,8 @@ audio_init(const char *dev_name, uint8_t dir)
 
 	aud->dir = dir;
 
-	aud->fd = open(aud->dev_name, aud->dir ? O_WRONLY : O_RDONLY, 0);
+	aud->fd = open(aud->dev_name,
+	    (aud->dir ? O_WRONLY : O_RDONLY) | flags, 0);
 	if (aud->fd == -1) {
 		DPRINTF("Failed to open dev: %s, errno: %d",
 		    aud->dev_name, errno);
@@ -108,7 +100,12 @@ audio_init(const char *dev_name, uint8_t dir)
 	}
 
 #ifndef WITHOUT_CAPSICUM
-	cap_rights_init(&rights, CAP_IOCTL, CAP_READ, CAP_WRITE);
+	/*
+	 * CAP_EVENT is required by event-driven consumers which register the
+	 * nonblocking descriptor with kqueue.  It is harmless for the legacy
+	 * blocking HDA consumer and avoids widening rights after cap_enter().
+	 */
+	cap_rights_init(&rights, CAP_EVENT, CAP_IOCTL, CAP_READ, CAP_WRITE);
 	if (caph_rights_limit(aud->fd, &rights) == -1)
 		errx(EX_OSERR, "Unable to apply rights for sandbox");
 	if (caph_ioctls_limit(aud->fd, cmds, nitems(cmds)) == -1)
@@ -116,6 +113,49 @@ audio_init(const char *dev_name, uint8_t dir)
 #endif
 
 	return aud;
+}
+
+/*
+ * Audio Player module function definitions
+ */
+
+/*
+ * audio_init - initialize an instance of audio player
+ * @dev_name - the backend sound device used to play / capture
+ * @dir - dir = 1 for write mode, dir = 0 for read mode
+ */
+struct audio *
+audio_init(const char *dev_name, uint8_t dir)
+{
+
+	return (audio_init_flags(dev_name, dir, 0));
+}
+
+struct audio *
+audio_init_nonblock(const char *dev_name, uint8_t dir)
+{
+
+	return (audio_init_flags(dev_name, dir, O_NONBLOCK));
+}
+
+void
+audio_destroy(struct audio *aud)
+{
+
+	if (aud == NULL)
+		return;
+	if (aud->fd >= 0)
+		(void)close(aud->fd);
+	aud->fd = -1;
+	free(aud);
+}
+
+int
+audio_fd(const struct audio *aud)
+{
+
+	assert(aud != NULL);
+	return (aud->fd);
 }
 
 /*
@@ -225,25 +265,47 @@ audio_playback(struct audio *aud, const uint8_t *buf, size_t count)
 {
 	ssize_t len;
 	size_t total;
-	int audio_fd;
 
 	assert(aud);
 	assert(aud->dir);
 	assert(buf);
 
-	audio_fd = aud->fd;
-	assert(audio_fd != -1);
-
-	for (total = 0; total < count; total += len) {
-		len = write(audio_fd, buf + total, count - total);
-		if (len < 0) {
-			DPRINTF("Fail to write to fd: %d, errno: %d",
-			    audio_fd, errno);
+	total = 0;
+	while (total < count) {
+		len = audio_playback_some(aud, buf + total, count - total);
+		if (len < 0)
 			return -1;
-		}
+		total += (size_t)len;
 	}
 
 	return 0;
+}
+
+ssize_t
+audio_playback_some(struct audio *aud, const uint8_t *buf, size_t count)
+{
+	ssize_t len;
+
+	assert(aud != NULL);
+	assert(aud->dir);
+	assert(buf != NULL);
+	assert(aud->fd != -1);
+
+	if (count == 0)
+		return (0);
+	do {
+		len = write(aud->fd, buf, count);
+	} while (len < 0 && errno == EINTR);
+	if (len < 0) {
+		DPRINTF("Fail to write to fd: %d, errno: %d", aud->fd, errno);
+		return (-1);
+	}
+	if (len == 0) {
+		errno = EIO;
+		DPRINTF("Zero-progress write to fd: %d", aud->fd);
+		return (-1);
+	}
+	return (len);
 }
 
 /*
@@ -259,23 +321,45 @@ audio_record(struct audio *aud, uint8_t *buf, size_t count)
 {
 	ssize_t len;
 	size_t total;
-	int audio_fd;
 
 	assert(aud);
 	assert(!aud->dir);
 	assert(buf);
 
-	audio_fd = aud->fd;
-	assert(audio_fd != -1);
-
-	for (total = 0; total < count; total += len) {
-		len = read(audio_fd, buf + total, count - total);
-		if (len < 0) {
-			DPRINTF("Fail to write to fd: %d, errno: %d",
-			    audio_fd, errno);
+	total = 0;
+	while (total < count) {
+		len = audio_record_some(aud, buf + total, count - total);
+		if (len < 0)
 			return -1;
-		}
+		total += (size_t)len;
 	}
 
 	return 0;
+}
+
+ssize_t
+audio_record_some(struct audio *aud, uint8_t *buf, size_t count)
+{
+	ssize_t len;
+
+	assert(aud != NULL);
+	assert(!aud->dir);
+	assert(buf != NULL);
+	assert(aud->fd != -1);
+
+	if (count == 0)
+		return (0);
+	do {
+		len = read(aud->fd, buf, count);
+	} while (len < 0 && errno == EINTR);
+	if (len < 0) {
+		DPRINTF("Fail to read from fd: %d, errno: %d", aud->fd, errno);
+		return (-1);
+	}
+	if (len == 0) {
+		errno = EIO;
+		DPRINTF("Zero-progress read from fd: %d", aud->fd);
+		return (-1);
+	}
+	return (len);
 }

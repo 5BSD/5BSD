@@ -41,8 +41,7 @@
 
 #include "scmi.h"
 #include "scmi_protocols.h"
-
-#define SCMI_VIRTIO_POLLING_INTERVAL_MS	2
+#include "scmi_virtio_poll.h"
 
 struct scmi_virtio_softc {
 	struct scmi_softc	base;
@@ -53,7 +52,7 @@ struct scmi_virtio_softc {
 };
 
 static void	scmi_virtio_callback(void *, unsigned int, void *);
-static void	*scmi_virtio_p2a_pool_init(device_t, unsigned int);
+static int	scmi_virtio_p2a_pool_init(device_t, unsigned int, void **);
 static int	scmi_virtio_transport_init(device_t);
 static void	scmi_virtio_transport_cleanup(device_t);
 static int	scmi_virtio_xfer_msg(device_t, struct scmi_msg *);
@@ -79,14 +78,14 @@ scmi_virtio_callback(void *msg, unsigned int len, void *priv)
 	scmi_rx_irq_callback(sc->base.dev, msg, hdr, len);
 }
 
-static void *
-scmi_virtio_p2a_pool_init(device_t dev, unsigned int max_msg)
+static int
+scmi_virtio_p2a_pool_init(device_t dev, unsigned int max_msg, void **poolp)
 {
 	struct scmi_virtio_softc *sc;
 	unsigned int max_msg_sz;
 	void *pool;
 	uint8_t *buf;
-	int i;
+	int error, i;
 
 	sc = device_get_softc(dev);
 	max_msg_sz = SCMI_MAX_MSG_SIZE(&sc->base);
@@ -94,14 +93,19 @@ scmi_virtio_p2a_pool_init(device_t dev, unsigned int max_msg)
 
 	for (i = 0, buf = pool; i < max_msg; i++, buf += max_msg_sz) {
 		/* Feed platform with pre-allocated P2A buffers */
-		virtio_scmi_message_enqueue(sc->virtio_dev,
+		error = virtio_scmi_message_enqueue(sc->virtio_dev,
 		    VIRTIO_SCMI_CHAN_P2A, buf, 0, max_msg_sz);
+		if (error != 0) {
+			*poolp = pool;
+			return (error);
+		}
 	}
 
 	device_printf(dev,
 	    "Fed %d initial P2A buffers to platform.\n", max_msg);
 
-	return (pool);
+	*poolp = pool;
+	return (0);
 }
 
 static void
@@ -110,8 +114,10 @@ scmi_virtio_clear_channel(device_t dev, void *msg)
 	struct scmi_virtio_softc *sc;
 
 	sc = device_get_softc(dev);
-	virtio_scmi_message_enqueue(sc->virtio_dev, VIRTIO_SCMI_CHAN_P2A,
-	    msg, 0, SCMI_MAX_MSG_SIZE(&sc->base));
+	if (virtio_scmi_message_enqueue(sc->virtio_dev,
+	    VIRTIO_SCMI_CHAN_P2A, msg, 0,
+	    SCMI_MAX_MSG_SIZE(&sc->base)) != 0)
+		device_printf(dev, "Failed to recycle VirtIO event buffer.\n");
 }
 
 static int
@@ -121,6 +127,9 @@ scmi_virtio_transport_init(device_t dev)
 	int ret;
 
 	sc = device_get_softc(dev);
+	ret = virtio_scmi_transport_start(sc->virtio_dev);
+	if (ret != 0)
+		return (ret);
 
 	sc->cmdq_sz = virtio_scmi_channel_size_get(sc->virtio_dev,
 	    VIRTIO_SCMI_CHAN_A2P);
@@ -130,17 +139,8 @@ scmi_virtio_transport_init(device_t dev)
 	if (!sc->cmdq_sz) {
 		device_printf(dev,
 		    "VirtIO cmdq virtqueue not found. Aborting.\n");
-		return (ENXIO);
-	}
-
-	/*
-	 * P2A buffers are owned by the platform initially; allocate a feed an
-	 * appropriate number of buffers.
-	 */
-	if (sc->evtq_sz != 0) {
-		sc->p2a_pool = scmi_virtio_p2a_pool_init(dev, sc->evtq_sz);
-		if (sc->p2a_pool == NULL)
-			return (ENOMEM);
+		ret = ENXIO;
+		goto fail;
 	}
 
 	/* Note that setting a callback also enables that VQ interrupts */
@@ -148,7 +148,7 @@ scmi_virtio_transport_init(device_t dev)
 	    VIRTIO_SCMI_CHAN_A2P, scmi_virtio_callback, sc);
 	if (ret) {
 		device_printf(dev, "Failed to set VirtIO cmdq callback.\n");
-		return (ENXIO);
+		goto fail;
 	}
 
 	device_printf(dev,
@@ -164,14 +164,35 @@ scmi_virtio_transport_init(device_t dev)
 			    sc->evtq_sz);
 		} else {
 			device_printf(dev,
-			    "Failed to set VirtIO evtq callback.Skip.\n");
-			sc->evtq_sz = 0;
+			    "Failed to set VirtIO evtq callback.\n");
+			goto fail;
 		}
+	}
+
+	/*
+	 * Register callbacks before publishing consumer-owned P2A buffers.  This
+	 * keeps every failure path free of device-owned pool memory.
+	 */
+	if (sc->evtq_sz != 0) {
+		ret = scmi_virtio_p2a_pool_init(dev, sc->evtq_sz,
+		    &sc->p2a_pool);
+		if (ret != 0)
+			goto fail;
 	}
 
 	sc->base.trs_desc.reply_timo_ms = 100;
 
 	return (0);
+
+fail:
+	virtio_scmi_channel_callback_set(sc->virtio_dev,
+	    VIRTIO_SCMI_CHAN_P2A, NULL, NULL);
+	virtio_scmi_channel_callback_set(sc->virtio_dev,
+	    VIRTIO_SCMI_CHAN_A2P, NULL, NULL);
+	virtio_scmi_transport_quiesce(sc->virtio_dev);
+	free(sc->p2a_pool, M_DEVBUF);
+	sc->p2a_pool = NULL;
+	return (ret != 0 ? ret : ENXIO);
 }
 
 static void
@@ -184,11 +205,15 @@ scmi_virtio_transport_cleanup(device_t dev)
 	if (sc->evtq_sz != 0) {
 		virtio_scmi_channel_callback_set(sc->virtio_dev,
 		    VIRTIO_SCMI_CHAN_P2A, NULL, NULL);
-		free(sc->p2a_pool, M_DEVBUF);
 	}
 
 	virtio_scmi_channel_callback_set(sc->virtio_dev,
 	    VIRTIO_SCMI_CHAN_A2P, NULL, NULL);
+	virtio_scmi_transport_quiesce(sc->virtio_dev);
+	free(sc->p2a_pool, M_DEVBUF);
+	sc->p2a_pool = NULL;
+	virtio_scmi_transport_put(sc->virtio_dev);
+	sc->virtio_dev = NULL;
 }
 
 static int
@@ -207,16 +232,28 @@ scmi_virtio_poll_msg(device_t dev, struct scmi_msg *msg, unsigned int tmo_ms)
 {
 	struct scmi_virtio_softc *sc;
 	device_t vdev;
-	int tmo_loops;
+	unsigned int tmo_loops;
 
 	sc = device_get_softc(dev);
 	vdev = sc->virtio_dev;
 
-	tmo_loops = tmo_ms / SCMI_VIRTIO_POLLING_INTERVAL_MS;
-	while (tmo_loops-- && atomic_load_acq_int(&msg->poll_done) == 0) {
+	if (atomic_load_acq_int(&msg->poll_done) != 0)
+		return (0);
+	/*
+	 * Poll mode can run where sleeping is forbidden.  Round a positive
+	 * sub-interval timeout up to one bounded probe, and determine success
+	 * from the completion state rather than the post-decremented budget.
+	 * The old loop reported ETIMEDOUT when the matching reply arrived on
+	 * its final iteration.
+	 */
+	tmo_loops = scmi_virtio_poll_probes(tmo_ms);
+	while (tmo_loops-- != 0) {
 		struct scmi_msg *rx_msg;
 		void *rx_buf;
 		uint32_t rx_len;
+
+		if (atomic_load_acq_int(&msg->poll_done) != 0)
+			return (0);
 
 		rx_buf = virtio_scmi_message_poll(vdev, &rx_len);
 		if (rx_buf == NULL) {
@@ -230,7 +267,7 @@ scmi_virtio_poll_msg(device_t dev, struct scmi_msg *msg, unsigned int tmo_ms)
 			atomic_store_rel_int(&rx_msg->poll_done, 1);
 
 		if (__predict_true(rx_msg == msg))
-			break;
+			return (0);
 
 		/*
 		 * Polling returned an unexpected message: either a message
@@ -244,7 +281,8 @@ scmi_virtio_poll_msg(device_t dev, struct scmi_msg *msg, unsigned int tmo_ms)
 			scmi_rx_irq_callback(sc->base.dev, rx_msg, rx_msg->hdr, rx_len);
 	}
 
-	return (tmo_loops > 0 ? 0 : ETIMEDOUT);
+	return (scmi_virtio_poll_timed_out(
+	    atomic_load_acq_int(&msg->poll_done)) ? ETIMEDOUT : 0);
 }
 
 static int
@@ -265,14 +303,19 @@ static int
 scmi_virtio_attach(device_t dev)
 {
 	struct scmi_virtio_softc *sc;
+	int error;
 
 	sc = device_get_softc(dev);
 	sc->virtio_dev = virtio_scmi_transport_get();
 	if (sc->virtio_dev == NULL)
 		return (1);
 
-	/* When attach fails there is nothing to cleanup*/
-	return (scmi_attach(dev));
+	error = scmi_attach(dev);
+	if (error != 0) {
+		virtio_scmi_transport_put(sc->virtio_dev);
+		sc->virtio_dev = NULL;
+	}
+	return (error);
 }
 
 static device_method_t scmi_virtio_methods[] = {

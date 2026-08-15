@@ -35,6 +35,9 @@
 #include <machine/vmm_snapshot.h>
 
 #include <dev/vmm/vmm_param.h>
+#include <dev/vmm/vmm_dirty_log_request.h>
+#include <dev/vmm/vmm_startup_request.h>
+#include <dev/vmm/vmm_startup_run_request.h>
 
 struct vm_memmap {
 	vm_paddr_t	gpa;
@@ -244,6 +247,31 @@ struct vm_cpu_topology {
 	uint16_t	maxcpus;
 };
 
+/*
+ * Query the CPUID view implemented by the kernel for a vCPU.  The baseline
+ * form removes values which are solely a function of mutable guest execution
+ * state, so it can be used to construct a checkpoint compatibility contract
+ * before restoring that state.
+ */
+#define	VM_CPUID_F_BASELINE	0x00000001U
+#define	VM_CPUID_F_VALID	VM_CPUID_F_BASELINE
+struct vm_cpuid {
+	int		cpuid;
+	uint32_t	flags;
+	uint32_t	eax;
+	uint32_t	ebx;
+	uint32_t	ecx;
+	uint32_t	edx;
+};
+_Static_assert(sizeof(struct vm_cpuid) == 24, "ABI");
+
+struct vm_cpu_compat_query {
+	int			cpuid;
+	uint32_t		reserved;
+	struct vm_cpu_compat	compat;
+};
+_Static_assert(sizeof(struct vm_cpu_compat_query) == 56, "ABI");
+
 struct vm_readwrite_kernemu_device {
 	int		vcpuid;
 	unsigned	access_width : 3;
@@ -319,6 +347,8 @@ enum {
 	/* CPU Topology */
 	IOCNUM_SET_TOPOLOGY = 63,
 	IOCNUM_GET_TOPOLOGY = 64,
+	IOCNUM_GET_CPUID = 65,
+	IOCNUM_GET_CPU_COMPAT = 66,
 
 	/* legacy interrupt injection */
 	IOCNUM_ISA_ASSERT_IRQ = 80,
@@ -340,8 +370,14 @@ enum {
 
 	/* checkpoint */
 	IOCNUM_SNAPSHOT_REQ = 113,
+	IOCNUM_SNAPSHOT_SESSION = 114,
 
-	IOCNUM_RESTORE_TIME = 115
+	IOCNUM_RESTORE_TIME = 115,
+
+	/* Private, versioned kernel-owned startup staging ABI. */
+	IOCNUM_STARTUP_REQUEST = VMM_STARTUP_REQUEST_IOCNUM,
+	IOCNUM_RUN_GENERATION = VMM_STARTUP_RUN_REQUEST_IOCNUM,
+	IOCNUM_DIRTY_LOG_REQUEST = VMM_DIRTY_LOG_REQUEST_IOCNUM,
 };
 
 #define	VM_RUN		\
@@ -436,6 +472,10 @@ enum {
 	_IOW('v', IOCNUM_SET_TOPOLOGY, struct vm_cpu_topology)
 #define VM_GET_TOPOLOGY \
 	_IOR('v', IOCNUM_GET_TOPOLOGY, struct vm_cpu_topology)
+#define	VM_GET_CPUID \
+	_IOWR('v', IOCNUM_GET_CPUID, struct vm_cpuid)
+#define	VM_GET_CPU_COMPAT \
+	_IOWR('v', IOCNUM_GET_CPU_COMPAT, struct vm_cpu_compat_query)
 #define	VM_GET_GPA_PMAP \
 	_IOWR('v', IOCNUM_GET_GPA_PMAP, struct vm_gpa_pte)
 #define	VM_GLA2GPA	\
@@ -466,6 +506,10 @@ enum {
 	_IOW('v', IOCNUM_RESTART_INSTRUCTION, int)
 #define VM_SNAPSHOT_REQ \
 	_IOWR('v', IOCNUM_SNAPSHOT_REQ, struct vm_snapshot_meta)
+#define VM_SNAPSHOT_SESSION \
+	_IOWR('v', IOCNUM_SNAPSHOT_SESSION, struct vm_snapshot_session)
 #define VM_RESTORE_TIME \
 	_IOWR('v', IOCNUM_RESTORE_TIME, int)
+#define VM_DIRTY_LOG_REQUEST \
+	_IOW('v', IOCNUM_DIRTY_LOG_REQUEST, struct vmm_dirty_log_request)
 #endif

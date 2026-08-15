@@ -63,8 +63,11 @@
 #include <sys/sbuf.h>
 #include <sys/smp.h>
 #include <sys/endian.h>
+#include <sys/event.h>
+#include <sys/poll.h>
 #include <sys/proc.h>
 #include <sys/sched.h>
+#include <sys/selinfo.h>
 #include <sys/sysctl.h>
 #include <sys/nv.h>
 #include <sys/dnv.h>
@@ -88,6 +91,9 @@
 #include <cam/ctl/ctl_error.h>
 
 struct ctl_softc *control_softc = NULL;
+
+SDT_PROBE_DEFINE3(cam, , ctl, lun__event, "uint32_t", "uint32_t",
+    "uint64_t");
 
 /*
  * Template mode pages.
@@ -395,6 +401,11 @@ static int ctl_init(void);
 static int ctl_shutdown(void);
 static int ctl_open(struct cdev *dev, int flags, int fmt, struct thread *td);
 static int ctl_close(struct cdev *dev, int flags, int fmt, struct thread *td);
+static int ctl_poll(struct cdev *dev, int events, struct thread *td);
+static int ctl_kqfilter(struct cdev *dev, struct knote *kn);
+static void ctl_lun_event_dtor(void *data);
+static void ctl_lun_event_emit(struct ctl_softc *softc, uint32_t type,
+    uint32_t lun_id, uint32_t device_type);
 static void ctl_serialize_other_sc_cmd(struct ctl_scsiio *ctsio);
 static void ctl_ioctl_fill_ooa(struct ctl_lun *lun, uint32_t *cur_fill_num,
 			      struct ctl_ooa *ooa_hdr,
@@ -515,10 +526,99 @@ static struct cdevsw ctl_cdevsw = {
 	.d_open =	ctl_open,
 	.d_close =	ctl_close,
 	.d_ioctl =	ctl_ioctl,
+	.d_poll =	ctl_poll,
+	.d_kqfilter =	ctl_kqfilter,
 	.d_name =	"ctl",
 };
 
 MALLOC_DEFINE(M_CTL, "ctlmem", "Memory used for CTL");
+
+struct ctl_lun_event_subscriber {
+	struct ctl_softc		*softc;
+	struct ctl_lun_event	*events;
+	uint32_t		capacity;
+	uint32_t		head;
+	uint32_t		count;
+	bool			missed;
+	bool			registered;
+	struct selinfo		sel;
+	LIST_ENTRY(ctl_lun_event_subscriber) link;
+};
+
+static bool
+ctl_lun_event_ready(const struct ctl_lun_event_subscriber *subscriber)
+{
+
+	return (subscriber->count != 0 || subscriber->missed);
+}
+
+static void
+ctl_lun_event_notify_locked(struct ctl_lun_event_subscriber *subscriber)
+{
+
+	mtx_assert(&subscriber->softc->ctl_lock, MA_OWNED);
+	selwakeup(&subscriber->sel);
+	KNOTE_LOCKED(&subscriber->sel.si_note, 0);
+}
+
+static void
+ctl_lun_event_queue_locked(struct ctl_lun_event_subscriber *subscriber,
+    const struct ctl_lun_event *event)
+{
+	struct ctl_lun_event accepted;
+	uint32_t tail;
+
+	mtx_assert(&subscriber->softc->ctl_lock, MA_OWNED);
+	if (subscriber->count == subscriber->capacity) {
+		subscriber->missed = true;
+		ctl_lun_event_notify_locked(subscriber);
+		return;
+	}
+	accepted = *event;
+	/*
+	 * Loss occurred before this newly accepted record.  Mark that boundary
+	 * instead of reporting it after the new record.  When no later record
+	 * arrives, ctl_lun_event_next() emits a synthetic RESCAN only after all
+	 * retained records have drained.
+	 */
+	if (subscriber->missed) {
+		accepted.flags |= CTL_LUN_EVENT_F_MISSED;
+		subscriber->missed = false;
+	}
+	tail = (subscriber->head + subscriber->count) %
+	    subscriber->capacity;
+	subscriber->events[tail] = accepted;
+	subscriber->count++;
+	ctl_lun_event_notify_locked(subscriber);
+}
+
+static void
+ctl_lun_event_emit(struct ctl_softc *softc, uint32_t type, uint32_t lun_id,
+    uint32_t device_type)
+{
+	struct ctl_lun_event_subscriber *subscriber;
+	struct ctl_lun_event event;
+
+	memset(&event, 0, sizeof(event));
+	event.version = CTL_LUN_EVENT_VERSION;
+	event.type = type;
+	event.lun_id = lun_id;
+	event.device_type = device_type;
+
+	mtx_lock(&softc->ctl_lock);
+	/*
+	 * Sequence zero denotes the subscription baseline.  Keep emitted
+	 * records non-zero even across the theoretical uint64_t wrap so a
+	 * consumer can distinguish a real event from that baseline.
+	 */
+	if (++softc->lun_event_sequence == 0)
+		softc->lun_event_sequence++;
+	event.sequence = softc->lun_event_sequence;
+	LIST_FOREACH(subscriber, &softc->lun_event_subscribers, link)
+		ctl_lun_event_queue_locked(subscriber, &event);
+	mtx_unlock(&softc->ctl_lock);
+	CAM_PROBE3(ctl, lun__event, type, lun_id, event.sequence);
+}
 
 static int ctl_module_event_handler(module_t, int /*modeventtype_t*/, void *);
 
@@ -1937,6 +2037,7 @@ ctl_init(void)
 	}
 
 	mtx_init(&softc->ctl_lock, "CTL mutex", NULL, MTX_DEF);
+	LIST_INIT(&softc->lun_event_subscribers);
 	softc->io_zone = uma_zcreate("CTL IO", sizeof(union ctl_io),
 	    NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, 0);
 	softc->flags = 0;
@@ -2046,6 +2147,8 @@ ctl_shutdown(void)
 		ctl_frontend_deregister(&ha_frontend);
 
 	destroy_dev(softc->dev);
+	KASSERT(LIST_EMPTY(&softc->lun_event_subscribers),
+	    ("CTL LUN event subscribers survived destroy_dev"));
 
 	/* Shutdown CTL threads. */
 	softc->shutdown = 1;
@@ -2108,6 +2211,98 @@ static int
 ctl_close(struct cdev *dev, int flags, int fmt, struct thread *td)
 {
 	return (0);
+}
+
+static void
+ctl_lun_event_dtor(void *data)
+{
+	struct ctl_lun_event_subscriber *subscriber = data;
+	struct ctl_softc *softc = subscriber->softc;
+
+	mtx_lock(&softc->ctl_lock);
+	if (subscriber->registered) {
+		LIST_REMOVE(subscriber, link);
+		subscriber->registered = false;
+	}
+	ctl_lun_event_notify_locked(subscriber);
+	mtx_unlock(&softc->ctl_lock);
+
+	knlist_clear(&subscriber->sel.si_note, 0);
+	seldrain(&subscriber->sel);
+	knlist_destroy(&subscriber->sel.si_note);
+	free(subscriber->events, M_CTL);
+	free(subscriber, M_CTL);
+}
+
+static int
+ctl_poll(struct cdev *dev __unused, int events, struct thread *td)
+{
+	struct ctl_lun_event_subscriber *subscriber;
+	int revents;
+
+	if (devfs_get_cdevpriv((void **)&subscriber) != 0)
+		return (POLLERR);
+	revents = 0;
+	mtx_lock(&subscriber->softc->ctl_lock);
+	if ((events & (POLLIN | POLLRDNORM)) != 0) {
+		if (ctl_lun_event_ready(subscriber))
+			revents = events & (POLLIN | POLLRDNORM);
+		else
+			selrecord(td, &subscriber->sel);
+	}
+	mtx_unlock(&subscriber->softc->ctl_lock);
+	return (revents);
+}
+
+static int ctl_lun_event_kqread(struct knote *, long);
+static void ctl_lun_event_kqdetach(struct knote *);
+
+static const struct filterops ctl_lun_event_read_filterops = {
+	.f_isfd = 1,
+	.f_detach = ctl_lun_event_kqdetach,
+	.f_event = ctl_lun_event_kqread,
+};
+
+static int
+ctl_kqfilter(struct cdev *dev __unused, struct knote *kn)
+{
+	struct ctl_lun_event_subscriber *subscriber;
+	int error;
+
+	if (kn->kn_filter != EVFILT_READ)
+		return (EINVAL);
+	error = devfs_get_cdevpriv((void **)&subscriber);
+	if (error != 0)
+		return (error);
+	kn->kn_fop = &ctl_lun_event_read_filterops;
+	kn->kn_hook = subscriber;
+	mtx_lock(&subscriber->softc->ctl_lock);
+	if (!subscriber->registered)
+		error = ENXIO;
+	else
+		knlist_add(&subscriber->sel.si_note, kn, 1);
+	mtx_unlock(&subscriber->softc->ctl_lock);
+	return (error);
+}
+
+static int
+ctl_lun_event_kqread(struct knote *kn, long hint __unused)
+{
+	struct ctl_lun_event_subscriber *subscriber = kn->kn_hook;
+
+	mtx_assert(&subscriber->softc->ctl_lock, MA_OWNED);
+	kn->kn_data = subscriber->count + (subscriber->missed ? 1 : 0);
+	return (ctl_lun_event_ready(subscriber));
+}
+
+static void
+ctl_lun_event_kqdetach(struct knote *kn)
+{
+	struct ctl_lun_event_subscriber *subscriber = kn->kn_hook;
+
+	mtx_lock(&subscriber->softc->ctl_lock);
+	knlist_remove(&subscriber->sel.si_note, kn, 1);
+	mtx_unlock(&subscriber->softc->ctl_lock);
 }
 
 /*
@@ -2569,6 +2764,100 @@ ctl_id_sbuf(struct ctl_devid *id, struct sbuf *sb)
 }
 
 static int
+ctl_lun_event_subscribe(struct ctl_softc *softc,
+    struct ctl_lun_event_subscribe *request)
+{
+	struct ctl_lun_event_subscriber *subscriber, *existing;
+	struct ctl_lun_event initial;
+	uint32_t depth;
+	int error;
+
+	if (request->version != CTL_LUN_EVENT_VERSION ||
+	    request->flags != 0 || request->reserved != 0)
+		return (EINVAL);
+	depth = request->queue_depth;
+	if (depth == 0)
+		depth = CTL_LUN_EVENT_QUEUE_DEFAULT;
+	if (depth < CTL_LUN_EVENT_QUEUE_MIN ||
+	    depth > CTL_LUN_EVENT_QUEUE_MAX)
+		return (EINVAL);
+	if (devfs_get_cdevpriv((void **)&existing) == 0)
+		return (EALREADY);
+
+	subscriber = malloc(sizeof(*subscriber), M_CTL, M_WAITOK | M_ZERO);
+	subscriber->events = mallocarray(depth, sizeof(*subscriber->events),
+	    M_CTL, M_WAITOK | M_ZERO);
+	subscriber->softc = softc;
+	subscriber->capacity = depth;
+	knlist_init_mtx(&subscriber->sel.si_note, &softc->ctl_lock);
+	error = devfs_set_cdevpriv(subscriber, ctl_lun_event_dtor);
+	if (error != 0) {
+		knlist_destroy(&subscriber->sel.si_note);
+		free(subscriber->events, M_CTL);
+		free(subscriber, M_CTL);
+		return (error);
+	}
+
+	memset(&initial, 0, sizeof(initial));
+	initial.version = CTL_LUN_EVENT_VERSION;
+	initial.type = CTL_LUN_EVENT_RESCAN;
+	initial.lun_id = UINT32_MAX;
+	initial.device_type = CTL_LUN_EVENT_DEVICE_TYPE_UNKNOWN;
+	mtx_lock(&softc->ctl_lock);
+	initial.sequence = softc->lun_event_sequence;
+	subscriber->registered = true;
+	LIST_INSERT_HEAD(&softc->lun_event_subscribers, subscriber, link);
+	ctl_lun_event_queue_locked(subscriber, &initial);
+	mtx_unlock(&softc->ctl_lock);
+
+	request->queue_depth = depth;
+	request->sequence = initial.sequence;
+	return (0);
+}
+
+static int
+ctl_lun_event_next(struct ctl_softc *softc, struct ctl_lun_event *event)
+{
+	struct ctl_lun_event_subscriber *subscriber;
+	int error;
+
+	if (event->version != CTL_LUN_EVENT_VERSION ||
+	    event->type != 0 || event->flags != 0 || event->lun_id != 0 ||
+	    event->sequence != 0 || event->device_type != 0 ||
+	    event->reserved != 0)
+		return (EINVAL);
+	error = devfs_get_cdevpriv((void **)&subscriber);
+	if (error != 0)
+		return (error);
+	if (subscriber->softc != softc)
+		return (ENXIO);
+
+	mtx_lock(&softc->ctl_lock);
+	if (subscriber->count != 0) {
+		*event = subscriber->events[subscriber->head];
+		memset(&subscriber->events[subscriber->head], 0,
+		    sizeof(subscriber->events[subscriber->head]));
+		subscriber->head = (subscriber->head + 1) %
+		    subscriber->capacity;
+		subscriber->count--;
+		error = 0;
+	} else if (subscriber->missed) {
+		memset(event, 0, sizeof(*event));
+		event->version = CTL_LUN_EVENT_VERSION;
+		event->type = CTL_LUN_EVENT_RESCAN;
+		event->flags = CTL_LUN_EVENT_F_MISSED;
+		event->lun_id = UINT32_MAX;
+		event->device_type = CTL_LUN_EVENT_DEVICE_TYPE_UNKNOWN;
+		event->sequence = softc->lun_event_sequence;
+		subscriber->missed = false;
+		error = 0;
+	} else
+		error = EAGAIN;
+	mtx_unlock(&softc->ctl_lock);
+	return (error);
+}
+
+static int
 ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 	  struct thread *td)
 {
@@ -2580,6 +2869,14 @@ ctl_ioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flag,
 	retval = 0;
 
 	switch (cmd) {
+	case CTL_LUN_EVENT_SUBSCRIBE:
+		retval = ctl_lun_event_subscribe(softc,
+		    (struct ctl_lun_event_subscribe *)addr);
+		break;
+	case CTL_LUN_EVENT_NEXT:
+		retval = ctl_lun_event_next(softc,
+		    (struct ctl_lun_event *)addr);
+		break;
 	case CTL_IO:
 		retval = ctl_ioctl_io(dev, cmd, addr, flag, td);
 		break;
@@ -4672,6 +4969,8 @@ fail:
 		free(lun, M_CTL);
 		return (EIO);
 	}
+	ctl_lun_event_emit(ctl_softc, CTL_LUN_EVENT_ADDED,
+	    (uint32_t)lun_number, be_lun->lun_type);
 
 	return (0);
 }
@@ -4700,6 +4999,8 @@ ctl_free_lun(struct ctl_lun *lun)
 		mtx_unlock(&nlun->lun_lock);
 	}
 	mtx_unlock(&softc->ctl_lock);
+	ctl_lun_event_emit(softc, CTL_LUN_EVENT_REMOVED,
+	    (uint32_t)lun->lun, lun->be_lun->lun_type);
 
 	/*
 	 * Tell the backend to free resources, if this LUN has a backend.
@@ -4965,6 +5266,8 @@ ctl_lun_capacity_changed(struct ctl_be_lun *be_lun)
 		ctl_ha_msg_send(CTL_HA_CHAN_CTL, &msg, sizeof(msg.ua),
 		    M_WAITOK);
 	}
+	ctl_lun_event_emit(lun->ctl_softc, CTL_LUN_EVENT_CHANGED,
+	    (uint32_t)lun->lun, be_lun->lun_type);
 }
 
 void

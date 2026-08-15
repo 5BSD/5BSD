@@ -26,7 +26,7 @@
  */
 
 /*
- * Based on libixp code: ©2007-2010 Kris Maglione <maglione.k at Gmail>
+ * Based on libixp code: (c)2007-2010 Kris Maglione <maglione.k at Gmail>
  */
 
 #include <stdlib.h>
@@ -154,16 +154,16 @@ static pthread_mutex_t fs_attach_mutex;
  */
 static struct passwd *fs_getpwuid(struct fs_softc *, uid_t, struct r_pgdata *);
 static struct group *fs_getgrgid(struct fs_softc *, gid_t, struct r_pgdata *);
-static int fs_buildname(struct l9p_fid *, char *, char *, size_t);
+static int fs_buildname(struct l9p_fid *, const char *, char *, size_t);
 static int fs_pdir(struct fs_softc *, struct l9p_fid *, char *, size_t,
     struct stat *st);
-static int fs_dpf(char *, char *, size_t);
+static int fs_dpf(char *, const char *, size_t);
 static int fs_oflags_dotu(int, int *);
 static int fs_oflags_dotl(uint32_t, int *, enum l9p_omode *);
 static int fs_nde(struct fs_softc *, struct l9p_fid *, bool, gid_t,
     struct stat *, uid_t *, gid_t *);
 static struct fs_fid *open_fid(int, const char *, struct fs_authinfo *, bool);
-static void dostat(struct fs_softc *, struct l9p_stat *, char *,
+static void dostat(struct fs_softc *, struct l9p_stat *, int, char *,
     struct stat *, bool dotu);
 static void dostatfs(struct l9p_statfs *, struct statfs *, long);
 static void fillacl(struct fs_fid *ff);
@@ -437,15 +437,24 @@ fs_getgrgid(struct fs_softc *sc, gid_t gid, struct r_pgdata *pg)
  * Build full name of file by appending given name to directory name.
  */
 static int
-fs_buildname(struct l9p_fid *dir, char *name, char *buf, size_t size)
+fs_buildname(struct l9p_fid *dir, const char *name, char *buf, size_t size)
 {
 	struct fs_fid *dirf = dir->lo_aux;
 	size_t dlen, nlen1;
 
 	assert(dirf != NULL);
+	/*
+	 * All callers use name as one protocol path element.  Twalk handles
+	 * ".." itself; accepting separators or dot elements here would turn a
+	 * create/rename/link request into an unintended multi-component
+	 * lookup even though the root descriptor prevents an actual escape.
+	 */
+	if (name[0] == '\0' || strcmp(name, ".") == 0 ||
+	    strcmp(name, "..") == 0 || strchr(name, '/') != NULL)
+		return (EINVAL);
 	dlen = strlen(dirf->ff_name);
 	nlen1 = strlen(name) + 1;	/* +1 for '\0' */
-	if (dlen + 1 + nlen1 > size)
+	if (dlen >= size || nlen1 > size - dlen - 1)
 		return (ENAMETOOLONG);
 	memcpy(buf, dirf->ff_name, dlen);
 	buf[dlen] = '/';
@@ -488,13 +497,16 @@ fs_pdir(struct fs_softc *sc __unused, struct l9p_fid *fid, char *buf,
  * (Think of the function name as "directory plus-equals file".)
  */
 static int
-fs_dpf(char *dbuf, char *fname, size_t size)
+fs_dpf(char *dbuf, const char *fname, size_t size)
 {
 	size_t dlen, nlen1;
 
+	if (fname[0] == '\0' || strcmp(fname, ".") == 0 ||
+	    strcmp(fname, "..") == 0 || strchr(fname, '/') != NULL)
+		return (EINVAL);
 	dlen = strlen(dbuf);
 	nlen1 = strlen(fname) + 1;
-	if (dlen + 1 + nlen1 > size)
+	if (dlen >= size || nlen1 > size - dlen - 1)
 		return (ENAMETOOLONG);
 	dbuf[dlen] = '/';
 	memcpy(dbuf + dlen + 1, fname, nlen1);
@@ -593,7 +605,7 @@ open_fid(int dirfd, const char *path, struct fs_authinfo *ai, bool creating)
 }
 
 static void
-dostat(struct fs_softc *sc, struct l9p_stat *s, char *name,
+dostat(struct fs_softc *sc, struct l9p_stat *s, int dirfd, char *name,
     struct stat *buf, bool dotu)
 {
 	struct passwd *user;
@@ -652,7 +664,8 @@ dostat(struct fs_softc *sc, struct l9p_stat *s, char *name,
 
 		if (S_ISLNK(buf->st_mode)) {
 			char target[MAXPATHLEN];
-			ssize_t ret = readlink(name, target, MAXPATHLEN);
+			ssize_t ret = readlinkat(dirfd, name, target,
+			    sizeof(target));
 
 			if (ret < 0) {
 				s->extension = NULL;
@@ -1256,9 +1269,13 @@ fs_iopen(void *softc, struct l9p_fid *fid, int flags, enum l9p_omode p9,
 		if ((flags & O_ACCMODE) != O_RDONLY || (flags & O_TRUNC))
 			return (EPERM);
 		fd = openat(file->ff_dirfd, name, O_DIRECTORY);
-		dirp = fdopendir(fd);
-		if (dirp == NULL)
+		if (fd < 0)
 			return (EPERM);
+		dirp = fdopendir(fd);
+		if (dirp == NULL) {
+			(void)close(fd);
+			return (EPERM);
+		}
 		fd = dirfd(dirp);
 	} else {
 		dirp = NULL;
@@ -1440,8 +1457,22 @@ fs_imkfifo(void *softc, struct l9p_fid *dir, char *name,
 	if (isp9)
 		perm = fs_p9perm(perm, st->st_mode, false);
 
-	if (mkfifo(newname, perm) != 0)
+#ifdef __APPLE__
+	if (fs_ifchdir_thread_local(ff->ff_dirfd) < 0)
 		return (errno);
+	error = mkfifo(newname, perm);
+	{
+		int preserved_errno = errno;
+
+		(void)fs_ifchdir_thread_local(-1);
+		errno = preserved_errno;
+	}
+	if (error != 0)
+		return (errno);
+#else
+	if (mkfifoat(ff->ff_dirfd, newname, perm) != 0)
+		return (errno);
+#endif
 
 	/* We cannot open the new name; race to use l* syscalls. */
 	if (fchownat(ff->ff_dirfd, newname, uid, gid, AT_SYMLINK_NOFOLLOW) != 0 ||
@@ -1493,13 +1524,18 @@ fs_imksocket(void *softc, struct l9p_fid *dir, char *name,
 	path = newname;
 	fd = -1;
 #ifdef HAVE_BINDAT
-	/* Try bindat() if needed. */
-	if (strlen(path) >= sizeof(sun.sun_path)) {
-		fd = openat(ff->ff_dirfd, ff->ff_name,
-		    O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
-		if (fd >= 0)
-			path = name;
+	/*
+	 * Always bind relative to the walked directory.  Using bind(2) for a
+	 * short pathname would instead interpret ff_name relative to the
+	 * server process's working directory and bypass the export root.
+	 */
+	fd = openat(ff->ff_dirfd, ff->ff_name,
+	    O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
+	if (fd < 0) {
+		error = errno;
+		goto out;
 	}
+	path = name;
 #endif
 
 	/*
@@ -1521,15 +1557,12 @@ fs_imksocket(void *softc, struct l9p_fid *dir, char *name,
 	strncpy(sun.sun_path, path, sizeof(sun.sun_path));
 
 #ifdef HAVE_BINDAT
-	if (fd >= 0) {
-		if (bindat(fd, s, (struct sockaddr *)&sun, sun.sun_len) < 0)
-			error = errno;
-		goto out;	/* done now, for good or ill */
-	}
-#endif
-
+	if (bindat(fd, s, (struct sockaddr *)&sun, sun.sun_len) < 0)
+		error = errno;
+#else
 	if (bind(s, (struct sockaddr *)&sun, sun.sun_len) < 0)
 		error = errno;
+#endif
 out:
 
 	if (error == 0) {
@@ -1684,7 +1717,8 @@ fs_read(void *softc, struct l9p_request *req)
 				break;
 			if (fs_lstatat(file, d->d_name, &st))
 				continue;
-			dostat(sc, &l9stat, d->d_name, &st, dotu);
+			dostat(sc, &l9stat, dirfd(file->ff_dir), d->d_name,
+			    &st, dotu);
 			if (l9p_pack_stat(&msg, req, &l9stat) != 0) {
 				seekdir(file->ff_dir, o);
 				break;
@@ -1739,7 +1773,7 @@ fs_remove(void *softc, struct l9p_fid *fid)
 
 	file = fid->lo_aux;
 	if (fstatat(file->ff_dirfd, file->ff_name, &cst, AT_SYMLINK_NOFOLLOW) != 0)
-		return (error);
+		return (errno);
 
 	parent_acl = getacl(file, -1, dirname);
 	fillacl(file);
@@ -1773,7 +1807,8 @@ fs_stat(void *softc, struct l9p_request *req)
 	    AT_SYMLINK_NOFOLLOW) != 0)
 		return (errno);
 
-	dostat(sc, &req->lr_resp.rstat.stat, file->ff_name, &st, dotu);
+	dostat(sc, &req->lr_resp.rstat.stat, file->ff_dirfd, file->ff_name,
+	    &st, dotu);
 	return (0);
 }
 
@@ -1933,7 +1968,15 @@ fs_walk(void *softc, struct l9p_request *req)
 		next = swtmp;
 		if (acl != NULL && acl != file->ff_acl)
 			l9p_acl_free(acl);
-		acl = getacl(file, -1, next);
+		/*
+		 * After the swap "succ" is the freshly validated path and
+		 * "st" describes it; the cached ACL must describe the same
+		 * path so the next iteration's execute-permission check is
+		 * evaluated against the directory actually being searched.
+		 * Fetching the ACL of "next" (the previous path) would test
+		 * the wrong directory.
+		 */
+		acl = getacl(file, -1, succ);
 	}
 
 	/*
@@ -2052,15 +2095,24 @@ fs_wstat(void *softc, struct l9p_request *req)
 	}
 
 	if (l9stat->length != (uint64_t)~0) {
+		int fd;
+
 		if (file->ff_dir != NULL) {
 			error = EINVAL;
 			goto out;
 		}
 
-		if (truncate(file->ff_name, (off_t)l9stat->length) != 0) {
+		fd = openat(file->ff_dirfd, file->ff_name,
+		    O_WRONLY | O_NOFOLLOW);
+		if (fd < 0) {
 			error = errno;
 			goto out;
 		}
+		if (ftruncate(fd, (off_t)l9stat->length) != 0)
+			error = errno;
+		(void)close(fd);
+		if (error != 0)
+			goto out;
 	}
 
 	if (req->lr_conn->lc_version >= L9P_2000U) {
@@ -2152,8 +2204,11 @@ fs_statfs(void *softc __unused, struct l9p_request *req)
 	if (fd < 0)
 		return (errno);
 
-	if (fstatfs(fd, &f) != 0)
-		return (errno);
+	if (fstatfs(fd, &f) != 0) {
+		error = errno;
+		(void)close(fd);
+		return (error);
+	}
 
 	name_max = fpathconf(fd, _PC_NAME_MAX);
 	error = errno;
@@ -2569,6 +2624,10 @@ fs_setattr(void *softc, struct l9p_request *req)
 	if (mask & L9PL_SETATTR_SIZE) {
 		/* Truncate follows symlinks, is this OK? */
 		int fd = openat(file->ff_dirfd, file->ff_name, O_RDWR);
+		if (fd < 0) {
+			error = errno;
+			goto out;
+		}
 		if (ftruncate(fd, (off_t)req->lr_req.tsetattr.size)) {
 			error = errno;
 			(void) close(fd);

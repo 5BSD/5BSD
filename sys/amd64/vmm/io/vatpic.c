@@ -30,6 +30,7 @@
 #include "opt_bhyve_snapshot.h"
 
 #include <sys/param.h>
+#include <sys/limits.h>
 #include <sys/types.h>
 #include <sys/queue.h>
 #include <sys/kernel.h>
@@ -812,15 +813,140 @@ vatpic_cleanup(struct vatpic *vatpic)
 }
 
 #ifdef BHYVE_SNAPSHOT
+_Static_assert(sizeof(bool) == sizeof(uint8_t),
+    "historical VATPIC boolean byte width");
+
+struct vatpic_snapshot_atpic {
+	uint8_t		ready;
+	int		icw_num;
+	int		rd_cmd_reg;
+	uint8_t		aeoi;
+	uint8_t		poll;
+	uint8_t		rotate;
+	uint8_t		sfn;
+	int		irq_base;
+	uint8_t		request;
+	uint8_t		service;
+	uint8_t		mask;
+	uint8_t		smm;
+	int		acnt[8];
+	int		lowprio;
+	uint8_t		intr_raised;
+};
+
+struct vatpic_snapshot_state {
+	struct vatpic_snapshot_atpic atpic[2];
+	uint8_t		elc[2];
+};
+
+static void
+vatpic_snapshot_capture_locked(struct vatpic *vatpic,
+    struct vatpic_snapshot_state *state)
+{
+	struct atpic *atpic;
+	struct vatpic_snapshot_atpic *snapshot_atpic;
+	int i;
+
+	KASSERT(VATPIC_LOCKED(vatpic), ("vatpic lock not held"));
+	for (i = 0; i < nitems(vatpic->atpic); i++) {
+		atpic = &vatpic->atpic[i];
+		snapshot_atpic = &state->atpic[i];
+		snapshot_atpic->ready = atpic->ready ? 1 : 0;
+		snapshot_atpic->icw_num = atpic->icw_num;
+		snapshot_atpic->rd_cmd_reg = atpic->rd_cmd_reg;
+		snapshot_atpic->aeoi = atpic->aeoi ? 1 : 0;
+		snapshot_atpic->poll = atpic->poll ? 1 : 0;
+		snapshot_atpic->rotate = atpic->rotate ? 1 : 0;
+		snapshot_atpic->sfn = atpic->sfn ? 1 : 0;
+		snapshot_atpic->irq_base = atpic->irq_base;
+		snapshot_atpic->request = atpic->request;
+		snapshot_atpic->service = atpic->service;
+		snapshot_atpic->mask = atpic->mask;
+		snapshot_atpic->smm = atpic->smm;
+		memcpy(snapshot_atpic->acnt, atpic->acnt,
+		    sizeof(snapshot_atpic->acnt));
+		snapshot_atpic->lowprio = atpic->lowprio;
+		snapshot_atpic->intr_raised = atpic->intr_raised ? 1 : 0;
+	}
+	memcpy(state->elc, vatpic->elc, sizeof(state->elc));
+}
+
+static bool
+vatpic_snapshot_state_valid(const struct vatpic_snapshot_state *state)
+{
+	const struct vatpic_snapshot_atpic *atpic;
+	int i, pin;
+
+	for (i = 0; i < nitems(state->atpic); i++) {
+		atpic = &state->atpic[i];
+		if (atpic->ready > 1 || atpic->aeoi > 1 ||
+		    atpic->poll > 1 || atpic->rotate > 1 ||
+		    atpic->sfn > 1 || atpic->intr_raised > 1 ||
+		    atpic->icw_num < 0 || atpic->icw_num > 4 ||
+		    (atpic->rd_cmd_reg & ~OCW3_RIS) != 0 ||
+		    (atpic->irq_base & 0x7) != 0 ||
+		    atpic->smm > 1 || atpic->lowprio < 0 ||
+		    atpic->lowprio > 7)
+			return (false);
+		for (pin = 0; pin < nitems(atpic->acnt); pin++) {
+			if (atpic->acnt[pin] == INT_MIN ||
+			    atpic->acnt[pin] == INT_MAX)
+				return (false);
+		}
+	}
+	return (true);
+}
+
+static void
+vatpic_snapshot_restore_locked(struct vatpic *vatpic,
+    const struct vatpic_snapshot_state *state)
+{
+	struct atpic *atpic;
+	const struct vatpic_snapshot_atpic *snapshot_atpic;
+	int i;
+
+	KASSERT(VATPIC_LOCKED(vatpic), ("vatpic lock not held"));
+	for (i = 0; i < nitems(vatpic->atpic); i++) {
+		atpic = &vatpic->atpic[i];
+		snapshot_atpic = &state->atpic[i];
+		atpic->ready = snapshot_atpic->ready != 0;
+		atpic->icw_num = snapshot_atpic->icw_num;
+		atpic->rd_cmd_reg = snapshot_atpic->rd_cmd_reg;
+		atpic->aeoi = snapshot_atpic->aeoi != 0;
+		atpic->poll = snapshot_atpic->poll != 0;
+		atpic->rotate = snapshot_atpic->rotate != 0;
+		atpic->sfn = snapshot_atpic->sfn != 0;
+		atpic->irq_base = snapshot_atpic->irq_base;
+		atpic->request = snapshot_atpic->request;
+		atpic->service = snapshot_atpic->service;
+		atpic->mask = snapshot_atpic->mask;
+		atpic->smm = snapshot_atpic->smm;
+		memcpy(atpic->acnt, snapshot_atpic->acnt,
+		    sizeof(atpic->acnt));
+		atpic->lowprio = snapshot_atpic->lowprio;
+		atpic->intr_raised = snapshot_atpic->intr_raised != 0;
+	}
+	memcpy(vatpic->elc, state->elc, sizeof(vatpic->elc));
+}
+
 int
 vatpic_snapshot(struct vatpic *vatpic, struct vm_snapshot_meta *meta)
 {
+	struct vatpic_snapshot_state state;
 	int ret;
 	int i;
-	struct atpic *atpic;
+	struct vatpic_snapshot_atpic *atpic;
 
-	for (i = 0; i < nitems(vatpic->atpic); i++) {
-		atpic = &vatpic->atpic[i];
+	if (vatpic == NULL || meta == NULL)
+		return (EINVAL);
+	memset(&state, 0, sizeof(state));
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		VATPIC_LOCK(vatpic);
+		vatpic_snapshot_capture_locked(vatpic, &state);
+		VATPIC_UNLOCK(vatpic);
+	}
+	for (i = 0; i < nitems(state.atpic); i++) {
+		atpic = &state.atpic[i];
 
 		SNAPSHOT_VAR_OR_LEAVE(atpic->ready, meta, ret, done);
 		SNAPSHOT_VAR_OR_LEAVE(atpic->icw_num, meta, ret, done);
@@ -842,10 +968,20 @@ vatpic_snapshot(struct vatpic *vatpic, struct vm_snapshot_meta *meta)
 		SNAPSHOT_VAR_OR_LEAVE(atpic->intr_raised, meta, ret, done);
 	}
 
-	SNAPSHOT_BUF_OR_LEAVE(vatpic->elc, sizeof(vatpic->elc),
+	SNAPSHOT_BUF_OR_LEAVE(state.elc, sizeof(state.elc),
 			      meta, ret, done);
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (!vatpic_snapshot_state_valid(&state)) {
+			ret = EINVAL;
+			goto done;
+		}
+		VATPIC_LOCK(vatpic);
+		vatpic_snapshot_restore_locked(vatpic, &state);
+		VATPIC_UNLOCK(vatpic);
+	}
 
 done:
+	explicit_bzero(&state, sizeof(state));
 	return (ret);
 }
 #endif

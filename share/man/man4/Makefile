@@ -635,9 +635,14 @@ MAN=	aac.4 \
 	virtio_balloon.4 \
 	virtio_blk.4 \
 	virtio_console.4 \
+	virtio_fs.4 \
 	virtio_gpu.4 \
+	virtio_iommu.4 \
+	virtio_mem.4 \
+	virtio_pmem.4 \
 	virtio_random.4 \
 	virtio_scsi.4 \
+	virtio_snd.4 \
 	vsock.4 \
 	${_vmci.4} \
 	vmgenc.4 \
@@ -798,6 +803,11 @@ MLINKS+=nge.4 if_nge.4
 MLINKS+=openfirm.4 openfirmware.4
 MLINKS+=ow.4 onewire.4
 MLINKS+=p9fs.4 virtio_p9fs.4
+MLINKS+=virtio_fs.4 vtfs.4
+MLINKS+=virtio_iommu.4 vtiommu.4
+MLINKS+=virtio_mem.4 vtmem.4
+MLINKS+=virtio_pmem.4 vtpmem.4
+MLINKS+=virtio_snd.4 vtsnd.4
 MLINKS+=pccbb.4 cbb.4
 MLINKS+=pcm.4 snd.4 \
 	pcm.4 sound.4

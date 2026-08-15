@@ -121,6 +121,15 @@ struct nvdimm_spa_dev {
 	struct vm_object	*spa_obj;
 	struct cdev		*spa_dev;
 	struct g_geom		*spa_g;
+	/*
+	 * Optional transport durability operation.  The SPA worker performs its
+	 * architecture-specific cache writeback first, then invokes this hook
+	 * before completing BIO_FLUSH.  This lets a transport such as virtio-pmem
+	 * make host persistence part of the block-layer flush contract without
+	 * teaching the generic NVDIMM code about a particular bus.
+	 */
+	int			(*spa_flush)(void *);
+	void			*spa_flush_arg;
 };
 
 struct g_spa {

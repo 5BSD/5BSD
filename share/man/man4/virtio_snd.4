@@ -1,0 +1,96 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 The FreeBSD Foundation
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd August 13, 2026
+.Dt VIRTIO_SND 4
+.Os
+.Sh NAME
+.Nm virtio_snd
+.Nd VirtIO sound driver
+.Sh SYNOPSIS
+To compile this driver into the kernel,
+place the following lines in your
+kernel configuration file:
+.Bd -ragged -offset indent
+.Cd "device sound"
+.Cd "device virtio_snd"
+.Ed
+.Pp
+Alternatively, to load the driver as a
+module at boot time, place the following line in
+.Xr loader.conf 5 :
+.Bd -literal -offset indent
+virtio_snd_load="YES"
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+device driver provides support for VirtIO sound devices,
+bridging the device to the
+.Xr pcm 4
+sound framework.
+.Pp
+The driver exports a single playback (transmit) stream and a single
+capture (receive) stream.
+Both streams operate at signed 16-bit little-endian samples, two channels,
+at the sample rates the device advertises (44.1 and 48 kHz).
+Each attached device registers a
+.Xr pcm 4
+sound card, accessible through the usual
+.Pa /dev/dsp Ns Ar N
+interfaces.
+The device has no hardware mixer; a stub software mixer is presented so that
+the standard
+.Xr mixer 8
+controls are available.
+.Pp
+The driver speaks the VirtIO sound wire protocol directly.
+Control-queue commands are issued synchronously, and the transmit and
+capture data paths stage one period at a time through a coherent bounce
+buffer, keeping a single transfer in flight per stream.
+Both split and packed virtqueues are supported transparently by the shared
+VirtIO transport layer.
+.Sh SEE ALSO
+.Xr pcm 4 ,
+.Xr sound 4 ,
+.Xr virtio 4 ,
+.Xr mixer 8
+.Sh HISTORY
+The
+.Nm
+driver first appeared in
+.Fx 15.0 .
+.Sh AUTHORS
+The
+.Nm
+driver was written by
+.An Kory Heard .
+.Sh BUGS
+This is a first-pass implementation.
+Only the fixed stereo S16_LE format at 44.1 and 48 kHz is supported, a
+single stream is exported in each direction, and the
+.Dq controls
+feature is neither offered nor used.

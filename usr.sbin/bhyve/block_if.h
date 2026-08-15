@@ -50,6 +50,7 @@ struct vm_snapshot_meta;
  */
 #define	BLOCKIF_IOV_MAX		128	/* not practical to be IOV_MAX */
 #define	BLOCKIF_RING_MAX	1024
+#define	BLOCKIF_CHECKPOINT_ID_MAX	255
 
 struct blockif_req {
 	int		br_iovcnt;
@@ -63,7 +64,13 @@ struct blockif_req {
 struct pci_devinst;
 struct blockif_ctxt;
 
-typedef void blockif_resize_cb(struct blockif_ctxt *, void *, size_t);
+/*
+ * A backing object's capacity is an off_t throughout blockif.  Keep that
+ * type at the notification boundary too: size_t narrows a valid media size
+ * on 32-bit hosts and also loses the invalid-negative sentinel used by the
+ * underlying stat(2)/DIOCGMEDIASIZE paths.
+ */
+typedef void blockif_resize_cb(struct blockif_ctxt *, void *, off_t);
 
 int	blockif_legacy_config(nvlist_t *nvl, const char *opts);
 int 	blockif_add_boot_device(struct pci_devinst *const pi, struct blockif_ctxt *const bc);
@@ -78,11 +85,20 @@ void	blockif_psectsz(struct blockif_ctxt *bc, int *size, int *off);
 int	blockif_queuesz(struct blockif_ctxt *bc);
 int	blockif_is_ro(struct blockif_ctxt *bc);
 int	blockif_candelete(struct blockif_ctxt *bc);
+const char *blockif_checkpoint_identity(struct blockif_ctxt *bc);
 int	blockif_read(struct blockif_ctxt *bc, struct blockif_req *breq);
 int	blockif_write(struct blockif_ctxt *bc, struct blockif_req *breq);
 int	blockif_write_zeroes(struct blockif_ctxt *bc,
 	    struct blockif_req *breq);
 int	blockif_flush(struct blockif_ctxt *bc, struct blockif_req *breq);
+/*
+ * Queue a write-completion durability fence while a lifecycle owner is
+ * draining work accepted before its pause fence.  Frontends must use
+ * blockif_flush() for guest requests; this narrow operation is not a guest
+ * command admission path.
+ */
+int	blockif_flush_stability(struct blockif_ctxt *bc,
+	    struct blockif_req *breq);
 int	blockif_delete(struct blockif_ctxt *bc, struct blockif_req *breq);
 int	blockif_cancel(struct blockif_ctxt *bc, struct blockif_req *breq);
 int	blockif_close(struct blockif_ctxt *bc);
@@ -92,6 +108,7 @@ int	blockif_close(struct blockif_ctxt *bc);
  * the backend prematurely.
  */
 int	blockif_suspend(struct blockif_ctxt *bc);
+void	blockif_suspend_retain(struct blockif_ctxt *bc);
 void	blockif_resume(struct blockif_ctxt *bc);
 
 #endif /* _BLOCK_IF_H_ */

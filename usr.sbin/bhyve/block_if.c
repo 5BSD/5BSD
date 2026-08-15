@@ -50,6 +50,7 @@
 #include <pthread_np.h>
 #include <signal.h>
 #include <sysexits.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <machine/atomic.h>
@@ -66,6 +67,9 @@
 
 #define BLOCKIF_NUMTHR	8
 #define BLOCKIF_MAXREQ	(BLOCKIF_RING_MAX + BLOCKIF_NUMTHR)
+#ifndef BLOCKIF_QUIESCE_TIMEOUT_SEC
+#define	BLOCKIF_QUIESCE_TIMEOUT_SEC	30
+#endif
 /*
  * blockif_queuesz() historically exposed a 135-entry caller pool.  Keep that
  * contract for AHCI and other users whose request objects are much larger
@@ -110,6 +114,8 @@ struct blockif_ctxt {
 	int			bc_sectsz;
 	int			bc_psectsz;
 	int			bc_psectoff;
+	char			bc_checkpoint_identity[
+				    BLOCKIF_CHECKPOINT_ID_MAX + 1];
 	int			bc_closing;
 	int			bc_paused;
 	pthread_t		bc_btid[BLOCKIF_NUMTHR];
@@ -140,6 +146,55 @@ struct blockif_sig_elem {
 
 static struct blockif_sig_elem *blockif_bse_head;
 static uint8_t blockif_zeroes[MAXPHYS] __aligned(PAGE_SIZE);
+
+static int
+blockif_make_checkpoint_identity(char *identity, size_t identity_size,
+    const char *configured, const struct stat *sb, const char *provider)
+{
+	size_t configured_length;
+	int length;
+
+	if (identity == NULL || identity_size == 0 || sb == NULL)
+		return (EINVAL);
+	if (configured != NULL) {
+		configured_length = strlen(configured);
+		if (configured_length == 0 ||
+		    configured_length >= identity_size)
+			return (EINVAL);
+		memcpy(identity, configured, configured_length + 1);
+		return (0);
+	}
+
+	if (S_ISCHR(sb->st_mode)) {
+		length = snprintf(identity, identity_size,
+		    "local:chr:%ju:%s", (uintmax_t)sb->st_rdev,
+		    provider == NULL ? "" : provider);
+	} else {
+		length = snprintf(identity, identity_size,
+		    "local:file:%ju:%ju:%ju",
+		    (uintmax_t)sb->st_dev, (uintmax_t)sb->st_ino,
+		    (uintmax_t)sb->st_gen);
+	}
+	if (length < 0 || (size_t)length >= identity_size)
+		return (E2BIG);
+	return (0);
+}
+
+static int
+blockif_work_cond_init(pthread_cond_t *cond)
+{
+	pthread_condattr_t attr;
+	int error;
+
+	error = pthread_condattr_init(&attr);
+	if (error != 0)
+		return (error);
+	error = pthread_condattr_setclock(&attr, CLOCK_MONOTONIC);
+	if (error == 0)
+		error = pthread_cond_init(cond, &attr);
+	(void)pthread_condattr_destroy(&attr);
+	return (error);
+}
 
 static int
 blockif_enqueue(struct blockif_ctxt *bc, struct blockif_req *breq,
@@ -259,10 +314,11 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 {
 	struct spacectl_range range;
 	struct blockif_req *br;
+	struct iovec iov[BLOCKIF_IOV_MAX];
 	off_t arg[2];
 	ssize_t n;
-	size_t clen, len, off, boff, voff, written;
-	int i, err;
+	size_t clen, len, off, boff, voff, written, completed;
+	int i, iovstart, err;
 
 	br = be->be_req;
 	assert(br->br_resid >= 0);
@@ -323,11 +379,63 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 			break;
 		}
 		if (buf == NULL) {
-			if ((n = pwritev(bc->bc_fd, br->br_iov, br->br_iovcnt,
-			    br->br_offset)) < 0)
-				err = errno;
-			else
-				br->br_resid -= n;
+			/*
+			 * pwritev(2) may make positive short progress.  The staged
+			 * (GEOM) path below already drains such writes; regular-file
+			 * backends must do the same rather than returning an incomplete
+			 * request to the device layer.  Use a private cursor so callers
+			 * retain their original scatter/gather description for completion
+			 * and cancellation bookkeeping.
+			 */
+			memcpy(iov, br->br_iov, sizeof(*iov) * br->br_iovcnt);
+			iovstart = 0;
+			off = 0;
+			while (br->br_resid > 0) {
+				while (iovstart < br->br_iovcnt &&
+				    iov[iovstart].iov_len == 0)
+					iovstart++;
+				if (iovstart == br->br_iovcnt) {
+					err = EIO;
+					break;
+				}
+				n = pwritev(bc->bc_fd, iov + iovstart,
+				    br->br_iovcnt - iovstart, br->br_offset + off);
+				if (n < 0) {
+					/*
+					 * Treat EINTR as a terminal error like the
+					 * other proc paths.  blockif_cancel()
+					 * interrupts an in-flight request with
+					 * SIGCONT expecting the syscall to return
+					 * so the worker reaches BST_DONE; retrying
+					 * here would swallow that signal and spin
+					 * the cancel loop while it holds bc_mtx.
+					 */
+					err = errno;
+					break;
+				}
+				if (n == 0) {
+					err = EIO;
+					break;
+				}
+				completed = (size_t)n;
+				if (completed > (size_t)br->br_resid) {
+					err = EIO;
+					break;
+				}
+				br->br_resid -= (ssize_t)completed;
+				off += completed;
+				while (completed != 0) {
+					if (completed < iov[iovstart].iov_len) {
+						iov[iovstart].iov_base =
+						    (uint8_t *)iov[iovstart].iov_base + completed;
+						iov[iovstart].iov_len -= completed;
+						completed = 0;
+					} else {
+						completed -= iov[iovstart].iov_len;
+						iovstart++;
+					}
+				}
+			}
 			break;
 		}
 		i = 0;
@@ -400,7 +508,14 @@ blockif_proc(struct blockif_ctxt *bc, struct blockif_elem *be, uint8_t *buf)
 		}
 		break;
 	case BOP_FLUSH:
-		err = blockif_flush_bc(bc);
+		/*
+		 * A read-only backing object cannot have volatile guest writes.
+		 * Treat FLUSH as a successful no-op.  This also avoids issuing
+		 * fsync(2) after Capsicum deliberately removed CAP_FSYNC from a
+		 * read-only descriptor.
+		 */
+		if (!bc->bc_rdonly)
+			err = blockif_flush_bc(bc);
 		break;
 	case BOP_DELETE:
 		if (!bc->bc_candelete)
@@ -554,13 +669,13 @@ blockif_open(nvlist_t *nvl, const char *ident)
 {
 	char tname[MAXCOMLEN + 1];
 	char name[MAXPATHLEN];
-	const char *path, *pssval, *ssval, *bootindex_val;
+	const char *checkpoint_identity, *path, *pssval, *ssval, *bootindex_val;
 	char *cp;
 	struct blockif_ctxt *bc;
 	struct stat sbuf;
 	struct diocgattr_arg arg;
 	off_t size, psectsz, psectoff;
-	int extra, fd, i, sectsz;
+	int created, error, extra, fd, i, sectsz;
 	int ro, candelete, geom, ssopt, pssopt;
 	int nodelete;
 	int bootindex;
@@ -727,10 +842,21 @@ blockif_open(nvlist_t *nvl, const char *ident)
 	bc->bc_sectsz = sectsz;
 	bc->bc_psectsz = psectsz;
 	bc->bc_psectoff = psectoff;
-	pthread_mutex_init(&bc->bc_mtx, NULL);
-	pthread_cond_init(&bc->bc_cond, NULL);
+	checkpoint_identity = get_config_value_node(nvl,
+	    "checkpoint_identity");
+	if (blockif_make_checkpoint_identity(bc->bc_checkpoint_identity,
+	    sizeof(bc->bc_checkpoint_identity), checkpoint_identity, &sbuf,
+	    geom ? name : NULL) != 0) {
+		EPRINTLN("Invalid block checkpoint_identity");
+		goto err_bc;
+	}
+	if (pthread_mutex_init(&bc->bc_mtx, NULL) != 0)
+		goto err_bc;
+	if (pthread_cond_init(&bc->bc_cond, NULL) != 0)
+		goto err_mtx;
 	bc->bc_paused = 0;
-	pthread_cond_init(&bc->bc_work_done_cond, NULL);
+	if (blockif_work_cond_init(&bc->bc_work_done_cond) != 0)
+		goto err_cond;
 	TAILQ_INIT(&bc->bc_freeq);
 	TAILQ_INIT(&bc->bc_pendq);
 	TAILQ_INIT(&bc->bc_busyq);
@@ -740,13 +866,34 @@ blockif_open(nvlist_t *nvl, const char *ident)
 		TAILQ_INSERT_HEAD(&bc->bc_freeq, &bc->bc_reqs[i], be_link);
 	}
 
+	created = 0;
 	for (i = 0; i < BLOCKIF_NUMTHR; i++) {
-		pthread_create(&bc->bc_btid[i], NULL, blockif_thr, bc);
+		error = pthread_create(&bc->bc_btid[i], NULL, blockif_thr, bc);
+		if (error != 0) {
+			EPRINTLN("Failed to create block worker %d: %s", i,
+			    strerror(error));
+			goto err_workers;
+		}
+		created++;
 		snprintf(tname, sizeof(tname), "blk-%s-%d", ident, i);
 		pthread_set_name_np(bc->bc_btid[i], tname);
 	}
 
 	return (bc);
+err_workers:
+	pthread_mutex_lock(&bc->bc_mtx);
+	bc->bc_closing = 1;
+	pthread_cond_broadcast(&bc->bc_cond);
+	pthread_mutex_unlock(&bc->bc_mtx);
+	for (i = 0; i < created; i++)
+		(void)pthread_join(bc->bc_btid[i], NULL);
+	pthread_cond_destroy(&bc->bc_work_done_cond);
+err_cond:
+	pthread_cond_destroy(&bc->bc_cond);
+err_mtx:
+	pthread_mutex_destroy(&bc->bc_mtx);
+err_bc:
+	free(bc);
 err:
 	if (fd >= 0)
 		close(fd);
@@ -773,6 +920,10 @@ blockif_resized(int fd, enum ev_type type __unused, void *arg)
 		}
 	} else
 		mediasize = sb.st_size;
+	if (mediasize < 0) {
+		EPRINTLN("blockif_resized: invalid negative mediasize");
+		return;
+	}
 
 	bc = arg;
 	cb = NULL;
@@ -847,15 +998,49 @@ out:
 }
 
 static int
+blockif_rw_request_validate(const struct blockif_req *breq)
+{
+	size_t total;
+	int i;
+
+	if (breq == NULL || breq->br_offset < 0 || breq->br_resid < 0 ||
+	    breq->br_resid > OFF_MAX - breq->br_offset ||
+	    breq->br_iovcnt < 0 || breq->br_iovcnt > BLOCKIF_IOV_MAX)
+		return (EINVAL);
+
+	total = 0;
+	for (i = 0; i < breq->br_iovcnt; i++) {
+		if (breq->br_iov[i].iov_len != 0 &&
+		    breq->br_iov[i].iov_base == NULL)
+			return (EINVAL);
+		if (breq->br_iov[i].iov_len > (size_t)SSIZE_MAX - total)
+			return (EINVAL);
+		total += breq->br_iov[i].iov_len;
+	}
+	return (total == (size_t)breq->br_resid ? 0 : EINVAL);
+}
+
+static int
 blockif_request(struct blockif_ctxt *bc, struct blockif_req *breq,
-		enum blockop op)
+		enum blockop op, bool stability_flush)
 {
 	int err;
 
 	err = 0;
 
 	pthread_mutex_lock(&bc->bc_mtx);
-	assert(!bc->bc_paused);
+	/*
+	 * Quiesce fences new frontend requests before setting bc_paused, but a
+	 * write completion already owned by the backend can still need to enqueue
+	 * its writethrough stability flush.  That flush is part of the in-flight
+	 * request being drained, not new guest work, and the worker must be allowed
+	 * to finish it or suspend can deadlock.  A guest-issued FLUSH is new work,
+	 * however, and must remain behind the fence.
+	 */
+	if (bc->bc_paused != 0 && !stability_flush) {
+		err = EBUSY;
+		goto out;
+	}
 	if (!TAILQ_EMPTY(&bc->bc_freeq)) {
 		/*
 		 * Enqueue and inform the block i/o thread
@@ -872,6 +1057,7 @@ blockif_request(struct blockif_ctxt *bc, struct blockif_req *breq,
 		 */
 		err = E2BIG;
 	}
+out:
 	pthread_mutex_unlock(&bc->bc_mtx);
 
 	return (err);
@@ -880,15 +1066,25 @@ blockif_request(struct blockif_ctxt *bc, struct blockif_req *breq,
 int
 blockif_read(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
+	int error;
+
 	assert(bc->bc_magic == BLOCKIF_SIG);
-	return (blockif_request(bc, breq, BOP_READ));
+	error = blockif_rw_request_validate(breq);
+	if (error != 0)
+		return (error);
+	return (blockif_request(bc, breq, BOP_READ, false));
 }
 
 int
 blockif_write(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
+	int error;
+
 	assert(bc->bc_magic == BLOCKIF_SIG);
-	return (blockif_request(bc, breq, BOP_WRITE));
+	error = blockif_rw_request_validate(breq);
+	if (error != 0)
+		return (error);
+	return (blockif_request(bc, breq, BOP_WRITE, false));
 }
 
 int
@@ -898,14 +1094,22 @@ blockif_write_zeroes(struct blockif_ctxt *bc, struct blockif_req *breq)
 	if (breq->br_offset < 0 || breq->br_resid < 0 ||
 	    breq->br_resid > OFF_MAX - breq->br_offset)
 		return (EINVAL);
-	return (blockif_request(bc, breq, BOP_WRITE_ZEROES));
+	return (blockif_request(bc, breq, BOP_WRITE_ZEROES, false));
 }
 
 int
 blockif_flush(struct blockif_ctxt *bc, struct blockif_req *breq)
 {
 	assert(bc->bc_magic == BLOCKIF_SIG);
-	return (blockif_request(bc, breq, BOP_FLUSH));
+	return (blockif_request(bc, breq, BOP_FLUSH, false));
+}
+
+int
+blockif_flush_stability(struct blockif_ctxt *bc, struct blockif_req *breq)
+{
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
+	return (blockif_request(bc, breq, BOP_FLUSH, true));
 }
 
 int
@@ -915,7 +1119,7 @@ blockif_delete(struct blockif_ctxt *bc, struct blockif_req *breq)
 	if (breq->br_offset < 0 || breq->br_resid < 0 ||
 	    breq->br_resid > OFF_MAX - breq->br_offset)
 		return (EINVAL);
-	return (blockif_request(bc, breq, BOP_DELETE));
+	return (blockif_request(bc, breq, BOP_DELETE, false));
 }
 
 int
@@ -926,7 +1130,12 @@ blockif_cancel(struct blockif_ctxt *bc, struct blockif_req *breq)
 	assert(bc->bc_magic == BLOCKIF_SIG);
 
 	pthread_mutex_lock(&bc->bc_mtx);
-	/* XXX: not waiting while paused */
+	/*
+	 * Cancellation deliberately remains available while a lifecycle owner has
+	 * paused new frontend work.  Reset and teardown use it to retire work
+	 * accepted before that fence; waiting for resume here would deadlock the
+	 * owner which is waiting for that work to leave the backend.
+	 */
 
 	/*
 	 * Check pending requests.
@@ -985,6 +1194,8 @@ blockif_cancel(struct blockif_ctxt *bc, struct blockif_req *breq)
 		while (bse.bse_pending)
 			pthread_cond_wait(&bse.bse_cond, &bse.bse_mtx);
 		pthread_mutex_unlock(&bse.bse_mtx);
+		pthread_cond_destroy(&bse.bse_cond);
+		pthread_mutex_destroy(&bse.bse_mtx);
 	}
 
 	pthread_mutex_unlock(&bc->bc_mtx);
@@ -1009,8 +1220,20 @@ blockif_close(struct blockif_ctxt *bc)
 	 */
 	pthread_mutex_lock(&bc->bc_mtx);
 	bc->bc_closing = 1;
-	if (bc->bc_resize_event != NULL)
+	bc->bc_resize_cb = NULL;
+	bc->bc_resize_cb_arg = NULL;
+	if (bc->bc_resize_event != NULL) {
 		mevent_disable(bc->bc_resize_event);
+		pthread_mutex_unlock(&bc->bc_mtx);
+		/*
+		 * mevent deletion is normally asynchronous.  Wait for the
+		 * dispatch thread to acknowledge it before freeing bc, which
+		 * is the callback argument.
+		 */
+		(void)mevent_delete_sync(bc->bc_resize_event);
+		pthread_mutex_lock(&bc->bc_mtx);
+		bc->bc_resize_event = NULL;
+	}
 	while (bc->bc_resize_inflight != 0)
 		pthread_cond_wait(&bc->bc_work_done_cond, &bc->bc_mtx);
 	pthread_mutex_unlock(&bc->bc_mtx);
@@ -1018,13 +1241,20 @@ blockif_close(struct blockif_ctxt *bc)
 	for (i = 0; i < BLOCKIF_NUMTHR; i++)
 		pthread_join(bc->bc_btid[i], &jval);
 
-	/* XXX Cancel queued i/o's ??? */
+	/*
+	 * Each worker drains its pending queue before observing bc_closing, and
+	 * joins above wait for both those completions and any busy operation.
+	 * That preserves the request callback lifetime through backend teardown.
+	 */
 
 	/*
 	 * Release resources
 	 */
 	bc->bc_magic = 0;
 	close(bc->bc_fd);
+	pthread_cond_destroy(&bc->bc_work_done_cond);
+	pthread_cond_destroy(&bc->bc_cond);
+	pthread_mutex_destroy(&bc->bc_mtx);
 	free(bc);
 
 	return (0);
@@ -1108,6 +1338,7 @@ int
 blockif_queuesz(struct blockif_ctxt *bc)
 {
 	assert(bc->bc_magic == BLOCKIF_SIG);
+	(void)bc;
 	return (BLOCKIF_COMPAT_QUEUESZ);
 }
 
@@ -1125,14 +1356,27 @@ blockif_candelete(struct blockif_ctxt *bc)
 	return (bc->bc_candelete);
 }
 
+const char *
+blockif_checkpoint_identity(struct blockif_ctxt *bc)
+{
+
+	assert(bc->bc_magic == BLOCKIF_SIG);
+	return (bc->bc_checkpoint_identity);
+}
+
 static int
 blockif_quiesce(struct blockif_ctxt *bc)
 {
+	struct timespec deadline;
 	bool first;
 	int error;
 
 	assert(bc != NULL);
 	assert(bc->bc_magic == BLOCKIF_SIG);
+
+	if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0)
+		return (errno);
+	deadline.tv_sec += BLOCKIF_QUIESCE_TIMEOUT_SEC;
 
 	pthread_mutex_lock(&bc->bc_mtx);
 	first = bc->bc_paused == 0;
@@ -1143,12 +1387,16 @@ blockif_quiesce(struct blockif_ctxt *bc)
 
 	/* The interface is paused. Wait for workers to finish their work */
 	pthread_mutex_lock(&bc->bc_mtx);
-	while (!blockif_empty(bc) || bc->bc_resize_inflight != 0)
-		pthread_cond_wait(&bc->bc_work_done_cond, &bc->bc_mtx);
+	error = 0;
+	while (!blockif_empty(bc) || bc->bc_resize_inflight != 0) {
+		error = pthread_cond_timedwait(&bc->bc_work_done_cond,
+		    &bc->bc_mtx, &deadline);
+		if (error != 0)
+			break;
+	}
 	pthread_mutex_unlock(&bc->bc_mtx);
 
-	error = 0;
-	if (!bc->bc_rdonly)
+	if (error == 0 && !bc->bc_rdonly)
 		error = blockif_flush_bc(bc);
 	return (error);
 }
@@ -1162,6 +1410,26 @@ blockif_suspend(struct blockif_ctxt *bc)
 	if (error != 0)
 		blockif_resume(bc);
 	return (error);
+}
+
+/*
+ * Add a nested quiesce owner after another owner has already drained and
+ * stabilized the backend.  Snapshot restore uses this to reconstruct a saved
+ * guest-suspend owner while checkpoint pause still owns the backend.  Running
+ * another flush here would introduce a fallible operation after restored
+ * device state has been published.
+ */
+void
+blockif_suspend_retain(struct blockif_ctxt *bc)
+{
+
+	assert(bc != NULL);
+	assert(bc->bc_magic == BLOCKIF_SIG);
+
+	pthread_mutex_lock(&bc->bc_mtx);
+	assert(bc->bc_paused > 0);
+	bc->bc_paused++;
+	pthread_mutex_unlock(&bc->bc_mtx);
 }
 
 void

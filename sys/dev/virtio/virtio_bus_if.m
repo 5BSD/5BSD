@@ -52,6 +52,7 @@ CODE {
 	{
 		return (EOPNOTSUPP);
 	}
+
 };
 
 METHOD uint64_t negotiate_features {
@@ -79,7 +80,19 @@ METHOD int setup_intr {
 	enum intr_type	type;
 };
 
+# Stop and drain every bus interrupt handler without releasing virtqueues.
+# A child calls this after resetting the device and before destroying any
+# lock or callback state reachable from its virtqueue interrupt handlers.
+# The operation is idempotent; parent child-detach cleanup may call it again.
+METHOD void teardown_intr {
+	device_t	dev;
+};
+
 METHOD void stop {
+	device_t	dev;
+};
+
+METHOD void fail {
 	device_t	dev;
 };
 

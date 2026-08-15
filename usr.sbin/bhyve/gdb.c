@@ -71,6 +71,7 @@
 #include "gdb.h"
 #include "mem.h"
 #include "mevent.h"
+#include "migration_dirty.h"
 
 #define	_PATH_GDB_XML		"/usr/share/bhyve/gdb"
 
@@ -99,6 +100,13 @@ _Static_assert(sizeof(GDB_BP_INSTR) == GDB_BP_SIZE,
 
 static void gdb_resume_vcpus(void);
 static void check_command(int fd);
+
+static _Noreturn void
+gdb_fatal_error(const char *operation, int error)
+{
+
+	err(BHYVE_EXIT_ERROR, "%s failed (error %d)", operation, error);
+}
 
 static struct mevent *read_event, *write_event;
 
@@ -472,14 +480,15 @@ response_pending(void)
 }
 
 static void
-close_connection(void)
+close_connection_locked(void)
 {
+
+	assert(pthread_mutex_isowned_np(&gdb_lock));
 
 	/*
 	 * XXX: This triggers a warning because mevent does the close
 	 * before the EV_DELETE.
 	 */
-	pthread_mutex_lock(&gdb_lock);
 	mevent_delete(write_event);
 	mevent_delete_close(read_event);
 	write_event = NULL;
@@ -495,6 +504,14 @@ close_connection(void)
 
 	/* Resume any stopped vCPUs. */
 	gdb_resume_vcpus();
+}
+
+static void
+close_connection(void)
+{
+
+	pthread_mutex_lock(&gdb_lock);
+	close_connection_locked();
 	pthread_mutex_unlock(&gdb_lock);
 }
 
@@ -555,8 +572,18 @@ send_pending_data(int fd)
 	}
 	nwritten = write(fd, io_buffer_head(&cur_resp), cur_resp.len);
 	if (nwritten == -1) {
+		if (errno == EAGAIN) {
+			/*
+			 * The socket send buffer is full; leave the
+			 * remaining response queued and wait for the
+			 * socket to become writable again rather than
+			 * dropping the connection mid-response.
+			 */
+			mevent_enable(write_event);
+			return;
+		}
 		warn("Write to GDB socket failed");
-		close_connection();
+		close_connection_locked();
 	} else {
 		io_buffer_advance(&cur_resp, nwritten);
 		if (cur_resp.len == 0)
@@ -763,6 +790,7 @@ send_ok(void)
 static int
 parse_threadid(const uint8_t *data, size_t len)
 {
+	uintmax_t tid;
 
 	if (len == 1 && *data == '0')
 		return (0);
@@ -770,7 +798,15 @@ parse_threadid(const uint8_t *data, size_t len)
 		return (-1);
 	if (len == 0)
 		return (-2);
-	return (parse_integer(data, len));
+
+	/*
+	 * Thread ids name vCPUs as 1..guest_ncpus.  Reject anything
+	 * outside that range before it can be used as a cpuset_t index.
+	 */
+	tid = parse_integer(data, len);
+	if (tid < 1 || tid > (uintmax_t)guest_ncpus)
+		return (-2);
+	return ((int)tid);
 }
 
 /*
@@ -942,6 +978,8 @@ gdb_cpu_add(struct vcpu *vcpu)
 		int error;
 
 		error = vm_debug_cpus(ctx, &suspended);
+		if (error != 0)
+			gdb_fatal_error("vm_debug_cpus", error);
 		assert(error == 0);
 
 		CPU_SET(vcpuid, &vcpus_suspended);
@@ -958,6 +996,8 @@ gdb_cpu_add(struct vcpu *vcpu)
 		 */
 		if (CPU_ISSET(vcpuid, &suspended)) {
 			error = vm_suspend_cpu(vcpu);
+			if (error != 0)
+				gdb_fatal_error("vm_suspend_cpu", error);
 			assert(error == 0);
 		}
 	}
@@ -984,6 +1024,8 @@ gdb_cpu_resume(struct vcpu *vcpu)
 	assert(vs->stepped == false);
 	if (vs->stepping) {
 		error = _gdb_set_step(vcpu, 1);
+		if (error != 0)
+			gdb_fatal_error("enable guest single-step", error);
 		assert(error == 0);
 	}
 }
@@ -1035,6 +1077,8 @@ gdb_cpu_step(struct vcpu *vcpu)
 		vs->stepping = false;
 		vs->stepped = true;
 		error = _gdb_set_step(vcpu, 0);
+		if (error != 0)
+			gdb_fatal_error("disable guest single-step", error);
 		assert(error == 0);
 
 		while (vs->stepped) {
@@ -1110,6 +1154,8 @@ gdb_cpu_breakpoint(struct vcpu *vcpu, struct vm_exit *vmexit)
 	vcpuid = vcpu_id(vcpu);
 	pthread_mutex_lock(&gdb_lock);
 	error = guest_vaddr2paddr(vcpu, guest_pc(vmexit), &gpa);
+	if (error != 1)
+		gdb_fatal_error("translate breakpoint address", error);
 	assert(error == 1);
 	bp = find_breakpoint(gpa);
 	if (bp != NULL) {
@@ -1145,14 +1191,20 @@ gdb_cpu_breakpoint(struct vcpu *vcpu, struct vm_exit *vmexit)
 #ifdef __amd64__
 		error = vm_set_register(vcpu, VM_REG_GUEST_ENTRY_INST_LENGTH,
 		    vmexit->u.bpt.inst_length);
+		if (error != 0)
+			gdb_fatal_error("set breakpoint instruction length", error);
 		assert(error == 0);
 		error = vm_inject_exception(vcpu, IDT_BP, 0, 0, 0);
+		if (error != 0)
+			gdb_fatal_error("inject breakpoint exception", error);
 		assert(error == 0);
 #else /* __aarch64__ */
 		uint64_t esr;
 
 		esr = (EXCP_BRK << ESR_ELx_EC_SHIFT) | vmexit->u.hyp.esr_el2;
 		error = vm_inject_exception(vcpu, esr, 0);
+		if (error != 0)
+			gdb_fatal_error("inject breakpoint exception", error);
 		assert(error == 0);
 #endif
 	}
@@ -1354,9 +1406,9 @@ gdb_read_mem(const uint8_t *data, size_t len)
 static void
 gdb_write_mem(const uint8_t *data, size_t len)
 {
-	uint64_t gpa, gva, val;
+	uint64_t chunk_gpa, gpa, gva, val;
 	uint8_t *cp;
-	size_t resid, todo, bytes;
+	size_t chunk_len, resid, todo, bytes;
 	int error;
 
 	assert(len >= 1);
@@ -1385,8 +1437,13 @@ gdb_write_mem(const uint8_t *data, size_t len)
 	len -= (cp - data) + 1;
 	data += (cp - data) + 1;
 
-	/* Verify the available bytes match the length. */
-	if (len != resid * 2) {
+	/*
+	 * Verify the available bytes match the length.  Compare in terms
+	 * of the payload length rather than 'resid * 2' so that a huge
+	 * 'resid' cannot overflow the multiplication and slip past this
+	 * check, which would later drive the write loops out of bounds.
+	 */
+	if ((len & 1) != 0 || resid != len / 2) {
 		send_error(EINVAL);
 		return;
 	}
@@ -1409,6 +1466,8 @@ gdb_write_mem(const uint8_t *data, size_t len)
 
 		cp = paddr_guest2host(ctx, gpa, todo);
 		if (cp != NULL) {
+			chunk_gpa = gpa;
+			chunk_len = todo;
 			/*
 			 * If this page is guest RAM, write it a byte
 			 * at a time.
@@ -1424,6 +1483,9 @@ gdb_write_mem(const uint8_t *data, size_t len)
 				resid--;
 				todo--;
 			}
+			error = migration_dirty_mark(ctx, chunk_gpa, chunk_len);
+			if (error != 0)
+				migration_dirty_fail(ctx, error);
 		} else {
 			/*
 			 * If this page isn't guest RAM, try to handle
@@ -1496,6 +1558,16 @@ write_instr(uint8_t *dest, uint8_t *instr, size_t len)
 }
 
 static void
+gdb_mark_guest_write(uint64_t gpa, size_t len)
+{
+	int error;
+
+	error = migration_dirty_mark(ctx, gpa, len);
+	if (error != 0)
+		migration_dirty_fail(ctx, error);
+}
+
+static void
 remove_all_sw_breakpoints(void)
 {
 	struct breakpoint *bp, *nbp;
@@ -1508,6 +1580,7 @@ remove_all_sw_breakpoints(void)
 		debug("remove breakpoint at %#lx\n", bp->gpa);
 		cp = paddr_guest2host(ctx, bp->gpa, sizeof(bp->shadow_inst));
 		write_instr(cp, bp->shadow_inst, sizeof(bp->shadow_inst));
+		gdb_mark_guest_write(bp->gpa, sizeof(bp->shadow_inst));
 		TAILQ_REMOVE(&breakpoints, bp, link);
 		free(bp);
 	}
@@ -1564,6 +1637,7 @@ update_sw_breakpoint(uint64_t gva, int kind, bool insert)
 			bp->gpa = gpa;
 			memcpy(bp->shadow_inst, cp, sizeof(bp->shadow_inst));
 			write_instr(cp, GDB_BP_INSTR, sizeof(bp->shadow_inst));
+			gdb_mark_guest_write(gpa, sizeof(bp->shadow_inst));
 			TAILQ_INSERT_TAIL(&breakpoints, bp, link);
 			debug("new breakpoint at %#lx\n", gpa);
 		}
@@ -1572,6 +1646,7 @@ update_sw_breakpoint(uint64_t gva, int kind, bool insert)
 			debug("remove breakpoint at %#lx\n", gpa);
 			write_instr(cp, bp->shadow_inst,
 			    sizeof(bp->shadow_inst));
+			gdb_mark_guest_write(gpa, sizeof(bp->shadow_inst));
 			TAILQ_REMOVE(&breakpoints, bp, link);
 			free(bp);
 			if (TAILQ_EMPTY(&breakpoints))
@@ -1790,7 +1865,7 @@ gdb_query(const uint8_t *data, size_t len)
 		const char *xml;
 		const uint8_t *pathend;
 		char buf[64], path[PATH_MAX];
-		size_t xmllen;
+		size_t pathlen, xmllen;
 		unsigned int doff, dlen;
 		int fd;
 
@@ -1803,10 +1878,11 @@ gdb_query(const uint8_t *data, size_t len)
 			send_error(EINVAL);
 			return;
 		}
-		memcpy(path, data, pathend - data);
-		path[pathend - data] = '\0';
-		data += (pathend - data) + 1;
-		len -= (pathend - data) + 1;
+		pathlen = (size_t)(pathend - data);
+		memcpy(path, data, pathlen);
+		path[pathlen] = '\0';
+		data += pathlen + 1;
+		len -= pathlen + 1;
 
 		if (len > sizeof(buf) - 1) {
 			send_error(EINVAL);
@@ -1841,7 +1917,7 @@ gdb_query(const uint8_t *data, size_t len)
 		start_packet();
 		if (doff >= xmllen) {
 			append_char('l');
-		} else if (doff + dlen >= xmllen) {
+		} else if (dlen >= xmllen - doff) {
 			append_char('l');
 			append_binary_data(xml + doff, xmllen - doff);
 		} else {
@@ -1860,7 +1936,7 @@ handle_command(const uint8_t *data, size_t len)
 
 	/* Reject packets with a sequence-id. */
 	if (len >= 3 && data[0] >= '0' && data[0] <= '9' &&
-	    data[0] >= '0' && data[0] <= '9' && data[2] == ':') {
+	    data[1] >= '0' && data[1] <= '9' && data[2] == ':') {
 		send_empty_response();
 		return;
 	}
@@ -2101,7 +2177,14 @@ static void
 gdb_writable(int fd, enum ev_type event __unused, void *arg __unused)
 {
 
+	/*
+	 * cur_resp is shared with the vCPU threads that report stops; take
+	 * gdb_lock so this mevent-thread drain does not race their appends and
+	 * advances.  All other send_pending_data() callers already hold it.
+	 */
+	pthread_mutex_lock(&gdb_lock);
 	send_pending_data(fd);
+	pthread_mutex_unlock(&gdb_lock);
 }
 
 static void
@@ -2130,6 +2213,8 @@ new_connection(int fd, enum ev_type event __unused, void *arg)
 	if (cur_fd != -1) {
 		close(s);
 		warnx("Ignoring additional GDB connection.");
+		pthread_mutex_unlock(&gdb_lock);
+		return;
 	}
 
 	read_event = mevent_add(s, EVF_READ, gdb_readable, NULL);
@@ -2145,6 +2230,8 @@ new_connection(int fd, enum ev_type event __unused, void *arg)
 			err(1, "Failed to setup initial GDB connection");
 		mevent_delete_close(read_event);
 		read_event = NULL;
+		pthread_mutex_unlock(&gdb_lock);
+		return;
 	}
 
 	cur_fd = s;

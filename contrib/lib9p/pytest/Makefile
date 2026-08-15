@@ -2,7 +2,7 @@ PYTHON?=python
 
 selftest:
 	for f in lerrno p9err pfod protocol sequencer; do \
-	    ${PYTHON} $$f.py; \
+	    ${PYTHON} ${.CURDIR}/$$f.py; \
 	done
 
 clean cleandir:

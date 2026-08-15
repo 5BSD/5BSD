@@ -60,6 +60,7 @@ fflush(dbg); } while (0)
 
 struct hda_softc;
 struct hda_codec_class;
+struct vm_snapshot_meta;
 
 struct hda_codec_inst {
 	uint8_t cad;
@@ -77,6 +78,15 @@ struct hda_codec_class {
 	int (*command)(struct hda_codec_inst *hci, uint32_t cmd_data);
 	int (*notify)(struct hda_codec_inst *hci, uint8_t run, uint8_t stream,
 		uint8_t dir);
+	/*
+	 * Serialize/validate/restore the codec state actually held by the
+	 * emulation (converter format, stream/channel tags, amplifier gain
+	 * and mute).  The op is taken from meta->op; VM_SNAPSHOT_VALIDATE
+	 * must consume the record without side effects.  A registered codec
+	 * without this callback makes the controller checkpoint fail closed.
+	 */
+	int (*snapshot)(struct hda_codec_inst *hci,
+		struct vm_snapshot_meta *meta);
 };
 
 struct hda_ops {

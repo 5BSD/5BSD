@@ -49,6 +49,7 @@
 #endif
 #include <err.h>
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <pthread_np.h>
 #include <signal.h>
@@ -116,7 +117,7 @@ struct rfb_softc {
 	int		sfd;
 	pthread_t	tid;
 
-	int		cfd;
+	atomic_int	cfd;
 
 	int		width, height;
 
@@ -131,7 +132,7 @@ struct rfb_softc {
 
 	z_stream	zstream;
 	uint8_t		*zbuf;
-	int		zbuflen;
+	size_t		zbuflen;
 
 	int		conn_wait;
 	int		wrcount;
@@ -143,17 +144,20 @@ struct rfb_softc {
 	atomic_bool	update_pixfmt;
 
 	pthread_mutex_t mtx;
+	pthread_mutex_t encoding_mtx;
 	pthread_mutex_t pixfmt_mtx;
 	pthread_cond_t  cond;
 
 	int		hw_crc;
 	uint32_t	*crc;		/* WxH crc cells */
 	uint32_t	*crc_tmp;	/* buffer to store single crc row */
+	size_t		crc_cells;
 	int		crc_width, crc_height;
 
 	struct pixfmt	pixfmt;		/* owned by the write thread */
 	struct pixfmt	new_pixfmt;	/* managed with pixfmt_mtx */
 	uint32_t	*pixrow;
+	size_t		pixrow_pixels;
 	char		*fbname;
 	int		fbnamelen;
 };
@@ -192,9 +196,9 @@ struct rfb_pixfmt_msg {
 
 #define	RFB_CLIENTMSG_EXT_KEYEVENT	0
 
-#define	RFB_MAX_WIDTH			2000
-#define	RFB_MAX_HEIGHT			1200
-#define	RFB_ZLIB_BUFSZ			RFB_MAX_WIDTH*RFB_MAX_HEIGHT*4
+#define	PIX_PER_CELL	32
+#define	PIXCELL_SHIFT	5
+#define	PIXCELL_MASK	0x1F
 
 #define PIXEL_RED_SHIFT		16
 #define PIXEL_GREEN_SHIFT	8
@@ -266,12 +270,99 @@ struct rfb_cuttext_msg {
 };
 
 static int
+rfb_ensure_buffers(struct rfb_softc *rc, int width, int height)
+{
+	uint32_t *new_crc, *new_crc_tmp, *new_pixrow;
+	uint8_t *new_zbuf;
+	size_t cells, raw_bytes, rows_overhead, zbuflen;
+
+	if (width <= 0 || height <= 0 || width > UINT16_MAX ||
+	    height > UINT16_MAX ||
+	    (size_t)width > SIZE_MAX / (size_t)height)
+		return (EINVAL);
+	raw_bytes = (size_t)width * (size_t)height;
+	if (raw_bytes > SIZE_MAX / sizeof(uint32_t))
+		return (EOVERFLOW);
+	raw_bytes *= sizeof(uint32_t);
+	if (raw_bytes > UINT_MAX)
+		return (EOVERFLOW);
+	if ((size_t)howmany(width, PIX_PER_CELL) >
+	    SIZE_MAX / (size_t)howmany(height, PIX_PER_CELL))
+		return (EOVERFLOW);
+	cells = (size_t)howmany(width, PIX_PER_CELL) *
+	    (size_t)howmany(height, PIX_PER_CELL);
+	/* Each per-row Z_SYNC_FLUSH may add a small empty stored block. */
+	if ((size_t)height > (SIZE_MAX - 64) / 6)
+		return (EOVERFLOW);
+	rows_overhead = (size_t)height * 6 + 64;
+	zbuflen = (size_t)compressBound((uLong)raw_bytes);
+	if (zbuflen > SIZE_MAX - rows_overhead)
+		return (EOVERFLOW);
+	zbuflen += rows_overhead;
+	if (zbuflen > UINT_MAX)
+		return (EOVERFLOW);
+
+	new_crc = NULL;
+	new_crc_tmp = NULL;
+	new_pixrow = NULL;
+	new_zbuf = NULL;
+	if (cells > rc->crc_cells) {
+		new_crc = calloc(cells, sizeof(*new_crc));
+		new_crc_tmp = calloc(cells, sizeof(*new_crc_tmp));
+		if (new_crc == NULL || new_crc_tmp == NULL)
+			goto nomem;
+	}
+	if ((size_t)width > rc->pixrow_pixels) {
+		new_pixrow = malloc((size_t)width * sizeof(*new_pixrow));
+		if (new_pixrow == NULL)
+			goto nomem;
+	}
+	if (zbuflen > rc->zbuflen) {
+		new_zbuf = malloc(zbuflen);
+		if (new_zbuf == NULL)
+			goto nomem;
+	}
+
+	if (new_crc != NULL) {
+		free(rc->crc);
+		free(rc->crc_tmp);
+		rc->crc = new_crc;
+		rc->crc_tmp = new_crc_tmp;
+		rc->crc_cells = cells;
+	}
+	if (new_pixrow != NULL) {
+		free(rc->pixrow);
+		rc->pixrow = new_pixrow;
+		rc->pixrow_pixels = (size_t)width;
+	}
+	if (new_zbuf != NULL) {
+		free(rc->zbuf);
+		rc->zbuf = new_zbuf;
+		rc->zbuflen = zbuflen;
+	}
+	return (0);
+
+nomem:
+	free(new_crc);
+	free(new_crc_tmp);
+	free(new_pixrow);
+	free(new_zbuf);
+	return (ENOMEM);
+}
+
+static int
 rfb_send_server_init_msg(struct rfb_softc *rc, int cfd)
 {
 	struct bhyvegc_image *gc_image;
 	struct rfb_srvr_info sinfo;
 
 	gc_image = console_get_image();
+	if (gc_image == NULL || gc_image->data == NULL ||
+	    rfb_ensure_buffers(rc, gc_image->width,
+	    gc_image->height) != 0)
+		return (-1);
+	rc->width = gc_image->width;
+	rc->height = gc_image->height;
 
 	sinfo.width = htons(gc_image->width);
 	sinfo.height = htons(gc_image->height);
@@ -387,10 +478,16 @@ rfb_recv_set_pixfmt_msg(struct rfb_softc *rc __unused, int cfd)
 	green_shift = pixfmt_msg.pixfmt.green_shift;
 	blue_shift = pixfmt_msg.pixfmt.blue_shift;
 
-	/* Check shifts are 8 bit aligned */
+	/*
+	 * Check shifts are distinct byte lanes in a 32-bit pixel.  Merely
+	 * checking alignment permits values such as 248, which would make the
+	 * renderer execute an undefined-width shift.
+	 */
 	if ((red_shift & 0x7) != 0 ||
 	    (green_shift & 0x7) != 0 ||
-	    (blue_shift & 0x7) != 0) {
+	    (blue_shift & 0x7) != 0 || red_shift > 24 || green_shift > 24 ||
+	    blue_shift > 24 || red_shift == green_shift ||
+	    red_shift == blue_shift || green_shift == blue_shift) {
 		WPRINTF(("rfb: pixfmt unsupported shift values "
 			 "r: %d g: %d b: %d",
 			 red_shift, green_shift, blue_shift));
@@ -433,14 +530,18 @@ rfb_recv_set_encodings_msg(struct rfb_softc *rc, int cfd)
 		if (len <= 0)
 			return (-1);
 
+		pthread_mutex_lock(&rc->encoding_mtx);
 		switch (htonl(encoding)) {
 		case RFB_ENCODING_RAW:
 			rc->enc_raw_ok = true;
 			break;
 		case RFB_ENCODING_ZLIB:
 			if (!rc->enc_zlib_ok) {
-				deflateInit(&rc->zstream, Z_BEST_SPEED);
-				rc->enc_zlib_ok = true;
+				if (deflateInit(&rc->zstream, Z_BEST_SPEED) ==
+				    Z_OK)
+					rc->enc_zlib_ok = true;
+				else
+					WPRINTF(("rfb: zlib initialization failed"));
 			}
 			break;
 		case RFB_ENCODING_RESIZE:
@@ -450,6 +551,7 @@ rfb_recv_set_encodings_msg(struct rfb_softc *rc, int cfd)
 			rc->enc_extkeyevent_ok = true;
 			break;
 		}
+		pthread_mutex_unlock(&rc->encoding_mtx);
 	}
 
 	return (0);
@@ -520,7 +622,7 @@ rfb_send_rect(struct rfb_softc *rc, int cfd, struct bhyvegc_image *gc,
 	struct rfb_srvr_rect_hdr srect_hdr;
 	unsigned long zlen;
 	ssize_t nwrite, total;
-	int err, width;
+	int end_y, err, start_y, width;
 	uint32_t *p, *pixelp;
 	uint8_t *zbufp;
 
@@ -535,24 +637,28 @@ rfb_send_rect(struct rfb_softc *rc, int cfd, struct bhyvegc_image *gc,
 	srect_hdr.height = htons(h);
 
 	width = w;
-	h = y + h;
+	start_y = y;
+	end_y = y + h;
 	w *= sizeof(uint32_t);
 	if (rc->enc_zlib_ok) {
 		zbufp = rc->zbuf;
 		rc->zstream.total_in = 0;
 		rc->zstream.total_out = 0;
-		for (p = &gc->data[y * gc->width + x]; y < h; y++) {
+		for (p = &gc->data[y * gc->width + x]; y < end_y; y++) {
 			pixelp = rfb_adjust_pixels(rc, p, width);
 			rc->zstream.next_in = (Bytef *)pixelp;
 			rc->zstream.avail_in = w;
 			rc->zstream.next_out = (Bytef *)zbufp;
-			rc->zstream.avail_out = RFB_ZLIB_BUFSZ + 16 -
-			                        rc->zstream.total_out;
+			if (rc->zstream.total_out > rc->zbuflen)
+				goto doraw;
+			rc->zstream.avail_out = (uInt)(rc->zbuflen -
+			    rc->zstream.total_out);
 			rc->zstream.data_type = Z_BINARY;
 
 			/* Compress with zlib */
 			err = deflate(&rc->zstream, Z_SYNC_FLUSH);
-			if (err != Z_OK) {
+			if (err != Z_OK || rc->zstream.avail_in != 0 ||
+			    rc->zstream.avail_out == 0) {
 				WPRINTF(("zlib[rect] deflate err: %d", err));
 				rc->enc_zlib_ok = false;
 				deflateEnd(&rc->zstream);
@@ -576,9 +682,10 @@ rfb_send_rect(struct rfb_softc *rc, int cfd, struct bhyvegc_image *gc,
 
 doraw:
 
+	y = start_y;
 	total = 0;
 	zbufp = rc->zbuf;
-	for (p = &gc->data[y * gc->width + x]; y < h; y++) {
+	for (p = &gc->data[y * gc->width + x]; y < end_y; y++) {
 		pixelp = rfb_adjust_pixels(rc, p, width);
 		memcpy(zbufp, pixelp, w);
 		zbufp += w;
@@ -634,7 +741,7 @@ rfb_send_all(struct rfb_softc *rc, int cfd, struct bhyvegc_image *gc)
 		rc->zstream.avail_in = gc->width * gc->height *
 		                   sizeof(uint32_t);
 		rc->zstream.next_out = (Bytef *)rc->zbuf;
-		rc->zstream.avail_out = RFB_ZLIB_BUFSZ + 16;
+		rc->zstream.avail_out = (uInt)rc->zbuflen;
 		rc->zstream.data_type = Z_BINARY;
 
 		rc->zstream.total_in = 0;
@@ -642,7 +749,8 @@ rfb_send_all(struct rfb_softc *rc, int cfd, struct bhyvegc_image *gc)
 
 		/* Compress with zlib */
 		err = deflate(&rc->zstream, Z_SYNC_FLUSH);
-		if (err != Z_OK) {
+		if (err != Z_OK || rc->zstream.avail_in != 0 ||
+		    rc->zstream.avail_out == 0) {
 			WPRINTF(("zlib deflate err: %d", err));
 			rc->enc_zlib_ok = false;
 			deflateEnd(&rc->zstream);
@@ -675,10 +783,6 @@ doraw:
 	return (nwrite);
 }
 
-#define	PIX_PER_CELL	32
-#define	PIXCELL_SHIFT	5
-#define	PIXCELL_MASK	0x1F
-
 static void
 rfb_set_pixel_adjustment(struct rfb_softc *rc)
 {
@@ -707,6 +811,7 @@ rfb_send_screen(struct rfb_softc *rc, int cfd)
 	expected = false;
 	if (atomic_compare_exchange_strong(&rc->sending, &expected, true) == false)
 		return (1);
+	pthread_mutex_lock(&rc->encoding_mtx);
 
 	retval = 1;
 
@@ -720,13 +825,17 @@ rfb_send_screen(struct rfb_softc *rc, int cfd)
 
 	console_refresh();
 	gc_image = console_get_image();
+	if (gc_image == NULL || gc_image->data == NULL ||
+	    rfb_ensure_buffers(rc, gc_image->width,
+	    gc_image->height) != 0) {
+		retval = -1;
+		goto done;
+	}
 
 	/* Clear old CRC values when the size changes */
 	if (rc->crc_width != gc_image->width ||
 	    rc->crc_height != gc_image->height) {
-		memset(rc->crc, 0, sizeof(uint32_t) *
-		    howmany(RFB_MAX_WIDTH, PIX_PER_CELL) *
-		    howmany(RFB_MAX_HEIGHT, PIX_PER_CELL));
+		memset(rc->crc, 0, rc->crc_cells * sizeof(*rc->crc));
 		rc->crc_width = gc_image->width;
 		rc->crc_height = gc_image->height;
 	}
@@ -865,6 +974,7 @@ rfb_send_screen(struct rfb_softc *rc, int cfd)
 	}
 
 done:
+	pthread_mutex_unlock(&rc->encoding_mtx);
 	rc->sending = false;
 
 	return (retval);
@@ -882,17 +992,23 @@ rfb_recv_update_msg(struct rfb_softc *rc, int cfd)
 	if (len <= 0)
 		return (-1);
 
+	pthread_mutex_lock(&rc->encoding_mtx);
 	if (rc->enc_extkeyevent_ok && (!rc->enc_extkeyevent_send)) {
 		if (rfb_send_extended_keyevent_update_msg(rc, cfd) < 0)
-			return (-1);
+			goto fail;
 		rc->enc_extkeyevent_send = true;
 	}
+	pthread_mutex_unlock(&rc->encoding_mtx);
 
 	rc->pending = true;
 	if (!updt_msg.incremental)
 		rc->update_all = true;
 
 	return (0);
+
+fail:
+	pthread_mutex_unlock(&rc->encoding_mtx);
+	return (-1);
 }
 
 static int
@@ -1226,14 +1342,13 @@ report_and_done:
 	if (rfb_send_server_init_msg(rc, cfd) < 0)
 		goto done;
 
-	if (!rc->zbuf) {
-		rc->zbuf = malloc(RFB_ZLIB_BUFSZ + 16);
-		assert(rc->zbuf != NULL);
-	}
-
 	perror = pthread_create(&tid, NULL, rfb_wr_thr, rc);
-	if (perror == 0)
-		pthread_set_name_np(tid, "rfbout");
+	if (perror != 0) {
+		WPRINTF(("rfb: failed to create writer thread: %s",
+		    strerror(perror)));
+		goto done;
+	}
+	pthread_set_name_np(tid, "rfbout");
 
         /* Now read in client requests. 1st byte identifies type */
 	for (;;) {
@@ -1311,12 +1426,18 @@ rfb_thr(void *arg)
 		rc->enc_extkeyevent_send = false;
 
 		cfd = accept(rc->sfd, NULL, NULL);
-		if (rc->conn_wait) {
-			pthread_mutex_lock(&rc->mtx);
-			pthread_cond_signal(&rc->cond);
-			pthread_mutex_unlock(&rc->mtx);
-			rc->conn_wait = 0;
+		if (cfd < 0) {
+			if (errno == EINTR)
+				continue;
+			WPRINTF(("rfb accept failed: %s", strerror(errno)));
+			return (NULL);
 		}
+		pthread_mutex_lock(&rc->mtx);
+		if (rc->conn_wait) {
+			rc->conn_wait = 0;
+			pthread_cond_signal(&rc->cond);
+		}
+		pthread_mutex_unlock(&rc->mtx);
 		rfb_handle(rc, cfd);
 		close(cfd);
 	}
@@ -1348,19 +1469,22 @@ rfb_init(sa_family_t family, const char *hostname, int port, int wait,
 	struct addrinfo hints;
 	struct sockaddr_un sun;
 	int on = 1;
-	int cnt;
+	bool cond_initialized, encoding_mtx_initialized, mtx_initialized;
+	bool pixfmt_mtx_initialized;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
 #endif
 
+	cond_initialized = false;
+	encoding_mtx_initialized = false;
+	mtx_initialized = false;
+	pixfmt_mtx_initialized = false;
 	rc = calloc(1, sizeof(struct rfb_softc));
+	if (rc == NULL) {
+		EPRINTLN("rfb: failed to allocate server state");
+		return (-1);
+	}
 
-	cnt = howmany(RFB_MAX_WIDTH, PIX_PER_CELL) *
-	    howmany(RFB_MAX_HEIGHT, PIX_PER_CELL);
-	rc->crc = calloc(cnt, sizeof(uint32_t));
-	rc->crc_tmp = calloc(cnt, sizeof(uint32_t));
-	rc->crc_width = RFB_MAX_WIDTH;
-	rc->crc_height = RFB_MAX_HEIGHT;
 	rc->sfd = -1;
 
 	rc->password = password;
@@ -1369,12 +1493,6 @@ rfb_init(sa_family_t family, const char *hostname, int port, int wait,
 	    get_config_value("name"));
 	if (rc->fbnamelen < 0) {
 		EPRINTLN("rfb: failed to allocate memory for VNC title");
-		goto error;
-	}
-
-	rc->pixrow = malloc(RFB_MAX_WIDTH * sizeof(uint32_t));
-	if (rc->pixrow == NULL) {
-		EPRINTLN("rfb: failed to allocate memory for pixrow buffer");
 		goto error;
 	}
 
@@ -1441,19 +1559,47 @@ rfb_init(sa_family_t family, const char *hostname, int port, int wait,
 	rc->hw_crc = sse42_supported();
 
 	rc->conn_wait = wait;
-	if (wait) {
-		pthread_mutex_init(&rc->mtx, NULL);
-		pthread_cond_init(&rc->cond, NULL);
+	e = pthread_mutex_init(&rc->mtx, NULL);
+	if (e != 0) {
+		EPRINTLN("rfb: failed to initialize wait mutex: %s",
+		    strerror(e));
+		goto error;
 	}
+	mtx_initialized = true;
+	e = pthread_cond_init(&rc->cond, NULL);
+	if (e != 0) {
+		EPRINTLN("rfb: failed to initialize wait condition: %s",
+		    strerror(e));
+		goto error;
+	}
+	cond_initialized = true;
 
-	pthread_mutex_init(&rc->pixfmt_mtx, NULL);
-	pthread_create(&rc->tid, NULL, rfb_thr, rc);
+	e = pthread_mutex_init(&rc->encoding_mtx, NULL);
+	if (e != 0) {
+		EPRINTLN("rfb: failed to initialize encoding mutex: %s",
+		    strerror(e));
+		goto error;
+	}
+	encoding_mtx_initialized = true;
+	e = pthread_mutex_init(&rc->pixfmt_mtx, NULL);
+	if (e != 0) {
+		EPRINTLN("rfb: failed to initialize pixel-format mutex: %s",
+		    strerror(e));
+		goto error;
+	}
+	pixfmt_mtx_initialized = true;
+	e = pthread_create(&rc->tid, NULL, rfb_thr, rc);
+	if (e != 0) {
+		EPRINTLN("rfb: failed to create server thread: %s", strerror(e));
+		goto error;
+	}
 	pthread_set_name_np(rc->tid, "rfb");
 
 	if (wait) {
 		DPRINTF(("Waiting for rfb client..."));
 		pthread_mutex_lock(&rc->mtx);
-		pthread_cond_wait(&rc->cond, &rc->mtx);
+		while (rc->conn_wait)
+			pthread_cond_wait(&rc->cond, &rc->mtx);
 		pthread_mutex_unlock(&rc->mtx);
 		DPRINTF(("rfb client connected"));
 	}
@@ -1463,8 +1609,14 @@ rfb_init(sa_family_t family, const char *hostname, int port, int wait,
 	return (0);
 
  error:
-	if (rc->pixfmt_mtx)
+	if (pixfmt_mtx_initialized)
 		pthread_mutex_destroy(&rc->pixfmt_mtx);
+	if (encoding_mtx_initialized)
+		pthread_mutex_destroy(&rc->encoding_mtx);
+	if (cond_initialized)
+		pthread_cond_destroy(&rc->cond);
+	if (mtx_initialized)
+		pthread_mutex_destroy(&rc->mtx);
 	if (ai != NULL) {
 		assert(family != AF_UNIX);
 		freeaddrinfo(ai);

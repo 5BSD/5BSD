@@ -284,6 +284,8 @@ init_mmio_uart(struct vmctx *ctx)
 
 	sc = uart_pl011_init(mmio_uart_intr_assert, mmio_uart_intr_deassert,
 	    ctx);
+	if (sc == NULL)
+		return (-1);
 	if (uart_pl011_tty_open(sc, path) != 0) {
 		EPRINTLN("Unable to initialize backend '%s' for mmio uart",
 		    path);
@@ -299,7 +301,8 @@ init_mmio_uart(struct vmctx *ctx)
 	mr.arg1 = sc;
 	mr.arg2 = mr.base;
 	error = register_mem(&mr);
-	assert(error == 0);
+	if (error != 0)
+		return (error);
 
 	return (0);
 }

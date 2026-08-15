@@ -62,6 +62,7 @@
 
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtqueue.h>
+#include <dev/virtio/vsock/virtio_vsock_var.h>
 
 #include <kern/uipc_vsock.h>
 
@@ -84,6 +85,14 @@ SDT_PROBE_DEFINE6(vsock, , , pkt__tx,
     "uint32_t",	/* dst port */
     "uint32_t",	/* payload len */
     "uint32_t");	/* flags */
+/* Metadata-only trace of a packet rejected before reaching the wire. */
+SDT_PROBE_DEFINE6(vsock, , , pkt__tx__drop,
+    "uint16_t",	/* op */
+    "uint64_t",	/* dst CID */
+    "uint32_t",	/* dst port */
+    "uint32_t",	/* payload len */
+    "int",	/* errno */
+    "uint32_t");	/* holding queue depth */
 
 /* -----------------------------------------------------------------------
  * Constants
@@ -389,8 +398,16 @@ vtvsock_ctrl_submit(struct vtvsock_softc *sc, void *pkt, struct sglist *sg)
 	}
 
 	if (sc->sc_txq_count >= VTVSOCK_TXQ_MAX) {
+		struct virtio_vsock_hdr *hdr;
+
 		/* Bounded: drop newest, account for it, do not grow. */
+		hdr = pkt;
+		(void)hdr;	/* SDT arguments compile out without KDTRACE_HOOKS. */
 		sc->sc_txq_drops++;
+		counter_u64_add(vtvsock_cnt_tx_drops, 1);
+		SDT_PROBE6(vsock, , , pkt__tx__drop, le16toh(hdr->op),
+		    le64toh(hdr->dst_cid), le32toh(hdr->dst_port),
+		    le32toh(hdr->len), EWOULDBLOCK, sc->sc_txq_count);
 		free(pkt, M_VTVSOCK);
 		return (EWOULDBLOCK);
 	}
@@ -441,8 +458,13 @@ vtvsock_txq_drain(struct vtvsock_softc *sc)
 		sc->sc_txq_count--;
 		if (error != 0) {
 			/* Should not happen with worst-case sglist sizing. */
-			free(pkt, M_VTVSOCK);
 			sc->sc_txq_drops++;
+			counter_u64_add(vtvsock_cnt_tx_drops, 1);
+			SDT_PROBE6(vsock, , , pkt__tx__drop,
+			    le16toh(hdr->op), le64toh(hdr->dst_cid),
+			    le32toh(hdr->dst_port), le32toh(hdr->len), error,
+			    sc->sc_txq_count);
+			free(pkt, M_VTVSOCK);
 			continue;
 		}
 		drained = true;
@@ -676,7 +698,7 @@ vtvsock_virtio_send_seqpacket(struct vtvsock_pcb *pcb, bool nonblocking,
 			return (ENOMEM);
 		}
 		m_copydata(m, (int)offset, (int)chunk,
-		    frags[i].buf + sizeof(*hdr));
+		    (caddr_t)(void *)(frags[i].buf + sizeof(*hdr)));
 		offset += chunk;
 	}
 
@@ -954,7 +976,8 @@ vtvsock_virtio_send(struct vtvsock_pcb *pcb, int flags, struct mbuf *m,
 		    pcb->local.svm_cid, pcb->local.svm_port,
 		    pcb->remote.svm_port, (uint32_t)chunk, pkt_flags);
 
-		m_copydata(m, (int)offset, (int)chunk, buf + sizeof(*hdr));
+		m_copydata(m, (int)offset, (int)chunk,
+		    (caddr_t)(void *)(buf + sizeof(*hdr)));
 
 		sglist_init(&sg, VTVSOCK_TX_SEGS, segs);
 		error = sglist_append(&sg, buf,
@@ -1274,9 +1297,15 @@ again:
 		sc->sc_rx_inflight++;
 		mtx_unlock(&vtvsock_mtx);
 
-		if (len > VTVSOCK_RX_BUFSZ)
-			len = VTVSOCK_RX_BUFSZ;
-		vsock_rx_packet(sc, buf, len);
+		/*
+		 * A device cannot legitimately report more bytes than the
+		 * writable buffer published by the driver.  Clipping such a
+		 * completion would turn a malformed used-ring entry into an
+		 * apparently valid packet and hide the transport violation.
+		 * VIRTIO_ACTIVATION_ASSERTION: exact-used-length-boundaries
+		 */
+		if (virtio_vsock_rx_used_len_valid(len, VTVSOCK_RX_BUFSZ))
+			vsock_rx_packet(sc, buf, len);
 
 		/*
 		 * Recycle the buffer back into the RX virtqueue.
@@ -1415,6 +1444,7 @@ vtvsock_event_intr(void *arg)
 	uint32_t len;
 	uint64_t new_cid;
 	bool reset;
+	int error;
 
 	sglist_init(&sg, 1, segs);
 	mtx_lock(&vtvsock_mtx);
@@ -1430,12 +1460,17 @@ again:
 		 * unregister the transport and drain the ring).  Skip processing
 		 * and free instead of recycling into an about-to-be-drained ring.
 		 */
-		if (vtvsock_global_softc() == NULL) {
+		if (vtvsock_global_softc() != sc) {
 			free(evt, M_VTVSOCK);
-			continue;
+			goto out;
 		}
 
-		reset = (len >= sizeof(*evt) &&
+		/*
+		 * The event descriptor contains exactly one fixed-size event.
+		 * Reject both truncated and oversized used lengths instead of
+		 * parsing bytes from a completion outside the published shape.
+		 */
+		reset = (virtio_vsock_event_used_len_valid(len, sizeof(*evt)) &&
 		    le32toh(evt->id) == VIRTIO_VSOCK_EVENT_TRANSPORT_RESET);
 
 		if (reset) {
@@ -1478,10 +1513,22 @@ again:
 			    &new_cid, sizeof(new_cid));
 			new_cid = vtvsock_sanitize_cid(sc->sc_dev, new_cid);
 			sc->sc_guest_cid = new_cid;
-			KASSERT(vsock_transport_register_locked(
+			/*
+			 * Registration updates the domain's visible CID.  It must run in
+			 * production kernels too; KASSERT() is compiled out without
+			 * INVARIANTS and therefore may only verify the result.
+			 */
+			error = vsock_transport_register_locked(
 			    &vtvsock_virtio_transport, sc, new_cid,
-			    sc->sc_features) == 0,
+			    sc->sc_features);
+			KASSERT(error == 0,
 			    ("%s: lost transport ownership", __func__));
+			if (__predict_false(error != 0)) {
+				device_printf(sc->sc_dev,
+				    "lost AF_VSOCK transport ownership during reset\n");
+				free(evt, M_VTVSOCK);
+				goto out;
+			}
 			vsock_transport_reset_locked();
 			/*
 			 * reset_locked woke per-pcb credit sleepers, but a
@@ -1537,10 +1584,12 @@ vtvsock_attach(device_t dev)
 	struct sglist_seg segs[1];
 	struct sglist sg;
 	void *drain_buf;
+	bool intr_setup;
 	int i, error;
 
 	sc = device_get_softc(dev);
 	sc->sc_dev = dev;
+	intr_setup = false;
 
 	virtio_set_feature_desc(dev, vtvsock_feature_desc);
 	/*
@@ -1588,6 +1637,7 @@ vtvsock_attach(device_t dev)
 	error = virtio_setup_intr(dev, INTR_TYPE_MISC | INTR_MPSAFE);
 	if (error != 0)
 		goto fail;
+	intr_setup = true;
 
 	/*
 	 * Read the guest CID from device config.
@@ -1664,6 +1714,8 @@ vtvsock_attach(device_t dev)
 
 fail:
 	virtio_stop(dev);
+	if (intr_setup)
+		virtio_teardown_intr(dev);
 	/* Drain any buffers enqueued before the failure. */
 	{
 		int last;
@@ -1773,8 +1825,8 @@ vtvsock_detach(device_t dev)
 	 * The rx/tx/event handlers take vtvsock_mtx around every virtqueue
 	 * access, so the lock serializes this teardown against a handler still
 	 * in flight on another CPU: MPSAFE interrupts keep running until
-	 * bus_teardown_intr, which the bus performs only after detach returns.
-	 * Without the lock here, disable_intr()/virtio_stop() could issue
+	 * explicit virtio_teardown_intr() below.  Without the lock here,
+	 * disable_intr()/virtio_stop() could issue
 	 * virtqueue MMIO concurrently with a handler doing the same.
 	 */
 	mtx_lock(&vtvsock_mtx);
@@ -1841,6 +1893,7 @@ vtvsock_detach(device_t dev)
 	}
 
 	mtx_unlock(&vtvsock_mtx);
+	virtio_teardown_intr(dev);
 
 	return (0);
 }

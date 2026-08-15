@@ -42,6 +42,7 @@
 #include <sys/queue.h>
 #include <sys/sbuf.h>
 #include <sys/stdarg.h>
+#include <sys/smp.h>
 
 #include <machine/bus.h>
 #include <machine/resource.h>
@@ -77,7 +78,8 @@ static int	vtscsi_setup_features(struct vtscsi_softc *);
 static void	vtscsi_read_config(struct vtscsi_softc *,
 		    struct virtio_scsi_config *);
 static int	vtscsi_maximum_segments(struct vtscsi_softc *, int);
-static int	vtscsi_alloc_virtqueues(struct vtscsi_softc *);
+static int	vtscsi_alloc_virtqueues(struct vtscsi_softc *,
+		    const struct virtio_scsi_config *);
 static void	vtscsi_check_sizes(struct vtscsi_softc *);
 static void	vtscsi_write_device_config(struct vtscsi_softc *);
 static int	vtscsi_reinit(struct vtscsi_softc *);
@@ -107,6 +109,8 @@ static int	vtscsi_fill_scsi_cmd_sglist(struct vtscsi_softc *,
 		    struct vtscsi_request *, int *, int *);
 static int	vtscsi_execute_scsi_cmd(struct vtscsi_softc *,
 		    struct vtscsi_request *);
+static struct virtqueue *
+		vtscsi_select_request_vq(struct vtscsi_softc *, int);
 static int	vtscsi_start_scsi_cmd(struct vtscsi_softc *, union ccb *);
 static void	vtscsi_complete_abort_timedout_scsi_cmd(struct vtscsi_softc *,
 		    struct vtscsi_request *);
@@ -119,10 +123,8 @@ static cam_status vtscsi_complete_scsi_cmd_response(struct vtscsi_softc *,
 static void	vtscsi_complete_scsi_cmd(struct vtscsi_softc *,
 		    struct vtscsi_request *);
 
-static void	vtscsi_poll_ctrl_req(struct vtscsi_softc *,
-		    struct vtscsi_request *);
 static int	vtscsi_execute_ctrl_req(struct vtscsi_softc *,
-		    struct vtscsi_request *, struct sglist *, int, int, int);
+		    struct vtscsi_request *, struct sglist *, int, int);
 static void	vtscsi_complete_abort_task_cmd(struct vtscsi_softc *c,
 		    struct vtscsi_request *);
 static int	vtscsi_execute_abort_task_cmd(struct vtscsi_softc *,
@@ -146,12 +148,12 @@ static void	vtscsi_execute_rescan(struct vtscsi_softc *, target_id_t,
 		    lun_id_t);
 static void	vtscsi_execute_rescan_bus(struct vtscsi_softc *);
 
-static void	vtscsi_handle_event(struct vtscsi_softc *,
+static int	vtscsi_handle_event(struct vtscsi_softc *,
 		    struct virtio_scsi_event *);
 static int	vtscsi_enqueue_event_buf(struct vtscsi_softc *,
 		    struct virtio_scsi_event *);
 static int	vtscsi_init_event_vq(struct vtscsi_softc *);
-static void	vtscsi_reinit_event_vq(struct vtscsi_softc *);
+static int	vtscsi_reinit_event_vq(struct vtscsi_softc *);
 static void	vtscsi_drain_event_vq(struct vtscsi_softc *);
 
 static void	vtscsi_complete_vqs_locked(struct vtscsi_softc *);
@@ -193,6 +195,8 @@ static void	vtscsi_printf_req(struct vtscsi_request *, const char *,
 #define vtscsi_gtoh16(_sc, _val)	virtio_gtoh16(vtscsi_modern(_sc), _val)
 #define vtscsi_gtoh32(_sc, _val)	virtio_gtoh32(vtscsi_modern(_sc), _val)
 #define vtscsi_gtoh64(_sc, _val)	virtio_gtoh64(vtscsi_modern(_sc), _val)
+
+#define VTSCSI_MAX_REQUEST_VQS	64
 
 /* Global tunables. */
 /*
@@ -296,6 +300,23 @@ vtscsi_attach(device_t dev)
 	sc->vtscsi_max_target = scsicfg.max_target;
 	sc->vtscsi_max_lun = scsicfg.max_lun;
 	sc->vtscsi_event_buf_size = scsicfg.event_info_size;
+	if ((sc->vtscsi_flags &
+	    (VTSCSI_FLAG_HOTPLUG | VTSCSI_FLAG_CHANGE)) != 0) {
+		if (sc->vtscsi_event_buf_size <
+		    sizeof(struct virtio_scsi_event) ||
+		    sc->vtscsi_event_buf_size > VTSCSI_MAX_EVENT_SIZE) {
+			device_printf(dev, "invalid event_info_size %u\n",
+			    sc->vtscsi_event_buf_size);
+			error = EINVAL;
+			goto fail;
+		}
+		sc->vtscsi_event_bufs = mallocarray(VTSCSI_NUM_EVENT_BUFS,
+		    sc->vtscsi_event_buf_size, M_DEVBUF, M_NOWAIT | M_ZERO);
+		if (sc->vtscsi_event_bufs == NULL) {
+			error = ENOMEM;
+			goto fail;
+		}
+	}
 
 	vtscsi_write_device_config(sc);
 
@@ -307,7 +328,7 @@ vtscsi_attach(device_t dev)
 		goto fail;
 	}
 
-	error = vtscsi_alloc_virtqueues(sc);
+	error = vtscsi_alloc_virtqueues(sc, &scsicfg);
 	if (error) {
 		device_printf(dev, "cannot allocate virtqueues\n");
 		goto fail;
@@ -367,9 +388,22 @@ vtscsi_detach(device_t dev)
 
 	VTSCSI_LOCK(sc);
 	sc->vtscsi_flags |= VTSCSI_FLAG_DETACH;
-	if (device_is_attached(dev))
+	/*
+	 * Reset the device whenever the virtqueues were allocated, not only for a
+	 * fully attached device.  attach() populates the event virtqueue with
+	 * device-writable buffers (vtscsi_init_event_vq) before later steps that
+	 * can fail, and calls vtscsi_detach() on the unwind, where
+	 * device_is_attached() is still false (newbus sets DF_ATTACHED only after
+	 * attach returns 0).  Skipping the reset there would let vtscsi_drain_vqs()
+	 * free vtscsi_event_bufs while the device still owns those descriptors -- a
+	 * DMA-after-free.  Gating on the event vq (rather than device_is_attached)
+	 * keeps vtscsi_disable_vqs_intr() safe: the buffers cannot have been posted
+	 * unless the virtqueues exist.
+	 */
+	if (sc->vtscsi_event_vq != NULL)
 		vtscsi_stop(sc);
 	VTSCSI_UNLOCK(sc);
+	virtio_teardown_intr(dev);
 
 	vtscsi_complete_vqs(sc);
 	vtscsi_drain_vqs(sc);
@@ -381,6 +415,11 @@ vtscsi_detach(device_t dev)
 		sglist_free(sc->vtscsi_sglist);
 		sc->vtscsi_sglist = NULL;
 	}
+	free(sc->vtscsi_request_vqs, M_DEVBUF);
+	sc->vtscsi_request_vqs = NULL;
+	sc->vtscsi_num_request_vqs = 0;
+	free(sc->vtscsi_event_bufs, M_DEVBUF);
+	sc->vtscsi_event_bufs = NULL;
 
 	VTSCSI_LOCK_DESTROY(sc);
 
@@ -432,6 +471,8 @@ vtscsi_setup_features(struct vtscsi_softc *sc)
 		sc->vtscsi_flags |= VTSCSI_FLAG_BIDIRECTIONAL;
 	if (virtio_with_feature(dev, VIRTIO_SCSI_F_HOTPLUG))
 		sc->vtscsi_flags |= VTSCSI_FLAG_HOTPLUG;
+	if (virtio_with_feature(dev, VIRTIO_SCSI_F_CHANGE))
+		sc->vtscsi_flags |= VTSCSI_FLAG_CHANGE;
 
 	return (0);
 }
@@ -483,14 +524,27 @@ vtscsi_maximum_segments(struct vtscsi_softc *sc, int seg_max)
 }
 
 static int
-vtscsi_alloc_virtqueues(struct vtscsi_softc *sc)
+vtscsi_alloc_virtqueues(struct vtscsi_softc *sc,
+    const struct virtio_scsi_config *scsicfg)
 {
 	device_t dev;
-	struct vq_alloc_info vq_info[3];
-	int nvqs;
+	struct vq_alloc_info *vq_info;
+	int error, nrequest_vqs, nvqs;
 
 	dev = sc->vtscsi_dev;
-	nvqs = 3;
+	if (scsicfg->num_queues == 0)
+		return (EINVAL);
+	nrequest_vqs = MIN(scsicfg->num_queues,
+	    (uint32_t)MIN(mp_ncpus, VTSCSI_MAX_REQUEST_VQS));
+	nvqs = 2 + nrequest_vqs;
+	vq_info = mallocarray((size_t)nvqs, sizeof(*vq_info), M_DEVBUF,
+	    M_NOWAIT | M_ZERO);
+	sc->vtscsi_request_vqs = mallocarray((size_t)nrequest_vqs,
+	    sizeof(*sc->vtscsi_request_vqs), M_DEVBUF, M_NOWAIT | M_ZERO);
+	if (vq_info == NULL || sc->vtscsi_request_vqs == NULL) {
+		free(vq_info, M_DEVBUF);
+		return (ENOMEM);
+	}
 
 	VQ_ALLOC_INFO_INIT(&vq_info[0], 0, vtscsi_control_vq_intr, sc,
 	    &sc->vtscsi_control_vq, "%s control", device_get_nameunit(dev));
@@ -498,11 +552,22 @@ vtscsi_alloc_virtqueues(struct vtscsi_softc *sc)
 	VQ_ALLOC_INFO_INIT(&vq_info[1], 0, vtscsi_event_vq_intr, sc,
 	    &sc->vtscsi_event_vq, "%s event", device_get_nameunit(dev));
 
-	VQ_ALLOC_INFO_INIT(&vq_info[2], sc->vtscsi_max_nsegs,
-	    vtscsi_request_vq_intr, sc, &sc->vtscsi_request_vq,
-	    "%s request", device_get_nameunit(dev));
-
-	return (virtio_alloc_virtqueues(dev, nvqs, vq_info));
+	for (int i = 0; i < nrequest_vqs; i++) {
+		sc->vtscsi_request_vqs[i].vsv_softc = sc;
+		VQ_ALLOC_INFO_INIT(&vq_info[2 + i], sc->vtscsi_max_nsegs,
+		    vtscsi_request_vq_intr, &sc->vtscsi_request_vqs[i],
+		    &sc->vtscsi_request_vqs[i].vsv_vq, "%s request.%d",
+		    device_get_nameunit(dev), i);
+	}
+	error = virtio_alloc_virtqueues(dev, nvqs, vq_info);
+	free(vq_info, M_DEVBUF);
+	if (error != 0)
+		return (error);
+	sc->vtscsi_num_request_vqs = nrequest_vqs;
+	if (bootverbose && nrequest_vqs > 1)
+		device_printf(dev, "using %d request virtqueues\n",
+		    nrequest_vqs);
+	return (0);
 }
 
 static void
@@ -515,7 +580,10 @@ vtscsi_check_sizes(struct vtscsi_softc *sc)
 		 * Ensure the assertions in virtqueue_enqueue(),
 		 * even if the hypervisor reports a bad seg_max.
 		 */
-		rqsize = virtqueue_size(sc->vtscsi_request_vq);
+		rqsize = INT_MAX;
+		for (int i = 0; i < sc->vtscsi_num_request_vqs; i++)
+			rqsize = MIN(rqsize, virtqueue_size(
+			    sc->vtscsi_request_vqs[i].vsv_vq));
 		if (sc->vtscsi_max_nsegs > rqsize) {
 			device_printf(sc->vtscsi_dev,
 			    "clamping seg_max (%d %d)\n", sc->vtscsi_max_nsegs,
@@ -554,9 +622,9 @@ vtscsi_reinit(struct vtscsi_softc *sc)
 	if (error == 0) {
 		vtscsi_write_device_config(sc);
 		virtio_reinit_complete(dev);
-		vtscsi_reinit_event_vq(sc);
-
-		vtscsi_enable_vqs_intr(sc);
+		error = vtscsi_reinit_event_vq(sc);
+		if (error == 0)
+			vtscsi_enable_vqs_intr(sc);
 	}
 
 	vtscsi_dprintf(sc, VTSCSI_TRACE, "error=%d\n", error);
@@ -678,8 +746,12 @@ vtscsi_cam_async(void *cb_arg, uint32_t code, struct cam_path *path, void *arg)
 	vtscsi_dprintf(sc, VTSCSI_TRACE, "code=%u\n", code);
 
 	/*
-	 * TODO Once QEMU supports event reporting, we should
-	 *      (un)subscribe to events here.
+	 * VirtIO-SCSI eventq delivery is enabled by negotiated HOTPLUG/CHANGE
+	 * features and remains populated independently of CAM discovery
+	 * callbacks.  AC_FOUND_DEVICE and AC_LOST_DEVICE therefore require no
+	 * controlq subscription side effect here; tying eventq ownership to CAM
+	 * notifications would create a discovery loop and could leave the queue
+	 * empty while a removal is in flight.
 	 */
 	switch (code) {
 	case AC_FOUND_DEVICE:
@@ -1104,7 +1176,6 @@ vtscsi_execute_scsi_cmd(struct vtscsi_softc *sc, struct vtscsi_request *req)
 	int readable, writable, error;
 
 	sg = sc->vtscsi_sglist;
-	vq = sc->vtscsi_request_vq;
 	csio = &req->vsr_ccb->csio;
 	ccbh = &csio->ccb_h;
 	cmd_req = &req->vsr_cmd_req;
@@ -1115,6 +1186,15 @@ vtscsi_execute_scsi_cmd(struct vtscsi_softc *sc, struct vtscsi_request *req)
 	error = vtscsi_fill_scsi_cmd_sglist(sc, req, &readable, &writable);
 	if (error)
 		return (error);
+	vq = vtscsi_select_request_vq(sc,
+	    (sc->vtscsi_flags & VTSCSI_FLAG_INDIRECT) != 0 ?
+	    1 : readable + writable);
+	if (vq == NULL) {
+		ccbh->status = CAM_REQUEUE_REQ;
+		vtscsi_freeze_simq(sc, VTSCSI_REQUEST_VQ);
+		return (ENOSPC);
+	}
+	req->vsr_vq = vq;
 
 	req->vsr_complete = vtscsi_complete_scsi_cmd;
 	cmd_resp->response = -1;
@@ -1144,6 +1224,25 @@ vtscsi_execute_scsi_cmd(struct vtscsi_softc *sc, struct vtscsi_request *req)
 	    req, ccbh);
 
 	return (0);
+}
+
+static struct virtqueue *
+vtscsi_select_request_vq(struct vtscsi_softc *sc, int needed)
+{
+	struct virtqueue *vq;
+	int index;
+
+	for (int i = 0; i < sc->vtscsi_num_request_vqs; i++) {
+		index = (sc->vtscsi_next_request_vq + i) %
+		    sc->vtscsi_num_request_vqs;
+		vq = sc->vtscsi_request_vqs[index].vsv_vq;
+		if (virtqueue_nfree(vq) >= needed) {
+			sc->vtscsi_next_request_vq = (index + 1) %
+			    sc->vtscsi_num_request_vqs;
+			return (vq);
+		}
+	}
+	return (NULL);
 }
 
 static int
@@ -1241,8 +1340,7 @@ vtscsi_abort_timedout_scsi_cmd(struct vtscsi_softc *sc,
 	req->vsr_complete = vtscsi_complete_abort_timedout_scsi_cmd;
 	tmf_resp->response = -1;
 
-	error = vtscsi_execute_ctrl_req(sc, req, sg, 1, 1,
-	    VTSCSI_EXECUTE_ASYNC);
+	error = vtscsi_execute_ctrl_req(sc, req, sg, 1, 1);
 	if (error == 0)
 		return (0);
 
@@ -1283,7 +1381,8 @@ vtscsi_timedout_scsi_cmd(void *xreq)
 	 * Complete the request queue in case the timedout request is
 	 * actually just pending.
 	 */
-	vtscsi_complete_vq(sc, sc->vtscsi_request_vq);
+	if (to_req->vsr_vq != NULL)
+		vtscsi_complete_vq(sc, to_req->vsr_vq);
 	if (to_req->vsr_state == VTSCSI_REQ_STATE_FREE)
 		return;
 
@@ -1338,11 +1437,16 @@ static cam_status
 vtscsi_complete_scsi_cmd_response(struct vtscsi_softc *sc,
     struct ccb_scsiio *csio, struct virtio_scsi_cmd_resp *cmd_resp)
 {
-	uint32_t resp_sense_length;
+	uint32_t copy_sense_length, resp_resid, resp_sense_length;
 	cam_status status;
 
 	csio->scsi_status = cmd_resp->status;
-	csio->resid = vtscsi_htog32(sc, cmd_resp->resid);
+	resp_resid = vtscsi_htog32(sc, cmd_resp->resid);
+	if (!virtio_scsi_resid_valid(resp_resid, csio->dxfer_len)) {
+		csio->resid = csio->dxfer_len;
+		return (CAM_REQ_CMP_ERR);
+	}
+	csio->resid = resp_resid;
 
 	if (csio->scsi_status == SCSI_STATUS_OK)
 		status = CAM_REQ_CMP;
@@ -1352,15 +1456,12 @@ vtscsi_complete_scsi_cmd_response(struct vtscsi_softc *sc,
 	resp_sense_length = vtscsi_htog32(sc, cmd_resp->sense_len);
 
 	if (resp_sense_length > 0) {
+		copy_sense_length = virtio_scsi_sense_copy_len(
+		    resp_sense_length, csio->sense_len);
 		status |= CAM_AUTOSNS_VALID;
-
-		if (resp_sense_length < csio->sense_len)
-			csio->sense_resid = csio->sense_len - resp_sense_length;
-		else
-			csio->sense_resid = 0;
-
+		csio->sense_resid = csio->sense_len - copy_sense_length;
 		memcpy(&csio->sense_data, cmd_resp->sense,
-		    csio->sense_len - csio->sense_resid);
+		    copy_sense_length);
 	}
 
 	vtscsi_dprintf(sc, status == CAM_REQ_CMP ? VTSCSI_TRACE : VTSCSI_ERROR,
@@ -1411,29 +1512,16 @@ vtscsi_complete_scsi_cmd(struct vtscsi_softc *sc, struct vtscsi_request *req)
 	vtscsi_enqueue_request(sc, req);
 }
 
-static void
-vtscsi_poll_ctrl_req(struct vtscsi_softc *sc, struct vtscsi_request *req)
-{
-
-	/* XXX We probably shouldn't poll forever. */
-	req->vsr_flags |= VTSCSI_REQ_FLAG_POLLED;
-	do
-		vtscsi_complete_vq(sc, sc->vtscsi_control_vq);
-	while ((req->vsr_flags & VTSCSI_REQ_FLAG_COMPLETE) == 0);
-
-	req->vsr_flags &= ~VTSCSI_REQ_FLAG_POLLED;
-}
-
 static int
 vtscsi_execute_ctrl_req(struct vtscsi_softc *sc, struct vtscsi_request *req,
-    struct sglist *sg, int readable, int writable, int flag)
+    struct sglist *sg, int readable, int writable)
 {
 	struct virtqueue *vq;
 	int error;
 
 	vq = sc->vtscsi_control_vq;
 
-	MPASS(flag == VTSCSI_EXECUTE_POLL || req->vsr_complete != NULL);
+	MPASS(req->vsr_complete != NULL);
 
 	error = virtqueue_enqueue(vq, req, sg, readable, writable);
 	if (error) {
@@ -1448,9 +1536,6 @@ vtscsi_execute_ctrl_req(struct vtscsi_softc *sc, struct vtscsi_request *req,
 	}
 
 	virtqueue_notify(vq);
-	if (flag == VTSCSI_EXECUTE_POLL)
-		vtscsi_poll_ctrl_req(sc, req);
-
 	return (0);
 }
 
@@ -1530,8 +1615,7 @@ vtscsi_execute_abort_task_cmd(struct vtscsi_softc *sc,
 	req->vsr_complete = vtscsi_complete_abort_task_cmd;
 	tmf_resp->response = -1;
 
-	error = vtscsi_execute_ctrl_req(sc, req, sg, 1, 1,
-	    VTSCSI_EXECUTE_ASYNC);
+	error = vtscsi_execute_ctrl_req(sc, req, sg, 1, 1);
 
 fail:
 	vtscsi_dprintf(sc, VTSCSI_TRACE, "error=%d req=%p abort_ccb=%p "
@@ -1598,8 +1682,7 @@ vtscsi_execute_reset_dev_cmd(struct vtscsi_softc *sc,
 	req->vsr_complete = vtscsi_complete_reset_dev_cmd;
 	tmf_resp->response = -1;
 
-	error = vtscsi_execute_ctrl_req(sc, req, sg, 1, 1,
-	    VTSCSI_EXECUTE_ASYNC);
+	error = vtscsi_execute_ctrl_req(sc, req, sg, 1, 1);
 
 	vtscsi_dprintf(sc, VTSCSI_TRACE, "error=%d req=%p ccb=%p\n",
 	    error, req, ccbh);
@@ -1767,50 +1850,63 @@ vtscsi_execute_rescan_bus(struct vtscsi_softc *sc)
 
 static void
 vtscsi_transport_reset_event(struct vtscsi_softc *sc,
-    struct virtio_scsi_event *event)
+    struct virtio_scsi_event *event, uint32_t reason)
 {
 	target_id_t target_id;
 	lun_id_t lun_id;
 
 	vtscsi_get_request_lun(event->lun, &target_id, &lun_id);
 
-	switch (event->reason) {
+	switch (reason) {
 	case VIRTIO_SCSI_EVT_RESET_RESCAN:
 	case VIRTIO_SCSI_EVT_RESET_REMOVED:
 		vtscsi_execute_rescan(sc, target_id, lun_id);
 		break;
 	default:
 		device_printf(sc->vtscsi_dev,
-		    "unhandled transport event reason: %d\n", event->reason);
+		    "unhandled transport event reason: %u\n", reason);
 		break;
 	}
 }
 
 static void
+vtscsi_param_change_event(struct vtscsi_softc *sc,
+    struct virtio_scsi_event *event)
+{
+	target_id_t target_id;
+	lun_id_t lun_id;
+
+	vtscsi_get_request_lun(event->lun, &target_id, &lun_id);
+	vtscsi_execute_rescan(sc, target_id, lun_id);
+}
+
+static int
 vtscsi_handle_event(struct vtscsi_softc *sc, struct virtio_scsi_event *event)
 {
-	int error __diagused;
+	uint32_t event_type, reason;
 
-	if ((event->event & VIRTIO_SCSI_T_EVENTS_MISSED) == 0) {
-		switch (event->event) {
-		case VIRTIO_SCSI_T_TRANSPORT_RESET:
-			vtscsi_transport_reset_event(sc, event);
-			break;
-		default:
-			device_printf(sc->vtscsi_dev,
-			    "unhandled event: %d\n", event->event);
-			break;
-		}
-	} else
+	event_type = vtscsi_gtoh32(sc, event->event);
+	reason = vtscsi_gtoh32(sc, event->reason);
+	if ((event_type & VIRTIO_SCSI_T_EVENTS_MISSED) != 0) {
 		vtscsi_execute_rescan_bus(sc);
+		event_type &= ~VIRTIO_SCSI_T_EVENTS_MISSED;
+	}
+	switch (event_type) {
+	case VIRTIO_SCSI_T_NO_EVENT:
+		break;
+	case VIRTIO_SCSI_T_TRANSPORT_RESET:
+		vtscsi_transport_reset_event(sc, event, reason);
+		break;
+	case VIRTIO_SCSI_T_PARAM_CHANGE:
+		vtscsi_param_change_event(sc, event);
+		break;
+	default:
+		device_printf(sc->vtscsi_dev,
+		    "unhandled event: %u\n", event_type);
+		break;
+	}
 
-	/*
-	 * This should always be successful since the buffer
-	 * was just dequeued.
-	 */
-	error = vtscsi_enqueue_event_buf(sc, event);
-	KASSERT(error == 0,
-	    ("cannot requeue event buffer: %d", error));
+	return (vtscsi_enqueue_event_buf(sc, event));
 }
 
 static int
@@ -1852,7 +1948,8 @@ vtscsi_init_event_vq(struct vtscsi_softc *sc)
 	 * when attempting to notify the event virtqueue. This was fixed
 	 * when hotplug support was added.
 	 */
-	if (sc->vtscsi_flags & VTSCSI_FLAG_HOTPLUG)
+	if ((sc->vtscsi_flags &
+	    (VTSCSI_FLAG_HOTPLUG | VTSCSI_FLAG_CHANGE)) != 0)
 		size = sc->vtscsi_event_buf_size;
 	else
 		size = 0;
@@ -1861,7 +1958,8 @@ vtscsi_init_event_vq(struct vtscsi_softc *sc)
 		return (0);
 
 	for (i = 0; i < VTSCSI_NUM_EVENT_BUFS; i++) {
-		event = &sc->vtscsi_event_bufs[i];
+		event = (struct virtio_scsi_event *)(sc->vtscsi_event_bufs +
+		    (size_t)i * size);
 
 		error = vtscsi_enqueue_event_buf(sc, event);
 		if (error)
@@ -1878,25 +1976,30 @@ vtscsi_init_event_vq(struct vtscsi_softc *sc)
 	return (error);
 }
 
-static void
+static int
 vtscsi_reinit_event_vq(struct vtscsi_softc *sc)
 {
 	struct virtio_scsi_event *event;
 	int i, error;
 
-	if ((sc->vtscsi_flags & VTSCSI_FLAG_HOTPLUG) == 0 ||
+	if ((sc->vtscsi_flags &
+	    (VTSCSI_FLAG_HOTPLUG | VTSCSI_FLAG_CHANGE)) == 0 ||
 	    sc->vtscsi_event_buf_size < sizeof(struct virtio_scsi_event))
-		return;
+		return (0);
 
+	error = 0;
 	for (i = 0; i < VTSCSI_NUM_EVENT_BUFS; i++) {
-		event = &sc->vtscsi_event_bufs[i];
+		event = (struct virtio_scsi_event *)(sc->vtscsi_event_bufs +
+		    (size_t)i * sc->vtscsi_event_buf_size);
 
 		error = vtscsi_enqueue_event_buf(sc, event);
 		if (error)
 			break;
 	}
 
-	KASSERT(i > 0, ("cannot reinit event vq: %d", error));
+	if (i == 0)
+		return (error != 0 ? error : EIO);
+	return (0);
 }
 
 static void
@@ -1920,8 +2023,8 @@ vtscsi_complete_vqs_locked(struct vtscsi_softc *sc)
 
 	VTSCSI_LOCK_OWNED(sc);
 
-	if (sc->vtscsi_request_vq != NULL)
-		vtscsi_complete_vq(sc, sc->vtscsi_request_vq);
+	for (int i = 0; i < sc->vtscsi_num_request_vqs; i++)
+		vtscsi_complete_vq(sc, sc->vtscsi_request_vqs[i].vsv_vq);
 	if (sc->vtscsi_control_vq != NULL)
 		vtscsi_complete_vq(sc, sc->vtscsi_control_vq);
 }
@@ -2001,8 +2104,8 @@ vtscsi_drain_vqs(struct vtscsi_softc *sc)
 
 	if (sc->vtscsi_control_vq != NULL)
 		vtscsi_drain_vq(sc, sc->vtscsi_control_vq);
-	if (sc->vtscsi_request_vq != NULL)
-		vtscsi_drain_vq(sc, sc->vtscsi_request_vq);
+	for (int i = 0; i < sc->vtscsi_num_request_vqs; i++)
+		vtscsi_drain_vq(sc, sc->vtscsi_request_vqs[i].vsv_vq);
 	if (sc->vtscsi_event_vq != NULL)
 		vtscsi_drain_event_vq(sc);
 }
@@ -2091,9 +2194,16 @@ vtscsi_alloc_requests(struct vtscsi_softc *sc)
 	 * as it (should) be much more frequently used. Some additional
 	 * requests are allocated for internal (TMF) use.
 	 */
-	nreqs = virtqueue_size(sc->vtscsi_request_vq);
-	if ((sc->vtscsi_flags & VTSCSI_FLAG_INDIRECT) == 0)
-		nreqs /= VTSCSI_MIN_SEGMENTS;
+	nreqs = 0;
+	for (int i = 0; i < sc->vtscsi_num_request_vqs; i++) {
+		int queue_requests;
+
+		queue_requests =
+		    virtqueue_size(sc->vtscsi_request_vqs[i].vsv_vq);
+		if ((sc->vtscsi_flags & VTSCSI_FLAG_INDIRECT) == 0)
+			queue_requests /= VTSCSI_MIN_SEGMENTS;
+		nreqs += queue_requests;
+	}
 	nreqs += VTSCSI_RESERVED_REQUESTS;
 
 	for (i = 0; i < nreqs; i++) {
@@ -2143,6 +2253,7 @@ vtscsi_enqueue_request(struct vtscsi_softc *sc, struct vtscsi_request *req)
 
 	req->vsr_ccb = NULL;
 	req->vsr_complete = NULL;
+	req->vsr_vq = NULL;
 	req->vsr_ptr0 = NULL;
 	req->vsr_state = VTSCSI_REQ_STATE_FREE;
 	req->vsr_flags = 0;
@@ -2178,9 +2289,6 @@ vtscsi_dequeue_request(struct vtscsi_softc *sc)
 static void
 vtscsi_complete_request(struct vtscsi_request *req)
 {
-
-	if (req->vsr_flags & VTSCSI_REQ_FLAG_POLLED)
-		req->vsr_flags |= VTSCSI_REQ_FLAG_COMPLETE;
 
 	if (req->vsr_complete != NULL)
 		req->vsr_complete(req->vsr_softc, req);
@@ -2226,6 +2334,8 @@ vtscsi_event_vq_intr(void *xsc)
 	struct vtscsi_softc *sc;
 	struct virtqueue *vq;
 	struct virtio_scsi_event *event;
+	uint32_t len;
+	int error;
 
 	sc = xsc;
 	vq = sc->vtscsi_event_vq;
@@ -2233,8 +2343,28 @@ vtscsi_event_vq_intr(void *xsc)
 again:
 	VTSCSI_LOCK(sc);
 
-	while ((event = virtqueue_dequeue(vq, NULL)) != NULL)
-		vtscsi_handle_event(sc, event);
+	while ((event = virtqueue_dequeue(vq, &len)) != NULL) {
+		if (!virtio_scsi_event_used_len_valid(len,
+		    sc->vtscsi_event_buf_size)) {
+			device_printf(sc->vtscsi_dev,
+			    "event returned invalid response length %u\n", len);
+			/*
+			 * The malformed completion may have replaced a real
+			 * inventory event.  Rescan the whole bus before
+			 * returning the zeroed buffer so loss is never silent.
+			 */
+			vtscsi_execute_rescan_bus(sc);
+			error = vtscsi_enqueue_event_buf(sc, event);
+		} else
+			error = vtscsi_handle_event(sc, event);
+		if (error != 0) {
+			device_printf(sc->vtscsi_dev,
+			    "cannot requeue event buffer: %d\n", error);
+			(void)vtscsi_reset_bus(sc);
+			VTSCSI_UNLOCK(sc);
+			return;
+		}
+	}
 
 	if (virtqueue_enable_intr(vq) != 0) {
 		virtqueue_disable_intr(vq);
@@ -2248,16 +2378,18 @@ again:
 static void
 vtscsi_request_vq_intr(void *xsc)
 {
+	struct vtscsi_vq *request_vq;
 	struct vtscsi_softc *sc;
 	struct virtqueue *vq;
 
-	sc = xsc;
-	vq = sc->vtscsi_request_vq;
+	request_vq = xsc;
+	sc = request_vq->vsv_softc;
+	vq = request_vq->vsv_vq;
 
 again:
 	VTSCSI_LOCK(sc);
 
-	vtscsi_complete_vq(sc, sc->vtscsi_request_vq);
+	vtscsi_complete_vq(sc, vq);
 
 	if (virtqueue_enable_intr(vq) != 0) {
 		virtqueue_disable_intr(vq);
@@ -2274,7 +2406,8 @@ vtscsi_disable_vqs_intr(struct vtscsi_softc *sc)
 
 	virtqueue_disable_intr(sc->vtscsi_control_vq);
 	virtqueue_disable_intr(sc->vtscsi_event_vq);
-	virtqueue_disable_intr(sc->vtscsi_request_vq);
+	for (int i = 0; i < sc->vtscsi_num_request_vqs; i++)
+		virtqueue_disable_intr(sc->vtscsi_request_vqs[i].vsv_vq);
 }
 
 static void
@@ -2283,7 +2416,8 @@ vtscsi_enable_vqs_intr(struct vtscsi_softc *sc)
 
 	virtqueue_enable_intr(sc->vtscsi_control_vq);
 	virtqueue_enable_intr(sc->vtscsi_event_vq);
-	virtqueue_enable_intr(sc->vtscsi_request_vq);
+	for (int i = 0; i < sc->vtscsi_num_request_vqs; i++)
+		virtqueue_enable_intr(sc->vtscsi_request_vqs[i].vsv_vq);
 }
 
 static void
@@ -2316,6 +2450,9 @@ vtscsi_setup_sysctl(struct vtscsi_softc *sc)
 	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "debug_level",
 	    CTLFLAG_RW, &sc->vtscsi_debug, 0,
 	    "Debug level");
+	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "num_queues",
+	    CTLFLAG_RD, &sc->vtscsi_num_request_vqs, 0,
+	    "Number of active request virtqueues");
 
 	SYSCTL_ADD_ULONG(ctx, child, OID_AUTO, "scsi_cmd_timeouts",
 	    CTLFLAG_RD, &stats->scsi_cmd_timeouts,

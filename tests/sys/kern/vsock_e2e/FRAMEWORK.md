@@ -30,6 +30,21 @@ Plan a release without root or booting a VM:
 /usr/tests/sys/kern/vsock_e2e/virtio-lab plan --profile release
 ```
 
+For a repeatable focused diagnosis, add one or more case identifiers from the
+plan:
+
+```
+/usr/tests/sys/kern/vsock_e2e/virtio-lab plan --profile checkpoint \
+    --case checkpoint-balloon-modern \
+    --case checkpoint-rtc-alarm-modern
+```
+
+`--case` preserves manifest order, rejects identifiers outside the selected
+profile, and becomes part of the run's resume identity.  A filtered plan or
+run intentionally does not claim that the profile coverage contract passed;
+`coverage --case` is rejected.  Release and qualification promotion still
+require the unfiltered profile.
+
 Run up to three independent cases concurrently:
 
 ```sh
@@ -42,8 +57,17 @@ su root -c '/usr/tests/sys/kern/vsock_e2e/virtio-lab run \
 The `release` profile first runs the exclusive `host-regression` gate.  It
 executes the requirements ledger, host-helper controls, and the canonical
 VirtIO/vsock/AF_VSOCK ATF runner.  No VM worker is launched unless that gate
-passes.  The individual `vmfree` cases remain available for focused
-development and the `smoke` profile, without duplicating them in a release
+passes.  A second exclusive VM-free gate compiles the complete in-tree 5BSD
+VirtIO guest stack with `-Werror` (core and PCI transports plus net, block,
+SCSI, balloon, RNG, console, GPU, input, 9P, RTC, and vsock modules).  This
+proves that the drivers used by the 5BSD activation matrix build from the same
+source revision; successful compilation does not replace live feature
+activation in the disposable guest image.  The `vmfree` and `nested` profiles
+also compile the production `vmm.ko` in an isolated object tree.  That closes
+the build/link boundary for the Intel nested implementation, but cannot
+replace the L1/L2 hardware evidence produced by `nested-vmx-live`.  The
+individual `vmfree` cases remain available for focused development and the
+`smoke` profile, without duplicating them in a release
 run.  A gate failure records every unstarted case as `BLOCKED`; `--resume`
 reruns the failed gate and starts VM work only after it succeeds.
 The gate includes the AF_VSOCK isolation tests, so `/dev/mac_capability` must
@@ -85,15 +109,137 @@ successful cases and rejects a changed manifest, profile, ISO, or override
 set.  The `checkpoint` and `soak` profiles separate expensive lifecycle and
 longevity gates from the ordinary smoke profile.
 
+Nested VMX has a separate `nested` profile because it is Intel-only,
+experimental, and default-off.  This profile first runs the same architectural
+host-regression gate, then executes one exclusive hardware case through the
+strict L1-driver evidence contract:
+
+```sh
+su root -c '/usr/tests/sys/kern/vsock_e2e/virtio-lab run \
+    --profile nested --jobs 1 \
+    --workdir /tmp/waspnest-nested-vmx \
+    --set NESTED_L1_RUNNER=/path/to/reviewed-l1-runner \
+    --set NESTED_L1_IMAGE=/path/to/linux-kvm-l1.raw \
+    --set NESTED_LINUX_L2_IMAGE=/path/to/linux-l2.raw \
+    --set NESTED_FIVEBSD_L2_IMAGE=/path/to/fivebsd-l2.raw'
+```
+
+The runner must be root-owned and not writable by group or other.  It boots
+the pinned Linux/KVM L1 with `x86.nested_vmx=true`, runs both L2 operating
+systems, and writes the four-column evidence transaction named by
+`NESTED_EVIDENCE_FILE`.  Every evidence token must resolve below
+`NESTED_LIVE_ARTIFACT_DIR` to a distinct, nonempty, owner-only artifact.  Its
+version-3 header names the matching feature and role, records `result=PASS`,
+copies the wrapper-generated `NESTED_LIVE_RUN_ID`, records strict UTC start and
+finish bounds, and includes exactly one `assertion` record for every normative
+requirement ID assigned to that feature group plus one corresponding `proof`
+record.  Each proof names that requirement, a guest-test or host-trace type
+appropriate to the artifact role, a stable test/trace label, and a positive
+observation count.  Missing, duplicate, zero-count, unknown, cross-role, or
+cross-group proof IDs fail closed.  The host wrapper derives the required feature and artifact
+counts from the validated live ledger (currently twelve groups and 36 artifacts),
+separate Linux-L2, 5BSD-L2, and host assertions, unchanged SHA-256 values for
+the runner, all images, and bhyve, plus stable hashes while the evidence
+bundle is validated and atomically published.  The profile is orchestration, not
+evidence by itself; it remains outside `qualification` until the live ledger
+is complete and nested VMX is ready to leave its default-off policy.  On the
+Intel development target, `intel-qualification` deliberately composes that
+hardware profile with portable qualification while leaving the portable
+profile usable on future non-Intel hosts.
+
+The VPID/INVVPID feature group additionally requires the test host to have
+booted with `hw.vmm.vmx.nested_vpid=1` as well as
+`hw.vmm.vmx.nested=1`.  A second boot with the VPID tunable off must run the
+`nested-default` profile in a distinct work directory and prove that VPID and
+INVVPID are absent while untagged L2 execution remains functional.  The
+wrapper binds each transaction to its observed boot policy, kernel-version
+hash, and loaded `vmm.ko` image hash in
+`host-policy.tsv`; one transaction cannot satisfy the other policy.  The
+installed `validate-vmx-nested-policy-pair.sh` tool revalidates both sealed
+transactions and requires identical qualification inputs and exact kernel and
+VMM module build identity.  The
+positive VPID group must cover
+all four virtual INVVPID types, tag reuse, CPU migration, reset, active-L2
+restore, allocation exhaustion, and transactional restore abort before the
+default policy can be reconsidered.
+
+`full-qualification` is the single-machine release gate for this Intel host.
+It composes portable `qualification`, nested-VMX hardware qualification, and
+the representative split/packed OSS sound and sound-checkpoint cases.  Run it
+through the wrapper so host preparation, audio endpoints, nested inputs,
+cleanup, resumability, and the result ledger are one transaction:
+
+```sh
+su root -c 'env \
+    PROFILE=full-qualification JOBS=3 \
+    ISO=/path/to/alpine-virt.iso \
+    FIVEBSD_IMAGE=/path/to/disposable-freebsd.raw \
+    UPLINK=re0 SOUND_PLAY=/dev/dsp SOUND_RECORD=/dev/dsp \
+    NESTED_L1_RUNNER=/path/to/reviewed-l1-runner \
+    NESTED_L1_IMAGE=/path/to/linux-kvm-l1.raw \
+    NESTED_LINUX_L2_IMAGE=/path/to/linux-l2.raw \
+    NESTED_FIVEBSD_L2_IMAGE=/path/to/fivebsd-l2.raw \
+    WORKDIR=/tmp/waspnest-full-qualification \
+    sh /usr/tests/sys/kern/vsock_e2e/run-waspnest-qualification.sh'
+```
+
+Set `RESUME=yes` with the identical inputs to reuse only successful cases.
+The profile currently resolves to 149 de-duplicated cases.  Portable hosts can
+continue to use `qualification`; machines without suitable OSS endpoints can
+use `intel-qualification` and keep audio as an explicit external gate.
+
+Before a privileged run, `PLAN_ONLY=yes` validates the selected profile and
+prints the exact `virtio-lab` argument vector without creating a bridge,
+changing host networking, or starting a VM.  It is particularly useful for
+the nested-only profiles, whose L1/L2 inputs are independent of the ordinary
+Alpine and disposable-5BSD images:
+
+```sh
+env PLAN_ONLY=yes PROFILE=nested JOBS=1 \
+    NESTED_L1_RUNNER=/path/to/reviewed-l1-runner \
+    NESTED_L1_IMAGE=/path/to/linux-kvm-l1.raw \
+    NESTED_LINUX_L2_IMAGE=/path/to/linux-l2.raw \
+    NESTED_FIVEBSD_L2_IMAGE=/path/to/fivebsd-l2.raw \
+    sh /usr/tests/sys/kern/vsock_e2e/run-waspnest-qualification.sh
+```
+
+The emitted nested plan must contain no `--prepare-host`, `--uplink`, `--iso`,
+or `--fivebsd-image` argument.  A release-family plan intentionally rejects
+missing Alpine, 5BSD-image, and uplink inputs.
+
 The YAML `coverage` section is the release contract for behavior-affecting
 VirtIO test options.  A release plan fails when any declared value lacks a
-case.  `allowed_overrides` is the deliberate command-line environment API, so
+case.  The `coverage` verb therefore prints a `SCOPE` line before its stable
+`COVERED` records: those records prove the selected manifest has the declared
+option combinations, not that any guest case has run or passed.  Runtime
+evidence belongs exclusively to a completed `run` summary and its per-case
+terminal records.  `allowed_overrides` is the deliberate command-line environment API, so
 a misspelled or undeclared `--set` is rejected.  Infrastructure paths,
 diagnostic verbosity, allocation values, data-set sizes, and soak thresholds
 are not treated as pairwise feature dimensions.  The standards requirements
 ledger is a separate VM-free case, which prevents an advertised or mandatory
 VirtIO requirement from silently lacking implementation and positive-test
-evidence.  Together these checks cover declared supported behavior; they do
+evidence.  The adjacent `virtio-feature-activation.tsv` ledger separately
+records whether Linux and 5BSD actually negotiate and drive each optional
+mechanism.  An `exercised` entry requires a guest-visible assertion, real
+data/control traffic, and host-side evidence from the distinct implementation
+path.  `pending` and `driver-gap` are explicit non-coverage states; they cannot
+be summarized as a pass merely because another guest exercised the feature.
+Each exercised guest status also names its exact scheduled `virtio-lab.yaml`
+case.  The VM-free validator rejects missing and unknown case IDs; a
+cross-device claim lists every applicable case instead of using one device as
+proof for the others.
+
+Coverage values are scalar unless a contract explicitly sets `tokens: true`.
+Tokenized contracts split an environment value on ASCII whitespace and are
+used for domains such as a combined `DEVICES` topology.  This lets one VM
+prove that every named endpoint was present while the live verifier still
+requires independent translated-DMA activity for each enumerated endpoint;
+it does not turn one endpoint's activity into evidence for another.
+Each `artifact:assertion` evidence reference must also resolve to an explicit
+`VIRTIO_ACTIVATION_ASSERTION: assertion` marker in that artifact.  Fabricated
+labels and real files with nonexistent markers fail validation.
+Together these checks cover declared supported behavior; they do
 not claim that unsupported VirtIO features or every host backend combination
 has become supported.
 
@@ -161,9 +307,11 @@ ISO=/path/to/alpine-virt.iso ./run-alpine-matrix.sh
 The declarative release lab runs the complete sanitizer/device harness and
 the installed ATF suites once as its exclusive host gate, then starts the VM
 matrix.  It also runs `run-5bsd-auto.sh` against a caller-supplied 5BSD raw
-base image.  A private sparse copy is booted once with modern PCI transport and
-once with the default legacy command-line behavior, and validates vsock and
-RNG attachment plus the full bidirectional vsock matrix:
+   base image.  A private sparse copy is booted once with modern PCI transport and
+once with the default legacy command-line behavior, and validates root
+virtio-blk I/O, vsock and RNG attachment, plus the full bidirectional vsock
+matrix.  A separate scheduled lane requires packed block, RNG, and vsock
+queues and correlates each guest workload with host queue evidence:
 
 ```sh
 /usr/libexec/flua ./virtio-lab.lua run --profile release --jobs 3 \
@@ -191,17 +339,21 @@ after post-reset verification.  The first barrier guarantees both providers
 are attached before transport traffic begins.  Requiring both guests at the
 later barriers proves simultaneous provider usability through reset instead
 of only proving that two bhyve processes existed at the same time.
+The checkpoint profile also runs this executor with reset disabled and
+checkpoint enabled.  Pre- and post-checkpoint barriers keep both distinct CID
+providers attached while each VM proves active-connection rejection and
+rollback, then completes an idle portable save and destination restore.
 
-The default topology order is
-`net vsock-userspace vsock-kernel rng block scsi console 9p input combined`.
-Net, both vsock backends, RNG, block, SCSI, console, and 9P run both `modern`
-and `legacy`; input's real-VM data path runs only with its modern interface
+The default topology order also includes the modern-only `fs` backend between
+9P and input.  Net, both vsock backends, RNG, block, SCSI, console, and 9P run
+both `modern` and `legacy`; virtio-fs and input's real-VM data paths run only
+with their modern interfaces
 because VirtIO 1.4 assigns no transitional PCI identity to the input device,
-and upstream Alpine has no driver for bhyve's historical hybrid interface.
+and defines virtio-fs as a modern device.
 Every topology retains and verifies the network interface used to provision
 the guest.  SCSI uses a uniquely sized, fully backed CTL ramdisk which is
 removed on exit.  The legacy combined run contains net, vsock, RNG, block,
-SCSI, console, and 9P and reports the input omission.  A development run can
+SCSI, console, and 9P and omits modern-only devices.  A development run can
 narrow either axis, for example:
 
 ```sh
@@ -222,8 +374,11 @@ old endpoints to disconnect within 30 seconds, and verifies fresh vsock paths
 and the same block prefix after the new guest boot.
 
 `VSOCK_SOAK_ITERATIONS=N` converts either focused vsock topology into a
-same-process longevity gate.  After the initial full matrix, it repeats that
-matrix `N` times and checks bhyve descriptor/RSS growth after every iteration.
+same-process longevity gate.  It first runs the full conformance matrix, then
+runs `N` hot iterations containing concurrent STREAM and SEQPACKET traffic in
+both directions; each worker proves connection, tagged data integrity,
+orderly close, and endpoint reuse.  It performs full conformance again after
+the hot loop and checks bhyve descriptor/RSS growth after every iteration.
 The kernel backend additionally requires `kern.vsock.cur_connections` to
 return to its post-warmup baseline.  This is the acceptance gate for slow
 descriptor, connection, and heap leaks; it complements rather than replaces
@@ -233,14 +388,33 @@ the sanitizer and deterministic race harnesses.
 VirtIO PCI function, reruns the real network and selected device data checks,
 and bounds bhyve descriptor and RSS growth after every cycle.  Block and SCSI
 checks verify the original data after each reset; console, 9P, RNG, and vsock
-perform fresh transfers.  The one-shot input provider is excluded from this
-gate.  For example:
+perform fresh transfers.  Input is included through the long-lived
+`uinput-inject` provider: each rebind starts a fresh guest event exchange and
+requires a new host-observed LED response.  This avoids treating a stale event
+node or a one-shot provider result as reset evidence.  For example:
 
 ```sh
 ISO=/path/to/alpine-virt.iso VM_FREE_GATES=no \
 TOPOLOGIES='net vsock-userspace vsock-kernel rng block scsi console 9p' \
 TRANSPORTS=modern \
 VIRTIO_RESET_SOAK_ITERATIONS=100 ./run-alpine-matrix.sh
+```
+
+`virtio-lab.lua --profile soak-smoke` is the bounded operational screen.  It
+runs three hot iterations for each userspace and kernel vsock backend, and
+three reset/rebind cycles for the core, optional-device, and IOMMU fabrics.
+Unlike a reduced one-off command, it uses the same host-regression gate,
+resource serialization, CID allocation, independent coverage contracts, and
+post-rebind data checks as the full soak profile.  It verifies functionality
+after every reset.  Use it for a practical pre-commit or post-upgrade gate;
+the `soak` profile retains the 100-cycle endurance evidence and must not be
+replaced by the bounded screen in a release report.
+
+```sh
+su root -c '/usr/libexec/flua \
+    /usr/tests/sys/kern/vsock_e2e/virtio-lab.lua \
+    run --profile soak-smoke --jobs 3 \
+    --iso /path/to/alpine-virt.iso --workdir /tmp/virtio-soak-smoke'
 ```
 
 `VM_FREE_GATES=no` skips the first two gates for a repeated VM-only debugging
@@ -250,13 +424,21 @@ controls otherwise work from either a source/object build or an installed test
 package, using helper binaries installed beside the scripts when no Makefile is
 present.
 
-The `checkpoint` profile currently covers modern net, RNG, block, and idle
-userspace-vsock devices.  Those are the devices with complete bhyve
-pause/snapshot/resume callbacks.  SCSI, console, 9P, and input remain ordinary
-boot/reset data-path coverage and must not be reported as checkpoint-tested
-until their device-specific external and in-flight state can be quiesced,
-serialized, and restored.  The manifest's `checkpoint-devices` contract makes
-this boundary machine-checkable.
+The `checkpoint` profile is the checkpoint qualification matrix, not the
+historical four-device smoke test.  It has modern split- and packed-ring cases
+for net, RNG, balloon, RTC, block, SCSI, userspace and kernel vsock, console,
+input, 9P, virtio-fs, GPU, virtio-mem, pmem, sound, and translated-DMA/IOMMU
+compositions where the device contract supports them.  The cases select the
+appropriate device-specific policy: for example, active 9P and active console
+checkpoints are expected to reject and roll back intact, while the virtio-fs
+lane exercises its explicitly reconstructible backend session.
+
+The manifest's `checkpoint-devices` contract makes that intended matrix
+machine-checkable.  A manifest entry is still only a qualification obligation:
+it must not be reported as live checkpoint evidence until the root-only case
+has passed using a source-matched snapshot-enabled kernel, bhyvectl, bhyve,
+and backend.  In particular, a feature negotiation or an idle boot does not
+substitute for a post-restore data-path assertion.
 
 ## FreeBSD guest queue-reset acceptance
 

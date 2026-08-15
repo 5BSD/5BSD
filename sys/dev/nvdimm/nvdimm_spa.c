@@ -357,6 +357,14 @@ nvdimm_spa_g_thread(void *arg)
 			/*
 			 * XXX flush IMC
 			 */
+			/*
+			 * Some SPA ranges are owned by a transport whose host backing
+			 * needs a second durability operation.  The hook is deliberately
+			 * invoked only from this serialized GEOM worker, after local cache
+			 * writeback and before BIO_FLUSH completes.
+			 */
+			if (sc->dev->spa_flush != NULL)
+				error = sc->dev->spa_flush(sc->dev->spa_flush_arg);
 			goto completed;
 		}
 		
@@ -582,12 +590,16 @@ nvdimm_spa_dev_fini(struct nvdimm_spa_dev *dev)
 		g_topology_lock();
 		nvdimm_spa_g_destroy_geom(NULL, dev->spa_g->class, dev->spa_g);
 		g_topology_unlock();
+		dev->spa_g = NULL;
 	}
 	if (dev->spa_dev != NULL) {
 		destroy_dev(dev->spa_dev);
 		dev->spa_dev = NULL;
 	}
-	vm_object_deallocate(dev->spa_obj);
+	if (dev->spa_obj != NULL) {
+		vm_object_deallocate(dev->spa_obj);
+		dev->spa_obj = NULL;
+	}
 	if (dev->spa_kva != NULL) {
 		pmap_large_unmap(dev->spa_kva, dev->spa_len);
 		dev->spa_kva = NULL;

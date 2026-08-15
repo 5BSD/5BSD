@@ -81,6 +81,7 @@
 #include <sys/zfs_onexit.h>
 #include <sys/zfs_vfsops.h>
 #include <sys/zfs_znode.h>
+#include <sys/zfshandle.h>
 #include <sys/zio_checksum.h>
 #include <sys/zone.h>
 #include <sys/zvol.h>
@@ -128,6 +129,10 @@ zfsdev_ioctl(struct cdev *dev, ulong_t zcmd, caddr_t arg, int flag,
 #endif
 	int rc, error;
 	void *uaddr;
+
+	/* 5BSD: TrustedZFS handle minting; see zfs_handle.c. */
+	if (zfs_handle_is_mint_ioctl(zcmd))
+		return (zfs_handle_mint_ioctl(zcmd, arg, td));
 
 	len = IOCPARM_LEN(zcmd);
 	vecnum = zcmd & 0xff;

@@ -55,6 +55,9 @@ struct audio_params {
  * Returns NULL on error and the address of the audio player instance
  */
 struct audio *audio_init(const char *dev_name, uint8_t dir);
+struct audio *audio_init_nonblock(const char *dev_name, uint8_t dir);
+void audio_destroy(struct audio *aud);
+int audio_fd(const struct audio *aud);
 
 /*
  * audio_set_params - reset the sound device and set the audio params
@@ -72,6 +75,8 @@ int audio_set_params(struct audio *aud, struct audio_params *params);
  * Returns -1 on error and 0 on success
  */
 int audio_playback(struct audio *aud, const uint8_t *buf, size_t count);
+ssize_t audio_playback_some(struct audio *aud, const uint8_t *buf,
+	    size_t count);
 
 /*
  * audio_record - records samples from the sound device using blocking
@@ -82,5 +87,6 @@ int audio_playback(struct audio *aud, const uint8_t *buf, size_t count);
  * Returns -1 on error and 0 on success
  */
 int audio_record(struct audio *aud, uint8_t *buf, size_t count);
+ssize_t audio_record_some(struct audio *aud, uint8_t *buf, size_t count);
 
 #endif  /* _AUDIO_EMUL_H_ */

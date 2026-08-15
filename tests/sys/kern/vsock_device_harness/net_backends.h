@@ -27,6 +27,7 @@
 #define VIRTIO_NET_F_HASH_REPORT (1ULL << 57)
 #define VIRTIO_NET_F_RSS	(1ULL << 60)
 #define NETBE_MAX_RECORD_SIZE	(65589U + 12U)
+#define NETBE_CHECKPOINT_ID_MAX	255
 
 struct virtio_net_rxhdr {
 	uint8_t vrh_flags;
@@ -46,6 +47,7 @@ void netbe_cleanup(net_backend_t *);
 uint64_t netbe_get_cap(net_backend_t *);
 int netbe_set_cap(net_backend_t *, uint64_t, unsigned int);
 size_t netbe_get_vnet_hdr_len(net_backend_t *);
+const char *netbe_checkpoint_identity(net_backend_t *);
 ssize_t netbe_send(net_backend_t *, const struct iovec *, int);
 ssize_t netbe_peek_recvlen(net_backend_t *);
 ssize_t netbe_recv(net_backend_t *, const struct iovec *, int);

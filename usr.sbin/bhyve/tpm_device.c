@@ -133,16 +133,21 @@ tpm_device_create(struct tpm_device **const new_dev, struct vmctx *const vm_ctx,
 	const char *value;
 	int error;
 
-	if (new_dev == NULL || vm_ctx == NULL) {
+	if (new_dev == NULL || vm_ctx == NULL || nvl == NULL) {
 		error = EINVAL;
 		goto err_out;
 	}
+	*new_dev = NULL;
 
 	set_config_value_node_if_unset(nvl, "intf", "crb");
 	set_config_value_node_if_unset(nvl, "ppi", "qemu");
 
 	value = get_config_value_node(nvl, "version");
-	assert(value != NULL);
+	if (value == NULL) {
+		warnx("%s: TPM version is required", __func__);
+		error = EINVAL;
+		goto err_out;
+	}
 	if (strcmp(value, "2.0")) {
 		warnx("%s: unsupported tpm version %s", __func__, value);
 		error = EINVAL;
@@ -163,7 +168,11 @@ tpm_device_create(struct tpm_device **const new_dev, struct vmctx *const vm_ctx,
 		goto err_out;
 
 	value = get_config_value_node(nvl, "type");
-	assert(value != NULL);
+	if (value == NULL) {
+		warnx("%s: TPM backend type is required", __func__);
+		error = EINVAL;
+		goto err_out;
+	}
 	SET_FOREACH(ppemul, tpm_emul_set) {
 		if (strcmp(value, (*ppemul)->name))
 			continue;
@@ -183,6 +192,10 @@ tpm_device_create(struct tpm_device **const new_dev, struct vmctx *const vm_ctx,
 	}
 
 	value = get_config_value_node(nvl, "intf");
+	if (value == NULL) {
+		error = EINVAL;
+		goto err_out;
+	}
 	SET_FOREACH(ppintf, tpm_intf_set) {
 		if (strcmp(value, (*ppintf)->name)) {
 			continue;
@@ -204,6 +217,10 @@ tpm_device_create(struct tpm_device **const new_dev, struct vmctx *const vm_ctx,
 	}
 
 	value = get_config_value_node(nvl, "ppi");
+	if (value == NULL) {
+		error = EINVAL;
+		goto err_out;
+	}
 	SET_FOREACH(pp_ppi, tpm_ppi_set) {
 		if (strcmp(value, (*pp_ppi)->name)) {
 			continue;

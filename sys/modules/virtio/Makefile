@@ -22,6 +22,12 @@
 # SUCH DAMAGE.
 #
 
-SUBDIR=	virtio pci network block balloon scsi random console p9fs vsock
+SUBDIR=	virtio pci network block balloon scsi random console gpu input p9fs \
+	rtc vsock sound fs mem iommu
+
+# The current PMEM frontend consumes the amd64-only nvdimm provider.
+.if ${MACHINE_CPUARCH} == "amd64"
+SUBDIR+=	pmem
+.endif
 
 .include <bsd.subdir.mk>

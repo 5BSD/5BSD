@@ -29,14 +29,17 @@
 #define FS_P9FS_P9_TRANSPORT_H
 
 #include <sys/queue.h>
+#include <sys/types.h>
 
 struct p9_req_t;
 
-/* Tranport module interface */
+/* Transport module interface. */
 struct p9_trans_module {
 	TAILQ_ENTRY(p9_trans_module) link;
 	char *name;			/* name of transport */
-	/* member function to create a new conection on this transport*/
+	u_int references;
+	bool registered;
+	/* member function to create a new connection on this transport */
 	int (*create)(const char *mount_tag, void **handlep);
 	/* member function to terminate a connection on this transport */
 	void (*close) (void *handle);
@@ -46,8 +49,9 @@ struct p9_trans_module {
 	int (*cancel) (void *handle, struct p9_req_t *req);
 };
 
-void p9_register_trans(struct p9_trans_module *m);
-void p9_unregister_trans(struct p9_trans_module *m);
-struct p9_trans_module *p9_get_trans_by_name(char *s);
+int p9_register_trans(struct p9_trans_module *m);
+int p9_unregister_trans(struct p9_trans_module *m);
+struct p9_trans_module *p9_get_trans_by_name(const char *s);
+void p9_put_trans(struct p9_trans_module *m);
 
 #endif /* FS_P9FS_P9_TRANSPORT_H */

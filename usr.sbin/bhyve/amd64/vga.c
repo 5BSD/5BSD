@@ -1281,6 +1281,14 @@ vga_init(int io_only)
 		iop.arg = sc;
 
 		error = register_inout(&iop);
+		if (error != 0) {
+			while (--port >= VGA_IOPORT_START) {
+				iop.port = port;
+				(void)unregister_inout(&iop);
+			}
+			free(sc);
+			return (NULL);
+		}
 		assert(error == 0);
 	}
 
@@ -1297,6 +1305,15 @@ vga_init(int io_only)
 	sc->mr.handler = vga_mem_handler;
 	sc->mr.arg1 = sc;
 	error = register_mem_fallback(&sc->mr);
+	if (error != 0) {
+		for (port = VGA_IOPORT_START; port <= VGA_IOPORT_END;
+		    port++) {
+			iop.port = port;
+			(void)unregister_inout(&iop);
+		}
+		free(sc);
+		return (NULL);
+	}
 	assert(error == 0);
 
 	sc->vga_ram = malloc(256 * KB);

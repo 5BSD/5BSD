@@ -31,6 +31,7 @@
 #include "opt_bhyve_snapshot.h"
 
 #include <sys/param.h>
+#include <sys/limits.h>
 #include <sys/queue.h>
 #include <sys/lock.h>
 #include <sys/mutex.h>
@@ -527,20 +528,111 @@ vioapic_pincount(struct vm *vm)
 }
 
 #ifdef BHYVE_SNAPSHOT
+/*
+ * Staging for the fixed STRUCT_VIOAPIC compatibility record.  The individual
+ * snapshot operations below deliberately retain the historical wire order;
+ * the guest-writable 'id' register is appended after the historical fields.
+ * Per the current-only unreleased-format policy, development records written
+ * before 'id' was added are four bytes short and are rejected by the failed
+ * final read (and the whole-record consumption check rejects the converse)
+ * before any destination state is published; no compatibility reader
+ * reinterprets them.
+ */
+struct vioapic_snapshot_entry {
+	uint64_t reg;
+	int	 acnt;
+};
+
+struct vioapic_snapshot_state {
+	uint32_t ioregsel;
+	struct vioapic_snapshot_entry rtbl[REDIR_ENTRIES];
+	uint32_t id;
+};
+
+static void
+vioapic_snapshot_capture_locked(struct vioapic *vioapic,
+    struct vioapic_snapshot_state *state)
+{
+	int i;
+
+	KASSERT(VIOAPIC_LOCKED(vioapic), ("%s: vioapic is not locked",
+	    __func__));
+	state->ioregsel = vioapic->ioregsel;
+	for (i = 0; i < nitems(vioapic->rtbl); i++) {
+		state->rtbl[i].reg = vioapic->rtbl[i].reg;
+		state->rtbl[i].acnt = vioapic->rtbl[i].acnt;
+	}
+	state->id = vioapic->id;
+}
+
+static void
+vioapic_snapshot_restore_locked(struct vioapic *vioapic,
+    const struct vioapic_snapshot_state *state)
+{
+	int i;
+
+	KASSERT(VIOAPIC_LOCKED(vioapic), ("%s: vioapic is not locked",
+	    __func__));
+	vioapic->ioregsel = state->ioregsel;
+	for (i = 0; i < nitems(vioapic->rtbl); i++) {
+		vioapic->rtbl[i].reg = state->rtbl[i].reg;
+		vioapic->rtbl[i].acnt = state->rtbl[i].acnt;
+	}
+	vioapic->id = state->id;
+}
+
+static bool
+vioapic_snapshot_state_valid(const struct vioapic_snapshot_state *state)
+{
+	int i;
+
+	for (i = 0; i < nitems(state->rtbl); i++) {
+		if (state->rtbl[i].acnt == INT_MIN ||
+		    state->rtbl[i].acnt == INT_MAX)
+			return (false);
+	}
+	/* The guest can only ever latch bits inside APIC_ID_MASK. */
+	if ((state->id & ~(uint32_t)APIC_ID_MASK) != 0)
+		return (false);
+	return (true);
+}
+
 int
 vioapic_snapshot(struct vioapic *vioapic, struct vm_snapshot_meta *meta)
 {
+	struct vioapic_snapshot_state state;
 	int ret;
 	int i;
 
-	SNAPSHOT_VAR_OR_LEAVE(vioapic->ioregsel, meta, ret, done);
+	if (vioapic == NULL || meta == NULL)
+		return (EINVAL);
+	memset(&state, 0, sizeof(state));
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		VIOAPIC_LOCK(vioapic);
+		vioapic_snapshot_capture_locked(vioapic, &state);
+		VIOAPIC_UNLOCK(vioapic);
+	}
 
-	for (i = 0; i < nitems(vioapic->rtbl); i++) {
-		SNAPSHOT_VAR_OR_LEAVE(vioapic->rtbl[i].reg, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(vioapic->rtbl[i].acnt, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.ioregsel, meta, ret, done);
+
+	for (i = 0; i < nitems(state.rtbl); i++) {
+		SNAPSHOT_VAR_OR_LEAVE(state.rtbl[i].reg, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(state.rtbl[i].acnt, meta, ret, done);
+	}
+	SNAPSHOT_VAR_OR_LEAVE(state.id, meta, ret, done);
+
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (!vioapic_snapshot_state_valid(&state)) {
+			ret = EINVAL;
+			goto done;
+		}
+		VIOAPIC_LOCK(vioapic);
+		vioapic_snapshot_restore_locked(vioapic, &state);
+		VIOAPIC_UNLOCK(vioapic);
 	}
 
 done:
+	explicit_bzero(&state, sizeof(state));
 	return (ret);
 }
 #endif

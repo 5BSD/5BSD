@@ -39,6 +39,7 @@ struct vtpci_virtqueue {
 	struct virtqueue	*vtv_vq;
 	int			 vtv_no_intr;
 	int			 vtv_notify_offset;
+	uint16_t		 vtv_notify_data;
 };
 
 struct vtpci_common {
@@ -127,6 +128,7 @@ int	vtpci_write_ivar(struct vtpci_common *cn, int index, uintptr_t value);
 int	vtpci_alloc_virtqueues(struct vtpci_common *cn, int nvqs,
 	    struct vq_alloc_info *vq_info);
 int	vtpci_setup_interrupts(struct vtpci_common *cn, enum intr_type type);
+void	vtpci_teardown_interrupts(struct vtpci_common *cn);
 void	vtpci_release_child_resources(struct vtpci_common *cn);
 
 #endif /* _VIRTIO_PCI_H */

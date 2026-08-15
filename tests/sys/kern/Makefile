@@ -58,7 +58,9 @@ ATF_TESTS_C+=	socket_msg_trunc
 ATF_TESTS_C+=	socket_msg_waitall
 ATF_TESTS_C+=	socket_splice
 ATF_TESTS_C+=	vsock_test
+CFLAGS.vsock_test+=	-I${SRCTOP}/sys
 ATF_TESTS_C+=	vsock_wire_test
+CFLAGS.vsock_wire_test+=	-I${SRCTOP}/sys
 ATF_TESTS_C+=	vsock_iov_test
 CFLAGS.vsock_iov_test+=	-I${SRCTOP}/usr.sbin/bhyve
 

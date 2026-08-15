@@ -108,6 +108,8 @@ struct net_backend {
 	 */
 	unsigned int be_vnet_hdr_len;
 	unsigned int fe_vnet_hdr_len;
+	uint64_t fe_features;
+	char checkpoint_identity[NETBE_CHECKPOINT_ID_MAX + 1];
 
 	/* Size of backend-specific private data. */
 	size_t priv_size;

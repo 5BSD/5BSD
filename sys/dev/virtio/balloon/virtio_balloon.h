@@ -35,6 +35,9 @@
 #define VIRTIO_BALLOON_F_MUST_TELL_HOST	0x1 /* Tell before reclaiming pages */
 #define VIRTIO_BALLOON_F_STATS_VQ	0x2 /* Memory stats virtqueue */
 #define VIRTIO_BALLOON_F_DEFLATE_ON_OOM	0x4 /* Deflate balloon on OOM */
+#define VIRTIO_BALLOON_F_FREE_PAGE_HINT	0x8 /* Free-page hinting queue */
+#define VIRTIO_BALLOON_F_PAGE_POISON	0x10 /* Guest poisons free pages */
+#define VIRTIO_BALLOON_F_PAGE_REPORTING	0x20 /* Free-page reporting queue */
 
 /* Size of a PFN in the balloon interface. */
 #define VIRTIO_BALLOON_PFN_SHIFT 12
@@ -45,6 +48,12 @@ struct virtio_balloon_config {
 
 	/* Number of pages we've actually got in balloon. */
 	uint32_t actual;
+
+	/* Valid with VIRTIO_BALLOON_F_FREE_PAGE_HINT. */
+	uint32_t free_page_hint_cmd_id;
+
+	/* Valid with VIRTIO_BALLOON_F_PAGE_POISON. */
+	uint32_t poison_val;
 };
 
 #define VIRTIO_BALLOON_S_SWAP_IN  0   /* Amount of memory swapped in */
@@ -55,7 +64,9 @@ struct virtio_balloon_config {
 #define VIRTIO_BALLOON_S_MEMTOT   5   /* Total amount of memory */
 #define VIRTIO_BALLOON_S_AVAIL    6   /* Available memory as in /proc */
 #define VIRTIO_BALLOON_S_CACHES   7   /* Disk caches */
-#define VIRTIO_BALLOON_S_NR       8
+#define VIRTIO_BALLOON_S_HTLB_PGALLOC 8 /* Successful hugetlb allocations */
+#define VIRTIO_BALLOON_S_HTLB_PGFAIL  9 /* Failed hugetlb allocations */
+#define VIRTIO_BALLOON_S_NR       10
 
 /*
  * Memory statistics structure.

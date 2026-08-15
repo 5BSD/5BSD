@@ -32,6 +32,7 @@
 #include <machine/vmm.h>
 
 #include <dev/vmm/vmm_param.h>
+#include <dev/vmm/vmm_dirty_log_request.h>
 
 struct vm_memmap {
 	vm_paddr_t	gpa;
@@ -213,6 +214,7 @@ enum {
 	/* vm_attach_vgic */
 	IOCNUM_GET_VGIC_VERSION = 110,
 	IOCNUM_ATTACH_VGIC = 111,
+	IOCNUM_DIRTY_LOG_REQUEST = VMM_DIRTY_LOG_REQUEST_IOCNUM,
 };
 
 #define	VM_RUN		\
@@ -273,4 +275,6 @@ enum {
 	_IOR('v', IOCNUM_GET_VGIC_VERSION, struct vm_vgic_version)
 #define	VM_ATTACH_VGIC	\
 	_IOW('v', IOCNUM_ATTACH_VGIC, struct vm_vgic_descr)
+#define VM_DIRTY_LOG_REQUEST \
+	_IOW('v', IOCNUM_DIRTY_LOG_REQUEST, struct vmm_dirty_log_request)
 #endif

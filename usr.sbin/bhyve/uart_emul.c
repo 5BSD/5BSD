@@ -43,6 +43,9 @@
 
 #include "uart_backend.h"
 #include "uart_emul.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 #define	COM1_BASE      	0x3F8
 #define	COM1_IRQ	4
@@ -96,6 +99,9 @@ struct uart_ns16550_softc {
 	uint8_t dlh;		/* Baudrate divisor latch MSB */
 
 	bool	thre_int_pending;	/* THRE interrupt pending */
+#ifdef BHYVE_SNAPSHOT
+	bool	snapshot_paused;
+#endif
 
 	void	*arg;
 	uart_intr_func_t intr_assert;
@@ -165,7 +171,7 @@ uart_reset(struct uart_ns16550_softc *sc)
 
 	divisor = DEFAULT_RCLK / DEFAULT_BAUD / 16;
 	sc->dll = divisor;
-	sc->dlh = divisor >> 16;
+	sc->dlh = divisor >> 8;
 	sc->msr = modem_status(sc->mcr);
 
 	uart_rxfifo_reset(sc->backend, 1);
@@ -189,7 +195,7 @@ uart_toggle_intr(struct uart_ns16550_softc *sc)
 }
 
 static void
-uart_drain(int fd __unused, enum ev_type ev, void *arg)
+uart_drain(int fd __unused, enum ev_type ev __unused, void *arg)
 {
 	struct uart_ns16550_softc *sc;
 	bool loopback;
@@ -438,12 +444,20 @@ uart_ns16550_init(uart_intr_func_t intr_assert, uart_intr_func_t intr_deassert,
 {
 	struct uart_ns16550_softc *sc;
 
+	if (intr_assert == NULL || intr_deassert == NULL)
+		return (NULL);
 	sc = calloc(1, sizeof(struct uart_ns16550_softc));
+	if (sc == NULL)
+		return (NULL);
 
 	sc->arg = arg;
 	sc->intr_assert = intr_assert;
 	sc->intr_deassert = intr_deassert;
 	sc->backend = uart_init();
+	if (sc->backend == NULL) {
+		free(sc);
+		return (NULL);
+	}
 
 	uart_reset(sc);
 
@@ -461,25 +475,93 @@ int
 uart_ns16550_snapshot(struct uart_ns16550_softc *sc,
     struct vm_snapshot_meta *meta)
 {
+	struct {
+		uint8_t data, ier, lcr, mcr, lsr, msr, fcr, scr;
+		uint8_t dll, dlh;
+	} candidate;
+	bool lock_owned;
 	int ret;
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->data, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->ier, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->lcr, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->mcr, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->lsr, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->msr, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->fcr, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->scr, meta, ret, done);
+	if (sc == NULL || meta == NULL)
+		return (EINVAL);
+	lock_owned = sc->snapshot_paused;
+	if (!lock_owned)
+		uart_softc_lock(sc->backend);
+	candidate.data = sc->data;
+	candidate.ier = sc->ier;
+	candidate.lcr = sc->lcr;
+	candidate.mcr = sc->mcr;
+	candidate.lsr = sc->lsr;
+	candidate.msr = sc->msr;
+	candidate.fcr = sc->fcr;
+	candidate.scr = sc->scr;
+	candidate.dll = sc->dll;
+	candidate.dlh = sc->dlh;
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->dll, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->dlh, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.data, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.ier, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.lcr, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.mcr, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.lsr, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.msr, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.fcr, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.scr, meta, ret, done);
+
+	SNAPSHOT_U8_OR_LEAVE(candidate.dll, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(candidate.dlh, meta, ret, done);
+	if (meta->op != VM_SNAPSHOT_SAVE &&
+	    ((candidate.ier & ~0x0fU) != 0 ||
+	    (candidate.mcr & ~0x1fU) != 0)) {
+		ret = EINVAL;
+		goto done;
+	}
 
 	ret = uart_rxfifo_snapshot(sc->backend, meta);
-
-	sc->thre_int_pending = 1;
+	if (ret != 0)
+		goto done;
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		sc->data = candidate.data;
+		sc->ier = candidate.ier;
+		sc->lcr = candidate.lcr;
+		sc->mcr = candidate.mcr;
+		sc->lsr = candidate.lsr;
+		sc->msr = candidate.msr;
+		sc->fcr = candidate.fcr;
+		sc->scr = candidate.scr;
+		sc->dll = candidate.dll;
+		sc->dlh = candidate.dlh;
+		sc->thre_int_pending = true;
+	}
 
 done:
+	if (!lock_owned)
+		uart_softc_unlock(sc->backend);
 	return (ret);
+}
+
+int
+uart_ns16550_pause(struct uart_ns16550_softc *sc)
+{
+	int error;
+
+	if (sc == NULL || sc->snapshot_paused)
+		return (EINVAL);
+	error = uart_snapshot_pause(sc->backend);
+	if (error == 0)
+		sc->snapshot_paused = true;
+	return (error);
+}
+
+int
+uart_ns16550_resume(struct uart_ns16550_softc *sc)
+{
+	int error;
+
+	if (sc == NULL || !sc->snapshot_paused)
+		return (EINVAL);
+	error = uart_snapshot_resume(sc->backend);
+	if (error == 0)
+		sc->snapshot_paused = false;
+	return (error);
 }
 #endif

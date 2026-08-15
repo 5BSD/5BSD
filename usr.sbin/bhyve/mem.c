@@ -42,6 +42,7 @@
 #include <assert.h>
 #include <err.h>
 #include <pthread.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <vmmapi.h>
@@ -196,6 +197,7 @@ access_memory(struct vcpu *vcpu, uint64_t paddr, mem_cb_t *cb, void *arg)
 			if (err != 0) {
 				perror = pthread_rwlock_unlock(&mmio_rwlock);
 				assert(perror == 0);
+				(void)perror;
 				return (err == EJUSTRETURN ? 0 : err);
 			}
 		}
@@ -221,6 +223,7 @@ access_memory(struct vcpu *vcpu, uint64_t paddr, mem_cb_t *cb, void *arg)
 	if (immutable) {
 		perror = pthread_rwlock_unlock(&mmio_rwlock);
 		assert(perror == 0);
+		(void)perror;
 	}
 
 	err = cb(vcpu, paddr, mr, arg);
@@ -228,6 +231,7 @@ access_memory(struct vcpu *vcpu, uint64_t paddr, mem_cb_t *cb, void *arg)
 	if (!immutable) {
 		perror = pthread_rwlock_unlock(&mmio_rwlock);
 		assert(perror == 0);
+		(void)perror;
 	}
 
 	return (err);
@@ -304,6 +308,10 @@ register_mem_int(struct mmio_rb_tree *rbt, struct mem_range *memp)
 	struct mmio_rb_range *entry, *mrp;
 	int err, perror;
 
+	if (memp == NULL || memp->size == 0 ||
+	    memp->base > UINT64_MAX - (memp->size - 1))
+		return (EINVAL);
+
 	err = 0;
 
 	mrp = malloc(sizeof(struct mmio_rb_range));
@@ -320,6 +328,7 @@ register_mem_int(struct mmio_rb_tree *rbt, struct mem_range *memp)
 			err = mmio_rb_add(rbt, mrp);
 		perror = pthread_rwlock_unlock(&mmio_rwlock);
 		assert(perror == 0);
+		(void)perror;
 		if (err)
 			free(mrp);
 	}
@@ -355,6 +364,7 @@ unregister_mem(struct mem_range *memp)
 		assert(mr->name == memp->name);
 		assert(mr->base == memp->base && mr->size == memp->size);
 		assert((mr->flags & MEM_F_IMMUTABLE) == 0);
+		(void)mr;
 		RB_REMOVE(mmio_rb_tree, &mmio_rb_root, entry);
 
 		/* flush Per-vCPU cache */
@@ -365,6 +375,7 @@ unregister_mem(struct mem_range *memp)
 	}
 	perror = pthread_rwlock_unlock(&mmio_rwlock);
 	assert(perror == 0);
+	(void)perror;
 
 	if (entry)
 		free(entry);

@@ -7,8 +7,11 @@ import os
 import sys
 import tempfile
 
+# VIRTIO_ACTIVATION_ASSERTION: packed-negotiation-and-entropy-read
+
 # VirtIO 1.4 feature allocation (§6).
 VIRTIO_F_IN_ORDER = 35
+VIRTIO_F_RING_PACKED = 34
 VIRTIO_F_NOTIFICATION_DATA = 38
 VIRTIO_F_RING_RESET = 40
 
@@ -54,6 +57,7 @@ def negotiated_feature(child, bit):
     if len(features) <= bit or any(value not in "01" for value in features):
         raise RuntimeError(f"invalid virtio feature bitmap: {features!r}")
     return features[bit] == "1"
+
 
 def require_features(child, required):
     for bit, name in required:
@@ -102,7 +106,12 @@ def self_test():
         with open(child + "/features", "w", encoding="ascii") as stream:
             stream.write("".join(features) + "\n")
         require_features(child, MODERN_REQUIRED_FEATURES)
-        assert not negotiated_feature(child, 34)
+        assert not negotiated_feature(child, VIRTIO_F_RING_PACKED)
+        features[VIRTIO_F_RING_PACKED] = "1"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
+        assert negotiated_feature(child, VIRTIO_F_RING_PACKED)
+        features[VIRTIO_F_RING_PACKED] = "0"
         for missing_bit, missing_name in MODERN_REQUIRED_FEATURES:
             missing = features.copy()
             missing[missing_bit] = "0"
@@ -123,12 +132,26 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
-    if len(sys.argv) != 2 or sys.argv[1] not in ("modern", "legacy"):
-        raise SystemExit("usage: grng.py modern|legacy")
+    if (
+        len(sys.argv) not in (2, 3)
+        or sys.argv[1] not in ("modern", "legacy")
+        or (len(sys.argv) == 3 and sys.argv[2] != "packed")
+    ):
+        raise SystemExit("usage: grng.py modern|legacy [packed]")
+    expect_packed = len(sys.argv) == 3
+    if expect_packed and sys.argv[1] != "modern":
+        raise RuntimeError("packed virtqueues require modern transport")
     expected_device = "0x1044" if sys.argv[1] == "modern" else "0x1005"
     child = find_bound_rng(expected_device)
     if sys.argv[1] == "modern":
         require_features(child, MODERN_REQUIRED_FEATURES)
+        packed = negotiated_feature(child, VIRTIO_F_RING_PACKED)
+        if packed != expect_packed:
+            raise RuntimeError(
+                "virtio-rng packed negotiation mismatch: "
+                f"expected={'yes' if expect_packed else 'no'} "
+                f"actual={'yes' if packed else 'no'}"
+            )
     current = open(
         "/sys/class/misc/hw_random/rng_current", encoding="ascii"
     ).read().strip()
@@ -149,9 +172,11 @@ def main():
         os.close(fd)
     modern = sys.argv[1] == "modern"
     in_order = modern and negotiated_feature(child, VIRTIO_F_IN_ORDER)
+    packed = modern and negotiated_feature(child, VIRTIO_F_RING_PACKED)
     print(
         f"PASS rng bytes={total} sha256={digest.hexdigest()} "
         f"in_order={'yes' if in_order else ('no' if modern else 'n/a')} "
+        f"packed={'yes' if packed else ('no' if modern else 'n/a')} "
         f"notification_data={'yes' if modern else 'n/a'} "
         f"ring_reset={'yes' if modern else 'n/a'}"
     )

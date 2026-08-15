@@ -48,7 +48,16 @@
 
 #define L9P_DEFAULT_MSIZE   8192
 #define L9P_MAX_IOV         128
-#define	L9P_NUMTHREADS      8
+/*
+ * Fid state is connection-local and request.c deliberately preserves 9P
+ * request order within a session.  In particular, a request may consume the
+ * fid produced or changed by its predecessor.  Until the frontend supplies
+ * explicit per-fid operation ownership and an ordering rule for dependent
+ * requests, use one worker for each connection.  This still permits
+ * concurrency across connections and keeps Tflush's existing queue-state
+ * synchronization meaningful.
+ */
+#define	L9P_NUMTHREADS      1
 
 struct l9p_request;
 struct l9p_backend;

@@ -28,6 +28,7 @@ struct fake_device {
 	int		 alloc_error;
 	int		 setup_intr_error;
 	int		 queue_sizes[3];
+	int		 teardown_intr_calls;
 	int		 stop_calls;
 	int		 printf_calls;
 	const char	*desc;
@@ -249,6 +250,8 @@ static inline int virtio_alloc_virtqueues(device_t d, int n,
 }
 static inline int virtio_setup_intr(device_t d, int flags __unused)
 { return (d->setup_intr_error); }
+static inline void virtio_teardown_intr(device_t d)
+{ d->teardown_intr_calls++; }
 static inline void virtio_read_device_config(device_t d, int off __unused,
     void *buf, size_t len)
 { memcpy(buf, &d->config_cid, MIN(len, sizeof(d->config_cid))); }

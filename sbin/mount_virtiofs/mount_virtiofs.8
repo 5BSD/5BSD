@@ -1,0 +1,73 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 12, 2026
+.Dt MOUNT_VIRTIOFS 8
+.Os
+.Sh NAME
+.Nm mount_virtiofs
+.Nd mount a virtio-fs shared directory
+.Sh SYNOPSIS
+.Nm
+.Op Fl o Ar options
+.Ar tag | special
+.Ar node
+.Sh DESCRIPTION
+The
+.Nm
+utility attaches a
+.Em virtio-fs
+shared directory exported by the hypervisor to the file system.
+.Pp
+virtio-fs is the FUSE protocol carried over VirtIO request queues.
+The
+.Xr virtio_fs 4
+guest driver publishes one
+.Pa /dev/virtiofs Ns Ar N
+character device per virtio-fs PCI function and drives an in-kernel FUSE
+session over the device queues, so the mounted file system is of type
+.Xr fusefs 5 .
+.Pp
+The first argument is either the mount
+.Ar tag
+configured on the host (resolved to the matching device through the
+.Va dev.virtio_fs. Ns Ar N Ns Va .tag
+sysctl), or an explicit device node path beginning with
+.Ql / .
+The second argument is the mount point.
+.Pp
+The options are as follows:
+.Bl -tag -width indent
+.It Fl o Ar options
+Options are passed to
+.Xr nmount 2 .
+In addition to the standard file system options described in
+.Xr mount 8 ,
+the fusefs flag options
+.Cm allow_other , default_permissions , intr , push_symlinks_in
+and
+.Cm auto_unmount
+are recognised, along with
+.Cm max_read Ns = Ns Ar n .
+.El
+.Pp
+Unless overridden,
+.Nm
+bounds
+.Cm max_read
+to 131072 bytes so that each FUSE read fits in a single transport request.
+.Sh SEE ALSO
+.Xr nmount 2 ,
+.Xr virtio_fs 4 ,
+.Xr fusefs 5 ,
+.Xr mount 8 ,
+.Xr mount_fusefs 8
+.Sh HISTORY
+The
+.Nm
+utility first appeared as part of the 5BSD virtio-fs guest driver.
+.Sh CAVEATS
+This is a first-slice implementation.
+DAX, the notification queue, and packed rings are not yet negotiated.

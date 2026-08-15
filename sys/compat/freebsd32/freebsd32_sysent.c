@@ -122,7 +122,7 @@ struct sysent freebsd32_sysent[] = {
 	{ compat(0,sigpending), .sy_auevent = AUE_SIGPENDING, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 52 = old sigpending */
 	{ .sy_narg = AS(freebsd32_sigaltstack_args), .sy_call = (sy_call_t *)freebsd32_sigaltstack, .sy_auevent = AUE_SIGALTSTACK, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 53 = freebsd32_sigaltstack */
 	{ .sy_narg = AS(freebsd32_ioctl_args), .sy_call = (sy_call_t *)freebsd32_ioctl, .sy_auevent = AUE_IOCTL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 54 = freebsd32_ioctl */
-	{ .sy_narg = AS(reboot_args), .sy_call = (sy_call_t *)sys_reboot, .sy_auevent = AUE_REBOOT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 55 = reboot */
+	{ .sy_narg = AS(reboot_args), .sy_call = (sy_call_t *)sys_reboot, .sy_auevent = AUE_REBOOT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 55 = reboot */
 	{ .sy_narg = AS(revoke_args), .sy_call = (sy_call_t *)sys_revoke, .sy_auevent = AUE_REVOKE, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 56 = revoke */
 	{ .sy_narg = AS(symlink_args), .sy_call = (sy_call_t *)sys_symlink, .sy_auevent = AUE_SYMLINK, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 57 = symlink */
 	{ .sy_narg = AS(readlink_args), .sy_call = (sy_call_t *)sys_readlink, .sy_auevent = AUE_READLINK, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 58 = readlink */
@@ -371,12 +371,12 @@ struct sysent freebsd32_sysent[] = {
 	{ .sy_narg = AS(freebsd32_modstat_args), .sy_call = (sy_call_t *)freebsd32_modstat, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 301 = freebsd32_modstat */
 	{ .sy_narg = AS(modfnext_args), .sy_call = (sy_call_t *)sys_modfnext, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 302 = modfnext */
 	{ .sy_narg = AS(modfind_args), .sy_call = (sy_call_t *)sys_modfind, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 303 = modfind */
-	{ .sy_narg = AS(kldload_args), .sy_call = (sy_call_t *)sys_kldload, .sy_auevent = AUE_MODLOAD, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 304 = kldload */
-	{ .sy_narg = AS(kldunload_args), .sy_call = (sy_call_t *)sys_kldunload, .sy_auevent = AUE_MODUNLOAD, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 305 = kldunload */
-	{ .sy_narg = AS(kldfind_args), .sy_call = (sy_call_t *)sys_kldfind, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 306 = kldfind */
-	{ .sy_narg = AS(kldnext_args), .sy_call = (sy_call_t *)sys_kldnext, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 307 = kldnext */
-	{ .sy_narg = AS(freebsd32_kldstat_args), .sy_call = (sy_call_t *)freebsd32_kldstat, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 308 = freebsd32_kldstat */
-	{ .sy_narg = AS(kldfirstmod_args), .sy_call = (sy_call_t *)sys_kldfirstmod, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 309 = kldfirstmod */
+	{ .sy_narg = AS(kldload_args), .sy_call = (sy_call_t *)sys_kldload, .sy_auevent = AUE_MODLOAD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 304 = kldload */
+	{ .sy_narg = AS(kldunload_args), .sy_call = (sy_call_t *)sys_kldunload, .sy_auevent = AUE_MODUNLOAD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 305 = kldunload */
+	{ .sy_narg = AS(kldfind_args), .sy_call = (sy_call_t *)sys_kldfind, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 306 = kldfind */
+	{ .sy_narg = AS(kldnext_args), .sy_call = (sy_call_t *)sys_kldnext, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 307 = kldnext */
+	{ .sy_narg = AS(freebsd32_kldstat_args), .sy_call = (sy_call_t *)freebsd32_kldstat, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 308 = freebsd32_kldstat */
+	{ .sy_narg = AS(kldfirstmod_args), .sy_call = (sy_call_t *)sys_kldfirstmod, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 309 = kldfirstmod */
 	{ .sy_narg = AS(getsid_args), .sy_call = (sy_call_t *)sys_getsid, .sy_auevent = AUE_GETSID, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 310 = getsid */
 	{ .sy_narg = AS(setresuid_args), .sy_call = (sy_call_t *)sys_setresuid, .sy_auevent = AUE_SETRESUID, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 311 = setresuid */
 	{ .sy_narg = AS(setresgid_args), .sy_call = (sy_call_t *)sys_setresgid, .sy_auevent = AUE_SETRESGID, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 312 = setresgid */
@@ -511,8 +511,8 @@ struct sysent freebsd32_sysent[] = {
 	{ .sy_narg = AS(freebsd32_ksem_timedwait_args), .sy_call = (sy_call_t *)lkmressys, .sy_auevent = AUE_NULL, .sy_flags = 0, .sy_thrcnt = SY_THR_ABSENT },	/* 441 = freebsd32_ksem_timedwait */
 	{ .sy_narg = AS(freebsd32_thr_suspend_args), .sy_call = (sy_call_t *)freebsd32_thr_suspend, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 442 = freebsd32_thr_suspend */
 	{ .sy_narg = AS(thr_wake_args), .sy_call = (sy_call_t *)sys_thr_wake, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 443 = thr_wake */
-	{ .sy_narg = AS(kldunloadf_args), .sy_call = (sy_call_t *)sys_kldunloadf, .sy_auevent = AUE_MODUNLOAD, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 444 = kldunloadf */
-	{ .sy_narg = AS(audit_args), .sy_call = (sy_call_t *)sys_audit, .sy_auevent = AUE_AUDIT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 445 = audit */
+	{ .sy_narg = AS(kldunloadf_args), .sy_call = (sy_call_t *)sys_kldunloadf, .sy_auevent = AUE_MODUNLOAD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 444 = kldunloadf */
+	{ .sy_narg = AS(audit_args), .sy_call = (sy_call_t *)sys_audit, .sy_auevent = AUE_AUDIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 445 = audit */
 	{ .sy_narg = AS(auditon_args), .sy_call = (sy_call_t *)sys_auditon, .sy_auevent = AUE_AUDITON, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 446 = auditon */
 	{ .sy_narg = AS(getauid_args), .sy_call = (sy_call_t *)sys_getauid, .sy_auevent = AUE_GETAUID, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 447 = getauid */
 	{ .sy_narg = AS(setauid_args), .sy_call = (sy_call_t *)sys_setauid, .sy_auevent = AUE_SETAUID, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 448 = setauid */

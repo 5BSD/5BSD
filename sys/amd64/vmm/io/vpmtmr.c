@@ -32,7 +32,9 @@
 #include <sys/param.h>
 #include <sys/queue.h>
 #include <sys/kernel.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
+#include <sys/mutex.h>
 #include <sys/systm.h>
 
 #include <machine/vmm.h>
@@ -50,12 +52,30 @@
 #define PMTMR_FREQ	3579545  /* 3.579545MHz */
 
 struct vpmtmr {
+	struct mtx	mtx;
 	sbintime_t	freq_sbt;
 	sbintime_t	baseuptime;
 	uint32_t	baseval;
 };
 
+#define	VPMTMR_LOCK(pmtmr)	mtx_lock(&((pmtmr)->mtx))
+#define	VPMTMR_UNLOCK(pmtmr)	mtx_unlock(&((pmtmr)->mtx))
+#define	VPMTMR_LOCKED(pmtmr)	mtx_owned(&((pmtmr)->mtx))
+
 static MALLOC_DEFINE(M_VPMTMR, "vpmtmr", "bhyve virtual acpi timer");
+
+static uint32_t
+vpmtmr_value_locked(struct vpmtmr *vpmtmr)
+{
+	sbintime_t delta, now;
+
+	KASSERT(VPMTMR_LOCKED(vpmtmr), ("%s: pmtmr is not locked", __func__));
+	now = sbinuptime();
+	delta = now - vpmtmr->baseuptime;
+	KASSERT(delta >= 0, ("vpmtmr: uptime went backwards: %#lx to %#lx",
+	    vpmtmr->baseuptime, now));
+	return (vpmtmr->baseval + delta / vpmtmr->freq_sbt);
+}
 
 struct vpmtmr *
 vpmtmr_init(struct vm *vm)
@@ -64,6 +84,7 @@ vpmtmr_init(struct vm *vm)
 	struct bintime bt;
 
 	vpmtmr = malloc(sizeof(struct vpmtmr), M_VPMTMR, M_WAITOK | M_ZERO);
+	mtx_init(&vpmtmr->mtx, "pmtmr lock", NULL, MTX_DEF);
 	vpmtmr->baseuptime = sbinuptime();
 	vpmtmr->baseval = 0;
 
@@ -77,6 +98,7 @@ void
 vpmtmr_cleanup(struct vpmtmr *vpmtmr)
 {
 
+	mtx_destroy(&vpmtmr->mtx);
 	free(vpmtmr, M_VPMTMR);
 }
 
@@ -84,22 +106,15 @@ int
 vpmtmr_handler(struct vm *vm, bool in, int port, int bytes, uint32_t *val)
 {
 	struct vpmtmr *vpmtmr;
-	sbintime_t now, delta;
 
 	if (!in || bytes != 4)
 		return (-1);
 
 	vpmtmr = vm_pmtmr(vm);
 
-	/*
-	 * No locking needed because 'baseuptime' and 'baseval' are
-	 * written only during initialization.
-	 */
-	now = sbinuptime();
-	delta = now - vpmtmr->baseuptime;
-	KASSERT(delta >= 0, ("vpmtmr_handler: uptime went backwards: "
-	    "%#lx to %#lx", vpmtmr->baseuptime, now));
-	*val = vpmtmr->baseval + delta / vpmtmr->freq_sbt;
+	VPMTMR_LOCK(vpmtmr);
+	*val = vpmtmr_value_locked(vpmtmr);
+	VPMTMR_UNLOCK(vpmtmr);
 
 	return (0);
 }
@@ -108,9 +123,22 @@ vpmtmr_handler(struct vm *vm, bool in, int port, int bytes, uint32_t *val)
 int
 vpmtmr_snapshot(struct vpmtmr *vpmtmr, struct vm_snapshot_meta *meta)
 {
+	uint32_t baseval;
 	int ret;
 
-	SNAPSHOT_VAR_OR_LEAVE(vpmtmr->baseval, meta, ret, done);
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		VPMTMR_LOCK(vpmtmr);
+		baseval = vpmtmr_value_locked(vpmtmr);
+		VPMTMR_UNLOCK(vpmtmr);
+	}
+	SNAPSHOT_VAR_OR_LEAVE(baseval, meta, ret, done);
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		VPMTMR_LOCK(vpmtmr);
+		vpmtmr->baseval = baseval;
+		/* The saved count, not the source host uptime, is portable. */
+		vpmtmr->baseuptime = sbinuptime();
+		VPMTMR_UNLOCK(vpmtmr);
+	}
 
 done:
 	return (ret);

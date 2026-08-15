@@ -94,6 +94,16 @@ struct vrtc {
  */
 #define	VRTC_BROKEN_TIME	((time_t)-1)
 
+/*
+ * Latest time_t that secs_to_rtc() can represent without indexing past the
+ * 100-entry bin2bcd_data[] table: 23:59:59 on 9999-12-31 UTC.  secs_to_rtc()
+ * derives the century BCD byte with bin2bcd_data[ct.year / 100], so a year of
+ * 10000 or more (ct.year / 100 >= 100) reads past the table.  Every runtime
+ * path clamps base_rtctime through rtc_to_secs() (BCD fields cap the year at
+ * 9999); a restored snapshot is the only otherwise-unclamped source.
+ */
+#define	VRTC_MAX_RTCTIME	((time_t)253402300799)
+
 #define	RTC_IRQ			8
 #define	RTCSB_BIN		0x04
 #define	RTCSB_ALL_INTRS		(RTCSB_UINTR | RTCSB_AINTR | RTCSB_PINTR)
@@ -1022,43 +1032,112 @@ vrtc_cleanup(struct vrtc *vrtc)
 }
 
 #ifdef BHYVE_SNAPSHOT
+/*
+ * This mirrors the historical STRUCT_VRTC record.  Keep the fields below in
+ * the same order and with the same types as the individual snapshot calls in
+ * vrtc_snapshot(); the structure is a restore staging area, not a new wire
+ * format.
+ */
+struct vrtc_snapshot_state {
+	u_int		addr;
+	time_t		base_rtctime;
+	struct rtcdev	rtcdev;
+};
+
+static void
+vrtc_snapshot_capture_locked(struct vrtc *vrtc,
+    struct vrtc_snapshot_state *state)
+{
+
+	KASSERT(VRTC_LOCKED(vrtc), ("%s: vrtc not locked", __func__));
+	state->addr = vrtc->addr;
+	state->base_rtctime = vrtc->base_rtctime;
+	memcpy(&state->rtcdev, &vrtc->rtcdev, sizeof(state->rtcdev));
+}
+
+static bool
+vrtc_snapshot_state_valid(const struct vrtc_snapshot_state *state)
+{
+
+	/*
+	 * base_rtctime is either the sentinel BROKEN value or a non-negative
+	 * time the RTC can represent.  An out-of-range value would flow into
+	 * secs_to_rtc() on the next guest RTC read and index bin2bcd_data[]
+	 * past its 100 entries via ct.year / 100 -- a silent out-of-bounds
+	 * read (guest-visible info leak) in a production kernel.  This mirrors
+	 * the restore validation the other in-kernel timers apply.
+	 */
+	if (state->base_rtctime != VRTC_BROKEN_TIME &&
+	    (state->base_rtctime < 0 ||
+	    state->base_rtctime > VRTC_MAX_RTCTIME))
+		return (false);
+	return (true);
+}
+
+static void
+vrtc_snapshot_restore_locked(struct vrtc *vrtc,
+    const struct vrtc_snapshot_state *state)
+{
+
+	KASSERT(VRTC_LOCKED(vrtc), ("%s: vrtc not locked", __func__));
+	vrtc->addr = state->addr;
+	vrtc->base_rtctime = state->base_rtctime;
+	memcpy(&vrtc->rtcdev, &state->rtcdev, sizeof(vrtc->rtcdev));
+	/* A saved uptime has no meaning on the destination host. */
+	vrtc->base_uptime = sbinuptime();
+	vrtc_callout_reset(vrtc, vrtc_freq(vrtc));
+}
+
 int
 vrtc_snapshot(struct vrtc *vrtc, struct vm_snapshot_meta *meta)
 {
+	struct vrtc_snapshot_state state;
 	int ret;
 
+	memset(&state, 0, sizeof(state));
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		VRTC_LOCK(vrtc);
+		vrtc_snapshot_capture_locked(vrtc, &state);
+		VRTC_UNLOCK(vrtc);
+	}
+
+	SNAPSHOT_VAR_OR_LEAVE(state.addr, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.base_rtctime, meta, ret, done);
+
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.sec, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.alarm_sec, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.min, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.alarm_min, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.hour, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.alarm_hour, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.day_of_week, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.day_of_month, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.month, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.year, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.reg_a, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.reg_b, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.reg_c, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.reg_d, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(state.rtcdev.nvram, sizeof(state.rtcdev.nvram),
+			      meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.rtcdev.century, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(state.rtcdev.nvram2, sizeof(state.rtcdev.nvram2),
+			      meta, ret, done);
+
 	VRTC_LOCK(vrtc);
-
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->addr, meta, ret, done);
-	if (meta->op == VM_SNAPSHOT_RESTORE)
-		vrtc->base_uptime = sbinuptime();
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->base_rtctime, meta, ret, done);
-
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.sec, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.alarm_sec, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.min, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.alarm_min, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.hour, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.alarm_hour, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.day_of_week, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.day_of_month, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.month, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.year, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.reg_a, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.reg_b, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.reg_c, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.reg_d, meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(vrtc->rtcdev.nvram, sizeof(vrtc->rtcdev.nvram),
-			      meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vrtc->rtcdev.century, meta, ret, done);
-	SNAPSHOT_BUF_OR_LEAVE(vrtc->rtcdev.nvram2, sizeof(vrtc->rtcdev.nvram2),
-			      meta, ret, done);
-
-	vrtc_callout_reset(vrtc, vrtc_freq(vrtc));
-
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (!vrtc_snapshot_state_valid(&state)) {
+			VRTC_UNLOCK(vrtc);
+			ret = EINVAL;
+			goto done;
+		}
+		vrtc_snapshot_restore_locked(vrtc, &state);
+	} else
+		vrtc_callout_reset(vrtc, vrtc_freq(vrtc));
 	VRTC_UNLOCK(vrtc);
 
 done:
+	explicit_bzero(&state, sizeof(state));
 	return (ret);
 }
 #endif

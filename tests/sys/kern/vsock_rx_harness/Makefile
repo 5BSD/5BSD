@@ -12,7 +12,8 @@ CFLAGS.vsock_rx_test+=	-I${.CURDIR} -I${.OBJDIR}
 
 ATF_TESTS_C+=	virtio_vsock_transport_test
 SRCS.virtio_vsock_transport_test=	virtio_vsock_transport_test.c
-CFLAGS.virtio_vsock_transport_test+=	-I${.CURDIR} -I${.OBJDIR}
+CFLAGS.virtio_vsock_transport_test+=	-I${.CURDIR} -I${.OBJDIR} \
+					-I${SRCTOP}/sys
 LIBADD.virtio_vsock_transport_test+=	pthread
 
 # The included kernel source has intentional sockaddr casts, a local variable

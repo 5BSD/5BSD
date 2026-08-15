@@ -33,6 +33,10 @@
 #include <sys/cpuset.h>
 #include <machine/vmm.h>
 #include <machine/vmm_dev.h>
+#include <dev/vmm/vmm_mem.h>
+#include <dev/vmm/vmm_startup_request.h>
+#include <dev/vmm/vmm_startup_run_request.h>
+#include <dev/vmm/vmm_dirty_log_request.h>
 
 #include <stdbool.h>
 
@@ -40,12 +44,14 @@
  * API version for out-of-tree consumers like grub-bhyve for making compile
  * time decisions.
  */
-#define	VMMAPI_VERSION	0300	/* 2 digit major followed by 2 digit minor */
+#define	VMMAPI_VERSION	0301	/* 2 digit major followed by 2 digit minor */
 
 struct iovec;
 struct vcpu;
 struct vmctx;
+struct vm_cpu_compat;
 struct vm_snapshot_meta;
+struct vm_snapshot_session;
 enum x2apic_state;
 
 /*
@@ -98,9 +104,28 @@ int	vm_get_guestmem_from_ctx(struct vmctx *ctx, char **guest_baseaddr,
  * Create a device memory segment identified by 'segid'.
  *
  * Returns a pointer to the memory segment on success and MAP_FAILED otherwise.
+ * 'segid' must identify a device-memory segment in
+ * [VM_BOOTROM, VM_MEMSEG_END).  A zero length is invalid.  Lengths which
+ * cannot be surrounded by the
+ * library's guard mappings fail with EOVERFLOW before a kernel segment is
+ * allocated.
  */
 void	*vm_create_devmem(struct vmctx *ctx, int segid, const char *name,
 	    size_t len);
+/*
+ * Allocate an unused generic device-memory segment identifier and create the
+ * named segment.  Fixed-purpose segments such as VM_FRAMEBUFFER are excluded.
+ * On success, *segid contains an identifier in
+ * [VM_DEVMEM_START, VM_DEVMEM_END).
+ */
+void	*vm_create_devmem_auto(struct vmctx *ctx, const char *name, size_t len,
+	    int *segid);
+/*
+ * Return the host mapping and kernel-recorded identity of a device-memory
+ * segment created through this vmctx.  This does not expose system memory.
+ */
+int	vm_get_devmem_info(struct vmctx *ctx, int segid, void **host_base,
+	    size_t *len, char *name, size_t namesiz);
 
 /*
  * Map the memory segment identified by 'segid' into the guest address space
@@ -124,6 +149,12 @@ struct vcpu *vm_vcpu_open(struct vmctx *ctx, int vcpuid);
 void	vm_vcpu_close(struct vcpu *vcpu);
 int	vcpu_id(struct vcpu *vcpu);
 int	vm_parse_memsize(const char *optarg, size_t *memsize);
+/*
+ * Divide total_size among domain_count nonempty domains in whole allocation
+ * granules.  Earlier domains receive at most one additional granule.
+ */
+int	vm_distribute_memory_domains(size_t total_size, size_t domain_count,
+	    size_t allocation_granule, size_t *domain_sizes, size_t capacity);
 int vm_setup_memory(struct vmctx *ctx, size_t len, enum vm_mmap_style s);
 int vm_setup_memory_domains(struct vmctx *ctx, enum vm_mmap_style s,
 			    struct vm_mem_domain *doms, int ndoms);
@@ -161,6 +192,15 @@ int	vm_get_register_set(struct vcpu *vcpu, unsigned int count,
 int	vm_run(struct vcpu *vcpu, struct vm_run *vmrun);
 int	vm_suspend(struct vmctx *ctx, enum vm_suspend_how how);
 int	vm_reinit(struct vmctx *ctx);
+int	vm_dirty_log_request(struct vmctx *,
+	    const struct vmm_dirty_log_request *);
+/*
+ * Validate a complete OBSERVE/CLEAR publication returned through the nested
+ * output buffer of vm_dirty_log_request().  Returns an errno value without
+ * changing errno.
+ */
+int	vm_dirty_log_result_validate(const struct vmm_dirty_log_result *,
+	    size_t);
 int	vm_raise_msi(struct vmctx *ctx, uint64_t addr, uint64_t msg,
     int bus, int slot, int func);
 #if defined(__aarch64__)
@@ -201,6 +241,11 @@ int	vm_get_capability(struct vcpu *vcpu, enum vm_cap_type cap,
 			  int *retval);
 int	vm_set_capability(struct vcpu *vcpu, enum vm_cap_type cap,
 			  int val);
+#ifdef __amd64__
+int	vm_get_cpuid(struct vcpu *vcpu, uint32_t flags, uint32_t *eax,
+	    uint32_t *ebx, uint32_t *ecx, uint32_t *edx);
+int	vm_get_cpu_compat(struct vcpu *vcpu, struct vm_cpu_compat *);
+#endif
 int	vm_assign_pptdev(struct vmctx *ctx, int bus, int slot, int func);
 int	vm_unassign_pptdev(struct vmctx *ctx, int bus, int slot, int func);
 int	vm_map_pptdev_mmio(struct vmctx *ctx, int bus, int slot, int func,
@@ -225,6 +270,8 @@ uint64_t *vm_get_stats(struct vcpu *vcpu, struct timeval *ret_tv,
 const char *vm_get_stat_desc(struct vmctx *ctx, int index);
 
 #ifdef __amd64__
+int	vm_startup_request(struct vmctx *, struct vmm_startup_request *);
+int	vm_run_generation(struct vcpu *, struct vmm_startup_run_request *);
 int	vm_get_x2apic_state(struct vcpu *vcpu, enum x2apic_state *s);
 int	vm_set_x2apic_state(struct vcpu *vcpu, enum x2apic_state s);
 
@@ -289,6 +336,8 @@ void	vm_setup_freebsd_gdt(uint64_t *gdtr);
  * Save and restore
  */
 int	vm_snapshot_req(struct vmctx *ctx, struct vm_snapshot_meta *meta);
+int	vm_snapshot_session(struct vmctx *ctx,
+	    struct vm_snapshot_session *session);
 int	vm_restore_time(struct vmctx *ctx);
 
 /*

@@ -11,9 +11,11 @@
 MALLOC_DEFINE(M_VTVSOCK, "vtvsock", "virtio vsock test");
 struct mtx vtvsock_mtx;
 uint64_t vtvsock_guest_cid;
-static uint64_t tx_packets, tx_bytes, rx_packets, rx_bytes, rx_drops, conns;
+static uint64_t tx_packets, tx_bytes, tx_drops, rx_packets, rx_bytes, rx_drops,
+    conns;
 counter_u64_t vtvsock_cnt_tx_packets = &tx_packets;
 counter_u64_t vtvsock_cnt_tx_bytes = &tx_bytes;
+counter_u64_t vtvsock_cnt_tx_drops = &tx_drops;
 counter_u64_t vtvsock_cnt_rx_packets = &rx_packets;
 counter_u64_t vtvsock_cnt_rx_bytes = &rx_bytes;
 counter_u64_t vtvsock_cnt_rx_drops = &rx_drops;
@@ -40,8 +42,10 @@ static struct {
 static bool transport_mtx_initialized;
 static int register_calls, register_locked_calls, unregister_calls, reset_calls;
 static int pcb_tx_wakeup_calls, transport_tx_wakeup_calls;
+static int rx_delivery_calls;
 static uint64_t registered_cid, registered_features;
 static void (*transport_rx_packet_hook)(void *, uint32_t);
+static void count_rx_delivery(void *, uint32_t);
 
 int
 transport_msleep(void *chan, struct mtx *m, int pri __unused,
@@ -174,6 +178,7 @@ reset_state(void)
 	transport_last_wakeup = NULL;
 	register_calls = register_locked_calls = unregister_calls = reset_calls = 0;
 	pcb_tx_wakeup_calls = transport_tx_wakeup_calls = 0;
+	rx_delivery_calls = 0;
 	vsock_kmock_sock_lock_calls = vsock_kmock_sock_lock_depth = 0;
 	vsock_kmock_sndbuf_lock_calls = vsock_kmock_sndbuf_lock_depth = 0;
 	vsock_kmock_msleep_sbt_calls = 0;
@@ -182,7 +187,8 @@ reset_state(void)
 	transport_rx_packet_hook = NULL;
 	kmock_nowait_malloc_fail_after = -1;
 	kmock_nowait_malloc_calls = 0;
-	tx_packets = tx_bytes = rx_packets = rx_bytes = rx_drops = conns = 0;
+	tx_packets = tx_bytes = tx_drops = rx_packets = rx_bytes = rx_drops =
+	    conns = 0;
 }
 
 static struct virtio_vsock_hdr *
@@ -585,6 +591,7 @@ ATF_TC_BODY(control_queue_bounded, tc)
 	ATF_CHECK(vtvsock_ctrl_submit(&sc, pkt, &sg) == EWOULDBLOCK);
 	ATF_CHECK(sc.sc_txq_count == VTVSOCK_TXQ_MAX);
 	ATF_CHECK(sc.sc_txq_drops == 1);
+	ATF_CHECK(tx_drops == 1);
 
 	/* Detach must reclaim both ring-owned and software-queued packets. */
 	memset(&dev, 0, sizeof(dev));
@@ -594,6 +601,85 @@ ATF_TC_BODY(control_queue_bounded, tc)
 	ATF_CHECK(vtvsock_detach(&dev) == 0);
 	ATF_CHECK(sc.sc_txq_count == 0);
 	ATF_CHECK(txvq.entry_count == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(reply_highwater_stalls_and_resumes_rx);
+ATF_TC_BODY(reply_highwater_stalls_and_resumes_rx, tc)
+{
+	struct sglist_seg rxsegs[VTVSOCK_RX_SEGS];
+	struct sglist_seg txseg;
+	struct virtqueue rxvq, txvq;
+	struct vtvsock_softc sc;
+	struct sglist rxsg, txsg;
+	void *buf, *pkt;
+	int last;
+
+	reset_state();
+	memset(&sc, 0, sizeof(sc));
+	mock_vq_init(&rxvq, VTVSOCK_RX_SEGS);
+	mock_vq_init(&txvq, MOCK_VQ_MAX);
+	sc.sc_rxvq = &rxvq;
+	sc.sc_txvq = &txvq;
+	buf = calloc(1, VTVSOCK_RX_BUFSZ);
+	ATF_REQUIRE(buf != NULL);
+	sglist_init(&rxsg, VTVSOCK_RX_SEGS, rxsegs);
+	ATF_REQUIRE(sglist_append(&rxsg, buf, VTVSOCK_RX_BUFSZ) == 0);
+	ATF_REQUIRE(virtqueue_enqueue(&rxvq, buf, &rxsg, 0,
+	    rxsg.sg_nseg) == 0);
+	ATF_REQUIRE(mock_vq_complete(&rxvq, buf, 0));
+
+	/*
+	 * This limit is FreeBSD transport policy, not a VirtIO wire constant.
+	 * At the exact high-water mark the completed RX buffer must remain
+	 * owned by the virtqueue until TX progress creates reply capacity.
+	 */
+	for (u_int i = 0; i < VTVSOCK_TXQ_HIWAT; i++) {
+		sc.sc_txq_pkts[sc.sc_txq_tail] = new_control_packet();
+		sc.sc_txq_tail =
+		    (sc.sc_txq_tail + 1) % VTVSOCK_TXQ_MAX;
+		sc.sc_txq_count++;
+	}
+	atomic_store_ptr(&vtvsock_sc, &sc);
+	transport_rx_packet_hook = count_rx_delivery;
+
+	vtvsock_rx_intr(&sc);
+	ATF_CHECK(sc.sc_rx_stalled);
+	ATF_CHECK(sc.sc_txq_count == VTVSOCK_TXQ_HIWAT);
+	ATF_CHECK(rx_delivery_calls == 0);
+	ATF_CHECK(rxvq.entry_count == 1);
+	ATF_CHECK(rxvq.entries[0].complete);
+	ATF_CHECK(rxvq.disable_count == 1);
+	ATF_CHECK(rxvq.enable_count == 0);
+
+	/* The reserved margin absorbs control traffic, then drops observably. */
+	one_seg(&txsg, &txseg);
+	for (u_int i = VTVSOCK_TXQ_HIWAT; i < VTVSOCK_TXQ_MAX; i++)
+		ATF_REQUIRE(vtvsock_ctrl_submit(&sc, new_control_packet(),
+		    &txsg) == 0);
+	ATF_CHECK(sc.sc_txq_count == VTVSOCK_TXQ_MAX);
+	ATF_CHECK(vtvsock_ctrl_submit(&sc, new_control_packet(), &txsg) ==
+	    EWOULDBLOCK);
+	ATF_CHECK(sc.sc_txq_drops == 1);
+	ATF_CHECK(tx_drops == 1);
+
+	/*
+	 * A TX interrupt drains the bounded FIFO, then synchronously resumes RX.
+	 * The completed buffer is delivered once and recycled, not dropped.
+	 */
+	vtvsock_tx_intr(&sc);
+	ATF_CHECK(!sc.sc_rx_stalled);
+	ATF_CHECK(sc.sc_txq_count == 0);
+	ATF_CHECK(rx_delivery_calls == 1);
+	ATF_CHECK(rxvq.entry_count == 1);
+	ATF_CHECK(!rxvq.entries[0].complete);
+	ATF_CHECK(rxvq.enable_count == 1);
+
+	last = 0;
+	while ((pkt = virtqueue_drain(&txvq, &last)) != NULL)
+		kfree(pkt);
+	last = 0;
+	while ((pkt = virtqueue_drain(&rxvq, &last)) != NULL)
+		kfree(pkt);
 }
 
 ATF_TC_WITHOUT_HEAD(partial_ring_is_transient);
@@ -789,10 +875,24 @@ block_rx_delivery(void *buf __unused, uint32_t len __unused)
 }
 
 static void
+count_rx_delivery(void *buf __unused, uint32_t len __unused)
+{
+
+	rx_delivery_calls++;
+}
+
+static void
 replace_rx_owner(void *buf __unused, uint32_t len __unused)
 {
 
 	atomic_store_ptr(&vtvsock_sc, replacement_rx_softc);
+}
+
+static void
+replace_event_owner(struct virtqueue *vq __unused, void *arg)
+{
+
+	atomic_store_ptr(&vtvsock_sc, arg);
 }
 
 static void
@@ -1216,6 +1316,38 @@ ATF_TC_BODY(rx_recycle_rejects_replacement_device, tc)
 	replacement_rx_softc = NULL;
 }
 
+ATF_TC_WITHOUT_HEAD(event_recycle_rejects_replacement_device);
+ATF_TC_BODY(event_recycle_rejects_replacement_device, tc)
+{
+	struct virtqueue eventvq;
+	struct virtio_vsock_event *evt;
+	struct vtvsock_softc old, replacement;
+
+	reset_state();
+	memset(&old, 0, sizeof(old));
+	memset(&replacement, 0, sizeof(replacement));
+	mock_vq_init(&eventvq, 1);
+	old.sc_eventvq = &eventvq;
+	evt = calloc(1, sizeof(*evt));
+	ATF_REQUIRE(evt != NULL);
+	/* An unknown event must be discarded, never recycled. */
+	evt->id = htole32(UINT32_MAX);
+	eventvq.entries[0] = (struct mock_vq_entry) {
+		.cookie = evt, .len = sizeof(*evt), .ndesc = 1, .complete = true
+	};
+	eventvq.entry_count = 1;
+	eventvq.nfree--;
+	atomic_store_ptr(&vtvsock_sc, &old);
+	eventvq.dequeue_hook = replace_event_owner;
+	eventvq.dequeue_hook_arg = &replacement;
+
+	vtvsock_event_intr(&old);
+	ATF_CHECK(vtvsock_global_softc() == &replacement);
+	ATF_CHECK(eventvq.entry_count == 0);
+	ATF_CHECK(eventvq.notify_count == 0);
+	ATF_CHECK(eventvq.enable_count == 0);
+}
+
 ATF_TC_WITHOUT_HEAD(tx_interrupt_serializes_detach);
 ATF_TC_BODY(tx_interrupt_serializes_detach, tc)
 {
@@ -1317,6 +1449,7 @@ ATF_TC_BODY(attach_completed_detach_lifecycle, tc)
 	ATF_REQUIRE(vtvsock_detach(&dev) == 0);
 	ATF_CHECK(vtvsock_global_softc() == NULL);
 	ATF_CHECK(unregister_calls == 1);
+	ATF_CHECK(dev.teardown_intr_calls == 1);
 	ATF_CHECK(dev.stop_calls == 1);
 	ATF_CHECK(transport_last_wakeup == &sc.sc_txvq);
 	ATF_CHECK(rxvq->entry_count == 0);
@@ -1391,6 +1524,7 @@ ATF_TC_BODY(attach_rejects_undersized_queues, tc)
 		dev.queue_sizes[queue] = size;
 
 		ATF_CHECK(vtvsock_attach(&dev) == ENXIO);
+		ATF_CHECK(dev.teardown_intr_calls == 0);
 		ATF_CHECK(dev.stop_calls == 1);
 		ATF_CHECK(dev.printf_calls == 1);
 		ATF_CHECK(register_calls == 0);
@@ -1428,6 +1562,7 @@ ATF_TC_BODY(nowait_allocation_failures_cleanup, tc)
 	kmock_nowait_malloc_fail_after = 0;
 	ATF_CHECK(vtvsock_attach(&dev) == ENOMEM);
 	ATF_CHECK(kmock_nowait_malloc_calls == 1);
+	ATF_CHECK(dev.teardown_intr_calls == 1);
 	ATF_CHECK(dev.stop_calls == 1);
 	ATF_CHECK(register_calls == 0);
 	ATF_CHECK(vtvsock_global_softc() == NULL);
@@ -1477,6 +1612,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, seqpacket_record_allocation_is_atomic);
 	ATF_TP_ADD_TC(tp, enqueue_reclaims_then_retries);
 	ATF_TP_ADD_TC(tp, control_queue_bounded);
+	ATF_TP_ADD_TC(tp, reply_highwater_stalls_and_resumes_rx);
 	ATF_TP_ADD_TC(tp, partial_ring_is_transient);
 	ATF_TP_ADD_TC(tp, tx_interrupt_drains_fifo_and_wakes);
 	ATF_TP_ADD_TC(tp, transport_reset_recycles_event_and_wakes);
@@ -1486,6 +1622,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, transport_reset_waits_for_rx_delivery);
 	ATF_TP_ADD_TC(tp, detach_waits_for_reset_event);
 	ATF_TP_ADD_TC(tp, rx_recycle_rejects_replacement_device);
+	ATF_TP_ADD_TC(tp, event_recycle_rejects_replacement_device);
 	ATF_TP_ADD_TC(tp, tx_interrupt_serializes_detach);
 	ATF_TP_ADD_TC(tp, attach_completed_detach_lifecycle);
 	ATF_TP_ADD_TC(tp, second_device_preserves_transport_owner);

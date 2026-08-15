@@ -42,7 +42,7 @@ static struct xsave_limits vmm_xsave_limits;
 void
 vmm_host_state_init(void)
 {
-	int regs[4];
+	u_int regs[4];
 
 	vmm_host_efer = rdmsr(MSR_EFER);
 	vmm_host_pat = rdmsr(MSR_PAT);

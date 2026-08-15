@@ -55,6 +55,9 @@ enum vtscmi_chan {
 typedef void virtio_scmi_rx_callback_t(void *msg, unsigned int len, void *priv);
 
 device_t virtio_scmi_transport_get(void);
+void virtio_scmi_transport_put(device_t dev);
+int virtio_scmi_transport_start(device_t dev);
+void virtio_scmi_transport_quiesce(device_t dev);
 int virtio_scmi_channel_size_get(device_t dev, enum vtscmi_chan chan);
 int virtio_scmi_channel_callback_set(device_t dev, enum vtscmi_chan chan,
 				     virtio_scmi_rx_callback_t *cb, void *priv);

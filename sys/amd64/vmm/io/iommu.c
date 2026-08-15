@@ -104,7 +104,7 @@ IOMMU_CREATE_MAPPING(void *domain, vm_paddr_t gpa, vm_paddr_t hpa,
 	return (EOPNOTSUPP);
 }
 
-static __inline uint64_t
+static __inline int
 IOMMU_REMOVE_MAPPING(void *domain, vm_paddr_t gpa, uint64_t len,
     uint64_t *res_len)
 {
@@ -160,16 +160,24 @@ IOMMU_DISABLE(void)
 static void
 iommu_pci_add(void *arg, device_t dev)
 {
+	int error;
 
 	/* Add new devices to the host domain. */
-	iommu_add_device(host_domain, dev, pci_get_rid(dev));
+	error = iommu_add_device(host_domain, dev, pci_get_rid(dev));
+	if (error != 0 && error != ENXIO)
+		device_printf(dev, "unable to add to host IOMMU domain: %d\n",
+		    error);
 }
 
 static void
 iommu_pci_delete(void *arg, device_t dev)
 {
+	int error;
 
-	iommu_remove_device(host_domain, dev, pci_get_rid(dev));
+	error = iommu_remove_device(host_domain, dev, pci_get_rid(dev));
+	if (error != 0 && error != ENXIO)
+		device_printf(dev, "unable to remove from host IOMMU domain: %d\n",
+		    error);
 }
 
 static void
@@ -213,7 +221,17 @@ iommu_init(void)
 	 * Create 1:1 mappings from '0' to 'maxaddr' for devices assigned to
 	 * the host
 	 */
-	iommu_create_mapping(host_domain, 0, 0, maxaddr);
+	/*
+	 * A host domain without its complete identity map is unsafe.  In
+	 * particular, do not continue to attach host devices after a backend
+	 * reports a mapping failure or violates the mapping-progress contract.
+	 */
+	error = iommu_create_mapping(host_domain, 0, 0, maxaddr);
+	if (error != 0) {
+		printf("iommu_init: unable to create host mappings: %d\n", error);
+		iommu_cleanup_int(false);
+		return;
+	}
 
 	add_tag = EVENTHANDLER_REGISTER(pci_add_device, iommu_pci_add, NULL, 0);
 	delete_tag = EVENTHANDLER_REGISTER(pci_delete_device, iommu_pci_delete,
@@ -265,9 +283,18 @@ iommu_cleanup_int(bool iommu_disable)
 	}
 	if (iommu_disable)
 		IOMMU_DISABLE();
-	IOMMU_DESTROY_DOMAIN(host_domain);
+	if (host_domain != NULL)
+		IOMMU_DESTROY_DOMAIN(host_domain);
 	host_domain = NULL;
 	IOMMU_CLEANUP();
+	/*
+	 * Cleanup is terminal for this module instance.  In particular, a
+	 * partially initialized host domain must not leave a usable-looking
+	 * backend behind for iommu_create_domain().  The module reload path
+	 * supplies a fresh initialization state.
+	 */
+	iommu_avail = 0;
+	ops = NULL;
 }
 
 void
@@ -279,7 +306,7 @@ iommu_cleanup(void)
 void *
 iommu_create_domain(vm_paddr_t maxaddr)
 {
-	static volatile int iommu_initted;
+	static volatile u_int iommu_initted;
 
 	if (iommu_initted < 2) {
 		if (atomic_cmpset_int(&iommu_initted, 0, 1)) {
@@ -309,9 +336,17 @@ iommu_create_mapping(void *dom, vm_paddr_t gpa, vm_paddr_t hpa, size_t len)
 	    remaining -= mapped) {
 		error = IOMMU_CREATE_MAPPING(dom, gpa, hpa, remaining,
 		    &mapped);
-		if (error != 0) {
+		/*
+		 * The backend contract returns the exact positive prefix it
+		 * installed.  Do not trust a broken implementation to make
+		 * progress: a zero result otherwise spins forever with the same
+		 * GPA/HPA pair, and an oversized result wraps the cursors below.
+		 * Returning an ordinary error leaves the caller's existing reset
+		 * and domain-destruction path in charge of any partial mapping.
+		 */
+		if (error != 0 || mapped == 0 || mapped > remaining) {
 			/* XXXKIB rollback */
-			return (error);
+			return (error != 0 ? error : EIO);
 		}
 	}
 	return (0);
@@ -326,9 +361,10 @@ iommu_remove_mapping(void *dom, vm_paddr_t gpa, size_t len)
 	for (remaining = len; remaining > 0; gpa += unmapped,
 	    remaining -= unmapped) {
 		error = IOMMU_REMOVE_MAPPING(dom, gpa, remaining, &unmapped);
-		if (error != 0) {
+		/* See iommu_create_mapping(): preserve cursor progress invariants. */
+		if (error != 0 || unmapped == 0 || unmapped > remaining) {
 			/* XXXKIB ? */
-			return (error);
+			return (error != 0 ? error : EIO);
 		}
 	}
 	return (0);

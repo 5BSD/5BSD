@@ -32,6 +32,7 @@
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/bio.h>
+#include <sys/limits.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/msan.h>
@@ -40,6 +41,8 @@
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/queue.h>
+#include <sys/sdt.h>
+#include <sys/smp.h>
 
 #include <geom/geom.h>
 #include <geom/geom_disk.h>
@@ -52,8 +55,23 @@
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtqueue.h>
 #include <dev/virtio/block/virtio_blk.h>
+#include <dev/virtio/block/virtio_blk_capacity.h>
 
 #include "virtio_if.h"
+
+/*
+ * Metadata-only request lifetime probes.  They deliberately omit buffer
+ * addresses and payload contents: the paired type/sector/length/queue values
+ * are sufficient to determine whether a stalled filesystem operation reached
+ * the VirtIO queue and whether the device returned a completion.
+ */
+SDT_PROVIDER_DEFINE(vtblk);
+SDT_PROBE_DEFINE6(vtblk, , , request__submit,
+    "device_t", "uint16_t", "uint32_t", "uint64_t", "uint32_t",
+    "uint16_t");
+SDT_PROBE_DEFINE6(vtblk, , , request__complete,
+    "device_t", "uint16_t", "uint32_t", "uint64_t", "uint32_t",
+    "int");
 
 struct vtblk_request {
 	struct vtblk_softc		*vbr_sc;
@@ -68,10 +86,16 @@ struct vtblk_request {
 
 	/* Fields after this point are zeroed for each request. */
 	struct bio			*vbr_bp;
+	struct virtqueue		*vbr_vq;
 	uint8_t				 vbr_requeue_on_error;
 	uint8_t				 vbr_busdma_wait;
 	int				 vbr_error;
 	TAILQ_ENTRY(vtblk_request)	 vbr_link;
+};
+
+struct vtblk_vq {
+	struct vtblk_softc	*vvq_sc;
+	struct virtqueue	*vvq_vq;
 };
 
 enum vtblk_cache_mode {
@@ -95,7 +119,9 @@ struct vtblk_softc {
 #define VTBLK_FLAG_BUSDMA_WAIT	0x0020
 #define VTBLK_FLAG_BUSDMA_ALIGN	0x0040
 
-	struct virtqueue	*vtblk_vq;
+	struct vtblk_vq		*vtblk_vqs;
+	int			 vtblk_nvqs;
+	int			 vtblk_next_vq;
 	struct sglist		*vtblk_sglist;
 	bus_dma_tag_t		 vtblk_dmat;
 	bus_dma_tag_t		 vtblk_hdr_dmat;
@@ -111,6 +137,14 @@ struct vtblk_softc {
 
 	int			 vtblk_max_nsegs;
 	int			 vtblk_request_count;
+	/*
+	 * GEOM has one deletion request type.  Retain the negotiated WRITE_ZEROES
+	 * limit so a later BIO_DELETE can select the deterministic zeroing command
+	 * rather than merely negotiating the feature and never exercising it.
+	 */
+	uint32_t		 vtblk_max_write_zeroes_sectors;
+	uint32_t		 vtblk_max_discard_sectors;
+	bool			 vtblk_delete_uses_write_zeroes;
 	enum vtblk_cache_mode	 vtblk_write_cache;
 
 	struct bio_queue	 vtblk_dump_queue;
@@ -157,8 +191,10 @@ static int	vtblk_negotiate_features(struct vtblk_softc *);
 static int	vtblk_setup_features(struct vtblk_softc *);
 static int	vtblk_maximum_segments(struct vtblk_softc *,
 		    struct virtio_blk_config *);
-static int	vtblk_alloc_virtqueue(struct vtblk_softc *);
-static void	vtblk_resize_disk(struct vtblk_softc *, uint64_t);
+static int	vtblk_alloc_virtqueues(struct vtblk_softc *,
+		    const struct virtio_blk_config *);
+static bool	vtblk_capacity_bytes(uint64_t, off_t *);
+static void	vtblk_resize_disk(struct vtblk_softc *, off_t);
 static void	vtblk_alloc_disk(struct vtblk_softc *,
 		    struct virtio_blk_config *);
 static void	vtblk_create_disk(struct vtblk_softc *);
@@ -177,16 +213,19 @@ static struct vtblk_request *
 		vtblk_request_next(struct vtblk_softc *);
 static struct vtblk_request *
 		vtblk_request_bio(struct vtblk_softc *);
+static bool	vtblk_virtqueues_empty(struct vtblk_softc *);
+static struct virtqueue *
+		vtblk_select_virtqueue(struct vtblk_softc *, int);
 static int	vtblk_request_execute(struct vtblk_request *, int);
 static void	vtblk_request_execute_cb(void *,
 		    bus_dma_segment_t *, int, int);
 static int	vtblk_request_error(struct vtblk_request *);
 
 static void	vtblk_queue_completed(struct vtblk_softc *,
-		    struct bio_queue *);
+		    struct virtqueue *, struct bio_queue *);
 static void	vtblk_done_completed(struct vtblk_softc *,
 		    struct bio_queue *);
-static void	vtblk_drain_vq(struct vtblk_softc *);
+static void	vtblk_drain_vq(struct vtblk_softc *, struct virtqueue *);
 static void	vtblk_drain(struct vtblk_softc *);
 
 static void	vtblk_startio(struct vtblk_softc *);
@@ -210,6 +249,7 @@ static void	vtblk_set_write_cache(struct vtblk_softc *, int);
 static int	vtblk_write_cache_enabled(struct vtblk_softc *sc,
 		    struct virtio_blk_config *);
 static int	vtblk_write_cache_sysctl(SYSCTL_HANDLER_ARGS);
+static int	vtblk_write_zeroes_delete_sysctl(SYSCTL_HANDLER_ARGS);
 
 static void	vtblk_setup_sysctl(struct vtblk_softc *);
 static int	vtblk_tunable_int(struct vtblk_softc *, const char *, int);
@@ -237,7 +277,10 @@ TUNABLE_INT("hw.vtblk.writecache_mode", &vtblk_writecache_mode);
      VIRTIO_BLK_F_FLUSH			| \
      VIRTIO_BLK_F_TOPOLOGY		| \
      VIRTIO_BLK_F_CONFIG_WCE		| \
+     VIRTIO_BLK_F_MQ			| \
      VIRTIO_BLK_F_DISCARD		| \
+	 VIRTIO_BLK_F_WRITE_ZEROES		| \
+     VIRTIO_F_RING_PACKED		| \
      VIRTIO_RING_F_INDIRECT_DESC)
 
 #define VTBLK_MODERN_FEATURES	(VTBLK_COMMON_FEATURES)
@@ -255,8 +298,9 @@ TUNABLE_INT("hw.vtblk.writecache_mode", &vtblk_writecache_mode);
 				mtx_assert(VTBLK_MTX((_sc)), MA_NOTOWNED)
 
 #define VTBLK_DISK_NAME		"vtbd"
-#define VTBLK_QUIESCE_TIMEOUT	(30 * hz)
+#define VTBLK_QUIESCE_TIMEOUT	(30 * SBT_1S)
 #define VTBLK_BSIZE		512
+#define VTBLK_MAX_VQS		64
 
 /*
  * Each block request uses at least two segments - one for the header
@@ -345,6 +389,25 @@ vtblk_attach(device_t dev)
 	}
 
 	vtblk_read_config(sc, &blkcfg);
+	if (!vtblk_capacity_bytes(blkcfg.capacity, NULL)) {
+		error = EINVAL;
+		device_printf(dev, "invalid capacity %ju sectors\n",
+		    (uintmax_t)blkcfg.capacity);
+		goto fail;
+	}
+
+	/*
+	 * A device-supplied logical block size becomes d_sectorsize and is
+	 * used as a divisor by the disk(9)/GEOM layer and by the topology
+	 * stripe arithmetic below.  Reject a zero or non-power-of-two value
+	 * before it can cause a divide-by-zero or violate disk(9) invariants.
+	 */
+	if (virtio_with_feature(dev, VIRTIO_BLK_F_BLK_SIZE) &&
+	    (blkcfg.blk_size == 0 || !powerof2(blkcfg.blk_size))) {
+		error = EINVAL;
+		device_printf(dev, "invalid block size %u\n", blkcfg.blk_size);
+		goto fail;
+	}
 
 	/*
 	 * With the current sglist(9) implementation, it is not easy
@@ -454,9 +517,9 @@ vtblk_attach(device_t dev)
 	bus_dma_tag_set_iommu(sc->vtblk_ack_dmat, NULL, NULL);
 #endif
 
-	error = vtblk_alloc_virtqueue(sc);
+	error = vtblk_alloc_virtqueues(sc, &blkcfg);
 	if (error) {
-		device_printf(dev, "cannot allocate virtqueue\n");
+		device_printf(dev, "cannot allocate virtqueues\n");
 		goto fail;
 	}
 
@@ -474,7 +537,8 @@ vtblk_attach(device_t dev)
 		goto fail;
 	}
 
-	virtqueue_enable_intr(sc->vtblk_vq);
+	for (int i = 0; i < sc->vtblk_nvqs; i++)
+		virtqueue_enable_intr(sc->vtblk_vqs[i].vvq_vq);
 
 fail:
 	if (error)
@@ -492,9 +556,18 @@ vtblk_detach(device_t dev)
 
 	VTBLK_LOCK(sc);
 	sc->vtblk_flags |= VTBLK_FLAG_DETACH;
+	/*
+	 * A deferred busdma callback owns a request which is not visible in any
+	 * virtqueue or software queue.  Close callback admission and wait for it
+	 * to return that request before resetting queues or destroying the DMA
+	 * tag and callback mutex.
+	 */
+	while (sc->vtblk_flags & VTBLK_FLAG_BUSDMA_WAIT)
+		msleep(sc, VTBLK_MTX(sc), PRIBIO, "vtblkd", 0);
 	if (device_is_attached(dev))
 		vtblk_stop(sc);
 	VTBLK_UNLOCK(sc);
+	virtio_teardown_intr(dev);
 
 	vtblk_drain(sc);
 
@@ -522,6 +595,10 @@ vtblk_detach(device_t dev)
 		sglist_free(sc->vtblk_sglist);
 		sc->vtblk_sglist = NULL;
 	}
+
+	free(sc->vtblk_vqs, M_DEVBUF);
+	sc->vtblk_vqs = NULL;
+	sc->vtblk_nvqs = 0;
 
 	VTBLK_LOCK_DESTROY(sc);
 
@@ -591,14 +668,18 @@ vtblk_config_change(device_t dev)
 {
 	struct vtblk_softc *sc;
 	struct virtio_blk_config blkcfg;
-	uint64_t capacity;
+	off_t capacity;
 
 	sc = device_get_softc(dev);
 
 	vtblk_read_config(sc, &blkcfg);
 
 	/* Capacity is always in 512-byte units. */
-	capacity = blkcfg.capacity * VTBLK_BSIZE;
+	if (!vtblk_capacity_bytes(blkcfg.capacity, &capacity)) {
+		device_printf(dev, "ignoring invalid capacity %ju sectors\n",
+		    (uintmax_t)blkcfg.capacity);
+		return (EINVAL);
+	}
 
 	if (sc->vtblk_disk->d_mediasize != capacity)
 		vtblk_resize_disk(sc, capacity);
@@ -756,26 +837,72 @@ vtblk_maximum_segments(struct vtblk_softc *sc,
 }
 
 static int
-vtblk_alloc_virtqueue(struct vtblk_softc *sc)
+vtblk_alloc_virtqueues(struct vtblk_softc *sc,
+    const struct virtio_blk_config *blkcfg)
 {
 	device_t dev;
-	struct vq_alloc_info vq_info;
-	int indir_segs;
+	struct vq_alloc_info *vq_info;
+	int indir_segs, nvqs;
+	int error;
 
 	dev = sc->vtblk_dev;
-
+	nvqs = 1;
+	if (virtio_with_feature(dev, VIRTIO_BLK_F_MQ)) {
+		if (blkcfg->num_queues == 0)
+			return (EINVAL);
+		nvqs = MIN((int)blkcfg->num_queues, mp_ncpus);
+		nvqs = MIN(nvqs, VTBLK_MAX_VQS);
+	}
+	sc->vtblk_vqs = mallocarray((size_t)nvqs,
+	    sizeof(*sc->vtblk_vqs), M_DEVBUF, M_NOWAIT | M_ZERO);
+	vq_info = mallocarray((size_t)nvqs, sizeof(*vq_info), M_DEVBUF,
+	    M_NOWAIT | M_ZERO);
+	if (sc->vtblk_vqs == NULL || vq_info == NULL) {
+		free(vq_info, M_DEVBUF);
+		return (ENOMEM);
+	}
 	indir_segs = 0;
 	if (sc->vtblk_flags & VTBLK_FLAG_INDIRECT)
 		indir_segs = sc->vtblk_max_nsegs;
-	VQ_ALLOC_INFO_INIT(&vq_info, indir_segs,
-	    vtblk_vq_intr, sc, &sc->vtblk_vq,
-	    "%s request", device_get_nameunit(dev));
+	for (int i = 0; i < nvqs; i++) {
+		sc->vtblk_vqs[i].vvq_sc = sc;
+		VQ_ALLOC_INFO_INIT(&vq_info[i], indir_segs,
+		    vtblk_vq_intr, &sc->vtblk_vqs[i],
+		    &sc->vtblk_vqs[i].vvq_vq, "%s request.%d",
+		    device_get_nameunit(dev), i);
+	}
+	error = virtio_alloc_virtqueues(dev, nvqs, vq_info);
+	free(vq_info, M_DEVBUF);
+	if (error != 0)
+		return (error);
+	sc->vtblk_nvqs = nvqs;
+	if (bootverbose && nvqs > 1)
+		device_printf(dev, "using %d request virtqueues\n", nvqs);
+	return (0);
+}
 
-	return (virtio_alloc_virtqueues(dev, 1, &vq_info));
+/*
+ * The device configuration expresses capacity in 512-byte sectors, whereas
+ * geom_disk stores the media size in an off_t.  Do this conversion once, with
+ * an explicit bound, before either attach or a runtime configuration change
+ * publishes it.  A malformed or simply too-large device value must not wrap
+ * into a smaller guest disk.
+ */
+static bool
+vtblk_capacity_bytes(uint64_t sectors, off_t *bytes)
+{
+	uint64_t capacity;
+
+	if (!virtio_blk_capacity_to_bytes(sectors, (uint64_t)OFF_MAX,
+	    &capacity))
+		return (false);
+	if (bytes != NULL)
+		*bytes = (off_t)capacity;
+	return (true);
 }
 
 static void
-vtblk_resize_disk(struct vtblk_softc *sc, uint64_t new_capacity)
+vtblk_resize_disk(struct vtblk_softc *sc, off_t new_capacity)
 {
 	device_t dev;
 	struct disk *dp;
@@ -804,6 +931,7 @@ vtblk_alloc_disk(struct vtblk_softc *sc, struct virtio_blk_config *blkcfg)
 {
 	device_t dev;
 	struct disk *dp;
+	off_t capacity;
 
 	dev = sc->vtblk_dev;
 
@@ -831,8 +959,10 @@ vtblk_alloc_disk(struct vtblk_softc *sc, struct virtio_blk_config *blkcfg)
 		dp->d_dump = vtblk_dump;
 	}
 
-	/* Capacity is always in 512-byte units. */
-	dp->d_mediasize = blkcfg->capacity * VTBLK_BSIZE;
+	/* vtblk_attach() validated this conversion before reaching here. */
+	if (!vtblk_capacity_bytes(blkcfg->capacity, &capacity))
+		panic("%s: invalid virtio-blk capacity", __func__);
+	dp->d_mediasize = capacity;
 
 	if (virtio_with_feature(dev, VIRTIO_BLK_F_BLK_SIZE))
 		dp->d_sectorsize = blkcfg->blk_size;
@@ -872,9 +1002,45 @@ vtblk_alloc_disk(struct vtblk_softc *sc, struct virtio_blk_config *blkcfg)
 		    dp->d_stripesize;
 	}
 
-	if (virtio_with_feature(dev, VIRTIO_BLK_F_DISCARD)) {
+	if (virtio_with_feature(dev, VIRTIO_BLK_F_WRITE_ZEROES) &&
+	    blkcfg->max_write_zeroes_sectors != 0 &&
+	    blkcfg->max_write_zeroes_seg != 0) {
+		/*
+		 * Zeroing is a valid, deterministic implementation of a GEOM delete.
+		 * Deliberately leave the WRITE_ZEROES UNMAP flag clear: generic delete
+		 * requests do not require deallocation, and an unadvertised unmap
+		 * contract must not be inferred from this translation.
+		 */
+		sc->vtblk_max_write_zeroes_sectors =
+		    blkcfg->max_write_zeroes_sectors;
+	}
+	if (virtio_with_feature(dev, VIRTIO_BLK_F_DISCARD) &&
+	    blkcfg->max_discard_sectors != 0)
+		sc->vtblk_max_discard_sectors = blkcfg->max_discard_sectors;
+	/*
+	 * BIO_DELETE defaults to the DISCARD command, but a host may offer
+	 * only WRITE_ZEROES (e.g. bhyve advertises WRITE_ZEROES for any
+	 * writable disk while gating DISCARD on backing-store delete support).
+	 * With no DISCARD command negotiated, a delete must issue WRITE_ZEROES
+	 * or every BIO_DELETE would be rejected as unsupported.  This mirrors
+	 * the invariant enforced by the write_zeroes_delete sysctl.
+	 */
+	if (sc->vtblk_max_discard_sectors == 0 &&
+	    sc->vtblk_max_write_zeroes_sectors != 0)
+		sc->vtblk_delete_uses_write_zeroes = true;
+	if (sc->vtblk_max_write_zeroes_sectors != 0 ||
+	    sc->vtblk_max_discard_sectors != 0) {
 		dp->d_flags |= DISKFLAG_CANDELETE;
-		dp->d_delmaxsize = blkcfg->max_discard_sectors * VTBLK_BSIZE;
+		if (sc->vtblk_max_write_zeroes_sectors == 0)
+			dp->d_delmaxsize =
+			    (off_t)sc->vtblk_max_discard_sectors * VTBLK_BSIZE;
+		else if (sc->vtblk_max_discard_sectors == 0)
+			dp->d_delmaxsize =
+			    (off_t)sc->vtblk_max_write_zeroes_sectors * VTBLK_BSIZE;
+		else
+			dp->d_delmaxsize = (off_t)MIN(
+			    sc->vtblk_max_discard_sectors,
+			    sc->vtblk_max_write_zeroes_sectors) * VTBLK_BSIZE;
 	}
 
 	if (vtblk_write_cache_enabled(sc, blkcfg) != 0)
@@ -983,7 +1149,9 @@ vtblk_request_prealloc(struct vtblk_softc *sc)
 	int i, nreqs;
 	int error;
 
-	nreqs = virtqueue_size(sc->vtblk_vq);
+	nreqs = 0;
+	for (int i = 0; i < sc->vtblk_nvqs; i++)
+		nreqs += virtqueue_size(sc->vtblk_vqs[i].vvq_vq);
 
 	/*
 	 * Preallocate sufficient requests to keep the virtqueue full. Each
@@ -1128,7 +1296,9 @@ vtblk_request_bio(struct vtblk_softc *sc)
 		    VTBLK_BSIZE);
 		break;
 	case BIO_DELETE:
-		req->vbr_hdr->type = vtblk_gtoh32(sc, VIRTIO_BLK_T_DISCARD);
+		req->vbr_hdr->type = vtblk_gtoh32(sc,
+		    sc->vtblk_delete_uses_write_zeroes ?
+		    VIRTIO_BLK_T_WRITE_ZEROES : VIRTIO_BLK_T_DISCARD);
 		req->vbr_hdr->sector = vtblk_gtoh64(sc, bp->bio_offset /
 		    VTBLK_BSIZE);
 		break;
@@ -1140,6 +1310,34 @@ vtblk_request_bio(struct vtblk_softc *sc)
 		req->vbr_hdr->type |= vtblk_gtoh32(sc, VIRTIO_BLK_T_BARRIER);
 
 	return (req);
+}
+
+static bool
+vtblk_virtqueues_empty(struct vtblk_softc *sc)
+{
+
+	for (int i = 0; i < sc->vtblk_nvqs; i++) {
+		if (!virtqueue_empty(sc->vtblk_vqs[i].vvq_vq))
+			return (false);
+	}
+	return (true);
+}
+
+static struct virtqueue *
+vtblk_select_virtqueue(struct vtblk_softc *sc, int needed)
+{
+	struct virtqueue *vq;
+	int index;
+
+	for (int i = 0; i < sc->vtblk_nvqs; i++) {
+		index = (sc->vtblk_next_vq + i) % sc->vtblk_nvqs;
+		vq = sc->vtblk_vqs[index].vvq_vq;
+		if (virtqueue_nfree(vq) >= needed) {
+			sc->vtblk_next_vq = (index + 1) % sc->vtblk_nvqs;
+			return (vq);
+		}
+	}
+	return (NULL);
 }
 
 static int
@@ -1180,14 +1378,15 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 	struct sglist *sg;
 	struct bio *bp;
 	int ordered, readable, writable, i;
+	bool busdma_wait;
 
 	req = (struct vtblk_request *)callback_arg;
 	sc = req->vbr_sc;
-	vq = sc->vtblk_vq;
 	sg = sc->vtblk_sglist;
 	bp = req->vbr_bp;
 	ordered = 0;
 	writable = 0;
+	busdma_wait = req->vbr_busdma_wait != 0;
 
 	/*
 	 * If we paused request queueing while we waited for busdma to call us
@@ -1198,6 +1397,17 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 	 */
 	if (req->vbr_busdma_wait)
 		sc->vtblk_flags &= ~VTBLK_FLAG_BUSDMA_WAIT;
+	/*
+	 * Detach may have closed admission while busdma held this request.
+	 * Return it to the software ready queue without publishing a descriptor
+	 * into a device which detach is about to reset.
+	 */
+	if (sc->vtblk_flags & VTBLK_FLAG_DETACH) {
+		if (error != 0)
+			goto out1;
+		error = ENXIO;
+		goto out;
+	}
 
 	/* Fail on errors from busdma. */
 	if (error)
@@ -1214,7 +1424,7 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 			goto out;
 		}
 		if (bp->bio_flags & BIO_ORDERED) {
-			if (!virtqueue_empty(vq)) {
+			if (!vtblk_virtqueues_empty(sc)) {
 				error = EBUSY;
 				goto out;
 			}
@@ -1282,6 +1492,17 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 	writable++;
 	sglist_append_phys(sg, req->vbr_ack_paddr, sizeof(uint8_t));
 	readable = sg->sg_nseg - writable;
+	vq = req->vbr_vq;
+	if (vq == NULL) {
+		vq = vtblk_select_virtqueue(sc,
+		    (sc->vtblk_flags & VTBLK_FLAG_INDIRECT) != 0 ?
+		    1 : sg->sg_nseg);
+		if (vq == NULL) {
+			error = EBUSY;
+			goto out;
+		}
+		req->vbr_vq = vq;
+	}
 
 	if (req->vbr_mapp != NULL) {
 		switch (bp->bio_cmd) {
@@ -1299,13 +1520,19 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 	error = virtqueue_enqueue(vq, req, sg, readable, writable);
 	if (error == 0 && ordered)
 		sc->vtblk_req_ordered = req;
+	if (error == 0) {
+		SDT_PROBE6(vtblk, , , request__submit, sc->vtblk_dev,
+		    virtqueue_index(vq), vtblk_gtoh32(sc, req->vbr_hdr->type),
+		    vtblk_gtoh64(sc, req->vbr_hdr->sector), bp->bio_bcount,
+		    virtqueue_nfree(vq));
+	}
 
 	/*
 	 * If we were called asynchronously, we need to notify the queue that
 	 * we've added a new request, since the notification from startio was
 	 * performed already.
 	 */
-	if (error == 0 && req->vbr_busdma_wait)
+	if (error == 0 && busdma_wait)
 		virtqueue_notify(vq);
 
 out:
@@ -1315,6 +1542,9 @@ out1:
 	if (error && req->vbr_requeue_on_error)
 		vtblk_request_requeue_ready(sc, req);
 	req->vbr_error = error;
+	if (busdma_wait &&
+	    (sc->vtblk_flags & (VTBLK_FLAG_SUSPEND | VTBLK_FLAG_DETACH)) != 0)
+		wakeup(sc);
 }
 
 static int
@@ -1344,6 +1574,7 @@ static struct bio *
 vtblk_queue_complete_one(struct vtblk_softc *sc, struct vtblk_request *req)
 {
 	struct bio *bp;
+	int error;
 
 	if (sc->vtblk_req_ordered != NULL) {
 		MPASS(sc->vtblk_req_ordered == req);
@@ -1365,17 +1596,22 @@ vtblk_queue_complete_one(struct vtblk_softc *sc, struct vtblk_request *req)
 			break;
 		}
 	}
-	bp->bio_error = vtblk_request_error(req);
+	error = vtblk_request_error(req);
+	bp->bio_error = error;
+	SDT_PROBE6(vtblk, , , request__complete, sc->vtblk_dev,
+	    virtqueue_index(req->vbr_vq), vtblk_gtoh32(sc, req->vbr_hdr->type),
+	    vtblk_gtoh64(sc, req->vbr_hdr->sector), bp->bio_bcount, error);
 	return (bp);
 }
 
 static void
-vtblk_queue_completed(struct vtblk_softc *sc, struct bio_queue *queue)
+vtblk_queue_completed(struct vtblk_softc *sc, struct virtqueue *vq,
+    struct bio_queue *queue)
 {
 	struct vtblk_request *req;
 	struct bio *bp;
 
-	while ((req = virtqueue_dequeue(sc->vtblk_vq, NULL)) != NULL) {
+	while ((req = virtqueue_dequeue(vq, NULL)) != NULL) {
 		bp = vtblk_queue_complete_one(sc, req);
 
 		TAILQ_INSERT_TAIL(queue, bp, bio_queue);
@@ -1396,13 +1632,11 @@ vtblk_done_completed(struct vtblk_softc *sc, struct bio_queue *queue)
 }
 
 static void
-vtblk_drain_vq(struct vtblk_softc *sc)
+vtblk_drain_vq(struct vtblk_softc *sc, struct virtqueue *vq)
 {
-	struct virtqueue *vq;
 	struct vtblk_request *req;
 	int last;
 
-	vq = sc->vtblk_vq;
 	last = 0;
 
 	while ((req = virtqueue_drain(vq, &last)) != NULL) {
@@ -1410,7 +1644,6 @@ vtblk_drain_vq(struct vtblk_softc *sc)
 		vtblk_request_enqueue(sc, req);
 	}
 
-	sc->vtblk_req_ordered = NULL;
 	KASSERT(virtqueue_empty(vq), ("virtqueue not empty"));
 }
 
@@ -1423,15 +1656,19 @@ vtblk_drain(struct vtblk_softc *sc)
 
 	bioq = &sc->vtblk_bioq;
 
-	if (sc->vtblk_vq != NULL) {
+	if (sc->vtblk_vqs != NULL) {
 		struct bio_queue queue;
 
 		TAILQ_INIT(&queue);
-		vtblk_queue_completed(sc, &queue);
+		for (int i = 0; i < sc->vtblk_nvqs; i++)
+			vtblk_queue_completed(sc, sc->vtblk_vqs[i].vvq_vq,
+			    &queue);
 		vtblk_done_completed(sc, &queue);
 
-		vtblk_drain_vq(sc);
+		for (int i = 0; i < sc->vtblk_nvqs; i++)
+			vtblk_drain_vq(sc, sc->vtblk_vqs[i].vvq_vq);
 	}
+	sc->vtblk_req_ordered = NULL;
 
 	while ((req = vtblk_request_next_ready(sc)) != NULL) {
 		vtblk_bio_done(sc, req->vbr_bp, ENXIO);
@@ -1449,31 +1686,25 @@ vtblk_drain(struct vtblk_softc *sc)
 static void
 vtblk_startio(struct vtblk_softc *sc)
 {
-	struct virtqueue *vq;
 	struct vtblk_request *req;
-	int enq;
+	int error;
 
 	VTBLK_LOCK_ASSERT(sc);
-	vq = sc->vtblk_vq;
-	enq = 0;
 
 	if (sc->vtblk_flags & (VTBLK_FLAG_SUSPEND | VTBLK_FLAG_BUSDMA_WAIT))
 		return;
 
-	while (!virtqueue_full(vq)) {
+	for (;;) {
 		req = vtblk_request_next(sc);
 		if (req == NULL)
 			break;
 
 		req->vbr_requeue_on_error = 1;
-		if (vtblk_request_execute(req, BUS_DMA_WAITOK))
+		error = vtblk_request_execute(req, BUS_DMA_WAITOK);
+		if (error != 0)
 			break;
-
-		enq++;
+		virtqueue_notify(req->vbr_vq);
 	}
-
-	if (enq > 0)
-		virtqueue_notify(vq);
 }
 
 static void
@@ -1539,11 +1770,18 @@ vtblk_read_config(struct vtblk_softc *sc, struct virtio_blk_config *blkcfg)
 	VTBLK_GET_CONFIG(dev, VIRTIO_BLK_F_TOPOLOGY,
 	    topology.opt_io_size, blkcfg);
 	VTBLK_GET_CONFIG(dev, VIRTIO_BLK_F_CONFIG_WCE, wce, blkcfg);
+	VTBLK_GET_CONFIG(dev, VIRTIO_BLK_F_MQ, num_queues, blkcfg);
 	VTBLK_GET_CONFIG(dev, VIRTIO_BLK_F_DISCARD, max_discard_sectors,
 	    blkcfg);
 	VTBLK_GET_CONFIG(dev, VIRTIO_BLK_F_DISCARD, max_discard_seg, blkcfg);
 	VTBLK_GET_CONFIG(dev, VIRTIO_BLK_F_DISCARD, discard_sector_alignment,
 	    blkcfg);
+	VTBLK_GET_CONFIG(dev, VIRTIO_BLK_F_WRITE_ZEROES,
+	    max_write_zeroes_sectors, blkcfg);
+	VTBLK_GET_CONFIG(dev, VIRTIO_BLK_F_WRITE_ZEROES,
+	    max_write_zeroes_seg, blkcfg);
+	VTBLK_GET_CONFIG(dev, VIRTIO_BLK_F_WRITE_ZEROES,
+	    write_zeroes_may_unmap, blkcfg);
 }
 
 #undef VTBLK_GET_CONFIG
@@ -1596,17 +1834,20 @@ vtblk_poll_request(struct vtblk_softc *sc, struct vtblk_request *req)
 	struct bio *bp;
 	int error;
 
-	vq = sc->vtblk_vq;
+	vq = sc->vtblk_vqs[0].vvq_vq;
 
-	if (!virtqueue_empty(vq))
+	if (!vtblk_virtqueues_empty(sc))
 		return (EBUSY);
 
+	req->vbr_vq = vq;
 	error = vtblk_request_execute(req, BUS_DMA_NOWAIT);
 	if (error)
 		return (error);
 
 	virtqueue_notify(vq);
 	req1 = virtqueue_poll(vq, NULL);
+	if (req1 == NULL)
+		return (EIO);
 	KASSERT(req == req1,
 	    ("%s: polling completed %p not %p", __func__, req1, req));
 
@@ -1625,14 +1866,19 @@ vtblk_poll_request(struct vtblk_softc *sc, struct vtblk_request *req)
 static int
 vtblk_quiesce(struct vtblk_softc *sc)
 {
+	sbintime_t deadline, remaining;
 	int error;
 
 	VTBLK_LOCK_ASSERT(sc);
 	error = 0;
+	deadline = sbinuptime() + VTBLK_QUIESCE_TIMEOUT;
 
-	while (!virtqueue_empty(sc->vtblk_vq)) {
-		if (mtx_sleep(&sc->vtblk_vq, VTBLK_MTX(sc), PRIBIO, "vtblkq",
-		    VTBLK_QUIESCE_TIMEOUT) == EWOULDBLOCK) {
+	while ((sc->vtblk_flags & VTBLK_FLAG_BUSDMA_WAIT) != 0 ||
+	    !vtblk_virtqueues_empty(sc)) {
+		remaining = deadline - sbinuptime();
+		if (remaining <= 0 ||
+		    msleep_sbt(sc, VTBLK_MTX(sc), PRIBIO, "vtblkq",
+		    remaining, 0, 0) == EWOULDBLOCK) {
 			error = EBUSY;
 			break;
 		}
@@ -1644,12 +1890,14 @@ vtblk_quiesce(struct vtblk_softc *sc)
 static void
 vtblk_vq_intr(void *xsc)
 {
+	struct vtblk_vq *vvq;
 	struct vtblk_softc *sc;
 	struct virtqueue *vq;
 	struct bio_queue queue;
 
-	sc = xsc;
-	vq = sc->vtblk_vq;
+	vvq = xsc;
+	sc = vvq->vvq_sc;
+	vq = vvq->vvq_vq;
 	TAILQ_INIT(&queue);
 
 	VTBLK_LOCK(sc);
@@ -1658,7 +1906,7 @@ again:
 	if (sc->vtblk_flags & VTBLK_FLAG_DETACH)
 		goto out;
 
-	vtblk_queue_completed(sc, &queue);
+	vtblk_queue_completed(sc, vq, &queue);
 	vtblk_startio(sc);
 
 	if (virtqueue_enable_intr(vq) != 0) {
@@ -1667,7 +1915,7 @@ again:
 	}
 
 	if (sc->vtblk_flags & VTBLK_FLAG_SUSPEND)
-		wakeup(&sc->vtblk_vq);
+		wakeup(sc);
 
 out:
 	VTBLK_UNLOCK(sc);
@@ -1678,7 +1926,8 @@ static void
 vtblk_stop(struct vtblk_softc *sc)
 {
 
-	virtqueue_disable_intr(sc->vtblk_vq);
+	for (int i = 0; i < sc->vtblk_nvqs; i++)
+		virtqueue_disable_intr(sc->vtblk_vqs[i].vvq_vq);
 	virtio_stop(sc->vtblk_dev);
 }
 
@@ -1691,8 +1940,11 @@ vtblk_dump_quiesce(struct vtblk_softc *sc)
 	 * dump are completed and queued. The queued requests will be
 	 * biodone'd once the dump is finished.
 	 */
-	while (!virtqueue_empty(sc->vtblk_vq))
-		vtblk_queue_completed(sc, &sc->vtblk_dump_queue);
+	while (!vtblk_virtqueues_empty(sc)) {
+		for (int i = 0; i < sc->vtblk_nvqs; i++)
+			vtblk_queue_completed(sc, sc->vtblk_vqs[i].vvq_vq,
+			    &sc->vtblk_dump_queue);
+	}
 }
 
 static int
@@ -1804,6 +2056,48 @@ vtblk_write_cache_sysctl(SYSCTL_HANDLER_ARGS)
 	return (0);
 }
 
+/*
+ * FreeBSD exposes one BIO_DELETE operation for both discard-like and
+ * deterministic-zeroing backends.  Keep DISCARD as the compatibility default
+ * when both are present, but provide an explicit per-device selection so a
+ * caller can request the stronger WRITE_ZEROES operation and verify its
+ * readback semantics.  The disk delete limit is fixed to the safe minimum at
+ * attach time, so switching this policy cannot cause GEOM to issue an extent
+ * larger than either device command accepts.
+ */
+static int
+vtblk_write_zeroes_delete_sysctl(SYSCTL_HANDLER_ARGS)
+{
+	struct vtblk_softc *sc;
+	int enabled, error;
+
+	sc = oidp->oid_arg1;
+	VTBLK_LOCK(sc);
+	enabled = sc->vtblk_delete_uses_write_zeroes ? 1 : 0;
+	error = sysctl_handle_int(oidp, &enabled, 0, req);
+	if (error != 0 || req->newptr == NULL) {
+		VTBLK_UNLOCK(sc);
+		return (error);
+	}
+	if (enabled != 0 && enabled != 1) {
+		VTBLK_UNLOCK(sc);
+		return (EINVAL);
+	}
+	if ((sc->vtblk_flags & VTBLK_FLAG_DETACH) != 0 ||
+	    (enabled != 0 && sc->vtblk_max_write_zeroes_sectors == 0)) {
+		VTBLK_UNLOCK(sc);
+		return (ENXIO);
+	}
+	/* A zero limit with no DISCARD fallback is never an executable delete. */
+	if (enabled == 0 && sc->vtblk_max_discard_sectors == 0) {
+		VTBLK_UNLOCK(sc);
+		return (EOPNOTSUPP);
+	}
+	sc->vtblk_delete_uses_write_zeroes = enabled != 0;
+	VTBLK_UNLOCK(sc);
+	return (0);
+}
+
 static void
 vtblk_setup_sysctl(struct vtblk_softc *sc)
 {
@@ -1821,6 +2115,13 @@ vtblk_setup_sysctl(struct vtblk_softc *sc)
 	    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, sc, 0,
 	    vtblk_write_cache_sysctl, "I",
 	    "Write cache mode (writethrough (0) or writeback (1))");
+	SYSCTL_ADD_PROC(ctx, child, OID_AUTO, "write_zeroes_delete",
+	    CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, sc, 0,
+	    vtblk_write_zeroes_delete_sysctl, "I",
+	    "Use WRITE_ZEROES rather than DISCARD for BIO_DELETE (0 or 1)");
+	SYSCTL_ADD_INT(ctx, child, OID_AUTO, "num_queues",
+	    CTLFLAG_RD, &sc->vtblk_nvqs, 0,
+	    "Number of active request virtqueues");
 }
 
 static int

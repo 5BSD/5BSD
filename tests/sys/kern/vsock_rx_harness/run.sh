@@ -46,6 +46,7 @@ $cc -O1 -g -fsanitize="$sanitizers" -I. -Iatfshim -include kmock.h \
     -Wno-macro-redefined -o rxtest vsock_rx_test.c glue.c
 ./rxtest
 $cc -O1 -g -fsanitize="$sanitizers" -I. -Iatfshim \
+	-I"$srctop/sys" \
     -Wno-macro-redefined -Wno-unused-function -Wno-unused-variable \
     -pthread -o transporttest virtio_vsock_transport_test.c
 ./transporttest

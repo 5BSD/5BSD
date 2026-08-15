@@ -34,6 +34,10 @@
  * forwards complete wire packets through /dev/vsock, making normal host
  * AF_VSOCK sockets the protocol endpoint instead.
  *
+ * Release-ledger anchors:
+ * VIRTIO_ACTIVATION_ASSERTION: userspace-and-kernel-backends
+ * VIRTIO_ACTIVATION_ASSERTION: userspace-backend-snapshot-restore
+ *
  * The userspace backend supports two connection directions:
  *
  * Host-to-guest:
@@ -139,6 +143,9 @@
 #include "mevent.h"
 #include "pci_emul.h"
 #include "pci_virtio_vsock_probes.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "sockstream.h"
 #include "virtio.h"
 #include <sys/vsock.h>
@@ -349,6 +356,13 @@ vtvsock_set_relay_bufsize(int fd, uint32_t guest_port)
 	int got = 0;
 	socklen_t len = sizeof(got);
 
+	/*
+	 * The port is observable through DTrace, but the probe wrapper becomes
+	 * a no-op in WITHOUT_DTRACE builds.  Keep the parameter in the common
+	 * signature so instrumented and uninstrumented binaries exercise the
+	 * same call path without producing a configuration-specific warning.
+	 */
+	(void)guest_port;
 	if (setsockopt(fd, SOL_SOCKET, SO_SNDBUF, &want, sizeof(want)) < 0)
 		DPRINTF(("vtvsock: SO_SNDBUF %d failed: %s (keeping default)",
 		    want, strerror(errno)));
@@ -363,6 +377,21 @@ vtvsock_set_relay_bufsize(int fd, uint32_t guest_port)
 		    "(records above %d bytes will fragment)", got, want, got));
 }
 
+struct pci_vtvsock_softc;
+
+/*
+ * An event callback cannot retain a conn pointer: a vCPU can tear the
+ * connection down while the mevent thread is waiting for vsc_mtx.  It also
+ * cannot identify the connection by fd alone, because a just-closed fd may be
+ * reused before that stale callback gets the mutex.  Keep an immutable id in
+ * the event parameter instead.  mevent owns and retires this object only
+ * after any already-selected callback can no longer run.
+ */
+struct vtvsock_event_ref {
+	struct pci_vtvsock_softc *sc;
+	uint64_t id;
+};
+
 /*
  * Per-connection state.  Each host-side Unix socket connection (or
  * guest-initiated connection accepted by the host) is represented by one of
@@ -375,6 +404,7 @@ struct vtvsock_conn {
 	int			reply_fd;	/* fd to send back to host via SCM_RIGHTS (-1 if N/A) */
 	uint32_t		local_port;	/* host CID 2 port (auto-assigned) */
 	uint32_t		guest_port;	/* guest-side port */
+	uint64_t		event_id;	/* immutable host-readiness identity */
 	struct mevent		*evp;		/* mevent for reads on fd */
 	uint16_t		type;		/* VIRTIO_VSOCK_TYPE_{STREAM,SEQPACKET} */
 
@@ -456,6 +486,7 @@ TAILQ_HEAD(vtvsock_conn_list, vtvsock_conn);
 struct vtvsock_ctl_conn {
 	int			fd;
 	struct mevent		*evp;
+	uint64_t		event_id;	/* immutable host-readiness identity */
 	time_t			created;	/* monotonic secs; for idle reaping */
 	struct vsock_ctl_msg	msg;		/* request accumulated from stream */
 	size_t			msg_off;	/* bytes received into msg */
@@ -466,6 +497,7 @@ TAILQ_HEAD(vtvsock_ctl_conn_list, vtvsock_ctl_conn);
 
 struct pci_vtvsock_softc {
 	struct virtio_softc	vsc_vs;
+	struct virtio_consts	vsc_consts;
 	struct vqueue_info	vsc_queues[VTVSOCK_MAXQ];
 	pthread_mutex_t		vsc_mtx;
 
@@ -476,6 +508,8 @@ struct pci_vtvsock_softc {
 	char			*vsc_path;
 	bool			 vsc_kernel;
 	bool			 vsc_kernel_failed;
+	bool			 vsc_kernel_frozen;
+	bool			 vsc_checkpoint_lock_held;
 	int			 vsc_kernel_fd;
 	struct mevent		*vsc_kernel_evp;
 	struct mevent		*vsc_kernel_write_evp;
@@ -493,6 +527,7 @@ struct pci_vtvsock_softc {
 	struct vtvsock_conn_list vsc_conns;
 	uint32_t		vsc_conn_count;
 	uint32_t		vsc_next_port;	/* next port to try assigning */
+	uint64_t		vsc_next_event_id;
 
 	/* Pending control connections */
 	struct vtvsock_ctl_conn_list vsc_ctl_conns;
@@ -533,7 +568,14 @@ struct pci_vtvsock_softc {
 };
 
 /* Forward declarations */
-static void pci_vtvsock_reset(void *);
+/*
+ * A common status reset invokes this while vsc_mtx is owned, whereas direct
+ * construction and model callers invoke it unlocked.  The runtime ownership
+ * branch below is intentional, but Clang's lock analysis cannot express that
+ * conditional acquire/release pairing; retain the runtime check and suppress
+ * only this callback's false positive.
+ */
+static void pci_vtvsock_reset(void *) __no_lock_analysis;
 static int  pci_vtvsock_qreset(void *, struct vqueue_info *, uint64_t);
 static void pci_vtvsock_notify_rx(void *, struct vqueue_info *);
 static void pci_vtvsock_notify_tx(void *, struct vqueue_info *);
@@ -541,28 +583,99 @@ static void pci_vtvsock_notify_event(void *, struct vqueue_info *);
 static int  pci_vtvsock_cfgread(void *, int, int, uint32_t *);
 static int  pci_vtvsock_cfgwrite(void *, int, int, uint32_t);
 static int pci_vtvsock_neg_features(void *, uint64_t);
+static int pci_vtvsock_set_kernel_features(struct pci_vtvsock_softc *,
+    uint64_t);
 static int  pci_vtvsock_legacy_config(nvlist_t *, const char *);
 static void vtvsock_conn_data_cb(int, enum ev_type, void *);
 static void vtvsock_conn_write_cb(int, enum ev_type, void *);
 static void vtvsock_conn_close(struct pci_vtvsock_softc *,
     struct vtvsock_conn *);
+static void vtvsock_conn_destroy_detached(struct pci_vtvsock_softc *,
+    struct vtvsock_conn *);
+static void vtvsock_ctl_conn_destroy_detached(struct vtvsock_ctl_conn *);
+static void vtvsock_init_failure_detach(struct pci_vtvsock_softc *,
+    struct vtvsock_conn_list *, struct vtvsock_ctl_conn_list *);
+static void vtvsock_lifecycle_stop_locked(struct pci_vtvsock_softc *);
 static void vtvsock_host_eof(struct pci_vtvsock_softc *,
     struct vtvsock_conn *);
 static void vtvsock_kernel_read_cb(int, enum ev_type, void *);
 static void vtvsock_kernel_write_cb(int, enum ev_type, void *);
-static void vtvsock_kernel_drain(struct pci_vtvsock_softc *);
+static void vtvsock_pend_flush_budget(struct pci_vtvsock_softc *, uint16_t *);
+static void vtvsock_pend_flush(struct pci_vtvsock_softc *);
+static bool vtvsock_kernel_rx_ready(struct pci_vtvsock_softc *, uint16_t *);
+static void vtvsock_kernel_drain_budget(struct pci_vtvsock_softc *,
+    uint16_t *);
+
+static void
+vtvsock_event_ref_destroy(void *arg)
+{
+
+	free(arg);
+}
+
+static uint64_t
+vtvsock_event_id_alloc(struct pci_vtvsock_softc *sc)
+{
+
+	/* Zero is reserved so an incompletely initialized object never matches. */
+	if (++sc->vsc_next_event_id == 0)
+		sc->vsc_next_event_id++;
+	return (sc->vsc_next_event_id);
+}
+
+static struct mevent *
+vtvsock_event_add(struct pci_vtvsock_softc *sc, int fd, uint64_t id,
+    enum ev_type type, void (*callback)(int, enum ev_type, void *))
+{
+	struct vtvsock_event_ref *ref;
+	struct mevent *event;
+
+	ref = calloc(1, sizeof(*ref));
+	if (ref == NULL)
+		return (NULL);
+	ref->sc = sc;
+	ref->id = id;
+	event = mevent_add_cleanup(fd, type, callback, ref,
+	    vtvsock_event_ref_destroy);
+	if (event == NULL)
+		free(ref);
+	return (event);
+}
 static bool vtvsock_rx_ready(struct pci_vtvsock_softc *);
 static int pci_vtvsock_suspend_device(void *);
 static int pci_vtvsock_resume_device(void *);
 static void pci_vtvsock_resume_complete(void *);
 #ifdef BHYVE_SNAPSHOT
-static int pci_vtvsock_pause(void *);
-static int pci_vtvsock_resume(void *);
+/*
+ * Checkpoint pause deliberately returns with vsc_mtx held and resume
+ * releases that ownership.  Clang's intraprocedural lock analysis cannot
+ * represent a lock transfer through the generic vc_pause/vc_resume callback
+ * pair, so keep runtime ownership assertions at the boundary and suppress
+ * only that pair's structurally unavoidable diagnostics.
+ */
+static int pci_vtvsock_pause(void *) __no_lock_analysis;
+static int pci_vtvsock_resume(void *) __no_lock_analysis;
 static int pci_vtvsock_snapshot(void *, struct vm_snapshot_meta *);
+static int pci_vtvsock_snapshot_validate(struct vm_snapshot_meta *);
 #endif
 
 #define	VTVSOCK_DEVICE_FEATURES	(VIRTIO_VSOCK_F_STREAM |		\
 	    VIRTIO_VSOCK_F_SEQPACKET | VIRTIO_VSOCK_F_NO_IMPLIED_STREAM)
+
+static int
+pci_vtvsock_set_kernel_features(struct pci_vtvsock_softc *sc,
+    uint64_t features)
+{
+	struct vsock_transport_features request;
+
+	memset(&request, 0, sizeof(request));
+	request.version = VSOCK_TRANSPORT_FEATURES_VERSION;
+	request.features = features;
+	if (ioctl(sc->vsc_kernel_fd, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+	    &request) < 0)
+		return (errno != 0 ? errno : EIO);
+	return (0);
+}
 
 static bool
 vtvsock_type_supported(const struct pci_vtvsock_softc *sc, uint16_t type)
@@ -750,6 +863,7 @@ vtvsock_conn_alloc(struct pci_vtvsock_softc *sc, int fd, uint32_t guest_port)
 	conn->reply_fd   = -1;
 	conn->local_port = port;
 	conn->guest_port = guest_port;
+	conn->event_id   = vtvsock_event_id_alloc(sc);
 	conn->state      = CONN_CONNECTING;
 	conn->type       = VIRTIO_VSOCK_TYPE_STREAM;
 	conn->buf_alloc  = VTVSOCK_BUF_ALLOC;
@@ -896,6 +1010,68 @@ vtvsock_conn_close(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
 	free(conn);
 }
 
+/*
+ * Init rollback is the one teardown context that can reclaim the entire
+ * softc.  It first removes every child from the lookup lists under vsc_mtx;
+ * callbacks selected before that point therefore become no-ops after they
+ * acquire the mutex.  The detached objects are then retired synchronously so
+ * their event references cannot retain sc beyond the failure cleanup.
+ */
+static void
+vtvsock_conn_destroy_detached(struct pci_vtvsock_softc *sc __unused,
+    struct vtvsock_conn *conn)
+{
+
+	if (conn->tx_evp != NULL)
+		(void)mevent_delete_sync(conn->tx_evp);
+	if (conn->evp != NULL) {
+		(void)mevent_delete_close_sync(conn->evp);
+		conn->fd = -1;
+	} else if (conn->fd >= 0) {
+		close(conn->fd);
+		conn->fd = -1;
+	}
+	if (conn->reply_fd >= 0)
+		close(conn->reply_fd);
+	free(conn->rx_reasm);
+	free(conn->tx_buf);
+	free(conn->rx_resid);
+	free(conn);
+}
+
+static void
+vtvsock_ctl_conn_destroy_detached(struct vtvsock_ctl_conn *cc)
+{
+
+	if (cc->evp != NULL)
+		(void)mevent_delete_close_sync(cc->evp);
+	else if (cc->fd >= 0)
+		close(cc->fd);
+	free(cc);
+}
+
+static void
+vtvsock_init_failure_detach(struct pci_vtvsock_softc *sc,
+    struct vtvsock_conn_list *conns, struct vtvsock_ctl_conn_list *ctl_conns)
+{
+
+	assert(pthread_mutex_isowned_np(&sc->vsc_mtx) == false);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	/*
+	 * Publish the callback fence before withdrawing lookup.  A callback
+	 * selected just before this point either finishes before this lock is
+	 * acquired or sees the pause after it acquires the lock.
+	 */
+	vtvsock_lifecycle_stop_locked(sc);
+	TAILQ_CONCAT(conns, &sc->vsc_conns, link);
+	TAILQ_CONCAT(ctl_conns, &sc->vsc_ctl_conns, link);
+	sc->vsc_conn_count = 0;
+	sc->vsc_ctl_conn_count = 0;
+	sc->vsc_reasm_total = 0;
+	sc->vsc_txbuf_total = 0;
+	pthread_mutex_unlock(&sc->vsc_mtx);
+}
+
 /* -------------------------------------------------------------------------
  * Injecting packets into the RX (host->guest) virtqueue
  * ---------------------------------------------------------------------- */
@@ -940,15 +1116,24 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 	size_t off, avail;
 
 	if (!vq_has_descs(vq)) {
-		DPRINTF2(("vtvsock: RX inject unavailable op=%u ring=%d "
+		DPRINTF2(("vtvsock: RX inject unavailable op=%u layout=%s ring=%d "
 		    "enabled=%u status=%#x caps=%#jx last_avail=%u "
 		    "avail_idx=%u used_idx=%u pending=%u",
-		    le16toh(hdrp->op), vq_ring_ready(vq), vq->vq_enabled,
+		    le16toh(hdrp->op),
+		    vq->vq_layout == VIRTIO_QUEUE_PACKED ? "packed" : "split",
+		    vq_ring_ready(vq), vq->vq_enabled,
 		    sc->vsc_vs.vs_status,
 		    (uintmax_t)sc->vsc_vs.vs_negotiated_caps,
-		    vq->vq_last_avail,
-		    vq->vq_avail == NULL ? 0 : vq->vq_avail->idx,
-		    vq->vq_used == NULL ? 0 : vq->vq_used->idx,
+		    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+		    vq->vq_packed_next_avail : vq->vq_last_avail,
+		    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+		    vq->vq_packed_next_avail :
+		    (vq->vq_avail == NULL ? 0 :
+		    vi16_to_cpu(vq->vq_vs, vq->vq_avail->idx)),
+		    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+		    vq->vq_packed_next_used :
+		    (vq->vq_used == NULL ? 0 :
+		    vi16_to_cpu(vq->vq_vs, vq->vq_used->idx)),
 		    sc->vsc_pend_count));
 		return (-1);
 	}
@@ -957,14 +1142,24 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 	if (n <= 0) {
 		DPRINTF2(("vtvsock: RX getchain failed op=%u result=%d "
 		    "last_avail=%u avail_idx=%u",
-		    le16toh(hdrp->op), n, vq->vq_last_avail,
-		    vq->vq_avail->idx));
+		    le16toh(hdrp->op), n,
+		    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+		    vq->vq_packed_next_avail : vq->vq_last_avail,
+		    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+		    vq->vq_packed_next_avail :
+		    (vq->vq_avail == NULL ? 0 :
+		    vi16_to_cpu(vq->vq_vs, vq->vq_avail->idx))));
 		return (-1);
 	}
 	DPRINTF2(("vtvsock: RX chain op=%u head=%u n=%d readable=%d "
 	    "writable=%d last_avail=%u avail_idx=%u",
 	    le16toh(hdrp->op), req.idx, n, req.readable, req.writable,
-	    vq->vq_last_avail, vq->vq_avail->idx));
+	    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+	    vq->vq_packed_next_avail : vq->vq_last_avail,
+	    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+	    vq->vq_packed_next_avail :
+	    (vq->vq_avail == NULL ? 0 :
+	    vi16_to_cpu(vq->vq_vs, vq->vq_avail->idx))));
 	if (n > VTVSOCK_MAX_IOV) {
 		/*
 		 * vq_getchain() can return more descriptors than it stored in
@@ -976,7 +1171,7 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 		VSOCK_PROBE_DESC_DROP("rx-chain-too-long");
 		DPRINTF(("vtvsock: rx descriptor chain too long (%d), dropping",
 		    n));
-		vq_relchain(vq, req.idx, 0);
+		vq_relchain_req(vq, &req, 0);
 		vq_endchains(vq, 0);
 		return (-1);
 	}
@@ -984,7 +1179,7 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 		/* Descriptor addr outside guest RAM; copying would crash us. */
 		VSOCK_PROBE_DESC_DROP("rx-bad-descriptor-addr");
 		DPRINTF(("vtvsock: rx descriptor with bad address, dropping"));
-		vq_relchain(vq, req.idx, 0);
+		vq_relchain_req(vq, &req, 0);
 		vq_endchains(vq, 0);
 		return (-1);
 	}
@@ -1006,7 +1201,7 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 		VSOCK_PROBE_DESC_DROP("rx-not-writable");
 		DPRINTF(("vtvsock: rx descriptor chain not wholly writable, "
 		    "dropping"));
-		vq_relchain(vq, req.idx, 0);
+		vq_relchain_req(vq, &req, 0);
 		vq_endchains(vq, 0);
 		return (-1);
 	}
@@ -1022,7 +1217,7 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 		VSOCK_PROBE_DESC_DROP("rx-descriptor-too-small");
 		DPRINTF(("vtvsock: rx descriptor too small for header (%zu)",
 		    avail));
-		vq_relchain(vq, req.idx, 0);
+		vq_relchain_req(vq, &req, 0);
 		vq_endchains(vq, 0);
 		return (-1);
 	}
@@ -1063,18 +1258,24 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
 		{
 			uint16_t avail_flags, event_idx, old_used;
 
-			avail_flags = vq->vq_avail == NULL ? 0 :
-			    vq->vq_avail->flags;
-			event_idx = vq->vq_avail == NULL ? 0 :
-			    VQ_USED_EVENT_IDX(vq);
-			old_used = vq->vq_save_used;
-			vq_relchain(vq, req.idx, (uint32_t)off);
-			vq_endchains(vq, 1);
+			avail_flags = vq->vq_layout == VIRTIO_QUEUE_PACKED ||
+			    vq->vq_avail == NULL ? 0 :
+			    vi16_to_cpu(vq->vq_vs, vq->vq_avail->flags);
+			event_idx = vq->vq_layout == VIRTIO_QUEUE_PACKED ||
+			    vq->vq_avail == NULL ? 0 :
+			    vq_used_event_idx(vq);
+			old_used = vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+			    vq->vq_packed_save_used : vq->vq_save_used;
+			vq_relchain_req(vq, &req, (uint32_t)off);
+			vq_endchains(vq, !vq_has_descs(vq));
 			DPRINTF2(("vtvsock: RX published op=%u bytes=%zu "
 			    "used=%u->%u event=%u avail_flags=%#x "
 			    "event_idx=%d msix=%d vector=%u",
 			    le16toh(hdrp->op), off, old_used,
-			    vq->vq_used == NULL ? 0 : vq->vq_used->idx,
+			    vq->vq_layout == VIRTIO_QUEUE_PACKED ?
+			    vq->vq_packed_next_used :
+			    (vq->vq_used == NULL ? 0 :
+			    vi16_to_cpu(vq->vq_vs, vq->vq_used->idx)),
 			    event_idx, avail_flags,
 			    (sc->vsc_vs.vs_negotiated_caps &
 			    VIRTIO_RING_F_EVENT_IDX) != 0,
@@ -1091,7 +1292,8 @@ vtvsock_inject_raw(struct pci_vtvsock_softc *sc,
  * vtvsock_inject_raw() removes EOM/EOR from non-final fragments.
  */
 static void
-vtvsock_kernel_drain(struct pci_vtvsock_softc *sc)
+vtvsock_kernel_drain_budget(struct pci_vtvsock_softc *sc,
+    uint16_t *budgetp)
 {
 	struct virtio_vsock_hdr *hdr;
 	struct virtio_vsock_hdr fragment;
@@ -1099,13 +1301,15 @@ vtvsock_kernel_drain(struct pci_vtvsock_softc *sc)
 	uint32_t paylen, remaining;
 	int written;
 
-	while (!sc->vsc_kernel_failed && sc->vsc_kernel_rx != NULL) {
+	while (*budgetp != 0 && !sc->vsc_kernel_failed &&
+	    sc->vsc_kernel_rx != NULL) {
 		hdr = (struct virtio_vsock_hdr *)sc->vsc_kernel_rx;
 		paylen = le32toh(hdr->len);
 		payload = sc->vsc_kernel_rx + sizeof(*hdr);
-		if (!vtvsock_rx_ready(sc))
+		if (!vtvsock_kernel_rx_ready(sc, budgetp))
 			break;
 		if (paylen == 0) {
+			(*budgetp)--;
 			written = vtvsock_inject_raw(sc, hdr, NULL, 0);
 			if (written < 0)
 				break;
@@ -1114,6 +1318,7 @@ vtvsock_kernel_drain(struct pci_vtvsock_softc *sc)
 			remaining = paylen - sc->vsc_kernel_rx_off;
 			fragment = *hdr;
 			fragment.len = htole32(remaining);
+			(*budgetp)--;
 			written = vtvsock_inject_raw(sc, &fragment,
 			    payload + sc->vsc_kernel_rx_off, remaining);
 			if (written <= 0)
@@ -1129,7 +1334,7 @@ vtvsock_kernel_drain(struct pci_vtvsock_softc *sc)
 	}
 	if (sc->vsc_kernel_evp != NULL) {
 		if (sc->vsc_kernel_failed || sc->vsc_kernel_rx != NULL ||
-		    !vtvsock_rx_ready(sc))
+		    !vtvsock_kernel_rx_ready(sc, budgetp))
 			mevent_disable(sc->vsc_kernel_evp);
 		else
 			mevent_enable(sc->vsc_kernel_evp);
@@ -1151,15 +1356,20 @@ vtvsock_kernel_read_locked(struct pci_vtvsock_softc *sc, int fd)
 	struct virtio_vsock_hdr *hdr;
 	bool disable, fatal;
 	ssize_t len;
+	uint16_t budget;
 
 	disable = false;
 	fatal = false;
 	DPRINTF2(("vtvsock: kernel RX pull ready=%d pending=%d failed=%d",
-	    vtvsock_rx_ready(sc), sc->vsc_kernel_rx != NULL,
+	    sc->vsc_pend_count == 0 &&
+	    vq_has_descs(&sc->vsc_queues[VTVSOCK_RXQ]),
+	    sc->vsc_kernel_rx != NULL,
 	    sc->vsc_kernel_failed));
-	vtvsock_kernel_drain(sc);
-	while (!sc->vsc_kernel_failed && sc->vsc_kernel_rx == NULL &&
-	    vtvsock_rx_ready(sc)) {
+	budget = sc->vsc_queues[VTVSOCK_RXQ].vq_qsize;
+	vtvsock_kernel_drain_budget(sc, &budget);
+	while (budget != 0 && !sc->vsc_kernel_failed &&
+	    sc->vsc_kernel_rx == NULL &&
+	    vtvsock_kernel_rx_ready(sc, &budget)) {
 		len = read(fd, sc->vsc_kernel_rx_buf,
 		    sizeof(*hdr) + VTVSOCK_MAX_PKT);
 		if (len < 0) {
@@ -1193,7 +1403,7 @@ vtvsock_kernel_read_locked(struct pci_vtvsock_softc *sc, int fd)
 		    le32toh(hdr->dst_port), le32toh(hdr->len)));
 		sc->vsc_kernel_rx = sc->vsc_kernel_rx_buf;
 		sc->vsc_kernel_rx_off = 0;
-		vtvsock_kernel_drain(sc);
+		vtvsock_kernel_drain_budget(sc, &budget);
 	}
 	if (fatal) {
 		sc->vsc_kernel_failed = true;
@@ -1267,19 +1477,29 @@ vtvsock_kernel_write_cb(int fd, enum ev_type type __unused, void *arg)
 }
 
 /*
- * Push parked control replies onto the RX virtqueue, FIFO, until the ring
- * runs out of descriptors again.  Must be called with vsc_mtx held.
+ * Push parked control replies onto the RX virtqueue, FIFO, while the caller's
+ * queue-work budget permits.  Must be called with vsc_mtx held.
  */
 static void
-vtvsock_pend_flush(struct pci_vtvsock_softc *sc)
+vtvsock_pend_flush_budget(struct pci_vtvsock_softc *sc, uint16_t *budgetp)
 {
-	while (sc->vsc_pend_count != 0) {
+	while (*budgetp != 0 && sc->vsc_pend_count != 0) {
 		if (vtvsock_inject_raw(sc, &sc->vsc_pend[sc->vsc_pend_head],
 		    NULL, 0) != 0)
 			break;
+		(*budgetp)--;
 		sc->vsc_pend_head = (sc->vsc_pend_head + 1) % VTVSOCK_PEND_MAX;
 		sc->vsc_pend_count--;
 	}
+}
+
+static void
+vtvsock_pend_flush(struct pci_vtvsock_softc *sc)
+{
+	uint16_t budget;
+
+	budget = sc->vsc_queues[VTVSOCK_RXQ].vq_qsize;
+	vtvsock_pend_flush_budget(sc, &budget);
 }
 
 /*
@@ -1293,6 +1513,15 @@ vtvsock_rx_ready(struct pci_vtvsock_softc *sc)
 {
 	vtvsock_pend_flush(sc);
 	return (sc->vsc_pend_count == 0 &&
+	    vq_has_descs(&sc->vsc_queues[VTVSOCK_RXQ]));
+}
+
+/* Kernel-provider reads share their budget with parked-reply delivery. */
+static bool
+vtvsock_kernel_rx_ready(struct pci_vtvsock_softc *sc, uint16_t *budgetp)
+{
+	vtvsock_pend_flush_budget(sc, budgetp);
+	return (*budgetp != 0 && sc->vsc_pend_count == 0 &&
 	    vq_has_descs(&sc->vsc_queues[VTVSOCK_RXQ]));
 }
 
@@ -1513,8 +1742,8 @@ vtvsock_tx_arm(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
 	if (conn->tx_evp == NULL) {
 		/* mevent_add() returns an enabled event, which is what we want
 		 * here: there is backlog to drain. */
-		conn->tx_evp = mevent_add(conn->fd, EVF_WRITE,
-		    vtvsock_conn_write_cb, sc);
+		conn->tx_evp = vtvsock_event_add(sc, conn->fd, conn->event_id,
+		    EVF_WRITE, vtvsock_conn_write_cb);
 		if (conn->tx_evp == NULL)
 			return (-1);
 	} else {
@@ -1978,8 +2207,8 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 			VSOCK_PROBE_CONN_ESTABLISHED((uint32_t)sc->vsc_guest_cid,
 			    conn->guest_port);
 
-			conn->evp = mevent_add(cfd, EVF_READ,
-			    vtvsock_conn_data_cb, sc);
+			conn->evp = vtvsock_event_add(sc, cfd, conn->event_id,
+			    EVF_READ, vtvsock_conn_data_cb);
 			if (conn->evp == NULL) {
 				WPRINTF(("vtvsock: mevent_add failed for "
 				    "guest-initiated conn"));
@@ -2059,8 +2288,8 @@ vtvsock_process_tx_pkt(struct pci_vtvsock_softc *sc,
 
 		/* Arm the mevent now that the connection is established */
 		if (conn->fd >= 0) {
-			conn->evp = mevent_add(conn->fd, EVF_READ,
-			    vtvsock_conn_data_cb, sc);
+			conn->evp = vtvsock_event_add(sc, conn->fd, conn->event_id,
+			    EVF_READ, vtvsock_conn_data_cb);
 			if (conn->evp == NULL) {
 				WPRINTF(("vtvsock: mevent_add failed after "
 				    "RESPONSE"));
@@ -2468,6 +2697,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 	struct vi_req req;
 	struct iovec iov[VTVSOCK_MAX_IOV];
 	uint8_t *payload = NULL;
+	uint16_t budget;
 	int n;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
@@ -2484,7 +2714,8 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 		return;
 	}
 
-	while (vq_has_descs(vq)) {
+	budget = vq->vq_qsize;
+	while (budget-- != 0 && vq_has_descs(vq)) {
 		n = vq_getchain(vq, iov, VTVSOCK_MAX_IOV, &req);
 		if (n <= 0)
 			break;
@@ -2500,7 +2731,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			VSOCK_PROBE_DESC_DROP("tx-chain-too-long");
 			DPRINTF(("vtvsock: tx descriptor chain too long (%d), "
 			    "dropping", n));
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 		if (iov_has_null_base(iov, n)) {
@@ -2508,7 +2739,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			VSOCK_PROBE_DESC_DROP("tx-bad-descriptor-addr");
 			DPRINTF(("vtvsock: tx descriptor with bad address, "
 			    "dropping"));
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 		if (req.writable != 0 || req.readable == 0) {
@@ -2527,7 +2758,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			DPRINTF(("vtvsock: tx descriptor chain not wholly "
 			    "readable, dropping"));
 			VSOCK_PROBE_DESC_DROP("tx-not-readable");
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 
@@ -2535,7 +2766,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 		if (total < sizeof(hdr)) {
 			DPRINTF(("vtvsock: tx pkt too small (%zu)", total));
 			VSOCK_PROBE_DESC_DROP("tx-packet-too-small");
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 
@@ -2546,7 +2777,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			DPRINTF(("vtvsock: tx payload too large (%u), dropping",
 			    paylen));
 			VSOCK_PROBE_DESC_DROP("tx-payload-too-large");
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 		if (paylen > 0 && le16toh(hdr.op) != VIRTIO_VSOCK_OP_RW) {
@@ -2561,7 +2792,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			DPRINTF(("vtvsock: control op %u with %u payload bytes, "
 			    "dropping", le16toh(hdr.op), paylen));
 			VSOCK_PROBE_DESC_DROP("tx-control-payload");
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 
@@ -2571,7 +2802,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			payload = malloc(paylen);
 			if (payload == NULL) {
 				WPRINTF(("vtvsock: payload malloc failed"));
-				vq_relchain(vq, req.idx, 0);
+				vq_relchain_req(vq, &req, 0);
 				continue;
 			}
 			/*
@@ -2596,7 +2827,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 				VSOCK_PROBE_DESC_DROP("tx-truncated-payload");
 				free(payload);
 				payload = NULL;
-				vq_relchain(vq, req.idx, 0);
+				vq_relchain_req(vq, &req, 0);
 				continue;
 			}
 		}
@@ -2647,14 +2878,14 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 						if (sc->vsc_kernel_write_evp != NULL)
 							mevent_enable(
 							    sc->vsc_kernel_write_evp);
-						vq_relchain(vq, req.idx, 0);
+						vq_relchain_req(vq, &req, 0);
 						break;
 					}
 					WPRINTF(("vtvsock: kernel transport retry "
 					    "allocation failed"));
 					sc->vsc_kernel_failed = true;
 					vi_set_needs_reset(&sc->vsc_vs);
-					vq_relchain(vq, req.idx, 0);
+					vq_relchain_req(vq, &req, 0);
 					break;
 				} else {
 					WPRINTF(("vtvsock: kernel transport write "
@@ -2662,7 +2893,7 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 					    "short write"));
 					sc->vsc_kernel_failed = true;
 					vi_set_needs_reset(&sc->vsc_vs);
-					vq_relchain(vq, req.idx, 0);
+					vq_relchain_req(vq, &req, 0);
 					break;
 				}
 			}
@@ -2670,10 +2901,10 @@ pci_vtvsock_notify_tx(void *vsc, struct vqueue_info *vq)
 			vtvsock_process_tx_pkt(sc, &hdr, payload, paylen);
 		}
 		/* TX is output-only; device does not write back to the desc. */
-		vq_relchain(vq, req.idx, 0);
+		vq_relchain_req(vq, &req, 0);
 	}
 
-	vq_endchains(vq, 1);
+	vq_endchains(vq, !vq_has_descs(vq));
 	free(payload);
 
 	if (sc->vsc_kernel) {
@@ -2878,7 +3109,8 @@ vtvsock_host_eof(struct pci_vtvsock_softc *sc, struct vtvsock_conn *conn)
 static void
 vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 {
-	struct pci_vtvsock_softc *sc = arg;
+	struct vtvsock_event_ref *ref = arg;
+	struct pci_vtvsock_softc *sc = ref->sc;
 	struct vtvsock_conn *conn;
 	uint8_t *buf = NULL;
 	ssize_t n;
@@ -2890,15 +3122,12 @@ vtvsock_conn_data_cb(int fd, enum ev_type t __unused, void *arg)
 	}
 
 	/*
-	 * Re-look-up the connection by fd under the lock.  This callback is
-	 * registered with sc (not a raw conn pointer) because the vCPU thread
-	 * can free the conn (OP_RST / OP_SHUTDOWN / device reset) concurrently
-	 * with this callback being dispatched on the mevent thread -- a cached
-	 * pointer would be a use-after-free.  If the conn is gone the event is
-	 * stale; return.  (Same idiom as pci_vtvsock_ctl_conn_cb.)
+	 * Re-look-up by immutable event id under the lock.  The vCPU may free this
+	 * conn while the callback is selected, and it may reuse the numeric fd for
+	 * a different connection before this callback acquires vsc_mtx.
 	 */
 	TAILQ_FOREACH(conn, &sc->vsc_conns, link) {
-		if (conn->fd == fd)
+		if (conn->event_id == ref->id && conn->fd == fd)
 			break;
 	}
 	if (conn == NULL) {
@@ -3307,7 +3536,8 @@ conn_error:
 static void
 vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 {
-	struct pci_vtvsock_softc *sc = arg;
+	struct vtvsock_event_ref *ref = arg;
+	struct pci_vtvsock_softc *sc = ref->sc;
 	struct vtvsock_conn *conn;
 
 	pthread_mutex_lock(&sc->vsc_mtx);
@@ -3316,9 +3546,13 @@ vtvsock_conn_write_cb(int fd, enum ev_type t __unused, void *arg)
 		return;
 	}
 
-	/* Re-look-up by fd under the lock (the conn may have been freed). */
+	/*
+	 * A deleted event may already have been selected for dispatch.  Match its
+	 * immutable identity as well as its descriptor, since the descriptor may
+	 * have been closed and reused before this callback obtains vsc_mtx.
+	 */
 	TAILQ_FOREACH(conn, &sc->vsc_conns, link) {
-		if (conn->fd == fd)
+		if (conn->event_id == ref->id && conn->fd == fd)
 			break;
 	}
 	if (conn == NULL) {
@@ -3420,7 +3654,8 @@ write_reset:
 static void
 pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 {
-	struct pci_vtvsock_softc *sc = arg;
+	struct vtvsock_event_ref *ref = arg;
+	struct pci_vtvsock_softc *sc = ref->sc;
 	struct vtvsock_ctl_conn *cc, *cctmp;
 	struct vsock_ctl_msg msg;
 	int error;
@@ -3432,10 +3667,10 @@ pci_vtvsock_ctl_conn_cb(int fd, enum ev_type t __unused, void *arg)
 		return;
 	}
 
-	/* Find the ctl_conn for this fd */
+	/* Reject a stale callback if a closed descriptor has been reused. */
 	cc = NULL;
 	TAILQ_FOREACH(cctmp, &sc->vsc_ctl_conns, link) {
-		if (cctmp->fd == fd) {
+		if (cctmp->event_id == ref->id && cctmp->fd == fd) {
 			cc = cctmp;
 			break;
 		}
@@ -3684,6 +3919,7 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 		return;
 	}
 	cc->fd = s;
+	cc->event_id = vtvsock_event_id_alloc(sc);
 	cc->created = monotonic_seconds();
 
 	if (sc->vsc_ctl_conn_count >= VTVSOCK_MAX_CTL_CONNS) {
@@ -3702,7 +3938,8 @@ pci_vtvsock_ctl_accept(int fd __unused, enum ev_type t __unused, void *arg)
 	 * order (no LOR), and pci_vtvsock_ctl_conn_cb re-looks-up cc under
 	 * vsc_mtx, so it cannot run until we insert cc and unlock.
 	 */
-	cc->evp = mevent_add(s, EVF_READ, pci_vtvsock_ctl_conn_cb, sc);
+	cc->evp = vtvsock_event_add(sc, s, cc->event_id, EVF_READ,
+	    pci_vtvsock_ctl_conn_cb);
 	if (cc->evp == NULL) {
 		pthread_mutex_unlock(&sc->vsc_mtx);
 		WPRINTF(("vtvsock: mevent_add failed for ctl conn"));
@@ -3845,6 +4082,19 @@ pci_vtvsock_resume_complete(void *vsc)
 	struct pci_vtvsock_softc *sc;
 
 	sc = vsc;
+	/*
+	 * Guest resume reaches this callback from the status-write path with
+	 * vsc_mtx already held.  Checkpoint resume invokes it without that
+	 * lock.  The device mutex is recursive because the checkpoint callback
+	 * pair deliberately transfers its ownership through the common VirtIO
+	 * lifecycle.  Avoid taking an extra recursive level here: this helper
+	 * needs to work for both entry points and must leave ownership exactly as
+	 * it found it.
+	 */
+	if (pthread_mutex_isowned_np(&sc->vsc_mtx)) {
+		vtvsock_lifecycle_start_locked(sc);
+		return;
+	}
 	pthread_mutex_lock(&sc->vsc_mtx);
 	vtvsock_lifecycle_start_locked(sc);
 	pthread_mutex_unlock(&sc->vsc_mtx);
@@ -3856,10 +4106,18 @@ pci_vtvsock_resume_complete(void *vsc)
  * snapshot build guard so the exclusion policy has direct unit coverage.
  */
 static int __unused
-vtvsock_snapshot_state_error(const struct pci_vtvsock_softc *sc)
+vtvsock_snapshot_state_error(const struct pci_vtvsock_softc *sc,
+    bool require_kernel_frozen)
 {
-	if (sc->vsc_kernel)
-		return (EOPNOTSUPP);
+	if (sc->vsc_kernel) {
+		if (require_kernel_frozen && !sc->vsc_kernel_frozen)
+			return (EBUSY);
+		if (sc->vsc_kernel_failed || sc->vsc_kernel_rx != NULL ||
+		    sc->vsc_kernel_rx_off != 0 || sc->vsc_kernel_tx != NULL ||
+		    sc->vsc_kernel_tx_len != 0)
+			return (EBUSY);
+		return (0);
+	}
 	if (sc->vsc_conn_count != 0 || sc->vsc_ctl_conn_count != 0 ||
 	    sc->vsc_pend_count != 0 || sc->vsc_reasm_total != 0 ||
 	    sc->vsc_txbuf_total != 0)
@@ -3868,13 +4126,28 @@ vtvsock_snapshot_state_error(const struct pci_vtvsock_softc *sc)
 }
 
 #ifdef BHYVE_SNAPSHOT
-#define	VTVSOCK_SNAPSHOT_MAGIC		0x56534f31U	/* "VSO1" */
-#define	VTVSOCK_SNAPSHOT_VERSION	1U
+#define	VTVSOCK_SNAPSHOT_MAGIC		0x314f5356U	/* "VSO1" on wire */
+#define	VTVSOCK_SNAPSHOT_VERSION	2U
+
+static bool
+vtvsock_snapshot_zero_tail(const char *path, uint32_t path_len)
+{
+
+	if (path_len >= MAXPATHLEN)
+		return (false);
+	for (size_t i = path_len; i < MAXPATHLEN; i++) {
+		if (path[i] != '\0')
+			return (false);
+	}
+	return (true);
+}
 
 static int
 pci_vtvsock_pause(void *vsc)
 {
 	struct pci_vtvsock_softc *sc;
+	struct vsock_transport_checkpoint checkpoint;
+	int error;
 
 	sc = vsc;
 	/*
@@ -3882,8 +4155,63 @@ pci_vtvsock_pause(void *vsc)
 	 * the established net/block checkpoint contract.  vi_pci_resume() releases
 	 * this owner on every successful pause path.
 	 */
+	assert(!pthread_mutex_isowned_np(&sc->vsc_mtx));
 	pthread_mutex_lock(&sc->vsc_mtx);
+	sc->vsc_checkpoint_lock_held = true;
 	vtvsock_lifecycle_stop_locked(sc);
+	if (sc->vsc_kernel) {
+		memset(&checkpoint, 0, sizeof(checkpoint));
+		checkpoint.version = VSOCK_TRANSPORT_CHECKPOINT_VERSION;
+		if (ioctl(sc->vsc_kernel_fd, VSOCK_IOC_TRANSPORT_FREEZE,
+		    &checkpoint) < 0) {
+			/* A failed provider boundary must never look like success. */
+			error = errno != 0 ? errno : EIO;
+			/*
+			 * A failed checkpoint must leave the source in its prior
+			 * lifecycle state.  lifecycle_stop_locked() set the private
+			 * fence, so clear only the checkpoint owner before attempting
+			 * to rearm host sources.  Preserve an independently active
+			 * guest suspend.
+			 */
+			sc->vsc_lifecycle_paused = sc->vsc_vs.vs_suspended;
+			vtvsock_lifecycle_start_locked(sc);
+			sc->vsc_checkpoint_lock_held = false;
+			pthread_mutex_unlock(&sc->vsc_mtx);
+			return (error);
+		}
+		if (checkpoint.version !=
+		    VSOCK_TRANSPORT_CHECKPOINT_VERSION ||
+		    checkpoint.flags !=
+		    VSOCK_TRANSPORT_CHECKPOINT_F_FROZEN ||
+		    checkpoint.queue_count != 0 ||
+		    checkpoint.connection_count != 0 ||
+		    checkpoint.reserved[0] != 0 ||
+		    checkpoint.reserved[1] != 0) {
+			/*
+			 * FREEZE succeeded, so the provider is frozen even when its
+			 * returned metadata is malformed.  Roll that state back before
+			 * reopening admission.  If THAW itself fails, require a device
+			 * reset instead of advertising a running source backed by a
+			 * provider which is still fenced.
+			 */
+			sc->vsc_kernel_frozen = true;
+			if (ioctl(sc->vsc_kernel_fd,
+			    VSOCK_IOC_TRANSPORT_THAW) < 0) {
+				error = errno != 0 ? errno : EIO;
+				sc->vsc_kernel_failed = true;
+				vi_set_needs_reset(&sc->vsc_vs);
+			} else {
+				sc->vsc_kernel_frozen = false;
+				error = EPROTO;
+			}
+			sc->vsc_lifecycle_paused = sc->vsc_vs.vs_suspended;
+			vtvsock_lifecycle_start_locked(sc);
+			sc->vsc_checkpoint_lock_held = false;
+			pthread_mutex_unlock(&sc->vsc_mtx);
+			return (error);
+		}
+		sc->vsc_kernel_frozen = true;
+	}
 	return (0);
 }
 
@@ -3891,68 +4219,171 @@ static int
 pci_vtvsock_resume(void *vsc)
 {
 	struct pci_vtvsock_softc *sc;
+	uint64_t device_features;
+	int error;
 
 	sc = vsc;
-	/* A nested guest suspend continues to own the stopped host sources. */
-	sc->vsc_lifecycle_paused = sc->vsc_vs.vs_suspended;
+	if (!sc->vsc_checkpoint_lock_held) {
+		assert(!pthread_mutex_isowned_np(&sc->vsc_mtx));
+		pthread_mutex_lock(&sc->vsc_mtx);
+		sc->vsc_checkpoint_lock_held = true;
+	} else
+		assert(pthread_mutex_isowned_np(&sc->vsc_mtx));
+	error = 0;
+	if (sc->vsc_kernel && sc->vsc_kernel_frozen) {
+		/*
+		 * A restore reinstates DRIVER_OK directly and therefore does not
+		 * replay vc_apply_features().  Reconstruct the destination-local
+		 * provider's device-feature epoch while its empty transport remains
+		 * fenced, before any socket or packet admission can resume.  This is
+		 * also harmless for an ordinary save/resume because SET_FEATURES is
+		 * idempotent when the epoch is unchanged.
+		 */
+		device_features = sc->vsc_features & VTVSOCK_DEVICE_FEATURES;
+		error = pci_vtvsock_set_kernel_features(sc, device_features);
+		if (error == 0) {
+			if (ioctl(sc->vsc_kernel_fd,
+			    VSOCK_IOC_TRANSPORT_THAW) < 0)
+				error = errno != 0 ? errno : EIO;
+			else
+				sc->vsc_kernel_frozen = false;
+		}
+	}
+	/*
+	 * A failed provider thaw leaves every host source stopped.  Preserve that
+	 * logical fence as well so callbacks cannot mistake a partial resume for
+	 * an operational device.  A retry reacquires this mutex and clears the
+	 * fence only after THAW succeeds.
+	 */
+	if (error == 0)
+		sc->vsc_lifecycle_paused = sc->vsc_vs.vs_suspended;
+	sc->vsc_checkpoint_lock_held = false;
 	pthread_mutex_unlock(&sc->vsc_mtx);
-	return (0);
+	return (error);
 }
 
 static int
 pci_vtvsock_snapshot(void *vsc, struct vm_snapshot_meta *meta)
 {
 	struct pci_vtvsock_softc *sc;
-	struct virtio_vsock_config config;
-	uint64_t features;
-	uint32_t magic, next_port, version;
+	char path[MAXPATHLEN];
+	uint64_t features, guest_cid;
+	uint32_t magic, next_port, path_len, reserved, version;
+	uint8_t backend;
 	int ret;
 
 	sc = vsc;
+	assert(sc->vsc_checkpoint_lock_held);
+	assert(pthread_mutex_isowned_np(&sc->vsc_mtx));
 	/*
-	 * The AF_VSOCK provider owns connection and socket-buffer state that the
-	 * bhyve fd ABI intentionally does not expose.  A snapshot that omitted it
-	 * would restore a device whose virtqueues and status describe connections
-	 * that no longer exist, so fail explicitly for the kernel backend.
+	 * Backend sockets and buffered data are host resources, not snapshot
+	 * bytes.  Empty userspace devices are reconstructible from the configured
+	 * listener.  Empty kernel providers are reconstructible only while the
+	 * provider checkpoint fence is held.
 	 */
-	/*
-	 * Userspace Unix sockets are also host resources, not snapshot bytes.
-	 * Empty devices are reconstructible from their configured listener and
-	 * saved VirtIO state; active, pending, or buffered sessions are not.
-	 */
-	ret = vtvsock_snapshot_state_error(sc);
+	ret = vtvsock_snapshot_state_error(sc,
+	    meta->op != VM_SNAPSHOT_VALIDATE);
 	if (ret != 0)
 		return (ret);
+	/*
+	 * The private feature mirror is serialized below and must describe the
+	 * same negotiated contract as the common VirtIO transport.  Reject a
+	 * locally inconsistent source instead of emitting an image which its own
+	 * destination validation would necessarily reject.
+	 */
+	if (meta->op == VM_SNAPSHOT_SAVE &&
+	    sc->vsc_features != sc->vsc_vs.vs_negotiated_caps)
+		return (EINVAL);
 
 	magic = VTVSOCK_SNAPSHOT_MAGIC;
 	version = VTVSOCK_SNAPSHOT_VERSION;
-	SNAPSHOT_VAR_OR_LEAVE(magic, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(version, meta, ret, done);
-	if (magic != VTVSOCK_SNAPSHOT_MAGIC ||
-	    version != VTVSOCK_SNAPSHOT_VERSION) {
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, ret, done);
+	if (magic != VTVSOCK_SNAPSHOT_MAGIC || version !=
+	    VTVSOCK_SNAPSHOT_VERSION) {
 		ret = ENOTSUP;
 		goto done;
 	}
-	config = sc->vsc_config;
+
+	backend = sc->vsc_kernel ? 1 : 0;
+	guest_cid = sc->vsc_guest_cid;
 	features = sc->vsc_features;
 	next_port = sc->vsc_next_port;
-	SNAPSHOT_VAR_OR_LEAVE(config, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(features, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(next_port, meta, ret, done);
-	if (meta->op == VM_SNAPSHOT_RESTORE) {
-		if (le64toh(config.guest_cid) != sc->vsc_guest_cid ||
+	reserved = 0;
+	memset(path, 0, sizeof(path));
+	path_len = 0;
+	if (!sc->vsc_kernel) {
+		path_len = strlen(sc->vsc_path);
+		if (path_len >= sizeof(path)) {
+			ret = ENAMETOOLONG;
+			goto done;
+		}
+		memcpy(path, sc->vsc_path, path_len);
+	}
+
+	SNAPSHOT_U8_OR_LEAVE(backend, meta, ret, done);
+	SNAPSHOT_LE64_OR_LEAVE(guest_cid, meta, ret, done);
+	SNAPSHOT_LE64_OR_LEAVE(features, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(next_port, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(path_len, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(reserved, meta, ret, done);
+	ret = vm_snapshot_buf(path, sizeof(path), meta);
+	if (ret != 0)
+		goto done;
+	if (vm_snapshot_is_loading(meta)) {
+		if (backend > 1 || backend != (sc->vsc_kernel ? 1 : 0) ||
+		    guest_cid != sc->vsc_guest_cid ||
 		    features != sc->vsc_vs.vs_negotiated_caps ||
-		    next_port < VTVSOCK_PORT_MIN || next_port == UINT32_MAX) {
+		    next_port < VTVSOCK_PORT_MIN || next_port == UINT32_MAX ||
+		    reserved != 0 || path_len >= sizeof(path) ||
+		    !vtvsock_snapshot_zero_tail(path, path_len) ||
+		    (backend == 1 && path_len != 0) ||
+		    (backend == 0 && (strlen(sc->vsc_path) != path_len ||
+		    memcmp(sc->vsc_path, path, path_len) != 0))) {
 			ret = EINVAL;
 			goto done;
 		}
-		sc->vsc_config = config;
-		sc->vsc_features = features;
-		sc->vsc_next_port = next_port;
+		if (vm_snapshot_is_restoring(meta)) {
+			sc->vsc_config.guest_cid = htole64(guest_cid);
+			sc->vsc_features = features;
+			sc->vsc_next_port = next_port;
+		}
 	}
 
 done:
 	return (ret);
+}
+
+/*
+ * Restore preflight is deliberately side-effect free and therefore does not
+ * invoke the ordinary pause callback.  Serialize the local device model while
+ * the common and private codecs validate the image, but do not freeze or thaw
+ * the kernel provider.  Commit-time pause still freezes the provider and
+ * requires its queue and connection counts to be zero before restore.
+ */
+static int
+pci_vtvsock_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	struct pci_devinst *pi;
+	struct pci_vtvsock_softc *sc;
+	bool old_lock_held;
+	int error;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE ||
+	    meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	sc = pi->pi_arg;
+	if (sc == NULL)
+		return (EINVAL);
+
+	pthread_mutex_lock(&sc->vsc_mtx);
+	old_lock_held = sc->vsc_checkpoint_lock_held;
+	sc->vsc_checkpoint_lock_held = true;
+	error = vi_pci_snapshot(meta);
+	sc->vsc_checkpoint_lock_held = old_lock_held;
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	return (error);
 }
 #endif
 
@@ -3962,10 +4393,19 @@ pci_vtvsock_reset(void *vsc)
 	struct pci_vtvsock_softc *sc = vsc;
 	struct vtvsock_conn *conn, *tmp;
 	struct vtvsock_ctl_conn *cc, *cctmp;
+	bool already_locked;
 
 	DPRINTF(("vtvsock: device reset requested"));
 
-	pthread_mutex_lock(&sc->vsc_mtx);
+	/*
+	 * A guest status reset enters vc_reset under the common VirtIO mutex,
+	 * which this device aliases to vsc_mtx.  Direct initialization and model
+	 * callers do not.  Preserve the former ownership and acquire the latter
+	 * so a register reset cannot self-deadlock or release its caller's lock.
+	 */
+	already_locked = pthread_mutex_isowned_np(&sc->vsc_mtx);
+	if (!already_locked)
+		pthread_mutex_lock(&sc->vsc_mtx);
 	if (sc->vsc_kernel) {
 		if (ioctl(sc->vsc_kernel_fd, VSOCK_IOC_TRANSPORT_RESET) < 0) {
 			WPRINTF(("vtvsock: kernel transport reset failed: %s",
@@ -3973,6 +4413,7 @@ pci_vtvsock_reset(void *vsc)
 			sc->vsc_kernel_failed = true;
 		} else {
 			sc->vsc_kernel_failed = false;
+			sc->vsc_kernel_frozen = false;
 		}
 		if (sc->vsc_kernel_rx != sc->vsc_kernel_rx_buf)
 			free(sc->vsc_kernel_rx);
@@ -4007,10 +4448,10 @@ pci_vtvsock_reset(void *vsc)
 	 */
 	sc->vsc_lifecycle_paused = false;
 	vtvsock_lifecycle_start_locked(sc);
-	pthread_mutex_unlock(&sc->vsc_mtx);
-
 	vi_reset_dev(&sc->vsc_vs);
 	sc->vsc_features = 0;
+	if (!already_locked)
+		pthread_mutex_unlock(&sc->vsc_mtx);
 }
 
 static int
@@ -4061,11 +4502,10 @@ pci_vtvsock_neg_features(void *vsc, uint64_t negotiated_features)
 		 * across that provider boundary.
 		 */
 		device_features = negotiated_features & VTVSOCK_DEVICE_FEATURES;
-		if (ioctl(sc->vsc_kernel_fd,
-		    VSOCK_IOC_TRANSPORT_SET_FEATURES, &device_features) < 0) {
-			error = errno != 0 ? errno : EIO;
+		error = pci_vtvsock_set_kernel_features(sc, device_features);
+		if (error != 0) {
 			WPRINTF(("vtvsock: kernel feature update failed: %s",
-			    strerror(errno)));
+			    strerror(error)));
 			sc->vsc_kernel_failed = true;
 		}
 		/*
@@ -4092,15 +4532,13 @@ static int
 pci_vtvsock_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vtvsock_softc *sc = vsc;
+	int error;
 
-	*retval = 0;
-	if (offset < 0 || (size != 1 && size != 2 && size != 4) ||
-	    (size_t)offset > sizeof(sc->vsc_config) ||
-	    (size_t)size > sizeof(sc->vsc_config) - (size_t)offset) {
-		return (-1);
-	}
-	memcpy(retval, (uint8_t *)&sc->vsc_config + offset, size);
-	return (0);
+	if (retval != NULL)
+		*retval = 0;
+	error = vi_config_read_le(&sc->vsc_config, sizeof(sc->vsc_config),
+	    offset, size, retval);
+	return (error == 0 ? 0 : -1);
 }
 
 static int
@@ -4166,7 +4604,7 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	const char *backend, *cidstr, *path;
 	pthread_mutexattr_t mtx_attr;
 	struct sockaddr_un sun;
-	bool intr_initialized = false, mtx_initialized = false;
+	bool intr_initialized = false, mtx_initialized = false, packed;
 	int s   = -1;
 #ifndef WITHOUT_CAPSICUM
 	cap_rights_t rights;
@@ -4267,7 +4705,8 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	pthread_mutexattr_destroy(&mtx_attr);
 
 	/* --- Link virtio softc --- */
-	vi_softc_linkup(&sc->vsc_vs, &vtvsock_vi_consts, sc, pi,
+	memcpy(&sc->vsc_consts, &vtvsock_vi_consts, sizeof(sc->vsc_consts));
+	vi_softc_linkup(&sc->vsc_vs, &sc->vsc_consts, sc, pi,
 	    sc->vsc_queues);
 	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
 
@@ -4279,6 +4718,13 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
 	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
 		goto failed;
+	packed = get_config_bool_node_default(nvl, "packed", false);
+	if (packed && !vi_pci_is_modern(&sc->vsc_vs)) {
+		WPRINTF(("vtvsock: packed queues require transport=modern"));
+		goto failed;
+	}
+	if (packed)
+		sc->vsc_consts.vc_hv_caps |= VIRTIO_F_RING_PACKED;
 
 	/* --- PCI identity --- */
 	if (vi_pci_is_modern(&sc->vsc_vs))
@@ -4324,6 +4770,8 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 			const cap_ioctl_t cmds[] = {
 				VSOCK_IOC_TRANSPORT_SET_FEATURES,
 				VSOCK_IOC_TRANSPORT_RESET,
+				VSOCK_IOC_TRANSPORT_FREEZE,
+				VSOCK_IOC_TRANSPORT_THAW,
 			};
 
 			cap_rights_init(&rights, CAP_EVENT, CAP_IOCTL, CAP_READ,
@@ -4456,36 +4904,49 @@ setup_pci:
 	return (0);
 
 failed:
-	if (s >= 0)
-		close(s);
 	/* sc is always allocated here (NULL is checked right after calloc). */
 	{
 		struct vtvsock_conn *conn, *tmp;
 		struct vtvsock_ctl_conn *cc, *cctmp;
-		TAILQ_FOREACH_SAFE(conn, &sc->vsc_conns, link, tmp)
-			vtvsock_conn_close(sc, conn);
-		TAILQ_FOREACH_SAFE(cc, &sc->vsc_ctl_conns, link, cctmp) {
-			TAILQ_REMOVE(&sc->vsc_ctl_conns, cc, link);
-			sc->vsc_ctl_conn_count--;
-			if (cc->evp != NULL)
-				mevent_delete_close(cc->evp);
-			else
-				close(cc->fd);
-			free(cc);
+		struct vtvsock_conn_list conns;
+		struct vtvsock_ctl_conn_list ctl_conns;
+
+		TAILQ_INIT(&conns);
+		TAILQ_INIT(&ctl_conns);
+		if (mtx_initialized)
+			vtvsock_init_failure_detach(sc, &conns, &ctl_conns);
+		TAILQ_FOREACH_SAFE(conn, &conns, link, tmp) {
+			TAILQ_REMOVE(&conns, conn, link);
+			vtvsock_conn_destroy_detached(sc, conn);
+		}
+		TAILQ_FOREACH_SAFE(cc, &ctl_conns, link, cctmp) {
+			TAILQ_REMOVE(&ctl_conns, cc, link);
+			vtvsock_ctl_conn_destroy_detached(cc);
 		}
 		if (sc->vsc_dfd >= 0)
 			close(sc->vsc_dfd);
+		/*
+		 * Each device-level callback carries sc as its argument.  Waiting
+		 * for deletion acknowledgement before free(sc) prevents a stale
+		 * callback if initialization is attempted after dispatch starts.
+		 * During ordinary startup the same helper removes the registration
+		 * directly, before the event loop exists.
+		 */
 		if (sc->vsc_reap_evp != NULL)
-			mevent_delete(sc->vsc_reap_evp);
+			(void)mevent_delete_sync(sc->vsc_reap_evp);
 		if (sc->vsc_ctl_evp != NULL)
-			mevent_delete(sc->vsc_ctl_evp);
+			(void)mevent_delete_sync(sc->vsc_ctl_evp);
 		if (sc->vsc_kernel_write_evp != NULL)
-			mevent_delete(sc->vsc_kernel_write_evp);
-		if (sc->vsc_kernel_evp != NULL) {
-			mevent_delete_close(sc->vsc_kernel_evp);
-			sc->vsc_kernel_fd = -1;
-		} else if (sc->vsc_kernel_fd >= 0) {
+			(void)mevent_delete_sync(sc->vsc_kernel_write_evp);
+		if (sc->vsc_kernel_evp != NULL)
+			(void)mevent_delete_sync(sc->vsc_kernel_evp);
+		if (sc->vsc_kernel_fd >= 0) {
 			close(sc->vsc_kernel_fd);
+			sc->vsc_kernel_fd = -1;
+		}
+		if (s >= 0) {
+			close(s);
+			sc->vsc_ctl_fd = -1;
 		}
 		if (sc->vsc_kernel_rx != sc->vsc_kernel_rx_buf)
 			free(sc->vsc_kernel_rx);
@@ -4516,8 +4977,12 @@ static const struct pci_devemu pci_de_vtvsock = {
 	.pe_legacy_config =	pci_vtvsock_legacy_config,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =		vi_pci_snapshot,
+	.pe_snapshot_validate =	pci_vtvsock_snapshot_validate,
+	.pe_snapshot_compat =	vi_pci_snapshot_compat,
 	.pe_pause =		vi_pci_pause,
 	.pe_resume =		vi_pci_resume,
+	/* Provider pause/reconstruction is part of the device snapshot codec. */
+	.pe_migration_flags =	PCI_MIGRATION_VIRTIO_FLAGS,
 #endif
 };
 PCI_EMUL_SET(pci_de_vtvsock);

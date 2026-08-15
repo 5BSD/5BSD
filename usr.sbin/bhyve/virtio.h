@@ -29,13 +29,20 @@
 #ifndef	_BHYVE_VIRTIO_H_
 #define	_BHYVE_VIRTIO_H_
 
+#include <sys/endian.h>
+
+#include <assert.h>
 #include <stdatomic.h>
+#include <string.h>
 
 #include <machine/atomic.h>
 
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtio_ring.h>
 #include <dev/virtio/pci/virtio_pci_var.h>
+
+#include "virtio_dma.h"
+#include "virtio_packed.h"
 
 /*
  * The transport and device constants below follow OASIS VirtIO 1.4.
@@ -191,10 +198,50 @@ vring_size_aligned(u_int qsz)
 }
 
 struct pci_devinst;
+struct pci_snapshot_compat;
 struct nvlist;
 struct vqueue_info;
 struct vm_snapshot_meta;
-struct virtio_pci_modern;
+struct virtio_admin_pci_binding;
+
+#define	VIRTIO_PCI_SHARED_MEMORY_MAX	8
+
+struct virtio_pci_shared_memory_region {
+	uint64_t offset;
+	uint64_t length;
+	uint8_t id;
+	uint8_t bar;
+};
+
+struct virtio_pci_shared_memory_backing {
+	void *base;
+	void *arg;
+	int (*read)(void *, uint64_t, int, uint64_t *);
+	int (*write)(void *, uint64_t, int, uint64_t);
+	uint64_t length;
+	uint8_t id;
+	bool writable;
+};
+
+/*
+ * Modern PCI transport register state.  Keep this free of host pointers and
+ * synchronization objects so restore can stage and roll back it atomically.
+ */
+struct virtio_pci_modern {
+	uint64_t driver_features;
+	struct virtio_pci_shared_memory_region
+	    shared_memory[VIRTIO_PCI_SHARED_MEMORY_MAX];
+	uint32_t device_feature_select;
+	uint32_t driver_feature_select;
+	int bar;
+	uint8_t config_generation;
+	uint8_t pci_cfg_capoff;
+	uint8_t shared_memory_count;
+	bool shared_memory_sealed;
+	bool config_changed;
+	bool config_pending;
+	bool config_deferred;
+};
 
 enum virtio_pci_transport {
 	VIRTIO_PCI_TRANSPORT_LEGACY,
@@ -205,6 +252,11 @@ enum virtio_pci_transport_policy {
 	VIRTIO_PCI_LEGACY_DEFAULT,
 	VIRTIO_PCI_MODERN_DEFAULT,
 	VIRTIO_PCI_MODERN_ONLY,
+};
+
+enum virtio_queue_layout {
+	VIRTIO_QUEUE_SPLIT,
+	VIRTIO_QUEUE_PACKED,
 };
 
 /*
@@ -234,15 +286,27 @@ enum virtio_pci_transport_policy {
  * However, the driver must verify the read or write size and offset
  * and that no one is writing a readonly register.)
  *
- * The BROKED flag ("this thing done gone and broked") is for future
- * use.
  */
 #define	VIRTIO_USE_MSIX		0x01
-#define	VIRTIO_EVENT_IDX	0x02	/* use the event-index values */
-#define	VIRTIO_BROKED		0x08	/* ??? */
 
 struct virtio_softc {
 	struct virtio_consts *vs_vc;	/* constants (see below) */
+	const struct virtio_platform_ops *vs_platform_ops;
+	void	*vs_platform_arg;
+	_Atomic(const struct virtio_dma_domain_ops *) vs_dma_domain_ops;
+	void	*vs_dma_domain_arg;
+	uint32_t vs_dma_endpoint;
+	bool	vs_dma_access_platform_added;
+	_Atomic bool vs_dma_detaching;
+	_Atomic uint32_t vs_dma_active_requests;
+	/*
+	 * Runtime mappings for PCI shared-memory regions.  These pointers are
+	 * destination-local resources and are intentionally kept out of the
+	 * portable modern-transport snapshot.
+	 */
+	struct virtio_pci_shared_memory_backing
+	    vs_shared_memory_backing[VIRTIO_PCI_SHARED_MEMORY_MAX];
+	uint8_t vs_shared_memory_backing_count;
 	int	vs_flags;		/* VIRTIO_* flags from above */
 	pthread_mutex_t *vs_mtx;	/* POSIX mutex, if any */
 	/* Innermost lock: never acquire vs_mtx while holding this mutex. */
@@ -250,6 +314,18 @@ struct virtio_softc {
 	struct pci_devinst *vs_pi;	/* PCI device instance */
 	uint64_t vs_negotiated_caps;	/* negotiated capabilities */
 	struct vqueue_info *vs_queues;	/* one per vc_nvq */
+	/*
+	 * Administration virtqueues occupy a distinct, potentially gapped PCI
+	 * queue-number range.  They must never be folded into vc_nvq: the PCI
+	 * num_queues field counts ordinary device queues only.  Staging storage
+	 * here does not make it guest-visible; lookup admits this range only
+	 * after VIRTIO_F_ADMIN_VQ has been negotiated.
+	 */
+	struct vqueue_info *vs_admin_queues;
+	uint16_t vs_admin_queue_index;
+	uint16_t vs_admin_queue_count;
+	/* Runtime-only owner; portable state is serialized by the binding. */
+	struct virtio_admin_pci_binding *vs_admin_binding;
 	int	vs_curq;		/* current queue */
 	/*
 	 * Queue workers inspect status and may report a fatal ring/backend error
@@ -261,6 +337,13 @@ struct virtio_softc {
 	_Atomic uint8_t vs_status;	/* value from last status write */
 	_Atomic bool vs_resetting;	/* device reset callback is still active */
 	_Atomic bool vs_reset_failed;	/* report reset callback failure on reinit */
+	/*
+	 * A restore callback can sometimes change external state before a later
+	 * operation fails.  If its compensating operation also fails, the common
+	 * snapshot rollback must not hide the resulting NEEDS_RESET indication
+	 * when it restores the old in-memory status byte.
+	 */
+	_Atomic bool vs_restore_incomplete;
 	/*
 	 * Guest-visible suspend and bhyve checkpoint pause use the same queue
 	 * ownership gate.  Snapshot pause does not alter device status.
@@ -285,6 +368,27 @@ struct virtio_softc {
 	uint16_t vs_msix_cfg_idx;	/* MSI-X vector for config event */
 	enum virtio_pci_transport vs_transport;
 	struct virtio_pci_modern *vs_modern;
+};
+
+/*
+ * Architecture and DMA-domain operations used by the common VirtIO queue
+ * engine.  Device models must not translate guest addresses themselves.
+ * The PCI default maps a guest physical address directly through vmctx;
+ * ACCESS_PLATFORM and non-PCI transports can install a different mapper
+ * without changing descriptor parsing or individual devices.
+ */
+struct virtio_platform_ops {
+	void	*(*vpo_map_dma)(void *, uint64_t, size_t,
+		    enum virtio_dma_direction);
+	int	(*vpo_reverse_ram)(void *, void *, size_t, uint64_t *);
+	void	(*vpo_mark_dma_dirty)(void *, void *, size_t);
+	size_t	(*vpo_ram_page_size)(void *);
+	int	(*vpo_discard_ram)(void *, uint64_t, size_t);
+	int	(*vpo_undiscard_ram)(void *, uint64_t, size_t);
+	bool	(*vpo_msix_enabled)(void *);
+	void	(*vpo_raise_msix)(void *, uint16_t);
+	void	(*vpo_raise_msi)(void *);
+	void	(*vpo_set_intx)(void *, bool);
 };
 
 #define	VS_LOCK(vs)							\
@@ -324,17 +428,82 @@ struct virtio_consts {
 	int	(*vc_resume_device)(void *);
 				/* restart after guest suspend */
 	void	(*vc_resume_complete)(void *);
-				/* lifecycle gates are open; restart queue sources */
-	int	(*vc_restore_suspended)(void *);
-				/* restore guest-suspend ownership while paused */
+				/*
+				 * Lifecycle gates are open; restart queue sources.
+				 * Guest resume calls with vs_mtx held, checkpoint
+				 * resume calls without it, so implementations must
+				 * accept either ownership context.
+				 */
+	void	(*vc_restore_suspended)(void *);
+				/*
+				 * Infallibly retain guest-suspend ownership when
+				 * restore transitions the destination from runnable
+				 * to suspended while checkpoint pause still owns
+				 * every backend resource.  It is not called for an
+				 * already-suspended destination.  The generic snapshot layer
+				 * does not impose a private-mutex ownership rule: a device's
+				 * pause callback may retain it, while future devices may not.
+				 */
+	void	(*vc_restore_resumed)(void *);
+				/*
+				 * Infallibly release pre-existing guest-suspend ownership
+				 * when restore transitions the destination from suspended
+				 * to runnable.  Checkpoint ownership remains held until
+				 * the common resume callback runs.  Like restore_suspended,
+				 * it must tolerate either private-mutex ownership context.
+				 */
 	uint64_t vc_hv_caps;		/* hypervisor-provided capabilities */
+	/*
+	 * The corresponding guest driver ABI cannot use translated DMA.
+	 * Do not place this function in VIOT or add ACCESS_PLATFORM merely
+	 * because a VirtIO-IOMMU is present.
+	 */
+	bool	vc_access_platform_ineligible;
 	int	(*vc_pause)(void *);	/* pause; return errno on failure */
-	int	(*vc_resume)(void *);	/* resume; return errno on failure */
+	int	(*vc_resume)(void *);	/*
+				 * Resume checkpoint ownership; return errno on failure.
+				 * A failed resume leaves common checkpoint ownership
+				 * intact and this callback can be retried without an
+				 * intervening pause.  Implementations must therefore
+				 * preserve or re-establish every private admission and
+				 * locking invariant needed by that retry.
+				 */
 	int	(*vc_snapshot)(void *, struct vm_snapshot_meta *);
-				/* called to save / restore device state */
+				/*
+				 * Save or restore device state.  A failed restore
+				 * must leave device and external-backend state
+				 * unchanged.
+				 */
 };
 
 bool	vi_pci_is_modern(const struct virtio_softc *);
+bool	vi_pci_access_platform_eligible(const struct virtio_softc *);
+struct virtio_softc *vi_pci_get_softc(struct pci_devinst *);
+void	vi_set_platform_ops(struct virtio_softc *,
+	    const struct virtio_platform_ops *, void *);
+/*
+ * Topology lifecycle operations serialize themselves with vs_mtx and must
+ * therefore be called without that mutex held.  The caller retains the
+ * external DMA-domain object's lifetime until vi_clear_dma_domain() succeeds.
+ */
+int	vi_set_dma_domain(struct virtio_softc *,
+	    const struct virtio_dma_domain_ops *, void *, uint32_t);
+int	vi_clear_dma_domain(struct virtio_softc *);
+bool	vi_dma_acquire(struct virtio_softc *, struct virtio_dma_lease *);
+void	vi_dma_release(struct virtio_softc *, struct virtio_dma_lease *);
+void	*vi_map_dma(struct virtio_softc *, uint64_t, size_t,
+	    enum virtio_dma_direction);
+size_t	vi_platform_ram_page_size(struct virtio_softc *);
+int	vi_platform_discard_ram(struct virtio_softc *, uint64_t, size_t);
+int	vi_platform_undiscard_ram(struct virtio_softc *, uint64_t, size_t);
+int	vi_platform_reverse_ram(struct virtio_softc *, void *, size_t,
+	    uint64_t *);
+void	vi_mark_dma_dirty(struct virtio_softc *, void *, size_t);
+int	vi_config_read_le(const void *, size_t, int, int, uint32_t *);
+bool	vi_platform_msix_enabled(struct virtio_softc *);
+void	vi_platform_raise_msix(struct virtio_softc *, uint16_t);
+void	vi_platform_raise_msi(struct virtio_softc *);
+void	vi_platform_set_intx(struct virtio_softc *, bool);
 
 /*
  * Data structure allocated (statically) per virtual queue.
@@ -354,19 +523,21 @@ bool	vi_pci_is_modern(const struct virtio_softc *);
  * they're just XX_ring[N].
  */
 #define	VQ_ALLOC	0x01	/* set once we have a pfn */
-#define	VQ_BROKED	0x02	/* ??? */
+struct virtio_packed_completion;
+
 struct vqueue_info {
-	uint16_t vq_qsize;	/* size of this queue (a power of 2) */
+	uint16_t vq_qsize;	/* split: power of 2; packed: 1..32768 */
 	void	(*vq_notify)(void *, struct vqueue_info *);
 				/* called instead of vc_notify, if not NULL */
 
 	struct virtio_softc *vq_vs;	/* backpointer to softc */
 	uint16_t vq_num;	/* we're the num'th queue in the softc */
+	enum virtio_queue_layout vq_layout;
 
 	uint16_t vq_flags;	/* flags (see above) */
 	uint16_t vq_last_avail;	/* a recent value of vq_avail->idx */
 	uint16_t vq_next_used;	/* index of the next used slot to be filled */
-	uint16_t vq_save_used;	/* saved vq_used->idx; see vq_endchains */
+	uint16_t vq_save_used;	/* saved host vq_next_used; see vq_endchains */
 	uint16_t vq_msix_idx;	/* MSI-X index, or VIRTIO_MSI_NO_VECTOR */
 
 	uint32_t vq_pfn;	/* PFN of virt queue (not shifted!) */
@@ -374,22 +545,192 @@ struct vqueue_info {
 	uint16_t vq_enabled;	/* modern: queue_enable */
 	uint16_t vq_reset;	/* modern: queue_reset */
 	volatile uint16_t vq_resetting; /* queue backend is being drained */
-	bool	 vq_notify_pending; /* kick received before DRIVER_OK */
+	bool	 vq_notify_pending; /* kick deferred by status/lifecycle fence */
 	uint64_t vq_generation;	/* changes whenever queue ownership resets */
 	uint64_t vq_desc_gpa;	/* modern descriptor table address */
 	uint64_t vq_driver_gpa;	/* modern available ring address */
 	uint64_t vq_device_gpa;	/* modern used ring address */
+	uint64_t vq_dma_generation; /* generation of cached ring mappings */
+	bool	 vq_dma_generation_valid;
+	/*
+	 * Split rings do not carry an ownership bit.  Track each outstanding
+	 * head in device-owned memory so copied asynchronous completion tokens
+	 * cannot publish the same descriptor twice.
+	 */
+	uint8_t	*vq_split_owners;
+	uint16_t vq_split_owner_count;
 
 	struct vring_desc *vq_desc;	/* descriptor array */
 	struct vring_avail *vq_avail;	/* the "avail" ring */
 	struct vring_used *vq_used;	/* the "used" ring */
+	struct virtio_packed_desc *vq_packed_desc;
+	struct virtio_packed_event *vq_packed_driver_event;
+	struct virtio_packed_event *vq_packed_device_event;
+	uint16_t vq_packed_next_avail;
+	uint16_t vq_packed_next_used;
+	uint16_t vq_packed_save_used;
+	bool	 vq_packed_avail_wrap;
+	bool	 vq_packed_used_wrap;
+	bool	 vq_packed_save_used_wrap;
+	/*
+	 * Packed queues used by asynchronous device models complete through
+	 * this bounded reorder table.  It is host-owned transient state and
+	 * is never part of a snapshot; checkpoint quiesce must drain it.
+	 */
+	struct virtio_packed_completion *vq_packed_completions;
+	uint16_t vq_packed_completion_count;
 
 };
-/* as noted above, these are sort of backwards, name-wise */
-#define VQ_AVAIL_EVENT_IDX(vq) \
-	(*(uint16_t *)&(vq)->vq_used->ring[(vq)->vq_qsize])
-#define VQ_USED_EVENT_IDX(vq) \
-	((vq)->vq_avail->ring[(vq)->vq_qsize])
+
+static inline struct vqueue_info *
+vi_pci_queue_lookup(struct virtio_softc *vs, uint32_t queue)
+{
+	uint32_t local;
+
+	if (vs == NULL || vs->vs_vc == NULL || vs->vs_vc->vc_nvq < 0)
+		return (NULL);
+	if (queue < (uint32_t)vs->vs_vc->vc_nvq)
+		return (vs->vs_queues == NULL ? NULL : &vs->vs_queues[queue]);
+	if ((vs->vs_negotiated_caps & VIRTIO_F_ADMIN_VQ) == 0 ||
+	    vs->vs_admin_queues == NULL ||
+	    queue < vs->vs_admin_queue_index)
+		return (NULL);
+	local = queue - vs->vs_admin_queue_index;
+	if (local >= vs->vs_admin_queue_count)
+		return (NULL);
+	return (&vs->vs_admin_queues[local]);
+}
+
+/*
+ * Iterate allocated queue storage rather than queue selector values.  An
+ * administration range may follow a hole, so treating an ordinal as a
+ * selector would incorrectly turn the hole into ordinary queues.
+ */
+static inline size_t
+vi_pci_queue_storage_count(const struct virtio_softc *vs)
+{
+
+	if (vs == NULL || vs->vs_vc == NULL || vs->vs_vc->vc_nvq < 0)
+		return (0);
+	return ((size_t)vs->vs_vc->vc_nvq + vs->vs_admin_queue_count);
+}
+
+static inline struct vqueue_info *
+vi_pci_queue_at(struct virtio_softc *vs, size_t ordinal)
+{
+	size_t ordinary, local;
+
+	if (vs == NULL || vs->vs_vc == NULL || vs->vs_vc->vc_nvq < 0)
+		return (NULL);
+	ordinary = (size_t)vs->vs_vc->vc_nvq;
+	if (ordinal < ordinary)
+		return (vs->vs_queues == NULL ? NULL : &vs->vs_queues[ordinal]);
+	local = ordinal - ordinary;
+	if (vs->vs_admin_queues == NULL ||
+	    local >= vs->vs_admin_queue_count)
+		return (NULL);
+	return (&vs->vs_admin_queues[local]);
+}
+
+static inline bool
+vi_pci_queue_is_admin(const struct virtio_softc *vs,
+    const struct vqueue_info *vq)
+{
+	uintptr_t begin, end, candidate;
+	size_t length;
+
+	if (vs == NULL || vq == NULL || vs->vs_admin_queues == NULL ||
+	    vs->vs_admin_queue_count == 0)
+		return (false);
+	begin = (uintptr_t)vs->vs_admin_queues;
+	candidate = (uintptr_t)vq;
+	if (__builtin_mul_overflow((size_t)vs->vs_admin_queue_count,
+	    sizeof(*vq), &length) ||
+	    __builtin_add_overflow(begin, length, &end))
+		return (false);
+	return (candidate >= begin && candidate < end &&
+	    (candidate - begin) % sizeof(*vq) == 0);
+}
+
+/*
+ * Modern VirtIO structures are little endian.  The legacy PCI interface
+ * retains guest-native byte order; preserving that distinction keeps common
+ * ring code portable without extending legacy identities into new devices.
+ */
+static inline uint16_t
+vi16_to_cpu(const struct virtio_softc *vs, uint16_t value)
+{
+
+	return ((vs->vs_negotiated_caps & VIRTIO_F_VERSION_1) != 0 ?
+	    le16toh(value) : value);
+}
+
+static inline uint32_t
+vi32_to_cpu(const struct virtio_softc *vs, uint32_t value)
+{
+
+	return ((vs->vs_negotiated_caps & VIRTIO_F_VERSION_1) != 0 ?
+	    le32toh(value) : value);
+}
+
+static inline uint64_t
+vi64_to_cpu(const struct virtio_softc *vs, uint64_t value)
+{
+
+	return ((vs->vs_negotiated_caps & VIRTIO_F_VERSION_1) != 0 ?
+	    le64toh(value) : value);
+}
+
+static inline uint16_t
+vi16_from_cpu(const struct virtio_softc *vs, uint16_t value)
+{
+
+	return ((vs->vs_negotiated_caps & VIRTIO_F_VERSION_1) != 0 ?
+	    htole16(value) : value);
+}
+
+static inline uint32_t
+vi32_from_cpu(const struct virtio_softc *vs, uint32_t value)
+{
+
+	return ((vs->vs_negotiated_caps & VIRTIO_F_VERSION_1) != 0 ?
+	    htole32(value) : value);
+}
+
+/*
+ * As noted above, these are sort of backwards, name-wise.  The event fields
+ * are trailing uint16_t values in guest little-endian ring images; use byte
+ * codecs because the C flexible-array members do not establish alignment for
+ * a cast beyond their declared element type.
+ */
+static inline uint16_t
+vq_avail_event_idx(const struct vqueue_info *vq)
+{
+	uint16_t value;
+
+	memcpy(&value, &vq->vq_used->ring[vq->vq_qsize], sizeof(value));
+	return (vi16_to_cpu(vq->vq_vs, value));
+}
+
+static inline void
+vq_set_avail_event_idx(struct vqueue_info *vq, uint16_t value)
+{
+	uint16_t encoded;
+
+	encoded = vi16_from_cpu(vq->vq_vs, value);
+	vi_mark_dma_dirty(vq->vq_vs,
+	    &vq->vq_used->ring[vq->vq_qsize], sizeof(encoded));
+	memcpy(&vq->vq_used->ring[vq->vq_qsize], &encoded, sizeof(encoded));
+}
+
+static inline uint16_t
+vq_used_event_idx(const struct vqueue_info *vq)
+{
+	uint16_t value;
+
+	memcpy(&value, &vq->vq_avail->ring[vq->vq_qsize], sizeof(value));
+	return (vi16_to_cpu(vq->vq_vs, value));
+}
 
 /*
  * Is this ring ready for I/O?
@@ -437,20 +778,7 @@ vq_ring_ready(struct vqueue_info *vq)
  * Are there "available" descriptors?  (This does not count
  * how many, just returns True if there are some.)
  */
-static inline int
-vq_has_descs(struct vqueue_info *vq)
-{
-
-	/*
-	 * A fatal ring error sets NEEDS_RESET.  A callback may already be
-	 * draining a batch when that happens, so blocking only later queue
-	 * notifications is insufficient: stop the current drain before it can
-	 * consume a subsequent available entry from the poisoned ring.
-	 */
-	return ((vq->vq_vs->vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0 &&
-	    vq_ring_ready(vq) && vq->vq_last_avail !=
-	    atomic_load_acq_16(&vq->vq_avail->idx));
-}
+int	vq_has_descs(struct vqueue_info *);
 
 /*
  * Deliver an interrupt to the guest for a specific MSI-X queue or
@@ -462,7 +790,7 @@ vi_interrupt(struct virtio_softc *vs, uint8_t isr, uint16_t msix_idx)
 
 	if (vs->vs_suspended || vs->vs_checkpoint_paused)
 		return;
-	if (pci_msix_enabled(vs->vs_pi)) {
+	if (vi_platform_msix_enabled(vs)) {
 		/*
 		 * VirtIO 1.4 section 4.1.4.5.1 requires the device
 		 * configuration bit to be set before a configuration change
@@ -475,12 +803,12 @@ vi_interrupt(struct virtio_softc *vs, uint8_t isr, uint16_t msix_idx)
 			VS_ISR_UNLOCK(vs);
 		}
 		if (msix_idx != VIRTIO_MSI_NO_VECTOR)
-			pci_generate_msix(vs->vs_pi, msix_idx);
+			vi_platform_raise_msix(vs, msix_idx);
 	} else {
 		VS_ISR_LOCK(vs);
 		vs->vs_isr |= isr;
-		pci_generate_msi(vs->vs_pi, 0);
-		pci_lintr_assert(vs->vs_pi);
+		vi_platform_raise_msi(vs);
+		vi_platform_set_intx(vs, true);
 		VS_ISR_UNLOCK(vs);
 	}
 }
@@ -499,7 +827,7 @@ vi_isr_read(struct virtio_softc *vs)
 	isr = vs->vs_isr;
 	vs->vs_isr = 0;
 	if (isr != 0)
-		pci_lintr_deassert(vs->vs_pi);
+		vi_platform_set_intx(vs, false);
 	VS_ISR_UNLOCK(vs);
 
 	return (isr);
@@ -518,46 +846,8 @@ vq_interrupt(struct virtio_softc *vs, struct vqueue_info *vq)
 	vi_interrupt(vs, VIRTIO_PCI_ISR_INTR, vq->vq_msix_idx);
 }
 
-static inline void
-vq_kick_enable(struct vqueue_info *vq)
-{
-
-	if ((vq->vq_vs->vs_negotiated_caps &
-	    VIRTIO_RING_F_EVENT_IDX) != 0) {
-		/*
-		 * Ask for a notification when the driver publishes its next
-		 * available entry.  With EVENT_IDX, flags must remain zero.
-		 */
-		vq->vq_used->flags = 0;
-		VQ_AVAIL_EVENT_IDX(vq) = vq->vq_last_avail;
-	} else
-		vq->vq_used->flags = 0;
-	/*
-	 * Full memory barrier to make sure the suppression update happens
-	 * before the load from vq_avail->idx in a subsequent vq_has_descs().
-	 */
-	atomic_thread_fence_seq_cst();
-}
-
-static inline void
-vq_kick_disable(struct vqueue_info *vq)
-{
-
-	if ((vq->vq_vs->vs_negotiated_caps &
-	    VIRTIO_RING_F_EVENT_IDX) != 0) {
-		/*
-		 * Suppress notifications while the device is actively polling or
-		 * has another wakeup source.  Placing the event immediately behind
-		 * the last consumed index makes vring_need_event() false for every
-		 * number of outstanding buffers permitted by this ring.  Advancing
-		 * by only qsize - 1 would request a needless kick once per ring
-		 * revolution on a continuously busy queue.
-		 */
-		vq->vq_used->flags = 0;
-		VQ_AVAIL_EVENT_IDX(vq) = vq->vq_last_avail - 1;
-	} else
-		vq->vq_used->flags = VRING_USED_F_NO_NOTIFY;
-}
+void	vq_kick_enable(struct vqueue_info *);
+void	vq_kick_disable(struct vqueue_info *);
 
 struct iovec;
 
@@ -572,27 +862,112 @@ struct iovec;
 struct vi_req {
 	int readable;		/* num of readable iovecs */
 	int writable;		/* num of writable iovecs */
+	uint64_t writable_bytes; /* total device-writable capacity */
 	bool ordered;		/* readable descriptors precede writable ones */
+	bool lengths_known;	/* capacities came from descriptor parsing */
 	unsigned int idx;	/* ring index */
+	/*
+	 * Completion identity for layout-neutral callers.  Split queues use
+	 * only idx.  Packed queues additionally need the consumed descriptor
+	 * span and wrap generation because an offset can be reused before an
+	 * asynchronous completion returns.
+	 */
+	uint16_t descriptor_count;
+	uint16_t completion_id;
+	/*
+	 * Split-ring producer cursor immediately after this request was
+	 * acquired.  It makes a returned request prove that it is the current
+	 * acquisition tail without rereading guest-owned avail memory.
+	 */
+	uint16_t split_avail_next;
+	uint16_t packed_head;
+	bool packed_wrap;
+	enum virtio_queue_layout queue_layout;
+	uint64_t queue_generation;
+	bool dma_acquired;
+	bool outstanding;
+};
+
+struct virtio_packed_completion {
+	uint32_t iolen;
+	uint16_t descriptor_count;
+	uint16_t completion_id;
+	uint16_t group_count;
+	uint16_t group_prev_head;
+	bool group_prev_wrap;
+	bool packed_wrap;
+	bool valid;
+	/*
+	 * Zero means the packed head is not held by a backend.  One and two
+	 * identify a request acquired with wrap=false and wrap=true,
+	 * respectively.  This queue-owned identity survives copied vi_req
+	 * tokens and makes completion, rollback, and discard single-use.
+	 */
+	uint8_t owner_state;
 };
 
 void	vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
-			void *dev_softc, struct pci_devinst *pi,
-			struct vqueue_info *queues);
+	    void *dev_softc, struct pci_devinst *pi,
+	    struct vqueue_info *queues);
+int	vi_pci_stage_admin_queues(struct virtio_softc *,
+	    struct vqueue_info *, uint32_t, uint32_t);
 int	vi_pci_select_transport(struct virtio_softc *, const struct nvlist *,
 	    enum virtio_pci_transport_policy);
 int	vi_pci_modern_init(struct virtio_softc *, int);
 void	vi_pci_modern_set_identity(struct virtio_softc *, uint16_t);
+/*
+ * Add immutable PCI topology during single-threaded device initialization.
+ * The caller owns the BAR mapping and its lifetime.
+ */
+int	vi_pci_modern_add_shared_memory(struct virtio_softc *, uint8_t,
+	    uint8_t, uint64_t, uint64_t);
+void	vi_pci_modern_seal_shared_memory(struct virtio_softc *);
+/*
+ * Initial backing registration occurs before vCPU start.  Replacement must
+ * be performed by a device lifecycle owner while reset/quiesce fences guest
+ * BAR access.  Once vCPUs can run, the caller must hold vs_mtx: lifecycle
+ * callbacks are invoked with that mutex held, and these helpers deliberately
+ * do not relock it before changing the runtime registry.
+ */
+int	vi_pci_modern_set_shared_memory_backing(struct virtio_softc *,
+	    uint8_t, void *, uint64_t, bool);
+int	vi_pci_modern_clear_shared_memory_backing(struct virtio_softc *,
+	    uint8_t, void *);
+/*
+ * Callback-backed regions support sparse or dynamically remapped apertures.
+ * Callbacks execute with the device mutex held and therefore must not invoke
+ * an operation that takes that mutex again or changes transport, queue, or
+ * lifecycle state.  A callback may use the lock-free vi_dma_acquire(),
+ * vi_dma_release(), and vi_map_dma() lease/map trio: it is the explicitly
+ * supported way for a sparse aperture to retain its DMA-domain binding while
+ * it accesses destination-local state.  They return zero on success; failed
+ * reads are reported to the guest as an all-ones value and failed writes are
+ * dropped.
+ */
+int	vi_pci_modern_set_shared_memory_handler(struct virtio_softc *,
+	    uint8_t, uint64_t, bool, void *,
+	    int (*)(void *, uint64_t, int, uint64_t *),
+	    int (*)(void *, uint64_t, int, uint64_t));
+int	vi_pci_modern_clear_shared_memory_handler(struct virtio_softc *,
+	    uint8_t, void *);
 void	vi_pci_modern_reset(struct virtio_softc *);
 void	vi_pci_modern_queue_reset_complete(struct vqueue_info *, uint64_t,
 	    int);
 /* Record a modern config change and notify; caller holds vs_mtx, if present. */
 void	vi_pci_modern_config_changed(struct virtio_softc *);
+/*
+ * Mark modern device configuration as changed without raising an interrupt.
+ * This is for specification-defined fields such as virtio-mem plugged_size
+ * whose changes must participate in config_generation stable reads but must
+ * not generate a configuration-change notification.
+ */
+void	vi_pci_modern_config_dirty(struct virtio_softc *);
 /* Notify a config change using the active transport; caller holds vs_mtx. */
 void	vi_pci_config_changed(struct virtio_softc *);
 int	vi_pci_lifecycle_noop(void *);
 void	vi_pci_quiesce_enter(struct virtio_softc *);
 void	vi_pci_quiesce_exit(struct virtio_softc *);
+void	vi_pci_reset_device(struct virtio_softc *);
 uint64_t vi_pci_modern_read(struct pci_devinst *, int, uint64_t, int);
 void	vi_pci_modern_write(struct pci_devinst *, int, uint64_t, int,
 	    uint64_t);
@@ -604,16 +979,38 @@ int	vi_intr_init(struct virtio_softc *vs, int barnum, int use_msix);
 void	vi_reset_dev(struct virtio_softc *);
 /* Mark an unrecoverable device error and notify an active driver. */
 void	vi_set_needs_reset(struct virtio_softc *);
+/* Mark a snapshot restore whose external rollback could not be completed. */
+void	vi_snapshot_restore_incomplete(struct virtio_softc *);
 void	vi_set_io_bar(struct virtio_softc *, int);
+uint64_t vi_modern_device_features(const struct virtio_softc *);
 
 int	vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	    struct vi_req *reqp);
 void	vq_retchains(struct vqueue_info *vq, uint16_t n_chains);
-void	vq_relchain_prepare(struct vqueue_info *vq, uint16_t idx,
-			    uint32_t iolen);
-void	vq_relchain_publish(struct vqueue_info *vq);
-void	vq_relchain(struct vqueue_info *vq, uint16_t idx, uint32_t iolen);
+/*
+ * Return only an immediately rejected tail request.  A request which is not
+ * the newest acquired chain cannot safely be returned; use
+ * vq_discard_req() after invalidating the queue generation for asynchronous
+ * cancellation or reset instead.
+ */
+void	vq_retchain_req(struct vqueue_info *, struct vi_req *);
+void	vq_discard_req(struct vqueue_info *, struct vi_req *);
+/*
+ * Completion and publication are per-queue serialized operations.  A device
+ * may use its device mutex, a queue worker, or another lifecycle-owned lock,
+ * but it must never enter these helpers concurrently for the same queue.
+ * This preserves packed completion-table ordering and split used-ring cursor
+ * ownership while still permitting independent queues to run concurrently.
+ */
+void	vq_relchain_req(struct vqueue_info *, struct vi_req *, uint32_t);
+void	vq_relchain_group(struct vqueue_info *, struct vi_req *,
+	    const uint32_t *, unsigned int);
 void	vq_endchains(struct vqueue_info *vq, int used_all_avail);
+int	vq_packed_completions_init(struct vqueue_info *);
+void	vq_packed_completions_fini(struct vqueue_info *);
+void	vq_packed_completions_reset(struct vqueue_info *);
+bool	vq_packed_completions_empty(const struct vqueue_info *);
+bool	vq_split_owners_empty(const struct vqueue_info *);
 
 uint64_t vi_pci_read(struct pci_devinst *pi, int baridx, uint64_t offset,
 	    int size);
@@ -621,6 +1018,8 @@ void	vi_pci_write(struct pci_devinst *pi, int baridx, uint64_t offset,
 	    int size, uint64_t value);
 #ifdef BHYVE_SNAPSHOT
 int	vi_pci_snapshot(struct vm_snapshot_meta *meta);
+int	vi_pci_snapshot_compat(struct pci_devinst *,
+	    struct pci_snapshot_compat *);
 int	vi_pci_pause(struct pci_devinst *pi);
 int	vi_pci_resume(struct pci_devinst *pi);
 int	vi_pci_modern_snapshot_transport(struct virtio_softc *,

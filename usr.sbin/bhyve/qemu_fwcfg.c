@@ -188,9 +188,13 @@ static int
 qemu_fwcfg_add_item(const uint16_t architecture, const uint16_t index,
     const uint32_t size, void *const data)
 {
-	/* truncate architecture and index to their desired size */
-	const uint16_t arch = architecture & QEMU_FWCFG_ARCHITECTURE_MASK;
-	const uint16_t idx = index & QEMU_FWCFG_INDEX_MASK;
+	uint16_t arch, idx;
+
+	if (architecture >= QEMU_FWCFG_MAX_ARCHS ||
+	    index >= QEMU_FWCFG_MAX_ENTRIES || data == NULL)
+		return (EINVAL);
+	arch = architecture;
+	idx = index;
 
 	/* get pointer to item specified by selector */
 	struct qemu_fwcfg_item *const fwcfg_item = &fwcfg_sc.items[arch][idx];
@@ -215,15 +219,21 @@ qemu_fwcfg_add_item_file_dir(void)
 	const size_t size = sizeof(struct qemu_fwcfg_directory) +
 	    QEMU_FWCFG_MIN_FILES * sizeof(struct qemu_fwcfg_file);
 	struct qemu_fwcfg_directory *const fwcfg_directory = calloc(1, size);
+	int error;
+
 	if (fwcfg_directory == NULL) {
 		return (ENOMEM);
 	}
 
-	fwcfg_sc.directory = fwcfg_directory;
-
-	return (qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
+	error = qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
 	    QEMU_FWCFG_INDEX_FILE_DIR, sizeof(struct qemu_fwcfg_directory),
-	    (uint8_t *)fwcfg_sc.directory));
+	    (uint8_t *)fwcfg_directory);
+	if (error != 0) {
+		free(fwcfg_directory);
+		return (error);
+	}
+	fwcfg_sc.directory = fwcfg_directory;
+	return (0);
 }
 
 static int
@@ -231,6 +241,8 @@ qemu_fwcfg_add_item_id(void)
 {
 	struct qemu_fwcfg_id *const fwcfg_id = calloc(1,
 	    sizeof(struct qemu_fwcfg_id));
+	int error;
+
 	if (fwcfg_id == NULL) {
 		return (ENOMEM);
 	}
@@ -241,15 +253,20 @@ qemu_fwcfg_add_item_id(void)
 	uint32_t *const le_fwcfg_id_ptr = (uint32_t *)fwcfg_id;
 	*le_fwcfg_id_ptr = htole32(*le_fwcfg_id_ptr);
 
-	return (qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
+	error = qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
 	    QEMU_FWCFG_INDEX_ID, sizeof(struct qemu_fwcfg_id),
-	    (uint8_t *)fwcfg_id));
+	    (uint8_t *)fwcfg_id);
+	if (error != 0)
+		free(fwcfg_id);
+	return (error);
 }
 
 static int
 qemu_fwcfg_add_item_max_cpus(void)
 {
 	uint16_t *fwcfg_max_cpus = calloc(1, sizeof(uint16_t));
+	int error;
+
 	if (fwcfg_max_cpus == NULL) {
 		return (ENOMEM);
 	}
@@ -260,22 +277,30 @@ qemu_fwcfg_add_item_max_cpus(void)
 	 */
 	*fwcfg_max_cpus = htole16(guest_ncpus);
 
-	return (qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
-	    QEMU_FWCFG_INDEX_MAX_CPUS, sizeof(uint16_t), fwcfg_max_cpus));
+	error = qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
+	    QEMU_FWCFG_INDEX_MAX_CPUS, sizeof(uint16_t), fwcfg_max_cpus);
+	if (error != 0)
+		free(fwcfg_max_cpus);
+	return (error);
 }
 
 static int
 qemu_fwcfg_add_item_nb_cpus(void)
 {
 	uint16_t *fwcfg_max_cpus = calloc(1, sizeof(uint16_t));
+	int error;
+
 	if (fwcfg_max_cpus == NULL) {
 		return (ENOMEM);
 	}
 
 	*fwcfg_max_cpus = htole16(guest_ncpus);
 
-	return (qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
-	    QEMU_FWCFG_INDEX_NB_CPUS, sizeof(uint16_t), fwcfg_max_cpus));
+	error = qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
+	    QEMU_FWCFG_INDEX_NB_CPUS, sizeof(uint16_t), fwcfg_max_cpus);
+	if (error != 0)
+		free(fwcfg_max_cpus);
+	return (error);
 }
 
 static int
@@ -283,6 +308,8 @@ qemu_fwcfg_add_item_signature(void)
 {
 	struct qemu_fwcfg_signature *const fwcfg_signature = calloc(1,
 	    sizeof(struct qemu_fwcfg_signature));
+	int error;
+
 	if (fwcfg_signature == NULL) {
 		return (ENOMEM);
 	}
@@ -292,9 +319,12 @@ qemu_fwcfg_add_item_signature(void)
 	fwcfg_signature->signature[2] = 'M';
 	fwcfg_signature->signature[3] = 'U';
 
-	return (qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
+	error = qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
 	    QEMU_FWCFG_INDEX_SIGNATURE, sizeof(struct qemu_fwcfg_signature),
-	    (uint8_t *)fwcfg_signature));
+	    (uint8_t *)fwcfg_signature);
+	if (error != 0)
+		free(fwcfg_signature);
+	return (error);
 }
 
 #ifdef __amd64__
@@ -318,39 +348,45 @@ qemu_fwcfg_register_port(const char *const name, const int port, const int size,
 int
 qemu_fwcfg_add_file(const char *name, const uint32_t size, void *const data)
 {
-	if (strlen(name) >= QEMU_FWCFG_MAX_NAME)
+	struct qemu_fwcfg_directory *new_directory;
+	uint32_t count, file_index, index, old_count;
+	size_t new_size;
+	int error;
+
+	if (name == NULL || name[0] == '\0' || data == NULL ||
+	    fwcfg_sc.directory == NULL || strlen(name) >= QEMU_FWCFG_MAX_NAME)
 		return (EINVAL);
 
 	/*
 	 * QEMU specifies count as big endian.
 	 * Convert it to host endian to work with it.
 	 */
-	const uint32_t count = be32toh(fwcfg_sc.directory->be_count) + 1;
-
-	/* add file to items list */
-	const uint32_t index = QEMU_FWCFG_FIRST_FILE_INDEX + count - 1;
-	const int error = qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
-	    index, size, data);
-	if (error != 0) {
-		return (error);
-	}
+	old_count = be32toh(fwcfg_sc.directory->be_count);
+	if (old_count >= QEMU_FWCFG_MAX_ENTRIES - QEMU_FWCFG_FIRST_FILE_INDEX)
+		return (ENOSPC);
+	count = old_count + 1;
+	index = QEMU_FWCFG_FIRST_FILE_INDEX + old_count;
 
 	/*
 	 * files should be sorted alphabetical, get index for new file
 	 */
-	uint32_t file_index;
-	for (file_index = 0; file_index < count - 1; ++file_index) {
-		if (strcmp(name, fwcfg_sc.directory->files[file_index].name) <
-		    0)
+	for (file_index = 0; file_index < old_count; ++file_index) {
+		int comparison;
+
+		comparison = strcmp(name,
+		    fwcfg_sc.directory->files[file_index].name);
+		if (comparison == 0)
+			return (EEXIST);
+		if (comparison < 0)
 			break;
 	}
 
+	new_directory = NULL;
 	if (count > QEMU_FWCFG_MIN_FILES) {
 		/* alloc new file directory */
-		const uint64_t new_size = sizeof(struct qemu_fwcfg_directory) +
-		    count * sizeof(struct qemu_fwcfg_file);
-		struct qemu_fwcfg_directory *const new_directory = calloc(1,
-		    new_size);
+		new_size = sizeof(struct qemu_fwcfg_directory) +
+		    (size_t)count * sizeof(struct qemu_fwcfg_file);
+		new_directory = calloc(1, new_size);
 		if (new_directory == NULL) {
 			warnx(
 			    "%s: Unable to allocate a new qemu fwcfg files directory (count %d)",
@@ -367,13 +403,17 @@ qemu_fwcfg_add_file(const char *name, const uint32_t size, void *const data)
 		    &fwcfg_sc.directory->files[file_index],
 		    (count - file_index - 1) * sizeof(struct qemu_fwcfg_file));
 
-		/* free old directory */
+	}
+
+	error = qemu_fwcfg_add_item(QEMU_FWCFG_ARCHITECTURE_GENERIC,
+	    index, size, data);
+	if (error != 0) {
+		free(new_directory);
+		return (error);
+	}
+	if (new_directory != NULL) {
 		free(fwcfg_sc.directory);
-
-		/* set directory pointer to new directory */
 		fwcfg_sc.directory = new_directory;
-
-		/* adjust directory pointer */
 		fwcfg_sc.items[0][QEMU_FWCFG_INDEX_FILE_DIR].data =
 		    (uint8_t *)fwcfg_sc.directory;
 	} else {
@@ -507,6 +547,7 @@ qemu_fwcfg_init(struct vmctx *const ctx)
 	}
 	if ((error = qemu_fwcfg_add_item_file_dir()) != 0) {
 		warnx("%s: Unable to add file_dir item", __func__);
+		goto done;
 	}
 
 	/* add user defined fwcfg files */
@@ -516,7 +557,7 @@ qemu_fwcfg_init(struct vmctx *const ctx)
 	}
 
 done:
-	if (error) {
+	if (error && fwcfg_sc.acpi_dev != NULL) {
 		acpi_device_destroy(fwcfg_sc.acpi_dev);
 	}
 
@@ -543,10 +584,13 @@ qemu_fwcfg_parse_cmdline_arg(const char *opt)
 	struct qemu_fwcfg_user_file *fwcfg_file;
 	struct stat sb;
 	const char *opt_ptr, *opt_end;
+	size_t offset, size, string_size;
 	ssize_t bytes_read;
-	int fd;
+	int error, fd;
 	
-	fwcfg_file = malloc(sizeof(*fwcfg_file));
+	if (opt == NULL)
+		return (EINVAL);
+	fwcfg_file = calloc(1, sizeof(*fwcfg_file));
 	if (fwcfg_file == NULL) {
 		warnx("Unable to allocate fw_cfg_user_file");
 		return (ENOMEM);
@@ -563,13 +607,15 @@ qemu_fwcfg_parse_cmdline_arg(const char *opt)
 	opt_end = strchr(opt_ptr, ',');
 	if (opt_end == NULL) {
 		qemu_fwcfg_usage(opt);
-		return (EINVAL);
+		error = EINVAL;
+		goto fail;
 	}
 
 	/* check if <name> is too long */
 	if (opt_end - opt_ptr >= QEMU_FWCFG_MAX_NAME) {
 		warnx("fw_cfg name too long: \"%s\"", opt);
-		return (EINVAL);
+		error = EINVAL;
+		goto fail;
 	}
 
 	/* save <name> */
@@ -582,53 +628,85 @@ qemu_fwcfg_parse_cmdline_arg(const char *opt)
 
 	if (strncmp(opt_ptr, "string=", sizeof("string=") - 1) == 0) {
 		opt_ptr += sizeof("string=") - 1;
+		string_size = strlen(opt_ptr);
+		if (string_size >= UINT32_MAX) {
+			error = EOVERFLOW;
+			goto fail;
+		}
 		fwcfg_file->data = strdup(opt_ptr);
 		if (fwcfg_file->data == NULL) {
 			warnx("Can't duplicate fw_cfg_user_file string \"%s\"",
 			    opt_ptr);
-			return (ENOMEM);
+			error = ENOMEM;
+			goto fail;
 		}
-		fwcfg_file->size = strlen(opt_ptr) + 1;
+		fwcfg_file->size = (uint32_t)string_size + 1;
 	} else if (strncmp(opt_ptr, "file=", sizeof("file=") - 1) == 0) {
 		opt_ptr += sizeof("file=") - 1;
 
-		fd = open(opt_ptr, O_RDONLY);
+		fd = open(opt_ptr,
+		    O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
 		if (fd < 0) {
 			warn("Can't open fw_cfg_user_file file \"%s\"",
 			    opt_ptr);
-			return (EINVAL);
+			error = errno;
+			goto fail;
 		}
 
 		if (fstat(fd, &sb) < 0) {
 			warn("Unable to get size of file \"%s\"", opt_ptr);
+			error = errno;
 			close(fd);
-			return (-1);
+			goto fail;
 		}
-
-		fwcfg_file->data = malloc(sb.st_size);
+		if (!S_ISREG(sb.st_mode) || sb.st_size < 0 ||
+		    (uintmax_t)sb.st_size > UINT32_MAX) {
+			warnx("Invalid fw_cfg_user_file file \"%s\"", opt_ptr);
+			error = EINVAL;
+			close(fd);
+			goto fail;
+		}
+		size = (size_t)sb.st_size;
+		fwcfg_file->data = malloc(MAX(size, 1));
 		if (fwcfg_file->data == NULL) {
 			warnx(
 			    "Can't allocate fw_cfg_user_file file \"%s\" (size: 0x%16lx)",
 			    opt_ptr, sb.st_size);
+			error = ENOMEM;
 			close(fd);
-			return (ENOMEM);
+			goto fail;
 		}
-		bytes_read = read(fd, fwcfg_file->data, sb.st_size);
-		if (bytes_read < 0 || bytes_read != sb.st_size) {
-			warn("Unable to read file \"%s\"", opt_ptr);
-			free(fwcfg_file->data);
-			close(fd);
-			return (-1);
+		offset = 0;
+		while (offset < size) {
+			bytes_read = read(fd, (uint8_t *)fwcfg_file->data + offset,
+			    size - offset);
+			if (bytes_read < 0 && errno == EINTR)
+				continue;
+			if (bytes_read <= 0) {
+				warn("Unable to read file \"%s\"", opt_ptr);
+				error = bytes_read < 0 ? errno : EIO;
+				close(fd);
+				goto fail;
+			}
+			offset += (size_t)bytes_read;
 		}
-		fwcfg_file->size = bytes_read;
-
-		close(fd);
+		fwcfg_file->size = (uint32_t)size;
+		if (close(fd) != 0) {
+			error = errno;
+			goto fail;
+		}
 	} else {
 		qemu_fwcfg_usage(opt);
-		return (EINVAL);
+		error = EINVAL;
+		goto fail;
 	}
 
 	STAILQ_INSERT_TAIL(&user_files, fwcfg_file, chain);
 
 	return (0);
+
+fail:
+	free(fwcfg_file->data);
+	free(fwcfg_file);
+	return (error);
 }

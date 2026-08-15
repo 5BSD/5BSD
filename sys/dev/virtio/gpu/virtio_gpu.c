@@ -35,8 +35,11 @@
 #include <sys/callout.h>
 #include <sys/fbio.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
+#include <sys/lock.h>
 #include <sys/malloc.h>
 #include <sys/module.h>
+#include <sys/mutex.h>
 #include <sys/sglist.h>
 
 #include <machine/atomic.h>
@@ -49,17 +52,24 @@
 #include <dev/virtio/virtio.h>
 #include <dev/virtio/virtqueue.h>
 #include <dev/virtio/gpu/virtio_gpu.h>
+#include <dev/virtio/gpu/virtio_gpu_geometry.h>
 
 #include <dev/vt/vt.h>
 #include <dev/vt/hw/fb/vt_fb.h>
 #include <dev/vt/colors/vt_termcolors.h>
 
 #include "fb_if.h"
+#include "virtio_if.h"
 
 #define VTGPU_FEATURES	0
 
 /* The guest can allocate resource IDs, we only need one */
 #define	VTGPU_RESOURCE_ID	1
+#define	VTGPU_REQUEST_TIMEOUT	(10 * SBT_1S)
+#define	VTGPU_MAX_FB_SIZE	(256U * 1024U * 1024U)
+
+#define	VTGPU_FLAG_DETACH	0x01
+#define	VTGPU_FLAG_FAILED	0x02
 
 struct vtgpu_softc {
 	/* Must be first so we can cast from info -> softc */
@@ -68,18 +78,24 @@ struct vtgpu_softc {
 
 	device_t		 vtgpu_dev;
 	uint64_t		 vtgpu_features;
+	struct mtx		 vtgpu_mtx;
+	u_int			 vtgpu_flags;
+	u_int			 vtgpu_ops;
 
 	struct virtqueue	*vtgpu_ctrl_vq;
 
 	uint64_t		 vtgpu_next_fence;
 
 	bool			 vtgpu_have_fb_info;
+	bool			 vtgpu_mtx_initialized;
+	bool			 vtgpu_request_active;
 };
 
 static int	vtgpu_modevent(module_t, int, void *);
 
 static int	vtgpu_probe(device_t);
 static int	vtgpu_attach(device_t);
+static int	vtgpu_attach_completed(device_t);
 static int	vtgpu_detach(device_t);
 
 static int	vtgpu_negotiate_features(struct vtgpu_softc *);
@@ -87,6 +103,12 @@ static int	vtgpu_setup_features(struct vtgpu_softc *);
 static void	vtgpu_read_config(struct vtgpu_softc *,
 		    struct virtio_gpu_config *);
 static int	vtgpu_alloc_virtqueue(struct vtgpu_softc *);
+static void	vtgpu_ctrl_vq_intr(void *);
+static bool	vtgpu_op_enter(struct vtgpu_softc *);
+static void	vtgpu_op_leave(struct vtgpu_softc *);
+static int	vtgpu_check_response(struct vtgpu_softc *,
+		    const struct virtio_gpu_ctrl_hdr *,
+		    const struct virtio_gpu_ctrl_hdr *, uint32_t);
 static int	vtgpu_get_display_info(struct vtgpu_softc *);
 static int	vtgpu_create_2d(struct vtgpu_softc *);
 static int	vtgpu_attach_backing(struct vtgpu_softc *);
@@ -133,6 +155,8 @@ vtgpu_fb_blank(struct vt_device *vd, term_color_t color)
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
+	if (!vtgpu_op_enter(sc))
+		return;
 
 	vt_fb_blank(vd, color);
 
@@ -140,6 +164,7 @@ vtgpu_fb_blank(struct vt_device *vd, term_color_t color)
 	    sc->vtgpu_fb_info.fb_height);
 	vtgpu_resource_flush(sc, 0, 0, sc->vtgpu_fb_info.fb_width,
 	    sc->vtgpu_fb_info.fb_height);
+	vtgpu_op_leave(sc);
 }
 
 static void
@@ -152,6 +177,8 @@ vtgpu_fb_bitblt_text(struct vt_device *vd, const struct vt_window *vw,
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
+	if (!vtgpu_op_enter(sc))
+		return;
 
 	vt_fb_bitblt_text(vd, vw, area);
 
@@ -162,6 +189,7 @@ vtgpu_fb_bitblt_text(struct vt_device *vd, const struct vt_window *vw,
 
 	vtgpu_transfer_to_host_2d(sc, x, y, width, height);
 	vtgpu_resource_flush(sc, x, y, width, height);
+	vtgpu_op_leave(sc);
 }
 
 static void
@@ -175,11 +203,14 @@ vtgpu_fb_bitblt_bitmap(struct vt_device *vd, const struct vt_window *vw,
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
+	if (!vtgpu_op_enter(sc))
+		return;
 
 	vt_fb_bitblt_bitmap(vd, vw, pattern, mask, width, height, x, y, fg, bg);
 
 	vtgpu_transfer_to_host_2d(sc, x, y, width, height);
 	vtgpu_resource_flush(sc, x, y, width, height);
+	vtgpu_op_leave(sc);
 }
 
 static int
@@ -202,6 +233,8 @@ vtgpu_fb_drawrect(struct vt_device *vd, int x1, int y1, int x2, int y2,
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
+	if (!vtgpu_op_enter(sc))
+		return;
 
 	vt_fb_drawrect(vd, x1, y1, x2, y2, fill, color);
 
@@ -209,6 +242,7 @@ vtgpu_fb_drawrect(struct vt_device *vd, int x1, int y1, int x2, int y2,
 	height = y2 - y1 + 1;
 	vtgpu_transfer_to_host_2d(sc, x1, y1, width, height);
 	vtgpu_resource_flush(sc, x1, y1, width, height);
+	vtgpu_op_leave(sc);
 }
 
 static void
@@ -219,11 +253,14 @@ vtgpu_fb_setpixel(struct vt_device *vd, int x, int y, term_color_t color)
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
+	if (!vtgpu_op_enter(sc))
+		return;
 
 	vt_fb_setpixel(vd, x, y, color);
 
 	vtgpu_transfer_to_host_2d(sc, x, y, 1, 1);
 	vtgpu_resource_flush(sc, x, y, 1, 1);
+	vtgpu_op_leave(sc);
 }
 
 static struct virtio_feature_desc vtgpu_feature_desc[] = {
@@ -240,6 +277,9 @@ static device_method_t vtgpu_methods[] = {
 	DEVMETHOD(device_probe,		vtgpu_probe),
 	DEVMETHOD(device_attach,	vtgpu_attach),
 	DEVMETHOD(device_detach,	vtgpu_detach),
+
+	/* VirtIO methods. */
+	DEVMETHOD(virtio_attach_completed, vtgpu_attach_completed),
 
 	DEVMETHOD_END
 };
@@ -293,6 +333,9 @@ vtgpu_attach(device_t dev)
 	sc->vtgpu_have_fb_info = false;
 	sc->vtgpu_dev = dev;
 	sc->vtgpu_next_fence = 1;
+	mtx_init(&sc->vtgpu_mtx, device_get_nameunit(dev),
+	    "VirtIO GPU request lock", MTX_DEF);
+	sc->vtgpu_mtx_initialized = true;
 	virtio_set_feature_desc(dev, vtgpu_feature_desc);
 
 	error = vtgpu_setup_features(sc);
@@ -309,50 +352,11 @@ vtgpu_attach(device_t dev)
 		goto fail;
 	}
 
-	virtio_setup_intr(dev, INTR_TYPE_TTY);
-
-	/* Read the device info to get the display size */
-	error = vtgpu_get_display_info(sc);
+	error = virtio_setup_intr(dev, INTR_TYPE_TTY);
 	if (error != 0) {
+		device_printf(dev, "cannot setup virtqueue interrupt\n");
 		goto fail;
 	}
-
-	/*
-	 * TODO: This doesn't need to be contigmalloc as we
-	 * can use scatter-gather lists.
-	 */
-	sc->vtgpu_fb_info.fb_vbase = (vm_offset_t)contigmalloc(
-	    sc->vtgpu_fb_info.fb_size, M_DEVBUF, M_WAITOK|M_ZERO, 0, ~0, 4, 0);
-	sc->vtgpu_fb_info.fb_pbase = pmap_kextract(sc->vtgpu_fb_info.fb_vbase);
-
-	/* Create the 2d resource */
-	error = vtgpu_create_2d(sc);
-	if (error != 0) {
-		goto fail;
-	}
-
-	/* Attach the backing memory */
-	error = vtgpu_attach_backing(sc);
-	if (error != 0) {
-		goto fail;
-	}
-
-	/* Set the scanout to link the framebuffer to the display scanout */
-	error = vtgpu_set_scanout(sc, 0, 0, sc->vtgpu_fb_info.fb_width,
-	    sc->vtgpu_fb_info.fb_height);
-	if (error != 0) {
-		goto fail;
-	}
-
-	vt_allocate(&vtgpu_fb_driver, &sc->vtgpu_fb_info);
-	sc->vtgpu_have_fb_info = true;
-
-	error = vtgpu_transfer_to_host_2d(sc, 0, 0, sc->vtgpu_fb_info.fb_width,
-	    sc->vtgpu_fb_info.fb_height);
-	if (error != 0)
-		goto fail;
-	error = vtgpu_resource_flush(sc, 0, 0, sc->vtgpu_fb_info.fb_width,
-	    sc->vtgpu_fb_info.fb_height);
 
 fail:
 	if (error != 0)
@@ -362,20 +366,109 @@ fail:
 }
 
 static int
+vtgpu_attach_completed(device_t dev)
+{
+	struct vtgpu_softc *sc;
+	void *fb;
+	int error;
+
+	sc = device_get_softc(dev);
+
+	/*
+	 * Device commands are not legal until the bus has published DRIVER_OK.
+	 * Enable completion interrupts before issuing the first synchronous
+	 * command; if an entry raced interrupt enable, the request path will
+	 * observe it directly in the used ring.
+	 */
+	(void)virtqueue_enable_intr(sc->vtgpu_ctrl_vq);
+
+	error = vtgpu_get_display_info(sc);
+	if (error != 0)
+		return (error);
+
+	/*
+	 * The current VT backend uses one physically contiguous 2D resource.
+	 * Bound device-provided geometry before making a potentially large
+	 * M_WAITOK allocation.  Scatter-gather backing remains future work.
+	 */
+	fb = contigmalloc((size_t)sc->vtgpu_fb_info.fb_size, M_DEVBUF,
+	    M_WAITOK | M_ZERO, 0, ~0, 4, 0);
+	if (fb == NULL)
+		return (ENOMEM);
+	sc->vtgpu_fb_info.fb_vbase = (vm_offset_t)fb;
+	sc->vtgpu_fb_info.fb_pbase =
+	    pmap_kextract(sc->vtgpu_fb_info.fb_vbase);
+
+	error = vtgpu_create_2d(sc);
+	if (error != 0)
+		return (error);
+	error = vtgpu_attach_backing(sc);
+	if (error != 0)
+		return (error);
+	error = vtgpu_set_scanout(sc, 0, 0, sc->vtgpu_fb_info.fb_width,
+	    sc->vtgpu_fb_info.fb_height);
+	if (error != 0)
+		return (error);
+
+	vt_allocate(&vtgpu_fb_driver, &sc->vtgpu_fb_info);
+	sc->vtgpu_have_fb_info = true;
+
+	error = vtgpu_transfer_to_host_2d(sc, 0, 0,
+	    sc->vtgpu_fb_info.fb_width, sc->vtgpu_fb_info.fb_height);
+	if (error != 0)
+		return (error);
+	return (vtgpu_resource_flush(sc, 0, 0,
+	    sc->vtgpu_fb_info.fb_width, sc->vtgpu_fb_info.fb_height));
+}
+
+static int
 vtgpu_detach(device_t dev)
 {
 	struct vtgpu_softc *sc;
 
 	sc = device_get_softc(dev);
+	if (sc->vtgpu_mtx_initialized) {
+		/*
+		 * Stop VT from publishing new drawing operations before waiting
+		 * for requests which already crossed the entry fence.  Set the
+		 * flag and wake request waiters under their mutex so neither the
+		 * request wait nor the operation-count wait can miss its wakeup.
+		 */
+		mtx_lock(&sc->vtgpu_mtx);
+		sc->vtgpu_flags |= VTGPU_FLAG_DETACH;
+		wakeup(sc);
+		mtx_unlock(&sc->vtgpu_mtx);
+	}
 	if (sc->vtgpu_have_fb_info)
 		vt_deallocate(&vtgpu_fb_driver, &sc->vtgpu_fb_info);
+	sc->vtgpu_have_fb_info = false;
+	if (sc->vtgpu_mtx_initialized) {
+		mtx_lock(&sc->vtgpu_mtx);
+		while (sc->vtgpu_ops != 0)
+			msleep(&sc->vtgpu_ops, &sc->vtgpu_mtx, 0,
+			    "vtgpudt", 0);
+		mtx_unlock(&sc->vtgpu_mtx);
+	}
+	if (sc->vtgpu_ctrl_vq != NULL) {
+		virtqueue_disable_intr(sc->vtgpu_ctrl_vq);
+		virtio_stop(dev);
+		/*
+		 * The parent normally tears interrupts down only after child
+		 * detach returns.  Drain them here before destroying the mutex
+		 * used by vtgpu_ctrl_vq_intr().
+		 */
+		virtio_teardown_intr(dev);
+	}
 	if (sc->vtgpu_fb_info.fb_vbase != 0) {
 		MPASS(sc->vtgpu_fb_info.fb_size != 0);
 		free((void *)sc->vtgpu_fb_info.fb_vbase,
 		    M_DEVBUF);
+		sc->vtgpu_fb_info.fb_vbase = 0;
 	}
-
-	/* TODO: Tell the host we are detaching */
+	if (sc->vtgpu_mtx_initialized) {
+		mtx_destroy(&sc->vtgpu_mtx);
+		sc->vtgpu_mtx_initialized = false;
+	}
 
 	return (0);
 }
@@ -438,10 +531,45 @@ vtgpu_alloc_virtqueue(struct vtgpu_softc *sc)
 	dev = sc->vtgpu_dev;
 	nvqs = 1;
 
-	VQ_ALLOC_INFO_INIT(&vq_info[0], 0, NULL, sc, &sc->vtgpu_ctrl_vq,
-	    "%s control", device_get_nameunit(dev));
+	VQ_ALLOC_INFO_INIT(&vq_info[0], 0, vtgpu_ctrl_vq_intr, sc,
+	    &sc->vtgpu_ctrl_vq, "%s control", device_get_nameunit(dev));
 
 	return (virtio_alloc_virtqueues(dev, nvqs, vq_info));
+}
+
+static void
+vtgpu_ctrl_vq_intr(void *xsc)
+{
+	struct vtgpu_softc *sc;
+
+	sc = xsc;
+	mtx_lock(&sc->vtgpu_mtx);
+	wakeup(sc);
+	mtx_unlock(&sc->vtgpu_mtx);
+}
+
+static bool
+vtgpu_op_enter(struct vtgpu_softc *sc)
+{
+	bool entered;
+
+	mtx_lock(&sc->vtgpu_mtx);
+	entered = (sc->vtgpu_flags & VTGPU_FLAG_DETACH) == 0;
+	if (entered)
+		sc->vtgpu_ops++;
+	mtx_unlock(&sc->vtgpu_mtx);
+	return (entered);
+}
+
+static void
+vtgpu_op_leave(struct vtgpu_softc *sc)
+{
+
+	mtx_lock(&sc->vtgpu_mtx);
+	MPASS(sc->vtgpu_ops != 0);
+	if (--sc->vtgpu_ops == 0)
+		wakeup(&sc->vtgpu_ops);
+	mtx_unlock(&sc->vtgpu_mtx);
 }
 
 static int
@@ -449,18 +577,42 @@ vtgpu_req_resp2(struct vtgpu_softc *sc, void *req1, size_t req1len,
     void *req2, size_t req2len, void *resp, size_t resplen)
 {
 	struct sglist sg;
-	struct sglist_seg segs[3];
-	int error, rcount;
+	struct sglist_seg segs[6];
+	sbintime_t deadline, remaining;
+	void *cookie;
+	uint32_t used_len;
+	int error, last, rcount;
 
-	sglist_init(&sg, 3, segs);
+	/*
+	 * Detach first removes the VT producer, then waits for this count.
+	 * Enter before taking the mutex so a callback already in progress
+	 * cannot race mutex destruction.
+	 */
+	if (!vtgpu_op_enter(sc)) {
+		error = ENXIO;
+		return (error);
+	}
 
-	rcount = 1;
+	/*
+	 * Each of these protocol objects is smaller than one page, but a stack
+	 * object may straddle a page boundary.  Reserve two physical segments
+	 * per logical object and tell the virtqueue the physical, rather than
+	 * logical, readable count.
+	 */
+	if (req1len == 0 || req1len > PAGE_SIZE ||
+	    (req2 != NULL && (req2len == 0 || req2len > PAGE_SIZE)) ||
+	    resplen == 0 || resplen > PAGE_SIZE) {
+		error = EINVAL;
+		goto leave;
+	}
+	sglist_init(&sg, nitems(segs), segs);
+
 	error = sglist_append(&sg, req1, req1len);
 	if (error != 0) {
 		device_printf(sc->vtgpu_dev,
 		    "Unable to append the request to the sglist: %d\n",
 		    error);
-		return (error);
+		goto leave;
 	}
 	if (req2 != NULL) {
 		error = sglist_append(&sg, req2, req2len);
@@ -468,27 +620,106 @@ vtgpu_req_resp2(struct vtgpu_softc *sc, void *req1, size_t req1len,
 			device_printf(sc->vtgpu_dev,
 			    "Unable to append the request to the sglist: %d\n",
 			    error);
-			return (error);
+			goto leave;
 		}
-		rcount++;
 	}
+	rcount = sg.sg_nseg;
 	error = sglist_append(&sg, resp, resplen);
 	if (error != 0) {
 		device_printf(sc->vtgpu_dev,
 		    "Unable to append the response buffer to the sglist: %d\n",
 		    error);
-		return (error);
+		goto leave;
 	}
-	error = virtqueue_enqueue(sc->vtgpu_ctrl_vq, resp, &sg, rcount, 1);
+	mtx_lock(&sc->vtgpu_mtx);
+	while (sc->vtgpu_request_active &&
+	    (atomic_load_acq_int(&sc->vtgpu_flags) &
+	    (VTGPU_FLAG_DETACH | VTGPU_FLAG_FAILED)) == 0)
+		msleep(&sc->vtgpu_request_active, &sc->vtgpu_mtx, 0,
+		    "vtgpuq", 0);
+	if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+	    VTGPU_FLAG_DETACH) != 0) {
+		mtx_unlock(&sc->vtgpu_mtx);
+		error = ENXIO;
+		goto leave;
+	}
+	if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+	    VTGPU_FLAG_FAILED) != 0) {
+		mtx_unlock(&sc->vtgpu_mtx);
+		error = EIO;
+		goto leave;
+	}
+	sc->vtgpu_request_active = true;
+
+	error = virtqueue_enqueue(sc->vtgpu_ctrl_vq, resp, &sg, rcount,
+	    sg.sg_nseg - rcount);
 	if (error != 0) {
 		device_printf(sc->vtgpu_dev, "Enqueue failed: %d\n", error);
-		return (error);
+		goto out;
 	}
 
 	virtqueue_notify(sc->vtgpu_ctrl_vq);
-	virtqueue_poll(sc->vtgpu_ctrl_vq, NULL);
+	deadline = sbinuptime() + VTGPU_REQUEST_TIMEOUT;
+	for (;;) {
+		cookie = virtqueue_dequeue(sc->vtgpu_ctrl_vq, &used_len);
+		if (cookie != NULL)
+			break;
+		if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+		    VTGPU_FLAG_DETACH) != 0) {
+			error = ENXIO;
+			goto reset;
+		}
+		if (virtqueue_enable_intr(sc->vtgpu_ctrl_vq) != 0)
+			continue;
+		remaining = deadline - sbinuptime();
+		if (remaining <= 0) {
+			error = EWOULDBLOCK;
+		} else {
+			error = msleep_sbt(sc, &sc->vtgpu_mtx, 0, "vtgpurs",
+			    remaining, 0, 0);
+		}
+		if (error == EWOULDBLOCK) {
+			device_printf(sc->vtgpu_dev,
+			    "control request timed out\n");
+			error = ETIMEDOUT;
+			goto reset;
+		}
+		if (error != 0)
+			goto reset;
+	}
+	if (cookie != resp) {
+		device_printf(sc->vtgpu_dev,
+		    "control request returned an unexpected cookie\n");
+		error = EIO;
+		goto reset;
+	}
+	if (used_len != resplen) {
+		device_printf(sc->vtgpu_dev,
+		    "control request returned %u bytes, expected %zu\n",
+		    used_len, resplen);
+		error = EIO;
+		goto reset;
+	}
+	error = 0;
+	goto out;
 
-	return (0);
+reset:
+	/*
+	 * The descriptor contains pointers into this function's caller stack.
+	 * Reset and drain it before returning on every incomplete path.
+	 */
+	atomic_set_rel_int(&sc->vtgpu_flags, VTGPU_FLAG_FAILED);
+	virtio_stop(sc->vtgpu_dev);
+	last = 0;
+	while (virtqueue_drain(sc->vtgpu_ctrl_vq, &last) != NULL)
+		;
+out:
+	sc->vtgpu_request_active = false;
+	wakeup(&sc->vtgpu_request_active);
+	mtx_unlock(&sc->vtgpu_mtx);
+leave:
+	vtgpu_op_leave(sc);
+	return (error);
 }
 
 static int
@@ -499,6 +730,31 @@ vtgpu_req_resp(struct vtgpu_softc *sc, void *req, size_t reqlen,
 }
 
 static int
+vtgpu_check_response(struct vtgpu_softc *sc,
+    const struct virtio_gpu_ctrl_hdr *req,
+    const struct virtio_gpu_ctrl_hdr *resp, uint32_t expected_type)
+{
+	uint32_t flags, type;
+
+	type = le32toh(resp->type);
+	flags = le32toh(resp->flags);
+	if (type != expected_type) {
+		device_printf(sc->vtgpu_dev, "Invalid response type %x\n", type);
+		return (EIO);
+	}
+	if ((le32toh(req->flags) & VIRTIO_GPU_FLAG_FENCE) != 0 &&
+	    ((flags & VIRTIO_GPU_FLAG_FENCE) == 0 ||
+	    resp->fence_id != req->fence_id)) {
+		device_printf(sc->vtgpu_dev,
+		    "Invalid fenced response flags=%x fence=%ju expected=%ju\n",
+		    flags, (uintmax_t)le64toh(resp->fence_id),
+		    (uintmax_t)le64toh(req->fence_id));
+		return (EIO);
+	}
+	return (0);
+}
+
+static int
 vtgpu_get_display_info(struct vtgpu_softc *sc)
 {
 	struct {
@@ -506,7 +762,9 @@ vtgpu_get_display_info(struct vtgpu_softc *sc)
 		char pad;
 		struct virtio_gpu_resp_display_info resp;
 	} s = { 0 };
-	int error;
+	uint32_t height, num_scanouts, stride, width;
+	uint64_t size;
+	int error, i;
 
 	s.req.type = htole32(VIRTIO_GPU_CMD_GET_DISPLAY_INFO);
 	s.req.flags = htole32(VIRTIO_GPU_FLAG_FENCE);
@@ -517,24 +775,47 @@ vtgpu_get_display_info(struct vtgpu_softc *sc)
 	if (error != 0)
 		return (error);
 
-	for (int i = 0; i < sc->vtgpu_gpucfg.num_scanouts; i++) {
-		if (s.resp.pmodes[i].enabled != 0)
-			MPASS(i == 0);
-			sc->vtgpu_fb_info.fb_name =
-			    device_get_nameunit(sc->vtgpu_dev);
+	error = vtgpu_check_response(sc, &s.req, &s.resp.hdr,
+	    VIRTIO_GPU_RESP_OK_DISPLAY_INFO);
+	if (error != 0)
+		return (error);
+	/*
+	 * virtio_read_device_config() returns host-endian scalar fields for
+	 * both modern and legacy transports.  Do not apply a second guest to
+	 * host conversion here: it is a no-op on little-endian machines but
+	 * corrupts the scanout count on a big-endian guest.
+	 */
+	num_scanouts = sc->vtgpu_gpucfg.num_scanouts;
+	if (num_scanouts > nitems(s.resp.pmodes)) {
+		device_printf(sc->vtgpu_dev,
+		    "Invalid scanout count %u\n", num_scanouts);
+		return (EINVAL);
+	}
+	for (i = 0; i < num_scanouts; i++) {
+		if (le32toh(s.resp.pmodes[i].enabled) == 0)
+			continue;
+		if (i != 0) {
+			device_printf(sc->vtgpu_dev,
+			    "Unsupported enabled scanout %d\n", i);
+			return (ENOTSUP);
+		}
+		width = le32toh(s.resp.pmodes[i].r.width);
+		height = le32toh(s.resp.pmodes[i].r.height);
+		if (!virtio_gpu_framebuffer_geometry(width, height, 4,
+		    INT_MAX, MIN((uint64_t)INT_MAX,
+		    (uint64_t)VTGPU_MAX_FB_SIZE), &stride, &size))
+			return (EFBIG);
 
-			sc->vtgpu_fb_info.fb_width =
-			    le32toh(s.resp.pmodes[i].r.width);
-			sc->vtgpu_fb_info.fb_height =
-			    le32toh(s.resp.pmodes[i].r.height);
-			/* 32 bits per pixel */
-			sc->vtgpu_fb_info.fb_bpp = 32;
-			sc->vtgpu_fb_info.fb_depth = 32;
-			sc->vtgpu_fb_info.fb_size = sc->vtgpu_fb_info.fb_width *
-			    sc->vtgpu_fb_info.fb_height * 4;
-			sc->vtgpu_fb_info.fb_stride =
-			    sc->vtgpu_fb_info.fb_width * 4;
-			return (0);
+		sc->vtgpu_fb_info.fb_name =
+		    device_get_nameunit(sc->vtgpu_dev);
+		sc->vtgpu_fb_info.fb_width = width;
+		sc->vtgpu_fb_info.fb_height = height;
+		/* 32 bits per pixel */
+		sc->vtgpu_fb_info.fb_bpp = 32;
+		sc->vtgpu_fb_info.fb_depth = 32;
+		sc->vtgpu_fb_info.fb_size = size;
+		sc->vtgpu_fb_info.fb_stride = stride;
+		return (0);
 	}
 
 	return (ENXIO);
@@ -565,13 +846,8 @@ vtgpu_create_2d(struct vtgpu_softc *sc)
 	if (error != 0)
 		return (error);
 
-	if (s.resp.type != htole32(VIRTIO_GPU_RESP_OK_NODATA)) {
-		device_printf(sc->vtgpu_dev, "Invalid response type %x\n",
-		    le32toh(s.resp.type));
-		return (EINVAL);
-	}
-
-	return (0);
+	return (vtgpu_check_response(sc, &s.req.hdr, &s.resp,
+	    VIRTIO_GPU_RESP_OK_NODATA));
 }
 
 static int
@@ -610,13 +886,8 @@ vtgpu_attach_backing(struct vtgpu_softc *sc)
 	if (error != 0)
 		return (error);
 
-	if (s.resp.type != htole32(VIRTIO_GPU_RESP_OK_NODATA)) {
-		device_printf(sc->vtgpu_dev, "Invalid response type %x\n",
-		    le32toh(s.resp.type));
-		return (EINVAL);
-	}
-
-	return (0);
+	return (vtgpu_check_response(sc, &s.req.backing.hdr, &s.resp,
+	    VIRTIO_GPU_RESP_OK_NODATA));
 }
 
 static int
@@ -648,13 +919,8 @@ vtgpu_set_scanout(struct vtgpu_softc *sc, uint32_t x, uint32_t y,
 	if (error != 0)
 		return (error);
 
-	if (s.resp.type != htole32(VIRTIO_GPU_RESP_OK_NODATA)) {
-		device_printf(sc->vtgpu_dev, "Invalid response type %x\n",
-		    le32toh(s.resp.type));
-		return (EINVAL);
-	}
-
-	return (0);
+	return (vtgpu_check_response(sc, &s.req.hdr, &s.resp,
+	    VIRTIO_GPU_RESP_OK_NODATA));
 }
 
 static int
@@ -668,6 +934,10 @@ vtgpu_transfer_to_host_2d(struct vtgpu_softc *sc, uint32_t x, uint32_t y,
 	} s = { 0 };
 	int error;
 
+	if (!virtio_gpu_rect_within(sc->vtgpu_fb_info.fb_width,
+	    sc->vtgpu_fb_info.fb_height, x, y, width, height))
+		return (EINVAL);
+
 	s.req.hdr.type = htole32(VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D);
 	s.req.hdr.flags = htole32(VIRTIO_GPU_FLAG_FENCE);
 	s.req.hdr.fence_id = htole64(
@@ -678,8 +948,9 @@ vtgpu_transfer_to_host_2d(struct vtgpu_softc *sc, uint32_t x, uint32_t y,
 	s.req.r.width = htole32(width);
 	s.req.r.height = htole32(height);
 
-	s.req.offset = htole64((y * sc->vtgpu_fb_info.fb_width + x)
-	 * (sc->vtgpu_fb_info.fb_bpp / 8));
+	s.req.offset = htole64((uint64_t)y *
+	    sc->vtgpu_fb_info.fb_stride +
+	    (uint64_t)x * (sc->vtgpu_fb_info.fb_bpp / 8));
 	s.req.resource_id = htole32(VTGPU_RESOURCE_ID);
 
 	error = vtgpu_req_resp(sc, &s.req, sizeof(s.req), &s.resp,
@@ -687,13 +958,8 @@ vtgpu_transfer_to_host_2d(struct vtgpu_softc *sc, uint32_t x, uint32_t y,
 	if (error != 0)
 		return (error);
 
-	if (s.resp.type != htole32(VIRTIO_GPU_RESP_OK_NODATA)) {
-		device_printf(sc->vtgpu_dev, "Invalid response type %x\n",
-		    le32toh(s.resp.type));
-		return (EINVAL);
-	}
-
-	return (0);
+	return (vtgpu_check_response(sc, &s.req.hdr, &s.resp,
+	    VIRTIO_GPU_RESP_OK_NODATA));
 }
 
 static int
@@ -706,6 +972,10 @@ vtgpu_resource_flush(struct vtgpu_softc *sc, uint32_t x, uint32_t y,
 		struct virtio_gpu_ctrl_hdr resp;
 	} s = { 0 };
 	int error;
+
+	if (!virtio_gpu_rect_within(sc->vtgpu_fb_info.fb_width,
+	    sc->vtgpu_fb_info.fb_height, x, y, width, height))
+		return (EINVAL);
 
 	s.req.hdr.type = htole32(VIRTIO_GPU_CMD_RESOURCE_FLUSH);
 	s.req.hdr.flags = htole32(VIRTIO_GPU_FLAG_FENCE);
@@ -724,11 +994,6 @@ vtgpu_resource_flush(struct vtgpu_softc *sc, uint32_t x, uint32_t y,
 	if (error != 0)
 		return (error);
 
-	if (s.resp.type != htole32(VIRTIO_GPU_RESP_OK_NODATA)) {
-		device_printf(sc->vtgpu_dev, "Invalid response type %x\n",
-		    le32toh(s.resp.type));
-		return (EINVAL);
-	}
-
-	return (0);
+	return (vtgpu_check_response(sc, &s.req.hdr, &s.resp,
+	    VIRTIO_GPU_RESP_OK_NODATA));
 }

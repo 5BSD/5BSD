@@ -89,7 +89,9 @@ static bool	vtpci_legacy_with_feature(device_t, uint64_t);
 static int	vtpci_legacy_alloc_virtqueues(device_t, int,
 		    struct vq_alloc_info *);
 static int	vtpci_legacy_setup_interrupts(device_t, enum intr_type);
+static void	vtpci_legacy_teardown_interrupts(device_t);
 static void	vtpci_legacy_stop(device_t);
+static void	vtpci_legacy_fail(device_t);
 static int	vtpci_legacy_reinit(device_t, uint64_t);
 static void	vtpci_legacy_reinit_complete(device_t);
 static void	vtpci_legacy_notify_vq(device_t, uint16_t, bus_size_t,
@@ -170,7 +172,9 @@ static device_method_t vtpci_legacy_methods[] = {
 	DEVMETHOD(virtio_bus_with_feature,	  vtpci_legacy_with_feature),
 	DEVMETHOD(virtio_bus_alloc_virtqueues,	  vtpci_legacy_alloc_virtqueues),
 	DEVMETHOD(virtio_bus_setup_intr,	  vtpci_legacy_setup_interrupts),
+	DEVMETHOD(virtio_bus_teardown_intr,	  vtpci_legacy_teardown_interrupts),
 	DEVMETHOD(virtio_bus_stop,		  vtpci_legacy_stop),
+	DEVMETHOD(virtio_bus_fail,		  vtpci_legacy_fail),
 	DEVMETHOD(virtio_bus_reinit,		  vtpci_legacy_reinit),
 	DEVMETHOD(virtio_bus_reinit_complete,	  vtpci_legacy_reinit_complete),
 	DEVMETHOD(virtio_bus_notify_vq,		  vtpci_legacy_notify_vq),
@@ -411,9 +415,27 @@ vtpci_legacy_setup_interrupts(device_t dev, enum intr_type type)
 }
 
 static void
+vtpci_legacy_teardown_interrupts(device_t dev)
+{
+	struct vtpci_legacy_softc *sc;
+
+	sc = device_get_softc(dev);
+	vtpci_teardown_interrupts(&sc->vtpci_common);
+}
+
+static void
 vtpci_legacy_stop(device_t dev)
 {
 	vtpci_legacy_reset(device_get_softc(dev));
+}
+
+static void
+vtpci_legacy_fail(device_t dev)
+{
+	struct vtpci_legacy_softc *sc;
+
+	sc = device_get_softc(dev);
+	vtpci_legacy_set_status(sc, VIRTIO_CONFIG_STATUS_FAILED);
 }
 
 static int

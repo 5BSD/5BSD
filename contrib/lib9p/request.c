@@ -576,7 +576,9 @@ l9p_dispatch_tversion(struct l9p_request *req)
 	struct l9p_connection *conn = req->lr_conn;
 	struct l9p_server *server = conn->lc_server;
 	enum l9p_version remote_version = L9P_INVALID_VERSION;
+	uint32_t negotiated_msize;
 	size_t i;
+	char *negotiated_version;
 	const char *remote_version_name;
 
 	for (i = 0; i < N(l9p_versions); i++) {
@@ -598,10 +600,24 @@ l9p_dispatch_tversion(struct l9p_request *req)
 	L9P_LOG(L9P_INFO, "local version: %s",
 	    l9p_versions[server->ls_max_version].name);
 
+	/*
+	 * lc_max_io_size accounts for the largest fixed per-request overhead
+	 * used by the server.  Reject a peer size which cannot contain that
+	 * overhead instead of allowing the unsigned subtraction below to wrap.
+	 * Validate before changing the connection's negotiated state so that a
+	 * rejected Tversion is atomic.
+	 */
+	negotiated_msize = MIN(req->lr_req.version.msize, conn->lc_msize);
+	if (negotiated_msize <= 24)
+		return (EINVAL);
+	negotiated_version = strdup(remote_version_name);
+	if (negotiated_version == NULL)
+		return (ENOMEM);
+
 	conn->lc_version = MIN(remote_version, server->ls_max_version);
-	conn->lc_msize = MIN(req->lr_req.version.msize, conn->lc_msize);
+	conn->lc_msize = negotiated_msize;
 	conn->lc_max_io_size = conn->lc_msize - 24;
-	req->lr_resp.version.version = strdup(remote_version_name);
+	req->lr_resp.version.version = negotiated_version;
 	req->lr_resp.version.msize = conn->lc_msize;
 	return (0);
 }
@@ -704,6 +720,8 @@ l9p_dispatch_tcreate(struct l9p_request *req)
 	    F_REQUIRE_DIR | F_FORBID_OPEN, &req->lr_fid);
 	if (error)
 		return (error);
+	if (!l9p_valid_component(req->lr_req.tcreate.name))
+		return (EINVAL);
 
 	be = conn->lc_server->ls_backend;
 	dmperm = req->lr_req.tcreate.perm;
@@ -712,7 +730,6 @@ l9p_dispatch_tcreate(struct l9p_request *req)
 
 	/*
 	 * TODO:
-	 *  - check new file name
 	 *  - break out different kinds of create (file vs mkdir etc)
 	 *  - add async file-create (leaves req->lr_fid in limbo)
 	 *
@@ -843,7 +860,7 @@ l9p_dispatch_tstat(struct l9p_request *req)
 			req->lr_resp.rstat.stat.qid.type |= L9P_QTAUTH;
 
 		/* should we check req->lr_resp.rstat.qid.type L9P_QTDIR bit? */
-		if (req->lr_resp.rstat.stat.qid.type &= L9P_QTDIR)
+		if (req->lr_resp.rstat.stat.qid.type & L9P_QTDIR)
 			l9p_fid_setdir(fid);
 		else
 			l9p_fid_unsetdir(fid);
@@ -1027,12 +1044,13 @@ l9p_dispatch_tlcreate(struct l9p_request *req)
 	    F_REQUIRE_DIR | F_FORBID_OPEN, &req->lr_fid);
 	if (error)
 		return (error);
+	if (!l9p_valid_component(req->lr_req.tlcreate.name))
+		return (EINVAL);
 
 	be = conn->lc_server->ls_backend;
 
 	/*
 	 * TODO:
-	 *  - check new file name
 	 *  - add async create (leaves req->lr_fid in limbo)
 	 */
 	error = be->lcreate != NULL ? be->lcreate(be->softc, req) : ENOSYS;
@@ -1055,13 +1073,10 @@ l9p_dispatch_tsymlink(struct l9p_request *req)
 	    F_REQUIRE_DIR | F_FORBID_OPEN, &req->lr_fid);
 	if (error)
 		return (error);
+	if (!l9p_valid_component(req->lr_req.tsymlink.name))
+		return (EINVAL);
 
 	be = conn->lc_server->ls_backend;
-
-	/*
-	 * TODO:
-	 *  - check new file name
-	 */
 	error = be->symlink != NULL ? be->symlink(be->softc, req) : ENOSYS;
 	return (error);
 }
@@ -1078,13 +1093,10 @@ l9p_dispatch_tmknod(struct l9p_request *req)
 	    F_REQUIRE_DIR | F_FORBID_OPEN, &req->lr_fid);
 	if (error)
 		return (error);
+	if (!l9p_valid_component(req->lr_req.tmknod.name))
+		return (EINVAL);
 
 	be = conn->lc_server->ls_backend;
-
-	/*
-	 * TODO:
-	 *  - check new file name
-	 */
 	error = be->mknod != NULL ? be->mknod(be->softc, req) : ENOSYS;
 	return (error);
 }
@@ -1107,13 +1119,10 @@ l9p_dispatch_trename(struct l9p_request *req)
 	    F_REQUIRE_DIR | F_FORBID_OPEN, &req->lr_fid2);
 	if (error)
 		return (error);
+	if (!l9p_valid_component(req->lr_req.trename.name))
+		return (EINVAL);
 
 	be = conn->lc_server->ls_backend;
-
-	/*
-	 * TODO:
-	 *  - check new file name (trename.name)
-	 */
 	error = be->rename != NULL ? be->rename(be->softc, req) : ENOSYS;
 	return (error);
 }
@@ -1368,6 +1377,8 @@ l9p_dispatch_tlink(struct l9p_request *req)
 	    F_FORBID_DIR | F_FORBID_XATTR, &req->lr_fid);
 	if (error)
 		return (error);
+	if (!l9p_valid_component(req->lr_req.tlink.name))
+		return (EINVAL);
 
 	be = conn->lc_server->ls_backend;
 
@@ -1387,8 +1398,7 @@ l9p_dispatch_tmkdir(struct l9p_request *req)
 	if (error)
 		return (error);
 
-	/* Slashes embedded in the name are not allowed */
-	if (strchr(req->lr_req.tlcreate.name, '/') != NULL)
+	if (!l9p_valid_component(req->lr_req.tmkdir.name))
 		return (EINVAL);
 
 	be = conn->lc_server->ls_backend;
@@ -1412,10 +1422,11 @@ l9p_dispatch_trenameat(struct l9p_request *req)
 	    F_REQUIRE_DIR | F_FORBID_OPEN, &req->lr_fid2);
 	if (error)
 		return (error);
+	if (!l9p_valid_component(req->lr_req.trenameat.oldname) ||
+	    !l9p_valid_component(req->lr_req.trenameat.newname))
+		return (EINVAL);
 
 	be = conn->lc_server->ls_backend;
-
-	/* TODO: check old and new names */
 	error = be->renameat != NULL ? be->renameat(be->softc, req) : ENOSYS;
 	return (error);
 }
@@ -1431,10 +1442,10 @@ l9p_dispatch_tunlinkat(struct l9p_request *req)
 	    F_REQUIRE_DIR | F_FORBID_OPEN, &req->lr_fid);
 	if (error)
 		return (error);
+	if (!l9p_valid_component(req->lr_req.tunlinkat.name))
+		return (EINVAL);
 
 	be = conn->lc_server->ls_backend;
-
-	/* TODO: check dir-or-file name */
 	error = be->unlinkat != NULL ? be->unlinkat(be->softc, req) : ENOSYS;
 	return (error);
 }

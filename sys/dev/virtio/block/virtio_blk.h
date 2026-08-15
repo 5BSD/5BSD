@@ -161,9 +161,6 @@ struct virtio_blk_config {
 /* Barrier before this op. */
 #define VIRTIO_BLK_T_BARRIER		0x80000000
 
-/* Unmap this range (only valid for write zeroes command) */
-#define VIRTIO_BLK_WRITE_ZEROES_FLAG_UNMAP	0x00000001
-
 /*
  * This comes first in the read scatter-gather list.
  * For legacy virtio, if VIRTIO_F_ANY_LAYOUT is not negotiated,

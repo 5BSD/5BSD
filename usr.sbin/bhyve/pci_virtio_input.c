@@ -39,6 +39,7 @@
 #endif
 #include <sys/ioctl.h>
 #include <sys/linker_set.h>
+#include <sys/stat.h>
 #include <sys/uio.h>
 
 #include <dev/evdev/input.h>
@@ -47,6 +48,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -61,9 +63,13 @@
 #include "debug.h"
 #include "mevent.h"
 #include "pci_emul.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 #include "virtio.h"
 
 #define VTINPUT_RINGSZ 64
+#define VTINPUT_HOST_EVENT_BUDGET VTINPUT_RINGSZ
 
 #define VTINPUT_MAX_PKT_LEN 10
 #define VTINPUT_MAX_FRAME_EVENTS 4096
@@ -139,7 +145,7 @@ struct vtinput_event {
 
 struct vtinput_event_elem {
 	struct vtinput_event event;
-	uint16_t idx;
+	struct vi_req req;
 };
 
 struct vtinput_eventqueue {
@@ -153,22 +159,44 @@ struct vtinput_eventqueue {
  */
 struct pci_vtinput_softc {
 	struct virtio_softc vsc_vs;
+	struct virtio_consts vsc_consts;
 	struct vqueue_info vsc_queues[VTINPUT_MAXQ];
 	pthread_mutex_t vsc_mtx;
 	bool vsc_mtx_initialized;
-	const char *vsc_evdev;
+	char *vsc_evdev;
+	dev_t vsc_evdev_rdev;
 	int vsc_fd;
 	struct vtinput_config vsc_config;
 	int vsc_config_valid;
 	struct mevent *vsc_evp;
 	struct vtinput_eventqueue vsc_eventqueue;
 	bool vsc_drop_frame;
+	bool vsc_resync_frame;
+	bool vsc_discard_host_events;
+#ifdef BHYVE_SNAPSHOT
+	/* Private mutex ownership retained by a successful checkpoint pause. */
+	bool vsc_checkpoint_lock_held;
+#endif
 };
 
 static void pci_vtinput_reset(void *);
 static int pci_vtinput_qreset(void *, struct vqueue_info *, uint64_t);
 static int pci_vtinput_cfgread(void *, int, int, uint32_t *);
 static int pci_vtinput_cfgwrite(void *, int, int, uint32_t);
+static int pci_vtinput_suspend_device(void *);
+static int pci_vtinput_resume_device(void *);
+static void vtinput_eventqueue_clear(struct vtinput_eventqueue *);
+static bool vtinput_eventqueue_frame_complete(
+    const struct vtinput_eventqueue *);
+static bool vtinput_eventqueue_send_events(struct vtinput_eventqueue *,
+    struct vqueue_info *);
+static bool vtinput_drain_host_events(struct pci_vtinput_softc *);
+#ifdef BHYVE_SNAPSHOT
+static int pci_vtinput_pause(void *);
+static int pci_vtinput_resume(void *);
+static int pci_vtinput_snapshot(void *, struct vm_snapshot_meta *);
+static int pci_vtinput_snapshot_validate(struct vm_snapshot_meta *);
+#endif
 
 static struct virtio_consts vtinput_vi_consts = {
 	.vc_name =	"vtinput",
@@ -178,8 +206,76 @@ static struct virtio_consts vtinput_vi_consts = {
 	.vc_cfgread =	pci_vtinput_cfgread,
 	.vc_cfgwrite =	pci_vtinput_cfgwrite,
 	.vc_qreset =	pci_vtinput_qreset,
-	.vc_hv_caps =	VIRTIO_F_IN_ORDER | VIRTIO_F_RING_RESET,
+	.vc_suspend =	pci_vtinput_suspend_device,
+	.vc_resume_device = pci_vtinput_resume_device,
+	.vc_hv_caps =	VIRTIO_F_IN_ORDER | VIRTIO_F_RING_RESET |
+	    VIRTIO_F_SUSPEND,
+#ifdef BHYVE_SNAPSHOT
+	.vc_pause =	pci_vtinput_pause,
+	.vc_resume =	pci_vtinput_resume,
+	.vc_snapshot =	pci_vtinput_snapshot,
+#endif
 };
+
+static int
+pci_vtinput_suspend_device(void *vsc)
+{
+	struct pci_vtinput_softc *sc;
+
+	sc = vsc;
+	/*
+	 * An input frame is atomic at SYN_REPORT.  The common suspend fence
+	 * prevents new guest descriptors from being consumed, but a partial
+	 * host frame staged before that fence is not an architectural device
+	 * result and must not be joined to input received after resume.
+	 *
+	 * The evdev callback takes the same device mutex.  Once this callback
+	 * returns it can still drain the nonblocking host fd while suspended,
+	 * but vq_ring_ready() keeps it from staging or publishing guest data.
+	 */
+	vtinput_eventqueue_clear(&sc->vsc_eventqueue);
+	sc->vsc_drop_frame = false;
+	sc->vsc_resync_frame = false;
+	return (0);
+}
+
+static int
+pci_vtinput_resume_device(void *vsc __unused)
+{
+
+	return (0);
+}
+
+static bool
+vtinput_drain_host_events(struct pci_vtinput_softc *sc)
+{
+	struct input_event event;
+	unsigned int budget;
+	ssize_t len;
+
+	/*
+	 * The descriptor is nonblocking.  Drain input that belongs to the old
+	 * queue incarnation while reset still holds the VirtIO mutex; otherwise
+	 * a quick guest re-enable can let a later mevent callback deliver
+	 * pre-reset host events through the replacement queue.
+	 */
+	if (sc->vsc_evp == NULL || sc->vsc_fd < 0)
+		return (true);
+	budget = VTINPUT_HOST_EVENT_BUDGET;
+	while (budget-- != 0) {
+		len = read(sc->vsc_fd, &event, sizeof(event));
+		if (len != sizeof(event))
+			break;
+	}
+	if (len == sizeof(event))
+		return (false);
+	if (len < 0 && errno != EAGAIN)
+		WPRINTF(("%s: event drain failed: %s", __func__,
+		    strerror(errno)));
+	else if (len > 0)
+		WPRINTF(("%s: short event during drain: %zd", __func__, len));
+	return (true);
+}
 
 static void
 pci_vtinput_reset(void *vsc)
@@ -190,6 +286,8 @@ pci_vtinput_reset(void *vsc)
 	vi_reset_dev(&sc->vsc_vs);
 	sc->vsc_eventqueue.idx = 0;
 	sc->vsc_drop_frame = false;
+	sc->vsc_resync_frame = false;
+	sc->vsc_discard_host_events = !vtinput_drain_host_events(sc);
 	memset(&sc->vsc_config, 0, sizeof(sc->vsc_config));
 	sc->vsc_config_valid = 0;
 }
@@ -213,14 +311,41 @@ pci_vtinput_qreset(void *vsc, struct vqueue_info *vq,
 	if (vq->vq_num == VTINPUT_EVENTQ) {
 		sc->vsc_eventqueue.idx = 0;
 		sc->vsc_drop_frame = false;
+		sc->vsc_resync_frame = false;
+		sc->vsc_discard_host_events = !vtinput_drain_host_events(sc);
 	}
 	return (0);
 }
 
 static void
-pci_vtinput_notify_eventq(void *vsc __unused, struct vqueue_info *vq __unused)
+pci_vtinput_notify_eventq(void *vsc, struct vqueue_info *vq)
 {
+	struct pci_vtinput_softc *sc;
+
 	DPRINTF(("%s", __func__));
+	sc = vsc;
+	/*
+	 * A complete host frame can be retained when the guest temporarily has
+	 * too few writable descriptors.  The guest's next queue kick is the only
+	 * guaranteed wakeup in that state, so retry it here rather than waiting
+	 * for unrelated host input.
+	 */
+	if (vtinput_eventqueue_frame_complete(&sc->vsc_eventqueue))
+		(void)vtinput_eventqueue_send_events(&sc->vsc_eventqueue, vq);
+}
+
+static bool
+vtinput_iov_has_exact_size(const struct iovec *iov, int niov, size_t wanted)
+{
+	size_t total;
+
+	total = 0;
+	for (int i = 0; i < niov; i++) {
+		if (iov[i].iov_len > SIZE_MAX - total)
+			return (false);
+		total += iov[i].iov_len;
+	}
+	return (total == wanted);
 }
 
 static void
@@ -229,11 +354,13 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 	struct pci_vtinput_softc *sc = vsc;
 	struct iovec iov[VTINPUT_RINGSZ];
 	uint32_t completed;
+	uint16_t budget;
 
 	completed = 0;
 	DPRINTF(("vtinput: status queue notify"));
 
-	while (vq_has_descs(vq)) {
+	budget = vq->vq_qsize;
+	while (budget-- != 0 && vq_has_descs(vq)) {
 		/* get descriptor chain */
 		struct vi_req req;
 		const int n = vq_getchain(vq, iov, nitems(iov), &req);
@@ -244,7 +371,13 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 		if (n > (int)nitems(iov) || req.readable != n ||
 		    req.writable != 0) {
 			WPRINTF(("%s: invalid status descriptor", __func__));
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
+			continue;
+		}
+		if (!vtinput_iov_has_exact_size(iov, n,
+		    sizeof(struct vtinput_event))) {
+			WPRINTF(("%s: invalid status event length", __func__));
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 
@@ -264,7 +397,7 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 		}
 		if (copied != sizeof(event)) {
 			WPRINTF(("%s: short status event", __func__));
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 		const uint16_t type = le16toh(event.type);
@@ -286,12 +419,13 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 		 * avoid endless loops by ignoring EV_MSC
 		 */
 		if (type == EV_MSC) {
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			continue;
 		}
 
 		/* send event to evdev */
 		struct input_event host_event;
+		memset(&host_event, 0, sizeof(host_event));
 		host_event.type = type;
 		host_event.code = code;
 		host_event.value = value;
@@ -313,24 +447,43 @@ pci_vtinput_notify_statusq(void *vsc, struct vqueue_info *vq)
 			    host_event.code, host_event.value));
 		}
 
-		vq_relchain(vq, req.idx, 0);
+		vq_relchain_req(vq, &req, 0);
 		completed++;
 	}
-	vq_endchains(vq, 1);
+	vq_endchains(vq, !vq_has_descs(vq));
 	DPRINTF(("vtinput: status queue completed=%u", completed));
 }
 
 static int
 pci_vtinput_get_bitmap(struct pci_vtinput_softc *sc, int cmd, int count)
 {
-	if (count <= 0 || !sc) {
+	unsigned long native[howmany(sizeof(sc->vsc_config.u.bitmap),
+	    sizeof(unsigned long))];
+	const size_t word_bits = sizeof(unsigned long) * CHAR_BIT;
+	size_t bit, bits;
+
+	if (count <= 0 || sc == NULL ||
+	    (size_t)count > sizeof(native)) {
 		return (-1);
 	}
 
-	/* query bitmap */
+	/*
+	 * EVIOCGBIT and EVIOCGPROP expose a native unsigned-long bitmap.
+	 * VirtIO exposes a byte bitmap where bit N is bit N % 8 of byte N / 8.
+	 * Copying the ioctl buffer byte-for-byte therefore works accidentally
+	 * only on little-endian hosts.  Translate bit numbers explicitly.
+	 */
+	memset(native, 0, sizeof(native));
 	memset(sc->vsc_config.u.bitmap, 0, sizeof(sc->vsc_config.u.bitmap));
-	if (ioctl(sc->vsc_fd, cmd, sc->vsc_config.u.bitmap) < 0) {
+	if (ioctl(sc->vsc_fd, cmd, native) < 0) {
 		return (-1);
+	}
+	bits = (size_t)count * CHAR_BIT;
+	for (bit = 0; bit < bits; bit++) {
+		if ((native[bit / word_bits] &
+		    (1UL << (bit % word_bits))) != 0)
+			sc->vsc_config.u.bitmap[bit / CHAR_BIT] |=
+			    (uint8_t)(1U << (bit % CHAR_BIT));
 	}
 
 	/* get number of set bytes in bitmap */
@@ -431,6 +584,12 @@ pci_vtinput_read_config_ev_bits(struct pci_vtinput_softc *sc, uint8_t type)
 	case EV_LED:
 		count = LED_CNT;
 		break;
+	case EV_SND:
+		count = SND_CNT;
+		break;
+	case EV_REP:
+		count = REP_CNT;
+		break;
 	default:
 		return (1);
 	}
@@ -511,6 +670,8 @@ pci_vtinput_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 {
 	struct pci_vtinput_softc *sc = vsc;
 
+	if (retval == NULL)
+		return (EINVAL);
 	*retval = 0;
 
 	/* check for valid offset and size */
@@ -530,10 +691,8 @@ pci_vtinput_cfgread(void *vsc, int offset, int size, uint32_t *retval)
 		sc->vsc_config_valid = 1;
 	}
 
-	uint8_t *ptr = (uint8_t *)&sc->vsc_config;
-	memcpy(retval, ptr + offset, size);
-
-	return (0);
+	return (vi_config_read_le(&sc->vsc_config, sizeof(sc->vsc_config),
+	    offset, size, retval));
 }
 
 static int
@@ -548,9 +707,14 @@ pci_vtinput_cfgwrite(void *vsc, int offset, int size, uint32_t value)
 		return (1);
 	}
 
-	/* copy value into config */
+	/*
+	 * The transport passes a host numeric value.  Device configuration is
+	 * little-endian, so assign bytes explicitly rather than copying the
+	 * host representation.
+	 */
 	uint8_t *ptr = (uint8_t *)&sc->vsc_config;
-	memcpy(ptr + offset, &value, size);
+	for (int i = 0; i < size; i++)
+		ptr[offset + i] = value >> (i * 8);
 
 	/* select/subsel changed, query new config on next cfgread */
 	sc->vsc_config_valid = 0;
@@ -601,20 +765,35 @@ vtinput_eventqueue_clear(struct vtinput_eventqueue *queue)
 	queue->idx = 0;
 }
 
+static bool
+vtinput_eventqueue_frame_complete(const struct vtinput_eventqueue *queue)
+{
+	const struct vtinput_event *event;
+
+	if (queue == NULL || queue->idx == 0 || queue->events == NULL)
+		return (false);
+	event = &queue->events[queue->idx - 1].event;
+	return (le16toh(event->type) == EV_SYN &&
+	    le16toh(event->code) == SYN_REPORT);
+}
+
 static void
 vtinput_eventqueue_drop_events(struct vtinput_eventqueue *queue,
     struct vqueue_info *vq, uint32_t count)
 {
 
 	for (uint32_t i = 0; i < count; i++)
-		vq_relchain(vq, queue->events[i].idx, 0);
+		vq_relchain_req(vq, &queue->events[i].req, 0);
 }
 
-static void
+static bool
 vtinput_eventqueue_send_events(
     struct vtinput_eventqueue *queue, struct vqueue_info *vq)
 {
 	struct iovec iov[VTINPUT_RINGSZ];
+	bool consumed;
+
+	consumed = true;
 
 	/*
 	 * First iteration through eventqueue:
@@ -624,13 +803,17 @@ vtinput_eventqueue_send_events(
 		/* get descriptor */
 		if (!vq_has_descs(vq)) {
 			/*
-			 * We don't have enough descriptors for all events.
-			 * Return chains back to guest.
+			 * We don't have enough descriptors for the complete frame.
+			 * Return chains to the guest in reverse acquisition order, but
+			 * retain the host frame.  Its queue kick will retry delivery.
 			 */
-			vq_retchains(vq, i);
-			WPRINTF((
-			    "%s: not enough available descriptors, dropping %d events",
+			while (i != 0) {
+				i--;
+				vq_retchain_req(vq, &queue->events[i].req);
+			}
+			DPRINTF(("%s: waiting for descriptors for %u events",
 			    __func__, queue->idx));
+			consumed = false;
 			goto done;
 		}
 
@@ -648,14 +831,14 @@ vtinput_eventqueue_send_events(
 				__func__, n));
 			/* Drop the frame in available-ring order. */
 			vtinput_eventqueue_drop_events(queue, vq, i);
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			goto done;
 		}
 		if (req.readable != 0 || req.writable != n) {
 			WPRINTF(("%s: invalid event descriptor", __func__));
 			/* Drop the frame in available-ring order. */
 			vtinput_eventqueue_drop_events(queue, vq, i);
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			goto done;
 		}
 
@@ -678,10 +861,10 @@ vtinput_eventqueue_send_events(
 		if (copied != sizeof(struct vtinput_event)) {
 			WPRINTF(("%s: short event buffer", __func__));
 			vtinput_eventqueue_drop_events(queue, vq, i);
-			vq_relchain(vq, req.idx, 0);
+			vq_relchain_req(vq, &req, 0);
 			goto done;
 		}
-		queue->events[i].idx = req.idx;
+		queue->events[i].req = req;
 	}
 
 	/*
@@ -689,13 +872,16 @@ vtinput_eventqueue_send_events(
 	 *   Send events to guest by releasing chains
 	 */
 	for (uint32_t i = 0; i < queue->idx; ++i) {
-		vq_relchain(vq, queue->events[i].idx,
+		vq_relchain_req(vq, &queue->events[i].req,
 		    sizeof(struct vtinput_event));
 	}
 done:
-	/* clear queue and send interrupt to guest */
-	vtinput_eventqueue_clear(queue);
-	vq_endchains(vq, 1);
+	if (consumed) {
+		/* Clear a delivered or malformed frame and publish completions. */
+		vtinput_eventqueue_clear(queue);
+		vq_endchains(vq, !vq_has_descs(vq));
+	}
+	return (consumed);
 }
 
 static int
@@ -715,6 +901,36 @@ vtinput_read_event_from_host(int fd, struct input_event *event)
 	return (0);
 }
 
+static bool
+vtinput_eventqueue_report_loss(struct vtinput_eventqueue *queue,
+    struct vqueue_info *vq)
+{
+	struct input_event marker;
+
+	/*
+	 * Dropping a locally oversized frame is indistinguishable to the guest
+	 * from an evdev client overrun: some input state transitions are
+	 * missing.  Emit the standard resynchronization frame instead of
+	 * silently leaving guest key or axis state stale.  Clearing the queue
+	 * first guarantees that the two fixed events fit in the normal
+	 * preallocated buffer; allocation failure remains safely bounded.
+	 */
+	vtinput_eventqueue_clear(queue);
+	memset(&marker, 0, sizeof(marker));
+	marker.type = EV_SYN;
+	marker.code = SYN_DROPPED;
+	if (vtinput_eventqueue_add_event(queue, &marker) != 0)
+		goto fail;
+	marker.code = SYN_REPORT;
+	if (vtinput_eventqueue_add_event(queue, &marker) != 0)
+		goto fail;
+	return (vtinput_eventqueue_send_events(queue, vq));
+
+fail:
+	vtinput_eventqueue_clear(queue);
+	return (true);
+}
+
 static void
 vtinput_read_event(int fd __attribute((unused)),
     enum ev_type t __attribute__((unused)), void *arg __attribute__((unused)))
@@ -722,9 +938,15 @@ vtinput_read_event(int fd __attribute((unused)),
 	struct pci_vtinput_softc *sc = arg;
 	struct virtio_softc *vs = &sc->vsc_vs;
 	struct vqueue_info *event_vq;
+	unsigned int budget;
 
 	VS_LOCK(vs);
 	event_vq = &sc->vsc_queues[VTINPUT_EVENTQ];
+	if (sc->vsc_discard_host_events) {
+		sc->vsc_discard_host_events = !vtinput_drain_host_events(sc);
+		VS_UNLOCK(vs);
+		return;
+	}
 
 	/* Skip if the device or its independently-resettable event queue is idle. */
 	if (!(sc->vsc_vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) ||
@@ -735,36 +957,318 @@ vtinput_read_event(int fd __attribute((unused)),
 		 * loop and stale input can cross a guest device or queue reset.
 		 */
 		struct input_event event;
-		while (vtinput_read_event_from_host(sc->vsc_fd, &event) == 0)
+		budget = VTINPUT_HOST_EVENT_BUDGET;
+		while (budget-- != 0 &&
+		    vtinput_read_event_from_host(sc->vsc_fd, &event) == 0)
 			;
 		VS_UNLOCK(vs);
 		return;
 	}
+	/* Do not append a new host frame behind one waiting on guest buffers. */
+	if (vtinput_eventqueue_frame_complete(&sc->vsc_eventqueue) &&
+	    !vtinput_eventqueue_send_events(&sc->vsc_eventqueue, event_vq)) {
+		VS_UNLOCK(vs);
+		return;
+	}
 
-	/* read all events from host */
+	/* Read one guest-ring-sized batch from the level-triggered host source. */
 	struct input_event event;
-	while (vtinput_read_event_from_host(sc->vsc_fd, &event) == 0) {
-		/* add events to our queue */
-		if (vtinput_eventqueue_add_event(&sc->vsc_eventqueue, &event) != 0)
+	budget = VTINPUT_HOST_EVENT_BUDGET;
+	while (budget-- != 0 &&
+	    vtinput_read_event_from_host(sc->vsc_fd, &event) == 0) {
+		/*
+		 * evdev inserts SYN_DROPPED when its client queue overruns.
+		 * Everything already staged, and every event up to the following
+		 * SYN_REPORT, describes state which can no longer be trusted.
+		 * Preserve only the loss marker and its terminating SYN_REPORT so
+		 * the guest evdev client is told to query current device state.
+		 */
+		if (event.type == EV_SYN && event.code == SYN_DROPPED) {
+			vtinput_eventqueue_clear(&sc->vsc_eventqueue);
+			sc->vsc_drop_frame = false;
+			sc->vsc_resync_frame = true;
+			if (vtinput_eventqueue_add_event(&sc->vsc_eventqueue,
+			    &event) != 0)
+				sc->vsc_drop_frame = true;
+			continue;
+		}
+		if (sc->vsc_resync_frame &&
+		    (event.type != EV_SYN || event.code != SYN_REPORT))
+			continue;
+
+		/*
+		 * A frame larger than the negotiated guest ring can never be
+		 * published atomically.  Stop retaining it at that boundary and
+		 * report SYN_DROPPED at its terminator instead of letting a frame
+		 * assembled across readiness callbacks drive an oversized descriptor
+		 * acquisition loop.
+		 */
+		if (!sc->vsc_drop_frame &&
+		    sc->vsc_eventqueue.idx >= event_vq->vq_qsize)
 			sc->vsc_drop_frame = true;
+
+		/* add trustworthy events to our queue */
+		if (!sc->vsc_drop_frame &&
+		    vtinput_eventqueue_add_event(&sc->vsc_eventqueue, &event) != 0)
+			sc->vsc_drop_frame = true;
+		else if (!sc->vsc_drop_frame &&
+		    (event.type != EV_SYN || event.code != SYN_REPORT))
+			DPRINTF(("vtinput: staged event type=%u code=%u value=%d "
+			    "count=%u", event.type, event.code, event.value,
+			    sc->vsc_eventqueue.idx));
 
 		/* only send events to guest on EV_SYN or SYN_REPORT */
 		if (event.type != EV_SYN || event.code != SYN_REPORT) {
 			continue;
 		}
 		if (sc->vsc_drop_frame) {
-			vtinput_eventqueue_clear(&sc->vsc_eventqueue);
 			sc->vsc_drop_frame = false;
+			sc->vsc_resync_frame = false;
+			if (!vtinput_eventqueue_report_loss(&sc->vsc_eventqueue,
+			    event_vq))
+				break;
 			continue;
 		}
 
 		/* send host events to guest */
-		vtinput_eventqueue_send_events(
-		    &sc->vsc_eventqueue, event_vq);
+		if (!vtinput_eventqueue_send_events(&sc->vsc_eventqueue,
+		    event_vq)) {
+			sc->vsc_resync_frame = false;
+			break;
+		}
+		sc->vsc_resync_frame = false;
 	}
+	/* VIRTIO_ACTIVATION_ASSERTION: staged-frame-checkpoint-restore */
+	/* VIRTIO_ACTIVATION_ASSERTION: synchronous-event-and-status-completion */
 
 	VS_UNLOCK(vs);
 }
+
+#ifdef BHYVE_SNAPSHOT
+#define	VTINPUT_SNAPSHOT_MAGIC		0x31504e49U	/* "INP1" on disk */
+#define	VTINPUT_SNAPSHOT_VERSION	2U
+#define	VTINPUT_SNAPSHOT_STRING_MAX	(1024U * 1024U)
+
+static bool
+pci_vtinput_snapshot_config_valid(const struct vtinput_config *config)
+{
+
+	if (config->size > sizeof(config->u))
+		return (false);
+	for (size_t i = 0; i < nitems(config->reserved); i++) {
+		if (config->reserved[i] != 0)
+			return (false);
+	}
+	/*
+	 * Every live configuration query starts from a zeroed response.  Keep
+	 * checkpoint restore inside that production state space: bytes beyond
+	 * the advertised payload remain guest-readable even though they carry no
+	 * selector-specific value.
+	 */
+	for (size_t i = config->size; i < sizeof(config->u.bitmap); i++) {
+		if (config->u.bitmap[i] != 0)
+			return (false);
+	}
+	return (true);
+}
+
+static int
+pci_vtinput_pause(void *vsc)
+{
+	struct pci_vtinput_softc *sc;
+	int error;
+
+	sc = vsc;
+	if (sc->vsc_checkpoint_lock_held)
+		return (EBUSY);
+	error = mevent_disable(sc->vsc_evp);
+	if (error != 0)
+		return (error);
+	pthread_mutex_lock(&sc->vsc_mtx);
+	sc->vsc_checkpoint_lock_held = true;
+	return (0);
+}
+
+static int
+pci_vtinput_resume(void *vsc)
+{
+	struct pci_vtinput_softc *sc;
+	int error;
+
+	sc = vsc;
+	/*
+	 * vi_pci_resume() retains common checkpoint ownership after an error and
+	 * can retry without a fresh pause.  Do not retain this private mutex
+	 * across that return: reset, detach, and a retry need a well-defined
+	 * reacquisition point rather than an implicit same-thread assumption.
+	 */
+	if (!sc->vsc_checkpoint_lock_held) {
+		pthread_mutex_lock(&sc->vsc_mtx);
+		sc->vsc_checkpoint_lock_held = true;
+	}
+	error = mevent_enable(sc->vsc_evp);
+	sc->vsc_checkpoint_lock_held = false;
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	return (error);
+}
+
+static int
+pci_vtinput_snapshot(void *vsc, struct vm_snapshot_meta *meta)
+{
+	struct pci_vtinput_softc *sc;
+	struct vtinput_event_elem *events;
+	struct vtinput_config config;
+	uint64_t rdev;
+	uint32_t count, magic, version;
+	uint16_t code, type;
+	uint8_t config_valid, drop_frame, resync_frame;
+	uint32_t value;
+	int error;
+
+	sc = vsc;
+	if (meta->op == VM_SNAPSHOT_SAVE &&
+	    (sc->vsc_eventqueue.idx > sc->vsc_eventqueue.size ||
+	    (sc->vsc_eventqueue.idx != 0 &&
+	    sc->vsc_eventqueue.events == NULL)))
+		return (EINVAL);
+	magic = VTINPUT_SNAPSHOT_MAGIC;
+	version = VTINPUT_SNAPSHOT_VERSION;
+	rdev = (uint64_t)sc->vsc_evdev_rdev;
+	config = sc->vsc_config;
+	config_valid = sc->vsc_config_valid != 0;
+	drop_frame = sc->vsc_drop_frame;
+	resync_frame = sc->vsc_resync_frame;
+	count = sc->vsc_eventqueue.idx;
+	events = NULL;
+
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, error, done);
+	if (magic != VTINPUT_SNAPSHOT_MAGIC ||
+	    version != VTINPUT_SNAPSHOT_VERSION) {
+		error = ENOTSUP;
+		goto done;
+	}
+	SNAPSHOT_LE64_OR_LEAVE(rdev, meta, error, done);
+	SNAPSHOT_U8_OR_LEAVE(config_valid, meta, error, done);
+	SNAPSHOT_U8_OR_LEAVE(drop_frame, meta, error, done);
+	SNAPSHOT_U8_OR_LEAVE(resync_frame, meta, error, done);
+	SNAPSHOT_U8_OR_LEAVE(config.select, meta, error, done);
+	SNAPSHOT_U8_OR_LEAVE(config.subsel, meta, error, done);
+	SNAPSHOT_U8_OR_LEAVE(config.size, meta, error, done);
+	SNAPSHOT_BUF_OR_LEAVE(config.reserved, sizeof(config.reserved),
+	    meta, error, done);
+	SNAPSHOT_BUF_OR_LEAVE(&config.u, sizeof(config.u), meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(count, meta, error, done);
+	if (config_valid > 1 || drop_frame > 1 || resync_frame > 1 ||
+	    !pci_vtinput_snapshot_config_valid(&config) ||
+	    count > VTINPUT_MAX_FRAME_EVENTS ||
+	    count > sc->vsc_queues[VTINPUT_EVENTQ].vq_qsize) {
+		error = EINVAL;
+		goto done;
+	}
+	if (vm_snapshot_is_loading(meta) && count != 0) {
+		events = calloc(count, sizeof(*events));
+		if (events == NULL) {
+			error = ENOMEM;
+			goto done;
+		}
+	}
+	for (uint32_t i = 0; i < count; i++) {
+		if (meta->op == VM_SNAPSHOT_SAVE) {
+			type = le16toh(sc->vsc_eventqueue.events[i].event.type);
+			code = le16toh(sc->vsc_eventqueue.events[i].event.code);
+			value = le32toh(sc->vsc_eventqueue.events[i].event.value);
+		} else {
+			type = 0;
+			code = 0;
+			value = 0;
+		}
+		SNAPSHOT_LE16_OR_LEAVE(type, meta, error, done);
+		SNAPSHOT_LE16_OR_LEAVE(code, meta, error, done);
+		SNAPSHOT_LE32_OR_LEAVE(value, meta, error, done);
+		if (vm_snapshot_is_loading(meta)) {
+			events[i].event.type = htole16(type);
+			events[i].event.code = htole16(code);
+			events[i].event.value = htole32(value);
+		}
+	}
+	/*
+	 * A resynchronization frame is either a staged SYN_DROPPED marker, or
+	 * empty only because allocation failed and the whole frame is already
+	 * marked for discard.  Reject impossible combinations before publishing
+	 * restored state.
+	 */
+	if (resync_frame != 0 &&
+	    !((count == 0 && drop_frame != 0) ||
+	    (count == 1 &&
+	    (meta->op == VM_SNAPSHOT_SAVE ?
+	    le16toh(sc->vsc_eventqueue.events[0].event.type) :
+	    le16toh(events[0].event.type)) == EV_SYN &&
+	    (meta->op == VM_SNAPSHOT_SAVE ?
+	    le16toh(sc->vsc_eventqueue.events[0].event.code) :
+	    le16toh(events[0].event.code)) == SYN_DROPPED))) {
+		error = EINVAL;
+		goto done;
+	}
+	error = vm_snapshot_identity_string(sc->vsc_evdev,
+	    VTINPUT_SNAPSHOT_STRING_MAX, meta);
+	if (error != 0)
+		goto done;
+	if (vm_snapshot_is_loading(meta) &&
+	    rdev != (uint64_t)sc->vsc_evdev_rdev) {
+		error = EINVAL;
+		goto done;
+	}
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (count > sc->vsc_eventqueue.size ||
+		    sc->vsc_eventqueue.events == NULL) {
+			free(sc->vsc_eventqueue.events);
+			sc->vsc_eventqueue.events = events;
+			sc->vsc_eventqueue.size = count;
+			events = NULL;
+		} else if (count != 0) {
+			memcpy(sc->vsc_eventqueue.events, events,
+			    count * sizeof(*events));
+		}
+		sc->vsc_eventqueue.idx = count;
+		sc->vsc_config = config;
+		sc->vsc_config_valid = config_valid;
+		sc->vsc_drop_frame = drop_frame;
+		sc->vsc_resync_frame = resync_frame;
+	}
+	error = 0;
+done:
+	free(events);
+	return (error);
+}
+
+/*
+ * Input preflight reads the staged host-event frame and selector cache.  The
+ * event callback uses vsc_mtx too, so direct validation needs that boundary.
+ * This mutex is recursive by construction, making it safe to compose with
+ * checkpoint pause, which already retains it.
+ */
+static int
+pci_vtinput_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	struct pci_devinst *pi;
+	struct pci_vtinput_softc *sc;
+	int error;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE ||
+	    meta->dev_data == NULL)
+		return (EINVAL);
+	pi = meta->dev_data;
+	sc = pi->pi_arg;
+	if (sc == NULL)
+		return (EINVAL);
+
+	pthread_mutex_lock(&sc->vsc_mtx);
+	error = vi_pci_snapshot(meta);
+	pthread_mutex_unlock(&sc->vsc_mtx);
+	return (error);
+}
+#endif
 
 static int
 pci_vtinput_legacy_config(nvlist_t *nvl, const char *opts)
@@ -792,7 +1296,8 @@ static int
 pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtinput_softc *sc;
-	bool intr_initialized, mtx_attr_initialized;
+	struct stat evstat;
+	bool intr_initialized, mtx_attr_initialized, packed;
 	const char *debug;
 
 	debug = getenv("BHYVE_VTINPUT_DEBUG");
@@ -815,11 +1320,14 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 	intr_initialized = false;
 	mtx_attr_initialized = false;
 
-	sc->vsc_evdev = get_config_value_node(nvl, "path");
-	if (sc->vsc_evdev == NULL) {
+	const char *evdev = get_config_value_node(nvl, "path");
+	if (evdev == NULL) {
 		WPRINTF(("%s: missing required path config value", __func__));
 		goto failed;
 	}
+	sc->vsc_evdev = strdup(evdev);
+	if (sc->vsc_evdev == NULL)
+		goto failed;
 
 	/*
 	 * open evdev by using non blocking I/O:
@@ -830,6 +1338,9 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 		WPRINTF(("%s: failed to open %s", __func__, sc->vsc_evdev));
 		goto failed;
 	}
+	if (fstat(sc->vsc_fd, &evstat) != 0)
+		goto failed;
+	sc->vsc_evdev_rdev = evstat.st_rdev;
 	DPRINTF(("vtinput: opened host device %s", sc->vsc_evdev));
 
 	/* check if evdev is really a evdev */
@@ -891,8 +1402,9 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 #endif
 
 	/* link virtio to softc */
+	memcpy(&sc->vsc_consts, &vtinput_vi_consts, sizeof(sc->vsc_consts));
 	vi_softc_linkup(
-	    &sc->vsc_vs, &vtinput_vi_consts, sc, pi, sc->vsc_queues);
+	    &sc->vsc_vs, &sc->vsc_consts, sc, pi, sc->vsc_queues);
 	sc->vsc_vs.vs_mtx = &sc->vsc_mtx;
 
 	/* init virtio queues */
@@ -903,6 +1415,13 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 	if (vi_pci_select_transport(&sc->vsc_vs, nvl,
 	    VIRTIO_PCI_MODERN_DEFAULT) != 0)
 		goto failed;
+	packed = get_config_bool_node_default(nvl, "packed", false);
+	if (packed && !vi_pci_is_modern(&sc->vsc_vs)) {
+		WPRINTF(("%s: packed queues require transport=modern", __func__));
+		goto failed;
+	}
+	if (packed)
+		sc->vsc_consts.vc_hv_caps |= VIRTIO_F_RING_PACKED;
 
 	/* initialize config space */
 	if (vi_pci_is_modern(&sc->vsc_vs))
@@ -935,8 +1454,13 @@ pci_vtinput_init(struct pci_devinst *pi, nvlist_t *nvl)
 	return (0);
 
 failed:
+	/*
+	 * The event callback owns sc as its argument.  Initialization can fail
+	 * after registration, including after dispatch has started in embedded
+	 * users, so acknowledge deletion before releasing the softc.
+	 */
 	if (sc->vsc_evp)
-		mevent_delete(sc->vsc_evp);
+		(void)mevent_delete_sync(sc->vsc_evp);
 	free(sc->vsc_vs.vs_modern);
 	if (intr_initialized)
 		pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);
@@ -948,6 +1472,7 @@ failed:
 		pthread_mutexattr_destroy(&mtx_attr);
 	if (sc->vsc_fd >= 0)
 		close(sc->vsc_fd);
+	free(sc->vsc_evdev);
 
 	free(sc);
 
@@ -962,5 +1487,12 @@ static const struct pci_devemu pci_de_vinput = {
 	.pe_cfgread = vi_pci_modern_cfgread,
 	.pe_barwrite = vi_pci_write,
 	.pe_barread = vi_pci_read,
+#ifdef BHYVE_SNAPSHOT
+	.pe_snapshot = vi_pci_snapshot,
+	.pe_snapshot_validate = pci_vtinput_snapshot_validate,
+	.pe_snapshot_compat = vi_pci_snapshot_compat,
+	.pe_pause = vi_pci_pause,
+	.pe_resume = vi_pci_resume,
+#endif
 };
 PCI_EMUL_SET(pci_de_vinput);

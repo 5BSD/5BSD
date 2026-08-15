@@ -31,11 +31,13 @@
 #include <sys/param.h>
 #include <sys/kernel.h>
 #include <sys/conf.h>
+#include <sys/fcntl.h>
 #include <sys/libkern.h>
 #include <sys/ioccom.h>
 #include <sys/mman.h>
 #include <sys/uio.h>
 #include <sys/proc.h>
+#include <sys/sysent.h>
 
 #include <vm/vm.h>
 #include <vm/pmap.h>
@@ -56,8 +58,10 @@
 #include "io/ppt.h"
 #include "io/vatpic.h"
 #include "io/vioapic.h"
+#include "io/vlapic.h"
 #include "io/vhpet.h"
 #include "io/vrtc.h"
+#include "vmm_x86_startup_state.h"
 
 #ifdef COMPAT_FREEBSD13
 struct vm_stats_13 {
@@ -108,6 +112,7 @@ struct vm_run_13 {
 
 const struct vmmdev_ioctl vmmdev_machdep_ioctls[] = {
 	VMMDEV_IOCTL(VM_RUN, VMMDEV_IOCTL_LOCK_ONE_VCPU),
+	VMMDEV_IOCTL(VM_RUN_GENERATION, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 #ifdef COMPAT_FREEBSD13
 	VMMDEV_IOCTL(VM_RUN_13, VMMDEV_IOCTL_LOCK_ONE_VCPU),
 #endif
@@ -139,6 +144,7 @@ const struct vmmdev_ioctl vmmdev_machdep_ioctls[] = {
 	VMMDEV_IOCTL(VM_SNAPSHOT_REQ_13, VMMDEV_IOCTL_LOCK_ALL_VCPUS),
 #endif
 	VMMDEV_IOCTL(VM_SNAPSHOT_REQ, VMMDEV_IOCTL_LOCK_ALL_VCPUS),
+	VMMDEV_IOCTL(VM_SNAPSHOT_SESSION, VMMDEV_IOCTL_LOCK_ALL_VCPUS),
 	VMMDEV_IOCTL(VM_RESTORE_TIME, VMMDEV_IOCTL_LOCK_ALL_VCPUS),
 #endif
 
@@ -173,6 +179,30 @@ const struct vmmdev_ioctl vmmdev_machdep_ioctls[] = {
 const size_t vmmdev_machdep_ioctl_count = nitems(vmmdev_machdep_ioctls);
 
 int
+vmmdev_machdep_startup_classify(struct vcpu *vcpu,
+    bool *bootstrap_processor)
+{
+	struct vlapic *vlapic;
+	bool candidate;
+	int error;
+
+	if (vcpu == NULL || bootstrap_processor == NULL)
+		return (EINVAL);
+	if (vcpu_get_state(vcpu, NULL) != VCPU_FROZEN)
+		return (EBUSY);
+	vlapic = vm_lapic(vcpu);
+	if (vlapic == NULL)
+		return (EINVAL);
+
+	error = vmm_x86_startup_apicbase_classify(vlapic_get_apicbase(vlapic),
+	    &candidate);
+	if (error != 0)
+		return (error);
+	*bootstrap_processor = candidate;
+	return (0);
+}
+
+int
 vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
     int fflag, struct thread *td)
 {
@@ -180,14 +210,57 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 
 	error = 0;
 	switch (cmd) {
+	case VM_RUN_GENERATION: {
+		struct vmm_startup_run_request *request;
+		struct vm_exit *vme;
+		void *cpuset_address, *exit_address;
+		uint64_t max_address;
+
+		request = (struct vmm_startup_run_request *)data;
+		if (td == NULL || td->td_proc == NULL ||
+		    td->td_proc->p_sysent == NULL ||
+		    td->td_proc->p_sysent->sv_maxuser == 0) {
+			error = EINVAL;
+			break;
+		}
+		max_address = td->td_proc->p_sysent->sv_maxuser - 1;
+		error = vmm_startup_run_request_validate(request,
+		    vm_get_maxcpus(vm), sizeof(cpuset_t),
+		    sizeof(struct vm_exit), max_address);
+		if (error != 0)
+			break;
+
+		error = vmmdev_startup_run_enter(vm, vcpu,
+		    request->generation);
+		if (error == 0)
+			error = vm_run(vcpu);
+		if (error != 0)
+			break;
+
+		vme = vm_exitinfo(vcpu);
+		exit_address = (void *)(uintptr_t)request->exit_address;
+		error = copyout(vme, exit_address, sizeof(*vme));
+		if (error != 0)
+			break;
+		if (vme->exitcode == VM_EXITCODE_IPI) {
+			cpuset_address =
+			    (void *)(uintptr_t)request->cpuset_address;
+			error = copyout(vm_exitinfo_cpuset(vcpu),
+			    cpuset_address, request->cpuset_size);
+		}
+		break;
+	}
 	case VM_RUN: {
 		struct vm_exit *vme;
 		struct vm_run *vmrun;
+		uint64_t startup_generation;
 
 		vmrun = (struct vm_run *)data;
 		vme = vm_exitinfo(vcpu);
 
-		error = vm_run(vcpu);
+		error = vm_startup_lock_default(vm, &startup_generation);
+		if (error == 0)
+			error = vm_run(vcpu);
 		if (error != 0)
 			break;
 
@@ -221,12 +294,15 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 		struct vm_exit *vme;
 		struct vm_exit_13 *vme_13;
 		struct vm_run_13 *vmrun_13;
+		uint64_t startup_generation;
 
 		vmrun_13 = (struct vm_run_13 *)data;
 		vme_13 = &vmrun_13->vm_exit;
 		vme = vm_exitinfo(vcpu);
 
-		error = vm_run(vcpu);
+		error = vm_startup_lock_default(vm, &startup_generation);
+		if (error == 0)
+			error = vm_run(vcpu);
 		if (error == 0) {
 			vme_13->exitcode = vme->exitcode;
 			vme_13->inst_length = vme->inst_length;
@@ -565,6 +641,47 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 
 		snapshot_meta = (struct vm_snapshot_meta *)data;
 		error = vm_snapshot_req(vm, snapshot_meta);
+		break;
+	}
+	case VM_SNAPSHOT_SESSION: {
+		struct vm_snapshot_session *session;
+
+		session = (struct vm_snapshot_session *)data;
+		if ((fflag & FWRITE) == 0) {
+			error = EBADF;
+			break;
+		}
+		if (session->version != VM_SNAPSHOT_SESSION_VERSION ||
+		    session->flags != 0 || session->reserved[0] != 0 ||
+		    session->reserved[1] != 0) {
+			error = EINVAL;
+			break;
+		}
+		switch (session->op) {
+		case VM_SNAPSHOT_SESSION_BEGIN:
+			error = vmmdev_snapshot_session_begin(vm,
+			    vm_event_checkpoint_deferred_apply, vm,
+			    &session->session_id);
+			break;
+		case VM_SNAPSHOT_SESSION_COMMIT:
+			error = vmmdev_snapshot_session_finish(vm,
+			    session->session_id, false);
+			break;
+		case VM_SNAPSHOT_SESSION_ABORT:
+			error = vmmdev_snapshot_session_finish(vm,
+			    session->session_id, true);
+			break;
+		case VM_SNAPSHOT_SESSION_ABORT_CURRENT:
+			if (session->session_id != 0) {
+				error = EINVAL;
+				break;
+			}
+			error = vmmdev_snapshot_session_abort_current(vm);
+			break;
+		default:
+			error = EINVAL;
+			break;
+		}
 		break;
 	}
 #ifdef COMPAT_FREEBSD13

@@ -30,6 +30,24 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
+#include <string.h>
+
+/*
+ * Return true when name is one non-dot protocol path component.  Operations
+ * that create, remove, link, or rename directory entries must not delegate
+ * path traversal to a backend.  Twalk is intentionally excluded: "." and
+ * ".." have protocol meaning there and are handled by the backend walk
+ * implementation.
+ */
+static inline bool
+l9p_valid_component(const char *name)
+{
+
+	return (name != NULL && name[0] != '\0' &&
+	    strcmp(name, ".") != 0 && strcmp(name, "..") != 0 &&
+	    strchr(name, '/') == NULL);
+}
 
 #ifndef _KERNEL
 static inline void *

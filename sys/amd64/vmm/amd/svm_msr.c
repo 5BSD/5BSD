@@ -36,11 +36,13 @@
 #include <machine/cpufunc.h>
 #include <machine/specialreg.h>
 #include <machine/vmm.h>
+#include <x86/x86_var.h>
 
 #include "svm.h"
 #include "vmcb.h"
 #include "svm_softc.h"
 #include "svm_msr.h"
+#include "vpvclock.h"
 
 #ifndef MSR_AMDK8_IPM
 #define	MSR_AMDK8_IPM	0xc0010055
@@ -131,6 +133,9 @@ svm_rdmsr(struct svm_vcpu *vcpu, u_int num, uint64_t *result, bool *retu)
 		*result = 0;
 		break;
 	default:
+		/* KVM paravirtual clock MSRs (no-op unless the guest opted in). */
+		if (vpvclock_rdmsr(vcpu->vcpu, num, result) == 0)
+			break;
 		error = EINVAL;
 		break;
 	}
@@ -153,7 +158,8 @@ svm_wrmsr(struct svm_vcpu *vcpu, u_int num, uint64_t val, bool *retu)
 	case MSR_MTRR16kBase ... MSR_MTRR16kBase + 1:
 	case MSR_MTRR64kBase:
 	case MSR_MTRRVarBase ... MSR_MTRRVarBase + (VMM_MTRR_VAR_MAX * 2) - 1:
-		if (vm_wrmtrr(&vcpu->mtrr, num, val) != 0) {
+		if (vm_wrmtrr(&vcpu->mtrr, num, val,
+		    vm_mtrr_maxphyaddr(cpu_maxphyaddr)) != 0) {
 			vm_inject_gp(vcpu->vcpu);
 		}
 		break;
@@ -172,11 +178,20 @@ svm_wrmsr(struct svm_vcpu *vcpu, u_int num, uint64_t val, bool *retu)
 #ifdef BHYVE_SNAPSHOT
 	case MSR_TSC:
 		svm_set_tsc_offset(vcpu, val - rdtsc());
+		/*
+		 * The guest just moved its TSC; republish the paravirtual clock
+		 * page so its computed time tracks the new offset.  No-op unless
+		 * the guest enabled pvclock on this vCPU.
+		 */
+		vpvclock_vcpu_update(vcpu->vcpu);
 		break;
 #endif
 	case MSR_EXTFEATURES:
 		break;
 	default:
+		/* KVM paravirtual clock MSRs (no-op unless the guest opted in). */
+		if (vpvclock_wrmsr(vcpu->vcpu, num, val) == 0)
+			break;
 		error = EINVAL;
 		break;
 	}

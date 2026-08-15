@@ -9,6 +9,7 @@
 
 #define BLOCKIF_IOV_MAX 128
 #define BLOCKIF_RING_MAX 1024
+#define BLOCKIF_CHECKPOINT_ID_MAX 255
 
 struct blockif_req {
 	int br_iovcnt;
@@ -21,7 +22,7 @@ struct blockif_req {
 
 struct blockif_ctxt;
 struct pci_devinst;
-typedef void blockif_resize_cb(struct blockif_ctxt *, void *, size_t);
+typedef void blockif_resize_cb(struct blockif_ctxt *, void *, off_t);
 
 int blockif_legacy_config(nvlist_t *, const char *);
 int blockif_add_boot_device(struct pci_devinst *, struct blockif_ctxt *);
@@ -35,14 +36,17 @@ void blockif_psectsz(struct blockif_ctxt *, int *, int *);
 int blockif_queuesz(struct blockif_ctxt *);
 int blockif_is_ro(struct blockif_ctxt *);
 int blockif_candelete(struct blockif_ctxt *);
+const char *blockif_checkpoint_identity(struct blockif_ctxt *);
 int blockif_read(struct blockif_ctxt *, struct blockif_req *);
 int blockif_write(struct blockif_ctxt *, struct blockif_req *);
 int blockif_write_zeroes(struct blockif_ctxt *, struct blockif_req *);
 int blockif_flush(struct blockif_ctxt *, struct blockif_req *);
+int blockif_flush_stability(struct blockif_ctxt *, struct blockif_req *);
 int blockif_delete(struct blockif_ctxt *, struct blockif_req *);
 int blockif_cancel(struct blockif_ctxt *, struct blockif_req *);
 int blockif_close(struct blockif_ctxt *);
 int blockif_suspend(struct blockif_ctxt *);
+void blockif_suspend_retain(struct blockif_ctxt *);
 void blockif_resume(struct blockif_ctxt *);
 
 #endif

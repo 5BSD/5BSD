@@ -54,7 +54,7 @@ struct vmcs;
 
 /* returns 0 on success and non-zero on failure */
 static __inline int
-vmxon(char *region)
+vmxon(const void *region)
 {
 	int error;
 	uint64_t addr;

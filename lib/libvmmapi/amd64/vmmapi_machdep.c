@@ -30,9 +30,10 @@
 #include <sys/ioctl.h>
 
 #include <machine/specialreg.h>
-#include <machine/vmm.h>
-#include <machine/vmm_dev.h>
-#include <machine/vmm_snapshot.h>
+/* See vmmapi.c: use the source ABI while building libvmmapi from source. */
+#include <amd64/include/vmm.h>
+#include <amd64/include/vmm_snapshot.h>
+#include <amd64/include/vmm_dev.h>
 
 #include <string.h>
 
@@ -51,6 +52,7 @@ const char *vm_capstrmap[] = {
 	[VM_CAP_IPI_EXIT] = "ipi_exit",
 	[VM_CAP_MASK_HWINTR] = "mask_hwintr",
 	[VM_CAP_RFLAGS_TF] = "rflags_tf",
+	[VM_CAP_NESTED_VMX] = "nested_vmx",
 	[VM_CAP_MAX] = NULL,
 };
 
@@ -84,6 +86,7 @@ const char *vm_capstrmap[] = {
 	VM_GET_INTINFO,			\
 	VM_RESTART_INSTRUCTION,		\
 	VM_SNAPSHOT_REQ,		\
+	VM_SNAPSHOT_SESSION,		\
 	VM_RESTORE_TIME
 
 const cap_ioctl_t vm_ioctl_cmds[] = {

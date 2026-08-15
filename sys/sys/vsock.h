@@ -90,10 +90,45 @@ struct vsock_transport_attach {
 	uint64_t	reserved[2];
 };
 
+#define	VSOCK_TRANSPORT_FEATURES_VERSION	1
+struct vsock_transport_features {
+	uint32_t	version;
+	uint32_t	flags;
+	uint64_t	features;	/* VIRTIO_VSOCK_F_* device bits only */
+	uint64_t	reserved[2];
+};
+
+/*
+ * A VMM may checkpoint a kernel-backed transport only after FREEZE succeeds.
+ * FREEZE is an atomic admission fence: it waits for provider copies already
+ * in flight, then succeeds only when no packet or AF_VSOCK connection belongs
+ * to this guest CID.  While frozen, poll/kqueue report no provider readiness
+ * and new socket traffic is backpressured.  SET_FEATURES remains available to
+ * the owning VMM so restore can reconstruct the empty destination provider's
+ * feature epoch before admission reopens.  FREEZE, SET_FEATURES, and RESET
+ * bound waits for in-flight copies and return EWOULDBLOCK without publishing
+ * a transition if the copy does not drain.  THAW is idempotent.
+ */
+#define	VSOCK_TRANSPORT_CHECKPOINT_VERSION	1
+struct vsock_transport_checkpoint {
+	uint32_t	version;
+	uint32_t	flags;
+	uint32_t	queue_count;
+	uint32_t	connection_count;
+	uint64_t	generation;
+	uint64_t	reserved[2];
+};
+
+#define	VSOCK_TRANSPORT_CHECKPOINT_F_FROZEN	0x00000001U
+
 #define	VSOCK_IOC_TRANSPORT_ATTACH	_IOW('v', 0xba, \
 	    struct vsock_transport_attach)
-#define	VSOCK_IOC_TRANSPORT_SET_FEATURES _IOW('v', 0xbb, uint64_t)
+#define	VSOCK_IOC_TRANSPORT_SET_FEATURES _IOW('v', 0xbb, \
+	    struct vsock_transport_features)
 #define	VSOCK_IOC_TRANSPORT_RESET	_IO('v', 0xbc)
+#define	VSOCK_IOC_TRANSPORT_FREEZE	_IOWR('v', 0xbd, \
+	    struct vsock_transport_checkpoint)
+#define	VSOCK_IOC_TRANSPORT_THAW	_IO('v', 0xbe)
 
 #define	SO_VM_SOCKETS_BUFFER_SIZE	0
 #define	SO_VM_SOCKETS_BUFFER_MIN_SIZE	1
@@ -200,6 +235,10 @@ _Static_assert(sizeof(struct virtio_vsock_event) == 4,
     "virtio_vsock_event must be 4 bytes");
 _Static_assert(sizeof(struct sockaddr_vm) == 16,
     "sockaddr_vm ABI layout must be 16 bytes");
+_Static_assert(sizeof(struct vsock_transport_checkpoint) == 40,
+    "vsock_transport_checkpoint ABI layout must be 40 bytes");
+_Static_assert(sizeof(struct vsock_transport_features) == 32,
+    "vsock_transport_features ABI layout must be 32 bytes");
 
 /*
  * Connection state values exported in xvsock_pcb.xvp_state.

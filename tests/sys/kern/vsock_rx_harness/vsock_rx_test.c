@@ -133,6 +133,8 @@ reset_state(void)
 	vtvsock_remote_transport_owner = NULL;
 	vtvsock_guest_cid = VSOCK_CID_LOCAL;
 	vtvsock_remote_features = 0;
+	vtvsock_max_conn = VTVSOCK_DEFAULT_MAX_CONN;
+	vtvsock_max_conn_per_cid = VTVSOCK_DEFAULT_MAX_CONN_PER_CID;
 }
 
 ATF_TC_WITHOUT_HEAD(seqpacket_rx_eor_follows_wire_flag);
@@ -179,6 +181,28 @@ ATF_TC_BODY(rx_mbuf_chain_copy, tc)
 	}
 	ATF_CHECK(offset == sizeof(payload));
 	ATF_CHECK(headers == 1);
+	m_freem(m);
+}
+
+/*
+ * m_getm2() still returns a packet-header mbuf for an empty record.  Keep
+ * that representation distinct from a NULL payload: SEQPACKET delivery and
+ * the socket-buffer accounting both rely on an empty record carrying its
+ * packet header, while no zero-length chain element may be manufactured by
+ * the direct-copy helper.
+ */
+ATF_TC_WITHOUT_HEAD(rx_mbuf_empty_has_packet_header);
+ATF_TC_BODY(rx_mbuf_empty_has_packet_header, tc)
+{
+	const uint8_t byte = 0;
+	struct mbuf *m;
+
+	m = vsock_mbuf_from_buffer(&byte, 0);
+	ATF_REQUIRE(m != NULL);
+	ATF_CHECK((m->m_flags & M_PKTHDR) != 0);
+	ATF_CHECK(m->m_pkthdr.len == 0);
+	ATF_CHECK(m->m_len == 0);
+	ATF_CHECK(m->m_next == NULL);
 	m_freem(m);
 }
 
@@ -1185,6 +1209,105 @@ ATF_TC_BODY(inbound_connection_cap_reclaims_slot, tc)
 	vtvsock_max_conn = saved_max_conn;
 }
 
+ATF_TC_WITHOUT_HEAD(connection_limits_cover_all_directions);
+ATF_TC_BODY(connection_limits_cover_all_directions, tc)
+{
+	struct sockaddr_vm local;
+	struct sockaddr_vm peer;
+	struct socket *client1, *client2, *listener;
+	struct virtio_vsock_hdr h;
+	int error;
+
+	/*
+	 * Outbound CONNECTING PCBs consume the global and per-CID budgets.
+	 * A rejected attempt retains its automatic binding and becomes
+	 * admissible as soon as the first socket releases the CID slot.
+	 */
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	vtvsock_max_conn = 8;
+	vtvsock_max_conn_per_cid = 1;
+	memset(&peer, 0, sizeof(peer));
+	peer.svm_len = sizeof(peer);
+	peer.svm_family = AF_VSOCK;
+	peer.svm_cid = VSOCK_CID_HOST;
+	peer.svm_port = 9200;
+	client1 = mk_socket(SOCK_STREAM);
+	client2 = mk_socket(SOCK_STREAM);
+	ATF_REQUIRE(client1 != NULL && client2 != NULL);
+	memset(&local, 0, sizeof(local));
+	local.svm_len = sizeof(local);
+	local.svm_family = AF_VSOCK;
+	local.svm_cid = VSOCK_CID_ANY;
+	local.svm_port = 9301;
+	ATF_REQUIRE(vsock_bind(client1, (struct sockaddr *)&local, NULL) == 0);
+	local.svm_port = 9302;
+	ATF_REQUIRE(vsock_bind(client2, (struct sockaddr *)&local, NULL) == 0);
+	ATF_REQUIRE(vsock_connect(client1,
+	    (struct sockaddr *)&peer, NULL) == 0);
+	ATF_CHECK(vtvsock_conn_count == 1);
+	error = vsock_connect(client2, (struct sockaddr *)&peer, NULL);
+	ATF_CHECK_MSG(error == ENOBUFS, "second remote connect returned %d (%s)",
+	    error, strerror(error));
+	ATF_CHECK(vtvsock_conn_count == 1);
+	ATF_CHECK(((struct vtvsock_pcb *)client2->so_pcb)->on_boundlist);
+	ATF_CHECK(!((struct vtvsock_pcb *)client2->so_pcb)->on_connlist);
+	vsock_detach(client1);
+	ATF_CHECK(vtvsock_conn_count == 0);
+	ATF_REQUIRE(vsock_connect(client2,
+	    (struct sockaddr *)&peer, NULL) == 0);
+	ATF_CHECK(vtvsock_conn_count == 1);
+
+	/*
+	 * One loopback connection needs two table entries.  Reject it before
+	 * allocating an accepted child when only one global slot remains.
+	 */
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	vtvsock_max_conn = 1;
+	vtvsock_max_conn_per_cid = 0;
+	listener = mk_socket(SOCK_STREAM);
+	client1 = mk_socket(SOCK_STREAM);
+	ATF_REQUIRE(listener != NULL && client1 != NULL);
+	ATF_REQUIRE(bind_listen(listener, 9201) == 0);
+	peer.svm_cid = VSOCK_CID_LOCAL;
+	peer.svm_port = 9201;
+	ATF_CHECK(vsock_connect(client1,
+	    (struct sockaddr *)&peer, NULL) == ECONNRESET);
+	ATF_CHECK(vtvsock_conn_count == 0);
+	ATF_CHECK(g_test_socket_count == 2);
+
+	/*
+	 * Inbound requests use the same per-CID admission rule and reclaim a
+	 * slot immediately when the peer resets the accepted connection.
+	 */
+	reset_state();
+	register_mock(3, VIRTIO_VSOCK_F_STREAM);
+	vtvsock_max_conn = 8;
+	vtvsock_max_conn_per_cid = 1;
+	listener = mk_socket(SOCK_STREAM);
+	ATF_REQUIRE(listener != NULL);
+	ATF_REQUIRE(bind_listen(listener, 9202) == 0);
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, VIRTIO_VSOCK_TYPE_STREAM,
+	    VSOCK_CID_HOST, 19202, 9202, 0, 0, 65536, 0);
+	vsock_rx_packet(&h, sizeof(h));
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, VIRTIO_VSOCK_TYPE_STREAM,
+	    VSOCK_CID_HOST, 19203, 9202, 0, 0, 65536, 0);
+	vsock_rx_packet(&h, sizeof(h));
+	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RESPONSE) == 1);
+	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RST) == 1);
+	ATF_CHECK(vtvsock_conn_count == 1);
+	mkhdr(&h, VIRTIO_VSOCK_OP_RST, VIRTIO_VSOCK_TYPE_STREAM,
+	    VSOCK_CID_HOST, 19202, 9202, 0, 0, 0, 0);
+	vsock_rx_packet(&h, sizeof(h));
+	ATF_CHECK(vtvsock_conn_count == 0);
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, VIRTIO_VSOCK_TYPE_STREAM,
+	    VSOCK_CID_HOST, 19204, 9202, 0, 0, 65536, 0);
+	vsock_rx_packet(&h, sizeof(h));
+	ATF_CHECK(cap_count(VIRTIO_VSOCK_OP_RESPONSE) == 2);
+	ATF_CHECK(vtvsock_conn_count == 1);
+}
+
 ATF_TC_WITHOUT_HEAD(request_nonzero_initial_fwd_cnt_rst);
 ATF_TC_BODY(request_nonzero_initial_fwd_cnt_rst, tc)
 {
@@ -1319,6 +1442,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rebind_preserves_original_reservation);
 	ATF_TP_ADD_TC(tp, seqpacket_rx_eor_follows_wire_flag);
 	ATF_TP_ADD_TC(tp, rx_mbuf_chain_copy);
+	ATF_TP_ADD_TC(tp, rx_mbuf_empty_has_packet_header);
 	ATF_TP_ADD_TC(tp, seqpacket_fragment_mbuf_headers);
 	ATF_TP_ADD_TC(tp, seqpacket_fragment_limit_rst);
 	ATF_TP_ADD_TC(tp, deferred_shutdown_timeout);
@@ -1335,6 +1459,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rx_control_payload_is_rejected_before_state_change);
 	ATF_TP_ADD_TC(tp, rx_unknown_type_rst_is_terminal);
 	ATF_TP_ADD_TC(tp, inbound_connection_cap_reclaims_slot);
+	ATF_TP_ADD_TC(tp, connection_limits_cover_all_directions);
 	ATF_TP_ADD_TC(tp, request_nonzero_initial_fwd_cnt_rst);
 	ATF_TP_ADD_TC(tp, stale_transport_packet_is_dropped);
 	ATF_TP_ADD_TC(tp, transport_write_readiness_poll_kqueue);

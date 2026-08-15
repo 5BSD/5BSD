@@ -1,0 +1,99 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.\" Redistribution and use in source and binary forms, with or without
+.\" modification, are permitted provided that the following conditions
+.\" are met:
+.\" 1. Redistributions of source code must retain the above copyright
+.\"    notice, this list of conditions and the following disclaimer.
+.\" 2. Redistributions in binary form must reproduce the above copyright
+.\"    notice, this list of conditions and the following disclaimer in the
+.\"    documentation and/or other materials provided with the distribution.
+.\"
+.\" THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+.\" ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+.\" IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+.\" ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+.\" FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+.\" DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+.\" OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+.\" HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+.\" LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+.\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+.\" SUCH DAMAGE.
+.\"
+.Dd August 13, 2026
+.Dt VIRTIO_FS 4
+.Os
+.Sh NAME
+.Nm virtio_fs
+.Nd VirtIO file system driver
+.Sh SYNOPSIS
+To compile this driver into the kernel,
+place the following lines in your
+kernel configuration file:
+.Bd -ragged -offset indent
+.Cd "options FUSEFS"
+.Cd "device virtio_fs"
+.Ed
+.Pp
+Alternatively, to load the driver as a
+module at boot time, place the following line in
+.Xr loader.conf 5 :
+.Bd -literal -offset indent
+virtio_fs_load="YES"
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+device driver provides support for VirtIO file system (virtio-fs) devices,
+which export a host directory tree to the guest.
+.Pp
+virtio-fs is the FUSE protocol carried over VirtIO request queues instead of
+the
+.Pa /dev/fuse
+character device.
+Rather than reimplement a file system, the
+.Nm
+driver bridges the in-tree
+.Xr fusefs 5
+VFS to the VirtIO transport: for each virtio-fs PCI function it publishes a
+.Pa /dev/virtiofs Ns Ar N
+character device holding an in-kernel FUSE session, and an in-kernel worker
+thread marshals the session's FUSE messages onto the device request queues,
+playing the role a userspace FUSE daemon plays for
+.Pa /dev/fuse .
+.Pp
+The exported directory is attached to the file system with
+.Xr mount_virtiofs 8 ,
+which resolves the host-configured mount tag and mounts a file system of type
+.Xr fusefs 5 .
+The mount tag of each device is published through the
+.Va dev.virtio_fs. Ns Ar N Ns Va .tag
+.Xr sysctl 8
+variable.
+.Sh FILES
+.Bl -tag -width ".Pa /dev/virtiofs Ns Ar N" -compact
+.It Pa /dev/virtiofs Ns Ar N
+per-device FUSE session node
+.El
+.Sh SEE ALSO
+.Xr virtio 4 ,
+.Xr fusefs 5 ,
+.Xr mount_virtiofs 8
+.Sh HISTORY
+The
+.Nm
+driver first appeared in
+.Fx 15.0 .
+.Sh AUTHORS
+The
+.Nm
+driver was written by
+.An Kory Heard .
+.Sh BUGS
+This is a first-slice implementation.
+DAX, the notification queue, and packed-ring, queue-reset and suspend
+negotiation are not yet supported.

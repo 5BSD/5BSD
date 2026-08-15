@@ -51,7 +51,11 @@ flow-control-violation ECONNRESET, CID_LOCAL wire isolation, SEQPACKET
 fragment-limit RST, deferred-teardown timeout, and transport reset with CID
 re-registration.  It also covers the global inbound connection cap, the
 non-blocking TX-ready gate before uio consumption, and guest SEQPACKET
-`MSG_EOR` transport marking.  An exact peer-advertised-window record is
+`MSG_EOR` transport marking.  RX mbuf tests prove that a multi-mbuf payload is
+copied through every preallocated element with one accurate packet header,
+that an empty record retains its zero-length packet header, and that
+fragmented SEQPACKET delivery preserves exactly one packet header.  An exact
+peer-advertised-window record is
 accepted and fragmented with EOM/EOR only on its final packet; one byte more
 returns `EMSGSIZE` without consuming credit or closing the connection.
 Send-side terminal-state checks assert that

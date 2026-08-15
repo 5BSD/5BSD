@@ -1576,6 +1576,153 @@ pmap_pte(pmap_t pmap, vm_offset_t va)
 	return (pmap_pde_to_pte(pde, va));
 }
 
+/*
+ * Apply the architectural R/W/X bits to one resident 4-KiB EPT leaf.
+ *
+ * This entry point is intentionally narrower than pmap_protect().  The
+ * generic VM protection API cannot represent execute-only EPT mappings, and
+ * the ordinary EPT pmap uses hardware R/W bits for accessed/dirty tracking.
+ * A caller needing exact nested-EPT permissions must therefore use an EPT
+ * pmap with software-emulated A/D bits and keep the mapping wired while the
+ * permissions are installed.
+ */
+int
+pmap_ept_set_permissions(pmap_t pmap, vm_offset_t va, u_int permissions)
+{
+	pd_entry_t *pde;
+	pt_entry_t *pte, oldpte, newpte;
+
+	if (pmap == NULL || pmap->pm_type != PT_EPT ||
+	    !pmap_emulate_ad_bits(pmap) ||
+	    (permissions & ~PMAP_EPT_PERM_MASK) != 0 ||
+	    permissions == 0 ||
+	    ((permissions & PMAP_EPT_PERM_WRITE) != 0 &&
+	    (permissions & PMAP_EPT_PERM_READ) == 0))
+		return (EINVAL);
+	if ((permissions & (PMAP_EPT_PERM_READ |
+	    PMAP_EPT_PERM_EXECUTE)) == PMAP_EPT_PERM_EXECUTE &&
+	    (pmap->pm_flags & PMAP_SUPPORTS_EXEC_ONLY) == 0)
+		return (ENOTSUP);
+
+	va = trunc_page(va);
+	PMAP_LOCK(pmap);
+	pde = pmap_pde(pmap, va);
+	if (pde == NULL || (*pde & EPT_PG_EMUL_V) == 0) {
+		PMAP_UNLOCK(pmap);
+		return (ENOENT);
+	}
+	if ((*pde & PG_PS) != 0) {
+		PMAP_UNLOCK(pmap);
+		return (E2BIG);
+	}
+	pte = pmap_pde_to_pte(pde, va);
+	oldpte = *pte;
+	if ((oldpte & EPT_PG_EMUL_V) == 0) {
+		PMAP_UNLOCK(pmap);
+		return (ENOENT);
+	}
+	newpte = (oldpte & ~(EPT_PG_READ | EPT_PG_WRITE |
+	    EPT_PG_EXECUTE)) | permissions;
+	if (newpte != oldpte) {
+		pte_store(pte, newpte);
+		pmap_invalidate_page(pmap, va);
+	}
+	PMAP_UNLOCK(pmap);
+	return (0);
+}
+
+/*
+ * Query the hardware dirty bit for the guest mapping which contains va.
+ *
+ * This intentionally accepts only nested EPT/NPT pmaps using hardware A/D
+ * bits.  An EPT pmap with emulated A/D uses its write permission as the
+ * modified bit, so treating it as a dirty-log source would report writable
+ * but untouched memory as dirty.  Callers which request clear must stop the
+ * relevant guest CPUs before calling this routine: the operation clears one
+ * leaf and invalidates the nested translation, but it cannot account for a
+ * guest write racing the clear.
+ *
+ * The result describes the actual mapped leaf.  In particular, a dirty
+ * superpage is deliberately not misreported as one dirty 4 KiB page.
+ */
+int
+pmap_guest_query_dirty(pmap_t pmap, vm_offset_t va, bool clear,
+    struct pmap_guest_dirty_leaf *leaf)
+{
+	pdp_entry_t *pdpe;
+	pd_entry_t *pde;
+	pt_entry_t *pte;
+	pt_entry_t oldpte, newpte, valid, modified;
+	vm_offset_t base;
+	vm_size_t size;
+	bool dirty;
+
+	if (pmap == NULL || leaf == NULL || !pmap_type_guest(pmap))
+		return (EINVAL);
+	if (pmap_emulate_ad_bits(pmap))
+		return (ENOTSUP);
+
+	va = trunc_page(va);
+	PMAP_LOCK(pmap);
+	valid = pmap_valid_bit(pmap);
+	modified = pmap_modified_bit(pmap);
+	pdpe = pmap_pdpe(pmap, va);
+	if (pdpe == NULL || (*pdpe & valid) == 0) {
+		PMAP_UNLOCK(pmap);
+		return (ENOENT);
+	}
+	if ((*pdpe & PG_PS) != 0) {
+		pte = (pt_entry_t *)pdpe;
+		base = va & ~PDPMASK;
+		size = NBPDP;
+	} else {
+		pde = pmap_pdpe_to_pde(pdpe, va);
+		if ((*pde & valid) == 0) {
+			PMAP_UNLOCK(pmap);
+			return (ENOENT);
+		}
+		if ((*pde & PG_PS) != 0) {
+			pte = (pt_entry_t *)pde;
+			base = va & ~PDRMASK;
+			size = NBPDR;
+		} else {
+			pte = pmap_pde_to_pte(pde, va);
+			if ((*pte & valid) == 0) {
+				PMAP_UNLOCK(pmap);
+				return (ENOENT);
+			}
+			base = va;
+			size = PAGE_SIZE;
+		}
+	}
+
+	/*
+	 * Hardware can set A/D bits without taking the pmap lock.  A CAS avoids
+	 * erasing a freshly-set dirty bit that was not included in oldpte.
+	 */
+	oldpte = atomic_load_long((u_long *)pte);
+	for (;;) {
+		if ((oldpte & valid) == 0) {
+			PMAP_UNLOCK(pmap);
+			return (ENOENT);
+		}
+		dirty = (oldpte & modified) != 0;
+		if (!clear || !dirty)
+			break;
+		newpte = oldpte & ~modified;
+		if (atomic_fcmpset_long((u_long *)pte, &oldpte, newpte)) {
+			pmap_invalidate_page(pmap, va);
+			break;
+		}
+	}
+	PMAP_UNLOCK(pmap);
+
+	leaf->pgl_base = base;
+	leaf->pgl_size = size;
+	leaf->pgl_dirty = dirty;
+	return (0);
+}
+
 static __inline void
 pmap_resident_count_adj(pmap_t pmap, int count)
 {

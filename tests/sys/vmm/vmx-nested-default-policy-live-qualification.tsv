@@ -1,0 +1,2 @@
+feature_id	requirement_ids	linux_l2_status	linux_l2_evidence	fivebsd_l2_status	fivebsd_l2_evidence	host_evidence	notes
+VPID-DEFAULT-OFF	NVMX-CAP-010;NVMX-VPID-001	pending	-	pending	-	-	Boot with hw.vmm.vmx.nested=1 and hw.vmm.vmx.nested_vpid=0; prove both L2 operating systems observe an L1 CPU model without VPID, every INVVPID form raises the architecturally expected unavailable-instruction result, ordinary untagged nested execution remains functional, and the host trace contains no destination-local VPID allocation or INVVPID execution.

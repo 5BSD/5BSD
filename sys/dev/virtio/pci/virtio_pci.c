@@ -388,8 +388,20 @@ vtpci_alloc_virtqueues(struct vtpci_common *cn, int nvqs,
 		cn->vtpci_nvqs++;
 	}
 
-	if (error)
+	if (error) {
+		/*
+		 * A partial allocation stored a live virtqueue pointer into each
+		 * driver softc slot (*info->vqai_vq) for every vq that did
+		 * allocate.  vtpci_free_virtqueues() frees those rings but only
+		 * clears its own vtv_vq array, leaving the driver's copies
+		 * dangling -- an attach-failure detach path that dereferences
+		 * them (e.g. virtqueue_drain(sc->eventq)) would then touch freed
+		 * memory.  Clear the driver slots before freeing.
+		 */
+		for (idx = 0; idx < cn->vtpci_nvqs; idx++)
+			*vq_info[idx].vqai_vq = NULL;
 		vtpci_free_virtqueues(cn);
+	}
 
 	return (error);
 }
@@ -569,6 +581,13 @@ vtpci_free_interrupts(struct vtpci_common *cn)
 		pci_release_msi(cn->vtpci_dev);
 
 	cn->vtpci_flags &= ~VTPCI_FLAG_ITYPE_MASK;
+}
+
+void
+vtpci_teardown_interrupts(struct vtpci_common *cn)
+{
+
+	vtpci_free_interrupts(cn);
 }
 
 static void

@@ -764,46 +764,170 @@ vhpet_getcap(struct vm_hpet_cap *cap)
 }
 
 #ifdef BHYVE_SNAPSHOT
+/*
+ * This is staging for the fixed STRUCT_VHPET compatibility record.  It is
+ * deliberately not serialized as one object: retain the historical field
+ * order below so existing snapshot files remain readable.
+ */
+struct vhpet_snapshot_timer {
+	uint64_t	cap_config;
+	uint64_t	msireg;
+	uint32_t	compval;
+	uint32_t	comprate;
+	sbintime_t	callout_sbt;
+};
+
+struct vhpet_snapshot_state {
+	sbintime_t	freq_sbt;
+	uint64_t	config;
+	uint64_t	isr;
+	uint32_t	countbase;
+	struct vhpet_snapshot_timer timer[VHPET_NUM_TIMERS];
+};
+
+static void
+vhpet_snapshot_capture_locked(struct vhpet *vhpet,
+    struct vhpet_snapshot_state *state)
+{
+	int i;
+
+	state->freq_sbt = vhpet->freq_sbt;
+	state->config = vhpet->config;
+	state->isr = vhpet->isr;
+	state->countbase = vhpet_counter(vhpet, NULL);
+	for (i = 0; i < nitems(vhpet->timer); i++) {
+		state->timer[i].cap_config = vhpet->timer[i].cap_config;
+		state->timer[i].msireg = vhpet->timer[i].msireg;
+		state->timer[i].compval = vhpet->timer[i].compval;
+		state->timer[i].comprate = vhpet->timer[i].comprate;
+		state->timer[i].callout_sbt = vhpet->timer[i].callout_sbt;
+	}
+}
+
+static bool
+vhpet_snapshot_state_valid(struct vhpet *vhpet,
+    const struct vhpet_snapshot_state *state)
+{
+	const uint64_t writable = HPET_TCNF_FSB_EN | HPET_TCNF_INT_ROUTE |
+	    HPET_TCNF_VAL_SET | HPET_TCNF_TYPE | HPET_TCNF_INT_ENB |
+	    HPET_TCNF_INT_TYPE;
+	uint64_t cap_config, allowed_irqs, route;
+	int i;
+
+	/* freq_sbt is a device constant and is used as a division divisor. */
+	if (state->freq_sbt != vhpet->freq_sbt || state->freq_sbt == 0 ||
+	    (state->config & ~HPET_CNF_ENABLE) != 0 ||
+	    (state->isr & ~((UINT64_C(1) << VHPET_NUM_TIMERS) - 1)) != 0)
+		return (false);
+
+	for (i = 0; i < nitems(state->timer); i++) {
+		cap_config = state->timer[i].cap_config;
+		if ((cap_config & HPET_TCAP_RO_MASK) !=
+		    (vhpet->timer[i].cap_config & HPET_TCAP_RO_MASK) ||
+		    (cap_config & ~(HPET_TCAP_RO_MASK | writable)) != 0)
+			return (false);
+		if ((cap_config & HPET_TCNF_FSB_EN) != 0 &&
+		    (cap_config & HPET_TCAP_FSB_INT_DEL) == 0)
+			return (false);
+		if ((cap_config & HPET_TCNF_TYPE) != 0 &&
+		    (cap_config & HPET_TCAP_PER_INT) == 0)
+			return (false);
+		if ((cap_config & HPET_TCNF_TYPE) == 0 &&
+		    state->timer[i].comprate != 0)
+			return (false);
+
+		allowed_irqs = cap_config >> 32;
+		route = (cap_config & HPET_TCNF_INT_ROUTE) >> 9;
+		if (route != 0 &&
+		    (allowed_irqs & (UINT64_C(1) << route)) == 0)
+			return (false);
+
+		/* ISR bits represent asserted level-triggered IOAPIC lines. */
+		if ((state->isr & (UINT64_C(1) << i)) != 0 &&
+		    ((cap_config & HPET_TCNF_INT_ENB) == 0 ||
+		    (cap_config & HPET_TCNF_INT_TYPE) == 0 ||
+		    (cap_config & HPET_TCNF_FSB_EN) != 0 || route == 0))
+			return (false);
+	}
+	return (true);
+}
+
+static void
+vhpet_snapshot_restore_locked(struct vhpet *vhpet,
+    const struct vhpet_snapshot_state *state)
+{
+	int i;
+
+	/* Source callout deadlines are not valid on the destination host. */
+	for (i = 0; i < nitems(vhpet->timer); i++)
+		callout_stop(&vhpet->timer[i].callout);
+
+	vhpet->freq_sbt = state->freq_sbt;
+	vhpet->config = state->config;
+	vhpet->isr = state->isr;
+	vhpet->countbase = state->countbase;
+	for (i = 0; i < nitems(vhpet->timer); i++) {
+		vhpet->timer[i].cap_config = state->timer[i].cap_config;
+		vhpet->timer[i].msireg = state->timer[i].msireg;
+		vhpet->timer[i].compval = state->timer[i].compval;
+		vhpet->timer[i].comprate = state->timer[i].comprate;
+		vhpet->timer[i].callout_sbt = state->timer[i].callout_sbt;
+	}
+}
+
 int
 vhpet_snapshot(struct vhpet *vhpet, struct vm_snapshot_meta *meta)
 {
+	struct vhpet_snapshot_state state;
 	int i, ret;
-	uint32_t countbase;
 
-	SNAPSHOT_VAR_OR_LEAVE(vhpet->freq_sbt, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vhpet->config, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vhpet->isr, meta, ret, done);
+	if (vhpet == NULL || meta == NULL)
+		return (EINVAL);
+	memset(&state, 0, sizeof(state));
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		VHPET_LOCK(vhpet);
+		vhpet_snapshot_capture_locked(vhpet, &state);
+		VHPET_UNLOCK(vhpet);
+	}
 
-	/* at restore time the countbase should have the value it had when the
-	 * snapshot was created; since the value is not directly kept in
-	 * vhpet->countbase, but rather computed relative to the current system
-	 * uptime using countbase_sbt, save the value returned by vhpet_counter
-	 */
-	if (meta->op == VM_SNAPSHOT_SAVE)
-		countbase = vhpet_counter(vhpet, NULL);
-	SNAPSHOT_VAR_OR_LEAVE(countbase, meta, ret, done);
-	if (meta->op == VM_SNAPSHOT_RESTORE)
-		vhpet->countbase = countbase;
+	SNAPSHOT_VAR_OR_LEAVE(state.freq_sbt, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.config, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.isr, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.countbase, meta, ret, done);
 
 	for (i = 0; i < nitems(vhpet->timer); i++) {
-		SNAPSHOT_VAR_OR_LEAVE(vhpet->timer[i].cap_config,
+		SNAPSHOT_VAR_OR_LEAVE(state.timer[i].cap_config,
 				      meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(vhpet->timer[i].msireg, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(vhpet->timer[i].compval, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(vhpet->timer[i].comprate, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(vhpet->timer[i].callout_sbt,
+		SNAPSHOT_VAR_OR_LEAVE(state.timer[i].msireg, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(state.timer[i].compval, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(state.timer[i].comprate, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(state.timer[i].callout_sbt,
 				      meta, ret, done);
 	}
 
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		VHPET_LOCK(vhpet);
+		if (!vhpet_snapshot_state_valid(vhpet, &state)) {
+			VHPET_UNLOCK(vhpet);
+			ret = EINVAL;
+			goto done;
+		}
+		vhpet_snapshot_restore_locked(vhpet, &state);
+		VHPET_UNLOCK(vhpet);
+	}
+
 done:
+	explicit_bzero(&state, sizeof(state));
 	return (ret);
 }
 
 int
 vhpet_restore_time(struct vhpet *vhpet)
 {
+	VHPET_LOCK(vhpet);
 	if (vhpet_counter_enabled(vhpet))
 		vhpet_start_counting(vhpet);
+	VHPET_UNLOCK(vhpet);
 
 	return (0);
 }

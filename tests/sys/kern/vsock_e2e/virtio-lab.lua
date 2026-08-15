@@ -166,6 +166,50 @@ local function validate_string_list(values, description, allow_empty)
 	end
 end
 
+local function valid_profile_name(name)
+
+	return type(name) == "string" and
+	    name:match("^[a-z0-9][a-z0-9._-]*$") ~= nil
+end
+
+local function profile_closure(document, requested)
+	local active = {}
+	local visiting = {}
+
+	local function include(name)
+		if visiting[name] then
+			die("profile group cycle at " .. name)
+		end
+		if active[name] then
+			return
+		end
+		active[name] = true
+		local members = document.profile_groups and
+		    document.profile_groups[name]
+		if members == nil then
+			return
+		end
+		visiting[name] = true
+		for _, member in ipairs(members) do
+			include(member)
+		end
+		visiting[name] = nil
+	end
+
+	include(requested)
+	return active
+end
+
+local function profile_list_matches(profiles, active)
+
+	for _, profile in ipairs(profiles or {}) do
+		if active[profile] then
+			return true
+		end
+	end
+	return false
+end
+
 local function merge_environment(base, overlay)
 	local result = table_copy(base)
 	for key, value in pairs(overlay or {}) do
@@ -176,6 +220,7 @@ end
 
 local function parse_options(first)
 	local options = {
+		case_ids = {},
 		jobs = 1,
 		profile = "smoke",
 		sets = {},
@@ -193,7 +238,9 @@ local function parse_options(first)
 		    option == "--jobs" or option == "--iso" or
 		    option == "--fivebsd-image" or
 		    option == "--workdir" or option == "--bridge" or
-		    option == "--uplink" or option == "--set" then
+		    option == "--uplink" or option == "--cid-lease-dir" or
+		    option == "--case" or
+		    option == "--set" then
 			local value = arg[index + 1]
 			if value == nil then
 				die(option .. " requires a value")
@@ -218,6 +265,10 @@ local function parse_options(first)
 				options.bridge = value
 			elseif option == "--uplink" then
 				options.uplink = value
+			elseif option == "--cid-lease-dir" then
+				options.cid_lease_dir = value
+			elseif option == "--case" then
+				table.insert(options.case_ids, value)
 			else
 				local key, setting = value:match("^([A-Z][A-Z0-9_]*)=(.*)$")
 				if key == nil then
@@ -245,11 +296,66 @@ local executors = {
 	["rx-harness"] = "../vsock_rx_harness/run.sh",
 	["host-selftest"] = "host-tools-selftest.sh",
 	["host-regression"] = "virtio-host-regression.sh",
+	["fivebsd-module-build"] = "build-5bsd-virtio-modules.sh",
+	["vmm-module-build"] = "build-vmm-module.sh",
+	-- Keep the architectural nested-state model in the ordinary rootless
+	-- qualification lane.  The hardware executor remains a separate,
+	-- explicitly privileged gate below; passing this model must never be
+	-- interpreted as enabling nested VMX in the running kernel.
+	["nested-vmx-model"] = "../../vmm/run-vmx-nested-model.sh",
+	["nested-vmx-live"] = "../../vmm/run-vmx-nested-live.sh",
 	["orchestrator-probe"] = "virtio-lab-probe.sh",
 }
 
+--
+-- lyaml accepts duplicate mapping keys using last-key-wins semantics.  That
+-- is unsafe for a qualification manifest because a duplicated executor,
+-- timeout, gate, or environment key can silently replace the reviewed value.
+-- This manifest uses plain mapping keys and space indentation, so reject a
+-- duplicate at the same mapping level before parsing it.
+--
+local function reject_duplicate_mapping_keys(contents, path)
+	local line_number = 0
+	local seen = {}
+
+	for line in (contents .. "\n"):gmatch("(.-)\n") do
+		local indent_text, body
+		local indent, key, sequence_item
+
+		line_number = line_number + 1
+		if line:match("^ *\t") ~= nil then
+			die(path .. ":" .. line_number ..
+			    ": tabs are not allowed for YAML indentation")
+		end
+		indent_text, body = line:match("^( *)(.*)$")
+		indent = #indent_text
+		sequence_item = body:match("^%-%s+") ~= nil
+		if sequence_item then
+			body = body:gsub("^%-%s+", "", 1)
+			indent = indent + 2
+		end
+		for level in pairs(seen) do
+			if level > indent or
+			    (sequence_item and level >= indent) then
+				seen[level] = nil
+			end
+		end
+		key = body:match("^([%a_][%w_-]*):")
+		if key ~= nil then
+			seen[indent] = seen[indent] or {}
+			if seen[indent][key] then
+				die(path .. ":" .. line_number ..
+				    ": duplicate mapping key: " .. key)
+			end
+			seen[indent][key] = true
+		end
+	end
+end
+
 local function load_manifest(path)
-	local document = lyaml.load(read_file(path))
+	local contents = read_file(path)
+	reject_duplicate_mapping_keys(contents, path)
+	local document = lyaml.load(contents)
 	if type(document) ~= "table" or document.version ~= 1 or
 	    type(document.cases) ~= "table" then
 		die("manifest must contain version: 1 and a cases sequence")
@@ -257,8 +363,30 @@ local function load_manifest(path)
 	if document.defaults ~= nil and type(document.defaults) ~= "table" then
 		die("defaults must be a mapping")
 	end
+	if document.profile_groups ~= nil and
+	    type(document.profile_groups) ~= "table" then
+		die("profile_groups must be a mapping")
+	end
+	for name, members in pairs(document.profile_groups or {}) do
+		if not valid_profile_name(name) then
+			die("invalid profile group name: " .. tostring(name))
+		end
+		validate_string_list(members, "profile group " .. name, false)
+		for _, member in ipairs(members) do
+			if not valid_profile_name(member) then
+				die("invalid member in profile group " .. name)
+			end
+		end
+	end
 	validate_environment(document.defaults and document.defaults.env,
 	    "defaults.env")
+	-- The nested architectural model is a VM-free preflight.  Do not let a
+	-- manifest default turn it into an installed-kernel test when the lab is
+	-- launched by root; the separate nested-vmx-live executor owns that scope.
+	if document.defaults ~= nil and document.defaults.env ~= nil and
+	    document.defaults.env.VMX_NESTED_MODEL_LIVE_ATF ~= nil then
+		die("defaults.env must not set VMX_NESTED_MODEL_LIVE_ATF")
+	end
 	if document.allowed_overrides ~= nil then
 		validate_string_list(document.allowed_overrides,
 		    "allowed_overrides", true)
@@ -314,6 +442,248 @@ local function case_timeout(document, case)
 	return timeout
 end
 
+local checkpoint_packed_variable = {
+	net = "NET_PACKED",
+	vsock = "VSOCK_PACKED",
+	rng = "RNG_PACKED",
+	balloon = "BALLOON_PACKED",
+	rtc = "RTC_PACKED",
+	block = "BLOCK_PACKED",
+	scsi = "SCSI_PACKED",
+	console = "CONSOLE_PACKED",
+	["9p"] = "NINEP_PACKED",
+	fs = "FS_PACKED",
+	input = "INPUT_PACKED",
+	gpu = "GPU_PACKED",
+	iommu = "IOMMU_PACKED",
+	mem = "MEM_PACKED",
+	pmem = "PMEM_PACKED",
+	sound = "SOUND_PACKED",
+}
+
+local packed_trace_device = {
+	net = "vtnet",
+	vsock = "vtvsock",
+	rng = "vtrnd",
+	balloon = "vtballoon",
+	rtc = "vtrtc",
+	block = "vtblk",
+	scsi = "vtscsi",
+	console = "vtcon",
+	["9p"] = "vt9p",
+	fs = "vtfs",
+	input = "vtinput",
+	gpu = "vtgpu",
+	iommu = "vtiommu",
+	mem = "vtmem",
+	pmem = "vtpmem",
+	sound = "vtsnd",
+}
+
+local function single_case_device(case)
+	local device
+	local count = 0
+
+	if type(case.env) ~= "table" then
+		return nil
+	end
+	for candidate in tostring(case.env.DEVICES or ""):gmatch("[^,%s]+") do
+		device = candidate
+		count = count + 1
+	end
+	if count == 1 then
+		return device
+	end
+	return nil
+end
+
+local function case_has_device(case, wanted)
+	if type(case.env) ~= "table" then
+		return false
+	end
+	for device in tostring(case.env.DEVICES or ""):gmatch("[^,%s]+") do
+		if device == wanted then
+			return true
+		end
+	end
+	return false
+end
+
+local function case_has_profile(case, wanted)
+
+	for _, profile in ipairs(case.profiles or {}) do
+		if profile == wanted then
+			return true
+		end
+	end
+	return false
+end
+
+local function validate_checkpoint_ring_label(case)
+	local device
+	local variable
+	local expected
+
+	if case.id:match("^checkpoint%-") == nil or type(case.env) ~= "table" then
+		return
+	end
+	device = single_case_device(case)
+	if device == nil then
+		return
+	end
+	variable = checkpoint_packed_variable[device]
+	if variable == nil then
+		return
+	end
+	expected = case.id:find("packed", 1, true) ~= nil and "yes" or "no"
+	if tostring(case.env[variable] or "") ~= expected then
+		die(case.id .. " must set " .. variable .. "=" .. expected ..
+		    " so its ring-format label is authoritative")
+	end
+end
+
+local function validate_packed_trace_evidence(case)
+	local device
+	local variable
+	local expected_name
+
+	if case.executor ~= "alpine-auto" or type(case.env) ~= "table" then
+		return
+	end
+	-- The IOMMU is an implicit fabric device: endpoint cases name their
+	-- endpoint devices in DEVICES and enable it with VIRTIO_IOMMU.  It
+	-- therefore cannot rely on the single-DEVICES entry check below.
+	if tostring(case.env.IOMMU_PACKED or "") == "yes" then
+		if tostring(case.env.VIRTIO_IOMMU or "") ~= "yes" or
+		    tostring(case.env.VERIFY_DEVICE_RING_NAME or "") ~= "vtiommu" or
+		    tostring(case.env.VERIFY_DEVICE_RING_LAYOUT or "") ~= "packed" then
+			die(case.id .. " must require packed host ring evidence from " ..
+		    "vtiommu when IOMMU_PACKED=yes")
+		end
+	end
+	device = single_case_device(case)
+	if device == nil then
+		return
+	end
+	variable = checkpoint_packed_variable[device]
+	expected_name = packed_trace_device[device]
+	if variable == nil or expected_name == nil or
+	    tostring(case.env[variable] or "") ~= "yes" then
+		return
+	end
+	if tostring(case.env.VERIFY_DEVICE_RING_NAME or "") ~= expected_name or
+	    tostring(case.env.VERIFY_DEVICE_RING_LAYOUT or "") ~= "packed" then
+		die(case.id .. " must require packed host ring evidence from " ..
+		    expected_name)
+	end
+end
+
+local function validate_active_checkpoint_evidence(case)
+	local device
+	local interval
+
+	if case.executor ~= "alpine-auto" or type(case.env) ~= "table" or
+	    tostring(case.env.CHECKPOINT_TEST or "") ~= "yes" then
+		return
+	end
+	device = single_case_device(case)
+	if device == "balloon" or case_has_device(case, "balloon") then
+		interval = tonumber(case.env.BALLOON_STATS_INTERVAL or "0")
+		if interval == nil or interval < 1 then
+			die(case.id .. " must enable BALLOON_STATS_INTERVAL so " ..
+		    "checkpoint qualification has active device state")
+		end
+	end
+	if device == "mem" then
+		if tostring(case.env.CHECKPOINT_ACTIVE_MEM or "") ~= "yes" or
+		    (tonumber(case.env.MEM_CHECKPOINT_ALLOC_MB or "0") or 0) < 1 then
+			die(case.id .. " must enable CHECKPOINT_ACTIVE_MEM with " ..
+			    "a positive MEM_CHECKPOINT_ALLOC_MB so checkpoint " ..
+			    "qualification pins verified device-backed pages")
+		end
+	end
+	if case_has_device(case, "vsock") and
+	    tostring(case.env.CHECKPOINT_ACTIVE_VSOCK_REJECT or "") ~= "yes" then
+		die(case.id .. " must enable CHECKPOINT_ACTIVE_VSOCK_REJECT so " ..
+		    "checkpoint qualification proves active-backend rollback")
+	end
+	if case_has_device(case, "console") and
+	    tostring(case.env.CHECKPOINT_ACTIVE_CONSOLE_REJECT or "") ~= "yes" then
+		die(case.id .. " must enable CHECKPOINT_ACTIVE_CONSOLE_REJECT so " ..
+		    "checkpoint qualification proves active-port rollback")
+	end
+	if case_has_device(case, "9p") and
+	    tostring(case.env.CHECKPOINT_ACTIVE_9P_REJECT or "") ~= "yes" then
+		die(case.id .. " must enable CHECKPOINT_ACTIVE_9P_REJECT so " ..
+		    "checkpoint qualification proves active-fid rollback")
+	end
+	-- The active and idle virtio-fs checkpoint lanes intentionally exercise
+	-- different reconstruction contracts.  Keep the names authoritative:
+	-- otherwise a future manifest edit can leave a case labelled "active"
+	-- while silently unmounting the export before snapshot, or call an idle
+	-- case a repeated-restore test without retaining an open fid.
+	if case.id:match("^checkpoint%-fs%-active") ~= nil then
+		if tostring(case.env.CHECKPOINT_ACTIVE_FS or "") ~= "yes" or
+		    tostring(case.env.CHECKPOINT_REPEAT_FS_RESTORE or "") ~= "yes" then
+			die(case.id .. " must retain active virtio-fs state across a " ..
+			    "repeated checkpoint restore")
+		end
+	end
+	if case.id:match("^checkpoint%-fs%-idle") ~= nil then
+		-- Defaults are merged after manifest shape validation.  Omission is
+		-- therefore the reviewed default "no" here, while an explicit "yes"
+		-- would make an idle-labelled lane misleading.
+		if tostring(case.env.CHECKPOINT_ACTIVE_FS or "no") ~= "no" or
+		    tostring(case.env.CHECKPOINT_REPEAT_FS_RESTORE or "no") ~= "no" then
+			die(case.id .. " must remain an idle virtio-fs checkpoint lane")
+		end
+	end
+end
+
+local function validate_iommu_translation_evidence(case)
+
+	if case.executor ~= "alpine-auto" or type(case.env) ~= "table" or
+	    tostring(case.env.VIRTIO_IOMMU or "") ~= "yes" then
+		return
+	end
+	-- Enumeration, an iommu_group symlink, and negotiated
+	-- ACCESS_PLATFORM do not prove that a device request reached the
+	-- translated DMA path.  Release and checkpoint lanes therefore need
+	-- the host translation probe, correlated with every endpoint found
+	-- by the guest.  Soak lanes deliberately avoid retaining an
+	-- unbounded trace and validate translation at their bounded
+	-- observation intervals instead.
+	if (case_has_profile(case, "release") or
+	    case_has_profile(case, "checkpoint")) and
+	    tostring(case.env.VERIFY_RING_ACTIVITY or "") ~= "yes" then
+		die(case.id .. " must set VERIFY_RING_ACTIVITY=yes so live " ..
+		    "IOMMU coverage observes translated DMA for every endpoint")
+	end
+end
+
+local function validate_balloon_optional_evidence(case)
+
+	if case.executor ~= "alpine-auto" or type(case.env) ~= "table" then
+		return
+	end
+	-- PAGE_POISON intentionally prevents the host discard optimization for
+	-- reported pages.  Keep separate live cases for the discard and
+	-- poison-preservation paths so enabling both features cannot satisfy
+	-- both claims with one branch.
+	if case.id == "balloon-free-page-reporting-modern" and
+	    (tostring(case.env.BALLOON_FREE_PAGE_REPORTING or "") ~= "yes" or
+	    tostring(case.env.BALLOON_PAGE_POISON or "") ~= "no") then
+		die(case.id .. " must enable reporting with PAGE_POISON=no so " ..
+		    "the live lane proves host free-page discard")
+	end
+	if case.id == "balloon-page-poison-modern" and
+	    (tostring(case.env.BALLOON_FREE_PAGE_REPORTING or "") ~= "yes" or
+	    tostring(case.env.BALLOON_PAGE_POISON or "") ~= "yes") then
+		die(case.id .. " must enable reporting with PAGE_POISON=yes so " ..
+		    "the live lane proves poison preservation")
+	end
+end
+
 local function validate_case(case, identifiers)
 	if type(case) ~= "table" then
 		die("each case must be a mapping")
@@ -342,31 +712,103 @@ local function validate_case(case, identifiers)
 		die("gate must be exclusive in " .. case.id)
 	end
 	validate_environment(case.env, case.id)
+	if case.executor == "nested-vmx-model" and case.env ~= nil and
+	    case.env.VMX_NESTED_MODEL_LIVE_ATF ~= nil then
+		die("VM-free nested model may not set VMX_NESTED_MODEL_LIVE_ATF: " ..
+	    case.id)
+	end
+	validate_checkpoint_ring_label(case)
+	validate_packed_trace_evidence(case)
+	validate_active_checkpoint_evidence(case)
+	validate_iommu_translation_evidence(case)
+	validate_balloon_optional_evidence(case)
 end
 
-local function selected_cases(document, profile)
+local function selected_cases(document, profile, requested_ids)
 	local selected = {}
 	local identifiers = {}
+	local requested = {}
+	local matched = {}
 	local saw_non_gate = false
+	local active_profiles = profile_closure(document, profile)
+	for _, identifier in ipairs(requested_ids or {}) do
+		if type(identifier) ~= "string" or
+		    identifier:match("^[a-z0-9][a-z0-9._-]*$") == nil then
+			die("invalid --case id: " .. tostring(identifier))
+		end
+		if requested[identifier] then
+			die("duplicate --case id: " .. identifier)
+		end
+		requested[identifier] = true
+	end
 	for _, case in ipairs(document.cases) do
 		validate_case(case, identifiers)
 		case_timeout(document, case)
-		if list_contains(case.profiles, profile) then
+		if profile_list_matches(case.profiles, active_profiles) then
 			if case.gate and saw_non_gate then
 				die("gates must precede non-gate cases in profile " ..
 				    profile .. ": " .. case.id)
 			end
 			saw_non_gate = saw_non_gate or not case.gate
-			table.insert(selected, case)
+			if next(requested) == nil or requested[case.id] then
+				table.insert(selected, case)
+				matched[case.id] = true
+			end
+		end
+	end
+	for identifier, _ in pairs(requested) do
+		if not identifiers[identifier] then
+			die("unknown --case id: " .. identifier)
+		elseif not matched[identifier] then
+			die("--case " .. identifier .. " is not in profile " .. profile)
 		end
 	end
 	if #selected == 0 then
+		if next(requested) ~= nil then
+			die("--case selection is empty")
+		end
 		die("profile selects no cases: " .. profile)
 	end
 	return selected
 end
 
-local function effective_environment(document, case, options, ordinal)
+local function device_list_contains(devices, wanted)
+	for device in tostring(devices or ""):gmatch("[^,%s]+") do
+		if device == wanted then
+			return true
+		end
+	end
+	return false
+end
+
+local function assign_port_lanes(document, cases, options)
+	local next_lane = 0
+	local lane_width = 512
+	local max_base_port = 7473
+
+	for _, case in ipairs(cases) do
+		local environment = merge_environment(
+		    document.defaults and document.defaults.env, case.env)
+		environment = merge_environment(environment, options.sets)
+		local lanes = 0
+		if case.executor == "alpine-multi-vsock" then
+			lanes = 2
+		elseif case.executor == "alpine-auto" and
+		    device_list_contains(environment.DEVICES, "vsock") then
+			lanes = 1
+		end
+		if lanes ~= 0 then
+			case._port_lane = next_lane * lane_width
+			next_lane = next_lane + lanes
+		end
+	end
+	if next_lane * lane_width > 65535 - max_base_port then
+		die("profile has too many concurrent vsock port namespaces")
+	end
+end
+
+local function effective_environment(document, case, options, ordinal,
+    cid_assignment)
 	local environment = merge_environment(
 	    document.defaults and document.defaults.env, case.env)
 	environment = merge_environment(environment, options.sets)
@@ -379,10 +821,7 @@ local function effective_environment(document, case, options, ordinal)
 		environment.GUEST_OS = "5bsd"
 	end
 	environment.VM_FREE_GATES = environment.VM_FREE_GATES or "no"
-	local port_lane = (ordinal - 1) * 1024
-	if port_lane + 512 > 65535 - 7237 then
-		die("profile has too many cases for collision-free port allocation")
-	end
+	local port_lane = case._port_lane or 0
 	if case.executor == "alpine-auto" then
 		environment.CONSOLE_PORT = environment.CONSOLE_PORT or
 		    tostring(10000 + ordinal * 4)
@@ -404,8 +843,19 @@ local function effective_environment(document, case, options, ordinal)
 		    tostring(port_lane + 512)
 	elseif case.executor == "fivebsd-auto" then
 		environment.CONSOLE_PORT = environment.CONSOLE_PORT or
-		    tostring(10000 + ordinal * 4)
+	    tostring(10000 + ordinal * 4)
 		environment.CID = environment.CID or tostring(1000 + ordinal * 4)
+	elseif device_list_contains(environment.DEVICES, "vsock") then
+		--
+		-- CID leasing is a property of a case that uses an AF_VSOCK
+		-- endpoint, not of the particular VM runner.  In particular, the
+		-- rootless scheduler probes deliberately exercise the same lease
+		-- path without launching bhyve.
+		--
+		environment.CID = environment.CID or tostring(1000 + ordinal * 4)
+	end
+	for key, value in pairs(cid_assignment or {}) do
+		environment[key] = value
 	end
 	return environment
 end
@@ -422,6 +872,16 @@ end
 local function coverage_report(document, cases, options)
 	local missing = 0
 	local identifiers = {}
+	local active_profiles = profile_closure(document, options.profile)
+	--
+	-- This command proves that the selected declarative profile contains every
+	-- required option combination.  It deliberately does not read a result
+	-- directory or infer that a guest booted: `run` and its terminal summary
+	-- own that evidence.  Keep the existing COVERED records below because they
+	-- are the stable profile-preflight interface, but make the scope visible to
+	-- a human invoking `coverage` by itself.
+	--
+	print("SCOPE\tdeclarative-profile; runtime results are not implied")
 	for _, contract in ipairs(document.coverage or {}) do
 		if type(contract) ~= "table" or type(contract.id) ~= "string" or
 		    contract.id:match("^[a-z0-9][a-z0-9._-]*$") == nil or
@@ -442,6 +902,9 @@ local function coverage_report(document, cases, options)
 		if contract.selector ~= nil and type(contract.selector) ~= "table" then
 			die("coverage selector must be a mapping for " .. contract.id)
 		end
+		if contract.tokens ~= nil and type(contract.tokens) ~= "boolean" then
+			die("coverage tokens must be a boolean for " .. contract.id)
+		end
 		for key, value in pairs(contract.selector or {}) do
 			if type(key) ~= "string" or
 			    key:match("^[A-Z][A-Z0-9_]*$") == nil or
@@ -450,13 +913,21 @@ local function coverage_report(document, cases, options)
 			end
 		end
 		if contract.profiles == nil or
-		    list_contains(contract.profiles, options.profile) then
+		    profile_list_matches(contract.profiles, active_profiles) then
 			local found = {}
 			for ordinal, case in ipairs(cases) do
 				local environment =
 				    effective_environment(document, case, options, ordinal)
 				if selector_matches(environment, contract.selector) then
-					found[tostring(environment[contract.variable] or "")] = true
+					local actual =
+					    tostring(environment[contract.variable] or "")
+					if contract.tokens then
+						for token in actual:gmatch("%S+") do
+							found[token] = true
+						end
+					else
+						found[actual] = true
+					end
 				end
 			end
 			local absent = {}
@@ -542,11 +1013,116 @@ local function process_parent(pid)
 	return parent
 end
 
-local function supervised_case_alive(status_path)
+-- A PID/PPID pair is not an authority to signal a process: both values can
+-- be recycled between an interrupted manager and a later --resume or cancel
+-- invocation.  Record the same stable process identity used by the case
+-- wrapper (start time plus command, hashed by the host utility) before the
+-- manager treats a daemon-supervised case as its own.
+local function process_fingerprint(pid)
+	if pid == nil or pid <= 1 or pid % 1 ~= 0 then
+		return nil
+	end
+	local process = io.popen("/bin/ps -p " .. tostring(pid) ..
+	    " -o lstart= -o command= 2>/dev/null", "r")
+	if process == nil then
+		return nil
+	end
+	local identity = process:read("*l")
+	local closed = process:close()
+	-- sha256(1) accepts an empty stream.  A vanished process must not acquire
+	-- the digest of that stream as a valid cancellation or resume identity.
+	if identity == nil or identity == "" or not closed then
+		return nil
+	end
+	local hash = io.popen("/usr/bin/printf '%s\\n' " .. shell_quote(identity) ..
+	    " | /sbin/sha256 -q", "r")
+	if hash == nil then
+		return nil
+	end
+	local fingerprint = hash:read("*l")
+	hash:close()
+	if fingerprint == nil or fingerprint:match("^[0-9a-f]+$") == nil or
+	    #fingerprint ~= 64 then
+		return nil
+	end
+	return fingerprint
+end
+
+local function record_process_fingerprint(path, pid)
+	local fingerprint = process_fingerprint(pid)
+	if fingerprint == nil then
+		return false
+	end
+	write_file(path .. ".fingerprint", fingerprint .. "\n")
+	return true
+end
+
+local function recorded_process_fingerprint(path)
+	local file = io.open(path .. ".fingerprint", "r")
+	if file == nil then
+		return nil
+	end
+	local expected = file:read("*l")
+	file:close()
+	if expected == nil or expected:match("^[0-9a-f]+$") == nil or
+	    #expected ~= 64 then
+		return nil
+	end
+	return expected
+end
+
+local function process_fingerprint_value_matches(expected, pid)
+	return expected ~= nil and expected == process_fingerprint(pid)
+end
+
+local function process_fingerprint_matches(path, pid)
+	return process_fingerprint_value_matches(
+	    recorded_process_fingerprint(path), pid)
+end
+
+-- daemon(8) publishes its PID files asynchronously with respect to the
+-- launch command's return.  Only the owning scheduler may fill this missing
+-- control-plane metadata, and it does so from its existing bounded status
+-- scan.  A later cancel/status invocation never turns an unrecorded PID into
+-- signal authority.
+local function record_supervised_case_identity(status_path)
 	local supervisor = read_number(status_path .. ".pid")
 	local child = read_number(status_path .. ".child")
-	return supervisor ~= nil and child ~= nil and
-	    process_parent(child) == supervisor
+	if supervisor == nil or child == nil or
+	    process_parent(child) ~= supervisor then
+		return false
+	end
+	return record_process_fingerprint(status_path .. ".pid", supervisor) and
+	    record_process_fingerprint(status_path .. ".child", child)
+end
+
+-- Return a captured, verified identity rather than merely a boolean when a
+-- caller will later act on the process.  In particular cancel(1) rechecks
+-- this captured identity immediately before kill(2), so PID reuse between
+-- directory enumeration and signal delivery cannot retarget a signal.
+local function supervised_case_identity(status_path)
+	local supervisor = read_number(status_path .. ".pid")
+	local child = read_number(status_path .. ".child")
+	local supervisor_fingerprint =
+	    recorded_process_fingerprint(status_path .. ".pid")
+	local child_fingerprint =
+	    recorded_process_fingerprint(status_path .. ".child")
+	if supervisor == nil or child == nil or
+	    process_parent(child) ~= supervisor or
+	    not process_fingerprint_value_matches(supervisor_fingerprint, supervisor) or
+	    not process_fingerprint_value_matches(child_fingerprint, child) then
+		return nil
+	end
+	return {
+		supervisor = supervisor,
+		child = child,
+		supervisor_fingerprint = supervisor_fingerprint,
+		child_fingerprint = child_fingerprint,
+	}
+end
+
+local function supervised_case_alive(status_path)
+	return supervised_case_identity(status_path) ~= nil
 end
 
 local function stale_case_process_alive(status_path)
@@ -555,11 +1131,278 @@ local function stale_case_process_alive(status_path)
 	if supervised_case_alive(status_path) then
 		return false
 	end
-	return process_parent(supervisor) ~= nil or process_parent(child) ~= nil
+	-- A live parent/child pair with missing or mismatched fingerprints is not
+	-- safe to adopt, cancel, or rerun over.  It may be a corrupted control
+	-- record or a recycled PID pair; either way, fail closed and require the
+	-- operator to let it exit before resuming.  A lone matching process is
+	-- likewise a possible reparented case helper and must block a retry.
+	return (supervisor ~= nil and child ~= nil and
+	    process_parent(child) == supervisor) or
+	    process_fingerprint_matches(status_path .. ".pid", supervisor) or
+	    process_fingerprint_matches(status_path .. ".child", child)
 end
 
-local function start_case(document, case, options, runroot, ordinal)
+-- One run directory has one scheduler.  In particular, a resumed supervisor
+-- owns release of its case CID leases, so two concurrent --resume commands
+-- must not race to reap the same completed case.  A stale owner is reclaimed
+-- only after its PID is demonstrably absent; PID reuse is conservatively busy.
+local function run_manager_lease_acquire(runroot)
+	local path = runroot .. "/manager.lock"
+	local owner_path = path .. "/owner"
+	local owner, file
+
+	if not lfs.mkdir(path) then
+		file = io.open(owner_path, "r")
+		owner = file ~= nil and tonumber(file:read("*l")) or nil
+		if file ~= nil then
+			file:close()
+		end
+		if owner ~= nil and process_parent(owner) ~= nil then
+			die("run directory is already managed by PID " .. tostring(owner))
+		end
+		if not os.remove(owner_path) or not lfs.rmdir(path) then
+			die("cannot reclaim stale run-manager lease: " .. runroot)
+		end
+		if not lfs.mkdir(path) then
+			die("cannot acquire run-manager lease: " .. runroot)
+		end
+	end
+	local wrote, closed
+	file = io.open(owner_path, "w")
+	if file ~= nil then
+		wrote = file:write(tostring(unistd.getpid()), "\n")
+		closed = file:close()
+	end
+	if file == nil or not wrote or not closed or
+	    not command_ok("/bin/chmod 600 " .. shell_quote(owner_path)) then
+		os.remove(owner_path)
+		lfs.rmdir(path)
+		die("cannot publish run-manager lease: " .. runroot)
+	end
+	return { owner = tostring(unistd.getpid()), path = path }
+end
+
+local function run_manager_lease_release(lease)
+	local owner_path = lease.path .. "/owner"
+	local file = io.open(owner_path, "r")
+	local owner = file ~= nil and file:read("*l") or nil
+	if file ~= nil then
+		file:close()
+	end
+	if owner ~= lease.owner or not os.remove(owner_path) or
+	    not lfs.rmdir(lease.path) then
+		die("run-manager lease ownership changed unexpectedly")
+	end
+end
+
+--
+-- A test run may be parallel internally and may also overlap another
+-- independently invoked virtio-lab process.  The kernel is the authoritative
+-- CID collision check, but avoid reaching it with a known collision: reserve
+-- each real-VM CID in a root-owned directory for the lifetime of its
+-- supervised case.  mkdir(2) gives this small management layer an atomic
+-- claim without a long-lived lock or a polling allocator.
+--
+local function cid_lease_directory(options, owner_uid)
+	local path = options.cid_lease_dir or "/var/run/virtio-lab/cid-leases"
+	local identity = path_identity(path)
+
+	if identity == nil then
+		if owner_uid ~= 0 then
+			die("CID lease directory must already exist for a non-root run: " ..
+			    path)
+		end
+		if not command_ok("/usr/bin/install -d -o root -g wheel -m 700 " ..
+		    shell_quote(path)) then
+			die("cannot create CID lease directory: " .. path)
+		end
+		identity = path_identity(path)
+	end
+	if identity == nil or identity.kind ~= "Directory" or
+	    identity.uid ~= owner_uid or
+	    identity.permissions ~= "700" then
+		die("CID lease directory must be caller-owned mode 0700: " .. path)
+	end
+	return path
+end
+
+local function parse_guest_cid(value, description)
+	local max_guest_cid = 4294967295
+
+	if type(value) ~= "string" or value:match("^[0-9]+$") == nil then
+		die(description .. " must be a decimal CID")
+	end
+	local cid = tonumber(value)
+	if cid == nil or cid < 3 or cid > max_guest_cid or cid % 1 ~= 0 then
+		die(description .. " must be from 3 through 4294967295")
+	end
+	return cid
+end
+
+local function case_uses_vsock(case, environment)
+	return device_list_contains(environment.DEVICES, "vsock")
+end
+
+local function cid_lease_try(directory, cid, owner)
+	local path = directory .. "/" .. tostring(cid)
+	local ok, error = lfs.mkdir(path)
+
+	if not ok then
+		if lfs.attributes(path, "mode") == "directory" then
+			return nil
+		end
+		die("cannot create CID lease " .. tostring(cid) .. ": " ..
+		    tostring(error))
+	end
+	local owner_path = path .. "/owner"
+	local file, write_error = io.open(owner_path, "w")
+	local wrote, closed
+	if file ~= nil then
+		wrote = file:write(owner, "\n")
+		closed = file:close()
+	end
+	if file == nil or not wrote or not closed or
+	    not command_ok("/bin/chmod 600 " .. shell_quote(owner_path)) then
+		os.remove(owner_path)
+		lfs.rmdir(path)
+		die("cannot publish CID lease " .. tostring(cid) .. ": " ..
+		    tostring(write_error))
+	end
+	return { cid = cid, owner = owner, path = path }
+end
+
+local function cid_lease_release(lease)
+	local owner_path = lease.path .. "/owner"
+	local file = io.open(owner_path, "r")
+	local owner = file ~= nil and file:read("*l") or nil
+	if file ~= nil then
+		file:close()
+	end
+	if owner ~= lease.owner then
+		die("CID lease ownership changed unexpectedly: " ..
+		    tostring(lease.cid))
+	end
+	if not os.remove(owner_path) then
+		die("cannot remove CID lease owner record: " ..
+	    tostring(lease.cid))
+	end
+	if not lfs.rmdir(lease.path) then
+		die("cannot remove CID lease: " .. tostring(lease.cid))
+	end
+end
+
+local function acquire_case_cids(document, case, options, runroot, ordinal,
+    directory)
 	local environment = effective_environment(document, case, options, ordinal)
+	local names, requested, seen = {}, {}, {}
+	local owner
+	local max_guest_cid = 4294967295
+	local explicit = false
+
+	if not case_uses_vsock(case, environment) then
+		return nil
+	end
+	if case.executor == "alpine-multi-vsock" then
+		names = { "CID1", "CID2" }
+	else
+		names = { "CID" }
+	end
+	for _, name in ipairs(names) do
+		requested[name] = parse_guest_cid(environment[name], name)
+		explicit = explicit or options.sets[name] ~= nil or
+		    (case.env ~= nil and case.env[name] ~= nil) or
+		    (document.defaults ~= nil and document.defaults.env ~= nil and
+		    document.defaults.env[name] ~= nil)
+		if seen[requested[name]] then
+			die(case.id .. " assigns the same CID more than once")
+		end
+		seen[requested[name]] = true
+	end
+	owner = runroot .. "\t" .. case.id
+	--
+	-- Preserve the documented four-CID spacing for generated CIDs and advance
+	-- the complete case allocation together when another run owns it.  An
+	-- operator-supplied CID is never remapped: report its collision instead.
+	-- The bounded scan fails safely rather than wrapping into a reserved CID.
+	--
+	for slot = 0, explicit and 0 or 16383 do
+		local allocation, leases = {}, {}
+		local available = true
+		for _, name in ipairs(names) do
+			local cid = requested[name] + slot * 4
+			if cid > max_guest_cid then
+				available = false
+				break
+			end
+			local lease = cid_lease_try(directory, cid, owner)
+			if lease == nil then
+				available = false
+				break
+			end
+			allocation[name] = tostring(cid)
+			table.insert(leases, lease)
+		end
+		if available then
+			return { allocation = allocation, leases = leases }
+		end
+		for _, lease in ipairs(leases) do
+			cid_lease_release(lease)
+		end
+		if requested[names[1]] + (slot + 1) * 4 > max_guest_cid then
+			break
+		end
+	end
+	die("no CID lease available for " .. case.id .. " in " .. directory ..
+	    (explicit and " (explicit CID allocation is not remapped)" or ""))
+end
+
+local function release_case_cids(allocation)
+	if allocation == nil then
+		return
+	end
+	for _, lease in ipairs(allocation.leases) do
+		cid_lease_release(lease)
+	end
+end
+
+local function recover_case_cids(directory, runroot, case)
+	local owner = runroot .. "\t" .. case.id
+	local leases = {}
+
+	if directory == nil then
+		return nil
+	end
+	for entry in lfs.dir(directory) do
+		if entry:match("^[0-9]+$") ~= nil then
+			local path = directory .. "/" .. entry
+			local file = io.open(path .. "/owner", "r")
+			local recorded_owner = file ~= nil and file:read("*l") or nil
+			if file ~= nil then
+				file:close()
+			end
+			if recorded_owner == owner then
+				table.insert(leases, {
+					cid = tonumber(entry), owner = owner, path = path,
+				})
+			end
+		end
+	end
+	return #leases == 0 and nil or { leases = leases }
+end
+
+-- Reclaim only a completed or abandoned case's own allocation.  The caller
+-- must first rule out both a supervised process and an untracked survivor;
+-- this helper deliberately has no authority to make that liveness decision.
+local function release_recovered_case_cids(directory, runroot, case)
+	local allocation = recover_case_cids(directory, runroot, case)
+
+	if allocation ~= nil then
+		release_case_cids(allocation)
+	end
+end
+
+local function start_case(document, case, options, runroot, ordinal,
+    lease_directory)
 	local status = runroot .. "/status/" .. case.id
 	local attempt_path = status .. ".attempt"
 	local attempt = (read_number(attempt_path) or 0) + 1
@@ -572,6 +1415,12 @@ local function start_case(document, case, options, runroot, ordinal)
 	local child_pidfile = status .. ".child"
 	os.remove(pidfile)
 	os.remove(child_pidfile)
+	os.remove(pidfile .. ".fingerprint")
+	os.remove(child_pidfile .. ".fingerprint")
+	local allocation = acquire_case_cids(document, case, options, runroot,
+	    ordinal, lease_directory)
+	local environment = effective_environment(document, case, options, ordinal,
+	    allocation and allocation.allocation or nil)
 	environment.WORKDIR = case_workdir
 	environment.VIRTIO_LAB_ATTEMPT = tostring(attempt)
 	local assignments = {}
@@ -591,7 +1440,18 @@ local function start_case(document, case, options, runroot, ordinal)
 	    shell_quote(status), shell_quote(runner),
 	}, " ")
 	if not command_ok(command) then
+		release_case_cids(allocation)
 		die("failed to launch case " .. case.id)
+	end
+	local identity_pending = false
+	if read_number(status) == nil then
+		-- Very short compiler/self-test cases can have written their terminal
+		-- status, or exited, before daemon(8)'s control PID is observable to
+		-- this manager.  Do not turn that completed case into a launch failure.
+		-- A nonterminal case without both identities is never considered live
+		-- or cancellable; the normal bounded supervisor check will publish 125
+		-- instead of adopting a bare PID.
+		identity_pending = not record_supervised_case_identity(status)
 	end
 	emit_event(runroot, "START", case.id, "", log)
 	return {
@@ -601,6 +1461,8 @@ local function start_case(document, case, options, runroot, ordinal)
 		pidfile = pidfile,
 		started = os.time(),
 		status = status,
+		identity_pending = identity_pending,
+		cid_allocation = allocation,
 	}
 end
 
@@ -646,12 +1508,16 @@ local function run_configuration(document, options)
 		die("cannot hash manifest: " .. options.manifest)
 	end
 	local settings = {
-		"version=1",
+		"version=2",
 		"manifest_sha256=" .. digest,
 		"profile=" .. options.profile,
 		"iso=" .. tostring(options.iso or ""),
 		"fivebsd_image=" .. tostring(options.fivebsd_image or ""),
+		"cid_lease_dir=" .. tostring(options.cid_lease_dir or ""),
 	}
+	for _, identifier in ipairs(options.case_ids) do
+		table.insert(settings, "case=" .. identifier)
+	end
 	for key, value in pairs(options.sets) do
 		table.insert(settings, "set." .. key .. "=" .. tostring(value))
 	end
@@ -669,6 +1535,7 @@ local function run_cases(document, cases, options)
 	local needs_network_vm = false
 	local needs_alpine_iso = false
 	local needs_fivebsd_image = false
+	local needs_nested_vmx_live = false
 	for _, case in ipairs(cases) do
 		if case.executor == "alpine-auto" or
 		    case.executor == "alpine-multi-vsock" then
@@ -685,6 +1552,9 @@ local function run_cases(document, cases, options)
 				die("--fivebsd-image (or FIVEBSD_IMAGE) is required by case " ..
 				    case.id)
 			end
+		elseif case.executor == "nested-vmx-live" then
+			needs_root = true
+			needs_nested_vmx_live = true
 		end
 	end
 	for _, input in ipairs({
@@ -699,7 +1569,32 @@ local function run_cases(document, cases, options)
 				die(input.option .. " must name a readable regular file: " ..
 				    input.path)
 			end
-			file:close()
+		file:close()
+		end
+	end
+	--
+	-- A nested-VMX run has an intentionally external, reviewed L1 driver and
+	-- three immutable guest images.  Discovering that one is absent only after
+	-- the host-regression gate would waste a costly, otherwise unrelated VM
+	-- qualification run.  Validate the effective case environment before any
+	-- privilege or host-side work; the root-only wrapper later validates the
+	-- paths' ownership, hierarchy, identity, and content stability.
+	--
+	if needs_nested_vmx_live then
+		for _, case in ipairs(cases) do
+			if case.executor == "nested-vmx-live" then
+				local environment = effective_environment(document, case,
+				    options, 1)
+				for _, key in ipairs({
+				    "NESTED_L1_RUNNER", "NESTED_L1_IMAGE",
+				    "NESTED_LINUX_L2_IMAGE", "NESTED_FIVEBSD_L2_IMAGE",
+				}) do
+					if environment[key] == nil or environment[key] == "" then
+						die("nested-vmx-live requires --set " .. key ..
+						    "=/absolute/path")
+					end
+				end
+			end
 		end
 	end
 	if needs_root and effective_uid ~= 0 then
@@ -816,10 +1711,29 @@ local function run_cases(document, cases, options)
 	    "-" .. tostring(unistd.getpid()))
 	prepare_runroot(runroot, options.resume, effective_uid)
 	local configuration = run_configuration(document, options)
-	if options.resume then
-		if read_file(runroot .. "/run.config") ~= configuration then
-			die("resume configuration differs from the original run")
+	--
+	-- This check is intentionally before acquiring manager.lock.  A rejected
+	-- resume has not started a case and must leave the existing run directory
+	-- exactly as it found it; in particular, it must not strand a lease that
+	-- prevents the rightful owner from resuming the run.
+	--
+	if options.resume and read_file(runroot .. "/run.config") ~= configuration then
+		die("resume configuration differs from the original run")
+	end
+	local lease_directory
+	for ordinal, case in ipairs(cases) do
+		local environment = effective_environment(document, case, options,
+		    ordinal)
+		if case_uses_vsock(case, environment) then
+			lease_directory = cid_lease_directory(options, effective_uid)
+			break
 		end
+	end
+	-- Validate the shared lease directory before publishing a per-run manager
+	-- lease as well.  A malformed or symlinked control path is a caller error,
+	-- not a partially started run, and must not require stale-lease recovery.
+	local manager_lease = run_manager_lease_acquire(runroot)
+	if options.resume then
 		append_file(runroot .. "/events.tsv", table.concat({
 		    os.date("!%Y-%m-%dT%H:%M:%SZ"), "RESUME", "-", "", "",
 		}, "\t") .. "\n")
@@ -836,10 +1750,7 @@ local function run_cases(document, cases, options)
 	for ordinal, case in ipairs(cases) do
 		local status_path = runroot .. "/status/" .. case.id
 		local pidfile = status_path .. ".pid"
-		if options.resume and read_status(status_path) == 0 then
-			passed = passed + 1
-			emit_event(runroot, "REUSE", case.id, 0, runroot .. "/logs")
-		elseif options.resume and supervised_case_alive(status_path) then
+		if options.resume and supervised_case_alive(status_path) then
 			local attempt = read_number(status_path .. ".attempt") or 1
 			active[case.id] = {
 				case = case,
@@ -849,12 +1760,35 @@ local function run_cases(document, cases, options)
 				pidfile = pidfile,
 				started = os.time(),
 				status = status_path,
+				identity_pending = false,
+				cid_allocation = recover_case_cids(lease_directory, runroot,
+				    case),
 			}
+			if case_uses_vsock(case, effective_environment(document, case,
+			    options, ordinal)) and active[case.id].cid_allocation == nil then
+				die("active vsock case is missing its CID lease: " .. case.id)
+			end
 			emit_event(runroot, "REATTACH", case.id, "", active[case.id].log)
 		elseif options.resume and stale_case_process_alive(status_path) then
 			die("refusing to rerun case with an untracked live process: " ..
 			    case.id)
+		elseif options.resume and read_status(status_path) == 0 then
+			-- A terminal success from an interrupted manager is reusable only
+			-- after its case-specific allocation is no longer retained.
+			release_recovered_case_cids(lease_directory, runroot, case)
+			passed = passed + 1
+			emit_event(runroot, "REUSE", case.id, 0, runroot .. "/logs")
 		else
+			-- A previous manager can be interrupted after the supervised case
+			-- wrote a terminal status but before it released this case's CID
+			-- lease.  We have already rejected a live or untracked process
+			-- above, so release only leases whose immutable owner record names
+			-- this exact run and case before retrying it.  Without this recovery
+			-- a --resume silently advances to a different CID and leaves the
+			-- original lease stranded.
+			if options.resume then
+				release_recovered_case_cids(lease_directory, runroot, case)
+			end
 			table.insert(pending, { case = case, ordinal = ordinal })
 		end
 	end
@@ -870,7 +1804,7 @@ local function run_cases(document, cases, options)
 				for index, item in ipairs(pending) do
 					if can_start(item.case, active) then
 						local running = start_case(document, item.case,
-						    options, runroot, item.ordinal)
+						    options, runroot, item.ordinal, lease_directory)
 						active[item.case.id] = running
 						table.remove(pending, index)
 						progress = true
@@ -880,6 +1814,10 @@ local function run_cases(document, cases, options)
 			end
 		end
 		for id, running in pairs(active) do
+			if running.identity_pending and
+			    record_supervised_case_identity(running.status) then
+				running.identity_pending = false
+			end
 			local status = read_status(running.status)
 			if status == nil and os.time() - running.started >= 3 and
 			    not supervised_case_alive(running.status) then
@@ -904,9 +1842,17 @@ local function run_cases(document, cases, options)
 					end
 				end
 				active[id] = nil
+				release_case_cids(running.cid_allocation)
 			end
 		end
 		if #pending > 0 or next(active) ~= nil then
+			-- daemon(8) owns the case processes, so this manager cannot
+			-- waitpid(2) on them.  This is deliberately the only periodic
+			-- wait in the lab: it polls an atomic, terminal status file at a
+			-- one-second control-plane cadence.  It is not a device retry
+			-- mechanism; guest I/O, queue reset, and backend completion use
+			-- their own event/callback paths.  Keep the process model explicit
+			-- until the runner can receive a portable child-status event.
 			os.execute("/bin/sleep 1")
 		end
 	end
@@ -916,6 +1862,7 @@ local function run_cases(document, cases, options)
 	write_file(runroot .. "/summary", summary)
 	io.write(summary)
 	io.write("results=", runroot, "\n")
+	run_manager_lease_release(manager_lease)
 	if failed ~= 0 then
 		os.exit(1)
 	end
@@ -970,32 +1917,48 @@ local function write_host_state(state)
 	if lfs.attributes(host_state_directory, "mode") ~= "directory" then
 		if not command_ok("/usr/bin/install -d -o root -g wheel -m 755 " ..
 		    shell_quote(host_state_directory)) then
-			die("cannot create " .. host_state_directory)
+			return nil, "cannot create " .. host_state_directory
 		end
 	end
 	local identity = path_identity(host_state_directory)
 	if identity == nil or identity.kind ~= "Directory" or identity.uid ~= 0 or
 	    identity.permissions ~= "755" then
-		die(host_state_directory .. " must be a root-owned mode-0755 directory")
+		return nil, host_state_directory ..
+		    " must be a root-owned mode-0755 directory"
 	end
 	local path = host_state_path(state.bridge)
 	local temporary = path .. ".tmp-" .. tostring(unistd.getpid())
-	write_file(temporary, table.concat({
-	    "bridge=" .. state.bridge,
-	    "uplink=" .. state.uplink,
-	    "bridge_created=" .. (state.bridge_created and "yes" or "no"),
-	    "member_added=" .. (state.member_added and "yes" or "no"),
-	    "",
-	}, "\n"))
+	local contents = table.concat({
+		"bridge=" .. state.bridge,
+		"uplink=" .. state.uplink,
+		"bridge_created=" .. (state.bridge_created and "yes" or "no"),
+		"member_added=" .. (state.member_added and "yes" or "no"),
+		"",
+	}, "\n")
+	local file, error = io.open(temporary, "w")
+	if file == nil then
+		return nil, "cannot create host state file: " .. tostring(error)
+	end
+	if not file:write(contents) then
+		file:close()
+		os.remove(temporary)
+		return nil, "cannot write host state file"
+	end
+	if not file:close() then
+		os.remove(temporary)
+		return nil, "cannot close host state file"
+	end
 	if not command_ok("/bin/chmod 644 " .. shell_quote(temporary)) then
 		os.remove(temporary)
-		die("cannot protect host state file")
+		return nil, "cannot protect host state file"
 	end
-	local ok, error = os.rename(temporary, path)
+	local ok
+	ok, error = os.rename(temporary, path)
 	if not ok then
 		os.remove(temporary)
-		die("cannot publish host state: " .. tostring(error))
+		return nil, "cannot publish host state: " .. tostring(error)
 	end
+	return true
 end
 
 local function read_host_state(bridge)
@@ -1034,6 +1997,19 @@ local function read_host_state(bridge)
 end
 
 local function host_prepare(options)
+	local function publish(state, action, rollback)
+		local ok, error = write_host_state(state)
+
+		if ok then
+			return
+		end
+		if rollback ~= nil and rollback() then
+			die(error .. " after " .. action .. "; mutation rolled back")
+		end
+		die(error .. " after " .. action ..
+		    "; rollback failed, host state requires manual recovery")
+	end
+
 	if effective_uid() ~= 0 then
 		die("host-prepare must execute as root")
 	end
@@ -1057,7 +2033,7 @@ local function host_prepare(options)
 			bridge_created = false,
 			member_added = false,
 		}
-		write_host_state(state)
+		publish(state, "creating the ownership record")
 	end
 	if not interface_exists(bridge) then
 		if not command_ok("/sbin/ifconfig " .. shell_quote(bridge) ..
@@ -1066,17 +2042,25 @@ local function host_prepare(options)
 		end
 		state.bridge_created = true
 		state.member_added = false
-		write_host_state(state)
+		publish(state, "creating " .. bridge, function()
+			state.bridge_created = false
+			return command_ok("/sbin/ifconfig " .. shell_quote(bridge) ..
+			    " destroy")
+		end)
 	end
 	local members = bridge_members(bridge)
 	if not members[uplink] then
 		if not command_ok("/sbin/ifconfig " .. shell_quote(bridge) ..
 		    " addm " .. shell_quote(uplink)) then
 			die("cannot add " .. uplink .. " to " .. bridge ..
-			    "; run host-cleanup to roll back")
+			"; run host-cleanup to roll back")
 		end
 		state.member_added = true
-		write_host_state(state)
+		publish(state, "adding " .. uplink .. " to " .. bridge, function()
+			state.member_added = false
+			return command_ok("/sbin/ifconfig " .. shell_quote(bridge) ..
+			    " deletem " .. shell_quote(uplink))
+		end)
 	end
 	if not command_ok("/sbin/ifconfig " .. shell_quote(bridge) .. " up") then
 		die("cannot bring " .. bridge .. " up; run host-cleanup to roll back")
@@ -1118,7 +2102,7 @@ local function host_cleanup(options)
 		local members = bridge_members(bridge)
 		if state.bridge_created then
 			for member in pairs(members) do
-				if member ~= state.uplink then
+				if member ~= state.uplink or not state.member_added then
 					die(bridge .. " still has member " .. member ..
 					    "; stop its VM and retry host-cleanup")
 				end
@@ -1135,13 +2119,19 @@ local function host_cleanup(options)
 			die("cannot destroy " .. bridge)
 		end
 	end
-	assert(os.remove(host_state_path(bridge)))
+	-- The ownership record is part of the cleanup transaction.  Do not turn
+	-- an unexpected unlink failure into a Lua assertion traceback: callers
+	-- need an actionable error and the record must remain for a safe retry.
+	if not os.remove(host_state_path(bridge)) then
+		die("cannot remove " .. bridge .. " virtio-lab ownership record; " ..
+		    "host cleanup is incomplete")
+	end
 	print("clean")
 	print("bridge=" .. bridge)
 	print("uplink=" .. state.uplink)
 end
 
-local function usage()
+local function usage(status)
 	io.stderr:write([[
 usage: virtio-lab.lua plan|coverage [options]
        virtio-lab.lua run [options]
@@ -1152,24 +2142,31 @@ usage: virtio-lab.lua plan|coverage [options]
        virtio-lab.lua host-cleanup [--bridge name]
 options:
   --manifest path   case manifest (default: virtio-lab.yaml beside script)
-  --profile name    vmfree, smoke, release, checkpoint, or soak
+  --profile name    vmfree, smoke, release, checkpoint, soak, soak-smoke,
+                    audio, nested,
+                    nested-default,
+                    qualification, intel-qualification, audio-qualification,
+                    or full-qualification
+  --case id         run or plan one named profile case; may be repeated
   --jobs count      bounded parallel case count
   --iso path        Alpine virt ISO for real-VM cases
   --fivebsd-image path
                     immutable 5BSD raw base image
   --workdir path    new run directory, or existing directory for status
+  --cid-lease-dir path
+                    root-owned mode-0700 CID lease directory for real VMs
   --bridge name     managed shared bridge (default: bridge0)
   --uplink name     explicit physical uplink for host-prepare
   --prepare-host    idempotently prepare bridge before a run
   --resume          reuse passes and rerun failed or incomplete cases
   --set NAME=value  override a runner environment setting
 ]])
-	os.exit(2)
+	os.exit(status or 2)
 end
 
 local command = arg[1]
 if command == nil or command == "-h" or command == "--help" then
-	usage()
+	usage(command == nil and 2 or 0)
 end
 local options = parse_options(2)
 options.iso = options.iso or os.getenv("ISO")
@@ -1182,6 +2179,7 @@ for name, value in pairs({
     iso = options.iso,
     fivebsd_image = options.fivebsd_image,
     workdir = options.workdir,
+    cid_lease_dir = options.cid_lease_dir,
     bridge = options.bridge,
     uplink = options.uplink,
 }) do
@@ -1213,6 +2211,13 @@ end
 if options.prepare_host and command ~= "run" then
 	die("--prepare-host is valid only with run")
 end
+if #options.case_ids ~= 0 and command ~= "plan" and command ~= "run" and
+    command ~= "coverage" then
+	die("--case is valid only with plan or run")
+end
+if command == "coverage" and #options.case_ids ~= 0 then
+	die("--case is not valid with coverage; coverage evaluates a full profile")
+end
 
 if command == "host-prepare" then
 	if options.uplink == nil then
@@ -1232,8 +2237,27 @@ if command == "status" or command == "cancel" then
 	if options.workdir == nil then
 		die(command .. " requires --workdir")
 	end
+	if command == "cancel" then
+		local caller_uid = effective_uid()
+		local run_identity = path_identity(options.workdir)
+		if run_identity == nil or run_identity.kind ~= "Directory" then
+			die("cancel requires root or a caller-owned mode-0700 run directory" ..
+		    ": workdir is not a directly accessible directory")
+		elseif caller_uid == nil then
+			die("cancel requires root or a caller-owned mode-0700 run directory" ..
+		    ": cannot determine caller uid")
+		elseif caller_uid ~= 0 and
+		    (run_identity.permissions ~= "700" or
+		    run_identity.uid ~= caller_uid) then
+			die("cancel requires root or a caller-owned mode-0700 run directory" ..
+			    ": caller uid=" .. tostring(caller_uid) ..
+			    ", workdir uid=" .. tostring(run_identity.uid) ..
+			    " mode=" .. tostring(run_identity.permissions) ..
+			    "; rerun cancel as root")
+		end
+	end
 	local status_directory = options.workdir .. "/status"
-	local pidfiles = {}
+	local active_cases = {}
 	local has_status_directory =
 	    lfs.attributes(status_directory, "mode") == "directory"
 	local has_summary =
@@ -1247,42 +2271,42 @@ if command == "status" or command == "cancel" then
 	if has_status_directory then
 		for entry in lfs.dir(status_directory) do
 			if entry:match("%.pid$") ~= nil then
-				local pidfile = status_directory .. "/" .. entry
-				local status_path = pidfile:gsub("%.pid$", "")
-				if supervised_case_alive(status_path) then
-					table.insert(pidfiles, pidfile)
+				local status_path = (status_directory .. "/" .. entry):gsub(
+				    "%.pid$", "")
+				local identity = supervised_case_identity(status_path)
+				if identity ~= nil then
+					identity.status_path = status_path
+					table.insert(active_cases, identity)
 				end
 			end
 		end
 	end
-	table.sort(pidfiles)
+	table.sort(active_cases, function(left, right)
+		return left.status_path < right.status_path
+	end)
 	if command == "cancel" then
-		local id = io.popen("/usr/bin/id -u", "r")
-		local effective_uid = id ~= nil and tonumber(id:read("*l")) or nil
-		if id ~= nil then
-			id:close()
-		end
-		local run_identity = path_identity(options.workdir)
-		if run_identity == nil or run_identity.kind ~= "Directory" or
-		    run_identity.permissions ~= "700" or
-		    (effective_uid ~= 0 and run_identity.uid ~= effective_uid) then
-			die("cancel requires root or a caller-owned mode-0700 run directory")
-		end
 		local cancelled = 0
-		for _, pidfile in ipairs(pidfiles) do
-			local child_pidfile = pidfile:gsub("%.pid$", ".child")
-			local child_pid = read_number(child_pidfile)
-			local supervisor_pid = read_number(pidfile)
-			if child_pid ~= nil and
-			    process_parent(child_pid) == supervisor_pid then
-				os.execute("/bin/kill -TERM " .. tostring(child_pid))
-				cancelled = cancelled + 1
+		for _, identity in ipairs(active_cases) do
+			-- Revalidate the captured parent/child identities immediately before
+			-- sending the signal.  Do not reread the mutable run directory here:
+			-- cancellation authority belongs to the identity observed during the
+			-- initial trusted scan, not to a later PID-file replacement.
+			if process_parent(identity.child) == identity.supervisor and
+			    process_fingerprint_value_matches(identity.supervisor_fingerprint,
+			    identity.supervisor) and
+			    process_fingerprint_value_matches(identity.child_fingerprint,
+			    identity.child) then
+				-- The case can still exit after identity validation.  Report only
+				-- signals that kill(2) actually delivered.
+				if command_ok("/bin/kill -TERM " .. tostring(identity.child)) then
+					cancelled = cancelled + 1
+				end
 			end
 		end
 		print("cancelled=" .. tostring(cancelled))
 	else
-		if #pidfiles ~= 0 then
-			io.write("running\nactive=", tostring(#pidfiles), "\n")
+		if #active_cases ~= 0 then
+			io.write("running\nactive=", tostring(#active_cases), "\n")
 		else
 			local summary = io.open(options.workdir .. "/summary", "r")
 			if summary ~= nil then
@@ -1303,7 +2327,8 @@ end
 
 local document = load_manifest(options.manifest)
 validate_overrides(document, options)
-local cases = selected_cases(document, options.profile)
+local cases = selected_cases(document, options.profile, options.case_ids)
+assign_port_lanes(document, cases, options)
 if command == "plan" then
 	for ordinal, case in ipairs(cases) do
 		local environment =
@@ -1327,6 +2352,9 @@ if command == "plan" then
 		}, "\t"))
 	end
 	print("cases=" .. tostring(#cases))
+	if #options.case_ids ~= 0 then
+		os.exit(0)
+	end
 	os.exit(coverage_report(document, cases, options) == 0 and 0 or 1)
 elseif command == "coverage" then
 	os.exit(coverage_report(document, cases, options) == 0 and 0 or 1)
@@ -1337,7 +2365,8 @@ elseif command == "run" then
 		end
 		host_prepare(options)
 	end
-	if coverage_report(document, cases, options) ~= 0 then
+	if #options.case_ids == 0 and
+	    coverage_report(document, cases, options) ~= 0 then
 		die("selected profile does not satisfy its option coverage contract")
 	end
 	run_cases(document, cases, options)

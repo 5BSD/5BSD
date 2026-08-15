@@ -42,8 +42,8 @@
 #include <fs/p9fs/p9_client.h>
 #include <fs/p9fs/p9_debug.h>
 #include <fs/p9fs/p9_transport.h>
+#include <fs/p9fs/p9_wire.h>
 
-#define QEMU_HEADER 7
 #define P9FS_MAX_FID_CNT (1024 * 1024 * 1024)
 #define P9FS_ROOT_FID_NO 2
 #define P9FS_MIN_TAG 1
@@ -90,8 +90,13 @@ p9_parse_opts(struct mount  *mp, struct p9_client *clnt)
 	 * Default to virtio since thats the only transport we have for now.
 	 */
 	error = vfs_getopt(mp->mnt_optnew, "trans", (void **)&trans, &len);
-	if (error == ENOENT)
+	if (error == ENOENT) {
 		trans = "virtio";
+	} else if (error != 0) {
+		return (error);
+	} else if (len <= 0 || trans[len - 1] != '\0') {
+		return (EINVAL);
+	}
 
 	/* These are defaults for now */
 	clnt->proto_version = p9_proto_2000L;
@@ -174,21 +179,25 @@ p9_get_request(struct p9_client *clnt, int *error)
 static int
 p9_parse_receive(struct p9_buffer *buf, struct p9_client *clnt)
 {
+	uint32_t received;
 	int8_t type;
 	int16_t tag;
 	int32_t size;
 	int error;
 
+	received = buf->size;
 	buf->offset = 0;
-
-	/* This value is set by QEMU for the header.*/
-	if (buf->size == 0)
-		buf->size = QEMU_HEADER;
+	if (received < P9_WIRE_HEADER_SIZE || received > buf->capacity)
+		return (EIO);
 
 	/* This is the initial header. Parse size, type, and tag .*/
 	error = p9_buf_readf(buf, 0, "dbw", &size, &type, &tag);
 	if (error != 0)
 		goto out;
+	if (!p9_wire_response_length_valid(received, buf->capacity, size)) {
+		error = EIO;
+		goto out;
+	}
 
 	buf->size = size;
 	buf->id = type;
@@ -207,6 +216,8 @@ p9_client_check_return(struct p9_client *c, struct p9_req_t *req)
 	int ecode;
 	char *ename;
 
+	ecode = EIO;
+	ename = NULL;
 	/* Check what we have in the receive bufer .*/
 	error = p9_parse_receive(req->rc, c);
 	if (error != 0)
@@ -255,6 +266,7 @@ p9_client_check_return(struct p9_client *c, struct p9_req_t *req)
 	return (error);
 
 out:
+	free(ename, M_TEMP);
 	P9_DEBUG(ERROR, "couldn't parse receive buffer error%d\n", error);
 	return (error);
 }
@@ -264,14 +276,30 @@ void p9_client_disconnect(struct p9_client *clnt)
 {
 
 	P9_DEBUG(TRANS, "%s: clnt %p\n", __func__, clnt);
-	clnt->trans_status = P9FS_DISCONNECT;
+	atomic_store_rel_int(&clnt->trans_status, P9FS_DISCONNECT);
 }
 
 void p9_client_begin_disconnect(struct p9_client *clnt)
 {
 
 	P9_DEBUG(TRANS, "%s: clnt %p\n", __func__, clnt);
-	clnt->trans_status = P9FS_BEGIN_DISCONNECT;
+	atomic_store_rel_int(&clnt->trans_status, P9FS_BEGIN_DISCONNECT);
+}
+
+void
+p9_client_connect(struct p9_client *clnt)
+{
+
+	P9_DEBUG(TRANS, "%s: clnt %p\n", __func__, clnt);
+	atomic_store_rel_int(&clnt->trans_status, P9FS_CONNECT);
+}
+
+enum transport_status
+p9_client_status(struct p9_client *clnt)
+{
+
+	return ((enum transport_status)
+	    atomic_load_acq_int(&clnt->trans_status));
 }
 
 static struct p9_req_t *
@@ -279,6 +307,7 @@ p9_client_prepare_req(struct p9_client *c, int8_t type,
     int req_size, int *error, const char *fmt, __va_list ap)
 {
 	struct p9_req_t *req;
+	enum transport_status status;
 
 	P9_DEBUG(TRANS, "%s: client %p op %d\n", __func__, c, type);
 
@@ -288,14 +317,14 @@ p9_client_prepare_req(struct p9_client *c, int8_t type,
 	 * are no close sessions happening or else there can be race. If the
 	 * status is Disconnected, we stop any requests coming in after that.
 	 */
-	if (c->trans_status == P9FS_DISCONNECT) {
+	status = p9_client_status(c);
+	if (status == P9FS_DISCONNECT) {
 		*error = EIO;
 		return (NULL);
 	}
 
 	/* Allow only cleanup clunk messages once teardown has started. */
-	if ((c->trans_status == P9FS_BEGIN_DISCONNECT) &&
-	    (type != P9PROTO_TCLUNK)) {
+	if (status == P9FS_BEGIN_DISCONNECT && type != P9PROTO_TCLUNK) {
 		*error = EIO;
 		return (NULL);
 	}
@@ -449,6 +478,7 @@ p9_client_version(struct p9_client *c)
 	int msize;
 
 	error = 0;
+	version = NULL;
 
 	P9_DEBUG(PROTO, "TVERSION msize %d protocol %d\n",
 	    c->msize, c->proto_version);
@@ -482,21 +512,26 @@ p9_client_version(struct p9_client *c)
 
 	P9_DEBUG(PROTO, "RVERSION msize %d %s\n", msize, version);
 
-	if (!strncmp(version, "9P2000.L", 8))
+	if (strcmp(version, "9P2000.L") == 0)
 		c->proto_version = p9_proto_2000L;
-	else if (!strncmp(version, "9P2000.u", 8))
+	else if (strcmp(version, "9P2000.u") == 0)
 		c->proto_version = p9_proto_2000u;
-	else if (!strncmp(version, "9P2000", 6))
+	else if (strcmp(version, "9P2000") == 0)
 		c->proto_version = p9_proto_legacy;
 	else {
-		error = ENOMEM;
+		error = EPROTONOSUPPORT;
 		goto out;
 	}
 
 	/* limit the msize .*/
+	if (msize < (int)P9_WIRE_HEADER_SIZE) {
+		error = EPROTO;
+		goto out;
+	}
 	if (msize < c->msize)
 		c->msize = msize;
 out:
+	free(version, M_TEMP);
 	p9_free_req(c, req);
 	return (error);
 }
@@ -537,9 +572,13 @@ struct p9_client *
 p9_client_create(struct mount *mp, int *error, const char *mount_tag)
 {
 	struct p9_client *clnt;
+	bool pools_initialized, transport_acquired, transport_created;
 
 	clnt = malloc(sizeof(struct p9_client), M_P9CLNT, M_WAITOK | M_ZERO);
 	mtx_init(&clnt->clnt_mtx, "p9clnt", NULL, MTX_DEF);
+	pools_initialized = false;
+	transport_acquired = false;
+	transport_created = false;
 
 	/* Parse should have set trans_mod */
 	*error = p9_parse_opts(mp, clnt);
@@ -551,12 +590,14 @@ p9_client_create(struct mount *mp, int *error, const char *mount_tag)
 		P9_DEBUG(ERROR, "%s: no transport\n", __func__);
 		goto out;
 	}
+	transport_acquired = true;
 
 	/* All the structures from here are protected by the lock clnt_mtx */
 	init_unrhdr(&clnt->fidpool, P9FS_ROOT_FID_NO, P9FS_MAX_FID_CNT,
 	    &clnt->clnt_mtx);
 	init_unrhdr(&clnt->tagpool, P9FS_MIN_TAG, P9FS_MAX_TAG,
 	    &clnt->clnt_mtx);
+	pools_initialized = true;
 
 	P9_DEBUG(TRANS, "%s: clnt %p trans %p msize %d protocol %d\n",
 	    __func__, clnt, clnt->ops, clnt->msize, clnt->proto_version);
@@ -567,7 +608,8 @@ p9_client_create(struct mount *mp, int *error, const char *mount_tag)
 		    __func__, *error);
 		goto out;
 	}
-	clnt->trans_status = P9FS_CONNECT;
+	transport_created = true;
+	p9_client_connect(clnt);
 
 	*error = p9_client_version(clnt);
 	if (*error != 0)
@@ -576,6 +618,15 @@ p9_client_create(struct mount *mp, int *error, const char *mount_tag)
 	P9_DEBUG(TRANS, "%s: client creation succeeded.\n", __func__);
 	return (clnt);
 out:
+	if (transport_created)
+		clnt->ops->close(clnt->handle);
+	if (transport_acquired)
+		p9_put_trans(clnt->ops);
+	if (pools_initialized) {
+		clear_unrhdr(&clnt->fidpool);
+		clear_unrhdr(&clnt->tagpool);
+	}
+	mtx_destroy(&clnt->clnt_mtx);
 	free(clnt, M_P9CLNT);
 	return (NULL);
 }
@@ -587,6 +638,7 @@ p9_client_destroy(struct p9_client *clnt)
 
 	P9_DEBUG(TRANS, "%s: client %p\n", __func__, clnt);
 	clnt->ops->close(clnt->handle);
+	p9_put_trans(clnt->ops);
 
 	P9_DEBUG(TRANS, "%s : Destroying fidpool\n", __func__);
 	clear_unrhdr(&clnt->fidpool);
@@ -594,6 +646,7 @@ p9_client_destroy(struct p9_client *clnt)
 	P9_DEBUG(TRANS, "%s : Destroying tagpool\n", __func__);
 	clear_unrhdr(&clnt->tagpool);
 
+	mtx_destroy(&clnt->clnt_mtx);
 	free(clnt, M_P9CLNT);
 }
 
@@ -746,7 +799,7 @@ p9_client_walk(struct p9_fid *oldfid, uint16_t nwnames, char **wnames,
 	 *  down. Only then we create.
 	 *  Allow only cleanup clunk messages once we are starting to teardown.
 	 */
-	if (clnt->trans_status != P9FS_CONNECT) {
+	if (p9_client_status(clnt) != P9FS_CONNECT) {
 		*error = EIO;
 		return (NULL);
 	}
@@ -900,6 +953,12 @@ p9_client_readdir(struct p9_fid *fid, char *data, uint64_t offset,
 		p9_free_req(clnt, req);
 		return (-error);
 	}
+	if (count > rsize) {
+		P9_DEBUG(ERROR, "%s: RREADDIR count %u exceeds request %u\n",
+		    __func__, count, rsize);
+		p9_free_req(clnt, req);
+		return (-EPROTO);
+	}
 
 	P9_DEBUG(PROTO, "RREADDIR count %u\n", count);
 
@@ -953,18 +1012,27 @@ p9_client_read(struct p9_fid *fid, uint64_t offset, uint32_t count, char *data)
 		goto out;
 	}
 
-	if (rsize < count) {
-		P9_DEBUG(PROTO, "RREAD count (%d > %d)\n", count, rsize);
-		count = rsize;
+	if (count > (uint32_t)rsize) {
+		P9_DEBUG(ERROR, "RREAD count (%u > %d)\n", count, rsize);
+		error = EPROTO;
+		goto out;
+	}
+
+	/*
+	 * A zero-length RREAD reply while the caller still expects data (the
+	 * read loop only calls us when offset < filesize) means the server is
+	 * making no progress.  Return an error rather than 0: the p9fs_read()
+	 * loop advances only by the returned byte count and would otherwise
+	 * spin forever holding the vnode lock.
+	 */
+	if (count == 0) {
+		P9_DEBUG(ERROR, "%s: server returned zero-length RREAD\n",
+		    __func__);
+		error = EIO;
+		goto out;
 	}
 
 	P9_DEBUG(PROTO, "RREAD count %d\n", count);
-
-	if (count == 0) {
-		error = -EIO;
-		P9_DEBUG(ERROR, "%s: EIO error in client_read \n", __func__);
-		goto out;
-	}
 
 	/* Copy back the data into the input buffer. */
 	memmove(data, dataptr, count);
@@ -1024,17 +1092,24 @@ p9_client_write(struct p9_fid *fid, uint64_t offset, uint32_t count, char *data)
 		goto out;
 	}
 
-	if (count < ret) {
-		P9_DEBUG(PROTO, "RWRITE count (%d > %d)\n", count, ret);
-		ret = count;
-	}
-	P9_DEBUG(PROTO, "RWRITE count %d\n", ret);
-
-	if (count == 0) {
-		error = EIO;
-		P9_DEBUG(ERROR, "%s: EIO error\n", __func__);
+	if (ret < 0 || (uint32_t)ret > count) {
+		P9_DEBUG(ERROR, "RWRITE count (%d > %u or negative)\n",
+		    ret, count);
+		error = EPROTO;
 		goto out;
 	}
+	/*
+	 * A zero-length RWRITE reply while count > 0 means no progress.  The
+	 * p9fs_write() inner loop only advances by the returned count and
+	 * breaks on a negative return, so returning 0 would spin forever.
+	 */
+	if (ret == 0) {
+		P9_DEBUG(ERROR, "%s: server returned zero-length RWRITE\n",
+		    __func__);
+		error = EIO;
+		goto out;
+	}
+	P9_DEBUG(PROTO, "RWRITE count %d\n", ret);
 
 	p9_free_req(clnt, req);
 	return (ret);
@@ -1329,4 +1404,3 @@ p9_client_setattr(struct p9_fid *fid, struct p9_iattr_dotl *p9attr)
 error:
 	return (err);
 }
-

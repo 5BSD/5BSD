@@ -203,7 +203,7 @@ l9p_pu64(struct l9p_message *msg, uint64_t *val)
 		copy = htole64(*val);
 		return (l9p_iov_io(msg, &copy, sizeof (uint64_t)));
 	}
-	ret = l9p_iov_io(msg, val, sizeof (uint32_t));
+	ret = l9p_iov_io(msg, val, sizeof (uint64_t));
 	*val = le64toh(*val);
 	return (ret);
 #else

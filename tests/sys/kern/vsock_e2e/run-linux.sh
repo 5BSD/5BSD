@@ -22,7 +22,10 @@
 # (required and checked against the guest transport), HOST_WORK, PORT_OFFSET
 # (added to every test port for concurrent VMs), and optional BHYVE_LOG,
 # CONSOLE_LOG_PATH,
-# and SMOKE_ONLY diagnostics/lifecycle controls.
+# and MODE diagnostics/lifecycle controls.  MODE is one of full, smoke, or
+# churn.  The churn mode intentionally skips the full conformance preflight
+# and runs 4 * CHURN_CONNECTIONS concurrent data/close lifecycles; callers
+# must bracket it with full validation.
 set -u
 
 DIR=${DIR:-$HOME/vm/vsock-sockdir-linux}
@@ -36,8 +39,10 @@ GUEST_CID=${GUEST_CID:-}
 HOST_WORK=${HOST_WORK:-${TMPDIR:-/tmp}/vsock-linux-e2e.$$}
 BHYVE_LOG=${BHYVE_LOG:-}
 CONSOLE_LOG_PATH=${CONSOLE_LOG_PATH:-}
-SMOKE_ONLY=${SMOKE_ONLY:-no}
+MODE=${MODE:-full}
+CHURN_CONNECTIONS=${CHURN_CONNECTIONS:-8}
 PORT_OFFSET=${PORT_OFFSET:-0}
+VSOCK_PACKED=${VSOCK_PACKED:-no}
 mkdir -p "$HOST_WORK"
 
 PASS=0; FAIL=0; FAILED=""
@@ -215,6 +220,11 @@ vshc() {
 	_dir=$1
 	_port=$2
 	shift 2
+	if [ "$BACKEND" = kernel ]; then
+		_retry_status=3
+	else
+		_retry_status=4
+	fi
 	_try=0
 	while [ "$_try" -lt 5 ]; do
 		if [ "$BACKEND" = kernel ]; then
@@ -223,11 +233,11 @@ vshc() {
 			timeout 20 "$TOOLS/vsh-connect" "$@" "$_dir" "$_port"
 		fi
 		_rc=$?
-		[ "$_rc" -ne 4 ] && return "$_rc"
+		[ "$_rc" -ne "$_retry_status" ] && return "$_rc"
 		sleep 1
 		_try=$((_try + 1))
 	done
-	return 4
+	return "$_retry_status"
 }
 
 host_listener() {
@@ -265,10 +275,17 @@ userspace) ;;
 kernel) ;;
 *) echo "BACKEND must be userspace or kernel" >&2; exit 2 ;;
 esac
-case "$SMOKE_ONLY" in
-yes|no) ;;
-*) echo "SMOKE_ONLY must be yes or no" >&2; exit 2 ;;
+case "$MODE" in
+full|smoke|churn) ;;
+*) echo "MODE must be full, smoke, or churn" >&2; exit 2 ;;
 esac
+case "$CHURN_CONNECTIONS" in
+''|*[!0-9]*) echo "CHURN_CONNECTIONS must be an integer" >&2; exit 2 ;;
+esac
+[ "$CHURN_CONNECTIONS" -ge 2 ] && [ "$CHURN_CONNECTIONS" -le 64 ] || {
+	echo "CHURN_CONNECTIONS must be in [2, 64]" >&2
+	exit 2
+}
 case "$PORT_OFFSET" in
 ''|*[!0-9]*) echo "PORT_OFFSET must be a non-negative integer" >&2; exit 2 ;;
 esac
@@ -277,10 +294,29 @@ esac
 	exit 2
 }
 
+# A full matrix immediately precedes the soak loop.  Keep each soak iteration
+# focused on the hot lifecycle paths so thousands of connections finish in
+# minutes rather than rerunning slow reserved-CID and feature conformance
+# probes.  Both socket types and directions are covered, and each successful
+# worker proves connection, data integrity, orderly close, and endpoint reuse.
+if [ "$MODE" = churn ]; then
+	run_parallel_h2g stream "$((7200 + PORT_OFFSET))" "$CHURN_CONNECTIONS"
+	run_parallel_h2g seq "$((7270 + PORT_OFFSET))" "$CHURN_CONNECTIONS"
+	run_parallel_g2h stream "$((7340 + PORT_OFFSET))" "$CHURN_CONNECTIONS"
+	run_parallel_g2h seq "$((7410 + PORT_OFFSET))" "$CHURN_CONNECTIONS"
+	echo "----"
+	echo "linux e2e churn: $PASS passed, $FAIL failed " \
+	    "connections=$((4 * CHURN_CONNECTIONS))"
+	[ "$FAIL" -eq 0 ] || dump_context
+	exit "$FAIL"
+fi
+
 # Fail before the data tests unless the exact expected PCI function is uniquely
 # bound to the upstream driver.  The helper also proves AF_VSOCK socket
 # creation, so a similarly named but unbound device cannot satisfy preflight.
-$ACMD "test -r $GPY && python3 $GPY preflight $TRANSPORT $GUEST_CID" 20 || {
+preflight_packed=
+[ "$VSOCK_PACKED" = no ] || preflight_packed=" packed"
+$ACMD "test -r $GPY && python3 $GPY preflight $TRANSPORT $GUEST_CID$preflight_packed" 20 || {
 	echo "Alpine preflight failed: helper, driver binding, or PCI identity" >&2
 	dump_context
 	exit 2
@@ -355,9 +391,13 @@ for refused_type in stream seq; do
 	res "refused_storm_h2g_$refused_type" "$ok"
 done
 
-# Prove both directions before running the larger matrix.  Every subsequent
-# case depends on these same control and data paths; cascading failures after
-# either smoke probe only obscure the root cause.
+# Prove both socket types in both directions before running the larger matrix.
+# In particular, lifecycle callers use this gate after checkpoint/restore, so
+# the SEQPACKET probes independently prove that a reconstructed kernel provider
+# received the restored transport feature epoch rather than merely accepting
+# STREAM traffic under its attach-time defaults.  Every subsequent case
+# depends on these same control and data paths; cascading failures after a
+# smoke probe only obscure the root cause.
 gbg "echo-l stream $((6991 + PORT_OFFSET))"
 if smoke_out=$(printf 'VSOCK-SMOKE-H2G' |
     vshc "$DIR" "$((6991 + PORT_OFFSET))"); then
@@ -394,9 +434,45 @@ if [ "$smoke_rc" -ne 0 ] || [ "$smoke_host_rc" -ne 0 ] ||
 fi
 echo "PASS  preflight_data_g2h"
 
-if [ "$SMOKE_ONLY" = yes ]; then
+gbg "echo-l seq $((6993 + PORT_OFFSET))"
+if smoke_out=$(printf 'VSOCK-SMOKE-SEQ-H2G' |
+    vshc "$DIR" "$((6993 + PORT_OFFSET))" -s); then
+	smoke_rc=0
+else
+	smoke_rc=$?
+fi
+if [ "$smoke_rc" -ne 0 ] || [ "$smoke_out" != VSOCK-SMOKE-SEQ-H2G ]; then
+	diag_capture smoke_seq_h2g "$smoke_rc" "$smoke_out"
+	dump_context
+	exit 2
+fi
+echo "PASS  preflight_seqpacket_data_h2g"
+
+host_listener 20 "$((6994 + PORT_OFFSET))" -s -e -n 1 \
+    >"$HOST_WORK/smoke-seq-g2h.host.log" 2>&1 &
+smoke_pid=$!
+sleep 1
+smoke_host_rc=0
+if smoke_out=$($ACMD \
+    "python3 $GPY send-echo seq $((6994 + PORT_OFFSET)) VSOCK-SMOKE-SEQ-G2H" 15); then
+	smoke_rc=0
+else
+	smoke_rc=$?
+fi
+wait "$smoke_pid" 2>/dev/null || smoke_host_rc=$?
+if [ "$smoke_rc" -ne 0 ] || [ "$smoke_host_rc" -ne 0 ] ||
+    [ "$smoke_out" != "ECHO VSOCK-SMOKE-SEQ-G2H" ]; then
+	diag_capture smoke_seq_g2h "$smoke_rc" "$smoke_out"
+	echo "  host listener rc=$smoke_host_rc" >&2
+	cat "$HOST_WORK/smoke-seq-g2h.host.log" >&2 || true
+	dump_context
+	exit 2
+fi
+echo "PASS  preflight_seqpacket_data_g2h"
+
+if [ "$MODE" = smoke ]; then
 	echo "----"
-	echo "linux e2e smoke: 2 passed, 0 failed"
+	echo "linux e2e smoke: 4 passed, 0 failed"
 	exit 0
 fi
 

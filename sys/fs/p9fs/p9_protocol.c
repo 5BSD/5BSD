@@ -36,6 +36,7 @@
 #include <fs/p9fs/p9_client.h>
 #include <fs/p9fs/p9_debug.h>
 #include <fs/p9fs/p9_protocol.h>
+#include <fs/p9fs/p9_wire.h>
 
 #define P9FS_MAXLEN 255
 
@@ -57,27 +58,27 @@ stat_free(struct p9_wstat *stbuf)
 static size_t
 buf_read(struct p9_buffer *buf, void *data, size_t size)
 {
-	size_t len;
+	if (!p9_wire_range_valid(buf->offset, buf->size, size))
+		return (size);
 
-	len = min(buf->size - buf->offset, size);
+	if (size != 0)
+		memcpy(data, &buf->sdata[buf->offset], size);
+	buf->offset += size;
 
-	memcpy(data, &buf->sdata[buf->offset], len);
-	buf->offset += len;
-
-	return (size - len);
+	return (0);
 }
 
 static size_t
 buf_write(struct p9_buffer *buf, const void *data, size_t size)
 {
-	size_t len;
+	if (!p9_wire_range_valid(buf->size, buf->capacity, size))
+		return (size);
 
-	len = min(buf->capacity - buf->size, size);
+	if (size != 0)
+		memcpy(&buf->sdata[buf->size], data, size);
+	buf->size += size;
 
-	memcpy(&buf->sdata[buf->size], data, len);
-	buf->size += len;
-
-	return (size - len);
+	return (0);
 }
 
 /*
@@ -121,25 +122,34 @@ p9_buf_vreadf(struct p9_buffer *buf, int proto_version, const char *fmt,
 		case 'w':
 		{
 			int16_t *val = va_arg(ap, int16_t *);
+			uint8_t wire[sizeof(uint16_t)];
 
-			if (buf_read(buf, val, sizeof(*val)))
+			if (buf_read(buf, wire, sizeof(wire)))
 				error = EFAULT;
+			else
+				*val = (int16_t)p9_wire_load_le16(wire);
 			break;
 		}
 		case 'd':
 		{
 			int32_t *val = va_arg(ap, int32_t *);
+			uint8_t wire[sizeof(uint32_t)];
 
-			if (buf_read(buf, val, sizeof(*val)))
+			if (buf_read(buf, wire, sizeof(wire)))
 				error = EFAULT;
+			else
+				*val = (int32_t)p9_wire_load_le32(wire);
 			break;
 		}
 		case 'q':
 		{
 			int64_t *val = va_arg(ap, int64_t *);
+			uint8_t wire[sizeof(uint64_t)];
 
-			if (buf_read(buf, val, sizeof(*val)))
+			if (buf_read(buf, wire, sizeof(wire)))
 				error = EFAULT;
+			else
+				*val = (int64_t)p9_wire_load_le64(wire);
 			break;
 		}
 		case 's':
@@ -147,19 +157,22 @@ p9_buf_vreadf(struct p9_buffer *buf, int proto_version, const char *fmt,
 			char **sptr_p = va_arg(ap, char **);
 			uint16_t len;
 			char *sptr;
+			uint8_t wire[sizeof(uint16_t)];
 
-			error = buf_read(buf, &len, sizeof(uint16_t));
+			*sptr_p = NULL;
+			error = buf_read(buf, wire, sizeof(wire));
 			if (error)
 				break;
+			len = p9_wire_load_le16(wire);
 
 			sptr = malloc(len + 1, M_TEMP, M_NOWAIT | M_ZERO);
-
-			if (buf_read(buf, sptr, len)) {
+			if (sptr == NULL) {
+				error = ENOMEM;
+			} else if (buf_read(buf, sptr, len)) {
 				error = EFAULT;
 				free(sptr, M_TEMP);
-				sptr = NULL;
 			} else {
-				(sptr)[len] = 0;
+				sptr[len] = '\0';
 				*sptr_p = sptr;
 			}
 			break;
@@ -167,18 +180,28 @@ p9_buf_vreadf(struct p9_buffer *buf, int proto_version, const char *fmt,
 		case 'u':
 		{
 			uid_t *val = va_arg(ap, uid_t *);
+			uint8_t wire[sizeof(uint32_t)];
 
-			if (buf_read(buf, val, sizeof(*val)))
+			if (sizeof(*val) != sizeof(uint32_t))
+				error = EOVERFLOW;
+			else if (buf_read(buf, wire, sizeof(wire)))
 				error = EFAULT;
+			else
+				*val = (uid_t)p9_wire_load_le32(wire);
 			break;
 
 		}
 		case 'g':
 		{
 			gid_t *val = va_arg(ap, gid_t *);
+			uint8_t wire[sizeof(uint32_t)];
 
-			if (buf_read(buf, val, sizeof(*val)))
+			if (sizeof(*val) != sizeof(uint32_t))
+				error = EOVERFLOW;
+			else if (buf_read(buf, wire, sizeof(wire)))
 				error = EFAULT;
+			else
+				*val = (gid_t)p9_wire_load_le32(wire);
 			break;
 
 		}
@@ -195,6 +218,7 @@ p9_buf_vreadf(struct p9_buffer *buf, int proto_version, const char *fmt,
 		{
 			struct p9_wstat *stbuf = va_arg(ap, struct p9_wstat *);
 
+			memset(stbuf, 0, sizeof(*stbuf));
 			error = p9_buf_readf(buf, proto_version, "wwdQdddqssss?sddd",
 			    &stbuf->size, &stbuf->type, &stbuf->dev, &stbuf->qid,
 			    &stbuf->mode, &stbuf->atime, &stbuf->mtime, &stbuf->length,
@@ -226,11 +250,18 @@ p9_buf_vreadf(struct p9_buffer *buf, int proto_version, const char *fmt,
 		{
 			uint32_t *count = va_arg(ap, uint32_t *);
 			void **data = va_arg(ap, void **);
+			uint8_t wire[sizeof(uint32_t)];
 
-			error = buf_read(buf, count, sizeof(uint32_t));
+			error = buf_read(buf, wire, sizeof(wire));
 			if (error == 0) {
-				*count = MIN(*count, buf->size - buf->offset);
-				*data = &buf->sdata[buf->offset];
+				*count = p9_wire_load_le32(wire);
+				if (!p9_wire_range_valid(buf->offset,
+				    buf->size, *count)) {
+					error = EFAULT;
+				} else {
+					*data = &buf->sdata[buf->offset];
+					buf->offset += *count;
+				}
 			}
 			break;
 		}
@@ -240,14 +271,21 @@ p9_buf_vreadf(struct p9_buffer *buf, int proto_version, const char *fmt,
 			char ***wnames_p = va_arg(ap, char ***);
 			uint16_t nwname;
 			char **wnames;
+			uint8_t wire[sizeof(uint16_t)];
 			int i;
 
-			error = buf_read(buf, nwname_p, sizeof(uint16_t));
+			*wnames_p = NULL;
+			error = buf_read(buf, wire, sizeof(wire));
 			if (error != 0)
 				break;
 
-			nwname = *nwname_p;
+			nwname = p9_wire_load_le16(wire);
+			*nwname_p = nwname;
 			wnames = malloc(sizeof(char *) * nwname, M_TEMP, M_NOWAIT | M_ZERO);
+			if (nwname != 0 && wnames == NULL) {
+				error = ENOMEM;
+				break;
+			}
 
 			for (i = 0; i < nwname && (error == 0); i++)
 				error = p9_buf_readf(buf, proto_version, "s", &wnames[i]);
@@ -266,16 +304,19 @@ p9_buf_vreadf(struct p9_buffer *buf, int proto_version, const char *fmt,
 			struct p9_qid **wqids_p = va_arg(ap, struct p9_qid **);
 			uint16_t nwqid;
 			struct p9_qid *wqids;
+			uint8_t wire[sizeof(uint16_t)];
 			int i;
 
+			*wqids_p = NULL;
 			wqids = NULL;
-			error = buf_read(buf, nwqid_p, sizeof(uint16_t));
+			error = buf_read(buf, wire, sizeof(wire));
 			if (error != 0)
 				break;
 
-			nwqid = *nwqid_p;
+			nwqid = p9_wire_load_le16(wire);
+			*nwqid_p = nwqid;
 			wqids = malloc(nwqid * sizeof(struct p9_qid), M_TEMP, M_NOWAIT | M_ZERO);
-			if (wqids == NULL) {
+			if (nwqid != 0 && wqids == NULL) {
 				error = ENOMEM;
 				break;
 			}
@@ -349,24 +390,30 @@ p9_buf_vwritef(struct p9_buffer *buf, int proto_version, const char *fmt,
 		case 'w':
 		{
 			int16_t val = va_arg(ap, int);
+			uint8_t wire[sizeof(uint16_t)];
 
-			if (buf_write(buf, &val, sizeof(val)))
+			p9_wire_store_le16(wire, (uint16_t)val);
+			if (buf_write(buf, wire, sizeof(wire)))
 				error = EFAULT;
 			break;
 		}
 		case 'd':
 		{
 			int32_t val = va_arg(ap, int32_t);
+			uint8_t wire[sizeof(uint32_t)];
 
-			if (buf_write(buf, &val, sizeof(val)))
+			p9_wire_store_le32(wire, (uint32_t)val);
+			if (buf_write(buf, wire, sizeof(wire)))
 				error = EFAULT;
 			break;
 		}
 		case 'q':
 		{
 			int64_t val = va_arg(ap, int64_t);
+			uint8_t wire[sizeof(uint64_t)];
 
-			if (buf_write(buf, &val, sizeof(val)))
+			p9_wire_store_le64(wire, (uint64_t)val);
+			if (buf_write(buf, wire, sizeof(wire)))
 				error = EFAULT;
 
 			break;
@@ -375,11 +422,13 @@ p9_buf_vwritef(struct p9_buffer *buf, int proto_version, const char *fmt,
 		{
 			const char *sptr = va_arg(ap, const char *);
 		        uint16_t len = 0;
+			uint8_t wire[sizeof(uint16_t)];
 
 	                if (sptr)
 			    len = MIN(strlen(sptr), P9FS_MAXLEN);
 
-			error = buf_write(buf, &len, sizeof(uint16_t));
+			p9_wire_store_le16(wire, len);
+			error = buf_write(buf, wire, sizeof(wire));
 			if (error == 0 && buf_write(buf, sptr, len))
 				error = EFAULT;
 			break;
@@ -387,18 +436,30 @@ p9_buf_vwritef(struct p9_buffer *buf, int proto_version, const char *fmt,
 		case 'u':
 		{
 			uid_t val = va_arg(ap, uid_t);
+			uint8_t wire[sizeof(uint32_t)];
 
-			if (buf_write(buf, &val, sizeof(val)))
-				error = EFAULT;
+			if (sizeof(val) != sizeof(uint32_t))
+				error = EOVERFLOW;
+			else {
+				p9_wire_store_le32(wire, (uint32_t)val);
+				if (buf_write(buf, wire, sizeof(wire)))
+					error = EFAULT;
+			}
 			break;
 
 		}
 		case 'g':
 		{
 			gid_t val = va_arg(ap, gid_t);
+			uint8_t wire[sizeof(uint32_t)];
 
-			if (buf_write(buf, &val, sizeof(val)))
-				error = EFAULT;
+			if (sizeof(val) != sizeof(uint32_t))
+				error = EOVERFLOW;
+			else {
+				p9_wire_store_le32(wire, (uint32_t)val);
+				if (buf_write(buf, wire, sizeof(wire)))
+					error = EFAULT;
+			}
 			break;
 
 		}
@@ -429,8 +490,10 @@ p9_buf_vwritef(struct p9_buffer *buf, int proto_version, const char *fmt,
 		{
 			uint32_t count = va_arg(ap, uint32_t);
 			void *data = va_arg(ap, void *);
+			uint8_t wire[sizeof(uint32_t)];
 
-			error = buf_write(buf, &count, sizeof(uint32_t));
+			p9_wire_store_le32(wire, count);
+			error = buf_write(buf, wire, sizeof(wire));
 			if ((error == 0) && buf_write(buf, data, count))
 				error = EFAULT;
 
@@ -440,8 +503,10 @@ p9_buf_vwritef(struct p9_buffer *buf, int proto_version, const char *fmt,
 		{
                         char **wnames = va_arg(ap, char **);
                         uint16_t nwnames = va_arg(ap, int);
+			uint8_t wire[sizeof(uint16_t)];
 
-			error = buf_write(buf, &nwnames, sizeof(uint16_t));
+			p9_wire_store_le16(wire, nwnames);
+			error = buf_write(buf, wire, sizeof(wire));
 			if (error == 0) {
 				int i = 0;
 				for (i = 0; i < nwnames; i++) {
@@ -456,8 +521,10 @@ p9_buf_vwritef(struct p9_buffer *buf, int proto_version, const char *fmt,
                 {
                         const char *sptr = va_arg(ap, const char*);
                         uint16_t len = va_arg(ap, int);
+			uint8_t wire[sizeof(uint16_t)];
 
-			error = buf_write(buf, &len, sizeof(uint16_t));
+			p9_wire_store_le16(wire, len);
+			error = buf_write(buf, wire, sizeof(wire));
 			if (error == 0 && buf_write(buf, sptr, len))
 				error = EFAULT;
 			break;
@@ -467,9 +534,11 @@ p9_buf_vwritef(struct p9_buffer *buf, int proto_version, const char *fmt,
 		{
 			uint16_t nwqid = va_arg(ap, int);
 			struct p9_qid *wqids = va_arg(ap, struct p9_qid *);
+			uint8_t wire[sizeof(uint16_t)];
 			int i;
 
-			error = buf_write(buf, &nwqid, sizeof(uint16_t));
+			p9_wire_store_le16(wire, nwqid);
+			error = buf_write(buf, wire, sizeof(wire));
 			if (error == 0) {
 
 				for (i = 0; i < nwqid; i++) {
@@ -558,8 +627,7 @@ p9stat_read(struct p9_client *clnt, char *buf, size_t len, struct p9_wstat *st)
 }
 
 /*
- * P9_header preparation routine. All p9 buffers have to have this header(QEMU_HEADER) at the
- * front of the buffer.
+ * Prepare the fixed seven-byte 9P message header at the front of a buffer.
  */
 int
 p9_buf_prepare(struct p9_buffer *buf, int8_t type)
@@ -609,8 +677,11 @@ p9_dirent_read(struct p9_client *clnt, char *buf, int start, int len,
 	struct p9_buffer msg_buf;
 	int ret;
 	char *nameptr;
-	uint16_t sle;
+	size_t namelen;
 
+	nameptr = NULL;
+	if (start < 0 || len < 0 || start > len)
+		return (-1);
 	msg_buf.size = len;
 	msg_buf.capacity = len;
 	msg_buf.sdata = buf;
@@ -620,13 +691,18 @@ p9_dirent_read(struct p9_client *clnt, char *buf, int start, int len,
 	    &dent->d_off, &dent->d_type, &nameptr);
 	if (ret) {
 		P9_DEBUG(ERROR, "%s: failed: %d\n", __func__, ret);
-		goto out;
+		free(nameptr, M_TEMP);
+		return (-1);
 	}
 
-	sle = strlen(nameptr);
-	strncpy(dent->d_name, nameptr, sle);
-	dent->len = sle;
+	namelen = strlen(nameptr);
+	if (namelen >= sizeof(dent->d_name)) {
+		free(nameptr, M_TEMP);
+		return (-1);
+	}
+	memcpy(dent->d_name, nameptr, namelen);
+	dent->d_name[namelen] = '\0';
+	dent->len = (int)namelen;
 	free(nameptr, M_TEMP);
-out:
 	return (msg_buf.offset);
 }

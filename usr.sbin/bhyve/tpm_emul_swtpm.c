@@ -8,11 +8,13 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <sys/endian.h>
 
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <malloc_np.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
@@ -33,6 +35,48 @@ struct tpm_resp_hdr {
 } __packed;
 
 static int
+tpm_swtpm_send_all(int fd, const void *buffer, size_t size)
+{
+	const uint8_t *p = buffer;
+	ssize_t n;
+
+	while (size != 0) {
+		n = send(fd, p, size, MSG_NOSIGNAL);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			return (errno);
+		}
+		if (n == 0)
+			return (ECONNRESET);
+		p += n;
+		size -= n;
+	}
+	return (0);
+}
+
+static int
+tpm_swtpm_recv_all(int fd, void *buffer, size_t size)
+{
+	uint8_t *p = buffer;
+	ssize_t n;
+
+	while (size != 0) {
+		n = recv(fd, p, size, 0);
+		if (n < 0) {
+			if (errno == EINTR)
+				continue;
+			return (errno);
+		}
+		if (n == 0)
+			return (ECONNRESET);
+		p += n;
+		size -= n;
+	}
+	return (0);
+}
+
+static int
 tpm_swtpm_init(void **sc, nvlist_t *nvl)
 {
 	struct tpm_swtpm *tpm;
@@ -44,27 +88,38 @@ tpm_swtpm_init(void **sc, nvlist_t *nvl)
 		warnx("%s: failed to allocate tpm_swtpm", __func__);
 		return (ENOMEM);
 	}
+	tpm->fd = -1;
 
 	path = get_config_value_node(nvl, "path");
 	if (path == NULL) {
 		warnx("%s: no socket path specified", __func__);
-		return (ENOENT);
+		free(tpm);
+		return (EINVAL);
 	}
 
 	tpm->fd = socket(PF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (tpm->fd < 0) {
 		warnx("%s: unable to open tpm socket", __func__);
+		free(tpm);
 		return (ENOENT);
 	}
 
 	bzero(&tpm_addr, sizeof (tpm_addr));
 	tpm_addr.sun_family = AF_UNIX;
-	strlcpy(tpm_addr.sun_path, path, sizeof (tpm_addr.sun_path) - 1);
+	if (strlcpy(tpm_addr.sun_path, path, sizeof(tpm_addr.sun_path)) >=
+	    sizeof(tpm_addr.sun_path)) {
+		warnx("%s: TPM socket path is too long", __func__);
+		close(tpm->fd);
+		free(tpm);
+		return (ENAMETOOLONG);
+	}
 
 	if (connect(tpm->fd, (struct sockaddr *)&tpm_addr, sizeof (tpm_addr)) ==
 	    -1) {
 		warnx("%s: unable to connect to tpm socket \"%s\"", __func__,
 		    path);
+		close(tpm->fd);
+		free(tpm);
 		return (ENOENT);
 	}
 
@@ -78,7 +133,8 @@ tpm_swtpm_execute_cmd(void *sc, void *cmd, uint32_t cmd_size, void *rsp,
     uint32_t rsp_size)
 {
 	struct tpm_swtpm *tpm;
-	ssize_t len;
+	uint32_t response_size;
+	int error;
 
 	if (rsp_size < (ssize_t)sizeof(struct tpm_resp_hdr)) {
 		warn("%s: rsp_size of %u is too small", __func__, rsp_size);
@@ -87,25 +143,42 @@ tpm_swtpm_execute_cmd(void *sc, void *cmd, uint32_t cmd_size, void *rsp,
 
 	tpm = sc;
 
-	len = send(tpm->fd, cmd, cmd_size, MSG_NOSIGNAL|MSG_DONTWAIT);
-	if (len == -1)
-		err(1, "%s: cmd send failed, is swtpm running?", __func__);
-	if (len != cmd_size) {
-		warn("%s: cmd write failed (bytes written: %zd / %d)", __func__,
-		    len, cmd_size);
-		return (EFAULT);
+	/*
+	 * A partial send or recv leaves the SOCK_STREAM connection desynced
+	 * mid-message.  Tear the fd down on any transport error so a later
+	 * command cannot read a stale/aborted message's bytes as its own
+	 * response; subsequent commands then fail closed on the dead fd
+	 * rather than acting on leftover data.
+	 */
+	error = tpm_swtpm_send_all(tpm->fd, cmd, cmd_size);
+	if (error != 0)
+		goto fail;
+	error = tpm_swtpm_recv_all(tpm->fd, rsp,
+	    sizeof(struct tpm_resp_hdr));
+	if (error != 0)
+		goto fail;
+	response_size = be32dec((uint8_t *)rsp +
+	    offsetof(struct tpm_resp_hdr, len));
+	if (response_size < sizeof(struct tpm_resp_hdr) ||
+	    response_size > rsp_size) {
+		error = EMSGSIZE;
+		goto fail;
 	}
-
-	len = recv(tpm->fd, rsp, rsp_size, 0);
-	if (len == -1)
-		err(1, "%s: rsp recv failed, is swtpm running?", __func__);
-	if (len < (ssize_t)sizeof(struct tpm_resp_hdr)) {
-		warn("%s: rsp read failed (bytes read: %zd / %d)", __func__,
-		    len, rsp_size);
-		return (EFAULT);
-	}
+	error = tpm_swtpm_recv_all(tpm->fd,
+	    (uint8_t *)rsp + sizeof(struct tpm_resp_hdr),
+	    response_size - sizeof(struct tpm_resp_hdr));
+	if (error != 0)
+		goto fail;
+	memset((uint8_t *)rsp + response_size, 0, rsp_size - response_size);
 
 	return (0);
+
+fail:
+	if (tpm->fd >= 0) {
+		(void)close(tpm->fd);
+		tpm->fd = -1;
+	}
+	return (error);
 }
 
 static void

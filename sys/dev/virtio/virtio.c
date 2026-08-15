@@ -76,6 +76,7 @@ static struct virtio_ident {
 	{ VIRTIO_ID_VSOCK,		"VSOCK Transport"		},
 	{ VIRTIO_ID_CRYPTO,		"Crypto"			},
 	{ VIRTIO_ID_IOMMU,		"IOMMU"				},
+	{ VIRTIO_ID_MEM,		"Memory"			},
 	{ VIRTIO_ID_SOUND,		"Sound"				},
 	{ VIRTIO_ID_FS,			"Filesystem"			},
 	{ VIRTIO_ID_PMEM,		"Persistent Memory"		},
@@ -289,6 +290,13 @@ virtio_setup_intr(device_t dev, enum intr_type type)
 {
 
 	return (VIRTIO_BUS_SETUP_INTR(device_get_parent(dev), type));
+}
+
+void
+virtio_teardown_intr(device_t dev)
+{
+
+	VIRTIO_BUS_TEARDOWN_INTR(device_get_parent(dev));
 }
 
 bool

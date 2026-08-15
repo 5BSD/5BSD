@@ -33,7 +33,7 @@
 .Nd "run a guest operating system inside a virtual machine"
 .Sh SYNOPSIS
 .Nm
-.Op Fl aCDeHhMPSuWwxY
+.Op Fl aACDeHhIMPSuWwxY
 .Oo
 .Sm off
 .Fl c\~
@@ -81,6 +81,7 @@
 .Op Fl o Ar var Ns Cm = Ns Ar value
 .Op Fl p Ar vcpu Ns Cm \&: Ns Ar hostcpu
 .Op Fl r Ar file
+.Op Fl R Ar fd
 .Sm off
 .Oo Fl s\~
 .Ar slot Cm \&, Ar emulation Op Cm \&, Ar conf
@@ -141,6 +142,12 @@ The guest's local APIC is configured in xAPIC mode.
 This option only applies to the amd64 platform.
 xAPIC mode is the default setting so this option is redundant.
 It will be deprecated in a future version.
+.It Fl A
+Generate ACPI tables.
+This option is deprecated and has no effect:
+.Nm
+always generates ACPI tables because most guests do not operate correctly
+without them.
 .It Fl C
 Include guest memory in core files.
 .It Fl c Oo Oo Cm cpus= Oc Ns Ar numcpus Oc Ns Oo Cm ,sockets= Ns Ar n Oc Ns Oo Cm ,cores= Ns Ar n Oc Ns Oo Cm ,threads= Ns Ar n Oc
@@ -215,6 +222,10 @@ will pause execution at the first instruction waiting for a debugger to attach.
 Yield the virtual CPU thread when a HLT instruction is detected.
 If this option is not specified, virtual CPUs will use 100% of a host CPU.
 This option applies only to the amd64 platform.
+.It Fl I
+Present an I/O APIC to the guest.
+This option is deprecated and has no effect:
+an I/O APIC is now provided unconditionally to every guest.
 .It Fl h
 Print help message and exit.
 .It Fl k Ar config_file
@@ -255,8 +266,37 @@ the boot ROM device
 .Cm bootrom ,
 the
 .Cm fwcfg
-type and the debug/test device
-.Cm pc-testdev .
+type, the debug/test device
+.Cm pc-testdev ,
+and the paravirtual crash-notification device
+.Cm pvpanic .
+.Pp
+The
+.Cm pvpanic
+device is presented on the ISA bus at I/O port
+.Li 0x505
+with ACPI
+.Li _HID
+.Qq QEMU0001 ,
+matching the QEMU
+.Sy isa-pvpanic
+device that stock guest drivers bind to.
+When the guest reports a panic, the event is logged; the optional
+.Ar conf
+.Cm action Ns = Ns Ar policy
+selects the host reaction, where
+.Ar policy
+is one of
+.Cm none
+(the default; log only),
+.Cm log
+(an accepted synonym for
+.Cm none ) ,
+.Cm poweroff ,
+.Cm reset ,
+or
+.Cm halt .
+A crash-load event never changes the virtual machine lifecycle.
 .Pp
 The possible values for the
 .Ar conf
@@ -388,12 +428,8 @@ These values detect accidental or post-publication changes but do not
 authenticate an untrusted checkpoint producer.
 The manifest, its members, and their containing directory must therefore be
 controlled by a trusted operator.
-Legacy snapshots in which
-.Ar file
-contains guest memory and
-.Dq Ar file Ns .kern
-contains state remain readable.
-Version-2 manifests also remain readable and do not contain member digests.
+Only the current manifest version is accepted; unreleased earlier manifests
+and raw multi-file snapshot layouts are rejected.
 .Pp
 Note that the current snapshot file format requires that the
 configuration of devices in the new VM match the VM from which the
@@ -403,6 +439,25 @@ and
 .Fl l
 options.
 The count of vCPUs and memory configuration are read from the snapshot.
+.It Fl R Ar fd
+Stand up this instance as the destination of an inbound live migration on the
+already-connected stream socket referenced by file descriptor
+.Ar fd ,
+which the operator or monitor passes after accepting the connection from the
+source host.
+The guest is configured normally from the command line, as for a fresh boot,
+but is held fenced and does not begin executing until the migration commits
+and releases its vCPUs.
+This option is mutually exclusive with
+.Fl r ;
+supplying both is an error.
+It is the destination counterpart of the
+.Cm migrate
+control command described below, and, like
+.Fl r ,
+is available only when
+.Nm
+is built with snapshot support.
 .It Fl S
 Wire guest memory.
 .It Fl s Cm help
@@ -479,6 +534,33 @@ Alphanumeric name of the guest.
 This should be the same as that created by
 .Xr bhyveload 8 .
 .El
+.Sh CONTROL COMMANDS
+When built with snapshot support,
+.Nm
+accepts commands over its per-guest IPC socket, sent by an operator or
+monitor.
+In addition to the checkpoint command used by
+.Xr bhyvectl 8 ,
+the following command is provided:
+.Bl -tag -width indent
+.It Cm migrate Cm fd Ns = Ns Ar fd Oo Cm max_rounds Ns = Ns Ar n Oc Oo Cm converge_pages Ns = Ns Ar n Oc
+Drive a live migration of this running guest, acting as the migration source,
+over the already-connected stream socket referenced by file descriptor
+.Ar fd .
+The command performs the live handshake, capability and topology validation,
+device-eligibility check, and iterative pre-copy against a destination
+.Nm
+brought up with the
+.Fl R
+option.
+The optional
+.Cm max_rounds
+and
+.Cm converge_pages
+values bound, respectively, the number of pre-copy iterations and the
+dirty-page count at which the transfer is considered converged.
+The source is left running if the migration does not commit.
+.El
 .Sh PCI EMULATION
 .Nm
 provides emulation for various PCI devices.
@@ -534,6 +616,11 @@ Values greater than 1 advertise
 .Dv VIRTIO_BLK_F_MQ
 and create that many independent request virtqueues.
 The default is one queue.
+The optional
+.Cm resize=true
+setting enables notifications when the backing store's capacity changes at
+runtime.  It is disabled by default: enabling it for a partitioned root disk
+can cause guest partition-provider reconfiguration while that root is mounted.
 For modern devices,
 .Cm packed=true
 enables packed virtqueues and is disabled by default.
@@ -599,6 +686,15 @@ also exposes one high-priority queue.
 The optional
 .Cm packed=true
 setting enables packed virtqueues and is disabled by default.
+The optional
+.Cm notifications=true
+setting enables the standard
+.Dv VIRTIO_FS_F_NOTIFICATION
+feature.  It adds notification queue 1, moves request queues to indices 2
+through N, and publishes a 64-KiB minimum notification buffer size.  The
+authenticated VFSB backend must explicitly negotiate notification support;
+otherwise device creation fails rather than exposing a partly functional
+queue.
 The optional
 .Cm identity
 setting supplies a stable backend identity for checkpoint compatibility.
@@ -691,11 +787,10 @@ context initialization.
 The experimental
 .Cm blob=true
 setting advertises guest-memory blob resources and blob alignment, and adds a
-256 MiB sparse host-visible shared-memory aperture in a dedicated 64-bit BAR.
-It accepts guest blobs, including Linux's shareable dumb-buffer convention,
-but not host-renderer or cross-device blobs.
-Mapped aperture accesses are reported uncached and are translated through the
-same architecture-neutral DMA boundary as descriptor-backed resources.
+bounded guest-memory blob resource path.
+It accepts Linux's guest/shareable dumb-buffer convention, but not mappable,
+host-renderer, or cross-device blobs, and does not advertise a host-visible
+shared-memory region.
 The setting is disabled by default pending live Linux and checkpoint
 qualification.
 If no host display consumer is configured, the scanout remains headless while
@@ -722,7 +817,7 @@ setting advertises
 and is disabled by default.
 Checkpoint state uses a bounded, versioned little-endian representation of
 monitor identity, resources, host pixels, guest physical backing descriptors,
-blob identities and mappings, scanout, and cursor state.
+blob identities, scanout, and cursor state.
 Restore rejects a destination configured with different monitor dimensions.
 Host mappings, pointers, display handles, and architecture-specific state are
 never serialized.

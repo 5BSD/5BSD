@@ -511,7 +511,7 @@ struct sysent sysent[] = {
 	{ .sy_narg = AS(thr_suspend_args), .sy_call = (sy_call_t *)sys_thr_suspend, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 442 = thr_suspend */
 	{ .sy_narg = AS(thr_wake_args), .sy_call = (sy_call_t *)sys_thr_wake, .sy_auevent = AUE_NULL, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 443 = thr_wake */
 	{ .sy_narg = AS(kldunloadf_args), .sy_call = (sy_call_t *)sys_kldunloadf, .sy_auevent = AUE_MODUNLOAD, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 444 = kldunloadf */
-	{ .sy_narg = AS(audit_args), .sy_call = (sy_call_t *)sys_audit, .sy_auevent = AUE_AUDIT, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 445 = audit */
+	{ .sy_narg = AS(audit_args), .sy_call = (sy_call_t *)sys_audit, .sy_auevent = AUE_AUDIT, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 445 = audit */
 	{ .sy_narg = AS(auditon_args), .sy_call = (sy_call_t *)sys_auditon, .sy_auevent = AUE_AUDITON, .sy_flags = 0, .sy_thrcnt = SY_THR_STATIC },	/* 446 = auditon */
 	{ .sy_narg = AS(getauid_args), .sy_call = (sy_call_t *)sys_getauid, .sy_auevent = AUE_GETAUID, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 447 = getauid */
 	{ .sy_narg = AS(setauid_args), .sy_call = (sy_call_t *)sys_setauid, .sy_auevent = AUE_SETAUID, .sy_flags = SYF_CAPENABLED, .sy_thrcnt = SY_THR_STATIC },	/* 448 = setauid */

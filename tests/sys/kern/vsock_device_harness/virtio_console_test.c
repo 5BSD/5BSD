@@ -19,6 +19,8 @@
 
 #include <atf-c.h>
 
+#include "virtio_config_read_test_support.h"
+#define	BHYVE_SNAPSHOT
 #include "iov.c"
 #include "pci_virtio_console.c"
 #include "virtio_1_4_spec.h"
@@ -32,6 +34,10 @@
 #define	VIRTIO_F_IN_ORDER	VIRTIO14_F_IN_ORDER
 #undef VIRTIO_F_RING_RESET
 #define	VIRTIO_F_RING_RESET	VIRTIO14_F_RING_RESET
+#undef VIRTIO_F_RING_PACKED
+#define	VIRTIO_F_RING_PACKED	VIRTIO14_F_RING_PACKED
+#undef VIRTIO_F_SUSPEND
+#define	VIRTIO_F_SUSPEND	VIRTIO14_F_SUSPEND
 #undef VIRTIO_ID_CONSOLE
 #define	VIRTIO_ID_CONSOLE	VIRTIO14_DEVICE_CONSOLE
 #undef VTCON_F_SIZE
@@ -65,10 +71,12 @@ static const char *g_transport;
 static char g_set_name[16][32];
 static char g_set_value[16][128];
 static int g_set_count;
+static uint16_t g_config_nodes;
 static int g_modern_identity;
 static int g_modern_bar;
 static int g_io_bar;
 static int g_descs;
+static int g_has_descs_q;
 static int g_chain_n;
 static int g_readable;
 static int g_writable;
@@ -90,16 +98,116 @@ static ssize_t g_send_result;
 static int g_send_errno;
 static int g_send_flags;
 static bool g_realloc_fail;
+static bool g_packed;
+static int g_snapshot_validate_calls;
+static bool g_snapshot_validate_mutex_owned;
+
+int
+vi_pci_snapshot(struct vm_snapshot_meta *meta)
+{
+	struct pci_vtcon_softc *sc;
+
+	sc = ((struct pci_devinst *)meta->dev_data)->pi_arg;
+	g_snapshot_validate_calls++;
+	g_snapshot_validate_mutex_owned = pthread_mutex_isowned_np(&sc->vsc_mtx);
+	return (0);
+}
+
+void
+vm_snapshot_buf_err(const char *name __unused,
+    const enum vm_snapshot_op op __unused)
+{
+}
+
+int
+vm_snapshot_buf(void *data, size_t size, struct vm_snapshot_meta *meta)
+{
+
+	if (size > meta->buffer.buf_rem)
+		return (E2BIG);
+	if (meta->op == VM_SNAPSHOT_SAVE)
+		memcpy(meta->buffer.buf, data, size);
+	else if (vm_snapshot_is_loading(meta))
+		memcpy(data, meta->buffer.buf, size);
+	else
+		return (EINVAL);
+	meta->buffer.buf += size;
+	meta->buffer.buf_rem -= size;
+	return (0);
+}
+
+int
+vm_snapshot_u8(uint8_t *value, struct vm_snapshot_meta *meta)
+{
+
+	return (vm_snapshot_buf(value, sizeof(*value), meta));
+}
+
+int
+vm_snapshot_le16(uint16_t *value, struct vm_snapshot_meta *meta)
+{
+	uint8_t bytes[2];
+	int error;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		bytes[0] = *value;
+		bytes[1] = *value >> 8;
+	}
+	error = vm_snapshot_buf(bytes, sizeof(bytes), meta);
+	if (error == 0 && vm_snapshot_is_loading(meta))
+		*value = (uint16_t)bytes[0] | (uint16_t)bytes[1] << 8;
+	return (error);
+}
+
+int
+vm_snapshot_le32(uint32_t *value, struct vm_snapshot_meta *meta)
+{
+	uint8_t bytes[4];
+	int error;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			bytes[i] = *value >> (i * 8);
+	}
+	error = vm_snapshot_buf(bytes, sizeof(bytes), meta);
+	if (error == 0 && vm_snapshot_is_loading(meta)) {
+		*value = 0;
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			*value |= (uint32_t)bytes[i] << (i * 8);
+	}
+	return (error);
+}
+
+int
+vm_snapshot_le64(uint64_t *value, struct vm_snapshot_meta *meta)
+{
+	uint8_t bytes[8];
+	int error;
+
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			bytes[i] = *value >> (i * 8);
+	}
+	error = vm_snapshot_buf(bytes, sizeof(bytes), meta);
+	if (error == 0 && vm_snapshot_is_loading(meta)) {
+		*value = 0;
+		for (unsigned int i = 0; i < nitems(bytes); i++)
+			*value |= (uint64_t)bytes[i] << (i * 8);
+	}
+	return (error);
+}
 
 static void
 reset_mocks(void)
 {
 	g_transport = NULL;
 	g_set_count = 0;
+	g_config_nodes = 0;
 	g_modern_identity = -1;
 	g_modern_bar = -1;
 	g_io_bar = -1;
 	g_descs = 1;
+	g_has_descs_q = -1;
 	g_chain_n = 1;
 	g_readable = 1;
 	g_writable = 0;
@@ -121,6 +229,7 @@ reset_mocks(void)
 	g_send_errno = 0;
 	g_send_flags = 0;
 	g_realloc_fail = false;
+	g_packed = false;
 }
 
 ssize_t __real_send(int, const void *, size_t, int);
@@ -157,6 +266,16 @@ get_config_value_node(const nvlist_t *nvl __unused, const char *name)
 	return (strcmp(name, "transport") == 0 ? g_transport : NULL);
 }
 
+bool
+get_config_bool_node_default(const nvlist_t *nvl __unused,
+    const char *name, bool default_value)
+{
+
+	if (strcmp(name, "packed") == 0)
+		return (g_packed);
+	return (default_value);
+}
+
 void
 set_config_value_node(nvlist_t *nvl __unused, const char *name,
     const char *value)
@@ -178,12 +297,25 @@ pci_parse_legacy_config(nvlist_t *nvl __unused, const char *opts __unused)
 nvlist_t *
 create_relative_config_node(nvlist_t *nvl, const char *name __unused)
 {
+	char *end;
+	long value;
+
+	value = strtol(name, &end, 10);
+	if (*name != '\0' && *end == '\0' && value >= 0 && value < 16)
+		g_config_nodes |= (uint16_t)1U << value;
 	return (nvl);
 }
 
 nvlist_t *
-find_relative_config_node(nvlist_t *nvl __unused, const char *name __unused)
+find_relative_config_node(nvlist_t *nvl, const char *name)
 {
+	char *end;
+	long value;
+
+	value = strtol(name, &end, 10);
+	if (*name != '\0' && *end == '\0' && value >= 0 && value < 16 &&
+	    (g_config_nodes & ((uint16_t)1U << value)) != 0)
+		return (nvl);
 	return (NULL);
 }
 
@@ -233,6 +365,7 @@ mevent_disable(struct mevent *ev __unused)
 }
 
 int mevent_delete(struct mevent *ev __unused) { return (0); }
+int mevent_delete_sync(struct mevent *ev __unused) { return (0); }
 int mevent_delete_close(struct mevent *ev __unused) { return (0); }
 
 int
@@ -244,6 +377,7 @@ stream_write(int fd, const void *buf, int len)
 int
 vq_has_descs(struct vqueue_info *vq __unused)
 {
+	g_has_descs_q = vq->vq_num;
 	return (g_descs > 0);
 }
 
@@ -364,6 +498,20 @@ capture_cb(struct pci_vtcon_port *port __unused, void *arg __unused,
 }
 
 static void
+resume_rx_cb(struct pci_vtcon_port *port __unused, void *arg __unused)
+{
+
+	g_enable_calls++;
+}
+
+static void
+disable_rx_cb(struct pci_vtcon_port *port __unused, void *arg __unused)
+{
+
+	g_disable_calls++;
+}
+
+static void
 free_softc(struct pci_devinst *pi)
 {
 	struct pci_vtcon_softc *sc;
@@ -390,7 +538,7 @@ ATF_TC_BODY(transport_and_features, tc)
 	ATF_CHECK(vtcon_vi_consts.vc_hv_caps ==
 	    ((1ULL << VTCON_F_SIZE) | (1ULL << VTCON_F_MULTIPORT) |
 	    (1ULL << VTCON_F_EMERG_WRITE) |
-	    VIRTIO_F_IN_ORDER | VIRTIO_F_RING_RESET));
+	    VIRTIO_F_IN_ORDER | VIRTIO_F_RING_RESET | VIRTIO_F_SUSPEND));
 	ATF_CHECK((vtcon_vi_consts.vc_hv_caps &
 	    (1ULL << VTCON_F_EMERG_WRITE)) != 0);
 
@@ -424,10 +572,84 @@ ATF_TC_BODY(transport_and_features, tc)
 	ATF_CHECK(pci_vtcon_cfgread(sc,
 	    VIRTIO14_CONSOLE_CONFIG_SIZE - 1, 4,
 	    &val) == -1);
+	ATF_CHECK(pci_vtcon_cfgread(sc, 0, 1, NULL) == -1);
 	ATF_CHECK(pci_vtcon_cfgwrite(sc, 0, 4, 1) == -1);
 	ATF_CHECK(pci_vtcon_cfgwrite(sc,
 	    VIRTIO14_CONSOLE_CONFIG_EMERG_WR_OFF, 4, 'x') == 0);
 	free_softc(&pi);
+
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_transport = "modern";
+	g_packed = true;
+	ATF_REQUIRE(pci_vtcon_init(&pi, &nvl) == 0);
+	sc = pi.pi_arg;
+	ATF_CHECK((sc->vsc_consts.vc_hv_caps &
+	    VIRTIO_F_RING_PACKED) != 0);
+	ATF_CHECK((vtcon_vi_consts.vc_hv_caps &
+	    VIRTIO_F_RING_PACKED) == 0);
+	free_softc(&pi);
+
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_packed = true;
+	ATF_CHECK(pci_vtcon_init(&pi, &nvl) != 0);
+}
+
+ATF_TC_WITHOUT_HEAD(suspend_resume_rearms_existing_rx);
+ATF_TC_BODY(suspend_resume_rearms_existing_rx, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_port *port;
+	struct vring_used used;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&used, 0, sizeof(used));
+	reset_mocks();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_features = 1ULL << VTCON_F_MULTIPORT;
+	sc.vsc_control_port.vsp_sc = &sc;
+	sc.vsc_control_port.vsp_txq = 2;
+	sc.vsc_queues[2].vq_num = 2;
+	port = &sc.vsc_ports[0];
+	port->vsp_sc = &sc;
+	port->vsp_enabled = true;
+	port->vsp_txq = 0;
+	port->vsp_rxq = 1;
+	port->vsp_rx_cb = resume_rx_cb;
+	sc.vsc_queues[0].vq_num = 0;
+	sc.vsc_queues[0].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[0].vq_used = &used;
+	sc.vsc_queues[1].vq_num = 1;
+	sc.vsc_queues[1].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[1].vq_used = &used;
+
+	ATF_CHECK((vtcon_vi_consts.vc_hv_caps &
+	    VIRTIO14_F_SUSPEND) != 0);
+	ATF_CHECK(vtcon_vi_consts.vc_suspend ==
+	    pci_vtcon_suspend_device);
+	ATF_CHECK(vtcon_vi_consts.vc_resume_complete ==
+	    pci_vtcon_resume_complete);
+	ATF_REQUIRE_EQ(pci_vtcon_suspend_device(&sc), 0);
+	pci_vtcon_resume_complete(&sc);
+	ATF_CHECK(port->vsp_rx_ready);
+	ATF_CHECK_EQ(g_enable_calls, 1);
+	ATF_CHECK_EQ(g_has_descs_q, 0);
+
+	/*
+	 * Guest-driven resume calls the completion hook with the VirtIO mutex
+	 * already held.  Verify that path does not attempt to relock it.
+	 */
+	port->vsp_rx_ready = false;
+	g_enable_calls = 0;
+	pthread_mutex_lock(&sc.vsc_mtx);
+	pci_vtcon_resume_complete(&sc);
+	ATF_CHECK(pthread_mutex_isowned_np(&sc.vsc_mtx));
+	pthread_mutex_unlock(&sc.vsc_mtx);
+	ATF_CHECK(port->vsp_rx_ready);
+	ATF_CHECK_EQ(g_enable_calls, 1);
+	ATF_CHECK_EQ(g_has_descs_q, 0);
+	pthread_mutex_destroy(&sc.vsc_mtx);
 }
 
 ATF_TC_WITHOUT_HEAD(in_order_completion);
@@ -441,6 +663,7 @@ ATF_TC_BODY(in_order_completion, tc)
 	memset(&sc, 0, sizeof(sc));
 	vq = &sc.vsc_queues[1];
 	vq->vq_num = 1;
+	vq->vq_qsize = VTCON_RINGSZ;
 	sc.vsc_ports[0].vsp_enabled = true;
 	sc.vsc_ports[0].vsp_cb = capture_cb;
 	reset_mocks();
@@ -504,23 +727,149 @@ ATF_TC_BODY(queue_reset_isolated, tc)
 	memset(&sc, 0, sizeof(sc));
 	sc.vsc_ports[0].vsp_rx_ready = true;
 	sc.vsc_ports[1].vsp_rx_ready = true;
+	sc.vsc_ports[0].vsp_rx_disable_cb = disable_rx_cb;
+	sc.vsc_ports[1].vsp_rx_disable_cb = disable_rx_cb;
 	sc.vsc_queues[0].vq_num = 0;
 	sc.vsc_queues[1].vq_num = 1;
 	sc.vsc_queues[4].vq_num = 4;
 
+	reset_mocks();
 	ATF_CHECK_EQ(pci_vtcon_qreset(&sc, &sc.vsc_queues[1], 1), 0);
 	ATF_CHECK(sc.vsc_ports[0].vsp_rx_ready);
 	ATF_CHECK(sc.vsc_ports[1].vsp_rx_ready);
+	ATF_CHECK_EQ(g_disable_calls, 0);
 
 	ATF_CHECK_EQ(pci_vtcon_qreset(&sc, &sc.vsc_queues[0], 2), 0);
 	ATF_CHECK(!sc.vsc_ports[0].vsp_rx_ready);
 	ATF_CHECK(sc.vsc_ports[1].vsp_rx_ready);
+	ATF_CHECK_EQ(g_disable_calls, 1);
 
 	ATF_CHECK_EQ(pci_vtcon_qreset(&sc, &sc.vsc_queues[4], 3), 0);
 	ATF_CHECK(!sc.vsc_ports[1].vsp_rx_ready);
+	ATF_CHECK_EQ(g_disable_calls, 2);
 
 	sc.vsc_queues[0].vq_num = VTCON_MAXQ;
 	ATF_CHECK_EQ(pci_vtcon_qreset(&sc, &sc.vsc_queues[0], 4), EINVAL);
+}
+
+ATF_TC_WITHOUT_HEAD(queue_reset_fences_selected_rx_callback);
+ATF_TC_BODY(queue_reset_fences_selected_rx_callback, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_sock sock;
+	struct mevent ev;
+	struct vring_used used;
+	char byte;
+	int sv[2];
+
+	/*
+	 * mevent_disable() queues a change for the event thread.  Model a read
+	 * callback that kqueue selected before the queue reset, but which does
+	 * not acquire the VirtIO mutex until after reset published the cleared
+	 * readiness latch.  It must not consume a descriptor or host byte.
+	 */
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	memset(&sc, 0, sizeof(sc));
+	memset(&sock, 0, sizeof(sock));
+	memset(&used, 0, sizeof(used));
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
+	sc.vsc_ports[0].vsp_sc = &sc;
+	sc.vsc_ports[0].vsp_enabled = true;
+	sc.vsc_ports[0].vsp_rx_ready = true;
+	sc.vsc_ports[0].vsp_rx_disable_cb = pci_vtcon_sock_rx_disable;
+	sc.vsc_ports[0].vsp_arg = &sock;
+	sc.vsc_ports[0].vsp_txq = 0;
+	sc.vsc_queues[0].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[0].vq_used = &used;
+	sc.vsc_queues[0].vq_num = 0;
+	sc.vsc_queues[0].vq_qsize = VTCON_RINGSZ;
+	sock.vss_sc = &sc;
+	sock.vss_port = &sc.vsc_ports[0];
+	sock.vss_open = true;
+	sock.vss_conn_fd = sv[1];
+	sock.vss_conn_evp = &ev;
+
+	reset_mocks();
+	g_readable = 0;
+	g_writable = 1;
+	g_chain_iov[0] = (struct iovec){
+		.iov_base = &byte, .iov_len = sizeof(byte),
+	};
+	ATF_REQUIRE_EQ(write(sv[0], "x", 1), 1);
+	ATF_REQUIRE_EQ(pci_vtcon_qreset(&sc, &sc.vsc_queues[0], 1), 0);
+	ATF_CHECK_EQ(g_disable_calls, 1);
+
+	pci_vtcon_sock_rx(sv[1], EVF_READ, &sock);
+	ATF_CHECK_EQ(g_disable_calls, 2);
+	ATF_CHECK_EQ(g_get_calls, 0);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(recv(sv[1], &byte, 1, MSG_DONTWAIT), 1);
+	ATF_CHECK_EQ(byte, 'x');
+
+	close(sv[0]);
+	close(sv[1]);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(stale_connection_callbacks_are_ignored);
+ATF_TC_BODY(stale_connection_callbacks_are_ignored, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_sock sock;
+	struct mevent read_ev, write_ev;
+	struct vring_used used;
+	char byte;
+	int sv[2];
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	ATF_REQUIRE(fcntl(sv[0], F_SETFL,
+	    fcntl(sv[0], F_GETFL) | O_NONBLOCK) == 0);
+	memset(&sc, 0, sizeof(sc));
+	memset(&sock, 0, sizeof(sock));
+	memset(&used, 0, sizeof(used));
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
+	sc.vsc_ports[0].vsp_sc = &sc;
+	sc.vsc_ports[0].vsp_enabled = true;
+	sc.vsc_ports[0].vsp_rx_ready = true;
+	sc.vsc_ports[0].vsp_txq = 0;
+	sc.vsc_queues[0].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[0].vq_used = &used;
+	sc.vsc_queues[0].vq_qsize = VTCON_RINGSZ;
+	sock.vss_sc = &sc;
+	sock.vss_port = &sc.vsc_ports[0];
+	sock.vss_open = true;
+	sock.vss_conn_fd = sv[1];
+	sock.vss_conn_evp = &read_ev;
+	sock.vss_write_evp = &write_ev;
+
+	reset_mocks();
+	g_readable = 0;
+	g_writable = 1;
+	g_chain_iov[0] = (struct iovec){
+		.iov_base = &byte, .iov_len = sizeof(byte),
+	};
+	ATF_REQUIRE_EQ(write(sv[0], "r", 1), 1);
+	pci_vtcon_sock_rx(sv[1] + 100, EVF_READ, &sock);
+	ATF_CHECK_EQ(g_get_calls, 0);
+	ATF_CHECK_EQ(recv(sv[1], &byte, 1, MSG_DONTWAIT), 1);
+	ATF_CHECK_EQ(byte, 'r');
+
+	sock.vss_tx_buf = malloc(1);
+	ATF_REQUIRE(sock.vss_tx_buf != NULL);
+	sock.vss_tx_buf[0] = 'w';
+	sock.vss_tx_len = 1;
+	sock.vss_tx_cap = 1;
+	pci_vtcon_sock_tx_event(sv[1] + 100, EVF_WRITE, &sock);
+	ATF_CHECK_EQ(sock.vss_tx_off, 0);
+	ATF_CHECK_EQ(recv(sv[0], &byte, 1, MSG_DONTWAIT), -1);
+	ATF_CHECK_EQ(errno, EAGAIN);
+
+	free(sock.vss_tx_buf);
+	close(sv[0]);
+	close(sv[1]);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(legacy_parser_transport);
@@ -530,21 +879,53 @@ ATF_TC_BODY(legacy_parser_transport, tc)
 
 	reset_mocks();
 	ATF_REQUIRE(pci_vtcon_legacy_config(&nvl,
-	    "agent=/tmp/a,transport=modern,other=/tmp/b") == 0);
-	ATF_CHECK(g_set_count == 5);
+	    "agent=/tmp/a,transport=modern,console-port=0,packed=true,"
+	    "other=/tmp/b") == 0);
+	ATF_CHECK(g_set_count == 7);
 	ATF_CHECK(strcmp(g_set_name[2], "transport") == 0);
 	ATF_CHECK(strcmp(g_set_value[2], "modern") == 0);
-	ATF_CHECK(strcmp(g_set_value[3], "other") == 0);
+	ATF_CHECK(strcmp(g_set_name[3], "console") == 0);
+	ATF_CHECK(strcmp(g_set_value[3], "true") == 0);
+	ATF_CHECK(strcmp(g_set_name[4], "packed") == 0);
+	ATF_CHECK(strcmp(g_set_value[4], "true") == 0);
+	ATF_CHECK(strcmp(g_set_value[5], "other") == 0);
+	ATF_CHECK(pci_vtcon_legacy_config(&nvl,
+	    "agent=/tmp/a,console-port=1") == -1);
+	ATF_CHECK(pci_vtcon_legacy_config(&nvl,
+	    "agent=/tmp/a,console-port=-1") == -1);
+	ATF_CHECK(pci_vtcon_legacy_config(&nvl,
+	    "agent=/tmp/a,console-port=") == -1);
 	ATF_CHECK(pci_vtcon_legacy_config(&nvl, NULL) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(port_identifier_validation);
+ATF_TC_BODY(port_identifier_validation, tc)
+{
+	const char *errstr;
+	int port;
+
+	ATF_REQUIRE_EQ(pci_vtcon_parse_port("0", &port, &errstr), 0);
+	ATF_CHECK_EQ(port, 0);
+	ATF_REQUIRE_EQ(pci_vtcon_parse_port("15", &port, &errstr), 0);
+	ATF_CHECK_EQ(port, 15);
+	ATF_CHECK_EQ(pci_vtcon_parse_port(NULL, &port, &errstr), EINVAL);
+	ATF_CHECK_EQ(pci_vtcon_parse_port("", &port, &errstr), EINVAL);
+	ATF_CHECK_EQ(pci_vtcon_parse_port(" 0", &port, &errstr), EINVAL);
+	ATF_CHECK_EQ(pci_vtcon_parse_port("+0", &port, &errstr), EINVAL);
+	ATF_CHECK_EQ(pci_vtcon_parse_port("0x1", &port, &errstr), EINVAL);
+	ATF_CHECK_EQ(pci_vtcon_parse_port("16", &port, &errstr), EINVAL);
+	ATF_CHECK_EQ(pci_vtcon_parse_port("1garbage", &port, &errstr),
+	    EINVAL);
 }
 
 ATF_TC_WITHOUT_HEAD(control_validation);
 ATF_TC_BODY(control_validation, tc)
 {
 	struct pci_vtcon_softc sc;
-	struct iovec iov[2];
+	struct iovec iov[3];
 	uint8_t ready[VIRTIO14_CONSOLE_CONTROL_SIZE];
 	uint8_t unknown[VIRTIO14_CONSOLE_CONTROL_SIZE];
+	uint8_t trailing;
 
 	memset(&sc, 0, sizeof(sc));
 	memset(ready, 0, sizeof(ready));
@@ -572,12 +953,25 @@ ATF_TC_BODY(control_validation, tc)
 	pci_vtcon_control_tx(&sc.vsc_control_port, NULL, iov, 2);
 	ATF_CHECK(!sc.vsc_ready);
 
-	virtio14_store_le16(ready + VIRTIO14_CONSOLE_CONTROL_VALUE_OFF, 0);
+	/* A valid header prefix with any trailing byte is still malformed. */
 	iov[0] = (struct iovec){ .iov_base = ready, .iov_len = sizeof(ready) };
-	pci_vtcon_control_tx(&sc.vsc_control_port, NULL, iov, 1);
+	iov[1] = (struct iovec){ .iov_base = &trailing, .iov_len = 1 };
+	pci_vtcon_control_tx(&sc.vsc_control_port, NULL, iov, 2);
+	ATF_CHECK(!sc.vsc_ready);
+
+	/* Empty descriptor segments do not change the exact aggregate length. */
+	iov[0] = (struct iovec){ .iov_base = ready, .iov_len = 3 };
+	iov[1] = (struct iovec){ .iov_base = NULL, .iov_len = 0 };
+	iov[2] = (struct iovec){
+		.iov_base = ready + 3,
+		.iov_len = sizeof(ready) - 3,
+	};
+
+	virtio14_store_le16(ready + VIRTIO14_CONSOLE_CONTROL_VALUE_OFF, 0);
+	pci_vtcon_control_tx(&sc.vsc_control_port, NULL, iov, 3);
 	ATF_CHECK(!sc.vsc_ready);
 	virtio14_store_le16(ready + VIRTIO14_CONSOLE_CONTROL_VALUE_OFF, 1);
-	pci_vtcon_control_tx(&sc.vsc_control_port, NULL, iov, 1);
+	pci_vtcon_control_tx(&sc.vsc_control_port, NULL, iov, 3);
 	ATF_CHECK(sc.vsc_ready);
 }
 
@@ -619,6 +1013,7 @@ ATF_TC_BODY(transmit_validation, tc)
 	sc.vsc_features = 1ULL << VTCON_F_MULTIPORT;
 	vq = &sc.vsc_queues[4];
 	vq->vq_num = 4;
+	vq->vq_qsize = VTCON_RINGSZ;
 	sc.vsc_ports[1].vsp_enabled = true;
 	sc.vsc_ports[1].vsp_cb = capture_cb;
 	reset_mocks();
@@ -639,6 +1034,7 @@ ATF_TC_BODY(transmit_validation, tc)
 	ATF_CHECK(g_rel_calls == 1 && g_rel_len == 0);
 
 	reset_mocks();
+	sc.vsc_queues[6].vq_qsize = VTCON_RINGSZ;
 	pci_vtcon_notify_tx(&sc, &sc.vsc_queues[6]);
 	ATF_CHECK(g_callback_calls == 0 && g_rel_calls == 1);
 }
@@ -865,6 +1261,7 @@ ATF_TC_BODY(device_add_name_retry, tc)
 	sc.vsc_ports[0].vsp_id = 0;
 	sc.vsc_ports[0].vsp_name = "console";
 	sc.vsc_ports[0].vsp_open = true;
+	sc.vsc_ports[0].vsp_console = true;
 	sc.vsc_queues[2].vq_num = 2;
 	ctrl = (struct pci_vtcon_control){
 		.event = VTCON_DEVICE_READY, .value = 1,
@@ -914,10 +1311,25 @@ ATF_TC_BODY(device_add_name_retry, tc)
 	ATF_CHECK(sc.vsc_ports[0].vsp_announced);
 	ATF_CHECK(sc.vsc_ports[0].vsp_guest_ready);
 	ATF_CHECK(sc.vsc_ports[0].vsp_named);
+	ATF_CHECK(sc.vsc_ports[0].vsp_console_pending);
 	ATF_CHECK(sc.vsc_ports[0].vsp_open_pending);
 	ATF_CHECK_EQ(g_rel_calls, 1);
 
-	/* The next kick publishes the still-pending host-open state. */
+	/* The next kick nominates this configured text console. */
+	reset_mocks();
+	g_readable = 0;
+	g_writable = 1;
+	g_chain_iov[0] = (struct iovec){
+		.iov_base = output, .iov_len = sizeof(output),
+	};
+	pci_vtcon_notify_rx(&sc, &sc.vsc_queues[2]);
+	memcpy(&event, output, VIRTIO14_CONSOLE_CONTROL_SIZE);
+	ATF_CHECK_EQ(event.event, VTCON_CONSOLE_PORT);
+	ATF_CHECK(!sc.vsc_ports[0].vsp_console_pending);
+	ATF_CHECK(sc.vsc_ports[0].vsp_open_pending);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+
+	/* A later receive buffer publishes the still-pending host-open state. */
 	reset_mocks();
 	g_readable = 0;
 	g_writable = 1;
@@ -964,6 +1376,7 @@ ATF_TC_BODY(receive_preserves_data, tc)
 	sc.vsc_ports[0].vsp_txq = 0;
 	sc.vsc_queues[0].vq_vs = &sc.vsc_vs;
 	sc.vsc_queues[0].vq_used = &used;
+	sc.vsc_queues[0].vq_qsize = VTCON_RINGSZ;
 	sock.vss_sc = &sc;
 	sock.vss_port = &sc.vsc_ports[0];
 	sock.vss_open = true;
@@ -995,6 +1408,55 @@ ATF_TC_BODY(receive_preserves_data, tc)
 	close(sv[0]);
 	close(sv[1]);
 	ATF_REQUIRE(pthread_mutex_destroy(&sc.vsc_mtx) == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(malformed_receive_dispatch_is_queue_bounded);
+ATF_TC_BODY(malformed_receive_dispatch_is_queue_bounded, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_sock sock;
+	struct mevent ev;
+	struct vring_used used;
+	char byte;
+	int sv[2];
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	memset(&sc, 0, sizeof(sc));
+	memset(&sock, 0, sizeof(sock));
+	memset(&used, 0, sizeof(used));
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
+	sc.vsc_ports[0].vsp_sc = &sc;
+	sc.vsc_ports[0].vsp_enabled = true;
+	sc.vsc_ports[0].vsp_rx_ready = true;
+	sc.vsc_ports[0].vsp_txq = 0;
+	sc.vsc_queues[0].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[0].vq_used = &used;
+	sc.vsc_queues[0].vq_qsize = 4;
+	sock.vss_sc = &sc;
+	sock.vss_port = &sc.vsc_ports[0];
+	sock.vss_open = true;
+	sock.vss_conn_fd = sv[1];
+	sock.vss_conn_evp = &ev;
+
+	reset_mocks();
+	g_descs = 8;
+	g_readable = 1;
+	g_writable = 0;
+	g_chain_iov[0] = (struct iovec){
+		.iov_base = &byte, .iov_len = sizeof(byte),
+	};
+	ATF_REQUIRE_EQ(write(sv[0], "x", 1), 1);
+	pci_vtcon_sock_rx(sv[1], EVF_READ, &sock);
+	ATF_CHECK_EQ(g_get_calls, 4);
+	ATF_CHECK_EQ(g_rel_calls, 4);
+	ATF_CHECK_EQ(g_descs, 4);
+	ATF_CHECK_EQ(recv(sv[1], &byte, 1, MSG_DONTWAIT), 1);
+	ATF_CHECK_EQ(byte, 'x');
+
+	close(sv[0]);
+	close(sv[1]);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(transmit_backpressure);
@@ -1155,6 +1617,311 @@ ATF_TC_BODY(transmit_failure_paths, tc)
 	ATF_CHECK(sock.vss_tx_buf == NULL && sock.vss_tx_len == 0);
 }
 
+static void
+setup_snapshot_console(struct pci_vtcon_softc *sc,
+    struct pci_vtcon_config *config, struct pci_vtcon_sock *sock,
+    const char *name, const char *path)
+{
+	struct pci_vtcon_port *port;
+
+	memset(sc, 0, sizeof(*sc));
+	memset(config, 0, sizeof(*config));
+	memset(sock, 0, sizeof(*sock));
+	sc->vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	sc->vsc_features = VIRTIO14_F_VERSION_1 |
+	    VIRTIO14_CONSOLE_F_MULTIPORT;
+	sc->vsc_vs.vs_negotiated_caps = sc->vsc_features;
+	sc->vsc_config = config;
+	config->cols = htole16(80);
+	config->rows = htole16(25);
+	config->max_nr_ports = htole32(VTCON_MAXPORTS);
+	port = &sc->vsc_ports[0];
+	port->vsp_sc = sc;
+	port->vsp_id = 0;
+	port->vsp_name = name;
+	port->vsp_enabled = true;
+	port->vsp_rxq = 1;
+	port->vsp_txq = 0;
+	port->vsp_arg = sock;
+	sock->vss_sc = sc;
+	sock->vss_port = port;
+	sock->vss_path = path;
+	sock->vss_server_fd = 3;
+	sock->vss_conn_fd = -1;
+}
+
+static void
+setup_snapshot_extra_port(struct pci_vtcon_softc *sc,
+    struct pci_vtcon_sock *sock, unsigned int id, const char *name,
+    const char *path)
+{
+	struct pci_vtcon_port *port;
+
+	ATF_REQUIRE(id > 0 && id < VTCON_MAXPORTS);
+	memset(sock, 0, sizeof(*sock));
+	port = &sc->vsc_ports[id];
+	port->vsp_sc = sc;
+	port->vsp_id = id;
+	port->vsp_name = name;
+	port->vsp_enabled = true;
+	port->vsp_rxq = (id + 1) * 2 + 1;
+	port->vsp_txq = (id + 1) * 2;
+	port->vsp_arg = sock;
+	sock->vss_sc = sc;
+	sock->vss_port = port;
+	sock->vss_path = path;
+	sock->vss_server_fd = 4 + (int)id;
+	sock->vss_conn_fd = -1;
+}
+
+static int
+run_console_snapshot(struct pci_vtcon_softc *sc, void *buffer, size_t size,
+    enum vm_snapshot_op op, size_t *used)
+{
+	struct vm_snapshot_meta meta = {
+		.buffer = {
+			.buf_start = buffer,
+			.buf_size = size,
+			.buf = buffer,
+			.buf_rem = size,
+		},
+		.op = op,
+	};
+	int error;
+
+	error = pci_vtcon_snapshot(sc, &meta);
+	if (used != NULL)
+		*used = size - meta.buffer.buf_rem;
+	return (error);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_wire_identity_and_atomicity);
+ATF_TC_BODY(snapshot_wire_identity_and_atomicity, tc)
+{
+	struct pci_vtcon_config dst_config, src_config;
+	struct pci_vtcon_sock dst_sock, dst_sock2, src_sock, src_sock2;
+	struct pci_vtcon_softc destination, source;
+	uint8_t image[4096];
+	size_t used;
+
+	setup_snapshot_console(&source, &src_config, &src_sock,
+	    "org.freebsd.console", "/tmp/vtcon-test.sock");
+	setup_snapshot_extra_port(&source, &src_sock2, 1,
+	    "org.freebsd.agent", "/tmp/vtcon-agent.sock");
+	source.vsc_ready = true;
+	source.vsc_config->emerg_wr = htole32(0x41);
+	source.vsc_ports[0].vsp_rx_ready = true;
+	source.vsc_ports[0].vsp_announced = true;
+	source.vsc_ports[0].vsp_guest_ready = true;
+	source.vsc_ports[0].vsp_named = true;
+	source.vsc_ports[0].vsp_open_pending = true;
+	source.vsc_ports[1].vsp_rx_ready = true;
+	source.vsc_ports[1].vsp_announced = true;
+	source.vsc_ports[1].vsp_guest_ready = true;
+	source.vsc_ports[1].vsp_named = true;
+	source.vsc_ports[1].vsp_console = true;
+	source.vsc_ports[1].vsp_console_pending = true;
+	source.vsc_features ^= UINT64_C(1);
+	ATF_CHECK_EQ(run_console_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EINVAL);
+	source.vsc_features ^= UINT64_C(1);
+	/*
+	 * The codec is a self-contained portability boundary: it must reject an
+	 * enabled port without a reconstructible backend even when a caller has
+	 * bypassed the normal pause callback, which also rejects this state.
+	 */
+	source.vsc_ports[0].vsp_arg = NULL;
+	ATF_CHECK_EQ(run_console_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EINVAL);
+	source.vsc_ports[0].vsp_arg = &src_sock;
+	/* A portable console image cannot encode a live host connection. */
+	source.vsc_ports[0].vsp_open = true;
+	ATF_CHECK_EQ(run_console_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EINVAL);
+	source.vsc_ports[0].vsp_open = false;
+	ATF_REQUIRE_EQ(run_console_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE(used > 64);
+	ATF_CHECK_EQ(image[0], 'C');
+	ATF_CHECK_EQ(image[1], 'O');
+	ATF_CHECK_EQ(image[2], 'N');
+	ATF_CHECK_EQ(image[3], '1');
+	ATF_CHECK_EQ(image[4], 1);
+	ATF_CHECK_EQ(image[5], 0);
+
+	setup_snapshot_console(&destination, &dst_config, &dst_sock,
+	    "org.freebsd.console", "/tmp/vtcon-test.sock");
+	setup_snapshot_extra_port(&destination, &dst_sock2, 1,
+	    "org.freebsd.agent", "/tmp/vtcon-agent.sock");
+	destination.vsc_ports[1].vsp_console = true;
+	ATF_REQUIRE_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_CHECK(!destination.vsc_ready);
+	ATF_CHECK(!destination.vsc_ports[0].vsp_rx_ready);
+	ATF_CHECK_EQ(le32toh(destination.vsc_config->emerg_wr), 0);
+
+	/* The production callback must propagate codec failures to preflight. */
+	image[0] ^= 0xff;
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), ENOTSUP);
+	ATF_CHECK(!destination.vsc_ready);
+	image[0] ^= 0xff;
+
+	/* A portable image can never contain a live host socket. */
+	image[31] = 1;		/* port 0 open */
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	ATF_CHECK(!destination.vsc_ready);
+	ATF_CHECK(!destination.vsc_ports[0].vsp_open);
+	image[31] = 0;
+
+	/*
+	 * The first port starts after the fixed 29-byte device header.  Its
+	 * announced and guest-ready bytes follow the 15-byte port identity
+	 * and the receive-ready byte.
+	 */
+	image[45] = 0;
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	ATF_CHECK(!destination.vsc_ready);
+	ATF_CHECK(!destination.vsc_ports[0].vsp_rx_ready);
+	image[45] = 1;
+
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used - 1,
+	    VM_SNAPSHOT_VALIDATE, NULL), E2BIG);
+	ATF_CHECK(!destination.vsc_ready);
+	ATF_REQUIRE_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK(destination.vsc_ready);
+	ATF_CHECK(destination.vsc_ports[0].vsp_rx_ready);
+	ATF_CHECK(destination.vsc_ports[0].vsp_announced);
+	ATF_CHECK(destination.vsc_ports[0].vsp_guest_ready);
+	ATF_CHECK(destination.vsc_ports[0].vsp_named);
+	ATF_CHECK(destination.vsc_ports[0].vsp_open_pending);
+	ATF_CHECK(destination.vsc_ports[1].vsp_rx_ready);
+	ATF_CHECK(destination.vsc_ports[1].vsp_announced);
+	ATF_CHECK(destination.vsc_ports[1].vsp_guest_ready);
+	ATF_CHECK(destination.vsc_ports[1].vsp_named);
+	ATF_CHECK(destination.vsc_ports[1].vsp_console_pending);
+	ATF_CHECK_EQ(le32toh(destination.vsc_config->emerg_wr), 0x41);
+
+	/* A late truncation must not publish any earlier port state. */
+	destination.vsc_ready = false;
+	destination.vsc_ports[0].vsp_rx_ready = false;
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used - 1,
+	    VM_SNAPSHOT_RESTORE, NULL), E2BIG);
+	ATF_CHECK(!destination.vsc_ready);
+	ATF_CHECK(!destination.vsc_ports[0].vsp_rx_ready);
+
+	/* Listener identity is a destination contract, not restored bytes. */
+	setup_snapshot_console(&destination, &dst_config, &dst_sock,
+	    "org.freebsd.console", "/tmp/vtcon-test.sock");
+	setup_snapshot_extra_port(&destination, &dst_sock2, 1,
+	    "org.freebsd.agent", "/tmp/different-agent.sock");
+	destination.vsc_ports[1].vsp_console = true;
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	ATF_CHECK(!destination.vsc_ready);
+
+	setup_snapshot_console(&destination, &dst_config, &dst_sock,
+	    "org.freebsd.different", "/tmp/vtcon-test.sock");
+	setup_snapshot_extra_port(&destination, &dst_sock2, 1,
+	    "org.freebsd.agent", "/tmp/vtcon-agent.sock");
+	destination.vsc_ports[1].vsp_console = true;
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	ATF_CHECK(!destination.vsc_ready);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_lifecycle_validation);
+ATF_TC_BODY(snapshot_lifecycle_validation, tc)
+{
+	struct pci_vtcon_port_snapshot state;
+
+	memset(&state, 0, sizeof(state));
+	ATF_CHECK(pci_vtcon_snapshot_port_valid(true, false, &state));
+	state.open_pending = 1;
+	ATF_CHECK(pci_vtcon_snapshot_port_valid(true, false, &state));
+	state.open_pending = 0;
+
+	state.announced = 1;
+	ATF_CHECK(pci_vtcon_snapshot_port_valid(true, false, &state));
+	state.guest_ready = 1;
+	ATF_CHECK(pci_vtcon_snapshot_port_valid(true, false, &state));
+	state.named = 1;
+	ATF_CHECK(pci_vtcon_snapshot_port_valid(true, false, &state));
+
+	state.announced = 0;
+	ATF_CHECK(!pci_vtcon_snapshot_port_valid(true, false, &state));
+	state.announced = 1;
+	state.guest_ready = 0;
+	ATF_CHECK(!pci_vtcon_snapshot_port_valid(true, false, &state));
+	state.guest_ready = 1;
+	state.named = 0;
+	state.console_pending = 1;
+	ATF_CHECK(!pci_vtcon_snapshot_port_valid(true, false, &state));
+	ATF_CHECK(pci_vtcon_snapshot_port_valid(true, true, &state));
+
+	memset(&state, 0, sizeof(state));
+	state.rx_ready = 1;
+	ATF_CHECK(!pci_vtcon_snapshot_port_valid(false, false, &state));
+	memset(&state, 0, sizeof(state));
+	ATF_CHECK(!pci_vtcon_snapshot_port_valid(false, true, &state));
+}
+
+ATF_TC_WITHOUT_HEAD(checkpoint_rejects_active_host_socket);
+ATF_TC_BODY(checkpoint_rejects_active_host_socket, tc)
+{
+	struct pci_vtcon_config config;
+	struct pci_vtcon_sock sock;
+	struct pci_vtcon_softc sc;
+
+	setup_snapshot_console(&sc, &config, &sock, "console",
+	    "/tmp/vtcon-test.sock");
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sock.vss_open = true;
+	sock.vss_conn_fd = 4;
+	ATF_CHECK_EQ(pci_vtcon_pause(&sc), EBUSY);
+	sock.vss_open = false;
+	sock.vss_conn_fd = -1;
+	ATF_REQUIRE_EQ(pci_vtcon_pause(&sc), 0);
+	ATF_REQUIRE_EQ(pci_vtcon_resume(&sc), 0);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_preflight_is_locally_serialized);
+ATF_TC_BODY(snapshot_preflight_is_locally_serialized, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtcon_softc sc;
+	struct vm_snapshot_meta meta = {
+		.dev_data = &pi,
+		.op = VM_SNAPSHOT_VALIDATE,
+	};
+
+	memset(&pi, 0, sizeof(pi));
+	memset(&sc, 0, sizeof(sc));
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	pi.pi_arg = &sc;
+	g_snapshot_validate_calls = 0;
+	g_snapshot_validate_mutex_owned = false;
+	ATF_CHECK_EQ(pci_de_vcon.pe_snapshot_validate, pci_vtcon_snapshot_validate);
+	ATF_REQUIRE_EQ(pci_vtcon_snapshot_validate(&meta), 0);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 1);
+	ATF_CHECK(g_snapshot_validate_mutex_owned);
+	/* The normal restore transaction enters preflight with pause ownership. */
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	g_snapshot_validate_mutex_owned = false;
+	ATF_REQUIRE_EQ(pci_vtcon_snapshot_validate(&meta), 0);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 2);
+	ATF_CHECK(g_snapshot_validate_mutex_owned);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	meta.dev_data = NULL;
+	ATF_CHECK_EQ(pci_vtcon_snapshot_validate(&meta), EINVAL);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 2);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+}
+
 ATF_TC_WITHOUT_HEAD(virtio_1_4_wire_layout);
 ATF_TC_BODY(virtio_1_4_wire_layout, tc)
 {
@@ -1183,10 +1950,14 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	ATF_TP_ADD_TC(tp, transport_and_features);
+	ATF_TP_ADD_TC(tp, suspend_resume_rearms_existing_rx);
 	ATF_TP_ADD_TC(tp, in_order_completion);
 	ATF_TP_ADD_TC(tp, emergency_write);
 	ATF_TP_ADD_TC(tp, queue_reset_isolated);
+	ATF_TP_ADD_TC(tp, queue_reset_fences_selected_rx_callback);
+	ATF_TP_ADD_TC(tp, stale_connection_callbacks_are_ignored);
 	ATF_TP_ADD_TC(tp, legacy_parser_transport);
+	ATF_TP_ADD_TC(tp, port_identifier_validation);
 	ATF_TP_ADD_TC(tp, control_validation);
 	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, transmit_validation);
@@ -1195,8 +1966,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, device_add_lifecycle);
 	ATF_TP_ADD_TC(tp, device_add_name_retry);
 	ATF_TP_ADD_TC(tp, receive_preserves_data);
+	ATF_TP_ADD_TC(tp, malformed_receive_dispatch_is_queue_bounded);
 	ATF_TP_ADD_TC(tp, transmit_backpressure);
 	ATF_TP_ADD_TC(tp, transmit_partial_and_compaction);
 	ATF_TP_ADD_TC(tp, transmit_failure_paths);
+	ATF_TP_ADD_TC(tp, snapshot_wire_identity_and_atomicity);
+	ATF_TP_ADD_TC(tp, snapshot_preflight_is_locally_serialized);
+	ATF_TP_ADD_TC(tp, snapshot_lifecycle_validation);
+	ATF_TP_ADD_TC(tp, checkpoint_rejects_active_host_socket);
 	return (atf_no_error());
 }

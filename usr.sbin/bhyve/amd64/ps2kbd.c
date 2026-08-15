@@ -33,6 +33,7 @@
 #include <machine/vmm_snapshot.h>
 
 #include <assert.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -49,6 +50,9 @@
 #include "console.h"
 #include "debug.h"
 #include "ps2kbd.h"
+#ifdef BHYVE_SNAPSHOT
+#include "snapshot.h"
+#endif
 
 /* keyboard device commands */
 #define	PS2KC_RESET_DEV		0xff
@@ -505,16 +509,62 @@ ps2kbd_init(struct atkbdc_softc *atkbdc_sc)
 }
 
 #ifdef BHYVE_SNAPSHOT
+static bool
+ps2kbd_snapshot_curcmd_valid(uint8_t curcmd)
+{
+
+	return (curcmd == 0 || curcmd == PS2KC_SET_LEDS ||
+	    curcmd == PS2KC_SET_SCANCODE_SET ||
+	    curcmd == PS2KC_SET_TYPEMATIC);
+}
+
 int
 ps2kbd_snapshot(struct ps2kbd_softc *sc, struct vm_snapshot_meta *meta)
 {
+	struct fifo fifo;
+	uint8_t curcmd, enabled;
+	uint32_t num, rindex, size, windex;
 	int ret;
 
-	SNAPSHOT_VAR_OR_LEAVE(sc->enabled, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(sc->curcmd, meta, ret, done);
+	if (sc == NULL || meta == NULL)
+		return (EINVAL);
+	pthread_mutex_lock(&sc->mtx);
+	enabled = sc->enabled ? 1 : 0;
+	curcmd = sc->curcmd;
+	fifo = sc->fifo;
+	rindex = fifo.rindex;
+	windex = fifo.windex;
+	num = fifo.num;
+	size = fifo.size;
+
+	SNAPSHOT_U8_OR_LEAVE(enabled, meta, ret, done);
+	SNAPSHOT_U8_OR_LEAVE(curcmd, meta, ret, done);
+	SNAPSHOT_BUF_OR_LEAVE(fifo.buf, sizeof(fifo.buf), meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(rindex, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(windex, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(num, meta, ret, done);
+	SNAPSHOT_LE32_OR_LEAVE(size, meta, ret, done);
+	if (vm_snapshot_is_loading(meta)) {
+		if (enabled > 1 || !ps2kbd_snapshot_curcmd_valid(curcmd) ||
+		    size != PS2KBD_FIFOSZ ||
+		    rindex >= size || windex >= size || num > size ||
+		    windex != (rindex + num) % size) {
+			ret = EINVAL;
+			goto done;
+		}
+		if (vm_snapshot_is_restoring(meta)) {
+			fifo.rindex = rindex;
+			fifo.windex = windex;
+			fifo.num = num;
+			fifo.size = size;
+			sc->enabled = enabled != 0;
+			sc->curcmd = curcmd;
+			sc->fifo = fifo;
+		}
+	}
 
 done:
+	pthread_mutex_unlock(&sc->mtx);
 	return (ret);
 }
 #endif
-

@@ -3,20 +3,38 @@
 
 import errno
 import glob
+import mmap
 import os
 import select
 import socket
+import struct
 import sys
 import tempfile
 import threading
 import time
 
+# VIRTIO_ACTIVATION_ASSERTION: packed-negotiation-and-bidirectional-data
+# VIRTIO_ACTIVATION_ASSERTION: in-order-negotiation-and-bidirectional-data
+# VIRTIO_ACTIVATION_ASSERTION: emergency-write-config-and-host-byte
+
 # VirtIO 1.4 feature allocation (§6).
+VIRTIO_F_RING_PACKED = 34
 VIRTIO_F_IN_ORDER = 35
 VIRTIO_F_NOTIFICATION_DATA = 38
 VIRTIO_F_RING_RESET = 40
+VIRTIO_CONSOLE_F_EMERG_WRITE = 2
+
+# VirtIO PCI modern capability placement used by bhyve.  These are test-oracle
+# literals from the advertised PCI capability layout and console config in
+# VirtIO 1.4, not values imported from bhyve headers.
+MODERN_DEVICE_CONFIG_OFFSET = 0x2000
+CONSOLE_EMERG_WR_OFFSET = 8
+MODERN_BAR_LENGTH = 0x4000
+MODERN_DEVICE_FEATURE_SELECT_OFFSET = 0
+MODERN_DEVICE_FEATURE_OFFSET = 4
 
 MODERN_REQUIRED_FEATURES = (
+    (VIRTIO_F_IN_ORDER, "VIRTIO_F_IN_ORDER"),
     (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
     (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
 )
@@ -41,7 +59,10 @@ def negotiated_feature(virtio, bit):
     return features[bit] == "1"
 
 
-def find_port(transport, wanted_name, sys_root="/sys", dev_root="/dev"):
+def find_port(
+    transport, wanted_name, sys_root="/sys", dev_root="/dev",
+    require_packed=False
+):
     expected = expected_pci_device(transport)
     matches = []
     for pci in glob.glob(os.path.join(sys_root, "bus/pci/devices/*")):
@@ -81,6 +102,13 @@ def find_port(transport, wanted_name, sys_root="/sys", dev_root="/dev"):
                                 "virtio-console did not negotiate "
                                 f"{feature_name}"
                             )
+                    if require_packed and not negotiated_feature(
+                        child, VIRTIO_F_RING_PACKED
+                    ):
+                        raise RuntimeError(
+                            "virtio-console did not negotiate "
+                            "VIRTIO_F_RING_PACKED"
+                        )
                 matches.append((
                     os.path.join(dev_root, os.path.basename(port)),
                     child,
@@ -147,6 +175,101 @@ def exchange(path, incoming, outgoing, timeout=20):
         os.close(fd)
 
 
+def emergency_write(child, value, resource_path=None):
+    if not 0 <= value <= 0xff:
+        raise RuntimeError("emergency character is outside one byte")
+    pci = os.path.dirname(os.path.realpath(child))
+    path = resource_path or os.path.join(pci, "resource2")
+    offset = MODERN_DEVICE_CONFIG_OFFSET + CONSOLE_EMERG_WR_OFFSET
+    fd = os.open(path, os.O_RDWR | os.O_SYNC)
+    try:
+        mapping = mmap.mmap(
+            fd, MODERN_BAR_LENGTH, flags=mmap.MAP_SHARED,
+            prot=mmap.PROT_READ | mmap.PROT_WRITE
+        )
+        try:
+            old_select = mapping[
+                MODERN_DEVICE_FEATURE_SELECT_OFFSET:
+                MODERN_DEVICE_FEATURE_SELECT_OFFSET + 4
+            ]
+            mapping[
+                MODERN_DEVICE_FEATURE_SELECT_OFFSET:
+                MODERN_DEVICE_FEATURE_SELECT_OFFSET + 4
+            ] = struct.pack("<I", 0)
+            offered = struct.unpack(
+                "<I", mapping[
+                    MODERN_DEVICE_FEATURE_OFFSET:
+                    MODERN_DEVICE_FEATURE_OFFSET + 4
+                ]
+            )[0]
+            mapping[
+                MODERN_DEVICE_FEATURE_SELECT_OFFSET:
+                MODERN_DEVICE_FEATURE_SELECT_OFFSET + 4
+            ] = old_select
+            if not offered & (1 << VIRTIO_CONSOLE_F_EMERG_WRITE):
+                raise RuntimeError(
+                    "virtio-console did not offer emergency write"
+                )
+            mapping[offset:offset + 4] = struct.pack("<I", value)
+        finally:
+            mapping.close()
+    finally:
+        os.close(fd)
+
+
+def hold_echo_fd(fd):
+    while True:
+        ready, _, _ = select.select([fd], [], [])
+        if not ready:
+            continue
+        try:
+            data = os.read(fd, 65536)
+        except BlockingIOError:
+            continue
+        if not data:
+            break
+        offset = 0
+        while offset < len(data):
+            _, writable, _ = select.select([], [fd], [])
+            if not writable:
+                continue
+            try:
+                written = os.write(fd, data[offset:])
+            except BlockingIOError:
+                continue
+            if written <= 0:
+                raise RuntimeError("short virtio-console echo write")
+            offset += written
+
+
+def write_all(fd, data, timeout=20):
+    deadline = time.monotonic() + timeout
+    offset = 0
+    while offset < len(data):
+        wait_io(fd, False, deadline)
+        try:
+            written = os.write(fd, data[offset:])
+        except BlockingIOError:
+            continue
+        if written <= 0:
+            raise RuntimeError("short virtio-console write")
+        offset += written
+
+
+def hold_echo(path, ready_token):
+    fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+    try:
+        # This token crosses the virtio port.  Seeing it at the host proves
+        # both endpoints are connected and avoids relying on the existence of
+        # the guest device node as a PORT_READY indication.
+        write_all(fd, ready_token)
+        print("READY", flush=True)
+        hold_echo_fd(fd)
+    finally:
+        os.close(fd)
+    print("PASS hold-echo-closed", flush=True)
+
+
 def self_test():
     with tempfile.TemporaryDirectory() as root:
         sys_root = root + "/sys"
@@ -200,6 +323,40 @@ def self_test():
                 raise AssertionError(
                     f"accepted console without {missing_name}"
                 )
+        features[VIRTIO_F_RING_PACKED] = "0"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
+        try:
+            find_port(
+                "modern", "bhyve-e2e-console", sys_root=sys_root,
+                dev_root=root, require_packed=True
+            )
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("accepted console without packed rings")
+        features[VIRTIO_F_RING_PACKED] = "1"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
+        find_port(
+            "modern", "bhyve-e2e-console", sys_root=sys_root,
+            dev_root=root, require_packed=True
+        )
+
+        resource = pci + "/resource2"
+        with open(resource, "wb") as stream:
+            stream.truncate(MODERN_BAR_LENGTH)
+        with open(resource, "r+b") as stream:
+            stream.seek(MODERN_DEVICE_FEATURE_OFFSET)
+            stream.write(struct.pack(
+                "<I", 1 << VIRTIO_CONSOLE_F_EMERG_WRITE
+            ))
+        emergency_write(child, ord("E"), resource_path=resource)
+        with open(resource, "rb") as stream:
+            stream.seek(MODERN_DEVICE_CONFIG_OFFSET +
+                        CONSOLE_EMERG_WR_OFFSET)
+            if stream.read(4) != b"E\x00\x00\x00":
+                raise AssertionError("emergency write used wrong wire bytes")
 
     incoming = b"host-ready"
     outgoing = b"guest-ready"
@@ -232,6 +389,23 @@ def self_test():
         raise AssertionError("exchange self-test peer did not exit")
     if peer_errors:
         raise peer_errors[0]
+
+    left, right = socket.socketpair()
+    left.setblocking(False)
+    write_all(left.fileno(), b"ready-token", timeout=2)
+    if right.recv(11) != b"ready-token":
+        raise AssertionError("hold readiness token corrupted")
+    holder = threading.Thread(target=hold_echo_fd, args=(left.fileno(),))
+    holder.start()
+    right.sendall(b"checkpoint-console")
+    if right.recv(18) != b"checkpoint-console":
+        raise AssertionError("hold echo corrupted data")
+    right.shutdown(socket.SHUT_WR)
+    holder.join(timeout=2)
+    if holder.is_alive():
+        raise AssertionError("hold echo did not observe EOF")
+    left.close()
+    right.close()
     print("SELFTEST PASS")
 
 
@@ -239,30 +413,69 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
-    if len(sys.argv) not in (4, 6):
+    if len(sys.argv) not in (4, 5, 6, 7):
         raise SystemExit(
-            "usage: gconsole.py --self-test | check transport name | "
-            "exchange transport name incoming outgoing"
+            "usage: gconsole.py --self-test | check transport name [packed] | "
+            "exchange transport name incoming outgoing [packed] | "
+            "exchange-emergency modern name incoming outgoing [packed] | "
+            "hold transport name ready-token [packed]"
         )
     command, transport, name = sys.argv[1:4]
-    path, child = find_port(transport, name)
+    packed_arg = (
+        (command == "check" and len(sys.argv) == 5 and sys.argv[4] == "packed")
+        or
+        (command == "hold" and len(sys.argv) == 6 and sys.argv[5] == "packed")
+        or
+        (command == "exchange" and len(sys.argv) == 7
+         and sys.argv[6] == "packed")
+        or
+        (command == "exchange-emergency" and len(sys.argv) == 7
+         and sys.argv[6] == "packed")
+    )
+    if ((command == "check" and len(sys.argv) == 5)
+            or (command == "hold" and len(sys.argv) == 6)
+            or (command == "exchange" and len(sys.argv) == 7)
+            or (command == "exchange-emergency" and
+                len(sys.argv) == 7)) and not packed_arg:
+        raise SystemExit("optional feature argument must be packed")
+    path, child = find_port(transport, name, require_packed=packed_arg)
     modern = transport == "modern"
     in_order = modern and negotiated_feature(child, VIRTIO_F_IN_ORDER)
+    packed = modern and negotiated_feature(child, VIRTIO_F_RING_PACKED)
     feature_status = (
         "yes" if in_order else ("no" if modern else "n/a")
     )
-    if command == "check" and len(sys.argv) == 4:
+    packed_status = "yes" if packed else ("no" if modern else "n/a")
+    if command == "check" and len(sys.argv) in (4, 5):
         print(
             f"PASS console-device name={name} device={path} "
-            f"in_order={feature_status}"
+            f"in_order={feature_status} packed={packed_status}"
         )
-    elif command == "exchange" and len(sys.argv) == 6:
+    elif command == "hold" and len(sys.argv) in (5, 6):
+        hold_echo(path, sys.argv[4].encode("ascii"))
+    elif command == "exchange" and len(sys.argv) in (6, 7):
         incoming = sys.argv[4].encode("ascii")
         outgoing = sys.argv[5].encode("ascii")
         exchange(path, incoming, outgoing)
         print(
             f"PASS console-exchange name={name} device={path} "
-            f"in_order={feature_status}"
+            f"in_order={feature_status} packed={packed_status}"
+        )
+    elif command == "exchange-emergency" and len(sys.argv) in (6, 7):
+        if transport != "modern":
+            raise RuntimeError("emergency mmap test requires modern PCI")
+        fd = os.open(path, os.O_RDWR | os.O_NONBLOCK)
+        try:
+            exchange_fd(
+                fd, sys.argv[4].encode("ascii"),
+                sys.argv[5].encode("ascii")
+            )
+            emergency_write(child, ord("E"))
+        finally:
+            os.close(fd)
+        print(
+            f"PASS console-emergency-write name={name} device={path} "
+            f"in_order={feature_status} packed={packed_status}"
         )
     else:
         raise SystemExit("invalid gconsole.py command or argument count")

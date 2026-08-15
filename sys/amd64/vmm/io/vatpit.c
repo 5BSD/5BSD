@@ -474,26 +474,259 @@ vatpit_cleanup(struct vatpit *vatpit)
 }
 
 #ifdef BHYVE_SNAPSHOT
+_Static_assert(sizeof(bool) == sizeof(uint8_t),
+    "historical VATPIT latch byte width");
+
+/*
+ * VATPIT wire record, generation 2 ("APT2").
+ *
+ * Generation 1 serialized 'now_bt' and 'callout_bt' as absolute source
+ * uptimes.  A destination whose uptime differs from the source would then
+ * compute guest-visible counters from a meaningless delta and (via the
+ * overdue clamp in pit_timer_start_cntr0()) fire or delay IRQ0 arbitrarily.
+ * The record now serializes, per channel, the time elapsed since the counter
+ * was loaded and the time remaining until the armed callout target, so
+ * restore reanchors both 'now_bt' and 'callout_bt' against destination
+ * uptime.
+ *
+ * Per the current-only unreleased-format policy there is no generation-1
+ * reader: the leading magic accepts exactly this encoding.  A generation-1
+ * record begins with freq_bt.sec, which is always zero for the 8254 input
+ * frequency, so it fails the magic check (and its shorter length fails the
+ * final reads) before any destination state is published.
+ */
+#define	VATPIT_SNAPSHOT_MAGIC	0x32545041U	/* "APT2" on the wire */
+
+struct vatpit_snapshot_channel {
+	int		mode;
+	uint16_t	initial;
+	struct bintime	elapsed_bt;	/* capture uptime - now_bt */
+	uint8_t		cr[2];
+	uint8_t		ol[2];
+	uint8_t		slatched;
+	uint8_t		status;
+	int		crbyte;
+	int		frbyte;
+	uint8_t		callout_armed;
+	struct bintime	remaining_bt;	/* callout target - capture uptime */
+	int		olbyte;		/* not on the wire; see below */
+};
+
+struct vatpit_snapshot_state {
+	uint32_t	magic;
+	struct bintime	freq_bt;
+	struct vatpit_snapshot_channel channel[3];
+};
+
+static void
+vatpit_snapshot_capture_locked(struct vatpit *vatpit,
+    struct vatpit_snapshot_state *state)
+{
+	struct channel *channel;
+	struct vatpit_snapshot_channel *snapshot_channel;
+	struct bintime now;
+	int i;
+
+	KASSERT(VATPIT_LOCKED(vatpit), ("vatpit lock not held"));
+	binuptime(&now);
+	state->magic = VATPIT_SNAPSHOT_MAGIC;
+	state->freq_bt = vatpit->freq_bt;
+	for (i = 0; i < nitems(vatpit->channel); i++) {
+		channel = &vatpit->channel[i];
+		snapshot_channel = &state->channel[i];
+		snapshot_channel->mode = channel->mode;
+		snapshot_channel->initial = channel->initial;
+		/* 'now_bt' is always a past binuptime() value. */
+		snapshot_channel->elapsed_bt = now;
+		bintime_sub(&snapshot_channel->elapsed_bt, &channel->now_bt);
+		memcpy(snapshot_channel->cr, channel->cr,
+		    sizeof(snapshot_channel->cr));
+		memcpy(snapshot_channel->ol, channel->ol,
+		    sizeof(snapshot_channel->ol));
+		snapshot_channel->slatched = channel->slatched ? 1 : 0;
+		snapshot_channel->status = channel->status;
+		snapshot_channel->crbyte = channel->crbyte;
+		snapshot_channel->olbyte = channel->olbyte;
+		snapshot_channel->frbyte = channel->frbyte;
+		/* Only counter 0 ever arms its callout. */
+		snapshot_channel->callout_armed = (i == 0 &&
+		    callout_active(&channel->callout)) ? 1 : 0;
+		if (snapshot_channel->callout_armed != 0 &&
+		    bintime_cmp(&channel->callout_bt, &now, >)) {
+			snapshot_channel->remaining_bt = channel->callout_bt;
+			bintime_sub(&snapshot_channel->remaining_bt, &now);
+		} else {
+			/* An overdue target fires immediately on restore. */
+			snapshot_channel->remaining_bt.sec = 0;
+			snapshot_channel->remaining_bt.frac = 0;
+		}
+	}
+}
+
+static void
+vatpit_snapshot_restore_locked(struct vatpit *vatpit,
+    const struct vatpit_snapshot_state *state)
+{
+	struct channel *channel;
+	const struct vatpit_snapshot_channel *snapshot_channel;
+	struct bintime now, delta;
+	sbintime_t precision;
+	int i;
+
+	KASSERT(VATPIT_LOCKED(vatpit), ("vatpit lock not held"));
+	/* A former source callout must not fire after its state is replaced. */
+	callout_stop(&vatpit->channel[0].callout);
+	binuptime(&now);
+	vatpit->freq_bt = state->freq_bt;
+	for (i = 0; i < nitems(vatpit->channel); i++) {
+		channel = &vatpit->channel[i];
+		snapshot_channel = &state->channel[i];
+		channel->mode = snapshot_channel->mode;
+		channel->initial = snapshot_channel->initial;
+		/*
+		 * Reanchor: the same time has elapsed since the counter was
+		 * loaded, measured from destination uptime.  A destination
+		 * uptime smaller than the elapsed time yields a negative
+		 * anchor, which vatpit_delta_ticks() subtracts back out.
+		 */
+		channel->now_bt = now;
+		bintime_sub(&channel->now_bt, &snapshot_channel->elapsed_bt);
+		memcpy(channel->cr, snapshot_channel->cr, sizeof(channel->cr));
+		memcpy(channel->ol, snapshot_channel->ol, sizeof(channel->ol));
+		channel->slatched = snapshot_channel->slatched != 0;
+		channel->status = snapshot_channel->status;
+		channel->crbyte = snapshot_channel->crbyte;
+		/* The wire record has no output-latch cursor. */
+		channel->olbyte = 0;
+		channel->frbyte = snapshot_channel->frbyte;
+		/* Reanchor the callout target against destination uptime. */
+		channel->callout_bt = now;
+		bintime_add(&channel->callout_bt,
+		    &snapshot_channel->remaining_bt);
+	}
+	/*
+	 * Rearm counter 0 for the serialized remaining time instead of
+	 * calling pit_timer_start_cntr0(), which would advance the target by
+	 * another full period.
+	 */
+	channel = &vatpit->channel[0];
+	if (state->channel[0].callout_armed != 0 && channel->initial != 0) {
+		delta.sec = 0;
+		delta.frac = vatpit->freq_bt.frac * channel->initial;
+		precision = bttosbt(delta) >> tc_precexp;
+		callout_reset_sbt(&channel->callout,
+		    bttosbt(channel->callout_bt), precision,
+		    vatpit_callout_handler, &channel->callout_arg, C_ABSOLUTE);
+	}
+}
+
+/*
+ * The historical record is a compatibility ABI.  Validate its values before
+ * taking the PIT lock and publishing them, since several cursor fields are
+ * used directly by the port-I/O path after restore.
+ */
+static bool
+vatpit_snapshot_state_valid(const struct vatpit_snapshot_state *state)
+{
+	struct bintime freq_bt, period_bt;
+	const struct vatpit_snapshot_channel *channel;
+	int i;
+
+	if (state->magic != VATPIT_SNAPSHOT_MAGIC)
+		return (false);
+	FREQ2BT(PIT_8254_FREQ, &freq_bt);
+	if (state->freq_bt.sec != freq_bt.sec ||
+	    state->freq_bt.frac != freq_bt.frac)
+		return (false);
+	for (i = 0; i < nitems(state->channel); i++) {
+		channel = &state->channel[i];
+		switch (channel->mode) {
+		case TIMER_INTTC:
+		case TIMER_RATEGEN:
+		case TIMER_SQWAVE:
+		case TIMER_SWSTROBE:
+			break;
+		default:
+			return (false);
+		}
+		if (channel->crbyte < 0 || channel->crbyte > 1 ||
+		    channel->frbyte < 0 || channel->frbyte > 1 ||
+		    channel->slatched > 1)
+			return (false);
+		if (channel->elapsed_bt.sec < 0 ||
+		    channel->remaining_bt.sec < 0)
+			return (false);
+		if (channel->callout_armed > 1)
+			return (false);
+		if (channel->callout_armed != 0) {
+			/* Only counter 0 arms a loaded counter's callout... */
+			if (i != 0 || channel->initial == 0)
+				return (false);
+			/* ...and its target is at most one period out. */
+			period_bt.sec = 0;
+			period_bt.frac = freq_bt.frac * channel->initial;
+			if (bintime_cmp(&channel->remaining_bt, &period_bt, >))
+				return (false);
+		} else if (channel->remaining_bt.sec != 0 ||
+		    channel->remaining_bt.frac != 0) {
+			return (false);
+		}
+	}
+	return (true);
+}
+
+/*
+ * The VATPIT record carries the output-latch bytes but not the olbyte cursor
+ * which makes those bytes live.  Do not create a snapshot that would resume
+ * with a different port-I/O result.  The cursor is normally transient (one or
+ * two reads); callers can retry the checkpoint once the guest consumes it.
+ */
+static bool
+vatpit_snapshot_state_serializable(const struct vatpit_snapshot_state *state)
+{
+	int i;
+
+	for (i = 0; i < nitems(state->channel); i++) {
+		if (state->channel[i].olbyte != 0)
+			return (false);
+	}
+	return (true);
+}
+
 int
 vatpit_snapshot(struct vatpit *vatpit, struct vm_snapshot_meta *meta)
 {
+	struct vatpit_snapshot_state state;
 	int ret;
 	int i;
-	struct channel *channel;
+	struct vatpit_snapshot_channel *channel;
 
-	SNAPSHOT_VAR_OR_LEAVE(vatpit->freq_bt.sec, meta, ret, done);
-	SNAPSHOT_VAR_OR_LEAVE(vatpit->freq_bt.frac, meta, ret, done);
+	if (vatpit == NULL || meta == NULL)
+		return (EINVAL);
+	memset(&state, 0, sizeof(state));
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		VATPIT_LOCK(vatpit);
+		vatpit_snapshot_capture_locked(vatpit, &state);
+		VATPIT_UNLOCK(vatpit);
+		if (!vatpit_snapshot_state_serializable(&state)) {
+			ret = EBUSY;
+			goto done;
+		}
+	}
 
-	/* properly restore timers; they will NOT work currently */
-	printf("%s: snapshot restore does not reset timers!\r\n", __func__);
+	SNAPSHOT_VAR_OR_LEAVE(state.magic, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.freq_bt.sec, meta, ret, done);
+	SNAPSHOT_VAR_OR_LEAVE(state.freq_bt.frac, meta, ret, done);
 
-	for (i = 0; i < nitems(vatpit->channel); i++) {
-		channel = &vatpit->channel[i];
+	for (i = 0; i < nitems(state.channel); i++) {
+		channel = &state.channel[i];
 
 		SNAPSHOT_VAR_OR_LEAVE(channel->mode, meta, ret, done);
 		SNAPSHOT_VAR_OR_LEAVE(channel->initial, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(channel->now_bt.sec, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(channel->now_bt.frac, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(channel->elapsed_bt.sec, meta, ret,
+			done);
+		SNAPSHOT_VAR_OR_LEAVE(channel->elapsed_bt.frac, meta, ret,
+			done);
 		SNAPSHOT_BUF_OR_LEAVE(channel->cr, sizeof(channel->cr),
 			meta, ret, done);
 		SNAPSHOT_BUF_OR_LEAVE(channel->ol, sizeof(channel->ol),
@@ -502,12 +735,24 @@ vatpit_snapshot(struct vatpit *vatpit, struct vm_snapshot_meta *meta)
 		SNAPSHOT_VAR_OR_LEAVE(channel->status, meta, ret, done);
 		SNAPSHOT_VAR_OR_LEAVE(channel->crbyte, meta, ret, done);
 		SNAPSHOT_VAR_OR_LEAVE(channel->frbyte, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(channel->callout_bt.sec, meta, ret, done);
-		SNAPSHOT_VAR_OR_LEAVE(channel->callout_bt.frac, meta, ret,
+		SNAPSHOT_VAR_OR_LEAVE(channel->callout_armed, meta, ret, done);
+		SNAPSHOT_VAR_OR_LEAVE(channel->remaining_bt.sec, meta, ret,
 			done);
+		SNAPSHOT_VAR_OR_LEAVE(channel->remaining_bt.frac, meta, ret,
+			done);
+	}
+	if (meta->op == VM_SNAPSHOT_RESTORE) {
+		if (!vatpit_snapshot_state_valid(&state)) {
+			ret = EINVAL;
+			goto done;
+		}
+		VATPIT_LOCK(vatpit);
+		vatpit_snapshot_restore_locked(vatpit, &state);
+		VATPIT_UNLOCK(vatpit);
 	}
 
 done:
+	explicit_bzero(&state, sizeof(state));
 	return (ret);
 }
 #endif

@@ -4056,6 +4056,8 @@ ATF_TC_BODY(sysctl_counters, tc)
 		    &val, &len, NULL, 0) == 0);
 		ATF_REQUIRE(sysctlbyname("kern.vsock.tx_bytes",
 		    &val, &len, NULL, 0) == 0);
+		ATF_REQUIRE(sysctlbyname("kern.vsock.tx_drops",
+		    &val, &len, NULL, 0) == 0);
 		ATF_REQUIRE(sysctlbyname("kern.vsock.rx_bytes",
 		    &val, &len, NULL, 0) == 0);
 		ATF_REQUIRE(sysctlbyname("kern.vsock.rx_drops",
@@ -5690,6 +5692,17 @@ provider_blocked_read_thread(void *arg)
 	return (NULL);
 }
 
+static int
+provider_set_features(int fd, uint64_t features)
+{
+	struct vsock_transport_features request;
+
+	memset(&request, 0, sizeof(request));
+	request.version = VSOCK_TRANSPORT_FEATURES_VERSION;
+	request.features = features;
+	return (ioctl(fd, VSOCK_IOC_TRANSPORT_SET_FEATURES, &request));
+}
+
 ATF_TC(kernel_transport_provider);
 ATF_TC_HEAD(kernel_transport_provider, tc)
 {
@@ -5713,6 +5726,43 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 	ATF_REQUIRE_MSG(provider >= 0, "open /dev/vsock: %s",
 	    strerror(errno));
 	/*
+	 * Exercise the versioned private ATTACH decoder before the descriptor has
+	 * acquired a provider.  Testing these after a successful attach merely
+	 * reaches the EALREADY ownership guard and can mask a permissive decoder.
+	 */
+	memset(&attach, 0, sizeof(attach));
+	attach.version = VSOCK_TRANSPORT_VERSION;
+	attach.guest_cid = 42;
+	attach.features = VIRTIO_VSOCK_F_STREAM |
+	    VIRTIO_VSOCK_F_SEQPACKET;
+	{
+		struct vsock_transport_attach invalid = attach;
+
+		invalid.features |= UINT64_C(1) << 63;
+		errno = 0;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH,
+		    &invalid) == -1);
+		ATF_CHECK(errno == EINVAL);
+		invalid = attach;
+		invalid.version++;
+		errno = 0;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH,
+		    &invalid) == -1);
+		ATF_CHECK(errno == EINVAL);
+		invalid = attach;
+		invalid.reserved[0] = 1;
+		errno = 0;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH,
+		    &invalid) == -1);
+		ATF_CHECK(errno == EINVAL);
+		invalid = attach;
+		invalid.reserved[1] = 1;
+		errno = 0;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH,
+		    &invalid) == -1);
+		ATF_CHECK(errno == EINVAL);
+	}
+	/*
 	 * Provider state is created by ATTACH, so readiness filters are valid
 	 * only after that ioctl succeeds.  The descriptor must reject packet
 	 * I/O before attachment.
@@ -5723,16 +5773,13 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 		struct timespec zero = { 0, 0 };
 		int attach_kq;
 
+		attach_kq = -1;
 		ATF_REQUIRE(write(provider, packet, sizeof(*request)) == -1);
 		ATF_REQUIRE(errno == ENXIO);
 
-		memset(&attach, 0, sizeof(attach));
-		attach.version = VSOCK_TRANSPORT_VERSION;
-		attach.guest_cid = 42;
-		attach.features = VIRTIO_VSOCK_F_STREAM |
-		    VIRTIO_VSOCK_F_SEQPACKET;
 		if (ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH, &attach) < 0) {
-			close(attach_kq);
+			if (attach_kq >= 0)
+				close(attach_kq);
 			if (errno == EBUSY) {
 				close(provider);
 				atf_tc_skip(
@@ -5759,36 +5806,53 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 		ATF_CHECK(event.ident == (uintptr_t)provider);
 		close(attach_kq);
 	}
-	memset(&attach, 0, sizeof(attach));
-	attach.version = VSOCK_TRANSPORT_VERSION;
-	attach.guest_cid = 42;
-	attach.features = VIRTIO_VSOCK_F_STREAM |
-	    VIRTIO_VSOCK_F_SEQPACKET;
-	{
-		struct vsock_transport_attach invalid = attach;
-
-		invalid.features |= UINT64_C(1) << 63;
-		errno = 0;
-		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH,
-		    &invalid) == -1);
-		ATF_CHECK(errno == EINVAL);
-	}
 	local_cid = 0;
 	ATF_REQUIRE(ioctl(provider, IOCTL_VM_SOCKETS_GET_LOCAL_CID,
 	    &local_cid) == 0);
 	ATF_CHECK(local_cid == VSOCK_CID_HOST);
 	{
-		uint64_t invalid_features, valid_features;
+		struct vsock_transport_features feature_request;
 
-		invalid_features = attach.features | (UINT64_C(1) << 63);
+		memset(&feature_request, 0, sizeof(feature_request));
+		feature_request.version = VSOCK_TRANSPORT_FEATURES_VERSION;
+		feature_request.features = attach.features |
+		    (UINT64_C(1) << 63);
 		errno = 0;
 		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
-		    &invalid_features) == -1);
+		    &feature_request) == -1);
 		ATF_CHECK(errno == EINVAL);
-		valid_features = VIRTIO_VSOCK_F_STREAM |
-		    VIRTIO_VSOCK_F_SEQPACKET;
-		ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
-		    &valid_features) == 0);
+		feature_request.features = attach.features;
+		feature_request.version++;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &feature_request) == -1);
+		ATF_CHECK(errno == EINVAL);
+		feature_request.version = VSOCK_TRANSPORT_FEATURES_VERSION;
+		feature_request.flags = 1;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &feature_request) == -1);
+		ATF_CHECK(errno == EINVAL);
+		feature_request.flags = 0;
+		feature_request.reserved[0] = 1;
+		errno = 0;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &feature_request) == -1);
+		ATF_CHECK(errno == EINVAL);
+		feature_request.reserved[0] = 0;
+		feature_request.reserved[1] = 1;
+		errno = 0;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &feature_request) == -1);
+		ATF_CHECK(errno == EINVAL);
+		ATF_REQUIRE(provider_set_features(provider,
+		    attach.features) == 0);
+		feature_request.features |= UINT64_C(1) << 63;
+		errno = 0;
+		ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
+		    &feature_request) == -1);
+		ATF_CHECK(errno == EINVAL);
+		feature_request.features = attach.features;
+		ATF_REQUIRE(provider_set_features(provider,
+		    attach.features) == 0);
 	}
 
 	second = open("/dev/vsock", O_RDWR | O_NONBLOCK);
@@ -5857,13 +5921,8 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 	errno = 0;
 	ATF_CHECK(read(provider, packet, sizeof(packet)) == -1);
 	ATF_CHECK(errno == EAGAIN || errno == EWOULDBLOCK);
-	{
-		uint64_t features = VIRTIO_VSOCK_F_STREAM |
-		    VIRTIO_VSOCK_F_SEQPACKET;
-
-		ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_SET_FEATURES,
-		    &features) == 0);
-	}
+	ATF_REQUIRE(provider_set_features(provider, VIRTIO_VSOCK_F_STREAM |
+	    VIRTIO_VSOCK_F_SEQPACKET) == 0);
 	/*
 	 * A blocking read must not silently cross a provider reset and consume a
 	 * packet from the new transport epoch.  Reset wakes the empty-queue
@@ -5910,13 +5969,8 @@ ATF_TC_BODY(kernel_transport_provider, tc)
 		ATF_CHECK(args.result == -1);
 		ATF_CHECK(args.error == ECANCELED);
 		ATF_REQUIRE(fcntl(provider, F_SETFL, flags) == 0);
-		{
-			uint64_t features = VIRTIO_VSOCK_F_STREAM |
-			    VIRTIO_VSOCK_F_SEQPACKET;
-
-			ATF_REQUIRE(ioctl(provider,
-			    VSOCK_IOC_TRANSPORT_SET_FEATURES, &features) == 0);
-		}
+		ATF_REQUIRE(provider_set_features(provider,
+		    VIRTIO_VSOCK_F_STREAM | VIRTIO_VSOCK_F_SEQPACKET) == 0);
 	}
 
 	s = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK, 0);
@@ -6326,6 +6380,107 @@ provider_start_connect(uint32_t guest_cid, uint32_t port, int type)
 	return (s);
 }
 
+ATF_TC(kernel_transport_checkpoint_fence);
+ATF_TC_HEAD(kernel_transport_checkpoint_fence, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(kernel_transport_checkpoint_fence, tc)
+{
+	struct vsock_transport_attach attach;
+	struct vsock_transport_checkpoint checkpoint;
+	struct pollfd pfd;
+	size_t count_len;
+	uint64_t frozen_generation, features;
+	u_int provider_count;
+	int provider, s;
+
+	count_len = sizeof(provider_count);
+	ATF_REQUIRE_MSG(sysctlbyname("kern.vsock.userspace_providers",
+	    &provider_count, &count_len, NULL, 0) == 0,
+	    "kern.vsock.userspace_providers: %s", strerror(errno));
+	if (provider_count != 0)
+		atf_tc_skip("another /dev/vsock provider is active");
+
+	provider = open("/dev/vsock", O_RDWR | O_NONBLOCK);
+	ATF_REQUIRE_MSG(provider >= 0, "open /dev/vsock: %s",
+	    strerror(errno));
+	memset(&attach, 0, sizeof(attach));
+	attach.version = VSOCK_TRANSPORT_VERSION;
+	attach.guest_cid = 0x7fffefU;
+	attach.features = VIRTIO_VSOCK_F_STREAM |
+	    VIRTIO_VSOCK_F_SEQPACKET;
+	if (ioctl(provider, VSOCK_IOC_TRANSPORT_ATTACH, &attach) < 0) {
+		if (errno == ENOTTY)
+			atf_tc_skip("kernel lacks userspace-provider ioctls");
+		ATF_REQUIRE_MSG(false, "provider attach: %s", strerror(errno));
+	}
+
+	memset(&checkpoint, 0, sizeof(checkpoint));
+	checkpoint.version = VSOCK_TRANSPORT_CHECKPOINT_VERSION;
+	ATF_REQUIRE_MSG(ioctl(provider, VSOCK_IOC_TRANSPORT_FREEZE,
+	    &checkpoint) == 0, "empty provider freeze: %s", strerror(errno));
+	ATF_CHECK_EQ(checkpoint.flags,
+	    VSOCK_TRANSPORT_CHECKPOINT_F_FROZEN);
+	ATF_CHECK_EQ(checkpoint.queue_count, 0);
+	ATF_CHECK_EQ(checkpoint.connection_count, 0);
+	frozen_generation = checkpoint.generation;
+	pfd.fd = provider;
+	pfd.events = POLLIN | POLLOUT;
+	pfd.revents = 0;
+	ATF_CHECK_EQ(poll(&pfd, 1, 0), 0);
+
+	/*
+	 * Restore reconstructs the device feature epoch before THAW.  The
+	 * provider is empty and fenced here, so changing the epoch cannot race
+	 * packet or connection admission and readiness must remain suppressed.
+	 */
+	features = VIRTIO_VSOCK_F_SEQPACKET |
+	    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM;
+	ATF_REQUIRE_MSG(provider_set_features(provider, features) == 0,
+	    "frozen feature reconstruction: %s",
+	    strerror(errno));
+	pfd.revents = 0;
+	ATF_CHECK_EQ(poll(&pfd, 1, 0), 0);
+
+	/* Repeating FREEZE is safe and reports the same fenced epoch. */
+	memset(&checkpoint, 0, sizeof(checkpoint));
+	checkpoint.version = VSOCK_TRANSPORT_CHECKPOINT_VERSION;
+	ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_FREEZE,
+	    &checkpoint) == 0);
+	ATF_CHECK(checkpoint.generation != frozen_generation);
+	ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_THAW) == 0);
+
+	s = provider_start_connect(attach.guest_cid, 9010, SOCK_STREAM);
+	memset(&checkpoint, 0, sizeof(checkpoint));
+	checkpoint.version = VSOCK_TRANSPORT_CHECKPOINT_VERSION;
+	errno = 0;
+	ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_FREEZE,
+	    &checkpoint) == -1);
+	ATF_CHECK_EQ(errno, EBUSY);
+	/* A rejected checkpoint must roll its admission fence back. */
+	pfd.revents = 0;
+	ATF_CHECK_EQ(poll(&pfd, 1, 0), 1);
+	ATF_CHECK((pfd.revents & POLLOUT) != 0);
+	ATF_REQUIRE(ioctl(provider, VSOCK_IOC_TRANSPORT_RESET) == 0);
+	close(s);
+
+	memset(&checkpoint, 0, sizeof(checkpoint));
+	checkpoint.version = VSOCK_TRANSPORT_CHECKPOINT_VERSION;
+	checkpoint.reserved[0] = 1;
+	errno = 0;
+	ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_FREEZE,
+	    &checkpoint) == -1);
+	ATF_CHECK_EQ(errno, EINVAL);
+	checkpoint.reserved[0] = 0;
+	checkpoint.reserved[1] = 1;
+	errno = 0;
+	ATF_CHECK(ioctl(provider, VSOCK_IOC_TRANSPORT_FREEZE,
+	    &checkpoint) == -1);
+	ATF_CHECK_EQ(errno, EINVAL);
+	close(provider);
+}
+
 ATF_TC(kernel_transport_multiple_providers);
 ATF_TC_HEAD(kernel_transport_multiple_providers, tc)
 {
@@ -6517,8 +6672,7 @@ ATF_TC_BODY(kernel_transport_multiple_providers, tc)
 
 		features = VIRTIO_VSOCK_F_SEQPACKET |
 		    VIRTIO_VSOCK_F_NO_IMPLIED_STREAM;
-		ATF_REQUIRE(ioctl(p1, VSOCK_IOC_TRANSPORT_SET_FEATURES,
-		    &features) == 0);
+		ATF_REQUIRE(provider_set_features(p1, features) == 0);
 		/*
 		 * Socket creation is independent of remote feature negotiation:
 		 * this descriptor could still be used over loopback.  The
@@ -6561,8 +6715,7 @@ ATF_TC_BODY(kernel_transport_multiple_providers, tc)
 
 		close(s1);
 		features = VIRTIO_VSOCK_F_STREAM;
-		ATF_REQUIRE(ioctl(p1, VSOCK_IOC_TRANSPORT_SET_FEATURES,
-		    &features) == 0);
+		ATF_REQUIRE(provider_set_features(p1, features) == 0);
 		error = socket(AF_VSOCK, SOCK_STREAM | SOCK_NONBLOCK, 0);
 		ATF_REQUIRE_MSG(error >= 0,
 		    "aggregate STREAM feature was not restored: %s",
@@ -7106,6 +7259,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Group 53: privileged VMM packet transport. */
 	ATF_TP_ADD_TC(tp, kernel_transport_provider);
+	ATF_TP_ADD_TC(tp, kernel_transport_checkpoint_fence);
 	ATF_TP_ADD_TC(tp, kernel_transport_multiple_providers);
 	ATF_TP_ADD_TC(tp, kernel_transport_provider_scale);
 	ATF_TP_ADD_TC(tp, kernel_transport_duplicate_attach_race);

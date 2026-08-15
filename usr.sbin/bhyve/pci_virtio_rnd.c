@@ -29,6 +29,7 @@
 
 /*
  * virtio entropy device emulation.
+ * VIRTIO_ACTIVATION_ASSERTION: common-queue-snapshot-no-entropy-replay
  * Randomness is sourced from /dev/random which does not block
  * once it has been seeded at bootup.
  */
@@ -55,9 +56,11 @@
 #include <sysexits.h>
 
 #include "bhyverun.h"
+#include "config.h"
 #include "debug.h"
 #include "pci_emul.h"
 #include "virtio.h"
+#include "virtio_pci_modern_probes.h"
 
 #define VTRND_RINGSZ	64
 #define VTRND_MAX_BYTES	(64 * 1024)
@@ -73,8 +76,8 @@ static int pci_vtrnd_debug;
 struct pci_vtrnd_softc {
 	struct virtio_softc vrsc_vs;
 	struct vqueue_info  vrsc_vq;
+	struct virtio_consts vrsc_consts;
 	pthread_mutex_t     vrsc_mtx;
-	uint64_t            vrsc_cfg;
 	int                 vrsc_fd;
 };
 
@@ -115,26 +118,40 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 	struct vi_req req;
 	ssize_t len;
 	size_t total;
+	uint16_t budget;
 	int i, n, niov;
 
 	sc = vsc;
 
 	if (sc->vrsc_fd < 0) {
+		WPRINTF(("vtrnd: entropy source is unavailable"));
+		VIRTIO_PROBE_ERROR(sc->vrsc_consts.vc_name,
+		    "entropy-source-unavailable");
+		vi_set_needs_reset(&sc->vrsc_vs);
 		vq_endchains(vq, 0);
 		return;
 	}
 
-	while (vq_has_descs(vq)) {
+	budget = vq->vq_qsize;
+	while (budget-- != 0 && vq_has_descs(vq)) {
 		n = vq_getchain(vq, iov, nitems(iov), &req);
 		if (n <= 0) {
-			WPRINTF(("vtrnd: invalid descriptor chain"));
+			if (n < 0) {
+				WPRINTF(("vtrnd: invalid descriptor chain"));
+				VIRTIO_PROBE_ERROR(sc->vrsc_consts.vc_name,
+				    "invalid-entropy-chain");
+				vi_set_needs_reset(&sc->vrsc_vs);
+			}
 			break;
 		}
 		if (n > (int)nitems(iov) || req.readable != 0 ||
 		    req.writable != n) {
 			WPRINTF(("vtrnd: invalid writable descriptor"));
-			vq_relchain(vq, req.idx, 0);
-			continue;
+			VIRTIO_PROBE_ERROR(sc->vrsc_consts.vc_name,
+			    "invalid-entropy-descriptor");
+			vq_relchain_req(vq, &req, 0);
+			vi_set_needs_reset(&sc->vrsc_vs);
+			break;
 		}
 		for (i = 0; i < n; i++) {
 			if (iov[i].iov_base == NULL || iov[i].iov_len == 0)
@@ -142,8 +159,11 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 		}
 		if (i != n) {
 			WPRINTF(("vtrnd: invalid writable buffer"));
-			vq_relchain(vq, req.idx, 0);
-			continue;
+			VIRTIO_PROBE_ERROR(sc->vrsc_consts.vc_name,
+			    "invalid-entropy-buffer");
+			vq_relchain_req(vq, &req, 0);
+			vi_set_needs_reset(&sc->vrsc_vs);
+			break;
 		}
 
 		/*
@@ -168,7 +188,10 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 		if (len <= 0) {
 			WPRINTF(("vtrnd: read from /dev/random failed: %s",
 			    len == 0 ? "unexpected EOF" : strerror(errno)));
-			vq_retchains(vq, 1);
+			VIRTIO_PROBE_ERROR(sc->vrsc_consts.vc_name,
+			    (len == 0 ? "entropy-source-eof" :
+			    "entropy-source-read-failed"));
+			vq_retchain_req(vq, &req);
 			/*
 			 * There is no readiness event associated with this
 			 * retained descriptor.  Treat even a transient failure as
@@ -182,9 +205,9 @@ pci_vtrnd_notify(void *vsc, struct vqueue_info *vq)
 		/*
 		 * Release this chain and handle more
 		 */
-		vq_relchain(vq, req.idx, len);
+		vq_relchain_req(vq, &req, len);
 	}
-	vq_endchains(vq, 1);	/* Generate interrupt if appropriate. */
+	vq_endchains(vq, !vq_has_descs(vq));
 }
 
 
@@ -192,7 +215,7 @@ static int
 pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 {
 	struct pci_vtrnd_softc *sc;
-	bool intr_initialized;
+	bool intr_initialized, packed;
 	int fd;
 	int len;
 	uint8_t v;
@@ -219,9 +242,12 @@ pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 	/*
 	 * Check that device is seeded and non-blocking.
 	 */
-	len = read(fd, &v, sizeof(v));
+	do {
+		len = read(fd, &v, sizeof(v));
+	} while (len < 0 && errno == EINTR);
 	if (len <= 0) {
-		WPRINTF(("vtrnd: /dev/random not ready, read(): %d", len));
+		WPRINTF(("vtrnd: /dev/random not ready: %s",
+		    len == 0 ? "unexpected EOF" : strerror(errno)));
 		close(fd);
 		return (1);
 	}
@@ -232,6 +258,7 @@ pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 		return (1);
 	}
 	intr_initialized = false;
+	packed = get_config_bool_node_default(nvl, "packed", false);
 
 	if (pthread_mutex_init(&sc->vrsc_mtx, NULL) != 0) {
 		close(fd);
@@ -239,13 +266,21 @@ pci_vtrnd_init(struct pci_devinst *pi, nvlist_t *nvl)
 		return (1);
 	}
 
-	vi_softc_linkup(&sc->vrsc_vs, &vtrnd_vi_consts, sc, pi, &sc->vrsc_vq);
+	sc->vrsc_consts = vtrnd_vi_consts;
+	if (packed)
+		sc->vrsc_consts.vc_hv_caps |= VIRTIO_F_RING_PACKED;
+	vi_softc_linkup(&sc->vrsc_vs, &sc->vrsc_consts, sc, pi,
+	    &sc->vrsc_vq);
 	sc->vrsc_vs.vs_mtx = &sc->vrsc_mtx;
 
 	sc->vrsc_vq.vq_qsize = VTRND_RINGSZ;
 	if (vi_pci_select_transport(&sc->vrsc_vs, nvl,
 	    VIRTIO_PCI_LEGACY_DEFAULT) != 0)
 		goto failed;
+	if (packed && !vi_pci_is_modern(&sc->vrsc_vs)) {
+		WPRINTF(("vtrnd: packed queues require modern transport"));
+		goto failed;
+	}
 
 	/* keep /dev/random opened while emulating */
 	sc->vrsc_fd = fd;
@@ -293,8 +328,12 @@ static const struct pci_devemu pci_de_vrnd = {
 	.pe_barread =	vi_pci_read,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	vi_pci_snapshot,
+	.pe_snapshot_validate = vi_pci_snapshot,
+	.pe_snapshot_compat = vi_pci_snapshot_compat,
 	.pe_pause =	vi_pci_pause,
 	.pe_resume =	vi_pci_resume,
+	/* Entropy bytes are never state; common queue leases form the cut. */
+	.pe_migration_flags = PCI_MIGRATION_VIRTIO_FLAGS,
 #endif
 };
 PCI_EMUL_SET(pci_de_vrnd);

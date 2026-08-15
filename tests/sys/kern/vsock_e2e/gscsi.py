@@ -5,13 +5,25 @@ import glob
 import hashlib
 import mmap
 import os
+import shutil
+import stat
 import sys
 import tempfile
+import time
+
+# Release-ledger anchors for discovery, queue, and integrity checks below.
+# VIRTIO_ACTIVATION_ASSERTION: disk-discovery-and-write-read-digest
+# VIRTIO_ACTIVATION_ASSERTION: packed-negotiation-and-write-read-digest
+# VIRTIO_ACTIVATION_ASSERTION: queue-count-write-read-digest
+# VIRTIO_ACTIVATION_ASSERTION: hotplug-change-remove-without-manual-rescan
 
 
 CHUNK_SIZE = 1024 * 1024
 DIRECT_ALIGNMENT = 4096
 VIRTIO_RING_F_INDIRECT_DESC = 28
+VIRTIO_SCSI_F_HOTPLUG = 1
+VIRTIO_SCSI_F_CHANGE = 2
+VIRTIO_F_RING_PACKED = 34
 VIRTIO_F_NOTIFICATION_DATA = 38
 VIRTIO_F_RING_RESET = 40
 
@@ -22,9 +34,13 @@ MODERN_REQUIRED_FEATURES = REQUIRED_FEATURES + (
     (VIRTIO_F_NOTIFICATION_DATA, "VIRTIO_F_NOTIFICATION_DATA"),
     (VIRTIO_F_RING_RESET, "VIRTIO_F_RING_RESET"),
 )
+EVENT_FEATURES = (
+    (VIRTIO_SCSI_F_HOTPLUG, "VIRTIO_SCSI_F_HOTPLUG"),
+    (VIRTIO_SCSI_F_CHANGE, "VIRTIO_SCSI_F_CHANGE"),
+)
 
 
-def find_bound_scsi(
+def bound_scsi_matches(
     expected_device, expected_size, sys_root="/sys", dev_root="/dev"
 ):
     if expected_size <= 0 or expected_size % 512 != 0:
@@ -65,12 +81,98 @@ def find_bound_scsi(
                             child,
                         )
                     )
+    return matches
+
+
+def find_bound_scsi(
+    expected_device, expected_size, sys_root="/sys", dev_root="/dev"
+):
+    matches = bound_scsi_matches(
+        expected_device, expected_size, sys_root, dev_root
+    )
     if len(matches) != 1:
         raise RuntimeError(
             f"expected one PCI {expected_device} virtio_scsi LUN with "
             f"capacity {expected_size}, found {len(matches)}"
         )
     return matches[0]
+
+
+def wait_bound_scsi(
+    expected_device,
+    expected_size,
+    sys_root="/sys",
+    dev_root="/dev",
+    timeout=30.0,
+    require_block_device=True,
+):
+    deadline = time.monotonic() + timeout
+    last_error = None
+    while True:
+        try:
+            device, child = find_bound_scsi(
+                expected_device, expected_size, sys_root, dev_root
+            )
+            try:
+                node = os.stat(device)
+            except OSError:
+                node = None
+            if node is not None and (
+                not require_block_device or stat.S_ISBLK(node.st_mode)
+            ):
+                # Sysfs can publish the block child before devtmpfs/udev has
+                # completed the node transition.  Check that the node is
+                # usable rather than letting the first direct-I/O request
+                # turn a bounded rebind settle into a misleading I/O test
+                # failure.  This is deliberately a nonblocking open only;
+                # no I/O is retried or hidden here.
+                try:
+                    fd = os.open(device, os.O_RDONLY | os.O_NONBLOCK)
+                except OSError as error:
+                    last_error = RuntimeError(
+                        f"virtio-scsi device is not openable: {device}: "
+                        f"{error}"
+                    )
+                else:
+                    os.close(fd)
+                    return device, child
+            else:
+                suffix = ""
+                if node is not None and require_block_device:
+                    suffix = " (not a block device)"
+                last_error = RuntimeError(
+                    f"virtio-scsi device node is not ready: {device}{suffix}"
+                )
+        except RuntimeError as error:
+            last_error = error
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "timed out waiting for bound virtio-scsi device: "
+                f"{last_error}"
+            )
+        time.sleep(0.1)
+
+
+def wait_absent_scsi(
+    expected_device,
+    expected_size,
+    sys_root="/sys",
+    dev_root="/dev",
+    timeout=30.0,
+):
+    deadline = time.monotonic() + timeout
+    while True:
+        matches = bound_scsi_matches(
+            expected_device, expected_size, sys_root, dev_root
+        )
+        if not matches:
+            return
+        if time.monotonic() >= deadline:
+            raise RuntimeError(
+                "timed out waiting for virtio-scsi LUN removal: "
+                f"capacity={expected_size} matches={matches!r}"
+            )
+        time.sleep(0.1)
 
 
 def negotiated_feature(child, bit):
@@ -88,6 +190,18 @@ def require_features(child, required):
     for bit, name in required:
         if not negotiated_feature(child, bit):
             raise RuntimeError(f"virtio-scsi did not negotiate {name}")
+
+
+def require_ring_format(child, transport, packed):
+    negotiated = negotiated_feature(child, VIRTIO_F_RING_PACKED)
+    if packed and transport != "modern":
+        raise RuntimeError("packed virtio-scsi requires the modern transport")
+    if negotiated != packed:
+        wanted = "packed" if packed else "split"
+        actual = "packed" if negotiated else "split"
+        raise RuntimeError(
+            f"virtio-scsi negotiated {actual} rings, expected {wanted}"
+        )
 
 
 def require_multiqueue(device, expected, sys_root="/sys"):
@@ -304,20 +418,70 @@ def self_test():
         for queue in range(4):
             os.makedirs(block + f"/mq/{queue}")
         features = ["0"] * 64
-        for bit, _ in MODERN_REQUIRED_FEATURES:
+        for bit, _ in MODERN_REQUIRED_FEATURES + EVENT_FEATURES:
             features[bit] = "1"
         with open(child + "/features", "w", encoding="ascii") as stream:
             stream.write("".join(features) + "\n")
         os.symlink(driver, child + "/driver")
         os.symlink(scsi_device, block + "/device")
-        found, found_child = find_bound_scsi(
-            "0x1048", 2 * CHUNK_SIZE, sys_root, root
+        with open(root + "/vdz", "wb"):
+            pass
+        found, found_child = wait_bound_scsi(
+            "0x1048", 2 * CHUNK_SIZE, sys_root, root, timeout=0,
+            require_block_device=False,
         )
         if found != root + "/vdz" or found_child != child:
             raise AssertionError(
                 f"wrong SCSI device: {(found, found_child)!r}"
             )
+        real_open = os.open
+        try:
+            def reject_scsi_node(path, flags, *args):
+                if path == root + "/vdz":
+                    raise OSError("synthetic devtmpfs transition")
+                return real_open(path, flags, *args)
+
+            os.open = reject_scsi_node
+            try:
+                wait_bound_scsi(
+                    "0x1048", 2 * CHUNK_SIZE, sys_root, root, timeout=0,
+                    require_block_device=False,
+                )
+            except RuntimeError as error:
+                if "not openable" not in str(error):
+                    raise AssertionError(
+                        f"wrong SCSI readiness error: {error}"
+                    ) from error
+            else:
+                raise AssertionError("accepted an unopenable SCSI device")
+        finally:
+            os.open = real_open
+        try:
+            wait_bound_scsi("0x1048", 2 * CHUNK_SIZE, sys_root, root,
+                timeout=0)
+        except RuntimeError as error:
+            if "not a block device" not in str(error):
+                raise AssertionError(
+                    f"wrong SCSI node-type error: {error}"
+                ) from error
+        else:
+            raise AssertionError("accepted a regular file as a SCSI device")
         require_features(found_child, MODERN_REQUIRED_FEATURES)
+        require_features(found_child, EVENT_FEATURES)
+        require_ring_format(found_child, "modern", False)
+        features[VIRTIO_F_RING_PACKED] = "1"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
+        require_ring_format(found_child, "modern", True)
+        try:
+            require_ring_format(found_child, "legacy", True)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("accepted packed rings on legacy virtio-scsi")
+        features[VIRTIO_F_RING_PACKED] = "0"
+        with open(child + "/features", "w", encoding="ascii") as stream:
+            stream.write("".join(features) + "\n")
         require_multiqueue(found, 4, sys_root)
         try:
             require_multiqueue(found, 3, sys_root)
@@ -345,6 +509,8 @@ def self_test():
             pass
         else:
             raise AssertionError("accepted the wrong SCSI capacity")
+        shutil.rmtree(block)
+        wait_absent_scsi("0x1048", 2 * CHUNK_SIZE, sys_root, root, timeout=0)
 
         backing = root + "/backing"
         with open(backing, "wb") as stream:
@@ -366,16 +532,43 @@ def main():
     if sys.argv[1:] == ["--self-test"]:
         self_test()
         return
-    if len(sys.argv) not in (6, 7):
+    arguments = sys.argv[1:]
+    if len(arguments) == 3 and arguments[0] in (
+        "event-add",
+        "event-change",
+        "event-remove",
+    ):
+        command, transport, capacity_text = arguments
+        capacity = int(capacity_text)
+        pci_device = expected_pci_device(transport)
+        if command == "event-remove":
+            wait_absent_scsi(pci_device, capacity)
+            print(f"PASS scsi-event-remove capacity={capacity}")
+            return
+        device, child = wait_bound_scsi(pci_device, capacity)
+        require_features(child, EVENT_FEATURES)
+        action = command.removeprefix("event-")
+        print(
+            f"PASS scsi-event-{action} capacity={capacity} "
+            f"device={device} hotplug=yes change=yes"
+        )
+        return
+    packed = arguments[-1:] == ["packed"]
+    if packed:
+        arguments = arguments[:-1]
+    if len(arguments) not in (5, 6):
         raise SystemExit(
             "usage: gscsi.py --self-test | "
-            "write transport capacity bytes queues | "
-            "verify transport capacity bytes sha256 queues"
+            "write transport capacity bytes queues [packed] | "
+            "verify transport capacity bytes sha256 queues [packed] | "
+            "event-add transport capacity | "
+            "event-change transport capacity | "
+            "event-remove transport capacity"
         )
-    command, transport, capacity_text, size_text = sys.argv[1:5]
+    command, transport, capacity_text, size_text = arguments[:4]
     capacity = int(capacity_text)
     size = int(size_text)
-    expected_queues = int(sys.argv[-1])
+    expected_queues = int(arguments[-1])
     if size <= 0 or size > capacity:
         raise RuntimeError("require 0 < byte count <= SCSI capacity")
     if size % DIRECT_ALIGNMENT != 0:
@@ -383,12 +576,15 @@ def main():
             f"SCSI direct-I/O byte count must be a multiple of "
             f"{DIRECT_ALIGNMENT}"
         )
-    device, child = find_bound_scsi(expected_pci_device(transport), capacity)
+    device, child = wait_bound_scsi(
+        expected_pci_device(transport), capacity
+    )
     require_features(child, REQUIRED_FEATURES)
     if transport == "modern":
         require_features(child, MODERN_REQUIRED_FEATURES)
+    require_ring_format(child, transport, packed)
     require_multiqueue(device, expected_queues)
-    if command == "write" and len(sys.argv) == 6:
+    if command == "write" and len(arguments) == 5:
         if expected_queues > 1:
             wanted = write_pattern_parallel(device, size, expected_queues)
         else:
@@ -398,16 +594,18 @@ def main():
             raise RuntimeError(f"SCSI checksum mismatch: {actual} != {wanted}")
         print(
             f"PASS scsi bytes={size} sha256={actual} device={device} "
-            f"indirect_desc=yes queues={expected_queues}"
+            f"indirect_desc=yes queues={expected_queues} "
+            f"packed={'yes' if packed else 'no'}"
         )
-    elif command == "verify" and len(sys.argv) == 7:
-        wanted = sys.argv[5]
+    elif command == "verify" and len(arguments) == 6:
+        wanted = arguments[4]
         actual = read_digest(device, size, direct=True)
         if actual != wanted:
             raise RuntimeError(f"SCSI checksum mismatch: {actual} != {wanted}")
         print(
             f"PASS scsi-persist bytes={size} sha256={actual} device={device} "
-            f"indirect_desc=yes queues={expected_queues}"
+            f"indirect_desc=yes queues={expected_queues} "
+            f"packed={'yes' if packed else 'no'}"
         )
     else:
         raise SystemExit("invalid gscsi.py command or argument count")

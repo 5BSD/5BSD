@@ -15,6 +15,7 @@ SRCS+=	\
 	pci_passthru.c	\
 	pci_passthru_quirks.c	\
 	pctestdev.c	\
+	pvpanic.c	\
 	pm.c		\
 	post.c		\
 	ps2kbd.c	\

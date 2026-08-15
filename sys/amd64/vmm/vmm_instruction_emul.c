@@ -710,16 +710,24 @@ get_gla(struct vcpu *vcpu, struct vie *vie __unused,
 	int error __diagused;
 
 	error = vie_read_register(vcpu, VM_REG_GUEST_CR0, &cr0);
+	if (error != 0)
+		return (error);
 	KASSERT(error == 0, ("%s: error %d getting cr0", __func__, error));
 
 	error = vie_read_register(vcpu, VM_REG_GUEST_RFLAGS, &rflags);
+	if (error != 0)
+		return (error);
 	KASSERT(error == 0, ("%s: error %d getting rflags", __func__, error));
 
 	error = vm_get_seg_desc(vcpu, seg, &desc);
+	if (error != 0)
+		return (error);
 	KASSERT(error == 0, ("%s: error %d getting segment descriptor %d",
 	    __func__, error, seg));
 
 	error = vie_read_register(vcpu, gpr, &val);
+	if (error != 0)
+		return (error);
 	KASSERT(error == 0, ("%s: error %d getting register %d", __func__,
 	    error, gpr));
 

@@ -27,6 +27,7 @@
  * SUCH DAMAGE.
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 #ifndef WITHOUT_CAPSICUM
 #include <sys/capsicum.h>
@@ -93,6 +94,7 @@
 #include "qemu_fwcfg.h"
 #ifdef BHYVE_SNAPSHOT
 #include "snapshot.h"
+#include "migration_session.h"
 #endif
 #include "tpm_device.h"
 #include "vmgenc.h"
@@ -112,10 +114,19 @@ char *restore_file;
 
 static const int BSP = 0;
 
+#ifdef __amd64__
+static bool kernel_startup;
+static uint64_t kernel_startup_generation;
+#endif
+
 static cpuset_t cpumask;
 
 static struct vm_mem_domain guest_domains[VM_MAXMEMDOM];
 static int guest_ndomains = 0;
+#ifdef BHYVE_SNAPSHOT
+static uint16_t *guest_vcpu_domains;
+static bool guest_numa_restored;
+#endif
 
 static void vm_loop(struct vmctx *ctx, struct vcpu *vcpu);
 
@@ -126,6 +137,109 @@ static struct vcpu_info {
 } *vcpu_info;
 
 static cpuset_t **vcpumap;
+
+#ifdef __amd64__
+static int
+kernel_startup_request(struct vmctx *ctx,
+    struct vmm_startup_request *request)
+{
+	int error;
+
+	do {
+		error = vm_startup_request(ctx, request);
+	} while (error != 0 && errno == EINTR);
+	return (error);
+}
+
+static void
+kernel_startup_configure(struct vmctx *ctx)
+{
+	struct vmm_startup_request request;
+
+	memset(&request, 0, sizeof(request));
+	request.version = VMM_STARTUP_REQUEST_VERSION;
+	request.size = VMM_STARTUP_REQUEST_SIZE;
+	request.operation = VMM_STARTUP_REQUEST_CONFIGURE;
+	request.expected_vcpus = guest_ncpus;
+	if (kernel_startup_request(ctx, &request) != 0)
+		err(EX_OSERR, "kernel-owned INIT/SIPI configuration");
+	if (request.generation == 0 ||
+	    request.expected_vcpus != (uint32_t)guest_ncpus ||
+	    request.entered_vcpus != 0 || request.bootstrap_entered != 0 ||
+	    request.phase != VMM_STARTUP_REQUEST_PHASE_COLLECTING ||
+	    request.owner != VMM_STARTUP_REQUEST_OWNER_KERNEL ||
+	    request.execution != VMM_STARTUP_REQUEST_EXECUTION_PRESTARTED)
+		errx(EX_OSERR, "invalid kernel-owned INIT/SIPI configuration status");
+	kernel_startup_generation = request.generation;
+}
+
+static void
+kernel_startup_commit(struct vmctx *ctx)
+{
+	struct vmm_startup_request request;
+
+	memset(&request, 0, sizeof(request));
+	request.version = VMM_STARTUP_REQUEST_VERSION;
+	request.size = VMM_STARTUP_REQUEST_SIZE;
+	request.operation = VMM_STARTUP_REQUEST_WAIT_READY;
+	request.generation = kernel_startup_generation;
+	if (kernel_startup_request(ctx, &request) != 0)
+		err(EX_OSERR, "waiting for kernel-owned INIT/SIPI vCPUs");
+	if (request.generation != kernel_startup_generation ||
+	    request.expected_vcpus != (uint32_t)guest_ncpus ||
+	    request.entered_vcpus != (uint32_t)guest_ncpus ||
+	    request.bootstrap_entered != 1 ||
+	    request.phase != VMM_STARTUP_REQUEST_PHASE_COLLECTING ||
+	    request.owner != VMM_STARTUP_REQUEST_OWNER_KERNEL ||
+	    request.execution != VMM_STARTUP_REQUEST_EXECUTION_PRESTARTED)
+		errx(EX_OSERR, "invalid kernel-owned INIT/SIPI ready status");
+
+	/*
+	 * WAIT_READY returns status in fields that are reserved as zero on input.
+	 * Build a new request rather than feeding those output values back into
+	 * the management ABI.
+	 */
+	memset(&request, 0, sizeof(request));
+	request.version = VMM_STARTUP_REQUEST_VERSION;
+	request.size = VMM_STARTUP_REQUEST_SIZE;
+	request.operation = VMM_STARTUP_REQUEST_COMMIT;
+	request.generation = kernel_startup_generation;
+	if (kernel_startup_request(ctx, &request) != 0)
+		err(EX_OSERR, "committing kernel-owned INIT/SIPI vCPUs");
+	if (request.generation != kernel_startup_generation ||
+	    request.expected_vcpus != (uint32_t)guest_ncpus ||
+	    request.entered_vcpus != (uint32_t)guest_ncpus ||
+	    request.bootstrap_entered != 1 ||
+	    request.phase != VMM_STARTUP_REQUEST_PHASE_COMMITTED ||
+	    request.owner != VMM_STARTUP_REQUEST_OWNER_KERNEL ||
+	    request.execution != VMM_STARTUP_REQUEST_EXECUTION_PRESTARTED)
+		errx(EX_OSERR, "invalid kernel-owned INIT/SIPI commit status");
+}
+
+static void
+kernel_startup_refresh(struct vmctx *ctx)
+{
+	struct vmm_startup_request request;
+	uint64_t previous_generation;
+
+	previous_generation = kernel_startup_generation;
+	memset(&request, 0, sizeof(request));
+	request.version = VMM_STARTUP_REQUEST_VERSION;
+	request.size = VMM_STARTUP_REQUEST_SIZE;
+	request.operation = VMM_STARTUP_REQUEST_STATUS;
+	if (kernel_startup_request(ctx, &request) != 0)
+		err(EX_OSERR, "refreshing kernel-owned INIT/SIPI generation");
+	if (request.generation == 0 ||
+	    request.generation == previous_generation ||
+	    request.expected_vcpus != (uint32_t)guest_ncpus ||
+	    request.entered_vcpus != 0 || request.bootstrap_entered != 0 ||
+	    request.phase != VMM_STARTUP_REQUEST_PHASE_COLLECTING ||
+	    request.owner != VMM_STARTUP_REQUEST_OWNER_KERNEL ||
+	    request.execution != VMM_STARTUP_REQUEST_EXECUTION_PRESTARTED)
+		errx(EX_OSERR, "invalid replacement INIT/SIPI generation status");
+	kernel_startup_generation = request.generation;
+}
+#endif
 
 /*
  * XXX This parser is known to have the following issues:
@@ -246,9 +360,11 @@ static void
 calc_mem_affinity(size_t vm_memsize)
 {
 	int i;
+	int error;
 	nvlist_t *nvl;
 	bool need_recalc;
 	const char *value;
+	size_t domain_sizes[VM_MAXMEMDOM];
 	struct vm_mem_domain *dom;
 	char pathbuf[64] = { 0 };
 
@@ -294,9 +410,17 @@ calc_mem_affinity(size_t vm_memsize)
 	} else if (need_recalc) {
 		warnx("At least one domain memory size was not specified, distributing"
 		    " total VM memory size across all domains");
-		for (i = 0; i < guest_ndomains; i++) {
-			guest_domains[i].size = vm_memsize / guest_ndomains;
-		}
+		error = vm_distribute_memory_domains(vm_memsize,
+		    guest_ndomains, PAGE_SIZE, domain_sizes,
+		    nitems(domain_sizes));
+		if (error != 0)
+			errx(EX_USAGE,
+			    "cannot distribute %zu bytes across %d memory "
+			    "domains in %u-byte allocation units: %s",
+			    vm_memsize, guest_ndomains, PAGE_SIZE,
+			    strerror(error));
+		for (i = 0; i < guest_ndomains; i++)
+			guest_domains[i].size = domain_sizes[i];
 	}
 }
 
@@ -470,6 +594,27 @@ set_vcpu_affinities(void)
 	const char *value;
 	char pathbuf[64] = { 0 };
 
+#ifdef BHYVE_SNAPSHOT
+	if (guest_vcpu_domains == NULL) {
+		guest_vcpu_domains = malloc((size_t)guest_ncpus *
+		    sizeof(*guest_vcpu_domains));
+		if (guest_vcpu_domains == NULL)
+			err(EX_OSERR, "Failed to allocate guest NUMA map");
+		for (cpu = 0; cpu < guest_ncpus; cpu++)
+			guest_vcpu_domains[cpu] = UINT16_MAX;
+	}
+	if (guest_numa_restored) {
+		for (cpu = 0; cpu < guest_ncpus; cpu++) {
+			error = acpi_add_vcpu_affinity(cpu,
+			    guest_vcpu_domains[cpu]);
+			if (error != 0)
+				errx(BHYVE_EXIT_ERROR,
+				    "Unable to restore vCPU %d NUMA affinity: %s",
+				    cpu, strerror(error));
+		}
+		return;
+	}
+#endif
 	for (int dom = 0; dom < guest_ndomains; dom++) {
 		snprintf(pathbuf, sizeof(pathbuf), "domains.%d", dom);
 		nvl = find_config_node(pathbuf);
@@ -484,32 +629,107 @@ set_vcpu_affinities(void)
 
 		parse_cpuset(dom, value, &cpus);
 		CPU_FOREACH_ISSET(cpu, &cpus) {
+			if (cpu >= guest_ncpus)
+				errx(EX_USAGE,
+				    "vCPU %d in NUMA domain %d exceeds guest "
+				    "vCPU count %d", cpu, dom, guest_ncpus);
+#ifdef BHYVE_SNAPSHOT
+			if (guest_vcpu_domains[cpu] != UINT16_MAX)
+				errx(EX_USAGE,
+				    "vCPU %d belongs to more than one NUMA "
+				    "domain", cpu);
+			guest_vcpu_domains[cpu] = (uint16_t)dom;
+#endif
 			error = acpi_add_vcpu_affinity(cpu, dom);
 			if (error) {
 				EPRINTLN(
 				    "Unable to set vCPU %d affinity for domain %d: %s",
-				    cpu, dom, strerror(errno));
+				    cpu, dom, strerror(error));
 				exit(BHYVE_EXIT_ERROR);
 			}
 		}
 	}
-	if (guest_ndomains > 1 || nvl != NULL)
+	if (guest_ndomains > 1 || nvl != NULL) {
+#ifdef BHYVE_SNAPSHOT
+		for (cpu = 0; cpu < guest_ncpus; cpu++) {
+			if (guest_vcpu_domains[cpu] == UINT16_MAX)
+				errx(EX_USAGE,
+				    "vCPU %d does not belong to a NUMA domain",
+				    cpu);
+		}
+#endif
 		return;
+	}
 
 	/*
 	 * If we're dealing with one domain and no cpuset was provided, create a
 	 * default one holding all cpus.
 	 */
 	for (cpu = 0; cpu < guest_ncpus; cpu++) {
+#ifdef BHYVE_SNAPSHOT
+		guest_vcpu_domains[cpu] = 0;
+#endif
 		error = acpi_add_vcpu_affinity(cpu, 0);
 		if (error) {
 			EPRINTLN(
 			    "Unable to set vCPU %d affinity for domain %d: %s",
-			    cpu, 0, strerror(errno));
+			    cpu, 0, strerror(error));
 			exit(BHYVE_EXIT_ERROR);
 		}
 	}
 }
+
+#ifdef BHYVE_SNAPSHOT
+int
+bhyve_numa_checkpoint_export(uint64_t *domain_sizes, size_t domain_capacity,
+    uint16_t *vcpu_domains, size_t vcpu_capacity, size_t *domain_count)
+{
+
+	if (domain_sizes == NULL || vcpu_domains == NULL ||
+	    domain_count == NULL || guest_ndomains <= 0 ||
+	    (size_t)guest_ndomains > domain_capacity ||
+	    guest_ncpus <= 0 || (size_t)guest_ncpus > vcpu_capacity ||
+	    guest_vcpu_domains == NULL)
+		return (EINVAL);
+	for (int domain = 0; domain < guest_ndomains; domain++)
+		domain_sizes[domain] = guest_domains[domain].size;
+	memcpy(vcpu_domains, guest_vcpu_domains,
+	    (size_t)guest_ncpus * sizeof(*vcpu_domains));
+	*domain_count = (size_t)guest_ndomains;
+	return (0);
+}
+
+int
+bhyve_numa_restore_apply(const uint64_t *domain_sizes, size_t domain_count,
+    const uint16_t *vcpu_domains, size_t vcpu_count, uint64_t memory_size)
+{
+	uint16_t *replacement;
+	int error;
+
+	if (vcpu_count != (size_t)guest_ncpus ||
+	    domain_count > nitems(guest_domains))
+		return (EINVAL);
+	error = checkpoint_numa_mapping_validate(domain_sizes, domain_count,
+	    vcpu_domains, vcpu_count, memory_size);
+	if (error != 0)
+		return (error);
+	replacement = malloc(vcpu_count * sizeof(*replacement));
+	if (replacement == NULL)
+		return (ENOMEM);
+	memcpy(replacement, vcpu_domains,
+	    vcpu_count * sizeof(*replacement));
+	for (size_t domain = 0; domain < domain_count; domain++)
+		guest_domains[domain].size = (size_t)domain_sizes[domain];
+	for (size_t domain = domain_count; domain < nitems(guest_domains);
+	    domain++)
+		guest_domains[domain].size = 0;
+	free(guest_vcpu_domains);
+	guest_vcpu_domains = replacement;
+	guest_ndomains = (int)domain_count;
+	guest_numa_restored = true;
+	return (0);
+}
+#endif
 
 void *
 paddr_guest2host(struct vmctx *ctx, uintptr_t gaddr, size_t len)
@@ -552,7 +772,9 @@ fbsdrun_start_thread(void *param)
 	if (vcpumap[vi->vcpuid] != NULL) {
 		error = pthread_setaffinity_np(pthread_self(),
 		    sizeof(cpuset_t), vcpumap[vi->vcpuid]);
-		assert(error == 0);
+		if (error != 0)
+			errc(EX_OSERR, error,
+			    "could not set affinity for CPU %d", vi->vcpuid);
 	}
 
 #ifdef BHYVE_SNAPSHOT
@@ -583,10 +805,13 @@ fbsdrun_addcpu(int vcpuid)
 	CPU_SET_ATOMIC(vcpuid, &cpumask);
 
 	error = vm_suspend_cpu(vi->vcpu);
-	assert(error == 0);
+	if (error != 0)
+		err(EX_OSERR, "could not suspend CPU %d", vi->vcpuid);
 
 	error = pthread_create(&thr, NULL, fbsdrun_start_thread, vi);
-	assert(error == 0);
+	if (error != 0)
+		errc(EX_OSERR, error, "could not create CPU %d thread",
+		    vi->vcpuid);
 }
 
 void
@@ -627,6 +852,10 @@ vm_loop(struct vmctx *ctx, struct vcpu *vcpu)
 {
 	struct vm_exit vme;
 	struct vm_run vmrun;
+#ifdef __amd64__
+	struct vmm_startup_run_request startup_run;
+	bool startup_admitted;
+#endif
 	int error, rc;
 	enum vm_exitcode exitcode;
 	cpuset_t active_cpus, dmask;
@@ -638,8 +867,29 @@ vm_loop(struct vmctx *ctx, struct vcpu *vcpu)
 	vmrun.cpuset = &dmask;
 	vmrun.cpusetsize = sizeof(dmask);
 
+#ifdef __amd64__
+	startup_admitted = !kernel_startup;
+#endif
+
 	while (1) {
-		error = vm_run(vcpu, &vmrun);
+#ifdef __amd64__
+		if (!startup_admitted) {
+			memset(&startup_run, 0, sizeof(startup_run));
+			startup_run.version = VMM_STARTUP_RUN_REQUEST_VERSION;
+			startup_run.size = VMM_STARTUP_RUN_REQUEST_SIZE;
+			startup_run.generation = kernel_startup_generation;
+			startup_run.cpuset_address = (uintptr_t)&dmask;
+			startup_run.cpuset_size = sizeof(dmask);
+			startup_run.exit_address = (uintptr_t)&vme;
+			startup_run.exit_size = sizeof(vme);
+			error = vm_run_generation(vcpu, &startup_run);
+			if (error != 0 && errno == EINTR)
+				continue;
+			if (error == 0)
+				startup_admitted = true;
+		} else
+#endif
+			error = vm_run(vcpu, &vmrun);
 		if (error != 0)
 			break;
 
@@ -806,6 +1056,7 @@ main(int argc, char *argv[])
 	const char *value, *vmname;
 #ifdef BHYVE_SNAPSHOT
 	struct restore_state rstate;
+	int migrate_recv_fd = -1;
 #endif
 
 	bhyve_init_config();
@@ -815,6 +1066,22 @@ main(int argc, char *argv[])
 
 	if (argc > 1)
 		bhyve_usage(1);
+
+#ifdef BHYVE_SNAPSHOT
+	{
+		const char *rv = get_config_value("migrate.receive_fd");
+
+		if (rv != NULL) {
+			migrate_recv_fd = atoi(rv);
+			if (migrate_recv_fd < 0)
+				errx(EX_USAGE, "invalid migrate receive fd '%s'",
+				    rv);
+		}
+	}
+	if (restore_file != NULL && migrate_recv_fd >= 0)
+		errx(EX_USAGE, "-r (restore) and -R (migrate-receive) are "
+		    "mutually exclusive");
+#endif
 
 #ifdef BHYVE_SNAPSHOT
 	if (restore_file != NULL) {
@@ -843,6 +1110,20 @@ main(int argc, char *argv[])
 	}
 
 	calc_topology();
+#ifdef BHYVE_SNAPSHOT
+	if (restore_file != NULL) {
+		int saved_ncpus;
+
+		error = lookup_cpu_topology(&rstate, &saved_ncpus,
+		    &cpu_sockets, &cpu_cores, &cpu_threads);
+		if (error != 0) {
+			fprintf(stderr,
+			    "Invalid CPU topology in checkpoint metadata.\n");
+			exit(BHYVE_EXIT_ERROR);
+		}
+		guest_ncpus = saved_ncpus;
+	}
+#endif
 	build_vcpumaps();
 
 	value = get_config_value("memory.size");
@@ -854,8 +1135,11 @@ main(int argc, char *argv[])
 
 #ifdef BHYVE_SNAPSHOT
 	if (restore_file != NULL) {
-		guest_ncpus = lookup_guest_ncpus(&rstate);
-		memflags = lookup_memflags(&rstate);
+		if (lookup_memflags(&rstate, &memflags) != 0) {
+			fprintf(stderr,
+			    "Invalid guest memory flags in checkpoint.\n");
+			exit(BHYVE_EXIT_ERROR);
+		}
 		memsize = lookup_memsize(&rstate);
 	}
 
@@ -866,11 +1150,61 @@ main(int argc, char *argv[])
 #endif
 
 	calc_mem_affinity(memsize);
-	memflags = 0;
-	if (get_config_bool_default("memory.wired", false))
-		memflags |= VM_MEM_F_WIRED;
-	if (get_config_bool_default("memory.guest_in_core", false))
-		memflags |= VM_MEM_F_INCORE;
+#ifdef BHYVE_SNAPSHOT
+	if (restore_file != NULL) {
+		struct checkpoint_memory_geometry destination_geometry;
+		struct checkpoint_memory_geometry source_geometry;
+		uint64_t domain_sizes[CHECKPOINT_NUMA_MAX_DOMAINS];
+		uint16_t *vcpu_domains;
+		size_t domain_count;
+
+		vcpu_domains = calloc((size_t)guest_ncpus,
+		    sizeof(*vcpu_domains));
+		if (vcpu_domains == NULL)
+			err(EX_OSERR, "Failed to allocate restored NUMA map");
+		error = lookup_numa_topology(&rstate, guest_ncpus, memsize,
+		    domain_sizes, &domain_count, vcpu_domains);
+			if (error == 0)
+				error = bhyve_numa_restore_apply(domain_sizes,
+				    domain_count, vcpu_domains, (size_t)guest_ncpus,
+				    memsize);
+			free(vcpu_domains);
+			if (error != 0) {
+			fprintf(stderr,
+			    "Invalid NUMA topology in checkpoint metadata.\n");
+			exit(BHYVE_EXIT_ERROR);
+		}
+
+		destination_geometry = (struct checkpoint_memory_geometry) {
+			.page_size = PAGE_SIZE,
+			.lowmem_size = MIN(memsize,
+			    (size_t)vm_get_lowmem_limit(ctx)),
+			.highmem_base = vm_get_highmem_base(ctx),
+			.highmem_size = memsize -
+			    MIN(memsize, (size_t)vm_get_lowmem_limit(ctx)),
+		};
+		error = lookup_memory_geometry(&rstate, &source_geometry);
+			if (error == 0)
+				error = checkpoint_memory_geometry_match(
+				    &source_geometry, &destination_geometry, memsize);
+			if (error != 0) {
+			fprintf(stderr,
+			    "Checkpoint guest memory geometry is incompatible "
+			    "with this destination.\n");
+			exit(BHYVE_EXIT_ERROR);
+		}
+	}
+#endif
+#ifdef BHYVE_SNAPSHOT
+	if (restore_file == NULL)
+#endif
+	{
+		memflags = 0;
+		if (get_config_bool_default("memory.wired", false))
+			memflags |= VM_MEM_F_WIRED;
+		if (get_config_bool_default("memory.guest_in_core", false))
+			memflags |= VM_MEM_F_INCORE;
+	}
 	vm_set_memflags(ctx, memflags);
 	error = vm_setup_memory_domains(ctx, VM_MMAP_ALL, guest_domains,
 	    guest_ndomains);
@@ -882,6 +1216,21 @@ main(int argc, char *argv[])
 	set_vcpu_affinities();
 	init_mem(guest_ncpus);
 	init_bootrom(ctx);
+
+#ifdef __amd64__
+	kernel_startup = get_config_bool_default("x86.kernel_startup", false);
+#ifdef BHYVE_SNAPSHOT
+	if (kernel_startup && restore_file != NULL)
+		errx(EX_USAGE, "x86.kernel_startup is not yet compatible with restore");
+#endif
+	/*
+	 * The monitor parent owns the open VM description across replacement
+	 * children.  Select the startup owner before fork so each child inherits
+	 * the exact controller, then refresh the generation after vm_reinit().
+	 */
+	if (kernel_startup)
+		kernel_startup_configure(ctx);
+#endif
 
 	if (get_config_bool_default("monitor", false)) {
 		while (1) {
@@ -914,6 +1263,10 @@ main(int argc, char *argv[])
 				    strerror(errno));
 				exit(BHYVE_EXIT_ERROR);
 			};
+#ifdef __amd64__
+			if (kernel_startup)
+				kernel_startup_refresh(ctx);
+#endif
 		}
 	}
 
@@ -953,6 +1306,26 @@ main(int argc, char *argv[])
 	if (bhyve_init_platform(ctx, bsp) != 0)
 		exit(BHYVE_EXIT_ERROR);
 
+#ifdef BHYVE_SNAPSHOT
+	if (restore_file != NULL) {
+		struct checkpoint_cpu_contract destination_cpu, source_cpu;
+
+		error = lookup_cpu_contract(&rstate, &source_cpu);
+		if (error == 0) {
+			error = checkpoint_cpu_contract_capture(bsp,
+			    &destination_cpu);
+				if (error == 0)
+					error = checkpoint_cpu_contract_match(&source_cpu,
+					    &destination_cpu);
+			}
+			if (error != 0) {
+			EPRINTLN("Checkpoint CPU contract is incompatible with "
+			    "this destination.");
+			exit(BHYVE_EXIT_ERROR);
+		}
+	}
+#endif
+
 	if (qemu_fwcfg_init(ctx) != 0) {
 		fprintf(stderr, "qemu fwcfg initialization error\n");
 		exit(BHYVE_EXIT_ERROR);
@@ -991,38 +1364,42 @@ main(int argc, char *argv[])
 	/*
 	 * Add all vCPUs.
 	 */
+#ifdef BHYVE_SNAPSHOT
+	/*
+	 * A restored CPU starts with destination-local state until the restore
+	 * transaction publishes the checkpoint.  Arm the common startup fence
+	 * before creating a vCPU thread so it cannot reach vm_loop() in that
+	 * interval.  vm_restore_transaction() releases this only after COMMIT and
+	 * device resume; an error exits with all vCPUs still held.
+	 */
+	if (restore_file != NULL || migrate_recv_fd >= 0)
+		checkpoint_restore_startup_hold();
+#endif
 	for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++)
 		bhyve_start_vcpu(vcpu_info[vcpuid].vcpu, vcpuid == BSP);
+#ifdef __amd64__
+	if (kernel_startup)
+		kernel_startup_commit(ctx);
+#endif
 
 #ifdef BHYVE_SNAPSHOT
 	if (restore_file != NULL) {
-		FPRINTLN(stdout, "Pausing pci devs...");
-		if (vm_pause_devices() != 0) {
-			EPRINTLN("Failed to pause PCI device state.");
+		FPRINTLN(stdout, "Validating checkpoint topology...");
+		if (vm_restore_transaction(ctx, &rstate) != 0)
 			exit(BHYVE_EXIT_ERROR);
-		}
+	} else if (migrate_recv_fd >= 0) {
+		struct migration_session_config mcfg;
+		struct migration_dest_result mres;
 
-		FPRINTLN(stdout, "Restoring vm mem...");
-		if (restore_vm_mem(ctx, &rstate) != 0) {
-			EPRINTLN("Failed to restore VM memory.");
-			exit(BHYVE_EXIT_ERROR);
-		}
-
-		FPRINTLN(stdout, "Restoring pci devs...");
-		if (vm_restore_devices(&rstate) != 0) {
-			EPRINTLN("Failed to restore PCI device state.");
-			exit(BHYVE_EXIT_ERROR);
-		}
-
-		FPRINTLN(stdout, "Restoring kernel structs...");
-		if (vm_restore_kern_structs(ctx, &rstate) != 0) {
-			EPRINTLN("Failed to restore kernel structs.");
-			exit(BHYVE_EXIT_ERROR);
-		}
-
-		FPRINTLN(stdout, "Resuming pci devs...");
-		if (vm_resume_devices() != 0) {
-			EPRINTLN("Failed to resume PCI device state.");
+		memset(&mcfg, 0, sizeof(mcfg));
+		mcfg.version_max = MIGRATION_PROTO_VERSION;
+		mcfg.version_min = MIGRATION_PROTO_VERSION_MIN;
+		memset(&mres, 0, sizeof(mres));
+		FPRINTLN(stdout, "Awaiting inbound live migration...");
+		if (migration_prod_dest_serve(ctx, migrate_recv_fd, &mcfg,
+		    &mres) != 0) {
+			fprintf(stderr, "Inbound migration failed at phase %u "
+			    "(reason %u).\n", mres.phase, mres.reason);
 			exit(BHYVE_EXIT_ERROR);
 		}
 	}
@@ -1060,6 +1437,13 @@ main(int argc, char *argv[])
 		if (vm_restore_time(ctx) < 0)
 			err(EX_OSERR, "Unable to restore time");
 
+		for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++)
+			vm_resume_cpu(vcpu_info[vcpuid].vcpu);
+	} else if (migrate_recv_fd >= 0) {
+		/*
+		 * The migration commit already released the restore startup
+		 * fence and resumed devices; release the migrated vCPUs to run.
+		 */
 		for (int vcpuid = 0; vcpuid < guest_ncpus; vcpuid++)
 			vm_resume_cpu(vcpu_info[vcpuid].vcpu);
 	} else
