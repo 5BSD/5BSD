@@ -1,0 +1,86 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 14, 2026
+.Dt TZFSCTL 8
+.Os
+.Sh NAME
+.Nm tzfsctl
+.Nd inspect and exercise the tzfsd storage daemon
+.Sh SYNOPSIS
+.Nm
+.Cm list-flavors
+.Nm
+.Cm ping
+.Nm
+.Cm request
+.Op Fl f Ar flavor
+.Op Fl l Ar lifetime
+.Op Fl r Ar rights
+.Op Fl m
+.Ar name
+.Nm
+.Cm release
+.Ar name
+.Sh DESCRIPTION
+.Nm
+is the operator command-line interface to
+.Xr tzfsd 8 ,
+the
+.Sy [TZFS]
+storage daemon.
+It connects the daemon socket and issues one request.
+.Pp
+The commands are:
+.Bl -tag -width ".Cm list-flavors"
+.It Cm list-flavors
+Print the flavors
+.Xr tzfsd 8
+currently offers, marking the default.
+The list is exactly the set
+.Cm request
+will honor.
+.It Cm ping
+Report whether the daemon is answering.
+.It Cm request Oo Fl f Ar flavor Oc Oo Fl l Ar lifetime Oc Oo Fl r Ar rights Oc Oo Fl m Oc Ar name
+Ask for a storage handle named
+.Ar name
+and print the resolved dataset.
+.Fl f
+selects a flavor to clone
+.Pq default: a bare dataset ;
+.Fl l
+is
+.Ar persistent
+or
+.Ar ephemeral
+.Pq default: ephemeral ;
+.Fl r
+is a comma-separated rights list
+.Pq for example Ar mount,snapshot,props_read , or Ar all ;
+and
+.Fl m
+additionally mounts the handle and prints the directory descriptor.
+.Nm
+is a demonstration and health tool: it exits immediately, closing the handle
+(and unmounting), so it does not hold storage open.
+.It Cm release Ar name
+Destroy the ephemeral claim previously granted under
+.Ar name .
+Idempotent.
+.El
+.Sh EXAMPLES
+Show what is on offer and get a Rocky Linux root as a directory:
+.Bd -literal -offset indent
+tzfsctl list-flavors
+tzfsctl request -f linux -l ephemeral -m rootfs
+.Ed
+.Sh SEE ALSO
+.Xr libtzfsd 3 ,
+.Xr trustedzfs 3 ,
+.Xr tzfs.conf 5 ,
+.Xr tzfsd 8
+.Sh AUTHORS
+.An Kory Heard

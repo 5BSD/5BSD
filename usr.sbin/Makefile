@@ -28,6 +28,7 @@ SUBDIR=	adduser \
 	extattrctl \
 	fifolog \
 	localfilesystem \
+	localcrypto \
 	filesystemcmpctl \
 	fstyp \
 	fwcontrol \
@@ -108,6 +109,7 @@ SUBDIR=	adduser \
 	tcpsso \
 	traceroute \
 	trim \
+	tzfsctl \
 	tzfsd \
 	tzsetup \
 	ugidfw \

@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <spawn.h>
+#include <stdio.h>
 #include <string.h>
 #include <syslog.h>
 #include <time.h>
@@ -277,7 +278,21 @@ recv_baked(int templates_fd, struct tzfsd_flavor_def *f)
 		return (-1);
 	}
 
-	rc = tzfs_recv(templates_fd, f->name, pipefd[0], false);
+	/*
+	 * The recv target is a snapshot name: a full send stream creates the
+	 * dataset and its @ready snapshot together (ZFD_RECV rejects a bare
+	 * dataset name).  mkflavor sends @ready, so receive templates/<flavor>
+	 * @ready.
+	 */
+	{
+		char target[TZFSD_FLAVOR_MAX + sizeof(TZFSD_TEMPLATE_SNAP) + 1];
+
+		(void)snprintf(target, sizeof(target), "%s@%s", f->name,
+		    TZFSD_TEMPLATE_SNAP);
+		rc = tzfs_recv(templates_fd, target, pipefd[0], false);
+	}
+	if (rc == -1)
+		syslog(LOG_ERR, "recv %s from %s: %m", f->name, f->source);
 	(void)close(pipefd[0]);
 	(void)waitpid(pid, &status, 0);
 	if (rc == -1)

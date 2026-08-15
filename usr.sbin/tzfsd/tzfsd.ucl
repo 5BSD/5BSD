@@ -1,0 +1,21 @@
+# tzfsd(8) configuration.  Every key is optional; the built-in defaults
+# (shown commented below) apply when omitted.  See tzfs.conf(5).
+
+# pool = "zroot";                    # pool backing /Capabilities
+
+# roots {
+#     base        = "zroot/Capabilities";
+#     persistent  = "zroot/Capabilities/persistent";
+#     ephemeral   = "zroot/Capabilities/ephemeral";
+#     templates   = "zroot/Capabilities/.templates";
+#     mountpoint  = "/Capabilities";
+# }
+
+# ephemeral { sync = "disabled"; }   # sync= for ephemeral datasets
+
+flavors {
+    # Linux (Rocky) is a first-class flavor, enabled by default.  To slim a
+    # deployment and drop the Red Hat userland, set enabled = false here (or
+    # remove the tzfs-image-linux artifact).  See tzfs.conf(5).
+    linux { enabled = true; }
+}
