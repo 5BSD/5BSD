@@ -711,8 +711,19 @@ ATF_TC_BODY(component_bootstrap_roundtrip, tc)
 		ATF_REQUIRE(result > 0);
 		if ((result & CHANNEL_WAIT_WRITE) != 0)
 			ATF_REQUIRE(channel_flush(channel) == 0);
-		if ((result & CHANNEL_WAIT_READ) != 0)
-			ATF_REQUIRE(channel_dispatch(channel) == 0);
+		if ((result & CHANNEL_WAIT_READ) != 0) {
+			/*
+			 * The provider thread closes its channel immediately
+			 * after sending the reply, so the reply and the peer
+			 * EOF can arrive in the same dispatch batch: the reply
+			 * is delivered (reply.done set via the callback) and
+			 * channel_dispatch then reports the EOF as -1.  That is
+			 * expected -- only a failure that leaves the reply
+			 * undelivered is fatal.
+			 */
+			if (channel_dispatch(channel) == -1)
+				ATF_REQUIRE(reply.done);
+		}
 	}
 	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
 	ATF_CHECK_EQ(0, provider.error);

@@ -123,7 +123,16 @@ else
 	for testbin in $ATF_TEST_BINS; do
 		testbin_path="${SCRIPT_DIR}/${testbin}"
 		[ -x "$testbin_path" ] || continue
-		testcases=$("$testbin_path" -l | awk '/^ident: / { print $2 }')
+		case_log=$(mktemp /tmp/mac-capability-atf-cases.XXXXXX) ||
+		    die "cannot create ATF case-list output"
+		if ! "$testbin_path" -l >"$case_log" 2>&1; then
+			cat "$case_log" >&2
+			rm -f "$case_log"
+			die "ATF case discovery failed: ${testbin}"
+		fi
+		testcases=$(awk '/^ident: / { print $2 }' "$case_log")
+		rm -f "$case_log"
+		[ -n "$testcases" ] || die "ATF test declares no cases: ${testbin}"
 		for testcase in $testcases; do
 			info "ATF ${testbin}:${testcase}"
 			"$testbin_path" -s "$SCRIPT_DIR" "$testcase" ||
