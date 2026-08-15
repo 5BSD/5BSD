@@ -299,7 +299,9 @@ struct fcrypt {
 /* A passable, rights-limited OpenCrypto session. */
 struct cryptodesc {
 	struct csession	*cd_session;
+	struct mtx	cd_lock;
 	uint32_t	cd_rights;
+	bool		cd_revoked;
 };
 
 static fo_ioctl_t cryptodesc_ioctl;
@@ -308,6 +310,22 @@ static fo_close_t cryptodesc_close;
 static fo_fill_kinfo_t cryptodesc_fill_kinfo;
 static int cryptodev_op(struct csession *, const struct crypt_op *);
 static int cryptodev_aead(struct csession *, struct crypt_aead *);
+
+static int
+cryptodesc_check_rights(struct cryptodesc *cd, uint32_t required)
+{
+	int error;
+
+	mtx_lock(&cd->cd_lock);
+	if (cd->cd_revoked)
+		error = EACCES;
+	else if ((cd->cd_rights & required) != required)
+		error = EPERM;
+	else
+		error = 0;
+	mtx_unlock(&cd->cd_lock);
+	return (error);
+}
 
 static const struct fileops cryptodesc_ops = {
 	.fo_read = invfo_rdwr,
@@ -645,10 +663,12 @@ cryptodesc_mint(struct thread *td, struct cryptodesc_create *create)
 		return (error);
 	cd = malloc(sizeof(*cd), M_CRYPTODEV, M_WAITOK | M_ZERO);
 	cd->cd_session = cse;
+	mtx_init(&cd->cd_lock, "cryptodesc", NULL, MTX_DEF);
 	cd->cd_rights = create->cd_rights;
 	error = falloc_noinstall(td, &fp);
 	if (error != 0) {
 		cse_free(cse);
+		mtx_destroy(&cd->cd_lock);
 		free(cd, M_CRYPTODEV);
 		return (error);
 	}
@@ -667,11 +687,37 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 	struct cryptodesc *cd;
 	struct crypt_op *cop;
 	struct crypt_aead *caead;
+	struct cryptodesc_restrict *attenuation;
+	struct cryptodesc_revoke *revoke;
 	const struct crypto_session_params *csp;
 	uint32_t required;
+	int error;
 
 	cd = fp->f_data;
 	switch (cmd) {
+	case CIOCCRYPTODESCREVOKE:
+		revoke = data;
+		if (revoke->cd_flags != 0)
+			return (EINVAL);
+		mtx_lock(&cd->cd_lock);
+		cd->cd_revoked = true;
+		mtx_unlock(&cd->cd_lock);
+		return (0);
+	case CIOCSCRYPTODESCRIGHTS:
+		attenuation = data;
+		if ((attenuation->cd_rights & ~CRYPTODESC_RIGHT_ALL) != 0)
+			return (EINVAL);
+		mtx_lock(&cd->cd_lock);
+		if (cd->cd_revoked)
+			error = EACCES;
+		else if ((attenuation->cd_rights & ~cd->cd_rights) != 0)
+			error = EPERM;
+		else {
+			cd->cd_rights = attenuation->cd_rights;
+			error = 0;
+		}
+		mtx_unlock(&cd->cd_lock);
+		return (error);
 	case CIOCCRYPT:
 		cop = data;
 		csp = crypto_get_params(cd->cd_session->cses);
@@ -687,9 +733,10 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 			required = cop->op == COP_ENCRYPT ?
 			    CRYPTODESC_RIGHT_ENCRYPT : cop->op == COP_DECRYPT ?
 			    CRYPTODESC_RIGHT_DECRYPT : 0;
-		if (required == 0 || cop->ses != 0 ||
-		    (cd->cd_rights & required) != required)
-			return (EPERM);
+		error = required == 0 || cop->ses != 0 ? EPERM :
+		    cryptodesc_check_rights(cd, required);
+		if (error != 0)
+			return (error);
 		return (cryptodev_op(cd->cd_session, cop));
 	case CIOCCRYPTAEAD:
 		caead = data;
@@ -697,9 +744,10 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 		    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_AUTH :
 		    caead->op == COP_DECRYPT ?
 		    CRYPTODESC_RIGHT_DECRYPT | CRYPTODESC_RIGHT_VERIFY : 0;
-		if (required == 0 || caead->ses != 0 ||
-		    (cd->cd_rights & required) != required)
-			return (EPERM);
+		error = required == 0 || caead->ses != 0 ? EPERM :
+		    cryptodesc_check_rights(cd, required);
+		if (error != 0)
+			return (error);
 		return (cryptodev_aead(cd->cd_session, caead));
 	default:
 		return (ENOTTY);
@@ -729,6 +777,7 @@ cryptodesc_close(struct file *fp, struct thread *td __unused)
 	fp->f_ops = &badfileops;
 	fp->f_data = NULL;
 	cse_free(cd->cd_session);
+	mtx_destroy(&cd->cd_lock);
 	explicit_bzero(cd, sizeof(*cd));
 	free(cd, M_CRYPTODEV);
 	return (0);
@@ -740,13 +789,20 @@ cryptodesc_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 {
 	struct cryptodesc *cd;
 	const struct crypto_session_params *csp;
+	bool revoked;
+	uint32_t rights;
 
 	cd = fp->f_data;
 	csp = crypto_get_params(cd->cd_session->cses);
+	mtx_lock(&cd->cd_lock);
+	rights = cd->cd_rights;
+	revoked = cd->cd_revoked;
+	mtx_unlock(&cd->cd_lock);
 	kif->kf_type = KF_TYPE_CRYPTO;
 	snprintf(kif->kf_path, sizeof(kif->kf_path),
-	    "crypto:mode=%d:cipher=%d:auth=%d:rights=%#x", csp->csp_mode,
-	    csp->csp_cipher_alg, csp->csp_auth_alg, cd->cd_rights);
+	    "crypto:mode=%d:cipher=%d:auth=%d:rights=%#x:revoked=%d",
+	    csp->csp_mode, csp->csp_cipher_alg, csp->csp_auth_alg, rights,
+	    revoked);
 	return (0);
 }
 

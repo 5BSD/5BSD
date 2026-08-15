@@ -41,6 +41,21 @@ struct cryptodesc_create {
 	int32_t			cd_fd;		/* out */
 };
 
+/*
+ * Attenuate an issued descriptor.  cd_rights must be a subset of the current
+ * rights and may be zero.  Rights can never be restored through this ABI.
+ */
+struct cryptodesc_restrict {
+	uint32_t		cd_rights;
+};
+
+/* Permanently disable an issued descriptor before its final close. */
+struct cryptodesc_revoke {
+	uint32_t		cd_flags;	/* must be zero */
+};
+
 #define	CIOCGCRYPTODESC	_IOWR('c', 110, struct cryptodesc_create)
+#define	CIOCSCRYPTODESCRIGHTS	_IOW('c', 111, struct cryptodesc_restrict)
+#define	CIOCCRYPTODESCREVOKE	_IOW('c', 112, struct cryptodesc_revoke)
 
 #endif /* !_SYS_CRYPTODESC_H_ */

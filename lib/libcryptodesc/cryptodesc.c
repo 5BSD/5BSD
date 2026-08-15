@@ -29,3 +29,29 @@ cryptodesc_mint(int control_fd, const struct session2_op *session,
 	*descriptor_fd = create.cd_fd;
 	return (0);
 }
+
+int
+cryptodesc_restrict(int descriptor_fd, uint32_t rights)
+{
+	struct cryptodesc_restrict attenuation;
+
+	if (descriptor_fd < 0 || (rights & ~CRYPTODESC_RIGHT_ALL) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	attenuation.cd_rights = rights;
+	return (ioctl(descriptor_fd, CIOCSCRYPTODESCRIGHTS, &attenuation));
+}
+
+int
+cryptodesc_revoke(int descriptor_fd)
+{
+	struct cryptodesc_revoke revoke;
+
+	if (descriptor_fd < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&revoke, 0, sizeof(revoke));
+	return (ioctl(descriptor_fd, CIOCCRYPTODESCREVOKE, &revoke));
+}

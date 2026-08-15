@@ -25,6 +25,12 @@ static const uint8_t aes_key[16] = {
 	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
 	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
 };
+static const uint8_t chacha_key[32] = {
+	0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+	0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+	0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+	0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+};
 static const uint8_t aes_iv[16] = {
 	0xf0, 0xf1, 0xf2, 0xf3, 0xf4, 0xf5, 0xf6, 0xf7,
 	0xf8, 0xf9, 0xfa, 0xfb, 0xfc, 0xfd, 0xfe, 0xff,
@@ -53,18 +59,18 @@ open_control(void)
 }
 
 static int
-mint_descriptor(int control, uint32_t cipher, uint32_t mac, int ivlen,
-    int maclen, uint32_t rights)
+mint_descriptor_key(int control, uint32_t cipher, uint32_t mac,
+    const uint8_t *key, size_t keylen, int ivlen, int maclen, uint32_t rights)
 {
 	struct cryptodesc_create create;
 
 	memset(&create, 0, sizeof(create));
 	create.session.cipher = cipher;
 	create.session.mac = mac;
-	create.session.keylen = sizeof(aes_key);
-	create.session.key = aes_key;
-	create.session.mackeylen = sizeof(aes_key);
-	create.session.mackey = aes_key;
+	create.session.keylen = keylen;
+	create.session.key = key;
+	create.session.mackeylen = keylen;
+	create.session.mackey = key;
 	create.session.crid = CRYPTO_FLAG_SOFTWARE;
 	create.session.ivlen = ivlen;
 	create.session.maclen = maclen;
@@ -74,6 +80,15 @@ mint_descriptor(int control, uint32_t cipher, uint32_t mac, int ivlen,
 	    "CIOCGCRYPTODESC: %s", strerror(errno));
 	ATF_REQUIRE(create.cd_fd >= 0);
 	return (create.cd_fd);
+}
+
+static int
+mint_descriptor(int control, uint32_t cipher, uint32_t mac, int ivlen,
+    int maclen, uint32_t rights)
+{
+
+	return (mint_descriptor_key(control, cipher, mac, aes_key,
+	    sizeof(aes_key), ivlen, maclen, rights));
 }
 
 static void
@@ -190,6 +205,8 @@ ATF_TC_BODY(cbc_rights_and_metadata, tc)
 {
 	uint8_t ciphertext[sizeof(cbc_plaintext)], output[sizeof(cbc_plaintext)];
 	struct crypt_op cop;
+	struct cryptodesc_restrict attenuation;
+	struct cryptodesc_revoke revoke;
 	struct session2_op sop;
 	struct stat st;
 	int control, decrypt_only, encrypt_only, full;
@@ -236,9 +253,83 @@ ATF_TC_BODY(cbc_rights_and_metadata, tc)
 	cop.dst = ciphertext;
 	errno = 0;
 	ATF_REQUIRE_ERRNO(EPERM, ioctl(decrypt_only, CIOCCRYPT, &cop) == -1);
+
+	memset(&attenuation, 0, sizeof(attenuation));
+	attenuation.cd_rights = CRYPTODESC_RIGHT_ENCRYPT;
+	ATF_REQUIRE_MSG(ioctl(full, CIOCSCRYPTODESCRIGHTS, &attenuation) == 0,
+	    "CIOCSCRYPTODESCRIGHTS: %s", strerror(errno));
+	crypt_cbc(full, COP_ENCRYPT, cbc_plaintext, ciphertext);
+	cop.op = COP_DECRYPT;
+	cop.src = ciphertext;
+	cop.dst = output;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPERM, ioctl(full, CIOCCRYPT, &cop) == -1);
+	attenuation.cd_rights = CRYPTODESC_RIGHT_ALL;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPERM,
+	    ioctl(full, CIOCSCRYPTODESCRIGHTS, &attenuation) == -1);
+	memset(&revoke, 0, sizeof(revoke));
+	ATF_REQUIRE_MSG(ioctl(full, CIOCCRYPTODESCREVOKE, &revoke) == 0,
+	    "CIOCCRYPTODESCREVOKE: %s", strerror(errno));
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EACCES,
+	    ioctl(full, CIOCCRYPT, &cop) == -1);
 	close(decrypt_only);
 	close(encrypt_only);
 	close(full);
+	close(control);
+}
+
+ATF_TC(descriptor_lifecycle);
+ATF_TC_HEAD(descriptor_lifecycle, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(descriptor_lifecycle, tc)
+{
+	uint8_t ciphertext[sizeof(cbc_plaintext)];
+	struct crypt_op cop;
+	struct cryptodesc_restrict attenuation;
+	struct cryptodesc_revoke revoke;
+	int control, fd;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+	fd = mint_descriptor(control, CRYPTO_AES_CBC, 0, sizeof(aes_iv), 0,
+	    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT);
+
+	attenuation.cd_rights = CRYPTODESC_RIGHT_ENCRYPT | 0x80000000U;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    ioctl(fd, CIOCSCRYPTODESCRIGHTS, &attenuation) == -1);
+
+	attenuation.cd_rights = 0;
+	ATF_REQUIRE_MSG(ioctl(fd, CIOCSCRYPTODESCRIGHTS, &attenuation) == 0,
+	    "zero-right attenuation: %s", strerror(errno));
+	memset(&cop, 0, sizeof(cop));
+	cop.op = COP_ENCRYPT;
+	cop.len = sizeof(cbc_plaintext);
+	cop.src = cbc_plaintext;
+	cop.dst = ciphertext;
+	cop.iv = aes_iv;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPERM, ioctl(fd, CIOCCRYPT, &cop) == -1);
+
+	revoke.cd_flags = 1;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    ioctl(fd, CIOCCRYPTODESCREVOKE, &revoke) == -1);
+	revoke.cd_flags = 0;
+	ATF_REQUIRE_MSG(ioctl(fd, CIOCCRYPTODESCREVOKE, &revoke) == 0,
+	    "revoke descriptor: %s", strerror(errno));
+	ATF_REQUIRE_MSG(ioctl(fd, CIOCCRYPTODESCREVOKE, &revoke) == 0,
+	    "idempotent revocation: %s", strerror(errno));
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EACCES,
+	    ioctl(fd, CIOCSCRYPTODESCRIGHTS, &attenuation) == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EACCES, ioctl(fd, CIOCCRYPT, &cop) == -1);
+	close(fd);
 	close(control);
 }
 
@@ -315,6 +406,8 @@ ATF_TC_HEAD(passable_descriptor, tc)
 ATF_TC_BODY(passable_descriptor, tc)
 {
 	uint8_t ciphertext[sizeof(cbc_plaintext)], output[sizeof(cbc_plaintext)];
+	struct crypt_op cop;
+	struct cryptodesc_restrict attenuation;
 	int control, fd, sockets[2], transferred;
 
 	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
@@ -329,6 +422,21 @@ ATF_TC_BODY(passable_descriptor, tc)
 	crypt_cbc(transferred, COP_ENCRYPT, cbc_plaintext, ciphertext);
 	crypt_cbc(transferred, COP_DECRYPT, ciphertext, output);
 	ATF_REQUIRE_EQ(memcmp(output, cbc_plaintext, sizeof(output)), 0);
+
+	attenuation.cd_rights = CRYPTODESC_RIGHT_ENCRYPT;
+	ATF_REQUIRE_MSG(ioctl(transferred, CIOCSCRYPTODESCRIGHTS,
+	    &attenuation) == 0, "attenuate transferred descriptor: %s",
+	    strerror(errno));
+	crypt_cbc(transferred, COP_ENCRYPT, cbc_plaintext, ciphertext);
+	memset(&cop, 0, sizeof(cop));
+	cop.op = COP_DECRYPT;
+	cop.len = sizeof(ciphertext);
+	cop.src = ciphertext;
+	cop.dst = output;
+	cop.iv = aes_iv;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPERM,
+	    ioctl(transferred, CIOCCRYPT, &cop) == -1);
 	close(transferred);
 	close(sockets[0]);
 	close(sockets[1]);
@@ -346,7 +454,7 @@ ATF_TC_BODY(aead_rights_and_integrity, tc)
 	uint8_t output[sizeof(aead_plaintext) - 1];
 	uint8_t tag[16];
 	struct crypt_aead caead;
-	int control, encrypt_only, full;
+	int chacha, control, encrypt_only, full;
 
 	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
 	control = open_control();
@@ -390,6 +498,29 @@ ATF_TC_BODY(aead_rights_and_integrity, tc)
 	errno = 0;
 	ATF_REQUIRE_ERRNO(EPERM,
 	    ioctl(encrypt_only, CIOCCRYPTAEAD, &caead) == -1);
+
+	chacha = mint_descriptor_key(control, CRYPTO_CHACHA20_POLY1305, 0,
+	    chacha_key, sizeof(chacha_key), sizeof(gcm_iv), sizeof(tag),
+	    CRYPTODESC_RIGHT_ALL);
+	memset(&caead, 0, sizeof(caead));
+	caead.op = COP_ENCRYPT;
+	caead.len = sizeof(aead_plaintext) - 1;
+	caead.aadlen = sizeof(aad) - 1;
+	caead.ivlen = sizeof(gcm_iv);
+	caead.src = aead_plaintext;
+	caead.dst = ciphertext;
+	caead.aad = aad;
+	caead.tag = tag;
+	caead.iv = gcm_iv;
+	ATF_REQUIRE_MSG(ioctl(chacha, CIOCCRYPTAEAD, &caead) == 0,
+	    "ChaCha20-Poly1305 encrypt: %s", strerror(errno));
+	caead.op = COP_DECRYPT;
+	caead.src = ciphertext;
+	caead.dst = output;
+	ATF_REQUIRE_MSG(ioctl(chacha, CIOCCRYPTAEAD, &caead) == 0,
+	    "ChaCha20-Poly1305 decrypt: %s", strerror(errno));
+	ATF_REQUIRE_EQ(memcmp(output, aead_plaintext, sizeof(output)), 0);
+	close(chacha);
 	close(encrypt_only);
 	close(full);
 	close(control);
@@ -400,6 +531,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, mint_validation);
 	ATF_TP_ADD_TC(tp, cbc_rights_and_metadata);
+	ATF_TP_ADD_TC(tp, descriptor_lifecycle);
 	ATF_TP_ADD_TC(tp, digest_and_eta_rights);
 	ATF_TP_ADD_TC(tp, passable_descriptor);
 	ATF_TP_ADD_TC(tp, aead_rights_and_integrity);
