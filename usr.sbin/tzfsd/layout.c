@@ -177,8 +177,13 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 	const char *rel;
 	int zpd, root_fd;
 
-	/* Pool root handle: the anchor for the whole /Capabilities tree. */
-	zpd = tzfs_pool_open(cfg->pool, ZH_PROPS_READ | ZH_CREATE);
+	/*
+	 * Pool root handle: the anchor for the whole /Capabilities tree.  The
+	 * pool handle must hold at least the rights we then derive for the root
+	 * dataset handle (pool_root_open requires a subset), so open it with the
+	 * full mask; tzfsd runs as root and owns the storage plane.
+	 */
+	zpd = tzfs_pool_open(cfg->pool, RETAIN_RIGHTS);
 	if (zpd == -1) {
 		syslog(LOG_ERR, "pool_open %s: %m", cfg->pool);
 		return (-1);
