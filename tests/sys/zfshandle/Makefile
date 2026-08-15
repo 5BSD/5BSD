@@ -2,6 +2,10 @@ PACKAGE=	tests
 TESTSDIR=	${TESTSBASE}/sys/zfshandle
 SCRIPTSDIR=	${TESTSDIR}
 
+# The shared helper includes <sys/zfshandle.h>; needed for standalone builds
+# (in a full world build it resolves from the staged headers).
+CFLAGS+=	-I${SRCTOP}/sys
+
 ATF_TESTS_C+=	zfshandle_rights_test
 ATF_TESTS_C+=	zfshandle_derive_test
 ATF_TESTS_C+=	zfshandle_pin_test
