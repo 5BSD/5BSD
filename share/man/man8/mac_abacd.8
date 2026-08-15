@@ -1,0 +1,66 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.Dd August 15, 2026
+.Dt MAC_ABACD 8
+.Os
+.Sh NAME
+.Nm mac_abacd
+.Nd load and maintain MAC ABAC policy rules
+.Sh SYNOPSIS
+.Nm
+.Op Fl dfv
+.Op Fl c Ar config
+.Op Fl p Ar pidfile
+.Nm
+.Fl t
+.Op Fl v
+.Op Fl c Ar config
+.Sh DESCRIPTION
+.Nm
+loads an attribute-based access-control policy into the
+.Xr mac_abac 4
+kernel module.
+The default configuration file is
+.Pa /etc/mac_abac.conf .
+On receipt of
+.Dv SIGHUP ,
+the daemon reloads the configuration.
+.Pp
+The rc service is disabled by default because loading an enforcing policy can
+restrict system access.
+After reviewing the policy, enable it with
+.Bd -literal -offset indent
+sysrc mac_abacd_enable=YES
+service mac_abacd start
+.Ed
+.Bl -tag -width indent
+.It Fl c Ar config
+Use the specified UCL or JSON policy file.
+.It Fl d
+Do not detach from the controlling terminal.
+.It Fl f
+Run in the foreground.
+.It Fl p Ar pidfile
+Write the process ID to
+.Ar pidfile .
+.It Fl t
+Validate the configuration without changing kernel policy.
+.It Fl v
+Increase diagnostic output.
+.El
+.Sh FILES
+.Bl -tag -width /etc/mac_abac.conf
+.It Pa /etc/mac_abac.conf
+Default policy configuration.
+.It Pa /etc/rc.d/mac_abacd
+Service control script.
+.El
+.Sh SEE ALSO
+.Xr mac_abac 4 ,
+.Xr mac_abac.conf 5 ,
+.Xr mac_abac_ctl 8
+.Sh HISTORY
+.Nm
+was added in
+.Dx 16.0 .

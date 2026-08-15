@@ -25,6 +25,7 @@ SUBDIR=	blocklist \
 	ctl \
 	oracled \
 	oraclectl \
+	oes \
 	serviced \
 	servicectl \
 	localcrypto \
@@ -33,6 +34,7 @@ SUBDIR=	blocklist \
 	localnetwork \
 	bsdnotify \
 	traced \
+	mac-abac \
 	mac-capability \
 	devd \
 	devmatch \
@@ -190,6 +192,7 @@ SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotifycmp-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
 SUBDIR.${MK_TESTS}+=		liboraclectl-tests liboraclert-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
+SUBDIR.${MK_TESTS}+=		mac-abac-tests oes-tests
 SUBDIR.${MK_TESTS}+=		localfilesystem-tests localnetwork-tests
 SUBDIR.${MK_TESTS}+=		localcrypto-tests
 SUBDIR.${MK_TESTS}+=		logd-tests bsdnotify-tests traced-tests

@@ -14,4 +14,8 @@ CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 NO_WCAST_ALIGN=
 LIBADD=	ucl
 
+# The mac_syscall(2) ABI used by management clients is public.
+INCS=		${SRCTOP}/sys/security/mac_abac/mac_abac.h
+INCSDIR=	${INCLUDEDIR}/security/mac_abac
+
 .include <bsd.prog.mk>

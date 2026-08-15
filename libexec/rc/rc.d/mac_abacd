@@ -1,0 +1,37 @@
+#!/bin/sh
+#
+# PROVIDE: mac_abacd
+# REQUIRE: FILESYSTEMS
+# BEFORE: DAEMON
+# KEYWORD: nojail shutdown
+#
+
+. /etc/rc.subr
+
+name="mac_abacd"
+desc="MAC ABAC policy daemon"
+rcvar="mac_abacd_enable"
+command="/usr/sbin/mac_abacd"
+start_precmd="mac_abacd_prestart"
+
+load_rc_config "$name"
+
+: ${mac_abacd_enable:="NO"}
+: ${mac_abacd_config:="/etc/mac_abac.conf"}
+: ${mac_abacd_pidfile:="/var/run/mac_abacd.pid"}
+
+pidfile="${mac_abacd_pidfile}"
+command_args="-c ${mac_abacd_config} -p ${mac_abacd_pidfile} ${mac_abacd_flags}"
+
+mac_abacd_prestart()
+{
+	if [ ! -r "${mac_abacd_config}" ]; then
+		warn "ABAC policy file ${mac_abacd_config} is not readable"
+		return 1
+	fi
+	if ! kldstat -q -m mac_abac; then
+		kldload mac_abac || return 1
+	fi
+}
+
+run_rc_command "$1"
