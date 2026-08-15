@@ -1244,9 +1244,24 @@ oes_dev_init(void)
 	oes_softc.sc_defer_count = 0;
 	TASK_INIT(&oes_softc.sc_defer_task, 0, oes_defer_task_fn, NULL);
 
+	/*
+	 * Dedicated worker thread for deferred NOSLEEP event delivery.  A
+	 * private taskqueue keeps delivery latency low and bounded: notify
+	 * events queued from non-sleepable contexts are drained promptly by a
+	 * dedicated thread rather than contending with unrelated work on the
+	 * shared taskqueue_thread, which was observed to stall deferred delivery
+	 * long enough for observers to miss events under load.
+	 */
+	oes_softc.sc_defer_tq = taskqueue_create("oes_deferq", M_WAITOK,
+	    taskqueue_thread_enqueue, &oes_softc.sc_defer_tq);
+	taskqueue_start_threads(&oes_softc.sc_defer_tq, 1, PI_SOFT,
+	    "oes_deferq");
+
 	oes_softc.sc_cdev = make_dev(&oes_cdevsw, 0, UID_ROOT, GID_WHEEL,
 	    0600, "oes");
 	if (oes_softc.sc_cdev == NULL) {
+		taskqueue_free(oes_softc.sc_defer_tq);
+		mtx_destroy(&oes_softc.sc_defer_mtx);
 		mtx_destroy(&oes_softc.sc_mtx);
 		return (ENXIO);
 	}
@@ -1310,7 +1325,8 @@ oes_dev_uninit(void)
 	 * Deferred delivery: sc_active is false so no new events are queued.
 	 * Drain the task, then release anything still on the deferred list.
 	 */
-	taskqueue_drain(taskqueue_thread, &oes_softc.sc_defer_task);
+	taskqueue_drain(oes_softc.sc_defer_tq, &oes_softc.sc_defer_task);
+	taskqueue_free(oes_softc.sc_defer_tq);
 	{
 		struct oes_pending *ep;
 

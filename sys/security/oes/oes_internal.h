@@ -60,6 +60,7 @@ struct oes_softc {
 	TAILQ_HEAD(, oes_pending) sc_defer;	/* Deferred NOSLEEP events */
 	uint32_t		sc_defer_count;	/* Deferred queue depth */
 	struct task		sc_defer_task;	/* Deferred delivery task */
+	struct taskqueue	*sc_defer_tq;	/* Dedicated delivery thread */
 };
 
 /* Bound on the deferred queue so a burst cannot exhaust memory. */

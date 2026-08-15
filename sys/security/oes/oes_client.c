@@ -225,6 +225,17 @@ oes_client_free(struct oes_client *ec)
 
 	EC_UNLOCK(ec);
 
+	/*
+	 * Drain any knotes still attached to this client's knlist before
+	 * destroying it.  A kqueue registration (oes_kqfilter) attaches a knote
+	 * whose kn_hook is this client; if such a knote outlived the fd-close
+	 * knote_fdclose() drop, destroying (and freeing) the client underneath
+	 * it would leave a dangling kn_knlist and fault in oes_kqdetach().
+	 * knlist_clear() removes and detaches any remaining knotes first; it is
+	 * a no-op in the common case where the fd close already dropped them.
+	 */
+	knlist_clear(&ec->ec_selinfo.si_note, 0);
+
 	/* Destroy knlist (must be done without lock) */
 	knlist_destroy(&ec->ec_selinfo.si_note);
 

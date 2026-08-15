@@ -1415,7 +1415,7 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p __unused)
 	oes_softc.sc_defer_count++;
 	mtx_unlock_spin(&oes_softc.sc_defer_mtx);
 
-	taskqueue_enqueue(taskqueue_thread, &oes_softc.sc_defer_task);
+	taskqueue_enqueue(oes_softc.sc_defer_tq, &oes_softc.sc_defer_task);
 }
 
 static void
