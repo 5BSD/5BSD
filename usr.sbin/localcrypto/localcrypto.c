@@ -18,17 +18,23 @@
 
 #define CRYPTOCMP_NAME "org.5bsd.CryptoCmp"
 static int control_fd;
-struct crypto_worker { int terminal_error; };
+struct crypto_worker { char owner[CRYPTODESC_KEY_OWNER_MAX]; };
 static void
 request(struct channel *c __unused, struct channel_message *m, void *arg __unused)
 {
 	const struct cryptocmp_msg *in;
 	const struct cryptocmp_generate *generate;
 	const struct cryptocmp_key_generate *key_generate;
+	const struct cryptocmp_named_create *named_create;
+	const struct cryptocmp_named_lease *named_lease;
+	const struct cryptocmp_named_control *named_control;
 	struct cryptocmp_msg out;
 	struct cryptocmp_key_reply key_out;
+	struct cryptocmp_named_reply named_out;
 	struct session2_op session;
+	struct crypto_worker *worker;
 	uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE];
+	uint64_t generation;
 	int fd, error;
 
 	fd = -1;
@@ -36,13 +42,16 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	in = channel_message_data(m);
 	memset(&out, 0, sizeof(out));
 	memset(&key_out, 0, sizeof(key_out));
+	memset(&named_out, 0, sizeof(named_out));
 	memset(public_key, 0, sizeof(public_key));
+	generation = 0;
+	worker = arg;
 	if (channel_message_length(m) >= sizeof(*in) &&
 	    channel_message_fd_count(m) == 0 &&
 	    in->magic == CRYPTOCMP_MAGIC &&
 	    in->version == CRYPTOCMP_VERSION &&
-	    (in->opcode == CRYPTOCMP_OP_GENERATE ||
-	    in->opcode == CRYPTOCMP_OP_GENERATE_KEY)) {
+	    in->opcode >= CRYPTOCMP_OP_GENERATE &&
+	    in->opcode <= CRYPTOCMP_OP_NAMED_DELETE) {
 		out.opcode = in->opcode;
 		if (in->opcode == CRYPTOCMP_OP_GENERATE &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*generate)) {
@@ -74,6 +83,49 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 				error = 0;
 			else
 				error = errno;
+		} else if (in->opcode == CRYPTOCMP_OP_NAMED_CREATE &&
+		    channel_message_length(m) == sizeof(*in) + sizeof(*named_create)) {
+			named_create = (const struct cryptocmp_named_create *)(in + 1);
+			if (cryptocmp_named_create_policy_validate(named_create) != 0)
+				goto reply;
+			memset(&session, 0, sizeof(session));
+			session.cipher = named_create->generate.cipher;
+			session.mac = named_create->generate.mac;
+			session.keylen = named_create->generate.keylen;
+			session.mackeylen = named_create->generate.mackeylen;
+			session.crid = named_create->generate.crid;
+			session.ivlen = named_create->generate.ivlen;
+			session.maclen = named_create->generate.maclen;
+			if (cryptodesc_named_create(control_fd, named_create->name,
+			    worker->owner, &session, named_create->generate.rights,
+			    &generation) == 0)
+				error = 0;
+			else
+				error = errno;
+		} else if (in->opcode == CRYPTOCMP_OP_NAMED_LEASE &&
+		    channel_message_length(m) == sizeof(*in) + sizeof(*named_lease)) {
+			named_lease = (const struct cryptocmp_named_lease *)(in + 1);
+			if (cryptocmp_named_lease_policy_validate(named_lease) != 0)
+				goto reply;
+			if (cryptodesc_named_lease(control_fd, named_lease->name,
+			    worker->owner, named_lease->rights, named_lease->ttl,
+			    &generation, &fd) == 0)
+				error = 0;
+			else
+				error = errno;
+		} else if ((in->opcode == CRYPTOCMP_OP_NAMED_ROTATE ||
+		    in->opcode == CRYPTOCMP_OP_NAMED_DELETE) &&
+		    channel_message_length(m) == sizeof(*in) + sizeof(*named_control)) {
+			named_control = (const struct cryptocmp_named_control *)(in + 1);
+			if (cryptocmp_named_control_policy_validate(named_control) != 0)
+				goto reply;
+			if ((in->opcode == CRYPTOCMP_OP_NAMED_ROTATE ?
+			    cryptodesc_named_rotate(control_fd, named_control->name,
+			    worker->owner, &generation) : cryptodesc_named_delete(control_fd,
+			    named_control->name, worker->owner, &generation)) == 0)
+				error = 0;
+			else
+				error = errno;
 		}
 	}
 
@@ -82,24 +134,33 @@ reply:
 	out.version = CRYPTOCMP_VERSION;
 	out.status = error == 0 ? 0 : -error;
 	key_out.msg = out;
+	named_out.msg = out;
+	named_out.generation = generation;
 	if (out.opcode == CRYPTOCMP_OP_GENERATE_KEY)
 		memcpy(key_out.public_key, public_key, sizeof(key_out.public_key));
 	(void)channel_send_reply(m, &(struct channel_outgoing){
 	    .size = sizeof(struct channel_outgoing),
-	    .data = out.opcode == CRYPTOCMP_OP_GENERATE_KEY ?
-	    (const void *)&key_out : (const void *)&out,
-	    .length = out.opcode == CRYPTOCMP_OP_GENERATE_KEY ?
-	    sizeof(key_out) : sizeof(out), .fds = error == 0 ? &fd : NULL,
-	    .nfds = error == 0 ? 1 : 0 });
+	    .data = out.opcode == CRYPTOCMP_OP_GENERATE_KEY ? (const void *)&key_out :
+	    out.opcode >= CRYPTOCMP_OP_NAMED_CREATE ? (const void *)&named_out :
+	    (const void *)&out,
+	    .length = out.opcode == CRYPTOCMP_OP_GENERATE_KEY ? sizeof(key_out) :
+	    out.opcode >= CRYPTOCMP_OP_NAMED_CREATE ? sizeof(named_out) : sizeof(out),
+	    .fds = error == 0 && (out.opcode == CRYPTOCMP_OP_GENERATE ||
+	    out.opcode == CRYPTOCMP_OP_GENERATE_KEY ||
+	    out.opcode == CRYPTOCMP_OP_NAMED_LEASE) ? &fd : NULL,
+	    .nfds = error == 0 && (out.opcode == CRYPTOCMP_OP_GENERATE ||
+	    out.opcode == CRYPTOCMP_OP_GENERATE_KEY ||
+	    out.opcode == CRYPTOCMP_OP_NAMED_LEASE) ? 1 : 0 });
 	if (fd >= 0)
 		close(fd);
 	explicit_bzero(public_key, sizeof(public_key));
 	explicit_bzero(&key_out, sizeof(key_out));
+	explicit_bzero(&named_out, sizeof(named_out));
 	channel_message_free(m);
 }
 
 static int
-worker(int fd)
+worker(int fd, const char *owner)
 {
 	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct crypto_worker state;
@@ -107,6 +168,7 @@ worker(int fd)
 	int ready, wants_write;
 
 	memset(&state, 0, sizeof(state));
+	strlcpy(state.owner, owner, sizeof(state.owner));
 	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
@@ -137,6 +199,7 @@ start_session(int fd)
 	struct service_component_bootstrap *boot;
 	int pd;
 	pid_t pid;
+	char owner[CRYPTODESC_KEY_OWNER_MAX];
 
 	boot = NULL;
 	if (service_component_accept(fd, &boot) == -1)
@@ -148,13 +211,20 @@ start_session(int fd)
 		(void)service_component_fail(boot, EPROTO);
 		return (-1);
 	}
+	if (strnlen(service_component_client_label(boot), sizeof(owner)) == 0 ||
+	    strnlen(service_component_client_label(boot), sizeof(owner)) ==
+	    sizeof(owner)) {
+		(void)service_component_fail(boot, EINVAL);
+		return (-1);
+	}
+	strlcpy(owner, service_component_client_label(boot), sizeof(owner));
 	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
 	if (pid == -1) {
 		(void)service_component_fail(boot, errno);
 		return (-1);
 	}
 	if (pid == 0)
-		_exit(worker(fd));
+		_exit(worker(fd, owner));
 	if (service_component_complete(boot, SERVICE_COMPONENT_MEMBER_PROCDESC,
 	    pd) == -1) {
 		(void)pdkill(pd, SIGKILL);

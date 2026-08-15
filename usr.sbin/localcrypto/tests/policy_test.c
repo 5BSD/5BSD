@@ -102,6 +102,62 @@ ATF_TC_HEAD(approved_only_profiles, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "[CRYPTO] approved-only policy admits its narrow AES/SHA-2 suite");
 }
+
+ATF_TC(named_lifecycle_policy);
+ATF_TC_HEAD(named_lifecycle_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "[CRYPTO] validates named-key lifecycle request boundaries");
+}
+ATF_TC_BODY(named_lifecycle_policy, tc)
+{
+	struct cryptocmp_named_create create;
+	struct cryptocmp_named_lease lease;
+	struct cryptocmp_named_control control;
+
+	memset(&create, 0, sizeof(create));
+	strlcpy(create.name, "service-key.1", sizeof(create.name));
+	create.generate = request(CRYPTO_AES_CBC, 0, 32, 0,
+	    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT, 16, 0);
+	ATF_REQUIRE(cryptocmp_named_create_policy_validate(&create) == 0);
+	strlcpy(create.name, "bad/name", sizeof(create.name));
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_named_create_policy_validate(&create) == -1);
+	strlcpy(create.name, "service-key.1", sizeof(create.name));
+	create.generate.keylen = 31;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_named_create_policy_validate(&create) == -1);
+
+	memset(&lease, 0, sizeof(lease));
+	strlcpy(lease.name, "service-key.1", sizeof(lease.name));
+	lease.rights = CRYPTODESC_RIGHT_ENCRYPT;
+	lease.ttl = 60;
+	ATF_REQUIRE(cryptocmp_named_lease_policy_validate(&lease) == 0);
+	lease.rights = CRYPTODESC_RIGHT_SIGN;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_named_lease_policy_validate(&lease) == -1);
+	lease.rights = CRYPTODESC_RIGHT_ENCRYPT;
+	lease.ttl = 86401;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_named_lease_policy_validate(&lease) == -1);
+	strlcpy(lease.name, "bad/name", sizeof(lease.name));
+	lease.ttl = 60;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_named_lease_policy_validate(&lease) == -1);
+
+	memset(&control, 0, sizeof(control));
+	strlcpy(control.name, "service-key.1", sizeof(control.name));
+	ATF_REQUIRE(cryptocmp_named_control_policy_validate(&control) == 0);
+	control.flags = 1;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_named_control_policy_validate(&control) == -1);
+}
 ATF_TC_BODY(approved_only_profiles, tc)
 {
 	struct cryptocmp_generate generate;
@@ -242,6 +298,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, valid_profiles);
 	ATF_TP_ADD_TC(tp, key_profiles);
 	ATF_TP_ADD_TC(tp, approved_only_profiles);
+	ATF_TP_ADD_TC(tp, named_lifecycle_policy);
 	ATF_TP_ADD_TC(tp, rejects_invalid_profiles);
 	ATF_TP_ADD_TC(tp, driver_selection);
 	return (atf_no_error());

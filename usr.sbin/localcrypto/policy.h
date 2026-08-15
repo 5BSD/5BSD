@@ -11,5 +11,8 @@
 
 int	cryptocmp_policy_validate(const struct cryptocmp_generate *);
 int	cryptocmp_key_policy_validate(const struct cryptocmp_key_generate *);
+int	cryptocmp_named_create_policy_validate(const struct cryptocmp_named_create *);
+int	cryptocmp_named_lease_policy_validate(const struct cryptocmp_named_lease *);
+int	cryptocmp_named_control_policy_validate(const struct cryptocmp_named_control *);
 
 #endif /* !_LOCALCRYPTO_POLICY_H_ */

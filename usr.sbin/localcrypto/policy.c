@@ -4,6 +4,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <string.h>
 
 #include <opencrypto/cryptodev.h>
 
@@ -80,6 +81,24 @@ nist_approved_profile(const struct cryptocmp_generate *request)
 		    request->mac == CRYPTO_SHA2_512_HMAC);
 	return (request->cipher == CRYPTO_AES_CBC ||
 	    request->cipher == CRYPTO_AES_NIST_GCM_16);
+}
+
+static bool
+name_valid(const char *name, size_t capacity)
+{
+	size_t i, length;
+
+	length = strnlen(name, capacity);
+	if (length == 0 || length == capacity)
+		return (false);
+	for (i = 0; i < length; i++) {
+		if (!((name[i] >= 'a' && name[i] <= 'z') ||
+		    (name[i] >= 'A' && name[i] <= 'Z') ||
+		    (name[i] >= '0' && name[i] <= '9') || name[i] == '.' ||
+		    name[i] == '_' || name[i] == '-'))
+			return (false);
+	}
+	return (true);
 }
 
 int
@@ -202,6 +221,43 @@ cryptocmp_key_policy_validate(const struct cryptocmp_key_generate *request)
 		return (-1);
 	}
 	if (!rights_allowed(request->rights, allowed)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+cryptocmp_named_create_policy_validate(const struct cryptocmp_named_create *request)
+{
+
+	if (request == NULL ||
+	    !name_valid(request->name, sizeof(request->name))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (cryptocmp_policy_validate(&request->generate));
+}
+
+int
+cryptocmp_named_lease_policy_validate(const struct cryptocmp_named_lease *request)
+{
+
+	if (request == NULL || !name_valid(request->name, sizeof(request->name)) ||
+	    request->flags != 0 || request->ttl > 86400 ||
+	    !rights_allowed(request->rights, CRYPTODESC_RIGHT_SESSION)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+cryptocmp_named_control_policy_validate(const struct cryptocmp_named_control *request)
+{
+
+	if (request == NULL || !name_valid(request->name, sizeof(request->name)) ||
+	    request->flags != 0) {
 		errno = EINVAL;
 		return (-1);
 	}

@@ -88,6 +88,41 @@ struct cryptodesc_derive {
 #define	CRYPTODESC_X25519_SIZE	32
 #define	CRYPTODESC_ED25519_PUBLIC_SIZE	32
 #define	CRYPTODESC_ED25519_SIGNATURE_SIZE	64
+#define	CRYPTODESC_KEY_NAME_MAX	64
+#define	CRYPTODESC_KEY_OWNER_MAX	64
+
+/*
+ * Named key objects are kernel-resident symmetric-key templates.  Names are
+ * scoped to cd_owner, which [CRYPTO] fills from the serviced client label.
+ * They are intentionally volatile: module unload destroys every object.
+ */
+struct cryptodesc_named_create {
+	char			cd_name[CRYPTODESC_KEY_NAME_MAX];
+	char			cd_owner[CRYPTODESC_KEY_OWNER_MAX];
+	struct session2_op	cd_session;
+	uint32_t		cd_rights;
+	uint32_t		cd_flags;	/* must be zero */
+	uint64_t		cd_generation;	/* out */
+};
+
+struct cryptodesc_named_lease {
+	char			cd_name[CRYPTODESC_KEY_NAME_MAX];
+	char			cd_owner[CRYPTODESC_KEY_OWNER_MAX];
+	uint32_t		cd_rights;
+	uint32_t		cd_ttl;
+	uint32_t		cd_flags;	/* must be zero */
+	uint32_t		cd_pad;
+	uint64_t		cd_generation;	/* out */
+	int32_t			cd_fd;		/* out */
+};
+
+struct cryptodesc_named_control {
+	char			cd_name[CRYPTODESC_KEY_NAME_MAX];
+	char			cd_owner[CRYPTODESC_KEY_OWNER_MAX];
+	uint32_t		cd_flags;	/* must be zero */
+	uint32_t		cd_pad;
+	uint64_t		cd_generation;	/* out */
+};
 
 /* Mint a kernel-generated X25519 or Ed25519 key descriptor. */
 struct cryptodesc_key_create {
@@ -142,5 +177,9 @@ struct cryptodesc_revoke {
 #define	CIOCCRYPTX25519	_IOWR('c', 116, struct cryptodesc_x25519)
 #define	CIOCCRYPTOSIGN	_IOWR('c', 117, struct cryptodesc_sign)
 #define	CIOCCRYPTOVERIFY	_IOW('c', 118, struct cryptodesc_verify)
+#define	CIOCGCRYPTONAMEDKEY	_IOWR('c', 119, struct cryptodesc_named_create)
+#define	CIOCGCRYPTONAMEDLEASE	_IOWR('c', 120, struct cryptodesc_named_lease)
+#define	CIOCCRYPTONAMEDROTATE	_IOWR('c', 121, struct cryptodesc_named_control)
+#define	CIOCCRYPTONAMEDDELETE	_IOWR('c', 122, struct cryptodesc_named_control)
 
 #endif /* !_SYS_CRYPTODESC_H_ */

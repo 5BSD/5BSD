@@ -1,7 +1,7 @@
 schema = "org.5bsd.serviced.service";
 schema_version = "1.0.0";
 bundle_id = "org.5bsd.CryptoCmp";
-version = "2.0.0";
+version = "3.0.0";
 author = "5BSD";
 
 # [CRYPTO] is the local authority-replacement provider for DTYPE_CRYPTO.

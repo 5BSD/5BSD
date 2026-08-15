@@ -66,6 +66,14 @@ implements RFC 5869 HKDF-SHA-256/512 and produces another opaque descriptor,
 never derived bytes.  X25519 descriptors permit only `EXCHANGE`; Ed25519
 descriptors permit independently attenuable `SIGN` and `VERIFY` operations.
 
+`[CRYPTO]` can also own a named volatile symmetric key object.  Names are
+bound to the serviced client label, are not a global cross-service namespace,
+and never reveal key bytes.  A create records the approved session profile and
+maximum rights; a lease can only request a subset and produces an ordinary
+short-lived descriptor.  Rotation changes the object generation and causes
+older leases to fail with `EACCES`; deletion has the same effect and removes
+the name.  These objects do not survive a module unload or reboot.
+
 The regression suite in `tests/sys/opencrypto/cryptodesc_test.c` covers mint
 validation, descriptor metadata, kernel-generated keys and expiry, an RFC 5869
 derivation vector, X25519 exchange, Ed25519 signing/verification, concurrent
@@ -77,9 +85,9 @@ capability-bundle verification/security-contract tests.
 
 ## Deliberate extension boundaries
 
-Current descriptors contain kernel-generated, session-scoped symmetric or
-asymmetric material.  They are not named or persistent.  The remaining
-key-lifecycle work is specified in
+Current descriptors contain kernel-generated session-scoped symmetric or
+asymmetric material, plus the volatile named symmetric-key objects described
+above.  Persistent key lifecycle work is specified in
 [`crypto-keyvault-integration.md`](crypto-keyvault-integration.md).  It folds
 the safe KeyVault patterns into `[CRYPTO]` and `DTYPE_CRYPTO`; it does not add
 KeyVault as a second device, daemon, or key authority.  `[CRYPTO]` must never

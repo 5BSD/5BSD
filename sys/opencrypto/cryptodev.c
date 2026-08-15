@@ -51,6 +51,7 @@
 #include <sys/sysctl.h>
 #include <sys/errno.h>
 #include <sys/random.h>
+#include <sys/refcount.h>
 #include <sys/conf.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
@@ -300,6 +301,24 @@ struct fcrypt {
 	struct mtx	lock;
 };
 
+struct cryptokey_object {
+	TAILQ_ENTRY(cryptokey_object) next;
+	struct mtx	lock;
+	volatile u_int	refs;
+	bool		deleted;
+	uint64_t	generation;
+	char		name[CRYPTODESC_KEY_NAME_MAX];
+	char		owner[CRYPTODESC_KEY_OWNER_MAX];
+	struct session2_op session;
+	uint32_t	rights;
+	uint8_t		key[128];
+	uint8_t		mackey[128];
+};
+
+static TAILQ_HEAD(, cryptokey_object) cryptokey_objects =
+    TAILQ_HEAD_INITIALIZER(cryptokey_objects);
+static struct mtx cryptokey_objects_lock;
+
 /* A passable, rights-limited OpenCrypto session. */
 struct cryptodesc {
 	struct csession	*cd_session;
@@ -308,6 +327,8 @@ struct cryptodesc {
 	uint32_t	cd_type;
 	time_t		cd_expires;
 	bool		cd_revoked;
+	struct cryptokey_object *cd_key;
+	uint64_t	cd_key_generation;
 	uint8_t		cd_private[CRYPTODESC_ED25519_SECRET_SIZE];
 	uint8_t		cd_public[CRYPTODESC_ED25519_PUBLIC_SIZE];
 };
@@ -336,6 +357,13 @@ cryptodesc_check_rights(struct cryptodesc *cd, uint32_t required)
 	else
 		error = 0;
 	mtx_unlock(&cd->cd_lock);
+	if (error != 0 || cd->cd_key == NULL)
+		return (error);
+	mtx_lock(&cd->cd_key->lock);
+	if (cd->cd_key->deleted ||
+	    cd->cd_key->generation != cd->cd_key_generation)
+		error = EACCES;
+	mtx_unlock(&cd->cd_key->lock);
 	return (error);
 }
 
@@ -671,11 +699,92 @@ cse_free(struct csession *cse)
 	free(cse, M_CRYPTODEV);
 }
 
+static bool
+cryptokey_identifier_valid(const char *identifier, size_t maxlen)
+{
+	size_t i, length;
+
+	length = strnlen(identifier, maxlen);
+	if (length == 0 || length == maxlen)
+		return (false);
+	for (i = 0; i < length; i++) {
+		if (!((identifier[i] >= 'a' && identifier[i] <= 'z') ||
+		    (identifier[i] >= 'A' && identifier[i] <= 'Z') ||
+		    (identifier[i] >= '0' && identifier[i] <= '9') ||
+		    identifier[i] == '.' || identifier[i] == '_' ||
+		    identifier[i] == '-'))
+			return (false);
+	}
+	return (true);
+}
+
+static bool
+cryptokey_matches(const struct cryptokey_object *key, const char *name,
+    const char *owner)
+{
+
+	return (strcmp(key->name, name) == 0 && strcmp(key->owner, owner) == 0);
+}
+
+static void
+cryptokey_release(struct cryptokey_object *key)
+{
+
+	if (!refcount_release(&key->refs))
+		return;
+	mtx_destroy(&key->lock);
+	explicit_bzero(key, sizeof(*key));
+	free(key, M_CRYPTODEV);
+}
+
+static struct cryptokey_object *
+cryptokey_lookup(const char *name, const char *owner)
+{
+	struct cryptokey_object *key;
+
+	mtx_lock(&cryptokey_objects_lock);
+	TAILQ_FOREACH(key, &cryptokey_objects, next) {
+		if (cryptokey_matches(key, name, owner)) {
+			refcount_acquire(&key->refs);
+			mtx_unlock(&cryptokey_objects_lock);
+			return (key);
+		}
+	}
+	mtx_unlock(&cryptokey_objects_lock);
+	return (NULL);
+}
+
+/* Drop global namespace references while preserving outstanding leases. */
+static void
+cryptokey_remove_all(void)
+{
+	struct cryptokey_object *key;
+
+	for (;;) {
+		mtx_lock(&cryptokey_objects_lock);
+		key = TAILQ_FIRST(&cryptokey_objects);
+		if (key == NULL) {
+			mtx_unlock(&cryptokey_objects_lock);
+			break;
+		}
+		TAILQ_REMOVE(&cryptokey_objects, key, next);
+		mtx_lock(&key->lock);
+		key->deleted = true;
+		key->generation++;
+		explicit_bzero(key->key, sizeof(key->key));
+		explicit_bzero(key->mackey, sizeof(key->mackey));
+		mtx_unlock(&key->lock);
+		mtx_unlock(&cryptokey_objects_lock);
+		cryptokey_release(key);
+	}
+}
+
 static int
 cryptodesc_install(struct thread *td, struct csession *cse, uint32_t type,
     const uint8_t *private_key, size_t private_key_len,
     const uint8_t *public_key, size_t public_key_len, uint32_t rights,
-    uint32_t ttl, int32_t *descriptor_fd)
+    uint32_t ttl, int32_t *descriptor_fd, struct cryptokey_object *key,
+    uint64_t key_generation)
 {
 	struct cryptodesc *cd;
 	struct file *fp;
@@ -692,6 +801,8 @@ cryptodesc_install(struct thread *td, struct csession *cse, uint32_t type,
 	cd->cd_rights = rights;
 	cd->cd_type = type;
 	cd->cd_expires = ttl == 0 ? 0 : time_second + ttl;
+	cd->cd_key = key;
+	cd->cd_key_generation = key_generation;
 	if (private_key_len != 0)
 		memcpy(cd->cd_private, private_key, private_key_len);
 	if (public_key_len != 0)
@@ -700,6 +811,8 @@ cryptodesc_install(struct thread *td, struct csession *cse, uint32_t type,
 	if (error != 0) {
 		if (cse != NULL)
 			cse_free(cse);
+		if (key != NULL)
+			cryptokey_release(key);
 		mtx_destroy(&cd->cd_lock);
 		explicit_bzero(cd, sizeof(*cd));
 		free(cd, M_CRYPTODEV);
@@ -726,7 +839,7 @@ cryptodesc_mint(struct thread *td, struct cryptodesc_create *create)
 	if (error != 0)
 		return (error);
 	return (cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
-	    create->cd_rights, 0, &create->cd_fd));
+	    create->cd_rights, 0, &create->cd_fd, NULL, 0));
 }
 
 static int
@@ -765,7 +878,168 @@ cryptodesc_mint_generated(struct thread *td, struct cryptodesc_generate *create)
 	if (error != 0)
 		return (error);
 	return (cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
-	    create->cd_rights, create->cd_ttl, &create->cd_fd));
+	    create->cd_rights, create->cd_ttl, &create->cd_fd, NULL, 0));
+}
+
+static int
+cryptokey_create(struct cryptodesc_named_create *create)
+{
+	struct cryptokey_object *key, *existing;
+
+	if (!cryptokey_identifier_valid(create->cd_name,
+	    sizeof(create->cd_name)) || !cryptokey_identifier_valid(
+	    create->cd_owner, sizeof(create->cd_owner)) || create->cd_flags != 0 ||
+	    create->cd_session.ses != 0 || create->cd_session.key != NULL ||
+	    create->cd_session.mackey != NULL || create->cd_session.keylen > 128 ||
+	    create->cd_session.mackeylen > 128 ||
+	    (create->cd_session.keylen == 0 && create->cd_session.mackeylen == 0) ||
+	    create->cd_rights == 0 ||
+	    (create->cd_rights & ~CRYPTODESC_RIGHT_SESSION) != 0)
+		return (EINVAL);
+	key = malloc(sizeof(*key), M_CRYPTODEV, M_WAITOK | M_ZERO);
+	mtx_init(&key->lock, "cryptokey", NULL, MTX_DEF);
+	refcount_init(&key->refs, 1); /* global key-object reference */
+	key->generation = 1;
+	strlcpy(key->name, create->cd_name, sizeof(key->name));
+	strlcpy(key->owner, create->cd_owner, sizeof(key->owner));
+	key->session = create->cd_session;
+	key->session.key = NULL;
+	key->session.mackey = NULL;
+	key->rights = create->cd_rights;
+	if (key->session.keylen != 0)
+		arc4random_buf(key->key, key->session.keylen);
+	if (key->session.mackeylen != 0)
+		arc4random_buf(key->mackey, key->session.mackeylen);
+	mtx_lock(&cryptokey_objects_lock);
+	TAILQ_FOREACH(existing, &cryptokey_objects, next) {
+		if (cryptokey_matches(existing, key->name, key->owner)) {
+			mtx_unlock(&cryptokey_objects_lock);
+			cryptokey_release(key);
+			return (EEXIST);
+		}
+	}
+	TAILQ_INSERT_TAIL(&cryptokey_objects, key, next);
+	mtx_unlock(&cryptokey_objects_lock);
+	create->cd_generation = key->generation;
+	return (0);
+}
+
+static int
+cryptokey_lease(struct thread *td, struct cryptodesc_named_lease *lease)
+{
+	struct cryptokey_object *key;
+	struct session2_op session;
+	struct csession *cse;
+	uint8_t cipher_key[128], mac_key[128];
+	uint64_t generation;
+	int error;
+
+	if (!cryptokey_identifier_valid(lease->cd_name, sizeof(lease->cd_name)) ||
+	    !cryptokey_identifier_valid(lease->cd_owner, sizeof(lease->cd_owner)) ||
+	    lease->cd_flags != 0 || lease->cd_pad != 0 || lease->cd_rights == 0 ||
+	    (lease->cd_rights & ~CRYPTODESC_RIGHT_SESSION) != 0) {
+		return (EINVAL);
+	}
+	lease->cd_fd = -1;
+	key = cryptokey_lookup(lease->cd_name, lease->cd_owner);
+	if (key == NULL)
+		return (ENOENT);
+	memset(cipher_key, 0, sizeof(cipher_key));
+	memset(mac_key, 0, sizeof(mac_key));
+	mtx_lock(&key->lock);
+	if (key->deleted || (lease->cd_rights & ~key->rights) != 0)
+		error = EACCES;
+	else {
+		session = key->session;
+		if (session.keylen != 0)
+			memcpy(cipher_key, key->key, session.keylen);
+		if (session.mackeylen != 0)
+			memcpy(mac_key, key->mackey, session.mackeylen);
+		generation = key->generation;
+		error = 0;
+	}
+	mtx_unlock(&key->lock);
+	if (error != 0)
+		goto out;
+	session.key = session.keylen == 0 ? NULL : cipher_key;
+	session.mackey = session.mackeylen == 0 ? NULL : mac_key;
+	error = cse_create_session(&session, &cse, false);
+	if (error != 0)
+		goto out;
+	error = cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
+	    lease->cd_rights, lease->cd_ttl, &lease->cd_fd, key, generation);
+	key = NULL; /* cryptodesc_install owns this lease reference. */
+	if (error == 0)
+		lease->cd_generation = generation;
+out:
+	explicit_bzero(cipher_key, sizeof(cipher_key));
+	explicit_bzero(mac_key, sizeof(mac_key));
+	if (key != NULL)
+		cryptokey_release(key);
+	return (error);
+}
+
+static int
+cryptokey_rotate(struct cryptodesc_named_control *control)
+{
+	struct cryptokey_object *key;
+	int error;
+
+	if (!cryptokey_identifier_valid(control->cd_name,
+	    sizeof(control->cd_name)) || !cryptokey_identifier_valid(
+	    control->cd_owner, sizeof(control->cd_owner)) || control->cd_flags != 0 ||
+	    control->cd_pad != 0)
+		return (EINVAL);
+	key = cryptokey_lookup(control->cd_name, control->cd_owner);
+	if (key == NULL)
+		return (ENOENT);
+	mtx_lock(&key->lock);
+	if (key->deleted)
+		error = EACCES;
+	else {
+		if (key->session.keylen != 0)
+			arc4random_buf(key->key, key->session.keylen);
+		if (key->session.mackeylen != 0)
+			arc4random_buf(key->mackey, key->session.mackeylen);
+		key->generation++;
+		control->cd_generation = key->generation;
+		error = 0;
+	}
+	mtx_unlock(&key->lock);
+	cryptokey_release(key);
+	return (error);
+}
+
+static int
+cryptokey_delete(struct cryptodesc_named_control *control)
+{
+	struct cryptokey_object *key;
+
+	if (!cryptokey_identifier_valid(control->cd_name,
+	    sizeof(control->cd_name)) || !cryptokey_identifier_valid(
+	    control->cd_owner, sizeof(control->cd_owner)) || control->cd_flags != 0 ||
+	    control->cd_pad != 0)
+		return (EINVAL);
+	mtx_lock(&cryptokey_objects_lock);
+	TAILQ_FOREACH(key, &cryptokey_objects, next) {
+		if (cryptokey_matches(key, control->cd_name, control->cd_owner))
+			break;
+	}
+	if (key == NULL) {
+		mtx_unlock(&cryptokey_objects_lock);
+		return (ENOENT);
+	}
+	mtx_lock(&key->lock);
+	key->deleted = true;
+	key->generation++;
+	explicit_bzero(key->key, sizeof(key->key));
+	explicit_bzero(key->mackey, sizeof(key->mackey));
+	control->cd_generation = key->generation;
+	mtx_unlock(&key->lock);
+	TAILQ_REMOVE(&cryptokey_objects, key, next);
+	mtx_unlock(&cryptokey_objects_lock);
+	cryptokey_release(key);
+	return (0);
 }
 
 static int
@@ -840,7 +1114,7 @@ cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
 	    (ttl == 0 || time_second + ttl > cd->cd_expires))
 		ttl = cd->cd_expires - time_second;
 	error = cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
-	    derive->cd_rights, ttl, &derive->cd_fd);
+	    derive->cd_rights, ttl, &derive->cd_fd, NULL, 0);
 out:
 	if (salt != NULL) {
 		explicit_bzero(salt, derive->cd_salt_len);
@@ -892,7 +1166,7 @@ cryptodesc_mint_key(struct thread *td, struct cryptodesc_key_create *create)
 	error = cryptodesc_install(td, NULL, create->cd_type, private_key,
 	    create->cd_type == CRYPTODESC_KEY_X25519 ? CRYPTODESC_X25519_SIZE :
 	    CRYPTODESC_ED25519_SECRET_SIZE, public_key, sizeof(public_key),
-	    create->cd_rights, create->cd_ttl, &create->cd_fd);
+	    create->cd_rights, create->cd_ttl, &create->cd_fd, NULL, 0);
 	if (error == 0)
 		memcpy(create->cd_public, public_key, sizeof(create->cd_public));
 out:
@@ -1116,6 +1390,8 @@ cryptodesc_close(struct file *fp, struct thread *td __unused)
 	fp->f_data = NULL;
 	if (cd->cd_session != NULL)
 		cse_free(cd->cd_session);
+	if (cd->cd_key != NULL)
+		cryptokey_release(cd->cd_key);
 	mtx_destroy(&cd->cd_lock);
 	explicit_bzero(cd, sizeof(*cd));
 	free(cd, M_CRYPTODEV);
@@ -1711,6 +1987,9 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	struct cryptodesc_create *create;
 	struct cryptodesc_generate *generate;
 	struct cryptodesc_key_create *key_create;
+	struct cryptodesc_named_create *named_create;
+	struct cryptodesc_named_lease *named_lease;
+	struct cryptodesc_named_control *named_control;
 	uint32_t ses;
 	int error = 0;
 	union {
@@ -1821,6 +2100,22 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		key_create = (struct cryptodesc_key_create *)data;
 		error = cryptodesc_mint_key(td, key_create);
 		break;
+	case CIOCGCRYPTONAMEDKEY:
+		named_create = (struct cryptodesc_named_create *)data;
+		error = cryptokey_create(named_create);
+		break;
+	case CIOCGCRYPTONAMEDLEASE:
+		named_lease = (struct cryptodesc_named_lease *)data;
+		error = cryptokey_lease(td, named_lease);
+		break;
+	case CIOCCRYPTONAMEDROTATE:
+		named_control = (struct cryptodesc_named_control *)data;
+		error = cryptokey_rotate(named_control);
+		break;
+	case CIOCCRYPTONAMEDDELETE:
+		named_control = (struct cryptodesc_named_control *)data;
+		error = cryptokey_delete(named_control);
+		break;
 	case CIOCCRYPTAEAD:
 		caead = (struct crypt_aead *)data;
 		cse = cse_find(fcr, caead->ses);
@@ -1878,6 +2173,7 @@ cryptodev_modevent(module_t mod, int type, void *unused)
 	case MOD_LOAD:
 		if (bootverbose)
 			printf("crypto: <crypto device>\n");
+		mtx_init(&cryptokey_objects_lock, "cryptokeys", NULL, MTX_DEF);
 		crypto_dev = make_dev(&crypto_cdevsw, 0, 
 				      UID_ROOT, GID_WHEEL, 0666,
 				      "crypto");
@@ -1885,6 +2181,8 @@ cryptodev_modevent(module_t mod, int type, void *unused)
 	case MOD_UNLOAD:
 		/*XXX disallow if active sessions */
 		destroy_dev(crypto_dev);
+		cryptokey_remove_all();
+		mtx_destroy(&cryptokey_objects_lock);
 		return 0;
 	}
 	return EINVAL;

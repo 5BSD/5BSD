@@ -135,6 +135,52 @@ mint_generated_descriptor(int control, uint32_t cipher, uint32_t mac,
 }
 
 static void
+named_control(struct cryptodesc_named_control *control, const char *name,
+    const char *owner)
+{
+
+	memset(control, 0, sizeof(*control));
+	strlcpy(control->cd_name, name, sizeof(control->cd_name));
+	strlcpy(control->cd_owner, owner, sizeof(control->cd_owner));
+}
+
+static void
+create_named_cbc(int control, const char *name, const char *owner,
+    uint32_t rights)
+{
+	struct cryptodesc_named_create create;
+
+	memset(&create, 0, sizeof(create));
+	strlcpy(create.cd_name, name, sizeof(create.cd_name));
+	strlcpy(create.cd_owner, owner, sizeof(create.cd_owner));
+	create.cd_session.cipher = CRYPTO_AES_CBC;
+	create.cd_session.keylen = 32;
+	create.cd_session.crid = CRYPTO_FLAG_SOFTWARE;
+	create.cd_session.ivlen = sizeof(aes_iv);
+	create.cd_rights = rights;
+	ATF_REQUIRE_MSG(ioctl(control, CIOCGCRYPTONAMEDKEY, &create) == 0,
+	    "CIOCGCRYPTONAMEDKEY: %s", strerror(errno));
+	ATF_REQUIRE_EQ(create.cd_generation, 1);
+}
+
+static int
+lease_named(int control, const char *name, const char *owner, uint32_t rights)
+{
+	struct cryptodesc_named_lease lease;
+
+	memset(&lease, 0, sizeof(lease));
+	strlcpy(lease.cd_name, name, sizeof(lease.cd_name));
+	strlcpy(lease.cd_owner, owner, sizeof(lease.cd_owner));
+	lease.cd_rights = rights;
+	lease.cd_ttl = 60;
+	lease.cd_fd = -1;
+	ATF_REQUIRE_MSG(ioctl(control, CIOCGCRYPTONAMEDLEASE, &lease) == 0,
+	    "CIOCGCRYPTONAMEDLEASE: %s", strerror(errno));
+	ATF_REQUIRE(lease.cd_fd >= 0);
+	return (lease.cd_fd);
+}
+
+static void
 crypt_cbc(int fd, int op, const void *src, void *dst)
 {
 	struct crypt_op cop;
@@ -445,6 +491,95 @@ ATF_TC(kernel_generated_and_expiry);
 ATF_TC_HEAD(kernel_generated_and_expiry, tc)
 {
 	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+
+ATF_TC(named_key_lifecycle);
+ATF_TC_HEAD(named_key_lifecycle, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(named_key_lifecycle, tc)
+{
+	const char *name = "lifecycle-test";
+	const char *owner = "service.alpha";
+	uint8_t ciphertext[sizeof(cbc_plaintext)], output[sizeof(cbc_plaintext)];
+	struct cryptodesc_named_control control_request;
+	struct cryptodesc_named_create duplicate;
+	struct cryptodesc_named_lease lease;
+	int control, decryptor, encryptor, replacement;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+	create_named_cbc(control, name, owner,
+	    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT);
+	memset(&duplicate, 0, sizeof(duplicate));
+	strlcpy(duplicate.cd_name, name, sizeof(duplicate.cd_name));
+	strlcpy(duplicate.cd_owner, owner, sizeof(duplicate.cd_owner));
+	duplicate.cd_session.cipher = CRYPTO_AES_CBC;
+	duplicate.cd_session.keylen = 32;
+	duplicate.cd_session.crid = CRYPTO_FLAG_SOFTWARE;
+	duplicate.cd_session.ivlen = sizeof(aes_iv);
+	duplicate.cd_rights = CRYPTODESC_RIGHT_ENCRYPT;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EEXIST,
+	    ioctl(control, CIOCGCRYPTONAMEDKEY, &duplicate) == -1);
+
+	memset(&lease, 0, sizeof(lease));
+	strlcpy(lease.cd_name, name, sizeof(lease.cd_name));
+	strlcpy(lease.cd_owner, "service.beta", sizeof(lease.cd_owner));
+	lease.cd_rights = CRYPTODESC_RIGHT_ENCRYPT;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(ENOENT,
+	    ioctl(control, CIOCGCRYPTONAMEDLEASE, &lease) == -1);
+	strlcpy(lease.cd_owner, owner, sizeof(lease.cd_owner));
+	lease.cd_rights = CRYPTODESC_RIGHT_AUTH;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EACCES,
+	    ioctl(control, CIOCGCRYPTONAMEDLEASE, &lease) == -1);
+	lease.cd_rights = CRYPTODESC_RIGHT_ENCRYPT;
+	lease.cd_pad = 1;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    ioctl(control, CIOCGCRYPTONAMEDLEASE, &lease) == -1);
+	lease.cd_pad = 0;
+
+	encryptor = lease_named(control, name, owner, CRYPTODESC_RIGHT_ENCRYPT);
+	decryptor = lease_named(control, name, owner, CRYPTODESC_RIGHT_DECRYPT);
+	crypt_cbc(encryptor, COP_ENCRYPT, cbc_plaintext, ciphertext);
+	crypt_cbc(decryptor, COP_DECRYPT, ciphertext, output);
+	ATF_REQUIRE_EQ(memcmp(output, cbc_plaintext, sizeof(output)), 0);
+
+	named_control(&control_request, name, owner);
+	ATF_REQUIRE_MSG(ioctl(control, CIOCCRYPTONAMEDROTATE,
+	    &control_request) == 0, "CIOCCRYPTONAMEDROTATE: %s", strerror(errno));
+	ATF_REQUIRE_EQ(control_request.cd_generation, 2);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EACCES,
+	    ioctl(encryptor, CIOCCRYPT, &(struct crypt_op){ .op = COP_ENCRYPT,
+	    .len = sizeof(cbc_plaintext), .src = cbc_plaintext, .dst = ciphertext,
+	    .iv = aes_iv }) == -1);
+	close(encryptor);
+	close(decryptor);
+
+	encryptor = lease_named(control, name, owner, CRYPTODESC_RIGHT_ENCRYPT);
+	replacement = lease_named(control, name, owner, CRYPTODESC_RIGHT_DECRYPT);
+	crypt_cbc(encryptor, COP_ENCRYPT, cbc_plaintext, ciphertext);
+	crypt_cbc(replacement, COP_DECRYPT, ciphertext, output);
+	ATF_REQUIRE_EQ(memcmp(output, cbc_plaintext, sizeof(output)), 0);
+	named_control(&control_request, name, owner);
+	ATF_REQUIRE_MSG(ioctl(control, CIOCCRYPTONAMEDDELETE,
+	    &control_request) == 0, "CIOCCRYPTONAMEDDELETE: %s", strerror(errno));
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EACCES,
+	    ioctl(encryptor, CIOCCRYPT, &(struct crypt_op){ .op = COP_ENCRYPT,
+	    .len = sizeof(cbc_plaintext), .src = cbc_plaintext, .dst = ciphertext,
+	    .iv = aes_iv }) == -1);
+	close(encryptor);
+	close(replacement);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(ENOENT,
+	    ioctl(control, CIOCGCRYPTONAMEDLEASE, &lease) == -1);
+	close(control);
 }
 ATF_TC_BODY(kernel_generated_and_expiry, tc)
 {
@@ -789,6 +924,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, descriptor_lifecycle);
 	ATF_TP_ADD_TC(tp, digest_and_eta_rights);
 	ATF_TP_ADD_TC(tp, kernel_generated_and_expiry);
+	ATF_TP_ADD_TC(tp, named_key_lifecycle);
 	ATF_TP_ADD_TC(tp, hkdf_opaque_derivation);
 	ATF_TP_ADD_TC(tp, asymmetric_capabilities);
 	ATF_TP_ADD_TC(tp, concurrent_descriptor_use);
