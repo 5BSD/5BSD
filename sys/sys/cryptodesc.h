@@ -19,7 +19,11 @@
 #include <sys/ioccom.h>
 #include <sys/types.h>
 
+#ifdef _KERNEL
 #include <opencrypto/cryptodev.h>
+#else
+#include <crypto/cryptodev.h>
+#endif
 
 #define	CRYPTODESC_RIGHT_ENCRYPT	0x00000001U
 #define	CRYPTODESC_RIGHT_DECRYPT	0x00000002U
