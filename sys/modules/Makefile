@@ -343,6 +343,7 @@ SUBDIR=	\
 	${_pst} \
 	${_pt} \
 	pty  \
+	pvpanic \
 	puc \
 	pwm \
 	${_qat} \
