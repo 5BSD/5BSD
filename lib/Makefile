@@ -112,6 +112,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libthr \
 	libthread_db \
 	libtrustedzfs \
+	libtzfsd \
 	libucl \
 	libufs \
 	libugidfw \
@@ -169,6 +170,7 @@ SUBDIR_DEPEND_libcapbundle= liboraclert libucl
 SUBDIR_DEPEND_libservice= libcapability libchannel
 SUBDIR_DEPEND_libtracecmp= libservice
 SUBDIR_DEPEND_liboraclert= libucl
+SUBDIR_DEPEND_libtzfsd= libtrustedzfs
 # See comment above about libssp_nonshared
 SUBDIR_DEPEND_libsys= libcompiler_rt libssp_nonshared
 SUBDIR_DEPEND_libtacplus= libmd

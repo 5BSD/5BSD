@@ -1,0 +1,91 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
+ * libtzfsd — client library for the tzfsd(8) storage daemon.
+ *
+ * A consumer asks tzfsd for storage of a given flavor and lifetime and
+ * receives a rights-limited TrustedZFS dataset handle, which it then drives
+ * with the libtrustedzfs verb API (tzfs_*).  This library only *obtains* the
+ * handle; it deliberately does not duplicate the verb surface.
+ *
+ * Function prefix is tzfsd_ (not tzfs_) so a program may link both this
+ * library and libtrustedzfs without symbol collision.
+ */
+
+#ifndef LIBTZFSD_H
+#define LIBTZFSD_H
+
+#include <sys/types.h>
+#include <stdint.h>
+
+#include "tzfsd_proto.h"
+
+/*
+ * Storage request.  flavor[0] == '\0' asks for a bare dataset claim (no
+ * template); a named flavor ("native", "freebsd", "linux", "empty") clones
+ * that flavor's template.  rights is the ZH_* mask to grant; lifetime is
+ * TZFSD_PERSISTENT or TZFSD_EPHEMERAL.
+ */
+struct tzfsd_req {
+	char		flavor[TZFSD_FLAVOR_MAX];
+	char		name[TZFSD_NAME_MAX];
+	uint64_t	rights;
+	uint32_t	flags;			/* ZHF_* (0 for the common case) */
+	uint8_t		lifetime;
+};
+
+struct tzfsd_grant {
+	int		handle_fd;		/* the granted zfd (caller closes) */
+	char		dataset[TZFSD_DATASET_MAX];	/* resolved name, for audit */
+};
+
+struct tzfsd_flavor_info {
+	char		name[TZFSD_FLAVOR_MAX];
+	int		is_default;
+};
+
+__BEGIN_DECLS
+
+/*
+ * Connect the well-known tzfsd socket.  Returns a channel fd (caller closes)
+ * or -1 with errno set.  Sandboxed callers that were handed a pre-connected
+ * channel at bootstrap skip this and pass that fd to the calls below.
+ */
+int	tzfsd_connect(void);
+
+/*
+ * Request a storage handle.  On success returns 0 and fills *out (out->handle_fd
+ * is the granted descriptor, which the caller owns and must close).  On failure
+ * returns -1 with errno set to the daemon-reported error.
+ */
+int	tzfsd_request(int chan, const struct tzfsd_req *req,
+	    struct tzfsd_grant *out);
+
+/*
+ * Release (destroy) an ephemeral claim previously granted under this name.
+ * Idempotent: a missing claim is success.  Returns 0 or -1/errno.
+ */
+int	tzfsd_release(int chan, const char *name);
+
+/*
+ * Enumerate the flavors tzfsd currently offers.  Writes up to max entries into
+ * list[] and returns the count, or -1/errno.  The list is exactly the set that
+ * tzfsd_request will honor (unavailable/disabled flavors are omitted).
+ */
+int	tzfsd_list_flavors(int chan, struct tzfsd_flavor_info *list, size_t max);
+
+/* Liveness check.  Returns 0 if tzfsd answered, -1/errno otherwise. */
+int	tzfsd_ping(int chan);
+
+/*
+ * Convenience: mount a granted handle and return a directory fd for its root
+ * (rdonly selects a read-only mount).  Thin wrapper over libtrustedzfs
+ * tzfs_mount(); requires the handle to carry ZH_MOUNT.  Returns a dirfd or -1.
+ */
+int	tzfsd_mount_dir(int handle_fd, int rdonly);
+
+__END_DECLS
+
+#endif /* LIBTZFSD_H */

@@ -1,0 +1,145 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 14, 2026
+.Dt LIBTZFSD 3
+.Os
+.Sh NAME
+.Nm tzfsd_connect ,
+.Nm tzfsd_request ,
+.Nm tzfsd_release ,
+.Nm tzfsd_list_flavors ,
+.Nm tzfsd_ping ,
+.Nm tzfsd_mount_dir
+.Nd client interface to the tzfsd storage daemon
+.Sh LIBRARY
+.Lb libtzfsd
+.Sh SYNOPSIS
+.In tzfsd.h
+.Ft int
+.Fn tzfsd_connect "void"
+.Ft int
+.Fn tzfsd_request "int chan" "const struct tzfsd_req *req" "struct tzfsd_grant *out"
+.Ft int
+.Fn tzfsd_release "int chan" "const char *name"
+.Ft int
+.Fn tzfsd_list_flavors "int chan" "struct tzfsd_flavor_info *list" "size_t max"
+.Ft int
+.Fn tzfsd_ping "int chan"
+.Ft int
+.Fn tzfsd_mount_dir "int handle_fd" "int rdonly"
+.Sh DESCRIPTION
+.Nm libtzfsd
+is the client library for
+.Xr tzfsd 8 ,
+the
+.Sy [TZFS]
+storage daemon.
+A consumer asks
+.Xr tzfsd 8
+for storage of a given flavor and lifetime and receives a rights-limited
+TrustedZFS dataset handle, which it then drives with the
+.Xr trustedzfs 3
+verb interface.
+This library only
+.Em obtains
+the handle; it does not duplicate the verb surface.
+Its symbols use the
+.Sy tzfsd_
+prefix so a program may link both this library and
+.Xr trustedzfs 3
+without collision.
+.Pp
+.Fn tzfsd_connect
+connects the well-known daemon socket
+.Pa /var/run/tzfsd.sock
+and returns a channel descriptor, or -1 with
+.Va errno
+set.
+A sandboxed caller handed a pre-connected channel at bootstrap skips this and
+passes that descriptor as
+.Fa chan
+to the calls below.
+.Pp
+.Fn tzfsd_request
+asks for a handle described by
+.Fa req :
+.Bl -tag -width ".Va lifetime" -offset indent
+.It Va flavor
+.Dv "" Ns No (empty) for a bare dataset claim, or one of
+.Dq native ,
+.Dq freebsd ,
+.Dq linux ,
+.Dq empty
+to clone that flavor's template.
+.It Va name
+logical claim name within the requesting bundle.
+.It Va rights
+the
+.Dv ZH_*
+mask to grant; the returned handle carries no more than these.
+.It Va lifetime
+.Dv TZFSD_PERSISTENT
+or
+.Dv TZFSD_EPHEMERAL .
+.El
+.Pp
+On success it returns 0 and fills
+.Fa out ,
+whose
+.Va handle_fd
+the caller owns and must
+.Xr close 2 ,
+and whose
+.Va dataset
+holds the resolved dataset name for audit.
+.Pp
+.Fn tzfsd_release
+destroys the ephemeral claim previously granted under
+.Fa name .
+It is idempotent: a missing claim is success.
+.Pp
+.Fn tzfsd_list_flavors
+writes up to
+.Fa max
+offered flavors into
+.Fa list
+and returns the count.
+The list is exactly the set
+.Fn tzfsd_request
+will honor; unavailable or disabled flavors (for example
+.Dq linux
+on a slimmed system) are omitted.
+.Pp
+.Fn tzfsd_ping
+verifies the daemon is answering.
+.Pp
+.Fn tzfsd_mount_dir
+mounts a granted handle and returns a directory descriptor for its root,
+selecting a read-only mount when
+.Fa rdonly
+is nonzero.
+It is a thin wrapper over
+.Xr tzfs_mount 3
+and requires the handle to carry
+.Dv ZH_MOUNT .
+.Sh RETURN VALUES
+.Fn tzfsd_connect
+and
+.Fn tzfsd_mount_dir
+return a descriptor, or -1 with
+.Va errno
+set.
+.Fn tzfsd_list_flavors
+returns a nonnegative count, or -1.
+The remaining functions return 0 on success or -1 with
+.Va errno
+set to the daemon-reported error.
+.Sh SEE ALSO
+.Xr trustedzfs 3 ,
+.Xr tzfsctl 8 ,
+.Xr tzfsd 8
+.Sh AUTHORS
+.An Kory Heard

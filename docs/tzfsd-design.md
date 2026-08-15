@@ -116,8 +116,30 @@ never stuck:
 3. **Sourced** — a configured URL/mirror path (`base.txz`, Rocky rootfs),
    fetched + unpacked on first request. Off by default (opt-in; not air-gapped).
 
-A flavor with no available source is simply not offered; `tzfs_request` on it
+A flavor with no available source is simply not offered; `tzfsd_request` on it
 returns `ENOENT`.
+
+### 3.2 Removability — on by default, slimmable
+
+The `linux` (Rocky) flavor is **enabled by default** — the out-of-the-box
+opinion is "Linux is first-class and present." But a deployment that doesn't
+want a Red Hat userland on disk must be able to **shed it cleanly** and reclaim
+the space. Three independent, supported levers, coarsest to finest:
+
+1. **Build/package** — a `MK_TZFS_LINUX` (default `yes`) omits the Rocky
+   send-stream from a slim release; equivalently the image is a removable
+   package so `pkg delete tzfs-image-linux` drops it. The base + native +
+   freebsd flavors are unaffected.
+2. **Config** — `flavors { linux { enabled = false; } }` makes tzfsd not offer
+   the flavor even if the artifact is present.
+3. **Runtime reclaim** — `tzfsctl flavor destroy linux` (tzfsd removes the
+   `.templates/linux` origin via its `ZH_DESTROY` handle). Existing clones are
+   independent once promoted or already diverged.
+
+"Off" is a designed state, not a failure mode: with `linux` gone,
+`tzfsd_request({.flavor="linux"})` returns `ENOENT`, `tzfsctl list-flavors`
+omits it, and nothing else changes. Turning it back on is re-adding the
+artifact (or re-enabling in config) and letting tzfsd `zfs recv` it.
 
 ---
 
@@ -143,6 +165,7 @@ flavors {
     native  { build = "live"; }
     freebsd { build = "baked"; source = "/usr/share/tzfs/freebsd.zfs.zst"; }
     linux   { build = "baked"; source = "/usr/share/tzfs/rocky9.zfs.zst";
+              enabled = true;          # on by default; false to slim
               default = true; }        # the opinionated Linux default
 }
 ```
@@ -159,29 +182,37 @@ semantics — moving ownership needed no manifest change (as promised in §6a).
 Two libraries, cleanly separated:
 
 - **`libtrustedzfs`** (exists) — raw kernel handle verbs (ioctl/syscall
-  wrappers). What you use *after* you hold a handle.
-- **`libtzfs`** (new) — the client to tzfsd. What you use to *obtain* a handle.
+  wrappers), function prefix `tzfs_`. What you use *after* you hold a handle.
+- **`libtzfsd`** (new) — the client to tzfsd, function prefix `tzfsd_`. What
+  you use to *obtain* a handle. Distinct prefix because consumers link both
+  libraries (`libtrustedzfs` already owns `tzfs_`); named parallel to how
+  `liboraclert` hosts the `oracle_*` client for oracled.
 
-### 5.1 `libtzfs` API
+### 5.1 `libtzfsd` API
 
 ```c
+/* Connect the tzfsd socket (non-sandboxed callers); sandboxed callers pass
+ * a channel fd delivered at bootstrap instead. Returns fd or -1. */
+int tzfsd_connect(void);
+
 /* Request a rights-limited handle for storage of a given flavor+lifetime.
  * Returns a TrustedZFS dataset fd (drive it with libtrustedzfs), or -1. */
-int tzfs_request(const struct tzfs_req *req, struct tzfs_grant *out);
+int tzfsd_request(int chan, const struct tzfsd_req *req,
+    struct tzfsd_grant *out);
 
-struct tzfs_req {
+struct tzfsd_req {
     char      flavor[32];      /* "native"|"freebsd"|"linux"|"empty"|"" */
     char      name[64];        /* logical claim name within the bundle   */
     uint64_t  rights;          /* ZH_* mask requested                    */
-    uint8_t   lifetime;        /* TZFS_PERSISTENT | TZFS_EPHEMERAL        */
+    uint8_t   lifetime;        /* TZFSD_PERSISTENT | TZFSD_EPHEMERAL      */
 };
-struct tzfs_grant {
+struct tzfsd_grant {
     int       handle_fd;       /* the zfd (SCM_RIGHTS from tzfsd)         */
     char      dataset[256];    /* resolved dataset name (for audit)       */
 };
 
-int tzfs_release(const char *name);          /* ephemeral teardown       */
-int tzfs_mount_dir(int handle_fd);           /* handle -> dirfd (convenience) */
+int tzfsd_release(int chan, const char *name);   /* ephemeral teardown   */
+int tzfsd_mount_dir(int handle_fd);              /* handle -> dirfd       */
 ```
 
 `flavor=""` means "just a dataset" (the current behavior — a claim on an
