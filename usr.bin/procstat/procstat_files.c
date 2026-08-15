@@ -443,6 +443,11 @@ procstat_files(struct procstat *procstat, struct kinfo_proc *kipp)
 			xo_emit("{eq:fd_type/envfd}");
 			break;
 
+		case PS_FST_TYPE_CRYPTO:
+			str = "K";
+			xo_emit("{eq:fd_type/crypto}");
+			break;
+
 		case PS_FST_TYPE_ZFSHANDLE:
 			str = "Z";
 			xo_emit("{eq:fd_type/zfshandle}");

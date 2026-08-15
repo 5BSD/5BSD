@@ -52,14 +52,19 @@
 #include <sys/errno.h>
 #include <sys/random.h>
 #include <sys/conf.h>
+#include <sys/file.h>
+#include <sys/filedesc.h>
+#include <sys/stat.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
 #include <sys/fcntl.h>
 #include <sys/bus.h>
 #include <sys/sdt.h>
 #include <sys/syscallsubr.h>
+#include <sys/user.h>
 
 #include <opencrypto/cryptodev.h>
+#include <sys/cryptodesc.h>
 #include <opencrypto/xform.h>
 
 SDT_PROVIDER_DECLARE(opencrypto);
@@ -272,6 +277,8 @@ struct csession {
 
 	void		*key;
 	void		*mackey;
+	size_t		keylen;
+	size_t		mackeylen;
 };
 
 struct cryptop_data {
@@ -287,6 +294,36 @@ struct fcrypt {
 	TAILQ_HEAD(csessionlist, csession) csessions;
 	int		sesn;
 	struct mtx	lock;
+};
+
+/* A passable, rights-limited OpenCrypto session. */
+struct cryptodesc {
+	struct csession	*cd_session;
+	uint32_t	cd_rights;
+};
+
+static fo_ioctl_t cryptodesc_ioctl;
+static fo_stat_t cryptodesc_stat;
+static fo_close_t cryptodesc_close;
+static fo_fill_kinfo_t cryptodesc_fill_kinfo;
+static int cryptodev_op(struct csession *, const struct crypt_op *);
+static int cryptodev_aead(struct csession *, struct crypt_aead *);
+
+static const struct fileops cryptodesc_ops = {
+	.fo_read = invfo_rdwr,
+	.fo_write = invfo_rdwr,
+	.fo_truncate = invfo_truncate,
+	.fo_ioctl = cryptodesc_ioctl,
+	.fo_poll = invfo_poll,
+	.fo_kqfilter = invfo_kqfilter,
+	.fo_stat = cryptodesc_stat,
+	.fo_close = cryptodesc_close,
+	.fo_chmod = invfo_chmod,
+	.fo_chown = invfo_chown,
+	.fo_sendfile = invfo_sendfile,
+	.fo_fill_kinfo = cryptodesc_fill_kinfo,
+	.fo_cmp = file_kcmp_generic,
+	.fo_flags = DFLAG_PASSABLE,
 };
 
 static bool use_outputbuffers;
@@ -329,7 +366,7 @@ checkforsoftware(int *cridp)
 }
 
 static int
-cse_create(struct fcrypt *fcr, struct session2_op *sop)
+cse_create_session(struct session2_op *sop, struct csession **csep)
 {
 	struct crypto_session_params csp;
 	struct csession *cse;
@@ -339,6 +376,8 @@ cse_create(struct fcrypt *fcr, struct session2_op *sop)
 	void *mackey = NULL;
 	crypto_session_t cses;
 	int crid, error, mac;
+
+	*csep = NULL;
 
 	mac = sop->mac;
 #ifdef COMPAT_FREEBSD12
@@ -498,6 +537,8 @@ cse_create(struct fcrypt *fcr, struct session2_op *sop)
 	refcount_init(&cse->refs, 1);
 	cse->key = key;
 	cse->mackey = mackey;
+	cse->keylen = csp.csp_cipher_klen;
+	cse->mackeylen = csp.csp_auth_klen;
 	cse->cses = cses;
 	if (sop->maclen != 0)
 		cse->hashsize = sop->maclen;
@@ -517,21 +558,37 @@ cse_create(struct fcrypt *fcr, struct session2_op *sop)
 	else
 		cse->blocksize = 1;
 
-	mtx_lock(&fcr->lock);
-	TAILQ_INSERT_TAIL(&fcr->csessions, cse, next);
-	cse->ses = fcr->sesn++;
-	mtx_unlock(&fcr->lock);
-
-	sop->ses = cse->ses;
-
 	/* return hardware/driver id */
 	sop->crid = crypto_ses2hid(cse->cses);
+	*csep = cse;
+	return (0);
 bail:
 	if (error) {
+		if (key != NULL)
+			explicit_bzero(key, csp.csp_cipher_klen);
+		if (mackey != NULL)
+			explicit_bzero(mackey, csp.csp_auth_klen);
 		free(key, M_CRYPTODEV);
 		free(mackey, M_CRYPTODEV);
 	}
 	return (error);
+}
+
+static int
+cse_create(struct fcrypt *fcr, struct session2_op *sop)
+{
+	struct csession *cse;
+	int error;
+
+	error = cse_create_session(sop, &cse);
+	if (error != 0)
+		return (error);
+	mtx_lock(&fcr->lock);
+	TAILQ_INSERT_TAIL(&fcr->csessions, cse, next);
+	cse->ses = fcr->sesn++;
+	mtx_unlock(&fcr->lock);
+	sop->ses = cse->ses;
+	return (0);
 }
 
 static struct csession *
@@ -559,11 +616,138 @@ cse_free(struct csession *cse)
 		return;
 	crypto_freesession(cse->cses);
 	mtx_destroy(&cse->lock);
-	if (cse->key)
+	if (cse->key) {
+		explicit_bzero(cse->key, cse->keylen);
 		free(cse->key, M_CRYPTODEV);
-	if (cse->mackey)
+	}
+	if (cse->mackey) {
+		explicit_bzero(cse->mackey, cse->mackeylen);
 		free(cse->mackey, M_CRYPTODEV);
+	}
 	free(cse, M_CRYPTODEV);
+}
+
+static int
+cryptodesc_mint(struct thread *td, struct cryptodesc_create *create)
+{
+	struct cryptodesc *cd;
+	struct csession *cse;
+	struct file *fp;
+	int error, fd;
+
+	if ((create->cd_rights & ~CRYPTODESC_RIGHT_ALL) != 0 ||
+	    create->cd_rights == 0 || create->session.ses != 0) {
+		return (EINVAL);
+	}
+	create->cd_fd = -1;
+	error = cse_create_session(&create->session, &cse);
+	if (error != 0)
+		return (error);
+	cd = malloc(sizeof(*cd), M_CRYPTODEV, M_WAITOK | M_ZERO);
+	cd->cd_session = cse;
+	cd->cd_rights = create->cd_rights;
+	error = falloc_noinstall(td, &fp);
+	if (error != 0) {
+		cse_free(cse);
+		free(cd, M_CRYPTODEV);
+		return (error);
+	}
+	finit(fp, FREAD | FWRITE, DTYPE_CRYPTO, cd, &cryptodesc_ops);
+	error = finstall(td, fp, &fd, 0, NULL);
+	fdrop(fp, td);
+	if (error == 0)
+		create->cd_fd = fd;
+	return (error);
+}
+
+static int
+cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
+    struct ucred *active_cred __unused, struct thread *td __unused)
+{
+	struct cryptodesc *cd;
+	struct crypt_op *cop;
+	struct crypt_aead *caead;
+	const struct crypto_session_params *csp;
+	uint32_t required;
+
+	cd = fp->f_data;
+	switch (cmd) {
+	case CIOCCRYPT:
+		cop = data;
+		csp = crypto_get_params(cd->cd_session->cses);
+		if (csp->csp_mode == CSP_MODE_DIGEST)
+			required = cop->op == COP_ENCRYPT ? CRYPTODESC_RIGHT_AUTH :
+			    cop->op == COP_DECRYPT ? CRYPTODESC_RIGHT_VERIFY : 0;
+		else if (csp->csp_mode == CSP_MODE_ETA)
+			required = cop->op == COP_ENCRYPT ?
+			    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_AUTH :
+			    cop->op == COP_DECRYPT ?
+			    CRYPTODESC_RIGHT_DECRYPT | CRYPTODESC_RIGHT_VERIFY : 0;
+		else
+			required = cop->op == COP_ENCRYPT ?
+			    CRYPTODESC_RIGHT_ENCRYPT : cop->op == COP_DECRYPT ?
+			    CRYPTODESC_RIGHT_DECRYPT : 0;
+		if (required == 0 || cop->ses != 0 ||
+		    (cd->cd_rights & required) != required)
+			return (EPERM);
+		return (cryptodev_op(cd->cd_session, cop));
+	case CIOCCRYPTAEAD:
+		caead = data;
+		required = caead->op == COP_ENCRYPT ?
+		    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_AUTH :
+		    caead->op == COP_DECRYPT ?
+		    CRYPTODESC_RIGHT_DECRYPT | CRYPTODESC_RIGHT_VERIFY : 0;
+		if (required == 0 || caead->ses != 0 ||
+		    (cd->cd_rights & required) != required)
+			return (EPERM);
+		return (cryptodev_aead(cd->cd_session, caead));
+	default:
+		return (ENOTTY);
+	}
+}
+
+static int
+cryptodesc_stat(struct file *fp, struct stat *st,
+    struct ucred *active_cred __unused)
+{
+
+	memset(st, 0, sizeof(*st));
+	st->st_mode = S_IFIFO;
+	if ((fp->f_flag & FREAD) != 0)
+		st->st_mode |= S_IRUSR;
+	if ((fp->f_flag & FWRITE) != 0)
+		st->st_mode |= S_IWUSR;
+	return (0);
+}
+
+static int
+cryptodesc_close(struct file *fp, struct thread *td __unused)
+{
+	struct cryptodesc *cd;
+
+	cd = fp->f_data;
+	fp->f_ops = &badfileops;
+	fp->f_data = NULL;
+	cse_free(cd->cd_session);
+	explicit_bzero(cd, sizeof(*cd));
+	free(cd, M_CRYPTODEV);
+	return (0);
+}
+
+static int
+cryptodesc_fill_kinfo(struct file *fp, struct kinfo_file *kif,
+    struct filedesc *fdp __unused)
+{
+	struct cryptodesc *cd;
+	const struct crypto_session_params *csp;
+
+	cd = fp->f_data;
+	csp = crypto_get_params(cd->cd_session->cses);
+	kif->kf_type = KF_TYPE_CRYPTO;
+	snprintf(kif->kf_path, sizeof(kif->kf_path),
+	    "crypto:mode=%d:cipher=%d:auth=%d:rights=%#x", csp->csp_mode,
+	    csp->csp_cipher_alg, csp->csp_auth_alg, cd->cd_rights);
+	return (0);
 }
 
 static bool
@@ -1123,6 +1307,7 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	struct session2_op *sop;
 	struct crypt_op *cop;
 	struct crypt_aead *caead;
+	struct cryptodesc_create *create;
 	uint32_t ses;
 	int error = 0;
 	union {
@@ -1220,6 +1405,10 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		break;
 	case CIOCFINDDEV:
 		error = cryptodev_find((struct crypt_find_op *)data);
+		break;
+	case CIOCGCRYPTODESC:
+		create = (struct cryptodesc_create *)data;
+		error = cryptodesc_mint(td, create);
 		break;
 	case CIOCCRYPTAEAD:
 		caead = (struct crypt_aead *)data;

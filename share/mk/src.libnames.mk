@@ -112,6 +112,8 @@ _LIBRARIES=	\
 		9p \
 		alias \
 		capbundle \
+		cryptocmp \
+		cryptodesc \
 		archive \
 		auditcmp \
 		asn1 \
@@ -338,6 +340,7 @@ _DP_service=	capability channel pthread
 _DP_shmring=
 _DP_networkcmp=	pthread service
 _DP_filesystemcmp=	pthread service
+_DP_cryptocmp=	pthread service
 _DP_logcmp=	pthread service shmring
 _DP_kldmgr=	service
 _DP_notifycmp=	pthread service

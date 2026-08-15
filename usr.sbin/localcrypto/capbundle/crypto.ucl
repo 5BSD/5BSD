@@ -1,0 +1,11 @@
+schema = "org.5bsd.serviced.service";
+schema_version = "1.0.0";
+bundle_id = "org.5bsd.CryptoCmp";
+version = "1.0.0";
+author = "5BSD";
+
+# [CRYPTO] is the local authority-replacement provider for DTYPE_CRYPTO.
+program = "localcrypto";
+provides = ["org.5bsd.CryptoCmp"];
+restart = "on-failure";
+user = "capability";

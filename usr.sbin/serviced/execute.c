@@ -95,6 +95,8 @@ local_component_provider(const struct serviced_component *component)
 		return ("org.5bsd.FileSystemCmp");
 	if (strcmp(component->name, "network") == 0)
 		return ("org.5bsd.NetworkCmp");
+	if (strcmp(component->name, "crypto") == 0)
+		return ("org.5bsd.CryptoCmp");
 	return (NULL);
 }
 
@@ -106,6 +108,8 @@ local_component_interface(const struct serviced_component *component)
 		return ("org.5bsd.filesystem");
 	if (strcmp(component->name, "network") == 0)
 		return ("org.5bsd.network");
+	if (strcmp(component->name, "crypto") == 0)
+		return ("org.5bsd.crypto");
 	return (NULL);
 }
 
@@ -527,6 +531,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	char bootstrap_env[32];
 	char network_component_env[32];
 	char filesystem_component_env[32];
+	char crypto_component_env[32];
 	char *env[SVC_MAX_ENV];
 	char *argv[SERVICED_MAX_ARGUMENTS + 2];
 	int nullfd, fd;
@@ -720,6 +725,13 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 			    sizeof(filesystem_component_env), "%s=%d",
 			    SERVICE_FILESYSTEMCMP_ENV, component_fd);
 			env[envc++] = filesystem_component_env;
+		} else if (strcmp(component->name, "crypto") == 0) {
+			if (manifest_has_env(m, SERVICE_CRYPTOCMP_ENV))
+				_exit(126);
+			(void)snprintf(crypto_component_env,
+			    sizeof(crypto_component_env), "%s=%d",
+			    SERVICE_CRYPTOCMP_ENV, component_fd);
+			env[envc++] = crypto_component_env;
 		} else {
 			/* The manifest parser must reject all other components. */
 			_exit(126);

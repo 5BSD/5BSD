@@ -1536,6 +1536,9 @@ service_local_component_open(struct service_context *context,
 	} else if (strcmp(interface, "org.5bsd.network") == 0) {
 		environment_name = SERVICE_NETWORKCMP_ENV;
 		expected_version = "1.0.0";
+	} else if (strcmp(interface, "org.5bsd.crypto") == 0) {
+		environment_name = SERVICE_CRYPTOCMP_ENV;
+		expected_version = "1.0.0";
 	} else {
 		errno = ENOENT;
 		return (-1);

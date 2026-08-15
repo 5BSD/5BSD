@@ -242,7 +242,7 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    errlen) != 0 ||
 	    validate_string_list(root, "arguments", SERVICED_MAX_ARGUMENTS,
 	    SERVICED_ARGUMENT_MAX, errbuf, errlen) != 0 ||
-	    validate_string_list(root, "components", 2, 16, errbuf,
+	    validate_string_list(root, "components", 3, 16, errbuf,
 	    errlen) != 0)
 		return (-1);
 
@@ -261,10 +261,11 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 				break;
 			name = ucl_object_tostring(entry);
 			if (strcmp(name, "filesystem") != 0 &&
-			    strcmp(name, "network") != 0) {
+			    strcmp(name, "network") != 0 &&
+			    strcmp(name, "crypto") != 0) {
 				snprintf(errbuf, errlen,
 				    "components accepts only 'filesystem' and "
-				    "'network'");
+				    "'network' and 'crypto'");
 				return (-1);
 			}
 			if (first != NULL && strcmp(first, name) == 0) {
@@ -874,7 +875,8 @@ parse_components(const ucl_object_t *root, struct capbundle_service *svc,
 		component = &svc->components[svc->ncomponents];
 		strlcpy(component->name, name, sizeof(component->name));
 		provider = strcmp(name, "filesystem") == 0 ?
-		    "org.5bsd.FileSystemCmp" : "org.5bsd.NetworkCmp";
+		    "org.5bsd.FileSystemCmp" : strcmp(name, "network") == 0 ?
+		    "org.5bsd.NetworkCmp" : "org.5bsd.CryptoCmp";
 		for (unsigned i = 0; i < svc->nstartup_after; i++)
 			if (strcmp(svc->startup_after[i], provider) == 0)
 				goto dependency_present;
