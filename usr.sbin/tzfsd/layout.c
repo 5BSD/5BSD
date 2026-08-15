@@ -352,9 +352,10 @@ tzfsd_flavors_prepare(struct tzfsd_state *st)
 			}
 		}
 		/*
-		 * LIVE "native" population and SOURCE fetch are Phase 4; until
-		 * then those flavors are offered only if their template was
-		 * pre-seeded (handled by the "already present" branch above).
+		 * SOURCE fetch (fetch/unpack from a URL) is not yet
+		 * implemented; such flavors are offered only if their template
+		 * was pre-seeded (handled by the "already present" branch
+		 * above).  empty is built live; native/freebsd/linux are baked.
 		 */
 		if (f->available)
 			navail++;

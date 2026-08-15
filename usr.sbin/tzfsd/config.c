@@ -67,9 +67,16 @@ tzfsd_config_defaults(struct tzfsd_config *cfg)
 	(void)strlcpy(cfg->ephemeral_sync, "disabled",
 	    sizeof(cfg->ephemeral_sync));
 
-	/* The opinionated, out-of-the-box flavor set. */
+	/*
+	 * The opinionated, out-of-the-box flavor set.  empty is built live
+	 * (trivial); native/freebsd/linux are baked send-stream artifacts
+	 * produced by tzfs-mkflavor (native from the built world at image
+	 * time; freebsd/linux from their base rootfs), received into the
+	 * templates on first start.
+	 */
 	add_flavor(cfg, "empty", TZFSD_BUILD_LIVE, NULL, false);
-	add_flavor(cfg, "native", TZFSD_BUILD_LIVE, NULL, false);
+	add_flavor(cfg, "native", TZFSD_BUILD_BAKED,
+	    "/usr/share/tzfs/native.zfs.zst", false);
 	add_flavor(cfg, "freebsd", TZFSD_BUILD_BAKED,
 	    "/usr/share/tzfs/freebsd.zfs.zst", false);
 	add_flavor(cfg, "linux", TZFSD_BUILD_BAKED,

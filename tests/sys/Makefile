@@ -38,6 +38,7 @@ TESTS_SUBDIRS+=		sys
 TESTS_SUBDIRS+=		vfs
 TESTS_SUBDIRS+=		vm
 TESTS_SUBDIRS+=		vmm
+TESTS_SUBDIRS+=		tzfs
 TESTS_SUBDIRS+=		zfshandle
 
 .if ${MK_AUDIT} != "no"
