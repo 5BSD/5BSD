@@ -1,0 +1,111 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 14, 2026
+.Dt TZFS.CONF 5
+.Os
+.Sh NAME
+.Nm tzfs.conf
+.Nd configuration file for the tzfsd storage daemon
+.Sh DESCRIPTION
+.Pa /etc/capability/tzfsd.ucl
+configures
+.Xr tzfsd 8 .
+It is a
+.Xr libucl 3
+document; every key is optional, and a missing file leaves the built-in
+opinionated defaults in force.
+Unknown keys are ignored so the schema can grow.
+.Sh KEYS
+.Bl -tag -width ".Va ephemeral.sync"
+.It Va pool
+Name of the ZFS pool that backs
+.Pa /Capabilities .
+Setting it recomputes the root layout below unless those are overridden
+explicitly.
+Default
+.Ql zroot .
+.It Va roots.base
+Base dataset for the capability storage tree.
+Default
+.Ql <pool>/Capabilities .
+.It Va roots.persistent
+Parent of persistent per-application datasets.
+Default
+.Ql <base>/persistent .
+.It Va roots.ephemeral
+Parent of ephemeral datasets, created on service start and destroyed on stop.
+Default
+.Ql <base>/ephemeral .
+.It Va roots.templates
+Parent of the flavor template datasets.
+Default
+.Ql <base>/.templates .
+.It Va roots.mountpoint
+Filesystem location of the base.
+Default
+.Ql /Capabilities .
+.It Va ephemeral.sync
+The
+.Ql sync
+property applied to ephemeral datasets.
+Default
+.Ql disabled
+for throughput.
+.El
+.Ss Flavors
+The
+.Va flavors
+object maps a flavor name to its settings:
+.Bl -tag -width ".Va enabled" -offset indent
+.It Va build
+How the template is populated:
+.Ql live
+(built from the running system),
+.Ql baked
+(received from a shipped send-stream), or
+.Ql source
+(fetched from an external source).
+.It Va source
+Path to the baked send-stream or rootfs source.
+.It Va enabled
+Whether the flavor is offered.
+Set to
+.Ql false
+to slim a deployment; for example, removing the
+.Ql linux
+(Rocky) flavor drops the Red Hat userland from disk.
+The flavor is then simply not offered and a request for it fails with
+.Er ENOENT .
+.It Va default
+Marks the opinionated default flavor.
+.El
+.Sh EXAMPLES
+Turn off the bundled Linux flavor on a slimmed host:
+.Bd -literal -offset indent
+flavors {
+    linux { enabled = false; }
+}
+.Ed
+.Pp
+Back
+.Pa /Capabilities
+with a dedicated pool:
+.Bd -literal -offset indent
+pool = "tank";
+ephemeral { sync = "standard"; }
+.Ed
+.Sh FILES
+.Bl -tag -width ".Pa /etc/capability/tzfsd.ucl" -compact
+.It Pa /etc/capability/tzfsd.ucl
+the file described here
+.El
+.Sh SEE ALSO
+.Xr libtzfsd 3 ,
+.Xr trustedzfs 3 ,
+.Xr tzfsctl 8 ,
+.Xr tzfsd 8
+.Sh AUTHORS
+.An Kory Heard

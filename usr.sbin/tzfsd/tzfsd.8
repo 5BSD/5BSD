@@ -1,0 +1,104 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 14, 2026
+.Dt TZFSD 8
+.Os
+.Sh NAME
+.Nm tzfsd
+.Nd "[TZFS] storage daemon"
+.Sh SYNOPSIS
+.Nm
+.Op Fl f
+.Op Fl c Ar config
+.Sh DESCRIPTION
+.Nm
+is the
+.Sy [TZFS]
+system daemon that owns the storage plane of the capability system.
+It holds the root-pool handle for the pool that backs
+.Pa /Capabilities ,
+auto-provisions the persistent, ephemeral, and template dataset roots, and
+maintains a curated set of storage
+.Em flavors .
+On request it mints a rights-limited TrustedZFS handle
+.Pq see Xr trustedzfs 3
+and passes it back to the caller over
+.Dv SCM_RIGHTS ;
+the caller then drives the handle with the ordinary verb interface.
+.Nm
+takes the storage-granting role that
+.Xr oracled 8
+previously performed inline.
+.Pp
+ZFS is a required subsystem for this system, although the host may still boot
+from UFS.
+.Nm
+comes up in the PID 1 boot chain, after the pool is available and before
+.Xr serviced 8
+hands out storage to services.
+.Pp
+All name-based setup
+.Pq configuration, opening the pool, provisioning, receiving baked templates
+happens at startup.
+.Nm
+then enters capability mode with
+.Xr cap_enter 2
+and serves every request from its retained capability handles, so a
+compromised daemon cannot reach datasets outside
+.Pa /Capabilities .
+.Pp
+The options are:
+.Bl -tag -width ".Fl c Ar config"
+.It Fl c Ar config
+Read configuration from
+.Ar config
+instead of
+.Pa /etc/capability/tzfsd.ucl .
+A missing file is not an error; built-in defaults stand.
+.It Fl f
+Run in the foreground and log to stderr as well as syslog.
+.El
+.Sh FLAVORS
+A flavor is a template dataset cloned per request (instant, copy-on-write).
+The out-of-the-box set is:
+.Bl -tag -width ".Sy freebsd" -offset indent
+.It Sy empty
+a bare dataset, built live.
+.It Sy native
+a 5BSD base userland.
+.It Sy freebsd
+a FreeBSD base rootfs.
+.It Sy linux
+a Rocky Linux 9 rootfs, offered as a directory and enabled by default.
+.El
+.Pp
+A flavor whose template cannot be made available
+.Pq not baked, not built, or disabled in configuration
+is simply not offered, and a request for it fails with
+.Er ENOENT .
+The
+.Sy linux
+flavor is on by default but may be removed to slim a deployment; see
+.Xr tzfs.conf 5 .
+.Sh FILES
+.Bl -tag -width ".Pa /var/run/tzfsd.ready" -compact
+.It Pa /etc/capability/tzfsd.ucl
+configuration file
+.It Pa /var/run/tzfsd.sock
+request socket (root only)
+.It Pa /var/run/tzfsd.ready
+readiness marker, written once serving begins
+.El
+.Sh SEE ALSO
+.Xr cap_enter 2 ,
+.Xr libtzfsd 3 ,
+.Xr trustedzfs 3 ,
+.Xr tzfs.conf 5 ,
+.Xr tzfsctl 8 ,
+.Xr oracled 8 ,
+.Xr serviced 8
+.Sh AUTHORS
+.An Kory Heard

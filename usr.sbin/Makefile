@@ -108,6 +108,7 @@ SUBDIR=	adduser \
 	tcpsso \
 	traceroute \
 	trim \
+	tzfsd \
 	tzsetup \
 	ugidfw \
 	valectl \
