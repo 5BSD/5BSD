@@ -156,9 +156,10 @@ print_bundle(const struct capbundle *b)
 		for (j = 0; j < m.ncap_services; j++)
 			printf("        service: %s\n", m.cap_services[j]);
 		for (j = 0; j < m.ncap_storage; j++)
-			printf("        storage: %s rights=0x%jx lifetime=%s\n",
-			    m.cap_storage[j].dataset,
-			    (uintmax_t)m.cap_storage[j].rights,
+			printf("        storage: %s flavor=%s rights=0x%jx "
+			    "lifetime=%s\n", m.cap_storage[j].name,
+			    m.cap_storage[j].flavor[0] ? m.cap_storage[j].flavor :
+			    "(bare)", (uintmax_t)m.cap_storage[j].rights,
 			    m.cap_storage[j].lifetime == ORT_STORAGE_EPHEMERAL ?
 			    "ephemeral" : "persistent");
 		for (j = 0; j < m.ncomponents; j++)

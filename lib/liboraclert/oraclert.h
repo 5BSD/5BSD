@@ -53,17 +53,22 @@ struct ort_vsock_claim {
 };
 
 /*
- * TrustedZFS storage claim: a dataset the service is granted a capability
- * handle to.  rights is a ZH_* mask (see <sys/zfshandle.h>); lifetime is
- * whether the dataset persists across restarts or is created/destroyed
- * with the service.  POD, embedded by value like the other claim arrays.
+ * TrustedZFS storage claim: storage the service is granted a capability
+ * handle to, obtained from tzfsd(8) under /Capabilities.  name is a logical
+ * claim name within the bundle's tzfsd namespace; flavor selects a template
+ * to clone ("" = a bare dataset, "native"/"freebsd"/"linux"/"empty" clone
+ * that flavor); rights is a ZH_* mask (see <sys/zfshandle.h>); lifetime is
+ * whether the storage persists across restarts or is created/destroyed with
+ * the service.  POD, embedded by value like the other claim arrays.
  */
-#define	ORT_STORAGE_DATASET_MAX	256	/* == ZFS_MAX_DATASET_NAME_LEN */
+#define	ORT_STORAGE_NAME_MAX	64	/* == TZFSD_NAME_MAX */
+#define	ORT_STORAGE_FLAVOR_MAX	32	/* == TZFSD_FLAVOR_MAX */
 #define	ORT_STORAGE_PERSISTENT	0
 #define	ORT_STORAGE_EPHEMERAL	1
 
 struct ort_storage_claim {
-	char		dataset[ORT_STORAGE_DATASET_MAX];
+	char		name[ORT_STORAGE_NAME_MAX];
+	char		flavor[ORT_STORAGE_FLAVOR_MAX];
 	uint64_t	rights;		/* ZH_* mask */
 	uint8_t		lifetime;	/* ORT_STORAGE_* */
 };

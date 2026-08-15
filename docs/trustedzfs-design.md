@@ -405,11 +405,15 @@ serviced manifest and mint machinery, the design is:
 grant broker, `tzfsd`).  One tag each.
 
 **Manifest stanza (UCL, matches the existing `capabilities {}` style).**
-A service declares storage the way it declares `files`/`network`:
+A service declares storage the way it declares `files`/`network`.  The
+addressing is a logical `name` under tzfsd's `/Capabilities` plus an
+optional `flavor` template (not an absolute pool path — tzfsd owns the
+layout):
 ```ucl
 capabilities {
     storage = [{
-        dataset  = "tank/svc/mydata";
+        name     = "mydata";
+        flavor   = "linux";        # "" = bare dataset; else clone that flavor
         rights   = ["mount", "snapshot", "props_read"];
         lifetime = "persistent";   # or "ephemeral"
     }];

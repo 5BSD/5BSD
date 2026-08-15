@@ -398,7 +398,7 @@ file_capabilities_cleanup() {
 }
 
 # ---------------------------------------------------------------
-# Test: TrustedZFS storage capabilities (dataset, rights, lifetime)
+# Test: TrustedZFS storage capabilities (name, flavor, rights, lifetime)
 # ---------------------------------------------------------------
 atf_test_case storage_capabilities cleanup
 storage_capabilities_head() {
@@ -418,9 +418,10 @@ program = "stored";
 provides = ["org.test.storage"];
 capabilities {
     storage = [
-        {dataset = "tank/svc/pgsql"; rights = ["mount", "snapshot",
+        {name = "pgdata"; rights = ["mount", "snapshot",
           "props_read"]; lifetime = "persistent";},
-        {dataset = "tank/svc/scratch"; rights = "all"; lifetime = "ephemeral";},
+        {name = "scratch"; flavor = "linux"; rights = "all";
+          lifetime = "ephemeral";},
     ];
 }
 UCL
@@ -436,7 +437,7 @@ program = "stored";
 provides = ["org.test.storage"];
 capabilities {
     storage = [
-        {dataset = "tank/svc/x"; rights = ["mount", "bogus_right"];},
+        {name = "x"; rights = ["mount", "bogus_right"];},
     ];
 }
 UCL

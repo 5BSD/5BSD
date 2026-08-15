@@ -249,6 +249,7 @@ _LIBRARIES=	\
 		termcapw \
 		tinfow \
 		trustedzfs \
+		tzfsd \
 		ufs \
 		ugidfw \
 		ulog \
@@ -332,6 +333,7 @@ _DP_9p=		sbuf
 _DP_auditcmp=	service
 _DP_capbundle=	oraclert ucl
 _DP_oraclert=	ucl
+_DP_tzfsd=	trustedzfs
 _DP_service=	capability channel pthread
 _DP_shmring=
 _DP_networkcmp=	pthread service

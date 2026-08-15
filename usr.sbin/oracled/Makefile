@@ -25,8 +25,9 @@ CFLAGS+= -I${SRCTOP}/sys
 CFLAGS+= -I${SRCTOP}/lib/libcapability
 CFLAGS+= -I${SRCTOP}/lib/liboraclert
 CFLAGS+= -I${SRCTOP}/lib/libcapbundle
+CFLAGS+= -I${SRCTOP}/lib/libtzfsd
 CFLAGS+= -I${SRCTOP}/contrib/libucl/include
-LIBADD= capability crypt jail oraclert ucl util
+LIBADD= capability crypt jail oraclert tzfsd ucl util
 
 .if ${MK_DTRACE} != "no"
 SRCS+= oracled_provider.d

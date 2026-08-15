@@ -152,7 +152,7 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "components", "jail" };
 	static const char *const capkeys[] = { "paths", "files", "network",
 	    "jails", "vsock", "services", "system", "storage" };
-	static const char *const storagekeys[] = { "dataset", "rights",
+	static const char *const storagekeys[] = { "name", "flavor", "rights",
 	    "lifetime" };
 	static const char *const service_names[] = { "mount", "node",
 	    "accounting", "identity" };
@@ -511,17 +511,28 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		uint8_t lifetime;
 		const ucl_object_t *lt;
 
+		const ucl_object_t *fl;
+
 		if (validate_keys(v, "capabilities.storage entry", storagekeys,
 		    nitems(storagekeys), errbuf, errlen) != 0)
 			return (-1);
-		x = ucl_object_lookup(v, "dataset");
+		x = ucl_object_lookup(v, "name");
 		if (x == NULL || ucl_object_type(x) != UCL_STRING ||
 		    ucl_object_tostring(x)[0] == '\0' ||
-		    strlen(ucl_object_tostring(x)) >= ORT_STORAGE_DATASET_MAX ||
+		    strlen(ucl_object_tostring(x)) >= ORT_STORAGE_NAME_MAX ||
+		    strchr(ucl_object_tostring(x), '/') != NULL ||
+		    strchr(ucl_object_tostring(x), '@') != NULL ||
 		    parse_storage_rights(ucl_object_lookup(v, "rights"),
 		    &rights) != 0) {
 			snprintf(errbuf, errlen,
 			    "invalid capabilities.storage entry");
+			return (-1);
+		}
+		fl = ucl_object_lookup(v, "flavor");
+		if (fl != NULL && (ucl_object_type(fl) != UCL_STRING ||
+		    strlen(ucl_object_tostring(fl)) >= ORT_STORAGE_FLAVOR_MAX)) {
+			snprintf(errbuf, errlen,
+			    "invalid capabilities.storage flavor");
 			return (-1);
 		}
 		lt = ucl_object_lookup(v, "lifetime");
@@ -1574,20 +1585,28 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 				    true)) != NULL) {
 					struct ort_storage_claim *sc =
 					    &svc->cap_storage[svc->ncap_storage];
-					const char *dsname;
+					const char *nm, *fv;
 
 					if (ucl_object_type(selem) != UCL_OBJECT)
 						continue;
 					memset(sc, 0, sizeof(*sc));
 					sc->lifetime = ORT_STORAGE_PERSISTENT;
-					sv = ucl_object_lookup(selem, "dataset");
+					sv = ucl_object_lookup(selem, "name");
 					if (sv == NULL ||
 					    ucl_object_type(sv) != UCL_STRING)
 						continue;
-					dsname = ucl_object_tostring(sv);
-					if (strlcpy(sc->dataset, dsname,
-					    sizeof(sc->dataset)) >=
-					    sizeof(sc->dataset))
+					nm = ucl_object_tostring(sv);
+					if (strlcpy(sc->name, nm,
+					    sizeof(sc->name)) >=
+					    sizeof(sc->name))
+						continue;
+					sv = ucl_object_lookup(selem, "flavor");
+					if (sv != NULL &&
+					    ucl_object_type(sv) == UCL_STRING &&
+					    (fv = ucl_object_tostring(sv)) != NULL &&
+					    strlcpy(sc->flavor, fv,
+					    sizeof(sc->flavor)) >=
+					    sizeof(sc->flavor))
 						continue;
 					if (parse_storage_rights(
 					    ucl_object_lookup(selem, "rights"),

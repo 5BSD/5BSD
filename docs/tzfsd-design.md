@@ -242,17 +242,22 @@ Today: serviced `oracle_mint_storage()` → oracled `handle_mint_storage()`
 opens `/dev/zfs` and mints. After the move:
 
 - The `storage_open_handle` / `storage_create_ephemeral` / `storage_split`
-  logic **moves into tzfsd** (extended with clone-from-flavor).
-- oracled keeps `ORACLE_OP_MINT_STORAGE` as a thin **forwarder** to tzfsd (so
-  the existing serviced→oracled path keeps working during transition), or
-  serviced talks to tzfsd directly via a passed channel. Recommended:
-  serviced holds a tzfsd channel fd (delivered by oracled at bootstrap, like
-  the oracle channel) and calls tzfsd directly — oracled is out of the data
-  path entirely.
-- **Boot order:** `oracle-init` (oracled, PID 1) brings up tzfsd right after
-  the pool is available and before serviced starts services that declare
-  storage. tzfsd readiness gates serviced's storage grants (a `tzfsd.ready`
-  handshake, mirroring `serviced.ready`).
+  logic **moved into tzfsd** (extended with clone-from-flavor). **Built.**
+- oracled keeps `ORACLE_OP_MINT_STORAGE` as a thin **forwarder** to tzfsd via
+  `libtzfsd` (`handle_mint_storage`/`handle_destroy_storage` in
+  `oracle_proto.c` now call `tzfsd_request`/`tzfsd_release`; oracled no longer
+  opens `/dev/zfs`). **Built.** This was chosen over serviced-talks-to-tzfsd-
+  directly because `serviced` mints *every* capability class (path/file/net/
+  jail/vsock/storage/system) uniformly over its one oracle channel; making
+  storage the sole exception would fracture that pattern for no real gain.
+  oracled forwarding relocates the full ZFS authority to tzfsd while keeping
+  the mint path uniform. serviced-direct remains a possible later
+  optimization (design unaffected — it is the same grant semantics).
+- **Startup:** oracled starts tzfsd on demand the first time a service needs
+  storage (`posix_spawn` + `waitpid`; tzfsd provisions synchronously then
+  daemonizes, so the wait returns once it is ready). A boot-time
+  `tzfsd.ready` gate for services that need storage before first-mint is a
+  Phase 4 refinement.
 
 The manifest `capabilities.storage` stanza is unchanged; only *who mints* moves.
 A `flavor` field is added to the stanza (optional; default `""` = today's

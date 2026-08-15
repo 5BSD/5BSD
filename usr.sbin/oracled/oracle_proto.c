@@ -18,6 +18,7 @@
 #include <sys/jail.h>
 #include <sys/linker.h>
 #include <sys/module.h>
+#include <sys/wait.h>
 
 #include <sys/zfshandle.h>
 
@@ -31,6 +32,7 @@
 #include <errno.h>
 #include <jail.h>
 #include <limits.h>
+#include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -39,10 +41,13 @@
 
 #include "oracled.h"
 #include "oracled_svc_proto.h"
+#include "tzfsd.h"		/* libtzfsd client: forward storage to tzfsd(8) */
 #include "mac_capability_priv.h"
 #include "probes.h"
 #include "oracle_proto_claims.h"
 #include "req_validate.h"
+
+extern char **environ;		/* for posix_spawn of tzfsd */
 
 static int	proto_channel_fd = -1;
 static bool	serviced_ready;
@@ -367,102 +372,82 @@ handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
 	close(token_fd);
 }
 
-/* Mint a dataset handle by name.  Returns fd, or -1 with errno set. */
-static int
-storage_open_handle(int devfd, const char *dataset, uint64_t rights,
-    uint32_t flags)
-{
-	struct zfs_dataset_open_args args;
-
-	memset(&args, 0, sizeof(args));
-	strlcpy(args.zdo_name, dataset, sizeof(args.zdo_name));
-	args.zdo_rights = rights;
-	args.zdo_flags = flags;
-	args.zdo_fd = -1;
-	if (ioctl(devfd, ZFS_IOC_DATASET_OPEN, &args) == -1)
-		return (-1);
-	return (args.zdo_fd);
-}
-
 /*
- * Split "pool/a/b/leaf" into parent "pool/a/b" and leaf "leaf".  Returns
- * 0 on success; -1 if the dataset has no parent (a bare pool name, which
- * cannot be an ephemeral leaf).
+ * Storage capabilities are owned by tzfsd(8), the [TZFS] storage daemon,
+ * which holds the pool, the /Capabilities layout, and the flavor templates.
+ * oracled forwards mint/release requests to tzfsd and relays the
+ * rights-limited handle back; it no longer opens /dev/zfs itself.
+ *
+ * The channel to tzfsd is cached.  tzfsd is started on demand the first time
+ * a service needs storage: it provisions synchronously and then daemonizes,
+ * so waitpid() on the spawned child returns once tzfsd is ready (or failed).
  */
-static int
-storage_split(const char *dataset, char *parent, size_t plen,
-    const char **leafp)
-{
-	const char *slash;
+static int oracle_tzfsd_channel = -1;
 
-	slash = strrchr(dataset, '/');
-	if (slash == NULL || slash == dataset)
-		return (-1);
-	if ((size_t)(slash - dataset) >= plen)
-		return (-1);
-	memcpy(parent, dataset, slash - dataset);
-	parent[slash - dataset] = '\0';
-	*leafp = slash + 1;
-	return (0);
+static void
+tzfsd_channel_reset(void)
+{
+
+	if (oracle_tzfsd_channel != -1) {
+		close(oracle_tzfsd_channel);
+		oracle_tzfsd_channel = -1;
+	}
+}
+
+static int
+tzfsd_channel_get(void)
+{
+	posix_spawn_file_actions_t fa;
+	char *argv[2];
+	pid_t pid;
+	int i, status;
+
+	if (oracle_tzfsd_channel != -1)
+		return (oracle_tzfsd_channel);
+
+	oracle_tzfsd_channel = tzfsd_connect();
+	if (oracle_tzfsd_channel != -1)
+		return (oracle_tzfsd_channel);
+
+	/* Not running yet: spawn tzfsd, which provisions then daemonizes. */
+	argv[0] = __DECONST(char *, "/usr/sbin/tzfsd");
+	argv[1] = NULL;
+	(void)posix_spawn_file_actions_init(&fa);
+	if (posix_spawn(&pid, "/usr/sbin/tzfsd", &fa, NULL, argv,
+	    environ) == 0)
+		(void)waitpid(pid, &status, 0);	/* returns after daemon() */
+	posix_spawn_file_actions_destroy(&fa);
+
+	for (i = 0; i < 100 && oracle_tzfsd_channel == -1; i++) {
+		struct timespec ts = { 0, 50 * 1000 * 1000 }; /* 50ms */
+
+		(void)nanosleep(&ts, NULL);
+		oracle_tzfsd_channel = tzfsd_connect();
+	}
+	return (oracle_tzfsd_channel);
 }
 
 /*
- * Create the leaf dataset of an ephemeral storage claim, through a
- * capability handle on its parent (which the operator must have
- * provisioned).  Tolerates EEXIST so a crash-leftover leaf is reused.
- */
-static int
-storage_create_ephemeral(int devfd, const char *dataset)
-{
-	char parent[256];
-	const char *leaf;
-	struct zfd_create_args ca;
-	int parent_fd;
-
-	if (storage_split(dataset, parent, sizeof(parent), &leaf) != 0) {
-		errno = EINVAL;
-		return (-1);
-	}
-	parent_fd = storage_open_handle(devfd, parent, ZH_CREATE,
-	    ZHF_SUBTREE);
-	if (parent_fd == -1)
-		return (-1);
-	memset(&ca, 0, sizeof(ca));
-	strlcpy(ca.zc_relname, leaf, sizeof(ca.zc_relname));
-	ca.zc_type = ZFD_TYPE_FILESYSTEM;
-	ca.zc_fd = -1;
-	if (ioctl(parent_fd, ZFD_CREATE, &ca) == -1 && errno != EEXIST) {
-		int serrno = errno;
-		close(parent_fd);
-		errno = serrno;
-		return (-1);
-	}
-	if (ca.zc_fd >= 0)
-		close(ca.zc_fd);
-	close(parent_fd);
-	return (0);
-}
-
-/*
- * Mint a TrustedZFS dataset handle for the requested dataset and rights
- * and pass the handle fd back to the service.  oracled holds the /dev/zfs
- * privilege (it runs unsandboxed as the capability engine); the service
- * receives only the rights-limited descriptor.  For an ephemeral claim
- * the leaf dataset is created first (under its provisioned parent).
+ * Forward a storage mint to tzfsd and relay the rights-limited handle back to
+ * the service.  flavor[0] == '\0' is a bare dataset claim; a named flavor
+ * clones that template.  oracled holds no ZFS privilege of its own.
  */
 static void
 handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct oracle_storage_req *req;
-	int devfd, handle_fd, serrno;
+	struct tzfsd_req treq;
+	struct tzfsd_grant grant;
+	int chan, e;
 
 	if (len != sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
-	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
-	    req->dataset[0] == '\0' ||
+	if (memchr(req->name, '\0', sizeof(req->name)) == NULL ||
+	    req->name[0] == '\0' ||
+	    memchr(req->flavor, '\0', sizeof(req->flavor)) == NULL ||
 	    (req->rights & ~ZH_ALL_RIGHTS) != 0 ||
 	    (req->flags & ~ZHF_SUBTREE) != 0 ||
 	    req->lifetime > ORT_STORAGE_EPHEMERAL) {
@@ -470,82 +455,63 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
-	devfd = open("/dev/zfs", O_RDWR | O_CLOEXEC);
-	if (devfd == -1) {
-		proto_reply(errno, reply_token, NULL, 0);
+	chan = tzfsd_channel_get();
+	if (chan == -1) {
+		proto_reply(errno != 0 ? errno : ECONNREFUSED, reply_token,
+		    NULL, 0);
 		return;
 	}
-	if (req->lifetime == ORT_STORAGE_EPHEMERAL &&
-	    storage_create_ephemeral(devfd, req->dataset) == -1) {
-		serrno = errno;
-		close(devfd);
-		proto_reply(serrno, reply_token, NULL, 0);
-		return;
-	}
-	handle_fd = storage_open_handle(devfd, req->dataset, req->rights,
-	    req->flags);
-	if (handle_fd == -1) {
-		serrno = errno;
-		close(devfd);
-		proto_reply(serrno, reply_token, NULL, 0);
-		return;
-	}
-	close(devfd);
 
-	proto_reply(0, reply_token, &handle_fd, 1);
-	close(handle_fd);
+	memset(&treq, 0, sizeof(treq));
+	(void)strlcpy(treq.flavor, req->flavor, sizeof(treq.flavor));
+	(void)strlcpy(treq.name, req->name, sizeof(treq.name));
+	treq.rights = req->rights;
+	treq.flags = req->flags;
+	treq.lifetime = req->lifetime;
+	if (tzfsd_request(chan, &treq, &grant) == -1) {
+		e = errno;
+		if (e == EPIPE || e == ECONNRESET || e == EBADF)
+			tzfsd_channel_reset();
+		proto_reply(e, reply_token, NULL, 0);
+		return;
+	}
+	proto_reply(0, reply_token, &grant.handle_fd, 1);
+	close(grant.handle_fd);
 }
 
 /*
- * Destroy an ephemeral leaf dataset on service stop, through a ZH_DESTROY
- * handle on its parent.  A missing target is success (idempotent stop).
+ * Forward an ephemeral storage teardown to tzfsd on service stop.  A missing
+ * claim is success so stop paths stay idempotent.
  */
 static void
 handle_destroy_storage(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct oracle_storage_req *req;
-	char parent[256];
-	const char *leaf;
-	struct zfd_destroy_args da;
-	int devfd, parent_fd, serrno;
+	int chan, e;
 
 	if (len != sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
 	req = payload;
-	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
-	    storage_split(req->dataset, parent, sizeof(parent), &leaf) != 0) {
+	if (memchr(req->name, '\0', sizeof(req->name)) == NULL ||
+	    req->name[0] == '\0') {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
-
-	devfd = open("/dev/zfs", O_RDWR | O_CLOEXEC);
-	if (devfd == -1) {
-		proto_reply(errno, reply_token, NULL, 0);
-		return;
-	}
-	parent_fd = storage_open_handle(devfd, parent, ZH_DESTROY,
-	    ZHF_SUBTREE);
-	if (parent_fd == -1) {
-		serrno = errno;
-		close(devfd);
-		/* Parent gone => the leaf is gone too; idempotent success. */
-		proto_reply(serrno == ENOENT ? 0 : serrno, reply_token,
+	chan = tzfsd_channel_get();
+	if (chan == -1) {
+		proto_reply(errno != 0 ? errno : ECONNREFUSED, reply_token,
 		    NULL, 0);
 		return;
 	}
-	memset(&da, 0, sizeof(da));
-	strlcpy(da.zd_relname, leaf, sizeof(da.zd_relname));
-	if (ioctl(parent_fd, ZFD_DESTROY, &da) == -1 && errno != ENOENT) {
-		serrno = errno;
-		close(parent_fd);
-		close(devfd);
-		proto_reply(serrno, reply_token, NULL, 0);
+	if (tzfsd_release(chan, req->name) == -1) {
+		e = errno;
+		if (e == EPIPE || e == ECONNRESET || e == EBADF)
+			tzfsd_channel_reset();
+		proto_reply(e, reply_token, NULL, 0);
 		return;
 	}
-	close(parent_fd);
-	close(devfd);
 	proto_reply(0, reply_token, NULL, 0);
 }
 

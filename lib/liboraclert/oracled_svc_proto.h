@@ -193,12 +193,11 @@ struct oracle_vsock_req {
  *   reply: oracle_reply { .status }
  *   reply_fds[0] = TrustedZFS dataset handle fd (on success)
  *
- * Mints a dataset handle (ZFS_IOC_DATASET_OPEN) for the named dataset
- * with the requested ZH_* rights and ZHF_* flags, and passes the handle
- * fd back over the channel.  oracled holds the /dev/zfs privilege; the
- * service receives only the rights-limited handle.  The dataset must
- * already exist (serviced materializes ephemeral datasets before
- * requesting the mint).
+ * oracled forwards the request to tzfsd(8) (the [TZFS] storage daemon,
+ * which owns /Capabilities and the flavor templates) and relays the
+ * rights-limited handle back over the channel.  oracled no longer opens
+ * /dev/zfs itself; tzfsd is the storage authority.  flavor[0] == '\0'
+ * requests a bare dataset claim; a named flavor clones that template.
  */
 struct oracle_storage_req {
 	uint32_t	op;		/* ORACLE_OP_MINT_STORAGE / DESTROY */
@@ -206,19 +205,18 @@ struct oracle_storage_req {
 	uint64_t	rights;		/* ZH_* mask (mint only) */
 	uint8_t		lifetime;	/* ORT_STORAGE_* */
 	uint8_t		_reserved[7];
-	char		dataset[256];	/* == ORT_STORAGE_DATASET_MAX */
+	char		name[64];	/* == ORT_STORAGE_NAME_MAX */
+	char		flavor[32];	/* == ORT_STORAGE_FLAVOR_MAX */
 };
 
 /*
  * ORACLE_OP_DESTROY_STORAGE
- *   req:  oracle_storage_req (op, dataset; rights/flags ignored)
+ *   req:  oracle_storage_req (op, name; flavor/rights/flags ignored)
  *   reply: oracle_reply { .status }
  *
- * Destroy an ephemeral dataset created for a service, on service stop.
- * Only leaf datasets under a provisioned storage root are destroyable
- * this way (oracled opens the parent with ZH_DESTROY and removes the
- * named child); a non-empty or non-existent target is a no-op success
- * so stop paths are idempotent.
+ * Release an ephemeral storage claim on service stop; oracled forwards the
+ * teardown to tzfsd (which destroys the ephemeral clone).  A missing claim
+ * is a no-op success so stop paths are idempotent.
  */
 
 /*

@@ -381,8 +381,10 @@ oracle_mint_storage(int channel_fd, const struct ort_storage_claim *sc)
 	req.op = ORACLE_OP_MINT_STORAGE;
 	req.rights = sc->rights;
 	req.lifetime = sc->lifetime;
-	if (strlcpy(req.dataset, sc->dataset, sizeof(req.dataset)) >=
-	    sizeof(req.dataset)) {
+	if (strlcpy(req.name, sc->name, sizeof(req.name)) >=
+	    sizeof(req.name) ||
+	    strlcpy(req.flavor, sc->flavor, sizeof(req.flavor)) >=
+	    sizeof(req.flavor)) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -399,8 +401,8 @@ oracle_destroy_storage(int channel_fd, const struct ort_storage_claim *sc)
 
 	memset(&req, 0, sizeof(req));
 	req.op = ORACLE_OP_DESTROY_STORAGE;
-	if (strlcpy(req.dataset, sc->dataset, sizeof(req.dataset)) >=
-	    sizeof(req.dataset)) {
+	if (strlcpy(req.name, sc->name, sizeof(req.name)) >=
+	    sizeof(req.name)) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -780,8 +782,8 @@ oracle_release_manifest(int channel_fd, const struct svc_manifest *m)
 			continue;
 		memset(&req, 0, sizeof(req));
 		req.op = ORACLE_OP_DESTROY_STORAGE;
-		if (strlcpy(req.dataset, m->cap_storage[i].dataset,
-		    sizeof(req.dataset)) >= sizeof(req.dataset))
+		if (strlcpy(req.name, m->cap_storage[i].name,
+		    sizeof(req.name)) >= sizeof(req.name))
 			continue;
 		if (oracle_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
