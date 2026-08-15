@@ -383,10 +383,15 @@ trajectory as the rest of the Oracle work.
   `ZFS_IOC_DATASET_OPEN`, passing the rights-limited handle fd back.
 - serviced grants the handle at exec, in the token-bootstrap range,
   for datasets that already exist (persistent case).
-- **Remaining**: ephemeral lifecycle (create-on-start, destroy-on-stop);
-  the `SVC_OP_STORAGE_REQUEST` runtime path; the optional `tzfsd` broker.
+- Ephemeral lifecycle (create-on-start, destroy-on-stop) built and
+  committed; clean-VM validated 2026-08-14.
+- **Remaining is now its own effort:** the `tzfsd` daemon takes storage
+  ownership from oracled and adds the flavor/image system (native /
+  freebsd / linux=Rocky / empty). ZFS is a required subsystem for 5BSD
+  (UFS still bootable). See **`docs/tzfsd-design.md`** — that supersedes
+  the "optional broker" sketch below.
 
-Design below.
+Original sketch (kept for context; see tzfsd-design.md for the built design):
 
 
 
