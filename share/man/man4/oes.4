@@ -113,3 +113,19 @@ set, the absence of a client can deny operations outright.
 Access to
 .Pa /dev/oes
 should therefore be restricted to trusted, privileged programs.
+.Pp
+AUTH events are delivered from MAC check hooks, several of which
+.Pq for example vnode open, read, and write
+run with the target vnode locked.
+While a subscribed client is deciding, the originating thread sleeps in the
+hook with that lock held, up to the client's timeout.
+An AUTH client
+.Em must not
+perform, directly or indirectly, any operation on the object it is authorizing
+.Pq or a path that requires locking the same vnode ,
+because doing so deadlocks against the very thread that is waiting for its
+decision; the operation then stalls until the timeout expires and the
+timeout action is applied.
+Prefer NOTIFY subscriptions where blocking authorization is not required, keep
+AUTH handlers fast, and set a bounded
+.Dv OES_IOC_SET_TIMEOUT .
