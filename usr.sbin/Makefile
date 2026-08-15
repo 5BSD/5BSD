@@ -41,6 +41,8 @@ SUBDIR=	adduser \
 	iostat \
 	iovctl \
 	kldxref \
+	mac_abac_ctl \
+	mac_abacd \
 	mailwrapper \
 	makefs \
 	memcontrol \
@@ -109,6 +111,7 @@ SUBDIR=	adduser \
 	tcpsso \
 	traceroute \
 	trim \
+	tzfs-flavors \
 	tzfsctl \
 	tzfsd \
 	tzsetup \
