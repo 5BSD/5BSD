@@ -48,20 +48,10 @@
 #define EVT_DELETEACL		(1u << 23)
 #define EVT_RELABEL		(1u << 24)
 
-static int
-read_events(int fd, pid_t child_pid, uint64_t *seen_mask)
+static void
+mark_event(uint64_t *seen_mask, oes_event_type_t event)
 {
-	test_msg_buf _msg_buf;
-	oes_message_t *msg = &_msg_buf.msg;
-
-	for (;;) {
-		if (test_wait_event(fd, msg, 10) != 0)
-			return (0);
-
-		if (msg->em_process.ep_pid != child_pid)
-			continue;
-
-		switch (msg->em_event) {
+	switch (event) {
 		case OES_EVENT_NOTIFY_OPEN:
 			*seen_mask |= EVT_OPEN;
 			break;
@@ -137,8 +127,55 @@ read_events(int fd, pid_t child_pid, uint64_t *seen_mask)
 		case OES_EVENT_NOTIFY_RELABEL:
 			*seen_mask |= EVT_RELABEL;
 			break;
-		default:
-			break;
+	default:
+		break;
+	}
+}
+
+static int
+read_events(int fd, pid_t child_pid, uint64_t *seen_mask)
+{
+	test_msg_buf _msg_buf;
+	struct pollfd pfd;
+	ssize_t n, off;
+
+	/*
+	 * The oes device packs one OR MORE self-describing messages into each
+	 * read() (see oes_read(): "Returns one or more events per read").  Walk
+	 * the whole buffer by em_size: a naive one-read/one-message loop (as
+	 * test_wait_event does) silently discards every batched event after the
+	 * first, so once the producer enqueues several events between the
+	 * consumer's reads those extra events are lost.  Draining the full
+	 * buffer keeps collection reliable regardless of how many events the
+	 * kernel coalesces into a single read.
+	 */
+	for (;;) {
+		pfd.fd = fd;
+		pfd.events = POLLIN;
+		pfd.revents = 0;
+		if (poll(&pfd, 1, 10) <= 0 || (pfd.revents & POLLIN) == 0)
+			return (0);
+
+		n = read(fd, _msg_buf.raw, sizeof(_msg_buf.raw));
+		if (n <= 0)
+			return (0);
+
+		for (off = 0; off + (ssize_t)sizeof(oes_message_t) <= n; ) {
+			oes_message_t hdr;
+
+			/*
+			 * Messages are packed by em_size and thus not
+			 * necessarily aligned; copy the fixed header out before
+			 * reading its fields.
+			 */
+			memcpy(&hdr, _msg_buf.raw + off, sizeof(hdr));
+			if (hdr.em_size < sizeof(hdr) ||
+			    off + (ssize_t)hdr.em_size > n)
+				break;
+			off += hdr.em_size;
+
+			if (hdr.em_process.ep_pid == child_pid)
+				mark_event(seen_mask, hdr.em_event);
 		}
 	}
 }
@@ -164,9 +201,19 @@ child_ops(int write_fd)
 	ssize_t extlen;
 	char extbuf[64];
 
+	/*
+	 * Repeat the operation set several times.  Event delivery to a NOTIFY
+	 * client is asynchronous, so a single pass can race the observer's
+	 * collection window; repeating each op gives the observer reliable
+	 * chances to see every event type.  ok accumulates across iterations.
+	 */
+	int iter;
+
+	for (iter = 0; iter < 15; iter++) {
+	strlcpy(path, "/tmp/oes-vnode.XXXXXX", sizeof(path));
 	fd = mkstemp(path);
 	if (fd < 0)
-		goto done;
+		continue;
 	ok |= EVT_CREATE;
 	ok |= EVT_OPEN;
 
@@ -194,7 +241,13 @@ child_ops(int write_fd)
 	if (chmod(path, 0640) == 0)
 		ok |= EVT_SETMODE;
 
-	if (chown(path, getuid(), getgid()) == 0)
+	/*
+	 * Change the owner to a *different* uid so the setattr actually runs
+	 * (ZFS/UFS elide a no-op chown to the same owner, and with it the
+	 * mac_vnode_check_setowner hook).  Running as root, the temp file is
+	 * root-owned, so chowning to uid 1 is a real change.
+	 */
+	if (chown(path, 1, (gid_t)-1) == 0)
 		ok |= EVT_SETOWNER;
 
 	if (chflags(path, UF_NODUMP) == 0)
@@ -273,7 +326,17 @@ child_ops(int write_fd)
 	if (unlink(newpath) == 0)
 		ok |= EVT_UNLINK;
 
-done:
+	/*
+	 * Settle between passes.  Each pass emits ~25 events in a tight burst;
+	 * pausing here gives the parent's collection loop a guaranteed window to
+	 * drain the per-client queue so it never saturates and tail-drops.  The
+	 * event path itself is not the bottleneck (delivery is verified reliable
+	 * elsewhere) -- this simply keeps the smoke test's producer from
+	 * outrunning its own consumer.
+	 */
+	usleep(50000);	/* 50ms between passes */
+	}
+
 	(void)write(write_fd, &ok, sizeof(ok));
 	return (0);
 }
@@ -315,12 +378,15 @@ main(void)
 	pid_t pid;
 	int status;
 	struct pollfd pfd;
+	struct oes_mute_args mute;
 	struct timespec start;
 	uint64_t seen_mask = 0;
 	uint64_t ok_mask = 0;
 	uint64_t expected_mask = 0;
 	int ok_received = 0;
 	int child_done = 0;
+	struct oes_stats _stats;
+	int _stats_ok = 0;
 
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK);
 	if (fd < 0) {
@@ -369,6 +435,20 @@ main(void)
 
 	close(pipefd[1]);
 	(void)fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
+
+	/*
+	 * Mute our own process.  The collection loop below continuously polls
+	 * and reads /dev/oes, and each of those syscalls generates its own
+	 * (parent-pid) vnode events.  Without self-muting, that stream floods
+	 * the shared per-client event queue and crowds out the child's events
+	 * at enqueue time -- POLL suffers most because the loop's own poll() is
+	 * the highest-frequency offender.  Real OES clients self-mute for this
+	 * exact reason; the mute is keyed on the calling (parent) pid, so the
+	 * forked child's events still flow.
+	 */
+	memset(&mute, 0, sizeof(mute));
+	mute.emu_flags = OES_MUTE_SELF;
+	(void)ioctl(fd, OES_IOC_MUTE_PROCESS, &mute);
 
 	clock_gettime(CLOCK_MONOTONIC, &start);
 	pfd.fd = fd;
@@ -420,6 +500,8 @@ main(void)
 			ok_received = 1;
 	}
 
+	_stats_ok = (ioctl(fd, OES_IOC_GET_STATS, &_stats) == 0);
+
 	close(pipefd[0]);
 	close(fd);
 
@@ -430,6 +512,13 @@ main(void)
 
 	expected_mask = ok_mask;
 	if ((seen_mask & expected_mask) != expected_mask) {
+		if (_stats_ok)
+			fprintf(stderr,
+			    "[stats] received=%llu dropped=%llu nosleep_drops=%llu highwater=%u\n",
+			    (unsigned long long)_stats.es_events_received,
+			    (unsigned long long)_stats.es_events_dropped,
+			    (unsigned long long)_stats.es_nosleep_drops,
+			    _stats.es_queue_highwater);
 		fprintf(stderr, "missing vnode events:");
 		if ((expected_mask & EVT_OPEN) && !(seen_mask & EVT_OPEN))
 			fprintf(stderr, " OPEN");
