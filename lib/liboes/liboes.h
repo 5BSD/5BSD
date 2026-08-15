@@ -274,6 +274,18 @@ int oes_respond(oes_client_t *client, uint64_t msg_id,
     oes_auth_result_t result);
 
 /*
+ * oes_respond_flags - Respond with event-specific flag restrictions.
+ *
+ * For AUTH_OPEN, AUTH_MMAP, and AUTH_MPROTECT, allowed_flags restricts an
+ * otherwise allowed request and denied_flags explicitly denies matching
+ * requested flags.  A zero value for either field leaves that restriction
+ * unset.  Other AUTH events ignore the flag fields.
+ */
+int oes_respond_flags(oes_client_t *client, uint64_t msg_id,
+    oes_auth_result_t result, uint32_t allowed_flags,
+    uint32_t denied_flags);
+
+/*
  * oes_respond_allow - Shorthand for oes_respond(..., OES_AUTH_ALLOW)
  */
 static inline int

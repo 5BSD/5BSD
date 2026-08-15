@@ -22,6 +22,7 @@
 
 #include <err.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <signal.h>
 #include <stdio.h>
@@ -88,19 +89,32 @@ send_fd(int sock, int fd)
 }
 
 /*
- * Create a restricted oes fd for a third-party client
+ * Create an independent, passive oes client for a third-party client.
+ *
+ * A duplicated descriptor would share the system daemon's cdevpriv state:
+ * subscriptions, queue, and AUTH responses are all per-open rather than
+ * per-descriptor.  Give each vendor a distinct open so it cannot alter or
+ * respond on the daemon's authoritative client.
  */
 static int
-create_vendor_fd(int oes_fd)
+create_vendor_fd(void)
 {
 	int vendor_fd;
 	cap_rights_t rights;
 	cap_ioctl_t allowed[] = OES_IOCTLS_THIRD_PARTY_INIT;
+	struct oes_mode_args mode;
 
-	/* Duplicate the fd */
-	vendor_fd = dup(oes_fd);
+	vendor_fd = open(OES_DEVICE_PATH, O_RDONLY | O_CLOEXEC);
 	if (vendor_fd < 0)
 		return (-1);
+
+	/* Passive clients receive AUTH subscriptions as NOTIFY messages. */
+	memset(&mode, 0, sizeof(mode));
+	mode.ema_mode = OES_MODE_PASSIVE;
+	if (ioctl(vendor_fd, OES_IOC_SET_MODE, &mode) < 0) {
+		close(vendor_fd);
+		return (-1);
+	}
 
 	/* Limit allowed ioctls */
 	if (cap_ioctls_limit(vendor_fd, allowed, nitems(allowed)) < 0) {
@@ -109,7 +123,7 @@ create_vendor_fd(int oes_fd)
 	}
 
 	/* Limit capability rights */
-	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_EVENT, CAP_IOCTL);
+	cap_rights_init(&rights, CAP_READ, CAP_EVENT, CAP_IOCTL);
 	if (cap_rights_limit(vendor_fd, &rights) < 0) {
 		close(vendor_fd);
 		return (-1);
@@ -122,11 +136,11 @@ create_vendor_fd(int oes_fd)
  * Handle a client connection
  */
 static void
-handle_client(int client_sock, int oes_fd)
+handle_client(int client_sock)
 {
 	int vendor_fd;
 
-	vendor_fd = create_vendor_fd(oes_fd);
+	vendor_fd = create_vendor_fd();
 	if (vendor_fd < 0) {
 		syslog(LOG_ERR, "failed to create vendor fd: %m");
 		return;
@@ -265,7 +279,7 @@ main(int argc, char *argv[])
 				/* New client connection */
 				int client_sock = accept(listen_sock, NULL, NULL);
 				if (client_sock >= 0) {
-					handle_client(client_sock, oes_fd);
+					handle_client(client_sock);
 					close(client_sock);
 				}
 			}

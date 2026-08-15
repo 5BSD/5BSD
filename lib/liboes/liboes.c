@@ -755,6 +755,42 @@ oes_respond(oes_client_t *client, uint64_t msg_id, oes_auth_result_t result)
 }
 
 /*
+ * oes_respond_flags - Respond to an AUTH event with flag restrictions
+ */
+int
+oes_respond_flags(oes_client_t *client, uint64_t msg_id,
+    oes_auth_result_t result, uint32_t allowed_flags, uint32_t denied_flags)
+{
+	oes_response_flags_t resp;
+	ssize_t n;
+	int fd;
+
+	fd = oes_client_get_fd(client);
+	if (fd < 0)
+		return (-1);
+	if (result != OES_AUTH_ALLOW && result != OES_AUTH_DENY) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&resp, 0, sizeof(resp));
+	resp.erf_id = msg_id;
+	resp.erf_result = result;
+	resp.erf_allowed_flags = allowed_flags;
+	resp.erf_denied_flags = denied_flags;
+
+	n = write(fd, &resp, sizeof(resp));
+	if (n < 0)
+		return (-1);
+	if (n != sizeof(resp)) {
+		errno = EIO;
+		return (-1);
+	}
+
+	return (0);
+}
+
+/*
  * oes_dispatch - Event dispatch loop
  */
 int

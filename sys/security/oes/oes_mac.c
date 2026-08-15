@@ -377,6 +377,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	size_t auth_max = 0;
 	size_t clone_idx = 0;
 	bool auth_consulted = false;
+	bool auth_delivery_failed = false;
 	bool is_auth;
 	bool cached_denied = false;
 	int error = 0;
@@ -400,7 +401,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		 * the new clients can be served by the next event.
 		 */
 		for (;;) {
-			size_t need, i;
+			size_t need, i = 0;
 
 			OES_LOCK();
 			need = 0;
@@ -439,9 +440,40 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 			    M_WAITOK | M_ZERO);
 			auth_clones = malloc(sizeof(*auth_clones) * need, M_OES,
 			    M_WAITOK | M_ZERO);
-			for (i = 0; i < need; i++)
-				auth_clones[i] = oes_pending_clone(ep, M_WAITOK);
+			if (auth_eps != NULL && auth_clones != NULL) {
+				for (i = 0; i < need; i++) {
+					auth_clones[i] = oes_pending_clone(ep,
+					    M_WAITOK);
+					if (auth_clones[i] == NULL)
+						break;
+				}
+			}
 			ag = oes_auth_group_alloc(M_WAITOK);
+			if (auth_eps == NULL || auth_clones == NULL || ag == NULL ||
+			    i != need) {
+				/*
+				 * Do not dereference partially allocated AUTH state.
+				 * In fail-closed mode this condition must deny the
+				 * authorization rather than silently skipping a client.
+				 */
+				if (auth_clones != NULL) {
+					for (i = 0; i < need; i++) {
+						if (auth_clones[i] != NULL)
+							oes_pending_rele(auth_clones[i]);
+					}
+					free(auth_clones, M_OES);
+				}
+				if (auth_eps != NULL)
+					free(auth_eps, M_OES);
+				if (ag != NULL)
+					oes_auth_group_rele(ag);
+				auth_clones = NULL;
+				auth_eps = NULL;
+				ag = NULL;
+				auth_delivery_failed = true;
+				OES_LOCK();
+				break;
+			}
 			auth_max = need;
 		}
 	} else {
@@ -514,6 +546,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 					ep_client = auth_clones[clone_idx];
 				if (ep_client == NULL) {
 					ec->ec_events_dropped++;
+					auth_delivery_failed = true;
 					EC_UNLOCK(ec);
 					continue;
 				}
@@ -541,6 +574,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 				} else {
 					oes_auth_group_cancel_pending(ag);
 					oes_pending_rele(ep_client);
+					auth_delivery_failed = true;
 				}
 				EC_UNLOCK(ec);
 				continue;
@@ -617,6 +651,8 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	if (is_auth && auth_count > 0 && ag != NULL)
 		error = oes_auth_group_wait(ag, auth_eps, auth_count);
 	if (is_auth && cached_denied)
+		error = EACCES;
+	if (is_auth && auth_delivery_failed && oes_auth_fail_closed)
 		error = EACCES;
 
 	/*

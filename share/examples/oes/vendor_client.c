@@ -136,9 +136,9 @@ event_handler(oes_client_t *client __unused, const oes_message_t *msg,
 	printf("\n");
 
 	/*
-	 * Note: If we receive AUTH events (in PASSIVE mode), we don't
-	 * respond - they're informational only. The system daemon
-	 * handles the actual responses.
+	 * The broker configured this client in PASSIVE mode.  AUTH
+	 * subscriptions arrive as informational NOTIFY messages; the system
+	 * daemon alone handles the corresponding authorization responses.
 	 *
 	 * If we try to call oes_respond() or oes_set_mode(OES_MODE_AUTH),
 	 * we'll get ENOTCAPABLE because oesd restricted our ioctls.
@@ -190,9 +190,9 @@ main(int argc, char *argv[])
 		printf("  Unexpectedly succeeded!\n");
 	}
 
-	/* Subscribe to NOTIFY events only (we can't do AUTH) */
-	printf("Subscribing to NOTIFY events...\n");
-	if (oes_subscribe_all(client, false, true) < 0)
+	/* Passive mode converts AUTH subscriptions to informational NOTIFY events. */
+	printf("Subscribing to passive AUTH notifications...\n");
+	if (oes_subscribe_all(client, true, false) < 0)
 		err(1, "oes_subscribe_all");
 
 	/* Mute ourselves */
