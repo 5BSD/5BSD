@@ -119,6 +119,8 @@ main(int argc, char **argv)
 	tzfsd_config_defaults(&st.cfg);
 	if (tzfsd_config_load(&st.cfg, conf) == -1)
 		syslog(LOG_WARNING, "config %s: %m (using defaults)", conf);
+	/* Flavor-catalog drop-ins (freebsd, linux, ...) layer on last. */
+	(void)tzfsd_config_load_confd(&st.cfg, TZFSD_DEFAULT_CONFD);
 
 	/* All name-based work happens before cap_enter(). */
 	if (tzfsd_ensure_zfs(&st.cfg) == -1)

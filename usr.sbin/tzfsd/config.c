@@ -8,6 +8,7 @@
 
 #include <sys/types.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -68,19 +69,20 @@ tzfsd_config_defaults(struct tzfsd_config *cfg)
 	    sizeof(cfg->ephemeral_sync));
 
 	/*
-	 * The opinionated, out-of-the-box flavor set.  empty is built live
-	 * (trivial); native/freebsd/linux are baked send-stream artifacts
-	 * produced by tzfs-mkflavor (native from the built world at image
-	 * time; freebsd/linux from their base rootfs), received into the
-	 * templates on first start.
+	 * The built-in flavor set is deliberately just the two that need no
+	 * external content, so the broker stays self-contained: empty is a
+	 * fresh dataset and native is a copy-on-write clone of the running boot
+	 * environment (it ships for free, not as a baked second copy).
+	 *
+	 * OS-image flavors (e.g. freebsd, linux) are *not* built in -- curating
+	 * and shipping a distro rootfs is a separate concern from brokering
+	 * storage.  They are contributed as data by a flavor-catalog package
+	 * that drops a config fragment under the conf.d directory (declaring the
+	 * flavor and its baked artifact) plus the artifact itself; tzfsd then
+	 * offers whatever templates it finds.  See tzfsd_config_load_confd().
 	 */
 	add_flavor(cfg, "empty", TZFSD_BUILD_LIVE, NULL, false);
-	add_flavor(cfg, "native", TZFSD_BUILD_BAKED,
-	    "/usr/share/tzfs/native.zfs.zst", false);
-	add_flavor(cfg, "freebsd", TZFSD_BUILD_BAKED,
-	    "/usr/share/tzfs/freebsd.zfs.zst", false);
-	add_flavor(cfg, "linux", TZFSD_BUILD_BAKED,
-	    "/usr/share/tzfs/rocky9.zfs.zst", true);	/* linux is default */
+	add_flavor(cfg, "native", TZFSD_BUILD_LIVE, NULL, false);
 }
 
 struct tzfsd_flavor_def *
@@ -215,5 +217,38 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 
 	ucl_object_unref(__DECONST(ucl_object_t *, root));
 	ucl_parser_free(p);
+	return (0);
+}
+
+/*
+ * Overlay every *.ucl fragment in a conf.d directory, in lexical order, on top
+ * of the already-loaded configuration.  This is the seam that keeps OS-image
+ * curation out of the broker: a separately-packaged flavor catalog contributes
+ * its flavors (freebsd, linux, ...) by dropping a fragment here plus the baked
+ * artifact it points at, and tzfsd offers whatever it finds.  A missing or
+ * unreadable directory is not an error -- the built-in defaults stand.
+ */
+int
+tzfsd_config_load_confd(struct tzfsd_config *cfg, const char *dir)
+{
+	struct dirent **names;
+	int n, i;
+
+	n = scandir(dir, &names, NULL, alphasort);
+	if (n < 0)
+		return (0);
+	for (i = 0; i < n; i++) {
+		const char *nm = names[i]->d_name;
+		size_t len = strlen(nm);
+
+		if (len > 4 && strcmp(nm + len - 4, ".ucl") == 0) {
+			char path[TZFSD_MAXPATH];
+
+			(void)snprintf(path, sizeof(path), "%s/%s", dir, nm);
+			(void)tzfsd_config_load(cfg, path);
+		}
+		free(names[i]);
+	}
+	free(names);
 	return (0);
 }

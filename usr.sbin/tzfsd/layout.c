@@ -10,6 +10,8 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
+#include <sys/mount.h>
 #include <sys/linker.h>
 #include <sys/wait.h>
 
@@ -30,6 +32,7 @@ extern char **environ;
 
 #define	RETAIN_RIGHTS	ZH_ALL_RIGHTS
 #define	ZFS_DEV_PATH	"/dev/zfs"
+#define	TZFSD_NATIVE_SNAP	"tzfs-native"	/* BE snapshot cloned for native */
 
 /* Run a command to completion; return its exit status, or -1 to spawn. */
 static int
@@ -301,6 +304,73 @@ recv_baked(int templates_fd, struct tzfsd_flavor_def *f)
 }
 
 /*
+ * Build the "native" template as a copy-on-write clone of the running boot
+ * environment (the dataset mounted at "/").  This costs essentially no image
+ * space: the template shares blocks with the live root until a capability
+ * cloned from it diverges, so native ships "for free" rather than as a baked
+ * second copy of the system.  The pinned BE snapshot is created once, on the
+ * first start that materializes the template; later starts take the "already
+ * present" path and never re-enter here.  Returns 0 on success, -1 otherwise.
+ */
+static int
+build_native_live(struct tzfsd_state *st, struct tzfsd_flavor_def *f)
+{
+	struct tzfsd_config *cfg = &st->cfg;
+	struct statfs sfs;
+	const char *be, *rel;
+	size_t plen;
+	int zpd, root_fd, be_fd, tmpl_fd, ok = -1;
+
+	if (statfs("/", &sfs) != 0)
+		return (-1);
+	be = sfs.f_mntfromname;		/* e.g. "zroot" or "zroot/ROOT/default" */
+
+	/* The boot environment must live in our configured pool. */
+	plen = strlen(cfg->pool);
+	if (strncmp(be, cfg->pool, plen) != 0 ||
+	    (be[plen] != '\0' && be[plen] != '/'))
+		return (-1);
+	rel = (be[plen] == '/') ? be + plen + 1 : "";
+
+	zpd = tzfs_pool_open(cfg->pool, RETAIN_RIGHTS);
+	if (zpd == -1)
+		return (-1);
+	root_fd = tzfs_pool_root_open(zpd, RETAIN_RIGHTS, ZHF_SUBTREE);
+	(void)close(zpd);
+	if (root_fd == -1)
+		return (-1);
+
+	if (rel[0] == '\0') {
+		be_fd = root_fd;
+	} else {
+		be_fd = tzfs_openat(root_fd, rel, RETAIN_RIGHTS, 0);
+		if (be_fd == -1) {
+			(void)close(root_fd);
+			return (-1);
+		}
+	}
+
+	/* Snapshot the live BE (idempotent) and clone it into the template. */
+	if (tzfs_snapshot(be_fd, TZFSD_NATIVE_SNAP) == -1 && errno != EEXIST)
+		goto out;
+	tmpl_fd = tzfs_clone(st->templates_fd, be_fd, TZFSD_NATIVE_SNAP,
+	    f->name);
+	if (tmpl_fd == -1) {
+		syslog(LOG_ERR, "native: clone %s@%s: %m", be,
+		    TZFSD_NATIVE_SNAP);
+		goto out;
+	}
+	if (ensure_ready_snap(tmpl_fd) == 0)
+		ok = 0;
+	(void)close(tmpl_fd);
+out:
+	if (be_fd != root_fd)
+		(void)close(be_fd);
+	(void)close(root_fd);
+	return (ok);
+}
+
+/*
  * Make each enabled flavor's template available, per its build mode and the
  * precedence in docs/tzfsd-design.md §3.1.  Sets f->available.  A flavor that
  * cannot be made ready is simply left unavailable (and thus not offered).
@@ -340,6 +410,10 @@ tzfsd_flavors_prepare(struct tzfsd_state *st)
 					f->available = true;
 				(void)close(tmpl_fd);
 			}
+		} else if (f->build == TZFSD_BUILD_LIVE) {
+			/* native: clone the running boot environment. */
+			if (build_native_live(st, f) == 0)
+				f->available = true;
 		} else if (f->build == TZFSD_BUILD_BAKED) {
 			if (recv_baked(st->templates_fd, f) == 0) {
 				tmpl_fd = tzfs_openat(st->templates_fd,
@@ -355,7 +429,8 @@ tzfsd_flavors_prepare(struct tzfsd_state *st)
 		 * SOURCE fetch (fetch/unpack from a URL) is not yet
 		 * implemented; such flavors are offered only if their template
 		 * was pre-seeded (handled by the "already present" branch
-		 * above).  empty is built live; native/freebsd/linux are baked.
+		 * above).  empty and native are built live; freebsd/linux are
+		 * baked.
 		 */
 		if (f->available)
 			navail++;

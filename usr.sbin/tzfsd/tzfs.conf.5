@@ -56,9 +56,29 @@ Default
 for throughput.
 .El
 .Ss Flavors
+The broker's built-in flavors are only
+.Ql empty
+(a blank dataset) and
+.Ql native
+(a copy-on-write clone of the running boot environment); both are built live
+on first start and need no shipped content.
+OS-image flavors such as
+.Ql linux
+(Rocky) and
+.Ql freebsd
+are not built in \(em curating a distribution rootfs is a separate concern
+from brokering storage.
+They are contributed by the separately packaged flavor catalog,
+.Xr tzfs-flavors 7 ,
+which drops its own fragment under
+.Pa /etc/capability/tzfsd.d/ .
+.Pp
 The
 .Va flavors
-object maps a flavor name to its settings:
+object (in this file or in a
+.Pa tzfsd.d
+drop-in) maps a flavor name to its settings; a name not already known is
+added as a new flavor:
 .Bl -tag -width ".Va enabled" -offset indent
 .It Va build
 How the template is populated:
@@ -74,7 +94,7 @@ Path to the baked send-stream or rootfs source.
 Whether the flavor is offered.
 Set to
 .Ql false
-to slim a deployment; for example, removing the
+to slim a deployment; for example, disabling the
 .Ql linux
 (Rocky) flavor drops the Red Hat userland from disk.
 The flavor is then simply not offered and a request for it fails with
