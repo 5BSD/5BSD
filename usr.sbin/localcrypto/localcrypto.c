@@ -14,6 +14,8 @@
 #include <cryptocmp_protocol.h>
 #include <libservice.h>
 
+#include "policy.h"
+
 #define CRYPTOCMP_NAME "org.5bsd.CryptoCmp"
 static int control_fd;
 struct crypto_worker { int terminal_error; };
@@ -37,7 +39,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	    in->msg.opcode == CRYPTOCMP_OP_GENERATE &&
 	    in->generate.keylen <= sizeof(key) &&
 	    in->generate.mackeylen <= sizeof(mackey) &&
-	    (in->generate.keylen != 0 || in->generate.mackeylen != 0)) {
+	    cryptocmp_policy_validate(&in->generate) == 0) {
 		if (in->generate.keylen != 0)
 			arc4random_buf(key, in->generate.keylen);
 		if (in->generate.mackeylen != 0)
