@@ -8,6 +8,14 @@ PACKAGE=	bhyve
 
 MAN=	bhyve.8 bhyve_config.5
 
+# Transitional "waspnest" alias.  The hypervisor will eventually be named
+# waspnest with bhyve kept as the compatibility alias; for now install
+# waspnest as a symlink to bhyve so packaging and tooling can reference the
+# forward-looking name.  BINDIR defaults to /usr/sbin via bsd.prog.mk, so the
+# symlink is ${BINDIR}/waspnest -> bhyve (relative, same directory).
+SYMLINKS+=	bhyve ${BINDIR}/waspnest
+MLINKS+=	bhyve.8 waspnest.8
+
 BHYVE_SYSDIR?=${SRCTOP}
 
 .PATH:	${.CURDIR}/${MACHINE_CPUARCH}	\
