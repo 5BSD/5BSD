@@ -1331,6 +1331,21 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p)
 {
 	struct oes_client *ec;
 	struct oes_pending *ep_clone;
+	oes_event_type_t notify_event;
+
+	/*
+	 * NOSLEEP hooks deliver to NOTIFY clients only, but the pending event
+	 * still carries the AUTH event type it was generated with.  NOTIFY
+	 * clients subscribe to (and mute by) the NOTIFY variant, so convert
+	 * before matching and stamp the delivered clone with it -- mirroring
+	 * the sleep-path dispatch, which checks the notify_event.  Without this
+	 * every NOSLEEP-hook event (stat, poll, readlink, setowner, setflags,
+	 * get/listextattr) is dropped as "not subscribed".
+	 */
+	notify_event = OES_EVENT_IS_AUTH(ep->ep_msg.em_event) ?
+	    oes_auth_to_notify(ep->ep_msg.em_event) : ep->ep_msg.em_event;
+	if (notify_event == 0)
+		notify_event = ep->ep_msg.em_event;
 
 	if (!mtx_trylock(&oes_softc.sc_mtx)) {
 		atomic_add_64(&oes_softc.sc_nosleep_drops, 1);
@@ -1347,7 +1362,7 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p)
 			EC_UNLOCK(ec);
 			continue;
 		}
-		if (!oes_client_subscribed(ec, ep->ep_msg.em_event)) {
+		if (!oes_client_subscribed(ec, notify_event)) {
 			EC_UNLOCK(ec);
 			continue;
 		}
@@ -1357,7 +1372,7 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p)
 		 * so we don't need PROC_LOCK here.
 		 */
 		if (oes_client_is_muted_by_token(ec,
-		    &ep->ep_msg.em_process.ep_token, ep->ep_msg.em_event)) {
+		    &ep->ep_msg.em_process.ep_token, notify_event)) {
 			EC_UNLOCK(ec);
 			continue;
 		}
@@ -1378,6 +1393,8 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p)
 			EC_UNLOCK(ec);
 			continue;
 		}
+		/* Deliver as the NOTIFY event type the client subscribed to. */
+		ep_clone->ep_msg.em_event = notify_event;
 
 		if (oes_event_enqueue(ec, ep_clone) != 0)
 			oes_pending_free(ep_clone);
