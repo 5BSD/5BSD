@@ -1,0 +1,9 @@
+comment = "mac_abac integration tests"
+
+desc = <<EOD
+Integration tests for the mac_abac kernel module and its control utility.
+EOD
+
+annotations = {
+	set = "tests"
+}

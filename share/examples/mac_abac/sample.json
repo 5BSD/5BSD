@@ -1,0 +1,122 @@
+{
+    "mode": "permissive",
+    "rules": [
+        {
+            "id": 1,
+            "action": "deny",
+            "operations": ["exec"],
+            "object": { "type": "untrusted" }
+        },
+        {
+            "id": 10,
+            "action": "allow",
+            "operations": ["read", "write", "open", "stat", "mmap"],
+            "subject": { "domain": "web" },
+            "object": { "domain": "web" }
+        },
+        {
+            "id": 11,
+            "action": "allow",
+            "operations": ["read", "write", "open", "stat"],
+            "subject": { "domain": "database" },
+            "object": { "domain": "database" }
+        },
+        {
+            "id": 20,
+            "action": "allow",
+            "operations": ["exec"],
+            "subject": { "type": "admin" },
+            "object": { "type": "admin-tool" },
+            "subj_ctx": { "jail": "host" }
+        },
+        {
+            "id": 21,
+            "action": "deny",
+            "operations": ["exec"],
+            "object": { "type": "admin-tool" },
+            "subj_ctx": { "jail": "any" }
+        },
+        {
+            "id": 30,
+            "action": "allow",
+            "operations": ["read", "write"],
+            "subject": "*",
+            "object": { "level": "sandbox-only" },
+            "subj_ctx": { "sandboxed": true }
+        },
+        {
+            "id": 31,
+            "action": "deny",
+            "operations": ["read", "write", "exec"],
+            "object": { "level": "sandbox-only" },
+            "subj_ctx": { "sandboxed": false }
+        },
+        {
+            "id": 40,
+            "action": "allow",
+            "operations": ["debug", "signal", "sched"],
+            "subject": { "type": "supervisor" },
+            "object": { "type": "worker" }
+        },
+        {
+            "id": 41,
+            "action": "deny",
+            "operations": ["debug"],
+            "subject": "*",
+            "object": "*",
+            "obj_ctx": { "sandboxed": true }
+        },
+        {
+            "id": 50,
+            "action": "transition",
+            "operations": ["exec"],
+            "subject": { "type": "user" },
+            "object": { "type": "setuid", "name": "su" },
+            "newlabel": "type=admin,domain=system"
+        },
+        {
+            "id": 51,
+            "action": "transition",
+            "operations": ["exec"],
+            "subject": { "type": "user" },
+            "object": { "type": "setuid", "name": "sudo" },
+            "newlabel": "type=admin,domain=system"
+        },
+        {
+            "id": 60,
+            "action": "deny",
+            "operations": ["exec"],
+            "subject": { "type": "restricted" },
+            "object": { "type": "trusted", "negate": true }
+        },
+        {
+            "id": 100,
+            "action": "allow",
+            "operations": ["all"],
+            "subject": { "type": "trusted" },
+            "object": "*"
+        },
+        {
+            "id": 101,
+            "action": "allow",
+            "operations": ["all"],
+            "subject": { "domain": "system" },
+            "object": "*"
+        },
+        {
+            "id": 102,
+            "action": "allow",
+            "operations": ["all"],
+            "subject": "*",
+            "object": "*",
+            "subj_ctx": { "uid": 0 }
+        },
+        {
+            "id": 999,
+            "action": "deny",
+            "operations": ["all"],
+            "subject": "*",
+            "object": "*"
+        }
+    ]
+}

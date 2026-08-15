@@ -210,6 +210,7 @@ SUBDIR=	\
 	${_ixl} \
 	jme \
 	kbdmux \
+	${_mac_abac} \
 	mac_capability \
 	mac_capability_capprotect \
 	mac_capability_coalition \
@@ -618,6 +619,7 @@ _ossl=		ossl
 
 # MAC framework
 .if ${KERN_OPTS:MMAC} || defined(ALL_MODULES)
+_mac_abac=	mac_abac
 _mac_biba=	mac_biba
 _mac_bsdextended= mac_bsdextended
 .if ${KERN_OPTS:MDDB} || defined(ALL_MODULES)

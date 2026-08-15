@@ -1,0 +1,315 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 ABAC Project
+.\" All rights reserved.
+.\"
+.Dd March 9, 2026
+.Dt MAC_ABAC 4
+.Os
+.Sh NAME
+.Nm mac_abac
+.Nd "flexible label-based Mandatory Access Control policy"
+.Sh SYNOPSIS
+To compile the policy into a static kernel:
+.Bd -ragged -offset indent
+.Cd "options MAC"
+.Cd "options MAC_ABAC"
+.Ed
+.Pp
+To load the policy as a kernel module at boot:
+.Bd -literal -offset indent
+mac_abac_load="YES"
+.Ed
+.Pp
+in
+.Xr loader.conf 5 .
+.Sh DESCRIPTION
+The
+.Nm
+policy implements flexible, label-based Mandatory Access Control (MAC)
+for
+.Fx .
+Unlike fixed policies like
+.Xr mac_biba 4
+or
+.Xr mac_mls 4 ,
+.Nm
+allows administrators to define arbitrary label attributes and custom
+access control rules.
+.Pp
+Labels are key-value pairs stored in the
+.Dq system:mac_abac
+extended attribute on files and inherited by processes.
+Rules define access decisions based on pattern matching against subject
+(process) and object (file/process) labels.
+.Ss Design Philosophy
+The
+.Nm
+policy follows a Type Enforcement model similar to SELinux domains, but with
+a simpler, more flexible approach:
+.Bl -bullet
+.It
+Labels are arbitrary key=value pairs, not predefined types
+.It
+Rules are first-match ordered, like
+.Xr pf 4
+.It
+No compile-time policy \(em rules are loaded dynamically
+.It
+Integrates with FreeBSD security primitives (jails, Capsicum)
+.El
+.Ss Enforcement Modes
+.Bl -tag -width "permissive"
+.It Cm disabled
+No access checks.
+Labels are still read and stored, but not enforced.
+.It Cm permissive
+Access checks are performed and logged, but denials are not enforced.
+Useful for policy development.
+.It Cm enforcing
+Full enforcement of access control decisions.
+.El
+.Ss Labels
+Each file can have a label stored in the
+.Dq system:mac_abac
+extended attribute.
+Labels consist of key=value pairs in newline-separated format:
+.Bd -literal -offset indent
+type=app
+domain=web
+name=nginx
+.Ed
+.Pp
+Process labels are inherited from the parent process at fork, and can
+be changed via exec transition rules.
+.Pp
+Files and processes without explicit labels receive a default label of
+.Dq type=unlabeled .
+.Ss Rules
+Rules are evaluated in order (first match wins).
+Each rule specifies:
+.Bl -bullet -compact
+.It
+Action: allow, deny, or transition
+.It
+Operations: which system calls to check
+.It
+Subject pattern: match the calling process label
+.It
+Object pattern: match the target object label
+.It
+Context constraints (optional): check process attributes (UID, jail, etc.)
+.It
+New label (transition rules only): label assigned after exec
+.El
+.Pp
+If no rule matches, the default policy applies (configurable as allow or deny).
+.Ss Context Constraints
+Rules can include constraints on process attributes beyond labels:
+.Bl -bullet -compact
+.It
+UID/GID checks
+.It
+Jail membership (host, any jail, specific jail)
+.It
+Capsicum capability mode
+.It
+Controlling terminal presence
+.El
+.Pp
+Subject context applies to the calling process.
+Object context applies to the target process (for debug/signal/sched operations).
+.Sh SYSCTLS
+.Bl -tag -width indent
+.It Va security.mac.mac_abac.enabled
+Enable/disable the policy module (0 or 1).
+.It Va security.mac.mac_abac.mode
+Current enforcement mode (0=disabled, 1=permissive, 2=enforcing).
+.It Va security.mac.mac_abac.default_policy
+Default when no rule matches (0=allow, 1=deny).
+.It Va security.mac.mac_abac.checks
+Total access checks performed.
+.It Va security.mac.mac_abac.allowed
+Access checks that returned allow.
+.It Va security.mac.mac_abac.denied
+Access checks that returned deny.
+.It Va security.mac.mac_abac.rule_count
+Number of active rules.
+.It Va security.mac.mac_abac.labels_allocated
+Total labels allocated (debugging).
+.It Va security.mac.mac_abac.labels_freed
+Total labels freed (debugging).
+.It Va security.mac.mac_abac.parse_errors
+Label parsing errors encountered.
+.It Va security.mac.mac_abac.locked
+Policy lock status (0=unlocked, 1=locked until reboot).
+Once locked, policy cannot be modified.
+This sysctl is read-only.
+.It Va security.mac.mac_abac.log_level
+Audit log level (0=none, 1=error, 2=admin, 3=deny, 4=all).
+Default is 2 (admin), which logs policy changes.
+.It Va security.mac.mac_abac.extattr_name
+Name of the extended attribute used to store labels.
+Default is
+.Dq mac_abac .
+.El
+.Sh LIMITS
+.Bl -column "Maximum label length" "4096 bytes" -offset indent
+.It Sy Limit Ta Sy Value
+.It Maximum label length Ta 4,096 bytes
+.It Maximum key length Ta 64 bytes
+.It Maximum value length Ta 256 bytes
+.It Maximum pairs per label Ta 16
+.It Maximum pairs per rule pattern Ta 8
+.It Maximum rules Ta 4,096
+.El
+.Sh IMPLEMENTATION NOTES
+.Ss Memory Usage
+Each rule uses approximately 1.6KB of memory.
+.Ss Extended Attributes
+Labels are stored in the
+.Dq system:mac_abac
+namespace.
+The filesystem must support extended attributes.
+For UFS, ensure
+.Cm multilabel
+is set in
+.Xr tunefs 8 .
+ZFS supports extended attributes natively.
+.Ss DTrace Probes
+The module provides SDT probes for tracing.
+The provider name is
+.Dq abac .
+.Pp
+Example usage:
+.Bd -literal -offset indent
+dtrace -n 'abac:::check-deny { printf("%s -> %s", copyinstr(arg0), copyinstr(arg1)); }'
+.Ed
+.Pp
+Available probes:
+.Bl -tag -width "abac:policy:loglevel:change" -compact
+.It Li abac:rules:check:entry
+Access check started.
+.It Li abac:rules:check:return
+Access check completed (with result).
+.It Li abac:rules:check:allow
+Access allowed.
+.It Li abac:rules:check:deny
+Access denied.
+.It Li abac:rules:rule:match
+Rule matched.
+.It Li abac:rules:rule:nomatch
+No rule matched, using default.
+.It Li abac:rules:rule:add
+Rule added.
+.It Li abac:rules:rule:remove
+Rule removed.
+.It Li abac:rules:rule:clear
+All rules cleared.
+.It Li abac:policy:mode:change
+Enforcement mode changed.
+.It Li abac:policy:default:change
+Default policy changed.
+.It Li abac:policy:lock:set
+Policy locked (until reboot).
+.It Li abac:policy:loglevel:change
+Log level changed.
+.It Li abac:cred:transition:exec
+Process label transition on exec.
+.It Li abac:label:extattr:read
+Label read from extended attribute.
+.It Li abac:label:extattr:default
+Default label assigned.
+.It Li abac:label:file:set
+File label set via syscall.
+.It Li abac:sets:set:enable
+Rule set(s) enabled.
+.It Li abac:sets:set:disable
+Rule set(s) disabled.
+.It Li abac:sets:set:swap
+Rule sets swapped.
+.It Li abac:sets:set:move
+Rules moved between sets.
+.It Li abac:sets:set:clear
+Rule set cleared.
+.El
+.Sh FILES
+.Bl -tag -width "/etc/mac_abac.conf"
+.It Pa /etc/mac_abac.conf
+Default policy configuration file.
+.It Pa /usr/sbin/mac_abac_ctl
+Administration utility.
+.El
+.Sh EXAMPLES
+Basic setup to protect against untrusted executables:
+.Bd -literal -offset indent
+# Load the module
+kldload mac_abac
+
+# Set default deny policy
+mac_abac_ctl default deny
+
+# Allow execution of trusted binaries
+mac_abac_ctl rule add allow exec '*' -> type=trusted
+mac_abac_ctl rule add allow exec '*' -> type=system
+
+# Allow everything else except exec
+mac_abac_ctl rule add allow read,write,stat,open '*' -> '*'
+
+# Enable enforcement
+mac_abac_ctl mode enforcing
+
+# Label trusted binaries
+find /bin /sbin /usr/bin /usr/sbin -type f -exec \\
+    setextattr system mac_abac "type=system" {} \\;
+.Ed
+.Sh SEE ALSO
+.Xr mac 4 ,
+.Xr mac_biba 4 ,
+.Xr mac_mls 4 ,
+.Xr mac_abac.conf 5 ,
+.Xr mac_abac_ctl 8
+.Sh HISTORY
+The
+.Nm
+module first appeared in
+.Fx 15.0 .
+.Sh AUTHORS
+.An "The ABAC project" .
+.Sh CAVEATS
+.Nm
+cannot be unloaded once loaded.
+This is by design, as labels may be attached to vnodes and credentials
+that persist across the module lifecycle.
+.Pp
+The module must be loaded at boot time via
+.Xr loader.conf 5
+or compiled into the kernel.
+Loading after boot with
+.Xr kldload 8
+works but is not recommended for production.
+.Sh SECURITY CONSIDERATIONS
+.Bl -bullet
+.It
+Rules are root-only.
+Only processes with uid 0 can add, remove, or modify rules.
+.It
+Labels on files require write access to extended attributes.
+Consider protecting critical files with filesystem permissions.
+.It
+Default policy of "allow" is permissive.
+For high-security environments, use "deny" as default.
+.It
+Permissive mode should only be used for policy development, not production.
+.It
+Use
+.Cm mac_abac_ctl lock
+in production to prevent runtime policy modifications.
+Once locked, the policy cannot be changed until reboot.
+.It
+Admin actions are logged to the kernel message buffer when
+.Va security.mac.mac_abac.log_level
+is 2 (admin) or higher.
+Review logs with
+.Xr dmesg 8 .
+.El

@@ -1,0 +1,7 @@
+comment = "Attribute-based access control MAC policy and management tools"
+
+desc = <<EOD
+The mac_abac kernel policy provides label-based mandatory access control with
+dynamic rules.  This package includes the module, mac_abac_ctl management
+utility, mac_abacd policy daemon, documentation, and sample policy files.
+EOD

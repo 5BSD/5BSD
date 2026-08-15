@@ -44,4 +44,8 @@ _uefi.8= uefi.8
 
 MLINKS+=uefi.8 efi.8
 
+MANGROUPS+=		MAC_ABAC
+MAC_ABACPACKAGE=	mac-abac
+MAC_ABAC=		mac_abac_ctl.8
+
 .include <bsd.prog.mk>

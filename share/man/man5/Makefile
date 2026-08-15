@@ -119,4 +119,8 @@ UFS=		fs.5
 # we decide to install all manpages in all architectures
 _boot.config.5=	boot.config.5
 
+MANGROUPS+=		MAC_ABAC
+MAC_ABACPACKAGE=	mac-abac
+MAC_ABAC=		mac_abac.conf.5
+
 .include <bsd.prog.mk>

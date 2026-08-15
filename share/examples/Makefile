@@ -115,6 +115,10 @@ SE_JAILS= \
 SE_DIRS+=	kld
 SE_KLD=	Makefile
 
+SE_DIRS+=	mac_abac
+SE_MAC_ABAC_PACKAGE=	mac-abac
+SE_MAC_ABAC=	sample.conf sample.json sample.rules sample.ucl
+
 SE_DIRS+=	kld/cdev
 SE_KLD_CDEV= \
 	Makefile \

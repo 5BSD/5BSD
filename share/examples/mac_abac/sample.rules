@@ -1,0 +1,137 @@
+# ABAC Policy Configuration - Line Format (.rules)
+#
+# Simple text format for ABAC rules, one rule per line.
+# Best for quick edits and shell scripting.
+#
+# Usage:
+#   mac_abac_ctl rule load /etc/mac_abac.rules
+#   mac_abac_ctl rule add "allow exec * -> *"
+#
+# Syntax:
+#   action operations subject [ctx:...] -> object [ctx:...] [=> newlabel]
+#
+# Actions:
+#   allow      - permit the operation
+#   deny       - block the operation
+#   transition - allow and change process label to newlabel
+#
+# Operations (comma-separated):
+#   exec, read, write, mmap, link, rename, unlink, chdir, stat,
+#   readdir, create, open, access, lookup, setextattr, getextattr,
+#   debug, signal, sched, all
+#
+# Patterns:
+#   *                    - match anything
+#   key=value            - match single field
+#   key=val1,key2=val2   - match multiple fields (AND)
+#   !key=value           - negation (match if NOT equal)
+#
+# Context constraints (ctx:):
+#   Position determines what ctx: applies to:
+#   - ctx: BEFORE -> = subject constraint (the caller)
+#   - ctx: AFTER  -> = object constraint (the target)
+#
+#   Available keys (comma-separated for multiple):
+#   ctx:uid=0           - effective UID
+#   ctx:gid=0           - effective GID
+#   ctx:jail=host       - on host (not jailed)
+#   ctx:jail=any        - in any jail
+#   ctx:sandboxed=true  - in Capsicum sandbox
+#   ctx:tty=true        - has controlling terminal
+#
+#   Examples:
+#   deny exec * ctx:jail=any -> type=hostonly         # jailed subject blocked
+#   deny debug * -> * ctx:sandboxed=true              # sandboxed target protected
+#   deny signal * ctx:jail=any -> * ctx:jail=host     # jail can't signal host
+
+# =============================================================================
+# DENY RULES - Block dangerous operations
+# =============================================================================
+
+# Block execution of untrusted binaries
+deny exec * -> type=untrusted
+
+# Block execution of anything NOT marked trusted (negation)
+deny exec type=restricted -> !type=trusted
+
+# Block admin tools from jails (subject is jailed)
+deny exec * ctx:jail=any -> type=admin-tool
+
+# Block debugging of sandboxed processes
+deny debug * -> * ctx:sandboxed=true
+
+# =============================================================================
+# DOMAIN ISOLATION - Processes stay in their domain
+# =============================================================================
+
+# Web domain isolation
+allow read,write,open,stat,mmap domain=web -> domain=web
+
+# Database domain isolation
+allow read,write,open,stat domain=database -> domain=database
+
+# App domain isolation
+allow read,write,mmap,exec domain=app -> domain=app
+
+# =============================================================================
+# CONTEXT-BASED ACCESS - Access depends on process context
+# =============================================================================
+
+# Admin tools only on host system (subject must be on host)
+allow exec type=admin ctx:jail=host -> type=admin-tool
+
+# Sandboxed processes can access sandbox resources (subject is sandboxed)
+allow read,write * ctx:sandboxed=true -> level=sandbox-only
+
+# Non-sandboxed denied sandbox resources (subject not sandboxed)
+deny read,write,exec * ctx:sandboxed=false -> level=sandbox-only
+
+# Interactive programs require TTY (subject has tty)
+allow exec * ctx:tty=true -> type=interactive
+
+# =============================================================================
+# PROCESS OPERATIONS - Debug, signal, scheduling
+# =============================================================================
+
+# Supervisors can control workers
+allow debug,signal,sched type=supervisor -> type=worker
+
+# Init can signal anything
+allow signal type=init -> *
+
+# =============================================================================
+# TRANSITIONS - Change label on exec
+# =============================================================================
+
+# User executing su becomes admin
+transition exec type=user -> type=setuid,name=su => type=admin,domain=system
+
+# User executing sudo becomes admin
+transition exec type=user -> type=setuid,name=sudo => type=admin,domain=system
+
+# Login shell transitions user
+transition exec type=login -> type=shell => type=user,domain=user
+
+# =============================================================================
+# ALLOW RULES - Permit safe operations
+# =============================================================================
+
+# Trusted processes have full access
+allow all type=trusted -> *
+
+# System domain has full access
+allow all domain=system -> *
+
+# Root always allowed (subject has uid 0)
+allow all * ctx:uid=0 -> *
+
+# =============================================================================
+# DEFAULT POLICY
+# =============================================================================
+# The final rule determines default behavior.
+# Alternatively, use: sysctl security.mac.mac_abac.default_policy=0 (deny)
+#                 or: sysctl security.mac.mac_abac.default_policy=1 (allow)
+
+# Uncomment ONE of these:
+# deny all * -> *    # Strict: deny everything not explicitly allowed
+# allow all * -> *   # Permissive: allow everything not explicitly denied

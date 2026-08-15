@@ -1,0 +1,535 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 ABAC Project
+.\" All rights reserved.
+.\"
+.Dd March 9, 2026
+.Dt ABACCTL 8
+.Os
+.Sh NAME
+.Nm mac_abac_ctl
+.Nd control utility for the ABAC MAC policy module
+.Sh SYNOPSIS
+.Nm
+.Cm mode
+.Op Cm disabled | permissive | enforcing
+.Nm
+.Cm default
+.Op Cm allow | deny
+.Nm
+.Cm status
+.Nm
+.Cm stats
+.Nm
+.Cm limits
+.Nm
+.Cm rule add
+.Ar action operations subject
+.Op Cm ctx: Ns Ar constraints
+.Cm ->
+.Ar object
+.Op Cm ctx: Ns Ar constraints
+.Op Cm => Ar newlabel
+.Nm
+.Cm rule remove
+.Ar id
+.Nm
+.Cm rule clear
+.Nm
+.Cm rule list
+.Nm
+.Cm rule load
+.Ar file
+.Nm
+.Cm rule append
+.Ar file
+.Nm
+.Cm rule validate
+.Ar file
+.Nm
+.Cm rule add
+.Op Fl s Ar set
+.Ar rule
+.Nm
+.Cm rule load
+.Op Fl s Ar set
+.Ar file
+.Nm
+.Cm set enable
+.Ar num | start Ns - Ns Ar end | No all
+.Nm
+.Cm set disable
+.Ar num | start Ns - Ns Ar end | No all
+.Nm
+.Cm set swap
+.Ar set_a set_b
+.Nm
+.Cm set move
+.Ar from_set to_set
+.Nm
+.Cm set clear
+.Ar num
+.Nm
+.Cm set list
+.Op Ar start Ns - Ns Ar end
+.Nm
+.Cm lock
+.Nm
+.Cm log
+.Op Cm none | error | admin | deny | all
+.Nm
+.Cm label get
+.Ar path
+.Nm
+.Cm label set
+.Ar path label
+.Nm
+.Cm label setatomic
+.Ar path label
+.Nm
+.Cm label setrecursive
+.Ar path label
+.Op Fl v
+.Op Fl d | Fl f
+.Nm
+.Cm label refresh
+.Ar path
+.Nm
+.Cm label remove
+.Ar path
+.Nm
+.Cm test
+.Ar operation subject object
+.Sh DESCRIPTION
+The
+.Nm
+utility controls the
+.Xr mac_abac 4
+kernel module, which implements a flexible label-based Mandatory Access
+Control (MAC) policy for FreeBSD.
+.Pp
+Labels are key-value pairs attached to files (via extended attributes) and
+processes (via credential labels).
+Rules define access control decisions based on pattern matching against
+these labels.
+.Ss Commands
+.Bl -tag -width indent
+.It Cm mode Op Cm disabled | permissive | enforcing
+Get or set the enforcement mode.
+.Bl -tag -width "permissive" -compact
+.It Cm disabled
+No access checks performed.
+.It Cm permissive
+Log denials but allow access (for policy development).
+.It Cm enforcing
+Enforce access control decisions.
+.El
+.It Cm default Op Cm allow | deny
+Get or set the default policy when no rule matches.
+.It Cm status
+Display current mode, default policy, and rule count.
+.It Cm stats
+Display access check statistics (checks, allowed, denied).
+.It Cm limits
+Display system limits (max rules, max pairs, max label length).
+.El
+.Ss Rule Management
+.Bl -tag -width indent
+.It Cm rule add Ar action operations subject Cm -> Ar object Op Cm => Ar newlabel
+Add a new access control rule.
+.Bl -tag -width "operations" -compact
+.It Ar action
+One of
+.Cm allow ,
+.Cm deny ,
+or
+.Cm transition .
+.It Ar operations
+Comma-separated list of operations or
+.Cm all .
+See
+.Sx OPERATIONS
+below.
+.It Ar subject
+Pattern to match the calling process label, or
+.Cm *
+for wildcard.
+.It Ar object
+Pattern to match the target object label, or
+.Cm *
+for wildcard.
+.It Ar newlabel
+For
+.Cm transition
+rules only: the new label assigned to the process after exec.
+.El
+.It Cm rule remove Ar id
+Remove a rule by its numeric ID.
+.It Cm rule clear
+Remove all rules.
+.It Cm rule list
+List all loaded rules.
+.It Cm rule load Ar file
+Atomically replace all rules with those in
+.Ar file .
+On parse error, existing rules remain unchanged.
+.It Cm rule append Ar file
+Add rules from
+.Ar file
+to the existing rule set.
+.It Cm rule validate Ar file
+Check
+.Ar file
+syntax without loading rules.
+.El
+.Ss Rule Sets
+Rules are organized into sets numbered 0-65535.
+During rule evaluation, sets are checked in ascending order (set 0 first, then 1, etc.).
+Within each set, rules are evaluated in the order they were added.
+The first matching rule wins.
+.Pp
+Sets can be enabled or disabled without removing rules.
+Disabled sets are skipped during evaluation.
+.Bl -tag -width indent
+.It Cm set enable Ar num | start Ns - Ns Ar end | No all
+Enable rule set(s).
+Rules in disabled sets are not evaluated.
+.It Cm set disable Ar num | start Ns - Ns Ar end | No all
+Disable rule set(s).
+.It Cm set swap Ar set_a set_b
+Atomically swap two sets.
+Useful for hot-reloading policies without a window where no rules are active.
+.It Cm set move Ar from_set to_set
+Move all rules from one set to another.
+.It Cm set clear Ar num
+Remove all rules in the specified set.
+.It Cm set list Op Ar start Ns - Ns Ar end
+Show set status and rule counts.
+Default range is 0-31.
+.El
+.Pp
+The
+.Fl s
+option on
+.Cm rule add
+and
+.Cm rule load
+specifies the target set.
+If not specified, rules go to set 0.
+The
+.Fl s
+option overrides any
+.Cm set
+field in the rule file.
+.Pp
+In line format rules, append
+.Cm set Ar N
+to specify the set:
+.Bd -literal -offset indent
+allow exec * -> * set 5
+.Ed
+.Ss Policy Protection
+.Bl -tag -width indent
+.It Cm lock
+Lock the policy, preventing all rule and mode changes until the system
+is rebooted.
+This provides tamper resistance for production deployments.
+Once locked, the following operations are denied with
+.Er EPERM :
+mode changes, default policy changes, rule add/remove/clear/load,
+and set enable/disable/swap/move/clear.
+.Pp
+The lock is one-way and cannot be undone without rebooting.
+.It Cm log Op Cm none | error | admin | deny | all
+Get or set the audit log level.
+Admin actions are logged to the kernel message buffer
+.Pq see Xr dmesg 8 .
+.Bl -tag -width "admin" -compact
+.It Cm none
+No logging.
+.It Cm error
+Log errors only.
+.It Cm admin
+Log policy changes (rule add/remove, mode changes).
+This is the default.
+.It Cm deny
+Also log access denials.
+.It Cm all
+Log all access checks (very verbose, use for debugging).
+.El
+.El
+.Ss Label Management
+.Bl -tag -width indent
+.It Cm label get Ar path
+Display the ABAC extended attribute on
+.Ar path .
+.It Cm label set Ar path Ar label
+Set the ABAC extended attribute on
+.Ar path .
+The
+.Ar label
+is specified as comma-separated key=value pairs.
+Also refreshes the kernel's in-memory cached label.
+.It Cm label setatomic Ar path Ar label
+Set the label atomically via a single kernel syscall.
+This writes the extended attribute and updates the in-memory cached label
+in one operation, avoiding race conditions.
+This is the preferred method for ZFS filesystems.
+.It Cm label setrecursive Ar path Ar label Op Fl v Op Fl d | Fl f
+Recursively set labels on a directory tree.
+Uses atomic setlabel for each file.
+.Bl -tag -width "-v" -compact
+.It Fl v
+Verbose mode; print each file as it is labeled.
+.It Fl d
+Label directories only.
+.It Fl f
+Label files only.
+.El
+.It Cm label refresh Ar path
+Refresh the kernel's in-memory cached label for
+.Ar path
+by re-reading from the extended attribute.
+Useful after using
+.Xr setextattr 8
+directly.
+.It Cm label remove Ar path
+Remove the ABAC extended attribute from
+.Ar path .
+.El
+.Ss Testing
+.Bl -tag -width indent
+.It Cm test Ar operation subject object
+Simulate an access check without performing it.
+Reports whether access would be allowed or denied, and which rule matched.
+.El
+.Sh LABEL FORMAT
+Labels are comma-separated key=value pairs:
+.Bd -literal -offset indent
+type=app,domain=web,name=nginx
+.Ed
+.Pp
+Keys and values are arbitrary strings.
+Common conventions include:
+.Bl -tag -width "sensitivity" -compact
+.It Cm type
+Object type (app, data, config, log, etc.)
+.It Cm domain
+Security domain (web, database, mail, etc.)
+.It Cm name
+Application or file name
+.It Cm sensitivity
+Classification level (public, internal, secret, etc.)
+.It Cm compartment
+Need-to-know compartment (hr, finance, etc.)
+.El
+.Sh PATTERN FORMAT
+Patterns match labels using key=value pairs.
+All specified pairs must match (AND logic).
+.Bl -tag -width "key1=val1,key2=val2"
+.It Cm *
+Match any label (wildcard).
+.It Cm key=value
+Label must have exact key=value.
+.It Cm key=*
+Label must have key with any value.
+.It Cm key1=val1,key2=val2
+Label must have both pairs.
+.It Cm !pattern
+Negate the match (matches labels that do NOT match the pattern).
+.El
+.Sh OPERATIONS
+Operations that can be controlled by rules:
+.Bl -column "setextattr" "Description" -offset indent
+.It Sy Operation Ta Sy Description
+.It Cm exec Ta Execute a file
+.It Cm read Ta Read file contents
+.It Cm write Ta Write file contents
+.It Cm mmap Ta Memory-map a file
+.It Cm link Ta Create hard link
+.It Cm rename Ta Rename file
+.It Cm unlink Ta Delete file
+.It Cm chdir Ta Change directory
+.It Cm stat Ta Get file status
+.It Cm readdir Ta Read directory contents
+.It Cm create Ta Create new file
+.It Cm setextattr Ta Set extended attribute
+.It Cm getextattr Ta Get extended attribute
+.It Cm lookup Ta Look up file in directory
+.It Cm open Ta Open file
+.It Cm access Ta Check file access
+.It Cm debug Ta Debug process (ptrace)
+.It Cm signal Ta Send signal to process
+.It Cm sched Ta Scheduler operations on process
+.It Cm connect Ta Socket connect
+.It Cm bind Ta Socket bind to address
+.It Cm listen Ta Socket listen for connections
+.It Cm accept Ta Socket accept connection
+.It Cm send Ta Socket send data
+.It Cm receive Ta Socket receive data
+.It Cm deliver Ta Packet delivery to socket
+.It Cm wait Ta Wait on process
+.It Cm mprotect Ta Memory protection change
+.It Cm audit Ta Audit operations
+.It Cm all Ta All operations
+.El
+.Sh CONTEXT CONSTRAINTS
+Rules can include context constraints that check process attributes.
+The position of
+.Cm ctx:
+determines what it applies to:
+.Bl -tag -width "ctx: after ->" -offset indent
+.It Cm ctx: No before Cm ->
+Constraints on the calling process (subject).
+.It Cm ctx: No after Cm ->
+Constraints on the target process (object).
+.El
+.Pp
+Multiple constraints on the same side are comma-separated (one
+.Cm ctx:
+per side):
+.Bd -literal -offset indent
+ctx:uid=0,jail=host
+.Ed
+.Pp
+Available constraints:
+.Bl -tag -width "sandboxed=true" -compact
+.It Cm uid= Ns Ar N
+Effective UID must equal N.
+.It Cm ruid= Ns Ar N
+Real UID must equal N.
+.It Cm gid= Ns Ar N
+Effective GID must equal N.
+.It Cm jail=host
+Must be running on host (not in jail).
+.It Cm jail=any
+Must be running in a jail.
+.It Cm jail= Ns Ar N
+Must be in jail with ID N.
+.It Cm sandboxed=true
+Must be in Capsicum capability mode.
+.It Cm sandboxed=false
+Must not be in Capsicum capability mode.
+.It Cm tty=true
+Must have a controlling terminal.
+.El
+.Sh EXAMPLES
+Enable enforcing mode:
+.Bd -literal -offset indent
+mac_abac_ctl mode enforcing
+.Ed
+.Pp
+Deny execution of untrusted files:
+.Bd -literal -offset indent
+mac_abac_ctl rule add deny exec '*' -> type=untrusted
+.Ed
+.Pp
+Allow web domain to read web files:
+.Bd -literal -offset indent
+mac_abac_ctl rule add allow read,write domain=web -> domain=web
+.Ed
+.Pp
+Transition to restricted domain on exec:
+.Bd -literal -offset indent
+mac_abac_ctl rule add transition exec '*' -> type=entrypoint,app=nginx \\
+    => domain=web,restricted=true
+.Ed
+.Pp
+Only root on host can run admin tools:
+.Bd -literal -offset indent
+mac_abac_ctl rule add allow exec '*' ctx:uid=0,jail=host -> type=admin
+.Ed
+.Pp
+Prevent jailed processes from debugging host processes:
+.Bd -literal -offset indent
+mac_abac_ctl rule add deny debug '*' ctx:jail=any -> '*' ctx:jail=host
+.Ed
+.Pp
+Protect sandboxed processes from debugging:
+.Bd -literal -offset indent
+mac_abac_ctl rule add deny debug '*' -> '*' ctx:sandboxed=true
+.Ed
+.Pp
+Label a file:
+.Bd -literal -offset indent
+mac_abac_ctl label set /usr/local/bin/nginx type=app,domain=web,name=nginx
+.Ed
+.Pp
+Test if an operation would be allowed:
+.Bd -literal -offset indent
+mac_abac_ctl test exec domain=user type=trusted
+.Ed
+.Ss Rule Sets
+Load base policy to set 0 (default):
+.Bd -literal -offset indent
+mac_abac_ctl rule load /etc/mac_abac/base.conf
+.Ed
+.Pp
+Load application rules to set 100:
+.Bd -literal -offset indent
+mac_abac_ctl rule load /etc/mac_abac/webapp.conf -s 100
+.Ed
+.Pp
+Temporarily disable application rules:
+.Bd -literal -offset indent
+mac_abac_ctl set disable 100
+.Ed
+.Pp
+Hot-reload policy without downtime:
+.Bd -literal -offset indent
+mac_abac_ctl rule load /etc/mac_abac/new_base.conf -s 50000
+mac_abac_ctl set swap 0 50000
+mac_abac_ctl set clear 50000
+.Ed
+.Pp
+View set status:
+.Bd -literal -offset indent
+mac_abac_ctl set list
+mac_abac_ctl set list 0-100
+.Ed
+.Ss Policy Protection
+Enable verbose logging for debugging:
+.Bd -literal -offset indent
+mac_abac_ctl log all
+.Ed
+.Pp
+Lock the policy for production:
+.Bd -literal -offset indent
+mac_abac_ctl rule load /etc/mac_abac/production.conf
+mac_abac_ctl mode enforcing
+mac_abac_ctl lock
+.Ed
+.Pp
+View current status including locked state:
+.Bd -literal -offset indent
+mac_abac_ctl status
+.Ed
+.Sh DIAGNOSTICS
+.Ex -std
+.Pp
+Exit codes follow
+.Xr sysexits 3 :
+.Bl -tag -width "EX_UNAVAILABLE" -compact
+.It Dv EX_OK
+Success.
+.It Dv EX_USAGE
+Invalid command-line arguments.
+.It Dv EX_NOPERM
+Permission denied (must be root).
+.It Dv EX_UNAVAILABLE
+ABAC kernel module not loaded.
+.It Dv EX_DATAERR
+Invalid rule or label syntax.
+.El
+.Sh SEE ALSO
+.Xr mac 4 ,
+.Xr mac_abac 4 ,
+.Xr mac_abac.conf 5 ,
+.Xr setextattr 8
+.Sh HISTORY
+The
+.Nm
+utility first appeared in
+.Fx 15.0 .
+.Sh AUTHORS
+.An "The ABAC project" .

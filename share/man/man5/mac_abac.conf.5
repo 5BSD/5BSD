@@ -1,0 +1,349 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 ABAC Project
+.\" All rights reserved.
+.\"
+.Dd March 9, 2026
+.Dt ABAC.CONF 5
+.Os
+.Sh NAME
+.Nm mac_abac.conf
+.Nd ABAC policy configuration file
+.Sh DESCRIPTION
+The
+.Nm
+file defines the access control policy for the
+.Xr mac_abac 4
+kernel module.
+It uses UCL (Universal Configuration Language) syntax.
+.Pp
+The configuration file is read by
+.Xr mac_abac_ctl 8
+and can be loaded atomically using:
+.Bd -literal -offset indent
+mac_abac_ctl rule load /etc/mac_abac.conf
+.Ed
+.Sh SYNTAX
+The file uses UCL syntax.
+Top-level keys are:
+.Bl -tag -width "default_policy"
+.It Cm mode
+Enforcement mode:
+.Dq disabled ,
+.Dq permissive ,
+or
+.Dq enforcing .
+.It Cm default_policy
+Default when no rule matches:
+.Dq allow
+or
+.Dq deny .
+.It Cm rules
+Array of rule objects.
+.El
+.Ss Rule Objects
+Each rule in the
+.Cm rules
+array is an object with the following keys:
+.Bl -tag -width "operations"
+.It Cm id
+Optional numeric rule identifier for reference.
+If omitted, IDs are assigned automatically.
+.It Cm set
+Optional rule set number (0-65535).
+Rules in lower-numbered sets are evaluated first.
+If omitted, defaults to 0.
+.It Cm action
+Required.
+One of:
+.Dq allow ,
+.Dq deny ,
+or
+.Dq transition .
+.It Cm operations
+Required.
+Array of operation names, or
+.Dq all .
+.It Cm subject
+Optional.
+Pattern to match the calling process label.
+If omitted, matches any subject.
+.It Cm object
+Optional.
+Pattern to match the target object label.
+If omitted, matches any object.
+.It Cm newlabel
+Required for
+.Cm transition
+rules.
+The label assigned to the process after exec.
+.It Cm subj_ctx
+Optional.
+Object specifying constraints on the calling process.
+.It Cm obj_ctx
+Optional.
+Object specifying constraints on the target process
+(only meaningful for debug, signal, and sched operations).
+.El
+.Ss Pattern Syntax
+Patterns can be specified as:
+.Bl -bullet -compact
+.It
+An object with key=value pairs (UCL object syntax)
+.It
+A string in comma-separated format
+.It
+An asterisk
+.Dq *
+for wildcard
+.El
+.Pp
+Examples:
+.Bd -literal -offset indent
+# Object syntax
+subject = { type = "app"; domain = "web"; };
+
+# String syntax
+subject = "type=app,domain=web";
+
+# Wildcard
+subject = "*";
+
+# Negation (does NOT match this pattern)
+subject = "!type=untrusted";
+.Ed
+.Pp
+Within a pattern, all pairs must match (AND logic).
+Use multiple rules for OR logic.
+.Ss Context Constraints
+Context objects can contain:
+.Bl -tag -width "sandboxed"
+.It Cm uid
+Required effective UID (integer).
+.It Cm ruid
+Required real UID (integer).
+Cannot be used with
+.Cm uid
+in the same constraint.
+.It Cm gid
+Required effective GID (integer).
+.It Cm jail
+Jail constraint:
+.Dq host
+(not jailed),
+.Dq any
+(in any jail),
+or a jail ID (integer).
+.It Cm sandboxed
+Capsicum mode:
+.Cm true
+(must be sandboxed) or
+.Cm false
+(must not be).
+.It Cm tty
+Terminal requirement:
+.Cm true
+(must have TTY) or
+.Cm false
+(must not).
+.El
+.Ss Operations
+Valid operation names:
+.Pp
+.Bl -column "setextattr" "getextattr" "readdir" "mprotect" -compact
+.It exec Ta read Ta write Ta mmap
+.It link Ta rename Ta unlink Ta chdir
+.It stat Ta readdir Ta create Ta setextattr
+.It getextattr Ta lookup Ta open Ta access
+.It debug Ta signal Ta sched Ta wait
+.It mprotect Ta audit Ta connect Ta bind
+.It listen Ta accept Ta send Ta receive
+.It deliver Ta all Ta \& Ta \&
+.El
+.Sh EXAMPLES
+.Ss Basic Whitelist Policy
+Allow only labeled executables to run:
+.Bd -literal -offset indent
+mode = "enforcing";
+default_policy = "deny";
+
+rules = [
+    {
+        action = "allow";
+        operations = ["exec"];
+        object = { type = "trusted"; };
+    },
+    {
+        action = "allow";
+        operations = ["exec"];
+        object = { type = "system"; };
+    },
+    {
+        action = "allow";
+        operations = ["read", "write", "stat", "open", "readdir"];
+    }
+];
+.Ed
+.Ss Domain Isolation
+Isolate web and database services:
+.Bd -literal -offset indent
+mode = "enforcing";
+default_policy = "allow";
+
+rules = [
+    # Web can access web files
+    {
+        action = "allow";
+        operations = ["read", "write", "open"];
+        subject = { domain = "web"; };
+        object = { domain = "web"; };
+    },
+
+    # Database can access database files
+    {
+        action = "allow";
+        operations = ["read", "write", "open", "create", "unlink"];
+        subject = { domain = "database"; };
+        object = { domain = "database"; };
+    },
+
+    # Deny cross-domain access
+    {
+        action = "deny";
+        operations = ["read", "write"];
+        subject = { domain = "web"; };
+        object = { domain = "database"; };
+    },
+    {
+        action = "deny";
+        operations = ["read", "write"];
+        subject = { domain = "database"; };
+        object = { domain = "web"; };
+    }
+];
+.Ed
+.Ss Label Transitions
+Transition into restricted domain on exec:
+.Bd -literal -offset indent
+mode = "enforcing";
+
+rules = [
+    # Transition to web domain when starting nginx
+    {
+        action = "transition";
+        operations = ["exec"];
+        object = "type=entrypoint,app=nginx";
+        newlabel = "domain=web,app=nginx,restricted=true";
+    },
+
+    # Restricted processes can only access their domain
+    {
+        action = "allow";
+        operations = ["all"];
+        subject = { domain = "web"; restricted = "true"; };
+        object = { domain = "web"; };
+    },
+    {
+        action = "deny";
+        operations = ["read", "write", "exec"];
+        subject = { restricted = "true"; };
+    }
+];
+.Ed
+.Ss Context Constraints
+Restrict admin tools to root on host:
+.Bd -literal -offset indent
+rules = [
+    {
+        action = "allow";
+        operations = ["exec"];
+        object = { type = "admin"; };
+        subj_ctx = {
+            uid = 0;
+            jail = "host";
+            tty = true;
+        };
+    },
+    {
+        action = "deny";
+        operations = ["exec"];
+        object = { type = "admin"; };
+    }
+];
+.Ed
+.Pp
+Prevent sandboxed processes from being debugged:
+.Bd -literal -offset indent
+rules = [
+    {
+        action = "deny";
+        operations = ["debug"];
+        obj_ctx = { sandboxed = true; };
+    }
+];
+.Ed
+.Ss Rule Sets
+Organize policies using rule sets:
+.Bd -literal -offset indent
+# Rule sets allow grouping rules for bulk enable/disable.
+# Sets are evaluated in order: set 0 first, then 1, then 2, etc.
+# Default set is 0 if not specified.
+
+rules = [
+    # Base policy (set 0) - always evaluated first
+    {
+        id = 1;
+        set = 0;
+        action = "deny";
+        operations = ["exec"];
+        object = { type = "untrusted"; };
+    },
+
+    # Web application sandbox (set 100)
+    {
+        id = 100;
+        set = 100;
+        action = "allow";
+        operations = ["read", "write"];
+        subject = { domain = "webapp"; };
+        object = { domain = "webapp"; };
+    },
+
+    # Database sandbox (set 200)
+    {
+        id = 200;
+        set = 200;
+        action = "allow";
+        operations = ["read", "write"];
+        subject = { domain = "database"; };
+        object = { domain = "database"; };
+    }
+];
+.Ed
+.Pp
+In line format rules, append
+.Cm set Ar N
+to specify the set:
+.Bd -literal -offset indent
+allow exec * -> type=trusted set 0
+allow read,write domain=webapp -> domain=webapp set 100
+allow read,write domain=database -> domain=database set 200
+.Ed
+.Sh SEE ALSO
+.Xr mac_abac 4 ,
+.Xr mac_abac_ctl 8
+.Pp
+UCL documentation:
+.Lk https://github.com/vstakhov/libucl
+.Sh HISTORY
+The
+.Nm
+configuration format first appeared in
+.Fx 15.0 .
+.Sh AUTHORS
+.An "The ABAC project" .
+.Sh FILES
+.Bl -tag -width "/etc/mac_abac.conf"
+.It Pa /etc/mac_abac.conf
+Default configuration file location.
+.El

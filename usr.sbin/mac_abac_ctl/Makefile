@@ -1,0 +1,17 @@
+.PATH: ${SRCTOP}/usr.sbin/mac_abacd
+
+.include <src.opts.mk>
+
+PACKAGE=	mac-abac
+PROG=		mac_abac_ctl
+SRCS=		mac_abac_ctl.c mac_abac_ctl_label.c mac_abac_ctl_rule.c \
+		mac_abac_ctl_set.c parse_line.c parse_ucl.c
+MAN=
+
+CFLAGS+=	-I${SRCTOP}/sys
+CFLAGS+=	-I${SRCTOP}/usr.sbin/mac_abacd
+CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
+NO_WCAST_ALIGN=
+LIBADD=	ucl
+
+.include <bsd.prog.mk>

@@ -1,0 +1,184 @@
+# ABAC Policy Configuration - UCL Format
+#
+# UCL (Universal Configuration Language) is the preferred format for
+# ABAC policies. It supports comments, includes, and flexible syntax.
+#
+# Usage:
+#   mac_abacd -c /etc/mac_abac.conf
+#   mac_abac_ctl rule load /etc/mac_abac.conf
+#
+# UCL is a superset of JSON with these enhancements:
+#   - Comments with # or //
+#   - Optional commas and quotes for simple keys
+#   - Include directives: .include "other.ucl"
+#   - Variable expansion: ${VAR}
+#
+# Rule Sets:
+#   Rules are organized into sets (0-65535). Sets are evaluated in order:
+#   set 0 first, then set 1, etc. The first matching rule wins. Sets can
+#   be enabled/disabled without removing rules, useful for hot-reloading.
+#   If 'set' is omitted, rules go to set 0 by default.
+#
+#   Common patterns:
+#     - Set 0: Base security policy (always active)
+#     - Sets 100-199: Application sandboxes
+#     - Sets 1000+: Temporary/debug rules
+
+# Enforcement mode: disabled, permissive, enforcing
+mode = "permissive";
+
+# Rules are evaluated in set order (set 0 first), then by rule order within set
+rules = [
+    {
+        # Block execution of untrusted binaries (set 0 - base policy)
+        id = 1;
+        set = 0;
+        action = "deny";
+        operations = ["exec"];
+        object = { type = "untrusted"; };
+    },
+
+    {
+        # Web domain isolation - processes can only access their domain
+        # (set 100 - can be disabled without affecting base policy)
+        id = 10;
+        set = 100;
+        action = "allow";
+        operations = ["read", "write", "open", "stat", "mmap"];
+        subject = { domain = "web"; };
+        object = { domain = "web"; };
+    },
+
+    {
+        # Database domain isolation (set 100)
+        id = 11;
+        set = 100;
+        action = "allow";
+        operations = ["read", "write", "open", "stat"];
+        subject = { domain = "database"; };
+        object = { domain = "database"; };
+    },
+
+    {
+        # Admin tools only on host system (not in jails)
+        id = 20;
+        action = "allow";
+        operations = ["exec"];
+        subject = { type = "admin"; };
+        object = { type = "admin-tool"; };
+        subj_ctx = { jail = "host"; };
+    },
+
+    {
+        # Block admin tools from jails
+        id = 21;
+        action = "deny";
+        operations = ["exec"];
+        object = { type = "admin-tool"; };
+        subj_ctx = { jail = "any"; };
+    },
+
+    {
+        # Sandboxed processes can only access sandbox resources
+        id = 30;
+        action = "allow";
+        operations = ["read", "write"];
+        subject = "*";
+        object = { level = "sandbox-only"; };
+        subj_ctx = { sandboxed = true; };
+    },
+
+    {
+        # Non-sandboxed processes denied sandbox resources
+        id = 31;
+        action = "deny";
+        operations = ["read", "write", "exec"];
+        object = { level = "sandbox-only"; };
+        subj_ctx = { sandboxed = false; };
+    },
+
+    {
+        # Protect debuggers - only supervisors can debug workers
+        id = 40;
+        action = "allow";
+        operations = ["debug", "signal", "sched"];
+        subject = { type = "supervisor"; };
+        object = { type = "worker"; };
+    },
+
+    {
+        # Block unauthorized debugging
+        id = 41;
+        action = "deny";
+        operations = ["debug"];
+        subject = "*";
+        object = "*";
+        obj_ctx = { sandboxed = true; };
+    },
+
+    {
+        # Transition: user executing su becomes admin
+        id = 50;
+        action = "transition";
+        operations = ["exec"];
+        subject = { type = "user"; };
+        object = { type = "setuid"; name = "su"; };
+        newlabel = "type=admin,domain=system";
+    },
+
+    {
+        # Transition: user executing sudo becomes admin
+        id = 51;
+        action = "transition";
+        operations = ["exec"];
+        subject = { type = "user"; };
+        object = { type = "setuid"; name = "sudo"; };
+        newlabel = "type=admin,domain=system";
+    },
+
+    {
+        # Negation: deny access to everything NOT marked trusted
+        id = 60;
+        action = "deny";
+        operations = ["exec"];
+        subject = { type = "restricted"; };
+        object = { type = "trusted"; negate = true; };
+    },
+
+    {
+        # Trusted processes have full access
+        id = 100;
+        action = "allow";
+        operations = ["all"];
+        subject = { type = "trusted"; };
+        object = "*";
+    },
+
+    {
+        # System domain has full access
+        id = 101;
+        action = "allow";
+        operations = ["all"];
+        subject = { domain = "system"; };
+        object = "*";
+    },
+
+    {
+        # Root (uid 0) has full access
+        id = 102;
+        action = "allow";
+        operations = ["all"];
+        subject = "*";
+        object = "*";
+        subj_ctx = { uid = 0; };
+    },
+
+    {
+        # Default deny (optional - see security.mac.mac_abac.default_policy)
+        id = 999;
+        action = "deny";
+        operations = ["all"];
+        subject = "*";
+        object = "*";
+    }
+];

@@ -1179,4 +1179,8 @@ MLINKS+=${_urtw.4} ${_if_urtw.4}
 MLINKS+=zyd.4 if_zyd.4
 .endif
 
+MANGROUPS+=		MAC_ABAC
+MAC_ABACPACKAGE=	mac-abac
+MAC_ABAC=		mac_abac.4
+
 .include <bsd.prog.mk>
