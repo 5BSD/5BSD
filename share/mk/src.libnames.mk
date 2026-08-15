@@ -212,6 +212,7 @@ _LIBRARIES=	\
 		ngatm \
 		nv \
 		nvpair \
+		oes \
 		opencsd \
 		oraclectl \
 		oraclert \
@@ -344,6 +345,7 @@ _DP_cryptocmp=	pthread service
 _DP_logcmp=	pthread service shmring
 _DP_kldmgr=	service
 _DP_notifycmp=	pthread service
+_DP_oes=
 _DP_rebootctl=	service
 _DP_tracecmp=	dtrace service
 _DP_capability=

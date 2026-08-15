@@ -26,6 +26,7 @@ SUBDIR=	adduser \
 	etcupdate \
 	extattr \
 	extattrctl \
+	oeslogger \
 	fifolog \
 	localfilesystem \
 	localcrypto \

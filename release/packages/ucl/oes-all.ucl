@@ -1,8 +1,9 @@
-comment = "OpenEndpointSecurity userland client library (liboes)"
+comment = "OpenEndpointSecurity userland client library and event logger"
 
 desc = <<EOD
 liboes, the userland client library for the oes(4) OpenEndpointSecurity
-framework.  Applications use it to open a client, subscribe to security
-events, mute processes or paths, and authorize or observe kernel security
-events delivered through the MAC framework.
+framework, and oeslogger(8), a passive NDJSON event logger.  Applications use
+liboes to open a client, subscribe to security events, mute processes or
+paths, and authorize or observe kernel security events delivered through the
+MAC framework.
 EOD
