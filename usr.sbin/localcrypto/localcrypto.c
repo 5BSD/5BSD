@@ -3,6 +3,8 @@
 #include <sys/procdesc.h>
 #include <sys/types.h>
 #include <sys/cryptodesc.h>
+#include <auditcmp.h>
+#include <auditcmp_server.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
@@ -18,7 +20,18 @@
 
 #define CRYPTOCMP_NAME "org.5bsd.CryptoCmp"
 static int control_fd;
-struct crypto_worker { char owner[CRYPTODESC_KEY_OWNER_MAX]; };
+struct crypto_worker {
+	char	owner[CRYPTODESC_KEY_OWNER_MAX];
+	struct auditcmp_client *audit;
+};
+
+static void
+audit_operation(struct crypto_worker *worker, const char *operation, int error)
+{
+
+	if (worker->audit != NULL)
+		(void)auditcmp_submit(worker->audit, worker->owner, operation, error);
+}
 static void
 request(struct channel *c __unused, struct channel_message *m, void *arg __unused)
 {
@@ -33,12 +46,14 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	struct cryptocmp_named_reply named_out;
 	struct session2_op session;
 	struct crypto_worker *worker;
+	const char *operation;
 	uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE];
 	uint64_t generation;
 	int fd, error;
 
 	fd = -1;
 	error = EPROTO;
+	operation = "malformed-request";
 	in = channel_message_data(m);
 	memset(&out, 0, sizeof(out));
 	memset(&key_out, 0, sizeof(key_out));
@@ -55,6 +70,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 		out.opcode = in->opcode;
 		if (in->opcode == CRYPTOCMP_OP_GENERATE &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*generate)) {
+			operation = "descriptor-generate";
 			generate = (const struct cryptocmp_generate *)(in + 1);
 			if (cryptocmp_policy_validate(generate) != 0)
 				goto reply;
@@ -75,6 +91,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 			error = errno;
 		} else if (in->opcode == CRYPTOCMP_OP_GENERATE_KEY &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*key_generate)) {
+			operation = "key-generate";
 			key_generate = (const struct cryptocmp_key_generate *)(in + 1);
 			if (cryptocmp_key_policy_validate(key_generate) != 0)
 				goto reply;
@@ -85,6 +102,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 				error = errno;
 		} else if (in->opcode == CRYPTOCMP_OP_NAMED_CREATE &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*named_create)) {
+			operation = "named-create";
 			named_create = (const struct cryptocmp_named_create *)(in + 1);
 			if (cryptocmp_named_create_policy_validate(named_create) != 0)
 				goto reply;
@@ -104,6 +122,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 				error = errno;
 		} else if (in->opcode == CRYPTOCMP_OP_NAMED_LEASE &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*named_lease)) {
+			operation = "named-lease";
 			named_lease = (const struct cryptocmp_named_lease *)(in + 1);
 			if (cryptocmp_named_lease_policy_validate(named_lease) != 0)
 				goto reply;
@@ -116,6 +135,8 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 		} else if ((in->opcode == CRYPTOCMP_OP_NAMED_ROTATE ||
 		    in->opcode == CRYPTOCMP_OP_NAMED_DELETE) &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*named_control)) {
+			operation = in->opcode == CRYPTOCMP_OP_NAMED_ROTATE ?
+			    "named-rotate" : "named-delete";
 			named_control = (const struct cryptocmp_named_control *)(in + 1);
 			if (cryptocmp_named_control_policy_validate(named_control) != 0)
 				goto reply;
@@ -136,6 +157,7 @@ reply:
 	key_out.msg = out;
 	named_out.msg = out;
 	named_out.generation = generation;
+	audit_operation(worker, operation, error);
 	if (out.opcode == CRYPTOCMP_OP_GENERATE_KEY)
 		memcpy(key_out.public_key, public_key, sizeof(key_out.public_key));
 	(void)channel_send_reply(m, &(struct channel_outgoing){
@@ -160,26 +182,29 @@ reply:
 }
 
 static int
-worker(int fd, const char *owner)
+worker(int fd, int audit_fd, const char *owner)
 {
 	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct crypto_worker state;
 	struct channel *channel;
-	int ready, wants_write;
+	int ready, result, wants_write;
 
 	memset(&state, 0, sizeof(state));
 	strlcpy(state.owner, owner, sizeof(state.owner));
+	channel = NULL;
+	result = 1;
+	if (auditcmp_client_adopt(audit_fd, &state.audit) == -1)
+		goto out;
 	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
 	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1)
-		return (1);
+		goto out;
 	service_worker_drop_inherited_authority();
 	if (cap_enter() == -1 || channel_create(fd, &options, &channel) == -1)
-		return (1);
+		goto out;
 	if (channel_set_request_handler(channel, request, &state) == -1) {
-		channel_destroy(channel);
-		return (1);
+		goto out;
 	}
 	for (;;) {
 		wants_write = channel_wants_write(channel);
@@ -189,19 +214,24 @@ worker(int fd, const char *owner)
 		    ((ready & CHANNEL_WAIT_READ) != 0 && channel_dispatch(channel) == -1))
 			break;
 	}
-	channel_destroy(channel);
-	return (0);
+	result = 0;
+out:
+	if (channel != NULL)
+		channel_destroy(channel);
+	auditcmp_client_close(state.audit);
+	return (result);
 }
 
 static int
 start_session(int fd)
 {
 	struct service_component_bootstrap *boot;
-	int pd;
+	int audit_fd, pd;
 	pid_t pid;
 	char owner[CRYPTODESC_KEY_OWNER_MAX];
 
 	boot = NULL;
+	audit_fd = -1;
 	if (service_component_accept(fd, &boot) == -1)
 		return (-1);
 	if (strcmp(service_component_interface(boot), CRYPTOCMP_INTERFACE) != 0 ||
@@ -218,13 +248,19 @@ start_session(int fd)
 		return (-1);
 	}
 	strlcpy(owner, service_component_client_label(boot), sizeof(owner));
+	if (auditcmp_client_prepare(&audit_fd) == -1) {
+		(void)service_component_fail(boot, errno);
+		return (-1);
+	}
 	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
 	if (pid == -1) {
+		close(audit_fd);
 		(void)service_component_fail(boot, errno);
 		return (-1);
 	}
 	if (pid == 0)
-		_exit(worker(fd, owner));
+		_exit(worker(fd, audit_fd, owner));
+	close(audit_fd);
 	if (service_component_complete(boot, SERVICE_COMPONENT_MEMBER_PROCDESC,
 	    pd) == -1) {
 		(void)pdkill(pd, SIGKILL);

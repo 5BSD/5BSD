@@ -1,0 +1,9 @@
+comment = "CRYPTO descriptor-control-library tests"
+
+desc = <<EOD
+Public DTYPE_CRYPTO descriptor-control API validation tests.
+EOD
+
+annotations = {
+	set = "tests"
+}

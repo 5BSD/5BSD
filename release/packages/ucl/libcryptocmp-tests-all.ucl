@@ -1,0 +1,9 @@
+comment = "CRYPTO component protocol-library tests"
+
+desc = <<EOD
+Public CRYPTO component-client API validation tests.
+EOD
+
+annotations = {
+	set = "tests"
+}

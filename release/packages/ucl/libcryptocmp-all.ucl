@@ -1,0 +1,6 @@
+comment = "Public CRYPTO capability-component protocol library"
+
+desc = <<EOD
+The versioned client protocol for requesting generated, asymmetric, and named
+volatile CRYPTO descriptor capabilities from the [CRYPTO] component.
+EOD

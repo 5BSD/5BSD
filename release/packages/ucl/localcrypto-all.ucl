@@ -1,0 +1,7 @@
+comment = "Capability-mode CRYPTO provider"
+
+desc = <<EOD
+The [CRYPTO] capability bundle, installed with its public client libraries.
+It creates and leases opaque DTYPE_CRYPTO descriptors and records security
+events through the trusted Audit.cap capability.
+EOD

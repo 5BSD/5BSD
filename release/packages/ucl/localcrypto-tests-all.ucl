@@ -1,0 +1,9 @@
+comment = "CRYPTO capability-provider tests"
+
+desc = <<EOD
+Policy, audit-capability integration, and verified-bundle tests for [CRYPTO].
+EOD
+
+annotations = {
+	set = "tests"
+}

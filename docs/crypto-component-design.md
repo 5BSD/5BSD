@@ -60,6 +60,12 @@ a separate key-device capability surface.  `CIOCCRYPTODESCREVOKE` permanently
 disables a descriptor before final close; subsequent operations fail with
 `EACCES`.
 
+Every component request is also recorded through the standard `Audit.cap`
+capability using `libauditcmp`.  The record identifies the serviced client
+label, operation, and result but contains neither key material nor descriptor
+contents.  Audit-broker failure is non-authoritative: it cannot turn a denied
+request into an allowed one or broaden an issued descriptor.
+
 Generated and derived descriptors can have a bounded lifetime; once their TTL
 has elapsed, every operation fails with `ESTALE`.  `CIOCCRYPTODESCDERIVE`
 implements RFC 5869 HKDF-SHA-256/512 and produces another opaque descriptor,

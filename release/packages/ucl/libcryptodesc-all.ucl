@@ -1,0 +1,6 @@
+comment = "Public DTYPE_CRYPTO descriptor-control library"
+
+desc = <<EOD
+The typed control-descriptor API for creating, leasing, restricting, revoking,
+and using opaque CRYPTO descriptor capabilities without exposing key bytes.
+EOD

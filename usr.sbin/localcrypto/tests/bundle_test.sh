@@ -44,16 +44,20 @@ provider_security_contract_head()
 provider_security_contract_body()
 {
 	source="@SRCTOP@/usr.sbin/localcrypto/localcrypto.c"
+	srcdir="@SRCTOP@/usr.sbin/localcrypto"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOIPC \
 	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOEXEC SERVICE_PROTECT_NOSOCK \
 	    service_worker_drop_inherited_authority cap_enter explicit_bzero \
 	    service_component_client_label cryptocmp_named_create_policy_validate \
 	    cryptodesc_named_create cryptodesc_named_lease cryptodesc_named_rotate \
-	    cryptodesc_named_delete
+	    cryptodesc_named_delete auditcmp_client_prepare auditcmp_client_adopt \
+	    auditcmp_submit named-create named-lease named-rotate named-delete
 	do
 		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${source}"
 	done
+	atf_check -s exit:0 -o match:'LIBADD=.*auditcmp' \
+	    grep 'LIBADD=.*auditcmp' "${srcdir}/Makefile"
 }
 
 atf_init_test_cases()
