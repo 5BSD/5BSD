@@ -455,6 +455,8 @@
         ..
         mac_veriexec
         ..
+        oes             tags=package=oes,dev
+        ..
     ..
     ssp
     ..
