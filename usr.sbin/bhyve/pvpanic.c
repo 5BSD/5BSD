@@ -267,7 +267,14 @@ pvpanic_snapshot(struct vm_snapshot_meta *meta)
 			ret = EINVAL;
 			goto err;
 		}
-		pvpanic_inited = enabled;
+		/*
+		 * Initialization has already registered the I/O port and emitted
+		 * ACPI.  Enablement is topology, not mutable checkpoint state.
+		 */
+		if (!pvpanic_topology_matches(pvpanic_inited, enabled)) {
+			ret = EINVAL;
+			goto err;
+		}
 		pvpanic_action = action;
 	}
 err:

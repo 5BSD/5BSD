@@ -42,6 +42,13 @@ int	vmmdev_snapshot_session_begin(struct vm *,
 	    vmm_event_deferred_apply_t *, void *, uint64_t *);
 int	vmmdev_snapshot_session_finish(struct vm *, uint64_t, bool);
 int	vmmdev_snapshot_session_abort_current(struct vm *);
+/*
+ * VM_SNAPSHOT_REQ changes VM state on RESTORE and participates in the
+ * descriptor-owned checkpoint event fence on both SAVE and RESTORE.  The
+ * machine-dependent ioctl dispatcher uses this to prevent a second open VM
+ * descriptor from injecting records into another descriptor's transaction.
+ */
+int	vmmdev_snapshot_session_require(struct vm *);
 
 /*
  * Entry in an ioctl handler table.  A number of generic ioctls are defined,

@@ -34,6 +34,14 @@
 #define	VIRTIOFSD_DEFAULT_MESSAGE	(16U * 1024U * 1024U)
 #define	VIRTIOFSD_DEFAULT_PENDING	(256U * 1024U * 1024U)
 #define	VIRTIOFSD_IO_BUDGET		64U
+/*
+ * A backend socket is normally private to one bhyve instance.  Bound the
+ * pre-HELLO phase nonetheless: an authenticated peer can otherwise connect
+ * and remain silent forever, holding the daemon's only accept loop.
+ */
+#ifndef VIRTIOFSD_HELLO_TIMEOUT_MS
+#define	VIRTIOFSD_HELLO_TIMEOUT_MS	5000
+#endif
 
 static int signal_pipe[2] = { -1, -1 };
 
@@ -226,8 +234,8 @@ client_run(int client, int rootfd, uid_t expected_uid, gid_t expected_gid,
 	uint8_t *payload;
 	size_t payload_len;
 	unsigned int budget;
-	int error, result;
-	bool done;
+	int error, result, timeout;
+	bool done, hello_seen;
 
 	error = virtio_fs_backend_authenticate(client, expected_uid,
 	    expected_gid);
@@ -251,6 +259,7 @@ client_run(int client, int rootfd, uid_t expected_uid, gid_t expected_gid,
 	if (error != 0)
 		goto out;
 	done = false;
+	hello_seen = false;
 	while (!done) {
 		descriptors[0] = (struct pollfd) {
 			.fd = client,
@@ -266,9 +275,15 @@ client_run(int client, int rootfd, uid_t expected_uid, gid_t expected_gid,
 			.fd = signal_pipe[0],
 			.events = POLLIN,
 		};
+		/* Do not let a connected but silent peer starve later clients. */
+		timeout = hello_seen ? -1 : VIRTIOFSD_HELLO_TIMEOUT_MS;
 		do {
-			result = poll(descriptors, nitems(descriptors), -1);
+			result = poll(descriptors, nitems(descriptors), timeout);
 		} while (result < 0 && errno == EINTR);
+		if (result == 0) {
+			error = ETIMEDOUT;
+			break;
+		}
 		if (result < 0) {
 			error = errno;
 			break;
@@ -295,6 +310,8 @@ client_run(int client, int rootfd, uid_t expected_uid, gid_t expected_gid,
 				    payload_len);
 				if (error != 0)
 					break;
+				if (header.type == VIRTIO_FS_BACKEND_HELLO)
+					hello_seen = true;
 			}
 			if (error != 0)
 				break;

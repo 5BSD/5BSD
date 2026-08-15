@@ -132,6 +132,9 @@ static sig_t old_winch_handler;
 
 #define	SNAPSHOT_BUFFER_SIZE (40 * MB)
 
+/* One stalled controller must not monopolize the checkpoint command thread. */
+#define	CHECKPOINT_CLIENT_TIMEOUT_SEC	30
+
 #define	JSON_KERNEL_ARR_KEY		"kern_structs"
 #define	JSON_DEV_ARR_KEY		"devices"
 #define	JSON_BASIC_METADATA_KEY 	"basic metadata"
@@ -3403,6 +3406,9 @@ vm_migrate_commit_state(struct vmctx *ctx, const uint8_t *blob, size_t len)
 	if (meta_len > len - MIGRATE_BLOB_HDR ||
 	    kdata_len > len - MIGRATE_BLOB_HDR - meta_len)
 		return (EBADMSG);
+	/* The framed state blob is one exact record, not a prefix container. */
+	if (meta_len + kdata_len != len - MIGRATE_BLOB_HDR)
+		return (EBADMSG);
 
 	memset(&rstate, 0, sizeof(rstate));
 	rstate.kdata_fd = -1;
@@ -3518,7 +3524,7 @@ checkpoint_thread(void *param)
 	thread_info = (struct checkpoint_thread_info *)param;
 
 	for (;;) {
-		fd = accept(thread_info->socket_fd, NULL, NULL);
+		fd = accept4(thread_info->socket_fd, NULL, NULL, SOCK_CLOEXEC);
 		if (fd < 0) {
 			if (errno == EINTR)
 				continue;
@@ -3569,6 +3575,7 @@ init_checkpoint_thread(struct vmctx *ctx)
 {
 	struct checkpoint_thread_info *checkpoint_info = NULL;
 	struct sockaddr_un addr;
+	struct timeval receive_timeout;
 	int socket_fd = -1;
 	pthread_t checkpoint_pthread;
 	int err, pathlen;
@@ -3578,7 +3585,7 @@ init_checkpoint_thread(struct vmctx *ctx)
 
 	memset(&addr, 0, sizeof(addr));
 
-	socket_fd = socket(PF_UNIX, SOCK_STREAM, 0);
+	socket_fd = socket(PF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
 	if (socket_fd < 0) {
 		EPRINTLN("Socket creation failed: %s", strerror(errno));
 		err = -1;
@@ -3601,6 +3608,25 @@ init_checkpoint_thread(struct vmctx *ctx)
 		EPRINTLN("Failed to bind socket \"%s\": %s\n",
 		    addr.sun_path, strerror(errno));
 		err = -1;
+		goto fail;
+	}
+	/* Control operations can replace guest state; keep the endpoint private. */
+	if (chmod(addr.sun_path, S_IRUSR | S_IWUSR) != 0) {
+		EPRINTLN("Failed to restrict checkpoint socket \"%s\": %s\n",
+		    addr.sun_path, strerror(errno));
+		err = errno;
+		goto fail;
+	}
+	/* Accepted Unix sockets inherit this deadline for nvlist_recv(). */
+	receive_timeout = (struct timeval) {
+		.tv_sec = CHECKPOINT_CLIENT_TIMEOUT_SEC,
+		.tv_usec = 0,
+	};
+	if (setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &receive_timeout,
+	    sizeof(receive_timeout)) != 0) {
+		EPRINTLN("Failed to set checkpoint client timeout: %s\n",
+		    strerror(errno));
+		err = errno;
 		goto fail;
 	}
 

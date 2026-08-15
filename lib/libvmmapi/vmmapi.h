@@ -44,7 +44,7 @@
  * API version for out-of-tree consumers like grub-bhyve for making compile
  * time decisions.
  */
-#define	VMMAPI_VERSION	0301	/* 2 digit major followed by 2 digit minor */
+#define	VMMAPI_VERSION	0302	/* 2 digit major followed by 2 digit minor */
 
 struct iovec;
 struct vcpu;

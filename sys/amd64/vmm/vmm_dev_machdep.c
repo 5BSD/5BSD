@@ -639,6 +639,13 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 	case VM_SNAPSHOT_REQ: {
 		struct vm_snapshot_meta *snapshot_meta;
 
+		if ((fflag & FWRITE) == 0) {
+			error = EBADF;
+			break;
+		}
+		error = vmmdev_snapshot_session_require(vm);
+		if (error != 0)
+			break;
 		snapshot_meta = (struct vm_snapshot_meta *)data;
 		error = vm_snapshot_req(vm, snapshot_meta);
 		break;
@@ -693,6 +700,13 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 		 * The old structure just has an additional pointer at
 		 * the start that is ignored.
 		 */
+		if ((fflag & FWRITE) == 0) {
+			error = EBADF;
+			break;
+		}
+		error = vmmdev_snapshot_session_require(vm);
+		if (error != 0)
+			break;
 		snapshot_13 = (struct vm_snapshot_meta_13 *)data;
 		snapshot_meta =
 		    (struct vm_snapshot_meta *)&snapshot_13->dev_data;

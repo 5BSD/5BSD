@@ -468,7 +468,15 @@ ppt_unassign_device(struct vm *vm, int bus, int slot, int func)
 	ppt_teardown_msix(ppt);
 	error = iommu_remove_device(vm_iommu_domain(vm), ppt->dev,
 	    pci_get_rid(ppt->dev));
-	ppt->vm = NULL;
+	/*
+	 * Keep the ownership record until the IOMMU detach has completed.
+	 * Clearing it on failure makes the device appear assignable to a
+	 * different VM even though the IOMMU may still route DMA through the
+	 * former VM's domain.  The disabled command register keeps the failed
+	 * unassign fail-closed while the caller retries or destroys the VM.
+	 */
+	if (error == 0)
+		ppt->vm = NULL;
 out:
 	PPT_UNLOCK();
 	return (error);

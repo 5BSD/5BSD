@@ -37,6 +37,7 @@ vm_name_for(const atf_tc_t *tc, char *name, size_t size)
 static struct vmctx *
 create_vm_with_vcpu(const atf_tc_t *tc, struct vcpu **vcpup)
 {
+	struct vm_snapshot_session session;
 	struct vmctx *ctx;
 	struct vcpu *vcpu;
 	char name[VM_MAX_NAMELEN];
@@ -50,6 +51,18 @@ create_vm_with_vcpu(const atf_tc_t *tc, struct vcpu **vcpup)
 	ATF_REQUIRE_MSG(vcpu != NULL, "vm_vcpu_open: %s", strerror(errno));
 	ATF_REQUIRE_EQ_MSG(vm_activate_cpu(vcpu), 0, "vm_activate_cpu: %s",
 	    strerror(errno));
+
+	/*
+	 * This test is built on every amd64 test install, but the kernel
+	 * snapshot option is intentionally off by default.  Probe the versioned
+	 * session ioctl after the VM exists: an unsupported kernel reports
+	 * ENOTTY, while a snapshot-enabled kernel rejects the zero version.
+	 */
+	memset(&session, 0, sizeof(session));
+	errno = 0;
+	if (vm_snapshot_session(ctx, &session) == -1 && errno == ENOTTY)
+		atf_tc_skip("vmm kernel lacks BHYVE_SNAPSHOT support");
+	ATF_REQUIRE_ERRNO(EINVAL, vm_snapshot_session(ctx, &session) == -1);
 	*vcpup = vcpu;
 	return (ctx);
 }

@@ -124,6 +124,16 @@ ATF_TC_BODY(snapshot_codec_roundtrips, tc)
 	ATF_CHECK(!pvpanic_config_decode(0x88, &enabled, &action));
 }
 
+ATF_TC_WITHOUT_HEAD(snapshot_rejects_topology_change);
+ATF_TC_BODY(snapshot_rejects_topology_change, tc)
+{
+
+	ATF_CHECK(pvpanic_topology_matches(false, false));
+	ATF_CHECK(pvpanic_topology_matches(true, true));
+	ATF_CHECK(!pvpanic_topology_matches(false, true));
+	ATF_CHECK(!pvpanic_topology_matches(true, false));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -133,5 +143,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, only_panicked_is_fatal);
 	ATF_TP_ADD_TC(tp, action_parsing);
 	ATF_TP_ADD_TC(tp, snapshot_codec_roundtrips);
+	ATF_TP_ADD_TC(tp, snapshot_rejects_topology_change);
 	return (atf_no_error());
 }

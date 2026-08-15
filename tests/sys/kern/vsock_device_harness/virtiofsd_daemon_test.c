@@ -29,6 +29,7 @@
 #include "virtiofsd_handle.c"
 #include "virtiofsd_session.c"
 #include "virtiofsd_server.c"
+#define	VIRTIOFSD_HELLO_TIMEOUT_MS	200
 #define	main	virtiofsd_program_main
 int	virtiofsd_program_main(int, char **);
 #include "virtiofsd.c"
@@ -167,6 +168,27 @@ ATF_TC_BODY(pending_limit_validation, tc)
 	ATF_CHECK(!pending_limit_valid(2, 3));
 	ATF_CHECK(pending_limit_valid(UINT32_MAX / 2U, UINT32_MAX - 1U));
 	ATF_CHECK(!pending_limit_valid(UINT32_MAX / 2U + 1U, UINT32_MAX));
+}
+
+ATF_TC_WITHOUT_HEAD(silent_authenticated_client_times_out);
+ATF_TC_BODY(silent_authenticated_client_times_out, tc)
+{
+	int client[2], error, rootfd;
+
+	ATF_REQUIRE_EQ(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0,
+	    client), 0);
+	rootfd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ATF_REQUIRE(rootfd >= 0);
+	/*
+	 * The peer has the expected credentials but sends no HELLO.  It must not
+	 * hold the daemon's sole accept loop indefinitely.
+	 */
+	error = client_run(client[0], rootfd, geteuid(), getegid(), 2, 2,
+	    4096, 1, 8192, 1);
+	ATF_CHECK_EQ(error, ETIMEDOUT);
+	ATF_CHECK_EQ(close(rootfd), 0);
+	ATF_CHECK_EQ(close(client[0]), 0);
+	ATF_CHECK_EQ(close(client[1]), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(foreground_daemon_is_sandboxed_event_driven_and_cleans);
@@ -390,6 +412,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, pending_limit_validation);
+	ATF_TP_ADD_TC(tp, silent_authenticated_client_times_out);
 	ATF_TP_ADD_TC(tp,
 	    foreground_daemon_is_sandboxed_event_driven_and_cleans);
 	return (atf_no_error());

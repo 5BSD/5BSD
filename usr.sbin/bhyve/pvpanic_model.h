@@ -73,6 +73,17 @@ pvpanic_event_is_fatal(uint8_t events)
 }
 
 /*
+ * The LPC I/O registration and ACPI namespace are created before restore.
+ * They cannot be safely added or removed by a one-byte device snapshot.
+ */
+static inline bool
+pvpanic_topology_matches(bool local_enabled, bool restored_enabled)
+{
+
+	return (local_enabled == restored_enabled);
+}
+
+/*
  * Parse an operator-supplied action string ("none"/"log", "poweroff",
  * "reset", "halt").  Returns false on an unrecognised value and leaves *out
  * untouched.

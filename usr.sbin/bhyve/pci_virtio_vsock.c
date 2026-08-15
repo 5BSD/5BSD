@@ -4829,6 +4829,17 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 		WPRINTF(("vtvsock: bindat sock failed: %s", strerror(errno)));
 		goto failed;
 	}
+	/*
+	 * The control protocol can return a connected relay descriptor.  Do not
+	 * leave access to that authority to the caller's umask: only the bhyve
+	 * owner (and the system superuser) may connect to this control endpoint.
+	 */
+	if (fchmodat(sc->vsc_dfd, "sock", 0600,
+	    AT_SYMLINK_NOFOLLOW | AT_RESOLVE_BENEATH) < 0) {
+		WPRINTF(("vtvsock: chmod control socket failed: %s",
+		    strerror(errno)));
+		goto failed;
+	}
 
 #ifndef WITHOUT_CAPSICUM
 	/*
@@ -4849,7 +4860,11 @@ pci_vtvsock_init(struct pci_devinst *pi, nvlist_t *nvl)
 #ifndef WITHOUT_CAPSICUM
 	{
 		int one = 1;
-		(void)setsockopt(s, 0, LOCAL_CAP_CONNECT, &one, sizeof(one));
+		if (setsockopt(s, 0, LOCAL_CAP_CONNECT, &one, sizeof(one)) < 0) {
+			WPRINTF(("vtvsock: enable control capability mode failed: %s",
+			    strerror(errno)));
+			goto failed;
+		}
 	}
 #endif
 	/* Backlog of 16 allows a burst of incoming host connections */

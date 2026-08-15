@@ -151,6 +151,36 @@ ATF_TC_BODY(frame_rejects_oversize_and_short_header, tc)
 	    EMSGSIZE);
 }
 
+ATF_TC_WITHOUT_HEAD(frame_rejects_unknown_version_type_and_flags);
+ATF_TC_BODY(frame_rejects_unknown_version_type_and_flags, tc)
+{
+	struct migration_frame_header hdr;
+	uint8_t frame[MIGRATION_FRAME_HDR_SIZE];
+	size_t written;
+
+	(void)tc;
+	ATF_CHECK_EQ(migration_frame_encode(0, MIGRATION_MSG_HELLO, 1, 0,
+	    NULL, 0, frame, sizeof(frame), &written), EINVAL);
+	ATF_CHECK_EQ(migration_frame_encode(MIGRATION_PROTO_VERSION,
+	    MIGRATION_MSG_HELLO, 1, MIGRATION_FFLAG_CHUNK, NULL, 0, frame,
+	    sizeof(frame), &written), EINVAL);
+
+	memset(frame, 0, sizeof(frame));
+	le32enc(frame + 0, MIGRATION_PROTO_MAGIC);
+	le16enc(frame + 4, MIGRATION_PROTO_VERSION + 1);
+	le16enc(frame + 6, MIGRATION_MSG_HELLO);
+	ATF_CHECK_EQ(migration_frame_decode_header(frame, sizeof(frame), &hdr),
+	    EPROTO);
+	le16enc(frame + 4, MIGRATION_PROTO_VERSION);
+	le16enc(frame + 6, MIGRATION_MSG_ABORT + 1);
+	ATF_CHECK_EQ(migration_frame_decode_header(frame, sizeof(frame), &hdr),
+	    EPROTO);
+	le16enc(frame + 6, MIGRATION_MSG_HELLO);
+	le32enc(frame + 8, MIGRATION_FFLAG_CHUNK);
+	ATF_CHECK_EQ(migration_frame_decode_header(frame, sizeof(frame), &hdr),
+	    EPROTO);
+}
+
 ATF_TC_WITHOUT_HEAD(topology_roundtrip_and_bounds);
 ATF_TC_BODY(topology_roundtrip_and_bounds, tc)
 {
@@ -193,6 +223,8 @@ ATF_TC_BODY(topology_roundtrip_and_bounds, tc)
 
 	/* Truncated device array is rejected. */
 	ATF_CHECK_EQ(migration_topology_decode(wire, size - 1, out), EBADMSG);
+	/* Fixed-version topology records do not admit silently ignored trailers. */
+	ATF_CHECK_EQ(migration_topology_decode(wire, size + 1, out), EBADMSG);
 
 	/* An over-large device_count in the header is rejected. */
 	le32enc(wire + 36, MIGRATION_MAX_DEVICES + 1);
@@ -379,6 +411,7 @@ struct source_model {
 	int chunk_cursor;	/* page index a chunked generation resumes from */
 	int converge_after;	/* declare converged at this round (<=0 never) */
 	int fail_dev_state;	/* errno to fail so_dev_state with */
+	int fail_resume;	/* errno to fail source rollback resume with */
 	const uint8_t *dev_override;	/* large dev-state blob (else guest.dev_state) */
 	size_t dev_override_len;
 	bool quiesced;
@@ -548,6 +581,8 @@ src_resume(void *arg)
 {
 	struct source_model *m = arg;
 
+	if (m->fail_resume != 0)
+		return (m->fail_resume);
 	m->quiesced = false;
 	m->resumed_after_rollback = true;
 	return (0);
@@ -1188,6 +1223,45 @@ ATF_TC_BODY(source_rolls_back_when_dev_state_fails, tc)
 	ATF_CHECK(!src.defunct);
 	ATF_CHECK_EQ(sres.phase, (uint32_t)MIGRATION_PHASE_ROLLED_BACK);
 	/* Destination never committed and discarded staged state. */
+	ATF_CHECK(derr != 0);
+	ATF_CHECK(!dstate->committed);
+	ATF_CHECK(!dstate->resumed);
+	ATF_CHECK(dstate->discarded);
+}
+
+/*
+ * A rollback is only successful if the quiesced source can actually resume.
+ * If the device fabric resume fails, it must remain stopped rather than being
+ * reported as a runnable source after a failed handoff.
+ */
+ATF_TC_WITHOUT_HEAD(source_resume_failure_stays_fail_closed);
+ATF_TC_BODY(source_resume_failure_stays_fail_closed, tc)
+{
+	struct source_model src;
+	struct dest_model dst;
+	struct migration_source_result sres;
+	struct migration_session_config cfg;
+	struct dest_model *dstate;
+	int serr, derr;
+
+	(void)tc;
+	memset(&src, 0, sizeof(src));
+	memset(&dst, 0, sizeof(dst));
+	src.converge_after = 2;
+	src.fail_dev_state = EOPNOTSUPP;
+	src.fail_resume = EIO;
+	cfg = base_config();
+
+	run_loopback(&src, &dst, &cfg, &cfg, &sres, &dstate, &serr, &derr);
+
+	/* Keep the original cutover failure while recording failed rollback. */
+	ATF_CHECK_EQ(serr, EOPNOTSUPP);
+	ATF_CHECK(!sres.source_runnable);
+	ATF_CHECK(src.quiesced);
+	ATF_CHECK(!src.resumed_after_rollback);
+	ATF_CHECK(!src.defunct);
+	ATF_CHECK_EQ(sres.phase, (uint32_t)MIGRATION_PHASE_FAILED);
+	ATF_CHECK_EQ(sres.reason, (uint32_t)MIGRATION_REASON_STATE);
 	ATF_CHECK(derr != 0);
 	ATF_CHECK(!dstate->committed);
 	ATF_CHECK(!dstate->resumed);
@@ -2244,6 +2318,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, hello_rejects_uncanonical_abi_and_truncation);
 	ATF_TP_ADD_TC(tp, frame_roundtrip_and_crc);
 	ATF_TP_ADD_TC(tp, frame_rejects_oversize_and_short_header);
+	ATF_TP_ADD_TC(tp, frame_rejects_unknown_version_type_and_flags);
 	ATF_TP_ADD_TC(tp, topology_roundtrip_and_bounds);
 	ATF_TP_ADD_TC(tp, version_negotiation_downgrade_and_reject);
 	ATF_TP_ADD_TC(tp, hello_validate_rejects_mismatch);
@@ -2257,6 +2332,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, recv_enforces_sequence_monotonicity);
 	ATF_TP_ADD_TC(tp, destination_without_release_does_not_run);
 	ATF_TP_ADD_TC(tp, source_rolls_back_when_dev_state_fails);
+	ATF_TP_ADD_TC(tp, source_resume_failure_stays_fail_closed);
 	ATF_TP_ADD_TC(tp, chunk_validate_rejects_gap_dup_oversize);
 	ATF_TP_ADD_TC(tp, loopback_multiframe_dev_state_reassembles);
 	ATF_TP_ADD_TC(tp, source_rolls_back_on_midchunk_dev_state_failure);

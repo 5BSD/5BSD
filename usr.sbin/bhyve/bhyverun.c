@@ -55,6 +55,7 @@
 #include <string.h>
 #include <err.h>
 #include <errno.h>
+#include <limits.h>
 #ifdef BHYVE_SNAPSHOT
 #include <fcntl.h>
 #endif
@@ -1070,12 +1071,27 @@ main(int argc, char *argv[])
 #ifdef BHYVE_SNAPSHOT
 	{
 		const char *rv = get_config_value("migrate.receive_fd");
+		const char *errstr;
+		long descriptor;
+		int fdflags, socket_type;
+		socklen_t socket_type_len;
 
 		if (rv != NULL) {
-			migrate_recv_fd = atoi(rv);
-			if (migrate_recv_fd < 0)
+			descriptor = strtonum(rv, 0, INT_MAX, &errstr);
+			if (errstr != NULL)
 				errx(EX_USAGE, "invalid migrate receive fd '%s'",
 				    rv);
+			migrate_recv_fd = (int)descriptor;
+			fdflags = fcntl(migrate_recv_fd, F_GETFD);
+			socket_type_len = sizeof(socket_type);
+			if (fdflags < 0 || getsockopt(migrate_recv_fd, SOL_SOCKET,
+			    SO_TYPE, &socket_type, &socket_type_len) != 0 ||
+			    socket_type_len != sizeof(socket_type) ||
+			    socket_type != SOCK_STREAM)
+				errx(EX_USAGE, "migrate receive fd '%s' is not a stream socket",
+				    rv);
+			if (fcntl(migrate_recv_fd, F_SETFD, fdflags | FD_CLOEXEC) < 0)
+				errx(EX_OSERR, "cannot set close-on-exec on migrate receive fd");
 		}
 	}
 	if (restore_file != NULL && migrate_recv_fd >= 0)

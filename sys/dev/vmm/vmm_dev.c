@@ -1011,6 +1011,31 @@ vmmdev_snapshot_session_abort_current(struct vm *vm)
 	return (error);
 }
 
+int
+vmmdev_snapshot_session_require(struct vm *vm)
+{
+	struct vmmdev_fdpriv *priv;
+	int error;
+
+	if (vm == NULL || !sx_xlocked(&vm->vcpus_init_lock))
+		return (EINVAL);
+	error = devfs_get_cdevpriv((void **)&priv);
+	if (error != 0)
+		return (error);
+	if (priv->vm != vm)
+		return (EXDEV);
+
+	/*
+	 * A session is an open-file-description credential.  Merely holding a
+	 * second descriptor for the same VM is not authority to add SAVE or
+	 * RESTORE records while its owner has ingress fenced.
+	 */
+	sx_slock(&priv->lock);
+	error = priv->active ? 0 : EPERM;
+	sx_sunlock(&priv->lock);
+	return (error);
+}
+
 static int
 vmmdev_open(struct cdev *dev, int flags, int fmt, struct thread *td)
 {

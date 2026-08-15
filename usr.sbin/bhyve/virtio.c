@@ -1903,7 +1903,7 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 			}
 			n_indir = vi32_to_cpu(vs, vdir->len) / 16;
 			if ((vi32_to_cpu(vs, vdir->len) & 0xf) ||
-			    n_indir == 0) {
+			    n_indir == 0 || n_indir > vq->vq_qsize) {
 				EPRINTLN(
 				    "%s: invalid indir len 0x%x, "
 				    "driver confused?",
