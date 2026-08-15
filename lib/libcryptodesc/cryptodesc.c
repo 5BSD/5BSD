@@ -8,9 +8,21 @@
 static int
 named_identifier(const char *value, size_t maxlen)
 {
+	size_t i, length;
 
-	return (value != NULL && strnlen(value, maxlen) != 0 &&
-	    strnlen(value, maxlen) < maxlen);
+	if (value == NULL)
+		return (0);
+	length = strnlen(value, maxlen);
+	if (length == 0 || length == maxlen)
+		return (0);
+	for (i = 0; i < length; i++) {
+		if (!((value[i] >= 'a' && value[i] <= 'z') ||
+		    (value[i] >= 'A' && value[i] <= 'Z') ||
+		    (value[i] >= '0' && value[i] <= '9') ||
+		    value[i] == '.' || value[i] == '_' || value[i] == '-'))
+			return (0);
+	}
+	return (1);
 }
 
 int

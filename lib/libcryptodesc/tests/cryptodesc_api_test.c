@@ -35,13 +35,13 @@ ATF_TC_BODY(argument_validation, tc)
 	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_mint_key(-1, CRYPTODESC_KEY_ED25519,
 	    CRYPTODESC_RIGHT_SIGN, 0, NULL, &descriptor) == -1);
 	errno = 0;
-	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_named_create(-1, "bad/name", "owner",
+	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_named_create(0, "bad/name", "owner",
 	    &session, CRYPTODESC_RIGHT_ENCRYPT, &generation) == -1);
 	errno = 0;
-	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_named_lease(-1, "name", "bad/owner",
+	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_named_lease(0, "name", "bad/owner",
 	    CRYPTODESC_RIGHT_ENCRYPT, 0, &generation, &descriptor) == -1);
 	errno = 0;
-	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_named_rotate(-1, "", "owner",
+	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_named_rotate(0, "", "owner",
 	    &generation) == -1);
 	errno = 0;
 	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_restrict(-1,

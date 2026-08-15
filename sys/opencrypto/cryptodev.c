@@ -877,6 +877,7 @@ cryptodesc_mint_generated(struct thread *td, struct cryptodesc_generate *create)
 	}
 	if (error != 0)
 		return (error);
+	create->session.crid = session.crid;
 	return (cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
 	    create->cd_rights, create->cd_ttl, &create->cd_fd, NULL, 0));
 }
@@ -1109,6 +1110,7 @@ cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
 	error = cse_create_session(&session, &cse, false);
 	if (error != 0)
 		goto out;
+	derive->session.crid = session.crid;
 	ttl = derive->cd_ttl;
 	if (cd->cd_expires != 0 &&
 	    (ttl == 0 || time_second + ttl > cd->cd_expires))
