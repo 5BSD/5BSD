@@ -218,6 +218,12 @@ ATF_TC_BODY(mesh_net_nid_mismatch, tc)
 	ATF_CHECK_EQ_MSG(-1, mesh_net_decrypt(enckey, privkey, 0x69,
 	    NET_IVINDEX, pdu_bytes, 28, &out),
 	    "decrypt accepted a PDU whose NID did not match the key");
+
+	/* IVI is bound to the IV Index, not merely ignored by NID matching. */
+	pdu_bytes[0] ^= 0x80;
+	ATF_CHECK_EQ_MSG(-1, mesh_net_decrypt(enckey, privkey, NET_NID,
+	    NET_IVINDEX, pdu_bytes, 28, &out),
+	    "decrypt accepted a PDU whose IVI did not match the IV Index");
 }
 
 /* ================================================================

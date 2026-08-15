@@ -217,6 +217,8 @@ ATF_TC_BODY(friendship_live_establish_and_deliver, tc)
 	struct mesh_node *sender;
 	uint8_t netkey[16], appkey[16];
 	uint8_t msg[3] = { 0x82, 0x99, 0x5A };	/* a 2-octet-opcode access msg */
+	uint8_t poll[64];
+	size_t poll_len;
 	size_t qbefore;
 	int delivered;
 
@@ -257,6 +259,9 @@ ATF_TC_BODY(friendship_live_establish_and_deliver, tc)
 	ATF_CHECK_EQ(MESH_LPN_ST_ESTABLISHING, lpn->lpn_fsm.state);
 	ATF_CHECK_EQ(0x0100, lpn->lpn_fsm.friend_addr);
 	ATF_REQUIRE(g_ncap >= 1);
+	poll_len = g_cap[0].len;
+	ATF_REQUIRE(poll_len <= sizeof(poll));
+	memcpy(poll, g_cap[0].buf, poll_len);
 
 	/* Poll -> Friend: establishes the friendship, answers with a Friend
 	 * Update (empty queue); Update -> LPN establishes the friendship. */
@@ -265,6 +270,11 @@ ATF_TC_BODY(friendship_live_establish_and_deliver, tc)
 	ATF_REQUIRE(g_ncap >= 1);		/* Friend emitted an Update */
 	fr_pump(lpn);
 	ATF_CHECK_EQ(1, mesh_lpn_fsm_established(&lpn->lpn_fsm));
+
+	/* An authenticated replay of the first Poll must not emit another Update. */
+	g_ncap = 0;
+	ATF_CHECK_EQ(0, meshd_bearer_rx(friend, poll, poll_len));
+	ATF_CHECK_EQ(0, g_ncap);
 
 	/* -- Queued-message delivery -------------------------------------- */
 

@@ -713,6 +713,26 @@ ATF_TC_BODY(link_foreign_link_id_ignored, tc)
 	    NULL, NULL, NULL, NULL));
 	ATF_CHECK(mesh_prov_link_is_open(&pl));
 
+	/* An active device must ignore another provisioner's Link Open. */
+	mesh_prov_link_init_provisioner(&opener, 0x55556666, uuid, 1000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_open(&opener, now + 1, pkt, &pktlen));
+	have_ack = 0;
+	ATF_CHECK_EQ(0, mesh_prov_link_recv(&dl, pkt, pktlen, now + 1, NULL,
+	    NULL, NULL, ack, &acklen, &have_ack));
+	ATF_CHECK_EQ(0, have_ack);
+	ATF_CHECK_EQ(0x11112222, dl.link_id);
+	ATF_CHECK(mesh_prov_link_is_open(&dl));
+
+	/* A retransmitted Open for the active Link ID is Acked but not reset. */
+	mesh_prov_link_init_provisioner(&opener, 0x11112222, uuid, 1000, 3);
+	ATF_REQUIRE_EQ(0, mesh_prov_link_open(&opener, now + 2, pkt, &pktlen));
+	have_ack = 0;
+	ATF_CHECK_EQ(0, mesh_prov_link_recv(&dl, pkt, pktlen, now + 2, NULL,
+	    NULL, NULL, ack, &acklen, &have_ack));
+	ATF_CHECK(have_ack);
+	ATF_CHECK_EQ(0x11112222, dl.link_id);
+	ATF_CHECK(mesh_prov_link_is_open(&dl));
+
 	/* A Link Close on a DIFFERENT Link ID must be ignored by both ends. */
 	mesh_prov_link_init_provisioner(&foreign, 0x33334444, uuid, 1000, 3);
 	ATF_REQUIRE_EQ(0, mesh_prov_link_close(&foreign, 0, pkt, &pktlen));

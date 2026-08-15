@@ -806,18 +806,24 @@ mesh_prov_link_recv(struct mesh_prov_link *l, const uint8_t *pkt, size_t len,
 		case MESH_BEARER_LINK_OPEN:
 			/*
 			 * Adopt the link only if we are an unopened device and
-			 * the Device UUID matches ours (Section 5.3.1.4.1); a
-			 * Link Open for a different device is ignored rather
-			 * than tearing down / re-adopting our link.
+			 * the Device UUID matches ours (Section 5.3.1.4.1).  An
+			 * Open retransmission for our active Link ID is re-acked, but
+			 * must not reset an in-flight transaction.  A different Link ID
+			 * is a concurrent provisioner and must not replace the link.
 			 */
 			if (l->role == MESH_PROV_ROLE_DEVICE &&
 			    gp.payload_len == sizeof(l->device_uuid) &&
 			    memcmp(gp.payload, l->device_uuid,
 			    sizeof(l->device_uuid)) == 0) {
-				l->link_id = link_id;
-				l->state = MESH_LINK_OPEN;
+				if (l->state == MESH_LINK_OPEN &&
+				    link_id != l->link_id)
+					return (0);
+				if (l->state != MESH_LINK_OPEN) {
+					l->link_id = link_id;
+					l->state = MESH_LINK_OPEN;
+					l->proto_start_ms = now;
+				}
 				l->last_rx_ms = now;
-				l->proto_start_ms = now;
 				if (ack != NULL && acklen != NULL &&
 				    have_ack != NULL) {
 					uint8_t g[MESH_GP_PDU_MAX];

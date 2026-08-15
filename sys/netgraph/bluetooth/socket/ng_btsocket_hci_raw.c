@@ -485,14 +485,47 @@ ng_btsocket_hci_raw_data_input(struct mbuf *nam)
 	ng_btsocket_hci_raw_pcb_p	 pcb = NULL;
 	struct mbuf			*m0 = NULL, *m = NULL;
 	struct sockaddr_hci		*sa = NULL;
+	int				 hdrlen;
 
 	m0 = nam->m_next;
 	nam->m_next = NULL;
 
 	KASSERT((nam->m_type == MT_SONAME),
 		("%s: m_type=%d\n", __func__, nam->m_type));
-	KASSERT((m0->m_flags & M_PKTHDR),
-		("%s: m_flags=%#x\n", __func__, m0->m_flags));
+
+	/*
+	 * A netgraph peer may supply a fragmented mbuf chain.  The filter below
+	 * reads the packet type and, for commands and events, header fields, so
+	 * make the complete header contiguous before applying it.  In particular,
+	 * do not turn an empty item into a KASSERT or read past m_len.
+	 */
+	if (m0 == NULL || (m0->m_flags & M_PKTHDR) == 0 ||
+	    m0->m_pkthdr.len < 1)
+		goto drop;
+	if (m0->m_len < 1 && (m0 = m_pullup(m0, 1)) == NULL)
+		goto drop;
+
+	switch (*mtod(m0, u_int8_t *)) {
+	case NG_HCI_CMD_PKT:
+		hdrlen = sizeof(ng_hci_cmd_pkt_t);
+		break;
+	case NG_HCI_ACL_DATA_PKT:
+		hdrlen = sizeof(ng_hci_acldata_pkt_t);
+		break;
+	case NG_HCI_SCO_DATA_PKT:
+		hdrlen = sizeof(ng_hci_scodata_pkt_t);
+		break;
+	case NG_HCI_EVENT_PKT:
+		hdrlen = sizeof(ng_hci_event_pkt_t);
+		break;
+	default:
+		hdrlen = 1;
+		break;
+	}
+	if (m0->m_pkthdr.len < hdrlen)
+		goto drop;
+	if (m0->m_len < hdrlen && (m0 = m_pullup(m0, hdrlen)) == NULL)
+		goto drop;
 
 	sa = mtod(nam, struct sockaddr_hci *);
 
@@ -548,6 +581,11 @@ next:
 
 	mtx_unlock(&ng_btsocket_hci_raw_sockets_mtx);
 
+	NG_FREE_M(nam);
+	NG_FREE_M(m0);
+	return;
+
+drop:
 	NG_FREE_M(nam);
 	NG_FREE_M(m0);
 } /* ng_btsocket_hci_raw_data_input */ 

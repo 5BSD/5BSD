@@ -469,6 +469,11 @@ struct meshd_node {
 	 */
 	struct mesh_friend_fsm		friend_fsm;
 	int				friend_enabled;
+	/* One replay list per friendship-control opcode: a valid Offer and Update
+	 * may share a Network SEQ during establishment, but a replay of either
+	 * opcode must still be rejected independently. */
+	struct mesh_rpl_entry		friend_rpl_store[7][MESH_SIM_RPL_SIZE];
+	struct mesh_rpl			friend_rpl[7];
 	struct mesh_lpn_fsm		lpn_fsm;
 	int				lpn_enabled;
 	struct mesh_prov_session	prov_sess;	/* provisioner session */

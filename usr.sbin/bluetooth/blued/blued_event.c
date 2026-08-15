@@ -1245,9 +1245,7 @@ blued_handle_readable(struct kevent *ev)
 						return;
 					}
 
-					do {
-						nr = recv(bfd, buf, bmtu, 0);
-					} while (nr < 0 && errno == EINTR);
+					nr = att_recv_record(bfd, buf, bmtu);
 					if (nr <= 0) {
 						if (buf != fixed)
 							free(buf);
@@ -1286,10 +1284,7 @@ blued_handle_readable(struct kevent *ev)
 					return;
 				}
 
-				do {
-					nr = recv(conn->att_fd, buf,
-					    sizeof(buf), 0);
-				} while (nr < 0 && errno == EINTR);
+				nr = att_recv_record(conn->att_fd, buf, sizeof(buf));
 				if (nr <= 0) {
 					LOG_ATT(1, "peripheral recv: %s",
 					    nr == 0 ? "closed" :

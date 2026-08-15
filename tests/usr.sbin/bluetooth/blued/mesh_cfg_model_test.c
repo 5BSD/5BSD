@@ -506,6 +506,8 @@ ATF_TC_BODY(node_states, tc)
 	ATF_CHECK_EQ(MESH_CFG_OP_RELAY_SET, op);
 	ATF_CHECK_EQ(0x01, rout.relay);
 	ATF_CHECK_EQ(0x2a, rout.retransmit);
+	buf[0] = 0x80; buf[1] = 0x27; buf[2] = 0x02; buf[3] = 0x2a;
+	ATF_CHECK_EQ(-1, mesh_cfg_relay_set_parse(buf, 4, &op, &rout));
 
 	/* Node Reset (0x8049) and Node Reset Status (0x804A): no parameters. */
 	ATF_REQUIRE_EQ(0, mesh_cfg_node_reset_build(buf, &outlen));
@@ -1544,6 +1546,9 @@ ATF_TC_BODY(key_refresh_phase, tc)
 	ATF_CHECK_EQ(MESH_CFG_KR_TRANSITION_2, transition);
 	/* Only transitions 0x02/0x03 are valid. */
 	ATF_CHECK_EQ(-1, mesh_cfg_kr_phase_set_build(0x456, 0x01, buf, &len));
+	buf[4] = 0x01;
+	ATF_CHECK_EQ(-1, mesh_cfg_kr_phase_set_parse(buf, 5, &net_idx,
+	    &transition));
 
 	ATF_REQUIRE_EQ(0, mesh_cfg_kr_phase_status_build(MESH_CFG_SUCCESS,
 	    0x456, MESH_CFG_KR_PHASE_2, buf, &len));
@@ -1577,6 +1582,11 @@ ATF_TC_BODY(node_identity, tc)
 	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_set_parse(buf, len, &net_idx,
 	    &identity));
 	ATF_CHECK_EQ(MESH_CFG_NODE_IDENTITY_RUNNING, identity);
+	buf[4] = 0x02;
+	ATF_CHECK_EQ(-1, mesh_cfg_node_identity_set_parse(buf, len, &net_idx,
+	    &identity));
+	ATF_CHECK_EQ(-1, mesh_cfg_node_identity_set_build(0x456, 0x02, buf,
+	    &len));
 
 	ATF_REQUIRE_EQ(0, mesh_cfg_node_identity_status_build(MESH_CFG_SUCCESS,
 	    0x456, MESH_CFG_NODE_IDENTITY_RUNNING, buf, &len));

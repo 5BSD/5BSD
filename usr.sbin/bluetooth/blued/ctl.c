@@ -5389,6 +5389,19 @@ blued_ctl_init(const char *path)
 
 	/* Save path for cleanup */
 	ctl_sock_path = strdup(path);
+	if (ctl_sock_path == NULL) {
+		/*
+		 * Do not leave an active listener whose pathname cannot be removed
+		 * during normal shutdown.  This is after worker startup, so undo the
+		 * complete control-plane setup before reporting ENOMEM.
+		 */
+		ctl_gatt_workers_stop();
+		close(fd);
+		blued_g.ctl_fd = -1;
+		(void)unlink(path);
+		errno = ENOMEM;
+		return (-1);
+	}
 
 	LOG_HCI(1, "control socket: %s", path);
 	return (0);

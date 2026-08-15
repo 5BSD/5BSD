@@ -724,25 +724,27 @@ ng_hci_drv_rcvdata(hook_p hook, item_p item)
 
 	/* Process packet */
 	m = NGI_M(item); /* item still has mbuf, just peeking */
+
+	if (m == NULL || m->m_pkthdr.len < 1) {
+		NG_HCI_WARN("%s: %s - empty HCI packet\n",
+		    __func__, NG_NODE_NAME(unit->node));
+		NG_FREE_ITEM(item);
+		return (EMSGSIZE);
+	}
+	if (m->m_len < 1) {
+		m = m_pullup(m, 1);
+		NGI_M(item) = m;
+		if (m == NULL) {
+			NG_FREE_ITEM(item);
+			return (ENOBUFS);
+		}
+	}
 	m->m_flags |= M_PROTO1; /* mark as incoming packet */
 
 	NG_HCI_STAT_BYTES_RECV(unit->stat, m->m_pkthdr.len);
 
 	/* Give copy packet to RAW hook */
 	ng_hci_mtap(unit, m);
-
-	/*
-	 * XXX XXX XXX
-	 * Lower layer drivers MUST NOT send mbuf chain with empty mbuf at
-	 * the beginning of the chain. HCI layer WILL NOT call m_pullup() here.
-	 */
-
-	if (m->m_pkthdr.len < 1) {
-		NG_HCI_WARN("%s: %s - empty HCI packet\n",
-		    __func__, NG_NODE_NAME(unit->node));
-		NG_FREE_ITEM(item);
-		return (EMSGSIZE);
-	}
 
 	switch (*mtod(m, u_int8_t *)) {
 	case NG_HCI_ACL_DATA_PKT:

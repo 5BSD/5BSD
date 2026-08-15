@@ -606,9 +606,7 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
 		    &tv_remaining, sizeof(tv_remaining));
 
-		do {
-			n = recv(fd, rsp, recvlen, 0);
-		} while (n < 0 && errno == EINTR);
+		n = att_recv_record(fd, rsp, recvlen);
 		if (n < 0) {
 			int save = errno;
 			att_bearer_fail(ac, fd);
@@ -1501,15 +1499,50 @@ att_read_by_group_type(struct att_conn *ac, uint16_t start, uint16_t end,
  * Receive an unsolicited PDU (notification or indication).
  * Caller should use poll(2)/select(2) on ac->fd to know when data is ready.
  */
+ssize_t
+att_recv_record(int fd, void *buf, size_t buflen)
+{
+	struct sockaddr_storage ss;
+	struct iovec iov;
+	struct msghdr msg;
+	socklen_t sslen;
+	int family;
+	ssize_t n;
+
+	sslen = sizeof(ss);
+	family = AF_BLUETOOTH;
+	if (getsockname(fd, (struct sockaddr *)&ss, &sslen) == 0)
+		family = ss.ss_family;
+	iov.iov_base = buf;
+	iov.iov_len = buflen;
+	memset(&msg, 0, sizeof(msg));
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	do {
+		n = recvmsg(fd, &msg, 0);
+	} while (n < 0 && errno == EINTR);
+	if (n >= 0 && att_record_is_truncated(family, msg.msg_flags)) {
+		errno = EMSGSIZE;
+		return (-1);
+	}
+	return (n);
+}
+
+bool
+att_record_is_truncated(int family, int msg_flags)
+{
+
+	/* AF_UNIX is the byte-stream-like unit-test transport on FreeBSD. */
+	return (family != AF_UNIX && (msg_flags & MSG_TRUNC) != 0);
+}
+
 int
 att_recv_bearer(struct att_conn *ac, int fd, void *buf, size_t buflen,
     size_t *outlen)
 {
 	ssize_t n;
 
-	do {
-		n = recv(fd, buf, buflen, 0);
-	} while (n < 0 && errno == EINTR);
+	n = att_recv_record(fd, buf, buflen);
 	if (n < 0)
 		return (-1);
 	if (n == 0) {

@@ -54,8 +54,10 @@ static int meshd_remote_devkey_rx(void *, uint32_t, uint16_t, uint16_t,
 static struct meshd_appkey_entry *meshd_find_appkey(struct meshd_node *,
     uint16_t);
 static void meshd_df_rpr_init(struct meshd_node *nd);
-static void meshd_friendship_rx(struct meshd_node *nd, const uint8_t *pdu,
-    size_t len);
+static int meshd_friendship_control_rx(struct meshd_node *, const uint8_t *,
+    size_t);
+static void meshd_friendship_access_queue_rx(struct meshd_node *,
+    const uint8_t *, size_t);
 static void meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
     struct mesh_friend_out *out);
 static void meshd_lpn_emit(struct meshd_node *nd, struct mesh_lpn_out *out);
@@ -392,6 +394,9 @@ meshd_setup_node(struct meshd_node *nd, const uint8_t netkey[16],
 
 	nd->addr = addr;
 	nd->self = node;
+	for (size_t i = 0; i < nitems(nd->friend_rpl); i++)
+		mesh_rpl_init(&nd->friend_rpl[i], nd->friend_rpl_store[i],
+		    nitems(nd->friend_rpl_store[i]));
 	if (nd->have_local_devkey && mesh_sim_set_devkey(node,
 	    nd->local_devkey, meshd_devkey_rx, nd) != 0)
 		return (-1);
@@ -624,7 +629,7 @@ meshd_bearer_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 		return (-1);
 	if (!nd->provisioned)
 		return (-1);
-
+	/* Friendship control is dispatched separately below with its own RPL. */
 	before = nd->self->rx.count;
 	memset(pub_valid, 0, sizeof(pub_valid));
 	for (i = 0; i < nd->db.n_models; i++)
@@ -647,8 +652,10 @@ meshd_bearer_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 	 * transmitting the resulting control/queued PDUs over the bearer.  The
 	 * sim step above ignores these opcodes, so this is additive.
 	 */
-	if (nd->friend_enabled || nd->lpn_enabled)
-		meshd_friendship_rx(nd, pdu, len);
+	if (nd->friend_enabled || nd->lpn_enabled) {
+		(void)meshd_friendship_control_rx(nd, pdu, len);
+		meshd_friendship_access_queue_rx(nd, pdu, len);
+	}
 
 	if (nd->self->rx.count > before) {
 		meshd_app_queue_rx(nd);
@@ -4775,17 +4782,131 @@ meshd_lpn_emit(struct meshd_node *nd, struct mesh_lpn_out *out)
  * (Offer / Update), and any resulting control/queued PDU is transmitted.  An
  * access message destined for our LPN is offered to the Friend Queue.
  */
-static void
-meshd_friendship_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
+static int
+meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
+    size_t len)
 {
+	struct mesh_lower lower;
 	struct mesh_net_pdu np;
-	uint32_t ivc[2], iv;
+	struct {
+		uint8_t nid;
+		const uint8_t *enckey;
+		const uint8_t *privkey;
+	} keys[2];
+	uint32_t ivc[2], iv, iv_used;
 	uint64_t now;
-	size_t ni, niv;
-	uint8_t op, ivu;
+	size_t ki, nkeys, ni, niv;
+	uint8_t op, ivu, rpl_slot;
 	int ok = 0;
 
 	if (nd->self == NULL)
+		return (0);
+	iv = mesh_iv_tx_index(&nd->self->iv);
+	ivc[0] = iv;
+	niv = 1;
+	if (iv > 0) {
+		ivc[1] = iv - 1;
+		niv = 2;
+	}
+	nkeys = 0;
+	if (mesh_kr_rx_accept_old(&nd->self->kr)) {
+		keys[nkeys].nid = nd->self->nid;
+		keys[nkeys].enckey = nd->self->enckey;
+		keys[nkeys].privkey = nd->self->privkey;
+		nkeys++;
+	}
+	if (nd->self->have_new_key && mesh_kr_rx_accept_new(&nd->self->kr)) {
+		keys[nkeys].nid = nd->self->new_nid;
+		keys[nkeys].enckey = nd->self->new_enckey;
+		keys[nkeys].privkey = nd->self->new_privkey;
+		nkeys++;
+	}
+	for (ki = 0; ki < nkeys && !ok; ki++)
+		for (ni = 0; ni < niv && !ok; ni++)
+			if (mesh_net_decrypt(keys[ki].enckey, keys[ki].privkey,
+			    keys[ki].nid, ivc[ni], pdu, len, &np) == 0) {
+				iv_used = ivc[ni];
+				ok = 1;
+			}
+	if (!ok || np.transport_len == 0)
+		return (0);
+	if (np.ctl != 1 || mesh_lower_parse(1, np.transport,
+	    np.transport_len, &lower) != 0 || lower.seg != 0)
+		return (0);
+	op = lower.opcode;
+	if (!((nd->friend_enabled &&
+	    (op == MESH_FRIEND_OP_REQUEST || op == MESH_FRIEND_OP_POLL ||
+	    op == MESH_FRIEND_OP_SUBLIST_ADD ||
+	    op == MESH_FRIEND_OP_SUBLIST_REMOVE ||
+	    op == MESH_FRIEND_OP_CLEAR)) ||
+	    (nd->lpn_enabled && (op == MESH_FRIEND_OP_OFFER ||
+	    op == MESH_FRIEND_OP_UPDATE))))
+		return (0);
+	switch (op) {
+	case MESH_FRIEND_OP_REQUEST:
+		rpl_slot = 0;
+		break;
+	case MESH_FRIEND_OP_POLL:
+		rpl_slot = 1;
+		break;
+	case MESH_FRIEND_OP_SUBLIST_ADD:
+		rpl_slot = 2;
+		break;
+	case MESH_FRIEND_OP_SUBLIST_REMOVE:
+		rpl_slot = 3;
+		break;
+	case MESH_FRIEND_OP_CLEAR:
+		rpl_slot = 4;
+		break;
+	case MESH_FRIEND_OP_OFFER:
+		rpl_slot = 5;
+		break;
+	default: /* MESH_FRIEND_OP_UPDATE */
+		rpl_slot = 6;
+		break;
+	}
+	if (mesh_rpl_check(&nd->friend_rpl[rpl_slot], np.src, iv_used,
+	    np.seq) != 1)
+		return (1);
+
+	now = nd->tick_last;
+	ivu = (nd->self->iv.state == MESH_IV_UPDATE_IN_PROGRESS) ? 1 : 0;
+	if (nd->friend_enabled &&
+	    (op == MESH_FRIEND_OP_REQUEST || op == MESH_FRIEND_OP_POLL ||
+	    op == MESH_FRIEND_OP_SUBLIST_ADD ||
+	    op == MESH_FRIEND_OP_SUBLIST_REMOVE || op == MESH_FRIEND_OP_CLEAR)) {
+			struct mesh_friend_out out;
+
+			memset(&out, 0, sizeof(out));
+			if (meshd_friend_input(nd, np.src, np.transport,
+			    np.transport_len, MESHD_FRIEND_RX_RSSI, 0, ivu, iv_used,
+			    now, &out) >= 0)
+				meshd_friend_emit(nd, nd->friend_fsm.lpn_addr,
+				    &out);
+	}
+	if (nd->lpn_enabled && op == MESH_FRIEND_OP_OFFER)
+			(void)meshd_lpn_recv_offer(nd, np.transport,
+			    np.transport_len, np.src, now);
+	if (nd->lpn_enabled && op == MESH_FRIEND_OP_UPDATE) {
+			struct mesh_lpn_out lout;
+
+			memset(&lout, 0, sizeof(lout));
+			(void)meshd_lpn_recv_update(nd, np.transport,
+			    np.transport_len, now, &lout);
+	}
+	return (1);
+}
+
+static void
+meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
+    size_t len)
+{
+	struct mesh_net_pdu np;
+	uint32_t ivc[2], iv;
+	size_t ni, niv;
+	int ok = 0;
+
+	if (nd->self == NULL || !nd->friend_enabled)
 		return;
 	iv = mesh_iv_tx_index(&nd->self->iv);
 	ivc[0] = iv;
@@ -4800,37 +4921,7 @@ meshd_friendship_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 			ok = 1;
 	if (!ok || np.transport_len == 0)
 		return;
-
-	now = nd->tick_last;
-	ivu = (nd->self->iv.state == MESH_IV_UPDATE_IN_PROGRESS) ? 1 : 0;
-
-	if (np.ctl == 1) {
-		op = (uint8_t)(np.transport[0] & 0x7f);
-		if (nd->friend_enabled &&
-		    (op == MESH_FRIEND_OP_REQUEST || op == MESH_FRIEND_OP_POLL ||
-		    op == MESH_FRIEND_OP_SUBLIST_ADD ||
-		    op == MESH_FRIEND_OP_SUBLIST_REMOVE ||
-		    op == MESH_FRIEND_OP_CLEAR)) {
-			struct mesh_friend_out out;
-
-			memset(&out, 0, sizeof(out));
-			if (meshd_friend_input(nd, np.src, np.transport,
-			    np.transport_len, MESHD_FRIEND_RX_RSSI, 0, ivu, iv,
-			    now, &out) >= 0)
-				meshd_friend_emit(nd, nd->friend_fsm.lpn_addr,
-				    &out);
-		}
-		if (nd->lpn_enabled && op == MESH_FRIEND_OP_OFFER)
-			(void)meshd_lpn_recv_offer(nd, np.transport,
-			    np.transport_len, np.src, now);
-		if (nd->lpn_enabled && op == MESH_FRIEND_OP_UPDATE) {
-			struct mesh_lpn_out lout;
-
-			memset(&lout, 0, sizeof(lout));
-			(void)meshd_lpn_recv_update(nd, np.transport,
-			    np.transport_len, now, &lout);
-		}
-	} else if (np.ctl == 0 && nd->friend_enabled &&
+	if (np.ctl == 0 && nd->friend_enabled &&
 	    np.transport_len <= MESH_FQ_PDU_MAX) {
 		struct mesh_fq_entry e;
 

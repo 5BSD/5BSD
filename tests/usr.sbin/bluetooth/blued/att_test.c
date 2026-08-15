@@ -8016,6 +8016,16 @@ ATF_TC_BODY(test_hog_notification_recv, tc)
 	att_mock_cleanup(&ac, peer);
 }
 
+/* Bluetooth L2CAP records must not be accepted after MSG_TRUNC. */
+ATF_TC_WITHOUT_HEAD(test_att_recv_rejects_truncated_record);
+ATF_TC_BODY(test_att_recv_rejects_truncated_record, tc)
+{
+
+	ATF_CHECK(att_record_is_truncated(AF_BLUETOOTH, MSG_TRUNC));
+	ATF_CHECK(!att_record_is_truncated(AF_BLUETOOTH, 0));
+	ATF_CHECK(!att_record_is_truncated(AF_UNIX, MSG_TRUNC));
+}
+
 /* HOG multi-byte report via notification */
 ATF_TC_WITHOUT_HEAD(test_hog_notification_report);
 ATF_TC_BODY(test_hog_notification_report, tc)
@@ -11701,6 +11711,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* HOG notification tests */
 	ATF_TP_ADD_TC(tp, test_hog_notification_recv);
+	ATF_TP_ADD_TC(tp, test_att_recv_rejects_truncated_record);
 	ATF_TP_ADD_TC(tp, test_hog_notification_report);
 	ATF_TP_ADD_TC(tp, test_hog_notification_sequence);
 	ATF_TP_ADD_TC(tp, test_hog_indication_confirm);

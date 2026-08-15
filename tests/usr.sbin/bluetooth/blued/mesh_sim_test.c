@@ -774,6 +774,7 @@ ATF_TC_BODY(api_limits, tc)
 	ATF_CHECK_EQ(-1, mesh_sim_proxy_gatt_in(NULL, n, junk, sizeof(junk)));
 	ATF_CHECK_EQ(-1, mesh_sim_proxy_gatt_in(sim, NULL, junk, sizeof(junk)));
 	ATF_CHECK_EQ(-1, mesh_sim_proxy_gatt_in(sim, n, NULL, sizeof(junk)));
+	ATF_CHECK_EQ(-1, mesh_sim_proxy_gatt_in(sim, n, junk, 0));
 
 	/* Explicit-key and pre-encrypted transport entry-point guards. */
 	ATF_CHECK_EQ(-1, mesh_sim_send_upper(NULL, n, 2, 0, junk,

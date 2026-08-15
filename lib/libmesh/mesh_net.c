@@ -303,6 +303,8 @@ mesh_net_decrypt(const uint8_t enckey[16], const uint8_t privkey[16],
 		MESH_PROBE_NET_NID_MATCH(nid, in[0] & 0x7f, 0);
 		return (-1);
 	}
+	if ((in[0] >> 7) != (iv_index & 1))
+		return (-1);
 	MESH_PROBE_NET_NID_MATCH(nid, in[0] & 0x7f, 1);
 
 	/*

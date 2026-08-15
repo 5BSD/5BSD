@@ -1601,6 +1601,9 @@ mesh_cfg_kr_phase_set_parse(const uint8_t *in, size_t inlen, uint16_t *net_idx,
 		return (-1);
 	if (ap.opcode != MESH_CFG_OP_KEY_REFRESH_PHASE_SET || ap.params_len != 3)
 		return (-1);
+	if (ap.params[2] != MESH_CFG_KR_TRANSITION_2 &&
+	    ap.params[2] != MESH_CFG_KR_TRANSITION_3)
+		return (-1);
 	if (net_idx != NULL)
 		*net_idx = mesh_cfg_keyidx_unpack1(ap.params);
 	if (transition != NULL)
@@ -1687,7 +1690,8 @@ mesh_cfg_node_identity_set_build(uint16_t net_idx, uint8_t identity,
 {
 	uint8_t params[3];
 
-	if (net_idx > 0x0fff)
+	if (net_idx > 0x0fff || (identity != MESH_CFG_NODE_IDENTITY_STOPPED &&
+	    identity != MESH_CFG_NODE_IDENTITY_RUNNING))
 		return (-1);
 	mesh_cfg_keyidx_pack1(params, net_idx);
 	params[2] = identity;
@@ -1707,6 +1711,9 @@ mesh_cfg_node_identity_set_parse(const uint8_t *in, size_t inlen,
 	if (mesh_access_pdu_parse(in, inlen, &ap) != 0)
 		return (-1);
 	if (ap.opcode != MESH_CFG_OP_NODE_IDENTITY_SET || ap.params_len != 3)
+		return (-1);
+	if (ap.params[2] != MESH_CFG_NODE_IDENTITY_STOPPED &&
+	    ap.params[2] != MESH_CFG_NODE_IDENTITY_RUNNING)
 		return (-1);
 	if (net_idx != NULL)
 		*net_idx = mesh_cfg_keyidx_unpack1(ap.params);
@@ -1924,6 +1931,8 @@ mesh_cfg_relay_set_parse(const uint8_t *in, size_t inlen, uint32_t *opcode,
 	    ap.opcode != MESH_CFG_OP_RELAY_STATUS)
 		return (-1);
 	if (ap.params_len != 2)
+		return (-1);
+	if (ap.opcode == MESH_CFG_OP_RELAY_SET && ap.params[0] > 1)
 		return (-1);
 	out->relay = ap.params[0];
 	out->retransmit = ap.params[1];

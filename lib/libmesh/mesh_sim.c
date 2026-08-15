@@ -710,7 +710,8 @@ mesh_sim_proxy_gatt_in(struct mesh_sim *sim, struct mesh_node *proxy,
     const uint8_t *net_pdu, size_t len)
 {
 
-	if (sim == NULL || proxy == NULL || net_pdu == NULL || !proxy->is_proxy)
+	if (sim == NULL || proxy == NULL || net_pdu == NULL || !proxy->is_proxy ||
+	    len == 0 || len > MESH_NET_MAX_PDU)
 		return (-1);
 	/*
 	 * MshPRT_v1.1 Section 6.7: the Proxy Server both relays the PDU onto the

@@ -852,6 +852,7 @@ FUZZ+=		fuzz/fuzz_smp_responder.c
 FUZZ+=		fuzz/fuzz_ctl_ipc.c
 FUZZ+=		fuzz/fuzz_l2cap_sig.c
 FUZZ+=		fuzz/fuzz_mesh_net.c
+FUZZ+=		fuzz/fuzz_mesh_access.c
 FUZZ+=		fuzz/fuzz_l2cap_data.c
 FUZZ+=		fuzz/fuzz_config.c
 FUZZ+=		fuzz/fuzz_scan_parse.c
@@ -865,6 +866,10 @@ FUZZ+=		fuzz/fuzz_mesh_friend.c
 FUZZ+=		fuzz/fuzz_mesh_transport.c
 FUZZ+=		fuzz/fuzz_att_client.c
 FUZZ+=		fuzz/fuzz_mesh_sim.c
+
+# Ensure every fuzz harness advertised by fuzz/Makefile is present in the
+# installed bluetooth-tests package.
+ATF_TESTS_SH+=	fuzz_manifest_test
 
 ATF_TESTS_C+=	l2cap_data_test
 SRCS.l2cap_data_test=	l2cap_data_test.c
