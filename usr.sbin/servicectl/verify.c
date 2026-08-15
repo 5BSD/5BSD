@@ -122,9 +122,9 @@ print_bundle(const struct capbundle *b)
 			printf(" [%s]", m.kmod_requires[j]);
 		printf("\n");
 		printf("      capabilities: paths=%u files=%u network=%u "
-		    "jails=%u vsock=%u services=%u system=0x%x\n", m.ncap_paths,
-		    m.ncap_files, m.ncap_net, m.ncap_jail, m.ncap_vsock,
-		    m.ncap_services, m.cap_system);
+		    "jails=%u vsock=%u services=%u storage=%u system=0x%x\n",
+		    m.ncap_paths, m.ncap_files, m.ncap_net, m.ncap_jail,
+		    m.ncap_vsock, m.ncap_services, m.ncap_storage, m.cap_system);
 		for (j = 0; j < m.ncap_paths; j++)
 			printf("        path: %s\n", m.cap_paths[j]);
 		for (j = 0; j < m.ncap_files; j++)
@@ -155,6 +155,12 @@ print_bundle(const struct capbundle *b)
 			    ort_net_direction_name(m.cap_vsock[j].direction));
 		for (j = 0; j < m.ncap_services; j++)
 			printf("        service: %s\n", m.cap_services[j]);
+		for (j = 0; j < m.ncap_storage; j++)
+			printf("        storage: %s rights=0x%jx lifetime=%s\n",
+			    m.cap_storage[j].dataset,
+			    (uintmax_t)m.cap_storage[j].rights,
+			    m.cap_storage[j].lifetime == ORT_STORAGE_EPHEMERAL ?
+			    "ephemeral" : "persistent");
 		for (j = 0; j < m.ncomponents; j++)
 			printf("      component: %s\n",
 			    m.components[j].name);
