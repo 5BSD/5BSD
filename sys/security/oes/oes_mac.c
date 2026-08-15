@@ -1297,67 +1297,30 @@ oes_accmode_to_open_flags(accmode_t accmode)
 	return (flags);
 }
 
+
 /*
- * Clone an oes_pending for per-client delivery in NOSLEEP context.
- * Uses M_NOWAIT so may return NULL on allocation failure.
- *
- * Only copies the message payload; does NOT copy mutex, cv, group,
- * or link fields from the source.  NOSLEEP events are always NOTIFY
- * (no AUTH response tracking needed).
+ * Deliver a self-contained NOTIFY event to all subscribed clients using the
+ * normal blocking client locks.  Runs from the deferred task (or any context
+ * with no VFS locks held), so it never has to trylock-and-drop.  The pending
+ * event still carries the AUTH event type it was generated with; NOTIFY
+ * clients subscribe to (and mute by) the NOTIFY variant, so convert before
+ * matching and stamp each delivered clone with it.
  */
-static struct oes_pending *
-oes_pending_clone_nosleep(const struct oes_pending *src)
-{
-	struct oes_pending *ep;
-	size_t msg_size, alloc_size;
-
-	msg_size = src->ep_msg.em_size;
-	if (msg_size < sizeof(oes_message_t))
-		msg_size = sizeof(oes_message_t);
-	alloc_size = offsetof(struct oes_pending, ep_msg) + msg_size;
-
-	ep = malloc(alloc_size, M_OES, M_NOWAIT | M_ZERO);
-	if (ep == NULL)
-		return (NULL);
-
-	ep->ep_refcount = 1;
-	bcopy(&src->ep_msg, &ep->ep_msg, msg_size);
-
-	return (ep);
-}
-
 static void
-oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p)
+oes_deliver_notify_locked(struct oes_pending *ep)
 {
 	struct oes_client *ec;
 	struct oes_pending *ep_clone;
 	oes_event_type_t notify_event;
 
-	/*
-	 * NOSLEEP hooks deliver to NOTIFY clients only, but the pending event
-	 * still carries the AUTH event type it was generated with.  NOTIFY
-	 * clients subscribe to (and mute by) the NOTIFY variant, so convert
-	 * before matching and stamp the delivered clone with it -- mirroring
-	 * the sleep-path dispatch, which checks the notify_event.  Without this
-	 * every NOSLEEP-hook event (stat, poll, readlink, setowner, setflags,
-	 * get/listextattr) is dropped as "not subscribed".
-	 */
 	notify_event = OES_EVENT_IS_AUTH(ep->ep_msg.em_event) ?
 	    oes_auth_to_notify(ep->ep_msg.em_event) : ep->ep_msg.em_event;
 	if (notify_event == 0)
 		notify_event = ep->ep_msg.em_event;
 
-	if (!mtx_trylock(&oes_softc.sc_mtx)) {
-		atomic_add_64(&oes_softc.sc_nosleep_drops, 1);
-		return;
-	}
-
+	OES_LOCK();
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
-		if (!mtx_trylock(&ec->ec_mtx)) {
-			/* Can't check subscription without lock, count as drop */
-			atomic_add_64(&oes_softc.sc_nosleep_drops, 1);
-			continue;
-		}
+		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
 			EC_UNLOCK(ec);
 			continue;
@@ -1366,11 +1329,7 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p)
 			EC_UNLOCK(ec);
 			continue;
 		}
-		/*
-		 * Use token-based mute check - NOSLEEP-safe.
-		 * The token was captured when the event was created,
-		 * so we don't need PROC_LOCK here.
-		 */
+		/* Token-based mute check: token captured at event creation. */
 		if (oes_client_is_muted_by_token(ec,
 		    &ep->ep_msg.em_process.ep_token, notify_event)) {
 			EC_UNLOCK(ec);
@@ -1380,16 +1339,17 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p)
 			EC_UNLOCK(ec);
 			continue;
 		}
-		/* Check UID/GID muting using process info from message */
 		if (oes_client_is_uid_muted(ec, ep->ep_msg.em_process.ep_uid) ||
 		    oes_client_is_gid_muted(ec, ep->ep_msg.em_process.ep_gid)) {
 			EC_UNLOCK(ec);
 			continue;
 		}
 
-		ep_clone = oes_pending_clone_nosleep(ep);
+		/* M_NOWAIT: still under EC_LOCK, as in the sleep-path dispatch. */
+		ep_clone = oes_pending_clone(ep, M_NOWAIT);
 		if (ep_clone == NULL) {
-			atomic_add_64(&oes_softc.sc_nosleep_drops, 1);
+			ec->ec_events_dropped++;
+			atomic_add_64(&oes_softc.sc_alloc_failures, 1);
 			EC_UNLOCK(ec);
 			continue;
 		}
@@ -1402,8 +1362,60 @@ oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p)
 			oes_pending_rele(ep_clone);
 		EC_UNLOCK(ec);
 	}
-
 	OES_UNLOCK();
+}
+
+/*
+ * Deferred-delivery task: drain the deferred queue, delivering each event with
+ * the blocking path above.  Runs on the system taskqueue thread, so it may
+ * sleep/block on the client locks.
+ */
+void
+oes_defer_task_fn(void *arg __unused, int pending __unused)
+{
+	struct oes_pending *ep;
+
+	for (;;) {
+		mtx_lock_spin(&oes_softc.sc_defer_mtx);
+		ep = TAILQ_FIRST(&oes_softc.sc_defer);
+		if (ep == NULL) {
+			mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+			break;
+		}
+		TAILQ_REMOVE(&oes_softc.sc_defer, ep, ep_link);
+		oes_softc.sc_defer_count--;
+		mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+
+		oes_deliver_notify_locked(ep);
+		oes_pending_rele(ep);
+	}
+}
+
+/*
+ * NOSLEEP MAC hooks run with VFS locks held, so taking the blocking client
+ * locks here risks a lock-order deadlock -- the reason the old path used
+ * trylock and dropped events (sc_nosleep_drops) under contention.  Instead,
+ * hand the already-built, self-contained event to the deferred task, which
+ * delivers it later with normal locks and no contention drops.  Only a truly
+ * overloaded deferred queue (bounded by OES_DEFER_MAX) drops, keeping memory
+ * bounded.  The event's ep_link is free here (only clones enter client queues).
+ */
+static void
+oes_deliver_notify_nosleep(struct oes_pending *ep, struct proc *p __unused)
+{
+
+	mtx_lock_spin(&oes_softc.sc_defer_mtx);
+	if (oes_softc.sc_defer_count >= OES_DEFER_MAX) {
+		mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+		atomic_add_64(&oes_softc.sc_nosleep_drops, 1);
+		return;
+	}
+	oes_pending_hold(ep);
+	TAILQ_INSERT_TAIL(&oes_softc.sc_defer, ep, ep_link);
+	oes_softc.sc_defer_count++;
+	mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+
+	taskqueue_enqueue(taskqueue_thread, &oes_softc.sc_defer_task);
 }
 
 static void

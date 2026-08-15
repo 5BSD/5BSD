@@ -1238,6 +1238,12 @@ oes_dev_init(void)
 	oes_softc.sc_next_msg_id = 1;
 	oes_softc.sc_next_client_id = 1;
 
+	/* Deferred NOSLEEP notify delivery. */
+	mtx_init(&oes_softc.sc_defer_mtx, "oes_defer", NULL, MTX_SPIN);
+	TAILQ_INIT(&oes_softc.sc_defer);
+	oes_softc.sc_defer_count = 0;
+	TASK_INIT(&oes_softc.sc_defer_task, 0, oes_defer_task_fn, NULL);
+
 	oes_softc.sc_cdev = make_dev(&oes_cdevsw, 0, UID_ROOT, GID_WHEEL,
 	    0600, "oes");
 	if (oes_softc.sc_cdev == NULL) {
@@ -1299,6 +1305,26 @@ oes_dev_uninit(void)
 	}
 
 	printf("oes: device destroyed\n");
+
+	/*
+	 * Deferred delivery: sc_active is false so no new events are queued.
+	 * Drain the task, then release anything still on the deferred list.
+	 */
+	taskqueue_drain(taskqueue_thread, &oes_softc.sc_defer_task);
+	{
+		struct oes_pending *ep;
+
+		mtx_lock_spin(&oes_softc.sc_defer_mtx);
+		while ((ep = TAILQ_FIRST(&oes_softc.sc_defer)) != NULL) {
+			TAILQ_REMOVE(&oes_softc.sc_defer, ep, ep_link);
+			oes_softc.sc_defer_count--;
+			mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+			oes_pending_rele(ep);
+			mtx_lock_spin(&oes_softc.sc_defer_mtx);
+		}
+		mtx_unlock_spin(&oes_softc.sc_defer_mtx);
+	}
+	mtx_destroy(&oes_softc.sc_defer_mtx);
 
 	mtx_destroy(&oes_softc.sc_mtx);
 }

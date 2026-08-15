@@ -18,6 +18,7 @@
 #include <sys/mutex.h>
 #include <sys/sx.h>
 #include <sys/queue.h>
+#include <sys/taskqueue.h>
 #include <sys/selinfo.h>
 #include <sys/proc.h>
 #include <sys/file.h>
@@ -47,7 +48,22 @@ struct oes_softc {
 	bool			sc_active;	/* Module is active */
 	uint64_t		sc_nosleep_drops; /* NOSLEEP notifies dropped */
 	uint64_t		sc_alloc_failures; /* Allocation failures */
+
+	/*
+	 * Deferred NOSLEEP notify delivery.  NOSLEEP MAC hooks run with VFS
+	 * locks held and cannot take the blocking client locks, so events are
+	 * handed to sc_defer_task, which delivers them later with normal locks
+	 * (no trylock drops).  sc_defer_mtx is a spin lock so it is safe to
+	 * take from the NOSLEEP context.
+	 */
+	struct mtx		sc_defer_mtx;	/* SPIN: guards sc_defer */
+	TAILQ_HEAD(, oes_pending) sc_defer;	/* Deferred NOSLEEP events */
+	uint32_t		sc_defer_count;	/* Deferred queue depth */
+	struct task		sc_defer_task;	/* Deferred delivery task */
 };
+
+/* Bound on the deferred queue so a burst cannot exhaust memory. */
+#define	OES_DEFER_MAX		16384
 
 extern struct oes_softc oes_softc;
 
@@ -335,6 +351,9 @@ bool	oes_event_is_valid(oes_event_type_t ev);
  * Defined in oes_event.c.
  */
 oes_event_type_t oes_auth_to_notify(oes_event_type_t auth_event);
+
+/* Deferred NOSLEEP notify delivery task handler (oes_mac.c). */
+void	oes_defer_task_fn(void *arg, int pending);
 
 /*
  * Convert vnode type to EF_TYPE_*
