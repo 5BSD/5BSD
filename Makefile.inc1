@@ -3362,6 +3362,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		lib/libkiconv lib/libkldelf lib/libkvm \
 		lib/liblzma lib/libmd lib/libnv \
 		lib/libucl lib/liboraclert \
+		lib/libtrustedzfs \
 		lib/libzstd \
 		${_lib_casper} \
 		lib/ncurses/tinfo \
