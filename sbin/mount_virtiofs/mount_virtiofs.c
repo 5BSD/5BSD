@@ -57,6 +57,13 @@
 #define	VIRTIOFS_DEFAULT_MAX_READ	131072
 
 static struct mntopt mopts[] = {
+	/* FUSE session options passed to fuse_vfsop_mount(). */
+	{ "allow_other", 0, 0, 0 },
+	{ "default_permissions", 0, 0, 0 },
+	{ "intr", 0, 0, 0 },
+	{ "push_symlinks_in", 0, 0, 0 },
+	{ "auto_unmount", 0, 0, 0 },
+	{ "max_read=", 0, 0, 0 },
 	MOPT_STDOPTS,
 	MOPT_END
 };
@@ -78,6 +85,7 @@ static const char *fuse_flags[] = {
 static void	usage(void) __dead2;
 static char	*resolve_tag(const char *tag);
 static void	add_fuse_flags(struct iovec **, int *, const char *);
+static char	*find_option_value(const char *, const char *);
 
 int
 main(int argc, char *argv[])
@@ -88,15 +96,21 @@ main(int argc, char *argv[])
 	char fdstr[16];
 	char *tag;
 	int ch, fd, iovlen = 0, mntflags = 0;
-	int have_max_read = 0;
+	char *max_read = NULL;
 	char *options = NULL;
 
 	while ((ch = getopt(argc, argv, "o:")) != -1) {
 		switch (ch) {
 		case 'o':
+		{
+			char *value;
+
 			getmntopts(optarg, mopts, &mntflags, NULL);
-			if (strstr(optarg, "max_read") != NULL)
-				have_max_read = 1;
+			value = find_option_value(optarg, "max_read=");
+			if (value != NULL) {
+				free(max_read);
+				max_read = value;
+			}
 			if (options == NULL)
 				options = strdup(optarg);
 			else {
@@ -108,6 +122,7 @@ main(int argc, char *argv[])
 				options = n;
 			}
 			break;
+		}
 		default:
 			usage();
 		}
@@ -150,11 +165,13 @@ main(int argc, char *argv[])
 	build_iovec(&iov, &iovlen, "from", dev, -1);
 	build_iovec(&iov, &iovlen, "fd", fdstr, -1);
 	add_fuse_flags(&iov, &iovlen, options);
-	if (!have_max_read) {
+	if (max_read == NULL) {
 		char mr[16];
 
 		snprintf(mr, sizeof(mr), "%d", VIRTIOFS_DEFAULT_MAX_READ);
 		build_iovec(&iov, &iovlen, "max_read=", mr, -1);
+	} else {
+		build_iovec(&iov, &iovlen, "max_read=", max_read, -1);
 	}
 
 	if (nmount(iov, iovlen, mntflags) < 0)
@@ -167,6 +184,7 @@ main(int argc, char *argv[])
 	 */
 	close(fd);
 	free(devbuf);
+	free(max_read);
 	free(options);
 	return (0);
 }
@@ -179,18 +197,49 @@ static void
 add_fuse_flags(struct iovec **iov, int *iovlen, const char *options)
 {
 	char uscore[64];
-	const char *p;
+	char *value;
 	int i;
 
 	for (i = 0; fuse_flags[i] != NULL; i++) {
-		if ((p = strstr(options, fuse_flags[i])) == NULL)
+		value = find_option_value(options, fuse_flags[i]);
+		if (value == NULL)
 			continue;
-		/* Require a token boundary so "allow_other" != "xallow_other". */
-		if (p != options && p[-1] != ',')
-			continue;
+		free(value);
 		snprintf(uscore, sizeof(uscore), "__%s", fuse_flags[i]);
 		build_iovec(iov, iovlen, uscore, __DECONST(void *, ""), -1);
 	}
+}
+
+/*
+ * Return a copy of the value of an exact comma-delimited mount option.  A
+ * flag option has an empty value, which lets add_fuse_flags() use this for
+ * exact matching as well.  Do not use strstr(): for example, xallow_other
+ * must not grant the allow_other session flag, and nomax_read must not
+ * suppress the transport's bounded default.
+ */
+static char *
+find_option_value(const char *options, const char *option)
+{
+	const char *end, *p;
+	size_t option_len;
+
+	if (options == NULL || option == NULL)
+		return (NULL);
+	option_len = strlen(option);
+	for (p = options; *p != '\0'; p = end + 1) {
+		end = strchr(p, ',');
+		if (end == NULL)
+			end = p + strlen(p);
+		if ((size_t)(end - p) >= option_len &&
+		    strncmp(p, option, option_len) == 0 &&
+		    ((option[option_len - 1] == '=') ||
+		    (size_t)(end - p) == option_len))
+			return (strndup(p + option_len,
+			    (size_t)(end - p) - option_len));
+		if (*end == '\0')
+			break;
+	}
+	return (NULL);
 }
 
 /*
