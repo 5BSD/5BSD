@@ -89,6 +89,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libnetworkcmp \
 	libnv \
 	libnvmf \
+	liboes \
 	libopenbsd \
 	liboraclectl \
 	liboraclert \

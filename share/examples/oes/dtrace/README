@@ -1,0 +1,6 @@
+DTrace scripts for the oes(4) "oes" SDT provider.
+
+Probes: auth-allow, auth-deny, auth-timeout, event-enqueue, event-drop,
+cache-hit, cache-miss.  Run e.g.:
+
+  dtrace -s 04-auth-dispatch.d

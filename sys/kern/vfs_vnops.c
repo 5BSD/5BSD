@@ -593,6 +593,14 @@ vn_close1(struct vnode *vp, int flags, struct ucred *file_cred,
 		CTR3(KTR_VFS, "%s: vp %p v_writecount decreased to %d",
 		    __func__, vp, vp->v_writecount);
 	}
+#ifdef MAC
+	/*
+	 * A close cannot be denied, so the result is advisory only: the hook
+	 * exists to deliver a close notification (for example to oes(4)).  The
+	 * vnode is locked here, as the vnode check contract requires.
+	 */
+	(void)mac_vnode_check_close(td->td_ucred, vp);
+#endif
 	error = VOP_CLOSE(vp, flags, file_cred, td);
 	if (keep_ref)
 		VOP_UNLOCK(vp);

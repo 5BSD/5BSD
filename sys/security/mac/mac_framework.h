@@ -686,6 +686,7 @@ mac_vnode_check_access(struct ucred *cred, struct vnode *dvp,
 }
 int	mac_vnode_check_chdir(struct ucred *cred, struct vnode *dvp);
 int	mac_vnode_check_chroot(struct ucred *cred, struct vnode *dvp);
+int	mac_vnode_check_close(struct ucred *cred, struct vnode *vp);
 int	mac_vnode_check_create(struct ucred *cred, struct vnode *dvp,
 	    struct componentname *cnp, struct vattr *vap);
 int	mac_vnode_check_deleteacl(struct ucred *cred, struct vnode *vp,

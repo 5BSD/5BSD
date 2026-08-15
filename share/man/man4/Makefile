@@ -463,6 +463,7 @@ MAN=	aac.4 \
 	${_nvram.4} \
 	oce.4 \
 	ocs_fc.4\
+	oes.4 \
 	ohci.4 \
 	openfirm.4 \
 	orm.4 \

@@ -1,0 +1,115 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 14, 2026
+.Dt OES 4
+.Os
+.Sh NAME
+.Nm oes
+.Nd OpenEndpointSecurity event monitoring and authorization framework
+.Sh SYNOPSIS
+To load the driver as a module at boot time, place the following line in
+.Xr loader.conf 5 :
+.Bd -literal -offset indent
+oes_load="YES"
+.Ed
+.Sh DESCRIPTION
+The
+.Nm
+framework provides endpoint-security event monitoring and authorization,
+inspired by Apple's Endpoint Security API but built on the
+.Fx
+MAC framework and the Capsicum capability model.
+It registers a MAC policy whose hooks turn kernel security-relevant operations
+into events, and exposes them to userland clients through the
+.Pa /dev/oes
+character device.
+The
+.Xr liboes 3
+library is the supported client interface.
+.Pp
+Events are of two kinds.
+.Bl -tag -width "NOTIFY" -offset indent
+.It AUTH
+Authorization events are delivered from sleepable MAC check hooks; a subscribed
+client may allow or deny the operation, and the operation blocks until the
+client responds or the per-client timeout expires.
+.It NOTIFY
+Notification events are informational and never block the originating thread.
+.El
+.Pp
+Multiple clients, in different processes, may be active at once.
+Each
+.Xr open 2
+of
+.Pa /dev/oes
+creates an independent client with its own subscription set, muting state, mode,
+and decision cache; events fan out to every subscribed client.
+The maximum number of concurrent clients is bounded by the
+.Va security.oes.max_clients
+tunable.
+.Pp
+A client subscribes to event types with the
+.Dv OES_IOC_SUBSCRIBE
+ioctl, reads events with
+.Xr read 2 ,
+.Xr poll 2 ,
+.Xr select 2 ,
+or
+.Xr kqueue 2 ,
+and answers authorization events with
+.Dv OES_IOC_RESPOND .
+Processes and paths may be muted per client so that their events are suppressed.
+.Ss MAC hooks
+Events are generated from MAC policy hooks, including process execution and
+credential changes, the file lifecycle
+.Pq open, close, create, unlink, rename, link, truncate ,
+memory mapping, extended attributes and ACLs, mounts, module load and unload,
+and socket and pipe operations.
+File
+.Em close
+events are delivered via the
+.Fn mac_vnode_check_close
+hook; because a close cannot be denied, close is a NOTIFY-only event.
+.Ss DTrace
+The framework defines an
+.Nm
+SDT provider with probes for authorization outcomes
+.Pq allow, deny, timeout ,
+event enqueue and drop, and decision-cache hit and miss.
+.Sh SYSCTL VARIABLES
+.Bl -tag -width indent
+.It Va security.oes.max_clients
+Maximum number of concurrent clients.
+.It Va security.oes.require_auth_clients
+When non-zero, operations that would generate an AUTH event are denied if no
+client is subscribed to authorize them.
+.It Va security.oes.default_self_mute
+When non-zero, a new client is automatically muted against its own process.
+.El
+.Sh FILES
+.Bl -tag -width ".Pa /dev/oes" -compact
+.It Pa /dev/oes
+client device
+.El
+.Sh SEE ALSO
+.Xr liboes 3 ,
+.Xr mac 4 ,
+.Xr dtrace 1
+.Sh HISTORY
+The
+.Nm
+framework first appeared in
+.Fx 15.0 .
+.Sh AUTHORS
+.An Kory Heard .
+.Sh SECURITY CONSIDERATIONS
+A client that subscribes to AUTH events can block or deny the corresponding
+system operations; with
+.Va security.oes.require_auth_clients
+set, the absence of a client can deny operations outright.
+Access to
+.Pa /dev/oes
+should therefore be restricted to trusted, privileged programs.

@@ -1,0 +1,12 @@
+comment = "OpenEndpointSecurity (oes) integration tests"
+
+desc = <<EOD
+Integration tests for the oes(4) OpenEndpointSecurity framework: event
+delivery, authorization and timeout behavior, per-client and cross-process
+subscription, muting, the decision cache, and the wire ABI.  Most tests
+require the oes(4) module loaded and root privilege.
+EOD
+
+annotations = {
+	set = "tests"
+}

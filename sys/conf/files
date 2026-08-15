@@ -5328,6 +5328,11 @@ security/mac_veriexec/mac_veriexec_sha1.c		optional mac_veriexec_sha1
 security/mac_veriexec/mac_veriexec_sha256.c		optional mac_veriexec_sha256
 security/mac_veriexec/mac_veriexec_sha384.c		optional mac_veriexec_sha384
 security/mac_veriexec/mac_veriexec_sha512.c		optional mac_veriexec_sha512
+security/oes/oes_dev.c		optional oes
+security/oes/oes_client.c	optional oes
+security/oes/oes_cache.c	optional oes
+security/oes/oes_event.c	optional oes
+security/oes/oes_mac.c		optional oes
 teken/teken.c			optional sc !SC_NO_TERM_TEKEN | vt
 ufs/ffs/ffs_alloc.c		optional ffs
 ufs/ffs/ffs_balloc.c		optional ffs

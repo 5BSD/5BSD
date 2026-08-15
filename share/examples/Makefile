@@ -393,6 +393,7 @@ SE_LIBBLE= \
 	ble_topmem.c \
 	ble_weather.c
 LDIRS+=		libblemesh
+LDIRS+=		oes
 SE_DIRS+=	libblemesh
 SE_LIBBLEMESH= \
 	Makefile \

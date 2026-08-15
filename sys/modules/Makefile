@@ -316,6 +316,7 @@ SUBDIR=	\
 	${_nvram} \
 	oce \
 	${_ocs_fc} \
+	oes \
 	${_ossl} \
 	otus \
 	${_otusfw} \
