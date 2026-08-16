@@ -94,7 +94,7 @@ vm_extra_filter_base_packages() {
 }
 
 vm_install_base() {
-	# Installs the FreeBSD userland/kernel to the virtual machine disk.
+	# Installs the 5BSD userland/kernel to the virtual machine disk.
 
 	if [ -z "${NOPKGBASE}" ]; then
 		local pkg_cmd
@@ -131,7 +131,7 @@ vm_install_base() {
 	    env -i LC_COLLATE=C sort >> ${DESTDIR}/METALOG
 	rm ${DESTDIR}/var/db/etcupdate/current/METALOG
 
-	echo '# Custom /etc/fstab for FreeBSD VM images' \
+	echo '# Custom /etc/fstab for 5BSD VM images' \
 		> ${DESTDIR}/etc/fstab
 	if [ "${VMFS}" != zfs ]; then
 		echo "/dev/${ROOTLABEL}/rootfs   /       ${VMFS}   rw,noatime      1       1" \
@@ -144,7 +144,7 @@ vm_install_base() {
 	metalog_add_data ./etc/fstab
 
 	local hostname
-	hostname="$(echo $(uname -o) | tr '[:upper:]' '[:lower:]')"
+	hostname="${IMAGE_HOSTNAME:-5BSD}"
 	echo "hostname=\"${hostname}\"" >> ${DESTDIR}/etc/rc.conf
 	metalog_add_data ./etc/rc.conf
 	if [ "${VMFS}" = zfs ]; then

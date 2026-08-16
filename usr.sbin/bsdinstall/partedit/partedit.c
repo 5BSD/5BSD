@@ -308,8 +308,8 @@ validate_setup(void)
 		conf.title = "Warning";
 		button = bsddialog_yesno(&conf, "The chosen root partition "
 		    "has a preexisting filesystem. If it contains an existing "
-		    OSNAME " system, please update it with freebsd-update "
-		    "instead of installing a new system on it. The partition "
+		    OSNAME " system, please update it with pkg(8) instead of "
+		    "installing a new system on it. The partition "
 		    "can also be erased by pressing \"No\" and then deleting "
 		    "and recreating it. Are you sure you want to proceed?",
 		    0, 0);

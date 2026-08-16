@@ -85,8 +85,8 @@ if [ -n "$bootable" ]; then
 	cp "$BASEBITSDIR/boot/loader" "$BASEBITSDIR/ppc/chrp"
 	cat > "$BASEBITSDIR/ppc/bootinfo.txt" << EOF
 <chrp-boot>
-<description>FreeBSD Install</description>
-<os-name>FreeBSD</os-name>
+<description>5BSD Install</description>
+<os-name>5BSD</os-name>
 <boot-script>boot &device;:,\ppc\chrp\loader</boot-script>
 </chrp-boot>
 EOF
@@ -99,13 +99,13 @@ EOF
 	fi
 
 	# Petitboot config for PS3/PowerNV
-	echo FreeBSD Install=\'/boot/kernel/kernel vfs.root.mountfrom=cd9660:/dev/iso9660/$LABEL\' > "$BASEBITSDIR/etc/kboot.conf"
+	echo 5BSD Install=\'/boot/kernel/kernel vfs.root.mountfrom=cd9660:/dev/iso9660/$LABEL\' > "$BASEBITSDIR/etc/kboot.conf"
 	if [ -n "${METALOG}" ]; then
 		echo "./etc/kboot.conf type=file uname=root gname=wheel mode=0644" >> ${metalogfilename}
 	fi
 fi
 
-publisher="The FreeBSD Project.  https://www.FreeBSD.org/"
+publisher="The 5BSD Project.  https://github.com/5BSD/5BSD"
 echo "/dev/iso9660/$LABEL / cd9660 ro 0 0" > "$BASEBITSDIR/etc/fstab"
 if [ -n "${METALOG}" ]; then
 	echo "./etc/fstab type=file uname=root gname=wheel mode=0644" >> ${metalogfilename}

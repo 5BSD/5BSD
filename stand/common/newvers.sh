@@ -54,7 +54,7 @@ else
 fi
 r=`awk -F: ' /^[0-9]\.[0-9]+:/ { print $1; exit }' $1`
 
-bootprog_info="FreeBSD/${3} ${2}, Revision ${r}\\n"
+bootprog_info="5BSD/${3} ${2}, Revision ${r}\\n"
 if [ -n "${include_metadata}" ]; then
 	bootprog_info="$bootprog_info(${t} ${u}@${h})\\n"
 	if [ -n "$BUILD_UTC" ]; then

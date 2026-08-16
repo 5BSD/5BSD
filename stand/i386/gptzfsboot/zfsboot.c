@@ -310,7 +310,7 @@ main(void)
 
 	for (;;) {
 		if (!auto_boot || !OPT_CHECK(RBX_QUIET)) {
-			printf("\nFreeBSD/x86 boot\n");
+			printf("\n5BSD/x86 boot\n");
 			printf("Default: %s%s\nboot: ", boot_devname, kname);
 		}
 		if (ioctrl & IO_SERIAL)

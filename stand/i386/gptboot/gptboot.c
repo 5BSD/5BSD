@@ -345,7 +345,7 @@ main(void)
 
 	for (;;) {
 		if (!OPT_CHECK(RBX_QUIET)) {
-			printf("\nFreeBSD/x86 boot\n"
+			printf("\n5BSD/x86 boot\n"
 			    "Default: %u:%s(%up%u)%s\n"
 			    "boot: ",
 			    gdsk.dsk.drive & DRV_MASK, dev_nm[gdsk.dsk.type],

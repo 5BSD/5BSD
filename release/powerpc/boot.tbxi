@@ -5,7 +5,7 @@
 MacRISC MacRISC3 MacRISC4
 </COMPATIBLE>
 <DESCRIPTION>
-FreeBSD/PPC bootloader
+5BSD/PPC bootloader
 </DESCRIPTION>
 <BOOT-SCRIPT>
 " screen" output

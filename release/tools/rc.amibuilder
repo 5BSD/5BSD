@@ -25,7 +25,7 @@ BOOTPARTNUM=${BOOTPART##*p}
 # First pass: Copy ourselves into a memory disk and reroot into it
 if ! [ -c /dev/md0 ]; then
 	# Create a memory disk of appropriate size and copy the disk
-	echo "Copying FreeBSD into memory disk..."
+	echo "Copying 5BSD into memory disk..."
 	DISKBYTES=$(diskinfo ${BOOTDISK} | awk '{print $3}')
 	mdconfig -a -t swap -s ${DISKBYTES}b -u 0
 	dd if=/dev/${BOOTDISK} of=/dev/md0 bs=1M
@@ -41,7 +41,7 @@ if ! [ -c /dev/md0 ]; then
 fi
 
 # Second pass: Extract a clean copy of FreeBSD onto the physical disk
-echo "Installing base FreeBSD image..."
+echo "Installing base 5BSD image..."
 sysctl kern.geom.debugflags=16
 zstdcat < /image.zst | dd bs=1M of=/dev/${BOOTDISK}
 
@@ -57,9 +57,9 @@ fi
 # Provide instructions for when the user logs in
 mount -w /
 cat >/etc/motd.template <<EOF
-Welcome to the FreeBSD AMI builder!
+Welcome to the 5BSD AMI builder!
 
-FreeBSD `uname -r` is now installed onto the disk /dev/${BOOTDISK},
+5BSD `uname -r` is now installed onto the disk /dev/${BOOTDISK},
 and mounted at /mnt. Make any further changes you wish, then run
 
 # mkami <AMI name> [<AMI description>]

@@ -27,7 +27,7 @@
 
 ATLAS_API_URL=''
 ATLAS_UPLOAD_URL='https://app.vagrantup.com'
-DESCRIPTION="FreeBSD Snapshot Build"
+DESCRIPTION="5BSD Snapshot Build"
 
 usage() {
 	echo "${0} usage:"

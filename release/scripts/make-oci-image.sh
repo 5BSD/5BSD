@@ -14,8 +14,9 @@ minor=${rev#*.}
 
 abi=FreeBSD:${major}:${arch}
 ver=${rev}-${branch}-${arch}
+pkg_prefix=${PKG_NAME_PREFIX:-5BSD}
 
-echo "Building OCI freebsd${major}-${image} image for ${abi}"
+echo "Building 5BSD OCI ${image} image for ${abi}"
 
 . ${curdir}/tools/oci-image-${image}.conf
 
@@ -132,7 +133,7 @@ commit_container() {
 
 	mkdir -p ${workdir}/oci/blobs/sha256
 	echo "{\"imageLayoutVersion\": \"1.0.0\"}" > ${workdir}/oci/oci-layout
-	echo "{\"schemaVersion\":2,\"manifests\":[{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:${manifest_hash}\",\"size\":${manifest_size},\"annotations\":{\"org.opencontainers.image.ref.name\":\"freebsd-${image}:${ver}\"}}]}" > ${workdir}/oci/index.json
+	echo "{\"schemaVersion\":2,\"manifests\":[{\"mediaType\":\"application/vnd.oci.image.manifest.v1+json\",\"digest\":\"sha256:${manifest_hash}\",\"size\":${manifest_size},\"annotations\":{\"org.opencontainers.image.ref.name\":\"5bsd-${image}:${ver}\"}}]}" > ${workdir}/oci/index.json
 	ln ${workdir}/rootfs.tar.gz ${workdir}/oci/blobs/sha256/${root_hash}
 	ln ${workdir}/config.json ${workdir}/oci/blobs/sha256/${config_hash}
 	ln ${workdir}/manifest.json ${workdir}/oci/blobs/sha256/${manifest_hash}

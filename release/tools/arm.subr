@@ -90,8 +90,9 @@ arm_create_disk() {
 }
 
 arm_create_user() {
-	# Create a default user account 'freebsd' with the password 'freebsd',
-	# and set the default password for the 'root' user to 'root'.
+	# Preserve the conventional image login for automation compatibility.
+	# The account's display name and the installed hostname identify 5BSD.
+	# Set the default password for the 'root' user to 'root'.
 	chroot ${CHROOTDIR} /usr/sbin/pw -R ${DESTDIR} \
 		groupadd freebsd -g 1001
 	chroot ${CHROOTDIR} mkdir -p ${DESTDIR}/home/freebsd
@@ -195,7 +196,7 @@ arm_install_base() {
 	arm_setup_minimal_loader
 	arm_do_quirk
 
-	echo '# Custom /etc/fstab for FreeBSD embedded images' \
+	echo '# Custom /etc/fstab for 5BSD embedded images' \
 		> ${CHROOTDIR}/${DESTDIR}/etc/fstab
 	echo "/dev/ufs/rootfs		/		ufs	rw		1	1" \
 		>> ${CHROOTDIR}/${DESTDIR}/etc/fstab
@@ -205,7 +206,7 @@ arm_install_base() {
 		>> ${CHROOTDIR}/${DESTDIR}/etc/fstab
 
 	local hostname
-	hostname="$(echo ${KERNEL} | tr '[:upper:]' '[:lower:]')"
+	hostname="${IMAGE_HOSTNAME:-5BSD}"
 	echo "hostname=\"${hostname}\"" > ${CHROOTDIR}/${DESTDIR}/etc/rc.conf
 	echo 'ifconfig_DEFAULT="DHCP inet6 accept_rtadv"' >> ${CHROOTDIR}/${DESTDIR}/etc/rc.conf
 	echo 'sshd_enable="YES"' >> ${CHROOTDIR}/${DESTDIR}/etc/rc.conf

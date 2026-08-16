@@ -17,7 +17,7 @@ LOADER_SIZE=500k
 OUTPUT_FILE=hfs-boot
 
 dd if=/dev/zero of=$OUTPUT_FILE bs=2048 count=$HFS_SIZE
-hformat -l "FreeBSD Install" $OUTPUT_FILE
+hformat -l "5BSD Install" $OUTPUT_FILE
 hmount $OUTPUT_FILE
 
 # Create and bless a directory for the boot loader
@@ -28,8 +28,8 @@ hcd ppc
 # Make the CHRP boot script, which gets loader from the ISO9660 partition
 cat > bootinfo.txt << EOF
 <CHRP-BOOT>
-<DESCRIPTION>FreeBSD/powerpc bootloader</DESCRIPTION>
-<OS-NAME>FreeBSD</OS-NAME>
+<DESCRIPTION>5BSD/powerpc bootloader</DESCRIPTION>
+<OS-NAME>5BSD</OS-NAME>
 <VERSION> $FreeBSD: head/stand/powerpc/boot1.chrp/bootinfo.txt 184490 2008-10
 -31 00:52:31Z nwhitehorn $ </VERSION>
 
@@ -58,4 +58,3 @@ echo 'DO NOT EDIT' >> $OUTPUT_FILE.bz2.uu
 
 uuencode $OUTPUT_FILE.bz2 $OUTPUT_FILE.bz2 >> $OUTPUT_FILE.bz2.uu
 rm $OUTPUT_FILE.bz2
-

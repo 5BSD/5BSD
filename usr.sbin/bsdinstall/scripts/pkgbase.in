@@ -327,7 +327,7 @@ local function parse_options()
 end
 
 -- Fetch and install pkgbase packages to BSDINSTALL_CHROOT.
--- Respect BSDINSTALL_PKG_REPOS_DIR if set, otherwise use pkgbase.freebsd.org.
+-- Respect BSDINSTALL_PKG_REPOS_DIR if set, otherwise use the 5BSD base repo.
 local function pkgbase()
 	local options = parse_options()
 

@@ -1,5 +1,5 @@
 #
-# Makefile for creating FreeBSD/Firecracker artifacts
+# Makefile for creating 5BSD/Firecracker artifacts
 #
 
 CLEANDIRS+=	${TARGET}/firecracker-kern ${TARGET}/firecracker-world
@@ -41,7 +41,7 @@ firecracker-freebsd-rootfs.bin:
 	${MAKE} -C ${WORLDDIR} DESTDIR=${FCWDIR} \
 	    ${WITHOUTS} TARGET=${TARGET} installworld distribution distrib-dirs
 	echo '/dev/ufs/rootfs / ufs rw 1 1' > ${FCWDIR}/etc/fstab
-	echo 'hostname="freebsd"' >> ${FCWDIR}/etc/rc.conf
+	echo 'hostname="5BSD"' >> ${FCWDIR}/etc/rc.conf
 	echo 'ifconfig_vtnet0="inet 10.0.0.2 netmask 255.255.0.0"' >> ${FCWDIR}/etc/rc.conf
 	echo 'defaultrouter="10.0.0.1"' >> ${FCWDIR}/etc/rc.conf
 	echo 'sshd_enable="YES"' >> ${FCWDIR}/etc/rc.conf
@@ -52,7 +52,7 @@ firecracker-freebsd-rootfs.bin:
 	pw -R ${FCWDIR} groupadd freebsd -g 1001
 	mkdir -p ${FCWDIR}/home/freebsd
 	pw -R ${FCWDIR} useradd freebsd -m -M 0755 -w yes -n freebsd \
-	    -u 1001 -g 1001 -G 0 -c "FreeBSD User" -d /home/freebsd -s /bin/sh
+	    -u 1001 -g 1001 -G 0 -c "5BSD User" -d /home/freebsd -s /bin/sh
 	pw -R ${FCWDIR} usermod root -w yes
 	touch ${FCWDIR}/firstboot
 	makefs -s ${FCROOTFSSZ} -o label=rootfs -o version=2 -o softupdates=1 \

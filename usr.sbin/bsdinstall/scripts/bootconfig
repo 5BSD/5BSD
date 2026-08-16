@@ -30,7 +30,7 @@
 BSDCFG_SHARE="/usr/share/bsdconfig"
 . $BSDCFG_SHARE/common.subr || exit 1
 
-FREEBSD_BOOTLABEL=$OSNAME
+EFI_LABEL_NAME=$OSNAME
 
 f_dprintf "%s: loading_includes..." "$0"
 f_include $BSDCFG_SHARE/dialog.subr
@@ -103,9 +103,9 @@ update_uefi_bootentry()
 		return
 	fi
 
-	FREEBSD_BOOTLABEL=$(dialog_uefi_entryname "${EFI_LABEL_NAME}")
+	EFI_LABEL_NAME=$(dialog_uefi_entryname "${EFI_LABEL_NAME}")
 	[ $? -eq $DIALOG_CANCEL ] && exit 1
-	efibootmgr --create --activate --label "$FREEBSD_BOOTLABEL" --loader "${loader_path}" > /dev/null
+	efibootmgr --create --activate --label "$EFI_LABEL_NAME" --loader "${loader_path}" > /dev/null
 }
 
 f_dialog_title "Boot Configuration"
@@ -117,8 +117,8 @@ if [ `uname -m` == powerpc ]; then
 		rootpart=$(awk '{ if($2 == "/") printf("%s:%s\n", $3, $1); }' $PATH_FSTAB)
 		kboot_conf=$BSDINSTALL_CHROOT/boot/etc/kboot.conf
 		mkdir -p $BSDINSTALL_CHROOT/boot/etc/
-		echo default=$FREEBSD_BOOTLABEL > $kboot_conf
-		echo $FREEBSD_BOOTLABEL=\'/kernel/kernel kernelname=/boot/kernel/kernel vfs.root.mountfrom=${rootpart}\' >> $kboot_conf
+		echo default=$EFI_LABEL_NAME > $kboot_conf
+		echo $EFI_LABEL_NAME=\'/kernel/kernel kernelname=/boot/kernel/kernel vfs.root.mountfrom=${rootpart}\' >> $kboot_conf
 	fi
 fi
 

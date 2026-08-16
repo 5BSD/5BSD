@@ -498,7 +498,7 @@ main(int ac, char **av)
 		}
 	}
 
-	printf(" \n>> FreeBSD/powerpc Open Firmware boot block\n"
+	printf(" \n>> 5BSD/powerpc Open Firmware boot block\n"
 	"   Boot path:   %s\n"
 	"   Boot loader: %s\n", bootpath, path);
 

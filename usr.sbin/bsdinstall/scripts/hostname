@@ -38,7 +38,7 @@ f_include $BSDCFG_SHARE/dialog.subr
 #
 # Default value
 #
-: ${HOSTNAME=$( hostname )}
+: ${HOSTNAME:=5BSD}
 
 #
 # Default file to store hostname entry in

@@ -43,7 +43,7 @@ if [ -e ${2} ]; then
 	exit 1
 fi
 
-echo '/dev/ufs/FreeBSD_Install / ufs ro,noatime 1 1' > ${BASEBITSDIR}/etc/fstab
+echo '/dev/ufs/5BSD_Install / ufs ro,noatime 1 1' > ${BASEBITSDIR}/etc/fstab
 echo 'root_rw_mount="NO"' > ${BASEBITSDIR}/etc/rc.conf.local
 if [ -n "${METALOG}" ]; then
 	metalogfilename=$(mktemp /tmp/metalog.XXXXXX)
@@ -52,7 +52,7 @@ if [ -n "${METALOG}" ]; then
 	echo "./etc/rc.conf.local type=file uname=root gname=wheel mode=0644" >> ${metalogfilename}
 	MAKEFSARG=${metalogfilename}
 fi
-${MAKEFS} -D -N ${BASEBITSDIR}/etc -B little -o label=FreeBSD_Install -o version=2 ${2}.part ${MAKEFSARG}
+${MAKEFS} -D -N ${BASEBITSDIR}/etc -B little -o label=5BSD_Install -o version=2 ${2}.part ${MAKEFSARG}
 rm ${BASEBITSDIR}/etc/fstab
 rm ${BASEBITSDIR}/etc/rc.conf.local
 if [ -n "${METALOG}" ]; then
@@ -69,4 +69,3 @@ ${MKIMG} -s gpt \
     -o ${2}
 rm ${espfilename}
 rm ${2}.part
-
