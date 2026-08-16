@@ -88,7 +88,7 @@ trap on_interrupt HUP INT TERM
 
 echo "Booting $image as $vm_name; serial log: $boot_log"
 started=true
-if ! bhyveload -m "$vm_memory" -e console=comconsole \
+if ! bhyveload -c /dev/null -m "$vm_memory" -e console=comconsole \
     -e comconsole_speed=115200 -d "$image" "$vm_name"; then
 	fail "bhyveload failed"
 fi
