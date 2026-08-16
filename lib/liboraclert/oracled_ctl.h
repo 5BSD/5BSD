@@ -24,13 +24,6 @@
  * The daemon reads its actual path from config. */
 #define	ORACLED_CTL_SOCK	"/var/run/oracled.sock"
 
-/*
- * serviced creates this file once boot has converged (it has run /etc/rc
- * and launched native services).  oracle-init (PID 1) waits for it with a
- * deadline after starting serviced; if it never appears, or serviced dies
- * first, PID 1 enters recovery instead of proceeding to multi-user.
- */
-#define	SERVICED_READY_PATH	"/var/run/serviced.ready"
 #define	CTL_VERSION		1
 #define	CTL_MAX_PAYLOAD		1024
 

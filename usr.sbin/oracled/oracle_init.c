@@ -1036,8 +1036,8 @@ establish_authority(void)
 }
 
 /*
- * Wait for serviced to signal boot convergence: it creates
- * SERVICED_READY_PATH after running /etc/rc and launching native
+ * Wait for serviced to signal boot convergence over its authenticated,
+ * per-instance oracle channel after running /etc/rc and launching native
  * services.  The engine kqueue is serviced meanwhile so serviced's
  * channel/procdesc events -- including crash and restart -- are handled.
  *
@@ -1056,12 +1056,11 @@ oi_await_convergence(void)
 {
 	struct kevent kev;
 	struct timespec ts;
-	struct stat sb;
 	int nev;
 
 	BOOTTRACE("awaiting serviced convergence");
 	for (;;) {
-		if (stat(SERVICED_READY_PATH, &sb) == 0) {
+		if (oracle_proto_is_ready()) {
 			BOOTTRACE("serviced converged");
 			return (0);
 		}

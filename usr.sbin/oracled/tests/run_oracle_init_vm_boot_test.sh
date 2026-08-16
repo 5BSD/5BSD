@@ -28,6 +28,15 @@ fail()
 	exit 1
 }
 
+boot_completed()
+{
+	awk '
+		index($0, "startup: /etc/rc completed") != 0 { rc_done = 1 }
+		rc_done && index($0, "login:") != 0 { login_ready = 1 }
+		END { exit (login_ready ? 0 : 1) }
+	' "$boot_log"
+}
+
 image=${IMAGE:-}
 [ -n "$image" ] || usage
 [ -f "$image" ] && [ ! -L "$image" ] || fail "image is missing or is a symlink: $image"
@@ -57,14 +66,31 @@ bhyve_pid=
 started=false
 interrupted=false
 
+stop_bhyve()
+{
+	local tries
+
+	if [ -z "$bhyve_pid" ] || ! kill -0 "$bhyve_pid" 2>/dev/null; then
+		return 0
+	fi
+	kill -TERM "$bhyve_pid" 2>/dev/null || :
+	tries=0
+	while kill -0 "$bhyve_pid" 2>/dev/null && [ "$tries" -lt 10 ]; do
+		sleep 1
+		tries=$((tries + 1))
+	done
+	if kill -0 "$bhyve_pid" 2>/dev/null; then
+		echo "oracle-init VM boot test: forcibly stopping bhyve" >&2
+		kill -KILL "$bhyve_pid" 2>/dev/null || :
+	fi
+	wait "$bhyve_pid" 2>/dev/null || :
+}
+
 cleanup()
 {
 	rc=$?
 	trap - EXIT HUP INT TERM
-	if [ -n "$bhyve_pid" ] && kill -0 "$bhyve_pid" 2>/dev/null; then
-		kill -TERM "$bhyve_pid" 2>/dev/null || :
-		wait "$bhyve_pid" 2>/dev/null || :
-	fi
+	stop_bhyve
 	if [ "$started" = true ]; then
 		bhyvectl --destroy --vm "$vm_name" >/dev/null 2>&1 || :
 	fi
@@ -100,8 +126,7 @@ bhyve_pid=$!
 
 elapsed=0
 while [ "$elapsed" -lt "$boot_timeout" ]; do
-	if grep -Fq 'startup: /etc/rc completed' "$boot_log" 2>/dev/null &&
-	    grep -Eq '(^|[^[:alnum:]])login:' "$boot_log" 2>/dev/null; then
+	if boot_completed 2>/dev/null; then
 		echo "oracle-init VM boot test: PASS: serviced completed /etc/rc and serial login is ready"
 		exit 0
 	fi

@@ -14,10 +14,10 @@
  * Startup sequence:
  *   1. Inherit channel fd from ORACLED_CHANNEL_FD env (fd 3)
  *   2. Create kqueue, register channel + signals
- *   3. Send ORACLE_OP_READY to oracled
- *   4. Scan bundle directories
- *   5. Dependency sort
- *   6. Fork/exec services (requesting tokens from oracled)
+ *   3. Scan bundle directories
+ *   4. Dependency sort
+ *   5. Run /etc/rc, then fork/exec services (requesting tokens from oracled)
+ *   6. Send ORACLE_OP_READY to oracled to confirm this boot converged
  *   7. Enter event loop
  */
 
@@ -46,7 +46,6 @@
 #include "serviced_audit.h"
 #include "fd_budget.h"
 #include "serviced_probes.h"
-#include "oracled_ctl.h"		/* SERVICED_READY_PATH */
 
 struct serviced_state sd;
 int serviced_kq;
@@ -454,12 +453,6 @@ main(int argc, char *argv[])
 		syslog(LOG_INFO, "capprotect shield active");
 	}
 
-	/* READY means protected and operational, not merely post-exec alive. */
-	if (oracle_send_ready(sd.oracle_channel_fd) != 0) {
-		syslog(LOG_ERR, "failed to send protected READY to oracled");
-		return (1);
-	}
-
 	sd.running = true;
 	syslog(LOG_INFO, "serviced started, %u bundles registered",
 	    bundle_registry_count());
@@ -486,21 +479,15 @@ main(int argc, char *argv[])
 	}
 
 	/*
-	 * Boot has converged: /etc/rc ran and native services were
-	 * launched.  Signal oracle-init (PID 1) so it proceeds past its
-	 * converge-or-recover deadline.  Individual service failures do not
-	 * block convergence; only serviced never reaching this point (crash
-	 * or wedge) triggers PID 1 recovery.
+	 * Boot has converged: /etc/rc ran and native services were launched.
+	 * Tell PID 1 through the per-instance authenticated channel, rather
+	 * than a pathname which a persistent root can carry across reboots.
+	 * Individual service failures do not block convergence; only serviced
+	 * never reaching this point (crash or wedge) triggers PID 1 recovery.
 	 */
-	{
-		int rfd = open(SERVICED_READY_PATH,
-		    O_WRONLY | O_CREAT | O_TRUNC, 0644);
-
-		if (rfd != -1)
-			(void)close(rfd);
-		else
-			syslog(LOG_WARNING, "cannot write %s: %m",
-			    SERVICED_READY_PATH);
+	if (oracle_send_ready(sd.oracle_channel_fd) != 0) {
+		syslog(LOG_ERR, "failed to send convergence READY to oracled");
+		return (1);
 	}
 
 	event_loop();
