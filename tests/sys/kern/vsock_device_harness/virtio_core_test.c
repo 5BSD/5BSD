@@ -4144,7 +4144,8 @@ ATF_TC_BODY(indirect_mapping_validation, tc)
 	struct virtio_consts vc = { 0 };
 	struct pci_devinst pi;
 	struct vqueue_info vq;
-	struct vring_desc desc[8], indirect[1], oversized_indirect[9];
+	struct vring_desc desc[8], indirect[1];
+	uint8_t oversized_indirect[9 * VIRTIO14_SPLIT_DESC_SIZE];
 	struct vi_req req;
 	struct iovec iov;
 	uint8_t payload[8];
@@ -4232,10 +4233,12 @@ ATF_TC_BODY(indirect_mapping_validation, tc)
 	    (struct vring_avail *)avail_mem.bytes,
 	    (struct vring_used *)used_mem.bytes);
 	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
-	memset(oversized_indirect, 0, sizeof(oversized_indirect));
-	add_region(0x3000, oversized_indirect, sizeof(oversized_indirect));
+	memset(oversized_indirect, 0,
+	    9 * VIRTIO14_SPLIT_DESC_SIZE);
+	add_region(0x3000, oversized_indirect,
+	    9 * VIRTIO14_SPLIT_DESC_SIZE);
 	desc[0].addr = 0x3000;
-	desc[0].len = sizeof(oversized_indirect);
+	desc[0].len = 9 * VIRTIO14_SPLIT_DESC_SIZE;
 	desc[0].flags = VRING_DESC_F_INDIRECT;
 	ATF_CHECK_EQ(vq_getchain(&vq, &iov, 1, &req), -1);
 	ATF_CHECK_EQ(g_map_calls, 0);
