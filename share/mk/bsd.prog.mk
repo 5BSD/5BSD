@@ -315,13 +315,19 @@ SCRIPTSDIR_${script:T}?=	${SCRIPTSDIR}
 SCRIPTSOWN_${script:T}?=	${SCRIPTSOWN}
 SCRIPTSGRP_${script:T}?=	${SCRIPTSGRP}
 SCRIPTSMODE_${script:T}?=	${SCRIPTSMODE}
+# A script may be the only file installed into its directory (as is common
+# for ATF shell tests).  Make its destination a managed directory and make
+# the copy depend on it; realinstall prerequisites have no ordering between
+# themselves, so relying on the aggregate installdirs target is racy.
+DIRS+=	SCRIPTSDIR_${script:T}
+SCRIPTSDIR_${script:T}TAGS?=	${TAGS}
 STAGE_AS_${script:T}=		${SCRIPTSDIR_${script:T}}/${SCRIPTSNAME_${script:T}}
 _scriptsinstall: _SCRIPTSINS_${script:T}
-_SCRIPTSINS_${script:T}: ${script}
-	${INSTALL} ${TAG_ARGS} -o ${SCRIPTSOWN_${.ALLSRC:T}} \
-	    -g ${SCRIPTSGRP_${.ALLSRC:T}} -m ${SCRIPTSMODE_${.ALLSRC:T}} \
-	    ${.ALLSRC} \
-	    ${DESTDIR}${SCRIPTSDIR_${.ALLSRC:T}}/${SCRIPTSNAME_${.ALLSRC:T}}
+_SCRIPTSINS_${script:T}: ${script} installdirs-SCRIPTSDIR_${script:T}
+	${INSTALL} ${TAG_ARGS} -o ${SCRIPTSOWN_${script:T}} \
+	    -g ${SCRIPTSGRP_${script:T}} -m ${SCRIPTSMODE_${script:T}} \
+	    ${script} \
+	    ${DESTDIR}${SCRIPTSDIR_${script:T}}/${SCRIPTSNAME_${script:T}}
 .endfor
 .endif
 
