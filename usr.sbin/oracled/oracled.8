@@ -26,15 +26,28 @@ and manages a single bootstrap child process, typically
 which reads capability bundles and supervises individual services.
 .Pp
 .Nm
+is installed both as
+.Pa /usr/sbin/oracled
+and as
+.Pa /sbin/oracle-init .
+The latter is the system PID 1 program: the installed loader configuration
+places it first in
+.Va init_path ,
+with the stock
+.Pa /sbin/init
+and rescue init programs as execution fallbacks.
+When invoked as PID 1,
+.Nm
+does not daemonize; it runs the Oracle init state machine, starts
+.Xr serviced 8
+as its first managed child, and remains the system lifecycle authority.
+.Pp
+.Nm
 does not start or manage services directly.
 It mints capability tokens on request from
 .Xr serviced 8
 via the oracle protocol, a message-passing channel over a mac_capability
 channel descriptor.
-.Pp
-.Nm
-is started by
-.Xr rc 8 .
 .Pp
 During startup,
 .Nm
