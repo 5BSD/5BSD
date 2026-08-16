@@ -378,7 +378,7 @@ umount_loop() {
 }
 
 vm_create_disk() {
-	local BOOTFILES BOOTPARTSOFFSET FSPARTTYPE X86GPTBOOTFILE
+	local BOOTFILES BOOTPARTSOFFSET FSPARTTYPE X86GPTBOOTFILE esp_fstab
 
 	if [ -z "${NOSWAP}" ]; then
 		SWAPOPT="-p freebsd-swap/swapfs::${SWAPSIZE}"
@@ -456,10 +456,14 @@ vm_create_disk() {
 		fi
 		BOOTPARTS="${BOOTPARTS} -p efi/efiboot0:=${espfilename}${espsuffix}"
 
-		# Add this to fstab
+		# Add this to fstab.  vm_create_disk() can be retried against a
+		# staged root after a failed mkimg invocation, so do not duplicate
+		# the mount entry on a retry.
 		mkdir -p ${DESTDIR}/boot/efi
-		echo "/dev/${ROOTLABEL}/efiboot0	/boot/efi       msdosfs     rw      2       2" \
-			>> ${DESTDIR}/etc/fstab
+		esp_fstab="/dev/${ROOTLABEL}/efiboot0	/boot/efi       msdosfs     rw      2       2"
+		if ! grep -Fqx "${esp_fstab}" ${DESTDIR}/etc/fstab; then
+			echo "${esp_fstab}" >> ${DESTDIR}/etc/fstab
+		fi
 	fi
 
 	# Add a marker file which indicates that this image has never
