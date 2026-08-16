@@ -19,6 +19,9 @@ usage()
 	  VM_MEMORY     guest memory (default: 1024M)
 	  BOOT_TIMEOUT  seconds to wait for RC bootstrap and login (default: 180)
 	  BOOT_LOG      serial-console log path (default: /tmp/<VM_NAME>.log)
+	  EXPECTED_BANNER literal banner fragment required before login (optional)
+	  INTERACTIVE   set to yes to attach the guest serial console to this terminal
+	  VM_TAP        existing host tap interface to attach as guest vtnet0
 	EOF
 	exit 2
 }
@@ -31,9 +34,13 @@ fail()
 
 boot_completed()
 {
-	awk '
+	awk -v expected_banner="$expected_banner" '
+		BEGIN { banner_seen = (expected_banner == "") }
 		index($0, "startup: running /etc/rc") != 0 { rc_started = 1 }
-		rc_started && index($0, "login:") != 0 { login_ready = 1 }
+		index($0, expected_banner) != 0 { banner_seen = 1 }
+		rc_started && banner_seen && index($0, "login:") != 0 {
+			login_ready = 1
+		}
 		END { exit (login_ready ? 0 : 1) }
 	' "$boot_log"
 }
@@ -49,10 +56,21 @@ esac
 
 vm_memory=${VM_MEMORY:-1024M}
 boot_timeout=${BOOT_TIMEOUT:-180}
+interactive=${INTERACTIVE:-no}
+vm_tap=${VM_TAP:-}
+expected_banner=${EXPECTED_BANNER:-}
 case "$boot_timeout" in
 ''|*[!0-9]*) fail "BOOT_TIMEOUT must be a positive integer" ;;
 esac
 [ "$boot_timeout" -gt 0 ] || fail "BOOT_TIMEOUT must be a positive integer"
+case "$interactive" in
+yes|no) ;;
+*) fail "INTERACTIVE must be yes or no" ;;
+esac
+case "$vm_tap" in
+'') ;;
+*[!A-Za-z0-9_.-]*) fail "invalid VM_TAP: $vm_tap" ;;
+esac
 
 boot_log=${BOOT_LOG:-/tmp/$vm_name.log}
 [ ! -e "$boot_log" ] || fail "refusing to overwrite existing BOOT_LOG: $boot_log"
@@ -95,7 +113,7 @@ cleanup()
 	if [ "$started" = true ]; then
 		bhyvectl --destroy --vm "$vm_name" >/dev/null 2>&1 || :
 	fi
-	if [ "$rc" -ne 0 ]; then
+	if [ "$rc" -ne 0 ] && [ "$interactive" = no ]; then
 		if [ "$interrupted" = true ]; then
 			echo "oracle-init VM boot test: FAIL: interrupted; Ctrl-C is not boot completion" >&2
 		fi
@@ -106,6 +124,10 @@ cleanup()
 
 on_interrupt()
 {
+	if [ "$interactive" = yes ]; then
+		echo "interactive VM session ended" >&2
+		exit 0
+	fi
 	interrupted=true
 	exit 130
 }
@@ -120,9 +142,21 @@ if ! bhyveload -m "$vm_memory" -e console=comconsole \
 	fail "bhyveload failed"
 fi
 
-bhyve -D -c 2 -m "$vm_memory" -H -w -s 0,hostbridge \
-    -s 3,virtio-blk,"$image" -s 31,lpc -l com1,stdio "$vm_name" \
-    >"$boot_log" 2>&1 &
+set -- -D -c 2 -m "$vm_memory" -H -w -s 0,hostbridge \
+    -s 3,virtio-blk,"$image"
+if [ -n "$vm_tap" ]; then
+	set -- "$@" -s 4,virtio-net,"$vm_tap"
+fi
+set -- "$@" -s 31,lpc -l com1,stdio "$vm_name"
+
+if [ "$interactive" = yes ]; then
+	echo "Starting interactive $vm_name; use Ctrl-C to end the session"
+	bhyve "$@"
+	echo "interactive VM session ended"
+	exit 0
+fi
+
+bhyve "$@" >"$boot_log" 2>&1 &
 bhyve_pid=$!
 
 elapsed=0

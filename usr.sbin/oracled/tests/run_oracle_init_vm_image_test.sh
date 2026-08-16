@@ -18,6 +18,9 @@ usage()
 	  BOOT_TIMEOUT       boot-test timeout in seconds (default: 180)
 	  VM_MEMORY          guest memory (default: 1024M)
 	  KEEP_VM_IMAGE      set to yes to retain a successful image
+	  EXPECTED_BANNER    literal banner fragment (default: 5BSD/amd64 (5BSD))
+	  INTERACTIVE        set to yes to attach the guest serial console to this terminal
+	  VM_TAP             existing host tap interface to attach as guest vtnet0
 	EOF
 	exit 2
 }
@@ -42,6 +45,9 @@ vm_size=${VM_SIZE:-4g}
 boot_timeout=${BOOT_TIMEOUT:-180}
 vm_memory=${VM_MEMORY:-1024M}
 keep_image=${KEEP_VM_IMAGE:-no}
+interactive=${INTERACTIVE:-no}
+vm_tap=${VM_TAP:-}
+expected_banner="${EXPECTED_BANNER:-5BSD/amd64 (5BSD)}"
 case "$boot_timeout" in
 ''|*[!0-9]*) fail "BOOT_TIMEOUT must be a positive integer" ;;
 esac
@@ -49,6 +55,14 @@ esac
 case "$keep_image" in
 yes|no) ;;
 *) fail "KEEP_VM_IMAGE must be yes or no" ;;
+esac
+case "$interactive" in
+yes|no) ;;
+*) fail "INTERACTIVE must be yes or no" ;;
+esac
+case "$vm_tap" in
+'') ;;
+*[!A-Za-z0-9_.-]*) fail "invalid VM_TAP: $vm_tap" ;;
 esac
 
 workdir=$(mktemp -d /tmp/oracle-pid1-vm.XXXXXX) || fail "mktemp failed"
@@ -83,9 +97,20 @@ env TARGET=amd64 TARGET_ARCH=amd64 NOPKGBASE=YES WITHOUT_QEMU=YES NOSWAP=YES \
 	-d "$workdir/root" -F ufs -f raw -i "$workdir/rootfs.img" \
 	-o "$image" -s "$vm_size" -S "$src"
 
-echo "Boot-testing $image"
+if [ "$interactive" = yes ]; then
+	echo "Starting interactive VM session for $image"
+else
+	echo "Boot-testing $image"
+fi
 env IMAGE="$image" VM_MEMORY="$vm_memory" BOOT_TIMEOUT="$boot_timeout" \
+	EXPECTED_BANNER="$expected_banner" \
+	INTERACTIVE="$interactive" \
+	VM_TAP="$vm_tap" \
 	BOOT_LOG="$workdir/serial.log" "$boot_test"
 
 passed=true
-echo "oracle-init VM image test: PASS"
+if [ "$interactive" = yes ]; then
+	echo "oracle-init VM image test: interactive session completed"
+else
+	echo "oracle-init VM image test: PASS"
+fi
