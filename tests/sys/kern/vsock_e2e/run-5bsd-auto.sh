@@ -93,6 +93,11 @@ FIVEBSD_SOUND_PACKED=${FIVEBSD_SOUND_PACKED:-no}
 FIVEBSD_MEM_TEST=${FIVEBSD_MEM_TEST:-no}
 FIVEBSD_PMEM_TEST=${FIVEBSD_PMEM_TEST:-no}
 FIVEBSD_IOMMU_TEST=${FIVEBSD_IOMMU_TEST:-no}
+if [ "$FIVEBSD_MEM_TEST" = yes ] || [ "$FIVEBSD_PMEM_TEST" = yes ] ||
+    [ "$FIVEBSD_IOMMU_TEST" = yes ]; then
+	echo "virtio-mem, virtio-pmem, and virtio-IOMMU are unsupported on the 5BSD qualification guest" >&2
+	exit 2
+fi
 BRIDGE=${BRIDGE:-bridge0}
 VIRTIO_DEBUG=${VIRTIO_DEBUG:-0}
 case "$VIRTIO_DEBUG" in
@@ -581,6 +586,43 @@ guest_check()
 		tail -n 30 "$console_log" >&2
 	fi
 	return "$status"
+}
+
+audit_5bsd_virtio_features()
+{
+	expected=4
+	specs="vtblk.0=$FIVEBSD_BLOCK_PACKED virtio_vsock.0=$FIVEBSD_VSOCK_PACKED vtrnd.0=$FIVEBSD_RNG_PACKED vtballoon.0=$BALLOON_PACKED"
+	if [ "$FIVEBSD_SCSI_QUEUES" -gt 0 ]; then
+		expected=$((expected + 1)); specs="$specs vtscsi.0=$FIVEBSD_SCSI_PACKED"
+	fi
+	if [ "$FIVEBSD_CONSOLE_TEST" = yes ]; then
+		expected=$((expected + 1)); specs="$specs vtcon.0=$FIVEBSD_CONSOLE_PACKED"
+	fi
+	if [ "$FIVEBSD_NET_TEST" = yes ]; then
+		expected=$((expected + 1)); specs="$specs vtnet.0=$FIVEBSD_NET_PACKED"
+	fi
+	if [ "$FIVEBSD_GPU_TEST" = yes ]; then
+		expected=$((expected + 1)); specs="$specs vtgpu.0=$FIVEBSD_GPU_PACKED"
+	fi
+	if [ "$FIVEBSD_RTC_TEST" = yes ]; then
+		expected=$((expected + 1)); specs="$specs vtrtc.0=$FIVEBSD_RTC_PACKED"
+	fi
+	if [ "$FIVEBSD_INPUT_TEST" = yes ]; then
+		i=0
+		while [ "$i" -lt "$FIVEBSD_INPUT_DEVICES" ]; do
+			expected=$((expected + 1)); specs="$specs vtinput.$i=$FIVEBSD_INPUT_PACKED"
+			i=$((i + 1))
+		done
+	fi
+	if [ "$FIVEBSD_NINEP_TEST" = yes ]; then
+		expected=$((expected + 1)); specs="$specs virtio_p9fs.0=$FIVEBSD_NINEP_PACKED"
+	fi
+	if [ "$FIVEBSD_SOUND_TEST" = yes ]; then
+		expected=$((expected + 1)); specs="$specs pcm.0=$FIVEBSD_SOUND_PACKED"
+	fi
+	guest_check virtio_feature_inventory \
+	    "set -eu; nodes=\$(sysctl -aN | grep -E '^dev\.vtpci\.[0-9]+\.negotiated_features$'); set -- \$nodes; test \"\$#\" = '$expected'; for node in \$nodes; do features=\$(sysctl -n \"\$node\"); host=\$(sysctl -n \"\${node%negotiated_features}host_features\"); test -n \"\$features\"; if [ '$transport' = modern ]; then printf '%s\\n' \"\$features\" | grep -q Version1; else ! printf '%s\\n' \"\$features\" | grep -q Version1; fi; printf 'FEATURES node=%s host=%s negotiated=%s\\n' \"\$node\" \"\$host\" \"\$features\"; done; for spec in $specs; do child=\${spec%=*}; wanted=\${spec#*=}; parent=\$(sysctl -n \"dev.\$child.%parent\"); unit=\${parent##*[!0-9]}; name=\${parent%\$unit}; test -n \"\$unit\"; features=\$(sysctl -n \"dev.\$name.\$unit.negotiated_features\"); if [ \"\$wanted\" = yes ]; then printf '%s\\n' \"\$features\" | grep -q RingPacked; else ! printf '%s\\n' \"\$features\" | grep -q RingPacked; fi; done" \
+	    45
 }
 
 run_5bsd_console_exchange()
@@ -1344,6 +1386,7 @@ for transport in $TRANSPORTS; do
 		}
 		echo "PASS  host_iommu_config_and_queue_publication"
 	fi
+	audit_5bsd_virtio_features
 	guest_check vsock_driver \
 	    "devinfo -rv | grep -q 'virtio_vsock0'"
 	guest_check block_driver \

@@ -1917,6 +1917,8 @@ provision_guest()
 	guest_cmd 'set -eu; ip link set eth0 up; udhcpc -n -q -t 5 -T 3 -i eth0; release=$(cut -d. -f1,2 /etc/alpine-release); case "$release" in *.*) ;; *) echo "invalid Alpine release: $release" >&2; exit 1;; esac; major=${release%.*}; minor=${release#*.}; case "$major:$minor" in *[!0-9:]*|:|*:) echo "invalid Alpine release: $release" >&2; exit 1;; esac; repository="https://dl-cdn.alpinelinux.org/alpine/v${release}/main"; printf "%s\n" "$repository" > /etc/apk/repositories; apk add --no-cache ethtool python3; printf "PROVISION alpine=%s kernel=%s repository=%s " "$(cat /etc/alpine-release)" "$(uname -r)" "$repository"; python3 --version' 150
 	copy_guest_file "$here/gnet.py" /tmp/gnet.py
 	guest_cmd 'python3 /tmp/gnet.py --self-test | grep -q "^SELFTEST PASS$"' 30
+	copy_guest_file "$here/gvirtio_features.py" /tmp/gvirtio_features.py
+	guest_cmd 'python3 /tmp/gvirtio_features.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	if [ "$CHECKPOINT_TEST" = yes ]; then
 		copy_guest_file "$here/gcheckpoint.py" /tmp/gcheckpoint.py
 		guest_cmd 'python3 /tmp/gcheckpoint.py --self-test | grep -q "^SELFTEST PASS$"' 30
@@ -2549,6 +2551,37 @@ discover_guest_virtio_bdfs()
 	[ -z "$iommu_bdf" ] || virtio_bdfs="$virtio_bdfs $iommu_bdf"
 	echo "PASS guest-virtio-inventory endpoints=$expected_endpoints " \
 	    "iommu=${iommu_bdf:-none}"
+}
+
+audit_guest_virtio_features()
+{
+	packed=
+	[ "$NET_PACKED" = no ] || packed="$packed,0000:00:04.0"
+	[ "$run_vsock" = no ] || [ "$VSOCK_PACKED" = no ] || packed="$packed,0000:00:05.0"
+	[ "$run_input_device" = no ] || [ "$INPUT_PACKED" = no ] || packed="$packed,0000:00:06.0"
+	[ "$run_rng_device" = no ] || [ "$RNG_PACKED" = no ] || packed="$packed,0000:00:07.0"
+	[ "$run_block_device" = no ] || [ "$BLOCK_PACKED" = no ] || packed="$packed,0000:00:08.0"
+	[ "$run_scsi_device" = no ] || [ "$SCSI_PACKED" = no ] || packed="$packed,0000:00:09.0"
+	[ "$run_console_device" = no ] || [ "$CONSOLE_PACKED" = no ] || packed="$packed,0000:00:0a.0"
+	[ "$run_9p_device" = no ] || [ "$NINEP_PACKED" = no ] || packed="$packed,0000:00:0b.0"
+	[ "$run_balloon_device" = no ] || [ "$BALLOON_PACKED" = no ] || packed="$packed,0000:00:0c.0"
+	[ "$run_rtc_device" = no ] || [ "$RTC_PACKED" = no ] || packed="$packed,0000:00:0d.0"
+	[ "$run_gpu_device" = no ] || [ "$GPU_PACKED" = no ] || packed="$packed,0000:00:0e.0"
+	[ "$VIRTIO_IOMMU" = no ] || [ "$IOMMU_PACKED" = no ] || packed="$packed,0000:00:0f.0"
+	[ "$run_mem_device" = no ] || [ "$MEM_PACKED" = no ] || packed="$packed,0000:00:10.0"
+	[ "$run_sound_device" = no ] || [ "$SOUND_PACKED" = no ] || packed="$packed,0000:00:11.0"
+	[ "$run_fs_device" = no ] || [ "$FS_PACKED" = no ] || packed="$packed,0000:00:13.0"
+	[ "$run_pmem_device" = no ] || [ "$PMEM_PACKED" = no ] || packed="$packed,0000:00:14.0"
+	packed=${packed#,}
+	[ -n "$packed" ] || packed=-
+	set -- $virtio_bdfs
+	output=$(guest_cmd "python3 /tmp/gvirtio_features.py '$transport' '$#' '$packed'" 30) || {
+		status=$?
+		echo "guest VirtIO feature audit failed (status $status)" >&2
+		[ -z "$output" ] || printf '%s\n' "$output" >&2
+		return "$status"
+	}
+	printf '%s\n' "$output"
 }
 
 run_block()
@@ -3717,6 +3750,7 @@ for transport in $TRANSPORTS; do
 	launch_vm
 	provision_guest
 	discover_guest_virtio_bdfs
+	audit_guest_virtio_features
 	if [ "$VERIFY_RING_ACTIVITY" = yes ] ||
 	    [ "$VERIFY_GPU_BLOB_ACTIVITY" = yes ] ||
 	    [ -n "$VERIFY_DEVICE_RING_NAME" ]; then

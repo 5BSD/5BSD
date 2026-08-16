@@ -34,6 +34,19 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
+if command -v python3 >/dev/null 2>&1; then
+	python3 "$here/gvirtio_features.py" --self-test | grep -q '^SELFTEST PASS$'
+else
+	# Python is a guest dependency, not a host-package dependency.  Alpine
+	# runs this self-test after provisioning; retain a source contract on
+	# hosts which intentionally do not install Python.
+	grep -Fq 'def self_test():' "$here/gvirtio_features.py"
+fi
+sh -n "$here/run-alpine-auto.sh" "$here/run-5bsd-auto.sh"
+grep -Fq 'audit_guest_virtio_features' "$here/run-alpine-auto.sh"
+grep -Fq 'audit_5bsd_virtio_features' "$here/run-5bsd-auto.sh"
+grep -Fq 'negotiated_features' "$here/run-5bsd-auto.sh"
+
 # Cancellation records a process identity before the runner can reparent its
 # descendants.  The live cancellation probe below proves that the recorded
 # tree is drained; retain this source contract as well because PID reuse is
@@ -693,7 +706,7 @@ grep -q '^cases=7$' "$work/soak-smoke-plan"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/qualification"
-grep -q '^cases=149$' "$work/qualification"
+grep -q '^cases=146$' "$work/qualification"
 [ "$(grep -c '^host-regression	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^fivebsd-module-build	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^fivebsd-block-write-zeroes	' "$work/qualification")" -eq 1 ]
@@ -796,7 +809,7 @@ grep -q '^vmfree-nested-vmx-model-sanitized	nested-vmx-model	' \
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile intel-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/intel-qualification"
-grep -q '^cases=153$' "$work/intel-qualification"
+grep -q '^cases=150$' "$work/intel-qualification"
 [ "$(grep -c '^host-regression	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^fivebsd-module-build	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-module-build	' "$work/intel-qualification")" -eq 1 ]
@@ -809,7 +822,7 @@ grep -q '^cases=153$' "$work/intel-qualification"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile full-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/full-qualification"
-grep -q '^cases=157$' "$work/full-qualification"
+grep -q '^cases=154$' "$work/full-qualification"
 [ "$(grep -c '^nested-vmx-live	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-modern	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-packed-modern	' \

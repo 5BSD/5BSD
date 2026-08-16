@@ -92,6 +92,7 @@ ${PACKAGE}FILES+=	vsock-pipe.c
 ${PACKAGE}FILES+=	vsock-conntest.c
 ${PACKAGE}FILES+=	vsock-recrx.c
 ${PACKAGE}FILES+=	gvsock.py
+${PACKAGE}FILES+=	gvirtio_features.py
 ${PACKAGE}FILES+=	ginput.py
 ${PACKAGE}FILES+=	grng.py
 ${PACKAGE}FILES+=	gballoon.py

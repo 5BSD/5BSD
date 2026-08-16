@@ -184,7 +184,7 @@ su root -c 'env \
 ```
 
 Set `RESUME=yes` with the identical inputs to reuse only successful cases.
-The profile currently resolves to 149 de-duplicated cases.  Portable hosts can
+The profile currently resolves to 154 de-duplicated cases.  Portable hosts can
 continue to use `qualification`; machines without suitable OSS endpoints can
 use `intel-qualification` and keep audio as an explicit external gate.
 
@@ -229,6 +229,16 @@ Each exercised guest status also names its exact scheduled `virtio-lab.yaml`
 case.  The VM-free validator rejects missing and unknown case IDs; a
 cross-device claim lists every applicable case instead of using one device as
 proof for the others.
+
+Every Alpine run also inventories every attached VirtIO PCI function through
+the guest's 64-bit negotiated `features` bitmap.  It requires VERSION_1 on
+modern functions, forbids it on legacy functions, and requires RING_PACKED to
+match the per-device opt-in exactly.  The 5BSD runner performs the equivalent
+audit through each `vtpci` parent's `host_features` and
+`negotiated_features` sysctls and applies the packed expectation to every
+supported child.  These inventories make negotiation an explicit artifact;
+the device-specific helpers still have to drive the corresponding data or
+control path before a feature can be promoted to `exercised`.
 
 Coverage values are scalar unless a contract explicitly sets `tokens: true`.
 Tokenized contracts split an environment value on ASCII whitespace and are

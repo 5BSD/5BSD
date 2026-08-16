@@ -1514,6 +1514,9 @@ cases:
   # of the new driver and fails closed (host queue-enable / notify
   # correlation) if that path is not reached.  They are pending, not
   # exercised: promotion requires a live pass on the Intel qualification host.
+  # The sound lanes exercise a supported 5BSD data path.  The mem, pmem, and
+  # IOMMU definitions below are retained only as explicit prototypes: they
+  # cannot satisfy 5BSD release semantics and are outside every release group.
   - id: fivebsd-sound-modern
     executor: fivebsd-auto
     profiles: [release]
@@ -1548,7 +1551,7 @@ cases:
 
   - id: fivebsd-mem-modern
     executor: fivebsd-auto
-    profiles: [release]
+    profiles: [unsupported-5bsd-prototypes]
     timeout: 2400
     resources: [fivebsd-image]
     env:
@@ -1563,7 +1566,7 @@ cases:
 
   - id: fivebsd-pmem-modern
     executor: fivebsd-auto
-    profiles: [release]
+    profiles: [unsupported-5bsd-prototypes]
     timeout: 2400
     resources: [fivebsd-image]
     env:
@@ -1579,7 +1582,7 @@ cases:
 
   - id: fivebsd-iommu-modern
     executor: fivebsd-auto
-    profiles: [release]
+    profiles: [unsupported-5bsd-prototypes]
     timeout: 2400
     resources: [fivebsd-image]
     env:
