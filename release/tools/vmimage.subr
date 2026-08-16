@@ -112,7 +112,9 @@ vm_install_base() {
 		metalog_add_data ./usr/local/etc/pkg/repos/5BSD.conf
 	else
 		cd ${WORLDDIR} && \
-			make DESTDIR=${DESTDIR} ${INSTALLOPTS} \
+			make DESTDIR=${DESTDIR} DB_FROM_SRC=yes NO_ROOT=yes \
+			METALOG=${DESTDIR}/METALOG \
+			INSTALL="install -N ${WORLDDIR}/etc" ${INSTALLOPTS} \
 			installworld installkernel distribution || \
 			err "\n\nCannot install the base system to ${DESTDIR}."
 	fi
@@ -472,7 +474,7 @@ vm_create_disk() {
 	metalog_add_data ./firstboot
 
 	echo "Building filesystem...  Please wait."
-	buildfs
+	buildfs || return 1
 
 	echo "Building final disk image...  Please wait."
 	${MKIMG} -s ${PARTSCHEME} -f ${VMFORMAT} \

@@ -17,8 +17,10 @@ CFLAGS.capd_bootstrap_fixture+=	-I${SRCTOP}/sys
 CFLAGS.capd_bootstrap_fixture+=	-I${SRCTOP}/lib/liboraclert
 
 ${PACKAGE}FILES+=	capd_test_harness.sh bsdinstall-config.sh \
-			run_oracle_init_vm_boot_test.sh
+                run_oracle_init_vm_boot_test.sh \
+			run_oracle_init_vm_image_test.sh
 ${PACKAGE}FILESMODE_run_oracle_init_vm_boot_test.sh=	0555
+${PACKAGE}FILESMODE_run_oracle_init_vm_image_test.sh=	0555
 
 # Keep the shared harness beside generated ATF programs for object-tree runs.
 .if ${.OBJDIR} != ${.CURDIR}
@@ -31,10 +33,14 @@ ${.OBJDIR}/bsdinstall-config.sh: ${SRCTOP}/usr.sbin/bsdinstall/scripts/config
 ${.OBJDIR}/run_oracle_init_vm_boot_test.sh: ${.CURDIR}/run_oracle_init_vm_boot_test.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
+${.OBJDIR}/run_oracle_init_vm_image_test.sh: ${.CURDIR}/run_oracle_init_vm_image_test.sh
+	${CP} ${.ALLSRC} ${.TARGET}
+
 all: ${.OBJDIR}/capd_test_harness.sh ${.OBJDIR}/bsdinstall-config.sh \
-	${.OBJDIR}/run_oracle_init_vm_boot_test.sh
+	${.OBJDIR}/run_oracle_init_vm_boot_test.sh \
+	${.OBJDIR}/run_oracle_init_vm_image_test.sh
 CLEANFILES+=	capd_test_harness.sh bsdinstall-config.sh \
-		run_oracle_init_vm_boot_test.sh
+		run_oracle_init_vm_boot_test.sh run_oracle_init_vm_image_test.sh
 .endif
 
 ATF_TESTS_C+=	req_validate_test

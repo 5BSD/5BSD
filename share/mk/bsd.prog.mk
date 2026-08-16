@@ -326,7 +326,7 @@ _scriptsinstall: _SCRIPTSINS_${script:T}
 _SCRIPTSINS_${script:T}: ${script} installdirs-SCRIPTSDIR_${script:T}
 	${INSTALL} ${TAG_ARGS} -o ${SCRIPTSOWN_${script:T}} \
 	    -g ${SCRIPTSGRP_${script:T}} -m ${SCRIPTSMODE_${script:T}} \
-	    ${script} \
+	    ${.ALLSRC:Ninstalldirs-*} \
 	    ${DESTDIR}${SCRIPTSDIR_${script:T}}/${SCRIPTSNAME_${script:T}}
 .endfor
 .endif

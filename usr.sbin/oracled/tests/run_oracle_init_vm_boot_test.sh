@@ -4,7 +4,8 @@
 #
 # Exercise an installed Oracle PID 1 image through bhyve.  This is deliberately
 # a manual, root-only test: unlike a VM liveness check, it succeeds only after
-# serviced reports that /etc/rc completed and the serial getty presents login.
+# serviced begins its /etc/rc bootstrap and Oracle's authenticated convergence
+# gate permits a serial getty to present login.
 
 set -eu
 
@@ -16,7 +17,7 @@ usage()
 	Optional environment:
 	  VM_NAME       bhyve name (default: oracle-init-boot-test-<pid>)
 	  VM_MEMORY     guest memory (default: 1024M)
-	  BOOT_TIMEOUT  seconds to wait for RC completion and login (default: 180)
+	  BOOT_TIMEOUT  seconds to wait for RC bootstrap and login (default: 180)
 	  BOOT_LOG      serial-console log path (default: /tmp/<VM_NAME>.log)
 	EOF
 	exit 2
@@ -31,8 +32,8 @@ fail()
 boot_completed()
 {
 	awk '
-		index($0, "startup: /etc/rc completed") != 0 { rc_done = 1 }
-		rc_done && index($0, "login:") != 0 { login_ready = 1 }
+		index($0, "startup: running /etc/rc") != 0 { rc_started = 1 }
+		rc_started && index($0, "login:") != 0 { login_ready = 1 }
 		END { exit (login_ready ? 0 : 1) }
 	' "$boot_log"
 }
@@ -114,7 +115,7 @@ trap on_interrupt HUP INT TERM
 
 echo "Booting $image as $vm_name; serial log: $boot_log"
 started=true
-if ! bhyveload -c /dev/null -m "$vm_memory" -e console=comconsole \
+if ! bhyveload -m "$vm_memory" -e console=comconsole \
     -e comconsole_speed=115200 -d "$image" "$vm_name"; then
 	fail "bhyveload failed"
 fi
@@ -127,7 +128,7 @@ bhyve_pid=$!
 elapsed=0
 while [ "$elapsed" -lt "$boot_timeout" ]; do
 	if boot_completed 2>/dev/null; then
-		echo "oracle-init VM boot test: PASS: serviced completed /etc/rc and serial login is ready"
+		echo "oracle-init VM boot test: PASS: serviced RC bootstrap converged and Oracle-gated serial login is ready"
 		exit 0
 	fi
 	if ! kill -0 "$bhyve_pid" 2>/dev/null; then
@@ -138,4 +139,4 @@ while [ "$elapsed" -lt "$boot_timeout" ]; do
 	elapsed=$((elapsed + 1))
 done
 
-fail "timed out after ${boot_timeout}s waiting for serviced RC completion and serial login"
+fail "timed out after ${boot_timeout}s waiting for serviced RC bootstrap and serial login"
