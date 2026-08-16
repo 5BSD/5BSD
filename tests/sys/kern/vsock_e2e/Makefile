@@ -34,6 +34,8 @@ PROGS+=		vsh-connect-test-server
 PROGS+=		uinput-inject
 PROGS+=		freebsd-input-check
 NO_SHARED.freebsd-input-check=	yes
+PROGS+=		freebsd-tpm2-check
+NO_SHARED.freebsd-tpm2-check=	yes
 PROGS+=		gpu-rfb-check
 NO_SHARED.gpu-rfb-check=	yes
 
@@ -99,6 +101,8 @@ ${PACKAGE}FILES+=	gballoon.py
 ${PACKAGE}FILES+=	grtc.py
 ${PACKAGE}FILES+=	gblock.py
 ${PACKAGE}FILES+=	gnet.py
+${PACKAGE}FILES+=	gnonvirtio.py
+${PACKAGE}FILES+=	freebsd-nonvirtio.sh
 ${PACKAGE}FILES+=	gscsi.py
 ${PACKAGE}FILES+=	gconsole.py
 ${PACKAGE}FILES+=	g9p.py

@@ -38,6 +38,26 @@ static const uint8_t last_pixel[4] = { 0x24, 0x68, 0xac, 0x00 };
 
 static void rfb_handshake(int, uint32_t, uint32_t, int64_t);
 static uint8_t *rfb_read_frame(int, uint32_t, uint32_t, int64_t);
+static void write_all(int, const void *, size_t, int64_t);
+
+static void
+encode_pointer(uint8_t message[6], uint8_t buttons, uint16_t x, uint16_t y)
+{
+	message[0] = 5; /* RFB PointerEvent */
+	message[1] = buttons;
+	be16enc(message + 2, x);
+	be16enc(message + 4, y);
+}
+
+static void
+rfb_send_pointer(int fd, uint8_t buttons, uint16_t x, uint16_t y,
+    int64_t deadline)
+{
+	uint8_t message[6];
+
+	encode_pointer(message, buttons, x, y);
+	write_all(fd, message, sizeof(message), deadline);
+}
 
 static int64_t
 milliseconds(void)
@@ -175,6 +195,7 @@ static int
 self_test(void)
 {
 	uint8_t frame[4 * 3 * 2], buffer[20], init[24], rectangle[12];
+	uint8_t pointer[6];
 	uint8_t parsed_pixel[4];
 	uint8_t *received;
 	int sockets[2], status;
@@ -192,6 +213,10 @@ self_test(void)
 		errx(1, "pixel parser self-test failed");
 	if (parse_dimension("4096", "width") != 4096)
 		errx(1, "dimension parser self-test failed");
+	encode_pointer(pointer, 3, 0x1234, 0x5678);
+	if (memcmp(pointer, (uint8_t[]){ 5, 3, 0x12, 0x34, 0x56, 0x78 },
+	    sizeof(pointer)) != 0)
+		errx(1, "pointer-event encoder self-test failed");
 
 	if (socketpair(AF_UNIX, SOCK_STREAM, 0, sockets) != 0)
 		err(1, "socketpair self-test");
@@ -397,17 +422,36 @@ main(int argc, char **argv)
 {
 	uint8_t expected_last[4];
 	uint8_t *frame;
-	uint32_t width, height;
+	uint32_t buttons, width, height, x, y;
 	int64_t deadline;
 	int fd;
 
 	if (argc == 2 && strcmp(argv[1], "--self-test") == 0)
 		return (self_test());
-	if (argc != 4 && argc != 5)
+	if (argc != 4 && argc != 5 && argc != 8)
 		errx(2, "usage: gpu-rfb-check socket-path width height "
-		    "[last-pixel-hex] | --self-test");
+		    "[last-pixel-hex] | socket-path width height --pointer "
+		    "x y buttons | --self-test");
 	width = parse_dimension(argv[2], "width");
 	height = parse_dimension(argv[3], "height");
+	if (argc == 8) {
+		if (strcmp(argv[4], "--pointer") != 0)
+			errx(2, "expected --pointer");
+		x = parse_dimension(argv[5], "pointer x");
+		y = parse_dimension(argv[6], "pointer y");
+		buttons = parse_dimension(argv[7], "pointer buttons");
+		if (x >= width || y >= height || buttons > UINT8_MAX)
+			errx(2, "pointer event is outside the framebuffer or invalid");
+		deadline = milliseconds() + RFB_TIMEOUT_MS;
+		fd = connect_unix(argv[1]);
+		rfb_handshake(fd, width, height, deadline);
+		rfb_send_pointer(fd, (uint8_t)buttons, (uint16_t)x, (uint16_t)y,
+		    deadline);
+		if (close(fd) != 0)
+			err(1, "close RFB socket");
+		printf("PASS gpu-rfb pointer=%u,%u buttons=%u\n", x, y, buttons);
+		return (0);
+	}
 	memcpy(expected_last, last_pixel, sizeof(expected_last));
 	if (argc == 5)
 		parse_pixel(argv[4], expected_last);

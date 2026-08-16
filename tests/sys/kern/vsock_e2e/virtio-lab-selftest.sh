@@ -35,17 +35,31 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 
 if command -v python3 >/dev/null 2>&1; then
+	python3 "$here/gnonvirtio.py" --self-test | grep -q '^SELFTEST PASS$'
 	python3 "$here/gvirtio_features.py" --self-test | grep -q '^SELFTEST PASS$'
 else
 	# Python is a guest dependency, not a host-package dependency.  Alpine
 	# runs this self-test after provisioning; retain a source contract on
 	# hosts which intentionally do not install Python.
+	grep -Fq 'def self_test():' "$here/gnonvirtio.py"
 	grep -Fq 'def self_test():' "$here/gvirtio_features.py"
 fi
 sh -n "$here/run-alpine-auto.sh" "$here/run-5bsd-auto.sh"
 grep -Fq 'audit_guest_virtio_features' "$here/run-alpine-auto.sh"
 grep -Fq 'audit_5bsd_virtio_features' "$here/run-5bsd-auto.sh"
 grep -Fq 'negotiated_features' "$here/run-5bsd-auto.sh"
+grep -Fq 'run_nonvirtio_checkpoint_rejection' "$here/run-alpine-auto.sh"
+grep -Fq 'run_nonvirtio_checkpoint_5bsd' "$here/run-5bsd-auto.sh"
+grep -Fq 'gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768' \
+    "$here/run-alpine-auto.sh"
+grep -Fq 'gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768' \
+    "$here/run-5bsd-auto.sh"
+grep -Fq 'pci0:0:21:0' "$here/freebsd-nonvirtio.sh"
+grep -Fq '/tmp/freebsd-tpm2-check /dev/tpm0' "$here/run-5bsd-auto.sh"
+grep -Fq 'nonvirtio_xhci_pending_transfer' "$here/run-5bsd-auto.sh"
+grep -Fq 'nonvirtio_hda_open_stream' "$here/run-5bsd-auto.sh"
+grep -Fq 'nonvirtio_hostbridge_exact_topology' "$here/run-5bsd-auto.sh"
+grep -Fq '86abc0f5' "$here/run-5bsd-auto.sh"
 
 # Cancellation records a process identity before the runner can reparent its
 # descendants.  The live cancellation probe below proves that the recorded
@@ -822,7 +836,8 @@ grep -q '^cases=150$' "$work/intel-qualification"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile full-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/full-qualification"
-grep -q '^cases=154$' "$work/full-qualification"
+grep -q '^cases=200$' "$work/full-qualification"
+[ "$(grep -c '^nonvirtio-' "$work/full-qualification")" -eq 46 ]
 [ "$(grep -c '^nested-vmx-live	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-modern	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-packed-modern	' \
@@ -973,8 +988,34 @@ env PLAN_ONLY=yes PROFILE=nested JOBS=1 WORKDIR="$work/nested-plan" \
     NESTED_FIVEBSD_L2_IMAGE=/tmp/fivebsd-l2.img \
     sh "$here/run-waspnest-qualification.sh" >"$work/nested-wrapper-plan"
 grep -q '^qualification-plan profile=nested$' "$work/nested-wrapper-plan"
+grep -q '^nested-vmx-live[[:space:]]nested-vmx-live[[:space:]]' \
+    "$work/nested-wrapper-plan"
+grep -q '^cases=' "$work/nested-wrapper-plan"
 ! grep -q -- '--prepare-host\|--bridge\|--uplink\|--iso\|--fivebsd-image' \
     "$work/nested-wrapper-plan"
+
+env PLAN_ONLY=yes PROFILE=nonvirtio JOBS=1 \
+    WORKDIR="$work/nonvirtio-plan" UPLINK=re0 \
+    ISO=/tmp/alpine.iso FIVEBSD_IMAGE=/tmp/5bsd.img \
+    NONVIRTIO_TPM_PATH=/tmp/swtpm.sock NONVIRTIO_PASSTHRU=ppt0 \
+    NONVIRTIO_PASSTHRU_LINUX_ASSERT='test -d /sys/bus/pci/devices/0000:00:15.0' \
+    NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT='pciconf -l pci0:21:0' \
+    sh "$here/run-waspnest-qualification.sh" >"$work/nonvirtio-plan.out"
+grep -q '^qualification-plan profile=nonvirtio$' "$work/nonvirtio-plan.out"
+grep -q '^cases=46$' "$work/nonvirtio-plan.out"
+for nonvirtio_argument in \
+    NONVIRTIO_TPM_PATH=/tmp/swtpm.sock \
+    NONVIRTIO_PASSTHRU=ppt0 \
+    'NONVIRTIO_PASSTHRU_LINUX_ASSERT=test -d /sys/bus/pci/devices/0000:00:15.0' \
+    'NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT=pciconf -l pci0:21:0'; do
+	awk -v wanted="$nonvirtio_argument" '
+	$1 == "argument" && $2 == "--set" {
+		if (getline > 0 && $1 == "argument" && substr($0, index($0, $2)) == wanted)
+			found = 1
+	}
+	END { exit(found ? 0 : 1) }
+	' "$work/nonvirtio-plan.out"
+done
 # The optional authenticated corpus is a preflight boundary, including for a
 # plan-only nested invocation.  A bad path must fail before the wrapper can
 # claim that it merely planned a root-free profile.

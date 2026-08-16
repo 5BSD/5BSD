@@ -10,13 +10,14 @@
 #     profiles do not prepare or alter host networking.
 #   ISO=/path/to/alpine-virt.iso
 #     Required by profiles that select Alpine VM cases.
-#   FIVEBSD_IMAGE=/path/to/disposable-freebsd.raw
+#   FIVEBSD_IMAGE=/path/to/disposable-5bsd.raw
 #     Required by profiles that select a 5BSD VM case.  Nested-only profiles
 #     instead use the NESTED_* inputs below and must not need an unrelated
 #     disposable 5BSD image.
 #
 # Optional:
-#   PROFILE=qualification|soak-smoke  JOBS=3  BRIDGE=bridge0  RESUME=no
+#   PROFILE=qualification|nonvirtio|soak-smoke  JOBS=3  BRIDGE=bridge0
+#   RESUME=no
 #   PLAN_ONLY=yes  validate and print the exact virtio-lab invocation without
 #                  requiring root or changing host state
 #   VIRTIO_REFERENCE_ARTIFACT_DIR=/path/to/complete-pinned-corpus
@@ -24,8 +25,10 @@
 #   Intel hardware promotion uses PROFILE=intel-qualification and requires
 #   the NESTED_L1_* and NESTED_*_L2_IMAGE inputs documented by
 #   run-vmx-nested-live.sh.
-#   PROFILE=full-qualification adds both the nested and representative OSS
-#   audio/checkpoint gates to the complete portable qualification matrix.
+#   PROFILE=nonvirtio runs the Alpine/5BSD non-VirtIO live and checkpoint
+#   suite.  TPM and passthrough cases need the NONVIRTIO_* inputs below.
+#   PROFILE=full-qualification adds nested, representative OSS audio, and
+#   non-VirtIO gates to the complete portable qualification matrix.
 #   WORKDIR=/tmp/virtio-qualification
 #
 
@@ -67,7 +70,7 @@ if [ -n "${VIRTIO_REFERENCE_ARTIFACT_DIR:-}" ]; then
 fi
 
 case "$PROFILE" in
-qualification|intel-qualification|audio-qualification|full-qualification|release|checkpoint|soak|soak-smoke|audio|checkpoint-audio|nested|nested-default)
+qualification|intel-qualification|audio-qualification|full-qualification|release|checkpoint|soak|soak-smoke|audio|checkpoint-audio|nonvirtio|nested|nested-default)
 	;;
 *)
 	echo "unsupported qualification profile: $PROFILE" >&2
@@ -81,16 +84,24 @@ esac
 # fivebsd-auto case.  Passing absent optional inputs through to virtio-lab
 # would also make the saved resume configuration depend on irrelevant paths.
 case "$PROFILE" in
-qualification|intel-qualification|full-qualification|release)
+qualification|intel-qualification|full-qualification|nonvirtio|release)
 	: "${UPLINK:?set UPLINK to the host network interface}"
 	: "${ISO:?set ISO to an Alpine virt ISO}"
-	: "${FIVEBSD_IMAGE:?set FIVEBSD_IMAGE to a disposable FreeBSD image}"
+	: "${FIVEBSD_IMAGE:?set FIVEBSD_IMAGE to a disposable 5BSD image}"
 	;;
 checkpoint|soak|soak-smoke|audio|checkpoint-audio|audio-qualification)
 	: "${UPLINK:?set UPLINK to the host network interface}"
 	: "${ISO:?set ISO to an Alpine virt ISO}"
 	;;
 nested|nested-default)
+	;;
+esac
+case "$PROFILE" in
+nonvirtio|full-qualification)
+	: "${NONVIRTIO_TPM_PATH:?set NONVIRTIO_TPM_PATH to a live TPM2 backend socket or device}"
+	: "${NONVIRTIO_PASSTHRU:?set NONVIRTIO_PASSTHRU to the ppt device selector}"
+	: "${NONVIRTIO_PASSTHRU_LINUX_ASSERT:?set NONVIRTIO_PASSTHRU_LINUX_ASSERT to the reviewed Alpine activation command}"
+	: "${NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT:?set NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT to the reviewed 5BSD activation command}"
 	;;
 esac
 case "$JOBS" in
@@ -120,13 +131,20 @@ if [ "$PLAN_ONLY" = no ] && [ "$(id -u)" -ne 0 ]; then
 	exit 1
 fi
 
-set -- /usr/libexec/flua "$LAB" run \
+lab_command=run
+if [ "$PLAN_ONLY" = yes ]; then
+	lab_command=plan
+fi
+set -- /usr/libexec/flua "$LAB" "$lab_command" \
     --profile "$PROFILE" --jobs "$JOBS" --workdir "$WORKDIR"
 case "$PROFILE" in
 nested|nested-default)
 	;;
 *)
-	set -- "$@" --prepare-host --bridge "$BRIDGE" --uplink "$UPLINK"
+	# plan accepts the allocation inputs so its effective environments match
+	# the eventual run, but host preparation is deliberately run-only.
+	[ "$PLAN_ONLY" = yes ] || set -- "$@" --prepare-host
+	set -- "$@" --bridge "$BRIDGE" --uplink "$UPLINK"
 	;;
 esac
 if [ -n "${ISO:-}" ]; then
@@ -185,6 +203,24 @@ audio|checkpoint-audio|audio-qualification|full-qualification)
 	    --set "SOUND_RECORD=$SOUND_RECORD"
 	;;
 esac
+[ -z "${NONVIRTIO_IMAGE_MB:-}" ] || set -- "$@" \
+    --set "NONVIRTIO_IMAGE_MB=$NONVIRTIO_IMAGE_MB"
+[ -z "${NONVIRTIO_HDA_PLAY:-}" ] || set -- "$@" \
+    --set "NONVIRTIO_HDA_PLAY=$NONVIRTIO_HDA_PLAY"
+[ -z "${NONVIRTIO_HDA_RECORD:-}" ] || set -- "$@" \
+    --set "NONVIRTIO_HDA_RECORD=$NONVIRTIO_HDA_RECORD"
+[ -z "${NONVIRTIO_TPM_TYPE:-}" ] || set -- "$@" \
+    --set "NONVIRTIO_TPM_TYPE=$NONVIRTIO_TPM_TYPE"
+[ -z "${NONVIRTIO_TPM_PATH:-}" ] || set -- "$@" \
+    --set "NONVIRTIO_TPM_PATH=$NONVIRTIO_TPM_PATH"
+[ -z "${NONVIRTIO_PASSTHRU:-}" ] || set -- "$@" \
+    --set "NONVIRTIO_PASSTHRU=$NONVIRTIO_PASSTHRU"
+[ -z "${NONVIRTIO_PASSTHRU_GUEST_ASSERT:-}" ] || set -- "$@" \
+    --set "NONVIRTIO_PASSTHRU_GUEST_ASSERT=$NONVIRTIO_PASSTHRU_GUEST_ASSERT"
+[ -z "${NONVIRTIO_PASSTHRU_LINUX_ASSERT:-}" ] || set -- "$@" \
+    --set "NONVIRTIO_PASSTHRU_LINUX_ASSERT=$NONVIRTIO_PASSTHRU_LINUX_ASSERT"
+[ -z "${NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT:-}" ] || set -- "$@" \
+    --set "NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT=$NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT"
 if [ "$RESUME" = yes ]; then
 	set -- "$@" --resume
 fi
@@ -193,6 +229,10 @@ if [ "$PLAN_ONLY" = yes ]; then
 	for argument do
 		printf '%s\t%s\n' "argument" "$argument"
 	done
-	exit 0
+	# Do not stop at an argument echo.  Expanding the selected profile also
+	# validates every behavior-override coverage contract and prints the exact
+	# ordered case inventory without creating a bridge, TAP, VM, or workdir.
+	"$@"
+	exit $?
 fi
 exec "$@"

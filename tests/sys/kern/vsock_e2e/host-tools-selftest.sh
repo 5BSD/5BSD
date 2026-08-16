@@ -32,12 +32,84 @@ trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
 
 for tool in unix-pipe vsock-pipe vsh-connect vsh-connect-test-server \
-    uinput-inject freebsd-input-check gpu-rfb-check; do
+    uinput-inject freebsd-input-check freebsd-tpm2-check gpu-rfb-check; do
 	[ -x "$TOOLS/$tool" ] || {
 		echo "missing helper: $TOOLS/$tool" >&2
 		exit 1
 	}
 done
+
+"$TOOLS/freebsd-tpm2-check" --self-test | grep -q '^SELFTEST PASS$'
+echo "PASS  freebsd_tpm2_guest_helper_selftest"
+
+resolver_root="$work/nonvirtio-resolver"
+mkdir -p "$resolver_root/bin" "$resolver_root/dev"
+for node in ada0 nvme2ns1 dsp7 ums2; do
+	ln -s /dev/null "$resolver_root/dev/$node"
+done
+cat >"$resolver_root/bin/devinfo" <<'EOF'
+#!/bin/sh
+if [ "$1" = -rv ]; then
+	cat <<OUTPUT
+ahci0 <AHCI> pnpinfo class=0x010601 at slot=21 function=0 dbsf=pci0:0:21:0
+nvme2 <NVMe> pnpinfo class=0x010802 at slot=21 function=0 dbsf=pci0:0:21:0
+em1 <e82545> pnpinfo class=0x020000 at slot=21 function=0 dbsf=pci0:0:21:0
+hdac3 <HDA> pnpinfo class=0x040300 at slot=21 function=0 dbsf=pci0:0:21:0
+xhci4 <xHCI> pnpinfo class=0x0c0330 at slot=21 function=0 dbsf=pci0:0:21:0
+uart5 <UART> pnpinfo class=0x070002 at slot=21 function=0 dbsf=pci0:0:21:0
+OUTPUT
+	[ "${DEVINFO_DUPLICATE_EM:-no}" = no ] ||
+	    echo 'em9 <duplicate> pnpinfo dbsf=pci0:0:21:0'
+	exit 0
+fi
+[ "$1" = -p ] || exit 2
+case "$2" in
+pcm7) echo 'pcm7 hdaa0 hdacc0 hdac3 pci0 pcib0 nexus0' ;;
+usbus4) echo 'usbus4 xhci4 pci0 pcib0 nexus0' ;;
+ums2) echo 'ums2 uhub0 usbus4 xhci4 pci0 pcib0 nexus0' ;;
+*) exit 1 ;;
+esac
+EOF
+cat >"$resolver_root/bin/sysctl" <<'EOF'
+#!/bin/sh
+if [ "$1" = -n ] && [ "$2" = kern.disks ]; then
+	echo 'vtbd0 ada0 nda9'
+	exit 0
+fi
+if [ "$1" = -aN ]; then
+	cat <<OUTPUT
+dev.pcm.7.%parent
+dev.usbus.4.%parent
+dev.ums.2.%parent
+OUTPUT
+	exit 0
+fi
+exit 2
+EOF
+cat >"$resolver_root/bin/usbconfig" <<'EOF'
+#!/bin/sh
+[ "$1" = list ] || exit 2
+echo 'ugen4.1: <BHYVE HID Tablet> at usbus4'
+EOF
+chmod 0555 "$resolver_root/bin/devinfo" "$resolver_root/bin/sysctl" \
+    "$resolver_root/bin/usbconfig"
+resolver="env PATH=$resolver_root/bin:/bin:/usr/bin DEVICE_ROOT=$resolver_root/dev sh $here/freebsd-nonvirtio.sh"
+[ "$(sh -c "$resolver ahci-disk")" = ada0 ]
+[ "$(sh -c "$resolver nvme-controller")" = nvme2 ]
+[ "$(sh -c "$resolver nvme-disk")" = nvme2ns1 ]
+[ "$(sh -c "$resolver e82545-interface")" = em1 ]
+[ "$(sh -c "$resolver hda-pcm")" = dsp7 ]
+[ "$(sh -c "$resolver xhci-bus")" = 4 ]
+[ "$(sh -c "$resolver xhci-ugen")" = ugen4.1 ]
+[ "$(sh -c "$resolver xhci-mouse")" = ums2 ]
+[ "$(sh -c "$resolver pci-uart")" = uart5 ]
+if DEVINFO_DUPLICATE_EM=yes sh -c "$resolver e82545-interface" \
+    >"$work/resolver-ambiguous.out" 2>"$work/resolver-ambiguous.err"; then
+	echo "5BSD device resolver accepted an ambiguous PCI assignment" >&2
+	exit 1
+fi
+grep -q 'expected one em device.*found 2' "$work/resolver-ambiguous.err"
+echo "PASS  freebsd_nonvirtio_device_resolver"
 
 wait_for_socket()
 {

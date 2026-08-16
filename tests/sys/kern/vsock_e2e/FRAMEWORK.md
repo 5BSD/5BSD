@@ -164,10 +164,11 @@ restore, allocation exhaustion, and transactional restore abort before the
 default policy can be reconsidered.
 
 `full-qualification` is the single-machine release gate for this Intel host.
-It composes portable `qualification`, nested-VMX hardware qualification, and
-the representative split/packed OSS sound and sound-checkpoint cases.  Run it
-through the wrapper so host preparation, audio endpoints, nested inputs,
-cleanup, resumability, and the result ledger are one transaction:
+It composes portable `qualification`, nested-VMX hardware qualification, the
+representative split/packed OSS sound cases, and the 46-case non-VirtIO
+Alpine/5BSD live and checkpoint matrix.  Run it through the wrapper so host
+preparation, device backends, nested inputs, cleanup, resumability, and the
+result ledger are one transaction:
 
 ```sh
 su root -c 'env \
@@ -175,6 +176,10 @@ su root -c 'env \
     ISO=/path/to/alpine-virt.iso \
     FIVEBSD_IMAGE=/path/to/disposable-freebsd.raw \
     UPLINK=re0 SOUND_PLAY=/dev/dsp SOUND_RECORD=/dev/dsp \
+    NONVIRTIO_TPM_PATH=/path/to/swtpm.sock \
+    NONVIRTIO_PASSTHRU=ppt0 \
+    NONVIRTIO_PASSTHRU_LINUX_ASSERT=/root/test-selected-ppt-device \
+    NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT=/root/test-selected-ppt-device \
     NESTED_L1_RUNNER=/path/to/reviewed-l1-runner \
     NESTED_L1_IMAGE=/path/to/linux-kvm-l1.raw \
     NESTED_LINUX_L2_IMAGE=/path/to/linux-l2.raw \
@@ -184,7 +189,7 @@ su root -c 'env \
 ```
 
 Set `RESUME=yes` with the identical inputs to reuse only successful cases.
-The profile currently resolves to 154 de-duplicated cases.  Portable hosts can
+The profile currently resolves to 200 de-duplicated cases.  Portable hosts can
 continue to use `qualification`; machines without suitable OSS endpoints can
 use `intel-qualification` and keep audio as an explicit external gate.
 

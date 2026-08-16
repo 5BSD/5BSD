@@ -100,6 +100,39 @@ if [ "$FIVEBSD_MEM_TEST" = yes ] || [ "$FIVEBSD_PMEM_TEST" = yes ] ||
 fi
 BRIDGE=${BRIDGE:-bridge0}
 VIRTIO_DEBUG=${VIRTIO_DEBUG:-0}
+NONVIRTIO_DEVICE=${NONVIRTIO_DEVICE:-none}
+NONVIRTIO_CHECKPOINT=${NONVIRTIO_CHECKPOINT:-no}
+NONVIRTIO_IMAGE_MB=${NONVIRTIO_IMAGE_MB:-128}
+NONVIRTIO_HDA_PLAY=${NONVIRTIO_HDA_PLAY:-/dev/dsp0}
+NONVIRTIO_HDA_RECORD=${NONVIRTIO_HDA_RECORD:-/dev/dsp1}
+NONVIRTIO_TPM_TYPE=${NONVIRTIO_TPM_TYPE:-swtpm}
+NONVIRTIO_TPM_PATH=${NONVIRTIO_TPM_PATH:-}
+NONVIRTIO_PASSTHRU=${NONVIRTIO_PASSTHRU:-}
+NONVIRTIO_PASSTHRU_GUEST_ASSERT=${NONVIRTIO_PASSTHRU_GUEST_ASSERT:-}
+NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT=${NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT:-$NONVIRTIO_PASSTHRU_GUEST_ASSERT}
+case "$NONVIRTIO_DEVICE" in
+none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|hostbridge|passthru) ;;
+*) echo "unknown NONVIRTIO_DEVICE: $NONVIRTIO_DEVICE" >&2; exit 2 ;;
+esac
+validate_yes_no_early()
+{
+	case "$2" in yes|no) ;; *) echo "$1 must be yes or no" >&2; exit 2 ;; esac
+}
+validate_yes_no_early NONVIRTIO_CHECKPOINT "$NONVIRTIO_CHECKPOINT"
+case "$NONVIRTIO_IMAGE_MB" in
+''|*[!0-9]*|0) echo "NONVIRTIO_IMAGE_MB must be positive" >&2; exit 2 ;;
+esac
+case "$NONVIRTIO_TPM_TYPE" in
+passthru|swtpm) ;; *) echo "invalid NONVIRTIO_TPM_TYPE" >&2; exit 2 ;;
+esac
+[ "$NONVIRTIO_DEVICE" != tpm-crb ] || [ -n "$NONVIRTIO_TPM_PATH" ] || {
+	echo "tpm-crb requires NONVIRTIO_TPM_PATH" >&2; exit 2
+}
+[ "$NONVIRTIO_DEVICE" != passthru ] || {
+	[ -n "$NONVIRTIO_PASSTHRU" ] && [ -n "$NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT" ] || {
+		echo "passthru requires NONVIRTIO_PASSTHRU and NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT" >&2; exit 2
+	}
+}
 case "$VIRTIO_DEBUG" in
 ''|*[!0-9]*) echo "VIRTIO_DEBUG must be a non-negative integer" >&2; exit 2 ;;
 esac
@@ -349,6 +382,16 @@ fi
 [ -x "$BHYVE" ] || { echo "bhyve not found: $BHYVE" >&2; exit 1; }
 [ -x "$BHYVELOAD" ] || { echo "bhyveload not found: $BHYVELOAD" >&2; exit 1; }
 [ -x "$BHYVECTL" ] || { echo "bhyvectl not found: $BHYVECTL" >&2; exit 1; }
+if [ "$NONVIRTIO_CHECKPOINT" = yes ]; then
+	"$BHYVECTL" --help 2>&1 | grep -q -- '--checkpoint=<filename>' || {
+		echo "NONVIRTIO_CHECKPOINT requires snapshot-enabled bhyvectl" >&2
+		exit 1
+	}
+	sysctl -n kern.conftxt 2>/dev/null | grep -Eq '^options[[:space:]]+BHYVE_SNAPSHOT([[:space:]]|$)' || {
+		echo "NONVIRTIO_CHECKPOINT requires a BHYVE_SNAPSHOT kernel" >&2
+		exit 1
+	}
+fi
 prepare_workdir()
 {
 	path=$1
@@ -393,12 +436,21 @@ else
 	tools=${TOOLS:-$here}
 fi
 for tool in unix-pipe vsh-connect vsh-connect-test-server uinput-inject \
-    freebsd-input-check; do
+    freebsd-input-check freebsd-tpm2-check; do
 	[ -x "$tools/$tool" ] || {
 		echo "built helper not found: $tools/$tool" >&2
 		exit 1
 	}
 done
+[ -f "$here/freebsd-nonvirtio.sh" ] || {
+	echo "5BSD non-VirtIO guest helper not found: $here/freebsd-nonvirtio.sh" >&2
+	exit 1
+}
+if [ "$NONVIRTIO_DEVICE" = fbuf ] || [ "$NONVIRTIO_DEVICE" = xhci ]; then
+	[ -x "$tools/gpu-rfb-check" ] || {
+		echo "built helper not found: $tools/gpu-rfb-check" >&2; exit 1
+	}
+fi
 [ "$VM_FREE_GATES" = no ] ||
     TOOLS="$tools" sh "$here/host-tools-selftest.sh"
 kldload -n vmm
@@ -625,6 +677,351 @@ audit_5bsd_virtio_features()
 	    45
 }
 
+nonvirtio_pci_identity()
+{
+	case "$NONVIRTIO_DEVICE" in
+	ahci) echo 'vendor=0x8086 device=0x2821 class=0x010601' ;;
+	nvme) echo 'vendor=0xfb5d device=0x0a0a class=0x010802' ;;
+	e82545) echo 'vendor=0x8086 device=0x100f class=0x020000' ;;
+	hda) echo 'vendor=0x8086 device=0x27d8 class=0x040300' ;;
+	xhci) echo 'vendor=0x8086 device=0x1e31 class=0x0c0330' ;;
+	fbuf) echo 'vendor=0xfb5d device=0x40fb class=0x030000' ;;
+	pci-uart) echo 'vendor=0x131f device=0x2000 class=0x070002' ;;
+	hostbridge) echo 'vendor=0x1275 device=0x1275 class=0x060000' ;;
+	*) return 1 ;;
+	esac
+}
+
+run_nonvirtio_5bsd()
+{
+	case "$NONVIRTIO_DEVICE" in
+	none) return 0 ;;
+	ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|hostbridge)
+		identity=$(nonvirtio_pci_identity)
+		address=pci0:21:0
+		[ "$NONVIRTIO_DEVICE" != hostbridge ] || address=pci0:0:0
+		set -- $identity
+		vendor=${1#vendor=}; device=${2#device=}; class=${3#class=}
+		guest_check "nonvirtio_${NONVIRTIO_DEVICE}_pci" \
+		    "pciconf -l '$address' | grep -Eqi 'vendor=$vendor device=$device class=$class'"
+		;;
+	esac
+	case "$NONVIRTIO_DEVICE" in
+	ahci)
+		guest_check nonvirtio_ahci_io "set -eu; disk=\$(/tmp/freebsd-nonvirtio ahci-disk); marker=/tmp/ahci-marker; dd if=/dev/random of=\$marker bs=4096 count=1 2>/dev/null; dd if=\$marker of=/dev/\$disk bs=4096 oseek=256 2>/dev/null; sync; dd if=/dev/\$disk of=/tmp/ahci-read bs=4096 skip=256 count=1 2>/dev/null; cmp \$marker /tmp/ahci-read"
+		;;
+	nvme)
+		guest_check nonvirtio_nvme_io "set -eu; controller=\$(/tmp/freebsd-nonvirtio nvme-controller); disk=\$(/tmp/freebsd-nonvirtio nvme-disk); nvmecontrol identify \$controller >/tmp/nvme-identify; grep -q WASPNESTNVME /tmp/nvme-identify; marker=/tmp/nvme-marker; dd if=/dev/random of=\$marker bs=4096 count=1 2>/dev/null; dd if=\$marker of=/dev/\$disk bs=4096 oseek=256 2>/dev/null; sync; dd if=/dev/\$disk of=/tmp/nvme-read bs=4096 skip=256 count=1 2>/dev/null; cmp \$marker /tmp/nvme-read"
+		;;
+	e82545)
+		guest_check nonvirtio_e82545_io "set -eu; iface=\$(/tmp/freebsd-nonvirtio e82545-interface); ifconfig \$iface up; dhclient \$iface; address=\$(ifconfig \$iface inet | awk '/inet /{print \$2; exit}'); gateway=\$(route -n get default | awk '/gateway:/{print \$2; exit}'); test -n \"\$address\"; test -n \"\$gateway\"; route -n get \$gateway | awk -v iface=\$iface '/interface:/{found=(\$2 == iface)} END {exit !found}'; ping -S \$address -c 3 \$gateway; netstat -I \$iface -b | awk 'NR > 1 && \$8 + \$11 > 0 { ok=1 } END { exit !ok }'" 90
+		;;
+	hda)
+		guest_check nonvirtio_hda_io "set -eu; dsp=\$(/tmp/freebsd-nonvirtio hda-pcm); timeout 5 dd if=/dev/zero of=/dev/\$dsp bs=4096 count=32 2>/dev/null; timeout 5 dd if=/dev/\$dsp of=/tmp/hda-capture bs=4096 count=4 2>/dev/null; test -s /tmp/hda-capture" 30
+		;;
+	xhci)
+		guest_check nonvirtio_xhci_descriptor "set -eu; unit=\$(/tmp/freebsd-nonvirtio xhci-ugen); usbconfig -d \$unit dump_device_desc | grep -q ."
+		guest_cmd 'set -eu; mouse=$(/tmp/freebsd-nonvirtio xhci-mouse); rm -f /tmp/xhci-live.event; dd if=/dev/$mouse of=/tmp/xhci-live.event bs=8 count=1 2>/dev/null & echo $! >/tmp/xhci-live.pid'
+		"$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768 --pointer 127 131 1
+		guest_check nonvirtio_xhci_input 'set -eu; pid=$(cat /tmp/xhci-live.pid); i=0; while kill -0 $pid 2>/dev/null && [ $i -lt 100 ]; do sleep 0.1; i=$((i + 1)); done; ! kill -0 $pid 2>/dev/null; test -s /tmp/xhci-live.event' 20
+		;;
+	fbuf)
+		guest_check nonvirtio_fbuf_io "set -eu; base=\$(pciconf -lb pci0:21:0 | awk '/bar[[:space:]]+\\[14\\]/{for(i=1;i<=NF;i++) if(\$i==\"base\") {gsub(/,/,\"\",\$(i+1)); print \$(i+1); exit}}'); test -n \"\$base\"; printf '\\023\\127\\233\\000' | dd of=/dev/mem bs=1 oseek=\$((base + (1024 - 1) * 4)) conv=notrunc 2>/dev/null; printf '\\044\\150\\254\\000' | dd of=/dev/mem bs=1 oseek=\$((base + (768 - 1) * 1024 * 4)) conv=notrunc 2>/dev/null"
+		"$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768
+		;;
+	pci-uart)
+		marker="PCI-UART-LIVE-$transport-$$"
+		guest_check nonvirtio_pci_uart_io "set -eu; uart=\$(/tmp/freebsd-nonvirtio pci-uart); tty=/dev/cuau\${uart#uart}; test -c \"\$tty\"; stty -f \"\$tty\" 115200 raw -echo; printf '%s\\n' '$marker' > \"\$tty\""
+		grep -q "$marker" "$nonvirtio_uart_log"
+		;;
+	lpc-uart)
+		marker="LPC-UART-LIVE-$transport-$$"
+		guest_check nonvirtio_lpc_uart_io "test -c /dev/cuau1; stty -f /dev/cuau1 115200 raw -echo; printf '%s\\n' '$marker' > /dev/cuau1"
+		grep -q "$marker" "$nonvirtio_uart_log"
+		;;
+	tpm-crb)
+		guest_check nonvirtio_tpm_crb "set -eu; kldstat -q -m tpm || kldload tpm; i=0; while [ ! -c /dev/tpm0 ] && [ \$i -lt 50 ]; do sleep 0.1; i=\$((i + 1)); done; test -c /dev/tpm0; /tmp/freebsd-tpm2-check /dev/tpm0" 60
+		;;
+	hostbridge)
+		guest_check nonvirtio_hostbridge_topology "test \"\$(pciconf -l | wc -l)\" -ge 4; devinfo -rv | grep -q 'Host to PCI bridge'"
+		;;
+	passthru) guest_check nonvirtio_passthru "$NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT" 60 ;;
+	esac
+	echo "PASS nonvirtio-live guest=5bsd device=$NONVIRTIO_DEVICE"
+}
+
+wait_nonvirtio_manifest()
+{
+	manifest=$1
+	old_contents=${2:-}
+	i=0
+	while [ "$i" -lt 180 ]; do
+		if [ -f "$manifest" ] &&
+		    [ "$(sed -n '1p' "$manifest")" = BHYVE-CHECKPOINT-MANIFEST-3 ]; then
+			contents=$(cat "$manifest")
+			if [ -z "$old_contents" ] || [ "$contents" != "$old_contents" ]; then
+				return 0
+			fi
+		fi
+		sleep 1; i=$((i + 1))
+	done
+	echo "checkpoint manifest was not published: $manifest" >&2
+	return 1
+}
+
+launch_nonvirtio_restore_5bsd()
+{
+	manifest=$1
+	set -- "$BHYVE" -c 2 -m 2G -H -w -r "$manifest" \
+	    -s "0,hostbridge$nonvirtio_hostbridge_opt" -s "3,virtio-blk,$guest_image$block_opt" \
+	    -s "5,virtio-vsock,cid=$CID,path=$sockdir$vsock_opt" \
+	    -s "6,virtio-rnd$rng_opt"
+	[ "$FIVEBSD_NET_TEST" = no ] || set -- "$@" -s "4,virtio-net,$tap$net_opt"
+	[ -z "$balloon_opt" ] || set -- "$@" -s "7,virtio-balloon$balloon_opt"
+	[ "$FIVEBSD_SCSI_QUEUES" -eq 0 ] || set -- "$@" -s "8,virtio-scsi,/dev/cam/ctl$scsi_opt"
+	if [ "$FIVEBSD_BLOCK_DISCARD" = yes ] || [ "$FIVEBSD_BLOCK_WRITE_ZEROES" = yes ]; then
+		set -- "$@" -s "9,virtio-blk,$discard_image$block_opt"
+	fi
+	[ "$FIVEBSD_CONSOLE_TEST" = no ] || set -- "$@" -s "10,virtio-console,$console_ports_opt$console_opt"
+	[ "$FIVEBSD_BLOCK_READONLY" = no ] || set -- "$@" -s "11,virtio-blk,$readonly_image,ro=true$block_opt"
+	[ "$FIVEBSD_GPU_TEST" = no ] || set -- "$@" -s "12,virtio-gpu$gpu_opt"
+	[ "$FIVEBSD_RTC_TEST" = no ] || set -- "$@" -s "13,virtio-rtc$rtc_opt"
+	[ "$FIVEBSD_INPUT_TEST" = no ] || set -- "$@" -s "14,virtio-input,$input_path$input_opt"
+	[ "$FIVEBSD_INPUT_DEVICES" -eq 1 ] || set -- "$@" -s "15,virtio-input,$input2_path$input_opt"
+	[ "$FIVEBSD_NINEP_TEST" = no ] || set -- "$@" -s "16,virtio-9p,$ninep_tag=$ninep_share$ninep_opt"
+	[ "$FIVEBSD_SOUND_TEST" = no ] || set -- "$@" -s "17,virtio-snd$snd_opt"
+	[ "$FIVEBSD_MEM_TEST" = no ] || set -- "$@" -s "18,virtio-mem$mem_opt"
+	[ "$FIVEBSD_PMEM_TEST" = no ] || set -- "$@" -s "19,virtio-pmem,path=$pmem_image$pmem_opt"
+	[ "$FIVEBSD_IOMMU_TEST" = no ] || set -- "$@" -s "20,virtio-iommu$iommu_opt"
+	case "$NONVIRTIO_DEVICE" in
+	ahci) set -- "$@" -s "21,ahci-hd,$nonvirtio_image,checkpoint_identity=waspnest-ahci" ;;
+	nvme) set -- "$@" -s "21,nvme,$nonvirtio_image,ser=WASPNESTNVME,ioslots=64,maxq=8,qsz=64" ;;
+	e82545) set -- "$@" -s "21,e1000,$tap" ;;
+	hda) set -- "$@" -s "21,hda,play=$NONVIRTIO_HDA_PLAY,rec=$NONVIRTIO_HDA_RECORD" ;;
+	xhci) set -- "$@" -s "21,xhci,tablet" \
+	    -s "22,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
+	fbuf) set -- "$@" -s "21,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
+	pci-uart) set -- "$@" -s "21,uart,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log" ;;
+	hostbridge) ;;
+	lpc-uart) ;;
+	*) echo "restore is not supported for $NONVIRTIO_DEVICE" >&2; return 2 ;;
+	esac
+	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT"
+	[ "$NONVIRTIO_DEVICE" != lpc-uart ] || set -- "$@" \
+	    -l "com2,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log"
+	set -- "$@" "$vmname"
+	env BHYVE_VIRTIO_DEBUG="$VIRTIO_DEBUG" \
+	    BHYVE_VTBLK_DEBUG="$VIRTIO_DEBUG" \
+	    BHYVE_VTSCSI_DEBUG="$VIRTIO_DEBUG" \
+	    "$@" >> "$bhyve_log" 2>&1 &
+	vm_pid=$!
+	start_console
+}
+
+start_nonvirtio_checkpoint_5bsd()
+{
+	nonvirtio_checkpoint_phase=0
+	case "$NONVIRTIO_DEVICE" in
+	ahci|nvme)
+		resolve="$NONVIRTIO_DEVICE-disk"
+		guest_cmd "set -eu; disk=\$(/tmp/freebsd-nonvirtio $resolve); rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; dd if=/dev/random of=/tmp/nonvirtio-checkpoint.marker bs=4096 count=1 2>/dev/null; dd if=/tmp/nonvirtio-checkpoint.marker of=/dev/\$disk bs=4096 oseek=384 2>/dev/null; sync; (exec 3<>/dev/\$disk; i=0; while :; do i=\$((i + 1)); dd if=/dev/zero bs=4096 oseek=\$((512 + i % 64)) count=1 >&3 2>/dev/null; echo \$i > /tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo \$! > /tmp/nonvirtio-checkpoint.pid" 30
+		;;
+	e82545)
+		guest_cmd 'set -eu; iface=$(/tmp/freebsd-nonvirtio e82545-interface); address=$(ifconfig $iface inet | awk '\''/inet /{print $2; exit}'\''); gateway=$(route -n get default | awk '\''/gateway:/{print $2; exit}'\''); test -n "$address"; test -n "$gateway"; route -n get $gateway | awk -v iface=$iface '\''/interface:/{found=($2 == iface)} END {exit !found}'\''; rm -f /tmp/nonvirtio-checkpoint.log; ping -S $address -i 0.1 $gateway >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid; netstat -I $iface -b | awk '\''NR > 1 {n += $8 + $11} END {print n + 0}'\'' >/tmp/nonvirtio-checkpoint.count' 30
+		;;
+	hda)
+		guest_cmd 'set -eu; dsp=$(/tmp/freebsd-nonvirtio hda-pcm); rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (exec 3>/dev/$dsp; i=0; while :; do i=$((i + 1)); dd if=/dev/zero bs=4096 count=4 >&3 2>/dev/null; echo $i >/tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
+		;;
+	xhci)
+		guest_cmd 'set -eu; mouse=$(/tmp/freebsd-nonvirtio xhci-mouse); rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log /tmp/xhci-checkpoint.event.*; echo 0 >/tmp/nonvirtio-checkpoint.count; dd if=/dev/$mouse of=/tmp/xhci-checkpoint.event.1 bs=8 count=1 2>/tmp/nonvirtio-checkpoint.log & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
+		;;
+	fbuf)
+		guest_cmd 'set -eu; base=$(pciconf -lb pci0:21:0 | awk '\''/bar[[:space:]]+\[14\]/{for(i=1;i<=NF;i++) if($i=="base") {gsub(/,/,"",$(i+1)); print $(i+1); exit}}'\''); test -n "$base"; printf "\023\127\233\000" | dd of=/dev/mem bs=1 oseek=$((base + (1024 - 1) * 4)) conv=notrunc 2>/dev/null; printf "\165\232\277\344" | dd of=/dev/mem bs=1 oseek=$((base + (768 - 1) * 1024 * 4)) conv=notrunc 2>/dev/null; echo 1 >/tmp/nonvirtio-checkpoint.count; sleep 100000 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
+		;;
+	pci-uart)
+		guest_cmd 'set -eu; uart=$(/tmp/freebsd-nonvirtio pci-uart); tty=/dev/cuau${uart#uart}; rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (exec 3>$tty; i=0; while :; do i=$((i + 1)); printf "PCI-UART-CHECKPOINT-%s\n" "$i" >&3; echo $i >/tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
+		;;
+	lpc-uart)
+		guest_cmd 'set -eu; tty=/dev/cuau1; test -c $tty; rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (exec 3>$tty; i=0; while :; do i=$((i + 1)); printf "LPC-UART-CHECKPOINT-%s\n" "$i" >&3; echo $i >/tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
+		;;
+	hostbridge)
+		guest_cmd 'set -eu; pciconf -l | sort >/tmp/nonvirtio-topology.expected; rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (i=0; while :; do i=$((i + 1)); pciconf -l pci0:0:0 >/dev/null; echo $i >/tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
+		;;
+	*) return 1 ;;
+	esac
+	if [ "$NONVIRTIO_DEVICE" = xhci ]; then
+		guest_cmd 'kill -0 $(cat /tmp/nonvirtio-checkpoint.pid)' 10
+		nonvirtio_count=0
+		return 0
+	fi
+	i=0
+	while [ "$i" -lt 30 ]; do
+		nonvirtio_count=$(guest_cmd 'cat /tmp/nonvirtio-checkpoint.count 2>/dev/null || echo 0' 10)
+		[ "$nonvirtio_count" -gt 0 ] 2>/dev/null && return 0
+		sleep 1; i=$((i + 1))
+	done
+	guest_cmd 'cat /tmp/nonvirtio-checkpoint.log' 10 >&2 || true
+	return 1
+}
+
+verify_nonvirtio_checkpoint_5bsd()
+{
+	case "$NONVIRTIO_DEVICE" in
+	xhci)
+		event=$((nonvirtio_checkpoint_phase + 1))
+		"$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768 \
+		    --pointer $((200 + event)) $((220 + event)) 1
+		guest_check nonvirtio_xhci_pending_transfer "set -eu; pid=\$(cat /tmp/nonvirtio-checkpoint.pid); i=0; while kill -0 \$pid 2>/dev/null && [ \$i -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done; ! kill -0 \$pid 2>/dev/null; test -s /tmp/xhci-checkpoint.event.$event; echo $event >/tmp/nonvirtio-checkpoint.count" 20
+		nonvirtio_count=$event
+		if [ "$nonvirtio_checkpoint_phase" -eq 0 ]; then
+			guest_cmd 'mouse=$(/tmp/freebsd-nonvirtio xhci-mouse); dd if=/dev/$mouse of=/tmp/xhci-checkpoint.event.2 bs=8 count=1 2>>/tmp/nonvirtio-checkpoint.log & echo $! >/tmp/nonvirtio-checkpoint.pid' 15
+		fi
+		nonvirtio_checkpoint_phase=$((nonvirtio_checkpoint_phase + 1))
+		echo "PASS active-checkpoint-state guest=5bsd device=xhci pending-transfer=$event"
+		return 0
+		;;
+	fbuf)
+		if [ "$nonvirtio_checkpoint_phase" -eq 0 ]; then
+			"$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768 759abfe4
+			guest_cmd 'base=$(pciconf -lb pci0:21:0 | awk '\''/bar[[:space:]]+\[14\]/{for(i=1;i<=NF;i++) if($i=="base") {gsub(/,/,"",$(i+1)); print $(i+1); exit}}'\''); printf "\206\253\300\365" | dd of=/dev/mem bs=1 oseek=$((base + (768 - 1) * 1024 * 4)) conv=notrunc 2>/dev/null; echo 2 >/tmp/nonvirtio-checkpoint.count' 15
+			nonvirtio_count=2
+		else
+			# This check happens before any restored guest command rewrites the BAR.
+			"$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768 86abc0f5
+			nonvirtio_count=2
+		fi
+		nonvirtio_checkpoint_phase=$((nonvirtio_checkpoint_phase + 1))
+		echo "PASS active-checkpoint-state guest=5bsd device=fbuf phase=$nonvirtio_checkpoint_phase"
+		return 0
+		;;
+	esac
+	case "$NONVIRTIO_DEVICE" in
+	ahci|nvme)
+		resolve="$NONVIRTIO_DEVICE-disk"
+		guest_check "nonvirtio_${NONVIRTIO_DEVICE}_checkpoint_marker" "set -eu; disk=\$(/tmp/freebsd-nonvirtio $resolve); dd if=/dev/\$disk of=/tmp/nonvirtio-checkpoint.read bs=4096 skip=384 count=1 2>/dev/null; cmp /tmp/nonvirtio-checkpoint.marker /tmp/nonvirtio-checkpoint.read"
+		;;
+	e82545)
+		guest_check nonvirtio_e82545_open_socket 'set -eu; kill -0 $(cat /tmp/nonvirtio-checkpoint.pid); iface=$(/tmp/freebsd-nonvirtio e82545-interface); route -n get default | awk -v iface=$iface '\''/interface:/{found=($2 == iface)} END {exit !found}'\''' 15
+		before=$nonvirtio_count
+		i=0
+		while [ "$i" -lt 30 ]; do
+			after=$(guest_cmd 'iface=$(/tmp/freebsd-nonvirtio e82545-interface); netstat -I $iface -b | awk '\''NR > 1 {n += $8 + $11} END {print n + 0}'\''' 10)
+			[ "$after" -gt "$before" ] 2>/dev/null && break
+			sleep 1; i=$((i + 1))
+		done
+		[ "$i" -lt 30 ] || return 1
+		nonvirtio_count=$after
+		echo "PASS active-checkpoint-state guest=5bsd device=e82545 bytes_before=$before bytes_after=$after"
+		return 0
+		;;
+	hda)
+		guest_check nonvirtio_hda_open_stream 'set -eu; dsp=$(/tmp/freebsd-nonvirtio hda-pcm); procstat -f $(cat /tmp/nonvirtio-checkpoint.pid) | grep -q "/dev/$dsp"'
+		;;
+	pci-uart)
+		guest_check nonvirtio_pci_uart_open_descriptor 'set -eu; uart=$(/tmp/freebsd-nonvirtio pci-uart); procstat -f $(cat /tmp/nonvirtio-checkpoint.pid) | grep -q "/dev/cuau${uart#uart}"'
+		;;
+	lpc-uart)
+		guest_check nonvirtio_lpc_uart_open_descriptor 'procstat -f $(cat /tmp/nonvirtio-checkpoint.pid) | grep -q /dev/cuau1'
+		;;
+	hostbridge)
+		guest_check nonvirtio_hostbridge_exact_topology 'pciconf -l | sort | cmp - /tmp/nonvirtio-topology.expected'
+		;;
+	esac
+	before=$nonvirtio_count
+	i=0
+	while [ "$i" -lt 30 ]; do
+		after=$(guest_cmd 'cat /tmp/nonvirtio-checkpoint.count 2>/dev/null || echo 0' 10)
+		[ "$after" -gt "$before" ] 2>/dev/null && break
+		sleep 1; i=$((i + 1))
+	done
+	[ "$i" -lt 30 ] || return 1
+	nonvirtio_count=$after
+	echo "PASS active-checkpoint-state guest=5bsd device=$NONVIRTIO_DEVICE before=$before after=$after"
+}
+
+verify_nonvirtio_topology_rejection_5bsd()
+{
+	[ "$NONVIRTIO_DEVICE" = hostbridge ] || return 0
+	nonvirtio_hostbridge_opt=',vendor=0x8086,devid=0x1237'
+	log_line=$(( $(wc -l < "$bhyve_log") + 1 ))
+	# Device backends, including the TCP console, can become visible before
+	# checkpoint validation finishes.  The launcher's status is therefore not
+	# the restore result; wait for bhyve and require a non-zero exit.
+	if launch_nonvirtio_restore_5bsd "$nonvirtio_checkpoint"; then :; fi
+	i=0
+	while kill -0 "$vm_pid" 2>/dev/null && [ "$i" -lt 30 ]; do
+		sleep 1; i=$((i + 1))
+	done
+	if kill -0 "$vm_pid" 2>/dev/null; then
+		echo "changed hostbridge topology unexpectedly remained running" >&2
+		kill "$vm_pid" 2>/dev/null || true
+		wait "$vm_pid" 2>/dev/null || true
+		restore_status=0
+	else
+		if wait "$vm_pid" 2>/dev/null; then
+			restore_status=0
+		else
+			restore_status=$?
+		fi
+	fi
+	vm_pid=
+	[ -z "$console_pid" ] || pkill -TERM -P "$console_pid" 2>/dev/null || true
+	[ -z "$console_pid" ] || kill "$console_pid" 2>/dev/null || true
+	[ -z "$console_pid" ] || wait "$console_pid" 2>/dev/null || true
+	console_pid=
+	"$BHYVECTL" --vm="$vmname" --destroy >/dev/null 2>&1 || true
+	nonvirtio_hostbridge_opt=
+	[ "$restore_status" -ne 0 ] || return 1
+	sed -n "${log_line},\$p" "$bhyve_log" | \
+	    grep -Eqi 'incompatible|Failed to restore|topology'
+	echo "PASS incompatible checkpoint restore rejected contract=hostbridge-topology guest=5bsd"
+}
+
+run_nonvirtio_checkpoint_5bsd()
+{
+	rm -f "$nonvirtio_checkpoint" "$nonvirtio_checkpoint".*
+	case "$NONVIRTIO_DEVICE" in
+	tpm-crb|passthru)
+		if "$BHYVECTL" --vm="$vmname" --checkpoint="$nonvirtio_checkpoint" \
+		    >"$nonvirtio_checkpoint.stdout" 2>"$nonvirtio_checkpoint.stderr"; then
+			echo "$NONVIRTIO_DEVICE unexpectedly accepted checkpoint" >&2; return 1
+		fi
+		grep -Eqi 'not supported|unsupported|cannot snapshot' \
+		    "$nonvirtio_checkpoint.stdout" "$nonvirtio_checkpoint.stderr" "$bhyve_log"
+		kill -0 "$vm_pid"
+		[ ! -e "$nonvirtio_checkpoint" ] || {
+			echo "rejected checkpoint published a manifest" >&2; return 1
+		}
+		run_nonvirtio_5bsd
+		echo "PASS checkpoint-rejected guest=5bsd device=$NONVIRTIO_DEVICE"
+		return 0
+		;;
+	esac
+	start_nonvirtio_checkpoint_5bsd
+	"$BHYVECTL" --vm="$vmname" --checkpoint="$nonvirtio_checkpoint"
+	wait_nonvirtio_manifest "$nonvirtio_checkpoint"
+	first_manifest=$(cat "$nonvirtio_checkpoint")
+	verify_nonvirtio_checkpoint_5bsd
+	"$BHYVECTL" --vm="$vmname" --suspend="$nonvirtio_checkpoint"
+	i=0
+	while kill -0 "$vm_pid" 2>/dev/null && [ "$i" -lt 180 ]; do sleep 1; i=$((i + 1)); done
+	[ "$i" -lt 180 ] || return 1
+	wait "$vm_pid" 2>/dev/null || true
+	vm_pid=
+	[ -z "$console_pid" ] || pkill -TERM -P "$console_pid" 2>/dev/null || true
+	[ -z "$console_pid" ] || kill "$console_pid" 2>/dev/null || true
+	[ -z "$console_pid" ] || wait "$console_pid" 2>/dev/null || true
+	console_pid=
+	wait_nonvirtio_manifest "$nonvirtio_checkpoint" "$first_manifest"
+	verify_nonvirtio_topology_rejection_5bsd
+	launch_nonvirtio_restore_5bsd "$nonvirtio_checkpoint"
+	guest_cmd 'test -s /tmp/nonvirtio-checkpoint.pid' 60
+	verify_nonvirtio_checkpoint_5bsd
+	guest_cmd 'pid=$(cat /tmp/nonvirtio-checkpoint.pid); kill $pid 2>/dev/null || true; i=0; while kill -0 $pid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; ! kill -0 $pid 2>/dev/null' 15
+	run_nonvirtio_5bsd
+	echo "PASS checkpoint-restore guest=5bsd device=$NONVIRTIO_DEVICE"
+}
+
 run_5bsd_console_exchange()
 {
 	label=$1
@@ -736,12 +1133,22 @@ prepare_guest_image()
 		tail -n 40 "$fsck_log" >&2
 		return 1
 	fi
-	if [ "$FIVEBSD_INPUT_TEST" = yes ]; then
+	if [ "$FIVEBSD_INPUT_TEST" = yes ] || [ "$NONVIRTIO_DEVICE" != none ]; then
 		image_mount="$copy.mount"
 		mkdir -m 0700 "$image_mount"
 		mount -t ufs "$ufs_partition" "$image_mount"
-		install -m 0555 "$tools/freebsd-input-check" \
-		    "$image_mount/tmp/freebsd-input-check"
+		if [ "$FIVEBSD_INPUT_TEST" = yes ]; then
+			install -m 0555 "$tools/freebsd-input-check" \
+			    "$image_mount/tmp/freebsd-input-check"
+		fi
+		if [ "$NONVIRTIO_DEVICE" != none ]; then
+			install -m 0555 "$here/freebsd-nonvirtio.sh" \
+			    "$image_mount/tmp/freebsd-nonvirtio"
+		fi
+		if [ "$NONVIRTIO_DEVICE" = tpm-crb ]; then
+			install -m 0555 "$tools/freebsd-tpm2-check" \
+			    "$image_mount/tmp/freebsd-tpm2-check"
+		fi
 		sync
 		umount "$image_mount"
 		rmdir "$image_mount"
@@ -945,6 +1352,12 @@ for transport in $TRANSPORTS; do
 	pmem_image="$rundir/pmem-backing.img"
 	readonly_digest=
 	guest_image="$rundir/guest.img"
+	nonvirtio_image="$rundir/nonvirtio.img"
+	nonvirtio_fbuf_socket="$rundir/nonvirtio-vnc.sock"
+	nonvirtio_uart_log="$rundir/nonvirtio-uart.log"
+	nonvirtio_uart_port=$((CONSOLE_PORT + 1))
+	nonvirtio_hostbridge_opt=
+	nonvirtio_checkpoint="$rundir/nonvirtio.checkpoint"
 	fsck_log="$rundir/fsck.log"
 	mkdir -p -m 0700 "$sockdir"
 	if [ "$FIVEBSD_NINEP_TEST" = yes ]; then
@@ -954,6 +1367,10 @@ for transport in $TRANSPORTS; do
 		ln -s .. "$ninep_share/escape"
 	fi
 	: > "$bhyve_log"
+	: > "$nonvirtio_uart_log"
+	case "$NONVIRTIO_DEVICE" in
+	ahci|nvme) truncate -s "${NONVIRTIO_IMAGE_MB}M" "$nonvirtio_image" ;;
+	esac
 
 	echo "== 5BSD $transport: boot and test =="
 	prepare_guest_image "$IMAGE" "$guest_image" "$fsck_log"
@@ -971,9 +1388,9 @@ for transport in $TRANSPORTS; do
 		# memory region the guest driver maps and flushes.
 		truncate -s "${PMEM_IMAGE_MB:-64}M" "$pmem_image"
 	fi
-	if [ "$FIVEBSD_NET_TEST" = yes ]; then
+	if [ "$FIVEBSD_NET_TEST" = yes ] || [ "$NONVIRTIO_DEVICE" = e82545 ]; then
 		[ "$transport" = modern ] || {
-			echo "FIVEBSD_NET_TEST=yes requires modern transport" >&2
+			echo "network device tests require modern transport" >&2
 			exit 2
 		}
 		ifconfig "$BRIDGE" >/dev/null 2>&1 || {
@@ -1051,7 +1468,7 @@ for transport in $TRANSPORTS; do
 	"$BHYVELOAD" -c /dev/null -m 2G -d "$guest_image" "$vmname" \
 	    >> "$bhyve_log" 2>&1
 	set -- "$BHYVE" -c 2 -m 2G -H -w \
-	    -s 0,hostbridge \
+	    -s "0,hostbridge$nonvirtio_hostbridge_opt" \
 	    -s "3,virtio-blk,$guest_image$block_opt" \
 	    -s "5,virtio-vsock,cid=$CID,path=$sockdir$vsock_opt" \
 	    -s "6,virtio-rnd$rng_opt"
@@ -1087,8 +1504,24 @@ for transport in $TRANSPORTS; do
 	    -s "19,virtio-pmem,path=$pmem_image$pmem_opt"
 	[ "$FIVEBSD_IOMMU_TEST" = no ] || set -- "$@" \
 	    -s "20,virtio-iommu$iommu_opt"
-	set -- "$@" -s 31,lpc \
-	    -l "com1,tcp=127.0.0.1:$CONSOLE_PORT" "$vmname"
+	case "$NONVIRTIO_DEVICE" in
+	none|lpc-uart|tpm-crb|hostbridge) ;;
+	ahci) set -- "$@" -s "21,ahci-hd,$nonvirtio_image,checkpoint_identity=waspnest-ahci" ;;
+	nvme) set -- "$@" -s "21,nvme,$nonvirtio_image,ser=WASPNESTNVME,ioslots=64,maxq=8,qsz=64" ;;
+	e82545) set -- "$@" -s "21,e1000,$tap" ;;
+	hda) set -- "$@" -s "21,hda,play=$NONVIRTIO_HDA_PLAY,rec=$NONVIRTIO_HDA_RECORD" ;;
+	xhci) set -- "$@" -s "21,xhci,tablet" \
+	    -s "22,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
+	fbuf) set -- "$@" -s "21,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
+	pci-uart) set -- "$@" -s "21,uart,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log" ;;
+	passthru) set -- "$@" -S -s "21,passthru,$NONVIRTIO_PASSTHRU" ;;
+	esac
+	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT"
+	[ "$NONVIRTIO_DEVICE" != lpc-uart ] || set -- "$@" \
+	    -l "com2,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log"
+	[ "$NONVIRTIO_DEVICE" != tpm-crb ] || set -- "$@" \
+	    -l "tpm,$NONVIRTIO_TPM_TYPE,$NONVIRTIO_TPM_PATH,version=2.0"
+	set -- "$@" "$vmname"
 	env BHYVE_VIRTIO_DEBUG="$VIRTIO_DEBUG" \
 	    BHYVE_VTBLK_DEBUG="$VIRTIO_DEBUG" \
 	    BHYVE_VTSCSI_DEBUG="$VIRTIO_DEBUG" \
@@ -1789,6 +2222,9 @@ for transport in $TRANSPORTS; do
 			echo "PASS  host_balloon_packed_layout"
 		fi
 	fi
+
+	run_nonvirtio_5bsd
+	[ "$NONVIRTIO_CHECKPOINT" = no ] || run_nonvirtio_checkpoint_5bsd
 
 	mkdir -p -m 0700 "$rundir/data"
 	DIR=$sockdir BULK_MB=$BULK_MB \

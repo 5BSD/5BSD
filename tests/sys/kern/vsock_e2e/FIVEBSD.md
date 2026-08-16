@@ -138,3 +138,25 @@ ISO:
 
 `VM_FREE_GATES=no` is set by the lab because its exclusive host gate has
 already built and validated the helper programs.
+
+The `nonvirtio-5bsd-*-live` and `*-checkpoint` cases use the same disposable
+image and console controller but attach one non-VirtIO function at slot 21.
+The guest resolver follows 5BSD newbus ancestry back to `pci0:0:21:0` and
+rejects ambiguous controller, interface, audio, USB, or UART assignments.
+Scratch AHCI/NVMe media is never the root disk.
+
+Checkpoint cases preserve device-specific state rather than accepting a
+restored shell loop as sufficient evidence.  Disk lanes retain a generation
+marker outside the active-write range; e82545 retains one bound ping socket;
+HDA and UART retain open descriptors; xHCI completes a mouse read that was
+pending when the checkpoint was taken; framebuffer pixels are checked before
+the restored guest can rewrite them; and hostbridge cases compare the exact
+PCI topology.  These checks run after both a nonterminal checkpoint and a
+suspend/restore.  The xHCI lane attaches an auxiliary slot-22 framebuffer only
+to inject RFB pointer events into the slot-21 tablet.
+
+TPM CRB uses a static, dependency-free guest helper which loads the 5BSD
+`tpm.ko` module and issues native TPM2 GetRandom and SHA-256 PCR 0 commands.
+TPM CRB and passthrough must reject checkpoint creation and leave the original
+VM usable.  pvpanic has no claimed 5BSD guest driver and therefore remains an
+explicit driver gap rather than an enumeration-only pass.

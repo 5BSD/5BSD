@@ -133,6 +133,34 @@ VIRTIO_RESET_SOAK_MAX_FD_GROWTH=${VIRTIO_RESET_SOAK_MAX_FD_GROWTH:-0}
 VIRTIO_RESET_SOAK_MAX_RSS_KB=${VIRTIO_RESET_SOAK_MAX_RSS_KB:-16384}
 BRIDGE=${BRIDGE:-bridge0}
 UPLINK=${UPLINK:-}
+NONVIRTIO_DEVICE=${NONVIRTIO_DEVICE:-none}
+NONVIRTIO_IMAGE_MB=${NONVIRTIO_IMAGE_MB:-128}
+NONVIRTIO_HDA_PLAY=${NONVIRTIO_HDA_PLAY:-/dev/dsp0}
+NONVIRTIO_HDA_RECORD=${NONVIRTIO_HDA_RECORD:-/dev/dsp1}
+NONVIRTIO_TPM_TYPE=${NONVIRTIO_TPM_TYPE:-swtpm}
+NONVIRTIO_TPM_PATH=${NONVIRTIO_TPM_PATH:-}
+NONVIRTIO_PASSTHRU=${NONVIRTIO_PASSTHRU:-}
+NONVIRTIO_PASSTHRU_GUEST_ASSERT=${NONVIRTIO_PASSTHRU_GUEST_ASSERT:-}
+NONVIRTIO_PASSTHRU_LINUX_ASSERT=${NONVIRTIO_PASSTHRU_LINUX_ASSERT:-$NONVIRTIO_PASSTHRU_GUEST_ASSERT}
+
+case "$NONVIRTIO_DEVICE" in
+none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|pvpanic|hostbridge|passthru) ;;
+*) echo "unknown NONVIRTIO_DEVICE: $NONVIRTIO_DEVICE" >&2; exit 2 ;;
+esac
+case "$NONVIRTIO_IMAGE_MB" in
+''|*[!0-9]*|0) echo "NONVIRTIO_IMAGE_MB must be positive" >&2; exit 2 ;;
+esac
+case "$NONVIRTIO_TPM_TYPE" in passthru|swtpm) ;; *) echo "invalid NONVIRTIO_TPM_TYPE" >&2; exit 2 ;; esac
+[ "$NONVIRTIO_DEVICE" != tpm-crb ] || [ -n "$NONVIRTIO_TPM_PATH" ] || {
+	echo "tpm-crb requires NONVIRTIO_TPM_PATH" >&2
+	exit 2
+}
+[ "$NONVIRTIO_DEVICE" != passthru ] || {
+	[ -n "$NONVIRTIO_PASSTHRU" ] && [ -n "$NONVIRTIO_PASSTHRU_LINUX_ASSERT" ] || {
+		echo "passthru requires NONVIRTIO_PASSTHRU and NONVIRTIO_PASSTHRU_LINUX_ASSERT" >&2
+		exit 2
+	}
+}
 
 if [ -z "$BHYVE" ]; then
 	object_bhyve="$OBJROOT$SRCTOP/$(uname -p).$(uname -p)/usr.sbin/bhyve/bhyve"
@@ -823,6 +851,7 @@ required_tools=
 [ "$run_console_device" = no ] || required_tools="$required_tools unix-pipe"
 [ "$run_input_device" = no ] || required_tools="$required_tools uinput-inject"
 [ "$GPU_DISPLAY" = no ] || required_tools="$required_tools gpu-rfb-check"
+[ "$NONVIRTIO_DEVICE" != fbuf ] || required_tools="$required_tools gpu-rfb-check"
 for tool in $required_tools; do
 	[ -x "$tools/$tool" ] || {
 		echo "built helper not found: $tools/$tool" >&2
@@ -861,6 +890,12 @@ fi
 tap=$(ifconfig tap create)
 ifconfig "$BRIDGE" addm "$tap"
 ifconfig "$tap" up
+nonvirtio_tap=
+if [ "$NONVIRTIO_DEVICE" = e82545 ]; then
+	nonvirtio_tap=$(ifconfig tap create)
+	ifconfig "$BRIDGE" addm "$nonvirtio_tap"
+	ifconfig "$nonvirtio_tap" up
+fi
 
 vm_pid=
 console_pid=
@@ -967,6 +1002,10 @@ cleanup_all()
 	fi
 	ifconfig "$BRIDGE" deletem "$tap" >/dev/null 2>&1 || true
 	ifconfig "$tap" destroy >/dev/null 2>&1 || true
+	if [ -n "$nonvirtio_tap" ]; then
+		ifconfig "$BRIDGE" deletem "$nonvirtio_tap" >/dev/null 2>&1 || true
+		ifconfig "$nonvirtio_tap" destroy >/dev/null 2>&1 || true
+	fi
 	[ "$bridge_created" = no ] || ifconfig "$BRIDGE" destroy >/dev/null 2>&1 || true
 }
 report_failure()
@@ -1077,7 +1116,7 @@ launch_vm()
 {
 	restore_file=${1:-}
 	set -- "$BHYVE" -c "$vm_cpus" -m "${VM_MEMORY_MB}M" -H -w \
-	    -s 0,hostbridge -s "3,ahci-cd,$ISO" \
+	    -s "0,hostbridge$nonvirtio_hostbridge_opt" -s "3,ahci-cd,$ISO" \
 	    -s "4,virtio-net,$tap$net_transport_opt$net_queues_opt$net_packed_opt"
 	[ "$VIRTIO_MSIX" = yes ] || set -- "$@" -W
 	[ "$REBOOT_TEST" = no ] || set -- "$@" -M
@@ -1117,8 +1156,24 @@ launch_vm()
 	    -s "11,virtio-9p,$ninep_tag=$ninep_share$ninep_transport_opt$ninep_packed_opt"
 	[ "$run_fs_device" = no ] || set -- "$@" \
 	    -s "19,virtio-fs,path=$fs_socket,tag=$fs_tag,queues=$FS_QUEUES$fs_packed_opt$fs_identity_opt"
-	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT" \
-	    -l "bootrom,$UEFI" "$vmname"
+	case "$NONVIRTIO_DEVICE" in
+	none|pvpanic|lpc-uart|tpm-crb|hostbridge) ;;
+	ahci) set -- "$@" -s "21,ahci-hd,$nonvirtio_image,checkpoint_identity=waspnest-ahci" ;;
+	nvme) set -- "$@" -s "21,nvme,$nonvirtio_image,ser=WASPNESTNVME,ioslots=64,maxq=8,qsz=64" ;;
+	e82545) set -- "$@" -s "21,e1000,$nonvirtio_tap" ;;
+	hda) set -- "$@" -s "21,hda,play=$NONVIRTIO_HDA_PLAY,rec=$NONVIRTIO_HDA_RECORD" ;;
+	xhci) set -- "$@" -s "21,xhci,tablet" ;;
+	fbuf) set -- "$@" -s "21,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
+	pci-uart) set -- "$@" -s "21,uart,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log" ;;
+	passthru) set -- "$@" -S -s "21,passthru,$NONVIRTIO_PASSTHRU" ;;
+	esac
+	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT"
+	[ "$NONVIRTIO_DEVICE" != lpc-uart ] || set -- "$@" \
+	    -l "com2,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log"
+	[ "$NONVIRTIO_DEVICE" != pvpanic ] || set -- "$@" -l "pvpanic,action=none"
+	[ "$NONVIRTIO_DEVICE" != tpm-crb ] || set -- "$@" \
+	    -l "tpm,$NONVIRTIO_TPM_TYPE,$NONVIRTIO_TPM_PATH,version=2.0"
+	set -- "$@" -l "bootrom,$UEFI" "$vmname"
 	env BHYVE_VTVSOCK_DEBUG="$VSOCK_DEBUG" \
 	    BHYVE_VIRTIO_DEBUG="$VIRTIO_DEBUG" \
 	    BHYVE_VTINPUT_DEBUG="$INPUT_DEBUG" \
@@ -1265,6 +1320,19 @@ verify_incompatible_pmem_restore_rejected()
 	return "$status"
 }
 
+verify_incompatible_nonvirtio_restore_rejected()
+{
+	[ "$NONVIRTIO_DEVICE" = hostbridge ] || return 0
+	saved_hostbridge_opt=$nonvirtio_hostbridge_opt
+	nonvirtio_hostbridge_opt=',vendor=0x8086,devid=0x1237'
+	negative_log="$WORKDIR/$transport.incompatible-hostbridge-topology.log"
+	status=0
+	expect_incompatible_restore_rejected hostbridge-topology \
+	    "$negative_log" || status=$?
+	nonvirtio_hostbridge_opt=$saved_hostbridge_opt
+	return "$status"
+}
+
 terminate_vm_for_repeat_restore()
 {
 
@@ -1324,6 +1392,7 @@ run_checkpoint_roundtrip()
 	verify_incompatible_queue_restore_rejected
 	verify_incompatible_feature_restore_rejected
 	verify_incompatible_pmem_restore_rejected
+	verify_incompatible_nonvirtio_restore_rejected
 	launch_vm "$checkpoint"
 	guest_cmd "test \"\$(cat /tmp/bhyve-checkpoint-marker)\" = '$marker'" 60
 	verify_active_fs_checkpoint
@@ -1347,6 +1416,29 @@ run_checkpoint_roundtrip()
 	fi
 	cleanup_active_fs_checkpoint
 	echo "PASS checkpoint restore transport=$transport manifest=$checkpoint"
+}
+
+run_nonvirtio_checkpoint_rejection()
+{
+	checkpoint="$WORKDIR/$transport.$NONVIRTIO_DEVICE.rejected.checkpoint"
+	rm -f "$checkpoint" "$checkpoint".*
+	if "$BHYVECTL" --vm="$vmname" --checkpoint="$checkpoint" \
+	    >"$checkpoint.stdout" 2>"$checkpoint.stderr"; then
+		echo "$NONVIRTIO_DEVICE unexpectedly accepted checkpoint" >&2
+		return 1
+	fi
+	grep -Eqi 'not supported|unsupported|cannot snapshot' \
+	    "$checkpoint.stdout" "$checkpoint.stderr" "$bhyve_log" || {
+		echo "$NONVIRTIO_DEVICE rejection lacked an unsupported-state diagnostic" >&2
+		return 1
+	}
+	kill -0 "$vm_pid"
+	run_nonvirtio
+	[ ! -e "$checkpoint" ] || {
+		echo "rejected checkpoint published a manifest: $checkpoint" >&2
+		return 1
+	}
+	echo "PASS checkpoint-rejected guest=alpine device=$NONVIRTIO_DEVICE"
 }
 
 verify_active_console_checkpoint_rejected()
@@ -1831,6 +1923,7 @@ verify_sound_checkpoint_workload()
 start_checkpoint_workloads()
 {
 	start_checkpoint_workload net
+	start_nonvirtio_checkpoint_workload
 	[ "$run_rng_device" = no ] || start_checkpoint_workload rng
 	[ "$run_block_device" = no ] || start_checkpoint_workload block
 	[ "$run_scsi_device" = no ] || start_checkpoint_workload scsi
@@ -1851,6 +1944,7 @@ start_checkpoint_workloads()
 verify_checkpoint_workloads()
 {
 	verify_checkpoint_workload net
+	verify_nonvirtio_checkpoint_workload
 	[ "$run_rng_device" = no ] || verify_checkpoint_workload rng
 	[ "$run_block_device" = no ] || verify_checkpoint_workload block
 	[ "$run_scsi_device" = no ] || verify_checkpoint_workload scsi
@@ -1870,6 +1964,7 @@ verify_checkpoint_workloads()
 stop_checkpoint_workloads()
 {
 	stop_checkpoint_workload net
+	stop_nonvirtio_checkpoint_workload
 	[ "$run_rng_device" = no ] || stop_checkpoint_workload rng
 	[ "$run_block_device" = no ] || stop_checkpoint_workload block
 	[ "$run_scsi_device" = no ] || stop_checkpoint_workload scsi
@@ -1919,6 +2014,19 @@ provision_guest()
 	guest_cmd 'python3 /tmp/gnet.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	copy_guest_file "$here/gvirtio_features.py" /tmp/gvirtio_features.py
 	guest_cmd 'python3 /tmp/gvirtio_features.py --self-test | grep -q "^SELFTEST PASS$"' 30
+	if [ "$NONVIRTIO_DEVICE" != none ]; then
+		copy_guest_file "$here/gnonvirtio.py" /tmp/gnonvirtio.py
+		guest_cmd 'python3 /tmp/gnonvirtio.py --self-test | grep -q "^SELFTEST PASS$"' 30
+	fi
+	case "$NONVIRTIO_DEVICE" in
+	nvme) guest_cmd 'apk add --no-cache nvme-cli; modprobe nvme' 120 ;;
+	hda) guest_cmd 'apk add --no-cache alsa-utils; modprobe snd_hda_intel' 120 ;;
+	xhci) guest_cmd 'modprobe xhci_pci; modprobe usbhid' 30 ;;
+	fbuf) guest_cmd 'modprobe simplefb 2>/dev/null || true' 30 ;;
+	pci-uart) guest_cmd 'modprobe 8250_pci' 30 ;;
+	tpm-crb) guest_cmd 'apk add --no-cache tpm2-tools; modprobe tpm_crb' 120 ;;
+	pvpanic) guest_cmd 'modprobe pvpanic 2>/dev/null || modprobe pvpanic-pci 2>/dev/null || true' 30 ;;
+	esac
 	if [ "$CHECKPOINT_TEST" = yes ]; then
 		copy_guest_file "$here/gcheckpoint.py" /tmp/gcheckpoint.py
 		guest_cmd 'python3 /tmp/gcheckpoint.py --self-test | grep -q "^SELFTEST PASS$"' 30
@@ -1995,6 +2103,122 @@ provision_guest()
 		copy_guest_file "$here/gsnd.py" /tmp/gsnd.py
 		guest_cmd 'python3 /tmp/gsnd.py --self-test | grep -q "^SELFTEST PASS$"' 30
 	fi
+}
+
+run_nonvirtio()
+{
+	case "$NONVIRTIO_DEVICE" in
+	none) return 0 ;;
+	ahci)
+		guest_cmd "python3 /tmp/gnonvirtio.py block-io '$NONVIRTIO_DEVICE' 0000:00:15.0 live-$transport-$$" 45
+		;;
+	nvme)
+		guest_cmd "python3 /tmp/gnonvirtio.py block-io nvme 0000:00:15.0 live-$transport-$$; controller=\$(basename /sys/bus/pci/devices/0000:00:15.0/nvme/nvme*); test \"\$(cat /sys/class/nvme/\$controller/serial)\" = WASPNESTNVME; nvme id-ctrl /dev/\$controller | grep -q 'WASPNESTNVME'; queues=/sys/class/nvme/\$controller/queue_count; test ! -f \$queues || test \"\$(cat \$queues)\" -ge 2" 60
+		;;
+	e82545)
+		guest_cmd "python3 /tmp/gnonvirtio.py probe e82545 0000:00:15.0; iface=\$(basename /sys/bus/pci/devices/0000:00:15.0/net/*); ip link set \"\$iface\" up; udhcpc -n -q -t 5 -T 3 -i \"\$iface\"; gateway=\$(ip route show default dev \"\$iface\" | awk 'NR == 1 { print \$3 }'); test -n \"\$gateway\"; ping -I \"\$iface\" -c 3 \"\$gateway\"; ethtool -i \"\$iface\" | grep -q '^driver: e1000$'" 90
+		;;
+	hda)
+		guest_cmd "python3 /tmp/gnonvirtio.py probe hda 0000:00:15.0; card=\$(basename /sys/bus/pci/devices/0000:00:15.0/sound/card*); unit=\${card#card}; dd if=/dev/zero bs=4096 count=32 2>/dev/null | aplay -q -D hw:\$unit,0 -f S16_LE -c 2 -r 48000; arecord -q -D hw:\$unit,0 -f S16_LE -c 2 -r 48000 -d 1 /tmp/nonvirtio-hda.wav; test -s /tmp/nonvirtio-hda.wav" 45
+		;;
+	xhci)
+		guest_cmd "python3 /tmp/gnonvirtio.py probe xhci 0000:00:15.0; test -n \"\$(find /sys/bus/pci/devices/0000:00:15.0 -name idVendor -o -name descriptors | head -n 1)\"; grep -Rqs 'HID' /sys/bus/pci/devices/0000:00:15.0/usb* 2>/dev/null || find /sys/bus/pci/devices/0000:00:15.0 -path '*/input/input*' | grep -q ." 30
+		;;
+	fbuf)
+		guest_cmd "python3 /tmp/gnonvirtio.py framebuffer-io 0000:00:15.0 live-$transport-$$" 30
+		"$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768
+		;;
+	pci-uart)
+		marker="PCI-UART-LIVE-$transport-$$"
+		guest_cmd "python3 /tmp/gnonvirtio.py probe pci-uart 0000:00:15.0; tty=\$(basename /sys/bus/pci/devices/0000:00:15.0/tty/ttyS*); stty -F /dev/\$tty 115200 raw -echo; printf '%s\\n' '$marker' > /dev/\$tty" 30
+		grep -q "$marker" "$nonvirtio_uart_log"
+		;;
+	lpc-uart)
+		marker="LPC-UART-LIVE-$transport-$$"
+		guest_cmd "test -c /dev/ttyS1; stty -F /dev/ttyS1 115200 raw -echo; printf '%s\\n' '$marker' > /dev/ttyS1" 30
+		grep -q "$marker" "$nonvirtio_uart_log"
+		;;
+	tpm-crb)
+		guest_cmd "test -c /dev/tpmrm0 -o -c /dev/tpm0; tpm2_getrandom 32 -o /tmp/nonvirtio-tpm.random; test \"\$(wc -c < /tmp/nonvirtio-tpm.random)\" = 32; tpm2_pcrread sha256:0 >/tmp/nonvirtio-pcr" 45
+		;;
+	pvpanic)
+		guest_cmd "test -d /sys/bus/acpi/devices/QEMU0001:00; python3 /tmp/gnonvirtio.py pvpanic 2" 30
+		grep -q 'pvpanic: guest reported event 0x02' "$bhyve_log"
+		pvpanic_event_count=$(grep -c 'pvpanic: guest reported event 0x02' "$bhyve_log")
+		;;
+	hostbridge)
+		guest_cmd "python3 /tmp/gnonvirtio.py probe hostbridge 0000:00:00.0; test \"\$(find /sys/bus/pci/devices -mindepth 1 -maxdepth 1 -type l | wc -l)\" -ge 4" 30
+		;;
+	passthru)
+		guest_cmd "$NONVIRTIO_PASSTHRU_LINUX_ASSERT" 60
+		;;
+	esac
+	echo "PASS nonvirtio-live guest=alpine device=$NONVIRTIO_DEVICE"
+}
+
+nonvirtio_checkpoint_operation()
+{
+	case "$NONVIRTIO_DEVICE" in
+	ahci|nvme) printf '%s' "python3 /tmp/gnonvirtio.py block-io '$NONVIRTIO_DEVICE' 0000:00:15.0 checkpoint-\$i" ;;
+	e82545) printf '%s' 'iface=$(basename /sys/bus/pci/devices/0000:00:15.0/net/*); gateway=$(ip route show default dev "$iface" | awk '\''NR == 1 { print $3 }'\''); ping -I "$iface" -c 1 -W 2 "$gateway" >/dev/null' ;;
+	hda) printf '%s' 'card=$(basename /sys/bus/pci/devices/0000:00:15.0/sound/card*); unit=${card#card}; dd if=/dev/zero bs=4096 count=4 2>/dev/null | aplay -q -D hw:$unit,0 -f S16_LE -c 2 -r 48000' ;;
+	xhci) printf '%s' 'find /sys/bus/pci/devices/0000:00:15.0 -name descriptors -exec dd if={} of=/dev/null bs=64 count=1 status=none \;' ;;
+	fbuf) printf '%s' 'python3 /tmp/gnonvirtio.py framebuffer-io 0000:00:15.0 checkpoint-$i' ;;
+	pci-uart) printf '%s' 'tty=$(basename /sys/bus/pci/devices/0000:00:15.0/tty/ttyS*); printf "PCI-UART-CHECKPOINT-%s\n" "$i" > /dev/$tty' ;;
+	lpc-uart) printf '%s' 'printf "LPC-UART-CHECKPOINT-%s\n" "$i" > /dev/ttyS1' ;;
+	pvpanic) printf '%s' 'python3 /tmp/gnonvirtio.py probe hostbridge 0000:00:00.0 >/dev/null' ;;
+	hostbridge) printf '%s' 'python3 /tmp/gnonvirtio.py probe hostbridge 0000:00:00.0 >/dev/null' ;;
+	*) return 1 ;;
+	esac
+}
+
+start_nonvirtio_checkpoint_workload()
+{
+	[ "$NONVIRTIO_DEVICE" = none ] && return 0
+	case "$NONVIRTIO_DEVICE" in tpm-crb|passthru) return 0 ;; esac
+	operation=$(nonvirtio_checkpoint_operation)
+	guest_cmd "rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (i=0; while :; do i=\$((i + 1)); $operation; printf '%s\\n' \"\$i\" > /tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo \$! > /tmp/nonvirtio-checkpoint.pid" 30
+	i=0
+	while [ "$i" -lt 30 ]; do
+		nonvirtio_checkpoint_count=$(guest_cmd 'cat /tmp/nonvirtio-checkpoint.count 2>/dev/null || echo 0' 10)
+		[ "$nonvirtio_checkpoint_count" -gt 0 ] 2>/dev/null && break
+		sleep 1; i=$((i + 1))
+	done
+	[ "$i" -lt 30 ] || { guest_cmd 'cat /tmp/nonvirtio-checkpoint.log' 10 >&2; return 1; }
+	echo "PASS active-checkpoint-start device=$NONVIRTIO_DEVICE count=$nonvirtio_checkpoint_count"
+}
+
+verify_nonvirtio_checkpoint_workload()
+{
+	[ "$NONVIRTIO_DEVICE" = none ] && return 0
+	case "$NONVIRTIO_DEVICE" in tpm-crb|passthru) return 0 ;; esac
+	before=$nonvirtio_checkpoint_count
+	i=0
+	while [ "$i" -lt 30 ]; do
+		after=$(guest_cmd 'cat /tmp/nonvirtio-checkpoint.count 2>/dev/null || echo 0' 10)
+		[ "$after" -gt "$before" ] 2>/dev/null && break
+		sleep 1; i=$((i + 1))
+	done
+	[ "$i" -lt 30 ] || { guest_cmd 'cat /tmp/nonvirtio-checkpoint.log' 10 >&2; return 1; }
+	nonvirtio_checkpoint_count=$after
+	if [ "$NONVIRTIO_DEVICE" = pvpanic ]; then
+		before_events=${pvpanic_event_count:-0}
+		guest_cmd 'python3 /tmp/gnonvirtio.py pvpanic 2' 30
+		pvpanic_event_count=$(grep -c 'pvpanic: guest reported event 0x02' "$bhyve_log")
+		[ "$pvpanic_event_count" -gt "$before_events" ] || {
+			echo "restored pvpanic event did not reach host" >&2; return 1
+		}
+	fi
+	[ "$NONVIRTIO_DEVICE" != fbuf ] || \
+	    "$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768
+	echo "PASS active-checkpoint-progress device=$NONVIRTIO_DEVICE before=$before after=$after"
+}
+
+stop_nonvirtio_checkpoint_workload()
+{
+	[ "$NONVIRTIO_DEVICE" = none ] && return 0
+	case "$NONVIRTIO_DEVICE" in tpm-crb|passthru) return 0 ;; esac
+	guest_cmd 'test ! -s /tmp/nonvirtio-checkpoint.pid || kill $(cat /tmp/nonvirtio-checkpoint.pid) 2>/dev/null || true' 15
 }
 
 run_vsock_driver()
@@ -3049,6 +3273,7 @@ guest_rebind_iommu_fabric()
 run_lifecycle_smokes()
 {
 	run_network_smoke
+	run_nonvirtio
 	[ "$VIRTIO_IOMMU" = no ] || run_iommu
 	verify_no_msix
 	[ "$run_vsock" = no ] || run_vsock_smoke
@@ -3399,6 +3624,11 @@ for transport in $TRANSPORTS; do
 	bhyve_log="$WORKDIR/$transport.bhyve.log"
 	ring_trace="$WORKDIR/$transport.virtio-ring.trace"
 	block_image="$WORKDIR/$transport.block.img"
+	nonvirtio_image="$WORKDIR/$transport.nonvirtio.img"
+	nonvirtio_fbuf_socket="$WORKDIR/$transport.nonvirtio-vnc.sock"
+	nonvirtio_uart_log="$WORKDIR/$transport.nonvirtio-uart.log"
+	nonvirtio_uart_port=$((CONSOLE_PORT + 1))
+	nonvirtio_hostbridge_opt=
 	pmem_image="$WORKDIR/$transport.pmem.img"
 	pmem_generation=0
 	input_fifo="$WORKDIR/$transport.input.fifo"
@@ -3681,6 +3911,14 @@ for transport in $TRANSPORTS; do
 		}
 	fi
 	: > "$bhyve_log"
+	: > "$nonvirtio_uart_log"
+	rm -f "$nonvirtio_fbuf_socket"
+	case "$NONVIRTIO_DEVICE" in
+	ahci|nvme)
+		truncate -s "${NONVIRTIO_IMAGE_MB}M" "$nonvirtio_image"
+		chmod 0600 "$nonvirtio_image"
+		;;
+	esac
 	if [ "$run_block_device" = yes ]; then
 		truncate -s "${BLOCK_IMAGE_MB}M" "$block_image"
 		chmod 0600 "$block_image"
@@ -3759,6 +3997,7 @@ for transport in $TRANSPORTS; do
 		virtio_ring_trace_start "$vm_pid" "$ring_trace"
 	fi
 	run_network_smoke
+	run_nonvirtio
 	[ "$VIRTIO_IOMMU" = no ] || run_iommu
 	if [ "$run_vsock" = yes ]; then
 		wait_vsock_provider_barrier initial
@@ -3785,7 +4024,10 @@ for transport in $TRANSPORTS; do
 	verify_no_msix
 	if [ "$CHECKPOINT_TEST" != no ]; then
 		wait_vsock_provider_barrier pre-checkpoint
-		run_checkpoint_roundtrip
+		case "$NONVIRTIO_DEVICE" in
+		tpm-crb|passthru) run_nonvirtio_checkpoint_rejection ;;
+		*) run_checkpoint_roundtrip ;;
+		esac
 		wait_vsock_provider_barrier post-checkpoint
 	fi
 	if [ "$VIRTIO_RESET_SOAK_ITERATIONS" -gt 0 ]; then

@@ -490,3 +490,28 @@ Repeat with `TRANSPORT=legacy` in both commands to prove the unchanged legacy
 path.  Omitting `transport` from the bhyve device option is equivalent to the
 legacy run; `run-alpine-bhyve.sh` always spells it out so the selected test is
 unambiguous.
+
+## Non-VirtIO qualification
+
+`run-alpine-auto.sh` also accepts one reviewed `NONVIRTIO_DEVICE` value.  The
+lab's `nonvirtio-alpine-*-live` cases verify the exact PCI/ACPI identity and a
+distinguishing guest operation.  The matching `*-checkpoint` cases keep that
+operation active through a nonterminal checkpoint and suspend/restore.  TPM
+CRB and passthrough deliberately assert a rollback-safe rejection because
+those models do not implement portable snapshot state.
+
+Use the declarative entry point rather than constructing cases by hand:
+
+```sh
+PROFILE=nonvirtio PLAN_ONLY=yes UPLINK=igb0 \
+    ISO=/path/to/alpine-virt.iso FIVEBSD_IMAGE=/path/to/5bsd.raw \
+    NONVIRTIO_TPM_PATH=/path/to/swtpm.sock \
+    NONVIRTIO_PASSTHRU=ppt0 \
+    NONVIRTIO_PASSTHRU_LINUX_ASSERT='/root/test-selected-ppt-device' \
+    NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT='/root/test-selected-ppt-device' \
+    ./run-waspnest-qualification.sh
+```
+
+Framebuffer cases write fixed pixels through the PCI framebuffer BAR and
+verify the result with an independent RFB client.  UART cases use a separate
+COM2 or PCI-UART backend log, so control-console traffic cannot satisfy them.

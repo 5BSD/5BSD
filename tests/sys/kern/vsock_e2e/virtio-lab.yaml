@@ -83,6 +83,17 @@ defaults:
     PMEM_IDENTITY: "waspnest-pmem"
     VM_MEMORY_MB: "2048"
     SCSI_EVENTS: "no"
+    NONVIRTIO_DEVICE: none
+    NONVIRTIO_CHECKPOINT: "no"
+    NONVIRTIO_IMAGE_MB: "128"
+    NONVIRTIO_HDA_PLAY: "/dev/dsp0"
+    NONVIRTIO_HDA_RECORD: "/dev/dsp1"
+    NONVIRTIO_TPM_TYPE: swtpm
+    NONVIRTIO_TPM_PATH: ""
+    NONVIRTIO_PASSTHRU: ""
+    NONVIRTIO_PASSTHRU_GUEST_ASSERT: ""
+    NONVIRTIO_PASSTHRU_LINUX_ASSERT: ""
+    NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT: ""
     # Internal coverage marker.  This is intentionally absent from
     # allowed_overrides: only the reviewed nested hardware case may satisfy
     # the full-qualification nested-VMX coverage contract.
@@ -97,9 +108,10 @@ profile_groups:
   qualification: [release, checkpoint, soak]
   intel-qualification: [release, checkpoint, soak, nested]
   audio-qualification: [audio, checkpoint-audio]
-  # One explicit promotion gate for the Intel development host.  Portable
-  # and audio-only hosts retain the narrower profiles above.
-  full-qualification: [release, checkpoint, soak, nested, audio, checkpoint-audio]
+  # One explicit promotion gate for the Intel development host.  It also
+  # includes the non-VirtIO software and operator-supplied hardware matrix;
+  # portable and audio-only hosts retain the narrower profiles above.
+  full-qualification: [release, checkpoint, soak, nonvirtio, nested, audio, checkpoint-audio]
 
 # Deliberate command-line API for `--set`.  Allocation variables are included
 # for single-case debugging, but the orchestrator rejects global allocation
@@ -243,6 +255,15 @@ allowed_overrides:
   - VIRTIO_RESET_SOAK_MAX_RSS_KB
   - BRIDGE
   - UPLINK
+  - NONVIRTIO_IMAGE_MB
+  - NONVIRTIO_HDA_PLAY
+  - NONVIRTIO_HDA_RECORD
+  - NONVIRTIO_TPM_TYPE
+  - NONVIRTIO_TPM_PATH
+  - NONVIRTIO_PASSTHRU
+  - NONVIRTIO_PASSTHRU_GUEST_ASSERT
+  - NONVIRTIO_PASSTHRU_LINUX_ASSERT
+  - NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT
 
 # These settings change the VirtIO-visible behavior or a lifecycle contract.
 # Every entry must be the variable of a release coverage contract.  Host
@@ -1509,11 +1530,6 @@ cases:
       BULK_MB: "1"
       VM_FREE_GATES: "no"
 
-  # Stock-5BSD activation lanes for the guest drivers added this session.
-  # Each drives probe/attach/feature-negotiation and one protocol operation
-  # of the new driver and fails closed (host queue-enable / notify
-  # correlation) if that path is not reached.  They are pending, not
-  # exercised: promotion requires a live pass on the Intel qualification host.
   # The sound lanes exercise a supported 5BSD data path.  The mem, pmem, and
   # IOMMU definitions below are retained only as explicit prototypes: they
   # cannot satisfy 5BSD release semantics and are outside every release group.
@@ -3300,3 +3316,426 @@ cases:
       VERIFY_DEVICE_RING_LAYOUT: packed
       VIRTIO_RESET_SOAK_ITERATIONS: "3"
       VIRTIO_RESET_SOAK_VERIFY_EVERY: "1"
+
+  # Non-VirtIO qualification is deliberately separate from the VirtIO
+  # transport matrix.  Every checkpoint case first runs its live oracle.
+
+  - id: nonvirtio-alpine-ahci-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: ahci
+
+  - id: nonvirtio-alpine-ahci-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: ahci
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-nvme-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: nvme
+
+  - id: nonvirtio-alpine-nvme-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: nvme
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-e82545-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: e82545
+
+  - id: nonvirtio-alpine-e82545-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: e82545
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-hda-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    resources: [audio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: hda
+
+  - id: nonvirtio-alpine-hda-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    resources: [audio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: hda
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-xhci-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: xhci
+
+  - id: nonvirtio-alpine-xhci-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: xhci
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-fbuf-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: fbuf
+
+  - id: nonvirtio-alpine-fbuf-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: fbuf
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-pci-uart-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: pci-uart
+
+  - id: nonvirtio-alpine-pci-uart-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: pci-uart
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-lpc-uart-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: lpc-uart
+
+  - id: nonvirtio-alpine-lpc-uart-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: lpc-uart
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-tpm-crb-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    resources: [tpm]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: tpm-crb
+
+  - id: nonvirtio-alpine-tpm-crb-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    resources: [tpm]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: tpm-crb
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-pvpanic-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: pvpanic
+
+  - id: nonvirtio-alpine-pvpanic-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: pvpanic
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-hostbridge-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: hostbridge
+
+  - id: nonvirtio-alpine-hostbridge-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: hostbridge
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-alpine-passthru-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    resources: [passthru]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: passthru
+
+  - id: nonvirtio-alpine-passthru-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    resources: [passthru]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: passthru
+      CHECKPOINT_TEST: "yes"
+
+  - id: nonvirtio-5bsd-ahci-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: ahci
+
+  - id: nonvirtio-5bsd-ahci-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: ahci
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-nvme-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: nvme
+
+  - id: nonvirtio-5bsd-nvme-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: nvme
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-e82545-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: e82545
+
+  - id: nonvirtio-5bsd-e82545-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: e82545
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-hda-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image, audio]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: hda
+
+  - id: nonvirtio-5bsd-hda-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image, audio]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: hda
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-xhci-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: xhci
+
+  - id: nonvirtio-5bsd-xhci-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: xhci
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-fbuf-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: fbuf
+
+  - id: nonvirtio-5bsd-fbuf-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: fbuf
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-pci-uart-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: pci-uart
+
+  - id: nonvirtio-5bsd-pci-uart-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: pci-uart
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-lpc-uart-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: lpc-uart
+
+  - id: nonvirtio-5bsd-lpc-uart-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: lpc-uart
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-tpm-crb-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image, tpm]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: tpm-crb
+
+  - id: nonvirtio-5bsd-tpm-crb-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image, tpm]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: tpm-crb
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-hostbridge-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: hostbridge
+
+  - id: nonvirtio-5bsd-hostbridge-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: hostbridge
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-passthru-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image, passthru]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: passthru
+
+  - id: nonvirtio-5bsd-passthru-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image, passthru]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: passthru
+      NONVIRTIO_CHECKPOINT: "yes"
