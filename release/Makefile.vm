@@ -151,7 +151,7 @@ cw-${_CW:tl}-${_FS}-${_FMT}: ${QEMUTGT} ${PKGBASE_REPO_DIR}
 		-C ${.CURDIR}/tools/vmimage.subr -d ${.OBJDIR}/${.TARGET} \
 		-F ${"${_CW:MEC2-BUILDER}" != "":?ufs:${_FS}} \
 		-i ${.OBJDIR}/${_CW:tl}.${_FS}.${_FMT}.img -s ${VMSIZE} -f ${_FMT} \
-		-S ${WORLDDIR} -o ${.OBJDIR}/${${_CW:tu}${_FS:tu}${_FMT:tu}IMAGE} -c ${${_CW:tu}CONF} || true
+		-S ${WORLDDIR} -o ${.OBJDIR}/${${_CW:tu}${_FS:tu}${_FMT:tu}IMAGE} -c ${${_CW:tu}CONF}
 	touch ${.TARGET}
 .   endfor
 .  endfor
@@ -211,7 +211,7 @@ vm-image:	${QEMUTGT} ${PKGBASE_REPO_DIR}
 		${VM_IMAGE_CONFIG:D-c ${VM_IMAGE_CONFIG}} \
 		-d ${.OBJDIR}/${.TARGET}-${FORMAT}-${FS} -F ${FS} \
 		-i ${.OBJDIR}/${FORMAT}.${FS}.img -s ${VMSIZE} -f ${FORMAT} \
-		-S ${WORLDDIR} -o ${.OBJDIR}/${VMBASE}.${FS}.${FORMAT} || true
+		-S ${WORLDDIR} -o ${.OBJDIR}/${VMBASE}.${FS}.${FORMAT}
 .  endfor
 . endfor
 .endif

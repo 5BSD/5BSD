@@ -107,7 +107,7 @@ main() {
 	vm_extra_pkg_rmcache
 	vm_emulation_cleanup
 	vm_copy_base
-	vm_create_disk || return 0
+	vm_create_disk || return 1
 	vm_extra_create_disk
 
 	return 0

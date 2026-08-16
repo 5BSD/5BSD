@@ -253,6 +253,12 @@ vm_emulation_cleanup() {
 }
 
 vm_extra_pkg_rmcache() {
+	# Source-tree images have no pkg(8) database or PKG_CMD.  Invoking an
+	# unset command variable here makes the following -o argument a command.
+	if [ -n "${NOPKGBASE}" ]; then
+		return 0
+	fi
+
 	${PKG_CMD} \
 	    -o ASSUME_ALWAYS_YES=yes \
 	    -o INSTALL_AS_USER=yes \
@@ -323,11 +329,11 @@ buildfs() {
 
 	case "${VMFS}" in
 	ufs)
-		cd ${DESTDIR} && ${MAKEFS} ${MAKEFSARGS} -o label=rootfs -o version=2 -o softupdates=1 \
-			${VMBASE} ./METALOG
+		cd ${DESTDIR} && ${MAKEFS} -N ${DESTDIR}/etc ${MAKEFSARGS} -o label=rootfs -o version=2 -o softupdates=1 \
+			${VMBASE} ./METALOG || return 1
 		;;
 	zfs)
-		cd ${DESTDIR} && ${MAKEFS} -t zfs ${MAKEFSARGS} \
+		cd ${DESTDIR} && ${MAKEFS} -N ${DESTDIR}/etc -t zfs ${MAKEFSARGS} \
 			-o poolname=zroot -o bootfs=zroot/ROOT/default -o rootpath=/ \
 			-o fs=zroot\;mountpoint=none \
 			-o fs=zroot/ROOT\;mountpoint=none \
@@ -344,7 +350,7 @@ buildfs() {
 			-o fs=zroot/var/log\;setuid=off\;exec=off \
 			-o fs=zroot/var/mail\;atime=on \
 			-o fs=zroot/var/tmp\;setuid=off \
-			${VMBASE} ./METALOG
+			${VMBASE} ./METALOG || return 1
 		;;
 	*)
 		echo "Unexpected VMFS value '${VMFS}'"
@@ -470,7 +476,7 @@ vm_create_disk() {
 		${SWAPOPT} \
 		${CONFIG_DRIVE} \
 		${ROOTFSPART} \
-		-o ${VMIMAGE}
+		-o ${VMIMAGE} || return 1
 
 	echo "Disk image ${VMIMAGE} created."
 
