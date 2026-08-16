@@ -6,7 +6,9 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
+#include <sys/param.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -17,6 +19,149 @@
 #include "trustedzfs.h"
 
 #define	ZFS_DEV	"/dev/zfs"
+
+struct tzfs_ioctl_map {
+	tzfs_opset_t op;
+	cap_ioctl_t cmd;
+};
+
+static const struct tzfs_ioctl_map tzfs_dataset_ioctl_map[] = {
+	{ TZFS_OP_INFO, ZFD_INFO },
+	{ TZFS_OP_DERIVE, ZFD_DERIVE },
+	{ TZFS_OP_OPENAT, ZFD_OPENAT },
+	{ TZFS_OP_STAT, ZFD_STAT },
+	{ TZFS_OP_GET_PROPS, ZFD_GET_PROPS },
+	{ TZFS_OP_GET_ONE_PROP, ZFD_GET_ONE_PROP },
+	{ TZFS_OP_LIST_CHILDREN, ZFD_LIST_CHILDREN },
+	{ TZFS_OP_LIST_SNAPSHOTS, ZFD_LIST_SNAPS },
+	{ TZFS_OP_HOLDS, ZFD_HOLDS },
+	{ TZFS_OP_LIST_BOOKMARKS, ZFD_LIST_BOOKMARKS },
+	{ TZFS_OP_SET_PROP, ZFD_SET_PROP },
+	{ TZFS_OP_INHERIT, ZFD_INHERIT },
+	{ TZFS_OP_SNAPSHOT, ZFD_SNAPSHOT },
+	{ TZFS_OP_BOOKMARK, ZFD_BOOKMARK },
+	{ TZFS_OP_SNAP_DESTROY, ZFD_SNAP_DESTROY },
+	{ TZFS_OP_DESTROY_BOOKMARK, ZFD_DESTROY_BOOKMARK },
+	{ TZFS_OP_ROLLBACK, ZFD_ROLLBACK },
+	{ TZFS_OP_CREATE, ZFD_CREATE },
+	{ TZFS_OP_DESTROY, ZFD_DESTROY },
+	{ TZFS_OP_RENAME, ZFD_RENAME },
+	{ TZFS_OP_CLONE, ZFD_CLONE },
+	{ TZFS_OP_PROMOTE, ZFD_PROMOTE },
+	{ TZFS_OP_SEND, ZFD_SEND },
+	{ TZFS_OP_RECV, ZFD_RECV },
+	{ TZFS_OP_HOLD, ZFD_HOLD },
+	{ TZFS_OP_RELEASE, ZFD_RELEASE },
+	{ TZFS_OP_BLKOPEN, ZFD_BLKOPEN },
+	{ TZFS_OP_MOUNT, ZFD_MOUNT },
+	{ TZFS_OP_UNMOUNT, ZFD_UNMOUNT },
+	{ TZFS_OP_WAIT, ZFD_WAIT },
+};
+
+static const struct tzfs_ioctl_map tzfs_pool_ioctl_map[] = {
+	{ TZFS_OP_INFO, ZFD_INFO },
+	{ TZFS_OP_DERIVE, ZFD_DERIVE },
+	{ TZFS_OP_POOL_STAT, ZPD_STAT },
+	{ TZFS_OP_POOL_GET_PROPS, ZPD_GET_PROPS },
+	{ TZFS_OP_POOL_SET_PROP, ZPD_SET_PROP },
+	{ TZFS_OP_POOL_SCRUB, ZPD_SCRUB },
+	{ TZFS_OP_POOL_ROOT_OPEN, ZPD_ROOT_OPEN },
+	{ TZFS_OP_POOL_WAIT, ZPD_WAIT },
+};
+
+static int
+tzfs_limit_ioctls(int fd, tzfs_opset_t ops, tzfs_opset_t valid,
+    const struct tzfs_ioctl_map *map, size_t nmap)
+{
+	cap_ioctl_t cmds[nmap];
+	size_t i, ncmds;
+
+	if ((ops & ~valid) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	ncmds = 0;
+	for (i = 0; i < nmap; i++) {
+		if ((ops & map[i].op) != 0)
+			cmds[ncmds++] = map[i].cmd;
+	}
+	return (cap_ioctls_limit(fd, cmds, ncmds));
+}
+
+int
+tzfs_limit_dataset_ioctls(int zfd, tzfs_opset_t ops)
+{
+	return (tzfs_limit_ioctls(zfd, ops, TZFS_OP_DATASET_ALL,
+	    tzfs_dataset_ioctl_map, nitems(tzfs_dataset_ioctl_map)));
+}
+
+int
+tzfs_limit_pool_ioctls(int zpd, tzfs_opset_t ops)
+{
+	return (tzfs_limit_ioctls(zpd, ops, TZFS_OP_POOL_ALL,
+	    tzfs_pool_ioctl_map, nitems(tzfs_pool_ioctl_map)));
+}
+
+int
+tzfs_limit_dataset_ioctls_by_rights(int zfd, uint64_t rights, uint32_t flags)
+{
+	tzfs_opset_t ops;
+
+	if ((rights & ~ZH_ALL_RIGHTS) != 0 || (flags & ~ZHF_SUBTREE) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	/* Every dataset handle has ZH_PROPS_READ and ZH_EVENT implicitly. */
+	ops = TZFS_OP_INFO | TZFS_OP_DERIVE | TZFS_OP_STAT |
+	    TZFS_OP_GET_PROPS | TZFS_OP_GET_ONE_PROP |
+	    TZFS_OP_LIST_SNAPSHOTS | TZFS_OP_HOLDS |
+	    TZFS_OP_LIST_BOOKMARKS | TZFS_OP_WAIT;
+	if ((flags & ZHF_SUBTREE) != 0)
+		ops |= TZFS_OP_OPENAT | TZFS_OP_LIST_CHILDREN;
+	if ((rights & ZH_PROPS_WRITE) != 0)
+		ops |= TZFS_OP_SET_PROP | TZFS_OP_INHERIT;
+	if ((rights & ZH_SNAPSHOT) != 0)
+		ops |= TZFS_OP_SNAPSHOT | TZFS_OP_BOOKMARK;
+	if ((rights & ZH_SNAP_DESTROY) != 0)
+		ops |= TZFS_OP_SNAP_DESTROY | TZFS_OP_DESTROY_BOOKMARK;
+	if ((rights & ZH_ROLLBACK) != 0)
+		ops |= TZFS_OP_ROLLBACK;
+	if ((rights & ZH_CREATE) != 0)
+		ops |= TZFS_OP_CREATE | TZFS_OP_CLONE | TZFS_OP_PROMOTE;
+	if ((rights & ZH_DESTROY) != 0)
+		ops |= TZFS_OP_DESTROY;
+	if ((rights & (ZH_CREATE | ZH_DESTROY)) ==
+	    (ZH_CREATE | ZH_DESTROY))
+		ops |= TZFS_OP_RENAME;
+	if ((rights & ZH_SEND) != 0)
+		ops |= TZFS_OP_SEND;
+	if ((rights & ZH_RECV) != 0)
+		ops |= TZFS_OP_RECV;
+	if ((rights & ZH_MOUNT) != 0)
+		ops |= TZFS_OP_BLKOPEN | TZFS_OP_MOUNT | TZFS_OP_UNMOUNT;
+	if ((rights & ZH_HOLD) != 0)
+		ops |= TZFS_OP_HOLD | TZFS_OP_RELEASE;
+	return (tzfs_limit_dataset_ioctls(zfd, ops));
+}
+
+int
+tzfs_limit_pool_ioctls_by_rights(int zpd, uint64_t rights)
+{
+	tzfs_opset_t ops;
+
+	if ((rights & ~ZH_ALL_RIGHTS) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	ops = TZFS_OP_INFO | TZFS_OP_DERIVE | TZFS_OP_POOL_STAT |
+	    TZFS_OP_POOL_GET_PROPS | TZFS_OP_POOL_ROOT_OPEN |
+	    TZFS_OP_POOL_WAIT;
+	if ((rights & ZH_PROPS_WRITE) != 0)
+		ops |= TZFS_OP_POOL_SET_PROP;
+	if ((rights & ZH_SCRUB) != 0)
+		ops |= TZFS_OP_POOL_SCRUB;
+	return (tzfs_limit_pool_ioctls(zpd, ops));
+}
 
 static int
 tzfs_str_arg(char *dst, size_t dstlen, const char *src, bool required)

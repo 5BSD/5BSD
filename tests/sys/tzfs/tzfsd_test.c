@@ -9,6 +9,8 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
+#include <sys/param.h>
 #include <sys/stat.h>
 
 #include <errno.h>
@@ -21,6 +23,18 @@
 #include <trustedzfs.h>
 #include "tzfsd.h"
 #include "tzfs_test_helpers.h"
+
+static bool
+has_ioctl(const cap_ioctl_t *cmds, size_t ncmds, cap_ioctl_t wanted)
+{
+	size_t i;
+
+	for (i = 0; i < ncmds; i++) {
+		if (cmds[i] == wanted)
+			return (true);
+	}
+	return (false);
+}
 
 /* list-flavors always offers at least "empty" (built live). */
 ATF_TC_WITH_CLEANUP(list_flavors);
@@ -143,6 +157,15 @@ ATF_TC_BODY(rights_attenuation, tc)
 {
 	struct tzfsd_req req;
 	struct tzfsd_grant g;
+	struct zfd_info_args info;
+	const cap_ioctl_t expected[] = {
+		ZFD_INFO, ZFD_DERIVE, ZFD_STAT, ZFD_GET_PROPS,
+		ZFD_GET_ONE_PROP, ZFD_LIST_SNAPS, ZFD_HOLDS,
+		ZFD_LIST_BOOKMARKS, ZFD_WAIT,
+	};
+	cap_ioctl_t cmds[16];
+	ssize_t ncmds;
+	size_t i;
 	int chan;
 
 	tzt_require();
@@ -157,10 +180,23 @@ ATF_TC_BODY(rights_attenuation, tc)
 	req.rights = ZH_PROPS_READ;		/* deliberately no ZH_MOUNT */
 	req.lifetime = TZFSD_EPHEMERAL;
 	ATF_REQUIRE_EQ(0, tzfsd_request(chan, &req, &g));
+	ATF_REQUIRE_EQ(0, tzfs_info(g.handle_fd, &info));
+	ATF_CHECK_EQ(0, info.zi_flags & ZHF_SUBTREE);
+
+	/* The daemon installs the exact implicit read/watch ioctl profile. */
+	ncmds = cap_ioctls_get(g.handle_fd, cmds, nitems(cmds));
+	ATF_REQUIRE_EQ(nitems(expected), (size_t)ncmds);
+	for (i = 0; i < nitems(expected); i++)
+		ATF_CHECK(has_ioctl(cmds, (size_t)ncmds, expected[i]));
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    tzfs_snapshot(g.handle_fd, "blocked-by-ioctl-profile") == -1);
 
 	/* Mount must be refused: the handle lacks ZH_MOUNT. */
 	ATF_CHECK_EQ(-1, tzfs_mount(g.handle_fd, false));
 	ATF_CHECK_EQ(ENOTCAPABLE, errno);
+	/* No-subtree was requested and must not be inherited from provisioning. */
+	ATF_CHECK_ERRNO(ENOTCAPABLE,
+	    tzfs_openat(g.handle_fd, "child", 0, 0) == -1);
 	(void)close(g.handle_fd);
 	(void)tzfsd_release(chan, "r1");
 	(void)close(chan);
@@ -233,6 +269,15 @@ ATF_TC_BODY(persistent_and_badname, tc)
 	memset(&req, 0, sizeof(req));
 	strlcpy(req.name, "bad/name", sizeof(req.name));
 	req.rights = ZH_PROPS_READ;
+	req.lifetime = TZFSD_EPHEMERAL;
+	ATF_CHECK_EQ(-1, tzfsd_request(chan, &req, &g));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/* Unknown handle-scope flags must not cross the protocol boundary. */
+	memset(&req, 0, sizeof(req));
+	strlcpy(req.name, "badflags", sizeof(req.name));
+	req.rights = ZH_PROPS_READ;
+	req.flags = ZHF_SUBTREE << 1;
 	req.lifetime = TZFSD_EPHEMERAL;
 	ATF_CHECK_EQ(-1, tzfsd_request(chan, &req, &g));
 	ATF_CHECK_EQ(EINVAL, errno);

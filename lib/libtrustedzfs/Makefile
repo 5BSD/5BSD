@@ -10,6 +10,9 @@ SRCS=		trustedzfs.c
 INCS=		trustedzfs.h
 MAN=		trustedzfs.3
 
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
+
 MLINKS+=	trustedzfs.3 tzfs_open.3 \
 		trustedzfs.3 tzfs_derive.3 \
 		trustedzfs.3 tzfs_openat.3 \
@@ -50,5 +53,10 @@ MLINKS+=	trustedzfs.3 tzfs_open.3 \
 		trustedzfs.3 tzfs_destroy_bookmark.3 \
 		trustedzfs.3 tzfs_wait.3 \
 		trustedzfs.3 tzfs_pool_wait.3
+
+MLINKS+=	trustedzfs.3 tzfs_limit_dataset_ioctls.3 \
+		trustedzfs.3 tzfs_limit_pool_ioctls.3 \
+		trustedzfs.3 tzfs_limit_dataset_ioctls_by_rights.3 \
+		trustedzfs.3 tzfs_limit_pool_ioctls_by_rights.3
 
 .include <bsd.lib.mk>

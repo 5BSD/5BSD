@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 5BSD Project
-.Dd August 14, 2026
+.Dd August 16, 2026
 .Dt TRUSTEDZFS 3
 .Os
 .Sh NAME
@@ -25,7 +25,11 @@
 .Nm tzfs_clone ,
 .Nm tzfs_send ,
 .Nm tzfs_recv ,
-.Nm tzfs_blkopen
+.Nm tzfs_blkopen ,
+.Nm tzfs_limit_dataset_ioctls ,
+.Nm tzfs_limit_pool_ioctls ,
+.Nm tzfs_limit_dataset_ioctls_by_rights ,
+.Nm tzfs_limit_pool_ioctls_by_rights
 .Nd capability file descriptors over the ZFS management plane
 .Sh LIBRARY
 .Lb libtrustedzfs
@@ -74,6 +78,14 @@
 .Fn tzfs_recv "int zfd" "const char *reltarget" "int in_fd" "bool force"
 .Ft int
 .Fn tzfs_blkopen "int zfd" "bool writable"
+.Ft int
+.Fn tzfs_limit_dataset_ioctls "int zfd" "tzfs_opset_t ops"
+.Ft int
+.Fn tzfs_limit_pool_ioctls "int zpd" "tzfs_opset_t ops"
+.Ft int
+.Fn tzfs_limit_dataset_ioctls_by_rights "int zfd" "uint64_t rights" "uint32_t flags"
+.Ft int
+.Fn tzfs_limit_pool_ioctls_by_rights "int zpd" "uint64_t rights"
 .Sh DESCRIPTION
 The
 .Nm
@@ -124,6 +136,54 @@ opens a descendant dataset (or
 of the handle itself) with a subset of the rights; descending requires a
 .Dv ZHF_SUBTREE
 handle and relative names may not escape the grant.
+.Ss Capsicum ioctl confinement
+.Fn tzfs_limit_dataset_ioctls
+and
+.Fn tzfs_limit_pool_ioctls
+apply a typed, exact
+.Xr cap_ioctls_limit 2
+allowlist to one descriptor.
+The
+.Fa ops
+argument is a combination of the
+.Dv TZFS_OP_*
+bits declared in
+.In trustedzfs.h .
+Dataset and pool operation bits may not be mixed; an unknown or wrong-kind
+bit fails with
+.Er EINVAL
+without changing the descriptor.
+An empty mask is valid and denies all ioctls.
+As with the underlying Capsicum primitive, confinement is monotonic: a later
+call may narrow the set but cannot restore a removed operation.
+.Pp
+.Fn tzfs_limit_dataset_ioctls_by_rights
+constructs the complete dataset ioctl profile permitted by the supplied
+.Dv ZH_*
+rights and
+.Dv ZHF_SUBTREE
+scope.
+It includes the implicit inspection and wait operations, permits descendant
+open and enumeration only for a subtree grant, and includes
+.Dv ZFD_RENAME
+only when both
+.Dv ZH_CREATE
+and
+.Dv ZH_DESTROY
+are present.
+.Fn tzfs_limit_pool_ioctls_by_rights
+does the corresponding mapping for pool handles.
+These helpers add a per-descriptor Capsicum ceiling; they do not replace the
+immutable rights enforced by the TrustedZFS kernel handle.
+.Pp
+An ioctl that returns a new descriptor, including derive, openat, create,
+clone, pool-root-open, block-open, and mount, does not copy the parent's
+per-descriptor ioctl allowlist to that result.
+Code retaining such a result must call the appropriate limiter on the new
+descriptor before using or transferring it.
+An allowlist is preserved by ordinary descriptor duplication and
+.Dv SCM_RIGHTS
+transfer.
 .Pp
 .Fn tzfs_get_props
 returns all properties as a packed native-encoded nvlist in a
@@ -245,6 +305,7 @@ kevent
 .Dv EVFILT_READ
 on the handle reports invalidation.
 .Sh SEE ALSO
+.Xr cap_ioctls_limit 2 ,
 .Xr cap_rights_limit 2 ,
 .Xr kqueue 2 ,
 .Xr capsicum 4 ,

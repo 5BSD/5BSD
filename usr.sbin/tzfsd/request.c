@@ -99,7 +99,8 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		errno = EINVAL;
 		return (-1);
 	}
-	if ((rq->rights & ~ZH_ALL_RIGHTS) != 0 || rq->rights == 0) {
+	if ((rq->rights & ~ZH_ALL_RIGHTS) != 0 || rq->rights == 0 ||
+	    (rq->flags & ~ZHF_SUBTREE) != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -145,11 +146,24 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 			return (-1);
 	}
 
-	/* Attenuate to exactly the requested rights before handing it out. */
-	granted = tzfs_derive(leaf_fd, rq->rights);
+	/*
+	 * Re-open from the retained parent so both rights and subtree scope are
+	 * exactly those requested.  The provisioning leaf is always subtree-
+	 * capable and deriving it would accidentally preserve that authority.
+	 */
 	(void)close(leaf_fd);
+	granted = tzfs_openat(parent_fd, rq->name, rq->rights, rq->flags);
 	if (granted == -1)
 		return (-1);
+	/* Add a monotonic Capsicum ioctl ceiling before SCM_RIGHTS transfer. */
+	if (tzfs_limit_dataset_ioctls_by_rights(granted, rq->rights,
+	    rq->flags) == -1) {
+		int saved = errno;
+
+		(void)close(granted);
+		errno = saved;
+		return (-1);
+	}
 
 	(void)snprintf(dataset, dsz, "%s/%s", parent_name, rq->name);
 	return (granted);

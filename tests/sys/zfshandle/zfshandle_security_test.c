@@ -98,14 +98,14 @@ ATF_TC_BODY(ioctl_allowlist, tc)
 	struct zfd_info_args info;
 	struct zfd_stat_args st;
 	cap_rights_t rights;
-	const cap_ioctl_t cmds[] = { ZFD_INFO, ZFD_STAT };
 	char ds[256];
 	int zfd;
 
 	zht_setup(tc, ds, sizeof(ds));
 	zfd = zht_open_req(ds, ZH_SNAPSHOT, 0);
 
-	ATF_REQUIRE_EQ(0, cap_ioctls_limit(zfd, cmds, nitems(cmds)));
+	ATF_REQUIRE_EQ(0, tzfs_limit_dataset_ioctls(zfd,
+	    TZFS_OP_INFO | TZFS_OP_STAT));
 	ATF_REQUIRE_EQ(0, zfd_info(zfd, &info));
 	ATF_REQUIRE_EQ(0, zfd_stat(zfd, &st));
 	/* Allowed by the handle rights, blocked by the fd allowlist. */
@@ -127,7 +127,7 @@ ATF_TC_WITH_CLEANUP(scm_rights_delegation);
 ATF_TC_HEAD(scm_rights_delegation, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "a handle passed over a unix socket works in the receiver");
+	    "SCM_RIGHTS preserves a TrustedZFS ioctl allowlist");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(scm_rights_delegation, tc)
@@ -170,9 +170,9 @@ ATF_TC_BODY(scm_rights_delegation, tc)
 		/* Use the delegated authority. */
 		if (zfd_snapshot(rfd, "delegated") != 0)
 			_exit(23);
-		/* The delegation is narrow: destroy was not granted. */
+		/* The fd allowlist is preserved, independently of ZH_* rights. */
 		if (zfd_snap_destroy(rfd, "delegated") != -1 ||
-		    errno != EPERM)
+		    errno != ENOTCAPABLE)
 			_exit(24);
 		_exit(0);
 	}
@@ -182,6 +182,8 @@ ATF_TC_BODY(scm_rights_delegation, tc)
 	zfd = zht_open_req(ds, ZH_SNAPSHOT | ZH_SNAP_DESTROY, 0);
 	rfd = zfd_derive(zfd, ZH_SNAPSHOT);
 	ATF_REQUIRE(rfd >= 0);
+	ATF_REQUIRE_EQ(0, tzfs_limit_dataset_ioctls(rfd,
+	    TZFS_OP_INFO | TZFS_OP_SNAPSHOT));
 
 	memset(&msg, 0, sizeof(msg));
 	byte = 'x';
