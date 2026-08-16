@@ -1,7 +1,7 @@
-comment = "FreeBSD Devicetree Blobs"
+comment = "5BSD Devicetree Blobs"
 
 desc = <<EOD
-FreeBSD Devicetree Blobs
+5BSD Devicetree Blobs
 EOD
 
 annotations {

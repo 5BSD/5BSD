@@ -1,8 +1,8 @@
 # This is the default set of options applied to all packages, unless overridden
 # in the package-specific manifests.
 
-# The name of the package.  $PKG_NAME_PREFIX is "FreeBSD", or might be replaced
-# by a downstream packager.
+# The name of the package.  $PKG_NAME_PREFIX is "5BSD", or might be replaced by
+# a downstream packager.
 name = "${PKG_NAME_PREFIX}-${PKGNAME}"
 
 # Base packages always install to /.
@@ -14,7 +14,7 @@ categories = [ base ]
 # $VERSION is the version of the base system being built.
 version = "${VERSION}"
 
-# Maintainer and WWW point to freebsd.org by default.  This should not be
+# Maintainer and WWW point to the 5BSD project by default.  This should not be
 # changed in package-specific manifests even for third-party packages.
 maintainer = "${PKG_MAINTAINER}"
 www = "${PKG_WWW}"

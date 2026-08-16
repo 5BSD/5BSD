@@ -6,13 +6,13 @@ package's subpackages.
 For example, if a Makefile sets PACKAGE=foo, then the build might generate the
 following packages:
 
-	FreeBSD-foo
-	FreeBSD-foo-dev
-	FreeBSD-foo-lib32
-	FreeBSD-foo-man
+	5BSD-foo
+	5BSD-foo-dev
+	5BSD-foo-lib32
+	5BSD-foo-man
 
 All of these packages will include "foo-all.ucl", but "foo.ucl" will only be
-included by FreeBSD-foo, "foo-dev.ucl" will only be included by FreeBSD-foo-dev,
+included by 5BSD-foo, "foo-dev.ucl" will only be included by 5BSD-foo-dev,
 and so on.
 
 In general, dependencies and post-install scripts should be added in the

@@ -32,9 +32,9 @@
 #
 # Package metadata:
 #
-# PKG_NAME_PREFIX	The prefix to use for package names.  [FreeBSD]
-# PKG_MAINTAINER	The package maintainer.  [re@FreeBSD.org]
-# PKG_WWW		The package website.  [https://www.FreeBSD.org]
+# PKG_NAME_PREFIX	The prefix to use for package names.  [5BSD]
+# PKG_MAINTAINER	The package maintainer.  [re@5bsd.org]
+# PKG_WWW		The package website.  [https://github.com/5BSD/5BSD]
 #
 #
 # Only if _PKG_NEED_ABI is defined:
@@ -55,8 +55,8 @@ PKG_ABI_FILE?=	${WSTAGEDIR}/usr/bin/uname
 # These are used in the generated packages, and can be overridden for
 # downstream builds.
 PKG_NAME_PREFIX?=	5BSD
-PKG_MAINTAINER?=	re@FreeBSD.org
-PKG_WWW?=		https://www.FreeBSD.org
+PKG_MAINTAINER?=	re@5bsd.org
+PKG_WWW?=		https://github.com/5BSD/5BSD
 
 # These can be set per-package.
 PKG_LICENSELOGIC?=	single

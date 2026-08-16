@@ -52,17 +52,17 @@ CROSS_TOOLCHAIN_PARAM=	"CROSS_TOOLCHAIN=${CROSS_TOOLCHAIN}"
 
 # Define OSRELEASE by using newvers.sh
 .if !defined(OSRELEASE) || empty(OSRELEASE)
-.  for _V in TYPE BRANCH REVISION
+.  for _V in TYPE BRAND BRANCH REVISION
 .    if !defined(${_V}) || empty(${_V})
 ${_V}!=	eval $$(awk '/^${_V}=/{print}' ${.CURDIR}/../../sys/conf/newvers.sh); echo $$${_V}
 .    endif
 .  endfor
 .  for _V in ${TARGET_ARCH}
 .    if !empty(TARGET:M${_V})
-OSRELEASE=	${TYPE}-${REVISION}-${BRANCH:C/[.-\/]/_/g}-${TARGET}
+OSRELEASE=	${BRAND}-${REVISION}-${BRANCH:C/[.-\/]/_/g}-${TARGET}
 VOLUME_LABEL=	${REVISION:C/[.-]/_/g}_${BRANCH:C/[.-\/]/_/g}_${TARGET}
 .    else
-OSRELEASE=	${TYPE}-${REVISION}-${BRANCH:C/[.-\/]/_/g}-${TARGET}-${TARGET_ARCH}
+OSRELEASE=	${BRAND}-${REVISION}-${BRANCH:C/[.-\/]/_/g}-${TARGET}-${TARGET_ARCH}
 VOLUME_LABEL=	${REVISION:C/[.-]/_/g}_${BRANCH:C/[.-\/]/_/g}_${TARGET_ARCH}
 .    endif
 .  endfor

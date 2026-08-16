@@ -546,7 +546,7 @@ OSRELDATE=	0
 .endif
 
 # Set VERSION for CTFMERGE to use via the default CTFFLAGS=-L VERSION.
-.for _V in BRANCH REVISION TYPE
+.for _V in BRAND BRANCH REVISION TYPE
 .if !defined(_${_V})
 _${_V}!=	eval $$(awk '/^${_V}=/{print}' ${SRCTOP}/sys/conf/newvers.sh); echo $$${_V}
 .export _${_V}
@@ -558,7 +558,7 @@ SRCRELDATE!=	awk '/^\#define[[:space:]]*__FreeBSD_version/ { print $$3 }' \
 .export SRCRELDATE
 .endif
 .if !defined(VERSION)
-VERSION=	FreeBSD ${_REVISION}-${_BRANCH:C/-p[0-9]+$//} ${TARGET_ARCH} ${SRCRELDATE}
+VERSION=	${_BRAND} ${_REVISION}-${_BRANCH:C/-p[0-9]+$//} ${TARGET_ARCH} ${SRCRELDATE}
 .export VERSION
 .endif
 MAJOR_REVISION=	${_REVISION:R}
@@ -590,8 +590,8 @@ PKG_VERSION:=	${_PKG_REVISION}${EXTRA_REVISION:C/[[:space:]]//g}
 .endif	# !defined(_MKSHOWCONFIG)
 
 PKG_NAME_PREFIX?=	5BSD
-PKG_MAINTAINER?=	re@FreeBSD.org
-PKG_WWW?=		https://www.FreeBSD.org
+PKG_MAINTAINER?=	re@5bsd.org
+PKG_WWW?=		https://github.com/5BSD/5BSD
 PKG_WORKERS_COUNT?=	1
 
 .if make(*package*)

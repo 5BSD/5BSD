@@ -50,6 +50,7 @@
 #
 
 TYPE="FreeBSD"
+BRAND="5BSD"
 REVISION="16.0"
 BRANCH="CURRENT"
 if [ -n "${BRANCH_OVERRIDE}" ]; then
@@ -72,7 +73,7 @@ do
 done
 
 RELEASE="${RELEASE:-${REVISION}-${BRANCH}}"
-VERSION="${VERSION:-${TYPE} ${RELEASE}}"
+VERSION="${VERSION:-${BRAND} ${RELEASE}}"
 
 RELDATE=$(awk '/^#define[[:space:]]*__FreeBSD_version/ {print $3}' ${PARAMFILE:-${SYSDIR}/sys/param.h})
 

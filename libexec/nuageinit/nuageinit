@@ -32,7 +32,7 @@ local function default_user(obj, metadata)
 		name = "freebsd",
 		homedir = "/home/freebsd",
 		groups = "wheel",
-		gecos = "FreeBSD User",
+		gecos = "5BSD User",
 		shell = "/bin/sh",
 		plain_text_passwd = "freebsd",
 		ssh_authorized_keys = ssh_authorized_keys

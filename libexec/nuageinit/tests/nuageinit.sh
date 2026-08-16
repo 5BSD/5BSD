@@ -148,7 +148,7 @@ EOF
 	cat > expectedpasswd << 'EOF'
 root:*:0:0::0:0:Charlie &:/root:/bin/sh
 sys:*:1:0::0:0:Sys:/home/sys:/bin/sh
-freebsd:freebsd:1001:1003::0:0:FreeBSD User:/home/freebsd:/bin/sh
+freebsd:freebsd:1001:1003::0:0:5BSD User:/home/freebsd:/bin/sh
 foobar:$6$j212wezy$7H/1LT4f9/N3wpgNunhsIqtMj62OKiS3nyNwuizouQc3u7MbYCarYeAHWYPYb2FT.lbioDm2RrkJPb9BZMN1O/:1002:1004::0:0:Foo B. Bar:/home/foobar:/bin/sh
 bla::1003:1005::0:0:bla User:/home/bla:/bin/sh
 EOF
