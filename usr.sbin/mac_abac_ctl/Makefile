@@ -23,4 +23,8 @@ MAC_ABACINCDIR=	${INCSDIR}
 MAC_ABACINCDIRPACKAGE=	mac-abac
 DIRS+=		MAC_ABACINCDIR
 
+# The includes build phase does not run realinstall, so arrange for the
+# public ABI include directory before bsd.incs.mk copies mac_abac.h.
+includes: installdirs
+
 .include <bsd.prog.mk>
