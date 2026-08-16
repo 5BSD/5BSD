@@ -2276,8 +2276,32 @@ create-source-packages: .PHONY _pkgbootstrap create-source-src-package create-so
 
 create-world-packages:	_pkgbootstrap .PHONY
 	@rm -f ${WSTAGEDIR}/*.plist 2>/dev/null || :
+	# Kernel modules with an explicit PACKAGE belong to that PKGBASE package,
+	# not to the monolithic kernel package.  Materialize those files in the
+	# world staging root so bsd.pkg.mk can create one package containing both
+	# the module and any related userland files.
+	@if [ -f ${KSTAGEDIR}/kernel.meta ]; then \
+		${METALOG_SORT_CMD} ${KSTAGEDIR}/kernel.meta | \
+		awk ' \
+		  { path=$$1; tags=""; for (i = 2; i <= NF; i++) \
+		      if ($$i ~ /^tags=/) { tags=$$i; sub(/^tags=/, "", tags) } \
+		    n=split(tags, a, ","); pkg=""; \
+		    for (i = 1; i <= n; i++) if (a[i] ~ /^package=/) { \
+		      pkg=a[i]; sub(/^package=/, "", pkg) } \
+		    if (pkg != "" && pkg != "kernel" && pkg != "dtb") print path \
+		  }' | \
+		while IFS= read -r path; do \
+			src=${KSTAGEDIR}/kernel/$${path#./}; \
+			dst=${WSTAGEDIR}/$${path#./}; \
+			[ -f "$$src" ] || continue; \
+			mkdir -p "$${dst%/*}" || exit 1; \
+			cp -pf "$$src" "$$dst" || exit 1; \
+		done; \
+	fi
 	@cd ${WSTAGEDIR} ; \
-		${METALOG_SORT_CMD} ${WSTAGEDIR}/${DISTDIR}/METALOG | \
+		( ${METALOG_SORT_CMD} ${WSTAGEDIR}/${DISTDIR}/METALOG; \
+		  if [ -f ${KSTAGEDIR}/kernel.meta ]; then \
+			${METALOG_SORT_CMD} ${KSTAGEDIR}/kernel.meta; fi ) | \
 		awk -f ${SRCDIR}/release/scripts/mtree-to-plist.awk
 	# bsd.pkg.mk doesn't always know about the dependencies of things
 	# it builds, so for now, always run clean here.

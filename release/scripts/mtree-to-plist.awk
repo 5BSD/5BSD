@@ -25,11 +25,8 @@
 	if (kernel != "") {
 		if ($1 ~ /^\/boot\/dtb\//) {
 			tags="package=dtb"
-		} else {
+		} else if (tags !~ /(^|,)package=/) {
 			tags="package=kernel"
-			if (_kernconf != "") {
-				tags=tags""_kernconf
-			}
 		}
 	}
 	if (length(tags) == 0)
@@ -52,6 +49,7 @@
 					ext=a[i]
 			}
 		}
+		basepkg = pkgname
 		if (ext != "") {
 			pkgname=pkgname"-"ext
 		}
@@ -66,10 +64,10 @@
 		print "No packages specified in line: $0"
 		next
 	}
-	if (kernel != "" && pkgname != "dtb") {
+	if (kernel != "" && basepkg == "kernel") {
 		output="kernel"
 		if (_kernconf != "") {
-			output=output"."_kernconf
+			output = output "." _kernconf
 		}
 		if ($1 ~ /^\/usr\/lib\/debug\/boot/) {
 			output=output"-dbg.plist"

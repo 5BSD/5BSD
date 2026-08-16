@@ -352,6 +352,12 @@ ${_ILINKS}:
 
 CLEANFILES+= ${PROG} ${KMOD}.kld ${OBJS}
 
+# Keep staged kernel modules in the package declared by their Makefile.  Most
+# modules remain part of the kernel package, while feature modules can travel
+# with their userland tools and tests in a PKGBASE package.
+KMODTAGS?=	package=${PACKAGE:Ukernel}
+KMODDBGTAGS?=	package=${PACKAGE:Ukernel},dbg
+
 .if defined(DEBUG_FLAGS) && ${MK_SPLIT_KERNEL_DEBUG} != "no"
 CLEANFILES+= ${FULLPROG} ${PROG}.debug
 .endif
@@ -368,10 +374,10 @@ KERN_DEBUGDIR?=	${DEBUGDIR}
 realinstall: _kmodinstall
 .ORDER: beforeinstall _kmodinstall
 _kmodinstall: .PHONY
-	${INSTALL} -T release -o ${KMODOWN} -g ${KMODGRP} -m ${KMODMODE} \
+	${INSTALL} -T ${KMODTAGS} -o ${KMODOWN} -g ${KMODGRP} -m ${KMODMODE} \
 	    ${_INSTALLFLAGS} ${PROG} ${DESTDIR}${KMODDIR}/
 .if defined(DEBUG_FLAGS) && !defined(INSTALL_NODEBUG) && ${MK_KERNEL_SYMBOLS} != "no"
-	${INSTALL} -T dbg -o ${KMODOWN} -g ${KMODGRP} -m ${KMODMODE} \
+	${INSTALL} -T ${KMODDBGTAGS} -o ${KMODOWN} -g ${KMODGRP} -m ${KMODMODE} \
 	    ${_INSTALLFLAGS} ${PROG}.debug ${DESTDIR}${KERN_DEBUGDIR}${KMODDIR}/
 .endif
 
