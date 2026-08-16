@@ -13,6 +13,9 @@ SUBDIR+= examples
 SUBDIR+= include
 SUBDIR+= sys
 SUBDIR+= usr.sbin
+.if ${MK_BHYVE} != "no"
+SUBDIR+= waspnest
+.endif
 SUBDIR+= atf_python
 .if ${MK_CDDL} != "no"
 SUBDIR+= oclo

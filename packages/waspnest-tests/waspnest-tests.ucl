@@ -1,0 +1,14 @@
+comment = "WASPNest bhyve, VMM, device, checkpoint, and nested-VM qualification"
+
+desc = <<EOD
+Aggregate WASPNest qualification package for bhyve and the VMM kernel
+subsystem.  It combines the VM-free device and sanitizer harnesses, VMM
+ATF/Kyua tests, Alpine Linux and 5BSD live guest matrices, split and packed
+VirtIO queues, multiqueue, device lifecycle, checkpoint/restore, bounded
+soak, AHCI/NVMe/e82545/HDA/xHCI/framebuffer/UART/TPM/pvpanic/passthrough
+activation and checkpoint policy, and Intel nested-VMX qualification.  The
+waspnest-test entry point
+reports unsupported guest features explicitly and treats failed, missing,
+pending, environment-dependent, or unclassified required release gates as
+failures rather than successful skips.
+EOD

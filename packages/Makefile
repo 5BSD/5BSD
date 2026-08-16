@@ -181,6 +181,9 @@ SUBDIR.${MK_TELNET}+=		telnet
 SUBDIR.${MK_TESTS}+=		tests
 SUBDIR.${MK_TESTS}+=		bluetooth-tests
 SUBDIR.${MK_TESTS}+=		vsock-tests
+.if ${MK_BHYVE} != "no"
+SUBDIR.${MK_TESTS}+=		waspnest-tests
+.endif
 SUBDIR.${MK_TESTS}+=		oracled-tests oraclectl-tests
 SUBDIR.${MK_TESTS}+=		serviced-tests servicectl-tests
 SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
