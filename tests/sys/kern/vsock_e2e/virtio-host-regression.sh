@@ -2,12 +2,47 @@
 # Complete VM-free release gate for the bhyve VirtIO lab.
 set -eu
 
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+export PATH
+umask 077
+
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 kern_tests=$(CDPATH= cd -- "$here/.." && pwd)
 tree_root=$(CDPATH= cd -- "$here/../../../.." && pwd)
-workdir=${WORKDIR:-/tmp/virtio-host-regression}
+if [ -n "${WORKDIR:-}" ]; then
+	workdir=$WORKDIR
+	case "$workdir" in
+	/*) ;;
+	*) echo "WORKDIR must be an absolute path" >&2; exit 1 ;;
+	esac
+	if [ -e "$workdir" ]; then
+		[ -d "$workdir" ] && [ ! -L "$workdir" ] || {
+			echo "WORKDIR must be a real directory: $workdir" >&2
+			exit 1
+		}
+		set -- $(stat -f '%u %Lp' "$workdir")
+		[ "$1" -eq "$(id -u)" ] && [ "$2" = 700 ] || {
+			echo "WORKDIR must be owned by the caller with mode 0700: $workdir" >&2
+			exit 1
+		}
+	else
+		mkdir -m 0700 "$workdir"
+	fi
+else
+	workdir=$(mktemp -d /tmp/virtio-host-regression.XXXXXX)
+fi
 
-mkdir -p "$workdir"
+if [ -d "$tree_root/sys" ]; then
+	source_root=$tree_root
+else
+	source_root=${SRCTOP:-/usr/src}
+fi
+[ -d "$source_root/sys" ] || {
+	echo "matching source tree is unavailable: $source_root" >&2
+	exit 1
+}
+
+echo "host-regression artifacts: $workdir"
 
 echo "=== VirtIO device, transport, and requirements sanitizer harnesses ==="
 harness_result="$workdir/device-harness.result"
@@ -28,29 +63,31 @@ sh "$here/host-tools-selftest.sh"
 
 echo "=== bhyve snapshot build-mode integration ==="
 sh "$kern_tests/vsock_device_harness/validate-bhyve-build-modes.sh" \
-    "$tree_root"
+    "$source_root"
 
 echo "=== Intel nested-VMX architectural state ABI ==="
-vmx_test_dir=$tree_root/tests/sys/vmm
-vmx_requirements=$vmx_test_dir/validate-vmx-nested-requirements.sh
-[ -x "$vmx_requirements" ] || {
-	echo "validate-vmx-nested-requirements.sh is unavailable" >&2
-	exit 1
-}
-sh "$vmx_requirements"
-sh "$vmx_test_dir/vmx-nested-live-coverage-selftest.sh"
-vmx_model=$vmx_test_dir/run-vmx-nested-model.sh
-[ -x "$vmx_model" ] || {
-	echo "run-vmx-nested-model.sh is unavailable" >&2
-	exit 1
-}
-if [ -d "$tree_root/sys" ]; then
-	model_srctop=$tree_root
-else
-	model_srctop=${SRCTOP:-/usr/src}
-fi
-SANITIZERS=${NESTED_SANITIZERS:-address,undefined} \
-    SRCTOP=$model_srctop sh "$vmx_model"
+case $(uname -m) in
+amd64)
+	vmx_test_dir=$tree_root/tests/sys/vmm
+	vmx_requirements=$vmx_test_dir/validate-vmx-nested-requirements.sh
+	[ -x "$vmx_requirements" ] || {
+		echo "validate-vmx-nested-requirements.sh is unavailable" >&2
+		exit 1
+	}
+	sh "$vmx_requirements"
+	sh "$vmx_test_dir/vmx-nested-live-coverage-selftest.sh"
+	vmx_model=$vmx_test_dir/run-vmx-nested-model.sh
+	[ -x "$vmx_model" ] || {
+		echo "run-vmx-nested-model.sh is unavailable" >&2
+		exit 1
+	}
+	SANITIZERS=${NESTED_SANITIZERS:-address,undefined} \
+	    SRCTOP=$source_root sh "$vmx_model"
+	;;
+*)
+	echo "SKIP nested VMX model: Intel amd64-only"
+	;;
+esac
 
 echo "=== VirtIO, vsock, and AF_VSOCK isolation ATF suites ==="
 if [ "$(id -u)" -ne 0 ] &&
