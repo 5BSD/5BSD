@@ -13,6 +13,7 @@ SUBDIR+=	bhyvectl
 SUBDIR+=	bhyveload
 .endif
 SUBDIR+=	boot0cfg
+SUBDIR+=	bsdtrace
 .if ${MK_TOOLCHAIN} != "no"
 SUBDIR+=	btxld
 .endif

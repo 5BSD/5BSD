@@ -1,0 +1,9 @@
+comment = "Hardware-assisted execution tracing (Intel PT)"
+
+desc = <<EOD
+bsdtrace captures every branch a program takes using Intel Processor
+Trace via the hwt(4) framework, then decodes the trace into
+symbolized control-flow events (calls, returns, jumps, syscalls)
+with per-function profiles, call trees, and flame-graph output.
+Traces are saved for offline analysis.
+EOD

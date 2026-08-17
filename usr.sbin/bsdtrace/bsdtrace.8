@@ -1,0 +1,163 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 16, 2026
+.Dt BSDTRACE 8
+.Os
+.Sh NAME
+.Nm bsdtrace
+.Nd hardware-assisted execution tracing using Intel Processor Trace
+.Sh SYNOPSIS
+.Nm
+.Cm exec
+.Op Ar options
+.Fl -
+.Ar command Op Ar args
+.Nm
+.Cm trace
+.Op Ar options
+.Ar pid
+.Nm
+.Cm list
+.Op Fl p Ar pid
+.Nm
+.Cm decode
+.Op Fl f Ar format
+.Ar trace.pt
+.Sh DESCRIPTION
+.Nm
+uses Intel Processor Trace (PT) via the
+.Xr hwt 4
+framework to capture every branch a program takes, then decodes the
+trace into symbolized control-flow events: function calls, returns,
+jumps, and system calls.
+Traces are saved to disk for offline analysis — capture once,
+re-decode as many times as needed.
+.Ss Subcommands
+.Bl -tag -width "decode"
+.It Cm exec
+Run a command under tracing.
+.It Cm trace
+Attach to a running process.
+.It Cm list
+Show HWT availability and backend capabilities; with
+.Fl p ,
+list a process's threads.
+.It Cm decode
+Offline re-decode a saved
+.Pa .pt
++
+.Pa .meta
+file pair.
+.El
+.Ss Options
+.Bl -tag -width "-r range"
+.It Fl f Ar format
+Output format:
+.Cm text
+(default),
+.Cm json ,
+.Cm profile ,
+.Cm tree ,
+or
+.Cm collapsed
+(folded stacks for flame graphs).
+.It Fl d Ar seconds
+Trace duration
+.Po Fl t
+also accepted;
+.Cm exec
+default: 30
+.Pc .
+.It Fl s Ar size
+PT buffer size, e.g.\&
+.Li 8m ,
+.Li 64m
+(default: 64m).
+.It Fl o Ar file
+Output path for the
+.Pa .pt
+file.
+.It Fl r Ar range
+IP filter:
+.Li 0xstart:0xend
+(end exclusive) or a function name (up to 2 ranges); prefix with
+.Li stop:
+for TraceStop mode.
+.It Fl T Ar tid
+Thread index (default: 0), comma list
+.Pq Li 0,1,3 ,
+or
+.Cm all .
+.It Fl P Ar freq
+PSB sync frequency 0-15.
+.It Fl C
+Enable timing packets (MTC + cycle-accurate).
+.It Fl M Ar freq
+Explicit MTC frequency 1-15.
+.It Fl Y Ar thresh
+Explicit CYC threshold 1-15.
+.It Fl W
+Enable PTWRITE trace markers (see
+.In bsdtrace_ptwrite.h ) .
+.It Fl K
+Include OS/kernel-mode tracing.
+.It Fl m Ar count
+Stop after N HWT records.
+.It Fl b Ar backend
+HWT backend (default: auto-detect).
+.It Fl A
+Disable ASLR for the child process
+.Pq Cm exec
+only.
+.It Fl n
+Dry run — validate setup without tracing.
+.It Fl p
+Pause the target on mmap/exec events.
+.El
+.Sh OUTPUT
+Each trace produces
+.Pa bsdtrace-<pid>.pt
+(raw Intel PT data) and
+.Pa bsdtrace-<pid>.meta
+(binary mapping metadata as JSONL); with
+.Fl T Cm all ,
+additional per-thread
+.Pa -tid<N>
+file pairs are written.
+.Sh REQUIREMENTS
+A kernel with
+.Cd options HWT_HOOKS
+and the
+.Xr hwt 4
+and pt kernel modules loaded, on a CPU with Intel Processor Trace.
+Tracing requires root.
+Offline
+.Cm decode
+needs no special privileges or hardware.
+.Sh EXAMPLES
+Trace a command for 5 seconds:
+.Bd -literal -offset indent
+bsdtrace exec -t 5 -- /bin/sleep 1
+.Ed
+.Pp
+Attach to a running process, all threads, with timing:
+.Bd -literal -offset indent
+bsdtrace trace -T all -C -d 10 $(pgrep -n nginx)
+.Ed
+.Pp
+Re-decode a saved trace as folded stacks for a flame graph:
+.Bd -literal -offset indent
+bsdtrace decode -f collapsed bsdtrace-1234.pt | \e
+    flamegraph.pl > trace.svg
+.Ed
+.Sh SEE ALSO
+.Xr bsdinstruments 8 ,
+.Xr hwtlm 8
+.Sh HISTORY
+.Nm
+first appeared in the ObservableBSD project.
+.Sh AUTHORS
+.An Kory Heard
