@@ -49,12 +49,18 @@ struct hwt_record_entry {
 	union {
 		/*
 		 * Used for MMAP, EXECUTABLE, INTERP,
-		 * and KERNEL records.
+		 * and KERNEL records.  For MMAP records, pgoff and
+		 * len carry the file offset and length of the
+		 * mapping so consumers can bias nonstandard mappings
+		 * (JIT/plugin loaders) correctly; both are 0 when
+		 * unknown.
 		 */
 		struct {
 			char *fullpath;
 			uintptr_t addr;
 			uintptr_t baseaddr;
+			off_t pgoff;
+			size_t len;
 		};
 		/* Used for BUFFER records. */
 		struct {

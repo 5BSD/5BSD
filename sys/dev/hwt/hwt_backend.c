@@ -252,6 +252,8 @@ hwt_backend_svc_buf(struct hwt_context *ctx, void *data, size_t data_size,
 
 	dprintf("%s\n", __func__);
 
+	if (ctx->hwt_backend->ops->hwt_backend_svc_buf == NULL)
+		return (EOPNOTSUPP);
 	error = ctx->hwt_backend->ops->hwt_backend_svc_buf(ctx, data, data_size,
 	    data_version);
 

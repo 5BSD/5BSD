@@ -92,7 +92,12 @@ hwt_record_to_user(struct hwt_record_entry *ent,
 	case HWT_RECORD_KERNEL:
 		usr->addr = ent->addr;
 		usr->baseaddr = ent->baseaddr;
+		usr->pgoff = ent->pgoff;
+		usr->len = ent->len;
 		strncpy(usr->fullpath, ent->fullpath, MAXPATHLEN);
+		break;
+	case HWT_RECORD_MUNMAP:
+		usr->addr = ent->addr;
 		break;
 	case HWT_RECORD_BUFFER:
 	case HWT_RECORD_OVERFLOW:
@@ -288,6 +293,9 @@ hwt_record_kernel_objects(struct hwt_context *ctx)
 		entry->record_type = HWT_RECORD_KERNEL;
 		entry->fullpath = strdup(kobase[i].pm_file, M_HWT_RECORD);
 		entry->addr = kobase[i].pm_address;
+		entry->baseaddr = 0;
+		entry->pgoff = 0;
+		entry->len = 0;
 
 		HWT_CTX_LOCK(ctx);
 		TAILQ_INSERT_HEAD(&ctx->records, entry, next);

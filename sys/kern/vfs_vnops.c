@@ -3191,6 +3191,9 @@ vn_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t size,
 		if (vn_fullpath(vp, &fullpath, &freepath) == 0) {
 			ent.fullpath = fullpath;
 			ent.addr = (uintptr_t) *addr;
+			ent.baseaddr = 0;
+			ent.pgoff = foff;
+			ent.len = size;
 			ent.record_type = HWT_RECORD_MMAP;
 			HWT_CALL_HOOK(td, HWT_MMAP, &ent);
 			free(freepath, M_TEMP);

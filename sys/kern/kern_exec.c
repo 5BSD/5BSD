@@ -996,6 +996,8 @@ interpret:
 		ent.fullpath = imgp->execpath;
 		ent.addr = imgp->et_dyn_addr;
 		ent.baseaddr = imgp->reloc_base;
+		ent.pgoff = 0;
+		ent.len = 0;
 		ent.record_type = HWT_RECORD_EXECUTABLE;
 		HWT_CALL_HOOK(td, HWT_EXEC, &ent);
 		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);

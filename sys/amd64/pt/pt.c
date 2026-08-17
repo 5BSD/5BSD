@@ -56,6 +56,7 @@
 #include <vm/vm_page.h>
 
 #include <machine/atomic.h>
+#include <machine/cpu.h>
 #include <machine/cpufunc.h>
 #include <machine/fpu.h>
 #include <machine/smp.h>
@@ -299,6 +300,13 @@ pt_cpu_stop(void *dummy)
 		    curcpu);
 		return;
 	}
+	/*
+	 * If PT is already stopped (e.g. HWT_IOC_STOP already ran
+	 * pt_cpu_stop_clean), the buffer offset is already recorded;
+	 * toggling off again would XSAVES stopped PT and clobber it.
+	 */
+	if ((rdmsr(MSR_IA32_RTIT_CTL) & RTIT_CTL_TRACEEN) == 0)
+		return;
 	pt_cpu_toggle_local(cpu->ctx->save_area, false);
 	pt_update_buffer(ctx);
 }
@@ -322,8 +330,20 @@ pt_topa_prepare(struct pt_ctx *ctx, struct hwt_vm *vm)
 
 	KASSERT(buf->topa_hw == NULL,
 	    ("%s: ToPA info already exists", __func__));
-	buf->topa_hw = mallocarray(vm->npages + 1, sizeof(uint64_t), M_PT,
-	    M_ZERO | M_WAITOK);
+	/*
+	 * The ToPA table is walked by the CPU by physical address, and
+	 * its base (loaded into IA32_RTIT_OUTPUT_BASE and referenced by
+	 * the END entry) must be 4K-aligned — the low 12 bits of a ToPA
+	 * entry are END/INT/STOP/SIZE flags, not address.  It must also
+	 * be physically contiguous.  malloc(9) guarantees neither for
+	 * sub-page or multi-page tables, so use contigmalloc(9) for a
+	 * page-aligned, physically-contiguous table.  Freed with free(9)
+	 * (which handles contigmalloc'd memory).
+	 */
+	buf->topa_hw = contigmalloc((vm->npages + 1) * sizeof(uint64_t),
+	    M_PT, M_ZERO | M_WAITOK, 0, ~(vm_paddr_t)0, PAGE_SIZE, 0);
+	if (buf->topa_hw == NULL)
+		return (ENOMEM);
 	dprintf("%s: ToPA virt addr %p\n", __func__, buf->topa_hw);
 	buf->size = vm->npages * PAGE_SIZE;
 	for (i = 0; i < vm->npages; i++) {
@@ -680,8 +700,14 @@ pt_backend_disable(struct hwt_context *ctx, int cpu_id)
 	dprintf("%s: waiting for cpu %d to exit interrupt handler\n", __func__,
 	    cpu_id);
 	pt_cpu_set_state(cpu_id, PT_INACTIVE);
-	while (atomic_cmpset_int(&cpu->in_pcint_handler, 1, 0))
-		;
+	/*
+	 * State is now INACTIVE, so the ToPA PMI handler early-returns
+	 * without setting this flag; wait for any in-flight handler to
+	 * finish before stopping.  (The previous cmpset merely cleared
+	 * the flag and returned without waiting.)
+	 */
+	while (atomic_load_acq_int(&cpu->in_pcint_handler) != 0)
+		cpu_spinwait();
 
 	pt_cpu_stop(NULL);
 	CPU_CLR(cpu_id, &ctx->cpu_map);
@@ -729,8 +755,9 @@ pt_backend_disable_smp(struct hwt_context *ctx)
 		dprintf("%s: waiting for cpu %d to exit interrupt handler\n",
 		    __func__, cpu_id);
 		pt_cpu_set_state(cpu_id, PT_INACTIVE);
-		while (atomic_cmpset_int(&cpu->in_pcint_handler, 1, 0))
-			;
+		/* Wait for any in-flight ToPA PMI handler to finish. */
+		while (atomic_load_acq_int(&cpu->in_pcint_handler) != 0)
+			cpu_spinwait();
 	}
 	smp_rendezvous_cpus(ctx->cpu_map, NULL, pt_cpu_stop, NULL, NULL);
 
@@ -907,8 +934,9 @@ pt_backend_stop_op(struct hwt_context *ctx)
 
 	CPU_FOREACH_ISSET(cpu_id, &ctx->cpu_map) {
 		cpu = &pt_pcpu[cpu_id];
-		while (atomic_cmpset_int(&cpu->in_pcint_handler, 1, 0))
-			;
+		/* Wait for any in-flight ToPA PMI handler to finish. */
+		while (atomic_load_acq_int(&cpu->in_pcint_handler) != 0)
+			cpu_spinwait();
 	}
 	smp_rendezvous_cpus(ctx->cpu_map, NULL, pt_cpu_stop_clean,
 	    NULL, NULL);
@@ -978,12 +1006,13 @@ pt_send_buffer_record(void *arg)
 static void
 pt_topa_status_clear(void)
 {
-	uint64_t reg;
 
-	reg = rdmsr(MSR_IA_GLOBAL_STATUS_RESET);
-	reg &= ~GLOBAL_STATUS_FLAG_TRACETOPAPMI;
-	reg |= GLOBAL_STATUS_FLAG_TRACETOPAPMI;
-	wrmsr(MSR_IA_GLOBAL_STATUS_RESET, reg);
+	/*
+	 * IA32_PERF_GLOBAL_STATUS_RESET is write-1-to-clear and reads
+	 * as zero; write only the TOPA-PMI reset bit so unrelated
+	 * status bits are left untouched.
+	 */
+	wrmsr(MSR_IA_GLOBAL_STATUS_RESET, GLOBAL_STATUS_FLAG_TRACETOPAPMI);
 }
 
 /*
