@@ -13,7 +13,10 @@ SUBDIR+=	bhyvectl
 SUBDIR+=	bhyveload
 .endif
 SUBDIR+=	boot0cfg
+# bsdtrace links libipt, which is MK_PMC-gated (see lib/Makefile).
+.if ${MK_PMC} != "no"
 SUBDIR+=	bsdtrace
+.endif
 .if ${MK_TOOLCHAIN} != "no"
 SUBDIR+=	btxld
 .endif
