@@ -1,0 +1,10 @@
+comment = "Hardware telemetry with OpenTelemetry output"
+
+desc = <<EOD
+hwtlm collects CPU power consumption (Intel RAPL), per-core
+temperatures, frequencies, C-state residency, ACPI thermal zones,
+and GPU state, and ships the results as text, JSONL, or OTLP/HTTP
+metrics to an OpenTelemetry collector.  The sysctl-based sensors are
+architecture-independent; RAPL power data requires an Intel CPU and
+cpuctl(4).
+EOD

@@ -1,0 +1,106 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 16, 2026
+.Dt HWTLM 8
+.Os
+.Sh NAME
+.Nm hwtlm
+.Nd hardware telemetry with OpenTelemetry output
+.Sh SYNOPSIS
+.Nm
+.Cm list
+.Op Fl -format Ar text | json
+.Op Fl -per-core
+.Nm
+.Cm watch
+.Op Fl -interval Ar seconds
+.Op Fl -duration Ar seconds
+.Op Fl -per-core
+.Op Fl -format Ar text | json | otel
+.Op Fl -endpoint Ar url
+.Nm
+.Cm exec
+.Op Fl -format Ar text | json
+.Op Fl -per-core
+.Fl -
+.Ar command Op Ar args
+.Sh DESCRIPTION
+.Nm
+collects CPU power consumption (Intel RAPL), per-core temperatures,
+frequencies, C-state residency, ACPI thermal zones, and GPU state,
+and ships the results as text, JSONL, or OTLP/HTTP metrics to an
+OpenTelemetry collector.
+.Ss Subcommands
+.Bl -tag -width "watch"
+.It Cm list
+Report CPU identity, RAPL power domains, temperatures, frequencies,
+C-state support, ACPI thermal zones, and GPU state.
+.It Cm watch
+Sample telemetry at the given interval (default 1 second) until
+interrupted or
+.Fl -duration
+elapses.
+With
+.Fl -format Cm otel ,
+each sample interval becomes a set of OTLP gauge metrics POSTed to
+the collector's
+.Pa /v1/metrics
+endpoint.
+.It Cm exec
+Read RAPL energy counters and temperatures before and after running
+the given command, then report total energy, average power, and
+temperature delta.
+The child's exit status is propagated.
+.El
+.Sh HARDWARE SUPPORT
+RAPL power data requires an Intel CPU and the
+.Xr cpuctl 4
+kernel module; temperatures require
+.Xr coretemp 4
+or a SoC-specific driver.
+.Nm
+degrades gracefully when either is missing: the sysctl-based
+sensors (temperatures, frequencies, C-states via
+.Xr acpi 4 ,
+thermal zones) are architecture-independent and work on arm64 and
+riscv given the appropriate platform drivers, while all power
+columns are simply omitted.
+.Sh ENVIRONMENT
+The OTLP exporter honors
+.Ev OTEL_SERVICE_NAME ,
+.Ev OTEL_RESOURCE_ATTRIBUTES ,
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
+.Ev OTEL_EXPORTER_OTLP_HEADERS ,
+.Ev OTEL_EXPORTER_OTLP_COMPRESSION ,
+and
+.Ev OTEL_EXPORTER_OTLP_TIMEOUT .
+.Sh EXAMPLES
+Sample every 2 seconds with per-core detail:
+.Bd -literal -offset indent
+hwtlm watch --per-core --interval 2
+.Ed
+.Pp
+Ship metrics to an OpenTelemetry collector for 5 minutes:
+.Bd -literal -offset indent
+hwtlm watch --format otel --endpoint http://collector:4318 \e
+    --duration 300
+.Ed
+.Pp
+Measure the energy cost of a build:
+.Bd -literal -offset indent
+hwtlm exec -- make -j20
+.Ed
+.Sh SEE ALSO
+.Xr acpi 4 ,
+.Xr coretemp 4 ,
+.Xr cpuctl 4 ,
+.Xr bsdinstruments 8
+.Sh HISTORY
+.Nm
+first appeared in the ObservableBSD project and was ported from
+Swift to C for inclusion in the base system.
+.Sh AUTHORS
+.An Kory Heard
