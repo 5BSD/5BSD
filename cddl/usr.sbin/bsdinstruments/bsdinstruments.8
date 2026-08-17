@@ -1,0 +1,190 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 16, 2026
+.Dt BSDINSTRUMENTS 8
+.Os
+.Sh NAME
+.Nm bsdinstruments
+.Nd DTrace-backed profiling templates with OpenTelemetry output
+.Sh SYNOPSIS
+.Nm
+.Cm list
+.Op Fl -json
+.Nm
+.Cm watch
+.Op Ar profile | Fl f Ar script.d
+.Op Fl -param Ar key=value
+.Op Fl -pid Ar n
+.Op Fl -execname Ar name
+.Op Fl -uid Ar n
+.Op Fl -gid Ar n
+.Op Fl -jail Ar jid
+.Op Fl -where Ar predicate
+.Op Fl -duration Ar seconds
+.Op Fl -with-stack
+.Op Fl -with-ustack
+.Op Fl -format Ar text | json | otel | collapsed
+.Op Fl -endpoint Ar url
+.Op Fl -bufsize Ar size
+.Op Fl -switchrate Ar rate
+.Nm
+.Cm generate
+.Op Ar profile | Fl f Ar script.d
+.Op Ar rendering options ...
+.Nm
+.Cm probes
+.Op Fl -provider Ar name
+.Op Fl -regex Ar re
+.Op Fl -pid Ar n
+.Op Fl -json
+.Sh DESCRIPTION
+.Nm
+bundles a catalog of DTrace profiling templates covering system
+tracing, file and network activity, allocations, scheduler and lock
+contention analysis, and USDT-instrumented applications, and ships
+the results as text, JSONL, or OTLP/HTTP+JSON to an OpenTelemetry
+collector.
+.Pp
+A profile is a plain
+.Pa .d
+file.
+Profiles are loaded from three locations, in increasing precedence:
+.Pa /usr/share/bsdinstruments/profiles
+(base system),
+.Pa /usr/local/share/bsdinstruments/profiles
+(ports), and
+.Pa ~/.bsdinstruments/profiles
+(per-user).
+When the same profile name appears in several locations the
+higher-precedence file shadows the lower one and a warning is
+printed to standard error.
+.Ss Subcommands
+.Bl -tag -width "generate"
+.It Cm list
+Print every profile the loader found.
+With
+.Fl -json ,
+emit one JSONL record per profile.
+.It Cm watch
+Run a profile (or an explicit
+.Fl f Ar script.d
+file) via
+.Xr dtrace 1 Ap s
+libdtrace and stream its output through the selected exporter.
+Requires root.
+.It Cm generate
+Render a profile to final D source without running it, applying the
+same parameter, filter, stack, and duration processing as
+.Cm watch .
+Needs no privileges; useful for piping into
+.Nm dtrace Fl s Ar - .
+.It Cm probes
+List DTrace probes available on this system, including USDT probes
+of a running process when
+.Fl -pid
+is given.
+.El
+.Ss Profile markers
+.Bl -tag -width Ds
+.It Li /* @bsdinstruments-predicate */
+Replaced with the composed
+.Fl -pid , -execname , -uid , -gid , -jail , -where
+filter predicate.
+.It Li /* @bsdinstruments-predicate-and */
+Appended, with a leading
+.Ql && ,
+inside a profile's own predicate block.
+.It Li /* @bsdinstruments-stack */ , /* @bsdinstruments-ustack */
+Replaced with
+.Fn stack /
+.Fn ustack
+actions when
+.Fl -with-stack /
+.Fl -with-ustack
+is set.
+.It Li ${name}
+Substituted from
+.Fl -param Ar name=value .
+.El
+.Ss Output formats
+.Bl -tag -width "collapsed"
+.It Cm text
+Line-oriented dwatch-style output; libdtrace's formatted output goes
+directly to standard output, in color on a terminal.
+.It Cm json
+One JSON object per probe firing, pipe-friendly for
+.Xr jq 1 ,
+Loki, or Vector.
+.It Cm otel
+Batch events as OTLP LogRecords POSTed to the collector's
+.Pa /v1/logs
+endpoint; DTrace aggregations become typed metrics on
+.Pa /v1/metrics
+(count/sum as monotonic Sums, min/max/avg as Gauges, quantize
+variants as Histograms).
+.It Cm collapsed
+Folded stacks for
+.Nm flamegraph.pl
+or speedscope; requires
+.Fl -with-stack
+and/or
+.Fl -with-ustack .
+.El
+.Ss DTrace buffer tuning
+.Fl -bufsize
+sets the per-CPU trace buffer size (default 4m for text output, 16m
+for structured output) and
+.Fl -switchrate
+the buffer drain cadence (default 50ms).
+Increase both for extreme probe rates.
+.Sh ENVIRONMENT
+The OTLP exporter honors the standard OpenTelemetry variables
+.Ev OTEL_SERVICE_NAME ,
+.Ev OTEL_RESOURCE_ATTRIBUTES ,
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT ,
+.Ev OTEL_EXPORTER_OTLP_HEADERS ,
+.Ev OTEL_EXPORTER_OTLP_COMPRESSION ,
+and
+.Ev OTEL_EXPORTER_OTLP_TIMEOUT .
+An explicit
+.Fl -endpoint
+flag takes precedence over
+.Ev OTEL_EXPORTER_OTLP_ENDPOINT .
+.Sh EXAMPLES
+Watch
+.Xr kill 2
+syscalls system-wide:
+.Bd -literal -offset indent
+bsdinstruments watch kill
+.Ed
+.Pp
+Trace TCP connects from nginx for 60 seconds as JSONL:
+.Bd -literal -offset indent
+bsdinstruments watch tcp-connect --execname nginx --duration 60 \e
+    --format json | jq .
+.Ed
+.Pp
+Ship syscall counts to an OpenTelemetry collector:
+.Bd -literal -offset indent
+bsdinstruments watch syscall-counts --format otel \e
+    --endpoint http://collector:4318 --duration 10
+.Ed
+.Pp
+Generate a flame graph of on-CPU stacks:
+.Bd -literal -offset indent
+bsdinstruments watch sched-on-cpu --with-stack --format collapsed \e
+    --duration 10 | flamegraph.pl > out.svg
+.Ed
+.Sh SEE ALSO
+.Xr dtrace 1 ,
+.Xr dwatch 1 ,
+.Xr hwtlm 8
+.Sh HISTORY
+.Nm
+first appeared in the ObservableBSD project and was ported from
+Swift to C for inclusion in the base system.
+.Sh AUTHORS
+.An Kory Heard

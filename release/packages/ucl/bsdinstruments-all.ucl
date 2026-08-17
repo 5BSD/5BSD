@@ -1,0 +1,9 @@
+comment = "DTrace profiling templates with OpenTelemetry output"
+
+desc = <<EOD
+bsdinstruments bundles a catalog of DTrace-backed profiling templates
+covering system tracing, file and network activity, allocations,
+scheduler and lock analysis, and USDT-instrumented applications, and
+ships the results as text, JSONL, or OTLP/HTTP+JSON to an
+OpenTelemetry collector.
+EOD
