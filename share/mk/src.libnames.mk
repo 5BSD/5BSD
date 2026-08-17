@@ -71,6 +71,7 @@ _INTERNALLIBS=	\
 		nvmf \
 		openbsd \
 		opts \
+		otelexport \
 		parse \
 		pe \
 		pfctl \
@@ -428,6 +429,7 @@ _DP_gtest=	pthread regex
 _DP_gtest_main=	gtest
 _DP_ifconfig=	m
 _DP_ipf=	kvm
+_DP_otelexport=	z ssl crypto pthread
 _DP_iscsiutil=	md
 _DP_kldelf=	elf
 _DP_krb5ss=	edit
@@ -768,6 +770,9 @@ LIBPKGECC?=	${LIBPKGECCDIR}/libpkgecc${PIE_SUFFIX}.a
 
 LIBPMCSTATDIR=	${_LIB_OBJTOP}/lib/libpmcstat
 LIBPMCSTAT?=	${LIBPMCSTATDIR}/libpmcstat${PIE_SUFFIX}.a
+
+LIBOTELEXPORTDIR=	${_LIB_OBJTOP}/lib/libotelexport
+LIBOTELEXPORT?=	${LIBOTELEXPORTDIR}/libotelexport${PIE_SUFFIX}.a
 
 LIBUTIL++DIR=	${_LIB_OBJTOP}/lib/libutil++
 LIBUTIL++?=	${LIBUTIL++DIR}/libutil++${PIE_SUFFIX}.a

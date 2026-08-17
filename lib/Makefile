@@ -91,6 +91,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libnvmf \
 	liboes \
 	libopenbsd \
+	libotelexport \
 	liboraclectl \
 	liboraclert \
 	libpam \
