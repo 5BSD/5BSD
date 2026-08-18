@@ -45,6 +45,7 @@ SUBDIR=	blocklist \
 	fwget \
 	geom \
 	ggate \
+	hwtlm \
 	lib9p \
 	libauditcmp \
 	libarchive \
@@ -137,7 +138,7 @@ SUBDIR.${MK_CCD}+=		ccdconfig
 SUBDIR.${MK_CUSE}+=		libcuse
 SUBDIR.${MK_CXGBETOOL}+=	cxgbe-tools
 SUBDIR.${MK_DMAGENT}+=		dma
-SUBDIR.${MK_DTRACE}+=		ctf dtrace dwatch
+SUBDIR.${MK_DTRACE}+=		bsdinstruments ctf dtrace dwatch
 SUBDIR.${MK_EE}+=		ee
 SUBDIR.${MK_EFI}+=		efi-tools
 SUBDIR.${MK_EXAMPLES}+=		examples

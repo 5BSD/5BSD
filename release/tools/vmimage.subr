@@ -161,6 +161,13 @@ vm_install_base() {
 		metalog_add_data ./boot/loader.conf
 	fi
 
+	# Use the serial console (comconsole) so the image is drivable over a
+	# bhyve -l com1 serial line for automated boot verification.  Headless
+	# bhyve has no framebuffer, so vidconsole is unavailable there and must
+	# NOT be listed (pairing it yields "no valid consoles!").
+	echo 'console="comconsole"' >> ${DESTDIR}/boot/loader.conf
+	metalog_add_data ./boot/loader.conf
+
 	return 0
 }
 
