@@ -9,6 +9,11 @@ INCSDIR?=	${INCLUDEDIR}/casper
 SHLIB=	cap_netdb
 
 SRCS=	cap_netdb.c
+
+.if ${MK_DTRACE} != "no"
+SRCS+=	cap_netdb_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 .endif
 
 INCS=	cap_netdb.h

@@ -44,6 +44,7 @@
 #include <libcasper_service.h>
 
 #include "cap_fileargs.h"
+#include "cap_fileargs_probes.h"
 
 #define CACHE_SIZE	128
 
@@ -599,20 +600,29 @@ fileargs_allowed(const nvlist_t *limits, const nvlist_t *request, int operation)
 {
 	const char *name;
 
-	if ((allowed_operations & operation) == 0)
+	if ((allowed_operations & operation) == 0) {
+		CAP_FILEARGS_PROBE_ALLOW("", operation, 0);
 		return (false);
+	}
 
 	name = dnvlist_get_string(request, "name", NULL);
-	if (name == NULL)
+	if (name == NULL) {
+		CAP_FILEARGS_PROBE_ALLOW("", operation, 0);
 		return (false);
+	}
 
 	/* Fast path. */
-	if (lastname != NULL && strcmp(name, lastname) == 0)
+	if (lastname != NULL && strcmp(name, lastname) == 0) {
+		CAP_FILEARGS_PROBE_ALLOW(name, operation, 1);
 		return (true);
+	}
 
-	if (!nvlist_exists_null(limits, name))
+	if (!nvlist_exists_null(limits, name)) {
+		CAP_FILEARGS_PROBE_ALLOW(name, operation, 0);
 		return (false);
+	}
 
+	CAP_FILEARGS_PROBE_ALLOW(name, operation, 1);
 	return (true);
 }
 
@@ -632,6 +642,7 @@ fileargs_limit(const nvlist_t *oldlimits, const nvlist_t *newlimits)
 
 	caprightsp = dnvlist_get_binary(newlimits, "cap_rights", NULL, NULL, 0);
 
+	CAP_FILEARGS_PROBE_LIMIT(allowed_operations, capflags);
 	return (0);
 }
 

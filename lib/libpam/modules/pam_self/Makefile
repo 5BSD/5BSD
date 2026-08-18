@@ -27,4 +27,10 @@ LIB=		pam_self
 SRCS=		pam_self.c
 MANNODEV=	pam_self.8
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=		pam_self_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

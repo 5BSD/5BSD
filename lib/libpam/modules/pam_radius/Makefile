@@ -31,4 +31,10 @@ WARNS?=	3
 
 LIBADD+=	radius
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=	pam_radius_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

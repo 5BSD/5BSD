@@ -58,6 +58,7 @@
 #include <sys/uio.h>
 #include <sys/sysent.h>
 #include <sys/systm.h>
+#include <sys/sdt.h>
 
 #include <sys/file.h>
 #include <sys/poll.h>
@@ -84,6 +85,12 @@
 #include <security/mac/mac_framework.h>
 
 MALLOC_DEFINE(M_BPF, "BPF", "BPF data");
+
+SDT_PROVIDER_DEFINE(bpf);
+/* Opening the raw packet-capture device.  Args: opener cred, result. */
+SDT_PROBE_DEFINE2(bpf, , , open, "struct ucred *", "int");
+/* Binding a capture descriptor to an interface.  Args: ifname, cred. */
+SDT_PROBE_DEFINE2(bpf, , , attach, "char *", "struct ucred *");
 
 struct bpf_if {
 	struct bpfd_list	bif_dlist;	/* list of all interfaces */
@@ -777,6 +784,7 @@ bpfopen(struct cdev *dev, int flags, int fmt, struct thread *td)
 	/* Disable VLAN pcp tagging. */
 	d->bd_pcp = 0;
 
+	SDT_PROBE2(bpf, , , open, td->td_ucred, 0);
 	return (0);
 }
 
@@ -1421,9 +1429,12 @@ bpfioctl(struct cdev *dev, u_long cmd, caddr_t addr, int flags,
 			    sizeof(ifr->ifr_name)) == 0)
 				break;
 		}
-		if (bp != NULL)
+		if (bp != NULL) {
 			error = bpf_attachd(d, bp);
-		else
+			if (error == 0)
+				SDT_PROBE2(bpf, , , attach, bp->bif_name,
+				    td->td_ucred);
+		} else
 			error = ENXIO;
 		BPF_UNLOCK();
 		break;

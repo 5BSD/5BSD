@@ -1,0 +1,138 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * storwatch.d -- observe storage/filesystem policy: ZFS administrative ioctls
+ *		  and per-file VOP access verdicts, the capability-fd
+ *		  ("trustedzfs") deny and op-return path, mount/unmount, and the
+ *		  ACL/chroot security VOPs.
+ *
+ * KERNEL (SDT) providers added to this 5BSD/VBSD fork.  Dataset names, mount
+ * fstypes and paths are kernel char* -- dereferenced with stringof(args[N]).
+ * The firing thread is the acting process: execname/uid/pid name it (the zfs
+ * ioc probe also carries the caller uid explicitly as args[2]).
+ *
+ * Providers / probes consumed (args in exact SDT_PROBE_DEFINE order):
+ *
+ *   zfs:::ioc          (int vecnum, char *dataset, uint64_t uid, int error)
+ *		src: contrib/openzfs/.../kmod_core.c  DEFINE4
+ *   zfs:::access       (uint64_t obj_id, int accmode, struct ucred *cr, int result)
+ *		src: contrib/openzfs/.../zfs_vnops_os.c (DEFINE in kmod_core.c)
+ *   trustedzfs:::denied (uint64_t ds_guid, int cmd, uint64_t a, uint64_t b)
+ *		src: contrib/openzfs/.../zfs_handle.c DEFINE4
+ *   trustedzfs:::op-return (uint64_t ds_guid, int cmd, int result)
+ *		src: contrib/openzfs/.../zfs_handle.c DEFINE3 (probe op__return)
+ *   mount:::mount      (char *fstype, char *fspath, uint64_t flags, struct ucred *cr, int error)
+ *		src: sys/kern/vfs_mount.c  DEFINE5
+ *   mount:::unmount    (char *fstype, char *fspath, uint64_t flags, int error)
+ *		src: sys/kern/vfs_mount.c  DEFINE4
+ *   vfs:::setacl       (acl_type_t type, struct ucred *cr, int error)
+ *		src: sys/kern/vfs_acl.c    DEFINE3
+ *   vfs:::chroot       (struct vnode *vp, struct ucred *cr, int error)
+ *		src: sys/kern/vfs_syscalls.c DEFINE3
+ *
+ * REQUIRES: a kernel (and zfs.ko) rebuilt with these SDT providers.  Until
+ * then "dtrace -l -P zfs" / "-P trustedzfs" / "-P mount" / "-P vfs" lists
+ * nothing.
+ *
+ * Example:  dtrace -s storwatch.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-6s %-16s %-16s %-24s %s\n",
+	    "TIME", "UID", "EXEC", "OP", "OBJECT", "RESULT");
+}
+
+/* -------- ZFS administrative ioctls -------- */
+
+zfs:::ioc
+{
+	this->ds = stringof(args[1]);
+	printf("%-20Y %-6d %-16s %-16s %-24s vec=%d err=%d\n",
+	    walltimestamp, (int)args[2], execname, "zfs_ioc",
+	    this->ds, args[0], args[3]);
+	@ioc[this->ds] = count();
+}
+
+/* Per-file access verdict from ZFS's own ACL/mode evaluation. */
+zfs:::access
+{
+	printf("%-20Y %-6d %-16s %-16s obj=0x%llx accmode=0x%x %s(%d)\n",
+	    walltimestamp, uid, execname, "zfs_access",
+	    (unsigned long long)args[0], args[1],
+	    args[3] == 0 ? "ALLOW" : "DENY", args[3]);
+	@ops[execname, "zfs_access"] = count();
+}
+
+/* -------- trustedzfs capability-fd plane -------- */
+
+trustedzfs:::denied
+{
+	printf("%-20Y %-6d %-16s %-16s guid=0x%llx cmd=%d DENIED (a=0x%llx b=0x%llx)\n",
+	    walltimestamp, uid, execname, "tzfs_denied",
+	    (unsigned long long)args[0], args[1],
+	    (unsigned long long)args[2], (unsigned long long)args[3]);
+	@ops[execname, "tzfs_denied"] = count();
+}
+
+trustedzfs:::op-return
+{
+	printf("%-20Y %-6d %-16s %-16s guid=0x%llx cmd=%d %s(%d)\n",
+	    walltimestamp, uid, execname, "tzfs_op",
+	    (unsigned long long)args[0], args[1],
+	    args[2] == 0 ? "OK" : "ERR", args[2]);
+	@ops[execname, "tzfs_op"] = count();
+}
+
+/* -------- mount / unmount -------- */
+
+mount:::mount
+{
+	this->fst = stringof(args[0]);
+	printf("%-20Y %-6d %-16s %-16s %-24s type=%s flags=0x%llx err=%d\n",
+	    walltimestamp, uid, execname, "mount",
+	    stringof(args[1]), this->fst,
+	    (unsigned long long)args[2], args[4]);
+	@mounts[this->fst] = count();
+}
+
+mount:::unmount
+{
+	this->fst = stringof(args[0]);
+	printf("%-20Y %-6d %-16s %-16s %-24s type=%s flags=0x%llx err=%d\n",
+	    walltimestamp, uid, execname, "unmount",
+	    stringof(args[1]), this->fst,
+	    (unsigned long long)args[2], args[3]);
+	@mounts[this->fst] = count();
+}
+
+/* -------- ACL / chroot security VOPs -------- */
+
+vfs:::setacl
+{
+	printf("%-20Y %-6d %-16s %-16s acl_type=%d %s(%d)\n",
+	    walltimestamp, uid, execname, "setacl",
+	    args[0], args[2] == 0 ? "OK" : "ERR", args[2]);
+	@ops[execname, "setacl"] = count();
+}
+
+vfs:::chroot
+{
+	printf("%-20Y %-6d %-16s %-16s vp=%p %s(%d)\n",
+	    walltimestamp, uid, execname, "chroot",
+	    args[0], args[2] == 0 ? "OK" : "ERR", args[2]);
+	@ops[execname, "chroot"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n%-40s %s\n", "DATASET", "ZFS_IOCTLS");
+	printa("%-40s %@d\n", @ioc);
+	printf("\n%-16s %s\n", "FSTYPE", "MOUNT_OPS");
+	printa("%-16s %@d\n", @mounts);
+	printf("\n%-16s %-16s %s\n", "EXEC", "OP", "COUNT");
+	printa("%-16s %-16s %@d\n", @ops);
+}

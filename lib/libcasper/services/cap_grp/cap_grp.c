@@ -43,6 +43,7 @@
 #include <libcasper_service.h>
 
 #include "cap_grp.h"
+#include "cap_grp_probes.h"
 
 static struct group ggrp;
 static char *gbuffer;
@@ -367,6 +368,7 @@ cap_grp_limit_cmds(cap_channel_t *chan, const char * const *cmds, size_t ncmds)
 {
 	nvlist_t *limits, *nvl;
 	unsigned int i;
+	int error;
 
 	if (cap_limit_get(chan, &limits) < 0)
 		return (-1);
@@ -377,10 +379,16 @@ cap_grp_limit_cmds(cap_channel_t *chan, const char * const *cmds, size_t ncmds)
 			nvlist_free_nvlist(limits, "cmds");
 	}
 	nvl = nvlist_create(0);
-	for (i = 0; i < ncmds; i++)
+	for (i = 0; i < ncmds; i++) {
 		nvlist_add_null(nvl, cmds[i]);
+	}
 	nvlist_move_nvlist(limits, "cmds", nvl);
-	return (cap_limit_set(chan, limits));
+	error = cap_limit_set(chan, limits);
+	if (error == 0) {
+		for (i = 0; i < ncmds; i++)
+			CAP_GRP_PROBE_LIMIT_CMDS(cmds[i]);
+	}
+	return (error);
 }
 
 int
@@ -389,6 +397,7 @@ cap_grp_limit_fields(cap_channel_t *chan, const char * const *fields,
 {
 	nvlist_t *limits, *nvl;
 	unsigned int i;
+	int error;
 
 	if (cap_limit_get(chan, &limits) < 0)
 		return (-1);
@@ -399,10 +408,16 @@ cap_grp_limit_fields(cap_channel_t *chan, const char * const *fields,
 			nvlist_free_nvlist(limits, "fields");
 	}
 	nvl = nvlist_create(0);
-	for (i = 0; i < nfields; i++)
+	for (i = 0; i < nfields; i++) {
 		nvlist_add_null(nvl, fields[i]);
+	}
 	nvlist_move_nvlist(limits, "fields", nvl);
-	return (cap_limit_set(chan, limits));
+	error = cap_limit_set(chan, limits);
+	if (error == 0) {
+		for (i = 0; i < nfields; i++)
+			CAP_GRP_PROBE_LIMIT_FIELDS(fields[i]);
+	}
+	return (error);
 }
 
 int
@@ -412,7 +427,7 @@ cap_grp_limit_groups(cap_channel_t *chan, const char * const *names,
 	nvlist_t *limits, *groups;
 	unsigned int i;
 	char nvlname[64];
-	int n;
+	int error, n;
 
 	if (cap_limit_get(chan, &limits) < 0)
 		return (-1);
@@ -434,7 +449,12 @@ cap_grp_limit_groups(cap_channel_t *chan, const char * const *names,
 		nvlist_add_string(groups, nvlname, names[i]);
 	}
 	nvlist_move_nvlist(limits, "groups", groups);
-	return (cap_limit_set(chan, limits));
+	error = cap_limit_set(chan, limits);
+	if (error == 0) {
+		for (i = 0; i < nnames; i++)
+			CAP_GRP_PROBE_LIMIT_GROUPS(names[i]);
+	}
+	return (error);
 }
 
 /*
@@ -443,19 +463,26 @@ cap_grp_limit_groups(cap_channel_t *chan, const char * const *names,
 static bool
 grp_allowed_cmd(const nvlist_t *limits, const char *cmd)
 {
+	bool allowed;
 
-	if (limits == NULL)
+	if (limits == NULL) {
+		CAP_GRP_PROBE_ALLOW(cmd, 1);
 		return (true);
+	}
 
 	/*
 	 * If no limit was set on allowed commands, then all commands
 	 * are allowed.
 	 */
-	if (!nvlist_exists_nvlist(limits, "cmds"))
+	if (!nvlist_exists_nvlist(limits, "cmds")) {
+		CAP_GRP_PROBE_ALLOW(cmd, 1);
 		return (true);
+	}
 
 	limits = nvlist_get_nvlist(limits, "cmds");
-	return (nvlist_exists_null(limits, cmd));
+	allowed = nvlist_exists_null(limits, cmd);
+	CAP_GRP_PROBE_ALLOW(cmd, allowed);
+	return (allowed);
 }
 
 static int
@@ -782,6 +809,7 @@ grp_command(const char *cmd, const nvlist_t *limits, nvlist_t *nvlin,
 	else
 		error = EINVAL;
 
+	CAP_GRP_PROBE_COMMAND(cmd, error);
 	return (error);
 }
 

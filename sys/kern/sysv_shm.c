@@ -86,6 +86,7 @@
 #include <sys/racct.h>
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
+#include <sys/sdt.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/syscallsubr.h>
@@ -107,6 +108,23 @@
 FEATURE(sysv_shm, "System V shared memory segments support");
 
 static MALLOC_DEFINE(M_SHM, "shm", "SVID compatible shared memory segments");
+
+/*
+ * Static DTrace (SDT) tracepoints for the native System V shared-memory
+ * operations.  These probe the IPC operations themselves; access-control
+ * decisions are already covered by the MAC framework's mac_sysvshm_* probes.
+ * SHM_EXEC and SHM_RDONLY are carried in the shmat flags argument as they are
+ * security-relevant.
+ */
+SDT_PROVIDER_DEFINE(sysvshm);
+SDT_PROBE_DEFINE5(sysvshm, , , shmget__create, "pid_t", "key_t", "int",
+    "size_t", "int");
+SDT_PROBE_DEFINE5(sysvshm, , , shmget__lookup, "pid_t", "key_t", "int",
+    "size_t", "int");
+SDT_PROBE_DEFINE4(sysvshm, , , shmat, "pid_t", "int", "vm_offset_t", "int");
+SDT_PROBE_DEFINE4(sysvshm, , , shmdt, "pid_t", "int", "vm_offset_t", "int");
+SDT_PROBE_DEFINE4(sysvshm, , , shmctl, "pid_t", "int", "int", "int");
+SDT_PROBE_DEFINE4(sysvshm, , , shmdestroy, "pid_t", "int", "key_t", "size_t");
 
 static int shm_last_free, shm_nused, shmalloced;
 vm_size_t shm_committed;
@@ -247,6 +265,10 @@ shm_deallocate_segment(struct shmid_kernel *shmseg)
 
 	SYSVSHM_ASSERT_LOCKED();
 
+	SDT_PROBE4(sysvshm, , , shmdestroy, curproc->p_pid,
+	    (int)(shmseg - shmsegs), shmseg->u.shm_perm.key,
+	    shmseg->u.shm_segsz);
+
 	vm_object_deallocate(shmseg->object);
 	shmseg->object = NULL;
 	size = round_page(shmseg->u.shm_segsz);
@@ -277,6 +299,8 @@ shm_delete_mapping(struct vmspace *vm, struct shmmap_state *shmmap_s)
 	shmseg = &shmsegs[segnum];
 	size = round_page(shmseg->u.shm_segsz);
 	result = vm_map_remove(&vm->vm_map, shmmap_s->va, shmmap_s->va + size);
+	SDT_PROBE4(sysvshm, , , shmdt, curproc->p_pid, shmmap_s->shmid,
+	    shmmap_s->va, result);
 	if (result != KERN_SUCCESS)
 		return (EINVAL);
 	shmmap_s->shmid = -1;
@@ -461,6 +485,8 @@ kern_shmat_locked(struct thread *td, int shmid, const void *shmaddr,
 	shmseg->u.shm_atime = time_second;
 	shmseg->u.shm_nattch++;
 	td->td_retval[0] = attach_va;
+	SDT_PROBE4(sysvshm, , , shmat, td->td_proc->p_pid, shmid, attach_va,
+	    shmflg);
 	return (error);
 }
 
@@ -590,6 +616,7 @@ kern_shmctl_locked(struct thread *td, int shmid, int cmd, void *buf,
 		error = EINVAL;
 		break;
 	}
+	SDT_PROBE4(sysvshm, , , shmctl, td->td_proc->p_pid, shmid, cmd, error);
 	return (error);
 }
 
@@ -675,6 +702,10 @@ shmget_existing(struct thread *td, size_t size, int shmflg, int mode,
 	if (size != 0 && size > shmseg->u.shm_segsz)
 		return (EINVAL);
 	td->td_retval[0] = IXSEQ_TO_IPCID(segnum, shmseg->u.shm_perm);
+	SDT_PROBE5(sysvshm, , , shmget__lookup, td->td_proc->p_pid,
+	    shmseg->u.shm_perm.key,
+	    IXSEQ_TO_IPCID(segnum, shmseg->u.shm_perm),
+	    shmseg->u.shm_segsz, shmflg);
 	return (0);
 }
 
@@ -766,6 +797,8 @@ shmget_allocate_segment(struct thread *td, key_t key, size_t size, int mode)
 	shm_committed += btoc(size);
 	shm_nused++;
 	td->td_retval[0] = IXSEQ_TO_IPCID(segnum, shmseg->u.shm_perm);
+	SDT_PROBE5(sysvshm, , , shmget__create, td->td_proc->p_pid, key,
+	    IXSEQ_TO_IPCID(segnum, shmseg->u.shm_perm), size, mode);
 
 	return (0);
 }

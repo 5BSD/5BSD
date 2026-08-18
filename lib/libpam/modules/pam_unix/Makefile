@@ -47,4 +47,9 @@ CFLAGS+= -DYP
 LIBADD+=	ypclnt
 .endif
 
+.if ${MK_DTRACE} != "no"
+SRCS+=	pam_unix_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

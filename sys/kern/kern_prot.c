@@ -58,6 +58,7 @@
 #include <sys/mutex.h>
 #include <sys/ptrace.h>
 #include <sys/refcount.h>
+#include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
@@ -3253,6 +3254,15 @@ setsugid(struct proc *p)
 	p->p_flag |= P_SUGID;
 }
 
+SDT_PROVIDER_DEFINE(cred);
+SDT_PROBE_DEFINE2(cred, , , euid, "struct ucred *", "uid_t");
+SDT_PROBE_DEFINE2(cred, , , ruid, "struct ucred *", "uid_t");
+SDT_PROBE_DEFINE2(cred, , , svuid, "struct ucred *", "uid_t");
+SDT_PROBE_DEFINE2(cred, , , egid, "struct ucred *", "gid_t");
+SDT_PROBE_DEFINE2(cred, , , rgid, "struct ucred *", "gid_t");
+SDT_PROBE_DEFINE2(cred, , , svgid, "struct ucred *", "gid_t");
+SDT_PROBE_DEFINE3(cred, , , setid__exec, "char *", "uid_t", "gid_t");
+
 /*-
  * Change a process's effective uid.
  * Side effects: newcred->cr_uid and newcred->cr_uidinfo will be modified.
@@ -3267,6 +3277,7 @@ change_euid(struct ucred *newcred, struct uidinfo *euip)
 	uihold(euip);
 	uifree(newcred->cr_uidinfo);
 	newcred->cr_uidinfo = euip;
+	SDT_PROBE2(cred, , , euid, newcred, newcred->cr_uid);
 }
 
 /*-
@@ -3280,6 +3291,7 @@ change_egid(struct ucred *newcred, gid_t egid)
 {
 
 	newcred->cr_gid = egid;
+	SDT_PROBE2(cred, , , egid, newcred, newcred->cr_gid);
 }
 
 /*-
@@ -3297,6 +3309,7 @@ change_ruid(struct ucred *newcred, struct uidinfo *ruip)
 	uihold(ruip);
 	uifree(newcred->cr_ruidinfo);
 	newcred->cr_ruidinfo = ruip;
+	SDT_PROBE2(cred, , , ruid, newcred, newcred->cr_ruid);
 }
 
 /*-
@@ -3310,6 +3323,7 @@ change_rgid(struct ucred *newcred, gid_t rgid)
 {
 
 	newcred->cr_rgid = rgid;
+	SDT_PROBE2(cred, , , rgid, newcred, newcred->cr_rgid);
 }
 
 /*-
@@ -3323,6 +3337,7 @@ change_svuid(struct ucred *newcred, uid_t svuid)
 {
 
 	newcred->cr_svuid = svuid;
+	SDT_PROBE2(cred, , , svuid, newcred, newcred->cr_svuid);
 }
 
 /*-
@@ -3336,6 +3351,7 @@ change_svgid(struct ucred *newcred, gid_t svgid)
 {
 
 	newcred->cr_svgid = svgid;
+	SDT_PROBE2(cred, , , svgid, newcred, newcred->cr_svgid);
 }
 
 bool allow_ptrace = true;

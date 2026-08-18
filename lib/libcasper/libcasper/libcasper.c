@@ -42,6 +42,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "casper_probes.h"
 #include "libcasper.h"
 #include "libcasper_impl.h"
 
@@ -319,10 +320,17 @@ cap_service_open(const cap_channel_t *chan, const char *name)
 	nvlist_add_string(nvl, "cmd", "open");
 	nvlist_add_string(nvl, "service", name);
 	nvl = cap_xfer_nvlist(chan, nvl);
-	if (nvl == NULL)
+	if (nvl == NULL) {
+		error = errno;
+		if (error == 0)
+			error = EIO;
+		CASPER_PROBE_SERVICE_OPEN(name, error);
+		errno = error;
 		return (NULL);
+	}
 	error = (int)nvlist_get_number(nvl, "error");
 	if (error != 0) {
+		CASPER_PROBE_SERVICE_OPEN(name, error);
 		nvlist_destroy(nvl);
 		errno = error;
 		return (NULL);
@@ -335,9 +343,13 @@ cap_service_open(const cap_channel_t *chan, const char *name)
 	newchan = cap_wrap(sock, flags);
 	if (newchan == NULL)
 		goto fail;
+	CASPER_PROBE_SERVICE_OPEN(name, 0);
 	return (newchan);
 fail:
 	error = errno;
+	if (error == 0)
+		error = EINVAL;
+	CASPER_PROBE_SERVICE_OPEN(name, error);
 	close(sock);
 	errno = error;
 	return (NULL);

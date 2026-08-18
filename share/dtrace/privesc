@@ -1,0 +1,129 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * privesc.d -- observe privilege changes: setuid-binary execution, in-process
+ *		credential mutations, denied privileges, and jail entry.
+ *
+ * Providers / probes consumed (all kernel SDT -- "provider:::probe"; string
+ * args are kernel pointers, dereferenced with stringof(); struct ucred *
+ * members are read directly, e.g. args[0]->cr_uid):
+ *
+ *   cred:::setid-exec (char *path, uid_t uid, gid_t gid)
+ *		args[0]=path  args[1]=new uid  args[2]=new gid
+ *		src: sys/kern/kern_prot.c  (probe setid__exec)
+ *   cred:::euid|ruid|svuid (struct ucred *cr, uid_t newid)
+ *   cred:::egid|rgid|svgid (struct ucred *cr, gid_t newid)
+ *		args[0]=ucred being updated  args[1]=new id
+ *		src: sys/kern/kern_prot.c
+ *		(there is no "old" value in the probe args; we stash the prior
+ *		 euid seen for the thread in self->last_euid to show old->new
+ *		 where we can, else we print the credential's current cr_uid.)
+ *   priv:::priv-err-cred (int priv, struct ucred *cr)
+ *		args[0]=priv id  args[1]=denied credential
+ *		src: sys/kern/kern_priv.c  (probe priv__err__cred, function priv_check)
+ *   jail:::attach (pid_t pid, int jid)
+ *		args[0]=pid  args[1]=jid
+ *		src: sys/kern/kern_jail.c  (function do_jail_attach)
+ *
+ * REQUIRES: a kernel built and booted from this tree (buildkernel /
+ * installkernel + reboot).  These SDT providers do not exist in a stock
+ * kernel; "dtrace -l -P cred" etc. will be empty until then.
+ *
+ * Example:  dtrace -s privesc.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	last_euid[0] = 0;
+	seen_euid[0] = 0;
+	printf("%-20s %-8s %-16s %-6s %s\n",
+	    "TIME", "KIND", "EXEC", "PID", "DETAIL");
+}
+
+/* A setuid/setgid binary was executed and took on new credentials. */
+cred:::setid-exec
+{
+	printf("%-20Y %-8s %-16s %-6d setid-exec path=%s -> uid=%d gid=%d\n",
+	    walltimestamp, "setid", execname, pid,
+	    stringof(args[0]), args[1], args[2]);
+	@setid[execname] = count();
+}
+
+/* Effective uid changed: show prior stashed euid -> new where available. */
+cred:::euid
+{
+	printf("%-20Y %-8s %-16s %-6d euid %d -> %d (cr_uid=%d)\n",
+	    walltimestamp, "euid", execname, pid,
+	    seen_euid[pid] ? last_euid[pid] : args[0]->cr_uid,
+	    args[1], args[0]->cr_uid);
+	last_euid[pid] = args[1];
+	seen_euid[pid] = 1;
+	@credchg[execname, "euid"] = count();
+}
+
+cred:::ruid
+{
+	printf("%-20Y %-8s %-16s %-6d ruid -> %d (cr_ruid=%d)\n",
+	    walltimestamp, "ruid", execname, pid, args[1], args[0]->cr_ruid);
+	@credchg[execname, "ruid"] = count();
+}
+
+cred:::svuid
+{
+	printf("%-20Y %-8s %-16s %-6d svuid -> %d (cr_svuid=%d)\n",
+	    walltimestamp, "svuid", execname, pid, args[1], args[0]->cr_svuid);
+	@credchg[execname, "svuid"] = count();
+}
+
+cred:::egid
+{
+	printf("%-20Y %-8s %-16s %-6d egid -> %d (cr_groups[0]=%d)\n",
+	    walltimestamp, "egid", execname, pid, args[1], args[0]->cr_groups[0]);
+	@credchg[execname, "egid"] = count();
+}
+
+cred:::rgid
+{
+	printf("%-20Y %-8s %-16s %-6d rgid -> %d (cr_rgid=%d)\n",
+	    walltimestamp, "rgid", execname, pid, args[1], args[0]->cr_rgid);
+	@credchg[execname, "rgid"] = count();
+}
+
+cred:::svgid
+{
+	printf("%-20Y %-8s %-16s %-6d svgid -> %d (cr_svgid=%d)\n",
+	    walltimestamp, "svgid", execname, pid, args[1], args[0]->cr_svgid);
+	@credchg[execname, "svgid"] = count();
+}
+
+/* A privilege check denied the credential a specific privilege. */
+priv:::priv-err-cred
+{
+	printf("%-20Y %-8s %-16s %-6d DENIED priv=%d (euid=%d ruid=%d)\n",
+	    walltimestamp, "priv-err", execname, pid,
+	    args[0], args[1]->cr_uid, args[1]->cr_ruid);
+	@denied_priv[execname, args[0]] = count();
+}
+
+/* A process entered a jail. */
+jail:::attach
+{
+	printf("%-20Y %-8s %-16s %-6d attach jid=%d\n",
+	    walltimestamp, "jail", execname, args[0], args[1]);
+	@jailattach[execname] = count();
+}
+
+dtrace:::END
+{
+	printf("\nsetuid/setgid binaries executed:\n");
+	printa("  %-24s %@d\n", @setid);
+	printf("\ncredential changes by exec/kind:\n");
+	printa("  %-24s %-8s %@d\n", @credchg);
+	printf("\ndenied privileges by exec/priv-id:\n");
+	printa("  %-24s priv=%-6d %@d\n", @denied_priv);
+	printf("\njail attaches by exec:\n");
+	printa("  %-24s %@d\n", @jailattach);
+}

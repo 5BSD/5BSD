@@ -35,6 +35,19 @@
 #include <sys/exec.h>
 #include <sys/imgact.h>
 #include <sys/kernel.h>
+#include <sys/sdt.h>
+
+/*
+ * Static SDT tracepoints for the executable image activators.  The
+ * "imgact" provider is defined here (imgact_shell.c is always compiled,
+ * exactly once) and declared by the other activators.  These probes fire
+ * once per successful exec, on the code path that decides what actually
+ * gets executed, so a DTrace consumer can observe interpreter/RTLD/brand
+ * selection.  String args may reference kernel or user buffers; a D script
+ * should use stringof()/copyinstr() as appropriate.
+ */
+SDT_PROVIDER_DEFINE(imgact);
+SDT_PROBE_DEFINE3(imgact, , , shell, "char *", "char *", "char *");
 
 #if BYTE_ORDER == LITTLE_ENDIAN
 #define SHELLMAGIC	0x2123 /* #! */
@@ -234,8 +247,20 @@ exec_shell_imgact(struct image_params *imgp)
 	error = copystr(fname, imgp->args->begin_argv + offset,
 	    imgp->args->stringspace, NULL);
 
-	if (error == 0)
+	if (error == 0) {
 		imgp->interpreter_name = imgp->args->begin_argv;
+
+		/*
+		 * The shebang interpreter has been resolved.  arg0 is the
+		 * interpreter path, arg1 the optional interpreter argument
+		 * (if the "#!" line had one, else NULL), arg2 the script.
+		 * The GOTCHA: (uintptr_t) casts in SDT_PROBE bind tighter
+		 * than ?:, so the ternary is fully parenthesized.
+		 */
+		SDT_PROBE3(imgact, , , shell, imgp->interpreter_name,
+		    ((opte > optb) ? (imgp->args->begin_argv +
+		    (interpe - interpb) + 1) : NULL), fname);
+	}
 
 	if (sname != NULL)
 		sbuf_delete(sname);

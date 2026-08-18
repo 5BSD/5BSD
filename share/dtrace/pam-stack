@@ -1,0 +1,98 @@
+#!/usr/sbin/dtrace -Zs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * pam-stack -- PAM authentication stack visibility.
+ *
+ * Every PAM module in the base (pam_unix, pam_ssh, pam_exec, pam_rootok,
+ * pam_deny, pam_permit, pam_group, pam_login_access, ...) carries a USDT
+ * provider named after the module.  This script matches ALL of them with a
+ * "pam_*" provider wildcard and reports each service-management call as it
+ * fires: authentication, account management, credential setting, and session
+ * open.  pam_exec's external-program launch is captured too.  For every
+ * probe "result" (a PAM_* return code) 0 == PAM_SUCCESS.
+ *
+ * The firing module is identified by probeprov (the provider name, e.g.
+ * "pam_unix1234" -- the trailing digits are the pid the USDT probe lives in);
+ * probefunc names the sm_* entry point.  These are userland USDT providers,
+ * so string arguments are read with copyinstr().  Requires rebuilt base
+ * PAM modules carrying the providers.
+ *
+ * Provider argument maps (declaration order, common to every pam_* module):
+ *   pam_*:::sm-authenticate   args[0]=user (char *), args[1]=result (int)
+ *   pam_*:::sm-acct_mgmt      args[0]=user (char *), args[1]=result (int)
+ *   pam_*:::sm-setcred        args[0]=user (char *), args[1]=flags (int),
+ *                             args[2]=result (int)
+ *   pam_*:::sm-open_session   args[0]=user (char *), args[1]=result (int)
+ *   pam_exec:::exec           args[0]=user (char *), args[1]=command (char *)
+ *
+ * Note: the account-management probe keeps a single underscore in its
+ * account half -- it is "sm-acct_mgmt" (only the sm__ separator becomes a
+ * dash), likewise "sm-open_session".
+ *
+ * Usage: pam-stack
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing PAM module stack... Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-16s %-14s %-16s %s\n",
+	    "TIME", "PID", "MODULE", "PHASE", "USER", "RESULT");
+}
+
+pam_*:::sm-authenticate
+{
+	printf("%-20Y %-6d %-16s %-14s %-16s %s (%d)\n", walltimestamp,
+	    pid, probeprov, "authenticate",
+	    arg0 != 0 ? copyinstr(arg0) : "<unknown>",
+	    arg1 == 0 ? "SUCCESS" : "FAIL", arg1);
+	@out[probeprov, arg1 == 0 ? "success" : "fail"] = count();
+}
+
+pam_*:::sm-acct_mgmt
+{
+	printf("%-20Y %-6d %-16s %-14s %-16s %s (%d)\n", walltimestamp,
+	    pid, probeprov, "acct_mgmt",
+	    arg0 != 0 ? copyinstr(arg0) : "<unknown>",
+	    arg1 == 0 ? "SUCCESS" : "FAIL", arg1);
+	@out[probeprov, arg1 == 0 ? "success" : "fail"] = count();
+}
+
+pam_*:::sm-setcred
+{
+	printf("%-20Y %-6d %-16s %-14s %-16s %s (%d) flags=0x%x\n",
+	    walltimestamp, pid, probeprov, "setcred",
+	    arg0 != 0 ? copyinstr(arg0) : "<unknown>",
+	    arg2 == 0 ? "SUCCESS" : "FAIL", arg2, arg1);
+	@out[probeprov, arg2 == 0 ? "success" : "fail"] = count();
+}
+
+pam_*:::sm-open_session
+{
+	printf("%-20Y %-6d %-16s %-14s %-16s %s (%d)\n", walltimestamp,
+	    pid, probeprov, "open_session",
+	    arg0 != 0 ? copyinstr(arg0) : "<unknown>",
+	    arg1 == 0 ? "SUCCESS" : "FAIL", arg1);
+	@out[probeprov, arg1 == 0 ? "success" : "fail"] = count();
+}
+
+/* pam_exec runs an arbitrary external program as part of the stack. */
+pam_exec*:::exec
+{
+	printf("%-20Y %-6d %-16s %-14s %-16s %s\n", walltimestamp,
+	    pid, probeprov, "exec",
+	    arg0 != 0 ? copyinstr(arg0) : "<unknown>", copyinstr(arg1));
+	@execs[copyinstr(arg1)] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Outcomes by (module, result) ---\n");
+	printa("  %-18s %-8s %@d\n", @out);
+	printf("\n--- pam_exec external programs run ---\n");
+	printa("  %-40s %@d\n", @execs);
+}

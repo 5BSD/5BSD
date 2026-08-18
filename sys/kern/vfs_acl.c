@@ -55,9 +55,14 @@
 #include <sys/filedesc.h>
 #include <sys/proc.h>
 #include <sys/acl.h>
+#include <sys/sdt.h>
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DECLARE(vfs);
+SDT_PROBE_DEFINE3(vfs, , , setacl, "acl_type_t", "struct ucred *", "int");
+SDT_PROBE_DEFINE2(vfs, , , rmacl, "acl_type_t", "int");
 
 CTASSERT(ACL_MAX_ENTRIES >= OLDACL_MAX_ENTRIES);
 
@@ -254,6 +259,7 @@ out_unlock:
 	vn_finished_write(mp);
 out:
 	acl_free(inkernelacl);
+	SDT_PROBE3(vfs, , , setacl, type, td->td_ucred, error);
 	return (error);
 }
 
@@ -315,6 +321,7 @@ out:
 #endif
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
+	SDT_PROBE2(vfs, , , rmacl, type, error);
 	return (error);
 }
 

@@ -44,10 +44,16 @@
 #include <sys/vnode.h>
 #include <sys/proc.h>
 #include <sys/extattr.h>
+#include <sys/sdt.h>
 #include <sys/syscallsubr.h>
 
 #include <security/audit/audit.h>
 #include <security/mac/mac_framework.h>
+
+SDT_PROVIDER_DECLARE(vfs);
+SDT_PROBE_DEFINE4(vfs, , , setextattr, "int", "char *", "struct ucred *",
+    "int");
+SDT_PROBE_DEFINE3(vfs, , , rmextattr, "int", "char *", "int");
 
 static int	user_extattr_set_path(struct thread *td, const char *path,
 		    int attrnamespace, const char *attrname, void *data,
@@ -219,6 +225,8 @@ done:
 #endif
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
+	SDT_PROBE4(vfs, , , setextattr, attrnamespace, attrname, td->td_ucred,
+	    error);
 	return (error);
 }
 
@@ -568,6 +576,7 @@ done:
 #endif
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
+	SDT_PROBE3(vfs, , , rmextattr, attrnamespace, attrname, error);
 	return (error);
 }
 

@@ -1,11 +1,11 @@
-/* Print every SCTP association state change */
+/* Print every SCTP association state change and its previous state. */
 
 sctp:::state-change
 /* @bsdinstruments-predicate */
 {
-    printf("%s[%d]: sctp state %d -> %d\n",
-        execname, pid,
-        args[5]->sctps_state, args[3]->sctps_state);
+	/* arg5 is old state; arg3 is the association after the transition. */
+	printf("%s[%d]: sctp state %d -> %d\n", execname, pid,
+	    (int)arg5, ((struct sctp_tcb *)arg3)->asoc.state);
     /* @bsdinstruments-stack */
     /* @bsdinstruments-ustack */
 }

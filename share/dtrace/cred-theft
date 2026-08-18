@@ -1,0 +1,98 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * cred-theft -- surface credential / secret-exposure primitives.
+ *
+ * Credential and secret theft leaves distinctive kernel traces: attaching to
+ * another process to read its address space (ptrace), forcing or observing a
+ * core dump that may capture keys, pinning secret pages with mlock so they
+ * are never swapped (also the mark of a process guarding harvested secrets),
+ * and killing a process through a process descriptor (pdkill) to disrupt a
+ * monitor.  This consumer records each primitive and correlates the acting
+ * (tracer) executable to the target it acted on.
+ *
+ * Probes correlated (all KERNEL SDT probes; char * args are kernel
+ * pointers -> stringof(); no USDT, so no copyinstr()):
+ *
+ *   ptrace:::attach    SDT_PROBE3(ptrace,,,attach,
+ *                        args[0]=int req (PT_ request), args[1]=pid_t target,
+ *                        args[2]=struct proc *tracer)
+ *                        -- the acting process reads another's memory/regs
+ *   coredump:::write   SDT_PROBE3(coredump,,,write,
+ *                        args[0]=pid_t pid, args[1]=char *comm,
+ *                        args[2]=int error)  -- core may hold secrets
+ *   vm:::mlock         SDT_PROBE4(vm,,,mlock,
+ *                        args[0]=pid_t pid, args[1]=vm_offset_t addr,
+ *                        args[2]=vm_size_t len, args[3]=int error)
+ *                        -- secret pages pinned out of swap
+ *   capsicum:::pdkill  SDT_PROBE3(capsicum,,,pdkill,
+ *                        args[0]=int fd, args[1]=pid_t target,
+ *                        args[2]=int signal)  -- kill via process descriptor
+ *
+ * NOTE: requires the rebuilt instrumented kernel/base defining the ptrace,
+ * coredump, vm and capsicum SDT providers.  These probes are absent on a
+ * stock kernel.
+ *
+ * Usage: cred-theft
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Watching credential/secret-exposure primitives. Ctrl-C for summary.\n\n");
+	printf("%-20s %-8s %-18s %-14s %s\n",
+	    "TIME", "PID", "TRACER", "PRIMITIVE", "TARGET/DETAIL");
+}
+
+/*
+ * ptrace attach: the acting process (execname / pid builtins) is the tracer;
+ * args[1] is the target pid it is reading.  Correlate tracer -> target.
+ */
+ptrace:::attach
+{
+	@tracer[execname, args[1]] = count();
+	@prim[execname, "ptrace-attach"] = count();
+	printf("%-20Y %-8d %-18s %-14s target-pid=%d req=%d\n",
+	    walltimestamp, pid, execname, "ptrace-attach", args[1], args[0]);
+}
+
+coredump:::write
+{
+	@prim[stringof(args[1]), "coredump-write"] = count();
+	printf("%-20Y %-8d %-18s %-14s core-of=%s error=%d\n",
+	    walltimestamp, args[0], stringof(args[1]), "coredump-write",
+	    stringof(args[1]), args[2]);
+}
+
+/*
+ * mlock succeeded (error == 0): pages are now pinned out of swap.  Attacker
+ * secret-hiding, or a victim's secret being copied into a pinned region.
+ */
+vm:::mlock
+/args[3] == 0/
+{
+	@prim[execname, "mlock"] = count();
+	printf("%-20Y %-8d %-18s %-14s addr=0x%x len=%d\n",
+	    walltimestamp, pid, execname, "mlock", args[1], args[2]);
+}
+
+capsicum:::pdkill
+{
+	@tracer[execname, args[1]] = count();
+	@prim[execname, "pdkill"] = count();
+	printf("%-20Y %-8d %-18s %-14s target-pid=%d sig=%d fd=%d\n",
+	    walltimestamp, pid, execname, "pdkill", args[1], args[2], args[0]);
+}
+
+dtrace:::END
+{
+	printf("\n%-18s %-22s %s\n", "EXECNAME", "PRIMITIVE", "COUNT");
+	printa("%-18s %-22s %@d\n", @prim);
+
+	printf("\n%-18s %-12s %s\n", "TRACER", "TARGET-PID", "COUNT");
+	printa("%-18s %-12d %@d\n", @tracer);
+}

@@ -50,23 +50,29 @@
 #include <security/pam_mod_misc.h>
 #include <security/openpam.h>
 
+#include "pam_ftpusers_probes.h"
+
 PAM_EXTERN int
 pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
 	struct passwd *pwd;
 	struct group *grp;
-	const char *user;
+	const char *user = NULL;
 	int pam_err, found, allow;
 	char *line, *name, **mem;
 	size_t len, ulen;
 	FILE *f;
 
 	pam_err = pam_get_user(pamh, &user, NULL);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_FTPUSERS_PROBE_SM_ACCT_MGMT(user, pam_err);
 		return (pam_err);
-	if (user == NULL || (pwd = getpwnam(user)) == NULL)
+	}
+	if (user == NULL || (pwd = getpwnam(user)) == NULL) {
+		PAM_FTPUSERS_PROBE_SM_ACCT_MGMT(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	found = 0;
 	ulen = strlen(user);
@@ -91,6 +97,7 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
 		asprintf(&name, "%.*s", (int)len - 1, line + 1);
 		if (name == NULL) {
 			fclose(f);
+			PAM_FTPUSERS_PROBE_SM_ACCT_MGMT(user, PAM_BUF_ERR);
 			return (PAM_BUF_ERR);
 		}
 		grp = getgrnam(name);
@@ -109,6 +116,7 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
 		pam_err = allow ? PAM_AUTH_ERR : PAM_SUCCESS;
 	if (f != NULL)
 		fclose(f);
+	PAM_FTPUSERS_PROBE_SM_ACCT_MGMT(user, pam_err);
 	return (pam_err);
 }
 

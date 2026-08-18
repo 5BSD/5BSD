@@ -104,6 +104,7 @@
 #include <sys/malloc.h>
 #include <sys/poll.h>
 #include <sys/priv.h>
+#include <sys/sdt.h>
 #include <sys/selinfo.h>
 #include <sys/signalvar.h>
 #include <sys/syscallsubr.h>
@@ -137,6 +138,32 @@
 
 #define PIPE_PEER(pipe)	\
 	(((pipe)->pipe_type & PIPE_TYPE_NAMED) ? (pipe) : ((pipe)->pipe_peer))
+
+/*
+ * Static DTrace (SDT) instrumentation for the anonymous pipe subsystem.
+ * Probes fire at per-syscall / per-event granularity only; the per-byte
+ * uiomove()/direct-copy inner loops are intentionally left un-probed.
+ *
+ *   pipe:::create		- a pipe pair was handed back to userspace
+ *				  (read fd, write fd, pipe2() flags)
+ *   pipe:::read		- a pipe_read() completed (pipe, bytes, error);
+ *				  EOF == bytes 0 && error 0, EAGAIN == error
+ *   pipe:::read-blocked		- a reader is about to sleep for data (pipe)
+ *   pipe:::write		- a pipe_write() completed (pipe, bytes, error);
+ *				  broken reader is observable as error EPIPE
+ *   pipe:::write-blocked	- a writer is about to sleep on a full pipe
+ *				  (pipe, residual bytes still to write)
+ *   pipe:::ioctl		- a pipe ioctl was issued (pipe, command)
+ *   pipe:::close		- an endpoint is being torn down (pipe)
+ */
+SDT_PROVIDER_DEFINE(pipe);
+SDT_PROBE_DEFINE3(pipe, , , create, "int", "int", "int");
+SDT_PROBE_DEFINE3(pipe, , , read, "struct pipe *", "int", "int");
+SDT_PROBE_DEFINE1(pipe, , , read__blocked, "struct pipe *");
+SDT_PROBE_DEFINE3(pipe, , , write, "struct pipe *", "ssize_t", "int");
+SDT_PROBE_DEFINE2(pipe, , , write__blocked, "struct pipe *", "ssize_t");
+SDT_PROBE_DEFINE2(pipe, , , ioctl, "struct pipe *", "unsigned long");
+SDT_PROBE_DEFINE1(pipe, , , close, "struct pipe *");
 
 /*
  * interfaces to the outside world
@@ -516,6 +543,8 @@ kern_pipe(struct thread *td, int fildes[2], int flags, struct filecaps *fcaps1,
 	fildes[1] = fd;
 	fdrop(rf, td);
 
+	SDT_PROBE3(pipe, , , create, fildes[0], fildes[1], flags);
+
 	return (0);
 }
 
@@ -775,8 +804,10 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			return (0);
 		if ((atomic_load_short(&rpipe->pipe_state) & PIPE_EOF) == 0 &&
 		    atomic_load_int(&rpipe->pipe_buffer.cnt) == 0 &&
-		    atomic_load_int(&rpipe->pipe_pages.cnt) == 0)
+		    atomic_load_int(&rpipe->pipe_pages.cnt) == 0) {
+			SDT_PROBE3(pipe, , , read, rpipe, 0, EAGAIN);
 			return (EAGAIN);
+		}
 	}
 
 	PIPE_LOCK(rpipe);
@@ -893,6 +924,7 @@ pipe_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			if (fp->f_flag & FNONBLOCK) {
 				error = EAGAIN;
 			} else {
+				SDT_PROBE1(pipe, , , read__blocked, rpipe);
 				rpipe->pipe_state |= PIPE_WANTR;
 				if ((error = msleep(rpipe, PIPE_MTX(rpipe),
 				    PRIBIO | PCATCH,
@@ -939,6 +971,7 @@ unlocked_error:
 		pipeselwakeup(rpipe);
 
 	PIPE_UNLOCK(rpipe);
+	SDT_PROBE3(pipe, , , read, rpipe, nread, error);
 	if (nread > 0)
 		td->td_ru.ru_msgrcv++;
 	return (error);
@@ -1162,6 +1195,7 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	 */
 	if (wpipe->pipe_present != PIPE_ACTIVE ||
 	    (wpipe->pipe_state & PIPE_EOF)) {
+		SDT_PROBE3(pipe, , , write, wpipe, 0, EPIPE);
 		pipeunlock(wpipe);
 		PIPE_UNLOCK(rpipe);
 		return (EPIPE);
@@ -1352,6 +1386,8 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			 */
 			pipeselwakeup(wpipe);
 
+			SDT_PROBE2(pipe, , , write__blocked, wpipe,
+			    uio->uio_resid);
 			wpipe->pipe_state |= PIPE_WANTW;
 			pipeunlock(wpipe);
 			error = msleep(wpipe, PIPE_MTX(rpipe),
@@ -1400,6 +1436,7 @@ pipe_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 
 	pipeunlock(wpipe);
 	PIPE_UNLOCK(rpipe);
+	SDT_PROBE3(pipe, , , write, wpipe, (orig_resid - uio->uio_resid), error);
 	if (uio->uio_resid != orig_resid)
 		td->td_ru.ru_msgsnd++;
 	return (error);
@@ -1442,6 +1479,7 @@ pipe_ioctl(struct file *fp, u_long cmd, void *data, struct ucred *active_cred,
 #endif
 
 	error = 0;
+	SDT_PROBE2(pipe, , , ioctl, mpipe, cmd);
 	switch (cmd) {
 	case FIONBIO:
 		break;
@@ -1715,6 +1753,8 @@ pipeclose(struct pipe *cpipe)
 	struct pipe *ppipe;
 
 	KASSERT(cpipe != NULL, ("pipeclose: cpipe == NULL"));
+
+	SDT_PROBE1(pipe, , , close, cpipe);
 
 	PIPE_LOCK(cpipe);
 	pipelock(cpipe, false);

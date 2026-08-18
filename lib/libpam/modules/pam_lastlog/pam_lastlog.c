@@ -61,6 +61,8 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_lastlog_probes.h"
+
 #define	PAM_UTMPX_ID	"utmpx_id"
 
 PAM_EXTERN int
@@ -69,16 +71,20 @@ pam_sm_open_session(pam_handle_t *pamh, int flags,
 {
 	struct utmpx *utx, utl;
 	time_t t;
-	const char *user;
+	const char *user = NULL;
 	const void *rhost, *tty;
 	char *id;
 	int pam_err;
 
 	pam_err = pam_get_user(pamh, &user, NULL);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_LASTLOG_PROBE_SM_OPEN_SESSION(user, pam_err);
 		return (pam_err);
-	if (user == NULL)
+	}
+	if (user == NULL) {
+		PAM_LASTLOG_PROBE_SM_OPEN_SESSION(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 	PAM_LOG("Got user: %s", user);
 
 	pam_err = pam_get_item(pamh, PAM_RHOST, &rhost);
@@ -142,11 +148,15 @@ pam_sm_open_session(pam_handle_t *pamh, int flags,
 	gettimeofday(&utl.ut_tv, NULL);
 	pututxline(&utl);
 
+	PAM_LASTLOG_PROBE_SM_OPEN_SESSION(user, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 
 err:
-	if (openpam_get_option(pamh, "no_fail"))
+	if (openpam_get_option(pamh, "no_fail")) {
+		PAM_LASTLOG_PROBE_SM_OPEN_SESSION(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
+	}
+	PAM_LASTLOG_PROBE_SM_OPEN_SESSION(user, pam_err);
 	return (pam_err);
 }
 
@@ -156,7 +166,10 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 {
 	struct utmpx utl;
 	const void *id;
+	const void *user = NULL;
 	int pam_err;
+
+	(void)pam_get_item(pamh, PAM_USER, &user);
 
 	pam_err = pam_get_data(pamh, PAM_UTMPX_ID, (const void **)&id);
 	if (pam_err != PAM_SUCCESS)
@@ -169,11 +182,15 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
 	gettimeofday(&utl.ut_tv, NULL);
 	pututxline(&utl);
 
+	PAM_LASTLOG_PROBE_SM_CLOSE_SESSION((const char *)user, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 
  err:
-	if (openpam_get_option(pamh, "no_fail"))
+	if (openpam_get_option(pamh, "no_fail")) {
+		PAM_LASTLOG_PROBE_SM_CLOSE_SESSION((const char *)user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
+	}
+	PAM_LASTLOG_PROBE_SM_CLOSE_SESSION((const char *)user, pam_err);
 	return (pam_err);
 }
 

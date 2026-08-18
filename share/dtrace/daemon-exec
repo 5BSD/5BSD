@@ -1,0 +1,82 @@
+#!/usr/sbin/dtrace -Zs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * daemon-exec -- privileged execution launched by system daemons.
+ *
+ * System daemons routinely run commands on behalf of users or the system:
+ * cron(8) runs crontab entries as a user, inetd(8) spawns network services,
+ * and devd(8) runs (typically root) shell commands in response to device
+ * events -- the last being especially high value from a security standpoint.
+ * This script surfaces every such privileged launch and aggregates the
+ * commands run by each daemon.
+ *
+ * These are userland USDT providers, so the probe spec uses the "NAME*"
+ * form to match every instance of the daemon, and string arguments are read
+ * with copyinstr().  Requires rebuilt base binaries carrying the providers
+ * (cron, inetd, devd).
+ *
+ * Provider argument maps (declaration order):
+ *   cron:::job-run       args[0]=user (char *), args[1]=cmd (char *)
+ *   cron:::job-done      args[0]=user (char *), args[1]=status (int)
+ *   inetd:::spawn        args[0]=service (char *), args[1]=proto (char *),
+ *                        args[2]=user (char *)
+ *   inetd:::refuse       args[0]=service (char *), args[1]=proto (char *)
+ *   devd:::action        args[0]=event (char *), args[1]=cmd (char *)
+ *
+ * Usage: daemon-exec
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing daemon-launched execution... Ctrl-C for summary.\n\n");
+	printf("%-20s %-8s %-16s %s\n",
+	    "TIME", "DAEMON", "USER/SERVICE", "COMMAND");
+}
+
+cron*:::job-run
+{
+	printf("%-20Y %-8s %-16s %s\n", walltimestamp,
+	    "cron", copyinstr(arg0), copyinstr(arg1));
+	@cmds["cron", copyinstr(arg0)] = count();
+}
+
+cron*:::job-done
+{
+	printf("%-20Y %-8s %-16s (exit status %d)\n", walltimestamp,
+	    "cron", copyinstr(arg0), arg1);
+}
+
+inetd*:::spawn
+{
+	printf("%-20Y %-8s %-16s spawn %s/%s\n", walltimestamp,
+	    "inetd", copyinstr(arg2), copyinstr(arg0),
+	    copyinstr(arg1));
+	@cmds["inetd", copyinstr(arg0)] = count();
+}
+
+inetd*:::refuse
+{
+	printf("%-20Y %-8s %-16s REFUSED %s/%s\n", walltimestamp,
+	    "inetd", "-", copyinstr(arg0), copyinstr(arg1));
+	@refuse[copyinstr(arg0)] = count();
+}
+
+devd*:::action
+{
+	printf("%-20Y %-8s %-16s %s\n", walltimestamp,
+	    "devd", copyinstr(arg0), copyinstr(arg1));
+	@cmds["devd", copyinstr(arg1)] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Commands launched by (daemon, user/service) ---\n");
+	printa("  %-8s %-24s %@d\n", @cmds);
+	printf("\n--- inetd connections refused by service ---\n");
+	printa("  %-24s %@d\n", @refuse);
+}

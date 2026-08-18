@@ -1,0 +1,246 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * capflow.d -- capability & descriptor flow overview.  Correlates Capsicum
+ * capability grants/denials with the raw descriptor lifecycle and, crucially,
+ * cross-process descriptor passing (SCM_RIGHTS over UNIX-domain sockets) plus
+ * process- and jail-descriptor capability handles.  Answers "which descriptors
+ * and capabilities are moving between processes, and which are being refused."
+ *
+ * Providers / probes consumed (kernel SDT; args in exact SDT_PROBE_DEFINE
+ * order; struct ucred * members read directly):
+ *
+ *   -- Capsicum capability decisions --
+ *   capsicum:::check-deny   (cap_rights_t *needed, cap_rights_t *held,
+ *			      pid_t pid, struct ucred *cr, int fd, int errno)
+ *		fd=args[4] errno=args[5]  src: sys/kern/sys_capability.c
+ *   capsicum:::syscall-deny (pid_t pid, int code, int flags, int errno)
+ *		src: sys/kern/sys_capability.c (syscall__deny)
+ *
+ *   -- Descriptor lifecycle (fd provider, sys/kern/kern_descrip.c) --
+ *   fd:::install (struct file *fp, int fd, pid_t pid, struct ucred *cr,
+ *		   short type, int flags)   fd=args[1] pid=args[2] type=args[4]
+ *   fd:::dup     (struct file *fp, int oldfd, int newfd, pid_t pid,
+ *		   struct ucred *cr, short type)  old=args[1] new=args[2] type=args[5]
+ *   fd:::close   (struct file *fp, int fd, pid_t pid, struct ucred *cr,
+ *		   short type, u_int count)  fd=args[1] pid=args[2] count=args[5]
+ *
+ *   -- Cross-process descriptor passing (unpcb + fd SCM probes) --
+ *   unpcb:::internalize (pid_t pid, struct socket *so, int nfds)
+ *		sender packs nfds fds into an SCM_RIGHTS control message
+ *   unpcb:::externalize (pid_t pid, int nfds, int error)
+ *		receiver is handed nfds fds
+ *   unpcb:::scm-creds   (pid_t pid, uid_t uid, gid_t gid)
+ *		src: sys/kern/uipc_usrreq.c
+ *   fd:::scm-rights-send/scm-rights-recv (struct file *fp, int fd, pid_t pid,
+ *		   struct ucred *cr, short type, int flags)
+ *		per-descriptor send/receive of a passed fd
+ *   fd:::pass-deny / fd:::xfer-deny (same 6-arg signature)
+ *		a descriptor-pass or in-flight transfer was refused
+ *		src: sys/kern/kern_descrip.c / uipc_usrreq.c
+ *
+ *   -- Process-descriptor capabilities (capsicum, sys/kern/sys_capability.c) --
+ *   capsicum:::pdfork  (pid_t ppid, pid_t cpid, int flags)
+ *   capsicum:::pdkill  (int fd, pid_t tpid, int sig)
+ *   capsicum:::pdclose (pid_t tpid, int pd_flags, int killed)
+ *
+ *   -- Jail-descriptor capabilities (jaildesc, sys/kern/kern_jaildesc.c) --
+ *   jaildesc:::alloc (int pid, int fd, int owning)
+ *   jaildesc:::find  (int pid, int fd, int error)
+ *   jaildesc:::close (int pid, int jid, int owning)
+ *
+ * REQUIRES: a kernel rebuilt/booted from this tree carrying the capsicum, fd,
+ * unpcb and jaildesc SDT providers.  Absent on stock base.
+ *
+ * Example:  dtrace -s capflow.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-6s %-16s %-18s %s\n",
+	    "TIME", "UID", "EXEC", "OP", "DETAIL");
+}
+
+/* ------------------------ Capsicum capability decisions ---------------- */
+
+capsicum:::check-deny
+{
+	printf("%-20Y %-6d %-16s %-18s fd=%d errno=%d  DENIED\n",
+	    walltimestamp, args[3] != NULL ? args[3]->cr_uid : uid, execname,
+	    "cap-check-deny", args[4], args[5]);
+	@ops[execname, "cap-check-deny"] = count();
+	@denies["capsicum:check-deny"] = count();
+}
+
+capsicum:::syscall-deny
+{
+	printf("%-20Y %-6d %-16s %-18s syscall=%d errno=%d  DENIED\n",
+	    walltimestamp, uid, execname, "cap-syscall-deny",
+	    args[1], args[3]);
+	@ops[execname, "cap-syscall-deny"] = count();
+	@denies["capsicum:syscall-deny"] = count();
+}
+
+/* ------------------------------- descriptor lifecycle ------------------ */
+
+fd:::install
+{
+	printf("%-20Y %-6d %-16s %-18s fd=%d pid=%d type=%d\n",
+	    walltimestamp, uid, execname, "fd-install",
+	    args[1], args[2], args[4]);
+	@ops[execname, "fd-install"] = count();
+}
+
+fd:::dup
+{
+	printf("%-20Y %-6d %-16s %-18s oldfd=%d newfd=%d pid=%d type=%d\n",
+	    walltimestamp, uid, execname, "fd-dup",
+	    args[1], args[2], args[3], args[5]);
+	@ops[execname, "fd-dup"] = count();
+}
+
+fd:::close
+{
+	printf("%-20Y %-6d %-16s %-18s fd=%d pid=%d refs=%u\n",
+	    walltimestamp, uid, execname, "fd-close",
+	    args[1], args[2], (unsigned)args[5]);
+	@ops[execname, "fd-close"] = count();
+}
+
+/* ------------------------ cross-process descriptor passing ------------- */
+
+/* Sender: nfds descriptors packed into an in-flight SCM_RIGHTS message. */
+unpcb:::internalize
+{
+	printf("%-20Y %-6d %-16s %-18s pid=%d nfds=%d (send)\n",
+	    walltimestamp, uid, execname, "scm-internalize",
+	    args[0], args[2]);
+	@passed[execname] = sum(args[2]);
+	@ops[execname, "scm-internalize"] = count();
+}
+
+/* Receiver: nfds descriptors handed to the receiving process. */
+unpcb:::externalize
+{
+	printf("%-20Y %-6d %-16s %-18s pid=%d nfds=%d err=%d (recv)\n",
+	    walltimestamp, uid, execname, "scm-externalize",
+	    args[0], args[1], args[2]);
+	@received[execname] = sum(args[1]);
+	@ops[execname, "scm-externalize"] = count();
+}
+
+/* Credentials carried alongside the passed descriptors. */
+unpcb:::scm-creds
+{
+	printf("%-20Y %-6d %-16s %-18s pid=%d uid=%d gid=%d\n",
+	    walltimestamp, uid, execname, "scm-creds",
+	    args[0], args[1], args[2]);
+	@ops[execname, "scm-creds"] = count();
+}
+
+/* Per-descriptor pass send/recv. */
+fd:::scm-rights-send
+{
+	printf("%-20Y %-6d %-16s %-18s fd=%d pid=%d type=%d\n",
+	    walltimestamp, uid, execname, "scm-fd-send",
+	    args[1], args[2], args[4]);
+	@ops[execname, "scm-fd-send"] = count();
+}
+
+fd:::scm-rights-recv
+{
+	printf("%-20Y %-6d %-16s %-18s fd=%d pid=%d type=%d\n",
+	    walltimestamp, uid, execname, "scm-fd-recv",
+	    args[1], args[2], args[4]);
+	@ops[execname, "scm-fd-recv"] = count();
+}
+
+/* A descriptor-pass or in-flight transfer was refused. */
+fd:::pass-deny
+{
+	printf("%-20Y %-6d %-16s %-18s fd=%d pid=%d type=%d  DENIED\n",
+	    walltimestamp, uid, execname, "scm-pass-deny",
+	    args[1], args[2], args[4]);
+	@ops[execname, "scm-pass-deny"] = count();
+	@denies["fd:pass-deny"] = count();
+}
+
+fd:::xfer-deny
+{
+	printf("%-20Y %-6d %-16s %-18s fd=%d pid=%d type=%d  DENIED\n",
+	    walltimestamp, uid, execname, "scm-xfer-deny",
+	    args[1], args[2], args[4]);
+	@ops[execname, "scm-xfer-deny"] = count();
+	@denies["fd:xfer-deny"] = count();
+}
+
+/* -------------------------- process-descriptor capabilities ------------ */
+
+capsicum:::pdfork
+{
+	printf("%-20Y %-6d %-16s %-18s ppid=%d cpid=%d flags=0x%x\n",
+	    walltimestamp, uid, execname, "pdfork",
+	    args[0], args[1], args[2]);
+	@ops[execname, "pdfork"] = count();
+}
+
+capsicum:::pdkill
+{
+	printf("%-20Y %-6d %-16s %-18s fd=%d target=%d sig=%d\n",
+	    walltimestamp, uid, execname, "pdkill",
+	    args[0], args[1], args[2]);
+	@ops[execname, "pdkill"] = count();
+}
+
+capsicum:::pdclose
+{
+	printf("%-20Y %-6d %-16s %-18s target=%d pd_flags=0x%x killed=%d\n",
+	    walltimestamp, uid, execname, "pdclose",
+	    args[0], args[1], args[2]);
+	@ops[execname, "pdclose"] = count();
+}
+
+/* ---------------------------- jail-descriptor capabilities ------------- */
+
+jaildesc:::alloc
+{
+	printf("%-20Y %-6d %-16s %-18s pid=%d fd=%d owning=%d\n",
+	    walltimestamp, uid, execname, "jaildesc-alloc",
+	    args[0], args[1], args[2]);
+	@ops[execname, "jaildesc-alloc"] = count();
+}
+
+jaildesc:::find
+{
+	printf("%-20Y %-6d %-16s %-18s pid=%d fd=%d error=%d\n",
+	    walltimestamp, uid, execname, "jaildesc-find",
+	    args[0], args[1], args[2]);
+	@ops[execname, "jaildesc-find"] = count();
+}
+
+jaildesc:::close
+{
+	printf("%-20Y %-6d %-16s %-18s pid=%d jid=%d owning=%d\n",
+	    walltimestamp, uid, execname, "jaildesc-close",
+	    args[0], args[1], args[2]);
+	@ops[execname, "jaildesc-close"] = count();
+}
+
+/* -------------------------------------------------------------- summary */
+
+dtrace:::END
+{
+	printf("\n==== descriptors PASSED (SCM_RIGHTS, send side) by exec ====\n");
+	printa("  %-24s %@d\n", @passed);
+	printf("\n==== descriptors RECEIVED (SCM_RIGHTS) by exec ====\n");
+	printa("  %-24s %@d\n", @received);
+	printf("\n==== capability/descriptor denials by kind ====\n");
+	printa("  %-24s %@d\n", @denies);
+	printf("\n==== all capflow ops by (exec, op) ====\n");
+	printa("  %-16s %-20s %@d\n", @ops);
+}

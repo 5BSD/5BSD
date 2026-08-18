@@ -83,6 +83,7 @@
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
 #include <sys/sched.h>
+#include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
@@ -139,6 +140,9 @@ static int		 acct_flags;
 static struct sx	 acct_sx;
 
 SX_SYSINIT(acct, &acct_sx, "acct_sx");
+
+SDT_PROVIDER_DEFINE(acct);
+SDT_PROBE_DEFINE3(acct, , , config, "uintptr_t", "struct ucred *", "int");
 
 /*
  * State of the accounting kthread.
@@ -266,6 +270,8 @@ sys_acct(struct thread *td, struct acct_args *uap)
 			wakeup(&acct_state);
 		}
 		sx_xunlock(&acct_sx);
+		SDT_PROBE3(acct, , , config, (uintptr_t)uap->path,
+		    td->td_ucred, error);
 		return (error);
 	}
 
@@ -297,6 +303,8 @@ sys_acct(struct thread *td, struct acct_args *uap)
 	sx_xunlock(&acct_sx);
 	if (!replacing)
 		log(LOG_NOTICE, "Accounting enabled\n");
+	SDT_PROBE3(acct, , , config, (uintptr_t)uap->path, td->td_ucred,
+	    error);
 	return (error);
 }
 

@@ -41,6 +41,8 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_ksu_probes.h"
+
 static const char superuser[] = "root";
 
 static long	get_su_principal(krb5_context, const char *, const char *,
@@ -93,44 +95,55 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 {
 	krb5_context	 context;
 	krb5_principal	 su_principal;
-	const char	*user;
+	const char	*user = NULL;
 	const void	*ruser;
 	char		*su_principal_name;
 	long		 rv;
 	int		 pamret;
 
 	pamret = pam_get_user(pamh, &user, NULL);
-	if (pamret != PAM_SUCCESS)
+	if (pamret != PAM_SUCCESS) {
+		PAM_KSU_PROBE_SM_AUTHENTICATE(user, pamret);
 		return (pamret);
+	}
 	PAM_LOG("Got user: %s", user);
 	pamret = pam_get_item(pamh, PAM_RUSER, &ruser);
-	if (pamret != PAM_SUCCESS)
+	if (pamret != PAM_SUCCESS) {
+		PAM_KSU_PROBE_SM_AUTHENTICATE(user, pamret);
 		return (pamret);
+	}
 	PAM_LOG("Got ruser: %s", (const char *)ruser);
 	rv = krb5_init_context(&context);
 	if (rv != 0) {
 		const char *msg = krb5_get_error_message(context, rv);
 		PAM_LOG("krb5_init_context failed: %s", msg);
 		krb5_free_error_message(context, msg);
+		PAM_KSU_PROBE_SM_AUTHENTICATE(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
 	}
 	rv = get_su_principal(context, user, ruser, &su_principal_name, &su_principal);
-	if (rv != 0)
+	if (rv != 0) {
+		PAM_KSU_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 	PAM_LOG("kuserok: %s -> %s", su_principal_name, user);
 	rv = krb5_kuserok(context, su_principal, user);
 	pamret = rv ? auth_krb5(pamh, context, su_principal_name, su_principal) : PAM_AUTH_ERR;
 	free(su_principal_name);
 	krb5_free_principal(context, su_principal);
 	krb5_free_context(context);
+	PAM_KSU_PROBE_SM_AUTHENTICATE(user, pamret);
 	return (pamret);
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int ac __unused, const char *av[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_KSU_PROBE_SM_SETCRED((const char *)user, flags, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 

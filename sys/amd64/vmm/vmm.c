@@ -276,6 +276,19 @@ SDT_PROVIDER_DEFINE(vmm);
 SDT_PROBE_DEFINE2(vmm, kernel, internal_exit, handled,
     "struct vcpu *", "int");
 
+/*
+ * VMM control-plane lifecycle probes (distinct from the vmx/svm exit-tracing
+ * probes above).  These observe the security-relevant guest lifecycle and,
+ * most notably, PCI passthrough — assigning a physical, DMA-capable device to
+ * a guest, which hands hardware and an IOMMU domain to the VM.
+ */
+SDT_PROBE_DEFINE2(vmm, kernel, vm_create, create, "char *", "int");
+SDT_PROBE_DEFINE1(vmm, kernel, vm_destroy, destroy, "char *");
+SDT_PROBE_DEFINE5(vmm, kernel, vm_assign_pptdev, passthru__assign,
+    "char *", "int", "int", "int", "int");
+SDT_PROBE_DEFINE5(vmm, kernel, vm_unassign_pptdev, passthru__unassign,
+    "char *", "int", "int", "int", "int");
+
 static MALLOC_DEFINE(M_VM, "vm", "vm");
 
 /* statistics */
@@ -576,6 +589,7 @@ vm_create(const char *name, struct vm **retvm)
 	vm_init(vm, true);
 
 	*retvm = vm;
+	SDT_PROBE2(vmm, kernel, vm_create, create, vm->name, 0);
 	return (0);
 }
 
@@ -632,6 +646,7 @@ vm_destroy(struct vm *vm)
 {
 	int error;
 
+	SDT_PROBE1(vmm, kernel, vm_destroy, destroy, vm->name);
 	error = vm_vcpu_event_cleanup(vm);
 	if (error != 0)
 		panic("%s: cannot release architecture event owner: %d",
@@ -812,6 +827,8 @@ vm_unassign_pptdev(struct vm *vm, int bus, int slot, int func)
 	} else
 		error = 0;
 
+	SDT_PROBE5(vmm, kernel, vm_unassign_pptdev, passthru__unassign, vm->name,
+	    bus, slot, func, (unassign_error != 0 ? unassign_error : error));
 	return (unassign_error != 0 ? unassign_error : error);
 }
 
@@ -846,6 +863,8 @@ vm_assign_pptdev(struct vm *vm, int bus, int slot, int func)
 		if (error != 0)
 			(void)vm_unassign_pptdev(vm, bus, slot, func);
 	}
+	SDT_PROBE5(vmm, kernel, vm_assign_pptdev, passthru__assign, vm->name,
+	    bus, slot, func, error);
 	return (error);
 }
 

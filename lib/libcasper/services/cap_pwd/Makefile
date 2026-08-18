@@ -9,6 +9,11 @@ INCSDIR?=	${INCLUDEDIR}/casper
 SHLIB=	cap_pwd
 
 SRCS=	cap_pwd.c
+
+.if ${MK_DTRACE} != "no"
+SRCS+=	cap_pwd_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 .endif
 
 INCS=	cap_pwd.h

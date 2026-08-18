@@ -1,0 +1,177 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * ipcwatch.d -- observe the System V / POSIX IPC surface: who is talking to
+ *		 whom through message queues, semaphores, shared memory,
+ *		 pipes, and cross-process kqueue process-watching.
+ *
+ * These are KERNEL (SDT) providers added to this 5BSD/VBSD fork.  All string
+ * arguments are kernel char* pointers -- dereference with stringof(args[N]).
+ * The firing thread is the acting process, so the built-ins execname/uid/pid
+ * identify the caller.
+ *
+ * Providers / probes consumed (args in exact SDT_PROBE_DEFINE order):
+ *
+ *   mqueue:::timedsend        (int mqd, size_t msg_len, unsigned msg_prio, int waitok)
+ *		src: sys/kern/uipc_mqueue.c  DEFINE4
+ *   mqueue:::timedreceive     (int mqd, size_t msg_len, int waitok)
+ *		src: sys/kern/uipc_mqueue.c  DEFINE3
+ *   mqueue:::notify-deliver   (struct mqueue *mq, pid_t pid, int signo)
+ *		src: sys/kern/uipc_mqueue.c  DEFINE3 (probe notify__deliver)
+ *		The async signal actually delivered to a registered process.
+ *   sysvmsg:::msgget-create / msgget-lookup (pid_t pid, key_t key, int msgid, int msgflg)
+ *		src: sys/kern/sysv_msg.c     DEFINE4
+ *   sysvmsg:::msgsnd          (pid_t pid, int msqid, long mtype, size_t len)
+ *		src: sys/kern/sysv_msg.c     DEFINE4
+ *   sysvmsg:::msgrcv          (pid_t pid, int msqid, long mtype, long msgtyp, size_t len)
+ *		src: sys/kern/sysv_msg.c     DEFINE5
+ *   sysvsem:::semget-create / semget-lookup (pid_t pid, key_t key, int semid, int nsems, int semflg)
+ *		src: sys/kern/sysv_sem.c     DEFINE5
+ *   sysvsem:::semop           (pid_t pid, int semid, size_t nsops, int semflg)
+ *		src: sys/kern/sysv_sem.c     DEFINE4
+ *   sysvshm:::shmget-create / shmget-lookup (pid_t pid, key_t key, int shmid, size_t size, int shmflg)
+ *		src: sys/kern/sysv_shm.c     DEFINE5
+ *   sysvshm:::shmat           (pid_t pid, int shmid, vm_offset_t attach_va, int shmflg)
+ *		src: sys/kern/sysv_shm.c     DEFINE4
+ *   pipe:::create             (int rfd, int wfd, int flags)
+ *		src: sys/kern/sys_pipe.c     DEFINE3
+ *   kqueue:::filt-proc-attach (int watcher_pid, int target_pid, int note_flags)
+ *		src: sys/kern/kern_event.c   DEFINE3 (probe filt__proc__attach)
+ *		A process arming EVFILT_PROC to watch another process.
+ *
+ * The prompt named "msgget", "semget", "shmget"; the actual providers split
+ * each into a -create and a -lookup probe, so this script matches both with a
+ * "msgget-*" / "semget-*" / "shmget-*" glob (inferred expansion).
+ *
+ * REQUIRES: a kernel rebuilt with these SDT providers.  Until then
+ * "dtrace -l -P mqueue" (etc.) will list nothing.
+ *
+ * Example:  dtrace -s ipcwatch.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-6s %-16s %-14s %s\n",
+	    "TIME", "UID", "EXEC", "OP", "DETAIL");
+}
+
+/* -------- POSIX message queues -------- */
+
+mqueue:::timedsend
+{
+	printf("%-20Y %-6d %-16s %-14s mqd=%d len=%u prio=%u waitok=%d\n",
+	    walltimestamp, uid, execname, "mq_send",
+	    args[0], (unsigned)args[1], args[2], args[3]);
+	@ops[execname, "mq_send"] = count();
+}
+
+mqueue:::timedreceive
+{
+	printf("%-20Y %-6d %-16s %-14s mqd=%d len=%u waitok=%d\n",
+	    walltimestamp, uid, execname, "mq_receive",
+	    args[0], (unsigned)args[1], args[2]);
+	@ops[execname, "mq_receive"] = count();
+}
+
+/* The interesting path: an async notification signal handed to a process. */
+mqueue:::notify-deliver
+{
+	printf("%-20Y %-6d %-16s %-14s mq=%p -> pid=%d signo=%d\n",
+	    walltimestamp, uid, execname, "mq_notify",
+	    args[0], args[1], args[2]);
+	@ops[execname, "mq_notify"] = count();
+}
+
+/* -------- System V message queues -------- */
+
+sysvmsg:::msgget-create,
+sysvmsg:::msgget-lookup
+{
+	printf("%-20Y %-6d %-16s %-14s pid=%d key=0x%x msqid=%d flag=0x%x\n",
+	    walltimestamp, uid, execname, "msgget",
+	    args[0], args[1], args[2], args[3]);
+	@ops[execname, "msgget"] = count();
+}
+
+sysvmsg:::msgsnd
+{
+	printf("%-20Y %-6d %-16s %-14s pid=%d msqid=%d mtype=%d len=%u\n",
+	    walltimestamp, uid, execname, "msgsnd",
+	    args[0], args[1], args[2], (unsigned)args[3]);
+	@ops[execname, "msgsnd"] = count();
+}
+
+sysvmsg:::msgrcv
+{
+	printf("%-20Y %-6d %-16s %-14s pid=%d msqid=%d mtype=%d msgtyp=%d len=%u\n",
+	    walltimestamp, uid, execname, "msgrcv",
+	    args[0], args[1], args[2], args[3], (unsigned)args[4]);
+	@ops[execname, "msgrcv"] = count();
+}
+
+/* -------- System V semaphores -------- */
+
+sysvsem:::semget-create,
+sysvsem:::semget-lookup
+{
+	printf("%-20Y %-6d %-16s %-14s pid=%d key=0x%x semid=%d nsems=%d flag=0x%x\n",
+	    walltimestamp, uid, execname, "semget",
+	    args[0], args[1], args[2], args[3], args[4]);
+	@ops[execname, "semget"] = count();
+}
+
+sysvsem:::semop
+{
+	printf("%-20Y %-6d %-16s %-14s pid=%d semid=%d nsops=%u flag=0x%x\n",
+	    walltimestamp, uid, execname, "semop",
+	    args[0], args[1], (unsigned)args[2], args[3]);
+	@ops[execname, "semop"] = count();
+}
+
+/* -------- System V shared memory -------- */
+
+sysvshm:::shmget-create,
+sysvshm:::shmget-lookup
+{
+	printf("%-20Y %-6d %-16s %-14s pid=%d key=0x%x shmid=%d size=%u flag=0x%x\n",
+	    walltimestamp, uid, execname, "shmget",
+	    args[0], args[1], args[2], (unsigned)args[3], args[4]);
+	@ops[execname, "shmget"] = count();
+}
+
+sysvshm:::shmat
+{
+	printf("%-20Y %-6d %-16s %-14s pid=%d shmid=%d va=%p flag=0x%x\n",
+	    walltimestamp, uid, execname, "shmat",
+	    args[0], args[1], (void *)args[2], args[3]);
+	@ops[execname, "shmat"] = count();
+}
+
+/* -------- pipes -------- */
+
+pipe:::create
+{
+	printf("%-20Y %-6d %-16s %-14s rfd=%d wfd=%d flags=0x%x\n",
+	    walltimestamp, uid, execname, "pipe",
+	    args[0], args[1], args[2]);
+	@ops[execname, "pipe"] = count();
+}
+
+/* -------- cross-process kqueue watching -------- */
+
+kqueue:::filt-proc-attach
+{
+	printf("%-20Y %-6d %-16s %-14s watcher_pid=%d target_pid=%d note=0x%x\n",
+	    walltimestamp, uid, execname, "kq_proc_watch",
+	    args[0], args[1], args[2]);
+	@ops[execname, "kq_proc_watch"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n%-16s %-16s %s\n", "EXEC", "OP", "COUNT");
+	printa("%-16s %-16s %@d\n", @ops);
+}

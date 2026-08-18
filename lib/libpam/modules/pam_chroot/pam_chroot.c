@@ -47,26 +47,35 @@
 #include <security/pam_modules.h>
 #include <security/openpam.h>
 
+#include "pam_chroot_probes.h"
+
 PAM_EXTERN int
 pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
-	const char *dir, *end, *cwd, *user;
+	const char *dir, *end, *cwd, *user = NULL;
 	struct passwd *pwd;
 	char buf[PATH_MAX];
 
 	if (pam_get_user(pamh, &user, NULL) != PAM_SUCCESS ||
-	    user == NULL || (pwd = getpwnam(user)) == NULL)
+	    user == NULL || (pwd = getpwnam(user)) == NULL) {
+		PAM_CHROOT_PROBE_SM_OPEN_SESSION(user, PAM_SESSION_ERR);
 		return (PAM_SESSION_ERR);
-	if (pwd->pw_uid == 0 && !openpam_get_option(pamh, "also_root"))
+	}
+	if (pwd->pw_uid == 0 && !openpam_get_option(pamh, "also_root")) {
+		PAM_CHROOT_PROBE_SM_OPEN_SESSION(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
-	if (pwd->pw_dir == NULL)
+	}
+	if (pwd->pw_dir == NULL) {
+		PAM_CHROOT_PROBE_SM_OPEN_SESSION(user, PAM_SESSION_ERR);
 		return (PAM_SESSION_ERR);
+	}
 	if ((end = strstr(pwd->pw_dir, "/./")) != NULL) {
 		if (snprintf(buf, sizeof(buf), "%.*s",
 		    (int)(end - pwd->pw_dir), pwd->pw_dir) > (int)sizeof(buf)) {
 			openpam_log(PAM_LOG_ERROR,
 			    "%s's home directory is too long", user);
+			PAM_CHROOT_PROBE_SM_OPEN_SESSION(user, PAM_SESSION_ERR);
 			return (PAM_SESSION_ERR);
 		}
 		dir = buf;
@@ -78,8 +87,10 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 		if (openpam_get_option(pamh, "always")) {
 			openpam_log(PAM_LOG_ERROR,
 			    "%s has no chroot directory", user);
+			PAM_CHROOT_PROBE_SM_OPEN_SESSION(user, PAM_SESSION_ERR);
 			return (PAM_SESSION_ERR);
 		}
+		PAM_CHROOT_PROBE_SM_OPEN_SESSION(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
 	}
 
@@ -87,21 +98,27 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 
 	if (chroot(dir) == -1) {
 		openpam_log(PAM_LOG_ERROR, "chroot(): %m");
+		PAM_CHROOT_PROBE_SM_OPEN_SESSION(user, PAM_SESSION_ERR);
 		return (PAM_SESSION_ERR);
 	}
 	if (chdir(cwd) == -1) {
 		openpam_log(PAM_LOG_ERROR, "chdir(): %m");
+		PAM_CHROOT_PROBE_SM_OPEN_SESSION(user, PAM_SESSION_ERR);
 		return (PAM_SESSION_ERR);
 	}
 	pam_setenv(pamh, "HOME", cwd, 1);
+	PAM_CHROOT_PROBE_SM_OPEN_SESSION(user, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 
 PAM_EXTERN int
-pam_sm_close_session(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_CHROOT_PROBE_SM_CLOSE_SESSION((const char *)user, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 

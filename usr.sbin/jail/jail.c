@@ -44,6 +44,7 @@
 #include <unistd.h>
 
 #include "jailp.h"
+#include "jail_probes.h"
 
 #define JP_RDTUN(jp)	(((jp)->jp_ctltype & CTLFLAG_RDTUN) == CTLFLAG_RDTUN)
 
@@ -925,6 +926,7 @@ jailparam_set_note(const struct cfjail *j, struct jailparam *jp, unsigned njp,
 	unsigned i;
 
 	jid = jailparam_set(jp, njp, flags);
+	JAIL_PROBE_PARAM_SET(j->name, flags, jid);
 	if (verbose > 0) {
 		jail_note(j, "jail_set(%s)",
 		    (flags & (JAIL_CREATE | JAIL_UPDATE)) == JAIL_CREATE

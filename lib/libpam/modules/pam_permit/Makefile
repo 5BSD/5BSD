@@ -27,4 +27,10 @@ LIB=		pam_permit
 SRCS=		pam_permit.c
 MANNODEV=	pam_permit.8
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=		pam_permit_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

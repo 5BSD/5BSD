@@ -1,0 +1,148 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * tamperwatch.d -- high-signal anti-forensics / system-tamper events in one
+ * view: wall-clock stepping, process-accounting redirection/disable, immutable
+ * & append-only flag clearing, kernel-environment writes, security-relevant
+ * sysctl writes, and shutdown/reboot requests.
+ *
+ * Providers / probes consumed (kernel SDT, see sources for signatures):
+ *   clock:kernel:settime:step  (kern_time.c)
+ *       args[0] int64_t new time (sec), args[1] int64_t requested delta (sec),
+ *       args[2] struct ucred *subject
+ *   acct:::config              (kern_acct.c)
+ *       args[0] char *path (NULL => accounting DISABLED),
+ *       args[1] struct ucred *, args[2] int error
+ *   vfs:::chflags              (vfs_syscalls.c)
+ *       args[0] u_long newflags, args[1] struct ucred *, args[2] int error
+ *   kenv:::set                 (kern_environment.c)
+ *       args[0] char *name, args[1] char *value,
+ *       args[2] struct ucred *, args[3] int error
+ *   kenv:::unset               (kern_environment.c)
+ *       args[0] char *name, args[1] struct ucred *, args[2] int error
+ *   sysctl:::write             (kern_sysctl.c)
+ *       args[0] char *oid_name, args[1] struct ucred * (may be NULL),
+ *       args[2] int error
+ *   shutdown:::request         (kern_shutdown.c)
+ *       args[0] int opt/howto, args[1] struct ucred *, args[2] int error
+ *
+ * Example invocation:
+ *       dtrace -qs tamperwatch.d
+ *       ./tamperwatch.d
+ *
+ * REQUIRES a kernel rebuilt from this tree (buildkernel/installkernel +
+ * reboot).  Until then these providers are absent and `dtrace -l` will not
+ * list them.
+ */
+
+/* chattr(1) system flags of interest (sys/stat.h). */
+inline unsigned long SF_APPEND    = 0x00040000;
+inline unsigned long SF_IMMUTABLE = 0x00020000;
+
+/* A step larger than this many seconds (either direction) is loud. */
+inline int64_t STEP_THRESH = 30;
+
+dtrace:::BEGIN
+{
+	printf("%-20s %5s %-16s %-14s %s\n",
+	    "TIME", "UID", "EXEC", "EVENT", "DETAIL");
+}
+
+/*
+ * Absolute clock stepped.  Backward or large steps are classic log/forensics
+ * tampering, so annotate them, but record every step.
+ */
+clock:kernel:settime:step
+{
+	this->uid = args[2] != NULL ? args[2]->cr_uid : uid;
+	printf("%-20Y %5d %-16s %-14s newsec=%d delta=%ds%s\n",
+	    walltimestamp, this->uid, execname, "SETTIME-STEP",
+	    args[0], args[1],
+	    (args[1] < 0 || args[1] > STEP_THRESH || args[1] < -STEP_THRESH)
+	        ? "  <== LARGE/BACKWARD STEP" : "");
+	@byexec[execname, "settime-step"] = count();
+}
+
+/*
+ * Process accounting (re)configured.  path == NULL means accounting was
+ * turned OFF -- a deliberate blinding of audit trails.
+ */
+acct:::config
+{
+	this->uid = args[1] != NULL ? args[1]->cr_uid : uid;
+	printf("%-20Y %5d %-16s %-14s %s err=%d\n",
+	    walltimestamp, this->uid, execname, "ACCT-CONFIG",
+	    args[0] == 0 ? "DISABLE accounting" :
+	        strjoin("redirect -> ", copyinstr(args[0])),
+	    args[2]);
+	@byexec[execname, "acct-config"] = count();
+}
+
+/*
+ * chflags(2): the newflags word is what the file will carry afterwards.
+ * If SF_IMMUTABLE / SF_APPEND are absent, protections may be being cleared.
+ */
+vfs:::chflags
+{
+	this->uid = args[1] != NULL ? args[1]->cr_uid : uid;
+	printf("%-20Y %5d %-16s %-14s newflags=0x%lx%s%s err=%d\n",
+	    walltimestamp, this->uid, execname, "CHFLAGS",
+	    args[0],
+	    (args[0] & SF_IMMUTABLE) ? "" : " noSF_IMMUTABLE",
+	    (args[0] & SF_APPEND) ? "" : " noSF_APPEND",
+	    args[2]);
+	@byexec[execname, "chflags"] = count();
+}
+
+kenv:::set
+{
+	this->uid = args[2] != NULL ? args[2]->cr_uid : uid;
+	printf("%-20Y %5d %-16s %-14s %s=%s err=%d\n",
+	    walltimestamp, this->uid, execname, "KENV-SET",
+	    stringof(args[0]), stringof(args[1]), args[3]);
+	@byexec[execname, "kenv-set"] = count();
+}
+
+kenv:::unset
+{
+	this->uid = args[1] != NULL ? args[1]->cr_uid : uid;
+	printf("%-20Y %5d %-16s %-14s %s err=%d\n",
+	    walltimestamp, this->uid, execname, "KENV-UNSET",
+	    stringof(args[0]), args[2]);
+	@byexec[execname, "kenv-unset"] = count();
+}
+
+/*
+ * All sysctl writes are logged; security-relevant OIDs are annotated.
+ */
+sysctl:::write
+{
+	this->uid = args[1] != NULL ? args[1]->cr_uid : uid;
+	this->oid = stringof(args[0]);
+	this->hot =
+	    (strstr(this->oid, "securelevel") != NULL ||
+	     strstr(this->oid, "security.bsd") != NULL ||
+	     strstr(this->oid, "coredump") != NULL) ? "  <== SECURITY OID" : "";
+	printf("%-20Y %5d %-16s %-14s %s err=%d%s\n",
+	    walltimestamp, this->uid, execname, "SYSCTL-WRITE",
+	    this->oid, args[2], this->hot);
+	@byexec[execname, "sysctl-write"] = count();
+}
+
+shutdown:::request
+{
+	this->uid = args[1] != NULL ? args[1]->cr_uid : uid;
+	printf("%-20Y %5d %-16s %-14s howto=0x%x err=%d\n",
+	    walltimestamp, this->uid, execname, "SHUTDOWN-REQ",
+	    args[0], args[2]);
+	@byexec[execname, "shutdown-request"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n==== tamper events by (execname, event) ====\n");
+	printa("  %-16s %-18s %@d\n", @byexec);
+}

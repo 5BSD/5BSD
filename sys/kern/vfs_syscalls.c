@@ -91,6 +91,10 @@
 
 MALLOC_DEFINE(M_FADVISE, "fadvise", "posix_fadvise(2) information");
 
+SDT_PROVIDER_DECLARE(vfs);
+SDT_PROBE_DEFINE3(vfs, , , chflags, "u_long", "struct ucred *", "int");
+SDT_PROBE_DEFINE3(vfs, , , chroot, "struct vnode *", "struct ucred *", "int");
+
 static int kern_chflagsat(struct thread *td, int fd, const char *path,
     enum uio_seg pathseg, u_long flags, int atflag);
 static int getutimens(const struct timespec *, enum uio_seg,
@@ -1020,9 +1024,11 @@ kern_chroot(struct thread *td, struct vnode *vp)
 		procdesc_knote(p, NOTE_CHROOT);
 		PROC_UNLOCK(p);
 	}
+	SDT_PROBE3(vfs, , , chroot, vp, td->td_ucred, error);
 	vrele(vp);
 	return (error);
 e_vunlock:
+	SDT_PROBE3(vfs, , , chroot, vp, td->td_ucred, error);
 	vput(vp);
 	return (error);
 }
@@ -2870,6 +2876,7 @@ setfflags(struct thread *td, struct vnode *vp, u_long flags)
 #endif
 	VOP_UNLOCK(vp);
 	vn_finished_write(mp);
+	SDT_PROBE3(vfs, , , chflags, flags, td->td_ucred, error);
 	return (error);
 }
 

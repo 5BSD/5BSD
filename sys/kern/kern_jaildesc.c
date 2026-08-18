@@ -38,6 +38,8 @@
 #include <sys/mutex.h>
 #include <sys/poll.h>
 #include <sys/priv.h>
+#include <sys/proc.h>
+#include <sys/sdt.h>
 #include <sys/stat.h>
 #include <sys/sysproto.h>
 #include <sys/systm.h>
@@ -46,6 +48,18 @@
 #include <sys/vnode.h>
 
 MALLOC_DEFINE(M_JAILDESC, "jaildesc", "jail descriptors");
+
+SDT_PROVIDER_DEFINE(jaildesc);
+/* A new jail descriptor was created: pid, fd, owning flag. */
+SDT_PROBE_DEFINE3(jaildesc, , , alloc, "int", "int", "int");
+/* An fd was resolved to a prison under a cap_rights check: pid, fd, error. */
+SDT_PROBE_DEFINE3(jaildesc, , , find, "int", "int", "int");
+/* A descriptor was bound to a prison: pid, jid. */
+SDT_PROBE_DEFINE2(jaildesc, , , set__prison, "int", "int");
+/* A prison was dereferenced from a descriptor: pid, jid, error. */
+SDT_PROBE_DEFINE3(jaildesc, , , get__prison, "int", "int", "int");
+/* Last close of a jail descriptor: pid, jid, owning (tears down prison). */
+SDT_PROBE_DEFINE3(jaildesc, , , close, "int", "int", "int");
 
 static fo_poll_t	jaildesc_poll;
 static fo_kqfilter_t	jaildesc_kqfilter;
@@ -133,6 +147,7 @@ jaildesc_find(struct thread *td, int fd, const cap_rights_t *rightsp,
 	}
 
 	fdrop(fp, td);
+	SDT_PROBE3(jaildesc, , , find, td->td_proc->p_pid, fd, error);
 	return (error);
 }
 
@@ -166,6 +181,7 @@ jaildesc_alloc(struct thread *td, struct file **fpp, int *fdp, int owning)
 	if (owning)
 		jd->jd_flags |= JDF_OWNING;
 	*fpp = fp;
+	SDT_PROBE3(jaildesc, , , alloc, td->td_proc->p_pid, *fdp, owning);
 	return (0);
 }
 
@@ -176,8 +192,13 @@ jaildesc_alloc(struct thread *td, struct file **fpp, int *fdp, int owning)
 int
 jaildesc_get_prison(struct file *fp, struct prison **prp)
 {
+	int error;
+
 	MPASS(prp != NULL);
-	return (jaildesc_get_prison_impl(fp, prp));
+	error = jaildesc_get_prison_impl(fp, prp);
+	SDT_PROBE3(jaildesc, , , get__prison, curproc->p_pid,
+	    ((error == 0 && *prp != NULL) ? (*prp)->pr_id : 0), error);
+	return (error);
 }
 
 /*
@@ -195,6 +216,7 @@ jaildesc_set_prison(struct file *fp, struct prison *pr)
 	LIST_INSERT_HEAD(&pr->pr_descs, jd, jd_list);
 	prison_hold(pr);
 	JAILDESC_UNLOCK(jd);
+	SDT_PROBE2(jaildesc, , , set__prison, curproc->p_pid, pr->pr_id);
 }
 
 /*
@@ -247,13 +269,18 @@ jaildesc_close(struct file *fp, struct thread *td)
 {
 	struct jaildesc *jd;
 	struct prison *pr;
+	int jid, owning;
 
+	jid = 0;
+	owning = 0;
 	jd = fp->f_data;
 	fp->f_data = NULL;
 	if (jd != NULL) {
 		JAILDESC_LOCK(jd);
 		pr = jd->jd_prison;
 		if (pr != NULL) {
+			jid = pr->pr_id;
+			owning = (jd->jd_flags & JDF_OWNING) != 0;
 			/*
 			 * Free or remove the associated prison.
 			 * This requires a second check after re-
@@ -294,6 +321,7 @@ jaildesc_close(struct file *fp, struct thread *td)
 		JAILDESC_LOCK_DESTROY(jd);
 		free(jd, M_JAILDESC);
 	}
+	SDT_PROBE3(jaildesc, , , close, td->td_proc->p_pid, jid, owning);
 	return (0);
 }
 

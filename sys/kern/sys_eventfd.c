@@ -41,6 +41,7 @@
 #include <sys/poll.h>
 #include <sys/proc.h>
 #include <sys/refcount.h>
+#include <sys/sdt.h>
 #include <sys/selinfo.h>
 #include <sys/stat.h>
 #include <sys/uio.h>
@@ -52,6 +53,22 @@ _Static_assert(EFD_CLOEXEC == O_CLOEXEC, "Mismatched EFD_CLOEXEC");
 _Static_assert(EFD_NONBLOCK == O_NONBLOCK, "Mismatched EFD_NONBLOCK");
 
 MALLOC_DEFINE(M_EVENTFD, "eventfd", "eventfd structures");
+
+SDT_PROVIDER_DEFINE(eventfd);
+/* A new eventfd object was created: pid, initval, flags. */
+SDT_PROBE_DEFINE3(eventfd, , , create, "int", "uint32_t", "int");
+/* A blocking/successful read returned a value: pid, count, flags. */
+SDT_PROBE_DEFINE3(eventfd, , , read, "int", "uint64_t", "uint32_t");
+/* A non-blocking read found the counter at zero: pid. */
+SDT_PROBE_DEFINE1(eventfd, , , read__eagain, "int");
+/* A write added to the counter: pid, added value, new counter. */
+SDT_PROBE_DEFINE3(eventfd, , , write, "int", "uint64_t", "uint64_t");
+/* A non-blocking write would overflow the counter: pid, value. */
+SDT_PROBE_DEFINE2(eventfd, , , write__eagain, "int", "uint64_t");
+/* An eventfd descriptor was closed: pid. */
+SDT_PROBE_DEFINE1(eventfd, , , close, "int");
+/* The last reference was released and the object freed: efd. */
+SDT_PROBE_DEFINE1(eventfd, , , free, "void *");
 
 static fo_rdwr_t	eventfd_read;
 static fo_rdwr_t	eventfd_write;
@@ -128,6 +145,7 @@ eventfd_create_file(struct thread *td, struct file *fp, uint32_t initval,
 		fflags |= FNONBLOCK;
 	finit(fp, fflags, DTYPE_EVENTFD, efd, &eventfdops);
 
+	SDT_PROBE3(eventfd, , , create, td->td_proc->p_pid, initval, flags);
 	return (0);
 }
 
@@ -151,6 +169,7 @@ eventfd_put(struct eventfd *efd)
 	if (!refcount_release(&efd->efd_refcount))
 		return;
 
+	SDT_PROBE1(eventfd, , , free, efd);
 	seldrain(&efd->efd_sel);
 	knlist_destroy(&efd->efd_sel.si_note);
 	mtx_destroy(&efd->efd_lock);
@@ -184,6 +203,7 @@ eventfd_close(struct file *fp, struct thread *td)
 	struct eventfd *efd;
 
 	efd = fp->f_data;
+	SDT_PROBE1(eventfd, , , close, td->td_proc->p_pid);
 	eventfd_put(efd);
 	return (0);
 }
@@ -205,6 +225,7 @@ eventfd_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	while (error == 0 && efd->efd_count == 0) {
 		if ((fp->f_flag & FNONBLOCK) != 0) {
 			mtx_unlock(&efd->efd_lock);
+			SDT_PROBE1(eventfd, , , read__eagain, td->td_proc->p_pid);
 			return (EAGAIN);
 		}
 		error = mtx_sleep(&efd->efd_count, &efd->efd_lock, PCATCH,
@@ -219,6 +240,8 @@ eventfd_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 			count = efd->efd_count;
 			efd->efd_count = 0;
 		}
+		SDT_PROBE3(eventfd, , , read, td->td_proc->p_pid, count,
+		    efd->efd_flags);
 		KNOTE_LOCKED(&efd->efd_sel.si_note, 0);
 		selwakeup(&efd->efd_sel);
 		wakeup(&efd->efd_count);
@@ -255,6 +278,8 @@ retry:
 			mtx_unlock(&efd->efd_lock);
 			/* Do not not return the number of bytes written */
 			uio->uio_resid += sizeof(eventfd_t);
+			SDT_PROBE2(eventfd, , , write__eagain,
+			    td->td_proc->p_pid, count);
 			return (EAGAIN);
 		}
 		error = mtx_sleep(&efd->efd_count, &efd->efd_lock,
@@ -265,6 +290,8 @@ retry:
 	if (error == 0) {
 		MPASS(UINT64_MAX - efd->efd_count > count);
 		efd->efd_count += count;
+		SDT_PROBE3(eventfd, , , write, td->td_proc->p_pid, count,
+		    efd->efd_count);
 		eventfd_wakeup(efd);
 	}
 	mtx_unlock(&efd->efd_lock);

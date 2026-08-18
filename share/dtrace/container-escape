@@ -1,0 +1,206 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * container-escape -- correlate jail(2)/Capsicum sandbox-escape signals.
+ *
+ * A confined process (a jail, or a Capsicum capability-mode process) that
+ * begins probing the boundary of its sandbox emits denials and boundary
+ * operations across SEVERAL unrelated providers in a short window.  This
+ * consumer correlates those events per executable name and raises an ALERT
+ * once a single execname trips two or more distinct escape categories.
+ *
+ * Probes correlated (all are KERNEL SDT probes; string args are kernel
+ * pointers, so stringof() is used -- no copyinstr()):
+ *
+ *   jail:::deny            SDT_PROBE3(jail, kernel, prison_priv_check, deny,
+ *                            args[0]=int   jid   (cred->cr_prison->pr_id)
+ *                            args[1]=int   priv  (privilege number denied)
+ *                            args[2]=struct ucred *cred)
+ *   jaildesc:::find        SDT_PROBE3(jaildesc,,,find,
+ *                            args[0]=int pid, args[1]=int fd, args[2]=int error)
+ *   jaildesc:::close       SDT_PROBE3(jaildesc,,,close,
+ *                            args[0]=int pid, args[1]=int jid, args[2]=int owning)
+ *   mount:::mount          SDT_PROBE5(mount,,,mount,
+ *                            args[0]=char *fstype, args[1]=char *fspath,
+ *                            args[2]=uint64_t fsflags, args[3]=struct ucred *,
+ *                            args[4]=int error)
+ *   vfs:::chroot           SDT_PROBE3(vfs,,,chroot,
+ *                            args[0]=struct vnode *vp,
+ *                            args[1]=struct ucred *cred, args[2]=int error)
+ *   capsicum:::syscall-deny SDT_PROBE4(capsicum,,,syscall__deny,
+ *                            args[0]=pid_t pid, args[1]=int syscall_code,
+ *                            args[2]=int sy_flags, args[3]=int errno)
+ *   capsicum:::trap-signal  SDT_PROBE4(capsicum,,,trap__signal,
+ *                            args[0]=pid_t pid, args[1]=int errno,
+ *                            args[2]=int syscall_code, args[3]=int si_code)
+ *   ptrace:::deny          SDT_PROBE3(ptrace,,,deny,
+ *                            args[0]=struct proc *tracer,
+ *                            args[1]=struct proc *target, args[2]=int errno)
+ *
+ * NOTE: requires the rebuilt instrumented kernel/base that defines the jail,
+ * jaildesc, capsicum, mount, vfs and ptrace SDT providers; the probes above
+ * do not exist on a stock kernel.
+ *
+ * Usage: container-escape
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	seen["", ""] = 0;
+	score[""] = 0;
+	alerted[""] = 0;
+	printf("Correlating jail/Capsicum sandbox-escape signals. Ctrl-C for summary.\n\n");
+	printf("%-20s %-8s %-22s %s\n", "TIME", "PID", "EXECNAME", "SIGNAL");
+}
+
+/*
+ * bump() records a distinct escape category for an execname and prints an
+ * ALERT the first time an execname crosses two categories.  Implemented
+ * inline in each clause via the seen[]/score[] associative arrays.
+ */
+
+jail:::deny
+{
+	this->e = execname;
+	@denials[this->e, "jail-priv-deny"] = count();
+	printf("%-20Y %-8d %-22s jail:::deny jid=%d priv=%d\n",
+	    walltimestamp, pid, this->e, args[0], args[1]);
+	this->cat = "jail";
+}
+
+jail:::deny
+/seen[execname, "jail"] == 0/
+{
+	seen[execname, "jail"] = 1;
+	score[execname] += 1;
+}
+
+jaildesc:::find
+{
+	@denials[execname, "jaildesc-find"] = count();
+	printf("%-20Y %-8d %-22s jaildesc:::find fd=%d error=%d\n",
+	    walltimestamp, pid, execname, args[1], args[2]);
+}
+
+jaildesc:::find
+/seen[execname, "jaildesc"] == 0/
+{
+	seen[execname, "jaildesc"] = 1;
+	score[execname] += 1;
+}
+
+jaildesc:::close
+{
+	@denials[execname, "jaildesc-close"] = count();
+	printf("%-20Y %-8d %-22s jaildesc:::close jid=%d owning=%d\n",
+	    walltimestamp, pid, execname, args[1], args[2]);
+}
+
+jaildesc:::close
+/seen[execname, "jaildesc"] == 0/
+{
+	seen[execname, "jaildesc"] = 1;
+	score[execname] += 1;
+}
+
+mount:::mount
+{
+	@denials[execname, "mount"] = count();
+	printf("%-20Y %-8d %-22s mount:::mount type=%s path=%s error=%d\n",
+	    walltimestamp, pid, execname, stringof(args[0]),
+	    stringof(args[1]), args[4]);
+}
+
+mount:::mount
+/seen[execname, "mount"] == 0/
+{
+	seen[execname, "mount"] = 1;
+	score[execname] += 1;
+}
+
+vfs:::chroot
+{
+	@denials[execname, "chroot"] = count();
+	printf("%-20Y %-8d %-22s vfs:::chroot error=%d\n",
+	    walltimestamp, pid, execname, args[2]);
+}
+
+vfs:::chroot
+/seen[execname, "chroot"] == 0/
+{
+	seen[execname, "chroot"] = 1;
+	score[execname] += 1;
+}
+
+capsicum:::syscall-deny
+{
+	@denials[execname, "capsicum-syscall-deny"] = count();
+	printf("%-20Y %-8d %-22s capsicum:::syscall-deny sc=%d errno=%d\n",
+	    walltimestamp, pid, execname, args[1], args[3]);
+}
+
+capsicum:::syscall-deny
+/seen[execname, "capsicum"] == 0/
+{
+	seen[execname, "capsicum"] = 1;
+	score[execname] += 1;
+}
+
+capsicum:::trap-signal
+{
+	@denials[execname, "capsicum-trap-signal"] = count();
+	printf("%-20Y %-8d %-22s capsicum:::trap-signal sc=%d si_code=%d\n",
+	    walltimestamp, pid, execname, args[2], args[3]);
+}
+
+capsicum:::trap-signal
+/seen[execname, "capsicum"] == 0/
+{
+	seen[execname, "capsicum"] = 1;
+	score[execname] += 1;
+}
+
+ptrace:::deny
+{
+	@denials[execname, "ptrace-deny"] = count();
+	printf("%-20Y %-8d %-22s ptrace:::deny target=%d errno=%d\n",
+	    walltimestamp, pid,
+	    stringof(((struct proc *)args[0])->p_comm),
+	    ((struct proc *)args[1])->p_pid, args[2]);
+}
+
+ptrace:::deny
+/seen[stringof(((struct proc *)args[0])->p_comm), "ptrace"] == 0/
+{
+	seen[stringof(((struct proc *)args[0])->p_comm), "ptrace"] = 1;
+	score[stringof(((struct proc *)args[0])->p_comm)] += 1;
+}
+
+/*
+ * Cross-provider correlation: the moment an execname has tripped two or
+ * more distinct escape categories, surface it as a probable escape attempt.
+ */
+jail:::deny,
+jaildesc:::find,
+jaildesc:::close,
+mount:::mount,
+vfs:::chroot,
+capsicum:::syscall-deny,
+capsicum:::trap-signal
+/score[execname] == 2 && alerted[execname] == 0/
+{
+	alerted[execname] = 1;
+	printf("  *** ALERT: %s (pid %d) tripped %d distinct sandbox-escape categories ***\n",
+	    execname, pid, score[execname]);
+}
+
+dtrace:::END
+{
+	printf("\n%-22s %-26s %s\n", "EXECNAME", "SIGNAL", "COUNT");
+	printa("%-22s %-26s %@d\n", @denials);
+}

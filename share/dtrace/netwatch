@@ -1,0 +1,190 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * netwatch.d -- observe socket lifecycle and network-policy events: socket
+ *		 creation/bind/listen/connect/accept/shutdown, security-relevant
+ *		 setsockopt calls, listen-queue overflow drops, routing-table
+ *		 mutations, packet-filter drops, and raw packet capture (BPF).
+ *
+ * KERNEL (SDT) providers added to this 5BSD/VBSD fork.  pfil/bpf carry a
+ * kernel char* interface name -- dereferenced with stringof(args[N]).  The
+ * socket address arguments are kernel `struct sockaddr *`; they are shown as
+ * pointers (decoding them safely in D is address-family dependent).  The
+ * firing thread is the acting process: execname/uid/pid name it.
+ *
+ * Providers / probes consumed (args in exact SDT_PROBE_DEFINE order):
+ *
+ *   socket:::create   (struct socket *so, int dom, int type, int proto, int error, int pid)
+ *   socket:::bind     (struct socket *so, struct sockaddr *nam, int error, int pid)
+ *   socket:::bindat   (int fd, struct socket *so, struct sockaddr *nam, int error, int pid)
+ *   socket:::listen   (struct socket *so, int backlog, int error, int pid)
+ *   socket:::connect  (int fd, struct socket *so, struct sockaddr *nam, int error, int pid)
+ *   socket:::accept   (struct socket *so, struct sockaddr *sa, int error, int pid)
+ *   socket:::shutdown (struct socket *so, int how, int error, int pid)
+ *   socket:::setopt   (struct socket *so, int level, int optname, int error, int pid)
+ *   socket:::newconn-overflow (struct socket *head, u_int qlen, u_int qlimit)
+ *		src: sys/kern/uipc_socket.c  (probe newconn__overflow)
+ *   route:::add / delete / change (int addr_family, int error)
+ *		src: sys/net/rtsock.c        DEFINE2
+ *   pfil:::drop       (int flags, int rv, char *ifname)
+ *		src: sys/net/pfil.c          DEFINE3
+ *   bpf:::open        (struct ucred *cr, int zero)
+ *		src: sys/net/bpf.c           DEFINE2
+ *   bpf:::attach      (char *ifname, struct ucred *cr)
+ *		src: sys/net/bpf.c           DEFINE2
+ *
+ * REQUIRES: a kernel rebuilt with these SDT providers.  Until then
+ * "dtrace -l -P socket" / "-P route" / "-P pfil" / "-P bpf" lists nothing.
+ *
+ * Example:  dtrace -s netwatch.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-6s %-16s %-14s %s\n",
+	    "TIME", "UID", "EXEC", "OP", "DETAIL");
+}
+
+/* -------- socket lifecycle -------- */
+
+socket:::create
+{
+	printf("%-20Y %-6d %-16s %-14s so=%p dom=%d type=%d proto=%d err=%d pid=%d\n",
+	    walltimestamp, uid, execname, "create",
+	    args[0], args[1], args[2], args[3], args[4], args[5]);
+	@ops[execname, "create"] = count();
+}
+
+socket:::bind
+{
+	printf("%-20Y %-6d %-16s %-14s so=%p nam=%p err=%d pid=%d\n",
+	    walltimestamp, uid, execname, "bind",
+	    args[0], args[1], args[2], args[3]);
+	@ops[execname, "bind"] = count();
+}
+
+socket:::bindat
+{
+	printf("%-20Y %-6d %-16s %-14s fd=%d so=%p nam=%p err=%d pid=%d\n",
+	    walltimestamp, uid, execname, "bindat",
+	    args[0], args[1], args[2], args[3], args[4]);
+	@ops[execname, "bindat"] = count();
+}
+
+socket:::listen
+{
+	printf("%-20Y %-6d %-16s %-14s so=%p backlog=%d err=%d pid=%d\n",
+	    walltimestamp, uid, execname, "listen",
+	    args[0], args[1], args[2], args[3]);
+	@ops[execname, "listen"] = count();
+}
+
+socket:::connect
+{
+	printf("%-20Y %-6d %-16s %-14s fd=%d so=%p nam=%p err=%d pid=%d\n",
+	    walltimestamp, uid, execname, "connect",
+	    args[0], args[1], args[2], args[3], args[4]);
+	@connects[execname] = count();
+	@ops[execname, "connect"] = count();
+}
+
+socket:::accept
+{
+	printf("%-20Y %-6d %-16s %-14s so=%p sa=%p err=%d pid=%d\n",
+	    walltimestamp, uid, execname, "accept",
+	    args[0], args[1], args[2], args[3]);
+	@ops[execname, "accept"] = count();
+}
+
+socket:::shutdown
+{
+	printf("%-20Y %-6d %-16s %-14s so=%p how=%d err=%d pid=%d\n",
+	    walltimestamp, uid, execname, "shutdown",
+	    args[0], args[1], args[2], args[3]);
+	@ops[execname, "shutdown"] = count();
+}
+
+/*
+ * setsockopt: annotate the security-relevant option levels/names.  SOL_SOCKET
+ * is 0xffff; a few high-risk options are called out by number.
+ */
+socket:::setopt
+{
+	this->lvl = args[1] == 0xffff ? "SOL_SOCKET" : "PROTO";
+	printf("%-20Y %-6d %-16s %-14s so=%p level=%s(0x%x) optname=%d err=%d pid=%d\n",
+	    walltimestamp, uid, execname, "setopt",
+	    args[0], this->lvl, args[1], args[2], args[3], args[4]);
+	@ops[execname, "setopt"] = count();
+}
+
+/* Listener could not enqueue a new connection: queue overflow drop. */
+socket:::newconn-overflow
+{
+	printf("%-20Y %-6d %-16s %-14s head=%p qlen=%u qlimit=%u (DROP)\n",
+	    walltimestamp, uid, execname, "q_overflow",
+	    args[0], (unsigned)args[1], (unsigned)args[2]);
+	@ops[execname, "q_overflow"] = count();
+}
+
+/* -------- routing table changes -------- */
+
+route:::add
+{
+	printf("%-20Y %-6d %-16s %-14s af=%d err=%d\n",
+	    walltimestamp, uid, execname, "route_add", args[0], args[1]);
+	@ops[execname, "route_add"] = count();
+}
+
+route:::delete
+{
+	printf("%-20Y %-6d %-16s %-14s af=%d err=%d\n",
+	    walltimestamp, uid, execname, "route_delete", args[0], args[1]);
+	@ops[execname, "route_delete"] = count();
+}
+
+route:::change
+{
+	printf("%-20Y %-6d %-16s %-14s af=%d err=%d\n",
+	    walltimestamp, uid, execname, "route_change", args[0], args[1]);
+	@ops[execname, "route_change"] = count();
+}
+
+/* -------- packet filter drops -------- */
+
+pfil:::drop
+{
+	this->ifn = stringof(args[2]);
+	printf("%-20Y %-6d %-16s %-14s flags=0x%x rv=%d if=%s (DROP)\n",
+	    walltimestamp, uid, execname, "pfil_drop",
+	    args[0], args[1], this->ifn);
+	@drops[this->ifn] = count();
+}
+
+/* -------- raw packet capture (BPF) -------- */
+
+bpf:::open
+{
+	printf("%-20Y %-6d %-16s %-14s /dev/bpf opened\n",
+	    walltimestamp, uid, execname, "bpf_open");
+	@ops[execname, "bpf_open"] = count();
+}
+
+bpf:::attach
+{
+	printf("%-20Y %-6d %-16s %-14s if=%s\n",
+	    walltimestamp, uid, execname, "bpf_attach", stringof(args[0]));
+	@ops[execname, "bpf_attach"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n%-24s %s\n", "EXEC", "CONNECTS");
+	printa("%-24s %@d\n", @connects);
+	printf("\n%-24s %s\n", "IFNAME", "PFIL_DROPS");
+	printa("%-24s %@d\n", @drops);
+	printf("\n%-16s %-16s %s\n", "EXEC", "OP", "COUNT");
+	printa("%-16s %-16s %@d\n", @ops);
+}

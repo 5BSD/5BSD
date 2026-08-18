@@ -45,6 +45,7 @@
 #include <sys/mutex.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/ucred.h>
 #include <sys/jail.h>
 
@@ -53,6 +54,13 @@
 #include <net/pfil.h>
 
 static MALLOC_DEFINE(M_PFIL, "pfil", "pfil(9) packet filter hooks");
+
+SDT_PROVIDER_DEFINE(pfil);
+/*
+ * Fires only on a non-pass (dropped) verdict, the security-relevant,
+ * low-volume event.  Args: direction/flags, final verdict rv, ifname.
+ */
+SDT_PROBE_DEFINE3(pfil, , , drop, "int", "int", "char *");
 
 static int pfil_ioctl(struct cdev *, u_long, caddr_t, int, struct thread *);
 static struct cdevsw pfil_cdevsw = {
@@ -167,9 +175,12 @@ pfil_mem_common(pfil_chain_t *pch, void *mem, u_int len, int flags,
 			rv = link->link_mbuf_chk(m, ifp, flags,
 			    link->link_ruleset, NULL);
 
-		if (rv == PFIL_DROPPED || rv == PFIL_CONSUMED)
+		if (rv == PFIL_DROPPED || rv == PFIL_CONSUMED) {
+			if (rv == PFIL_DROPPED)
+				SDT_PROBE3(pfil, , , drop, flags, rv,
+				    (ifp != NULL ? if_name(ifp) : ""));
 			break;
-		else if (rv == PFIL_REALLOCED)
+		} else if (rv == PFIL_REALLOCED)
 			realloc = true;
 	}
 	if (realloc && rv == PFIL_PASS)
@@ -212,6 +223,9 @@ pfil_mbuf_common(pfil_chain_t *pch, struct mbuf **m, struct ifnet *ifp,
 		rv = link->link_mbuf_chk(m, ifp, flags, link->link_ruleset,
 		    inp);
 		if (rv == PFIL_DROPPED || rv == PFIL_CONSUMED) {
+			if (rv == PFIL_DROPPED)
+				SDT_PROBE3(pfil, , , drop, flags, rv,
+				    (ifp != NULL ? if_name(ifp) : ""));
 			MPASS(*m == NULL);
 			break;
 		} else {

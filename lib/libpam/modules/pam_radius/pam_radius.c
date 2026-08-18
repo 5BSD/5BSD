@@ -54,6 +54,8 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_radius_probes.h"
+
 #define PAM_OPT_CONF		"conf"
 #define PAM_OPT_TEMPLATE_USER	"template_user"
 #define PAM_OPT_NAS_ID		"nas_id"
@@ -295,7 +297,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
 	struct rad_handle *radh;
-	const char *user, *pass;
+	const char *user = NULL, *pass;
 	const void *rhost, *tmpuser;
 	const char *conf_file, *template_user, *nas_id, *nas_ipaddr;
 	int retval;
@@ -308,20 +310,25 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	pam_get_item(pamh, PAM_RHOST, &rhost);
 
 	retval = pam_get_user(pamh, &user, NULL);
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_RADIUS_PROBE_SM_AUTHENTICATE(user, retval);
 		return (retval);
+	}
 
 	PAM_LOG("Got user: %s", user);
 
 	retval = pam_get_authtok(pamh, PAM_AUTHTOK, &pass, PASSWORD_PROMPT);
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_RADIUS_PROBE_SM_AUTHENTICATE(user, retval);
 		return (retval);
+	}
 
 	PAM_LOG("Got password");
 
 	radh = rad_open();
 	if (radh == NULL) {
 		syslog(LOG_CRIT, "rad_open failed");
+		PAM_RADIUS_PROBE_SM_AUTHENTICATE(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
 	}
 
@@ -330,6 +337,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	if (rad_config(radh, conf_file) == -1) {
 		syslog(LOG_ALERT, "rad_config: %s", rad_strerror(radh));
 		rad_close(radh);
+		PAM_RADIUS_PROBE_SM_AUTHENTICATE(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
 	}
 
@@ -338,6 +346,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	if (build_access_request(radh, user, pass, nas_id, nas_ipaddr, rhost,
 	    NULL, 0) == -1) {
 		rad_close(radh);
+		PAM_RADIUS_PROBE_SM_AUTHENTICATE(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
 	}
 
@@ -349,8 +358,11 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 		case RAD_ACCESS_ACCEPT:
 			e = do_accept(pamh, radh);
 			rad_close(radh);
-			if (e == -1)
+			if (e == -1) {
+				PAM_RADIUS_PROBE_SM_AUTHENTICATE(user,
+				    PAM_SERVICE_ERR);
 				return (PAM_SERVICE_ERR);
+			}
 			if (template_user != NULL) {
 
 				PAM_LOG("Trying template user: %s",
@@ -363,8 +375,11 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 				 * option.
 				 */
 				retval = pam_get_item(pamh, PAM_USER, &tmpuser);
-				if (retval != PAM_SUCCESS)
+				if (retval != PAM_SUCCESS) {
+					PAM_RADIUS_PROBE_SM_AUTHENTICATE(user,
+					    retval);
 					return (retval);
+				}
 				if (getpwnam(tmpuser) == NULL) {
 					pam_set_item(pamh, PAM_USER,
 					    template_user);
@@ -372,12 +387,14 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 				}
 
 			}
+			PAM_RADIUS_PROBE_SM_AUTHENTICATE(user, PAM_SUCCESS);
 			return (PAM_SUCCESS);
 
 		case RAD_ACCESS_REJECT:
 			retval = do_reject(pamh, radh);
 			rad_close(radh);
 			PAM_VERBOSE_ERROR("Radius rejection");
+			PAM_RADIUS_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 			return (PAM_AUTH_ERR);
 
 		case RAD_ACCESS_CHALLENGE:
@@ -385,6 +402,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 			    nas_ipaddr, rhost);
 			if (retval != PAM_SUCCESS) {
 				rad_close(radh);
+				PAM_RADIUS_PROBE_SM_AUTHENTICATE(user, retval);
 				return (retval);
 			}
 			break;
@@ -394,6 +412,8 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 			    rad_strerror(radh));
 			rad_close(radh);
 			PAM_VERBOSE_ERROR("Radius failure");
+			PAM_RADIUS_PROBE_SM_AUTHENTICATE(user,
+			    PAM_AUTHINFO_UNAVAIL);
 			return (PAM_AUTHINFO_UNAVAIL);
 
 		default:
@@ -401,16 +421,20 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 			    "rad_send_request: unexpected return value");
 			rad_close(radh);
 			PAM_VERBOSE_ERROR("Radius error");
+			PAM_RADIUS_PROBE_SM_AUTHENTICATE(user, PAM_SERVICE_ERR);
 			return (PAM_SERVICE_ERR);
 		}
 	}
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_RADIUS_PROBE_SM_SETCRED((const char *)user, flags, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 

@@ -27,4 +27,10 @@ LIB=		pam_lastlog
 SRCS=		pam_lastlog.c
 MANNODEV=	pam_lastlog.8
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=		pam_lastlog_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

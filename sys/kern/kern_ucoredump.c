@@ -46,6 +46,7 @@
 #include <sys/racct.h>
 #include <sys/resourcevar.h>
 #include <sys/rmlock.h>
+#include <sys/sdt.h>
 #include <sys/sysctl.h>
 #include <sys/syslog.h>
 #include <sys/ucoredump.h>
@@ -54,6 +55,9 @@
 #include <security/mac/mac_framework.h>
 
 static int coredump(struct thread *td, const char **);
+
+SDT_PROVIDER_DEFINE(coredump);
+SDT_PROBE_DEFINE3(coredump, , , write, "pid_t", "char *", "int");
 
 int compress_user_cores = 0;
 
@@ -301,5 +305,6 @@ coredump(struct thread *td, const char **errmsg)
 
 	blockcount_release(&chosen->cd_refcount, 1);
 
+	SDT_PROBE3(coredump, , , write, p->p_pid, p->p_comm, error);
 	return (error);
 }

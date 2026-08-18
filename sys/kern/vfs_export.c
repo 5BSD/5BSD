@@ -52,6 +52,7 @@
 #include <sys/proc.h>
 #include <sys/rmlock.h>
 #include <sys/refcount.h>
+#include <sys/sdt.h>
 #include <sys/signalvar.h>
 #include <sys/socket.h>
 #include <sys/vnode.h>
@@ -61,6 +62,71 @@
 
 #include <rpc/types.h>
 #include <rpc/auth.h>
+
+/*
+ * Defensive observability for the NFS export access-control surface.
+ * This provider traces the config-time export machinery (which file
+ * systems are exported to which network clients, with what flags and
+ * mapped credentials) plus the per-request server-side access decision.
+ * These are config-time / low-rate paths (the lookup is only moderately
+ * hot and fires at most once per lookup).
+ */
+SDT_PROVIDER_DEFINE(nfsexport);
+
+/*
+ * vfs_export(): a file system's export set is being (re)configured via
+ * nmount()/mountd(8).  Args: mount pointer, mount path, export flags.
+ */
+SDT_PROBE_DEFINE3(nfsexport, , , export,
+    "struct mount *", "char *", "uint64_t");
+/* vfs_export() result.  Args: mount pointer, mount path, errno. */
+SDT_PROBE_DEFINE3(nfsexport, , , export__done,
+    "struct mount *", "char *", "int");
+
+/*
+ * vfs_hang_addrlist(): an export entry is being added.  Args: mount
+ * pointer, mount path, export flags, address length (0 == default export).
+ */
+SDT_PROBE_DEFINE4(nfsexport, , , hang__addrlist,
+    "struct mount *", "char *", "uint64_t", "int");
+
+/*
+ * The default (world/public) export case is being installed.  Args:
+ * mount pointer, export flags, mapped anon uid.
+ */
+SDT_PROBE_DEFINE3(nfsexport, , , defexport,
+    "struct mount *", "uint64_t", "uint32_t");
+
+/*
+ * The anonymous/mapped credential a client's requests map to (e.g. remote
+ * uid 0 -> this local uid/gid).  Args: mapped uid, mapped gid.
+ */
+SDT_PROBE_DEFINE2(nfsexport, , , anoncred,
+    "uint32_t", "uint32_t");
+
+/*
+ * A per-client grant is being installed for a specific network/host.
+ * Security-critical authorization.  Args: mount pointer, address family,
+ * export flags, mapped anon uid.
+ */
+SDT_PROBE_DEFINE4(nfsexport, , , grant,
+    "struct mount *", "int", "uint64_t", "uint32_t");
+
+/*
+ * Runtime access decision: an incoming client address is matched against
+ * the export list.  Fires at most once per lookup for both grant and
+ * deny.  Args: mount pointer, client address family, matched export flags
+ * (0 on deny), matched (1 == grant, 0 == no match / deny).
+ */
+SDT_PROBE_DEFINE4(nfsexport, , , lookup,
+    "struct mount *", "int", "uint64_t", "int");
+
+/*
+ * An export's address lists are being torn down (export removal / unmount
+ * / jail cleanup).  Args: netexport pointer.
+ */
+SDT_PROBE_DEFINE1(nfsexport, , , free__addrlist,
+    "struct netexport *");
 
 /* Publicly exported FS */
 static struct nfs_public nfs_pub;
@@ -120,6 +186,9 @@ vfs_hang_addrlist(struct mount *mp, struct netexport *nep,
 	KASSERT(argp->ex_numsecflavors < MAXSECFLAVORS,
 	    ("%s: numsecflavors >= MAXSECFLAVORS", __func__));
 
+	SDT_PROBE4(nfsexport, , , hang__addrlist, mp,
+	    mp->mnt_stat.f_mntonname, argp->ex_flags, argp->ex_addrlen);
+
 	/*
 	 * XXX: This routine converts from a uid plus gid list
 	 * to a `struct ucred' (np->netc_anon).  This
@@ -147,6 +216,10 @@ vfs_hang_addrlist(struct mount *mp, struct netexport *nep,
 		MNT_ILOCK(mp);
 		mp->mnt_flag |= MNT_DEFEXPORTED;
 		MNT_IUNLOCK(mp);
+		SDT_PROBE2(nfsexport, , , anoncred, argp->ex_uid,
+		    (argp->ex_ngroups > 0 ? argp->ex_groups[0] : GID_NOGROUP));
+		SDT_PROBE3(nfsexport, , , defexport, mp, np->netc_exflags,
+		    argp->ex_uid);
 		return (0);
 	}
 
@@ -223,6 +296,10 @@ vfs_hang_addrlist(struct mount *mp, struct netexport *nep,
 	np->netc_numsecflavors = argp->ex_numsecflavors;
 	bcopy(argp->ex_secflavors, np->netc_secflavors,
 	    sizeof(np->netc_secflavors));
+	SDT_PROBE2(nfsexport, , , anoncred, argp->ex_uid,
+	    (argp->ex_ngroups > 0 ? argp->ex_groups[0] : GID_NOGROUP));
+	SDT_PROBE4(nfsexport, , , grant, mp, saddr->sa_family,
+	    np->netc_exflags, argp->ex_uid);
 	return (0);
 out:
 	free(np, M_NETADDR);
@@ -279,6 +356,8 @@ vfs_free_addrlist(struct netexport *nep)
 {
 	struct ucred *cred;
 
+	SDT_PROBE1(nfsexport, , , free__addrlist, nep);
+
 	if (nep->ne4 != NULL)
 		vfs_free_addrlist_af(&nep->ne4);
 	if (nep->ne6 != NULL)
@@ -319,6 +398,8 @@ vfs_export(struct mount *mp, struct export_args *argp, bool do_exjail)
 		return (EINVAL);
 
 	error = 0;
+	SDT_PROBE3(nfsexport, , , export, mp, mp->mnt_stat.f_mntonname,
+	    argp->ex_flags);
 	pr = curthread->td_ucred->cr_prison;
 	lockmgr(&mp->mnt_explock, LK_EXCLUSIVE, NULL);
 	nep = mp->mnt_export;
@@ -433,6 +514,8 @@ out:
 	 */
 	vfs_deleteopt(mp->mnt_optnew, "export");
 	vfs_deleteopt(mp->mnt_opt, "export");
+	SDT_PROBE3(nfsexport, , , export__done, mp,
+	    mp->mnt_stat.f_mntonname, error);
 	return (error);
 }
 
@@ -646,17 +729,27 @@ vfs_export_lookup(struct mount *mp, struct sockaddr *nam)
 			RADIX_NODE_HEAD_RLOCK(rnh);
 			np = (struct netcred *) (*rnh->rnh_matchaddr)(saddr, &rnh->rh);
 			RADIX_NODE_HEAD_RUNLOCK(rnh);
-			if (np != NULL && (np->netc_rnodes->rn_flags & RNF_ROOT) != 0)
+			if (np != NULL && (np->netc_rnodes->rn_flags & RNF_ROOT) != 0) {
+				SDT_PROBE4(nfsexport, , , lookup, mp,
+				    saddr->sa_family, (uint64_t)0, 0);
 				return (NULL);
+			}
 		}
 	}
 
 	/*
 	 * If no address match, use the default if it exists.
 	 */
-	if (np == NULL && (mp->mnt_flag & MNT_DEFEXPORTED) != 0)
+	if (np == NULL && (mp->mnt_flag & MNT_DEFEXPORTED) != 0) {
+		SDT_PROBE4(nfsexport, , , lookup, mp,
+		    (nam != NULL ? nam->sa_family : AF_UNSPEC),
+		    nep->ne_defexported.netc_exflags, 1);
 		return (&nep->ne_defexported);
+	}
 
+	SDT_PROBE4(nfsexport, , , lookup, mp,
+	    (nam != NULL ? nam->sa_family : AF_UNSPEC),
+	    (np != NULL ? np->netc_exflags : (uint64_t)0), (np != NULL));
 	return (np);
 }
 

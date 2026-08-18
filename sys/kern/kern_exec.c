@@ -106,6 +106,8 @@ dtrace_execexit_func_t	dtrace_fasttrap_exec;
 #endif
 
 SDT_PROVIDER_DECLARE(proc);
+SDT_PROVIDER_DECLARE(cred);
+SDT_PROBE_DECLARE(cred, , , setid__exec);
 SDT_PROBE_DEFINE1(proc, , , exec, "char *");
 SDT_PROBE_DEFINE1(proc, , , exec__failure, "int");
 SDT_PROBE_DEFINE1(proc, , , exec__success, "char *");
@@ -634,6 +636,8 @@ interpret:
 		 */
 		change_svuid(imgp->newcred, imgp->newcred->cr_uid);
 		change_svgid(imgp->newcred, imgp->newcred->cr_gid);
+		SDT_PROBE3(cred, , , setid__exec, args->fname,
+		    imgp->newcred->cr_uid, imgp->newcred->cr_gid);
 	} else {
 		/*
 		 * Implement correct POSIX saved-id behavior.

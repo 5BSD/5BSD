@@ -1,0 +1,143 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * wxwatch.d -- writable->executable and executable-anonymous memory watch.
+ *
+ * Surfaces the classic building blocks of JIT-spray, shellcode staging and
+ * fileless execution: a page that becomes executable after being writable,
+ * a W^X policy rejecting a W+X request, an executable mapping of a shared /
+ * memfd object, memory-object sealing (often paired with an exec mapping),
+ * a SysV shared segment attached with SHM_EXEC, and a process toggling its
+ * own W^X enforcement off.
+ *
+ * Providers/probes consumed (SDT):
+ *   vm:::mprotect-exec   (sys/vm/vm_map.c)      args: start, end, new_prot
+ *   vm:::wxorx-deny      (sys/vm/vm_map.c)      args: start, end, new_prot
+ *   vm:::mmap-exec       (sys/vm/vm_mmap.c)     args: pid, addr, len, prot, flags, error
+ *   shmfd:::mmap-exec    (sys/kern/uipc_shm.c)  args: pid, shmfd*, prot, flags, error
+ *   shmfd:::setseals     (sys/kern/uipc_shm.c)  args: pid, shmfd*, seals, error
+ *   sysvshm:::shmat      (sys/kern/sysv_shm.c)  args: pid, shmid, addr, shmflg
+ *   procctl:::wxmap-ctl  (sys/kern/kern_procctl.c) args: target_pid, requestor_pid, state
+ *
+ * NOTE: These probes exist only in the 5BSD security-instrumentation kernel.
+ *       Run against a REBUILT kernel that carries the providers above, else
+ *       dtrace(1) will report the probes as unknown.
+ *
+ * Example:
+ *   # dtrace -s wxwatch.d
+ *   # dtrace -s wxwatch.d -c ./suspect_jit
+ */
+
+#pragma D option quiet
+
+/*
+ * SHM_EXEC is carried in the shmat(2) flags argument (see the comment in
+ * sys/kern/sysv_shm.c) but is not yet exported by <sys/shm.h> in this tree.
+ * It follows the existing octal bit progression SHM_RDONLY(010000) /
+ * SHM_RND(020000) / SHM_REMAP(040000), so the next bit is 0100000.
+ * TODO: replace with the header macro once the concurrent effort lands the
+ *       "#define SHM_EXEC 0100000" in sys/sys/shm.h and verify the value.
+ */
+inline int SHM_EXEC = 0100000;
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-6s %-16s %-10s %-18s %s\n",
+	    "TIME", "PID", "EXEC", "WHAT", "OBJECT", "DETAIL");
+}
+
+/*
+ * A mapping transitioned to executable via mprotect(2) (e.g. RW -> RX).
+ * args[0]=start, args[1]=end, args[2]=new_prot.
+ */
+vm:::mprotect-exec
+{
+	printf("%-20Y %-6d %-16s %-10s 0x%-16x len=%d prot=0x%x\n",
+	    walltimestamp, pid, execname, "mprot-exec",
+	    args[0], args[1] - args[0], args[2]);
+	@w2x[execname, "mprotect-exec"] = count();
+}
+
+/*
+ * A W^X-enforcing map rejected a simultaneous W+X request.
+ * args[0]=start, args[1]=end, args[2]=new_prot.
+ */
+vm:::wxorx-deny
+{
+	printf("%-20Y %-6d %-16s %-10s 0x%-16x len=%d prot=0x%x DENIED\n",
+	    walltimestamp, pid, execname, "wxorx-deny",
+	    args[0], args[1] - args[0], args[2]);
+	@w2x[execname, "wxorx-deny"] = count();
+}
+
+/*
+ * mmap(2) of anonymous / file memory requesting PROT_EXEC.
+ * args: pid, addr, len, prot, flags, error.
+ * TODO: vm:::mmap-exec is freshly added (sys/vm/vm_mmap.c). If the running
+ *       kernel predates it, comment this clause out; the vm:::mprotect-exec
+ *       and vm:::wxorx-deny clauses above still cover the W^X transitions.
+ */
+vm:::mmap-exec
+{
+	printf("%-20Y %-6d %-16s %-10s 0x%-16x len=%d prot=0x%x flags=0x%x err=%d\n",
+	    walltimestamp, args[0], execname, "mmap-exec",
+	    args[1], args[2], args[3], args[4], args[5]);
+	@w2x[execname, "mmap-exec"] = count();
+}
+
+/*
+ * Executable mapping of a shm / memfd object -- fileless execution vector.
+ * args: pid, shmfd*, prot, flags, error.
+ */
+shmfd:::mmap-exec
+{
+	printf("%-20Y %-6d %-16s %-10s %-18s prot=0x%x flags=0x%x err=%d\n",
+	    walltimestamp, args[0], execname, "shm-exec",
+	    "shmfd", args[2], args[3], args[4]);
+	@w2x[execname, "shmfd-mmap-exec"] = count();
+}
+
+/*
+ * Sealing a memory object (F_ADD_SEALS) -- frequently paired with an
+ * executable memfd mapping to lock its contents.
+ * args: pid, shmfd*, seals, error.
+ */
+shmfd:::setseals
+{
+	printf("%-20Y %-6d %-16s %-10s %-18s seals=0x%x err=%d\n",
+	    walltimestamp, args[0], execname, "setseals",
+	    "shmfd", args[2], args[3]);
+	@w2x[execname, "setseals"] = count();
+}
+
+/*
+ * SysV shared segment attached with SHM_EXEC.
+ * args: pid, shmid, addr, shmflg.  Predicate isolates the executable attach.
+ */
+sysvshm:::shmat
+/(args[3] & SHM_EXEC) != 0/
+{
+	printf("%-20Y %-6d %-16s %-10s shmid=%-11d addr=0x%x flags=0x%x\n",
+	    walltimestamp, args[0], execname, "shmat-exec",
+	    args[1], args[2], args[3]);
+	@w2x[execname, "shmat-exec"] = count();
+}
+
+/*
+ * A process changing its own W^X (PROC_WXMAP_CTL) enforcement.
+ * args: target_pid, requestor_pid, state.
+ */
+procctl:::wxmap-ctl
+{
+	printf("%-20Y %-6d %-16s %-10s target=%-11d state=0x%x\n",
+	    walltimestamp, args[1], execname, "wxmap-ctl",
+	    args[0], args[2]);
+	@w2x[execname, "wxmap-ctl"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n%-16s %-20s %s\n", "EXEC", "EVENT", "COUNT");
+	printa("%-16s %-20s %@d\n", @w2x);
+}

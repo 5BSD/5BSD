@@ -52,6 +52,8 @@
 #include <security/pam_modules.h>
 #include <security/openpam.h>
 
+#include "pam_group_probes.h"
+
 static int
 pam_group(pam_handle_t *pamh)
 {
@@ -122,15 +124,23 @@ PAM_EXTERN int
 pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
+	int r;
 
-	return (pam_group(pamh));
+	r = pam_group(pamh);
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_GROUP_PROBE_SM_AUTHENTICATE((const char *)user, r);
+	return (r);
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t * pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_GROUP_PROBE_SM_SETCRED((const char *)user, flags, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 
@@ -138,8 +148,13 @@ PAM_EXTERN int
 pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
+	int r;
 
-	return (pam_group(pamh));
+	r = pam_group(pamh);
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_GROUP_PROBE_SM_ACCT_MGMT((const char *)user, r);
+	return (r);
 }
 
 PAM_MODULE_ENTRY("pam_group");

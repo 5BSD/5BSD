@@ -52,6 +52,8 @@
 #include <security/pam_modules.h>
 #include <security/openpam.h>
 
+#include "pam_exec_probes.h"
+
 #define PAM_ITEM_ENV(n) { (n), #n }
 static struct {
 	int item;
@@ -165,6 +167,7 @@ _pam_exec(pam_handle_t *pamh,
 	struct pollfd pfd[4];
 	const void *item;
 	char **envlist, *envstr, *resp, **tmp;
+	const void *user = NULL;
 	ssize_t rlen, wlen;
 	int envlen, extralen, i;
 	int pam_err, serrno, status;
@@ -308,6 +311,9 @@ _pam_exec(pam_handle_t *pamh,
 			OUT(PAM_SYSTEM_ERR);
 		}
 	}
+
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_EXEC_PROBE_EXEC((const char *)user, argv[0]);
 
 	if ((pid = pdfork(&pd, 0)) == 0) {
 		/* child */
@@ -463,12 +469,18 @@ PAM_EXTERN int
 pam_sm_authenticate(pam_handle_t *pamh, int flags,
     int argc, const char *argv[])
 {
+	const void *user = NULL;
 	int ret;
 	struct pe_opts options;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+
 	ret = parse_options(__func__, &argc, &argv, &options);
-	if (ret != 0)
+	if (ret != 0) {
+		PAM_EXEC_PROBE_SM_AUTHENTICATE((const char *)user,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	ret = _pam_exec(pamh, __func__, flags, argc, argv, &options);
 
@@ -497,6 +509,7 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 		ret = PAM_SERVICE_ERR;
 	}
 
+	PAM_EXEC_PROBE_SM_AUTHENTICATE((const char *)user, ret);
 	return (ret);
 }
 
@@ -504,12 +517,18 @@ PAM_EXTERN int
 pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc, const char *argv[])
 {
+	const void *user = NULL;
 	int ret;
 	struct pe_opts options;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+
 	ret = parse_options(__func__, &argc, &argv, &options);
-	if (ret != 0)
+	if (ret != 0) {
+		PAM_EXEC_PROBE_SM_SETCRED((const char *)user, flags,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	ret = _pam_exec(pamh, __func__, flags, argc, argv, &options);
 
@@ -537,6 +556,7 @@ pam_sm_setcred(pam_handle_t *pamh, int flags,
 		ret = PAM_SERVICE_ERR;
 	}
 
+	PAM_EXEC_PROBE_SM_SETCRED((const char *)user, flags, ret);
 	return (ret);
 }
 
@@ -544,12 +564,18 @@ PAM_EXTERN int
 pam_sm_acct_mgmt(pam_handle_t *pamh, int flags,
     int argc, const char *argv[])
 {
+	const void *user = NULL;
 	int ret;
 	struct pe_opts options;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+
 	ret = parse_options(__func__, &argc, &argv, &options);
-	if (ret != 0)
+	if (ret != 0) {
+		PAM_EXEC_PROBE_SM_ACCT_MGMT((const char *)user,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	ret = _pam_exec(pamh, __func__, flags, argc, argv, &options);
 
@@ -577,6 +603,7 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags,
 		ret = PAM_SERVICE_ERR;
 	}
 
+	PAM_EXEC_PROBE_SM_ACCT_MGMT((const char *)user, ret);
 	return (ret);
 }
 
@@ -584,12 +611,18 @@ PAM_EXTERN int
 pam_sm_open_session(pam_handle_t *pamh, int flags,
     int argc, const char *argv[])
 {
+	const void *user = NULL;
 	int ret;
 	struct pe_opts options;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+
 	ret = parse_options(__func__, &argc, &argv, &options);
-	if (ret != 0)
+	if (ret != 0) {
+		PAM_EXEC_PROBE_SM_OPEN_SESSION((const char *)user,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	ret = _pam_exec(pamh, __func__, flags, argc, argv, &options);
 
@@ -614,6 +647,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags,
 		ret = PAM_SERVICE_ERR;
 	}
 
+	PAM_EXEC_PROBE_SM_OPEN_SESSION((const char *)user, ret);
 	return (ret);
 }
 
@@ -621,12 +655,18 @@ PAM_EXTERN int
 pam_sm_close_session(pam_handle_t *pamh, int flags,
     int argc, const char *argv[])
 {
+	const void *user = NULL;
 	int ret;
 	struct pe_opts options;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+
 	ret = parse_options(__func__, &argc, &argv, &options);
-	if (ret != 0)
+	if (ret != 0) {
+		PAM_EXEC_PROBE_SM_CLOSE_SESSION((const char *)user,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	ret = _pam_exec(pamh, __func__, flags, argc, argv, &options);
 
@@ -651,6 +691,7 @@ pam_sm_close_session(pam_handle_t *pamh, int flags,
 		ret = PAM_SERVICE_ERR;
 	}
 
+	PAM_EXEC_PROBE_SM_CLOSE_SESSION((const char *)user, ret);
 	return (ret);
 }
 
@@ -658,12 +699,18 @@ PAM_EXTERN int
 pam_sm_chauthtok(pam_handle_t *pamh, int flags,
     int argc, const char *argv[])
 {
+	const void *user = NULL;
 	int ret;
 	struct pe_opts options;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+
 	ret = parse_options(__func__, &argc, &argv, &options);
-	if (ret != 0)
+	if (ret != 0) {
+		PAM_EXEC_PROBE_SM_CHAUTHTOK((const char *)user,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	ret = _pam_exec(pamh, __func__, flags, argc, argv, &options);
 
@@ -692,6 +739,7 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 		ret = PAM_SERVICE_ERR;
 	}
 
+	PAM_EXEC_PROBE_SM_CHAUTHTOK((const char *)user, ret);
 	return (ret);
 }
 

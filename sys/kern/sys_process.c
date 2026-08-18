@@ -53,6 +53,7 @@
 #include <sys/signalvar.h>
 #include <sys/caprights.h>
 #include <sys/filedesc.h>
+#include <sys/sdt.h>
 
 #include <security/audit/audit.h>
 
@@ -68,6 +69,11 @@
 #ifdef COMPAT_FREEBSD32
 #include <sys/procfs.h>
 #endif
+
+SDT_PROVIDER_DEFINE(ptrace);
+SDT_PROBE_DEFINE3(ptrace, , , deny, "struct proc *", "struct proc *", "int");
+SDT_PROBE_DEFINE3(ptrace, , , attach, "int", "pid_t", "struct proc *");
+SDT_PROBE_DEFINE2(ptrace, , , detach, "pid_t", "struct proc *");
 
 /* Assert it's safe to unlock a process, e.g. to allocate working memory */
 #define	PROC_ASSERT_TRACEREQ(p)	MPASS(((p)->p_flag2 & P2_PTRACEREQ) != 0)
@@ -837,27 +843,39 @@ proc_can_ptrace(struct thread *td, struct proc *p)
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
-	if ((p->p_flag & P_WEXIT) != 0)
+	if ((p->p_flag & P_WEXIT) != 0) {
+		SDT_PROBE3(ptrace, , , deny, td->td_proc, p, ESRCH);
 		return (ESRCH);
+	}
 
-	if ((error = p_cansee(td, p)) != 0)
+	if ((error = p_cansee(td, p)) != 0) {
+		SDT_PROBE3(ptrace, , , deny, td->td_proc, p, error);
 		return (error);
-	if ((error = p_candebug(td, p)) != 0)
+	}
+	if ((error = p_candebug(td, p)) != 0) {
+		SDT_PROBE3(ptrace, , , deny, td->td_proc, p, error);
 		return (error);
+	}
 
 	/* not being traced... */
-	if ((p->p_flag & P_TRACED) == 0)
+	if ((p->p_flag & P_TRACED) == 0) {
+		SDT_PROBE3(ptrace, , , deny, td->td_proc, p, EPERM);
 		return (EPERM);
+	}
 
 	/* not being traced by YOU */
-	if (p->p_pptr != td->td_proc)
+	if (p->p_pptr != td->td_proc) {
+		SDT_PROBE3(ptrace, , , deny, td->td_proc, p, EBUSY);
 		return (EBUSY);
+	}
 
 	/* not currently stopped */
 	if ((p->p_flag & P_STOPPED_TRACE) == 0 ||
 	    p->p_suspcount != p->p_numthreads  ||
-	    (p->p_flag & P_WAITED) == 0)
+	    (p->p_flag & P_WAITED) == 0) {
+		SDT_PROBE3(ptrace, , , deny, td->td_proc, p, EBUSY);
 		return (EBUSY);
+	}
 
 	return (0);
 }
@@ -1109,6 +1127,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 		 */
 		proc_set_traced(p, true);
 		proc_reparent(p, td->td_proc, false);
+		SDT_PROBE3(ptrace, , , attach, req, p->p_pid, td->td_proc);
 		CTR2(KTR_PTRACE, "PT_ATTACH: pid %d, oppid %d", p->p_pid,
 		    p->p_oppid);
 
@@ -1315,6 +1334,7 @@ kern_ptrace(struct thread *td, int req, pid_t pid, void *addr, int data)
 			}
 			break;
 		case PT_DETACH:
+			SDT_PROBE2(ptrace, , , detach, p->p_pid, td->td_proc);
 			/*
 			 * Clear P_TRACED before reparenting
 			 * a detached process back to its original

@@ -113,6 +113,42 @@ SDT_PROBE_DEFINE6(fd, , , xfer__deny,
 SDT_PROBE_DEFINE6(fd, , , xfer__consume,
     "struct file *", "int", "pid_t", "struct ucred *", "short", "int");
 
+/*
+ * Static (SDT) observability for the UNIX-domain socket subsystem.  The
+ * "unpcb" provider gives per-message / per-syscall visibility into the
+ * security-critical descriptor- and credential-passing paths as well as the
+ * connection lifecycle and in-flight-rights garbage collector.  Probes fire
+ * with a pid, the relevant socket/unpcb pointer, a filesystem path where one
+ * is available, an fd/message count, and a result/error where meaningful.
+ */
+SDT_PROVIDER_DEFINE(unpcb);
+SDT_PROBE_DEFINE4(unpcb, , , attach,
+    "pid_t", "struct socket *", "struct unpcb *", "int");
+SDT_PROBE_DEFINE3(unpcb, , , detach,
+    "pid_t", "struct socket *", "struct unpcb *");
+SDT_PROBE_DEFINE4(unpcb, , , bind,
+    "pid_t", "struct unpcb *", "char *", "int");
+SDT_PROBE_DEFINE4(unpcb, , , connect,
+    "pid_t", "struct socket *", "char *", "int");
+SDT_PROBE_DEFINE3(unpcb, , , connect2,
+    "pid_t", "struct socket *", "struct socket *");
+SDT_PROBE_DEFINE3(unpcb, , , disconnect,
+    "pid_t", "struct unpcb *", "struct unpcb *");
+SDT_PROBE_DEFINE2(unpcb, , , drop,
+    "pid_t", "struct unpcb *");
+SDT_PROBE_DEFINE3(unpcb, , , internalize,
+    "pid_t", "struct socket *", "int");
+SDT_PROBE_DEFINE3(unpcb, , , externalize,
+    "pid_t", "int", "int");
+SDT_PROBE_DEFINE1(unpcb, , , freerights,
+    "int");
+SDT_PROBE_DEFINE3(unpcb, , , scm__creds,
+    "pid_t", "uid_t", "gid_t");
+SDT_PROBE_DEFINE3(unpcb, , , addsockcred,
+    "pid_t", "int", "int");
+SDT_PROBE_DEFINE2(unpcb, , , gc,
+    "int", "int");
+
 #ifdef DDB
 #include <ddb/ddb.h>
 #endif
@@ -575,6 +611,9 @@ common:
 	if (locked == false)
 		UNP_LINK_WUNLOCK();
 
+	SDT_PROBE4(unpcb, , , attach, (td != NULL ? td->td_proc->p_pid : 0),
+	    so, unp, so->so_type);
+
 	return (0);
 }
 
@@ -698,6 +737,7 @@ restart:
 	vref(vp);
 	VOP_VPUT_PAIR(nd.ni_dvp, &vp, true);
 	vn_finished_write(mp);
+	SDT_PROBE4(unpcb, , , bind, td->td_proc->p_pid, unp, buf, 0);
 	free(buf, M_TEMP);
 	return (0);
 
@@ -705,6 +745,7 @@ error:
 	UNP_PCB_LOCK(unp);
 	unp->unp_flags &= ~UNP_BINDING;
 	UNP_PCB_UNLOCK(unp);
+	SDT_PROBE4(unpcb, , , bind, td->td_proc->p_pid, unp, buf, error);
 	free(buf, M_TEMP);
 	return (error);
 }
@@ -827,6 +868,8 @@ uipc_detach(struct socket *so)
 
 	unp = sotounpcb(so);
 	KASSERT(unp != NULL, ("uipc_detach: unp == NULL"));
+
+	SDT_PROBE3(unpcb, , , detach, curproc->p_pid, so, unp);
 
 	vp = NULL;
 	vplock = NULL;
@@ -3173,6 +3216,7 @@ bad:
 		unp->unp_flags &= ~UNP_CONNECTING;
 		UNP_PCB_UNLOCK(unp);
 	}
+	SDT_PROBE4(unpcb, , , connect, td->td_proc->p_pid, so, buf, error);
 	return (error);
 }
 
@@ -3266,6 +3310,8 @@ unp_connect2(struct socket *so, struct socket *so2, bool wakeup)
 	unp2 = sotounpcb(so2);
 	KASSERT(unp2 != NULL, ("unp_connect2: unp2 == NULL"));
 
+	SDT_PROBE3(unpcb, , , connect2, curproc->p_pid, so, so2);
+
 	UNP_PCB_LOCK_ASSERT(unp);
 	UNP_PCB_LOCK_ASSERT(unp2);
 	KASSERT(unp->unp_conn == NULL,
@@ -3338,6 +3384,8 @@ unp_disconnect(struct unpcb *unp, struct unpcb *unp2)
 	UNP_PCB_LOCK_ASSERT(unp2);
 	KASSERT(unp->unp_conn == unp2,
 	    ("%s: unpcb %p is not connected to %p", __func__, unp, unp2));
+
+	SDT_PROBE3(unpcb, , , disconnect, curproc->p_pid, unp, unp2);
 
 	unp->unp_conn = NULL;
 	so = unp->unp_socket;
@@ -3589,6 +3637,8 @@ unp_drop(struct unpcb *unp)
 	struct socket *so;
 	struct unpcb *unp2;
 
+	SDT_PROBE2(unpcb, , , drop, curproc->p_pid, unp);
+
 	/*
 	 * Regardless of whether the socket's peer dropped the connection
 	 * with this socket by aborting or disconnecting, POSIX requires
@@ -3615,6 +3665,8 @@ unp_freerights(struct filedescent **fdep, int fdcount)
 	int i;
 
 	KASSERT(fdcount > 0, ("%s: fdcount %d", __func__, fdcount));
+
+	SDT_PROBE1(unpcb, , , freerights, fdcount);
 
 	for (i = 0; i < fdcount; i++) {
 		fp = fdep[i]->fde_file;
@@ -3704,6 +3756,8 @@ unp_externalize(struct mbuf *control, struct mbuf **controlp, int flags)
 				*controlp = NULL;
 				goto next;
 			}
+			SDT_PROBE3(unpcb, , , externalize,
+			    td->td_proc->p_pid, newfds, *fdp);
 			for (int i = 0; i < newfds; i++, fdp++) {
 				struct file *fp;
 
@@ -3890,12 +3944,15 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 			for (i = 1; i < cmcred->cmcred_ngroups; i++)
 				cmcred->cmcred_groups[i] =
 				    td->td_ucred->cr_groups[i - 1];
+			SDT_PROBE3(unpcb, , , scm__creds, p->p_pid,
+			    td->td_ucred->cr_ruid, td->td_ucred->cr_rgid);
 			break;
 
 		case SCM_RIGHTS:
 			oldfds = datalen / sizeof (int);
 			if (oldfds == 0)
 				continue;
+			SDT_PROBE3(unpcb, , , internalize, p->p_pid, so, oldfds);
 			/* On some machines sizeof pointer is bigger than
 			 * sizeof int, so we need to check if data fits into
 			 * single mbuf.  We could allocate several mbufs, and
@@ -4083,6 +4140,8 @@ unp_addsockcred(struct thread *td, struct mchain *mc, int mode)
 	if (m == NULL)
 		return;
 	MPASS((m->m_flags & M_EXT) == 0 && m->m_next == NULL);
+
+	SDT_PROBE3(unpcb, , , addsockcred, td->td_proc->p_pid, mode, ngroups);
 
 	if (mode & UNP_WANTCRED_ALWAYS) {
 		struct sockcred2 *sc;
@@ -4348,6 +4407,7 @@ unp_gc(__unused void *arg, int pending)
 
 	LIST_INIT(&unp_deadhead);
 	unp_taskcount++;
+	SDT_PROBE2(unpcb, , , gc, pending, unp_taskcount);
 	UNP_LINK_RLOCK();
 	/*
 	 * First determine which sockets may be in cycles.

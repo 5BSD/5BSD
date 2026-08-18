@@ -9,6 +9,11 @@ SRCS=	login.c login_fbtab.c
 CFLAGS+=-DLOGALL
 LIBADD=	util pam
 
+.if ${MK_DTRACE} != "no"
+SRCS+=		login_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 WARNS?=	5
 
 .if ${MK_AUDIT} != "no"

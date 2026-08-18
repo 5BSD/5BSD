@@ -131,7 +131,18 @@ dtrace_dof_init(void)
 	}
 #endif
 
-	if ((modname = strrchr(lmp->l_name, '/')) == NULL)
+	/*
+	 * fdlopen(3) has no pathname argument.  rtld consequently exposes a
+	 * link map with a NULL l_name for objects loaded that way.  OpenPAM
+	 * deliberately uses fdlopen() after securely opening each module, so
+	 * every USDT-instrumented PAM module reaches this constructor with no
+	 * link-map name.  Do not dereference it: the provider name still
+	 * uniquely identifies the probes, and "unknown" is an honest module
+	 * name when the loader was not given one.
+	 */
+	if (lmp->l_name == NULL || lmp->l_name[0] == '\0')
+		modname = "unknown";
+	else if ((modname = strrchr(lmp->l_name, '/')) == NULL)
 		modname = lmp->l_name;
 	else
 		modname++;

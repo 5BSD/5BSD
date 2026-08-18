@@ -1,0 +1,133 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * fdpass.d -- follow capability (file-descriptor) flow: descriptors passed
+ *	       between processes over UNIX-domain sockets via SCM_RIGHTS, the
+ *	       credentials passed alongside them, and the raw install/dup/close
+ *	       lifecycle of every descriptor, plus eventfd/timerfd creation.
+ *
+ * KERNEL (SDT) providers added to this 5BSD/VBSD fork.  String args are kernel
+ * char* (none dereferenced here -- these probes carry pointers/counts, not
+ * strings).  The firing thread is the acting process: execname/uid/pid name it.
+ *
+ * Providers / probes consumed (args in exact SDT_PROBE_DEFINE order):
+ *
+ *   unpcb:::internalize  (pid_t pid, struct socket *so, int nfds)
+ *		src: sys/kern/uipc_usrreq.c  DEFINE3
+ *		Sender side: nfds descriptors packed into an SCM_RIGHTS message.
+ *   unpcb:::externalize  (pid_t pid, int nfds, int error)
+ *		src: sys/kern/uipc_usrreq.c  DEFINE3
+ *		Receiver side: nfds descriptors handed to the receiving process.
+ *   unpcb:::scm-creds    (pid_t pid, uid_t uid, gid_t gid)
+ *		src: sys/kern/uipc_usrreq.c  DEFINE3 (probe scm__creds)
+ *   fd:::install         (struct file *fp, int fd, pid_t pid, struct ucred *cr, short type, int flags)
+ *		src: sys/kern/kern_descrip.c DEFINE6
+ *   fd:::dup             (struct file *fp, int oldfd, int newfd, pid_t pid, struct ucred *cr, short type)
+ *		src: sys/kern/kern_descrip.c DEFINE6
+ *   fd:::close           (struct file *fp, int fd, pid_t pid, struct ucred *cr, short type, u_int count)
+ *		src: sys/kern/kern_descrip.c DEFINE6
+ *   eventfd:::create     (int fd, uint32_t initval, int flags)
+ *		src: sys/kern/sys_eventfd.c  DEFINE3
+ *   timerfd:::create     (int fd, int clockid, int flags, int error)
+ *		src: sys/kern/sys_timerfd.c  DEFINE4
+ *
+ * NB fd:::dup args: args[1]=old fd, args[2]=new fd (from the SDT_PROBE6 site
+ * `dup, oldfp, old, new, ...` in kern_descrip.c).
+ *
+ * REQUIRES: a kernel rebuilt with these SDT providers.  Until then
+ * "dtrace -l -P unpcb" / "-P fd" will list nothing.
+ *
+ * Example:  dtrace -s fdpass.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-6s %-16s %-16s %s\n",
+	    "TIME", "UID", "EXEC", "OP", "DETAIL");
+}
+
+/* -------- SCM_RIGHTS descriptor passing -------- */
+
+/* Sender: fds being internalized into an in-flight control message. */
+unpcb:::internalize
+{
+	printf("%-20Y %-6d %-16s %-16s pid=%d so=%p nfds=%d (send)\n",
+	    walltimestamp, uid, execname, "scm_internalize",
+	    args[0], args[1], args[2]);
+	@passed[execname] = sum(args[2]);
+	@ops[execname, "scm_internalize"] = count();
+}
+
+/* Receiver: fds externalized into the receiving process's table. */
+unpcb:::externalize
+{
+	printf("%-20Y %-6d %-16s %-16s pid=%d nfds=%d err=%d (recv)\n",
+	    walltimestamp, uid, execname, "scm_externalize",
+	    args[0], args[1], args[2]);
+	@passed[execname] = sum(args[1]);
+	@ops[execname, "scm_externalize"] = count();
+}
+
+/* Credentials carried alongside the passed descriptors. */
+unpcb:::scm-creds
+{
+	printf("%-20Y %-6d %-16s %-16s pid=%d uid=%d gid=%d\n",
+	    walltimestamp, uid, execname, "scm_creds",
+	    args[0], args[1], args[2]);
+	@ops[execname, "scm_creds"] = count();
+}
+
+/* -------- descriptor lifecycle -------- */
+
+fd:::install
+{
+	printf("%-20Y %-6d %-16s %-16s fd=%d pid=%d type=%d flags=0x%x\n",
+	    walltimestamp, uid, execname, "fd_install",
+	    args[1], args[2], args[4], args[5]);
+	@ops[execname, "fd_install"] = count();
+}
+
+fd:::dup
+{
+	printf("%-20Y %-6d %-16s %-16s oldfd=%d newfd=%d pid=%d type=%d\n",
+	    walltimestamp, uid, execname, "fd_dup",
+	    args[1], args[2], args[3], args[5]);
+	@ops[execname, "fd_dup"] = count();
+}
+
+fd:::close
+{
+	printf("%-20Y %-6d %-16s %-16s fd=%d pid=%d type=%d refs=%u\n",
+	    walltimestamp, uid, execname, "fd_close",
+	    args[1], args[2], args[4], (unsigned)args[5]);
+	@ops[execname, "fd_close"] = count();
+}
+
+/* -------- eventfd / timerfd creation -------- */
+
+eventfd:::create
+{
+	printf("%-20Y %-6d %-16s %-16s fd=%d initval=%u flags=0x%x\n",
+	    walltimestamp, uid, execname, "eventfd_create",
+	    args[0], args[1], args[2]);
+	@ops[execname, "eventfd_create"] = count();
+}
+
+timerfd:::create
+{
+	printf("%-20Y %-6d %-16s %-16s fd=%d clockid=%d flags=0x%x err=%d\n",
+	    walltimestamp, uid, execname, "timerfd_create",
+	    args[0], args[1], args[2], args[3]);
+	@ops[execname, "timerfd_create"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n%-24s %s\n", "EXEC", "FDS_PASSED(SCM_RIGHTS)");
+	printa("%-24s %@d\n", @passed);
+	printf("\n%-16s %-18s %s\n", "EXEC", "OP", "COUNT");
+	printa("%-16s %-18s %@d\n", @ops);
+}

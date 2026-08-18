@@ -1,0 +1,190 @@
+#!/usr/sbin/dtrace -Zs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * secreport.d -- a periodic SOC-style security dashboard.  Every 10 seconds it
+ * emits a snapshot of security-relevant activity grouped into operator
+ * categories, then resets its counters, so an analyst watching the console
+ * sees a rolling per-interval picture rather than an unbounded scroll.
+ *
+ * Categories and the probes feeding each (kernel SDT unless noted; userland
+ * USDT matched with provider* globs; args in exact SDT_PROBE_DEFINE order):
+ *
+ *   auth       login:::fail                (const char *user, const char *tty)
+ *		su*:::auth  /retcode!=0/      (from, to, tty, int retcode)
+ *		pam_*:::sm-authenticate /result!=0/  (const char *user, int result)
+ *		src: usr.bin/login, usr.bin/su, and the PAM modules
+ *   privilege  cred:::setid-exec           (char *path, uid_t uid, gid_t gid)
+ *		priv:::priv-err-cred         (int priv, struct ucred *cr)
+ *		jail:::deny                  (int jid, int priv, struct ucred *cr)
+ *		src: sys/kern/kern_prot.c, kern_priv.c, kern_jail.c
+ *   capability capsicum:::syscall-deny / check-deny / mmap-capmode-deny /
+ *		lookup-capmode-deny / signal-capmode-deny  (sys_capability.c)
+ *		casper*:::cmd-return /error!=0/  (service, cmd, int error)
+ *		src: sys/kern/sys_capability.c, lib/libcasper/.../casper_provider.d
+ *   tamper     kld:::load                   (char *file, int fileid, int error)
+ *		clock:kernel:settime:step    (int64 newsec, int64 delta, ucred*)
+ *		acct:::config                (uintptr_t user path, ucred *, int error)
+ *		sysctl:::write               (char *oid, struct ucred *, int error)
+ *		src: sys/kern/kern_linker.c, kern_time.c, kern_acct.c, kern_sysctl.c
+ *   exec/mem   vm:::mmap-exec               (pid, addr, len, prot, flags, error)
+ *		vm:::mprotect-exec           (start, end, new_prot)
+ *		src: sys/vm/vm_mmap.c, sys/vm/vm_map.c
+ *   process    proclife:::reap              (pid_t reaper, pid_t pid,
+ *				             int status, int flags)
+ *		ptrace:::attach              (int req, pid_t target, struct proc*)
+ *		src: sys/kern/kern_exit.c, sys/kern/sys_process.c
+ *
+ * REQUIRES: a kernel rebuilt/booted from this tree plus the rebuilt base
+ * userland (login/su/libpam/libcasper) for the USDT providers.  Not present
+ * on stock base.
+ *
+ * Example:  dtrace -s secreport.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	snap = 0;
+	printf("secreport: 10s security dashboard starting; ^C to stop.\n");
+}
+
+/* ============================ auth ============================ */
+
+login*:::fail
+{
+	@cat["auth"] = count();
+	@sub["auth", "login-fail"] = count();
+}
+
+su*:::auth
+/arg3 != 0/
+{
+	@cat["auth"] = count();
+	@sub["auth", "su-fail"] = count();
+}
+
+pam_*:::sm-authenticate
+/arg1 != 0/
+{
+	@cat["auth"] = count();
+	@sub["auth", "pam-auth-fail"] = count();
+}
+
+/* ========================= privilege ========================= */
+
+cred:::setid-exec
+{
+	@cat["privilege"] = count();
+	@sub["privilege", "setid-exec"] = count();
+}
+
+priv:::priv-err-cred
+{
+	@cat["privilege"] = count();
+	@sub["privilege", "priv-denied"] = count();
+}
+
+jail:::deny
+{
+	@cat["privilege"] = count();
+	@sub["privilege", "jail-deny"] = count();
+}
+
+/* ========================= capability ======================== */
+
+capsicum:::syscall-deny,
+capsicum:::check-deny,
+capsicum:::mmap-capmode-deny,
+capsicum:::lookup-capmode-deny,
+capsicum:::signal-capmode-deny
+{
+	@cat["capability"] = count();
+	@sub["capability", probename] = count();
+}
+
+casper*:::cmd-return
+/arg2 != 0/
+{
+	@cat["capability"] = count();
+	@sub["capability", "casper-deny"] = count();
+}
+
+/* =========================== tamper ========================== */
+
+kld:::load
+{
+	@cat["tamper"] = count();
+	@sub["tamper", "kld-load"] = count();
+}
+
+clock:kernel:settime:step
+{
+	@cat["tamper"] = count();
+	@sub["tamper", "clock-step"] = count();
+}
+
+acct:::config
+{
+	@cat["tamper"] = count();
+	@sub["tamper", "acct-config"] = count();
+}
+
+sysctl:::write
+{
+	@cat["tamper"] = count();
+	@sub["tamper", "sysctl-write"] = count();
+}
+
+/* ========================== exec/mem ========================= */
+
+vm:::mmap-exec
+{
+	@cat["exec/mem"] = count();
+	@sub["exec/mem", "mmap-exec"] = count();
+}
+
+vm:::mprotect-exec
+{
+	@cat["exec/mem"] = count();
+	@sub["exec/mem", "mprotect-exec"] = count();
+}
+
+/* ========================== process ========================== */
+
+proclife:::reap
+{
+	@cat["process"] = count();
+	@sub["process", "reap"] = count();
+}
+
+ptrace:::attach
+{
+	@cat["process"] = count();
+	@sub["process", "ptrace-attach"] = count();
+}
+
+/* ===================== periodic dashboard ==================== */
+
+tick-10s
+{
+	snap++;
+	printf("\n======== secreport interval %d  %Y ========\n",
+	    snap, walltimestamp);
+	printf("-- events per category --\n");
+	printa("  %-14s %@d\n", @cat);
+	printf("-- breakdown (category / kind) --\n");
+	printa("  %-14s %-22s %@d\n", @sub);
+	clear(@cat);
+	clear(@sub);
+}
+
+dtrace:::END
+{
+	printf("\n======== secreport final (uncleared interval) ========\n");
+	printa("  %-14s %@d\n", @cat);
+	printa("  %-14s %-22s %@d\n", @sub);
+}

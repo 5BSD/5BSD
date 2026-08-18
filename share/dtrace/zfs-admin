@@ -1,0 +1,136 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * zfs-admin -- ZFS administrative and access-control observability across the
+ *		two ZFS SDT providers on this 5BSD/VBSD fork:
+ *		  - zfs:::ioc     every /dev/zfs control ioctl (mount, snapshot,
+ *				  send/recv, pool import/export, rollback, ...)
+ *				  with the vecnum, target dataset/pool, caller
+ *				  uid and result.
+ *		  - zfs:::access  the authoritative VOP_ACCESS verdict from
+ *				  ZFS's own ACL/mode evaluation.
+ *		  - trustedzfs:::denied / op-return  the capability-fd plane's
+ *				  rights-mask denials and per-op results.
+ *
+ * REQUIRES a kernel/zfs.ko rebuilt with the zfs and trustedzfs SDT providers
+ * (this fork).  Run after the zfs module is loaded.
+ *
+ * Providers / probes consumed (args in exact SDT_PROBE_DEFINE order):
+ *
+ *   zfs:::ioc     (int vecnum, char *dataset, uint64_t uid, int error)
+ *		src: sys/contrib/openzfs/module/os/freebsd/zfs/kmod_core.c DEFINE4
+ *   zfs:::access  (uint64_t obj_id, int accmode, struct ucred *cr, int result)
+ *		src: .../zfs_vnops_os.c (DEFINE in kmod_core.c) DEFINE4
+ *   trustedzfs:::denied    (uint64_t ds_guid, int cmd, uint64_t required,
+ *				uint64_t held)
+ *		src: .../zfs_handle.c DEFINE4
+ *   trustedzfs:::op-return (uint64_t ds_guid, int cmd, int result)
+ *		src: .../zfs_handle.c DEFINE3 (probe op__return)
+ *
+ * Dataset/pool names are kernel char* -> stringof(args[1]).  The zfs ioc
+ * probe carries the caller uid explicitly (args[2]); the firing thread names
+ * execname/pid.  EACCES=13, EPERM=1.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("zfs-admin: ZFS ioctl + access + capability-fd plane.  Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-6s %-16s %-14s %s\n",
+	    "TIME", "PID", "UID", "EXEC", "EVENT", "DETAIL");
+}
+
+/*
+ * Control-plane ioctls.  Aggregate by dataset and by uid; separate the
+ * failures out so a scan of the summary shows who was refused what.
+ */
+zfs:::ioc
+{
+	this->ds = stringof(args[1]);
+	printf("%-20Y %-6d %-6d %-16s %-14s vecnum=%d ds=%s error=%d\n",
+	    walltimestamp, pid, (int)args[2], execname, "ioc",
+	    args[0], this->ds, args[3]);
+
+	@ioc_by_ds[this->ds] = count();
+	@ioc_by_uid[(int)args[2]] = count();
+	@ioc_by_vec[args[0]] = count();
+}
+
+zfs:::ioc
+/args[3] != 0/
+{
+	printf("%-20Y %-6d %-6d %-16s %-14s vecnum=%d ds=%s error=%d\n",
+	    walltimestamp, pid, (int)args[2], execname, "ioc-FAIL",
+	    args[0], stringof(args[1]), args[3]);
+	@ioc_fail[stringof(args[1]), args[0]] = count();
+}
+
+/*
+ * File-access verdicts.  Count the refusals by errno; obj_id is the znode id.
+ */
+zfs:::access
+{
+	@access_result[args[3]] = count();
+}
+
+zfs:::access
+/args[3] != 0/
+{
+	printf("%-20Y %-6d %-6d %-16s %-14s obj=%d accmode=0x%x result=%d%s\n",
+	    walltimestamp, pid, ((struct ucred *)args[2])->cr_uid, execname,
+	    "access-DENY", (int)args[0], args[1], args[3],
+	    args[3] == 13 ? " (EACCES)" : args[3] == 1 ? " (EPERM)" : "");
+	@access_deny[execname, args[3]] = count();
+}
+
+/*
+ * Capability-fd plane: the rights-mask told the holder no.
+ */
+trustedzfs:::denied
+{
+	printf("%-20Y %-6d %-6s %-16s %-14s guid=0x%x cmd=0x%x required=0x%x held=0x%x\n",
+	    walltimestamp, pid, "-", execname, "cap-DENIED",
+	    args[0], args[1], args[2], args[3]);
+	@cap_denied[execname, args[1]] = count();
+}
+
+/*
+ * Capability-fd per-op results; tally the error tail.
+ */
+trustedzfs:::op-return
+/args[2] != 0/
+{
+	printf("%-20Y %-6d %-6s %-16s %-14s guid=0x%x cmd=0x%x error=%d\n",
+	    walltimestamp, pid, "-", execname, "cap-op-ERR",
+	    args[0], args[1], args[2]);
+	@cap_op_err[execname, args[2]] = count();
+}
+
+dtrace:::END
+{
+	printf("\n== ioctls by dataset/pool ==\n");
+	printa("  %-40s %@d\n", @ioc_by_ds);
+
+	printf("\n== ioctls by caller uid ==\n");
+	printa("  uid=%-6d %@d\n", @ioc_by_uid);
+
+	printf("\n== ioctls by vecnum ==\n");
+	printa("  vecnum=%-6d %@d\n", @ioc_by_vec);
+
+	printf("\n== failed ioctls by (dataset, vecnum) ==\n");
+	printa("  %-40s vecnum=%-6d %@d\n", @ioc_fail);
+
+	printf("\n== VOP_ACCESS verdicts by result (0=allow) ==\n");
+	printa("  result=%-6d %@d\n", @access_result);
+
+	printf("\n== access denials by (exec, errno) ==\n");
+	printa("  %-16s errno=%-4d %@d\n", @access_deny);
+
+	printf("\n== capability-fd rights-mask denials by (exec, cmd) ==\n");
+	printa("  %-16s cmd=0x%-8x %@d\n", @cap_denied);
+
+	printf("\n== capability-fd op errors by (exec, errno) ==\n");
+	printa("  %-16s errno=%-4d %@d\n", @cap_op_err);
+}

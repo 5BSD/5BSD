@@ -76,6 +76,7 @@
 #include <sys/proc.h>
 #include <sys/procdesc.h>
 #include <sys/resourcevar.h>
+#include <sys/sdt.h>
 #include <sys/stat.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysproto.h>
@@ -87,6 +88,9 @@
 #include <security/audit/audit.h>
 
 #include <vm/uma.h>
+
+SDT_PROBE_DECLARE(capsicum, , , pdfork);
+SDT_PROBE_DECLARE(capsicum, , , pdclose);
 
 FEATURE(process_descriptors, "Process Descriptors");
 
@@ -426,6 +430,8 @@ procdesc_new(struct proc *p, int flags)
 	 * struct file, and the other from their struct proc.
 	 */
 	refcount_init(&pd->pd_refcount, 2);
+
+	SDT_PROBE3(capsicum, , , pdfork, curproc->p_pid, p->p_pid, flags);
 }
 
 /*
@@ -658,6 +664,8 @@ procdesc_close(struct file *fp, struct thread *td)
 			}
 			if ((pdflags & PDF_DAEMON) == 0)
 				kern_psignal(p, SIGKILL);
+			SDT_PROBE3(capsicum, , , pdclose, p->p_pid, pdflags,
+			    (pdflags & PDF_DAEMON) == 0);
 			PROC_UNLOCK(p);
 			sx_xunlock(&proctree_lock);
 		}

@@ -65,7 +65,40 @@ SCRIPTS=	blued-att \
 		vsock-overview \
 		vsock-perf \
 		vsock-provider \
-		vsock-security
+		vsock-security \
+		authwatch \
+		privesc \
+		capwatch \
+		jailwatch \
+		tamperwatch \
+		rootkit-kld \
+		surveil \
+		evattr \
+		wxwatch \
+		inject \
+		proctree \
+		ipcwatch \
+		fdpass \
+		netwatch \
+		storwatch \
+		container-escape \
+		persistence \
+		fileless-exec \
+		cred-theft \
+		mac-decisions \
+		aio-flow \
+		mqueue-flow \
+		zfs-admin \
+		vmm-passthru \
+		rctl-limits \
+		daemon-exec \
+		casper-mediation \
+		pam-stack \
+		sessions \
+		denials \
+		secreport \
+		execwatch \
+		capflow
 
 SCRIPTSDIR= ${SHAREDIR}/dtrace
 

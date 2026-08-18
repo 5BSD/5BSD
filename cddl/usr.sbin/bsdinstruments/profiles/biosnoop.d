@@ -20,8 +20,8 @@ io:::done
     this->us = (timestamp - start_ts[arg0]) / 1000;
     printf("%s[%d]: %s %d bytes %dus\n",
         start_exec[arg0], start_pid[arg0],
-        args[0]->b_flags & 0x00000001 ? "R" : "W",
-        args[0]->b_bcount, this->us);
+        ((struct bio *)arg0)->bio_cmd == 0x01 ? "R" : "W",
+        ((struct bio *)arg0)->bio_bcount, this->us);
     /* @bsdinstruments-stack */
     /* @bsdinstruments-ustack */
     start_ts[arg0] = 0;

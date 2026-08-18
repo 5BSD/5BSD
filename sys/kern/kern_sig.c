@@ -96,6 +96,8 @@
 #define	ONSIG	32		/* NSIG for osig* syscalls.  XXX. */
 
 SDT_PROVIDER_DECLARE(proc);
+SDT_PROBE_DECLARE(capsicum, , , signal__capmode__deny);
+SDT_PROBE_DECLARE(capsicum, , , pdkill);
 SDT_PROBE_DEFINE3(proc, , , signal__send,
     "struct thread *", "struct proc *", "int");
 SDT_PROBE_DEFINE2(proc, , , signal__clear,
@@ -1916,8 +1918,11 @@ kern_kill(struct thread *td, pid_t pid, int signum)
 	if (pid != td->td_proc->p_pid) {
 		if (CAP_TRACING(td))
 			ktrcapfail(CAPFAIL_SIGNAL, &signum);
-		if (IN_CAPABILITY_MODE(td))
+		if (IN_CAPABILITY_MODE(td)) {
+			SDT_PROBE4(capsicum, , , signal__capmode__deny,
+			    td->td_proc->p_pid, pid, signum, ECAPMODE);
 			return (ECAPMODE);
+		}
 	}
 
 	AUDIT_ARG_SIGNUM(signum);
@@ -1975,8 +1980,11 @@ sys_pdkill(struct thread *td, struct pdkill_args *uap)
 	 * procdesc_close(), which sends SIGKILL via kern_psignal() without
 	 * any permission check.
 	 */
-	if (uap->signum)
+	if (uap->signum) {
+		SDT_PROBE3(capsicum, , , pdkill, uap->fd, p->p_pid,
+		    uap->signum);
 		kern_psignal(p, uap->signum);
+	}
 	PROC_UNLOCK(p);
 	return (0);
 }

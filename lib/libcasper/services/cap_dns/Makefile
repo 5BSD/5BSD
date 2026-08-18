@@ -9,6 +9,11 @@ INCSDIR?=	${INCLUDEDIR}/casper
 SHLIB=	cap_dns
 
 SRCS=	cap_dns.c
+
+.if ${MK_DTRACE} != "no"
+SRCS+=	cap_dns_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 .endif
 
 INCS=	cap_dns.h

@@ -96,6 +96,20 @@ dtrace_execexit_func_t	dtrace_fasttrap_exit;
 SDT_PROVIDER_DECLARE(proc);
 SDT_PROBE_DEFINE1(proc, , , exit, "int");
 
+/*
+ * proclife: process-lifecycle observability provider (defined in kern_fork.c).
+ * The existing proc:::exit probe only carries the coarse CLD_* reason code and
+ * no pid; these probes add the teardown detail it lacks.
+ *
+ *   proclife:::exit-status	- a process is exiting: pid, exit code (rval)
+ *				  and terminating signal (signo)
+ *   proclife:::reap		- a parent is collecting a zombie child:
+ *				  parent pid, child pid, child exit code, signal
+ */
+SDT_PROVIDER_DECLARE(proclife);
+SDT_PROBE_DEFINE3(proclife, , , exit__status, "pid_t", "int", "int");
+SDT_PROBE_DEFINE4(proclife, , , reap, "pid_t", "pid_t", "int", "int");
+
 static int kern_kill_on_dbg_exit = 1;
 SYSCTL_INT(_kern, OID_AUTO, kill_on_debugger_exit, CTLFLAG_RWTUN,
     &kern_kill_on_dbg_exit, 0,
@@ -234,6 +248,7 @@ exit1(struct thread *td, int rval, int signo)
 	TSPROCEXIT(td->td_proc->p_pid);
 
 	p = td->td_proc;
+	SDT_PROBE3(proclife, , , exit__status, p->p_pid, rval, signo);
 	/*
 	 * In case we're rebooting we just let init die in order to
 	 * work around an issues where pid 1 might get a fatal signal.
@@ -955,6 +970,9 @@ proc_reap(struct thread *td, struct proc *p, int *status, int options)
 	mtx_spin_wait_unlocked(&p->p_slock);
 
 	q = td->td_proc;
+
+	SDT_PROBE4(proclife, , , reap, q->p_pid, p->p_pid, p->p_xexit,
+	    p->p_xsig);
 
 	if (status != NULL)
 		*status = KW_EXITCODE(p->p_xexit, p->p_xsig);

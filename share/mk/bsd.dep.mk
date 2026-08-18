@@ -156,32 +156,48 @@ OBJS_DEPEND_GUESS.${_YC:R}.o+=	${_YC}
 # DTrace probe definitions
 .if ${SRCS:M*.d}
 CFLAGS+=	-I${.OBJDIR}
+.if defined(SYSROOT) && !empty(SYSROOT)
+# A staged/cross build must embed the staged drti.o of the matching ABI.
+# In particular, LIBDIR is /usr/lib32 during the amd64 compatibility pass.
+_DTRACE_SYSROOT_FLAG=	-x syslibdir=${SYSROOT}${LIBDIR}/dtrace
+.endif
+.if defined(SRCTOP)
+# dtrace -G links drti.o into every userspace provider object.  Track the
+# drti source explicitly so an incremental world rebuild cannot leave old
+# constructor code embedded in otherwise up-to-date DSOs and executables.
+_DTRACE_DRTI_DEP=	${SRCTOP}/cddl/contrib/opensolaris/lib/libdtrace/common/drti.c
+.endif
 .endif
 .for _DSRC in ${SRCS:M*.d:N*/*}
 .for _D in ${_DSRC:R}
 SRCS+=	${_D}.h
 ${_D}.h: ${_DSRC}
-	${DTRACE} ${DTRACEFLAGS} -h -s ${.ALLSRC}
+	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -h -s ${.ALLSRC}
 SRCS:=	${SRCS:S/^${_DSRC}$//}
-OBJS+=	${_D}.o
-CLEANFILES+= ${_D}.h ${_D}.o
-${_D}.o: ${_DSRC} ${OBJS:S/^${_D}.o$//}
+OBJS+=	${_D}.${OBJ_EXT:Uo}
+CLEANFILES+= ${_D}.h ${_D}.${OBJ_EXT:Uo}
+${_D}.o: ${_DSRC} ${OBJS:S/^${_D}.o$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
-	${DTRACE} ${DTRACEFLAGS} -G -o ${.TARGET} -s ${.ALLSRC:N*.h}
-${_D}.pieo: ${_DSRC} ${OBJS:S/^${_D}.pieo$//}
+	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
+	    ${.ALLSRC:M*.o}
+${_D}.pieo: ${_DSRC} ${OBJS:S/^${_D}.pieo$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
-	${DTRACE} ${DTRACEFLAGS} -G -o ${.TARGET} -s ${.ALLSRC:N*.h}
-.if defined(LIB)
+	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
+	    ${.ALLSRC:M*.pieo}
+.if defined(LIB) || defined(SHLIB)
 CLEANFILES+= ${_D}.pico ${_D}.pieo ${_D}.po ${_D}.nossppico
-${_D}.pico: ${_DSRC} ${SOBJS:S/^${_D}.pico$//}
+${_D}.pico: ${_DSRC} ${SOBJS:S/^${_D}.pico$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
-	${DTRACE} ${DTRACEFLAGS} -G -o ${.TARGET} -s ${.ALLSRC:N*.h}
-${_D}.po: ${_DSRC} ${POBJS:S/^${_D}.po$//}
+	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
+	    ${.ALLSRC:M*.pico}
+${_D}.po: ${_DSRC} ${POBJS:S/^${_D}.po$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
-	${DTRACE} ${DTRACEFLAGS} -G -o ${.TARGET} -s ${.ALLSRC:N*.h}
-${_D}.nossppico: ${_DSRC} ${SOBJS:S/^${_D}.nossppico$//}
+	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
+	    ${.ALLSRC:M*.po}
+${_D}.nossppico: ${_DSRC} ${SOBJS:S/^${_D}.nossppico$//} ${_DTRACE_DRTI_DEP}
 	@rm -f ${.TARGET}
-	${DTRACE} ${DTRACEFLAGS} -G -o ${.TARGET} -s ${.ALLSRC:N*.h}
+	${DTRACE} ${DTRACEFLAGS} ${_DTRACE_SYSROOT_FLAG} -G -o ${.TARGET} -s ${.ALLSRC:M*.d} \
+	    ${.ALLSRC:M*.nossppico}
 .endif
 .endfor
 .endfor

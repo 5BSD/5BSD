@@ -1,0 +1,306 @@
+#!/usr/sbin/dtrace -Zs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * denials.d -- the unified "what got refused" firehose.  A single normalized
+ * stream of every security denial/error the instrumented 5BSD/VBSD kernel and
+ * Casper broker can emit, from Capsicum, MAC, privilege, jail, resource-limit,
+ * packet-filter, ZFS, NFS-export, kld-load, ptrace and procctl enforcement.
+ *
+ * Each firing prints one line:
+ *	TIME  SUBSYSTEM  EXEC/UID  WHAT  DETAIL
+ * and folds into two aggregations printed at END:
+ *	@bykind[subsystem]   -- which enforcement point is refusing the most
+ *	@byexec[execname]    -- which program is being refused the most
+ *
+ * Providers / probes consumed (kernel SDT unless noted; args in exact
+ * SDT_PROBE_DEFINE order; kernel char* via stringof(), userland via
+ * copyinstr(); struct ucred * members read directly):
+ *
+ *   capsicum:::syscall-deny        (pid_t pid, int code, int flags, int errno)
+ *		src: sys/kern/sys_capability.c (syscall__deny)
+ *   capsicum:::check-deny          (cap_rights_t *needed, cap_rights_t *held,
+ *				     pid_t pid, struct ucred *cr, int fd, int errno)
+ *		src: sys/kern/sys_capability.c (check__deny) errno=args[5]
+ *   capsicum:::connect-capmode-deny        (pid_t pid, struct ucred *cr,
+ *				     int flags, int so_type, int so2_type, int errno)
+ *   capsicum:::connect-capmode-server-deny (same signature)
+ *		src: sys/kern/sys_capability.c  errno=args[5], cr=args[1]
+ *   capsicum:::mmap-capmode-deny    (int fd, pid_t pid, struct ucred *cr,
+ *				     int prot, int flags, int errno)
+ *   capsicum:::lookup-capmode-deny  (int fd, pid_t pid, struct ucred *cr,
+ *				     int type, int flags, int errno)
+ *		src: sys/kern/sys_capability.c  errno=args[5], cr=args[2]
+ *   capsicum:::signal-capmode-deny  (pid_t spid, pid_t tpid, int sig, int errno)
+ *		src: sys/kern/sys_capability.c (signal__capmode__deny)
+ *   capsicum:::trap-signal          (pid_t pid, int errno, int code, int si_code)
+ *		src: sys/kern/sys_capability.c (trap__signal)
+ *   mac_framework:::policy-decision (char *entrypoint, char *policy, int result)
+ *		src: sys/security/mac/mac_internal.h (policy__decision); fires per
+ *		policy per entry point.  result != 0 == that policy denied.
+ *   priv:::priv-err-cred            (int priv, struct ucred *cr)
+ *		src: sys/kern/kern_priv.c (priv__err__cred, priv_check)
+ *   jail:::deny                     (int jid, int priv, struct ucred *cr)
+ *		src: sys/kern/kern_jail.c (prison_priv_check)
+ *   rctl:::deny                     (struct proc *p, int resource, uint64_t amount)
+ *		src: sys/kern/kern_rctl.c (rctl_enforce)
+ *   casper*:::cmd-return            (const char *service, const char *cmd, int error)
+ *		src: lib/libcasper/libcasper/casper_provider.d (cmd__return);
+ *		userland USDT, error != 0 == request denied.
+ *   pfil:::drop                     (int flags, int rv, char *ifname)
+ *		src: sys/net/pfil.c (drop); a hook dropped the packet (rv != 0).
+ *   zfs:::access                    (uint64_t objid, int accmode,
+ *				     struct ucred *cr, int error)
+ *		src: sys/contrib/openzfs/.../zfs_vnops_os.c (access); error != 0.
+ *   nfsexport:::lookup              (struct mount *mp, int af, uint64_t exflags,
+ *				     int found)
+ *		src: sys/kern/vfs_export.c (lookup); found == 0 == no export
+ *		matched the client -> NFS access refused.
+ *   kld:::load-deny                 (char *filename, struct ucred *cr)
+ *		src: sys/kern/kern_linker.c (load__deny)
+ *   ptrace:::deny                   (struct proc *tracer, struct proc *target,
+ *				     int error)
+ *		src: sys/kern/sys_process.c (deny)
+ *   procctl:::deny                  (int com, pid_t pid, int error)
+ *		src: sys/kern/kern_procctl.c (deny)
+ *
+ * REQUIRES: a kernel rebuilt/booted from this tree AND the rebuilt libcasper
+ * (for the userland casper provider).  These providers do not exist on stock
+ * base; "dtrace -l" will not list them until then.
+ *
+ * Example:  dtrace -s denials.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-14s %-16s %-6s %-20s %s\n",
+	    "TIME", "SUBSYSTEM", "EXEC", "UID", "WHAT", "DETAIL");
+}
+
+/* -------------------------------------------------------------- capsicum */
+
+capsicum:::syscall-deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s syscall=%d flags=0x%x errno=%d\n",
+	    walltimestamp, "capsicum", execname, uid, "syscall-deny",
+	    args[1], args[2], args[3]);
+	@bykind["capsicum"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::check-deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s fd=%d errno=%d\n",
+	    walltimestamp, "capsicum", execname,
+	    args[3] != NULL ? args[3]->cr_uid : uid, "check-deny",
+	    args[4], args[5]);
+	@bykind["capsicum"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::connect-capmode-deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s so_type=%d flags=0x%x errno=%d\n",
+	    walltimestamp, "capsicum", execname,
+	    args[1] != NULL ? args[1]->cr_uid : uid, "connect-capmode-deny",
+	    args[3], args[2], args[5]);
+	@bykind["capsicum"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::connect-capmode-server-deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s so_type=%d flags=0x%x errno=%d\n",
+	    walltimestamp, "capsicum", execname,
+	    args[1] != NULL ? args[1]->cr_uid : uid,
+	    "connect-server-deny", args[3], args[2], args[5]);
+	@bykind["capsicum"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::mmap-capmode-deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s fd=%d prot=%d flags=0x%x errno=%d\n",
+	    walltimestamp, "capsicum", execname,
+	    args[2] != NULL ? args[2]->cr_uid : uid, "mmap-capmode-deny",
+	    args[0], args[3], args[4], args[5]);
+	@bykind["capsicum"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::lookup-capmode-deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s fd=%d type=%d flags=0x%x errno=%d\n",
+	    walltimestamp, "capsicum", execname,
+	    args[2] != NULL ? args[2]->cr_uid : uid, "lookup-capmode-deny",
+	    args[0], args[3], args[4], args[5]);
+	@bykind["capsicum"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::signal-capmode-deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s target=%d sig=%d errno=%d\n",
+	    walltimestamp, "capsicum", execname, uid, "signal-capmode-deny",
+	    args[1], args[2], args[3]);
+	@bykind["capsicum"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::trap-signal
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s errno=%d syscall=%d si_code=%d\n",
+	    walltimestamp, "capsicum", execname, uid, "trap-signal(SIGTRAP)",
+	    args[1], args[2], args[3]);
+	@bykind["capsicum"] = count();
+	@byexec[execname] = count();
+}
+
+/* ------------------------------------------------------------------- MAC */
+
+/* Fires per policy per entry point; a nonzero result is that policy's deny. */
+mac_framework:::policy-decision
+/arg2 != 0/
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s policy=%s errno=%d\n",
+	    walltimestamp, "mac", execname, uid,
+	    stringof(args[0]), stringof(args[1]), args[2]);
+	@bykind["mac"] = count();
+	@byexec[execname] = count();
+}
+
+/* ------------------------------------------------------------- privilege */
+
+priv:::priv-err-cred
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s priv=%d ruid=%d\n",
+	    walltimestamp, "priv", execname,
+	    args[1] != NULL ? args[1]->cr_uid : uid, "priv-denied",
+	    args[0], args[1] != NULL ? args[1]->cr_ruid : -1);
+	@bykind["priv"] = count();
+	@byexec[execname] = count();
+}
+
+/* ------------------------------------------------------------------ jail */
+
+jail:::deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s jid=%d priv=%d\n",
+	    walltimestamp, "jail", execname,
+	    args[2] != NULL ? args[2]->cr_uid : uid, "jail-priv-denied",
+	    args[0], args[1]);
+	@bykind["jail"] = count();
+	@byexec[execname] = count();
+}
+
+/* ------------------------------------------------------------------ rctl */
+
+rctl:::deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s resource=%d amount=%d\n",
+	    walltimestamp, "rctl", execname, uid, "limit-denied",
+	    args[1], (int)args[2]);
+	@bykind["rctl"] = count();
+	@byexec[execname] = count();
+}
+
+/* ---------------------------------------------------------------- casper */
+
+/* Userland broker: error != 0 means the mediated request was refused. */
+casper*:::cmd-return
+/arg2 != 0/
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s service=%s cmd=%s error=%d\n",
+	    walltimestamp, "casper", execname, uid, "cmd-denied",
+	    copyinstr(arg0), copyinstr(arg1), arg2);
+	@bykind["casper"] = count();
+	@byexec[execname] = count();
+}
+
+/* ------------------------------------------------------------------ pfil */
+
+pfil:::drop
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s flags=0x%x rv=%d if=%s\n",
+	    walltimestamp, "pfil", execname, uid, "packet-drop",
+	    args[0], args[1], stringof(args[2]));
+	@bykind["pfil"] = count();
+	@byexec[execname] = count();
+}
+
+/* ------------------------------------------------------------------- zfs */
+
+zfs:::access
+/args[3] != 0/
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s objid=0x%x accmode=0x%x error=%d\n",
+	    walltimestamp, "zfs", execname,
+	    args[2] != NULL ? args[2]->cr_uid : uid, "vop-access-deny",
+	    args[0], args[1], args[3]);
+	@bykind["zfs"] = count();
+	@byexec[execname] = count();
+}
+
+/* ------------------------------------------------------------- nfsexport */
+
+/* found == 0: no export entry matched the client -> access refused. */
+nfsexport:::lookup
+/args[3] == 0/
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s af=%d exflags=0x%x\n",
+	    walltimestamp, "nfsexport", execname, uid, "export-lookup-deny",
+	    args[1], args[2]);
+	@bykind["nfsexport"] = count();
+	@byexec[execname] = count();
+}
+
+/* ------------------------------------------------------------------- kld */
+
+kld:::load-deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s file=%s\n",
+	    walltimestamp, "kld", execname,
+	    args[1] != NULL ? args[1]->cr_uid : uid, "load-deny",
+	    stringof(args[0]));
+	@bykind["kld"] = count();
+	@byexec[execname] = count();
+}
+
+/* ---------------------------------------------------------------- ptrace */
+
+ptrace:::deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s tracer=%s/%d target=%s/%d error=%d\n",
+	    walltimestamp, "ptrace", execname, uid, "trace-deny",
+	    args[0] != NULL ? stringof(args[0]->p_comm) : "?",
+	    args[0] != NULL ? args[0]->p_pid : -1,
+	    args[1] != NULL ? stringof(args[1]->p_comm) : "?",
+	    args[1] != NULL ? args[1]->p_pid : -1, args[2]);
+	@bykind["ptrace"] = count();
+	@byexec[execname] = count();
+}
+
+/* --------------------------------------------------------------- procctl */
+
+procctl:::deny
+{
+	printf("%-20Y %-14s %-16s %-6d %-20s com=%d target=%d error=%d\n",
+	    walltimestamp, "procctl", execname, uid, "procctl-deny",
+	    args[0], args[1], args[2]);
+	@bykind["procctl"] = count();
+	@byexec[execname] = count();
+}
+
+/* ------------------------------------------------------------------- end */
+
+dtrace:::END
+{
+	printf("\n==== denials by subsystem ====\n");
+	printa("  %-16s %@d\n", @bykind);
+	printf("\n==== denials by exec ====\n");
+	printa("  %-24s %@d\n", @byexec);
+}

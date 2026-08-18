@@ -9,6 +9,11 @@ INCSDIR?=	${INCLUDEDIR}/casper
 SHLIB=	cap_sysctl
 
 SRCS=	cap_sysctl.c
+
+.if ${MK_DTRACE} != "no"
+SRCS+=	cap_sysctl_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 .endif
 
 INCS=	cap_sysctl.h

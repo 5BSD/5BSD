@@ -1,0 +1,152 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * jailwatch.d -- observe jail lifecycle, per-jail privilege denials, jail
+ *		  descriptor operations, and TrustedZFS handle-op outcomes.
+ *
+ * All probes here are kernel SDT ("provider:::probe").  char * args are kernel
+ * pointers, dereferenced with stringof(); ucred members are read directly.
+ *
+ *   jail:::create (int jid, const char *name, const char *path, int flags)
+ *		args[0]=jid  args[1]=name  args[2]=path  args[3]=flags
+ *		src: sys/kern/kern_jail.c (function kern_jail_set)
+ *   jail:::update (int jid, const char *name, int flags)
+ *		args[0]=jid  args[1]=name  args[2]=flags
+ *		src: sys/kern/kern_jail.c (function kern_jail_set)
+ *   jail:::attach (pid_t pid, int jid)
+ *		args[0]=pid  args[1]=jid
+ *		src: sys/kern/kern_jail.c (function do_jail_attach)
+ *   jail:::remove (int jid, const char *name)
+ *		args[0]=jid  args[1]=name
+ *		src: sys/kern/kern_jail.c (function prison_deref)
+ *   jail:::deny (int jid, int priv, struct ucred *cr)
+ *		args[0]=jid  args[1]=priv  args[2]=cred
+ *		src: sys/kern/kern_jail.c (function prison_priv_check)
+ *   jaildesc:::alloc (int pid, int fd, int owning)
+ *		args[0]=pid  args[1]=fd  args[2]=owning
+ *		src: sys/kern/kern_jaildesc.c
+ *   jaildesc:::find (int pid, int fd, int error)
+ *		args[0]=pid  args[1]=fd  args[2]=error
+ *		src: sys/kern/kern_jaildesc.c
+ *   jaildesc:::close (int pid, int jid, int owning)
+ *		args[0]=pid  args[1]=jid  args[2]=owning (tears down prison)
+ *		src: sys/kern/kern_jaildesc.c
+ *   trustedzfs:::denied (uint64_t guid, int cmd, uint64_t required, uint64_t held)
+ *		args[0]=guid  args[1]=cmd/op  args[2]=required rights  args[3]=held rights
+ *		src: sys/contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c (probe denied)
+ *   trustedzfs:::op-return (uint64_t guid, int op, int error)
+ *		args[0]=guid  args[1]=op  args[2]=error (!=0 -> failed)
+ *		src: sys/contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c (probe op__return)
+ *
+ * REQUIRES: a kernel built and booted from this tree (the jail/jaildesc SDT
+ * providers and the openzfs trustedzfs provider are compiled into that
+ * kernel/module).  "dtrace -l -P jail" is empty on a stock kernel.
+ *
+ * Example:  dtrace -s jailwatch.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-18s %-16s %-6s %s\n",
+	    "TIME", "EVENT", "EXEC", "PID", "DETAIL");
+}
+
+jail:::create
+{
+	printf("%-20Y %-18s %-16s %-6d jid=%d name=%s path=%s flags=0x%x\n",
+	    walltimestamp, "jail:create", execname, pid,
+	    args[0], stringof(args[1]), stringof(args[2]), args[3]);
+	@jailevt["create"] = count();
+}
+
+jail:::update
+{
+	printf("%-20Y %-18s %-16s %-6d jid=%d name=%s flags=0x%x\n",
+	    walltimestamp, "jail:update", execname, pid,
+	    args[0], stringof(args[1]), args[2]);
+	@jailevt["update"] = count();
+}
+
+jail:::attach
+{
+	printf("%-20Y %-18s %-16s %-6d pid=%d jid=%d\n",
+	    walltimestamp, "jail:attach", execname, args[0], args[0], args[1]);
+	@jailevt["attach"] = count();
+}
+
+jail:::remove
+{
+	printf("%-20Y %-18s %-16s %-6d jid=%d name=%s\n",
+	    walltimestamp, "jail:remove", execname, pid,
+	    args[0], stringof(args[1]));
+	@jailevt["remove"] = count();
+}
+
+/* Per-jail privilege check denied a privilege inside a prison. */
+jail:::deny
+{
+	printf("%-20Y %-18s %-16s %-6d jid=%d DENIED priv=%d (euid=%d)\n",
+	    walltimestamp, "jail:deny", execname, pid,
+	    args[0], args[1], args[2]->cr_uid);
+	@denyjail[args[0], args[1]] = count();
+}
+
+jaildesc:::alloc
+{
+	printf("%-20Y %-18s %-16s %-6d fd=%d owning=%d\n",
+	    walltimestamp, "jaildesc:alloc", execname, args[0],
+	    args[1], args[2]);
+	@jdevt["alloc"] = count();
+}
+
+jaildesc:::find
+{
+	printf("%-20Y %-18s %-16s %-6d fd=%d error=%d\n",
+	    walltimestamp, "jaildesc:find", execname, args[0],
+	    args[1], args[2]);
+	@jdevt["find"] = count();
+}
+
+jaildesc:::close
+{
+	printf("%-20Y %-18s %-16s %-6d jid=%d owning=%d\n",
+	    walltimestamp, "jaildesc:close", execname, args[0],
+	    args[1], args[2]);
+	@jdevt["close"] = count();
+}
+
+/* TrustedZFS: a handle op was refused by the rights mask. */
+trustedzfs:::denied
+{
+	printf("%-20Y %-18s %-16s %-6d guid=0x%x cmd=%d required=0x%x held=0x%x\n",
+	    walltimestamp, "tzfs:denied", execname, pid,
+	    args[0], args[1], args[2], args[3]);
+	@tzfsdeny[execname] = count();
+}
+
+/* TrustedZFS: op completion; error != 0 is a failed handle operation. */
+trustedzfs:::op-return
+/args[2] != 0/
+{
+	printf("%-20Y %-18s %-16s %-6d guid=0x%x op=%d error=%d\n",
+	    walltimestamp, "tzfs:op-return", execname, pid,
+	    args[0], args[1], args[2]);
+	@tzfserr[execname] = count();
+}
+
+dtrace:::END
+{
+	printf("\njail lifecycle events:\n");
+	printa("  %-12s %@d\n", @jailevt);
+	printf("\nper-jail privilege denials (jid / priv):\n");
+	printa("  jid=%-6d priv=%-6d %@d\n", @denyjail);
+	printf("\njail-descriptor events:\n");
+	printa("  %-12s %@d\n", @jdevt);
+	printf("\nTrustedZFS rights denials by exec:\n");
+	printa("  %-24s %@d\n", @tzfsdeny);
+	printf("\nTrustedZFS op errors by exec:\n");
+	printa("  %-24s %@d\n", @tzfserr);
+}

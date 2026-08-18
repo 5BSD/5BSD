@@ -72,6 +72,7 @@
 #include <security/openpam.h>
 
 #include "login.h"
+#include "login_probes.h"
 #include "pathnames.h"
 
 static int		 auth_pam(void);
@@ -340,6 +341,7 @@ main(int argc, char *argv[])
 			(void)setpriority(PRIO_PROCESS, 0, 0);
 		}
 
+		LOGIN_PROBE_AUTH(username, tty, rootlogin, rval);
 		if (pwd != NULL && rval == 0)
 			break;
 
@@ -364,6 +366,7 @@ main(int argc, char *argv[])
 		 */
 		if (++cnt > backoff) {
 			if (cnt >= retries) {
+				LOGIN_PROBE_FAIL(username, tty);
 				badlogin(username);
 				bail(SLEEP_EXIT, 1);
 			}

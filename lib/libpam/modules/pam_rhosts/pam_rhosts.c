@@ -47,6 +47,8 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_rhosts_probes.h"
+
 #define OPT_ALLOW_ROOT "allow_root"
 
 PAM_EXTERN int
@@ -54,41 +56,57 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
 	struct passwd *pw;
-	const char *user;
+	const char *user = NULL;
 	const void *ruser, *rhost;
 	int err, superuser;
 
 	err = pam_get_user(pamh, &user, NULL);
-	if (err != PAM_SUCCESS)
+	if (err != PAM_SUCCESS) {
+		PAM_RHOSTS_PROBE_SM_AUTHENTICATE(user, err);
 		return (err);
+	}
 
-	if ((pw = getpwnam(user)) == NULL)
+	if ((pw = getpwnam(user)) == NULL) {
+		PAM_RHOSTS_PROBE_SM_AUTHENTICATE(user, PAM_USER_UNKNOWN);
 		return (PAM_USER_UNKNOWN);
+	}
 	if (pw->pw_uid == 0 &&
-	    openpam_get_option(pamh, OPT_ALLOW_ROOT) == NULL)
+	    openpam_get_option(pamh, OPT_ALLOW_ROOT) == NULL) {
+		PAM_RHOSTS_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
 	err = pam_get_item(pamh, PAM_RUSER, &ruser);
-	if (err != PAM_SUCCESS)
+	if (err != PAM_SUCCESS) {
+		PAM_RHOSTS_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
 	err = pam_get_item(pamh, PAM_RHOST, &rhost);
-	if (err != PAM_SUCCESS)
+	if (err != PAM_SUCCESS) {
+		PAM_RHOSTS_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
 	superuser = (strcmp(user, "root") == 0);
 	err = ruserok(rhost, superuser, ruser, user);
-	if (err != 0)
+	if (err != 0) {
+		PAM_RHOSTS_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
+	PAM_RHOSTS_PROBE_SM_AUTHENTICATE(user, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_RHOSTS_PROBE_SM_SETCRED((const char *)user, flags, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 

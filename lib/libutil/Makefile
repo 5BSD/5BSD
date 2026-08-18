@@ -19,6 +19,10 @@ SRCS=	_secure_path.c cpuset.c expand_number.c flopen.c fparseln.c \
 	mntopts.c \
 	pidfile.c property.c pty.c pw_scan.c pw_util.c quotafile.c \
 	realhostname.c stub.c trimdomain.c uucplock.c
+.if ${MK_DTRACE} != "no"
+SRCS+=	logincap_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 INCS=	libutil.h login_cap.h mntopts.h
 
 CFLAGS+= -DNO__SCCSID

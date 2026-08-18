@@ -43,6 +43,8 @@
 #include <security/pam_modules.h>
 #include <security/openpam.h>
 
+#include "pam_guest_probes.h"
+
 #define DEFAULT_GUESTS	"guest"
 
 static int
@@ -69,12 +71,14 @@ PAM_EXTERN int
 pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
-	const char *authtok, *guests, *user;
+	const char *authtok, *guests, *user = NULL;
 	int err, is_guest;
 
 	/* get target account */
-	if (pam_get_user(pamh, &user, NULL) != PAM_SUCCESS || user == NULL)
+	if (pam_get_user(pamh, &user, NULL) != PAM_SUCCESS || user == NULL) {
+		PAM_GUEST_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
 	/* get list of guest logins */
 	if ((guests = openpam_get_option(pamh, "guests")) == NULL)
@@ -86,11 +90,15 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	/* check password */
 	if (!openpam_get_option(pamh, "nopass")) {
 		err = pam_get_authtok(pamh, PAM_AUTHTOK, &authtok, NULL);
-		if (err != PAM_SUCCESS)
+		if (err != PAM_SUCCESS) {
+			PAM_GUEST_PROBE_SM_AUTHENTICATE(user, err);
 			return (err);
+		}
 		if (openpam_get_option(pamh, "pass_is_user") &&
-		    strcmp(user, authtok) != 0)
+		    strcmp(user, authtok) != 0) {
+			PAM_GUEST_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 			return (PAM_AUTH_ERR);
+		}
 		if (openpam_get_option(pamh, "pass_as_ruser"))
 			pam_set_item(pamh, PAM_RUSER, authtok);
 	}
@@ -98,16 +106,21 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	/* done */
 	if (is_guest) {
 		pam_setenv(pamh, "GUEST", user, 1);
+		PAM_GUEST_PROBE_SM_AUTHENTICATE(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
 	}
+	PAM_GUEST_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 	return (PAM_AUTH_ERR);
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t * pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t * pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_GUEST_PROBE_SM_SETCRED((const char *)user, flags, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 

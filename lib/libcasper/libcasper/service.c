@@ -49,6 +49,7 @@
 #include <strings.h>
 #include <unistd.h>
 
+#include "casper_probes.h"
 #include "libcasper.h"
 #include "libcasper_impl.h"
 
@@ -348,6 +349,7 @@ service_message(struct service *service, struct service_connection *sconn)
 	nvlout = nvlist_create(flags);
 
 	cmd = nvlist_get_string(nvlin, "cmd");
+	CASPER_PROBE_CMD_DISPATCH(service->s_name, cmd);
 	if (strcmp(cmd, "limit_set") == 0) {
 		nvlist_t *nvllim;
 
@@ -358,6 +360,7 @@ service_message(struct service *service, struct service_connection *sconn)
 			error = service->s_limit(
 			    service_connection_get_limits(sconn), nvllim);
 		}
+		CASPER_PROBE_LIMIT_SET(service->s_name, error);
 		if (error == 0) {
 			service_connection_set_limits(sconn, nvllim);
 			/* Function consumes nvllim. */
@@ -388,6 +391,7 @@ service_message(struct service *service, struct service_connection *sconn)
 		    service_connection_get_limits(sconn), nvlin, nvlout);
 	}
 
+	CASPER_PROBE_CMD_RETURN(service->s_name, cmd, error);
 	nvlist_destroy(nvlin);
 	nvlist_add_number(nvlout, "error", (uint64_t)error);
 

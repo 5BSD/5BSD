@@ -1,0 +1,147 @@
+#!/usr/sbin/dtrace -Zs
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * capwatch.d -- observe capability mediation: in-kernel Capsicum denials and
+ *		 process-descriptor signalling, plus the userland Casper broker
+ *		 allow/deny decisions.
+ *
+ * Kernel SDT probes ("provider:::probe"; struct ucred * members read directly):
+ *
+ *   capsicum:::syscall-deny (pid_t pid, int code, int flags, int errno)
+ *		args[0]=pid  args[1]=syscall code  args[2]=sy_flags  args[3]=errno
+ *		src: sys/kern/sys_capability.c (probe syscall__deny)
+ *   capsicum:::check-deny (cap_rights_t *needed, cap_rights_t *held,
+ *			    pid_t pid, struct ucred *cr, int fd, int errno)
+ *		args[0]=needed rights  args[1]=held rights  args[2]=pid
+ *		args[3]=cred  args[4]=fd  args[5]=errno
+ *		src: sys/kern/sys_capability.c (probe check__deny)
+ *   capsicum:::trap-signal (pid_t pid, int errno, int code, int si_code)
+ *		args[0]=pid  args[1]=errno  args[2]=syscall code  args[3]=si_code
+ *		src: sys/kern/sys_capability.c (probe trap__signal)
+ *   capsicum:::signal-capmode-deny (pid_t spid, pid_t tpid, int sig, int errno)
+ *		args[0]=sender pid  args[1]=target pid  args[2]=signal  args[3]=errno
+ *		src: sys/kern/sys_capability.c (probe signal__capmode__deny)
+ *   capsicum:::pdkill (int fd, pid_t tpid, int sig)
+ *		args[0]=fd  args[1]=target pid  args[2]=signal
+ *		src: sys/kern/sys_capability.c (probe pdkill)
+ *
+ * Userland USDT probes ("provider*:::probe"; strings via copyinstr()):
+ *
+ *   casper:::cmd-return (const char *service, const char *cmd, int error)
+ *		args[0]=service  args[1]=cmd  args[2]=error (!=0 -> denied)
+ *		src: lib/libcasper/libcasper/casper_provider.d (probe cmd__return)
+ *   casper:::service-open (const char *service, int error)
+ *		args[0]=service  args[1]=error (!=0 -> refused)
+ *		src: lib/libcasper/libcasper/casper_provider.d (probe service__open)
+ *   cap_pwd:::allow (const char *cmd, int allowed)
+ *		args[0]=cmd  args[1]=allowed (0 -> denied)
+ *		src: lib/libcasper/services/cap_pwd/cap_pwd_provider.d (probe allow)
+ *		(each cap_* service ships an identical "allow" predicate; extend
+ *		 with cap_grp*:::allow, cap_net*:::allow, etc. as needed.)
+ *
+ * REQUIRES: the kernel (Capsicum SDT) and the rebuilt libcasper / cap_* base
+ * services must both be from this tree.  Until then the providers do not
+ * appear in "dtrace -l".
+ *
+ * Example:  dtrace -s capwatch.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-22s %-16s %-6s %s\n",
+	    "TIME", "PROBE", "EXEC", "PID", "DETAIL");
+}
+
+capsicum:::syscall-deny
+{
+	printf("%-20Y %-22s %-16s %-6d syscall=%d flags=0x%x errno=%d\n",
+	    walltimestamp, "capsicum:syscall-deny", execname, args[0],
+	    args[1], args[2], args[3]);
+	@bydeny["capsicum:syscall-deny"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::check-deny
+{
+	printf("%-20Y %-22s %-16s %-6d fd=%d errno=%d\n",
+	    walltimestamp, "capsicum:check-deny", execname, args[2],
+	    args[4], args[5]);
+	@bydeny["capsicum:check-deny"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::trap-signal
+{
+	printf("%-20Y %-22s %-16s %-6d errno=%d syscall=%d si_code=%d\n",
+	    walltimestamp, "capsicum:trap-signal", execname, args[0],
+	    args[1], args[2], args[3]);
+	@bydeny["capsicum:trap-signal"] = count();
+	@byexec[execname] = count();
+}
+
+capsicum:::signal-capmode-deny
+{
+	printf("%-20Y %-22s %-16s %-6d target=%d sig=%d errno=%d\n",
+	    walltimestamp, "capsicum:signal-deny", execname, args[0],
+	    args[1], args[2], args[3]);
+	@bydeny["capsicum:signal-capmode-deny"] = count();
+	@byexec[execname] = count();
+}
+
+/* pdkill: signal delivered via a process descriptor (informational). */
+capsicum:::pdkill
+{
+	printf("%-20Y %-22s %-16s %-6d fd=%d target=%d sig=%d\n",
+	    walltimestamp, "capsicum:pdkill", execname, pid,
+	    args[0], args[1], args[2]);
+	@bydeny["capsicum:pdkill"] = count();
+}
+
+/* Casper broker final decision; error != 0 means the request was denied. */
+casper*:::cmd-return
+/arg2 != 0/
+{
+	printf("%-20Y %-22s %-16s %-6d service=%s cmd=%s error=%d\n",
+	    walltimestamp, "casper:cmd-return", execname, pid,
+	    copyinstr(arg0), copyinstr(arg1), arg2);
+	@bydeny["casper:cmd-return"] = count();
+	@byexec[execname] = count();
+}
+
+/* Casper channel-open outcome. */
+casper*:::service-open
+{
+	printf("%-20Y %-22s %-16s %-6d service=%s error=%d%s\n",
+	    walltimestamp, "casper:service-open", execname, pid,
+	    copyinstr(arg0), arg1,
+	    arg1 != 0 ? " (REFUSED)" : "");
+}
+
+casper*:::service-open
+/arg1 != 0/
+{
+	@bydeny["casper:service-open"] = count();
+	@byexec[execname] = count();
+}
+
+/* Per-service permission predicate; allowed == 0 means denied. */
+cap_pwd*:::allow
+/arg1 == 0/
+{
+	printf("%-20Y %-22s %-16s %-6d cmd=%s DENIED\n",
+	    walltimestamp, "cap_pwd:allow", execname, pid,
+	    copyinstr(arg0));
+	@bydeny["cap_pwd:allow"] = count();
+	@byexec[execname] = count();
+}
+
+dtrace:::END
+{
+	printf("\ndenials by probe:\n");
+	printa("  %-28s %@d\n", @bydeny);
+	printf("\ndenials by exec:\n");
+	printa("  %-24s %@d\n", @byexec);
+}

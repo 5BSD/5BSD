@@ -105,6 +105,33 @@ SDT_PROBE_DECLARE(capsicum, , , mmap__capmode__deny);
 #include <dev/hwt/hwt_hook.h>
 #endif
 
+/*
+ * Static SDT tracepoints for the memory-mapping syscall layer.  These attach
+ * to the existing "vm" provider (defined in vm_pageout.c, also used by
+ * vm_map.c for mprotect__exec/wxorx__deny) and add syscall-completion probes
+ * for the mmap-family calls implemented in this file.  Defensive
+ * observability only: no control-flow or locking changes.
+ */
+SDT_PROVIDER_DECLARE(vm);
+/* mmap: pid, addr, len, prot, flags, error */
+SDT_PROBE_DEFINE6(vm, , , mmap, "pid_t", "vm_offset_t", "vm_size_t", "int",
+    "int", "int");
+/* mmap of executable memory (PROT_EXEC): pid, addr, len, prot, flags, error */
+SDT_PROBE_DEFINE6(vm, , , mmap__exec, "pid_t", "vm_offset_t", "vm_size_t",
+    "int", "int", "int");
+/* munmap: pid, addr, len */
+SDT_PROBE_DEFINE3(vm, , , munmap, "pid_t", "vm_offset_t", "vm_size_t");
+/* mlock/mlockall: pid, addr, len, result */
+SDT_PROBE_DEFINE4(vm, , , mlock, "pid_t", "vm_offset_t", "vm_size_t", "int");
+/* munlock/munlockall: pid, addr, len, result */
+SDT_PROBE_DEFINE4(vm, , , munlock, "pid_t", "vm_offset_t", "vm_size_t", "int");
+/* minherit: pid, addr, len, inherit */
+SDT_PROBE_DEFINE4(vm, , , minherit, "pid_t", "vm_offset_t", "vm_size_t", "int");
+/* madvise (security-relevant behaviors only): pid, addr, len, behav */
+SDT_PROBE_DEFINE4(vm, , , madvise, "pid_t", "vm_offset_t", "vm_size_t", "int");
+/* msync: pid, addr, len, flags */
+SDT_PROBE_DEFINE4(vm, , , msync, "pid_t", "vm_offset_t", "vm_size_t", "int");
+
 int old_mlock = 0;
 SYSCTL_INT(_vm, OID_AUTO, old_mlock, CTLFLAG_RWTUN, &old_mlock, 0,
     "Do not apply RLIMIT_MEMLOCK on mlockall");
@@ -453,6 +480,17 @@ done:
 	if (fp)
 		fdrop(fp, td);
 
+	SDT_PROBE6(vm, , , mmap, p->p_pid, addr, len, prot, flags, error);
+	/*
+	 * Distinct probe for mapping executable memory.  Anonymous exec
+	 * mappings (MAP_ANON) and MAP_FIXED overwrites are the classic
+	 * shellcode / code-injection signatures; callers can filter on
+	 * flags in the consumer.
+	 */
+	if ((prot & PROT_EXEC) != 0)
+		SDT_PROBE6(vm, , , mmap__exec, p->p_pid, addr, len, prot,
+		    flags, error);
+
 	return (error);
 }
 
@@ -581,6 +619,9 @@ kern_msync(struct thread *td, uintptr_t addr0, size_t size, int flags)
 	 */
 	rv = vm_map_sync(map, addr, addr + size, (flags & MS_ASYNC) == 0,
 	    (flags & MS_INVALIDATE) != 0);
+
+	SDT_PROBE4(vm, , , msync, td->td_proc->p_pid, addr, size, flags);
+
 	switch (rv) {
 	case KERN_SUCCESS:
 		return (0);
@@ -680,6 +721,8 @@ kern_munmap(struct thread *td, uintptr_t addr0, size_t size)
 	} else
 #endif
 		vm_map_unlock(map);
+
+	SDT_PROBE3(vm, , , munmap, td->td_proc->p_pid, addr, size);
 
 	return (vm_mmap_to_errno(rv));
 }
@@ -782,6 +825,8 @@ kern_minherit(struct thread *td, uintptr_t addr0, size_t len, int inherit0)
 	if (addr + size < addr)
 		return (EINVAL);
 
+	SDT_PROBE4(vm, , , minherit, td->td_proc->p_pid, addr, size, inherit);
+
 	switch (vm_map_inherit(&td->td_proc->p_vmspace->vm_map, addr,
 	    addr + size, inherit)) {
 	case KERN_SUCCESS:
@@ -839,6 +884,18 @@ kern_madvise(struct thread *td, uintptr_t addr0, size_t len, int behav)
 	 */
 	start = trunc_page(addr);
 	end = round_page(addr + len);
+
+	/*
+	 * Only trace the security-relevant advices; the common perf hints
+	 * (NORMAL/RANDOM/SEQUENTIAL/WILLNEED/DONTNEED/NOSYNC/AUTOSYNC) are
+	 * high-frequency noise.  MADV_FREE junks page contents (anti-forensic
+	 * discard), MADV_NOCORE excludes pages from core dumps (secret
+	 * hiding, DONTDUMP-equivalent), and MADV_CORE re-enables core dumps.
+	 * MADV_PROTECT is handled above via procctl.
+	 */
+	if (behav == MADV_FREE || behav == MADV_NOCORE || behav == MADV_CORE)
+		SDT_PROBE4(vm, , , madvise, td->td_proc->p_pid, start, len,
+		    behav);
 
 	/*
 	 * vm_map_madvise() checks for illegal values of behav.
@@ -1160,6 +1217,9 @@ kern_mlock(struct proc *proc, struct ucred *cred, uintptr_t addr0, size_t len)
 		PROC_UNLOCK(proc);
 	}
 #endif
+
+	SDT_PROBE4(vm, , , mlock, proc->p_pid, start, size, error);
+
 	switch (error) {
 	case KERN_SUCCESS:
 		return (0);
@@ -1240,6 +1300,9 @@ sys_mlockall(struct thread *td, struct mlockall_args *uap)
 	}
 #endif
 
+	/* Whole-address-space wire; addr 0 distinguishes it from mlock(2). */
+	SDT_PROBE4(vm, , , mlock, td->td_proc->p_pid, 0, map->size, error);
+
 	return (error);
 }
 
@@ -1275,6 +1338,9 @@ sys_munlockall(struct thread *td, struct munlockall_args *uap)
 		PROC_UNLOCK(td->td_proc);
 	}
 #endif
+
+	/* Whole-address-space unwire; addr 0 distinguishes it from munlock(2). */
+	SDT_PROBE4(vm, , , munlock, td->td_proc->p_pid, 0, map->size, error);
 
 	return (error);
 }
@@ -1321,6 +1387,8 @@ kern_munlock(struct thread *td, uintptr_t addr0, size_t size)
 		PROC_UNLOCK(td->td_proc);
 	}
 #endif
+	SDT_PROBE4(vm, , , munlock, td->td_proc->p_pid, start, size, error);
+
 	return (error == KERN_SUCCESS ? 0 : ENOMEM);
 }
 

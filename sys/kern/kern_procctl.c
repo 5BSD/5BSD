@@ -40,6 +40,7 @@
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/procctl.h>
+#include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysproto.h>
@@ -49,6 +50,100 @@
 #include <vm/pmap.h>
 #include <vm/vm_map.h>
 #include <vm/vm_extern.h>
+
+/*
+ * Defensive observability: static SDT tracepoints for the process-control
+ * subsystem.  procctl(2) governs anti-debugging (ptrace-ability), SIGTRAP on
+ * capability violations, W^X, ASLR, stack-gap and protmax hardening toggles,
+ * no-new-privs, the reaper (subtree mass-kill), and the parent-death signal --
+ * a high security-value surface.  Every command below fires at least the
+ * generic "cmd" probe at the dispatch funnel; per-command probes carry the
+ * meaningful decision arguments (target pid, requestor pid, new value, etc.),
+ * and "deny" fires whenever the per-process permission gate rejects a request.
+ *
+ * NB: the kernel SDT_PROBE macros cast each argument to uintptr_t, which binds
+ * tighter than ?: -- any ternary/operator argument passed to a fire site must
+ * therefore be fully parenthesized.
+ */
+SDT_PROVIDER_DEFINE(procctl);
+
+/* Central dispatch funnel: fires for every command, per targeted process. */
+SDT_PROBE_DEFINE3(procctl, , , cmd,
+    "int", "pid_t", "int");
+/* Per-process permission gate (p_candebug / p_cansee) rejected the request. */
+SDT_PROBE_DEFINE3(procctl, , , deny,
+    "int", "pid_t", "int");
+
+/* PROC_SPROTECT: (target pid, requestor pid, flags). */
+SDT_PROBE_DEFINE3(procctl, , , sprotect,
+    "pid_t", "pid_t", "int");
+
+/* Anti-debugging control (PROC_TRACE_CTL / PROC_TRACE_STATUS). */
+SDT_PROBE_DEFINE3(procctl, , , trace__ctl,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , trace__status,
+    "pid_t", "pid_t", "int");
+
+/* SIGTRAP on capability violation (PROC_TRAPCAP_CTL / STATUS). */
+SDT_PROBE_DEFINE3(procctl, , , trapcap__ctl,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , trapcap__status,
+    "pid_t", "pid_t", "int");
+
+/* Maximum-protection enforcement (PROC_PROTMAX_CTL / STATUS). */
+SDT_PROBE_DEFINE3(procctl, , , protmax__ctl,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , protmax__status,
+    "pid_t", "pid_t", "int");
+
+/* ASLR enforcement toggle (PROC_ASLR_CTL / STATUS). */
+SDT_PROBE_DEFINE3(procctl, , , aslr__ctl,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , aslr__status,
+    "pid_t", "pid_t", "int");
+
+/* Stack-gap randomization toggle (PROC_STACKGAP_CTL / STATUS). */
+SDT_PROBE_DEFINE3(procctl, , , stackgap__ctl,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , stackgap__status,
+    "pid_t", "pid_t", "int");
+
+/* no-new-privs toggle (PROC_NO_NEW_PRIVS_CTL / STATUS). */
+SDT_PROBE_DEFINE3(procctl, , , nonewprivs__ctl,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , nonewprivs__status,
+    "pid_t", "pid_t", "int");
+
+/* W^X enforcement toggle (PROC_WXMAP_CTL / STATUS). */
+SDT_PROBE_DEFINE3(procctl, , , wxmap__ctl,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , wxmap__status,
+    "pid_t", "pid_t", "int");
+
+/* Log-signal-exit toggle (PROC_LOGSIGEXIT_CTL / STATUS). */
+SDT_PROBE_DEFINE3(procctl, , , logsigexit__ctl,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , logsigexit__status,
+    "pid_t", "pid_t", "int");
+
+/* Parent-death signal (PROC_PDEATHSIG_CTL / STATUS): third arg is signum. */
+SDT_PROBE_DEFINE3(procctl, , , pdeathsig__ctl,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , pdeathsig__status,
+    "pid_t", "pid_t", "int");
+
+/* Reaper lifecycle and subtree kill (PROC_REAP_*). */
+SDT_PROBE_DEFINE2(procctl, , , reap__acquire,
+    "pid_t", "pid_t");
+SDT_PROBE_DEFINE2(procctl, , , reap__release,
+    "pid_t", "pid_t");
+SDT_PROBE_DEFINE3(procctl, , , reap__status,
+    "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(procctl, , , reap__getpids,
+    "pid_t", "pid_t", "int");
+/* (reaper pid, signal, flags, number killed, requestor pid). */
+SDT_PROBE_DEFINE5(procctl, , , reap__kill,
+    "pid_t", "int", "int", "int", "pid_t");
 
 static int
 protect_setchild(struct thread *td, struct proc *p, int flags)
@@ -123,6 +218,8 @@ protect_set(struct thread *td, struct proc *p, void *data)
 	if (error)
 		return (error);
 
+	SDT_PROBE3(procctl, , , sprotect, p->p_pid, td->td_proc->p_pid, flags);
+
 	if (flags & PPROT_DESCEND)
 		ret = protect_setchildren(td, p, flags);
 	else
@@ -142,6 +239,7 @@ reap_acquire(struct thread *td, struct proc *p, void *data __unused)
 	if ((p->p_treeflag & P_TREE_REAPER) != 0)
 		return (EBUSY);
 	p->p_treeflag |= P_TREE_REAPER;
+	SDT_PROBE2(procctl, , , reap__acquire, p->p_pid, td->td_proc->p_pid);
 	/*
 	 * We do not reattach existing children and the whole tree
 	 * under them to us, since p->p_reaper already seen them.
@@ -160,6 +258,7 @@ reap_release(struct thread *td, struct proc *p, void *data __unused)
 		return (EINVAL);
 	if ((p->p_treeflag & P_TREE_REAPER) == 0)
 		return (EINVAL);
+	SDT_PROBE2(procctl, , , reap__release, p->p_pid, td->td_proc->p_pid);
 	reaper_abandon_children(p, false);
 	return (0);
 }
@@ -196,6 +295,8 @@ reap_status(struct thread *td, struct proc *p, void *data)
 	} else {
 		rs->rs_pid = -1;
 	}
+	SDT_PROBE3(procctl, , , reap__status, reap->p_pid,
+	    td->td_proc->p_pid, (int)rs->rs_descendants);
 	return (0);
 }
 
@@ -246,6 +347,8 @@ reap_getpids(struct thread *td, struct proc *p, void *data)
 	free(pi, M_TEMP);
 	sx_slock(&proctree_lock);
 	PROC_LOCK(p);
+	SDT_PROBE3(procctl, , , reap__getpids, reap->p_pid,
+	    td->td_proc->p_pid, (int)i);
 	return (error);
 }
 
@@ -555,6 +658,8 @@ reap_kill(struct thread *td, struct proc *p, void *data)
 		reap_kill_subtree(td, p, reaper, &w);
 		crfree(w.cr);
 	}
+	SDT_PROBE5(procctl, , , reap__kill, reaper->p_pid, rk->rk_sig,
+	    rk->rk_flags, rk->rk_killed, td->td_proc->p_pid);
 	PROC_LOCK(p);
 	return (error);
 }
@@ -566,6 +671,9 @@ trace_ctl(struct thread *td, struct proc *p, void *data)
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	state = *(int *)data;
+
+	SDT_PROBE3(procctl, , , trace__ctl, p->p_pid, td->td_proc->p_pid,
+	    state);
 
 	/*
 	 * Ktrace changes p_traceflag from or to zero under the
@@ -616,6 +724,8 @@ trace_status(struct thread *td, struct proc *p, void *data)
 	} else {
 		*status = 0;
 	}
+	SDT_PROBE3(procctl, , , trace__status, p->p_pid, td->td_proc->p_pid,
+	    *status);
 	return (0);
 }
 
@@ -626,6 +736,9 @@ trapcap_ctl(struct thread *td, struct proc *p, void *data)
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	state = *(int *)data;
+
+	SDT_PROBE3(procctl, , , trapcap__ctl, p->p_pid, td->td_proc->p_pid,
+	    state);
 
 	switch (state) {
 	case PROC_TRAPCAP_CTL_ENABLE:
@@ -648,6 +761,8 @@ trapcap_status(struct thread *td, struct proc *p, void *data)
 	status = data;
 	*status = (p->p_flag2 & P2_TRAPCAP) != 0 ? PROC_TRAPCAP_CTL_ENABLE :
 	    PROC_TRAPCAP_CTL_DISABLE;
+	SDT_PROBE3(procctl, , , trapcap__status, p->p_pid,
+	    td->td_proc->p_pid, *status);
 	return (0);
 }
 
@@ -658,6 +773,9 @@ no_new_privs_ctl(struct thread *td, struct proc *p, void *data)
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	state = *(int *)data;
+
+	SDT_PROBE3(procctl, , , nonewprivs__ctl, p->p_pid,
+	    td->td_proc->p_pid, state);
 
 	if (state != PROC_NO_NEW_PRIVS_ENABLE)
 		return (EINVAL);
@@ -671,6 +789,8 @@ no_new_privs_status(struct thread *td, struct proc *p, void *data)
 
 	*(int *)data = (p->p_flag2 & P2_NO_NEW_PRIVS) != 0 ?
 	    PROC_NO_NEW_PRIVS_ENABLE : PROC_NO_NEW_PRIVS_DISABLE;
+	SDT_PROBE3(procctl, , , nonewprivs__status, p->p_pid,
+	    td->td_proc->p_pid, *(int *)data);
 	return (0);
 }
 
@@ -681,6 +801,9 @@ protmax_ctl(struct thread *td, struct proc *p, void *data)
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	state = *(int *)data;
+
+	SDT_PROBE3(procctl, , , protmax__ctl, p->p_pid, td->td_proc->p_pid,
+	    state);
 
 	switch (state) {
 	case PROC_PROTMAX_FORCE_ENABLE:
@@ -719,6 +842,8 @@ protmax_status(struct thread *td, struct proc *p, void *data)
 	if (kern_mmap_maxprot(p, PROT_READ) == PROT_READ)
 		d |= PROC_PROTMAX_ACTIVE;
 	*(int *)data = d;
+	SDT_PROBE3(procctl, , , protmax__status, p->p_pid,
+	    td->td_proc->p_pid, d);
 	return (0);
 }
 
@@ -729,6 +854,9 @@ aslr_ctl(struct thread *td, struct proc *p, void *data)
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	state = *(int *)data;
+
+	SDT_PROBE3(procctl, , , aslr__ctl, p->p_pid, td->td_proc->p_pid,
+	    state);
 
 	switch (state) {
 	case PROC_ASLR_FORCE_ENABLE:
@@ -778,6 +906,8 @@ aslr_status(struct thread *td, struct proc *p, void *data)
 		_PRELE(p);
 	}
 	*(int *)data = d;
+	SDT_PROBE3(procctl, , , aslr__status, p->p_pid, td->td_proc->p_pid,
+	    d);
 	return (0);
 }
 
@@ -788,6 +918,9 @@ stackgap_ctl(struct thread *td, struct proc *p, void *data)
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	state = *(int *)data;
+
+	SDT_PROBE3(procctl, , , stackgap__ctl, p->p_pid, td->td_proc->p_pid,
+	    state);
 
 	if ((state & ~(PROC_STACKGAP_ENABLE | PROC_STACKGAP_DISABLE |
 	    PROC_STACKGAP_ENABLE_EXEC | PROC_STACKGAP_DISABLE_EXEC)) != 0)
@@ -833,6 +966,8 @@ stackgap_status(struct thread *td, struct proc *p, void *data)
 	d |= (p->p_flag2 & P2_STKGAP_DISABLE_EXEC) != 0 ?
 	    PROC_STACKGAP_DISABLE_EXEC : PROC_STACKGAP_ENABLE_EXEC;
 	*(int *)data = d;
+	SDT_PROBE3(procctl, , , stackgap__status, p->p_pid,
+	    td->td_proc->p_pid, d);
 	return (0);
 }
 
@@ -847,6 +982,9 @@ wxmap_ctl(struct thread *td, struct proc *p, void *data)
 	if ((p->p_flag & P_WEXIT) != 0)
 		return (ESRCH);
 	state = *(int *)data;
+
+	SDT_PROBE3(procctl, , , wxmap__ctl, p->p_pid, td->td_proc->p_pid,
+	    state);
 
 	switch (state) {
 	case PROC_WX_MAPPINGS_PERMIT:
@@ -900,6 +1038,8 @@ wxmap_status(struct thread *td, struct proc *p, void *data)
 	PROC_LOCK(p);
 	_PRELE(p);
 	*(int *)data = d;
+	SDT_PROBE3(procctl, , , wxmap__status, p->p_pid, td->td_proc->p_pid,
+	    d);
 	return (0);
 }
 
@@ -909,6 +1049,8 @@ pdeathsig_ctl(struct thread *td, struct proc *p, void *data)
 	int signum;
 
 	signum = *(int *)data;
+	SDT_PROBE3(procctl, , , pdeathsig__ctl, p->p_pid, td->td_proc->p_pid,
+	    signum);
 	if (p != td->td_proc || (signum != 0 && !_SIG_VALID(signum)))
 		return (EINVAL);
 	p->p_pdeathsig = signum;
@@ -921,6 +1063,8 @@ pdeathsig_status(struct thread *td, struct proc *p, void *data)
 	if (p != td->td_proc)
 		return (EINVAL);
 	*(int *)data = p->p_pdeathsig;
+	SDT_PROBE3(procctl, , , pdeathsig__status, p->p_pid,
+	    td->td_proc->p_pid, p->p_pdeathsig);
 	return (0);
 }
 
@@ -931,6 +1075,9 @@ logsigexit_ctl(struct thread *td, struct proc *p, void *data)
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	state = *(int *)data;
+
+	SDT_PROBE3(procctl, , , logsigexit__ctl, p->p_pid,
+	    td->td_proc->p_pid, state);
 
 	switch (state) {
 	case PROC_LOGSIGEXIT_CTL_NOFORCE:
@@ -961,6 +1108,8 @@ logsigexit_status(struct thread *td, struct proc *p, void *data)
 	else
 		state = PROC_LOGSIGEXIT_CTL_FORCE_DISABLE;
 	*(int *)data = state;
+	SDT_PROBE3(procctl, , , logsigexit__status, p->p_pid,
+	    td->td_proc->p_pid, state);
 	return (0);
 }
 
@@ -1175,9 +1324,12 @@ sys_procctl(struct thread *td, struct procctl_args *uap)
 int
 kern_procctl_single(struct thread *td, struct proc *p, int com, void *data)
 {
+	int error;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
-	return (procctl_cmds_info[com].exec(td, p, data));
+	error = procctl_cmds_info[com].exec(td, p, data);
+	SDT_PROBE3(procctl, , , cmd, com, p->p_pid, error);
+	return (error);
 }
 
 int
@@ -1227,6 +1379,9 @@ kern_procctl(struct thread *td, idtype_t idtype, id_t id, int com, void *data)
 			}
 			error = cmd_info->need_candebug ? p_candebug(td, p) :
 			    p_cansee(td, p);
+			if (error != 0)
+				SDT_PROBE3(procctl, , , deny, com,
+				    p->p_pid, error);
 		}
 		if (error == 0)
 			error = kern_procctl_single(td, p, com, data);

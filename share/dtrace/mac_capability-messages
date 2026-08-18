@@ -58,7 +58,7 @@ dtrace:::END
 	printf("\n--- Message counts by service ---\n");
 	printf("%-16s %-10s %-10s %-10s\n",
 	    "SERVICE", "SENDS", "REPLIES", "NOTIFIES");
-	printa("%-16s %-@10d\n", @sends);
-	printa("%-16s %-10s %-@10d\n", @replies);
-	printa("%-16s %-10s %-10s %-@10d\n", @notifies);
+	printa("%-16s %@10d\n", @sends);
+	printa("%-16s %@10d\n", @replies);
+	printa("%-16s %@10d\n", @notifies);
 }

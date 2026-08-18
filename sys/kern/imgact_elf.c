@@ -55,6 +55,7 @@
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 #include <sys/sf_buf.h>
 #include <sys/smp.h>
 #include <sys/systm.h>
@@ -110,6 +111,38 @@ static vm_prot_t __elfN(trans_prot)(Elf_Word);
 static Elf_Word __elfN(untrans_prot)(vm_prot_t);
 static size_t __elfN(prepare_register_notes)(struct thread *td,
     struct note_info_list *list, struct thread *target_td);
+
+/*
+ * Static SDT tracepoints for the ELF image activator.  The "imgact"
+ * provider is defined in imgact_shell.c; here we only reference it.
+ *
+ * This source is compiled once per ELF word size: natively (the "standard"
+ * build) and again via imgact_elf32.c when COMPAT_FREEBSD32 is configured.
+ * SDT_PROBE_DEFINE emits a global struct plus linker-set entry, so the
+ * probes must be DEFINEd in exactly one of those passes to avoid duplicate
+ * symbols at link time.  Define in the native pass; the 32-bit compat pass
+ * (which always runs alongside a 64-bit native pass) only DECLAREs them.
+ *
+ *   imgact:::elf      - fires at successful ELF activation
+ *   imgact:::interp   - fires when a PT_INTERP (dynamic linker / RTLD) runs
+ *   imgact:::brand    - fires when an ABI brand / osabi is matched
+ *   imgact:::wxneeded - fires when the image opts into W+X mappings
+ *
+ * String args may be kernel or user pointers; consumers use
+ * stringof()/copyinstr() as appropriate.
+ */
+SDT_PROVIDER_DECLARE(imgact);
+#if defined(COMPAT_FREEBSD32) && __ELF_WORD_SIZE == 32
+SDT_PROBE_DECLARE(imgact, , , elf);
+SDT_PROBE_DECLARE(imgact, , , interp);
+SDT_PROBE_DECLARE(imgact, , , brand);
+SDT_PROBE_DECLARE(imgact, , , wxneeded);
+#else
+SDT_PROBE_DEFINE4(imgact, , , elf, "char *", "char *", "unsigned long", "int");
+SDT_PROBE_DEFINE2(imgact, , , interp, "char *", "unsigned long");
+SDT_PROBE_DEFINE2(imgact, , , brand, "char *", "int");
+SDT_PROBE_DEFINE2(imgact, , , wxneeded, "char *", "uint32_t");
+#endif
 
 SYSCTL_NODE(_kern, OID_AUTO, ELF_ABI_ID, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "");
@@ -1242,6 +1275,13 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		goto ret;
 	}
 	sv = brand_info->sysvec;
+
+	/*
+	 * A brand / osabi was matched (native vs linux vs other foreign
+	 * ABI).  arg0 is the human-readable ABI name, arg1 the ELF osabi.
+	 */
+	SDT_PROBE2(imgact, , , brand, sv->sv_name, brand_info->brand);
+
 	if (hdr->e_type == ET_DYN) {
 		if ((brand_info->flags & BI_CAN_EXEC_DYN) == 0) {
 			uprintf("Cannot execute shared object\n");
@@ -1314,6 +1354,14 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		if (__elfN(aslr_shared_page))
 			imgp->imgp_flags |= IMGP_ASLR_SHARED_PAGE;
 	}
+
+	/*
+	 * The image explicitly requested simultaneously writable and
+	 * executable mappings (feature-control WXNEEDED note); it will be
+	 * mapped via the W+X-allowed path rather than getting MAP_WXORX.
+	 */
+	if ((fctl0 & NT_FREEBSD_FCTL_WXNEEDED) != 0)
+		SDT_PROBE2(imgact, , , wxneeded, imgp->args->fname, fctl0);
 
 	if ((!__elfN(allow_wx) && (fctl0 & NT_FREEBSD_FCTL_WXNEEDED) == 0 &&
 	    (imgp->proc->p_flag2 & P2_WXORX_DISABLE) == 0) ||
@@ -1397,6 +1445,14 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 		if (error == 0) {
 			error = __elfN(load_interp)(imgp, brand_info, interp,
 			    &addr, &imgp->entry_addr);
+			/*
+			 * A PT_INTERP dynamic linker (RTLD) was loaded and
+			 * will run before the program.  arg0 is the RTLD
+			 * path, arg1 its resolved entry address.
+			 */
+			if (error == 0)
+				SDT_PROBE2(imgact, , , interp, interp,
+				    imgp->entry_addr);
 		}
 		vn_lock(imgp->vp, LK_SHARED | LK_RETRY);
 		if (error != 0)
@@ -1433,6 +1489,14 @@ __CONCAT(exec_, __elfN(imgact))(struct image_params *imgp)
 	imgp->proc->p_osrel = osrel;
 	imgp->proc->p_fctl0 = fctl0;
 	imgp->proc->p_elf_flags = hdr->e_flags;
+
+	/*
+	 * Successful ELF activation: this is what will execute.  arg0 is
+	 * the image path, arg1 the PT_INTERP/RTLD path (NULL if statically
+	 * linked), arg2 the entry address, arg3 the matched ELF osabi/brand.
+	 */
+	SDT_PROBE4(imgact, , , elf, imgp->args->fname, interp,
+	    imgp->entry_addr, brand_info->brand);
 
 ret:
 	ASSERT_VOP_LOCKED(imgp->vp, "skipped relock");

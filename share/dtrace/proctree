@@ -1,0 +1,137 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * proctree.d -- process lifecycle and control-abuse observability.
+ *
+ * Renders a family-tree view of process creation and teardown alongside the
+ * process-control operations that malware leans on: anti-debug trace toggles,
+ * reaper acquisition, and reaper subtree kill (mass termination), plus ASLR
+ * enforcement toggles.
+ *
+ * Providers/probes consumed (SDT):
+ *   proc:::create          (sys/kern/kern_fork.c)    args: child_proc*, parent_proc*, flags
+ *   proclife:::exit-status  (sys/kern/kern_exit.c)    args: pid, exit_code, signo
+ *   proclife:::reap         (sys/kern/kern_exit.c)    args: parent_pid, child_pid, exit_code, signal
+ *   procctl:::trace-ctl     (sys/kern/kern_procctl.c) args: target_pid, requestor_pid, state
+ *   procctl:::trace-status  (sys/kern/kern_procctl.c) args: target_pid, requestor_pid, status
+ *   procctl:::reap-acquire  (sys/kern/kern_procctl.c) args: reaper_pid, requestor_pid
+ *   procctl:::reap-kill     (sys/kern/kern_procctl.c) args: reaper_pid, sig, flags, killed, requestor_pid
+ *   procctl:::aslr-ctl      (sys/kern/kern_procctl.c) args: target_pid, requestor_pid, state
+ *
+ * proc:::create is the existing base probe; the fork-specific proclife:::fork
+ * probe was NOT present in this tree (kern_fork.c only defines proc:::create),
+ * so creation is tracked via proc:::create here.
+ * TODO: switch the create clause to proclife:::fork if/when that probe is added.
+ *
+ * NOTE: The proclife and security procctl probes exist only in the 5BSD
+ *       security-instrumentation kernel.  Run against a REBUILT kernel that
+ *       carries the providers above.
+ *
+ * Example:
+ *   # dtrace -s proctree.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-6s %-16s %-12s %s\n",
+	    "TIME", "PID", "EXEC", "OP", "RELATION / DETAIL");
+}
+
+/*
+ * Process creation.  args[0]=child proc*, args[1]=parent proc*, args[2]=flags.
+ */
+proc:::create
+{
+	printf("%-20Y %-6d %-16s %-12s %s[%d] -> child[%d] flags=0x%x\n",
+	    walltimestamp, args[1]->p_pid, stringof(args[1]->p_comm), "fork",
+	    stringof(args[1]->p_comm), args[1]->p_pid, args[0]->p_pid, args[2]);
+}
+
+/*
+ * Process exit teardown.  args[0]=pid, args[1]=exit code, args[2]=signo.
+ */
+proclife:::exit-status
+{
+	printf("%-20Y %-6d %-16s %-12s code=%d signal=%d\n",
+	    walltimestamp, args[0], execname, "exit",
+	    args[1], args[2]);
+}
+
+/*
+ * A parent reaping a zombie child.
+ * args[0]=parent pid, args[1]=child pid, args[2]=exit code, args[3]=signal.
+ */
+proclife:::reap
+{
+	printf("%-20Y %-6d %-16s %-12s parent[%d] <- child[%d] code=%d sig=%d\n",
+	    walltimestamp, args[0], execname, "reap",
+	    args[0], args[1], args[2], args[3]);
+}
+
+/*
+ * Anti-debug: a process toggling PROC_TRACE_CTL (trace enable/disable).
+ * args[0]=target pid, args[1]=requestor pid, args[2]=state.
+ */
+procctl:::trace-ctl
+{
+	printf("%-20Y %-6d %-16s %-12s target=%d state=%d\n",
+	    walltimestamp, args[1], execname, "trace-ctl",
+	    args[0], args[2]);
+	@tracectl[execname] = count();
+}
+
+/*
+ * PROC_TRACE_STATUS query.  args[0]=target, args[1]=requestor, args[2]=status.
+ */
+procctl:::trace-status
+{
+	printf("%-20Y %-6d %-16s %-12s target=%d status=%d\n",
+	    walltimestamp, args[1], execname, "trace-status",
+	    args[0], args[2]);
+}
+
+/*
+ * Reaper acquisition (PROC_REAP_ACQUIRE): building a subtree to control.
+ * args[0]=reaper pid, args[1]=requestor pid.
+ */
+procctl:::reap-acquire
+{
+	printf("%-20Y %-6d %-16s %-12s reaper=%d\n",
+	    walltimestamp, args[1], execname, "reap-acq",
+	    args[0]);
+}
+
+/*
+ * Reaper subtree kill (PROC_REAP_KILL): mass termination of a process subtree.
+ * args[0]=reaper pid, args[1]=sig, args[2]=flags, args[3]=killed count,
+ * args[4]=requestor pid.
+ */
+procctl:::reap-kill
+{
+	printf("%-20Y %-6d %-16s %-12s reaper=%d sig=%d killed=%d flags=0x%x\n",
+	    walltimestamp, args[4], execname, "reap-kill",
+	    args[0], args[1], args[3], args[2]);
+	@reapkill[execname] = sum(args[3]);
+}
+
+/*
+ * ASLR enforcement toggle (PROC_ASLR_CTL).
+ * args[0]=target pid, args[1]=requestor pid, args[2]=state.
+ */
+procctl:::aslr-ctl
+{
+	printf("%-20Y %-6d %-16s %-12s target=%d state=%d\n",
+	    walltimestamp, args[1], execname, "aslr-ctl",
+	    args[0], args[2]);
+}
+
+dtrace:::END
+{
+	printf("\n%-16s %s\n", "EXEC", "TRACE-CTL TOGGLES");
+	printa("%-16s %@d\n", @tracectl);
+	printf("\n%-16s %s\n", "EXEC", "PROCS KILLED VIA REAP-KILL");
+	printa("%-16s %@d\n", @reapkill);
+}

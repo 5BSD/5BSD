@@ -52,6 +52,7 @@
 #include <sys/poll.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/sdt.h>
 #include <sys/serial.h>
 #include <sys/signal.h>
 #include <sys/stat.h>
@@ -81,6 +82,44 @@ static unsigned int tty_list_count = 0;
 /* Character device of /dev/console. */
 static struct cdev	*dev_console;
 static const char	*dev_console_filename;
+
+/*
+ * Static DTrace (SDT) provider for security/session-relevant TTY events.
+ *
+ * Covers the control ioctls (character injection, controlling-terminal
+ * acquire/drop, foreground process group changes), device open/close and
+ * revoke, session-leader/pgrp signal delivery (including SIGHUP hangup),
+ * and controlling-terminal teardown when a session leaves or the TTY is
+ * revoked.  The per-character line-discipline read/write/rint paths are
+ * deliberately NOT probed here (per-byte hot paths).
+ */
+SDT_PROVIDER_DEFINE(tty);
+
+/* Device open/close/revoke: (pid, result). */
+SDT_PROBE_DEFINE2(tty, , , open, "int", "int");
+SDT_PROBE_DEFINE2(tty, , , close, "int", "int");
+SDT_PROBE_DEFINE2(tty, , , revoke, "int", "int");
+
+/* TIOCSTI terminal character injection: (pid, injected char). */
+SDT_PROBE_DEFINE2(tty, , , sti, "int", "int");
+
+/* Controlling terminal acquire (TIOCSCTTY) / drop (TIOCNOTTY): (pid, sid, result). */
+SDT_PROBE_DEFINE3(tty, , , ctty__set, "int", "int", "int");
+SDT_PROBE_DEFINE3(tty, , , ctty__drop, "int", "int", "int");
+
+/* Foreground process group set (TIOCSPGRP) / get (TIOCGPGRP): (pid, pgid, result). */
+SDT_PROBE_DEFINE3(tty, , , spgrp, "int", "int", "int");
+SDT_PROBE_DEFINE3(tty, , , gpgrp, "int", "int", "int");
+
+/* Signal delivery to session leader (incl. SIGHUP hangup): (pid, sid, sig). */
+SDT_PROBE_DEFINE3(tty, , , signal__sessleader, "int", "int", "int");
+/* Signal delivery to foreground process group: (pgid, sig). */
+SDT_PROBE_DEFINE2(tty, , , signal__pgrp, "int", "int");
+
+/* TTY revoked/gone: (sid). */
+SDT_PROBE_DEFINE1(tty, , , gone, "int");
+/* A session released its reference to the TTY: (sid). */
+SDT_PROBE_DEFINE1(tty, , , rel__sess, "int");
 
 /*
  * Flags that are supported and stored by this implementation.
@@ -361,6 +400,7 @@ done:	tp->t_flags &= ~TF_OPENCLOSE;
 	cv_broadcast(&tp->t_dcdwait);
 	ttydev_leave(tp);
 
+	SDT_PROBE2(tty, , , open, td->td_proc->p_pid, error);
 	return (error);
 }
 
@@ -393,6 +433,8 @@ ttydev_close(struct cdev *dev, int fflag, int devtype __unused,
 		tty_flush(tp, FWRITE);
 		knlist_delete(&tp->t_inpoll.si_note, td, 1);
 		knlist_delete(&tp->t_outpoll.si_note, td, 1);
+		SDT_PROBE2(tty, , , revoke, td->td_proc->p_pid,
+		    tp->t_revokecnt);
 	}
 
 	tp->t_flags &= ~TF_EXCLUDE;
@@ -402,6 +444,8 @@ ttydev_close(struct cdev *dev, int fflag, int devtype __unused,
 	tty_wakeup(tp, FREAD|FWRITE);
 	cv_broadcast(&tp->t_bgwait);
 	cv_broadcast(&tp->t_dcdwait);
+
+	SDT_PROBE2(tty, , , close, td->td_proc->p_pid, 0);
 
 	ttydev_leave(tp);
 
@@ -1189,6 +1233,8 @@ tty_rel_sess(struct tty *tp, struct session *sess)
 
 	MPASS(tp->t_sessioncnt > 0);
 
+	SDT_PROBE1(tty, , , rel__sess, sess->s_sid);
+
 	/* Current session has left. */
 	if (tp->t_session == sess) {
 		tp->t_session = NULL;
@@ -1204,6 +1250,9 @@ tty_rel_gone(struct tty *tp)
 
 	tty_assert_locked(tp);
 	MPASS(!tty_gone(tp));
+
+	SDT_PROBE1(tty, , , gone,
+	    (tp->t_session != NULL ? tp->t_session->s_sid : 0));
 
 	/* Simulate carrier removal. */
 	ttydisc_modem(tp, 0);
@@ -1235,6 +1284,8 @@ tty_drop_ctty(struct tty *tp, struct proc *p)
 	sx_xlock(&proctree_lock);
 	tty_lock(tp);
 	if (tty_gone(tp)) {
+		SDT_PROBE3(tty, , , ctty__drop, p->p_pid,
+		    p->p_session->s_sid, ENODEV);
 		sx_xunlock(&proctree_lock);
 		return (ENODEV);
 	}
@@ -1246,11 +1297,15 @@ tty_drop_ctty(struct tty *tp, struct proc *p)
 	 */
 	session = p->p_session;
 	if (session->s_ttyp == NULL || session->s_ttyp != tp) {
+		SDT_PROBE3(tty, , , ctty__drop, p->p_pid,
+		    session->s_sid, ENOTTY);
 		sx_xunlock(&proctree_lock);
 		return (ENOTTY);
 	}
 
 	if (!SESS_LEADER(p)) {
+		SDT_PROBE3(tty, , , ctty__drop, p->p_pid,
+		    session->s_sid, EPERM);
 		sx_xunlock(&proctree_lock);
 		return (EPERM);
 	}
@@ -1283,6 +1338,7 @@ tty_drop_ctty(struct tty *tp, struct proc *p)
 	 */
 	if (vp != NULL)
 		devfs_ctty_unref(vp);
+	SDT_PROBE3(tty, , , ctty__drop, p->p_pid, session->s_sid, 0);
 	return (0);
 }
 
@@ -1521,6 +1577,8 @@ tty_signal_sessleader(struct tty *tp, int sig)
 	 */
 	if ((s = tp->t_session) != NULL &&
 	    (p = atomic_load_ptr(&s->s_leader)) != NULL) {
+		SDT_PROBE3(tty, , , signal__sessleader, p->p_pid,
+		    s->s_sid, sig);
 		PROC_LOCK(p);
 		kern_psignal(p, sig);
 		PROC_UNLOCK(p);
@@ -1542,6 +1600,7 @@ tty_signal_pgrp(struct tty *tp, int sig)
 	if (sig == SIGINFO && !(tp->t_termios.c_lflag & NOKERNINFO))
 		tty_info(tp);
 	if (tp->t_pgrp != NULL) {
+		SDT_PROBE2(tty, , , signal__pgrp, tp->t_pgrp->pg_id, sig);
 		ksiginfo_init(&ksi);
 		ksi.ksi_signo = sig;
 		ksi.ksi_code = SI_KERNEL;
@@ -1847,13 +1906,18 @@ tty_generic_ioctl(struct tty *tp, u_long cmd, void *data, int fflag,
 		*(int *)data = TTYDISC;
 		return (0);
 	case TIOCGPGRP:
-		if (!tty_is_ctty(tp, td->td_proc))
+		if (!tty_is_ctty(tp, td->td_proc)) {
+			SDT_PROBE3(tty, , , gpgrp, td->td_proc->p_pid, 0,
+			    ENOTTY);
 			return (ENOTTY);
+		}
 
 		if (tp->t_pgrp != NULL)
 			*(int *)data = tp->t_pgrp->pg_id;
 		else
 			*(int *)data = NO_PID;
+		SDT_PROBE3(tty, , , gpgrp, td->td_proc->p_pid,
+		    *(int *)data, 0);
 		return (0);
 	case TIOCGSID:
 		if (!tty_is_ctty(tp, td->td_proc))
@@ -1874,12 +1938,16 @@ tty_generic_ioctl(struct tty *tp, u_long cmd, void *data, int fflag,
 
 		if (!SESS_LEADER(p)) {
 			/* Only the session leader may do this. */
+			SDT_PROBE3(tty, , , ctty__set, p->p_pid,
+			    p->p_session->s_sid, EPERM);
 			sx_xunlock(&proctree_lock);
 			return (EPERM);
 		}
 
 		if (tp->t_session != NULL && tp->t_session == p->p_session) {
 			/* This is already our controlling TTY. */
+			SDT_PROBE3(tty, , , ctty__set, p->p_pid,
+			    p->p_session->s_sid, 0);
 			sx_xunlock(&proctree_lock);
 			return (0);
 		}
@@ -1898,6 +1966,8 @@ tty_generic_ioctl(struct tty *tp, u_long cmd, void *data, int fflag,
 			 * TTYs of which the session leader has been
 			 * killed or the TTY revoked.
 			 */
+			SDT_PROBE3(tty, , , ctty__set, p->p_pid,
+			    p->p_session->s_sid, EPERM);
 			sx_xunlock(&proctree_lock);
 			return (EPERM);
 		}
@@ -1913,6 +1983,8 @@ tty_generic_ioctl(struct tty *tp, u_long cmd, void *data, int fflag,
 		p->p_flag |= P_CONTROLT;
 		PROC_UNLOCK(p);
 
+		SDT_PROBE3(tty, , , ctty__set, p->p_pid,
+		    p->p_session->s_sid, 0);
 		sx_xunlock(&proctree_lock);
 		return (0);
 	}
@@ -1930,6 +2002,8 @@ tty_generic_ioctl(struct tty *tp, u_long cmd, void *data, int fflag,
 		if (pg != NULL)
 			PGRP_UNLOCK(pg);
 		if (pg == NULL || pg->pg_session != td->td_proc->p_session) {
+			SDT_PROBE3(tty, , , spgrp, td->td_proc->p_pid,
+			    *(int *)data, EPERM);
 			sx_sunlock(&proctree_lock);
 			tty_lock(tp);
 			return (EPERM);
@@ -1941,10 +2015,14 @@ tty_generic_ioctl(struct tty *tp, u_long cmd, void *data, int fflag,
 		 * relocking the TTY.
 		 */
 		if (!tty_is_ctty(tp, td->td_proc)) {
+			SDT_PROBE3(tty, , , spgrp, td->td_proc->p_pid,
+			    *(int *)data, ENOTTY);
 			sx_sunlock(&proctree_lock);
 			return (ENOTTY);
 		}
 		tp->t_pgrp = pg;
+		SDT_PROBE3(tty, , , spgrp, td->td_proc->p_pid,
+		    pg->pg_id, 0);
 		sx_sunlock(&proctree_lock);
 
 		/* Wake up the background process groups. */
@@ -2014,6 +2092,8 @@ tty_generic_ioctl(struct tty *tp, u_long cmd, void *data, int fflag,
 		error = tty_sti_check(tp, fflag, td);
 		if (error != 0)
 			return (error);
+		SDT_PROBE2(tty, , , sti, td->td_proc->p_pid,
+		    *(char *)data);
 		ttydisc_rint(tp, *(char *)data, 0);
 		ttydisc_rint_done(tp);
 		return (0);

@@ -29,4 +29,10 @@ MANNODEV=	pam_tacplus.8
 
 LIBADD+=	tacplus
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=	pam_tacplus_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

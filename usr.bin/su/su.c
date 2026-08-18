@@ -86,6 +86,8 @@
 #include <security/pam_appl.h>
 #include <security/openpam.h>
 
+#include "su_probes.h"
+
 #define PAM_END() do {							\
 	int local_ret;							\
 	if (pamh != NULL) {						\
@@ -287,6 +289,7 @@ main(int argc, char *argv[])
 	PAM_SET_ITEM(PAM_TTY, mytty);
 
 	retcode = pam_authenticate(pamh, 0);
+	SU_PROBE_AUTH(username, user, mytty, retcode);
 	if (retcode != PAM_SUCCESS) {
 #ifdef USE_BSM_AUDIT
 		if (audit_submit(AUE_su, auid, EPERM, 1, "bad su %s to %s on %s",
@@ -318,6 +321,7 @@ main(int argc, char *argv[])
 	}
 
 	retcode = pam_acct_mgmt(pamh, 0);
+	SU_PROBE_ACCT(user, retcode);
 	if (retcode == PAM_NEW_AUTHTOK_REQD) {
 		retcode = pam_chauthtok(pamh,
 			PAM_CHANGE_EXPIRED_AUTHTOK);

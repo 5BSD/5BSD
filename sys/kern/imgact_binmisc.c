@@ -36,6 +36,7 @@
 #include <sys/mutex.h>
 #include <sys/namei.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 #include <sys/sysctl.h>
 #include <sys/sx.h>
 #include <sys/vnode.h>
@@ -92,6 +93,16 @@ typedef struct imgact_binmisc_entry {
 #define	ISM_OLD_ARGV0	'a'	/* "#a" is replaced with the old argv0. */
 
 MALLOC_DEFINE(M_BINMISC, KMOD_NAME, "misc binary image activator");
+
+/*
+ * Static SDT tracepoint for the misc binary image activator.  The
+ * "imgact" provider is defined in imgact_shell.c.  imgact:::binmisc fires
+ * when a registered interpreter (e.g. a qemu-user emulator selected by a
+ * magic/extension match) is chosen to run a foreign binary.  arg0 is the
+ * interpreter path, arg1 the registration name.
+ */
+SDT_PROVIDER_DECLARE(imgact);
+SDT_PROBE_DEFINE2(imgact, , , binmisc, "char *", "char *");
 
 /* The interpreter list. */
 static SLIST_HEAD(, imgact_binmisc_entry) interpreter_list =
@@ -730,6 +741,7 @@ imgact_binmisc_exec(struct image_params *imgp)
 	/* Catch ibe->ibe_argv0_cnt counting more #a than we did. */
 	MPASS(ibe->ibe_argv0_cnt == argv0_cnt);
 	imgp->interpreter_name = imgp->args->begin_argv;
+	SDT_PROBE2(imgact, , , binmisc, imgp->interpreter_name, ibe->ibe_name);
 	if (ibe->ibe_interpreter_vnode) {
 		imgp->interpreter_vp = ibe->ibe_interpreter_vnode;
 		vref(imgp->interpreter_vp);

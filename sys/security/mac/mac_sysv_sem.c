@@ -138,6 +138,7 @@ mac_sysvsem_check_semget(struct ucred *cred, struct semid_kernel *semakptr)
 
 	MAC_POLICY_CHECK_NOSLEEP(sysvsem_check_semget, cred, semakptr,
 	    semakptr->label);
+	MAC_CHECK_PROBE2(sysvsem_check_semget, error, cred, semakptr);
 
 	return (error);
 }

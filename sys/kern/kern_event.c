@@ -60,6 +60,7 @@
 #include <sys/protosw.h>
 #include <sys/resourcevar.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 #include <sys/sigio.h>
 #include <sys/signalvar.h>
 #include <sys/socket.h>
@@ -84,6 +85,44 @@
 #include <vm/uma.h>
 
 static MALLOC_DEFINE(M_KQUEUE, "kqueue", "memory for kqueue system");
+
+/*
+ * Static DTrace (SDT) observability for the kqueue operation surface.
+ * These probes cover per-syscall / per-registration granularity only; the
+ * hot per-activation path (knote(), kqueue_scan() copyout loop) is left
+ * deliberately uninstrumented.
+ */
+SDT_PROVIDER_DEFINE(kqueue);
+
+/* A new kqueue fd was created.  Args: pid, fd, flags. */
+SDT_PROBE_DEFINE3(kqueue, , , create, "int", "int", "int");
+
+/* A kqueue is being closed/torn down.  Args: pid, kqueue pointer. */
+SDT_PROBE_DEFINE2(kqueue, , , close, "int", "void *");
+
+/*
+ * A changelist entry was processed by kqueue_register().  Args: kqueue
+ * pointer, ident, filter (EVFILT_* number, negative), flags (EV_*), error.
+ * Consumers predicate on filter/flags to observe ADD/DELETE/ENABLE/DISABLE/
+ * RECEIPT and the security-interesting filters (EVFILT_PROC/SIGNAL/VNODE/
+ * READ/WRITE).
+ */
+SDT_PROBE_DEFINE5(kqueue, , , register, "void *", "uintptr_t", "int", "int",
+    "int");
+
+/* A knote was linked into a kqueue.  Args: pid, kqueue pointer, ident, filter. */
+SDT_PROBE_DEFINE4(kqueue, , , knote__attach, "int", "void *", "uintptr_t",
+    "int");
+
+/* A knote is being unlinked/dropped.  Args: pid, kqueue pointer, ident, filter. */
+SDT_PROBE_DEFINE4(kqueue, , , knote__drop, "int", "void *", "uintptr_t",
+    "int");
+
+/*
+ * An EVFILT_PROC knote successfully attached to a target process (watching
+ * another process).  Args: watcher pid, target pid, requested NOTE_* fflags.
+ */
+SDT_PROBE_DEFINE3(kqueue, , , filt__proc__attach, "int", "int", "int");
 
 /*
  * This lock is used if multiple kq locks are required.  This possibly
@@ -389,6 +428,7 @@ static struct {
 	[~EVFILT_JAIL] = { &jail_filtops, 1 },
 	[~EVFILT_JAILDESC] = { &file_filtops, 1 },
 	[~EVFILT_ENVFD] = { &file_filtops, 1 },
+	[~EVFILT_CRYPTODESC] = { &file_filtops, 1 },
 };
 
 /*
@@ -491,6 +531,9 @@ filt_procattach(struct knote *kn)
 	 */
 	if (immediate || (exiting && filt_proc(kn, NOTE_EXIT)))
 		KNOTE_ACTIVATE(kn, 0);
+
+	SDT_PROBE3(kqueue, , , filt__proc__attach, curproc->p_pid, p->p_pid,
+	    kn->kn_sfflags);
 
 	PROC_UNLOCK(p);
 
@@ -1276,6 +1319,8 @@ kern_kqueue(struct thread *td, int flags, bool cponfork, struct filecaps *fcaps)
 
 	fdrop(fp, td);
 
+	SDT_PROBE3(kqueue, , , create, td->td_proc->p_pid, fd, flags);
+
 	td->td_retval[0] = fd;
 	return (0);
 }
@@ -1930,6 +1975,8 @@ done_ev_add:
 	KQ_UNLOCK_FLUX(kq);
 
 done:
+	SDT_PROBE5(kqueue, , , register, kq, kev->ident, kev->filter,
+	    kev->flags, error);
 	KQ_GLOBAL_UNLOCK(&kq_global, haskqglobal);
 	if (filedesc_unlock)
 		FILEDESC_XUNLOCK(td->td_proc->p_fd);
@@ -2491,6 +2538,9 @@ kqueue_close(struct file *fp, struct thread *td)
 
 	if ((error = kqueue_acquire(fp, &kq)))
 		return error;
+
+	SDT_PROBE2(kqueue, , , close, td->td_proc->p_pid, kq);
+
 	kqueue_drain(kq, td);
 
 	/*
@@ -2913,6 +2963,8 @@ knote_attach(struct knote *kn, struct kqueue *kq)
 		list = &kq->kq_knhash[KN_HASH(kn->kn_id, kq->kq_knhashmask)];
 	}
 	SLIST_INSERT_HEAD(list, kn, kn_link);
+	SDT_PROBE4(kqueue, , , knote__attach, curproc->p_pid, kq, kn->kn_id,
+	    kn->kn_filter);
 	return (0);
 }
 
@@ -2920,6 +2972,8 @@ static void
 knote_drop(struct knote *kn, struct thread *td)
 {
 
+	SDT_PROBE4(kqueue, , , knote__drop, td->td_proc->p_pid, kn->kn_kq,
+	    kn->kn_id, kn->kn_filter);
 	if ((kn->kn_status & KN_DETACHED) == 0)
 		kn->kn_fop->f_detach(kn);
 	knote_drop_detached(kn, td);

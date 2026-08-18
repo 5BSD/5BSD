@@ -71,6 +71,89 @@
 #include <vm/uma.h>
 #include <sys/aio.h>
 
+#include <sys/sdt.h>
+
+/*
+ * Static DTrace (SDT) instrumentation for the POSIX AIO/LIO subsystem.
+ *
+ * One provider, "aio", exposes probes covering the full life cycle of an
+ * asynchronous I/O job: submission and its rejections, queueing, hand-off to
+ * a worker/bio, start, completion/error, cancellation, userland collection
+ * (return/suspend/waitcomplete/error), resource-limit denials, reap/rundown,
+ * and LIO group lifecycle plus notification delivery.
+ *
+ * All SDT_PROVIDER_DEFINE / SDT_PROBE_DEFINE* declarations MUST be at file
+ * scope.  Probes are fired with SDT_PROBE*() at the corresponding event
+ * sites.  The SDT_PROBE macro casts each argument to uintptr_t and that cast
+ * binds tighter than ?:/comparisons, so any ternary/operator probe argument
+ * is wrapped in its own parentheses.
+ */
+SDT_PROVIDER_DEFINE(aio);
+
+/* Submission surface (aio_aqueue / aio_read / aio_write / aio_fsync / mlock). */
+SDT_PROBE_DEFINE5(aio, , , submit,
+    "int" /*pid*/, "int" /*fd*/, "int" /*opcode*/, "size_t" /*nbytes*/,
+    "void *" /*job*/);
+SDT_PROBE_DEFINE3(aio, , , submit__eagain,
+    "int" /*pid*/, "int" /*kaio_count*/, "int" /*limit*/);
+SDT_PROBE_DEFINE4(aio, , , queue__fail,
+    "int" /*pid*/, "int" /*fd*/, "int" /*opcode*/, "int" /*error*/);
+
+/* Per-job lifecycle. */
+SDT_PROBE_DEFINE4(aio, , , queue,
+    "int" /*pid*/, "void *" /*job*/, "int" /*opcode*/, "int" /*fd*/);
+SDT_PROBE_DEFINE3(aio, , , schedule,
+    "void *" /*job*/, "int" /*pid*/, "int" /*opcode*/);
+SDT_PROBE_DEFINE3(aio, , , start,
+    "void *" /*job*/, "int" /*pid*/, "int" /*opcode*/);
+SDT_PROBE_DEFINE4(aio, , , bio__start,
+    "int" /*pid*/, "void *" /*job*/, "int" /*opcode*/, "int" /*iovcnt*/);
+SDT_PROBE_DEFINE5(aio, , , complete,
+    "void *" /*job*/, "int" /*pid*/, "long" /*status*/, "int" /*error*/,
+    "int" /*opcode*/);
+SDT_PROBE_DEFINE2(aio, , , cancel,
+    "void *" /*job*/, "int" /*pid*/);
+SDT_PROBE_DEFINE4(aio, , , cancel__job,
+    "int" /*pid*/, "void *" /*job*/, "int" /*fd*/, "int" /*opcode*/);
+SDT_PROBE_DEFINE2(aio, , , cancel__syscall,
+    "int" /*pid*/, "int" /*fd*/);
+SDT_PROBE_DEFINE3(aio, , , reap,
+    "int" /*pid*/, "void *" /*job*/, "int" /*opcode*/);
+
+/* Resource-limit enforcement denials. */
+SDT_PROBE_DEFINE3(aio, , , buf__limit,
+    "int" /*pid*/, "int" /*buffer_count*/, "int" /*limit*/);
+
+/* Process rundown / cleanup. */
+SDT_PROBE_DEFINE1(aio, , , proc__rundown,
+    "int" /*pid*/);
+
+/* Userland collection points. */
+SDT_PROBE_DEFINE4(aio, , , return,
+    "int" /*pid*/, "void *" /*job*/, "long" /*status*/, "long" /*error*/);
+SDT_PROBE_DEFINE2(aio, , , suspend,
+    "int" /*pid*/, "int" /*njoblist*/);
+SDT_PROBE_DEFINE4(aio, , , waitcomplete,
+    "int" /*pid*/, "void *" /*job*/, "long" /*status*/, "long" /*error*/);
+SDT_PROBE_DEFINE2(aio, , , error__query,
+    "int" /*pid*/, "void *" /*ujob*/);
+
+/* fsync/sync ordering: deferral, requeue, and reschedule. */
+SDT_PROBE_DEFINE3(aio, , , fsync__defer,
+    "int" /*pid*/, "void *" /*job*/, "int" /*fd*/);
+SDT_PROBE_DEFINE3(aio, , , requeue,
+    "int" /*pid*/, "void *" /*job*/, "int" /*fd*/);
+SDT_PROBE_DEFINE2(aio, , , fsync__schedule,
+    "int" /*pid*/, "void *" /*job*/);
+
+/* LIO group lifecycle and notification/signal delivery. */
+SDT_PROBE_DEFINE4(aio, , , lio__start,
+    "int" /*pid*/, "int" /*mode*/, "int" /*nent*/, "void *" /*lj*/);
+SDT_PROBE_DEFINE3(aio, , , lio__done,
+    "int" /*pid*/, "void *" /*lj*/, "int" /*count*/);
+SDT_PROBE_DEFINE2(aio, , , signal,
+    "int" /*pid*/, "int" /*signo*/);
+
 /*
  * Counter for aio_fsync.
  */
@@ -484,6 +567,7 @@ aio_sendsig(struct proc *p, struct sigevent *sigev, ksiginfo_t *ksi, bool ext)
 		ksiginfo_set_sigev(ksi, sigev);
 		ksi->ksi_code = SI_ASYNCIO;
 		ksi->ksi_flags |= ext ? (KSI_EXT | KSI_INS) : 0;
+		SDT_PROBE2(aio, , , signal, p->p_pid, ksi->ksi_signo);
 		tdsendsignal(p, td, ksi->ksi_signo, ksi);
 	}
 	PROC_UNLOCK(p);
@@ -509,6 +593,9 @@ aio_free_entry(struct kaiocb *job)
 
 	AIO_LOCK_ASSERT(ki, MA_OWNED);
 	MPASS(job->jobflags & KAIOCB_FINISHED);
+
+	SDT_PROBE3(aio, , , reap, p->p_pid, job,
+	    job->uaiocb.aio_lio_opcode);
 
 	atomic_subtract_int(&num_queue_count, 1);
 
@@ -598,6 +685,9 @@ aio_cancel_job(struct proc *p, struct kaioinfo *ki, struct kaiocb *job)
 	MPASS((job->jobflags & KAIOCB_CANCELLING) == 0);
 	job->jobflags |= KAIOCB_CANCELLED;
 
+	SDT_PROBE4(aio, , , cancel__job, p->p_pid, job,
+	    job->uaiocb.aio_fildes, job->uaiocb.aio_lio_opcode);
+
 	func = job->cancel_fn;
 
 	/*
@@ -652,6 +742,8 @@ aio_proc_rundown(void *arg, struct proc *p)
 	ki = p->p_aioinfo;
 	if (ki == NULL)
 		return;
+
+	SDT_PROBE1(aio, , , proc__rundown, p->p_pid);
 
 	AIO_LOCK(ki);
 	ki->kaio_flags |= KAIO_RUNDOWN;
@@ -915,6 +1007,8 @@ aio_bio_done_notify(struct proc *userp, struct kaiocb *job)
 	KNOTE_LOCKED(&job->klist, 1);
 
 	if (lj_done) {
+		SDT_PROBE3(aio, , , lio__done, userp->p_pid, lj,
+		    lj->lioj_count);
 		if (lj->lioj_signal.sigev_notify == SIGEV_KEVENT) {
 			lj->lioj_flags |= LIOJ_KEVENT_POSTED;
 			KNOTE_LOCKED(&lj->klist, 1);
@@ -942,6 +1036,8 @@ notification_done:
 			if (!aio_clear_cancel_function_locked(sjob))
 				continue;
 			TAILQ_INSERT_TAIL(&ki->kaio_syncready, sjob, list);
+			SDT_PROBE3(aio, , , requeue, userp->p_pid, sjob,
+			    sjob->uaiocb.aio_fildes);
 			schedule_fsync = true;
 		}
 		if (schedule_fsync)
@@ -965,6 +1061,7 @@ aio_schedule_fsync(void *context, int pending)
 	while (!TAILQ_EMPTY(&ki->kaio_syncready)) {
 		job = TAILQ_FIRST(&ki->kaio_syncready);
 		TAILQ_REMOVE(&ki->kaio_syncready, job, list);
+		SDT_PROBE2(aio, , , fsync__schedule, job->userproc->p_pid, job);
 		AIO_UNLOCK(ki);
 		aio_schedule(job, aio_process_sync);
 		AIO_LOCK(ki);
@@ -1048,6 +1145,9 @@ aio_complete(struct kaiocb *job, long status, int error)
 	userp = job->userproc;
 	ki = userp->p_aioinfo;
 
+	SDT_PROBE5(aio, , , complete, job, userp->p_pid, status, error,
+	    job->uaiocb.aio_lio_opcode);
+
 	AIO_LOCK(ki);
 	KASSERT(!(job->jobflags & KAIOCB_FINISHED),
 	    ("duplicate aio_complete"));
@@ -1063,6 +1163,7 @@ void
 aio_cancel(struct kaiocb *job)
 {
 
+	SDT_PROBE2(aio, , , cancel, job, job->userproc->p_pid);
 	aio_complete(job, -1, ECANCELED);
 }
 
@@ -1129,6 +1230,9 @@ aio_daemon(void *_id)
 			mtx_unlock(&aio_job_mtx);
 
 			ki = job->userproc->p_aioinfo;
+			SDT_PROBE3(aio, , , start, job,
+			    job->userproc->p_pid,
+			    job->uaiocb.aio_lio_opcode);
 			job->handle_fn(job);
 
 			mtx_lock(&aio_job_mtx);
@@ -1287,6 +1391,8 @@ aio_qbio(struct proc *p, struct kaiocb *job)
 		AIO_LOCK(ki);
 		if (ki->kaio_buffer_count + iovcnt > max_buf_aio) {
 			AIO_UNLOCK(ki);
+			SDT_PROBE3(aio, , , buf__limit, p->p_pid,
+			    ki->kaio_buffer_count, max_buf_aio);
 			error = EAGAIN;
 			goto unref;
 		}
@@ -1363,6 +1469,7 @@ aio_qbio(struct proc *p, struct kaiocb *job)
 	}
 
 	/* Perform transfer. */
+	SDT_PROBE4(aio, , , bio__start, p->p_pid, job, opcode, iovcnt);
 	for (i = 0; i < iovcnt; i++)
 		csw->d_strategy(bios[i]);
 	free(bios, M_TEMP);
@@ -1530,6 +1637,8 @@ aio_aqueue(struct thread *td, struct aiocb *ujob, struct aioliojob *lj,
 
 	if (num_queue_count >= max_queue_count ||
 	    ki->kaio_count >= max_aio_queue_per_proc) {
+		SDT_PROBE3(aio, , , submit__eagain, p->p_pid,
+		    ki->kaio_count, max_aio_queue_per_proc);
 		error = EAGAIN;
 		goto err1;
 	}
@@ -1699,6 +1808,9 @@ no_kqueue:
 	job->uiop->uio_offset = job->uaiocb.aio_offset;
 	job->uiop->uio_td = td;
 
+	SDT_PROBE5(aio, , , submit, p->p_pid, fd, opcode,
+	    job->uaiocb.aio_nbytes, job);
+
 	if (opcode == LIO_MLOCK) {
 		aio_schedule(job, aio_process_mlock);
 		error = 0;
@@ -1723,12 +1835,15 @@ no_kqueue:
 		 * until this point.
 		 */
 		aio_bio_done_notify(p, job);
-	} else
+	} else {
+		SDT_PROBE4(aio, , , queue, p->p_pid, job, opcode, fd);
 		TAILQ_INSERT_TAIL(&ki->kaio_jobqueue, job, plist);
+	}
 	AIO_UNLOCK(ki);
 	return (0);
 
 err4:
+	SDT_PROBE4(aio, , , queue__fail, p->p_pid, fd, opcode, error);
 	crfree(job->cred);
 err3:
 	if (fp)
@@ -1765,6 +1880,8 @@ aio_schedule(struct kaiocb *job, aio_handle_fn_t *func)
 		return;
 	}
 	job->handle_fn = func;
+	SDT_PROBE3(aio, , , schedule, job, job->userproc->p_pid,
+	    job->uaiocb.aio_lio_opcode);
 	TAILQ_INSERT_TAIL(&aio_jobs, job, list);
 	aio_kick_nowait(job->userproc);
 	mtx_unlock(&aio_job_mtx);
@@ -1835,6 +1952,9 @@ aio_queue_file(struct file *fp, struct kaiocb *job)
 				return (0);
 			}
 			TAILQ_INSERT_TAIL(&ki->kaio_syncqueue, job, list);
+			SDT_PROBE3(aio, , , fsync__defer,
+			    job->userproc->p_pid, job,
+			    job->uaiocb.aio_fildes);
 			AIO_UNLOCK(ki);
 			return (0);
 		}
@@ -1935,6 +2055,7 @@ kern_aio_return(struct thread *td, struct aiocb *ujob, struct aiocb_ops *ops)
 		td->td_ru.ru_inblock += job->inblock;
 		td->td_ru.ru_msgsnd += job->msgsnd;
 		td->td_ru.ru_msgrcv += job->msgrcv;
+		SDT_PROBE4(aio, , , return, p->p_pid, job, status, error);
 		aio_free_entry(job);
 		AIO_UNLOCK(ki);
 		ops->store_error(ujob, error);
@@ -1980,6 +2101,8 @@ kern_aio_suspend(struct thread *td, int njoblist, struct aiocb **ujoblist,
 	ki = p->p_aioinfo;
 	if (ki == NULL)
 		return (EAGAIN);
+
+	SDT_PROBE2(aio, , , suspend, p->p_pid, njoblist);
 
 	if (njoblist == 0)
 		return (0);
@@ -2065,6 +2188,8 @@ sys_aio_cancel(struct thread *td, struct aio_cancel_args *uap)
 	if (ki == NULL)
 		goto done;
 
+	SDT_PROBE2(aio, , , cancel__syscall, p->p_pid, uap->fd);
+
 	if (fp->f_type == DTYPE_VNODE) {
 		vp = fp->f_vnode;
 		if (vn_isdisk(vp)) {
@@ -2147,6 +2272,8 @@ kern_aio_error(struct thread *td, struct aiocb *ujob, struct aiocb_ops *ops)
 		td->td_retval[0] = EINVAL;
 		return (0);
 	}
+
+	SDT_PROBE2(aio, , , error__query, p->p_pid, ujob);
 
 	AIO_LOCK(ki);
 	TAILQ_FOREACH(job, &ki->kaio_all, allist) {
@@ -2321,6 +2448,8 @@ kern_lio_listio(struct thread *td, int mode, struct aiocb * const *uacb_list,
 	 */
 	lj->lioj_count = 1;
 	AIO_UNLOCK(ki);
+
+	SDT_PROBE4(aio, , , lio__start, p->p_pid, mode, nent, lj);
 
 	/*
 	 * Get pointers to the list of I/O requests.
@@ -2586,6 +2715,8 @@ kern_aio_waitcomplete(struct thread *td, struct aiocb **ujobp,
 		td->td_ru.ru_inblock += job->inblock;
 		td->td_ru.ru_msgsnd += job->msgsnd;
 		td->td_ru.ru_msgrcv += job->msgrcv;
+		SDT_PROBE4(aio, , , waitcomplete, p->p_pid, job, status,
+		    error);
 		aio_free_entry(job);
 		AIO_UNLOCK(ki);
 		ops->store_aiocb(ujobp, ujob);

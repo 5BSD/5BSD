@@ -44,4 +44,9 @@ CFLAGS+=	-include ${SRCTOP}/crypto/krb5/src/include/k5-int.h
 CFLAGS+=	-DMK_MITKRB5=yes
 .endif
 
+.if ${MK_DTRACE} != "no"
+SRCS+=	pam_ksu_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

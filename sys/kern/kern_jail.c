@@ -61,6 +61,7 @@
 #include <sys/racct.h>
 #include <sys/rctl.h>
 #include <sys/refcount.h>
+#include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/sysent.h>
 #include <sys/namei.h>
@@ -91,6 +92,21 @@ MALLOC_DEFINE(M_PRISON, "prison", "Prison structures");
 #ifdef RACCT
 static MALLOC_DEFINE(M_PRISON_RACCT, "prison_racct", "Prison racct structures");
 #endif
+
+SDT_PROVIDER_DEFINE(jail);
+/* A new prison was instantiated (JAIL_CREATE): jid, name, path, flags. */
+SDT_PROBE_DEFINE4(jail, kernel, kern_jail_set, create, "int", "const char *",
+    "const char *", "int");
+/* An existing prison was reconfigured (JAIL_UPDATE): jid, name, flags. */
+SDT_PROBE_DEFINE3(jail, kernel, kern_jail_set, update, "int", "const char *",
+    "int");
+/* A process entered a prison (jail_attach / JAIL_ATTACH): pid, jid. */
+SDT_PROBE_DEFINE2(jail, kernel, do_jail_attach, attach, "pid_t", "int");
+/* A prison was unlinked and destroyed: jid, name. */
+SDT_PROBE_DEFINE2(jail, kernel, prison_deref, remove, "int", "const char *");
+/* A per-jail privilege check denied a privilege: jid, priv, cred. */
+SDT_PROBE_DEFINE3(jail, kernel, prison_priv_check, deny, "int", "int",
+    "struct ucred *");
 
 /* Keep struct prison prison0 and some code in kern_jail_set() readable. */
 #ifdef INET
@@ -2360,6 +2376,13 @@ kern_jail_set(struct thread *td, struct uio *optuio, int flags)
 	drflags &= ~PD_KILL;
 	td->td_retval[0] = pr->pr_id;
 
+	if (created)
+		SDT_PROBE4(jail, kernel, kern_jail_set, create, pr->pr_id,
+		    pr->pr_name, pr->pr_path, flags);
+	else
+		SDT_PROBE3(jail, kernel, kern_jail_set, update, pr->pr_id,
+		    pr->pr_name, flags);
+
  done_deref:
 	/*
 	 * Report changes to kevent.  This can happen even if the
@@ -3232,6 +3255,7 @@ do_jail_attach(struct thread *td, struct prison *pr, int drflags)
 		PROC_UNLOCK(p);
 	}
 
+	SDT_PROBE2(jail, kernel, do_jail_attach, attach, p->p_pid, pr->pr_id);
 	return (0);
 
  e_unlock:
@@ -3701,6 +3725,8 @@ prison_deref(struct prison *pr, int flags)
 					 */
 					mac_prison_destroy(pr);
 #endif
+					SDT_PROBE2(jail, kernel, prison_deref,
+					    remove, pr->pr_id, pr->pr_name);
 					pr->pr_state = PRISON_STATE_INVALID;
 					TAILQ_REMOVE(&allprison, pr, pr_list);
 					LIST_REMOVE(pr, pr_sibling);
@@ -4322,8 +4348,8 @@ prison_enforce_statfs(struct ucred *cred, struct mount *mp, struct statfs *sp)
  * Check with permission for a specific privilege is granted within jail.  We
  * have a specific list of accepted privileges; the rest are denied.
  */
-int
-prison_priv_check(struct ucred *cred, int priv)
+static int
+prison_priv_check_impl(struct ucred *cred, int priv)
 {
 	struct prison *pr;
 	int error;
@@ -4768,6 +4794,18 @@ prison_priv_check(struct ucred *cred, int priv)
 		 */
 		return (EPERM);
 	}
+}
+
+int
+prison_priv_check(struct ucred *cred, int priv)
+{
+	int error;
+
+	error = prison_priv_check_impl(cred, priv);
+	if (error != 0 && SDT_PROBES_ENABLED() && jailed(cred))
+		SDT_PROBE3(jail, kernel, prison_priv_check, deny,
+		    cred->cr_prison->pr_id, priv, cred);
+	return (error);
 }
 
 /*

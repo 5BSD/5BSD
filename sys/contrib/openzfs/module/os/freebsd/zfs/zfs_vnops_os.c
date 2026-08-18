@@ -68,6 +68,9 @@
 #include <sys/zap.h>
 #include <sys/sa.h>
 #include <sys/policy.h>
+#include <sys/sdt.h>
+SDT_PROVIDER_DECLARE(zfs);
+SDT_PROBE_DECLARE(zfs, , , access);
 #include <sys/sunddi.h>
 #include <sys/filio.h>
 #include <sys/sid.h>
@@ -4849,6 +4852,8 @@ zfs_freebsd_access(struct vop_access_args *ap)
 		error = EACCES;
 	}
 
+	SDT_PROBE4(zfs, , , access, (uint64_t)zp->z_id,
+	    (int)ap->a_accmode, ap->a_cred, error);
 	return (error);
 }
 

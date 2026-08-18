@@ -46,6 +46,7 @@
 #include <libcasper_service.h>
 
 #include "cap_sysctl.h"
+#include "cap_sysctl_probes.h"
 
 /*
  * Limit interface.
@@ -94,6 +95,7 @@ cap_sysctl_limit_name(cap_sysctl_limit_t *limit, const char *name, int flags)
 	}
 	nvlist_add_string(lnv, "name", name);
 	nvlist_add_number(lnv, "operation", flags);
+	CAP_SYSCTL_PROBE_STAGE_NAME(name, flags);
 
 	mibsz = nitems(mib);
 	error = cap_sysctlnametomib(limit->chan, name, mib, &mibsz);
@@ -122,6 +124,7 @@ cap_sysctl_limit_mib(cap_sysctl_limit_t *limit, const int *mibp, u_int miblen,
 	}
 	nvlist_add_binary(lnv, "mib", mibp, miblen * sizeof(int));
 	nvlist_add_number(lnv, "operation", flags);
+	CAP_SYSCTL_PROBE_STAGE_MIB((int)miblen, flags);
 	nvlist_add_nvlist(limit->nv, "limit", lnv);
 	return (limit);
 }
@@ -345,11 +348,12 @@ sysctl_allowed(const nvlist_t *limits, const nvlist_t *req)
 	const int *lmib, *reqmib;
 	int type;
 
-	if (limits == NULL)
-		return (true);
-
 	reqmib = dnvlist_get_binary(req, "mib", &reqsize, NULL, 0);
 	reqname = dnvlist_get_string(req, "name", NULL);
+	if (limits == NULL) {
+		CAP_SYSCTL_PROBE_ALLOW((reqname != NULL ? reqname : "<mib>"), 1);
+		return (true);
+	}
 	reqop = nvlist_get_number(req, "operation");
 
 	cookie = NULL;
@@ -389,9 +393,11 @@ sysctl_allowed(const nvlist_t *limits, const nvlist_t *req)
 				continue;
 		}
 
+		CAP_SYSCTL_PROBE_ALLOW((reqname != NULL ? reqname : "<mib>"), 1);
 		return (true);
 	}
 
+	CAP_SYSCTL_PROBE_ALLOW((reqname != NULL ? reqname : "<mib>"), 0);
 	return (false);
 }
 

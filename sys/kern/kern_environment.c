@@ -49,6 +49,7 @@
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/sysent.h>
 #include <sys/sysproto.h>
 
@@ -61,6 +62,10 @@ static char *_getenv_dynamic(const char *name, int *idx);
 
 static char *kenv_acquire(const char *name);
 static void kenv_release(const char *buf);
+
+SDT_PROVIDER_DEFINE(kenv);
+SDT_PROBE_DEFINE4(kenv, , , set, "char *", "char *", "struct ucred *", "int");
+SDT_PROBE_DEFINE3(kenv, , , unset, "char *", "struct ucred *", "int");
 
 static MALLOC_DEFINE(M_KENV, "kenv", "kernel environment");
 
@@ -247,6 +252,7 @@ sys_kenv(struct thread *td, struct kenv_args *uap)
 		if (error == 0)
 #endif
 			kern_setenv(name, value);
+		SDT_PROBE4(kenv, , , set, name, value, td->td_ucred, error);
 		free(value, M_TEMP);
 		break;
 	case KENV_UNSET:
@@ -258,6 +264,7 @@ sys_kenv(struct thread *td, struct kenv_args *uap)
 		error = kern_unsetenv(name);
 		if (error)
 			error = ENOENT;
+		SDT_PROBE3(kenv, , , unset, name, td->td_ucred, error);
 		break;
 	default:
 		error = EINVAL;

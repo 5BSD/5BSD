@@ -49,6 +49,7 @@
 #include <sys/priv.h>
 #include <sys/proc.h>
 #include <sys/resourcevar.h>
+#include <sys/sdt.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
@@ -85,6 +86,10 @@ static MALLOC_DEFINE(M_KTRACE, "KTRACE", "KTRACE");
 #ifdef KTRACE
 
 FEATURE(ktrace, "Kernel support for system-call tracing");
+
+SDT_PROVIDER_DEFINE(ktrace);
+SDT_PROBE_DEFINE3(ktrace, , , set, "pid_t", "int", "int");
+SDT_PROBE_DEFINE2(ktrace, , , deny, "pid_t", "int");
 
 #ifndef KTRACE_REQUEST_POOL
 #define	KTRACE_REQUEST_POOL	100
@@ -1272,6 +1277,7 @@ ktrops(struct thread *td, struct proc *p, int ops, int facs,
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 	if (!ktrcanset(td, p)) {
+		SDT_PROBE2(ktrace, , , deny, p->p_pid, EPERM);
 		PROC_UNLOCK(p);
 		return (0);
 	}
@@ -1316,6 +1322,7 @@ ktrops(struct thread *td, struct proc *p, int ops, int facs,
 			old_kiop = ktr_freeproc(p);
 	}
 	mtx_unlock(&ktrace_mtx);
+	SDT_PROBE3(ktrace, , , set, p->p_pid, facs, ops);
 	if ((p->p_traceflag & KTRFAC_MASK) != 0)
 		ktrprocctor_entered(td, p);
 	PROC_UNLOCK(p);

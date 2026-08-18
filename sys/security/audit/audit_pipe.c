@@ -40,6 +40,7 @@
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/rwlock.h>
+#include <sys/sdt.h>
 #include <sys/selinfo.h>
 #include <sys/sigio.h>
 #include <sys/signal.h>
@@ -255,6 +256,49 @@ static u_int64_t	audit_pipe_records;	/* Records seen. */
 static u_int64_t	audit_pipe_drops;	/* Global record drop count. */
 
 /*
+ * Static DTrace (SDT) provider for observing the audit-pipe userspace
+ * delivery channel: consumer attach/detach, per-record delivery, the
+ * security-critical record-drop / queue-overflow path, consumer control
+ * (ioctl) operations, and consumer drains (read).  This is distinct from the
+ * native "audit" provider (audit_dtrace.c) which observes committed trail
+ * records; here we cover the pipe delivery/drop surface it lacks.
+ */
+SDT_PROVIDER_DEFINE(auditpipe);
+
+/*
+ * auditpipe:::open   -- a consumer opened /dev/auditpipe.  args: pid, error.
+ * auditpipe:::close  -- a consumer detached.  args: pipe pointer, pid.
+ */
+SDT_PROBE_DEFINE2(auditpipe, , , open, "int", "int");
+SDT_PROBE_DEFINE2(auditpipe, , , close, "void *", "int");
+
+/*
+ * auditpipe:::submit -- a record entered the pipe delivery path.
+ *     args: auid, event, class, record length.
+ * auditpipe:::append -- a record was enqueued onto a specific pipe.
+ *     args: pipe pointer, record length, resulting queue length.
+ */
+SDT_PROBE_DEFINE4(auditpipe, , , submit, "uint32_t", "uint16_t", "uint32_t",
+    "u_int");
+SDT_PROBE_DEFINE3(auditpipe, , , append, "void *", "u_int", "u_int");
+
+/*
+ * auditpipe:::drop -- a record was dropped (queue full or allocation
+ *     failure): a loss of audit visibility.  args: pipe pointer, record
+ *     length, per-pipe cumulative drop count.
+ */
+SDT_PROBE_DEFINE3(auditpipe, , , drop, "void *", "u_int", "uint64_t");
+
+/*
+ * auditpipe:::ioctl -- a consumer issued a control ioctl (queue-limit /
+ *     preselection changes and queries).  args: pid, command.
+ * auditpipe:::read  -- a consumer began draining records.  args: pid,
+ *     queue length, queued bytes.
+ */
+SDT_PROBE_DEFINE2(auditpipe, , , ioctl, "int", "u_long");
+SDT_PROBE_DEFINE3(auditpipe, , , read, "int", "u_int", "u_int");
+
+/*
  * Free an audit pipe entry.
  */
 static void
@@ -465,6 +509,7 @@ audit_pipe_append(struct audit_pipe *ap, void *record, u_int record_len)
 	if (ap->ap_qlen >= ap->ap_qlimit) {
 		ap->ap_drops++;
 		audit_pipe_drops++;
+		SDT_PROBE3(auditpipe, , , drop, ap, record_len, ap->ap_drops);
 		return;
 	}
 
@@ -472,6 +517,7 @@ audit_pipe_append(struct audit_pipe *ap, void *record, u_int record_len)
 	if (ape == NULL) {
 		ap->ap_drops++;
 		audit_pipe_drops++;
+		SDT_PROBE3(auditpipe, , , drop, ap, record_len, ap->ap_drops);
 		return;
 	}
 
@@ -480,6 +526,7 @@ audit_pipe_append(struct audit_pipe *ap, void *record, u_int record_len)
 		free(ape, M_AUDIT_PIPE_ENTRY);
 		ap->ap_drops++;
 		audit_pipe_drops++;
+		SDT_PROBE3(auditpipe, , , drop, ap, record_len, ap->ap_drops);
 		return;
 	}
 
@@ -490,6 +537,7 @@ audit_pipe_append(struct audit_pipe *ap, void *record, u_int record_len)
 	ap->ap_inserts++;
 	ap->ap_qlen++;
 	ap->ap_qbyteslen += ape->ape_record_len;
+	SDT_PROBE3(auditpipe, , , append, ap, record_len, ap->ap_qlen);
 	selwakeuppri(&ap->ap_selinfo, PSOCK);
 	KNOTE_LOCKED(&ap->ap_selinfo.si_note, 0);
 	if (ap->ap_flags & AUDIT_PIPE_ASYNC)
@@ -512,6 +560,8 @@ audit_pipe_submit(au_id_t auid, au_event_t event, au_class_t class, int sorf,
 	 */
 	if (TAILQ_FIRST(&audit_pipe_list) == NULL)
 		return;
+
+	SDT_PROBE4(auditpipe, , , submit, auid, event, class, record_len);
 
 	AUDIT_PIPE_LIST_RLOCK();
 	TAILQ_FOREACH(ap, &audit_pipe_list, ap_list) {
@@ -654,6 +704,7 @@ audit_pipe_dtor(void *arg)
 	struct audit_pipe *ap;
 
 	ap = arg;
+	SDT_PROBE2(auditpipe, , , close, ap, curthread->td_proc->p_pid);
 	funsetown(&ap->ap_sigio);
 	AUDIT_PIPE_LIST_WLOCK();
 	AUDIT_PIPE_LOCK(ap);
@@ -679,6 +730,7 @@ audit_pipe_open(struct cdev *dev, int oflags, int devtype, struct thread *td)
 	error = devfs_set_cdevpriv(ap, audit_pipe_dtor);
 	if (error != 0)
 		audit_pipe_dtor(ap);
+	SDT_PROBE2(auditpipe, , , open, td->td_proc->p_pid, error);
 	return (error);
 }
 
@@ -699,6 +751,8 @@ audit_pipe_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	error = devfs_get_cdevpriv((void **)&ap);
 	if (error != 0)
 		return (error);
+
+	SDT_PROBE2(auditpipe, , , ioctl, td->td_proc->p_pid, cmd);
 
 	/*
 	 * Audit pipe ioctls: first come standard device node ioctls, then
@@ -935,6 +989,8 @@ audit_pipe_read(struct cdev *dev, struct uio *uio, int flag)
 	 * Note: we rely on the SX lock to maintain ape's stability here.
 	 */
 	ap->ap_reads++;
+	SDT_PROBE3(auditpipe, , , read, curthread->td_proc->p_pid, ap->ap_qlen,
+	    ap->ap_qbyteslen);
 	while ((ape = TAILQ_FIRST(&ap->ap_queue)) != NULL &&
 	    uio->uio_resid > 0) {
 		AUDIT_PIPE_LOCK_ASSERT(ap);

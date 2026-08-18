@@ -47,10 +47,14 @@
 #include <sys/uio.h>
 #include <sys/ktrace.h>
 #endif
+#include <sys/sdt.h>
 #include <security/audit/audit.h>
 #ifdef MAC
 #include <security/mac/mac_framework.h>
 #endif
+
+SDT_PROBE_DECLARE(capsicum, , , syscall__deny);
+SDT_PROBE_DECLARE(capsicum, , , trap__signal);
 
 static inline void
 syscallenter(struct thread *td)
@@ -128,6 +132,8 @@ syscallenter(struct thread *td)
 			ktrcapfail(CAPFAIL_SYSCALL, NULL);
 		if (IN_CAPABILITY_MODE(td)) {
 			td->td_errno = error = ECAPMODE;
+			SDT_PROBE4(capsicum, , , syscall__deny,
+			    td->td_proc->p_pid, sa->code, se->sy_flags, error);
 			goto retval;
 		}
 	}
@@ -143,6 +149,8 @@ syscallenter(struct thread *td)
 			if (CAP_TRACING(td))
 				ktrcapfail(CAPFAIL_SYSCALL, NULL);
 			td->td_errno = error = ENOTCAPABLE;
+			SDT_PROBE4(capsicum, , , syscall__deny,
+			    td->td_proc->p_pid, sa->code, se->sy_flags, error);
 			goto retval;
 		}
 	}
@@ -263,6 +271,8 @@ syscallret(struct thread *td)
 			ksi.ksi_errno = td->td_errno;
 			ksi.ksi_code = TRAP_CAP;
 			ksi.ksi_info.si_syscall = sa->original_code;
+			SDT_PROBE4(capsicum, , , trap__signal, p->p_pid,
+			    td->td_errno, sa->original_code, TRAP_CAP);
 			trapsignal(td, &ksi);
 		}
 	}

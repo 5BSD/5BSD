@@ -106,6 +106,9 @@ mac_inpcb_init(struct inpcb *inp, int flag)
 	return (0);
 }
 
+MAC_CHECK_PROBE_DEFINE3(ip4_check_jail, "struct ucred *",
+    "struct in_addr *", "struct ifnet *");
+
 /* Check with rules in module if the IPv4 address is allowed. */
 int
 mac_inet_check_add_addr(struct ucred *cred, const struct in_addr *ia,
@@ -114,6 +117,7 @@ mac_inet_check_add_addr(struct ucred *cred, const struct in_addr *ia,
 	int error;
 
 	MAC_POLICY_CHECK(ip4_check_jail, cred, ia, ifp);
+	MAC_CHECK_PROBE3(ip4_check_jail, error, cred, ia, ifp);
 	return (error);
 }
 

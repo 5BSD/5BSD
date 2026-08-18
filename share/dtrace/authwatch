@@ -1,0 +1,134 @@
+#!/usr/sbin/dtrace -Zs
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * authwatch.d -- observe every authentication attempt and its outcome across
+ *		  the login/su tools, the PAM module stack, and the credential
+ *		  transition applied by libutil.
+ *
+ * Providers / probes consumed (all USDT -- string args are userland pointers,
+ * dereferenced with copyinstr()):
+ *
+ *   login:::auth  (const char *user, const char *tty, int rootlogin, int retcode)
+ *		args[0]=user  args[1]=tty  args[2]=rootlogin  args[3]=retcode(0=ok)
+ *		src: usr.bin/login/login_provider.d
+ *   login:::fail  (const char *user, const char *tty)
+ *		args[0]=user  args[1]=tty
+ *		src: usr.bin/login/login_provider.d
+ *   su:::auth     (const char *from, const char *to, const char *tty, int retcode)
+ *		args[0]=from  args[1]=to  args[2]=tty  args[3]=retcode(0=PAM_SUCCESS)
+ *		src: usr.bin/su/su_provider.d
+ *   su:::acct     (const char *to, int retcode)
+ *		args[0]=to  args[1]=retcode(0=ok)
+ *		src: usr.bin/su/su_provider.d
+ *   pam_*:::sm-authenticate (const char *user, int result)
+ *		args[0]=user  args[1]=result(0=PAM_SUCCESS)
+ *		src: the PAM module provider definitions (probe sm__authenticate)
+ *   pam_*:::sm-acct_mgmt     (const char *user, int result)
+ *		args[0]=user  args[1]=result(0=PAM_SUCCESS)
+ *		src: the PAM module provider definitions (probe sm__acct_mgmt)
+ *		NB: the D declaration is sm__acct_mgmt; DTrace turns only the "__"
+ *		    into "-", leaving the single "_", so the probe name is
+ *		    literally "sm-acct_mgmt" (not "sm-acct-mgmt").
+ *   logincap:::setusercontext (const char *user, int uid, int flags, int error)
+ *		args[0]=user  args[1]=uid  args[2]=flags  args[3]=error(0=applied)
+ *		src: lib/libutil/logincap_provider.d
+ *
+ * Userland USDT providers are matched with a "provider*:::probe" glob so the
+ * script attaches to every current and future pid publishing that provider.
+ *
+ * REQUIRES: the rebuilt 5BSD/VBSD base binaries and libraries (login, su,
+ * libpam modules, libutil) must be the ones running.  These USDT providers
+ * are not present in stock binaries; until the base is rebuilt/installed
+ * "dtrace -l" will not list them.
+ *
+ * Example:  dtrace -s authwatch.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-8s %-12s %-16s %-10s %s\n",
+	    "TIME", "SVC", "USER", "TTY/FROM", "RESULT", "DETAIL");
+}
+
+/* login(1): one authentication attempt. */
+login*:::auth
+{
+	this->user = arg0 != 0 ? copyinstr(arg0) : "<unknown>";
+	this->res  = arg3 == 0 ? "OK" : "FAIL";
+	printf("%-20Y %-8s %-12s %-16s %-10s rootlogin=%d rc=%d\n",
+	    walltimestamp, "login", this->user, copyinstr(arg1),
+	    this->res, arg2, arg3);
+	@attempts[this->user, this->res] = count();
+}
+
+/* login(1): terminal gave up after too many failures. */
+login*:::fail
+{
+	this->user = arg0 != 0 ? copyinstr(arg0) : "<unknown>";
+	printf("%-20Y %-8s %-12s %-16s %-10s abandoned\n",
+	    walltimestamp, "login", this->user, copyinstr(arg1), "GIVEUP");
+	@attempts[this->user, "GIVEUP"] = count();
+}
+
+/* su(1): PAM authentication result. */
+su*:::auth
+{
+	this->user = copyinstr(arg1);			/* target */
+	this->res  = arg3 == 0 ? "OK" : "FAIL";
+	printf("%-20Y %-8s %-12s %-16s %-10s pam_authenticate rc=%d\n",
+	    walltimestamp, "su", this->user, copyinstr(arg0),	/* from */
+	    this->res, arg3);
+	@attempts[this->user, this->res] = count();
+}
+
+/* su(1): PAM account-management result. */
+su*:::acct
+{
+	this->user = arg0 != 0 ? copyinstr(arg0) : "<unknown>"; /* target */
+	this->res  = arg1 == 0 ? "OK" : "FAIL";
+	printf("%-20Y %-8s %-12s %-16s %-10s pam_acct_mgmt rc=%d\n",
+	    walltimestamp, "su", this->user, "-", this->res, arg1);
+	@attempts[this->user, this->res] = count();
+}
+
+/* Any PAM module: authentication phase. */
+pam_*:::sm-authenticate
+{
+	this->user = arg0 != 0 ? copyinstr(arg0) : "<unknown>";
+	this->res  = arg1 == 0 ? "OK" : "FAIL";
+	printf("%-20Y %-8s %-12s %-16s %-10s %s:authenticate rc=%d\n",
+	    walltimestamp, "pam", this->user, "-", this->res,
+	    probeprov, arg1);
+	@attempts[this->user, this->res] = count();
+}
+
+/* Any PAM module: account-management phase. */
+pam_*:::sm-acct_mgmt
+{
+	this->user = arg0 != 0 ? copyinstr(arg0) : "<unknown>";
+	this->res  = arg1 == 0 ? "OK" : "FAIL";
+	printf("%-20Y %-8s %-12s %-16s %-10s %s:acct_mgmt rc=%d\n",
+	    walltimestamp, "pam", this->user, "-", this->res,
+	    probeprov, arg1);
+	@attempts[this->user, this->res] = count();
+}
+
+/* libutil: the credential transition applied after a successful auth. */
+logincap*:::setusercontext
+{
+	this->user = arg0 != 0 ? copyinstr(arg0) : "<unknown>";
+	this->res  = arg3 == 0 ? "APPLIED" : "ERR";
+	printf("%-20Y %-8s %-12s %-16s %-10s setusercontext uid=%d flags=0x%x err=%d\n",
+	    walltimestamp, "logincap", this->user, "-", this->res,
+	    arg1, arg2, arg3);
+	@attempts[this->user, this->res] = count();
+}
+
+dtrace:::END
+{
+	printf("\n%-24s %-10s %s\n", "USER", "RESULT", "COUNT");
+	printa("%-24s %-10s %@d\n", @attempts);
+}

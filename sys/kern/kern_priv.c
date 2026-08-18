@@ -94,6 +94,12 @@ SYSCTL_INT(_security_bsd, OID_AUTO, unprivileged_read_msgbuf,
 SDT_PROVIDER_DEFINE(priv);
 SDT_PROBE_DEFINE1(priv, kernel, priv_check, priv__ok, "int");
 SDT_PROBE_DEFINE1(priv, kernel, priv_check, priv__err, "int");
+/*
+ * Denial probe carrying the evaluated credential, so consumers can attribute
+ * a denied privilege to a subject (uid/pid/jail) without unwinding curthread.
+ */
+SDT_PROBE_DEFINE2(priv, kernel, priv_check, priv__err__cred, "int",
+    "struct ucred *");
 
 static __always_inline int
 priv_check_cred_pre(struct ucred *cred, int priv)
@@ -132,9 +138,11 @@ priv_check_cred_post(struct ucred *cred, int priv, int error, bool handled)
 	error = EPERM;
 out:
 	if (SDT_PROBES_ENABLED()) {
-		if (error)
+		if (error) {
 			SDT_PROBE1(priv, kernel, priv_check, priv__err, priv);
-		else
+			SDT_PROBE2(priv, kernel, priv_check, priv__err__cred,
+			    priv, cred);
+		} else
 			SDT_PROBE1(priv, kernel, priv_check, priv__ok, priv);
 	}
 	return (error);

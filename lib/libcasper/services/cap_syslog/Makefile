@@ -9,6 +9,11 @@ INCSDIR?=	${INCLUDEDIR}/casper
 SHLIB=	cap_syslog
 
 SRCS=	cap_syslog.c
+
+.if ${MK_DTRACE} != "no"
+SRCS+=	cap_syslog_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 .endif
 
 INCS=	cap_syslog.h

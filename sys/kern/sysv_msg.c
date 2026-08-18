@@ -69,6 +69,7 @@
 #include <sys/mount.h>
 #include <sys/msg.h>
 #include <sys/racct.h>
+#include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/syscall.h>
 #include <sys/syscallsubr.h>
@@ -83,6 +84,21 @@
 FEATURE(sysv_msg, "System V message queues support");
 
 static MALLOC_DEFINE(M_MSG, "msg", "SVID compatible message queues");
+
+/*
+ * Static DTrace (SDT) tracepoints for the native System V message-queue
+ * operations.  These probe the IPC operations themselves; access-control
+ * decisions are already covered by the MAC framework's mac_sysvmsq_* probes.
+ */
+SDT_PROVIDER_DEFINE(sysvmsg);
+SDT_PROBE_DEFINE4(sysvmsg, , , msgget__create, "pid_t", "key_t", "int", "int");
+SDT_PROBE_DEFINE4(sysvmsg, , , msgget__lookup, "pid_t", "key_t", "int", "int");
+SDT_PROBE_DEFINE4(sysvmsg, , , msgsnd, "pid_t", "int", "long", "size_t");
+SDT_PROBE_DEFINE3(sysvmsg, , , msgsnd__block, "pid_t", "int", "size_t");
+SDT_PROBE_DEFINE5(sysvmsg, , , msgrcv, "pid_t", "int", "long", "long",
+    "size_t");
+SDT_PROBE_DEFINE3(sysvmsg, , , msgrcv__block, "pid_t", "int", "long");
+SDT_PROBE_DEFINE4(sysvmsg, , , msgctl, "pid_t", "int", "int", "int");
 
 static int msginit(void);
 static int msgunload(void);
@@ -628,6 +644,7 @@ kern_msgctl(struct thread *td, int msqid, int cmd, struct msqid_ds *msqbuf)
 		td->td_retval[0] = rval;
 done2:
 	mtx_unlock(&msq_mtx);
+	SDT_PROBE4(sysvmsg, , , msgctl, td->td_proc->p_pid, msqid, cmd, error);
 	return (error);
 }
 
@@ -682,6 +699,9 @@ sys_msgget(struct thread *td, struct msgget_args *uap)
 			if (error != 0)
 				goto done2;
 #endif
+			SDT_PROBE4(sysvmsg, , , msgget__lookup,
+			    td->td_proc->p_pid, key,
+			    IXSEQ_TO_IPCID(msqid, msqkptr->u.msg_perm), msgflg);
 			goto found;
 		}
 	}
@@ -740,6 +760,8 @@ sys_msgget(struct thread *td, struct msgget_args *uap)
 		mac_sysvmsq_create(cred, msqkptr);
 #endif
 		AUDIT_ARG_SVIPC_PERM(&msqkptr->u.msg_perm);
+		SDT_PROBE4(sysvmsg, , , msgget__create, td->td_proc->p_pid, key,
+		    IXSEQ_TO_IPCID(msqid, msqkptr->u.msg_perm), msgflg);
 	} else {
 		DPRINTF(("didn't find it and wasn't asked to create it\n"));
 		error = ENOENT;
@@ -893,6 +915,8 @@ kern_msgsnd(struct thread *td, int msqid, const void *msgp,
 				we_own_it = 1;
 			}
 			DPRINTF(("msgsnd:  goodnight\n"));
+			SDT_PROBE3(sysvmsg, , , msgsnd__block,
+			    td->td_proc->p_pid, msqid, msgsz);
 			error = msleep(msqkptr, &msq_mtx, PVFS | PCATCH,
 			    "msgsnd", hz);
 			DPRINTF(("msgsnd:  good morning, error=%d\n", error));
@@ -1087,6 +1111,9 @@ kern_msgsnd(struct thread *td, int msqid, const void *msgp,
 	msqkptr->u.msg_qnum++;
 	msqkptr->u.msg_lspid = td->td_proc->p_pid;
 	msqkptr->u.msg_stime = time_second;
+
+	SDT_PROBE4(sysvmsg, , , msgsnd, td->td_proc->p_pid, msqid,
+	    msghdr->msg_type, (size_t)msghdr->msg_ts);
 
 	wakeup(msqkptr);
 	td->td_retval[0] = 0;
@@ -1302,6 +1329,8 @@ kern_msgrcv(struct thread *td, int msqid, void *msgp, size_t msgsz, long msgtyp,
 		 */
 
 		DPRINTF(("msgrcv:  goodnight\n"));
+		SDT_PROBE3(sysvmsg, , , msgrcv__block, td->td_proc->p_pid,
+		    msqid, msgtyp);
 		error = msleep(msqkptr, &msq_mtx, PVFS | PCATCH,
 		    "msgrcv", 0);
 		DPRINTF(("msgrcv:  good morning (error=%d)\n", error));
@@ -1383,6 +1412,9 @@ kern_msgrcv(struct thread *td, int msqid, void *msgp, size_t msgsz, long msgtyp,
 	/*
 	 * Done, return the actual number of bytes copied out.
 	 */
+
+	SDT_PROBE5(sysvmsg, , , msgrcv, td->td_proc->p_pid, msqid, msgtyp,
+	    msghdr->msg_type, msgsz);
 
 	msg_freehdr(msghdr);
 	wakeup(msqkptr);

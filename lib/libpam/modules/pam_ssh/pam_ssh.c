@@ -54,6 +54,8 @@
 #include <security/pam_modules.h>
 #include <security/openpam.h>
 
+#include "pam_ssh_probes.h"
+
 #include <openssl/evp.h>
 
 #define __bounded__(x, y, z)
@@ -155,7 +157,7 @@ PAM_EXTERN int
 pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
-	const char **kfn, *passphrase, *user;
+	const char **kfn, *passphrase, *user = NULL;
 	const void *item;
 	struct passwd *pwd;
 	struct pam_ssh_key *psk;
@@ -168,13 +170,19 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 
 	/* get user name and home directory */
 	pam_err = pam_get_user(pamh, &user, NULL);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_SSH_PROBE_SM_AUTHENTICATE(user, pam_err);
 		return (pam_err);
+	}
 	pwd = getpwnam(user);
-	if (pwd == NULL)
+	if (pwd == NULL) {
+		PAM_SSH_PROBE_SM_AUTHENTICATE(user, PAM_USER_UNKNOWN);
 		return (PAM_USER_UNKNOWN);
-	if (pwd->pw_dir == NULL)
+	}
+	if (pwd->pw_dir == NULL) {
+		PAM_SSH_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
 	nkeys = 0;
 	pass = (pam_get_item(pamh, PAM_AUTHTOK, &item) == PAM_SUCCESS &&
@@ -183,13 +191,17 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	/* get passphrase */
 	pam_err = pam_get_authtok(pamh, PAM_AUTHTOK,
 	    &passphrase, pam_ssh_prompt);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_SSH_PROBE_SM_AUTHENTICATE(user, pam_err);
 		return (pam_err);
+	}
 
 	/* switch to user credentials */
 	pam_err = openpam_borrow_cred(pamh, pwd);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_SSH_PROBE_SM_AUTHENTICATE(user, pam_err);
 		return (pam_err);
+	}
 
 	/* try to load keys from all keyfiles we know of */
 	for (kfn = pam_ssh_keyfiles; *kfn != NULL; ++kfn) {
@@ -216,18 +228,24 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	}
 
 	/* no keys? */
-	if (nkeys == 0)
+	if (nkeys == 0) {
+		PAM_SSH_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
 	pam_set_data(pamh, pam_ssh_have_keys, NULL, NULL);
+	PAM_SSH_PROBE_SM_AUTHENTICATE(user, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_SSH_PROBE_SM_SETCRED((const char *)user, flags, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 
@@ -377,30 +395,39 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
 	struct passwd *pwd;
-	const char *user;
+	const char *user = NULL;
 	const void *data;
 	int pam_err;
 
 	/* no keys, no work */
 	if (pam_get_data(pamh, pam_ssh_have_keys, &data) != PAM_SUCCESS &&
-	    openpam_get_option(pamh, "want_agent") == NULL)
+	    openpam_get_option(pamh, "want_agent") == NULL) {
+		PAM_SSH_PROBE_SM_OPEN_SESSION(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
+	}
 
 	/* switch to user credentials */
 	pam_err = pam_get_user(pamh, &user, NULL);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_SSH_PROBE_SM_OPEN_SESSION(user, pam_err);
 		return (pam_err);
+	}
 	pwd = getpwnam(user);
-	if (pwd == NULL)
+	if (pwd == NULL) {
+		PAM_SSH_PROBE_SM_OPEN_SESSION(user, PAM_USER_UNKNOWN);
 		return (PAM_USER_UNKNOWN);
+	}
 	pam_err = openpam_borrow_cred(pamh, pwd);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_SSH_PROBE_SM_OPEN_SESSION(user, pam_err);
 		return (pam_err);
+	}
 
 	/* start the agent */
 	pam_err = pam_ssh_start_agent(pamh);
 	if (pam_err != PAM_SUCCESS) {
 		openpam_restore_cred(pamh);
+		PAM_SSH_PROBE_SM_OPEN_SESSION(user, pam_err);
 		return (pam_err);
 	}
 
@@ -411,6 +438,7 @@ pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
 	}
 
 	openpam_restore_cred(pamh);
+	PAM_SSH_PROBE_SM_OPEN_SESSION(user, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 
@@ -419,23 +447,30 @@ pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
 	const char *ssh_agent_pid;
+	const void *user = NULL;
 	char *end;
 	int status;
 	pid_t pid;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
 	if ((ssh_agent_pid = pam_getenv(pamh, "SSH_AGENT_PID")) == NULL) {
 		openpam_log(PAM_LOG_DEBUG, "no ssh agent");
+		PAM_SSH_PROBE_SM_CLOSE_SESSION((const char *)user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
 	}
 	pid = (pid_t)strtol(ssh_agent_pid, &end, 10);
 	if (*ssh_agent_pid == '\0' || *end != '\0') {
 		openpam_log(PAM_LOG_DEBUG, "invalid ssh agent pid");
+		PAM_SSH_PROBE_SM_CLOSE_SESSION((const char *)user, PAM_SESSION_ERR);
 		return (PAM_SESSION_ERR);
 	}
 	openpam_log(PAM_LOG_DEBUG, "killing ssh agent %d", (int)pid);
 	if (kill(pid, SIGTERM) == -1 ||
-	    (waitpid(pid, &status, 0) == -1 && errno != ECHILD))
+	    (waitpid(pid, &status, 0) == -1 && errno != ECHILD)) {
+		PAM_SSH_PROBE_SM_CLOSE_SESSION((const char *)user, PAM_SYSTEM_ERR);
 		return (PAM_SYSTEM_ERR);
+	}
+	PAM_SSH_PROBE_SM_CLOSE_SESSION((const char *)user, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 

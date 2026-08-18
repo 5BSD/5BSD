@@ -26,6 +26,7 @@ ${PACKAGE}FILES= \
      tst.enabled2.ksh.out  \
      tst.entryreturn.ksh  \
      tst.entryreturn.ksh.out  \
+     tst.fdlopen.ksh  \
      tst.fork.ksh  \
      tst.fork.ksh.out  \
      tst.forker.ksh  \

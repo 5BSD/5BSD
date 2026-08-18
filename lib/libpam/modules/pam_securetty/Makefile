@@ -27,4 +27,10 @@ LIB=		pam_securetty
 SRCS=		pam_securetty.c
 MANNODEV=	pam_securetty.8
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=		pam_securetty_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

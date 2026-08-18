@@ -37,56 +37,76 @@
 #include <security/pam_appl.h>
 #include <security/pam_modules.h>
 
+#include "pam_deny_probes.h"
+
 PAM_EXTERN int
 pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
-	const char *user;
+	const char *user = NULL;
 	int r;
 
-	if ((r = pam_get_user(pamh, &user, NULL)) != PAM_SUCCESS)
+	if ((r = pam_get_user(pamh, &user, NULL)) != PAM_SUCCESS) {
+		PAM_DENY_PROBE_SM_AUTHENTICATE(user, r);
 		return (r);
+	}
 
+	PAM_DENY_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 	return (PAM_AUTH_ERR);
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_DENY_PROBE_SM_SETCRED((const char *)user, flags, PAM_CRED_ERR);
 	return (PAM_CRED_ERR);
 }
 
 PAM_EXTERN int
-pam_sm_acct_mgmt(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_DENY_PROBE_SM_ACCT_MGMT((const char *)user, PAM_AUTH_ERR);
 	return (PAM_AUTH_ERR);
 }
 
 PAM_EXTERN int
-pam_sm_chauthtok(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_chauthtok(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_DENY_PROBE_SM_CHAUTHTOK((const char *)user, PAM_AUTHTOK_ERR);
 	return (PAM_AUTHTOK_ERR);
 }
 
 PAM_EXTERN int
-pam_sm_open_session(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_open_session(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_DENY_PROBE_SM_OPEN_SESSION((const char *)user, PAM_SESSION_ERR);
 	return (PAM_SESSION_ERR);
 }
 
 PAM_EXTERN int
-pam_sm_close_session(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_close_session(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_DENY_PROBE_SM_CLOSE_SESSION((const char *)user, PAM_SESSION_ERR);
 	return (PAM_SESSION_ERR);
 }
 

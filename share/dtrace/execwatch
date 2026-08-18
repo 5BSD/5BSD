@@ -1,0 +1,106 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * execwatch.d -- process execution + privilege-transition overview.  Traces
+ * every program that is launched, whether the exec succeeded, any setuid/setgid
+ * credential transition it triggered, and how each process ultimately exits and
+ * is reaped -- the full birth-to-death picture for exec attribution.
+ *
+ * Providers / probes consumed (kernel SDT; char* args are kernel pointers read
+ * with stringof(); parent pid is taken from curthread):
+ *
+ *   proc:::exec           (char *path)
+ *		args[0]=path being exec'd (the attempt)
+ *		src: sys/kern/kern_exec.c (exec)  fname passed in
+ *   proc:::exec-success   (char *path)
+ *		args[0]=path that successfully replaced the image
+ *		src: sys/kern/kern_exec.c (exec__success)
+ *   cred:::setid-exec     (char *path, uid_t uid, gid_t gid)
+ *		args[0]=path  args[1]=new uid  args[2]=new gid
+ *		src: sys/kern/kern_prot.c (setid__exec) -- setuid/setgid binary
+ *   proclife:::exit-status (pid_t pid, int rval, int signo)
+ *		args[0]=pid  args[1]=exit value  args[2]=terminating signal
+ *		src: sys/kern/kern_exit.c (exit__status)
+ *   proclife:::reap        (pid_t reaper, pid_t pid, int xexit, int xsig)
+ *		args[0]=reaper pid  args[1]=reaped pid  args[2]=exit code
+ *		args[3]=exit signal
+ *		src: sys/kern/kern_exit.c (reap)
+ *
+ * ppid: the parent pid is read from curthread->td_proc->p_pptr->p_pid, since
+ * the proc SDT probes carry only the acting thread, not the parent.
+ *
+ * REQUIRES: a kernel rebuilt/booted from this tree (the cred/proclife SDT
+ * providers and the setid-exec probe are 5BSD additions; the base proc:::exec
+ * probes exist but the rest do not on stock).
+ *
+ * Example:  dtrace -s execwatch.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-14s %-6s %-6s %-6s %s\n",
+	    "TIME", "EVENT", "PID", "PPID", "UID", "PATH/DETAIL");
+}
+
+/* An exec was attempted (image may or may not be replaced yet). */
+proc:::exec
+{
+	printf("%-20Y %-14s %-6d %-6d %-6d %s\n",
+	    walltimestamp, "exec-try", pid,
+	    curthread->td_proc->p_pptr->p_pid, uid, stringof(args[0]));
+	@execs[stringof(args[0])] = count();
+}
+
+/* The exec succeeded: this path is now running as this pid. */
+proc:::exec-success
+{
+	printf("%-20Y %-14s %-6d %-6d %-6d %s\n",
+	    walltimestamp, "exec-success", pid,
+	    curthread->td_proc->p_pptr->p_pid, uid, stringof(args[0]));
+}
+
+/* A setuid/setgid binary transitioned credentials on exec. */
+cred:::setid-exec
+{
+	printf("%-20Y %-14s %-6d %-6d %-6d %s -> uid=%d gid=%d\n",
+	    walltimestamp, "setid-exec", pid,
+	    curthread->td_proc->p_pptr->p_pid, uid,
+	    stringof(args[0]), args[1], args[2]);
+	@setid[stringof(args[0])] = count();
+}
+
+/* Process exit: normal exit value and/or terminating signal. */
+proclife:::exit-status
+{
+	printf("%-20Y %-14s %-6d %-6d %-6d exit rval=%d signo=%d\n",
+	    walltimestamp, "exit", args[0],
+	    curthread->td_proc->p_pptr->p_pid, uid, args[1], args[2]);
+	@exits[execname] = count();
+}
+
+/* Process reaped by its (reaper) parent. */
+proclife:::reap
+{
+	printf("%-20Y %-14s %-6d %-6d %-6d reaped by %d (xexit=%d xsig=%d)\n",
+	    walltimestamp, "reap", args[1],
+	    curthread->td_proc->p_pptr->p_pid, uid,
+	    args[0], args[2], args[3]);
+	@reaps[execname] = count();
+}
+
+dtrace:::END
+{
+	printf("\n==== exec attempts by path ====\n");
+	printa("  %-48s %@d\n", @execs);
+	printf("\n==== setuid/setgid execs by path ====\n");
+	printa("  %-48s %@d\n", @setid);
+	printf("\n==== exits by execname ====\n");
+	printa("  %-24s %@d\n", @exits);
+	printf("\n==== reaps by execname ====\n");
+	printa("  %-24s %@d\n", @reaps);
+}

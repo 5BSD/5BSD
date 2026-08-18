@@ -88,11 +88,92 @@
 #include <sys/unistd.h>
 #include <sys/user.h>
 #include <sys/vnode.h>
+#include <sys/sdt.h>
 #include <machine/atomic.h>
 
 #include <security/audit/audit.h>
 
 FEATURE(p1003_1b_mqueue, "POSIX P1003.1B message queues support");
+
+/*
+ * DTrace static (SDT) provider for the POSIX message queue subsystem.
+ *
+ * All of these probes fire on runtime, syscall-driven paths (post-DTrace);
+ * none run on early-boot code.  The leaf names use a double underscore where
+ * a dash is desired in the visible probe name (e.g. open__create ->
+ * mqueue:::open-create).
+ */
+SDT_PROVIDER_DEFINE(mqueue);
+
+/* kmq_open: create a new named queue (name, flags, mode, maxmsg, msgsize). */
+SDT_PROBE_DEFINE5(mqueue, , , open__create,
+    "char *", "int", "int", "long", "long");
+/* kmq_open: access/permission check on an existing queue (name, flags,
+ * accmode, error). error != 0 is a permission denial. */
+SDT_PROBE_DEFINE4(mqueue, , , open__access,
+    "char *", "int", "int", "int");
+/* kmq_open: result (name, fd (-1 on failure), flags, error). */
+SDT_PROBE_DEFINE4(mqueue, , , open__return,
+    "char *", "int", "int", "int");
+/* kmq_unlink: remove a named queue (name, error). */
+SDT_PROBE_DEFINE2(mqueue, , , unlink,
+    "char *", "int");
+/* kmq_timedsend/mq_send: entry (mqd, msg_len, msg_prio, waitok). */
+SDT_PROBE_DEFINE4(mqueue, , , timedsend,
+    "int", "size_t", "unsigned", "int");
+/* kmq_timedsend/mq_send: result (mqd, msg_len, error). */
+SDT_PROBE_DEFINE3(mqueue, , , timedsend__return,
+    "int", "size_t", "int");
+/* message enqueued onto a queue (mq, msg_size, msg_prio). */
+SDT_PROBE_DEFINE3(mqueue, , , send__enqueued,
+    "struct mqueue *", "size_t", "unsigned");
+/* send found the queue full and could not block: EAGAIN (mq, timo). */
+SDT_PROBE_DEFINE2(mqueue, , , send__full,
+    "struct mqueue *", "int");
+/* send about to block waiting for room in a full queue (mq, timo). */
+SDT_PROBE_DEFINE2(mqueue, , , send__block,
+    "struct mqueue *", "int");
+/* kmq_timedreceive/mq_receive: entry (mqd, msg_len, waitok). */
+SDT_PROBE_DEFINE3(mqueue, , , timedreceive,
+    "int", "size_t", "int");
+/* kmq_timedreceive/mq_receive: result (mqd, msg_len, error). */
+SDT_PROBE_DEFINE3(mqueue, , , timedreceive__return,
+    "int", "size_t", "int");
+/* message dequeued from a queue (mq, msg_size, msg_prio). */
+SDT_PROBE_DEFINE3(mqueue, , , receive__dequeued,
+    "struct mqueue *", "size_t", "unsigned");
+/* receive found the queue empty and could not block: EAGAIN (mq, timo). */
+SDT_PROBE_DEFINE2(mqueue, , , receive__empty,
+    "struct mqueue *", "int");
+/* receive about to block waiting for a message (mq, timo). */
+SDT_PROBE_DEFINE2(mqueue, , , receive__block,
+    "struct mqueue *", "int");
+/* kmq_notify: a process registered for async notification
+ * (mqd, pid, sigev_notify method, signo). */
+SDT_PROBE_DEFINE4(mqueue, , , notify__register,
+    "int", "pid_t", "int", "int");
+/* kmq_notify: async notification registration removed (mqd, pid). */
+SDT_PROBE_DEFINE2(mqueue, , , notify__remove,
+    "int", "pid_t");
+/* async notification actually delivered (signal) to the registered
+ * process (mq, pid, signo). */
+SDT_PROBE_DEFINE3(mqueue, , , notify__deliver,
+    "struct mqueue *", "pid_t", "int");
+/* kmq_notify: result (mqd, error). */
+SDT_PROBE_DEFINE2(mqueue, , , notify__return,
+    "int", "int");
+/* mq_getattr: queried attributes (mqd, maxmsg, msgsize, curmsgs). */
+SDT_PROBE_DEFINE4(mqueue, , , getattr,
+    "int", "long", "long", "long");
+/* mq_setattr: new queue flags applied (mqd, mq_flags). */
+SDT_PROBE_DEFINE2(mqueue, , , setattr,
+    "int", "long");
+/* queue descriptor closed (queue name). */
+SDT_PROBE_DEFINE1(mqueue, , , close,
+    "char *");
+/* queue destroyed / final free (mq). */
+SDT_PROBE_DEFINE1(mqueue, , , destroy,
+    "struct mqueue *");
 
 /*
  * Limits and constants
@@ -1619,6 +1700,8 @@ mqueue_free(struct mqueue *mq)
 {
 	struct mqueue_msg *msg;
 
+	SDT_PROBE1(mqueue, , , destroy, mq);
+
 	while ((msg = TAILQ_FIRST(&mq->mq_msgq)) != NULL) {
 		TAILQ_REMOVE(&mq->mq_msgq, msg, msg_link);
 		free(msg, M_MQUEUEDATA);
@@ -1763,9 +1846,11 @@ _mqueue_send(struct mqueue *mq, struct mqueue_msg *msg, int timo)
 	mtx_lock(&mq->mq_mutex);
 	while (mq->mq_curmsgs >= mq->mq_maxmsg && error == 0) {
 		if (timo < 0) {
+			SDT_PROBE2(mqueue, , , send__full, mq, timo);
 			mtx_unlock(&mq->mq_mutex);
 			return (EAGAIN);
 		}
+		SDT_PROBE2(mqueue, , , send__block, mq, timo);
 		mq->mq_senders++;
 		error = msleep(&mq->mq_senders, &mq->mq_mutex,
 			    PCATCH, "mqsend", timo);
@@ -1793,6 +1878,7 @@ _mqueue_send(struct mqueue *mq, struct mqueue_msg *msg, int timo)
 	}
 	mq->mq_curmsgs++;
 	mq->mq_totalbytes += msg->msg_size;
+	SDT_PROBE3(mqueue, , , send__enqueued, mq, msg->msg_size, msg->msg_prio);
 	if (mq->mq_receivers)
 		wakeup_one(&mq->mq_receivers);
 	else if (mq->mq_notifier != NULL)
@@ -1830,6 +1916,8 @@ mqueue_send_notification(struct mqueue *mq)
 		if (!KSI_ONQ(&nt->nt_ksi)) {
 			ksiginfo_set_sigev(&nt->nt_ksi, &nt->nt_sigev);
 			tdsendsignal(p, td, nt->nt_ksi.ksi_signo, &nt->nt_ksi);
+			SDT_PROBE3(mqueue, , , notify__deliver, mq, p->p_pid,
+			    nt->nt_ksi.ksi_signo);
 		}
 		PROC_UNLOCK(p);
 	}
@@ -1919,9 +2007,11 @@ _mqueue_recv(struct mqueue *mq, struct mqueue_msg **msg, int timo)
 	mtx_lock(&mq->mq_mutex);
 	while ((*msg = TAILQ_FIRST(&mq->mq_msgq)) == NULL && error == 0) {
 		if (timo < 0) {
+			SDT_PROBE2(mqueue, , , receive__empty, mq, timo);
 			mtx_unlock(&mq->mq_mutex);
 			return (EAGAIN);
 		}
+		SDT_PROBE2(mqueue, , , receive__block, mq, timo);
 		mq->mq_receivers++;
 		error = msleep(&mq->mq_receivers, &mq->mq_mutex,
 			    PCATCH, "mqrecv", timo);
@@ -1934,6 +2024,8 @@ _mqueue_recv(struct mqueue *mq, struct mqueue_msg **msg, int timo)
 		TAILQ_REMOVE(&mq->mq_msgq, *msg, msg_link);
 		mq->mq_curmsgs--;
 		mq->mq_totalbytes -= (*msg)->msg_size;
+		SDT_PROBE3(mqueue, , , receive__dequeued, mq,
+		    (*msg)->msg_size, (*msg)->msg_prio);
 		if (mq->mq_senders)
 			wakeup_one(&mq->mq_senders);
 		if (mq->mq_flags & MQ_WSEL) {
@@ -2079,6 +2171,8 @@ kern_kmq_open(struct thread *td, const char *upath, int flags, mode_t mode,
 
 		if (error == 0) {
 			pn->mn_data = mq;
+			SDT_PROBE5(mqueue, , , open__create, path, flags,
+			    cmode, mq->mq_maxmsg, mq->mq_msgsize);
 		}
 	} else {
 		if ((flags & (O_CREAT | O_EXCL)) == (O_CREAT | O_EXCL)) {
@@ -2092,6 +2186,8 @@ kern_kmq_open(struct thread *td, const char *upath, int flags, mode_t mode,
 				accmode |= VWRITE;
 			error = vaccess(VREG, pn->mn_mode, pn->mn_uid,
 			    pn->mn_gid, accmode, td->td_ucred);
+			SDT_PROBE4(mqueue, , , open__access, path, flags,
+			    (int)accmode, error);
 		}
 	}
 
@@ -2099,6 +2195,7 @@ kern_kmq_open(struct thread *td, const char *upath, int flags, mode_t mode,
 		sx_xunlock(&mqfs_data.mi_lock);
 		fdclose(td, fp, fd);
 		fdrop(fp, td);
+		SDT_PROBE4(mqueue, , , open__return, path, -1, flags, error);
 		return (error);
 	}
 
@@ -2109,6 +2206,7 @@ kern_kmq_open(struct thread *td, const char *upath, int flags, mode_t mode,
 	    &mqueueops);
 
 	td->td_retval[0] = fd;
+	SDT_PROBE4(mqueue, , , open__return, path, fd, flags, 0);
 	fdrop(fp, td);
 	return (0);
 }
@@ -2167,6 +2265,7 @@ sys_kmq_unlink(struct thread *td, struct kmq_unlink_args *uap)
 	else
 		error = ENOENT;
 	sx_xunlock(&mqfs_data.mi_lock);
+	SDT_PROBE2(mqueue, , , unlink, path, error);
 	return (error);
 }
 
@@ -2243,12 +2342,15 @@ kern_kmq_setattr(struct thread *td, int mqd, const struct mq_attr *attr,
 	oattr->mq_maxmsg  = mq->mq_maxmsg;
 	oattr->mq_msgsize = mq->mq_msgsize;
 	oattr->mq_curmsgs = mq->mq_curmsgs;
+	SDT_PROBE4(mqueue, , , getattr, mqd, mq->mq_maxmsg, mq->mq_msgsize,
+	    mq->mq_curmsgs);
 	if (attr != NULL) {
 		do {
 			oflag = flag = fp->f_flag;
 			flag &= ~O_NONBLOCK;
 			flag |= (attr->mq_flags & O_NONBLOCK);
 		} while (atomic_cmpset_int(&fp->f_flag, oflag, flag) == 0);
+		SDT_PROBE2(mqueue, , , setattr, mqd, attr->mq_flags);
 	} else
 		oflag = fp->f_flag;
 	oattr->mq_flags = (O_NONBLOCK & oflag);
@@ -2289,8 +2391,10 @@ kern_kmq_timedreceive(struct thread *td, int mqd, char *msg_ptr,
 	if (error != 0)
 		return (error);
 	waitok = (fp->f_flag & O_NONBLOCK) == 0;
+	SDT_PROBE3(mqueue, , , timedreceive, mqd, msg_len, waitok);
 	error = mqueue_receive(mq, msg_ptr, msg_len, msg_prio, waitok,
 	    abs_timeout);
+	SDT_PROBE3(mqueue, , , timedreceive__return, mqd, msg_len, error);
 	fdrop(fp, td);
 	return (error);
 }
@@ -2326,8 +2430,10 @@ kern_kmq_timedsend(struct thread *td, int mqd, const char *msg_ptr,
 	if (error != 0)
 		return (error);
 	waitok = (fp->f_flag & O_NONBLOCK) == 0;
+	SDT_PROBE4(mqueue, , , timedsend, mqd, msg_len, msg_prio, waitok);
 	error = mqueue_send(mq, msg_ptr, msg_len, msg_prio, waitok,
 		abs_timeout);
+	SDT_PROBE3(mqueue, , , timedsend__return, mqd, msg_len, error);
 	fdrop(fp, td);
 	return (error);
 }
@@ -2431,6 +2537,8 @@ again:
 			}
 			nt->nt_sigev = *sigev;
 			mq->mq_notifier = nt;
+			SDT_PROBE4(mqueue, , , notify__register, mqd, p->p_pid,
+			    sigev->sigev_notify, sigev->sigev_signo);
 			PROC_UNLOCK(p);
 			/*
 			 * if there is no receivers and message queue
@@ -2443,6 +2551,7 @@ again:
 		}
 	} else {
 		notifier_remove(p, mq, mqd);
+		SDT_PROBE2(mqueue, , , notify__remove, mqd, p->p_pid);
 	}
 	mtx_unlock(&mq->mq_mutex);
 
@@ -2450,6 +2559,7 @@ out:
 	fdrop(fp, td);
 	if (newnt != NULL)
 		notifier_free(newnt);
+	SDT_PROBE2(mqueue, , , notify__return, mqd, error);
 	return (error);
 }
 
@@ -2529,6 +2639,7 @@ mqf_close(struct file *fp, struct thread *td)
 	fp->f_ops = &badfileops;
 	pn = fp->f_data;
 	fp->f_data = NULL;
+	SDT_PROBE1(mqueue, , , close, pn->mn_name);
 	sx_xlock(&mqfs_data.mi_lock);
 	mqnode_release(pn);
 	sx_xunlock(&mqfs_data.mi_lock);

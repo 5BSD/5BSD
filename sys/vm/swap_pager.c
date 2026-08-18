@@ -92,6 +92,7 @@
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 #include <sys/sysctl.h>
 #include <sys/sysproto.h>
 #include <sys/systm.h>
@@ -2642,6 +2643,10 @@ struct swapon_args {
 };
 #endif
 
+SDT_PROVIDER_DEFINE(swap);
+SDT_PROBE_DEFINE2(swap, , , on, "uintptr_t", "int");
+SDT_PROBE_DEFINE2(swap, , , off, "uintptr_t", "int");
+
 int
 sys_swapon(struct thread *td, struct swapon_args *uap)
 {
@@ -2692,6 +2697,7 @@ sys_swapon(struct thread *td, struct swapon_args *uap)
 		VOP_UNLOCK(vp);
 done:
 	sx_xunlock(&swdev_syscall_lock);
+	SDT_PROBE2(swap, , , on, (uintptr_t)uap->name, error);
 	return (error);
 }
 
@@ -2822,6 +2828,7 @@ kern_swapoff(struct thread *td, const char *name, enum uio_seg name_seg,
 	error = swapoff_one(sp, td->td_ucred, flags);
 done:
 	sx_xunlock(&swdev_syscall_lock);
+	SDT_PROBE2(swap, , , off, (uintptr_t)name, error);
 	return (error);
 }
 

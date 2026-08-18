@@ -437,6 +437,9 @@ mac_ifnet_ioctl_get(struct ucred *cred, struct ifreq *ifr,
 	return (error);
 }
 
+MAC_CHECK_PROBE_DEFINE3(ifnet_check_relabel, "struct ucred *",
+    "struct ifnet *", "struct label *");
+
 int
 mac_ifnet_ioctl_set(struct ucred *cred, struct ifreq *ifr, struct ifnet *ifp)
 {
@@ -485,6 +488,7 @@ mac_ifnet_ioctl_set(struct ucred *cred, struct ifreq *ifr, struct ifnet *ifp)
 	MAC_IFNET_LOCK(ifp, locked);
 	MAC_POLICY_CHECK_NOSLEEP(ifnet_check_relabel, cred, ifp,
 	    if_getmaclabel(ifp), intlabel);
+	MAC_CHECK_PROBE3(ifnet_check_relabel, error, cred, ifp, intlabel);
 	if (error) {
 		MAC_IFNET_UNLOCK(ifp, locked);
 		mac_ifnet_label_free(intlabel);

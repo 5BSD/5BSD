@@ -1,6 +1,12 @@
 .include <src.opts.mk>
 
 PROG=	su
+SRCS=	su.c
+
+.if ${MK_DTRACE} != "no"
+SRCS+=		su_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 
 LIBADD=	util pam
 

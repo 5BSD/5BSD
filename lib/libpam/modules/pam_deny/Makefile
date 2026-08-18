@@ -27,4 +27,10 @@ LIB=		pam_deny
 SRCS=		pam_deny.c
 MANNODEV=	pam_deny.8
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=		pam_deny_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

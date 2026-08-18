@@ -98,6 +98,7 @@
 
 #include "devd.h"		/* C compatible definitions */
 #include "devd.hh"		/* C++ class definitions */
+#include "devd_probes.h"
 
 #define STREAMPIPE "/var/run/devd.pipe"
 #define SEQPACKETPIPE "/var/run/devd.seqpacket.pipe"
@@ -282,6 +283,7 @@ action::do_action(config &c)
 {
 	string s = c.expand_string(_cmd.c_str());
 	devdlog(LOG_INFO, "Executing '%s'\n", s.c_str());
+	DEVD_PROBE_ACTION(c.get_variable("*").c_str(), s.c_str());
 	my_system(s.c_str());
 	return (true);
 }

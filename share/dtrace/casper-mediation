@@ -1,0 +1,171 @@
+#!/usr/sbin/dtrace -Zs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * casper-mediation -- the Casper userland capability broker in depth.
+ *
+ * Every capability-mediated request that a Capsicum-sandboxed process makes
+ * funnels through a Casper service.  This script watches the broker core
+ * (casper: connection opens, per-request dispatch/return, limit narrowing)
+ * together with the per-service allow-list predicates (cap_pwd, cap_grp,
+ * cap_net, cap_dns, cap_sysctl).  For the core "error" arguments 0 == allowed;
+ * for the per-service "allowed" arguments 0 == DENIED (1 == allowed).
+ *
+ * These are userland USDT providers, so the probe spec uses the "NAME*"
+ * form to match every sandboxed client, and string arguments are read with
+ * copyinstr().  Requires rebuilt base binaries/libraries carrying the
+ * casper and cap_* providers (libcasper + services).
+ *
+ * Provider argument maps (declaration order):
+ *   casper:::cmd-dispatch    args[0]=service (char *), args[1]=cmd (char *)
+ *   casper:::cmd-return      args[0]=service (char *), args[1]=cmd (char *),
+ *                            args[2]=error (int; 0 == allowed)
+ *   casper:::limit-set       args[0]=service (char *), args[1]=error (int)
+ *   casper:::service-open    args[0]=service (char *), args[1]=error (int)
+ *   cap_pwd:::allow          args[0]=cmd (char *), args[1]=allowed (int)
+ *   cap_grp:::allow          args[0]=cmd (char *), args[1]=allowed (int)
+ *   cap_net:::allow-mode     args[0]=mode (uint64_t), args[1]=allowed (int)
+ *   cap_net:::allow-family   args[0]=family (int), args[1]=allowed (int)
+ *   cap_net:::allow-host     args[0]=host (char *), args[1]=serv (char *),
+ *                            args[2]=allowed (int)
+ *   cap_net:::allow-addr     args[0]=saddrsize (int), args[1]=allowed (int)
+ *   cap_dns:::allow-type     args[0]=type (char *), args[1]=allowed (int)
+ *   cap_dns:::allow-family   args[0]=family (int), args[1]=allowed (int)
+ *   cap_sysctl:::allow       args[0]=name (char *), args[1]=allowed (int)
+ *
+ * Usage: casper-mediation
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing Casper capability mediation... Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-12s %-10s %-16s %s\n",
+	    "TIME", "PID", "SERVICE", "OUTCOME", "OP", "DETAIL");
+}
+
+/* --- Broker core: connection lifecycle and per-request dispatch --- */
+
+casper*:::service-open
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s error=%d\n", walltimestamp,
+	    pid, copyinstr(arg0),
+	    arg1 == 0 ? "OPEN" : "OPEN-FAIL", "service-open", arg1);
+}
+
+casper*:::limit-set
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s error=%d\n", walltimestamp,
+	    pid, copyinstr(arg0),
+	    arg1 == 0 ? "LIMIT" : "LIMIT-FAIL", "limit-set", arg1);
+}
+
+casper*:::cmd-return
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s error=%d\n", walltimestamp,
+	    pid, copyinstr(arg0),
+	    arg2 == 0 ? "ALLOW" : "DENY", copyinstr(arg1), arg2);
+	@med[copyinstr(arg0), arg2 == 0 ? "allow" : "deny"] = count();
+}
+
+casper*:::cmd-return
+/arg2 != 0/
+{
+	@deny[copyinstr(arg0), copyinstr(arg1)] = count();
+}
+
+/* --- Per-service allow-list predicates (allowed == 0 => DENIED) --- */
+
+cap_pwd*:::allow
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s -\n", walltimestamp,
+	    pid, "cap_pwd", arg1 == 0 ? "DENY" : "allow",
+	    copyinstr(arg0));
+	@pred["cap_pwd", arg1 == 0 ? "deny" : "allow"] = count();
+}
+cap_pwd*:::allow /arg1 == 0/ { @deny["cap_pwd", copyinstr(arg0)] = count(); }
+
+cap_grp*:::allow
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s -\n", walltimestamp,
+	    pid, "cap_grp", arg1 == 0 ? "DENY" : "allow",
+	    copyinstr(arg0));
+	@pred["cap_grp", arg1 == 0 ? "deny" : "allow"] = count();
+}
+cap_grp*:::allow /arg1 == 0/ { @deny["cap_grp", copyinstr(arg0)] = count(); }
+
+cap_net*:::allow-mode
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s mode=0x%x\n", walltimestamp,
+	    pid, "cap_net", arg1 == 0 ? "DENY" : "allow",
+	    "allow-mode", (int)arg0);
+	@pred["cap_net", arg1 == 0 ? "deny" : "allow"] = count();
+}
+cap_net*:::allow-mode /arg1 == 0/ { @deny["cap_net", "mode"] = count(); }
+
+cap_net*:::allow-family
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s family=%d\n", walltimestamp,
+	    pid, "cap_net", arg1 == 0 ? "DENY" : "allow",
+	    "allow-family", arg0);
+	@pred["cap_net", arg1 == 0 ? "deny" : "allow"] = count();
+}
+cap_net*:::allow-family /arg1 == 0/ { @deny["cap_net", "family"] = count(); }
+
+cap_net*:::allow-host
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s %s:%s\n", walltimestamp,
+	    pid, "cap_net", arg2 == 0 ? "DENY" : "allow",
+	    "allow-host", copyinstr(arg0), copyinstr(arg1));
+	@pred["cap_net", arg2 == 0 ? "deny" : "allow"] = count();
+}
+cap_net*:::allow-host /arg2 == 0/ { @deny["cap_net", copyinstr(arg0)] = count(); }
+
+cap_net*:::allow-addr
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s saddrsize=%d\n", walltimestamp,
+	    pid, "cap_net", arg1 == 0 ? "DENY" : "allow",
+	    "allow-addr", arg0);
+	@pred["cap_net", arg1 == 0 ? "deny" : "allow"] = count();
+}
+cap_net*:::allow-addr /arg1 == 0/ { @deny["cap_net", "addr"] = count(); }
+
+cap_dns*:::allow-type
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s %s\n", walltimestamp,
+	    pid, "cap_dns", arg1 == 0 ? "DENY" : "allow",
+	    "allow-type", copyinstr(arg0));
+	@pred["cap_dns", arg1 == 0 ? "deny" : "allow"] = count();
+}
+cap_dns*:::allow-type /arg1 == 0/ { @deny["cap_dns", copyinstr(arg0)] = count(); }
+
+cap_dns*:::allow-family
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s family=%d\n", walltimestamp,
+	    pid, "cap_dns", arg1 == 0 ? "DENY" : "allow",
+	    "allow-family", arg0);
+	@pred["cap_dns", arg1 == 0 ? "deny" : "allow"] = count();
+}
+cap_dns*:::allow-family /arg1 == 0/ { @deny["cap_dns", "family"] = count(); }
+
+cap_sysctl*:::allow
+{
+	printf("%-20Y %-6d %-12s %-10s %-16s %s\n", walltimestamp,
+	    pid, "cap_sysctl", arg1 == 0 ? "DENY" : "allow",
+	    "allow", copyinstr(arg0));
+	@pred["cap_sysctl", arg1 == 0 ? "deny" : "allow"] = count();
+}
+cap_sysctl*:::allow /arg1 == 0/ { @deny["cap_sysctl", copyinstr(arg0)] = count(); }
+
+dtrace:::END
+{
+	printf("\n--- Broker mediations by (service, outcome) ---\n");
+	printa("  %-12s %-8s %@d\n", @med);
+	printf("\n--- Per-service predicate checks by (service, outcome) ---\n");
+	printa("  %-12s %-8s %@d\n", @pred);
+	printf("\n--- Denials by (service, requested operation) ---\n");
+	printa("  %-12s %-24s %@d\n", @deny);
+}

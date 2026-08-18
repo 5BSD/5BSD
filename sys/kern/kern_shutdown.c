@@ -70,6 +70,7 @@
 #include <sys/rwlock.h>
 #include <sys/sbuf.h>
 #include <sys/sched.h>
+#include <sys/sdt.h>
 #include <sys/smp.h>
 #include <sys/stdarg.h>
 #include <sys/sysctl.h>
@@ -286,6 +287,10 @@ reroot_conf(void *unused)
 
 SYSINIT(reroot_conf, SI_SUB_DEVFS, SI_ORDER_ANY, reroot_conf, NULL);
 
+SDT_PROVIDER_DEFINE(shutdown);
+SDT_PROBE_DEFINE3(shutdown, , , request, "int", "struct ucred *", "int");
+SDT_PROBE_DEFINE1(shutdown, , , reboot, "int");
+
 /*
  * The system call that results in a reboot.
  */
@@ -301,6 +306,7 @@ sys_reboot(struct thread *td, struct reboot_args *uap)
 #endif
 	if (error == 0)
 		error = priv_check(td, PRIV_REBOOT);
+	SDT_PROBE3(shutdown, , , request, uap->opt, td->td_ucred, error);
 	if (error == 0) {
 		if (uap->opt & RB_REROOT)
 			error = kern_reroot();
@@ -453,6 +459,8 @@ void
 kern_reboot(int howto)
 {
 	static int once = 0;
+
+	SDT_PROBE1(shutdown, , , reboot, howto);
 
 	if (initproc != NULL && curproc != initproc)
 		BOOTTRACE("kernel shutdown (dirty) started");

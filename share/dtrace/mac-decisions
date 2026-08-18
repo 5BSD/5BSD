@@ -1,0 +1,82 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * mac-decisions -- per-policy MAC decision observability.  Shows WHICH MAC
+ *		    policy module denied (or allowed) WHICH framework entry
+ *		    point, the headline observability this 5BSD/VBSD fork's MAC
+ *		    framework gained.  Every mac_*_check_* entry point that
+ *		    reaches a registered policy fires policy__decision with the
+ *		    entry-point name, the policy (module) name, and the errno
+ *		    that policy returned (0 == allow, non-zero == deny).
+ *
+ * REQUIRES a kernel rebuilt with the mac_framework SDT provider (this fork).
+ * Load the framework/policies before running; the provider only exists once
+ * the MAC framework is compiled in (options MAC).
+ *
+ * Provider / probe consumed (args in exact SDT_PROBE_DEFINE order):
+ *
+ *   mac_framework:::policy-decision (char *entrypoint, char *policy, int error)
+ *		src: sys/security/mac/mac_framework.c
+ *		     SDT_PROBE_DEFINE3(mac_framework, , , policy__decision,
+ *		         "char *", "char *", "int")
+ *		args[0]=entrypoint name, args[1]=policy name, args[2]=errno
+ *
+ * Entry-point and policy names are kernel char* -> stringof(args[N]).
+ * The firing thread is the subject: execname/pid/uid name the actor.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("mac-decisions: per-policy MAC allow/deny stream.  Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-6s %-16s %-26s %-16s %s\n",
+	    "TIME", "PID", "UID", "EXEC", "ENTRYPOINT", "POLICY", "VERDICT");
+}
+
+/*
+ * Every decision: stream a line and tally allow/deny per (policy, entrypoint).
+ */
+mac_framework:::policy-decision
+{
+	this->ep = stringof(args[0]);
+	this->pol = stringof(args[1]);
+	this->verdict = (args[2] == 0) ? "ALLOW" : "DENY";
+
+	printf("%-20Y %-6d %-6d %-16s %-26s %-16s %s(%d)\n",
+	    walltimestamp, pid, uid, execname, this->ep, this->pol,
+	    this->verdict, args[2]);
+
+	@decisions[this->pol, this->ep, this->verdict] = count();
+}
+
+/*
+ * Denials only: rank the policies that are actually saying no, and by whom.
+ */
+mac_framework:::policy-decision
+/args[2] != 0/
+{
+	@denybypolicy[stringof(args[1])] = count();
+	@denybyentry[stringof(args[0])] = count();
+	@denybyexec[execname, stringof(args[1])] = count();
+	@errno[stringof(args[1]), args[2]] = count();
+}
+
+dtrace:::END
+{
+	printf("\n== decisions by (policy, entrypoint, verdict) ==\n");
+	printa("  %-16s %-26s %-8s %@d\n", @decisions);
+
+	printf("\n== denials by policy ==\n");
+	printa("  %-20s %@d\n", @denybypolicy);
+
+	printf("\n== denials by entrypoint ==\n");
+	printa("  %-26s %@d\n", @denybyentry);
+
+	printf("\n== denials by (exec, policy) ==\n");
+	printa("  %-16s %-20s %@d\n", @denybyexec);
+
+	printf("\n== deny errno by policy ==\n");
+	printa("  %-20s errno=%-4d %@d\n", @errno);
+}

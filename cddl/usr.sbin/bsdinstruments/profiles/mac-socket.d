@@ -48,7 +48,7 @@ fbt::mac_socket_check_bind:return,
 fbt::mac_socket_check_listen:return,
 fbt::mac_socket_check_send:return,
 fbt::mac_socket_check_receive:return
-/self->mac_sock_op && arg1 != 0/
+/self->mac_sock_op != NULL && arg1 != 0/
 {
     printf("%s[%d]: MAC DENIED socket %s err=%d\n",
         execname, pid, self->mac_sock_op, arg1);
@@ -64,7 +64,7 @@ fbt::mac_socket_check_bind:return,
 fbt::mac_socket_check_listen:return,
 fbt::mac_socket_check_send:return,
 fbt::mac_socket_check_receive:return
-/self->mac_sock_op && arg1 == 0/
+/self->mac_sock_op != NULL && arg1 == 0/
 {
     @allowed[execname, self->mac_sock_op] = count();
     self->mac_sock_op = 0;

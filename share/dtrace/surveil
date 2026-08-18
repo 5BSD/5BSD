@@ -1,0 +1,112 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * surveil.d -- surveillance / inspection of other processes and secret
+ * exposure: ktrace enablement & denial, ptrace attach / detach / deny, and
+ * core dumps (which can spill in-memory secrets to disk).  Shows the tracer
+ * (execname/pid) and the target pid.
+ *
+ * Providers / probes consumed (kernel SDT, see sources for signatures):
+ *   ktrace:::set      (kern_ktrace.c)
+ *       args[0] pid_t target pid, args[1] int facs, args[2] int ops
+ *   ktrace:::deny     (kern_ktrace.c)
+ *       args[0] pid_t target pid, args[1] int error
+ *   ptrace:::attach   (sys_process.c)
+ *       args[0] int req, args[1] pid_t target pid, args[2] struct proc *tracer
+ *   ptrace:::detach   (sys_process.c)
+ *       args[0] pid_t target pid, args[1] struct proc *tracer
+ *   ptrace:::deny     (sys_process.c)
+ *       args[0] struct proc *tracer, args[1] struct proc *target,
+ *       args[2] int error
+ *   coredump:::write  (kern_ucoredump.c)
+ *       args[0] pid_t pid, args[1] char *p_comm, args[2] int error
+ *
+ * Example invocation:
+ *       dtrace -qs surveil.d
+ *       ./surveil.d
+ *
+ * REQUIRES a kernel rebuilt from this tree (buildkernel/installkernel +
+ * reboot).  Until then these providers are absent and `dtrace -l` will not
+ * list them.
+ */
+
+dtrace:::BEGIN
+{
+	printf("%-20s %5s %-16s %-14s %s\n",
+	    "TIME", "UID", "TRACER", "EVENT", "DETAIL");
+}
+
+/*
+ * ktrace: the calling process (execname/pid) is enabling tracing on target
+ * pid args[0].
+ */
+ktrace:::set
+{
+	printf("%-20Y %5d %-16s %-14s pid %d -> target %d facs=0x%x ops=0x%x\n",
+	    walltimestamp, uid, execname, "KTRACE-SET",
+	    pid, args[0], args[1], args[2]);
+	@bytracer[execname, "ktrace-set"] = count();
+}
+
+ktrace:::deny
+{
+	printf("%-20Y %5d %-16s %-14s pid %d -> target %d err=%d  <== DENIED\n",
+	    walltimestamp, uid, execname, "KTRACE-DENY",
+	    pid, args[0], args[1]);
+}
+
+/*
+ * ptrace attach: args[2] is the tracer proc, args[1] the target pid.
+ */
+ptrace:::attach
+{
+	printf("%-20Y %5d %-16s %-14s %s/%d -> target %d req=%d\n",
+	    walltimestamp, uid, execname, "PTRACE-ATTACH",
+	    args[2] != NULL ? stringof(args[2]->p_comm) : execname,
+	    args[2] != NULL ? args[2]->p_pid : pid,
+	    args[1], args[0]);
+	@bytracer[execname, "ptrace-attach"] = count();
+}
+
+ptrace:::detach
+{
+	printf("%-20Y %5d %-16s %-14s %s/%d -> target %d\n",
+	    walltimestamp, uid, execname, "PTRACE-DETACH",
+	    args[1] != NULL ? stringof(args[1]->p_comm) : execname,
+	    args[1] != NULL ? args[1]->p_pid : pid,
+	    args[0]);
+}
+
+/*
+ * ptrace deny: args[0] tracer proc, args[1] target proc.
+ */
+ptrace:::deny
+{
+	printf("%-20Y %5d %-16s %-14s %s/%d -> target %s/%d err=%d  <== DENIED\n",
+	    walltimestamp, uid, execname, "PTRACE-DENY",
+	    args[0] != NULL ? stringof(args[0]->p_comm) : execname,
+	    args[0] != NULL ? args[0]->p_pid : pid,
+	    args[1] != NULL ? stringof(args[1]->p_comm) : "?",
+	    args[1] != NULL ? args[1]->p_pid : -1,
+	    args[2]);
+}
+
+/*
+ * A process dumped core: memory (potentially secrets/keys) hit disk.
+ */
+coredump:::write
+{
+	printf("%-20Y %5d %-16s %-14s pid %d comm=%s err=%d\n",
+	    walltimestamp, uid, execname, "COREDUMP",
+	    args[0], stringof(args[1]), args[2]);
+	@bytracer[execname, "coredump"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n==== attach/ktrace/coredump by (tracer, event) ====\n");
+	printa("  %-16s %-16s %@d\n", @bytracer);
+}

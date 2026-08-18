@@ -51,6 +51,8 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_tacplus_probes.h"
+
 #define PAM_OPT_CONF		"conf"
 #define PAM_OPT_TEMPLATE_USER	"template_user"
 
@@ -111,6 +113,9 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	int retval;
 	struct tac_handle *tach;
 	const char *conf_file, *template_user;
+	const void *puser = NULL;
+
+	(void)pam_get_item(pamh, PAM_USER, &puser);
 
 	conf_file = openpam_get_option(pamh, PAM_OPT_CONF);
 	template_user = openpam_get_option(pamh, PAM_OPT_TEMPLATE_USER);
@@ -118,38 +123,50 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 	tach = tac_open();
 	if (tach == NULL) {
 		syslog(LOG_CRIT, "tac_open failed");
+		PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
 	}
 	if (tac_config(tach, conf_file) == -1) {
 		syslog(LOG_ALERT, "tac_config: %s", tac_strerror(tach));
 		tac_close(tach);
+		PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
 	}
 	if (tac_create_authen(tach, TAC_AUTHEN_LOGIN, TAC_AUTHEN_TYPE_ASCII,
 	    TAC_AUTHEN_SVC_LOGIN) == -1) {
 		syslog(LOG_CRIT, "tac_create_authen: %s", tac_strerror(tach));
 		tac_close(tach);
+		PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
 	}
 
 	PAM_LOG("Done tac_open() ... tac_close()");
 
 	retval = do_item(pamh, tach, PAM_USER, tac_set_user, "tac_set_user");
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser, retval);
 		return (retval);
+	}
 
 	PAM_LOG("Done user");
 
 	retval = do_item(pamh, tach, PAM_TTY, tac_set_port, "tac_set_port");
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser, retval);
 		return (retval);
+	}
 
 	PAM_LOG("Done tty");
 
 	retval = do_item(pamh, tach, PAM_RHOST, tac_set_rem_addr,
 	    "tac_set_rem_addr");
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser, retval);
 		return (retval);
+	}
 
 	for (;;) {
 		char *srvr_msg;
@@ -164,6 +181,8 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 			syslog(LOG_CRIT, "tac_send_authen: %s",
 			    tac_strerror(tach));
 			tac_close(tach);
+			PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser,
+			    PAM_AUTHINFO_UNAVAIL);
 			return (PAM_AUTHINFO_UNAVAIL);
 		}
 		status = TAC_AUTHEN_STATUS(sflags);
@@ -187,8 +206,11 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 				 * option.
 				 */
 				retval = pam_get_item(pamh, PAM_USER, &item);
-				if (retval != PAM_SUCCESS)
+				if (retval != PAM_SUCCESS) {
+					PAM_TACPLUS_PROBE_SM_AUTHENTICATE(
+					    (const char *)puser, retval);
 					return (retval);
+				}
 				user = (const char *)item;
 				if (getpwnam(user) == NULL) {
 					pam_set_item(pamh, PAM_USER,
@@ -196,17 +218,24 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 					PAM_LOG("Using template user");
 				}
 			}
+			PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser,
+			    PAM_SUCCESS);
 			return (PAM_SUCCESS);
 
 		case TAC_AUTHEN_STATUS_FAIL:
 			tac_close(tach);
 			PAM_VERBOSE_ERROR("TACACS+ authentication failed");
+			PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser,
+			    PAM_AUTH_ERR);
 			return (PAM_AUTH_ERR);
 
 		case TAC_AUTHEN_STATUS_GETUSER:
 		case TAC_AUTHEN_STATUS_GETPASS:
-			if ((srvr_msg = get_msg(tach)) == NULL)
+			if ((srvr_msg = get_msg(tach)) == NULL) {
+				PAM_TACPLUS_PROBE_SM_AUTHENTICATE(
+				    (const char *)puser, PAM_SERVICE_ERR);
 				return (PAM_SERVICE_ERR);
+			}
 			if (status == TAC_AUTHEN_STATUS_GETUSER)
 				retval = pam_get_user(pamh, &user_msg,
 				    *srvr_msg ? srvr_msg : NULL);
@@ -218,15 +247,23 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 			if (retval != PAM_SUCCESS) {
 				/* XXX - send a TACACS+ abort packet */
 				tac_close(tach);
+				PAM_TACPLUS_PROBE_SM_AUTHENTICATE(
+				    (const char *)puser, retval);
 				return (retval);
 			}
-			if (set_msg(tach, user_msg) == -1)
+			if (set_msg(tach, user_msg) == -1) {
+				PAM_TACPLUS_PROBE_SM_AUTHENTICATE(
+				    (const char *)puser, PAM_SERVICE_ERR);
 				return (PAM_SERVICE_ERR);
+			}
 			break;
 
 		case TAC_AUTHEN_STATUS_GETDATA:
-			if ((srvr_msg = get_msg(tach)) == NULL)
+			if ((srvr_msg = get_msg(tach)) == NULL) {
+				PAM_TACPLUS_PROBE_SM_AUTHENTICATE(
+				    (const char *)puser, PAM_SERVICE_ERR);
 				return (PAM_SERVICE_ERR);
+			}
 			retval = pam_prompt(pamh,
 			    openpam_get_option(pamh, PAM_OPT_ECHO_PASS) ?
 			    PAM_PROMPT_ECHO_ON : PAM_PROMPT_ECHO_OFF,
@@ -235,13 +272,18 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 			if (retval != PAM_SUCCESS) {
 				/* XXX - send a TACACS+ abort packet */
 				tac_close(tach);
+				PAM_TACPLUS_PROBE_SM_AUTHENTICATE(
+				    (const char *)puser, retval);
 				return (retval);
 			}
 			retval = set_msg(tach, data_msg);
 			memset(data_msg, 0, strlen(data_msg));
 			free(data_msg);
-			if (retval == -1)
+			if (retval == -1) {
+				PAM_TACPLUS_PROBE_SM_AUTHENTICATE(
+				    (const char *)puser, PAM_SERVICE_ERR);
 				return (PAM_SERVICE_ERR);
+			}
 			break;
 
 		case TAC_AUTHEN_STATUS_ERROR:
@@ -255,6 +297,8 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 				syslog(LOG_CRIT,
 				    "tac_send_authen: server detected error");
 			tac_close(tach);
+			PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser,
+			    PAM_AUTHINFO_UNAVAIL);
 			return (PAM_AUTHINFO_UNAVAIL);
 			break;
 
@@ -264,16 +308,21 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
 			syslog(LOG_CRIT,
 			    "tac_send_authen: unexpected status %#x", status);
 			tac_close(tach);
+			PAM_TACPLUS_PROBE_SM_AUTHENTICATE((const char *)puser,
+			    PAM_AUTHINFO_UNAVAIL);
 			return (PAM_AUTHINFO_UNAVAIL);
 		}
 	}
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_TACPLUS_PROBE_SM_SETCRED((const char *)user, flags, PAM_IGNORE);
 	return (PAM_IGNORE);
 }
 

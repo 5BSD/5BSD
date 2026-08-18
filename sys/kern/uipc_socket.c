@@ -134,6 +134,7 @@
 #include <sys/socket.h>
 #include <sys/socketvar.h>
 #include <sys/resourcevar.h>
+#include <sys/sdt.h>
 #include <net/route.h>
 #include <sys/sched.h>
 #include <sys/signalvar.h>
@@ -163,6 +164,73 @@
 #include <sys/sysent.h>
 #include <compat/freebsd32/freebsd32.h>
 #endif
+
+/*
+ * Static SDT (DTrace) tracepoints for the socket-layer operation surface.
+ *
+ * These probes cover the classic BSD socket lifecycle and control operations
+ * (create, accept-side birth, bind, listen, connect, accept, disconnect,
+ * shutdown, setsockopt/getsockopt, teardown) at per-syscall/per-connection
+ * granularity.  They deliberately do NOT duplicate the ip/tcp/udp providers
+ * (protocol internals) or the MAC framework probes (socket access checks),
+ * and they avoid the per-byte/per-mbuf data paths (sosend/soreceive).
+ *
+ * Where the traced function is called with a struct thread * (syscall
+ * context) the calling pid is passed explicitly; the accept/close/shutdown/
+ * sockopt entry points lack a td argument but are still reached directly from
+ * their syscalls, so they read curthread.  The connection-birth path
+ * (sonewconn) and the deferred teardown paths (soabort/sofree/sodisconnect)
+ * run in ambiguous or softirq/netisr context, so they pass the socket pointer
+ * and so_type instead of a possibly-misleading pid (DTrace's builtin `pid`
+ * remains available in any probe context).
+ */
+SDT_PROVIDER_DEFINE(socket);
+
+/* so, domain, type, protocol, error, pid */
+SDT_PROBE_DEFINE6(socket, , , create,
+    "struct socket *", "int", "int", "int", "int", "int");
+/* listener head, new (accepted-side) socket, so_type, connstatus */
+SDT_PROBE_DEFINE4(socket, , , newconn,
+    "struct socket *", "struct socket *", "int", "int");
+/* listener head, current qlen, qlimit -- listen queue overflow drop */
+SDT_PROBE_DEFINE3(socket, , , newconn__overflow,
+    "struct socket *", "u_int", "u_int");
+/* so, so_type, error, pid */
+SDT_PROBE_DEFINE4(socket, , , close,
+    "struct socket *", "int", "int", "int");
+/* so, so_type */
+SDT_PROBE_DEFINE2(socket, , , abort,
+    "struct socket *", "int");
+/* so, so_type */
+SDT_PROBE_DEFINE2(socket, , , free,
+    "struct socket *", "int");
+/* so, nam, error, pid */
+SDT_PROBE_DEFINE4(socket, , , bind,
+    "struct socket *", "struct sockaddr *", "int", "int");
+/* fd, so, nam, error, pid */
+SDT_PROBE_DEFINE5(socket, , , bindat,
+    "int", "struct socket *", "struct sockaddr *", "int", "int");
+/* so, backlog, error, pid */
+SDT_PROBE_DEFINE4(socket, , , listen,
+    "struct socket *", "int", "int", "int");
+/* fd, so, nam, error, pid (covers soconnect via soconnectat) */
+SDT_PROBE_DEFINE5(socket, , , connect,
+    "int", "struct socket *", "struct sockaddr *", "int", "int");
+/* so, sa, error, pid */
+SDT_PROBE_DEFINE4(socket, , , accept,
+    "struct socket *", "struct sockaddr *", "int", "int");
+/* so, error */
+SDT_PROBE_DEFINE2(socket, , , disconnect,
+    "struct socket *", "int");
+/* so, how (SHUT_RD/WR/RDWR), error, pid */
+SDT_PROBE_DEFINE4(socket, , , shutdown,
+    "struct socket *", "int", "int", "int");
+/* so, level, optname, error, pid */
+SDT_PROBE_DEFINE5(socket, , , setopt,
+    "struct socket *", "int", "int", "int", "int");
+/* so, level, optname, error, pid */
+SDT_PROBE_DEFINE5(socket, , , getopt,
+    "struct socket *", "int", "int", "int", "int");
 
 static int	soreceive_generic_locked(struct socket *so,
 		    struct sockaddr **psa, struct uio *uio, struct mbuf **mp,
@@ -1040,6 +1108,8 @@ socreate(int dom, struct socket **aso, int type, int proto,
 		return (error);
 	}
 	soref(so);
+	SDT_PROBE6(socket, , , create, so, dom, type, proto, 0,
+	    td->td_proc->p_pid);
 	*aso = so;
 	return (0);
 }
@@ -1208,6 +1278,8 @@ solisten_clone(struct socket *head)
 			overcount = 0;
 		}
 
+		SDT_PROBE3(socket, , , newconn__overflow, head,
+		    head->sol_qlen, head->sol_qlimit);
 		return (NULL);
 	}
 	SOLISTEN_UNLOCK(head);
@@ -1289,6 +1361,7 @@ sonewconn(struct socket *head, int connstatus)
 
 	(void)solisten_enqueue(so, connstatus);
 
+	SDT_PROBE4(socket, , , newconn, head, so, so->so_type, connstatus);
 	return (so);
 }
 
@@ -1411,6 +1484,7 @@ sobind(struct socket *so, struct sockaddr *nam, struct thread *td)
 	CURVNET_SET(so->so_vnet);
 	error = so->so_proto->pr_bind(so, nam, td);
 	CURVNET_RESTORE();
+	SDT_PROBE4(socket, , , bind, so, nam, error, td->td_proc->p_pid);
 	return (error);
 }
 
@@ -1422,6 +1496,7 @@ sobindat(int fd, struct socket *so, struct sockaddr *nam, struct thread *td)
 	CURVNET_SET(so->so_vnet);
 	error = so->so_proto->pr_bindat(fd, so, nam, td);
 	CURVNET_RESTORE();
+	SDT_PROBE5(socket, , , bindat, fd, so, nam, error, td->td_proc->p_pid);
 	return (error);
 }
 
@@ -1445,6 +1520,7 @@ solisten(struct socket *so, int backlog, struct thread *td)
 	CURVNET_SET(so->so_vnet);
 	error = so->so_proto->pr_listen(so, backlog, td);
 	CURVNET_RESTORE();
+	SDT_PROBE4(socket, , , listen, so, backlog, error, td->td_proc->p_pid);
 	return (error);
 }
 
@@ -1924,6 +2000,8 @@ sofree(struct socket *so)
 	KASSERT(so->so_splice == NULL && so->so_splice_back == NULL,
 	    ("%s: so %p has spliced data", __func__, so));
 
+	SDT_PROBE2(socket, , , free, so, so->so_type);
+
 	SOCK_UNLOCK(so);
 
 	if (so->so_dtor != NULL)
@@ -1986,6 +2064,7 @@ soclose(struct socket *so)
 {
 	struct accept_queue lqueue;
 	int error = 0;
+	int sotype = so->so_type;
 	bool listening, last __diagused;
 
 	CURVNET_SET(so->so_vnet);
@@ -2046,6 +2125,8 @@ drop:
 			soabort(sp);
 	}
 	CURVNET_RESTORE();
+	SDT_PROBE4(socket, , , close, so, sotype, error,
+	    curthread->td_proc->p_pid);
 	return (error);
 }
 
@@ -2076,6 +2157,7 @@ soabort(struct socket *so)
 
 	VNET_SO_ASSERT(so);
 
+	SDT_PROBE2(socket, , , abort, so, so->so_type);
 	if (so->so_proto->pr_abort != NULL)
 		so->so_proto->pr_abort(so);
 	SOCK_LOCK(so);
@@ -2095,6 +2177,7 @@ soaccept(struct socket *so, struct sockaddr *sa)
 	KASSERT(sa->sa_len <= len,
 	    ("%s: protocol %p sockaddr overflow", __func__, so->so_proto));
 	CURVNET_RESTORE();
+	SDT_PROBE4(socket, , , accept, so, sa, error, curthread->td_proc->p_pid);
 	return (error);
 }
 
@@ -2172,6 +2255,8 @@ soconnectat(int fd, struct socket *so, struct sockaddr *nam, struct thread *td)
 	}
 	CURVNET_RESTORE();
 
+	SDT_PROBE5(socket, , , connect, fd, so, nam, error,
+	    td->td_proc->p_pid);
 	return (error);
 }
 
@@ -2197,6 +2282,7 @@ sodisconnect(struct socket *so)
 		return (EALREADY);
 	VNET_SO_ASSERT(so);
 	error = so->so_proto->pr_disconnect(so);
+	SDT_PROBE2(socket, , , disconnect, so, error);
 	return (error);
 }
 
@@ -3761,6 +3847,8 @@ soshutdown(struct socket *so, enum shutdown_how how)
 	error = so->so_proto->pr_shutdown(so, how);
 	CURVNET_RESTORE();
 
+	SDT_PROBE4(socket, , , shutdown, so, (int)how, error,
+	    curthread->td_proc->p_pid);
 	return (error);
 }
 
@@ -4117,6 +4205,8 @@ sosetopt(struct socket *so, struct sockopt *sopt)
 	}
 bad:
 	CURVNET_RESTORE();
+	SDT_PROBE5(socket, , , setopt, so, sopt->sopt_level, sopt->sopt_name,
+	    error, curthread->td_proc->p_pid);
 	return (error);
 }
 
@@ -4165,6 +4255,8 @@ sogetopt(struct socket *so, struct sockopt *sopt)
 	if (sopt->sopt_level != SOL_SOCKET) {
 		error = so->so_proto->pr_ctloutput(so, sopt);
 		CURVNET_RESTORE();
+		SDT_PROBE5(socket, , , getopt, so, sopt->sopt_level,
+		    sopt->sopt_name, error, curthread->td_proc->p_pid);
 		return (error);
 	} else {
 		switch (sopt->sopt_name) {
@@ -4378,6 +4470,8 @@ integer:
 	}
 bad:
 	CURVNET_RESTORE();
+	SDT_PROBE5(socket, , , getopt, so, sopt->sopt_level, sopt->sopt_name,
+	    error, curthread->td_proc->p_pid);
 	return (error);
 }
 

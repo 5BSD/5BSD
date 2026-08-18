@@ -57,6 +57,7 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/racct.h>
+#include <sys/sdt.h>
 #include <sys/sem.h>
 #include <sys/sx.h>
 #include <sys/syscall.h>
@@ -73,6 +74,21 @@
 FEATURE(sysv_sem, "System V semaphores support");
 
 static MALLOC_DEFINE(M_SEM, "sem", "SVID compatible semaphores");
+
+/*
+ * Static DTrace (SDT) tracepoints for the native System V semaphore
+ * operations.  These probe the IPC operations themselves; access-control
+ * decisions are already covered by the MAC framework's mac_sysvsem_* probes.
+ */
+SDT_PROVIDER_DEFINE(sysvsem);
+SDT_PROBE_DEFINE5(sysvsem, , , semget__create, "pid_t", "key_t", "int", "int",
+    "int");
+SDT_PROBE_DEFINE5(sysvsem, , , semget__lookup, "pid_t", "key_t", "int", "int",
+    "int");
+SDT_PROBE_DEFINE4(sysvsem, , , semop, "pid_t", "int", "size_t", "int");
+SDT_PROBE_DEFINE3(sysvsem, , , semop__block, "pid_t", "int", "size_t");
+SDT_PROBE_DEFINE4(sysvsem, , , semctl, "pid_t", "int", "int", "int");
+SDT_PROBE_DEFINE4(sysvsem, , , semexit, "pid_t", "int", "int", "int");
 
 #ifdef SEM_DEBUG
 #define DPRINTF(a)	printf a
@@ -948,6 +964,7 @@ done2:
 	mtx_unlock(sema_mtxp);
 	if (cmd == IPC_RMID)
 		mtx_unlock(&sem_mtx);
+	SDT_PROBE4(sysvsem, , , semctl, td->td_proc->p_pid, semid, cmd, error);
 	if (array != NULL)
 		free(array, M_TEMP);
 	return(error);
@@ -1007,6 +1024,10 @@ sys_semget(struct thread *td, struct semget_args *uap)
 			if (error != 0)
 				goto done2;
 #endif
+			SDT_PROBE5(sysvsem, , , semget__lookup,
+			    td->td_proc->p_pid, key,
+			    IXSEQ_TO_IPCID(semid, sema[semid].u.sem_perm),
+			    sema[semid].u.sem_nsems, semflg);
 			goto found;
 		}
 	}
@@ -1070,6 +1091,9 @@ sys_semget(struct thread *td, struct semget_args *uap)
 		mac_sysvsem_create(cred, &sema[semid]);
 #endif
 		mtx_unlock(&sema_mtx[semid]);
+		SDT_PROBE5(sysvsem, , , semget__create, td->td_proc->p_pid, key,
+		    IXSEQ_TO_IPCID(semid, sema[semid].u.sem_perm),
+		    sema[semid].u.sem_nsems, semflg);
 		DPRINTF(("sembase = %p, next = %p\n",
 		    sema[semid].u.__sem_base, &sem[semtot]));
 	} else {
@@ -1308,6 +1332,8 @@ kern_semop(struct thread *td, int usemid, struct sembuf *usops,
 			semptr->semncnt++;
 
 		DPRINTF(("semop:  good night!\n"));
+		SDT_PROBE3(sysvsem, , , semop__block, td->td_proc->p_pid,
+		    usemid, nsops);
 		error = msleep_sbt(semakptr, sema_mtxp, PVFS | PCATCH,
 		    "semwait", sbt, precision, C_ABSOLUTE);
 		DPRINTF(("semop:  good morning (error=%d)!\n", error));
@@ -1426,6 +1452,8 @@ done:
 		DPRINTF(("semop:  back from wakeup\n"));
 	}
 	DPRINTF(("semop:  done\n"));
+	SDT_PROBE4(sysvsem, , , semop, td->td_proc->p_pid, usemid, nsops,
+	    do_undos);
 	td->td_retval[0] = 0;
 done2:
 	mtx_unlock(sema_mtxp);
@@ -1501,6 +1529,9 @@ semexit_myhook(void *arg, struct proc *p)
 				semakptr->u.__sem_base[semnum].semval = 0;
 			else
 				semakptr->u.__sem_base[semnum].semval += adjval;
+
+			SDT_PROBE4(sysvsem, , , semexit, p->p_pid, semid, semnum,
+			    adjval);
 
 			wakeup(semakptr);
 			DPRINTF(("semexit:  back from wakeup\n"));

@@ -48,25 +48,38 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_rootok_probes.h"
+
 PAM_EXTERN int
 pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
-	if (getuid() == 0)
+	(void)pam_get_item(pamh, PAM_USER, &user);
+
+	if (getuid() == 0) {
+		PAM_ROOTOK_PROBE_SM_AUTHENTICATE((const char *)user,
+		    PAM_SUCCESS);
 		return (PAM_SUCCESS);
+	}
 
 	PAM_VERBOSE_ERROR("Refused; not superuser");
 	PAM_LOG("User is not superuser");
 
+	PAM_ROOTOK_PROBE_SM_AUTHENTICATE((const char *)user, PAM_AUTH_ERR);
 	return (PAM_AUTH_ERR);
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+
+	PAM_ROOTOK_PROBE_SM_SETCRED((const char *)user, flags, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 

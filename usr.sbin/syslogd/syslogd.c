@@ -129,6 +129,7 @@
 #include "pathnames.h"
 #include "syslogd.h"
 #include "syslogd_cap.h"
+#include "syslogd_probes.h"
 
 const char *ConfFile = _PATH_LOGCONF;
 static const char *PidFile = _PATH_LOGPID;
@@ -857,6 +858,7 @@ socklist_recv_sock(struct socklist *sl)
 			return (-1);
 		}
 	}
+	SYSLOGD_PROBE_MSG_ACCEPT(hname, len);
 	parsemsg(hname, line);
 
 	return (0);

@@ -11,6 +11,11 @@ SRCS+=	libcasper_impl.c
 SRCS+=	libcasper_service.c
 SRCS+=	service.c
 SRCS+=	zygote.c
+
+.if ${MK_DTRACE} != "no"
+SRCS+=		casper_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 .endif
 
 INCS=	libcasper.h

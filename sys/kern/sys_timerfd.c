@@ -41,6 +41,7 @@
 #include <sys/poll.h>
 #include <sys/proc.h>
 #include <sys/queue.h>
+#include <sys/sdt.h>
 #include <sys/selinfo.h>
 #include <sys/stat.h>
 #include <sys/sx.h>
@@ -56,6 +57,23 @@
 #include <security/audit/audit.h>
 
 static MALLOC_DEFINE(M_TIMERFD, "timerfd", "timerfd structures");
+
+SDT_PROVIDER_DEFINE(timerfd);
+/* A new timerfd was created: pid, clockid, flags, fd. */
+SDT_PROBE_DEFINE4(timerfd, , , create, "int", "int", "int", "int");
+/* A timerfd was armed/disarmed: pid, fd, flags, value sec, interval sec. */
+SDT_PROBE_DEFINE5(timerfd, , , settime, "int", "int", "int", "int64_t",
+    "int64_t");
+/* Current timer value was read back: pid, fd, remaining value sec. */
+SDT_PROBE_DEFINE3(timerfd, , , gettime, "int", "int", "int64_t");
+/* The timer callout fired (per expiration, not per tick): count, inode. */
+SDT_PROBE_DEFINE2(timerfd, , , expire, "uint64_t", "uint64_t");
+/* A read returned the expiration count: pid, count. */
+SDT_PROBE_DEFINE2(timerfd, , , read, "int", "uint64_t");
+/* A non-blocking read found no pending expirations: pid. */
+SDT_PROBE_DEFINE1(timerfd, , , read__eagain, "int");
+/* A timerfd descriptor was closed: pid. */
+SDT_PROBE_DEFINE1(timerfd, , , close, "int");
 
 static struct mtx timerfd_list_lock;
 static LIST_HEAD(, timerfd) timerfd_list;
@@ -214,6 +232,7 @@ retry:
 	if (tfd->tfd_count == 0) {
 		if ((fp->f_flag & FNONBLOCK) != 0) {
 			mtx_unlock(&tfd->tfd_lock);
+			SDT_PROBE1(timerfd, , , read__eagain, td->td_proc->p_pid);
 			return (EAGAIN);
 		}
 		error = mtx_sleep(&tfd->tfd_count, &tfd->tfd_lock,
@@ -229,6 +248,7 @@ retry:
 	count = tfd->tfd_count;
 	tfd->tfd_count = 0;
 	mtx_unlock(&tfd->tfd_lock);
+	SDT_PROBE2(timerfd, , , read, td->td_proc->p_pid, count);
 	error = uiomove(&count, sizeof(timerfd_t), uio);
 
 	return (error);
@@ -344,6 +364,7 @@ timerfd_close(struct file *fp, struct thread *td)
 	LIST_REMOVE(tfd, entry);
 	mtx_unlock(&timerfd_list_lock);
 
+	SDT_PROBE1(timerfd, , , close, td->td_proc->p_pid);
 	callout_drain(&tfd->tfd_callout);
 	seldrain(&tfd->tfd_sel);
 	knlist_destroy(&tfd->tfd_sel.si_note);
@@ -428,6 +449,7 @@ timerfd_expire(void *arg)
 		timespecclear(&tfd->tfd_time.it_value);
 	}
 
+	SDT_PROBE2(timerfd, , , expire, tfd->tfd_count, tfd->tfd_ino);
 	timerfd_wakeup(tfd);
 }
 
@@ -486,6 +508,7 @@ kern_timerfd_create(struct thread *td, int clockid, int flags)
 	fdrop(fp, td);
 
 	td->td_retval[0] = fd;
+	SDT_PROBE4(timerfd, , , create, td->td_proc->p_pid, clockid, flags, fd);
 	return (0);
 }
 
@@ -510,6 +533,8 @@ kern_timerfd_gettime(struct thread *td, int fd, struct itimerspec *curr_value)
 	mtx_unlock(&tfd->tfd_lock);
 
 	fdrop(fp, td);
+	SDT_PROBE3(timerfd, , , gettime, td->td_proc->p_pid, fd,
+	    curr_value->it_value.tv_sec);
 	return (0);
 }
 
@@ -572,6 +597,8 @@ kern_timerfd_settime(struct thread *td, int fd, int flags,
 	mtx_unlock(&tfd->tfd_lock);
 
 	fdrop(fp, td);
+	SDT_PROBE5(timerfd, , , settime, td->td_proc->p_pid, fd, flags,
+	    new_value->it_value.tv_sec, new_value->it_interval.tv_sec);
 	return (error);
 }
 

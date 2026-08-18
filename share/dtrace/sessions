@@ -1,0 +1,107 @@
+#!/usr/sbin/dtrace -Zs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * sessions -- session and privilege establishment, end to end.
+ *
+ * Follows a login/elevation attempt from authentication through the shared
+ * credential transition:
+ *   - login(1) authenticates a console/network user (auth) and gives up
+ *     after too many tries (fail);
+ *   - su(1) authenticates (auth) and account-checks (acct) a privilege
+ *     elevation;
+ *   - logincap:::setusercontext (libutil) is the single choke point through
+ *     which login(1), su(1) and jexec(8) actually apply the target
+ *     credential (setgid/initgroups/loginclass/MAC/setuid).
+ * For login/su retcodes and the logincap error, 0 == success.
+ *
+ * These are userland USDT providers, so the probe spec uses the "NAME*"
+ * form to match every instance and string arguments are read with
+ * copyinstr().  Requires rebuilt base binaries carrying the providers
+ * (login, su, and libutil's logincap).
+ *
+ * Provider argument maps (declaration order):
+ *   login:::auth              args[0]=user (char *), args[1]=tty (char *),
+ *                             args[2]=rootlogin (int), args[3]=retcode (int)
+ *   login:::fail              args[0]=user (char *), args[1]=tty (char *)
+ *   su:::auth                 args[0]=from (char *), args[1]=to (char *),
+ *                             args[2]=tty (char *), args[3]=retcode (int)
+ *   su:::acct                 args[0]=to (char *), args[1]=retcode (int)
+ *   logincap:::setusercontext args[0]=user (char *), args[1]=uid (int),
+ *                             args[2]=flags (int), args[3]=error (int)
+ *
+ * Usage: sessions
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing session establishment... Ctrl-C for summary.\n\n");
+	printf("%-20s %-10s %-18s %-10s %s\n",
+	    "TIME", "VIA", "WHO", "OUTCOME", "DETAIL");
+}
+
+login*:::auth
+{
+	printf("%-20Y %-10s %-18s %-10s tty=%s%s (%d)\n", walltimestamp,
+	    "login", copyinstr(arg0),
+	    arg3 == 0 ? "AUTH-OK" : "AUTH-FAIL", copyinstr(arg1),
+	    arg2 != 0 ? " root" : "", arg3);
+	@auth["login", copyinstr(arg0), arg3 == 0 ? "ok" : "fail"] =
+	    count();
+}
+
+login*:::auth
+/arg3 != 0/
+{
+	@fail[copyinstr(arg0)] = count();
+}
+
+login*:::fail
+{
+	printf("%-20Y %-10s %-18s %-10s tty=%s\n", walltimestamp,
+	    "login", copyinstr(arg0), "GIVE-UP", copyinstr(arg1));
+	@fail[copyinstr(arg0)] = count();
+}
+
+su*:::auth
+{
+	printf("%-20Y %-10s %-18s %-10s tty=%s (%d)\n", walltimestamp,
+	    "su", strjoin(strjoin(copyinstr(arg0), "->"), copyinstr(arg1)),
+	    arg3 == 0 ? "AUTH-OK" : "AUTH-FAIL", copyinstr(arg2), arg3);
+	@auth["su", copyinstr(arg1), arg3 == 0 ? "ok" : "fail"] = count();
+}
+
+su*:::auth
+/arg3 != 0/
+{
+	@fail[copyinstr(arg1)] = count();
+}
+
+su*:::acct
+{
+	printf("%-20Y %-10s %-18s %-10s (%d)\n", walltimestamp,
+	    "su", copyinstr(arg0),
+	    arg1 == 0 ? "ACCT-OK" : "ACCT-FAIL", arg1);
+}
+
+logincap*:::setusercontext
+{
+	printf("%-20Y %-10s %-18s %-10s uid=%d flags=0x%x (%d)\n",
+	    walltimestamp, "setctx", copyinstr(arg0),
+	    arg3 == 0 ? "CRED-OK" : "CRED-FAIL", arg1, arg2, arg3);
+	@ctx[copyinstr(arg0), arg3 == 0 ? "ok" : "fail"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Authentication attempts by (via, user, outcome) ---\n");
+	printa("  %-8s %-18s %-6s %@d\n", @auth);
+	printf("\n--- Credential transitions by (user, outcome) ---\n");
+	printa("  %-18s %-6s %@d\n", @ctx);
+	printf("\n--- Authentication failures by user ---\n");
+	printa("  %-18s %@d\n", @fail);
+}

@@ -46,6 +46,7 @@
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
 #include <sys/priv.h>
+#include <sys/sdt.h>
 #include <sys/proc.h>
 #include <sys/posix4.h>
 #include <sys/time.h>
@@ -116,6 +117,16 @@ static int	itimespecfix(struct timespec *ts);
 
 SYSINIT(posix_timer, SI_SUB_P1003_1B, SI_ORDER_FIRST+4, itimer_start, NULL);
 
+SDT_PROVIDER_DEFINE(clock);
+/*
+ * The absolute system clock was stepped via settimeofday(2)/clock_settime(2):
+ * new time (sec), requested delta (sec), subject credential.  A large or
+ * backward step is an anti-forensics/log-tampering signal.  Runtime syscall
+ * path only; boot-time clock initialization is not probed.
+ */
+SDT_PROBE_DEFINE3(clock, kernel, settime, step, "int64_t", "int64_t",
+    "struct ucred *");
+
 static int
 settime(struct thread *td, struct timeval *tv)
 {
@@ -166,6 +177,8 @@ settime(struct thread *td, struct timeval *tv)
 	ts.tv_nsec = tv->tv_usec * 1000;
 	tc_setclock(&ts);
 	resettodr();
+	SDT_PROBE3(clock, kernel, settime, step, (int64_t)tv->tv_sec,
+	    (int64_t)delta.tv_sec, td->td_ucred);
 	return (0);
 }
 

@@ -27,4 +27,10 @@ LIB=		pam_rootok
 SRCS=		pam_rootok.c
 MANNODEV=	pam_rootok.8
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=		pam_rootok_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

@@ -54,6 +54,7 @@
 #include <sys/mutex.h>
 #include <sys/rwlock.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 #include <sys/taskqueue.h>
 #include <sys/tree.h>
 #include <vm/uma.h>
@@ -67,6 +68,17 @@
 #endif
 
 FEATURE(rctl, "Resource Limits");
+
+SDT_PROVIDER_DEFINE(rctl);
+/* A resource limit with a deny action was hit; the operation is refused. */
+SDT_PROBE_DEFINE3(rctl, kernel, rctl_enforce, deny, "struct proc *", "int",
+    "uint64_t");
+/* A resource limit with a signal action fired; the process is signalled. */
+SDT_PROBE_DEFINE3(rctl, kernel, rctl_enforce, signal, "struct proc *", "int",
+    "int");
+/* A resource limit with a throttle action fired; the process is slept. */
+SDT_PROBE_DEFINE3(rctl, kernel, rctl_enforce, throttle, "struct proc *", "int",
+    "uint64_t");
 
 #define	HRF_DEFAULT		0
 #define	HRF_DONT_INHERIT	1
@@ -590,6 +602,8 @@ rctl_enforce(struct proc *p, int resource, uint64_t amount)
 				continue;
 
 			if (rule->rr_amount == 0) {
+				SDT_PROBE3(rctl, kernel, rctl_enforce, throttle,
+				    p, resource, (uint64_t)rctl_throttle_max);
 				racct_proc_throttle(p, rctl_throttle_max);
 				continue;
 			}
@@ -652,6 +666,8 @@ rctl_enforce(struct proc *p, int resource, uint64_t amount)
 
 			KASSERT(sleep_ms >= rctl_throttle_min, ("%s: %ju < %d\n",
 			    __func__, (uintmax_t)sleep_ms, rctl_throttle_min));
+			SDT_PROBE3(rctl, kernel, rctl_enforce, throttle, p,
+			    resource, (uint64_t)sleep_ms);
 			racct_proc_throttle(p, sleep_ms);
 			continue;
 		default:
@@ -670,6 +686,8 @@ rctl_enforce(struct proc *p, int resource, uint64_t amount)
 			 * We're using the fact that RCTL_ACTION_SIG* values
 			 * are equal to their counterparts from sys/signal.h.
 			 */
+			SDT_PROBE3(rctl, kernel, rctl_enforce, signal, p,
+			    resource, rule->rr_action);
 			kern_psignal(p, rule->rr_action);
 			link->rrl_exceeded = 1;
 			continue;
@@ -677,6 +695,8 @@ rctl_enforce(struct proc *p, int resource, uint64_t amount)
 	}
 
 	if (should_deny) {
+		SDT_PROBE3(rctl, kernel, rctl_enforce, deny, p, resource,
+		    amount);
 		/*
 		 * Return fake error code; the caller should change it
 		 * into one proper for the situation - EFSIZ, ENOMEM etc.

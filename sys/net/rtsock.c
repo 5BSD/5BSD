@@ -45,6 +45,7 @@
 #include <sys/protosw.h>
 #include <sys/rmlock.h>
 #include <sys/rwlock.h>
+#include <sys/sdt.h>
 #include <sys/signalvar.h>
 #include <sys/socket.h>
 #include <sys/socketvar.h>
@@ -77,6 +78,11 @@
 #define	DEBUG_MAX_LEVEL	LOG_DEBUG
 #include <net/route/route_debug.h>
 _DECLARE_DEBUG(LOG_INFO);
+
+SDT_PROVIDER_DEFINE(route);
+SDT_PROBE_DEFINE2(route, , , add, "int", "int");
+SDT_PROBE_DEFINE2(route, , , delete, "int", "int");
+SDT_PROBE_DEFINE2(route, , , change, "int", "int");
 
 #ifdef COMPAT_FREEBSD32
 #include <sys/mount.h>
@@ -1183,6 +1189,10 @@ rts_send(struct socket *so, int flags, struct mbuf *m,
 				rtm->rtm_flags = rc.rc_rt->rte_flags | nhop_get_rtflags(nh);
 			}
 		}
+		if (rtm->rtm_type == RTM_ADD)
+			SDT_PROBE2(route, , , add, saf, error);
+		else
+			SDT_PROBE2(route, , , change, saf, error);
 		break;
 
 	case RTM_DELETE:
@@ -1198,6 +1208,7 @@ rts_send(struct socket *so, int flags, struct mbuf *m,
 			}
 			nh = rc.rc_nh_old;
 		}
+		SDT_PROBE2(route, , , delete, saf, error);
 		break;
 
 	case RTM_GET:

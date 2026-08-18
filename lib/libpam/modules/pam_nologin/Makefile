@@ -29,4 +29,10 @@ MANNODEV=	pam_nologin.8
 
 LIBADD+=	util
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=		pam_nologin_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>

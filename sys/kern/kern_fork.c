@@ -89,6 +89,16 @@ dtrace_fork_func_t	dtrace_fasttrap_fork;
 SDT_PROVIDER_DECLARE(proc);
 SDT_PROBE_DEFINE3(proc, , , create, "struct proc *", "struct proc *", "int");
 
+/*
+ * proclife: process-lifecycle observability provider.  This is the defining
+ * translation unit for the provider; its probes live on the teardown side in
+ * kern_exit.c (see the SDT_PROVIDER_DECLARE there).  Process creation is not
+ * re-probed here: the existing proc:::create probe above already fires from
+ * do_fork() with the child, the parent, and the full RF* fork flags, so a
+ * proclife fork probe would carry no additional information.
+ */
+SDT_PROVIDER_DEFINE(proclife);
+
 #ifndef _SYS_SYSPROTO_H_
 struct fork_args {
 	int     dummy;

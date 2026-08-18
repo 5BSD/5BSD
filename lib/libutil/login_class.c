@@ -44,6 +44,8 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include "logincap_probes.h"
+
 
 static struct login_res {
     const char *what;
@@ -528,8 +530,8 @@ setclasspriority(login_cap_t * const lc, struct passwd const * const pwd)
  *
  */
 
-int
-setusercontext(login_cap_t *lc, const struct passwd *pwd, uid_t uid, unsigned int flags)
+static int
+setusercontext_impl(login_cap_t *lc, const struct passwd *pwd, uid_t uid, unsigned int flags)
 {
     login_cap_t *llc = NULL;
     int error;
@@ -634,4 +636,15 @@ setusercontext(login_cap_t *lc, const struct passwd *pwd, uid_t uid, unsigned in
     }
 
     return (0);
+}
+
+int
+setusercontext(login_cap_t *lc, const struct passwd *pwd, uid_t uid, unsigned int flags)
+{
+    int ret;
+
+    ret = setusercontext_impl(lc, pwd, uid, flags);
+    LOGINCAP_PROBE_SETUSERCONTEXT((pwd != NULL ? pwd->pw_name : NULL),
+	(int)uid, (int)flags, ret);
+    return (ret);
 }

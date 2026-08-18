@@ -8,6 +8,11 @@ MLINKS=	inetd.8 inetd.conf.5
 SRCS=	inetd.c builtins.c
 
 CFLAGS+= -DLOGIN_CAP
+
+.if ${MK_DTRACE} != "no"
+SRCS+=	inetd_provider.d
+CFLAGS+= -DWITH_DTRACE
+.endif
 #CFLAGS+= -DSANITY_CHECK
 
 .if ${MK_INET6_SUPPORT} != "no"

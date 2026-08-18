@@ -1,0 +1,151 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * persistence -- flag boot/rootkit persistence and hardening-downgrade TTPs.
+ *
+ * Attackers establishing persistence or lowering a host's defenses touch a
+ * recognizable spread of kernel subsystems: they load modules, disable
+ * process accounting, plant kernel environment variables, weaken security
+ * sysctls, add swap/backing store, mount new filesystems, and step the
+ * clock to defeat time-based detection.  This consumer records each such
+ * event, tagged with the persistence/hardening TTP it represents, and
+ * aggregates by executable name so a single actor touching several stands
+ * out.
+ *
+ * Probes correlated (all KERNEL SDT probes; char * args are kernel
+ * pointers -> stringof(), never copyinstr()):
+ *
+ *   kld:::load          SDT_PROBE3(kld,,,load,
+ *                         args[0]=char *filename, args[1]=int id,
+ *                         args[2]=int error)   -- new kernel module (rootkit)
+ *   kld:::load-deny     SDT_PROBE2(kld,,,load__deny,
+ *                         args[0]=char *file, args[1]=struct ucred *cred)
+ *                         -- blocked module load (probing/verified-boot)
+ *   acct:::config       SDT_PROBE3(acct,,,config,
+ *                         args[0]=uintptr_t user path (0 == DISABLED),
+ *                         args[1]=struct ucred *cred, args[2]=int error)
+ *   kenv:::set          SDT_PROBE4(kenv,,,set,
+ *                         args[0]=char *name, args[1]=char *value,
+ *                         args[2]=struct ucred *cred, args[3]=int error)
+ *   sysctl:::write      SDT_PROBE3(sysctl,,,write,
+ *                         args[0]=char *oid_name,
+ *                         args[1]=struct ucred *cred, args[2]=int error)
+ *                         -- predicate on securelevel/security.bsd nodes
+ *   swap:::on           SDT_PROBE2(swap,,,on,
+ *                         args[0]=uintptr_t user devname, args[1]=int error)
+ *   mount:::mount       SDT_PROBE5(mount,,,mount,
+ *                         args[0]=char *fstype, args[1]=char *fspath,
+ *                         args[2]=uint64_t fsflags, args[3]=struct ucred *,
+ *                         args[4]=int error)
+ *   clock:::step        SDT_PROBE3(clock, kernel, settime, step,
+ *                         args[0]=int64_t new_sec, args[1]=int64_t delta_sec,
+ *                         args[2]=struct ucred *cred)  -- discontinuous set
+ *
+ * NOTE: requires the rebuilt instrumented kernel/base defining the kld,
+ * acct, kenv, sysctl, swap, mount and clock SDT providers.  These probes are
+ * absent on a stock kernel.
+ *
+ * Usage: persistence
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Watching persistence / hardening-downgrade TTPs. Ctrl-C for summary.\n\n");
+	printf("%-20s %-8s %-18s %-16s %s\n",
+	    "TIME", "PID", "EXECNAME", "TTP", "DETAIL");
+}
+
+kld:::load
+{
+	@ttp[execname, "kld-load"] = count();
+	printf("%-20Y %-8d %-18s %-16s file=%s id=%d error=%d\n",
+	    walltimestamp, pid, execname, "kld-load",
+	    stringof(args[0]), args[1], args[2]);
+}
+
+kld:::load-deny
+{
+	@ttp[execname, "kld-load-deny"] = count();
+	printf("%-20Y %-8d %-18s %-16s file=%s (blocked)\n",
+	    walltimestamp, pid, execname, "kld-load-deny",
+	    stringof(args[0]));
+}
+
+/*
+ * A NULL path means acct(2) was called to TURN OFF accounting -- a classic
+ * anti-forensics step.  A non-NULL path (re)enables to an attacker file.
+ */
+acct:::config
+/args[0] == 0/
+{
+	@ttp[execname, "acct-disable"] = count();
+	printf("%-20Y %-8d %-18s %-16s accounting DISABLED error=%d\n",
+	    walltimestamp, pid, execname, "acct-disable", args[2]);
+}
+
+acct:::config
+/args[0] != 0/
+{
+	@ttp[execname, "acct-enable"] = count();
+	printf("%-20Y %-8d %-18s %-16s path=%s error=%d\n",
+	    walltimestamp, pid, execname, "acct-enable",
+	    copyinstr(args[0]), args[2]);
+}
+
+kenv:::set
+{
+	@ttp[execname, "kenv-set"] = count();
+	printf("%-20Y %-8d %-18s %-16s %s=%s error=%d\n",
+	    walltimestamp, pid, execname, "kenv-set",
+	    stringof(args[0]), stringof(args[1]), args[3]);
+}
+
+/*
+ * Watch writes to hardening controls: kern.securelevel and the security.bsd
+ * family (e.g. see_other_uids, unprivileged_proc_debug, hardlink checks).
+ */
+sysctl:::write
+/strstr(stringof(args[0]), "securelevel") != NULL ||
+ strstr(stringof(args[0]), "security.bsd") != NULL ||
+ strstr(stringof(args[0]), "security.jail") != NULL/
+{
+	@ttp[execname, "sysctl-harden"] = count();
+	printf("%-20Y %-8d %-18s %-16s node=%s error=%d\n",
+	    walltimestamp, pid, execname, "sysctl-harden",
+	    stringof(args[0]), args[2]);
+}
+
+swap:::on
+{
+	@ttp[execname, "swap-on"] = count();
+	printf("%-20Y %-8d %-18s %-16s dev=%s error=%d\n",
+	    walltimestamp, pid, execname, "swap-on",
+	    copyinstr(args[0]), args[1]);
+}
+
+mount:::mount
+{
+	@ttp[execname, "mount"] = count();
+	printf("%-20Y %-8d %-18s %-16s type=%s path=%s error=%d\n",
+	    walltimestamp, pid, execname, "mount",
+	    stringof(args[0]), stringof(args[1]), args[4]);
+}
+
+clock:::step
+{
+	@ttp[execname, "clock-step"] = count();
+	printf("%-20Y %-8d %-18s %-16s new_sec=%d delta_sec=%d\n",
+	    walltimestamp, pid, execname, "clock-step",
+	    args[0], args[1]);
+}
+
+dtrace:::END
+{
+	printf("\n%-18s %-20s %s\n", "EXECNAME", "TTP", "COUNT");
+	printa("%-18s %-20s %@d\n", @ttp);
+}

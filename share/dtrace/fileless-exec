@@ -1,0 +1,163 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 The FreeBSD Foundation
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * fileless-exec -- detect in-memory / fileless code execution sequences.
+ *
+ * Fileless execution stages code without a file on disk: it creates an
+ * anonymous shared-memory object (memfd_create / SHM_ANON), maps it
+ * executable, optionally seals it, or reuses a SysV segment attached with
+ * SHM_EXEC, then transfers control -- often visible as an mmap/mprotect that
+ * turns a writable region executable.  This consumer stitches those events
+ * into a per-pid sequence and reports which image activator (ELF / shell /
+ * interpreter) ultimately ran.
+ *
+ * Probes correlated (all KERNEL SDT probes; string args are kernel
+ * pointers -> stringof(); no USDT here, so no copyinstr()):
+ *
+ *   shmfd:::create      SDT_PROBE6(shmfd,,,create,
+ *                         args[0]=int pid, args[1]=char *path ("anon" for
+ *                         anonymous/memfd), args[2]=char *name (USERSPACE ptr,
+ *                         memfd label -- NOT dereferenced here), args[3]=int
+ *                         shmflags, args[4]=int mode, args[5]=int largepage)
+ *   shmfd:::mmap-exec   SDT_PROBE5(shmfd,,,mmap__exec,
+ *                         args[0]=int pid, args[1]=struct shmfd *,
+ *                         args[2]=int prot, args[3]=int flags, args[4]=int error)
+ *   shmfd:::setseals    SDT_PROBE4(shmfd,,,setseals,
+ *                         args[0]=int pid, args[1]=struct shmfd *,
+ *                         args[2]=int seals, args[3]=int error)
+ *   vm:::mmap-exec      SDT_PROBE6(vm,,,mmap__exec,
+ *                         args[0]=pid_t pid, args[1]=vm_offset_t addr,
+ *                         args[2]=vm_size_t len, args[3]=int prot,
+ *                         args[4]=int flags, args[5]=int error)
+ *   vm:::mprotect-exec  SDT_PROBE3(vm,,,mprotect__exec,
+ *                         args[0]=vm_offset_t start, args[1]=vm_offset_t end,
+ *                         args[2]=vm_prot_t new_prot)
+ *                         -- NOTE: no pid arg; uses the pid/execname builtins
+ *                         of the acting process (fires in its syscall context)
+ *   sysvshm:::shmat     SDT_PROBE4(sysvshm,,,shmat,
+ *                         args[0]=pid_t pid, args[1]=int shmid,
+ *                         args[2]=vm_offset_t va, args[3]=int shmflg)
+ *   imgact:::shell      SDT_PROBE3(imgact,,,shell,
+ *                         args[0]=char *interpreter_name,
+ *                         args[1]=char *optarg (may be NULL), args[2]=char *fname)
+ *   imgact:::elf        SDT_PROBE4(imgact,,,elf,
+ *                         args[0]=char *fname, args[1]=char *interp,
+ *                         args[2]=unsigned long entry, args[3]=int brand)
+ *   imgact:::interp     SDT_PROBE2(imgact,,,interp,
+ *                         args[0]=char *interp, args[1]=unsigned long entry)
+ *
+ * TODO: <sys/shm.h> defines SHM_RDONLY (010000) and SHM_RND (020000) but not
+ * SHM_EXEC; the SHM_EXEC bit is inlined below as 0100000.  Replace with the
+ * SHM_EXEC macro once the header exports it.
+ *
+ * NOTE: requires the rebuilt instrumented kernel/base defining the shmfd, vm,
+ * sysvshm and imgact SDT providers.  These probes are absent on a stock
+ * kernel.
+ *
+ * Usage: fileless-exec
+ */
+
+#pragma D option quiet
+
+inline int SHM_EXEC = 0100000;	/* TODO: not exported by <sys/shm.h> */
+
+dtrace:::BEGIN
+{
+	seq[0] = 0;
+	printf("Tracing in-memory execution sequences. Ctrl-C for summary.\n\n");
+	printf("%-20s %-8s %-18s %-14s %s\n",
+	    "TIME", "PID", "EXECNAME", "STAGE", "DETAIL");
+}
+
+shmfd:::create
+/args[1] != NULL/
+{
+	seq[pid] += 1;
+	@stage[execname, "shmfd-create"] = count();
+	printf("%-20Y %-8d %-18s %-14s [%d] backing=%s shmflags=0x%x mode=0%o\n",
+	    walltimestamp, pid, execname, "shmfd-create", seq[pid],
+	    stringof(args[1]), args[3], args[4]);
+}
+
+shmfd:::mmap-exec
+{
+	seq[pid] += 1;
+	@stage[execname, "shmfd-mmap-exec"] = count();
+	printf("%-20Y %-8d %-18s %-14s [%d] prot=0x%x flags=0x%x error=%d\n",
+	    walltimestamp, pid, execname, "shmfd-mmap-exec", seq[pid],
+	    args[2], args[3], args[4]);
+}
+
+shmfd:::setseals
+{
+	seq[pid] += 1;
+	@stage[execname, "shmfd-setseals"] = count();
+	printf("%-20Y %-8d %-18s %-14s [%d] seals=0x%x error=%d\n",
+	    walltimestamp, pid, execname, "shmfd-setseals", seq[pid],
+	    args[2], args[3]);
+}
+
+vm:::mmap-exec
+{
+	seq[pid] += 1;
+	@stage[execname, "vm-mmap-exec"] = count();
+	printf("%-20Y %-8d %-18s %-14s [%d] addr=0x%x len=%d prot=0x%x flags=0x%x\n",
+	    walltimestamp, pid, execname, "vm-mmap-exec", seq[pid],
+	    args[1], args[2], args[3], args[4]);
+}
+
+vm:::mprotect-exec
+{
+	seq[pid] += 1;
+	@stage[execname, "vm-mprotect-exec"] = count();
+	printf("%-20Y %-8d %-18s %-14s [%d] start=0x%x end=0x%x newprot=0x%x\n",
+	    walltimestamp, pid, execname, "vm-mprotect-exec", seq[pid],
+	    args[0], args[1], args[2]);
+}
+
+/*
+ * SysV shared-memory attach requesting an executable mapping (SHM_EXEC) is
+ * a fileless-exec primitive.
+ */
+sysvshm:::shmat
+/(args[3] & SHM_EXEC) != 0/
+{
+	seq[pid] += 1;
+	@stage[execname, "sysvshm-shmat-exec"] = count();
+	printf("%-20Y %-8d %-18s %-14s [%d] shmid=%d va=0x%x shmflg=0x%x (SHM_EXEC)\n",
+	    walltimestamp, pid, execname, "shmat-exec", seq[pid],
+	    args[1], args[2], args[3]);
+}
+
+imgact:::elf
+{
+	@stage[execname, "imgact-elf"] = count();
+	printf("%-20Y %-8d %-18s %-14s [%d] fname=%s interp=%s brand=%d\n",
+	    walltimestamp, pid, execname, "imgact-elf", seq[pid],
+	    stringof(args[0]), stringof(args[1]), args[3]);
+}
+
+imgact:::interp
+{
+	@stage[execname, "imgact-interp"] = count();
+	printf("%-20Y %-8d %-18s %-14s [%d] interp=%s entry=0x%x\n",
+	    walltimestamp, pid, execname, "imgact-interp", seq[pid],
+	    stringof(args[0]), args[1]);
+}
+
+imgact:::shell
+{
+	@stage[execname, "imgact-shell"] = count();
+	printf("%-20Y %-8d %-18s %-14s [%d] interp=%s fname=%s\n",
+	    walltimestamp, pid, execname, "imgact-shell", seq[pid],
+	    stringof(args[0]), stringof(args[2]));
+}
+
+dtrace:::END
+{
+	printf("\n%-18s %-22s %s\n", "EXECNAME", "STAGE", "COUNT");
+	printa("%-18s %-22s %@d\n", @stage);
+}

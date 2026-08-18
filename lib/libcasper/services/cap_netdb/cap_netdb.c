@@ -41,6 +41,7 @@
 #include <libcasper_service.h>
 
 #include "cap_netdb.h"
+#include "cap_netdb_probes.h"
 
 static struct protoent *
 protoent_unpack(nvlist_t *nvl)
@@ -147,6 +148,7 @@ netdb_command(const char *cmd, const nvlist_t *limits, nvlist_t *nvlin,
 	else
 		error = NO_RECOVERY;
 
+	CAP_NETDB_PROBE_COMMAND(cmd, error);
 	return (error);
 }
 

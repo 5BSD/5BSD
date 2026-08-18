@@ -49,6 +49,8 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_self_probes.h"
+
 #define OPT_ALLOW_ROOT "allow_root"
 
 PAM_EXTERN int
@@ -56,33 +58,45 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
 	struct passwd *pwd;
-	const char *luser;
+	const char *luser = NULL;
 	int pam_err;
 	uid_t uid;
 
 	pam_err = pam_get_user(pamh, &luser, NULL);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_SELF_PROBE_SM_AUTHENTICATE(luser, pam_err);
 		return (pam_err);
-	if (luser == NULL || (pwd = getpwnam(luser)) == NULL)
+	}
+	if (luser == NULL || (pwd = getpwnam(luser)) == NULL) {
+		PAM_SELF_PROBE_SM_AUTHENTICATE(luser, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
 	uid = getuid();
-	if (uid == 0 && !openpam_get_option(pamh, OPT_ALLOW_ROOT))
+	if (uid == 0 && !openpam_get_option(pamh, OPT_ALLOW_ROOT)) {
+		PAM_SELF_PROBE_SM_AUTHENTICATE(luser, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
-	if (uid == (uid_t)pwd->pw_uid)
+	if (uid == (uid_t)pwd->pw_uid) {
+		PAM_SELF_PROBE_SM_AUTHENTICATE(luser, PAM_SUCCESS);
 		return (PAM_SUCCESS);
+	}
 
 	PAM_VERBOSE_ERROR("Refused; source and target users differ");
 
+	PAM_SELF_PROBE_SM_AUTHENTICATE(luser, PAM_AUTH_ERR);
 	return (PAM_AUTH_ERR);
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_SELF_PROBE_SM_SETCRED((const char *)user, flags, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 

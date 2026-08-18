@@ -56,6 +56,7 @@
 #include <sys/filedesc.h>
 #include <sys/reboot.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 #include <sys/stdarg.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysproto.h>
@@ -72,6 +73,11 @@
 #include <security/mac/mac_framework.h>
 
 #define	VFS_MOUNTARG_SIZE_MAX	(1024 * 64)
+
+SDT_PROVIDER_DEFINE(mount);
+SDT_PROBE_DEFINE5(mount, , , mount, "char *", "char *", "uint64_t",
+    "struct ucred *", "int");
+SDT_PROBE_DEFINE4(mount, , , unmount, "char *", "char *", "uint64_t", "int");
 
 static int	vfs_domount(struct thread *td, const char *fstype, char *fspath,
 		    uint64_t fsflags, bool only_export, bool jail_export,
@@ -1734,6 +1740,8 @@ out:
 	NDFREE_PNBUF(&nd);
 	vrele(nd.ni_dvp);
 
+	SDT_PROBE5(mount, , , mount, fstype, fspath, fsflags, td->td_ucred,
+	    error);
 	return (error);
 }
 
@@ -2398,6 +2406,8 @@ dounmount(struct mount *mp, uint64_t flags, struct thread *td)
 	MNT_IUNLOCK(mp);
 	vfs_deallocate_syncvnode(mp);
 	error = VFS_UNMOUNT(mp, flags);
+	SDT_PROBE4(mount, , , unmount, mp->mnt_stat.f_fstypename,
+	    mp->mnt_stat.f_mntonname, flags, error);
 	vn_finished_write(mp);
 	vfs_rel(mp);
 	/*

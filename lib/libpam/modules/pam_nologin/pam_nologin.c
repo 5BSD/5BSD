@@ -51,6 +51,8 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_nologin_probes.h"
+
 #define	_PATH_NOLOGIN	"/var/run/nologin"
 
 static char nologin_def[] = _PATH_NOLOGIN;
@@ -64,18 +66,22 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags,
 	struct stat st;
 	int retval, fd;
 	ssize_t ss;
-	const char *user, *nologin;
+	const char *user = NULL, *nologin;
 	char *mtmp;
 
 	retval = pam_get_user(pamh, &user, NULL);
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_NOLOGIN_PROBE_SM_ACCT_MGMT(user, retval);
 		return (retval);
+	}
 
 	PAM_LOG("Got user: %s", user);
 
 	pwd = getpwnam(user);
-	if (pwd == NULL)
+	if (pwd == NULL) {
+		PAM_NOLOGIN_PROBE_SM_ACCT_MGMT(user, PAM_USER_UNKNOWN);
 		return (PAM_USER_UNKNOWN);
+	}
 
 	/*
 	 * login_getpwclass(3) will select the "root" class by default
@@ -85,11 +91,13 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags,
 	lc = login_getpwclass(pwd);
 	if (lc == NULL) {
 		PAM_LOG("Unable to get login class for user %s", user);
+		PAM_NOLOGIN_PROBE_SM_ACCT_MGMT(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
 	}
 
 	if (login_getcapbool(lc, "ignorenologin", 0)) {
 		login_close(lc);
+		PAM_NOLOGIN_PROBE_SM_ACCT_MGMT(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
 	}
 
@@ -98,6 +106,7 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags,
 	fd = open(nologin, O_RDONLY, 0);
 	if (fd < 0) {
 		login_close(lc);
+		PAM_NOLOGIN_PROBE_SM_ACCT_MGMT(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
 	}
 
@@ -120,6 +129,7 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags,
 	close(fd);
 	login_close(lc);
 
+	PAM_NOLOGIN_PROBE_SM_ACCT_MGMT(user, PAM_AUTH_ERR);
 	return (PAM_AUTH_ERR);
 }
 

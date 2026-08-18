@@ -53,6 +53,7 @@
 #include <sys/proc.h>
 #include <sys/racct.h>
 #include <sys/resourcevar.h>
+#include <sys/sdt.h>
 #include <sys/serial.h>
 #include <sys/stat.h>
 #include <sys/stdarg.h>
@@ -107,6 +108,68 @@ struct pts_softc {
 };
 
 /*
+ * Static DTrace (SDT) instrumentation for the pseudo-terminal subsystem.
+ *
+ * All probes belong to a single "pts" provider and are meant for runtime,
+ * syscall-driven observability of a session/privilege-relevant surface
+ * (pty allocation, master/slave open & close, and control ioctls such as
+ * TIOCSTI character injection, TIOCSCTTY, TIOCSIG and packet-mode ops).
+ *
+ * Granularity is strictly per-call (never per-byte).  Probe leaf names use
+ * a double underscore where the visible DTrace probe name carries a dash
+ * (e.g. master__read -> pts:::master-read).
+ */
+SDT_PROVIDER_DEFINE(pts);
+
+/* Lifecycle: a new pty pair is created. */
+SDT_PROBE_DEFINE3(pts, , , alloc,
+    "int" /* unit */, "pid_t" /* pid */, "uid_t" /* uid */);
+SDT_PROBE_DEFINE3(pts, , , alloc__external,
+    "const char *" /* name */, "pid_t" /* pid */, "uid_t" /* uid */);
+
+/* posix_openpt(2) / /dev/ptmx clone-open: the master controller is handed out. */
+SDT_PROBE_DEFINE3(pts, , , openpt,
+    "int" /* fd */, "int" /* flags */, "pid_t" /* pid */);
+SDT_PROBE_DEFINE3(pts, , , openpt__fail,
+    "int" /* flags */, "pid_t" /* pid */, "int" /* error */);
+
+/* Master (controller) data dispatch to/from the slave line discipline. */
+SDT_PROBE_DEFINE2(pts, , , master__read,
+    "int" /* unit */, "size_t" /* resid */);
+SDT_PROBE_DEFINE2(pts, , , master__write,
+    "int" /* unit */, "size_t" /* resid */);
+
+/* Control ioctls on the master. */
+SDT_PROBE_DEFINE2(pts, , , ioctl,
+    "int" /* unit */, "u_long" /* cmd */);
+SDT_PROBE_DEFINE3(pts, , , ioctl__redirect,
+    "int" /* unit */, "u_long" /* cmd */, "int" /* error */);
+SDT_PROBE_DEFINE1(pts, , , tiocptmaster,
+    "int" /* unit */);
+SDT_PROBE_DEFINE1(pts, , , tiocgptn,
+    "int" /* unit */);
+SDT_PROBE_DEFINE2(pts, , , tiocpkt,
+    "int" /* unit */, "int" /* enable */);
+SDT_PROBE_DEFINE2(pts, , , tiocsig,
+    "int" /* unit */, "int" /* sig */);
+
+/* Open / close teardown of the master and slave sides. */
+SDT_PROBE_DEFINE1(pts, , , master__close,
+    "int" /* unit */);
+SDT_PROBE_DEFINE1(pts, , , slave__open,
+    "int" /* unit */);
+SDT_PROBE_DEFINE1(pts, , , slave__close,
+    "int" /* unit */);
+
+/* Packet-mode / flush / window-size notification to the master. */
+SDT_PROBE_DEFINE2(pts, , , pktnotify,
+    "int" /* unit */, "char" /* event */);
+
+/* Final teardown / free of the pty. */
+SDT_PROBE_DEFINE1(pts, , , free,
+    "int" /* unit */);
+
+/*
  * Controller-side file operations.
  */
 
@@ -118,6 +181,8 @@ ptsdev_read(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	struct pts_softc *psc = tty_softc(tp);
 	int error = 0;
 	char pkt;
+
+	SDT_PROBE2(pts, , , master__read, psc->pts_unit, uio->uio_resid);
 
 	if (uio->uio_resid == 0)
 		return (0);
@@ -194,6 +259,8 @@ ptsdev_write(struct file *fp, struct uio *uio, struct ucred *active_cred,
 	size_t iblen, rintlen;
 	int error = 0;
 
+	SDT_PROBE2(pts, , , master__write, psc->pts_unit, uio->uio_resid);
+
 	if (uio->uio_resid == 0)
 		return (0);
 
@@ -265,6 +332,8 @@ ptsdev_ioctl(struct file *fp, u_long cmd, void *data,
 	struct pts_softc *psc = tty_softc(tp);
 	int error = 0, sig;
 
+	SDT_PROBE2(pts, , , ioctl, psc->pts_unit, cmd);
+
 	switch (cmd) {
 	case FIODTYPE:
 		*(int *)data = D_TTY;
@@ -327,6 +396,7 @@ ptsdev_ioctl(struct file *fp, u_long cmd, void *data,
 		/*
 		 * Get the device unit number.
 		 */
+		SDT_PROBE1(pts, , , tiocgptn, psc->pts_unit);
 		if (psc->pts_unit < 0)
 			return (ENOTTY);
 		*(unsigned int *)data = psc->pts_unit;
@@ -352,6 +422,7 @@ ptsdev_ioctl(struct file *fp, u_long cmd, void *data,
 		return (error);
 	case TIOCPTMASTER:
 		/* Yes, we are a pseudo-terminal master. */
+		SDT_PROBE1(pts, , , tiocptmaster, psc->pts_unit);
 		return (0);
 	case TIOCSIG:
 		/* Signal the foreground process group. */
@@ -359,12 +430,14 @@ ptsdev_ioctl(struct file *fp, u_long cmd, void *data,
 		if (sig < 1 || sig >= NSIG)
 			return (EINVAL);
 
+		SDT_PROBE2(pts, , , tiocsig, psc->pts_unit, sig);
 		tty_lock(tp);
 		tty_signal_pgrp(tp, sig);
 		tty_unlock(tp);
 		return (0);
 	case TIOCPKT:
 		/* Enable/disable packet mode. */
+		SDT_PROBE2(pts, , , tiocpkt, psc->pts_unit, *(int *)data);
 		tty_lock(tp);
 		if (*(int *)data)
 			psc->pts_flags |= PTS_PKT;
@@ -380,6 +453,13 @@ ptsdev_ioctl(struct file *fp, u_long cmd, void *data,
 	tty_unlock(tp);
 	if (error == ENOIOCTL)
 		error = ENOTTY;
+
+	/*
+	 * ioctls not handled inline (including the security-relevant
+	 * TIOCSTI, TIOCSCTTY and TIOCSWINSZ) are forwarded to the slave
+	 * line discipline; report the command and its result here.
+	 */
+	SDT_PROBE3(pts, , , ioctl__redirect, psc->pts_unit, cmd, error);
 
 	return (error);
 }
@@ -572,6 +652,9 @@ ptsdev_close(struct file *fp, struct thread *td)
 {
 	struct tty *tp = fp->f_data;
 
+	SDT_PROBE1(pts, , , master__close,
+	    ((struct pts_softc *)tty_softc(tp))->pts_unit);
+
 	/* Deallocate TTY device. */
 	tty_lock(tp);
 	tty_rel_gone(tp);
@@ -648,6 +731,8 @@ ptsdrv_open(struct tty *tp)
 {
 	struct pts_softc *psc = tty_softc(tp);
 
+	SDT_PROBE1(pts, , , slave__open, psc->pts_unit);
+
 	psc->pts_flags &= ~PTS_FINISHED;
 
 	return (0);
@@ -657,6 +742,8 @@ static void
 ptsdrv_close(struct tty *tp)
 {
 	struct pts_softc *psc = tty_softc(tp);
+
+	SDT_PROBE1(pts, , , slave__close, psc->pts_unit);
 
 	/* Wake up any blocked readers/writers. */
 	psc->pts_flags |= PTS_FINISHED;
@@ -668,6 +755,8 @@ static void
 ptsdrv_pktnotify(struct tty *tp, char event)
 {
 	struct pts_softc *psc = tty_softc(tp);
+
+	SDT_PROBE2(pts, , , pktnotify, psc->pts_unit, event);
 
 	/*
 	 * Clear conflicting flags.
@@ -696,6 +785,8 @@ static void
 ptsdrv_free(void *softc)
 {
 	struct pts_softc *psc = softc;
+
+	SDT_PROBE1(pts, , , free, psc->pts_unit);
 
 	/* Make device number available again. */
 	if (psc->pts_unit >= 0)
@@ -781,6 +872,8 @@ pts_alloc(int fflags, struct thread *td, struct file *fp)
 
 	finit(fp, fflags, DTYPE_PTS, tp, &ptsdev_ops);
 
+	SDT_PROBE3(pts, , , alloc, psc->pts_unit, p->p_pid, cred->cr_uid);
+
 	return (0);
 }
 
@@ -828,6 +921,8 @@ pts_alloc_external(int fflags, struct thread *td, struct file *fp,
 
 	finit(fp, fflags, DTYPE_PTS, tp, &ptsdev_ops);
 
+	SDT_PROBE3(pts, , , alloc__external, name, p->p_pid, cred->cr_uid);
+
 	return (0);
 }
 #endif /* PTS_EXTERNAL */
@@ -857,6 +952,8 @@ sys_posix_openpt(struct thread *td, struct posix_openpt_args *uap)
 	/* Allocate the actual pseudo-TTY. */
 	error = pts_alloc(FFLAGS(uap->flags & O_ACCMODE), td, fp);
 	if (error != 0) {
+		SDT_PROBE3(pts, , , openpt__fail, uap->flags,
+		    td->td_proc->p_pid, error);
 		fdclose(td, fp, fd);
 		fdrop(fp, td);
 		return (error);
@@ -864,6 +961,9 @@ sys_posix_openpt(struct thread *td, struct posix_openpt_args *uap)
 
 	/* Pass it back to userspace. */
 	td->td_retval[0] = fd;
+
+	SDT_PROBE3(pts, , , openpt, fd, uap->flags, td->td_proc->p_pid);
+
 	fdrop(fp, td);
 
 	return (0);

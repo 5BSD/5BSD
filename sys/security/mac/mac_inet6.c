@@ -171,6 +171,9 @@ mac_ip6q_update(struct mbuf *m, struct ip6q *q6)
 	    q6->ip6q_label);
 }
 
+MAC_CHECK_PROBE_DEFINE3(ip6_check_jail, "struct ucred *",
+    "struct in6_addr *", "struct ifnet *");
+
 /* Check with rules in module if the IPv6 address is allowed. */
 int
 mac_inet6_check_add_addr(struct ucred *cred, const struct in6_addr *ia6,
@@ -179,6 +182,7 @@ mac_inet6_check_add_addr(struct ucred *cred, const struct in6_addr *ia6,
 	int error;
 
 	MAC_POLICY_CHECK(ip6_check_jail, cred, ia6, ifp);
+	MAC_CHECK_PROBE3(ip6_check_jail, error, cred, ia6, ifp);
 	return (error);
 }
 

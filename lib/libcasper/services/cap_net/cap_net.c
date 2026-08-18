@@ -43,6 +43,7 @@
 #include <libcasper_service.h>
 
 #include "cap_net.h"
+#include "cap_net_probes.h"
 
 #define	CAPNET_MASK	(CAPNET_ADDR2NAME | CAPNET_NAME2ADDR	\
     CAPNET_DEPRECATED_ADDR2NAME | CAPNET_DEPRECATED_NAME2ADDR | \
@@ -392,6 +393,7 @@ cap_net_limit_init(cap_channel_t *chan, uint64_t mode)
 		limit->cnl_name2addr = nvlist_create(0);
 		limit->cnl_connect = nvlist_create(0);
 		limit->cnl_bind = nvlist_create(0);
+		CAP_NET_PROBE_STAGE_MODE(mode);
 	}
 
 	return (limit);
@@ -508,6 +510,8 @@ cap_net_limit_name2addr(cap_net_limit_t *limit, const char *host,
 	nvlist_add_string(nvl,
 	    host != NULL ? host : "",
 	    serv != NULL ? serv : "");
+	CAP_NET_PROBE_STAGE_HOST((host != NULL ? host : ""),
+	    (serv != NULL ? serv : ""));
 
 	nvlist_move_nvlist(limit->cnl_name2addr, "hosts", nvl);
 	return (limit);
@@ -607,11 +611,16 @@ net_add_hostent_to_cache(const char *address, size_t asize, int family)
 static bool
 net_allowed_mode(const nvlist_t *limits, uint64_t mode)
 {
+	bool allowed;
 
-	if (limits == NULL)
+	if (limits == NULL) {
+		CAP_NET_PROBE_ALLOW_MODE(mode, 1);
 		return (true);
+	}
 
-	return ((nvlist_get_number(limits, "mode") & mode) == mode);
+	allowed = ((nvlist_get_number(limits, "mode") & mode) == mode);
+	CAP_NET_PROBE_ALLOW_MODE(mode, allowed);
+	return (allowed);
 }
 
 static bool
@@ -620,21 +629,27 @@ net_allowed_family(const nvlist_t *limits, int family)
 	const uint64_t *allowedfamily;
 	size_t i, allsize;
 
-	if (limits == NULL)
+	if (limits == NULL) {
+		CAP_NET_PROBE_ALLOW_FAMILY(family, 1);
 		return (true);
+	}
 
 	/* If there are no familes at all, allow any mode. */
-	if (!nvlist_exists_number_array(limits, "family"))
+	if (!nvlist_exists_number_array(limits, "family")) {
+		CAP_NET_PROBE_ALLOW_FAMILY(family, 1);
 		return (true);
+	}
 
 	allowedfamily = nvlist_get_number_array(limits, "family", &allsize);
 	for (i = 0; i < allsize; i++) {
 		/* XXX: what with AF_UNSPEC? */
 		if (allowedfamily[i] == (uint64_t)family) {
+			CAP_NET_PROBE_ALLOW_FAMILY(family, 1);
 			return (true);
 		}
 	}
 
+	CAP_NET_PROBE_ALLOW_FAMILY(family, 0);
 	return (false);
 }
 
@@ -698,15 +713,22 @@ net_allowed_bsaddr_impl(const nvlist_t *salimits, const void *saddr,
 static bool
 net_allowed_bsaddr(const nvlist_t *limits, const void *saddr, size_t saddrsize)
 {
+	bool allowed;
 
-	if (limits == NULL)
+	if (limits == NULL) {
+		CAP_NET_PROBE_ALLOW_ADDR((int)saddrsize, 1);
 		return (true);
+	}
 
-	if (!nvlist_exists_nvlist(limits, "sockaddr"))
+	if (!nvlist_exists_nvlist(limits, "sockaddr")) {
+		CAP_NET_PROBE_ALLOW_ADDR((int)saddrsize, 1);
 		return (true);
+	}
 
-	return (net_allowed_bsaddr_impl(nvlist_get_nvlist(limits, "sockaddr"),
-	    saddr, saddrsize));
+	allowed = net_allowed_bsaddr_impl(nvlist_get_nvlist(limits, "sockaddr"),
+	    saddr, saddrsize);
+	CAP_NET_PROBE_ALLOW_ADDR((int)saddrsize, allowed);
+	return (allowed);
 }
 
 static bool
@@ -717,11 +739,15 @@ net_allowed_hosts(const nvlist_t *limits, const char *name, const char *srvname)
 	const char *testname, *testsrvname;
 
 	if (limits == NULL) {
+		CAP_NET_PROBE_ALLOW_HOST((name == NULL ? "" : name),
+		    (srvname == NULL ? "" : srvname), 1);
 		return (true);
 	}
 
 	/* If there are no hosts at all, allow any. */
 	if (!nvlist_exists_nvlist(limits, "hosts")) {
+		CAP_NET_PROBE_ALLOW_HOST((name == NULL ? "" : name),
+		    (srvname == NULL ? "" : srvname), 1);
 		return (true);
 	}
 
@@ -740,9 +766,11 @@ net_allowed_hosts(const nvlist_t *limits, const char *name, const char *srvname)
 			continue;
 		}
 
+		CAP_NET_PROBE_ALLOW_HOST(testname, testsrvname, 1);
 		return (true);
 	}
 
+	CAP_NET_PROBE_ALLOW_HOST(testname, testsrvname, 0);
 	return (false);
 }
 

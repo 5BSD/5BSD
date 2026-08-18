@@ -49,6 +49,7 @@
 #include <sys/namei.h>
 #include <sys/priv.h>
 #include <sys/proc.h>
+#include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
@@ -68,6 +69,11 @@
 #if defined(HWPMC_HOOKS) || defined(HWT_HOOKS)
 #include <sys/pmckern.h>
 #endif
+
+SDT_PROVIDER_DEFINE(kld);
+SDT_PROBE_DEFINE2(kld, , , load__deny, "char *", "struct ucred *");
+SDT_PROBE_DEFINE3(kld, , , load, "char *", "int", "int");
+SDT_PROBE_DEFINE2(kld, , , unload, "int", "int");
 
 #ifdef KLD_DEBUG
 int kld_debug = 0;
@@ -1211,8 +1217,11 @@ kern_kldload(struct thread *td, const char *file, int *fileid)
 	if ((error = securelevel_gt(td->td_ucred, 0)) != 0)
 		return (error);
 
-	if ((error = priv_check(td, PRIV_KLD_LOAD)) != 0)
+	if ((error = priv_check(td, PRIV_KLD_LOAD)) != 0) {
+		SDT_PROBE2(kld, , , load__deny, __DECONST(char *, file),
+		    td->td_ucred);
 		return (error);
+	}
 
 	/*
 	 * If file does not contain a qualified name or any dot in it
@@ -1246,6 +1255,7 @@ kern_kldload(struct thread *td, const char *file, int *fileid)
 		lf->userrefs++;
 		if (fileid != NULL)
 			*fileid = lf->id;
+		SDT_PROBE3(kld, , , load, lf->filename, lf->id, error);
 	}
 	linker_kldload_unbusy(LINKER_UB_LOCKED);
 	return (error);
@@ -1311,6 +1321,7 @@ kern_kldunload(struct thread *td, int fileid, int flags)
 	} else
 		error = ENOENT;
 	CURVNET_RESTORE();
+	SDT_PROBE2(kld, , , unload, fileid, error);
 	linker_kldload_unbusy(LINKER_UB_LOCKED);
 	return (error);
 }

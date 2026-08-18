@@ -1,0 +1,87 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * evattr.d -- off-band access-control changes that can hide data or alter
+ * enforcement: extended-attribute set/remove and ACL set/remove.  Attackers
+ * use extattrs (e.g. MAC labels, system-namespace attrs) and ACLs to stash
+ * state or quietly widen/narrow access outside the classic mode bits.
+ *
+ * Providers / probes consumed (kernel SDT, see sources for signatures):
+ *   vfs:::setextattr  (vfs_extattr.c)
+ *       args[0] int attrnamespace, args[1] char *attrname,
+ *       args[2] struct ucred *, args[3] int error
+ *   vfs:::rmextattr   (vfs_extattr.c)
+ *       args[0] int attrnamespace, args[1] char *attrname, args[2] int error
+ *   vfs:::setacl      (vfs_acl.c)
+ *       args[0] acl_type_t type, args[1] struct ucred *, args[2] int error
+ *   vfs:::rmacl       (vfs_acl.c)
+ *       args[0] acl_type_t type, args[1] int error
+ *
+ * attrnamespace: 1 = EXTATTR_NAMESPACE_USER, 2 = EXTATTR_NAMESPACE_SYSTEM
+ *   (sys/extattr.h).  System namespace requires privilege and is the
+ *   interesting one for tamper.
+ *
+ * Example invocation:
+ *       dtrace -qs evattr.d
+ *       ./evattr.d
+ *
+ * REQUIRES a kernel rebuilt from this tree (buildkernel/installkernel +
+ * reboot).  Until then these providers are absent and `dtrace -l` will not
+ * list them.
+ */
+
+inline int EXTATTR_NAMESPACE_USER   = 1;
+inline int EXTATTR_NAMESPACE_SYSTEM = 2;
+
+dtrace:::BEGIN
+{
+	printf("%-20s %5s %-16s %-14s %s\n",
+	    "TIME", "UID", "EXEC", "EVENT", "DETAIL");
+}
+
+vfs:::setextattr
+{
+	this->uid = args[2] != NULL ? args[2]->cr_uid : uid;
+	this->ns = args[0] == EXTATTR_NAMESPACE_SYSTEM ? "system" :
+	    (args[0] == EXTATTR_NAMESPACE_USER ? "user" : "ns?");
+	printf("%-20Y %5d %-16s %-14s %s/%s err=%d\n",
+	    walltimestamp, this->uid, execname, "SETEXTATTR",
+	    this->ns, stringof(args[1]), args[3]);
+	@byexec[execname, "setextattr"] = count();
+}
+
+vfs:::rmextattr
+{
+	this->ns = args[0] == EXTATTR_NAMESPACE_SYSTEM ? "system" :
+	    (args[0] == EXTATTR_NAMESPACE_USER ? "user" : "ns?");
+	printf("%-20Y %5d %-16s %-14s %s/%s err=%d\n",
+	    walltimestamp, uid, execname, "RMEXTATTR",
+	    this->ns, stringof(args[1]), args[2]);
+	@byexec[execname, "rmextattr"] = count();
+}
+
+vfs:::setacl
+{
+	this->uid = args[1] != NULL ? args[1]->cr_uid : uid;
+	printf("%-20Y %5d %-16s %-14s acl_type=%d err=%d\n",
+	    walltimestamp, this->uid, execname, "SETACL",
+	    args[0], args[2]);
+	@byexec[execname, "setacl"] = count();
+}
+
+vfs:::rmacl
+{
+	printf("%-20Y %5d %-16s %-14s acl_type=%d err=%d\n",
+	    walltimestamp, uid, execname, "RMACL",
+	    args[0], args[1]);
+	@byexec[execname, "rmacl"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n==== extattr/acl changes by (execname, event) ====\n");
+	printa("  %-16s %-16s %@d\n", @byexec);
+}

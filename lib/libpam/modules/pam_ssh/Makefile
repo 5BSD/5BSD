@@ -14,6 +14,12 @@ SRCS+=	 ssh_namespace.h
 
 LIBADD=	ssh
 
+.include <src.opts.mk>
+.if ${MK_DTRACE} != "no"
+SRCS+=	pam_ssh_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
+
 .include <bsd.lib.mk>
 
 .PATH: ${SSHDIR}

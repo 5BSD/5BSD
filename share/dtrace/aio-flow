@@ -1,0 +1,181 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * aio-flow -- full POSIX asynchronous-I/O pipeline tracer.  Follows a job
+ *	       from submit -> queue -> schedule -> start -> complete, times the
+ *	       submit->complete service latency, and surfaces the cancel/error
+ *	       and resource-limit (EAGAIN / buffer-limit) denial paths.
+ *
+ * REQUIRES a kernel rebuilt with the aio SDT provider on this 5BSD/VBSD fork
+ * (options VFS_AIO / the aio.ko module loaded).
+ *
+ * Latency note: aio submit runs on the submitting user thread while complete
+ * fires on an aiod worker / bio thread, so the two are NOT the same thread.
+ * The job pointer is a stable global identity, so we key a GLOBAL associative
+ * array on it (self-> thread-locals cannot bridge the two threads).
+ *
+ * Provider / probes consumed (args in exact SDT_PROBE_DEFINE order,
+ * src: sys/kern/vfs_aio.c):
+ *
+ *   aio:::submit         (int pid, int fd, int opcode, size_t nbytes, void *job)
+ *				DEFINE5  -- job = args[4]
+ *   aio:::submit-eagain  (int pid, int kaio_count, int limit)          DEFINE3
+ *   aio:::queue-fail     (int pid, int fd, int opcode, int error)      DEFINE4
+ *   aio:::queue          (int pid, void *job, int opcode, int fd)      DEFINE4
+ *   aio:::schedule       (void *job, int pid, int opcode)              DEFINE3
+ *   aio:::start          (void *job, int pid, int opcode)              DEFINE3
+ *   aio:::bio-start      (int pid, void *job, int opcode, int iovcnt)  DEFINE4
+ *   aio:::complete       (void *job, int pid, long status, int error, int opcode)
+ *				DEFINE5  -- job = args[0]
+ *   aio:::cancel         (void *job, int pid)                          DEFINE2
+ *   aio:::cancel-job     (int pid, void *job, int fd, int opcode)      DEFINE4
+ *   aio:::buf-limit      (int pid, int buffer_count, int limit)        DEFINE3
+ *   aio:::signal         (int pid, int signo)                          DEFINE2
+ *
+ * opcode (LIO_*, sys/sys/aio.h): 0 NOP, 1 WRITE, 2 READ, |4 VECTORED,
+ *				  8 SYNC, 0x10|8 DSYNC.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	/* Human name for an LIO opcode (sys/sys/aio.h). */
+	aio_op[0x0]  = "NOP";
+	aio_op[0x1]  = "WRITE";
+	aio_op[0x2]  = "READ";
+	aio_op[0x5]  = "WRITEV";
+	aio_op[0x6]  = "READV";
+	aio_op[0x8]  = "SYNC";
+	aio_op[0x18] = "DSYNC";
+
+	printf("aio-flow: async-I/O pipeline + latency.  Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-16s %-10s %-8s %s\n",
+	    "TIME", "PID", "EXEC", "STAGE", "OPCODE", "DETAIL");
+}
+
+/*
+ * Submit: stamp the job's start time (global array keyed on job pointer) and
+ * count the offered load by opcode and by execname.
+ */
+aio:::submit
+{
+	aio_start[args[4]] = timestamp;
+	printf("%-20Y %-6d %-16s %-10s %-8s fd=%d nbytes=%d job=%p\n",
+	    walltimestamp, args[0], execname, "submit",
+	    aio_op[args[2]], args[1], (int)args[3], args[4]);
+	@ops[aio_op[args[2]], execname] = count();
+}
+
+aio:::queue
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s fd=%d job=%p\n",
+	    walltimestamp, args[0], execname, "queue",
+	    aio_op[args[2]], args[3], args[1]);
+}
+
+aio:::schedule
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s job=%p\n",
+	    walltimestamp, args[1], execname, "schedule",
+	    aio_op[args[2]], args[0]);
+}
+
+aio:::start
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s job=%p\n",
+	    walltimestamp, args[1], execname, "start",
+	    aio_op[args[2]], args[0]);
+}
+
+/*
+ * Complete: close out the job.  status = bytes/return, error = errno.
+ * Compute submit->complete latency from the global start stamp.
+ */
+aio:::complete
+/aio_start[args[0]] != 0/
+{
+	this->lat = timestamp - aio_start[args[0]];
+	printf("%-20Y %-6d %-16s %-10s %-8s status=%d error=%d lat=%dus job=%p\n",
+	    walltimestamp, args[1], execname, "complete",
+	    aio_op[args[4]], (int)args[2], args[3], this->lat / 1000, args[0]);
+
+	@lat_us[aio_op[args[4]]] = quantize(this->lat / 1000);
+	@completed[aio_op[args[4]]] = count();
+	aio_start[args[0]] = 0;
+}
+
+/* Completion with no recorded submit (probe started mid-flight). */
+aio:::complete
+/aio_start[args[0]] == 0/
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s status=%d error=%d job=%p\n",
+	    walltimestamp, args[1], execname, "complete*",
+	    aio_op[args[4]], (int)args[2], args[3], args[0]);
+	@completed[aio_op[args[4]]] = count();
+}
+
+/* Cancellation and errors. */
+aio:::cancel
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s job=%p\n",
+	    walltimestamp, args[1], execname, "cancel", "-", args[0]);
+	@denials["cancel", execname] = count();
+	aio_start[args[0]] = 0;
+}
+
+aio:::cancel-job
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s fd=%d job=%p\n",
+	    walltimestamp, args[0], execname, "cancel-job",
+	    aio_op[args[3]], args[2], args[1]);
+	@denials["cancel-job", execname] = count();
+}
+
+aio:::queue-fail
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s fd=%d error=%d\n",
+	    walltimestamp, args[0], execname, "queue-fail",
+	    aio_op[args[2]], args[1], args[3]);
+	@denials["queue-fail", execname] = count();
+}
+
+/* Resource-limit denials: too many in-flight jobs / buffers. */
+aio:::submit-eagain
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s kaio_count=%d limit=%d\n",
+	    walltimestamp, args[0], execname, "EAGAIN", "-",
+	    args[1], args[2]);
+	@denials["submit-eagain", execname] = count();
+}
+
+aio:::buf-limit
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s bufs=%d limit=%d\n",
+	    walltimestamp, args[0], execname, "buf-limit", "-",
+	    args[1], args[2]);
+	@denials["buf-limit", execname] = count();
+}
+
+/* Completion signal delivered to the owner. */
+aio:::signal
+{
+	printf("%-20Y %-6d %-16s %-10s %-8s signo=%d\n",
+	    walltimestamp, args[0], execname, "signal", "-", args[1]);
+}
+
+dtrace:::END
+{
+	printf("\n== jobs offered by (opcode, exec) ==\n");
+	printa("  %-8s %-16s %@d\n", @ops);
+
+	printf("\n== jobs completed by opcode ==\n");
+	printa("  %-8s %@d\n", @completed);
+
+	printf("\n== submit->complete latency (us) by opcode ==\n");
+	printa("  %-8s %@d\n", @lat_us);
+
+	printf("\n== cancel / error / limit events by (kind, exec) ==\n");
+	printa("  %-16s %-16s %@d\n", @denials);
+}

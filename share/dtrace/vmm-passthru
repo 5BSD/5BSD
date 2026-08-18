@@ -1,0 +1,87 @@
+#!/usr/sbin/dtrace -Zs
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * vmm-passthru -- bhyve/vmm control-plane and PCI passthrough observability on
+ *		   this 5BSD/VBSD fork.  Traces guest create/destroy and, most
+ *		   importantly, PCI passthrough assign/unassign -- handing a
+ *		   physical, DMA-capable device (and an IOMMU domain) to a
+ *		   guest.  That is the highest-value event here: it moves real
+ *		   hardware into a VM's control.
+ *
+ * REQUIRES a kernel rebuilt with the vmm control-plane SDT probes on this fork
+ * (vmm.ko loaded).  These are distinct from the vmx/svm exit-tracing probes.
+ *
+ * Provider / probes consumed (args in exact SDT_PROBE_DEFINE order,
+ * src: sys/amd64/vmm/vmm.c).  VM names are kernel char* -> stringof(args[0]).
+ *
+ *   vmm:kernel:vm_create:create        (char *vmname, int reserved0)   DEFINE2
+ *		reserved0 is a literal 0 placeholder at the call site.
+ *   vmm:kernel:vm_destroy:destroy      (char *vmname)                  DEFINE1
+ *   vmm:kernel:vm_assign_pptdev:passthru-assign
+ *		(char *vmname, int bus, int slot, int func, int error)  DEFINE5
+ *   vmm:kernel:vm_unassign_pptdev:passthru-unassign
+ *		(char *vmname, int bus, int slot, int func, int error)  DEFINE5
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("vmm-passthru: guest lifecycle + PCI passthrough.  Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-16s %-20s %-16s %s\n",
+	    "TIME", "PID", "EXEC", "EVENT", "VM", "DETAIL");
+}
+
+vmm:kernel:vm_create:create
+{
+	printf("%-20Y %-6d %-16s %-20s %-16s -\n",
+	    walltimestamp, pid, execname, "vm-create", stringof((char *)arg0));
+	@lifecycle["create"] = count();
+}
+
+vmm:kernel:vm_destroy:destroy
+{
+	printf("%-20Y %-6d %-16s %-20s %-16s -\n",
+	    walltimestamp, pid, execname, "vm-destroy", stringof((char *)arg0));
+	@lifecycle["destroy"] = count();
+}
+
+/*
+ * PCI passthrough assignment: a physical device at bus:slot.func is bound to
+ * the guest and mapped into its IOMMU domain.  error==0 means the device is
+ * now the guest's.
+ */
+vmm:kernel:vm_assign_pptdev:passthru-assign
+{
+	printf("%-20Y %-6d %-16s %-20s %-16s %02x:%02x.%x error=%d%s\n",
+	    walltimestamp, pid, execname, "PPT-ASSIGN", stringof((char *)arg0),
+	    arg1, arg2, arg3, arg4,
+	    arg4 == 0 ? " [device -> guest]" : " [assign failed]");
+
+	@assign[stringof((char *)arg0), arg1, arg2, arg3,
+	    (arg4 == 0) ? "assigned" : "failed"] = count();
+	@lifecycle["ppt-assign"] = count();
+}
+
+vmm:kernel:vm_unassign_pptdev:passthru-unassign
+{
+	printf("%-20Y %-6d %-16s %-20s %-16s %02x:%02x.%x error=%d\n",
+	    walltimestamp, pid, execname, "PPT-UNASSIGN", stringof((char *)arg0),
+	    arg1, arg2, arg3, arg4);
+
+	@unassign[stringof((char *)arg0), arg1, arg2, arg3] = count();
+	@lifecycle["ppt-unassign"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n== control-plane events ==\n");
+	printa("  %-16s %@d\n", @lifecycle);
+
+	printf("\n== passthrough assignments by (vm, bus, slot, func, result) ==\n");
+	printa("  vm=%-16s %02x:%02x.%x %-10s %@d\n", @assign);
+
+	printf("\n== passthrough unassignments by (vm, bus, slot, func) ==\n");
+	printa("  vm=%-16s %02x:%02x.%x %@d\n", @unassign);
+}

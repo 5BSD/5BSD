@@ -94,6 +94,23 @@
 SYSCTL_DECL(_vfs_zfs);
 SYSCTL_DECL(_vfs_zfs_vdev);
 
+/*
+ * 5BSD: observability for the legacy /dev/zfs administrative plane.  A single
+ * choke-point probe at the ioctl dispatch makes every classic ZFS admin
+ * operation (mount, snapshot, send/recv, pool import/export, rollback, ...)
+ * forensically visible with the operation number, the target dataset/pool,
+ * the caller's uid, and the result.  The capability-fd plane has its own
+ * dedicated "trustedzfs" provider (see zfs_handle.c).
+ */
+SDT_PROVIDER_DEFINE(zfs);
+SDT_PROBE_DEFINE4(zfs, , , ioc, "int", "char *", "uint64_t", "int");
+/*
+ * The authoritative file-access verdict from ZFS's own ACL/mode evaluation
+ * (VOP_ACCESS): object id, requested access mode, subject credential, result.
+ * Fired from zfs_freebsd_access() in zfs_vnops_os.c.
+ */
+SDT_PROBE_DEFINE4(zfs, , , access, "uint64_t", "int", "struct ucred *", "int");
+
 extern uint_t rrw_tsd_key;
 static int zfs_version_ioctl = ZFS_IOCVER_OZFS;
 SYSCTL_DECL(_vfs_zfs_version);
@@ -170,6 +187,8 @@ zfsdev_ioctl(struct cdev *dev, ulong_t zcmd, caddr_t arg, int flag,
 		goto out;
 	}
 	error = zfsdev_ioctl_common(vecnum, zc, 0);
+	SDT_PROBE4(zfs, , , ioc, vecnum, zc->zc_name,
+	    (uint64_t)td->td_ucred->cr_uid, error);
 #ifdef ZFS_LEGACY_SUPPORT
 	if (zcl) {
 		zfs_cmd_ozfs_to_legacy(zc, zcl);

@@ -44,6 +44,7 @@
 #include <libcasper_service.h>
 
 #include "cap_dns.h"
+#include "cap_dns_probes.h"
 
 static struct hostent hent;
 
@@ -331,7 +332,7 @@ cap_dns_type_limit(cap_channel_t *chan, const char * const *types,
 	nvlist_t *limits;
 	unsigned int i;
 	char nvlname[64];
-	int n;
+	int error, n;
 
 	if (cap_limit_get(chan, &limits) < 0)
 		return (-1);
@@ -344,7 +345,12 @@ cap_dns_type_limit(cap_channel_t *chan, const char * const *types,
 		assert(n > 0 && n < (int)sizeof(nvlname));
 		nvlist_add_string(limits, nvlname, types[i]);
 	}
-	return (cap_limit_set(chan, limits));
+	error = cap_limit_set(chan, limits);
+	if (error == 0) {
+		for (i = 0; i < ntypes; i++)
+			CAP_DNS_PROBE_LIMIT_TYPE(types[i]);
+	}
+	return (error);
 }
 
 int
@@ -354,7 +360,7 @@ cap_dns_family_limit(cap_channel_t *chan, const int *families,
 	nvlist_t *limits;
 	unsigned int i;
 	char nvlname[64];
-	int n;
+	int error, n;
 
 	if (cap_limit_get(chan, &limits) < 0)
 		return (-1);
@@ -367,7 +373,12 @@ cap_dns_family_limit(cap_channel_t *chan, const int *families,
 		assert(n > 0 && n < (int)sizeof(nvlname));
 		nvlist_add_number(limits, nvlname, (uint64_t)families[i]);
 	}
-	return (cap_limit_set(chan, limits));
+	error = cap_limit_set(chan, limits);
+	if (error == 0) {
+		for (i = 0; i < nfamilies; i++)
+			CAP_DNS_PROBE_LIMIT_FAMILY(families[i]);
+	}
+	return (error);
 }
 
 /*
@@ -380,8 +391,10 @@ dns_allowed_type(const nvlist_t *limits, const char *type)
 	bool notypes;
 	void *cookie;
 
-	if (limits == NULL)
+	if (limits == NULL) {
+		CAP_DNS_PROBE_ALLOW_TYPE(type, 1);
 		return (true);
+	}
 
 	notypes = true;
 	cookie = NULL;
@@ -389,14 +402,19 @@ dns_allowed_type(const nvlist_t *limits, const char *type)
 		if (strncmp(name, "type", sizeof("type") - 1) != 0)
 			continue;
 		notypes = false;
-		if (strcmp(nvlist_get_string(limits, name), type) == 0)
+		if (strcmp(nvlist_get_string(limits, name), type) == 0) {
+			CAP_DNS_PROBE_ALLOW_TYPE(type, 1);
 			return (true);
+		}
 	}
 
 	/* If there are no types at all, allow any type. */
-	if (notypes)
+	if (notypes) {
+		CAP_DNS_PROBE_ALLOW_TYPE(type, 1);
 		return (true);
+	}
 
+	CAP_DNS_PROBE_ALLOW_TYPE(type, 0);
 	return (false);
 }
 
@@ -407,8 +425,10 @@ dns_allowed_family(const nvlist_t *limits, int family)
 	bool nofamilies;
 	void *cookie;
 
-	if (limits == NULL)
+	if (limits == NULL) {
+		CAP_DNS_PROBE_ALLOW_FAMILY(family, 1);
 		return (true);
+	}
 
 	nofamilies = true;
 	cookie = NULL;
@@ -418,14 +438,19 @@ dns_allowed_family(const nvlist_t *limits, int family)
 		nofamilies = false;
 		if (family == AF_UNSPEC)
 			continue;
-		if (nvlist_get_number(limits, name) == (uint64_t)family)
+		if (nvlist_get_number(limits, name) == (uint64_t)family) {
+			CAP_DNS_PROBE_ALLOW_FAMILY(family, 1);
 			return (true);
+		}
 	}
 
 	/* If there are no families at all, allow any family. */
-	if (nofamilies)
+	if (nofamilies) {
+		CAP_DNS_PROBE_ALLOW_FAMILY(family, 1);
 		return (true);
+	}
 
+	CAP_DNS_PROBE_ALLOW_FAMILY(family, 0);
 	return (false);
 }
 
@@ -761,6 +786,7 @@ dns_command(const char *cmd, const nvlist_t *limits, nvlist_t *nvlin,
 	else
 		error = NO_RECOVERY;
 
+	CAP_DNS_PROBE_COMMAND(cmd, error);
 	return (error);
 }
 

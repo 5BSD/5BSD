@@ -48,33 +48,43 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_securetty_probes.h"
+
 #define TTY_PREFIX	"/dev/"
 
 PAM_EXTERN int
-pam_sm_acct_mgmt(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
 	struct passwd *pwd;
 	struct ttyent *ty;
-	const char *user;
+	const char *user = NULL;
 	const void *tty;
 	int pam_err;
 
 	pam_err = pam_get_user(pamh, &user, NULL);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_SECURETTY_PROBE_SM_ACCT_MGMT(user, pam_err);
 		return (pam_err);
-	if (user == NULL || (pwd = getpwnam(user)) == NULL)
+	}
+	if (user == NULL || (pwd = getpwnam(user)) == NULL) {
+		PAM_SECURETTY_PROBE_SM_ACCT_MGMT(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	PAM_LOG("Got user: %s", user);
 
 	/* If the user is not root, secure ttys do not apply */
-	if (pwd->pw_uid != 0)
+	if (pwd->pw_uid != 0) {
+		PAM_SECURETTY_PROBE_SM_ACCT_MGMT(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
+	}
 
 	pam_err = pam_get_item(pamh, PAM_TTY, &tty);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_SECURETTY_PROBE_SM_ACCT_MGMT(user, pam_err);
 		return (pam_err);
+	}
 
 	PAM_LOG("Got TTY: %s", (const char *)tty);
 
@@ -85,10 +95,13 @@ pam_sm_acct_mgmt(pam_handle_t *pamh __unused, int flags __unused,
 	}
 
 	if (tty != NULL && (ty = getttynam(tty)) != NULL &&
-	    (ty->ty_status & TTY_SECURE) != 0)
+	    (ty->ty_status & TTY_SECURE) != 0) {
+		PAM_SECURETTY_PROBE_SM_ACCT_MGMT(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
+	}
 
 	PAM_VERBOSE_ERROR("Not on secure TTY");
+	PAM_SECURETTY_PROBE_SM_ACCT_MGMT(user, PAM_AUTH_ERR);
 	return (PAM_AUTH_ERR);
 }
 

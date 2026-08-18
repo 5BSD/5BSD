@@ -3356,6 +3356,14 @@ _startup_libs+=	lib/libc_nonshared
 _startup_libs+=	lib/libcxxrt
 _startup_libs+=	lib/libsys
 
+# Userspace SDT provider objects are linked with drti.o by dtrace -G.  Stage
+# the target-ABI copy before the parallel prebuild-library pass so a clean
+# cross build never falls back to the host object (or finds no object at all).
+.if ${MK_DTRACE} != "no"
+_startup_libs+=	cddl/lib/drti
+cddl/lib/drti__L: lib/libc__L
+.endif
+
 _prereq_libs+=	lib/libgcc_eh lib/libgcc_s
 _startup_libs+=	lib/libgcc_eh lib/libgcc_s
 
@@ -3410,6 +3418,7 @@ _prebuild_libs=	${_kerberos5_lib_libasn1} \
 		${_lib_librt} \
 		${_cddl_lib_libumem} ${_cddl_lib_libnvpair} \
 		${_cddl_lib_libavl} \
+		${_cddl_lib_libdtrace} \
 		${_cddl_lib_libicp} \
 		${_cddl_lib_libicp_rescue} \
 		${_cddl_lib_libspl} \
@@ -3495,6 +3504,9 @@ _cddl_lib_libumem= cddl/lib/libumem
 _cddl_lib_libnvpair= cddl/lib/libnvpair
 _cddl_lib_libavl= cddl/lib/libavl
 _cddl_lib_libspl= cddl/lib/libspl
+.if ${MK_DTRACE} != "no"
+_cddl_lib_libdtrace= cddl/lib/libdtrace
+.endif
 
 cddl/lib/libavl__L: cddl/lib/libspl__L
 cddl/lib/libnvpair__L: cddl/lib/libspl__L
@@ -3524,7 +3536,8 @@ lib/libbe__L: cddl/lib/libzfs__L cddl/lib/libzfsbootenv__L
 _cddl_lib_libctf= cddl/lib/libctf
 _cddl_lib= cddl/lib
 cddl/lib/libctf__L: lib/libz__L cddl/lib/libspl__L
-cddl/lib/libdtrace__L: lib/libxo__L
+cddl/lib/libdtrace__L: cddl/lib/libctf__L lib/libelf__L lib/libproc__L
+cddl/lib/libdtrace__L: lib/libthr__L lib/librtld_db__L lib/libxo__L
 .endif
 # cddl/lib/libdtrace requires lib/libproc and lib/librtld_db
 _prebuild_libs+=	lib/libprocstat lib/libproc lib/librtld_db

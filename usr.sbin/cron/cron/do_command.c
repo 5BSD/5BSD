@@ -25,6 +25,7 @@ static const char rcsid[] =
 #endif
 
 #include "cron.h"
+#include "cron_probes.h"
 #if defined(LOGIN_CAP)
 # include <login_cap.h>
 #endif
@@ -508,6 +509,7 @@ child_process(entry *e, user *u)
 				_exit(OK_EXIT);
 			}
 # endif /*DEBUGGING*/
+			CRON_PROBE_JOB_RUN(usernm, e->cmd);
 			execl(shell, shell, "-c", e->cmd, (char *)NULL);
 			warn("execl: couldn't exec `%s'", shell);
 			_exit(ERROR_EXIT);
@@ -719,6 +721,9 @@ child_process(entry *e, user *u)
 		WAIT_T waiter;
 
 		waiter = wait_on_child(jobpid, "grandchild command job");
+
+		CRON_PROBE_JOB_DONE(usernm,
+		    (WIFEXITED(waiter) ? WEXITSTATUS(waiter) : -1));
 
 		/* If everything went well, and -n was set, _and_ we have mail,
 		 * we won't be mailing... so shoot the messenger!

@@ -80,6 +80,7 @@
 #include <sys/sysctl.h>
 #include <sys/sysent.h>
 #include <sys/shm.h>
+#include <sys/sdt.h>
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -95,6 +96,19 @@
 #include <vm/vnode_pager.h>
 #include <vm/swap_pager.h>
 #include <vm/uma.h>
+
+SDT_PROVIDER_DECLARE(vm);
+/*
+ * A region was made executable via mprotect(2)/vm_map_protect() (new_prot
+ * includes VM_PROT_EXECUTE) — the RW->RX transition used by JIT/shellcode
+ * stagers.  This is a syscall-driven, post-boot event; VM's early bootstrap
+ * is deliberately left unprobed.  Args: start, end, new protection.
+ */
+SDT_PROBE_DEFINE3(vm, , , mprotect__exec, "vm_offset_t", "vm_offset_t",
+    "vm_prot_t");
+/* A W^X-enforcing map rejected a request for a simultaneously W+X mapping. */
+SDT_PROBE_DEFINE3(vm, , , wxorx__deny, "vm_offset_t", "vm_offset_t",
+    "vm_prot_t");
 
 /*
  *	Virtual memory maps provide for the mapping, protection,
@@ -2837,6 +2851,7 @@ again:
 	    (flags & VM_MAP_PROTECT_SET_PROT) != 0 &&
 	    CONTAINS_BITS(new_prot, VM_PROT_WRITE | VM_PROT_EXECUTE)) {
 		vm_map_unlock(map);
+		SDT_PROBE3(vm, , , wxorx__deny, orig_start, end, new_prot);
 		return (KERN_PROTECTION_FAILURE);
 	}
 
@@ -3029,6 +3044,9 @@ again:
 	}
 	vm_map_try_merge_entries(map, prev_entry, entry);
 	vm_map_unlock(map);
+	if (rv == KERN_SUCCESS && (flags & VM_MAP_PROTECT_SET_PROT) != 0 &&
+	    (new_prot & VM_PROT_EXECUTE) != 0)
+		SDT_PROBE3(vm, , , mprotect__exec, orig_start, end, new_prot);
 	return (rv);
 }
 

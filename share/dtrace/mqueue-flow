@@ -1,0 +1,227 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * mqueue-flow -- POSIX message-queue observability: open/access/unlink,
+ *		  send and receive (including the full/empty and block paths),
+ *		  and asynchronous notification register/deliver/remove -- the
+ *		  security-interesting case where a send causes an async signal
+ *		  to be delivered to a different, previously registered process.
+ *
+ * REQUIRES a kernel rebuilt with the mqueue SDT provider on this 5BSD/VBSD
+ * fork (options P1003_1B_MQUEUE / mqueuefs loaded).
+ *
+ * Queue identity: the kmq_* syscall probes carry the integer descriptor
+ * (mqd); the internal enqueue/dequeue/deliver probes carry the struct mqueue
+ * pointer.  Name is only known at open/unlink/close.  We aggregate sends and
+ * receives by mqd and the internal traffic by mq pointer.
+ *
+ * Provider / probes consumed (args in exact SDT_PROBE_DEFINE order,
+ * src: sys/kern/uipc_mqueue.c).  Queue names are kernel char* -> stringof().
+ *
+ *   mqueue:::open-create   (char *name, int flags, int mode, long, long) DEFINE5
+ *   mqueue:::open-access   (char *name, int flags, int accmode, int error) DEFINE4
+ *   mqueue:::open-return   (char *name, int fd, int flags, int error)    DEFINE4
+ *   mqueue:::unlink        (char *name, int error)                       DEFINE2
+ *   mqueue:::timedsend     (int mqd, size_t msg_len, unsigned prio, int waitok) DEFINE4
+ *   mqueue:::timedsend-return (int mqd, size_t msg_len, int error)       DEFINE3
+ *   mqueue:::send-enqueued (struct mqueue *mq, size_t msg_size, unsigned prio) DEFINE3
+ *   mqueue:::send-full     (struct mqueue *mq, int timo)                 DEFINE2
+ *   mqueue:::send-block    (struct mqueue *mq, int timo)                 DEFINE2
+ *   mqueue:::timedreceive  (int mqd, size_t msg_len, int waitok)         DEFINE3
+ *   mqueue:::timedreceive-return (int mqd, size_t msg_len, int error)    DEFINE3
+ *   mqueue:::receive-dequeued (struct mqueue *mq, size_t msg_size, unsigned prio) DEFINE3
+ *   mqueue:::receive-empty (struct mqueue *mq, int timo)                 DEFINE2
+ *   mqueue:::receive-block (struct mqueue *mq, int timo)                 DEFINE2
+ *   mqueue:::notify-register (int mqd, pid_t pid, int method, int signo) DEFINE4
+ *   mqueue:::notify-remove  (int mqd, pid_t pid)                         DEFINE2
+ *   mqueue:::notify-deliver (struct mqueue *mq, pid_t pid, int signo)    DEFINE3
+ *   mqueue:::notify-return  (int mqd, int error)                         DEFINE2
+ *   mqueue:::getattr       (int mqd, long maxmsg, long msgsize, long curmsgs) DEFINE4
+ *   mqueue:::setattr       (int mqd, long mq_flags)                      DEFINE2
+ *   mqueue:::close         (char *name)                                  DEFINE1
+ *   mqueue:::destroy       (struct mqueue *mq)                           DEFINE1
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("mqueue-flow: POSIX mqueue send/recv/notify.  Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-16s %-18s %s\n",
+	    "TIME", "PID", "EXEC", "EVENT", "DETAIL");
+}
+
+/* --- open / access / unlink / close --- */
+mqueue:::open-create
+{
+	printf("%-20Y %-6d %-16s %-18s name=%s flags=0x%x mode=0%o\n",
+	    walltimestamp, pid, execname, "open-create",
+	    stringof(args[0]), args[1], args[2]);
+	@byqueue[stringof(args[0]), "open-create"] = count();
+}
+
+mqueue:::open-access
+{
+	printf("%-20Y %-6d %-16s %-18s name=%s accmode=0x%x error=%d\n",
+	    walltimestamp, pid, execname, "open-access",
+	    stringof(args[0]), args[2], args[3]);
+	@byqueue[stringof(args[0]), (args[3] == 0) ? "open-ok" : "open-deny"] = count();
+}
+
+mqueue:::unlink
+{
+	printf("%-20Y %-6d %-16s %-18s name=%s error=%d\n",
+	    walltimestamp, pid, execname, "unlink",
+	    stringof(args[0]), args[1]);
+	@byqueue[stringof(args[0]), "unlink"] = count();
+}
+
+mqueue:::close
+{
+	printf("%-20Y %-6d %-16s %-18s name=%s\n",
+	    walltimestamp, pid, execname, "close", stringof(args[0]));
+}
+
+/* --- send path --- */
+mqueue:::timedsend
+{
+	printf("%-20Y %-6d %-16s %-18s mqd=%d len=%d prio=%d\n",
+	    walltimestamp, pid, execname, "send", args[0],
+	    (int)args[1], args[2]);
+}
+
+mqueue:::timedsend-return
+{
+	@sends[args[0], (args[2] == 0) ? "sent" : "send-err"] = count();
+	@sendbytes[args[0]] = sum(args[1]);
+}
+
+mqueue:::send-enqueued
+{
+	printf("%-20Y %-6d %-16s %-18s mq=%p size=%d prio=%d\n",
+	    walltimestamp, pid, execname, "enqueued", args[0],
+	    (int)args[1], args[2]);
+	@enq[args[0]] = count();
+}
+
+mqueue:::send-full
+{
+	printf("%-20Y %-6d %-16s %-18s mq=%p timo=%d (EAGAIN)\n",
+	    walltimestamp, pid, execname, "send-full", args[0], args[1]);
+	@block["send-full"] = count();
+}
+
+mqueue:::send-block
+{
+	printf("%-20Y %-6d %-16s %-18s mq=%p timo=%d\n",
+	    walltimestamp, pid, execname, "send-block", args[0], args[1]);
+	@block["send-block"] = count();
+}
+
+/* --- receive path --- */
+mqueue:::timedreceive
+{
+	printf("%-20Y %-6d %-16s %-18s mqd=%d len=%d\n",
+	    walltimestamp, pid, execname, "receive", args[0], (int)args[1]);
+}
+
+mqueue:::timedreceive-return
+{
+	@recvs[args[0], (args[2] == 0) ? "recvd" : "recv-err"] = count();
+}
+
+mqueue:::receive-dequeued
+{
+	printf("%-20Y %-6d %-16s %-18s mq=%p size=%d prio=%d\n",
+	    walltimestamp, pid, execname, "dequeued", args[0],
+	    (int)args[1], args[2]);
+	@deq[args[0]] = count();
+}
+
+mqueue:::receive-empty
+{
+	printf("%-20Y %-6d %-16s %-18s mq=%p timo=%d (EAGAIN)\n",
+	    walltimestamp, pid, execname, "recv-empty", args[0], args[1]);
+	@block["recv-empty"] = count();
+}
+
+mqueue:::receive-block
+{
+	printf("%-20Y %-6d %-16s %-18s mq=%p timo=%d\n",
+	    walltimestamp, pid, execname, "recv-block", args[0], args[1]);
+	@block["recv-block"] = count();
+}
+
+/* --- async notification --- */
+mqueue:::notify-register
+{
+	printf("%-20Y %-6d %-16s %-18s mqd=%d notify_pid=%d method=%d signo=%d\n",
+	    walltimestamp, pid, execname, "notify-register",
+	    args[0], args[1], args[2], args[3]);
+	@notify["register"] = count();
+}
+
+mqueue:::notify-remove
+{
+	printf("%-20Y %-6d %-16s %-18s mqd=%d notify_pid=%d\n",
+	    walltimestamp, pid, execname, "notify-remove", args[0], args[1]);
+	@notify["remove"] = count();
+}
+
+/*
+ * The security-relevant case: an async signal is actually delivered to a
+ * previously registered process (which may differ from the sender).
+ */
+mqueue:::notify-deliver
+{
+	printf("%-20Y %-6d %-16s %-18s mq=%p -> pid=%d signo=%d\n",
+	    walltimestamp, pid, execname, "notify-DELIVER",
+	    args[0], args[1], args[2]);
+	@notify["deliver"] = count();
+	@delivered[args[1], args[2]] = count();
+}
+
+/* --- attributes --- */
+mqueue:::getattr
+{
+	printf("%-20Y %-6d %-16s %-18s mqd=%d maxmsg=%d msgsize=%d curmsgs=%d\n",
+	    walltimestamp, pid, execname, "getattr", args[0],
+	    (int)args[1], (int)args[2], (int)args[3]);
+}
+
+mqueue:::setattr
+{
+	printf("%-20Y %-6d %-16s %-18s mqd=%d flags=0x%x\n",
+	    walltimestamp, pid, execname, "setattr", args[0], (int)args[1]);
+}
+
+dtrace:::END
+{
+	printf("\n== queue lifecycle by (name, event) ==\n");
+	printa("  %-24s %-12s %@d\n", @byqueue);
+
+	printf("\n== sends by (mqd, result) ==\n");
+	printa("  mqd=%-6d %-10s %@d\n", @sends);
+
+	printf("\n== bytes sent by mqd ==\n");
+	printa("  mqd=%-6d %@d\n", @sendbytes);
+
+	printf("\n== receives by (mqd, result) ==\n");
+	printa("  mqd=%-6d %-10s %@d\n", @recvs);
+
+	printf("\n== messages enqueued by mq pointer ==\n");
+	printa("  mq=%-18p %@d\n", @enq);
+
+	printf("\n== messages dequeued by mq pointer ==\n");
+	printa("  mq=%-18p %@d\n", @deq);
+
+	printf("\n== block / full / empty events ==\n");
+	printa("  %-12s %@d\n", @block);
+
+	printf("\n== notification events ==\n");
+	printa("  %-12s %@d\n", @notify);
+
+	printf("\n== async signals delivered by (target_pid, signo) ==\n");
+	printa("  pid=%-6d signo=%-4d %@d\n", @delivered);
+}

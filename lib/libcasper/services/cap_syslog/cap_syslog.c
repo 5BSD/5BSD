@@ -42,6 +42,7 @@
 #include <libcasper_service.h>
 
 #include "cap_syslog.h"
+#include "cap_syslog_probes.h"
 
 #define	CAP_SYSLOG_LIMIT	2048
 
@@ -213,9 +214,11 @@ syslog_command(const char *cmd, const nvlist_t *limits, nvlist_t *nvlin,
 	} else if (strcmp(cmd, "setlogmask") == 0) {
 		slog_setlogmask(limits, nvlin, nvlout);
 	} else {
+		CAP_SYSLOG_PROBE_COMMAND(cmd, EINVAL);
 		return (EINVAL);
 	}
 
+	CAP_SYSLOG_PROBE_COMMAND(cmd, 0);
 	return (0);
 }
 

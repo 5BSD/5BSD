@@ -1,0 +1,86 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * inject.d -- injecting into or hijacking another process or terminal.
+ *
+ * Watches the cross-process and cross-terminal control operations used to
+ * inject code or input: ptrace(2) attach (debugger-style hijack), TIOCSTI
+ * terminal character injection (the classic "type into another user's tty"
+ * escape), pty signal injection, and controlling-terminal acquisition.
+ *
+ * Providers/probes consumed (SDT):
+ *   ptrace:::attach   (sys/kern/sys_process.c) args: req, target_pid, tracer_proc*
+ *   tty:::sti         (sys/kern/tty.c)         args: pid, injected_char
+ *   pts:::tiocsig     (sys/kern/tty_pts.c)     args: unit, sig
+ *   tty:::ctty-set    (sys/kern/tty.c)         args: pid, sid, result
+ *
+ * NOTE: These probes exist only in the 5BSD security-instrumentation kernel.
+ *       Run against a REBUILT kernel that carries the providers above.
+ *
+ * Example:
+ *   # dtrace -s inject.d
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("%-20s %-16s %-6s %-12s %-18s %s\n",
+	    "TIME", "INJECTOR", "PID", "WHAT", "TARGET", "DETAIL");
+}
+
+/*
+ * ptrace attach: current thread (the tracer) hooks target_pid.
+ * args[0]=req (PT_* request), args[1]=target pid, args[2]=tracer struct proc *.
+ * execname/pid are the tracer (td->td_proc); args[1] is the victim.
+ */
+ptrace:::attach
+{
+	printf("%-20Y %-16s %-6d %-12s pid=%-14d req=%d\n",
+	    walltimestamp, execname, pid, "ptrace-attach",
+	    args[1], args[0]);
+	@inj[execname, "ptrace-attach"] = count();
+}
+
+/*
+ * TIOCSTI: push a character into a terminal's input queue -- top-tier signal
+ * for terminal input injection.  args[0]=pid, args[1]=injected char.
+ */
+tty:::sti
+{
+	printf("%-20Y %-16s %-6d %-12s tty-input      char=0x%02x\n",
+	    walltimestamp, execname, args[0], "TIOCSTI",
+	    args[1] & 0xff);
+	@inj[execname, "tty-sti"] = count();
+}
+
+/*
+ * pty signal injection (TIOCSIG): deliver a signal through a pty master.
+ * args[0]=unit, args[1]=sig.
+ */
+pts:::tiocsig
+{
+	printf("%-20Y %-16s %-6d %-12s pts%-11d sig=%d\n",
+	    walltimestamp, execname, pid, "pts-tiocsig",
+	    args[0], args[1]);
+	@inj[execname, "pts-tiocsig"] = count();
+}
+
+/*
+ * Controlling-terminal acquisition (TIOCSCTTY): grabbing a tty as the
+ * controlling terminal.  args[0]=pid, args[1]=sid, args[2]=result.
+ */
+tty:::ctty-set
+{
+	printf("%-20Y %-16s %-6d %-12s sid=%-14d result=%d\n",
+	    walltimestamp, execname, args[0], "ctty-set",
+	    args[1], args[2]);
+	@inj[execname, "ctty-set"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n%-16s %-20s %s\n", "INJECTOR", "EVENT", "COUNT");
+	printa("%-16s %-20s %@d\n", @inj);
+}

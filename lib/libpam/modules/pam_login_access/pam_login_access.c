@@ -53,6 +53,7 @@
 #include <security/openpam.h>
 
 #include "pam_login_access.h"
+#include "pam_login_access_probes.h"
 
 #define OPT_ACCESSFILE		"accessfile"
 #define OPT_NOAUDIT		"noaudit"
@@ -69,26 +70,35 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
     int argc __unused, const char *argv[] __unused)
 {
 	struct pam_login_access_options	login_access_opts;
-	const void *rhost, *tty, *user;
+	const void *rhost = NULL, *tty = NULL, *user = NULL;
 	char hostname[MAXHOSTNAMELEN];
 	int pam_err;
 
 	pam_err = pam_get_item(pamh, PAM_USER, &user);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_LOGIN_ACCESS_PROBE_SM_ACCT_MGMT((const char *)user, pam_err);
 		return (pam_err);
+	}
 
-	if (user == NULL)
+	if (user == NULL) {
+		PAM_LOGIN_ACCESS_PROBE_SM_ACCT_MGMT((const char *)user,
+		    PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	PAM_LOG("Got user: %s", (const char *)user);
 
 	pam_err = pam_get_item(pamh, PAM_RHOST, &rhost);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_LOGIN_ACCESS_PROBE_SM_ACCT_MGMT((const char *)user, pam_err);
 		return (pam_err);
+	}
 
 	pam_err = pam_get_item(pamh, PAM_TTY, &tty);
-	if (pam_err != PAM_SUCCESS)
+	if (pam_err != PAM_SUCCESS) {
+		PAM_LOGIN_ACCESS_PROBE_SM_ACCT_MGMT((const char *)user, pam_err);
 		return (pam_err);
+	}
 
 	gethostname(hostname, sizeof hostname);
 	login_access_opts.defgroup = openpam_get_option(pamh, OPT_NODEFGROUP) == NULL ? true : false;
@@ -103,26 +113,36 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
 	if (rhost != NULL && *(const char *)rhost != '\0') {
 		PAM_LOG("Checking login.access for user %s from host %s",
 		    (const char *)user, (const char *)rhost);
-		if (login_access(user, rhost, &login_access_opts) != 0)
+		if (login_access(user, rhost, &login_access_opts) != 0) {
+			PAM_LOGIN_ACCESS_PROBE_SM_ACCT_MGMT((const char *)user,
+			    PAM_SUCCESS);
 			return (PAM_SUCCESS);
+		}
 		PAM_VERBOSE_ERROR("%s is not allowed to log in from %s",
 		    (const char *)user, (const char *)rhost);
 	} else if (tty != NULL && *(const char *)tty != '\0') {
 		PAM_LOG("Checking login.access for user %s on tty %s",
 		    (const char *)user, (const char *)tty);
-		if (login_access(user, tty, &login_access_opts) != 0)
+		if (login_access(user, tty, &login_access_opts) != 0) {
+			PAM_LOGIN_ACCESS_PROBE_SM_ACCT_MGMT((const char *)user,
+			    PAM_SUCCESS);
 			return (PAM_SUCCESS);
+		}
 		PAM_VERBOSE_ERROR("%s is not allowed to log in on %s",
 		    (const char *)user, (const char *)tty);
 	} else {
 		PAM_LOG("Checking login.access for user %s",
 		    (const char *)user);
-		if (login_access(user, "***unknown***", &login_access_opts) != 0)
+		if (login_access(user, "***unknown***", &login_access_opts) != 0) {
+			PAM_LOGIN_ACCESS_PROBE_SM_ACCT_MGMT((const char *)user,
+			    PAM_SUCCESS);
 			return (PAM_SUCCESS);
+		}
 		PAM_VERBOSE_ERROR("%s is not allowed to log in",
 		    (const char *)user);
 	}
 
+	PAM_LOGIN_ACCESS_PROBE_SM_ACCT_MGMT((const char *)user, PAM_AUTH_ERR);
 	return (PAM_AUTH_ERR);
 }
 

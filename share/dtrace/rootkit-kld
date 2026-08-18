@@ -1,0 +1,116 @@
+#!/usr/sbin/dtrace -qs
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * rootkit-kld.d -- code & persistence loading surface: kernel module load /
+ * load-deny / unload, filesystem mount / unmount (highlighting missing
+ * nosuid/noexec), and swap enable/disable.  A rootkit that lands a kld, hides
+ * a writable+exec mount, or backs itself with swap will show here.
+ *
+ * Providers / probes consumed (kernel SDT, see sources for signatures):
+ *   kld:::load        (kern_linker.c)
+ *       args[0] char *filename, args[1] int fileid, args[2] int error
+ *   kld:::load-deny   (kern_linker.c, DEFINE name load__deny)
+ *       args[0] char *file, args[1] struct ucred *
+ *   kld:::unload      (kern_linker.c)
+ *       args[0] int fileid, args[1] int error
+ *   mount:::mount     (vfs_mount.c)
+ *       args[0] char *fstype, args[1] char *fspath, args[2] uint64_t fsflags,
+ *       args[3] struct ucred *, args[4] int error
+ *   mount:::unmount   (vfs_mount.c)
+ *       args[0] char *fstype, args[1] char *mntonname,
+ *       args[2] uint64_t flags, args[3] int error
+ *   swap:::on         (swap_pager.c)
+ *       args[0] uintptr_t user name, args[1] int error
+ *   swap:::off        (swap_pager.c)
+ *       args[0] uintptr_t user name, args[1] int error
+ *
+ * Example invocation:
+ *       dtrace -qs rootkit-kld.d
+ *       ./rootkit-kld.d
+ *
+ * REQUIRES a kernel rebuilt from this tree (buildkernel/installkernel +
+ * reboot).  Until then these providers are absent and `dtrace -l` will not
+ * list them.
+ */
+
+/* mount flags of interest (sys/mount.h). */
+inline uint64_t MNT_NOSUID = 0x0000000000000008;
+inline uint64_t MNT_NOEXEC = 0x0000000000000004;
+
+dtrace:::BEGIN
+{
+	printf("%-20s %5s %-16s %-14s %s\n",
+	    "TIME", "UID", "EXEC", "EVENT", "DETAIL");
+}
+
+kld:::load
+{
+	printf("%-20Y %5d %-16s %-14s %s id=%d err=%d\n",
+	    walltimestamp, uid, execname, "KLD-LOAD",
+	    stringof(args[0]), args[1], args[2]);
+	@bymod[stringof(args[0])] = count();
+	@byexec[execname] = count();
+}
+
+kld:::load-deny
+{
+	this->uid = args[1] != NULL ? args[1]->cr_uid : uid;
+	printf("%-20Y %5d %-16s %-14s %s  <== DENIED\n",
+	    walltimestamp, this->uid, execname, "KLD-LOAD-DENY",
+	    stringof(args[0]));
+}
+
+kld:::unload
+{
+	printf("%-20Y %5d %-16s %-14s id=%d err=%d\n",
+	    walltimestamp, uid, execname, "KLD-UNLOAD",
+	    args[0], args[1]);
+}
+
+/*
+ * A mount without nosuid or without noexec broadens the code-exec surface
+ * (setuid binaries / executables from attacker-controlled media).
+ */
+mount:::mount
+{
+	this->uid = args[3] != NULL ? args[3]->cr_uid : uid;
+	printf("%-20Y %5d %-16s %-14s %s on %s flags=0x%llx%s%s err=%d\n",
+	    walltimestamp, this->uid, execname, "MOUNT",
+	    stringof(args[0]), stringof(args[1]), (unsigned long long)args[2],
+	    (args[2] & MNT_NOSUID) ? "" : " !nosuid",
+	    (args[2] & MNT_NOEXEC) ? "" : " !noexec",
+	    args[4]);
+}
+
+mount:::unmount
+{
+	printf("%-20Y %5d %-16s %-14s %s on %s flags=0x%llx err=%d\n",
+	    walltimestamp, uid, execname, "UNMOUNT",
+	    stringof(args[0]), stringof(args[1]),
+	    (unsigned long long)args[2], args[3]);
+}
+
+swap:::on
+{
+	printf("%-20Y %5d %-16s %-14s %s err=%d\n",
+	    walltimestamp, uid, execname, "SWAP-ON",
+	    copyinstr(args[0]), args[1]);
+}
+
+swap:::off
+{
+	printf("%-20Y %5d %-16s %-14s %s err=%d\n",
+	    walltimestamp, uid, execname, "SWAP-OFF",
+	    copyinstr(args[0]), args[1]);
+}
+
+dtrace:::END
+{
+	printf("\n==== kld loads by module ====\n");
+	printa("  %-40s %@d\n", @bymod);
+	printf("\n==== kld loads by execname ====\n");
+	printa("  %-16s %@d\n", @byexec);
+}

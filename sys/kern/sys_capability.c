@@ -131,6 +131,34 @@ SDT_PROBE_DEFINE6(capsicum, , , lookup__capmode,
     "int", "pid_t", "struct ucred *", "int", "int", "int");
 SDT_PROBE_DEFINE6(capsicum, , , lookup__capmode__deny,
     "int", "pid_t", "struct ucred *", "int", "int", "int");
+/*
+ * An ambient syscall was blocked in capability mode, or a capability-required
+ * syscall was invoked outside it: pid, syscall code, sy_flags, errno.
+ */
+SDT_PROBE_DEFINE4(capsicum, , , syscall__deny,
+    "pid_t", "int", "int", "int");
+/*
+ * A capability violation was escalated to a SIGTRAP (TRAP_CAP): pid, errno,
+ * syscall code, si_code.
+ */
+SDT_PROBE_DEFINE4(capsicum, , , trap__signal,
+    "pid_t", "int", "int", "int");
+/*
+ * A process in capability mode was denied signalling another process:
+ * sender pid, target pid, signal number, errno.
+ */
+SDT_PROBE_DEFINE4(capsicum, , , signal__capmode__deny,
+    "pid_t", "pid_t", "int", "int");
+/*
+ * Process-descriptor lifecycle: a process is a capability referenced by an
+ * fd.  pdfork: a new described process (parent pid, child pid, flags).
+ * pdkill: a signal delivered via a descriptor, bypassing p_cansignal
+ * (fd, target pid, signal).  pdclose: last close on a descriptor
+ * (target pid, pd_flags, killed).
+ */
+SDT_PROBE_DEFINE3(capsicum, , , pdfork, "pid_t", "pid_t", "int");
+SDT_PROBE_DEFINE3(capsicum, , , pdkill, "int", "pid_t", "int");
+SDT_PROBE_DEFINE3(capsicum, , , pdclose, "pid_t", "int", "int");
 
 #ifdef CAPABILITY_MODE
 
@@ -237,6 +265,9 @@ cap_check_failed_notcapable(const cap_rights_t *havep, const cap_rights_t *needp
 
 	if (CAP_TRACING(curthread))
 		ktrcapfail(CAPFAIL_NOTCAPABLE, rights);
+	SDT_PROBE6(capsicum, , , check__deny, havep, needp,
+	    curthread->td_proc->p_pid, curthread->td_ucred, CAPFAIL_NOTCAPABLE,
+	    ENOTCAPABLE);
 	return (ENOTCAPABLE);
 }
 

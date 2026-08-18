@@ -114,6 +114,24 @@ SDT_PROVIDER_DECLARE(mac_framework);	/* Entry points to MAC. */
 	MAC_CHECK_PROBE3(name, error, arg0, arg1, 0)
 #define	MAC_CHECK_PROBE1(name, error, arg0)				\
 	MAC_CHECK_PROBE2(name, error, arg0, 0)
+
+/*
+ * Per-policy decision probe.  Unlike the per-entry-point mac__check__{ok,err}
+ * probes, which fire once with the combined result, this fires once for every
+ * registered policy that implements the entry point, exposing which policy
+ * returned what.  Arguments: entry-point name, policy name, that policy's
+ * individual result.
+ */
+SDT_PROBE_DECLARE(mac_framework, , , policy__decision);
+#define	MAC_POLICY_CHECK_PROBE(check, mpc, perr)	do {		\
+	if (SDT_PROBES_ENABLED())					\
+		SDT_PROBE3(mac_framework, , , policy__decision,		\
+		    __XSTRING(check), (mpc)->mpc_name, (perr));		\
+} while (0)
+#endif
+
+#ifndef MAC_POLICY_CHECK_PROBE
+#define	MAC_POLICY_CHECK_PROBE(check, mpc, perr)
 #endif
 
 #define	MAC_GRANT_PROBE_DEFINE2(name, arg0, arg1)			\
@@ -300,21 +318,27 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
  */
 #define	MAC_POLICY_CHECK(check, args...) do {				\
 	struct mac_policy_conf *mpc;					\
+	int __mac_perr;							\
 									\
 	error = 0;							\
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
-		if (mpc->mpc_ops->mpo_ ## check != NULL)		\
-			error = mac_error_select(			\
-			    mpc->mpc_ops->mpo_ ## check (args),		\
-			    error);					\
+		if (mpc->mpc_ops->mpo_ ## check != NULL) {		\
+			__mac_perr = mpc->mpc_ops->mpo_ ## check (args);\
+			MAC_POLICY_CHECK_PROBE(check, mpc, __mac_perr);	\
+			error = mac_error_select(__mac_perr, error);	\
+		}							\
 	}								\
 	if (!LIST_EMPTY(&mac_policy_list)) {				\
 		mac_policy_slock_sleep();				\
 		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
-			if (mpc->mpc_ops->mpo_ ## check != NULL)	\
-				error = mac_error_select(		\
-				    mpc->mpc_ops->mpo_ ## check (args),	\
+			if (mpc->mpc_ops->mpo_ ## check != NULL) {	\
+				__mac_perr =				\
+				    mpc->mpc_ops->mpo_ ## check (args);	\
+				MAC_POLICY_CHECK_PROBE(check, mpc,	\
+				    __mac_perr);			\
+				error = mac_error_select(__mac_perr,	\
 				    error);				\
+			}						\
 		}							\
 		mac_policy_sunlock_sleep();				\
 	}								\
@@ -322,23 +346,29 @@ int	vn_setlabel(struct vnode *vp, struct label *intlabel,
 
 #define	MAC_POLICY_CHECK_NOSLEEP(check, args...) do {			\
 	struct mac_policy_conf *mpc;					\
+	int __mac_perr;							\
 									\
 	error = 0;							\
 	LIST_FOREACH(mpc, &mac_static_policy_list, mpc_list) {		\
-		if (mpc->mpc_ops->mpo_ ## check != NULL)		\
-			error = mac_error_select(			\
-			    mpc->mpc_ops->mpo_ ## check (args),		\
-			    error);					\
+		if (mpc->mpc_ops->mpo_ ## check != NULL) {		\
+			__mac_perr = mpc->mpc_ops->mpo_ ## check (args);\
+			MAC_POLICY_CHECK_PROBE(check, mpc, __mac_perr);	\
+			error = mac_error_select(__mac_perr, error);	\
+		}							\
 	}								\
 	if (!LIST_EMPTY(&mac_policy_list)) {				\
 		struct rm_priotracker tracker;				\
 									\
 		mac_policy_slock_nosleep(&tracker);			\
 		LIST_FOREACH(mpc, &mac_policy_list, mpc_list) {		\
-			if (mpc->mpc_ops->mpo_ ## check != NULL)	\
-				error = mac_error_select(		\
-				    mpc->mpc_ops->mpo_ ## check (args),	\
+			if (mpc->mpc_ops->mpo_ ## check != NULL) {	\
+				__mac_perr =				\
+				    mpc->mpc_ops->mpo_ ## check (args);	\
+				MAC_POLICY_CHECK_PROBE(check, mpc,	\
+				    __mac_perr);			\
+				error = mac_error_select(__mac_perr,	\
 				    error);				\
+			}						\
 		}							\
 		mac_policy_sunlock_nosleep(&tracker);			\
 	}								\

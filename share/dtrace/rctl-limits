@@ -1,0 +1,87 @@
+#!/usr/sbin/dtrace -s
+/*
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * rctl-limits -- resource-limit (rctl/racct) enforcement observability on this
+ *		  5BSD/VBSD fork.  Shows every time the rctl engine ACTS on a
+ *		  limit: a deniable request refused, a process signalled, or a
+ *		  process throttled (slept) -- naming the offending process,
+ *		  the resource, and the amount/available.
+ *
+ * REQUIRES a kernel rebuilt with the rctl SDT provider (options RACCT + RCTL).
+ *
+ * Provider / probes consumed (args in exact SDT_PROBE_DEFINE order,
+ * src: sys/kern/kern_rctl.c).  arg0 is the target struct proc *; its pid is
+ * args[0]->p_pid and its name is stringof(args[0]->p_comm).
+ *
+ *   rctl:kernel:rctl_enforce:deny     (struct proc *p, int resource,
+ *					uint64_t amount)   DEFINE3
+ *   rctl:kernel:rctl_enforce:signal   (struct proc *p, int resource,
+ *					int signal)        DEFINE3
+ *   rctl:kernel:rctl_enforce:throttle (struct proc *p, int resource,
+ *					uint64_t amount)   DEFINE3
+ *
+ * Resource numbers are RACCT_* (sys/sys/racct.h); decoded below.
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	/* RACCT_* resource id -> name (sys/sys/racct.h). */
+	rname[0]  = "cpu";        rname[1]  = "data";      rname[2]  = "stack";
+	rname[3]  = "core";       rname[4]  = "rss";       rname[5]  = "memlock";
+	rname[6]  = "nproc";      rname[7]  = "nofile";    rname[8]  = "vmem";
+	rname[9]  = "npts";       rname[10] = "swap";      rname[11] = "nthr";
+	rname[12] = "msgqqueued"; rname[13] = "msgqsize";  rname[14] = "nmsgq";
+	rname[15] = "nsem";       rname[16] = "nsemop";    rname[17] = "nshm";
+	rname[18] = "shmsize";    rname[19] = "wallclock"; rname[20] = "pctcpu";
+	rname[21] = "readbps";    rname[22] = "writebps";  rname[23] = "readiops";
+	rname[24] = "writeiops";
+
+	printf("rctl-limits: resource-limit enforcement.  Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-16s %-10s %-12s %s\n",
+	    "TIME", "PID", "PROC", "ACTION", "RESOURCE", "DETAIL");
+}
+
+rctl:kernel:rctl_enforce:deny
+{
+	this->r = strlen(rname[args[1]]) != 0 ? rname[args[1]] : lltostr(args[1]);
+	printf("%-20Y %-6d %-16s %-10s %-12s amount=%d\n",
+	    walltimestamp, args[0]->p_pid, stringof(args[0]->p_comm),
+	    "DENY", this->r, args[2]);
+
+	@byres[this->r, "deny"] = count();
+	@byexec[stringof(args[0]->p_comm), this->r, "deny"] = count();
+}
+
+rctl:kernel:rctl_enforce:signal
+{
+	this->r = strlen(rname[args[1]]) != 0 ? rname[args[1]] : lltostr(args[1]);
+	printf("%-20Y %-6d %-16s %-10s %-12s signo=%d\n",
+	    walltimestamp, args[0]->p_pid, stringof(args[0]->p_comm),
+	    "SIGNAL", this->r, args[2]);
+
+	@byres[this->r, "signal"] = count();
+	@byexec[stringof(args[0]->p_comm), this->r, "signal"] = count();
+}
+
+rctl:kernel:rctl_enforce:throttle
+{
+	this->r = strlen(rname[args[1]]) != 0 ? rname[args[1]] : lltostr(args[1]);
+	printf("%-20Y %-6d %-16s %-10s %-12s amount=%d\n",
+	    walltimestamp, args[0]->p_pid, stringof(args[0]->p_comm),
+	    "THROTTLE", this->r, args[2]);
+
+	@byres[this->r, "throttle"] = count();
+	@byexec[stringof(args[0]->p_comm), this->r, "throttle"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n== enforcement by (resource, action) ==\n");
+	printa("  %-12s %-10s %@d\n", @byres);
+
+	printf("\n== enforcement by (proc, resource, action) ==\n");
+	printa("  %-16s %-12s %-10s %@d\n", @byexec);
+}

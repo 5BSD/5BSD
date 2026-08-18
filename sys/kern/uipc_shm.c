@@ -75,6 +75,7 @@
 #include <sys/resourcevar.h>
 #include <sys/rwlock.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 #include <sys/stat.h>
 #include <sys/syscallsubr.h>
 #include <sys/sysctl.h>
@@ -102,6 +103,121 @@
 #include <vm/vm_pager.h>
 #include <vm/vm_radix.h>
 #include <vm/swap_pager.h>
+
+/*
+ * Static SDT (DTrace) instrumentation for the POSIX shared-memory / memfd
+ * object surface.  One provider, "shmfd", with per-operation probes.  These
+ * are security-relevant: memfd_create(2) + exec is a fileless-execution
+ * technique, file sealing (F_ADD_SEALS) is a tamper/immutability control, and
+ * PROT_EXEC mappings of anonymous shared memory grant executable RW memory.
+ *
+ * NOTE: the SDT_PROBE macros cast every argument to uintptr_t, and that cast
+ * binds tighter than ?:, so any ternary passed as a probe argument must be
+ * fully parenthesized.  The 'name' argument (from shm_open2/memfd_create) is a
+ * userspace pointer; a D script must copyinstr() it.
+ */
+SDT_PROVIDER_DEFINE(shmfd);
+
+/* Object created (new shmfd allocated): named create, SHM_ANON, or memfd. */
+SDT_PROBE_DEFINE6(shmfd, , , create,
+    "int"		/* pid */,
+    "char *"		/* path ("anon" for anonymous) */,
+    "char *"		/* name (userspace ptr; memfd label) */,
+    "int"		/* shmflags (SHM_ALLOW_SEALING/GROW_ON_WRITE/LARGEPAGE) */,
+    "int"		/* mode */,
+    "int"		/* largepage */);
+
+/* shm_open/shm_open2/memfd_create completed successfully. */
+SDT_PROBE_DEFINE6(shmfd, , , open,
+    "int"		/* pid */,
+    "char *"		/* path ("anon" for anonymous) */,
+    "char *"		/* name (userspace ptr; memfd label) */,
+    "int"		/* flags (O_CREAT/O_EXCL/O_RDWR/O_TRUNC/...) */,
+    "int"		/* fd */,
+    "struct shmfd *"	/* shmfd */);
+
+/* shm_open/shm_open2 failed. */
+SDT_PROBE_DEFINE2(shmfd, , , open__fail,
+    "int"		/* pid */,
+    "int"		/* error */);
+
+/* shm_unlink(2): remove a named object. */
+SDT_PROBE_DEFINE3(shmfd, , , unlink,
+    "int"		/* pid */,
+    "char *"		/* path */,
+    "int"		/* error */);
+
+/* shm_rename(2): rename/exchange named objects. */
+SDT_PROBE_DEFINE5(shmfd, , , rename,
+    "int"		/* pid */,
+    "char *"		/* path_from */,
+    "char *"		/* path_to */,
+    "int"		/* flags (SHM_RENAME_NOREPLACE/EXCHANGE) */,
+    "int"		/* error */);
+
+/* Object resized (ftruncate/posix_fallocate/grow-on-write commit point). */
+SDT_PROBE_DEFINE4(shmfd, , , truncate,
+    "int"		/* pid */,
+    "struct shmfd *"	/* shmfd */,
+    "off_t"		/* new length */,
+    "int"		/* error */);
+
+/* posix_fallocate(2) on a shm object. */
+SDT_PROBE_DEFINE5(shmfd, , , fallocate,
+    "int"		/* pid */,
+    "struct shmfd *"	/* shmfd */,
+    "off_t"		/* offset */,
+    "off_t"		/* len */,
+    "int"		/* error */);
+
+/* fspacectl(2) SPACECTL_DEALLOC (hole punch) on a shm object. */
+SDT_PROBE_DEFINE5(shmfd, , , fspacectl,
+    "int"		/* pid */,
+    "struct shmfd *"	/* shmfd */,
+    "off_t"		/* offset */,
+    "off_t"		/* len */,
+    "int"		/* error */);
+
+/* F_ADD_SEALS: apply immutability/tamper seals. */
+SDT_PROBE_DEFINE4(shmfd, , , setseals,
+    "int"		/* pid */,
+    "struct shmfd *"	/* shmfd */,
+    "int"		/* seals (F_SEAL_SEAL/SHRINK/GROW/WRITE) */,
+    "int"		/* error */);
+
+/* F_GET_SEALS: query seals. */
+SDT_PROBE_DEFINE3(shmfd, , , getseals,
+    "int"		/* pid */,
+    "struct shmfd *"	/* shmfd */,
+    "int"		/* seals */);
+
+/* mmap(2) of a shm object. */
+SDT_PROBE_DEFINE6(shmfd, , , mmap,
+    "int"		/* pid */,
+    "struct shmfd *"	/* shmfd */,
+    "int"		/* prot */,
+    "int"		/* maxprot */,
+    "int"		/* flags */,
+    "int"		/* error */);
+
+/* Executable mapping requested (PROT_EXEC): W^X / fileless-exec signal. */
+SDT_PROBE_DEFINE5(shmfd, , , mmap__exec,
+    "int"		/* pid */,
+    "struct shmfd *"	/* shmfd */,
+    "int"		/* prot */,
+    "int"		/* flags */,
+    "int"		/* error */);
+
+/* Last close of a shm fd. */
+SDT_PROBE_DEFINE2(shmfd, , , close,
+    "int"		/* pid */,
+    "struct shmfd *"	/* shmfd */);
+
+/* Final reference dropped: object freed/deallocated. */
+SDT_PROBE_DEFINE3(shmfd, , , dealloc,
+    "int"		/* pid */,
+    "struct shmfd *"	/* shmfd */,
+    "uint64_t"		/* shm_ino */);
 
 struct shm_mapping {
 	char		*sm_path;
@@ -658,6 +774,7 @@ shm_close(struct file *fp, struct thread *td)
 
 	shmfd = fp->f_data;
 	fp->f_data = NULL;
+	SDT_PROBE2(shmfd, , , close, td->td_proc->p_pid, shmfd);
 	shm_drop(shmfd);
 
 	return (0);
@@ -889,6 +1006,7 @@ shm_dotruncate_cookie(struct shmfd *shmfd, off_t length, void *rl_cookie)
 	    length, rl_cookie) : shm_dotruncate_locked(shmfd, length,
 	    rl_cookie);
 	VM_OBJECT_WUNLOCK(shmfd->shm_object);
+	SDT_PROBE4(shmfd, , , truncate, curproc->p_pid, shmfd, length, error);
 	return (error);
 }
 
@@ -973,6 +1091,8 @@ shm_drop(struct shmfd *shmfd)
 	vm_object_t obj;
 
 	if (refcount_release(&shmfd->shm_refs)) {
+		SDT_PROBE3(shmfd, , , dealloc, curproc->p_pid, shmfd,
+		    shmfd->shm_ino);
 #ifdef MAC
 		mac_posixshm_destroy(shmfd);
 #endif
@@ -1250,6 +1370,9 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 
 			shmfd->shm_seals = initial_seals;
 			shmfd->shm_flags = shmflags;
+			SDT_PROBE6(shmfd, , , create, td->td_proc->p_pid,
+			    "anon", (name), shmflags, cmode,
+			    (largepage ? 1 : 0));
 		}
 	} else {
 		fnv = fnv_32_str(path, FNV1_32_INIT);
@@ -1273,6 +1396,10 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 						shmfd->shm_seals =
 						    initial_seals;
 						shmfd->shm_flags = shmflags;
+						SDT_PROBE6(shmfd, , , create,
+						    td->td_proc->p_pid, path,
+						    (name), shmflags, cmode,
+						    (largepage ? 1 : 0));
 						shm_insert(path, fnv, shmfd);
 						path = NULL;
 					}
@@ -1363,6 +1490,9 @@ kern_shm_open2(struct thread *td, const char *userpath, int flags, mode_t mode,
 
 	finit(fp, FFLAGS(flags & O_ACCMODE), DTYPE_SHM, shmfd, &shm_ops);
 
+	SDT_PROBE6(shmfd, , , open, td->td_proc->p_pid,
+	    (path == NULL ? "anon" : path), (name), flags, fd, shmfd);
+
 	td->td_retval[0] = fd;
 	fdrop(fp, td);
 	free(path, M_SHMFD);
@@ -1373,6 +1503,7 @@ out:
 	fdclose(td, fp, fd);
 	fdrop(fp, td);
 outnofp:
+	SDT_PROBE2(shmfd, , , open__fail, td->td_proc->p_pid, error);
 	free(path, M_SHMFD);
 
 	return (error);
@@ -1405,6 +1536,7 @@ sys_shm_unlink(struct thread *td, struct shm_unlink_args *uap)
 	sx_xlock(&shm_dict_lock);
 	error = shm_remove(path, fnv, td->td_ucred);
 	sx_xunlock(&shm_dict_lock);
+	SDT_PROBE3(shmfd, , , unlink, td->td_proc->p_pid, path, error);
 	free(path, M_SHMFD);
 
 	return (error);
@@ -1553,6 +1685,9 @@ out_locked:
 	sx_xunlock(&shm_dict_lock);
 
 out:
+	SDT_PROBE5(shmfd, , , rename, td->td_proc->p_pid,
+	    (path_from == NULL ? "" : path_from),
+	    (path_to == NULL ? "" : path_to), flags, error);
 	free(path_from, M_SHMFD);
 	free(path_to, M_SHMFD);
 	return (error);
@@ -1760,6 +1895,11 @@ shm_mmap(struct file *fp, vm_map_t map, vm_offset_t *addr, vm_size_t objsize,
 		vm_object_deallocate(shmfd->shm_object);
 	}
 out:
+	SDT_PROBE6(shmfd, , , mmap, td->td_proc->p_pid, shmfd, prot,
+	    maxprot, flags, error);
+	if ((prot & VM_PROT_EXECUTE) != 0)
+		SDT_PROBE5(shmfd, , , mmap__exec, td->td_proc->p_pid, shmfd,
+		    prot, flags, error);
 	shm_rangelock_unlock(shmfd, rl_cookie);
 	return (error);
 }
@@ -2007,6 +2147,7 @@ shm_add_seals(struct file *fp, int seals)
 	}
 	shmfd->shm_seals |= nseals;
 out:
+	SDT_PROBE4(shmfd, , , setseals, curproc->p_pid, shmfd, seals, error);
 	shm_rangelock_unlock(shmfd, rl_cookie);
 	return (error);
 }
@@ -2018,6 +2159,7 @@ shm_get_seals(struct file *fp, int *seals)
 
 	shmfd = fp->f_data;
 	*seals = shmfd->shm_seals;
+	SDT_PROBE3(shmfd, , , getseals, curproc->p_pid, shmfd, *seals);
 	return (0);
 }
 
@@ -2116,6 +2258,8 @@ shm_fspacectl(struct file *fp, int cmd, off_t *offset, off_t *length, int flags,
 		__assert_unreachable();
 	}
 	shm_rangelock_unlock(shmfd, rl_cookie);
+	SDT_PROBE5(shmfd, , , fspacectl, td->td_proc->p_pid, shmfd, off, len,
+	    error);
 	return (error);
 }
 
@@ -2149,6 +2293,8 @@ shm_fallocate(struct file *fp, off_t offset, off_t len, struct thread *td)
 	/* Translate to posix_fallocate(2) return value as needed. */
 	if (error == ENOMEM)
 		error = ENOSPC;
+	SDT_PROBE5(shmfd, , , fallocate, td->td_proc->p_pid, shmfd, offset,
+	    len, error);
 	return (error);
 }
 

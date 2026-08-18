@@ -57,6 +57,7 @@
 #include <sys/mutex.h>
 #include <sys/rmlock.h>
 #include <sys/sbuf.h>
+#include <sys/sdt.h>
 #include <sys/sx.h>
 #include <sys/sysproto.h>
 #include <sys/uio.h>
@@ -75,6 +76,9 @@
 
 #include <vm/vm.h>
 #include <vm/vm_extern.h>
+
+SDT_PROVIDER_DEFINE(sysctl);
+SDT_PROBE_DEFINE3(sysctl, , , write, "char *", "struct ucred *", "int");
 
 static MALLOC_DEFINE(M_SYSCTL, "sysctl", "sysctl internal magic");
 static MALLOC_DEFINE(M_SYSCTLOID, "sysctloid", "sysctl dynamic oids");
@@ -202,6 +206,10 @@ sysctl_root_handler_locked(struct sysctl_oid *oid, void *arg1, intmax_t arg2,
 		mtx_unlock(&Giant);
 
 	KFAIL_POINT_ERROR(_debug_fail_point, sysctl_running, error);
+
+	if (req->newptr != NULL)
+		SDT_PROBE3(sysctl, , , write, oid->oid_name,
+		    (req->td != NULL ? req->td->td_ucred : NULL), error);
 
 	if (tracker != NULL)
 		SYSCTL_RLOCK(tracker);

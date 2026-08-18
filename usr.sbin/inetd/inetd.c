@@ -131,6 +131,7 @@
 #include <unistd.h>
 
 #include "inetd.h"
+#include "inetd_probes.h"
 #include "pathnames.h"
 
 #ifdef IPSEC
@@ -756,6 +757,7 @@ main(int argc, char **argv)
 				        "refused connection from %.500s, service %s (%s%s)",
 				        eval_client(&req), service, sep->se_proto,
 					(whichaf(&req) == AF_INET6) ? "6" : "");
+				    INETD_PROBE_REFUSE(service, sep->se_proto);
 				    if (sep->se_socktype != SOCK_STREAM)
 					recv(ctrl, buf, sizeof (buf), 0);
 				    if (dofork) {
@@ -867,6 +869,8 @@ main(int argc, char **argv)
 #endif
 				sigaction(SIGPIPE, &sapipe,
 				    (struct sigaction *)0);
+				INETD_PROBE_SPAWN(sep->se_service,
+				    sep->se_proto, sep->se_user);
 				execv(sep->se_server, sep->se_argv);
 				syslog(LOG_ERR,
 				    "cannot execute %s: %m", sep->se_server);

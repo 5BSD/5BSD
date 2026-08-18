@@ -165,6 +165,24 @@ watch_conflicting_args_head()
 {
 	atf_set descr "watch rejects bad argument combinations"
 }
+
+atf_test_case profiles_compile
+profiles_compile_head()
+{
+	atf_set descr "profiles with optional providers compile with zdefs"
+	atf_set require.progs dtrace
+	atf_set require.user root
+}
+profiles_compile_body()
+{
+	profiles="biosnoop mac-socket sctp-state-change sctp tcplife"
+	for profile in $profiles; do
+		path="/usr/share/bsdinstruments/profiles/$profile.d"
+		[ -f "$path" ] || atf_fail "missing installed profile: $path"
+		atf_check -s exit:0 -o empty -e empty \
+		    dtrace -Z -e -s "$path"
+	done
+}
 watch_conflicting_args_body()
 {
 	atf_check -s exit:2 -e match:"profile name or -f" \
@@ -188,4 +206,5 @@ atf_init_test_cases()
 	atf_add_test_case generate_explicit_file
 	atf_add_test_case shadowing_warning
 	atf_add_test_case watch_conflicting_args
+	atf_add_test_case profiles_compile
 }

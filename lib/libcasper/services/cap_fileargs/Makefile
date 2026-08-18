@@ -9,6 +9,11 @@ INCSDIR?=	${INCLUDEDIR}/casper
 SHLIB=	cap_fileargs
 
 SRCS=	cap_fileargs.c
+
+.if ${MK_DTRACE} != "no"
+SRCS+=	cap_fileargs_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 .endif
 
 INCS=	cap_fileargs.h

@@ -98,6 +98,8 @@ SDT_PROBE_DEFINE1(mac, , policy, register,
     "struct mac_policy_conf *");
 SDT_PROBE_DEFINE1(mac, , policy, unregister,
     "struct mac_policy_conf *");
+SDT_PROBE_DEFINE3(mac_framework, , , policy__decision, "char *", "char *",
+    "int");
 
 /*
  * Root sysctl node for all MAC and MAC policy controls.

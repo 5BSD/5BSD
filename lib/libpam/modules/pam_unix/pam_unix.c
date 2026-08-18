@@ -66,6 +66,8 @@
 #include <security/pam_modules.h>
 #include <security/pam_mod_misc.h>
 
+#include "pam_unix_probes.h"
+
 #define PASSWORD_HASH		"md5"
 #define DEFAULT_WARN		(2L * 7L * 86400L)  /* Two weeks */
 #define	SALTSIZE		32
@@ -90,15 +92,17 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 	login_cap_t *lc;
 	struct passwd *pwd;
 	int retval;
-	const char *pass, *user, *realpw, *prompt;
+	const char *pass, *user = NULL, *realpw, *prompt;
 	const char *emptypasswd = "";
 
 	if (openpam_get_option(pamh, PAM_OPT_AUTH_AS_SELF)) {
 		user = getlogin();
 	} else {
 		retval = pam_get_user(pamh, &user, NULL);
-		if (retval != PAM_SUCCESS)
+		if (retval != PAM_SUCCESS) {
+			PAM_UNIX_PROBE_SM_AUTHENTICATE(user, retval);
 			return (retval);
+		}
 	}
 	pwd = getpwnam(user);
 
@@ -109,8 +113,11 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 		realpw = pwd->pw_passwd;
 		if (realpw[0] == '\0') {
 			if (!(flags & PAM_DISALLOW_NULL_AUTHTOK) &&
-			    openpam_get_option(pamh, PAM_OPT_NULLOK))
+			    openpam_get_option(pamh, PAM_OPT_NULLOK)) {
+				PAM_UNIX_PROBE_SM_AUTHENTICATE(user,
+				    PAM_SUCCESS);
 				return (PAM_SUCCESS);
+			}
 			PAM_LOG("Password is empty, using fake password");
 			realpw = "*";
 		}
@@ -121,8 +128,10 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 		 */
 		if (!(flags & PAM_DISALLOW_NULL_AUTHTOK) &&
 		    openpam_get_option(pamh, PAM_OPT_EMPTYOK) &&
-		    strcmp(crypt(emptypasswd, realpw), realpw) == 0)
+		    strcmp(crypt(emptypasswd, realpw), realpw) == 0) {
+			PAM_UNIX_PROBE_SM_AUTHENTICATE(user, PAM_SUCCESS);
 			return (PAM_SUCCESS);
+		}
 		lc = login_getpwclass(pwd);
 	} else {
 		PAM_LOG("Doing dummy authentication");
@@ -132,25 +141,33 @@ pam_sm_authenticate(pam_handle_t *pamh, int flags,
 	prompt = login_getcapstr(lc, "passwd_prompt", NULL, NULL);
 	retval = pam_get_authtok(pamh, PAM_AUTHTOK, &pass, prompt);
 	login_close(lc);
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_UNIX_PROBE_SM_AUTHENTICATE(user, retval);
 		return (retval);
+	}
 	PAM_LOG("Got password");
 	if (strnlen(pass, _PASSWORD_LEN + 1) > _PASSWORD_LEN) {
 		PAM_LOG("Password is too long, using fake password");
 		realpw = "*";
 	}
-	if (strcmp(crypt(pass, realpw), realpw) == 0)
+	if (strcmp(crypt(pass, realpw), realpw) == 0) {
+		PAM_UNIX_PROBE_SM_AUTHENTICATE(user, PAM_SUCCESS);
 		return (PAM_SUCCESS);
+	}
 
 	PAM_VERBOSE_ERROR("UNIX authentication refused");
+	PAM_UNIX_PROBE_SM_AUTHENTICATE(user, PAM_AUTH_ERR);
 	return (PAM_AUTH_ERR);
 }
 
 PAM_EXTERN int
-pam_sm_setcred(pam_handle_t *pamh __unused, int flags __unused,
+pam_sm_setcred(pam_handle_t *pamh, int flags,
     int argc __unused, const char *argv[] __unused)
 {
+	const void *user = NULL;
 
+	(void)pam_get_item(pamh, PAM_USER, &user);
+	PAM_UNIX_PROBE_SM_SETCRED((const char *)user, flags, PAM_SUCCESS);
 	return (PAM_SUCCESS);
 }
 
@@ -167,37 +184,50 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
 	login_cap_t *lc;
 	time_t warntime;
 	int retval;
-	const char *user;
+	const char *user = NULL;
 	const void *rhost, *tty;
 	char rhostip[MAXHOSTNAMELEN] = "";
 
 	retval = pam_get_user(pamh, &user, NULL);
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_UNIX_PROBE_SM_ACCT_MGMT(user, retval);
 		return (retval);
+	}
 
-	if (user == NULL || (pwd = getpwnam(user)) == NULL)
+	if (user == NULL || (pwd = getpwnam(user)) == NULL) {
+		PAM_UNIX_PROBE_SM_ACCT_MGMT(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
+	}
 
 	PAM_LOG("Got user: %s", user);
 
 	retval = pam_get_item(pamh, PAM_RHOST, &rhost);
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_UNIX_PROBE_SM_ACCT_MGMT(user, retval);
 		return (retval);
+	}
 
 	retval = pam_get_item(pamh, PAM_TTY, &tty);
-	if (retval != PAM_SUCCESS)
+	if (retval != PAM_SUCCESS) {
+		PAM_UNIX_PROBE_SM_ACCT_MGMT(user, retval);
 		return (retval);
+	}
 
 	if (*pwd->pw_passwd == '\0' &&
-	    (flags & PAM_DISALLOW_NULL_AUTHTOK) != 0)
+	    (flags & PAM_DISALLOW_NULL_AUTHTOK) != 0) {
+		PAM_UNIX_PROBE_SM_ACCT_MGMT(user, PAM_NEW_AUTHTOK_REQD);
 		return (PAM_NEW_AUTHTOK_REQD);
+	}
 
-	if (strncmp(pwd->pw_passwd, LOCKED_PREFIX, LOCKED_PREFIX_LEN) == 0)
+	if (strncmp(pwd->pw_passwd, LOCKED_PREFIX, LOCKED_PREFIX_LEN) == 0) {
+		PAM_UNIX_PROBE_SM_ACCT_MGMT(user, PAM_AUTH_ERR);
 		return (PAM_AUTH_ERR);
+	}
 
 	lc = login_getpwclass(pwd);
 	if (lc == NULL) {
 		PAM_LOG("Unable to get login class for user %s", user);
+		PAM_UNIX_PROBE_SM_ACCT_MGMT(user, PAM_SERVICE_ERR);
 		return (PAM_SERVICE_ERR);
 	}
 
@@ -216,6 +246,7 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
 		    DEFAULT_WARN, DEFAULT_WARN);
 		if (tp.tv_sec >= pwd->pw_expire) {
 			login_close(lc);
+			PAM_UNIX_PROBE_SM_ACCT_MGMT(user, PAM_ACCT_EXPIRED);
 			return (PAM_ACCT_EXPIRED);
 		} else if (pwd->pw_expire - tp.tv_sec < warntime &&
 		    (flags & PAM_SILENT) == 0) {
@@ -267,6 +298,7 @@ pam_sm_acct_mgmt(pam_handle_t *pamh, int flags __unused,
 
 	login_close(lc);
 
+	PAM_UNIX_PROBE_SM_ACCT_MGMT(user, retval);
 	return (retval);
 }
 
@@ -286,7 +318,7 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 	char salt[SALTSIZE + 1];
 	login_cap_t *lc;
 	struct passwd *pwd, *old_pwd;
-	const char *user, *old_pass, *new_pass;
+	const char *user = NULL, *old_pass, *new_pass;
 	char *encrypted;
 	time_t passwordtime;
 	int pfd, tfd, retval;
@@ -295,13 +327,17 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 		user = getlogin();
 	else {
 		retval = pam_get_user(pamh, &user, NULL);
-		if (retval != PAM_SUCCESS)
+		if (retval != PAM_SUCCESS) {
+			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, retval);
 			return (retval);
+		}
 	}
 	pwd = getpwnam(user);
 
-	if (pwd == NULL)
+	if (pwd == NULL) {
+		PAM_UNIX_PROBE_SM_CHAUTHTOK(user, PAM_AUTHTOK_RECOVERY_ERR);
 		return (PAM_AUTHTOK_RECOVERY_ERR);
+	}
 
 	PAM_LOG("Got user: %s", user);
 
@@ -310,9 +346,12 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 		PAM_LOG("PRELIM round");
 
 		if (getuid() == 0 &&
-		    (pwd->pw_fields & _PWF_SOURCE) == _PWF_FILES)
+		    (pwd->pw_fields & _PWF_SOURCE) == _PWF_FILES) {
 			/* root doesn't need the old password */
-			return (pam_set_item(pamh, PAM_OLDAUTHTOK, ""));
+			retval = pam_set_item(pamh, PAM_OLDAUTHTOK, "");
+			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, retval);
+			return (retval);
+		}
 #ifdef YP
 		if (getuid() == 0 &&
 		    (pwd->pw_fields & _PWF_SOURCE) == _PWF_NIS) {
@@ -322,20 +361,29 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 			(void)pam_get_data(pamh, "yp_server", &yp_server);
 
 			ypclnt = ypclnt_new(yp_domain, "passwd.byname", yp_server);
-			if (ypclnt == NULL)
+			if (ypclnt == NULL) {
+				PAM_UNIX_PROBE_SM_CHAUTHTOK(user, PAM_BUF_ERR);
 				return (PAM_BUF_ERR);
+			}
 
 			if (ypclnt_connect(ypclnt) == -1) {
 				ypclnt_free(ypclnt);
+				PAM_UNIX_PROBE_SM_CHAUTHTOK(user,
+				    PAM_SERVICE_ERR);
 				return (PAM_SERVICE_ERR);
 			}
 
 			retval = ypclnt_havepasswdd(ypclnt);
 			ypclnt_free(ypclnt);
-			if (retval == 1)
-				return (pam_set_item(pamh, PAM_OLDAUTHTOK, ""));
-			else if (retval == -1)
+			if (retval == 1) {
+				retval = pam_set_item(pamh, PAM_OLDAUTHTOK, "");
+				PAM_UNIX_PROBE_SM_CHAUTHTOK(user, retval);
+				return (retval);
+			} else if (retval == -1) {
+				PAM_UNIX_PROBE_SM_CHAUTHTOK(user,
+				    PAM_SERVICE_ERR);
 				return (PAM_SERVICE_ERR);
+			}
 		}
 #endif
 		if (pwd->pw_passwd[0] == '\0'
@@ -350,25 +398,33 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 		} else {
 			retval = pam_get_authtok(pamh,
 			    PAM_OLDAUTHTOK, &old_pass, NULL);
-			if (retval != PAM_SUCCESS)
+			if (retval != PAM_SUCCESS) {
+				PAM_UNIX_PROBE_SM_CHAUTHTOK(user, retval);
 				return (retval);
+			}
 		}
 		PAM_LOG("Got old password");
 		/* always encrypt first */
 		encrypted = crypt(old_pass, pwd->pw_passwd);
 		if (old_pass[0] == '\0' &&
-		    !openpam_get_option(pamh, PAM_OPT_NULLOK))
+		    !openpam_get_option(pamh, PAM_OPT_NULLOK)) {
+			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, PAM_PERM_DENIED);
 			return (PAM_PERM_DENIED);
-		if (strcmp(encrypted, pwd->pw_passwd) != 0)
+		}
+		if (strcmp(encrypted, pwd->pw_passwd) != 0) {
+			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, PAM_PERM_DENIED);
 			return (PAM_PERM_DENIED);
+		}
 	}
 	else if (flags & PAM_UPDATE_AUTHTOK) {
 		PAM_LOG("UPDATE round");
 
 		retval = pam_get_authtok(pamh,
 		    PAM_OLDAUTHTOK, &old_pass, NULL);
-		if (retval != PAM_SUCCESS)
+		if (retval != PAM_SUCCESS) {
+			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, retval);
 			return (retval);
+		}
 		PAM_LOG("Got old password");
 
 		/* get new password */
@@ -382,15 +438,20 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 		PAM_LOG("Got new password");
 		if (retval != PAM_SUCCESS) {
 			PAM_VERBOSE_ERROR("Unable to get new password");
+			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, retval);
 			return (retval);
 		}
 
 		if (getuid() != 0 && new_pass[0] == '\0' &&
-		    !openpam_get_option(pamh, PAM_OPT_NULLOK))
+		    !openpam_get_option(pamh, PAM_OPT_NULLOK)) {
+			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, PAM_PERM_DENIED);
 			return (PAM_PERM_DENIED);
+		}
 
-		if ((old_pwd = pw_dup(pwd)) == NULL)
+		if ((old_pwd = pw_dup(pwd)) == NULL) {
+			PAM_UNIX_PROBE_SM_CHAUTHTOK(user, PAM_BUF_ERR);
 			return (PAM_BUF_ERR);
+		}
 
 		lc = login_getclass(pwd->pw_class);
 		if (login_setcryptfmt(lc, password_hash, NULL) == NULL)
@@ -457,6 +518,7 @@ pam_sm_chauthtok(pam_handle_t *pamh, int flags,
 		PAM_LOG("Illegal 'flags'");
 	}
 
+	PAM_UNIX_PROBE_SM_CHAUTHTOK(user, retval);
 	return (retval);
 }
 
