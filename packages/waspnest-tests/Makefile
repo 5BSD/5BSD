@@ -1,5 +1,5 @@
 WORLDPACKAGE=	waspnest-tests
-SUBPACKAGES=	dbg
+SUBPACKAGES=
 
 PKG_SETS=	tests
 
