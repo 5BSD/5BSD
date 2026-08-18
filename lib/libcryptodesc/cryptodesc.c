@@ -221,3 +221,16 @@ cryptodesc_revoke(int descriptor_fd)
 	memset(&revoke, 0, sizeof(revoke));
 	return (ioctl(descriptor_fd, CIOCCRYPTODESCREVOKE, &revoke));
 }
+
+int
+cryptodesc_get_info(int descriptor_fd, struct cryptodesc_info *info)
+{
+
+	if (descriptor_fd < 0 || info == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(info, 0, sizeof(*info));
+	info->cd_size = sizeof(*info);
+	return (ioctl(descriptor_fd, CIOCGCRYPTODESCINFO, info));
+}

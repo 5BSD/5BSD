@@ -5601,8 +5601,12 @@ file_type_to_name(short type)
 		return ("timerfd");
 	case DTYPE_JAILDESC:
 		return ("jail");
+	case DTYPE_MAC_CAPABILITY:
+		return ("mac_capability");
 	case DTYPE_ENVFD:
 		return ("envfd");
+	case DTYPE_ZFSHANDLE:
+		return ("zfshandle");
 	default:
 		return ("unkn");
 	}
@@ -5641,12 +5645,12 @@ db_print_file(struct file *fp, int header)
 	struct proc *p;
 
 	if (header)
-		db_printf("%*s %6s %*s %8s %4s %5s %6s %*s %5s %s\n",
+		db_printf("%*s %14s %*s %8s %4s %5s %6s %*s %5s %s\n",
 		    XPTRWIDTH, "File", "Type", XPTRWIDTH, "Data", "Flag",
 		    "GCFl", "Count", "MCount", XPTRWIDTH, "Vnode", "FPID",
 		    "FCmd");
 	p = file_to_first_proc(fp);
-	db_printf("%*p %6s %*p %08x %04x %5d %6d %*p %5d %s\n", XPTRWIDTH,
+	db_printf("%*p %14s %*p %08x %04x %5d %6d %*p %5d %s\n", XPTRWIDTH,
 	    fp, file_type_to_name(fp->f_type), XPTRWIDTH, fp->f_data,
 	    fp->f_flag, 0, refcount_load(&fp->f_count), 0, XPTRWIDTH, fp->f_vnode,
 	    p != NULL ? p->p_pid : -1, p != NULL ? p->p_comm : "-");

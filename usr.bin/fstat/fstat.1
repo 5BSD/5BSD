@@ -25,7 +25,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd November 19, 2020
+.Dd August 16, 2026
 .Dt FSTAT 1
 .Os
 .Sh NAME
@@ -138,6 +138,15 @@ In this case the remainder of the line does not
 correspond to the remaining headers\(em the format of the line
 is described later under
 .Sx SOCKETS .
+.Pp
+Non-vnode capability descriptors are identified by a bracketed type name.
+Cryptographic capabilities, MAC capabilities, and TrustedZFS dataset handles
+are shown as
+.Ql [crypto] ,
+.Ql [mac_capability] ,
+and
+.Ql [zfshandle] ,
+respectively, followed by safe descriptor identity metadata when available.
 .It Sy MOUNT
 If the
 .Fl n

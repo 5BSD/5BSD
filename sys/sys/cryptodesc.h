@@ -172,6 +172,24 @@ struct cryptodesc_revoke {
 	uint32_t		cd_flags;	/* must be zero */
 };
 
+#define	CRYPTODESC_STATE_REVOKED	0x00000001U
+#define	CRYPTODESC_STATE_EXPIRED	0x00000002U
+#define	CRYPTODESC_STATE_KEY_INVALID	0x00000004U
+
+/* Fixed-layout metadata suitable for native and compatibility ABIs. */
+struct cryptodesc_info {
+	uint32_t		cd_size;
+	uint32_t		cd_type;
+	uint32_t		cd_rights;
+	uint32_t		cd_state;
+	int32_t			cd_crid;	/* selected OpenCrypto provider, or -1 */
+	uint32_t		cd_provider_flags; /* CRYPTO_FLAG_* classification */
+	int64_t			cd_expires;	/* absolute epoch seconds; zero if none */
+	uint64_t		cd_generation;	/* generation held by this lease */
+	uint64_t		cd_key_generation; /* latest observed named-key generation */
+	uint64_t		cd_spare[3];
+};
+
 #define	CIOCGCRYPTODESC	_IOWR('c', 110, struct cryptodesc_create)
 #define	CIOCSCRYPTODESCRIGHTS	_IOW('c', 111, struct cryptodesc_restrict)
 #define	CIOCCRYPTODESCREVOKE	_IOW('c', 112, struct cryptodesc_revoke)
@@ -185,5 +203,6 @@ struct cryptodesc_revoke {
 #define	CIOCGCRYPTONAMEDLEASE	_IOWR('c', 120, struct cryptodesc_named_lease)
 #define	CIOCCRYPTONAMEDROTATE	_IOWR('c', 121, struct cryptodesc_named_control)
 #define	CIOCCRYPTONAMEDDELETE	_IOWR('c', 122, struct cryptodesc_named_control)
+#define	CIOCGCRYPTODESCINFO	_IOWR('c', 123, struct cryptodesc_info)
 
 #endif /* !_SYS_CRYPTODESC_H_ */

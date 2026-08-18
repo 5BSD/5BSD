@@ -19,6 +19,7 @@ BINDIR=		${TESTSDIR}
 
 CFLAGS+=	-I${SRCTOP}/sys/dev/mac_capability
 LIBADD.mac_capability_test+=	jail
+LIBADD.mac_capability_test+=	util
 LIBADD.mac_capability_coalition_test+=	jail
 LIBADD.mac_capability_isolation_test+=	jail
 LIBADD.mac_capability_isolation_helper+=	jail

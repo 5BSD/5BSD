@@ -48,7 +48,8 @@
 #define EVFILT_JAIL		(-14)	/* attached to struct prison */
 #define EVFILT_JAILDESC		(-15)	/* attached to jail descriptors */
 #define EVFILT_ENVFD		(-16)	/* attached to environment descriptors */
-#define EVFILT_SYSCOUNT		16
+#define EVFILT_CRYPTODESC	(-17)	/* attached to crypto descriptors */
+#define EVFILT_SYSCOUNT		17
 
 #if defined(__STDC_VERSION__) && __STDC_VERSION__ >= 199901L
 #define	EV_SET(kevp_, a, b, c, d, e, f) do {	\
@@ -230,6 +231,14 @@ struct freebsd11_kevent32 {
 #define	NOTE_ENVFD_WRITE	0x00000001	/* value was replaced */
 #define	NOTE_ENVFD_SEALED	0x00000002	/* object became write-sealed */
 #define	NOTE_ENVFD_CTRLMASK	0x00000003
+
+/* data/hint flags for EVFILT_CRYPTODESC */
+#define	NOTE_CRYPTODESC_RIGHTS		0x00000001 /* rights were attenuated */
+#define	NOTE_CRYPTODESC_REVOKE		0x00000002 /* descriptor was revoked */
+#define	NOTE_CRYPTODESC_EXPIRE		0x00000004 /* descriptor TTL expired */
+#define	NOTE_CRYPTODESC_KEY_ROTATE	0x00000008 /* named key was rotated */
+#define	NOTE_CRYPTODESC_KEY_DELETE	0x00000010 /* named key was deleted */
+#define	NOTE_CRYPTODESC_CTRLMASK	0x0000001f
 
 /* additional flags for EVFILT_TIMER */
 #define NOTE_SECONDS		0x00000001	/* data is seconds */

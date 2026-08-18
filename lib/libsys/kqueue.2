@@ -22,7 +22,7 @@
 .\" OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 .\" SUCH DAMAGE.
 .\"
-.Dd July 24, 2026
+.Dd August 16, 2026
 .Dt KQUEUE 2
 .Os
 .Sh NAME
@@ -702,6 +702,41 @@ Writes may coalesce, in which case the latest generation is returned.
 The filter has
 .Dv EV_CLEAR
 semantics.
+.It Dv EVFILT_CRYPTODESC
+Takes a crypto descriptor as the identifier and reports capability lifecycle
+changes requested in
+.Va fflags .
+The supported events are:
+.Bl -tag -width "Dv NOTE_CRYPTODESC_KEY_ROTATE"
+.It Dv NOTE_CRYPTODESC_RIGHTS
+The descriptor's rights were irreversibly attenuated.
+.It Dv NOTE_CRYPTODESC_REVOKE
+The descriptor was revoked.
+.It Dv NOTE_CRYPTODESC_EXPIRE
+The descriptor's time-to-live expired.
+.It Dv NOTE_CRYPTODESC_KEY_ROTATE
+The named key backing a leased descriptor was rotated, invalidating the
+lease.
+.It Dv NOTE_CRYPTODESC_KEY_DELETE
+The named key backing a leased descriptor was deleted, invalidating the
+lease.
+.El
+.Pp
+The returned
+.Va data
+is the descriptor's current rights mask.
+.Va ext[0]
+is the generation held by the descriptor,
+.Va ext[1]
+is its absolute expiration time in seconds since the Epoch or zero, and
+.Va ext[2]
+is the newest observed named-key generation.
+Terminal events set
+.Dv EV_EOF
+and remove the filter after delivery.
+The filter otherwise has
+.Dv EV_CLEAR
+semantics, and multiple changes may coalesce.
 .It Dv EVFILT_TIMER
 Establishes an arbitrary timer identified by
 .Va ident .

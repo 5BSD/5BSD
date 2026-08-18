@@ -9,6 +9,7 @@ CFLAGS.blake2_test.c	+= -I${SRCTOP}/sys/contrib/libb2
 CFLAGS.poly1305_test.c	+= -I${SRCTOP}/sys/opencrypto
 CFLAGS.cryptodesc_test.c	+= -I${SRCTOP}/sys/opencrypto
 CFLAGS.cryptodesc_test.c	+= -I${SRCTOP}/sys
+LIBADD.cryptodesc_test	+= util
 
 ATF_TESTS_C+=	blake2_test cryptodesc_test poly1305_test
 

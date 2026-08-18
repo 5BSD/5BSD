@@ -21,6 +21,7 @@
 #include <sys/syscall.h>
 #include <sys/sysctl.h>
 #include <sys/un.h>
+#include <sys/user.h>
 #include <sys/procdesc.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
@@ -28,6 +29,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <jail.h>
+#include <libutil.h>
 #include <signal.h>
 #include <stdint.h>
 #include <sys/ptrace.h>
@@ -240,6 +242,35 @@ ATF_TC_BODY(connect_service, tc)
 {
 	int fd = mac_capability_connect("test_keystore");
 	ATF_REQUIRE(fd >= 0);
+	close(fd);
+}
+
+ATF_TC(descriptor_kinfo);
+ATF_TC_HEAD(descriptor_kinfo, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "MAC capability descriptors expose service identity to process tools");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_test_keystore");
+}
+ATF_TC_BODY(descriptor_kinfo, tc)
+{
+	struct kinfo_file *files;
+	int count, fd, i;
+
+	fd = mac_capability_connect("test_keystore");
+	ATF_REQUIRE(fd >= 0);
+	files = kinfo_getfile(getpid(), &count);
+	ATF_REQUIRE_MSG(files != NULL, "kinfo_getfile: %s", strerror(errno));
+	for (i = 0; i < count && files[i].kf_fd != fd; i++)
+		;
+	ATF_REQUIRE_MSG(i != count, "capability fd %d was not exported", fd);
+	ATF_REQUIRE_EQ(KF_TYPE_MAC_CAPABILITY, files[i].kf_type);
+	ATF_REQUIRE((files[i].kf_status & KF_ATTR_VALID) != 0);
+	ATF_REQUIRE_MSG(strncmp(files[i].kf_path,
+	    "mac_capability:test_keystore[", 29) == 0,
+	    "unexpected descriptor name: %s", files[i].kf_path);
+	free(files);
 	close(fd);
 }
 
@@ -7756,6 +7787,7 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Connection */
 	ATF_TP_ADD_TC(tp, connect_service);
+	ATF_TP_ADD_TC(tp, descriptor_kinfo);
 	ATF_TP_ADD_TC(tp, connect_noent);
 	ATF_TP_ADD_TC(tp, connect_empty_name);
 

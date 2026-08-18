@@ -629,12 +629,20 @@ procstat_getfiles_kvm(struct procstat *procstat, struct kinfo_proc *kp, int mmap
 			type = PS_FST_TYPE_INOTIFY;
 			data = file.f_data;
 			break;
+		case DTYPE_MAC_CAPABILITY:
+			type = PS_FST_TYPE_MAC_CAPABILITY;
+			data = file.f_data;
+			break;
 		case DTYPE_ENVFD:
 			type = PS_FST_TYPE_ENVFD;
 			data = file.f_data;
 			break;
 		case DTYPE_CRYPTO:
 			type = PS_FST_TYPE_CRYPTO;
+			data = file.f_data;
+			break;
+		case DTYPE_ZFSHANDLE:
+			type = PS_FST_TYPE_ZFSHANDLE;
 			data = file.f_data;
 			break;
 		default:

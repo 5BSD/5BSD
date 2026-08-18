@@ -434,7 +434,7 @@ procstat_files(struct procstat *procstat, struct kinfo_proc *kipp)
 			break;
 
 		case PS_FST_TYPE_MAC_CAPABILITY:
-			str = "C";
+			str = "M";
 			xo_emit("{eq:fd_type/mac_capability}");
 			break;
 
@@ -444,7 +444,7 @@ procstat_files(struct procstat *procstat, struct kinfo_proc *kipp)
 			break;
 
 		case PS_FST_TYPE_CRYPTO:
-			str = "K";
+			str = "C";
 			xo_emit("{eq:fd_type/crypto}");
 			break;
 

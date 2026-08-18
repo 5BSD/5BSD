@@ -320,14 +320,20 @@ print_file_info(struct procstat *procstat, struct filestat *fst,
 	case PS_FST_TYPE_EVENTFD:
 		printf(" [eventfd]");
 		break;
+	case PS_FST_TYPE_MAC_CAPABILITY:
+		printf(" [mac_capability] %s",
+		    fst->fs_path != NULL ? fst->fs_path : "-");
+		break;
 	case PS_FST_TYPE_ENVFD:
 		printf(" [envfd]");
 		break;
 	case PS_FST_TYPE_CRYPTO:
-		printf(" [crypto]");
+		printf(" [crypto] %s",
+		    fst->fs_path != NULL ? fst->fs_path : "-");
 		break;
 	case PS_FST_TYPE_ZFSHANDLE:
-		printf(" [zfshandle]");
+		printf(" [zfshandle] %s",
+		    fst->fs_path != NULL ? fst->fs_path : "-");
 		break;
 	default:	
 		if (vflg)

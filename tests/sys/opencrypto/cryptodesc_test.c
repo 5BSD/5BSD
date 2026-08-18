@@ -6,13 +6,18 @@
 
 #include <sys/param.h>
 #include <sys/cryptodesc.h>
+#include <sys/event.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/user.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <libutil.h>
+#include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <atf-c.h>
@@ -252,6 +257,19 @@ receive_fd(int socket)
 	return (fd);
 }
 
+static void
+wait_for_event(int kq, struct kevent *event, int seconds, int expected)
+{
+	struct timespec timeout;
+	int count;
+
+	timeout.tv_sec = seconds;
+	timeout.tv_nsec = 0;
+	count = kevent(kq, NULL, 0, event, 1, &timeout);
+	ATF_REQUIRE_MSG(count == expected, "kevent returned %d: %s", count,
+	    count == -1 ? strerror(errno) : "unexpected event count");
+}
+
 ATF_TC(mint_validation);
 ATF_TC_HEAD(mint_validation, tc)
 {
@@ -285,10 +303,193 @@ ATF_TC_BODY(mint_validation, tc)
 	close(control);
 }
 
+ATF_TC(descriptor_kinfo);
+ATF_TC_HEAD(descriptor_kinfo, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CRYPTO descriptors expose their type and safe metadata to process tools");
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(descriptor_kinfo, tc)
+{
+	struct kinfo_file *files;
+	int control, count, descriptor, i;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+	descriptor = mint_descriptor(control, CRYPTO_AES_CBC, 0,
+	    sizeof(aes_iv), 0, CRYPTODESC_RIGHT_ENCRYPT);
+	files = kinfo_getfile(getpid(), &count);
+	ATF_REQUIRE_MSG(files != NULL, "kinfo_getfile: %s", strerror(errno));
+	for (i = 0; i < count && files[i].kf_fd != descriptor; i++)
+		;
+	ATF_REQUIRE_MSG(i != count, "descriptor fd %d was not exported",
+	    descriptor);
+	ATF_REQUIRE_EQ(KF_TYPE_CRYPTO, files[i].kf_type);
+	ATF_REQUIRE((files[i].kf_status & KF_ATTR_VALID) != 0);
+	ATF_REQUIRE_MSG(strncmp(files[i].kf_path, "crypto:", 7) == 0,
+	    "unexpected descriptor name: %s", files[i].kf_path);
+	ATF_REQUIRE(strstr(files[i].kf_path, ":rights=") != NULL);
+	free(files);
+	close(descriptor);
+	close(control);
+}
+
 ATF_TC(cbc_rights_and_metadata);
 ATF_TC_HEAD(cbc_rights_and_metadata, tc)
 {
 	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+
+ATF_TC(descriptor_metadata_and_kqueue);
+ATF_TC_HEAD(descriptor_metadata_and_kqueue, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CRYPTO descriptors expose structured metadata and lifecycle events");
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(descriptor_metadata_and_kqueue, tc)
+{
+	struct cryptodesc_info info;
+	struct cryptodesc_named_control named;
+	struct cryptodesc_restrict attenuation;
+	struct cryptodesc_revoke revoke;
+	struct kevent change, event;
+	struct kinfo_file *files;
+	char name[CRYPTODESC_KEY_NAME_MAX];
+	const char *owner;
+	int control, count, fd, i, kq;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+	fd = mint_generated_descriptor(control, CRYPTO_AES_CBC, 0, 16, 0,
+	    sizeof(aes_iv), 0, CRYPTODESC_RIGHT_ENCRYPT |
+	    CRYPTODESC_RIGHT_DECRYPT, 60);
+
+	memset(&info, 0, sizeof(info));
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    ioctl(fd, CIOCGCRYPTODESCINFO, &info) == -1);
+	info.cd_size = sizeof(info);
+	ATF_REQUIRE_MSG(ioctl(fd, CIOCGCRYPTODESCINFO, &info) == 0,
+	    "CIOCGCRYPTODESCINFO: %s", strerror(errno));
+	ATF_REQUIRE_EQ(info.cd_type, 0);
+	ATF_REQUIRE_EQ(info.cd_rights, CRYPTODESC_RIGHT_ENCRYPT |
+	    CRYPTODESC_RIGHT_DECRYPT);
+	ATF_REQUIRE_EQ(info.cd_state, 0);
+	ATF_REQUIRE(info.cd_crid >= 0);
+	ATF_REQUIRE((info.cd_provider_flags & CRYPTO_FLAG_SOFTWARE) != 0);
+	ATF_REQUIRE(info.cd_expires > time(NULL));
+	ATF_REQUIRE_EQ(info.cd_generation, 0);
+	ATF_REQUIRE_EQ(info.cd_key_generation, 0);
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&change, fd, EVFILT_CRYPTODESC, EV_ADD, 0, 0, NULL);
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    kevent(kq, &change, 1, NULL, 0, NULL) == -1);
+	EV_SET(&change, fd, EVFILT_CRYPTODESC, EV_ADD, 0x20, 0, NULL);
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    kevent(kq, &change, 1, NULL, 0, NULL) == -1);
+	EV_SET(&change, fd, EVFILT_CRYPTODESC, EV_ADD,
+	    NOTE_CRYPTODESC_RIGHTS | NOTE_CRYPTODESC_REVOKE, 0, NULL);
+	ATF_REQUIRE_EQ(kevent(kq, &change, 1, NULL, 0, NULL), 0);
+	wait_for_event(kq, &event, 0, 0);
+
+	attenuation.cd_rights = CRYPTODESC_RIGHT_ENCRYPT;
+	ATF_REQUIRE_EQ(ioctl(fd, CIOCSCRYPTODESCRIGHTS, &attenuation), 0);
+	wait_for_event(kq, &event, 1, 1);
+	ATF_REQUIRE_EQ(event.filter, EVFILT_CRYPTODESC);
+	ATF_REQUIRE_EQ(event.fflags, NOTE_CRYPTODESC_RIGHTS);
+	ATF_REQUIRE_EQ(event.data, CRYPTODESC_RIGHT_ENCRYPT);
+	ATF_REQUIRE_EQ(event.ext[0], 0);
+	ATF_REQUIRE_EQ(event.ext[1], (uint64_t)info.cd_expires);
+	wait_for_event(kq, &event, 0, 0);
+
+	memset(&revoke, 0, sizeof(revoke));
+	ATF_REQUIRE_EQ(ioctl(fd, CIOCCRYPTODESCREVOKE, &revoke), 0);
+	wait_for_event(kq, &event, 1, 1);
+	ATF_REQUIRE_EQ(event.fflags, NOTE_CRYPTODESC_REVOKE);
+	ATF_REQUIRE((event.flags & EV_EOF) != 0);
+	info.cd_size = sizeof(info);
+	ATF_REQUIRE_EQ(ioctl(fd, CIOCGCRYPTODESCINFO, &info), 0);
+	ATF_REQUIRE((info.cd_state & CRYPTODESC_STATE_REVOKED) != 0);
+	close(kq);
+	close(fd);
+
+	/* TTL expiry wakes kqueue without requiring a crypto operation. */
+	fd = mint_generated_descriptor(control, CRYPTO_AES_CBC, 0, 16, 0,
+	    sizeof(aes_iv), 0, CRYPTODESC_RIGHT_ENCRYPT, 1);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&change, fd, EVFILT_CRYPTODESC, EV_ADD,
+	    NOTE_CRYPTODESC_EXPIRE, 0, NULL);
+	ATF_REQUIRE_EQ(kevent(kq, &change, 1, NULL, 0, NULL), 0);
+	wait_for_event(kq, &event, 3, 1);
+	ATF_REQUIRE_EQ(event.fflags, NOTE_CRYPTODESC_EXPIRE);
+	ATF_REQUIRE((event.flags & EV_EOF) != 0);
+	close(kq);
+	close(fd);
+
+	/* Rotation reports both the leased and newest named-key generations. */
+	snprintf(name, sizeof(name), "kqueue-%ld", (long)getpid());
+	owner = "cryptodesc-test";
+	create_named_cbc(control, name, owner, CRYPTODESC_RIGHT_ENCRYPT);
+	fd = lease_named(control, name, owner, CRYPTODESC_RIGHT_ENCRYPT);
+	info.cd_size = sizeof(info);
+	ATF_REQUIRE_EQ(ioctl(fd, CIOCGCRYPTODESCINFO, &info), 0);
+	ATF_REQUIRE_EQ(info.cd_generation, 1);
+	ATF_REQUIRE_EQ(info.cd_key_generation, 1);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&change, fd, EVFILT_CRYPTODESC, EV_ADD,
+	    NOTE_CRYPTODESC_KEY_ROTATE | NOTE_CRYPTODESC_KEY_DELETE, 0, NULL);
+	ATF_REQUIRE_EQ(kevent(kq, &change, 1, NULL, 0, NULL), 0);
+	named_control(&named, name, owner);
+	ATF_REQUIRE_EQ(ioctl(control, CIOCCRYPTONAMEDROTATE, &named), 0);
+	ATF_REQUIRE_EQ(named.cd_generation, 2);
+	wait_for_event(kq, &event, 1, 1);
+	ATF_REQUIRE_EQ(event.fflags, NOTE_CRYPTODESC_KEY_ROTATE);
+	ATF_REQUIRE_EQ(event.ext[0], 1);
+	ATF_REQUIRE_EQ(event.ext[2], 2);
+	info.cd_size = sizeof(info);
+	ATF_REQUIRE_EQ(ioctl(fd, CIOCGCRYPTODESCINFO, &info), 0);
+	ATF_REQUIRE_EQ(info.cd_generation, 1);
+	ATF_REQUIRE_EQ(info.cd_key_generation, 2);
+	ATF_REQUIRE((info.cd_state & CRYPTODESC_STATE_KEY_INVALID) != 0);
+	files = kinfo_getfile(getpid(), &count);
+	ATF_REQUIRE(files != NULL);
+	for (i = 0; i < count && files[i].kf_fd != fd; i++)
+		;
+	ATF_REQUIRE(i != count);
+	ATF_REQUIRE(strstr(files[i].kf_path, ":expires=") != NULL);
+	ATF_REQUIRE(strstr(files[i].kf_path,
+	    ":generation=1:key-generation=2:key-invalid=1") != NULL);
+	free(files);
+	close(kq);
+	close(fd);
+
+	fd = lease_named(control, name, owner, CRYPTODESC_RIGHT_ENCRYPT);
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	EV_SET(&change, fd, EVFILT_CRYPTODESC, EV_ADD,
+	    NOTE_CRYPTODESC_KEY_DELETE, 0, NULL);
+	ATF_REQUIRE_EQ(kevent(kq, &change, 1, NULL, 0, NULL), 0);
+	named_control(&named, name, owner);
+	ATF_REQUIRE_EQ(ioctl(control, CIOCCRYPTONAMEDDELETE, &named), 0);
+	ATF_REQUIRE_EQ(named.cd_generation, 3);
+	wait_for_event(kq, &event, 1, 1);
+	ATF_REQUIRE_EQ(event.fflags, NOTE_CRYPTODESC_KEY_DELETE);
+	ATF_REQUIRE_EQ(event.ext[0], 2);
+	ATF_REQUIRE_EQ(event.ext[2], 3);
+	info.cd_size = sizeof(info);
+	ATF_REQUIRE_EQ(ioctl(fd, CIOCGCRYPTODESCINFO, &info), 0);
+	ATF_REQUIRE_EQ(info.cd_generation, 2);
+	ATF_REQUIRE_EQ(info.cd_key_generation, 3);
+	ATF_REQUIRE((info.cd_state & CRYPTODESC_STATE_KEY_INVALID) != 0);
+	close(kq);
+	close(fd);
+	close(control);
 }
 ATF_TC_BODY(cbc_rights_and_metadata, tc)
 {
@@ -920,7 +1121,9 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, mint_validation);
+	ATF_TP_ADD_TC(tp, descriptor_kinfo);
 	ATF_TP_ADD_TC(tp, cbc_rights_and_metadata);
+	ATF_TP_ADD_TC(tp, descriptor_metadata_and_kqueue);
 	ATF_TP_ADD_TC(tp, descriptor_lifecycle);
 	ATF_TP_ADD_TC(tp, digest_and_eta_rights);
 	ATF_TP_ADD_TC(tp, kernel_generated_and_expiry);

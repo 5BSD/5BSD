@@ -52,11 +52,14 @@
 #include <sys/errno.h>
 #include <sys/random.h>
 #include <sys/refcount.h>
+#include <sys/callout.h>
 #include <sys/conf.h>
+#include <sys/event.h>
 #include <sys/file.h>
 #include <sys/filedesc.h>
 #include <sys/stat.h>
 #include <sys/kernel.h>
+#include <sys/limits.h>
 #include <sys/module.h>
 #include <sys/fcntl.h>
 #include <sys/bus.h>
@@ -301,6 +304,9 @@ struct fcrypt {
 	struct mtx	lock;
 };
 
+struct cryptodesc;
+TAILQ_HEAD(cryptodesc_list, cryptodesc);
+
 struct cryptokey_object {
 	TAILQ_ENTRY(cryptokey_object) next;
 	struct mtx	lock;
@@ -313,6 +319,7 @@ struct cryptokey_object {
 	uint32_t	rights;
 	uint8_t		key[128];
 	uint8_t		mackey[128];
+	struct cryptodesc_list descriptors;
 };
 
 static TAILQ_HEAD(, cryptokey_object) cryptokey_objects =
@@ -321,14 +328,21 @@ static struct mtx cryptokey_objects_lock;
 
 /* A passable, rights-limited OpenCrypto session. */
 struct cryptodesc {
+	TAILQ_ENTRY(cryptodesc) cd_key_link;
 	struct csession	*cd_session;
 	struct mtx	cd_lock;
+	struct knlist	cd_knotes;
+	struct callout	cd_expiry_callout;
 	uint32_t	cd_rights;
 	uint32_t	cd_type;
 	time_t		cd_expires;
 	bool		cd_revoked;
+	bool		cd_expired;
+	bool		cd_key_linked;
+	uint32_t	cd_terminal_events;
 	struct cryptokey_object *cd_key;
 	uint64_t	cd_key_generation;
+	uint64_t	cd_latest_key_generation;
 	uint8_t		cd_private[CRYPTODESC_ED25519_SECRET_SIZE];
 	uint8_t		cd_public[CRYPTODESC_ED25519_PUBLIC_SIZE];
 };
@@ -336,22 +350,162 @@ struct cryptodesc {
 #define	CRYPTODESC_MAX_ASYMMETRIC_DATA	(1024 * 1024)
 
 static fo_ioctl_t cryptodesc_ioctl;
+static fo_kqfilter_t cryptodesc_kqfilter;
 static fo_stat_t cryptodesc_stat;
 static fo_close_t cryptodesc_close;
 static fo_fill_kinfo_t cryptodesc_fill_kinfo;
 static int cryptodev_op(struct csession *, const struct crypt_op *);
 static int cryptodev_aead(struct csession *, struct crypt_aead *);
+static void cryptodesc_expire(void *);
+
+static void
+cryptodesc_schedule_expiry_locked(struct cryptodesc *cd)
+{
+	time_t remaining;
+	int seconds;
+
+	mtx_assert(&cd->cd_lock, MA_OWNED);
+	if (cd->cd_expires == 0 || cd->cd_expired)
+		return;
+	remaining = cd->cd_expires - time_second;
+	if (remaining <= 0) {
+		cd->cd_expired = true;
+		cd->cd_terminal_events |= NOTE_CRYPTODESC_EXPIRE;
+		KNOTE_LOCKED(&cd->cd_knotes, NOTE_CRYPTODESC_EXPIRE);
+		return;
+	}
+	seconds = remaining > INT_MAX / hz ? INT_MAX / hz : (int)remaining;
+	callout_reset(&cd->cd_expiry_callout, MAX(1, seconds * hz),
+	    cryptodesc_expire, cd);
+}
+
+static void
+cryptodesc_expire(void *arg)
+{
+	struct cryptodesc *cd;
+
+	cd = arg;
+	mtx_assert(&cd->cd_lock, MA_OWNED);
+	cryptodesc_schedule_expiry_locked(cd);
+}
+
+static uint32_t
+cryptodesc_state_locked(const struct cryptodesc *cd)
+{
+	uint32_t state;
+
+	mtx_assert(&cd->cd_lock, MA_OWNED);
+	state = 0;
+	if (cd->cd_revoked)
+		state |= CRYPTODESC_STATE_REVOKED;
+	if (cd->cd_expired ||
+	    (cd->cd_expires != 0 && time_second >= cd->cd_expires))
+		state |= CRYPTODESC_STATE_EXPIRED;
+	if ((cd->cd_terminal_events & (NOTE_CRYPTODESC_KEY_ROTATE |
+	    NOTE_CRYPTODESC_KEY_DELETE)) != 0)
+		state |= CRYPTODESC_STATE_KEY_INVALID;
+	return (state);
+}
+
+static void
+cryptodesc_notify_key_locked(struct cryptokey_object *key, uint32_t event)
+{
+	struct cryptodesc *cd;
+
+	mtx_assert(&key->lock, MA_OWNED);
+	TAILQ_FOREACH(cd, &key->descriptors, cd_key_link) {
+		mtx_lock(&cd->cd_lock);
+		cd->cd_latest_key_generation = key->generation;
+		cd->cd_terminal_events |= event;
+		KNOTE_LOCKED(&cd->cd_knotes, event);
+		mtx_unlock(&cd->cd_lock);
+	}
+}
+
+static void
+cryptodesc_kqdetach(struct knote *kn)
+{
+	struct cryptodesc *cd;
+
+	cd = kn->kn_hook;
+	mtx_lock(&cd->cd_lock);
+	knlist_remove(&cd->cd_knotes, kn, 1);
+	mtx_unlock(&cd->cd_lock);
+}
+
+static int
+cryptodesc_kqevent(struct knote *kn, long hint)
+{
+	struct cryptodesc *cd;
+	uint32_t events, terminal;
+
+	cd = kn->kn_hook;
+	mtx_assert(&cd->cd_lock, MA_OWNED);
+	if (hint == 0) {
+		events = cd->cd_terminal_events;
+		if ((cryptodesc_state_locked(cd) & CRYPTODESC_STATE_EXPIRED) != 0)
+			events |= NOTE_CRYPTODESC_EXPIRE;
+	} else
+		events = (uint32_t)hint & NOTE_CRYPTODESC_CTRLMASK;
+	events &= kn->kn_sfflags;
+	if (events != 0)
+		kn->kn_fflags |= events;
+	kn->kn_data = cd->cd_rights;
+	kn->kn_kevent.ext[0] = cd->cd_key_generation;
+	kn->kn_kevent.ext[1] = cd->cd_expires;
+	kn->kn_kevent.ext[2] = cd->cd_latest_key_generation;
+	terminal = kn->kn_fflags & (NOTE_CRYPTODESC_REVOKE |
+	    NOTE_CRYPTODESC_EXPIRE | NOTE_CRYPTODESC_KEY_ROTATE |
+	    NOTE_CRYPTODESC_KEY_DELETE);
+	if (terminal != 0)
+		kn->kn_flags |= EV_EOF | EV_ONESHOT;
+	return (kn->kn_fflags != 0);
+}
+
+static const struct filterops cryptodesc_filtops = {
+	.f_isfd = 1,
+	.f_detach = cryptodesc_kqdetach,
+	.f_event = cryptodesc_kqevent,
+	.f_copy = knote_triv_copy,
+};
+
+static int
+cryptodesc_kqfilter(struct file *fp, struct knote *kn)
+{
+	struct cryptodesc *cd;
+
+	if (kn->kn_filter != EVFILT_CRYPTODESC || kn->kn_sfflags == 0 ||
+	    (kn->kn_sfflags & ~NOTE_CRYPTODESC_CTRLMASK) != 0)
+		return (EINVAL);
+	cd = fp->f_data;
+	mtx_lock(&cd->cd_lock);
+	kn->kn_fop = &cryptodesc_filtops;
+	kn->kn_hook = cd;
+	kn->kn_flags |= EV_CLEAR;
+	knlist_add(&cd->cd_knotes, kn, 1);
+	mtx_unlock(&cd->cd_lock);
+	return (0);
+}
 
 static int
 cryptodesc_check_rights(struct cryptodesc *cd, uint32_t required)
 {
+	bool deleted;
+	uint64_t generation;
 	int error;
 
 	mtx_lock(&cd->cd_lock);
 	if (cd->cd_revoked)
 		error = EACCES;
-	else if (cd->cd_expires != 0 && time_second >= cd->cd_expires)
+	else if (cd->cd_expired ||
+	    (cd->cd_expires != 0 && time_second >= cd->cd_expires)) {
+		if (!cd->cd_expired) {
+			cd->cd_expired = true;
+			cd->cd_terminal_events |= NOTE_CRYPTODESC_EXPIRE;
+			KNOTE_LOCKED(&cd->cd_knotes, NOTE_CRYPTODESC_EXPIRE);
+		}
 		error = ESTALE;
+	}
 	else if ((cd->cd_rights & required) != required)
 		error = EPERM;
 	else
@@ -360,10 +514,20 @@ cryptodesc_check_rights(struct cryptodesc *cd, uint32_t required)
 	if (error != 0 || cd->cd_key == NULL)
 		return (error);
 	mtx_lock(&cd->cd_key->lock);
-	if (cd->cd_key->deleted ||
-	    cd->cd_key->generation != cd->cd_key_generation)
+	deleted = cd->cd_key->deleted;
+	generation = cd->cd_key->generation;
+	if (deleted || generation != cd->cd_key_generation)
 		error = EACCES;
 	mtx_unlock(&cd->cd_key->lock);
+	if (error != 0) {
+		mtx_lock(&cd->cd_lock);
+		cd->cd_latest_key_generation = generation;
+		cd->cd_terminal_events |= deleted ? NOTE_CRYPTODESC_KEY_DELETE :
+		    NOTE_CRYPTODESC_KEY_ROTATE;
+		KNOTE_LOCKED(&cd->cd_knotes, deleted ?
+		    NOTE_CRYPTODESC_KEY_DELETE : NOTE_CRYPTODESC_KEY_ROTATE);
+		mtx_unlock(&cd->cd_lock);
+	}
 	return (error);
 }
 
@@ -373,7 +537,7 @@ static const struct fileops cryptodesc_ops = {
 	.fo_truncate = invfo_truncate,
 	.fo_ioctl = cryptodesc_ioctl,
 	.fo_poll = invfo_poll,
-	.fo_kqfilter = invfo_kqfilter,
+	.fo_kqfilter = cryptodesc_kqfilter,
 	.fo_stat = cryptodesc_stat,
 	.fo_close = cryptodesc_close,
 	.fo_chmod = invfo_chmod,
@@ -771,6 +935,7 @@ cryptokey_remove_all(void)
 		mtx_lock(&key->lock);
 		key->deleted = true;
 		key->generation++;
+		cryptodesc_notify_key_locked(key, NOTE_CRYPTODESC_KEY_DELETE);
 		explicit_bzero(key->key, sizeof(key->key));
 		explicit_bzero(key->mackey, sizeof(key->mackey));
 		mtx_unlock(&key->lock);
@@ -798,27 +963,61 @@ cryptodesc_install(struct thread *td, struct csession *cse, uint32_t type,
 	cd = malloc(sizeof(*cd), M_CRYPTODEV, M_WAITOK | M_ZERO);
 	cd->cd_session = cse;
 	mtx_init(&cd->cd_lock, "cryptodesc", NULL, MTX_DEF);
+	knlist_init_mtx(&cd->cd_knotes, &cd->cd_lock);
+	callout_init_mtx(&cd->cd_expiry_callout, &cd->cd_lock, 0);
 	cd->cd_rights = rights;
 	cd->cd_type = type;
 	cd->cd_expires = ttl == 0 ? 0 : time_second + ttl;
 	cd->cd_key = key;
 	cd->cd_key_generation = key_generation;
+	cd->cd_latest_key_generation = key_generation;
 	if (private_key_len != 0)
 		memcpy(cd->cd_private, private_key, private_key_len);
 	if (public_key_len != 0)
 		memcpy(cd->cd_public, public_key, public_key_len);
+	if (key != NULL) {
+		mtx_lock(&key->lock);
+		if (key->deleted || key->generation != key_generation)
+			error = EACCES;
+		else {
+			TAILQ_INSERT_TAIL(&key->descriptors, cd, cd_key_link);
+			cd->cd_key_linked = true;
+			error = 0;
+		}
+		mtx_unlock(&key->lock);
+		if (error != 0) {
+			if (cse != NULL)
+				cse_free(cse);
+			cryptokey_release(key);
+			knlist_destroy(&cd->cd_knotes);
+			mtx_destroy(&cd->cd_lock);
+			explicit_bzero(cd, sizeof(*cd));
+			free(cd, M_CRYPTODEV);
+			return (error);
+		}
+	}
 	error = falloc_noinstall(td, &fp);
 	if (error != 0) {
+		if (cd->cd_key_linked) {
+			mtx_lock(&key->lock);
+			TAILQ_REMOVE(&key->descriptors, cd, cd_key_link);
+			cd->cd_key_linked = false;
+			mtx_unlock(&key->lock);
+		}
 		if (cse != NULL)
 			cse_free(cse);
 		if (key != NULL)
 			cryptokey_release(key);
+		knlist_destroy(&cd->cd_knotes);
 		mtx_destroy(&cd->cd_lock);
 		explicit_bzero(cd, sizeof(*cd));
 		free(cd, M_CRYPTODEV);
 		return (error);
 	}
 	finit(fp, FREAD | FWRITE, DTYPE_CRYPTO, cd, &cryptodesc_ops);
+	mtx_lock(&cd->cd_lock);
+	cryptodesc_schedule_expiry_locked(cd);
+	mtx_unlock(&cd->cd_lock);
 	error = finstall(td, fp, &fd, 0, NULL);
 	fdrop(fp, td);
 	if (error == 0)
@@ -900,6 +1099,7 @@ cryptokey_create(struct cryptodesc_named_create *create)
 	key = malloc(sizeof(*key), M_CRYPTODEV, M_WAITOK | M_ZERO);
 	mtx_init(&key->lock, "cryptokey", NULL, MTX_DEF);
 	refcount_init(&key->refs, 1); /* global key-object reference */
+	TAILQ_INIT(&key->descriptors);
 	key->generation = 1;
 	strlcpy(key->name, create->cd_name, sizeof(key->name));
 	strlcpy(key->owner, create->cd_owner, sizeof(key->owner));
@@ -1003,6 +1203,7 @@ cryptokey_rotate(struct cryptodesc_named_control *control)
 		if (key->session.mackeylen != 0)
 			arc4random_buf(key->mackey, key->session.mackeylen);
 		key->generation++;
+		cryptodesc_notify_key_locked(key, NOTE_CRYPTODESC_KEY_ROTATE);
 		control->cd_generation = key->generation;
 		error = 0;
 	}
@@ -1033,6 +1234,7 @@ cryptokey_delete(struct cryptodesc_named_control *control)
 	mtx_lock(&key->lock);
 	key->deleted = true;
 	key->generation++;
+	cryptodesc_notify_key_locked(key, NOTE_CRYPTODESC_KEY_DELETE);
 	explicit_bzero(key->key, sizeof(key->key));
 	explicit_bzero(key->mackey, sizeof(key->mackey));
 	control->cd_generation = key->generation;
@@ -1286,8 +1488,9 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 	struct cryptodesc_x25519 *x25519;
 	struct cryptodesc_sign *sign;
 	struct cryptodesc_verify *verify;
+	struct cryptodesc_info *info;
 	const struct crypto_session_params *csp;
-	uint32_t required;
+	uint32_t old_rights, required;
 	int error;
 
 	cd = fp->f_data;
@@ -1297,7 +1500,11 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 		if (revoke->cd_flags != 0)
 			return (EINVAL);
 		mtx_lock(&cd->cd_lock);
-		cd->cd_revoked = true;
+		if (!cd->cd_revoked) {
+			cd->cd_revoked = true;
+			cd->cd_terminal_events |= NOTE_CRYPTODESC_REVOKE;
+			KNOTE_LOCKED(&cd->cd_knotes, NOTE_CRYPTODESC_REVOKE);
+		}
 		mtx_unlock(&cd->cd_lock);
 		return (0);
 	case CIOCSCRYPTODESCRIGHTS:
@@ -1310,11 +1517,37 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 		else if ((attenuation->cd_rights & ~cd->cd_rights) != 0)
 			error = EPERM;
 		else {
+			old_rights = cd->cd_rights;
 			cd->cd_rights = attenuation->cd_rights;
+			if (old_rights != cd->cd_rights)
+				KNOTE_LOCKED(&cd->cd_knotes,
+				    NOTE_CRYPTODESC_RIGHTS);
 			error = 0;
 		}
 		mtx_unlock(&cd->cd_lock);
 		return (error);
+	case CIOCGCRYPTODESCINFO:
+		info = data;
+		if (info->cd_size != sizeof(*info))
+			return (EINVAL);
+		memset(info, 0, sizeof(*info));
+		info->cd_size = sizeof(*info);
+		info->cd_crid = -1;
+		if (cd->cd_session != NULL) {
+			info->cd_crid = crypto_ses2hid(cd->cd_session->cses);
+			info->cd_provider_flags =
+			    crypto_ses2caps(cd->cd_session->cses);
+		}
+		mtx_lock(&cd->cd_lock);
+		cryptodesc_schedule_expiry_locked(cd);
+		info->cd_type = cd->cd_type;
+		info->cd_rights = cd->cd_rights;
+		info->cd_state = cryptodesc_state_locked(cd);
+		info->cd_expires = cd->cd_expires;
+		info->cd_generation = cd->cd_key_generation;
+		info->cd_key_generation = cd->cd_latest_key_generation;
+		mtx_unlock(&cd->cd_lock);
+		return (0);
 	case CIOCCRYPTODESCDERIVE:
 		derive = data;
 		derive->cd_fd = -1;
@@ -1390,10 +1623,18 @@ cryptodesc_close(struct file *fp, struct thread *td __unused)
 	cd = fp->f_data;
 	fp->f_ops = &badfileops;
 	fp->f_data = NULL;
+	if (cd->cd_key_linked) {
+		mtx_lock(&cd->cd_key->lock);
+		TAILQ_REMOVE(&cd->cd_key->descriptors, cd, cd_key_link);
+		cd->cd_key_linked = false;
+		mtx_unlock(&cd->cd_key->lock);
+	}
+	callout_drain(&cd->cd_expiry_callout);
 	if (cd->cd_session != NULL)
 		cse_free(cd->cd_session);
 	if (cd->cd_key != NULL)
 		cryptokey_release(cd->cd_key);
+	knlist_destroy(&cd->cd_knotes);
 	mtx_destroy(&cd->cd_lock);
 	explicit_bzero(cd, sizeof(*cd));
 	free(cd, M_CRYPTODEV);
@@ -1407,24 +1648,51 @@ cryptodesc_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 	struct cryptodesc *cd;
 	const struct crypto_session_params *csp;
 	bool revoked;
+	bool expired, key_invalid;
+	time_t expires;
 	uint32_t rights;
+	uint32_t provider_flags;
+	uint64_t generation, key_generation;
+	int crid;
 
 	cd = fp->f_data;
 	mtx_lock(&cd->cd_lock);
 	rights = cd->cd_rights;
 	revoked = cd->cd_revoked;
+	expired = (cryptodesc_state_locked(cd) &
+	    CRYPTODESC_STATE_EXPIRED) != 0;
+	key_invalid = (cryptodesc_state_locked(cd) &
+	    CRYPTODESC_STATE_KEY_INVALID) != 0;
+	expires = cd->cd_expires;
+	generation = cd->cd_key_generation;
+	key_generation = cd->cd_latest_key_generation;
 	mtx_unlock(&cd->cd_lock);
+	crid = -1;
+	provider_flags = 0;
+	if (cd->cd_session != NULL) {
+		crid = crypto_ses2hid(cd->cd_session->cses);
+		provider_flags = crypto_ses2caps(cd->cd_session->cses);
+	}
 	kif->kf_type = KF_TYPE_CRYPTO;
 	if (cd->cd_type == 0) {
 		csp = crypto_get_params(cd->cd_session->cses);
 		snprintf(kif->kf_path, sizeof(kif->kf_path),
-		    "crypto:mode=%d:cipher=%d:auth=%d:rights=%#x:revoked=%d",
+		    "crypto:mode=%d:cipher=%d:auth=%d:rights=%#x:revoked=%d:"
+		    "provider=%d:provider-flags=%#x:expired=%d:expires=%jd:"
+		    "generation=%ju:key-generation=%ju:"
+		    "key-invalid=%d",
 		    csp->csp_mode, csp->csp_cipher_alg, csp->csp_auth_alg, rights,
-		    revoked);
+		    revoked, crid, provider_flags, expired, (intmax_t)expires,
+		    (uintmax_t)generation,
+		    (uintmax_t)key_generation, key_invalid);
 	} else {
 		snprintf(kif->kf_path, sizeof(kif->kf_path),
-		    "crypto:keytype=%u:rights=%#x:revoked=%d", cd->cd_type,
-		    rights, revoked);
+		    "crypto:keytype=%u:rights=%#x:revoked=%d:provider=%d:"
+		    "provider-flags=%#x:expired=%d:"
+		    "expires=%jd:generation=%ju:key-generation=%ju:key-invalid=%d",
+		    cd->cd_type, rights, revoked, crid, provider_flags, expired,
+		    (intmax_t)expires,
+		    (uintmax_t)generation, (uintmax_t)key_generation, key_invalid);
 	}
 	return (0);
 }

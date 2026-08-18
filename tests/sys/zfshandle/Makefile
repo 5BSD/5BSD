@@ -30,5 +30,6 @@ LIBADD.zfshandle_pool_test+=		trustedzfs
 LIBADD.zfshandle_security_test+=	trustedzfs
 LIBADD.zfshandle_verbs_test+=		trustedzfs
 LIBADD.zfshandle_negative_test+=	trustedzfs
+LIBADD.zfshandle_rights_test+=	util
 
 .include <bsd.test.mk>

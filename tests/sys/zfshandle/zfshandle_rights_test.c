@@ -7,6 +7,9 @@
  */
 
 #include <sys/eventfd.h>
+#include <sys/user.h>
+
+#include <libutil.h>
 
 #include "zfshandle_test_helpers.h"
 
@@ -57,6 +60,49 @@ ATF_TC_BODY(implicit_rights, tc)
 	close(fd);
 }
 ATF_TC_CLEANUP(implicit_rights, tc)
+{
+	zht_pool_cleanup(tc);
+}
+
+ATF_TC_WITH_CLEANUP(descriptor_kinfo);
+ATF_TC_HEAD(descriptor_kinfo, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "ZFS handles expose dataset identity and authority to process tools");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(descriptor_kinfo, tc)
+{
+	struct kinfo_file *files;
+	struct zfd_info_args info;
+	char ds[256];
+	int count, fd, i;
+
+	zht_setup(tc, ds, sizeof(ds));
+	fd = zht_open_req(ds, ZH_SNAPSHOT, ZHF_SUBTREE);
+	ATF_REQUIRE_EQ(0, zfd_info(fd, &info));
+	files = kinfo_getfile(getpid(), &count);
+	ATF_REQUIRE_MSG(files != NULL, "kinfo_getfile: %s", strerror(errno));
+	for (i = 0; i < count && files[i].kf_fd != fd; i++)
+		;
+	ATF_REQUIRE_MSG(i != count, "ZFS handle fd %d was not exported", fd);
+	ATF_REQUIRE_EQ(KF_TYPE_ZFSHANDLE, files[i].kf_type);
+	ATF_REQUIRE((files[i].kf_status & KF_ATTR_VALID) != 0);
+	ATF_REQUIRE_STREQ(ds, files[i].kf_path);
+	ATF_REQUIRE_EQ(info.zi_ds_guid,
+	    files[i].kf_un.kf_zfshandle.kf_zh_ds_guid);
+	ATF_REQUIRE_EQ(info.zi_pool_guid,
+	    files[i].kf_un.kf_zfshandle.kf_zh_pool_guid);
+	ATF_REQUIRE_EQ(info.zi_rights,
+	    files[i].kf_un.kf_zfshandle.kf_zh_rights);
+	ATF_REQUIRE_EQ(info.zi_flags,
+	    files[i].kf_un.kf_zfshandle.kf_zh_flags);
+	ATF_REQUIRE_EQ(info.zi_valid,
+	    files[i].kf_un.kf_zfshandle.kf_zh_valid);
+	free(files);
+	close(fd);
+}
+ATF_TC_CLEANUP(descriptor_kinfo, tc)
 {
 	zht_pool_cleanup(tc);
 }
@@ -159,6 +205,7 @@ ATF_TC_BODY(forged_fd, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, implicit_rights);
+	ATF_TP_ADD_TC(tp, descriptor_kinfo);
 	ATF_TP_ADD_TC(tp, right_gates_verb);
 	ATF_TP_ADD_TC(tp, mint_validation);
 	ATF_TP_ADD_TC(tp, forged_fd);

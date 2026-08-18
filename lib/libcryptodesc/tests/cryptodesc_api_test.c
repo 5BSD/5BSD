@@ -16,6 +16,7 @@ ATF_TC_HEAD(argument_validation, tc)
 }
 ATF_TC_BODY(argument_validation, tc)
 {
+	struct cryptodesc_info info;
 	struct session2_op session;
 	uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE];
 	uint64_t generation;
@@ -46,6 +47,10 @@ ATF_TC_BODY(argument_validation, tc)
 	errno = 0;
 	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_restrict(-1,
 	    CRYPTODESC_RIGHT_ALL + 1) == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_get_info(-1, &info) == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptodesc_get_info(0, NULL) == -1);
 }
 
 ATF_TP_ADD_TCS(tp)
