@@ -42,7 +42,7 @@ touching the base system in multiple places:
    credential handling.
 
 **MAC_CAPABILITY replaces all of this with one base system change** (`DTYPE_MAC_CAPABILITY`,
-three reserved Capsicum rights, one device node) that enables unlimited
+standard Capsicum rights with ioctl limits, one device node) that enables unlimited
 kernel services as loadable modules.  No new syscalls, no new DTYPEs,
 no new `CAP_*` bits per service.
 

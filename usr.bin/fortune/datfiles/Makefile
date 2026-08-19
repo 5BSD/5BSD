@@ -1,4 +1,4 @@
-DB=	freebsd-tips
+DB=	freebsd-tips 5bsd-tips
 
 BLDS=	${DB:S/$/.dat/}
 FILES=	${DB} ${BLDS}

@@ -97,7 +97,7 @@ to native FreeBSD operations before the kernel executes them.
 ### MAC_CAPABILITY -- MAC Capability
 
 Kernel message-passing framework.  One base system change
-(`DTYPE_MAC_CAPABILITY`, two Capsicum rights, one device node) enables
+(`DTYPE_MAC_CAPABILITY`, standard Capsicum rights with ioctl limits, one device node) enables
 unlimited kernel services as loadable modules.
 
 - Async (taskqueue) and sync (caller-thread) models
@@ -150,14 +150,16 @@ and nested coalitions.  Closing the coalition fd revokes all members.
 
 ### HWT/PT -- Hardware Trace
 
-Intel Processor Trace support with fixes over stock FreeBSD:
+Hardware trace: the machine-independent hwt(4) framework with per-arch
+backends -- Intel PT on amd64 (Intel CPUs only, not AMD) and ARM SPE on
+arm64.  Intel PT support carries fixes over stock FreeBSD:
 - Race condition fixes in teardown (PMI, SWI, switch-in)
 - Correct buffer position from XSAVE save area (not MSR)
 - Multi-thread trace fix (TAILQ_FIRST removal)
 - PSB/MTC/CYC timing packet support
 - TOCTOU fix in context hash removal
 
-**Source:** `sys/dev/hwt/`, `sys/amd64/pt/`
+**Source:** `sys/dev/hwt/`, `sys/amd64/pt/`, `sys/arm64/spe/`
 
 ---
 
@@ -266,7 +268,8 @@ Structured for FreeBSD contribution:
 - File names chosen to avoid merge conflicts
 
 Base system touches are minimal: `DTYPE_MAC_CAPABILITY` in `sys/sys/file.h`,
-two Capsicum rights in `sys/sys/capsicum.h`.
+per-descriptor transfer states (`CAP_XFER_*`) in `sys/sys/capsicum.h`;
+message-passing rights use standard Capsicum ioctl limits (efa4872a3df).
 
 ```sh
 git fetch freebsd main

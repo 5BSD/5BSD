@@ -8,6 +8,3 @@
 include GENERIC
 
 ident		VBSD
-
-# Required by the bhyve checkpoint/suspend-and-restore implementation.
-options		BHYVE_SNAPSHOT

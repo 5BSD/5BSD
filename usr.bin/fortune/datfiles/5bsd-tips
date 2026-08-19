@@ -1,0 +1,115 @@
+5BSD runs Linux binaries natively — and every Linux syscall passes
+through the MAC framework before it executes. See mac_abac(4) and the
+5BSD Epic for the security stack Linux programs can't see.
+%
+Want a file descriptor that only works in the process it was minted
+for? vnode claims and capability transfer states (CAP_XFER_ONCE,
+CAP_XFER_NONE) make a leaked fd useless. See the Capability Transfer
+chapter of the 5BSD Epic.
+%
+capprotect can make a process invisible to ps(1), immune to ptrace(2),
+and immune to kill(2) — enforced by the MAC framework, controlled by a
+capability fd.
+%
+Group processes, jails, and sockets into a coalition and close one fd
+to tear them all down — with grace periods, deadlines, and watchdogs.
+See the Process Protections chapter of the 5BSD Epic.
+%
+TrustedZFS hands out ZFS datasets as capability file descriptors: the
+fd is the authority. Request one with "tzfsctl request", and see what
+the broker offers with "tzfsctl list-flavors".
+%
+Need a scratch filesystem that disappears on close? Try an ephemeral
+TrustedZFS handle: tzfsctl(8) can mint anonymous datasets backed by
+the pool configured in tzfs.conf(5).
+%
+5BSD boots through oracle-init and serviced before running the classic
+rc(8) scripts. "oraclectl status" shows the capability broker;
+"servicectl services" shows managed services.
+%
+Services on 5BSD declare their needs in a UCL manifest inside a .cap
+bundle under /Capabilities/System — the kernel grants the declared
+authority before exec. See serviced(5).
+%
+WASPNest is 5BSD's hypervisor (the bhyve lineage). Guests get modern
+VirtIO devices — fs, gpu, balloon, iommu, rtc, vsock — plus packed
+rings and multiqueue.
+%
+AF_VSOCK sockets work between a WASPNest host and its guests with no
+network configuration at all: connect to a guest by context ID.
+%
+Trace every branch a program executes with bsdtrace(8) and Intel
+Processor Trace — then decode it offline into call trees and flame
+graphs. Requires an Intel CPU; the hwt(4) framework also supports ARM
+SPE on arm64.
+%
+bsdinstruments ships over 200 DTrace-powered profiles for one-command
+system investigation, and libotelexport streams the results as
+OpenTelemetry.
+%
+The blued(8) Bluetooth daemon owns the radio; meshd(8) provisions and
+configures BLE mesh networks through it. Try "meshctl cfg" to drive
+the mesh Config Client.
+%
+Ports and packages from FreeBSD generally just work: 5BSD tracks
+FreeBSD 16-CURRENT underneath. Where 5BSD has diverged, the 5BSD Epic
+— not the FreeBSD Handbook — is the source of truth.
+%
+The VBSD kernel is GENERIC plus an identity: every 5BSD kernel option
+lives in GENERIC itself, so custom kernel configs inherit the full
+feature set with a one-line include.
+%
+Wondering what a daemon is? 5BSD system daemons tag their log lines —
+[ORACLE], [SERVICE], [TZFS] — so a single grep separates the init
+broker, service manager, and storage broker.
+%
+Pass a secret to a child without an environment variable leak: an
+envfd(2) descriptor holds one write-once value, can be sealed to
+capability mode, and zeroes its memory on close.
+%
+Watch every file open, exec, and mount on the system in real time:
+OpenEndpointSecurity delivers kernel security events to subscribed
+clients. Try oeslogger(8).
+%
+mac_abac(4) gives you attribute-based access control: label files and
+processes with key=value pairs via extended attributes, then write
+ordered allow/deny/transition rules — no recompiling, no reboots.
+%
+Capsicum capability mode works on Linux binaries under 5BSD: cap_enter
+a Linux process and it can no longer open new files, sockets, or
+devices — only use the descriptors it already holds.
+%
+A process descriptor beats a PID: procdesc fds cannot be reused by a
+recycled PID, work in capability mode, and can be enlisted in a
+coalition so the child dies when you close the fd.
+%
+mac_capability services expose DTrace probes for every capability
+grant and denial. "dtrace -l | grep mac_capability" lists them; the
+canned scripts live in /usr/share/dtrace.
+%
+Measure CPU package power, temperature, and frequency over time with
+hwtlm(8) — hardware telemetry from RAPL and sensors, exportable as
+OpenTelemetry.
+%
+No Bluetooth hardware? The ng_hci_virt netgraph node emulates a
+controller, so blued(8), meshd(8), and the whole test suite run in a
+VM or CI without a USB radio.
+%
+Run Rocky Linux userlands on 5BSD storage: "tzfsctl request -f linux"
+materializes a glibc rootfs from the tzfs-flavors catalog as a
+capability-controlled ZFS dataset.
+%
+"servicectl services" shows every managed service, its state, and
+restart policy; "servicectl status" summarizes the manager itself.
+%
+The waspnest(8) command is bhyve(8): the hypervisor is being renamed
+as part of 5BSD's WASPNest virtualization stack, and both names work
+today.
+%
+Read the whole story: the 5BSD Epic covers the security stack,
+WASPNest, TrustedZFS, Bluetooth, and operations, chapter by chapter.
+It lives in docs/book in the source tree.
+%
+Everything in the VBSD kernel is stock GENERIC plus identity — diff
+sys/amd64/conf/VBSD against GENERIC and see for yourself.
+%

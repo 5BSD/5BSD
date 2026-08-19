@@ -379,6 +379,9 @@ device		kvm_clock		# KVM paravirtual clock driver
 # HyperV drivers and enhancement support
 device		hyperv			# HyperV drivers
 
+# Required by the bhyve checkpoint/suspend-and-restore implementation.
+options 	BHYVE_SNAPSHOT
+
 # Xen HVM Guest Optimizations
 # NOTE: XENHVM depends on xenpci and xentimer.
 # They must be added or removed together.

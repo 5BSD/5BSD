@@ -1,4 +1,4 @@
-comment = "Hardware-assisted execution tracing (Intel PT)"
+comment = "Hardware-assisted execution tracing (Intel PT, Intel CPUs only)"
 
 desc = <<EOD
 bsdtrace captures every branch a program takes using Intel Processor
@@ -6,4 +6,9 @@ Trace via the hwt(4) framework, then decodes the trace into
 symbolized control-flow events (calls, returns, jumps, syscalls)
 with per-function profiles, call trees, and flame-graph output.
 Traces are saved for offline analysis.
+
+Intel Processor Trace is an Intel-only CPU feature: this package
+requires an amd64 system with an Intel CPU and does not work on AMD
+processors. The underlying hwt(4) framework itself is cross-platform
+(ARM SPE is supported on arm64).
 EOD

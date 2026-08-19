@@ -25,4 +25,5 @@ if [ "$PWD" != "$HOME" ] && [ "$PWD" -ef "$HOME" ] ; then cd ; fi
 # Query terminal size; useful for serial lines.
 if [ -x /usr/bin/resizewin ] ; then /usr/bin/resizewin -z ; fi
 
-# A 5BSD-specific tips database can be enabled here when one is available.
+# Show a 5BSD tip of the day at login.
+if [ -x /usr/bin/fortune ] ; then /usr/bin/fortune 5bsd-tips ; fi

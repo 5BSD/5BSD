@@ -1,0 +1,68 @@
+/* The 5BSD Epic — dark gold and red identity, applied over every mdBook theme. */
+
+:root {
+    --epic-gold: #c9a227;
+    --epic-gold-dim: #a4720e;
+    --epic-red: #a32222;
+    --epic-red-dim: #7c1a1a;
+}
+
+/* Links: dark gold, red on hover */
+html {
+    --links: var(--epic-gold-dim);
+}
+html.navy, html.coal, html.ayu {
+    --links: var(--epic-gold);
+}
+.content a:hover {
+    color: var(--epic-red);
+}
+
+/* Sidebar: active chapter in gold */
+html {
+    --sidebar-active: var(--epic-gold-dim);
+}
+html.navy, html.coal, html.ayu {
+    --sidebar-active: var(--epic-gold);
+}
+.chapter li.part-title {
+    color: var(--epic-red);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+/* Headings: gold rule under h1, red-tinted h2 borders */
+.content h1 {
+    border-bottom: 2px solid var(--epic-gold);
+    padding-bottom: 0.3em;
+}
+.content h2 {
+    border-bottom: 1px solid var(--epic-gold-dim);
+    padding-bottom: 0.2em;
+}
+
+/* Menu bar title in gold */
+.menu-title {
+    color: var(--epic-gold);
+}
+
+/* Tables: gold header rule */
+.content table thead th {
+    border-bottom: 2px solid var(--epic-gold-dim);
+}
+
+/* Blockquotes (Status notes and callouts): red spine, gold-tinted wash */
+.content blockquote {
+    border-left: 4px solid var(--epic-red);
+    background-color: rgba(201, 162, 39, 0.07);
+}
+
+/* Inline code and code-block accents */
+.content :not(pre) > code {
+    color: var(--epic-red);
+}
+html.navy :not(pre) > code,
+html.coal :not(pre) > code,
+html.ayu :not(pre) > code {
+    color: var(--epic-gold);
+}

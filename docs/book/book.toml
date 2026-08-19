@@ -1,0 +1,19 @@
+[book]
+title = "The 5BSD Epic"
+authors = ["Kory Heard"]
+description = "The story of 5BSD: architecture, security, virtualization, and operations"
+language = "en"
+src = "src"
+
+[build]
+create-missing = false
+
+[output.html]
+default-theme = "coal"
+preferred-dark-theme = "coal"
+additional-css = ["epic.css"]
+git-repository-url = "https://github.com/5bsd/5bsd"
+
+[output.html.search]
+enable = true
+limit-results = 20

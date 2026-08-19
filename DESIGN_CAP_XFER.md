@@ -17,6 +17,7 @@ A `uint8_t fde_xfer_state` field on `struct filedescent`, orthogonal to
 | 0 | `CAP_XFER_UNLIMITED` | No restriction (default) |
 | 1 | `CAP_XFER_ONCE` | One send, then both sides exhausted |
 | 2 | `CAP_XFER_NONE` | Transfer blocked (`ENOTCAPABLE`) |
+| 3 | `CAP_XFER_TWICE` | Two-hop linear transfer budget |
 
 ## Transfer Semantics
 
@@ -59,7 +60,7 @@ NONE      → send → ENOTCAPABLE
 
 | File | What |
 |------|------|
-| `sys/sys/capsicum.h` | `CAP_XFER_UNLIMITED`, `CAP_XFER_ONCE`, `CAP_XFER_NONE` |
+| `sys/sys/capsicum.h` | `CAP_XFER_UNLIMITED`, `CAP_XFER_ONCE`, `CAP_XFER_NONE`, `CAP_XFER_TWICE` |
 | `sys/sys/filedesc.h` | `fde_xfer_state` field, `fde_copy()` line |
 | `sys/kern/kern_descrip.c` | Zero in `_finstall()` and `fdfree()` |
 | `sys/kern/uipc_usrreq.c` | Validate + consume in `unp_internalize()` (XLOCK), propagate in `unp_externalize()` |

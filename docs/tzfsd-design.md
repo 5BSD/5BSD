@@ -1,7 +1,10 @@
 # tzfsd — the `[TZFS]` storage daemon
 
-Status: **design** (2026-08-14). Supersedes the "optional broker" sketch in
-`trustedzfs-design.md §6a`; that section now points here.
+Status: **built** (designed 2026-08-14; daemon, `tzfsctl`, `libtzfsd`, the
+tzfs-flavors package, and tests are in the tree — see commits `2cbcfd463c6`
+through `80d8c2f99cc`; the boot-time ready gate remains design-only).
+Supersedes the "optional broker" sketch in `trustedzfs-design.md §6a`; that
+section now points here.
 
 `tzfsd` is the system component that owns the **storage plane**. It takes the
 storage-granting responsibility that oracled carried inline

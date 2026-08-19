@@ -133,6 +133,14 @@ A kernel with
 and the
 .Xr hwt 4
 and pt kernel modules loaded, on a CPU with Intel Processor Trace.
+Intel PT is an Intel-only CPU feature; AMD processors are not
+supported.
+The
+.Xr hwt 4
+framework itself is machine-independent and also supports ARM SPE on
+arm64, but
+.Nm
+requires the Intel PT backend.
 Tracing requires root.
 Offline
 .Cm decode
