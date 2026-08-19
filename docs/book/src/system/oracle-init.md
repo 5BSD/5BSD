@@ -27,9 +27,9 @@ reboot does not depend on `serviced` being alive, because during shutdown
 `serviced` is itself torn down. `serviced` runs as a `pdfork(2)` child of the
 spine and is supervised through its process descriptor; if oracled dies, the
 kernel closes that descriptor and the exact serviced instance terminates with
-it. The former `rebootd` and `kldmgrd` daemons are deleted (commit
-`581debffbfa`); reboot authority lives in PID 1 and module loading is an
-oracled channel operation (`ORACLE_OP_ENSURE_KMOD`).
+it. Reboot authority lives in PID 1 and module loading is an oracled
+channel operation (`ORACLE_OP_ENSURE_KMOD`); neither has a standalone
+daemon.
 
 ## PID-1 boot path
 

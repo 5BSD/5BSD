@@ -64,8 +64,8 @@ That said, **5BSD is a separate project, not a FreeBSD distribution**.
 system over time, and **FreeBSD 16 is the last version 5BSD adopts
 wholesale** — future FreeBSD releases will be sources of selectively
 merged improvements, not a base to track. The divergence is already
-underway: `rebootd` and `kldmgrd` are gone, init duties have moved to
-`oracled`/`serviced`, and bhyve is becoming WASPNest. Wherever 5BSD has
+underway: init duties have moved to `oracled`/`serviced`, and bhyve is
+becoming WASPNest. Wherever 5BSD has
 diverged from FreeBSD — whether by adding, changing, or removing a
 subsystem — **the Epic is the source of truth**, and the FreeBSD
 documentation no longer applies to that subsystem.

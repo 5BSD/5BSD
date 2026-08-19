@@ -55,10 +55,10 @@ descriptor, performs the global `SIGTERM`/`SIGKILL` sweep, runs
 - **oracled itself.** rc no longer starts oracled; it *is* PID 1 (there is no
   `rc.d/oracled` script — a duplicate daemon instance at boot would conflict
   with the spine).
-- **rebootd and kldmgrd** were removed entirely (commit `581debffbfa`).
-  Reboot orchestration is a PID 1 control-ABI operation; kernel-module
-  loading is brokered by oracled's `ORACLE_OP_ENSURE_KMOD` channel operation,
-  driven by `kmod_requires` in service manifests.
+- **Reboot and module-load orchestration.** Reboot is a PID 1 control-ABI
+  operation; kernel-module loading is brokered by oracled's
+  `ORACLE_OP_ENSURE_KMOD` channel operation, driven by `kmod_requires` in
+  service manifests. No standalone daemons exist for either.
 - **Native capability services** are launched by serviced from `.cap`
   bundles, not by rc.d scripts.
 - **Lifecycle signalling of PID 1.** `reboot(8)`, `halt(8)`, and
