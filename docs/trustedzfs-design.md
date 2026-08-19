@@ -270,10 +270,15 @@ Follow the established pattern (procdesc/eventfd/timerfd; in-fork:
   `DFLAG_PASSABLE` — no per-type work).
 - Handle struct: guid triple, rights mask + prop allowlist, subtree flag,
   mutex, refcount, `selinfo`/knlist.
-- Capsicum: fds are born with full rights and narrowed by userland
-  (`cap_rights_limit` for CAP_IOCTL etc.; `cap_ioctls_limit` to allowlist
-  individual `ZFD_*` command numbers — enforced in `kern_ioctl` before
-  `fo_ioctl` is ever called, `sys/kern/sys_capability.c:431`).
+- Capsicum: fds are born with full rights and narrowed by userland.
+  `libtrustedzfs` exposes typed `TZFS_OP_*` masks through
+  `tzfs_limit_dataset_ioctls()` / `tzfs_limit_pool_ioctls()`, plus complete
+  rights-to-verbs profiles for brokers. These call `cap_ioctls_limit()` and
+  reject unknown or cross-kind bits before changing the descriptor. The
+  `tzfsd` grant path installs the corresponding profile before SCM_RIGHTS
+  transfer. Capsicum ioctl lists are per-fd: every handle returned by
+  derive/openat/create/clone/root-open must be limited separately; the
+  library manual makes that rule explicit.
 - **Not** cdevpriv: `/dev/zfs` already binds per-open state via
   `devfs_set_cdevpriv` (`kmod_core.c:195-218`), but cdevpriv fds share
   state under `dup()`, cannot carry custom fileops/kqfilter, and are
