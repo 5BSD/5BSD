@@ -397,6 +397,13 @@ vm_destroy(struct vm *vm)
 }
 
 int
+vm_destroy_preflight(struct vm *vm __unused)
+{
+
+	return (0);
+}
+
+int
 vm_reset(struct vm *vm)
 {
 	int error;

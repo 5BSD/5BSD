@@ -15037,6 +15037,8 @@ ATF_TC_BODY(vmx_instruction_frozen_handoff, tc)
 	request.register_value = 0;
 	request.value_in_register = true;
 	request.register_index = 11;
+	/* MOV-SS blocking affects VM entry, not ordinary VMX instructions. */
+	request.movss_blocked = true;
 	ATF_REQUIRE_EQ(vmx_nested_instruction_handoff_publish(&handoff,
 	    &request), 0);
 	ATF_REQUIRE_EQ(vmx_nested_instruction_handoff_handle(&handoff,
@@ -15047,6 +15049,7 @@ ATF_TC_BODY(vmx_instruction_frozen_handoff, tc)
 	ATF_CHECK_EQ(result.output_size, 8);
 	ATF_CHECK_EQ(result.output_register_index, 11);
 	ATF_CHECK_EQ(result.output_value, 0x1234);
+	request.movss_blocked = false;
 
 	/* Invalid INVEPT type is VMfailValid before the memory operand read. */
 	request.id.state_generation++;

@@ -7,6 +7,7 @@
 
 #pragma once
 
+#include <stdbool.h>
 #include <vmmapi.h>
 
 #include "config.h"
@@ -18,3 +19,4 @@ int tpm_device_create(struct tpm_device **new_dev, struct vmctx *vm_ctx,
 void tpm_device_destroy(struct tpm_device *dev);
 
 int init_tpm(struct vmctx *ctx);
+bool tpm_device_present(void);

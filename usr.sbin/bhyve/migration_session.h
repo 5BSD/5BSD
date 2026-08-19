@@ -284,6 +284,9 @@ int	migration_chunk_decode(const uint8_t *, size_t,
  */
 int	migration_chunk_validate(uint64_t expect_offset, uint64_t total_or_zero,
 	    const struct migration_chunk *, size_t chunk_max, size_t reasm_cap);
+int	migration_memory_record_validate(uint64_t gpa, uint32_t length,
+	    uint64_t lowmem, uint64_t highmem_base, uint64_t highmem,
+	    uint64_t previous_end);
 
 /* Serialized size of an encoded topology (header + N device records). */
 size_t	migration_topology_wire_size(const struct migration_topology *);

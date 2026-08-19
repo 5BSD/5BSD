@@ -215,10 +215,6 @@ nvmx_ih_request_valid(
 	default:
 		break;
 	}
-	if (request->movss_blocked &&
-	    request->operation != VMX_NESTED_INSTRUCTION_VMLAUNCH &&
-	    request->operation != VMX_NESTED_INSTRUCTION_VMRESUME)
-		return (EINVAL);
 	return (0);
 }
 

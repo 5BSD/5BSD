@@ -604,8 +604,11 @@ vm_cleanup(struct vm *vm, bool destroy)
 		vm_assert_memseg_xlocked(vm);
 
 	error = ppt_unassign_all(vm);
-	if (error != 0)
+	if (error != 0) {
+		if (destroy)
+			vm_unlock_memsegs(vm);
 		return (error);
+	}
 
 	if (vm->iommu != NULL)
 		iommu_destroy_domain(vm->iommu);
@@ -639,6 +642,22 @@ vm_cleanup(struct vm *vm, bool destroy)
 		mtx_destroy(&vm->rendezvous_mtx);
 	}
 	return (0);
+}
+
+int
+vm_destroy_preflight(struct vm *vm)
+{
+	int error;
+
+	/*
+	 * Passthrough teardown is the only recoverable part of vm_cleanup().
+	 * Do it while the VM device still exists so an IOMMU detach failure can
+	 * be returned instead of panicking after VM bookkeeping is destroyed.
+	 */
+	vm_xlock_memsegs(vm);
+	error = ppt_unassign_all(vm);
+	vm_unlock_memsegs(vm);
+	return (error);
 }
 
 void

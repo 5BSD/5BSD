@@ -103,9 +103,12 @@
 #include "ipc.h"
 #include "mem.h"
 #include "pci_emul.h"
+#include "qemu_fwcfg.h"
+#include "qemu_fwcfg_snapshot.h"
 #include "snapshot.h"
 #include "snapshot_devmem.h"
 #include "snapshot_portable.h"
+#include "tpm_device.h"
 
 #include <libxo/xo.h>
 #include <ucl.h>
@@ -1339,6 +1342,10 @@ vm_restore_record_presence(struct restore_state *rstate)
 	    size == 0)
 		return (EINVAL);
 #endif
+	if (qemu_fwcfg_enabled() &&
+	    (lookup_dev(QEMU_FWCFG_SNAPSHOT_NAME, JSON_DEV_ARR_KEY, rstate,
+	    &size) == NULL || size == 0))
+		return (EINVAL);
 	return (0);
 }
 
@@ -1500,6 +1507,8 @@ vm_restore_device_topology(struct restore_state *rstate)
 #ifdef __amd64__
 	destination_count++;
 #endif
+	if (qemu_fwcfg_enabled())
+		destination_count++;
 	if (destination_count > SIZE_MAX / sizeof(*destination))
 		return (EOVERFLOW);
 	destination = calloc(destination_count, sizeof(*destination));
@@ -1512,6 +1521,8 @@ vm_restore_device_topology(struct restore_state *rstate)
 #ifdef __amd64__
 	destination[destination_count++] = "atkbdc";
 #endif
+	if (qemu_fwcfg_enabled())
+		destination[destination_count++] = QEMU_FWCFG_SNAPSHOT_NAME;
 	error = vm_restore_named_topology(rstate, JSON_DEV_ARR_KEY, destination,
 	    destination_count);
 
@@ -1535,6 +1546,8 @@ vm_machine_topology_digest_current(char *digest, size_t capacity)
 #ifdef __amd64__
 	count++;
 #endif
+	if (qemu_fwcfg_enabled())
+		count++;
 	devices = calloc(count, sizeof(*devices));
 	compats = calloc(count, sizeof(*compats));
 	if (count != 0 && (devices == NULL || compats == NULL)) {
@@ -1555,6 +1568,14 @@ vm_machine_topology_digest_current(char *digest, size_t capacity)
 #ifdef __amd64__
 	devices[index++].name = "atkbdc";
 #endif
+	if (qemu_fwcfg_enabled()) {
+		devices[index].name = QEMU_FWCFG_SNAPSHOT_NAME;
+		error = qemu_fwcfg_snapshot_compat(&compats[index]);
+		if (error != 0)
+			goto out;
+		devices[index].compat = &compats[index];
+		index++;
+	}
 	if (index != count) {
 		error = EINVAL;
 		goto out;
@@ -1585,6 +1606,8 @@ vm_machine_topology_digest_source(struct restore_state *rstate, char *digest,
 #ifdef __amd64__
 	count++;
 #endif
+	if (qemu_fwcfg_enabled())
+		count++;
 	devices = calloc(count, sizeof(*devices));
 	compats = calloc(count, sizeof(*compats));
 	if (count != 0 && (devices == NULL || compats == NULL)) {
@@ -1615,6 +1638,21 @@ vm_machine_topology_digest_source(struct restore_state *rstate, char *digest,
 #ifdef __amd64__
 	devices[index++].name = "atkbdc";
 #endif
+	if (qemu_fwcfg_enabled()) {
+		devices[index].name = QEMU_FWCFG_SNAPSHOT_NAME;
+		record = lookup_dev(QEMU_FWCFG_SNAPSHOT_NAME, JSON_DEV_ARR_KEY,
+		    rstate, &record_size);
+		if (record == NULL) {
+			error = EINVAL;
+			goto out;
+		}
+		error = qemu_fwcfg_snapshot_compat_record(record, record_size,
+		    &compats[index]);
+		if (error != 0)
+			goto out;
+		devices[index].compat = &compats[index];
+		index++;
+	}
 	if (index != count) {
 		error = EINVAL;
 		goto out;
@@ -1967,6 +2005,37 @@ vm_restore_device_payloads_validate(struct restore_state *rstate)
 		}
 	}
 #endif
+	if (error == 0 && qemu_fwcfg_enabled()) {
+		void *record;
+		size_t record_size;
+
+		record = lookup_dev(QEMU_FWCFG_SNAPSHOT_NAME, JSON_DEV_ARR_KEY,
+		    rstate, &record_size);
+		if (record == NULL || record_size == 0) {
+			error = EINVAL;
+			goto cleanup;
+		}
+		struct vm_snapshot_meta meta = {
+			.dev_name = QEMU_FWCFG_SNAPSHOT_NAME,
+			.dev_data = NULL,
+			.buffer = {
+				.buf_start = record,
+				.buf_size = record_size,
+				.buf = record,
+				.buf_rem = record_size,
+			},
+			.op = VM_SNAPSHOT_VALIDATE,
+		};
+		error = qemu_fwcfg_snapshot(&meta);
+		if (error == 0)
+			error = checkpoint_record_consumption_validate(record_size,
+			    meta.buffer.buf_rem);
+		if (error != 0) {
+			EPRINTLN("Checkpoint device '%s' payload is invalid: %s",
+			    QEMU_FWCFG_SNAPSHOT_NAME, strerror(error));
+			goto cleanup;
+		}
+	}
 cleanup:
 	/*
 	 * Fabric validation can stage an immutable incoming translation view.
@@ -1986,6 +2055,12 @@ vm_restore_preflight(struct restore_state *rstate)
 
 	if (rstate == NULL)
 		return (EINVAL);
+	/*
+	 * CRB, PPI, and backend state do not yet have one atomic portable
+	 * checkpoint contract.  Refuse before publishing any incoming state.
+	 */
+	if (tpm_device_present())
+		return (ENOTSUP);
 	error = vm_restore_kern_topology(rstate);
 	if (error == 0)
 		error = vm_restore_device_topology(rstate);
@@ -2038,6 +2113,9 @@ vm_restore_devices(struct restore_state *rstate)
 #else
 	ret = 0;
 #endif
+	if (ret == 0 && qemu_fwcfg_enabled())
+		ret = vm_restore_device(rstate, qemu_fwcfg_snapshot,
+		    QEMU_FWCFG_SNAPSHOT_NAME, NULL);
 	return (ret);
 }
 
@@ -2733,6 +2811,9 @@ vm_snapshot_devices(int data_fd, xo_handle_t *xop)
 #else
 	ret = 0;
 #endif
+	if (ret == 0 && qemu_fwcfg_enabled())
+		ret = vm_snapshot_device(qemu_fwcfg_snapshot,
+		    QEMU_FWCFG_SNAPSHOT_NAME, NULL, data_fd, xop, meta, &offset);
 
 	xo_close_list_h(xop, JSON_DEV_ARR_KEY);
 
@@ -2914,6 +2995,11 @@ vm_checkpoint(struct vmctx *ctx, int fddir, const char *checkpoint_file,
 	char *lock_filename = NULL, *manifest_tmp = NULL;
 	FILE *meta_file = NULL;
 
+	/* Fail before creating files or stopping the guest. */
+	if (tpm_device_present()) {
+		EPRINTLN("TPM-equipped VMs cannot be checkpointed safely yet.");
+		return (ENOTSUP);
+	}
 	memset(&manifest, 0, sizeof(manifest));
 	memset(&old_manifest, 0, sizeof(old_manifest));
 	lock_filename = strcat_extension(checkpoint_file, ".lock");
@@ -3485,7 +3571,9 @@ vm_migrate_resume(struct vmctx *ctx)
 {
 	int error;
 
-	(void)ctx;
+	/* Consume the committed restore's one-shot time-rebase credential first. */
+	if (vm_restore_time(ctx) < 0)
+		return (errno != 0 ? errno : EIO);
 	error = vm_resume_devices();
 	if (error == 0)
 		error = checkpoint_restore_startup_release();

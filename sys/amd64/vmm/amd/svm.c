@@ -1422,6 +1422,7 @@ svm_vmexit(struct svm_softc *svm_sc, struct svm_vcpu *vcpu,
 	case 0x40 ... 0x5F:
 		vmm_stat_incr(vcpu->vcpu, VMEXIT_EXCEPTION, 1);
 		reflect = 1;
+		errcode_valid = 0;
 		exception_class = VM_EXCEPTION_FAULT;
 		idtvec = code - 0x40;
 		switch (idtvec) {

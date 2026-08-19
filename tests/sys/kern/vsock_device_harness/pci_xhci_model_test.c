@@ -68,10 +68,26 @@ ATF_TC_BODY(deadline_expiry, tc)
 	ATF_CHECK(pci_xhci_drain_deadline_expired(now, deadline));
 }
 
+ATF_TC_WITHOUT_HEAD(event_ring_geometry_is_immutable);
+ATF_TC_BODY(event_ring_geometry_is_immutable, tc)
+{
+	const uint64_t base = UINT64_C(0x4000);
+
+	ATF_CHECK(pci_xhci_event_ring_geometry_matches(8, base, 8, base));
+	/* A guest cannot enlarge or shrink the mapped ring in its ERST entry. */
+	ATF_CHECK(!pci_xhci_event_ring_geometry_matches(8, base, 64, base));
+	ATF_CHECK(!pci_xhci_event_ring_geometry_matches(8, base, 4, base));
+	/* Nor can it redirect the already-mapped ring to another guest address. */
+	ATF_CHECK(!pci_xhci_event_ring_geometry_matches(8, base, 8,
+	    UINT64_C(0x8000)));
+	ATF_CHECK(!pci_xhci_event_ring_geometry_matches(0, base, 0, base));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, deadline_arithmetic);
 	ATF_TP_ADD_TC(tp, deadline_expiry);
+	ATF_TP_ADD_TC(tp, event_ring_geometry_is_immutable);
 	return (atf_no_error());
 }

@@ -15,6 +15,9 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#ifdef BHYVE_SNAPSHOT
+#include <sha256.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -27,6 +30,11 @@
 #include "amd64/pci_lpc.h"
 #endif
 #include "qemu_fwcfg.h"
+#ifdef BHYVE_SNAPSHOT
+#include "pci_emul.h"
+#include "qemu_fwcfg_snapshot.h"
+#include "snapshot.h"
+#endif
 
 #define QEMU_FWCFG_ACPI_DEVICE_NAME "FWCF"
 #define QEMU_FWCFG_ACPI_HARDWARE_ID "QEMU0002"
@@ -104,6 +112,182 @@ struct qemu_fwcfg_softc {
 };
 
 static struct qemu_fwcfg_softc fwcfg_sc;
+
+bool
+qemu_fwcfg_enabled(void)
+{
+
+	return (fwcfg_sc.acpi_dev != NULL);
+}
+
+#ifdef BHYVE_SNAPSHOT
+static int
+qemu_fwcfg_catalog_digest(uint8_t digest[QEMU_FWCFG_SNAPSHOT_DIGEST_SIZE])
+{
+	SHA256_CTX context;
+	uint8_t header[8];
+	uint32_t count;
+
+	count = 0;
+	for (uint32_t architecture = 0; architecture < QEMU_FWCFG_MAX_ARCHS;
+	    architecture++) {
+		for (uint32_t index = 0; index < QEMU_FWCFG_MAX_ENTRIES;
+		    index++) {
+			if (fwcfg_sc.items[architecture][index].data != NULL)
+				count++;
+		}
+	}
+	SHA256_Init(&context);
+	snapshot_store_le32(header, QEMU_FWCFG_SNAPSHOT_VERSION);
+	snapshot_store_le32(header + 4, count);
+	SHA256_Update(&context, header, sizeof(header));
+	for (uint32_t architecture = 0; architecture < QEMU_FWCFG_MAX_ARCHS;
+	    architecture++) {
+		for (uint32_t index = 0; index < QEMU_FWCFG_MAX_ENTRIES;
+		    index++) {
+			const struct qemu_fwcfg_item *item;
+			uint8_t identity[8];
+
+			item = &fwcfg_sc.items[architecture][index];
+			if (item->data == NULL)
+				continue;
+			snapshot_store_le16(identity, architecture);
+			snapshot_store_le16(identity + 2, index);
+			snapshot_store_le32(identity + 4, item->size);
+			SHA256_Update(&context, identity, sizeof(identity));
+			SHA256_Update(&context, item->data, item->size);
+		}
+	}
+	SHA256_Final(digest, &context);
+	return (0);
+}
+
+static int
+qemu_fwcfg_state_validate(const struct qemu_fwcfg_snapshot_state *state)
+{
+	const struct qemu_fwcfg_item *item;
+	union qemu_fwcfg_selector selector;
+	uint8_t digest[QEMU_FWCFG_SNAPSHOT_DIGEST_SIZE];
+	int error;
+
+	if (state == NULL)
+		return (EINVAL);
+	error = qemu_fwcfg_catalog_digest(digest);
+	if (error != 0)
+		return (error);
+	if (timingsafe_bcmp(digest, state->catalog_digest, sizeof(digest)) != 0)
+		return (ENOTSUP);
+	selector.bits = state->selector;
+	item = &fwcfg_sc.items[selector.architecture][selector.index];
+	if (!qemu_fwcfg_snapshot_cursor_valid(item->data != NULL, item->size,
+	    state->data_offset))
+		return (EINVAL);
+	return (0);
+}
+
+static void
+qemu_fwcfg_compat_from_digest(
+    const uint8_t digest[QEMU_FWCFG_SNAPSHOT_DIGEST_SIZE],
+    struct pci_snapshot_compat *compat)
+{
+	static const char hex[] = "0123456789abcdef";
+
+	memset(compat, 0, sizeof(*compat));
+	compat->schema = PCI_SNAPSHOT_COMPAT_SCHEMA;
+	compat->transport = QEMU_FWCFG_SNAPSHOT_MAGIC;
+	compat->config_size = QEMU_FWCFG_SNAPSHOT_DIGEST_SIZE;
+	for (size_t i = 0; i < QEMU_FWCFG_SNAPSHOT_DIGEST_SIZE; i++) {
+		compat->queue_sizes[i * 2] = hex[digest[i] >> 4];
+		compat->queue_sizes[i * 2 + 1] = hex[digest[i] & 0x0f];
+	}
+}
+
+int
+qemu_fwcfg_snapshot_compat(struct pci_snapshot_compat *compat)
+{
+	uint8_t digest[QEMU_FWCFG_SNAPSHOT_DIGEST_SIZE];
+	int error;
+
+	if (compat == NULL || !qemu_fwcfg_enabled())
+		return (EINVAL);
+	error = qemu_fwcfg_catalog_digest(digest);
+	if (error == 0)
+		qemu_fwcfg_compat_from_digest(digest, compat);
+	return (error);
+}
+
+int
+qemu_fwcfg_snapshot_compat_record(const void *record, size_t record_size,
+    struct pci_snapshot_compat *compat)
+{
+	struct qemu_fwcfg_snapshot_state state;
+	int error;
+
+	if (compat == NULL)
+		return (EINVAL);
+	error = qemu_fwcfg_snapshot_decode(record, record_size, &state);
+	if (error == 0)
+		qemu_fwcfg_compat_from_digest(state.catalog_digest, compat);
+	return (error);
+}
+
+int
+qemu_fwcfg_migration_identity(uint32_t *identity)
+{
+	uint8_t digest[QEMU_FWCFG_SNAPSHOT_DIGEST_SIZE];
+	int error;
+
+	if (identity == NULL || !qemu_fwcfg_enabled())
+		return (EINVAL);
+	error = qemu_fwcfg_catalog_digest(digest);
+	if (error == 0)
+		*identity = snapshot_load_le32(digest);
+	return (error);
+}
+
+int
+qemu_fwcfg_snapshot(struct vm_snapshot_meta *meta)
+{
+	struct qemu_fwcfg_snapshot_state state;
+	uint32_t magic, version;
+	uint16_t reserved;
+	int error;
+
+	if (meta == NULL || !qemu_fwcfg_enabled())
+		return (EINVAL);
+	magic = QEMU_FWCFG_SNAPSHOT_MAGIC;
+	version = QEMU_FWCFG_SNAPSHOT_VERSION;
+	reserved = 0;
+	if (meta->op == VM_SNAPSHOT_SAVE) {
+		state.selector = fwcfg_sc.selector.bits;
+		state.data_offset = fwcfg_sc.data_offset;
+		error = qemu_fwcfg_catalog_digest(state.catalog_digest);
+		if (error != 0)
+			return (error);
+	} else if (!vm_snapshot_is_loading(meta)) {
+		return (EINVAL);
+	}
+	SNAPSHOT_LE32_OR_LEAVE(magic, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(version, meta, error, done);
+	SNAPSHOT_LE16_OR_LEAVE(state.selector, meta, error, done);
+	SNAPSHOT_LE16_OR_LEAVE(reserved, meta, error, done);
+	SNAPSHOT_LE32_OR_LEAVE(state.data_offset, meta, error, done);
+	SNAPSHOT_BUF_OR_LEAVE(state.catalog_digest,
+	    sizeof(state.catalog_digest), meta, error, done);
+	if (magic != QEMU_FWCFG_SNAPSHOT_MAGIC ||
+	    version != QEMU_FWCFG_SNAPSHOT_VERSION || reserved != 0) {
+		error = EINVAL;
+		goto done;
+	}
+	error = qemu_fwcfg_state_validate(&state);
+	if (error == 0 && vm_snapshot_is_restoring(meta)) {
+		fwcfg_sc.selector.bits = state.selector;
+		fwcfg_sc.data_offset = state.data_offset;
+	}
+done:
+	return (error);
+}
+#endif /* BHYVE_SNAPSHOT */
 
 struct qemu_fwcfg_user_file {
 	STAILQ_ENTRY(qemu_fwcfg_user_file) chain;
@@ -559,6 +743,7 @@ qemu_fwcfg_init(struct vmctx *const ctx)
 done:
 	if (error && fwcfg_sc.acpi_dev != NULL) {
 		acpi_device_destroy(fwcfg_sc.acpi_dev);
+		fwcfg_sc.acpi_dev = NULL;
 	}
 
 	return (error);

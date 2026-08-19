@@ -252,6 +252,13 @@ err_out:
 
 static struct tpm_device *lpc_tpm;
 
+bool
+tpm_device_present(void)
+{
+
+	return (lpc_tpm != NULL);
+}
+
 int
 init_tpm(struct vmctx *ctx)
 {

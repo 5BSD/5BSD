@@ -264,7 +264,7 @@ virtio_device_parts_next(struct virtio_device_parts_iterator *iterator,
 	    (type == BHYVE_VIRTIO_DEV_PART_PCI_COMMON_CFG ||
 	    type == BHYVE_VIRTIO_DEV_PART_VQ_CFG ||
 	    type == BHYVE_VIRTIO_DEV_PART_VQ_NOTIFY_CFG) &&
-	    le64dec(selector) == iterator->prior_selector)
+	    le64dec(selector) <= iterator->prior_selector)
 		return (EPROTO);
 
 	part->type = type;

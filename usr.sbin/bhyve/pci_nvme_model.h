@@ -102,6 +102,24 @@ pci_nvme_dsm_range_bytes(uint8_t zero_based_range_count)
 	return ((size_t)zero_based_range_count + 1U) * 16U;
 }
 
+/* Convert an NVMe DSM LBA count without performing the shift in 32 bits. */
+static inline bool
+pci_nvme_dsm_length_bytes(uint32_t lba_count, unsigned int sector_shift,
+    size_t *result)
+{
+	uint64_t bytes;
+
+	if (result == NULL || sector_shift >= 64 ||
+	    (sector_shift != 0 &&
+	    (uint64_t)lba_count > (UINT64_MAX >> sector_shift)))
+		return (false);
+	bytes = (uint64_t)lba_count << sector_shift;
+	if (bytes > SIZE_MAX)
+		return (false);
+	*result = (size_t)bytes;
+	return (true);
+}
+
 /*
  * Start an asynchronous DSM deletion from the compacted non-empty range
  * array.  The original first descriptor is not necessarily the first range

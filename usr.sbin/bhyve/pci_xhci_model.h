@@ -38,4 +38,19 @@ pci_xhci_drain_deadline_expired(struct timespec now, struct timespec deadline)
 	return (now.tv_nsec >= deadline.tv_nsec);
 }
 
+/*
+ * An ERST entry is guest memory.  Once the event ring has been mapped, its
+ * geometry is immutable until the guest reprograms ERSTBA.  Event delivery
+ * must use the cached mapping geometry and reject a guest mutation rather
+ * than using a larger live table size to index past the mapped ring.
+ */
+static inline bool
+pci_xhci_event_ring_geometry_matches(uint32_t mapped_count,
+    uint64_t mapped_base, uint32_t table_count, uint64_t table_base)
+{
+
+	return (mapped_count != 0 && table_count == mapped_count &&
+	    table_base == mapped_base);
+}
+
 #endif /* _PCI_XHCI_MODEL_H_ */

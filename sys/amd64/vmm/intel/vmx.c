@@ -194,6 +194,8 @@ SYSCTL_NODE(_hw_vmm, OID_AUTO, vmx, CTLFLAG_RW | CTLFLAG_MPSAFE, NULL,
     NULL);
 
 int vmxon_enabled[MAXCPU];
+static int vmxon_error[MAXCPU];
+static bool vmxon_resume[MAXCPU];
 static uint8_t *vmxon_region;
 
 static uint32_t pinbased_ctls, procbased_ctls, procbased_ctls2;
@@ -849,6 +851,7 @@ vmx_disable(void *arg __unused)
 		invept(INVEPT_TYPE_ALL_CONTEXTS, invept_desc);
 		vmxoff();
 	}
+	vmxon_enabled[curcpu] = 0;
 	load_cr4(rcr4() & ~CR4_VMXE);
 }
 
@@ -893,6 +896,10 @@ vmx_enable(void *arg __unused)
 	int error;
 	uint64_t feature_control;
 
+	/* Record the result of this attempt, not a prior VMX episode. */
+	vmxon_enabled[curcpu] = 0;
+	vmxon_error[curcpu] = 0;
+
 	feature_control = rdmsr(MSR_IA32_FEATURE_CONTROL);
 	if ((feature_control & IA32_FEATURE_CONTROL_LOCK) == 0 ||
 	    (feature_control & IA32_FEATURE_CONTROL_VMX_EN) == 0) {
@@ -905,15 +912,20 @@ vmx_enable(void *arg __unused)
 
 	*(uint32_t *)&vmxon_region[curcpu * PAGE_SIZE] = vmx_revision();
 	error = vmxon(&vmxon_region[curcpu * PAGE_SIZE]);
-	if (error == 0)
+	if (error == 0) {
 		vmxon_enabled[curcpu] = 1;
+	} else {
+		vmxon_error[curcpu] = error;
+		load_cr4(rcr4() & ~CR4_VMXE);
+	}
 }
 
 static void
 vmx_modsuspend(void)
 {
 
-	if (vmxon_enabled[curcpu])
+	vmxon_resume[curcpu] = vmxon_enabled[curcpu] != 0;
+	if (vmxon_resume[curcpu])
 		vmx_disable(NULL);
 }
 
@@ -921,15 +933,20 @@ static void
 vmx_modresume(void)
 {
 
-	if (vmxon_enabled[curcpu])
+	if (vmxon_resume[curcpu]) {
 		vmx_enable(NULL);
+		if (!vmxon_enabled[curcpu])
+			panic("%s: VMXON failed on CPU %d: %d", __func__, curcpu,
+			    vmxon_error[curcpu]);
+	}
+	vmxon_resume[curcpu] = false;
 }
 
 static int
 vmx_modinit(int ipinum)
 {
 	struct vmx_nested_capability_policy_input nested_policy;
-	int error;
+	int cpu, error;
 	uint64_t basic, fixed0, fixed1, feature_control;
 	uint32_t tmp, procbased2_vid_bits;
 
@@ -1347,10 +1364,27 @@ vmx_modinit(int ipinum)
 	vmxon_region = kmem_malloc((mp_maxid + 1) * PAGE_SIZE,
 	    M_WAITOK | M_ZERO);
 	smp_rendezvous(NULL, vmx_enable, NULL, NULL);
+	CPU_FOREACH(cpu) {
+		if (vmxon_enabled[cpu])
+			continue;
+		printf("vmx_modinit: VMXON failed on CPU %d: %d\n", cpu,
+		    vmxon_error[cpu]);
+		error = ENXIO;
+		goto fail_vmxon;
+	}
 
 	vmx_initialized = 1;
 
 	return (0);
+
+fail_vmxon:
+	smp_rendezvous(NULL, vmx_disable, NULL, NULL);
+	kmem_free(vmxon_region, (mp_maxid + 1) * PAGE_SIZE);
+	vmxon_region = NULL;
+	bzero(vmxon_error, sizeof(vmxon_error));
+	bzero(vmxon_resume, sizeof(vmxon_resume));
+	delete_unrhdr(vpid_unr);
+	vpid_unr = NULL;
 
 fail:
 	/*

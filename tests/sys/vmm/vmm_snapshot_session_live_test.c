@@ -34,6 +34,23 @@ vm_name_for(const atf_tc_t *tc, char *name, size_t size)
 	    atf_tc_get_ident(tc)[0]) > 0);
 }
 
+static void
+record_vm_name(const atf_tc_t *tc, const char *name)
+{
+	FILE *fp;
+	char path[PATH_MAX];
+
+	ATF_REQUIRE(snprintf(path, sizeof(path), ".%s-vm-name",
+	    atf_tc_get_ident(tc)) > 0);
+	fp = fopen(path, "w");
+	ATF_REQUIRE_MSG(fp != NULL, "fopen(%s): %s", path,
+	    strerror(errno));
+	ATF_REQUIRE_MSG(fprintf(fp, "%s\n", name) > 0,
+	    "record VM name: %s", strerror(errno));
+	ATF_REQUIRE_EQ_MSG(fclose(fp), 0, "fclose(%s): %s", path,
+	    strerror(errno));
+}
+
 static struct vmctx *
 create_vm_with_vcpu(const atf_tc_t *tc, struct vcpu **vcpup)
 {
@@ -45,6 +62,7 @@ create_vm_with_vcpu(const atf_tc_t *tc, struct vcpu **vcpup)
 	vm_name_for(tc, name, sizeof(name));
 	ATF_REQUIRE_EQ_MSG(vm_create(name), 0, "vm_create: %s",
 	    strerror(errno));
+	record_vm_name(tc, name);
 	ctx = vm_open(name);
 	ATF_REQUIRE_MSG(ctx != NULL, "vm_open: %s", strerror(errno));
 	vcpu = vm_vcpu_open(ctx, 0);
@@ -71,9 +89,25 @@ static void
 cleanup_vm(const atf_tc_t *tc)
 {
 	struct vmctx *ctx;
-	char name[VM_MAX_NAMELEN];
+	FILE *fp;
+	char name[VM_MAX_NAMELEN], path[PATH_MAX];
 
-	vm_name_for(tc, name, sizeof(name));
+	if (snprintf(path, sizeof(path), ".%s-vm-name",
+	    atf_tc_get_ident(tc)) <= 0)
+		return;
+	fp = fopen(path, "r");
+	if (fp == NULL)
+		return;
+	if (fgets(name, sizeof(name), fp) == NULL) {
+		(void)fclose(fp);
+		(void)unlink(path);
+		return;
+	}
+	(void)fclose(fp);
+	(void)unlink(path);
+	name[strcspn(name, "\r\n")] = '\0';
+	if (name[0] == '\0')
+		return;
 	ctx = vm_open(name);
 	if (ctx != NULL)
 		vm_destroy(ctx);
@@ -92,12 +126,19 @@ ATF_TC_BODY(policy_and_descriptor_ownership, tc)
 	struct vcpu *vcpu;
 	char name[VM_MAX_NAMELEN], path[PATH_MAX];
 	uint64_t id;
-	int fd;
+	int dummy, fd;
 
 	ctx = create_vm_with_vcpu(tc, &vcpu);
 	vm_name_for(tc, name, sizeof(name));
 	ctx2 = vm_open(name);
 	ATF_REQUIRE(ctx2 != NULL);
+	/* Time rebasing is a write-only, one-shot result of a committed restore. */
+	errno = 0;
+	ATF_REQUIRE_EQ(vm_restore_time(ctx), -1);
+	ATF_REQUIRE_EQ(errno, ESTALE);
+	errno = 0;
+	ATF_REQUIRE_EQ(vm_restore_time(ctx2), -1);
+	ATF_REQUIRE_EQ(errno, ESTALE);
 
 	/* Malformed requests must not acquire or perturb session ownership. */
 	session = (struct vm_snapshot_session) {
@@ -218,6 +259,13 @@ ATF_TC_BODY(policy_and_descriptor_ownership, tc)
 	other.op = VM_SNAPSHOT_SESSION_BEGIN;
 	errno = 0;
 	ATF_REQUIRE_EQ(ioctl(fd, VM_SNAPSHOT_SESSION, &other), -1);
+	ATF_REQUIRE_EQ(errno, EBADF);
+	ATF_REQUIRE_EQ(close(fd), 0);
+	fd = open(path, O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE_MSG(fd >= 0, "open read-only VM: %s", strerror(errno));
+	dummy = 0;
+	errno = 0;
+	ATF_REQUIRE_EQ(ioctl(fd, VM_RESTORE_TIME, &dummy), -1);
 	ATF_REQUIRE_EQ(errno, EBADF);
 	ATF_REQUIRE_EQ(close(fd), 0);
 
@@ -373,6 +421,7 @@ ATF_TC_BODY(empty_group_rejected, tc)
 
 	vm_name_for(tc, name, sizeof(name));
 	ATF_REQUIRE_EQ(vm_create(name), 0);
+	record_vm_name(tc, name);
 	ctx = vm_open(name);
 	ATF_REQUIRE(ctx != NULL);
 	session = (struct vm_snapshot_session) {

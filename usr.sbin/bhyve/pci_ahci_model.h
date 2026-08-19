@@ -78,4 +78,17 @@ pci_ahci_prdt_dba_valid(uint64_t dba, uint64_t skip)
 	return (dba <= UINT64_MAX - skip);
 }
 
+/*
+ * Completion callbacks may resolve a guest command header only while the
+ * controller mutex stabilizes the command-list mapping.
+ */
+static inline bool
+pci_ahci_completion_slot_valid(const void *cmd_list, int slot,
+    unsigned int slot_count)
+{
+
+	return (cmd_list != NULL && slot >= 0 &&
+	    (unsigned int)slot < slot_count);
+}
+
 #endif /* _PCI_AHCI_MODEL_H_ */

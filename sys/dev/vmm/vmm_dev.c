@@ -126,6 +126,8 @@ struct vmmdev_fdpriv {
 	size_t count;
 	uint16_t maxcpus;
 	bool active;
+	bool restore_time_staged;
+	bool restore_time_ready;
 #ifdef __amd64__
 	bool startup_active;
 #endif
@@ -353,7 +355,12 @@ vmmdev_lookup(const char *name, struct ucred *cred)
 static struct vmmdev_softc *
 vmmdev_lookup2(struct cdev *cdev)
 {
-	return (cdev->si_drv1);
+	struct vmmdev_softc *sc;
+
+	sc = cdev->si_drv1;
+	if (sc == NULL || sc->cdev != cdev)
+		return (NULL);
+	return (sc);
 }
 
 #ifdef MAC
@@ -863,6 +870,9 @@ vmmdev_snapshot_session_begin(struct vm *vm,
 		error = EBUSY;
 		goto out;
 	}
+	/* A new transaction invalidates any unconsumed token from an older one. */
+	priv->restore_time_staged = false;
+	priv->restore_time_ready = false;
 	if (priv->entries == NULL) {
 		priv->entries = mallocarray(priv->maxcpus,
 		    sizeof(*priv->entries), M_VMMDEV, M_NOWAIT | M_ZERO);
@@ -954,9 +964,62 @@ vmmdev_snapshot_session_finish_locked(struct vmmdev_fdpriv *priv,
 		    vm_event_coordinator(priv->vm), &priv->checkpoint,
 		    priv->apply, priv->apply_arg);
 	if (error == 0) {
+		priv->restore_time_ready = !aborting && priv->restore_time_staged;
+		priv->restore_time_staged = false;
 		vmmdev_snapshot_session_notify(priv);
 		vmmdev_snapshot_session_clear(priv);
 	}
+	return (error);
+}
+
+int
+vmmdev_snapshot_restore_time_mark(struct vm *vm)
+{
+	struct vmmdev_fdpriv *priv;
+	int error;
+
+	if (vm == NULL || !sx_xlocked(&vm->vcpus_init_lock))
+		return (EINVAL);
+	error = devfs_get_cdevpriv((void **)&priv);
+	if (error != 0)
+		return (error);
+	if (priv->vm != vm)
+		return (EXDEV);
+	sx_xlock(&priv->lock);
+	if (!priv->active)
+		error = EPERM;
+	else {
+		priv->restore_time_staged = true;
+		error = 0;
+	}
+	sx_xunlock(&priv->lock);
+	return (error);
+}
+
+int
+vmmdev_snapshot_restore_time_consume(struct vm *vm)
+{
+	struct vmmdev_fdpriv *priv;
+	int error;
+
+	if (vm == NULL || !sx_xlocked(&vm->vcpus_init_lock))
+		return (EINVAL);
+	error = devfs_get_cdevpriv((void **)&priv);
+	if (error != 0)
+		return (error);
+	if (priv->vm != vm)
+		return (EXDEV);
+	sx_xlock(&priv->lock);
+	if (priv->active)
+		error = EBUSY;
+	else if (!priv->restore_time_ready)
+		error = ESTALE;
+	else {
+		/* Consume before rebasing: a partial hardware failure is not retryable. */
+		priv->restore_time_ready = false;
+		error = 0;
+	}
+	sx_xunlock(&priv->lock);
 	return (error);
 }
 
@@ -1722,6 +1785,20 @@ vmmdev_lookup_and_destroy(const char *name, struct ucred *cred)
 	sx_xunlock(&vmmdev_mtx);
 
 	(void)vm_suspend(sc->vm, VM_SUSPEND_DESTROY);
+	error = vm_destroy_preflight(sc->vm);
+	if (error != 0) {
+		/*
+		 * Keep the suspended VM and its control node available for a
+		 * privileged retry.  ppt_unassign_device() has already disabled
+		 * bus mastering and retains ownership when IOMMU detach fails.
+		 */
+		sx_xlock(&vmmdev_mtx);
+		KASSERT(sc->cdev == NULL,
+		    ("%s: VM device became live during destroy", __func__));
+		sc->cdev = cdev;
+		sx_xunlock(&vmmdev_mtx);
+		return (error);
+	}
 	destroy_dev(cdev);
 	vmmdev_destroy(sc);
 
@@ -1897,6 +1974,7 @@ vmmctl_dtor(void *arg)
 	struct cdev *sc_cdev;
 	struct vmmdev_softc *sc;
 	struct vmmctl_priv *priv = arg;
+	int error;
 
 	/*
 	 * Scan the softc list for any VMs associated with
@@ -1923,6 +2001,24 @@ vmmctl_dtor(void *arg)
 		 */
 		sx_xunlock(&vmmdev_mtx);
 		(void)vm_suspend(sc->vm, VM_SUSPEND_DESTROY);
+		error = vm_destroy_preflight(sc->vm);
+		if (error != 0) {
+			/*
+			 * A cdevpriv destructor cannot return an error.  Quarantine
+			 * the suspended VM for a later privileged destroy instead of
+			 * panicking the host or losing the passthrough ownership.
+			 */
+			sx_xlock(&vmmdev_mtx);
+			sc->cdev = sc_cdev;
+			sc->flags &= ~VMMCTL_CREATE_DESTROY_ON_CLOSE;
+			LIST_REMOVE(sc, priv_link);
+			sx_xunlock(&vmmdev_mtx);
+			printf("vmm: cannot auto-destroy %s: "
+			    "passthrough detach failed: %d\n",
+			    vm_name(sc->vm), error);
+			sx_xlock(&vmmdev_mtx);
+			continue;
+		}
 		destroy_dev(sc_cdev);
 		/* vmmdev_destroy will unlink the 'priv_link' entry. */
 		vmmdev_destroy(sc);

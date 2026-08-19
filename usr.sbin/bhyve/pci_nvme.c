@@ -3305,7 +3305,11 @@ nvme_opc_dataset_mgmt(struct pci_nvme_softc *sc,
 		}
 
 		offset = range[0].starting_lba << sectsz_bits;
-		bytes = range[0].length << sectsz_bits;
+		if (!pci_nvme_dsm_length_bytes(range[0].length, sectsz_bits,
+		    &bytes)) {
+			pci_nvme_status_genc(status, NVME_SC_LBA_OUT_OF_RANGE);
+			goto out;
+		}
 
 		/*
 		 * If the request is for more than a single range, store
@@ -3327,7 +3331,12 @@ nvme_opc_dataset_mgmt(struct pci_nvme_softc *sc,
 
 			for (r = 0, dr = 0; r <= nr; r++) {
 				offset = range[r].starting_lba << sectsz_bits;
-				bytes = range[r].length << sectsz_bits;
+				if (!pci_nvme_dsm_length_bytes(range[r].length,
+				    sectsz_bits, &bytes)) {
+					pci_nvme_status_genc(status,
+					    NVME_SC_LBA_OUT_OF_RANGE);
+					goto out;
+				}
 				if (bytes == 0)
 					continue;
 

@@ -88,6 +88,32 @@ migration_frame_flags_valid(uint16_t type, uint32_t flags)
 	    (type == MIGRATION_MSG_MEM_GEN || type == MIGRATION_MSG_DEV_STATE));
 }
 
+/*
+ * Memory-generation records are a canonical, page-ordered representation of
+ * backed guest RAM.  Keep this validation in the wire/core portion of the
+ * file so malformed streams can be tested without a VM or root privileges.
+ */
+int
+migration_memory_record_validate(uint64_t gpa, uint32_t length,
+    uint64_t lowmem, uint64_t highmem_base, uint64_t highmem,
+    uint64_t previous_end)
+{
+	uint64_t end, highmem_end;
+	bool backed;
+
+	if (length != MIGRATION_DIRTY_GRANULARITY ||
+	    (gpa & (MIGRATION_DIRTY_GRANULARITY - 1)) != 0 ||
+	    gpa < previous_end || gpa > UINT64_MAX - length)
+		return (EBADMSG);
+	end = gpa + length;
+	backed = gpa < lowmem && end <= lowmem;
+	if (highmem != 0 && highmem_base <= UINT64_MAX - highmem) {
+		highmem_end = highmem_base + highmem;
+		backed = backed || (gpa >= highmem_base && end <= highmem_end);
+	}
+	return (backed ? 0 : EBADMSG);
+}
+
 /* ------------------------------------------------------------------------- */
 /* Frame codec								     */
 /* ------------------------------------------------------------------------- */
@@ -1873,20 +1899,16 @@ fail:
 #include <vmmapi.h>
 
 #include "bhyverun.h"
+#include "checkpoint_compat.h"
 #include "checkpoint_manifest.h"
 #include "ipc.h"
 #include "migration_dirty.h"
 #include "migration_precopy.h"
 #include "pci_emul.h"
+#include "qemu_fwcfg.h"
+#include "qemu_fwcfg_snapshot.h"
 #include "snapshot.h"
-#include "virtio_balloon_host.h"
-
-/*
- * Bound on how long precopy waits for the guest to report its free pages.  A
- * timeout is not an error: it simply means the free set is unavailable and the
- * initial copy falls back to copying every page.
- */
-#define	MIGRATION_FREE_PAGE_HINT_TIMEOUT_MS	2000U
+#include "tpm_device.h"
 
 /* The pure core mirrors pci_emul.h's flag values; prove they stay identical. */
 _Static_assert(MIGRATION_DEVF_STATE_CODEC == PCI_MIGRATION_F_STATE_CODEC,
@@ -1920,14 +1942,6 @@ struct migration_prod_source {
 	uint64_t gen_total;	/* dirty pages emitted so far this generation */
 	bool gen_active;
 	bool quiesced;
-	/*
-	 * Free-page-hint optimization.  free_set holds the guest-reported free
-	 * pages collected once at the start of the first (initial) generation;
-	 * initial_generation gates it so only that first copy consults it.
-	 */
-	struct migration_precopy_free_set free_set;
-	bool initial_generation;
-	struct pci_vtballoon_softc *free_round_balloon;
 };
 
 /* Advance a page-aligned GPA to the next backed guest-RAM page, or track_len. */
@@ -1997,6 +2011,9 @@ migration_prod_fill_topology(struct vmctx *ctx, struct migration_topology *topo)
 
 	if (ctx == NULL || topo == NULL)
 		return (EINVAL);
+	/* TPM state has no portable backend/interface checkpoint contract yet. */
+	if (tpm_device_present())
+		return (ENOTSUP);
 	memset(topo, 0, sizeof(*topo));
 	lowmem = vm_get_lowmem_size(ctx);
 	highmem = vm_get_highmem_size(ctx);
@@ -2019,11 +2036,29 @@ migration_prod_fill_topology(struct vmctx *ctx, struct migration_topology *topo)
 		strlcpy(rec->name, pdi->pi_name, sizeof(rec->name));
 		rec->migration_flags = pdi->pi_d->pe_migration_flags;
 		rec->compat_schema = PCI_SNAPSHOT_COMPAT_SCHEMA;
-		/*
-		 * Per-device compat-envelope identity (compat_crc32) capture is
-		 * part of the device-state streaming work below; left zero here.
-		 */
-		rec->compat_crc32 = 0;
+		if ((rec->migration_flags & PCI_MIGRATION_F_COMPAT_CALLBACK) != 0) {
+			struct pci_snapshot_compat compat;
+			uint8_t wire[CHECKPOINT_COMPAT_ENVELOPE_SIZE];
+			int error;
+
+			error = pci_snapshot_compat(pdi, &compat);
+			if (error != 0)
+				return (error);
+			/*
+			 * Negotiation and payload state belong to the streamed checkpoint,
+			 * not the pre-quiesce destination shape.  Hash the canonical,
+			 * immutable compatibility envelope and require both endpoints to
+			 * instantiate that same device contract.
+			 */
+			compat.negotiated_features = 0;
+			compat.payload_crc32 = 0;
+			error = checkpoint_compat_encode(&compat, wire, sizeof(wire));
+			if (error != 0)
+				return (error);
+			rec->compat_crc32 = migration_crc32(wire, sizeof(wire));
+		} else {
+			rec->compat_crc32 = 0;
+		}
 		/*
 		 * BAR-layout identity: a host-independent hash over each BAR's
 		 * type and size (never its host-assigned address).  Two hosts
@@ -2047,6 +2082,25 @@ migration_prod_fill_topology(struct vmctx *ctx, struct migration_topology *topo)
 		}
 		topo->device_count++;
 	}
+	if (qemu_fwcfg_enabled()) {
+		struct migration_device_record *rec;
+		int error;
+
+		if (topo->device_count >= MIGRATION_MAX_DEVICES)
+			return (E2BIG);
+		rec = &topo->devices[topo->device_count];
+		strlcpy(rec->name, QEMU_FWCFG_SNAPSHOT_NAME,
+		    sizeof(rec->name));
+		rec->migration_flags = PCI_MIGRATION_F_STATE_CODEC |
+		    PCI_MIGRATION_F_COMPAT_FIXED | PCI_MIGRATION_F_DMA_NONE |
+		    PCI_MIGRATION_F_QUIESCE_NONE;
+		rec->compat_schema = QEMU_FWCFG_SNAPSHOT_VERSION;
+		error = qemu_fwcfg_migration_identity(&rec->compat_crc32);
+		if (error != 0)
+			return (error);
+		rec->bar_hash = 0;
+		topo->device_count++;
+	}
 	return (0);
 }
 
@@ -2064,76 +2118,6 @@ prod_local_topology(void *arg, struct migration_topology *topo)
 	struct migration_prod_source *src = arg;
 
 	return (migration_prod_fill_topology(src->ctx, topo));
-}
-
-/*
- * Sink for guest-reported free ranges: record them into the source's free set.
- * A marking failure is non-fatal (the page is simply left copyable), so the
- * callback never aborts the collection round.
- */
-static int
-prod_free_range(void *arg, uint64_t gpa, size_t length)
-{
-	struct migration_prod_source *src = arg;
-
-	(void)migration_precopy_free_set_mark(&src->free_set, gpa,
-	    (uint64_t)length);
-	return (0);
-}
-
-/*
- * Run one free-page-hint round against the balloon device, if present, and
- * commit the collected set.  Any uncertainty (no balloon, feature declined,
- * timeout, failure) leaves the set invalid so the initial walk copies every
- * page.  This is an optimization layered on dirty tracking and never a
- * precondition for correctness.
- *
- * The round is deliberately left OPEN on success: prod_end_free_round() closes
- * it (publishes DONE) only after the initial dirty snapshot has been taken, so
- * the guest holds its reported-free pages across the snapshot and cannot
- * silently reallocate-and-write one in the window between the report and the
- * snapshot's clear.  Post-DONE writes are caught by dirty tracking.
- */
-static void
-prod_collect_free_pages(struct migration_prod_source *src)
-{
-	int error;
-
-	src->free_round_balloon = NULL;
-	if (migration_precopy_free_set_init(&src->free_set, src->track_gpa,
-	    src->track_len) != 0)
-		return;
-	src->free_round_balloon = virtio_balloon_migration_lookup();
-	if (src->free_round_balloon == NULL)
-		return;
-	error = virtio_balloon_migration_start(src->free_round_balloon,
-	    prod_free_range, src);
-	if (error != 0) {
-		src->free_round_balloon = NULL;
-		migration_precopy_free_set_reset(&src->free_set);
-		return;
-	}
-	error = virtio_balloon_migration_wait(src->free_round_balloon,
-	    MIGRATION_FREE_PAGE_HINT_TIMEOUT_MS);
-	if (error == 0) {
-		migration_precopy_free_set_commit(&src->free_set);
-	} else {
-		/* Incomplete round: close it now and copy everything. */
-		virtio_balloon_migration_finish(src->free_round_balloon);
-		src->free_round_balloon = NULL;
-		migration_precopy_free_set_reset(&src->free_set);
-	}
-}
-
-/* Close an open free-page-hint round, releasing the guest.  Idempotent. */
-static void
-prod_end_free_round(struct migration_prod_source *src)
-{
-
-	if (src->free_round_balloon != NULL) {
-		virtio_balloon_migration_finish(src->free_round_balloon);
-		src->free_round_balloon = NULL;
-	}
 }
 
 static int
@@ -2167,9 +2151,6 @@ prod_precopy_enable(void *arg)
 	src->gen_active = false;
 	src->cursor = 0;
 	src->gen_total = 0;
-	src->initial_generation = true;
-	src->free_round_balloon = NULL;
-	memset(&src->free_set, 0, sizeof(src->free_set));
 	error = migration_precopy_enable(src->ctx, src->track_gpa,
 	    src->track_len);
 	return (error);
@@ -2201,30 +2182,13 @@ prod_precopy_round(void *arg, bool final, struct migration_memgen *gen,
 		src->bitmap = calloc(src->bitmap_bytes, 1);
 		if (src->bitmap == NULL)
 			return (ENOMEM);
-		/*
-		 * Collect the guest's free pages once, immediately before the
-		 * initial dirty snapshot.  Dirty tracking is already armed over
-		 * the whole range (prod_precopy_enable), so any write after the
-		 * round ends re-marks the page and it is copied in a later
-		 * generation.  The free set only suppresses the initial copy.
-		 */
-		if (src->initial_generation)
-			prod_collect_free_pages(src);
 		memset(&pc, 0, sizeof(pc));
 		error = migration_precopy_collect(src->ctx, src->track_gpa,
 		    src->track_len, MIGRATION_DIRTY_CLEAR, src->bitmap,
 		    src->bitmap_bytes, &pc);
-		/*
-		 * Close the hint round now that the initial dirty snapshot has
-		 * cleared the tracked range: any subsequent guest write to a
-		 * reported-free page re-marks it and it is copied in a later
-		 * generation.
-		 */
-		prod_end_free_round(src);
 		if (error != 0) {
 			free(src->bitmap);
 			src->bitmap = NULL;
-			migration_precopy_free_set_reset(&src->free_set);
 			return (error);
 		}
 		src->gen_active = true;
@@ -2245,17 +2209,6 @@ prod_precopy_round(void *arg, bool final, struct migration_memgen *gen,
 			    gpa + MIGRATION_DIRTY_GRANULARITY);
 			continue;
 		}
-		/*
-		 * Advisory free-page skip: only on the initial generation and
-		 * only for a page the guest reported entirely free.  Dirty
-		 * tracking remains authoritative; a later write re-copies it.
-		 */
-		if (migration_precopy_free_set_skip(&src->free_set,
-		    src->initial_generation, gpa)) {
-			gpa = prod_next_backed(src,
-			    gpa + MIGRATION_DIRTY_GRANULARITY);
-			continue;
-		}
 		if (off + 12 + MIGRATION_DIRTY_GRANULARITY > cap) {
 			/* Chunk full: resume here on the next call. */
 			src->cursor = gpa;
@@ -2267,7 +2220,6 @@ prod_precopy_round(void *arg, bool final, struct migration_memgen *gen,
 			free(src->bitmap);
 			src->bitmap = NULL;
 			src->gen_active = false;
-			migration_precopy_free_set_reset(&src->free_set);
 			return (EFAULT);
 		}
 		le64enc(buf + off, gpa);
@@ -2283,15 +2235,6 @@ prod_precopy_round(void *arg, bool final, struct migration_memgen *gen,
 		free(src->bitmap);
 		src->bitmap = NULL;
 		src->gen_active = false;
-		/*
-		 * The free set is a one-shot input to the initial copy.  Retire
-		 * it once that generation finishes so every later, dirty-driven
-		 * generation copies purely by dirty tracking.
-		 */
-		if (src->initial_generation) {
-			migration_precopy_free_set_reset(&src->free_set);
-			src->initial_generation = false;
-		}
 	}
 	gen->mode = MIGRATION_DIRTY_CLEAR;
 	gen->gpa = src->track_gpa;
@@ -2311,9 +2254,6 @@ prod_precopy_disable(void *arg)
 	free(src->bitmap);
 	src->bitmap = NULL;
 	src->gen_active = false;
-	src->initial_generation = false;
-	prod_end_free_round(src);
-	migration_precopy_free_set_reset(&src->free_set);
 	return (migration_precopy_disable(src->ctx));
 }
 
@@ -2405,12 +2345,12 @@ static const struct migration_source_ops migration_prod_source_ops = {
 
 /*
  * Operator entry: drive a source migration over an already-connected stream
- * descriptor (supplied by bhyvectl as "fd").  This performs the live handshake,
- * capability/topology validation, device eligibility check, and iterative
- * pre-copy against a destination bhyve, then fails closed at the device/CPU
- * cutover (see prod_dev_state) leaving the source running.  Wiring the
- * destination listener and the final device/CPU state stream completes the
- * live two-host path.
+ * descriptor (an nvlist descriptor received over the per-VM IPC control
+ * socket as "fd").  This performs the live handshake, capability/topology
+ * validation, device eligibility check, and iterative pre-copy against a
+ * destination bhyve, streams the device/CPU cutover state (see
+ * prod_dev_state) through COMMIT/RELEASE; a pre-commit failure rolls back
+ * and resumes the source, while a committed handoff makes it defunct.
  */
 static int
 vm_do_migrate(struct vmctx *ctx, const nvlist_t *nvl)
@@ -2470,6 +2410,9 @@ struct migration_prod_dest {
 	struct vmctx *ctx;
 	uint8_t *dev_blob;	/* reassembled device/CPU blob (owned) */
 	size_t dev_len;
+	uint64_t mem_last_end;
+	uint32_t mem_round;
+	bool mem_round_active;
 	bool committed;
 };
 
@@ -2500,18 +2443,26 @@ prod_dest_stage_mem(void *arg, const struct migration_memgen *gen,
     const uint8_t *buf, size_t len)
 {
 	struct migration_prod_dest *dst = arg;
-	uint64_t expected_length, highmem;
+	uint64_t expected_length, highmem, highmem_base;
 	size_t off;
 	uint32_t page_count;
 
 	highmem = vm_get_highmem_size(dst->ctx);
+	highmem_base = vm_get_highmem_base(dst->ctx);
 	expected_length = highmem != 0 ?
-	    vm_get_highmem_base(dst->ctx) + highmem :
+	    highmem_base + highmem :
 	    vm_get_lowmem_size(dst->ctx);
 	if (gen == NULL || gen->mode != MIGRATION_DIRTY_CLEAR ||
 	    gen->final > 1 || gen->gpa != 0 ||
 	    gen->length != expected_length)
 		return (EBADMSG);
+	if (!dst->mem_round_active || gen->round != dst->mem_round) {
+		if (dst->mem_round_active && gen->round <= dst->mem_round)
+			return (EBADMSG);
+		dst->mem_round = gen->round;
+		dst->mem_last_end = 0;
+		dst->mem_round_active = true;
+	}
 	off = 0;
 	page_count = 0;
 	while (off + 12 <= len) {
@@ -2522,12 +2473,15 @@ prod_dest_stage_mem(void *arg, const struct migration_memgen *gen,
 		gpa = le64dec(buf + off);
 		plen = le32dec(buf + off + 8);
 		off += 12;
-		if (plen != MIGRATION_DIRTY_GRANULARITY || off + plen > len)
+		if (off + plen > len || migration_memory_record_validate(gpa, plen,
+		    vm_get_lowmem_size(dst->ctx), highmem_base, highmem,
+		    dst->mem_last_end) != 0)
 			return (EBADMSG);
 		host = vm_map_gpa(dst->ctx, gpa, plen);
 		if (host == NULL)
 			return (EFAULT);
 		memcpy(host, buf + off, plen);
+		dst->mem_last_end = gpa + plen;
 		off += plen;
 		page_count++;
 	}

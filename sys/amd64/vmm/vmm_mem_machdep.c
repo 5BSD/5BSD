@@ -63,8 +63,10 @@ vmm_mmio_alloc(struct vmspace *vmspace, vm_paddr_t gpa, size_t len,
 	KASSERT(error == 0, ("error %d appending physaddr to sglist", error));
 
 	obj = vm_pager_allocate(OBJT_SG, sg, len, VM_PROT_RW, 0, NULL);
-	if (obj == NULL)
+	if (obj == NULL) {
+		sglist_free(sg);
 		return (ENOMEM);
+	}
 
 	/*
 	 * VT-x ignores the MTRR settings when figuring out the memory type for

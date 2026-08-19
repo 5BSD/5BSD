@@ -240,6 +240,17 @@ ahci_mark_cmd_header_dirty(struct ahci_port *p, struct ahci_cmd_hdr *hdr)
 	pci_emul_mark_dma_dirty_mapping(p->pr_sc->asc_pi, hdr, sizeof(*hdr));
 }
 
+static struct ahci_cmd_hdr *
+ahci_completion_header_locked(struct ahci_port *p, int slot)
+{
+
+	assert(pthread_mutex_isowned_np(&p->pr_sc->mtx));
+	if (!pci_ahci_completion_slot_valid(p->cmd_lst, slot,
+	    AHCI_MAX_SLOTS))
+		return (NULL);
+	return ((struct ahci_cmd_hdr *)(p->cmd_lst + slot * AHCI_CL_SIZE));
+}
+
 static void
 ahci_mark_iov_dirty(struct ahci_port *p, const struct blockif_req *breq)
 {
@@ -2132,7 +2143,6 @@ ata_ioreq_cb(struct blockif_req *br, int err)
 	cfis = aior->cfis;
 	slot = aior->slot;
 	sc = p->pr_sc;
-	hdr = (struct ahci_cmd_hdr *)(p->cmd_lst + slot * AHCI_CL_SIZE);
 
 	if (cfis[2] == ATA_WRITE_FPDMA_QUEUED ||
 	    cfis[2] == ATA_READ_FPDMA_QUEUED ||
@@ -2142,11 +2152,21 @@ ata_ioreq_cb(struct blockif_req *br, int err)
 	aior->dsm = NULL;
 
 	pthread_mutex_lock(&sc->mtx);
+	hdr = ahci_completion_header_locked(p, slot);
 
 	/*
 	 * Delete the blockif request from the busy list
 	 */
 	TAILQ_REMOVE(&p->iobhd, aior, io_blist);
+	if (hdr == NULL) {
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+		if (slot >= 0 && slot < AHCI_MAX_SLOTS)
+			p->pending &= ~(UINT32_C(1) << slot);
+		ahci_host_bus_error(p, AHCI_P_IX_HBF);
+		ahci_check_stopped(p);
+		free(dsm);
+		goto out;
+	}
 
 	if (!err && aior->readop)
 		ahci_mark_iov_dirty(p, br);
@@ -2221,14 +2241,22 @@ atapi_ioreq_cb(struct blockif_req *br, int err)
 	cfis = aior->cfis;
 	slot = aior->slot;
 	sc = p->pr_sc;
-	hdr = (struct ahci_cmd_hdr *)(p->cmd_lst + aior->slot * AHCI_CL_SIZE);
 
 	pthread_mutex_lock(&sc->mtx);
+	hdr = ahci_completion_header_locked(p, slot);
 
 	/*
 	 * Delete the blockif request from the busy list
 	 */
 	TAILQ_REMOVE(&p->iobhd, aior, io_blist);
+	if (hdr == NULL) {
+		STAILQ_INSERT_TAIL(&p->iofhd, aior, io_flist);
+		if (slot >= 0 && slot < AHCI_MAX_SLOTS)
+			p->pending &= ~(UINT32_C(1) << slot);
+		ahci_host_bus_error(p, AHCI_P_IX_HBF);
+		ahci_check_stopped(p);
+		goto out;
+	}
 
 	if (!err && aior->readop)
 		ahci_mark_iov_dirty(p, br);

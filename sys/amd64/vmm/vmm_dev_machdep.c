@@ -648,6 +648,9 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 			break;
 		snapshot_meta = (struct vm_snapshot_meta *)data;
 		error = vm_snapshot_req(vm, snapshot_meta);
+		if (error == 0 && snapshot_meta->op == VM_SNAPSHOT_RESTORE &&
+		    snapshot_meta->dev_req == STRUCT_VM)
+			error = vmmdev_snapshot_restore_time_mark(vm);
 		break;
 	}
 	case VM_SNAPSHOT_SESSION: {
@@ -711,11 +714,20 @@ vmmdev_machdep_ioctl(struct vm *vm, struct vcpu *vcpu, u_long cmd, caddr_t data,
 		snapshot_meta =
 		    (struct vm_snapshot_meta *)&snapshot_13->dev_data;
 		error = vm_snapshot_req(vm, snapshot_meta);
+		if (error == 0 && snapshot_meta->op == VM_SNAPSHOT_RESTORE &&
+		    snapshot_meta->dev_req == STRUCT_VM)
+			error = vmmdev_snapshot_restore_time_mark(vm);
 		break;
 	}
 #endif
 	case VM_RESTORE_TIME:
-		error = vm_restore_time(vm);
+		if ((fflag & FWRITE) == 0) {
+			error = EBADF;
+			break;
+		}
+		error = vmmdev_snapshot_restore_time_consume(vm);
+		if (error == 0)
+			error = vm_restore_time(vm);
 		break;
 #endif
 	default:

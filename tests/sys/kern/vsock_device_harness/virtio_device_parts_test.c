@@ -340,7 +340,7 @@ ATF_TC_BODY(repeated_selectors_rejected, tc)
 {
 	struct virtio_device_parts_iterator iterator;
 	struct virtio_device_part part;
-	uint8_t bytes[84], features[8], value[2];
+	uint8_t bytes[108], features[8], value[8];
 	size_t used;
 
 	memset(value, 0, sizeof(value));
@@ -354,12 +354,32 @@ ATF_TC_BODY(repeated_selectors_rejected, tc)
 	    VIRTIO14_DEV_PART_DRV_FEATURES, 0, 0, features,
 	    sizeof(features)), 0);
 	ATF_REQUIRE_EQ(virtio_device_part_append(bytes, sizeof(bytes), &used,
-	    VIRTIO14_DEV_PART_PCI_COMMON_CFG, 0, 18, value,
-	    sizeof(value)), 0);
+	    VIRTIO14_DEV_PART_PCI_COMMON_CFG, 0, 18, value, 2), 0);
 	ATF_REQUIRE_EQ(virtio_device_part_append(bytes, sizeof(bytes), &used,
-	    VIRTIO14_DEV_PART_PCI_COMMON_CFG, 0, 18, value,
-	    sizeof(value)), 0);
+	    VIRTIO14_DEV_PART_PCI_COMMON_CFG, 0, 18, value, 2), 0);
 	virtio_device_parts_iterator_init(&iterator, bytes, used);
+	ATF_REQUIRE_EQ(virtio_device_parts_next(&iterator, &part), 0);
+	ATF_REQUIRE_EQ(virtio_device_parts_next(&iterator, &part), 0);
+	ATF_REQUIRE_EQ(virtio_device_parts_next(&iterator, &part), 0);
+	ATF_CHECK_EQ(virtio_device_parts_next(&iterator, &part), EPROTO);
+
+	/* A duplicate separated by another selector is equally ambiguous. */
+	used = 0;
+	ATF_REQUIRE_EQ(virtio_device_part_append(bytes, sizeof(bytes), &used,
+	    VIRTIO14_DEV_PART_DEV_FEATURES,
+	    VIRTIO14_DEV_PART_F_OPTIONAL, 0, features,
+	    sizeof(features)), 0);
+	ATF_REQUIRE_EQ(virtio_device_part_append(bytes, sizeof(bytes), &used,
+	    VIRTIO14_DEV_PART_DRV_FEATURES, 0, 0, features,
+	    sizeof(features)), 0);
+	ATF_REQUIRE_EQ(virtio_device_part_append(bytes, sizeof(bytes), &used,
+	    VIRTIO14_DEV_PART_PCI_COMMON_CFG, 0, 0, value, 4), 0);
+	ATF_REQUIRE_EQ(virtio_device_part_append(bytes, sizeof(bytes), &used,
+	    VIRTIO14_DEV_PART_PCI_COMMON_CFG, 0, 4, value, 4), 0);
+	ATF_REQUIRE_EQ(virtio_device_part_append(bytes, sizeof(bytes), &used,
+	    VIRTIO14_DEV_PART_PCI_COMMON_CFG, 0, 0, value, 4), 0);
+	virtio_device_parts_iterator_init(&iterator, bytes, used);
+	ATF_REQUIRE_EQ(virtio_device_parts_next(&iterator, &part), 0);
 	ATF_REQUIRE_EQ(virtio_device_parts_next(&iterator, &part), 0);
 	ATF_REQUIRE_EQ(virtio_device_parts_next(&iterator, &part), 0);
 	ATF_REQUIRE_EQ(virtio_device_parts_next(&iterator, &part), 0);

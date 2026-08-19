@@ -146,9 +146,43 @@ ATF_TC_BODY(frame_rejects_oversize_and_short_header, tc)
 	/* A header claiming an oversize length is rejected. */
 	memset(frame, 0, sizeof(frame));
 	le32enc(frame + 0, MIGRATION_PROTO_MAGIC);
+	le16enc(frame + 4, MIGRATION_PROTO_VERSION);
+	le16enc(frame + 6, MIGRATION_MSG_HELLO);
 	le32enc(frame + 16, MIGRATION_MAX_PAYLOAD + 1);
 	ATF_CHECK_EQ(migration_frame_decode_header(frame, sizeof(frame), &hdr),
 	    EMSGSIZE);
+}
+
+ATF_TC_WITHOUT_HEAD(memory_record_validation);
+ATF_TC_BODY(memory_record_validation, tc)
+{
+	const uint64_t lowmem = 2 * MIGRATION_DIRTY_GRANULARITY;
+	const uint64_t highbase = UINT64_C(0x100000000);
+	const uint64_t highmem = 2 * MIGRATION_DIRTY_GRANULARITY;
+
+	(void)tc;
+	ATF_CHECK_EQ(migration_memory_record_validate(0,
+	    MIGRATION_DIRTY_GRANULARITY, lowmem, highbase, highmem, 0), 0);
+	ATF_CHECK_EQ(migration_memory_record_validate(
+	    MIGRATION_DIRTY_GRANULARITY, MIGRATION_DIRTY_GRANULARITY,
+	    lowmem, highbase, highmem, MIGRATION_DIRTY_GRANULARITY), 0);
+	ATF_CHECK_EQ(migration_memory_record_validate(highbase,
+	    MIGRATION_DIRTY_GRANULARITY, lowmem, highbase, highmem, lowmem), 0);
+
+	ATF_CHECK_EQ(migration_memory_record_validate(1,
+	    MIGRATION_DIRTY_GRANULARITY, lowmem, highbase, highmem, 0), EBADMSG);
+	ATF_CHECK_EQ(migration_memory_record_validate(0,
+	    MIGRATION_DIRTY_GRANULARITY / 2, lowmem, highbase, highmem, 0),
+	    EBADMSG);
+	ATF_CHECK_EQ(migration_memory_record_validate(0,
+	    MIGRATION_DIRTY_GRANULARITY, lowmem, highbase, highmem,
+	    MIGRATION_DIRTY_GRANULARITY), EBADMSG);
+	ATF_CHECK_EQ(migration_memory_record_validate(lowmem,
+	    MIGRATION_DIRTY_GRANULARITY, lowmem, highbase, highmem, lowmem),
+	    EBADMSG);
+	ATF_CHECK_EQ(migration_memory_record_validate(highbase + highmem,
+	    MIGRATION_DIRTY_GRANULARITY, lowmem, highbase, highmem, highbase),
+	    EBADMSG);
 }
 
 ATF_TC_WITHOUT_HEAD(frame_rejects_unknown_version_type_and_flags);
@@ -2319,6 +2353,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, frame_roundtrip_and_crc);
 	ATF_TP_ADD_TC(tp, frame_rejects_oversize_and_short_header);
 	ATF_TP_ADD_TC(tp, frame_rejects_unknown_version_type_and_flags);
+	ATF_TP_ADD_TC(tp, memory_record_validation);
 	ATF_TP_ADD_TC(tp, topology_roundtrip_and_bounds);
 	ATF_TP_ADD_TC(tp, version_negotiation_downgrade_and_reject);
 	ATF_TP_ADD_TC(tp, hello_validate_rejects_mismatch);

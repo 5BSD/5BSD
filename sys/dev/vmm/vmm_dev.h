@@ -49,6 +49,8 @@ int	vmmdev_snapshot_session_abort_current(struct vm *);
  * descriptor from injecting records into another descriptor's transaction.
  */
 int	vmmdev_snapshot_session_require(struct vm *);
+int	vmmdev_snapshot_restore_time_mark(struct vm *);
+int	vmmdev_snapshot_restore_time_consume(struct vm *);
 
 /*
  * Entry in an ioctl handler table.  A number of generic ioctls are defined,

@@ -123,6 +123,7 @@ ATF_TESTS_C+=	virtio_device_parts_test
 ATF_TESTS_C+=	virtio_device_parts_handler_test
 ATF_TESTS_C+=	snapshot_manifest_test
 ATF_TESTS_C+=	snapshot_portable_test
+ATF_TESTS_C+=	qemu_fwcfg_snapshot_test
 ATF_TESTS_C+=	snapshot_devmem_test
 ATF_TESTS_C+=	vmmapi_memory_test
 ATF_TESTS_C+=	lib9p_tversion_test
@@ -158,6 +159,8 @@ SCRIPTSNAME_validate-virtio-dma-boundary.sh= \
 	validate-virtio-dma-boundary.sh
 SCRIPTS+=	validate-virtio-dtrace.sh
 SCRIPTSNAME_validate-virtio-dtrace.sh=	validate-virtio-dtrace.sh
+SCRIPTS+=	validate-sanitizer-parity.sh
+SCRIPTSNAME_validate-sanitizer-parity.sh=	validate-sanitizer-parity.sh
 SCRIPTS+=	run.sh
 SCRIPTSNAME_run.sh=	run.sh
 SCRIPTS+=	run-snapshot-model.sh
@@ -295,7 +298,8 @@ SANITIZER_HARNESS_FILES=	bhyverun.h \
 				snapshot_manifest_test.c \
 				snapshot_devmem_test.c \
 				vmmapi_memory_test.c \
-				snapshot_portable_test.c
+				snapshot_portable_test.c \
+				qemu_fwcfg_snapshot_test.c
 VIRTIO_VALIDATION_FILES+=	lib9p_tversion_test.c lib9p_name_test.c \
 				lib9p_fs_path_test.c p9_guest_wire_test.c \
 				lib9p_marshal_test.c lib9p_dispatch_test.c \
@@ -349,6 +353,7 @@ CFLAGS.checkpoint_machine_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} \
 				-I${.OBJDIR} -I${SRCTOP}/usr.sbin/bhyve
 LIBADD.checkpoint_machine_test+= md
 CFLAGS.snapshot_manifest_test+= -I${.OBJDIR}
+CFLAGS.qemu_fwcfg_snapshot_test+= -I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.vmmapi_memory_test+= -I${.OBJDIR}
 LDFLAGS.snapshot_manifest_test+= -Wl,--wrap=close -Wl,--wrap=fsync -Wl,--wrap=write
 LIBADD.snapshot_manifest_test+= md

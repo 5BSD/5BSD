@@ -70,6 +70,7 @@ fi
 "$here/validate-virtio-snapshot-portability-selftest.sh"
 "$here/validate-virtio-snapshot-runner-selftest.sh"
 "$here/validate-virtio-dma-boundary.sh"
+sh "$here/validate-sanitizer-parity.sh"
 # The normative ledger deliberately excludes implementation-defined and
 # withheld interfaces.  Make their separate owner/rollback/negative-test
 # ledger a required harness gate as well, so a full rootless pass cannot
@@ -135,7 +136,13 @@ cp "$here"/*.h "$here/vsock_device_test.c" \
 	"$here/pci_ahci_model_test.c" \
 	"$here/pci_e82545_model_test.c" \
 	"$here/pci_fbuf_model_test.c" \
+	"$here/pci_hda_model_test.c" \
+	"$here/pci_xhci_model_test.c" \
 	"$here/uart_backend_model_test.c" \
+	"$here/console_owner_test.c" \
+	"$here/mevent_lifecycle_test.c" \
+	"$here/tpm_intf_crb_model_test.c" \
+	"$here/pvpanic_model_test.c" \
 	"$here/virtio_snd_async_test.c" \
 	"$here/virtio_snd_host_test.c" "$here/virtio_snd_queue_test.c" \
 	"$here/virtio_snd_test.c" \
@@ -159,6 +166,7 @@ cp "$here"/*.h "$here/vsock_device_test.c" \
 	"$here/snapshot_identity_test.c" \
 	"$here/vmmapi_memory_test.c" \
 	"$here/snapshot_portable_test.c" \
+	"$here/qemu_fwcfg_snapshot_test.c" \
 	"$work/"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock.c"        "$work/pci_virtio_vsock.c"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_iov.h"    "$work/pci_virtio_vsock_iov.h"
@@ -168,6 +176,8 @@ ln -s "$srctop/usr.sbin/bhyve/pci_virtio_vsock_probes.h" "$work/pci_virtio_vsock
 ln -s "$srctop/usr.sbin/bhyve/virtio_pci_modern.c" "$work/virtio_pci_modern.c"
 ln -s "$srctop/usr.sbin/bhyve/virtio_pci_modern_probes.h" "$work/virtio_pci_modern_probes.h"
 ln -s "$srctop/usr.sbin/bhyve/bhyvegc.c" "$work/bhyvegc.c"
+ln -s "$srctop/usr.sbin/bhyve/console.c" "$work/console_owner.c"
+ln -s "$srctop/usr.sbin/bhyve/mevent.c" "$work/mevent_dut.c"
 ln -s "$srctop/usr.sbin/bhyve/virtio_admin_pci.c" "$work/virtio_admin_pci.c"
 ln -s "$srctop/usr.sbin/bhyve/virtio_admin_pci.h" "$work/virtio_admin_pci.h"
 ln -s "$srctop/usr.sbin/bhyve/pci_virtio_input.c" "$work/pci_virtio_input.c"
@@ -971,6 +981,13 @@ fi
 "$work/snapshot-portable-test"
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
+	-o "$work/qemu-fwcfg-snapshot-test" \
+	"$work/qemu_fwcfg_snapshot_test.c"
+
+"$work/qemu-fwcfg-snapshot-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
 	-I"$work/atfshim" -I"$work/inc" \
 	-I"$work" -I"$srctop/sys" \
 	-o "$work/iov-test" "$work/iov_test.c"
@@ -1080,10 +1097,48 @@ fi
 
 "$cc" -g -O1 -fsanitize="$sanitizers" \
 	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
+	-o "$work/pci-hda-model-test" "$work/pci_hda_model_test.c"
+
+"$work/pci-hda-model-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
+	-o "$work/pci-xhci-model-test" "$work/pci_xhci_model_test.c"
+
+"$work/pci-xhci-model-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
 	-o "$work/uart-backend-model-test" \
 	"$work/uart_backend_model_test.c"
 
 "$work/uart-backend-model-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
+	-o "$work/console-owner-test" "$work/console_owner_test.c" -lpthread
+
+"$work/console-owner-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" -DWITHOUT_CAPSICUM \
+	-Wno-thread-safety-analysis -I"$work/atfshim" -I"$work" \
+	-I"$srctop/usr.sbin/bhyve" -o "$work/mevent-lifecycle-test" \
+	"$work/mevent_lifecycle_test.c" -lpthread
+
+"$work/mevent-lifecycle-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
+	-o "$work/tpm-intf-crb-model-test" \
+	"$work/tpm_intf_crb_model_test.c"
+
+"$work/tpm-intf-crb-model-test"
+
+"$cc" -g -O1 -fsanitize="$sanitizers" \
+	-I"$work/atfshim" -I"$work" -I"$srctop/usr.sbin/bhyve" \
+	-o "$work/pvpanic-model-test" "$work/pvpanic_model_test.c"
+
+"$work/pvpanic-model-test"
 
 "$cc" -g -O1 -fsanitize="$sanitizers" -ffunction-sections -fdata-sections \
 	-DWITHOUT_CAPSICUM -I"$work/atfshim" -I"$work/inc" \

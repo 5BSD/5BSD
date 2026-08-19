@@ -93,6 +93,22 @@ ATF_TC_BODY(dsm_transfer_length, tc)
 	ATF_CHECK_EQ(pci_nvme_dsm_range_bytes(UINT8_MAX), 4096U);
 }
 
+ATF_TC_WITHOUT_HEAD(dsm_lba_length_width);
+ATF_TC_BODY(dsm_lba_length_width, tc)
+{
+	size_t bytes;
+
+	ATF_REQUIRE(pci_nvme_dsm_length_bytes(UINT32_MAX, 12, &bytes));
+	ATF_CHECK_EQ(bytes, (size_t)UINT64_C(0xffffffff000));
+	ATF_REQUIRE(pci_nvme_dsm_length_bytes(UINT32_C(0x100000), 12,
+	    &bytes));
+	ATF_CHECK_EQ(bytes, (size_t)UINT64_C(0x100000000));
+	ATF_REQUIRE(pci_nvme_dsm_length_bytes(0, 12, &bytes));
+	ATF_CHECK_EQ(bytes, 0U);
+	ATF_CHECK(!pci_nvme_dsm_length_bytes(1, 64, &bytes));
+	ATF_CHECK(!pci_nvme_dsm_length_bytes(1, 12, NULL));
+}
+
 ATF_TC_WITHOUT_HEAD(dsm_skips_leading_empty_range);
 ATF_TC_BODY(dsm_skips_leading_empty_range, tc)
 {
@@ -225,6 +241,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, prp_alignment_and_list_bounds);
 	ATF_TP_ADD_TC(tp, ram_command_direction);
 	ATF_TP_ADD_TC(tp, dsm_transfer_length);
+	ATF_TP_ADD_TC(tp, dsm_lba_length_width);
 	ATF_TP_ADD_TC(tp, dsm_skips_leading_empty_range);
 	ATF_TP_ADD_TC(tp, completion_phase_is_device_owned);
 	ATF_TP_ADD_TC(tp, completion_queue_backpressure);

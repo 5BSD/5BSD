@@ -69,11 +69,25 @@ ATF_TC_BODY(prdt_dba_overflow, tc)
 	ATF_CHECK(!pci_ahci_prdt_dba_valid(UINT64_MAX - 0x100, 0x200));
 }
 
+ATF_TC_WITHOUT_HEAD(completion_header_validation);
+ATF_TC_BODY(completion_header_validation, tc)
+{
+	uint8_t command_list[32 * 32];
+
+	ATF_CHECK(pci_ahci_completion_slot_valid(command_list, 0, 32));
+	ATF_CHECK(pci_ahci_completion_slot_valid(command_list, 31, 32));
+	ATF_CHECK(!pci_ahci_completion_slot_valid(NULL, 0, 32));
+	ATF_CHECK(!pci_ahci_completion_slot_valid(command_list, -1, 32));
+	ATF_CHECK(!pci_ahci_completion_slot_valid(command_list, 32, 32));
+	ATF_CHECK(!pci_ahci_completion_slot_valid(command_list, 0, 0));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, mmio_access_validation);
 	ATF_TP_ADD_TC(tp, command_abort_is_taskfile_error);
 	ATF_TP_ADD_TC(tp, prdt_dba_overflow);
+	ATF_TP_ADD_TC(tp, completion_header_validation);
 	return (atf_no_error());
 }

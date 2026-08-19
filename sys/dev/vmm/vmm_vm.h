@@ -198,6 +198,7 @@ struct vm {
 int vm_create(const char *name, struct vm **retvm);
 struct vcpu *vm_alloc_vcpu(struct vm *vm, int vcpuid);
 void vm_destroy(struct vm *vm);
+int vm_destroy_preflight(struct vm *vm);
 int vm_reinit(struct vm *vm);
 int vm_reset(struct vm *vm);
 

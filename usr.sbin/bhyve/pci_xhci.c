@@ -57,8 +57,8 @@
 #include "debug.h"
 #include "pci_emul.h"
 #include "pci_xhci.h"
-#ifdef BHYVE_SNAPSHOT
 #include "pci_xhci_model.h"
+#ifdef BHYVE_SNAPSHOT
 #include "snapshot.h"
 #endif
 #include "usb_emul.h"
@@ -241,6 +241,8 @@ struct pci_xhci_rtsregs {
 	/* guest mapped addresses */
 	struct xhci_event_ring_seg *erstba_p;
 	struct xhci_trb *erst_p;	/* event ring segment tbl */
+	uint64_t	er_event_base;	/* immutable mapped ring base */
+	uint32_t	er_event_count;	/* immutable mapped ring entries */
 	int		er_deq_seg;	/* event ring dequeue segment */
 	int		er_enq_idx;	/* event ring enqueue index - xHCI */
 	int		er_enq_seg;	/* event ring enqueue segment */
@@ -893,16 +895,18 @@ pci_xhci_insert_event(struct pci_xhci_softc *sc, struct xhci_trb *evtrb,
 	err = XHCI_TRB_ERROR_SUCCESS;
 
 	rts = &sc->rtsregs;
-	event_count = rts->erstba_p != NULL ?
-	    rts->erstba_p->dwEvrsTableSize : 0;
+	event_count = rts->er_event_count;
 	if (rts->erstba_p == NULL || rts->erst_p == NULL ||
 	    rts->intrreg.erstsz != 1 || event_count == 0 ||
 	    event_count > XHCI_EVENT_RING_SEGMENT_MAX ||
+	    !pci_xhci_event_ring_geometry_matches(event_count,
+	    rts->er_event_base, rts->erstba_p->dwEvrsTableSize,
+	    rts->erstba_p->qwEvrsTablePtr) ||
 	    rts->er_enq_idx < 0 || (uint32_t)rts->er_enq_idx >= event_count) {
 		pci_xhci_host_error(sc);
 		return (XHCI_TRB_ERROR_EV_RING_FULL);
 	}
-	event_base = rts->erstba_p->qwEvrsTablePtr;
+	event_base = rts->er_event_base;
 	event_bytes = (uint64_t)event_count * sizeof(struct xhci_trb);
 	if (event_base > UINT64_MAX - event_bytes) {
 		pci_xhci_host_error(sc);
@@ -922,8 +926,7 @@ pci_xhci_insert_event(struct pci_xhci_softc *sc, struct xhci_trb *evtrb,
 	         erdp_idx, rts->er_deq_seg, rts->er_enq_idx,
 	         rts->er_enq_seg, rts->event_pcs));
 	DPRINTF(("\t(erdp=0x%lx, erst=0x%lx, tblsz=%u, do_intr %d)",
-		 erdp, rts->erstba_p->qwEvrsTablePtr,
-	         rts->erstba_p->dwEvrsTableSize, do_intr));
+		 erdp, event_base, event_count, do_intr));
 
 	evtrbptr = &rts->erst_p[rts->er_enq_idx];
 
@@ -2478,6 +2481,20 @@ pci_xhci_dbregs_write(struct pci_xhci_softc *sc, uint64_t offset,
 }
 
 static void
+pci_xhci_event_ring_invalidate(struct pci_xhci_rtsregs *rts)
+{
+
+	rts->erstba_p = NULL;
+	rts->erst_p = NULL;
+	rts->er_event_base = 0;
+	rts->er_event_count = 0;
+	rts->er_deq_seg = 0;
+	rts->er_enq_idx = 0;
+	rts->er_enq_seg = 0;
+	rts->er_events_cnt = 0;
+}
+
+static void
 pci_xhci_rtsregs_write(struct pci_xhci_softc *sc, uint64_t offset,
     uint64_t value)
 {
@@ -2514,11 +2531,14 @@ pci_xhci_rtsregs_write(struct pci_xhci_softc *sc, uint64_t offset,
 		break;
 
 	case 0x08:
+		if (rts->intrreg.erstsz != (value & 0xFFFF))
+			pci_xhci_event_ring_invalidate(rts);
 		rts->intrreg.erstsz = value & 0xFFFF;
 		break;
 
 	case 0x10:
 		/* ERSTBA low bits */
+		pci_xhci_event_ring_invalidate(rts);
 		rts->intrreg.erstba = MASK_64_HI(sc->rtsregs.intrreg.erstba) |
 		                      (value & ~0x3F);
 		break;
@@ -2529,44 +2549,47 @@ pci_xhci_rtsregs_write(struct pci_xhci_softc *sc, uint64_t offset,
 			uint64_t event_bytes, event_gpa;
 			uint32_t event_count;
 
-		rts->intrreg.erstba = (value << 32) |
-		    MASK_64_LO(sc->rtsregs.intrreg.erstba);
+			pci_xhci_event_ring_invalidate(rts);
+			rts->intrreg.erstba = (value << 32) |
+			    MASK_64_LO(sc->rtsregs.intrreg.erstba);
 
-		rts->erstba_p = pci_xhci_map(sc,
-		    rts->intrreg.erstba & ~0x3FUL, sizeof(*rts->erstba_p));
-		if (rts->erstba_p == NULL || rts->intrreg.erstsz != 1) {
-			rts->erstba_p = NULL;
-			rts->erst_p = NULL;
-			pci_xhci_host_error(sc);
-			break;
-		}
-		event_count = rts->erstba_p->dwEvrsTableSize;
-		event_gpa = rts->erstba_p->qwEvrsTablePtr & ~0x3FUL;
-		if (event_count == 0 ||
-		    event_count > XHCI_EVENT_RING_SEGMENT_MAX) {
-			rts->erstba_p = NULL;
-			rts->erst_p = NULL;
-			pci_xhci_host_error(sc);
-			break;
-		}
-		event_bytes = (uint64_t)event_count * sizeof(struct xhci_trb);
-		if (event_gpa > UINT64_MAX - event_bytes ||
-		    (rts->erst_p = pci_xhci_map_write(sc, event_gpa,
-		    event_bytes)) == NULL) {
-			rts->erstba_p = NULL;
-			rts->erst_p = NULL;
-			pci_xhci_host_error(sc);
-			break;
-		}
+			rts->erstba_p = pci_xhci_map(sc,
+			    rts->intrreg.erstba & ~0x3FUL,
+			    sizeof(*rts->erstba_p));
+			if (rts->erstba_p == NULL || rts->intrreg.erstsz != 1) {
+				pci_xhci_event_ring_invalidate(rts);
+				pci_xhci_host_error(sc);
+				break;
+			}
+			event_count = rts->erstba_p->dwEvrsTableSize;
+			event_gpa = rts->erstba_p->qwEvrsTablePtr;
+			if (event_count == 0 ||
+			    event_count > XHCI_EVENT_RING_SEGMENT_MAX ||
+			    (event_gpa & 0x3FUL) != 0) {
+				pci_xhci_event_ring_invalidate(rts);
+				pci_xhci_host_error(sc);
+				break;
+			}
+			event_bytes = (uint64_t)event_count *
+			    sizeof(struct xhci_trb);
+			if (event_gpa > UINT64_MAX - event_bytes ||
+			    (rts->erst_p = pci_xhci_map_write(sc, event_gpa,
+			    event_bytes)) == NULL) {
+				pci_xhci_event_ring_invalidate(rts);
+				pci_xhci_host_error(sc);
+				break;
+			}
 
-		rts->er_enq_idx = 0;
-		rts->er_events_cnt = 0;
+			rts->er_event_base = event_gpa;
+			rts->er_event_count = event_count;
+			rts->er_enq_idx = 0;
+			rts->er_events_cnt = 0;
 
-		DPRINTF(("pci_xhci: wr erstba erst (%p) ptr 0x%lx, sz %u",
-		        rts->erstba_p,
-		        rts->erstba_p->qwEvrsTablePtr,
-		        rts->erstba_p->dwEvrsTableSize));
-		break;
+			DPRINTF(("pci_xhci: wr erstba erst (%p) ptr 0x%lx, "
+			    "sz %u", rts->erstba_p,
+			    rts->erstba_p->qwEvrsTablePtr,
+			    rts->erstba_p->dwEvrsTableSize));
+			break;
 		}
 
 	case 0x18:
@@ -2593,13 +2616,17 @@ pci_xhci_rtsregs_write(struct pci_xhci_softc *sc, uint64_t offset,
 		    rts->erst_p != NULL) {
 			uint64_t erdp;
 			uint64_t event_base, event_bytes;
+			uint32_t event_count;
 			int erdp_i;
 
 			erdp = rts->intrreg.erdp & ~0xF;
-			event_base = rts->erstba_p->qwEvrsTablePtr;
-			event_bytes = (uint64_t)rts->erstba_p->dwEvrsTableSize *
-			    sizeof(struct xhci_trb);
+			event_base = rts->er_event_base;
+			event_count = rts->er_event_count;
+			event_bytes = (uint64_t)event_count * sizeof(struct xhci_trb);
 			if (event_bytes == 0 || event_base > UINT64_MAX - event_bytes ||
+			    !pci_xhci_event_ring_geometry_matches(event_count,
+			    event_base, rts->erstba_p->dwEvrsTableSize,
+			    rts->erstba_p->qwEvrsTablePtr) ||
 			    erdp < event_base || erdp >= event_base + event_bytes ||
 			    (erdp - event_base) % sizeof(struct xhci_trb) != 0) {
 				pci_xhci_host_error(sc);
@@ -2611,7 +2638,7 @@ pci_xhci_rtsregs_write(struct pci_xhci_softc *sc, uint64_t offset,
 				rts->er_events_cnt = rts->er_enq_idx - erdp_i;
 			else
 				rts->er_events_cnt =
-				          rts->erstba_p->dwEvrsTableSize -
+				          event_count -
 				          (erdp_i - rts->er_enq_idx);
 
 			DPRINTF(("pci_xhci: erdp 0x%lx, events cnt %u",
@@ -3975,8 +4002,14 @@ pci_xhci_snapshot(struct vm_snapshot_meta *meta)
 	 * the restored ERST only during the committing restore pass.
 	 */
 	if (meta->op == VM_SNAPSHOT_SAVE && sc->rtsregs.erstba_p != NULL) {
-		event_count = sc->rtsregs.erstba_p->dwEvrsTableSize;
-		event_base = sc->rtsregs.erstba_p->qwEvrsTablePtr;
+		event_count = sc->rtsregs.er_event_count;
+		event_base = sc->rtsregs.er_event_base;
+		if (!pci_xhci_event_ring_geometry_matches(event_count,
+		    event_base, sc->rtsregs.erstba_p->dwEvrsTableSize,
+		    sc->rtsregs.erstba_p->qwEvrsTablePtr)) {
+			ret = EINVAL;
+			goto done;
+		}
 	}
 	SNAPSHOT_LE32_OR_LEAVE(event_count, meta, ret, done);
 	SNAPSHOT_LE64_OR_LEAVE(event_base, meta, ret, done);
@@ -4052,9 +4085,14 @@ pci_xhci_snapshot(struct vm_snapshot_meta *meta)
 				ret = EINVAL;
 				goto done;
 			}
+			sc->rtsregs.er_event_base = event_base;
+			sc->rtsregs.er_event_count = event_count;
 		} else if (sc->rtsregs.erst_p != NULL) {
 			ret = EINVAL;
 			goto done;
+		} else {
+			sc->rtsregs.er_event_base = 0;
+			sc->rtsregs.er_event_count = 0;
 		}
 	}
 
