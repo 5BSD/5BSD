@@ -160,6 +160,10 @@ vm_install_base() {
 			>> ${DESTDIR}/boot/loader.conf
 		metalog_add_data ./boot/loader.conf
 	fi
+	(cd ${DESTDIR}/boot/kernel && \
+	    /usr/bin/find -s . -type f -exec /sbin/sha256 -r {} \;) | \
+	    /sbin/sha256 -q > ${DESTDIR}/etc/waspnest-build-id
+	metalog_add_data ./etc/waspnest-build-id
 
 	# Use the serial console (comconsole) so the image is drivable over a
 	# bhyve -l com1 serial line for automated boot verification.  Headless
