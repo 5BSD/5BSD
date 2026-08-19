@@ -59,13 +59,16 @@ FreeBSD manual pages. The Epic deliberately does not reiterate that
 material; consult the FreeBSD documentation for the underlying operating
 system.
 
-That said, **5BSD is a separate project, not a FreeBSD distribution**. It
-removes and changes inherited subsystems over time (for example: `rebootd`
-and `kldmgrd` are gone, init duties have moved to `oracled`/`serviced`, and
-bhyve is becoming WASPNest). Wherever 5BSD has diverged from FreeBSD —
-whether by adding, changing, or removing a subsystem — **the Epic is
-the source of truth**, and the FreeBSD documentation no longer applies to
-that subsystem.
+That said, **5BSD is a separate project, not a FreeBSD distribution**.
+5BSD plans to eject and modify significant portions of the inherited
+system over time, and **FreeBSD 16 is the last version 5BSD adopts
+wholesale** — future FreeBSD releases will be sources of selectively
+merged improvements, not a base to track. The divergence is already
+underway: `rebootd` and `kldmgrd` are gone, init duties have moved to
+`oracled`/`serviced`, and bhyve is becoming WASPNest. Wherever 5BSD has
+diverged from FreeBSD — whether by adding, changing, or removing a
+subsystem — **the Epic is the source of truth**, and the FreeBSD
+documentation no longer applies to that subsystem.
 
 ## How to read this Epic
 
