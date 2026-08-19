@@ -6,11 +6,9 @@ the credential**. A capability is an fd connected to a kernel service;
 holding the fd is holding the authority, and every attenuation of that
 authority is a one-way operation on the fd itself.
 
-The subsystem has been renamed twice. It began life as **CMI**, was
-renamed to **cap_rt** ("Capability Runtime") when MACF hooks were added
-(commit `7beb39be264`), and became **mac_capability** in commit
-`1ce81e5baaf`. Older design notes and commit messages use all three
-names for the same code.
+Earlier internal names for this subsystem appear in older commit
+messages; `mac_capability` is the name, and the only name used in this
+documentation.
 
 ## The problem it solves
 

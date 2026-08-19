@@ -45,10 +45,9 @@ later commits added hooks beyond it, such as `mac_vnode_check_close`).
 
 ### MAC_CAPABILITY — the capability framework
 
-The kernel message-passing framework, formerly known as **CMI** and then
-**cap_rt** (both names appear in older commit history). One base-system
-change — `DTYPE_MAC_CAPABILITY`, standard Capsicum rights with ioctl
-limits, one device node —
+The kernel message-passing framework. One base-system change —
+`DTYPE_MAC_CAPABILITY`, standard Capsicum rights with ioctl limits, one
+device node —
 enables unlimited kernel services as loadable modules:
 
 - Async (taskqueue) and sync (caller-thread) service models
@@ -85,6 +84,36 @@ per-architecture backends — Intel PT on amd64 (`sys/amd64/pt/`, Intel
 CPUs only) and ARM SPE on arm64 (`sys/arm64/spe/`) — with correctness
 fixes over stock FreeBSD, feeding the
 [Observability](observability/dtrace.md) stack.
+
+## New system calls
+
+5BSD adds the following system calls (`sys/kern/syscalls.master`), all
+Capsicum-enabled:
+
+| # | Syscall | Purpose |
+|---|---------|---------|
+| 600 | `pdrfork(2)` | `rfork` returning a process descriptor |
+| 601 | `pdwait(2)` | wait on a process descriptor |
+| 602 | `renameat2(2)` | Linux-compatible rename with flags |
+| 603 | `cap_xfer_limit(2)` | per-fd transfer state (`CAP_XFER_*`) |
+| 604 | `cap_cloexec_limit(2)` | one-way close-on-exec propagation lock |
+| 605 | `cap_clofork_limit(2)` | one-way close-on-fork propagation lock |
+| 606 | `cap_xfer_rights_limit(2)` | rights ceiling applied after transfer |
+| 607 | `cap_xfer_ioctls_limit(2)` | ioctl allowlist applied after transfer |
+| 608 | `cap_xfer_fcntls_limit(2)` | fcntl allowlist applied after transfer |
+| 630 | `pdself(2)` | process descriptor for the calling process |
+| 631 | `pdcmp(2)` | compare two process descriptors |
+| 633 | `pdincapmode(2)` | query a target's capability mode via procdesc |
+| 634 | `cap_mmap_capmode(2)` | monotonic flag: fd may only be mmapped from capability mode |
+| 635 | `cap_lookup_capmode(2)` | monotonic flag: fd usable as `*at` dirfd only from capability mode |
+
+The transfer family is covered in
+[Capability Transfer](security/capability-transfer.md); the procdesc
+family in [Process Protections](security/process-protections.md).
+Everything else 5BSD adds to the kernel is reachable without new
+syscalls — capability services are ioctls on `/dev/mac_capability`
+descriptors, and envfd creation goes through the specialfd path
+(`envfd(2)`).
 
 ## Userland stacks
 

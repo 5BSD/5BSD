@@ -62,8 +62,8 @@ Status: the control plane, both state machines, `-R` listener, and device
 bridge are implemented and loopback/model-proven; live two-host migration
 is not yet qualified. Known residuals: no authentication on the `-R`
 listener, kernel dirty-log confirmation and cross-version fixtures
-pending (`compat_crc32` is now computed — fixed in-flight, uncommitted
-as of 2026-08-19).
+pending. `compat_crc32` is computed over the wire stream (fixed in
+commit `63738c6f88b`).
 
 ## Nested VMX
 
@@ -98,9 +98,8 @@ capability is simply absent: `svm_getcap` returns `EINVAL` and the CPUID
 VMX bit is cleared — fail-closed by design.
 
 Testing is ledger-driven under `tests/sys/vmm/`:
-`vmx_nested_state_test.c` (166 rootless model cases — test counts in
-this section reflect the working tree as of 2026-08-19 and float with
-pending commits),
+`vmx_nested_state_test.c` (166 rootless model cases as of commit
+`63738c6f88b`),
 `vmm_snapshot_session_live_test.c` (root-required live snapshot-session
 cases), dirty-log and startup-edge suites, and the TSV ledgers
 `vmx-nested-requirements.tsv` (437 requirement rows citing Intel SDM
