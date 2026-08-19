@@ -18,6 +18,11 @@
 - [Endpoint Security (OES)](security/endpoint-security.md)
 - [Cryptographic Services](security/crypto.md)
 
+# Developer Guide
+
+- [Writing a Component](development/writing-components.md)
+- [Using Process Protections](development/using-protections.md)
+
 # Virtualization (WASPNest)
 
 - [WASPNest Overview](virtualization/overview.md)
