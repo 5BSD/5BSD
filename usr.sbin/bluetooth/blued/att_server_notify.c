@@ -34,6 +34,12 @@
  * verifying that the client has enabled notifications (CCCD bit 0) before
  * invoking this function.  This separation keeps the ATT transport layer
  * independent of GATT-level subscription state.
+ *
+ * A-F2: for the same reason this transport-level sender does not consult the
+ * parent characteristic's security requirement either.  The caller must gate
+ * delivery on the link meeting that requirement (see ctl_gatt_notify_result,
+ * which uses att_check_security_perms) — a subscription bit alone is not
+ * sufficient authority to deliver over an under-secured link.
  */
 int
 att_send_notification(struct att_conn *ac, uint16_t handle,

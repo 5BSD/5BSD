@@ -875,7 +875,7 @@ ATF_TC_BODY(health_dispatch, tc)
 		    &fs));
 		ATF_CHECK_EQ_MSG(0, (int)fs.n_faults, "faults cleared");
 	}
-	ATF_CHECK_EQ(0, (int)nd->health.n_faults);
+	ATF_CHECK_EQ(0, (int)nd->health.n_registered_faults);	/* P-M14 */
 
 	/* Fault Test (0x8032) sets the current Test ID and returns a Status. */
 	ATF_REQUIRE_EQ(0, mesh_hlt_fault_test_build(MESH_HLT_OP_FAULT_TEST, 0x42,

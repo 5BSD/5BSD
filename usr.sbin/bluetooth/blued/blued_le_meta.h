@@ -421,6 +421,9 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 		/* ng_hci_le_cis_established_ep is 28 bytes. */
 		if (avail != sizeof(ng_hci_le_cis_established_ep))
 			return (-1);
+		/* Finding H-L7: validate the CIS handle on success. */
+		if (p[0] == 0 && !blued_le_handle_valid(blued_le_meta_le16(p + 1)))
+			return (-1);
 		out->has_status = true;
 		out->status = p[0];
 		out->connection_handle = blued_le_meta_le16(p + 1);
@@ -441,6 +444,10 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 		/* ng_hci_le_cis_request_ep: acl(2) cis(2) cig_id(1) cis_id(1) */
 		if (avail != sizeof(ng_hci_le_cis_request_ep))
 			return (-1);
+		/* Finding H-L7: both the ACL and the requested CIS handle. */
+		if (!blued_le_handle_valid(blued_le_meta_le16(p + 0)) ||
+		    !blued_le_handle_valid(blued_le_meta_le16(p + 2)))
+			return (-1);
 		out->acl_connection_handle = blued_le_meta_le16(p + 0);
 		out->cis_connection_handle = blued_le_meta_le16(p + 2);
 		out->cig_id = p[4];
@@ -459,6 +466,12 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 			return (-1);
 		if (avail != (size_t)18 + (size_t)p[17] * 2)
 			return (-1);
+		/* Finding H-L7: validate each BIS connection handle on success. */
+		if (p[0] == 0)
+			for (uint8_t bi = 0; bi < p[17]; bi++)
+				if (!blued_le_handle_valid(
+				    blued_le_meta_le16(p + 18 + bi * 2)))
+					return (-1);
 		out->has_status = true;
 		out->status = p[0];
 		out->big_handle = p[1];
@@ -487,6 +500,12 @@ blued_parse_le_meta_event(const uint8_t *pkt, size_t len,
 			return (-1);
 		if (avail != (size_t)14 + (size_t)p[13] * 2)
 			return (-1);
+		/* Finding H-L7: validate each BIS connection handle on success. */
+		if (p[0] == 0)
+			for (uint8_t bi = 0; bi < p[13]; bi++)
+				if (!blued_le_handle_valid(
+				    blued_le_meta_le16(p + 14 + bi * 2)))
+					return (-1);
 		out->has_status = true;
 		out->status = p[0];
 		out->big_handle = p[1];

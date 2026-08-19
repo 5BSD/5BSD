@@ -206,37 +206,54 @@ reference_c1(const uint8_t key[16], const uint8_t random[16],
 }
 
 /*
- * Previously-used ATT signing construction (Core 6.3 Vol 1 Part E §2.4.2):
- * AES-CMAC(CSRK, message || little-endian counter), least-significant 64 bits.
+ * ATT signing construction (Core Spec Vol 3 Part H §2.4.5), matching the
+ * interoperable reference stacks (Linux net/bluetooth/smp.c, BlueZ
+ * src/shared/crypto.c bt_crypto_sign_att).  This is an INDEPENDENT
+ * reimplementation of the byte order used by smp_verify_signature (S-M3): the
+ * CSRK and the whole (message || SignCounter_le32) buffer are byte-reversed
+ * into the MSB order RFC 4493 AES-CMAC uses, and the wire signature is the low
+ * 8 octets of the byte-reversed (LSB-first) 128-bit MAC.
  */
 static int
 reference_signature(const uint8_t csrk_le[16], const uint8_t *msg,
     size_t msg_len, uint32_t counter, uint8_t signature[8])
 {
 	uint8_t key[16], mac[16];
-	uint8_t *input;
-	size_t i;
+	uint8_t *input, *swapped;
+	size_t i, n;
 	int rc;
 
 	if (msg_len > SIZE_MAX - 4)
 		return (-1);
-	input = malloc(msg_len + 4);
-	if (input == NULL)
+	n = msg_len + 4;
+	input = malloc(n);
+	swapped = malloc(n);
+	if (input == NULL || swapped == NULL) {
+		free(input);
+		free(swapped);
 		return (-1);
+	}
 	if (msg_len != 0)
 		memcpy(input, msg, msg_len);
 	input[msg_len] = (uint8_t)counter;
 	input[msg_len + 1] = (uint8_t)(counter >> 8);
 	input[msg_len + 2] = (uint8_t)(counter >> 16);
 	input[msg_len + 3] = (uint8_t)(counter >> 24);
+	/* Byte-reverse the whole message and the key into MSB order. */
+	for (i = 0; i < n; i++)
+		swapped[i] = input[n - 1 - i];
 	for (i = 0; i < sizeof(key); i++)
 		key[i] = csrk_le[sizeof(key) - 1 - i];
-	rc = reference_cmac(key, input, msg_len + 4, mac);
-	if (rc == 0)
-		memcpy(signature, mac + 8, 8);
+	rc = reference_cmac(key, swapped, n, mac);
+	if (rc == 0) {
+		/* Wire signature = low 8 octets of the LSB-first (reversed) MAC. */
+		for (i = 0; i < 8; i++)
+			signature[i] = mac[sizeof(mac) - 1 - i];
+	}
 	explicit_bzero(key, sizeof(key));
 	explicit_bzero(mac, sizeof(mac));
 	free(input);
+	free(swapped);
 	return (rc);
 }
 

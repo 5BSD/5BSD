@@ -216,6 +216,7 @@ struct mesh_light_lightness_srv {
 	const struct mesh_gen_dtt_srv *dtt;
 	struct mesh_gen_onoff_srv *onoff;
 	struct mesh_gen_level_srv *level;
+	int in_bind;		/* P-H4: guard the reverse (downward) binding */
 };
 
 struct mesh_light_lightness_cli {
@@ -249,6 +250,7 @@ struct mesh_light_ctl_srv {
 	struct mesh_transition_state delta_uv_transition;
 	struct mesh_light_lightness_srv *lightness;
 	struct mesh_gen_level_srv *temperature_level;
+	int in_bind;		/* P-H4: guard the reverse (downward) binding */
 };
 
 struct mesh_light_ctl_cli {
@@ -281,6 +283,7 @@ struct mesh_light_hsl_srv {
 	struct mesh_light_lightness_srv *lightness;
 	struct mesh_gen_level_srv *hue_level;
 	struct mesh_gen_level_srv *saturation_level;
+	int in_bind;		/* P-H4: guard the reverse (downward) binding */
 };
 
 struct mesh_light_hsl_cli {

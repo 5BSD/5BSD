@@ -12,6 +12,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
 #include <sys/endian.h>
 #include <sys/stat.h>
 
@@ -256,9 +257,29 @@ static void
 node_rehome_sim(struct meshd_node *nd, int self_index)
 {
 	int i;
+	uint8_t ei;
 
-	for (i = 0; i < nd->sim.n_nodes; i++)
-		nd->sim.nodes[i].sim = &nd->sim;
+	/*
+	 * The memberwise *nd = tmp copy in meshd_persist_load() carried the sim
+	 * and node state by value, but every self-referential pointer inside the
+	 * embedded mesh_node/meshd_node backing arrays still aims at the dead
+	 * source frame.  Rebase each such pointer family into nd's own arrays so
+	 * the RX path does not dispatch through, or write RPL/friend-RPL entries
+	 * into, freed stack storage (finding C-C1).
+	 */
+	for (i = 0; i < nd->sim.n_nodes; i++) {
+		struct mesh_node *n = &nd->sim.nodes[i];
+
+		n->sim = &nd->sim;
+		n->rpl.entries = n->rpl_store;
+		for (ei = 0; ei < n->n_elements; ei++) {
+			n->elems[ei].models = n->models[ei];
+			n->elems[ei].subs = n->elem_subs[ei];
+			n->elems[ei].labels = n->elem_labels[ei];
+		}
+	}
+	for (i = 0; i < (int)nitems(nd->friend_rpl); i++)
+		nd->friend_rpl[i].entries = nd->friend_rpl_store[i];
 	if (self_index >= 0 && self_index < nd->sim.n_nodes)
 		nd->self = &nd->sim.nodes[self_index];
 	else
@@ -1430,6 +1451,13 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 	self_index = tmp.self != NULL ? tmp.self->index : -1;
 	*nd = tmp;
 	node_rehome_sim(nd, self_index);
+	/*
+	 * Re-run the subscription sync AFTER the copy so the model config views
+	 * (rm->subs/labels/sub_is_va/app_idx) point into nd->db and the element
+	 * subs/label lists into nd's own arrays rather than tmp's dead frame
+	 * (finding C-C1).
+	 */
+	meshd_sync_subscriptions(nd);
 	return (0);
 }
 

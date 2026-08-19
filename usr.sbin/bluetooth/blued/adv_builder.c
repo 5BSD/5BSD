@@ -81,8 +81,12 @@ adv_ad_add_uuid128(struct adv_ad *b, bool complete, const uint8_t *uuids_le,
     size_t n)
 {
 
-	/* Each 128-bit UUID is 16 octets, little-endian (CSS Part A §1.1). */
-	if (n == 0 || n * 16 > 254) {
+	/*
+	 * Each 128-bit UUID is 16 octets, little-endian (CSS Part A §1.1).
+	 * A-F6: compare with division, not n * 16, so a huge size_t n cannot
+	 * overflow the product and slip past the bound.
+	 */
+	if (n == 0 || n > (size_t)254 / 16) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -127,8 +131,11 @@ adv_ad_add_manuf(struct adv_ad *b, uint16_t company, const uint8_t *data,
 {
 	uint8_t val[254];
 
-	/* Company Identifier Code (2 octets LE) then payload (CSS Part A §1.4). */
-	if (n + 2 > sizeof(val)) {
+	/*
+	 * Company Identifier Code (2 octets LE) then payload (CSS Part A §1.4).
+	 * A-F6: bound n by subtraction so n + 2 cannot overflow a size_t.
+	 */
+	if (n > sizeof(val) - 2) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -144,8 +151,11 @@ adv_ad_add_service_data16(struct adv_ad *b, uint16_t uuid, const uint8_t *data,
 {
 	uint8_t val[254];
 
-	/* 16-bit Service UUID (2 octets LE) then service data (CSS Part A §1.11). */
-	if (n + 2 > sizeof(val)) {
+	/*
+	 * 16-bit Service UUID (2 octets LE) then service data (CSS Part A §1.11).
+	 * A-F6: bound n by subtraction so n + 2 cannot overflow a size_t.
+	 */
+	if (n > sizeof(val) - 2) {
 		errno = EINVAL;
 		return (-1);
 	}

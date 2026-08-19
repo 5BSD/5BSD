@@ -92,9 +92,10 @@ extern const uint64_t mesh_df_lifetime_ms[4];
 /* ================================================================
  * Unicast address range (Section 3.6.6.4).  A 2- or 3-octet range used to
  * carry a Path Origin / Path Target / Dependent address span.  Wire layout,
- * big-endian:
+ * big-endian (MshPRT_v1.1 Table 3.6):
  *
- *   octets 0-1: (Range_Start << 1) | Length_Present
+ *   octets 0-1: (Length_Present << 15) | Range_Start  -- LengthPresent is the
+ *               most-significant bit, Range_Start the low 15 bits (unshifted)
  *   octet 2   : Range_Length            -- present only when Length_Present
  *
  * Range_Start is a 15-bit unicast address (0x0001..0x7FFF).  When
@@ -119,7 +120,7 @@ int	mesh_df_addr_range_parse(const uint8_t *in, size_t inlen,
  *       [1]=Path_Discovery_Interval
  *       [0]=RFU
  *   o1: Path_Origin_Forwarding_Number (8)
- *   o2: [1:7]=Path_Metric (7)  [0]=RFU
+ *   o2: Path_Origin_Path_Metric (full 8-bit octet)
  *   o3-o4: Destination (Path Target address, 16 big-endian)
  *   o5..:  Path_Origin unicast address range (2 or 3)
  *   [.. :  Dependent_Origin unicast address range (2 or 3), iff OBO=1]
@@ -130,7 +131,7 @@ struct mesh_df_path_request {
 	uint8_t				lifetime;	/* 2 bits, MESH_DF_LIFETIME_* */
 	uint8_t				path_discovery_interval; /* 1 bit */
 	uint8_t				forwarding_number;
-	uint8_t				path_metric;	/* 7 bits */
+	uint8_t				path_metric;	/* full 8-bit octet */
 	uint16_t			destination;	/* Path Target */
 	struct mesh_df_addr_range	origin;		/* Path Origin range */
 	struct mesh_df_addr_range	dependent_origin; /* iff OBO */
@@ -141,17 +142,20 @@ int	mesh_df_path_request_parse(const uint8_t *in, size_t inlen,
 	    struct mesh_df_path_request *out);
 
 /* ================================================================
- * Path Reply (0x0C).  Section 3.6.6.5.2.  Parameter wire layout:
+ * Path Reply (0x0C).  Section 3.6.6.5.2 (Table 3.52).  Parameter wire layout:
  *
- *   o0: [7]=On_Behalf_Of_Dependent_Target
- *       [6]=Confirmation_Request
- *       [0:5]=RFU
- *   o1: Forwarding_Number (8)  -- the Path Origin Forwarding Number replied to
- *   o2-o3: Path_Origin address (16 big-endian)
- *   o4..:  Path_Target unicast address range (2 or 3)
- *   [.. :  Dependent_Target unicast address range (2 or 3), iff OBO=1]
+ *   o0: [7]=Unicast_Destination
+ *       [6]=On_Behalf_Of_Dependent_Target
+ *       [5]=Confirmation_Request
+ *       [0:4]=Prohibited
+ *   o1-o2: Path_Origin address (16 big-endian)
+ *   o3: Path_Origin_Forwarding_Number (8) -- Forwarding Number replied to
+ *   [o4..:  Path_Target unicast address range (2 or 3), iff Unicast_Destination]
+ *   [.. :   Dependent_Target unicast address range (2 or 3),
+ *           iff Unicast_Destination && On_Behalf_Of_Dependent_Target]
  * ================================================================ */
 struct mesh_df_path_reply {
+	uint8_t				unicast_destination;
 	uint8_t				on_behalf_of_dependent_target;
 	uint8_t				confirmation_request;
 	uint8_t				forwarding_number;
@@ -189,8 +193,8 @@ int	mesh_df_path_echo_reply_parse(const uint8_t *in, size_t inlen,
 	    uint16_t *destination);
 
 /* ================================================================
- * Dependent Node Update (0x10).  Section 3.6.6.5.6.  Wire layout:
- *   o0: [0]=Type (0 remove, 1 add)  [1:7]=RFU
+ * Dependent Node Update (0x10).  Section 3.6.6.5.6 (Table 3.55).  Wire layout:
+ *   o0: [7]=Type (0 remove, 1 add)  [0:6]=Prohibited
  *   o1-o2: Path_Endpoint address (16 big-endian; a Path Origin or Path Target)
  *   o3..:  Dependent_Node unicast address range (2 or 3)
  * ================================================================ */
@@ -240,6 +244,7 @@ struct mesh_df_fwd_entry {
 	uint16_t	path_origin;
 	uint16_t	path_target;	/* unicast, group or virtual */
 	uint8_t		forwarding_number;
+	uint8_t		path_metric;	/* last-accepted lane metric (P-C1d(iii)) */
 	uint8_t		bearer_toward_origin;
 	uint8_t		bearer_toward_target;
 	uint8_t		lane_counter;	/* established lanes */
@@ -553,6 +558,32 @@ int	mesh_df_echo_is_pending(const struct mesh_df_node *node, uint16_t target);
 #define	MESH_CFG_OP_PATH_METRIC_GET			0x807E
 #define	MESH_CFG_OP_PATH_METRIC_SET			0x807F
 #define	MESH_CFG_OP_PATH_METRIC_STATUS			0x8080
+
+/*
+ * ============================================================================
+ * UNIMPLEMENTED: Forwarding Table / DF capabilities configuration messages.
+ *
+ * The Directed Forwarding Configuration model defines a further message set in
+ * the 0x8081-0x808F opcode range (between Path Metric Status at 0x8080 and
+ * Wanted Lanes Get at 0x8090) that this module does NOT implement.  These are a
+ * larger feature (a remotely-managed Forwarding Table with paged reads), not a
+ * wire-format detail, and are intentionally left as a documented gap rather
+ * than a half-implementation.  Absent messages (MshMDL_v1.1 Section 4.4.2):
+ *
+ *   - FORWARDING_TABLE_ADD / DELETE / STATUS
+ *   - FORWARDING_TABLE_DEPENDENTS_ADD / DELETE / STATUS
+ *   - FORWARDING_TABLE_DEPENDENTS_GET / DEPENDENTS_GET_STATUS
+ *   - FORWARDING_TABLE_ENTRIES_COUNT_GET / _COUNT_STATUS
+ *   - FORWARDING_TABLE_ENTRIES_GET / _STATUS
+ *   - the Directed Forwarding / Directed Proxy capabilities Get/Status
+ *     (e.g. DIRECTED_PROXY_CAPABILITIES_STATUS) messages
+ *
+ * The path-discovery transport-control PDUs (Path Request/Reply/Confirmation/
+ * Echo/Dependent Node Update/Solicitation) and the fixed-format config states
+ * that DO exist below are fully codec'd; only the table-management message set
+ * above is missing.
+ * ============================================================================
+ */
 #define	MESH_CFG_OP_WANTED_LANES_GET			0x8090
 #define	MESH_CFG_OP_WANTED_LANES_SET			0x8091
 #define	MESH_CFG_OP_WANTED_LANES_STATUS			0x8092

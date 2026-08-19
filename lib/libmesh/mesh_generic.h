@@ -241,6 +241,13 @@ struct mesh_gen_onoff_srv {
 	const struct mesh_gen_dtt_srv *dtt;
 	void			(*changed)(void *, uint8_t);
 	void			*changed_arg;
+	/*
+	 * P-H4: internal upward state-binding hook (e.g. Generic OnOff ->
+	 * Light Lightness Actual, MMDL 6.1.2.2.3).  Distinct from changed so an
+	 * application notification callback is not clobbered by the binding.
+	 */
+	void			(*bound_sink)(void *, uint8_t);
+	void			*bound_sink_arg;
 };
 
 /* Generic Level Server state (Section 3.2.2). */
@@ -254,6 +261,12 @@ struct mesh_gen_level_srv {
 	const struct mesh_gen_dtt_srv *dtt;
 	void			(*changed)(void *, int16_t);
 	void			*changed_arg;
+	/*
+	 * P-H4: internal upward state-binding hook (e.g. Generic Level ->
+	 * Light Lightness/CTL Temperature/HSL, MMDL 6.1.2.2.2 and 6.1.3.1.1).
+	 */
+	void			(*bound_sink)(void *, int16_t);
+	void			*bound_sink_arg;
 };
 
 struct mesh_gen_power_onoff_srv {

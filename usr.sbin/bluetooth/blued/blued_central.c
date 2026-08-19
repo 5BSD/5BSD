@@ -265,8 +265,21 @@ blued_central_pairing_worker(void *arg)
 {
 	struct blued_conn *conn = arg;
 
-	if (conn->hogp != NULL)
+	/*
+	 * Finding H-H1: this detached worker dereferences conn->hogp
+	 * (dev->smp / dev->att) throughout the blocking smp_pair() +
+	 * hci_wait_encryption().  A conn refcount alone does not protect the
+	 * hogp_device: blued_conn_central_teardown frees it independently of the
+	 * refcount.  Participate in the ATT-ops deferral protocol so a remote
+	 * link drop during pairing defers teardown (and therefore the free of
+	 * hogp) until this worker exits, and cannot spawn a second setup thread
+	 * (reconnect) over the same device.
+	 */
+	if (conn->hogp != NULL) {
+		blued_conn_att_ops_begin(conn);
 		(void)blued_central_start_pairing(conn->hogp, conn);
+		blued_conn_att_ops_end(conn);
+	}
 	blued_setup_worker_finish(conn);
 	blued_conn_unref(conn);
 	return (NULL);
@@ -398,7 +411,7 @@ blued_conn_setup_central_impl(void *arg)
 		for (retries = 0; retries < CON_HANDLE_POLL_RETRIES;
 		    retries++) {
 			if (hci_get_con_handle(dev->hci_fd, dev->addr,
-			    &dev->con_handle) == 0)
+			    dev->addr_type, &dev->con_handle) == 0)
 				break;
 			usleep(delay);
 			delay *= 2;

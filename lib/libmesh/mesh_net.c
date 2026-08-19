@@ -418,7 +418,13 @@ mesh_net_relay(uint8_t ttl, uint8_t *new_ttl)
 }
 
 /*
- * Minimal replay-protection primitive (Phase 6 provides the full RPL).
+ * Minimal replay-protection primitive.
+ *
+ * M-L7: DEPRECATED and NOT IV-Index-aware - a lower-IV-Index replay looks
+ * like new traffic here.  It cannot gate delivery safely and has no IV Index
+ * parameter to fix that in place; use the IV-aware mesh_rpl_check() /
+ * mesh_rpl_net_receive() (mesh_rpl.h) instead.  Retained only for existing
+ * test coverage.
  */
 int
 mesh_net_rpl_check(struct mesh_net_rpl *tbl, size_t n, uint16_t src,

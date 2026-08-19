@@ -22,17 +22,23 @@ hogp_enter_boot_protocol(struct att_conn *att, const struct gatt_char *chars,
     int nchars)
 {
 	uint8_t mode = HID_PROTOCOL_BOOT;
-	int i;
+	int i, found = 0;
 
 	if (att == NULL || chars == NULL || nchars < 0)
 		return (EINVAL);
+	/*
+	 * A-F6: a composite (dual-HID) device exposes one Protocol Mode
+	 * characteristic per HID Service (HOGP v1.1 §4.11).  Write Boot mode to
+	 * EVERY Protocol Mode characteristic, not just the first, or the second
+	 * HID Service stays in Report mode.
+	 */
 	for (i = 0; i < nchars; i++) {
 		if (chars[i].uuid16 != UUID_PROTOCOL_MODE)
 			continue;
 		if (att_write_cmd(att, chars[i].value_handle, &mode,
 		    sizeof(mode)) != 0)
 			return (EIO);
-		return (0);
+		found = 1;
 	}
-	return (ENOENT);
+	return (found ? 0 : ENOENT);
 }

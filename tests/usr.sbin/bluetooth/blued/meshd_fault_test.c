@@ -434,11 +434,11 @@ ATF_TC_BODY(foundation_failures, tc)
 	    sizeof(reply), &rlen));
 	f_fault_status_build = 0;
 
-	/* Health Fault Get: the n_faults overflow guard. */
-	nd->health.n_faults = MESH_HLT_MAX_FAULTS + 1;
+	/* Health Fault Get: the registered-fault overflow guard. */
+	nd->health.n_registered_faults = MESH_HLT_MAX_FAULTS + 1;	/* P-M14 */
 	ATF_CHECK_EQ(-1, meshd_foundation_recv(nd, msg, mlen, reply,
 	    sizeof(reply), &rlen));
-	nd->health.n_faults = 0;
+	nd->health.n_registered_faults = 0;
 }
 
 ATF_TP_ADD_TCS(tp)

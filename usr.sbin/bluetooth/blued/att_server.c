@@ -700,6 +700,33 @@ att_check_write_perm(const struct att_attr *a, const struct att_conn *ac)
 }
 
 /*
+ * A-F2: evaluate a connection against the encryption/authentication requirement
+ * encoded in an arbitrary permission mask, ignoring the plain READ/WRITE
+ * "permitted" bits.  Used to make a CCCD (created plaintext READ|WRITE) inherit
+ * its parent characteristic's security level (Core Spec Vol 3 Part G §3.3.3.3 /
+ * §10.3.1.1) and to gate notification/indication delivery on that same level.
+ * Returns 0 if the link satisfies the requirement, else the ATT error code.
+ */
+int
+att_check_security_perms(uint8_t perms, const struct att_conn *ac)
+{
+	uint8_t mks = ac->min_key_size ? ac->min_key_size : 16;
+	bool need_enc = (perms & (ATT_PERM_READ_ENCRYPT |
+	    ATT_PERM_WRITE_ENCRYPT)) != 0;
+	bool need_auth = (perms & (ATT_PERM_READ_AUTHEN |
+	    ATT_PERM_WRITE_AUTHEN)) != 0;
+
+	if (need_auth && !ac->authenticated)
+		return (ATT_ERR_INSUFF_AUTHEN);
+	if (need_enc && !ac->encrypted)
+		return (ATT_ERR_INSUFF_ENCRYPTION);
+	if ((need_enc || need_auth) && ac->encrypted &&
+	    ac->enc_key_size > 0 && ac->enc_key_size < mks)
+		return (ATT_ERR_INSUFF_ENC_KEY_SIZE);
+	return (0);
+}
+
+/*
  * Apply an HCI Encryption Change to a connection's ATT security state, gated
  * on real key material.
  *
@@ -736,7 +763,12 @@ att_conn_apply_encryption(struct att_conn *ac, bool has_key_material,
 		ac->enc_key_size = bond_key_size;
 	else
 		ac->enc_key_size = link_key_size;
-	if (mitm)
-		ac->authenticated = true;
+	/*
+	 * S-m9: set authenticated strictly from the backing key's MITM status.
+	 * A prior assignment only ever set it true, so a reused att_conn whose
+	 * new link is encrypted but unauthenticated would retain a stale true.
+	 * Assigning unconditionally keeps this idempotent.
+	 */
+	ac->authenticated = mitm;
 	return (true);
 }

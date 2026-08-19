@@ -96,4 +96,21 @@ int	mesh_rpl_net_receive(struct mesh_rpl *rpl, const uint8_t enckey[16],
 	    const uint8_t privkey[16], uint8_t nid, uint32_t iv_index,
 	    const uint8_t *in, size_t inlen, struct mesh_net_pdu *out);
 
+/*
+ * M-L6: IV-Update-aware wrapper around mesh_rpl_net_receive().
+ *
+ * mesh_rpl_net_receive() authenticates under a single IV Index only.  During
+ * an active IV Update a node must also accept PDUs still secured with the
+ * previous IV Index (iv_index - 1).  When iv_update is nonzero this wrapper
+ * tries iv_index first and, only if the PDU fails to authenticate under it,
+ * retries under iv_index - 1 (skipped when iv_index is 0).  Callers on the
+ * network receive path should prefer this seam over the single-IV primitive
+ * so traffic is not dropped across the >=96h IV-Update transition.  Returns
+ * the same 1/0/-1 values as mesh_rpl_net_receive().
+ */
+int	mesh_rpl_net_receive_ivupd(struct mesh_rpl *rpl, const uint8_t enckey[16],
+	    const uint8_t privkey[16], uint8_t nid, uint32_t iv_index,
+	    int iv_update, const uint8_t *in, size_t inlen,
+	    struct mesh_net_pdu *out);
+
 #endif /* _MESH_RPL_H_ */

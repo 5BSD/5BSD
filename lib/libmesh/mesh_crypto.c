@@ -26,12 +26,26 @@
 #include <sys/types.h>
 
 #include <err.h>
+#include <limits.h>
 #include <stdint.h>
 #include <string.h>
 
 #include <openssl/evp.h>
 
 #include "mesh_crypto.h"
+
+/*
+ * M-L5: crypto-primitive diagnostics must not pollute a linking
+ * consumer's stderr.  Route OpenSSL-failure warnings through a
+ * debug-gated hook that is silent unless the library is built with
+ * MESH_CRYPTO_DEBUG.  The MIC-mismatch decrypt path is deliberately
+ * silent (no padding/verification oracle) and never logs.
+ */
+#ifdef MESH_CRYPTO_DEBUG
+#define	mesh_crypto_warn(...)	warnx(__VA_ARGS__)
+#else
+#define	mesh_crypto_warn(...)	((void)0)
+#endif
 
 /*
  * AES-128 block cipher e(): out = AES-128-ECB(key, in).
@@ -45,19 +59,19 @@ mesh_aes128_e(const uint8_t key[16], const uint8_t in[16], uint8_t out[16])
 
 	ctx = EVP_CIPHER_CTX_new();
 	if (ctx == NULL) {
-		warnx("EVP_CIPHER_CTX_new failed");
+		mesh_crypto_warn("EVP_CIPHER_CTX_new failed");
 		memset(out, 0, 16);
 		return (-1);
 	}
 	if (EVP_EncryptInit_ex(ctx, EVP_aes_128_ecb(), NULL, key, NULL) <= 0) {
-		warnx("EVP_EncryptInit_ex failed");
+		mesh_crypto_warn("EVP_EncryptInit_ex failed");
 		EVP_CIPHER_CTX_free(ctx);
 		memset(out, 0, 16);
 		return (-1);
 	}
 	EVP_CIPHER_CTX_set_padding(ctx, 0);
 	if (EVP_EncryptUpdate(ctx, out, &outl, in, 16) <= 0) {
-		warnx("EVP_EncryptUpdate failed");
+		mesh_crypto_warn("EVP_EncryptUpdate failed");
 		EVP_CIPHER_CTX_free(ctx);
 		memset(out, 0, 16);
 		return (-1);
@@ -83,15 +97,20 @@ mesh_aes_cmac(const uint8_t key[16], const uint8_t *msg, size_t len,
 
 	static char cipher_name[] = "AES-128-CBC";
 
+	/* M-L4: never hand OpenSSL a NULL buffer with a nonzero length. */
+	if (key == NULL || (len != 0 && msg == NULL)) {
+		memset(mac, 0, 16);
+		return (-1);
+	}
 	cmac_type = EVP_MAC_fetch(NULL, "CMAC", NULL);
 	if (cmac_type == NULL) {
-		warnx("EVP_MAC_fetch failed");
+		mesh_crypto_warn("EVP_MAC_fetch failed");
 		memset(mac, 0, 16);
 		return (-1);
 	}
 	ctx = EVP_MAC_CTX_new(cmac_type);
 	if (ctx == NULL) {
-		warnx("EVP_MAC_CTX_new failed");
+		mesh_crypto_warn("EVP_MAC_CTX_new failed");
 		memset(mac, 0, 16);
 		EVP_MAC_free(cmac_type);
 		return (-1);
@@ -99,16 +118,16 @@ mesh_aes_cmac(const uint8_t key[16], const uint8_t *msg, size_t len,
 	params[0] = OSSL_PARAM_construct_utf8_string("cipher", cipher_name, 0);
 	params[1] = OSSL_PARAM_construct_end();
 	if (EVP_MAC_init(ctx, key, 16, params) <= 0) {
-		warnx("EVP_MAC_init failed");
+		mesh_crypto_warn("EVP_MAC_init failed");
 		goto cmac_fail;
 	}
 	if (len != 0 && EVP_MAC_update(ctx, msg, len) <= 0) {
-		warnx("EVP_MAC_update failed");
+		mesh_crypto_warn("EVP_MAC_update failed");
 		goto cmac_fail;
 	}
 	outlen = 16;
 	if (EVP_MAC_final(ctx, mac, &outlen, 16) <= 0) {
-		warnx("EVP_MAC_final failed");
+		mesh_crypto_warn("EVP_MAC_final failed");
 		goto cmac_fail;
 	}
 	EVP_MAC_CTX_free(ctx);
@@ -147,13 +166,13 @@ mesh_hmac_sha256(const uint8_t *key, size_t keylen, const uint8_t *msg,
 	}
 	hmac_type = EVP_MAC_fetch(NULL, "HMAC", NULL);
 	if (hmac_type == NULL) {
-		warnx("EVP_MAC_fetch failed");
+		mesh_crypto_warn("EVP_MAC_fetch failed");
 		memset(mac, 0, 32);
 		return (-1);
 	}
 	ctx = EVP_MAC_CTX_new(hmac_type);
 	if (ctx == NULL) {
-		warnx("EVP_MAC_CTX_new failed");
+		mesh_crypto_warn("EVP_MAC_CTX_new failed");
 		memset(mac, 0, 32);
 		EVP_MAC_free(hmac_type);
 		return (-1);
@@ -161,16 +180,16 @@ mesh_hmac_sha256(const uint8_t *key, size_t keylen, const uint8_t *msg,
 	params[0] = OSSL_PARAM_construct_utf8_string("digest", digest_name, 0);
 	params[1] = OSSL_PARAM_construct_end();
 	if (EVP_MAC_init(ctx, key, keylen, params) <= 0) {
-		warnx("EVP_MAC_init failed");
+		mesh_crypto_warn("EVP_MAC_init failed");
 		goto hmac_fail;
 	}
 	if (len != 0 && EVP_MAC_update(ctx, msg, len) <= 0) {
-		warnx("EVP_MAC_update failed");
+		mesh_crypto_warn("EVP_MAC_update failed");
 		goto hmac_fail;
 	}
 	outlen = 32;
 	if (EVP_MAC_final(ctx, mac, &outlen, 32) <= 0 || outlen != 32) {
-		warnx("EVP_MAC_final failed");
+		mesh_crypto_warn("EVP_MAC_final failed");
 		goto hmac_fail;
 	}
 	EVP_MAC_CTX_free(ctx);
@@ -277,7 +296,8 @@ mesh_k2(const uint8_t netkey[16], const uint8_t *p, size_t plen,
 	uint8_t msg[16 + MESH_K2_MAX_P + 1];
 	int rc = -1;
 
-	if (p == NULL || plen > MESH_K2_MAX_P)
+	/* M-L3: MshPRT Section 3.9.2.8 requires P to be at least 1 octet. */
+	if (p == NULL || plen == 0 || plen > MESH_K2_MAX_P)
 		goto out_zero;
 
 	if (mesh_s1((const uint8_t *)smk2, sizeof(smk2) - 1, salt) != 0)
@@ -408,12 +428,23 @@ mesh_aes_ccm_encrypt(const uint8_t key[16], const uint8_t nonce[13],
 	EVP_CIPHER_CTX *ctx;
 	int outl;
 
-	if (miclen != 4 && miclen != 8)
+	if (miclen != 4 && miclen != 8) {
+		/* M-L2: honor the zero-output contract even on a bad miclen. */
+		if (plen != 0)
+			memset(cipher, 0, plen);
 		return (-1);
+	}
+	/* M-L1: reject lengths that would truncate to a negative int. */
+	if (plen > INT_MAX || aadlen > INT_MAX) {
+		if (plen != 0)
+			memset(cipher, 0, plen);
+		memset(mic, 0, miclen);
+		return (-1);
+	}
 
 	ctx = EVP_CIPHER_CTX_new();
 	if (ctx == NULL) {
-		warnx("EVP_CIPHER_CTX_new failed");
+		mesh_crypto_warn("EVP_CIPHER_CTX_new failed");
 		if (plen != 0)
 			memset(cipher, 0, plen);
 		memset(mic, 0, miclen);
@@ -449,7 +480,7 @@ mesh_aes_ccm_encrypt(const uint8_t key[16], const uint8_t nonce[13],
 	return (0);
 
 fail:
-	warnx("mesh_aes_ccm_encrypt failed");
+	mesh_crypto_warn("mesh_aes_ccm_encrypt failed");
 	EVP_CIPHER_CTX_free(ctx);
 	if (plen != 0)
 		memset(cipher, 0, plen);
@@ -473,12 +504,22 @@ mesh_aes_ccm_decrypt(const uint8_t key[16], const uint8_t nonce[13],
 	EVP_CIPHER_CTX *ctx;
 	int outl, ret;
 
-	if (miclen != 4 && miclen != 8)
+	if (miclen != 4 && miclen != 8) {
+		/* M-L2: honor the zero-output contract even on a bad miclen. */
+		if (clen != 0)
+			memset(plain, 0, clen);
 		return (-1);
+	}
+	/* M-L1: reject lengths that would truncate to a negative int. */
+	if (clen > INT_MAX || aadlen > INT_MAX) {
+		if (clen != 0)
+			memset(plain, 0, clen);
+		return (-1);
+	}
 
 	ctx = EVP_CIPHER_CTX_new();
 	if (ctx == NULL) {
-		warnx("EVP_CIPHER_CTX_new failed");
+		mesh_crypto_warn("EVP_CIPHER_CTX_new failed");
 		if (clen != 0)
 			memset(plain, 0, clen);
 		return (-1);
@@ -513,7 +554,7 @@ mesh_aes_ccm_decrypt(const uint8_t key[16], const uint8_t nonce[13],
 	return (0);
 
 fail:
-	warnx("mesh_aes_ccm_decrypt failed");
+	mesh_crypto_warn("mesh_aes_ccm_decrypt failed");
 	EVP_CIPHER_CTX_free(ctx);
 	if (clen != 0)
 		memset(plain, 0, clen);

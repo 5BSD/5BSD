@@ -108,14 +108,59 @@ mesh_light_lightness_linear(uint16_t actual) {
         return (((uint32_t) actual * actual + (UINT16_MAX - 1)) / UINT16_MAX);
 }
 
+/*
+ * Reverse binding (MMDL 6.1.2.2.2/6.1.2.2.3): push the Light Lightness Actual
+ * down onto the bound Generic OnOff/Level states.  in_bind is raised so the
+ * generic servers' bound_sink upward hooks recognize this as an echo and do
+ * not re-drive the Lightness state (P-H4).
+ */
 static void
 lightness_bind(struct mesh_light_lightness_srv *srv)
 {
+	srv->in_bind = 1;
 	if (srv->onoff != NULL)
 		mesh_gen_onoff_srv_set_present(srv->onoff, srv->actual != 0);
 	if (srv->level != NULL)
 		mesh_gen_level_srv_set_present(srv->level,
 		    (int16_t)((int32_t)srv->actual - 32768));
+	srv->in_bind = 0;
+}
+
+/*
+ * P-H4 / MMDL 6.1.2.2.3: a Generic OnOff Set on the bound element drives the
+ * Light Lightness Actual state: OnOff 0 -> 0; OnOff 1 -> Default if the Default
+ * is non-zero, else Last.
+ */
+static void
+lightness_onoff_sink(void *arg, uint8_t onoff)
+{
+	struct mesh_light_lightness_srv *srv = arg;
+	uint16_t target;
+
+	if (srv == NULL || srv->in_bind)
+		return;
+	if (onoff == 0)
+		target = 0;
+	else
+		target = srv->default_lightness != 0 ? srv->default_lightness :
+		    srv->last;
+	(void)mesh_light_lightness_set_actual(srv, target);
+}
+
+/*
+ * P-H4 / MMDL 6.1.2.2.2: a Generic Level Set on the bound element drives the
+ * Light Lightness Actual state: Actual = Generic Level + 32768 (then clamped to
+ * the Lightness Range per 6.1.2.2.5, which set_actual applies).
+ */
+static void
+lightness_level_sink(void *arg, int16_t level)
+{
+	struct mesh_light_lightness_srv *srv = arg;
+
+	if (srv == NULL || srv->in_bind)
+		return;
+	(void)mesh_light_lightness_set_actual(srv,
+	    (uint16_t)((int32_t)level + 32768));
 }
 
 static int
@@ -154,16 +199,40 @@ mesh_light_lightness_srv_init(struct mesh_light_lightness_srv *srv,
         srv->range_max = UINT16_MAX;
         srv->onoff = onoff;
         srv->level = level;
+	/*
+	 * P-H4: install the upward state-binding hooks.  The bound Generic
+	 * OnOff/Level servers must already be initialized (mesh_gen_*_srv_init
+	 * zeroes bound_sink), so initialize them before the Lightness server.
+	 */
+	if (onoff != NULL) {
+		onoff->bound_sink = lightness_onoff_sink;
+		onoff->bound_sink_arg = srv;
+	}
+	if (level != NULL) {
+		level->bound_sink = lightness_level_sink;
+		level->bound_sink_arg = srv;
+	}
 }
 
 int
 mesh_light_lightness_set_actual(struct mesh_light_lightness_srv *srv,
                                 uint16_t actual)
 {
-	if (!lightness_value_valid(srv, actual))
+	if (srv == NULL)
                 return (-1);
+	/*
+	 * LOW / MMDL 6.1.2.2.5: a non-zero Actual outside [Range Min, Range Max]
+	 * is clamped to the nearer limit, not rejected (0 stays 0 = off).
+	 */
+	actual = lightness_clamp(srv, actual);
         srv->actual = actual;
-        if (actual != 0)
+	/*
+	 * P-M12 / MMDL 6.1.2.3: Last latches only the non-zero value of a
+	 * COMPLETED transaction, never a per-tick sample of an in-flight
+	 * transition (mesh_transition_sample() clears .active at completion), so
+	 * a fade-to-off leaves Last at the pre-fade level.
+	 */
+        if (actual != 0 && !srv->transition.active)
                 srv->last = actual;
         lightness_bind(srv);
         return (0);
@@ -613,9 +682,49 @@ static void
 ctl_sync_level(struct mesh_light_ctl_srv *srv)
 {
 
-	if (srv->temperature_level != NULL)
+	if (srv->temperature_level != NULL) {
+		srv->in_bind = 1;	/* P-H4: reverse-binding echo guard */
 		mesh_gen_level_srv_set_present(srv->temperature_level,
 		    ctl_level_from_temperature(srv));
+		srv->in_bind = 0;
+	}
+}
+
+/*
+ * P-H4 / MMDL 6.1.3.1.1: a Generic Level Set on the CTL Temperature element
+ * drives the Light CTL Temperature state:
+ *   Temperature = T_MIN + round((Generic Level + 32768) * (T_MAX-T_MIN)/65535)
+ * clamped to [T_MIN, T_MAX].
+ */
+static void
+ctl_temp_level_sink(void *arg, int16_t level)
+{
+	struct mesh_light_ctl_srv *srv = arg;
+	uint32_t span, scaled;
+	int32_t temp;
+
+	if (srv == NULL || srv->in_bind)
+		return;
+	span = (uint32_t)srv->range_max - srv->range_min;
+	scaled = (uint16_t)((int32_t)level + 32768);
+	temp = (int32_t)srv->range_min +
+	    (int32_t)(((uint64_t)scaled * span + 32768) / 65535);
+	if (temp < srv->range_min)
+		temp = srv->range_min;
+	if (temp > srv->range_max)
+		temp = srv->range_max;
+	srv->temperature = (uint16_t)temp;
+}
+
+/* P-H4: (re)install the CTL Temperature upward binding once wired. */
+static void
+ctl_bind_temp_level(struct mesh_light_ctl_srv *srv)
+{
+	if (srv->temperature_level != NULL &&
+	    srv->temperature_level->bound_sink == NULL) {
+		srv->temperature_level->bound_sink = ctl_temp_level_sink;
+		srv->temperature_level->bound_sink_arg = srv;
+	}
 }
 
 int
@@ -635,6 +744,7 @@ mesh_light_ctl_set(struct mesh_light_ctl_srv *srv, uint16_t lightness,
 static void
 ctl_update(struct mesh_light_ctl_srv *srv, uint64_t now_ms)
 {
+	ctl_bind_temp_level(srv);	/* P-H4: wire temperature_level once set */
 	lightness_update(srv->lightness, now_ms);
 	if (srv->temperature_transition.active)
 		srv->temperature = (uint16_t)mesh_transition_sample(
@@ -1118,12 +1228,53 @@ static void
 hsl_sync_levels(struct mesh_light_hsl_srv *srv)
 {
 
+	srv->in_bind = 1;		/* P-H4: reverse-binding echo guard */
 	if (srv->hue_level != NULL)
 		mesh_gen_level_srv_set_present(srv->hue_level,
 		    (int16_t)((int32_t)srv->hue - 32768));
 	if (srv->saturation_level != NULL)
 		mesh_gen_level_srv_set_present(srv->saturation_level,
 		    (int16_t)((int32_t)srv->saturation - 32768));
+	srv->in_bind = 0;
+}
+
+/*
+ * P-H4 / MMDL 6.1.4.1.1 and 6.1.4.4.1: a Generic Level Set on the HSL Hue or
+ * Saturation element drives that component: value = Generic Level + 32768.
+ */
+static void
+hsl_hue_level_sink(void *arg, int16_t level)
+{
+	struct mesh_light_hsl_srv *srv = arg;
+
+	if (srv == NULL || srv->in_bind)
+		return;
+	srv->hue = (uint16_t)((int32_t)level + 32768);
+}
+
+static void
+hsl_saturation_level_sink(void *arg, int16_t level)
+{
+	struct mesh_light_hsl_srv *srv = arg;
+
+	if (srv == NULL || srv->in_bind)
+		return;
+	srv->saturation = (uint16_t)((int32_t)level + 32768);
+}
+
+/* P-H4: (re)install the HSL Hue/Saturation upward bindings once wired. */
+static void
+hsl_bind_levels(struct mesh_light_hsl_srv *srv)
+{
+	if (srv->hue_level != NULL && srv->hue_level->bound_sink == NULL) {
+		srv->hue_level->bound_sink = hsl_hue_level_sink;
+		srv->hue_level->bound_sink_arg = srv;
+	}
+	if (srv->saturation_level != NULL &&
+	    srv->saturation_level->bound_sink == NULL) {
+		srv->saturation_level->bound_sink = hsl_saturation_level_sink;
+		srv->saturation_level->bound_sink_arg = srv;
+	}
 }
 
 int
@@ -1144,6 +1295,7 @@ mesh_light_hsl_set(struct mesh_light_hsl_srv *srv, uint16_t lightness,
 static void
 hsl_update(struct mesh_light_hsl_srv *srv, uint64_t now_ms)
 {
+	hsl_bind_levels(srv);		/* P-H4: wire hue/saturation levels once set */
 	lightness_update(srv->lightness, now_ms);
 	if (srv->hue_transition.active)
 		srv->hue = hsl_hue_transition_sample(srv, now_ms);

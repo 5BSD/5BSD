@@ -104,6 +104,8 @@
 #define ATT_UNENHANCED_MAX_MTU		517
 #define ATT_MAX_MTU			65535
 #define ATT_PDU_BUF_SIZE		ATT_UNENHANCED_MAX_MTU
+/* Maximum length of an attribute value (Core Spec Vol 3 Part F §3.2.9). */
+#define ATT_MAX_ATTR_VALUE_LEN		512
 
 /* EATT (Enhanced ATT) — Core Spec Vol 3 Part G Section 5.3 */
 #define ATT_EATT_PSM			0x0027

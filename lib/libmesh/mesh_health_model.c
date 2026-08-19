@@ -260,6 +260,13 @@ mesh_hlt_period_parse(const uint8_t *in, size_t inlen, uint32_t *opcode,
 	case MESH_HLT_OP_PERIOD_STATUS:
 		if (ap.params_len != 1)
 			return (-1);
+		/*
+		 * P-M13 / MMDL 1.3.3: Fast Period Divisor 16-255 is Prohibited;
+		 * such a message is silently ignored (parse fails so the caller
+		 * emits no Status and persists nothing).
+		 */
+		if (ap.params[0] > 15)
+			return (-1);
 		if (fast_period_divisor != NULL)
 			*fast_period_divisor = ap.params[0];
 		break;
@@ -339,31 +346,64 @@ mesh_hlt_server_init(struct mesh_hlt_server_state *s, uint16_t company_id)
 	s->company_id = company_id;
 }
 
+static int
+fault_array_add(uint8_t *faults, size_t *n, uint8_t fault)
+{
+	size_t i;
+
+	for (i = 0; i < *n; i++)
+		if (faults[i] == fault)
+			return (0);		/* already recorded */
+	if (*n >= MESH_HLT_MAX_FAULTS)
+		return (-1);
+	faults[(*n)++] = fault;
+	return (0);
+}
+
+/*
+ * P-M14 / MshPRT 4.2.16: a present fault is recorded in the Current Fault array
+ * and, because it has been present, also shadowed into the Registered Fault
+ * array (which is cleared only by mesh_hlt_server_clear_faults()).
+ */
 int
 mesh_hlt_server_add_fault(struct mesh_hlt_server_state *s, uint8_t fault)
 {
-	size_t i;
 
 	if (s == NULL)
 		return (-1);
 	if (fault == 0x00)		/* 0x00 is "No Fault"; nothing to add */
 		return (0);
-	for (i = 0; i < s->n_faults; i++) {
-		if (s->faults[i] == fault)
-			return (0);	/* already registered */
-	}
-	if (s->n_faults >= MESH_HLT_MAX_FAULTS)
+	if (fault_array_add(s->current_faults, &s->n_current_faults, fault) != 0)
 		return (-1);
-	s->faults[s->n_faults++] = fault;
-	return (0);
+	return (fault_array_add(s->registered_faults, &s->n_registered_faults,
+	    fault));
 }
 
+/*
+ * P-M14: a resolved condition is removed from the real-time Current Fault array
+ * only; the Registered Fault shadow persists until a Health Fault Clear.
+ */
+void
+mesh_hlt_server_clear_current(struct mesh_hlt_server_state *s)
+{
+
+	if (s == NULL)
+		return;
+	memset(s->current_faults, 0, sizeof(s->current_faults));
+	s->n_current_faults = 0;
+}
+
+/*
+ * P-M14 / MshPRT 4.2.16.2: a Health Fault Clear message clears the Registered
+ * Fault array only.  The Current Fault array reflects present conditions and is
+ * untouched.
+ */
 void
 mesh_hlt_server_clear_faults(struct mesh_hlt_server_state *s)
 {
 
 	if (s == NULL)
 		return;
-	memset(s->faults, 0, sizeof(s->faults));
-	s->n_faults = 0;
+	memset(s->registered_faults, 0, sizeof(s->registered_faults));
+	s->n_registered_faults = 0;
 }

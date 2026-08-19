@@ -54,6 +54,23 @@ smp_rpa_random_hook_t smp_rpa_random_hook = NULL;
 
 #define SMP_RPA_RANDOM_ATTEMPTS 16
 
+/*
+ * S-M1: an all-zero IRK is the spec-defined sentinel for "no IRK"
+ * (Core Vol 4 Part E Section 7.8.38).  Such a value must never be used
+ * to resolve a Resolvable Private Address nor be recorded as a usable
+ * identity key.
+ */
+static bool
+smp_irk_is_zero(const uint8_t irk[16])
+{
+	uint8_t acc = 0;
+	int i;
+
+	for (i = 0; i < 16; i++)
+		acc |= irk[i];
+	return (acc == 0);
+}
+
 static int
 smp_bond_db_flush(struct smp_bond_db *db)
 {
@@ -352,7 +369,13 @@ smp_receive_peer_keys(struct smp_conn *sc, struct smp_bond *bond,
 			memcpy(&pending.rand, pdu + 3, 8);
 		} else if (pdu[0] == SMP_IDENTITY_INFORMATION && n == 17) {
 			memcpy(pending.irk, pdu + 1, 16);
-			pending.has_irk = true;
+			/*
+			 * S-M1: an all-zero IRK means "no IRK" and must never
+			 * resolve an RPA; treat it as absent (has_irk stays
+			 * false) while still consuming the PDU so the Identity
+			 * Address Information that follows is accepted.
+			 */
+			pending.has_irk = !smp_irk_is_zero(pending.irk);
 			received_irk = true;
 		} else if (pdu[0] == SMP_IDENTITY_ADDRESS_INFO && n == 8 &&
 		    pdu[1] <= SMP_ID_ADDR_STATIC_RANDOM) {
@@ -366,6 +389,25 @@ smp_receive_peer_keys(struct smp_conn *sc, struct smp_bond *bond,
 			received_csrk = true;
 		} else
 			goto fail;
+	}
+	/*
+	 * S-M2(a): identity-address hijack guard.  If the peer connected using
+	 * a Resolvable Private Address, require that RPA to resolve under the
+	 * IRK it just distributed -- proving the connecting device actually
+	 * owns the IRK it is pairing an identity address to.  A peer that
+	 * connects with an RPA but hands over a mismatched IRK has not proven
+	 * ownership of the identity it claims, so the distribution is rejected.
+	 * Non-RPA connection addresses cannot be verified cryptographically and
+	 * fall through to the IRK-continuity guard in smp_bond_db_store (S-M2b).
+	 */
+	if (received_irk && pending.has_irk &&
+	    sc->remote_addr_type == BDADDR_LE_RANDOM &&
+	    (sc->remote_addr[5] & SMP_RANDOM_ADDRESS_TYPE_MASK) ==
+	    SMP_RANDOM_ADDRESS_RESOLVABLE &&
+	    !smp_rpa_matches(pending.irk, sc->remote_addr)) {
+		BLUED_LOG_SECURITY("identity distribution refused: connection "
+		    "RPA does not resolve under distributed IRK");
+		goto fail;
 	}
 	*bond = pending;
 	explicit_bzero(&pending, sizeof(pending));
@@ -481,6 +523,25 @@ smp_bond_db_store(struct smp_bond_db *db, const struct smp_bond *bond)
 				    db->bonds[i].is_sc, db->bonds[i].is_mitm,
 				    db->bonds[i].key_size, bond->is_sc,
 				    bond->is_mitm, bond->key_size);
+				if (db->lock != NULL)
+					pthread_mutex_unlock(db->lock);
+				return (-1);
+			}
+			/*
+			 * S-M2(b): IRK-continuity guard.  Bonds are matched by
+			 * identity addr_type+addr, so a different device that
+			 * claims this identity address must not clobber the
+			 * stored keys.  If both the stored and incoming bonds
+			 * carry an IRK and they differ, the incoming pairing is
+			 * for a different physical device -- refuse the overwrite.
+			 */
+			if (db->bonds[i].has_irk && bond->has_irk &&
+			    memcmp(db->bonds[i].irk, bond->irk, 16) != 0) {
+				BLUED_LOG_SECURITY("bond identity clobber refused "
+				    "addr=%02x:%02x:%02x:%02x:%02x:%02x: stored "
+				    "IRK differs from incoming IRK",
+				    bond->addr[5], bond->addr[4], bond->addr[3],
+				    bond->addr[2], bond->addr[1], bond->addr[0]);
 				if (db->lock != NULL)
 					pthread_mutex_unlock(db->lock);
 				return (-1);
@@ -871,7 +932,9 @@ smp_find_bond(struct smp_bond_db *db, const uint8_t *addr, uint8_t addr_type)
 	/* Try IRK-based RPA resolution for random addresses */
 	if (addr_type == BDADDR_LE_RANDOM) {
 		for (i = 0; i < db->count; i++) {
+			/* S-M1: an all-zero IRK never resolves an RPA. */
 			if (db->bonds[i].has_irk &&
+			    !smp_irk_is_zero(db->bonds[i].irk) &&
 			    smp_rpa_matches(db->bonds[i].irk, addr)) {
 				LOG_SMP(1, "bond found (IRK resolved)");
 				return (&db->bonds[i]);
@@ -900,6 +963,10 @@ smp_rpa_matches(const uint8_t irk[16], const uint8_t addr[6])
 	/* RPA: addr[5] has upper 2 bits = 01 */
 	if ((addr[5] & SMP_RANDOM_ADDRESS_TYPE_MASK) !=
 	    SMP_RANDOM_ADDRESS_RESOLVABLE)
+		return (false);
+
+	/* S-M1: an all-zero IRK ("no IRK") must never resolve an RPA. */
+	if (smp_irk_is_zero(irk))
 		return (false);
 
 	/* prand is the upper 3 bytes (addr[3..5]) */

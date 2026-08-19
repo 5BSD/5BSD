@@ -34,6 +34,94 @@
 #include "smp.h"
 
 /* ----------------------------------------------------------------
+ *  Shared value-read / access-control helpers
+ * ---------------------------------------------------------------- */
+
+/*
+ * A-F3: return the effective value octets for a read of attribute `a` on
+ * connection `ac`.  A CCCD (0x2902) holds a per-connection value in ac->cccds[];
+ * the shared attribute value is never updated on a CCCD write, so every read
+ * path must source the live per-connection value here rather than copying
+ * a->value (which stays the stale init {0,0}).  For any other attribute this
+ * returns a->value unchanged.  *outlen receives the full value length; the
+ * returned pointer is either the caller-supplied 2-byte scratch (CCCD) or
+ * a->value.
+ */
+static const uint8_t *
+att_read_value(const struct att_attr *a, const struct att_conn *ac,
+    uint8_t cccd_scratch[2], uint16_t *outlen)
+{
+
+	if (a->uuid16 == GATT_UUID_CCCD) {
+		uint16_t v = 0;
+
+		for (int ci = 0; ci < ac->cccd_count; ci++) {
+			if (ac->cccds[ci].handle == a->handle) {
+				v = ac->cccds[ci].value;
+				break;
+			}
+		}
+		put_le16(cccd_scratch, v);
+		*outlen = 2;
+		return (cccd_scratch);
+	}
+	*outlen = a->value_len;
+	return (a->value);
+}
+
+/*
+ * A-F1: the aggregated / multi read paths (Read By Type, Read Multiple, Read
+ * Multiple Variable, Find By Type Value) cannot perform the per-access app
+ * round-trip that the primary Read/Read-Blob handlers use for app-backed
+ * attributes.  An AUTHORIZE attribute must not be served from stored bytes
+ * without the owning app's per-access decision; a DYNAMIC attribute's stored
+ * bytes are stale (the live value lives in the owner).  Neither can be
+ * satisfied inline, so deny: AUTHORIZE -> Insufficient Authorization (Vol 3
+ * Part G §8.2); DYNAMIC -> Read Not Permitted (not readable via this inline
+ * path — the client must use a plain Read Request, which defers correctly).
+ * Returns 0 when the stored value may be returned, else the ATT error code.
+ */
+static int
+att_check_inline_read(const struct att_attr *a)
+{
+
+	if (a->owner_fd < 0)
+		return (0);
+	if (a->flags & ATT_ATTR_F_AUTHORIZE)
+		return (ATT_ERR_INSUFF_AUTHOR);
+	if (a->flags & ATT_ATTR_F_DYNAMIC)
+		return (ATT_ERR_READ_NOT_PERMITTED);
+	return (0);
+}
+
+/*
+ * A-F2: a CCCD is created with plaintext READ|WRITE perms (attdb_add_cccd), so
+ * its own att_check_write_perm cannot enforce the parent characteristic's
+ * encryption/authentication requirement.  Locate the characteristic value
+ * attribute preceding this CCCD and evaluate the connection against ITS
+ * security requirement (Core Spec Vol 3 Part G §3.3.3.3 / §10.3.1.1).  Returns
+ * 0 if satisfied (or no parent found), else the ATT error code.
+ */
+static int
+att_cccd_parent_security(struct att_db *db, uint16_t cccd_handle,
+    const struct att_conn *ac)
+{
+	struct att_attr *parent = NULL;
+
+	for (int di = 0; di < db->count; di++) {
+		struct att_attr *a = &db->attrs[di];
+
+		if (a->handle >= cccd_handle)
+			break;
+		if (a->is_char_value)
+			parent = a;
+	}
+	if (parent == NULL)
+		return (0);
+	return (att_check_security_perms(parent->perms, ac));
+}
+
+/* ----------------------------------------------------------------
  *  Request handlers
  * ---------------------------------------------------------------- */
 
@@ -338,7 +426,9 @@ handle_read_by_type(struct att_conn *ac, struct att_db *db,
 
 	for (int i = 0; i < db->count; i++) {
 		struct att_attr *a = &db->attrs[i];
-		uint16_t vlen;
+		uint8_t cccd_scratch[2];
+		const uint8_t *vptr;
+		uint16_t vlen, full_len;
 
 		if (a->handle < start || a->handle > end)
 			continue;
@@ -363,8 +453,23 @@ handle_read_by_type(struct att_conn *ac, struct att_db *db,
 				break;
 			}
 		}
+		/* A-F1: app-backed values cannot be served inline. */
+		{
+			int derr = att_check_inline_read(a);
+			if (derr != 0) {
+				if (entry_len == 0) {
+					ATT_RSP_BUF_FREE();
+					return att_send_error(ac,
+					    ATT_OP_READ_BY_TYPE_REQ,
+					    a->handle, (uint8_t)derr);
+				}
+				break;
+			}
+		}
 
-		vlen = a->value_len;
+		/* A-F3: source the live per-connection CCCD value. */
+		vptr = att_read_value(a, ac, cccd_scratch, &full_len);
+		vlen = full_len;
 		if (vlen > (uint16_t)pos_limit - 4)
 			vlen = (uint16_t)pos_limit - 4;
 		if (vlen > 253)
@@ -379,7 +484,8 @@ handle_read_by_type(struct att_conn *ac, struct att_db *db,
 			break;
 
 		put_le16(rsp + pos, a->handle);
-		memcpy(rsp + pos + 2, a->value, vlen);
+		if (vlen > 0 && vptr != NULL)
+			memcpy(rsp + pos + 2, vptr, vlen);
 		pos += entry_len;
 	}
 
@@ -752,25 +858,18 @@ handle_read(struct att_conn *ac, struct att_db *db,
 
 	rsp[0] = ATT_OP_READ_RSP;
 
-	if (a->uuid16 == GATT_UUID_CCCD) {
-		uint8_t cccd_val[2] = { 0, 0 };
+	/* A-F3: CCCD reads return the per-connection value via att_read_value. */
+	{
+		uint8_t cccd_scratch[2];
+		uint16_t full_len;
+		const uint8_t *vptr = att_read_value(a, ac, cccd_scratch,
+		    &full_len);
 
-		for (int ci = 0; ci < ac->cccd_count; ci++) {
-			if (ac->cccds[ci].handle == handle) {
-				put_le16(cccd_val, ac->cccds[ci].value);
-				break;
-			}
-		}
-		rlen = 2;
+		rlen = full_len;
 		if (1 + rlen > (uint16_t)pos_limit)
 			rlen = (uint16_t)pos_limit - 1;
-		memcpy(rsp + 1, cccd_val, rlen);
-	} else {
-		rlen = a->value_len;
-		if (1 + rlen > (uint16_t)pos_limit)
-			rlen = (uint16_t)pos_limit - 1;
-		if (rlen > 0 && a->value != NULL)
-			memcpy(rsp + 1, a->value, rlen);
+		if (rlen > 0 && vptr != NULL)
+			memcpy(rsp + 1, vptr, rlen);
 	}
 	if (a->uuid16 == 0x2B2A) {
 		BLUED_PROBE_ATT_ROBUST_TRANSITION(ac->change_aware, 1, 0x2B2A);
@@ -868,11 +967,19 @@ handle_read_blob(struct att_conn *ac, struct att_db *db,
 	}
 
 	rsp[0] = ATT_OP_READ_BLOB_RSP;
-	rlen = a->value_len - offset;
-	if (1 + rlen > (uint16_t)pos_limit)
-		rlen = (uint16_t)pos_limit - 1;
-	if (rlen > 0 && a->value != NULL)
-		memcpy(rsp + 1, a->value + offset, rlen);
+	/* A-F3: CCCD blob reads return the per-connection value. */
+	{
+		uint8_t cccd_scratch[2];
+		uint16_t full_len;
+		const uint8_t *vptr = att_read_value(a, ac, cccd_scratch,
+		    &full_len);
+
+		rlen = full_len - offset;
+		if (1 + rlen > (uint16_t)pos_limit)
+			rlen = (uint16_t)pos_limit - 1;
+		if (rlen > 0 && vptr != NULL)
+			memcpy(rsp + 1, vptr + offset, rlen);
+	}
 	ret = att_server_send(ac, rsp, 1 + rlen) == 1 + rlen ? 0 : -1;
 	ATT_RSP_BUF_FREE();
 	return (ret);
@@ -984,6 +1091,22 @@ handle_write(struct att_conn *ac, struct att_db *db,
 		int ci;
 
 		cccd_val &= 0x0003;
+
+		/*
+		 * A-F2: the CCCD inherits its parent characteristic's security
+		 * requirement.  Its own perms are plaintext READ|WRITE, so
+		 * enforce the parent's encryption/authentication level here.
+		 */
+		{
+			int serr = att_cccd_parent_security(db, handle, ac);
+			if (serr != 0) {
+				if (with_response)
+					return att_send_error(ac,
+					    ATT_OP_WRITE_REQ, handle,
+					    (uint8_t)serr);
+				return (0);
+			}
+		}
 
 		{
 			uint8_t char_props = 0;
@@ -1111,7 +1234,6 @@ handle_prepare_write(struct att_conn *ac, struct att_db *db,
 	struct att_prepare_queue *pq = &ac->prep_queue;
 	ATT_RSP_BUF_DECL(ac);
 	int rsplen;
-	int pos_limit = (int)ac->mtu;
 	int ret;
 
 	if (rsp == NULL)
@@ -1119,6 +1241,18 @@ handle_prepare_write(struct att_conn *ac, struct att_db *db,
 		    ATT_ERR_INSUFF_RESOURCES);
 
 	if (len < 5) {
+		ATT_RSP_BUF_FREE();
+		return att_send_error(ac, ATT_OP_PREPARE_WRITE_REQ, 0,
+		    ATT_ERR_INVALID_PDU);
+	}
+
+	/*
+	 * A-F6: a request PDU may not exceed ATT_MTU (Core Spec Vol 3 Part F
+	 * §3.4.2).  Rejecting an over-long Prepare Write here also guarantees
+	 * the Part Value echoed below equals the request's value (§3.4.6.2) —
+	 * the full queued value always fits the response, so no truncation.
+	 */
+	if (len > (size_t)ac->mtu) {
 		ATT_RSP_BUF_FREE();
 		return att_send_error(ac, ATT_OP_PREPARE_WRITE_REQ, 0,
 		    ATT_ERR_INVALID_PDU);
@@ -1172,8 +1306,10 @@ handle_prepare_write(struct att_conn *ac, struct att_db *db,
 	rsp[0] = ATT_OP_PREPARE_WRITE_RSP;
 	put_le16(rsp + 1, handle);
 	put_le16(rsp + 3, offset);
-	if (5 + (int)vlen > pos_limit)
-		vlen = (uint16_t)(pos_limit - 5);
+	/*
+	 * A-F6: echo the Part Value verbatim (§3.4.6.2).  len <= ac->mtu is
+	 * enforced above, so 5 + vlen == len <= pos_limit always fits.
+	 */
 	memcpy(rsp + 5, pdu + 5, vlen);
 
 	rsplen = 5 + vlen;
@@ -1252,6 +1388,23 @@ handle_execute_write(struct att_conn *ac, struct att_db *db,
 				uint8_t char_props = 0;
 				bool found_decl = false;
 				int ci, di, j;
+
+				/*
+				 * A-F2: enforce the parent characteristic's security
+				 * requirement on the queued CCCD write, as the direct
+				 * write path now does.
+				 */
+				{
+					int serr = att_cccd_parent_security(db,
+					    pe->handle, ac);
+					if (serr != 0) {
+						pq->count = 0;
+						pq->total_bytes = 0;
+						return att_send_error(ac,
+						    ATT_OP_EXECUTE_WRITE_REQ,
+						    pe->handle, (uint8_t)serr);
+					}
+				}
 
 				/*
 				 * CCCDs are two-octet, per-client values.  Compose every
@@ -1404,6 +1557,30 @@ handle_execute_write(struct att_conn *ac, struct att_db *db,
 				    (uint16_t)(pe->offset + pe->len);
 		}
 
+		/*
+		 * A-F1: inform each owning app of its committed value exactly
+		 * once, mirroring the direct write path (blued_ctl_notify_write).
+		 * The queued-write commit previously applied bytes to app-backed
+		 * attributes without ever notifying the owner.
+		 */
+		for (i = 0; i < pq->count; i++) {
+			struct att_prepare_entry *pe = &pq->entries[i];
+			struct att_attr *a;
+			int j;
+
+			for (j = 0; j < i; j++) {
+				if (pq->entries[j].handle == pe->handle)
+					break;
+			}
+			if (j != i)
+				continue;
+			a = attdb_find_by_handle(db, pe->handle);
+			if (a != NULL && a->uuid16 != GATT_UUID_CCCD &&
+			    a->owner_fd >= 0)
+				blued_ctl_notify_write(a->owner_fd, pe->handle,
+				    a->value, a->value_len);
+		}
+
 		LOG_ATT(2, "srv: execute write applied %d entries",
 		    pq->count);
 	} else {
@@ -1467,21 +1644,26 @@ handle_find_by_type_value(struct att_conn *ac, struct att_db *db,
 		if (a->uuid16 != uuid16)
 			continue;
 
-		{
-			int rerr = att_check_read_perm(a, ac);
-			if (rerr != 0) {
-				if (pos == 1) {
-					ATT_RSP_BUF_FREE();
-					return att_send_error(ac,
-					    ATT_OP_FIND_BY_TYPE_VALUE_REQ,
-					    a->handle, (uint8_t)rerr);
-				}
-				break;
-			}
-		}
-
+		/*
+		 * A-F5: match the value FIRST, then permission-evaluate only a
+		 * value-matching attribute.  An attribute that matches but the
+		 * client may not read is treated as non-matching — skip it and
+		 * keep scanning — so Find By Type Value neither leaks the
+		 * handle/security of a protected attribute nor truncates
+		 * discovery at it (contrast Read By Type, where error+break is
+		 * correct).
+		 */
 		if (a->value_len != vlen ||
 		    memcmp(a->value, val, vlen) != 0)
+			continue;
+
+		if (att_check_read_perm(a, ac) != 0)
+			continue;
+		/*
+		 * A-F1: an app-backed value is not comparable/servable inline;
+		 * treat it as non-matching rather than leaking its handle.
+		 */
+		if (att_check_inline_read(a) != 0)
 			continue;
 
 		if (uuid16 == GATT_UUID_PRIMARY_SERVICE ||
@@ -1570,12 +1752,31 @@ handle_read_multiple(struct att_conn *ac, struct att_db *db,
 				    handle, (uint8_t)rerr);
 			}
 		}
+		/*
+		 * A-F1: an app-backed value cannot be served inline in a Read
+		 * Multiple; the whole request fails (§3.4.4.7 treats an
+		 * unsatisfiable attribute as an error).
+		 */
+		{
+			int derr = att_check_inline_read(a);
+			if (derr != 0) {
+				ATT_RSP_BUF_FREE();
+				return att_send_error(ac,
+				    ATT_OP_READ_MULTIPLE_REQ,
+				    handle, (uint8_t)derr);
+			}
+		}
 
-		uint16_t avail = a->value_len;
+		/* A-F3: source the live per-connection CCCD value. */
+		uint8_t cccd_scratch[2];
+		uint16_t full_len;
+		const uint8_t *vptr = att_read_value(a, ac, cccd_scratch,
+		    &full_len);
+		uint16_t avail = full_len;
 		if (pos + avail > pos_limit)
 			avail = pos_limit - pos;
-		if (avail > 0 && a->value != NULL)
-			memcpy(rsp + pos, a->value, avail);
+		if (avail > 0 && vptr != NULL)
+			memcpy(rsp + pos, vptr, avail);
 		else if (avail > 0)
 			memset(rsp + pos, 0, avail);
 		pos += avail;
@@ -1632,9 +1833,23 @@ handle_read_multiple_variable(struct att_conn *ac, struct att_db *db,
 				    handle, (uint8_t)rerr);
 			}
 		}
+		/* A-F1: app-backed values cannot be served inline. */
+		{
+			int derr = att_check_inline_read(a);
+			if (derr != 0) {
+				ATT_RSP_BUF_FREE();
+				return att_send_error(ac,
+				    ATT_OP_READ_MULTIPLE_VARIABLE_REQ,
+				    handle, (uint8_t)derr);
+			}
+		}
 
-		uint16_t vlen = a->value_len;
-		uint16_t copylen = vlen;
+		/* A-F3: source the live per-connection CCCD value. */
+		uint8_t cccd_scratch[2];
+		uint16_t vlen, copylen;
+		const uint8_t *vptr = att_read_value(a, ac, cccd_scratch,
+		    &vlen);
+		copylen = vlen;
 		if (pos + 2 > pos_limit)
 			break;
 		/*
@@ -1649,8 +1864,8 @@ handle_read_multiple_variable(struct att_conn *ac, struct att_db *db,
 
 		put_le16(rsp + pos, vlen);
 		pos += 2;
-		if (copylen > 0 && a->value != NULL)
-			memcpy(rsp + pos, a->value, copylen);
+		if (copylen > 0 && vptr != NULL)
+			memcpy(rsp + pos, vptr, copylen);
 		pos += copylen;
 
 		if (pos >= pos_limit)
@@ -1946,6 +2161,18 @@ att_server_handle(struct att_conn *ac, struct att_db *db,
 		break;
 	default:
 		if (pdu[0] & ATT_OPCODE_COMMAND_FLAG) {
+			ret = 0;
+		} else if (pdu[0] == ATT_OP_HANDLE_NOTIFY ||
+		    pdu[0] == ATT_OP_HANDLE_IND ||
+		    pdu[0] == ATT_OP_MULTIPLE_HANDLE_VALUE_NTF) {
+			/*
+			 * A-F6: Handle Value Notification (0x1B), Indication
+			 * (0x1D) and Multiple HVN (0x23) have the Command Flag
+			 * (bit 6) clear, so the generic guard above would answer
+			 * them with an Error Response.  These are server-to-
+			 * client PDUs; if one is received it carries no response
+			 * and must simply be ignored, never Error-Responded.
+			 */
 			ret = 0;
 		} else {
 			ret = att_send_error(ac, pdu[0], 0,

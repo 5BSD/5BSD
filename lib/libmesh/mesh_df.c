@@ -72,6 +72,23 @@ addr_is_unicast(uint16_t a)
 	return (a >= 0x0001 && a <= 0x7fff);
 }
 
+/*
+ * A path Destination / Path Echo Reply Destination / solicitation Addr_List
+ * entry may be a unicast, virtual (0x8000-0xBFFF) or group (0xC000-0xFFFF)
+ * address.  The unassigned address (0x0000) and the all-directed-forwarding-
+ * nodes (0xFFFB), all-relays (0xFFFE) and all-nodes (0xFFFF) fixed group
+ * addresses are prohibited (MshPRT_v1.1 Tables 3.51/3.54/3.57).  P-C1d(v).
+ */
+static int
+addr_is_valid_dest(uint16_t a)
+{
+
+	if (a == 0x0000 || a == MESH_DF_ADDR_ALL_DIRECTED ||
+	    a == 0xFFFEu || a == 0xFFFFu)
+		return (0);
+	return (1);
+}
+
 /* ================================================================
  * Unicast address range (Section 3.6.6.4).
  * ================================================================ */
@@ -85,12 +102,16 @@ mesh_df_addr_range_build(const struct mesh_df_addr_range *in, uint8_t *out,
 	if (!addr_is_unicast(in->range_start) || in->range_length < 1 ||
 	    (uint32_t)in->range_start + in->range_length > 0x8000)
 		return (-1);
-	/* range_start uses 15 bits; the low bit is the Length_Present flag. */
+	/*
+	 * P-C1a (Table 3.6): the LengthPresent flag is the most-significant bit
+	 * (bit 15) and RangeStart is the low 15 bits UNSHIFTED, big-endian.  The
+	 * RangeLength octet follows only when LengthPresent is 1.
+	 */
 	if (in->range_length == 1) {
-		be16(out, (uint16_t)(in->range_start << 1));
+		be16(out, (uint16_t)(in->range_start & 0x7fff));
 		*outlen = 2;
 	} else {
-		be16(out, (uint16_t)((in->range_start << 1) | 0x0001));
+		be16(out, (uint16_t)((in->range_start & 0x7fff) | 0x8000));
 		out[2] = in->range_length;
 		*outlen = 3;
 	}
@@ -110,12 +131,13 @@ mesh_df_addr_range_parse(const uint8_t *in, size_t inlen,
 	}
 	memset(out, 0, sizeof(*out));
 	word = rd_be16(in);
-	out->range_start = (uint16_t)(word >> 1);
+	/* P-C1a (Table 3.6): LengthPresent = bit 15, RangeStart = low 15 bits. */
+	out->range_start = (uint16_t)(word & 0x7fff);
 	if (!addr_is_unicast(out->range_start)) {
 		memset(out, 0, sizeof(*out));
 		return (-1);
 	}
-	if (word & 0x0001) {
+	if (word & 0x8000) {
 		if (inlen < 3) {
 			memset(out, 0, sizeof(*out));
 			return (-1);
@@ -149,11 +171,10 @@ mesh_df_path_request_build(const struct mesh_df_path_request *in, uint8_t *out,
 
 	if (in == NULL || out == NULL || outlen == NULL)
 		return (-1);
-	if (in->metric_type > 0x07 || in->lifetime > 0x03 ||
-	    in->path_metric > 0x7f)
+	if (in->metric_type > 0x07 || in->lifetime > 0x03)
 		return (-1);
-	if (!addr_is_unicast(in->destination) &&
-	    !(in->destination >= 0xc000))	/* target may be group */
+	/* P-C1d(v): the path Destination may be unicast, virtual, or group. */
+	if (!addr_is_valid_dest(in->destination))
 		return (-1);
 
 	out[0] = (uint8_t)(((in->on_behalf_of_dependent_origin & 0x01) << 7) |
@@ -161,7 +182,8 @@ mesh_df_path_request_build(const struct mesh_df_path_request *in, uint8_t *out,
 	    ((in->lifetime & 0x03) << 2) |
 	    ((in->path_discovery_interval & 0x01) << 1));
 	out[1] = in->forwarding_number;
-	out[2] = (uint8_t)((in->path_metric & 0x7f) << 1);
+	/* P-C1d(i): Path_Origin_Path_Metric is a full 8-bit octet (Table 3.51). */
+	out[2] = in->path_metric;
 	be16(out + 3, in->destination);
 	off = 5;
 
@@ -195,7 +217,8 @@ mesh_df_path_request_parse(const uint8_t *in, size_t inlen,
 	out->lifetime = (uint8_t)((in[0] >> 2) & 0x03);
 	out->path_discovery_interval = (uint8_t)((in[0] >> 1) & 0x01);
 	out->forwarding_number = in[1];
-	out->path_metric = (uint8_t)((in[2] >> 1) & 0x7f);
+	/* P-C1d(i): Path_Origin_Path_Metric is a full 8-bit octet (Table 3.51). */
+	out->path_metric = in[2];
 	out->destination = rd_be16(in + 3);
 	off = 5;
 
@@ -229,20 +252,33 @@ mesh_df_path_reply_build(const struct mesh_df_path_reply *in, uint8_t *out,
 	if (!addr_is_unicast(in->path_origin))
 		return (-1);
 
-	out[0] = (uint8_t)(((in->on_behalf_of_dependent_target & 0x01) << 7) |
-	    ((in->confirmation_request & 0x01) << 6));
-	out[1] = in->forwarding_number;
-	be16(out + 2, in->path_origin);
+	/*
+	 * P-C1b (Table 3.52): the flag octet is Unicast_Destination(bit7),
+	 * On_Behalf_Of_Dependent_Target(bit6), Confirmation_Request(bit5); the
+	 * fields following are Path_Origin THEN Path_Origin_Forwarding_Number.
+	 */
+	out[0] = (uint8_t)(((in->unicast_destination & 0x01) << 7) |
+	    ((in->on_behalf_of_dependent_target & 0x01) << 6) |
+	    ((in->confirmation_request & 0x01) << 5));
+	be16(out + 1, in->path_origin);
+	out[3] = in->forwarding_number;
 	off = 4;
 
-	if (mesh_df_addr_range_build(&in->target, out + off, &used) != 0)
-		return (-1);
-	off += used;
-	if (in->on_behalf_of_dependent_target) {
-		if (mesh_df_addr_range_build(&in->dependent_target, out + off,
-		    &used) != 0)
+	/*
+	 * P-C1b (Table 3.52 C.1/C.2): the Path Target range is present only when
+	 * Unicast_Destination is set, and the Dependent Target range only when
+	 * both Unicast_Destination and On_Behalf_Of_Dependent_Target are set.
+	 */
+	if (in->unicast_destination) {
+		if (mesh_df_addr_range_build(&in->target, out + off, &used) != 0)
 			return (-1);
 		off += used;
+		if (in->on_behalf_of_dependent_target) {
+			if (mesh_df_addr_range_build(&in->dependent_target,
+			    out + off, &used) != 0)
+				return (-1);
+			off += used;
+		}
 	}
 	*outlen = off;
 	return (0);
@@ -254,29 +290,35 @@ mesh_df_path_reply_parse(const uint8_t *in, size_t inlen,
 {
 	size_t off, used;
 
-	if (in == NULL || out == NULL || inlen < 6) {
+	/* P-C1b: the fixed header is 4 octets (flags + Path_Origin + Fwd_Number). */
+	if (in == NULL || out == NULL || inlen < 4) {
 		if (out != NULL)
 			memset(out, 0, sizeof(*out));
 		return (-1);
 	}
 	memset(out, 0, sizeof(*out));
-	out->on_behalf_of_dependent_target = (uint8_t)((in[0] >> 7) & 0x01);
-	out->confirmation_request = (uint8_t)((in[0] >> 6) & 0x01);
-	out->forwarding_number = in[1];
-	out->path_origin = rd_be16(in + 2);
+	/* P-C1b (Table 3.52): Unicast_Destination(7), OBO(6), Confirmation(5). */
+	out->unicast_destination = (uint8_t)((in[0] >> 7) & 0x01);
+	out->on_behalf_of_dependent_target = (uint8_t)((in[0] >> 6) & 0x01);
+	out->confirmation_request = (uint8_t)((in[0] >> 5) & 0x01);
+	out->path_origin = rd_be16(in + 1);
+	out->forwarding_number = in[3];
 	if (!addr_is_unicast(out->path_origin))
 		goto fail;
 	off = 4;
 
-	if (mesh_df_addr_range_parse(in + off, inlen - off, &out->target,
-	    &used) != 0)
-		goto fail;
-	off += used;
-	if (out->on_behalf_of_dependent_target) {
-		if (mesh_df_addr_range_parse(in + off, inlen - off,
-		    &out->dependent_target, &used) != 0)
+	/* P-C1b (C.1/C.2): target/dependent ranges gated by Unicast_Destination. */
+	if (out->unicast_destination) {
+		if (mesh_df_addr_range_parse(in + off, inlen - off, &out->target,
+		    &used) != 0)
 			goto fail;
 		off += used;
+		if (out->on_behalf_of_dependent_target) {
+			if (mesh_df_addr_range_parse(in + off, inlen - off,
+			    &out->dependent_target, &used) != 0)
+				goto fail;
+			off += used;
+		}
 	}
 	return (0);
 fail:
@@ -333,7 +375,9 @@ int
 mesh_df_path_echo_reply_build(uint16_t destination, uint8_t *out, size_t *outlen)
 {
 
-	if (out == NULL || outlen == NULL || !addr_is_unicast(destination))
+	/* P-C1d(v): the Path Echo Reply Destination may be unicast, virtual, or
+	 * group (Table 3.54 prohibits only the unassigned/fixed-group addresses). */
+	if (out == NULL || outlen == NULL || !addr_is_valid_dest(destination))
 		return (-1);
 	be16(out, destination);
 	*outlen = 2;
@@ -367,7 +411,8 @@ mesh_df_dependent_update_build(const struct mesh_df_dependent_update *in,
 		return (-1);
 	if (in->type > MESH_DF_DEP_ADD || !addr_is_unicast(in->path_endpoint))
 		return (-1);
-	out[0] = (uint8_t)(in->type & 0x01);
+	/* P-C1d(ii): the Type field is bit 7 of octet 0 (Table 3.55). */
+	out[0] = (uint8_t)((in->type & 0x01) << 7);
 	be16(out + 1, in->path_endpoint);
 	if (mesh_df_addr_range_build(&in->dependent, out + 3, &used) != 0)
 		return (-1);
@@ -387,7 +432,8 @@ mesh_df_dependent_update_parse(const uint8_t *in, size_t inlen,
 		return (-1);
 	}
 	memset(out, 0, sizeof(*out));
-	out->type = (uint8_t)(in[0] & 0x01);
+	/* P-C1d(ii): the Type field is bit 7 of octet 0 (Table 3.55). */
+	out->type = (uint8_t)((in[0] >> 7) & 0x01);
 	out->path_endpoint = rd_be16(in + 1);
 	if (!addr_is_unicast(out->path_endpoint) ||
 	    mesh_df_addr_range_parse(in + 3, inlen - 3, &out->dependent,
@@ -411,7 +457,9 @@ mesh_df_path_solicitation_build(const uint16_t *dests, size_t n, uint8_t *out,
 	    n > MESH_DF_SOLICITATION_MAX)
 		return (-1);
 	for (i = 0; i < n; i++) {
-		if (!addr_is_unicast(dests[i]))
+		/* P-C1d(v): Addr_List entries may be unicast, virtual, or group
+		 * (Table 3.57 prohibits only the unassigned/fixed-group addresses). */
+		if (!addr_is_valid_dest(dests[i]))
 			return (-1);
 		be16(out + 2 * i, dests[i]);
 	}
@@ -436,7 +484,8 @@ mesh_df_path_solicitation_parse(const uint8_t *in, size_t inlen, uint16_t *dests
 		return (-1);
 	for (i = 0; i < cnt; i++) {
 		dests[i] = rd_be16(in + 2 * i);
-		if (!addr_is_unicast(dests[i])) {
+		/* P-C1d(v): allow unicast, virtual, or group Addr_List entries. */
+		if (!addr_is_valid_dest(dests[i])) {
 			*n = 0;
 			return (-1);
 		}
@@ -682,8 +731,9 @@ mesh_df_discovery_start(struct mesh_df_discovery *d, uint16_t origin,
 		return (-1);
 	if (!addr_is_unicast(origin) || metric_type > 0x07 || lifetime > 0x03)
 		return (-1);
-	if (!addr_is_unicast(target) && target < 0xc000)
-		return (-1);		/* target must be unicast or group */
+	/* P-C1d(v): the Path Target may be unicast, virtual, or group. */
+	if (!addr_is_valid_dest(target))
+		return (-1);
 
 	memset(d, 0, sizeof(*d));
 	d->state = MESH_DF_DISC_REQUEST_SENT;
@@ -902,7 +952,6 @@ recv_path_request(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 	struct mesh_df_path_request req;
 	struct mesh_df_fwd_entry *e;
 	uint16_t origin;
-	uint8_t new_ttl;
 	int is_dup;
 
 	if (mesh_df_path_request_parse(pdu, pdulen, &req) != 0)
@@ -912,11 +961,15 @@ recv_path_request(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 	/*
 	 * Dedup by (Path Origin, Forwarding Number): a request whose Forwarding
 	 * Number is not newer than the one already recorded for this path is a
-	 * duplicate and must not be processed again (no loops/storms).
+	 * duplicate.  P-C1d(iii) (§3.6.8.2.2): a request that is not newer but
+	 * carries a BETTER (strictly lower) Path_Origin_Path_Metric than the
+	 * stored one must still be processed so a better lane can form; discard
+	 * only when the metric is "not less than" the stored value.
 	 */
 	e = entry_find(&node->table, origin, req.destination);
 	is_dup = (e != NULL && mesh_df_entry_reverse_valid(e) &&
-	    !mesh_df_fn_newer(e->forwarding_number, req.forwarding_number));
+	    !mesh_df_fn_newer(e->forwarding_number, req.forwarding_number) &&
+	    req.path_metric >= e->path_metric);
 	if (is_dup)
 		return (MESH_DF_RECV_CONSUMED);
 
@@ -931,6 +984,7 @@ recv_path_request(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 	if (e == NULL)
 		return (MESH_DF_RECV_DROP);		/* table full */
 	e->backward_validated = 0;
+	e->path_metric = req.path_metric;	/* P-C1d(iii): remember lane metric */
 	node->echo_pending[entry_index(node, e)] = 0;
 	if (req.on_behalf_of_dependent_origin)
 		add_dep_range(e, 0, &req.dependent_origin);
@@ -942,6 +996,12 @@ recv_path_request(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 		size_t rlen;
 
 		memset(&rep, 0, sizeof(rep));
+		/*
+		 * P-C1b (Table 3.52): Unicast_Destination is 1 when the request's
+		 * Destination is a unicast address, in which case the Path Target
+		 * unicast address range is carried.
+		 */
+		rep.unicast_destination = addr_is_unicast(req.destination) ? 1 : 0;
 		rep.confirmation_request = node->two_way_path ? 1 : 0;
 		rep.forwarding_number = req.forwarding_number;
 		rep.path_origin = origin;
@@ -950,17 +1010,24 @@ recv_path_request(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 		    (uint8_t)(node->addr_last - node->addr + 1);
 		if (mesh_df_path_reply_build(&rep, rbuf, &rlen) != 0)
 			return (MESH_DF_RECV_DROP);
-		/* Originate the reply with a fresh TTL for the full return trip. */
+		/*
+		 * P-C1c (§3.6.8.2.3): the Path Target re-originates the PATH_REPLY
+		 * toward the Path Origin at TTL 0 (not the residual request TTL);
+		 * the reverse-path bearer carries it to the next hop.
+		 */
 		if (out_set(out, MESH_DF_OP_PATH_REPLY, ctx->bearer,
-		    MESH_DF_DEFAULT_TTL, node->addr, origin, rbuf, rlen) != 0)
+		    0, node->addr, origin, rbuf, rlen) != 0)
 			return (MESH_DF_RECV_DROP);
 		return (MESH_DF_RECV_FOR_TARGET);
 	}
 
-	/* Relay role: re-forward toward the target, TTL-1, node-count metric+1. */
-	if (!mesh_net_relay(ctx->ttl, &new_ttl))
-		return (MESH_DF_RECV_CONSUMED);		/* reverse kept; drop-at-zero */
-	if (req.metric_type == MESH_DF_METRIC_NODE_COUNT && req.path_metric < 0x7f)
+	/*
+	 * Relay role (P-C1c, §3.6.8.2.2): re-originate the PATH_REQUEST to the
+	 * all-directed-forwarding-nodes group at TTL 0 rather than TTL-relaying
+	 * (decrementing) it; the node-count metric increments by one at each hop
+	 * (P-C1d(i): the metric is a full 8-bit octet, so saturate at 0xff).
+	 */
+	if (req.metric_type == MESH_DF_METRIC_NODE_COUNT && req.path_metric < 0xff)
 		req.path_metric++;
 	{
 		uint8_t rbuf[16];
@@ -969,13 +1036,12 @@ recv_path_request(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 		if (mesh_df_path_request_build(&req, rbuf, &rlen) != 0)
 			return (MESH_DF_RECV_DROP);
 		/*
-		 * Re-flood toward the all-directed-forwarding-nodes group with
-		 * this node re-originating the network SRC; the Path Origin is
-		 * carried in the PDU's Origin range, not the network SRC.
+		 * Re-originate toward the all-directed-forwarding-nodes group with
+		 * this node as the network SRC; the Path Origin is carried in the
+		 * PDU's Origin range, not the network SRC.
 		 */
 		if (out_set(out, MESH_DF_OP_PATH_REQUEST, MESH_DF_BEARER_FLOOD,
-		    new_ttl, node->addr, MESH_DF_ADDR_ALL_DIRECTED, rbuf,
-		    rlen) != 0)
+		    0, node->addr, MESH_DF_ADDR_ALL_DIRECTED, rbuf, rlen) != 0)
 			return (MESH_DF_RECV_DROP);
 	}
 	return (MESH_DF_RECV_FORWARD);
@@ -992,7 +1058,6 @@ recv_path_reply(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 {
 	struct mesh_df_path_reply rep;
 	struct mesh_df_fwd_entry *e;
-	uint8_t new_ttl;
 	size_t i;
 
 	if (mesh_df_path_reply_parse(pdu, pdulen, &rep) != 0)
@@ -1040,11 +1105,16 @@ recv_path_reply(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 	if (node_covers(node, rep.path_origin))
 		return (MESH_DF_RECV_FOR_ORIGIN);
 
-	/* Forward the reply along the reverse path toward the origin. */
-	if (!mesh_net_relay(ctx->ttl, &new_ttl))
-		return (MESH_DF_RECV_CONSUMED);
-	if (out_set(out, MESH_DF_OP_PATH_REPLY, e->bearer_toward_origin, new_ttl,
-	    rep.target.range_start, rep.path_origin, pdu, pdulen) != 0)
+	/*
+	 * P-C1c/P-C1d(iv) (§3.6.8.2.3): re-originate the PATH_REPLY toward the
+	 * Path Origin at TTL 0 with this node as the network SRC.  The spec DST
+	 * is the Next_Toward_Path_Origin unicast; this module routes via the
+	 * reverse-path bearer and re-originates to the all-directed-forwarding-
+	 * nodes group so only DF nodes on the reverse path accept it.  It is a
+	 * re-origination, not a decrementing relay.
+	 */
+	if (out_set(out, MESH_DF_OP_PATH_REPLY, e->bearer_toward_origin, 0,
+	    node->addr, MESH_DF_ADDR_ALL_DIRECTED, pdu, pdulen) != 0)
 		return (MESH_DF_RECV_DROP);
 	return (MESH_DF_RECV_FORWARD);
 }
@@ -1060,8 +1130,8 @@ recv_path_confirmation(struct mesh_df_node *node,
 {
 	struct mesh_df_path_confirmation conf;
 	struct mesh_df_fwd_entry *e;
-	uint8_t new_ttl;
 
+	(void)ctx;		/* re-originated at TTL 0; no incoming-TTL relay */
 	if (mesh_df_path_confirmation_parse(pdu, pdulen, &conf) != 0)
 		return (MESH_DF_RECV_DROP);
 	e = entry_find(&node->table, conf.path_origin, conf.path_target);
@@ -1074,10 +1144,13 @@ recv_path_confirmation(struct mesh_df_node *node,
 	if (node_covers(node, conf.path_target) ||
 	    !mesh_df_entry_forward_valid(e))
 		return (MESH_DF_RECV_CONSUMED);
-	if (!mesh_net_relay(ctx->ttl, &new_ttl))
-		return (MESH_DF_RECV_CONSUMED);
+	/*
+	 * P-C1c/P-C1d(iv) (§3.6.8.2.4): re-originate the PATH_CONFIRMATION to the
+	 * all-directed-forwarding-nodes group at TTL 0 with this node as the
+	 * network SRC, rather than TTL-relaying it.
+	 */
 	if (out_set(out, MESH_DF_OP_PATH_CONFIRMATION, e->bearer_toward_target,
-	    new_ttl, conf.path_origin, conf.path_target, pdu, pdulen) != 0)
+	    0, node->addr, MESH_DF_ADDR_ALL_DIRECTED, pdu, pdulen) != 0)
 		return (MESH_DF_RECV_DROP);
 	return (MESH_DF_RECV_FORWARD);
 }
@@ -1095,7 +1168,7 @@ recv_path_echo_request(struct mesh_df_node *node,
 	struct mesh_df_fwd_entry *e;
 	uint8_t rbuf[2];
 	size_t rlen;
-	uint8_t new_ttl, bearer;
+	uint8_t bearer;
 
 	if (pdulen != 0)			/* Echo Request carries no params */
 		return (MESH_DF_RECV_DROP);
@@ -1118,9 +1191,14 @@ recv_path_echo_request(struct mesh_df_node *node,
 	bearer = (ctx->dst == e->path_target ||
 	    entry_has_dep(e->dep_target, e->dep_target_n, ctx->dst)) ?
 	    e->bearer_toward_target : e->bearer_toward_origin;
-	if (bearer == MESH_DF_BEARER_NONE || !mesh_net_relay(ctx->ttl, &new_ttl))
+	if (bearer == MESH_DF_BEARER_NONE)
 		return (MESH_DF_RECV_CONSUMED);
-	if (out_set(out, MESH_DF_OP_PATH_ECHO_REQUEST, bearer, new_ttl,
+	/*
+	 * P-C1c (§3.6.5.14): the PATH_ECHO_REQUEST is re-originated toward the
+	 * Forwarding Table Destination (ctx->dst) at TTL 0x7F, not decremented as
+	 * a managed-flood relay would.
+	 */
+	if (out_set(out, MESH_DF_OP_PATH_ECHO_REQUEST, bearer, MESH_DF_DEFAULT_TTL,
 	    ctx->src, ctx->dst, NULL, 0) != 0)
 		return (MESH_DF_RECV_DROP);
 	return (MESH_DF_RECV_FORWARD);
@@ -1138,7 +1216,7 @@ recv_path_echo_reply(struct mesh_df_node *node,
 {
 	struct mesh_df_fwd_entry *e;
 	uint16_t dest;
-	uint8_t new_ttl, bearer;
+	uint8_t bearer;
 	size_t i;
 
 	if (mesh_df_path_echo_reply_parse(pdu, pdulen, &dest) != 0)
@@ -1185,10 +1263,14 @@ recv_path_echo_reply(struct mesh_df_node *node,
 	bearer = (ctx->dst == e->path_origin ||
 	    entry_has_dep(e->dep_origin, e->dep_origin_n, ctx->dst)) ?
 	    e->bearer_toward_origin : e->bearer_toward_target;
-	if (bearer == MESH_DF_BEARER_NONE || !mesh_net_relay(ctx->ttl, &new_ttl))
+	if (bearer == MESH_DF_BEARER_NONE)
 		return (MESH_DF_RECV_CONSUMED);
-	if (out_set(out, MESH_DF_OP_PATH_ECHO_REPLY, bearer, new_ttl, dest,
-	    ctx->dst, pdu, pdulen) != 0)
+	/*
+	 * P-C1c (§3.6.5.15): the PATH_ECHO_REPLY is re-originated toward the echo
+	 * initiator (ctx->dst) at TTL 0x7F, not decremented as a relay.
+	 */
+	if (out_set(out, MESH_DF_OP_PATH_ECHO_REPLY, bearer, MESH_DF_DEFAULT_TTL,
+	    dest, ctx->dst, pdu, pdulen) != 0)
 		return (MESH_DF_RECV_DROP);
 	return (MESH_DF_RECV_FORWARD);
 }
@@ -1205,12 +1287,13 @@ recv_dependent_update(struct mesh_df_node *node,
 {
 	struct mesh_df_dependent_update du;
 	struct mesh_df_fwd_entry *e;
-	uint8_t new_ttl, bearer;
+	uint8_t bearer;
 	int toward_target;
 	uint16_t a;
 	unsigned i;
 	size_t k;
 
+	(void)ctx;		/* re-originated at TTL 0; no incoming-TTL relay */
 	if (mesh_df_dependent_update_parse(pdu, pdulen, &du) != 0)
 		return (MESH_DF_RECV_DROP);
 
@@ -1249,11 +1332,15 @@ recv_dependent_update(struct mesh_df_node *node,
 
 	/* Forward toward the referenced endpoint if the path continues. */
 	bearer = toward_target ? e->bearer_toward_target : e->bearer_toward_origin;
-	if (node_covers(node, du.path_endpoint) || bearer == MESH_DF_BEARER_NONE ||
-	    !mesh_net_relay(ctx->ttl, &new_ttl))
+	if (node_covers(node, du.path_endpoint) || bearer == MESH_DF_BEARER_NONE)
 		return (MESH_DF_RECV_CONSUMED);
-	if (out_set(out, MESH_DF_OP_DEPENDENT_NODE_UPDATE, bearer, new_ttl,
-	    ctx->src, du.path_endpoint, pdu, pdulen) != 0)
+	/*
+	 * P-C1c/P-C1d(iv) (§3.6.8.2.5): re-originate the DEPENDENT_NODE_UPDATE to
+	 * the all-directed-forwarding-nodes group at TTL 0 with this node as the
+	 * network SRC, rather than TTL-relaying it.
+	 */
+	if (out_set(out, MESH_DF_OP_DEPENDENT_NODE_UPDATE, bearer, 0,
+	    node->addr, MESH_DF_ADDR_ALL_DIRECTED, pdu, pdulen) != 0)
 		return (MESH_DF_RECV_DROP);
 	return (MESH_DF_RECV_FORWARD);
 }
@@ -1424,12 +1511,17 @@ static void
 pack_dc(const struct mesh_cfg_directed_control *in, uint8_t *p)
 {
 
+	/*
+	 * P-C1d(vi) (Table 4.199): each of the five state fields is a full octet
+	 * carrying a new state OR the 0xFF "Do Not Process" value; a 1-bit mask
+	 * would crush 0xFF to 0x01.  Store the whole octet.
+	 */
 	le16(p, in->net_idx);
-	p[2] = (uint8_t)(in->directed_forwarding & 0x01);
-	p[3] = (uint8_t)(in->directed_relay & 0x01);
-	p[4] = (uint8_t)(in->directed_proxy & 0x01);
-	p[5] = (uint8_t)(in->directed_proxy_use_directed_default & 0xff);
-	p[6] = (uint8_t)(in->directed_friend & 0x01);
+	p[2] = in->directed_forwarding;
+	p[3] = in->directed_relay;
+	p[4] = in->directed_proxy;
+	p[5] = in->directed_proxy_use_directed_default;
+	p[6] = in->directed_friend;
 }
 
 static void

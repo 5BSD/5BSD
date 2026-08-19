@@ -127,10 +127,15 @@ struct mesh_sim_relay_tx {
 	struct mesh_relay_tx	timer;
 };
 
-/* Network message cache slot: last (src, seq) processed (relay dedup). */
+/*
+ * Network message cache slot: a (src, seq) processed for relay dedup.
+ * M-N1: the IV Index is part of the key so a (src, seq) that recurs across
+ * an IV Index change is not mistaken for a duplicate of the earlier epoch.
+ */
 struct mesh_sim_nmc {
 	uint16_t	src;
 	uint32_t	seq;
+	uint32_t	iv_index;
 	int		valid;
 };
 

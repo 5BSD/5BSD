@@ -112,6 +112,9 @@ mesh_mgr_create_network(struct mesh_mgr *mgr, uint8_t out_netkey[16],
 		return (-1);
 	if (RAND_bytes(mgr->appkey, sizeof(mgr->appkey)) != 1)
 		return (-1);
+	/* Stage a distinct Phase-1 AppKey for a future Config AppKey Update. */
+	if (RAND_bytes(mgr->appkey_new, sizeof(mgr->appkey_new)) != 1)
+		return (-1);
 	if (RAND_bytes(mgr->self_devkey, sizeof(mgr->self_devkey)) != 1)
 		return (-1);
 	mgr->netkey_index = 0;
@@ -299,11 +302,22 @@ mesh_mgr_node_at(const struct mesh_mgr *mgr, size_t i)
 
 #define	MESH_MGR_MAGIC		"MSHMGR\0\1"	/* 8 octets */
 #define	MESH_MGR_MAGIC_LEN	8
-#define	MESH_MGR_VERSION	2	/* v2 adds the persisted SEQ high-water mark */
+/* v2 added the persisted SEQ high-water mark; v3 adds the staged Phase-1 AppKey. */
+#define	MESH_MGR_VERSION	3
 #define	MESH_MGR_HDR_LEN	20		/* magic..crc32 inclusive */
 
-/* Serialised network/self header (little-endian), 66 octets. */
-#define	MESH_MGR_NETHDR_LEN	66
+/* Serialised network/self header (little-endian), 82 octets. */
+#define	MESH_MGR_NETHDR_LEN	82
+
+/*
+ * Reserved SEQ block persisted ahead of the in-memory high-water mark
+ * (MshPRT_v1.1 Section 3.4.4.5).  On save the manager records seq + RESERVE and
+ * on reload resumes from that reserved-ahead value, so a crash between saves
+ * cannot re-issue a SEQ already used (which would repeat an (IV, SEQ, SRC)
+ * nonce).  The manager must therefore be persisted at least once per RESERVE
+ * DevKey seals; every save renews the reservation.
+ */
+#define	MESH_MGR_SEQ_RESERVE	100u
 /* Serialised per-node record (little-endian), 43 octets. */
 #define	MESH_MGR_NODEREC_LEN	43
 
@@ -432,13 +446,15 @@ encode_nethdr(const struct mesh_mgr *mgr, uint8_t out[MESH_MGR_NETHDR_LEN])
 	*p++ = mgr->flags;
 	*p++ = mgr->self_elements;
 	/*
-	 * Persist the outbound SEQ high-water mark: on reload the manager must
-	 * resume issuing SEQ values above every one it has already used, or
-	 * mesh_mgr_devkey_seal() would re-issue SEQs the peers' RPL discards
-	 * (and it would be (IV, SEQ) nonce reuse).
+	 * Persist the outbound SEQ high-water mark PLUS a reserved block: on
+	 * reload the manager resumes above every SEQ it might already have used
+	 * since the last save (up to RESERVE seals), so mesh_mgr_devkey_seal()
+	 * never re-issues a SEQ - which would repeat an (IV, SEQ, SRC) nonce.
 	 */
-	put_u32(&p, mgr->seq);
-	/* p - out == 66 */
+	put_u32(&p, mgr->seq + MESH_MGR_SEQ_RESERVE);
+	/* Persist the staged Phase-1 AppKey (Config AppKey Update payload). */
+	memcpy(p, mgr->appkey_new, 16);		p += 16;
+	/* p - out == 82 */
 }
 
 static void
@@ -456,7 +472,9 @@ decode_nethdr(struct mesh_mgr *mgr, const uint8_t in[MESH_MGR_NETHDR_LEN])
 	mgr->next_unicast = get_u16(&p);
 	mgr->flags = *p++;
 	mgr->self_elements = *p++;
+	/* Resume from the reserved-ahead SEQ (see encode_nethdr / P-H8). */
 	mgr->seq = get_u32(&p);
+	memcpy(mgr->appkey_new, p, 16);		p += 16;
 }
 
 static void
@@ -1038,7 +1056,13 @@ mesh_mgr_cfg_appkey_update_pdu(const struct mesh_mgr *mgr, uint8_t *out,
 	memset(&in, 0, sizeof(in));
 	in.net_idx = mgr->netkey_index;
 	in.app_idx = mgr->appkey_index;
-	memcpy(in.key, mgr->appkey, sizeof(in.key));
+	/*
+	 * A Key Refresh Phase-1 AppKey Update distributes the NEW AppKey, not the
+	 * current one; re-sending the in-use key is rejected by conformant nodes
+	 * with Cannot Update (MshPRT_v1.1 Section 3.11.4).  Mirror the NetKey
+	 * Update path, which carries the new key.
+	 */
+	memcpy(in.key, mgr->appkey_new, sizeof(in.key));
 	return (mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_UPDATE, &in, out,
 	    outlen));
 }

@@ -58,6 +58,8 @@
 #define	MESH_AD_TYPE_SERVICE_DATA_16	0x16	/* Service Data - 16-bit UUID */
 #define	MESH_PROXY_ADV_NETWORK_ID	0x00	/* Identification Type */
 #define	MESH_PROXY_ADV_NODE_IDENTITY	0x01
+#define	MESH_PROXY_ADV_PRIVATE_NETWORK_ID	0x02	/* Section 7.2.2.2.4 */
+#define	MESH_PROXY_ADV_PRIVATE_NODE_IDENTITY	0x03	/* Section 7.2.2.2.5 */
 
 #define	MESH_NETWORK_ID_ADV_LEN		8	/* Network ID = k3(NetKey) */
 #define	MESH_PROXY_ID_HASH_LEN		8
@@ -66,6 +68,9 @@
 /* Full AD structures: length(1) + AD type(1) + service data value. */
 #define	MESH_PROXY_ADV_NETWORK_ID_LEN	13	/* + UUID(2)+type(1)+netid(8) */
 #define	MESH_PROXY_ADV_NODE_IDENTITY_LEN 21	/* + UUID(2)+type(1)+hash(8)+rand(8) */
+/* Private Network/Node Identity AD structures: type(1)+hash(8)+rand(8) value. */
+#define	MESH_PROXY_ADV_PRIVATE_NETWORK_ID_LEN	21
+#define	MESH_PROXY_ADV_PRIVATE_NODE_IDENTITY_LEN 21
 
 /*
  * IdentityKey = k1(NetKey, s1("nkik"), "id128" || 0x01) (Section 3.9.6.3.4);
@@ -90,6 +95,29 @@ int	mesh_proxy_identity_hash(const uint8_t identity_key[16], uint16_t addr,
 int	mesh_proxy_adv_network_id_build(const uint8_t netkey[16], uint8_t *out,
 	    size_t *outlen);
 int	mesh_proxy_adv_node_identity_build(const uint8_t identity_key[16],
+	    uint16_t addr, const uint8_t random[MESH_PROXY_ID_RANDOM_LEN],
+	    uint8_t *out, size_t *outlen);
+
+/*
+ * Build the Private Network Identity (Section 7.2.2.2.4) and Private Node
+ * Identity (Section 7.2.2.2.5) connectable-advertising Service Data AD
+ * structures (Mesh Protocol 1.1).  The 8-octet Hash obscures the identity:
+ *
+ *   Private Network Identity (type 0x02):
+ *       Hash = e(IdentityKey, NetworkID(8) || Random(8))[8..15]
+ *   Private Node Identity (type 0x03):
+ *       Hash = e(IdentityKey, 0x00_00_00_00_00 || 0x03 || Random(8) ||
+ *                Address(2))[8..15]
+ *
+ * The network-id variant derives NetworkID (k3) and the IdentityKey from the
+ * NetKey; the node variant takes the IdentityKey and unicast Address.  Each
+ * writes the full AD structure and its length; -1 (output zeroed) on a
+ * derivation failure or NULL argument.
+ */
+int	mesh_proxy_adv_private_network_id_build(const uint8_t netkey[16],
+	    const uint8_t random[MESH_PROXY_ID_RANDOM_LEN], uint8_t *out,
+	    size_t *outlen);
+int	mesh_proxy_adv_private_node_identity_build(const uint8_t identity_key[16],
 	    uint16_t addr, const uint8_t random[MESH_PROXY_ID_RANDOM_LEN],
 	    uint8_t *out, size_t *outlen);
 
@@ -133,15 +161,20 @@ int	mesh_proxy_adv_node_identity_build(const uint8_t identity_key[16],
 #define	MESH_PROXY_MAX_PDU		(MESH_PROXY_HDR_LEN + MESH_PROXY_MAX_MSG)
 
 /*
- * Proxy configuration message opcodes (Section 6.6, Table 6.5).
- * 0x04 (DIRECTED_PROXY_CAPABILITIES_STATUS) and 0x05
- * (DIRECTED_PROXY_CONTROL) belong to the Directed Proxy feature and are
- * not modelled here (deferred); 0x06..0xff are RFU.
+ * Proxy configuration message opcodes (Section 6.6, Table 6.5).  0x04
+ * (DIRECTED_PROXY_CAPABILITIES_STATUS) and 0x05 (DIRECTED_PROXY_CONTROL) belong
+ * to the Directed Proxy feature (Sections 6.6.5/6.6.6); 0x06..0xff are RFU.
  */
 #define	MESH_PROXY_OP_SET_FILTER_TYPE	0x00
 #define	MESH_PROXY_OP_ADD_ADDR		0x01
 #define	MESH_PROXY_OP_REMOVE_ADDR	0x02
 #define	MESH_PROXY_OP_FILTER_STATUS	0x03
+#define	MESH_PROXY_OP_DIRECTED_PROXY_CAP_STATUS	0x04
+#define	MESH_PROXY_OP_DIRECTED_PROXY_CONTROL	0x05
+
+/* Use_Directed field values (Tables 6.12 / 6.14).  0x02..0xff prohibited. */
+#define	MESH_PROXY_USE_DIRECTED_DISABLE	0x00
+#define	MESH_PROXY_USE_DIRECTED_ENABLE	0x01
 
 /* FilterType values (Section 6.6.1, Table 6.7).  0x02..0xff are prohibited. */
 #define	MESH_PROXY_FILTER_ACCEPT	0x00	/* accept (white) list filter */
@@ -207,13 +240,31 @@ int	mesh_proxy_segment(uint8_t type, const uint8_t *msg, size_t msglen,
  * mesh_proxy_reasm_init(); each connection needs one instance.
  */
 struct mesh_proxy_reasm {
-	uint8_t	buf[MESH_PROXY_MAX_MSG];
-	size_t	len;			/* octets accumulated so far */
-	uint8_t	type;			/* MessageType of the message in flight */
-	int	in_progress;		/* 1 between a first and its last segment */
+	uint8_t		buf[MESH_PROXY_MAX_MSG];
+	size_t		len;		/* octets accumulated so far */
+	uint8_t		type;		/* MessageType of the message in flight */
+	int		in_progress;	/* 1 between a first and its last segment */
+	uint64_t	start_ms;	/* clock stamped when the timeout clock ran */
+	int		timing;		/* start_ms valid (timeout clock running) */
 };
 
+/*
+ * SAR reassembly timeout (Section 6.3.2.2): a partially reassembled message is
+ * discarded if a segment is not received within 20 seconds.
+ */
+#define	MESH_PROXY_REASM_TIMEOUT_MS	20000u
+
 void	mesh_proxy_reasm_init(struct mesh_proxy_reasm *r);
+
+/*
+ * Advance the reassembly timeout against the caller's clock (ms).  While a
+ * message is partially reassembled the timeout clock runs from the most recent
+ * segment; if MESH_PROXY_REASM_TIMEOUT_MS elapses with no further segment, the
+ * partial message is discarded and 1 is returned (in the specification the
+ * receiver disconnects).  Returns 0 when nothing is discarded.  Call it on a
+ * timer between feeds; feeding a segment restarts the clock.
+ */
+int	mesh_proxy_reasm_tick(struct mesh_proxy_reasm *r, uint64_t now);
 
 /*
  * Feed one received Proxy PDU (header + Data) into the reassembler.
@@ -289,6 +340,13 @@ struct mesh_proxy_cfg {
 	uint16_t	list_size;		/* filter-status */
 	size_t		naddr;			/* add / remove */
 	uint16_t	addrs[MESH_PROXY_MAX_ADDR_PER_MSG];
+
+	/* Directed Proxy messages (Sections 6.6.5 / 6.6.6). */
+	uint8_t		directed_proxy;		/* cap-status: Directed Proxy state */
+	uint8_t		use_directed;		/* cap-status / control: Use_Directed */
+	int		have_range;		/* control: address range present */
+	uint16_t	range_start;		/* control: range start unicast */
+	uint8_t		range_length;		/* control: range length (0 => single) */
 };
 
 /* Set Filter Type (opcode 0x00): FilterType (1). */
@@ -307,9 +365,11 @@ int	mesh_proxy_cfg_filter_status_build(uint8_t filter_type,
 	    uint16_t list_size, uint8_t *out, size_t outcap, size_t *outlen);
 
 /*
- * Parse any of the four modelled proxy configuration messages, validating
- * the opcode and its exact parameter length.  Directed Proxy opcodes
- * (0x04/0x05) and RFU opcodes are rejected with -1.
+ * Parse a proxy configuration message, validating the opcode and its parameter
+ * length: the four filter messages (0x00..0x03) plus the two Directed Proxy
+ * messages (0x04 DIRECTED_PROXY_CAPABILITIES_STATUS, 0x05 DIRECTED_PROXY_CONTROL,
+ * whose optional address range sets out->have_range).  RFU opcodes and
+ * prohibited field values are rejected with -1.
  */
 int	mesh_proxy_cfg_parse(const uint8_t *in, size_t inlen,
 	    struct mesh_proxy_cfg *out);

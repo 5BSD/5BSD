@@ -427,6 +427,19 @@ hci_le_set_ext_adv_params_full(int hci_fd, uint8_t handle,
 		return (-1);
 	}
 
+	/*
+	 * Finding H-M4: Core Spec Vol 4 Part E §7.8.53 forbids the high-duty-
+	 * cycle directed bit (bit 3) with extended-PDU advertising (the "use
+	 * legacy PDUs" bit 4 clear).  High-duty directed only exists for legacy
+	 * ADV_DIRECT_IND.  Reject the combination host-side with a clear error
+	 * rather than emitting a command the controller must reject.
+	 */
+	if ((event_props & BLUED_HCI_EXT_ADV_PROP_HIGH_DUTY_DIRECTED) &&
+	    !(event_props & BLUED_HCI_EXT_ADV_PROP_LEGACY)) {
+		errno = EINVAL;
+		return (-1);
+	}
+
 	/* Primary_Advertising_Channel_Map: 3-bit mask, at least one channel. */
 	if ((channel_map & ~0x07) != 0 || (channel_map & 0x07) == 0) {
 		errno = EINVAL;
@@ -464,6 +477,7 @@ hci_le_set_ext_adv_params_full(int hci_fd, uint8_t handle,
 	cp.primary_advertising_phy = primary_phy;
 	cp.secondary_advertising_phy = secondary_phy;
 
+	memset(&rp, 0, sizeof(rp));	/* Finding H-H3 */
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_SET_EXT_ADV_PARAMS);
@@ -475,7 +489,9 @@ hci_le_set_ext_adv_params_full(int hci_fd, uint8_t handle,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
-	if (rp.status != 0x00) {
+	/* Finding H-H3: a short CC that never carried status/selected_tx_power
+	 * must not be accepted as success. */
+	if ((size_t)r.rlen < sizeof(rp) || rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Ext Adv Params failed, status=0x%02x",
 		    rp.status);
 		errno = EIO;
@@ -675,29 +691,32 @@ hci_adv_configure(int hci_fd, uint64_t le_features, struct hci_adv_config *cfg)
  * all advertising types for simplicity, avoiding the need to check
  * the event properties to determine the exact maximum.
  */
-int
-hci_le_set_ext_adv_data(int hci_fd, uint8_t handle,
+/*
+ * Upper bound on host-originated extended advertising data.  The controller's
+ * true limit is Max_Advertising_Data_Length (Core Spec Vol 4 Part E §7.8.57,
+ * up to 1650); we cap the host side at that spec maximum and let the controller
+ * reject anything it cannot store.
+ */
+#define BLUED_HCI_EXT_ADV_DATA_TOTAL_MAX	1650
+
+/* Issue a single LE Set Extended Advertising Data command with one Operation. */
+static int
+hci_le_set_ext_adv_data_op(int hci_fd, uint8_t handle, uint8_t operation,
     const uint8_t *data, uint8_t len)
 {
 	struct bt_devreq r;
 	ng_hci_le_set_ext_adv_data_cp cp;
 	ng_hci_status_rp rp;
 
-	if (!hci_adv_handle_valid(handle) ||
-	    len > NG_HCI_LE_EXT_ADV_DATA_MAX ||
-	    (len > 0 && data == NULL)) {
-		errno = EINVAL;
-		return (-1);
-	}
-
 	memset(&cp, 0, sizeof(cp));
 	cp.advertising_handle = handle;
-	cp.operation = 0x03;		/* complete data */
-	cp.fragment_preference = 0x01;	/* don't fragment */
+	cp.operation = operation;
+	cp.fragment_preference = 0x01;	/* controller should not fragment further */
 	cp.advertising_data_length = len;
 	if (len > 0)
 		memcpy(cp.advertising_data, data, len);
 
+	memset(&rp, 0, sizeof(rp));	/* Finding H-H3 */
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_SET_EXT_ADV_DATA);
@@ -710,11 +729,57 @@ hci_le_set_ext_adv_data(int hci_fd, uint8_t handle,
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
-	if (rp.status != 0x00) {
+	if ((size_t)r.rlen < sizeof(rp) || rp.status != 0x00) {
 		LOG_HCI(1, "LE Set Ext Adv Data failed, status=0x%02x",
 		    rp.status);
 		errno = EIO;
 		return (-1);
+	}
+	return (0);
+}
+
+int
+hci_le_set_ext_adv_data(int hci_fd, uint8_t handle,
+    const uint8_t *data, uint16_t len)
+{
+	const uint16_t frag_max = NG_HCI_LE_EXT_ADV_DATA_MAX;	/* 251 */
+	uint16_t off;
+
+	if (!hci_adv_handle_valid(handle) ||
+	    len > BLUED_HCI_EXT_ADV_DATA_TOTAL_MAX ||
+	    (len > 0 && data == NULL)) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Single-command fast path: Operation 0x03 (complete data). */
+	if (len <= frag_max)
+		return (hci_le_set_ext_adv_data_op(hci_fd, handle, 0x03,
+		    data, (uint8_t)len));
+
+	/*
+	 * Finding H-M6: data too large for one HCI command must be delivered as
+	 * an ordered fragment sequence (Core Spec Vol 4 Part E §7.8.54):
+	 * Operation 0x01 (first fragment), 0x00 (intermediate), 0x02 (last).
+	 * Each fragment carries at most NG_HCI_LE_EXT_ADV_DATA_MAX octets.
+	 */
+	off = 0;
+	while (off < len) {
+		uint16_t chunk = len - off;
+		uint8_t op;
+
+		if (chunk > frag_max)
+			chunk = frag_max;
+		if (off == 0)
+			op = 0x01;			/* first */
+		else if ((uint16_t)(off + chunk) >= len)
+			op = 0x02;			/* last */
+		else
+			op = 0x00;			/* intermediate */
+		if (hci_le_set_ext_adv_data_op(hci_fd, handle, op,
+		    data + off, (uint8_t)chunk) < 0)
+			return (-1);
+		off = (uint16_t)(off + chunk);
 	}
 	return (0);
 }
@@ -966,6 +1031,7 @@ hci_le_read_max_adv_data_length(int fd, uint16_t *max_len)
 		return (-1);
 	}
 
+	memset(&rp, 0, sizeof(rp));	/* Finding H-H3 */
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_READ_MAX_ADV_DATA_LENGTH);
@@ -975,7 +1041,8 @@ hci_le_read_max_adv_data_length(int fd, uint16_t *max_len)
 
 	if (hci_devreq_logged(fd, &r, 5) < 0)
 		return (-1);
-	if (rp.status != 0x00) {
+	/* Finding H-H3: reject a short/absent CC before trusting the length. */
+	if ((size_t)r.rlen < sizeof(rp) || rp.status != 0x00) {
 		LOG_HCI(1, "LE Read Max Adv Data Length failed, "
 		    "status=0x%02x", rp.status);
 		errno = EIO;
@@ -1004,6 +1071,7 @@ hci_le_read_num_supported_adv_sets(int fd, uint8_t *num_sets)
 		return (-1);
 	}
 
+	memset(&rp, 0, sizeof(rp));	/* Finding H-H3 */
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_READ_NUM_SUPPORTED_ADV_SETS);
@@ -1013,7 +1081,8 @@ hci_le_read_num_supported_adv_sets(int fd, uint8_t *num_sets)
 
 	if (hci_devreq_logged(fd, &r, 5) < 0)
 		return (-1);
-	if (rp.status != 0x00) {
+	/* Finding H-H3: reject a short/absent CC before trusting the count. */
+	if ((size_t)r.rlen < sizeof(rp) || rp.status != 0x00) {
 		LOG_HCI(1, "LE Read Num Supported Adv Sets failed, "
 		    "status=0x%02x", rp.status);
 		errno = EIO;

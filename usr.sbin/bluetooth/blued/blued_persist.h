@@ -151,7 +151,14 @@ struct blued_persist_gatt_device {
  * Artifact 4: advertising configuration.
  * ================================================================ */
 #define BLUED_PERSIST_ADVCONFIG_MAGIC	"BLUEDADV"
-#define BLUED_PERSIST_ADVCONFIG_VERSION	1
+/*
+ * H-L5: version 2 widens interval_min/max from 16 to 24-bit-capable 32-bit
+ * fields so extended-advertising intervals above ~40.96s are no longer
+ * truncated on save.  Older v1 records are rejected by the version check
+ * (same policy as every other persisted artifact); adv config is rebuilt at
+ * the next flush.
+ */
+#define BLUED_PERSIST_ADVCONFIG_VERSION	2
 #define BLUED_PERSIST_MAX_ADV_SETS	4
 
 struct blued_persist_adv_set {
@@ -162,8 +169,8 @@ struct blued_persist_adv_set {
 	uint8_t		scan_rsp_len;
 	uint8_t		_pad0;
 	uint16_t	adv_props;		/* connectable/scannable/legacy */
-	uint16_t	interval_min;		/* units of 0.625ms */
-	uint16_t	interval_max;
+	uint32_t	interval_min;		/* H-L5: 24-bit, units of 0.625ms */
+	uint32_t	interval_max;
 	uint8_t		adv_data[31];
 	uint8_t		scan_rsp[31];
 	uint8_t		_pad1;

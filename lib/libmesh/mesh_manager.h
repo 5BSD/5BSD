@@ -115,6 +115,14 @@ struct mesh_mgr {
 	uint8_t		netkey[MESH_MGR_KEY_LEN];
 	uint16_t	netkey_index;	/* 12-bit NetKey Index, 0 for the primary */
 	uint8_t		appkey[MESH_MGR_KEY_LEN];
+	/*
+	 * Staged Key Refresh Phase-1 AppKey: the NEW application key distributed
+	 * by Config AppKey Update (MshPRT_v1.1 Section 3.11.4).  Distinct from the
+	 * current appkey so an AppKey Update never re-sends the in-use key (which
+	 * conformant nodes reject with Cannot Update).  Minted at create-network
+	 * time and persisted.
+	 */
+	uint8_t		appkey_new[MESH_MGR_KEY_LEN];
 	uint16_t	appkey_index;	/* 12-bit AppKey Index */
 	uint32_t	iv_index;
 	uint8_t		flags;		/* provisioning data Flags (KR | IV Update) */
@@ -413,8 +421,10 @@ size_t	mesh_mgr_kr_pending(const struct mesh_mgr *mgr);
 
 /*
  * Config AppKey Update (opcode 0x01) / AppKey Delete (opcode 0x8000) for the
- * manager's primary AppKey on its primary subnet.  Both are answered by a
- * Config AppKey Status (0x8003), parsed by _cfg_appkey_status_parse above.
+ * manager's primary AppKey on its primary subnet.  AppKey Update distributes
+ * the manager's staged Phase-1 AppKey (mgr->appkey_new) - a NEW key, never the
+ * in-use one (MshPRT_v1.1 Section 3.11.4).  Both are answered by a Config
+ * AppKey Status (0x8003), parsed by _cfg_appkey_status_parse above.
  */
 int	mesh_mgr_cfg_appkey_update_pdu(const struct mesh_mgr *mgr, uint8_t *out,
 	    size_t *outlen);

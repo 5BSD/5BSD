@@ -47,6 +47,7 @@ const int _blued_kq_ctl_tag;	/* sentinel address for BLUED_KQ_CTL_LISTEN */
 const int _blued_kq_setup_pipe_tag;
 const int _blued_kq_rpa_timer_tag;
 const int _blued_kq_rpa_retry_tag;
+const int _blued_kq_ctl_accept_retry_tag;	/* finding C-m1 */
 const int _blued_kq_ind_timeout_tag;
 const int _blued_kq_vhid_output_tag;
 const int _blued_kq_acquire_tag;	/* AcquireNotify/Write daemon-side fds */
@@ -1240,12 +1241,37 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 	if (adp == NULL)
 		return (-1);
 	reslist = &adp->reslist;
-	if (!blued_cfg.privacy) {
-		/* Privacy-off operation must not depend on optional RL support. */
-		(void)hci_le_set_addr_resolution_enable(dev->hci_fd, 0);
-		if (hci_le_clear_resolving_list(dev->hci_fd) == 0)
-			memset(reslist, 0, sizeof(*reslist));
-		return (0);
+
+	/*
+	 * Finding H-H5: resolving a bonded peer's RPA is independent of hiding
+	 * our own address.  Program bonded-peer IRKs into the controller
+	 * resolving list and enable address resolution whenever at least one
+	 * bonded peer (or a persisted runtime entry) carries an IRK — even with
+	 * local privacy off.  Only when there is nothing to resolve AND privacy
+	 * is off do we keep the historical best-effort teardown that must not
+	 * depend on optional resolving-list support.  Local-address privacy (our
+	 * own RPA advertising + RPA rotation) stays gated on blued_cfg.privacy
+	 * separately, below.
+	 */
+	{
+		bool have_irks = false;
+
+		if (dev->bond_db != NULL) {
+			for (int i = 0; i < dev->bond_db->count; i++)
+				if (dev->bond_db->bonds[i].has_irk) {
+					have_irks = true;
+					break;
+				}
+		}
+		if (blued_runtime_resolv_count > 0)
+			have_irks = true;
+
+		if (!blued_cfg.privacy && !have_irks) {
+			(void)hci_le_set_addr_resolution_enable(dev->hci_fd, 0);
+			if (hci_le_clear_resolving_list(dev->hci_fd) == 0)
+				memset(reslist, 0, sizeof(*reslist));
+			return (0);
+		}
 	}
 
 	/*
@@ -1262,9 +1288,9 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 		return (-1);
 	memset(reslist, 0, sizeof(*reslist));
 
-	if (dev->bond_db == NULL)
+	if (dev->bond_db == NULL && blued_runtime_resolv_count == 0)
 		return (blued_cfg.privacy ? -1 : 0);
-	for (int i = 0; i < dev->bond_db->count; i++) {
+	for (int i = 0; dev->bond_db != NULL && i < dev->bond_db->count; i++) {
 		struct smp_bond *b = &dev->bond_db->bonds[i];
 
 		if (!b->has_irk)
@@ -1751,6 +1777,7 @@ blued_adapter_rotate_rpa(struct blued_adapter *adp, const uint8_t rpa[6])
 	/* Global scan/initiation address; legacy advertising shares this domain. */
 	if (adp->rpa_pending_global) {
 		bool safe = true;
+		bool scan_suspended = false;
 
 		if (!primary_ext && adp->adv_enabled && !adp->rpa_restore_legacy) {
 			if (hci_le_set_advertise_enable(adp->hci_fd, false) < 0)
@@ -1758,11 +1785,48 @@ blued_adapter_rotate_rpa(struct blued_adapter *adp, const uint8_t rpa[6])
 			else
 				adp->rpa_restore_legacy = true;
 		}
+		/*
+		 * Finding H-H6: LE Set Random Address (Core Spec Vol 4 Part E
+		 * §7.8.4) returns Command Disallowed while scanning or initiating
+		 * is enabled.  The mesh bearer keeps an always-on passive scan and
+		 * a central may have a create-connection outstanding — either one
+		 * makes the address set fail, so the RPA never rotates and becomes
+		 * fixed.  Quiesce the mesh scanner and cancel any pending
+		 * create-connection across the address set, then resume the
+		 * scanner; a cancelled initiation is re-driven by the normal
+		 * reconnect path.
+		 */
+		if (safe && adp->mesh_scan_active) {
+			if (hci_le_mesh_scan_set(adp->hci_fd, adp->le_features,
+			    false) < 0)
+				safe = false;
+			else
+				scan_suspended = true;
+		}
+		if (safe) {
+			struct blued_conn *iconn;
+			bool initiating = false;
+
+			LIST_FOREACH(iconn, &blued_g.conns, entries)
+				if (iconn->adapter == adp &&
+				    atomic_load(&iconn->state) ==
+				    BLUED_CONN_CONNECTING) {
+					initiating = true;
+					break;
+				}
+			if (initiating &&
+			    hci_le_create_connection_cancel(adp->hci_fd) < 0)
+				safe = false;
+		}
 		if (safe && hci_le_set_random_address(adp->hci_fd, addr) == 0) {
 			memcpy(&adp->random_addr, addr, 6);
 			adp->random_addr_valid = true;
 			adp->rpa_pending_global = false;
 		}
+		/* Restore the always-on mesh scanner regardless of the outcome. */
+		if (scan_suspended)
+			(void)hci_le_mesh_scan_set(adp->hci_fd,
+			    adp->le_features, true);
 	}
 	if (adp->rpa_restore_legacy) {
 		if (!adp->adv_enabled ||
@@ -1893,16 +1957,85 @@ blued_persist_gattcache_reuse(const uint8_t addr[6], uint8_t addr_type,
 }
 
 /*
+ * Finding H-H7: resolving-list Add/Remove and Set Address Resolution Enable
+ * (Core Spec Vol 4 Part E §7.8.38/§7.8.44) are Command Disallowed while
+ * advertising or scanning is enabled.  These helpers quiesce the adapter's
+ * advertising and its always-on mesh passive scan around a resolving-list
+ * mutation and restore exactly what was suspended afterwards.
+ */
+void
+blued_reslist_quiesce_begin(struct blued_adapter *adp,
+    struct blued_reslist_quiesce *q)
+{
+
+	memset(q, 0, sizeof(*q));
+	if (adp == NULL)
+		return;
+	if (adp->adv_configured && adp->adv_enabled) {
+		if (adp->adv_use_extended) {
+			if (hci_le_set_ext_adv_enable(adp->hci_fd, 0, 0) == 0)
+				q->ext_primary_adv = true;
+		} else if (hci_le_set_advertise_enable(adp->hci_fd, false) == 0)
+			q->legacy_adv = true;
+	}
+	for (size_t i = 0; i < nitems(adp->ext_adv_sets); i++) {
+		struct blued_ext_adv_set *set = &adp->ext_adv_sets[i];
+
+		if (set->used && set->configured && set->enabled &&
+		    hci_le_set_ext_adv_enable(adp->hci_fd, 0, set->handle) == 0)
+			q->ext_sets[i] = true;
+	}
+	if (adp->mesh_scan_active &&
+	    hci_le_mesh_scan_set(adp->hci_fd, adp->le_features, false) == 0)
+		q->mesh_scan = true;
+}
+
+void
+blued_reslist_quiesce_end(struct blued_adapter *adp,
+    struct blued_reslist_quiesce *q)
+{
+
+	if (adp == NULL)
+		return;
+	if (q->mesh_scan)
+		(void)hci_le_mesh_scan_set(adp->hci_fd, adp->le_features, true);
+	for (size_t i = 0; i < nitems(adp->ext_adv_sets); i++)
+		if (q->ext_sets[i])
+			(void)hci_le_set_ext_adv_enable(adp->hci_fd, 1,
+			    adp->ext_adv_sets[i].handle);
+	if (q->ext_primary_adv)
+		(void)hci_le_set_ext_adv_enable(adp->hci_fd, 1, 0);
+	if (q->legacy_adv)
+		(void)hci_le_set_advertise_enable(adp->hci_fd, true);
+}
+
+/*
+ * Re-enable address resolution after a resolving-list mutation.  Finding H-H5:
+ * resolving bonded peers' RPAs is independent of local-address privacy, so
+ * resolution must be on whenever the shadow holds at least one entry, even with
+ * privacy off.
+ */
+void
+blued_reslist_restore_resolution(int hci_fd, struct blued_adapter *adp)
+{
+
+	(void)hci_le_set_addr_resolution_enable(hci_fd,
+	    (blued_cfg.privacy || adp->reslist.count > 0) ? 1 : 0);
+}
+
+/*
  * Incrementally add a freshly bonded peer's IRK to the controller resolving
  * list (PC10 add-on-bond).  Idempotent via the shadow and bounded to the
  * controller list depth, so repeated pairings never grow the list past its
- * capacity.  A bond without an IRK is a no-op.  Address resolution is toggled
- * off around the mutation (Core Spec Vol 4 Part E §7.8.38).
+ * capacity.  A bond without an IRK is a no-op.  Advertising/scanning are
+ * quiesced and address resolution is toggled off around the mutation (Core
+ * Spec Vol 4 Part E §7.8.38).
  */
 void
 blued_reslist_sync_add(int hci_fd, const struct smp_bond *bond)
 {
 	struct blued_adapter *adp;
+	struct blued_reslist_quiesce q;
 	const uint8_t *local_irk;
 	uint8_t at;
 
@@ -1920,15 +2053,26 @@ blued_reslist_sync_add(int hci_fd, const struct smp_bond *bond)
 
 	local_irk = blued_has_local_irk ? blued_local_irk : blued_zero_irk;
 	at = (bond->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
-	hci_le_set_addr_resolution_enable(hci_fd, 0);
-	if (hci_le_add_dev_resolving_list(hci_fd, at, bond->addr, bond->irk,
-	    local_irk) == 0)
-		hci_le_set_privacy_mode(hci_fd, at, bond->addr,
-		    blued_cfg.privacy_mode);
-	else
+	/*
+	 * Finding H-H7: quiesce adv/scan first, and check every command's
+	 * return.  Ignoring the disable-resolution / Add return let the Add fail
+	 * 0x0C (Command Disallowed) while the shadow claimed success — the peer
+	 * IRK silently never reached the controller.  On any failure roll the
+	 * shadow back so it stays consistent with the controller.
+	 */
+	blued_reslist_quiesce_begin(adp, &q);
+	if (hci_le_set_addr_resolution_enable(hci_fd, 0) != 0 ||
+	    hci_le_add_dev_resolving_list(hci_fd, at, bond->addr, bond->irk,
+	    local_irk) != 0) {
 		(void)blued_reslist_remove(&adp->reslist, bond->addr,
 		    bond->addr_type);	/* keep shadow == controller */
-	hci_le_set_addr_resolution_enable(hci_fd, blued_cfg.privacy ? 1 : 0);
+		LOG_HCI(1, "resolving-list add failed; peer IRK not programmed");
+	} else {
+		(void)hci_le_set_privacy_mode(hci_fd, at, bond->addr,
+		    blued_cfg.privacy_mode);
+	}
+	blued_reslist_restore_resolution(hci_fd, adp);
+	blued_reslist_quiesce_end(adp, &q);
 	pthread_mutex_unlock(&blued_g.reslist_lock);
 }
 
@@ -1941,6 +2085,7 @@ void
 blued_reslist_sync_remove(int hci_fd, const uint8_t addr[6], uint8_t addr_type)
 {
 	struct blued_adapter *adp;
+	struct blued_reslist_quiesce q;
 	uint8_t at;
 
 	if (hci_fd < 0)
@@ -1956,9 +2101,13 @@ blued_reslist_sync_remove(int hci_fd, const uint8_t addr[6], uint8_t addr_type)
 	}
 
 	at = (addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
-	hci_le_set_addr_resolution_enable(hci_fd, 0);
+	/* Finding H-H7: quiesce adv/scan around the disallowed-while-active
+	 * mutation (Core Spec Vol 4 Part E §7.8.38). */
+	blued_reslist_quiesce_begin(adp, &q);
+	(void)hci_le_set_addr_resolution_enable(hci_fd, 0);
 	(void)hci_le_remove_dev_resolving_list(hci_fd, at, addr);
-	hci_le_set_addr_resolution_enable(hci_fd, blued_cfg.privacy ? 1 : 0);
+	blued_reslist_restore_resolution(hci_fd, adp);
+	blued_reslist_quiesce_end(adp, &q);
 	pthread_mutex_unlock(&blued_g.reslist_lock);
 }
 
@@ -3256,6 +3405,16 @@ blued_persist_restore(struct blued_config *cfg)
 		 * peripheral resumes advertising after a restart.  Only the
 		 * legacy set (handle 0) is resumed; if it was enabled, force
 		 * peripheral mode so the startup adv path re-applies it.
+		 *
+		 * H-L5: the primary set's real interval/props are now restored
+		 * with full 24-bit interval precision (persist v2).  Re-creating
+		 * the additional persisted *extended* sets (records 1..nadv-1)
+		 * with their individual props/interval/data at adapter init is a
+		 * larger piece of plumbing (per-set create+data+enable in the
+		 * init path) and is NOT yet done: those records are loaded and
+		 * available in advs[] but not re-applied.  Until then a
+		 * non-connectable extended set is simply not resurrected (rather
+		 * than resurrected with the wrong, connectable, properties).
 		 */
 		blued_adv_restore = advs[0];
 		blued_adv_restore_valid = true;
@@ -3448,10 +3607,9 @@ blued_persist_flush(const struct blued_config *cfg)
 				adv->enabled = es->enabled ? 1 : 0;
 				adv->own_addr_type = es->own_addr_type;
 				adv->adv_props = es->event_props;
-				adv->interval_min =
-				    (uint16_t)es->interval_min;
-				adv->interval_max =
-				    (uint16_t)es->interval_max;
+				/* H-L5: interval is 24-bit; no longer truncated. */
+				adv->interval_min = es->interval_min;
+				adv->interval_max = es->interval_max;
 			}
 		}
 
@@ -3883,8 +4041,8 @@ main(int argc, char *argv[])
 			 * 100ms default otherwise.
 			 */
 			uint16_t adv_props = 0x0013;	/* conn+scan legacy */
-			uint16_t adv_imin = ADV_INTERVAL_100MS;
-			uint16_t adv_imax = ADV_INTERVAL_100MS;
+			uint32_t adv_imin = ADV_INTERVAL_100MS;	/* H-L5: 24-bit */
+			uint32_t adv_imax = ADV_INTERVAL_100MS;
 
 			if (blued_adv_restore_valid &&
 			    blued_adv_restore.enabled) {

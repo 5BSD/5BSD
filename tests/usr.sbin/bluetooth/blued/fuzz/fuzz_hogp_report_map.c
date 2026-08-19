@@ -70,7 +70,7 @@ volatile sig_atomic_t		running = 1;
  * ================================================================ */
 int
 hci_get_con_handle(int hci_fd __unused, const uint8_t *remote_addr __unused,
-    uint16_t *con_handle __unused)
+    uint8_t addr_type __unused, uint16_t *con_handle __unused)	/* H-L3 */
 {
 	return (-1);
 }

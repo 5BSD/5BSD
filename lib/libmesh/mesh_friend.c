@@ -542,6 +542,19 @@ mesh_fq_count(const struct mesh_friend_queue *q)
 	return (n);
 }
 
+void
+mesh_fq_flush(struct mesh_friend_queue *q)
+{
+	size_t i;
+
+	if (q == NULL)
+		return;
+	for (i = 0; i < q->cap; i++)
+		q->entries[i].valid = 0;
+	q->order_ctr = 0;
+	q->last_fsn = -1;			/* no Poll answered yet */
+}
+
 /* Is addr one of the LPN's own element unicast addresses? */
 static int
 fq_is_lpn_addr(const struct mesh_friend_queue *q, uint16_t addr)
@@ -637,6 +650,15 @@ mesh_fq_enqueue(struct mesh_friend_queue *q, const struct mesh_fq_entry *in)
 
 	if (q == NULL || in == NULL || in->pdu_len > MESH_FQ_PDU_MAX)
 		return (-1);
+
+	/*
+	 * A Segmented Access/Control message is stored only once the complete
+	 * Upper Transport PDU has been reassembled (Section 3.5.5).  The caller
+	 * flags an as-yet-incomplete segment via in->segmented; such a message is
+	 * not queued until it is presented reassembled (segmented == 0).
+	 */
+	if (in->segmented)
+		return (0);
 
 	/* Destined for the LPN? unicast element OR in the subscription list. */
 	if (!fq_is_lpn_addr(q, in->dst) &&
@@ -955,6 +977,7 @@ mesh_friend_fsm_recv_request(struct mesh_friend_fsm *f, const uint8_t *pdu,
 	f->num_elements = req.num_elements;
 	f->recv_delay = req.recv_delay;
 	f->poll_timeout = req.poll_timeout;
+	f->prev_addr = req.prev_addr;	/* PreviousAddress -> Friend Clear target */
 	mesh_fq_init(&f->queue, lpn_addr, f->num_elements, f->queue_size);
 
 	/* Compose the Offer we will emit after the delay. */
@@ -1037,7 +1060,39 @@ mesh_friend_fsm_tick(struct mesh_friend_fsm *f, uint64_t now,
 	    now - f->last_poll_ms >= friend_poll_timeout_ms(f)) {
 		out->action = MESH_FRIEND_ACT_TERMINATED;
 		f->state = MESH_FRIEND_ST_IDLE;
+		/* Terminated: discard the Friend Queue (Section 3.6.6.3.2). */
+		mesh_fq_flush(&f->queue);
+		f->clear_active = 0;
 		return (0);
+	}
+
+	/*
+	 * Friend Clear procedure toward the LPN's previous Friend (Section
+	 * 3.6.6.3.1).  Emit a Friend Clear when the repeat timer is due, doubling
+	 * the repeat period each time, until a Friend Clear Confirm arrives
+	 * (recv_clear) or the procedure timer (2 x PollTimeout) expires.
+	 */
+	if (f->clear_active) {
+		if ((int64_t)(now - f->clear_deadline_ms) >= 0) {
+			f->clear_active = 0;		/* procedure timer expired */
+		} else if ((int64_t)(now - f->clear_repeat_at_ms) >= 0) {
+			struct mesh_friend_clear clr;
+			size_t clen = 0;
+
+			memset(&clr, 0, sizeof(clr));
+			clr.lpn_addr = f->lpn_addr;
+			clr.lpn_counter = f->clear_lpn_counter;
+			if (mesh_friend_clear_build(MESH_FRIEND_OP_CLEAR, &clr,
+			    out->pdu, &clen) != 0)
+				return (-1);
+			out->pdu_len = clen;
+			out->addr = f->clear_addr;
+			out->action = MESH_FRIEND_ACT_SEND_CLEAR;
+			f->clear_repeat_at_ms = now + f->clear_repeat_ms;
+			if (f->clear_repeat_ms <= 0x7fffffffu / 2)
+				f->clear_repeat_ms *= 2;
+			return (0);
+		}
 	}
 	return (0);
 }
@@ -1050,7 +1105,7 @@ mesh_friend_fsm_recv_poll(struct mesh_friend_fsm *f, const uint8_t *pdu,
 	struct mesh_friend_poll poll;
 	struct mesh_fq_entry empty_update;
 	size_t qcount, remaining;
-	int rc, will_discard;
+	int rc, will_discard, first_poll;
 
 	if (f == NULL || pdu == NULL || out == NULL)
 		return (-1);
@@ -1075,8 +1130,58 @@ mesh_friend_fsm_recv_poll(struct mesh_friend_fsm *f, const uint8_t *pdu,
 	}
 
 	/* The first Poll establishes the friendship (Section 3.6.6.4.1). */
+	first_poll = (f->state == MESH_FRIEND_ST_ESTABLISHING);
 	f->state = MESH_FRIEND_ST_ESTABLISHED;
 	f->last_poll_ms = now;
+
+	if (first_poll) {
+		/*
+		 * The first Poll establishes the friendship and MUST be answered
+		 * with a Friend Update, not a queued data PDU (Section 3.6.6.3.1):
+		 * the LPN considers the friendship established only on receipt of a
+		 * Friend Update.  Any messages queued during establishment are
+		 * preserved and delivered on subsequent Polls; the queue FSN state
+		 * is left unstarted so the first toggled-FSN Poll delivers (rather
+		 * than ack-discards) the oldest queued message.
+		 */
+		f->establish_update = 1;
+		f->establish_fsn = poll.fsn;
+		f->queue.last_fsn = -1;
+
+		/*
+		 * If the accepted LPN carried a valid PreviousAddress that is not
+		 * our own, start the Friend Clear procedure toward the previous
+		 * Friend (Section 3.6.6.3.1): first Clear as soon as established,
+		 * repeat timer at 1 s doubling, procedure timer 2 x PollTimeout.
+		 */
+		if (f->prev_addr != 0 && f->prev_addr != f->friend_addr &&
+		    f->prev_addr <= 0x7fff) {
+			f->clear_active = 1;
+			f->clear_addr = f->prev_addr;
+			f->clear_lpn_counter = f->lpn_counter;
+			f->clear_repeat_ms = MESH_FRIEND_CLEAR_REPEAT_MS;
+			f->clear_repeat_at_ms = now;
+			f->clear_deadline_ms = now + 2 * friend_poll_timeout_ms(f);
+		}
+	}
+
+	if (f->establish_update) {
+		if (poll.fsn == f->establish_fsn) {
+			/*
+			 * The LPN has not yet acknowledged the establishing Friend
+			 * Update (its FSN is unchanged): resend the Friend Update
+			 * (Section 3.6.6.3.2), carrying MD per the current queue.
+			 */
+			qcount = mesh_fq_count(&f->queue);
+			if (friend_build_update_entry(f, key_refresh, iv_update,
+			    iv_index, qcount > 0 ? 1 : 0, &out->msg) != 0)
+				return (-1);
+			out->action = MESH_FRIEND_ACT_SEND_MSG;
+			return (1);
+		}
+		/* Toggled FSN: the Update was received.  Begin queue delivery. */
+		f->establish_update = 0;
+	}
 
 	/*
 	 * Compute More Data as the queue will look after this Poll's FSN
@@ -1152,6 +1257,19 @@ mesh_friend_fsm_recv_clear(struct mesh_friend_fsm *f, const uint8_t *pdu,
 
 	if (mesh_friend_clear_parse(pdu, len, &clr, &op) != 0)
 		return (-1);
+
+	/*
+	 * Friend Clear Confirm (0x06): the previous Friend has released the LPN in
+	 * response to our Friend Clear procedure (Section 3.6.5.6).  If it matches
+	 * an in-flight procedure, stop the repeat/procedure timers; nothing to
+	 * send.
+	 */
+	if (op == MESH_FRIEND_OP_CLEAR_CONFIRM) {
+		if (f->clear_active && clr.lpn_addr == f->lpn_addr &&
+		    clr.lpn_counter == f->clear_lpn_counter)
+			f->clear_active = 0;
+		return (0);
+	}
 	if (op != MESH_FRIEND_OP_CLEAR)
 		return (-1);
 	if (clr.lpn_addr != f->lpn_addr)
@@ -1169,8 +1287,10 @@ mesh_friend_fsm_recv_clear(struct mesh_friend_fsm *f, const uint8_t *pdu,
 	if ((uint16_t)(clr.lpn_counter - f->lpn_counter) > 255)
 		return (0);
 
-	/* Terminate and confirm (Section 3.6.5.5). */
+	/* Terminate, discard the queue, and confirm (Section 3.6.5.5). */
 	f->state = MESH_FRIEND_ST_IDLE;
+	mesh_fq_flush(&f->queue);
+	f->clear_active = 0;
 	olen = 0;
 	if (mesh_friend_clear_build(MESH_FRIEND_OP_CLEAR_CONFIRM, &clr, out->pdu,
 	    &olen) != 0)

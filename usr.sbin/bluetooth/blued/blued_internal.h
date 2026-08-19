@@ -290,6 +290,33 @@ bool	blued_oob_take(const uint8_t *addr, struct smp_oob_legacy *lg,
 void	blued_event_loop(void);
 void	blued_conn_disconnect(struct blued_conn *conn);
 void	blued_conn_central_teardown(struct blued_conn *conn);
+/*
+ * ATT in-flight guard (ctl.c).  Used by non-GATT worker paths (the central
+ * pairing worker) to participate in the same teardown-deferral protocol the
+ * GATT workers use (finding H-H1).
+ */
+void	blued_conn_att_ops_begin(struct blued_conn *conn);
+void	blued_conn_att_ops_end(struct blued_conn *conn);
+
+/*
+ * Resolving-list adv/scan quiescing (blued.c, finding H-H7).  Callers wrap a
+ * resolving-list mutation between _begin and _end so the LE Set/Add/Remove
+ * commands are not issued while advertising or scanning is enabled.
+ * blued_reslist_restore_resolution re-enables address resolution when either
+ * local privacy is on or the shadow holds at least one entry (finding H-H5).
+ */
+struct blued_reslist_quiesce {
+	bool	legacy_adv;
+	bool	ext_primary_adv;
+	bool	ext_sets[BLUED_EXT_ADV_SET_MAX];
+	bool	mesh_scan;
+};
+void	blued_reslist_quiesce_begin(struct blued_adapter *adp,
+	    struct blued_reslist_quiesce *q);
+void	blued_reslist_quiesce_end(struct blued_adapter *adp,
+	    struct blued_reslist_quiesce *q);
+void	blued_reslist_restore_resolution(int hci_fd,
+	    struct blued_adapter *adp);
 void	blued_ind_arm_timeout(struct blued_conn *conn);
 void	blued_ind_disarm_timeout(struct blued_conn *conn);
 void	blued_idle_arm(struct blued_conn *conn);

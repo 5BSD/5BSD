@@ -237,7 +237,14 @@ mesh_cfg_od_priv_proxy_parse(const uint8_t *in, size_t inlen, uint32_t *opcode,
  * Solicitation PDU RPL Configuration Server.
  * ================================================================ */
 
-/* Encode an Address Range: le16(start | length-present<<15) + optional len. */
+/*
+ * Encode an Address Range (access-layer, little-endian).  P-H6: this is an
+ * access message, so LengthPresent is bit 0 and RangeStart is bits 1-15, i.e.
+ * the little-endian word is (RangeStart << 1) | LengthPresent -- the same
+ * convention as the aggregator Length_Format (mesh_cfg_agg_len_encode).  This
+ * is the mirror image of the big-endian DF transport-control range in
+ * mesh_df.c, where LengthPresent is the most-significant bit.
+ */
 static int
 addr_range_valid(const struct mesh_cfg_addr_range *r)
 {
@@ -250,10 +257,11 @@ addr_range_valid(const struct mesh_cfg_addr_range *r)
 static size_t
 addr_range_encode(const struct mesh_cfg_addr_range *r, uint8_t *p)
 {
-	uint16_t word = (uint16_t)(r->range_start & 0x7fff);
+	/* P-H6: RangeStart occupies bits 1-15, LengthPresent is bit 0. */
+	uint16_t word = (uint16_t)((r->range_start & 0x7fff) << 1);
 
 	if (r->range_length > 1) {
-		put16(p, (uint16_t)(word | 0x8000));
+		put16(p, (uint16_t)(word | 0x0001));	/* LengthPresent = 1 */
 		p[2] = r->range_length;
 		return (3);
 	}
@@ -270,8 +278,9 @@ addr_range_decode(const uint8_t *p, size_t len, struct mesh_cfg_addr_range *r)
 	if (len < 2)
 		return (0);
 	word = get16(p);
-	r->range_start = word & 0x7fff;
-	if (word & 0x8000) {
+	/* P-H6: RangeStart = bits 1-15, LengthPresent = bit 0 (little-endian). */
+	r->range_start = (word >> 1) & 0x7fff;
+	if (word & 0x0001) {
 		if (len < 3)
 			return (0);
 		r->range_length = p[2];

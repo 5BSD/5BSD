@@ -25,6 +25,14 @@ lpn_build_request(struct mesh_lpn_fsm *l, uint64_t now, struct mesh_lpn_out *out
 	struct mesh_friend_request req;
 	size_t olen;
 
+	/*
+	 * PreviousAddress carries the unicast address of the Friend of the prior
+	 * friendship (0 = none), so a new Friend can send Friend Clear to release
+	 * it (Section 3.6.6.4.1).  friend_addr holds the last selected Friend and
+	 * is 0 on the first-ever Request.
+	 */
+	l->prev_addr = l->friend_addr;
+
 	memset(&req, 0, sizeof(req));
 	req.rssi_factor = l->rssi_factor;
 	req.rx_window_factor = l->rx_window_factor;
@@ -238,11 +246,21 @@ mesh_lpn_fsm_recv_update(struct mesh_lpn_fsm *l, const uint8_t *pdu, size_t len,
 
 	/*
 	 * The Update acknowledges the outstanding Poll: toggle FSN and advance
-	 * supervision.  A second copy of the same response (no Poll outstanding)
-	 * is a duplicate and must not toggle the FSN again (Section 3.6.6.4.2).
+	 * supervision.  Duplicate detection is keyed on PDU identity - a response
+	 * byte-identical to the last received Friend Update is a duplicate and
+	 * must not toggle the FSN (Section 3.6.6.4.2).  Keying on PDU identity
+	 * rather than the poll-outstanding flag prevents a stale retransmission of
+	 * a prior response (arriving while a fresh Poll is outstanding) from
+	 * erroneously toggling the FSN.
 	 */
-	is_duplicate = !l->poll_outstanding;
+	is_duplicate = (l->have_last_update && len == l->last_update_len &&
+	    memcmp(l->last_update, pdu, len) == 0);
 	l->poll_outstanding = 0;
+	if (len <= sizeof(l->last_update)) {
+		memcpy(l->last_update, pdu, len);
+		l->last_update_len = len;
+		l->have_last_update = 1;
+	}
 	(void)mesh_lpn_on_response(&l->cadence, is_duplicate, now);
 	l->next_poll_start_ms = now;
 	l->next_poll_ms = up.md ? now : now + l->poll_interval_ms;
@@ -293,7 +311,12 @@ mesh_lpn_fsm_sub(struct mesh_lpn_fsm *l, int add, const uint16_t *addrs,
 	(void)now;
 
 	memset(&sl, 0, sizeof(sl));
-	sl.transaction = ++l->sub_transaction;
+	/*
+	 * The first Subscription List TransactionNumber is 0x00 and increments per
+	 * completed transaction (Section 3.6.6.4.3).  sub_transaction holds the
+	 * number in flight; it advances on the matching Confirm (recv_subconfirm).
+	 */
+	sl.transaction = l->sub_transaction;
 	sl.naddr = naddr;
 	memcpy(sl.addrs, addrs, naddr * sizeof(addrs[0]));
 	op = add ? MESH_FRIEND_OP_SUBLIST_ADD : MESH_FRIEND_OP_SUBLIST_REMOVE;
@@ -322,6 +345,7 @@ mesh_lpn_fsm_recv_subconfirm(struct mesh_lpn_fsm *l, const uint8_t *pdu,
 	if (!l->sub_pending || cf.transaction != l->sub_transaction)
 		return (0);
 	l->sub_pending = 0;
+	l->sub_transaction++;		/* advance TransactionNumber for the next */
 	return (1);
 }
 

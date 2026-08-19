@@ -55,6 +55,18 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 	uint8_t buf[512];
 	ng_hci_event_pkt_t *evt;
 	struct timespec deadline, now;
+	pthread_mutex_t *hci_mtx;
+
+	/*
+	 * Finding H-H4: this runs on a detached worker thread doing raw
+	 * bt_devfilter/bt_devrecv on the shared HCI fd — the same fd the main
+	 * event loop drains.  Hold hci_devreq_mutex across the filter swap and
+	 * the receive loop so the worker and the event loop cannot both consume
+	 * HCI events (consistent with the finding-43 trylock in the event loop,
+	 * which backs off while this lock is held).
+	 */
+	hci_mtx = hci_devreq_mutex(hci_fd);
+	pthread_mutex_lock(hci_mtx);
 
 	/* Set filter to receive Encryption Change events */
 	memset(&flt, 0, sizeof(flt));
@@ -130,6 +142,7 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 			    h == con_handle) {
 				/* Restore old filter */
 				bt_devfilter(hci_fd, &oldflt, NULL);
+				pthread_mutex_unlock(hci_mtx);
 
 				LOG_HCI(1, "encryption change status=%d enable=%d",
 				    status, encryption_enable);
@@ -146,6 +159,7 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 
 	/* Restore old filter */
 	bt_devfilter(hci_fd, &oldflt, NULL);
+	pthread_mutex_unlock(hci_mtx);
 	errno = ETIMEDOUT;
 	return (-1);
 }
@@ -234,6 +248,7 @@ hci_reset(int hci_fd)
 	struct bt_devreq r;
 	ng_hci_status_rp rp;
 
+	memset(&rp, 0, sizeof(rp));	/* Finding H-H3 */
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_HC_BASEBAND,
 	    NG_HCI_OCF_RESET);
@@ -243,7 +258,12 @@ hci_reset(int hci_fd)
 
 	if (hci_devreq_logged(hci_fd, &r, 2) < 0)
 		return (-1);
-	if (rp.status != 0x00) {
+	/*
+	 * Finding H-H3: a truncated/empty Command Complete (r.rlen short of the
+	 * status byte) must not be mistaken for a successful reset just because
+	 * the pre-zeroed status reads 0x00.
+	 */
+	if ((size_t)r.rlen < sizeof(rp) || rp.status != 0x00) {
 		warnx("hci_reset: controller status 0x%02x", rp.status);
 		errno = EIO;
 		return (-1);
@@ -380,6 +400,7 @@ hci_le_read_local_features(int hci_fd, uint64_t *features)
 	struct bt_devreq r;
 	ng_hci_le_read_local_supported_features_rp rp;
 
+	memset(&rp, 0, sizeof(rp));	/* Finding H-H3 */
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
 	    NG_HCI_OCF_LE_READ_LOCAL_SUPPORTED_FEATURES);
@@ -389,6 +410,11 @@ hci_le_read_local_features(int hci_fd, uint64_t *features)
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/* Finding H-H3: reject a short/absent CC before reading le_features. */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 	if (rp.status != 0x00) {
 		warnx("hci_le_read_local_features: controller status 0x%02x",
 		    rp.status);

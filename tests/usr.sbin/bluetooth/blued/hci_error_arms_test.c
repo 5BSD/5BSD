@@ -1098,13 +1098,13 @@ ATF_TC_BODY(get_con_handle_arms, tc)
 	/* ioctl failure -> -1. */
 	con_reset();
 	G_ioctl_fail = 1;
-	ATF_CHECK_EQ(-1, hci_get_con_handle(FD, addr, &handle));
+	ATF_CHECK_EQ(-1, hci_get_con_handle(FD, addr, 0x00, &handle)); /* H-L3 */
 
 	/* No connections -> not found -> ENOENT. */
 	con_reset();
 	G_con_count = 0;
 	errno = 0;
-	ATF_CHECK_EQ(-1, hci_get_con_handle(FD, addr, &handle));
+	ATF_CHECK_EQ(-1, hci_get_con_handle(FD, addr, 0x00, &handle)); /* H-L3 */
 	ATF_CHECK_EQ(ENOENT, errno);
 
 	/* First entry a non-LE link (skipped), second an LE-public match. */
@@ -1117,7 +1117,7 @@ ATF_TC_BODY(get_con_handle_arms, tc)
 	memcpy(&G_cons[1].bdaddr, addr, 6);
 	G_cons[1].con_handle = 0x0042;
 	handle = 0;
-	ATF_CHECK_EQ(0, hci_get_con_handle(FD, addr, &handle));
+	ATF_CHECK_EQ(0, hci_get_con_handle(FD, addr, 0x00, &handle)); /* H-L3: LE-public */
 	ATF_CHECK_EQ(0x0042, handle);		/* con_handle extracted */
 
 	/* LE-random link type also matches. */
@@ -1127,7 +1127,7 @@ ATF_TC_BODY(get_con_handle_arms, tc)
 	memcpy(&G_cons[0].bdaddr, addr, 6);
 	G_cons[0].con_handle = 0x0043;
 	handle = 0;
-	ATF_CHECK_EQ(0, hci_get_con_handle(FD, addr, &handle));
+	ATF_CHECK_EQ(0, hci_get_con_handle(FD, addr, 0x01, &handle)); /* H-L3: LE-random */
 	ATF_CHECK_EQ(0x0043, handle);
 
 	/* LE link but a different address -> not found. */
@@ -1137,7 +1137,7 @@ ATF_TC_BODY(get_con_handle_arms, tc)
 	memcpy(&G_cons[0].bdaddr, other, 6);
 	G_cons[0].con_handle = 0x0044;
 	errno = 0;
-	ATF_CHECK_EQ(-1, hci_get_con_handle(FD, addr, &handle));
+	ATF_CHECK_EQ(-1, hci_get_con_handle(FD, addr, 0x00, &handle)); /* H-L3 */
 	ATF_CHECK_EQ(ENOENT, errno);
 
 	blued_verbose = 0;

@@ -109,19 +109,31 @@ int	mesh_hlt_attention_parse(const uint8_t *in, size_t inlen, uint32_t *opcode,
 	    uint8_t *attention);
 
 /*
- * Minimal Health Server state (Section 7.4.1): the registered fault array,
- * the current test id, the fast period divisor and the attention timer.
+ * Minimal Health Server state (Section 7.4.1).
+ *
+ * P-M14 / MshPRT 4.2.16: the Current Fault state (Section 4.2.16.1) is a
+ * real-time view of the conditions PRESENT NOW, while the Registered Fault
+ * state (Section 4.2.16.2) is a shadow array that latches every fault that has
+ * ever been present and is cleared ONLY by a Health Fault Clear message.  They
+ * are held as two independent arrays: a Health Current Status is built from
+ * current_faults, a Health Fault Status from registered_faults.
  */
 struct mesh_hlt_server_state {
 	uint16_t	company_id;
 	uint8_t		test_id;
 	uint8_t		fast_period_divisor;	/* 0..15 */
 	uint8_t		attention;		/* seconds remaining */
-	uint8_t		faults[MESH_HLT_MAX_FAULTS];
-	size_t		n_faults;
+	uint8_t		current_faults[MESH_HLT_MAX_FAULTS];
+	size_t		n_current_faults;
+	uint8_t		registered_faults[MESH_HLT_MAX_FAULTS];
+	size_t		n_registered_faults;
 };
 void	mesh_hlt_server_init(struct mesh_hlt_server_state *s, uint16_t company_id);
+/* A present fault is recorded in both the Current and Registered arrays. */
 int	mesh_hlt_server_add_fault(struct mesh_hlt_server_state *s, uint8_t fault);
+/* A resolved condition clears the Current array only (Registered persists). */
+void	mesh_hlt_server_clear_current(struct mesh_hlt_server_state *s);
+/* Health Fault Clear clears the Registered array only (Current unaffected). */
 void	mesh_hlt_server_clear_faults(struct mesh_hlt_server_state *s);
 
 #endif /* _MESH_HEALTH_MODEL_H_ */

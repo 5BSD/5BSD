@@ -696,7 +696,17 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 		if (ae != NULL) {
 			ae->req_opcode = ((uint8_t *)rsp)[1];
 			ae->handle = get_le16((uint8_t *)rsp + 2);
-			ae->code = ((uint8_t *)rsp)[4];
+			/*
+			 * A-F4: 0x00 is a Reserved error code (Core Spec Vol 3
+			 * Part F Table 3.4) that a peer must never send.  The
+			 * error-returning wrappers surface ae.code when errno is
+			 * EPROTO, and callers read 0 as success — so a malicious
+			 * or garbage 0x00 would be mistaken for a successful
+			 * operation.  Substitute a nonzero code so an Error
+			 * Response is always a failure.
+			 */
+			ae->code = (((uint8_t *)rsp)[4] == 0x00) ?
+			    ATT_ERR_UNLIKELY_ERROR : ((uint8_t *)rsp)[4];
 		}
 		warnx("ATT error: req=%02x handle=%04x code=%02x",
 		    ((uint8_t *)rsp)[1], get_le16((uint8_t *)rsp + 2),
@@ -759,8 +769,13 @@ att_exchange_mtu(struct att_conn *ac, uint16_t client_mtu)
 	ac->mtu = client_mtu < server_mtu ? client_mtu : server_mtu;
 	if (ac->mtu < ATT_DEFAULT_MTU)
 		ac->mtu = ATT_DEFAULT_MTU;
-	if (ac->mtu > ATT_MAX_MTU)
-		ac->mtu = ATT_MAX_MTU;
+	/*
+	 * A-F6: the unenhanced (fixed CID 0x0004) ATT bearer is capped at 517
+	 * octets (Core Spec Vol 3 Part F §3.2.8); clamp to that, not the 65535
+	 * EATT ceiling, since Exchange MTU only runs on the unenhanced bearer.
+	 */
+	if (ac->mtu > ATT_UNENHANCED_MAX_MTU)
+		ac->mtu = ATT_UNENHANCED_MAX_MTU;
 
 	ac->mtu_exchanged = true;
 

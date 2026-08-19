@@ -212,7 +212,7 @@ ctl_gatt_write_result(struct blued_conn *job_conn, uint8_t adapter_index,
 	(void)adapter_index;
 	(void)addr_type;
 	if (addr == NULL || handle == 0 || (value == NULL && value_len != 0) ||
-	    value_len > ATT_PDU_BUF_SIZE)
+	    value_len > ATT_MAX_ATTR_VALUE_LEN /* A-F6: max attr value is 512 */)
 		return (IPC_ERR_INVAL);
 	/* Finding 90: operate on the admitted, ref'd conn. */
 	conn = job_conn;
@@ -1397,7 +1397,7 @@ ctl_gatt_set_value_result(int client_fd, uint16_t handle,
 	struct att_attr *attr;
 
 	if (handle == 0 || (value == NULL && value_len != 0) ||
-	    value_len > ATT_PDU_BUF_SIZE)
+	    value_len > ATT_MAX_ATTR_VALUE_LEN /* A-F6: max attr value is 512 */)
 		return (IPC_ERR_INVAL);
 	attr = attdb_find_by_handle(&periph_gatt_db, handle);
 	if (attr == NULL)
@@ -1409,6 +1409,15 @@ ctl_gatt_set_value_result(int client_fd, uint16_t handle,
 	if (value_len != 0)
 		memcpy(attr->value, value, value_len);
 	attr->value_len = value_len;
+	/*
+	 * A-F6: the Characteristic Extended Properties descriptor (0x2900) value
+	 * is covered by the GATT Database Hash (Core Spec Vol 3 Part G §7.3.1).
+	 * Mutating it in place without recomputing the hash would leave
+	 * change-aware clients with a stale hash, so recompute and signal
+	 * Service Changed for its handle.
+	 */
+	if (attr->uuid16 == 0x2900)
+		ctl_recompute_hash_and_notify(handle, handle);
 	return (IPC_ERR_NONE);
 }
 
@@ -1480,7 +1489,7 @@ ctl_gatt_add_char_result(int client_fd, uint16_t service_handle,
 
 	if (service_handle == 0 || handle_out == NULL ||
 	    (uuid16 == 0 && uuid128 == NULL) ||
-	    (value == NULL && value_len != 0) || value_len > ATT_PDU_BUF_SIZE ||
+	    (value == NULL && value_len != 0) || value_len > ATT_MAX_ATTR_VALUE_LEN /* A-F6: max attr value is 512 */ ||
 	    (permissions & ~0x3fu) != 0 ||
 	    (flags & ~(ATT_ATTR_F_DYNAMIC | ATT_ATTR_F_AUTHORIZE)) != 0)
 		return (IPC_ERR_INVAL);
@@ -1607,7 +1616,7 @@ ctl_gatt_add_desc_result(int client_fd, uint16_t char_handle,
 
 	if (char_handle == 0 || handle_out == NULL ||
 	    (uuid16 == 0 && uuid128 == NULL) ||
-	    (value == NULL && value_len != 0) || value_len > ATT_PDU_BUF_SIZE ||
+	    (value == NULL && value_len != 0) || value_len > ATT_MAX_ATTR_VALUE_LEN /* A-F6: max attr value is 512 */ ||
 	    (permissions & ~0x3fu) != 0)
 		return (IPC_ERR_INVAL);
 	db = ctl_gatt_target_db(client_fd, &staged);
@@ -1657,12 +1666,14 @@ int
 ctl_gatt_notify_result(uint16_t handle, const uint8_t *value,
     uint16_t value_len, bool indicate, int *sent_out)
 {
+	struct att_attr *val_attr;
 	uint16_t cccd_handle;
 	uint8_t props;
+	uint8_t sec_perms = 0;
 	int sent = 0;
 
 	if (handle == 0 || (value == NULL && value_len != 0) ||
-	    value_len > ATT_PDU_BUF_SIZE)
+	    value_len > ATT_MAX_ATTR_VALUE_LEN /* A-F6: max attr value is 512 */)
 		return (IPC_ERR_INVAL);
 	pthread_mutex_lock(&blued_g.gatt_db_lock);
 	if (!ctl_char_metadata(&periph_gatt_db, handle, &props, &cccd_handle)) {
@@ -1674,6 +1685,14 @@ ctl_gatt_notify_result(uint16_t handle, const uint8_t *value,
 		pthread_mutex_unlock(&blued_g.gatt_db_lock);
 		return (IPC_ERR_INVAL);
 	}
+	/*
+	 * A-F2: capture the characteristic value's security requirement so
+	 * delivery can be gated on the link meeting the parent characteristic's
+	 * encryption/authentication level (Core Spec Vol 3 Part G §10.3.1.1).
+	 */
+	val_attr = attdb_find_by_handle(&periph_gatt_db, handle);
+	if (val_attr != NULL)
+		sec_perms = val_attr->perms;
 	pthread_mutex_unlock(&blued_g.gatt_db_lock);
 
 	pthread_rwlock_rdlock(&blued_g.conns_lock);
@@ -1688,6 +1707,13 @@ ctl_gatt_notify_result(uint16_t handle, const uint8_t *value,
 			    atomic_load(&conn->state) != BLUED_CONN_ACTIVE ||
 			    !ctl_cccd_enabled(ac, cccd_handle, indicate ?
 			    GATT_CCCD_INDICATE : GATT_CCCD_NOTIFY))
+				continue;
+			/*
+			 * A-F2: never deliver over a link that does not meet the
+			 * characteristic's security requirement, even if the CCCD
+			 * subscription bit is set.
+			 */
+			if (att_check_security_perms(sec_perms, ac) != 0)
 				continue;
 			if (indicate) {
 				ret = att_send_indication(ac, handle, value, value_len);
@@ -1744,7 +1770,7 @@ ctl_gatt_read_reply_result(int client_fd, uint16_t handle,
 {
 	struct blued_conn *conn;
 
-	if (handle == 0 || value_len > ATT_PDU_BUF_SIZE ||
+	if (handle == 0 || value_len > ATT_MAX_ATTR_VALUE_LEN /* A-F6: max attr value is 512 */ ||
 	    (value == NULL && value_len != 0))
 		return (IPC_ERR_INVAL);
 	pthread_rwlock_rdlock(&blued_g.conns_lock);

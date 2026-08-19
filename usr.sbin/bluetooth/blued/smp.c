@@ -47,6 +47,18 @@
 #include "smp_internal.h"
 
 /*
+ * S-m11: BLUED_DEBUG_KEYS gates blued_hexdump() calls that print live key
+ * material (e.g. the derived STK) to the log.  It is a developer-only switch
+ * and MUST remain undefined for any shipped build; it is not set by the
+ * Makefile or any header, so release builds never dump keys.  As a
+ * belt-and-braces safety net, refuse to compile if it is ever enabled in a
+ * release (NDEBUG) build.
+ */
+#if defined(BLUED_DEBUG_KEYS) && defined(NDEBUG)
+#error "BLUED_DEBUG_KEYS dumps key material and must never be set in a release build"
+#endif
+
+/*
  * Logged send/recv helpers for SMP — log PDUs as L2CAP on CID 0x0006
  * to BTSnoop when capture is active.
  */
@@ -285,8 +297,15 @@ smp_recv_skip_keypress(struct smp_conn *sc, uint8_t *buf, size_t len)
 			 * 3 Part H §3.5.8).  Previously received-and-dropped; now
 			 * delivered to a registered sink so a display-side UI can
 			 * reflect the peer's passkey entry progress.
+			 *
+			 * S-m7: gate delivery on keypress having been negotiated
+			 * by BOTH sides (preq[3]&pres[3] & SMP_AUTH_KEYPRESS),
+			 * captured in sc->kp_negotiated during Pairing Feature
+			 * exchange.  An inbound keypress that was never negotiated
+			 * is consumed (for wire-sequence tolerance) but not
+			 * surfaced.  Core Spec Vol 3 Part H §3.5.8.
 			 */
-			if (sc->keypress_cb != NULL)
+			if (sc->kp_negotiated && sc->keypress_cb != NULL)
 				sc->keypress_cb(buf[1], sc->keypress_cb_arg);
 		} else
 			LOG_SMP(1, "recv keypress notification (malformed)");
@@ -1035,8 +1054,9 @@ smp_pair(struct smp_conn *sc)
 		    (pres[3] & SMP_AUTH_SC);
 
 		if (peer_key_sz < 7 || peer_key_sz > 16) {
+			/* S-m6: out-of-range key size is ENCRYPTION_KEY_SIZE. */
 			pdu[0] = SMP_PAIRING_FAILED;
-			pdu[1] = SMP_ERR_INVALID_PARAMETERS;
+			pdu[1] = SMP_ERR_ENCRYPTION_KEY_SIZE;
 			smp_log_send(sc, pdu, 2);
 			errno = EPROTO;
 			return (-1);
@@ -1097,6 +1117,24 @@ smp_pair(struct smp_conn *sc)
 		    (preq[2] != 0 || pres[2] != 0) :
 		    (preq[2] != 0 && pres[2] != 0);
 		int model;
+
+		/*
+		 * S-m8: validate the peer's IO-capability and OOB-flag byte
+		 * ranges up front so reserved values are rejected on every
+		 * path, not only when MITM forces smp_select_model().  On the
+		 * initiator path the peer (responder) fields are in pres.
+		 * Table 3.4: IO capability 0x05-0xFF reserved; OOB data flag
+		 * 0x02-0xFF reserved.
+		 */
+		if (pres[1] > SMP_IO_KEYBOARD_DISPLAY || pres[2] > 1) {
+			LOG_SMP(1, "reserved peer IO-cap/OOB value "
+			    "(io=%d oob=%d), rejecting", pres[1], pres[2]);
+			pdu[0] = SMP_PAIRING_FAILED;
+			pdu[1] = SMP_ERR_INVALID_PARAMETERS;
+			smp_log_send(sc, pdu, 2);
+			errno = EPROTO;
+			return (-1);
+		}
 
 		/*
 		 * OOB takes priority over IO capabilities.
@@ -1234,6 +1272,7 @@ smp_pair(struct smp_conn *sc)
 			 */
 			kp_notify = (preq[3] & SMP_AUTH_KEYPRESS) &&
 			    (pres[3] & SMP_AUTH_KEYPRESS);
+			sc->kp_negotiated = kp_notify;	/* S-m7 */
 
 			/*
 			 * Passkey Entry display/input role, initiator side:
@@ -1425,7 +1464,14 @@ smp_pair(struct smp_conn *sc)
 		 */
 		bond.is_mitm = legacy_mitm;
 
-		if (smp_receive_peer_keys(sc, &bond, pres[6], false) != 0) {
+		/*
+		 * S-m5: expect only the keys we actually requested.  RespKeyDist
+		 * is the intersection of what the central requested (preq[6]) and
+		 * what the peripheral agreed to send (pres[6]); using pres[6]
+		 * verbatim would store/expect key material we never asked for.
+		 */
+		if (smp_receive_peer_keys(sc, &bond, preq[6] & pres[6],
+		    false) != 0) {
 			uint8_t fail[2] = { SMP_PAIRING_FAILED,
 			    SMP_ERR_INVALID_PARAMETERS };
 
@@ -1755,8 +1801,9 @@ smp_respond(struct smp_conn *sc)
 		    (pres[3] & SMP_AUTH_SC);
 
 		if (peer_key_sz < 7 || peer_key_sz > 16) {
+			/* S-m6: out-of-range key size is ENCRYPTION_KEY_SIZE. */
 			fail[0] = SMP_PAIRING_FAILED;
-			fail[1] = SMP_ERR_INVALID_PARAMETERS;
+			fail[1] = SMP_ERR_ENCRYPTION_KEY_SIZE;
 			smp_log_send(sc, fail, 2);
 			errno = EPROTO;
 			explicit_bzero(tk, sizeof(tk));
@@ -1813,6 +1860,24 @@ smp_respond(struct smp_conn *sc)
 		    (preq[2] != 0 || pres[2] != 0) :
 		    (preq[2] != 0 && pres[2] != 0);
 		int model;
+
+		/*
+		 * S-m8: validate the peer's IO-capability and OOB-flag byte
+		 * ranges up front so reserved values are rejected on every
+		 * path, not only when MITM forces smp_select_model().  On the
+		 * responder path the peer (initiator) fields are in preq.
+		 * Table 3.4: IO capability 0x05-0xFF reserved; OOB data flag
+		 * 0x02-0xFF reserved.
+		 */
+		if (preq[1] > SMP_IO_KEYBOARD_DISPLAY || preq[2] > 1) {
+			uint8_t fail[2] = { SMP_PAIRING_FAILED,
+			    SMP_ERR_INVALID_PARAMETERS };
+			LOG_SMP(1, "reserved peer IO-cap/OOB value "
+			    "(io=%d oob=%d), rejecting", preq[1], preq[2]);
+			smp_log_send(sc, fail, sizeof(fail));
+			errno = EPROTO;
+			return (-1);
+		}
 
 		/*
 		 * OOB takes priority over IO capabilities.
@@ -1929,6 +1994,7 @@ smp_respond(struct smp_conn *sc)
 			 */
 			kp_notify = (preq[3] & SMP_AUTH_KEYPRESS) &&
 			    (pres[3] & SMP_AUTH_KEYPRESS);
+			sc->kp_negotiated = kp_notify;	/* S-m7 */
 
 			/*
 			 * Passkey Entry display/input role, responder side:

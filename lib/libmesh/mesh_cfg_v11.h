@@ -135,9 +135,12 @@ int	mesh_cfg_od_priv_proxy_parse(const uint8_t *in, size_t inlen,
 /* ================================================================
  * Solicitation PDU RPL Configuration Server.  Solicitation PDU RPL Items
  * Clear (0x8078) / Clear Unacknowledged (0x8079) / Status (0x807A) carry an
- * Address Range: a 15-bit Range Start with a Length-Present bit in bit 15 of
- * the little-endian word, followed by a 1-octet Range Length only when the
- * range spans more than one address (MshPRT §3.4.2.2.1 address range).
+ * Address Range.  This is an access-layer (little-endian) message, so the word
+ * is (Range Start << 1) | Length-Present: Length-Present is bit 0 and the
+ * 15-bit Range Start is bits 1-15, followed by a 1-octet Range Length only when
+ * the range spans more than one address (P-H6; MshPRT §3.4.2.2.1 address
+ * range).  This is the mirror image of the big-endian DF transport-control
+ * range in mesh_df.c, where Length-Present is the most-significant bit.
  * ================================================================ */
 struct mesh_cfg_addr_range {
 	uint16_t	range_start;

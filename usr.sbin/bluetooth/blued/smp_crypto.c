@@ -204,12 +204,22 @@ smp_mask_key(uint8_t key[16], uint8_t key_size)
 
 /*
  * Reverse a byte buffer in-place or into a destination.
+ *
+ * S-m10: safe when dst == src.  Swapping from both ends means each pair of
+ * bytes is exchanged exactly once, so an in-place reversal is not corrupted
+ * by reads of already-overwritten source bytes.  For distinct buffers this
+ * produces the same result as a straight forward copy-reverse.
  */
 void
 smp_swap_buf(uint8_t *dst, const uint8_t *src, size_t len)
 {
-	for (size_t i = 0; i < len; i++)
-		dst[i] = src[len - 1 - i];
+	for (size_t i = 0; i < (len + 1) / 2; i++) {
+		uint8_t lo = src[i];
+		uint8_t hi = src[len - 1 - i];
+
+		dst[i] = hi;
+		dst[len - 1 - i] = lo;
+	}
 }
 
 /*
@@ -573,17 +583,28 @@ smp_generate_sc_oob(uint8_t confirm[16], uint8_t random[16],
 
 /*
  * Verify an ATT Signed Write authentication signature.
- * Core Spec Vol 3 Part H Section 2.4.5:
- *   MAC = AES-CMAC(CSRK, msg || counter_le32)
- * The signature is the first 8 bytes of the 16-byte CMAC output.
+ * Core Spec Vol 3 Part H Section 2.4.5:  MAC = AES-CMAC(CSRK, msg || SignCounter)
+ *
+ * Byte order (S-M3): AES-CMAC (RFC 4493) is defined most-significant-octet
+ * first, but on the LE link the CSRK and the signed message
+ * (att-data || SignCounter_le32) are exchanged least-significant-octet first.
+ * The interoperable reference stacks -- the Linux kernel
+ * (net/bluetooth/smp.c aes_cmac) and BlueZ (src/shared/crypto.c
+ * bt_crypto_sign_att) -- therefore byte-reverse BOTH the key AND the entire
+ * message into MSB order before CMAC, then byte-reverse the 128-bit MAC back
+ * to LSB order; the 8-octet wire signature is the low 8 octets of that
+ * LSB-first MAC (equivalently, mac_msb[8..15] byte-reversed).  We match that
+ * convention exactly so signed writes from Android/Linux/BlueZ centrals
+ * verify.
  */
 bool
 smp_verify_signature(const uint8_t csrk[16], const uint8_t *msg,
     size_t msg_len, const uint8_t mac[8], uint32_t counter)
 {
-	uint8_t *input;
+	uint8_t *input, *swapped;
 	uint8_t csrk_be[16];
 	uint8_t full_mac[16];
+	uint8_t mac_lsb[16];
 	uint32_t cnt_le;
 	int rc;
 
@@ -596,28 +617,33 @@ smp_verify_signature(const uint8_t csrk[16], const uint8_t *msg,
 		warn("smp_verify_signature: malloc");
 		return (false);
 	}
-
-	memcpy(input, msg, msg_len);
+	if (msg_len != 0)
+		memcpy(input, msg, msg_len);
 	cnt_le = htole32(counter);
 	memcpy(input + msg_len, &cnt_le, 4);
 
-	/*
-	 * The CSRK arrives in little-endian (wire) order but
-	 * smp_aes_cmac expects a big-endian key, matching the
-	 * convention used by f4/f5/f6/h6/h7.  Byte-swap before use.
-	 */
-	smp_swap_buf(csrk_be, csrk, 16);
-
-	rc = smp_aes_cmac(csrk_be, input, msg_len + 4, full_mac);
-	explicit_bzero(csrk_be, sizeof(csrk_be));
+	/* Reverse the whole (att-data || SignCounter_le32) message into MSB. */
+	swapped = malloc(msg_len + 4);
+	if (swapped == NULL) {
+		warn("smp_verify_signature: malloc");
+		free(input);
+		return (false);
+	}
+	smp_swap_buf(swapped, input, msg_len + 4);
 	free(input);
+
+	/* Reverse the CSRK into the MSB order smp_aes_cmac (RFC 4493) uses. */
+	smp_swap_buf(csrk_be, csrk, 16);
+	rc = smp_aes_cmac(csrk_be, swapped, msg_len + 4, full_mac);
+	explicit_bzero(csrk_be, sizeof(csrk_be));
+	free(swapped);
 	if (rc != 0)
 		return (false);
 
 	/*
-	 * The CMAC output is in big-endian order.  The spec signature
-	 * uses the 8 least significant bytes of the 128-bit MAC, which
-	 * are bytes [8..15] of the big-endian output.
+	 * Reverse the MSB-first CMAC output back to LSB order; the wire
+	 * signature is its low 8 octets.  Constant-time compare.
 	 */
-	return (timingsafe_bcmp(full_mac + 8, mac, 8) == 0);
+	smp_swap_buf(mac_lsb, full_mac, 16);
+	return (timingsafe_bcmp(mac_lsb, mac, 8) == 0);
 }

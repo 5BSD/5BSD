@@ -103,7 +103,8 @@ typedef void (*ctl_gatt_discover_cb)(const struct gatt_service *,
 	    const struct gatt_char *, void *);
 /* ctl_conn.c — connection commands */
 int	ctl_scan_result(const struct ctl_scan_params *params,
-	    struct blued_adapter *target, ctl_scan_result_cb cb, void *arg);
+	    struct blued_adapter *target, ctl_scan_result_cb cb, void *arg,
+	    int duration_sec);
 void	ctl_status_snapshot(uint16_t *adapters, uint16_t *connections,
 	    uint16_t *clients, uint16_t *flags);
 int	ctl_disconnect_result(uint8_t adapter_index, const bdaddr_t *addr,

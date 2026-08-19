@@ -130,9 +130,15 @@ int	mesh_net_relay(uint8_t ttl, uint8_t *new_ttl);
 /*
  * Minimal network message cache / replay-protection primitive.
  *
+ * M-L7: DEPRECATED.  This SEQ-only primitive ignores the IV Index and so
+ * treats a lower-IV-Index replay as new traffic; it must not be used to
+ * gate delivery.  New code MUST use the IV-Index-aware Replay Protection
+ * List in mesh_rpl.h (mesh_rpl_check() / mesh_rpl_net_receive()).  It has
+ * no IV Index parameter and therefore cannot be made IV-aware in place; it
+ * is retained only for source compatibility with existing tests.
+ *
  * This is a small, testable building block, NOT the full replay
- * protection list: the complete RPL (with IV Index handling and
- * persistence) is Phase 6.  Each slot records the highest SEQ seen from a
+ * protection list.  Each slot records the highest SEQ seen from a
  * SRC.  mesh_net_rpl_check() returns 1 and updates the table when (src,seq)
  * is new (SRC unseen, or seq strictly greater than the stored value),
  * i.e. the PDU should be accepted; it returns 0 without modifying the

@@ -204,6 +204,14 @@ int		att_check_read_perm(const struct att_attr *a,
 		    const struct att_conn *ac);
 int		att_check_write_perm(const struct att_attr *a,
 		    const struct att_conn *ac);
+/*
+ * Evaluate a link against the encryption/authentication requirement carried by
+ * a permission mask, ignoring the plain READ/WRITE bits.  Returns 0 if
+ * satisfied, else an ATT error code (A-F2 — CCCD security inheritance and
+ * notification/indication delivery gating).
+ */
+int		att_check_security_perms(uint8_t perms,
+		    const struct att_conn *ac);
 bool		att_conn_apply_encryption(struct att_conn *ac,
 		    bool has_key_material, bool mitm, uint8_t bond_key_size,
 		    uint8_t link_key_size);

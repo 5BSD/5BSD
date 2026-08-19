@@ -125,3 +125,33 @@ mesh_rpl_net_receive(struct mesh_rpl *rpl, const uint8_t enckey[16],
 	MESH_PROBE_RPL_NET_RECV(out->src, 1);
 	return (1);
 }
+
+/*
+ * M-L6: two-candidate secured-receive wrapper for the IV Update procedure.
+ *
+ * mesh_rpl_net_receive() authenticates under a single IV Index.  During an
+ * active IV Update (and for the >=96h grace after it completes) a node must
+ * still accept traffic secured with the previous IV Index (iv_index - 1); a
+ * consumer calling the single-IV seam directly would silently drop that
+ * traffic.  This wrapper tries iv_index first and, only when iv_update is set
+ * and the PDU fails to authenticate under it, retries under iv_index - 1.
+ *
+ * The RPL is enforced with the IV Index that actually authenticated the PDU,
+ * preserving the Section 3.8.8 ordering across the epoch boundary.  Returns
+ * the same 1/0/-1 values as mesh_rpl_net_receive().
+ */
+int
+mesh_rpl_net_receive_ivupd(struct mesh_rpl *rpl, const uint8_t enckey[16],
+    const uint8_t privkey[16], uint8_t nid, uint32_t iv_index, int iv_update,
+    const uint8_t *in, size_t inlen, struct mesh_net_pdu *out)
+{
+	int rc;
+
+	rc = mesh_rpl_net_receive(rpl, enckey, privkey, nid, iv_index, in,
+	    inlen, out);
+	if (rc >= 0 || !iv_update || iv_index == 0)
+		return (rc);
+	/* Authentication failed under the current IV Index; try IV-1. */
+	return (mesh_rpl_net_receive(rpl, enckey, privkey, nid, iv_index - 1,
+	    in, inlen, out));
+}

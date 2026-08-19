@@ -227,7 +227,7 @@ hci_le_set_advertising_data(int hci_fd __unused, const uint8_t *data __unused,
 
 int
 hci_le_set_ext_adv_data(int hci_fd __unused, uint8_t handle __unused,
-    const uint8_t *data __unused, uint8_t len __unused)
+    const uint8_t *data __unused, uint16_t len __unused)	/* H-M6 */
 {
 
 	return (0);
@@ -420,7 +420,7 @@ hci_le_set_periodic_adv_receive_enable(int fd __unused,
 
 int
 hci_get_con_handle(int fd __unused, const uint8_t addr[6] __unused,
-    uint16_t *handle)
+    uint8_t addr_type __unused, uint16_t *handle)	/* H-L3 */
 {
 	*handle = 1;
 	return (0);

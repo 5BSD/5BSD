@@ -254,7 +254,16 @@ scan_result_merge(struct ble_scan_result *dst, const struct ble_scan_result *src
 		dst->mfr_id = src->mfr_id;
 	for (int i = 0; i < src->num_svc_uuids &&
 	    dst->num_svc_uuids < 8; i++) {
-		dst->svc_uuids[dst->num_svc_uuids++] = src->svc_uuids[i];
+		bool present = false;
+
+		/* Finding H-L2: do not append a UUID the entry already lists. */
+		for (int k = 0; k < dst->num_svc_uuids; k++)
+			if (dst->svc_uuids[k] == src->svc_uuids[i]) {
+				present = true;
+				break;
+			}
+		if (!present)
+			dst->svc_uuids[dst->num_svc_uuids++] = src->svc_uuids[i];
 	}
 }
 
@@ -743,14 +752,20 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 				p++;
 				remain--;
 
-				/* Dedup by address */
+				/*
+				 * Dedup by address.  Finding H-L2: honor
+				 * NO_DEDUP (params->filter_dup == 0) by recording
+				 * every report as a distinct sighting.
+				 */
 				dup = false;
-				for (j = 0; j < count; j++) {
-					if (results[j].addr_type == sr->addr_type &&
-					    memcmp(results[j].addr, sr->addr, 6) == 0) {
-						scan_result_merge(&results[j], sr);
-						dup = true;
-						break;
+				if (params->filter_dup) {
+					for (j = 0; j < count; j++) {
+						if (results[j].addr_type == sr->addr_type &&
+						    memcmp(results[j].addr, sr->addr, 6) == 0) {
+							scan_result_merge(&results[j], sr);
+							dup = true;
+							break;
+						}
 					}
 				}
 				if (!dup)
@@ -1315,28 +1330,36 @@ ext_scan_params_ok:
 					remain -= consumed;
 
 					/*
-					 * Anonymous reports have no address to
-					 * key on; record each as a distinct
-					 * sighting rather than deduplicating on
-					 * the zeroed address bytes.
+					 * Finding H-L1: anonymous extended
+					 * adverts (Own/Peer address 0xFF, no
+					 * address to key on) cannot be
+					 * deduplicated, tracked, or connected.
+					 * Skip them here rather than letting each
+					 * sighting consume a result slot (and be
+					 * mislabeled by the zeroed address bytes),
+					 * which would crowd out addressable
+					 * devices in a bounded result array.
 					 */
 					if (sr.addr_type ==
-					    BLE_SCAN_ADDR_ANONYMOUS) {
-						results[count++] = sr;
+					    BLE_SCAN_ADDR_ANONYMOUS)
 						continue;
-					}
 
-					/* Dedup by address */
+					/*
+					 * Dedup by address.  Finding H-L2: honor
+					 * NO_DEDUP (params->filter_dup == 0).
+					 */
 					dup = false;
-					for (j = 0; j < count; j++) {
-						if (results[j].addr_type ==
-						    sr.addr_type &&
-						    memcmp(results[j].addr,
-						    sr.addr, 6) == 0) {
-							scan_result_merge(
-							    &results[j], &sr);
-							dup = true;
-							break;
+					if (params->filter_dup) {
+						for (j = 0; j < count; j++) {
+							if (results[j].addr_type ==
+							    sr.addr_type &&
+							    memcmp(results[j].addr,
+							    sr.addr, 6) == 0) {
+								scan_result_merge(
+								    &results[j], &sr);
+								dup = true;
+								break;
+							}
 						}
 					}
 					if (!dup)

@@ -1346,8 +1346,11 @@ ATF_TC_BODY(friend_fsm_clear_replay_guard, tc)
 
 /* ================================================================
  * The Friend Queue accepts messages while the friendship is still forming
- * (OFFERING / ESTABLISHING), so a message that arrives during establishment
- * is delivered on the first Poll rather than dropped (Section 3.6.6.4.1).
+ * (OFFERING / ESTABLISHING), so a message that arrives during establishment is
+ * preserved rather than dropped (Section 3.6.6.4.1).  The establishing Poll is
+ * answered with a Friend Update (Section 3.6.6.3.1) - never a data PDU - and
+ * the queued messages are then delivered in order on the following toggled-FSN
+ * Polls.
  * ================================================================ */
 ATF_TC_WITHOUT_HEAD(friend_enqueue_while_establishing);
 ATF_TC_BODY(friend_enqueue_while_establishing, tc)
@@ -1356,6 +1359,7 @@ ATF_TC_BODY(friend_enqueue_while_establishing, tc)
 	struct mesh_friend_out out;
 	struct mesh_friend_request req;
 	struct mesh_friend_poll poll;
+	struct mesh_friend_update up;
 	struct mesh_fq_entry a, b;
 	uint8_t rpdu[MESH_FRIEND_REQUEST_LEN];
 	uint8_t ppdu[MESH_FRIEND_POLL_LEN];
@@ -1403,8 +1407,12 @@ ATF_TC_BODY(friend_enqueue_while_establishing, tc)
 	ATF_CHECK_EQ(1, mesh_friend_fsm_enqueue(&f, &b));
 
 	/*
-	 * The first Poll establishes the friendship and delivers the message
-	 * queued during establishment - a real message, not an empty Update.
+	 * The first Poll (FSN 0) establishes the friendship and MUST be answered
+	 * with a Friend Update, not a queued data PDU (Section 3.6.6.3.1): the LPN
+	 * considers the friendship established only on receipt of a Friend Update.
+	 * The messages queued during establishment are preserved - the Update
+	 * carries MD=1 to tell the LPN there is data waiting - and are delivered,
+	 * in order, on the subsequent toggled-FSN Polls.
 	 */
 	memset(&poll, 0, sizeof(poll));
 	poll.fsn = 0;
@@ -1412,11 +1420,27 @@ ATF_TC_BODY(friend_enqueue_while_establishing, tc)
 	ATF_CHECK_EQ(1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
 	    now, &out));
 	ATF_CHECK_EQ(MESH_FRIEND_ACT_SEND_MSG, out.action);
+	ATF_CHECK_EQ(1, out.msg.is_update);
+	ATF_REQUIRE_EQ(0, mesh_friend_update_parse(out.msg.pdu, out.msg.pdu_len,
+	    &up));
+	ATF_CHECK_EQ_MSG(1, up.md,
+	    "the establishing Friend Update must report data pending (MD=1)");
+
+	/* The first toggled-FSN Poll (FSN 1) delivers the oldest queued message. */
+	poll.fsn = 1;
+	ATF_REQUIRE_EQ(0, mesh_friend_poll_build(&poll, ppdu, &plen));
+	ATF_CHECK_EQ(1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
+	    now, &out));
+	ATF_CHECK_EQ(MESH_FRIEND_ACT_SEND_MSG, out.action);
 	ATF_CHECK_EQ(0, out.msg.is_update);
 	ATF_CHECK_EQ(0xA1, out.msg.pdu[0]);
 
-	/* The next (toggled) Poll delivers the second queued message. */
-	poll.fsn = 1;
+	/*
+	 * The next toggled-FSN Poll (FSN 0) acknowledges 0xA1 and delivers the
+	 * second queued message, proving establishment-time data is preserved and
+	 * delivered in order after the Update rather than dropped.
+	 */
+	poll.fsn = 0;
 	ATF_REQUIRE_EQ(0, mesh_friend_poll_build(&poll, ppdu, &plen));
 	ATF_CHECK_EQ(1, mesh_friend_fsm_recv_poll(&f, ppdu, plen, 0, 0, 0x1000,
 	    now, &out));

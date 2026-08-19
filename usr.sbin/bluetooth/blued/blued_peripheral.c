@@ -321,12 +321,14 @@ gatt_send_service_changed(struct blued_conn *pconn, struct att_conn *ac,
 	int i;
 	uint16_t sc_handle = 0;
 	uint16_t cccd_handle = 0;
+	uint8_t sc_perms = 0;
 
 	/* Find the Service Changed characteristic value handle */
 	for (i = 0; i < db->count; i++) {
 		if (db->attrs[i].uuid16 == 0x2A05 &&
 		    db->attrs[i].is_char_value) {
 			sc_handle = db->attrs[i].handle;
+			sc_perms = db->attrs[i].perms;
 			/* The CCCD immediately follows the char value */
 			if (i + 1 < db->count &&
 			    db->attrs[i + 1].uuid16 == GATT_UUID_CCCD)
@@ -364,6 +366,18 @@ gatt_send_service_changed(struct blued_conn *pconn, struct att_conn *ac,
 
 		put_le16(val, start);
 		put_le16(val + 2, end);
+		/*
+		 * A-F2 (peripheral path): do not push a protected characteristic
+		 * value over a link that fails its encryption/authentication
+		 * requirement.  If the Service Changed value attribute carries no
+		 * ENCRYPT/AUTHEN bits this is satisfied trivially and delivery
+		 * proceeds unchanged.
+		 */
+		if (att_check_security_perms(sc_perms, ac) != 0) {
+			LOG_GATT(1, "Service Changed indication withheld: link "
+			    "does not satisfy characteristic security");
+			return (0);
+		}
 		if (att_send_indication(ac, sc_handle, val,
 		    sizeof(val)) < 0) {
 			LOG_GATT(1, "Service Changed indication send "
@@ -424,7 +438,8 @@ blued_conn_setup_peripheral_impl(void *arg)
 		for (retries = 0; retries < CON_HANDLE_POLL_RETRIES;
 		    retries++) {
 			if (hci_get_con_handle(adp->hci_fd,
-			    (const uint8_t *)&conn->dst, &ch) == 0)
+			    (const uint8_t *)&conn->dst, conn->addr_type,
+			    &ch) == 0)
 				break;
 			usleep(delay);
 			delay *= 2;
@@ -610,6 +625,23 @@ blued_conn_setup_peripheral_impl(void *arg)
 						hci_le_write_auth_payload_timeout(
 						    adp->hci_fd,
 						    conn->con_handle, 3000);
+						/*
+						 * Finding H-L4: an inbound
+						 * (peripheral-role) pairing that
+						 * distributed a peer IRK must
+						 * program it into the controller
+						 * resolving list too — the central
+						 * path already does this.  Refresh
+						 * (remove-then-add) so a rotated
+						 * IRK replaces any prior entry.
+						 */
+						if (have_pb) {
+							blued_reslist_sync_remove(
+							    adp->hci_fd, pb.addr,
+							    pb.addr_type);
+							blued_reslist_sync_add(
+							    adp->hci_fd, &pb);
+						}
 					}
 				}
 				smp_close(&sc);

@@ -133,7 +133,7 @@ struct hci_adv_config {
 int	hci_open(const char *adapter);
 int	hci_get_bdaddr(int hci_fd, uint8_t *bdaddr);
 int	hci_get_con_handle(int hci_fd, const uint8_t *remote_addr,
-	    uint16_t *handle);
+	    uint8_t addr_type, uint16_t *handle);
 int	hci_le_scan(int hci_fd, int duration_sec,
 	    struct ble_scan_result *results, int maxresults, int *nresults);
 /*
@@ -309,7 +309,7 @@ int	hci_le_set_ext_adv_params_full(int hci_fd, uint8_t handle,
 	    uint8_t secondary_phy, uint8_t channel_map, int8_t tx_power,
 	    uint8_t peer_address_type, const uint8_t *peer_address);
 int	hci_le_set_ext_adv_data(int hci_fd, uint8_t handle,
-	    const uint8_t *data, uint8_t len);
+	    const uint8_t *data, uint16_t len);	/* len fragmented, finding H-M6 */
 int	hci_le_set_ext_adv_enable(int hci_fd, uint8_t enable,
 	    uint8_t handle);
 int	hci_le_remove_adv_set(int hci_fd, uint8_t handle);

@@ -129,6 +129,15 @@ struct mesh_lpn_fsm {
 	uint32_t		iv_index;
 	int			more_data;
 
+	/*
+	 * Identity of the last received Friend Update, used to detect a duplicate
+	 * response (a byte-identical retransmission) that must not toggle the FSN
+	 * (Section 3.6.6.4.2).
+	 */
+	uint8_t			last_update[MESH_FRIEND_UPDATE_LEN];
+	size_t			last_update_len;
+	int			have_last_update;
+
 	/* Subscription List transaction handshake. */
 	uint8_t			sub_transaction;
 	int			sub_pending;	/* awaiting a Confirm */

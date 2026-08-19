@@ -236,6 +236,18 @@ bt_devreq(int s, struct bt_devreq *r, time_t to)
 		return (-1);
 	}
 
+	/*
+	 * Finding H-H3: zero-fill the caller's return-parameter buffer up front.
+	 * A short or empty Command Complete (or a Command Status mapped success)
+	 * copies fewer than r->rlen octets — historically leaving the tail as
+	 * caller stack garbage while still returning 0.  Pre-zeroing means an
+	 * absent/truncated response yields deterministic zeros (status field
+	 * included) rather than uninitialized memory, protecting every
+	 * libbluetooth consumer.
+	 */
+	if (r->rparam != NULL && r->rlen > 0)
+		memset(r->rparam, 0, r->rlen);
+
 	memset(&new, 0, sizeof(new));
 	bt_devfilter_pkt_set(&new, NG_HCI_EVENT_PKT);
 	bt_devfilter_evt_set(&new, NG_HCI_EVENT_COMMAND_COMPL);

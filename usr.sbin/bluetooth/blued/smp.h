@@ -297,6 +297,9 @@ struct smp_conn {
 	bool		bondable;	/* set SMP_AUTH_BONDING in AuthReq */
 	bool		sc_enabled;	/* set SMP_AUTH_SC in AuthReq */
 	bool		keypress;	/* set SMP_AUTH_KEYPRESS in AuthReq */
+	bool		kp_negotiated;	/* S-m7: both sides set KEYPRESS in AuthReq
+					 * (preq[3]&pres[3]); gates inbound
+					 * Keypress Notification delivery */
 	uint8_t		our_key_dist;	/* keys WE distribute (SMP_KEY_DIST_*) */
 	uint8_t		their_key_dist;	/* keys we REQUEST (SMP_KEY_DIST_*) */
 	uint8_t		neg_key_size;	/* negotiated enc key size (7-16); 16

@@ -296,6 +296,7 @@ struct mesh_fq_entry {
 	uint8_t		pdu[MESH_FQ_PDU_MAX];	/* Lower Transport PDU */
 	size_t		pdu_len;
 	int		is_update;		/* Friend Update (evict-protected) */
+	uint8_t		segmented;		/* an as-yet-unreassembled segment */
 	int		valid;
 	uint32_t	order;			/* insertion order (oldest = smallest) */
 };
@@ -327,6 +328,9 @@ void	mesh_fq_init(struct mesh_friend_queue *q, uint16_t lpn_addr,
  * The caller supplies the message in *in (CTL/TTL/SEQ/SRC/DST + Lower Transport
  * PDU) exactly as received.  The policy is:
  *
+ *   - a message flagged as an as-yet-unreassembled segment (in->segmented) is
+ *     not stored: a Segmented Access/Control message is queued only after the
+ *     complete Upper Transport PDU has been reassembled (Section 3.5.5);
  *   - the DST must be a unicast address of an LPN element (in the range
  *     [lpn_addr, lpn_addr+num_elements-1]) or an address in the Friend
  *     Subscription List; otherwise the message is not for the LPN;
@@ -354,6 +358,14 @@ int	mesh_fq_enqueue_update(struct mesh_friend_queue *q,
 
 /* Number of valid entries currently queued. */
 size_t	mesh_fq_count(const struct mesh_friend_queue *q);
+
+/*
+ * Discard every entry in the Friend Queue (Section 3.6.6.3.2: when a
+ * friendship is terminated the Friend node shall discard all entries in the
+ * Friend Queue).  The LPN binding and subscription list are retained; the FSN
+ * delivery state is reset.
+ */
+void	mesh_fq_flush(struct mesh_friend_queue *q);
 
 /*
  * Respond to a Friend Poll.  MshPRT_v1.1 Section 3.6.6.4.2.  fsn is the FSN
@@ -468,6 +480,15 @@ int	mesh_lpn_select_offer(const struct mesh_friend_offer *offers, size_t n,
  */
 #define	MESH_FRIEND_ESTABLISH_TIMEOUT_MS	1000u
 
+/*
+ * Friend Clear procedure timers (Section 3.6.6.3.1).  The first Friend Clear
+ * is sent as soon as the friendship is established; the Friend Clear Repeat
+ * timer starts at 1 s and doubles on each expiry, and the Friend Clear
+ * Procedure timer runs for twice the PollTimeout, after which the procedure is
+ * abandoned.
+ */
+#define	MESH_FRIEND_CLEAR_REPEAT_MS	1000u
+
 /* Friendship phase (Section 3.6.5 / 3.6.6.4.1). */
 enum mesh_friend_fsm_state {
 	MESH_FRIEND_ST_IDLE = 0,	/* no friendship, no pending offer */
@@ -482,13 +503,19 @@ enum mesh_friend_action {
 	MESH_FRIEND_ACT_SEND_CONTROL,	/* out->pdu is a control message to send */
 	MESH_FRIEND_ACT_SEND_MSG,	/* out->msg is a queued PDU to deliver */
 	MESH_FRIEND_ACT_TERMINATED,	/* friendship dropped (PollTimeout) */
+	MESH_FRIEND_ACT_SEND_CLEAR,	/* out->pdu is a Friend Clear for out->addr */
 };
 
-/* Output of a Friend FSM step. */
+/*
+ * Output of a Friend FSM step.  For MESH_FRIEND_ACT_SEND_CLEAR the control PDU
+ * is a Friend Clear that must be sent (with managed-flooding credentials, TTL
+ * 0x7F) to the previous Friend at out->addr, not to the LPN.
+ */
 struct mesh_friend_out {
 	enum mesh_friend_action	action;
 	uint8_t			pdu[MESH_FRIEND_MSG_MAX];	/* control PDU */
 	size_t			pdu_len;
+	uint16_t		addr;		/* control-PDU destination (SEND_CLEAR) */
 	struct mesh_fq_entry	msg;		/* dequeued queue entry (ACT_SEND_MSG) */
 };
 
@@ -513,6 +540,7 @@ struct mesh_friend_fsm {
 	uint16_t			lpn_addr;
 	uint16_t			lpn_counter;
 	uint16_t			friend_counter;	/* our FriendCounter */
+	uint16_t			prev_addr;	/* PreviousAddress from the Request */
 	uint8_t				num_elements;
 	uint8_t				recv_delay;	/* LPN ReceiveDelay, ms */
 	uint32_t			poll_timeout;	/* units of 100 ms */
@@ -523,6 +551,28 @@ struct mesh_friend_fsm {
 	uint64_t			offer_at_ms;	/* when to emit the Offer */
 	uint64_t			offer_sent_ms;	/* Offer emitted; ESTABLISHING start */
 	uint64_t			last_poll_ms;	/* last Poll received */
+
+	/*
+	 * Establishment handshake (Section 3.6.6.3.1): the first Friend Poll is
+	 * answered with a Friend Update, not a queued data PDU.  establish_update
+	 * is set from that first Poll until the LPN acknowledges the Update with a
+	 * Poll carrying a toggled FSN, at which point queued data delivery begins.
+	 */
+	uint8_t				establish_update;
+	uint8_t				establish_fsn;	/* FSN of the establishing Poll */
+
+	/*
+	 * Friend Clear procedure (Section 3.6.6.3.1): when an accepted LPN carried
+	 * a valid PreviousAddress, Friend Clear messages are sent to the previous
+	 * Friend until a Friend Clear Confirm is received or the procedure timer
+	 * (2 x PollTimeout) expires.  The repeat period starts at 1 s and doubles.
+	 */
+	uint8_t				clear_active;
+	uint16_t			clear_addr;	/* previous Friend to clear */
+	uint16_t			clear_lpn_counter;
+	uint64_t			clear_repeat_at_ms;
+	uint32_t			clear_repeat_ms;	/* current repeat period */
+	uint64_t			clear_deadline_ms;	/* procedure timer */
 
 	struct mesh_friend_offer	offer;		/* the pending Offer contents */
 	struct mesh_friend_queue	queue;		/* the Friend Queue */
@@ -595,10 +645,13 @@ int	mesh_friend_fsm_recv_sublist(struct mesh_friend_fsm *f,
 	    struct mesh_friend_out *out);
 
 /*
- * Process a Friend Clear (0x05) (Section 3.6.5.5): if it targets our LPN and
- * the LPNCounter is in range, terminate the friendship and emit a Friend Clear
- * Confirm (out->action SEND_CONTROL).  Returns 1 with a confirm to send, 0 if
- * the Clear does not match, -1 on error.
+ * Process a Friend Clear (0x05) or Friend Clear Confirm (0x06) (Section
+ * 3.6.5.5 / 3.6.5.6).  A Friend Clear that targets our LPN with an in-range
+ * LPNCounter terminates the friendship, discards the Friend Queue and emits a
+ * Friend Clear Confirm (out->action SEND_CONTROL, returns 1).  A Friend Clear
+ * Confirm that matches an in-flight Friend Clear procedure (this Friend cleared
+ * a previous Friend of the LPN) stops that procedure (returns 0, no output).
+ * Returns 0 when the message does not match, -1 on error.
  */
 int	mesh_friend_fsm_recv_clear(struct mesh_friend_fsm *f, const uint8_t *pdu,
 	    size_t len, struct mesh_friend_out *out);

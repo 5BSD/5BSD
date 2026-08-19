@@ -246,6 +246,8 @@ hci_get_bdaddr(int hci_fd, uint8_t *bdaddr)
 	ng_hci_read_bdaddr_rp rp;
 	int n;
 
+	/* Finding H-H3: never read rp fields off uninitialized stack. */
+	memset(&rp, 0, sizeof(rp));
 	memset(&r, 0, sizeof(r));
 	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_INFO,
 	    NG_HCI_OCF_READ_BDADDR);
@@ -258,6 +260,17 @@ hci_get_bdaddr(int hci_fd, uint8_t *bdaddr)
 	n = hci_devreq_logged(hci_fd, &r, 1);
 	if (n < 0)
 		return (-1);
+
+	/*
+	 * Finding H-H3: a short/empty Command Complete must not be accepted.
+	 * bt_devreq reports the actual return-parameter length in r.rlen; a
+	 * truncated response leaves rp pre-zeroed (status==0) which would
+	 * otherwise masquerade as success with a zero BD_ADDR.
+	 */
+	if ((size_t)r.rlen < sizeof(rp)) {
+		errno = EIO;
+		return (-1);
+	}
 
 	if (rp.status != 0) {
 		errno = EIO;
@@ -273,10 +286,14 @@ hci_get_bdaddr(int hci_fd, uint8_t *bdaddr)
  * Uses SIOC_HCI_RAW_NODE_GET_CON_LIST ioctl.
  */
 int
-hci_get_con_handle(int hci_fd, const uint8_t *remote_addr, uint16_t *handle)
+hci_get_con_handle(int hci_fd, const uint8_t *remote_addr, uint8_t addr_type,
+    uint16_t *handle)
 {
 	struct ng_btsocket_hci_raw_con_list cl;
 	ng_hci_node_con_ep cons[16];
+	uint8_t want_link;
+	bool have_fallback = false;
+	uint16_t fallback_handle = 0;
 	int i;
 
 	memset(&cl, 0, sizeof(cl));
@@ -295,15 +312,38 @@ hci_get_con_handle(int hci_fd, const uint8_t *remote_addr, uint16_t *handle)
 	if (cl.num_connections > nitems(cons))
 		cl.num_connections = nitems(cons);
 
+	/*
+	 * Finding H-L3: an address-only match aliases the public and random
+	 * links that can share a BD_ADDR value.  Prefer the entry whose LE
+	 * link_type matches the requested address type; fall back to an
+	 * address-only match only if no typed match exists (preserving the old
+	 * behaviour for callers that cannot distinguish the domains).
+	 */
+	want_link = (addr_type == BDADDR_LE_RANDOM) ? NG_HCI_LINK_LE_RANDOM :
+	    NG_HCI_LINK_LE_PUBLIC;
+
 	for (i = 0; (uint32_t)i < cl.num_connections; i++) {
-		if ((cons[i].link_type == NG_HCI_LINK_LE_PUBLIC ||
-		    cons[i].link_type == NG_HCI_LINK_LE_RANDOM) &&
-		    memcmp(&cons[i].bdaddr, remote_addr, 6) == 0) {
+		if ((cons[i].link_type != NG_HCI_LINK_LE_PUBLIC &&
+		    cons[i].link_type != NG_HCI_LINK_LE_RANDOM) ||
+		    memcmp(&cons[i].bdaddr, remote_addr, 6) != 0)
+			continue;
+		if (cons[i].link_type == want_link) {
 			*handle = cons[i].con_handle;
 			LOG_HCI(1, "connection handle=%04x",
 			    cons[i].con_handle);
 			return (0);
 		}
+		if (!have_fallback) {
+			have_fallback = true;
+			fallback_handle = cons[i].con_handle;
+		}
+	}
+
+	if (have_fallback) {
+		*handle = fallback_handle;
+		LOG_HCI(1, "connection handle=%04x (addr-type fallback)",
+		    fallback_handle);
+		return (0);
 	}
 
 	warnx("HCI: connection handle lookup failed");

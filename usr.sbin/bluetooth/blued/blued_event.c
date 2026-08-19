@@ -439,15 +439,31 @@ blued_handle_hci_event(struct blued_adapter *adp)
 						if (bond != NULL &&
 						    bond->has_ltk) {
 							/*
-							 * For legacy pairing,
-							 * validate EDIV/Rand.
-							 * SC bonds always use
-							 * EDIV=0, Rand=0.
+							 * Validate EDIV/Rand.  A
+							 * legacy bond matches its
+							 * stored EDIV/Rand.
+							 * Finding S-m4: a Secure
+							 * Connections bond is only
+							 * ever addressed by
+							 * EDIV=0/Rand=0 (Core Spec
+							 * Vol 3 Part H §2.4.4); a
+							 * reconnect LTK request
+							 * carrying a non-zero
+							 * EDIV/Rand is not this bond,
+							 * so refuse it rather than
+							 * returning the SC LTK.
 							 */
-							if (!bond->is_sc &&
-							    (bond->ediv != ediv ||
-							    memcmp(&bond->rand,
-							    &rand_val, 8) != 0)) {
+							bool match;
+
+							if (bond->is_sc)
+								match = (ediv == 0 &&
+								    rand_val == 0);
+							else
+								match = (bond->ediv ==
+								    ediv &&
+								    memcmp(&bond->rand,
+								    &rand_val, 8) == 0);
+							if (!match) {
 								/* EDIV/Rand mismatch */
 								LOG_SMP(1,
 								    "EDIV/Rand mismatch "
@@ -497,6 +513,33 @@ blued_handle_hci_event(struct blued_adapter *adp)
 				hci_le_ltk_request_neg_reply(
 				    adp->hci_fd, handle);
 			}
+		}
+
+		/*
+		 * Finding H-M2: LE Advertising Set Terminated (subevent 0x12).
+		 * [type(1), evt(1), len(1), subevent(1), status(1),
+		 *  adv_handle(1), conn_handle(2), num_completed_ext_adv_events(1)]
+		 * The controller has stopped this advertising set (a connection
+		 * was established on it, or its duration / max extended advertising
+		 * events elapsed).  Clear the host-side enabled flag for the
+		 * terminated handle so the RPA-rotation and privacy re-enable paths
+		 * do not act on a set the controller already stopped.
+		 */
+		if (subevent == 0x12 && n == 9) {
+			uint8_t adv_handle = buf[5];
+
+			for (size_t i = 0; i < nitems(adp->ext_adv_sets); i++) {
+				if (adp->ext_adv_sets[i].used &&
+				    adp->ext_adv_sets[i].configured &&
+				    adp->ext_adv_sets[i].handle == adv_handle) {
+					adp->ext_adv_sets[i].enabled = false;
+					break;
+				}
+			}
+			if (adv_handle == 0 && adp->adv_use_extended)
+				adp->adv_enabled = false;
+			LOG_HCI(1, "adv set terminated: handle=%u status=0x%02x",
+			    adv_handle, buf[4]);
 		}
 
 		/*
@@ -1063,6 +1106,27 @@ blued_handle_readable(struct kevent *ev)
 			 */
 			if (atomic_load_explicit(&c->needs_cleanup,
 			    memory_order_acquire)) {
+				/*
+				 * Finding H-H2: a GATT worker (or the central
+				 * pairing worker) may still be mid-ATT,
+				 * dereferencing c->att / c->hogp.  The terminal
+				 * APTO teardown must defer until every in-flight
+				 * ATT op retires, exactly as the EV_EOF path
+				 * does — otherwise blued_conn_central_teardown
+				 * frees att/hogp under the worker (UAF on
+				 * job->conn->att->mtu et al).  Set
+				 * disconnect_pending BEFORE reading
+				 * att_ops_active so a worker retiring right now
+				 * (which re-signals the pipe only while
+				 * disconnect_pending is set) cannot be missed;
+				 * needs_cleanup stays set so the re-signalled
+				 * sweep finishes the teardown.
+				 */
+				atomic_store_explicit(&c->disconnect_pending,
+				    true, memory_order_release);
+				if (atomic_load_explicit(&c->att_ops_active,
+				    memory_order_acquire) != 0)
+					continue;
 				(void)atomic_exchange_explicit(
 				    &c->disconnect_pending, false,
 				    memory_order_acq_rel);
@@ -1511,6 +1575,12 @@ blued_event_loop(void)
 				    events[i].ident);
 				continue;
 			}
+			/* Finding C-m1: fd-exhaustion listener backoff elapsed. */
+			if (events[i].filter == EVFILT_TIMER &&
+			    events[i].udata == BLUED_KQ_CTL_ACCEPT_RETRY) {
+				blued_ctl_accept_retry_enable();
+				continue;
+			}
 			if (events[i].filter == EVFILT_TIMER &&
 			    blued_discoverable_timer_fired(events[i].ident)) {
 				/* Discoverable auto-off timeout expired. */
@@ -1790,6 +1860,18 @@ blued_conn_disconnect(struct blued_conn *conn)
 				conn->hogp->report_map = NULL;
 				conn->hogp->nreports = 0;
 			}
+			/*
+			 * Finding H-M1: the old link handle is dead the moment we
+			 * enter reconnect backoff.  Clear con_handle_valid and
+			 * NULL conn->att now (not only when the reconnect timer
+			 * fires) so the Encryption-Change / Key-Refresh / APTO
+			 * handlers — which match purely on
+			 * con_handle_valid && con_handle == handle — cannot act
+			 * on this conn using a stale handle a controller may
+			 * reassign during the backoff window.
+			 */
+			conn->con_handle_valid = false;
+			conn->att = NULL;
 
 			conn->reconnect_timer = blued_next_timer_id++;
 			EV_SET(&kev, conn->reconnect_timer,

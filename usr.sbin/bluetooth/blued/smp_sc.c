@@ -45,6 +45,18 @@
 #include "smp_internal.h"
 
 /*
+ * S-m11: BLUED_DEBUG_KEYS gates blued_hexdump() calls that print live key
+ * material (LTK/STK/MacKey/DHKey-check values) to the log.  It is a
+ * developer-only switch and MUST remain undefined for any shipped build; it
+ * is not set by the Makefile or any header, so release builds never dump keys.
+ * As a belt-and-braces safety net, refuse to compile if it is ever enabled in
+ * a release (NDEBUG) build.
+ */
+#if defined(BLUED_DEBUG_KEYS) && defined(NDEBUG)
+#error "BLUED_DEBUG_KEYS dumps key material and must never be set in a release build"
+#endif
+
+/*
  * Core 6.3 Vol 3 Part H §2.3 and §3.5.5: SMP commands have exact
  * lengths.  A received instance of the expected command with any other
  * length is an Invalid Parameters failure, not a prefix-compatible PDU.
@@ -608,8 +620,13 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 
 		BLUED_PROBE_SMP_PHASE(
 		    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), "key-dist");
-		/* Receive key distribution from responder (SC: IdKey + SignKey) */
-		if (smp_receive_peer_keys(sc, &bond, pres[6], true) != 0) {
+		/*
+		 * Receive key distribution from responder (SC: IdKey + SignKey).
+		 * S-m5: RespKeyDist is preq[6] & pres[6] -- expect only the keys
+		 * we requested and the peer agreed to send, never pres[6] alone.
+		 */
+		if (smp_receive_peer_keys(sc, &bond, preq[6] & pres[6],
+		    true) != 0) {
 			explicit_bzero(&bond, sizeof(bond));
 			ret = -1;
 			goto sc_passkey_cleanup;
@@ -1107,8 +1124,11 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		BLUED_PROBE_SMP_PHASE(
 		    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), "key-dist");
 		/* Receive key distribution from responder.
-		 * SC ignores EncKey; IdKey and SignKey apply. */
-		if (smp_receive_peer_keys(sc, &bond, pres[6], true) != 0) {
+		 * SC ignores EncKey; IdKey and SignKey apply.
+		 * S-m5: RespKeyDist is preq[6] & pres[6] -- expect only the keys
+		 * we requested and the peer agreed to send, never pres[6] alone. */
+		if (smp_receive_peer_keys(sc, &bond, preq[6] & pres[6],
+		    true) != 0) {
 			explicit_bzero(&bond, sizeof(bond));
 			ret = -1;
 			goto sc_jw_cleanup;

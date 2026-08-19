@@ -209,7 +209,7 @@ l2cap_conn_param_use_hci_update(uint64_t local_features)
  */
 int
 l2cap_conn_param_update_req(const uint8_t *local_addr,
-    const uint8_t *peer_addr, uint8_t peer_addr_type __unused,
+    const uint8_t *peer_addr, uint8_t peer_addr_type,
     uint16_t interval_min, uint16_t interval_max,
     uint16_t latency, uint16_t timeout)
 {
@@ -249,7 +249,8 @@ l2cap_conn_param_update_req(const uint8_t *local_addr,
 	if (hci_fd < 0)
 		return (-1);
 
-	if (hci_get_con_handle(hci_fd, peer_addr, &con_handle) < 0) {
+	if (hci_get_con_handle(hci_fd, peer_addr, peer_addr_type,
+	    &con_handle) < 0) {
 		close(hci_fd);
 		return (-1);
 	}

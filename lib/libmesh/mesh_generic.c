@@ -111,8 +111,10 @@ mesh_gen_onoff_set_decode(const uint8_t *in, size_t inlen,
 	out->onoff = in[0];
 	out->tid = in[1];
 	if (inlen == 4) {
-		if (!mesh_transition_time_valid(in[2]))
-			return (-1);
+		/*
+		 * P-H5 / MMDL 3.2.9.3: accept steps 0x3F ("use Default Transition
+		 * Time"); it is resolved by gen_effective_transition, not dropped.
+		 */
 		out->has_transition = 1;
 		out->transition_time = in[2];
 		out->delay = in[3];
@@ -203,8 +205,7 @@ mesh_gen_level_set_decode(const uint8_t *in, size_t inlen,
 	out->level = (int16_t)get_le16(in);
 	out->tid = in[2];
 	if (inlen == 5) {
-		if (!mesh_transition_time_valid(in[3]))
-			return (-1);
+		/* P-H5 / MMDL 3.2.9.3: accept steps 0x3F ("use Default"). */
 		out->has_transition = 1;
 		out->transition_time = in[3];
 		out->delay = in[4];
@@ -246,8 +247,7 @@ mesh_gen_delta_set_decode(const uint8_t *in, size_t inlen,
 	out->delta = (int32_t)get_le32(in);
 	out->tid = in[4];
 	if (inlen == 7) {
-		if (!mesh_transition_time_valid(in[5]))
-			return (-1);
+		/* P-H5 / MMDL 3.2.9.3: accept steps 0x3F ("use Default"). */
 		out->has_transition = 1;
 		out->transition_time = in[5];
 		out->delay = in[6];
@@ -289,8 +289,7 @@ mesh_gen_move_set_decode(const uint8_t *in, size_t inlen,
 	out->delta = (int16_t)get_le16(in);
 	out->tid = in[2];
 	if (inlen == 5) {
-		if (!mesh_transition_time_valid(in[3]))
-			return (-1);
+		/* P-H5 / MMDL 3.2.9.3: accept steps 0x3F ("use Default"). */
 		out->has_transition = 1;
 		out->transition_time = in[3];
 		out->delay = in[4];
@@ -369,7 +368,14 @@ static uint8_t
 gen_effective_transition(const struct mesh_gen_dtt_srv *dtt, int has,
     uint8_t explicit_time)
 {
-	return (has ? explicit_time : (dtt != NULL ? dtt->transition_time : 0));
+	/*
+	 * P-H5 / MMDL 3.2.9.3: a present Transition Time field with the steps
+	 * subfield equal to 0x3F means "use the Default Transition Time state"
+	 * (instantaneous if it is unsupported), not a literal 63-step time.
+	 */
+	if (has && (explicit_time & 0x3f) != 0x3f)
+		return (explicit_time);
+	return (dtt != NULL ? dtt->transition_time : 0);
 }
 
 /* ================================================================
@@ -409,6 +415,9 @@ mesh_gen_onoff_srv_set_present(struct mesh_gen_onoff_srv *srv, uint8_t present)
 	srv->present = present;
 	if (srv->changed != NULL)
 		srv->changed(srv->changed_arg, present);
+	/* P-H4: drive any upward state binding (e.g. Light Lightness). */
+	if (srv->bound_sink != NULL)
+		srv->bound_sink(srv->bound_sink_arg, present);
 }
 
 int
@@ -525,6 +534,9 @@ mesh_gen_level_srv_set_present(struct mesh_gen_level_srv *srv, int16_t present)
 	srv->present = present;
 	if (srv->changed != NULL)
 		srv->changed(srv->changed_arg, present);
+	/* P-H4: drive any upward state binding (e.g. Light Lightness/CTL/HSL). */
+	if (srv->bound_sink != NULL)
+		srv->bound_sink(srv->bound_sink_arg, present);
 }
 
 int
@@ -814,7 +826,14 @@ mesh_gen_power_level_set_actual(struct mesh_gen_power_level_srv *srv,
 	if (actual > srv->range_max)
 		actual = srv->range_max;
 	srv->actual = actual;
-	if (actual != 0)
+	/*
+	 * P-M12 / MMDL 6.1.2.3 (Power Last, 3.3.6): Last latches only the
+	 * non-zero value of a COMPLETED transaction, never a per-tick sample of
+	 * an in-flight transition, so a fade-to-off leaves Last at the pre-fade
+	 * level.  mesh_transition_sample() clears .active at completion, so a
+	 * settled value is recognizable by an inactive transition.
+	 */
+	if (actual != 0 && !srv->transition.active)
 		srv->last = actual;
 	if (srv->bound_onoff != NULL)
 		mesh_gen_onoff_srv_set_present(srv->bound_onoff,
@@ -925,8 +944,11 @@ mesh_gen_power_level_srv_recv_at_dst(struct mesh_gen_power_level_srv *srv,
 		break;
 	case MESH_OP_GEN_POWER_LEVEL_SET:
 	case MESH_OP_GEN_POWER_LEVEL_SET_UNACK:
-		if (params == NULL || (plen != 3 && plen != 5) ||
-		    (plen == 5 && !mesh_gen_transition_time_valid(params[3])))
+		/*
+		 * P-H5 / MMDL 3.2.9.3: a steps-0x3F Transition Time is accepted
+		 * and resolved to the Default Transition Time, not dropped.
+		 */
+		if (params == NULL || (plen != 3 && plen != 5))
 			return (-1);
 		value = (uint16_t)params[0] | ((uint16_t)params[1] << 8);
 		if (gen_tid_is_new(&srv->txn, src, dst, params[2], now_ms)) {
@@ -960,19 +982,18 @@ mesh_gen_power_level_srv_recv_at_dst(struct mesh_gen_power_level_srv *srv,
 		min = (uint16_t)params[0] | ((uint16_t)params[1] << 8);
 		max = (uint16_t)params[2] | ((uint16_t)params[3] << 8);
 		/*
-		 * Mesh Model 1.1.1, Generic Power Range Set: a Range Min
-		 * greater than Range Max makes the message invalid and ignored.
-		 * It is not a "Cannot Set Range Max" status condition.
+		 * P-M13 / MMDL 1.3.3: a Range Min or Range Max of 0x0000 is a
+		 * Prohibited value and a Range Min greater than Range Max is an
+		 * invalid message; both are silently ignored (no Status, no
+		 * persist), matching the Light Lightness Range Set behavior.
 		 */
-		if (min > max)
+		if (min == 0 || max == 0 || min > max)
 			return (-1);
 		ack = opcode == MESH_OP_GEN_POWER_RANGE_SET;
-		srv->range_status = min == 0 ? 1 : (max == 0 ? 2 : 0);
-		if (srv->range_status == 0) {
-			srv->range_min = min;
-			srv->range_max = max;
-			mesh_gen_power_level_set_actual(srv, srv->actual);
-		}
+		srv->range_status = 0;
+		srv->range_min = min;
+		srv->range_max = max;
+		mesh_gen_power_level_set_actual(srv, srv->actual);
 		if (ack && reply != NULL) {
 			reply->have_reply = 1;
 			reply->opcode = MESH_OP_GEN_POWER_RANGE_STATUS;

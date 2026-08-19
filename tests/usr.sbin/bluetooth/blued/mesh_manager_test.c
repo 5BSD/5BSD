@@ -258,9 +258,13 @@ ATF_TC_BODY(seq_persist, tc)
 
 	ATF_REQUIRE_EQ(0, mesh_mgr_save(mgr, path));
 
-	/* The reloaded manager must resume at or above the pre-save high-water. */
+	/*
+	 * The reloaded manager must resume at or above the pre-save high-water.
+	 * P-H8: persistence now reserves a block of sequence numbers ahead of the
+	 * live value so a crash between saves can never reissue a used SEQ, so the
+	 * reloaded mark is strictly ahead of (not equal to) the pre-save value.
+	 */
 	ATF_REQUIRE_EQ(0, mesh_mgr_load(loaded, path));
-	ATF_CHECK_EQ_MSG(hw, loaded->seq, "reloaded SEQ equals the persisted mark");
 	ATF_CHECK_MSG(loaded->seq >= hw, "reloaded SEQ never regresses");
 
 	/* The next seal after reload must NOT re-issue an already-used SEQ. */

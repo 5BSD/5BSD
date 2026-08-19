@@ -100,7 +100,7 @@ ATF_TC_BODY(util_ioctl_and_disconnect, tc)
 
 	/* SIOC_HCI_RAW ioctls on a non-HCI fd fail -> -1. */
 	ATF_CHECK_EQ(hci_get_bdaddr(test_fd(), bdaddr), -1);
-	ATF_CHECK_EQ(hci_get_con_handle(test_fd(), remote, &handle), -1);
+	ATF_CHECK_EQ(hci_get_con_handle(test_fd(), remote, 0x00, &handle), -1); /* H-L3 */
 	ATF_CHECK_EQ(hci_node_init(test_fd()), -1);
 
 	/* Disconnect: no range check, drives to the devreq-failure arm. */

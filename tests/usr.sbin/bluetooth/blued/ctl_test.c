@@ -374,7 +374,7 @@ hci_le_set_periodic_adv_receive_enable(int fd __unused,
 
 int
 hci_get_con_handle(int fd __unused, const uint8_t addr[6] __unused,
-    uint16_t *handle)
+    uint8_t addr_type __unused, uint16_t *handle)	/* H-L3 */
 {
 	*handle = 1;
 	return (periodic_con_handle_rc);
@@ -6745,52 +6745,52 @@ ATF_TC_BODY(test_typed_gap_valid_matrix, tc)
 	strlcpy(scan_params.name_sub, "sensor",
 	    sizeof(scan_params.name_sub));
 	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_scan_result(&scan_params, &adp, NULL,
-	    NULL));
+	    NULL, 5));
 
 	memset(&scan_params, 0, sizeof(scan_params));
 	scan_params.interval = 3;
 	ATF_CHECK_EQ(IPC_ERR_INVAL, ctl_scan_result(&scan_params, &adp, NULL,
-	    NULL));
+	    NULL, 5));
 
 	/* Scan traversal, extended fallback, and hard-failure arms. */
 	memset(&scan_params, 0, sizeof(scan_params));
 	scan_params.rssi_min = INT8_MIN;
 	adp.active = false;
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_scan_result(&scan_params, NULL,
-	    NULL, NULL));
+	    NULL, NULL, 5));
 	adp.active = true;
 	memset(&other_adp, 0, sizeof(other_adp));
 	other_adp.active = true;
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_scan_result(&scan_params,
-	    &other_adp, NULL, NULL));
+	    &other_adp, NULL, NULL, 5));
 	adap_cap_reset();
 	adap_cap.ext_scan_rc = -1;
 	adap_cap.scan_nresults = 1;
 	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_scan_result(&scan_params, &adp, NULL,
-	    NULL));
+	    NULL, 5));
 	adap_cap_reset();
 	adap_cap.ext_scan_rc = -1;
 	adap_cap.scan_rc = -1;
 	ATF_CHECK_EQ(IPC_ERR_NOT_FOUND, ctl_scan_result(&scan_params, &adp,
-	    NULL, NULL));
+	    NULL, NULL, 5));
 	/* The compact API permits default scan parameters.  Cover that path and
 	 * the no-dedup mapping independently of the filtered-scan case above. */
 	adap_cap_reset();
 	adap_cap.scan_nresults = 1;
 	adp.le_features = LE_FEAT_EXT_ADVERTISING; /* no coded-PHY support */
-	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_scan_result(NULL, &adp, NULL, NULL));
+	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_scan_result(NULL, &adp, NULL, NULL, 5));
 	memset(&scan_params, 0, sizeof(scan_params));
 	scan_params.rssi_min = INT8_MIN;
 	scan_params.no_dedup = true;
 	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_scan_result(&scan_params, &adp, NULL,
-	    NULL));
+	    NULL, 5));
 	ATF_CHECK_EQ(0, adap_cap.scan_params.filter_dup);
 	/* Controllers without extended advertising support use the legacy LE
 	 * scan command directly; this is a normal interoperable fallback, not an
 	 * extended-scan failure path. */
 	adp.le_features = 0;
 	ATF_CHECK_EQ(IPC_ERR_NONE, ctl_scan_result(&scan_params, &adp, NULL,
-	    NULL));
+	    NULL, 5));
 	adp.le_features = UINT64_MAX;
 	adap_cap_reset();
 	adap_cap.ext_scan_rc = -1;

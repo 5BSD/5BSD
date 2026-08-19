@@ -552,27 +552,27 @@ meshd_set_bearer(struct meshd_node *nd, const struct meshd_bearer *b)
 void
 meshd_drain_tx(struct meshd_node *nd)
 {
-	size_t i, keep;
+	size_t i;
 
-	keep = 0;
 	for (i = 0; i < nd->sim.n_tx; i++) {
 		if (!nd->sim.tx[i].valid)
 			continue;
-		if (nd->bearer == NULL || nd->bearer->tx == NULL ||
-		    nd->bearer->tx(nd->bearer->arg, MESHD_PDU_NET,
-		    nd->sim.tx[i].bytes, nd->sim.tx[i].len) != 0) {
-			if (nd->bearer != NULL && nd->bearer->tx != NULL) {
-				nd->tx_frames++;
-				nd->tx_errors++;
-			}
-			for (; i < nd->sim.n_tx; i++)
-				if (nd->sim.tx[i].valid)
-					nd->sim.tx[keep++] = nd->sim.tx[i];
-			break;
-		}
+		/*
+		 * A NULL/absent bearer drops the PDU per the meshd_bearer
+		 * contract.  A present bearer that reports a transmit error (the
+		 * skyblued-down reconnect window) also drops rather than retaining
+		 * the PDU: re-queuing filled the fixed 256-slot ring, stalled new
+		 * originations, then burst stale SEQs onto the air on reconnect
+		 * (finding C-m3).
+		 */
+		if (nd->bearer == NULL || nd->bearer->tx == NULL)
+			continue;
 		nd->tx_frames++;
+		if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_NET,
+		    nd->sim.tx[i].bytes, nd->sim.tx[i].len) != 0)
+			nd->tx_errors++;
 	}
-	nd->sim.n_tx = keep;
+	nd->sim.n_tx = 0;
 }
 
 int
@@ -2810,10 +2810,15 @@ meshd_fault_snapshot(struct meshd_node *nd, struct mesh_hlt_fault_status *fs)
 	memset(fs, 0, sizeof(*fs));
 	fs->test_id = nd->health.test_id;
 	fs->company_id = nd->health.company_id;
-	if (nd->health.n_faults > MESH_HLT_MAX_FAULTS)
+	/*
+	 * P-M14: Health Fault Status reports the Registered Fault array (which
+	 * persists across Current-fault clearing), not the Current faults.
+	 */
+	if (nd->health.n_registered_faults > MESH_HLT_MAX_FAULTS)
 		return (-1);
-	memcpy(fs->faults, nd->health.faults, nd->health.n_faults);
-	fs->n_faults = nd->health.n_faults;
+	memcpy(fs->faults, nd->health.registered_faults,
+	    nd->health.n_registered_faults);
+	fs->n_faults = nd->health.n_registered_faults;
 	return (0);
 }
 
@@ -3241,11 +3246,23 @@ h_aggregator_seq(struct meshd_node *nd, const struct mesh_access_pdu *ap,
 		status = MESH_CFG_INVALID_ADDRESS;
 
 	for (i = 0; i < nitems; i++) {
+		struct mesh_access_pdu iap;
 		size_t rl = 0;
 
 		resp[i].data = NULL;
 		resp[i].len = 0;
 		if (status != MESH_CFG_SUCCESS || items[i].len == 0)
+			continue;
+		/*
+		 * An aggregated item may not itself be an Opcodes Aggregator
+		 * Sequence: h_aggregator_seq() and meshd_foundation_recv() are
+		 * mutually recursive with no depth bound, so a nested aggregator
+		 * would let a DevKey peer drive unbounded recursion (finding C-m4).
+		 * Reject it as an unhandled item (empty response) without
+		 * dispatching.
+		 */
+		if (mesh_access_pdu_parse(items[i].data, items[i].len, &iap) == 0 &&
+		    iap.opcode == MESH_CFG_OP_AGGREGATOR_SEQUENCE)
 			continue;
 		if (meshd_foundation_recv(nd, items[i].data, items[i].len,
 		    respbuf[i], sizeof(respbuf[i]), &rl) == 1) {
@@ -4749,6 +4766,19 @@ meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
 	case MESH_FRIEND_ACT_SEND_MSG:
 		(void)meshd_friend_send_msg(nd, &out->msg);
 		break;
+	case MESH_FRIEND_ACT_SEND_CLEAR:
+		/*
+		 * A Friend Clear is addressed to the *previous* Friend at
+		 * out->addr (not the LPN), which may be several hops away, so it
+		 * is flooded with the managed-flooding credential at TTL 0x7F
+		 * rather than the single-hop LPN<->Friend TTL (P-H7).
+		 */
+		if (out->pdu_len > 0)
+			(void)meshd_df_send_control(nd,
+			    (uint8_t)(out->pdu[0] & 0x7f), out->addr, 0x7f,
+			    out->pdu_len > 1 ? out->pdu + 1 : NULL,
+			    out->pdu_len - 1);
+		break;
 	default:
 		break;
 	}
@@ -4939,6 +4969,14 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 		e.dst = np.dst;
 		memcpy(e.pdu, np.transport, np.transport_len);
 		e.pdu_len = np.transport_len;
+		/*
+		 * This path enqueues the raw Lower Transport PDU without SAR
+		 * reassembly, so an individual segment (SEG bit set in octet 0)
+		 * can arrive here.  Flag it so mesh_fq_enqueue applies the §3.5.5
+		 * as-yet-unreassembled-segment gate rather than storing it as a
+		 * deliverable message (P-H7).
+		 */
+		e.segmented = (np.transport[0] & 0x80u) ? 1 : 0;
 		(void)meshd_friend_enqueue(nd, &e);
 	}
 }
@@ -5284,9 +5322,16 @@ meshd_provision_ota_commit(struct meshd_node *nd, uint64_t prov_time)
 		nd->provisioner_active = 0;
 		nd->prov_ack_pending = 0;
 		nd->prov_failed = 0;
-		/* PB-GATT completes by closing its GATT provisioning link. */
+		/*
+		 * PB-GATT completes by closing its GATT provisioning link, which
+		 * frees the provisioning session.  The PB-ADV path has no link to
+		 * close, so free the session here: the next provisioner_init would
+		 * otherwise memset it and leak the EVP_PKEY (finding C-m2).
+		 */
 		if (nd->pbgatt.active)
 			meshd_pbgatt_close(nd);
+		else
+			mesh_prov_session_free(&nd->prov_sess);
 	}
 	return (n);
 }

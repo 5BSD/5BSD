@@ -233,21 +233,22 @@ ATF_TC_BODY(server_fault_state, tc)
 	uint32_t op;
 
 	mesh_hlt_server_init(&s, 0x05f1);
-	ATF_CHECK_EQ(0, (int)s.n_faults);
+	ATF_CHECK_EQ(0, (int)s.n_registered_faults);	/* P-M14 */
 
 	/* A test registers faults; 0x00 (No Fault) is not stored. */
 	ATF_REQUIRE_EQ(0, mesh_hlt_server_add_fault(&s, 0x02));
 	ATF_REQUIRE_EQ(0, mesh_hlt_server_add_fault(&s, 0x51));
 	ATF_REQUIRE_EQ(0, mesh_hlt_server_add_fault(&s, 0x02));	/* duplicate */
 	ATF_REQUIRE_EQ(0, mesh_hlt_server_add_fault(&s, 0x00));	/* No Fault */
-	ATF_CHECK_EQ_MSG(2, (int)s.n_faults, "duplicates and No Fault ignored");
+	ATF_CHECK_EQ_MSG(2, (int)s.n_registered_faults,		/* P-M14 */
+	    "duplicates and No Fault ignored");
 
 	/* Emit a Fault Status from the registered faults (test-with-fault). */
 	memset(&fs, 0, sizeof(fs));
 	fs.test_id = 0x03;
 	fs.company_id = s.company_id;
-	memcpy(fs.faults, s.faults, s.n_faults);
-	fs.n_faults = s.n_faults;
+	memcpy(fs.faults, s.registered_faults, s.n_registered_faults); /* P-M14 */
+	fs.n_faults = s.n_registered_faults;
 	ATF_REQUIRE_EQ(0, mesh_hlt_fault_status_build(&fs, buf, &outlen));
 	ATF_REQUIRE_EQ(0, mesh_hlt_fault_status_parse(buf, outlen, &op, &out));
 	ATF_CHECK_EQ(BT_MESH_HLT_OP_FAULT_STATUS, op);
@@ -256,9 +257,9 @@ ATF_TC_BODY(server_fault_state, tc)
 	ATF_CHECK_EQ(0x02, out.faults[0]);
 	ATF_CHECK_EQ(0x51, out.faults[1]);
 
-	/* Clear returns the array to empty. */
+	/* Health Fault Clear returns the Registered array to empty. */
 	mesh_hlt_server_clear_faults(&s);
-	ATF_CHECK_EQ(0, (int)s.n_faults);
+	ATF_CHECK_EQ(0, (int)s.n_registered_faults);	/* P-M14 */
 }
 
 /* Malformed rejection. */
@@ -517,8 +518,8 @@ ATF_TC_BODY(server_state_guards, tc)
 	for (i = 1; i <= MESH_HLT_MAX_FAULTS; i++)
 		ATF_REQUIRE_EQ(0, mesh_hlt_server_add_fault(&s,
 		    (uint8_t)i));
-	ATF_CHECK_EQ_MSG((int)MESH_HLT_MAX_FAULTS, (int)s.n_faults,
-	    "table holds MESH_HLT_MAX_FAULTS distinct faults");
+	ATF_CHECK_EQ_MSG((int)MESH_HLT_MAX_FAULTS, (int)s.n_registered_faults,
+	    "table holds MESH_HLT_MAX_FAULTS distinct faults");	/* P-M14 */
 	ATF_CHECK_EQ_MSG(-1, mesh_hlt_server_add_fault(&s, 0xff),
 	    "a full fault table rejects a new fault");
 }

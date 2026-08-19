@@ -201,6 +201,30 @@ mesh_proxy_reasm_reset(struct mesh_proxy_reasm *r)
 	r->len = 0;
 	r->type = 0;
 	r->in_progress = 0;
+	r->timing = 0;
+	r->start_ms = 0;
+}
+
+int
+mesh_proxy_reasm_tick(struct mesh_proxy_reasm *r, uint64_t now)
+{
+
+	if (r == NULL || !r->in_progress) {
+		if (r != NULL)
+			r->timing = 0;		/* no partial message: clock idle */
+		return (0);
+	}
+	if (!r->timing) {
+		/* Start the timeout clock from the first tick after a segment. */
+		r->timing = 1;
+		r->start_ms = now;
+		return (0);
+	}
+	if ((uint64_t)(now - r->start_ms) >= MESH_PROXY_REASM_TIMEOUT_MS) {
+		mesh_proxy_reasm_reset(r);	/* discard the stalled partial */
+		return (1);
+	}
+	return (0);
 }
 
 int
@@ -256,6 +280,7 @@ mesh_proxy_reasm_feed(struct mesh_proxy_reasm *r, const uint8_t *pdu,
 			memcpy(r->buf, data, datalen);
 		r->len = datalen;
 		r->in_progress = 1;
+		r->timing = 0;		/* (re)start the 20 s timeout clock */
 		return (0);
 
 	case MESH_PROXY_SAR_CONTINUATION:
@@ -267,6 +292,7 @@ mesh_proxy_reasm_feed(struct mesh_proxy_reasm *r, const uint8_t *pdu,
 		if (datalen != 0)
 			memcpy(r->buf + r->len, data, datalen);
 		r->len += datalen;
+		r->timing = 0;		/* a segment arrived: restart the clock */
 		return (0);
 
 	case MESH_PROXY_SAR_LAST:
@@ -350,6 +376,8 @@ mesh_proxy_filter_add(struct mesh_proxy_filter *f, const uint16_t *addrs,
 	if (f == NULL || (n != 0 && addrs == NULL))
 		return (-1);
 	for (i = 0; i < n; i++) {
+		if (addrs[i] == 0x0000)
+			continue;		/* ignore the unassigned address (6.7) */
 		if (mesh_proxy_filter_find(f, addrs[i], NULL))
 			continue;		/* skip duplicates */
 		if (f->count >= MESH_PROXY_FILTER_MAX)
@@ -501,6 +529,51 @@ mesh_proxy_cfg_parse(const uint8_t *in, size_t inlen, struct mesh_proxy_cfg *out
 			goto bad;
 		out->filter_type = in[1];
 		out->list_size = (uint16_t)((in[2] << 8) | in[3]);
+		return (0);
+
+	case MESH_PROXY_OP_DIRECTED_PROXY_CAP_STATUS:
+		/* Directed_Proxy (1) || Use_Directed (1) (Section 6.6.5). */
+		if (inlen != 3)
+			goto bad;
+		if (in[2] > MESH_PROXY_USE_DIRECTED_ENABLE)
+			goto bad;		/* Use_Directed prohibited */
+		out->directed_proxy = in[1];
+		out->use_directed = in[2];
+		return (0);
+
+	case MESH_PROXY_OP_DIRECTED_PROXY_CONTROL:
+		/*
+		 * Use_Directed (1) || optional Proxy_Client_Unicast_Addr_Range,
+		 * present iff Use_Directed is Enable (Section 6.6.6).  The range is a
+		 * unicast address range (Section 3.4.2.2.1): first octet bit 7 is
+		 * LengthPresent and bits 6..0 are the RangeStart high bits; the second
+		 * octet is the RangeStart low bits; a trailing RangeLength octet is
+		 * present only when LengthPresent is set (2-octet vs 3-octet range).
+		 */
+		if (in[1] > MESH_PROXY_USE_DIRECTED_ENABLE)
+			goto bad;		/* Use_Directed prohibited */
+		out->use_directed = in[1];
+		if (in[1] != MESH_PROXY_USE_DIRECTED_ENABLE) {
+			if (inlen != 2)
+				goto bad;	/* Disable carries no range */
+			return (0);
+		}
+		if (inlen == 4) {			/* 2-octet range */
+			if (in[2] & 0x80)
+				goto bad;	/* LengthPresent clear for 2-octet */
+			out->range_start =
+			    (uint16_t)(((in[2] & 0x7f) << 8) | in[3]);
+			out->range_length = 0;	/* single address */
+		} else if (inlen == 5) {		/* 3-octet range */
+			if ((in[2] & 0x80) == 0)
+				goto bad;	/* LengthPresent set for 3-octet */
+			out->range_start =
+			    (uint16_t)(((in[2] & 0x7f) << 8) | in[3]);
+			out->range_length = in[4];
+		} else {
+			goto bad;
+		}
+		out->have_range = 1;
 		return (0);
 
 	default:
@@ -836,4 +909,95 @@ mesh_proxy_adv_node_identity_build(const uint8_t identity_key[16],
 	    MESH_PROXY_ID_RANDOM_LEN);
 	*outlen = MESH_PROXY_ADV_NODE_IDENTITY_LEN;
 	return (0);
+}
+
+/* Assemble a Private identity AD structure from an already-computed Hash. */
+static void
+mesh_proxy_private_adv_assemble(uint8_t id_type, const uint8_t hash[8],
+    const uint8_t random[MESH_PROXY_ID_RANDOM_LEN], uint8_t *out, size_t *outlen)
+{
+
+	out[0] = (uint8_t)(MESH_PROXY_ADV_PRIVATE_NETWORK_ID_LEN - 1);
+	out[1] = MESH_AD_TYPE_SERVICE_DATA_16;
+	out[2] = (uint8_t)(MESH_PROXY_SERVICE_UUID & 0xff);
+	out[3] = (uint8_t)(MESH_PROXY_SERVICE_UUID >> 8);
+	out[4] = id_type;
+	memcpy(out + 5, hash, MESH_PROXY_ID_HASH_LEN);
+	memcpy(out + 5 + MESH_PROXY_ID_HASH_LEN, random, MESH_PROXY_ID_RANDOM_LEN);
+	*outlen = MESH_PROXY_ADV_PRIVATE_NETWORK_ID_LEN;
+}
+
+int
+mesh_proxy_adv_private_network_id_build(const uint8_t netkey[16],
+    const uint8_t random[MESH_PROXY_ID_RANDOM_LEN], uint8_t *out, size_t *outlen)
+{
+	uint8_t idk[16], netid[MESH_NETWORK_ID_ADV_LEN];
+	uint8_t in[16], hout[16];
+	int rc = -1;
+
+	if (netkey == NULL || random == NULL || out == NULL || outlen == NULL)
+		return (-1);
+
+	/* NetworkID = k3(NetKey); IdentityKey = k1(NetKey, ...). */
+	if (mesh_k3(netkey, netid) != 0)
+		goto out;
+	if (mesh_proxy_identity_key(netkey, idk) != 0)
+		goto out;
+
+	/* Hash = e(IdentityKey, NetworkID(8) || Random(8))[8..15]. */
+	memcpy(in, netid, MESH_NETWORK_ID_ADV_LEN);
+	memcpy(in + 8, random, MESH_PROXY_ID_RANDOM_LEN);
+	if (mesh_aes128_e(idk, in, hout) != 0)
+		goto out;
+
+	mesh_proxy_private_adv_assemble(MESH_PROXY_ADV_PRIVATE_NETWORK_ID,
+	    hout + 8, random, out, outlen);
+	rc = 0;
+out:
+	explicit_bzero(idk, sizeof(idk));
+	explicit_bzero(netid, sizeof(netid));
+	explicit_bzero(in, sizeof(in));
+	explicit_bzero(hout, sizeof(hout));
+	if (rc != 0) {
+		memset(out, 0, MESH_PROXY_ADV_PRIVATE_NETWORK_ID_LEN);
+		*outlen = 0;
+	}
+	return (rc);
+}
+
+int
+mesh_proxy_adv_private_node_identity_build(const uint8_t identity_key[16],
+    uint16_t addr, const uint8_t random[MESH_PROXY_ID_RANDOM_LEN],
+    uint8_t *out, size_t *outlen)
+{
+	uint8_t in[16], hout[16];
+	int rc = -1;
+
+	if (identity_key == NULL || random == NULL || out == NULL ||
+	    outlen == NULL)
+		return (-1);
+
+	/*
+	 * Hash = e(IdentityKey, Padding(5 x 0x00) || 0x03 || Random(8) ||
+	 *          Address(2))[8..15]  (Section 7.2.2.2.5).
+	 */
+	memset(in, 0, 5);
+	in[5] = MESH_PROXY_ADV_PRIVATE_NODE_IDENTITY;	/* 0x03 */
+	memcpy(in + 6, random, MESH_PROXY_ID_RANDOM_LEN);
+	in[14] = (uint8_t)(addr >> 8);
+	in[15] = (uint8_t)addr;
+	if (mesh_aes128_e(identity_key, in, hout) != 0)
+		goto out;
+
+	mesh_proxy_private_adv_assemble(MESH_PROXY_ADV_PRIVATE_NODE_IDENTITY,
+	    hout + 8, random, out, outlen);
+	rc = 0;
+out:
+	explicit_bzero(in, sizeof(in));
+	explicit_bzero(hout, sizeof(hout));
+	if (rc != 0) {
+		memset(out, 0, MESH_PROXY_ADV_PRIVATE_NODE_IDENTITY_LEN);
+		*outlen = 0;
+	}
+	return (rc);
 }

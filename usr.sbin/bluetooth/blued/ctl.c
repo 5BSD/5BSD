@@ -628,6 +628,33 @@ ctl_restore_att_timeout(int att_fd, const struct timeval *old_tv)
 #define CTL_BLOCKING_LIMIT	4
 #define CTL_BLOCKING_WINDOW	10
 
+/*
+ * Finding C-M1: the operator SCAN verb runs synchronously on the main event
+ * loop and is exempt from the privilege gate on a 0660 socket, so any local
+ * user could freeze the loop with repeated multi-second scans.  Wire up the
+ * per-client blocking-command rate limiter (previously dead) to bound how
+ * often a client can trigger such a blocking command.  Returns true when the
+ * command is admitted, false when the client is over budget for the window.
+ * Runs on the main thread (per-client counters need no lock).
+ */
+static bool
+ctl_blocking_rate_ok(struct blued_ctl_client *client)
+{
+	time_t now = time(NULL);
+
+	if (client == NULL)
+		return (true);
+	if (client->blocking_window == 0 ||
+	    now - client->blocking_window >= CTL_BLOCKING_WINDOW) {
+		client->blocking_window = now;
+		client->blocking_count = 0;
+	}
+	if (client->blocking_count >= CTL_BLOCKING_LIMIT)
+		return (false);
+	client->blocking_count++;
+	return (true);
+}
+
 
 
 
@@ -2032,6 +2059,16 @@ ctl_process_typed_gap(struct blued_ctl_client *client, const uint8_t *payload,
 			    "SCAN payload has wrong size or flags");
 			return;
 		}
+		/*
+		 * Finding C-M1: bound the frequency of this event-loop-blocking
+		 * SCAN (the previously-dead per-client rate limiter), and cap the
+		 * per-request synchronous duration below.
+		 */
+		if (!ctl_blocking_rate_ok(client)) {
+			ctl_send_op_error(client, IPC_OP_DOMAIN_GAP,
+			    IPC_ERR_BUSY, "scan rate limit exceeded");
+			return;
+		}
 		memset(&params, 0, sizeof(params));
 		params.passive = (flags & IPC_GAP_SCAN_F_PASSIVE) != 0;
 		params.accept_list = (flags & IPC_GAP_SCAN_F_ACCEPT_LIST) != 0;
@@ -2042,7 +2079,7 @@ ctl_process_typed_gap(struct blued_ctl_client *client, const uint8_t *payload,
 		params.rssi_min = (int8_t)payload[10];
 		memcpy(params.name_sub, payload + 12, sizeof(params.name_sub));
 		error = ctl_scan_result(&params, NULL, ctl_send_typed_scan_result,
-		    client);
+		    client, 3);
 		if (error != IPC_ERR_NONE) {
 			ctl_send_op_error(client, IPC_OP_DOMAIN_GAP,
 			    (uint16_t)error, error == IPC_ERR_NOT_FOUND ?
@@ -2359,6 +2396,34 @@ ctl_att_ops_leave(struct blued_conn *conn)
 	return (last);
 }
 
+/*
+ * Finding H-H1: expose the ATT-ops in-flight guard to non-GATT worker paths
+ * (the central pairing worker in blued_central.c).  Bumping att_ops_active
+ * makes blued_conn_disconnect and the APTO cleanup sweep defer teardown until
+ * the worker exits, exactly as they already do for a GATT worker — so a remote
+ * link drop during smp_pair() cannot free conn->hogp (dev->smp/dev->att) under
+ * the worker.  _end mirrors the re-signal ctl_gatt_job_run performs so a
+ * disconnect that arrived while the worker ran is finalized on the main thread
+ * once the last ATT op retires.
+ */
+void
+blued_conn_att_ops_begin(struct blued_conn *conn)
+{
+
+	ctl_att_ops_enter(conn);
+}
+
+void
+blued_conn_att_ops_end(struct blued_conn *conn)
+{
+
+	(void)ctl_att_ops_leave(conn);
+	if (atomic_load_explicit(&conn->disconnect_pending,
+	    memory_order_acquire) && atomic_load_explicit(
+	    &conn->att_ops_active, memory_order_acquire) == 0)
+		(void)write(blued_g.setup_pipe[1], "d", 1);
+}
+
 static bool
 ctl_subscription_equal(const struct ctl_subscription *a,
     const struct ctl_subscription *b)
@@ -2443,7 +2508,15 @@ ctl_gatt_resolve_conn(uint8_t requested_adapter, const bdaddr_t *addr,
 	if (requested_adapter != UINT8_MAX) {
 		conn = blued_conn_by_peer(blued_adapter_by_index_powered(requested_adapter),
 		    addr, addr_type);
-		if (conn == NULL || conn->att == NULL)
+		/*
+		 * Finding H-M7: the central setup thread publishes conn->att
+		 * before the connection reaches ACTIVE.  Admitting a GATT job on
+		 * an att!=NULL but still-CONNECTING conn races the setup thread.
+		 * Require ACTIVE as well (mirrors ctl_gatt.c:1053).
+		 */
+		if (conn == NULL || conn->att == NULL ||
+		    atomic_load_explicit(&conn->state, memory_order_acquire) !=
+		    BLUED_CONN_ACTIVE)
 			return (IPC_ERR_NOT_CONN);
 		*result = conn;
 		return (IPC_ERR_NONE);
@@ -2453,7 +2526,9 @@ ctl_gatt_resolve_conn(uint8_t requested_adapter, const bdaddr_t *addr,
 	for (i = 0; i < BLUED_MAX_ADAPTERS; i++) {
 		conn = blued_conn_by_peer(blued_adapter_by_index_powered(i), addr,
 		    addr_type);
-		if (conn == NULL || conn->att == NULL)
+		if (conn == NULL || conn->att == NULL ||
+		    atomic_load_explicit(&conn->state, memory_order_acquire) !=
+		    BLUED_CONN_ACTIVE)	/* Finding H-M7 */
 			continue;
 		if (found != NULL)
 			return (IPC_ERR_BUSY);
@@ -3423,6 +3498,14 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 	uint8_t irk[16], hci_type;
 	bool bad;
 	/*
+	 * Finding H-M5: the Peer_Identity_Address programmed into the resolving
+	 * list must be the peer's true identity address, not an observed RPA the
+	 * operator may have supplied.  These track the identity address actually
+	 * programmed; they are overridden from the resolved bond below.
+	 */
+	const uint8_t *pid = (const uint8_t *)addr;
+	uint8_t pid_type = addr_type;
+	/*
 	 * Finding 138: only a client-*supplied* IRK (a non-bond runtime entry)
 	 * is persisted; an IRK derived from a bond is already covered by the
 	 * bond database and rebuilt from it at init.
@@ -3437,8 +3520,13 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 	if (bad || adp == NULL)
 		return (IPC_ERR_NOT_FOUND);
 	if (opcode == IPC_SECURITY_RESOLV_CLEAR) {
+		struct blued_reslist_quiesce q;
+
 		/* Serialize shadow + controller mutation (finding 92). */
 		pthread_mutex_lock(&blued_g.reslist_lock);
+		/* Finding H-H7: quiesce adv/scan around the disallowed-while-
+		 * active mutation (Core Spec Vol 4 Part E §7.8.38/§7.8.45). */
+		blued_reslist_quiesce_begin(adp, &q);
 		hci_le_set_addr_resolution_enable(adp->hci_fd, 0);
 		if (hci_le_clear_resolving_list(adp->hci_fd) < 0)
 			error = IPC_ERR_IO;
@@ -3447,8 +3535,10 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 			/* Drop persisted runtime entries too (finding 138). */
 			blued_runtime_resolv_clear();
 		}
-		hci_le_set_addr_resolution_enable(adp->hci_fd,
-		    blued_cfg.privacy ? 1 : 0);
+		/* Finding H-H5: gate resolution on shadow non-empty, not just
+		 * local privacy. */
+		blued_reslist_restore_resolution(adp->hci_fd, adp);
+		blued_reslist_quiesce_end(adp, &q);
 		pthread_mutex_unlock(&blued_g.reslist_lock);
 		return (error);
 	}
@@ -3461,23 +3551,37 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 		if (bond != NULL && bond->has_irk) {
 			memcpy(irk, bond->irk, sizeof(irk));
 			have_irk = true;
+			/*
+			 * Finding H-M5: the operator may have supplied an
+			 * observed RPA that smp_find_bond resolved to this bond.
+			 * Program the bond's identity address as
+			 * Peer_Identity_Address, not the RPA.
+			 */
+			pid = bond->addr;
+			pid_type = bond->addr_type;
 		}
 		pthread_mutex_unlock(&blued_g.bond_db_lock);
 		if (!have_irk)
 			return (IPC_ERR_NOT_FOUND);
 	} else if (have_irk)
 		memcpy(irk, supplied_irk, sizeof(irk));
-	hci_type = addr_type == BDADDR_LE_RANDOM ? 0x01 : 0x00;
+	hci_type = pid_type == BDADDR_LE_RANDOM ? 0x01 : 0x00;
 	/* Serialize shadow + controller mutation against setup threads (92). */
 	pthread_mutex_lock(&blued_g.reslist_lock);
+	/* Finding H-H7: quiesce adv/scan around the disallowed-while-active
+	 * resolving-list mutation (Core Spec Vol 4 Part E §7.8.38/§7.8.39). */
+	{
+	struct blued_reslist_quiesce q;
+
+	blued_reslist_quiesce_begin(adp, &q);
 	hci_le_set_addr_resolution_enable(adp->hci_fd, 0);
 	if (opcode == IPC_SECURITY_RESOLV_ADD) {
 		if (hci_le_add_dev_resolving_list(adp->hci_fd, hci_type,
-		    (const uint8_t *)addr, irk, blued_has_local_irk ?
+		    pid, irk, blued_has_local_irk ?
 		    blued_local_irk : zero_irk) < 0)
 			error = IPC_ERR_IO;
 		else if (hci_le_set_privacy_mode(adp->hci_fd, hci_type,
-		    (const uint8_t *)addr, blued_cfg.privacy_mode) < 0) {
+		    pid, blued_cfg.privacy_mode) < 0) {
 			/*
 			 * Finding 122: the entry is in the controller resolving
 			 * list but Set Privacy Mode was rejected — do not report
@@ -3486,29 +3590,28 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 			 * sees the failure.
 			 */
 			(void)hci_le_remove_dev_resolving_list(adp->hci_fd,
-			    hci_type, (const uint8_t *)addr);
+			    hci_type, pid);
 			error = IPC_ERR_IO;
 		} else {
-			(void)blued_reslist_add(&adp->reslist,
-			    (const uint8_t *)addr, addr_type);
+			(void)blued_reslist_add(&adp->reslist, pid, pid_type);
 			/*
 			 * Persist a non-bond runtime entry with its supplied
 			 * IRK so it survives a restart (finding 138).
 			 */
 			if (client_supplied_irk)
-				blued_runtime_resolv_record(
-				    (const uint8_t *)addr, addr_type, irk);
+				blued_runtime_resolv_record(pid, pid_type, irk);
 		}
 	} else if (hci_le_remove_dev_resolving_list(adp->hci_fd, hci_type,
-	    (const uint8_t *)addr) < 0)
+	    pid) < 0)
 		error = IPC_ERR_IO;
 	else {
-		(void)blued_reslist_remove(&adp->reslist,
-		    (const uint8_t *)addr, addr_type);
-		blued_runtime_resolv_forget((const uint8_t *)addr, addr_type);
+		(void)blued_reslist_remove(&adp->reslist, pid, pid_type);
+		blued_runtime_resolv_forget(pid, pid_type);
 	}
-	hci_le_set_addr_resolution_enable(adp->hci_fd,
-	    blued_cfg.privacy ? 1 : 0);
+	/* Finding H-H5: resolution on whenever the shadow is non-empty. */
+	blued_reslist_restore_resolution(adp->hci_fd, adp);
+	blued_reslist_quiesce_end(adp, &q);
+	}
 	pthread_mutex_unlock(&blued_g.reslist_lock);
 	return (error);
 }
@@ -4227,6 +4330,15 @@ ctl_process_typed_adv(struct blued_ctl_client *client, const uint8_t *payload,
 			break;
 		}
 		for (candidate = 1; candidate <= 0xef; candidate++) {
+			/*
+			 * Finding H-M3: the mesh bearer's advertising set
+			 * (MESH_ADV_HANDLE, programmed in hci_adv.c) is not
+			 * tracked in ext_adv_sets[]/ctl_adv_sets[], so exclude it
+			 * explicitly or a client could be handed handle 0x02 and
+			 * collide with the mesh set.
+			 */
+			if (candidate == MESH_ADV_HANDLE)
+				continue;
 			if (blued_ext_adv_set_used(adp, (uint8_t)candidate))
 				continue;
 			for (i = 0; i < CTL_ADV_SET_MAX; i++)
@@ -5468,6 +5580,23 @@ blued_ctl_reset_owner(int client_fd)
 }
 
 /*
+ * Finding C-m1: re-enable the control-socket listener after the fd-exhaustion
+ * backoff timer (BLUED_KQ_CTL_ACCEPT_RETRY) fires.  The one-shot timer is
+ * already consumed; just re-arm the read filter.
+ */
+void
+blued_ctl_accept_retry_enable(void)
+{
+	struct kevent kev;
+
+	if (blued_g.kq < 0 || blued_g.ctl_fd < 0)
+		return;
+	EV_SET(&kev, blued_g.ctl_fd, EVFILT_READ, EV_ENABLE, 0, 0,
+	    BLUED_KQ_CTL_LISTEN);
+	(void)kevent(blued_g.kq, &kev, 1, NULL, 0, NULL);
+}
+
+/*
  * Accept a new control client connection.
  */
 void
@@ -5482,8 +5611,26 @@ blued_ctl_accept(void)
 
 	fd = accept4(blued_g.ctl_fd, NULL, NULL,
 	    SOCK_CLOEXEC | SOCK_CLOFORK | SOCK_NONBLOCK);
-	if (fd < 0)
+	if (fd < 0) {
+		/*
+		 * Finding C-m1: the listener is level-triggered, so on fd
+		 * exhaustion (EMFILE/ENFILE) accept4 keeps failing and the event
+		 * loop re-enters here at 100% CPU.  Disable the listener's read
+		 * filter and arm a one-shot timer to re-enable it, giving fds a
+		 * chance to be released first.
+		 */
+		if (errno == EMFILE || errno == ENFILE) {
+			struct kevent kev[2];
+
+			EV_SET(&kev[0], blued_g.ctl_fd, EVFILT_READ, EV_DISABLE,
+			    0, 0, BLUED_KQ_CTL_LISTEN);
+			EV_SET(&kev[1], blued_g.ctl_fd, EVFILT_TIMER,
+			    EV_ADD | EV_ONESHOT, NOTE_SECONDS, 1,
+			    BLUED_KQ_CTL_ACCEPT_RETRY);
+			(void)kevent(blued_g.kq, kev, 2, NULL, 0, NULL);
+		}
 		return;
+	}
 
 	/*
 	 * Record the peer's credentials for per-command privilege tiers.

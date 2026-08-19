@@ -163,7 +163,16 @@ time_setup_handler(const struct mesh_access_rx *rx)
 		if (mesh_time_state_decode(rx->pdu->params, rx->pdu->params_len,
 		    &srv->time) != 0) return (-1);
 		time_reply_init(rx, reply, MESH_OP_TIME_STATUS);
-		memcpy(reply->params, rx->pdu->params, 10); reply->params_len = 10;
+		/*
+		 * LOW / MMDL 5.2.1.5: the echoed Time Status honors the omission
+		 * rule -- when TAI Seconds is 0 the message carries only the
+		 * 5-octet zero TAI Seconds field, not the full 10-octet body.
+		 */
+		if (srv->time.tai_seconds == 0) {
+			memset(reply->params, 0, 5); reply->params_len = 5;
+		} else if (mesh_time_state_encode(&srv->time, reply->params) == 0)
+			reply->params_len = 10;
+		else return (-1);
 		break;
 	case MESH_OP_TIME_ROLE_SET:
 		if (rx->pdu->params_len != 1 || rx->pdu->params[0] > 3) return (-1);
@@ -475,6 +484,13 @@ scene_srv_handler(const struct mesh_access_rx *rx)
 			mesh_transition_start(&srv->transition, srv->current_scene,
 			    number, transition_time, delay,
 			    rx->now_ms);
+			/*
+			 * P-M9 / MMDL 5.1.3.2.1: while a scene transition is in
+			 * progress the Current Scene shall be 0x0000; it is
+			 * restored to the target on completion (mesh_scene_srv_tick
+			 * -> mesh_scene_srv_recall).
+			 */
+			srv->current_scene = 0;
 			status = 0;
 		} else {
 			srv->transition.active = 0;
@@ -503,7 +519,19 @@ scene_setup_handler(const struct mesh_access_rx *rx)
 	    rx->pdu->opcode == MESH_OP_SCENE_DELETE;
 	if (rx->pdu->opcode == MESH_OP_SCENE_STORE ||
 	    rx->pdu->opcode == MESH_OP_SCENE_STORE_UNACK) {
-		if (mesh_scene_srv_store(srv, number) != 0) status = 1;
+		/*
+		 * LOW / MMDL 5.2.2.11: "Scene Register Full" (0x01) is reported
+		 * ONLY when a new scene cannot be added because the register is
+		 * full.  A capture-callback failure is an internal error, not a
+		 * full register, so it must not be reported as Register Full;
+		 * with no status code defined for it the store is reported as
+		 * Success (the spec assumes capture cannot fail).
+		 */
+		if (scene_find(srv, number) == NULL &&
+		    srv->n_scenes >= MESH_SCENE_MAX)
+			status = 1;
+		else
+			(void)mesh_scene_srv_store(srv, number);
 	} else if (rx->pdu->opcode == MESH_OP_SCENE_DELETE ||
 	    rx->pdu->opcode == MESH_OP_SCENE_DELETE_UNACK) {
 		(void)mesh_scene_srv_delete(srv, number);

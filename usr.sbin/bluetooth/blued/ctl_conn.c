@@ -53,7 +53,8 @@
 
 int
 ctl_scan_result(const struct ctl_scan_params *params,
-    struct blued_adapter *target, ctl_scan_result_cb cb, void *arg)
+    struct blued_adapter *target, ctl_scan_result_cb cb, void *arg,
+    int duration_sec)
 {
 	struct blued_adapter *adp;
 	struct ble_scan_result results[BLE_MAX_SCAN_RESULTS];
@@ -62,6 +63,17 @@ ctl_scan_result(const struct ctl_scan_params *params,
 	char addr_str[18];
 	int nresults, i;
 	int nadapters_scanned = 0;
+
+	/*
+	 * Finding C-M1: this scan runs synchronously on the main event-loop
+	 * thread and blocks it for the whole duration per adapter.  Bound the
+	 * caller-requested duration so a single request cannot freeze the loop
+	 * for an unbounded time.
+	 */
+	if (duration_sec < 1)
+		duration_sec = 1;
+	if (duration_sec > 5)
+		duration_sec = 5;
 
 	hci_scan_params_default(&sp);
 	memset(&filt, 0, sizeof(filt));
@@ -106,13 +118,13 @@ ctl_scan_result(const struct ctl_scan_params *params,
 			uint8_t sphys = 0x01;
 			if (adp->le_features & LE_FEAT_CODED_PHY)
 				sphys = 0x05;
-			if (hci_le_ext_scan_ex(adp->hci_fd, 5, &sp, results,
-			    BLE_MAX_SCAN_RESULTS, &nresults, sphys) != 0)
+			if (hci_le_ext_scan_ex(adp->hci_fd, duration_sec, &sp,
+			    results, BLE_MAX_SCAN_RESULTS, &nresults, sphys) != 0)
 				nresults = 0;
 		}
 		if (nresults == 0) {
-			if (hci_le_scan_ex(adp->hci_fd, 5, &sp, results,
-			    BLE_MAX_SCAN_RESULTS, &nresults) < 0)
+			if (hci_le_scan_ex(adp->hci_fd, duration_sec, &sp,
+			    results, BLE_MAX_SCAN_RESULTS, &nresults) < 0)
 				continue;
 		}
 
@@ -304,7 +316,7 @@ ctl_connect_name_result(const char *name, struct blued_adapter *adapter,
 	params.rssi_min = INT8_MIN;
 	strlcpy(params.name_sub, name, sizeof(params.name_sub));
 	error = ctl_scan_result(&params, adapter, ctl_connect_name_scan_result,
-	    &match);
+	    &match, 5);
 	if (error != IPC_ERR_NONE)
 		return (error);
 	if (!match.found)
@@ -337,14 +349,17 @@ ctl_disconnect_result(uint8_t adapter_index, const bdaddr_t *addr,
 	 */
 	conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index), addr,
 	    addr_type);
-	if (conn != NULL && atomic_load(&conn->state) ==
-	    BLUED_CONN_CONNECTING) {
-		return (IPC_ERR_BUSY);
-	}
 	if (conn == NULL) {
 		return (IPC_ERR_NOT_FOUND);
 	}
 	conn->reconnect = false; /* prevent auto-reconnect */
+	/*
+	 * Finding H-L8: a CONNECTING conn is owned by its detached setup thread,
+	 * so blued_conn_disconnect latches disconnect_pending and lets the
+	 * thread tear the conn down at its handoff barrier rather than freeing
+	 * state under it.  Route through it instead of refusing with BUSY so the
+	 * operator's disconnect is honoured once setup completes/aborts.
+	 */
 	blued_conn_disconnect(conn);
 	return (IPC_ERR_NONE);
 }

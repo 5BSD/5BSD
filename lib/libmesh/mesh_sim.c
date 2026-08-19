@@ -91,20 +91,26 @@ addressed_here(const struct mesh_node *node, uint16_t dst)
 	return (0);
 }
 
-/* Network message cache: 1 if (src,seq) already recorded, else records + 0. */
+/*
+ * Network message cache: 1 if (src, seq, iv_index) already recorded, else
+ * records it and returns 0.  M-N1: the IV Index is part of the key so the same
+ * (src, seq) recurring after an IV Index change is not treated as a duplicate.
+ */
 static int
-nmc_seen_record(struct mesh_node *node, uint16_t src, uint32_t seq)
+nmc_seen_record(struct mesh_node *node, uint16_t src, uint32_t seq,
+    uint32_t iv_index)
 {
 	size_t i;
 
 	for (i = 0; i < MESH_SIM_NMC_SIZE; i++) {
 		if (node->nmc[i].valid && node->nmc[i].src == src &&
-		    node->nmc[i].seq == seq)
+		    node->nmc[i].seq == seq && node->nmc[i].iv_index == iv_index)
 			return (1);
 	}
 	node->nmc[node->nmc_next].valid = 1;
 	node->nmc[node->nmc_next].src = src;
 	node->nmc[node->nmc_next].seq = seq;
+	node->nmc[node->nmc_next].iv_index = iv_index;
 	node->nmc_next = (node->nmc_next + 1) % MESH_SIM_NMC_SIZE;
 	return (0);
 }
@@ -1560,7 +1566,7 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 	if (local_unicast(node, pdu.src))	/* our own message looped back */
 		return;
 
-	seen = nmc_seen_record(node, pdu.src, pdu.seq);
+	seen = nmc_seen_record(node, pdu.src, pdu.seq, iv);	/* M-N1 */
 
 	/*
 	 * Proxy (GATT bearer) forward, MshPRT_v1.1 Section 6.4/6.7: a proxy

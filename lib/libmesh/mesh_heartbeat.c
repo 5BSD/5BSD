@@ -469,21 +469,38 @@ mesh_hb_sub_init(struct mesh_hb_sub *s)
 }
 
 /*
- * Encode a remaining-period in seconds to a PeriodLog (Section 4.2.19.4,
- * Table 4.1): 0 -> 0x00, else the smallest n in 1..0x11 with 2^(n-1) >= secs.
+ * P-M10: the Heartbeat SUBSCRIPTION Count/Period Log fields use the Table 4.1
+ * log transform (MshPRT 4.1.2): the LARGEST n where 2^(n-1) is LESS THAN OR
+ * EQUAL TO the value (floor).  This is distinct from the PUBLICATION Count/
+ * Period Log, which use the ceil rule (smallest n where 2^(n-1) >= value) and
+ * are handled by mesh_hb_count_log().
  */
 static uint8_t
-hb_period_log_encode(uint32_t secs)
+hb_count_log_floor(uint16_t count)
+{
+	uint8_t n;
+
+	if (count == 0)
+		return (0x00);
+	if (count == 0xffff)
+		return (0xff);
+	for (n = 0x10; n >= 1; n--)
+		if (((uint32_t)1 << (n - 1)) <= count)
+			return (n);
+	return (0x01);
+}
+
+static uint8_t
+hb_period_log_floor(uint32_t secs)
 {
 	uint8_t n;
 
 	if (secs == 0)
 		return (0x00);
-	for (n = 1; n < 0x11; n++) {
-		if (((uint32_t)1 << (n - 1)) >= secs)
+	for (n = 0x11; n >= 1; n--)
+		if (((uint32_t)1 << (n - 1)) <= secs)
 			return (n);
-	}
-	return (0x11);
+	return (0x01);
 }
 
 int
@@ -577,9 +594,22 @@ mesh_hb_sub_snapshot(const struct mesh_hb_sub *s, uint8_t status,
 	out->status = status;
 	out->src = s->src;
 	out->dst = s->dst;
-	/* Section 4.2.19.4: report the REMAINING period, not the configured one. */
-	out->period_log = hb_period_log_encode(s->remaining);
-	out->count_log = mesh_hb_count_log(s->count);
-	out->min_hops = s->min_hops;
-	out->max_hops = s->max_hops;
+	/*
+	 * Section 4.2.19.4: report the REMAINING period, not the configured one.
+	 * P-M10: subscription Count/Period Log use the Table 4.1 floor transform.
+	 */
+	out->period_log = hb_period_log_floor(s->remaining);
+	out->count_log = hb_count_log_floor(s->count);
+	/*
+	 * P-M11 / MshPRT 4.4.1.2.16: when the Subscription Source or Destination
+	 * is the unassigned address (subscription disabled), Min Hops and Max
+	 * Hops shall be reported as 0x00, not the 0x7f "no message seen" sentinel.
+	 */
+	if (s->src == MESH_ADDR_UNASSIGNED || s->dst == MESH_ADDR_UNASSIGNED) {
+		out->min_hops = 0x00;
+		out->max_hops = 0x00;
+	} else {
+		out->min_hops = s->min_hops;
+		out->max_hops = s->max_hops;
+	}
 }

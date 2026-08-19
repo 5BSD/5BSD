@@ -76,6 +76,15 @@ sess_derive_confirmation(struct mesh_prov_session *s)
 	    s->ecdh) != 0)
 		return (-1);
 
+	/*
+	 * M-F1: MshPRT Section 5.4.3.1 - reject a peer public key equal to our
+	 * own (reflection).  The peer key is already validated on-curve and not
+	 * at infinity by mesh_prov_ecdh_secret(); failing here routes through the
+	 * same error path the caller uses for an off-curve key.
+	 */
+	if (memcmp(s->our_pub, s->peer_pub, 64) == 0)
+		return (-1);
+
 	if (s->role == MESH_PROV_ROLE_PROVISIONER) {
 		prov_pub = s->our_pub;
 		dev_pub = s->peer_pub;

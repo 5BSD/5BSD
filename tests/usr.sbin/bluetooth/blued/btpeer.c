@@ -2594,8 +2594,10 @@ btpeer_gatt_signed_write(struct btpeer *bp, uint16_t handle, const void *data,
     uint16_t len, const uint8_t csrk[16], uint32_t counter)
 {
 	uint8_t pdu[512];
+	uint8_t msg_swp[512];
 	uint8_t csrk_be[16], full_mac[16];
 	uint16_t mlen;		/* signed message length: opcode|handle|value */
+	size_t n;
 	int i;
 
 	/* opcode(1) | handle(2) | value | SignCounter(4) | MAC(8) */
@@ -2613,17 +2615,22 @@ btpeer_gatt_signed_write(struct btpeer *bp, uint16_t handle, const void *data,
 	pdu[mlen + 3] = (uint8_t)((counter >> 24) & 0xFF);
 
 	/*
-	 * MAC = AES-CMAC(CSRK, opcode||handle||value||SignCounter).  smp_aes_cmac
-	 * (Vol 3 Part H 2.2.5) expects a big-endian key while the CSRK is stored
-	 * little-endian on the wire; byte-swap it exactly as smp_verify_signature
-	 * does.  The 64-bit signature is the 8 least-significant octets, i.e.
-	 * bytes [8..15] of the big-endian CMAC output.
+	 * MAC byte order (S-M3): the interoperable stacks (Linux
+	 * net/bluetooth/smp.c, BlueZ bt_crypto_sign_att) byte-reverse BOTH the
+	 * CSRK and the whole (opcode||handle||value||SignCounter_le32) message
+	 * into the MSB order RFC 4493 AES-CMAC uses, then byte-reverse the MAC
+	 * back; the 8-octet wire signature is the low 8 octets of that LSB-first
+	 * MAC.  Generate it exactly as smp_verify_signature now checks it.
 	 */
+	n = (size_t)mlen + 4;
 	for (i = 0; i < 16; i++)
 		csrk_be[i] = csrk[15 - i];
-	if (smp_aes_cmac(csrk_be, pdu, (size_t)mlen + 4, full_mac) != 0)
+	for (i = 0; (size_t)i < n; i++)
+		msg_swp[i] = pdu[n - 1 - (size_t)i];
+	if (smp_aes_cmac(csrk_be, msg_swp, n, full_mac) != 0)
 		return (-1);
-	memcpy(&pdu[mlen + 4], &full_mac[8], 8);
+	for (i = 0; i < 8; i++)
+		pdu[mlen + 4 + i] = full_mac[15 - i];
 
 	btpeer_tx_l2cap(bp, L2CAP_CID_ATT, pdu, (uint16_t)(mlen + 4 + 8));
 	return (0);

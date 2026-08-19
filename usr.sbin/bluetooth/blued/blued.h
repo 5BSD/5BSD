@@ -233,7 +233,15 @@ struct blued_conn {
 	 * cannot free memory still in use by that thread.
 	 */
 	atomic_int		refcount;
-	atomic_bool		setup_worker_counted;
+	/*
+	 * Count of in-flight detached workers accounted for this connection in
+	 * the global setup_workers barrier (finding H-L6).  A per-conn boolean
+	 * undercounted when two workers overlapped on the same conn (the second
+	 * start was swallowed, then the first finish cleared the flag and the
+	 * barrier could drop to zero with a worker still running).  A counter
+	 * tracks each worker exactly once.
+	 */
+	atomic_int		setup_worker_count;
 	LIST_ENTRY(blued_conn)	entries;
 };
 
@@ -401,18 +409,28 @@ extern struct blued_ctx blued_g;
 static inline void
 blued_setup_worker_start(struct blued_conn *conn)
 {
-	bool expected = false;
 
-	if (atomic_compare_exchange_strong(&conn->setup_worker_counted,
-	    &expected, true))
-		atomic_fetch_add(&blued_g.setup_workers, 1);
+	/*
+	 * Finding H-L6: count every worker (overlapping workers on one conn
+	 * included) so the shutdown barrier is accurate.
+	 */
+	atomic_fetch_add(&conn->setup_worker_count, 1);
+	atomic_fetch_add(&blued_g.setup_workers, 1);
 }
 
 static inline void
 blued_setup_worker_finish(struct blued_conn *conn)
 {
+	int c = atomic_load(&conn->setup_worker_count);
 
-	if (atomic_exchange(&conn->setup_worker_counted, false))
+	/*
+	 * Decrement only while this conn still has a counted worker, so a stray
+	 * finish (no matching start) cannot underflow the global barrier.
+	 */
+	while (c > 0 && !atomic_compare_exchange_weak(&conn->setup_worker_count,
+	    &c, c - 1))
+		;
+	if (c > 0)
 		atomic_fetch_sub(&blued_g.setup_workers, 1);
 }
 
@@ -432,6 +450,16 @@ extern const int _blued_kq_rpa_timer_tag;
 
 extern const int _blued_kq_rpa_retry_tag;
 #define BLUED_KQ_RPA_RETRY	((void *)(uintptr_t)&_blued_kq_rpa_retry_tag)
+
+/*
+ * One-shot timer that re-enables the control-socket listener after it was
+ * disabled on fd exhaustion (finding C-m1).  Timer ident is blued_g.ctl_fd
+ * (distinct namespace from the EVFILT_READ filter on the same fd).
+ */
+extern const int _blued_kq_ctl_accept_retry_tag;
+#define BLUED_KQ_CTL_ACCEPT_RETRY \
+	((void *)(uintptr_t)&_blued_kq_ctl_accept_retry_tag)
+void	blued_ctl_accept_retry_enable(void);
 
 /* Central setup thread entry point — used by blued.c and ctl.c */
 void	*blued_conn_setup_central(void *arg);

@@ -342,6 +342,11 @@ sensor_column_handler(const struct mesh_access_rx *rx)
 	if (srv == NULL || rx->pdu->params_len < 2) return (-1);
 	property = (uint16_t)rx->pdu->params[0] |
 	    ((uint16_t)rx->pdu->params[1] << 8);
+	/*
+	 * P-M13 / MMDL 1.3.3: a Property ID of 0x0000 is Prohibited and the
+	 * Column/Series Get is silently ignored (no Status), not answered.
+	 */
+	if (property == 0) return (-1);
 	e = sensor_find_mut(srv, property);
 	if (reply == NULL) return (0);
 	reply->have_reply = 1; reply->src = rx->elem_addr; reply->dst = rx->src;
