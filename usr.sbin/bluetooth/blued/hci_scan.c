@@ -348,9 +348,13 @@ hci_le_set_scan_params(int hci_fd, const struct hci_scan_params *params)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	pthread_mutex_lock(hci_devreq_mutex(hci_fd));
-	rc = hci_devreq_logged_locked(hci_fd, &r, 5);
-	pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+	{
+		/* C3-L: same mutex object for lock and unlock. */
+		pthread_mutex_t *mtx = hci_devreq_mutex(hci_fd);
+		pthread_mutex_lock(mtx);
+		rc = hci_devreq_logged_locked(hci_fd, &r, 5);
+		pthread_mutex_unlock(mtx);
+	}
 	if (rc < 0)
 		return (-1);
 	if (rp.status != 0) {
@@ -391,9 +395,13 @@ hci_le_set_scan_enable(int hci_fd, uint8_t enable, uint8_t filter_dup)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	pthread_mutex_lock(hci_devreq_mutex(hci_fd));
-	rc = hci_devreq_logged_locked(hci_fd, &r, 5);
-	pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+	{
+		/* C3-L: same mutex object for lock and unlock. */
+		pthread_mutex_t *mtx = hci_devreq_mutex(hci_fd);
+		pthread_mutex_lock(mtx);
+		rc = hci_devreq_logged_locked(hci_fd, &r, 5);
+		pthread_mutex_unlock(mtx);
+	}
 	if (rc < 0)
 		return (-1);
 	if (rp.status != 0) {
@@ -435,9 +443,13 @@ hci_le_set_ext_scan_enable(int hci_fd, uint8_t enable, uint8_t filter_dup)
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	pthread_mutex_lock(hci_devreq_mutex(hci_fd));
-	rc = hci_devreq_logged_locked(hci_fd, &r, 5);
-	pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+	{
+		/* C3-L: same mutex object for lock and unlock. */
+		pthread_mutex_t *mtx = hci_devreq_mutex(hci_fd);
+		pthread_mutex_lock(mtx);
+		rc = hci_devreq_logged_locked(hci_fd, &r, 5);
+		pthread_mutex_unlock(mtx);
+	}
 	if (rc < 0)
 		return (-1);
 	if (rp.status != 0) {
@@ -551,13 +563,17 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 	ng_hci_event_pkt_t *evt;
 	int count = 0;
 	time_t end_time;
+	/* C3-L: capture the per-fd lock slot once; unlocking via a fresh
+	 * hci_devreq_mutex(hci_fd) could hit a remapped slot on fd reuse. */
+	pthread_mutex_t *mtx;
 
 	if (!scan_params_valid(params)) {
 		errno = EINVAL;
 		return (-1);
 	}
 
-	pthread_mutex_lock(hci_devreq_mutex(hci_fd));
+	mtx = hci_devreq_mutex(hci_fd);
+	pthread_mutex_lock(mtx);
 
 	/*
 	 * LE Set Scan Parameters is command-disallowed while scanning is
@@ -601,7 +617,7 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 
 	if (hci_devreq_logged_locked(hci_fd, &r, 5) < 0) {
 		bt_devfilter(hci_fd, &oldflt, NULL);
-		pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+		pthread_mutex_unlock(mtx);
 		return (-1);
 	}
 
@@ -610,7 +626,7 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 			LOG_HCI(1, "LE scan parameters rejected while "
 			    "controller is in a conflicting scan state");
 		bt_devfilter(hci_fd, &oldflt, NULL);
-		pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+		pthread_mutex_unlock(mtx);
 		errno = EIO;
 		return (-1);
 	}
@@ -634,13 +650,13 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 
 	if (hci_devreq_logged_locked(hci_fd, &r, 5) < 0) {
 		bt_devfilter(hci_fd, &oldflt, NULL);
-		pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+		pthread_mutex_unlock(mtx);
 		return (-1);
 	}
 
 	if (rp.status != 0) {
 		bt_devfilter(hci_fd, &oldflt, NULL);
-		pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+		pthread_mutex_unlock(mtx);
 		errno = EIO;
 		return (-1);
 	}
@@ -789,7 +805,7 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
 	/* Restore previous event filter */
 	bt_devfilter(hci_fd, &oldflt, NULL);
 
-	pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+	pthread_mutex_unlock(mtx);
 
 	*nresults = count;
 	return (0);
@@ -997,9 +1013,13 @@ hci_le_set_ext_scan_params(int hci_fd, const struct hci_scan_params *params,
 	r.rlen = sizeof(rp);
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
-	pthread_mutex_lock(hci_devreq_mutex(hci_fd));
-	rc = hci_devreq_logged_locked(hci_fd, &r, 5);
-	pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+	{
+		/* C3-L: same mutex object for lock and unlock. */
+		pthread_mutex_t *mtx = hci_devreq_mutex(hci_fd);
+		pthread_mutex_lock(mtx);
+		rc = hci_devreq_logged_locked(hci_fd, &r, 5);
+		pthread_mutex_unlock(mtx);
+	}
 	if (rc < 0)
 		return (-1);
 	if (rp.status != 0) {
@@ -1047,6 +1067,7 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 	 */
 	uint8_t scan_buf[3 + 5 * 2];
 	size_t scan_len;
+	pthread_mutex_t *mtx;	/* C3-L: capture the per-fd lock slot once */
 
 	if (!scan_params_valid(params)) {
 		errno = EINVAL;
@@ -1064,7 +1085,8 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 	/* Build the scan parameters buffer from the operator request. */
 	scan_len = scan_params_fill_ext(scan_buf, params, scanning_phys, hci_fd);
 
-	pthread_mutex_lock(hci_devreq_mutex(hci_fd));
+	mtx = hci_devreq_mutex(hci_fd);
+	pthread_mutex_lock(mtx);
 
 	/*
 	 * The controller rejects Set Extended Scan Parameters while scanning is
@@ -1084,7 +1106,7 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 	r.event = NG_HCI_EVENT_COMMAND_COMPL;
 
 	if (hci_devreq_logged_locked(hci_fd, &r, 5) < 0) {
-		pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+		pthread_mutex_unlock(mtx);
 		return (-1);
 	}
 	if (rp.status != 0) {
@@ -1125,7 +1147,7 @@ hci_le_ext_scan_ex(int hci_fd, int duration_sec,
 			LOG_HCI(1, "LE Set Ext Scan Params retry failed, "
 			    "status=0x%02x", rp.status);
 		}
-		pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+		pthread_mutex_unlock(mtx);
 		errno = EIO;
 		return (-1);
 	}
@@ -1163,14 +1185,14 @@ ext_scan_params_ok:
 
 	if (hci_devreq_logged_locked(hci_fd, &r, 5) < 0) {
 		bt_devfilter(hci_fd, &oldflt, NULL);
-		pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+		pthread_mutex_unlock(mtx);
 		return (-1);
 	}
 	if (rp.status != 0) {
 		LOG_HCI(1, "LE Set Ext Scan Enable failed, status=0x%02x",
 		    rp.status);
 		bt_devfilter(hci_fd, &oldflt, NULL);
-		pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+		pthread_mutex_unlock(mtx);
 		errno = EIO;
 		return (-1);
 	}
@@ -1282,17 +1304,28 @@ ext_scan_params_ok:
 					p++;
 					remain--;
 
-					/* Dedup by address */
+					/*
+					 * Dedup by address.  C3-L: honor
+					 * NO_DEDUP (params->filter_dup == 0) in
+					 * this legacy branch of the ext-scan
+					 * loop too — the extended branch below
+					 * already guards on filter_dup, but this
+					 * one deduplicated unconditionally, so a
+					 * NO_DEDUP scan still swallowed repeat
+					 * legacy sightings.
+					 */
 					dup = false;
-					for (j = 0; j < count; j++) {
-						if (results[j].addr_type ==
-						    sr->addr_type &&
-						    memcmp(results[j].addr,
-						    sr->addr, 6) == 0) {
-							scan_result_merge(
-							    &results[j], sr);
-							dup = true;
-							break;
+					if (params->filter_dup) {
+						for (j = 0; j < count; j++) {
+							if (results[j].addr_type ==
+							    sr->addr_type &&
+							    memcmp(results[j].addr,
+							    sr->addr, 6) == 0) {
+								scan_result_merge(
+								    &results[j], sr);
+								dup = true;
+								break;
+							}
 						}
 					}
 					if (!dup)
@@ -1396,7 +1429,7 @@ ext_scan_params_ok:
 	/* Restore previous event filter */
 	bt_devfilter(hci_fd, &oldflt, NULL);
 
-	pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+	pthread_mutex_unlock(mtx);
 
 	LOG_HCI(1, "extended scan complete, %d device(s) found", count);
 

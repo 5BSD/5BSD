@@ -223,7 +223,8 @@ ctl_send_fd_to_client(struct blued_ctl_client *client __unused,
 }
 
 void
-blued_ctl_send_fd(int client_fd __unused, int fd __unused)
+blued_ctl_send_fd(int client_fd __unused, uint64_t client_gen __unused,
+    int fd __unused)	/* C3-M9 */
 {
 
 	fd_handouts++;
@@ -558,7 +559,7 @@ ATF_TC_BODY(cis_central_full_lifecycle, tc)
 
 	/* Create CIS: issues LE Create CIS (Command Status), returns creating. */
 	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	ATF_CHECK_EQ(ISO_ST_CREATING, blued_iso_stream_state(&test_adp, h));
 	ATF_CHECK(idx_of(C_CREATE_CIS) >= 0);
 
@@ -603,7 +604,7 @@ ATF_TC_BODY(cis_central_push_on_establish, tc)
 	env_init();
 	h = make_cig();
 	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, 42 /* client fd */, true));
+	    BDADDR_LE_PUBLIC, 0, 1, 42 /* client fd */, 0, true));	/* C3-M9 */
 	iso_on_cis_established(&test_adp, h, 0);
 	ATF_CHECK_EQ(1, fd_handouts);
 	ATF_CHECK_EQ(ISO_ST_HANDED_OFF, blued_iso_stream_state(&test_adp, h));
@@ -620,7 +621,7 @@ ATF_TC_BODY(cis_push_handout_failure_is_retryable, tc)
 	env_init();
 	h = make_cig();
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, 42, true));
+	    BDADDR_LE_PUBLIC, 0, 1, 42, 0, true));	/* C3-M9 */
 	iso_connect_fail = true;
 	iso_on_cis_established(&test_adp, h, 0);
 	ATF_CHECK_EQ(ISO_ST_PATHS_UP, blued_iso_stream_state(&test_adp, h));
@@ -642,7 +643,7 @@ ATF_TC_BODY(cis_partial_setup_failure, tc)
 	env_init();
 	h = make_cig();
 	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 
 	iso_on_cis_established(&test_adp, h, 0x3E /* connection failed */);
 	ATF_CHECK_EQ(0, blued_iso_stream_count());
@@ -663,7 +664,7 @@ ATF_TC_BODY(cis_establish_failure_emits_event, tc)
 	env_init();
 	h = make_cig();
 	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 
 	iso_on_cis_established(&test_adp, h, 0x3E /* connection failed */);
 	ATF_CHECK(frame_is_iso_event(IPC_ISO_EV_FAILED));
@@ -684,7 +685,7 @@ ATF_TC_BODY(cis_datapath_failure_emits_event, tc)
 	env_init();
 	h = make_cig();
 	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 
 	setup_paths_override = 0;	/* host data path fails to come up */
 	iso_on_cis_established(&test_adp, h, 0 /* controller says OK */);
@@ -708,13 +709,13 @@ ATF_TC_BODY(cis_failure_keeps_cig_for_configured_sibling, tc)
 	    0, 0, 10, 10, cises, 2, handles, &count));
 	ATF_REQUIRE_EQ(2, count);
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 8, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 8, 1, -1, 0, false));
 	iso_on_cis_established(&test_adp, handles[0], 0x3e);
 	ATF_CHECK_EQ(1, blued_iso_stream_count());
 	ATF_CHECK_EQ(-1, idx_of(C_REMOVE_CIG));
 
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 8, 2, -1, false));
+	    BDADDR_LE_PUBLIC, 8, 2, -1, 0, false));
 	iso_on_cis_established(&test_adp, handles[1], 0x3e);
 	ATF_CHECK_EQ(0, blued_iso_stream_count());
 	ATF_CHECK(idx_of(C_REMOVE_CIG) >= 0);
@@ -730,7 +731,7 @@ ATF_TC_BODY(cis_create_command_error, tc)
 	h = make_cig();
 	fail_next = 1;
 	ATF_CHECK_EQ(-1, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	/* Stream still parked in CIG_CONFIGURED; removable via ISO_REMOVE_CIG. */
 	ATF_CHECK_EQ(ISO_ST_CIG_CONFIGURED, blued_iso_stream_state(&test_adp, h));
 	ATF_CHECK_EQ(0, blued_iso_cig_remove(&test_adp, 0));
@@ -747,7 +748,7 @@ ATF_TC_BODY(cis_peer_disconnect, tc)
 	env_init();
 	h = make_cig();
 	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	iso_on_cis_established(&test_adp, h, 0);
 
 	iso_on_cis_disconnected(&test_adp, h, 0x13);
@@ -766,7 +767,7 @@ ATF_TC_BODY(cis_teardown_no_spurious_lost, tc)
 	env_init();
 	h = make_cig();
 	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	iso_on_cis_established(&test_adp, h, 0);
 
 	ATF_CHECK_EQ(0, blued_iso_cis_teardown(&test_adp, h, 0x13));
@@ -794,9 +795,9 @@ ATF_TC_BODY(cig_removed_only_after_last_cis, tc)
 	    0, 10, 10, cises, 2, handles, &count));
 	ATF_CHECK_EQ(2, count);
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 3, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 3, 1, -1, 0, false));
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 3, 2, -1, false));
+	    BDADDR_LE_PUBLIC, 3, 2, -1, 0, false));
 	iso_on_cis_established(&test_adp, handles[0], 0);
 	iso_on_cis_established(&test_adp, handles[1], 0);
 	ncall = 0;
@@ -1196,11 +1197,11 @@ ATF_TC_BODY(defensive_state_completion, tc)
 	ATF_CHECK_EQ(-1, blued_iso_cig_create(&test_adp, 0, 0, 0, 0, 0, 0, 0,
 	    0, &cis, 17, NULL, NULL));
 	ATF_CHECK_EQ(-1, blued_iso_cis_create(NULL, NULL, 0, 0, 0, -1,
-	    false));
+	    0, false));
 	/* Check the independent peer-pointer guard (the NULL-adapter case above
 	 * deliberately short-circuits before it). */
 	ATF_CHECK_EQ(-1, blued_iso_cis_create(&test_adp, NULL,
-	    BDADDR_LE_PUBLIC, 0, 0, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 0, -1, 0, false));
 	/* Result arrays are optional API outputs.  A caller interested only in
 	 * configuring the CIG must not need to provide either one. */
 	ATF_REQUIRE_EQ(0, blued_iso_cig_create(&test_adp, 0, 1000, 1000, 0,
@@ -1234,7 +1235,7 @@ ATF_TC_BODY(defensive_state_completion, tc)
 	ATF_REQUIRE_EQ(0, blued_iso_big_create(&test_adp, 0x7e, 0, 1, 1000,
 	    60, 10, 1, 1, 0, 0, 0, NULL));
 	ATF_CHECK_EQ(-1, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	ATF_CHECK_EQ(-1, blued_iso_cig_remove(&test_adp, 0));
 	ATF_CHECK_EQ(0, blued_iso_big_terminate(&test_adp, 0x7e, 0x13));
 	iso_on_big_terminated(&test_adp, 0x7e, 0x13);
@@ -1256,7 +1257,7 @@ ATF_TC_BODY(defensive_state_completion, tc)
 	/* Connected peer but no configured CIG/CIS.  A locally unknown CIG is
 	 * rejected without issuing a controller command. */
 	ATF_CHECK_EQ(-1, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 9, 9, -1, false));
+	    BDADDR_LE_PUBLIC, 9, 9, -1, 0, false));
 	ATF_CHECK_EQ(-1, blued_iso_cig_remove(&test_adp, 9));
 
 	/* A source cannot be terminated through the sink verb, nor vice versa. */
@@ -1272,7 +1273,7 @@ ATF_TC_BODY(defensive_state_completion, tc)
 	/* Established streams with no usable controller data path fail closed. */
 	h = make_cig();
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	setup_paths_override = 0;
 	iso_on_cis_established(&test_adp, h, 0);
 	ATF_CHECK_EQ(ISO_ST_TEARDOWN,
@@ -1285,7 +1286,7 @@ ATF_TC_BODY(defensive_state_completion, tc)
 	blued_iso_reset();
 	h = make_cig();
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	iso_on_cis_established(&test_adp, h, 0x3e);
 	ATF_CHECK_EQ(0, blued_iso_stream_count());
 
@@ -1365,7 +1366,7 @@ ATF_TC_BODY(teardown_command_failure_is_retryable, tc)
 
 	h = make_cig();
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	iso_on_cis_established(&test_adp, h, 0);
 	fail_next = 1;
 	ATF_CHECK_EQ(-1, blued_iso_cis_teardown(&test_adp, h, 0x13));
@@ -1380,7 +1381,7 @@ ATF_TC_BODY(teardown_command_failure_is_retryable, tc)
 
 	h = make_cig();
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	setup_path_fail_direction = HCI_ISO_DIR_OUTPUT;
 	iso_on_cis_established(&test_adp, h, 0);
 	ATF_CHECK_EQ(ISO_ST_PATHS_UP,
@@ -1427,12 +1428,12 @@ ATF_TC_BODY(remaining_registry_and_fault_paths, tc)
 	ATF_CHECK_EQ(-1, blued_iso_acquire_fd(&test_adp, h));
 	conn_present = false;
 	ATF_CHECK_EQ(-1, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	conn_present = true;
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	ATF_CHECK_EQ(-1, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	blued_iso_reset();
 
 	/* Populate the best-effort peer lookup arm on an inbound CIS request. */
@@ -1509,11 +1510,11 @@ ATF_TC_BODY(registry_identity_and_role_collision_matrix, tc)
 	/* A request for the impossible CIG-4/CIS-2 pair must not select either
 	 * neighboring stream. */
 	ATF_CHECK_EQ(-1, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 4, 2, -1, false));
+	    BDADDR_LE_PUBLIC, 4, 2, -1, 0, false));
 	/* An inbound CIS is a distinct role and must also be skipped. */
 	iso_on_cis_request(&test_adp, 0x0020, 0x0040, 9, 1);
 	ATF_CHECK_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 5, 2, -1, false));
+	    BDADDR_LE_PUBLIC, 5, 2, -1, 0, false));
 	ATF_CHECK_EQ(ISO_ST_CREATING,
 	    blued_iso_stream_state(&test_adp, handles[0]));
 
@@ -1640,7 +1641,7 @@ ATF_TC_BODY(async_completion_failure_matrix, tc)
 
 	h = make_cig();
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	iso_on_cis_established(&test_adp, h, 0);
 	iso_connect_fail = true;
 	ATF_CHECK_EQ(-1, blued_iso_acquire_fd(&test_adp, h));
@@ -1825,7 +1826,7 @@ ATF_TC_BODY(typed_iso_acquire_tx_full_no_handout, tc)
 
 	h = make_cig();
 	ATF_REQUIRE_EQ(0, blued_iso_cis_create(&test_adp, &test_conn.dst,
-	    BDADDR_LE_PUBLIC, 0, 1, -1, false));
+	    BDADDR_LE_PUBLIC, 0, 1, -1, 0, false));
 	iso_on_cis_established(&test_adp, h, 0);
 	ATF_REQUIRE_EQ(ISO_ST_PATHS_UP, blued_iso_stream_state(&test_adp, h));
 	ncall = 0;

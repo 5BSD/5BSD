@@ -1419,6 +1419,34 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 		pthread_mutex_unlock(&blued_g.bond_db_lock);
 	}
 
+	/*
+	 * C3-M6: reprogram persisted runtime (non-bond) resolving-list entries
+	 * too, mirroring the init-time load path (blued.c ~1317).  The toggle
+	 * path previously rebuilt the list from bonds ONLY, silently dropping
+	 * every operator RESOLV_ADD IRK on a PRIVACY on->off->on cycle.  Skip
+	 * any address a bond already programmed above (idempotent).
+	 */
+	for (uint32_t ri = 0; ri < blued_runtime_resolv_count; ri++) {
+		struct blued_persist_resolv_entry *e = &blued_runtime_resolv[ri];
+		uint8_t at = (e->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
+
+		if (blued_reslist_contains(shadow, e->addr, e->addr_type))
+			continue;
+		if (hci_le_add_dev_resolving_list(hci_fd, at, e->addr, e->irk,
+		    blued_local_irk) != 0 ||
+		    hci_le_set_privacy_mode(hci_fd, at, e->addr,
+		    blued_cfg.privacy_mode) != 0)
+			return (-1);
+		(void)blued_reslist_add(shadow, e->addr, e->addr_type);
+		loaded++;
+	}
+
+	/*
+	 * C3-M6 (H-H5 policy): resolution must be ON whenever any identity is
+	 * present, independent of which op last ran.  A PRIVACY on request
+	 * always enables resolution; with entries loaded this also resolves
+	 * peer RPAs, and with none it still gives host-side advertising privacy.
+	 */
 	if (hci_le_set_rpa_timeout(hci_fd, (uint16_t)blued_cfg.rpa_timeout) != 0 ||
 	    hci_le_set_addr_resolution_enable(hci_fd, 1) != 0)
 		return (-1);
@@ -1448,10 +1476,20 @@ blued_privacy_set(int hci_fd, bool on)
 		return (-1);
 	}
 	shadow = &adp->reslist;
+	/*
+	 * C3-M7: serialize the read-modify-write of adp->reslist and the
+	 * controller reprogram against concurrent SMP-worker / dispatch
+	 * mutations (blued_reslist_sync_add/remove hold this same lock).
+	 * Without it, a pairing worker's incremental add could interleave with
+	 * this full rebuild and leave the shadow inconsistent with the
+	 * controller list.
+	 */
+	pthread_mutex_lock(&blued_g.reslist_lock);
 	old_on = adp->privacy;
 	next = *shadow;
 	if (blued_privacy_program(hci_fd, on, &next) == 0) {
 		*shadow = next;
+		pthread_mutex_unlock(&blued_g.reslist_lock);
 		return (0);
 	}
 
@@ -1471,6 +1509,7 @@ blued_privacy_set(int hci_fd, bool on)
 			memset(shadow, 0, sizeof(*shadow));
 		hci_scan_set_own_address_type(hci_fd, BLUED_HCI_OWN_ADDR_PUBLIC);
 	}
+	pthread_mutex_unlock(&blued_g.reslist_lock);
 	errno = saved_errno;
 	return (-1);
 }

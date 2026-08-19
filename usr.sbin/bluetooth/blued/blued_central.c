@@ -40,6 +40,17 @@ blued_central_setup_fail(struct blued_conn *conn)
 	if (conn->reconnect) {
 		struct kevent kev;
 
+		/*
+		 * C3-H3: invalidate the stale connection handle before the
+		 * (up to max) backoff, matching blued_conn_disconnect.  Leaving
+		 * con_handle_valid true through the RECONNECTING window let a
+		 * post-handle setup failure keep a dead handle live: LTK Request
+		 * events would reply the wrong peer's LTK, an APTO sweep could
+		 * free the RECONNECTING conn, and an Enhanced Connection Complete
+		 * for a reused handle could be hijacked onto this conn.
+		 */
+		conn->con_handle_valid = false;
+
 		blued_conn_set_state(conn, BLUED_CONN_RECONNECTING);
 		if (conn->reconnect_delay == 0)
 			conn->reconnect_delay = 3;
@@ -210,26 +221,36 @@ blued_central_start_pairing(struct hogp_device *dev, struct blued_conn *conn)
 		dev->smp.oob = NULL;
 		explicit_bzero(&oob_lg, sizeof(oob_lg));
 		explicit_bzero(&oob_sc, sizeof(oob_sc));
+		/*
+		 * C1-H2: the SC-OOB ephemeral is cleared only now, after
+		 * smp_pair() has consumed it (blued_oob_take no longer clears
+		 * it early), so the published PKa survived through pairing.
+		 * Clear on the failure path too so a stale ephemeral never
+		 * leaks into the next attempt.
+		 */
+		if (have_sc)
+			smp_sc_oob_clear_local();
 		warnx("SMP pairing failed");
 		return (-1);
 	}
 	dev->smp.oob = NULL;
 	explicit_bzero(&oob_lg, sizeof(oob_lg));
 	explicit_bzero(&oob_sc, sizeof(oob_sc));
-
-	if (hci_wait_encryption(dev->hci_fd, dev->con_handle, 10) < 0) {
-		/*
-		 * Finding 119: a completed SMP exchange whose encryption never
-		 * turns on is NOT a successful (re)pairing — the ATT security
-		 * gate stays closed and the rotated IRK is not programmed into
-		 * the controller resolving list.  Report failure so the caller
-		 * (REKEY / the reactive retry) does not map this to success.
-		 */
-		warn("post-pairing encryption timeout");
-		return (-1);
-	}
+	/* C1-H2: clear the SC-OOB ephemeral now that pairing has consumed it. */
+	if (have_sc)
+		smp_sc_oob_clear_local();
 
 	/*
+	 * C3-H1: smp_pair() already waits for and consumes the HCI Encryption
+	 * Change event INTERNALLY on every success sub-path (SC JW/NC, SC
+	 * passkey, legacy) and returns <0 if encryption did not turn on
+	 * (smp_sc.c:1095, smp_sc.c:594, smp.c:1436).  A redundant outer
+	 * hci_wait_encryption() here would wait on that already-consumed
+	 * one-shot event and inevitably time out, mapping a completed pairing
+	 * to failure (Finding 119).  smp_pair() returning 0 therefore already
+	 * means encryption is on; proceed straight to the ATT-gate / IRK
+	 * programming path.
+	 *
 	 * Open the ATT gate only if the pairing just stored a real LTK
 	 * for this peer.
 	 */
@@ -266,20 +287,22 @@ blued_central_pairing_worker(void *arg)
 	struct blued_conn *conn = arg;
 
 	/*
-	 * Finding H-H1: this detached worker dereferences conn->hogp
-	 * (dev->smp / dev->att) throughout the blocking smp_pair() +
-	 * hci_wait_encryption().  A conn refcount alone does not protect the
-	 * hogp_device: blued_conn_central_teardown frees it independently of the
-	 * refcount.  Participate in the ATT-ops deferral protocol so a remote
-	 * link drop during pairing defers teardown (and therefore the free of
-	 * hogp) until this worker exits, and cannot spawn a second setup thread
-	 * (reconnect) over the same device.
+	 * Finding H-H1 / C3-H2: this detached worker dereferences conn->hogp
+	 * (dev->smp / dev->att) throughout the blocking smp_pair().  A conn
+	 * refcount alone does not protect the hogp_device:
+	 * blued_conn_central_teardown frees it independently of the refcount.
+	 *
+	 * The ATT-ops in-flight guard (att_ops_active) is now bumped on the
+	 * MAIN thread by blued_central_start_pairing_async() BEFORE this worker
+	 * is spawned — closing the TOCTOU window where the worker could be
+	 * descheduled between a `hogp != NULL` check here and att_ops_begin(),
+	 * during which a disconnect on the main thread would read
+	 * att_ops_active == 0, free dev, and leave this worker dereferencing
+	 * freed memory.  With begin() done before spawn, hogp is guaranteed
+	 * live here; balance that begin() with a single end() below.
 	 */
-	if (conn->hogp != NULL) {
-		blued_conn_att_ops_begin(conn);
-		(void)blued_central_start_pairing(conn->hogp, conn);
-		blued_conn_att_ops_end(conn);
-	}
+	(void)blued_central_start_pairing(conn->hogp, conn);
+	blued_conn_att_ops_end(conn);
 	blued_setup_worker_finish(conn);
 	blued_conn_unref(conn);
 	return (NULL);
@@ -293,13 +316,38 @@ blued_central_start_pairing_async(struct blued_conn *conn)
 
 	if (conn == NULL || conn->hogp == NULL)
 		return (-1);
+	/*
+	 * C3-H2: refuse a second pairing/setup worker on the same conn.  Two
+	 * detached workers would both drive dev->smp / dev->att concurrently,
+	 * and the att_ops accounting could not be balanced cleanly against a
+	 * single teardown.  This runs on the main dispatch thread, which is the
+	 * only spawner, so the check-then-start is not racy.
+	 */
+	if (atomic_load(&conn->setup_worker_count) != 0)
+		return (-1);
 	if (pthread_attr_init(&attr) != 0)
 		return (-1);
 	(void)pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	blued_conn_ref(conn);
 	blued_setup_worker_start(conn);
+	/*
+	 * C3-H2: bump att_ops_active HERE, on the main (dispatch) thread,
+	 * BEFORE the detached worker can run, so a disconnect racing the
+	 * about-to-run worker observes att_ops_active != 0 and defers the free
+	 * of dev.  Re-validate hogp after begin() — still on the main thread,
+	 * so teardown (also main-thread) cannot race this check.
+	 */
+	blued_conn_att_ops_begin(conn);
+	if (conn->hogp == NULL) {
+		blued_conn_att_ops_end(conn);
+		blued_setup_worker_finish(conn);
+		blued_conn_unref(conn);
+		(void)pthread_attr_destroy(&attr);
+		return (-1);
+	}
 	if (pthread_create(&tid, &attr, blued_central_pairing_worker,
 	    conn) != 0) {
+		blued_conn_att_ops_end(conn);
 		blued_setup_worker_finish(conn);
 		blued_conn_unref(conn);
 		(void)pthread_attr_destroy(&attr);
@@ -952,7 +1000,13 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 	}
 
 	/*
-	 * Set Protocol Mode to Report Protocol (0x01).
+	 * Set Protocol Mode to Report Protocol (0x01) on EVERY Protocol Mode
+	 * instance in this HID service (HOGP v1.1 §4.11).  C2-M10: the old
+	 * `break` after the first instance left a composite/dual-HID service
+	 * with additional Protocol Mode characteristics in an undefined mode.
+	 * The bond cache still records only a single protocol_mode_handle (last
+	 * wins) — that persistence limitation is unchanged — but at connect time
+	 * every discovered instance is now switched to Report mode.
 	 */
 	for (int i = 0; i < disc->nchars; i++) {
 		if (disc->chars[i].uuid16 == UUID_PROTOCOL_MODE) {
@@ -960,8 +1014,8 @@ hogp_process_service(struct hogp_device *dev, struct gatt_discovery *disc)
 			att_write_cmd(&dev->att,
 			    disc->chars[i].value_handle,
 			    &mode, 1);
-			LOG_HOGP(1, "set Report Protocol mode");
-			break;
+			LOG_HOGP(1, "set Report Protocol mode (handle=%04x)",
+			    disc->chars[i].value_handle);
 		}
 	}
 

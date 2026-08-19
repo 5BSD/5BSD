@@ -1239,6 +1239,24 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 			    meshd_kr_phase(nd));
 			return (0);
 		}
+		if (argc == 2 && strcmp(argv[1], "appkey-finalize") == 0) {
+			/*
+			 * Complete an AppKey rotation: once every node has installed
+			 * the staged AppKey via "cfg <node> appkey-update", promote it
+			 * to the current key and mint a fresh staged key (C6-H3).
+			 */
+			if (!nd->mgr_active) {
+				snprintf(reply, reply_max, "ERR no network");
+				return (-1);
+			}
+			if (meshd_appkey_finalize(nd) != 0) {
+				snprintf(reply, reply_max,
+				    "ERR key-refresh appkey-finalize failed");
+				return (-1);
+			}
+			snprintf(reply, reply_max, "OK key-refresh appkey-finalize");
+			return (0);
+		}
 		if (argc == 2 && strcmp(argv[1], "network-status") == 0) {
 			if (!nd->mgr_active) {
 				snprintf(reply, reply_max, "ERR no network");
@@ -1276,7 +1294,7 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 		}
 		snprintf(reply, reply_max,
 		    "ERR usage: key-refresh begin|advance|finish|status|"
-		    "network|network-status");
+		    "network|network-status|appkey-finalize");
 		return (-1);
 	}
 

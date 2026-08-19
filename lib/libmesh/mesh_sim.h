@@ -149,6 +149,9 @@ struct mesh_sim_reasm {
 	int			ctl;
 	uint64_t		deadline_ms;
 	int			used;
+	int			complete;	/* C4-L4: SeqAuth fully reassembled;
+					 * retained so a retransmitted segment
+					 * is re-acked, not silently dropped. */
 };
 
 /* Retransmission state for one locally originated segmented message. */

@@ -32,7 +32,7 @@
 
 #define	MESHD_PERSIST_MAGIC	"MSHNODE\1"	/* 8 octets */
 #define	MESHD_PERSIST_MAGIC_LEN	8
-#define	MESHD_PERSIST_VERSION	6
+#define	MESHD_PERSIST_VERSION	7	/* v7 embeds the staged Phase-1 AppKey */
 #define	MESHD_PERSIST_HDR_LEN	20		/* magic..crc32 inclusive */
 
 /* Version 6 on-disk feature octet; these are store fields, not wire bits. */
@@ -588,6 +588,13 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 
 		put_bytes(c, mgr->netkey, 16);
 		put_bytes(c, mgr->appkey, 16);
+		/*
+		 * The staged Phase-1 AppKey (Config AppKey Update payload) must be
+		 * embedded too: otherwise it decodes to all-zero on restart and the
+		 * mirror is re-saved from the zeroed copy, so the next AppKey Update
+		 * distributes 16 zero bytes (C6-H2).
+		 */
+		put_bytes(c, mgr->appkey_new, 16);
 		put_bytes(c, mgr->self_devkey, 16);
 		put_u16(c, mgr->netkey_index);
 		put_u16(c, mgr->appkey_index);
@@ -1123,6 +1130,18 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 				return (-1);
 			get_bytes(c, mgr->netkey, 16);
 			get_bytes(c, mgr->appkey, 16);
+			if (version >= 7)
+				get_bytes(c, mgr->appkey_new, 16);
+			else if (RAND_bytes(mgr->appkey_new, 16) != 1) {
+				/*
+				 * Pre-v7 node files never embedded the staged AppKey
+				 * (C6-H2).  Migrate by minting a fresh one; the pre-fix
+				 * daemon never distributed a real staged key, so a new
+				 * random value is a correct un-distributed Phase-1 key.
+				 */
+				free(mgr);
+				return (-1);
+			}
 			get_bytes(c, mgr->self_devkey, 16);
 			mgr->netkey_index = get_u16(c);
 			mgr->appkey_index = get_u16(c);

@@ -536,6 +536,12 @@ blued_handle_hci_event(struct blued_adapter *adp)
 					break;
 				}
 			}
+			/*
+			 * C3-L: also clear the ctl adv-set registry's enabled
+			 * flag for this handle so the operator-facing view does
+			 * not keep reporting a controller-stopped set as active.
+			 */
+			blued_ctl_adv_set_terminated(adp, adv_handle);
 			if (adv_handle == 0 && adp->adv_use_extended)
 				adp->adv_enabled = false;
 			LOG_HCI(1, "adv set terminated: handle=%u status=0x%02x",
@@ -1758,11 +1764,23 @@ blued_conn_disconnect(struct blued_conn *conn)
 	if (atomic_load(&conn->state) == BLUED_CONN_RECONNECTING &&
 	    conn->reconnect)
 		return;
-	if (atomic_load_explicit(&conn->att_ops_active, memory_order_acquire) != 0) {
-		atomic_store_explicit(&conn->disconnect_pending, true,
-		    memory_order_release);
+	/*
+	 * C3-M1: store disconnect_pending BEFORE reading att_ops_active
+	 * (store-then-load), mirroring the needs_cleanup sweep at :1125.  A
+	 * worker retiring right now re-signals the setup pipe only while
+	 * disconnect_pending is already set (blued_conn_att_ops_end /
+	 * ctl_gatt_job_run); the previous load-then-store let a worker retire
+	 * in the window between the load and the store, so nobody signalled the
+	 * pipe and the deferred disconnect was stranded (indication timeout,
+	 * conn up forever).  If no op is in flight, clear the flag and proceed.
+	 */
+	atomic_store_explicit(&conn->disconnect_pending, true,
+	    memory_order_release);
+	if (atomic_load_explicit(&conn->att_ops_active,
+	    memory_order_acquire) != 0)
 		return;
-	}
+	(void)atomic_exchange_explicit(&conn->disconnect_pending, false,
+	    memory_order_acq_rel);
 
 	bt_ntoa(&conn->dst, addr_str);
 	LOG_HOGP(1, "device %s disconnected (role=%s handle=%04x)",

@@ -446,11 +446,20 @@ dev_recv(struct mesh_prov_session *s, const struct mesh_prov_pdu *p)
 		memcpy(s->peer_pub, p->params, MESH_PROV_PUBKEY_LEN);
 		if (sess_derive_confirmation(s) != 0)
 			return (sess_fail(s, PROV_ERR_UNEXPECTED_PDU));
-		if (mesh_prov_public_key_build(&s->our_pub[0], &s->our_pub[32],
-		    pdu, &len) != 0)
-			return (sess_fail(s, PROV_ERR_INVALID_PDU));
-		if (txq_push(s, pdu, len) != 0)
-			return (-1);
+		/*
+		 * C4-L1: only send the provisionee Public Key over the bearer on
+		 * the negotiated No-OOB public-key path.  When the accepted Start
+		 * selected an OOB public key (start_val[1] != 0), the device key
+		 * is exchanged out of band and must NOT be transmitted over the
+		 * provisioning bearer (MshPRT 5.4.2.3).
+		 */
+		if (s->start_val[1] == 0) {
+			if (mesh_prov_public_key_build(&s->our_pub[0],
+			    &s->our_pub[32], pdu, &len) != 0)
+				return (sess_fail(s, PROV_ERR_INVALID_PDU));
+			if (txq_push(s, pdu, len) != 0)
+				return (-1);
+		}
 		s->state = MPS_D_WAIT_CONFIRM;
 		return (0);
 

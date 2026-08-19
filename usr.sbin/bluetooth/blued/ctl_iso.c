@@ -267,6 +267,7 @@ ctl_iso_process_typed(struct blued_ctl_client *client, const uint8_t *payload,
 		memcpy(&peer, payload + 5, sizeof(peer));
 		error = blued_iso_cis_create(adp, &peer, addr_type,
 		    payload[11], payload[12], payload[13] ? client->fd : -1,
+		    payload[13] ? client->generation : 0,
 		    payload[13] != 0) != 0 ? IPC_ERR_IO : IPC_ERR_NONE;
 		break;
 	}

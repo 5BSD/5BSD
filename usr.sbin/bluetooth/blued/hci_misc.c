@@ -56,6 +56,7 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 	ng_hci_event_pkt_t *evt;
 	struct timespec deadline, now;
 	pthread_mutex_t *hci_mtx;
+	int saved_errno = ETIMEDOUT;	/* C3-L: real failure errno, not always ETIMEDOUT */
 
 	/*
 	 * Finding H-H4: this runs on a detached worker thread doing raw
@@ -64,6 +65,22 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 	 * the receive loop so the worker and the event loop cannot both consume
 	 * HCI events (consistent with the finding-43 trylock in the event loop,
 	 * which backs off while this lock is held).
+	 *
+	 * C3-M10: hci_devreq_mutex is per-fd, so on any one adapter fd only a
+	 * single encryption wait is ever active — a second pairing's wait
+	 * blocks here on the mutex until the first completes, i.e. same-adapter
+	 * pairings serialize.  C3-H1 additionally removed the redundant OUTER
+	 * hci_wait_encryption() calls, so each pairing now performs exactly one
+	 * wait instead of two, halving the window.  A residual remains: an
+	 * Encryption Change for a DIFFERENT handle that the controller delivers
+	 * while this wait holds the fd is drained here and dropped (the `h ==
+	 * con_handle` mismatch just `continue`s), because the kernel HCI socket
+	 * offers no per-handle filtering and there is no way to re-queue it.
+	 * Fully closing that would require a shared HCI-event demux rather than
+	 * a per-worker recv loop; that is out of scope for this pass.  Given the
+	 * mutex serialization and the C3-H1 halving, the practical concurrent-
+	 * pairing case on a single adapter is not exercised by the current
+	 * setup/REKEY paths (each conn spawns at most one pairing worker).
 	 */
 	hci_mtx = hci_devreq_mutex(hci_fd);
 	pthread_mutex_lock(hci_mtx);
@@ -96,6 +113,8 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 		if (n < 0) {
 			if (errno == EAGAIN || errno == EINTR)
 				continue;
+			/* C3-L: propagate the real recv errno to the caller. */
+			saved_errno = errno;
 			break;
 		}
 
@@ -160,7 +179,9 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 	/* Restore old filter */
 	bt_devfilter(hci_fd, &oldflt, NULL);
 	pthread_mutex_unlock(hci_mtx);
-	errno = ETIMEDOUT;
+	/* C3-L: ETIMEDOUT only when the deadline actually expired; otherwise
+	 * report the recv failure that broke the loop. */
+	errno = saved_errno;
 	return (-1);
 }
 

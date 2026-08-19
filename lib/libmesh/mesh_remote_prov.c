@@ -367,8 +367,11 @@ mesh_rp_ext_scan_start_parse(const uint8_t *in, size_t inlen,
 		out->has_uuid = 1;
 		memcpy(out->uuid, ap.params + 1 + count, 16);
 		out->timeout = ap.params[1 + count + 16];
-		if (out->timeout == 0)
+		if (out->timeout == 0) {
+			/* C4-L3: honor the zero-on-failure output contract. */
+			memset(out, 0, sizeof(*out));
 			return (-1);
+		}
 	}
 	return (0);
 }
@@ -489,8 +492,11 @@ mesh_rp_link_open_parse(const uint8_t *in, size_t inlen,
 	if (ap.params_len == 17) {
 		out->has_timeout = 1;
 		out->timeout = ap.params[16];
-		if (out->timeout == 0 || out->timeout > 0x3c)
+		if (out->timeout == 0 || out->timeout > 0x3c) {
+			/* C4-L3: honor the zero-on-failure output contract. */
+			memset(out, 0, sizeof(*out));
 			return (-1);
+		}
 	}
 	return (0);
 }
@@ -1319,8 +1325,18 @@ mesh_rp_server_link_bearer_closed(struct mesh_rp_server_link *s, int reason,
     struct mesh_rp_link_report *rp)
 {
 
-	if (s == NULL || rp == NULL || s->state != MESH_RP_LINK_CLOSING)
+	if (s == NULL || rp == NULL ||
+	    (s->state != MESH_RP_LINK_CLOSING &&
+	    s->state != MESH_RP_LINK_ACTIVE))
 		return (-1);
+	/*
+	 * C4-L2: a bearer close observed while the link is still ACTIVE is a
+	 * device-initiated close (the client never asked to tear it down); the
+	 * server must still transition to IDLE and emit a Link Report so the
+	 * client is not stranded to timeout.  Report it as Closed by Device.
+	 */
+	if (s->state == MESH_RP_LINK_ACTIVE)
+		s->link_close_status = MESH_RP_STATUS_LINK_CLOSED_BY_DEVICE;
 	if (reason >= 0 && reason <= 0xff) {
 		s->has_link_close_reason = 1;
 		s->link_close_reason = (uint8_t)reason;

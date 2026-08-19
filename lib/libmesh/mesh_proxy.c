@@ -550,6 +550,8 @@ mesh_proxy_cfg_parse(const uint8_t *in, size_t inlen, struct mesh_proxy_cfg *out
 		 * octet is the RangeStart low bits; a trailing RangeLength octet is
 		 * present only when LengthPresent is set (2-octet vs 3-octet range).
 		 */
+		if (inlen < 2)
+			goto bad;		/* need the Use_Directed octet before in[1] (C6-H5) */
 		if (in[1] > MESH_PROXY_USE_DIRECTED_ENABLE)
 			goto bad;		/* Use_Directed prohibited */
 		out->use_directed = in[1];
@@ -571,6 +573,21 @@ mesh_proxy_cfg_parse(const uint8_t *in, size_t inlen, struct mesh_proxy_cfg *out
 			    (uint16_t)(((in[2] & 0x7f) << 8) | in[3]);
 			out->range_length = in[4];
 		} else {
+			goto bad;
+		}
+		/*
+		 * Validate the Proxy_Client_Unicast_Addr_Range as a unicast range
+		 * (Section 3.4.2.2.1), mirroring mesh_df_addr_range_parse: RangeStart
+		 * must be a unicast address and the block must not spill past the
+		 * unicast space.  A 3-octet range must span at least two addresses
+		 * (C6-L12).
+		 */
+		if (out->range_start < 0x0001 || out->range_start > 0x7fff)
+			goto bad;
+		if (out->range_length == 0) {
+			/* 2-octet single-address form: RangeStart alone. */
+		} else if (out->range_length < 2 ||
+		    (uint32_t)out->range_start + out->range_length > 0x8000) {
 			goto bad;
 		}
 		out->have_range = 1;

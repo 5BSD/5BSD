@@ -103,16 +103,23 @@ att_bearers_unlock(struct att_conn *ac)
  * Select an idle bearer whose independently negotiated ATT_MTU can carry
  * the complete PDU.  EATT bearers are considered in array order before the
  * fixed bearer, matching att_eatt_select_bearer()'s established policy.
+ *
+ * C2-L6: when force_fixed is set the EATT bearers are skipped and only the
+ * unenhanced fixed L2CAP channel (CID 0x0004) is eligible.  The Exchange MTU
+ * sub-procedure "shall only be initiated on the ATT bearer using the L2CAP
+ * fixed channel" (Core Spec Vol 3 Part F §3.4.2 / §5.3.1) — routing it over an
+ * EATT bearer (which has its own per-CoC MTU and rejects MTU_REQ) is illegal.
  */
 static int
-att_select_bearer_for_pdu(struct att_conn *ac, size_t pdulen, uint16_t *mtu_out)
+att_select_bearer_for_pdu(struct att_conn *ac, size_t pdulen, uint16_t *mtu_out,
+    bool force_fixed)
 {
 	bool has_capacity;
 	int fd, i;
 
 	has_capacity = false;
 	att_bearers_lock(ac);
-	for (i = 0; i < ac->eatt_count; i++) {
+	for (i = 0; !force_fixed && i < ac->eatt_count; i++) {
 		if (!ac->eatt[i].active || ac->eatt[i].fd < 0 ||
 		    pdulen > ac->eatt[i].mtu)
 			continue;
@@ -534,7 +541,9 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 	 * available — they allow ATT multiplexing (Core Spec Vol 3
 	 * Part G §5.3).  Fall back to the primary bearer on CID 0x0004.
 	 */
-	fd = att_select_bearer_for_pdu(ac, reqlen, &bearer_mtu);
+	/* C2-L6: Exchange MTU must run only on the fixed bearer (§3.4.2). */
+	fd = att_select_bearer_for_pdu(ac, reqlen, &bearer_mtu,
+	    ((const uint8_t *)req)[0] == ATT_OP_MTU_REQ);
 	if (fd < 0)
 		return (-1);
 
@@ -635,19 +644,21 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 			if (--max_skip <= 0) {
 				warnx("ATT: too many unsolicited PDUs while waiting for response");
 				/*
-				 * A legitimate high-rate notification burst (e.g.
-				 * a fast mouse) can exceed this per-request guard
-				 * while the link is perfectly healthy.  Fail only
-				 * THIS request — release the bearer's pending slot
-				 * WITHOUT marking ac->failed — so subsequent
-				 * requests still use the bearer instead of every
-				 * later request returning EPIPE forever.  Not an
-				 * ATT Error Response, so 'ae' is left unpopulated;
-				 * a distinct errno (EBADMSG, not the EPROTO
-				 * reserved for a real Error Response) gives callers
-				 * a clean -1 transport failure.
+				 * C2-H2: abandoning the request here while its
+				 * response is still in flight desyncs the bearer —
+				 * the response we never consumed sits in the socket
+				 * and the NEXT att_request() recv()s it, matching a
+				 * stale reply to a new request.  Core Spec Vol 3
+				 * Part F §3.3.3 requires failing the bearer on such
+				 * an abort, so mark it unusable (fixed bearer:
+				 * ac->failed; EATT: remove the bearer) forcing a
+				 * reconnect rather than silently reusing a
+				 * desynchronised channel.  A distinct errno
+				 * (EBADMSG, not the EPROTO reserved for a real
+				 * Error Response) gives callers a clean transport
+				 * failure.
 				 */
-				att_eatt_bearer_release(ac, fd);
+				att_bearer_fail(ac, fd);
 				errno = EBADMSG;
 				return (-1);
 			}
@@ -666,11 +677,13 @@ att_request(struct att_conn *ac, const void *req, size_t reqlen,
 			if (--max_skip <= 0) {
 				warnx("ATT: too many unsolicited PDUs while waiting for response");
 				/*
-				 * As above: a benign burst must not permanently
-				 * kill the bearer.  Release the pending slot
-				 * without ac->failed and fail only this request.
+				 * C2-H2: as above — the request's response is
+				 * still in flight, so abandoning it without
+				 * failing the bearer would let a later request
+				 * consume the stale reply.  Fail the bearer
+				 * (§3.3.3) to force a resynchronising reconnect.
 				 */
-				att_eatt_bearer_release(ac, fd);
+				att_bearer_fail(ac, fd);
 				errno = EBADMSG;
 				return (-1);
 			}
@@ -1418,7 +1431,7 @@ att_read_by_type(struct att_conn *ac, uint16_t start, uint16_t end,
 
 /*
  * ATT Read By Type Request with 128-bit UUID (Core Spec Vol 3 Part F 3.4.4.1)
- * Builds a 23-byte PDU: opcode(1) + start(2) + end(2) + uuid128(16).
+ * Builds a 21-byte PDU: opcode(1) + start(2) + end(2) + uuid128(16).
  * Used for discovering characteristics with vendor-specific UUIDs.
  */
 int
@@ -1691,7 +1704,7 @@ int
 att_eatt_select_bearer(struct att_conn *ac)
 {
 
-	return (att_select_bearer_for_pdu(ac, 0, NULL));
+	return (att_select_bearer_for_pdu(ac, 0, NULL, false));
 }
 
 /*

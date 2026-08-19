@@ -292,10 +292,24 @@ bt_devreq(int s, struct bt_devreq *r, time_t to)
 			if (cc->opcode == opcode) {
 				n -= sizeof(*cc);
 
-				if (r->rlen >= n) {
+				/*
+				 * C3-M3: copy min(rlen, n) rather than skipping
+				 * the copy entirely when the controller returns
+				 * MORE bytes than the caller's buffer.  The old
+				 * `if (rlen >= n)` guard failed on an oversize
+				 * response, leaving rlen unchanged and (with the
+				 * H-H3 zero-fill) the caller reading an all-zero
+				 * buffer as a status==0 success.  Copying what
+				 * fits keeps the status byte + available fields
+				 * real; a short/absent response reduces rlen to
+				 * the actual length, so it stays distinguishable.
+				 */
+				if (n < 0)
+					n = 0;
+				if ((ssize_t)r->rlen > n)
 					r->rlen = n;
+				if (r->rlen > 0)
 					memcpy(r->rparam, cc + 1, r->rlen);
-				}
 
 				goto out;
 			}
@@ -309,10 +323,13 @@ bt_devreq(int s, struct bt_devreq *r, time_t to)
 						goto out;
 					}
 				} else {
-					if (r->rlen >= n) {
+					/* C3-M3: copy min(rlen, n). */
+					if (n < 0)
+						n = 0;
+					if ((ssize_t)r->rlen > n)
 						r->rlen = n;
+					if (r->rlen > 0)
 						memcpy(r->rparam, cs, r->rlen);
-					}
 
 					goto out;
 				}
@@ -321,10 +338,13 @@ bt_devreq(int s, struct bt_devreq *r, time_t to)
 
 		default:
 			if (e->event == r->event) {
-				if (r->rlen >= n) {
+				/* C3-M3: copy min(rlen, n). */
+				if (n < 0)
+					n = 0;
+				if ((ssize_t)r->rlen > n)
 					r->rlen = n;
+				if (r->rlen > 0)
 					memcpy(r->rparam, e + 1, r->rlen);
-				}
 
 				goto out;
 			}

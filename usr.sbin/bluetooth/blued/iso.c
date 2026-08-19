@@ -79,6 +79,30 @@ iso_alloc(void)
 	return (s);
 }
 
+/*
+ * C3-M9: a ctl client departed — forget any pending fd handout that targeted
+ * it so an establishing CIS does not push its data-path fd to a fd number the
+ * kernel may have already reassigned to a different client.  Runs on the main
+ * thread from blued_ctl_reset_owner().
+ */
+void
+blued_iso_client_gone(int client_fd)
+{
+	struct blued_iso_stream *s;
+
+	if (client_fd < 0)
+		return;
+	pthread_mutex_lock(&iso_lock);
+	LIST_FOREACH(s, &iso_streams, entries) {
+		if (s->requesting_client_fd == client_fd) {
+			s->requesting_client_fd = -1;
+			s->requesting_client_gen = 0;
+			s->push_on_establish = false;
+		}
+	}
+	pthread_mutex_unlock(&iso_lock);
+}
+
 static void
 iso_unref(struct blued_iso_stream *s)
 {
@@ -407,7 +431,8 @@ blued_iso_cig_create(struct blued_adapter *adp, uint8_t cig_id,
 int
 blued_iso_cis_create(struct blued_adapter *adp, const bdaddr_t *peer,
     uint8_t peer_type, uint8_t cig_id, uint8_t cis_id,
-    int requesting_client_fd, bool push_on_establish)
+    int requesting_client_fd, uint64_t requesting_client_gen,
+    bool push_on_establish)
 {
 	struct blued_iso_stream *s;
 	struct blued_conn *conn;
@@ -442,6 +467,7 @@ blued_iso_cis_create(struct blued_adapter *adp, const bdaddr_t *peer,
 	memcpy(&s->peer, peer, sizeof(s->peer));
 	s->peer_type = peer_type;
 	s->requesting_client_fd = requesting_client_fd;
+	s->requesting_client_gen = requesting_client_gen;	/* C3-M9 */
 	s->push_on_establish = push_on_establish;
 	cis_handle = s->cis_handle;
 
@@ -1021,7 +1047,14 @@ iso_on_cis_established(struct blued_adapter *adp, uint16_t cis_handle,
 		    (const uint8_t *)&s->peer, s->peer_type, cis_handle, 0);
 
 		if (fd >= 0) {
-			blued_ctl_send_fd(s->requesting_client_fd, fd);
+			/*
+			 * C3-M9: hand the data-path fd out only to the exact
+			 * client that requested it — matched by (fd,
+			 * generation), so a reused fd number belonging to a new
+			 * client never receives another client's CIS fd.
+			 */
+			blued_ctl_send_fd(s->requesting_client_fd,
+			    s->requesting_client_gen, fd);
 			close(fd);
 			s->state = ISO_ST_HANDED_OFF;
 		}

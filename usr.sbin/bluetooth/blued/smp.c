@@ -271,6 +271,12 @@ smp_recv_skip_keypress(struct smp_conn *sc, uint8_t *buf, size_t len)
 	for (;;) {
 		if (++loops > 100) {
 			warnx("too many keypress notifications");
+			/*
+			 * C1-L4: set errno so callers that classify the -1 by
+			 * errno do not observe a stale value from an earlier
+			 * syscall.  A keypress flood is a protocol-level abuse.
+			 */
+			errno = EPROTO;
 			return (-1);
 		}
 		n = smp_log_recv(sc, buf, len);
@@ -1214,6 +1220,18 @@ smp_pair(struct smp_conn *sc)
 			    sc->remote_addr[1], sc->remote_addr[0],
 			    use_sc);
 
+		/*
+		 * C1-H1 (S-m7): keypress delivery (smp_recv_skip_keypress) is
+		 * gated on sc->kp_negotiated.  It must be set for BOTH legacy and
+		 * SC before dispatch: the SC paths below never reach the legacy
+		 * passkey branch that historically set it, so an SC Passkey Entry
+		 * pairing would leave it false and silently drop every inbound
+		 * Keypress Notification.  Set it here from the negotiated AuthReq
+		 * (both sides set SMP_AUTH_KEYPRESS: preq[3]&pres[3]); preq/pres
+		 * are both fully populated at this point.
+		 */
+		sc->kp_negotiated = ((preq[3] & pres[3] & SMP_AUTH_KEYPRESS) != 0);
+
 		if (use_sc) {
 			int rc;
 
@@ -1231,15 +1249,51 @@ smp_pair(struct smp_conn *sc)
 		 */
 		if (model == SMP_MODEL_OOB) {
 			if (sc->oob == NULL || sc->oob->legacy == NULL) {
-				uint8_t fail[2] = { SMP_PAIRING_FAILED,
-				    SMP_ERR_OOB_NOT_AVAILABLE };
-				smp_log_send(sc, fail, 2);
-				errno = ENOTSUP;
-				return (-1);
+				/*
+				 * C1-M1: the OOB flag was advertised (we may hold
+				 * only SC OOB, or the legacy TK is no longer held)
+				 * but there is no legacy OOB TK for this legacy
+				 * pairing.  Rather than hard-fail a pairing that
+				 * can still complete, fall back to the IO-capability
+				 * association model -- Just Works when neither side
+				 * requires MITM, else Table 2.8 -- instead of
+				 * aborting with OOB Not Available.
+				 */
+				bool authed_fb;
+
+				model = use_mitm ?
+				    smp_select_model(preq[1], pres[1], false) :
+				    SMP_MODEL_JUST_WORKS;
+				if (model == SMP_MODEL_INVALID) {
+					pdu[0] = SMP_PAIRING_FAILED;
+					pdu[1] = SMP_ERR_INVALID_PARAMETERS;
+					smp_log_send(sc, pdu, 2);
+					errno = EPROTO;
+					return (-1);
+				}
+				/*
+				 * Re-enforce the min-security floor for the new
+				 * (possibly unauthenticated) model, since the
+				 * earlier gate ran against the OOB model.
+				 */
+				authed_fb = (model == SMP_MODEL_PASSKEY_ENTRY);
+				if (!smp_policy_permits(sc->min_pairing_security,
+				    authed_fb, false)) {
+					pdu[0] = SMP_PAIRING_FAILED;
+					pdu[1] = SMP_ERR_AUTH_REQUIREMENTS;
+					smp_log_send(sc, pdu, 2);
+					errno = EACCES;
+					return (-1);
+				}
+				legacy_mitm = authed_fb;
+				LOG_SMP(1, "legacy OOB advertised but no TK; "
+				    "fell back to model=%d", model);
+				/* tk stays zero for JW; passkey block sets it. */
+			} else {
+				memcpy(tk, sc->oob->legacy->tk, 16);
+				LOG_SMP(1, "legacy OOB: TK set from OOB data");
+				/* Fall through to legacy c1/s1 with this TK */
 			}
-			memcpy(tk, sc->oob->legacy->tk, 16);
-			LOG_SMP(1, "legacy OOB: TK set from OOB data");
-			/* Fall through to legacy c1/s1 with this TK */
 		}
 
 		/* Legacy Passkey Entry: TK = passkey value */
@@ -1272,7 +1326,7 @@ smp_pair(struct smp_conn *sc)
 			 */
 			kp_notify = (preq[3] & SMP_AUTH_KEYPRESS) &&
 			    (pres[3] & SMP_AUTH_KEYPRESS);
-			sc->kp_negotiated = kp_notify;	/* S-m7 */
+			/* S-m7: sc->kp_negotiated already set before dispatch (C1-H1). */
 
 			/*
 			 * Passkey Entry display/input role, initiator side:
@@ -1482,8 +1536,11 @@ smp_pair(struct smp_conn *sc)
 			goto legacy_cleanup;
 		}
 
-		/* Distribute initiator keys to responder */
-		if (smp_distribute_init_keys(sc, preq, pres, false) != 0) {
+		/*
+		 * Distribute initiator keys to responder.  Pass &bond so the
+		 * EncKey we distribute is recorded for LL role switch (C1-L1).
+		 */
+		if (smp_distribute_init_keys(sc, preq, pres, false, &bond) != 0) {
 			explicit_bzero(&bond, sizeof(bond));
 			ret = -1;
 			goto legacy_cleanup;
@@ -1945,6 +2002,15 @@ smp_respond(struct smp_conn *sc)
 			    sc->remote_addr[1], sc->remote_addr[0],
 			    use_sc);
 
+		/*
+		 * C1-H1 (S-m7): set the keypress-delivery gate for BOTH legacy
+		 * and SC before dispatch, mirroring smp_pair().  Without this the
+		 * SC Passkey Entry responder path would leave kp_negotiated false
+		 * and drop every inbound Keypress Notification.  preq/pres are
+		 * both fully populated here.
+		 */
+		sc->kp_negotiated = ((preq[3] & pres[3] & SMP_AUTH_KEYPRESS) != 0);
+
 		if (use_sc) {
 			int rc;
 
@@ -1994,7 +2060,7 @@ smp_respond(struct smp_conn *sc)
 			 */
 			kp_notify = (preq[3] & SMP_AUTH_KEYPRESS) &&
 			    (pres[3] & SMP_AUTH_KEYPRESS);
-			sc->kp_negotiated = kp_notify;	/* S-m7 */
+			/* S-m7: sc->kp_negotiated already set before dispatch (C1-H1). */
 
 			/*
 			 * Passkey Entry display/input role, responder side:

@@ -184,7 +184,7 @@ smp_ensure_local_csrk(struct smp_bond_db *db)
  */
 int
 smp_distribute_init_keys(struct smp_conn *sc, const uint8_t *preq,
-    const uint8_t *pres, bool is_sc)
+    const uint8_t *pres, bool is_sc, struct smp_bond *bond)
 {
 	uint8_t init_dist = preq[5] & pres[5];
 	uint8_t kpdu[19];
@@ -237,6 +237,25 @@ smp_distribute_init_keys(struct smp_conn *sc, const uint8_t *preq,
 		BLUED_PROBE_SMP_KEY_DIST(
 		    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL),
 		    SMP_CENTRAL_IDENTIFICATION);
+
+		/*
+		 * C1-L1: record the EncKey we (the central) just distributed
+		 * into the bond so it survives reconnect and can be honored on
+		 * an LL role switch (when we later act as peripheral, the peer
+		 * presents THIS ediv/rand -- Core Spec Vol 3 Part H §2.4.1).
+		 * struct smp_bond holds a single LTK slot: only populate it when
+		 * the peer did not already distribute an EncKey of its own (that
+		 * peripheral-direction key must win for normal reconnect where we
+		 * are central).  In the asymmetric case where only we distribute
+		 * EncKey, storing ours is both the primary key and the role-switch
+		 * key, so this is strictly an improvement over discarding it.
+		 */
+		if (bond != NULL && !bond->has_ltk) {
+			memcpy(bond->ltk, our_ltk, sizeof(bond->ltk));
+			bond->rand = our_rand;
+			bond->ediv = our_ediv;
+			bond->has_ltk = true;
+		}
 
 		explicit_bzero(our_ltk, sizeof(our_ltk));
 	}

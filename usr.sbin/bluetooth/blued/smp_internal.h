@@ -113,7 +113,7 @@ int	smp_validate_public_key(const uint8_t *, const uint8_t *);
 
 /* --- Key distribution and bond helpers (smp_keys.c) --- */
 int	smp_distribute_init_keys(struct smp_conn *, const uint8_t *,
-	    const uint8_t *, bool);
+	    const uint8_t *, bool, struct smp_bond *);
 int	smp_receive_peer_keys(struct smp_conn *, struct smp_bond *, uint8_t,
 	    bool);
 int	smp_ensure_local_irk(struct smp_bond_db *);

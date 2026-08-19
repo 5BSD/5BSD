@@ -212,6 +212,14 @@ int		att_check_write_perm(const struct att_attr *a,
  */
 int		att_check_security_perms(uint8_t perms,
 		    const struct att_conn *ac);
+/*
+ * C2-M6: READ-side variant for CCCD-write and notification/indication gating —
+ * masks off the write-side encryption/authentication bits so a plaintext-
+ * readable/encrypted-writable Notify characteristic accepts an unencrypted
+ * client's CCCD write and delivers its notifications.
+ */
+int		att_check_security_perms_read(uint8_t perms,
+		    const struct att_conn *ac);
 bool		att_conn_apply_encryption(struct att_conn *ac,
 		    bool has_key_material, bool mitm, uint8_t bond_key_size,
 		    uint8_t link_key_size);

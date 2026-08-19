@@ -494,7 +494,11 @@ int	smp_bond_import_record(const uint8_t *rec, size_t len,
  * not silently drop another peer's keys) but rejected.  Persists the DB on
  * success.  The CALLER MUST HOLD the bond-DB lock (this does not lock, mirroring
  * the in-place bond edits in ctl.c).  Returns 0 if an existing bond was
- * replaced, 1 if a new bond was appended, -1 if the DB is full.
+ * replaced, 1 if a new bond was appended, -1 if the DB is full, or
+ * SMP_BOND_DB_COMMIT_UNCERTAIN (-2) if the bond was applied in memory and the
+ * save reached the rename commit point but post-rename durability/fd refresh
+ * failed (C1-L3): the caller must treat the persist as failed but must not roll
+ * the in-memory bond back.
  */
 int	smp_bond_db_import(struct smp_bond_db *db, const struct smp_bond *bond);
 

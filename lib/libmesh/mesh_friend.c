@@ -906,6 +906,12 @@ friend_build_update_entry(const struct mesh_friend_fsm *f, uint8_t key_refresh,
 	e->dst = f->lpn_addr;
 	memcpy(e->pdu, pdu, plen);
 	e->pdu_len = plen;
+	/*
+	 * The Friend Update is ORIGINATED by the Friend, so it needs the Friend's
+	 * own advancing network SEQ.  This clockless library keeps no SEQ state;
+	 * e->seq is left 0 and the transmit path (meshd_friend_send_msg) stamps
+	 * the Friend's next SEQ on each send, keyed off is_update (C6-H1).
+	 */
 	e->is_update = 1;
 	return (0);
 }
@@ -975,6 +981,18 @@ mesh_friend_fsm_recv_request(struct mesh_friend_fsm *f, const uint8_t *pdu,
 	f->lpn_counter = req.lpn_counter;
 	f->lpn_addr = lpn_addr;
 	f->num_elements = req.num_elements;
+	/*
+	 * ReceiveDelay is the time the LPN waits after sending a Poll before it
+	 * turns its receiver on (Section 3.6.5.3).  The LPN side honours it by
+	 * opening its receive window at Poll + ReceiveDelay for ReceiveWindow ms
+	 * (mesh_lpn.c, establish_window_ms = recv_delay + recv_window), so the
+	 * Friend may answer as soon as the Poll is processed: in the driven-clock
+	 * meshd/sim model the response is delivered synchronously and still lands
+	 * inside the LPN's receive window.  A real-radio Friend that answered
+	 * before ReceiveDelay elapsed would miss the window; a hardware bearer
+	 * must therefore defer the response by recv_delay ms, which is why the
+	 * negotiated value is retained here (C6-M11).
+	 */
 	f->recv_delay = req.recv_delay;
 	f->poll_timeout = req.poll_timeout;
 	f->prev_addr = req.prev_addr;	/* PreviousAddress -> Friend Clear target */

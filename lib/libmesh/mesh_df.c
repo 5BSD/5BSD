@@ -883,6 +883,15 @@ mesh_df_node_init(struct mesh_df_node *n, uint16_t addr, uint16_t addr_last,
 	memset(n, 0, sizeof(*n));
 	n->addr = addr;
 	n->addr_last = (addr_last >= addr) ? addr_last : addr;
+	/*
+	 * C5-L3: the Path Target element range is carried on the wire as an
+	 * 8-bit range_length (mesh_df_path_reply, addr_last - addr + 1), so an
+	 * element span wider than 255 would truncate.  A single node can never
+	 * legitimately own that many elements; clamp the range here so the
+	 * built reply is always faithful to n->addr_last.
+	 */
+	if ((uint32_t)n->addr_last - n->addr + 1 > 0xff)
+		n->addr_last = (uint16_t)(n->addr + 0xfe);
 	n->lifetime = (uint8_t)(lifetime & 0x03);
 	n->two_way_path = two_way_path ? 1 : 0;
 }
@@ -1085,8 +1094,24 @@ recv_path_reply(struct mesh_df_node *node, const struct mesh_df_recv_ctx *ctx,
 			break;
 		}
 	}
-	if (e == NULL)
+	if (e == NULL) {
+		/*
+		 * C5-L2: no reverse entry matched.  If this node is itself the
+		 * Path Origin named in the reply, the reply belongs to this
+		 * node's own in-flight discovery.  mesh_df_discovery_start()
+		 * seeds the origin state machine (struct mesh_df_discovery), not
+		 * the node's Forwarding Table, so an origin that dispatches every
+		 * received control PDU through mesh_df_recv_control() would
+		 * otherwise get RECV_DROP for its own reply.  Recognize the
+		 * origin here so the documented FOR_ORIGIN flow is reachable
+		 * without the caller pre-seeding a table entry; the origin state
+		 * machine (mesh_df_discovery_on_reply()) performs the real
+		 * fn/target-range match and installs the forward path.
+		 */
+		if (node_covers(node, rep.path_origin))
+			return (MESH_DF_RECV_FOR_ORIGIN);
 		return (MESH_DF_RECV_DROP);
+	}
 
 	/* Dedup a duplicate reply once the forward path is already installed. */
 	if (mesh_df_entry_forward_valid(e))

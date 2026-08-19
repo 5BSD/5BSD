@@ -219,26 +219,35 @@ l2cap_conn_param_update_req(const uint8_t *local_addr,
 	char adapter[16];
 
 	/*
-	 * Find the adapter for this local address.  Try each ubt
-	 * device until one matches, falling back to ubt0.
+	 * Find the adapter for this local address.  Try each ubt device, then
+	 * each vhci device (the bhyve/vsock test rig names its virtual
+	 * controllers vhci*), until one matches; fall back to ubt0 (C3-L).
 	 */
 	{
+		/* C3-L: probe both real (ubt) and virtual (vhci) controllers. */
+		static const char *const prefixes[] = { "ubt", "vhci" };
+		size_t pfx;
 		int i;
 		bool found = false;
 
-		for (i = 0; i < 8; i++) {
-			uint8_t bdaddr[6];
+		hci_fd = -1;
+		for (pfx = 0; pfx < 2 && !found; pfx++) {
+			for (i = 0; i < 8; i++) {
+				uint8_t bdaddr[6];
 
-			snprintf(adapter, sizeof(adapter), "ubt%d", i);
-			hci_fd = hci_open(adapter);
-			if (hci_fd < 0)
-				continue;
-			if (hci_get_bdaddr(hci_fd, bdaddr) == 0 &&
-			    memcmp(bdaddr, local_addr, 6) == 0) {
-				found = true;
-				break;
+				snprintf(adapter, sizeof(adapter), "%s%d",
+				    prefixes[pfx], i);
+				hci_fd = hci_open(adapter);
+				if (hci_fd < 0)
+					continue;
+				if (hci_get_bdaddr(hci_fd, bdaddr) == 0 &&
+				    memcmp(bdaddr, local_addr, 6) == 0) {
+					found = true;
+					break;
+				}
+				close(hci_fd);
+				hci_fd = -1;
 			}
-			close(hci_fd);
 		}
 		if (!found) {
 			/* Fallback to ubt0 */
@@ -1008,7 +1017,13 @@ hci_le_ext_create_connection(int hci_fd, uint8_t filter,
 	    ((phys & HCI_LE_PHY_2M) != 0) +
 	    ((phys & HCI_LE_PHY_CODED) != 0);
 	expected_phy_len = phy_count * sizeof(ng_hci_le_ext_create_conn_phy_t);
-	if (filter > 1 || own_addr > 3 || peer_addr_type > 1 ||
+	/*
+	 * C3-L: Peer_Address_Type accepts 0x00-0x03 (Core Spec Vol 4 Part E
+	 * §7.8.66).  0x02/0x03 select the identity address of an RPA peer via
+	 * the resolving list (connect-by-identity), which the previous
+	 * `peer_addr_type > 1` guard wrongly rejected.
+	 */
+	if (filter > 1 || own_addr > 3 || peer_addr_type > 3 ||
 	    peer_addr == NULL || (phys & ~HCI_LE_PHY_MASK) != 0 ||
 	    (phys & (HCI_LE_PHY_1M | HCI_LE_PHY_CODED)) == 0 ||
 	    phy_len != expected_phy_len ||

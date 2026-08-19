@@ -1363,7 +1363,7 @@ ATF_TC_BODY(test_ctl_tx_queue_backpressure, tc)
 	/* Descriptor handoff closes the daemon's duplicate after sendmsg. */
 	fd = open("/dev/null", O_RDONLY);
 	ATF_REQUIRE(fd >= 0);
-	blued_ctl_send_fd(client.fd, fd);
+	blued_ctl_send_fd(client.fd, client.generation, fd);	/* C3-M9 */
 	ATF_CHECK(fcntl(fd, F_GETFD) >= 0);
 	close(fd);
 
@@ -1374,7 +1374,7 @@ ATF_TC_BODY(test_ctl_tx_queue_backpressure, tc)
 	ATF_REQUIRE(client.tx_queued > 0);
 	fd = open("/dev/null", O_RDONLY);
 	ATF_REQUIRE(fd >= 0);
-	blued_ctl_send_fd(client.fd, fd);
+	blued_ctl_send_fd(client.fd, client.generation, fd);	/* C3-M9 */
 	blued_ctl_client_fini(&client);
 	ATF_CHECK(fcntl(fd, F_GETFD) >= 0);
 	close(fd);
@@ -1476,7 +1476,7 @@ ATF_TC_BODY(test_ctl_send_fd, tc)
 	ATF_REQUIRE(ret == 0);
 
 	/* Send fd_pair[0] over sp[0] -> sp[1] */
-	blued_ctl_send_fd(sp[0], fd_pair[0]);
+	blued_ctl_send_fd(sp[0], client->generation, fd_pair[0]);	/* C3-M9 */
 
 	/* Receive the queued descriptor on the client side. */
 	{

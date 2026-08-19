@@ -795,10 +795,16 @@ ctl_handler(const struct mesh_access_rx *rx)
 			put_u16(reply->params, srv->temperature);
 			put_u16(reply->params + 2, (uint16_t) srv->delta_uv);
 			if (ctl_transition_active(srv, 1)) {
+				/* C5-L1: report each field's own target only
+				 * when that field's transition is active. */
 				put_u16(reply->params + 4,
-				    (uint16_t)srv->temperature_transition.target);
+				    srv->temperature_transition.active ?
+				    (uint16_t)srv->temperature_transition.target :
+				    srv->temperature);
 				put_u16(reply->params + 6,
-				    (uint16_t)srv->delta_uv_transition.target);
+				    srv->delta_uv_transition.active ?
+				    (uint16_t)srv->delta_uv_transition.target :
+				    (uint16_t)srv->delta_uv);
 				reply->params[8] = lighting_remaining(rx->now_ms,
 				    &srv->temperature_transition,
 				    &srv->delta_uv_transition, NULL);
@@ -912,10 +918,16 @@ ctl_handler(const struct mesh_access_rx *rx)
 		put_u16(reply->params, srv->lightness->actual);
 		put_u16(reply->params + 2, srv->temperature);
 		if (ctl_transition_active(srv, 0)) {
+			/* C5-L1: report each field's own target only when
+			 * that field's transition is active. */
 			put_u16(reply->params + 4,
-			    (uint16_t)srv->lightness->transition.target);
+			    srv->lightness->transition.active ?
+			    (uint16_t)srv->lightness->transition.target :
+			    srv->lightness->actual);
 			put_u16(reply->params + 6,
-			    (uint16_t)srv->temperature_transition.target);
+			    srv->temperature_transition.active ?
+			    (uint16_t)srv->temperature_transition.target :
+			    srv->temperature);
 			reply->params[8] = lighting_remaining(rx->now_ms,
 			    &srv->lightness->transition, &srv->temperature_transition,
 			    &srv->delta_uv_transition);

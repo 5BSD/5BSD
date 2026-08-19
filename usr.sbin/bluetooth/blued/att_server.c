@@ -727,6 +727,24 @@ att_check_security_perms(uint8_t perms, const struct att_conn *ac)
 }
 
 /*
+ * C2-M6: notification/indication delivery and the CCCD write that enables it
+ * both reflect a READ of the characteristic value (the notified payload is
+ * read data).  Gating them on the merged read|write security bits is wrong: a
+ * plaintext-readable but encrypted-writable Notify characteristic would then
+ * refuse an unencrypted client's CCCD write and drop its notifications even
+ * though the payload is freely readable.  Evaluate only the READ-side security
+ * requirement (Core Spec Vol 3 Part G §3.3.3.3 / §10.3.1.1) by masking off the
+ * write-side encryption/authentication bits before the shared check.
+ */
+int
+att_check_security_perms_read(uint8_t perms, const struct att_conn *ac)
+{
+
+	return (att_check_security_perms(perms &
+	    (ATT_PERM_READ_ENCRYPT | ATT_PERM_READ_AUTHEN), ac));
+}
+
+/*
  * Apply an HCI Encryption Change to a connection's ATT security state, gated
  * on real key material.
  *

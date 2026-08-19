@@ -472,8 +472,8 @@ struct meshd_node {
 	/* One replay list per friendship-control opcode: a valid Offer and Update
 	 * may share a Network SEQ during establishment, but a replay of either
 	 * opcode must still be rejected independently. */
-	struct mesh_rpl_entry		friend_rpl_store[7][MESH_SIM_RPL_SIZE];
-	struct mesh_rpl			friend_rpl[7];
+	struct mesh_rpl_entry		friend_rpl_store[8][MESH_SIM_RPL_SIZE];
+	struct mesh_rpl			friend_rpl[8];
 	struct mesh_lpn_fsm		lpn_fsm;
 	int				lpn_enabled;
 	struct mesh_prov_session	prov_sess;	/* provisioner session */
@@ -732,6 +732,13 @@ int	meshd_kr_begin(struct meshd_node *nd, const uint8_t new_key[16]);
 int	meshd_kr_advance(struct meshd_node *nd);
 int	meshd_kr_finish(struct meshd_node *nd);
 int	meshd_kr_phase(const struct meshd_node *nd);
+
+/*
+ * AppKey Key Refresh Phase-3 completion: promote the manager's staged AppKey to
+ * current, mint a fresh staged key, and apply the promoted key to this node's
+ * own primary AppKey.  Returns 0 on success, -1 if no network is active.
+ */
+int	meshd_appkey_finalize(struct meshd_node *nd);
 
 /* ================================================================
  * Friendship roles (MshPRT_v1.1 Section 3.6.5).

@@ -114,15 +114,27 @@ ctl_scan_result(const struct ctl_scan_params *params,
 
 		BLUED_PROBE_SCAN_START(adp->name);
 		nresults = 0;
+		/*
+		 * C3-M4: track ext-scan SUCCESS separately from the result
+		 * count.  A successful extended scan that legitimately returns
+		 * zero results must NOT fall through to a second (legacy) scan,
+		 * and must still count this adapter as scanned — otherwise an
+		 * empty-but-successful ext scan on the only adapter reported
+		 * IPC_ERR_NOT_FOUND ("no adapter").  Fall back to legacy only
+		 * when the ext scan was not run or actually failed.
+		 */
+		bool scanned_ok = false;
 		if (adp->le_features & LE_FEAT_EXT_ADVERTISING) {
 			uint8_t sphys = 0x01;
 			if (adp->le_features & LE_FEAT_CODED_PHY)
 				sphys = 0x05;
 			if (hci_le_ext_scan_ex(adp->hci_fd, duration_sec, &sp,
-			    results, BLE_MAX_SCAN_RESULTS, &nresults, sphys) != 0)
+			    results, BLE_MAX_SCAN_RESULTS, &nresults, sphys) == 0)
+				scanned_ok = true;
+			else
 				nresults = 0;
 		}
-		if (nresults == 0) {
+		if (!scanned_ok) {
 			if (hci_le_scan_ex(adp->hci_fd, duration_sec, &sp,
 			    results, BLE_MAX_SCAN_RESULTS, &nresults) < 0)
 				continue;
@@ -143,16 +155,22 @@ ctl_scan_result(const struct ctl_scan_params *params,
 		}
 	}
 
-	if (nadapters_scanned == 0)
-		return (IPC_ERR_NOT_FOUND);
-
 	/*
 	 * A synchronous SCAN burst reprograms and then disables the controller
 	 * scanner; if a mesh subscription wants the scanner always-on, re-assert
 	 * it now so the mesh RX path is never left stuck-off by an unrelated
 	 * SCAN (broker step C scanner reconciliation).
+	 *
+	 * C3-M5: resume mesh RX on ALL scan exit paths, including the
+	 * "no adapter scanned" failure below — a partially-run SCAN that then
+	 * failed still disabled the controller scanner, so returning early
+	 * without a resume left mesh RX dead.
 	 */
 	blued_mesh_scan_resume();
+
+	if (nadapters_scanned == 0)
+		return (IPC_ERR_NOT_FOUND);
+
 	return (IPC_ERR_NONE);
 }
 

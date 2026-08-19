@@ -572,13 +572,24 @@ blued_conn_setup_peripheral_impl(void *arg)
 				sc.reject_pairing = !atomic_load(&blued_pairable);
 
 				if (smp_respond(&sc) == 0) {
+					/*
+					 * C3-H1: smp_respond() already waited
+					 * for and consumed the HCI Encryption
+					 * Change event internally
+					 * (smp_sc.c:1498/1918,
+					 * smp_legacy.c:220) and returns <0 if
+					 * encryption did not turn on.  A
+					 * redundant outer hci_wait_encryption()
+					 * here would wait on an already-consumed
+					 * one-shot event and always time out,
+					 * mapping a completed pairing to failure
+					 * and never opening the ATT gate.
+					 * Success => encryption is on; run the
+					 * apply/gate path directly.
+					 */
 					LOG_HOGP(1, "peripheral SMP pairing "
-					    "complete, waiting for encryption");
-					if (hci_wait_encryption(adp->hci_fd,
-					    conn->con_handle, 10) < 0)
-						warn("post-pairing encryption "
-						    "timeout");
-					else {
+					    "complete");
+					{
 						struct smp_bond pb;
 						bool have_pb = false;
 

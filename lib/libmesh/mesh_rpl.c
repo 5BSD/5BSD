@@ -127,18 +127,27 @@ mesh_rpl_net_receive(struct mesh_rpl *rpl, const uint8_t enckey[16],
 }
 
 /*
- * M-L6: two-candidate secured-receive wrapper for the IV Update procedure.
+ * C4-M1: two-candidate secured-receive wrapper for the IV Update procedure.
  *
- * mesh_rpl_net_receive() authenticates under a single IV Index.  During an
- * active IV Update (and for the >=96h grace after it completes) a node must
- * still accept traffic secured with the previous IV Index (iv_index - 1); a
- * consumer calling the single-IV seam directly would silently drop that
- * traffic.  This wrapper tries iv_index first and, only when iv_update is set
- * and the PDU fails to authenticate under it, retries under iv_index - 1.
+ * mesh_rpl_net_receive() authenticates under a single IV Index.  Per MshPRT
+ * 3.10.5/3.11.5 the IVI bit of a received Network PDU selects between the
+ * current IV Index and IV Index - 1 in Normal Operation as well as during an
+ * active IV Update: a node must accept traffic secured with the previous IV
+ * Index whenever iv_index > 0, independent of the iv_update flag (a peer may
+ * remain In-Progress for >=96h and keep securing at iv_index - 1 while this
+ * node has already passed iv_update=0).  A consumer calling the single-IV
+ * seam directly would silently drop that traffic.  This wrapper tries
+ * iv_index first and, only when the PDU fails to authenticate under it,
+ * retries under iv_index - 1.
  *
- * The RPL is enforced with the IV Index that actually authenticated the PDU,
- * preserving the Section 3.8.8 ordering across the epoch boundary.  Returns
- * the same 1/0/-1 values as mesh_rpl_net_receive().
+ * The IVI bit ensures at most one of the two IV Indices can authenticate the
+ * PDU, so exactly one candidate is ever recorded.  The RPL is enforced with
+ * the IV Index that actually authenticated the PDU, preserving the Section
+ * 3.9.8 ordering across the epoch boundary.  A replay verdict (rc == 0) is
+ * authoritative and must NOT be retried under the other IV Index.  The
+ * iv_update argument is retained for source/ABI compatibility but no longer
+ * gates the retry.  Returns the same 1/0/-1 values as
+ * mesh_rpl_net_receive().
  */
 int
 mesh_rpl_net_receive_ivupd(struct mesh_rpl *rpl, const uint8_t enckey[16],
@@ -147,9 +156,10 @@ mesh_rpl_net_receive_ivupd(struct mesh_rpl *rpl, const uint8_t enckey[16],
 {
 	int rc;
 
+	(void)iv_update;
 	rc = mesh_rpl_net_receive(rpl, enckey, privkey, nid, iv_index, in,
 	    inlen, out);
-	if (rc >= 0 || !iv_update || iv_index == 0)
+	if (rc >= 0 || iv_index == 0)
 		return (rc);
 	/* Authentication failed under the current IV Index; try IV-1. */
 	return (mesh_rpl_net_receive(rpl, enckey, privkey, nid, iv_index - 1,

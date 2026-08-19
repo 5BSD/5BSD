@@ -515,6 +515,7 @@ int	blued_ext_adv_set_track(struct blued_adapter *, uint8_t, uint16_t,
 void	blued_ext_adv_set_enabled(struct blued_adapter *, uint8_t, bool);
 void	blued_ext_adv_set_untrack(struct blued_adapter *, uint8_t);
 void	blued_ctl_adapter_reset(struct blued_adapter *);
+void	blued_ctl_adv_set_terminated(struct blued_adapter *, uint8_t handle);
 bool	blued_ext_adv_set_used(const struct blued_adapter *, uint8_t);
 int	blued_adv_set_privacy_prepare(struct blued_adapter *, uint8_t);
 int	blued_adapter_rotate_rpa(struct blued_adapter *, const uint8_t [6]);

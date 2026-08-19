@@ -428,6 +428,15 @@ size_t	mesh_mgr_kr_pending(const struct mesh_mgr *mgr);
  */
 int	mesh_mgr_cfg_appkey_update_pdu(const struct mesh_mgr *mgr, uint8_t *out,
 	    size_t *outlen);
+
+/*
+ * Key Refresh Phase-3 completion for the primary AppKey (MshPRT_v1.1 Section
+ * 3.11.4): promote the staged Phase-1 AppKey (appkey_new) to the current key
+ * and mint a fresh Phase-1 key for the next rotation.  Call once every node has
+ * installed the new key via Config AppKey Update.  out_appkey, if non-NULL,
+ * receives the now-current key.  Returns 0 on success, -1 on failure.
+ */
+int	mesh_mgr_appkey_promote(struct mesh_mgr *mgr, uint8_t out_appkey[16]);
 int	mesh_mgr_cfg_appkey_delete_pdu(const struct mesh_mgr *mgr, uint8_t *out,
 	    size_t *outlen);
 

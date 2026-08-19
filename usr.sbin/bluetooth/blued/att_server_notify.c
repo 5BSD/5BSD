@@ -38,7 +38,7 @@
  * A-F2: for the same reason this transport-level sender does not consult the
  * parent characteristic's security requirement either.  The caller must gate
  * delivery on the link meeting that requirement (see ctl_gatt_notify_result,
- * which uses att_check_security_perms) — a subscription bit alone is not
+ * which uses att_check_security_perms_read) — a subscription bit alone is not
  * sufficient authority to deliver over an under-secured link.
  */
 int
@@ -215,8 +215,23 @@ att_send_multiple_handle_value_ntf(struct att_conn *ac,
 	}
 
 	if (i == 0) {
+		/*
+		 * C2-M4: not even a single (handle,len,value) tuple fit the
+		 * MTU, so no Multiple HVN was sent.  Returning 0 here would let
+		 * the caller count these handles as delivered while nothing went
+		 * out.  Fall back to one truncating Handle Value Notification per
+		 * handle (Core Spec Vol 3 Part F §3.4.7.1); att_send_notification
+		 * clamps each value to MTU-3.  Report failure if any send fails.
+		 */
+		int nret = 0;
+
 		ATT_RSP_BUF_FREE();
-		return (0);
+		for (i = 0; i < count; i++) {
+			if (att_send_notification(ac, handles[i], values[i],
+			    lengths[i]) < 0)
+				nret = -1;
+		}
+		return (nret);
 	}
 
 	LOG_ATT(2, "srv: multi handle value ntf count=%d/%d len=%d",

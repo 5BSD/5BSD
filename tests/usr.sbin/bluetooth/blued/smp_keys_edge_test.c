@@ -1364,6 +1364,7 @@ ATF_TC_BODY(test_distribute_init_keys_legacy_all, tc)
 {
 	struct smp_conn sc;
 	struct smp_bond_db db;
+	struct smp_bond dist_bond;	/* C1-L1 */
 	int fds[2];
 	char path[] = "/tmp/blued_test_dist.XXXXXX";
 	int bfd;
@@ -1382,7 +1383,8 @@ ATF_TC_BODY(test_distribute_init_keys_legacy_all, tc)
 	preq[5] = pres[5] = BT_CORE63_SMP_KEY_DIST_ENC_KEY |
 	    BT_CORE63_SMP_KEY_DIST_ID_KEY;
 
-	smp_distribute_init_keys(&sc, preq, pres, false);	/* legacy */
+	memset(&dist_bond, 0, sizeof(dist_bond));	/* C1-L1 */
+	smp_distribute_init_keys(&sc, preq, pres, false, &dist_bond);	/* legacy */
 
 	nseen = drain_opcodes(fds[1], seen, 16);
 	ATF_REQUIRE_EQ(4, nseen);
@@ -1402,6 +1404,7 @@ ATF_TC_BODY(test_distribute_init_keys_sc_skips_enc, tc)
 {
 	struct smp_conn sc;
 	struct smp_bond_db db;
+	struct smp_bond dist_bond;	/* C1-L1 */
 	int fds[2];
 	char path[] = "/tmp/blued_test_dist2.XXXXXX";
 	int bfd;
@@ -1420,7 +1423,8 @@ ATF_TC_BODY(test_distribute_init_keys_sc_skips_enc, tc)
 	preq[5] = pres[5] = BT_CORE63_SMP_KEY_DIST_ENC_KEY |
 	    BT_CORE63_SMP_KEY_DIST_ID_KEY;
 
-	smp_distribute_init_keys(&sc, preq, pres, true);	/* SC */
+	memset(&dist_bond, 0, sizeof(dist_bond));	/* C1-L1 */
+	smp_distribute_init_keys(&sc, preq, pres, true, &dist_bond);	/* SC */
 
 	nseen = drain_opcodes(fds[1], seen, 16);
 	ATF_REQUIRE_EQ(2, nseen);
@@ -1447,6 +1451,7 @@ capture_id_addr_type(uint8_t local_type)
 {
 	struct smp_conn sc;
 	struct smp_bond_db db;
+	struct smp_bond dist_bond;	/* C1-L1 */
 	int fds[2];
 	char path[] = "/tmp/blued_test_dist3.XXXXXX";
 	int bfd;
@@ -1465,7 +1470,8 @@ capture_id_addr_type(uint8_t local_type)
 	memset(pres, 0, 7);
 	preq[5] = pres[5] = SMP_KEY_DIST_ID_KEY;
 
-	smp_distribute_init_keys(&sc, preq, pres, true);
+	memset(&dist_bond, 0, sizeof(dist_bond));	/* C1-L1 */
+	smp_distribute_init_keys(&sc, preq, pres, true, &dist_bond);
 
 	(void)fcntl(fds[1], F_SETFL, O_NONBLOCK);
 	while ((n = recv(fds[1], buf, sizeof(buf), 0)) > 0) {
@@ -1803,11 +1809,13 @@ ATF_TC_BODY(test_distribute_init_keys_null_bonddb, tc)
 {
 	struct smp_conn sc;
 	struct smp_bond_db db;
+	struct smp_bond dist_bond;	/* C1-L1 */
 	int fds[2];
 	uint8_t preq[7], pres[7];
 	uint8_t seen[16];
 	int nseen;
 
+	memset(&dist_bond, 0, sizeof(dist_bond));	/* C1-L1 */
 	signal(SIGPIPE, SIG_IGN);
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, fds) == 0);
 	{
@@ -1828,7 +1836,8 @@ ATF_TC_BODY(test_distribute_init_keys_null_bonddb, tc)
 	preq[5] = pres[5] = BT_CORE63_SMP_KEY_DIST_ID_KEY;
 
 	/* Must return without dereferencing the NULL bond_db. */
-	ATF_CHECK_EQ(smp_distribute_init_keys(&sc, preq, pres, false), -1);
+	ATF_CHECK_EQ(smp_distribute_init_keys(&sc, preq, pres, false,
+	    &dist_bond), -1);	/* C1-L1 */
 
 	nseen = drain_opcodes(fds[1], seen, 16);
 	ATF_CHECK_EQ_MSG(nseen, 0,
@@ -1840,7 +1849,8 @@ ATF_TC_BODY(test_distribute_init_keys_null_bonddb, tc)
 	db.fd = -1;
 	smp_bond_db_set_atomic(&db, STDIN_FILENO, "bonds");
 	sc.bond_db = &db;
-	ATF_CHECK_EQ(smp_distribute_init_keys(&sc, preq, pres, false), -1);
+	ATF_CHECK_EQ(smp_distribute_init_keys(&sc, preq, pres, false,
+	    &dist_bond), -1);	/* C1-L1 */
 	nseen = drain_opcodes(fds[1], seen, 16);
 	ATF_CHECK_EQ_MSG(nseen, 0,
 	    "an unpersistable IRK must produce no key-distribution PDU");

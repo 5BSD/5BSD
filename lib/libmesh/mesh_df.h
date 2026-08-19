@@ -508,8 +508,12 @@ struct mesh_df_output {
  * mesh_df_recv_control() result.  DROP: PDU rejected (truncated/invalid/no
  * matching state).  CONSUMED: processed, nothing to transmit.  FORWARD: *out
  * holds a PDU to transmit.  FOR_ORIGIN: a Path Reply reached this node acting
- * as the Path Origin (feed the origin state machine).  FOR_TARGET: a Path
- * Request/Echo reached this node as the Path Target and *out holds the reply.
+ * as the Path Origin (feed the origin state machine, mesh_df_discovery_on_reply);
+ * reported when the reply's Path Origin is one of this node's element addresses,
+ * whether or not a reverse Forwarding Table entry was pre-seeded, since the
+ * discovery lives in the origin state machine, not the Forwarding Table.
+ * FOR_TARGET: a Path Request/Echo reached this node as the Path Target and *out
+ * holds the reply.
  */
 #define	MESH_DF_RECV_DROP		(-1)
 #define	MESH_DF_RECV_CONSUMED		0

@@ -1746,9 +1746,25 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				sess->dst = pdu.dst;
 				sess->szmic = lower.szmic;
 				sess->ctl = 0;
+				sess->complete = 0;
 				sess->deadline_ms = sim->now_ms +
 				    SIM_SAR_DISCARD_MS;
 				sess->used = 1;
+			} else if (sess->complete) {
+				/*
+				 * C4-L4: a retransmitted segment for an
+				 * already-completed SeqAuth.  MshPRT 3.5.3.4
+				 * requires re-sending the (complete) block ack
+				 * rather than silently dropping it; do not
+				 * re-run RPL/reassembly or re-deliver.
+				 */
+				sess->deadline_ms = sim->now_ms +
+				    SIM_SAR_DISCARD_MS;
+				if (local_unicast(node, pdu.dst))
+					send_seg_ack(sim, node, pdu.src,
+					    lower.seqzero, sess->r.blockack,
+					    SIM_DEFAULT_TTL);
+				return;
 			} else if (sess->dst != pdu.dst ||
 			    sess->szmic != lower.szmic ||
 			    sess->r.akf != lower.akf || sess->r.aid != lower.aid) {
@@ -1781,7 +1797,12 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 					    pdu.dst, sess->seqauth, sess->szmic,
 					    lower.akf, lower.aid, up, up_len, iv,
 					    net_idx);
-				sess->used = 0;
+				/*
+				 * C4-L4: keep the session so a retransmitted
+				 * segment is re-acked (handled above) until the
+				 * SAR discard deadline reaps it.
+				 */
+				sess->complete = 1;
 			}
 		}
 	} else {
@@ -1825,9 +1846,20 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				sess->iv_index = iv;
 				sess->dst = pdu.dst;
 				sess->ctl = 1;
+				sess->complete = 0;
 				sess->deadline_ms = sim->now_ms +
 				    SIM_SAR_DISCARD_MS;
 				sess->used = 1;
+			} else if (sess->complete) {
+				/* C4-L4: re-ack a retransmit of a completed
+				 * SeqAuth (MshPRT 3.5.3.4); no re-delivery. */
+				sess->deadline_ms = sim->now_ms +
+				    SIM_SAR_DISCARD_MS;
+				if (local_unicast(node, pdu.dst))
+					send_seg_ack(sim, node, pdu.src,
+					    lower.seqzero, sess->r.blockack,
+					    SIM_DEFAULT_TTL);
+				return;
 			} else if (sess->dst != pdu.dst ||
 			    sess->r.opcode != lower.opcode)
 				return;
@@ -1857,7 +1889,8 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 			}
 			ctlp = ctlbuf;
 			ctl_len = data_len + 1;
-			sess->used = 0;
+			/* C4-L4: retain for retransmit re-ack (as above). */
+			sess->complete = 1;
 		} else if (mesh_rpl_check(&node->rpl, pdu.src, iv,
 		    pdu.seq) != 1)
 			return;
@@ -2098,7 +2131,14 @@ mesh_sim_send_beacon(struct mesh_sim *sim, struct mesh_node *node,
 	if (net_idx == node->primary_net_idx) {
 		phase = mesh_kr_phase(&node->kr);
 		have_new = node->have_new_key;
-		bkey = have_new && phase >= MESH_KR_PHASE_1 ?
+		/*
+		 * C4-M2: Phase-1 nodes must still beacon with the OLD key
+		 * (MshPRT 3.11.4); new-key beacons begin at Phase 2.  Beaconing
+		 * the new key in Phase 1 (with the Phase-1 KR=0 flag) is the
+		 * Phase-3 signal and would collapse receivers straight to
+		 * Phase 3, revoking the old key mid-distribution.
+		 */
+		bkey = have_new && phase >= MESH_KR_PHASE_2 ?
 		    node->new_netkey : node->netkey;
 		kr_flag = have_new ? mesh_kr_beacon_flag(&node->kr) : 0;
 	} else {
@@ -2107,7 +2147,8 @@ mesh_sim_send_beacon(struct mesh_sim *sim, struct mesh_node *node,
 			return (-1);
 		phase = mesh_kr_phase(&subnet->kr);
 		have_new = subnet->have_new_key;
-		bkey = have_new && phase >= MESH_KR_PHASE_1 ?
+		/* C4-M2: subnet mirror of the primary fix above. */
+		bkey = have_new && phase >= MESH_KR_PHASE_2 ?
 		    subnet->new_netkey : subnet->netkey;
 		kr_flag = have_new ? mesh_kr_beacon_flag(&subnet->kr) : 0;
 	}

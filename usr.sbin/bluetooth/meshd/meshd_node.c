@@ -657,6 +657,20 @@ meshd_bearer_rx(struct meshd_node *nd, const uint8_t *pdu, size_t len)
 		meshd_friendship_access_queue_rx(nd, pdu, len);
 	}
 
+	/*
+	 * An access PDU delivered to us while we are an established LPN is a
+	 * Friend Queue delivery answering our outstanding Poll: toggle the LPN
+	 * FSN so the next Poll acknowledges this entry and the Friend advances to
+	 * the next queued message (without this the Friend resends the queue head
+	 * forever; C6-M6).  more_data is set so the LPN re-polls promptly to drain
+	 * any remaining entries; an empty-queue Friend Update later resets the
+	 * cadence with MD=0.  on_message treats a copy with no Poll outstanding as
+	 * a duplicate and leaves the FSN unchanged.
+	 */
+	if (nd->lpn_enabled && mesh_lpn_fsm_established(&nd->lpn_fsm) &&
+	    nd->self->rx.count > before)
+		(void)mesh_lpn_fsm_on_message(&nd->lpn_fsm, 1, nd->tick_last);
+
 	if (nd->self->rx.count > before) {
 		meshd_app_queue_rx(nd);
 		for (i = 0; i < nd->db.n_models; i++)
@@ -1852,6 +1866,38 @@ meshd_kr_finish(struct meshd_node *nd)
 {
 	return (nd == NULL ? -1 :
 	    meshd_kr_finish_idx(nd, nd->netkey_index));
+}
+
+/*
+ * AppKey Key Refresh Phase-3 completion (C6-H3).  After every node has
+ * installed the staged AppKey via Config AppKey Update, promote it to the
+ * manager's current key, mint a fresh staged key, and apply the promoted key
+ * to the Provisioner's own primary AppKey so the local node uses the current
+ * key and the persisted node/mirror copies agree (the restart consistency
+ * check compares mgr->appkey against the node's stored primary AppKey).  A
+ * subsequent AppKey Update then distributes a genuinely new key, and a fresh
+ * node provisioned via AppKey Add receives the current (not revoked) key.
+ */
+int
+meshd_appkey_finalize(struct meshd_node *nd)
+{
+	struct meshd_appkey_entry *e;
+	uint8_t newkey[16];
+	int rc = 0;
+
+	if (nd == NULL || !nd->mgr_active || nd->mgr == NULL || nd->self == NULL)
+		return (-1);
+	if (mesh_mgr_appkey_promote(nd->mgr, newkey) != 0)
+		return (-1);
+	e = meshd_find_appkey(nd, nd->mgr->appkey_index);
+	if (e != NULL) {
+		memcpy(e->key, newkey, sizeof(e->key));
+		if (mesh_sim_add_appkey(nd->self, e->net_idx, e->app_idx,
+		    newkey) != 0)
+			rc = -1;
+	}
+	explicit_bzero(newkey, sizeof(newkey));
+	return (rc);
 }
 
 /* ---------------- NetKey list ------------------------------------------- */
@@ -4587,8 +4633,21 @@ meshd_friend_input(struct meshd_node *nd, uint16_t src, const uint8_t *pdu,
 		return (mesh_friend_fsm_recv_sublist(&nd->friend_fsm, pdu, len,
 		    now, out));
 	case MESH_FRIEND_OP_CLEAR:
-		return (mesh_friend_fsm_recv_clear(&nd->friend_fsm, pdu, len,
-		    out));
+	case MESH_FRIEND_OP_CLEAR_CONFIRM: {
+		int r = mesh_friend_fsm_recv_clear(&nd->friend_fsm, pdu, len,
+		    out);
+
+		/*
+		 * A Friend Clear Confirm must be returned to the sender of the
+		 * Friend Clear (this Friend, several hops away), NOT to the LPN at
+		 * TTL 0.  The library builds the Confirm but cannot know the
+		 * sender, so stamp it here so meshd_friend_emit floods it to src
+		 * (C6-H4).
+		 */
+		if (r == 1 && out->action == MESH_FRIEND_ACT_SEND_CONTROL)
+			out->addr = src;
+		return (r);
+	}
 	default:
 		return (-1);
 	}
@@ -4737,7 +4796,16 @@ meshd_friend_send_msg(struct meshd_node *nd, const struct mesh_fq_entry *e)
 	np.nid = self->nid;
 	np.ctl = e->ctl;
 	np.ttl = e->ttl;
-	np.seq = e->seq;
+	/*
+	 * A Friend Update is ORIGINATED by the Friend, so it must carry the
+	 * Friend's own monotonically-advancing network SEQ (the built entry's
+	 * seq is 0).  Every transmission - including a resend of the same empty
+	 * -queue Update on a duplicate Poll - advances the SEQ so the LPN's
+	 * network RPL accepts each successive Update rather than rejecting it as
+	 * a replay (C6-H1).  A stored data entry keeps its original SRC/SEQ so
+	 * the LPN sees the message exactly as first sent.
+	 */
+	np.seq = e->is_update ? nd->self->seq : e->seq;
 	np.src = e->src;
 	np.dst = e->dst;
 	memcpy(np.transport, e->pdu, e->pdu_len);
@@ -4745,6 +4813,8 @@ meshd_friend_send_msg(struct meshd_node *nd, const struct mesh_fq_entry *e)
 	if (mesh_net_encrypt(self->enckey, self->privkey, self->nid, iv,
 	    &np, frame, &flen) != 0)
 		return (-1);
+	if (e->is_update)
+		nd->self->seq++;	/* consume the SEQ the Update carried */
 	nd->tx_frames++;
 	if (nd->bearer->tx(nd->bearer->arg, MESHD_PDU_NET, frame, flen) != 0) {
 		nd->tx_errors++;
@@ -4761,7 +4831,21 @@ meshd_friend_emit(struct meshd_node *nd, uint16_t dst,
 
 	switch (out->action) {
 	case MESH_FRIEND_ACT_SEND_CONTROL:
-		(void)meshd_friend_send_control(nd, dst, out->pdu, out->pdu_len);
+		/*
+		 * Most control replies go single-hop to the LPN at TTL 0.  A
+		 * Friend Clear Confirm, however, is addressed to the sender of the
+		 * Friend Clear (out->addr, possibly several hops away) and must be
+		 * flooded with the managed-flooding TTL rather than to the LPN
+		 * (C6-H4).
+		 */
+		if (out->addr != 0 && out->pdu_len > 0)
+			(void)meshd_df_send_control(nd,
+			    (uint8_t)(out->pdu[0] & 0x7f), out->addr, 0x7f,
+			    out->pdu_len > 1 ? out->pdu + 1 : NULL,
+			    out->pdu_len - 1);
+		else
+			(void)meshd_friend_send_control(nd, dst, out->pdu,
+			    out->pdu_len);
 		break;
 	case MESH_FRIEND_ACT_SEND_MSG:
 		(void)meshd_friend_send_msg(nd, &out->msg);
@@ -4868,7 +4952,8 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 	    (op == MESH_FRIEND_OP_REQUEST || op == MESH_FRIEND_OP_POLL ||
 	    op == MESH_FRIEND_OP_SUBLIST_ADD ||
 	    op == MESH_FRIEND_OP_SUBLIST_REMOVE ||
-	    op == MESH_FRIEND_OP_CLEAR)) ||
+	    op == MESH_FRIEND_OP_CLEAR ||
+	    op == MESH_FRIEND_OP_CLEAR_CONFIRM)) ||
 	    (nd->lpn_enabled && (op == MESH_FRIEND_OP_OFFER ||
 	    op == MESH_FRIEND_OP_UPDATE))))
 		return (0);
@@ -4891,6 +4976,14 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 	case MESH_FRIEND_OP_OFFER:
 		rpl_slot = 5;
 		break;
+	case MESH_FRIEND_OP_CLEAR_CONFIRM:
+		/*
+		 * Admit the Friend Clear Confirm so the Friend Clear initiator
+		 * stops repeating on the Confirm rather than only at the 2x
+		 * PollTimeout deadline (C6-M7).
+		 */
+		rpl_slot = 7;
+		break;
 	default: /* MESH_FRIEND_OP_UPDATE */
 		rpl_slot = 6;
 		break;
@@ -4904,12 +4997,21 @@ meshd_friendship_control_rx(struct meshd_node *nd, const uint8_t *pdu,
 	if (nd->friend_enabled &&
 	    (op == MESH_FRIEND_OP_REQUEST || op == MESH_FRIEND_OP_POLL ||
 	    op == MESH_FRIEND_OP_SUBLIST_ADD ||
-	    op == MESH_FRIEND_OP_SUBLIST_REMOVE || op == MESH_FRIEND_OP_CLEAR)) {
+	    op == MESH_FRIEND_OP_SUBLIST_REMOVE || op == MESH_FRIEND_OP_CLEAR ||
+	    op == MESH_FRIEND_OP_CLEAR_CONFIRM)) {
 			struct mesh_friend_out out;
 
 			memset(&out, 0, sizeof(out));
+			/*
+			 * The empty-queue Friend Update carries the network's
+			 * current Key Refresh flag and IV Index (Section 3.6.5.2),
+			 * not a hardcoded 0 / the Poll's decrypt IV: LPNs adopt the
+			 * IV Index and Key Refresh state solely from these Updates
+			 * (C6-M8).
+			 */
 			if (meshd_friend_input(nd, np.src, np.transport,
-			    np.transport_len, MESHD_FRIEND_RX_RSSI, 0, ivu, iv_used,
+			    np.transport_len, MESHD_FRIEND_RX_RSSI,
+			    (uint8_t)mesh_kr_beacon_flag(&nd->self->kr), ivu, iv,
 			    now, &out) >= 0)
 				meshd_friend_emit(nd, nd->friend_fsm.lpn_addr,
 				    &out);
@@ -4932,8 +5034,13 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
     size_t len)
 {
 	struct mesh_net_pdu np;
+	struct {
+		uint8_t nid;
+		const uint8_t *enckey;
+		const uint8_t *privkey;
+	} keys[2];
 	uint32_t ivc[2], iv;
-	size_t ni, niv;
+	size_t ki, nkeys, ni, niv;
 	int ok = 0;
 
 	if (nd->self == NULL || !nd->friend_enabled)
@@ -4945,10 +5052,29 @@ meshd_friendship_access_queue_rx(struct meshd_node *nd, const uint8_t *pdu,
 		ivc[1] = iv - 1;
 		niv = 2;
 	}
-	for (ni = 0; ni < niv && !ok; ni++)
-		if (mesh_net_decrypt(nd->self->enckey, nd->self->privkey,
-		    nd->self->nid, ivc[ni], pdu, len, &np) == 0)
-			ok = 1;
+	/*
+	 * During a Key Refresh a message destined for the LPN may be secured
+	 * with the new NetKey; try both credentials (mirroring the friendship
+	 * control path) so new-key traffic is still queued for the LPN (C6-M9).
+	 */
+	nkeys = 0;
+	if (mesh_kr_rx_accept_old(&nd->self->kr)) {
+		keys[nkeys].nid = nd->self->nid;
+		keys[nkeys].enckey = nd->self->enckey;
+		keys[nkeys].privkey = nd->self->privkey;
+		nkeys++;
+	}
+	if (nd->self->have_new_key && mesh_kr_rx_accept_new(&nd->self->kr)) {
+		keys[nkeys].nid = nd->self->new_nid;
+		keys[nkeys].enckey = nd->self->new_enckey;
+		keys[nkeys].privkey = nd->self->new_privkey;
+		nkeys++;
+	}
+	for (ki = 0; ki < nkeys && !ok; ki++)
+		for (ni = 0; ni < niv && !ok; ni++)
+			if (mesh_net_decrypt(keys[ki].enckey, keys[ki].privkey,
+			    keys[ki].nid, ivc[ni], pdu, len, &np) == 0)
+				ok = 1;
 	if (!ok || np.transport_len == 0)
 		return;
 	if (np.ctl == 0 && nd->friend_enabled &&

@@ -308,6 +308,8 @@ mesh_mgr_node_at(const struct mesh_mgr *mgr, size_t i)
 
 /* Serialised network/self header (little-endian), 82 octets. */
 #define	MESH_MGR_NETHDR_LEN	82
+/* v2 network/self header: identical through the SEQ high-water, no appkey_new. */
+#define	MESH_MGR_NETHDR_V2_LEN	66
 
 /*
  * Reserved SEQ block persisted ahead of the in-memory high-water mark
@@ -457,8 +459,8 @@ encode_nethdr(const struct mesh_mgr *mgr, uint8_t out[MESH_MGR_NETHDR_LEN])
 	/* p - out == 82 */
 }
 
-static void
-decode_nethdr(struct mesh_mgr *mgr, const uint8_t in[MESH_MGR_NETHDR_LEN])
+static int
+decode_nethdr(struct mesh_mgr *mgr, const uint8_t *in, uint16_t version)
 {
 	const uint8_t *p = in;
 
@@ -474,7 +476,18 @@ decode_nethdr(struct mesh_mgr *mgr, const uint8_t in[MESH_MGR_NETHDR_LEN])
 	mgr->self_elements = *p++;
 	/* Resume from the reserved-ahead SEQ (see encode_nethdr / P-H8). */
 	mgr->seq = get_u32(&p);
-	memcpy(mgr->appkey_new, p, 16);		p += 16;
+	if (version >= 3) {
+		memcpy(mgr->appkey_new, p, 16);		p += 16;
+	} else {
+		/*
+		 * v2 predates the staged Phase-1 AppKey (C6-L13).  Migrate by
+		 * minting a fresh appkey_new; it has never been distributed, so a
+		 * random value is a correct staged key for the next rotation.
+		 */
+		if (RAND_bytes(mgr->appkey_new, sizeof(mgr->appkey_new)) != 1)
+			return (-1);
+	}
+	return (0);
 }
 
 static void
@@ -628,7 +641,7 @@ mesh_mgr_load(struct mesh_mgr *mgr, const char *path)
 	const uint8_t *p;
 	uint32_t crc, stored_crc, running;
 	uint16_t version, count;
-	size_t i;
+	size_t i, nethdr_len;
 	int fd;
 
 	if (mgr == NULL || path == NULL)
@@ -655,10 +668,12 @@ mesh_mgr_load(struct mesh_mgr *mgr, const char *path)
 	count = get_u16(&p);
 	(void)get_u16(&p);			/* reserved */
 	stored_crc = le32dec(hdr + MESH_MGR_HDR_LEN - 4);
-	if (version != MESH_MGR_VERSION || count > MESH_MGR_MAX_NODES) {
+	if ((version != MESH_MGR_VERSION && version != 2) ||
+	    count > MESH_MGR_MAX_NODES) {
 		(void)close(fd);
 		return (-1);
 	}
+	nethdr_len = (version >= 3) ? MESH_MGR_NETHDR_LEN : MESH_MGR_NETHDR_V2_LEN;
 
 	memset(&tmp, 0, sizeof(tmp));
 
@@ -671,12 +686,15 @@ mesh_mgr_load(struct mesh_mgr *mgr, const char *path)
 		running = mgr_crc32(0, hcopy, MESH_MGR_HDR_LEN);
 	}
 
-	if (read_all(fd, nethdr, MESH_MGR_NETHDR_LEN) != 0) {
+	if (read_all(fd, nethdr, nethdr_len) != 0) {
 		(void)close(fd);
 		return (-1);
 	}
-	running = mgr_crc32(running, nethdr, MESH_MGR_NETHDR_LEN);
-	decode_nethdr(&tmp, nethdr);
+	running = mgr_crc32(running, nethdr, nethdr_len);
+	if (decode_nethdr(&tmp, nethdr, version) != 0) {
+		(void)close(fd);
+		return (-1);
+	}
 
 	for (i = 0; i < count; i++) {
 		if (read_all(fd, noderec, MESH_MGR_NODEREC_LEN) != 0) {
@@ -1065,6 +1083,28 @@ mesh_mgr_cfg_appkey_update_pdu(const struct mesh_mgr *mgr, uint8_t *out,
 	memcpy(in.key, mgr->appkey_new, sizeof(in.key));
 	return (mesh_cfg_appkey_add_build(MESH_CFG_OP_APPKEY_UPDATE, &in, out,
 	    outlen));
+}
+
+int
+mesh_mgr_appkey_promote(struct mesh_mgr *mgr, uint8_t out_appkey[16])
+{
+
+	if (mgr == NULL)
+		return (-1);
+	/*
+	 * Key Refresh Phase-3 completion for the primary AppKey (MshPRT_v1.1
+	 * Section 3.11.4).  Once every node has replaced its AppKey via Config
+	 * AppKey Update, the staged Phase-1 key becomes the current key and a
+	 * fresh Phase-1 key is minted for the next rotation.  Without this the
+	 * manager keeps handing the revoked key to AppKey Add and re-distributes
+	 * an already-installed key on the next AppKey Update (C6-H3).
+	 */
+	memcpy(mgr->appkey, mgr->appkey_new, sizeof(mgr->appkey));
+	if (RAND_bytes(mgr->appkey_new, sizeof(mgr->appkey_new)) != 1)
+		return (-1);
+	if (out_appkey != NULL)
+		memcpy(out_appkey, mgr->appkey, sizeof(mgr->appkey));
+	return (0);
 }
 
 int

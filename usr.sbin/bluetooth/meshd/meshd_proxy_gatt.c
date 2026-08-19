@@ -161,10 +161,15 @@ meshd_proxy_gatt_recv_mtu(struct meshd_node *nd, const char *addr,
 	if (rc == MESH_PROXY_REASM_IGNORED)
 		return (0);
 	if (!complete) {
-		if (!session->rx_started) {
-			session->rx_started_ms = now_ms;
-			session->rx_started = 1;
-		}
+		/*
+		 * The 20s SAR reassembly timeout is measured per-segment
+		 * (Section 6.3.2.2): refresh the start stamp on EVERY accepted
+		 * segment, not only the first, so a slow-but-steady multi-segment
+		 * transfer with sub-20s inter-segment gaps is not torn down at 20s
+		 * from the first segment (C6-M10).
+		 */
+		session->rx_started_ms = now_ms;
+		session->rx_started = 1;
 		return (0);
 	}
 	session->rx_started = 0;

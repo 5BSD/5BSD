@@ -32,7 +32,7 @@ void	blued_ctl_accept(void);
 int	blued_ctl_dispatch(struct blued_ctl_client *client);
 int	blued_ctl_flush(struct blued_ctl_client *client);
 void	blued_ctl_client_fini(struct blued_ctl_client *client);
-void	blued_ctl_send_fd(int client_fd, int fd);
+void	blued_ctl_send_fd(int client_fd, uint64_t client_gen, int fd);
 void	blued_ctl_cleanup(void);
 
 /*

@@ -367,6 +367,7 @@ hci_send_raw_cmd(int hci_fd, uint16_t opcode, const void *params,
     uint8_t plen)
 {
 	uint8_t pkt[260];	/* max HCI command: 4 + 255 */
+	pthread_mutex_t *mtx;	/* C3-L: capture the slot, don't re-look-up */
 
 	if (plen > 0 && params == NULL) {
 		errno = EINVAL;
@@ -380,18 +381,25 @@ hci_send_raw_cmd(int hci_fd, uint16_t opcode, const void *params,
 	if (plen > 0)
 		memcpy(pkt + 4, params, plen);
 
-	pthread_mutex_lock(hci_devreq_mutex(hci_fd));
+	/*
+	 * C3-L: resolve the per-fd mutex ONCE and unlock the same object.
+	 * Re-looking up hci_devreq_mutex(hci_fd) at unlock time could return a
+	 * different slot if the fd was closed and its slot remapped in the
+	 * window (hci_fd_closed), unlocking a mutex we never held.
+	 */
+	mtx = hci_devreq_mutex(hci_fd);
+	pthread_mutex_lock(mtx);
 
 	/* Log outgoing HCI command to BTSnoop capture */
 	hci_log_packet(HCI_LOG_CMD, pkt + 1, 3 + plen, false);
 
 	if (send(hci_fd, pkt, 4 + plen, 0) < 0) {
-		pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+		pthread_mutex_unlock(mtx);
 		return (-1);
 	}
 	BLUED_PROBE_HCI_CMD_RAW(opcode, plen);
 
-	pthread_mutex_unlock(hci_devreq_mutex(hci_fd));
+	pthread_mutex_unlock(mtx);
 
 	return (0);
 }

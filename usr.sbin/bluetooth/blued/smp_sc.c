@@ -627,13 +627,21 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		 */
 		if (smp_receive_peer_keys(sc, &bond, preq[6] & pres[6],
 		    true) != 0) {
+			uint8_t fail[2] = { SMP_PAIRING_FAILED,
+			    SMP_ERR_INVALID_PARAMETERS };
+			/*
+			 * C1-L2: signal Pairing Failed (as the legacy path does)
+			 * so the peer is not left waiting out the §3.4 30 s
+			 * timeout on a key-distribution error.
+			 */
+			(void)smp_log_send(sc, fail, sizeof(fail));
 			explicit_bzero(&bond, sizeof(bond));
 			ret = -1;
 			goto sc_passkey_cleanup;
 		}
 
 		/* Distribute initiator keys to responder */
-		if (smp_distribute_init_keys(sc, preq, pres, true) != 0) {
+		if (smp_distribute_init_keys(sc, preq, pres, true, &bond) != 0) {
 			explicit_bzero(&bond, sizeof(bond));
 			ret = -1;
 			goto sc_passkey_cleanup;
@@ -848,13 +856,16 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		 *  4. Verify peer's OOB confirm: Cb = f4(PKbx, PKbx, Nb, 0)
 		 *     must match sc->oob->sc->confirm
 		 */
-		if (sc->oob == NULL || sc->oob->sc == NULL) {
-			pdu[0] = SMP_PAIRING_FAILED;
-			pdu[1] = SMP_ERR_OOB_NOT_AVAILABLE;
-			smp_log_send(sc, pdu, 2);
-			errno = ENOTSUP;
-			goto sc_jw_cleanup;
-		}
+		/*
+		 * C1-M2: one-sided SC OOB is legal (Core Spec Vol 3 Part H
+		 * Table 2.7 / §2.3.5.6.4).  If the peer advertised OOB but we
+		 * hold no OOB data for it, do NOT reject with OOB Not Available:
+		 * proceed with the nonce exchange, skip the peer-confirm check
+		 * (nothing to verify against), and let the DHKey-check use r=0
+		 * (the r selection below already falls to 0 when sc->oob->sc is
+		 * NULL).
+		 */
+		bool have_peer_oob = (sc->oob != NULL && sc->oob->sc != NULL);
 
 		smp_random(na, sizeof(na));
 
@@ -875,8 +886,8 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		}
 		memcpy(nb, pdu + 1, 16);
 
-		/* Verify peer's OOB confirm: Cb = f4(PKbx, PKbx, rb, 0) */
-		{
+		if (have_peer_oob) {
+			/* Verify peer's OOB confirm: Cb = f4(PKbx, PKbx, rb, 0) */
 			uint8_t cb_verify[16];
 			if (smp_f4(pkb_le, pkb_le, sc->oob->sc->random, 0,
 			    cb_verify) != 0) {
@@ -894,8 +905,11 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 				errno = EACCES;
 				goto sc_jw_cleanup;
 			}
+			LOG_SMP(1, "SC OOB: peer confirm verified");
+		} else {
+			LOG_SMP(1, "SC OOB: no peer OOB received, "
+			    "continuing with r=0 (one-sided OOB)");
 		}
-		LOG_SMP(1, "SC OOB: peer confirm verified");
 	} else {
 		/*
 		 * Just Works / Numeric Comparison Stage 1.
@@ -1129,13 +1143,21 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		 * we requested and the peer agreed to send, never pres[6] alone. */
 		if (smp_receive_peer_keys(sc, &bond, preq[6] & pres[6],
 		    true) != 0) {
+			uint8_t fail[2] = { SMP_PAIRING_FAILED,
+			    SMP_ERR_INVALID_PARAMETERS };
+			/*
+			 * C1-L2: signal Pairing Failed (as the legacy path does)
+			 * so the peer is not left waiting out the §3.4 30 s
+			 * timeout on a key-distribution error.
+			 */
+			(void)smp_log_send(sc, fail, sizeof(fail));
 			explicit_bzero(&bond, sizeof(bond));
 			ret = -1;
 			goto sc_jw_cleanup;
 		}
 
 		/* Distribute initiator keys to responder */
-		if (smp_distribute_init_keys(sc, preq, pres, true) != 0) {
+		if (smp_distribute_init_keys(sc, preq, pres, true, &bond) != 0) {
 			explicit_bzero(&bond, sizeof(bond));
 			ret = -1;
 			goto sc_jw_cleanup;
@@ -1307,13 +1329,15 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		 *     must match sc->oob->sc->confirm
 		 *  4. Send Pairing Random (Nb)
 		 */
-		if (sc->oob == NULL || sc->oob->sc == NULL) {
-			pdu[0] = SMP_PAIRING_FAILED;
-			pdu[1] = SMP_ERR_OOB_NOT_AVAILABLE;
-			smp_log_send(sc, pdu, 2);
-			errno = ENOTSUP;
-			goto resp_sc_cleanup;
-		}
+		/*
+		 * C1-M2: one-sided SC OOB is legal (Core Spec Vol 3 Part H
+		 * Table 2.7 / §2.3.5.6.4).  If the peer advertised OOB but we
+		 * hold no OOB data for it, do NOT reject with OOB Not Available:
+		 * receive Na, skip the peer-confirm check (nothing to verify
+		 * against), send Nb, and let the DHKey-check use r=0 (the r
+		 * selection below already falls to 0 when sc->oob->sc is NULL).
+		 */
+		bool have_peer_oob = (sc->oob != NULL && sc->oob->sc != NULL);
 
 		smp_random(nb, sizeof(nb));
 
@@ -1328,8 +1352,8 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		}
 		memcpy(na, pdu + 1, 16);
 
-		/* Verify peer's OOB confirm: Ca = f4(PKax, PKax, ra, 0) */
-		{
+		if (have_peer_oob) {
+			/* Verify peer's OOB confirm: Ca = f4(PKax, PKax, ra, 0) */
 			uint8_t ca_verify[16];
 			if (smp_f4(pka_le, pka_le, sc->oob->sc->random, 0,
 			    ca_verify) != 0) {
@@ -1347,8 +1371,11 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 				errno = EACCES;
 				goto resp_sc_cleanup;
 			}
+			LOG_SMP(1, "resp SC OOB: peer confirm verified");
+		} else {
+			LOG_SMP(1, "resp SC OOB: no peer OOB received, "
+			    "continuing with r=0 (one-sided OOB)");
 		}
-		LOG_SMP(1, "resp SC OOB: peer confirm verified");
 
 		/* Send Nb */
 		pdu[0] = SMP_PAIRING_RANDOM;
@@ -1574,6 +1601,14 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		/* Receive initiator's keys. SC ignores EncKey;
 		 * IdKey and SignKey from pres[5] apply. */
 		if (smp_receive_peer_keys(sc, &bond, pres[5], true) != 0) {
+			uint8_t fail[2] = { SMP_PAIRING_FAILED,
+			    SMP_ERR_INVALID_PARAMETERS };
+			/*
+			 * C1-L2: signal Pairing Failed (as the legacy path does)
+			 * so the peer is not left waiting out the §3.4 30 s
+			 * timeout on a key-distribution error.
+			 */
+			(void)smp_log_send(sc, fail, sizeof(fail));
 			explicit_bzero(&bond, sizeof(bond));
 			ret = -1;
 			goto resp_sc_cleanup;
@@ -1991,6 +2026,14 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 		/* Receive initiator's keys. SC ignores EncKey;
 		 * IdKey and SignKey from pres[5] apply. */
 		if (smp_receive_peer_keys(sc, &bond, pres[5], true) != 0) {
+			uint8_t fail[2] = { SMP_PAIRING_FAILED,
+			    SMP_ERR_INVALID_PARAMETERS };
+			/*
+			 * C1-L2: signal Pairing Failed (as the legacy path does)
+			 * so the peer is not left waiting out the §3.4 30 s
+			 * timeout on a key-distribution error.
+			 */
+			(void)smp_log_send(sc, fail, sizeof(fail));
 			explicit_bzero(&bond, sizeof(bond));
 			ret = -1;
 			goto resp_sc_pk_cleanup;

@@ -123,11 +123,15 @@ ctl_elevate_security(struct blued_conn *conn)
 		return (false);
 	}
 
-	if (hci_wait_encryption(conn->adapter->hci_fd,
-	    conn->con_handle, 10) < 0) {
-		smp_close(&sc);
-		return (false);
-	}
+	/*
+	 * C3-H1: smp_pair() already waits for and consumes the HCI Encryption
+	 * Change event internally (smp_sc.c / smp.c hci_wait_encryption) and only
+	 * returns >= 0 once encryption is confirmed for this connection.  A
+	 * second hci_wait_encryption() here would block on an already-consumed
+	 * one-shot event and always time out, turning every successful elevation
+	 * into a reported failure.  Encryption is confirmed above, so proceed
+	 * directly to committing the ATT security state.
+	 */
 
 	/*
 	 * Finding 95: serialise these security-state writes against the HCI
@@ -188,6 +192,17 @@ ctl_gatt_read_result(struct blued_conn *job_conn, uint8_t adapter_index,
 	if (conn == NULL || conn->att == NULL)
 		return (IPC_ERR_NOT_CONN);
 	ctl_set_att_timeout(conn->att->fd, &old_tv);
+	/*
+	 * C2-L5: the SO_RCVTIMEO installed by ctl_set_att_timeout is reset every
+	 * iteration by att.c's per-request deadline loop, so on its own the ctl
+	 * 2 s cap is dead — the op would run to the 30 s ATT ceiling.  Install
+	 * the tighter bound through the mechanism att.c actually honours
+	 * (att_conn_set_op_timeout / ac->op_timeout_ms) so a stalled peer fails
+	 * the ctl op in CTL_ATT_TIMEOUT_SEC, then clear it before restore so the
+	 * notification/peripheral paths sharing this att_conn keep blocking
+	 * semantics.
+	 */
+	att_conn_set_op_timeout(conn->att, CTL_ATT_TIMEOUT_SEC * 1000);
 	*value_len = 0;
 	ret = att_read(conn->att, handle, value, value_size, value_len);
 	if (ret != 0 && ctl_att_needs_security(ret) &&
@@ -195,6 +210,31 @@ ctl_gatt_read_result(struct blued_conn *job_conn, uint8_t adapter_index,
 		*value_len = 0;
 		ret = att_read(conn->att, handle, value, value_size, value_len);
 	}
+	/*
+	 * C2-M8: an ATT Read Response carries at most ATT_MTU-1 value octets, so
+	 * a value that exactly fills MTU-1 may have more bytes the client never
+	 * sees.  Continue with ATT Read Blob (Read Long, Core Spec Vol 3 Part G
+	 * §4.8.3) at successive offsets to assemble the full value for the ctl
+	 * client, mirroring the pattern blued_central uses for the Report Map.
+	 */
+	if (ret == 0) {
+		size_t total = *value_len;
+		uint16_t mtu = conn->att->mtu;
+
+		while (total == (size_t)(mtu - 1) && total < value_size &&
+		    total <= UINT16_MAX) {
+			size_t blen = 0;
+
+			if (att_read_blob(conn->att, handle, (uint16_t)total,
+			    value + total, value_size - total, &blen) != 0)
+				break;
+			if (blen == 0)
+				break;
+			total += blen;
+		}
+		*value_len = total;
+	}
+	att_conn_set_op_timeout(conn->att, 0);
 	ctl_restore_att_timeout(conn->att->fd, &old_tv);
 	return (ret == 0 ? IPC_ERR_NONE : IPC_ERR_IO);
 }
@@ -222,10 +262,14 @@ ctl_gatt_write_result(struct blued_conn *job_conn, uint8_t adapter_index,
 		return (att_write_cmd(conn->att, handle, value, value_len) == 0 ?
 		    IPC_ERR_NONE : IPC_ERR_IO);
 	ctl_set_att_timeout(conn->att->fd, &old_tv);
+	/* C2-L5: honour the ctl op timeout through att.c's op_timeout_ms (the
+	 * SO_RCVTIMEO alone is reset each iteration by att.c's deadline loop). */
+	att_conn_set_op_timeout(conn->att, CTL_ATT_TIMEOUT_SEC * 1000);
 	ret = att_write_req(conn->att, handle, value, value_len);
 	if (ret != 0 && ctl_att_needs_security(ret) &&
 	    ctl_elevate_security(conn))
 		ret = att_write_req(conn->att, handle, value, value_len);
+	att_conn_set_op_timeout(conn->att, 0);
 	ctl_restore_att_timeout(conn->att->fd, &old_tv);
 	return (ret == 0 ? IPC_ERR_NONE : IPC_ERR_IO);
 }
@@ -474,6 +518,19 @@ ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
 
 		cccd_handle = client->subs[i].cccd_handle;
 		cccd_value = client->subs[i].cccd_value;
+		/*
+		 * C2-M11: this is the last-owner unsubscribe (the shared path
+		 * above did not fire), so we are about to write CCCD=0.  Mark the
+		 * subscription pending-removal BEFORE dropping the lock.  Left
+		 * non-pending, a concurrent subscriber for the same characteristic
+		 * would scan this still-present sub, conclude the peer CCCD is
+		 * already enabled ("shared"), and add its route WITHOUT rewriting
+		 * the CCCD — then our CCCD=0 write lands and the new subscriber
+		 * silently never receives notifications.  Marked pending, that
+		 * concurrent subscriber instead observes shared_pending and backs
+		 * off with BUSY, symmetric with the subscribe staging path.
+		 */
+		client->subs[i].pending = true;
 		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		ctl_set_att_timeout(conn->att->fd, &old_tv);
 		ret = att_write_req(conn->att, cccd_handle, value, sizeof(value));
@@ -483,8 +540,25 @@ ctl_gatt_subscribe_result(struct blued_conn *job_conn, int client_fd,
 			ret = att_write_req(conn->att, cccd_handle, value,
 			    sizeof(value));
 		ctl_restore_att_timeout(conn->att->fd, &old_tv);
-		if (ret != 0)
+		if (ret != 0) {
+			/*
+			 * C2-M11: the disable failed, so the subscription stays
+			 * active — clear the pending-removal mark we set above
+			 * rather than leaving the sub wedged pending forever
+			 * (which would make it un-removable and block resubscribe).
+			 */
+			pthread_mutex_lock(&blued_g.ctl_clients_lock);
+			client = ctl_subscription_client(client_fd,
+			    client_generation);
+			if (client != NULL) {
+				i = ctl_subscription_find(client, addr, addr_type,
+				    adapter_index, handle);
+				if (i != client->nsubs)
+					client->subs[i].pending = false;
+			}
+			pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 			return (IPC_ERR_IO);
+		}
 	} else {
 		pthread_mutex_unlock(&blued_g.ctl_clients_lock);
 		/* Locate the characteristic's descriptor range and its CCCD. */
@@ -1395,11 +1469,25 @@ ctl_gatt_set_value_result(int client_fd, uint16_t handle,
     const uint8_t *value, uint16_t value_len)
 {
 	struct att_attr *attr;
+	struct att_db *db;
+	bool staged;
 
 	if (handle == 0 || (value == NULL && value_len != 0) ||
 	    value_len > ATT_MAX_ATTR_VALUE_LEN /* A-F6: max attr value is 512 */)
 		return (IPC_ERR_INVAL);
-	attr = attdb_find_by_handle(&periph_gatt_db, handle);
+	/*
+	 * C2-L3: when this client owns an active staged txn, apply the value to
+	 * the staged scratch DB, not the live periph_gatt_db.  Writing the live
+	 * DB mid-txn makes the new value visible to peers immediately and is
+	 * then reverted by the COMMIT attdb_copy() (which overwrites live with
+	 * the staged snapshot) — so the SET_VALUE would silently vanish.  The
+	 * staged path also skips the hash recompute / Service Changed, which
+	 * COMMIT emits atomically for the whole batch.
+	 */
+	db = ctl_gatt_target_db(client_fd, &staged);
+	if (db == NULL)
+		return (IPC_ERR_BUSY);
+	attr = attdb_find_by_handle(db, handle);
 	if (attr == NULL)
 		return (IPC_ERR_NOT_FOUND);
 	if (attr->owner_fd >= 0 && attr->owner_fd != client_fd)
@@ -1409,6 +1497,8 @@ ctl_gatt_set_value_result(int client_fd, uint16_t handle,
 	if (value_len != 0)
 		memcpy(attr->value, value, value_len);
 	attr->value_len = value_len;
+	if (staged)
+		return (IPC_ERR_NONE);
 	/*
 	 * A-F6: the Characteristic Extended Properties descriptor (0x2900) value
 	 * is covered by the GATT Database Hash (Core Spec Vol 3 Part G §7.3.1).
@@ -1416,8 +1506,24 @@ ctl_gatt_set_value_result(int client_fd, uint16_t handle,
 	 * change-aware clients with a stale hash, so recompute and signal
 	 * Service Changed for its handle.
 	 */
-	if (attr->uuid16 == 0x2900)
+	/*
+	 * C2-L4: the DB-hash value-inclusion set is 0x2800/0x2801/0x2802/0x2803/
+	 * 0x2900 (see attdb_compute_db_hash in att_server_hash.c) — a SET_VALUE
+	 * on ANY of these declaration / extended-properties attributes changes
+	 * the hash, not only 0x2900.  These declarations are unowned
+	 * (owner_fd == -1) so a client can mutate them here; recompute the hash
+	 * and signal Service Changed for each so change-aware clients don't keep
+	 * a stale hash (Core Spec Vol 3 Part G §7.3.1).
+	 */
+	switch (attr->uuid16) {
+	case 0x2800:
+	case 0x2801:
+	case 0x2802:
+	case 0x2803:
+	case 0x2900:
 		ctl_recompute_hash_and_notify(handle, handle);
+		break;
+	}
 	return (IPC_ERR_NONE);
 }
 
@@ -1433,8 +1539,16 @@ ctl_gatt_remove_service_result(int client_fd, uint16_t handle)
 	if (db == NULL)
 		return (IPC_ERR_BUSY);
 	if (attdb_remove_service(db, handle) != 0) {
-		if (staged)
-			ctl_gatt_txn_free();
+		/*
+		 * C2-M9: a benign per-verb error must NOT tear down an active
+		 * staged txn.  Freeing it here would make every subsequent verb
+		 * fall through to the LIVE periph_gatt_db (ctl_gatt_target_db
+		 * returns the live DB once the txn is inactive), applying changes
+		 * one-by-one with mid-apply hash recompute + Service Changed —
+		 * exactly what the BEGIN/COMMIT batching exists to prevent.  The
+		 * staged DB is unchanged on this error path, so leave the txn
+		 * staged for the client to continue or ABORT/COMMIT.
+		 */
 		return (IPC_ERR_NOT_FOUND);
 	}
 	BLUED_PROBE_GATT_SVC_REMOVE(handle);
@@ -1469,8 +1583,14 @@ ctl_gatt_add_service_result(int client_fd, uint16_t uuid16,
 		BLUED_PROBE_GATT_SVC_ADD(handle, uuid16);
 		*handle_out = handle;
 	}
-	if (error != IPC_ERR_NONE && staged)
-		ctl_gatt_txn_free();
+	/*
+	 * C2-M9: do NOT free an active staged txn on a per-verb error.  Each
+	 * failure path above either mutated nothing or rolled back via the
+	 * attdb mark, so the staged DB stays consistent; tearing the txn down
+	 * would make later verbs mutate the LIVE periph_gatt_db directly,
+	 * defeating the atomic BEGIN/COMMIT application.  Leave it staged for
+	 * the client to continue or ABORT/COMMIT.
+	 */
 	return (error);
 }
 
@@ -1531,8 +1651,14 @@ ctl_gatt_add_char_result(int client_fd, uint16_t service_handle,
 		ctl_recompute_hash_and_notify(handle, 0xFFFF);
 	*handle_out = handle;
 out:
-	if (error != IPC_ERR_NONE && staged)
-		ctl_gatt_txn_free();
+	/*
+	 * C2-M9: do NOT free an active staged txn on a per-verb error.  Each
+	 * failure path above either mutated nothing or rolled back via the
+	 * attdb mark, so the staged DB stays consistent; tearing the txn down
+	 * would make later verbs mutate the LIVE periph_gatt_db directly,
+	 * defeating the atomic BEGIN/COMMIT application.  Leave it staged for
+	 * the client to continue or ABORT/COMMIT.
+	 */
 	return (error);
 }
 
@@ -1598,8 +1724,14 @@ ctl_gatt_add_include_result(int client_fd, uint16_t service_handle,
 		ctl_recompute_hash_and_notify(handle, 0xFFFF);
 	*handle_out = handle;
 out:
-	if (error != IPC_ERR_NONE && staged)
-		ctl_gatt_txn_free();
+	/*
+	 * C2-M9: do NOT free an active staged txn on a per-verb error.  Each
+	 * failure path above either mutated nothing or rolled back via the
+	 * attdb mark, so the staged DB stays consistent; tearing the txn down
+	 * would make later verbs mutate the LIVE periph_gatt_db directly,
+	 * defeating the atomic BEGIN/COMMIT application.  Leave it staged for
+	 * the client to continue or ABORT/COMMIT.
+	 */
 	return (error);
 }
 
@@ -1643,8 +1775,14 @@ ctl_gatt_add_desc_result(int client_fd, uint16_t char_handle,
 		ctl_recompute_hash_and_notify(handle, 0xFFFF);
 	*handle_out = handle;
 out:
-	if (error != IPC_ERR_NONE && staged)
-		ctl_gatt_txn_free();
+	/*
+	 * C2-M9: do NOT free an active staged txn on a per-verb error.  Each
+	 * failure path above either mutated nothing or rolled back via the
+	 * attdb mark, so the staged DB stays consistent; tearing the txn down
+	 * would make later verbs mutate the LIVE periph_gatt_db directly,
+	 * defeating the atomic BEGIN/COMMIT application.  Leave it staged for
+	 * the client to continue or ABORT/COMMIT.
+	 */
 	return (error);
 }
 
@@ -1713,7 +1851,7 @@ ctl_gatt_notify_result(uint16_t handle, const uint8_t *value,
 			 * characteristic's security requirement, even if the CCCD
 			 * subscription bit is set.
 			 */
-			if (att_check_security_perms(sec_perms, ac) != 0)
+			if (att_check_security_perms_read(sec_perms, ac) != 0)
 				continue;
 			if (indicate) {
 				ret = att_send_indication(ac, handle, value, value_len);

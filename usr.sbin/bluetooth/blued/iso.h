@@ -123,6 +123,14 @@ struct blued_iso_stream {
 	 * otherwise the client pulls it later with ISO_ACQUIRE.  -1 if none.
 	 */
 	int			requesting_client_fd;
+	/*
+	 * C3-M9: the ctl client's generation captured at create time.  A raw fd
+	 * alone is ambiguous — the requesting client can disconnect and its fd
+	 * number be reused by a different client before the CIS establishes, so
+	 * the data-path fd handout is validated against (fd, generation) exactly
+	 * like the async GATT reply path.
+	 */
+	uint64_t		requesting_client_gen;
 	bool			push_on_establish;
 
 	bool			linked;		/* still in the registry list */
@@ -153,7 +161,14 @@ int	blued_iso_cig_create(struct blued_adapter *adp, uint8_t cig_id,
  */
 int	blued_iso_cis_create(struct blued_adapter *adp, const bdaddr_t *peer,
 	    uint8_t peer_type, uint8_t cig_id, uint8_t cis_id,
-	    int requesting_client_fd, bool push_on_establish);
+	    int requesting_client_fd, uint64_t requesting_client_gen,
+	    bool push_on_establish);
+
+/*
+ * C3-M9: forget any pending data-path fd handout targeting a departed ctl
+ * client, so an establishing CIS never pushes its fd to a reused fd number.
+ */
+void	blued_iso_client_gone(int client_fd);
 
 /* Remove a CIG once no CIS references it (§7.8.100).  Returns 0/-1. */
 int	blued_iso_cig_remove(struct blued_adapter *adp, uint8_t cig_id);

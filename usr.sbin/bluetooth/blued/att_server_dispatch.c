@@ -118,7 +118,14 @@ att_cccd_parent_security(struct att_db *db, uint16_t cccd_handle,
 	}
 	if (parent == NULL)
 		return (0);
-	return (att_check_security_perms(parent->perms, ac));
+	/*
+	 * C2-M6: a CCCD write authorises a future READ of the parent value
+	 * (the notified payload), so it must be gated on the parent's READ-side
+	 * security only — not the merged read|write bits, which would reject an
+	 * unencrypted client on an encrypted-writable-but-plaintext-readable
+	 * Notify characteristic.
+	 */
+	return (att_check_security_perms_read(parent->perms, ac));
 }
 
 /* ----------------------------------------------------------------
@@ -457,6 +464,23 @@ handle_read_by_type(struct att_conn *ac, struct att_db *db,
 		{
 			int derr = att_check_inline_read(a);
 			if (derr != 0) {
+				/*
+				 * C2-M5: an owner-served DYNAMIC value cannot be
+				 * fetched inline for an aggregate read.  Read By
+				 * Type returns as many attributes as are
+				 * available (Core Spec Vol 3 Part F §3.4.4.1); a
+				 * value that cannot be included ends the list
+				 * cleanly rather than emitting a terminal Read
+				 * Not Permitted (0x02), which clients treat as
+				 * "never readable" and never retry.  Anything
+				 * already collected is still returned, and an
+				 * empty result falls through to Attribute Not
+				 * Found below.  An AUTHORIZE attribute must still
+				 * deny (Insufficient Authorization) — the app's
+				 * per-access decision cannot be bypassed.
+				 */
+				if (derr != ATT_ERR_INSUFF_AUTHOR)
+					break;
 				if (entry_len == 0) {
 					ATT_RSP_BUF_FREE();
 					return att_send_error(ac,
@@ -608,9 +632,20 @@ att_begin_defer(struct att_conn *ac, uint8_t kind, uint8_t req_op,
 	struct att_pending *p = &ac->pending;
 	struct timeval now;
 
-	if (p->kind != ATT_PEND_NONE)
+	if (p->kind != ATT_PEND_NONE) {
+		/*
+		 * C2-M3: a Command (opcode bit 6 set, e.g. Write Command 0x52 /
+		 * Signed Write 0xD2) must never elicit an Error Response (Core
+		 * Spec Vol 3 Part F §3.4.5.3 / §3.3.2).  Only Requests get the
+		 * "busy" Error Response; a Command that could not be deferred is
+		 * silently dropped, mirroring the out-of-line guard
+		 * (pending_req_has_response).
+		 */
+		if (req_op & 0x40)
+			return (-1);
 		return att_send_error(ac, req_op, handle,
 		    ATT_ERR_UNLIKELY_ERROR);
+	}
 
 	memset(p, 0, sizeof(*p));
 	p->kind = kind;
@@ -1001,6 +1036,19 @@ handle_write(struct att_conn *ac, struct att_db *db,
 		return (0);
 	}
 
+	/*
+	 * C2-L2: an ATT PDU may not exceed the negotiated ATT_MTU (Core Spec
+	 * Vol 3 Part F §3.4.2).  A Write Request longer than the MTU is
+	 * malformed — reject it with Invalid PDU; a Write Command is silently
+	 * dropped (no response for commands).
+	 */
+	if (len > (size_t)ac->mtu) {
+		if (with_response)
+			return att_send_error(ac, ATT_OP_WRITE_REQ, 0,
+			    ATT_ERR_INVALID_PDU);
+		return (0);
+	}
+
 	handle = get_le16(pdu + 1);
 	vlen = len - 3;
 	a = attdb_find_by_handle(db, handle);
@@ -1277,6 +1325,23 @@ handle_prepare_write(struct att_conn *ac, struct att_db *db,
 		}
 	}
 
+	/*
+	 * C2-M7: an AUTHORIZE attribute requires the owning app's per-access
+	 * allow/deny decision.  The direct Write path performs it by deferring
+	 * the write and awaiting the app's verdict; the batched Execute Write
+	 * commit cannot round-trip to the app mid-commit, so a queued write
+	 * would otherwise apply unauthorized bytes and (via the owner-notify
+	 * below) report the commit as done.  Reject the queued write up front at
+	 * Prepare time with Insufficient Authorization (Core Spec Vol 3 Part G
+	 * §8.2) so it never enters the queue.
+	 */
+	if (a->owner_fd >= 0 && (a->flags & ATT_ATTR_F_AUTHORIZE) &&
+	    a->uuid16 != GATT_UUID_CCCD) {
+		ATT_RSP_BUF_FREE();
+		return att_send_error(ac, ATT_OP_PREPARE_WRITE_REQ, handle,
+		    ATT_ERR_INSUFF_AUTHOR);
+	}
+
 	if ((uint32_t)offset + (uint32_t)vlen > UINT16_MAX) {
 		ATT_RSP_BUF_FREE();
 		return att_send_error(ac, ATT_OP_PREPARE_WRITE_REQ, handle,
@@ -1367,12 +1432,54 @@ handle_execute_write(struct att_conn *ac, struct att_db *db,
 				    ATT_OP_EXECUTE_WRITE_REQ,
 				    pe->handle, (uint8_t)werr);
 			}
-			if (pe->offset > a->value_len) {
+			/*
+			 * C2-M7 (defense in depth): AUTHORIZE attributes are
+			 * rejected at Prepare time, so none can reach the queue.
+			 * If one somehow did, deny the commit here rather than
+			 * apply unauthorized bytes.
+			 */
+			if (a->owner_fd >= 0 &&
+			    (a->flags & ATT_ATTR_F_AUTHORIZE) &&
+			    a->uuid16 != GATT_UUID_CCCD) {
 				pq->count = 0;
 				pq->total_bytes = 0;
 				return att_send_error(ac,
 				    ATT_OP_EXECUTE_WRITE_REQ,
-				    pe->handle, ATT_ERR_INVALID_OFFSET);
+				    pe->handle, ATT_ERR_INSUFF_AUTHOR);
+			}
+			/*
+			 * C2-H1: validate the fragment offset against the length
+			 * the attribute will have once earlier fragments in THIS
+			 * Execute are applied, not the static pre-commit
+			 * a->value_len.  A Write Long that grows an attribute
+			 * (empty value written as Prepare(0,N) + Prepare(N,N) +
+			 * Execute) legitimately has later fragments starting past
+			 * the current stored length (Core Spec Vol 3 Part G
+			 * §4.9.4).  The offset+len <= value_maxlen bound below
+			 * still caps the total size.
+			 */
+			{
+				uint32_t run_len = a->value_len;
+				int k;
+
+				for (k = 0; k < i; k++) {
+					struct att_prepare_entry *fp =
+					    &pq->entries[k];
+
+					if (fp->handle != pe->handle)
+						continue;
+					if ((uint32_t)fp->offset + fp->len >
+					    run_len)
+						run_len = (uint32_t)fp->offset +
+						    fp->len;
+				}
+				if (pe->offset > run_len) {
+					pq->count = 0;
+					pq->total_bytes = 0;
+					return att_send_error(ac,
+					    ATT_OP_EXECUTE_WRITE_REQ,
+					    pe->handle, ATT_ERR_INVALID_OFFSET);
+				}
 			}
 			if ((uint32_t)pe->offset + (uint32_t)pe->len >
 			    a->value_maxlen) {
@@ -1653,9 +1760,24 @@ handle_find_by_type_value(struct att_conn *ac, struct att_db *db,
 		 * discovery at it (contrast Read By Type, where error+break is
 		 * correct).
 		 */
-		if (a->value_len != vlen ||
-		    memcmp(a->value, val, vlen) != 0)
-			continue;
+		/*
+		 * C2-L1: compare against the per-connection value.  For a CCCD
+		 * (0x2902) the shared a->value stays at its init {0,0}; the live
+		 * subscription state lives per-connection, so a direct a->value
+		 * compare would match on the wrong bytes.  att_read_value sources
+		 * the per-conn CCCD value and returns a->value for everything
+		 * else.  Find By Type Value requires an exact value match
+		 * (Core Spec Vol 3 Part F §3.4.3.3), so the length must be equal.
+		 */
+		{
+			uint8_t cccd_scratch[2];
+			const uint8_t *aval;
+			uint16_t alen;
+
+			aval = att_read_value(a, ac, cccd_scratch, &alen);
+			if (alen != vlen || memcmp(aval, val, vlen) != 0)
+				continue;
+		}
 
 		if (att_check_read_perm(a, ac) != 0)
 			continue;

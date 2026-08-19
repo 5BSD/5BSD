@@ -53,6 +53,7 @@
 #include "hci_internal.h"
 #include "hci_util.h"
 #include "ipc_proto.h"
+#include "iso.h"
 #include "smp.h"
 
 /* Peripheral GATT database — defined in blued.c */
@@ -546,7 +547,7 @@ blued_ctl_keypress(const bdaddr_t *addr, uint8_t type)
  * The fd is dup'd and capability-limited before sending.
  */
 void
-blued_ctl_send_fd(int client_fd, int fd_to_send)
+blued_ctl_send_fd(int client_fd, uint64_t client_gen, int fd_to_send)
 {
 	struct blued_ctl_client *client;
 
@@ -562,7 +563,15 @@ blued_ctl_send_fd(int client_fd, int fd_to_send)
 	pthread_mutex_lock(&blued_g.ctl_clients_lock);
 	client = NULL;
 	LIST_FOREACH(client, &blued_g.ctl_clients, entries) {
-		if (client->fd == client_fd)
+		/*
+		 * C3-M9: match BOTH fd and generation.  Matching the raw fd
+		 * alone would deliver the descriptor to whatever client now
+		 * holds that fd number if the original requester disconnected
+		 * and its fd was reassigned.  A zero generation from a caller
+		 * that has no generation to assert never matches a live client.
+		 */
+		if (client->fd == client_fd &&
+		    client->generation == client_gen)
 			break;
 	}
 	(void)ctl_send_fd_to_client(client, fd_to_send);
@@ -640,7 +649,17 @@ ctl_restore_att_timeout(int att_fd, const struct timeval *old_tv)
 static bool
 ctl_blocking_rate_ok(struct blued_ctl_client *client)
 {
-	time_t now = time(NULL);
+	/*
+	 * C3-L: measure the window on CLOCK_MONOTONIC.  With wall-clock
+	 * time(NULL) an NTP step (or manual clock set) backwards could park the
+	 * window far in the future and suppress every SCAN, or a forward jump
+	 * could reset the budget early — a monotonic source is immune.
+	 */
+	struct timespec ts;
+	time_t now;
+
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	now = ts.tv_sec;
 
 	if (client == NULL)
 		return (true);
@@ -1366,10 +1385,20 @@ blued_oob_take(const uint8_t *addr, struct smp_oob_legacy *lg, bool *has_lg,
 		e->valid = false;
 	}
 	if (*has_sc && blued_oob_local_valid) {
+		/*
+		 * C1-H2: consume the published one-shot local OOB random here,
+		 * but do NOT clear the SC-OOB ephemeral yet.  smp_pair_sc()
+		 * calls smp_sc_gen_ephemeral() AFTER this take; clearing the
+		 * ephemeral now (NULLing the hook) would make it mint a fresh
+		 * random keypair, so the wire PKa would no longer match the pkx
+		 * that was published to the peer over OOB — the peer's
+		 * Ca = f4(PKax,PKax,ra,0) check then fails and every SC-OOB
+		 * pairing is rejected with Confirm Value Failed.  The ephemeral
+		 * is cleared post-pairing instead (blued_central_start_pairing).
+		 */
 		blued_oob_local_valid = false;
 		explicit_bzero(blued_oob_local_random,
 		    sizeof(blued_oob_local_random));
-		smp_sc_oob_clear_local();
 	}
 	pthread_mutex_unlock(&blued_oob_lock);
 	return (found);
@@ -1419,6 +1448,26 @@ ctl_adv_set_release(struct ctl_adv_set *set)
 	if (set->adapter != NULL)
 		blued_ext_adv_set_untrack(set->adapter, set->handle);
 	memset(set, 0, sizeof(*set));
+}
+
+/*
+ * C3-L: the controller stopped an advertising set (LE Advertising Set
+ * Terminated, subevent 0x12).  Clear the ctl-registry `enabled` flag for the
+ * matching adapter+handle so the operator adv-set view (and any re-enable
+ * bookkeeping) does not keep believing a controller-stopped set is still
+ * advertising.  Runs on the main event-loop thread, same as the ctl verbs, so
+ * ctl_adv_sets needs no additional lock.
+ */
+void
+blued_ctl_adv_set_terminated(struct blued_adapter *adp, uint8_t handle)
+{
+
+	if (adp == NULL)
+		return;
+	for (size_t i = 0; i < nitems(ctl_adv_sets); i++)
+		if (ctl_adv_sets[i].used && ctl_adv_sets[i].adapter == adp &&
+		    ctl_adv_sets[i].handle == handle)
+			ctl_adv_sets[i].enabled = false;
 }
 
 /* HCI Reset removes every controller advertising set and its payloads. */
@@ -3504,6 +3553,7 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 	 * programmed; they are overridden from the resolved bond below.
 	 */
 	const uint8_t *pid = (const uint8_t *)addr;
+	uint8_t pid_buf[6];		/* C3-M8: stable copy of a bond's addr */
 	uint8_t pid_type = addr_type;
 	/*
 	 * Finding 138: only a client-*supplied* IRK (a non-bond runtime entry)
@@ -3557,7 +3607,16 @@ ctl_security_resolv_result(struct blued_adapter *adp, uint16_t opcode,
 			 * Program the bond's identity address as
 			 * Peer_Identity_Address, not the RPA.
 			 */
-			pid = bond->addr;
+			/*
+			 * C3-M8: bond->addr points into the bond DB array,
+			 * which an unbond can memmove once we drop
+			 * bond_db_lock below.  Copy the identity address into a
+			 * stack buffer under the lock (as irk is copied above)
+			 * and use that for the later HCI resolving-list
+			 * add/remove, so we never dereference a shifted DB slot.
+			 */
+			memcpy(pid_buf, bond->addr, sizeof(pid_buf));
+			pid = pid_buf;
 			pid_type = bond->addr_type;
 		}
 		pthread_mutex_unlock(&blued_g.bond_db_lock);
@@ -5531,6 +5590,9 @@ blued_ctl_reset_owner(int client_fd)
 
 	ctl_gatt_jobs_cancel_client(client_fd);
 
+	/* C3-M9: drop any pending ISO CIS fd handout aimed at this client. */
+	blued_iso_client_gone(client_fd);
+
 	for (i = 0; i < CTL_ADV_SET_MAX; i++)
 		if (ctl_adv_sets[i].used && ctl_adv_sets[i].owner_fd == client_fd)
 			ctl_adv_set_release(&ctl_adv_sets[i]);
@@ -5621,10 +5683,25 @@ blued_ctl_accept(void)
 		 */
 		if (errno == EMFILE || errno == ENFILE) {
 			struct kevent kev[2];
+			/*
+			 * C3-M2: the retry timer must NOT use ctl_fd as its
+			 * EVFILT_TIMER ident.  Connection/idle/reconnect timers
+			 * are keyed by blued_next_timer_id (from 1), which lives
+			 * in the same small-integer space as fds; a timer whose
+			 * ident equals ctl_fd would collide with a connection
+			 * timer on (ident, EVFILT_TIMER), so EV_ADD would modify
+			 * the existing knote — clobbering a conn's disconnect
+			 * timer or having the retry timer overwritten.  Draw a
+			 * dedicated ident from blued_next_timer_id (allocated
+			 * once) so it can never alias another timer.
+			 */
+			static uintptr_t accept_retry_timer_id;
 
+			if (accept_retry_timer_id == 0)
+				accept_retry_timer_id = blued_next_timer_id++;
 			EV_SET(&kev[0], blued_g.ctl_fd, EVFILT_READ, EV_DISABLE,
 			    0, 0, BLUED_KQ_CTL_LISTEN);
-			EV_SET(&kev[1], blued_g.ctl_fd, EVFILT_TIMER,
+			EV_SET(&kev[1], accept_retry_timer_id, EVFILT_TIMER,
 			    EV_ADD | EV_ONESHOT, NOTE_SECONDS, 1,
 			    BLUED_KQ_CTL_ACCEPT_RETRY);
 			(void)kevent(blued_g.kq, kev, 2, NULL, 0, NULL);
