@@ -150,6 +150,9 @@ ATF_TC_BODY(console_control_used_length_contract, tc)
 	    buffer_len));
 	ATF_CHECK(!virtio_console_control_used_len_valid(buffer_len + 1,
 	    buffer_len));
+	ATF_CHECK(virtio_console_output_used_len_valid(0));
+	ATF_CHECK(!virtio_console_output_used_len_valid(1));
+	ATF_CHECK(!virtio_console_output_used_len_valid(UINT32_MAX));
 }
 
 ATF_TC_WITHOUT_HEAD(vsock_used_length_contract);

@@ -69,6 +69,14 @@ virtio_console_control_used_len_valid(uint32_t used_len,
 	    used_len <= buffer_len);
 }
 
+/* Device-readable control and data buffers never contain device output. */
+static inline int
+virtio_console_output_used_len_valid(uint32_t used_len)
+{
+
+	return (used_len == 0);
+}
+
 /* Some events for control messages */
 #define VIRTIO_CONSOLE_DEVICE_READY	0
 #define VIRTIO_CONSOLE_PORT_ADD		1

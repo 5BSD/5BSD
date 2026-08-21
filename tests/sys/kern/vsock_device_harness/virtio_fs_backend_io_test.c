@@ -2,6 +2,7 @@
  * Unix-domain transport tests for the private VFSB protocol.
  */
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/uio.h>
 #include <sys/un.h>
@@ -98,6 +99,71 @@ ATF_TC_BODY(backend_connect_is_bounded_and_authenticated, tc)
 	too_long[sizeof(too_long) - 1] = '\0';
 	ATF_CHECK_EQ(virtio_fs_backend_connect_start(too_long, geteuid(),
 	    getegid(), &client, &connecting), ENAMETOOLONG);
+}
+
+ATF_TC_WITHOUT_HEAD(backend_connect_supports_long_parent_path);
+ATF_TC_BODY(backend_connect_supports_long_parent_path, tc)
+{
+	static const char component[] = "parent-directory-component-0000";
+	struct sockaddr_un address;
+	struct pollfd pollfd;
+	char directories[4][MAXPATHLEN];
+	char root[] = "/tmp/vfsb-long.XXXXXX";
+	char path[MAXPATHLEN];
+	socklen_t address_len;
+	bool connecting;
+	int accepted, client, dfd, listener;
+	size_t i;
+
+	ATF_REQUIRE(mkdtemp(root) != NULL);
+	ATF_REQUIRE(strlcpy(directories[0], root,
+	    sizeof(directories[0])) < sizeof(directories[0]));
+	for (i = 1; i < nitems(directories); i++) {
+		ATF_REQUIRE(snprintf(directories[i], sizeof(directories[i]),
+		    "%s/%s%zu", directories[i - 1], component, i) > 0);
+		ATF_REQUIRE_EQ(mkdir(directories[i], 0700), 0);
+	}
+	ATF_REQUIRE(snprintf(path, sizeof(path), "%s/backend",
+	    directories[nitems(directories) - 1]) > 0);
+	ATF_REQUIRE(strlen(path) >= sizeof(address.sun_path));
+
+	dfd = open(directories[nitems(directories) - 1],
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ATF_REQUIRE(dfd >= 0);
+	listener = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+	ATF_REQUIRE(listener >= 0);
+	memset(&address, 0, sizeof(address));
+	address.sun_family = AF_UNIX;
+	ATF_REQUIRE(strlcpy(address.sun_path, "backend",
+	    sizeof(address.sun_path)) < sizeof(address.sun_path));
+	address.sun_len = (uint8_t)(offsetof(struct sockaddr_un, sun_path) +
+	    strlen(address.sun_path) + 1);
+	address_len = address.sun_len;
+	ATF_REQUIRE_EQ(bindat(dfd, listener, (struct sockaddr *)&address,
+	    address_len), 0);
+	ATF_REQUIRE_EQ(listen(listener, 1), 0);
+
+	ATF_REQUIRE_EQ(virtio_fs_backend_connect_start(path, geteuid(),
+	    getegid(), &client, &connecting), 0);
+	if (connecting) {
+		pollfd = (struct pollfd) {
+			.fd = client,
+			.events = POLLOUT,
+		};
+		ATF_REQUIRE_EQ(poll(&pollfd, 1, 1000), 1);
+		ATF_REQUIRE_EQ(virtio_fs_backend_connect_finish(client,
+		    geteuid(), getegid()), 0);
+	}
+	accepted = accept(listener, NULL, NULL);
+	ATF_REQUIRE(accepted >= 0);
+	ATF_REQUIRE_EQ(close(accepted), 0);
+	ATF_REQUIRE_EQ(close(client), 0);
+	ATF_REQUIRE_EQ(close(listener), 0);
+	ATF_REQUIRE_EQ(unlinkat(dfd, "backend", 0), 0);
+	ATF_REQUIRE_EQ(close(dfd), 0);
+	for (i = nitems(directories); i-- > 1;)
+		ATF_REQUIRE_EQ(rmdir(directories[i]), 0);
+	ATF_REQUIRE_EQ(rmdir(root), 0);
 }
 
 ATF_TC_WITHOUT_HEAD(peer_authentication);
@@ -349,6 +415,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, api_errors_and_peer_close);
 	ATF_TP_ADD_TC(tp, backend_connect_is_bounded_and_authenticated);
+	ATF_TP_ADD_TC(tp, backend_connect_supports_long_parent_path);
 	ATF_TP_ADD_TC(tp, peer_authentication);
 	ATF_TP_ADD_TC(tp, frame_round_trip_and_nonblocking);
 	ATF_TP_ADD_TC(tp, truncation_and_bad_frames);

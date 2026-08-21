@@ -125,6 +125,58 @@ if rg -n -U 'cfgread\([^)]*\)[[:space:]]*\{([^}]|}[[:space:]]*else)*memcpy\((ret
 fi
 echo "virtio requirements: device configuration reads use the portable decoder"
 
+# The console driver posts receive storage while newbus is attaching, but it
+# must not notify or issue DEVICE_READY until the transport has published
+# DRIVER_OK.  Its synchronous control and tty-output queues also carry
+# caller-owned stack buffers, so neither path may use virtqueue_poll()'s
+# unbounded wait: failure must reset and reclaim the descriptor before return.
+console_driver=$source_root/sys/dev/virtio/console/virtio_console.c
+rg -q -F 'DEVMETHOD(virtio_attach_completed, vtcon_attach_completed)' \
+    "$console_driver" || {
+	echo "virtio requirements: console lacks post-DRIVER_OK activation" >&2
+	exit 1
+}
+console_attach=$(sed -n '/^vtcon_attach(device_t dev)/,/^}/p' \
+    "$console_driver")
+if printf '%s\n' "$console_attach" | \
+    rg -q 'virtqueue_notify|vtcon_enable_interrupts|vtcon_ctrl_send_control'; then
+	echo "virtio requirements: console uses the device before DRIVER_OK" >&2
+	exit 1
+fi
+console_completed=$(sed -n \
+    '/^vtcon_attach_completed(device_t dev)/,/^}/p' "$console_driver")
+for contract in \
+    'virtqueue_notify(sc->vtcon_ctrl_rxvq)' \
+    'virtqueue_notify(port->vtcport_invq)' \
+    'vtcon_enable_interrupts(sc)' \
+    'VIRTIO_CONSOLE_DEVICE_READY'; do
+	printf '%s\n' "$console_completed" | rg -q -F "$contract" || {
+		echo "virtio requirements: console activation lacks: $contract" >&2
+		exit 1
+	}
+done
+for bounded_function in vtcon_ctrl_poll vtcon_port_out; do
+	bounded_body=$(sed -n "/^${bounded_function}(/,/^}/p" \
+	    "$console_driver")
+	for contract in \
+	    'sbinuptime() + VTCON_IO_TIMEOUT' \
+	    'DELAY(VTCON_POLL_DELAY_US)' \
+	    'atomic_set_32(&sc->vtcon_flags, VTCON_FLAG_FAILED)' \
+	    'virtio_stop(sc->vtcon_dev)' \
+	    'virtqueue_drain(vq, &last)'; do
+		printf '%s\n' "$bounded_body" | rg -q -F "$contract" || {
+			echo "virtio requirements: $bounded_function lacks: $contract" >&2
+			exit 1
+		}
+	done
+	if printf '%s\n' "$bounded_body" |
+	    rg -q 'virtqueue_poll|pause(_sbt)?|msleep|cv_wait'; then
+		echo "virtio requirements: $bounded_function is unbounded or sleeps while lock-constrained" >&2
+		exit 1
+	fi
+done
+echo "virtio requirements: console activation and synchronous I/O are bounded"
+
 # run.sh deliberately rebuilds the real source fixtures instead of relying on
 # a stale installed binary.  Keep its source set inside PACKAGEFILES: an ATF
 # registration alone only installs an executable and cannot make the
@@ -1997,6 +2049,63 @@ if [ -n "$source_root" ]; then
 		exit 1
 	fi
 	echo "virtio requirements: 5BSD GPU consumes host-endian device configuration"
+
+	# vt_timer() invokes drawing methods from callout/critical context.  The
+	# memory draw is permitted there, but a VirtIO request takes a sleep mutex
+	# and waits for an interrupt.  Require a non-sleeping damage producer and a
+	# drained taskqueue consumer so neither panic nor detach can race it.
+	for callback in vtgpu_fb_blank vtgpu_fb_bitblt_text \
+	    vtgpu_fb_bitblt_bitmap vtgpu_fb_drawrect vtgpu_fb_setpixel; do
+		callback_body=$(sed -n "/^${callback}(/,/^}/p" "$gpu_source")
+		[ -n "$callback_body" ] || {
+			echo "virtio requirements: missing GPU VT callback: $callback" >&2
+			exit 1
+		}
+		if printf '%s\n' "$callback_body" | rg -q \
+		    'vtgpu_op_enter|vtgpu_transfer_to_host_2d|vtgpu_resource_flush|msleep|mtx_lock\(&sc->vtgpu_mtx'; then
+			echo "virtio requirements: $callback can sleep in VT context" >&2
+			exit 1
+		fi
+		printf '%s\n' "$callback_body" | rg -q -F 'vtgpu_fb_changed(' || {
+			echo "virtio requirements: $callback does not publish damage" >&2
+			exit 1
+		}
+	done
+	for contract in \
+	    'mtx_lock_spin(&sc->vtgpu_dirty_mtx)' \
+	    'taskqueue_create_fast("vtgpu_flush", M_WAITOK,' \
+	    'taskqueue_thread_enqueue, &sc->vtgpu_flush_tq)' \
+	    'taskqueue_start_threads(&sc->vtgpu_flush_tq, 1, PI_TTY,' \
+	    'taskqueue_enqueue(sc->vtgpu_flush_tq, &sc->vtgpu_flush_task)' \
+	    'TASK_INIT(&sc->vtgpu_flush_task, 0, vtgpu_flush_task, sc)' \
+	    'taskqueue_drain(sc->vtgpu_flush_tq, &sc->vtgpu_flush_task)' \
+	    'taskqueue_free(sc->vtgpu_flush_tq)'; do
+		rg -q -F "$contract" "$gpu_source" || {
+			echo "virtio requirements: GPU deferred flush lacks: $contract" >&2
+			exit 1
+		}
+	done
+	flush_body=$(sed -n '/^vtgpu_flush_task(/,/^}/p' "$gpu_source")
+	for contract in vtgpu_transfer_to_host_2d vtgpu_resource_flush; do
+		printf '%s\n' "$flush_body" | rg -q -F "$contract" || {
+			echo "virtio requirements: GPU flush worker lacks: $contract" >&2
+			exit 1
+		}
+	done
+	detach_body=$(sed -n '/^vtgpu_detach(device_t dev)/,/^}/p' \
+	    "$gpu_source")
+	printf '%s\n' "$detach_body" | awk '
+/atomic_set_rel_int\(&sc->vtgpu_flags, VTGPU_FLAG_DETACH\)/ && flag == 0 { flag = NR }
+/vt_deallocate\(/ && deallocate == 0 { deallocate = NR }
+/taskqueue_drain\(/ && drain == 0 { drain = NR }
+/taskqueue_free\(/ && tqfree == 0 { tqfree = NR }
+/free\(\(void \*\)sc->vtgpu_fb_info.fb_vbase/ && release == 0 { release = NR }
+END { exit(flag > 0 && flag < deallocate && deallocate < drain && drain < tqfree && tqfree < release ? 0 : 1) }
+	' || {
+		echo "virtio requirements: GPU detach does not drain VT flush ownership" >&2
+		exit 1
+	}
+	echo "virtio requirements: 5BSD GPU VT callbacks defer sleeping requests"
 else
 	echo "virtio requirements: source-only 5BSD GPU configuration-endian check unavailable"
 fi
@@ -2160,6 +2269,106 @@ if [ -n "$source_root" ]; then
 	echo "virtio requirements: guest interrupt callbacks drain before child state destruction"
 else
 	echo "virtio requirements: source-only guest interrupt teardown check unavailable"
+fi
+
+# Request and response ranges have opposite VirtIO descriptor directions.
+# sglist_append() coalesces physically adjacent ranges without knowing those
+# directions, so the RTC request path must own a padded bounce pair and assert
+# that the writable response remains a distinct segment.  Bare caller stack
+# objects can otherwise form a read-only chain which the host correctly
+# rejects with DEVICE_NEEDS_RESET.
+if [ -n "$source_root" ]; then
+	rtc_source=$source_root/sys/dev/virtio/rtc/virtio_rtc.c
+	for contract in \
+	    'struct vtrtc_request_io {' \
+	    'uint8_t pad;' \
+	    'memcpy(io.request, request, request_len);' \
+	    'sglist_append(&sg, io.request, request_len)' \
+	    'sglist_append_boundary(&sg, io.response, response_len)' \
+	    'KASSERT(sg.sg_nseg > readable,' \
+	    'if (sg.sg_nseg <= readable)' \
+	    'virtqueue_enqueue(sc->requestq, io.response, &sg, readable,' \
+	    'memcpy(response, io.response, used_len);'; do
+		rg -q -F "$contract" "$rtc_source" || {
+			echo "virtio requirements: RTC direction boundary lacks: $contract" >&2
+			exit 1
+		}
+	done
+	echo "virtio requirements: RTC request/response descriptor directions cannot coalesce"
+	mem_source=$source_root/sys/dev/virtio/mem/virtio_mem.c
+	for contract in \
+	    'struct vtmem_request_io {' \
+	    'CTASSERT(offsetof(struct vtmem_request_io, response) >=' \
+	    'sglist_append(&sg, &io->request, sizeof(io->request))' \
+	    'sglist_append_boundary(&sg, &io->response,' \
+	    'KASSERT(sg.sg_nseg > readable,' \
+	    'if (sg.sg_nseg <= readable)' \
+	    'virtqueue_enqueue(sc->vtmem_vq, &io->response, &sg, readable,'; do
+		rg -q -F "$contract" "$mem_source" || {
+			echo "virtio requirements: memory direction boundary lacks: $contract" >&2
+			exit 1
+		}
+	done
+	echo "virtio requirements: memory request/response descriptor directions cannot coalesce"
+	for contract in \
+	    'sglist_append_boundary(struct sglist *sg, void *buf, size_t len)' \
+	    'sglist_append_phys_boundary(struct sglist *sg, vm_paddr_t paddr, size_t len)' \
+	    'sglist_append_bio_boundary(struct sglist *sg, struct bio *bp)' \
+	    'sglist_append_vmpages_boundary(struct sglist *sg, vm_page_t *m,'; do
+		rg -q -F "$contract" "$source_root/sys/kern/subr_sglist.c" || {
+			echo "virtio requirements: semantic sglist boundary lacks: $contract" >&2
+			exit 1
+		}
+	done
+	for boundary_user in \
+	    block/virtio_blk.c \
+	    fs/virtio_fs.c \
+	    gpu/virtio_gpu.c \
+	    iommu/virtio_iommu.c \
+	    mem/virtio_mem.c \
+	    network/if_vtnet.c \
+	    p9fs/virtio_p9fs.c \
+	    pmem/virtio_pmem.c \
+	    rtc/virtio_rtc.c \
+	    scmi/virtio_scmi.c \
+	    scsi/virtio_scsi.c \
+	    sound/virtio_snd.c; do
+		rg -q 'sglist_append_([a-z_]*_)?boundary\(' \
+		    "$source_root/sys/dev/virtio/$boundary_user" || {
+			echo "virtio requirements: mixed-direction driver lacks semantic sglist boundary: $boundary_user" >&2
+			exit 1
+		}
+	done
+	echo "virtio requirements: mixed descriptor directions use non-coalescing sglist boundaries"
+	for source_contract in \
+	    "$source_root/sys/dev/virtio/gpu/virtio_gpu.c vtgpu:request-and-response-collapsed" \
+	    "$source_root/sys/dev/virtio/pmem/virtio_pmem.c vtpmem:request-and-response-collapsed" \
+	    "$source_root/sys/dev/virtio/iommu/virtio_iommu.c vtiommu:request-and-response-collapsed"; do
+		set -- $source_contract
+		case "$2" in
+		vtgpu:*) needle='if (sg.sg_nseg <= rcount)' ;;
+		vtpmem:*) needle='if (sg.sg_nseg != readable + 1)' ;;
+		vtiommu:*) needle='if (writable == 0)' ;;
+		esac
+		rg -q -F "$needle" "$1" || {
+			echo "virtio requirements: $2 lacks a release-kernel direction-boundary check" >&2
+			exit 1
+		}
+	done
+	for iommu_contract in \
+	    'struct vtiommu_request_io {' \
+	    'CTASSERT(offsetof(struct vtiommu_request_io, response) >=' \
+	    'sc->vtiommu_req = sc->vtiommu_io->request;' \
+	    'sc->vtiommu_resp = sc->vtiommu_io->response;'; do
+		rg -q -F "$iommu_contract" \
+		    "$source_root/sys/dev/virtio/iommu/virtio_iommu.c" || {
+			echo "virtio requirements: IOMMU direction boundary lacks: $iommu_contract" >&2
+			exit 1
+		}
+	done
+	echo "virtio requirements: GPU, PMEM, and IOMMU direction failures fail closed in release kernels"
+else
+	echo "virtio requirements: source-only guest descriptor-direction checks unavailable"
 fi
 
 # An internal failed bit is not an ownership fence for writable buffers which

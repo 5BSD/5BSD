@@ -59,6 +59,8 @@
 #define VTCON_TTY_ALIAS_PREFIX "vtcon"
 #define VTCON_BULK_BUFSZ 128
 #define VTCON_CTRL_BUFSZ 128
+#define VTCON_IO_TIMEOUT (5 * SBT_1S)
+#define VTCON_POLL_DELAY_US 1000
 
 /*
  * The buffers cannot cross more than one page boundary due to the
@@ -152,6 +154,7 @@ static void	 vtcon_drain_all(void);
 
 static int	 vtcon_probe(device_t);
 static int	 vtcon_attach(device_t);
+static int	 vtcon_attach_completed(device_t);
 static int	 vtcon_detach(device_t);
 static int	 vtcon_config_change(device_t);
 
@@ -186,9 +189,9 @@ static void	 vtcon_ctrl_process_event(struct vtcon_softc *,
 		     struct virtio_console_control *, void *, size_t);
 static void	 vtcon_ctrl_task_cb(void *, int);
 static void	 vtcon_ctrl_event_intr(void *);
-static void	 vtcon_ctrl_poll(struct vtcon_softc *,
+static int	 vtcon_ctrl_poll(struct vtcon_softc *,
 		     struct virtio_console_control *control);
-static void	 vtcon_ctrl_send_control(struct vtcon_softc *, uint32_t,
+static int	 vtcon_ctrl_send_control(struct vtcon_softc *, uint32_t,
 		     uint16_t, uint16_t);
 
 static int	 vtcon_port_enqueue_buf(struct vtcon_port *, void *, size_t);
@@ -196,7 +199,7 @@ static int	 vtcon_port_create_buf(struct vtcon_port *);
 static void	 vtcon_port_requeue_buf(struct vtcon_port *, void *);
 static int	 vtcon_port_populate(struct vtcon_port *);
 static void	 vtcon_port_destroy(struct vtcon_port *);
-static int	 vtcon_port_create(struct vtcon_softc *, int);
+static int	 vtcon_port_create(struct vtcon_softc *, int, bool);
 static void	 vtcon_port_dev_alias(struct vtcon_port *, const char *,
 		     size_t);
 static void	 vtcon_port_drain_bufs(struct virtqueue *);
@@ -209,8 +212,8 @@ static void	 vtcon_port_enable_intr(struct vtcon_port *);
 static void	 vtcon_port_disable_intr(struct vtcon_port *);
 static void	 vtcon_port_in(struct vtcon_port *);
 static void	 vtcon_port_intr(void *);
-static void	 vtcon_port_out(struct vtcon_port *, void *, int);
-static void	 vtcon_port_submit_event(struct vtcon_port *, uint16_t,
+static int	 vtcon_port_out(struct vtcon_port *, void *, int);
+static int	 vtcon_port_submit_event(struct vtcon_port *, uint16_t,
 		     uint16_t);
 
 static int	 vtcon_tty_open(struct tty *);
@@ -252,6 +255,7 @@ static device_method_t vtcon_methods[] = {
 	DEVMETHOD(device_detach,	vtcon_detach),
 
 	/* VirtIO methods. */
+	DEVMETHOD(virtio_attach_completed, vtcon_attach_completed),
 	DEVMETHOD(virtio_config_change,	vtcon_config_change),
 
 	DEVMETHOD_END
@@ -361,7 +365,7 @@ vtcon_attach(device_t dev)
 		if (error)
 			goto fail;
 	} else {
-		error = vtcon_port_create(sc, 0);
+		error = vtcon_port_create(sc, 0, false);
 		if (error)
 			goto fail;
 		if (sc->vtcon_flags & VTCON_FLAG_SIZE)
@@ -374,16 +378,36 @@ vtcon_attach(device_t dev)
 		goto fail;
 	}
 
-	vtcon_enable_interrupts(sc);
-
-	vtcon_ctrl_send_control(sc, VIRTIO_CONSOLE_BAD_ID,
-	    VIRTIO_CONSOLE_DEVICE_READY, 1);
-
 fail:
 	if (error)
 		vtcon_detach(dev);
 
 	return (error);
+}
+
+/*
+ * The transport calls this only after publishing DRIVER_OK.  Buffers may be
+ * prepared during attach, but VirtIO 1.4 section 3.1.1 does not permit the
+ * driver to notify or otherwise use the device before that transition.
+ */
+static int
+vtcon_attach_completed(device_t dev)
+{
+	struct vtcon_softc *sc;
+	struct vtcon_port *port;
+
+	sc = device_get_softc(dev);
+	vtcon_enable_interrupts(sc);
+	if (sc->vtcon_flags & VTCON_FLAG_MULTIPORT) {
+		virtqueue_notify(sc->vtcon_ctrl_rxvq);
+	} else {
+		port = sc->vtcon_ports[0].vcsp_port;
+		KASSERT(port != NULL, ("%s: port 0 is missing", __func__));
+		virtqueue_notify(port->vtcport_invq);
+	}
+
+	return (vtcon_ctrl_send_control(sc, VIRTIO_CONSOLE_BAD_ID,
+	    VIRTIO_CONSOLE_DEVICE_READY, 1));
 }
 
 static int
@@ -685,10 +709,8 @@ vtcon_ctrl_event_populate(struct vtcon_softc *sc)
 			break;
 	}
 
-	if (nbufs > 0) {
-		virtqueue_notify(vq);
+	if (nbufs > 0)
 		error = 0;
-	}
 
 	return (error);
 }
@@ -744,11 +766,12 @@ vtcon_ctrl_port_add_event(struct vtcon_softc *sc, int id)
 		return;
 	}
 
-	error = vtcon_port_create(sc, id);
+	error = vtcon_port_create(sc, id, true);
 	if (error) {
 		device_printf(dev, "%s: cannot create port %d: %d\n",
 		    __func__, id, error);
-		vtcon_ctrl_send_control(sc, id, VIRTIO_CONSOLE_PORT_READY, 0);
+		(void)vtcon_ctrl_send_control(sc, id,
+		    VIRTIO_CONSOLE_PORT_READY, 0);
 		return;
 	}
 }
@@ -1007,14 +1030,17 @@ vtcon_ctrl_event_intr(void *xsc)
 	taskqueue_enqueue(taskqueue_thread, &sc->vtcon_ctrl_task);
 }
 
-static void
+static int
 vtcon_ctrl_poll(struct vtcon_softc *sc,
     struct virtio_console_control *control)
 {
 	struct sglist_seg segs[2];
 	struct sglist sg;
 	struct virtqueue *vq;
-	int error;
+	void *cookie;
+	sbintime_t deadline;
+	uint32_t len;
+	int error, last;
 
 	vq = sc->vtcon_ctrl_txvq;
 
@@ -1036,25 +1062,59 @@ vtcon_ctrl_poll(struct vtcon_softc *sc,
 	error = virtqueue_enqueue(vq, control, &sg, sg.sg_nseg, 0);
 	if (error == 0) {
 		virtqueue_notify(vq);
-		virtqueue_poll(vq, NULL);
+		deadline = sbinuptime() + VTCON_IO_TIMEOUT;
+		for (;;) {
+			cookie = virtqueue_dequeue(vq, &len);
+			if (cookie != NULL)
+				break;
+			if (sbinuptime() >= deadline) {
+				error = ETIMEDOUT;
+				break;
+			}
+			/* The tty/port lock may be held; this path must not sleep. */
+			DELAY(VTCON_POLL_DELAY_US);
+		}
+		if (error == 0 && (cookie != control ||
+		    !virtio_console_output_used_len_valid(len)))
+			error = EIO;
+		if (error != 0) {
+			/*
+			 * The descriptor refers to caller-owned stack storage.  Reset
+			 * and reclaim it before returning from a failed command.
+			 */
+			atomic_set_32(&sc->vtcon_flags, VTCON_FLAG_FAILED);
+			virtio_stop(sc->vtcon_dev);
+			last = 0;
+			while (virtqueue_drain(vq, &last) != NULL)
+				;
+		}
 	}
 	VTCON_CTRL_TX_UNLOCK(sc);
+
+	if (error != 0)
+		device_printf(sc->vtcon_dev,
+		    "control command did not complete: %d\n", error);
+	return (error);
 }
 
-static void
+static int
 vtcon_ctrl_send_control(struct vtcon_softc *sc, uint32_t portid,
     uint16_t event, uint16_t value)
 {
 	struct virtio_console_control control;
 
 	if ((sc->vtcon_flags & VTCON_FLAG_MULTIPORT) == 0)
-		return;
+		return (0);
+	if (sc->vtcon_flags & VTCON_FLAG_DETACHED)
+		return (ENXIO);
+	if (sc->vtcon_flags & VTCON_FLAG_FAILED)
+		return (EIO);
 
 	control.id = vtcon_gtoh32(sc, portid);
 	control.event = vtcon_gtoh16(sc, event);
 	control.value = vtcon_gtoh16(sc, value);
 
-	vtcon_ctrl_poll(sc, &control);
+	return (vtcon_ctrl_poll(sc, &control));
 }
 
 static int
@@ -1120,7 +1180,6 @@ vtcon_port_populate(struct vtcon_port *port)
 	}
 
 	if (nbufs > 0) {
-		virtqueue_notify(vq);
 		error = 0;
 	}
 
@@ -1171,7 +1230,7 @@ vtcon_port_init_vqs(struct vtcon_port *port)
 }
 
 static int
-vtcon_port_create(struct vtcon_softc *sc, int id)
+vtcon_port_create(struct vtcon_softc *sc, int id, bool activate)
 {
 	device_t dev;
 	struct vtcon_softc_port *scport;
@@ -1205,10 +1264,15 @@ vtcon_port_create(struct vtcon_softc *sc, int id)
 	VTCON_LOCK(sc);
 	VTCON_PORT_LOCK(port);
 	scport->vcsp_port = port;
-	vtcon_port_enable_intr(port);
-	vtcon_port_submit_event(port, VIRTIO_CONSOLE_PORT_READY, 1);
+	if (activate)
+		vtcon_port_enable_intr(port);
 	VTCON_PORT_UNLOCK(port);
 	VTCON_UNLOCK(sc);
+	if (activate) {
+		virtqueue_notify(port->vtcport_invq);
+		(void)vtcon_port_submit_event(port,
+		    VIRTIO_CONSOLE_PORT_READY, 1);
+	}
 
 	tty_makedev(port->vtcport_tty, NULL, "%s%r.%r", VTCON_TTY_PREFIX,
 	    device_get_unit(dev), id);
@@ -1412,31 +1476,66 @@ vtcon_port_intr(void *scportx)
 	VTCON_PORT_UNLOCK(port);
 }
 
-static void
+static int
 vtcon_port_out(struct vtcon_port *port, void *buf, int bufsize)
 {
 	struct sglist_seg segs[2];
 	struct sglist sg;
 	struct virtqueue *vq;
-	int error;
+	struct vtcon_softc *sc;
+	void *cookie;
+	sbintime_t deadline;
+	uint32_t len;
+	int error, last;
 
+	sc = port->vtcport_sc;
+	if (sc->vtcon_flags & VTCON_FLAG_DETACHED)
+		return (ENXIO);
+	if (sc->vtcon_flags & VTCON_FLAG_FAILED)
+		return (EIO);
 	vq = port->vtcport_outvq;
 	KASSERT(virtqueue_empty(vq),
 	    ("%s: port %p out virtqueue not empty", __func__, port));
 
 	sglist_init(&sg, 2, segs);
 	error = sglist_append(&sg, buf, bufsize);
-	KASSERT(error == 0, ("%s: error %d adding buffer to sglist",
-	    __func__, error));
+	if (error != 0)
+		return (error);
 
 	error = virtqueue_enqueue(vq, buf, &sg, sg.sg_nseg, 0);
 	if (error == 0) {
 		virtqueue_notify(vq);
-		virtqueue_poll(vq, NULL);
+		deadline = sbinuptime() + VTCON_IO_TIMEOUT;
+		for (;;) {
+			cookie = virtqueue_dequeue(vq, &len);
+			if (cookie != NULL)
+				break;
+			if (sbinuptime() >= deadline) {
+				error = ETIMEDOUT;
+				break;
+			}
+			/* Called by the tty layer with its port lock held. */
+			DELAY(VTCON_POLL_DELAY_US);
+		}
+		if (error == 0 && (cookie != buf ||
+		    !virtio_console_output_used_len_valid(len)))
+			error = EIO;
+		if (error != 0) {
+			/* buf belongs to the tty stack; reclaim it before return. */
+			atomic_set_32(&sc->vtcon_flags, VTCON_FLAG_FAILED);
+			virtio_stop(sc->vtcon_dev);
+			last = 0;
+			while (virtqueue_drain(vq, &last) != NULL)
+				;
+			device_printf(sc->vtcon_dev,
+			    "port output did not complete: %d\n", error);
+		}
 	}
+
+	return (error);
 }
 
-static void
+static int
 vtcon_port_submit_event(struct vtcon_port *port, uint16_t event,
     uint16_t value)
 {
@@ -1444,7 +1543,7 @@ vtcon_port_submit_event(struct vtcon_port *port, uint16_t event,
 
 	sc = port->vtcport_sc;
 
-	vtcon_ctrl_send_control(sc, port->vtcport_id, event, value);
+	return (vtcon_ctrl_send_control(sc, port->vtcport_id, event, value));
 }
 
 static int
@@ -1457,9 +1556,7 @@ vtcon_tty_open(struct tty *tp)
 	if (port->vtcport_flags & VTCON_PORT_FLAG_GONE)
 		return (ENXIO);
 
-	vtcon_port_submit_event(port, VIRTIO_CONSOLE_PORT_OPEN, 1);
-
-	return (0);
+	return (vtcon_port_submit_event(port, VIRTIO_CONSOLE_PORT_OPEN, 1));
 }
 
 static void
@@ -1472,7 +1569,7 @@ vtcon_tty_close(struct tty *tp)
 	if (port->vtcport_flags & VTCON_PORT_FLAG_GONE)
 		return;
 
-	vtcon_port_submit_event(port, VIRTIO_CONSOLE_PORT_OPEN, 0);
+	(void)vtcon_port_submit_event(port, VIRTIO_CONSOLE_PORT_OPEN, 0);
 }
 
 static void
@@ -1487,8 +1584,10 @@ vtcon_tty_outwakeup(struct tty *tp)
 	if (port->vtcport_flags & VTCON_PORT_FLAG_GONE)
 		return;
 
-	while ((len = ttydisc_getc(tp, buf, sizeof(buf))) != 0)
-		vtcon_port_out(port, buf, len);
+	while ((len = ttydisc_getc(tp, buf, sizeof(buf))) != 0) {
+		if (vtcon_port_out(port, buf, len) != 0)
+			break;
+	}
 }
 
 static void

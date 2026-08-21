@@ -16,7 +16,7 @@
 #     disposable 5BSD image.
 #
 # Optional:
-#   PROFILE=qualification|nonvirtio|soak-smoke  JOBS=3  BRIDGE=bridge0
+#   PROFILE=qualification|vmm-root|nonvirtio|soak-smoke  JOBS=3  BRIDGE=bridge0
 #   RESUME=no
 #   PLAN_ONLY=yes  validate and print the exact virtio-lab invocation without
 #                  requiring root or changing host state
@@ -30,6 +30,8 @@
 #   PROFILE=full-qualification adds nested, representative OSS audio, and
 #   non-VirtIO gates to the complete portable qualification matrix.
 #   WORKDIR=/tmp/virtio-qualification
+#   BHYVE=/path/to/bhyve BHYVECTL=/path/to/bhyvectl
+#     Override both together when qualifying a private snapshot-enabled build.
 #
 
 set -eu
@@ -70,7 +72,7 @@ if [ -n "${VIRTIO_REFERENCE_ARTIFACT_DIR:-}" ]; then
 fi
 
 case "$PROFILE" in
-qualification|intel-qualification|audio-qualification|full-qualification|release|checkpoint|soak|soak-smoke|audio|checkpoint-audio|nonvirtio|nested|nested-default)
+qualification|intel-qualification|audio-qualification|full-qualification|release|checkpoint|soak|soak-smoke|audio|checkpoint-audio|nonvirtio|nested|nested-default|vmm-root)
 	;;
 *)
 	echo "unsupported qualification profile: $PROFILE" >&2
@@ -84,20 +86,22 @@ esac
 # fivebsd-auto case.  Passing absent optional inputs through to virtio-lab
 # would also make the saved resume configuration depend on irrelevant paths.
 case "$PROFILE" in
-qualification|intel-qualification|full-qualification|nonvirtio|release)
+qualification|intel-qualification|full-qualification|nonvirtio|release|checkpoint)
 	: "${UPLINK:?set UPLINK to the host network interface}"
 	: "${ISO:?set ISO to an Alpine virt ISO}"
 	: "${FIVEBSD_IMAGE:?set FIVEBSD_IMAGE to a disposable 5BSD image}"
+	: "${FIVEBSD_IMAGE_SHA256:?set FIVEBSD_IMAGE_SHA256 to its qualified digest}"
+	: "${FIVEBSD_BUILD_ID:?set FIVEBSD_BUILD_ID to the embedded current-build identifier}"
 	;;
-checkpoint|soak|soak-smoke|audio|checkpoint-audio|audio-qualification)
+soak|soak-smoke|audio|checkpoint-audio|audio-qualification)
 	: "${UPLINK:?set UPLINK to the host network interface}"
 	: "${ISO:?set ISO to an Alpine virt ISO}"
 	;;
-nested|nested-default)
+nested|nested-default|vmm-root)
 	;;
 esac
 case "$PROFILE" in
-nonvirtio|full-qualification)
+qualification|intel-qualification|nonvirtio|full-qualification)
 	: "${NONVIRTIO_TPM_PATH:?set NONVIRTIO_TPM_PATH to a live TPM2 backend socket or device}"
 	: "${NONVIRTIO_PASSTHRU:?set NONVIRTIO_PASSTHRU to the ppt device selector}"
 	: "${NONVIRTIO_PASSTHRU_LINUX_ASSERT:?set NONVIRTIO_PASSTHRU_LINUX_ASSERT to the reviewed Alpine activation command}"
@@ -138,7 +142,7 @@ fi
 set -- /usr/libexec/flua "$LAB" "$lab_command" \
     --profile "$PROFILE" --jobs "$JOBS" --workdir "$WORKDIR"
 case "$PROFILE" in
-nested|nested-default)
+nested|nested-default|vmm-root)
 	;;
 *)
 	# plan accepts the allocation inputs so its effective environments match
@@ -153,6 +157,14 @@ fi
 if [ -n "${FIVEBSD_IMAGE:-}" ]; then
 	set -- "$@" --fivebsd-image "$FIVEBSD_IMAGE"
 fi
+if [ -n "${FIVEBSD_IMAGE_SHA256:-}" ]; then
+	set -- "$@" --set "FIVEBSD_IMAGE_SHA256=$FIVEBSD_IMAGE_SHA256"
+fi
+if [ -n "${FIVEBSD_BUILD_ID:-}" ]; then
+	set -- "$@" --set "FIVEBSD_BUILD_ID=$FIVEBSD_BUILD_ID"
+fi
+[ -z "${BHYVE:-}" ] || set -- "$@" --set "BHYVE=$BHYVE"
+[ -z "${BHYVECTL:-}" ] || set -- "$@" --set "BHYVECTL=$BHYVECTL"
 case "$PROFILE" in
 nested|nested-default|intel-qualification|full-qualification)
 	: "${NESTED_L1_RUNNER:?set NESTED_L1_RUNNER for nested qualification}"

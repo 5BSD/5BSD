@@ -310,6 +310,8 @@ host_tests()
 }
 
 campaign_pid=
+campaign_completed=no
+campaign_workdir=
 
 campaign_running()
 {
@@ -356,6 +358,8 @@ run_campaign()
 	campaign_pid=$!
 	if wait "$campaign_pid"; then
 		status=0
+		campaign_completed=yes
+		campaign_workdir=${WORKDIR:-/tmp/virtio-qualification}
 	else
 		status=$?
 	fi
@@ -368,6 +372,64 @@ release_ready()
 {
 	require_payload
 	validate_dispositions
+	if [ "$campaign_completed" != yes ]; then
+		[ -n "${WORKDIR:-}" ] ||
+		    fail "standalone release-ready requires WORKDIR naming a completed content-bound campaign"
+		campaign_workdir=$WORKDIR
+	fi
+	[ -n "$campaign_workdir" ] && [ -d "$campaign_workdir" ] ||
+	    fail "current campaign workdir is unavailable"
+	need_file "$campaign_workdir/run.config"
+	need_file "$campaign_workdir/summary"
+	need_file "$campaign_workdir/events.tsv"
+	lab=$e2e/virtio-lab
+	if [ ! -x "$lab" ]; then
+		lab=$e2e/virtio-lab.lua
+	fi
+	need_exec "$lab"
+	"$lab" verify-inputs --workdir "$campaign_workdir" >/dev/null ||
+	    fail "current campaign inputs no longer match its recorded identities"
+	grep -qx 'version=3' "$campaign_workdir/run.config" ||
+	    fail "current campaign does not contain content-bound input identities"
+	saved_profile=$(sed -n 's/^profile=//p' "$campaign_workdir/run.config")
+	[ -n "$saved_profile" ] || fail "current campaign does not identify its profile"
+	if [ -n "${PROFILE:-}" ]; then
+		[ "$PROFILE" = "$saved_profile" ] ||
+		    fail "requested release profile does not match current campaign"
+	else
+		PROFILE=$saved_profile
+		export PROFILE
+	fi
+	grep -qx "profile=$PROFILE" \
+	    "$campaign_workdir/run.config" ||
+	    fail "current campaign profile does not match release profile"
+	case_count=$(grep -c '^case=' "$campaign_workdir/run.config")
+	passed=$(sed -n 's/^passed=//p' "$campaign_workdir/summary")
+	failed=$(sed -n 's/^failed=//p' "$campaign_workdir/summary")
+	blocked=$(sed -n 's/^blocked=//p' "$campaign_workdir/summary")
+	total=$(sed -n 's/^total=//p' "$campaign_workdir/summary")
+	case "$passed:$failed:$blocked:$total:$case_count" in
+	*[!0-9:]*|*::*|:*|*:) fail "current campaign summary is malformed" ;;
+	esac
+	[ "$failed" -eq 0 ] && [ "$blocked" -eq 0 ] &&
+	    [ "$passed" -eq "$total" ] && [ "$total" -eq "$case_count" ] ||
+	    fail "current campaign is incomplete: passed=$passed failed=$failed blocked=$blocked total=$total selected=$case_count"
+	for case_id in $(sed -n 's/^case=//p' "$campaign_workdir/run.config"); do
+		[ -f "$campaign_workdir/status/$case_id" ] &&
+		    [ "$(cat "$campaign_workdir/status/$case_id")" = 0 ] ||
+		    fail "current campaign lacks a successful terminal result for $case_id"
+	done
+	if sysctl -n hw.vmm.vmx.initialized 2>/dev/null | grep -qx 1; then
+		case ${PROFILE:-} in
+		intel-qualification|full-qualification) ;;
+		*) fail "Intel release qualification requires a profile containing nested and non-VirtIO live gates" ;;
+		esac
+	else
+		case ${PROFILE:-} in
+		qualification|full-qualification) ;;
+		*) fail "release qualification requires a profile containing non-VirtIO live gates" ;;
+		esac
+	fi
 	virtio_unresolved=$(awk -F '\t' 'NR > 1 && $0 !~ /^#/ {
 	    if ($3 == "pending") n++
 	    if ($5 == "pending") n++

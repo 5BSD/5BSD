@@ -664,11 +664,20 @@ retry:
 	    tick->tk_ms_fiov.len);
 	readable = sc->vtfs_sg->sg_nseg;
 	if (error == 0 && req->vr_expects_reply)
-		error = sglist_append(sc->vtfs_sg, req->vr_reply,
+		error = sglist_append_boundary(sc->vtfs_sg, req->vr_reply,
 		    req->vr_reply_cap);
 	writable = sc->vtfs_sg->sg_nseg - readable;
 	if (error != 0) {
 		device_printf(sc->vtfs_dev, "sglist build failed: %d\n", error);
+		VTFS_UNLOCK(sc);
+		vtfs_abort_request(sc, req, true);
+		return;
+	}
+	KASSERT(!req->vr_expects_reply || writable > 0,
+	    ("vtfs: request and response share a descriptor"));
+	if (req->vr_expects_reply && writable == 0) {
+		device_printf(sc->vtfs_dev,
+		    "request and response descriptor boundary was lost\n");
 		VTFS_UNLOCK(sc);
 		vtfs_abort_request(sc, req, true);
 		return;

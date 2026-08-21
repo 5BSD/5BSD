@@ -68,9 +68,9 @@ nonvirtio_inventory_body()
 	    ($8 == "exercised" && $9 == "-") { exit 14 }
 	{ present[$1] = 1; rows++ }
 	END {
-		split("ahci nvme e82545 hda xhci fbuf pci-uart lpc-uart tpm-crb pvpanic hostbridge passthru", required, " ")
+		split("ahci nvme e82545 hda xhci fbuf pci-uart lpc-uart tpm-crb pvpanic hostbridge passthru qemu-fwcfg", required, " ")
 		for (i in required) if (!present[required[i]]) exit 12
-		if (rows != 12) exit 13
+		if (rows != 13) exit 13
 	}' "$src/waspnest-nonvirtio-coverage.tsv" ||
 	    atf_fail "invalid non-VirtIO coverage inventory"
 }
@@ -172,6 +172,37 @@ status_body()
 	    >>root/sys/vmm/vmx-nested-default-policy-live-qualification.tsv
 	: >root/sys/kern/vsock_e2e/run-waspnest-qualification.sh
 	chmod +x root/sys/kern/vsock_e2e/run-waspnest-qualification.sh
+	lab_src="$src/virtio-lab.lua"
+	if [ ! -f "$lab_src" ]; then
+		lab_src="$src/../sys/kern/vsock_e2e/virtio-lab.lua"
+	fi
+	if [ ! -f "$lab_src" ]; then
+		lab_src="$src/../sys/kern/vsock_e2e/virtio-lab"
+	fi
+	cp "$lab_src" root/sys/kern/vsock_e2e/virtio-lab.lua
+	chmod +x root/sys/kern/vsock_e2e/virtio-lab.lua
+	# release-ready deliberately accepts only a completed, content-bound
+	# campaign.  Supply that precondition so the negative assertions below
+	# reach the disposition checks they are intended to exercise.
+	mkdir -p campaign/status campaign/executor
+	: >campaign/manifest.yaml
+	: >campaign/input
+	manifest="$PWD/campaign/manifest.yaml"
+	input="$PWD/campaign/input"
+	executor="$PWD/campaign/executor"
+	printf '%s\n' "$manifest" >campaign/manifest.path
+	manifest_sha=$(sha256 -q "$manifest")
+	input_sha=$(sha256 -q "$input")
+	executor_sha=$(cd "$executor" &&
+	    find -s . -type f -exec sha256 -r {} \; | sha256 -q)
+	printf '%s\n' version=3 profile=full-qualification case=synthetic \
+	    "manifest_sha256=$manifest_sha" \
+	    "input_sha256.$input=$input_sha" \
+	    "executor_tree_sha256.$executor=$executor_sha" \
+	    >campaign/run.config
+	printf '%s\n' passed=1 failed=0 blocked=0 total=1 >campaign/summary
+	printf 'time\tevent\tcase\tstatus\tlog\n' >campaign/events.tsv
+	printf '0\n' >campaign/status/synthetic
 	# The runner's manifest lives beside it, while TESTROOT points at the
 	# synthetic installed hierarchy.
 	atf_check -s exit:0 -o save:status.out -e empty env \
@@ -183,14 +214,34 @@ status_body()
 	    atf_fail "missing nested default-policy count"
 	atf_check -s exit:1 -o match:'VirtIO activation rows: 2' \
 	    -e match:'release coverage unresolved' env \
-	    WASPNEST_TESTROOT="$PWD/root" sh "$runner" release-ready
+	    WORKDIR="$PWD/campaign" WASPNEST_TESTROOT="$PWD/root" \
+	    sh "$runner" release-ready
+	printf 'tampered\n' >campaign/input
+	atf_check -s exit:1 -o empty \
+	    -e match:'campaign inputs no longer match' env \
+	    WORKDIR="$PWD/campaign" WASPNEST_TESTROOT="$PWD/root" \
+	    sh "$runner" release-ready
+	: >campaign/input
+	printf 'tampered\n' >campaign/manifest.yaml
+	atf_check -s exit:1 -o empty \
+	    -e match:'campaign inputs no longer match' env \
+	    WORKDIR="$PWD/campaign" WASPNEST_TESTROOT="$PWD/root" \
+	    sh "$runner" release-ready
+	: >campaign/manifest.yaml
+	printf 'tampered\n' >campaign/executor/new-helper
+	atf_check -s exit:1 -o empty \
+	    -e match:'campaign inputs no longer match' env \
+	    WORKDIR="$PWD/campaign" WASPNEST_TESTROOT="$PWD/root" \
+	    sh "$runner" release-ready
+	rm campaign/executor/new-helper
 	cp root/sys/kern/vsock_device_harness/virtio-feature-activation.tsv \
 	    activation.saved
 	awk -F '\t' 'BEGIN { OFS = "\t" } NR == 2 { $3 = "typo-pass" } { print }' \
 	    activation.saved \
 	    >root/sys/kern/vsock_device_harness/virtio-feature-activation.tsv
 	atf_check -s exit:1 -o empty -e match:'unknown disposition' env \
-	    WASPNEST_TESTROOT="$PWD/root" sh "$runner" release-ready
+	    WORKDIR="$PWD/campaign" WASPNEST_TESTROOT="$PWD/root" \
+	    sh "$runner" release-ready
 	cp activation.saved \
 	    root/sys/kern/vsock_device_harness/virtio-feature-activation.tsv
 	cp root/sys/vmm/vmx-nested-default-policy-live-qualification.tsv \
@@ -200,7 +251,8 @@ status_body()
 	    >root/sys/vmm/vmx-nested-default-policy-live-qualification.tsv
 	atf_check -s exit:1 -o empty \
 	    -e match:'nested default-policy ledger contains an unknown disposition' \
-	    env WASPNEST_TESTROOT="$PWD/root" sh "$runner" release-ready
+	    env WORKDIR="$PWD/campaign" WASPNEST_TESTROOT="$PWD/root" \
+	    sh "$runner" release-ready
 }
 
 atf_init_test_cases()

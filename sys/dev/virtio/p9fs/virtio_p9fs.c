@@ -247,13 +247,20 @@ req_retry:
 	}
 	readable = sg->sg_nseg;
 
-	error = sglist_append(sg, req->rc->sdata, req->rc->capacity);
+	error = sglist_append_boundary(sg, req->rc->sdata,
+	    req->rc->capacity);
 	if (error != 0) {
 		P9_DEBUG(ERROR, "%s: sglist append failed\n", __func__);
 		VT9P_UNLOCK(chan);
 		return (error);
 	}
 	writable = sg->sg_nseg - readable;
+	KASSERT(writable > 0,
+	    ("vt9p: request and response share a descriptor"));
+	if (writable == 0) {
+		VT9P_UNLOCK(chan);
+		return (EFAULT);
+	}
 
 	error = virtqueue_enqueue(vq, req, sg, readable, writable);
 	if (error != 0) {

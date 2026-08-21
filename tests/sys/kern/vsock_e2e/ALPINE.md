@@ -330,9 +330,9 @@ substitute.  `checkpoint-fs-idle-modern` and
 lanes which unmount to trigger `FUSE_DESTROY` before checkpoint.
 This exercises bhyve checkpoint pause while the guest devices are running.
 Both the host kernel and bhyve/bhyvectl must be built with
-`WITH_BHYVE_SNAPSHOT=yes`; the runner checks both sides before booting the
-guest.  The `VBSD` kernel configuration also enables `BHYVE_SNAPSHOT`
-explicitly.
+snapshot support (the amd64 default); the runner checks both sides before
+booting the guest.  The `VBSD` kernel configuration also enables
+`BHYVE_SNAPSHOT` explicitly.
 The separate nested case in which a guest has already set the VirtIO
 `DEVICE_SUSPEND` status bit is covered by the device state-machine harness;
 stock Alpine/Linux does not currently expose a userspace control that can

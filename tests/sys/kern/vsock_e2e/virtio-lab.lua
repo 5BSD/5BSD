@@ -298,6 +298,8 @@ local executors = {
 	["host-regression"] = "virtio-host-regression.sh",
 	["fivebsd-module-build"] = "build-5bsd-virtio-modules.sh",
 	["vmm-module-build"] = "build-vmm-module.sh",
+	["vmm-root"] = "../../vmm/run-vmm-root.sh",
+	["kernel-contract-root"] = "run-kernel-contract-root.sh",
 	-- Keep the architectural nested-state model in the ordinary rootless
 	-- qualification lane.  The hardware executor remains a separate,
 	-- explicitly privileged gate below; passing this model must never be
@@ -594,7 +596,7 @@ local function validate_active_checkpoint_evidence(case)
 		    "checkpoint qualification has active device state")
 		end
 	end
-	if device == "mem" then
+	if device == "mem" or case_has_device(case, "mem") then
 		if tostring(case.env.CHECKPOINT_ACTIVE_MEM or "") ~= "yes" or
 		    (tonumber(case.env.MEM_CHECKPOINT_ALLOC_MB or "0") or 0) < 1 then
 			die(case.id .. " must enable CHECKPOINT_ACTIVE_MEM with " ..
@@ -637,6 +639,135 @@ local function validate_active_checkpoint_evidence(case)
 		    tostring(case.env.CHECKPOINT_REPEAT_FS_RESTORE or "no") ~= "no" then
 			die(case.id .. " must remain an idle virtio-fs checkpoint lane")
 		end
+	end
+end
+
+local function token_set(value)
+	local result = {}
+
+	for token in tostring(value or ""):gmatch("%S+") do
+		if result[token] then
+			return nil
+		end
+		result[token] = true
+	end
+	return result
+end
+
+local function require_exact_tokens(case, variable, expected)
+	local actual = token_set(case.env[variable])
+
+	if actual == nil then
+		die(case.id .. " has duplicate tokens in " .. variable)
+	end
+	for _, token in ipairs(expected) do
+		if not actual[token] then
+			die(case.id .. " must include " .. token .. " in " .. variable)
+		end
+		actual[token] = nil
+	end
+	if next(actual) ~= nil then
+		die(case.id .. " has an unreviewed token in " .. variable)
+	end
+end
+
+-- These are deliberately complete-machine checkpoint lanes, not convenient
+-- labels for arbitrary multi-device cases.  Validate the configuration behind
+-- each coverage marker so a manifest edit cannot claim graph coverage while
+-- silently dropping a device, ring format, queue, or active-state workload.
+local function validate_checkpoint_combination(case)
+	local combination
+	local expected_packed
+	local packed_variables
+
+	if type(case.env) ~= "table" then
+		return
+	end
+	combination = tostring(case.env.CHECKPOINT_COMBINATION or "")
+	if combination == "" then
+		return
+	end
+	if tostring(case.env.CHECKPOINT_TEST or "") ~= "yes" then
+		die(case.id .. " checkpoint combination must enable CHECKPOINT_TEST")
+	end
+
+	if combination == "alpine-all-split" or
+	    combination == "alpine-all-packed" then
+		if case.executor ~= "alpine-auto" then
+			die(case.id .. " has the wrong executor for " .. combination)
+		end
+		require_exact_tokens(case, "DEVICES", {
+		    "net", "vsock", "rng", "balloon", "rtc", "block", "scsi",
+		    "console", "9p", "fs", "input", "gpu", "mem", "pmem",
+		    "sound",
+		})
+		expected_packed = combination:match("packed$") and "yes" or "no"
+		packed_variables = {
+		    "NET_PACKED", "VSOCK_PACKED", "RNG_PACKED", "BALLOON_PACKED",
+		    "RTC_PACKED", "BLOCK_PACKED", "SCSI_PACKED", "CONSOLE_PACKED",
+		    "NINEP_PACKED", "FS_PACKED", "INPUT_PACKED", "GPU_PACKED",
+		    "MEM_PACKED", "PMEM_PACKED", "SOUND_PACKED",
+		}
+		for _, variable in ipairs(packed_variables) do
+			if tostring(case.env[variable] or "") ~= expected_packed then
+				die(case.id .. " must set " .. variable .. "=" ..
+				    expected_packed)
+			end
+		end
+		for _, variable in ipairs({ "NET_QUEUES", "BLOCK_QUEUES",
+		    "SCSI_QUEUES", "FS_QUEUES" }) do
+			if (tonumber(case.env[variable] or "0") or 0) < 2 then
+				die(case.id .. " must exercise multiple " .. variable)
+			end
+		end
+		if tostring(case.env.CONSOLE_MULTIPORT or "") ~= "yes" or
+		    (tonumber(case.env.INPUT_DEVICES or "0") or 0) < 2 or
+		    (tonumber(case.env.BALLOON_STATS_INTERVAL or "0") or 0) < 1 or
+		    tostring(case.env.RTC_ALARM or "") ~= "yes" or
+		    tostring(case.env.CHECKPOINT_ACTIVE_FS or "") ~= "yes" or
+		    tostring(case.env.CHECKPOINT_REPEAT_FS_RESTORE or "") ~= "yes" then
+			die(case.id .. " must exercise multiport/input and active " ..
+			    "balloon/RTC/virtio-fs state")
+		end
+	elseif combination == "fivebsd-all-split" or
+	    combination == "fivebsd-all-packed" then
+		if case.executor ~= "fivebsd-auto" or
+		    tostring(case.env.FIVEBSD_CHECKPOINT_TEST or "") ~= "yes" then
+			die(case.id .. " has the wrong 5BSD checkpoint executor")
+		end
+		require_exact_tokens(case, "CHECKPOINT_COMBINATION_DEVICES", {
+		    "net", "vsock", "rng", "balloon", "block", "scsi", "console",
+		    "gpu", "rtc", "input", "9p", "sound",
+		})
+		expected_packed = combination:match("packed$") and "yes" or "no"
+		packed_variables = {
+		    "FIVEBSD_NET_PACKED", "FIVEBSD_VSOCK_PACKED",
+		    "FIVEBSD_RNG_PACKED", "BALLOON_PACKED", "FIVEBSD_BLOCK_PACKED",
+		    "FIVEBSD_SCSI_PACKED", "FIVEBSD_CONSOLE_PACKED",
+		    "FIVEBSD_GPU_PACKED", "FIVEBSD_RTC_PACKED",
+		    "FIVEBSD_INPUT_PACKED", "FIVEBSD_NINEP_PACKED",
+		    "FIVEBSD_SOUND_PACKED",
+		}
+		for _, variable in ipairs(packed_variables) do
+			if tostring(case.env[variable] or "") ~= expected_packed then
+				die(case.id .. " must set " .. variable .. "=" ..
+				    expected_packed)
+			end
+		end
+		for _, variable in ipairs({ "FIVEBSD_NET_QUEUES",
+		    "FIVEBSD_BLOCK_QUEUES", "FIVEBSD_SCSI_QUEUES" }) do
+			if (tonumber(case.env[variable] or "0") or 0) < 2 then
+				die(case.id .. " must exercise multiple " .. variable)
+			end
+		end
+		if (tonumber(case.env.FIVEBSD_CONSOLE_PORTS or "0") or 0) < 2 or
+		    (tonumber(case.env.FIVEBSD_INPUT_DEVICES or "0") or 0) < 2 or
+		    (tonumber(case.env.FIVEBSD_BALLOON_STATS_INTERVAL or "0") or 0) < 1 then
+			die(case.id .. " must exercise multiport/input and active " ..
+			    "balloon state")
+		end
+	else
+		die(case.id .. " has unknown CHECKPOINT_COMBINATION=" .. combination)
 	end
 end
 
@@ -720,6 +851,7 @@ local function validate_case(case, identifiers)
 	validate_checkpoint_ring_label(case)
 	validate_packed_trace_evidence(case)
 	validate_active_checkpoint_evidence(case)
+	validate_checkpoint_combination(case)
 	validate_iommu_translation_evidence(case)
 	validate_balloon_optional_evidence(case)
 end
@@ -1048,13 +1180,21 @@ local function process_fingerprint(pid)
 	return fingerprint
 end
 
-local function record_process_fingerprint(path, pid)
-	local fingerprint = process_fingerprint(pid)
-	if fingerprint == nil then
-		return false
+local function process_command(pid)
+	if pid == nil or pid <= 1 or pid % 1 ~= 0 then
+		return nil
 	end
-	write_file(path .. ".fingerprint", fingerprint .. "\n")
-	return true
+	local process = io.popen("/bin/ps -p " .. tostring(pid) ..
+	    " -o command= 2>/dev/null", "r")
+	if process == nil then
+		return nil
+	end
+	local command = process:read("*l")
+	local closed = process:close()
+	if command == nil or command == "" or not closed then
+		return nil
+	end
+	return command
 end
 
 local function recorded_process_fingerprint(path)
@@ -1080,20 +1220,59 @@ local function process_fingerprint_matches(path, pid)
 	    recorded_process_fingerprint(path), pid)
 end
 
--- daemon(8) publishes its PID files asynchronously with respect to the
--- launch command's return.  Only the owning scheduler may fill this missing
--- control-plane metadata, and it does so from its existing bounded status
--- scan.  A later cancel/status invocation never turns an unrecorded PID into
--- signal authority.
+-- daemon(8) publishes its PID files before its child necessarily finishes the
+-- exec chain from env(1) into the case wrapper.  A fingerprint captured at
+-- that boundary can therefore become stale without the PID changing.  Only
+-- the owning scheduler may fill this control-plane metadata, and it publishes
+-- cancellation authority only after the same parent/child identities survive
+-- two bounded status scans.  A later cancel/status invocation never turns an
+-- unrecorded or merely pending PID into signal authority.
 local function record_supervised_case_identity(status_path)
+	local supervisor_path = status_path .. ".pid"
+	local child_path = status_path .. ".child"
+	local supervisor_pending = supervisor_path .. ".pending"
+	local child_pending = child_path .. ".pending"
 	local supervisor = read_number(status_path .. ".pid")
 	local child = read_number(status_path .. ".child")
+	local supervisor_fingerprint, child_fingerprint
+	local child_command
 	if supervisor == nil or child == nil or
 	    process_parent(child) ~= supervisor then
 		return false
 	end
-	return record_process_fingerprint(status_path .. ".pid", supervisor) and
-	    record_process_fingerprint(status_path .. ".child", child)
+	child_command = process_command(child)
+	if child_command == nil or child_command:find(
+	    script_directory() .. "/virtio-lab-case.sh", 1, true) == nil then
+		-- daemon(8)'s pre-exec env(1) child is not yet the supervised
+		-- wrapper and must never become cancellation authority.
+		return false
+	end
+	supervisor_fingerprint = process_fingerprint(supervisor)
+	child_fingerprint = process_fingerprint(child)
+	if supervisor_fingerprint == nil or child_fingerprint == nil or
+	    read_number(supervisor_path) ~= supervisor or
+	    read_number(child_path) ~= child or
+	    process_parent(child) ~= supervisor then
+		return false
+	end
+	if recorded_process_fingerprint(supervisor_pending) ==
+	    supervisor_fingerprint and
+	    recorded_process_fingerprint(child_pending) == child_fingerprint then
+		write_file(supervisor_path .. ".fingerprint",
+		    supervisor_fingerprint .. "\n")
+		write_file(child_path .. ".fingerprint", child_fingerprint .. "\n")
+		os.remove(supervisor_pending .. ".fingerprint")
+		os.remove(child_pending .. ".fingerprint")
+		return true
+	end
+	-- A changed observation restarts stabilization and revokes any partial
+	-- authority left by an interrupted launch attempt.
+	os.remove(supervisor_path .. ".fingerprint")
+	os.remove(child_path .. ".fingerprint")
+	write_file(supervisor_pending .. ".fingerprint",
+	    supervisor_fingerprint .. "\n")
+	write_file(child_pending .. ".fingerprint", child_fingerprint .. "\n")
+	return false
 end
 
 -- Return a captured, verified identity rather than merely a boolean when a
@@ -1417,6 +1596,8 @@ local function start_case(document, case, options, runroot, ordinal,
 	os.remove(child_pidfile)
 	os.remove(pidfile .. ".fingerprint")
 	os.remove(child_pidfile .. ".fingerprint")
+	os.remove(pidfile .. ".pending.fingerprint")
+	os.remove(child_pidfile .. ".pending.fingerprint")
 	local allocation = acquire_case_cids(document, case, options, runroot,
 	    ordinal, lease_directory)
 	local environment = effective_environment(document, case, options, ordinal,
@@ -1443,15 +1624,16 @@ local function start_case(document, case, options, runroot, ordinal,
 		release_case_cids(allocation)
 		die("failed to launch case " .. case.id)
 	end
-	local identity_pending = false
-	if read_number(status) == nil then
+	local identity_pending = read_number(status) == nil
+	if identity_pending then
 		-- Very short compiler/self-test cases can have written their terminal
 		-- status, or exited, before daemon(8)'s control PID is observable to
 		-- this manager.  Do not turn that completed case into a launch failure.
 		-- A nonterminal case without both identities is never considered live
 		-- or cancellable; the normal bounded supervisor check will publish 125
-		-- instead of adopting a bare PID.
-		identity_pending = not record_supervised_case_identity(status)
+		-- instead of adopting a bare PID.  Defer the first identity observation
+		-- to the supervisor loop so a second observation cannot occur in the
+		-- same launch iteration before env(1) finishes its exec chain.
 	end
 	emit_event(runroot, "START", case.id, "", log)
 	return {
@@ -1497,18 +1679,37 @@ local function prepare_runroot(path, resume, expected_uid)
 	write_file(path .. "/events.tsv", "time\tevent\tcase\tstatus\tlog\n")
 end
 
-local function run_configuration(document, options)
-	local sha = io.popen("/sbin/sha256 -q " ..
-	    shell_quote(options.manifest) .. " 2>/dev/null", "r")
+local function sha256_command(command, description)
+	local sha = io.popen(command .. " 2>/dev/null", "r")
 	local digest = sha ~= nil and sha:read("*l") or nil
-	if sha ~= nil then
-		sha:close()
+	local closed = sha ~= nil and sha:close() or nil
+	if digest == nil or digest:match("^[0-9a-f]+$") == nil or not closed then
+		die("cannot hash " .. description)
 	end
+	return digest
+end
+
+local function sha256_file(path)
+	return sha256_command("/sbin/sha256 -q " .. shell_quote(path), path)
+end
+
+local function sha256_tree(path)
+	-- Hash the ordered stream of per-file digests.  Qualification helpers are
+	-- inputs just as much as the top-level executor; changing one in place must
+	-- invalidate reusable case results.
+	return sha256_command("cd " .. shell_quote(path) ..
+	    " && /usr/bin/find -s . -type f -exec /sbin/sha256 -r {} \\; " ..
+	    "| /sbin/sha256 -q",
+	    "executor tree " .. path)
+end
+
+local function run_configuration(document, cases, options)
+	local digest = sha256_file(options.manifest)
 	if digest == nil or digest:match("^[0-9a-f]+$") == nil then
 		die("cannot hash manifest: " .. options.manifest)
 	end
 	local settings = {
-		"version=2",
+		"version=3",
 		"manifest_sha256=" .. digest,
 		"profile=" .. options.profile,
 		"iso=" .. tostring(options.iso or ""),
@@ -1521,8 +1722,119 @@ local function run_configuration(document, options)
 	for key, value in pairs(options.sets) do
 		table.insert(settings, "set." .. key .. "=" .. tostring(value))
 	end
+	local input_files = {}
+	local executor_directories = {}
+	local base = script_directory()
+	input_files[base .. "/virtio-lab.lua"] = true
+	input_files[base .. "/virtio-lab-case.sh"] = true
+	for ordinal, case in ipairs(cases) do
+		local runner = base .. "/" .. executors[case.executor]
+		input_files[runner] = true
+		executor_directories[runner:match("^(.*)/[^/]+$")] = true
+		local environment = effective_environment(document, case, options,
+		    ordinal)
+		for _, value in pairs(environment) do
+			if type(value) == "string" and
+			    lfs.attributes(value, "mode") == "file" then
+				input_files[value] = true
+			end
+		end
+	end
+	if options.iso ~= nil then
+		input_files[options.iso] = true
+	end
+	if options.fivebsd_image ~= nil then
+		input_files[options.fivebsd_image] = true
+	end
+	for path, _ in pairs(input_files) do
+		table.insert(settings, "input_sha256." .. path .. "=" ..
+		    sha256_file(path))
+	end
+	for path, _ in pairs(executor_directories) do
+		table.insert(settings, "executor_tree_sha256." .. path .. "=" ..
+		    sha256_tree(path))
+	end
 	table.sort(settings)
 	return table.concat(settings, "\n") .. "\n"
+end
+
+local function verify_run_inputs(workdir)
+	local configuration = read_file(workdir .. "/run.config")
+	local manifest_path = read_file(workdir .. "/manifest.path")
+	manifest_path = manifest_path:match("^([^\r\n]+)\r?\n?$")
+	if manifest_path == nil then
+		die("invalid manifest.path in run directory")
+	end
+	local manifest_identity = path_identity(manifest_path)
+	if manifest_identity == nil or manifest_identity.kind ~= "Regular File" then
+		die("recorded manifest is not a regular file: " .. manifest_path)
+	end
+
+	local expected_manifest
+	local manifest_count = 0
+	local input_count = 0
+	local tree_count = 0
+	local seen = {}
+	for line in configuration:gmatch("[^\n]+") do
+		local digest = line:match("^manifest_sha256=([0-9a-f]+)$")
+		if digest ~= nil then
+			manifest_count = manifest_count + 1
+			expected_manifest = digest
+		elseif line:match("^manifest_sha256=") ~= nil then
+			die("malformed manifest identity in run.config")
+		else
+			local kind, path, recorded
+			path, recorded = line:match(
+			    "^input_sha256%.(.*)=([0-9a-f]+)$")
+			if path ~= nil then
+				kind = "input"
+				input_count = input_count + 1
+			else
+				path, recorded = line:match(
+				    "^executor_tree_sha256%.(.*)=([0-9a-f]+)$")
+				if path ~= nil then
+					kind = "executor tree"
+					tree_count = tree_count + 1
+				elseif line:match("^input_sha256%.") ~= nil or
+				    line:match("^executor_tree_sha256%.") ~= nil then
+					die("malformed content identity in run.config")
+				end
+			end
+			if path ~= nil then
+				if path == "" or #recorded ~= 64 or seen[kind .. "\0" .. path] then
+					die("invalid or duplicate " .. kind ..
+					    " identity in run.config")
+				end
+				seen[kind .. "\0" .. path] = true
+				local identity = path_identity(path)
+				local expected_kind = kind == "input" and
+				    "Regular File" or "Directory"
+				if identity == nil or identity.kind ~= expected_kind then
+					die("recorded " .. kind .. " is not a " ..
+					    expected_kind:lower() .. ": " .. path)
+				end
+				local actual = kind == "input" and sha256_file(path) or
+				    sha256_tree(path)
+				if actual ~= recorded then
+					die("recorded " .. kind .. " changed since the run: " ..
+					    path)
+				end
+			end
+		end
+	end
+	if manifest_count ~= 1 or expected_manifest == nil or
+	    #expected_manifest ~= 64 then
+		die("run.config must contain exactly one valid manifest identity")
+	end
+	if sha256_file(manifest_path) ~= expected_manifest then
+		die("recorded manifest changed since the run: " .. manifest_path)
+	end
+	if input_count == 0 or tree_count == 0 then
+		die("run.config lacks complete input and executor-tree identities")
+	end
+	print("verified")
+	print("inputs=" .. tostring(input_count))
+	print("executor_trees=" .. tostring(tree_count))
 end
 
 local function run_cases(document, cases, options)
@@ -1555,6 +1867,9 @@ local function run_cases(document, cases, options)
 		elseif case.executor == "nested-vmx-live" then
 			needs_root = true
 			needs_nested_vmx_live = true
+		elseif case.executor == "vmm-root" or
+		    case.executor == "kernel-contract-root" then
+			needs_root = true
 		end
 	end
 	for _, input in ipairs({
@@ -1710,7 +2025,7 @@ local function run_cases(document, cases, options)
 	    ("/tmp/virtio-lab-" .. os.date("!%Y%m%dT%H%M%SZ") ..
 	    "-" .. tostring(unistd.getpid()))
 	prepare_runroot(runroot, options.resume, effective_uid)
-	local configuration = run_configuration(document, options)
+	local configuration = run_configuration(document, cases, options)
 	--
 	-- This check is intentionally before acquiring manager.lock.  A rejected
 	-- resume has not started a case and must leave the existing run directory
@@ -2136,13 +2451,15 @@ local function usage(status)
 usage: virtio-lab.lua plan|coverage [options]
        virtio-lab.lua run [options]
        virtio-lab.lua status --workdir run-directory
+       virtio-lab.lua verify-inputs --workdir run-directory
        virtio-lab.lua cancel --workdir run-directory
        virtio-lab.lua host-prepare --bridge name --uplink name
        virtio-lab.lua host-status [--bridge name]
        virtio-lab.lua host-cleanup [--bridge name]
 options:
   --manifest path   case manifest (default: virtio-lab.yaml beside script)
-  --profile name    vmfree, smoke, release, checkpoint, soak, soak-smoke,
+  --profile name    vmfree, kernel-root, vmm-root, smoke, release, checkpoint,
+                    soak, soak-smoke,
                     audio, nested,
                     nested-default,
                     qualification, intel-qualification, audio-qualification,
@@ -2230,6 +2547,14 @@ elseif command == "host-status" then
 	os.exit(0)
 elseif command == "host-cleanup" then
 	host_cleanup(options)
+	os.exit(0)
+end
+
+if command == "verify-inputs" then
+	if options.workdir == nil then
+		die("verify-inputs requires --workdir")
+	end
+	verify_run_inputs(options.workdir)
 	os.exit(0)
 end
 

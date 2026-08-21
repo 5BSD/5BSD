@@ -128,6 +128,14 @@ CTASSERT(offsetof(struct virtio_mem_config, requested_size) == 48);
 #define VTMEM_F_FAILED		0x02
 #define VTMEM_F_TD_EXITED	0x04
 
+struct vtmem_request_io {
+	struct virtio_mem_req	 request;
+	uint32_t		 pad;
+	struct virtio_mem_resp	 response;
+};
+CTASSERT(offsetof(struct vtmem_request_io, response) >=
+    sizeof(struct virtio_mem_req) + 1);
+
 struct vtmem_softc {
 	device_t		 vtmem_dev;
 	struct mtx		 vtmem_mtx;
@@ -153,14 +161,8 @@ struct vtmem_softc {
 
 	int			 vtmem_timeout;
 
-	/*
-	 * A single in-flight request.  Only the worker thread issues requests,
-	 * so one embedded request/response pair suffices.  Each buffer is kept
-	 * in its own allocation so it never shares a cache line or straddles a
-	 * page boundary with unrelated softc state.
-	 */
-	struct virtio_mem_req	*vtmem_req;
-	struct virtio_mem_resp	*vtmem_resp;
+	/* The pad preserves the request/response descriptor direction boundary. */
+	struct vtmem_request_io	*vtmem_io;
 };
 
 static int	vtmem_probe(device_t);
@@ -314,9 +316,7 @@ vtmem_attach(device_t dev)
 
 	sc->vtmem_bitmap = malloc(howmany(sc->vtmem_nblocks, 8), M_DEVBUF,
 	    M_WAITOK | M_ZERO);
-	sc->vtmem_req = malloc(sizeof(*sc->vtmem_req), M_DEVBUF,
-	    M_WAITOK | M_ZERO);
-	sc->vtmem_resp = malloc(sizeof(*sc->vtmem_resp), M_DEVBUF,
+	sc->vtmem_io = malloc(sizeof(*sc->vtmem_io), M_DEVBUF,
 	    M_WAITOK | M_ZERO);
 
 	error = vtmem_alloc_virtqueue(sc);
@@ -401,13 +401,9 @@ vtmem_detach(device_t dev)
 		free(sc->vtmem_bitmap, M_DEVBUF);
 		sc->vtmem_bitmap = NULL;
 	}
-	if (sc->vtmem_req != NULL) {
-		free(sc->vtmem_req, M_DEVBUF);
-		sc->vtmem_req = NULL;
-	}
-	if (sc->vtmem_resp != NULL) {
-		free(sc->vtmem_resp, M_DEVBUF);
-		sc->vtmem_resp = NULL;
+	if (sc->vtmem_io != NULL) {
+		free(sc->vtmem_io, M_DEVBUF);
+		sc->vtmem_io = NULL;
 	}
 	mtx_destroy(&sc->vtmem_mtx);
 	return (0);
@@ -538,35 +534,42 @@ static int
 vtmem_send_request(struct vtmem_softc *sc, uint16_t type, uint64_t addr,
     uint16_t nb_blocks, uint16_t *statep)
 {
+	struct vtmem_request_io *io;
 	struct sglist sg;
-	struct sglist_seg segs[2];
+	struct sglist_seg segs[4];
 	sbintime_t deadline, remaining;
 	void *cookie;
 	uint32_t len;
 	int error, readable;
 
-	memset(sc->vtmem_req, 0, sizeof(*sc->vtmem_req));
-	sc->vtmem_req->type = htole16(type);
-	sc->vtmem_req->addr = htole64(addr);
-	sc->vtmem_req->nb_blocks = htole16(nb_blocks);
-	memset(sc->vtmem_resp, 0, sizeof(*sc->vtmem_resp));
-	sc->vtmem_resp->type = htole16(VIRTIO_MEM_RESP_ERROR);
+	io = sc->vtmem_io;
+	memset(&io->request, 0, sizeof(io->request));
+	io->request.type = htole16(type);
+	io->request.addr = htole64(addr);
+	io->request.nb_blocks = htole16(nb_blocks);
+	memset(&io->response, 0, sizeof(io->response));
+	io->response.type = htole16(VIRTIO_MEM_RESP_ERROR);
 
 	sglist_init(&sg, nitems(segs), segs);
-	error = sglist_append(&sg, sc->vtmem_req, sizeof(*sc->vtmem_req));
+	error = sglist_append(&sg, &io->request, sizeof(io->request));
 	if (error != 0)
 		return (-error);
 	readable = sg.sg_nseg;
-	error = sglist_append(&sg, sc->vtmem_resp, sizeof(*sc->vtmem_resp));
+	error = sglist_append_boundary(&sg, &io->response,
+	    sizeof(io->response));
 	if (error != 0)
 		return (-error);
+	KASSERT(sg.sg_nseg > readable,
+	    ("vtmem: request and response collapsed into one descriptor"));
+	if (sg.sg_nseg <= readable)
+		return (-EFAULT);
 
 	VTMEM_LOCK(sc);
 	if ((sc->vtmem_flags & (VTMEM_F_DETACH | VTMEM_F_FAILED)) != 0) {
 		VTMEM_UNLOCK(sc);
 		return (-ENXIO);
 	}
-	error = virtqueue_enqueue(sc->vtmem_vq, sc->vtmem_resp, &sg, readable,
+	error = virtqueue_enqueue(sc->vtmem_vq, &io->response, &sg, readable,
 	    sg.sg_nseg - readable);
 	if (error != 0) {
 		VTMEM_UNLOCK(sc);
@@ -598,8 +601,8 @@ vtmem_send_request(struct vtmem_softc *sc, uint16_t type, uint64_t addr,
 	 * the request/response storage can no longer be trusted to be idle.
 	 * Fail the device so the buffers are not reused under the host.
 	 */
-	if (cookie == NULL || cookie != sc->vtmem_resp ||
-	    len != sizeof(*sc->vtmem_resp)) {
+	if (cookie == NULL || cookie != &io->response ||
+	    len != sizeof(io->response)) {
 		device_printf(sc->vtmem_dev,
 		    "request type %u did not complete cleanly\n", type);
 		VTMEM_LOCK(sc);
@@ -608,8 +611,8 @@ vtmem_send_request(struct vtmem_softc *sc, uint16_t type, uint64_t addr,
 		return (error != 0 ? -error : -EIO);
 	}
 	if (statep != NULL)
-		*statep = le16toh(sc->vtmem_resp->state);
-	return (le16toh(sc->vtmem_resp->type));
+		*statep = le16toh(io->response.state);
+	return (le16toh(io->response.type));
 }
 
 /*

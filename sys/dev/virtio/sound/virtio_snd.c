@@ -291,7 +291,8 @@ vtsnd_ctrl_cmd(struct vtsnd_softc *sc, const void *req, size_t reqlen,
 	sglist_reset(sg);
 	error = sglist_append_phys(sg, sc->vtsnd_creq.dma_paddr, reqlen);
 	if (error == 0)
-		error = sglist_append_phys(sg, sc->vtsnd_cresp.dma_paddr,
+		error = sglist_append_phys_boundary(sg,
+		    sc->vtsnd_cresp.dma_paddr,
 		    resplen);
 	if (error != 0)
 		goto release;
@@ -529,7 +530,8 @@ vtsnd_tx_submit(struct vtsnd_chan *ch)
 	if (error == 0)
 		error = sglist_append_phys(sg, ch->data.dma_paddr, blksz);
 	if (error == 0)
-		error = sglist_append_phys(sg, ch->status.dma_paddr,
+		error = sglist_append_phys_boundary(sg,
+		    ch->status.dma_paddr,
 		    VTSND_PCM_STATUS_SIZE);
 	if (error != 0)
 		return (error);
@@ -567,7 +569,8 @@ vtsnd_rx_submit(struct vtsnd_chan *ch)
 	sglist_reset(sg);
 	error = sglist_append_phys(sg, ch->xhdr.dma_paddr, VTSND_PCM_XFER_SIZE);
 	if (error == 0)
-		error = sglist_append_phys(sg, ch->data.dma_paddr, blksz);
+		error = sglist_append_phys_boundary(sg, ch->data.dma_paddr,
+		    blksz);
 	if (error == 0)
 		error = sglist_append_phys(sg, ch->status.dma_paddr,
 		    VTSND_PCM_STATUS_SIZE);

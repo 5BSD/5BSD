@@ -105,13 +105,13 @@ defaults:
 # every release, checkpoint, and soak case authoritative in one place and
 # de-duplicates cases that belong to more than one constituent profile.
 profile_groups:
-  qualification: [release, checkpoint, soak]
-  intel-qualification: [release, checkpoint, soak, nested]
+  qualification: [kernel-root, vmm-root, release, checkpoint, soak, nonvirtio]
+  intel-qualification: [kernel-root, vmm-root, release, checkpoint, soak, nonvirtio, nested]
   audio-qualification: [audio, checkpoint-audio]
   # One explicit promotion gate for the Intel development host.  It also
   # includes the non-VirtIO software and operator-supplied hardware matrix;
   # portable and audio-only hosts retain the narrower profiles above.
-  full-qualification: [release, checkpoint, soak, nonvirtio, nested, audio, checkpoint-audio]
+  full-qualification: [kernel-root, vmm-root, release, checkpoint, soak, nonvirtio, nested, audio, checkpoint-audio]
 
 # Deliberate command-line API for `--set`.  Allocation variables are included
 # for single-case debugging, but the orchestrator rejects global allocation
@@ -227,6 +227,10 @@ allowed_overrides:
   - FIVEBSD_NOTIFICATION_DATA
   - FIVEBSD_RNG_RESET_ITERATIONS
   - FIVEBSD_DEVICE_SUSPEND
+  - FIVEBSD_CHECKPOINT_TEST
+  - FIVEBSD_IMAGE_SHA256
+  - FIVEBSD_BUILD_ID
+  - FIVEBSD_MODULE_SET
   - FIVEBSD_CONSOLE_TEST
   - FIVEBSD_CONSOLE_PACKED
   - FIVEBSD_CONSOLE_PORTS
@@ -623,6 +627,19 @@ coverage:
       FIVEBSD_NINEP_TEST: "yes"
       TRANSPORTS: modern
     values: ["no", "yes"]
+  - id: fivebsd-sound-testing
+    profiles: [release]
+    variable: FIVEBSD_SOUND_TEST
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
+  - id: fivebsd-sound-ring-formats
+    profiles: [release]
+    variable: FIVEBSD_SOUND_PACKED
+    selector:
+      GUEST_OS: 5bsd
+      FIVEBSD_SOUND_TEST: "yes"
+      TRANSPORTS: modern
+    values: ["no", "yes"]
   - id: net-ring-formats
     profiles: [release]
     variable: NET_PACKED
@@ -960,6 +977,40 @@ coverage:
     variable: DEVICES
     selector: { CHECKPOINT_TEST: "yes" }
     values: [net, rng, balloon, rtc, block, scsi, vsock, console, input, 9p, fs, gpu, mem, pmem, sound]
+  - id: checkpoint-alpine-all-device-split-combination
+    profiles: [checkpoint]
+    variable: DEVICES
+    tokens: true
+    selector: { CHECKPOINT_COMBINATION: alpine-all-split }
+    values: [net, vsock, rng, balloon, rtc, block, scsi, console, 9p, fs, input, gpu, mem, pmem, sound]
+  - id: checkpoint-alpine-all-device-packed-combination
+    profiles: [checkpoint]
+    variable: DEVICES
+    tokens: true
+    selector: { CHECKPOINT_COMBINATION: alpine-all-packed }
+    values: [net, vsock, rng, balloon, rtc, block, scsi, console, 9p, fs, input, gpu, mem, pmem, sound]
+  - id: checkpoint-fivebsd-all-device-split-combination
+    profiles: [checkpoint]
+    variable: CHECKPOINT_COMBINATION_DEVICES
+    tokens: true
+    selector: { CHECKPOINT_COMBINATION: fivebsd-all-split }
+    values: [net, vsock, rng, balloon, block, scsi, console, gpu, rtc, input, 9p, sound]
+  - id: checkpoint-fivebsd-all-device-packed-combination
+    profiles: [checkpoint]
+    variable: CHECKPOINT_COMBINATION_DEVICES
+    tokens: true
+    selector: { CHECKPOINT_COMBINATION: fivebsd-all-packed }
+    values: [net, vsock, rng, balloon, block, scsi, console, gpu, rtc, input, 9p, sound]
+  - id: nonvirtio-alpine-checkpoint-devices
+    profiles: [nonvirtio]
+    variable: NONVIRTIO_DEVICE
+    selector: { CHECKPOINT_TEST: "yes" }
+    values: [qemu-fwcfg, ahci, nvme, e82545, hda, xhci, fbuf, pci-uart, lpc-uart, tpm-crb, pvpanic, hostbridge, passthru]
+  - id: nonvirtio-fivebsd-checkpoint-devices
+    profiles: [nonvirtio]
+    variable: NONVIRTIO_DEVICE
+    selector: { NONVIRTIO_CHECKPOINT: "yes" }
+    values: [qemu-fwcfg, ahci, nvme, e82545, hda, xhci, fbuf, pci-uart, lpc-uart, tpm-crb, hostbridge, passthru]
   - id: checkpoint-net-ring-formats
     profiles: [checkpoint]
     variable: NET_PACKED
@@ -1264,6 +1315,39 @@ cases:
     exclusive: true
     gate: true
     resources: [compiler]
+
+  - id: fivebsd-prototype-module-build
+    executor: fivebsd-module-build
+    profiles: [unsupported-5bsd-prototypes]
+    timeout: 900
+    exclusive: true
+    gate: true
+    resources: [compiler]
+    env:
+      FIVEBSD_MODULE_SET: prototype
+
+  # The kernel VMM gate owns ABI/model tests, real VM entry on the active
+  # hardware backend, snapshot sessions, dirty logging, and startup staging.
+  # Device-model state belongs to the Alpine/5BSD checkpoint cases below.
+  # Keep this exclusive and before every VM case because it replaces vmm.ko.
+  - id: vmm-root
+    executor: vmm-root
+    profiles: [vmm-root]
+    timeout: 1800
+    exclusive: true
+    gate: true
+    resources: [compiler, vmm-module]
+
+  # Exercise production scatter/gather construction in the running kernel.
+  # These cases reproduce the physically-adjacent request/response collapse
+  # that ordinary host-model tests cannot create deterministically.
+  - id: kernel-contract-root
+    executor: kernel-contract-root
+    profiles: [kernel-root]
+    timeout: 300
+    exclusive: true
+    gate: true
+    resources: [compiler, kernel-module]
 
   # Nested architectural models must be accompanied by a clean build of the
   # production kernel module that will execute them.  Keep this VM-free so a
@@ -1748,6 +1832,219 @@ cases:
       FIVEBSD_CONSOLE_TEST: "yes"
       FIVEBSD_CONSOLE_PACKED: "yes"
       FIVEBSD_CONSOLE_PORTS: "2"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  # 5BSD save/restore is qualified separately from ordinary feature
+  # activation.  Every supported device has split and packed coverage where
+  # the guest implements packed rings, and the combined lane catches restore
+  # ordering and PCI-topology interactions.
+  - id: fivebsd-checkpoint-core-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-core-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_BLOCK_PACKED: "yes", FIVEBSD_RNG_PACKED: "yes", FIVEBSD_VSOCK_PACKED: "yes", BALLOON_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-net-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_NET_TEST: "yes", FIVEBSD_NET_QUEUES: "2", FIVEBSD_NET_PACKED: "no", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-net-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_NET_TEST: "yes", FIVEBSD_NET_QUEUES: "2", FIVEBSD_NET_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-scsi-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image, ctl]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_SCSI_QUEUES: "2", FIVEBSD_SCSI_PACKED: "no", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-scsi-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image, ctl]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_SCSI_QUEUES: "2", FIVEBSD_SCSI_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-console-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_CONSOLE_TEST: "yes", FIVEBSD_CONSOLE_PORTS: "2", FIVEBSD_CONSOLE_PACKED: "no", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-console-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_CONSOLE_TEST: "yes", FIVEBSD_CONSOLE_PORTS: "2", FIVEBSD_CONSOLE_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-gpu-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_GPU_TEST: "yes", FIVEBSD_GPU_PACKED: "no", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-gpu-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_GPU_TEST: "yes", FIVEBSD_GPU_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-rtc-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_RTC_TEST: "yes", FIVEBSD_RTC_PACKED: "no", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-rtc-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_RTC_TEST: "yes", FIVEBSD_RTC_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-input-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_INPUT_TEST: "yes", FIVEBSD_INPUT_DEVICES: "2", FIVEBSD_INPUT_PACKED: "no", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-input-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_INPUT_TEST: "yes", FIVEBSD_INPUT_DEVICES: "2", FIVEBSD_INPUT_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-ninep-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_NINEP_TEST: "yes", FIVEBSD_NINEP_PACKED: "no", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-ninep-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_NINEP_TEST: "yes", FIVEBSD_NINEP_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-sound-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_SOUND_TEST: "yes", FIVEBSD_SOUND_PACKED: "no", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-sound-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 3600
+    resources: [fivebsd-image]
+    env: { GUEST_OS: 5bsd, TRANSPORTS: modern, CHECKPOINT_TEST: "yes", FIVEBSD_CHECKPOINT_TEST: "yes", FIVEBSD_SOUND_TEST: "yes", FIVEBSD_SOUND_PACKED: "yes", VIRTIO_DEBUG: "2", BULK_MB: "1", VM_FREE_GATES: "no" }
+
+  - id: fivebsd-checkpoint-combined-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 5400
+    resources: [fivebsd-image, ctl, uinput]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      CHECKPOINT_TEST: "yes"
+      FIVEBSD_CHECKPOINT_TEST: "yes"
+      CHECKPOINT_COMBINATION: fivebsd-all-split
+      CHECKPOINT_COMBINATION_DEVICES: "net vsock rng balloon block scsi console gpu rtc input 9p sound"
+      FIVEBSD_BLOCK_PACKED: "no"
+      FIVEBSD_BLOCK_QUEUES: "2"
+      FIVEBSD_RNG_PACKED: "no"
+      FIVEBSD_VSOCK_PACKED: "no"
+      BALLOON_PACKED: "no"
+      FIVEBSD_BALLOON_STATS_INTERVAL: "1"
+      FIVEBSD_NET_TEST: "yes"
+      FIVEBSD_NET_QUEUES: "2"
+      FIVEBSD_NET_PACKED: "no"
+      FIVEBSD_SCSI_QUEUES: "2"
+      FIVEBSD_SCSI_PACKED: "no"
+      FIVEBSD_SCSI_EVENTS: "yes"
+      FIVEBSD_CONSOLE_TEST: "yes"
+      FIVEBSD_CONSOLE_PORTS: "2"
+      FIVEBSD_CONSOLE_PACKED: "no"
+      FIVEBSD_GPU_TEST: "yes"
+      FIVEBSD_GPU_PACKED: "no"
+      FIVEBSD_RTC_TEST: "yes"
+      FIVEBSD_RTC_PACKED: "no"
+      FIVEBSD_INPUT_TEST: "yes"
+      FIVEBSD_INPUT_DEVICES: "2"
+      FIVEBSD_INPUT_PACKED: "no"
+      FIVEBSD_NINEP_TEST: "yes"
+      FIVEBSD_NINEP_PACKED: "no"
+      FIVEBSD_SOUND_TEST: "yes"
+      FIVEBSD_SOUND_PACKED: "no"
+      VIRTIO_DEBUG: "2"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  - id: fivebsd-checkpoint-combined-packed-modern
+    executor: fivebsd-auto
+    profiles: [checkpoint]
+    timeout: 5400
+    resources: [fivebsd-image, ctl, uinput]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      CHECKPOINT_TEST: "yes"
+      FIVEBSD_CHECKPOINT_TEST: "yes"
+      CHECKPOINT_COMBINATION: fivebsd-all-packed
+      CHECKPOINT_COMBINATION_DEVICES: "net vsock rng balloon block scsi console gpu rtc input 9p sound"
+      FIVEBSD_BLOCK_PACKED: "yes"
+      FIVEBSD_BLOCK_QUEUES: "2"
+      FIVEBSD_RNG_PACKED: "yes"
+      FIVEBSD_VSOCK_PACKED: "yes"
+      BALLOON_PACKED: "yes"
+      FIVEBSD_BALLOON_STATS_INTERVAL: "1"
+      FIVEBSD_NET_TEST: "yes"
+      FIVEBSD_NET_QUEUES: "2"
+      FIVEBSD_NET_PACKED: "yes"
+      FIVEBSD_SCSI_QUEUES: "2"
+      FIVEBSD_SCSI_PACKED: "yes"
+      FIVEBSD_CONSOLE_TEST: "yes"
+      FIVEBSD_CONSOLE_PORTS: "2"
+      FIVEBSD_CONSOLE_PACKED: "yes"
+      FIVEBSD_GPU_TEST: "yes"
+      FIVEBSD_GPU_PACKED: "yes"
+      FIVEBSD_RTC_TEST: "yes"
+      FIVEBSD_RTC_PACKED: "yes"
+      FIVEBSD_INPUT_TEST: "yes"
+      FIVEBSD_INPUT_DEVICES: "2"
+      FIVEBSD_INPUT_PACKED: "yes"
+      FIVEBSD_NINEP_TEST: "yes"
+      FIVEBSD_NINEP_PACKED: "yes"
+      FIVEBSD_SOUND_TEST: "yes"
+      FIVEBSD_SOUND_PACKED: "yes"
+      VIRTIO_DEBUG: "2"
       BULK_MB: "1"
       VM_FREE_GATES: "no"
 
@@ -2634,6 +2931,8 @@ cases:
       GPU_PACKED: "yes"
       GPU_BLOB: "yes"
       MEM_PACKED: "yes"
+      CHECKPOINT_ACTIVE_MEM: "yes"
+      MEM_CHECKPOINT_ALLOC_MB: "32"
       SOUND_PACKED: "yes"
       VERIFY_RING_ACTIVITY: "yes"
       VERIFY_DEVICE_RING_NAME: vtiommu
@@ -2642,6 +2941,7 @@ cases:
       CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
       CHECKPOINT_ACTIVE_9P_REJECT: "yes"
       CHECKPOINT_ACTIVE_FS: "yes"
+      CHECKPOINT_REPEAT_FS_RESTORE: "yes"
       CHECKPOINT_TEST: "yes"
 
   - id: checkpoint-rng-modern
@@ -3159,16 +3459,91 @@ cases:
     resources: [ctl, uinput]
     timeout: 3000
     env:
-      DEVICES: "net vsock rng balloon rtc block scsi console 9p input mem"
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p fs input gpu mem pmem sound"
       TRANSPORTS: modern
+      CHECKPOINT_COMBINATION: alpine-all-split
       VSOCK_BACKEND: userspace
       NET_QUEUES: "2"
+      NET_PACKED: "no"
+      VSOCK_PACKED: "no"
+      RNG_PACKED: "no"
+      BALLOON_PACKED: "no"
+      RTC_PACKED: "no"
       BLOCK_QUEUES: "2"
+      BLOCK_PACKED: "no"
+      BLOCK_READONLY: "no"
+      BLOCK_DISCARD: "yes"
       SCSI_QUEUES: "2"
+      SCSI_PACKED: "no"
+      SCSI_EVENTS: "yes"
+      CONSOLE_PACKED: "no"
+      CONSOLE_MULTIPORT: "yes"
+      NINEP_PACKED: "no"
+      FS_PACKED: "no"
+      FS_QUEUES: "2"
+      INPUT_PACKED: "no"
+      INPUT_DEVICES: "2"
+      GPU_PACKED: "no"
+      GPU_BLOB: "no"
+      MEM_PACKED: "no"
+      CHECKPOINT_ACTIVE_MEM: "yes"
+      MEM_CHECKPOINT_ALLOC_MB: "32"
+      PMEM_PACKED: "no"
+      SOUND_PACKED: "no"
       BALLOON_STATS_INTERVAL: "1"
+      RTC_ALARM: "yes"
       CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
       CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
       CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+      CHECKPOINT_ACTIVE_FS: "yes"
+      CHECKPOINT_REPEAT_FS_RESTORE: "yes"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-combined-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    resources: [ctl, uinput]
+    timeout: 5400
+    env:
+      DEVICES: "net vsock rng balloon rtc block scsi console 9p fs input gpu mem pmem sound"
+      TRANSPORTS: modern
+      CHECKPOINT_COMBINATION: alpine-all-packed
+      VSOCK_BACKEND: userspace
+      NET_QUEUES: "2"
+      NET_PACKED: "yes"
+      VSOCK_PACKED: "yes"
+      RNG_PACKED: "yes"
+      BALLOON_PACKED: "yes"
+      RTC_PACKED: "yes"
+      BLOCK_QUEUES: "2"
+      BLOCK_PACKED: "yes"
+      BLOCK_READONLY: "yes"
+      BLOCK_DISCARD: "no"
+      SCSI_QUEUES: "2"
+      SCSI_PACKED: "yes"
+      SCSI_EVENTS: "no"
+      CONSOLE_PACKED: "yes"
+      CONSOLE_MULTIPORT: "yes"
+      NINEP_PACKED: "yes"
+      FS_PACKED: "yes"
+      FS_QUEUES: "8"
+      INPUT_PACKED: "yes"
+      INPUT_DEVICES: "2"
+      GPU_PACKED: "yes"
+      GPU_BLOB: "yes"
+      MEM_PACKED: "yes"
+      CHECKPOINT_ACTIVE_MEM: "yes"
+      MEM_CHECKPOINT_ALLOC_MB: "32"
+      PMEM_PACKED: "yes"
+      SOUND_PACKED: "yes"
+      BALLOON_STATS_INTERVAL: "1"
+      RTC_ALARM: "yes"
+      CHECKPOINT_ACTIVE_VSOCK_REJECT: "yes"
+      CHECKPOINT_ACTIVE_CONSOLE_REJECT: "yes"
+      CHECKPOINT_ACTIVE_9P_REJECT: "yes"
+      CHECKPOINT_ACTIVE_FS: "yes"
+      CHECKPOINT_REPEAT_FS_RESTORE: "yes"
+      CHECKPOINT_REPEAT_PMEM_RESTORE: "yes"
       CHECKPOINT_TEST: "yes"
 
   - id: soak-vsock-userspace
@@ -3319,6 +3694,24 @@ cases:
 
   # Non-VirtIO qualification is deliberately separate from the VirtIO
   # transport matrix.  Every checkpoint case first runs its live oracle.
+
+  - id: nonvirtio-alpine-qemu-fwcfg-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: qemu-fwcfg
+
+  - id: nonvirtio-alpine-qemu-fwcfg-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: qemu-fwcfg
+      CHECKPOINT_TEST: "yes"
 
   - id: nonvirtio-alpine-ahci-live
     executor: alpine-auto
@@ -3549,6 +3942,24 @@ cases:
     env:
       TRANSPORTS: modern
       NONVIRTIO_DEVICE: ahci
+
+  - id: nonvirtio-5bsd-qemu-fwcfg-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: qemu-fwcfg
+
+  - id: nonvirtio-5bsd-qemu-fwcfg-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: qemu-fwcfg
+      NONVIRTIO_CHECKPOINT: "yes"
 
   - id: nonvirtio-5bsd-ahci-checkpoint
     executor: fivebsd-auto

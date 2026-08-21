@@ -15,8 +15,8 @@ $srctop/usr.sbin/bhyve/virtio_pci_modern_probes.h
 "
 
 if ! command -v dtrace >/dev/null 2>&1; then
-	echo "virtio dtrace: dtrace unavailable; validation skipped"
-	exit 0
+	echo "virtio dtrace: dtrace unavailable; qualification cannot validate providers" >&2
+	exit 1
 fi
 
 work=$(mktemp -d)

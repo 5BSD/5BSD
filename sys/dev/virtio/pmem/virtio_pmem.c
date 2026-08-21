@@ -268,11 +268,14 @@ vtpmem_flush(void *arg)
 	if (error != 0)
 		return (error);
 	readable = sg.sg_nseg;
-	error = sglist_append(&sg, &buf.response, sizeof(buf.response));
+	error = sglist_append_boundary(&sg, &buf.response,
+	    sizeof(buf.response));
 	if (error != 0)
 		return (error);
 	KASSERT(sg.sg_nseg == readable + 1,
 	    ("vtpmem: request and response collapsed into one descriptor"));
+	if (sg.sg_nseg != readable + 1)
+		return (EFAULT);
 
 	mtx_lock(&sc->mtx);
 	while (sc->request_active && (sc->flags &

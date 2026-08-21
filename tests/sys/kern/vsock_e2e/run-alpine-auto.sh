@@ -142,9 +142,11 @@ NONVIRTIO_TPM_PATH=${NONVIRTIO_TPM_PATH:-}
 NONVIRTIO_PASSTHRU=${NONVIRTIO_PASSTHRU:-}
 NONVIRTIO_PASSTHRU_GUEST_ASSERT=${NONVIRTIO_PASSTHRU_GUEST_ASSERT:-}
 NONVIRTIO_PASSTHRU_LINUX_ASSERT=${NONVIRTIO_PASSTHRU_LINUX_ASSERT:-$NONVIRTIO_PASSTHRU_GUEST_ASSERT}
+NONVIRTIO_FWCFG_NAME=opt/waspnest/checkpoint
+NONVIRTIO_FWCFG_VALUE=WASPNEST-FWCFG-CURSOR-0123456789ABCDEF
 
 case "$NONVIRTIO_DEVICE" in
-none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|pvpanic|hostbridge|passthru) ;;
+none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|pvpanic|hostbridge|passthru|qemu-fwcfg) ;;
 *) echo "unknown NONVIRTIO_DEVICE: $NONVIRTIO_DEVICE" >&2; exit 2 ;;
 esac
 case "$NONVIRTIO_IMAGE_MB" in
@@ -205,9 +207,13 @@ fi
 	exit 1
 }
 if [ "$CHECKPOINT_TEST" = yes ]; then
+	"$BHYVE" -h 2>&1 | grep -q -- '-r: path to checkpoint file' || {
+		echo "CHECKPOINT_TEST requires a snapshot-enabled bhyve" >&2
+		exit 1
+	}
 	checkpoint_usage=$("$BHYVECTL" --help 2>&1 || true)
 	printf '%s\n' "$checkpoint_usage" | grep -q -- '--checkpoint=<filename>' || {
-		echo "CHECKPOINT_TEST requires a WITH_BHYVE_SNAPSHOT bhyvectl" >&2
+		echo "CHECKPOINT_TEST requires a snapshot-enabled bhyvectl" >&2
 		exit 1
 	}
 	sysctl -n kern.conftxt 2>/dev/null |
@@ -743,7 +749,7 @@ esac
 if [ "$CHECKPOINT_TEST" = yes ]; then
 	for device in $DEVICES; do
 		case "$device:$VSOCK_BACKEND" in
-		net:*|block:*|rng:*|balloon:*|rtc:*|scsi:*|console:*|input:*|9p:*|gpu:*|mem:*|pmem:*|sound:*|vsock:*) ;;
+		net:*|block:*|rng:*|balloon:*|rtc:*|scsi:*|console:*|input:*|9p:*|fs:*|gpu:*|mem:*|pmem:*|sound:*|vsock:*) ;;
 		*)
 			echo "CHECKPOINT_TEST does not support device: $device" >&2
 			exit 2
@@ -1157,7 +1163,7 @@ launch_vm()
 	[ "$run_fs_device" = no ] || set -- "$@" \
 	    -s "19,virtio-fs,path=$fs_socket,tag=$fs_tag,queues=$FS_QUEUES$fs_packed_opt$fs_identity_opt"
 	case "$NONVIRTIO_DEVICE" in
-	none|pvpanic|lpc-uart|tpm-crb|hostbridge) ;;
+	none|pvpanic|lpc-uart|tpm-crb|hostbridge|qemu-fwcfg) ;;
 	ahci) set -- "$@" -s "21,ahci-hd,$nonvirtio_image,checkpoint_identity=waspnest-ahci" ;;
 	nvme) set -- "$@" -s "21,nvme,$nonvirtio_image,ser=WASPNESTNVME,ioslots=64,maxq=8,qsz=64" ;;
 	e82545) set -- "$@" -s "21,e1000,$nonvirtio_tap" ;;
@@ -1173,6 +1179,8 @@ launch_vm()
 	[ "$NONVIRTIO_DEVICE" != pvpanic ] || set -- "$@" -l "pvpanic,action=none"
 	[ "$NONVIRTIO_DEVICE" != tpm-crb ] || set -- "$@" \
 	    -l "tpm,$NONVIRTIO_TPM_TYPE,$NONVIRTIO_TPM_PATH,version=2.0"
+	[ "$NONVIRTIO_DEVICE" != qemu-fwcfg ] || set -- "$@" \
+	    -l fwcfg,qemu -f "$NONVIRTIO_FWCFG_NAME,string=$NONVIRTIO_FWCFG_VALUE"
 	set -- "$@" -l "bootrom,$UEFI" "$vmname"
 	env BHYVE_VTVSOCK_DEBUG="$VSOCK_DEBUG" \
 	    BHYVE_VIRTIO_DEBUG="$VIRTIO_DEBUG" \
@@ -2026,6 +2034,11 @@ provision_guest()
 	pci-uart) guest_cmd 'modprobe 8250_pci' 30 ;;
 	tpm-crb) guest_cmd 'apk add --no-cache tpm2-tools; modprobe tpm_crb' 120 ;;
 	pvpanic) guest_cmd 'modprobe pvpanic 2>/dev/null || modprobe pvpanic-pci 2>/dev/null || true' 30 ;;
+	qemu-fwcfg)
+		guest_cmd 'apk add --no-cache build-base' 120
+		copy_guest_file "$here/freebsd-fwcfg-check.c" /tmp/fwcfg-check.c
+		guest_cmd 'cc -O2 -Wall -Wextra -Werror -o /tmp/fwcfg-check /tmp/fwcfg-check.c; /tmp/fwcfg-check --self-test | grep -q "^SELFTEST PASS$"' 60
+		;;
 	esac
 	if [ "$CHECKPOINT_TEST" = yes ]; then
 		copy_guest_file "$here/gcheckpoint.py" /tmp/gcheckpoint.py
@@ -2146,6 +2159,9 @@ run_nonvirtio()
 		grep -q 'pvpanic: guest reported event 0x02' "$bhyve_log"
 		pvpanic_event_count=$(grep -c 'pvpanic: guest reported event 0x02' "$bhyve_log")
 		;;
+	qemu-fwcfg)
+		guest_cmd "/tmp/fwcfg-check live '$NONVIRTIO_FWCFG_NAME' '$NONVIRTIO_FWCFG_VALUE'" 30
+		;;
 	hostbridge)
 		guest_cmd "python3 /tmp/gnonvirtio.py probe hostbridge 0000:00:00.0; test \"\$(find /sys/bus/pci/devices -mindepth 1 -maxdepth 1 -type l | wc -l)\" -ge 4" 30
 		;;
@@ -2176,6 +2192,34 @@ start_nonvirtio_checkpoint_workload()
 {
 	[ "$NONVIRTIO_DEVICE" = none ] && return 0
 	case "$NONVIRTIO_DEVICE" in tpm-crb|passthru) return 0 ;; esac
+	if [ "$NONVIRTIO_DEVICE" = qemu-fwcfg ]; then
+		nonvirtio_checkpoint_phase=${nonvirtio_checkpoint_phase:-0}
+		phase=$((nonvirtio_checkpoint_phase + 1))
+		guest_cmd "set -eu; rm -f /tmp/fwcfg.ready.$phase /tmp/fwcfg.go.$phase /tmp/fwcfg.result.$phase /tmp/nonvirtio-checkpoint.log; nohup /tmp/fwcfg-check active '$NONVIRTIO_FWCFG_NAME' '$NONVIRTIO_FWCFG_VALUE' /tmp/fwcfg.ready.$phase /tmp/fwcfg.go.$phase /tmp/fwcfg.result.$phase >/tmp/nonvirtio-checkpoint.log 2>&1 & echo \$! >/tmp/nonvirtio-checkpoint.pid; i=0; while [ ! -s /tmp/fwcfg.ready.$phase ] && kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid) 2>/dev/null && [ \$i -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done; test -s /tmp/fwcfg.ready.$phase; kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid)" 30
+		nonvirtio_checkpoint_count=$nonvirtio_checkpoint_phase
+		echo "PASS active-checkpoint-start device=qemu-fwcfg cursor-phase=$phase"
+		return 0
+	fi
+	if [ "$NONVIRTIO_DEVICE" = xhci ]; then
+		nonvirtio_checkpoint_phase=${nonvirtio_checkpoint_phase:-0}
+		event=$((nonvirtio_checkpoint_phase + 1))
+		guest_cmd "set -eu; event=\$(find /sys/bus/pci/devices/0000:00:15.0 -path '*/input/input*/event*' -printf '%f\\n' | head -n 1); test -n \"\$event\"; rm -f /tmp/nonvirtio-xhci.event.$event; dd if=/dev/input/\$event of=/tmp/nonvirtio-xhci.event.$event bs=24 count=1 2>/tmp/nonvirtio-checkpoint.log & echo \$! >/tmp/nonvirtio-checkpoint.pid; echo '$event' >/tmp/nonvirtio-checkpoint.event; echo '$nonvirtio_checkpoint_phase' >/tmp/nonvirtio-checkpoint.count" 30
+		guest_cmd 'kill -0 $(cat /tmp/nonvirtio-checkpoint.pid)' 10
+		nonvirtio_checkpoint_count=$nonvirtio_checkpoint_phase
+		echo "PASS active-checkpoint-start device=xhci pending-transfer=$event"
+		return 0
+	fi
+	if [ "$NONVIRTIO_DEVICE" = fbuf ]; then
+		nonvirtio_checkpoint_phase=${nonvirtio_checkpoint_phase:-0}
+		case $((nonvirtio_checkpoint_phase + 1)) in
+		1) nonvirtio_fbuf_expected=759abfe4 ;;
+		*) nonvirtio_fbuf_expected=86abc0f5 ;;
+		esac
+		guest_cmd "set -eu; python3 /tmp/gnonvirtio.py framebuffer-io 0000:00:15.0 checkpoint-$((nonvirtio_checkpoint_phase + 1)) '$nonvirtio_fbuf_expected'; echo '$nonvirtio_checkpoint_phase' >/tmp/nonvirtio-checkpoint.count; sleep 100000 & echo \$! >/tmp/nonvirtio-checkpoint.pid" 30
+		nonvirtio_checkpoint_count=$nonvirtio_checkpoint_phase
+		echo "PASS active-checkpoint-start device=fbuf pixel=$nonvirtio_fbuf_expected"
+		return 0
+	fi
 	operation=$(nonvirtio_checkpoint_operation)
 	guest_cmd "rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (i=0; while :; do i=\$((i + 1)); $operation; printf '%s\\n' \"\$i\" > /tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo \$! > /tmp/nonvirtio-checkpoint.pid" 30
 	i=0
@@ -2192,6 +2236,35 @@ verify_nonvirtio_checkpoint_workload()
 {
 	[ "$NONVIRTIO_DEVICE" = none ] && return 0
 	case "$NONVIRTIO_DEVICE" in tpm-crb|passthru) return 0 ;; esac
+	if [ "$NONVIRTIO_DEVICE" = qemu-fwcfg ]; then
+		phase=$((nonvirtio_checkpoint_phase + 1))
+		guest_cmd "set -eu; touch /tmp/fwcfg.go.$phase; i=0; while [ ! -s /tmp/fwcfg.result.$phase ] && kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid) 2>/dev/null && [ \$i -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done; cat /tmp/nonvirtio-checkpoint.log; test \"\$(cat /tmp/fwcfg.result.$phase)\" = pass; i=0; while kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid) 2>/dev/null && [ \$i -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done; ! kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid) 2>/dev/null" 30
+		nonvirtio_checkpoint_phase=$phase
+		nonvirtio_checkpoint_count=$phase
+		echo "PASS active-checkpoint-state device=qemu-fwcfg cursor-phase=$phase"
+		return 0
+	fi
+	if [ "$NONVIRTIO_DEVICE" = xhci ]; then
+		event=$((nonvirtio_checkpoint_phase + 1))
+		"$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768 \
+		    --pointer $((300 + event)) $((320 + event)) 1
+		guest_cmd "set -eu; pid=\$(cat /tmp/nonvirtio-checkpoint.pid); i=0; while kill -0 \$pid 2>/dev/null && [ \$i -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done; ! kill -0 \$pid 2>/dev/null; input_event=\$(cat /tmp/nonvirtio-checkpoint.event); test -s /tmp/nonvirtio-xhci.event.\$input_event; echo '$event' >/tmp/nonvirtio-checkpoint.count" 20
+		nonvirtio_checkpoint_phase=$event
+		nonvirtio_checkpoint_count=$event
+		echo "PASS active-checkpoint-progress device=xhci pending-transfer=$event"
+		return 0
+	fi
+	if [ "$NONVIRTIO_DEVICE" = fbuf ]; then
+		# Inspect the restored BAR before any guest-side framebuffer writer can
+		# repair lost state.
+		"$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768 \
+		    "$nonvirtio_fbuf_expected"
+		guest_cmd 'kill -0 $(cat /tmp/nonvirtio-checkpoint.pid)' 10
+		nonvirtio_checkpoint_phase=$((nonvirtio_checkpoint_phase + 1))
+		nonvirtio_checkpoint_count=$nonvirtio_checkpoint_phase
+		echo "PASS active-checkpoint-state device=fbuf phase=$nonvirtio_checkpoint_phase pixel=$nonvirtio_fbuf_expected"
+		return 0
+	fi
 	before=$nonvirtio_checkpoint_count
 	i=0
 	while [ "$i" -lt 30 ]; do
@@ -2209,8 +2282,6 @@ verify_nonvirtio_checkpoint_workload()
 			echo "restored pvpanic event did not reach host" >&2; return 1
 		}
 	fi
-	[ "$NONVIRTIO_DEVICE" != fbuf ] || \
-	    "$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768
 	echo "PASS active-checkpoint-progress device=$NONVIRTIO_DEVICE before=$before after=$after"
 }
 

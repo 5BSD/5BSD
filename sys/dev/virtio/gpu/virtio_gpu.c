@@ -34,6 +34,7 @@
 #include <sys/bus.h>
 #include <sys/callout.h>
 #include <sys/fbio.h>
+#include <sys/kdb.h>
 #include <sys/kernel.h>
 #include <sys/limits.h>
 #include <sys/lock.h>
@@ -41,6 +42,7 @@
 #include <sys/module.h>
 #include <sys/mutex.h>
 #include <sys/sglist.h>
+#include <sys/taskqueue.h>
 
 #include <machine/atomic.h>
 #include <machine/bus.h>
@@ -79,8 +81,16 @@ struct vtgpu_softc {
 	device_t		 vtgpu_dev;
 	uint64_t		 vtgpu_features;
 	struct mtx		 vtgpu_mtx;
+	struct mtx		 vtgpu_dirty_mtx;
 	u_int			 vtgpu_flags;
 	u_int			 vtgpu_ops;
+	struct taskqueue	*vtgpu_flush_tq;
+	struct task		 vtgpu_flush_task;
+	uint32_t		 vtgpu_dirty_x1;
+	uint32_t		 vtgpu_dirty_y1;
+	uint32_t		 vtgpu_dirty_x2;
+	uint32_t		 vtgpu_dirty_y2;
+	bool			 vtgpu_dirty_valid;
 
 	struct virtqueue	*vtgpu_ctrl_vq;
 
@@ -88,6 +98,7 @@ struct vtgpu_softc {
 
 	bool			 vtgpu_have_fb_info;
 	bool			 vtgpu_mtx_initialized;
+	bool			 vtgpu_dirty_mtx_initialized;
 	bool			 vtgpu_request_active;
 };
 
@@ -106,6 +117,9 @@ static int	vtgpu_alloc_virtqueue(struct vtgpu_softc *);
 static void	vtgpu_ctrl_vq_intr(void *);
 static bool	vtgpu_op_enter(struct vtgpu_softc *);
 static void	vtgpu_op_leave(struct vtgpu_softc *);
+static void	vtgpu_fb_changed(struct vtgpu_softc *, uint32_t, uint32_t,
+		    uint32_t, uint32_t);
+static void	vtgpu_flush_task(void *, int);
 static int	vtgpu_check_response(struct vtgpu_softc *,
 		    const struct virtio_gpu_ctrl_hdr *,
 		    const struct virtio_gpu_ctrl_hdr *, uint32_t);
@@ -155,16 +169,13 @@ vtgpu_fb_blank(struct vt_device *vd, term_color_t color)
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
-	if (!vtgpu_op_enter(sc))
+	if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+	    (VTGPU_FLAG_DETACH | VTGPU_FLAG_FAILED)) != 0)
 		return;
 
 	vt_fb_blank(vd, color);
-
-	vtgpu_transfer_to_host_2d(sc, 0, 0, sc->vtgpu_fb_info.fb_width,
+	vtgpu_fb_changed(sc, 0, 0, sc->vtgpu_fb_info.fb_width,
 	    sc->vtgpu_fb_info.fb_height);
-	vtgpu_resource_flush(sc, 0, 0, sc->vtgpu_fb_info.fb_width,
-	    sc->vtgpu_fb_info.fb_height);
-	vtgpu_op_leave(sc);
 }
 
 static void
@@ -177,7 +188,8 @@ vtgpu_fb_bitblt_text(struct vt_device *vd, const struct vt_window *vw,
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
-	if (!vtgpu_op_enter(sc))
+	if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+	    (VTGPU_FLAG_DETACH | VTGPU_FLAG_FAILED)) != 0)
 		return;
 
 	vt_fb_bitblt_text(vd, vw, area);
@@ -187,9 +199,7 @@ vtgpu_fb_bitblt_text(struct vt_device *vd, const struct vt_window *vw,
 	width = area->tr_end.tp_col * vw->vw_font->vf_width + vw->vw_draw_area.tr_begin.tp_col - x;
 	height = area->tr_end.tp_row * vw->vw_font->vf_height + vw->vw_draw_area.tr_begin.tp_row - y;
 
-	vtgpu_transfer_to_host_2d(sc, x, y, width, height);
-	vtgpu_resource_flush(sc, x, y, width, height);
-	vtgpu_op_leave(sc);
+	vtgpu_fb_changed(sc, x, y, width, height);
 }
 
 static void
@@ -203,14 +213,13 @@ vtgpu_fb_bitblt_bitmap(struct vt_device *vd, const struct vt_window *vw,
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
-	if (!vtgpu_op_enter(sc))
+	if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+	    (VTGPU_FLAG_DETACH | VTGPU_FLAG_FAILED)) != 0)
 		return;
 
 	vt_fb_bitblt_bitmap(vd, vw, pattern, mask, width, height, x, y, fg, bg);
 
-	vtgpu_transfer_to_host_2d(sc, x, y, width, height);
-	vtgpu_resource_flush(sc, x, y, width, height);
-	vtgpu_op_leave(sc);
+	vtgpu_fb_changed(sc, x, y, width, height);
 }
 
 static int
@@ -233,16 +242,15 @@ vtgpu_fb_drawrect(struct vt_device *vd, int x1, int y1, int x2, int y2,
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
-	if (!vtgpu_op_enter(sc))
+	if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+	    (VTGPU_FLAG_DETACH | VTGPU_FLAG_FAILED)) != 0)
 		return;
 
 	vt_fb_drawrect(vd, x1, y1, x2, y2, fill, color);
 
 	width = x2 - x1 + 1;
 	height = y2 - y1 + 1;
-	vtgpu_transfer_to_host_2d(sc, x1, y1, width, height);
-	vtgpu_resource_flush(sc, x1, y1, width, height);
-	vtgpu_op_leave(sc);
+	vtgpu_fb_changed(sc, x1, y1, width, height);
 }
 
 static void
@@ -253,14 +261,13 @@ vtgpu_fb_setpixel(struct vt_device *vd, int x, int y, term_color_t color)
 
 	info = vd->vd_softc;
 	sc = (struct vtgpu_softc *)info;
-	if (!vtgpu_op_enter(sc))
+	if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+	    (VTGPU_FLAG_DETACH | VTGPU_FLAG_FAILED)) != 0)
 		return;
 
 	vt_fb_setpixel(vd, x, y, color);
 
-	vtgpu_transfer_to_host_2d(sc, x, y, 1, 1);
-	vtgpu_resource_flush(sc, x, y, 1, 1);
-	vtgpu_op_leave(sc);
+	vtgpu_fb_changed(sc, x, y, 1, 1);
 }
 
 static struct virtio_feature_desc vtgpu_feature_desc[] = {
@@ -336,6 +343,22 @@ vtgpu_attach(device_t dev)
 	mtx_init(&sc->vtgpu_mtx, device_get_nameunit(dev),
 	    "VirtIO GPU request lock", MTX_DEF);
 	sc->vtgpu_mtx_initialized = true;
+	mtx_init(&sc->vtgpu_dirty_mtx, device_get_nameunit(dev),
+	    "VirtIO GPU dirty rectangle", MTX_SPIN);
+	sc->vtgpu_dirty_mtx_initialized = true;
+	TASK_INIT(&sc->vtgpu_flush_task, 0, vtgpu_flush_task, sc);
+	sc->vtgpu_flush_tq = taskqueue_create_fast("vtgpu_flush", M_WAITOK,
+	    taskqueue_thread_enqueue, &sc->vtgpu_flush_tq);
+	if (sc->vtgpu_flush_tq == NULL) {
+		error = ENOMEM;
+		goto fail;
+	}
+	error = taskqueue_start_threads(&sc->vtgpu_flush_tq, 1, PI_TTY,
+	    "%s flush", device_get_nameunit(dev));
+	if (error != 0) {
+		device_printf(dev, "cannot start framebuffer flush thread\n");
+		goto fail;
+	}
 	virtio_set_feature_desc(dev, vtgpu_feature_desc);
 
 	error = vtgpu_setup_features(sc);
@@ -410,7 +433,9 @@ vtgpu_attach_completed(device_t dev)
 	if (error != 0)
 		return (error);
 
-	vt_allocate(&vtgpu_fb_driver, &sc->vtgpu_fb_info);
+	error = vt_allocate(&vtgpu_fb_driver, &sc->vtgpu_fb_info);
+	if (error != 0)
+		return (error);
 	sc->vtgpu_have_fb_info = true;
 
 	error = vtgpu_transfer_to_host_2d(sc, 0, 0,
@@ -435,13 +460,18 @@ vtgpu_detach(device_t dev)
 		 * request wait nor the operation-count wait can miss its wakeup.
 		 */
 		mtx_lock(&sc->vtgpu_mtx);
-		sc->vtgpu_flags |= VTGPU_FLAG_DETACH;
+		atomic_set_rel_int(&sc->vtgpu_flags, VTGPU_FLAG_DETACH);
 		wakeup(sc);
 		mtx_unlock(&sc->vtgpu_mtx);
 	}
 	if (sc->vtgpu_have_fb_info)
 		vt_deallocate(&vtgpu_fb_driver, &sc->vtgpu_fb_info);
 	sc->vtgpu_have_fb_info = false;
+	if (sc->vtgpu_flush_tq != NULL) {
+		taskqueue_drain(sc->vtgpu_flush_tq, &sc->vtgpu_flush_task);
+		taskqueue_free(sc->vtgpu_flush_tq);
+		sc->vtgpu_flush_tq = NULL;
+	}
 	if (sc->vtgpu_mtx_initialized) {
 		mtx_lock(&sc->vtgpu_mtx);
 		while (sc->vtgpu_ops != 0)
@@ -468,6 +498,10 @@ vtgpu_detach(device_t dev)
 	if (sc->vtgpu_mtx_initialized) {
 		mtx_destroy(&sc->vtgpu_mtx);
 		sc->vtgpu_mtx_initialized = false;
+	}
+	if (sc->vtgpu_dirty_mtx_initialized) {
+		mtx_destroy(&sc->vtgpu_dirty_mtx);
+		sc->vtgpu_dirty_mtx_initialized = false;
 	}
 
 	return (0);
@@ -572,6 +606,85 @@ vtgpu_op_leave(struct vtgpu_softc *sc)
 	mtx_unlock(&sc->vtgpu_mtx);
 }
 
+/*
+ * VT drawing methods can run from the callout path while a spin lock or
+ * critical section is held.  They may update the memory framebuffer there,
+ * but must not enter the synchronous VirtIO request path, which sleeps while
+ * waiting for a device completion.  Coalesce damage under a spin mutex and
+ * hand the transfer to a sleepable taskqueue thread.
+ */
+static void
+vtgpu_fb_changed(struct vtgpu_softc *sc, uint32_t x, uint32_t y,
+    uint32_t width, uint32_t height)
+{
+	uint32_t x2, y2;
+
+	/* A taskqueue cannot make progress while the debugger owns the CPU. */
+	if (kdb_active || KERNEL_PANICKED())
+		return;
+	if (!virtio_gpu_rect_within(sc->vtgpu_fb_info.fb_width,
+	    sc->vtgpu_fb_info.fb_height, x, y, width, height))
+		return;
+	x2 = x + width;
+	y2 = y + height;
+
+	mtx_lock_spin(&sc->vtgpu_dirty_mtx);
+	/*
+	 * Close the interval between the callback's initial flag check and
+	 * backend removal.  vt_deallocate() serializes normal VT callbacks,
+	 * but this second check also makes the producer/queue lifetime rule
+	 * explicit and protects any future producer which calls this helper.
+	 */
+	if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+	    (VTGPU_FLAG_DETACH | VTGPU_FLAG_FAILED)) != 0) {
+		mtx_unlock_spin(&sc->vtgpu_dirty_mtx);
+		return;
+	}
+	if (!sc->vtgpu_dirty_valid) {
+		sc->vtgpu_dirty_x1 = x;
+		sc->vtgpu_dirty_y1 = y;
+		sc->vtgpu_dirty_x2 = x2;
+		sc->vtgpu_dirty_y2 = y2;
+		sc->vtgpu_dirty_valid = true;
+	} else {
+		sc->vtgpu_dirty_x1 = MIN(sc->vtgpu_dirty_x1, x);
+		sc->vtgpu_dirty_y1 = MIN(sc->vtgpu_dirty_y1, y);
+		sc->vtgpu_dirty_x2 = MAX(sc->vtgpu_dirty_x2, x2);
+		sc->vtgpu_dirty_y2 = MAX(sc->vtgpu_dirty_y2, y2);
+	}
+	mtx_unlock_spin(&sc->vtgpu_dirty_mtx);
+
+	taskqueue_enqueue(sc->vtgpu_flush_tq, &sc->vtgpu_flush_task);
+}
+
+static void
+vtgpu_flush_task(void *xsc, int pending __unused)
+{
+	struct vtgpu_softc *sc;
+	uint32_t x, y, width, height;
+	int error;
+
+	sc = xsc;
+	mtx_lock_spin(&sc->vtgpu_dirty_mtx);
+	if (!sc->vtgpu_dirty_valid) {
+		mtx_unlock_spin(&sc->vtgpu_dirty_mtx);
+		return;
+	}
+	x = sc->vtgpu_dirty_x1;
+	y = sc->vtgpu_dirty_y1;
+	width = sc->vtgpu_dirty_x2 - x;
+	height = sc->vtgpu_dirty_y2 - y;
+	sc->vtgpu_dirty_valid = false;
+	mtx_unlock_spin(&sc->vtgpu_dirty_mtx);
+
+	if ((atomic_load_acq_int(&sc->vtgpu_flags) &
+	    (VTGPU_FLAG_DETACH | VTGPU_FLAG_FAILED)) != 0)
+		return;
+	error = vtgpu_transfer_to_host_2d(sc, x, y, width, height);
+	if (error == 0)
+		(void)vtgpu_resource_flush(sc, x, y, width, height);
+}
+
 static int
 vtgpu_req_resp2(struct vtgpu_softc *sc, void *req1, size_t req1len,
     void *req2, size_t req2len, void *resp, size_t resplen)
@@ -624,11 +737,17 @@ vtgpu_req_resp2(struct vtgpu_softc *sc, void *req1, size_t req1len,
 		}
 	}
 	rcount = sg.sg_nseg;
-	error = sglist_append(&sg, resp, resplen);
+	error = sglist_append_boundary(&sg, resp, resplen);
 	if (error != 0) {
 		device_printf(sc->vtgpu_dev,
 		    "Unable to append the response buffer to the sglist: %d\n",
 		    error);
+		goto leave;
+	}
+	KASSERT(sg.sg_nseg > rcount,
+	    ("vtgpu: request and response collapsed into one descriptor"));
+	if (sg.sg_nseg <= rcount) {
+		error = EFAULT;
 		goto leave;
 	}
 	mtx_lock(&sc->vtgpu_mtx);

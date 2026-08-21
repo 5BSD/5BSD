@@ -6,7 +6,7 @@ host-model	bhyve-devices	host	yes	waspnest-test host	all device models, malforme
 vmm-kernel	VMM	host	yes	waspnest-test host	VMM ABI, events, dirty logging, startup, snapshot sessions, and interrupt state pass
 linux-live	bhyve	Alpine-Linux	yes	waspnest-test run	all supported split, packed, multiqueue, reset, reboot, and combined-device lanes pass
 fivebsd-live	bhyve	5BSD	yes	waspnest-test run	all supported 5BSD guest lanes pass and driver gaps remain explicit
-nonvirtio-live	bhyve-devices	Alpine-Linux+5BSD	yes	waspnest-test run	AHCI, NVMe, e82545, HDA, xHCI, framebuffer, UART, TPM, pvpanic, and platform devices have named live evidence
+nonvirtio-live	bhyve-devices	Alpine-Linux+5BSD	yes	waspnest-test run	AHCI, NVMe, e82545, HDA, xHCI, framebuffer, UART, TPM, pvpanic, qemu-fwcfg, and platform devices have named live evidence
 checkpoint	bhyve+VMM	Alpine-Linux+5BSD	yes	waspnest-test run	all supported devices preserve or explicitly reject active state as declared
 nested-vmx	VMM	Linux-L2+5BSD-L2	yes	waspnest-test run	Intel nested VMX, EPT, APIC, timers, failures, active-L2 restore, and repeated lifecycle pass
 soak	bhyve+VMM	Alpine-Linux+5BSD	yes	waspnest-test run	bounded resource, reset, connection, and restore soak limits pass

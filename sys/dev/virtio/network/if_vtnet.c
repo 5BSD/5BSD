@@ -3694,9 +3694,7 @@ vtnet_ctrl_mac_cmd(struct vtnet_softc *sc, uint8_t *hwaddr)
 	sglist_init(&sg, nitems(segs), segs);
 	error |= sglist_append(&sg, &s.hdr, sizeof(struct virtio_net_ctrl_hdr));
 	error |= sglist_append(&sg, &s.addr[0], ETHER_ADDR_LEN);
-	error |= sglist_append(&sg, &s.ack, sizeof(uint8_t));
-	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
-
+	error |= sglist_append_boundary(&sg, &s.ack, sizeof(uint8_t));
 	if (error == 0)
 		vtnet_exec_ctrl_cmd(sc, &s.ack, &sg, sg.sg_nseg - 1, 1);
 
@@ -3728,9 +3726,7 @@ vtnet_ctrl_guest_offloads(struct vtnet_softc *sc, uint64_t offloads)
 	sglist_init(&sg, nitems(segs), segs);
 	error |= sglist_append(&sg, &s.hdr, sizeof(struct virtio_net_ctrl_hdr));
 	error |= sglist_append(&sg, &s.offloads, sizeof(uint64_t));
-	error |= sglist_append(&sg, &s.ack, sizeof(uint8_t));
-	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
-
+	error |= sglist_append_boundary(&sg, &s.ack, sizeof(uint8_t));
 	if (error == 0)
 		vtnet_exec_ctrl_cmd(sc, &s.ack, &sg, sg.sg_nseg - 1, 1);
 
@@ -3762,9 +3758,7 @@ vtnet_ctrl_mq_cmd(struct vtnet_softc *sc, uint16_t npairs)
 	sglist_init(&sg, nitems(segs), segs);
 	error |= sglist_append(&sg, &s.hdr, sizeof(struct virtio_net_ctrl_hdr));
 	error |= sglist_append(&sg, &s.mq, sizeof(struct virtio_net_ctrl_mq));
-	error |= sglist_append(&sg, &s.ack, sizeof(uint8_t));
-	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
-
+	error |= sglist_append_boundary(&sg, &s.ack, sizeof(uint8_t));
 	if (error == 0)
 		vtnet_exec_ctrl_cmd(sc, &s.ack, &sg, sg.sg_nseg - 1, 1);
 
@@ -3774,7 +3768,7 @@ vtnet_ctrl_mq_cmd(struct vtnet_softc *sc, uint16_t npairs)
 static int
 vtnet_ctrl_rss_cmd(struct vtnet_softc *sc, uint16_t npairs)
 {
-	struct sglist_seg segs[3];
+	struct sglist_seg segs[5];
 	struct sglist sg;
 	struct virtio_net_ctrl_hdr hdr;
 	struct virtio_net_ctrl_rss *rss;
@@ -3810,8 +3804,7 @@ vtnet_ctrl_rss_cmd(struct vtnet_softc *sc, uint16_t npairs)
 	sglist_init(&sg, nitems(segs), segs);
 	error = sglist_append(&sg, &hdr, sizeof(hdr));
 	error |= sglist_append(&sg, rss, sizeof(*rss));
-	error |= sglist_append(&sg, &ack, sizeof(ack));
-	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
+	error |= sglist_append_boundary(&sg, &ack, sizeof(ack));
 	if (error == 0)
 		vtnet_exec_ctrl_cmd(sc, &ack, &sg, sg.sg_nseg - 1, 1);
 
@@ -3822,7 +3815,7 @@ vtnet_ctrl_rss_cmd(struct vtnet_softc *sc, uint16_t npairs)
 static int
 vtnet_ctrl_hash_cmd(struct vtnet_softc *sc)
 {
-	struct sglist_seg segs[3];
+	struct sglist_seg segs[5];
 	struct sglist sg;
 	struct virtio_net_ctrl_hdr hdr;
 	struct virtio_net_ctrl_hash hash;
@@ -3842,8 +3835,7 @@ vtnet_ctrl_hash_cmd(struct vtnet_softc *sc)
 	sglist_init(&sg, nitems(segs), segs);
 	error = sglist_append(&sg, &hdr, sizeof(hdr));
 	error |= sglist_append(&sg, &hash, sizeof(hash));
-	error |= sglist_append(&sg, &ack, sizeof(ack));
-	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
+	error |= sglist_append_boundary(&sg, &ack, sizeof(ack));
 	if (error == 0)
 		vtnet_exec_ctrl_cmd(sc, &ack, &sg, sg.sg_nseg - 1, 1);
 
@@ -3875,9 +3867,7 @@ vtnet_ctrl_rx_cmd(struct vtnet_softc *sc, uint8_t cmd, bool on)
 	sglist_init(&sg, nitems(segs), segs);
 	error |= sglist_append(&sg, &s.hdr, sizeof(struct virtio_net_ctrl_hdr));
 	error |= sglist_append(&sg, &s.onoff, sizeof(uint8_t));
-	error |= sglist_append(&sg, &s.ack, sizeof(uint8_t));
-	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
-
+	error |= sglist_append_boundary(&sg, &s.ack, sizeof(uint8_t));
 	if (error == 0)
 		vtnet_exec_ctrl_cmd(sc, &s.ack, &sg, sg.sg_nseg - 1, 1);
 
@@ -4004,9 +3994,7 @@ vtnet_rx_filter_mac(struct vtnet_softc *sc)
 	    sizeof(uint32_t) + ucnt * ETHER_ADDR_LEN);
 	error |= sglist_append(&sg, &filter->vmf_multicast,
 	    sizeof(uint32_t) + mcnt * ETHER_ADDR_LEN);
-	error |= sglist_append(&sg, &ack, sizeof(uint8_t));
-	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
-
+	error |= sglist_append_boundary(&sg, &ack, sizeof(uint8_t));
 	if (error == 0)
 		vtnet_exec_ctrl_cmd(sc, &ack, &sg, sg.sg_nseg - 1, 1);
 	if (ack != VIRTIO_NET_OK)
@@ -4044,9 +4032,7 @@ vtnet_exec_vlan_filter(struct vtnet_softc *sc, int add, uint16_t tag)
 	sglist_init(&sg, nitems(segs), segs);
 	error |= sglist_append(&sg, &s.hdr, sizeof(struct virtio_net_ctrl_hdr));
 	error |= sglist_append(&sg, &s.tag, sizeof(uint16_t));
-	error |= sglist_append(&sg, &s.ack, sizeof(uint8_t));
-	MPASS(error == 0 && sg.sg_nseg == nitems(segs));
-
+	error |= sglist_append_boundary(&sg, &s.ack, sizeof(uint8_t));
 	if (error == 0)
 		vtnet_exec_ctrl_cmd(sc, &s.ack, &sg, sg.sg_nseg - 1, 1);
 

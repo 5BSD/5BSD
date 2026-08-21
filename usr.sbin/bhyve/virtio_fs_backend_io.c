@@ -9,9 +9,11 @@
 #include <sys/un.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -20,6 +22,34 @@
 #include "virtio_state_range.h"
 
 #define	VFSB_CONTROL_FDS	16U
+
+static int
+virtio_fs_backend_path_split(const char *path, char **parentp, char **namep)
+{
+	char *copy, *slash;
+
+	if (path == NULL || path[0] != '/' || parentp == NULL || namep == NULL)
+		return (EINVAL);
+	copy = strdup(path);
+	if (copy == NULL)
+		return (ENOMEM);
+	slash = strrchr(copy, '/');
+	if (slash == NULL || slash[1] == '\0') {
+		free(copy);
+		return (EINVAL);
+	}
+	*namep = strdup(slash + 1);
+	if (*namep == NULL) {
+		free(copy);
+		return (ENOMEM);
+	}
+	if (slash == copy)
+		slash[1] = '\0';
+	else
+		*slash = '\0';
+	*parentp = copy;
+	return (0);
+}
 
 int
 virtio_fs_backend_connect_finish(int fd, uid_t expected_uid,
@@ -45,34 +75,54 @@ virtio_fs_backend_connect_start(const char *path, uid_t expected_uid,
     gid_t expected_gid, int *result_fd, bool *connecting)
 {
 	struct sockaddr_un address;
-	size_t path_len;
-	int error, fd;
+	char *name, *parent;
+	size_t name_len;
+	int dfd, error, fd;
 
 	if (result_fd == NULL || connecting == NULL)
 		return (EINVAL);
 	*result_fd = -1;
 	*connecting = false;
-	if (path == NULL || path[0] != '/')
-		return (EINVAL);
-	path_len = strnlen(path, sizeof(address.sun_path));
-	if (path_len == 0 || path_len >= sizeof(address.sun_path))
+	error = virtio_fs_backend_path_split(path, &parent, &name);
+	if (error != 0)
+		return (error);
+	name_len = strlen(name);
+	if (name_len == 0 || name_len >= sizeof(address.sun_path)) {
+		free(name);
+		free(parent);
 		return (ENAMETOOLONG);
+	}
+	dfd = open(parent, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	error = errno;
+	free(parent);
+	if (dfd < 0) {
+		free(name);
+		return (error);
+	}
 	fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-	if (fd < 0)
-		return (errno);
+	if (fd < 0) {
+		error = errno;
+		(void)close(dfd);
+		free(name);
+		return (error);
+	}
 	memset(&address, 0, sizeof(address));
 	address.sun_family = AF_UNIX;
 	address.sun_len = (uint8_t)(offsetof(struct sockaddr_un, sun_path) +
-	    path_len + 1);
-	memcpy(address.sun_path, path, path_len + 1);
-	if (connect(fd, (struct sockaddr *)&address, address.sun_len) != 0) {
+	    name_len + 1);
+	memcpy(address.sun_path, name, name_len + 1);
+	free(name);
+	if (connectat(dfd, fd, (struct sockaddr *)&address,
+	    address.sun_len) != 0) {
 		error = errno;
+		(void)close(dfd);
 		if (error != EINPROGRESS) {
 			(void)close(fd);
 			return (error);
 		}
 		*connecting = true;
 	} else {
+		(void)close(dfd);
 		error = virtio_fs_backend_connect_finish(fd, expected_uid,
 		    expected_gid);
 		if (error != 0) {

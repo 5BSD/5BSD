@@ -8,6 +8,7 @@ set -eu
 
 src=${SRCTOP:-/usr/src}
 jobs=${MAKE_JOBS:-$(sysctl -n hw.ncpu 2>/dev/null || echo 1)}
+module_set=${FIVEBSD_MODULE_SET:-supported}
 
 case "$jobs" in
 ''|*[!0-9]*)
@@ -47,11 +48,27 @@ build_module_tree()
 	fi
 }
 
-build_module_tree sys/modules/virtio
-build_module_tree sys/modules/vsock
-build_module_tree sys/modules/p9fs
-
-modules='
+case "$module_set" in
+supported)
+	directories='
+sys/modules/virtio/virtio
+sys/modules/virtio/pci
+sys/modules/virtio/network
+sys/modules/virtio/block
+sys/modules/virtio/scsi
+sys/modules/virtio/balloon
+sys/modules/virtio/random
+sys/modules/virtio/console
+sys/modules/virtio/gpu
+sys/modules/virtio/input
+sys/modules/virtio/p9fs
+sys/modules/virtio/rtc
+sys/modules/virtio/vsock
+sys/modules/virtio/sound
+sys/modules/vsock
+sys/modules/p9fs
+'
+	modules='
 virtio.ko
 virtio_pci.ko
 if_vtnet.ko
@@ -66,22 +83,40 @@ virtio_p9fs.ko
 virtio_rtc.ko
 virtio_vsock.ko
 virtio_snd.ko
-virtio_fs.ko
-virtio_mem.ko
-virtio_iommu.ko
 vsock.ko
 p9fs.ko
 '
-
-# The PMEM frontend consumes the amd64-only nvdimm provider, so its module is
-# only built (and therefore only gated) on amd64.  Keep the -Werror gate honest
-# on other architectures rather than demanding a .ko the tree never emits there.
-case "$(uname -m)" in
-amd64|x86_64)
-	modules="$modules
+	;;
+prototype)
+	directories='
+sys/modules/virtio/fs
+sys/modules/virtio/mem
+sys/modules/virtio/iommu
+'
+	modules='
+virtio_fs.ko
+virtio_mem.ko
+virtio_iommu.ko
+'
+	# PMEM consumes the amd64-only nvdimm provider.
+	case "$(uname -m)" in
+	amd64|x86_64)
+		directories="$directories
+sys/modules/virtio/pmem"
+		modules="$modules
 virtio_pmem.ko"
+		;;
+	esac
+	;;
+*)
+	echo "5BSD VirtIO module build: FIVEBSD_MODULE_SET must be supported or prototype" >&2
+	exit 2
 	;;
 esac
+
+for directory in $directories; do
+	build_module_tree "$directory"
+done
 
 count=0
 for module in $modules; do
@@ -97,4 +132,4 @@ for module in $modules; do
 	count=$((count + 1))
 done
 
-echo "PASS 5BSD VirtIO modules=$count architecture=$(uname -m)"
+echo "PASS 5BSD VirtIO module-set=$module_set modules=$count architecture=$(uname -m)"

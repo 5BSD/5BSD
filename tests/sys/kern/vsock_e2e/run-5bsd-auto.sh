@@ -39,9 +39,11 @@ set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 . "$here/virtio-ring-trace.sh"
 IMAGE=${IMAGE:?set IMAGE to a 5BSD raw disk base image}
+FIVEBSD_IMAGE_SHA256=${FIVEBSD_IMAGE_SHA256:?set FIVEBSD_IMAGE_SHA256 to the qualified base-image digest}
+FIVEBSD_BUILD_ID=${FIVEBSD_BUILD_ID:?set FIVEBSD_BUILD_ID to the embedded current-build identifier}
 BHYVE=${BHYVE:-}
 BHYVELOAD=${BHYVELOAD:-$(command -v bhyveload 2>/dev/null || true)}
-BHYVECTL=${BHYVECTL:-$(command -v bhyvectl 2>/dev/null || true)}
+BHYVECTL=${BHYVECTL:-}
 SRCTOP=${SRCTOP:-$(cd "$here/../../../.." && pwd)}
 OBJROOT=${OBJROOT:-/usr/obj}
 WORKDIR=${WORKDIR:-/tmp/bhyve-vsock-5bsd}
@@ -93,6 +95,7 @@ FIVEBSD_SOUND_PACKED=${FIVEBSD_SOUND_PACKED:-no}
 FIVEBSD_MEM_TEST=${FIVEBSD_MEM_TEST:-no}
 FIVEBSD_PMEM_TEST=${FIVEBSD_PMEM_TEST:-no}
 FIVEBSD_IOMMU_TEST=${FIVEBSD_IOMMU_TEST:-no}
+FIVEBSD_CHECKPOINT_TEST=${FIVEBSD_CHECKPOINT_TEST:-no}
 if [ "$FIVEBSD_MEM_TEST" = yes ] || [ "$FIVEBSD_PMEM_TEST" = yes ] ||
     [ "$FIVEBSD_IOMMU_TEST" = yes ]; then
 	echo "virtio-mem, virtio-pmem, and virtio-IOMMU are unsupported on the 5BSD qualification guest" >&2
@@ -110,8 +113,10 @@ NONVIRTIO_TPM_PATH=${NONVIRTIO_TPM_PATH:-}
 NONVIRTIO_PASSTHRU=${NONVIRTIO_PASSTHRU:-}
 NONVIRTIO_PASSTHRU_GUEST_ASSERT=${NONVIRTIO_PASSTHRU_GUEST_ASSERT:-}
 NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT=${NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT:-$NONVIRTIO_PASSTHRU_GUEST_ASSERT}
+NONVIRTIO_FWCFG_NAME=opt/waspnest/checkpoint
+NONVIRTIO_FWCFG_VALUE=WASPNEST-FWCFG-CURSOR-0123456789ABCDEF
 case "$NONVIRTIO_DEVICE" in
-none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|hostbridge|passthru) ;;
+none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|hostbridge|passthru|qemu-fwcfg) ;;
 *) echo "unknown NONVIRTIO_DEVICE: $NONVIRTIO_DEVICE" >&2; exit 2 ;;
 esac
 validate_yes_no_early()
@@ -160,6 +165,7 @@ validate_yes_no FIVEBSD_RNG_PACKED "$FIVEBSD_RNG_PACKED"
 validate_yes_no FIVEBSD_VSOCK_PACKED "$FIVEBSD_VSOCK_PACKED"
 validate_yes_no FIVEBSD_NOTIFICATION_DATA "$FIVEBSD_NOTIFICATION_DATA"
 validate_yes_no FIVEBSD_DEVICE_SUSPEND "$FIVEBSD_DEVICE_SUSPEND"
+validate_yes_no FIVEBSD_CHECKPOINT_TEST "$FIVEBSD_CHECKPOINT_TEST"
 validate_yes_no FIVEBSD_RING_TRACE "$FIVEBSD_RING_TRACE"
 validate_yes_no FIVEBSD_GPU_TEST "$FIVEBSD_GPU_TEST"
 validate_yes_no FIVEBSD_GPU_PACKED "$FIVEBSD_GPU_PACKED"
@@ -373,22 +379,49 @@ if [ -z "$BHYVE" ]; then
 		BHYVE=$(command -v bhyve 2>/dev/null || true)
 	fi
 fi
+if [ -z "$BHYVECTL" ]; then
+	object_bhyvectl="$OBJROOT$SRCTOP/$(uname -p).$(uname -p)/usr.sbin/bhyvectl/bhyvectl"
+	if [ -x "$object_bhyvectl" ]; then
+		BHYVECTL=$object_bhyvectl
+	else
+		BHYVECTL=$(command -v bhyvectl 2>/dev/null || true)
+	fi
+fi
 
 [ "$(id -u)" -eq 0 ] || {
 	echo "run-5bsd-auto.sh must run as root" >&2
 	exit 1
 }
 [ -f "$IMAGE" ] || { echo "5BSD image not found: $IMAGE" >&2; exit 1; }
+case "$FIVEBSD_IMAGE_SHA256" in
+''|*[!0-9a-f]*) echo "FIVEBSD_IMAGE_SHA256 must be a lowercase SHA-256 digest" >&2; exit 2 ;;
+esac
+[ "${#FIVEBSD_IMAGE_SHA256}" -eq 64 ] || {
+	echo "FIVEBSD_IMAGE_SHA256 must contain exactly 64 hexadecimal digits" >&2
+	exit 2
+}
+case "$FIVEBSD_BUILD_ID" in
+''|*[!A-Za-z0-9._-]*) echo "FIVEBSD_BUILD_ID contains unsafe characters" >&2; exit 2 ;;
+esac
+base_image_sha256=$(sha256 -q "$IMAGE")
+[ "$base_image_sha256" = "$FIVEBSD_IMAGE_SHA256" ] || {
+	echo "5BSD image digest mismatch: expected=$FIVEBSD_IMAGE_SHA256 actual=$base_image_sha256" >&2
+	exit 1
+}
 [ -x "$BHYVE" ] || { echo "bhyve not found: $BHYVE" >&2; exit 1; }
 [ -x "$BHYVELOAD" ] || { echo "bhyveload not found: $BHYVELOAD" >&2; exit 1; }
 [ -x "$BHYVECTL" ] || { echo "bhyvectl not found: $BHYVECTL" >&2; exit 1; }
-if [ "$NONVIRTIO_CHECKPOINT" = yes ]; then
+if [ "$NONVIRTIO_CHECKPOINT" = yes ] || [ "$FIVEBSD_CHECKPOINT_TEST" = yes ]; then
+	"$BHYVE" -h 2>&1 | grep -q -- '-r: path to checkpoint file' || {
+		echo "5BSD checkpoint tests require snapshot-enabled bhyve" >&2
+		exit 1
+	}
 	"$BHYVECTL" --help 2>&1 | grep -q -- '--checkpoint=<filename>' || {
-		echo "NONVIRTIO_CHECKPOINT requires snapshot-enabled bhyvectl" >&2
+		echo "5BSD checkpoint tests require snapshot-enabled bhyvectl" >&2
 		exit 1
 	}
 	sysctl -n kern.conftxt 2>/dev/null | grep -Eq '^options[[:space:]]+BHYVE_SNAPSHOT([[:space:]]|$)' || {
-		echo "NONVIRTIO_CHECKPOINT requires a BHYVE_SNAPSHOT kernel" >&2
+		echo "5BSD checkpoint tests require a BHYVE_SNAPSHOT kernel" >&2
 		exit 1
 	}
 fi
@@ -436,7 +469,7 @@ else
 	tools=${TOOLS:-$here}
 fi
 for tool in unix-pipe vsh-connect vsh-connect-test-server uinput-inject \
-    freebsd-input-check freebsd-tpm2-check; do
+    freebsd-input-check freebsd-tpm2-check freebsd-fwcfg-check; do
 	[ -x "$tools/$tool" ] || {
 		echo "built helper not found: $tools/$tool" >&2
 		exit 1
@@ -633,10 +666,10 @@ guest_check()
 	fi
 	echo "FAIL  preflight_$label (guest status $status)" >&2
 	[ -z "$output" ] || printf '%s\n' "$output" >&2
-	if [ "$status" -eq 124 ]; then
-		echo "recent guest console output:" >&2
-		tail -n 30 "$console_log" >&2
-	fi
+	echo "recent guest console output:" >&2
+	tail -n 40 "$console_log" >&2
+	echo "recent bhyve output:" >&2
+	tail -n 40 "$bhyve_log" >&2
 	return "$status"
 }
 
@@ -673,7 +706,64 @@ audit_5bsd_virtio_features()
 		expected=$((expected + 1)); specs="$specs pcm.0=$FIVEBSD_SOUND_PACKED"
 	fi
 	guest_check virtio_feature_inventory \
-	    "set -eu; nodes=\$(sysctl -aN | grep -E '^dev\.vtpci\.[0-9]+\.negotiated_features$'); set -- \$nodes; test \"\$#\" = '$expected'; for node in \$nodes; do features=\$(sysctl -n \"\$node\"); host=\$(sysctl -n \"\${node%negotiated_features}host_features\"); test -n \"\$features\"; if [ '$transport' = modern ]; then printf '%s\\n' \"\$features\" | grep -q Version1; else ! printf '%s\\n' \"\$features\" | grep -q Version1; fi; printf 'FEATURES node=%s host=%s negotiated=%s\\n' \"\$node\" \"\$host\" \"\$features\"; done; for spec in $specs; do child=\${spec%=*}; wanted=\${spec#*=}; parent=\$(sysctl -n \"dev.\$child.%parent\"); unit=\${parent##*[!0-9]}; name=\${parent%\$unit}; test -n \"\$unit\"; features=\$(sysctl -n \"dev.\$name.\$unit.negotiated_features\"); if [ \"\$wanted\" = yes ]; then printf '%s\\n' \"\$features\" | grep -q RingPacked; else ! printf '%s\\n' \"\$features\" | grep -q RingPacked; fi; done" \
+	    "status=0
+nodes=\$(sysctl -aN 2>/dev/null | grep -E '^dev\.vtpci\.[0-9]+\.negotiated_features$' || :)
+set -- \$nodes
+printf 'FEATURE-INVENTORY transport=%s expected=%s actual=%s nodes=%s\\n' '$transport' '$expected' \"\$#\" \"\$nodes\"
+if [ \"\$#\" -ne '$expected' ]; then
+	echo 'FEATURE-ERROR transport-node-count' >&2
+	status=1
+fi
+for node in \$nodes; do
+	if ! features=\$(sysctl -n \"\$node\" 2>&1); then
+		printf 'FEATURE-ERROR node=%s negotiated-read=%s\\n' \"\$node\" \"\$features\" >&2
+		status=1
+		continue
+	fi
+	host_node=\${node%negotiated_features}host_features
+	if ! host=\$(sysctl -n \"\$host_node\" 2>&1); then
+		printf 'FEATURE-ERROR node=%s host-read=%s\\n' \"\$node\" \"\$host\" >&2
+		status=1
+		continue
+	fi
+	printf 'FEATURES node=%s host=%s negotiated=%s\\n' \"\$node\" \"\$host\" \"\$features\"
+	if [ '$transport' = modern ]; then
+		printf '%s\\n' \"\$features\" | grep -q Version1 || {
+			printf 'FEATURE-ERROR node=%s missing=Version1\\n' \"\$node\" >&2
+			status=1
+		}
+	elif printf '%s\\n' \"\$features\" | grep -q Version1; then
+		printf 'FEATURE-ERROR node=%s unexpected=Version1\\n' \"\$node\" >&2
+		status=1
+	fi
+done
+for spec in $specs; do
+	child=\${spec%=*}
+	wanted=\${spec#*=}
+	if ! parent=\$(sysctl -n \"dev.\$child.%parent\" 2>&1); then
+		printf 'FEATURE-ERROR child=%s parent-read=%s\\n' \"\$child\" \"\$parent\" >&2
+		status=1
+		continue
+	fi
+	unit=\${parent##*[!0-9]}
+	name=\${parent%\$unit}
+	if [ -z \"\$unit\" ] || ! features=\$(sysctl -n \"dev.\$name.\$unit.negotiated_features\" 2>&1); then
+		printf 'FEATURE-ERROR child=%s parent=%s negotiated-read=%s\\n' \"\$child\" \"\$parent\" \"\${features:-missing}\" >&2
+		status=1
+		continue
+	fi
+	printf 'FEATURE-MAP child=%s parent=%s packed=%s negotiated=%s\\n' \"\$child\" \"\$parent\" \"\$wanted\" \"\$features\"
+	if [ \"\$wanted\" = yes ]; then
+		printf '%s\\n' \"\$features\" | grep -q RingPacked || {
+			printf 'FEATURE-ERROR child=%s missing=RingPacked\\n' \"\$child\" >&2
+			status=1
+		}
+	elif printf '%s\\n' \"\$features\" | grep -q RingPacked; then
+		printf 'FEATURE-ERROR child=%s unexpected=RingPacked\\n' \"\$child\" >&2
+		status=1
+	fi
+done
+exit \"\$status\"" \
 	    45
 }
 
@@ -742,6 +832,9 @@ run_nonvirtio_5bsd()
 	tpm-crb)
 		guest_check nonvirtio_tpm_crb "set -eu; kldstat -q -m tpm || kldload tpm; i=0; while [ ! -c /dev/tpm0 ] && [ \$i -lt 50 ]; do sleep 0.1; i=\$((i + 1)); done; test -c /dev/tpm0; /tmp/freebsd-tpm2-check /dev/tpm0" 60
 		;;
+	qemu-fwcfg)
+		guest_check nonvirtio_qemu_fwcfg "/tmp/freebsd-fwcfg-check live '$NONVIRTIO_FWCFG_NAME' '$NONVIRTIO_FWCFG_VALUE'" 30
+		;;
 	hostbridge)
 		guest_check nonvirtio_hostbridge_topology "test \"\$(pciconf -l | wc -l)\" -ge 4; devinfo -rv | grep -q 'Host to PCI bridge'"
 		;;
@@ -760,7 +853,18 @@ wait_nonvirtio_manifest()
 		    [ "$(sed -n '1p' "$manifest")" = BHYVE-CHECKPOINT-MANIFEST-3 ]; then
 			contents=$(cat "$manifest")
 			if [ -z "$old_contents" ] || [ "$contents" != "$old_contents" ]; then
-				return 0
+				valid=yes
+				for key in data kern meta; do
+					member=$(printf '%s\n' "$contents" | sed -n "s/^$key=//p")
+					case "$member" in
+					''|*/*|.|..) valid=no; break ;;
+					esac
+					[ -f "$(dirname "$manifest")/$member" ] || {
+						valid=no
+						break
+					}
+				done
+				[ "$valid" = no ] || return 0
 			fi
 		fi
 		sleep 1; i=$((i + 1))
@@ -802,13 +906,14 @@ launch_nonvirtio_restore_5bsd()
 	    -s "22,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
 	fbuf) set -- "$@" -s "21,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
 	pci-uart) set -- "$@" -s "21,uart,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log" ;;
-	hostbridge) ;;
-	lpc-uart) ;;
+	none|hostbridge|lpc-uart|qemu-fwcfg) ;;
 	*) echo "restore is not supported for $NONVIRTIO_DEVICE" >&2; return 2 ;;
 	esac
 	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT"
 	[ "$NONVIRTIO_DEVICE" != lpc-uart ] || set -- "$@" \
 	    -l "com2,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log"
+	[ "$NONVIRTIO_DEVICE" != qemu-fwcfg ] || set -- "$@" \
+	    -l fwcfg,qemu -f "$NONVIRTIO_FWCFG_NAME,string=$NONVIRTIO_FWCFG_VALUE"
 	set -- "$@" "$vmname"
 	env BHYVE_VIRTIO_DEBUG="$VIRTIO_DEBUG" \
 	    BHYVE_VTBLK_DEBUG="$VIRTIO_DEBUG" \
@@ -816,6 +921,12 @@ launch_nonvirtio_restore_5bsd()
 	    "$@" >> "$bhyve_log" 2>&1 &
 	vm_pid=$!
 	start_console
+}
+
+start_fwcfg_cursor_5bsd()
+{
+	phase=$1
+	guest_cmd "set -eu; rm -f /tmp/fwcfg.ready.$phase /tmp/fwcfg.go.$phase /tmp/fwcfg.result.$phase /tmp/nonvirtio-checkpoint.log; nohup /tmp/freebsd-fwcfg-check active '$NONVIRTIO_FWCFG_NAME' '$NONVIRTIO_FWCFG_VALUE' /tmp/fwcfg.ready.$phase /tmp/fwcfg.go.$phase /tmp/fwcfg.result.$phase >/tmp/nonvirtio-checkpoint.log 2>&1 & echo \$! >/tmp/nonvirtio-checkpoint.pid; i=0; while [ ! -s /tmp/fwcfg.ready.$phase ] && kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid) 2>/dev/null && [ \$i -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done; test -s /tmp/fwcfg.ready.$phase; kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid)" 30
 }
 
 start_nonvirtio_checkpoint_5bsd()
@@ -847,6 +958,11 @@ start_nonvirtio_checkpoint_5bsd()
 	hostbridge)
 		guest_cmd 'set -eu; pciconf -l | sort >/tmp/nonvirtio-topology.expected; rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (i=0; while :; do i=$((i + 1)); pciconf -l pci0:0:0 >/dev/null; echo $i >/tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
 		;;
+	qemu-fwcfg)
+		start_fwcfg_cursor_5bsd 1
+		nonvirtio_count=0
+		return 0
+		;;
 	*) return 1 ;;
 	esac
 	if [ "$NONVIRTIO_DEVICE" = xhci ]; then
@@ -867,6 +983,17 @@ start_nonvirtio_checkpoint_5bsd()
 verify_nonvirtio_checkpoint_5bsd()
 {
 	case "$NONVIRTIO_DEVICE" in
+	qemu-fwcfg)
+		phase=$((nonvirtio_checkpoint_phase + 1))
+		guest_check nonvirtio_qemu_fwcfg_cursor "set -eu; touch /tmp/fwcfg.go.$phase; i=0; while [ ! -s /tmp/fwcfg.result.$phase ] && kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid) 2>/dev/null && [ \$i -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done; cat /tmp/nonvirtio-checkpoint.log; test \"\$(cat /tmp/fwcfg.result.$phase)\" = pass; i=0; while kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid) 2>/dev/null && [ \$i -lt 100 ]; do sleep 0.1; i=\$((i + 1)); done; ! kill -0 \$(cat /tmp/nonvirtio-checkpoint.pid) 2>/dev/null" 30
+		nonvirtio_checkpoint_phase=$phase
+		nonvirtio_count=$phase
+		if [ "$phase" -eq 1 ]; then
+			start_fwcfg_cursor_5bsd 2
+		fi
+		echo "PASS active-checkpoint-state guest=5bsd device=qemu-fwcfg cursor-phase=$phase"
+		return 0
+		;;
 	xhci)
 		event=$((nonvirtio_checkpoint_phase + 1))
 		"$tools/gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768 \
@@ -1006,7 +1133,11 @@ run_nonvirtio_checkpoint_5bsd()
 	i=0
 	while kill -0 "$vm_pid" 2>/dev/null && [ "$i" -lt 180 ]; do sleep 1; i=$((i + 1)); done
 	[ "$i" -lt 180 ] || return 1
-	wait "$vm_pid" 2>/dev/null || true
+	if wait "$vm_pid" 2>/dev/null; then :; else
+		status=$?
+		echo "suspended bhyve exited unsuccessfully: $status" >&2
+		return 1
+	fi
 	vm_pid=
 	[ -z "$console_pid" ] || pkill -TERM -P "$console_pid" 2>/dev/null || true
 	[ -z "$console_pid" ] || kill "$console_pid" 2>/dev/null || true
@@ -1020,6 +1151,91 @@ run_nonvirtio_checkpoint_5bsd()
 	guest_cmd 'pid=$(cat /tmp/nonvirtio-checkpoint.pid); kill $pid 2>/dev/null || true; i=0; while kill -0 $pid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; ! kill -0 $pid 2>/dev/null' 15
 	run_nonvirtio_5bsd
 	echo "PASS checkpoint-restore guest=5bsd device=$NONVIRTIO_DEVICE"
+}
+
+virtio_checkpoint_probe_5bsd()
+{
+	probe='set -eu; dd if=/dev/vtbd0 of=/dev/null bs=4096 count=1 2>/dev/null; dd if=/dev/random of=/dev/null bs=32 count=1 2>/dev/null; test "$(sysctl -n kern.vsock.guest_cid)" = '"$CID"
+	[ -z "$balloon_opt" ] || probe="$probe; sysctl -n dev.vtballoon.0.current >/dev/null"
+	if [ "$FIVEBSD_NET_TEST" = yes ]; then
+		probe="$probe; iface=\$(ifconfig -l | tr ' ' '\\n' | grep '^vtnet' | head -n 1); test -n \"\$iface\"; gateway=\$(route -n get default | awk '/gateway:/{print \$2; exit}'); ping -c 1 -W 2 \"\$gateway\" >/dev/null"
+	fi
+	[ "$FIVEBSD_SCSI_QUEUES" -eq 0 ] ||
+	    probe="$probe; camcontrol devlist | grep -q '<BHYVE '"
+	[ "$FIVEBSD_CONSOLE_TEST" = no ] ||
+	    probe="$probe; sysctl -aN | grep -q '^dev.vtcon.0.'"
+	[ "$FIVEBSD_GPU_TEST" = no ] ||
+	    probe="$probe; sysctl -aN | grep -q '^dev.vtgpu.0.'"
+	[ "$FIVEBSD_RTC_TEST" = no ] ||
+	    probe="$probe; sysctl -aN | grep -q '^dev.vtrtc.0.'"
+	[ "$FIVEBSD_INPUT_TEST" = no ] ||
+	    probe="$probe; sysctl -aN | grep -q '^dev.vtinput.0.'"
+	if [ "$FIVEBSD_NINEP_TEST" = yes ]; then
+		probe="$probe; mkdir -p /mnt/bhyve-checkpoint-9p; mount -t p9fs '$ninep_tag' /mnt/bhyve-checkpoint-9p; test \"\$(cat /mnt/bhyve-checkpoint-9p/host-seed)\" = '$ninep_seed'; umount /mnt/bhyve-checkpoint-9p"
+	fi
+	[ "$FIVEBSD_SOUND_TEST" = no ] ||
+	    probe="$probe; sysctl -aN | grep -q '^dev.vtsnd.0.'"
+	printf '%s' "$probe"
+}
+
+verify_virtio_checkpoint_worker_5bsd()
+{
+	before=$1
+	i=0
+	while [ "$i" -lt 30 ]; do
+		after=$(guest_cmd 'cat /tmp/virtio-checkpoint.count 2>/dev/null || echo 0' 10)
+		[ "$after" -gt "$before" ] 2>/dev/null && break
+		sleep 1
+		i=$((i + 1))
+	done
+	[ "$i" -lt 30 ] || {
+		guest_cmd 'cat /tmp/virtio-checkpoint.log' 10 >&2 || true
+		return 1
+	}
+	guest_cmd 'kill -0 $(cat /tmp/virtio-checkpoint.pid)' 10
+	virtio_checkpoint_count=$after
+	echo "PASS active-checkpoint-progress guest=5bsd before=$before after=$after"
+}
+
+run_virtio_checkpoint_5bsd()
+{
+	[ "$FIVEBSD_CHECKPOINT_TEST" = yes ] || return 0
+	checkpoint="$rundir/virtio.checkpoint"
+	rm -f "$checkpoint" "$checkpoint".*
+	probe=$(virtio_checkpoint_probe_5bsd)
+	guest_cmd "set -eu; printf '%s' '5bsd-checkpoint-$transport-$$' >/tmp/virtio-checkpoint.marker; rm -f /tmp/virtio-checkpoint.count /tmp/virtio-checkpoint.log; (i=0; while :; do i=\$((i + 1)); $probe; echo \$i >/tmp/virtio-checkpoint.count; sleep 0.05; done) >/tmp/virtio-checkpoint.log 2>&1 & echo \$! >/tmp/virtio-checkpoint.pid" 30
+	virtio_checkpoint_count=0
+	verify_virtio_checkpoint_worker_5bsd "$virtio_checkpoint_count"
+	"$BHYVECTL" --vm="$vmname" --checkpoint="$checkpoint"
+	wait_nonvirtio_manifest "$checkpoint"
+	first_manifest=$(cat "$checkpoint")
+	verify_virtio_checkpoint_worker_5bsd "$virtio_checkpoint_count"
+	"$BHYVECTL" --vm="$vmname" --suspend="$checkpoint"
+	i=0
+	while kill -0 "$vm_pid" 2>/dev/null && [ "$i" -lt 180 ]; do
+		sleep 1
+		i=$((i + 1))
+	done
+	[ "$i" -lt 180 ] || return 1
+	if wait "$vm_pid" 2>/dev/null; then :; else
+		status=$?
+		echo "suspended bhyve exited unsuccessfully: $status" >&2
+		return 1
+	fi
+	vm_pid=
+	[ -z "$console_pid" ] || pkill -TERM -P "$console_pid" 2>/dev/null || true
+	[ -z "$console_pid" ] || kill "$console_pid" 2>/dev/null || true
+	[ -z "$console_pid" ] || wait "$console_pid" 2>/dev/null || true
+	console_pid=
+	wait_nonvirtio_manifest "$checkpoint" "$first_manifest"
+	launch_nonvirtio_restore_5bsd "$checkpoint"
+	wait_for_guest
+	guest_check fivebsd_restored_build \
+	    "set -u; system=\$(uname -s); product=\$(sed -n 's/^ID=//p' /etc/os-release 2>/dev/null || :); embedded=\$(cat /etc/waspnest-build-id 2>/dev/null || :); actual=\$(cd /boot/kernel && find -s . -type f -exec sha256 -r {} \\; | sha256 -q) || actual=; printf '5BSD-RESTORE system=%s product=%s embedded=%s actual=%s\\n' \"\$system\" \"\$product\" \"\$embedded\" \"\$actual\"; test \"\$system\" = 5BSD; test \"\$product\" = 5bsd; test \"\$embedded\" = '$FIVEBSD_BUILD_ID'; test \"\$actual\" = '$FIVEBSD_BUILD_ID'; test \"\$(cat /tmp/virtio-checkpoint.marker)\" = '5bsd-checkpoint-$transport-$$'" \
+	    60
+	verify_virtio_checkpoint_worker_5bsd "$virtio_checkpoint_count"
+	guest_cmd 'pid=$(cat /tmp/virtio-checkpoint.pid); kill $pid; i=0; while kill -0 $pid 2>/dev/null && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; ! kill -0 $pid 2>/dev/null' 15
+	echo "PASS checkpoint-restore guest=5bsd transport=$transport manifest=$checkpoint"
 }
 
 run_5bsd_console_exchange()
@@ -1148,6 +1364,10 @@ prepare_guest_image()
 		if [ "$NONVIRTIO_DEVICE" = tpm-crb ]; then
 			install -m 0555 "$tools/freebsd-tpm2-check" \
 			    "$image_mount/tmp/freebsd-tpm2-check"
+		fi
+		if [ "$NONVIRTIO_DEVICE" = qemu-fwcfg ]; then
+			install -m 0555 "$tools/freebsd-fwcfg-check" \
+			    "$image_mount/tmp/freebsd-fwcfg-check"
 		fi
 		sync
 		umount "$image_mount"
@@ -1505,7 +1725,7 @@ for transport in $TRANSPORTS; do
 	[ "$FIVEBSD_IOMMU_TEST" = no ] || set -- "$@" \
 	    -s "20,virtio-iommu$iommu_opt"
 	case "$NONVIRTIO_DEVICE" in
-	none|lpc-uart|tpm-crb|hostbridge) ;;
+	none|lpc-uart|tpm-crb|hostbridge|qemu-fwcfg) ;;
 	ahci) set -- "$@" -s "21,ahci-hd,$nonvirtio_image,checkpoint_identity=waspnest-ahci" ;;
 	nvme) set -- "$@" -s "21,nvme,$nonvirtio_image,ser=WASPNESTNVME,ioslots=64,maxq=8,qsz=64" ;;
 	e82545) set -- "$@" -s "21,e1000,$tap" ;;
@@ -1521,6 +1741,8 @@ for transport in $TRANSPORTS; do
 	    -l "com2,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log"
 	[ "$NONVIRTIO_DEVICE" != tpm-crb ] || set -- "$@" \
 	    -l "tpm,$NONVIRTIO_TPM_TYPE,$NONVIRTIO_TPM_PATH,version=2.0"
+	[ "$NONVIRTIO_DEVICE" != qemu-fwcfg ] || set -- "$@" \
+	    -l fwcfg,qemu -f "$NONVIRTIO_FWCFG_NAME,string=$NONVIRTIO_FWCFG_VALUE"
 	set -- "$@" "$vmname"
 	env BHYVE_VIRTIO_DEBUG="$VIRTIO_DEBUG" \
 	    BHYVE_VTBLK_DEBUG="$VIRTIO_DEBUG" \
@@ -1529,6 +1751,9 @@ for transport in $TRANSPORTS; do
 	vm_pid=$!
 	start_console
 	wait_for_guest
+	guest_check fivebsd_current_build \
+	    "set -u; system=\$(uname -s); product=\$(sed -n 's/^ID=//p' /etc/os-release 2>/dev/null || :); embedded=\$(cat /etc/waspnest-build-id 2>/dev/null || :); actual=\$(cd /boot/kernel && find -s . -type f -exec sha256 -r {} \\; | sha256 -q) || actual=; printf '5BSD-BUILD system=%s product=%s kernel=%s machine=%s embedded=%s actual=%s\\n' \"\$system\" \"\$product\" \"\$(uname -K)\" \"\$(uname -m)\" \"\$embedded\" \"\$actual\"; test \"\$system\" = 5BSD; test \"\$product\" = 5bsd; test \"\$embedded\" = '$FIVEBSD_BUILD_ID'; test \"\$actual\" = '$FIVEBSD_BUILD_ID'" \
+	    60
 	if [ "$FIVEBSD_RING_TRACE" = yes ]; then
 		start_ring_trace
 		guest_check ring_features_negotiated \
@@ -2256,9 +2481,15 @@ for transport in $TRANSPORTS; do
 			finish_ring_trace
 		fi
 	fi
+	run_virtio_checkpoint_5bsd
 	shutdown_guest
 	cleanup_vm
 	rm -f "$guest_image"
 done
+
+[ "$(sha256 -q "$IMAGE")" = "$base_image_sha256" ] || {
+	echo "qualified 5BSD base image changed during execution" >&2
+	exit 1
+}
 
 echo "5BSD transport automation completed successfully: $TRANSPORTS"

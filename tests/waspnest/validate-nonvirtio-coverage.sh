@@ -32,9 +32,9 @@ NF != 10 || seen[$1]++ || !allowed[$4] || !allowed[$6] || !allowed[$8] { exit 11
     (($8 == "driver-gap" || $8 == "not-applicable") && $9 != "-") { exit 15 }
 { present[$1] = 1; rows++ }
 END {
-	split("ahci nvme e82545 hda xhci fbuf pci-uart lpc-uart tpm-crb pvpanic hostbridge passthru", required, " ")
+	split("ahci nvme e82545 hda xhci fbuf pci-uart lpc-uart tpm-crb pvpanic hostbridge passthru qemu-fwcfg", required, " ")
 	for (i in required) if (!present[required[i]]) exit 12
-	if (rows != 12) exit 13
+	if (rows != 13) exit 13
 }' "$ledger" || fail "malformed, duplicate, incomplete, or unknown-status row"
 
 # The inventory is also the executable contract: every supported guest gets

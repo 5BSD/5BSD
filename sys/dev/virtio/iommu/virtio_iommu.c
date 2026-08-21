@@ -144,6 +144,15 @@ struct vtiommu_event_buf {
 	struct virtio_iommu_fault	eb_fault;
 };
 
+struct vtiommu_request_io {
+	uint8_t	request[sizeof(struct virtio_iommu_req_probe)];
+	uint8_t	pad;
+	uint8_t	response[VTIOMMU_PROBE_MAX +
+	    sizeof(struct virtio_iommu_req_tail)] __aligned(sizeof(uint64_t));
+};
+CTASSERT(offsetof(struct vtiommu_request_io, response) >=
+    sizeof(((struct vtiommu_request_io *)0)->request) + 1);
+
 struct vtiommu_softc {
 	device_t		 vtiommu_dev;
 	struct mtx		 vtiommu_mtx;
@@ -164,6 +173,7 @@ struct vtiommu_softc {
 
 	/* Serialized request scratch (readable request + writable response). */
 	struct sglist		*vtiommu_sg;
+	struct vtiommu_request_io *vtiommu_io;
 	uint8_t			*vtiommu_req;		/* max request bytes */
 	uint8_t			*vtiommu_resp;		/* response + tail */
 	size_t			 vtiommu_resp_len;
@@ -630,18 +640,21 @@ vtiommu_alloc_scratch(struct vtiommu_softc *sc)
 		resp_len = sizeof(struct virtio_iommu_req_tail);
 	sc->vtiommu_resp_len = resp_len;
 
-	sc->vtiommu_req = malloc(sizeof(struct virtio_iommu_req_probe),
-	    M_VTIOMMU, M_WAITOK | M_ZERO);
-	sc->vtiommu_resp = malloc(resp_len, M_VTIOMMU, M_WAITOK | M_ZERO);
+	sc->vtiommu_io = malloc(sizeof(*sc->vtiommu_io), M_VTIOMMU,
+	    M_WAITOK | M_ZERO);
+	sc->vtiommu_req = sc->vtiommu_io->request;
+	sc->vtiommu_resp = sc->vtiommu_io->response;
 
 	/*
-	 * sglist_append() splits a buffer at every physical-page boundary, so a
-	 * multi-page PROBE response (up to VTIOMMU_PROBE_MAX + tail) can occupy
-	 * more than one segment.  Size the list for the request (always a single
-	 * page) plus the worst-case response segment count; vtiommu_send_request
-	 * derives the actual readable/writable descriptor counts from the list.
+	 * sglist_append() splits a range at every physical-page boundary.  Do
+	 * not assume an allocator-specific starting offset: both the request and
+	 * response can begin near the end of a page.  Size each side for that
+	 * worst case; vtiommu_send_request() derives the actual direction counts
+	 * from the resulting segments.
 	 */
-	sc->vtiommu_sg = sglist_alloc(1 + howmany(resp_len, PAGE_SIZE) + 1,
+	sc->vtiommu_sg = sglist_alloc(
+	    howmany(sizeof(sc->vtiommu_io->request) + PAGE_SIZE - 1,
+	    PAGE_SIZE) + howmany(resp_len + PAGE_SIZE - 1, PAGE_SIZE),
 	    M_WAITOK);
 
 	return (0);
@@ -651,14 +664,12 @@ static void
 vtiommu_free_scratch(struct vtiommu_softc *sc)
 {
 
-	if (sc->vtiommu_req != NULL) {
-		free(sc->vtiommu_req, M_VTIOMMU);
-		sc->vtiommu_req = NULL;
+	if (sc->vtiommu_io != NULL) {
+		free(sc->vtiommu_io, M_VTIOMMU);
+		sc->vtiommu_io = NULL;
 	}
-	if (sc->vtiommu_resp != NULL) {
-		free(sc->vtiommu_resp, M_VTIOMMU);
-		sc->vtiommu_resp = NULL;
-	}
+	sc->vtiommu_req = NULL;
+	sc->vtiommu_resp = NULL;
 	if (sc->vtiommu_sg != NULL) {
 		sglist_free(sc->vtiommu_sg);
 		sc->vtiommu_sg = NULL;
@@ -709,19 +720,25 @@ vtiommu_send_request(struct vtiommu_softc *sc, size_t req_len, size_t resp_len,
 	/*
 	 * The readable descriptors are the request; the writable descriptors
 	 * are the response (the tail, optionally preceded by a PROBE properties
-	 * region).  The request and response are separate allocations so the two
-	 * appends never coalesce, but either may span more than one physical
-	 * page, so derive the descriptor counts from the resulting segments
-	 * rather than assuming one segment apiece.
+	 * region).  An explicit pad in their shared allocation prevents the
+	 * opposite descriptor directions from coalescing.  Either range may still
+	 * span more than one physical page, so derive the descriptor counts from
+	 * the resulting segments rather than assuming one segment apiece.
 	 */
 	error = sglist_append(sg, sc->vtiommu_req, req_len);
 	if (error != 0)
 		goto release;
 	readable = sg->sg_nseg;
-	error = sglist_append(sg, sc->vtiommu_resp, resp_len);
+	error = sglist_append_boundary(sg, sc->vtiommu_resp, resp_len);
 	if (error != 0)
 		goto release;
 	writable = sg->sg_nseg - readable;
+	KASSERT(writable > 0,
+	    ("vtiommu: request and response collapsed into one descriptor"));
+	if (writable == 0) {
+		error = EFAULT;
+		goto release;
+	}
 
 	error = virtqueue_enqueue(sc->vtiommu_req_vq, sc, sg, readable, writable);
 	if (error != 0)

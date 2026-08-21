@@ -54,6 +54,8 @@ def audit(transport, count, packed_bdfs, sys_root="/sys"):
     if packed_bdfs - bdfs:
         raise RuntimeError("packed expectation names an absent device")
     for bdf, device, driver, bitmap in found:
+        if driver == "unbound":
+            raise RuntimeError(f"{bdf} has no bound VirtIO driver")
         version_1 = enabled(bitmap, VERSION_1)
         packed = enabled(bitmap, RING_PACKED)
         if version_1 != (transport == "modern"):
@@ -95,6 +97,13 @@ def self_test():
     with tempfile.TemporaryDirectory() as root:
         make_device(root, "0000:00:04.0", ())
         audit("legacy", 1, set(), root)
+        os.unlink(root + "/bus/pci/devices/0000:00:04.0/virtio0/driver")
+        try:
+            audit("legacy", 1, set(), root)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("accepted an unbound VirtIO device")
     print("SELFTEST PASS")
 
 

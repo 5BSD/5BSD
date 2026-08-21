@@ -1438,8 +1438,11 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 	    BUS_DMASYNC_PREWRITE);
 
 	sglist_reset(sg);
-	sglist_append_phys(sg, req->vbr_hdr_paddr,
+	error = sglist_append_phys(sg, req->vbr_hdr_paddr,
 	    sizeof(struct virtio_blk_outhdr));
+	if (error != 0)
+		panic("%s: bio %p request header too big %d", __func__, bp,
+		    error);
 
 	if (bp->bio_cmd == BIO_READ || bp->bio_cmd == BIO_WRITE) {
 		/*
@@ -1447,8 +1450,14 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 		 * iommu mapping (see vtblk_attach) this should be safe.
 		 */
 		for (i = 0; i < nseg; i++) {
-			error = sglist_append_phys(sg,
-			    (vm_paddr_t)segs[i].ds_addr, segs[i].ds_len);
+			if (bp->bio_cmd == BIO_READ && i == 0)
+				error = sglist_append_phys_boundary(sg,
+				    (vm_paddr_t)segs[i].ds_addr,
+				    segs[i].ds_len);
+			else
+				error = sglist_append_phys(sg,
+				    (vm_paddr_t)segs[i].ds_addr,
+				    segs[i].ds_len);
 			if (error || sg->sg_nseg == sg->sg_maxseg) {
 				panic("%s: bio %p data buffer too big %d",
 				    __func__, bp, error);
@@ -1457,7 +1466,10 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 
 		/* Special handling for dump, which bypasses busdma. */
 		if (req->vbr_mapp == NULL) {
-			error = sglist_append_bio(sg, bp);
+			if (bp->bio_cmd == BIO_READ)
+				error = sglist_append_bio_boundary(sg, bp);
+			else
+				error = sglist_append_bio(sg, bp);
 			if (error || sg->sg_nseg == sg->sg_maxseg) {
 				panic("%s: bio %p data buffer too big %d",
 				    __func__, bp, error);
@@ -1489,9 +1501,19 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 	bus_dmamap_sync(sc->vtblk_ack_dmat, req->vbr_ack_mapp,
 	    BUS_DMASYNC_PREREAD);
 
-	writable++;
-	sglist_append_phys(sg, req->vbr_ack_paddr, sizeof(uint8_t));
 	readable = sg->sg_nseg - writable;
+	if (writable == 0)
+		error = sglist_append_phys_boundary(sg, req->vbr_ack_paddr,
+		    sizeof(uint8_t));
+	else
+		error = sglist_append_phys(sg, req->vbr_ack_paddr,
+		    sizeof(uint8_t));
+	if (error != 0) {
+		panic("%s: bio %p status buffer too big %d", __func__, bp,
+		    error);
+	}
+	/* The status may coalesce with existing writable data, so rederive it. */
+	writable = sg->sg_nseg - readable;
 	vq = req->vbr_vq;
 	if (vq == NULL) {
 		vq = vtblk_select_virtqueue(sc,

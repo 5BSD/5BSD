@@ -1077,6 +1077,18 @@ grep -Eq '^#define[[:space:]]+VTCON_MAX_PORTS[[:space:]]+32$' \
 	echo "virtio private interfaces: guest console port policy is unpinned" >&2
 	exit 1
 }
+# TEST-ANCHOR: console-io-timeout-policy
+grep -Eq '^#define[[:space:]]+VTCON_IO_TIMEOUT[[:space:]]+\(5 \* SBT_1S\)$' \
+    "$virtio_console_guest" &&
+    [ "$(grep -c 'deadline = sbinuptime() + VTCON_IO_TIMEOUT' \
+        "$virtio_console_guest")" -eq 2 ] &&
+    [ "$(grep -c 'atomic_set_32(&sc->vtcon_flags, VTCON_FLAG_FAILED)' \
+        "$virtio_console_guest")" -eq 2 ] &&
+    [ "$(grep -c 'virtqueue_drain(vq, &last)' \
+        "$virtio_console_guest")" -ge 2 ] || {
+	echo "virtio private interfaces: guest console I/O timeout is unpinned" >&2
+	exit 1
+}
 grep -Eq '^#define[[:space:]]+VTINPUT_EVENT_SLOTS[[:space:]]+64$' \
     "$virtio_input_guest" &&
     grep -Eq '^#define[[:space:]]+VTINPUT_STATUS_SLOTS[[:space:]]+32$' \
@@ -1088,6 +1100,26 @@ grep -Eq '^#define[[:space:]]+VTGPU_MAX_FB_SIZE[[:space:]]+\(256U \* 1024U \* 10
     "$virtio_gpu_guest" &&
     grep -q '(uint64_t)VTGPU_MAX_FB_SIZE' "$virtio_gpu_guest" || {
 	echo "virtio private interfaces: guest GPU framebuffer policy is unpinned" >&2
+	exit 1
+}
+# TEST-ANCHOR: guest-gpu-deferred-flush
+grep -q 'mtx_init(&sc->vtgpu_dirty_mtx, device_get_nameunit(dev),' \
+    "$virtio_gpu_guest" &&
+	grep -q '"VirtIO GPU dirty rectangle", MTX_SPIN)' \
+	    "$virtio_gpu_guest" &&
+	grep -q 'taskqueue_create_fast("vtgpu_flush", M_WAITOK,' \
+	    "$virtio_gpu_guest" &&
+	grep -q 'taskqueue_start_threads(&sc->vtgpu_flush_tq, 1, PI_TTY,' \
+	    "$virtio_gpu_guest" &&
+	grep -q 'taskqueue_enqueue(sc->vtgpu_flush_tq, &sc->vtgpu_flush_task)' \
+	    "$virtio_gpu_guest" &&
+	grep -q 'taskqueue_drain(sc->vtgpu_flush_tq, &sc->vtgpu_flush_task)' \
+	    "$virtio_gpu_guest" &&
+	grep -q 'taskqueue_free(sc->vtgpu_flush_tq)' \
+	    "$virtio_gpu_guest" &&
+	grep -q 'atomic_set_rel_int(&sc->vtgpu_flags, VTGPU_FLAG_DETACH)' \
+	    "$virtio_gpu_guest" || {
+	echo "virtio private interfaces: guest GPU deferred flush is unpinned" >&2
 	exit 1
 }
 grep -Eq '^#define[[:space:]]+VTBALLOON_PFNS_PER_REQUEST[[:space:]]+256$' \

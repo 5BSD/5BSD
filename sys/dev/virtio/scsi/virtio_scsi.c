@@ -1127,7 +1127,9 @@ vtscsi_fill_scsi_cmd_sglist(struct vtscsi_softc *sc, struct vtscsi_request *req,
 
 	sglist_reset(sg);
 
-	sglist_append(sg, cmd_req, sizeof(struct virtio_scsi_cmd_req));
+	error = sglist_append(sg, cmd_req, sizeof(struct virtio_scsi_cmd_req));
+	if (error != 0)
+		goto fail;
 	if ((ccbh->flags & CAM_DIR_MASK) == CAM_DIR_OUT) {
 		error = vtscsi_sg_append_scsi_buf(sc, sg, csio);
 		/* At least one segment must be left for the response. */
@@ -1137,7 +1139,10 @@ vtscsi_fill_scsi_cmd_sglist(struct vtscsi_softc *sc, struct vtscsi_request *req,
 
 	*readable = sg->sg_nseg;
 
-	sglist_append(sg, cmd_resp, sizeof(struct virtio_scsi_cmd_resp));
+	error = sglist_append_boundary(sg, cmd_resp,
+	    sizeof(struct virtio_scsi_cmd_resp));
+	if (error != 0)
+		goto fail;
 	if ((ccbh->flags & CAM_DIR_MASK) == CAM_DIR_IN) {
 		error = vtscsi_sg_append_scsi_buf(sc, sg, csio);
 		if (error)
@@ -1333,8 +1338,15 @@ vtscsi_abort_timedout_scsi_cmd(struct vtscsi_softc *sc,
 	    (uintptr_t) to_ccbh, tmf_req);
 
 	sglist_reset(sg);
-	sglist_append(sg, tmf_req, sizeof(struct virtio_scsi_ctrl_tmf_req));
-	sglist_append(sg, tmf_resp, sizeof(struct virtio_scsi_ctrl_tmf_resp));
+	error = sglist_append(sg, tmf_req,
+	    sizeof(struct virtio_scsi_ctrl_tmf_req));
+	if (error == 0)
+		error = sglist_append_boundary(sg, tmf_resp,
+		    sizeof(struct virtio_scsi_ctrl_tmf_resp));
+	if (error != 0) {
+		vtscsi_enqueue_request(sc, req);
+		goto fail;
+	}
 
 	req->vsr_timedout_req = to_req;
 	req->vsr_complete = vtscsi_complete_abort_timedout_scsi_cmd;
@@ -1609,8 +1621,13 @@ vtscsi_execute_abort_task_cmd(struct vtscsi_softc *sc,
 	    (uintptr_t) abort_ccbh, tmf_req);
 
 	sglist_reset(sg);
-	sglist_append(sg, tmf_req, sizeof(struct virtio_scsi_ctrl_tmf_req));
-	sglist_append(sg, tmf_resp, sizeof(struct virtio_scsi_ctrl_tmf_resp));
+	error = sglist_append(sg, tmf_req,
+	    sizeof(struct virtio_scsi_ctrl_tmf_req));
+	if (error == 0)
+		error = sglist_append_boundary(sg, tmf_resp,
+		    sizeof(struct virtio_scsi_ctrl_tmf_resp));
+	if (error != 0)
+		goto fail;
 
 	req->vsr_complete = vtscsi_complete_abort_task_cmd;
 	tmf_resp->response = -1;
@@ -1676,14 +1693,20 @@ vtscsi_execute_reset_dev_cmd(struct vtscsi_softc *sc,
 	vtscsi_init_ctrl_tmf_req(sc, ccbh, subtype, 0, tmf_req);
 
 	sglist_reset(sg);
-	sglist_append(sg, tmf_req, sizeof(struct virtio_scsi_ctrl_tmf_req));
-	sglist_append(sg, tmf_resp, sizeof(struct virtio_scsi_ctrl_tmf_resp));
+	error = sglist_append(sg, tmf_req,
+	    sizeof(struct virtio_scsi_ctrl_tmf_req));
+	if (error == 0)
+		error = sglist_append_boundary(sg, tmf_resp,
+		    sizeof(struct virtio_scsi_ctrl_tmf_resp));
+	if (error != 0)
+		goto out;
 
 	req->vsr_complete = vtscsi_complete_reset_dev_cmd;
 	tmf_resp->response = -1;
 
 	error = vtscsi_execute_ctrl_req(sc, req, sg, 1, 1);
 
+out:
 	vtscsi_dprintf(sc, VTSCSI_TRACE, "error=%d req=%p ccb=%p\n",
 	    error, req, ccbh);
 

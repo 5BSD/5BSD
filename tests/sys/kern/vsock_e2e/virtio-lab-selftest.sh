@@ -50,6 +50,38 @@ grep -Fq 'audit_5bsd_virtio_features' "$here/run-5bsd-auto.sh"
 grep -Fq 'negotiated_features' "$here/run-5bsd-auto.sh"
 grep -Fq 'run_nonvirtio_checkpoint_rejection' "$here/run-alpine-auto.sh"
 grep -Fq 'run_nonvirtio_checkpoint_5bsd' "$here/run-5bsd-auto.sh"
+grep -Fq 'run_virtio_checkpoint_5bsd' "$here/run-5bsd-auto.sh"
+grep -Fq '["vmm-root"] = "../../vmm/run-vmm-root.sh"' "$lab"
+grep -Fq 'VMM-POSTCONDITION no-leaked-vms' \
+    "$tree_root/tests/sys/vmm/run-vmm-root.sh"
+grep -Fq '/etc/waspnest-build-id' "$here/run-5bsd-auto.sh"
+grep -Fq 'FIVEBSD_IMAGE_SHA256' "$here/run-5bsd-auto.sh"
+grep -Fq 'test \"\$system\" = 5BSD' "$here/run-5bsd-auto.sh"
+grep -Fq 'test \"\$product\" = 5bsd' "$here/run-5bsd-auto.sh"
+[ "$(grep -c '^  - id: fivebsd-checkpoint-' "$manifest")" -eq 20 ]
+grep -Fq 'fivebsd-checkpoint-combined-modern' "$manifest"
+grep -Fq 'fivebsd-checkpoint-combined-packed-modern' "$manifest"
+cat >"$work/incomplete-combination.yaml" <<'EOF'
+---
+version: 1
+cases:
+  - id: incomplete-combination
+    executor: alpine-auto
+    profiles: [checkpoint]
+    env:
+      CHECKPOINT_TEST: "yes"
+      CHECKPOINT_COMBINATION: alpine-all-split
+      DEVICES: "net"
+EOF
+if "$LUA" "$lab" plan --manifest "$work/incomplete-combination.yaml" \
+    --profile checkpoint >"$work/incomplete-combination.out" 2>&1; then
+	echo "incomplete complete-machine checkpoint unexpectedly passed" >&2
+	exit 1
+fi
+grep -q 'must include vsock in DEVICES' "$work/incomplete-combination.out"
+grep -Fq 'nonvirtio_xhci_pending_transfer' "$here/run-5bsd-auto.sh"
+grep -Fq 'pending-transfer=$event' "$here/run-alpine-auto.sh"
+grep -Fq 'before any guest-side framebuffer writer' "$here/run-alpine-auto.sh"
 grep -Fq 'gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768' \
     "$here/run-alpine-auto.sh"
 grep -Fq 'gpu-rfb-check" "$nonvirtio_fbuf_socket" 1024 768' \
@@ -59,6 +91,10 @@ grep -Fq '/tmp/freebsd-tpm2-check /dev/tpm0' "$here/run-5bsd-auto.sh"
 grep -Fq 'nonvirtio_xhci_pending_transfer' "$here/run-5bsd-auto.sh"
 grep -Fq 'nonvirtio_hda_open_stream' "$here/run-5bsd-auto.sh"
 grep -Fq 'nonvirtio_hostbridge_exact_topology' "$here/run-5bsd-auto.sh"
+grep -Fq 'nonvirtio-alpine-qemu-fwcfg-checkpoint' "$manifest"
+grep -Fq 'nonvirtio-5bsd-qemu-fwcfg-checkpoint' "$manifest"
+grep -Fq '/tmp/fwcfg-check active' "$here/run-alpine-auto.sh"
+grep -Fq 'freebsd-fwcfg-check active' "$here/run-5bsd-auto.sh"
 grep -Fq '86abc0f5' "$here/run-5bsd-auto.sh"
 
 # Cancellation records a process identity before the runner can reparent its
@@ -102,6 +138,9 @@ grep -Fq 'process_fingerprint_value_matches(identity.supervisor_fingerprint,' \
 grep -Fq 'process_fingerprint_value_matches(identity.child_fingerprint,' \
     "$lab"
 grep -Fq 'not reread the mutable run directory here' "$lab"
+grep -Fq 'two bounded status scans' "$lab"
+grep -Fq 'supervisor_pending .. ".fingerprint"' "$lab"
+grep -Fq "daemon(8)'s pre-exec env(1) child" "$lab"
 
 # The Unix control connector and AF_VSOCK connector intentionally report
 # their retryable not-yet-listening outcome with different statuses.  Keep
@@ -333,9 +372,13 @@ if SRCTOP="$portable_snapshot_tree" sh "$activation_validator" '' '' \
 	echo "qualification audit accepted native-width modern snapshot state" >&2
 	exit 1
 fi
-grep -Fq \
+if ! grep -Fq \
     'modern common snapshot uses native-width helper:' \
-    "$work/native-width-modern-snapshot.out"
+    "$work/native-width-modern-snapshot.out"; then
+	cat "$work/native-width-modern-snapshot.out" >&2
+	echo "native-width modern snapshot mutation failed for the wrong reason" >&2
+	exit 1
+fi
 grep -Fq 'vi_pci_snapshot_softc_modern:' \
     "$work/native-width-modern-snapshot.out"
 
@@ -436,7 +479,8 @@ grep -q 'release_case_cids(running.cid_allocation)' "$lab"
 # qualification composition counts alone would not identify a case silently
 # removed from the checkpoint profile while another profile still contained
 # the device.
-[ "$(grep -c '^cases=44$' "$work/checkpoint")" -eq 1 ]
+[ "$(grep -c '^cases=65$' "$work/checkpoint")" -eq 1 ]
+grep -Fq '9p:*|fs:*|gpu:*' "$tree_root/tests/sys/kern/vsock_e2e/run-alpine-auto.sh"
 tab=$(printf '\t')
 for checkpoint_case in \
     checkpoint-net-packed-modern \
@@ -454,7 +498,10 @@ for checkpoint_case in \
     checkpoint-input-packed-modern \
     checkpoint-9p-packed-modern \
     checkpoint-fs-active-packed-modern \
-    checkpoint-combined-modern; do
+    checkpoint-combined-modern \
+    checkpoint-combined-packed-modern \
+    fivebsd-checkpoint-combined-modern \
+    fivebsd-checkpoint-combined-packed-modern; do
 	grep -q "^${checkpoint_case}${tab}" "$work/checkpoint"
 done
 
@@ -633,7 +680,7 @@ grep -q -- '--case is not valid with coverage' "$work/filtered-coverage.out"
     >"$work/release"
 grep -q '^SCOPE	declarative-profile; runtime results are not implied$' \
     "$work/release"
-[ "$(grep -c '^COVERED	' "$work/release")" -eq 91 ]
+[ "$(grep -c '^COVERED	' "$work/release")" -eq 93 ]
 grep -q '^COVERED	pmem-ring-formats$' "$work/release"
 grep -q '^COVERED	pmem-capacity-boundaries$' "$work/release"
 awk '
@@ -720,7 +767,9 @@ grep -q '^cases=7$' "$work/soak-smoke-plan"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/qualification"
-grep -q '^cases=146$' "$work/qualification"
+grep -q '^cases=219$' "$work/qualification"
+[ "$(grep -c '^kernel-contract-root	' "$work/qualification")" -eq 1 ]
+[ "$(grep -c '^vmm-root	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^host-regression	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^fivebsd-module-build	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^fivebsd-block-write-zeroes	' "$work/qualification")" -eq 1 ]
@@ -753,7 +802,7 @@ grep -q '^cases=146$' "$work/qualification"
 [ "$(grep -c '^checkpoint-fs-active-packed-modern	' \
     "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^soak-vsock-userspace	' "$work/qualification")" -eq 1 ]
-[ "$(grep -c '^COVERED	' "$work/qualification")" -eq 147 ]
+[ "$(grep -c '^COVERED	' "$work/qualification")" -eq 155 ]
 grep -q '^COVERED	gpu-blob-checkpoint-lifecycle$' "$work/qualification"
 grep -q '^COVERED	gpu-presentation-checkpoint-lifecycle$' "$work/qualification"
 grep -q '^COVERED	checkpoint-balloon-deflate-on-oom$' "$work/qualification"
@@ -783,7 +832,23 @@ grep -q '^COVERED	checkpoint-restore-compatibility-rejection$' \
 grep -q '^COVERED	checkpoint-restore-feature-rejection$' \
     "$work/qualification"
 grep -q '^COVERED	fivebsd-ninep-testing$' "$work/qualification"
+grep -q '^COVERED	nonvirtio-alpine-checkpoint-devices$' \
+    "$work/qualification"
+grep -q '^COVERED	nonvirtio-fivebsd-checkpoint-devices$' \
+    "$work/qualification"
 ! grep -q '^MISSING	' "$work/qualification"
+
+"$LUA" "$lab" plan --manifest "$manifest" --profile vmm-root \
+    >"$work/vmm-root-plan"
+grep -q '^cases=1$' "$work/vmm-root-plan"
+grep -q '^vmm-root	vmm-root	1800	compiler,vmm-module	' \
+    "$work/vmm-root-plan"
+
+"$LUA" "$lab" plan --manifest "$manifest" --profile kernel-root \
+    >"$work/kernel-root-plan"
+grep -q '^cases=1$' "$work/kernel-root-plan"
+grep -q '^kernel-contract-root	kernel-contract-root	300	compiler,kernel-module	' \
+    "$work/kernel-root-plan"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile vmfree \
     >"$work/vmfree-plan"
@@ -823,7 +888,9 @@ grep -q '^vmfree-nested-vmx-model-sanitized	nested-vmx-model	' \
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile intel-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/intel-qualification"
-grep -q '^cases=150$' "$work/intel-qualification"
+grep -q '^cases=223$' "$work/intel-qualification"
+[ "$(grep -c '^kernel-contract-root	' "$work/intel-qualification")" -eq 1 ]
+[ "$(grep -c '^vmm-root	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^host-regression	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^fivebsd-module-build	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-module-build	' "$work/intel-qualification")" -eq 1 ]
@@ -836,8 +903,10 @@ grep -q '^cases=150$' "$work/intel-qualification"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile full-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/full-qualification"
-grep -q '^cases=200$' "$work/full-qualification"
-[ "$(grep -c '^nonvirtio-' "$work/full-qualification")" -eq 46 ]
+grep -q '^cases=227$' "$work/full-qualification"
+[ "$(grep -c '^kernel-contract-root	' "$work/full-qualification")" -eq 1 ]
+[ "$(grep -c '^vmm-root	' "$work/full-qualification")" -eq 1 ]
+[ "$(grep -c '^nonvirtio-' "$work/full-qualification")" -eq 50 ]
 [ "$(grep -c '^nested-vmx-live	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-modern	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-packed-modern	' \
@@ -995,14 +1064,16 @@ grep -q '^cases=' "$work/nested-wrapper-plan"
     "$work/nested-wrapper-plan"
 
 env PLAN_ONLY=yes PROFILE=nonvirtio JOBS=1 \
-    WORKDIR="$work/nonvirtio-plan" UPLINK=re0 \
-    ISO=/tmp/alpine.iso FIVEBSD_IMAGE=/tmp/5bsd.img \
+	    WORKDIR="$work/nonvirtio-plan" UPLINK=re0 \
+	    ISO=/tmp/alpine.iso FIVEBSD_IMAGE=/tmp/5bsd.img \
+	    FIVEBSD_IMAGE_SHA256=0000000000000000000000000000000000000000000000000000000000000000 \
+	    FIVEBSD_BUILD_ID=selftest \
     NONVIRTIO_TPM_PATH=/tmp/swtpm.sock NONVIRTIO_PASSTHRU=ppt0 \
     NONVIRTIO_PASSTHRU_LINUX_ASSERT='test -d /sys/bus/pci/devices/0000:00:15.0' \
     NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT='pciconf -l pci0:21:0' \
     sh "$here/run-waspnest-qualification.sh" >"$work/nonvirtio-plan.out"
 grep -q '^qualification-plan profile=nonvirtio$' "$work/nonvirtio-plan.out"
-grep -q '^cases=46$' "$work/nonvirtio-plan.out"
+grep -q '^cases=50$' "$work/nonvirtio-plan.out"
 for nonvirtio_argument in \
     NONVIRTIO_TPM_PATH=/tmp/swtpm.sock \
     NONVIRTIO_PASSTHRU=ppt0 \
@@ -1467,9 +1538,22 @@ printf '%064d\n' 0 >"$cancel_active_run/status/active-cancel.child.fingerprint"
 grep -q '^cancelled=0$' "$work/cancel-active-mismatched.out"
 mv "$work/active-cancel.child.fingerprint.saved" \
     "$cancel_active_run/status/active-cancel.child.fingerprint"
-"$LUA" "$lab" cancel --workdir "$cancel_active_run" \
-    >"$work/cancel-active.out"
-grep -q '^cancelled=1$' "$work/cancel-active.out"
+cancel_active_delivered=no
+for cancel_active_try in 1 2 3; do
+	"$LUA" "$lab" cancel --workdir "$cancel_active_run" \
+	    >"$work/cancel-active.out"
+	if grep -q '^cancelled=1$' "$work/cancel-active.out"; then
+		cancel_active_delivered=yes
+		break
+	fi
+	# cancel(1) deliberately reports only a signal delivered after its final
+	# identity recheck.  Under scheduler load the wrapper may cross an exec or
+	# status boundary between scan and signal; a bounded fresh scan is the safe
+	# operator action and never reuses the prior PID observation.
+	grep -q '^cancelled=0$' "$work/cancel-active.out"
+	sleep 1
+done
+[ "$cancel_active_delivered" = yes ]
 if wait "$cancel_active_manager"; then
     echo "cancelled active run unexpectedly passed" >&2
     exit 1
@@ -1591,6 +1675,10 @@ grep -q '^failed=0$' "$run/summary"
 [ "$(cat "$run/status/fail-seven.attempt")" -eq 2 ]
 grep -q '	REUSE	pass-one	0	' "$run/events.tsv"
 grep -q '	PASS	fail-seven	0	' "$run/events.tsv"
+"$LUA" "$lab" verify-inputs --workdir "$run" >"$work/verify-inputs.out"
+grep -q '^verified$' "$work/verify-inputs.out"
+grep -Eq '^inputs=[1-9][0-9]*$' "$work/verify-inputs.out"
+grep -Eq '^executor_trees=[1-9][0-9]*$' "$work/verify-inputs.out"
 
 resume_events=$(grep -c '	RESUME	' "$run/events.tsv")
 if "$LUA" "$lab" run --manifest "$work/scheduler.yaml" \
@@ -1602,6 +1690,38 @@ fi
 grep -q 'resume configuration differs' "$work/changed-resume.out"
 [ ! -e "$run/manager.lock" ]
 [ "$(grep -c '	RESUME	' "$run/events.tsv")" -eq "$resume_events" ]
+
+# A path string is not an immutable input identity.  Mutating a regular file
+# named by the effective case environment must invalidate reusable successes.
+resume_input="$work/resume-input"
+printf 'first\n' >"$resume_input"
+cat >"$work/input-resume.yaml" <<EOF
+---
+version: 1
+defaults: { timeout: 10 }
+cases:
+  - id: input-bound
+    executor: orchestrator-probe
+    profiles: [input-bound]
+    env: { LAB_PROBE_NAME: input, LAB_INPUT: "$resume_input" }
+EOF
+input_run="$work/input-run"
+"$LUA" "$lab" run --manifest "$work/input-resume.yaml" \
+    --profile input-bound --workdir "$input_run" >"$work/input-run.out"
+printf 'second\n' >"$resume_input"
+if "$LUA" "$lab" verify-inputs --workdir "$input_run" \
+    >"$work/input-verify.out" 2>&1; then
+	echo "input verification accepted a changed file" >&2
+	exit 1
+fi
+grep -q 'recorded input changed since the run' "$work/input-verify.out"
+if "$LUA" "$lab" run --manifest "$work/input-resume.yaml" \
+    --profile input-bound --workdir "$input_run" --resume \
+    >"$work/input-resume.out" 2>&1; then
+	echo "resume reused a pass after an input changed in place" >&2
+	exit 1
+fi
+grep -q 'resume configuration differs' "$work/input-resume.out"
 
 filtered_run="$work/filtered-run"
 "$LUA" "$lab" run --manifest "$work/scheduler.yaml" \

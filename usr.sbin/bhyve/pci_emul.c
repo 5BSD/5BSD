@@ -1301,7 +1301,7 @@ pci_emul_init(struct vmctx *ctx, struct pci_devemu *pde, int bus, int slot,
     int func, struct funcinfo *fi)
 {
 	struct pci_devinst *pdi;
-	int err;
+	int err, init_errno;
 
 	pdi = calloc(1, sizeof(struct pci_devinst));
 
@@ -1326,11 +1326,29 @@ pci_emul_init(struct vmctx *ctx, struct pci_devemu *pde, int bus, int slot,
 	if (get_config_bool_default("pci.enable_bars", !bootrom_boot()))
 		pci_set_cfgdata8(pdi, PCIR_COMMAND, PCIM_CMD_BUSMASTEREN);
 
+	/* Do not attribute an unrelated earlier errno to this device. */
+	errno = 0;
 	err = (*pde->pe_init)(pdi, fi->fi_config);
+	init_errno = errno;
 	if (err == 0)
 		fi->fi_devi = pdi;
-	else
+	else {
+		/* Modern initializers return an errno value directly. */
+		if (err > 0)
+			init_errno = err;
+		if (init_errno != 0) {
+			EPRINTLN("pci slot %d:%d:%d device \"%s\" "
+			    "initialization failed: %s (status %d)", bus, slot,
+			    func, pde->pe_emu, strerror(init_errno), err);
+		} else {
+			EPRINTLN("pci slot %d:%d:%d device \"%s\" "
+			    "initialization failed without errno (status %d)", bus,
+			    slot, func, pde->pe_emu, err);
+			init_errno = EINVAL;
+		}
+		errno = init_errno;
 		free(pdi);
+	}
 
 	return (err);
 }

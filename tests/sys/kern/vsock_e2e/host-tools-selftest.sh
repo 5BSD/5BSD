@@ -32,7 +32,8 @@ trap 'cleanup 130' INT
 trap 'cleanup 143' TERM
 
 for tool in unix-pipe vsock-pipe vsh-connect vsh-connect-test-server \
-    uinput-inject freebsd-input-check freebsd-tpm2-check gpu-rfb-check; do
+    uinput-inject freebsd-input-check freebsd-tpm2-check \
+    freebsd-fwcfg-check gpu-rfb-check; do
 	[ -x "$TOOLS/$tool" ] || {
 		echo "missing helper: $TOOLS/$tool" >&2
 		exit 1
@@ -41,6 +42,8 @@ done
 
 "$TOOLS/freebsd-tpm2-check" --self-test | grep -q '^SELFTEST PASS$'
 echo "PASS  freebsd_tpm2_guest_helper_selftest"
+"$TOOLS/freebsd-fwcfg-check" --self-test | grep -q '^SELFTEST PASS$'
+echo "PASS  freebsd_fwcfg_guest_helper_selftest"
 
 resolver_root="$work/nonvirtio-resolver"
 mkdir -p "$resolver_root/bin" "$resolver_root/dev"
@@ -422,6 +425,62 @@ check_console_timeout()
 	[ "$status" -eq 124 ]
 	grep -q 'timed out after 1s' "$work/console-timeout.err"
 	echo "PASS  console_command_timeout"
+}
+
+check_console_long_command()
+{
+	log="$work/console-long.log"
+	input="$work/console-long.in"
+	output="$work/console-long.out"
+	error="$work/console-long.err"
+	payload=$(dd if=/dev/zero bs=1 count=900 2>/dev/null | tr '\0' L)
+	long_command="printf '%s\\n' '$payload'"
+	: > "$log"
+	: > "$input"
+	CONSOLE_LOG="$log" CONSOLE_INPUT="$input" \
+	    sh "$here/acmd-console.sh" "$long_command" 10 \
+	    > "$output" 2> "$error" &
+	server_pid=$!
+	processed=0
+	completed=no
+	i=0
+	while [ "$completed" = no ] && [ "$i" -lt 200 ]; do
+		lines=$(tr '\r' '\n' < "$input" | awk 'NF { n++ } END { print n + 0 }')
+		while [ "$processed" -lt "$lines" ]; do
+			processed=$((processed + 1))
+			line=$(tr '\r' '\n' < "$input" | awk -v n="$processed" 'NF { i++ } i == n { print; exit }')
+			ack=$(printf '%s\n' "$line" | sed -n 's/.*\(__VSOCK_ACK_[0-9_]*__\).*/\1/p')
+			[ -z "$ack" ] || printf '%s\r\n' "$ack" >> "$log"
+			decode=$(printf '%s\n' "$line" | sed -n 's/.*\(__VSOCK_DECODE_[0-9_]*__\).*/\1/p')
+			[ -z "$decode" ] || printf '%s:0\r\n' "$decode" >> "$log"
+			begin=$(printf '%s\n' "$line" | sed -n 's/.*\(__VSOCK_BEGIN_[0-9_]*__\).*/\1/p')
+			end=$(printf '%s\n' "$line" | sed -n 's/.*\(__VSOCK_END_[0-9_]*__\).*/\1/p')
+			if [ -n "$begin" ] && [ -n "$end" ]; then
+				printf '%s\r\n%s\r\n%s:0\r\n' "$begin" guest-long-payload "$end" >> "$log"
+				completed=yes
+			fi
+		done
+		[ "$completed" = yes ] || sleep 0.1
+		i=$((i + 1))
+	done
+	[ "$completed" = yes ]
+	if wait "$server_pid"; then
+		status=0
+	else
+		status=$?
+	fi
+	server_pid=
+	[ "$status" -eq 0 ]
+	[ "$(cat "$output")" = guest-long-payload ]
+	[ ! -s "$error" ]
+	tr '\r' '\n' < "$input" | awk 'length > 240 { exit 1 }'
+	encoded=$(tr '\r' '\n' < "$input" |
+	    sed -n 's/.*printf %s \([A-Za-z0-9+\/=]*\) >> .*\.b;.*/\1/p' |
+	    tr -d '\n')
+	[ -n "$encoded" ]
+	decoded=$(printf %s "$encoded" | base64 -d)
+	[ "$decoded" = "$long_command" ]
+	echo "PASS  console_long_command_chunking"
 }
 
 check_nested_evidence_validator()
@@ -874,6 +933,7 @@ check_cli_rejection
 check_console_status 0
 check_console_status 7
 check_console_timeout
+check_console_long_command
 check_nested_evidence_validator
 check_ring_trace_parser
 check_net_hash_trace_parser

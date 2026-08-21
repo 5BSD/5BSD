@@ -45,8 +45,8 @@ source of truth.
 | Linux `driver-gap` | 5 |
 | Linux `not-applicable` | 13 |
 | 5BSD `exercised` | 8 |
-| 5BSD `pending` | 86 |
-| 5BSD `driver-gap` | 33 |
+| 5BSD `pending` | 81 |
+| 5BSD `driver-gap` | 38 |
 | 5BSD `not-applicable` | 3 |
 | Exercised by both Linux and 5BSD | 6 |
 | Implementation-defined interface rows | 111 |
@@ -93,27 +93,30 @@ models are build- and model-verified in this tree; neither is live-qualified.
 
 | Item | Count |
 | --- | ---: |
-| Inventory rows | 12 |
+| Inventory rows | 13 |
 | Linux live `exercised` | 0 |
-| Linux live `pending` | 11 |
+| Linux live `pending` | 12 |
 | Linux live `environment-dependent` | 1 |
 | 5BSD live `exercised` | 0 |
-| 5BSD live `pending` | 10 |
+| 5BSD live `pending` | 11 |
 | 5BSD live `driver-gap` | 1 |
 | 5BSD live `environment-dependent` | 1 |
-| Save/restore `pending` | 12 |
+| Save/restore `pending` | 13 |
 
 Hostbridge enumeration and LPC serial output from the existing guest boots
 remain `pending`: reachability is not distinguishing activation evidence.
 AHCI-assisted Alpine ISO boot likewise does not activate the disk, queue,
 error, reset, and active-I/O restore contract.  Host model tests exist for AHCI, NVMe, e82545,
-HDA, xHCI/USB mouse, framebuffer ownership, UART, TPM CRB, and pvpanic, but
-model evidence is not live guest or active save/restore evidence.  Passthrough
-is environment-dependent and needs a deterministic negative save/restore
-case unless a portable device-state contract is introduced.
-The three drivers that **do** deliver real 5BSD guest capability are
-virtio-sound (pcm(4)), virtio-fs (fusefs bridge), and virtio-pmem (NVDIMM SPA /
-GEOM).
+HDA, xHCI/USB mouse, framebuffer ownership, UART, TPM CRB, pvpanic, and
+qemu-fwcfg, but model evidence is not live guest or active save/restore
+evidence.  Passthrough remains environment-dependent for live activation; its
+checkpoint cases now require deterministic rejection unless a portable
+device-state contract is introduced.
+Virtio-sound delivers a supported 5BSD pcm(4) data path.  The in-tree
+virtio-fs, virtio-mem, virtio-pmem, and virtio-IOMMU frontends remain explicit
+prototypes: they compile, but do not yet provide the required 5BSD filesystem,
+memory-onlining, NVDIMM, or downstream busdma integration for live
+qualification.
 
 ### Intel nested VMX
 

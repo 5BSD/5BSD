@@ -49,8 +49,10 @@
 struct vtscmi_pdu {
 	enum vtscmi_chan	chan;
 	struct sglist		sg;
-	struct sglist_seg	segs[2];
+	struct sglist_seg	segs[4];
 	void			*buf;
+	int			readable;
+	int			writable;
 	SLIST_ENTRY(vtscmi_pdu)	next;
 };
 
@@ -310,9 +312,8 @@ vtscmi_alloc_queues(struct vtscmi_softc *sc)
 		SLIST_INIT(&q->p_head);
 		for (i = 0, pdu = q->pdus; i < q->vq_sz; i++, pdu++) {
 			pdu->chan = idx;
-			//XXX Maybe one seg redndant for P2A
-			sglist_init(&pdu->sg,
-			    idx == VIRTIO_SCMI_CHAN_A2P ? 2 : 1, pdu->segs);
+			/* Each side may straddle a physical-page boundary. */
+			sglist_init(&pdu->sg, nitems(pdu->segs), pdu->segs);
 			SLIST_INSERT_HEAD(&q->p_head, pdu, next);
 		}
 
@@ -425,6 +426,7 @@ virtio_scmi_pdu_get(struct vtscmi_queue *q, void *buf, unsigned int tx_len,
     unsigned int rx_len)
 {
 	struct vtscmi_pdu *pdu = NULL;
+	int error;
 
 	if (rx_len == 0)
 		return (NULL);
@@ -443,11 +445,30 @@ virtio_scmi_pdu_get(struct vtscmi_queue *q, void *buf, unsigned int tx_len,
 
 	/*Save msg buffer for easy access */
 	pdu->buf = buf;
-	if (tx_len != 0)
-		sglist_append(&pdu->sg, pdu->buf, tx_len);
-	sglist_append(&pdu->sg, pdu->buf, rx_len);
+	if (tx_len != 0) {
+		error = sglist_append(&pdu->sg, pdu->buf, tx_len);
+		if (error != 0)
+			goto fail;
+	}
+	pdu->readable = pdu->sg.sg_nseg;
+	error = sglist_append_boundary(&pdu->sg, pdu->buf, rx_len);
+	if (error != 0)
+		goto fail;
+	pdu->writable = pdu->sg.sg_nseg - pdu->readable;
+	KASSERT(pdu->writable > 0,
+	    ("vtscmi: request and response share a descriptor"));
+	if (pdu->writable == 0)
+		goto fail;
 
 	return (pdu);
+
+fail:
+	device_printf(q->dev, "Cannot map SCMI message buffers.\n");
+	sglist_reset(&pdu->sg);
+	mtx_lock_spin(&q->p_mtx);
+	SLIST_INSERT_HEAD(&q->p_head, pdu, next);
+	mtx_unlock_spin(&q->p_mtx);
+	return (NULL);
 }
 
 static void
@@ -606,7 +627,7 @@ virtio_scmi_message_enqueue(device_t dev, enum vtscmi_chan chan,
 		ret = ECANCELED;
 	else
 		ret = virtqueue_enqueue(q->vq, pdu, &pdu->sg,
-		    chan == VIRTIO_SCMI_CHAN_A2P ? 1 : 0, 1);
+		    pdu->readable, pdu->writable);
 	if (ret == 0)
 		virtqueue_notify(q->vq);
 	mtx_unlock_spin(&q->vq_mtx);

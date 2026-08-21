@@ -109,7 +109,7 @@ def framebuffer_node(path, sys_root="/sys", dev_root="/dev"):
     return matches[0]
 
 
-def framebuffer_io(path, token):
+def framebuffer_io(path, token, last_pixel=DISPLAY_LAST_PIXEL):
     try:
         fb, node = framebuffer_node(path)
     except RuntimeError:
@@ -122,9 +122,9 @@ def framebuffer_io(path, token):
             last_offset = (768 - 1) * 1024 * 4
             mapping = mmap.mmap(fd, 8 * 1024 * 1024)
             mapping[first_offset:first_offset + 4] = DISPLAY_FIRST_PIXEL
-            mapping[last_offset:last_offset + 4] = DISPLAY_LAST_PIXEL
+            mapping[last_offset:last_offset + 4] = last_pixel
             if mapping[first_offset:first_offset + 4] != DISPLAY_FIRST_PIXEL or \
-                    mapping[last_offset:last_offset + 4] != DISPLAY_LAST_PIXEL:
+                    mapping[last_offset:last_offset + 4] != last_pixel:
                 raise RuntimeError("framebuffer BAR marker did not read back")
             mapping.close()
         finally:
@@ -140,10 +140,10 @@ def framebuffer_io(path, token):
         first_offset = (width - 1) * 4
         last_offset = (height - 1) * stride
         if os.pwrite(fd, DISPLAY_FIRST_PIXEL, first_offset) != 4 or \
-                os.pwrite(fd, DISPLAY_LAST_PIXEL, last_offset) != 4:
+                os.pwrite(fd, last_pixel, last_offset) != 4:
             raise RuntimeError("short framebuffer write")
         if os.pread(fd, 4, first_offset) != DISPLAY_FIRST_PIXEL or \
-                os.pread(fd, 4, last_offset) != DISPLAY_LAST_PIXEL:
+                os.pread(fd, 4, last_offset) != last_pixel:
             raise RuntimeError("framebuffer marker did not read back")
     finally:
         os.close(fd)
@@ -197,6 +197,7 @@ def main():
     display = subparsers.add_parser("framebuffer-io")
     display.add_argument("bdf")
     display.add_argument("token")
+    display.add_argument("last_pixel", nargs="?")
     panic = subparsers.add_parser("pvpanic")
     panic.add_argument("event", type=int)
     args = parser.parse_args()
@@ -214,7 +215,15 @@ def main():
         print(f"PASS device={args.kind} node={block_io(path, args.token)}")
     elif args.command == "framebuffer-io":
         path = pci_device("fbuf", args.bdf)
-        print(f"PASS device=fbuf node={framebuffer_io(path, args.token)}")
+        pixel = DISPLAY_LAST_PIXEL
+        if args.last_pixel is not None:
+            try:
+                pixel = bytes.fromhex(args.last_pixel)
+            except ValueError as error:
+                raise RuntimeError("invalid framebuffer pixel") from error
+            if len(pixel) != 4:
+                raise RuntimeError("framebuffer pixel must contain four bytes")
+        print(f"PASS device=fbuf node={framebuffer_io(path, args.token, pixel)}")
     elif args.command == "pvpanic":
         pvpanic(args.event)
         print(f"PASS device=pvpanic event={args.event}")

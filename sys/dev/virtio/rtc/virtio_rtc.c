@@ -35,6 +35,8 @@
 #define	VTRTC_FEATURES		(VIRTIO_F_RING_RESET | VIRTIO_RTC_F_ALARM)
 #define	VTRTC_REQUEST_TIMEOUT	(10 * SBT_1S)
 #define	VTRTC_NSEC_PER_SEC	UINT64_C(1000000000)
+#define	VTRTC_MAX_REQUEST	(sizeof(struct virtio_rtc_req_set_alarm))
+#define	VTRTC_MAX_RESPONSE	(sizeof(struct virtio_rtc_resp_read_alarm))
 
 #define	VTRTC_FLAG_DETACH	0x01
 #define	VTRTC_FLAG_FAILED	0x02
@@ -58,6 +60,20 @@ struct vtrtc_softc {
 	bool			 request_active;
 	bool			 clock_registered;
 };
+
+/*
+ * sglist_append() coalesces physically adjacent ranges.  Keep the request
+ * and response in one padded object so their opposite descriptor directions
+ * cannot collapse into a single device-readable segment when caller-owned
+ * objects happen to be adjacent in memory.
+ */
+struct vtrtc_request_io {
+	uint8_t request[VTRTC_MAX_REQUEST];
+	uint8_t pad;
+	uint8_t response[VTRTC_MAX_RESPONSE];
+};
+CTASSERT(offsetof(struct vtrtc_request_io, response) >=
+    sizeof(((struct vtrtc_request_io *)0)->request) + 1);
 
 static int	vtrtc_modevent(module_t, int, void *);
 static int	vtrtc_probe(device_t);
@@ -482,6 +498,7 @@ vtrtc_request(struct vtrtc_softc *sc, const void *request,
     size_t request_len, void *response, size_t response_len,
     uint32_t *used_lenp)
 {
+	struct vtrtc_request_io io;
 	struct sglist sg;
 	struct sglist_seg segs[4];
 	sbintime_t deadline, remaining;
@@ -490,19 +507,26 @@ vtrtc_request(struct vtrtc_softc *sc, const void *request,
 	int error, readable;
 
 	if (request == NULL || response == NULL || request_len == 0 ||
-	    response_len == 0 || request_len > PAGE_SIZE ||
-	    response_len > PAGE_SIZE || used_lenp == NULL)
+	    response_len == 0 || request_len > sizeof(io.request) ||
+	    response_len > sizeof(io.response) || used_lenp == NULL)
 		return (EINVAL);
 	*used_lenp = 0;
+	memset(&io, 0, sizeof(io));
+	memcpy(io.request, request, request_len);
+	memset(response, 0, response_len);
 
 	sglist_init(&sg, nitems(segs), segs);
-	error = sglist_append(&sg, __DECONST(void *, request), request_len);
+	error = sglist_append(&sg, io.request, request_len);
 	if (error != 0)
 		return (error);
 	readable = sg.sg_nseg;
-	error = sglist_append(&sg, response, response_len);
+	error = sglist_append_boundary(&sg, io.response, response_len);
 	if (error != 0)
 		return (error);
+	KASSERT(sg.sg_nseg > readable,
+	    ("vtrtc: request and response collapsed into one descriptor"));
+	if (sg.sg_nseg <= readable)
+		return (EFAULT);
 
 	mtx_lock(&sc->mtx);
 	while (sc->request_active &&
@@ -518,7 +542,7 @@ vtrtc_request(struct vtrtc_softc *sc, const void *request,
 		goto out;
 	}
 	sc->request_active = true;
-	error = virtqueue_enqueue(sc->requestq, response, &sg, readable,
+	error = virtqueue_enqueue(sc->requestq, io.response, &sg, readable,
 	    sg.sg_nseg - readable);
 	if (error != 0)
 		goto complete;
@@ -552,7 +576,7 @@ vtrtc_request(struct vtrtc_softc *sc, const void *request,
 		if (error != 0)
 			goto reset;
 	}
-	if (cookie != response) {
+	if (cookie != io.response) {
 		device_printf(sc->dev, "request returned unexpected cookie\n");
 		error = EIO;
 		goto reset;
@@ -565,13 +589,14 @@ vtrtc_request(struct vtrtc_softc *sc, const void *request,
 		goto reset;
 	}
 	*used_lenp = used_len;
+	memcpy(response, io.response, used_len);
 	error = 0;
 	goto complete;
 
 reset:
 	/*
-	 * Both descriptors reference caller-owned stack objects.  Reset and
-	 * drain before returning from an incomplete request.
+	 * Both descriptors reference this call's stack-owned bounce object.
+	 * Reset and drain before returning from an incomplete request.
 	 */
 	vtrtc_fail_locked(sc);
 complete:
