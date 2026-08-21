@@ -12,6 +12,8 @@
 #include <err.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <pthread.h>
+#include <pthread_np.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -44,6 +46,28 @@
 #endif
 
 static int signal_pipe[2] = { -1, -1 };
+
+static void
+prepare_thread_runtime(void)
+{
+	pthread_attr_t attributes;
+	int error;
+
+	/*
+	 * libthr discovers the kernel CPU-set size lazily while copying the
+	 * first thread's attributes.  Do that before cap_enter(2), because the
+	 * required sysctl(3) lookup is intentionally unavailable afterwards.
+	 */
+	error = pthread_attr_init(&attributes);
+	if (error != 0)
+		errc(1, error, "pthread_attr_init");
+	error = pthread_attr_get_np(pthread_self(), &attributes);
+	if (error != 0)
+		errc(1, error, "pthread_attr_get_np");
+	error = pthread_attr_destroy(&attributes);
+	if (error != 0)
+		errc(1, error, "pthread_attr_destroy");
+}
 
 static void
 signal_handler(int signal_number __unused)
@@ -437,6 +461,7 @@ main(int argc, char **argv)
 	if (sigaction(SIGINT, &action, NULL) != 0 ||
 	    sigaction(SIGTERM, &action, NULL) != 0)
 		err(1, "sigaction");
+	prepare_thread_runtime();
 	sandbox_descriptors(rootfd, parentfd, listener);
 	if (cap_enter() != 0)
 		err(1, "cap_enter");
