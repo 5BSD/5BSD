@@ -11248,12 +11248,13 @@ ATF_TC_BODY(test_att_mtu_exchange_notification_intact, tc)
 }
 
 /*
- * Finding 64: a legitimate burst of >16 notifications must fail only the one
- * in-flight request, NOT permanently mark the primary bearer failed — the next
- * request on the healthy link must succeed.
+ * Abandoning a request after the unsolicited-PDU bound is reached leaves its
+ * response ownership unknown.  The fixed bearer must fail closed so a later
+ * request cannot consume a stale response (Core Spec Vol 3 Part F section
+ * 3.3.3).
  */
-ATF_TC_WITHOUT_HEAD(test_att_notification_burst_keeps_bearer);
-ATF_TC_BODY(test_att_notification_burst_keeps_bearer, tc)
+ATF_TC_WITHOUT_HEAD(test_att_notification_burst_fails_bearer);
+ATF_TC_BODY(test_att_notification_burst_fails_bearer, tc)
 {
 	struct att_conn ac;
 	int peer;
@@ -11269,7 +11270,8 @@ ATF_TC_BODY(test_att_notification_burst_keeps_bearer, tc)
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
-		uint8_t req[16], ntf[6], rsp[5];
+		uint8_t req[16], ntf[6];
+		ssize_t n;
 		int i;
 
 		close(ac.fd);
@@ -11289,42 +11291,29 @@ ATF_TC_BODY(test_att_notification_burst_keeps_bearer, tc)
 				_exit(2);
 			}
 		}
-		/* Second request: answer normally. */
-		if (recv(peer, req, sizeof(req), 0) < 3 ||
-		    req[0] != ATT_OP_READ_REQ) {
-			close(peer);
-			_exit(3);
-		}
-		rsp[0] = ATT_OP_READ_RSP;
-		rsp[1] = 0xDE;
-		rsp[2] = 0xAD;
-		rsp[3] = 0xBE;
-		rsp[4] = 0xEF;
-		if (send(peer, rsp, sizeof(rsp), MSG_EOR) != (ssize_t)sizeof(rsp)) {
-			close(peer);
-			_exit(4);
-		}
+		/* A failed bearer must be closed without sending another request. */
+		n = recv(peer, req, sizeof(req), 0);
 		close(peer);
-		_exit(0);
+		_exit(n == 0 ? 0 : 3);
 	}
 
 	close(peer);
 	errno = 0;
 	r1 = att_read(&ac, 0x0003, val, sizeof(val), &outlen);
 	ATF_CHECK_EQ_MSG(-1, r1, "burst request should fail");
-	ATF_CHECK_MSG(!ac.failed,
-	    "benign notification burst must not permanently fail the bearer");
+	ATF_CHECK_MSG(ac.failed,
+	    "abandoned request must permanently fail the desynchronized bearer");
 
 	outlen = 0;
 	errno = 0;
 	r2 = att_read(&ac, 0x0003, val, sizeof(val), &outlen);
-	ATF_CHECK_EQ_MSG(0, r2,
-	    "bearer must remain usable after a burst (errno=%d)", errno);
-	ATF_CHECK_EQ(4, outlen);
+	ATF_CHECK_EQ_MSG(-1, r2,
+	    "failed bearer must refuse reuse (errno=%d)", errno);
 
+	close(ac.fd);
+	ac.fd = -1;
 	waitpid(pid, &status, 0);
 	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
-	close(ac.fd);
 	free(ac.buf);
 }
 
@@ -11406,7 +11395,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, test_att_op_timeout_cap);
 	ATF_TP_ADD_TC(tp, test_att_mtu_exchange_notification_intact);
-	ATF_TP_ADD_TC(tp, test_att_notification_burst_keeps_bearer);
+	ATF_TP_ADD_TC(tp, test_att_notification_burst_fails_bearer);
 	ATF_TP_ADD_TC(tp, test_att_eatt_response_not_truncated);
 	ATF_TP_ADD_TC(tp, test_att_bearer_failed_refuses_reuse);
 

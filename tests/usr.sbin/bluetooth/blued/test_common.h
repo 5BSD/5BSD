@@ -188,6 +188,10 @@ blued_ctl_notify_authorize(int owner_fd __unused, uint16_t handle __unused,
 #include "hci_util.h"
 #include "config.h"
 
+/* Daemon-owned identities used by ctl.c's accept-retry path. */
+const int _blued_kq_ctl_accept_retry_tag;
+_Atomic uintptr_t blued_next_timer_id = 1;
+
 /* Per-translation-unit controller failures used by ctl white-box tests. */
 static int test_hci_adv_enable_rc;
 static int test_hci_ext_adv_enable_rc;
@@ -742,6 +746,65 @@ blued_reslist_sync_add(int hci_fd __unused, const struct smp_bond *bond __unused
 }
 #endif /* TEST_CUSTOM_BOND_MIGRATE */
 
+/*
+ * Resolving-list mutation helpers normally provided by blued.c.  Preserve the
+ * production quiesce/restore behavior in ctl.c white-box tests instead of
+ * satisfying the linker with no-op replacements.
+ */
+void
+blued_reslist_quiesce_begin(struct blued_adapter *adp,
+    struct blued_reslist_quiesce *q)
+{
+
+	memset(q, 0, sizeof(*q));
+	if (adp == NULL)
+		return;
+	if (adp->adv_configured && adp->adv_enabled) {
+		if (adp->adv_use_extended) {
+			if (hci_le_set_ext_adv_enable(adp->hci_fd, 0, 0) == 0)
+				q->ext_primary_adv = true;
+		} else if (hci_le_set_advertise_enable(adp->hci_fd, false) == 0)
+			q->legacy_adv = true;
+	}
+	for (size_t i = 0; i < nitems(adp->ext_adv_sets); i++) {
+		struct blued_ext_adv_set *set = &adp->ext_adv_sets[i];
+
+		if (set->used && set->configured && set->enabled &&
+		    hci_le_set_ext_adv_enable(adp->hci_fd, 0, set->handle) == 0)
+			q->ext_sets[i] = true;
+	}
+	if (adp->mesh_scan_active &&
+	    hci_le_mesh_scan_set(adp->hci_fd, adp->le_features, false) == 0)
+		q->mesh_scan = true;
+}
+
+void
+blued_reslist_quiesce_end(struct blued_adapter *adp,
+    struct blued_reslist_quiesce *q)
+{
+
+	if (adp == NULL)
+		return;
+	if (q->mesh_scan)
+		(void)hci_le_mesh_scan_set(adp->hci_fd, adp->le_features, true);
+	for (size_t i = 0; i < nitems(adp->ext_adv_sets); i++)
+		if (q->ext_sets[i])
+			(void)hci_le_set_ext_adv_enable(adp->hci_fd, 1,
+			    adp->ext_adv_sets[i].handle);
+	if (q->ext_primary_adv)
+		(void)hci_le_set_ext_adv_enable(adp->hci_fd, 1, 0);
+	if (q->legacy_adv)
+		(void)hci_le_set_advertise_enable(adp->hci_fd, true);
+}
+
+void
+blued_reslist_restore_resolution(int hci_fd, struct blued_adapter *adp)
+{
+
+	(void)hci_le_set_addr_resolution_enable(hci_fd,
+	    (blued_cfg.privacy || adp->reslist.count > 0) ? 1 : 0);
+}
+
 #endif /* TEST_LINKS_CTL */
 
 /* Typed ISO operation seam for tests that link ctl.c without the ISO engine. */
@@ -750,10 +813,16 @@ struct blued_ctl_client;
 
 void	ctl_iso_process_typed(struct blued_ctl_client *client,
 	    const uint8_t *payload, size_t plen);
+void	blued_iso_client_gone(int client_fd);
 
 void
 ctl_iso_process_typed(struct blued_ctl_client *client __unused,
     const uint8_t *payload __unused, size_t plen __unused)
+{
+}
+
+void
+blued_iso_client_gone(int client_fd __unused)
 {
 }
 #endif

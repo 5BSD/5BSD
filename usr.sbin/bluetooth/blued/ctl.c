@@ -5682,7 +5682,7 @@ blued_ctl_accept(void)
 		 * chance to be released first.
 		 */
 		if (errno == EMFILE || errno == ENFILE) {
-			struct kevent kev[2];
+			struct kevent retry_events[2];
 			/*
 			 * C3-M2: the retry timer must NOT use ctl_fd as its
 			 * EVFILT_TIMER ident.  Connection/idle/reconnect timers
@@ -5699,12 +5699,15 @@ blued_ctl_accept(void)
 
 			if (accept_retry_timer_id == 0)
 				accept_retry_timer_id = blued_next_timer_id++;
-			EV_SET(&kev[0], blued_g.ctl_fd, EVFILT_READ, EV_DISABLE,
+			EV_SET(&retry_events[0], blued_g.ctl_fd, EVFILT_READ,
+			    EV_DISABLE,
 			    0, 0, BLUED_KQ_CTL_LISTEN);
-			EV_SET(&kev[1], accept_retry_timer_id, EVFILT_TIMER,
+			EV_SET(&retry_events[1], accept_retry_timer_id,
+			    EVFILT_TIMER,
 			    EV_ADD | EV_ONESHOT, NOTE_SECONDS, 1,
 			    BLUED_KQ_CTL_ACCEPT_RETRY);
-			(void)kevent(blued_g.kq, kev, 2, NULL, 0, NULL);
+			(void)kevent(blued_g.kq, retry_events,
+			    nitems(retry_events), NULL, 0, NULL);
 		}
 		return;
 	}
