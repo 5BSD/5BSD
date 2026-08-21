@@ -306,6 +306,10 @@ host_tests()
 	    kyua test -k "$rx/Kyuafile"
 	run_gate "VMM, snapshot-session, dirty-log, startup, and nested model corpus" \
 	    kyua test -k "$vmm/Kyuafile"
+	run_gate "Bounded parallel VMM lifecycle and CPUID stress" env \
+	    ITERATIONS="${VMM_PARITY_STRESS_ITERATIONS:-3}" \
+	    JOBS="${VMM_PARITY_STRESS_JOBS:-4}" \
+	    sh "$vmm/run-vmm-kvm-parity-stress.sh"
 	echo "PASS WASPNest host gate"
 }
 

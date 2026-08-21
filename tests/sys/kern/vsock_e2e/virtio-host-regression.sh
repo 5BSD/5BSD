@@ -65,10 +65,17 @@ echo "=== bhyve snapshot build-mode integration ==="
 sh "$kern_tests/vsock_device_harness/validate-bhyve-build-modes.sh" \
     "$source_root"
 
+echo "=== KVM-selftests parity inventory and validator falsification ==="
+vmm_test_dir=$tree_root/tests/sys/vmm
+sh "$vmm_test_dir/validate-kvm-parity-requirements.sh" \
+    "$vmm_test_dir/kvm-parity-requirements.tsv" "$source_root"
+SRCTOP=$source_root sh "$vmm_test_dir/kvm-parity-selftest.sh"
+sh "$vmm_test_dir/vmm-kvm-parity-stress-selftest.sh"
+
 echo "=== Intel nested-VMX architectural state ABI ==="
 case $(uname -m) in
 amd64)
-	vmx_test_dir=$tree_root/tests/sys/vmm
+	vmx_test_dir=$vmm_test_dir
 	vmx_requirements=$vmx_test_dir/validate-vmx-nested-requirements.sh
 	[ -x "$vmx_requirements" ] || {
 		echo "validate-vmx-nested-requirements.sh is unavailable" >&2

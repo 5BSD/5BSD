@@ -20,6 +20,7 @@ current row counts or activation status.
 | Default-off nested policy qualification | `tests/sys/vmm/vmx-nested-default-policy-live-qualification.tsv` |
 | Nested implementation-defined interfaces | `tests/sys/vmm/vmx-nested-nonstandard-interfaces.tsv` |
 | Common/Intel/AMD startup-entry edges | `tests/sys/vmm/vmx-startup-entry-edge-matrix.tsv` |
+| Linux KVM-selftests parity | `tests/sys/vmm/kvm-parity-requirements.tsv` |
 
 Every activation row must reference an existing requirement row.  Requirement
 and feature identifiers must be unique.  The existing validators enforce

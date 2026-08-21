@@ -1,0 +1,50 @@
+# linux-commit: 818bebeb63dd6bf5f4e07e145f6cdbace520a34c
+# source: https://github.com/torvalds/linux/tree/818bebeb63dd6bf5f4e07e145f6cdbace520a34c/tools/testing/selftests/kvm
+id	kvm_reference	waspnest_scope	disposition	evidence	runner	notes
+KVM-GEN-001	kvm_create_max_vcpus.c	kernel-api	covered	tests/sys/vmm/vmm_kvm_parity_live_test.c	kyua-root	Repeated create/open/destroy and duplicate-name rejection
+KVM-GEN-002	kvm_create_max_vcpus.c	kernel-api	gap	-	kyua-root	Boundary and exhaustion coverage for hw.vmm.maxcpu is still required
+KVM-GEN-003	KVM_CREATE_VM review rule	concurrency	covered	tests/sys/vmm/vmm_kvm_parity_live_test.c	kyua-root	Four simultaneous VMs run independent vCPUs and survive peer destruction
+KVM-GEN-004	set_memory_region_test.c;memslot_modification_stress_test.c	memory	partial	tests/sys/vmm/vmm_dirty_log_map_test.c;tests/sys/vmm/vmm_dirty_log_management_abi_test.c	kyua-root	Mapping validation exists but live concurrent map mutation remains
+KVM-GEN-005	demand_paging_test.c	memory	gap	-	kyua-root	Guest-fault-driven population and host pager races are not covered
+KVM-GEN-006	dirty_log_test.c;dirty_log_perf_test.c	dirty-log	covered	tests/sys/vmm/vmm_dirty_log_test.c;tests/sys/vmm/vmm_dirty_log_collector_test.c;tests/sys/vmm/vmm_dirty_log_request_test.c	kyua-root	ABI model and collection semantics are covered; performance is a separate gate
+KVM-GEN-007	access_tracking_perf_test.c	dirty-log	partial	tests/sys/vmm/vmm_dirty_log_owner_test.c;tests/sys/vmm/vmm_dirty_log_map_test.c	kyua-root	Ownership and ranges are covered but access-tracking stress is not
+KVM-GEN-008	kvm_page_table_test.c;mmu_stress_test.c	mmu	gap	-	kyua-root	Live concurrent GPA translation and invalidation stress is required
+KVM-GEN-009	pre_fault_memory_test.c	memory	gap	-	kyua-root	No direct bhyve pre-fault API exists; equivalent residency behavior needs a scoped test
+KVM-GEN-010	coalesced_io_test.c	exit-abi	covered	tests/sys/vmm/vmm_run_live_test.c	kyua-root	bhyve uses synchronous INOUT exits rather than KVM coalesced-MMIO rings
+KVM-GEN-011	irqfd_test.c	interrupts	partial	tests/sys/vmm/vmm_exception_test.c;tests/sys/vmm/vmm_event_ingress_test.c	kyua-root	Native injection is covered by models; live concurrent routing remains
+KVM-GEN-012	kvm_binary_stats_test.c	observability	gap	-	kyua-root	VMM statistics ABI discovery and malformed-read coverage are missing
+KVM-GEN-013	hardware_disable_test.c	lifecycle	gap	-	kyua-root	Backend unload/disable with open and running VMs is not covered
+KVM-GEN-014	rseq_test.c	kvm-only	not-applicable	-	not-applicable	KVM validates Linux rseq interaction with KVM_RUN; there is no 5BSD rseq ABI
+KVM-GEN-015	system_counter_offset_test.c;arch_timer.c	time	partial	tests/sys/vmm/vpvclock_model_test.c	model-sanitized	pvclock arithmetic is modeled but live host-counter offset mutation is missing
+KVM-GEN-016	steal_time.c	time	gap	-	live-guest	Guest-visible steal-time accounting needs Linux and 5BSD coverage where exposed
+KVM-GEN-017	guest_memfd_test.c	kvm-only	not-applicable	-	not-applicable	KVM guest_memfd is not a bhyve public ABI
+KVM-X86-001	x86/cpuid_test.c;max_vcpuid_cap_test.c	cpu-contract	partial	tests/sys/vmm/vmm_kvm_parity_live_test.c	kyua-root	Guest CPUID leaf zero is compared with VM_GET_CPUID and unknown flags are rejected; allowlist limits invalid leaves and vCPU-ID boundaries remain
+KVM-X86-002	x86/cr4_cpuid_sync_test.c;x86/set_sregs_test.c	cpu-state	partial	tests/sys/vmm/vmm_x86_startup_state_test.c;tests/sys/vmm/vmm_x86_startup_vmreg_test.c	model-sanitized	Startup validation exists but live CPUID/control-register coupling is missing
+KVM-X86-003	x86/debug_regs.c	cpu-state	gap	-	kyua-root	Hardware debug register entry exit and exception behavior are missing
+KVM-X86-004	x86/amx_test.c;x86/xcr0_cpuid_test.c;x86/xss_msr_test.c	xsave	partial	tests/sys/vmm/vmm_snapshot_x86_fpu_test.c	model-sanitized	FPU snapshot envelopes exist but live XCR0/XSS/AMX negatives are missing
+KVM-X86-005	x86/msrs_test.c;x86/feature_msrs_test.c;x86/vmx_msrs_test.c	msr	gap	-	kyua-root	Readable writable reserved and feature MSR policies need direct tests
+KVM-X86-006	x86/platform_info_test.c;x86/hwcr_msr_test.c	msr	gap	-	kyua-root	Vendor platform MSR policy remains untested
+KVM-X86-007	x86/smaller_maxphyaddr_emulation_test.c;nx_huge_pages_test.c	mmu	gap	-	kyua-root	MAXPHYADDR reserved-bit NX and large-page faults need live coverage
+KVM-X86-008	x86/kvm_clock_test.c;x86/tsc_msrs_test.c;x86/tsc_scaling_sync.c	time	partial	tests/sys/vmm/vpvclock_model_test.c	model-sanitized	Model coverage exists; migration and multi-vCPU live TSC tests remain
+KVM-X86-009	x86/aperfmperf_test.c;x86/apic_bus_clock_test.c	time	gap	-	live-guest	APERF/MPERF and APIC bus-clock behavior need guest-visible qualification
+KVM-X86-010	x86/xapic_state_test.c;x86/xapic_tpr_test.c;x86/xapic_ipi_test.c	interrupts	partial	tests/sys/vmm/intr_snapshot_harness/vioapic_snapshot_test.c;tests/sys/vmm/vmm_exception_test.c	model-sanitized	Snapshot and exception models exist; live SMP IPI/TPR races remain
+KVM-X86-011	x86/vmx_apic_access_test.c;x86/vmx_apicv_updates_test.c	interrupts	gap	-	kyua-root	APIC-access virtualization and dynamic APICv controls are not covered
+KVM-X86-012	x86/userspace_io_test.c;x86/exit_on_emulation_failure_test.c	exit-abi	partial	tests/sys/vmm/vmm_run_live_test.c	kyua-root	INOUT and selected instruction exits work; malformed emulation failure paths remain
+KVM-X86-013	x86/triple_fault_event_test.c;x86/vmx_exception_with_invalid_guest_state.c	exceptions	partial	tests/sys/vmm/vmm_exception_test.c	model-sanitized	Exception arbitration is modeled but triple-fault shutdown needs live coverage
+KVM-X86-014	x86/monitor_mwait_test.c;x86/kvm_buslock_test.c	instructions	gap	-	kyua-root	MONITOR/MWAIT and bus-lock exit policies need explicit tests
+KVM-X86-015	x86/pmu_counters_test.c;x86/pmu_event_filter_test.c;x86/vmx_pmu_caps_test.c	pmu	gap	-	kyua-root	PMU capabilities filtering overflow and save/restore are not covered
+KVM-X86-016	x86/smm_test.c	smm	gap	-	kyua-root	SMM entry state and save/restore are not covered
+KVM-X86-017	x86/state_test.c;x86/sync_regs_test.c	cpu-state	partial	tests/sys/vmm/vmm_snapshot_session_live_test.c;tests/sys/vmm/vmm_x86_startup_transaction_test.c	kyua-root	Transactional state exists but bulk live register synchronization coverage is missing
+KVM-X86-018	x86/nested_set_state_test.c;x86/nested_close_kvm_test.c	nested	covered	tests/sys/vmm/vmx_nested_state_test.c;tests/sys/vmm/vmm_x86_startup_finalizer_test.c	model-sanitized	Nested state validation and teardown models are comprehensive but still pending live qualification
+KVM-X86-019	x86/nested_exceptions_test.c;x86/nested_emulation_test.c	nested	partial	tests/sys/vmm/vmx_nested_state_test.c;tests/sys/vmm/vmm_exception_test.c	model-sanitized	Model paths exist; live L1/L2 reflection evidence remains pending
+KVM-X86-020	x86/nested_dirty_log_test.c;x86/nested_tdp_fault_test.c	nested-mmu	partial	tests/sys/vmm/vmx_nested_state_test.c;tests/sys/vmm/vmm_dirty_log_test.c	model-sanitized	Individual models exist but nested active-L2 dirty/EPT interaction is pending
+KVM-X86-021	x86/nested_invalid_cr3_test.c;x86/vmx_invalid_nested_guest_state.c	nested	partial	tests/sys/vmm/vmx_nested_state_test.c	model-sanitized	Invalid state is modeled but live VM-entry failure qualification is pending
+KVM-X86-022	x86/nested_tsc_adjust_test.c;x86/nested_tsc_scaling_test.c	nested-time	partial	tests/sys/vmm/vmx_nested_state_test.c;tests/sys/vmm/vpvclock_model_test.c	model-sanitized	Nested time models exist; live migration and scaling evidence is pending
+KVM-X86-023	x86/vmx_preemption_timer_test.c	nested-time	partial	tests/sys/vmm/vmx_nested_state_test.c	model-sanitized	Timer state is modeled but live expiry/reflection races are pending
+KVM-X86-024	x86/svm_*;x86/nested_vmsave_vmload_test.c	amd-svm	gap	-	kyua-root	AMD nested SVM is outside the current Intel implementation and needs a separate decision and suite
+KVM-X86-025	x86/hyperv_*	kvm-only	not-applicable	-	not-applicable	KVM Hyper-V enlightenment ioctls are not bhyve APIs
+KVM-X86-026	x86/xen_*	kvm-only	not-applicable	-	not-applicable	KVM Xen compatibility ioctls are not bhyve APIs
+KVM-X86-027	x86/sev_*	kvm-only	not-applicable	-	not-applicable	KVM SEV launch and migration ioctls are not bhyve APIs
+KVM-X86-028	x86/private_mem_*	kvm-only	not-applicable	-	not-applicable	KVM private-memory conversion exits are not bhyve APIs
+KVM-X86-029	x86/userspace_msr_exit_test.c	exit-abi	gap	-	kyua-root	bhyve MSR userspace fallback policy needs a direct positive and negative test
+KVM-X86-030	x86/recalc_apic_map_test.c;set_boot_cpu_id.c	interrupts	gap	-	kyua-root	Dynamic APIC topology and boot-vCPU selection boundaries are missing

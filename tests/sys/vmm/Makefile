@@ -27,6 +27,7 @@ ATF_TESTS_C+=	vmm_snapshot_op_test
 ATF_TESTS_C+=	vmm_snapshot_session_abi_test
 ATF_TESTS_C+=	vmm_snapshot_session_live_test
 ATF_TESTS_C+=	vmm_run_live_test
+ATF_TESTS_C+=	vmm_kvm_parity_live_test
 ATF_TESTS_C+=	vmm_snapshot_envelope_test
 ATF_TESTS_C+=	vmm_snapshot_x86_fpu_test
 ATF_TESTS_C+=	vmm_mtrr_test
@@ -64,6 +65,10 @@ CFLAGS.vmm_run_live_test+=	-I${SRCTOP}/sys \
 	-I${SRCTOP}/sys/${MACHINE_CPUARCH}/include \
 	-I${SRCTOP}/lib/libvmmapi
 LIBADD.vmm_run_live_test+=	vmmapi
+CFLAGS.vmm_kvm_parity_live_test+=	-I${SRCTOP}/sys \
+	-I${SRCTOP}/sys/${MACHINE_CPUARCH}/include \
+	-I${SRCTOP}/lib/libvmmapi
+LIBADD.vmm_kvm_parity_live_test+=	vmmapi pthread
 CFLAGS.vmm_event_checkpoint_test+=	-I${SRCTOP}/sys
 CFLAGS.vmm_event_ingress_test+=	-I${SRCTOP}/sys
 CFLAGS.vmm_startup_event_test+=	-I${SRCTOP}/sys
@@ -135,6 +140,15 @@ ${PACKAGE}FILES+=	run-vmx-nested-model.sh
 ${PACKAGE}FILESMODE_run-vmx-nested-model.sh=	0555
 ${PACKAGE}FILES+=	run-vmm-root.sh
 ${PACKAGE}FILESMODE_run-vmm-root.sh=	0555
+${PACKAGE}FILES+=	validate-kvm-parity-requirements.sh
+${PACKAGE}FILES+=	kvm-parity-selftest.sh
+${PACKAGE}FILES+=	kvm-parity-requirements.tsv
+${PACKAGE}FILES+=	run-vmm-kvm-parity-stress.sh
+${PACKAGE}FILES+=	vmm-kvm-parity-stress-selftest.sh
+${PACKAGE}FILESMODE_validate-kvm-parity-requirements.sh=	0555
+${PACKAGE}FILESMODE_kvm-parity-selftest.sh=	0555
+${PACKAGE}FILESMODE_run-vmm-kvm-parity-stress.sh=	0555
+${PACKAGE}FILESMODE_vmm-kvm-parity-stress-selftest.sh=	0555
 ${PACKAGE}FILES+=	VMX_NESTED_FULL_REVIEW_PROMPT.md
 ${PACKAGE}FILES+=	vmx-nested-requirements.tsv
 ${PACKAGE}FILES+=	vmx-nested-live-qualification.tsv
@@ -161,6 +175,11 @@ VMM_OBJECT_FILES=	utils.subr \
 			vmx-nested-live-coverage-selftest.sh \
 			run-vmx-nested-model.sh \
 			run-vmm-root.sh \
+			validate-kvm-parity-requirements.sh \
+			kvm-parity-selftest.sh \
+			kvm-parity-requirements.tsv \
+			run-vmm-kvm-parity-stress.sh \
+			vmm-kvm-parity-stress-selftest.sh \
 			VMX_NESTED_FULL_REVIEW_PROMPT.md \
 			vmx-nested-requirements.tsv \
 			vmx-nested-live-qualification.tsv \
