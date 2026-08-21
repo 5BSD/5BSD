@@ -63,6 +63,7 @@ ATF_TESTS_C+=	vsock_wire_test
 CFLAGS.vsock_wire_test+=	-I${SRCTOP}/sys
 ATF_TESTS_C+=	vsock_iov_test
 CFLAGS.vsock_iov_test+=	-I${SRCTOP}/usr.sbin/bhyve
+ATF_TESTS_PYTEST+=	sglist_boundary_test.py
 
 # The device-level ATF harness (vsock_device_test) now lives in its own
 # subdirectory Makefile (vsock_device_harness/) so it can be packaged in

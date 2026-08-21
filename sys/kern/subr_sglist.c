@@ -325,6 +325,49 @@ sglist_append(struct sglist *sg, void *buf, size_t len)
 }
 
 /*
+ * Append a kernel virtual address range, forcing its first byte to begin a
+ * new segment when the list is non-empty.  This preserves semantic boundaries
+ * such as a VirtIO readable-to-writable descriptor transition even when the
+ * two caller buffers happen to be physically adjacent.  Physical continuity
+ * within the newly appended range is still coalesced normally.
+ */
+int
+sglist_append_boundary(struct sglist *sg, void *buf, size_t len)
+{
+	struct sgsave save;
+	vm_offset_t vaddr, offset;
+	vm_paddr_t paddr;
+	size_t seglen;
+	int error;
+
+	if (sg->sg_maxseg == 0)
+		return (EINVAL);
+	if (len == 0)
+		return (0);
+	if (sg->sg_nseg == 0)
+		return (sglist_append(sg, buf, len));
+
+	SGLIST_SAVE(sg, save);
+	if (sg->sg_nseg == sg->sg_maxseg)
+		return (EFBIG);
+	vaddr = (vm_offset_t)buf;
+	offset = vaddr & PAGE_MASK;
+	paddr = pmap_kextract(vaddr);
+	seglen = MIN(len, PAGE_SIZE - offset);
+	sg->sg_segs[sg->sg_nseg].ss_paddr = paddr;
+	sg->sg_segs[sg->sg_nseg].ss_len = seglen;
+	sg->sg_nseg++;
+	vaddr += seglen;
+	len -= seglen;
+	if (len == 0)
+		return (0);
+	error = _sglist_append_buf(sg, (void *)vaddr, len, NULL, NULL);
+	if (error != 0)
+		SGLIST_RESTORE(sg, save);
+	return (error);
+}
+
+/*
  * Append the segments to describe a bio's data to a scatter/gather list.
  * If there are insufficient segments, then this fails with EFBIG.
  *
@@ -339,6 +382,20 @@ sglist_append_bio(struct sglist *sg, struct bio *bp)
 		error = sglist_append(sg, bp->bio_data, bp->bio_bcount);
 	else
 		error = sglist_append_vmpages(sg, bp->bio_ma,
+		    bp->bio_ma_offset, bp->bio_bcount);
+	return (error);
+}
+
+int
+sglist_append_bio_boundary(struct sglist *sg, struct bio *bp)
+{
+	int error;
+
+	if ((bp->bio_flags & BIO_UNMAPPED) == 0)
+		error = sglist_append_boundary(sg, bp->bio_data,
+		    bp->bio_bcount);
+	else
+		error = sglist_append_vmpages_boundary(sg, bp->bio_ma,
 		    bp->bio_ma_offset, bp->bio_bcount);
 	return (error);
 }
@@ -371,6 +428,27 @@ sglist_append_phys(struct sglist *sg, vm_paddr_t paddr, size_t len)
 	if (error)
 		SGLIST_RESTORE(sg, save);
 	return (error);
+}
+
+/*
+ * Physical-address counterpart to sglist_append_boundary().
+ */
+int
+sglist_append_phys_boundary(struct sglist *sg, vm_paddr_t paddr, size_t len)
+{
+
+	if (sg->sg_maxseg == 0)
+		return (EINVAL);
+	if (len == 0)
+		return (0);
+	if (sg->sg_nseg == 0)
+		return (sglist_append_phys(sg, paddr, len));
+	if (sg->sg_nseg == sg->sg_maxseg)
+		return (EFBIG);
+	sg->sg_segs[sg->sg_nseg].ss_paddr = paddr;
+	sg->sg_segs[sg->sg_nseg].ss_len = len;
+	sg->sg_nseg++;
+	return (0);
 }
 
 /*
@@ -483,9 +561,9 @@ sglist_append_single_mbuf(struct sglist *sg, struct mbuf *m)
  * pages.  The buffer begins at an offset of 'pgoff' in the first
  * page.
  */
-int
-sglist_append_vmpages(struct sglist *sg, vm_page_t *m, size_t pgoff,
-    size_t len)
+static int
+_sglist_append_vmpages(struct sglist *sg, vm_page_t *m, size_t pgoff,
+    size_t len, bool boundary)
 {
 	struct sgsave save;
 	struct sglist_seg *ss;
@@ -500,11 +578,14 @@ sglist_append_vmpages(struct sglist *sg, vm_page_t *m, size_t pgoff,
 
 	SGLIST_SAVE(sg, save);
 	i = 0;
-	if (sg->sg_nseg == 0) {
+	if (sg->sg_nseg == 0 || boundary) {
+		if (sg->sg_nseg == sg->sg_maxseg)
+			return (EFBIG);
 		seglen = min(PAGE_SIZE - pgoff, len);
-		sg->sg_segs[0].ss_paddr = VM_PAGE_TO_PHYS(m[0]) + pgoff;
-		sg->sg_segs[0].ss_len = seglen;
-		sg->sg_nseg = 1;
+		sg->sg_segs[sg->sg_nseg].ss_paddr =
+		    VM_PAGE_TO_PHYS(m[0]) + pgoff;
+		sg->sg_segs[sg->sg_nseg].ss_len = seglen;
+		sg->sg_nseg++;
 		pgoff = 0;
 		len -= seglen;
 		i++;
@@ -521,6 +602,22 @@ sglist_append_vmpages(struct sglist *sg, vm_page_t *m, size_t pgoff,
 		pgoff = 0;
 	}
 	return (0);
+}
+
+int
+sglist_append_vmpages(struct sglist *sg, vm_page_t *m, size_t pgoff,
+    size_t len)
+{
+
+	return (_sglist_append_vmpages(sg, m, pgoff, len, false));
+}
+
+int
+sglist_append_vmpages_boundary(struct sglist *sg, vm_page_t *m,
+    size_t pgoff, size_t len)
+{
+
+	return (_sglist_append_vmpages(sg, m, pgoff, len, true));
 }
 
 /*

@@ -85,11 +85,15 @@ sglist_hold(struct sglist *sg)
 
 struct sglist *sglist_alloc(int nsegs, int mflags);
 int	sglist_append(struct sglist *sg, void *buf, size_t len);
+int	sglist_append_boundary(struct sglist *sg, void *buf, size_t len);
 int	sglist_append_bio(struct sglist *sg, struct bio *bp);
+int	sglist_append_bio_boundary(struct sglist *sg, struct bio *bp);
 int	sglist_append_mbuf(struct sglist *sg, struct mbuf *m0);
 int	sglist_append_mbuf_epg(struct sglist *sg, struct mbuf *m0, size_t off,
 	    size_t len);
 int	sglist_append_phys(struct sglist *sg, vm_paddr_t paddr,
+	    size_t len);
+int	sglist_append_phys_boundary(struct sglist *sg, vm_paddr_t paddr,
 	    size_t len);
 int	sglist_append_sglist(struct sglist *sg, struct sglist *source,
 	    size_t offset, size_t length);
@@ -99,6 +103,8 @@ int	sglist_append_user(struct sglist *sg, void *buf, size_t len,
 	    struct thread *td);
 int	sglist_append_vmpages(struct sglist *sg, vm_page_t *m, size_t pgoff,
 	    size_t len);
+int	sglist_append_vmpages_boundary(struct sglist *sg, vm_page_t *m,
+	    size_t pgoff, size_t len);
 struct sglist *sglist_build(void *buf, size_t len, int mflags);
 struct sglist *sglist_clone(struct sglist *sg, int mflags);
 int	sglist_consume_uio(struct sglist *sg, struct uio *uio, size_t resid);
