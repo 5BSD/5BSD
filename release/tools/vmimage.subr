@@ -132,6 +132,23 @@ vm_install_base() {
 	    env -i LC_COLLATE=C sort >> ${DESTDIR}/METALOG
 	rm ${DESTDIR}/var/db/etcupdate/current/METALOG
 
+	if [ -z "${NOPKGBASE}" ]; then
+		# pkg(8) deliberately suppresses package scripts for INSTALL_AS_USER
+		# roots.  Generate the databases normally produced by package hooks so
+		# a rootless image is just as bootable as one staged by root.  Database
+		# byte order must follow the target rather than the build host.
+		local cap_mkdb_endian
+		cap_mkdb_endian=$(make -f ${WORLDDIR}/share/mk/bsd.endian.mk \
+		    MACHINE=${TARGET} MACHINE_ARCH=${TARGET_ARCH} \
+		    -VCAP_MKDB_ENDIAN)
+		/usr/bin/cap_mkdb ${cap_mkdb_endian} \
+		    ${DESTDIR}/etc/login.conf
+		/usr/sbin/pwd_mkdb -i -p -d ${DESTDIR}/etc \
+		    ${DESTDIR}/etc/master.passwd
+		/usr/sbin/services_mkdb ${cap_mkdb_endian} -q \
+		    -o ${DESTDIR}/var/db/services.db ${DESTDIR}/etc/services
+	fi
+
 	echo '# Custom /etc/fstab for 5BSD VM images' \
 		> ${DESTDIR}/etc/fstab
 	if [ "${VMFS}" != zfs ]; then

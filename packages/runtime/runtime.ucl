@@ -59,6 +59,7 @@ EOD
         '$1 == "capability" && $3 == 976 && $4 == 976 && \
         $9 == "/nonexistent" && $10 == "/usr/sbin/nologin" \
         { found = 1 } END { exit !found }' || exit 1
-    services_mkdb ${CAP_MKDB_ENDIAN} -q -o ${PKG_ROOTDIR}/var/db/services.db ${PKG_ROOTDIR}/
+    services_mkdb ${CAP_MKDB_ENDIAN} -q -o ${PKG_ROOTDIR}/var/db/services.db \
+        ${PKG_ROOTDIR}/etc/services
 EOD
 }

@@ -53,6 +53,10 @@ validate_image_root()
 	    $1 == "capability" && $3 == 976 { ok = 1 }
 	    END { exit !ok }
 	' || fail "image root has an invalid capability group or group database"
+	chroot "$root" /usr/bin/getent services ssh | awk '
+	    $1 == "ssh" && $2 == "22/tcp" { ok = 1 }
+	    END { exit !ok }
+	' || fail "image root has an invalid services database"
 	chroot "$root" /bin/sh -c '
 	    set -- /Capabilities/System/*.cap
 	    [ -e "$1" ]
