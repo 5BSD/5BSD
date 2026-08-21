@@ -81,6 +81,45 @@ pkgbase_default_identity_body()
 	atf_check -s exit:0 -o match:'never edits passwd or group' \
 	    grep 'never edits passwd or group' \
 	    "${src}/usr.sbin/serviced/serviced.c"
+	atf_check -s exit:0 \
+	    -o match:'groupadd capability -g 976' \
+	    grep 'groupadd capability -g 976' \
+	    "${src}/packages/runtime/runtime.ucl"
+	atf_check -s exit:0 \
+	    -o match:'useradd capability -u 976 -g capability' \
+	    grep 'useradd capability -u 976 -g capability' \
+	    "${src}/packages/runtime/runtime.ucl"
+	atf_check -s exit:0 -o match:'users:' \
+	    grep '^users:' "${src}/packages/runtime/runtime.ucl"
+	atf_check -s exit:0 -o match:'groups:' \
+	    grep '^groups:' "${src}/packages/runtime/runtime.ucl"
+	atf_check -s exit:0 -o match:'pre-install' \
+	    grep 'pre-install' "${src}/packages/runtime/runtime.ucl"
+	atf_check -s exit:0 -o match:'/usr/sbin/pwd_mkdb' \
+	    grep '/usr/sbin/pwd_mkdb' "${src}/packages/runtime/runtime.ucl"
+	atf_check -s exit:0 -o match:'pw -V.*usershow capability' \
+	    grep 'pw -V.*usershow capability' \
+	    "${src}/packages/runtime/runtime.ucl"
+	atf_check -s exit:0 -o match:'kmod_requires.*vhid' \
+	    grep 'kmod_requires.*vhid' \
+	    "${src}/usr.sbin/bluetooth/blued/blued.ucl"
+	atf_check -s exit:0 -o match:'provides.*org.5bsd.blued' \
+	    grep 'provides.*org.5bsd.blued' \
+	    "${src}/usr.sbin/bluetooth/blued/blued.ucl"
+	atf_check -s exit:0 -o match:'etc/rc.d/oracled' \
+	    grep 'etc/rc.d/oracled' "${src}/packages/rc/rc.ucl"
+	atf_check -s exit:0 -o match:'OLD_FILES.*etc/rc.d/oracled' \
+	    grep -F 'OLD_FILES+=etc/rc.d/oracled' "${src}/ObsoleteFiles.inc"
+	for bundle in Reboot Kldmgr; do
+		atf_check -s exit:0 \
+		    -o match:"Capabilities/System/${bundle}.cap" \
+		    grep "Capabilities/System/${bundle}.cap" \
+		    "${src}/packages/serviced/serviced.ucl"
+		atf_check -s exit:0 \
+		    -o match:"Capabilities/System/${bundle}.cap" \
+		    grep "Capabilities/System/${bundle}.cap" \
+		    "${src}/ObsoleteFiles.inc"
+	done
 }
 
 atf_test_case pkgbase_component_metadata

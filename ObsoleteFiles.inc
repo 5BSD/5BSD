@@ -51,6 +51,23 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260819: Oracle now runs exclusively as PID 1; retire migrated daemons
+OLD_FILES+=etc/rc.d/oracled
+OLD_FILES+=Capabilities/System/Kldmgr.cap/bin/.debug/kldmgrd.debug
+OLD_FILES+=Capabilities/System/Kldmgr.cap/bin/kldmgrd
+OLD_FILES+=Capabilities/System/Kldmgr.cap/etc/kldmgrd.ucl
+OLD_DIRS+=Capabilities/System/Kldmgr.cap/bin/.debug
+OLD_DIRS+=Capabilities/System/Kldmgr.cap/bin
+OLD_DIRS+=Capabilities/System/Kldmgr.cap/etc
+OLD_DIRS+=Capabilities/System/Kldmgr.cap
+OLD_FILES+=Capabilities/System/Reboot.cap/bin/.debug/rebootd.debug
+OLD_FILES+=Capabilities/System/Reboot.cap/bin/rebootd
+OLD_FILES+=Capabilities/System/Reboot.cap/etc/rebootd.ucl
+OLD_DIRS+=Capabilities/System/Reboot.cap/bin/.debug
+OLD_DIRS+=Capabilities/System/Reboot.cap/bin
+OLD_DIRS+=Capabilities/System/Reboot.cap/etc
+OLD_DIRS+=Capabilities/System/Reboot.cap
+
 # 20260503: Kill off MANSUBDIRs
 OLD_DIRS+=usr/share/man/man4/amd64
 OLD_FILES+=usr/share/man/man8/amd64/apm.8.gz

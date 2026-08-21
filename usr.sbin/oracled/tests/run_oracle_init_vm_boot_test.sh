@@ -37,12 +37,26 @@ boot_completed()
 	awk -v expected_banner="$expected_banner" '
 		BEGIN { banner_seen = (expected_banner == "") }
 		index($0, "startup: running /etc/rc") != 0 { rc_started = 1 }
+		index($0, "oracle_proto: serviced ready") != 0 ||
+		    index($0, "serviced converged") != 0 { converged = 1 }
 		index($0, expected_banner) != 0 { banner_seen = 1 }
-		rc_started && banner_seen && index($0, "login:") != 0 {
+		rc_started && converged && banner_seen && index($0, "login:") != 0 {
 			login_ready = 1
 		}
 		END { exit (login_ready ? 0 : 1) }
 	' "$boot_log"
+}
+
+boot_failed()
+{
+	grep -Eq 'bundle registry init failed|system bundle scan failed|startup: failed to launch|serviced permanently failed before convergence|serviced failed [0-9]+ times, giving up' \
+	    "$boot_log"
+}
+
+optional_bluetooth_started()
+{
+	grep -Eq 'startup: service: org\.5bsd\.blued/blued|oracle_proto: ensure kernel module vhid|Virtual HID transport ready' \
+	    "$boot_log"
 }
 
 image=${IMAGE:-}
@@ -161,6 +175,12 @@ bhyve_pid=$!
 
 elapsed=0
 while [ "$elapsed" -lt "$boot_timeout" ]; do
+	if boot_failed 2>/dev/null; then
+		fail "boot log contains a serviced convergence or native-service failure"
+	fi
+	if optional_bluetooth_started 2>/dev/null; then
+		fail "clean boot started optional Blued/vhid support"
+	fi
 	if boot_completed 2>/dev/null; then
 		echo "oracle-init VM boot test: PASS: serviced RC bootstrap converged and Oracle-gated serial login is ready"
 		exit 0

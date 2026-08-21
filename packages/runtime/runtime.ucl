@@ -1,8 +1,64 @@
 .include(try=false) "${SRCDIR}/common.ucl"
 
+users: [
+    "capability"
+]
+
+groups: [
+    "capability"
+]
+
 scripts: {
+    pre-install = <<EOD
+    rootdir="${PKG_ROOTDIR}"
+    [ -n "$rootdir" ] || rootdir=/
+
+    # On upgrades, create the service identity before pkg handles the
+    # configuration files.  A new root does not have master.passwd yet;
+    # post-install performs the same migration after installing it.
+    if [ -f "$rootdir/etc/master.passwd" ]; then
+        if ! /usr/sbin/pw -R "$rootdir" groupshow capability \
+            >/dev/null 2>&1; then
+            /usr/sbin/pw -R "$rootdir" groupadd capability -g 976 || exit 1
+        fi
+        if ! /usr/sbin/pw -R "$rootdir" usershow capability \
+            >/dev/null 2>&1; then
+            /usr/sbin/pw -R "$rootdir" useradd capability -u 976 -g capability \
+                -w no -c "Capability service sandbox" -d /nonexistent \
+                -s /usr/sbin/nologin || exit 1
+        fi
+    fi
+EOD
+
     post-install = <<EOD
-    pwd_mkdb -i -p -d  ${PKG_ROOTDIR}/etc ${PKG_ROOTDIR}/etc/master.passwd
+    rootdir="${PKG_ROOTDIR}"
+    [ -n "$rootdir" ] || rootdir=/
+    if ! /usr/sbin/pw -R "$rootdir" groupshow capability \
+        >/dev/null 2>&1; then
+        /usr/sbin/pw -R "$rootdir" groupadd capability -g 976 || exit 1
+    fi
+    if ! /usr/sbin/pw -R "$rootdir" usershow capability \
+        >/dev/null 2>&1; then
+        /usr/sbin/pw -R "$rootdir" useradd capability -u 976 -g capability -w no \
+            -c "Capability service sandbox" -d /nonexistent \
+            -s /usr/sbin/nologin || exit 1
+    fi
+    /usr/sbin/pw -R "$rootdir" groupshow capability | awk -F: \
+        '$1 == "capability" && $3 == 976 { found = 1 } END { exit !found }' || \
+        exit 1
+    /usr/sbin/pw -R "$rootdir" usershow capability | awk -F: \
+        '$1 == "capability" && $3 == 976 && $4 == 976 && \
+        $9 == "/nonexistent" && $10 == "/usr/sbin/nologin" \
+        { found = 1 } END { exit !found }' || exit 1
+    /usr/sbin/pwd_mkdb -i -p -d "$rootdir/etc" \
+        "$rootdir/etc/master.passwd" || exit 1
+    /usr/sbin/pw -V "$rootdir/etc" groupshow capability | awk -F: \
+        '$1 == "capability" && $3 == 976 { found = 1 } END { exit !found }' || \
+        exit 1
+    /usr/sbin/pw -V "$rootdir/etc" usershow capability | awk -F: \
+        '$1 == "capability" && $3 == 976 && $4 == 976 && \
+        $9 == "/nonexistent" && $10 == "/usr/sbin/nologin" \
+        { found = 1 } END { exit !found }' || exit 1
     services_mkdb ${CAP_MKDB_ENDIAN} -q -o ${PKG_ROOTDIR}/var/db/services.db ${PKG_ROOTDIR}/
 EOD
 }

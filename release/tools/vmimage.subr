@@ -82,9 +82,10 @@ vm_base_packages_list() {
 		[ -z "${WITHOUT_DEBUG_FILES}" ] && echo 5BSD-set-lib32-dbg
 	esac
 	echo 5BSD-set-tests
-	# Also install pkg, since systems with a packaged base system should
-	# have the tools to upgrade themselves.
-	echo pkg
+	# Install the base-system pkg bootstrap client.  A pkgbase repository is
+	# self-contained and must not require the ports-built pkg package merely
+	# to construct an image or bootstrap its package manager.
+	echo 5BSD-pkg-bootstrap
 }
 
 vm_extra_filter_base_packages() {

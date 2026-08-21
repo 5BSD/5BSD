@@ -23,3 +23,14 @@ The rc(8) subsystem provides a method to start services at system startup and
 stop them at shutdown.  This package provides the rc(8) subsystem itself and
 the service scripts for the base system.
 EOD
+
+scripts: {
+    post-install = <<EOD
+    rootdir="${PKG_ROOTDIR}"
+    [ -n "$rootdir" ] || rootdir=/
+
+    # Oracle is PID 1 now.  pkg/installworld preserve removed configuration
+    # files, and this obsolete script would start a competing daemon instance.
+    /bin/rm -f "$rootdir/etc/rc.d/oracled"
+EOD
+}

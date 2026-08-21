@@ -5,8 +5,8 @@
  *
  * Ensures required kernel modules are loaded before a service is launched.
  * The operation is delegated to oracled so serviced never needs ambient
- * KLDSTAT/KLDLOAD authority.  kldmgrd remains the broker for runtime client
- * requests; it cannot satisfy its own pre-exec dependency.
+ * KLDSTAT/KLDLOAD authority.  Oracle owns both pre-exec and runtime module
+ * requests.
  */
 
 #include <sys/types.h>

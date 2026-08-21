@@ -40,9 +40,14 @@ EOD
 scripts {
   post-install = <<EOD
 #!/bin/sh
-# Remove obsolete pre-.cap application tree from early 5BSD installs.
-if [ -d /System/Applications ]; then
-    rm -rf /System/Applications
-fi
+rootdir="${PKG_ROOTDIR}"
+[ -n "$rootdir" ] || rootdir=/
+
+# Remove retired policy trees.  Leaving a removed system bundle installed is
+# boot-fatal because serviced intentionally fails closed on invalid system
+# policy.  rebootd and kldmgrd moved into Oracle before these bundles vanished.
+/bin/rm -rf "$rootdir/System/Applications" \
+    "$rootdir/Capabilities/System/Reboot.cap" \
+    "$rootdir/Capabilities/System/Kldmgr.cap"
 EOD
 }
