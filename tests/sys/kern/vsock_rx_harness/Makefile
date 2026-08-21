@@ -3,7 +3,7 @@
 # kernel headers with the small userspace environment in this directory.
 # Copy each DUT into ${.OBJDIR} so quote includes resolve in the object tree.
 
-PACKAGE=	vsock-tests
+PACKAGE=	waspnest-tests
 TESTSDIR=	${TESTSBASE}/sys/kern/vsock_rx_harness
 
 ATF_TESTS_C+=	vsock_rx_test

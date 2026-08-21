@@ -104,6 +104,10 @@ if [ "$(id -u)" -ne 0 ] &&
 	exit 0
 fi
 results="$workdir/vsock-results.txt"
-sh "$kern_tests/run_vsock_tests.sh" "$results"
+core_runner=$kern_tests/waspnest_core/run_vsock_tests.sh
+if [ ! -x "$core_runner" ]; then
+	core_runner=$kern_tests/run_vsock_tests.sh
+fi
+sh "$core_runner" "$results"
 
 echo "VM-free VirtIO release gate completed successfully"

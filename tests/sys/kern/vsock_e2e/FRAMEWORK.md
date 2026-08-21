@@ -487,7 +487,7 @@ A new device is complete only when all of the following are present:
   upstream guest driver, plus VM-free preservation tests for historical
   interfaces that cannot be exercised by that guest;
 - automatic log capture for the provider, bhyve, helper, and guest console;
-- inclusion in the combined topology and in the installed `vsock-tests`
+- inclusion in the combined topology and in the installed `waspnest-tests`
   package.
 
 Provider-backed devices such as input also need a disposable software provider

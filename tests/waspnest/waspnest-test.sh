@@ -20,6 +20,10 @@ nonvirtio_validator=$script_dir/validate-nonvirtio-coverage
 if [ ! -x "$nonvirtio_validator" ]; then
 	nonvirtio_validator=$script_dir/validate-nonvirtio-coverage.sh
 fi
+package_validator=$script_dir/validate-package-layout
+if [ ! -x "$package_validator" ]; then
+	package_validator=$script_dir/validate-package-layout.sh
+fi
 completion_matrix=$script_dir/waspnest-completion-matrix.md
 if [ ! -f "$completion_matrix" ]; then
 	completion_matrix=$srctop/docs/waspnest-completion-matrix.md
@@ -75,6 +79,7 @@ require_payload()
 	need_file "$vmm/vmx-nested-default-policy-live-qualification.tsv"
 	need_file "$nonvirtio"
 	need_exec "$e2e/run-waspnest-qualification.sh"
+	need_exec "$package_validator"
 }
 
 list_gates()
@@ -217,6 +222,8 @@ audit()
 	    "$vmm/vmx-nested-default-policy-live-qualification.tsv" \
 	    "$vmm/vmx-nested-nonstandard-interfaces.tsv" \
 	    "$vmm/vmx-startup-entry-edge-matrix.tsv"
+	run_gate "Single pkgbase package ownership" env SRCTOP="$srctop" \
+	    sh "$package_validator"
 	run_gate "VirtIO lab scheduler and failure semantics" \
 	    sh "$e2e/virtio-lab-selftest.sh"
 	run_gate "Non-VirtIO source and live-coverage inventory" env \

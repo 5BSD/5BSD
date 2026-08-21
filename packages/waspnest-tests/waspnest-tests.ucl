@@ -1,8 +1,8 @@
-comment = "WASPNest bhyve, VMM, device, checkpoint, and nested-VM qualification"
+comment = "Complete WASPNest bhyve and VMM qualification suite"
 
 desc = <<EOD
-Aggregate WASPNest qualification package for bhyve and the VMM kernel
-subsystem.  It combines the VM-free device and sanitizer harnesses, VMM
+Single WASPNest qualification package for bhyve and the VMM kernel subsystem.
+It contains the AF_VSOCK tests, VM-free device and sanitizer harnesses, VMM
 ATF/Kyua tests, Alpine Linux and 5BSD live guest matrices, split and packed
 VirtIO queues, multiqueue, device lifecycle, checkpoint/restore, bounded
 soak, AHCI/NVMe/e82545/HDA/xHCI/framebuffer/UART/TPM/pvpanic/passthrough

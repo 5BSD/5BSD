@@ -1,11 +1,11 @@
 # VirtIO end-to-end (host <-> bhyve guest) test harness.  The historical
 # directory name predates the RNG and input coverage.
 #
-# Installed into the base "tests" package (pkgbase: FreeBSD-tests) under
+# Installed with the complete WASPNest qualification package under
 # ${TESTSBASE}/sys/kern/vsock_e2e.  Unlike the ATF suites in the parent
-# directory these are NOT run by kyua automatically: they require a bhyve
-# host with a running guest and are driven by run.sh.  See the header of
-# run.sh for the environment it expects.
+# directory these are NOT run by kyua automatically: they require a bhyve host
+# with a running guest and are driven by run.sh.  See the header of run.sh for
+# the environment it expects.
 #
 # Host-side tools (built and installed here):
 #   unix-pipe       AF_UNIX netcat (relay/echo/drain) for the device's
@@ -18,7 +18,7 @@
 # which only the guest kernel provides at runtime, so they are shipped as
 # source, not built here.
 
-PACKAGE=	vsock-tests
+PACKAGE=	waspnest-tests
 TESTSDIR=	${TESTSBASE}/sys/kern/vsock_e2e
 BINDIR=		${TESTSDIR}
 SCRIPTSDIR=	${TESTSDIR}

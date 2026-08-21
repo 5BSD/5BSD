@@ -1,7 +1,9 @@
 # WASPNest test package
 
-`5BSD-waspnest-tests` is the aggregate qualification package for bhyve, VMM,
-VirtIO, non-VirtIO device models, checkpoint/restore, and nested VMX.  The
+`5BSD-waspnest-tests` is the single qualification package for bhyve, VMM,
+AF_VSOCK, VirtIO, non-VirtIO device models, checkpoint/restore, and nested VMX.
+The former `5BSD-vsock-tests` split and generic `5BSD-tests` ownership of VMM
+coverage have been removed.  The
 fine-grained sources of truth remain the installed VirtIO and nested-VMX TSV
 ledgers.  `waspnest-nonvirtio-coverage.tsv` separately prevents PCI and
 platform devices from disappearing behind a successful VirtIO guest boot;
@@ -15,7 +17,8 @@ The entry point is `/usr/tests/waspnest/waspnest-test`:
 * `post-reboot` verifies that the installed world, kernel, Oracle boot model,
   branding, VMM module, and test payload agree.
 * `audit` runs source/ledger/manifest and orchestration self-checks without
-  creating a VM or changing networking.
+  creating a VM or changing networking.  It also rejects new WaspNest test
+  directories that drift back into a generic or obsolete pkgbase package.
 * `host` runs audit, sanitizer/model coverage, AF_VSOCK coverage, and the VMM
   Kyua corpus.  It first applies the installed-host gate, requires root, and
   never converts a privileged skip into a pass.

@@ -9,6 +9,7 @@ ATF_TESTS_SH+=	waspnest_package_test
 SCRIPTS+=	waspnest-test.sh
 SCRIPTSNAME_waspnest-test.sh=	waspnest-test
 SCRIPTS+=	validate-nonvirtio-coverage.sh
+SCRIPTS+=	validate-package-layout.sh
 
 ${PACKAGE}FILES+=	README.md
 ${PACKAGE}FILES+=	waspnest-suite.tsv
@@ -20,6 +21,7 @@ ${PACKAGE}FILES+=	virtio-lab.lua
 # tree and packaged Kyua runs exercise the same payload.
 WASPNEST_OBJECT_FILES=	waspnest-test.sh \
 			validate-nonvirtio-coverage.sh \
+			validate-package-layout.sh \
 			waspnest-suite.tsv \
 			waspnest-nonvirtio-coverage.tsv
 

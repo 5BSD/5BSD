@@ -1,4 +1,4 @@
-PACKAGE=	tests
+PACKAGE=	waspnest-tests
 
 TESTSDIR=	${TESTSBASE}/sys/vmm
 

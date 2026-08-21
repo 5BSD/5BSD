@@ -57,17 +57,8 @@ ATF_TESTS_C+=	socket_accf
 ATF_TESTS_C+=	socket_msg_trunc
 ATF_TESTS_C+=	socket_msg_waitall
 ATF_TESTS_C+=	socket_splice
-ATF_TESTS_C+=	vsock_test
-CFLAGS.vsock_test+=	-I${SRCTOP}/sys
-ATF_TESTS_C+=	vsock_wire_test
-CFLAGS.vsock_wire_test+=	-I${SRCTOP}/sys
-ATF_TESTS_C+=	vsock_iov_test
-CFLAGS.vsock_iov_test+=	-I${SRCTOP}/usr.sbin/bhyve
-ATF_TESTS_PYTEST+=	sglist_boundary_test.py
-
-# The device-level ATF harness (vsock_device_test) now lives in its own
-# subdirectory Makefile (vsock_device_harness/) so it can be packaged in
-# vsock-tests; see TESTS_SUBDIRS below.
+# The WaspNest VSOCK, device-model, live-guest, and transport harnesses live in
+# package-specific subdirectories; see TESTS_SUBDIRS below.
 
 TEST_METADATA.sigwait+=	is_exclusive="true"
 TEST_METADATA.vsock_test+=	required_user="root"
@@ -105,7 +96,6 @@ ATF_TESTS_SH+=	dtrace_catalog_test
 ATF_TESTS_SH+=	logsigexit_test
 ATF_TESTS_SH+=	jailmeta
 ATF_TESTS_SH+=	sonewconn_overflow
-ATF_TESTS_SH+=	run_vsock_tests_test
 TEST_METADATA.sonewconn_overflow+=	required_programs="python"
 TEST_METADATA.sonewconn_overflow+=	required_user="root"
 TEST_METADATA.sonewconn_overflow+=	is_exclusive="true"
@@ -114,8 +104,6 @@ ATF_TESTS_SH+=	sysctl_security_jail_children
 
 ${PACKAGE}FILES+=	sonewconn_overflow.py
 ${PACKAGE}FILESMODE_sonewconn_overflow.py=0555
-${PACKAGE}FILES+=	run_vsock_tests.sh
-${PACKAGE}FILESMODE_run_vsock_tests.sh=0555
 
 BINDIR=		${TESTSDIR}
 PROGS+=		coredump_phnum_helper
@@ -142,7 +130,6 @@ LIBADD.procdesc+=			pthread
 LIBADD.shutdown_dgram+=			pthread
 LIBADD.socket_msg_waitall+=		pthread
 LIBADD.socket_splice+=			pthread
-LIBADD.vsock_test+=			pthread
 LIBADD.sendfile_helper+=		pthread
 LIBADD.fdgrowtable_test+=		util pthread kvm procstat
 LIBADD.sigwait+=			rt
@@ -188,6 +175,7 @@ TESTS_SUBDIRS+=	acct
 TESTS_SUBDIRS+=	execve
 TESTS_SUBDIRS+=	pipe
 TESTS_SUBDIRS+=	tty
+TESTS_SUBDIRS+=	waspnest_core
 TESTS_SUBDIRS+=	vsock_device_harness
 TESTS_SUBDIRS+=	vsock_e2e
 TESTS_SUBDIRS+=	vsock_rx_harness

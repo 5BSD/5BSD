@@ -80,8 +80,9 @@ grep -Eq '^ATF_TESTS_C\+=[[:space:]]+vmm_kvm_parity_live_test$' \
 	echo "multi-VM parity test is not registered with Kyua" >&2
 	exit 1
 }
-grep -Eq '^PACKAGE=[[:space:]]*tests$' "$srctop/tests/sys/vmm/Makefile" || {
-	echo "VMM parity tests are not owned by the tests package" >&2
+grep -Eq '^PACKAGE=[[:space:]]*waspnest-tests$' \
+    "$srctop/tests/sys/vmm/Makefile" || {
+	echo "VMM parity tests are not owned by the WASPNest test package" >&2
 	exit 1
 }
 grep -Eq '^TESTSDIR=[[:space:]]*\$\{TESTSBASE\}/sys/vmm$' \
@@ -96,7 +97,7 @@ for payload in validate-kvm-parity-requirements.sh \
 	    $1 == "${PACKAGE}FILES+=" && $2 == payload { found = 1 }
 	    END { exit !found }
 	' "$srctop/tests/sys/vmm/Makefile" || {
-		echo "tests package omits KVM parity payload: $payload" >&2
+		echo "WASPNest test package omits KVM parity payload: $payload" >&2
 		exit 1
 	}
 done

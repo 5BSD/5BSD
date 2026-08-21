@@ -12,46 +12,46 @@
 
 _script_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 _arch=$(uname -p)
-if [ -f "${_script_dir}/Makefile" ]; then
+if [ -d "${_script_dir}/waspnest_core" ]; then
 	_srctop=${SRCTOP:-$(CDPATH= cd -- "${_script_dir}/../../.." && pwd)}
+	_objtop=${OBJTOP:-/usr/obj${_srctop}/${_arch}.${_arch}}
+	_core_objdir=${CORE_TEST_DIR:-${_objtop}/tests/sys/kern/waspnest_core}
+	_kern_objdir=${KERN_TEST_DIR:-${_objtop}/tests/sys/kern}
+	_mac_objdir=${MAC_TEST_DIR:-${_objtop}/tests/sys/mac_capability}
 else
 	_srctop=${SRCTOP:-/usr/src}
-fi
-_objtop=${OBJTOP:-/usr/obj${_srctop}/${_arch}.${_arch}}
-if [ -x "${_script_dir}/vsock_test" ]; then
-	_objdir=${KERN_TEST_DIR:-${_script_dir}}
-	_mac_objdir=${MAC_TEST_DIR:-${_script_dir}/../mac_capability}
-else
-	_objdir=${KERN_TEST_DIR:-${_objtop}/tests/sys/kern}
-	_mac_objdir=${MAC_TEST_DIR:-${_objtop}/tests/sys/mac_capability}
+	_core_objdir=${CORE_TEST_DIR:-${_script_dir}}
+	_kern_objdir=${KERN_TEST_DIR:-$(CDPATH= cd -- "${_script_dir}/.." && pwd)}
+	_mac_objdir=${MAC_TEST_DIR:-${_kern_objdir}/../mac_capability}
 fi
 OUT="${1:-/tmp/vsock_test_results.txt}"
 
 # Test binaries to run, in order.  BINARY optionally overrides the path to the
 # primary functional suite (e.g. to point at a locally built binary); the
 # wire/iov/device/RX ABI suites are added from their actual subdirectories.
-BINARY="${BINARY:-${_objdir}/vsock_test}"
-BINARIES="$BINARY ${_objdir}/vsock_wire_test ${_objdir}/vsock_iov_test \
-    ${_objdir}/vsock_device_harness/vsock_device_test \
-    ${_objdir}/vsock_device_harness/virtio_modern_test \
-    ${_objdir}/vsock_device_harness/virtio_input_test \
-    ${_objdir}/vsock_device_harness/virtio_rnd_test \
-    ${_objdir}/vsock_device_harness/virtio_rnd_interrupt_test \
-    ${_objdir}/vsock_device_harness/virtio_core_test \
-    ${_objdir}/vsock_device_harness/iov_test \
-    ${_objdir}/vsock_device_harness/virtio_console_test \
-    ${_objdir}/vsock_device_harness/virtio_9p_test \
-    ${_objdir}/vsock_device_harness/virtio_block_test \
-    ${_objdir}/vsock_device_harness/virtio_net_test \
-    ${_objdir}/vsock_device_harness/virtio_scsi_test \
-    ${_objdir}/vsock_rx_harness/vsock_rx_test \
-    ${_objdir}/vsock_rx_harness/virtio_vsock_transport_test"
+BINARY="${BINARY:-${_core_objdir}/vsock_test}"
+BINARIES="$BINARY ${_core_objdir}/vsock_wire_test \
+    ${_core_objdir}/vsock_iov_test \
+    ${_kern_objdir}/vsock_device_harness/vsock_device_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_modern_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_input_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_rnd_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_rnd_interrupt_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_core_test \
+    ${_kern_objdir}/vsock_device_harness/iov_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_console_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_9p_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_block_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_net_test \
+    ${_kern_objdir}/vsock_device_harness/virtio_scsi_test \
+    ${_kern_objdir}/vsock_rx_harness/vsock_rx_test \
+    ${_kern_objdir}/vsock_rx_harness/virtio_vsock_transport_test"
 
 MAC_BINARY="${MAC_BINARY:-${_mac_objdir}/mac_capability_isolation_test}"
 for _bin in $BINARIES "$MAC_BINARY"; do
 	if [ ! -x "$_bin" ]; then
 		echo "ERROR: $_bin not found or not executable" >&2
-		echo "Build the vsock-tests, tests, and mac-capability-tests suites first" >&2
+		echo "Build the waspnest-tests and mac-capability-tests suites first" >&2
 		exit 1
 	fi
 done

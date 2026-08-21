@@ -4,13 +4,13 @@
 # README.md.  The DUT sources are copied into ${.OBJDIR} so their quote-includes
 # resolve to the mocks here (via -I) rather than the real bhyve headers.
 #
-# Packaged in vsock-tests (not the base tests package) so it can be installed on
-# its own.  run.sh runs the device/transport tests under sanitizers without
-# ATF.
+# Packaged with the complete WASPNest qualification suite rather than the base
+# tests package.  run.sh runs the device/transport tests under sanitizers
+# without ATF.
 
 .include <src.opts.mk>
 
-PACKAGE=	vsock-tests
+PACKAGE=	waspnest-tests
 TESTSDIR=	${TESTSBASE}/sys/kern/vsock_device_harness
 SCRIPTSDIR=	${TESTSDIR}
 

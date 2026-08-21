@@ -144,6 +144,24 @@ validator_falsification_body()
 	atf_check -s exit:1 -o empty -e match:'unclassified.*pci_new_device.c' env \
 	    SRCTOP="$PWD/tree" sh "$validator" "$PWD/good.tsv"
 }
+
+atf_test_case package_layout
+package_layout_head()
+{
+	atf_set descr "all WASPNest tests have one pkgbase package owner"
+}
+package_layout_body()
+{
+	src=$(atf_get_srcdir)
+	validator=$src/validate-package-layout
+	if [ ! -x "$validator" ]; then
+		validator=$src/validate-package-layout.sh
+	fi
+	srctop=${SRCTOP:-/usr/src}
+	[ -d "$srctop/tests" ] || atf_skip "matching source tree is unavailable"
+	atf_check -s exit:0 -o match:'PASS WASPNest package layout' -e empty \
+	    env SRCTOP="$srctop" sh "$validator"
+}
 status_body()
 {
 	src=$(atf_get_srcdir)
@@ -260,6 +278,7 @@ atf_init_test_cases()
 	atf_add_test_case inventory
 	atf_add_test_case list
 	atf_add_test_case nonvirtio_inventory
+	atf_add_test_case package_layout
 	atf_add_test_case status
 	atf_add_test_case validator_falsification
 }

@@ -1045,7 +1045,7 @@ After installing a world built from this exact tree, the focused privileged
 confirmation is:
 
 ```sh
-su root -c 'sh /usr/tests/sys/kern/run_vsock_tests.sh \
+su root -c 'sh /usr/tests/sys/kern/waspnest_core/run_vsock_tests.sh \
     /tmp/vsock-root-results.txt'
 su root -c '/usr/libexec/flua \
     /usr/src/tests/sys/kern/vsock_e2e/virtio-lab.lua \

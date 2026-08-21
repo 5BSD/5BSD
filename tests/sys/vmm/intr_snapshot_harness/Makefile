@@ -5,7 +5,7 @@
 # restore can be exercised on a destination whose uptime differs arbitrarily
 # from the source.
 
-PACKAGE=	tests
+PACKAGE=	waspnest-tests
 TESTSDIR=	${TESTSBASE}/sys/vmm/intr_snapshot_harness
 
 ATF_TESTS_C+=	vatpit_snapshot_test

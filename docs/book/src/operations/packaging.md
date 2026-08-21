@@ -43,9 +43,9 @@ Notable 5BSD packages:
   record is to rename the VMM to WASPNest, so `usr.sbin/bhyve/Makefile`
   installs a transitional symlink `${BINDIR}/waspnest -> bhyve` and a
   `waspnest.8` man link inside the bhyve package; tooling can already
-  reference the new name. `packages/waspnest-tests` carries the WASPNest
-  test suite (with a fix in commit `f00ddacdfd2` to avoid producing an
-  empty debug subpackage).
+  reference the new name. `packages/waspnest-tests` is the sole owner of the
+  WASPNest VMM, AF_VSOCK, VirtIO, live-guest, checkpoint, and nested-VM test
+  payloads; its `-dbg` subpackage carries their symbols.
 - **tzfs-flavors** (`PACKAGE=tzfs-flavors` in
   `usr.sbin/tzfs-flavors/Makefile`, commit `c46033b5618`): the TrustedZFS
   OS-image flavor catalog, deliberately decoupled from the `tzfsd`
