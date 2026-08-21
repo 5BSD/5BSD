@@ -940,7 +940,7 @@ local function assign_port_lanes(document, cases, options)
 end
 
 local function effective_environment(document, case, options, ordinal,
-    cid_assignment)
+    resource_assignment)
 	local environment = merge_environment(
 	    document.defaults and document.defaults.env, case.env)
 	environment = merge_environment(environment, options.sets)
@@ -985,8 +985,10 @@ local function effective_environment(document, case, options, ordinal,
 		-- path without launching bhyve.
 		--
 		environment.CID = environment.CID or tostring(1000 + ordinal * 4)
+		environment.CONSOLE_PORT = environment.CONSOLE_PORT or
+		    tostring(10000 + ordinal * 4)
 	end
-	for key, value in pairs(cid_assignment or {}) do
+	for key, value in pairs(resource_assignment or {}) do
 		environment[key] = value
 	end
 	return environment
@@ -1376,31 +1378,32 @@ end
 
 --
 -- A test run may be parallel internally and may also overlap another
--- independently invoked virtio-lab process.  The kernel is the authoritative
--- CID collision check, but avoid reaching it with a known collision: reserve
--- each real-VM CID in a root-owned directory for the lifetime of its
--- supervised case.  mkdir(2) gives this small management layer an atomic
--- claim without a long-lived lock or a polling allocator.
+-- independently invoked virtio-lab process.  The kernel and TCP bind are the
+-- authoritative collision checks, but avoid reaching them with a known
+-- collision: reserve every real-VM CID and console TCP port in a caller-owned
+-- directory for the lifetime of its supervised case.  mkdir(2) gives this
+-- small management layer an atomic claim without a long-lived lock or a
+-- polling allocator.
 --
-local function cid_lease_directory(options, owner_uid)
+local function resource_lease_directory(options, owner_uid)
 	local path = options.cid_lease_dir or "/var/run/virtio-lab/cid-leases"
 	local identity = path_identity(path)
 
 	if identity == nil then
 		if owner_uid ~= 0 then
-			die("CID lease directory must already exist for a non-root run: " ..
+			die("resource lease directory must already exist for a non-root run: " ..
 			    path)
 		end
 		if not command_ok("/usr/bin/install -d -o root -g wheel -m 700 " ..
 		    shell_quote(path)) then
-			die("cannot create CID lease directory: " .. path)
+			die("cannot create resource lease directory: " .. path)
 		end
 		identity = path_identity(path)
 	end
 	if identity == nil or identity.kind ~= "Directory" or
 	    identity.uid ~= owner_uid or
 	    identity.permissions ~= "700" then
-		die("CID lease directory must be caller-owned mode 0700: " .. path)
+		die("resource lease directory must be caller-owned mode 0700: " .. path)
 	end
 	return path
 end
@@ -1418,19 +1421,38 @@ local function parse_guest_cid(value, description)
 	return cid
 end
 
-local function case_uses_vsock(case, environment)
-	return device_list_contains(environment.DEVICES, "vsock")
+local function parse_tcp_port(value, description)
+	if type(value) ~= "string" or value:match("^[0-9]+$") == nil then
+		die(description .. " must be a decimal TCP port")
+	end
+	local port = tonumber(value)
+	if port == nil or port < 1 or port > 65535 or port % 1 ~= 0 then
+		die(description .. " must be from 1 through 65535")
+	end
+	return port
 end
 
-local function cid_lease_try(directory, cid, owner)
-	local path = directory .. "/" .. tostring(cid)
+local function case_uses_vsock(case, environment)
+	return case.executor == "alpine-multi-vsock" or
+	    case.executor == "fivebsd-auto" or
+	    device_list_contains(environment.DEVICES, "vsock")
+end
+
+local function case_uses_console(environment)
+	return environment.CONSOLE_PORT ~= nil or
+	    environment.CONSOLE_PORT1 ~= nil or
+	    environment.CONSOLE_PORT2 ~= nil
+end
+
+local function resource_lease_try(directory, name, description, owner)
+	local path = directory .. "/" .. name
 	local ok, error = lfs.mkdir(path)
 
 	if not ok then
 		if lfs.attributes(path, "mode") == "directory" then
 			return nil
 		end
-		die("cannot create CID lease " .. tostring(cid) .. ": " ..
+		die("cannot create " .. description .. " lease: " ..
 		    tostring(error))
 	end
 	local owner_path = path .. "/owner"
@@ -1444,13 +1466,23 @@ local function cid_lease_try(directory, cid, owner)
 	    not command_ok("/bin/chmod 600 " .. shell_quote(owner_path)) then
 		os.remove(owner_path)
 		lfs.rmdir(path)
-		die("cannot publish CID lease " .. tostring(cid) .. ": " ..
+		die("cannot publish " .. description .. " lease: " ..
 		    tostring(write_error))
 	end
-	return { cid = cid, owner = owner, path = path }
+	return { description = description, owner = owner, path = path }
 end
 
-local function cid_lease_release(lease)
+local function cid_lease_try(directory, cid, owner)
+	return resource_lease_try(directory, tostring(cid),
+	    "CID " .. tostring(cid), owner)
+end
+
+local function tcp_port_lease_try(directory, port, owner)
+	return resource_lease_try(directory, "tcp-" .. tostring(port),
+	    "TCP port " .. tostring(port), owner)
+end
+
+local function resource_lease_release(lease)
 	local owner_path = lease.path .. "/owner"
 	local file = io.open(owner_path, "r")
 	local owner = file ~= nil and file:read("*l") or nil
@@ -1458,33 +1490,38 @@ local function cid_lease_release(lease)
 		file:close()
 	end
 	if owner ~= lease.owner then
-		die("CID lease ownership changed unexpectedly: " ..
-		    tostring(lease.cid))
+		die("resource lease ownership changed unexpectedly: " ..
+		    lease.description)
 	end
 	if not os.remove(owner_path) then
-		die("cannot remove CID lease owner record: " ..
-	    tostring(lease.cid))
+		die("cannot remove resource lease owner record: " ..
+		    lease.description)
 	end
 	if not lfs.rmdir(lease.path) then
-		die("cannot remove CID lease: " .. tostring(lease.cid))
+		die("cannot remove resource lease: " .. lease.description)
 	end
 end
 
-local function acquire_case_cids(document, case, options, runroot, ordinal,
+local function acquire_case_resources(document, case, options, runroot, ordinal,
     directory)
 	local environment = effective_environment(document, case, options, ordinal)
 	local names, requested, seen = {}, {}, {}
+	local port_requests, port_seen = {}, {}
 	local owner
 	local max_guest_cid = 4294967295
 	local explicit = false
+	local port_explicit = false
 
-	if not case_uses_vsock(case, environment) then
+	if not case_uses_vsock(case, environment) and
+	    not case_uses_console(environment) then
 		return nil
 	end
-	if case.executor == "alpine-multi-vsock" then
-		names = { "CID1", "CID2" }
-	else
-		names = { "CID" }
+	if case_uses_vsock(case, environment) then
+		if case.executor == "alpine-multi-vsock" then
+			names = { "CID1", "CID2" }
+		else
+			names = { "CID" }
+		end
 	end
 	for _, name in ipairs(names) do
 		requested[name] = parse_guest_cid(environment[name], name)
@@ -1497,6 +1534,36 @@ local function acquire_case_cids(document, case, options, runroot, ordinal,
 		end
 		seen[requested[name]] = true
 	end
+	local port_names = {}
+	if environment.CONSOLE_PORT1 ~= nil or environment.CONSOLE_PORT2 ~= nil then
+		port_names = { "CONSOLE_PORT1", "CONSOLE_PORT2" }
+	elseif environment.CONSOLE_PORT ~= nil then
+		port_names = { "CONSOLE_PORT" }
+	end
+	for _, name in ipairs(port_names) do
+		local port = parse_tcp_port(environment[name], name)
+		if port_seen[port] then
+			die(case.id .. " assigns the same TCP console port more than once")
+		end
+		port_seen[port] = true
+		table.insert(port_requests, { name = name, port = port })
+		port_explicit = port_explicit or options.sets[name] ~= nil or
+		    (case.env ~= nil and case.env[name] ~= nil) or
+		    (document.defaults ~= nil and document.defaults.env ~= nil and
+		    document.defaults.env[name] ~= nil)
+	end
+	if environment.NONVIRTIO_DEVICE == "pci-uart" and
+	    environment.CONSOLE_PORT ~= nil then
+		local port = tonumber(environment.CONSOLE_PORT) + 1
+		if port > 65535 then
+			die("CONSOLE_PORT leaves no adjacent PCI UART port")
+		end
+		if port_seen[port] then
+			die(case.id .. " aliases its console and PCI UART ports")
+		end
+		port_seen[port] = true
+		table.insert(port_requests, { port = port })
+	end
 	owner = runroot .. "\t" .. case.id
 	--
 	-- Preserve the documented four-CID spacing for generated CIDs and advance
@@ -1504,6 +1571,7 @@ local function acquire_case_cids(document, case, options, runroot, ordinal,
 	-- operator-supplied CID is never remapped: report its collision instead.
 	-- The bounded scan fails safely rather than wrapping into a reserved CID.
 	--
+	local result = { allocation = {}, leases = {} }
 	for slot = 0, explicit and 0 or 16383 do
 		local allocation, leases = {}, {}
 		local available = true
@@ -1522,29 +1590,79 @@ local function acquire_case_cids(document, case, options, runroot, ordinal,
 			table.insert(leases, lease)
 		end
 		if available then
-			return { allocation = allocation, leases = leases }
+			for name, value in pairs(allocation) do
+				result.allocation[name] = value
+			end
+			for _, lease in ipairs(leases) do
+				table.insert(result.leases, lease)
+			end
+			break
 		end
 		for _, lease in ipairs(leases) do
-			cid_lease_release(lease)
+			resource_lease_release(lease)
 		end
 		if requested[names[1]] + (slot + 1) * 4 > max_guest_cid then
 			break
 		end
 	end
-	die("no CID lease available for " .. case.id .. " in " .. directory ..
-	    (explicit and " (explicit CID allocation is not remapped)" or ""))
+	if #names ~= 0 and #result.leases == 0 then
+		die("no CID lease available for " .. case.id .. " in " .. directory ..
+		    (explicit and " (explicit CID allocation is not remapped)" or ""))
+	end
+	local cid_lease_count = #result.leases
+	for slot = 0, port_explicit and 0 or 16383 do
+		local allocation, leases = {}, {}
+		local available = true
+		for _, request in ipairs(port_requests) do
+			local port = request.port + slot * 4
+			if port > 65535 then
+				available = false
+				break
+			end
+			local lease = tcp_port_lease_try(directory, port, owner)
+			if lease == nil then
+				available = false
+				break
+			end
+			if request.name ~= nil then
+				allocation[request.name] = tostring(port)
+			end
+			table.insert(leases, lease)
+		end
+		if available then
+			for name, value in pairs(allocation) do
+				result.allocation[name] = value
+			end
+			for _, lease in ipairs(leases) do
+				table.insert(result.leases, lease)
+			end
+			break
+		end
+		for _, lease in ipairs(leases) do
+			resource_lease_release(lease)
+		end
+	end
+	if #port_requests ~= 0 and #result.leases == cid_lease_count then
+		for _, lease in ipairs(result.leases) do
+			resource_lease_release(lease)
+		end
+		die("no TCP console port lease available for " .. case.id .. " in " ..
+		    directory .. (port_explicit and
+		    " (explicit TCP port allocation is not remapped)" or ""))
+	end
+	return #result.leases == 0 and nil or result
 end
 
-local function release_case_cids(allocation)
+local function release_case_resources(allocation)
 	if allocation == nil then
 		return
 	end
 	for _, lease in ipairs(allocation.leases) do
-		cid_lease_release(lease)
+		resource_lease_release(lease)
 	end
 end
 
-local function recover_case_cids(directory, runroot, case)
+local function recover_case_resources(directory, runroot, case)
 	local owner = runroot .. "\t" .. case.id
 	local leases = {}
 
@@ -1552,7 +1670,8 @@ local function recover_case_cids(directory, runroot, case)
 		return nil
 	end
 	for entry in lfs.dir(directory) do
-		if entry:match("^[0-9]+$") ~= nil then
+		if entry:match("^[0-9]+$") ~= nil or
+		    entry:match("^tcp%-[0-9]+$") ~= nil then
 			local path = directory .. "/" .. entry
 			local file = io.open(path .. "/owner", "r")
 			local recorded_owner = file ~= nil and file:read("*l") or nil
@@ -1560,8 +1679,11 @@ local function recover_case_cids(directory, runroot, case)
 				file:close()
 			end
 			if recorded_owner == owner then
+				local description = entry:match("^tcp%-(.+)$")
+				description = description ~= nil and
+				    "TCP port " .. description or "CID " .. entry
 				table.insert(leases, {
-					cid = tonumber(entry), owner = owner, path = path,
+					description = description, owner = owner, path = path,
 				})
 			end
 		end
@@ -1572,11 +1694,11 @@ end
 -- Reclaim only a completed or abandoned case's own allocation.  The caller
 -- must first rule out both a supervised process and an untracked survivor;
 -- this helper deliberately has no authority to make that liveness decision.
-local function release_recovered_case_cids(directory, runroot, case)
-	local allocation = recover_case_cids(directory, runroot, case)
+local function release_recovered_case_resources(directory, runroot, case)
+	local allocation = recover_case_resources(directory, runroot, case)
 
 	if allocation ~= nil then
-		release_case_cids(allocation)
+		release_case_resources(allocation)
 	end
 end
 
@@ -1598,7 +1720,7 @@ local function start_case(document, case, options, runroot, ordinal,
 	os.remove(child_pidfile .. ".fingerprint")
 	os.remove(pidfile .. ".pending.fingerprint")
 	os.remove(child_pidfile .. ".pending.fingerprint")
-	local allocation = acquire_case_cids(document, case, options, runroot,
+	local allocation = acquire_case_resources(document, case, options, runroot,
 	    ordinal, lease_directory)
 	local environment = effective_environment(document, case, options, ordinal,
 	    allocation and allocation.allocation or nil)
@@ -1621,7 +1743,7 @@ local function start_case(document, case, options, runroot, ordinal,
 	    shell_quote(status), shell_quote(runner),
 	}, " ")
 	if not command_ok(command) then
-		release_case_cids(allocation)
+		release_case_resources(allocation)
 		die("failed to launch case " .. case.id)
 	end
 	local identity_pending = read_number(status) == nil
@@ -1644,7 +1766,7 @@ local function start_case(document, case, options, runroot, ordinal,
 		started = os.time(),
 		status = status,
 		identity_pending = identity_pending,
-		cid_allocation = allocation,
+		resource_allocation = allocation,
 	}
 end
 
@@ -1991,23 +2113,6 @@ local function run_cases(document, cases, options)
 				    "kernel-vsock profile requires /dev/vsock and " ..
 				    "kern.vsock.userspace_providers (load or install vsock)")
 			end
-		elseif count ~= 0 then
-			local resumed_provider = false
-			if options.resume and options.workdir ~= nil then
-				for _, case in ipairs(cases) do
-					if list_contains(case.resources, "kernel-vsock") and
-					    supervised_case_alive(options.workdir .. "/status/" ..
-					    case.id) then
-						resumed_provider = true
-					end
-				end
-			end
-			if not resumed_provider then
-				table.insert(prerequisite_errors,
-				    "kernel-vsock provider already active (count=" ..
-				    tostring(count) ..
-				    "); stop oracle/other VMM providers")
-			end
 		end
 	end
 	if needs_checkpoint and not command_ok(
@@ -2039,8 +2144,9 @@ local function run_cases(document, cases, options)
 	for ordinal, case in ipairs(cases) do
 		local environment = effective_environment(document, case, options,
 		    ordinal)
-		if case_uses_vsock(case, environment) then
-			lease_directory = cid_lease_directory(options, effective_uid)
+		if case_uses_vsock(case, environment) or
+		    case_uses_console(environment) then
+			lease_directory = resource_lease_directory(options, effective_uid)
 			break
 		end
 	end
@@ -2076,12 +2182,15 @@ local function run_cases(document, cases, options)
 				started = os.time(),
 				status = status_path,
 				identity_pending = false,
-				cid_allocation = recover_case_cids(lease_directory, runroot,
-				    case),
+				resource_allocation = recover_case_resources(lease_directory,
+				    runroot, case),
 			}
-			if case_uses_vsock(case, effective_environment(document, case,
-			    options, ordinal)) and active[case.id].cid_allocation == nil then
-				die("active vsock case is missing its CID lease: " .. case.id)
+			local environment = effective_environment(document, case, options,
+			    ordinal)
+			if (case_uses_vsock(case, environment) or
+			    case_uses_console(environment)) and
+			    active[case.id].resource_allocation == nil then
+				die("active VM case is missing its resource leases: " .. case.id)
 			end
 			emit_event(runroot, "REATTACH", case.id, "", active[case.id].log)
 		elseif options.resume and stale_case_process_alive(status_path) then
@@ -2090,19 +2199,19 @@ local function run_cases(document, cases, options)
 		elseif options.resume and read_status(status_path) == 0 then
 			-- A terminal success from an interrupted manager is reusable only
 			-- after its case-specific allocation is no longer retained.
-			release_recovered_case_cids(lease_directory, runroot, case)
+			release_recovered_case_resources(lease_directory, runroot, case)
 			passed = passed + 1
 			emit_event(runroot, "REUSE", case.id, 0, runroot .. "/logs")
 		else
 			-- A previous manager can be interrupted after the supervised case
-			-- wrote a terminal status but before it released this case's CID
-			-- lease.  We have already rejected a live or untracked process
+			-- wrote a terminal status but before it released this case's resource
+			-- leases.  We have already rejected a live or untracked process
 			-- above, so release only leases whose immutable owner record names
 			-- this exact run and case before retrying it.  Without this recovery
-			-- a --resume silently advances to a different CID and leaves the
-			-- original lease stranded.
+			-- a --resume silently advances to a different allocation and leaves
+			-- the original leases stranded.
 			if options.resume then
-				release_recovered_case_cids(lease_directory, runroot, case)
+				release_recovered_case_resources(lease_directory, runroot, case)
 			end
 			table.insert(pending, { case = case, ordinal = ordinal })
 		end
@@ -2157,7 +2266,7 @@ local function run_cases(document, cases, options)
 					end
 				end
 				active[id] = nil
-				release_case_cids(running.cid_allocation)
+				release_case_resources(running.resource_allocation)
 			end
 		end
 		if #pending > 0 or next(active) ~= nil then
@@ -2471,7 +2580,7 @@ options:
                     immutable 5BSD raw base image
   --workdir path    new run directory, or existing directory for status
   --cid-lease-dir path
-                    root-owned mode-0700 CID lease directory for real VMs
+                    caller-owned mode-0700 CID and TCP-port lease directory
   --bridge name     managed shared bridge (default: bridge0)
   --uplink name     explicit physical uplink for host-prepare
   --prepare-host    idempotently prepare bridge before a run

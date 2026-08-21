@@ -1,6 +1,6 @@
 # WASPNest completion matrix
 
-Date: 2026-08-11 (ledger snapshot revised 2026-08-13)
+Date: 2026-08-20
 
 This file is the entry point for deciding whether the VirtIO, device,
 save/restore, and nested-virtualization work is complete.  Narrative review
@@ -35,8 +35,8 @@ source of truth.
 
 | Item | Count |
 | --- | ---: |
-| Requirement rows | 240 |
-| `implemented-tested` | 237 |
+| Requirement rows | 241 |
+| `implemented-tested` | 238 |
 | `not-applicable` and unadvertised | 2 |
 | `unsupported-optional` and unadvertised | 1 |
 | Live activation rows | 130 |
@@ -49,7 +49,7 @@ source of truth.
 | 5BSD `driver-gap` | 38 |
 | 5BSD `not-applicable` | 3 |
 | Exercised by both Linux and 5BSD | 6 |
-| Implementation-defined interface rows | 111 |
+| Implementation-defined interface rows | 113 |
 
 The three non-implemented requirement dispositions are explicit and
 fail-closed: platform ordering and SR-IOV are not applicable to the emulated

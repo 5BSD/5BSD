@@ -376,14 +376,17 @@ ln -s "$srctop/usr.sbin/bhyve/snapshot_metadata.h" "$work/snapshot_metadata.h"
 mkdir -p "$work/inc/sys"
 cp "$srctop/sys/sys/vsock.h" "$work/inc/sys/vsock.h"
 
-# Minimal <atf-c.h> shim: run each ATF_TC_BODY inline, report failures.
+# Minimal <atf-c.h> shim: isolate each ATF_TC_BODY like atf-run(1) and report
+# aggregate case failures.
 mkdir -p "$work/atfshim"
 cat > "$work/atfshim/atf-c.h" <<'EOF'
 #ifndef ATF_SHIM_H
 #define ATF_SHIM_H
+#include <sys/wait.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 static int atf_checks, atf_failed;
 #define ATF_TC_WITHOUT_HEAD(n) static void atf_tcbody_##n(void *tc)
 #define ATF_TC_BODY(n, tc)     static void atf_tcbody_##n(void *tc)
@@ -404,11 +407,33 @@ static int atf_checks, atf_failed;
  * individual tests.  It makes a blocked test identifiable in a local,
  * sanitizer-backed harness run without making normal successful runs noisy.
  */
-#define ATF_TP_ADD_TC(tp, n) do { \
-    if (getenv("ATF_SHIM_TRACE") != NULL) \
-        fprintf(stderr, "device harness: RUN %s\n", #n); \
-    atf_tcbody_##n(NULL); \
-} while (0)
+static void
+atf_run_case(const char *name, void (*body)(void *))
+{
+    pid_t child;
+    int status;
+
+    if (getenv("ATF_SHIM_TRACE") != NULL)
+        fprintf(stderr, "device harness: RUN %s\n", name);
+    child = fork();
+    if (child == -1)
+        abort();
+    if (child == 0) {
+        atf_checks = 0;
+        atf_failed = 0;
+        body(NULL);
+        _exit(atf_failed == 0 ? EXIT_SUCCESS : EXIT_FAILURE);
+    }
+    if (waitpid(child, &status, 0) != child)
+        abort();
+    atf_checks++;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        fprintf(stderr, "  FAIL device harness case %s terminated\n", name);
+        atf_failed++;
+    }
+}
+#define ATF_TP_ADD_TC(tp, n) \
+    atf_run_case(#n, atf_tcbody_##n)
 #define atf_no_error() (fprintf(stderr, \
     "device harness: %d checks, %d failed\n", atf_checks, atf_failed), \
     atf_failed ? 1 : 0)

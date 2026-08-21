@@ -5,6 +5,7 @@
 #include <sys/types.h>
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #include <atf-c.h>

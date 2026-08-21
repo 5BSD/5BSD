@@ -41,7 +41,7 @@ esac
 	printf '%s\n' "$!" >"$WORKDIR/probe-child.pid"
 }
 [ "$probe_sleep" -eq 0 ] || sleep "$probe_sleep"
-echo "virtio-lab probe case=${LAB_PROBE_NAME:-unnamed} cid=${CID:-none}"
+echo "virtio-lab probe case=${LAB_PROBE_NAME:-unnamed} cid=${CID:-none} cid1=${CID1:-none} cid2=${CID2:-none} console=${CONSOLE_PORT:-none} console1=${CONSOLE_PORT1:-none} console2=${CONSOLE_PORT2:-none}"
 [ "$probe_fail_first" != yes ] || [ "${VIRTIO_LAB_ATTEMPT:-0}" -ne 1 ] ||
     exit 7
 exit "$probe_status"

@@ -174,6 +174,11 @@ grep -q "! grep -qs ' \$mountpoint ' /proc/mounts" \
 # a partial validation result.
 private_validator=$tree_root/tests/sys/kern/vsock_device_harness/validate-virtio-nonstandard-interfaces.sh
 grep -Fq '[ ! -f "$catalog" ] || [ ! -r "$catalog" ]' "$private_validator"
+device_runner=$tree_root/tests/sys/kern/vsock_device_harness/run.sh
+grep -Fq 'child = fork();' "$device_runner"
+grep -Fq 'waitpid(child, &status, 0)' "$device_runner"
+grep -Fq '#include <stdbool.h>' \
+    "$tree_root/tests/sys/kern/vsock_device_harness/console_owner_test.c"
 if sh "$private_validator" "$tree_root" >"$work/nonregular-catalog.out" 2>&1; then
 	echo "non-regular private-interface catalog was accepted" >&2
 	exit 1
@@ -467,10 +472,10 @@ if "$LUA" "$lab" selftest >"$work/unknown-command.out" 2>&1; then
 	exit 1
 fi
 grep -q '^usage: virtio-lab.lua ' "$work/unknown-command.out"
-grep -q 'mkdir(2) gives this small management layer an atomic' "$lab"
+grep -q 'mkdir(2) gives this' "$lab"
 grep -q 'explicit CID allocation is not remapped' "$lab"
-grep -q 'CID lease directory must be caller-owned mode 0700' "$lab"
-grep -q 'release_case_cids(running.cid_allocation)' "$lab"
+grep -q 'resource lease directory must be caller-owned mode 0700' "$lab"
+grep -q 'release_case_resources(running.resource_allocation)' "$lab"
 [ "$(grep -c '^cases=18$' "$work/smoke")" -eq 1 ]
 
 # The standalone checkpoint profile is intentionally broader than the small
@@ -511,8 +516,9 @@ done
 # so this remains a rootless orchestration test.
 mkdir "$work/cid-leases"
 chmod 700 "$work/cid-leases"
-mkdir "$work/cid-leases/1000"
-printf '%s\n' foreign >"$work/cid-leases/1000/owner"
+mkdir "$work/cid-leases/1004" "$work/cid-leases/tcp-10004"
+printf '%s\n' foreign >"$work/cid-leases/1004/owner"
+printf '%s\n' foreign >"$work/cid-leases/tcp-10004/owner"
 cat >"$work/cid-lease.yaml" <<'EOF'
 ---
 version: 1
@@ -534,7 +540,7 @@ if "$LUA" "$lab" run --manifest "$work/cid-lease.yaml" --profile smoke \
 	echo "symlinked CID lease directory unexpectedly passed" >&2
 	exit 1
 fi
-grep -q 'CID lease directory must be caller-owned mode 0700' "$work/cid-link.out"
+grep -q 'resource lease directory must be caller-owned mode 0700' "$work/cid-link.out"
 [ ! -e "$work/cid-link-run/manager.lock" ]
 mkdir "$work/cancel-target"
 chmod 700 "$work/cancel-target"
@@ -550,35 +556,85 @@ grep -q 'cancel requires root or a caller-owned mode-0700 run directory' \
     --cid-lease-dir "$work/cid-leases" --workdir "$work/cid-run" \
     >"$work/cid-run.out"
 grep -q '^passed=1$' "$work/cid-run.out"
-grep -q 'cid=1004' "$work/cid-run/logs/generated-cid.attempt1.log"
-[ -d "$work/cid-leases/1000" ]
-[ ! -e "$work/cid-leases/1004" ]
+grep -q 'cid=1008 .*console=10008' \
+    "$work/cid-run/logs/generated-cid.attempt1.log"
+[ -d "$work/cid-leases/1004" ]
+[ -d "$work/cid-leases/tcp-10004" ]
+[ ! -e "$work/cid-leases/1008" ]
+[ ! -e "$work/cid-leases/tcp-10008" ]
+
+# Three independently supervised VM-shaped cases must overlap, and collision
+# remapping must keep both their CIDs and TCP consoles distinct while foreign
+# leases remain untouched.
+cat >"$work/coexist.yaml" <<'EOF'
+---
+version: 1
+defaults:
+  timeout: 20
+  env:
+    DEVICES: vsock
+cases:
+  - id: coexist-one
+    executor: orchestrator-probe
+    profiles: [coexist]
+    env: { LAB_PROBE_NAME: one, LAB_PROBE_SLEEP: "3" }
+  - id: coexist-two
+    executor: orchestrator-probe
+    profiles: [coexist]
+    env: { LAB_PROBE_NAME: two, LAB_PROBE_SLEEP: "3" }
+  - id: coexist-three
+    executor: orchestrator-probe
+    profiles: [coexist]
+    env: { LAB_PROBE_NAME: three, LAB_PROBE_SLEEP: "3" }
+EOF
+"$LUA" "$lab" run --manifest "$work/coexist.yaml" --profile coexist \
+    --jobs 3 --cid-lease-dir "$work/cid-leases" \
+    --workdir "$work/coexist-run" >"$work/coexist.out"
+first_pass=$(awk -F '\t' '$2 == "PASS" { print NR; exit }' \
+    "$work/coexist-run/events.tsv")
+[ "$(awk -F '\t' -v limit="$first_pass" \
+    'NR < limit && $2 == "START" { n++ } END { print n + 0 }' \
+    "$work/coexist-run/events.tsv")" -eq 3 ]
+[ "$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^cid=/) { sub(/^cid=/, "", $i); print $i } }' \
+    "$work/coexist-run/logs/"*.log | sort -u | wc -l)" -eq 3 ]
+[ "$(awk '{ for (i = 1; i <= NF; i++) if ($i ~ /^console=/) { sub(/^console=/, "", $i); print $i } }' \
+    "$work/coexist-run/logs/"*.log | sort -u | wc -l)" -eq 3 ]
+[ -d "$work/cid-leases/1004" ]
+[ -d "$work/cid-leases/tcp-10004" ]
+[ "$(find "$work/cid-leases" -mindepth 1 -maxdepth 1 -type d | wc -l)" -eq 2 ]
 [ ! -e "$work/cid-run/manager.lock" ]
 # Simulate an interrupted manager: the case has a terminal failure status,
-# but its own CID lease was not released.  Resume must reclaim exactly that
-# lease after proving no supervisor remains; otherwise the allocator would
-# silently advance from 1004 to 1008.
-mkdir "$work/cid-leases/1004"
+# but its own CID and console-port leases were not released.  Resume must
+# reclaim exactly those leases after proving no supervisor remains; otherwise
+# the allocator would silently advance from 1008 to 1012.
+mkdir "$work/cid-leases/1008" "$work/cid-leases/tcp-10008"
 printf '%s\t%s\n' "$work/cid-run" generated-cid > \
-    "$work/cid-leases/1004/owner"
+    "$work/cid-leases/1008/owner"
+printf '%s\t%s\n' "$work/cid-run" generated-cid > \
+    "$work/cid-leases/tcp-10008/owner"
 printf '1\n' > "$work/cid-run/status/generated-cid"
 "$LUA" "$lab" run --manifest "$work/cid-lease.yaml" --profile smoke \
     --cid-lease-dir "$work/cid-leases" --workdir "$work/cid-run" --resume \
     >"$work/cid-resume-stale-lease.out"
 grep -q '^passed=1$' "$work/cid-resume-stale-lease.out"
-grep -q 'cid=1004' "$work/cid-run/logs/generated-cid.attempt2.log"
-[ ! -e "$work/cid-leases/1004" ]
+grep -q 'cid=1008 .*console=10008' \
+    "$work/cid-run/logs/generated-cid.attempt2.log"
+[ ! -e "$work/cid-leases/1008" ]
+[ ! -e "$work/cid-leases/tcp-10008" ]
 # A manager can also be interrupted just after recording a successful case.
 # Resume must reclaim that completed case's lease rather than preserving an
 # allocation which no live process owns.
-mkdir "$work/cid-leases/1004"
+mkdir "$work/cid-leases/1008" "$work/cid-leases/tcp-10008"
 printf '%s\t%s\n' "$work/cid-run" generated-cid > \
-    "$work/cid-leases/1004/owner"
+    "$work/cid-leases/1008/owner"
+printf '%s\t%s\n' "$work/cid-run" generated-cid > \
+    "$work/cid-leases/tcp-10008/owner"
 "$LUA" "$lab" run --manifest "$work/cid-lease.yaml" --profile smoke \
     --cid-lease-dir "$work/cid-leases" --workdir "$work/cid-run" --resume \
     >"$work/cid-resume-success-lease.out"
 grep -q '^passed=1$' "$work/cid-resume-success-lease.out"
-[ ! -e "$work/cid-leases/1004" ]
+[ ! -e "$work/cid-leases/1008" ]
+[ ! -e "$work/cid-leases/tcp-10008" ]
 mkdir "$work/cid-run/manager.lock"
 printf '%s\n' "$$" >"$work/cid-run/manager.lock/owner"
 if "$LUA" "$lab" run --manifest "$work/cid-lease.yaml" --profile smoke \
@@ -619,6 +675,32 @@ if "$LUA" "$lab" run --manifest "$work/cid-explicit.yaml" \
 	exit 1
 fi
 grep -q 'explicit CID allocation is not remapped' "$work/cid-explicit.out"
+
+cat >"$work/port-explicit.yaml" <<'EOF'
+---
+version: 1
+defaults:
+  timeout: 20
+  env:
+    DEVICES: vsock
+    CID: "3000"
+    CONSOLE_PORT: "10004"
+cases:
+  - id: explicit-port
+    executor: orchestrator-probe
+    profiles: [smoke]
+EOF
+if "$LUA" "$lab" run --manifest "$work/port-explicit.yaml" \
+    --profile smoke --cid-lease-dir "$work/cid-leases" \
+    --workdir "$work/port-explicit-run" >"$work/port-explicit.out" 2>&1; then
+	echo "explicit occupied TCP port unexpectedly passed" >&2
+	exit 1
+fi
+grep -q 'explicit TCP port allocation is not remapped' \
+    "$work/port-explicit.out"
+[ ! -e "$work/cid-leases/3000" ]
+grep -Fq 'case.executor == "alpine-multi-vsock"' "$lab"
+grep -Fq 'case.executor == "fivebsd-auto"' "$lab"
 [ -x "$here/build-5bsd-virtio-modules.sh" ]
 grep -q '^SCRIPTS+=.*build-5bsd-virtio-modules.sh$' "$here/Makefile"
 [ -x "$here/build-vmm-module.sh" ]

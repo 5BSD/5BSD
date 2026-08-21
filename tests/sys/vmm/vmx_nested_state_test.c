@@ -12650,6 +12650,7 @@ ATF_TC_BODY(nested_startup_frozen_target, tc)
 	executed_plan.image.vpid.hardware_vpid = 41;
 	executed_plan.image.vpid.next_virtual_vpid = 9;
 	executed_plan.image.vpid.next_virtual_vpid_valid = true;
+	memset(&l2_runtime, 0, sizeof(l2_runtime));
 	l2_runtime.control = guest_control_state();
 	l2_runtime.arch = guest_arch_state();
 	l2_runtime.arch.rip = UINT64_C(0x12345678);

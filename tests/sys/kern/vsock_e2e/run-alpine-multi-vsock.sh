@@ -29,12 +29,10 @@ CHECKPOINT_ACTIVE_VSOCK_REJECT=${CHECKPOINT_ACTIVE_VSOCK_REJECT:-no}
 	echo "kernel-backed multi-VM testing requires /dev/vsock" >&2
 	exit 1
 }
-providers=$(sysctl -n kern.vsock.userspace_providers)
-[ "$providers" -eq 0 ] || {
-	echo "kernel vsock provider already active (count=$providers);" \
-	    "stop oracle/other VMM providers before this exclusive gate" >&2
-	exit 1
-}
+baseline_providers=$(sysctl -n kern.vsock.userspace_providers)
+case $baseline_providers in
+''|*[!0-9]*) echo "invalid kernel vsock provider count" >&2; exit 1 ;;
+esac
 case "$TRANSPORT" in
 modern|legacy) ;;
 *) echo "TRANSPORT must be modern or legacy" >&2; exit 2 ;;
@@ -188,6 +186,28 @@ run_one "$CID2" "$PORT_OFFSET2" "$CONSOLE_PORT2" cid2 \
     >"$WORKDIR/cid2.log" 2>&1 &
 pid2=$!
 
+# Both children stop at their initial barrier with their provider attached.
+# Prove coexistence relative to the host's baseline rather than requiring an
+# otherwise idle machine: unrelated VMs are allowed to remain active.
+i=0
+while { [ ! -f "$barrier_dir/initial-cid-$CID1" ] ||
+    [ ! -f "$barrier_dir/initial-cid-$CID2" ]; } && [ "$i" -lt 240 ]; do
+	kill -0 "$pid1" 2>/dev/null && kill -0 "$pid2" 2>/dev/null || break
+	sleep 1
+	i=$((i + 1))
+done
+[ -f "$barrier_dir/initial-cid-$CID1" ] &&
+    [ -f "$barrier_dir/initial-cid-$CID2" ] || {
+	echo "concurrent providers did not reach the initial barrier" >&2
+	exit 1
+}
+providers=$(sysctl -n kern.vsock.userspace_providers)
+[ "$providers" -eq $((baseline_providers + 2)) ] || {
+	echo "provider coexistence count mismatch: baseline=$baseline_providers active=$providers expected=$((baseline_providers + 2))" >&2
+	exit 1
+}
+echo "PASS provider coexistence baseline=$baseline_providers active=$providers"
+
 status1=0
 status2=0
 wait "$pid1" || status1=$?
@@ -204,8 +224,8 @@ if [ "$status1" -ne 0 ] || [ "$status2" -ne 0 ]; then
 fi
 
 providers=$(sysctl -n kern.vsock.userspace_providers)
-[ "$providers" -eq 0 ] || {
-	echo "provider count leaked after test: $providers" >&2
+[ "$providers" -eq "$baseline_providers" ] || {
+	echo "provider count leaked after test: baseline=$baseline_providers actual=$providers" >&2
 	exit 1
 }
 echo "PASS concurrent kernel VSOCK guests CID $CID1 and CID $CID2"
