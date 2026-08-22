@@ -35,6 +35,7 @@ int	notifycmp_broker_state_set(struct notifycmp_broker *,
 int	notifycmp_broker_state_get(struct notifycmp_broker *, const char *,
 	    size_t, struct notifycmp_state_reply *);
 uint64_t notifycmp_broker_epoch(const struct notifycmp_broker *);
+void	notifycmp_broker_test_set_sequence(struct notifycmp_broker *, uint64_t);
 int	notifycmp_broker_timer(struct notifycmp_broker *,
 	    struct notifycmp_broker_client *, uint64_t);
 ssize_t	notifycmp_broker_next(struct notifycmp_broker_client *,

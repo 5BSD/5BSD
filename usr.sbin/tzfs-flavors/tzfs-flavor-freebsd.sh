@@ -21,7 +21,7 @@
 # The output path must match the "source" the flavor catalog fragment
 # (flavors.ucl) declares for the freebsd flavor.
 
-set -e
+set -eu
 
 pool=zroot
 out=/usr/share/tzfs/freebsd.zfs.zst
@@ -41,9 +41,15 @@ while getopts "p:o:" opt; do
 done
 shift $((OPTIND - 1))
 
+[ $# -eq 1 ] || usage
 src=$1
 [ -n "$src" ] && [ -d "$src" ] || usage
+mkflavor=${TZFS_MKFLAVOR:-/usr/sbin/tzfs-mkflavor}
+[ -x "$mkflavor" ] || {
+	echo "tzfs-flavor-freebsd: tzfs-mkflavor unavailable" >&2
+	exit 1
+}
 
 mkdir -p "$(dirname "$out")"
-tzfs-mkflavor -p "$pool" -o "$out" freebsd "$src"
+"$mkflavor" -p "$pool" -o "$out" freebsd "$src"
 echo "tzfs-flavor-freebsd: wrote $out" >&2

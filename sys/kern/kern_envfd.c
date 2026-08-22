@@ -263,6 +263,24 @@ envfd_state_locked(const struct envfd *ef)
 	return (ENVFD_STATE_READY);
 }
 
+static bool
+envfd_name_valid(const char *name, size_t capacity)
+{
+	size_t i, length;
+
+	length = strnlen(name, capacity);
+	if (length == 0 || length == capacity)
+		return (false);
+	for (i = 0; i < length; i++) {
+		if (!((name[i] >= 'a' && name[i] <= 'z') ||
+		    (name[i] >= 'A' && name[i] <= 'Z') ||
+		    (name[i] >= '0' && name[i] <= '9') || name[i] == '.' ||
+		    name[i] == '_' || name[i] == '-'))
+			return (false);
+	}
+	return (true);
+}
+
 static int
 envfd_capmode_check(struct envfd *ef, struct thread *td, int operation)
 {
@@ -287,7 +305,7 @@ envfd_create_file(struct thread *td, struct file *fp, const char *name,
 	namelen = strnlen(name, ENVFD_NAME_MAX);
 	if (namelen == ENVFD_NAME_MAX)
 		return (ENAMETOOLONG);
-	if (namelen == 0 || strchr(name, '=') != NULL)
+	if (!envfd_name_valid(name, ENVFD_NAME_MAX))
 		return (EINVAL);
 	if (options->eco_max_value_size > envfd_max_value_size ||
 	    options->eco_max_value_size > INT_MAX -
@@ -315,21 +333,10 @@ envfd_create_file(struct thread *td, struct file *fp, const char *name,
 	ef->ef_flags = options->eco_flags;
 	strlcpy(ef->ef_name, name, sizeof(ef->ef_name));
 
-	fflags = 0;
-	switch (options->eco_access) {
-	case O_RDONLY:
-		fflags = FREAD;
-		break;
-	case O_WRONLY:
-		fflags = FWRITE;
-		break;
-	case O_RDWR:
-		fflags = FREAD | FWRITE;
-		break;
-	default:
-		panic("%s: invalid validated access %#x", __func__,
-		    options->eco_access);
-	}
+	KASSERT(options->eco_access == O_RDWR,
+	    ("%s: invalid validated access %#x", __func__,
+	    options->eco_access));
+	fflags = FREAD | FWRITE;
 	finit(fp, fflags, DTYPE_ENVFD, ef, &envfd_fileops);
 	SDT_PROBE6(envfd, , , create, ef, td->td_proc->p_pid, td->td_ucred,
 	    options->eco_flags, options->eco_max_value_size, 0);
@@ -601,7 +608,8 @@ envfd_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 	    ef->ef_blob == NULL ? 0 : ef->ef_blob->eb_size;
 	kif->kf_un.kf_envfd.kf_envfd_max_size = ef->ef_max_size;
 	kif->kf_un.kf_envfd.kf_envfd_generation = ef->ef_generation;
-	kif->kf_un.kf_envfd.kf_envfd_addr = (uintptr_t)ef;
+	/* Never expose the kernel object's address through process metadata. */
+	kif->kf_un.kf_envfd.kf_envfd_addr = 0;
 	kif->kf_un.kf_envfd.kf_envfd_flags = ef->ef_flags;
 	kif->kf_un.kf_envfd.kf_envfd_state = envfd_state_locked(ef);
 	snprintf(kif->kf_path, sizeof(kif->kf_path), "envfd:%s", ef->ef_name);

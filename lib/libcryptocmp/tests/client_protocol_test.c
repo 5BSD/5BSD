@@ -1,0 +1,198 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ */
+
+#include <sys/param.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+
+#include <atf-c.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <stdint.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <cryptocmp.h>
+
+#include "fake_service.h"
+
+static struct cryptocmp_generate
+generate_request(void)
+{
+	struct cryptocmp_generate request;
+
+	memset(&request, 0, sizeof(request));
+	request.mac = 1;
+	request.mackeylen = 32;
+	request.rights = 1;
+	return (request);
+}
+
+ATF_TC_WITHOUT_HEAD(successful_operation_matrix);
+ATF_TC_BODY(successful_operation_matrix, tc)
+{
+	struct cryptocmp_key_generate key_request;
+	struct cryptocmp_generate request;
+	struct cryptocmp_client *client;
+	uint8_t public_key[32];
+	uint64_t generation;
+	int descriptor;
+
+	fake_service_reset();
+	request = generate_request();
+	memset(&key_request, 0, sizeof(key_request));
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+	ATF_REQUIRE_EQ(0, cryptocmp_generate(client, &request, &descriptor));
+	ATF_REQUIRE(descriptor >= 0);
+	close(descriptor);
+	ATF_REQUIRE_EQ(0, cryptocmp_generate_key(client, &key_request,
+	    public_key, &descriptor));
+	ATF_CHECK_EQ(0xa5, public_key[0]);
+	close(descriptor);
+	ATF_REQUIRE_EQ(0, cryptocmp_named_create(client, "test", &request,
+	    &generation));
+	ATF_CHECK_EQ(42, generation);
+	ATF_REQUIRE_EQ(0, cryptocmp_named_lease(client, "test", 1, 60,
+	    &generation, &descriptor));
+	ATF_CHECK_EQ(42, generation);
+	close(descriptor);
+	ATF_REQUIRE_EQ(0,
+	    cryptocmp_named_rotate(client, "test", &generation));
+	ATF_CHECK_EQ(42, generation);
+	ATF_REQUIRE_EQ(0,
+	    cryptocmp_named_delete(client, "test", &generation));
+	ATF_CHECK_EQ(42, generation);
+	ATF_CHECK_EQ(6, fake_service_calls());
+	cryptocmp_close(client);
+	ATF_CHECK_EQ(1, fake_service_closed());
+}
+
+ATF_TC_WITHOUT_HEAD(error_and_output_contracts);
+ATF_TC_BODY(error_and_output_contracts, tc)
+{
+	struct cryptocmp_key_generate key_request;
+	struct cryptocmp_generate request;
+	struct cryptocmp_client *client;
+	uint8_t public_key[32];
+	uint64_t generation;
+	int descriptor;
+
+	fake_service_reset();
+	request = generate_request();
+	memset(&key_request, 0, sizeof(key_request));
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+	fake_service_status_next(EPERM);
+	descriptor = 99;
+	ATF_CHECK_ERRNO(EPERM,
+	    cryptocmp_generate(client, &request, &descriptor) == -1);
+	ATF_CHECK_EQ(-1, descriptor);
+	fake_service_status_next(ENOENT);
+	generation = 99;
+	descriptor = 99;
+	ATF_CHECK_ERRNO(ENOENT, cryptocmp_named_lease(client, "missing", 1,
+	    0, &generation, &descriptor) == -1);
+	ATF_CHECK_EQ(0, generation);
+	ATF_CHECK_EQ(-1, descriptor);
+	fake_service_status_next(EACCES);
+	memset(public_key, 0xff, sizeof(public_key));
+	descriptor = 99;
+	ATF_CHECK_ERRNO(EACCES, cryptocmp_generate_key(client, &key_request,
+	    public_key, &descriptor) == -1);
+	ATF_CHECK_EQ(-1, descriptor);
+	ATF_CHECK_EQ(0, public_key[0]);
+	fake_service_fault_next(FAKE_SERVICE_FAULT_CALL);
+	ATF_CHECK_ERRNO(ECONNRESET,
+	    cryptocmp_generate(client, &request, &descriptor) == -1);
+	cryptocmp_close(client);
+}
+
+ATF_TC_WITHOUT_HEAD(malformed_reply_matrix);
+ATF_TC_BODY(malformed_reply_matrix, tc)
+{
+	static const enum fake_service_fault faults[] = {
+		FAKE_SERVICE_FAULT_TRUNCATE,
+		FAKE_SERVICE_FAULT_WRONG_MAGIC,
+		FAKE_SERVICE_FAULT_WRONG_VERSION,
+		FAKE_SERVICE_FAULT_WRONG_OPCODE,
+		FAKE_SERVICE_FAULT_POSITIVE_STATUS,
+		FAKE_SERVICE_FAULT_INVALID_STATUS,
+		FAKE_SERVICE_FAULT_MISSING_FD,
+	};
+	struct cryptocmp_generate request;
+	struct cryptocmp_client *client;
+	int descriptor;
+	size_t i;
+
+	fake_service_reset();
+	request = generate_request();
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+	for (i = 0; i < nitems(faults); i++) {
+		fake_service_fault_next(faults[i]);
+		descriptor = 99;
+		ATF_CHECK_ERRNO(EPROTO,
+		    cryptocmp_generate(client, &request, &descriptor) == -1);
+		ATF_CHECK_EQ(-1, descriptor);
+	}
+	cryptocmp_close(client);
+}
+
+ATF_TC_WITHOUT_HEAD(unexpected_descriptor_is_closed);
+ATF_TC_BODY(unexpected_descriptor_is_closed, tc)
+{
+	struct cryptocmp_generate request;
+	struct cryptocmp_client *client;
+	int descriptor, fd;
+
+	fake_service_reset();
+	request = generate_request();
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+	fake_service_status_next(EPERM);
+	fake_service_fault_next(FAKE_SERVICE_FAULT_UNEXPECTED_FD);
+	ATF_CHECK_ERRNO(EPROTO,
+	    cryptocmp_generate(client, &request, &descriptor) == -1);
+	ATF_CHECK_EQ(-1, descriptor);
+	fd = fake_service_last_fd();
+	ATF_REQUIRE(fd >= 0);
+	errno = 0;
+	ATF_CHECK_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
+	cryptocmp_close(client);
+}
+
+ATF_TC_WITHOUT_HEAD(fork_rejects_inherited_client);
+ATF_TC_BODY(fork_rejects_inherited_client, tc)
+{
+	struct cryptocmp_generate request;
+	struct cryptocmp_client *client;
+	int descriptor, status;
+	pid_t child;
+
+	fake_service_reset();
+	request = generate_request();
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		if (cryptocmp_generate(client, &request, &descriptor) != -1 ||
+		    errno != EINVAL)
+			_exit(1);
+		cryptocmp_close(client);
+		_exit(0);
+	}
+	ATF_REQUIRE_EQ(child, waitpid(child, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(0, WEXITSTATUS(status));
+	ATF_REQUIRE_EQ(0, cryptocmp_generate(client, &request, &descriptor));
+	close(descriptor);
+	cryptocmp_close(client);
+}
+
+ATF_TP_ADD_TCS(tp)
+{
+	ATF_TP_ADD_TC(tp, successful_operation_matrix);
+	ATF_TP_ADD_TC(tp, error_and_output_contracts);
+	ATF_TP_ADD_TC(tp, malformed_reply_matrix);
+	ATF_TP_ADD_TC(tp, unexpected_descriptor_is_closed);
+	ATF_TP_ADD_TC(tp, fork_rejects_inherited_client);
+	return (atf_no_error());
+}

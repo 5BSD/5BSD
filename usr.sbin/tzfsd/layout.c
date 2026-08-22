@@ -12,6 +12,7 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/mount.h>
+#include <sys/stat.h>
 #include <sys/linker.h>
 #include <sys/wait.h>
 
@@ -32,6 +33,7 @@ extern char **environ;
 
 #define	RETAIN_RIGHTS	ZH_ALL_RIGHTS
 #define	ZFS_DEV_PATH	"/dev/zfs"
+#define	ZSTD_PATH	"/usr/bin/zstd"
 #define	TZFSD_NATIVE_SNAP	"tzfs-native"	/* BE snapshot cloned for native */
 
 /* Run a command to completion; return its exit status, or -1 to spawn. */
@@ -251,28 +253,47 @@ static int
 recv_baked(int templates_fd, struct tzfsd_flavor_def *f)
 {
 	posix_spawn_file_actions_t fa;
+	struct stat sb;
 	char *argv[4];
-	pid_t pid;
-	int pipefd[2], srcfd, rc, status;
+	pid_t pid, waited;
+	bool fa_initialized;
+	int error, pipefd[2], srcfd, rc, status;
 
-	if (access(f->source, R_OK) != 0)
-		return (-1);
-	srcfd = open(f->source, O_RDONLY | O_CLOEXEC);
+	srcfd = open(f->source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
 	if (srcfd == -1)
 		return (-1);
+	if (fstat(srcfd, &sb) == -1) {
+		error = errno;
+		(void)close(srcfd);
+		errno = error;
+		return (-1);
+	}
+	if (!S_ISREG(sb.st_mode) || sb.st_size == 0 || sb.st_uid != 0 ||
+	    (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+		(void)close(srcfd);
+		errno = EPERM;
+		return (-1);
+	}
 	if (pipe2(pipefd, O_CLOEXEC) == -1) {
 		(void)close(srcfd);
 		return (-1);
 	}
 
-	(void)posix_spawn_file_actions_init(&fa);
-	(void)posix_spawn_file_actions_adddup2(&fa, srcfd, STDIN_FILENO);
-	(void)posix_spawn_file_actions_adddup2(&fa, pipefd[1], STDOUT_FILENO);
-	argv[0] = __DECONST(char *, "zstd");
+	fa_initialized = false;
+	rc = posix_spawn_file_actions_init(&fa);
+	if (rc == 0)
+		fa_initialized = true;
+	if (rc == 0)
+		rc = posix_spawn_file_actions_adddup2(&fa, srcfd, STDIN_FILENO);
+	if (rc == 0)
+		rc = posix_spawn_file_actions_adddup2(&fa, pipefd[1], STDOUT_FILENO);
+	argv[0] = __DECONST(char *, ZSTD_PATH);
 	argv[1] = __DECONST(char *, "-dc");
 	argv[2] = NULL;
-	rc = posix_spawnp(&pid, "zstd", &fa, NULL, argv, environ);
-	posix_spawn_file_actions_destroy(&fa);
+	if (rc == 0)
+		rc = posix_spawn(&pid, ZSTD_PATH, &fa, NULL, argv, environ);
+	if (fa_initialized)
+		(void)posix_spawn_file_actions_destroy(&fa);
 	(void)close(srcfd);
 	(void)close(pipefd[1]);
 	if (rc != 0) {
@@ -297,7 +318,17 @@ recv_baked(int templates_fd, struct tzfsd_flavor_def *f)
 	if (rc == -1)
 		syslog(LOG_ERR, "recv %s from %s: %m", f->name, f->source);
 	(void)close(pipefd[0]);
-	(void)waitpid(pid, &status, 0);
+	do {
+		waited = waitpid(pid, &status, 0);
+	} while (waited == -1 && errno == EINTR);
+	if (waited == -1) {
+		if (rc == 0)
+			rc = -1;
+	} else if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		if (rc == 0)
+			errno = EIO;
+		rc = -1;
+	}
 	if (rc == -1)
 		return (-1);
 	return (0);

@@ -212,13 +212,15 @@ ATF_TC_BODY(validation_and_access, tc)
 	    ENVFD_CREATE_OPTIONS_INITIALIZER(8);
 	char max_name[ENVFD_NAME_MAX];
 	char long_name[ENVFD_NAME_MAX + 1];
-	char byte;
 	int fd;
 
 	ATF_REQUIRE_ERRNO(EINVAL, envfd_create(NULL, &options) == -1);
 	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("null-options", NULL) == -1);
 	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("", &options) == -1);
 	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("bad=name", &options) == -1);
+	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("bad/name", &options) == -1);
+	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("bad name", &options) == -1);
+	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("bad\nname", &options) == -1);
 	memset(long_name, 'x', sizeof(long_name));
 	long_name[sizeof(long_name) - 1] = '\0';
 	ATF_REQUIRE_ERRNO(ENAMETOOLONG,
@@ -248,7 +250,7 @@ ATF_TC_BODY(validation_and_access, tc)
 	options.eco_fdflags = O_CLOEXEC;
 	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("fdflags", &options) == -1);
 	options.eco_fdflags = 0;
-	options.eco_xfer_state = 3;
+	options.eco_xfer_state = CAP_XFER_TWICE + 1;
 	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("xfer-state", &options) == -1);
 	options.eco_xfer_state = CAP_XFER_UNLIMITED;
 	options.eco_cloexec_state = 3;
@@ -266,18 +268,9 @@ ATF_TC_BODY(validation_and_access, tc)
 	options = (struct envfd_create_options)
 	    ENVFD_CREATE_OPTIONS_INITIALIZER(1);
 	options.eco_access = O_RDONLY;
-	fd = envfd_create("readonly", &options);
-	ATF_REQUIRE(fd >= 0);
-	byte = 1;
-	ATF_REQUIRE_ERRNO(EBADF, write(fd, &byte, 1) == -1);
-	close(fd);
-
+	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("readonly", &options) == -1);
 	options.eco_access = O_WRONLY;
-	fd = envfd_create("writeonly", &options);
-	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE_ERRNO(EBADF, read(fd, &byte, 1) == -1);
-	ATF_REQUIRE_EQ(1, write(fd, &byte, 1));
-	close(fd);
+	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("writeonly", &options) == -1);
 
 	fd = new_envfd("bounded", 0, 1);
 	ATF_REQUIRE(fd >= 0);
@@ -844,6 +837,28 @@ ATF_TC_BODY(initial_descriptor_confinement, tc)
 	close(sv[1]);
 	close(fd);
 
+	/* A two-hop budget permits creator-to-broker-to-worker only. */
+	options = (struct envfd_create_options)
+	    ENVFD_CREATE_OPTIONS_INITIALIZER(1);
+	options.eco_xfer_state = CAP_XFER_TWICE;
+	fd = envfd_create("xfer-twice", &options);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	send_fd(sv[0], fd);
+	received = recv_fd(sv[1]);
+	ATF_CHECK_EQ(ENOTCAPABLE, try_send_fd(sv[0], fd));
+	close(sv[0]);
+	close(sv[1]);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	send_fd(sv[0], received);
+	close(received);
+	received = recv_fd(sv[1]);
+	ATF_CHECK_EQ(ENOTCAPABLE, try_send_fd(sv[1], received));
+	close(received);
+	close(sv[0]);
+	close(sv[1]);
+	close(fd);
+
 	/*
 	 * A one-shot fork permits the first child, then locks both the
 	 * parent's entry and the inherited child's entry against later forks.
@@ -975,6 +990,7 @@ ATF_TC_BODY(kinfo_metadata, tc)
 		    kif->kf_un.kf_envfd.kf_envfd_flags);
 		ATF_CHECK_EQ(ENVFD_STATE_SEALED,
 		    kif->kf_un.kf_envfd.kf_envfd_state);
+		ATF_CHECK_EQ(0, kif->kf_un.kf_envfd.kf_envfd_addr);
 	}
 	ATF_CHECK_EQ(1, found);
 	free(files);

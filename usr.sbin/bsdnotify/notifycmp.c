@@ -147,6 +147,17 @@ struct router_watch_context {
 	_Atomic bool	 exited;
 };
 
+static bool
+router_label_valid(const char *label)
+{
+	size_t length;
+
+	if (label == NULL)
+		return (false);
+	length = strnlen(label, NOTIFYCMP_MAX_PUBLISHER + 1);
+	return (length != 0 && length <= NOTIFYCMP_MAX_PUBLISHER);
+}
+
 #ifndef NOTIFYCMP_ROUTER_TEST
 static void router_channel_request(struct channel *, struct channel_message *,
     void *);
@@ -345,6 +356,36 @@ router_collect_garbage(struct router *router)
 }
 
 static int
+router_allocate_ident(struct router *router, uint64_t *ident)
+{
+	struct router_session *session;
+	struct router_timer *timer;
+	uint64_t candidate;
+	bool collision;
+
+	for (;;) {
+		candidate = ++router->next_ident;
+		if (candidate == 0)
+			continue;
+		collision = false;
+		for (session = router->sessions; session != NULL && !collision;
+		    session = session->next) {
+			if (session->next_timer != NULL &&
+			    session->next_timer->ident == candidate)
+				collision = true;
+			for (timer = session->timers; timer != NULL && !collision;
+			    timer = timer->next)
+				if (timer->ident == candidate)
+					collision = true;
+		}
+		if (!collision)
+			break;
+	}
+	*ident = candidate;
+	return (0);
+}
+
+static int
 router_add_timer(struct router *router, struct router_session *session,
     uint64_t user_id, uint32_t interval_ms, uint32_t flags,
     int source_type)
@@ -357,7 +398,10 @@ router_add_timer(struct router *router, struct router_session *session,
 		return (-1);
 	timer->source.type = source_type;
 	timer->session = session;
-	timer->ident = ++router->next_ident;
+	if (router_allocate_ident(router, &timer->ident) == -1) {
+		free(timer);
+		return (-1);
+	}
 	timer->user_id = user_id;
 	timer->flags = flags;
 	event_flags = EV_ADD | EV_ENABLE;
@@ -604,8 +648,7 @@ router_add_session(struct router *router, const struct router_control *control,
 	    control->magic != ROUTER_CONTROL_MAGIC ||
 	    control->queue_depth == 0 ||
 	    control->queue_depth > NOTIFYCMP_DEFAULT_QUEUE ||
-	    strnlen(control->label, sizeof(control->label)) ==
-	    sizeof(control->label)) {
+	    !router_label_valid(control->label)) {
 		if (fd >= 0)
 			close(fd);
 		errno = EPROTO;
@@ -958,7 +1001,7 @@ router_start_session(int fd, const char *peer_label,
 	int call_result, error;
 
 	result = ROUTER_ADMISSION_FATAL;
-	if (fd < 0 || peer_label == NULL || peer_label[0] == '\0')
+	if (fd < 0 || !router_label_valid(peer_label))
 		return (errno = EINVAL, ROUTER_ADMISSION_FATAL);
 	if (harden_transfer_channel(fd) == -1) {
 		error = errno;

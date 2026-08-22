@@ -18,6 +18,10 @@ It is a
 document; every key is optional, and a missing file leaves the built-in
 opinionated defaults in force.
 Unknown keys are ignored so the schema can grow.
+An existing configuration file must be a regular file owned by the daemon's
+effective user and must not be writable by its group or by other users.
+Symbolic links, malformed input, truncated values, invalid types, and invalid
+catalog combinations are fatal startup errors.
 .Sh KEYS
 .Bl -tag -width ".Va ephemeral.sync"
 .It Va pool
@@ -87,7 +91,8 @@ How the template is populated:
 .Ql baked
 (received from a shipped send-stream), or
 .Ql source
-(fetched from an external source).
+(offered only when its template has been pre-seeded; automatic source
+materialization is not yet implemented).
 .It Va source
 Path to the baked send-stream or rootfs source.
 .It Va enabled
@@ -101,6 +106,15 @@ The flavor is then simply not offered and a request for it fails with
 .Er ENOENT .
 .It Va default
 Marks the opinionated default flavor.
+.El
+.Sh FILES
+.Bl -tag -width ".Pa /etc/capability/tzfsd.ucl" -compact
+.It Pa /etc/capability/tzfsd.ucl
+the file described here
+.It Pa /etc/capability/tzfsd.d/
+flavor catalog drop-in directory; packages such as
+.Sy tzfs-flavors
+install additional flavor definitions here
 .El
 .Sh EXAMPLES
 Turn off the bundled Linux flavor on a slimmed host:
@@ -117,15 +131,6 @@ with a dedicated pool:
 pool = "tank";
 ephemeral { sync = "standard"; }
 .Ed
-.Sh FILES
-.Bl -tag -width ".Pa /etc/capability/tzfsd.ucl" -compact
-.It Pa /etc/capability/tzfsd.ucl
-the file described here
-.It Pa /etc/capability/tzfsd.d/
-flavor catalog drop-in directory; packages such as
-.Sy tzfs-flavors
-install additional flavor definitions here
-.El
 .Sh SEE ALSO
 .Xr libtzfsd 3 ,
 .Xr trustedzfs 3 ,

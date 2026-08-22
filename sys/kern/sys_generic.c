@@ -970,9 +970,7 @@ specialfd_envfd_validate(const struct specialfd_envfd *se)
 	eco = &se->options;
 	if (eco->eco_size != sizeof(*eco) ||
 	    (eco->eco_flags & ~ENVFD_VALID_FLAGS) != 0 ||
-	    (eco->eco_access != O_RDONLY &&
-	    eco->eco_access != O_WRONLY &&
-	    eco->eco_access != O_RDWR) ||
+	    eco->eco_access != O_RDWR ||
 	    (eco->eco_fdflags & ~(FD_CLOEXEC | FD_CLOFORK)) != 0 ||
 	    eco->eco_reserved0 != 0)
 		return (EINVAL);
@@ -984,6 +982,7 @@ specialfd_envfd_validate(const struct specialfd_envfd *se)
 	case CAP_XFER_UNLIMITED:
 	case CAP_XFER_ONCE:
 	case CAP_XFER_NONE:
+	case CAP_XFER_TWICE:
 		break;
 	default:
 		return (EINVAL);

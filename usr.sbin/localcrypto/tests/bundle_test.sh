@@ -49,6 +49,8 @@ provider_security_contract_body()
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOIPC \
 	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOEXEC SERVICE_PROTECT_NOSOCK \
 	    service_worker_drop_inherited_authority cap_enter explicit_bzero \
+	    harden_control_descriptor CAP_XFER_NONE CAP_CLOFORK_LOCKED \
+	    CAP_CLOEXEC_LOCKED cap_ioctls_limit cap_rights_limit CAP_IOCTL \
 	    service_component_client_label cryptocmp_named_create_policy_validate \
 	    cryptodesc_named_create cryptodesc_named_lease cryptodesc_named_rotate \
 	    cryptodesc_named_delete auditcmp_client_prepare auditcmp_client_adopt \

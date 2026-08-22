@@ -63,6 +63,8 @@ network access and a live ZFS pool \(em by:
 .It Xr tzfs-flavor-linux 8
 Fetches the official Rocky Linux minimal container base rootfs and writes
 .Pa /usr/share/tzfs/rocky9.zfs.zst .
+The caller must pin both the downloaded archive SHA-256 and the OCI layer
+SHA-256; the tool refuses unverified or ambiguous image content.
 .It Xr tzfs-flavor-freebsd 8
 Builds the
 .Ql freebsd

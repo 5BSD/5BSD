@@ -7,12 +7,15 @@
  */
 
 #include <sys/types.h>
+#include <sys/stat.h>
 
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <ucl.h>
 
@@ -37,14 +40,40 @@ derive_roots(struct tzfsd_config *cfg)
 	    "%s/.templates", cfg->base);
 }
 
-static void
+static bool
+identifier_valid(const char *name, size_t capacity)
+{
+	size_t i, length;
+
+	length = strnlen(name, capacity);
+	if (length == 0 || length == capacity || strcmp(name, ".") == 0 ||
+	    strcmp(name, "..") == 0)
+		return (false);
+	for (i = 0; i < length; i++) {
+		if (!((name[i] >= 'a' && name[i] <= 'z') ||
+		    (name[i] >= 'A' && name[i] <= 'Z') ||
+		    (name[i] >= '0' && name[i] <= '9') || name[i] == '.' ||
+		    name[i] == '_' || name[i] == '-'))
+			return (false);
+	}
+	return (true);
+}
+
+static int
 add_flavor(struct tzfsd_config *cfg, const char *name, enum tzfsd_build build,
     const char *source, bool is_default)
 {
 	struct tzfsd_flavor_def *f;
 
-	if (cfg->nflavors >= TZFSD_MAX_FLAVORS)
-		return;
+	if (!identifier_valid(name, TZFSD_FLAVOR_MAX) ||
+	    cfg->nflavors >= TZFSD_MAX_FLAVORS) {
+		errno = cfg->nflavors >= TZFSD_MAX_FLAVORS ? ENOSPC : EINVAL;
+		return (-1);
+	}
+	if (source != NULL && strnlen(source, TZFSD_MAXPATH) == TZFSD_MAXPATH) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
 	f = &cfg->flavors[cfg->nflavors++];
 	memset(f, 0, sizeof(*f));
 	(void)strlcpy(f->name, name, sizeof(f->name));
@@ -54,6 +83,7 @@ add_flavor(struct tzfsd_config *cfg, const char *name, enum tzfsd_build build,
 	f->enabled = true;
 	f->is_default = is_default;
 	f->available = false;
+	return (0);
 }
 
 void
@@ -81,8 +111,8 @@ tzfsd_config_defaults(struct tzfsd_config *cfg)
 	 * flavor and its baked artifact) plus the artifact itself; tzfsd then
 	 * offers whatever templates it finds.  See tzfsd_config_load_confd().
 	 */
-	add_flavor(cfg, "empty", TZFSD_BUILD_LIVE, NULL, false);
-	add_flavor(cfg, "native", TZFSD_BUILD_LIVE, NULL, false);
+	(void)add_flavor(cfg, "empty", TZFSD_BUILD_LIVE, NULL, false);
+	(void)add_flavor(cfg, "native", TZFSD_BUILD_LIVE, NULL, false);
 }
 
 struct tzfsd_flavor_def *
@@ -96,54 +126,171 @@ tzfsd_flavor_find(struct tzfsd_config *cfg, const char *name)
 	return (NULL);
 }
 
-static enum tzfsd_build
-build_from_string(const char *s, enum tzfsd_build dflt)
+static int
+build_from_string(const char *s, enum tzfsd_build *build)
 {
 
-	if (s == NULL)
-		return (dflt);
+	if (s == NULL || build == NULL)
+		return (errno = EINVAL, -1);
 	if (strcmp(s, "live") == 0)
-		return (TZFSD_BUILD_LIVE);
-	if (strcmp(s, "baked") == 0)
-		return (TZFSD_BUILD_BAKED);
-	if (strcmp(s, "source") == 0)
-		return (TZFSD_BUILD_SOURCE);
-	return (dflt);
+		*build = TZFSD_BUILD_LIVE;
+	else if (strcmp(s, "baked") == 0)
+		*build = TZFSD_BUILD_BAKED;
+	else if (strcmp(s, "source") == 0)
+		*build = TZFSD_BUILD_SOURCE;
+	else
+		return (errno = EINVAL, -1);
+	return (0);
 }
 
-static void
+static int
 apply_flavors(struct tzfsd_config *cfg, const ucl_object_t *flavors)
 {
 	ucl_object_iter_t it = NULL;
 	const ucl_object_t *fo;
 
+	if (ucl_object_type(flavors) != UCL_OBJECT)
+		return (errno = EINVAL, -1);
 	while ((fo = ucl_object_iterate(flavors, &it, true)) != NULL) {
 		const char *key = ucl_object_key(fo);
 		const ucl_object_t *v;
 		struct tzfsd_flavor_def *f;
 
-		if (key == NULL)
-			continue;
+		if (key == NULL || !identifier_valid(key, TZFSD_FLAVOR_MAX) ||
+		    ucl_object_type(fo) != UCL_OBJECT)
+			return (errno = EINVAL, -1);
 		f = tzfsd_flavor_find(cfg, key);
 		if (f == NULL) {
 			/* A config-declared flavor not in the default set. */
-			add_flavor(cfg, key, TZFSD_BUILD_SOURCE, NULL, false);
+			if (add_flavor(cfg, key, TZFSD_BUILD_SOURCE, NULL,
+			    false) == -1)
+				return (-1);
 			f = tzfsd_flavor_find(cfg, key);
 			if (f == NULL)
-				continue;
+				return (errno = EINVAL, -1);
 		}
-		if ((v = ucl_object_lookup(fo, "build")) != NULL)
-			f->build = build_from_string(ucl_object_tostring(v),
-			    f->build);
-		if ((v = ucl_object_lookup(fo, "source")) != NULL &&
-		    ucl_object_tostring(v) != NULL)
-			(void)strlcpy(f->source, ucl_object_tostring(v),
-			    sizeof(f->source));
-		if ((v = ucl_object_lookup(fo, "enabled")) != NULL)
+		if ((v = ucl_object_lookup(fo, "build")) != NULL &&
+		    (ucl_object_type(v) != UCL_STRING ||
+		    build_from_string(ucl_object_tostring(v), &f->build) == -1))
+			return (errno = EINVAL, -1);
+		if ((v = ucl_object_lookup(fo, "source")) != NULL) {
+			if (ucl_object_type(v) != UCL_STRING ||
+			    ucl_object_tostring(v) == NULL ||
+			    strlcpy(f->source, ucl_object_tostring(v),
+			    sizeof(f->source)) >= sizeof(f->source))
+				return (errno = EINVAL, -1);
+		}
+		if ((v = ucl_object_lookup(fo, "enabled")) != NULL) {
+			if (ucl_object_type(v) != UCL_BOOLEAN)
+				return (errno = EINVAL, -1);
 			f->enabled = ucl_object_toboolean(v);
-		if ((v = ucl_object_lookup(fo, "default")) != NULL)
+		}
+		if ((v = ucl_object_lookup(fo, "default")) != NULL) {
+			if (ucl_object_type(v) != UCL_BOOLEAN)
+				return (errno = EINVAL, -1);
 			f->is_default = ucl_object_toboolean(v);
+		}
 	}
+	return (0);
+}
+
+static int
+copy_string(char *destination, size_t capacity, const ucl_object_t *object)
+{
+	const char *value;
+
+	if (object == NULL || ucl_object_type(object) != UCL_STRING ||
+	    (value = ucl_object_tostring(object)) == NULL || value[0] == '\0' ||
+	    strlcpy(destination, value, capacity) >= capacity)
+		return (errno = EINVAL, -1);
+	return (0);
+}
+
+static bool
+dataset_under_pool(const char *pool, const char *dataset)
+{
+	const char *component, *slash;
+	size_t length, component_length;
+
+	length = strlen(pool);
+	if (strncmp(pool, dataset, length) != 0 || dataset[length] != '/' ||
+	    dataset[length + 1] == '\0')
+		return (false);
+	component = dataset + length + 1;
+	for (;;) {
+		slash = strchr(component, '/');
+		component_length = slash == NULL ? strlen(component) :
+		    (size_t)(slash - component);
+		if (component_length == 0 ||
+		    (component_length == 1 && component[0] == '.') ||
+		    (component_length == 2 && component[0] == '.' &&
+		    component[1] == '.') ||
+		    memchr(component, '@', component_length) != NULL ||
+		    memchr(component, '#', component_length) != NULL)
+			return (false);
+		if (slash == NULL)
+			return (true);
+		component = slash + 1;
+	}
+}
+
+static bool
+absolute_path_valid(const char *path)
+{
+	const char *component, *slash;
+	size_t component_length;
+
+	if (path[0] != '/' || path[1] == '\0')
+		return (false);
+	component = path + 1;
+	for (;;) {
+		slash = strchr(component, '/');
+		component_length = slash == NULL ? strlen(component) :
+		    (size_t)(slash - component);
+		if (component_length == 0 ||
+		    (component_length == 1 && component[0] == '.') ||
+		    (component_length == 2 && component[0] == '.' &&
+		    component[1] == '.'))
+			return (false);
+		if (slash == NULL)
+			return (true);
+		component = slash + 1;
+	}
+}
+
+static int
+config_validate(const struct tzfsd_config *cfg)
+{
+	const struct tzfsd_flavor_def *flavor;
+	unsigned defaults, i;
+
+	if (!identifier_valid(cfg->pool, sizeof(cfg->pool)) ||
+	    !dataset_under_pool(cfg->pool, cfg->base) ||
+	    !dataset_under_pool(cfg->pool, cfg->persistent) ||
+	    !dataset_under_pool(cfg->pool, cfg->ephemeral) ||
+	    !dataset_under_pool(cfg->pool, cfg->templates) ||
+	    !absolute_path_valid(cfg->mountpoint) ||
+	    (strcmp(cfg->ephemeral_sync, "disabled") != 0 &&
+	    strcmp(cfg->ephemeral_sync, "standard") != 0 &&
+	    strcmp(cfg->ephemeral_sync, "always") != 0))
+		return (errno = EINVAL, -1);
+	defaults = 0;
+	for (i = 0; i < cfg->nflavors; i++) {
+		flavor = &cfg->flavors[i];
+		if (!identifier_valid(flavor->name, sizeof(flavor->name)) ||
+		    (flavor->is_default && !flavor->enabled) ||
+		    (flavor->build == TZFSD_BUILD_BAKED &&
+		    !absolute_path_valid(flavor->source)) ||
+		    (flavor->build == TZFSD_BUILD_LIVE &&
+		    strcmp(flavor->name, "empty") != 0 &&
+		    strcmp(flavor->name, "native") != 0))
+			return (errno = EINVAL, -1);
+		if (flavor->is_default)
+			defaults++;
+	}
+	if (defaults > 1)
+		return (errno = EINVAL, -1);
+	return (0);
 }
 
 /*
@@ -153,30 +300,52 @@ apply_flavors(struct tzfsd_config *cfg, const ucl_object_t *flavors)
 int
 tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 {
+	struct tzfsd_config saved;
 	struct ucl_parser *p;
 	const ucl_object_t *root, *o, *roots;
-	const char *s;
+	struct stat sb;
+	int error, fd;
 	bool pool_set = false;
 
+	if (cfg == NULL || path == NULL)
+		return (errno = EINVAL, -1);
+	saved = *cfg;
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd == -1)
+		return (errno == ENOENT ? 0 : -1);
+	if (fstat(fd, &sb) == -1) {
+		error = errno;
+		close(fd);
+		return (errno = error, -1);
+	}
+	if (!S_ISREG(sb.st_mode) || sb.st_size > 1024 * 1024 ||
+	    sb.st_uid != geteuid() || (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+		close(fd);
+		return (errno = EPERM, -1);
+	}
 	p = ucl_parser_new(UCL_PARSER_DEFAULT);
 	if (p == NULL) {
+		close(fd);
 		errno = ENOMEM;
 		return (-1);
 	}
-	if (!ucl_parser_add_file(p, path)) {
-		/* No file / unreadable: keep defaults, succeed. */
+	if (!ucl_parser_add_fd(p, fd)) {
+		close(fd);
 		ucl_parser_free(p);
-		return (0);
+		return (errno = EINVAL, -1);
 	}
+	close(fd);
 	root = ucl_parser_get_object(p);
-	if (root == NULL) {
+	if (root == NULL || ucl_object_type(root) != UCL_OBJECT) {
+		if (root != NULL)
+			ucl_object_unref(__DECONST(ucl_object_t *, root));
 		ucl_parser_free(p);
-		return (0);
+		return (errno = EINVAL, -1);
 	}
 
-	if ((o = ucl_object_lookup(root, "pool")) != NULL &&
-	    (s = ucl_object_tostring(o)) != NULL) {
-		(void)strlcpy(cfg->pool, s, sizeof(cfg->pool));
+	if ((o = ucl_object_lookup(root, "pool")) != NULL) {
+		if (copy_string(cfg->pool, sizeof(cfg->pool), o) == -1)
+			goto invalid;
 		pool_set = true;
 	}
 	/* Recompute the root layout from a possibly-overridden pool. */
@@ -184,40 +353,51 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 		derive_roots(cfg);
 
 	if ((roots = ucl_object_lookup(root, "roots")) != NULL) {
+		if (ucl_object_type(roots) != UCL_OBJECT)
+			goto invalid;
 		if ((o = ucl_object_lookup(roots, "base")) != NULL &&
-		    (s = ucl_object_tostring(o)) != NULL)
-			(void)strlcpy(cfg->base, s, sizeof(cfg->base));
+		    copy_string(cfg->base, sizeof(cfg->base), o) == -1)
+			goto invalid;
 		if ((o = ucl_object_lookup(roots, "persistent")) != NULL &&
-		    (s = ucl_object_tostring(o)) != NULL)
-			(void)strlcpy(cfg->persistent, s,
-			    sizeof(cfg->persistent));
+		    copy_string(cfg->persistent, sizeof(cfg->persistent), o) == -1)
+			goto invalid;
 		if ((o = ucl_object_lookup(roots, "ephemeral")) != NULL &&
-		    (s = ucl_object_tostring(o)) != NULL)
-			(void)strlcpy(cfg->ephemeral, s,
-			    sizeof(cfg->ephemeral));
+		    copy_string(cfg->ephemeral, sizeof(cfg->ephemeral), o) == -1)
+			goto invalid;
 		if ((o = ucl_object_lookup(roots, "templates")) != NULL &&
-		    (s = ucl_object_tostring(o)) != NULL)
-			(void)strlcpy(cfg->templates, s,
-			    sizeof(cfg->templates));
+		    copy_string(cfg->templates, sizeof(cfg->templates), o) == -1)
+			goto invalid;
 		if ((o = ucl_object_lookup(roots, "mountpoint")) != NULL &&
-		    (s = ucl_object_tostring(o)) != NULL)
-			(void)strlcpy(cfg->mountpoint, s,
-			    sizeof(cfg->mountpoint));
+		    copy_string(cfg->mountpoint, sizeof(cfg->mountpoint), o) == -1)
+			goto invalid;
 	}
 
 	if ((o = ucl_object_lookup(root, "ephemeral")) != NULL) {
 		const ucl_object_t *sy = ucl_object_lookup(o, "sync");
-		if (sy != NULL && (s = ucl_object_tostring(sy)) != NULL)
-			(void)strlcpy(cfg->ephemeral_sync, s,
-			    sizeof(cfg->ephemeral_sync));
+
+		if (ucl_object_type(o) != UCL_OBJECT ||
+		    (sy != NULL && copy_string(cfg->ephemeral_sync,
+		    sizeof(cfg->ephemeral_sync), sy) == -1))
+			goto invalid;
 	}
 
-	if ((o = ucl_object_lookup(root, "flavors")) != NULL)
-		apply_flavors(cfg, o);
+	if ((o = ucl_object_lookup(root, "flavors")) != NULL &&
+	    apply_flavors(cfg, o) == -1)
+		goto invalid;
+	if (config_validate(cfg) == -1)
+		goto invalid;
 
 	ucl_object_unref(__DECONST(ucl_object_t *, root));
 	ucl_parser_free(p);
 	return (0);
+
+invalid:
+	error = errno != 0 ? errno : EINVAL;
+	*cfg = saved;
+	ucl_object_unref(__DECONST(ucl_object_t *, root));
+	ucl_parser_free(p);
+	errno = error;
+	return (-1);
 }
 
 /*
@@ -236,7 +416,7 @@ tzfsd_config_load_confd(struct tzfsd_config *cfg, const char *dir)
 
 	n = scandir(dir, &names, NULL, alphasort);
 	if (n < 0)
-		return (0);
+		return (errno == ENOENT ? 0 : -1);
 	for (i = 0; i < n; i++) {
 		const char *nm = names[i]->d_name;
 		size_t len = strlen(nm);
@@ -245,7 +425,15 @@ tzfsd_config_load_confd(struct tzfsd_config *cfg, const char *dir)
 			char path[TZFSD_MAXPATH];
 
 			(void)snprintf(path, sizeof(path), "%s/%s", dir, nm);
-			(void)tzfsd_config_load(cfg, path);
+			if (tzfsd_config_load(cfg, path) == -1) {
+				int error = errno;
+
+				while (i < n)
+					free(names[i++]);
+				free(names);
+				errno = error;
+				return (-1);
+			}
 		}
 		free(names[i]);
 	}

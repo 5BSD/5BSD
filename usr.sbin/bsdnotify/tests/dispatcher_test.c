@@ -316,11 +316,39 @@ ATF_TC_BODY(admission_failure_classes, tc)
 	ATF_CHECK_EQ(0, error);
 }
 
+ATF_TC_WITHOUT_HEAD(timer_identifier_wrap_and_label_bounds);
+ATF_TC_BODY(timer_identifier_wrap_and_label_bounds, tc)
+{
+	struct fixture fixture;
+	char overlong[NOTIFYCMP_MAX_PUBLISHER + 2];
+	uint64_t first;
+
+	fixture_open(&fixture);
+	fixture.router.next_ident = UINT64_MAX;
+	ATF_REQUIRE_EQ(0, router_add_timer(&fixture.router, &fixture.session,
+	    1, 60000, 0, ROUTER_EVENT_USER_TIMER));
+	first = fixture.session.timers->ident;
+	ATF_CHECK_EQ(1, first);
+	fixture.router.next_ident = UINT64_MAX;
+	ATF_REQUIRE_EQ(0, router_add_timer(&fixture.router, &fixture.session,
+	    2, 60000, 0, ROUTER_EVENT_USER_TIMER));
+	ATF_CHECK_EQ(2, fixture.session.timers->ident);
+	ATF_CHECK(fixture.session.timers->ident != first);
+	ATF_CHECK(!router_label_valid(NULL));
+	ATF_CHECK(!router_label_valid(""));
+	memset(overlong, 'x', sizeof(overlong));
+	overlong[sizeof(overlong) - 1] = '\0';
+	ATF_CHECK(!router_label_valid(overlong));
+	ATF_CHECK(router_label_valid("service.valid"));
+	fixture_close(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, hello_stats_and_errors);
 	ATF_TP_ADD_TC(tp, pubsub_state_and_next);
 	ATF_TP_ADD_TC(tp, timers_and_pending_request);
 	ATF_TP_ADD_TC(tp, admission_failure_classes);
+	ATF_TP_ADD_TC(tp, timer_identifier_wrap_and_label_bounds);
 	return (atf_no_error());
 }

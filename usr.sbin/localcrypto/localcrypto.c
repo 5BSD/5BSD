@@ -1,4 +1,5 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
+#include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/procdesc.h>
 #include <sys/types.h>
@@ -24,6 +25,28 @@ struct crypto_worker {
 	char	owner[CRYPTODESC_KEY_OWNER_MAX];
 	struct auditcmp_client *audit;
 };
+
+static int
+harden_control_descriptor(void)
+{
+	static const unsigned long commands[] = {
+		CIOCGCRYPTODESCGENERATE,
+		CIOCGCRYPTOKEYDESC,
+		CIOCGCRYPTONAMEDKEY,
+		CIOCGCRYPTONAMEDLEASE,
+		CIOCCRYPTONAMEDROTATE,
+		CIOCCRYPTONAMEDDELETE,
+	};
+	cap_rights_t rights;
+
+	if (cap_xfer_limit(control_fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(control_fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(control_fd, CAP_CLOEXEC_LOCKED) == -1 ||
+	    cap_ioctls_limit(control_fd, commands, nitems(commands)) == -1)
+		return (-1);
+	cap_rights_init(&rights, CAP_IOCTL);
+	return (cap_rights_limit(control_fd, &rights));
+}
 
 static void
 audit_operation(struct crypto_worker *worker, const char *operation, int error)
@@ -72,29 +95,33 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 		    channel_message_length(m) == sizeof(*in) + sizeof(*generate)) {
 			operation = "descriptor-generate";
 			generate = (const struct cryptocmp_generate *)(in + 1);
-			if (cryptocmp_policy_validate(generate) != 0)
+			if (cryptocmp_policy_validate(generate) != 0) {
+				error = errno;
 				goto reply;
-		memset(&session, 0, sizeof(session));
-		session.cipher = generate->cipher;
-		session.mac = generate->mac;
-		session.keylen = generate->keylen;
-		session.key = NULL;
-		session.mackeylen = generate->mackeylen;
-		session.mackey = NULL;
-		session.crid = generate->crid;
-		session.ivlen = generate->ivlen;
-		session.maclen = generate->maclen;
-		if (cryptodesc_mint_generated(control_fd, &session,
-		    generate->rights, generate->ttl, &fd) == 0)
-			error = 0;
-		else
-			error = errno;
+			}
+			memset(&session, 0, sizeof(session));
+			session.cipher = generate->cipher;
+			session.mac = generate->mac;
+			session.keylen = generate->keylen;
+			session.key = NULL;
+			session.mackeylen = generate->mackeylen;
+			session.mackey = NULL;
+			session.crid = generate->crid;
+			session.ivlen = generate->ivlen;
+			session.maclen = generate->maclen;
+			if (cryptodesc_mint_generated(control_fd, &session,
+			    generate->rights, generate->ttl, &fd) == 0)
+				error = 0;
+			else
+				error = errno;
 		} else if (in->opcode == CRYPTOCMP_OP_GENERATE_KEY &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*key_generate)) {
 			operation = "key-generate";
 			key_generate = (const struct cryptocmp_key_generate *)(in + 1);
-			if (cryptocmp_key_policy_validate(key_generate) != 0)
+			if (cryptocmp_key_policy_validate(key_generate) != 0) {
+				error = errno;
 				goto reply;
+			}
 			if (cryptodesc_mint_key(control_fd, key_generate->type,
 			    key_generate->rights, key_generate->ttl, public_key, &fd) == 0)
 				error = 0;
@@ -104,8 +131,10 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 		    channel_message_length(m) == sizeof(*in) + sizeof(*named_create)) {
 			operation = "named-create";
 			named_create = (const struct cryptocmp_named_create *)(in + 1);
-			if (cryptocmp_named_create_policy_validate(named_create) != 0)
+			if (cryptocmp_named_create_policy_validate(named_create) != 0) {
+				error = errno;
 				goto reply;
+			}
 			memset(&session, 0, sizeof(session));
 			session.cipher = named_create->generate.cipher;
 			session.mac = named_create->generate.mac;
@@ -124,8 +153,10 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 		    channel_message_length(m) == sizeof(*in) + sizeof(*named_lease)) {
 			operation = "named-lease";
 			named_lease = (const struct cryptocmp_named_lease *)(in + 1);
-			if (cryptocmp_named_lease_policy_validate(named_lease) != 0)
+			if (cryptocmp_named_lease_policy_validate(named_lease) != 0) {
+				error = errno;
 				goto reply;
+			}
 			if (cryptodesc_named_lease(control_fd, named_lease->name,
 			    worker->owner, named_lease->rights, named_lease->ttl,
 			    &generation, &fd) == 0)
@@ -138,8 +169,10 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 			operation = in->opcode == CRYPTOCMP_OP_NAMED_ROTATE ?
 			    "named-rotate" : "named-delete";
 			named_control = (const struct cryptocmp_named_control *)(in + 1);
-			if (cryptocmp_named_control_policy_validate(named_control) != 0)
+			if (cryptocmp_named_control_policy_validate(named_control) != 0) {
+				error = errno;
 				goto reply;
+			}
 			if ((in->opcode == CRYPTOCMP_OP_NAMED_ROTATE ?
 			    cryptodesc_named_rotate(control_fd, named_control->name,
 			    worker->owner, &generation) : cryptodesc_named_delete(control_fd,
@@ -193,7 +226,8 @@ worker(int fd, int audit_fd, const char *owner)
 	strlcpy(state.owner, owner, sizeof(state.owner));
 	channel = NULL;
 	result = 1;
-	if (auditcmp_client_adopt(audit_fd, &state.audit) == -1)
+	if (auditcmp_client_adopt(audit_fd, &state.audit) == -1 ||
+	    harden_control_descriptor() == -1)
 		goto out;
 	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
@@ -273,9 +307,25 @@ start_session(int fd)
 int
 main(void)
 {
-	struct service_provider *p; struct service_listener *l; struct service_identity id; int fd;
+	struct service_identity id;
+	struct service_listener *listener;
+	struct service_provider *provider;
+	int fd;
 
 	setproctitle("[CRYPTO] capability component");
-	control_fd = open("/dev/crypto", O_RDWR); if (control_fd < 0 || service_provider_create(&p) == -1 || service_provider_authorize_capabilities(p) == -1 || service_provider_expose(p, CRYPTOCMP_NAME, &l) == -1 || service_provider_enter_capability_mode(p) == -1 || service_provider_ready(p) == -1) return (1);
-	for (;;) { memset(&id,0,sizeof(id)); id.size=sizeof(id); if (service_listener_accept(l,&id,&fd)==-1) return (1); (void)start_session(fd); close(fd); }
+	control_fd = open("/dev/crypto", O_RDWR);
+	if (control_fd < 0 || service_provider_create(&provider) == -1 ||
+	    service_provider_authorize_capabilities(provider) == -1 ||
+	    service_provider_expose(provider, CRYPTOCMP_NAME, &listener) == -1 ||
+	    service_provider_enter_capability_mode(provider) == -1 ||
+	    service_provider_ready(provider) == -1)
+		return (1);
+	for (;;) {
+		memset(&id, 0, sizeof(id));
+		id.size = sizeof(id);
+		if (service_listener_accept(listener, &id, &fd) == -1)
+			return (1);
+		(void)start_session(fd);
+		close(fd);
+	}
 }

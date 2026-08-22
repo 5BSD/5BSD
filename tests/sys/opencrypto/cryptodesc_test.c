@@ -9,6 +9,7 @@
 #include <sys/event.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/user.h>
 #include <sys/wait.h>
 
@@ -698,6 +699,7 @@ ATF_TC(named_key_lifecycle);
 ATF_TC_HEAD(named_key_lifecycle, tc)
 {
 	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(named_key_lifecycle, tc)
 {
@@ -785,14 +787,35 @@ ATF_TC_BODY(named_key_lifecycle, tc)
 ATF_TC_BODY(kernel_generated_and_expiry, tc)
 {
 	uint8_t ciphertext[sizeof(cbc_plaintext)];
+	struct cryptodesc_info parent_info, child_info;
+	struct cryptodesc_derive derive;
 	struct crypt_op cop;
-	int control, fd;
+	int child, control, fd, parent;
 
 	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
 	control = open_control();
 	fd = mint_generated_descriptor(control, CRYPTO_AES_CBC, 0, 16, 0,
 	    sizeof(aes_iv), 0, CRYPTODESC_RIGHT_ENCRYPT, 1);
 	crypt_cbc(fd, COP_ENCRYPT, cbc_plaintext, ciphertext);
+	parent = mint_generated_descriptor(control, 0, CRYPTO_SHA2_256_HMAC,
+	    0, 32, 0, 0,
+	    CRYPTODESC_RIGHT_AUTH | CRYPTODESC_RIGHT_DERIVE, 1);
+	memset(&derive, 0, sizeof(derive));
+	derive.session.mac = CRYPTO_SHA2_256_HMAC;
+	derive.session.mackeylen = 32;
+	derive.session.crid = CRYPTO_FLAG_SOFTWARE;
+	derive.cd_hash = CRYPTODESC_HKDF_SHA256;
+	derive.cd_rights = CRYPTODESC_RIGHT_AUTH;
+	derive.cd_ttl = 3600;
+	ATF_REQUIRE_EQ(0, ioctl(parent, CIOCCRYPTODESCDERIVE, &derive));
+	child = derive.cd_fd;
+	memset(&parent_info, 0, sizeof(parent_info));
+	parent_info.cd_size = sizeof(parent_info);
+	memset(&child_info, 0, sizeof(child_info));
+	child_info.cd_size = sizeof(child_info);
+	ATF_REQUIRE_EQ(0, ioctl(parent, CIOCGCRYPTODESCINFO, &parent_info));
+	ATF_REQUIRE_EQ(0, ioctl(child, CIOCGCRYPTODESCINFO, &child_info));
+	ATF_CHECK_EQ(parent_info.cd_expires, child_info.cd_expires);
 	sleep(2);
 	memset(&cop, 0, sizeof(cop));
 	cop.op = COP_ENCRYPT;
@@ -802,6 +825,15 @@ ATF_TC_BODY(kernel_generated_and_expiry, tc)
 	cop.iv = aes_iv;
 	errno = 0;
 	ATF_REQUIRE_ERRNO(ESTALE, ioctl(fd, CIOCCRYPT, &cop) == -1);
+	cop.op = COP_ENCRYPT;
+	cop.len = 1;
+	cop.src = "x";
+	cop.dst = NULL;
+	cop.mac = ciphertext;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(ESTALE, ioctl(child, CIOCCRYPT, &cop) == -1);
+	close(child);
+	close(parent);
 	close(fd);
 	close(control);
 }
@@ -827,7 +859,7 @@ ATF_TC_BODY(hkdf_opaque_derivation, tc)
 	create.session.mackey = hkdf_ikm;
 	create.session.mackeylen = sizeof(hkdf_ikm);
 	create.session.crid = CRYPTO_FLAG_SOFTWARE;
-	create.cd_rights = CRYPTODESC_RIGHT_DERIVE;
+	create.cd_rights = CRYPTODESC_RIGHT_AUTH | CRYPTODESC_RIGHT_DERIVE;
 	ATF_REQUIRE_MSG(ioctl(control, CIOCGCRYPTODESC, &create) == 0,
 	    "mint HKDF parent: %s", strerror(errno));
 	parent = create.cd_fd;
@@ -858,6 +890,302 @@ ATF_TC_BODY(hkdf_opaque_derivation, tc)
 	close(child);
 	close(parent);
 	close(control);
+}
+
+ATF_TC(derive_authority_and_lineage);
+ATF_TC_HEAD(derive_authority_and_lineage, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+
+ATF_TC(derive_uses_complete_session_secret);
+ATF_TC_HEAD(derive_uses_complete_session_secret, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(derive_uses_complete_session_secret, tc)
+{
+	static const uint8_t message[] = "complete session secret";
+	struct cryptodesc_create create;
+	struct cryptodesc_derive derive;
+	struct crypt_op cop;
+	uint8_t mac_keys[2][32], outputs[2][32];
+	int child, control, i, parent;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+	memset(mac_keys[0], 0x5a, sizeof(mac_keys[0]));
+	memcpy(mac_keys[1], mac_keys[0], sizeof(mac_keys[1]));
+	mac_keys[1][0] ^= 0x80;
+	for (i = 0; i < 2; i++) {
+		memset(&create, 0, sizeof(create));
+		create.session.cipher = CRYPTO_AES_CBC;
+		create.session.mac = CRYPTO_SHA2_256_HMAC;
+		create.session.key = aes_key;
+		create.session.keylen = sizeof(aes_key);
+		create.session.mackey = mac_keys[i];
+		create.session.mackeylen = sizeof(mac_keys[i]);
+		create.session.crid = CRYPTO_FLAG_SOFTWARE;
+		create.session.ivlen = sizeof(aes_iv);
+		create.cd_rights = CRYPTODESC_RIGHT_AUTH |
+		    CRYPTODESC_RIGHT_DERIVE;
+		ATF_REQUIRE_EQ(0, ioctl(control, CIOCGCRYPTODESC, &create));
+		parent = create.cd_fd;
+		memset(&derive, 0, sizeof(derive));
+		derive.session.mac = CRYPTO_SHA2_256_HMAC;
+		derive.session.mackeylen = sizeof(outputs[i]);
+		derive.session.crid = CRYPTO_FLAG_SOFTWARE;
+		derive.cd_hash = CRYPTODESC_HKDF_SHA256;
+		derive.cd_rights = CRYPTODESC_RIGHT_AUTH;
+		ATF_REQUIRE_EQ(0,
+		    ioctl(parent, CIOCCRYPTODESCDERIVE, &derive));
+		child = derive.cd_fd;
+		memset(&cop, 0, sizeof(cop));
+		cop.op = COP_ENCRYPT;
+		cop.len = sizeof(message) - 1;
+		cop.src = message;
+		cop.mac = outputs[i];
+		ATF_REQUIRE_EQ(0, ioctl(child, CIOCCRYPT, &cop));
+		close(child);
+		close(parent);
+	}
+	ATF_CHECK_MSG(memcmp(outputs[0], outputs[1], sizeof(outputs[0])) != 0,
+	    "changing only the MAC key did not change the derived child");
+	explicit_bzero(mac_keys, sizeof(mac_keys));
+	explicit_bzero(outputs, sizeof(outputs));
+	close(control);
+}
+ATF_TC_BODY(derive_authority_and_lineage, tc)
+{
+	static const char name[] = "derive-lineage";
+	static const char owner[] = "service.derive";
+	static const uint8_t message[] = "lineage";
+	struct cryptodesc_named_control rotate;
+	struct cryptodesc_named_create named;
+	struct cryptodesc_derive derive;
+	struct cryptodesc_create create;
+	struct crypt_op cop;
+	uint8_t digest[32];
+	int child, control, parent;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+
+	/* Derivation cannot manufacture operation rights absent from its parent. */
+	memset(&create, 0, sizeof(create));
+	create.session.mac = CRYPTO_SHA2_256_HMAC;
+	create.session.mackey = hkdf_ikm;
+	create.session.mackeylen = sizeof(hkdf_ikm);
+	create.session.crid = CRYPTO_FLAG_SOFTWARE;
+	create.cd_rights = CRYPTODESC_RIGHT_DERIVE;
+	ATF_REQUIRE_EQ(0, ioctl(control, CIOCGCRYPTODESC, &create));
+	parent = create.cd_fd;
+	memset(&derive, 0, sizeof(derive));
+	derive.session.mac = CRYPTO_SHA2_256_HMAC;
+	derive.session.mackeylen = sizeof(digest);
+	derive.session.crid = CRYPTO_FLAG_SOFTWARE;
+	derive.cd_hash = CRYPTODESC_HKDF_SHA256;
+	derive.cd_rights = CRYPTODESC_RIGHT_AUTH;
+	derive.cd_fd = -1;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPERM,
+	    ioctl(parent, CIOCCRYPTODESCDERIVE, &derive) == -1);
+	close(parent);
+
+	/* A derived lease remains in the named key's revocation lineage. */
+	memset(&named, 0, sizeof(named));
+	strlcpy(named.cd_name, name, sizeof(named.cd_name));
+	strlcpy(named.cd_owner, owner, sizeof(named.cd_owner));
+	named.cd_session.mac = CRYPTO_SHA2_256_HMAC;
+	named.cd_session.mackeylen = sizeof(digest);
+	named.cd_session.crid = CRYPTO_FLAG_SOFTWARE;
+	named.cd_rights = CRYPTODESC_RIGHT_AUTH | CRYPTODESC_RIGHT_DERIVE;
+	ATF_REQUIRE_EQ(0, ioctl(control, CIOCGCRYPTONAMEDKEY, &named));
+	parent = lease_named(control, name, owner,
+	    CRYPTODESC_RIGHT_AUTH | CRYPTODESC_RIGHT_DERIVE);
+	memset(&derive, 0, sizeof(derive));
+	derive.session.mac = CRYPTO_SHA2_256_HMAC;
+	derive.session.mackeylen = sizeof(digest);
+	derive.session.crid = CRYPTO_FLAG_SOFTWARE;
+	derive.cd_hash = CRYPTODESC_HKDF_SHA256;
+	derive.cd_rights = CRYPTODESC_RIGHT_AUTH;
+	ATF_REQUIRE_EQ(0, ioctl(parent, CIOCCRYPTODESCDERIVE, &derive));
+	child = derive.cd_fd;
+	memset(&cop, 0, sizeof(cop));
+	cop.op = COP_ENCRYPT;
+	cop.len = sizeof(message) - 1;
+	cop.src = message;
+	cop.mac = digest;
+	ATF_REQUIRE_EQ(0, ioctl(child, CIOCCRYPT, &cop));
+	named_control(&rotate, name, owner);
+	ATF_REQUIRE_EQ(0, ioctl(control, CIOCCRYPTONAMEDROTATE, &rotate));
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EACCES, ioctl(child, CIOCCRYPT, &cop) == -1);
+	close(child);
+	close(parent);
+	named_control(&rotate, name, owner);
+	ATF_REQUIRE_EQ(0, ioctl(control, CIOCCRYPTONAMEDDELETE, &rotate));
+	close(control);
+}
+
+struct cryptokey_saved_limits {
+	u_int max_objects;
+	u_int max_owner_objects;
+};
+
+static u_int
+cryptokey_sysctl_get(const char *name)
+{
+	u_int value;
+	size_t length;
+
+	length = sizeof(value);
+	ATF_REQUIRE_EQ(0, sysctlbyname(name, &value, &length, NULL, 0));
+	ATF_REQUIRE_EQ(sizeof(value), length);
+	return (value);
+}
+
+static void
+cryptokey_sysctl_set(const char *name, u_int value)
+{
+
+	ATF_REQUIRE_EQ(0, sysctlbyname(name, NULL, NULL, &value,
+	    sizeof(value)));
+}
+
+ATF_TC_WITH_CLEANUP(named_key_accounting_limits);
+ATF_TC_HEAD(named_key_accounting_limits, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "is.exclusive", "true");
+}
+ATF_TC_BODY(named_key_accounting_limits, tc)
+{
+	static const char owner_a[] = "quota.owner.a";
+	static const char owner_b[] = "quota.owner.b";
+	struct cryptokey_saved_limits saved;
+	struct cryptodesc_named_create create;
+	struct cryptodesc_named_control control_request;
+	FILE *state;
+	u_int objects;
+	int control;
+
+	saved.max_objects = cryptokey_sysctl_get(
+	    "kern.crypto.cryptokey_max_objects");
+	saved.max_owner_objects = cryptokey_sysctl_get(
+	    "kern.crypto.cryptokey_max_owner_objects");
+	state = fopen("cryptokey-limits.save", "wb");
+	ATF_REQUIRE(state != NULL);
+	ATF_REQUIRE_EQ(1, fwrite(&saved, sizeof(saved), 1, state));
+	ATF_REQUIRE_EQ(0, fclose(state));
+	objects = cryptokey_sysctl_get("kern.crypto.cryptokey_objects");
+	cryptokey_sysctl_set("kern.crypto.cryptokey_max_objects", objects + 2);
+	cryptokey_sysctl_set("kern.crypto.cryptokey_max_owner_objects", 1);
+
+	control = open_control();
+	create_named_cbc(control, "quota-a1", owner_a,
+	    CRYPTODESC_RIGHT_ENCRYPT);
+	memset(&create, 0, sizeof(create));
+	strlcpy(create.cd_name, "quota-a2", sizeof(create.cd_name));
+	strlcpy(create.cd_owner, owner_a, sizeof(create.cd_owner));
+	create.cd_session.cipher = CRYPTO_AES_CBC;
+	create.cd_session.keylen = sizeof(aes_key);
+	create.cd_session.crid = CRYPTO_FLAG_SOFTWARE;
+	create.cd_session.ivlen = sizeof(aes_iv);
+	create.cd_rights = CRYPTODESC_RIGHT_ENCRYPT;
+	ATF_CHECK_ERRNO(ENOSPC,
+	    ioctl(control, CIOCGCRYPTONAMEDKEY, &create) == -1);
+	create_named_cbc(control, "quota-b1", owner_b,
+	    CRYPTODESC_RIGHT_ENCRYPT);
+	strlcpy(create.cd_name, "quota-b2", sizeof(create.cd_name));
+	strlcpy(create.cd_owner, "quota.owner.c", sizeof(create.cd_owner));
+	ATF_CHECK_ERRNO(ENOSPC,
+	    ioctl(control, CIOCGCRYPTONAMEDKEY, &create) == -1);
+	named_control(&control_request, "quota-a1", owner_a);
+	ATF_REQUIRE_EQ(0,
+	    ioctl(control, CIOCCRYPTONAMEDDELETE, &control_request));
+	named_control(&control_request, "quota-b1", owner_b);
+	ATF_REQUIRE_EQ(0,
+	    ioctl(control, CIOCCRYPTONAMEDDELETE, &control_request));
+	close(control);
+	cryptokey_sysctl_set("kern.crypto.cryptokey_max_objects",
+	    saved.max_objects);
+	cryptokey_sysctl_set("kern.crypto.cryptokey_max_owner_objects",
+	    saved.max_owner_objects);
+}
+ATF_TC_CLEANUP(named_key_accounting_limits, tc)
+{
+	static const char *const names[] = { "quota-a1", "quota-a2",
+	    "quota-b1", "quota-b2" };
+	static const char *const owners[] = { "quota.owner.a", "quota.owner.a",
+	    "quota.owner.b", "quota.owner.c" };
+	struct cryptokey_saved_limits saved;
+	struct cryptodesc_named_control request;
+	FILE *state;
+	int control;
+	size_t i;
+
+	control = open("/dev/crypto", O_RDWR);
+	if (control >= 0) {
+		for (i = 0; i < nitems(names); i++) {
+			named_control(&request, names[i], owners[i]);
+			(void)ioctl(control, CIOCCRYPTONAMEDDELETE, &request);
+		}
+		close(control);
+	}
+	state = fopen("cryptokey-limits.save", "rb");
+	if (state == NULL)
+		return;
+	if (fread(&saved, sizeof(saved), 1, state) == 1) {
+		(void)sysctlbyname("kern.crypto.cryptokey_max_objects", NULL,
+		    NULL, &saved.max_objects, sizeof(saved.max_objects));
+		(void)sysctlbyname("kern.crypto.cryptokey_max_owner_objects", NULL,
+		    NULL, &saved.max_owner_objects,
+		    sizeof(saved.max_owner_objects));
+	}
+	(void)fclose(state);
+}
+
+ATF_TC(named_key_requires_privileged_control);
+ATF_TC_HEAD(named_key_requires_privileged_control, tc)
+{
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(named_key_requires_privileged_control, tc)
+{
+	struct cryptodesc_named_create create;
+	int status;
+	pid_t pid;
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		int fd;
+
+		if (setgid(65534) == -1 || setuid(65534) == -1)
+			_exit(2);
+		fd = open("/dev/crypto", O_RDWR);
+		if (fd == -1)
+			_exit(3);
+		memset(&create, 0, sizeof(create));
+		strlcpy(create.cd_name, "unprivileged-create",
+		    sizeof(create.cd_name));
+		strlcpy(create.cd_owner, "service.victim",
+		    sizeof(create.cd_owner));
+		create.cd_session.mac = CRYPTO_SHA2_256_HMAC;
+		create.cd_session.mackeylen = 32;
+		create.cd_session.crid = CRYPTO_FLAG_SOFTWARE;
+		create.cd_rights = CRYPTODESC_RIGHT_AUTH;
+		_exit(ioctl(fd, CIOCGCRYPTONAMEDKEY, &create) == -1 &&
+		    errno == EPERM ? 0 : 4);
+	}
+	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_CHECK_EQ(0, WEXITSTATUS(status));
 }
 
 ATF_TC(asymmetric_capabilities);
@@ -1129,6 +1457,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, kernel_generated_and_expiry);
 	ATF_TP_ADD_TC(tp, named_key_lifecycle);
 	ATF_TP_ADD_TC(tp, hkdf_opaque_derivation);
+	ATF_TP_ADD_TC(tp, derive_authority_and_lineage);
+	ATF_TP_ADD_TC(tp, named_key_accounting_limits);
+	ATF_TP_ADD_TC(tp, derive_uses_complete_session_secret);
+	ATF_TP_ADD_TC(tp, named_key_requires_privileged_control);
 	ATF_TP_ADD_TC(tp, asymmetric_capabilities);
 	ATF_TP_ADD_TC(tp, concurrent_descriptor_use);
 	ATF_TP_ADD_TC(tp, passable_descriptor);

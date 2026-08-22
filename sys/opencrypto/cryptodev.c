@@ -48,6 +48,7 @@
 #include <sys/lock.h>
 #include <sys/mutex.h>
 #include <sys/proc.h>
+#include <sys/priv.h>
 #include <sys/sysctl.h>
 #include <sys/errno.h>
 #include <sys/random.h>
@@ -302,6 +303,7 @@ struct fcrypt {
 	TAILQ_HEAD(csessionlist, csession) csessions;
 	int		sesn;
 	struct mtx	lock;
+	bool		descriptor_authority;
 };
 
 struct cryptodesc;
@@ -325,6 +327,9 @@ struct cryptokey_object {
 static TAILQ_HEAD(, cryptokey_object) cryptokey_objects =
     TAILQ_HEAD_INITIALIZER(cryptokey_objects);
 static struct mtx cryptokey_objects_lock;
+static u_int cryptokey_max_objects = 16384;
+static u_int cryptokey_max_owner_objects = 1024;
+static u_int cryptokey_object_count;
 
 /* A passable, rights-limited OpenCrypto session. */
 struct cryptodesc {
@@ -557,6 +562,13 @@ static bool use_separate_aad;
 SYSCTL_BOOL(_kern_crypto, OID_AUTO, cryptodev_separate_aad, CTLFLAG_RW,
     &use_separate_aad, 0,
     "Use separate AAD buffer for /dev/crypto requests.");
+SYSCTL_UINT(_kern_crypto, OID_AUTO, cryptokey_max_objects, CTLFLAG_RW,
+    &cryptokey_max_objects, 0, "Maximum persistent named crypto keys");
+SYSCTL_UINT(_kern_crypto, OID_AUTO, cryptokey_max_owner_objects, CTLFLAG_RW,
+    &cryptokey_max_owner_objects, 0,
+    "Maximum persistent named crypto keys per owner label");
+SYSCTL_UINT(_kern_crypto, OID_AUTO, cryptokey_objects, CTLFLAG_RD,
+    &cryptokey_object_count, 0, "Current persistent named crypto keys");
 
 static MALLOC_DEFINE(M_CRYPTODEV, "cryptodev", "/dev/crypto data buffers");
 
@@ -932,6 +944,9 @@ cryptokey_remove_all(void)
 			break;
 		}
 		TAILQ_REMOVE(&cryptokey_objects, key, next);
+		KASSERT(cryptokey_object_count != 0,
+		    ("named crypto key count underflow"));
+		cryptokey_object_count--;
 		mtx_lock(&key->lock);
 		key->deleted = true;
 		key->generation++;
@@ -948,18 +963,31 @@ static int
 cryptodesc_install(struct thread *td, struct csession *cse, uint32_t type,
     const uint8_t *private_key, size_t private_key_len,
     const uint8_t *public_key, size_t public_key_len, uint32_t rights,
-    uint32_t ttl, int32_t *descriptor_fd, struct cryptokey_object *key,
-    uint64_t key_generation)
+    uint32_t ttl, time_t max_expires, int32_t *descriptor_fd,
+    struct cryptokey_object *key, uint64_t key_generation)
 {
 	struct cryptodesc *cd;
 	struct file *fp;
+	time_t expires, now;
 	int error, fd;
 
+	now = time_second;
 	if ((rights & ~CRYPTODESC_RIGHT_ALL) != 0 || rights == 0 ||
 	    private_key_len > sizeof(cd->cd_private) ||
 	    public_key_len > sizeof(cd->cd_public) ||
-	    (ttl != 0 && (time_second > INT64_MAX - ttl)))
-		return (EINVAL);
+	    (ttl != 0 && now > INT64_MAX - ttl)) {
+		error = EINVAL;
+		goto reject;
+	}
+	expires = ttl == 0 ? 0 : now + ttl;
+	if (max_expires != 0) {
+		if (max_expires <= now) {
+			error = ESTALE;
+			goto reject;
+		}
+		if (expires == 0 || expires > max_expires)
+			expires = max_expires;
+	}
 	cd = malloc(sizeof(*cd), M_CRYPTODEV, M_WAITOK | M_ZERO);
 	cd->cd_session = cse;
 	mtx_init(&cd->cd_lock, "cryptodesc", NULL, MTX_DEF);
@@ -967,7 +995,7 @@ cryptodesc_install(struct thread *td, struct csession *cse, uint32_t type,
 	callout_init_mtx(&cd->cd_expiry_callout, &cd->cd_lock, 0);
 	cd->cd_rights = rights;
 	cd->cd_type = type;
-	cd->cd_expires = ttl == 0 ? 0 : time_second + ttl;
+	cd->cd_expires = expires;
 	cd->cd_key = key;
 	cd->cd_key_generation = key_generation;
 	cd->cd_latest_key_generation = key_generation;
@@ -1023,6 +1051,13 @@ cryptodesc_install(struct thread *td, struct csession *cse, uint32_t type,
 	if (error == 0)
 		*descriptor_fd = fd;
 	return (error);
+
+reject:
+	if (cse != NULL)
+		cse_free(cse);
+	if (key != NULL)
+		cryptokey_release(key);
+	return (error);
 }
 
 static int
@@ -1038,7 +1073,7 @@ cryptodesc_mint(struct thread *td, struct cryptodesc_create *create)
 	if (error != 0)
 		return (error);
 	return (cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
-	    create->cd_rights, 0, &create->cd_fd, NULL, 0));
+	    create->cd_rights, 0, 0, &create->cd_fd, NULL, 0));
 }
 
 static int
@@ -1078,13 +1113,14 @@ cryptodesc_mint_generated(struct thread *td, struct cryptodesc_generate *create)
 		return (error);
 	create->session.crid = session.crid;
 	return (cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
-	    create->cd_rights, create->cd_ttl, &create->cd_fd, NULL, 0));
+	    create->cd_rights, create->cd_ttl, 0, &create->cd_fd, NULL, 0));
 }
 
 static int
 cryptokey_create(struct cryptodesc_named_create *create)
 {
 	struct cryptokey_object *key, *existing;
+	u_int owner_objects;
 
 	if (!cryptokey_identifier_valid(create->cd_name,
 	    sizeof(create->cd_name)) || !cryptokey_identifier_valid(
@@ -1112,14 +1148,26 @@ cryptokey_create(struct cryptodesc_named_create *create)
 	if (key->session.mackeylen != 0)
 		arc4random_buf(key->mackey, key->session.mackeylen);
 	mtx_lock(&cryptokey_objects_lock);
+	owner_objects = 0;
 	TAILQ_FOREACH(existing, &cryptokey_objects, next) {
 		if (cryptokey_matches(existing, key->name, key->owner)) {
 			mtx_unlock(&cryptokey_objects_lock);
 			cryptokey_release(key);
 			return (EEXIST);
 		}
+		if (strcmp(existing->owner, key->owner) == 0)
+			owner_objects++;
+	}
+	if ((cryptokey_max_objects != 0 &&
+	    cryptokey_object_count >= cryptokey_max_objects) ||
+	    (cryptokey_max_owner_objects != 0 &&
+	    owner_objects >= cryptokey_max_owner_objects)) {
+		mtx_unlock(&cryptokey_objects_lock);
+		cryptokey_release(key);
+		return (ENOSPC);
 	}
 	TAILQ_INSERT_TAIL(&cryptokey_objects, key, next);
+	cryptokey_object_count++;
 	mtx_unlock(&cryptokey_objects_lock);
 	create->cd_generation = key->generation;
 	return (0);
@@ -1168,7 +1216,7 @@ cryptokey_lease(struct thread *td, struct cryptodesc_named_lease *lease)
 	if (error != 0)
 		goto out;
 	error = cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
-	    lease->cd_rights, lease->cd_ttl, &lease->cd_fd, key, generation);
+	    lease->cd_rights, lease->cd_ttl, 0, &lease->cd_fd, key, generation);
 	key = NULL; /* cryptodesc_install owns this lease reference. */
 	if (error == 0)
 		lease->cd_generation = generation;
@@ -1240,6 +1288,9 @@ cryptokey_delete(struct cryptodesc_named_control *control)
 	control->cd_generation = key->generation;
 	mtx_unlock(&key->lock);
 	TAILQ_REMOVE(&cryptokey_objects, key, next);
+	KASSERT(cryptokey_object_count != 0,
+	    ("named crypto key count underflow"));
+	cryptokey_object_count--;
 	mtx_unlock(&cryptokey_objects_lock);
 	cryptokey_release(key);
 	return (0);
@@ -1251,12 +1302,16 @@ cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
 {
 	struct session2_op session;
 	struct csession *cse;
+	struct cryptokey_object *key;
 	uint8_t *salt, *info, *output;
-	const uint8_t *ikm;
+	uint8_t ikm[256];
 	size_t ikm_len, output_len;
-	uint32_t ttl;
+	time_t max_expires;
+	uint64_t key_generation;
 	int error;
 
+	derive->cd_fd = -1;
+	salt = info = output = NULL;
 	if (cd->cd_type != 0 || derive->session.ses != 0 ||
 	    derive->session.key != NULL || derive->session.mackey != NULL ||
 	    derive->cd_salt_len > CRYPTODESC_MAX_DERIVE_SALT ||
@@ -1268,23 +1323,32 @@ cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
 	    CRYPTODESC_RIGHT_DECRYPT | CRYPTODESC_RIGHT_AUTH |
 	    CRYPTODESC_RIGHT_VERIFY | CRYPTODESC_RIGHT_DERIVE)) != 0)
 		return (EINVAL);
-	error = cryptodesc_check_rights(cd, CRYPTODESC_RIGHT_DERIVE);
+	error = cryptodesc_check_rights(cd, CRYPTODESC_RIGHT_DERIVE |
+	    derive->cd_rights);
 	if (error != 0)
 		return (error);
+	memset(ikm, 0, sizeof(ikm));
+	ikm_len = 0;
 	if (cd->cd_session->key != NULL) {
-		ikm = cd->cd_session->key;
-		ikm_len = cd->cd_session->keylen;
-	} else {
-		ikm = cd->cd_session->mackey;
-		ikm_len = cd->cd_session->mackeylen;
+		memcpy(ikm + ikm_len, cd->cd_session->key,
+		    cd->cd_session->keylen);
+		ikm_len += cd->cd_session->keylen;
+	}
+	if (cd->cd_session->mackey != NULL) {
+		memcpy(ikm + ikm_len, cd->cd_session->mackey,
+		    cd->cd_session->mackeylen);
+		ikm_len += cd->cd_session->mackeylen;
 	}
 	output_len = derive->session.keylen + derive->session.mackeylen;
-	if (ikm == NULL || ikm_len == 0 || output_len == 0)
-		return (EINVAL);
-	salt = info = output = NULL;
+	if (ikm_len == 0 || output_len == 0) {
+		error = EINVAL;
+		goto out;
+	}
 	if (derive->cd_salt_len != 0) {
-		if (derive->cd_salt == NULL)
-			return (EINVAL);
+		if (derive->cd_salt == NULL) {
+			error = EINVAL;
+			goto out;
+		}
 		salt = malloc(derive->cd_salt_len, M_CRYPTODEV, M_WAITOK);
 		error = copyin(derive->cd_salt, salt, derive->cd_salt_len);
 		if (error != 0)
@@ -1313,13 +1377,18 @@ cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
 	if (error != 0)
 		goto out;
 	derive->session.crid = session.crid;
-	ttl = derive->cd_ttl;
-	if (cd->cd_expires != 0 &&
-	    (ttl == 0 || time_second + ttl > cd->cd_expires))
-		ttl = cd->cd_expires - time_second;
+	mtx_lock(&cd->cd_lock);
+	max_expires = cd->cd_expires;
+	key = cd->cd_key;
+	key_generation = cd->cd_key_generation;
+	if (key != NULL)
+		refcount_acquire(&key->refs);
+	mtx_unlock(&cd->cd_lock);
 	error = cryptodesc_install(td, cse, 0, NULL, 0, NULL, 0,
-	    derive->cd_rights, ttl, &derive->cd_fd, NULL, 0);
+	    derive->cd_rights, derive->cd_ttl, max_expires, &derive->cd_fd,
+	    key, key_generation);
 out:
+	explicit_bzero(ikm, sizeof(ikm));
 	if (salt != NULL) {
 		explicit_bzero(salt, derive->cd_salt_len);
 		free(salt, M_CRYPTODEV);
@@ -1370,7 +1439,7 @@ cryptodesc_mint_key(struct thread *td, struct cryptodesc_key_create *create)
 	error = cryptodesc_install(td, NULL, create->cd_type, private_key,
 	    create->cd_type == CRYPTODESC_KEY_X25519 ? CRYPTODESC_X25519_SIZE :
 	    CRYPTODESC_ED25519_SECRET_SIZE, public_key, sizeof(public_key),
-	    create->cd_rights, create->cd_ttl, &create->cd_fd, NULL, 0);
+	    create->cd_rights, create->cd_ttl, 0, &create->cd_fd, NULL, 0);
 	if (error == 0)
 		memcpy(create->cd_public, public_key, sizeof(create->cd_public));
 out:
@@ -2239,6 +2308,7 @@ crypto_open(struct cdev *dev, int oflags, int devtype, struct thread *td)
 	fcr = malloc(sizeof(struct fcrypt), M_CRYPTODEV, M_WAITOK | M_ZERO);
 	TAILQ_INIT(&fcr->csessions);
 	mtx_init(&fcr->lock, "fcrypt", NULL, MTX_DEF);
+	fcr->descriptor_authority = priv_check(td, PRIV_DRIVER) == 0;
 	error = devfs_set_cdevpriv(fcr, fcrypt_dtor);
 	if (error)
 		fcrypt_dtor(fcr);
@@ -2371,18 +2441,34 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		error = cryptodesc_mint_key(td, key_create);
 		break;
 	case CIOCGCRYPTONAMEDKEY:
+		if (!fcr->descriptor_authority) {
+			error = EPERM;
+			break;
+		}
 		named_create = (struct cryptodesc_named_create *)data;
 		error = cryptokey_create(named_create);
 		break;
 	case CIOCGCRYPTONAMEDLEASE:
+		if (!fcr->descriptor_authority) {
+			error = EPERM;
+			break;
+		}
 		named_lease = (struct cryptodesc_named_lease *)data;
 		error = cryptokey_lease(td, named_lease);
 		break;
 	case CIOCCRYPTONAMEDROTATE:
+		if (!fcr->descriptor_authority) {
+			error = EPERM;
+			break;
+		}
 		named_control = (struct cryptodesc_named_control *)data;
 		error = cryptokey_rotate(named_control);
 		break;
 	case CIOCCRYPTONAMEDDELETE:
+		if (!fcr->descriptor_authority) {
+			error = EPERM;
+			break;
+		}
 		named_control = (struct cryptodesc_named_control *)data;
 		error = cryptokey_delete(named_control);
 		break;

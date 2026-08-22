@@ -24,8 +24,8 @@
 
 /*
  * Public creation options.  eco_size must be initialized to sizeof(*eco).
- * eco_access is one of O_RDONLY, O_WRONLY, or O_RDWR.  eco_fdflags accepts
- * FD_CLOEXEC and FD_CLOFORK.
+ * eco_access must be O_RDWR.  Attenuate individual copies with Capsicum
+ * rights after creation.  eco_fdflags accepts FD_CLOEXEC and FD_CLOFORK.
  */
 struct envfd_create_options {
 	uint32_t	eco_size;

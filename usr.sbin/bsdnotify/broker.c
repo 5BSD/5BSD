@@ -92,6 +92,10 @@ event_create(struct notifycmp_broker *broker, uint32_t type,
 	uint8_t *cursor;
 
 	publisher_length = strlen(publisher);
+	if (broker->sequence == UINT64_MAX) {
+		errno = EOVERFLOW;
+		return (NULL);
+	}
 	length = sizeof(event->event) + publisher_length + topic_length +
 	    payload_length;
 	event = calloc(1, offsetof(struct broker_event, event) + length);
@@ -177,6 +181,15 @@ notifycmp_broker_epoch(const struct notifycmp_broker *broker)
 {
 
 	return (broker != NULL ? broker->epoch : 0);
+}
+
+void
+notifycmp_broker_test_set_sequence(struct notifycmp_broker *broker,
+    uint64_t sequence)
+{
+
+	if (broker != NULL)
+		broker->sequence = sequence;
 }
 
 struct notifycmp_broker_client *

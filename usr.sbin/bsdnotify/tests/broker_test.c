@@ -345,6 +345,35 @@ ATF_TC_BODY(fanout_and_churn, tc)
 	notifycmp_broker_destroy(broker);
 }
 
+ATF_TC_WITHOUT_HEAD(sequence_exhaustion);
+ATF_TC_BODY(sequence_exhaustion, tc)
+{
+	struct notifycmp_broker_client *publisher, *subscriber;
+	struct notifycmp_broker *broker;
+	union event_buffer buffer;
+	struct notifycmp_event *event;
+
+	broker = notifycmp_broker_create();
+	ATF_REQUIRE(broker != NULL);
+	publisher = notifycmp_broker_add(broker, "publisher", 2);
+	subscriber = notifycmp_broker_add(broker, "subscriber", 2);
+	ATF_REQUIRE(publisher != NULL && subscriber != NULL);
+	ATF_REQUIRE_EQ(0, notifycmp_broker_subscribe(broker, subscriber,
+	    "sequence.test", 13));
+	notifycmp_broker_test_set_sequence(broker, UINT64_MAX - 1);
+	ATF_REQUIRE_EQ(0, notifycmp_broker_publish(broker, publisher,
+	    "sequence.test", 13, NULL, 0));
+	event = (void *)buffer.bytes;
+	ATF_REQUIRE(notifycmp_broker_next(subscriber, event,
+	    sizeof(buffer)) > 0);
+	ATF_CHECK_EQ(UINT64_MAX, event->sequence);
+	ATF_CHECK_ERRNO(EOVERFLOW, notifycmp_broker_publish(broker, publisher,
+	    "sequence.test", 13, NULL, 0) == -1);
+	ATF_CHECK_ERRNO(EAGAIN, notifycmp_broker_next(subscriber, event,
+	    sizeof(buffer)) == -1);
+	notifycmp_broker_destroy(broker);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -356,5 +385,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, subscriptions);
 	ATF_TP_ADD_TC(tp, timer_and_cleanup);
 	ATF_TP_ADD_TC(tp, fanout_and_churn);
+	ATF_TP_ADD_TC(tp, sequence_exhaustion);
 	return (atf_no_error());
 }

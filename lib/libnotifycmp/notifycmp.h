@@ -15,6 +15,7 @@ struct notifycmp_client;
 
 __BEGIN_DECLS
 int	notifycmp_client_open(struct notifycmp_client **);
+/* Consumes fd on every call with a valid fd and result pointer. */
 int	notifycmp_client_adopt(int, struct notifycmp_client **);
 void	notifycmp_client_close(struct notifycmp_client *);
 int	notifycmp_subscribe(struct notifycmp_client *, const char *);

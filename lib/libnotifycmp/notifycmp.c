@@ -472,15 +472,21 @@ notifycmp_client_adopt(int fd, struct notifycmp_client **result)
 	}
 	*result = NULL;
 	client = calloc(1, sizeof(*client));
-	if (client == NULL)
+	if (client == NULL) {
+		(void)close(fd);
 		return (-1);
+	}
 	client->owner = getpid();
 	if ((error = pthread_mutex_init(&client->lock, NULL)) != 0) {
 		free(client);
+		(void)close(fd);
 		errno = error;
 		return (-1);
 	}
 	if (service_session_create(fd, &client->channel) == -1) {
+		error = errno;
+		(void)close(fd);
+		errno = error;
 		goto fail;
 	}
 	if (rpc_locked(client, NOTIFYCMP_OP_HELLO, NULL, 0, &reply, &payload,
@@ -525,11 +531,8 @@ notifycmp_client_open(struct notifycmp_client **result)
 	service_release(service);
 	if (fd == -1)
 		return (errno = error, -1);
-	if (notifycmp_client_adopt(fd, result) == -1) {
-		error = errno;
-		close(fd);
-		return (errno = error, -1);
-	}
+	if (notifycmp_client_adopt(fd, result) == -1)
+		return (-1);
 	return (0);
 }
 
@@ -942,15 +945,16 @@ notifycmp_stats(struct notifycmp_client *client, struct notifycmp_stats *stats)
 	else
 		result = rpc_locked(client, NOTIFYCMP_OP_STATS, NULL, 0, &reply,
 		    &payload, 30000);
-	if (result == 0) {
-		if (payload != sizeof(*stats)) {
-			result = -1;
-			error = EPROTO;
-		} else
-			memcpy(stats, (struct notifycmp_msg *)reply.bytes + 1,
-			    sizeof(*stats));
+	if (result == -1)
+		error = errno;
+	else if (payload != sizeof(*stats)) {
+		result = -1;
+		error = EPROTO;
+	} else {
+		memcpy(stats, (struct notifycmp_msg *)reply.bytes + 1,
+		    sizeof(*stats));
+		error = 0;
 	}
-	error = result == -1 ? errno : 0;
 	if (result == -1 && connection_unusable(error))
 		disconnect_locked(client);
 	pthread_mutex_unlock(&client->lock);

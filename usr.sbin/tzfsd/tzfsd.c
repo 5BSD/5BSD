@@ -119,10 +119,15 @@ main(int argc, char **argv)
 	st.listen_fd = -1;
 
 	tzfsd_config_defaults(&st.cfg);
-	if (tzfsd_config_load(&st.cfg, conf) == -1)
-		syslog(LOG_WARNING, "config %s: %m (using defaults)", conf);
+	if (tzfsd_config_load(&st.cfg, conf) == -1) {
+		syslog(LOG_ERR, "config %s: %m", conf);
+		return (1);
+	}
 	/* Flavor-catalog drop-ins (freebsd, linux, ...) layer on last. */
-	(void)tzfsd_config_load_confd(&st.cfg, TZFSD_DEFAULT_CONFD);
+	if (tzfsd_config_load_confd(&st.cfg, TZFSD_DEFAULT_CONFD) == -1) {
+		syslog(LOG_ERR, "config directory %s: %m", TZFSD_DEFAULT_CONFD);
+		return (1);
+	}
 
 	/* All name-based work happens before cap_enter(). */
 	if (tzfsd_ensure_zfs(&st.cfg) == -1)

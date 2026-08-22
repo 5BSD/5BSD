@@ -29,9 +29,12 @@ The name is immutable and is descriptive metadata rather than a global lookup
 key.
 It must be non-empty, fit in
 .Dv ENVFD_NAME_MAX
-bytes including its terminating null byte, and must not contain
-.Ql = .
-No character encoding or shell-identifier syntax is imposed.
+bytes including its terminating null byte, and contain only ASCII letters,
+digits,
+.Ql . ,
+.Ql _ ,
+and
+.Ql - .
 .Pp
 The
 .Fa options
@@ -60,20 +63,24 @@ and registering an
 event require the calling process to be in Capsicum capability mode.
 .El
 .It Va eco_access
-One of
-.Dv O_RDONLY ,
-.Dv O_WRONLY ,
-or
+Must be
 .Dv O_RDWR .
+After publishing a value, use
+.Xr cap_rights_limit 2
+to create read-only or write-only capabilities without creating an unusable
+initially-unwritten object.
 .It Va eco_fdflags
 Zero or more of
 .Dv FD_CLOEXEC
 and
 .Dv FD_CLOFORK .
 .It Va eco_xfer_state
-An initial
-.Dv CAP_XFER_*
-state.
+An initial transfer state:
+.Dv CAP_XFER_UNLIMITED ,
+.Dv CAP_XFER_ONCE ,
+.Dv CAP_XFER_TWICE ,
+or
+.Dv CAP_XFER_NONE .
 .It Va eco_cloexec_state
 An initial
 .Dv CAP_CLOEXEC_*

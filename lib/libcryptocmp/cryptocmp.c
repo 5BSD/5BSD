@@ -2,6 +2,7 @@
 #include <sys/types.h>
 #include <errno.h>
 #include <pthread.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -9,6 +10,23 @@
 #include "cryptocmp.h"
 
 struct cryptocmp_client { struct service_session *session; pid_t owner; };
+
+static bool
+valid_status(int32_t status)
+{
+
+	return (status <= 0 && status >= -ELAST);
+}
+
+static int
+reject_reply(int fd)
+{
+
+	if (fd >= 0)
+		(void)close(fd);
+	errno = EPROTO;
+	return (-1);
+}
 int
 cryptocmp_open(struct cryptocmp_client **out)
 {
@@ -33,11 +51,12 @@ cryptocmp_generate(struct cryptocmp_client *client, const struct cryptocmp_gener
 	struct cryptocmp_msg reply; struct service_message outgoing; struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER; int fd = -1;
 	if (client == NULL || request == NULL || descriptor == NULL || client->owner != getpid()) return (errno = EINVAL, -1);
+	*descriptor = -1;
 	memset(&wire, 0, sizeof(wire)); wire.msg.magic = CRYPTOCMP_MAGIC; wire.msg.version = CRYPTOCMP_VERSION; wire.msg.opcode = CRYPTOCMP_OP_GENERATE; wire.generate = *request;
 	memset(&outgoing, 0, sizeof(outgoing)); outgoing.size = sizeof(outgoing); outgoing.data = &wire; outgoing.length = sizeof(wire);
 	memset(&incoming, 0, sizeof(incoming)); incoming.size = sizeof(incoming); incoming.data = &reply; incoming.capacity = sizeof(reply); incoming.fds = &fd; incoming.fd_capacity = 1; options.timeout_ms = 30000;
 	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1) return (-1);
-	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC || reply.version != CRYPTOCMP_VERSION || reply.opcode != CRYPTOCMP_OP_GENERATE || incoming.nfds != (reply.status == 0 ? 1 : 0)) return (errno = EPROTO, -1);
+	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC || reply.version != CRYPTOCMP_VERSION || reply.opcode != CRYPTOCMP_OP_GENERATE || !valid_status(reply.status) || incoming.nfds != (reply.status == 0 ? 1 : 0)) return (reject_reply(incoming.nfds != 0 ? fd : -1));
 	if (reply.status != 0) return (errno = -reply.status, -1);
 	*descriptor = fd; return (0);
 }
@@ -57,6 +76,8 @@ cryptocmp_generate_key(struct cryptocmp_client *client,
 	if (client == NULL || request == NULL || public_key == NULL ||
 	    descriptor == NULL || client->owner != getpid())
 		return (errno = EINVAL, -1);
+	*descriptor = -1;
+	memset(public_key, 0, 32);
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = CRYPTOCMP_MAGIC;
 	wire.msg.version = CRYPTOCMP_VERSION;
@@ -79,8 +100,9 @@ cryptocmp_generate_key(struct cryptocmp_client *client,
 	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC ||
 	    reply.msg.version != CRYPTOCMP_VERSION ||
 	    reply.msg.opcode != CRYPTOCMP_OP_GENERATE_KEY ||
+	    !valid_status(reply.msg.status) ||
 	    incoming.nfds != (reply.msg.status == 0 ? 1 : 0))
-		return (errno = EPROTO, -1);
+		return (reject_reply(incoming.nfds != 0 ? fd : -1));
 	if (reply.msg.status != 0)
 		return (errno = -reply.msg.status, -1);
 	memcpy(public_key, reply.public_key, sizeof(reply.public_key));
@@ -105,6 +127,9 @@ cryptocmp_named_call(struct cryptocmp_client *client, uint16_t opcode,
 	    (descriptor == NULL && opcode == CRYPTOCMP_OP_NAMED_LEASE) ||
 	    (descriptor != NULL && opcode != CRYPTOCMP_OP_NAMED_LEASE))
 		return (errno = EINVAL, -1);
+	*generation = 0;
+	if (descriptor != NULL)
+		*descriptor = -1;
 	memset(&wire, 0, sizeof(wire));
 	wire.msg.magic = CRYPTOCMP_MAGIC;
 	wire.msg.version = CRYPTOCMP_VERSION;
@@ -126,8 +151,9 @@ cryptocmp_named_call(struct cryptocmp_client *client, uint16_t opcode,
 		return (-1);
 	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC ||
 	    reply.msg.version != CRYPTOCMP_VERSION || reply.msg.opcode != opcode ||
+	    !valid_status(reply.msg.status) ||
 	    incoming.nfds != (reply.msg.status == 0 && descriptor != NULL ? 1 : 0))
-		return (errno = EPROTO, -1);
+		return (reject_reply(incoming.nfds != 0 ? fd : -1));
 	if (reply.msg.status != 0)
 		return (errno = -reply.msg.status, -1);
 	*generation = reply.generation;
