@@ -1,4 +1,4 @@
-.Dd September 22, 2025
+.Dd August 21, 2026
 .Dt LIBOES 3
 .Os
 .Sh NAME
@@ -10,9 +10,81 @@
 The
 .Nm
 library provides convenience APIs for interacting with
+.Pa /dev/oes ,
+subscribing and muting, reading messages, and responding to authorization
+events.
+The library and kernel interface require an LP64 kernel and LP64 clients;
+32-bit processes are not supported.
+.Pp
+The
+.Fn oes_client_create_descendants
+constructor creates a visibility-restricted client analogous to Apple's
+.Fn es_new_descendants_client :
+the calling process is visible for NOTIFY events, its descendants are visible
+for AUTH and NOTIFY events, and all processes outside that subtree are hidden.
+The scope may also be selected before mode and subscription configuration with
+.Fn oes_set_descendants_scope
+and inspected with
+.Fn oes_get_scope .
+Unlike the Apple API, opening
 .Pa /dev/oes
-and decoding endpoint security events.
-This manual page is a minimal placeholder.
+still requires
+.Fx
+device privilege because OES has no code-signing
+entitlement authority.
+.Pp
+Per-AUTH-event deadline caps are configured with
+.Fn oes_set_deadline_max
+and queried with
+.Fn oes_get_deadline_max .
+Descendants clients may also use
+.Fn oes_set_deadline_min
+and
+.Fn oes_get_deadline_min
+to request a deadline floor.
+A zero SET value removes the corresponding event override.
+.Fn oes_set_deadline_miss_mode
+selects fail-open or fail-closed behavior when a deadline is missed or an AUTH
+message cannot be queued;
+.Fn oes_get_deadline_miss_mode
+queries that setting.
+.Pp
+The mute lists applied during initial mode setup are ordinary client state.
+They can be cleared with
+.Fn oes_unmute_all_processes ,
+.Fn oes_unmute_all_paths ,
+and
+.Fn oes_unmute_all_target_paths .
+.Pp
+The message pointer returned by
+.Fn oes_read_event
+is valid only until the next read on the client.
+.Fn oes_message_copy
+creates an owned copy, which must be released with
+.Fn oes_message_free .
+.Pp
+Messages contain per-client global and per-event sequence numbers.
+A gap
+indicates that delivery was attempted but at least one intervening event was
+dropped.
+AUTH-derived NOTIFY messages set
+.Dv OES_MSG_FLAG_AUTH_RESULT
+and expose the applied decision in
+.Va em_result .
+These AUTH-derived notifications report the authorization outcome before the
+MAC check returns; they do not prove that the originating system call later
+succeeded.
+.Pp
+The pre-1.0 interface currently uses API and message version 1.
+Messages include kernel-captured wall-clock and thread metadata,
+cached executable paths, expanded process lineage, scheduling and audit
+metadata, and richer vnode attributes with nanosecond timestamps.
+Consumers should inspect
+.Va ep_meta_flags
+and
+.Va ef_meta_flags
+because path, credential, filesystem, and attribute data can be unavailable
+independently.
 .Sh SEE ALSO
 .Xr oes 4
 .Sh AUTHORS

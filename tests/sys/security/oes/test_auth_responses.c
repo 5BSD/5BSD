@@ -72,7 +72,7 @@ test_auth_allow(void)
 	}
 
 	if (pid == 0) {
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		_exit(127);
 	}
 
@@ -161,7 +161,7 @@ test_auth_deny(void)
 
 	if (pid == 0) {
 		/* Child - this exec should be denied */
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		/* If exec fails, exit with specific code */
 		_exit(42);
 	}

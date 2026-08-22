@@ -16,8 +16,10 @@
 #include <sys/malloc.h>
 #include <sys/module.h>
 #include <sys/proc.h>
+#include <sys/refcount.h>
 #include <sys/vnode.h>
 #include <sys/mount.h>
+#include <sys/mman.h>
 #include <sys/namei.h>
 #include <sys/imgact.h>
 #include <sys/sysctl.h>
@@ -50,17 +52,37 @@ SDT_PROBE_DECLARE(oes, , , auth__deny);
 MALLOC_DECLARE(M_OES);
 
 /*
- * Per-credential label: stores the execution ID
+ * Per-credential label: stores execution identity and immutable path metadata.
  *
  * The exec_id is a 64-bit random value that:
  * - Stays the same across fork() (inherited by child via cred_copy_label)
- * - Changes on exec() (new random value in vnode_execve_transition)
+ * - Changes on exec() (new random value in vnode_execve_relabel)
  *
  * This allows tracking process lineage and detecting when
  * the actual executable code changes.
  */
+struct oes_exec_meta {
+	u_int		eem_refcount;
+	uint32_t	eem_flags;
+	char		eem_path[];
+};
+
+#define OES_EXEC_META_PATH_TRUNCATED	0x00000001
+
+struct oes_scope_meta {
+	u_int		esm_refcount;
+	uint8_t		esm_count;
+	uint64_t	esm_markers[OES_SCOPE_MARKERS_MAX];
+};
+
 struct oes_cred_label {
 	uint64_t	ecl_exec_id;	/* Execution ID */
+	struct oes_exec_meta *ecl_exec_meta; /* Shared across credential copies */
+	struct oes_scope_meta *ecl_scope_meta; /* Immutable inherited scopes */
+};
+
+struct oes_pipe_label {
+	uint64_t	epl_id;		/* Opaque identifier; never a kernel address */
 };
 
 static int oes_slot;		/* MAC label slot for our data */
@@ -71,6 +93,20 @@ static eventhandler_tag oes_vfs_mounted_tag;
 static eventhandler_tag oes_vfs_unmounted_tag;
 static eventhandler_tag oes_kld_unload_tag;
 static struct mtx oes_rename_mtx;
+
+static void
+oes_scope_meta_hold(struct oes_scope_meta *meta)
+{
+	if (meta != NULL)
+		atomic_add_int(&meta->esm_refcount, 1);
+}
+
+static void
+oes_scope_meta_rele(struct oes_scope_meta *meta)
+{
+	if (meta != NULL && atomic_fetchadd_int(&meta->esm_refcount, -1) == 1)
+		free(meta, M_OES);
+}
 
 struct oes_rename_ctx {
 	LIST_ENTRY(oes_rename_ctx) er_link;
@@ -92,6 +128,8 @@ static LIST_HEAD(, oes_rename_ctx) oes_rename_list =
 
 #define SLOT(l)	((struct oes_cred_label *)mac_label_get((l), oes_slot))
 #define SLOT_SET(l, v) mac_label_set((l), oes_slot, (uintptr_t)(v))
+#define PIPE_SLOT(l) \
+	((struct oes_pipe_label *)mac_label_get((l), oes_slot))
 
 /* Forward declarations for socket helpers */
 static void oes_fill_sockaddr(oes_sockaddr_t *esa, const struct sockaddr *sa);
@@ -104,6 +142,84 @@ oes_generate_exec_id(void)
 
 	arc4random_buf(&id, sizeof(id));
 	return (id);
+}
+
+static struct oes_exec_meta *
+oes_exec_meta_alloc(const char *path)
+{
+	struct oes_exec_meta *meta;
+	size_t len, alloc_size;
+	bool truncated;
+
+	if (path == NULL || path[0] == '\0')
+		return (NULL);
+	len = strnlen(path, MAXPATHLEN);
+	truncated = len == MAXPATHLEN;
+	if (truncated)
+		len = MAXPATHLEN - 1;
+	alloc_size = offsetof(struct oes_exec_meta, eem_path) + len + 1;
+	meta = malloc(alloc_size, M_OES, M_NOWAIT | M_ZERO);
+	if (meta == NULL)
+		return (NULL);
+	refcount_init(&meta->eem_refcount, 1);
+	if (truncated)
+		meta->eem_flags |= OES_EXEC_META_PATH_TRUNCATED;
+	memcpy(meta->eem_path, path, len);
+	meta->eem_path[len] = '\0';
+	return (meta);
+}
+
+static void
+oes_exec_meta_hold(struct oes_exec_meta *meta)
+{
+
+	if (meta != NULL)
+		refcount_acquire(&meta->eem_refcount);
+}
+
+static void
+oes_exec_meta_rele(struct oes_exec_meta *meta)
+{
+
+	if (meta != NULL && refcount_release(&meta->eem_refcount))
+		free(meta, M_OES);
+}
+
+static void
+oes_mac_pipe_init_label(struct label *label)
+{
+	struct oes_pipe_label *epl;
+
+	epl = malloc(sizeof(*epl), M_OES, M_NOWAIT | M_ZERO);
+	if (epl != NULL) {
+		do {
+			arc4random_buf(&epl->epl_id, sizeof(epl->epl_id));
+		} while (epl->epl_id == 0);
+	}
+	SLOT_SET(label, epl);
+}
+
+static void
+oes_mac_pipe_destroy_label(struct label *label)
+{
+	struct oes_pipe_label *epl;
+
+	epl = PIPE_SLOT(label);
+	if (epl != NULL) {
+		free(epl, M_OES);
+		SLOT_SET(label, NULL);
+	}
+}
+
+static void
+oes_mac_pipe_copy_label(struct label *src, struct label *dst)
+{
+	struct oes_pipe_label *src_epl, *dst_epl;
+
+	src_epl = PIPE_SLOT(src);
+	dst_epl = PIPE_SLOT(dst);
+	if (src_epl != NULL && dst_epl != NULL)
+		dst_epl->epl_id = src_epl->epl_id;
 }
 
 uint64_t
@@ -123,6 +239,29 @@ oes_proc_get_exec_id(struct proc *p)
 		return (0);
 
 	return (ecl->ecl_exec_id);
+}
+
+const char *
+oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags)
+{
+	struct oes_cred_label *ecl;
+	struct oes_exec_meta *meta;
+	struct ucred *cred;
+
+	PROC_LOCK_ASSERT(p, MA_OWNED);
+	if (meta_flags != NULL)
+		*meta_flags = 0;
+	cred = p->p_ucred;
+	if (cred == NULL || cred->cr_label == NULL)
+		return (NULL);
+	ecl = SLOT(cred->cr_label);
+	if (ecl == NULL || ecl->ecl_exec_meta == NULL)
+		return (NULL);
+	meta = ecl->ecl_exec_meta;
+	if (meta_flags != NULL &&
+	    (meta->eem_flags & OES_EXEC_META_PATH_TRUNCATED) != 0)
+		*meta_flags |= OES_PROC_META_PATH_TRUNCATED;
+	return (meta->eem_path);
 }
 
 /* MAC hook: allocate label for new credential */
@@ -156,6 +295,8 @@ oes_mac_cred_destroy_label(struct label *label)
 
 	ecl = SLOT(label);
 	if (ecl != NULL) {
+		oes_exec_meta_rele(ecl->ecl_exec_meta);
+		oes_scope_meta_rele(ecl->ecl_scope_meta);
 		free(ecl, M_OES);
 		SLOT_SET(label, NULL);
 	}
@@ -173,26 +314,128 @@ oes_mac_cred_copy_label(struct label *src, struct label *dst)
 	src_ecl = SLOT(src);
 	dst_ecl = SLOT(dst);
 
-	if (src_ecl != NULL && dst_ecl != NULL)
+	if (src_ecl != NULL && dst_ecl != NULL) {
+		oes_exec_meta_hold(src_ecl->ecl_exec_meta);
+		oes_exec_meta_rele(dst_ecl->ecl_exec_meta);
 		dst_ecl->ecl_exec_id = src_ecl->ecl_exec_id;
+		dst_ecl->ecl_exec_meta = src_ecl->ecl_exec_meta;
+		oes_scope_meta_hold(src_ecl->ecl_scope_meta);
+		oes_scope_meta_rele(dst_ecl->ecl_scope_meta);
+		dst_ecl->ecl_scope_meta = src_ecl->ecl_scope_meta;
+	}
 }
 
-/* MAC hook: generate new exec_id after exec */
+/*
+ * Anchor a descendants client in a private copy of the caller's credential.
+ * Fork and exec credential-label copying then propagate this opaque marker
+ * without walking the process tree from arbitrary MAC hook lock contexts.
+ */
+int
+oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp)
+{
+	struct oes_cred_label *ecl;
+	struct oes_scope_meta *meta, *oldmeta;
+	struct ucred *newcred, *oldcred;
+	struct proc *p;
+	uint64_t marker;
+
+	p = curthread->td_proc;
+	if (p == NULL || p->p_pid != owner_pid || markerp == NULL)
+		return (EPERM);
+	newcred = crget();
+	meta = malloc(sizeof(*meta), M_OES, M_WAITOK | M_ZERO);
+	meta->esm_refcount = 1;
+	PROC_LOCK(p);
+	oldcred = crcopysafe(p, newcred);
+	ecl = SLOT(newcred->cr_label);
+	oldmeta = ecl != NULL ? ecl->ecl_scope_meta : NULL;
+	if (ecl == NULL || (oldmeta != NULL &&
+	    oldmeta->esm_count == OES_SCOPE_MARKERS_MAX)) {
+		PROC_UNLOCK(p);
+		crfree(newcred);
+		oes_scope_meta_rele(meta);
+		return (ecl == NULL ? ENOMEM : ENOSPC);
+	}
+	do {
+		arc4random_buf(&marker, sizeof(marker));
+	} while (marker == 0);
+	if (oldmeta != NULL) {
+		meta->esm_count = oldmeta->esm_count;
+		memcpy(meta->esm_markers, oldmeta->esm_markers,
+		    sizeof(meta->esm_markers));
+	}
+	meta->esm_markers[meta->esm_count++] = marker;
+	ecl->ecl_scope_meta = meta;
+	oes_scope_meta_rele(oldmeta);
+	proc_set_cred(p, newcred);
+	PROC_UNLOCK(p);
+	crfree(oldcred);
+	*markerp = marker;
+	return (0);
+}
+
+void
+oes_scope_snapshot(struct oes_pending *ep)
+{
+	struct oes_cred_label *ecl;
+	struct oes_scope_meta *meta;
+	struct ucred *cred;
+
+	if (curthread == NULL || curthread->td_ucred == NULL)
+		return;
+	cred = curthread->td_ucred;
+	if (cred->cr_label == NULL)
+		return;
+	ecl = SLOT(cred->cr_label);
+	if (ecl == NULL || ecl->ecl_scope_meta == NULL)
+		return;
+	meta = ecl->ecl_scope_meta;
+	ep->ep_scope_count = meta->esm_count;
+	memcpy(ep->ep_scope_markers, meta->esm_markers,
+	    sizeof(ep->ep_scope_markers));
+}
+
+/* Refresh the OES identity on every successful exec, including non-setid. */
+static int
+oes_mac_vnode_execve_will_relabel(struct ucred *old, struct vnode *vp,
+    struct label *vplabel, struct label *interpvplabel,
+    struct image_params *imgp, struct label *execlabel)
+{
+
+	(void)old;
+	(void)vp;
+	(void)vplabel;
+	(void)interpvplabel;
+	(void)imgp;
+	(void)execlabel;
+	return (1);
+}
+
 static void
-oes_mac_vnode_execve_transition(struct ucred *old, struct ucred *new,
+oes_mac_vnode_execve_relabel(struct ucred *old, struct ucred *new,
     struct vnode *vp, struct label *vplabel, struct label *interpvplabel,
     struct image_params *imgp, struct label *execlabel)
 {
 	struct oes_cred_label *ecl;
+	struct oes_exec_meta *new_meta, *old_meta;
 	struct label *label;
 
+	(void)old;
+	(void)vp;
+	(void)vplabel;
+	(void)interpvplabel;
+	(void)execlabel;
 	label = new->cr_label;
 	if (label == NULL)
 		return;
 
 	ecl = SLOT(label);
 	if (ecl != NULL) {
+		new_meta = oes_exec_meta_alloc(imgp != NULL ? imgp->execpath : NULL);
+		old_meta = ecl->ecl_exec_meta;
+		ecl->ecl_exec_meta = new_meta;
 		ecl->ecl_exec_id = oes_generate_exec_id();
+		oes_exec_meta_rele(old_meta);
 		OES_DEBUG("exec: new exec_id %llu for pid %d",
 		    (unsigned long long)ecl->ecl_exec_id, curproc->p_pid);
 	}
@@ -232,6 +475,7 @@ struct oes_vnode_event_info {
 	int			socket_type;
 	int			socket_protocol;
 	struct pipepair		*pipepair;
+	uint64_t		pipe_id;
 	unsigned long		ioctl_cmd;
 	struct mount		*mp;
 	int			priv;
@@ -327,7 +571,7 @@ oes_file_set_requested_path_off(oes_file_t *file, uint32_t path_off)
 
 static struct oes_pending *
 oes_pending_alloc_notify_from_template(const struct oes_pending *src,
-    oes_event_type_t notify_event, struct proc *p, struct ucred *cred)
+    oes_event_type_t notify_event, oes_auth_result_t result)
 {
 	struct oes_pending *ep;
 	size_t src_msg_size, alloc_size;
@@ -348,20 +592,106 @@ oes_pending_alloc_notify_from_template(const struct oes_pending *src,
 		return (NULL);
 
 	ep->ep_refcount = 1;
+	ep->ep_scope_count = src->ep_scope_count;
+	memcpy(ep->ep_scope_markers, src->ep_scope_markers,
+	    sizeof(ep->ep_scope_markers));
 	bcopy(&src->ep_msg, &ep->ep_msg, src_msg_size);
 
 	/* Override event type and action for the notify copy */
 	ep->ep_msg.em_event = notify_event;
 	ep->ep_msg.em_action = OES_ACTION_NOTIFY;
+	ep->ep_msg.em_result = result;
+	ep->ep_msg.em_flags |= OES_MSG_FLAG_AUTH_RESULT;
 	ep->ep_msg.em_id = atomic_fetchadd_64(&oes_softc.sc_next_msg_id, 1);
-	ep->ep_msg.em_deadline = (struct timespec){ 0 };
+	ep->ep_msg.em_deadline = (oes_timespec_t){ 0 };
 
 	return (ep);
+}
+
+static bool
+oes_pending_visible_to_client(const struct oes_pending *ep,
+	const struct oes_client *ec)
+{
+	uint8_t i;
+
+	if (ec->ec_scope == OES_SCOPE_GLOBAL)
+		return (true);
+	if (ec->ec_scope != OES_SCOPE_DESCENDANTS)
+		return (false);
+	for (i = 0; i < ep->ep_scope_count; i++) {
+		if (ep->ep_scope_markers[i] == ec->ec_scope_marker)
+			return (true);
+	}
+	return (false);
 }
 
 /* Forward declaration for per-event path muting */
 static bool oes_event_is_path_muted(struct oes_client *ec,
     const struct oes_pending *ep, oes_event_type_t mute_event);
+
+/*
+ * Deliver the NOTIFY counterpart only after the combined AUTH decision is
+ * known.  This guarantees that em_result is the decision OES actually
+ * applied, rather than exposing a pre-decision attempt without an outcome.
+ */
+static void
+oes_dispatch_auth_notification(const struct oes_pending *ep, struct proc *p,
+    struct ucred *cred, oes_event_type_t notify_event,
+    oes_auth_result_t result)
+{
+	struct oes_client *ec;
+	struct oes_pending *ep_notify;
+	oes_event_type_t auth_event;
+	oes_event_type_t mute_event;
+	bool subscribed;
+
+	if (notify_event == 0)
+		return;
+
+	auth_event = ep->ep_msg.em_event;
+	OES_LOCK();
+	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+		if (!oes_pending_visible_to_client(ep, ec))
+			continue;
+		EC_LOCK(ec);
+		if (ec->ec_flags & EC_FLAG_CLOSING) {
+			EC_UNLOCK(ec);
+			continue;
+		}
+
+		if (ec->ec_mode == OES_MODE_PASSIVE) {
+			subscribed = oes_client_subscribed(ec, auth_event);
+			mute_event = auth_event;
+		} else if (ec->ec_mode == OES_MODE_NOTIFY ||
+		    ec->ec_mode == OES_MODE_AUTH) {
+			subscribed = oes_client_subscribed(ec, notify_event);
+			mute_event = notify_event;
+		} else {
+			EC_UNLOCK(ec);
+			continue;
+		}
+		if (!subscribed || oes_client_is_muted(ec, p, mute_event) ||
+		    oes_event_is_path_muted(ec, ep, mute_event) ||
+		    (cred != NULL &&
+		    (oes_client_is_uid_muted(ec, cred->cr_uid) ||
+		    oes_client_is_gid_muted(ec, cred->cr_gid)))) {
+			EC_UNLOCK(ec);
+			continue;
+		}
+
+		ep_notify = oes_pending_alloc_notify_from_template(ep,
+		    notify_event, result);
+		if (ep_notify != NULL) {
+			(void)oes_event_enqueue(ec, ep_notify);
+			oes_pending_rele(ep_notify);
+		} else {
+			oes_event_note_drop(ec, notify_event);
+			atomic_add_64(&oes_softc.sc_alloc_failures, 1);
+		}
+		EC_UNLOCK(ec);
+	}
+	OES_UNLOCK();
+}
 
 static int
 oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
@@ -369,7 +699,6 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 {
 	struct oes_client *ec;
 	struct oes_pending *ep_client;
-	struct oes_pending *ep_notify;
 	struct oes_auth_group *ag = NULL;
 	struct oes_pending **auth_eps = NULL;
 	struct oes_pending **auth_clones = NULL;
@@ -378,6 +707,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 	size_t clone_idx = 0;
 	bool auth_consulted = false;
 	bool auth_delivery_failed = false;
+	bool auth_delivery_fail_closed = false;
 	bool is_auth;
 	bool cached_denied = false;
 	int error = 0;
@@ -406,6 +736,8 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 			OES_LOCK();
 			need = 0;
 			LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+				if (!oes_pending_visible_to_client(ep, ec))
+					continue;
 				EC_LOCK(ec);
 				if ((ec->ec_flags & EC_FLAG_CLOSING) == 0 &&
 				    ec->ec_mode == OES_MODE_AUTH &&
@@ -480,12 +812,44 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		OES_LOCK();
 	}
 
+	/* Snapshot the portable equivalent of es_process_t.is_es_client. */
+	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+		if (ec->ec_owner_pid != ep->ep_msg.em_process.ep_pid ||
+		    (ec->ec_owner_genid != 0 &&
+		    ec->ec_owner_genid !=
+		    ep->ep_msg.em_process.ep_token.ept_genid))
+			continue;
+		ep->ep_msg.em_process.ep_flags |= EP_FLAG_OES_CLIENT;
+		if (auth_clones != NULL) {
+			for (size_t i = 0; i < auth_max; i++) {
+				if (auth_clones[i] != NULL)
+					auth_clones[i]->ep_msg.em_process.ep_flags |=
+					    EP_FLAG_OES_CLIENT;
+			}
+		}
+		break;
+	}
+
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
 		oes_event_type_t mute_event;
 
+		if (!oes_pending_visible_to_client(ep, ec))
+			continue;
 		EC_LOCK(ec);
 
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
+			EC_UNLOCK(ec);
+			continue;
+		}
+
+		/* AUTH clients never authorize their own operations. */
+		if (is_auth && ec->ec_mode == OES_MODE_AUTH &&
+		    oes_client_subscribed(ec, event) &&
+		    ep->ep_msg.em_process.ep_pid == ec->ec_owner_pid &&
+		    (ec->ec_owner_genid == 0 ||
+		    ep->ep_msg.em_process.ep_token.ept_genid ==
+		    ec->ec_owner_genid)) {
+			auth_consulted = true; /* Implicit allow, as part of the policy. */
 			EC_UNLOCK(ec);
 			continue;
 		}
@@ -514,14 +878,16 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 
 		if (is_auth) {
 			if (ec->ec_mode == OES_MODE_AUTH) {
-				uint32_t timeout = ec->ec_timeout_ms;
-				uint32_t action = ec->ec_timeout_action;
+				uint32_t deadline_ms;
+				uint32_t miss_mode = ec->ec_deadline_miss_mode;
 				oes_auth_result_t cache_result;
 
 				if (!oes_client_subscribed(ec, event)) {
 					EC_UNLOCK(ec);
 					continue;
 				}
+				deadline_ms = oes_client_effective_deadline_locked(ec,
+				    event);
 
 				if (oes_client_cache_lookup(ec, ep,
 				    &cache_result)) {
@@ -538,30 +904,26 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 
 				/*
 				 * Take a pre-allocated clone from the pool.
-				 * Pool was sized to sc_nclients so this
-				 * should always succeed.
+				 * The pool was sized to the eligible-client estimate, so
+				 * this should succeed while the global client lock is held.
 				 */
 				ep_client = NULL;
 				if (clone_idx < auth_max)
 					ep_client = auth_clones[clone_idx];
 				if (ep_client == NULL) {
-					ec->ec_events_dropped++;
+					oes_event_note_drop(ec, event);
 					auth_delivery_failed = true;
+					if (miss_mode == OES_DEADLINE_MISS_FAIL_CLOSED)
+						auth_delivery_fail_closed = true;
 					EC_UNLOCK(ec);
 					continue;
 				}
 				auth_clones[clone_idx] = NULL; /* taken */
 				clone_idx++;
 
-				if (timeout == 0)
-					timeout = OES_DEFAULT_TIMEOUT_MS;
-				if (action != OES_AUTH_ALLOW &&
-				    action != OES_AUTH_DENY)
-					action = OES_AUTH_ALLOW;
-
 				ep_client->ep_client_id = ec->ec_id;
-				ep_client->ep_timeout_action = action;
-				oes_set_auth_deadline(ep_client, timeout);
+				ep_client->ep_deadline_miss_mode = miss_mode;
+				oes_set_auth_deadline(ep_client, deadline_ms);
 
 				oes_auth_group_hold(ag);
 				ep_client->ep_group = ag;
@@ -575,44 +937,13 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 					oes_auth_group_cancel_pending(ag);
 					oes_pending_rele(ep_client);
 					auth_delivery_failed = true;
+					if (miss_mode == OES_DEADLINE_MISS_FAIL_CLOSED)
+						auth_delivery_fail_closed = true;
 				}
 				EC_UNLOCK(ec);
 				continue;
 			}
 
-			if (ec->ec_mode == OES_MODE_PASSIVE &&
-			    notify_event != 0 &&
-			    oes_client_subscribed(ec, event)) {
-				ep_notify = oes_pending_alloc_notify_from_template(
-				    ep, notify_event, p, cred);
-				if (ep_notify != NULL) {
-					oes_event_enqueue(ec, ep_notify);
-					oes_pending_rele(ep_notify);
-				} else {
-					ec->ec_events_dropped++;
-					atomic_add_64(
-					    &oes_softc.sc_alloc_failures, 1);
-				}
-				EC_UNLOCK(ec);
-				continue;
-			}
-
-			if (ec->ec_mode == OES_MODE_NOTIFY &&
-			    notify_event != 0 &&
-			    oes_client_subscribed(ec, notify_event)) {
-				ep_notify = oes_pending_alloc_notify_from_template(
-				    ep, notify_event, p, cred);
-				if (ep_notify != NULL) {
-					oes_event_enqueue(ec, ep_notify);
-					oes_pending_rele(ep_notify);
-				} else {
-					ec->ec_events_dropped++;
-					atomic_add_64(
-					    &oes_softc.sc_alloc_failures, 1);
-				}
-				EC_UNLOCK(ec);
-				continue;
-			}
 			EC_UNLOCK(ec);
 			continue;
 		}
@@ -627,7 +958,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 			oes_event_enqueue(ec, ep_client);
 			oes_pending_rele(ep_client);
 		} else {
-			ec->ec_events_dropped++;
+			oes_event_note_drop(ec, event);
 		}
 		EC_UNLOCK(ec);
 	}
@@ -652,7 +983,8 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		error = oes_auth_group_wait(ag, auth_eps, auth_count);
 	if (is_auth && cached_denied)
 		error = EACCES;
-	if (is_auth && auth_delivery_failed && oes_auth_fail_closed)
+	if (is_auth && auth_delivery_failed &&
+	    (oes_auth_fail_closed || auth_delivery_fail_closed))
 		error = EACCES;
 
 	/*
@@ -667,7 +999,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		/* Get requested flags based on event type */
 		switch (event) {
 		case OES_EVENT_AUTH_OPEN:
-			requested_flags = ep->ep_msg.em_event_data.open.flags;
+			requested_flags = ep->ep_msg.em_event_data.open.access;
 			break;
 		case OES_EVENT_AUTH_MMAP:
 			requested_flags = ep->ep_msg.em_event_data.mmap.prot;
@@ -683,6 +1015,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		for (i = 0; i < auth_count && error == 0; i++) {
 			struct oes_pending *ep_auth = auth_eps[i];
 			uint32_t allowed, denied;
+			bool has_flags;
 
 			if (ep_auth == NULL)
 				continue;
@@ -690,7 +1023,10 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 			mtx_lock(&ep_auth->ep_mtx);
 			allowed = ep_auth->ep_allowed_flags;
 			denied = ep_auth->ep_denied_flags;
+			has_flags = ep_auth->ep_has_flag_response;
 			mtx_unlock(&ep_auth->ep_mtx);
+			if (!has_flags)
+				continue;
 
 			/*
 			 * If client set denied_flags and requested has any
@@ -705,8 +1041,7 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 			 * If client set allowed_flags (partial allow) and
 			 * requested has flags not in allowed set, deny.
 			 */
-			if (allowed != 0 &&
-			    (requested_flags & ~allowed) != 0) {
+			if (allowed != 0 && (requested_flags & ~allowed) != 0) {
 				error = EACCES;
 				break;
 			}
@@ -726,6 +1061,10 @@ oes_dispatch_event(struct oes_pending *ep, struct proc *p, struct ucred *cred,
 		    oes_msg_string(&ep->ep_msg,
 		    ep->ep_msg.em_process.ep_path_off));
 	}
+
+	if (is_auth)
+		oes_dispatch_auth_notification(ep, p, cred, notify_event,
+		    error == 0 ? OES_AUTH_ALLOW : OES_AUTH_DENY);
 
 	if (auth_eps != NULL) {
 		size_t i;
@@ -913,6 +1252,8 @@ oes_fill_file_from_vap(oes_file_t *ef, struct vattr *vap)
 	ef->ef_mode = vap->va_mode;
 	ef->ef_uid = vap->va_uid;
 	ef->ef_gid = vap->va_gid;
+	ef->ef_vaflags = vap->va_vaflags;
+	ef->ef_meta_flags |= OES_FILE_META_PROPOSED_ATTRS;
 }
 
 static const char *
@@ -1333,6 +1674,20 @@ oes_accmode_to_open_flags(accmode_t accmode)
 	return (flags);
 }
 
+static uint32_t
+oes_accmode_to_access(accmode_t accmode)
+{
+	uint32_t access = 0;
+
+	if (accmode & VREAD)
+		access |= OES_ACCESS_READ;
+	if (accmode & VWRITE)
+		access |= OES_ACCESS_WRITE;
+	if (accmode & VEXEC)
+		access |= OES_ACCESS_EXEC;
+	return (access);
+}
+
 
 /*
  * Deliver a self-contained NOTIFY event to all subscribed clients using the
@@ -1356,6 +1711,8 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 
 	OES_LOCK();
 	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+		if (!oes_pending_visible_to_client(ep, ec))
+			continue;
 		EC_LOCK(ec);
 		if (ec->ec_flags & EC_FLAG_CLOSING) {
 			EC_UNLOCK(ec);
@@ -1384,7 +1741,7 @@ oes_deliver_notify_locked(struct oes_pending *ep)
 		/* M_NOWAIT: still under EC_LOCK, as in the sleep-path dispatch. */
 		ep_clone = oes_pending_clone(ep, M_NOWAIT);
 		if (ep_clone == NULL) {
-			ec->ec_events_dropped++;
+			oes_event_note_drop(ec, notify_event);
 			atomic_add_64(&oes_softc.sc_alloc_failures, 1);
 			EC_UNLOCK(ec);
 			continue;
@@ -1709,6 +2066,7 @@ oes_fill_event_open(struct oes_pending *ep, struct vnode *vp,
 	    st, msg_base);
 	ep->ep_msg.em_event_data.open.flags =
 	    oes_accmode_to_open_flags(accmode);
+	ep->ep_msg.em_event_data.open.access = oes_accmode_to_access(accmode);
 }
 
 static void
@@ -2000,8 +2358,10 @@ oes_fill_event_setutimes(struct oes_pending *ep, struct vnode *vp,
 {
 	oes_fill_event_file(&ep->ep_msg.em_event_data.setutimes.file, vp, cred,
 	    st, msg_base);
-	ep->ep_msg.em_event_data.setutimes.atime = atime;
-	ep->ep_msg.em_event_data.setutimes.mtime = mtime;
+	ep->ep_msg.em_event_data.setutimes.atime.tv_sec = atime.tv_sec;
+	ep->ep_msg.em_event_data.setutimes.atime.tv_nsec = atime.tv_nsec;
+	ep->ep_msg.em_event_data.setutimes.mtime.tv_sec = mtime.tv_sec;
+	ep->ep_msg.em_event_data.setutimes.mtime.tv_nsec = mtime.tv_nsec;
 }
 
 static void
@@ -2142,6 +2502,41 @@ oes_fill_event_setgid(struct oes_pending *ep, gid_t gid)
 	ep->ep_msg.em_event_data.setgid.gid = gid;
 }
 
+static bool
+oes_event_invalidates_namespace(oes_event_type_t event)
+{
+	switch (event) {
+	case OES_EVENT_AUTH_CREATE:
+	case OES_EVENT_AUTH_UNLINK:
+	case OES_EVENT_AUTH_RENAME:
+	case OES_EVENT_AUTH_LINK:
+	case OES_EVENT_AUTH_MOUNT:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
+static bool
+oes_event_invalidates_file(oes_event_type_t event)
+{
+	switch (event) {
+	case OES_EVENT_AUTH_WRITE:
+	case OES_EVENT_AUTH_SETMODE:
+	case OES_EVENT_AUTH_SETOWNER:
+	case OES_EVENT_AUTH_SETFLAGS:
+	case OES_EVENT_AUTH_SETUTIMES:
+	case OES_EVENT_AUTH_SETEXTATTR:
+	case OES_EVENT_AUTH_DELETEEXTATTR:
+	case OES_EVENT_AUTH_SETACL:
+	case OES_EVENT_AUTH_DELETEACL:
+	case OES_EVENT_AUTH_RELABEL:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
 /*
  * Helper: Generate an event and optionally wait for AUTH response.
  * NOSLEEP hooks (info.nosleep=true) use cache-only authorization.
@@ -2194,8 +2589,9 @@ oes_generate_vnode_event(oes_event_type_t event,
 	if (ep == NULL) {
 		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
 		if (OES_EVENT_IS_AUTH(event))
-			return (oes_auth_fail_closed ||
-			    oes_default_action == OES_AUTH_DENY ? EACCES : 0);
+			return (oes_require_auth_clients || oes_auth_fail_closed ||
+			    oes_default_deadline_miss_mode ==
+			    OES_DEADLINE_MISS_FAIL_CLOSED ? EACCES : 0);
 		return (0);
 	}
 
@@ -2425,11 +2821,11 @@ oes_generate_vnode_event(oes_event_type_t event,
 		case OES_EVENT_NOTIFY_PIPE_STAT:
 		case OES_EVENT_NOTIFY_PIPE_POLL:
 			ep->ep_msg.em_event_data.pipe.pipe_id =
-			    (uint64_t)(uintptr_t)info->pipepair;
+			    info->pipe_id;
 			break;
 		case OES_EVENT_NOTIFY_PIPE_IOCTL:
 			ep->ep_msg.em_event_data.pipe.pipe_id =
-			    (uint64_t)(uintptr_t)info->pipepair;
+			    info->pipe_id;
 			ep->ep_msg.em_event_data.pipe.ioctl_cmd =
 			    info->ioctl_cmd;
 			break;
@@ -2515,6 +2911,25 @@ oes_generate_vnode_event(oes_event_type_t event,
 		ep->ep_msg.em_size = OES_MSG_ALIGNED(st.st_off);
 	}
 
+	/*
+	 * Invalidate before consulting the cache.  Namespace changes are rare
+	 * and can affect path-based decisions beyond a single inode, so use the
+	 * conservative global operation for those.  Content/metadata mutations
+	 * invalidate every client entry that references the affected file.
+	 */
+	if (oes_event_invalidates_namespace(event)) {
+		oes_cache_invalidate_all();
+	} else if (oes_event_invalidates_file(event) ||
+	    (event == OES_EVENT_AUTH_MMAP &&
+	    (ep->ep_msg.em_event_data.mmap.prot & PROT_WRITE) != 0) ||
+	    (event == OES_EVENT_AUTH_MPROTECT &&
+	    (ep->ep_msg.em_event_data.mprotect.prot & PROT_WRITE) != 0)) {
+		const oes_file_t *file = oes_event_primary_file(ep);
+
+		if (file != NULL)
+			oes_cache_invalidate_token(&file->ef_token);
+	}
+
 	/* Use non-blocking delivery for NOSLEEP hooks */
 	if (info->nosleep) {
 		oes_deliver_notify_nosleep(ep, p);
@@ -2560,8 +2975,10 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 	if (ep == NULL) {
 		atomic_add_64(&oes_softc.sc_alloc_failures, 1);
 		if (OES_EVENT_IS_AUTH(event))
-			return (oes_auth_fail_closed ||
-			    oes_default_action == OES_AUTH_DENY ? EACCES : 0);
+			return (oes_require_auth_clients ||
+			    oes_auth_fail_closed ||
+			    oes_default_deadline_miss_mode ==
+			    OES_DEADLINE_MISS_FAIL_CLOSED ? EACCES : 0);
 		return (0);
 	}
 
@@ -2587,14 +3004,18 @@ oes_generate_exec_event(struct ucred *cred, struct vnode *vp,
 			    imgp->execpath);
 			ep->ep_msg.em_event_data.exec.executable.ef_path_off =
 			    exec_path_off;
-			ep->ep_msg.em_process.ep_path_off = exec_path_off;
 			ep->ep_msg.em_event_data.exec.target.ep_path_off =
 			    exec_path_off;
+			ep->ep_msg.em_event_data.exec.target.ep_meta_flags &=
+			    ~(OES_PROC_META_PATH_UNAVAILABLE |
+			    OES_PROC_META_PATH_TRUNCATED);
+			ep->ep_msg.em_event_data.exec.executable.ef_meta_flags &=
+			    ~(OES_FILE_META_PATH_UNAVAILABLE |
+			    OES_FILE_META_PATH_TRUNCATED |
+			    OES_FILE_META_PATH_REQUESTED);
 			if (exec_path_off == 0) {
 				oes_file_mark_path_unavailable(&ep->ep_msg,
 				    &ep->ep_msg.em_event_data.exec.executable);
-				oes_process_mark_path_unavailable(&ep->ep_msg,
-				    &ep->ep_msg.em_process);
 				oes_process_mark_path_unavailable(&ep->ep_msg,
 				    &ep->ep_msg.em_event_data.exec.target);
 			}
@@ -2855,6 +3276,28 @@ oes_mac_vnode_check_write(struct ucred *active_cred, struct ucred *file_cred,
 	info.vp = vp;
 
 	return (oes_generate_vnode_event(OES_EVENT_AUTH_WRITE, &info));
+}
+
+/* Truncate event delivery is pending, but cache invalidation is mandatory. */
+static int
+oes_mac_vnode_check_truncate(struct ucred *cred, struct vnode *vp,
+    struct label *vplabel)
+{
+	oes_file_token_t token = { 0 };
+	struct vattr va;
+
+	(void)vplabel;
+	if (!oes_softc.sc_active)
+		return (0);
+	if (VOP_GETATTR(vp, &va, cred) == 0) {
+		token.eft_id = va.va_fileid;
+		token.eft_dev = va.va_fsid;
+		oes_cache_invalidate_token(&token);
+	} else {
+		/* An unresolved mutation must not leave stale allow decisions. */
+		oes_cache_invalidate_all();
+	}
+	return (0);
 }
 
 /*
@@ -3657,9 +4100,11 @@ oes_mac_pipe_check_read(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
 	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	(void)pplabel;
+	struct oes_pipe_label *epl =
+	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
+	info.pipe_id = epl != NULL ? epl->epl_id : 0;
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_READ, &info);
@@ -3674,9 +4119,11 @@ oes_mac_pipe_check_write(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
 	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	(void)pplabel;
+	struct oes_pipe_label *epl =
+	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
+	info.pipe_id = epl != NULL ? epl->epl_id : 0;
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_WRITE, &info);
@@ -3691,9 +4138,11 @@ oes_mac_pipe_check_stat(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
 	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	(void)pplabel;
+	struct oes_pipe_label *epl =
+	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
+	info.pipe_id = epl != NULL ? epl->epl_id : 0;
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_STAT, &info);
@@ -3708,9 +4157,11 @@ oes_mac_pipe_check_poll(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel)
 {
 	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	(void)pplabel;
+	struct oes_pipe_label *epl =
+	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 
 	info.pipepair = pp;
+	info.pipe_id = epl != NULL ? epl->epl_id : 0;
 	info.nosleep = true;
 
 	(void)oes_generate_vnode_event(OES_EVENT_NOTIFY_PIPE_POLL, &info);
@@ -3725,10 +4176,12 @@ oes_mac_pipe_check_ioctl(struct ucred *cred, struct pipepair *pp,
     struct label *pplabel, unsigned long cmd, void *data)
 {
 	struct oes_vnode_event_info info = OES_VNODE_INFO_INIT(cred);
-	(void)pplabel;
+	struct oes_pipe_label *epl =
+	    pplabel != NULL ? PIPE_SLOT(pplabel) : NULL;
 	(void)data;
 
 	info.pipepair = pp;
+	info.pipe_id = epl != NULL ? epl->epl_id : 0;
 	info.ioctl_cmd = cmd;
 	info.nosleep = true;
 
@@ -3826,8 +4279,9 @@ static struct mac_policy_ops oes_mac_ops = {
 	.mpo_cred_check_setuid = oes_mac_cred_check_setuid,
 	.mpo_cred_check_setgid = oes_mac_cred_check_setgid,
 
-	/* Exec transition - regenerate exec_id */
-	.mpo_vnode_execve_transition = oes_mac_vnode_execve_transition,
+	/* Every successful exec refreshes the path and execution identity. */
+	.mpo_vnode_execve_will_relabel = oes_mac_vnode_execve_will_relabel,
+	.mpo_vnode_execve_relabel = oes_mac_vnode_execve_relabel,
 
 	/* Sleepable VFS checks - can block for AUTH */
 	.mpo_vnode_check_exec = oes_mac_vnode_check_exec,
@@ -3835,6 +4289,7 @@ static struct mac_policy_ops oes_mac_ops = {
 	.mpo_vnode_check_lookup = oes_mac_vnode_check_lookup,
 	.mpo_vnode_check_read = oes_mac_vnode_check_read,
 	.mpo_vnode_check_write = oes_mac_vnode_check_write,
+	.mpo_vnode_check_truncate = oes_mac_vnode_check_truncate,
 	.mpo_vnode_check_stat = oes_mac_vnode_check_stat,
 	.mpo_vnode_check_poll = oes_mac_vnode_check_poll,
 	.mpo_vnode_check_readdir = oes_mac_vnode_check_readdir,
@@ -3888,6 +4343,9 @@ static struct mac_policy_ops oes_mac_ops = {
 	.mpo_pipe_check_stat = oes_mac_pipe_check_stat,
 	.mpo_pipe_check_poll = oes_mac_pipe_check_poll,
 	.mpo_pipe_check_ioctl = oes_mac_pipe_check_ioctl,
+	.mpo_pipe_init_label = oes_mac_pipe_init_label,
+	.mpo_pipe_destroy_label = oes_mac_pipe_destroy_label,
+	.mpo_pipe_copy_label = oes_mac_pipe_copy_label,
 
 	/* Mount check - NOSLEEP */
 	.mpo_mount_check_stat = oes_mac_mount_check_stat,

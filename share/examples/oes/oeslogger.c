@@ -6,7 +6,10 @@
  *
  * oeslogger - Log OES events as JSON (similar to macOS eslogger)
  *
- * Usage: oeslogger [-p] [-o file] [event_type ...]
+ * Usage: oeslogger [-dnp] [-m path] [-o file] [event_type ...]
+ *   -d       Observe only this process and its descendant subtree
+ *   -n       Disable automatic self and /dev/ noise mutes
+ *   -m path  Add a prefix path mute (repeatable)
  *   -o file  Write output to file (append mode; default: stdout)
  *   -p       Pretty-print JSON output
  *   -l       List available event names
@@ -31,6 +34,8 @@
 #include <arpa/inet.h>
 #include <err.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -189,6 +194,14 @@ json_escape_n(const char *s, size_t maxlen, FILE *fp)
 	json_escape_bytes((const unsigned char *)s, maxlen, true, fp);
 }
 
+static bool
+message_range_valid(const oes_message_t *msg, uint32_t off, uint32_t len)
+{
+
+	return (off >= msg->em_struct_size && off <= msg->em_size &&
+	    len <= msg->em_size - off);
+}
+
 /* Indent helper for pretty-printing */
 static void
 indent(FILE *fp, int depth)
@@ -312,9 +325,17 @@ emit_process(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	/* IDs */
 	json_kv_int(fp, depth + 1, "pid", proc->ep_pid, true);
 	json_kv_int(fp, depth + 1, "ppid", proc->ep_ppid, true);
+	json_kv_int(fp, depth + 1, "original_ppid",
+	    proc->ep_original_ppid, true);
+	json_kv_int(fp, depth + 1, "reaper_pid", proc->ep_reaper_pid, true);
 	json_kv_str(fp, depth + 1, "pcomm", proc->ep_pcomm, true);
 	json_kv_int(fp, depth + 1, "pgid", proc->ep_pgid, true);
 	json_kv_int(fp, depth + 1, "sid", proc->ep_sid, true);
+	json_kv_uint(fp, depth + 1, "state", proc->ep_state, true);
+	json_kv_uint(fp, depth + 1, "num_threads", proc->ep_num_threads, true);
+	json_kv_int(fp, depth + 1, "nice", proc->ep_nice, true);
+	json_kv_uint(fp, depth + 1, "osrel", proc->ep_osrel, true);
+	json_kv_uint(fp, depth + 1, "fibnum", proc->ep_fibnum, true);
 
 	/* Credentials */
 	json_kv_int(fp, depth + 1, "uid", proc->ep_uid, true);
@@ -323,6 +344,8 @@ emit_process(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	json_kv_int(fp, depth + 1, "gid", proc->ep_gid, true);
 	json_kv_int(fp, depth + 1, "rgid", proc->ep_rgid, true);
 	json_kv_int(fp, depth + 1, "sgid", proc->ep_sgid, true);
+	json_kv_uint(fp, depth + 1, "credential_flags",
+	    proc->ep_cred_flags, true);
 
 	/* ABI */
 	json_kv_int(fp, depth + 1, "abi", proc->ep_abi, true);
@@ -352,6 +375,24 @@ emit_process(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	/* Audit info */
 	json_kv_int(fp, depth + 1, "auid", proc->ep_auid, true);
 	json_kv_uint(fp, depth + 1, "asid", proc->ep_asid, true);
+	json_kv_uint(fp, depth + 1, "audit_mask_success",
+	    proc->ep_audit_mask_success, true);
+	json_kv_uint(fp, depth + 1, "audit_mask_failure",
+	    proc->ep_audit_mask_failure, true);
+	json_kv_uint(fp, depth + 1, "audit_terminal_port",
+	    proc->ep_audit_term_port, true);
+	json_kv_uint(fp, depth + 1, "audit_terminal_type",
+	    proc->ep_audit_term_type, true);
+	json_kv_uint(fp, depth + 1, "audit_terminal_addr0",
+	    proc->ep_audit_term_addr[0], true);
+	json_kv_uint(fp, depth + 1, "audit_terminal_addr1",
+	    proc->ep_audit_term_addr[1], true);
+	json_kv_uint(fp, depth + 1, "audit_terminal_addr2",
+	    proc->ep_audit_term_addr[2], true);
+	json_kv_uint(fp, depth + 1, "audit_terminal_addr3",
+	    proc->ep_audit_term_addr[3], true);
+	json_kv_uint(fp, depth + 1, "audit_flags",
+	    proc->ep_audit_flags, true);
 
 	/* Jail */
 	json_kv_int(fp, depth + 1, "jid", proc->ep_jid, true);
@@ -367,8 +408,22 @@ emit_process(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	    oes_msg_string(msg, proc->ep_cwd_off), true);
 	json_kv_str(fp, depth + 1, "tty", proc->ep_tty, true);
 	json_kv_str(fp, depth + 1, "login", proc->ep_login, true);
+	json_kv_str(fp, depth + 1, "loginclass", proc->ep_loginclass, true);
 	json_kv_bool(fp, depth + 1, "path_unavailable",
 	    (proc->ep_meta_flags & OES_PROC_META_PATH_UNAVAILABLE) != 0, true);
+	json_kv_bool(fp, depth + 1, "path_truncated",
+	    (proc->ep_meta_flags & OES_PROC_META_PATH_TRUNCATED) != 0, true);
+	json_kv_bool(fp, depth + 1, "cwd_unavailable",
+	    (proc->ep_meta_flags & OES_PROC_META_CWD_UNAVAILABLE) != 0, true);
+	json_kv_bool(fp, depth + 1, "groups_truncated",
+	    (proc->ep_meta_flags & OES_PROC_META_GROUPS_TRUNCATED) != 0, true);
+	json_kv_bool(fp, depth + 1, "parent_unavailable",
+	    (proc->ep_meta_flags & OES_PROC_META_PARENT_UNAVAILABLE) != 0, true);
+	json_kv_bool(fp, depth + 1, "session_unavailable",
+	    (proc->ep_meta_flags & OES_PROC_META_SESSION_UNAVAILABLE) != 0, true);
+	json_kv_bool(fp, depth + 1, "credentials_unavailable",
+	    (proc->ep_meta_flags & OES_PROC_META_CREDENTIALS_UNAVAILABLE) != 0,
+	    true);
 
 	/* All flags */
 	json_kv_bool(fp, depth + 1, "setuid",
@@ -389,6 +444,8 @@ emit_process(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	    (proc->ep_flags & EP_FLAG_EXEC) != 0, true);
 	json_kv_bool(fp, depth + 1, "has_ctty",
 	    (proc->ep_flags & EP_FLAG_CONTROLT) != 0, true);
+	json_kv_bool(fp, depth + 1, "is_oes_client",
+	    (proc->ep_flags & EP_FLAG_OES_CLIENT) != 0, true);
 	json_kv_bool(fp, depth + 1, "linux",
 	    (proc->ep_flags & EP_FLAG_LINUX) != 0, false);
 
@@ -431,10 +488,18 @@ emit_file(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	    (file->ef_meta_flags & OES_FILE_META_PATH_UNAVAILABLE) != 0, true);
 	json_kv_bool(fp, depth + 1, "path_requested",
 	    (file->ef_meta_flags & OES_FILE_META_PATH_REQUESTED) != 0, true);
+	json_kv_bool(fp, depth + 1, "path_truncated",
+	    (file->ef_meta_flags & OES_FILE_META_PATH_TRUNCATED) != 0, true);
 
 	/* Size */
 	json_kv_uint(fp, depth + 1, "size", file->ef_size, true);
 	json_kv_uint(fp, depth + 1, "blocks", file->ef_blocks, true);
+	json_kv_uint(fp, depth + 1, "allocated_bytes",
+	    file->ef_allocated_bytes, true);
+	json_kv_uint(fp, depth + 1, "block_size", file->ef_block_size, true);
+	json_kv_uint(fp, depth + 1, "generation", file->ef_generation, true);
+	json_kv_uint(fp, depth + 1, "rdev", file->ef_rdev, true);
+	json_kv_uint(fp, depth + 1, "filerev", file->ef_filerev, true);
 
 	/* Ownership and permissions */
 	json_kv_int(fp, depth + 1, "uid", file->ef_uid, true);
@@ -453,6 +518,18 @@ emit_file(FILE *fp, int depth, const char *key, const oes_message_t *msg,
 	json_kv_int(fp, depth + 1, "mtime", file->ef_mtime, true);
 	json_kv_int(fp, depth + 1, "ctime", file->ef_ctime, true);
 	json_kv_int(fp, depth + 1, "birthtime", file->ef_birthtime, true);
+	json_kv_int(fp, depth + 1, "atime_nsec", file->ef_atime_nsec, true);
+	json_kv_int(fp, depth + 1, "mtime_nsec", file->ef_mtime_nsec, true);
+	json_kv_int(fp, depth + 1, "ctime_nsec", file->ef_ctime_nsec, true);
+	json_kv_int(fp, depth + 1, "birthtime_nsec",
+	    file->ef_birthtime_nsec, true);
+	json_kv_uint(fp, depth + 1, "vattr_flags", file->ef_vaflags, true);
+	json_kv_bool(fp, depth + 1, "attributes_unavailable",
+	    (file->ef_meta_flags & OES_FILE_META_ATTR_UNAVAILABLE) != 0, true);
+	json_kv_bool(fp, depth + 1, "proposed_attributes",
+	    (file->ef_meta_flags & OES_FILE_META_PROPOSED_ATTRS) != 0, true);
+	json_kv_bool(fp, depth + 1, "filesystem_type_unavailable",
+	    (file->ef_meta_flags & OES_FILE_META_FSTYPE_UNAVAILABLE) != 0, true);
 
 	/* Filesystem */
 	json_kv_str(fp, depth + 1, "fstype", file->ef_fstype, false);
@@ -544,10 +621,10 @@ emit_event_data(FILE *fp, int depth, const oes_message_t *msg)
 			uint32_t envp_off = msg->em_event_data.exec.envp_off;
 			uint32_t envp_len = msg->em_event_data.exec.envp_len;
 			const char *argv_data = (argv_off > 0 &&
-			    argv_off + argv_len <= msg->em_size) ?
+			    message_range_valid(msg, argv_off, argv_len)) ?
 			    (const char *)msg + argv_off : NULL;
 			const char *envp_data = (envp_off > 0 &&
-			    envp_off + envp_len <= msg->em_size) ?
+			    message_range_valid(msg, envp_off, envp_len)) ?
 			    (const char *)msg + envp_off : NULL;
 
 			obj_open(fp, depth + 1, "argv", true);
@@ -1116,7 +1193,10 @@ static void
 usage(void)
 {
 	fprintf(stderr,
-	    "usage: oeslogger [-p] [-o file] [event_type ...]\n"
+	    "usage: oeslogger [-dnp] [-m path] [-o file] [event_type ...]\n"
+	    "  -d       Observe this process and descendants only\n"
+	    "  -n       Disable automatic self and /dev/ noise mutes\n"
+	    "  -m path  Mute a path prefix (may be repeated)\n"
 	    "  -o file  Write JSON output to file (default: stdout)\n"
 	    "  -p       Pretty-print JSON output\n"
 	    "  -l       List available event names\n"
@@ -1163,22 +1243,24 @@ static bool
 handle_event(oes_client_t *client __unused, const oes_message_t *msg,
     void *ctx __unused)
 {
-	struct timespec ts;
 	FILE *fp = outfp;
 	int d = pretty ? 1 : 0;
 
 	if (!running)
 		return (false);
 
-	clock_gettime(CLOCK_REALTIME, &ts);
-
 	obj_open(fp, 0, NULL, false);
 	json_kv_str(fp, d, "event_type",
 	    oes_event_name(msg->em_event), true);
 	json_kv_uint(fp, d, "event_type_raw", msg->em_event, true);
 	json_kv_uint(fp, d, "msg_id", msg->em_id, true);
+	json_kv_uint(fp, d, "seq_num", msg->em_seq_num, true);
+	json_kv_uint(fp, d, "global_seq_num", msg->em_global_seq_num, true);
 	json_kv_str(fp, d, "action",
 	    msg->em_action == OES_ACTION_AUTH ? "auth" : "notify", true);
+	if (oes_message_has_auth_result(msg))
+		json_kv_str(fp, d, "auth_result",
+		    msg->em_result == OES_AUTH_ALLOW ? "allow" : "deny", true);
 
 	/*
 	 * Indicate whether this event type has an AUTH variant.
@@ -1198,16 +1280,20 @@ handle_event(oes_client_t *client __unused, const oes_message_t *msg,
 	{
 		char tbuf[64];
 		struct tm tm;
-		time_t sec = ts.tv_sec;
+		time_t sec = msg->em_wall_time.tv_sec;
 
 		gmtime_r(&sec, &tm);
 		snprintf(tbuf, sizeof(tbuf),
-		    "%04d-%02d-%02dT%02d:%02d:%02d.%06ldZ",
+		    "%04d-%02d-%02dT%02d:%02d:%02d.%09ldZ",
 		    tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
 		    tm.tm_hour, tm.tm_min, tm.tm_sec,
-		    ts.tv_nsec / 1000);
+		    (long)msg->em_wall_time.tv_nsec);
 		json_kv_str(fp, d, "timestamp", tbuf, true);
 	}
+	json_kv_int(fp, d, "wall_time_sec",
+	    msg->em_wall_time.tv_sec, true);
+	json_kv_int(fp, d, "wall_time_nsec",
+	    msg->em_wall_time.tv_nsec, true);
 
 	/* Monotonic event time from kernel */
 	json_kv_int(fp, d, "event_time_sec",
@@ -1222,6 +1308,12 @@ handle_event(oes_client_t *client __unused, const oes_message_t *msg,
 		json_kv_int(fp, d, "deadline_nsec",
 		    msg->em_deadline.tv_nsec, true);
 	}
+	if ((msg->em_thread.et_flags & OES_THREAD_META_PRESENT) != 0) {
+		obj_open(fp, d, "thread", false);
+		json_kv_uint(fp, d + 1, "id", msg->em_thread.et_id, true);
+		json_kv_str(fp, d + 1, "name", msg->em_thread.et_name, false);
+		obj_close(fp, d, false, true);
+	}
 
 	emit_process(fp, d, "process", msg, &msg->em_process, true);
 	emit_event_data(fp, d, msg);
@@ -1234,17 +1326,71 @@ handle_event(oes_client_t *client __unused, const oes_message_t *msg,
 	return (running != 0);
 }
 
+static int
+dispatch_events(oes_client_t *client)
+{
+	const oes_message_t *msg;
+	struct pollfd pfd;
+	int fd, flags, nready;
+
+	fd = oes_client_fd(client);
+	if (fd < 0)
+		return (-1);
+	flags = fcntl(fd, F_GETFL);
+	if (flags < 0 || fcntl(fd, F_SETFL, flags | O_NONBLOCK) < 0)
+		return (-1);
+	pfd.fd = fd;
+	pfd.events = POLLIN;
+
+	while (running) {
+		while (oes_read_event(client, &msg, false) == 0) {
+			if (!handle_event(client, msg, NULL))
+				return (0);
+		}
+		if (errno != EAGAIN && errno != EWOULDBLOCK)
+			return (-1);
+		pfd.revents = 0;
+		nready = poll(&pfd, 1, 250);
+		if (nready < 0) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (nready > 0 &&
+		    (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+			errno = ENXIO;
+			return (-1);
+		}
+	}
+	return (0);
+}
+
 int
 main(int argc, char *argv[])
 {
 	oes_client_t *client;
 	oes_event_type_t events[128];
+	const char *mute_paths[64];
 	size_t nevents = 0;
+	size_t nmute_paths = 0;
 	const char *outpath = NULL;
+	bool descendants = false;
+	bool no_default_mutes = false;
 	int ch, i;
 
-	while ((ch = getopt(argc, argv, "hlo:p")) != -1) {
+	while ((ch = getopt(argc, argv, "dhlm:no:p")) != -1) {
 		switch (ch) {
+		case 'd':
+			descendants = true;
+			break;
+		case 'm':
+			if (nmute_paths == nitems(mute_paths))
+				errx(EX_USAGE, "too many -m path options");
+			mute_paths[nmute_paths++] = optarg;
+			break;
+		case 'n':
+			no_default_mutes = true;
+			break;
 		case 'o':
 			outpath = optarg;
 			break;
@@ -1285,7 +1431,8 @@ main(int argc, char *argv[])
 	}
 
 	/* Create client */
-	client = oes_client_create();
+	client = descendants ? oes_client_create_descendants() :
+	    oes_client_create();
 	if (client == NULL)
 		err(EX_OSERR, "oes_client_create (are you root?)");
 
@@ -1307,12 +1454,24 @@ main(int argc, char *argv[])
 			err(EX_OSERR, "oes_subscribe_all");
 	}
 
-	/* Mute ourselves to avoid feedback loops */
-	if (oes_mute_self(client) < 0)
-		err(EX_OSERR, "oes_mute_self");
-
-	/* Mute noisy paths by default */
-	oes_mute_path(client, "/dev/", OES_MUTE_PATH_PREFIX);
+	if (no_default_mutes) {
+		/* Also remove defaults installed by the kernel at first mode set. */
+		if (oes_unmute_all_processes(client) < 0 ||
+		    oes_unmute_all_paths(client) < 0 ||
+		    oes_unmute_all_target_paths(client) < 0)
+			err(EX_OSERR, "clear default mutes");
+	} else {
+		/* A descendants client must retain root NOTIFY visibility. */
+		if (!descendants && oes_mute_self(client) < 0)
+			err(EX_OSERR, "oes_mute_self");
+		if (oes_mute_path(client, "/dev/", OES_MUTE_PATH_PREFIX) < 0)
+			err(EX_OSERR, "mute /dev/");
+	}
+	for (i = 0; i < (int)nmute_paths; i++) {
+		if (oes_mute_path(client, mute_paths[i],
+		    OES_MUTE_PATH_PREFIX) < 0)
+			err(EX_OSERR, "mute %s", mute_paths[i]);
+	}
 
 	signal(SIGINT, sighandler);
 	signal(SIGTERM, sighandler);
@@ -1326,7 +1485,7 @@ main(int argc, char *argv[])
 		fprintf(stderr, "oeslogger: writing to %s\n", outpath);
 
 	/* Run the event loop */
-	if (oes_dispatch(client, handle_event, NULL) < 0 && running)
+	if (dispatch_events(client) < 0 && running)
 		err(EX_OSERR, "oes_dispatch");
 
 	oes_client_destroy(client);

@@ -197,7 +197,7 @@ main(void)
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
-	mode.ema_timeout_ms = 500;
+	mode.ema_default_deadline_ms = 500;
 	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
 		perror("OES_IOC_SET_MODE");
 		close(fd);
@@ -278,8 +278,39 @@ main(void)
 	memset(&entry, 0, sizeof(entry));
 	entry.ece_key.eck_event = OES_EVENT_AUTH_OPEN;
 	entry.ece_key.eck_flags = OES_CACHE_KEY_PROCESS | OES_CACHE_KEY_FILE;
-	entry.ece_key.eck_op_flags = (uint32_t)msg->em_event_data.open.flags;
+	entry.ece_key.eck_op_flags = msg->em_event_data.open.access;
 	entry.ece_key.eck_process = msg->em_process.ep_token;
+	entry.ece_key.eck_exec_id = msg->em_process.ep_exec_id ^ 1;
+	if (entry.ece_key.eck_exec_id == 0)
+		entry.ece_key.eck_exec_id = 1;
+	entry.ece_key.eck_file = msg->em_event_data.open.file.ef_token;
+	entry.ece_result = OES_AUTH_ALLOW;
+	entry.ece_ttl_ms = 1000;
+	if (ioctl(fd, OES_IOC_CACHE_ADD, &entry) < 0) {
+		perror("OES_IOC_CACHE_ADD wrong exec id");
+		goto fail;
+	}
+
+	/* The PID generation is unchanged, but a different exec ID must miss. */
+	cmd = 'o';
+	(void)write(ctl_pipe[1], &cmd, 1);
+	if (wait_for_open_event(fd, child, 2000, msg) != 0) {
+		fprintf(stderr, "cache entry crossed execution identity\n");
+		goto fail;
+	}
+	if (respond_allow(fd, msg->em_id) != 0 ||
+	    wait_for_child_errno(res_pipe[0], 2000, &child_err) != 0 ||
+	    child_err != 0) {
+		fprintf(stderr, "child open failed after exec-id cache miss\n");
+		goto fail;
+	}
+
+	memset(&entry, 0, sizeof(entry));
+	entry.ece_key.eck_event = OES_EVENT_AUTH_OPEN;
+	entry.ece_key.eck_flags = OES_CACHE_KEY_PROCESS | OES_CACHE_KEY_FILE;
+	entry.ece_key.eck_op_flags = msg->em_event_data.open.access;
+	entry.ece_key.eck_process = msg->em_process.ep_token;
+	entry.ece_key.eck_exec_id = msg->em_process.ep_exec_id;
 	entry.ece_key.eck_file = msg->em_event_data.open.file.ef_token;
 	entry.ece_result = OES_AUTH_ALLOW;
 	entry.ece_ttl_ms = 300;
@@ -333,8 +364,9 @@ main(void)
 	memset(&entry, 0, sizeof(entry));
 	entry.ece_key.eck_event = OES_EVENT_AUTH_OPEN;
 	entry.ece_key.eck_flags = OES_CACHE_KEY_PROCESS | OES_CACHE_KEY_FILE;
-	entry.ece_key.eck_op_flags = (uint32_t)msg->em_event_data.open.flags;
+	entry.ece_key.eck_op_flags = msg->em_event_data.open.access;
 	entry.ece_key.eck_process = msg->em_process.ep_token;
+	entry.ece_key.eck_exec_id = msg->em_process.ep_exec_id;
 	entry.ece_key.eck_file = msg->em_event_data.open.file.ef_token;
 	entry.ece_result = OES_AUTH_DENY;
 	entry.ece_ttl_ms = 500;

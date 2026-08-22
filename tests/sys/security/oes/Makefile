@@ -10,7 +10,7 @@ PACKAGE=	oes-tests
 TESTSDIR=	${TESTSBASE}/sys/security/oes
 
 # ABI header: <security/oes/oes.h>.
-CFLAGS+=	-I${SRCTOP}/sys
+CFLAGS+=	-I${SRCTOP}/sys -I${SRCTOP}/lib/liboes
 
 # Several tests spawn client threads (multi-client auth/notify, stress).
 LIBADD+=	pthread
@@ -21,6 +21,11 @@ PLAIN_TESTS_C=	\
 	test_close_event \
 	test_multi_process_clients \
 	test_event_abi \
+	test_event_reader \
+	test_liboes_reader \
+	test_oeslogger_output \
+	test_descendants_client \
+	test_nested_descendants \
 	test_vnode_events \
 	test_process_events \
 	test_multi_client_auth \
@@ -46,6 +51,7 @@ PLAIN_TESTS_C=	\
 	test_chdir_chroot_events \
 	test_exec_args \
 	test_process_info \
+	test_event_metadata \
 	test_path_metadata \
 	test_hook_coverage \
 	test_event_delivery \
@@ -58,5 +64,15 @@ PLAIN_TESTS_C=	\
 	test_passive_mode \
 	test_memory_pressure \
 	test_stress
+
+ATF_TESTS_C+=	test_contract_matrix
+ATF_TESTS_SH+=	test_unsupported_32bit
+
+# Exercise the library's internal batch state without requiring /dev/oes.
+.PATH:	${SRCTOP}/lib/liboes
+SRCS.test_liboes_reader=	test_liboes_reader.c liboes.c
+SRCS.test_oeslogger_output=	test_oeslogger_output.c liboes.c
+SRCS.test_descendants_client=	test_descendants_client.c liboes.c
+SRCS.test_nested_descendants=	test_nested_descendants.c liboes.c
 
 .include <bsd.test.mk>

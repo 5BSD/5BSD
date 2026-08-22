@@ -77,6 +77,24 @@ oes_client_create(void)
 }
 
 /*
+ * oes_client_create_descendants - Create a subtree-scoped OES client
+ */
+oes_client_t *
+oes_client_create_descendants(void)
+{
+	oes_client_t *client;
+
+	client = oes_client_create();
+	if (client == NULL)
+		return (NULL);
+	if (oes_set_descendants_scope(client) < 0) {
+		oes_client_destroy(client);
+		return (NULL);
+	}
+	return (client);
+}
+
+/*
  * oes_client_create_from_fd - Create client from existing fd
  */
 oes_client_t *
@@ -126,12 +144,46 @@ oes_client_fd(oes_client_t *client)
 	return (oes_client_get_fd(client));
 }
 
+int
+oes_set_descendants_scope(oes_client_t *client)
+{
+	struct oes_scope_args args;
+	int fd;
+
+	fd = oes_client_get_fd(client);
+	if (fd < 0)
+		return (-1);
+	memset(&args, 0, sizeof(args));
+	args.esa_scope = OES_SCOPE_DESCENDANTS;
+	return (ioctl(fd, OES_IOC_SET_SCOPE, &args));
+}
+
+int
+oes_get_scope(oes_client_t *client, uint32_t *scope)
+{
+	struct oes_scope_args args;
+	int fd;
+
+	if (scope == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	fd = oes_client_get_fd(client);
+	if (fd < 0)
+		return (-1);
+	memset(&args, 0, sizeof(args));
+	if (ioctl(fd, OES_IOC_GET_SCOPE, &args) < 0)
+		return (-1);
+	*scope = args.esa_scope;
+	return (0);
+}
+
 /*
  * oes_set_mode - Set client operating mode
  */
 int
 oes_set_mode(oes_client_t *client, uint32_t mode,
-    uint32_t timeout_ms, uint32_t queue_size)
+    uint32_t default_deadline_ms, uint32_t queue_size)
 {
 	struct oes_mode_args args;
 	int fd;
@@ -142,7 +194,7 @@ oes_set_mode(oes_client_t *client, uint32_t mode,
 
 	memset(&args, 0, sizeof(args));
 	args.ema_mode = mode;
-	args.ema_timeout_ms = timeout_ms;
+	args.ema_default_deadline_ms = default_deadline_ms;
 	args.ema_queue_size = queue_size;
 
 	if (ioctl(fd, OES_IOC_SET_MODE, &args) < 0)
@@ -157,7 +209,7 @@ oes_set_mode(oes_client_t *client, uint32_t mode,
  */
 int
 oes_get_mode(oes_client_t *client, uint32_t *mode,
-    uint32_t *timeout_ms, uint32_t *queue_size)
+    uint32_t *default_deadline_ms, uint32_t *queue_size)
 {
 	struct oes_mode_args args;
 	int fd;
@@ -172,97 +224,129 @@ oes_get_mode(oes_client_t *client, uint32_t *mode,
 
 	if (mode != NULL)
 		*mode = args.ema_mode;
-	if (timeout_ms != NULL)
-		*timeout_ms = args.ema_timeout_ms;
+	if (default_deadline_ms != NULL)
+		*default_deadline_ms = args.ema_default_deadline_ms;
 	if (queue_size != NULL)
 		*queue_size = args.ema_queue_size;
 
 	return (0);
 }
 
-/*
- * oes_set_timeout - Set AUTH timeout independently of mode
- */
-int
-oes_set_timeout(oes_client_t *client, uint32_t timeout_ms)
+static int
+oes_deadline_bound(oes_client_t *client, oes_event_type_t event,
+    uint32_t *milliseconds, bool minimum, bool set)
 {
-	struct oes_timeout_args args;
+	struct oes_event_deadline_args args;
+	unsigned long command;
 	int fd;
 
-	fd = oes_client_get_fd(client);
+	if (milliseconds == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	fd = oes_client_fd(client);
 	if (fd < 0)
 		return (-1);
-
 	memset(&args, 0, sizeof(args));
-	args.eta_timeout_ms = timeout_ms;
+	args.oeda_event = (uint32_t)event;
+	if (set)
+		args.oeda_milliseconds = *milliseconds;
+	if (minimum)
+		command = set ? OES_IOC_SET_DEADLINE_MIN :
+		    OES_IOC_GET_DEADLINE_MIN;
+	else
+		command = set ? OES_IOC_SET_DEADLINE_MAX :
+		    OES_IOC_GET_DEADLINE_MAX;
+	if (ioctl(fd, command, &args) < 0)
+		return (-1);
+	if (!set)
+		*milliseconds = args.oeda_milliseconds;
+	return (0);
+}
 
-	return (ioctl(fd, OES_IOC_SET_TIMEOUT, &args));
+int
+oes_set_deadline_max(oes_client_t *client, oes_event_type_t event,
+    uint32_t milliseconds)
+{
+
+	return (oes_deadline_bound(client, event, &milliseconds, false, true));
+}
+
+int
+oes_get_deadline_max(oes_client_t *client, oes_event_type_t event,
+    uint32_t *milliseconds)
+{
+
+	return (oes_deadline_bound(client, event, milliseconds, false, false));
+}
+
+int
+oes_set_deadline_min(oes_client_t *client, oes_event_type_t event,
+    uint32_t milliseconds)
+{
+
+	return (oes_deadline_bound(client, event, &milliseconds, true, true));
+}
+
+int
+oes_get_deadline_min(oes_client_t *client, oes_event_type_t event,
+    uint32_t *milliseconds)
+{
+
+	return (oes_deadline_bound(client, event, milliseconds, true, false));
 }
 
 /*
- * oes_get_timeout - Get current AUTH timeout
+ * Set the behavior when an AUTH deadline is missed or delivery is dropped.
  */
 int
-oes_get_timeout(oes_client_t *client, uint32_t *timeout_ms)
+oes_set_deadline_miss_mode(oes_client_t *client,
+    oes_deadline_miss_mode_t mode)
 {
-	struct oes_timeout_args args;
+	struct oes_deadline_miss_mode_args args;
 	int fd;
 
+	if (mode != OES_DEADLINE_MISS_FAIL_OPEN &&
+	    mode != OES_DEADLINE_MISS_FAIL_CLOSED) {
+		errno = EINVAL;
+		return (-1);
+	}
 	fd = oes_client_get_fd(client);
 	if (fd < 0)
 		return (-1);
 
 	memset(&args, 0, sizeof(args));
-	if (ioctl(fd, OES_IOC_GET_TIMEOUT, &args) < 0)
-		return (-1);
+	args.edma_mode = mode;
 
-	if (timeout_ms != NULL)
-		*timeout_ms = args.eta_timeout_ms;
+	if (ioctl(fd, OES_IOC_SET_DEADLINE_MISS_MODE, &args) < 0)
+		return (-1);
 
 	return (0);
 }
 
 /*
- * oes_set_timeout_action - Set default action when AUTH times out
+ * Query the current AUTH deadline-miss behavior.
  */
 int
-oes_set_timeout_action(oes_client_t *client, oes_auth_result_t action)
+oes_get_deadline_miss_mode(oes_client_t *client,
+    oes_deadline_miss_mode_t *mode)
 {
-	struct oes_timeout_action_args args;
+	struct oes_deadline_miss_mode_args args;
 	int fd;
 
+	if (mode == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
 	fd = oes_client_get_fd(client);
 	if (fd < 0)
 		return (-1);
 
 	memset(&args, 0, sizeof(args));
-	args.eta_action = action;
-
-	if (ioctl(fd, OES_IOC_SET_TIMEOUT_ACTION, &args) < 0)
+	if (ioctl(fd, OES_IOC_GET_DEADLINE_MISS_MODE, &args) < 0)
 		return (-1);
 
-	return (0);
-}
-
-/*
- * oes_get_timeout_action - Get default action when AUTH times out
- */
-int
-oes_get_timeout_action(oes_client_t *client, oes_auth_result_t *action)
-{
-	struct oes_timeout_action_args args;
-	int fd;
-
-	fd = oes_client_get_fd(client);
-	if (fd < 0)
-		return (-1);
-
-	memset(&args, 0, sizeof(args));
-	if (ioctl(fd, OES_IOC_GET_TIMEOUT_ACTION, &args) < 0)
-		return (-1);
-
-	if (action != NULL)
-		*action = (oes_auth_result_t)args.eta_action;
+	*mode = (oes_deadline_miss_mode_t)args.edma_mode;
 
 	return (0);
 }
@@ -331,15 +415,26 @@ oes_subscribe(oes_client_t *client, const oes_event_type_t *events,
 	return (ioctl(fd, OES_IOC_SUBSCRIBE, &args));
 }
 
-/*
- * oes_subscribe_bitmap - Subscribe using bitmaps directly
- *
- * This uses the bitmap ioctl for efficient bulk subscription.
- * Bit positions correspond to (event_type & 0x0FFF).
- */
 int
-oes_subscribe_bitmap(oes_client_t *client, uint64_t auth_bitmap,
-    uint64_t notify_bitmap, uint32_t flags)
+oes_unsubscribe(oes_client_t *client, const oes_event_type_t *events,
+    size_t count)
+{
+
+	return (oes_subscribe(client, events, count, OES_SUB_REMOVE));
+}
+
+int
+oes_unsubscribe_all(oes_client_t *client)
+{
+	const uint64_t empty[2] = { 0, 0 };
+
+	return (oes_subscribe_bitmap(client, empty, empty,
+	    OES_SUB_REPLACE));
+}
+
+int
+oes_get_subscriptions(oes_client_t *client, uint64_t auth_bitmap[2],
+    uint64_t notify_bitmap[2])
 {
 	struct oes_subscribe_bitmap_args args;
 	int fd;
@@ -347,25 +442,31 @@ oes_subscribe_bitmap(oes_client_t *client, uint64_t auth_bitmap,
 	fd = oes_client_get_fd(client);
 	if (fd < 0)
 		return (-1);
-
+	if (auth_bitmap == NULL || notify_bitmap == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
 	memset(&args, 0, sizeof(args));
-	args.esba_auth = auth_bitmap;
-	args.esba_notify = notify_bitmap;
-	args.esba_flags = flags;
-
-	return (ioctl(fd, OES_IOC_SUBSCRIBE_BITMAP, &args));
+	if (ioctl(fd, OES_IOC_GET_SUBSCRIPTIONS, &args) < 0)
+		return (-1);
+	auth_bitmap[0] = args.esba_auth[0];
+	auth_bitmap[1] = args.esba_auth[1];
+	notify_bitmap[0] = args.esba_notify[0];
+	notify_bitmap[1] = args.esba_notify[1];
+	return (0);
 }
 
 /*
- * oes_subscribe_bitmap_ex - Subscribe using 128-bit bitmaps
+ * oes_subscribe_bitmap - Subscribe using bitmaps directly
  *
- * Extended version supporting events with bit positions >= 64.
+ * This uses the bitmap ioctl for efficient bulk subscription.
+ * Bit positions correspond to (event_type & 0x0FFF).
  */
 int
-oes_subscribe_bitmap_ex(oes_client_t *client, const uint64_t auth_bitmap[2],
+oes_subscribe_bitmap(oes_client_t *client, const uint64_t auth_bitmap[2],
     const uint64_t notify_bitmap[2], uint32_t flags)
 {
-	struct oes_subscribe_bitmap_ex_args args;
+	struct oes_subscribe_bitmap_args args;
 	int fd;
 
 	fd = oes_client_get_fd(client);
@@ -383,13 +484,13 @@ oes_subscribe_bitmap_ex(oes_client_t *client, const uint64_t auth_bitmap[2],
 	args.esba_notify[1] = notify_bitmap[1];
 	args.esba_flags = flags;
 
-	return (ioctl(fd, OES_IOC_SUBSCRIBE_BITMAP_EX, &args));
+	return (ioctl(fd, OES_IOC_SUBSCRIBE_BITMAP, &args));
 }
 
 /*
  * oes_subscribe_all - Subscribe to all events of a type
  *
- * Uses the extended bitmap ioctl for a single atomic operation.
+ * Uses the bitmap ioctl for a single atomic operation.
  */
 int
 oes_subscribe_all(oes_client_t *client, bool auth, bool notify)
@@ -401,7 +502,7 @@ oes_subscribe_all(oes_client_t *client, bool auth, bool notify)
 		OES_NOTIFY_EVENT_MASK_LO, OES_NOTIFY_EVENT_MASK_HI
 	};
 
-	return (oes_subscribe_bitmap_ex(client,
+	return (oes_subscribe_bitmap(client,
 	    auth ? all_auth : (const uint64_t[2]){0, 0},
 	    notify ? all_notify : (const uint64_t[2]){0, 0},
 	    OES_SUB_REPLACE));
@@ -561,6 +662,39 @@ oes_unmute_target_path(oes_client_t *client, const char *path, uint32_t type)
 	return (ioctl(fd, OES_IOC_UNMUTE_PATH, &args));
 }
 
+int
+oes_unmute_all_processes(oes_client_t *client)
+{
+	int fd;
+
+	fd = oes_client_get_fd(client);
+	if (fd < 0)
+		return (-1);
+	return (ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES));
+}
+
+int
+oes_unmute_all_paths(oes_client_t *client)
+{
+	int fd;
+
+	fd = oes_client_get_fd(client);
+	if (fd < 0)
+		return (-1);
+	return (ioctl(fd, OES_IOC_UNMUTE_ALL_PATHS));
+}
+
+int
+oes_unmute_all_target_paths(oes_client_t *client)
+{
+	int fd;
+
+	fd = oes_client_get_fd(client);
+	if (fd < 0)
+		return (-1);
+	return (ioctl(fd, OES_IOC_UNMUTE_ALL_TARGET_PATHS));
+}
+
 /*
  * oes_set_mute_invert - Enable/disable mute inversion for a type
  */
@@ -627,7 +761,9 @@ oes_refill(oes_client_t *client, bool blocking)
 		ret = poll(&pfd, 1, 0);
 		if (ret < 0)
 			return (-1);
-		if (pfd.revents & (POLLHUP | POLLERR | POLLNVAL)) {
+		/* A pipe/socket may report POLLIN|POLLHUP with data still queued. */
+		if (!(pfd.revents & POLLIN) &&
+		    (pfd.revents & (POLLHUP | POLLERR | POLLNVAL))) {
 			errno = ENXIO;
 			return (-1);
 		}
@@ -649,6 +785,32 @@ oes_refill(oes_client_t *client, bool blocking)
 	client->ec_buflen = (size_t)n;
 	client->ec_bufoff = 0;
 	return (0);
+}
+
+/* Validate and return the message beginning at ec_bufoff. */
+static int
+oes_buffer_message(oes_client_t *client, const oes_message_t **msgp)
+{
+	const oes_message_t *msg;
+	size_t remaining;
+
+	if (client->ec_bufoff > client->ec_buflen)
+		goto corrupt;
+	remaining = client->ec_buflen - client->ec_bufoff;
+	if (remaining < sizeof(*msg))
+		goto corrupt;
+	msg = (const oes_message_t *)(const void *)
+	    (client->ec_buf._raw + client->ec_bufoff);
+	if (msg->em_size > remaining || !oes_message_is_compatible(msg))
+		goto corrupt;
+	*msgp = msg;
+	return (0);
+
+corrupt:
+	client->ec_buflen = 0;
+	client->ec_bufoff = 0;
+	errno = EPROTO;
+	return (-1);
 }
 
 /*
@@ -674,54 +836,48 @@ oes_read_event(oes_client_t *client, const oes_message_t **msgp,
 
 	/* Advance past previous message if we have one buffered */
 	if (client->ec_bufoff < client->ec_buflen) {
-		msg = (const oes_message_t *)(void *)
-		    (client->ec_buf._raw + client->ec_bufoff);
-		if (msg->em_size < sizeof(oes_message_t) ||
-		    msg->em_size > client->ec_buflen - client->ec_bufoff) {
-			client->ec_buflen = 0;
-			client->ec_bufoff = 0;
-			errno = EIO;
+		if (oes_buffer_message(client, &msg) < 0)
 			return (-1);
-		}
-		if (!oes_message_is_compatible(msg)) {
-			client->ec_buflen = 0;
-			client->ec_bufoff = 0;
-			errno = EPROTO;
-			return (-1);
-		}
 		client->ec_bufoff += msg->em_size;
 	}
 
 	/* Check if more messages remain in the batch */
-	if (client->ec_bufoff + sizeof(oes_message_t) <= client->ec_buflen) {
-		msg = (const oes_message_t *)(void *)
-		    (client->ec_buf._raw + client->ec_bufoff);
-		if (msg->em_size >= sizeof(oes_message_t) &&
-		    client->ec_bufoff + msg->em_size <= client->ec_buflen) {
-			*msgp = msg;
-			return (0);
-		}
+	if (client->ec_bufoff < client->ec_buflen)
+		return (oes_buffer_message(client, msgp));
+	if (client->ec_bufoff > client->ec_buflen) {
+		errno = EPROTO;
+		return (-1);
 	}
 
 	/* Buffer empty or corrupt - refill from kernel */
 	if (oes_refill(client, blocking) < 0)
 		return (-1);
 
-	msg = &client->ec_buf._align;
-	if (msg->em_size < sizeof(oes_message_t) ||
-	    msg->em_size > client->ec_buflen) {
-		errno = EIO;
-		return (-1);
-	}
-	if (!oes_message_is_compatible(msg)) {
-		client->ec_buflen = 0;
-		client->ec_bufoff = 0;
-		errno = EPROTO;
-		return (-1);
-	}
+	return (oes_buffer_message(client, msgp));
+}
 
-	*msgp = msg;
-	return (0);
+oes_message_t *
+oes_message_copy(const oes_message_t *msg)
+{
+	oes_message_t *copy;
+
+	if (!oes_message_is_compatible(msg) ||
+	    msg->em_size > OES_MSG_MAX_SIZE) {
+		errno = EPROTO;
+		return (NULL);
+	}
+	copy = malloc(msg->em_size);
+	if (copy == NULL)
+		return (NULL);
+	memcpy(copy, msg, msg->em_size);
+	return (copy);
+}
+
+void
+oes_message_free(oes_message_t *msg)
+{
+
+	free(msg);
 }
 
 /*

@@ -742,7 +742,7 @@ test_auth_denial(void)
 
 	memset(&margs, 0, sizeof(margs));
 	margs.ema_mode = OES_MODE_AUTH;
-	margs.ema_timeout_ms = 500;
+	margs.ema_default_deadline_ms = 500;
 	if (ioctl(oes_fd, OES_IOC_SET_MODE, &margs) < 0) {
 		FAIL("AUTH_LINK denial", "set mode failed");
 		close_oes();

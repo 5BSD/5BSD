@@ -8,6 +8,8 @@
  *
  * This is the system daemon that owns /dev/oes and creates
  * restricted handles for third-party security vendors.
+ * The reference broker accepts only uid 0 peers and creates its socket 0600;
+ * deployments that delegate to a service group must add an explicit policy.
  *
  * Usage: oesd [-d] [-s socket_path]
  *   -d  Debug mode (don't daemonize)
@@ -19,10 +21,12 @@
 #include <sys/un.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/stat.h>
 
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <signal.h>
 #include <stdio.h>
@@ -139,6 +143,19 @@ static void
 handle_client(int client_sock)
 {
 	int vendor_fd;
+	uid_t peer_uid;
+	gid_t peer_gid;
+
+	if (getpeereid(client_sock, &peer_uid, &peer_gid) < 0) {
+		syslog(LOG_WARNING, "cannot identify broker peer: %m");
+		return;
+	}
+	if (peer_uid != 0) {
+		syslog(LOG_WARNING,
+		    "rejected unprivileged broker peer uid=%ju gid=%ju",
+		    (uintmax_t)peer_uid, (uintmax_t)peer_gid);
+		return;
+	}
 
 	vendor_fd = create_vendor_fd();
 	if (vendor_fd < 0) {
@@ -200,6 +217,13 @@ main(int argc, char *argv[])
 		}
 	}
 
+	/* Daemonize before opening OES so self-identity names this process. */
+	if (!debug_mode && daemon(0, 0) < 0)
+		err(1, "daemon");
+	openlog("oesd", LOG_PID, LOG_DAEMON);
+	/* bind(2) creates the socket as 0777 masked down to exactly 0600. */
+	(void)umask(0177);
+
 	/* Open the OES device */
 	client = oes_client_create();
 	if (client == NULL)
@@ -224,23 +248,29 @@ main(int argc, char *argv[])
 	if (listen_sock < 0)
 		err(1, "socket");
 
-	unlink(socket_path);
+	{
+		struct stat sb;
+
+		if (lstat(socket_path, &sb) == 0) {
+			if (!S_ISSOCK(sb.st_mode))
+				errx(1, "%s exists and is not a socket", socket_path);
+			if (unlink(socket_path) < 0)
+				err(1, "unlink %s", socket_path);
+		} else if (errno != ENOENT) {
+			err(1, "lstat %s", socket_path);
+		}
+	}
 	memset(&sun, 0, sizeof(sun));
 	sun.sun_family = AF_UNIX;
-	strlcpy(sun.sun_path, socket_path, sizeof(sun.sun_path));
+	if (strlcpy(sun.sun_path, socket_path, sizeof(sun.sun_path)) >=
+	    sizeof(sun.sun_path))
+		errx(1, "socket path is too long: %s", socket_path);
 
 	if (bind(listen_sock, (struct sockaddr *)&sun, sizeof(sun)) < 0)
 		err(1, "bind");
 
 	if (listen(listen_sock, 5) < 0)
 		err(1, "listen");
-
-	/* Daemonize unless debug mode */
-	if (!debug_mode) {
-		if (daemon(0, 0) < 0)
-			err(1, "daemon");
-		openlog("oesd", LOG_PID, LOG_DAEMON);
-	}
 
 	signal(SIGINT, sighandler);
 	signal(SIGTERM, sighandler);

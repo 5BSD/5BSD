@@ -4,7 +4,7 @@
  * Tests that process events contain correct:
  * - ABI information (FreeBSD vs Linux binary detection)
  * - Parent process info (ppid, pcomm)
- * - Process metadata flags remain clear when no path is present
+ * - Executable path, thread, lineage, and availability metadata
  */
 #include <sys/ioctl.h>
 #include <sys/poll.h>
@@ -50,7 +50,7 @@ read_fork_event(int fd, oes_message_t *out_msg)
 		if (msg->em_event != OES_EVENT_NOTIFY_FORK)
 			continue;
 
-		*out_msg = *msg;
+		memcpy(out_msg, msg, msg->em_size);
 		return (0);
 	}
 	return (-1);
@@ -147,6 +147,8 @@ main(void)
 	printf("  Flags: 0x%x (EP_FLAG_LINUX=0x%x)\n",
 	    proc->ep_flags, EP_FLAG_LINUX);
 	printf("  Meta flags: 0x%x\n", proc->ep_meta_flags);
+	printf("  Executable path: '%s'\n",
+	    oes_msg_string(msg, proc->ep_path_off));
 
 	/* Test 1: Parent PID should be us */
 	if (proc->ep_ppid != mypid) {
@@ -183,13 +185,33 @@ main(void)
 		printf("  PASS: EP_FLAG_LINUX not set\n");
 	}
 
-	/* Test 5: Fork child has no executable path metadata */
-	if (proc->ep_meta_flags != 0) {
-		fprintf(stderr, "  FAIL: ep_meta_flags=0x%x, expected 0\n",
-		    proc->ep_meta_flags);
+	/* Test 5: fork inherits the executable identity cached at exec. */
+	if (proc->ep_path_off == 0 ||
+	    oes_msg_string(msg, proc->ep_path_off)[0] == '\0' ||
+	    (proc->ep_meta_flags & OES_PROC_META_PATH_UNAVAILABLE) != 0) {
+		fprintf(stderr, "  FAIL: executable path is unavailable\n");
 		errors++;
 	} else {
-		printf("  PASS: process metadata flags clear\n");
+		printf("  PASS: executable path inherited across fork\n");
+	}
+
+	/* Test 6: core lineage and scheduling snapshot is populated. */
+	if (proc->ep_original_ppid != mypid || proc->ep_num_threads == 0 ||
+	    proc->ep_state == 0) {
+		fprintf(stderr, "  FAIL: extended process snapshot incomplete\n");
+		errors++;
+	} else {
+		printf("  PASS: extended process snapshot populated\n");
+	}
+
+	/* Test 7: message carries wall-clock and triggering-thread metadata. */
+	if (msg->em_wall_time.tv_sec == 0 ||
+	    (msg->em_thread.et_flags & OES_THREAD_META_PRESENT) == 0 ||
+	    msg->em_thread.et_id == 0) {
+		fprintf(stderr, "  FAIL: message time/thread metadata missing\n");
+		errors++;
+	} else {
+		printf("  PASS: message time/thread metadata populated\n");
 	}
 
 	if (errors > 0) {

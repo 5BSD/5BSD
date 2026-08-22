@@ -26,6 +26,9 @@
 
 MALLOC_DECLARE(M_OES);
 
+/* proctree_lock stabilizes proc_realparent() while ancestry is captured. */
+extern struct sx proctree_lock;
+
 /*
  * DTrace SDT provider for OES
  *
@@ -282,7 +285,9 @@ oes_auth_group_update_timeouts(struct oes_auth_group *ag,
 
 		mtx_lock(&ep->ep_mtx);
 		responded = ep->ep_responded;
-		action = ep->ep_timeout_action;
+		action = ep->ep_deadline_miss_mode ==
+		    OES_DEADLINE_MISS_FAIL_CLOSED ? OES_AUTH_DENY :
+		    OES_AUTH_ALLOW;
 		if (!responded &&
 		    timespeccmp(&now, &ep->ep_deadline, >=)) {
 			ep->ep_responded = true;
@@ -362,21 +367,22 @@ oes_auth_group_wait(struct oes_auth_group *ag, struct oes_pending **eps,
 }
 
 void
-oes_set_auth_deadline(struct oes_pending *ep, uint32_t timeout_ms)
+oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms)
 {
 	struct timespec ts;
 	struct timespec deadline;
 
-	if (timeout_ms == 0)
-		timeout_ms = OES_DEFAULT_TIMEOUT_MS;
+	if (deadline_ms == 0)
+		deadline_ms = OES_DEFAULT_DEADLINE_MS;
 
 	nanouptime(&deadline);
-	ts.tv_sec = timeout_ms / 1000;
-	ts.tv_nsec = (timeout_ms % 1000) * 1000000;
+	ts.tv_sec = deadline_ms / 1000;
+	ts.tv_nsec = (deadline_ms % 1000) * 1000000;
 	timespecadd(&deadline, &ts, &deadline);
 
 	ep->ep_deadline = deadline;
-	ep->ep_msg.em_deadline = deadline;
+	ep->ep_msg.em_deadline.tv_sec = deadline.tv_sec;
+	ep->ep_msg.em_deadline.tv_nsec = deadline.tv_nsec;
 }
 
 /*
@@ -405,6 +411,7 @@ oes_pending_alloc(oes_event_type_t event, struct proc *p)
 	ep->ep_refcount = 1;
 	ep->ep_msg.em_version = OES_MESSAGE_VERSION;
 	ep->ep_msg.em_size = sizeof(oes_message_t); /* minimum, grown by strtab */
+	ep->ep_msg.em_struct_size = sizeof(oes_message_t);
 
 	/* Assign unique message ID */
 	ep->ep_msg.em_id = atomic_fetchadd_64(&oes_softc.sc_next_msg_id, 1);
@@ -423,7 +430,23 @@ oes_pending_alloc(oes_event_type_t event, struct proc *p)
 	}
 
 	ep->ep_group = NULL;
-	nanouptime(&ep->ep_msg.em_time);
+	oes_scope_snapshot(ep);
+	{
+		struct timespec now, wall_now;
+
+		nanouptime(&now);
+		nanotime(&wall_now);
+		ep->ep_msg.em_time.tv_sec = now.tv_sec;
+		ep->ep_msg.em_time.tv_nsec = now.tv_nsec;
+		ep->ep_msg.em_wall_time.tv_sec = wall_now.tv_sec;
+		ep->ep_msg.em_wall_time.tv_nsec = wall_now.tv_nsec;
+	}
+	if (p != NULL && curthread != NULL && curthread->td_proc == p) {
+		ep->ep_msg.em_thread.et_id = curthread->td_tid;
+		ep->ep_msg.em_thread.et_flags = OES_THREAD_META_PRESENT;
+		strlcpy(ep->ep_msg.em_thread.et_name, curthread->td_name,
+		    sizeof(ep->ep_msg.em_thread.et_name));
+	}
 
 	/* Fill process info, appending paths to string table */
 	oes_strtab_init(&st);
@@ -475,9 +498,12 @@ oes_pending_clone(const struct oes_pending *src, int mflags)
 	ep->ep_refcount = 1;
 	ep->ep_flags = src->ep_flags & EP_FLAG_AUTH;
 	bcopy(&src->ep_msg, &ep->ep_msg, msg_size);
-	ep->ep_msg.em_deadline = (struct timespec){ 0 };
+	ep->ep_msg.em_deadline = (oes_timespec_t){ 0 };
 	ep->ep_deadline = (struct timespec){ 0 };
 	ep->ep_group = NULL;
+	ep->ep_scope_count = src->ep_scope_count;
+	memcpy(ep->ep_scope_markers, src->ep_scope_markers,
+	    sizeof(ep->ep_scope_markers));
 
 	if (ep->ep_flags & EP_FLAG_AUTH) {
 		mtx_init(&ep->ep_mtx, "oes_pending", NULL, MTX_DEF);
@@ -516,10 +542,40 @@ oes_pending_rele(struct oes_pending *ep)
 		oes_pending_free(ep);
 }
 
+static void
+oes_event_advance_sequences(struct oes_client *ec, oes_event_type_t event,
+    uint64_t *seq_num, uint64_t *global_seq_num)
+{
+	uint32_t event_class, event_index;
+
+	EC_LOCK_ASSERT(ec);
+	event_index = event & 0x0fff;
+	event_class = OES_EVENT_IS_NOTIFY(event) ? 1 : 0;
+	*global_seq_num = ++ec->ec_global_seq_num;
+	*seq_num = 0;
+	if (event_index < nitems(ec->ec_event_seq[event_class]))
+		*seq_num = ++ec->ec_event_seq[event_class][event_index];
+}
+
+void
+oes_event_note_drop(struct oes_client *ec, oes_event_type_t event)
+{
+	uint64_t seq_num, global_seq_num;
+
+	EC_LOCK_ASSERT(ec);
+	oes_event_advance_sequences(ec, event, &seq_num, &global_seq_num);
+	ec->ec_events_dropped++;
+}
+
 int
 oes_event_enqueue(struct oes_client *ec, struct oes_pending *ep)
 {
+
 	EC_LOCK_ASSERT(ec);
+
+	/* Stamp before checking capacity so a queue drop creates a visible gap. */
+	oes_event_advance_sequences(ec, ep->ep_msg.em_event,
+	    &ep->ep_msg.em_seq_num, &ep->ep_msg.em_global_seq_num);
 
 	if (ec->ec_queue_count >= ec->ec_queue_max) {
 		ec->ec_events_dropped++;
@@ -606,6 +662,13 @@ oes_event_respond_internal(struct oes_client *ec, uint64_t msg_id,
 
 	if (ep != NULL && (ep->ep_flags & EP_FLAG_AUTH)) {
 		mtx_lock(&ep->ep_mtx);
+		if (has_flags && ep->ep_msg.em_event != OES_EVENT_AUTH_OPEN &&
+		    ep->ep_msg.em_event != OES_EVENT_AUTH_MMAP &&
+		    ep->ep_msg.em_event != OES_EVENT_AUTH_MPROTECT) {
+			mtx_unlock(&ep->ep_mtx);
+			EC_UNLOCK(ec);
+			return (EINVAL);
+		}
 
 		if (!ep->ep_responded) {
 			ep->ep_responded = true;
@@ -613,6 +676,7 @@ oes_event_respond_internal(struct oes_client *ec, uint64_t msg_id,
 			if (has_flags) {
 				ep->ep_allowed_flags = allowed_flags;
 				ep->ep_denied_flags = denied_flags;
+				ep->ep_has_flag_response = true;
 			}
 
 			/* Update stats and fire DTrace probes */

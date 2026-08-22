@@ -365,7 +365,7 @@ test_auth_chdir(void)
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
-	mode.ema_timeout_ms = 5000;
+	mode.ema_default_deadline_ms = 5000;
 	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
 		TEST_FAIL("set mode: %s", strerror(errno));
 		close(fd);

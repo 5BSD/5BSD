@@ -28,8 +28,8 @@ test_read_default_paths_sysctl(void)
 	ret = sysctlbyname("security.oes.default_muted_paths", buf, &len, NULL, 0);
 	if (ret < 0) {
 		if (errno == ENOENT) {
-			printf("    INFO: sysctl not found (module not loaded?)\n");
-			return (0);
+			printf("    FAIL: sysctl not found (module not loaded?)\n");
+			return (1);
 		}
 		perror("sysctlbyname");
 		return (1);
@@ -52,8 +52,8 @@ test_read_default_self_mute_sysctl(void)
 	ret = sysctlbyname("security.oes.default_self_mute", &val, &len, NULL, 0);
 	if (ret < 0) {
 		if (errno == ENOENT) {
-			printf("    INFO: sysctl not found (module not loaded?)\n");
-			return (0);
+			printf("    FAIL: sysctl not found (module not loaded?)\n");
+			return (1);
 		}
 		perror("sysctlbyname");
 		return (1);
@@ -83,8 +83,8 @@ test_write_default_paths_sysctl(void)
 	ret = sysctlbyname("security.oes.default_muted_paths", old_val, &old_len, NULL, 0);
 	if (ret < 0) {
 		if (errno == ENOENT) {
-			printf("    INFO: sysctl not found (module not loaded?)\n");
-			return (0);
+			printf("    FAIL: sysctl not found (module not loaded?)\n");
+			return (1);
 		}
 		perror("sysctlbyname (read)");
 		return (1);
@@ -124,7 +124,7 @@ test_default_mute_applied(void)
 	size_t old_len = sizeof(old_val);
 	int ret;
 	size_t i;
-	int found = 0;
+	int found = 0, mutable = 0;
 
 	printf("  Testing default muting applied on mode set...\n");
 
@@ -137,8 +137,8 @@ test_default_mute_applied(void)
 	ret = sysctlbyname("security.oes.default_muted_paths", old_val, &old_len, NULL, 0);
 	if (ret < 0) {
 		if (errno == ENOENT) {
-			printf("    INFO: sysctl not found (module not loaded?)\n");
-			return (0);
+			printf("    FAIL: sysctl not found (module not loaded?)\n");
+			return (1);
 		}
 		perror("sysctlbyname (read)");
 		return (1);
@@ -202,6 +202,14 @@ test_default_mute_applied(void)
 			break;
 		}
 	}
+	if (found && ioctl(fd, OES_IOC_UNMUTE_ALL_PATHS) == 0) {
+		memset(&get_paths, 0, sizeof(get_paths));
+		get_paths.egmpa_entries = entries;
+		get_paths.egmpa_count = 16;
+		if (ioctl(fd, OES_IOC_GET_MUTED_PATHS, &get_paths) == 0 &&
+		    get_paths.egmpa_actual == 0)
+			mutable = 1;
+	}
 
 	close(fd);
 
@@ -209,14 +217,14 @@ test_default_mute_applied(void)
 	sysctlbyname("security.oes.default_muted_paths", NULL, NULL,
 	    old_val, strlen(old_val) + 1);
 
-	if (found) {
-		printf("    PASS: default muted path applied\n");
-	} else {
-		printf("    INFO: default muted path not found in list\n");
-		printf("    (may need module reload to take effect)\n");
+	if (found && mutable) {
+		printf("    PASS: default muted path applied and removable\n");
+		return (0);
 	}
-
-	return (0);
+	printf("    FAIL: default muted path was %s and %s\n",
+	    found ? "applied" : "not applied",
+	    mutable ? "removable" : "not removable");
+	return (1);
 }
 
 static int
@@ -232,7 +240,7 @@ test_default_self_mute(void)
 	size_t old_len = sizeof(old_val);
 	int ret;
 	size_t i;
-	int found = 0;
+	int found = 0, mutable = 0;
 	pid_t mypid = getpid();
 
 	printf("  Testing default self-mute...\n");
@@ -246,8 +254,8 @@ test_default_self_mute(void)
 	ret = sysctlbyname("security.oes.default_self_mute", &old_val, &old_len, NULL, 0);
 	if (ret < 0) {
 		if (errno == ENOENT) {
-			printf("    INFO: sysctl not found (module not loaded?)\n");
-			return (0);
+			printf("    FAIL: sysctl not found (module not loaded?)\n");
+			return (1);
 		}
 		perror("sysctlbyname (read)");
 		return (1);
@@ -310,6 +318,14 @@ test_default_self_mute(void)
 			break;
 		}
 	}
+	if (found && ioctl(fd, OES_IOC_UNMUTE_ALL_PROCESSES) == 0) {
+		memset(&get_procs, 0, sizeof(get_procs));
+		get_procs.egmp_entries = entries;
+		get_procs.egmp_count = 16;
+		if (ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get_procs) == 0 &&
+		    get_procs.egmp_actual == 0)
+			mutable = 1;
+	}
 
 	close(fd);
 
@@ -317,13 +333,14 @@ test_default_self_mute(void)
 	sysctlbyname("security.oes.default_self_mute", NULL, NULL,
 	    &old_val, sizeof(old_val));
 
-	if (found) {
-		printf("    PASS: default self-mute applied\n");
-	} else {
-		printf("    INFO: self not found in muted list\n");
+	if (found && mutable) {
+		printf("    PASS: default self-mute applied and removable\n");
+		return (0);
 	}
-
-	return (0);
+	printf("    FAIL: default self-mute was %s and %s\n",
+	    found ? "applied" : "not applied",
+	    mutable ? "removable" : "not removable");
+	return (1);
 }
 
 int

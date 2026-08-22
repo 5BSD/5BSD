@@ -59,6 +59,38 @@ oes_cache_event_requires_target(oes_event_type_t event)
 	}
 }
 
+/*
+ * Only cache operations whose complete security-relevant parameters fit in
+ * the public key.  Mutation operations invalidate before lookup and are
+ * deliberately excluded rather than pretending to cache them safely.
+ */
+static bool
+oes_cache_event_supported(oes_event_type_t event)
+{
+	switch (event) {
+	case OES_EVENT_AUTH_EXEC:
+	case OES_EVENT_AUTH_OPEN:
+	case OES_EVENT_AUTH_ACCESS:
+	case OES_EVENT_AUTH_READ:
+	case OES_EVENT_AUTH_STAT:
+	case OES_EVENT_AUTH_POLL:
+	case OES_EVENT_AUTH_READDIR:
+	case OES_EVENT_AUTH_READLINK:
+	case OES_EVENT_AUTH_KLDLOAD:
+	case OES_EVENT_AUTH_MMAP:
+	case OES_EVENT_AUTH_MPROTECT:
+	case OES_EVENT_AUTH_CHDIR:
+	case OES_EVENT_AUTH_CHROOT:
+	case OES_EVENT_AUTH_LISTEXTATTR:
+	case OES_EVENT_AUTH_GETACL:
+	case OES_EVENT_AUTH_SWAPON:
+	case OES_EVENT_AUTH_SWAPOFF:
+		return (true);
+	default:
+		return (false);
+	}
+}
+
 static uint32_t
 oes_cache_bucket(oes_event_type_t event)
 {
@@ -86,8 +118,13 @@ oes_cache_key_equal(const oes_cache_key_t *a, const oes_cache_key_t *b)
 		return (false);
 	if (a->eck_op_flags != b->eck_op_flags)
 		return (false);
+	if (a->eck_op_flags2 != b->eck_op_flags2)
+		return (false);
 	if ((a->eck_flags & OES_CACHE_KEY_PROCESS) &&
 	    !oes_cache_proc_equal(&a->eck_process, &b->eck_process))
+		return (false);
+	if ((a->eck_flags & OES_CACHE_KEY_PROCESS) &&
+	    a->eck_exec_id != b->eck_exec_id)
 		return (false);
 	if ((a->eck_flags & OES_CACHE_KEY_FILE) &&
 	    !oes_cache_file_equal(&a->eck_file, &b->eck_file))
@@ -110,6 +147,9 @@ oes_cache_key_match_remove(const oes_cache_key_t *entry,
 			return (false);
 		if (!oes_cache_proc_equal(&entry->eck_process,
 		    &remove->eck_process))
+			return (false);
+		if (remove->eck_exec_id != 0 &&
+		    entry->eck_exec_id != remove->eck_exec_id)
 			return (false);
 	}
 	if ((remove->eck_flags & OES_CACHE_KEY_FILE) != 0) {
@@ -139,12 +179,17 @@ oes_cache_key_from_pending(const struct oes_pending *ep,
 	msg = &ep->ep_msg;
 	if (!OES_EVENT_IS_AUTH(msg->em_event))
 		return (false);
+	if (!oes_cache_event_supported(msg->em_event))
+		return (false);
 
 	bzero(key, sizeof(*key));
 	key->eck_event = msg->em_event;
 	key->eck_flags = OES_CACHE_KEY_PROCESS;
 	key->eck_process = msg->em_process.ep_token;
+	key->eck_exec_id = msg->em_process.ep_exec_id;
 	if (!oes_cache_proc_valid(&key->eck_process))
+		return (false);
+	if (key->eck_exec_id == 0)
 		return (false);
 
 	switch (msg->em_event) {
@@ -153,7 +198,7 @@ oes_cache_key_from_pending(const struct oes_pending *ep,
 		break;
 	case OES_EVENT_AUTH_OPEN:
 		file = msg->em_event_data.open.file.ef_token;
-		key->eck_op_flags = (uint32_t)msg->em_event_data.open.flags;
+		key->eck_op_flags = msg->em_event_data.open.access;
 		break;
 	case OES_EVENT_AUTH_ACCESS:
 		file = msg->em_event_data.access.file.ef_token;
@@ -205,6 +250,7 @@ oes_cache_key_from_pending(const struct oes_pending *ep,
 	case OES_EVENT_AUTH_MMAP:
 		file = msg->em_event_data.mmap.file.ef_token;
 		key->eck_op_flags = (uint32_t)msg->em_event_data.mmap.prot;
+		key->eck_op_flags2 = (uint32_t)msg->em_event_data.mmap.flags;
 		break;
 	case OES_EVENT_AUTH_MPROTECT:
 		file = msg->em_event_data.mprotect.file.ef_token;
@@ -227,9 +273,13 @@ oes_cache_key_from_pending(const struct oes_pending *ep,
 		break;
 	case OES_EVENT_AUTH_LISTEXTATTR:
 		file = msg->em_event_data.listextattr.file.ef_token;
+		key->eck_op_flags =
+		    (uint32_t)msg->em_event_data.listextattr.attrnamespace;
 		break;
 	case OES_EVENT_AUTH_GETACL:
 		file = msg->em_event_data.getacl.file.ef_token;
+		key->eck_op_flags =
+		    (uint32_t)msg->em_event_data.getacl.type;
 		break;
 	case OES_EVENT_AUTH_SETACL:
 		file = msg->em_event_data.setacl.file.ef_token;
@@ -353,14 +403,16 @@ oes_client_cache_add(struct oes_client *ec, const oes_cache_entry_t *entry)
 	if (!oes_event_is_valid(entry->ece_key.eck_event) ||
 	    !OES_EVENT_IS_AUTH(entry->ece_key.eck_event))
 		return (EINVAL);
-	if (entry->ece_key.eck_pad != 0)
-		return (EINVAL);
+	if (!oes_cache_event_supported(entry->ece_key.eck_event))
+		return (EOPNOTSUPP);
 	/* AUTH_PTRACE targets processes, not files - can't cache */
 	if (entry->ece_key.eck_event == OES_EVENT_AUTH_PTRACE)
 		return (EINVAL);
 	if (!oes_cache_flags_valid(entry->ece_key.eck_flags))
 		return (EINVAL);
 	if (!oes_cache_proc_valid(&entry->ece_key.eck_process))
+		return (EINVAL);
+	if (entry->ece_key.eck_exec_id == 0)
 		return (EINVAL);
 	if ((entry->ece_key.eck_flags & OES_CACHE_KEY_FILE) == 0 ||
 	    !oes_cache_file_valid(&entry->ece_key.eck_file))
@@ -431,8 +483,6 @@ oes_client_cache_remove(struct oes_client *ec, const oes_cache_key_t *key)
 	    (!oes_event_is_valid(key->eck_event) ||
 	     !OES_EVENT_IS_AUTH(key->eck_event)))
 		return (EINVAL);
-	if (key->eck_pad != 0)
-		return (EINVAL);
 	flags = key->eck_flags;
 	if (!oes_cache_flags_valid(flags))
 		return (EINVAL);
@@ -470,6 +520,51 @@ oes_client_cache_clear(struct oes_client *ec)
 	EC_LOCK(ec);
 	oes_cache_clear_locked(ec);
 	EC_UNLOCK(ec);
+}
+
+void
+oes_cache_invalidate_token(const oes_file_token_t *token)
+{
+	struct oes_cache_entry *entry, *tmp;
+	struct oes_client *ec;
+	uint32_t idx;
+
+	if (token == NULL || !oes_cache_file_valid(token))
+		return;
+
+	OES_LOCK();
+	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+		EC_LOCK(ec);
+		for (idx = 0; idx < OES_CACHE_BUCKETS; idx++) {
+			LIST_FOREACH_SAFE(entry, &ec->ec_cache[idx], ece_link,
+			    tmp) {
+				if (((entry->ece_key.eck_flags & OES_CACHE_KEY_FILE) &&
+				    oes_cache_file_equal(&entry->ece_key.eck_file,
+				    token)) ||
+				    ((entry->ece_key.eck_flags & OES_CACHE_KEY_TARGET) &&
+				    oes_cache_file_equal(&entry->ece_key.eck_target,
+				    token)))
+					oes_cache_remove_entry_locked(ec, entry, false,
+					    false);
+			}
+		}
+		EC_UNLOCK(ec);
+	}
+	OES_UNLOCK();
+}
+
+void
+oes_cache_invalidate_all(void)
+{
+	struct oes_client *ec;
+
+	OES_LOCK();
+	LIST_FOREACH(ec, &oes_softc.sc_clients, ec_link) {
+		EC_LOCK(ec);
+		oes_cache_clear_locked(ec);
+		EC_UNLOCK(ec);
+	}
+	OES_UNLOCK();
 }
 
 bool

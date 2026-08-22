@@ -12,6 +12,7 @@
 
 #include <sys/param.h>
 #include <sys/systm.h>
+#include <sys/sysent.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
 #include <sys/conf.h>
@@ -50,13 +51,14 @@ int oes_debug = 0;
 SYSCTL_INT(_security_oes, OID_AUTO, debug, CTLFLAG_RW,
     &oes_debug, 0, "Enable debug output");
 
-int oes_default_timeout = OES_DEFAULT_TIMEOUT_MS;
-SYSCTL_INT(_security_oes, OID_AUTO, default_timeout, CTLFLAG_RW,
-    &oes_default_timeout, 0, "Default AUTH timeout in milliseconds");
+int oes_default_deadline = OES_DEFAULT_DEADLINE_MS;
+SYSCTL_INT(_security_oes, OID_AUTO, default_deadline_ms, CTLFLAG_RW,
+    &oes_default_deadline, 0, "Default AUTH deadline in milliseconds");
 
-int oes_default_action = OES_AUTH_ALLOW;
-SYSCTL_INT(_security_oes, OID_AUTO, default_action, CTLFLAG_RW,
-    &oes_default_action, 0, "Default AUTH timeout action (0=allow, 1=deny)");
+int oes_default_deadline_miss_mode = OES_DEADLINE_MISS_FAIL_OPEN;
+SYSCTL_INT(_security_oes, OID_AUTO, default_deadline_miss_mode, CTLFLAG_RW,
+    &oes_default_deadline_miss_mode, 0,
+    "Default AUTH deadline miss mode (0=fail open, 1=fail closed)");
 
 int oes_auth_fail_closed = 0;
 SYSCTL_INT(_security_oes, OID_AUTO, auth_fail_closed, CTLFLAG_RW,
@@ -112,20 +114,32 @@ static d_ioctl_t	oes_ioctl;
 static d_poll_t		oes_poll;
 static d_kqfilter_t	oes_kqfilter;
 
+static bool
+oes_thread_is_ilp32(struct thread *td)
+{
+
+	return (td != NULL && td->td_proc != NULL &&
+	    (td->td_proc->p_sysent->sv_flags & SV_ILP32) != 0);
+}
+
 static int	oes_ioctl_subscribe(struct oes_client *ec,
 		    struct oes_subscribe_args *args);
 static int	oes_ioctl_subscribe_bitmap(struct oes_client *ec,
 		    struct oes_subscribe_bitmap_args *args);
-static int	oes_ioctl_subscribe_bitmap_ex(struct oes_client *ec,
-		    struct oes_subscribe_bitmap_ex_args *args);
+static int	oes_ioctl_get_subscriptions(struct oes_client *ec,
+		    struct oes_subscribe_bitmap_args *args);
+static int	oes_ioctl_set_scope(struct oes_client *ec,
+		    struct oes_scope_args *args);
+static int	oes_ioctl_get_scope(struct oes_client *ec,
+		    struct oes_scope_args *args);
 static int	oes_ioctl_set_mode(struct oes_client *ec,
 		    struct oes_mode_args *args);
 static int	oes_ioctl_get_mode(struct oes_client *ec,
 		    struct oes_mode_args *args);
-static int	oes_ioctl_set_timeout(struct oes_client *ec,
-		    struct oes_timeout_args *args);
-static int	oes_ioctl_get_timeout(struct oes_client *ec,
-		    struct oes_timeout_args *args);
+static int	oes_ioctl_set_deadline_bound(struct oes_client *ec,
+		    struct oes_event_deadline_args *args, bool minimum);
+static int	oes_ioctl_get_deadline_bound(struct oes_client *ec,
+		    struct oes_event_deadline_args *args, bool minimum);
 static int	oes_ioctl_mute_process(struct oes_client *ec,
 		    struct oes_mute_args *args);
 static int	oes_ioctl_unmute_process(struct oes_client *ec,
@@ -138,10 +152,10 @@ static int	oes_ioctl_set_mute_invert(struct oes_client *ec,
 		    struct oes_mute_invert_args *args);
 static int	oes_ioctl_get_mute_invert(struct oes_client *ec,
 		    struct oes_mute_invert_args *args);
-static int	oes_ioctl_set_timeout_action(struct oes_client *ec,
-		    struct oes_timeout_action_args *args);
-static int	oes_ioctl_get_timeout_action(struct oes_client *ec,
-		    struct oes_timeout_action_args *args);
+static int	oes_ioctl_set_deadline_miss_mode(struct oes_client *ec,
+		    struct oes_deadline_miss_mode_args *args);
+static int	oes_ioctl_get_deadline_miss_mode(struct oes_client *ec,
+		    struct oes_deadline_miss_mode_args *args);
 static int	oes_ioctl_cache_add(struct oes_client *ec,
 		    oes_cache_entry_t *entry);
 static int	oes_ioctl_cache_remove(struct oes_client *ec,
@@ -204,6 +218,9 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 {
 	struct oes_client *ec;
 	int error;
+
+	if (oes_thread_is_ilp32(td))
+		return (EOPNOTSUPP);
 
 	/* Check privilege to open the device */
 	error = priv_check(td, PRIV_DRIVER);
@@ -332,6 +349,8 @@ oes_read(struct cdev *dev __unused, struct uio *uio, int ioflag)
 	struct oes_pending *ep;
 	int error;
 
+	if (oes_thread_is_ilp32(curthread))
+		return (EOPNOTSUPP);
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (error);
@@ -498,6 +517,8 @@ oes_write(struct cdev *dev, struct uio *uio, int ioflag)
 	struct oes_client *ec;
 	int error;
 
+	if (oes_thread_is_ilp32(curthread))
+		return (EOPNOTSUPP);
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (error);
@@ -555,6 +576,8 @@ oes_ioctl_subscribe(struct oes_client *ec, struct oes_subscribe_args *args)
 
 	if (args == NULL)
 		return (EINVAL);
+	if (args->esa_reserved != 0)
+		return (EINVAL);
 
 	count = args->esa_count;
 	if (count == 0 || count > 64)
@@ -578,26 +601,49 @@ oes_ioctl_subscribe_bitmap(struct oes_client *ec,
 {
 	if (args == NULL)
 		return (EINVAL);
+	if (args->esba_reserved != 0)
+		return (EINVAL);
 
 	return (oes_client_subscribe_bitmap(ec, args->esba_auth,
 	    args->esba_notify, args->esba_flags));
 }
 
 static int
-oes_ioctl_subscribe_bitmap_ex(struct oes_client *ec,
-    struct oes_subscribe_bitmap_ex_args *args)
+oes_ioctl_get_subscriptions(struct oes_client *ec,
+    struct oes_subscribe_bitmap_args *args)
 {
 	if (args == NULL)
 		return (EINVAL);
+	oes_client_get_subscriptions(ec, args->esba_auth, args->esba_notify);
+	args->esba_flags = 0;
+	args->esba_reserved = 0;
+	return (0);
+}
 
-	return (oes_client_subscribe_bitmap_ex(ec, args->esba_auth,
-	    args->esba_notify, args->esba_flags));
+static int
+oes_ioctl_set_scope(struct oes_client *ec, struct oes_scope_args *args)
+{
+
+	if (args == NULL || args->esa_reserved != 0)
+		return (EINVAL);
+	return (oes_client_set_scope(ec, args->esa_scope));
+}
+
+static int
+oes_ioctl_get_scope(struct oes_client *ec, struct oes_scope_args *args)
+{
+
+	if (args == NULL)
+		return (EINVAL);
+	oes_client_get_scope(ec, &args->esa_scope);
+	args->esa_reserved = 0;
+	return (0);
 }
 
 static int
 oes_ioctl_set_mode(struct oes_client *ec, struct oes_mode_args *args)
 {
-	if (args == NULL)
+	if (args == NULL || args->ema_flags != 0)
 		return (EINVAL);
 
 	/*
@@ -605,7 +651,7 @@ oes_ioctl_set_mode(struct oes_client *ec, struct oes_mode_args *args)
 	 * Third-party clients won't have this ioctl in their allowed set.
 	 */
 	return (oes_client_set_mode(ec, args->ema_mode,
-	    args->ema_timeout_ms, args->ema_queue_size));
+	    args->ema_default_deadline_ms, args->ema_queue_size));
 }
 
 static int
@@ -614,35 +660,48 @@ oes_ioctl_get_mode(struct oes_client *ec, struct oes_mode_args *args)
 	if (args == NULL)
 		return (EINVAL);
 
-	oes_client_get_mode(ec, &args->ema_mode, &args->ema_timeout_ms,
+	oes_client_get_mode(ec, &args->ema_mode, &args->ema_default_deadline_ms,
 	    &args->ema_queue_size);
 	args->ema_flags = 0;
 	return (0);
 }
 
 static int
-oes_ioctl_set_timeout(struct oes_client *ec, struct oes_timeout_args *args)
+oes_ioctl_set_deadline_bound(struct oes_client *ec,
+    struct oes_event_deadline_args *args, bool minimum)
 {
-	if (args == NULL)
-		return (EINVAL);
 
-	return (oes_client_set_timeout(ec, args->eta_timeout_ms));
+	if (args == NULL || args->oeda_reserved[0] != 0 ||
+	    args->oeda_reserved[1] != 0)
+		return (EINVAL);
+	return (oes_client_set_deadline_bound(ec,
+	    (oes_event_type_t)args->oeda_event, args->oeda_milliseconds,
+	    minimum));
 }
 
 static int
-oes_ioctl_get_timeout(struct oes_client *ec, struct oes_timeout_args *args)
+oes_ioctl_get_deadline_bound(struct oes_client *ec,
+    struct oes_event_deadline_args *args, bool minimum)
 {
-	if (args == NULL)
-		return (EINVAL);
+	int error;
 
-	oes_client_get_timeout(ec, &args->eta_timeout_ms);
-	return (0);
+	if (args == NULL || args->oeda_reserved[0] != 0 ||
+	    args->oeda_reserved[1] != 0)
+		return (EINVAL);
+	error = oes_client_get_deadline_bound(ec,
+	    (oes_event_type_t)args->oeda_event, &args->oeda_milliseconds,
+	    minimum);
+	if (error == 0) {
+		args->oeda_reserved[0] = 0;
+		args->oeda_reserved[1] = 0;
+	}
+	return (error);
 }
 
 static int
 oes_ioctl_mute_process(struct oes_client *ec, struct oes_mute_args *args)
 {
-	if (args == NULL)
+	if (args == NULL || (args->emu_flags & ~OES_MUTE_SELF) != 0)
 		return (EINVAL);
 
 	return (oes_client_mute(ec, &args->emu_token, args->emu_flags));
@@ -654,7 +713,7 @@ oes_ioctl_unmute_process(struct oes_client *ec, struct oes_mute_args *args)
 	struct oes_mute_entry *em, *em_tmp;
 	pid_t mypid;
 
-	if (args == NULL)
+	if (args == NULL || (args->emu_flags & ~OES_MUTE_SELF) != 0)
 		return (EINVAL);
 
 	/* Self-unmute: clear the self-mute flag AND remove list entry */
@@ -691,7 +750,8 @@ oes_ioctl_mute_path(struct oes_client *ec, struct oes_mute_path_args *args)
 {
 	bool target;
 
-	if (args == NULL)
+	if (args == NULL ||
+	    (args->emp_flags & ~OES_MUTE_PATH_FLAG_TARGET) != 0)
 		return (EINVAL);
 
 	target = (args->emp_flags & OES_MUTE_PATH_FLAG_TARGET) != 0;
@@ -704,7 +764,8 @@ oes_ioctl_unmute_path(struct oes_client *ec, struct oes_mute_path_args *args)
 {
 	bool target;
 
-	if (args == NULL)
+	if (args == NULL ||
+	    (args->emp_flags & ~OES_MUTE_PATH_FLAG_TARGET) != 0)
 		return (EINVAL);
 
 	target = (args->emp_flags & OES_MUTE_PATH_FLAG_TARGET) != 0;
@@ -716,7 +777,7 @@ static int
 oes_ioctl_set_mute_invert(struct oes_client *ec,
     struct oes_mute_invert_args *args)
 {
-	if (args == NULL)
+	if (args == NULL || args->emi_invert > 1)
 		return (EINVAL);
 
 	return (oes_client_set_mute_invert(ec, args->emi_type,
@@ -735,23 +796,24 @@ oes_ioctl_get_mute_invert(struct oes_client *ec,
 }
 
 static int
-oes_ioctl_set_timeout_action(struct oes_client *ec,
-    struct oes_timeout_action_args *args)
+oes_ioctl_set_deadline_miss_mode(struct oes_client *ec,
+    struct oes_deadline_miss_mode_args *args)
 {
-	if (args == NULL)
+	if (args == NULL || args->edma_reserved != 0)
 		return (EINVAL);
 
-	return (oes_client_set_timeout_action(ec, args->eta_action));
+	return (oes_client_set_deadline_miss_mode(ec, args->edma_mode));
 }
 
 static int
-oes_ioctl_get_timeout_action(struct oes_client *ec,
-    struct oes_timeout_action_args *args)
+oes_ioctl_get_deadline_miss_mode(struct oes_client *ec,
+    struct oes_deadline_miss_mode_args *args)
 {
-	if (args == NULL)
+	if (args == NULL || args->edma_reserved != 0)
 		return (EINVAL);
 
-	return (oes_client_get_timeout_action(ec, &args->eta_action));
+	args->edma_reserved = 0;
+	return (oes_client_get_deadline_miss_mode(ec, &args->edma_mode));
 }
 
 static int
@@ -790,7 +852,7 @@ static int
 oes_ioctl_mute_process_events(struct oes_client *ec,
     struct oes_mute_process_events_args *args)
 {
-	if (args == NULL)
+	if (args == NULL || (args->empe_flags & ~OES_MUTE_SELF) != 0)
 		return (EINVAL);
 
 	if (args->empe_count > OES_MAX_MUTE_EVENTS)
@@ -804,7 +866,7 @@ static int
 oes_ioctl_unmute_process_events(struct oes_client *ec,
     struct oes_mute_process_events_args *args)
 {
-	if (args == NULL)
+	if (args == NULL || (args->empe_flags & ~OES_MUTE_SELF) != 0)
 		return (EINVAL);
 
 	if (args->empe_count > OES_MAX_MUTE_EVENTS)
@@ -820,7 +882,8 @@ oes_ioctl_mute_path_events(struct oes_client *ec,
 {
 	bool target;
 
-	if (args == NULL)
+	if (args == NULL ||
+	    (args->empae_flags & ~OES_MUTE_PATH_FLAG_TARGET) != 0)
 		return (EINVAL);
 
 	if (args->empae_count > OES_MAX_MUTE_EVENTS)
@@ -837,7 +900,8 @@ oes_ioctl_unmute_path_events(struct oes_client *ec,
 {
 	bool target;
 
-	if (args == NULL)
+	if (args == NULL ||
+	    (args->empae_flags & ~OES_MUTE_PATH_FLAG_TARGET) != 0)
 		return (EINVAL);
 
 	if (args->empae_count > OES_MAX_MUTE_EVENTS)
@@ -900,6 +964,9 @@ oes_ioctl_get_muted_paths(struct oes_client *ec,
 
 	if (args == NULL)
 		return (EINVAL);
+	if (args->egmpa_reserved != 0 ||
+	    (args->egmpa_flags & ~OES_MUTE_PATH_FLAG_TARGET) != 0)
+		return (EINVAL);
 
 	target = (args->egmpa_flags & OES_MUTE_PATH_FLAG_TARGET) != 0;
 	count = args->egmpa_count;
@@ -956,6 +1023,8 @@ oes_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 	struct oes_client *ec;
 	int error;
 
+	if (oes_thread_is_ilp32(td))
+		return (EOPNOTSUPP);
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (error);
@@ -971,10 +1040,14 @@ oes_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		    (struct oes_subscribe_bitmap_args *)data));
 	}
 
-	case OES_IOC_SUBSCRIBE_BITMAP_EX: {
-		return (oes_ioctl_subscribe_bitmap_ex(ec,
-		    (struct oes_subscribe_bitmap_ex_args *)data));
+	case OES_IOC_GET_SUBSCRIPTIONS: {
+		return (oes_ioctl_get_subscriptions(ec,
+		    (struct oes_subscribe_bitmap_args *)data));
 	}
+	case OES_IOC_SET_SCOPE:
+		return (oes_ioctl_set_scope(ec, (struct oes_scope_args *)data));
+	case OES_IOC_GET_SCOPE:
+		return (oes_ioctl_get_scope(ec, (struct oes_scope_args *)data));
 
 	case OES_IOC_SET_MODE: {
 		return (oes_ioctl_set_mode(ec, (struct oes_mode_args *)data));
@@ -984,15 +1057,18 @@ oes_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		return (oes_ioctl_get_mode(ec, (struct oes_mode_args *)data));
 	}
 
-	case OES_IOC_SET_TIMEOUT: {
-		return (oes_ioctl_set_timeout(ec,
-		    (struct oes_timeout_args *)data));
-	}
-
-	case OES_IOC_GET_TIMEOUT: {
-		return (oes_ioctl_get_timeout(ec,
-		    (struct oes_timeout_args *)data));
-	}
+	case OES_IOC_SET_DEADLINE_MAX:
+		return (oes_ioctl_set_deadline_bound(ec,
+		    (struct oes_event_deadline_args *)data, false));
+	case OES_IOC_GET_DEADLINE_MAX:
+		return (oes_ioctl_get_deadline_bound(ec,
+		    (struct oes_event_deadline_args *)data, false));
+	case OES_IOC_SET_DEADLINE_MIN:
+		return (oes_ioctl_set_deadline_bound(ec,
+		    (struct oes_event_deadline_args *)data, true));
+	case OES_IOC_GET_DEADLINE_MIN:
+		return (oes_ioctl_get_deadline_bound(ec,
+		    (struct oes_event_deadline_args *)data, true));
 
 	case OES_IOC_MUTE_PROCESS: {
 		return (oes_ioctl_mute_process(ec, (struct oes_mute_args *)data));
@@ -1022,14 +1098,14 @@ oes_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int fflag,
 		    (struct oes_mute_invert_args *)data));
 	}
 
-	case OES_IOC_SET_TIMEOUT_ACTION: {
-		return (oes_ioctl_set_timeout_action(ec,
-		    (struct oes_timeout_action_args *)data));
+	case OES_IOC_SET_DEADLINE_MISS_MODE: {
+		return (oes_ioctl_set_deadline_miss_mode(ec,
+		    (struct oes_deadline_miss_mode_args *)data));
 	}
 
-	case OES_IOC_GET_TIMEOUT_ACTION: {
-		return (oes_ioctl_get_timeout_action(ec,
-		    (struct oes_timeout_action_args *)data));
+	case OES_IOC_GET_DEADLINE_MISS_MODE: {
+		return (oes_ioctl_get_deadline_miss_mode(ec,
+		    (struct oes_deadline_miss_mode_args *)data));
 	}
 
 	case OES_IOC_CACHE_ADD: {
@@ -1147,6 +1223,8 @@ oes_poll(struct cdev *dev, int events, struct thread *td)
 	int revents = 0;
 	int error;
 
+	if (oes_thread_is_ilp32(td))
+		return (POLLERR);
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (POLLNVAL);
@@ -1181,6 +1259,8 @@ oes_kqfilter(struct cdev *dev, struct knote *kn)
 	struct oes_client *ec;
 	int error;
 
+	if (oes_thread_is_ilp32(curthread))
+		return (EOPNOTSUPP);
 	error = devfs_get_cdevpriv((void **)&ec);
 	if (error)
 		return (error);

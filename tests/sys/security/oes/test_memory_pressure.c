@@ -11,6 +11,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -261,11 +262,11 @@ test_queue_exhaustion(void)
 	struct oes_mode_args mode;
 	struct oes_subscribe_args sub;
 	oes_event_type_t events[] = { OES_EVENT_NOTIFY_OPEN };
-	pid_t pids[500];
+	pid_t pids[64];
 	int i, spawned = 0;
-	int queue_full_detected = 0;
+	struct oes_stats stats;
 
-	printf("  Testing event queue exhaustion (500 events)...\n");
+	printf("  Testing event queue exhaustion...\n");
 
 	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
 	if (fd < 0) {
@@ -275,6 +276,7 @@ test_queue_exhaustion(void)
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_NOTIFY;
+	mode.ema_queue_size = 16;
 	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
 		perror("OES_IOC_SET_MODE");
 		close(fd);
@@ -292,7 +294,7 @@ test_queue_exhaustion(void)
 	}
 
 	/* Spawn many processes that generate events */
-	for (i = 0; i < 500; i++) {
+	for (i = 0; i < 64; i++) {
 		pids[i] = fork();
 		if (pids[i] < 0)
 			continue;
@@ -300,7 +302,7 @@ test_queue_exhaustion(void)
 		if (pids[i] == 0) {
 			/* Child - open many files */
 			int j;
-			for (j = 0; j < 10; j++) {
+			for (j = 0; j < 4; j++) {
 				int tmpfd = open("/etc/passwd", O_RDONLY);
 				if (tmpfd >= 0)
 					close(tmpfd);
@@ -313,7 +315,14 @@ test_queue_exhaustion(void)
 	/* Don't read - let queue fill up */
 	usleep(500000);
 
-	/* Now try to read - check for dropped events */
+	memset(&stats, 0, sizeof(stats));
+	if (ioctl(fd, OES_IOC_GET_STATS, &stats) < 0) {
+		perror("OES_IOC_GET_STATS");
+		close(fd);
+		return (1);
+	}
+
+	/* Now drain the events that fit. */
 	int count = 0;
 	test_msg_buf _msg_buf;
 	oes_message_t *msg = &_msg_buf.msg;
@@ -321,7 +330,7 @@ test_queue_exhaustion(void)
 		count++;
 
 	/* Wait for children */
-	for (i = 0; i < 500; i++) {
+	for (i = 0; i < 64; i++) {
 		if (pids[i] > 0)
 			waitpid(pids[i], NULL, 0);
 	}
@@ -329,10 +338,12 @@ test_queue_exhaustion(void)
 	close(fd);
 
 	printf("    INFO: spawned %d, received %d events\n", spawned, count);
-	if (queue_full_detected || count < spawned * 5) {
-		printf("    INFO: dropped events detected (queue full)\n");
+	if (stats.es_events_dropped == 0) {
+		fprintf(stderr, "FAIL: queue overflow did not increment drops\n");
+		return (1);
 	}
-	printf("    PASS: queue exhaustion tested\n");
+	printf("    PASS: detected %ju dropped events\n",
+	    (uintmax_t)stats.es_events_dropped);
 	return (0);
 }
 
@@ -392,6 +403,7 @@ test_cache_filling(void)
 		memset(&entry, 0, sizeof(entry));
 		entry.ece_key.eck_event = OES_EVENT_AUTH_EXEC;
 		entry.ece_key.eck_flags = OES_CACHE_KEY_PROCESS | OES_CACHE_KEY_FILE;
+		entry.ece_key.eck_exec_id = 1;
 		entry.ece_key.eck_process.ept_id = 1000 + i;
 		entry.ece_key.eck_process.ept_genid = 1;
 		entry.ece_key.eck_file.eft_id = i + 1;

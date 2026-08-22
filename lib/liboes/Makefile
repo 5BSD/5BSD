@@ -4,7 +4,7 @@
 
 PACKAGE=	oes
 LIB=		oes
-SHLIB_MAJOR=	2
+SHLIB_MAJOR=	1
 SRCS=		liboes.c
 
 MAN=		liboes.3

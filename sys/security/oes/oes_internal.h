@@ -119,9 +119,13 @@ struct oes_client {
 	uint64_t		ec_id;		/* Unique client ID */
 	pid_t			ec_owner_pid;	/* Owner pid (open()) */
 	uint64_t		ec_owner_genid;	/* Owner generation */
+	uint64_t		ec_scope_marker;	/* Inherited descendants marker */
+	uint32_t		ec_scope;	/* OES_SCOPE_* visibility */
 	uint32_t		ec_mode;	/* OES_MODE_* */
-	uint32_t		ec_timeout_ms;	/* AUTH timeout */
-	uint32_t		ec_timeout_action; /* Default AUTH timeout action */
+	uint32_t		ec_default_deadline_ms; /* Default AUTH deadline */
+	uint32_t		ec_deadline_miss_mode; /* OES_DEADLINE_MISS_* */
+	uint32_t		ec_deadline_min_ms[128]; /* Per-AUTH-event floor */
+	uint32_t		ec_deadline_max_ms[128]; /* Per-AUTH-event cap; 0=default */
 	uint64_t		ec_subscriptions[4]; /* [0,1]=AUTH (128b), [2,3]=NOTIFY (128b) */
 	uint32_t		ec_flags;	/* EC_FLAG_* */
 	uint32_t		ec_mute_invert;	/* OES_MUTE_INVERT_* */
@@ -133,6 +137,8 @@ struct oes_client {
 	uint32_t		ec_queue_max;	/* Max queue size */
 	uint32_t		ec_queue_bytes;	/* Current queued bytes */
 	uint32_t		ec_queue_highwater; /* Peak queue depth */
+	uint64_t		ec_global_seq_num; /* Includes attempted deliveries */
+	uint64_t		ec_event_seq[2][128]; /* AUTH/NOTIFY by event index */
 	struct selinfo		ec_selinfo;	/* For poll/select/kqueue */
 
 	/* Process muting (hash table by pid) */
@@ -171,6 +177,7 @@ struct oes_client {
 #define EC_FLAG_CLOSING		0x0001	/* Client is closing */
 #define EC_FLAG_MUTED_SELF	0x0002	/* Self-muted */
 #define EC_FLAG_MODE_SET	0x0004	/* Mode has been explicitly set */
+#define EC_FLAG_SCOPE_SETTING	0x0008	/* Scope credential update in flight */
 
 /* Mute inversion flags */
 #define EC_MUTE_INVERT_PROCESS	0x0001	/* Process mute inversion */
@@ -193,6 +200,9 @@ struct oes_strtab {
 	uint32_t	st_max;		/* Max message size */
 };
 
+/* Nested scope markers inherited through credential labels. */
+#define OES_SCOPE_MARKERS_MAX	64
+
 /*
  * Pending event (in client queue)
  *
@@ -205,7 +215,7 @@ struct oes_pending {
 	uint32_t		ep_flags;	/* EP_FLAG_* */
 	int			ep_refcount;	/* Reference count */
 	uint64_t		ep_client_id;	/* AUTH client ID */
-	uint32_t		ep_timeout_action; /* AUTH timeout action */
+	uint32_t		ep_deadline_miss_mode; /* OES_DEADLINE_MISS_* */
 
 	/* For AUTH events: response handling */
 	struct mtx		ep_mtx;		/* Protects response state */
@@ -214,8 +224,11 @@ struct oes_pending {
 	oes_auth_result_t	ep_result;	/* Response value */
 	uint32_t		ep_allowed_flags; /* Flags-based: allowed flags */
 	uint32_t		ep_denied_flags;  /* Flags-based: denied flags */
+	bool			ep_has_flag_response; /* Explicit flags mask supplied */
 	struct timespec		ep_deadline;	/* Absolute deadline */
 	struct oes_auth_group	*ep_group;	/* AUTH arbitration group */
+	uint64_t		ep_scope_markers[OES_SCOPE_MARKERS_MAX];
+	uint8_t			ep_scope_count;	/* Valid inherited markers */
 
 	/* Variable-length message - MUST be last */
 	oes_message_t		ep_msg;
@@ -317,6 +330,18 @@ oes_client_subscribe(struct oes_client *ec, oes_event_type_t event)
 }
 
 static __inline void
+oes_client_unsubscribe(struct oes_client *ec, oes_event_type_t event)
+{
+	int base = OES_EVENT_IS_NOTIFY(event) ? 2 : 0;
+	int bit = event & 0x0FFF;
+	int word = bit / 64;
+	int shift = bit % 64;
+
+	if (bit < 128)
+		ec->ec_subscriptions[base + word] &= ~(1ULL << shift);
+}
+
+static __inline void
 oes_client_unsubscribe_all(struct oes_client *ec)
 {
 	ec->ec_subscriptions[0] = 0;
@@ -388,16 +413,24 @@ void	oes_client_free(struct oes_client *ec);
 int	oes_client_subscribe_events(struct oes_client *ec,
 	    oes_event_type_t *events, size_t count, uint32_t flags);
 int	oes_client_subscribe_bitmap(struct oes_client *ec,
-	    uint64_t auth_bitmap, uint64_t notify_bitmap, uint32_t flags);
-int	oes_client_subscribe_bitmap_ex(struct oes_client *ec,
 	    const uint64_t auth_bitmap[2], const uint64_t notify_bitmap[2],
 	    uint32_t flags);
+void	oes_client_get_subscriptions(struct oes_client *ec,
+	    uint64_t auth_bitmap[2], uint64_t notify_bitmap[2]);
+int	oes_client_set_scope(struct oes_client *ec, uint32_t scope);
+void	oes_client_get_scope(struct oes_client *ec, uint32_t *scope);
+bool	oes_client_observes_token(const struct oes_client *ec,
+	    const oes_proc_token_t *token);
 int	oes_client_set_mode(struct oes_client *ec, uint32_t mode,
-	    uint32_t timeout_ms, uint32_t queue_size);
+	    uint32_t default_deadline_ms, uint32_t queue_size);
 void	oes_client_get_mode(struct oes_client *ec, uint32_t *mode,
-	    uint32_t *timeout_ms, uint32_t *queue_size);
-int	oes_client_set_timeout(struct oes_client *ec, uint32_t timeout_ms);
-void	oes_client_get_timeout(struct oes_client *ec, uint32_t *timeout_ms);
+	    uint32_t *default_deadline_ms, uint32_t *queue_size);
+int	oes_client_set_deadline_bound(struct oes_client *ec,
+	    oes_event_type_t event, uint32_t milliseconds, bool minimum);
+int	oes_client_get_deadline_bound(struct oes_client *ec,
+	    oes_event_type_t event, uint32_t *milliseconds, bool minimum);
+uint32_t oes_client_effective_deadline_locked(struct oes_client *ec,
+	    oes_event_type_t event);
 bool	oes_client_is_muted(struct oes_client *ec, struct proc *p,
 	    oes_event_type_t event);
 bool	oes_client_is_muted_by_token(struct oes_client *ec,
@@ -417,8 +450,8 @@ int	oes_client_set_mute_invert(struct oes_client *ec, uint32_t type,
 	    bool invert);
 int	oes_client_get_mute_invert(struct oes_client *ec, uint32_t type,
 	    uint32_t *invert);
-int	oes_client_set_timeout_action(struct oes_client *ec, uint32_t action);
-int	oes_client_get_timeout_action(struct oes_client *ec, uint32_t *action);
+int	oes_client_set_deadline_miss_mode(struct oes_client *ec, uint32_t mode);
+int	oes_client_get_deadline_miss_mode(struct oes_client *ec, uint32_t *mode);
 void	oes_client_get_stats(struct oes_client *ec, struct oes_stats *stats);
 
 /* Per-event-type muting */
@@ -465,6 +498,8 @@ int	oes_client_cache_add(struct oes_client *ec,
 int	oes_client_cache_remove(struct oes_client *ec,
 	    const oes_cache_key_t *key);
 void	oes_client_cache_clear(struct oes_client *ec);
+void	oes_cache_invalidate_token(const oes_file_token_t *token);
+void	oes_cache_invalidate_all(void);
 bool	oes_client_cache_lookup(struct oes_client *ec,
 	    const struct oes_pending *ep, oes_auth_result_t *result);
 
@@ -476,6 +511,7 @@ void	oes_pending_free(struct oes_pending *ep);
 void	oes_pending_hold(struct oes_pending *ep);
 void	oes_pending_rele(struct oes_pending *ep);
 int	oes_event_enqueue(struct oes_client *ec, struct oes_pending *ep);
+void	oes_event_note_drop(struct oes_client *ec, oes_event_type_t event);
 struct oes_pending *oes_event_dequeue(struct oes_client *ec);
 int	oes_event_respond(struct oes_client *ec, uint64_t msg_id,
 	    oes_auth_result_t result);
@@ -494,7 +530,7 @@ void	oes_auth_group_mark_response(struct oes_auth_group *ag,
 	    oes_auth_result_t result);
 int	oes_auth_group_wait(struct oes_auth_group *ag,
 	    struct oes_pending **eps, size_t count);
-void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t timeout_ms);
+void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms);
 
 /*
  * Function prototypes - oes_mac.c (MAC policy integration)
@@ -502,6 +538,7 @@ void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t timeout_ms);
 int	oes_mac_init(void);
 void	oes_mac_uninit(void);
 uint64_t oes_proc_get_exec_id(struct proc *p);
+const char *oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags);
 
 /*
  * String table helpers
@@ -520,6 +557,8 @@ void	oes_fill_process(oes_process_t *ep, struct proc *p,
 	    struct ucred *cred, struct oes_strtab *st, void *msg_base);
 void	oes_fill_file(oes_file_t *ef, struct vnode *vp, struct ucred *cred,
 	    struct oes_strtab *st, void *msg_base);
+int	oes_scope_mark_current(pid_t owner_pid, uint64_t *markerp);
+void	oes_scope_snapshot(struct oes_pending *ep);
 
 /*
  * Sysctl variables
@@ -527,8 +566,8 @@ void	oes_fill_file(oes_file_t *ef, struct vnode *vp, struct ucred *cred,
 SYSCTL_DECL(_security_oes);
 
 extern int oes_debug;
-extern int oes_default_timeout;
-extern int oes_default_action;
+extern int oes_default_deadline;
+extern int oes_default_deadline_miss_mode;
 extern int oes_auth_fail_closed;
 extern int oes_require_auth_clients;
 extern int oes_default_queue_size;

@@ -9,7 +9,8 @@
 .Nd log OpenEndpointSecurity events as JSON
 .Sh SYNOPSIS
 .Nm
-.Op Fl p
+.Op Fl dnp
+.Op Fl m Ar path
 .Op Fl o Ar file
 .Op Ar event_type ...
 .Nm
@@ -31,12 +32,26 @@ and
 .Pp
 .Nm
 never authorizes or blocks an operation.
-It uses notification mode and mutes itself to avoid logging its own activity.
-Each JSON record includes the event name, process information, event data, a
-timestamp, and whether the event type has an authorization-capable variant.
+It uses notification mode and, by default, mutes itself and
+.Pa /dev/
+to reduce recursive and device noise.
+Those defaults are ordinary mutable client state.
+Each JSON record includes message IDs and sequence numbers, monotonic and
+wall-clock timestamps, authorization results and deadlines, source process,
+thread and path metadata, and event-specific objects.
 .Bl -tag -width indent
+.It Fl d
+Use a descendants-scoped client.
+The logger process and its descendant subtree remain visible while unrelated
+processes are hidden.
 .It Fl l
 List accepted event names and exit.
+.It Fl m Ar path
+Mute events whose primary object has the given path prefix.
+This option may be repeated.
+.It Fl n
+Disable the normal noise mutes and clear kernel-configured default process and
+path mutes.
 .It Fl o Ar file
 Append JSON output to
 .Ar file
@@ -44,6 +59,8 @@ instead of standard output.
 .It Fl p
 Pretty-print JSON instead of emitting one compact object per line.
 .El
+.Sh EXIT STATUS
+.Ex -std
 .Sh EXAMPLES
 Log all observable events:
 .Bd -literal -offset indent
@@ -55,17 +72,20 @@ Log selected events to a file:
 oeslogger -o /var/log/oes.ndjson exec open create unlink
 .Ed
 .Pp
+Observe only the logger's process subtree without default noise filters:
+.Bd -literal -offset indent
+oeslogger -d -n exec open
+.Ed
+.Pp
 Format the normal NDJSON output with
 .Xr jq 1 :
 .Bd -literal -offset indent
 oeslogger exec open | jq .
 .Ed
-.Sh EXIT STATUS
-.Ex -std
 .Sh SEE ALSO
 .Xr jq 1 ,
-.Xr oes 4 ,
-.Xr liboes 3
+.Xr liboes 3 ,
+.Xr oes 4
 .Sh HISTORY
 .Nm
 was added as the OpenEndpointSecurity event logging tool in

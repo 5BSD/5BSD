@@ -1,8 +1,7 @@
 /*
  * OES flags-based AUTH response test.
  *
- * Tests oes_response_flags_t for partial authorization scenarios,
- * such as downgrading O_RDWR to O_RDONLY.
+ * Tests oes_response_flags_t for event-specific access restrictions.
  */
 #include <sys/ioctl.h>
 #include <sys/poll.h>
@@ -138,7 +137,7 @@ main(void)
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
-	mode.ema_timeout_ms = 5000;
+	mode.ema_default_deadline_ms = 5000;
 	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
 		perror("OES_IOC_SET_MODE");
 		close(fd);
@@ -348,14 +347,15 @@ main(void)
 
 	printf("    Received OPEN for flags=0x%x\n", msg->em_event_data.open.flags);
 
-	/* Allow but specify only read flag is permitted */
-	ret = respond_with_flags(fd, msg->em_id, OES_AUTH_ALLOW, O_RDONLY, O_WRONLY);
+	/* Allow but specify only read access is permitted. */
+	ret = respond_with_flags(fd, msg->em_id, OES_AUTH_ALLOW,
+	    OES_ACCESS_READ, OES_ACCESS_WRITE);
 	if (ret != 0) {
 		fprintf(stderr, "FAIL: flags response write failed\n");
 		goto fail;
 	}
 
-	/* The kernel should downgrade or the response should work */
+	/* OES does not downgrade; a write-capable open must be denied. */
 	{
 		char result;
 		struct pollfd pfd;
@@ -363,14 +363,17 @@ main(void)
 		pfd.events = POLLIN;
 		if (poll(&pfd, 1, 2000) > 0) {
 			if (read(pipefd[1], &result, 1) == 1) {
-				if (result == 'r') {
-					printf("    PASS: open was downgraded to read-only\n");
-				} else if (result == 'w') {
-					printf("    INFO: write still worked (flag filtering may be in MAC layer)\n");
+				if (result == 'w') {
+					fprintf(stderr,
+					    "FAIL: write succeeded despite read-only mask\n");
+					goto fail;
 				} else if (result == 'n') {
-					printf("    INFO: open was denied (stricter than expected)\n");
+					printf("    PASS: write-capable open was denied\n");
+				} else {
+					fprintf(stderr,
+					    "FAIL: unexpected child result '%c'\n", result);
+					goto fail;
 				}
-				/* All outcomes are acceptable for this test */
 			}
 		} else {
 			fprintf(stderr, "FAIL: no response from child\n");

@@ -5,6 +5,6 @@ Example clients for the oes(4) framework and DTrace scripts for the "oes"
 SDT provider.  See oes(4) and liboes(3).
 
   oesd.c          - reference monitoring daemon
-  oeslogger.c     - event logger
+  oeslogger.c     - JSON event logger; configurable noise mutes and descendant scope
   vendor_client.c - example third-party client
   dtrace/*.d      - DTrace scripts for the oes provider (auth, cache, events)

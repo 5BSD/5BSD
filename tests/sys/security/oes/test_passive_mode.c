@@ -52,6 +52,17 @@ wait_for_exec(int fd, pid_t pid, int timeout_ms)
 
 		if (msg->em_event == OES_EVENT_NOTIFY_EXEC &&
 		    msg->em_action == OES_ACTION_NOTIFY) {
+			if (!oes_message_has_auth_result(msg) ||
+			    msg->em_result != OES_AUTH_ALLOW) {
+				fprintf(stderr,
+				    "PASSIVE notification lacks applied allow result\n");
+				return (-1);
+			}
+			if (msg->em_seq_num == 0 || msg->em_global_seq_num == 0) {
+				fprintf(stderr,
+				    "PASSIVE notification lacks sequence numbers\n");
+				return (-1);
+			}
 			return (0);
 		}
 	}

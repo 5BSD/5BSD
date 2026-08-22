@@ -49,6 +49,15 @@ typedef bool (*oes_handler_t)(oes_client_t *client, const oes_message_t *msg,
 oes_client_t *oes_client_create(void);
 
 /*
+ * Create a client scoped to the calling process and its descendants.
+ *
+ * The root process is visible for NOTIFY events; descendants are visible for
+ * AUTH and NOTIFY events.  Processes outside the subtree are never delivered.
+ * On FreeBSD this still requires permission to open /dev/oes.
+ */
+oes_client_t *oes_client_create_descendants(void);
+
+/*
  * oes_client_create_from_fd - Create client from existing fd
  *
  * Used when receiving a restricted fd from a system daemon.
@@ -73,6 +82,10 @@ void oes_client_destroy(oes_client_t *client);
  */
 int oes_client_fd(oes_client_t *client);
 
+/* Select/query visibility.  Scope can only be narrowed before configuration. */
+int oes_set_descendants_scope(oes_client_t *client);
+int oes_get_scope(oes_client_t *client, uint32_t *scope);
+
 /*
  * Configuration
  */
@@ -81,56 +94,43 @@ int oes_client_fd(oes_client_t *client);
  * oes_set_mode - Set client operating mode
  *
  * mode: OES_MODE_NOTIFY, OES_MODE_AUTH, or OES_MODE_PASSIVE
- * timeout_ms: AUTH timeout in milliseconds (0 = keep current)
+ * default_deadline_ms: default AUTH deadline in milliseconds (0 = current)
  * queue_size: Max queued events (0 = keep current)
  *
  * Returns 0 on success, -1 on error (sets errno).
  */
 int oes_set_mode(oes_client_t *client, uint32_t mode,
-    uint32_t timeout_ms, uint32_t queue_size);
+    uint32_t default_deadline_ms, uint32_t queue_size);
 
 /*
  * oes_get_mode - Get current client mode and configuration
  *
  * mode: OUT, current operating mode (may be NULL)
- * timeout_ms: OUT, current AUTH timeout in milliseconds (may be NULL)
+ * default_deadline_ms: OUT, current default AUTH deadline (may be NULL)
  * queue_size: OUT, current max queued events (may be NULL)
  *
  * Returns 0 on success, -1 on error (sets errno).
  */
 int oes_get_mode(oes_client_t *client, uint32_t *mode,
-    uint32_t *timeout_ms, uint32_t *queue_size);
+    uint32_t *default_deadline_ms, uint32_t *queue_size);
+
+/* Per-AUTH-event deadline controls (milliseconds). */
+int oes_set_deadline_max(oes_client_t *client, oes_event_type_t event,
+    uint32_t milliseconds);
+int oes_get_deadline_max(oes_client_t *client, oes_event_type_t event,
+    uint32_t *milliseconds);
+int oes_set_deadline_min(oes_client_t *client, oes_event_type_t event,
+    uint32_t milliseconds);
+int oes_get_deadline_min(oes_client_t *client, oes_event_type_t event,
+    uint32_t *milliseconds);
 
 /*
- * oes_set_timeout - Set AUTH timeout independently of mode
- *
- * timeout_ms: AUTH timeout in milliseconds (clamped to valid range)
- *
- * Unlike oes_set_mode(), this does not trigger first-mode-set logic
- * (default mutes are not applied).
- *
- * Returns 0 on success, -1 on error (sets errno).
+ * Set/query behavior when an AUTH deadline is missed or delivery is dropped.
  */
-int oes_set_timeout(oes_client_t *client, uint32_t timeout_ms);
-
-/*
- * oes_get_timeout - Get current AUTH timeout
- *
- * Returns 0 on success, -1 on error (sets errno).
- */
-int oes_get_timeout(oes_client_t *client, uint32_t *timeout_ms);
-
-/*
- * oes_set_timeout_action - Set default action when AUTH times out
- *
- * action: OES_AUTH_ALLOW or OES_AUTH_DENY
- */
-int oes_set_timeout_action(oes_client_t *client, oes_auth_result_t action);
-
-/*
- * oes_get_timeout_action - Get default action when AUTH times out
- */
-int oes_get_timeout_action(oes_client_t *client, oes_auth_result_t *action);
+int oes_set_deadline_miss_mode(oes_client_t *client,
+    oes_deadline_miss_mode_t mode);
+int oes_get_deadline_miss_mode(oes_client_t *client,
+    oes_deadline_miss_mode_t *mode);
 
 /*
  * oes_cache_add - Add or update a decision cache entry
@@ -159,28 +159,25 @@ int oes_cache_clear(oes_client_t *client);
 int oes_subscribe(oes_client_t *client, const oes_event_type_t *events,
     size_t count, uint32_t flags);
 
+/* Remove selected subscriptions, or remove every subscription. */
+int oes_unsubscribe(oes_client_t *client, const oes_event_type_t *events,
+    size_t count);
+int oes_unsubscribe_all(oes_client_t *client);
+
+/* Retrieve the current 128-bit AUTH and NOTIFY subscription sets. */
+int oes_get_subscriptions(oes_client_t *client, uint64_t auth_bitmap[2],
+    uint64_t notify_bitmap[2]);
+
 /*
  * oes_subscribe_bitmap - Subscribe using bitmaps directly
  *
  * Efficient bulk subscription using event bitmaps.
  * Bit positions correspond to (event_type & 0x0FFF).
- * Only supports bits 0-63. Use oes_subscribe_bitmap_ex for bits 64+.
+ * Each bitmap contains bits 0-127.
  *
  * Returns 0 on success, -1 on error (sets errno).
  */
-int oes_subscribe_bitmap(oes_client_t *client, uint64_t auth_bitmap,
-    uint64_t notify_bitmap, uint32_t flags);
-
-/*
- * oes_subscribe_bitmap_ex - Subscribe using 128-bit bitmaps
- *
- * Extended version supporting events with bit positions >= 64.
- * auth_bitmap[0] = bits 0-63, auth_bitmap[1] = bits 64-127
- * notify_bitmap[0] = bits 0-63, notify_bitmap[1] = bits 64-127
- *
- * Returns 0 on success, -1 on error (sets errno).
- */
-int oes_subscribe_bitmap_ex(oes_client_t *client, const uint64_t auth_bitmap[2],
+int oes_subscribe_bitmap(oes_client_t *client, const uint64_t auth_bitmap[2],
     const uint64_t notify_bitmap[2], uint32_t flags);
 
 /*
@@ -209,9 +206,10 @@ int oes_mute_process(oes_client_t *client, const oes_proc_token_t *token);
 int oes_unmute_process(oes_client_t *client, const oes_proc_token_t *token);
 
 /*
- * oes_mute_path - Mute events by path
+ * oes_mute_path - Mute events whose primary object matches a path
  *
  * type: OES_MUTE_PATH_LITERAL or OES_MUTE_PATH_PREFIX
+ * This is target-object muting, not executable/source-process muting.
  */
 int oes_mute_path(oes_client_t *client, const char *path, uint32_t type);
 
@@ -221,7 +219,7 @@ int oes_mute_path(oes_client_t *client, const char *path, uint32_t type);
 int oes_unmute_path(oes_client_t *client, const char *path, uint32_t type);
 
 /*
- * oes_mute_target_path - Mute events by target path
+ * oes_mute_target_path - Mute events by secondary/destination path
  */
 int oes_mute_target_path(oes_client_t *client, const char *path,
     uint32_t type);
@@ -231,6 +229,11 @@ int oes_mute_target_path(oes_client_t *client, const char *path,
  */
 int oes_unmute_target_path(oes_client_t *client, const char *path,
     uint32_t type);
+
+/* Clear process/path mute lists, including defaults applied at mode setup. */
+int oes_unmute_all_processes(oes_client_t *client);
+int oes_unmute_all_paths(oes_client_t *client);
+int oes_unmute_all_target_paths(oes_client_t *client);
 
 /*
  * oes_set_mute_invert - Enable/disable mute inversion for a type
@@ -261,6 +264,10 @@ int oes_get_mute_invert(oes_client_t *client, uint32_t type, bool *invert);
  */
 int oes_read_event(oes_client_t *client, const oes_message_t **msgp,
     bool blocking);
+
+/* Copy a message when it must outlive the next read on this client. */
+oes_message_t *oes_message_copy(const oes_message_t *msg);
+void oes_message_free(oes_message_t *msg);
 
 /*
  * oes_respond - Respond to an AUTH event
@@ -304,7 +311,9 @@ oes_respond_deny(oes_client_t *client, const oes_message_t *msg)
 }
 
 /*
- * oes_process_path - Get executable path from process info
+ * oes_process_path - Get the cached executable path from process info
+ *
+ * Check OES_PROC_META_PATH_UNAVAILABLE and OES_PROC_META_PATH_TRUNCATED.
  */
 static inline const char *
 oes_process_path(const oes_message_t *msg, const oes_process_t *proc)

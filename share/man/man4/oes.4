@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd August 14, 2026
+.Dd August 21, 2026
 .Dt OES 4
 .Os
 .Sh NAME
@@ -29,15 +29,24 @@ character device.
 The
 .Xr liboes 3
 library is the supported client interface.
+The kernel interface is LP64-only.
+It is unavailable to 32-bit kernels and processes, and no 32-bit ioctl
+translation ABI is provided.
 .Pp
 Events are of two kinds.
 .Bl -tag -width "NOTIFY" -offset indent
 .It AUTH
 Authorization events are delivered from sleepable MAC check hooks; a subscribed
 client may allow or deny the operation, and the operation blocks until the
-client responds or the per-client timeout expires.
+client responds or the message deadline expires.
 .It NOTIFY
 Notification events are informational and never block the originating thread.
+When a NOTIFY event is the counterpart of an AUTH event, it is delivered after
+the combined authorization decision and includes that applied decision.
+Such an AUTH-derived notification is emitted before the MAC check returns; it
+reports the authorization outcome, not proof that the system call subsequently
+succeeded.
+This differs from a post-operation notification.
 .El
 .Pp
 Multiple clients, in different processes, may be active at once.
@@ -59,13 +68,82 @@ ioctl, reads events with
 .Xr select 2 ,
 or
 .Xr kqueue 2 ,
-and answers authorization events with
-.Dv OES_IOC_RESPOND .
+and answers authorization events by writing an
+.Vt oes_response_t
+or
+.Vt oes_response_flags_t .
 Processes and paths may be muted per client so that their events are suppressed.
+Path muting matches the primary event object; target-path muting matches a
+secondary or destination object.
+It does not mean "events originating from
+this executable" as similarly named APIs on some other systems do.
+.Pp
+A client may set
+.Dv OES_SCOPE_DESCENDANTS
+before setting its mode or subscriptions.
+Such a client receives NOTIFY events for its opener and AUTH plus NOTIFY events
+for the opener's entire descendant subtree, including descendants that already
+exist when the scope is selected.
+All other processes are invisible, and process mute operations are rejected
+for processes outside the visible subtree.
+The default self mute is not applied to this scope because it would suppress
+the required root-process notifications.
+.Pp
+Per-event AUTH deadlines may be configured with
+.Dv OES_IOC_SET_DEADLINE_MAX
+and queried with
+.Dv OES_IOC_GET_DEADLINE_MAX .
+Descendants-scoped clients may additionally set and query deadline floors with
+.Dv OES_IOC_SET_DEADLINE_MIN
+and
+.Dv OES_IOC_GET_DEADLINE_MIN .
+A zero SET value removes the event override.
+If a minimum exceeds the current maximum, the effective maximum rises to the
+minimum; lowering a maximum below its minimum lowers the minimum as well.
+The client-wide deadline in
+.Vt oes_mode_args
+is the inherited default.
+.Dv OES_IOC_SET_DEADLINE_MISS_MODE
+selects fail-open or fail-closed behavior for deadline misses and AUTH messages
+that cannot be queued.
+.Ss Event metadata
+Each message contains monotonic and wall-clock timestamps, the triggering
+thread ID and name when available, and a snapshot of the source process.
+Process metadata includes current and
+.Fx
+real-parent IDs, process reaper,
+process group and session, credentials and supplementary groups, audit session
+and terminal data, jail and login-class identity, ABI, start time, process
+state, thread count, nice value, OS release, and routing FIB.
+The
+.Dv EP_FLAG_OES_CLIENT
+bit reports whether the source process owns an active OES client, analogous to
+Apple's
+.Va es_process_t.is_es_client
+field.
+.Pp
+The executable path is captured during a successful exec and carried in the
+credential label, so subsequent MAC hooks do not perform unsafe vnode path
+lookups.
+The path is inherited across fork and credential changes.
+A process that predates OES activation may have
+.Dv OES_PROC_META_PATH_UNAVAILABLE
+set until its next exec.
+Current-working-directory paths are also explicitly marked unavailable when
+they cannot be captured without violating MAC-hook lock constraints.
+.Pp
+File objects include vnode identity, ownership, mode and flags, size, exact
+allocated bytes, preferred block size, generation, special-device ID,
+filesystem revision and type, link count, and second-plus-nanosecond access,
+modification, change, and birth timestamps.
+The
+.Dv OES_FILE_META_*
+bits distinguish unavailable attributes, unavailable or truncated paths, and
+proposed attributes for objects that do not exist yet.
 .Ss MAC hooks
 Events are generated from MAC policy hooks, including process execution and
 credential changes, the file lifecycle
-.Pq open, close, create, unlink, rename, link, truncate ,
+.Pq open, close, create, unlink, rename, link ,
 memory mapping, extended attributes and ACLs, mounts, module load and unload,
 and socket and pipe operations.
 File
@@ -86,8 +164,14 @@ Maximum number of concurrent clients.
 .It Va security.oes.require_auth_clients
 When non-zero, operations that would generate an AUTH event are denied if no
 client is subscribed to authorize them.
+.It Va security.oes.default_deadline_ms
+Default client-wide AUTH deadline in milliseconds.
+.It Va security.oes.default_deadline_miss_mode
+Default deadline-miss behavior: zero is fail open and one is fail closed.
 .It Va security.oes.default_self_mute
 When non-zero, a new client is automatically muted against its own process.
+This default is mutable client state and may be removed; it is not applied to
+descendants-scoped clients.
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /dev/oes" -compact
@@ -95,9 +179,9 @@ When non-zero, a new client is automatically muted against its own process.
 client device
 .El
 .Sh SEE ALSO
+.Xr dtrace 1 ,
 .Xr liboes 3 ,
-.Xr mac 4 ,
-.Xr dtrace 1
+.Xr mac 4
 .Sh HISTORY
 The
 .Nm
@@ -110,6 +194,10 @@ A client that subscribes to AUTH events can block or deny the corresponding
 system operations; with
 .Va security.oes.require_auth_clients
 set, the absence of a client can deny operations outright.
+Setting a client's deadline-miss mode to
+.Dv OES_DEADLINE_MISS_FAIL_CLOSED
+also denies an AUTH operation if that client's queue is full and the request
+cannot be delivered.
 Access to
 .Pa /dev/oes
 should therefore be restricted to trusted, privileged programs.
@@ -118,14 +206,12 @@ AUTH events are delivered from MAC check hooks, several of which
 .Pq for example vnode open, read, and write
 run with the target vnode locked.
 While a subscribed client is deciding, the originating thread sleeps in the
-hook with that lock held, up to the client's timeout.
-An AUTH client
-.Em must not
-perform, directly or indirectly, any operation on the object it is authorizing
-.Pq or a path that requires locking the same vnode ,
-because doing so deadlocks against the very thread that is waiting for its
-decision; the operation then stalls until the timeout expires and the
-timeout action is applied.
+hook with that lock held, up to the message deadline.
+The process that opened an AUTH client is implicitly allowed and is never sent
+its own AUTH requests, preventing direct handler recursion.
+Helper processes
+are separate identities and should be explicitly muted before they perform
+work on behalf of an AUTH handler; otherwise they can still deadlock on a vnode
+held by the operation awaiting authorization.
 Prefer NOTIFY subscriptions where blocking authorization is not required, keep
-AUTH handlers fast, and set a bounded
-.Dv OES_IOC_SET_TIMEOUT .
+AUTH handlers fast, and set bounded default and per-event deadlines.

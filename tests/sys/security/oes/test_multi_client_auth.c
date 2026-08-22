@@ -66,12 +66,39 @@ wait_for_auth_open(int fd, pid_t pid, int timeout_ms, oes_message_t *out)
 }
 
 static int
+wait_for_notify_open(int fd, pid_t pid, int timeout_ms, oes_message_t *out)
+{
+	test_msg_buf buf;
+	struct timespec start, now;
+
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	for (;;) {
+		long elapsed_ms;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		elapsed_ms = (now.tv_sec - start.tv_sec) * 1000L +
+		    (now.tv_nsec - start.tv_nsec) / 1000000L;
+		if (elapsed_ms >= timeout_ms)
+			return (ETIMEDOUT);
+		if (test_wait_event(fd, &buf.msg, 100) != 0)
+			continue;
+		if (buf.msg.em_event == OES_EVENT_NOTIFY_OPEN &&
+		    buf.msg.em_action == OES_ACTION_NOTIFY &&
+		    buf.msg.em_process.ep_pid == pid) {
+			if (out != NULL)
+				*out = buf.msg;
+			return (0);
+		}
+	}
+}
+
+static int
 setup_auth_client(int *out_fd, uint32_t timeout_ms,
-    oes_auth_result_t timeout_action)
+	    oes_deadline_miss_mode_t deadline_miss_mode)
 {
 	int fd;
 	struct oes_mode_args mode;
-	struct oes_timeout_action_args action;
+	struct oes_deadline_miss_mode_args action;
 	struct oes_subscribe_args sub;
 	oes_event_type_t events[] = {
 		OES_EVENT_AUTH_OPEN,
@@ -85,7 +112,7 @@ setup_auth_client(int *out_fd, uint32_t timeout_ms,
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
-	mode.ema_timeout_ms = timeout_ms;
+	mode.ema_default_deadline_ms = timeout_ms;
 	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
 		perror("OES_IOC_SET_MODE");
 		close(fd);
@@ -93,9 +120,9 @@ setup_auth_client(int *out_fd, uint32_t timeout_ms,
 	}
 
 	memset(&action, 0, sizeof(action));
-	action.eta_action = timeout_action;
-	if (ioctl(fd, OES_IOC_SET_TIMEOUT_ACTION, &action) < 0) {
-		perror("OES_IOC_SET_TIMEOUT_ACTION");
+	action.edma_mode = deadline_miss_mode;
+	if (ioctl(fd, OES_IOC_SET_DEADLINE_MISS_MODE, &action) < 0) {
+		perror("OES_IOC_SET_DEADLINE_MISS_MODE");
 		close(fd);
 		return (-1);
 	}
@@ -115,11 +142,30 @@ setup_auth_client(int *out_fd, uint32_t timeout_ms,
 }
 
 static int
+setup_passive_client(int *out_fd)
+{
+	int fd;
+	oes_event_type_t event = OES_EVENT_AUTH_OPEN;
+
+	fd = open("/dev/oes", O_RDWR | O_NONBLOCK);
+	if (fd < 0)
+		return (-1);
+	if (test_set_mode(fd, OES_MODE_PASSIVE) < 0 ||
+	    test_subscribe(fd, &event, 1, OES_SUB_REPLACE) < 0) {
+		close(fd);
+		return (-1);
+	}
+	*out_fd = fd;
+	return (0);
+}
+
+static int
 run_scenario(const char *name, oes_auth_result_t r1, oes_auth_result_t r2,
     int timeout2, int expect_errno)
 {
 	int fd1;
 	int fd2;
+	int fd3;
 	int ctl_pipe[2];
 	int res_pipe[2];
 	pid_t child;
@@ -127,15 +173,23 @@ run_scenario(const char *name, oes_auth_result_t r1, oes_auth_result_t r2,
 	oes_message_t *msg1 = &_msg1_buf.msg;
 	test_msg_buf _msg2_buf;
 	oes_message_t *msg2 = &_msg2_buf.msg;
+	test_msg_buf _msg3_buf;
+	oes_message_t *msg3 = &_msg3_buf.msg;
 	oes_response_t resp;
 	int err = 0;
 	int status;
 	char cmd = 'g';
 
-	if (setup_auth_client(&fd1, 500, OES_AUTH_ALLOW) != 0)
+	if (setup_auth_client(&fd1, 500, OES_DEADLINE_MISS_FAIL_OPEN) != 0)
 		return (1);
-	if (setup_auth_client(&fd2, timeout2, OES_AUTH_DENY) != 0) {
+	if (setup_auth_client(&fd2, timeout2,
+	    OES_DEADLINE_MISS_FAIL_CLOSED) != 0) {
 		close(fd1);
+		return (1);
+	}
+	if (setup_passive_client(&fd3) != 0) {
+		close(fd1);
+		close(fd2);
 		return (1);
 	}
 
@@ -143,6 +197,7 @@ run_scenario(const char *name, oes_auth_result_t r1, oes_auth_result_t r2,
 		perror("pipe");
 		close(fd1);
 		close(fd2);
+		close(fd3);
 		return (1);
 	}
 
@@ -151,6 +206,7 @@ run_scenario(const char *name, oes_auth_result_t r1, oes_auth_result_t r2,
 		perror("fork");
 		close(fd1);
 		close(fd2);
+		close(fd3);
 		return (1);
 	}
 	if (child == 0) {
@@ -159,6 +215,7 @@ run_scenario(const char *name, oes_auth_result_t r1, oes_auth_result_t r2,
 
 		close(fd1);
 		close(fd2);
+		close(fd3);
 		close(ctl_pipe[1]);
 		close(res_pipe[0]);
 		if (read(ctl_pipe[0], &cmd, 1) != 1)
@@ -207,12 +264,25 @@ run_scenario(const char *name, oes_auth_result_t r1, oes_auth_result_t r2,
 		fprintf(stderr, "%s: failed to read child result\n", name);
 		goto fail;
 	}
+	if (wait_for_notify_open(fd3, child, 2000, msg3) != 0) {
+		fprintf(stderr, "%s: missing post-decision NOTIFY open event\n",
+		    name);
+		goto fail;
+	}
+	if (!oes_message_has_auth_result(msg3) ||
+	    msg3->em_result !=
+	    (expect_errno == 0 ? OES_AUTH_ALLOW : OES_AUTH_DENY)) {
+		fprintf(stderr, "%s: incorrect applied result in NOTIFY event\n",
+		    name);
+		goto fail;
+	}
 
 	(void)waitpid(child, &status, 0);
 	close(ctl_pipe[1]);
 	close(res_pipe[0]);
 	close(fd1);
 	close(fd2);
+	close(fd3);
 
 	if (err != expect_errno) {
 		fprintf(stderr, "%s: expected errno %d, got %d\n",
@@ -228,6 +298,7 @@ fail:
 	close(res_pipe[0]);
 	close(fd1);
 	close(fd2);
+	close(fd3);
 	return (1);
 }
 

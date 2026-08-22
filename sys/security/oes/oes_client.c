@@ -17,6 +17,7 @@
 #include <sys/sx.h>
 #include <sys/selinfo.h>
 #include <sys/jail.h>
+#include <sys/loginclass.h>
 #include <sys/vnode.h>
 #include <sys/namei.h>
 #include <sys/fcntl.h>
@@ -55,8 +56,47 @@ oes_proc_genid(struct proc *p)
 	return (0);
 }
 
+bool
+oes_client_observes_token(const struct oes_client *ec,
+	const oes_proc_token_t *token)
+{
+	struct proc *p, *q;
+	bool locked_here, observed;
+
+	if (ec->ec_scope == OES_SCOPE_GLOBAL)
+		return (true);
+	if (token == NULL || token->ept_id == 0 || token->ept_id > PID_MAX)
+		return (false);
+
+	observed = false;
+	locked_here = !sx_xlocked(&proctree_lock);
+	if (locked_here)
+		sx_slock(&proctree_lock);
+	p = pfind((pid_t)token->ept_id);
+	if (p == NULL)
+		goto out;
+	if (token->ept_genid != 0 && token->ept_genid != oes_proc_genid(p)) {
+		PROC_UNLOCK(p);
+		goto out;
+	}
+	for (q = p; q != NULL; q = proc_realparent(q)) {
+		if (q->p_pid == ec->ec_owner_pid) {
+			observed = true;
+			break;
+		}
+		if (q == &proc0)
+			break;
+	}
+	PROC_UNLOCK(p);
+out:
+	if (locked_here)
+		sx_sunlock(&proctree_lock);
+	return (observed);
+}
+
 static int
-oes_client_validate_token(const oes_proc_token_t *token)
+oes_client_validate_token(struct oes_client *ec,
+	const oes_proc_token_t *token)
 {
 	struct proc *p;
 	uint64_t genid;
@@ -82,6 +122,8 @@ oes_client_validate_token(const oes_proc_token_t *token)
 
 	if (token->ept_genid != 0 && token->ept_genid != genid)
 		return (ESRCH);
+	if (!oes_client_observes_token(ec, token))
+		return (EPERM);
 
 	return (0);
 }
@@ -91,24 +133,25 @@ oes_client_alloc(void)
 {
 	struct oes_client *ec;
 	int queue_max;
-	int timeout_ms;
+	int deadline_ms;
 
 	ec = malloc(sizeof(*ec), M_OES, M_WAITOK | M_ZERO);
 
 	mtx_init(&ec->ec_mtx, "oes_client", NULL, MTX_DEF);
 	ec->ec_owner_pid = -1;
+	ec->ec_scope = OES_SCOPE_GLOBAL;
 	ec->ec_mode = OES_MODE_NOTIFY;
-	timeout_ms = oes_default_timeout;
-	if (timeout_ms < OES_MIN_TIMEOUT_MS)
-		timeout_ms = OES_MIN_TIMEOUT_MS;
-	if (timeout_ms > OES_MAX_TIMEOUT_MS)
-		timeout_ms = OES_MAX_TIMEOUT_MS;
-	ec->ec_timeout_ms = (uint32_t)timeout_ms;
-	if (oes_default_action == OES_AUTH_ALLOW ||
-	    oes_default_action == OES_AUTH_DENY)
-		ec->ec_timeout_action = oes_default_action;
+	deadline_ms = oes_default_deadline;
+	if (deadline_ms < OES_MIN_DEADLINE_MS)
+		deadline_ms = OES_MIN_DEADLINE_MS;
+	if (deadline_ms > OES_MAX_DEADLINE_MS)
+		deadline_ms = OES_MAX_DEADLINE_MS;
+	ec->ec_default_deadline_ms = (uint32_t)deadline_ms;
+	if (oes_default_deadline_miss_mode == OES_DEADLINE_MISS_FAIL_OPEN ||
+	    oes_default_deadline_miss_mode == OES_DEADLINE_MISS_FAIL_CLOSED)
+		ec->ec_deadline_miss_mode = oes_default_deadline_miss_mode;
 	else
-		ec->ec_timeout_action = OES_AUTH_ALLOW;
+		ec->ec_deadline_miss_mode = OES_DEADLINE_MISS_FAIL_OPEN;
 	queue_max = oes_default_queue_size;
 	if (queue_max <= 0)
 		queue_max = OES_DEFAULT_QUEUE_SIZE;
@@ -155,8 +198,9 @@ oes_client_free(struct oes_client *ec)
 				oes_auth_result_t close_action;
 
 				close_action = (oes_auth_fail_closed ||
-				    oes_require_auth_clients) ? OES_AUTH_DENY :
-				    (oes_auth_result_t)ec->ec_timeout_action;
+				    oes_require_auth_clients || ec->ec_deadline_miss_mode ==
+				    OES_DEADLINE_MISS_FAIL_CLOSED) ? OES_AUTH_DENY :
+				    OES_AUTH_ALLOW;
 				ep->ep_responded = true;
 				ep->ep_result = close_action;
 				if (ep->ep_group != NULL)
@@ -179,8 +223,9 @@ oes_client_free(struct oes_client *ec)
 				oes_auth_result_t close_action;
 
 				close_action = (oes_auth_fail_closed ||
-				    oes_require_auth_clients) ? OES_AUTH_DENY :
-				    (oes_auth_result_t)ec->ec_timeout_action;
+				    oes_require_auth_clients || ec->ec_deadline_miss_mode ==
+				    OES_DEADLINE_MISS_FAIL_CLOSED) ? OES_AUTH_DENY :
+				    OES_AUTH_ALLOW;
 				ep->ep_responded = true;
 				ep->ep_result = close_action;
 				if (ep->ep_group != NULL)
@@ -249,12 +294,20 @@ oes_client_subscribe_events(struct oes_client *ec, oes_event_type_t *events,
 {
 	size_t i;
 
+	if (flags != OES_SUB_ADD && flags != OES_SUB_REPLACE &&
+	    flags != OES_SUB_REMOVE)
+		return (EINVAL);
+
 	/*
 	 * Validate all events BEFORE modifying state to ensure atomicity.
 	 * Without this, OES_SUB_REPLACE could clear subscriptions and then
 	 * fail partway through, leaving the client with partial subscriptions.
 	 */
 	EC_LOCK(ec);
+	if ((ec->ec_flags & EC_FLAG_SCOPE_SETTING) != 0) {
+		EC_UNLOCK(ec);
+		return (EBUSY);
+	}
 
 	for (i = 0; i < count; i++) {
 		oes_event_type_t ev = events[i];
@@ -273,7 +326,8 @@ oes_client_subscribe_events(struct oes_client *ec, oes_event_type_t *events,
 		}
 
 		/* AUTH events require AUTH mode (PASSIVE gets them as NOTIFY). */
-		if (OES_EVENT_IS_AUTH(ev) && ec->ec_mode != OES_MODE_AUTH) {
+		if (flags != OES_SUB_REMOVE && OES_EVENT_IS_AUTH(ev) &&
+		    ec->ec_mode != OES_MODE_AUTH) {
 			if (ec->ec_mode == OES_MODE_PASSIVE) {
 				if (oes_auth_to_notify(ev) == 0) {
 					EC_UNLOCK(ec);
@@ -291,8 +345,12 @@ oes_client_subscribe_events(struct oes_client *ec, oes_event_type_t *events,
 	if (flags & OES_SUB_REPLACE)
 		oes_client_unsubscribe_all(ec);
 
-	for (i = 0; i < count; i++)
-		oes_client_subscribe(ec, events[i]);
+	for (i = 0; i < count; i++) {
+		if (flags == OES_SUB_REMOVE)
+			oes_client_unsubscribe(ec, events[i]);
+		else
+			oes_client_subscribe(ec, events[i]);
+	}
 
 	EC_UNLOCK(ec);
 
@@ -324,53 +382,23 @@ oes_validate_auth_bitmap_for_passive(const uint64_t auth_bitmap[2])
 }
 
 int
-oes_client_subscribe_bitmap(struct oes_client *ec, uint64_t auth_bitmap,
-    uint64_t notify_bitmap, uint32_t flags)
-{
-	EC_LOCK(ec);
-
-	/* AUTH subscriptions require AUTH mode (or PASSIVE) */
-	if (auth_bitmap != 0) {
-		if (ec->ec_mode != OES_MODE_AUTH &&
-		    ec->ec_mode != OES_MODE_PASSIVE) {
-			EC_UNLOCK(ec);
-			return (EPERM);
-		}
-		/* PASSIVE: validate all AUTH bits have NOTIFY mappings */
-		if (ec->ec_mode == OES_MODE_PASSIVE) {
-			uint64_t bitmap[2] = { auth_bitmap, 0 };
-			if (!oes_validate_auth_bitmap_for_passive(bitmap)) {
-				EC_UNLOCK(ec);
-				return (EPERM);
-			}
-		}
-	}
-
-	/* Replace mode: clear existing subscriptions */
-	if (flags & OES_SUB_REPLACE)
-		oes_client_unsubscribe_all(ec);
-
-	/* Apply bitmaps, masking out undefined event bits */
-	ec->ec_subscriptions[0] |= auth_bitmap & OES_VALID_AUTH_LO;
-	ec->ec_subscriptions[2] |= notify_bitmap & OES_VALID_NOTIFY_LO;
-
-	EC_UNLOCK(ec);
-
-	OES_DEBUG("client %p subscribed via bitmap (auth=0x%lx, notify=0x%lx)",
-	    ec, (unsigned long)auth_bitmap, (unsigned long)notify_bitmap);
-
-	return (0);
-}
-
-int
-oes_client_subscribe_bitmap_ex(struct oes_client *ec,
+oes_client_subscribe_bitmap(struct oes_client *ec,
     const uint64_t auth_bitmap[2], const uint64_t notify_bitmap[2],
     uint32_t flags)
 {
+	if (flags != OES_SUB_ADD && flags != OES_SUB_REPLACE &&
+	    flags != OES_SUB_REMOVE)
+		return (EINVAL);
+
 	EC_LOCK(ec);
+	if ((ec->ec_flags & EC_FLAG_SCOPE_SETTING) != 0) {
+		EC_UNLOCK(ec);
+		return (EBUSY);
+	}
 
 	/* AUTH subscriptions require AUTH mode (or PASSIVE) */
-	if (auth_bitmap[0] != 0 || auth_bitmap[1] != 0) {
+	if (flags != OES_SUB_REMOVE &&
+	    (auth_bitmap[0] != 0 || auth_bitmap[1] != 0)) {
 		if (ec->ec_mode != OES_MODE_AUTH &&
 		    ec->ec_mode != OES_MODE_PASSIVE) {
 			EC_UNLOCK(ec);
@@ -389,17 +417,78 @@ oes_client_subscribe_bitmap_ex(struct oes_client *ec,
 	if (flags & OES_SUB_REPLACE)
 		oes_client_unsubscribe_all(ec);
 
-	/* Apply bitmaps, masking out undefined event bits */
-	ec->ec_subscriptions[0] |= auth_bitmap[0] & OES_VALID_AUTH_LO;
-	ec->ec_subscriptions[1] |= auth_bitmap[1] & OES_VALID_AUTH_HI;
-	ec->ec_subscriptions[2] |= notify_bitmap[0] & OES_VALID_NOTIFY_LO;
-	ec->ec_subscriptions[3] |= notify_bitmap[1] & OES_VALID_NOTIFY_HI;
+	if (flags == OES_SUB_REMOVE) {
+		ec->ec_subscriptions[0] &= ~(auth_bitmap[0] & OES_VALID_AUTH_LO);
+		ec->ec_subscriptions[1] &= ~(auth_bitmap[1] & OES_VALID_AUTH_HI);
+		ec->ec_subscriptions[2] &= ~(notify_bitmap[0] & OES_VALID_NOTIFY_LO);
+		ec->ec_subscriptions[3] &= ~(notify_bitmap[1] & OES_VALID_NOTIFY_HI);
+	} else {
+		ec->ec_subscriptions[0] |= auth_bitmap[0] & OES_VALID_AUTH_LO;
+		ec->ec_subscriptions[1] |= auth_bitmap[1] & OES_VALID_AUTH_HI;
+		ec->ec_subscriptions[2] |= notify_bitmap[0] & OES_VALID_NOTIFY_LO;
+		ec->ec_subscriptions[3] |= notify_bitmap[1] & OES_VALID_NOTIFY_HI;
+	}
 
 	EC_UNLOCK(ec);
 
 	OES_DEBUG("client %p subscribed via ext bitmap", ec);
 
 	return (0);
+}
+
+void
+oes_client_get_subscriptions(struct oes_client *ec, uint64_t auth_bitmap[2],
+    uint64_t notify_bitmap[2])
+{
+	EC_LOCK(ec);
+	auth_bitmap[0] = ec->ec_subscriptions[0];
+	auth_bitmap[1] = ec->ec_subscriptions[1];
+	notify_bitmap[0] = ec->ec_subscriptions[2];
+	notify_bitmap[1] = ec->ec_subscriptions[3];
+	EC_UNLOCK(ec);
+}
+
+int
+oes_client_set_scope(struct oes_client *ec, uint32_t scope)
+{
+	uint64_t marker;
+	pid_t owner_pid;
+	int error;
+
+	if (scope != OES_SCOPE_DESCENDANTS)
+		return (EINVAL);
+
+	EC_LOCK(ec);
+	if ((ec->ec_flags & (EC_FLAG_MODE_SET | EC_FLAG_SCOPE_SETTING)) != 0 ||
+	    ec->ec_subscriptions[0] != 0 || ec->ec_subscriptions[1] != 0 ||
+	    ec->ec_subscriptions[2] != 0 || ec->ec_subscriptions[3] != 0 ||
+	    !TAILQ_EMPTY(&ec->ec_pending) || !TAILQ_EMPTY(&ec->ec_delivered)) {
+		error = EBUSY;
+	} else if (ec->ec_scope == OES_SCOPE_GLOBAL) {
+		ec->ec_flags |= EC_FLAG_SCOPE_SETTING;
+		owner_pid = ec->ec_owner_pid;
+		EC_UNLOCK(ec);
+		error = oes_scope_mark_current(owner_pid, &marker);
+		EC_LOCK(ec);
+		ec->ec_flags &= ~EC_FLAG_SCOPE_SETTING;
+		if (error == 0) {
+			ec->ec_scope_marker = marker;
+			ec->ec_scope = scope;
+		}
+	} else {
+		error = (ec->ec_scope == scope) ? 0 : EPERM;
+	}
+	EC_UNLOCK(ec);
+	return (error);
+}
+
+void
+oes_client_get_scope(struct oes_client *ec, uint32_t *scope)
+{
+
+	EC_LOCK(ec);
+	*scope = ec->ec_scope;
+	EC_UNLOCK(ec);
 }
 
 /*
@@ -414,7 +503,8 @@ oes_client_apply_default_mutes(struct oes_client *ec)
 	size_t len;
 
 	/* Apply default self-mute (add entry to list for query consistency) */
-	if (oes_default_self_mute && !(ec->ec_flags & EC_FLAG_MUTED_SELF)) {
+	if (oes_default_self_mute && ec->ec_scope != OES_SCOPE_DESCENDANTS &&
+	    !(ec->ec_flags & EC_FLAG_MUTED_SELF)) {
 		struct oes_mute_entry *em;
 
 		em = malloc(sizeof(*em), M_OES, M_NOWAIT | M_ZERO);
@@ -478,12 +568,17 @@ oes_client_apply_default_mutes(struct oes_client *ec)
 }
 
 int
-oes_client_set_mode(struct oes_client *ec, uint32_t mode, uint32_t timeout_ms,
+oes_client_set_mode(struct oes_client *ec, uint32_t mode,
+    uint32_t default_deadline_ms,
     uint32_t queue_size)
 {
 	bool first_mode_set;
 
 	EC_LOCK(ec);
+	if ((ec->ec_flags & EC_FLAG_SCOPE_SETTING) != 0) {
+		EC_UNLOCK(ec);
+		return (EBUSY);
+	}
 
 	/* Track if this is the first mode set (for default mutes) */
 	first_mode_set = !(ec->ec_flags & EC_FLAG_MODE_SET);
@@ -498,12 +593,12 @@ oes_client_set_mode(struct oes_client *ec, uint32_t mode, uint32_t timeout_ms,
 	ec->ec_mode = mode;
 	ec->ec_flags |= EC_FLAG_MODE_SET;
 
-	if (timeout_ms != 0) {
-		if (timeout_ms < OES_MIN_TIMEOUT_MS)
-			timeout_ms = OES_MIN_TIMEOUT_MS;
-		if (timeout_ms > OES_MAX_TIMEOUT_MS)
-			timeout_ms = OES_MAX_TIMEOUT_MS;
-		ec->ec_timeout_ms = timeout_ms;
+	if (default_deadline_ms != 0) {
+		if (default_deadline_ms < OES_MIN_DEADLINE_MS)
+			default_deadline_ms = OES_MIN_DEADLINE_MS;
+		if (default_deadline_ms > OES_MAX_DEADLINE_MS)
+			default_deadline_ms = OES_MAX_DEADLINE_MS;
+		ec->ec_default_deadline_ms = default_deadline_ms;
 	}
 
 	if (queue_size != 0) {
@@ -518,50 +613,135 @@ oes_client_set_mode(struct oes_client *ec, uint32_t mode, uint32_t timeout_ms,
 	if (first_mode_set)
 		oes_client_apply_default_mutes(ec);
 
-	OES_DEBUG("client %p mode=%u timeout=%u queue=%u",
-	    ec, mode, ec->ec_timeout_ms, ec->ec_queue_max);
+	OES_DEBUG("client %p mode=%u deadline=%u queue=%u",
+	    ec, mode, ec->ec_default_deadline_ms, ec->ec_queue_max);
 
 	return (0);
 }
 
 void
-oes_client_get_mode(struct oes_client *ec, uint32_t *mode, uint32_t *timeout_ms,
-    uint32_t *queue_size)
+oes_client_get_mode(struct oes_client *ec, uint32_t *mode,
+    uint32_t *default_deadline_ms, uint32_t *queue_size)
 {
 	EC_LOCK(ec);
 	if (mode != NULL)
 		*mode = ec->ec_mode;
-	if (timeout_ms != NULL)
-		*timeout_ms = ec->ec_timeout_ms;
+	if (default_deadline_ms != NULL)
+		*default_deadline_ms = ec->ec_default_deadline_ms;
 	if (queue_size != NULL)
 		*queue_size = ec->ec_queue_max;
 	EC_UNLOCK(ec);
 }
 
-int
-oes_client_set_timeout(struct oes_client *ec, uint32_t timeout_ms)
+static int
+oes_deadline_event_index(oes_event_type_t event, uint32_t *index)
 {
-	/* Clamp to valid range */
-	if (timeout_ms < OES_MIN_TIMEOUT_MS)
-		timeout_ms = OES_MIN_TIMEOUT_MS;
-	if (timeout_ms > OES_MAX_TIMEOUT_MS)
-		timeout_ms = OES_MAX_TIMEOUT_MS;
+	uint32_t bit;
 
-	EC_LOCK(ec);
-	ec->ec_timeout_ms = timeout_ms;
-	EC_UNLOCK(ec);
-
-	OES_DEBUG("client %p timeout set to %u ms", ec, timeout_ms);
+	if (!oes_event_is_valid(event) || !OES_EVENT_IS_AUTH(event))
+		return (EINVAL);
+	bit = (uint32_t)event & 0x0fff;
+	if (bit >= nitems(((struct oes_client *)0)->ec_deadline_min_ms))
+		return (EINVAL);
+	*index = bit;
 	return (0);
 }
 
-void
-oes_client_get_timeout(struct oes_client *ec, uint32_t *timeout_ms)
+int
+oes_client_set_deadline_bound(struct oes_client *ec, oes_event_type_t event,
+    uint32_t milliseconds, bool minimum)
 {
+	uint32_t index;
+	int error;
+
+	error = oes_deadline_event_index(event, &index);
+	if (error != 0)
+		return (error);
+	if (milliseconds != 0) {
+		if (milliseconds < OES_MIN_DEADLINE_MS)
+			milliseconds = OES_MIN_DEADLINE_MS;
+		if (milliseconds > OES_MAX_DEADLINE_MS)
+			milliseconds = OES_MAX_DEADLINE_MS;
+	}
+
 	EC_LOCK(ec);
-	if (timeout_ms != NULL)
-		*timeout_ms = ec->ec_timeout_ms;
+	if (minimum && ec->ec_scope != OES_SCOPE_DESCENDANTS) {
+		EC_UNLOCK(ec);
+		return (EPERM);
+	}
+	if (minimum) {
+		ec->ec_deadline_min_ms[index] = milliseconds;
+		if (milliseconds != 0) {
+			uint32_t maximum = ec->ec_deadline_max_ms[index];
+
+			if (maximum == 0)
+				maximum = ec->ec_default_deadline_ms;
+			if (maximum < milliseconds)
+				ec->ec_deadline_max_ms[index] = milliseconds;
+		}
+	} else {
+		ec->ec_deadline_max_ms[index] = milliseconds;
+		if (milliseconds != 0 &&
+		    ec->ec_deadline_min_ms[index] > milliseconds)
+			ec->ec_deadline_min_ms[index] = milliseconds;
+	}
 	EC_UNLOCK(ec);
+	return (0);
+}
+
+int
+oes_client_get_deadline_bound(struct oes_client *ec, oes_event_type_t event,
+    uint32_t *milliseconds, bool minimum)
+{
+	uint32_t index, value;
+	int error;
+
+	if (milliseconds == NULL)
+		return (EINVAL);
+	error = oes_deadline_event_index(event, &index);
+	if (error != 0)
+		return (error);
+
+	EC_LOCK(ec);
+	if (minimum && ec->ec_scope != OES_SCOPE_DESCENDANTS) {
+		EC_UNLOCK(ec);
+		return (EPERM);
+	}
+	if (minimum) {
+		value = ec->ec_deadline_min_ms[index];
+	} else {
+		value = ec->ec_deadline_max_ms[index];
+		if (value == 0)
+			value = ec->ec_default_deadline_ms;
+		if (value < ec->ec_deadline_min_ms[index])
+			value = ec->ec_deadline_min_ms[index];
+	}
+	EC_UNLOCK(ec);
+	*milliseconds = value;
+	return (0);
+}
+
+uint32_t
+oes_client_effective_deadline_locked(struct oes_client *ec,
+    oes_event_type_t event)
+{
+	uint32_t index, maximum, minimum, timeout;
+
+	EC_LOCK_ASSERT(ec);
+	if (oes_deadline_event_index(event, &index) != 0)
+		return (ec->ec_default_deadline_ms);
+	minimum = ec->ec_deadline_min_ms[index];
+	maximum = ec->ec_deadline_max_ms[index];
+	if (maximum == 0)
+		maximum = ec->ec_default_deadline_ms;
+	if (maximum < minimum)
+		maximum = minimum;
+	timeout = ec->ec_default_deadline_ms;
+	if (timeout < minimum)
+		timeout = minimum;
+	if (timeout > maximum)
+		timeout = maximum;
+	return (timeout);
 }
 
 static bool
@@ -619,7 +799,7 @@ oes_client_self_entry_muted(struct oes_client *ec, pid_t pid, uint64_t genid,
 /*
  * Check if a process is muted for this client for a specific event
  *
- * If event is 0, checks if the process is muted for any event (legacy behavior).
+ * If event is 0, checks whether the process is muted for all events.
  * Otherwise, checks if the specific event is muted for this process.
  */
 bool
@@ -669,7 +849,7 @@ oes_client_is_muted(struct oes_client *ec, struct proc *p, oes_event_type_t even
 		goto apply_inversion;
 
 	/* If the self-mute list entry could not be allocated, the flag still
-	 * represents a legacy mute-all self mute. */
+	 * represents a mute-all self entry. */
 	if ((ec->ec_flags & EC_FLAG_MUTED_SELF) &&
 	    p->p_pid == ec->ec_owner_pid &&
 	    (ec->ec_owner_genid == 0 || ec->ec_owner_genid == genid)) {
@@ -686,7 +866,7 @@ oes_client_is_muted(struct oes_client *ec, struct proc *p, oes_event_type_t even
 
 		/*
 		 * Found matching process entry.
-		 * If all bitmaps are 0, all events are muted (legacy mute).
+		 * If all bitmaps are 0, all events are muted.
 		 * Otherwise, check if specific event is in bitmap.
 		 */
 		in_list = oes_mute_entry_matches_event(em, event);
@@ -744,7 +924,7 @@ oes_client_is_muted_by_token(struct oes_client *ec, const oes_proc_token_t *toke
 
 		/*
 		 * Found matching process entry.
-		 * If all bitmaps are 0, all events are muted (legacy mute).
+		 * If all bitmaps are 0, all events are muted.
 		 * Otherwise, check if specific event is in bitmap.
 		 */
 		in_list = oes_mute_entry_matches_event(em, event);
@@ -784,7 +964,7 @@ oes_path_match(const struct oes_mute_path_entry *emp, const char *path)
 /*
  * Check if a path is muted for this client for a specific event
  *
- * If event is 0, checks if the path is muted for any event (legacy behavior).
+ * If event is 0, checks whether the path is muted for all events.
  * Otherwise, checks if the specific event is muted for this path.
  */
 bool
@@ -811,7 +991,7 @@ oes_client_is_path_muted(struct oes_client *ec, const char *path, bool target,
 
 		/*
 		 * Found matching path entry.
-		 * If all bitmaps are 0, all events are muted (legacy mute).
+		 * If all bitmaps are 0, all events are muted.
 		 * Otherwise, check if specific event is in bitmap.
 		 */
 		if (emp->emp_events[0] == 0 && emp->emp_events[1] == 0 &&
@@ -861,7 +1041,7 @@ oes_client_is_token_muted(struct oes_client *ec, uint64_t ino, uint64_t dev,
 
 		/*
 		 * Found matching token entry.
-		 * If all bitmaps are 0, all events are muted (legacy mute).
+		 * If all bitmaps are 0, all events are muted.
 		 * Otherwise, check if specific event is in bitmap.
 		 */
 		if (emp->emp_events[0] == 0 && emp->emp_events[1] == 0 &&
@@ -935,7 +1115,7 @@ oes_client_mute(struct oes_client *ec, oes_proc_token_t *token, uint32_t flags)
 		return (0);
 	}
 
-	error = oes_client_validate_token(token);
+	error = oes_client_validate_token(ec, token);
 	if (error != 0)
 		return (error);
 
@@ -1137,10 +1317,14 @@ int
 oes_client_unmute(struct oes_client *ec, oes_proc_token_t *token)
 {
 	struct oes_mute_entry *em, *em_tmp;
-	int error = ESRCH;
+	int error;
 
 	if (token == NULL)
 		return (EINVAL);
+	error = oes_client_validate_token(ec, token);
+	if (error != 0)
+		return (error);
+	error = ESRCH;
 
 	EC_LOCK(ec);
 
@@ -1221,26 +1405,27 @@ oes_client_get_mute_invert(struct oes_client *ec, uint32_t type,
 }
 
 int
-oes_client_set_timeout_action(struct oes_client *ec, uint32_t action)
+oes_client_set_deadline_miss_mode(struct oes_client *ec, uint32_t mode)
 {
-	if (action != OES_AUTH_ALLOW && action != OES_AUTH_DENY)
+	if (mode != OES_DEADLINE_MISS_FAIL_OPEN &&
+	    mode != OES_DEADLINE_MISS_FAIL_CLOSED)
 		return (EINVAL);
 
 	EC_LOCK(ec);
-	ec->ec_timeout_action = action;
+	ec->ec_deadline_miss_mode = mode;
 	EC_UNLOCK(ec);
 
 	return (0);
 }
 
 int
-oes_client_get_timeout_action(struct oes_client *ec, uint32_t *action)
+oes_client_get_deadline_miss_mode(struct oes_client *ec, uint32_t *mode)
 {
-	if (action == NULL)
+	if (mode == NULL)
 		return (EINVAL);
 
 	EC_LOCK(ec);
-	*action = ec->ec_timeout_action;
+	*mode = ec->ec_deadline_miss_mode;
 	EC_UNLOCK(ec);
 
 	return (0);
@@ -1278,8 +1463,8 @@ oes_client_get_stats(struct oes_client *ec, struct oes_stats *stats)
 
 	/* Current configuration */
 	stats->es_mode = ec->ec_mode;
-	stats->es_timeout_ms = ec->ec_timeout_ms;
-	stats->es_timeout_action = ec->ec_timeout_action;
+	stats->es_default_deadline_ms = ec->ec_default_deadline_ms;
+	stats->es_deadline_miss_mode = ec->ec_deadline_miss_mode;
 	stats->es_reserved = 0;
 
 	EC_UNLOCK(ec);
@@ -1421,7 +1606,7 @@ oes_client_mute_events(struct oes_client *ec, oes_proc_token_t *token,
 		return (0);
 	}
 
-	error = oes_client_validate_token(token);
+	error = oes_client_validate_token(ec, token);
 	if (error != 0)
 		return (error);
 
@@ -1488,6 +1673,7 @@ oes_client_unmute_events(struct oes_client *ec, oes_proc_token_t *token,
 {
 	struct oes_mute_entry *em;
 	uint64_t bitmap[4];
+	int error;
 
 	if (count == 0 || count > OES_MAX_MUTE_EVENTS)
 		return (EINVAL);
@@ -1545,6 +1731,9 @@ oes_client_unmute_events(struct oes_client *ec, oes_proc_token_t *token,
 
 	if (token == NULL)
 		return (EINVAL);
+	error = oes_client_validate_token(ec, token);
+	if (error != 0)
+		return (error);
 
 	/* bitmap was already populated at function start */
 
@@ -2064,6 +2253,8 @@ oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
 	struct session *sess;
 	struct proc *pptr;
 	struct pgrp *pgrp;
+	const char *exec_path;
+	uint32_t exec_meta_flags;
 	int i, ngroups;
 
 	PROC_LOCK_ASSERT(p, MA_OWNED);
@@ -2083,6 +2274,13 @@ oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
 
 	/* Basic process IDs */
 	ep->ep_pid = p->p_pid;
+	ep->ep_original_ppid = p->p_oppid;
+	ep->ep_num_threads = p->p_numthreads;
+	ep->ep_nice = p->p_nice;
+	ep->ep_osrel = p->p_osrel;
+	ep->ep_fibnum = p->p_fibnum;
+	ep->ep_state = (uint32_t)p->p_state + 1;
+	ep->ep_meta_flags |= OES_PROC_META_CWD_UNAVAILABLE;
 
 	/*
 	 * Parent and pgrp info require proctree_lock. Use sx_try_slock to
@@ -2095,25 +2293,38 @@ oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
 			ep->ep_ppid = pptr->p_pid;
 			strlcpy(ep->ep_pcomm, pptr->p_comm,
 			    sizeof(ep->ep_pcomm));
-		}
+		} else
+			ep->ep_meta_flags |= OES_PROC_META_PARENT_UNAVAILABLE;
+		if (p->p_reaper != NULL)
+			ep->ep_reaper_pid = p->p_reaper->p_pid;
 
 		pgrp = p->p_pgrp;
 		ep->ep_pgid = (pgrp != NULL) ? pgrp->pg_id : 0;
 		sess = (pgrp != NULL) ? pgrp->pg_session : NULL;
 		if (sess != NULL) {
+			struct tty *tp;
+			bool has_ttyvp;
+
 			ep->ep_sid = sess->s_sid;
-			if (sess->s_ttyp != NULL && sess->s_ttyvp != NULL) {
-				ep->ep_flags |= EP_FLAG_CONTROLT;
-				strlcpy(ep->ep_tty, tty_devname(sess->s_ttyp),
-				    sizeof(ep->ep_tty));
-			}
+			SESS_LOCK(sess);
+			tp = sess->s_ttyp;
+			has_ttyvp = sess->s_ttyvp != NULL;
 			if (sess->s_login[0] != '\0')
 				strlcpy(ep->ep_login, sess->s_login,
 				    sizeof(ep->ep_login));
-		}
+			SESS_UNLOCK(sess);
+			if (tp != NULL && has_ttyvp) {
+				ep->ep_flags |= EP_FLAG_CONTROLT;
+				strlcpy(ep->ep_tty, tty_devname(tp),
+				    sizeof(ep->ep_tty));
+			}
+		} else
+			ep->ep_meta_flags |= OES_PROC_META_SESSION_UNAVAILABLE;
 		sx_sunlock(&proctree_lock);
 	} else {
 		ep->ep_ppid = p->p_oppid;
+		ep->ep_meta_flags |= OES_PROC_META_PARENT_UNAVAILABLE |
+		    OES_PROC_META_SESSION_UNAVAILABLE;
 	}
 
 	/* Credential information */
@@ -2127,12 +2338,14 @@ oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
 		ep->ep_sgid = cred->cr_svgid;
 
 		ep->ep_ngroups = cred->cr_ngroups;
+		if (cred->cr_ngroups > 16)
+			ep->ep_meta_flags |= OES_PROC_META_GROUPS_TRUNCATED;
 		ngroups = MIN(cred->cr_ngroups, 16);
 		for (i = 0; i < ngroups; i++)
 			ep->ep_groups[i] = cred->cr_groups[i];
 
 		/* Jail info - name goes to string table */
-		if (cred->cr_prison != NULL) {
+		if (jailed(cred)) {
 			ep->ep_jid = cred->cr_prison->pr_id;
 			ep->ep_flags |= EP_FLAG_JAILED;
 			if (st != NULL && msg_base != NULL)
@@ -2141,20 +2354,38 @@ oes_fill_process(oes_process_t *ep, struct proc *p, struct ucred *cred_override,
 				    cred->cr_prison->pr_hostname);
 		}
 
-		if (cred->cr_flags & CRED_FLAG_CAPMODE)
+		if (cred->cr_flags & CRED_FLAG_CAPMODE) {
 			ep->ep_flags |= EP_FLAG_CAPMODE;
+			ep->ep_cred_flags |= OES_CRED_FLAG_CAPMODE;
+		}
+		if (cred->cr_loginclass != NULL)
+			strlcpy(ep->ep_loginclass, cred->cr_loginclass->lc_name,
+			    sizeof(ep->ep_loginclass));
 
 		ep->ep_auid = cred->cr_audit.ai_auid;
 		ep->ep_asid = cred->cr_audit.ai_asid;
-	}
+		ep->ep_audit_mask_success = cred->cr_audit.ai_mask.am_success;
+		ep->ep_audit_mask_failure = cred->cr_audit.ai_mask.am_failure;
+		ep->ep_audit_term_port = cred->cr_audit.ai_termid.at_port;
+		ep->ep_audit_term_type = cred->cr_audit.ai_termid.at_type;
+		bcopy(cred->cr_audit.ai_termid.at_addr,
+		    ep->ep_audit_term_addr, sizeof(ep->ep_audit_term_addr));
+		ep->ep_audit_flags = cred->cr_audit.ai_flags;
+	} else
+		ep->ep_meta_flags |= OES_PROC_META_CREDENTIALS_UNAVAILABLE;
 
 	/* Command name (inline - always populated, small) */
 	strlcpy(ep->ep_comm, p->p_comm, sizeof(ep->ep_comm));
 
-	/*
-	 * Path offsets left at 0 (empty). Callers that have path info
-	 * (e.g., exec with imgp->execpath) set ep_path_off via strtab.
-	 */
+	/* Executable path is cached at successful exec; no VFS lookup is needed. */
+	exec_path = oes_proc_get_exec_path(p, &exec_meta_flags);
+	if (exec_path != NULL && st != NULL && msg_base != NULL) {
+		ep->ep_path_off = oes_strtab_add(st, msg_base, exec_path);
+		ep->ep_meta_flags |= exec_meta_flags;
+		if (ep->ep_path_off == 0)
+			ep->ep_meta_flags |= OES_PROC_META_PATH_TRUNCATED;
+	} else if (msg_base != NULL)
+		oes_process_mark_path_unavailable(msg_base, ep);
 
 	/* Process flags */
 	if (p->p_flag & P_SUGID)
@@ -2215,6 +2446,11 @@ oes_fill_file(oes_file_t *ef, struct vnode *vp, struct ucred *cred,
 		ef->ef_dev = va.va_fsid;
 		ef->ef_size = va.va_size;
 		ef->ef_blocks = va.va_bytes / 512;
+		ef->ef_allocated_bytes = va.va_bytes;
+		ef->ef_block_size = va.va_blocksize;
+		ef->ef_generation = va.va_gen;
+		ef->ef_rdev = va.va_rdev;
+		ef->ef_filerev = va.va_filerev;
 		ef->ef_mode = va.va_mode;
 		ef->ef_uid = va.va_uid;
 		ef->ef_gid = va.va_gid;
@@ -2225,16 +2461,24 @@ oes_fill_file(oes_file_t *ef, struct vnode *vp, struct ucred *cred,
 		ef->ef_mtime = va.va_mtime.tv_sec;
 		ef->ef_ctime = va.va_ctime.tv_sec;
 		ef->ef_birthtime = va.va_birthtime.tv_sec;
+		ef->ef_atime_nsec = va.va_atime.tv_nsec;
+		ef->ef_mtime_nsec = va.va_mtime.tv_nsec;
+		ef->ef_ctime_nsec = va.va_ctime.tv_nsec;
+		ef->ef_birthtime_nsec = va.va_birthtime.tv_nsec;
+		ef->ef_vaflags = va.va_vaflags;
 
 		ef->ef_token.eft_id = va.va_fileid;
 		ef->ef_token.eft_dev = va.va_fsid;
-	}
+	} else
+		ef->ef_meta_flags |= OES_FILE_META_ATTR_UNAVAILABLE;
 
 	/* Filesystem type (inline - always populated, 16 bytes) */
 	mp = vp->v_mount;
 	if (mp != NULL && mp->mnt_vfc != NULL)
 		strlcpy(ef->ef_fstype, mp->mnt_vfc->vfc_name,
 		    sizeof(ef->ef_fstype));
+	else
+		ef->ef_meta_flags |= OES_FILE_META_FSTYPE_UNAVAILABLE;
 
 	/*
 	 * Path lookup: vn_fullpath() can deadlock when called from MAC
@@ -2250,7 +2494,7 @@ oes_fill_file(oes_file_t *ef, struct vnode *vp, struct ucred *cred,
 			ef->ef_path_off = oes_strtab_add(st, msg_base,
 			    fullpath);
 			if (ef->ef_path_off == 0)
-				oes_file_mark_path_unavailable(msg_base, ef);
+				ef->ef_meta_flags |= OES_FILE_META_PATH_TRUNCATED;
 		} else {
 			oes_file_mark_path_unavailable(msg_base, ef);
 		}

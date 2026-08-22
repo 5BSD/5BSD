@@ -105,7 +105,7 @@ main(void)
 	int ctl_pipe[2];
 	int res_pipe[2];
 	struct oes_mode_args mode;
-	struct oes_timeout_action_args timeout_action;
+	struct oes_deadline_miss_mode_args timeout_action;
 	struct oes_subscribe_args sub;
 	struct oes_mute_args mute;
 	struct oes_mute_invert_args invert;
@@ -127,7 +127,7 @@ main(void)
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
-	mode.ema_timeout_ms = 200;
+	mode.ema_default_deadline_ms = 200;
 	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
 		perror("OES_IOC_SET_MODE");
 		close(fd);
@@ -135,9 +135,9 @@ main(void)
 	}
 
 	memset(&timeout_action, 0, sizeof(timeout_action));
-	timeout_action.eta_action = OES_AUTH_DENY;
-	if (ioctl(fd, OES_IOC_SET_TIMEOUT_ACTION, &timeout_action) < 0) {
-		perror("OES_IOC_SET_TIMEOUT_ACTION");
+	timeout_action.edma_mode = OES_DEADLINE_MISS_FAIL_CLOSED;
+	if (ioctl(fd, OES_IOC_SET_DEADLINE_MISS_MODE, &timeout_action) < 0) {
+		perror("OES_IOC_SET_DEADLINE_MISS_MODE");
 		close(fd);
 		return (1);
 	}

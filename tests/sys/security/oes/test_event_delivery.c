@@ -96,7 +96,7 @@ test_basic_event_delivery(void)
 	/* Generate a known event */
 	pid = fork();
 	if (pid == 0) {
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		_exit(1);
 	}
 	waitpid(pid, NULL, 0);
@@ -466,7 +466,7 @@ test_poll_behavior(void)
 	/* Generate event */
 	pid = fork();
 	if (pid == 0) {
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		_exit(1);
 	}
 	waitpid(pid, NULL, 0);
@@ -544,7 +544,7 @@ test_blocking_read(void)
 	/* Generate event to unblock reader */
 	event_pid = fork();
 	if (event_pid == 0) {
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		_exit(1);
 	}
 	waitpid(event_pid, NULL, 0);
@@ -610,7 +610,7 @@ test_subscription_changes(void)
 		int tmpfd = open("/etc/passwd", O_RDONLY);
 		if (tmpfd >= 0)
 			close(tmpfd);
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		_exit(1);
 	}
 	waitpid(pid, NULL, 0);
@@ -633,7 +633,7 @@ test_subscription_changes(void)
 		int tmpfd = open("/etc/passwd", O_RDONLY);
 		if (tmpfd >= 0)
 			close(tmpfd);
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		_exit(1);
 	}
 	waitpid(pid, NULL, 0);

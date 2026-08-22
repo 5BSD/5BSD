@@ -48,7 +48,7 @@ test_invalid_ioctl_cmd(void)
 		int dummy = 0;
 		ret = ioctl(fd, bad_cmds[i], &dummy);
 		if (ret == 0) {
-			printf("    WARN: ioctl 0x%lx accepted\n", bad_cmds[i]);
+			printf("    FAIL: ioctl 0x%lx accepted\n", bad_cmds[i]);
 			all_rejected = 0;
 		} else if (errno != ENOTTY && errno != EINVAL && errno != ENOTSUP) {
 			printf("    INFO: ioctl 0x%lx returned %d (errno=%d)\n",
@@ -61,7 +61,7 @@ test_invalid_ioctl_cmd(void)
 	if (all_rejected) {
 		printf("    PASS: all invalid ioctls rejected\n");
 	}
-	return (0);
+	return (all_rejected ? 0 : 1);
 }
 
 /*
@@ -70,7 +70,7 @@ test_invalid_ioctl_cmd(void)
 static int
 test_null_ioctl_arg(void)
 {
-	int fd, ret;
+	int fd, ret, errors = 0;
 	struct oes_mode_args mode;
 
 	printf("  Testing NULL ioctl arguments...\n");
@@ -96,9 +96,11 @@ test_null_ioctl_arg(void)
 		printf("    PASS: SUBSCRIBE with NULL rejected (%s)\n",
 		    strerror(errno));
 	} else if (ret < 0) {
-		printf("    INFO: SUBSCRIBE with NULL returned errno=%d\n", errno);
+		printf("    FAIL: SUBSCRIBE with NULL returned errno=%d\n", errno);
+		errors++;
 	} else {
-		printf("    WARN: SUBSCRIBE with NULL succeeded\n");
+		printf("    FAIL: SUBSCRIBE with NULL succeeded\n");
+		errors++;
 	}
 
 	/* Test NULL arg for OES_IOC_MUTE_PROCESS */
@@ -107,25 +109,29 @@ test_null_ioctl_arg(void)
 		printf("    PASS: MUTE_PROCESS with NULL rejected (%s)\n",
 		    strerror(errno));
 	} else if (ret < 0) {
-		printf("    INFO: MUTE_PROCESS with NULL returned errno=%d\n", errno);
+		printf("    FAIL: MUTE_PROCESS with NULL returned errno=%d\n", errno);
+		errors++;
 	} else {
-		printf("    WARN: MUTE_PROCESS with NULL succeeded\n");
+		printf("    FAIL: MUTE_PROCESS with NULL succeeded\n");
+		errors++;
 	}
 
-	/* Test NULL arg for OES_IOC_GET_TIMEOUT_ACTION */
-	ret = ioctl(fd, OES_IOC_GET_TIMEOUT_ACTION, NULL);
+	/* Test NULL arg for OES_IOC_GET_DEADLINE_MISS_MODE */
+	ret = ioctl(fd, OES_IOC_GET_DEADLINE_MISS_MODE, NULL);
 	if (ret < 0 && (errno == EFAULT || errno == EINVAL)) {
-		printf("    PASS: GET_TIMEOUT_ACTION with NULL rejected (%s)\n",
+		printf("    PASS: GET_DEADLINE_MISS_MODE with NULL rejected (%s)\n",
 		    strerror(errno));
 	} else if (ret < 0) {
-		printf("    INFO: GET_TIMEOUT_ACTION with NULL returned errno=%d\n",
+		printf("    FAIL: GET_DEADLINE_MISS_MODE with NULL returned errno=%d\n",
 		    errno);
+		errors++;
 	} else {
-		printf("    WARN: GET_TIMEOUT_ACTION with NULL succeeded\n");
+		printf("    FAIL: GET_DEADLINE_MISS_MODE with NULL succeeded\n");
+		errors++;
 	}
 
 	close(fd);
-	return (0);
+	return (errors != 0);
 }
 
 /*
@@ -159,9 +165,13 @@ test_bad_pointer_arg(void)
 	if (ret < 0 && errno == EFAULT) {
 		printf("    PASS: SUBSCRIBE with bad pointer rejected (EFAULT)\n");
 	} else if (ret < 0) {
-		printf("    INFO: SUBSCRIBE with bad pointer errno=%d\n", errno);
+		printf("    FAIL: SUBSCRIBE with bad pointer errno=%d\n", errno);
+		close(fd);
+		return (1);
 	} else {
-		printf("    WARN: SUBSCRIBE with bad pointer succeeded\n");
+		printf("    FAIL: SUBSCRIBE with bad pointer succeeded\n");
+		close(fd);
+		return (1);
 	}
 
 	close(fd);
@@ -204,10 +214,14 @@ test_subscribe_bad_events_ptr(void)
 	if (ret < 0 && errno == EFAULT) {
 		printf("    PASS: bad events pointer rejected (EFAULT)\n");
 	} else if (ret < 0) {
-		printf("    INFO: bad events pointer errno=%d (%s)\n",
+		printf("    FAIL: bad events pointer errno=%d (%s)\n",
 		    errno, strerror(errno));
+		close(fd);
+		return (1);
 	} else {
-		printf("    WARN: bad events pointer accepted\n");
+		printf("    FAIL: bad events pointer accepted\n");
+		close(fd);
+		return (1);
 	}
 
 	close(fd);
@@ -249,7 +263,9 @@ test_mute_path_no_terminator(void)
 		printf("    PASS: unterminated path rejected (%s)\n",
 		    strerror(errno));
 	} else {
-		printf("    INFO: unterminated path accepted (kernel may handle)\n");
+		printf("    FAIL: unterminated path accepted\n");
+		close(fd);
+		return (1);
 	}
 
 	close(fd);
@@ -262,7 +278,7 @@ test_mute_path_no_terminator(void)
 static int
 test_mute_invalid_token(void)
 {
-	int fd, ret;
+	int fd, ret, errors = 0;
 	struct oes_mode_args mode;
 	struct oes_mute_args mute;
 
@@ -291,7 +307,8 @@ test_mute_invalid_token(void)
 		printf("    PASS: invalid token rejected (%s)\n",
 		    strerror(errno));
 	} else {
-		printf("    INFO: zero token accepted\n");
+		printf("    FAIL: zero token accepted\n");
+		errors++;
 	}
 
 	/* Garbage token */
@@ -303,11 +320,12 @@ test_mute_invalid_token(void)
 		printf("    PASS: garbage token rejected (%s)\n",
 		    strerror(errno));
 	} else {
-		printf("    INFO: garbage token accepted\n");
+		printf("    FAIL: garbage token accepted\n");
+		errors++;
 	}
 
 	close(fd);
-	return (0);
+	return (errors != 0);
 }
 
 /*
@@ -492,6 +510,8 @@ test_get_muted_bad_buffer(void)
 	int fd, ret;
 	struct oes_mode_args mode;
 	struct oes_get_muted_processes_args get;
+	struct oes_mute_args mute;
+	struct oes_muted_process_entry dummy;
 
 	printf("  Testing GET_MUTED_PROCESSES with bad buffer...\n");
 
@@ -508,6 +528,13 @@ test_get_muted_bad_buffer(void)
 		close(fd);
 		return (1);
 	}
+	memset(&mute, 0, sizeof(mute));
+	mute.emu_flags = OES_MUTE_SELF;
+	if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute) < 0) {
+		perror("OES_IOC_MUTE_PROCESS");
+		close(fd);
+		return (1);
+	}
 
 	/* Bad entries pointer */
 	memset(&get, 0, sizeof(get));
@@ -518,23 +545,28 @@ test_get_muted_bad_buffer(void)
 	if (ret < 0 && errno == EFAULT) {
 		printf("    PASS: bad buffer rejected (EFAULT)\n");
 	} else if (ret < 0) {
-		printf("    INFO: bad buffer errno=%d\n", errno);
+		printf("    FAIL: bad buffer errno=%d\n", errno);
+		close(fd);
+		return (1);
 	} else {
-		printf("    INFO: bad buffer accepted (count=%zu, actual=%zu)\n",
+		printf("    FAIL: bad buffer accepted (count=%zu, actual=%zu)\n",
 		    get.egmp_count, get.egmp_actual);
+		close(fd);
+		return (1);
 	}
 
 	/* Zero count but non-NULL pointer */
-	struct oes_muted_process_entry dummy;
 	get.egmp_entries = &dummy;
 	get.egmp_count = 0;
 
 	ret = ioctl(fd, OES_IOC_GET_MUTED_PROCESSES, &get);
-	if (ret < 0) {
-		printf("    INFO: zero count: %s\n", strerror(errno));
-	} else {
-		printf("    INFO: zero count accepted, actual=%zu\n", get.egmp_actual);
+	if (ret < 0 || get.egmp_actual == 0) {
+		printf("    FAIL: zero-count size query: %s (actual=%zu)\n",
+		    ret < 0 ? strerror(errno) : "empty", get.egmp_actual);
+		close(fd);
+		return (1);
 	}
+	printf("    PASS: zero-count query reports required entry count\n");
 
 	close(fd);
 	return (0);
@@ -565,7 +597,9 @@ test_ioctl_wrong_fd(void)
 	if (ret < 0 && errno == ENOTTY) {
 		printf("    PASS: ioctl on /dev/null rejected (ENOTTY)\n");
 	} else if (ret < 0) {
-		printf("    INFO: ioctl on /dev/null errno=%d\n", errno);
+		printf("    FAIL: ioctl on /dev/null errno=%d\n", errno);
+		close(fd);
+		return (1);
 	} else {
 		printf("    FAIL: ioctl on /dev/null succeeded!\n");
 		close(fd);
@@ -582,7 +616,7 @@ test_ioctl_wrong_fd(void)
 static int
 test_massive_counts(void)
 {
-	int fd, ret;
+	int fd, ret, errors = 0;
 	struct oes_mode_args mode;
 	struct oes_subscribe_args sub;
 	oes_event_type_t dummy_event = OES_EVENT_NOTIFY_EXEC;
@@ -613,7 +647,8 @@ test_massive_counts(void)
 	if (ret < 0) {
 		printf("    PASS: SIZE_MAX count rejected (%s)\n", strerror(errno));
 	} else {
-		printf("    WARN: SIZE_MAX count accepted\n");
+		printf("    FAIL: SIZE_MAX count accepted\n");
+		errors++;
 	}
 
 	/* Try with INT_MAX */
@@ -622,11 +657,12 @@ test_massive_counts(void)
 	if (ret < 0) {
 		printf("    PASS: INT_MAX count rejected (%s)\n", strerror(errno));
 	} else {
-		printf("    WARN: INT_MAX count accepted\n");
+		printf("    FAIL: INT_MAX count accepted\n");
+		errors++;
 	}
 
 	close(fd);
-	return (0);
+	return (errors != 0);
 }
 
 /*
@@ -655,7 +691,9 @@ test_mode_transitions(void)
 		printf("    PASS: invalid mode 0xDEAD rejected (%s)\n",
 		    strerror(errno));
 	} else {
-		printf("    WARN: invalid mode 0xDEAD accepted\n");
+		printf("    FAIL: invalid mode 0xDEAD accepted\n");
+		close(fd);
+		return (1);
 	}
 
 	/* Set NOTIFY mode */
@@ -666,18 +704,133 @@ test_mode_transitions(void)
 		return (1);
 	}
 
-	/* Try to switch to AUTH (should work or fail cleanly) */
+	/* Mode changes remain supported after initial configuration. */
 	mode.ema_mode = OES_MODE_AUTH;
 	ret = ioctl(fd, OES_IOC_SET_MODE, &mode);
 	if (ret < 0) {
-		printf("    INFO: NOTIFY->AUTH transition rejected (%s)\n",
+		printf("    FAIL: NOTIFY->AUTH transition rejected (%s)\n",
 		    strerror(errno));
+		close(fd);
+		return (1);
 	} else {
-		printf("    INFO: NOTIFY->AUTH transition accepted\n");
+		printf("    PASS: NOTIFY->AUTH transition accepted\n");
 	}
 
 	close(fd);
 	return (0);
+}
+
+/*
+ * Reserved bits and boolean fields are part of the ABI contract.  Rejecting
+ * them prevents an old kernel from silently misinterpreting a newer caller.
+ */
+static int
+test_noncanonical_fields(void)
+{
+	struct oes_mode_args mode;
+	struct oes_mute_args mute;
+	struct oes_mute_path_args path;
+	struct oes_mute_invert_args invert;
+	struct oes_mute_process_events_args process_events;
+	struct oes_mute_path_events_args path_events;
+	oes_cache_entry_t entry;
+	int fd, failures;
+
+	printf("  Testing reserved and noncanonical fields...\n");
+	fd = open("/dev/oes", O_RDWR | O_NONBLOCK | O_CLOEXEC);
+	if (fd < 0) {
+		perror("open /dev/oes");
+		return (1);
+	}
+	failures = 0;
+
+	memset(&mode, 0, sizeof(mode));
+	mode.ema_mode = OES_MODE_NOTIFY;
+	mode.ema_flags = 1;
+	errno = 0;
+	if (ioctl(fd, OES_IOC_SET_MODE, &mode) == 0 || errno != EINVAL) {
+		fprintf(stderr, "FAIL: SET_MODE accepted reserved flags\n");
+		failures++;
+	}
+	mode.ema_flags = 0;
+	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
+		perror("OES_IOC_SET_MODE");
+		close(fd);
+		return (1);
+	}
+
+	memset(&mute, 0, sizeof(mute));
+	mute.emu_flags = OES_MUTE_SELF | 0x80000000U;
+	errno = 0;
+	if (ioctl(fd, OES_IOC_MUTE_PROCESS, &mute) == 0 || errno != EINVAL) {
+		fprintf(stderr, "FAIL: MUTE_PROCESS accepted unknown flags\n");
+		failures++;
+	}
+
+	memset(&path, 0, sizeof(path));
+	strlcpy(path.emp_path, "/tmp", sizeof(path.emp_path));
+	path.emp_type = OES_MUTE_PATH_LITERAL;
+	path.emp_flags = 0x80000000U;
+	errno = 0;
+	if (ioctl(fd, OES_IOC_MUTE_PATH, &path) == 0 || errno != EINVAL) {
+		fprintf(stderr, "FAIL: MUTE_PATH accepted unknown flags\n");
+		failures++;
+	}
+
+	memset(&invert, 0, sizeof(invert));
+	invert.emi_type = OES_MUTE_INVERT_PROCESS;
+	invert.emi_invert = 2;
+	errno = 0;
+	if (ioctl(fd, OES_IOC_SET_MUTE_INVERT, &invert) == 0 ||
+	    errno != EINVAL) {
+		fprintf(stderr, "FAIL: SET_MUTE_INVERT accepted boolean value 2\n");
+		failures++;
+	}
+
+	memset(&process_events, 0, sizeof(process_events));
+	process_events.empe_flags = OES_MUTE_SELF | 0x80000000U;
+	process_events.empe_count = 1;
+	process_events.empe_events[0] = OES_EVENT_NOTIFY_OPEN;
+	errno = 0;
+	if (ioctl(fd, OES_IOC_MUTE_PROCESS_EVENTS, &process_events) == 0 ||
+	    errno != EINVAL) {
+		fprintf(stderr,
+		    "FAIL: MUTE_PROCESS_EVENTS accepted unknown flags\n");
+		failures++;
+	}
+
+	memset(&path_events, 0, sizeof(path_events));
+	strlcpy(path_events.empae_path, "/tmp",
+	    sizeof(path_events.empae_path));
+	path_events.empae_type = OES_MUTE_PATH_LITERAL;
+	path_events.empae_flags = 0x80000000U;
+	path_events.empae_count = 1;
+	path_events.empae_events[0] = OES_EVENT_NOTIFY_OPEN;
+	errno = 0;
+	if (ioctl(fd, OES_IOC_MUTE_PATH_EVENTS, &path_events) == 0 ||
+	    errno != EINVAL) {
+		fprintf(stderr, "FAIL: MUTE_PATH_EVENTS accepted unknown flags\n");
+		failures++;
+	}
+
+	memset(&entry, 0, sizeof(entry));
+	entry.ece_key.eck_event = OES_EVENT_AUTH_OPEN;
+	entry.ece_key.eck_flags = OES_CACHE_KEY_PROCESS | OES_CACHE_KEY_FILE;
+	entry.ece_key.eck_process.ept_id = 1;
+	entry.ece_key.eck_process.ept_genid = 1;
+	entry.ece_key.eck_file.eft_id = 1;
+	entry.ece_result = OES_AUTH_ALLOW;
+	entry.ece_ttl_ms = 1000;
+	errno = 0;
+	if (ioctl(fd, OES_IOC_CACHE_ADD, &entry) == 0 || errno != EINVAL) {
+		fprintf(stderr, "FAIL: CACHE_ADD accepted zero execution ID\n");
+		failures++;
+	}
+
+	close(fd);
+	if (failures == 0)
+		printf("    PASS: reserved and noncanonical fields rejected\n");
+	return (failures != 0);
 }
 
 int
@@ -700,6 +853,7 @@ main(void)
 	failed += test_ioctl_wrong_fd();
 	failed += test_massive_counts();
 	failed += test_mode_transitions();
+	failed += test_noncanonical_fields();
 
 	if (failed > 0) {
 		printf("bad ioctls: FAILED (%d tests)\n", failed);

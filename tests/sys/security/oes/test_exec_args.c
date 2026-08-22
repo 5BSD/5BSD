@@ -18,6 +18,16 @@
 #include <security/oes/oes.h>
 #include "test_common.h"
 
+static const char *
+event_data(const oes_message_t *msg, uint32_t off, uint32_t len)
+{
+
+	if (!oes_message_is_compatible(msg) || off < msg->em_struct_size ||
+	    off > msg->em_size || len > msg->em_size - off)
+		return (NULL);
+	return ((const char *)msg + off);
+}
+
 /*
  * Test retrieving argv from an AUTH_EXEC event.
  */
@@ -36,6 +46,7 @@ test_embedded_argv(void)
 	ssize_t n;
 	int status;
 	int got_event = 0;
+	int arg_mask = 0;
 
 	printf("  Testing embedded argv in EXEC event...\n");
 
@@ -47,7 +58,7 @@ test_embedded_argv(void)
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
-	mode.ema_timeout_ms = 5000;
+	mode.ema_default_deadline_ms = 5000;
 	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
 		perror("OES_IOC_SET_MODE");
 		close(fd);
@@ -86,22 +97,33 @@ test_embedded_argv(void)
 		n = read(fd, msg, OES_MSG_MAX_SIZE);
 		if (n >= (ssize_t)sizeof(oes_message_t) && msg->em_event == OES_EVENT_AUTH_EXEC) {
 			oes_event_exec_t *exec = &msg->em_event_data.exec;
+			const char *argv_data;
 			got_event = 1;
 
 			printf("    INFO: argc=%u, argv_len=%u, envp_len=%u, flags=0x%x\n",
 			    exec->argc, exec->argv_len, exec->envp_len, exec->flags);
 
 			/* Parse NUL-separated args from embedded data */
-			if (exec->argv_len > 0) {
+			argv_data = event_data(msg, exec->argv_off, exec->argv_len);
+			if (exec->argv_len > 0 && argv_data != NULL) {
 				size_t pos = 0;
 				int argc = 0;
 				printf("    INFO: Got %u bytes of argv data\n",
 				    exec->argv_len);
 				while (pos < exec->argv_len && argc < 10) {
-					size_t len = strlen((const char *)msg + exec->argv_off + pos);
+					const char *arg = argv_data + pos;
+					size_t len = strnlen(arg, exec->argv_len - pos);
+					if (len == exec->argv_len - pos)
+						break;
 					if (len > 0) {
 						printf("    INFO: argv[%d] = '%s'\n",
-						    argc, (const char *)msg + exec->argv_off + pos);
+						    argc, arg);
+						if (argc == 0 && strcmp(arg, "echo") == 0)
+							arg_mask |= 1;
+						if (argc == 1 && strcmp(arg, "test_arg1") == 0)
+							arg_mask |= 2;
+						if (argc == 2 && strcmp(arg, "test_arg2") == 0)
+							arg_mask |= 4;
 						argc++;
 					}
 					pos += len + 1;
@@ -130,7 +152,16 @@ test_embedded_argv(void)
 	close(fd);
 
 	if (!got_event) {
-		printf("    INFO: No AUTH_EXEC event received\n");
+		fprintf(stderr, "    FAIL: no AUTH_EXEC event received\n");
+		return (1);
+	}
+	if (arg_mask != 7) {
+		fprintf(stderr, "    FAIL: expected argv values were not embedded\n");
+		return (1);
+	}
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		fprintf(stderr, "    FAIL: exec child failed\n");
+		return (1);
 	}
 
 	printf("    PASS: embedded argv tested\n");
@@ -155,6 +186,7 @@ test_embedded_envp(void)
 	ssize_t n;
 	int status;
 	int got_event = 0;
+	int found_test_var = 0;
 
 	printf("  Testing embedded envp in EXEC event...\n");
 
@@ -166,7 +198,7 @@ test_embedded_envp(void)
 
 	memset(&mode, 0, sizeof(mode));
 	mode.ema_mode = OES_MODE_AUTH;
-	mode.ema_timeout_ms = 5000;
+	mode.ema_default_deadline_ms = 5000;
 	if (ioctl(fd, OES_IOC_SET_MODE, &mode) < 0) {
 		perror("OES_IOC_SET_MODE");
 		close(fd);
@@ -194,7 +226,7 @@ test_embedded_envp(void)
 	if (pid == 0) {
 		/* Child - set a test env var and exec */
 		setenv("OES_TEST_VAR", "test_value_12345", 1);
-		execl("/bin/true", "true", NULL);
+		execl("/usr/bin/true", "true", NULL);
 		_exit(127);
 	}
 
@@ -206,24 +238,29 @@ test_embedded_envp(void)
 		n = read(fd, msg, OES_MSG_MAX_SIZE);
 		if (n >= (ssize_t)sizeof(oes_message_t) && msg->em_event == OES_EVENT_AUTH_EXEC) {
 			oes_event_exec_t *exec = &msg->em_event_data.exec;
+			const char *envp_data;
 			got_event = 1;
 
 			printf("    INFO: argc=%u, envc=%u, argv_len=%u, envp_len=%u\n",
 			    exec->argc, exec->envc, exec->argv_len, exec->envp_len);
 
 			/* Parse envp from embedded data (after argv) */
-			if (exec->envp_len > 0) {
-				size_t pos = exec->argv_len;  /* envp starts after argv */
+			envp_data = event_data(msg, exec->envp_off, exec->envp_len);
+			if (exec->envp_len > 0 && envp_data != NULL) {
+				size_t pos = 0;
 				int envc = 0;
-				int found_test_var = 0;
 				printf("    INFO: Got %u bytes of envp data\n",
 				    exec->envp_len);
-				while (pos < exec->argv_len + exec->envp_len && envc < 100) {
-					size_t len = strlen((const char *)msg + exec->argv_off + pos);
+				while (pos < exec->envp_len && envc < 100) {
+					const char *entry = envp_data + pos;
+					size_t len = strnlen(entry, exec->envp_len - pos);
+					if (len == exec->envp_len - pos)
+						break;
 					if (len > 0) {
-						if (strstr((const char *)msg + exec->argv_off + pos, "OES_TEST_VAR=") != NULL) {
+						if (strcmp(entry,
+						    "OES_TEST_VAR=test_value_12345") == 0) {
 							printf("    INFO: Found test var: %s\n",
-							    (const char *)msg + exec->argv_off + pos);
+							    entry);
 							found_test_var = 1;
 						}
 						envc++;
@@ -254,7 +291,16 @@ test_embedded_envp(void)
 	close(fd);
 
 	if (!got_event) {
-		printf("    INFO: No AUTH_EXEC event received\n");
+		fprintf(stderr, "    FAIL: no AUTH_EXEC event received\n");
+		return (1);
+	}
+	if (!found_test_var) {
+		fprintf(stderr, "    FAIL: expected environment value missing\n");
+		return (1);
+	}
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		fprintf(stderr, "    FAIL: exec child failed\n");
+		return (1);
 	}
 
 	printf("    PASS: embedded envp tested\n");
@@ -278,6 +324,7 @@ test_notify_embedded_args(void)
 	ssize_t n;
 	int status;
 	int got_event = 0;
+	int found_notify_arg = 0;
 
 	printf("  Testing embedded args in NOTIFY_EXEC event...\n");
 
@@ -326,19 +373,26 @@ test_notify_embedded_args(void)
 		n = read(fd, msg, OES_MSG_MAX_SIZE);
 		if (n >= (ssize_t)sizeof(oes_message_t) && msg->em_event == OES_EVENT_NOTIFY_EXEC) {
 			oes_event_exec_t *exec = &msg->em_event_data.exec;
+			const char *argv_data;
 			got_event = 1;
 
 			printf("    INFO: NOTIFY argc=%u, argv_len=%u\n",
 			    exec->argc, exec->argv_len);
 
-			if (exec->argv_len > 0) {
+			argv_data = event_data(msg, exec->argv_off, exec->argv_len);
+			if (exec->argv_len > 0 && argv_data != NULL) {
 				size_t pos = 0;
 				int argc = 0;
 				while (pos < exec->argv_len && argc < 5) {
-					size_t len = strlen((const char *)msg + exec->argv_off + pos);
+					const char *arg = argv_data + pos;
+					size_t len = strnlen(arg, exec->argv_len - pos);
+					if (len == exec->argv_len - pos)
+						break;
 					if (len > 0) {
 						printf("    INFO: argv[%d] = '%s'\n",
-						    argc, (const char *)msg + exec->argv_off + pos);
+						    argc, arg);
+						if (strcmp(arg, "notify_test") == 0)
+							found_notify_arg = 1;
 						argc++;
 					}
 					pos += len + 1;
@@ -351,7 +405,16 @@ test_notify_embedded_args(void)
 	close(fd);
 
 	if (!got_event) {
-		printf("    INFO: No NOTIFY_EXEC event received\n");
+		fprintf(stderr, "    FAIL: no NOTIFY_EXEC event received\n");
+		return (1);
+	}
+	if (!found_notify_arg) {
+		fprintf(stderr, "    FAIL: expected NOTIFY argv value missing\n");
+		return (1);
+	}
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+		fprintf(stderr, "    FAIL: exec child failed\n");
+		return (1);
 	}
 
 	printf("    PASS: NOTIFY embedded args tested\n");

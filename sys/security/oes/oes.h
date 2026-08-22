@@ -21,10 +21,14 @@
 
 #include "oes_event_table.h"
 
+#ifndef __LP64__
+#error "OpenEndpointSecurity requires a 64-bit kernel and userspace"
+#endif
+
 /*
- * API Version - increment on breaking changes
+ * API Version - increment when the public API or ioctl contract changes
  */
-#define OES_API_VERSION		4
+#define OES_API_VERSION		1
 
 /*
  * Event Types
@@ -93,6 +97,22 @@ typedef enum {
 	OES_AUTH_DENY	= 1,
 } oes_auth_result_t;
 
+/* Fixed-width timestamp for the userspace wire ABI. */
+typedef struct {
+	int64_t		tv_sec;
+	int64_t		tv_nsec;
+} oes_timespec_t;
+
+/* Thread information for the thread that triggered the event. */
+typedef struct {
+	uint64_t	et_id;		/* FreeBSD thread ID; 0 if unavailable */
+	uint32_t	et_flags;	/* OES_THREAD_META_* */
+	uint32_t	et_reserved;	/* Must be zero */
+	char		et_name[MAXCOMLEN + 1]; /* Thread name, if assigned */
+} oes_thread_t;
+
+#define OES_THREAD_META_PRESENT	0x00000001
+
 /*
  * Client operating modes
  */
@@ -114,7 +134,8 @@ typedef struct {
 /*
  * File token - unique file identity
  *
- * Contains inode plus device/generation info.
+ * Contains inode plus device identity.  Inspect ef_generation separately
+ * when a filesystem supplies it.
  */
 typedef struct {
 	uint64_t	eft_id;		/* Inode number */
@@ -131,6 +152,10 @@ typedef struct {
  * message's trailing string table as NUL-terminated strings.
  * Use oes_msg_string(msg, offset) to access them.
  * An offset of 0 means the string is empty.
+ * ep_path is cached during exec and inherited across fork and credential
+ * changes, avoiding path resolution from inside MAC hooks.  Processes that
+ * predate OES activation may report it unavailable until their next exec.
+ * Check ep_meta_flags before treating an empty offset as authoritative.
  */
 typedef struct {
 	oes_proc_token_t ep_token;	/* Token for muting/identity */
@@ -140,6 +165,8 @@ typedef struct {
 	char		ep_pcomm[MAXCOMLEN + 1]; /* Parent command name */
 	pid_t		ep_pgid;	/* Process group ID */
 	pid_t		ep_sid;		/* Session ID */
+	pid_t		ep_original_ppid; /* FreeBSD real parent PID (p_oppid) */
+	pid_t		ep_reaper_pid;	/* FreeBSD process reaper PID */
 	uid_t		ep_uid;		/* Effective UID */
 	uid_t		ep_ruid;	/* Real UID */
 	uid_t		ep_suid;	/* Saved UID */
@@ -148,6 +175,12 @@ typedef struct {
 	gid_t		ep_sgid;	/* Saved GID */
 	int		ep_jid;		/* Jail ID (0 if not jailed) */
 	uint32_t	ep_flags;	/* EP_FLAG_* below */
+	uint32_t	ep_state;	/* OES_PROC_STATE_* */
+	uint32_t	ep_num_threads;	/* Number of threads in process */
+	int32_t		ep_nice;	/* Scheduling nice value */
+	uint32_t	ep_osrel;	/* Binary OS release value */
+	uint32_t	ep_fibnum;	/* Routing table/FIB number */
+	uint32_t	ep_cred_flags;	/* OES_CRED_FLAG_* */
 
 	/* ABI/Binary type - detect Linux vs FreeBSD binaries */
 	uint8_t		ep_abi;		/* EP_ABI_FREEBSD, EP_ABI_LINUX, etc. */
@@ -157,18 +190,25 @@ typedef struct {
 	int64_t		ep_start_sec;	/* Process start time (seconds) */
 	int64_t		ep_start_usec;	/* Process start time (microseconds) */
 
-	/* Supplementary groups */
-	uint16_t	ep_ngroups;	/* Total supplementary groups (may exceed 16) */
-	gid_t		ep_groups[16];	/* First 16 supplementary groups */
+	/* Credential groups (effective GID is element zero on FreeBSD). */
+	uint16_t	ep_ngroups;	/* Total credential groups (may exceed 16) */
+	gid_t		ep_groups[16];	/* First 16 credential groups */
 
 	/* Audit info */
 	uid_t		ep_auid;	/* Audit user ID */
 	uint32_t	ep_asid;	/* Audit session ID */
+	uint32_t	ep_audit_mask_success;
+	uint32_t	ep_audit_mask_failure;
+	uint32_t	ep_audit_term_port;
+	uint32_t	ep_audit_term_type;
+	uint32_t	ep_audit_term_addr[4];
+	uint64_t	ep_audit_flags;
 
 	/* Names (small, always populated - kept inline) */
 	char		ep_comm[MAXCOMLEN + 1];	/* Command name */
 	char		ep_tty[32];	/* Controlling TTY name */
 	char		ep_login[MAXLOGNAME];	/* Login name */
+	char		ep_loginclass[MAXLOGNAME]; /* Login class */
 
 	/* Paths (variable-length, in string table) */
 	uint32_t	ep_path_off;	/* Executable path (string table offset) */
@@ -176,6 +216,7 @@ typedef struct {
 	uint32_t	ep_jailname_off; /* Jail name if jailed */
 	uint32_t	ep_pad2;	/* Alignment */
 	uint32_t	ep_meta_flags;	/* OES_PROC_META_* */
+	uint32_t	ep_reserved;	/* Must be zero */
 } oes_process_t;
 
 /* Process flags */
@@ -189,6 +230,13 @@ typedef struct {
 #define EP_FLAG_WEXIT		0x0040	/* Process is exiting */
 #define EP_FLAG_EXEC		0x0080	/* Process did exec */
 #define EP_FLAG_CONTROLT	0x0100	/* Has controlling terminal */
+#define EP_FLAG_OES_CLIENT	0x0400	/* Owns an active OES client */
+
+#define OES_PROC_STATE_NEW	1
+#define OES_PROC_STATE_NORMAL	2
+#define OES_PROC_STATE_ZOMBIE	3
+
+#define OES_CRED_FLAG_CAPMODE	0x00000001
 
 /* ABI types for ep_abi (matches SV_ABI_* from sys/sysent.h) */
 #define EP_ABI_FREEBSD		9	/* Native FreeBSD binary */
@@ -198,7 +246,8 @@ typedef struct {
 /*
  * File information
  *
- * Path is stored in the message's trailing string table.
+ * Path is stored in the message's trailing string table.  Attribute and path
+ * availability are reported independently in ef_meta_flags.
  * Use oes_msg_string(msg, ef_path_off) to access it.
  */
 typedef struct {
@@ -207,6 +256,11 @@ typedef struct {
 	uint64_t	ef_dev;		/* Device ID */
 	uint64_t	ef_size;	/* File size in bytes */
 	uint64_t	ef_blocks;	/* Blocks allocated */
+	uint64_t	ef_allocated_bytes; /* Exact allocated byte count */
+	uint64_t	ef_block_size;	/* Preferred I/O block size */
+	uint64_t	ef_generation;	/* Filesystem generation number */
+	uint64_t	ef_rdev;	/* Device ID for special files */
+	uint64_t	ef_filerev;	/* Filesystem modification revision */
 	mode_t		ef_mode;	/* File mode */
 	uid_t		ef_uid;		/* Owner UID */
 	gid_t		ef_gid;		/* Owner GID */
@@ -220,11 +274,17 @@ typedef struct {
 	int64_t		ef_mtime;	/* Modification time */
 	int64_t		ef_ctime;	/* Change time */
 	int64_t		ef_birthtime;	/* Creation time */
+	int64_t		ef_atime_nsec;	/* Access timestamp nanoseconds */
+	int64_t		ef_mtime_nsec;	/* Modification timestamp nanoseconds */
+	int64_t		ef_ctime_nsec;	/* Change timestamp nanoseconds */
+	int64_t		ef_birthtime_nsec; /* Creation timestamp nanoseconds */
 
 	/* Filesystem info */
 	char		ef_fstype[16];	/* Filesystem type (ufs, zfs, etc.) */
 	uint32_t	ef_path_off;	/* Path (string table offset, 0 = empty) */
 	uint32_t	ef_meta_flags;	/* OES_FILE_META_* */
+	uint32_t	ef_vaflags;	/* Snapshot of va_vaflags */
+	uint32_t	ef_reserved;	/* Must be zero */
 } oes_file_t;
 
 /* File types */
@@ -270,7 +330,13 @@ typedef struct {
 	oes_file_t	file;		/* File being opened */
 	int		flags;		/* Open flags (O_RDONLY, etc.) */
 	mode_t		mode;		/* Reserved (creation mode unavailable from MAC hook) */
+	uint32_t	access;		/* OES_ACCESS_* requested by the kernel */
 } oes_event_open_t;
+
+/* Unambiguous access bits used by OPEN flags responses. */
+#define OES_ACCESS_READ		0x00000001
+#define OES_ACCESS_WRITE	0x00000002
+#define OES_ACCESS_EXEC		0x00000004
 
 /* OES_EVENT_*_ACCESS */
 typedef struct {
@@ -356,7 +422,7 @@ typedef struct {
 typedef struct {
 	oes_file_t	file;		/* File being mapped (if any) */
 	uint64_t	addr;		/* Reserved (addr unavailable from MAC hook) */
-	size_t		len;		/* Reserved (len unavailable from MAC hook) */
+	uint64_t	len;		/* Reserved (len unavailable from MAC hook) */
 	int		prot;		/* Protection flags */
 	int		flags;		/* Mmap flags */
 } oes_event_mmap_t;
@@ -377,14 +443,14 @@ typedef struct {
 /* OES_EVENT_*_SETFLAGS */
 typedef struct {
 	oes_file_t	file;		/* File being changed */
-	u_long		flags;		/* New file flags */
+	uint64_t	flags;		/* New file flags */
 } oes_event_setflags_t;
 
 /* OES_EVENT_*_SETUTIMES */
 typedef struct {
 	oes_file_t	file;		/* File being changed */
-	struct timespec	atime;		/* New access time */
-	struct timespec	mtime;		/* New modification time */
+	oes_timespec_t	atime;		/* New access time */
+	oes_timespec_t	mtime;		/* New modification time */
 } oes_event_setutimes_t;
 
 /* OES_EVENT_*_MPROTECT */
@@ -524,8 +590,8 @@ typedef struct {
  * Pipe event (read/write/stat/poll/ioctl)
  */
 typedef struct {
-	uint64_t	pipe_id;	/* Unique pipe identifier */
-	unsigned long	ioctl_cmd;	/* For ioctl events */
+	uint64_t	pipe_id;	/* Opaque pipe identifier; 0 if unavailable */
+	uint64_t	ioctl_cmd;	/* For ioctl events */
 } oes_event_pipe_t;
 
 /*
@@ -557,6 +623,9 @@ typedef struct {
  * a fixed header (sizeof(oes_message_t)) followed by a string table
  * containing NUL-terminated path/name strings referenced by _off fields.
  * em_size gives the total size including the string table.
+ * Existing field offsets must remain stable in later ABI versions.  Additive
+ * versions may consume em_event_data._reserved or append fixed data before the
+ * string table, update em_struct_size, and leave older fields untouched.
  *
  * Use oes_msg_string(msg, offset) to access strings by offset.
  * Allocate OES_MSG_MAX_SIZE for read buffers.
@@ -564,13 +633,19 @@ typedef struct {
 typedef struct {
 	uint32_t	em_version;	/* OES_MESSAGE_VERSION */
 	uint32_t	em_size;	/* Total message size (header + strings) */
+	uint32_t	em_struct_size;	/* Fixed structure size for this version */
 	uint32_t	em_flags;	/* OES_MSG_FLAG_* */
-	uint32_t	em_reserved;	/* Reserved, must be 0 */
 	uint64_t	em_id;		/* Unique message ID (for response) */
-	oes_event_type_t em_event;	/* Event type */
-	oes_action_t	em_action;	/* AUTH or NOTIFY */
-	struct timespec	em_time;	/* Event timestamp (CLOCK_MONOTONIC) */
-	struct timespec	em_deadline;	/* AUTH deadline (CLOCK_MONOTONIC) */
+	uint64_t	em_seq_num;	/* Per-client, per-event sequence number */
+	uint64_t	em_global_seq_num; /* Per-client sequence across all events */
+	uint32_t	em_event;	/* oes_event_type_t */
+	uint32_t	em_action;	/* oes_action_t: AUTH or NOTIFY */
+	uint32_t	em_result;	/* Applied oes_auth_result_t when flag is set */
+	uint32_t	em_reserved;	/* Reserved, must be 0 */
+	oes_timespec_t	em_time;	/* Event timestamp (CLOCK_MONOTONIC) */
+	oes_timespec_t	em_deadline;	/* AUTH deadline (CLOCK_MONOTONIC) */
+	oes_timespec_t	em_wall_time;	/* Event timestamp (CLOCK_REALTIME) */
+	oes_thread_t	em_thread;	/* Triggering thread */
 	oes_process_t	em_process;	/* Process that triggered event */
 
 	union {
@@ -636,16 +711,27 @@ typedef struct {
 	} em_event_data;
 } oes_message_t;
 
-#define OES_MESSAGE_VERSION	4
+#define OES_MESSAGE_VERSION	1
 
 /* Message flags */
 #define OES_MSG_FLAG_STRINGS_TRUNCATED	0x00000001
 #define OES_MSG_FLAG_PATH_UNAVAILABLE	0x00000002
+#define OES_MSG_FLAG_AUTH_RESULT		0x00000004
 
 /* Object metadata flags */
 #define OES_PROC_META_PATH_UNAVAILABLE	0x00000001
+#define OES_PROC_META_PATH_TRUNCATED	0x00000002
+#define OES_PROC_META_CWD_UNAVAILABLE	0x00000004
+#define OES_PROC_META_PARENT_UNAVAILABLE 0x00000008
+#define OES_PROC_META_SESSION_UNAVAILABLE 0x00000010
+#define OES_PROC_META_GROUPS_TRUNCATED	0x00000020
+#define OES_PROC_META_CREDENTIALS_UNAVAILABLE 0x00000040
 #define OES_FILE_META_PATH_UNAVAILABLE	0x00000001
 #define OES_FILE_META_PATH_REQUESTED	0x00000002
+#define OES_FILE_META_PATH_TRUNCATED	0x00000004
+#define OES_FILE_META_ATTR_UNAVAILABLE	0x00000008
+#define OES_FILE_META_FSTYPE_UNAVAILABLE 0x00000010
+#define OES_FILE_META_PROPOSED_ATTRS	0x00000020
 
 static inline void
 oes_message_mark_path_unavailable(oes_message_t *msg)
@@ -681,38 +767,61 @@ oes_file_mark_path_requested(oes_file_t *file)
 		file->ef_meta_flags |= OES_FILE_META_PATH_REQUESTED;
 }
 
-static inline int
-oes_message_is_compatible(const oes_message_t *msg)
-{
-
-	return (msg != NULL &&
-	    msg->em_version == OES_MESSAGE_VERSION &&
-	    msg->em_reserved == 0);
-}
-
 /*
- * Maximum message size including string table.
- * Use this to size read buffers.
- *
- * Batched messages are laid out back-to-back in raw byte buffers.
- * OES_MSG_ALIGN therefore must stay at least as strict as the natural
- * alignment required by oes_message_t, or later messages in a batch can
- * become misaligned for readers that walk the buffer one message at a time.
+ * Maximum message size including string table.  Use this to size read
+ * buffers.  Batched messages are laid out back-to-back in raw byte buffers,
+ * so OES_MSG_ALIGN must satisfy the natural alignment of oes_message_t.
  */
 #define OES_MSG_MAX_SIZE	8192
 #define OES_MSG_ALIGN		8	/* Message size alignment for batching */
 #define OES_MSG_ALIGNED(sz)	(((sz) + OES_MSG_ALIGN - 1) & ~(OES_MSG_ALIGN - 1))
 
+static inline int
+oes_message_is_compatible(const oes_message_t *msg)
+{
+
+	return (msg != NULL &&
+	    msg->em_version >= OES_MESSAGE_VERSION &&
+	    msg->em_size <= OES_MSG_MAX_SIZE &&
+	    (msg->em_size & (OES_MSG_ALIGN - 1)) == 0 &&
+	    msg->em_struct_size >= sizeof(oes_message_t) &&
+	    msg->em_struct_size <= msg->em_size &&
+	    msg->em_reserved == 0 &&
+	    (((msg->em_flags & OES_MSG_FLAG_AUTH_RESULT) == 0) ||
+	    msg->em_result == OES_AUTH_ALLOW ||
+	    msg->em_result == OES_AUTH_DENY));
+}
+
+static inline int
+oes_message_has_auth_result(const oes_message_t *msg)
+{
+
+	return (oes_message_is_compatible(msg) &&
+	    (msg->em_flags & OES_MSG_FLAG_AUTH_RESULT) != 0 &&
+	    (msg->em_result == OES_AUTH_ALLOW ||
+	    msg->em_result == OES_AUTH_DENY));
+}
+
 /*
  * Access a string from the message's string table by offset.
- * Returns "" for offset 0 (empty) or out-of-bounds offsets.
+ * Returns "" for offset 0, out-of-bounds offsets, or strings that are not
+ * NUL-terminated within the message.
  */
 static inline const char *
 oes_msg_string(const oes_message_t *msg, uint32_t off)
 {
-	if (off < sizeof(oes_message_t) || off >= msg->em_size)
+	const char *bytes;
+	uint32_t i;
+
+	if (!oes_message_is_compatible(msg) || off < msg->em_struct_size ||
+	    off >= msg->em_size)
 		return ("");
-	return ((const char *)msg + off);
+	bytes = (const char *)msg;
+	for (i = off; i < msg->em_size; i++) {
+		if (bytes[i] == '\0')
+			return (bytes + off);
+	}
+	return ("");
 }
 
 /*
@@ -722,17 +831,19 @@ oes_msg_string(const oes_message_t *msg, uint32_t off)
  */
 typedef struct {
 	uint64_t	er_id;		/* Message ID being responded to */
-	oes_auth_result_t er_result;	/* ALLOW or DENY */
+	uint32_t	er_result;	/* oes_auth_result_t: ALLOW or DENY */
 	uint32_t	er_flags;	/* Reserved, must be 0 */
 } oes_response_t;
 
 /*
- * Flags-based response for partial authorization (AUTH_OPEN, AUTH_MMAP).
+ * Flags-based response for partial authorization
+ * (AUTH_OPEN, AUTH_MMAP, AUTH_MPROTECT).
+ * AUTH_OPEN uses OES_ACCESS_* rather than O_* values because O_RDONLY is 0.
  * No downgrade: operations are fully allowed or fully denied.
  */
 typedef struct {
 	uint64_t	erf_id;		/* Message ID being responded to */
-	oes_auth_result_t erf_result;	/* ALLOW (with flags) or DENY */
+	uint32_t	erf_result;	/* oes_auth_result_t: ALLOW or DENY */
 	uint32_t	erf_reserved;	/* Padding */
 	uint32_t	erf_allowed_flags; /* Flags to allow (event-specific) */
 	uint32_t	erf_denied_flags;  /* Flags explicitly denied */
@@ -744,39 +855,54 @@ typedef struct {
 
 /* Subscribe to event types */
 struct oes_subscribe_args {
-	const oes_event_type_t *esa_events;	/* Array of event types */
+	const oes_event_type_t *esa_events; /* Array of event types */
 	size_t		esa_count;	/* Number of events */
 	uint32_t	esa_flags;	/* OES_SUB_* flags */
+	uint32_t	esa_reserved;	/* Must be zero */
 };
 #define OES_SUB_ADD		0x0000	/* Add to existing subscriptions */
 #define OES_SUB_REPLACE		0x0001	/* Replace all subscriptions */
+#define OES_SUB_REMOVE		0x0002	/* Remove listed subscriptions */
 
 #define OES_IOC_SUBSCRIBE	_IOW('E', 1, struct oes_subscribe_args)
 
-/* Subscribe using bitmap (no event count limit) */
+/* Subscribe using 128-bit bitmaps (no event count limit). */
 struct oes_subscribe_bitmap_args {
-	uint64_t	esba_auth;	/* AUTH event bitmap (bit = event & 0x0FFF) */
-	uint64_t	esba_notify;	/* NOTIFY event bitmap (bit = event & 0x0FFF) */
-	uint32_t	esba_flags;	/* OES_SUB_* flags */
-	uint32_t	esba_reserved;
-};
-
-#define OES_IOC_SUBSCRIBE_BITMAP	_IOW('E', 34, struct oes_subscribe_bitmap_args)
-
-/* Subscribe using extended bitmap (supports bits 64+) */
-struct oes_subscribe_bitmap_ex_args {
 	uint64_t	esba_auth[2];	/* AUTH event bitmap (128 bits) */
 	uint64_t	esba_notify[2];	/* NOTIFY event bitmap (128 bits) */
 	uint32_t	esba_flags;	/* OES_SUB_* flags */
 	uint32_t	esba_reserved;
 };
 
-#define OES_IOC_SUBSCRIBE_BITMAP_EX	_IOW('E', 35, struct oes_subscribe_bitmap_ex_args)
+#define OES_IOC_SUBSCRIBE_BITMAP	_IOW('E', 34, struct oes_subscribe_bitmap_args)
+#define OES_IOC_GET_SUBSCRIPTIONS \
+	_IOR('E', 35, struct oes_subscribe_bitmap_args)
+
+/*
+ * Client visibility scope.
+ *
+ * A descendants-scoped client receives NOTIFY events for its opener and
+ * AUTH+NOTIFY events for processes in the opener's descendant subtree.  It
+ * cannot observe processes outside that subtree.  The scope must be selected
+ * before setting the mode or adding subscriptions and cannot later be
+ * widened.  This mirrors Apple's es_new_descendants_client() visibility
+ * contract while retaining the OES fd-based API.
+ */
+#define OES_SCOPE_GLOBAL		0
+#define OES_SCOPE_DESCENDANTS	1
+
+struct oes_scope_args {
+	uint32_t	esa_scope;	/* OES_SCOPE_* */
+	uint32_t	esa_reserved;	/* Must be zero */
+};
+
+#define OES_IOC_SET_SCOPE	_IOW('E', 37, struct oes_scope_args)
+#define OES_IOC_GET_SCOPE	_IOR('E', 38, struct oes_scope_args)
 
 /* Set client mode and parameters */
 struct oes_mode_args {
 	uint32_t	ema_mode;	/* OES_MODE_* */
-	uint32_t	ema_timeout_ms;	/* AUTH timeout (0 = default) */
+	uint32_t	ema_default_deadline_ms; /* AUTH deadline (0 = default) */
 	uint32_t	ema_queue_size;	/* Max queued events (0 = default) */
 	uint32_t	ema_flags;	/* Reserved */
 };
@@ -785,16 +911,25 @@ struct oes_mode_args {
 #define OES_IOC_GET_MODE	_IOR('E', 31, struct oes_mode_args)
 
 /*
- * Set/get AUTH timeout independently of mode
- *
- * Allows changing timeout without re-triggering mode-set logic.
+ * Set/get deadline bounds for one AUTH event type.  A zero value passed to a
+ * SET operation removes that event's override.  Maximums are available to
+ * every client.  Minimums are restricted to descendants-scoped clients,
+ * matching the safety boundary of Apple's corresponding API.
  */
-struct oes_timeout_args {
-	uint32_t	eta_timeout_ms;	/* AUTH timeout in milliseconds */
+struct oes_event_deadline_args {
+	uint32_t	oeda_event;		/* oes_event_type_t (AUTH only) */
+	uint32_t	oeda_milliseconds;	/* Bound, or zero to reset on SET */
+	uint32_t	oeda_reserved[2];	/* Must be zero */
 };
 
-#define OES_IOC_SET_TIMEOUT	_IOW('E', 32, struct oes_timeout_args)
-#define OES_IOC_GET_TIMEOUT	_IOR('E', 33, struct oes_timeout_args)
+#define OES_IOC_SET_DEADLINE_MAX \
+	_IOW('E', 39, struct oes_event_deadline_args)
+#define OES_IOC_GET_DEADLINE_MAX \
+	_IOWR('E', 40, struct oes_event_deadline_args)
+#define OES_IOC_SET_DEADLINE_MIN \
+	_IOW('E', 41, struct oes_event_deadline_args)
+#define OES_IOC_GET_DEADLINE_MIN \
+	_IOWR('E', 42, struct oes_event_deadline_args)
 
 /* Mute events from a process */
 struct oes_mute_args {
@@ -901,6 +1036,7 @@ struct oes_get_muted_paths_args {
 	size_t		egmpa_count;		/* IN: array size */
 	size_t		egmpa_actual;		/* OUT: actual count */
 	uint32_t	egmpa_flags;		/* OES_MUTE_PATH_FLAG_TARGET */
+	uint32_t	egmpa_reserved;	/* Must be zero */
 };
 
 #define OES_IOC_GET_MUTED_PROCESSES	_IOWR('E', 20, struct oes_get_muted_processes_args)
@@ -942,20 +1078,27 @@ struct oes_mute_gid_args {
 #define OES_IOC_UNMUTE_ALL_UIDS	_IO('E', 29)
 #define OES_IOC_UNMUTE_ALL_GIDS	_IO('E', 30)
 
-/*
- * Default AUTH timeout action
- */
-struct oes_timeout_action_args {
-	uint32_t	eta_action;	/* OES_AUTH_ALLOW or OES_AUTH_DENY */
+/* Action applied when an AUTH deadline is missed or delivery is dropped. */
+typedef enum {
+	OES_DEADLINE_MISS_FAIL_OPEN = 0,
+	OES_DEADLINE_MISS_FAIL_CLOSED = 1,
+} oes_deadline_miss_mode_t;
+
+struct oes_deadline_miss_mode_args {
+	uint32_t	edma_mode;	/* oes_deadline_miss_mode_t */
+	uint32_t	edma_reserved;	/* Must be zero */
 };
 
-#define OES_IOC_SET_TIMEOUT_ACTION	_IOW('E', 11, struct oes_timeout_action_args)
-#define OES_IOC_GET_TIMEOUT_ACTION	_IOWR('E', 12, struct oes_timeout_action_args)
+#define OES_IOC_SET_DEADLINE_MISS_MODE \
+	_IOW('E', 11, struct oes_deadline_miss_mode_args)
+#define OES_IOC_GET_DEADLINE_MISS_MODE \
+	_IOWR('E', 12, struct oes_deadline_miss_mode_args)
 
 /*
  * Decision cache
  *
- * Cache AUTH decisions using a key of event + tokens.
+ * Cache AUTH decisions using the event, process token, execution identity,
+ * operation parameters, and affected object tokens.
  */
 #define OES_CACHE_KEY_PROCESS	0x0001
 #define OES_CACHE_KEY_FILE	0x0002
@@ -964,18 +1107,19 @@ struct oes_timeout_action_args {
 #define OES_CACHE_EVENT_ANY	0	/* Wildcard for remove */
 
 typedef struct {
-	oes_event_type_t eck_event;	/* OES_EVENT_AUTH_* or ANY */
+	uint32_t	eck_event;	/* oes_event_type_t: AUTH event or ANY */
 	uint32_t	eck_flags;	/* OES_CACHE_KEY_* */
-	uint32_t	eck_op_flags;	/* Event-specific flags/protections */
-	uint32_t	eck_pad;	/* Reserved, must be 0 */
+	uint32_t	eck_op_flags;	/* Access/prot/namespace/type, by event */
+	uint32_t	eck_op_flags2;	/* MMAP flags; zero for other events */
 	oes_proc_token_t eck_process;
+	uint64_t	eck_exec_id;	/* Process execution identity */
 	oes_file_token_t eck_file;
 	oes_file_token_t eck_target;
 } oes_cache_key_t;
 
 typedef struct {
 	oes_cache_key_t	ece_key;	/* Cache key */
-	oes_auth_result_t ece_result;	/* ALLOW or DENY */
+	uint32_t	ece_result;	/* oes_auth_result_t: ALLOW or DENY */
 	uint32_t	ece_ttl_ms;	/* Time-to-live in ms */
 } oes_cache_entry_t;
 
@@ -1012,8 +1156,8 @@ struct oes_stats {
 
 	/* Current configuration */
 	uint32_t	es_mode;		/* OES_MODE_* */
-	uint32_t	es_timeout_ms;		/* AUTH timeout in ms */
-	uint32_t	es_timeout_action;	/* OES_AUTH_ALLOW or DENY */
+	uint32_t	es_default_deadline_ms; /* Default AUTH deadline in ms */
+	uint32_t	es_deadline_miss_mode; /* oes_deadline_miss_mode_t */
 	uint32_t	es_reserved;
 };
 
@@ -1025,12 +1169,15 @@ struct oes_stats {
 #ifndef _KERNEL
 #define OES_IOCTLS_THIRD_PARTY_INIT \
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
-	  OES_IOC_SUBSCRIBE_BITMAP_EX, \
-	  OES_IOC_GET_MODE, OES_IOC_GET_TIMEOUT, \
+	  OES_IOC_GET_SUBSCRIPTIONS, \
+	  OES_IOC_GET_SCOPE, \
+	  OES_IOC_GET_MODE, \
+	  OES_IOC_SET_DEADLINE_MAX, OES_IOC_GET_DEADLINE_MAX, \
+	  OES_IOC_SET_DEADLINE_MIN, OES_IOC_GET_DEADLINE_MIN, \
 	  OES_IOC_MUTE_PROCESS, OES_IOC_UNMUTE_PROCESS, \
 	  OES_IOC_MUTE_PATH, OES_IOC_UNMUTE_PATH, OES_IOC_SET_MUTE_INVERT, \
-	  OES_IOC_GET_MUTE_INVERT, OES_IOC_SET_TIMEOUT_ACTION, \
-	  OES_IOC_GET_TIMEOUT_ACTION, OES_IOC_GET_STATS, \
+	  OES_IOC_GET_MUTE_INVERT, OES_IOC_SET_DEADLINE_MISS_MODE, \
+	  OES_IOC_GET_DEADLINE_MISS_MODE, OES_IOC_GET_STATS, \
 	  OES_IOC_MUTE_PROCESS_EVENTS, OES_IOC_UNMUTE_PROCESS_EVENTS, \
 	  OES_IOC_MUTE_PATH_EVENTS, OES_IOC_UNMUTE_PATH_EVENTS, \
 	  OES_IOC_GET_MUTED_PROCESSES, OES_IOC_GET_MUTED_PATHS, \
@@ -1041,13 +1188,15 @@ struct oes_stats {
 
 #define OES_IOCTLS_ALL_INIT \
 	{ OES_IOC_SUBSCRIBE, OES_IOC_SUBSCRIBE_BITMAP, \
-	  OES_IOC_SUBSCRIBE_BITMAP_EX, \
+	  OES_IOC_GET_SUBSCRIPTIONS, \
+	  OES_IOC_SET_SCOPE, OES_IOC_GET_SCOPE, \
 	  OES_IOC_SET_MODE, OES_IOC_GET_MODE, \
-	  OES_IOC_SET_TIMEOUT, OES_IOC_GET_TIMEOUT, \
+	  OES_IOC_SET_DEADLINE_MAX, OES_IOC_GET_DEADLINE_MAX, \
+	  OES_IOC_SET_DEADLINE_MIN, OES_IOC_GET_DEADLINE_MIN, \
 	  OES_IOC_MUTE_PROCESS, OES_IOC_UNMUTE_PROCESS, \
 	  OES_IOC_MUTE_PATH, OES_IOC_UNMUTE_PATH, \
 	  OES_IOC_SET_MUTE_INVERT, OES_IOC_GET_MUTE_INVERT, \
-	  OES_IOC_SET_TIMEOUT_ACTION, OES_IOC_GET_TIMEOUT_ACTION, \
+	  OES_IOC_SET_DEADLINE_MISS_MODE, OES_IOC_GET_DEADLINE_MISS_MODE, \
 	  OES_IOC_CACHE_ADD, OES_IOC_CACHE_REMOVE, OES_IOC_CACHE_CLEAR, \
 	  OES_IOC_GET_STATS, \
 	  OES_IOC_MUTE_PROCESS_EVENTS, OES_IOC_UNMUTE_PROCESS_EVENTS, \
@@ -1062,10 +1211,10 @@ struct oes_stats {
 /*
  * Default values
  */
-#define OES_DEFAULT_TIMEOUT_MS	30000	/* 30 seconds */
+#define OES_DEFAULT_DEADLINE_MS	30000	/* 30 seconds */
 #define OES_DEFAULT_QUEUE_SIZE	1024	/* Events per client */
-#define OES_MIN_TIMEOUT_MS	1000	/* 1 second minimum */
-#define OES_MAX_TIMEOUT_MS	300000	/* 5 minutes maximum */
+#define OES_MIN_DEADLINE_MS	1000	/* 1 second minimum */
+#define OES_MAX_DEADLINE_MS	300000	/* 5 minutes maximum */
 #define OES_MAX_CACHE_TTL_MS	3600000	/* 1 hour maximum */
 
 /*

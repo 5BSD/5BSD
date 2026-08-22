@@ -10,6 +10,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -23,6 +24,25 @@ typedef union {
 	uint8_t		raw[OES_MSG_MAX_SIZE];
 } test_msg_buf;
 
+/* Stateful reader: NOTIFY reads may contain several packed messages. */
+struct test_event_reader {
+	test_msg_buf	ter_batch;
+	size_t		ter_off;
+	size_t		ter_len;
+	int		ter_fd;
+};
+
+#define OES_TEST_DEFAULT_READERS	16
+
+/*
+ * Keep independent batch state for each descriptor.  Multi-client tests
+ * commonly alternate reads between descriptors; a single shared reader
+ * silently discarded the unread tail of the previous descriptor's batch.
+ */
+static struct test_event_reader
+    oes_test_default_readers[OES_TEST_DEFAULT_READERS];
+static bool oes_test_default_readers_initialized;
+
 /*
  * Test-failure accounting.  Previously TEST_FAIL()/ASSERT_MSG() only printed
  * "FAIL" and the process still exited 0, so a failing test was scored as a
@@ -30,6 +50,33 @@ typedef union {
  * atexit hook forces a non-zero exit status, making the harness sound.
  */
 static int oes_test_failures;
+
+static inline void
+test_default_readers_initialize(void)
+{
+	size_t i;
+
+	if (oes_test_default_readers_initialized)
+		return;
+	for (i = 0; i < OES_TEST_DEFAULT_READERS; i++)
+		oes_test_default_readers[i].ter_fd = -1;
+	oes_test_default_readers_initialized = true;
+}
+
+static inline void
+test_forget_event_reader(int fd)
+{
+	size_t i;
+
+	test_default_readers_initialize();
+	for (i = 0; i < OES_TEST_DEFAULT_READERS; i++) {
+		if (oes_test_default_readers[i].ter_fd != fd)
+			continue;
+		memset(&oes_test_default_readers[i], 0,
+		    sizeof(oes_test_default_readers[i]));
+		oes_test_default_readers[i].ter_fd = -1;
+	}
+}
 
 static void
 oes_test_report_failures(void)
@@ -77,8 +124,12 @@ oes_test_install_reporter(void)
 static inline int
 test_open_oes(void)
 {
+	int fd;
 
-	return (open(OES_DEVICE_PATH, O_RDWR | O_NONBLOCK | O_CLOEXEC));
+	fd = open(OES_DEVICE_PATH, O_RDWR | O_NONBLOCK | O_CLOEXEC);
+	if (fd >= 0)
+		test_forget_event_reader(fd);
+	return (fd);
 }
 
 static inline int
@@ -123,48 +174,149 @@ test_unmute_self(int fd)
 	return (ioctl(fd, OES_IOC_UNMUTE_PROCESS, &args));
 }
 
+static inline void
+test_event_reader_init(struct test_event_reader *reader)
+{
+
+	memset(reader, 0, sizeof(*reader));
+	reader->ter_fd = -1;
+}
+
 static inline int
-test_wait_event(int fd, oes_message_t *msg, int timeout_ms)
+test_event_reader_take(struct test_event_reader *reader, oes_message_t *msg)
+{
+	const oes_message_t *src;
+	size_t remaining;
+
+	if (reader->ter_off == reader->ter_len)
+		return (EAGAIN);
+	if (reader->ter_off > reader->ter_len ||
+	    reader->ter_len - reader->ter_off < sizeof(*src))
+		goto corrupt;
+
+	remaining = reader->ter_len - reader->ter_off;
+	src = (const oes_message_t *)(const void *)
+	    (reader->ter_batch.raw + reader->ter_off);
+	if (src->em_size < sizeof(*src) || src->em_size > remaining ||
+	    (src->em_size & (OES_MSG_ALIGN - 1)) != 0 ||
+	    !oes_message_is_compatible(src))
+		goto corrupt;
+
+	memcpy(msg, src, src->em_size);
+	reader->ter_off += src->em_size;
+	if (reader->ter_off == reader->ter_len) {
+		reader->ter_off = 0;
+		reader->ter_len = 0;
+	}
+	return (0);
+
+corrupt:
+	reader->ter_off = 0;
+	reader->ter_len = 0;
+	errno = EPROTO;
+	return (EPROTO);
+}
+
+/*
+ * Return one event while retaining the rest of a batched read.  msg must
+ * point to OES_MSG_MAX_SIZE bytes, normally a test_msg_buf.
+ */
+static inline int
+test_event_reader_next(struct test_event_reader *reader, int fd,
+    oes_message_t *msg, int timeout_ms)
 {
 	struct pollfd pfd;
 	ssize_t n;
+	int error, nready;
 
-	if (msg == NULL) {
+	if (reader == NULL || msg == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
+	if (reader->ter_len != 0 && reader->ter_fd != -1 &&
+	    reader->ter_fd != fd) {
+		errno = EBUSY;
+		return (-1);
+	}
+	if (reader->ter_len != 0) {
+		error = test_event_reader_take(reader, msg);
+		return (error == 0 ? 0 : -1);
+	}
+	reader->ter_fd = fd;
 
 	pfd.fd = fd;
 	pfd.events = POLLIN;
 	pfd.revents = 0;
-	if (poll(&pfd, 1, timeout_ms) <= 0) {
-		errno = EAGAIN;
+	do {
+		nready = poll(&pfd, 1, timeout_ms);
+	} while (nready < 0 && errno == EINTR);
+	if (nready <= 0) {
+		if (nready == 0)
+			errno = EAGAIN;
 		return (-1);
 	}
-	if ((pfd.revents & POLLIN) == 0) {
+	if ((pfd.revents & (POLLIN | POLLHUP)) == 0) {
 		errno = EAGAIN;
 		return (-1);
 	}
 
-	n = read(fd, msg, OES_MSG_MAX_SIZE);
-	if (n < (ssize_t)sizeof(*msg))
-		return (-1);
-	if (msg->em_size < sizeof(*msg) || msg->em_size > (uint32_t)n) {
-		errno = EIO;
+	n = read(fd, reader->ter_batch.raw, sizeof(reader->ter_batch.raw));
+	if (n < (ssize_t)sizeof(*msg)) {
+		if (n >= 0)
+			errno = EPROTO;
 		return (-1);
 	}
+	reader->ter_off = 0;
+	reader->ter_len = (size_t)n;
+	if (test_event_reader_take(reader, msg) != 0)
+		return (-1);
 
 	return (0);
+}
+
+static inline int
+test_wait_event(int fd, oes_message_t *msg, int timeout_ms)
+{
+	struct test_event_reader *free_reader;
+	size_t i;
+
+	test_default_readers_initialize();
+
+	free_reader = NULL;
+	for (i = 0; i < OES_TEST_DEFAULT_READERS; i++) {
+		if (oes_test_default_readers[i].ter_fd == fd)
+			return (test_event_reader_next(&oes_test_default_readers[i],
+			    fd, msg, timeout_ms));
+		if (free_reader == NULL &&
+		    oes_test_default_readers[i].ter_fd == -1)
+			free_reader = &oes_test_default_readers[i];
+	}
+	if (free_reader == NULL) {
+		errno = ENFILE;
+		return (-1);
+	}
+	free_reader->ter_fd = fd;
+	return (test_event_reader_next(free_reader, fd, msg, timeout_ms));
 }
 
 static inline int
 test_wait_event_type(int fd, oes_message_t *msg, oes_event_type_t event,
     int timeout_ms)
 {
-	int waited = 0;
+	struct timespec start;
 
-	while (waited < timeout_ms) {
-		int slice = timeout_ms - waited;
+	clock_gettime(CLOCK_MONOTONIC, &start);
+	for (;;) {
+		struct timespec now;
+		long elapsed_ms;
+		int slice;
+
+		clock_gettime(CLOCK_MONOTONIC, &now);
+		elapsed_ms = (now.tv_sec - start.tv_sec) * 1000L +
+		    (now.tv_nsec - start.tv_nsec) / 1000000L;
+		if (elapsed_ms >= timeout_ms)
+			break;
+		slice = timeout_ms - (int)elapsed_ms;
 
 		if (slice > 100)
 			slice = 100;
@@ -172,7 +324,6 @@ test_wait_event_type(int fd, oes_message_t *msg, oes_event_type_t event,
 			if (msg->em_event == event)
 				return (0);
 		}
-		waited += slice;
 	}
 
 	errno = ETIMEDOUT;
@@ -230,6 +381,11 @@ test_drain_events(int fd)
 static inline void
 test_batch_reset(void)
 {
+	size_t i;
+
+	for (i = 0; i < OES_TEST_DEFAULT_READERS; i++)
+		test_event_reader_init(&oes_test_default_readers[i]);
+	oes_test_default_readers_initialized = true;
 }
 
 static inline int
