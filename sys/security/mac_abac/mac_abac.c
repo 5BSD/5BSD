@@ -80,19 +80,12 @@ SDT_PROBE_DEFINE4(abac, rules, check, deny,
 /* Rule matching probes */
 SDT_PROBE_DEFINE3(abac, rules, rule, match,
     "uint32_t",		/* rule ID */
-    "uint8_t",		/* action (0=allow, 1=deny, 2=transition) */
+	"uint8_t",		/* action (0=allow, 1=deny) */
     "uint32_t");	/* operation bitmask */
 
 SDT_PROBE_DEFINE2(abac, rules, rule, nomatch,
     "int",		/* default policy (0=allow, 1=deny) */
     "uint32_t");	/* operation bitmask */
-
-/* Label transition probes */
-SDT_PROBE_DEFINE4(abac, cred, transition, exec,
-    "char *",		/* old label string */
-    "char *",		/* new label string */
-    "char *",		/* executable label string */
-    "pid_t");		/* pid */
 
 /* Label read probes */
 SDT_PROBE_DEFINE2(abac, label, extattr, read,
@@ -221,6 +214,55 @@ int abac_locked = 0;
  */
 int abac_log_level = ABAC_LOG_ADMIN;
 
+static int
+sysctl_abac_enabled(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = abac_enabled;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (abac_locked)
+		return (EPERM);
+	if (value != 0 && value != 1)
+		return (EINVAL);
+	abac_enabled = value;
+	return (0);
+}
+
+static int
+sysctl_abac_mode(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = abac_mode;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (abac_locked)
+		return (EPERM);
+	if (value < ABAC_MODE_DISABLED || value > ABAC_MODE_ENFORCING)
+		return (EINVAL);
+	abac_mode = value;
+	return (0);
+}
+
+static int
+sysctl_abac_log_level(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = abac_log_level;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (value < ABAC_LOG_NONE || value > ABAC_LOG_ALL)
+		return (EINVAL);
+	abac_log_level = value;
+	return (0);
+}
+
 /*
  * SYSCTL tree: security.mac.mac_abac.*
  */
@@ -228,11 +270,14 @@ SYSCTL_DECL(_security_mac);
 SYSCTL_NODE(_security_mac, OID_AUTO, mac_abac, CTLFLAG_RW | CTLFLAG_MPSAFE, 0,
     "ABAC MAC policy");
 
-SYSCTL_INT(_security_mac_mac_abac, OID_AUTO, enabled, CTLFLAG_RW,
-    &abac_enabled, 0, "Enable ABAC MAC policy");
+SYSCTL_PROC(_security_mac_mac_abac, OID_AUTO, enabled,
+	CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+	sysctl_abac_enabled, "I", "Enable ABAC MAC policy");
 
-SYSCTL_INT(_security_mac_mac_abac, OID_AUTO, mode, CTLFLAG_RW,
-    &abac_mode, 0, "Enforcement mode (0=disabled, 1=permissive, 2=enforcing)");
+SYSCTL_PROC(_security_mac_mac_abac, OID_AUTO, mode,
+	CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+	sysctl_abac_mode, "I",
+	"Enforcement mode (0=disabled, 1=permissive, 2=enforcing)");
 
 SYSCTL_UQUAD(_security_mac_mac_abac, OID_AUTO, labels_read, CTLFLAG_RD,
     &abac_labels_read, 0, "Labels read from extended attributes");
@@ -240,15 +285,16 @@ SYSCTL_UQUAD(_security_mac_mac_abac, OID_AUTO, labels_read, CTLFLAG_RD,
 SYSCTL_UQUAD(_security_mac_mac_abac, OID_AUTO, labels_default, CTLFLAG_RD,
     &abac_labels_default, 0, "Default labels assigned");
 
-SYSCTL_STRING(_security_mac_mac_abac, OID_AUTO, extattr_name, CTLFLAG_RW,
+SYSCTL_STRING(_security_mac_mac_abac, OID_AUTO, extattr_name, CTLFLAG_RDTUN,
     abac_extattr_name, sizeof(abac_extattr_name),
     "Extended attribute name for labels (default: mac_abac)");
 
 SYSCTL_INT(_security_mac_mac_abac, OID_AUTO, locked, CTLFLAG_RD,
     &abac_locked, 0, "Policy locked (1=locked until reboot, 0=unlocked)");
 
-SYSCTL_INT(_security_mac_mac_abac, OID_AUTO, log_level, CTLFLAG_RW,
-    &abac_log_level, 0,
+SYSCTL_PROC(_security_mac_mac_abac, OID_AUTO, log_level,
+	CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+	sysctl_abac_log_level, "I",
     "Audit log level (0=none, 1=error, 2=admin, 3=deny, 4=all)");
 
 /*
@@ -290,10 +336,6 @@ static struct mac_policy_ops abac_ops = {
 	.mpo_cred_check_setaudit = abac_cred_check_setaudit,
 	.mpo_cred_check_setaudit_addr = abac_cred_check_setaudit_addr,
 	.mpo_cred_check_setauid = abac_cred_check_setauid,
-
-	/* Process exec transition */
-	.mpo_vnode_execve_transition = abac_execve_transition,
-	.mpo_vnode_execve_will_transition = abac_execve_will_transition,
 
 	/* Vnode label lifecycle */
 	.mpo_vnode_init_label = abac_vnode_init_label,
@@ -594,6 +636,10 @@ abac_syscall(struct thread *td, int call, void *arg)
 		error = copyin(arg, &val, sizeof(int));
 		if (error)
 			break;
+		if (val != 0 && val != 1) {
+			error = EINVAL;
+			break;
+		}
 		SDT_PROBE2(abac, policy, default, change,
 		    abac_default_policy, val);
 		if (abac_log_level >= ABAC_LOG_ADMIN)
@@ -618,16 +664,16 @@ abac_syscall(struct thread *td, int call, void *arg)
 		 * Validate individual lengths before summing to prevent
 		 * integer overflow attacks.
 		 */
-		if (rule_arg.vr_subject_len > ABAC_MAX_LABEL_LEN ||
-		    rule_arg.vr_object_len > ABAC_MAX_LABEL_LEN ||
-		    rule_arg.vr_newlabel_len > ABAC_MAX_LABEL_LEN) {
+		if (rule_arg.vr_subject_len == 0 ||
+		    rule_arg.vr_object_len == 0 ||
+		    rule_arg.vr_subject_len > ABAC_MAX_LABEL_LEN ||
+		    rule_arg.vr_object_len > ABAC_MAX_LABEL_LEN) {
 			error = EINVAL;
 			break;
 		}
 
 		/* Calculate and copyin variable data */
-		data_len = rule_arg.vr_subject_len + rule_arg.vr_object_len +
-		    rule_arg.vr_newlabel_len;
+		data_len = rule_arg.vr_subject_len + rule_arg.vr_object_len;
 
 		data = malloc(data_len, M_TEMP, M_WAITOK);
 		error = copyin((char *)arg + sizeof(rule_arg), data, data_len);
@@ -719,7 +765,9 @@ abac_syscall(struct thread *td, int call, void *arg)
 		 * Validate individual lengths before summing to prevent
 		 * integer overflow attacks.
 		 */
-		if (test_arg.vt_subject_len > ABAC_MAX_LABEL_LEN ||
+		if (test_arg.vt_subject_len == 0 ||
+		    test_arg.vt_object_len == 0 ||
+		    test_arg.vt_subject_len > ABAC_MAX_LABEL_LEN ||
 		    test_arg.vt_object_len > ABAC_MAX_LABEL_LEN) {
 			error = EINVAL;
 			break;
@@ -799,16 +847,17 @@ abac_syscall(struct thread *td, int call, void *arg)
 			struct abac_setlabel_arg setlabel_arg;
 			struct file *fp;
 			struct vnode *vp;
-			struct abac_label *vl;
+			struct abac_label *old, *parsed;
 			char *label_buf;
-			int label_len;
+			size_t label_len;
 
 			error = copyin(arg, &setlabel_arg, sizeof(setlabel_arg));
 			if (error)
 				break;
 
 			/* Validate label length */
-			if (setlabel_arg.vsl_label_len == 0 ||
+			if (setlabel_arg.vsl_reserved != 0 ||
+			    setlabel_arg.vsl_label_len <= 1 ||
 			    setlabel_arg.vsl_label_len > ABAC_MAX_LABEL_LEN) {
 				error = EINVAL;
 				break;
@@ -823,19 +872,39 @@ abac_syscall(struct thread *td, int call, void *arg)
 				break;
 			}
 
-			/* Ensure null termination */
-			label_buf[setlabel_arg.vsl_label_len - 1] = '\0';
-			label_len = strlen(label_buf);
+			/* Require one exact terminator; never repair malformed input. */
+			label_len = strnlen(label_buf, setlabel_arg.vsl_label_len);
+			if (label_len != setlabel_arg.vsl_label_len - 1) {
+				free(label_buf, M_TEMP);
+				error = EINVAL;
+				break;
+			}
+
+			/* Parse before touching either persistent or cached state. */
+			parsed = abac_label_alloc(M_WAITOK);
+			if (parsed == NULL) {
+				free(label_buf, M_TEMP);
+				error = ENOMEM;
+				break;
+			}
+			error = abac_label_parse(label_buf, label_len, parsed);
+			if (error != 0) {
+				abac_label_free(parsed);
+				free(label_buf, M_TEMP);
+				break;
+			}
 
 			/* Get the vnode from the file descriptor */
 			error = fget(td, setlabel_arg.vsl_fd, &cap_no_rights, &fp);
 			if (error) {
+				abac_label_free(parsed);
 				free(label_buf, M_TEMP);
 				break;
 			}
 
 			if (fp->f_type != DTYPE_VNODE) {
 				fdrop(fp, td);
+				abac_label_free(parsed);
 				free(label_buf, M_TEMP);
 				error = EINVAL;
 				break;
@@ -844,6 +913,7 @@ abac_syscall(struct thread *td, int call, void *arg)
 			vp = fp->f_vnode;
 			if (vp == NULL) {
 				fdrop(fp, td);
+				abac_label_free(parsed);
 				free(label_buf, M_TEMP);
 				error = EINVAL;
 				break;
@@ -858,12 +928,12 @@ abac_syscall(struct thread *td, int call, void *arg)
 			    label_len, label_buf, td);
 
 			if (error == 0 && vp->v_label != NULL) {
-				/* Step 2: Update in-memory label */
-				vl = SLOT(vp->v_label);
-				if (vl != NULL) {
-					error = abac_label_parse(label_buf,
-					    label_len, vl);
-				}
+				/* Step 2: Publish the already validated label. */
+				old = SLOT(vp->v_label);
+				SLOT_SET(vp->v_label, parsed);
+				parsed = NULL;
+				if (old != NULL && old != ABAC_LABEL_NEEDS_LOAD)
+					abac_label_free(old);
 			}
 
 			if (error == 0)
@@ -872,7 +942,43 @@ abac_syscall(struct thread *td, int call, void *arg)
 
 			VOP_UNLOCK(vp);
 			fdrop(fp, td);
+			if (parsed != NULL)
+				abac_label_free(parsed);
 			free(label_buf, M_TEMP);
+		}
+		break;
+
+	case ABAC_SYS_REMOVELABEL:
+		error = copyin(arg, &val, sizeof(val));
+		if (error)
+			break;
+		{
+			struct abac_label *old;
+			struct file *fp;
+			struct vnode *vp;
+
+			error = fget(td, val, &cap_no_rights, &fp);
+			if (error)
+				break;
+			if (fp->f_type != DTYPE_VNODE || fp->f_vnode == NULL) {
+				fdrop(fp, td);
+				error = EINVAL;
+				break;
+			}
+			vp = fp->f_vnode;
+			vn_lock(vp, LK_EXCLUSIVE | LK_RETRY);
+			error = vn_extattr_rm(vp, IO_NODELOCKED,
+			    ABAC_EXTATTR_NAMESPACE, abac_extattr_name, td);
+			if (error == ENOATTR)
+				error = 0;
+			if (error == 0 && vp->v_label != NULL) {
+				old = SLOT(vp->v_label);
+				SLOT_SET(vp->v_label, NULL);
+				if (old != NULL && old != ABAC_LABEL_NEEDS_LOAD)
+					abac_label_free(old);
+			}
+			VOP_UNLOCK(vp);
+			fdrop(fp, td);
 		}
 		break;
 

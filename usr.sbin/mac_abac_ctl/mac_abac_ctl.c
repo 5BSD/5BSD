@@ -74,14 +74,64 @@ convert_label_format(const char *input)
 {
 	size_t len, outlen;
 	char *output, *outp;
-	const char *p, *end, *comma;
+	const char *p, *end, *comma, *eq;
+	const char *keys[ABAC_MAX_PAIRS];
+	size_t key_lengths[ABAC_MAX_PAIRS];
+	size_t keylen, valuelen, npairs, i;
 
-	if (input == NULL)
+	if (input == NULL) {
+		errno = EINVAL;
 		return (NULL);
+	}
 
 	len = strlen(input);
-	if (len == 0)
-		return (strdup(""));
+	if (len == 0 || len + 2 > ABAC_MAX_LABEL_LEN ||
+	    memchr(input, '\n', len) != NULL || memchr(input, '\r', len) != NULL) {
+		errno = EINVAL;
+		return (NULL);
+	}
+
+	/* Validate the complete label before allocating or rewriting it. */
+	p = input;
+	end = input + len;
+	npairs = 0;
+	while (p < end) {
+		comma = memchr(p, ',', end - p);
+		if (comma == NULL)
+			comma = end;
+		if (comma == p || npairs >= ABAC_MAX_PAIRS) {
+			errno = EINVAL;
+			return (NULL);
+		}
+		eq = memchr(p, '=', comma - p);
+		if (eq == NULL) {
+			errno = EINVAL;
+			return (NULL);
+		}
+		keylen = (size_t)(eq - p);
+		valuelen = (size_t)(comma - eq - 1);
+		if (keylen == 0 || keylen >= ABAC_MAX_KEY_LEN ||
+		    valuelen >= ABAC_MAX_VALUE_LEN) {
+			errno = EINVAL;
+			return (NULL);
+		}
+		for (i = 0; i < npairs; i++) {
+			if (key_lengths[i] == keylen &&
+			    memcmp(keys[i], p, keylen) == 0) {
+				errno = EEXIST;
+				return (NULL);
+			}
+		}
+		keys[npairs] = p;
+		key_lengths[npairs++] = keylen;
+		if (comma == end)
+			break;
+		p = comma + 1;
+		if (p == end) {
+			errno = EINVAL;
+			return (NULL);
+		}
+	}
 
 	/* Output size: same length, commas become newlines, plus trailing \n + \0 */
 	outlen = len + 2;
@@ -101,13 +151,12 @@ convert_label_format(const char *input)
 		if (comma == NULL)
 			comma = end;
 
-		/* Copy this segment */
-		if (comma > p) {
-			memcpy(outp, p, comma - p);
-			outp += comma - p;
-			*outp++ = '\n';
-		}
+		memcpy(outp, p, comma - p);
+		outp += comma - p;
+		*outp++ = '\n';
 
+		if (comma == end)
+			break;
 		p = comma + 1;
 	}
 
@@ -128,64 +177,12 @@ ops_to_string(uint32_t ops, char *buf, size_t buflen)
 
 	buf[0] = '\0';
 
-	if (ops & ABAC_OP_EXEC)
-		strlcat(buf, "exec,", buflen);
-	if (ops & ABAC_OP_READ)
-		strlcat(buf, "read,", buflen);
-	if (ops & ABAC_OP_WRITE)
-		strlcat(buf, "write,", buflen);
-	if (ops & ABAC_OP_OPEN)
-		strlcat(buf, "open,", buflen);
-	if (ops & ABAC_OP_ACCESS)
-		strlcat(buf, "access,", buflen);
-	if (ops & ABAC_OP_MMAP)
-		strlcat(buf, "mmap,", buflen);
-	if (ops & ABAC_OP_DEBUG)
-		strlcat(buf, "debug,", buflen);
-	if (ops & ABAC_OP_SIGNAL)
-		strlcat(buf, "signal,", buflen);
-	if (ops & ABAC_OP_SCHED)
-		strlcat(buf, "sched,", buflen);
-	if (ops & ABAC_OP_READDIR)
-		strlcat(buf, "readdir,", buflen);
-	if (ops & ABAC_OP_CREATE)
-		strlcat(buf, "create,", buflen);
-	if (ops & ABAC_OP_SETEXTATTR)
-		strlcat(buf, "setextattr,", buflen);
-	if (ops & ABAC_OP_GETEXTATTR)
-		strlcat(buf, "getextattr,", buflen);
-	if (ops & ABAC_OP_LOOKUP)
-		strlcat(buf, "lookup,", buflen);
-	if (ops & ABAC_OP_LINK)
-		strlcat(buf, "link,", buflen);
-	if (ops & ABAC_OP_RENAME)
-		strlcat(buf, "rename,", buflen);
-	if (ops & ABAC_OP_UNLINK)
-		strlcat(buf, "unlink,", buflen);
-	if (ops & ABAC_OP_CHDIR)
-		strlcat(buf, "chdir,", buflen);
-	if (ops & ABAC_OP_CONNECT)
-		strlcat(buf, "connect,", buflen);
-	if (ops & ABAC_OP_BIND)
-		strlcat(buf, "bind,", buflen);
-	if (ops & ABAC_OP_LISTEN)
-		strlcat(buf, "listen,", buflen);
-	if (ops & ABAC_OP_ACCEPT)
-		strlcat(buf, "accept,", buflen);
-	if (ops & ABAC_OP_SEND)
-		strlcat(buf, "send,", buflen);
-	if (ops & ABAC_OP_RECEIVE)
-		strlcat(buf, "receive,", buflen);
-	if (ops & ABAC_OP_DELIVER)
-		strlcat(buf, "deliver,", buflen);
-	if (ops & ABAC_OP_STAT)
-		strlcat(buf, "stat,", buflen);
-	if (ops & ABAC_OP_WAIT)
-		strlcat(buf, "wait,", buflen);
-	if (ops & ABAC_OP_MPROTECT)
-		strlcat(buf, "mprotect,", buflen);
-	if (ops & ABAC_OP_AUDIT)
-		strlcat(buf, "audit,", buflen);
+#define APPEND_OPERATION(name, value) do { \
+	if ((ops & (value)) != 0) \
+		(void)strlcat(buf, #name ",", buflen); \
+} while (0);
+	ABAC_OPERATION_LIST(APPEND_OPERATION)
+#undef APPEND_OPERATION
 
 	/* Remove trailing comma */
 	len = strlen(buf);
@@ -219,7 +216,7 @@ usage(void)
 	    "\n"
 	    "  rule add \"<rule>\"\n"
 	    "      Add a rule, prints assigned ID\n"
-	    "      Format: action ops subject [ctx:...] -> object [ctx:...] [=> newlabel]\n"
+	    "      Format: action ops subject [ctx:...] -> object [ctx:...]\n"
 	    "      Examples:\n"
 	    "        mac_abac_ctl rule add \"deny exec * -> type=untrusted\"\n"
 	    "        mac_abac_ctl rule add \"deny read * ctx:jail=any -> type=secret\"\n"
@@ -252,11 +249,11 @@ usage(void)
 	    "      Get the ABAC of a file\n"
 	    "\n"
 	    "  label set <path> \"<label>\"\n"
-	    "      Set the ABAC of a file (two-step: extattr + refresh)\n"
+	    "      Atomically set the persistent and cached ABAC label\n"
 	    "      Example: mac_abac_ctl label set /bin/foo \"type=trusted,domain=system\"\n"
 	    "\n"
 	    "  label setatomic <path> \"<label>\"\n"
-	    "      Set the ABAC atomically (single syscall, preferred for ZFS)\n"
+	    "      Alias for label set\n"
 	    "      Example: mac_abac_ctl label setatomic /bin/foo \"type=trusted\"\n"
 	    "\n"
 	    "  label refresh <path>\n"
@@ -649,12 +646,11 @@ cmd_limits(int argc __unused, char *argv[] __unused)
 	printf("    %-12s  0x%08x  %s\n", "all",        ABAC_OP_ALL,        "all operations");
 	printf("\n");
 	printf("  Rule Syntax:\n");
-	printf("    action operation subject -> object [=> newlabel]\n");
+	printf("    action operation subject -> object\n");
 	printf("\n");
 	printf("  Actions:\n");
 	printf("    allow       - permit the operation\n");
 	printf("    deny        - block the operation (returns EACCES)\n");
-	printf("    transition  - change process label on exec\n");
 	printf("\n");
 	printf("  Pattern Format:\n");
 	printf("    *                   - match anything (wildcard)\n");

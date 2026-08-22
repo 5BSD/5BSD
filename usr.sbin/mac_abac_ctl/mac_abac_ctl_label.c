@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include <security/mac_abac/mac_abac.h>
+#include "mac_abacd.h"
 #include "mac_abac_ctl.h"
 
 /*
@@ -69,64 +70,12 @@ setlabel_atomic(const char *path, const char *label_newline_fmt)
 static uint32_t
 parse_operation(const char *opstr)
 {
-	if (strcasecmp(opstr, "exec") == 0)
-		return ABAC_OP_EXEC;
-	if (strcasecmp(opstr, "read") == 0)
-		return ABAC_OP_READ;
-	if (strcasecmp(opstr, "write") == 0)
-		return ABAC_OP_WRITE;
-	if (strcasecmp(opstr, "open") == 0)
-		return ABAC_OP_OPEN;
-	if (strcasecmp(opstr, "mmap") == 0)
-		return ABAC_OP_MMAP;
-	if (strcasecmp(opstr, "access") == 0)
-		return ABAC_OP_ACCESS;
-	if (strcasecmp(opstr, "setextattr") == 0)
-		return ABAC_OP_SETEXTATTR;
-	if (strcasecmp(opstr, "getextattr") == 0)
-		return ABAC_OP_GETEXTATTR;
-	if (strcasecmp(opstr, "debug") == 0)
-		return ABAC_OP_DEBUG;
-	if (strcasecmp(opstr, "signal") == 0)
-		return ABAC_OP_SIGNAL;
-	if (strcasecmp(opstr, "sched") == 0)
-		return ABAC_OP_SCHED;
-	if (strcasecmp(opstr, "stat") == 0)
-		return ABAC_OP_STAT;
-	if (strcasecmp(opstr, "readdir") == 0)
-		return ABAC_OP_READDIR;
-	if (strcasecmp(opstr, "create") == 0)
-		return ABAC_OP_CREATE;
-	if (strcasecmp(opstr, "lookup") == 0)
-		return ABAC_OP_LOOKUP;
-	/* File/directory manipulation operations */
-	if (strcasecmp(opstr, "link") == 0)
-		return ABAC_OP_LINK;
-	if (strcasecmp(opstr, "rename") == 0)
-		return ABAC_OP_RENAME;
-	if (strcasecmp(opstr, "unlink") == 0)
-		return ABAC_OP_UNLINK;
-	if (strcasecmp(opstr, "chdir") == 0)
-		return ABAC_OP_CHDIR;
-	/* Socket operations */
-	if (strcasecmp(opstr, "connect") == 0)
-		return ABAC_OP_CONNECT;
-	if (strcasecmp(opstr, "bind") == 0)
-		return ABAC_OP_BIND;
-	if (strcasecmp(opstr, "listen") == 0)
-		return ABAC_OP_LISTEN;
-	if (strcasecmp(opstr, "accept") == 0)
-		return ABAC_OP_ACCEPT;
-	if (strcasecmp(opstr, "send") == 0)
-		return ABAC_OP_SEND;
-	if (strcasecmp(opstr, "receive") == 0)
-		return ABAC_OP_RECEIVE;
-	if (strcasecmp(opstr, "deliver") == 0)
-		return ABAC_OP_DELIVER;
-	if (strcasecmp(opstr, "all") == 0)
-		return ABAC_OP_ALL;
+	uint32_t operation;
 
-	return 0;
+	if (mac_abacd_parse_operations(opstr, &operation) != 0 ||
+	    operation == ABAC_OP_ALL || (operation & (operation - 1)) != 0)
+		return (0);
+	return (operation);
 }
 
 /*
@@ -171,12 +120,12 @@ cmd_label(int argc, char *argv[])
 		}
 		printf("%s\n", buf);
 
-	} else if (strcmp(argv[0], "set") == 0) {
+	} else if (strcmp(argv[0], "set") == 0 ||
+	    strcmp(argv[0], "setatomic") == 0) {
 		char *converted;
-		int fd;
 
 		if (argc < 3)
-			errx(EX_USAGE, "label set requires path and label");
+			errx(EX_USAGE, "label %s requires path and label", argv[0]);
 
 		/*
 		 * Convert from comma format (user-friendly) to newline format
@@ -185,97 +134,31 @@ cmd_label(int argc, char *argv[])
 		 */
 		converted = convert_label_format(argv[2]);
 		if (converted == NULL)
-			errx(EX_OSERR, "failed to convert label format");
+			errx(EX_DATAERR, "invalid label format");
 
-		ret = extattr_set_file(argv[1], EXTATTR_NAMESPACE_SYSTEM,
-		    get_extattr_name(), converted, strlen(converted));
+		ret = setlabel_atomic(argv[1], converted);
 		free(converted);
 		if (ret < 0)
-			err(EX_OSERR, "extattr_set_file");
+			err(EX_OSERR, "SETLABEL");
 
-		/*
-		 * Refresh the kernel's cached vnode label by re-reading
-		 * from extattr. This enables live relabeling on ZFS and
-		 * other filesystems that don't support MNT_MULTILABEL.
-		 */
-		fd = open(argv[1], O_RDONLY);
-		if (fd < 0) {
-			warn("warning: could not open file for refresh");
-		} else {
-			ret = mac_syscall(ABAC_POLICY_NAME, ABAC_SYS_REFRESH, &fd);
-			if (ret < 0)
-				warn("warning: refresh syscall failed (errno=%d)", errno);
-			else
-				printf("label refreshed\n");
-			close(fd);
-		}
-
-		printf("label set on %s\n", argv[1]);
+		printf("label set atomically on %s\n", argv[1]);
 
 	} else if (strcmp(argv[0], "remove") == 0) {
-		ret = extattr_delete_file(argv[1], EXTATTR_NAMESPACE_SYSTEM,
-		    get_extattr_name());
+		int fd;
+
+		fd = open(argv[1], O_RDONLY);
+		if (fd < 0)
+			err(EX_OSERR, "open");
+		ret = mac_syscall(ABAC_POLICY_NAME, ABAC_SYS_REMOVELABEL, &fd);
+		close(fd);
 		if (ret < 0) {
 			if (errno == ENOATTR) {
 				printf("(no label to remove)\n");
 				return (0);
 			}
-			err(EX_OSERR, "extattr_delete_file");
+			err(EX_OSERR, "REMOVELABEL");
 		}
 		printf("label removed from %s\n", argv[1]);
-
-	} else if (strcmp(argv[0], "setatomic") == 0) {
-		/*
-		 * Atomic setlabel: write extattr AND update in-memory cache
-		 * in a single syscall. This is the preferred method for ZFS.
-		 */
-		struct abac_setlabel_arg *setlabel_arg;
-		char *converted;
-		size_t label_len, total_len;
-		int fd;
-
-		if (argc < 3)
-			errx(EX_USAGE, "label setatomic requires path and label");
-
-		/* Convert from comma format to newline format */
-		converted = convert_label_format(argv[2]);
-		if (converted == NULL)
-			errx(EX_OSERR, "failed to convert label format");
-
-		label_len = strlen(converted) + 1;
-		total_len = sizeof(struct abac_setlabel_arg) + label_len;
-
-		/* Open the file first to get fd */
-		fd = open(argv[1], O_RDONLY);
-		if (fd < 0) {
-			free(converted);
-			err(EX_OSERR, "open");
-		}
-
-		/* Build syscall argument */
-		setlabel_arg = calloc(1, total_len);
-		if (setlabel_arg == NULL) {
-			free(converted);
-			close(fd);
-			err(EX_OSERR, "calloc");
-		}
-
-		setlabel_arg->vsl_fd = fd;
-		setlabel_arg->vsl_label_len = label_len;
-		memcpy((char *)setlabel_arg + sizeof(struct abac_setlabel_arg),
-		    converted, label_len);
-
-		/* Perform atomic setlabel */
-		ret = mac_syscall(ABAC_POLICY_NAME, ABAC_SYS_SETLABEL,
-		    setlabel_arg);
-		free(setlabel_arg);
-		free(converted);
-		close(fd);
-
-		if (ret < 0)
-			err(EX_OSERR, "SETLABEL");
-
-		printf("label set atomically on %s\n", argv[1]);
 
 	} else if (strcmp(argv[0], "refresh") == 0) {
 		/*
@@ -338,7 +221,7 @@ cmd_label(int argc, char *argv[])
 		/* Convert label format */
 		converted = convert_label_format(argv[2]);
 		if (converted == NULL)
-			errx(EX_OSERR, "failed to convert label format");
+			errx(EX_DATAERR, "invalid label format");
 
 		/* Set up fts */
 		paths[0] = argv[1];

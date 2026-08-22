@@ -9,7 +9,7 @@
  * Parses ABAC rules in a simple line-based format for CLI use.
  *
  * Format:
- *   action operations subject [ctx:...] -> object [ctx:...] [=> newlabel] [set N]
+ *   action operations subject [ctx:...] -> object [ctx:...] [set N]
  *
  * Context placement determines what it applies to:
  *   - ctx: BEFORE '->' applies to subject (caller)
@@ -24,7 +24,6 @@
  *   allow exec type=admin ctx:jail=host -> *
  *   deny debug * ctx:uid=0 -> * ctx:sandboxed=true
  *   deny signal type=user ctx:uid=1000 -> type=system ctx:uid=0
- *   transition exec type=user -> type=setuid,name=su => type=admin
  *   deny exec * -> type=untrusted set 1
  *   allow read domain=app -> domain=app set 100
  *
@@ -49,6 +48,7 @@
  *   ctx:jail=host,uid=0  - root on host only
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 
 #include <ctype.h>
@@ -83,19 +83,26 @@ skip_ws(const char *s)
 static const char *
 parse_word(const char *s, char *buf, size_t buflen)
 {
-	size_t i = 0;
+	const char *start;
+	size_t len;
 
 	s = skip_ws(s);
-	while (*s && !isspace((unsigned char)*s) && i < buflen - 1) {
-		buf[i++] = *s++;
+	start = s;
+	while (*s && !isspace((unsigned char)*s))
+		s++;
+	len = (size_t)(s - start);
+	if (len >= buflen) {
+		buf[0] = '\0';
+		return (NULL);
 	}
-	buf[i] = '\0';
+	memcpy(buf, start, len);
+	buf[len] = '\0';
 
 	return (s);
 }
 
 /*
- * Parse action: allow, deny, transition
+ * Parse action: allow or deny
  */
 static int
 parse_action(const char *word, uint8_t *action)
@@ -108,95 +115,54 @@ parse_action(const char *word, uint8_t *action)
 		*action = ABAC_ACTION_DENY;
 		return (0);
 	}
-	if (strcasecmp(word, "transition") == 0) {
-		*action = ABAC_ACTION_TRANSITION;
-		return (0);
-	}
 	return (-1);
 }
 
 /*
  * Parse operations: exec, read, write, exec,read,write, all, *
  */
-static int
-parse_operations(const char *word, uint32_t *ops)
+int
+mac_abacd_parse_operations(const char *word, uint32_t *ops)
 {
 	char buf[256];
 	char *p, *tok;
+	static const struct {
+		const char *name;
+		uint32_t operation;
+	} operation_names[] = {
+#define ABAC_OPERATION_NAME(name, value) { #name, value },
+		ABAC_OPERATION_LIST(ABAC_OPERATION_NAME)
+#undef ABAC_OPERATION_NAME
+	};
+	size_t i;
+	bool found;
 
+	if (word == NULL || ops == NULL || word[0] == '\0' ||
+	    strlen(word) >= sizeof(buf) || word[strlen(word) - 1] == ',' ||
+	    strstr(word, ",,") != NULL)
+		return (-1);
 	*ops = 0;
 	strlcpy(buf, word, sizeof(buf));
 
 	for (tok = strtok_r(buf, ",", &p); tok != NULL;
 	     tok = strtok_r(NULL, ",", &p)) {
-		if (strcasecmp(tok, "exec") == 0)
-			*ops |= ABAC_OP_EXEC;
-		else if (strcasecmp(tok, "read") == 0)
-			*ops |= ABAC_OP_READ;
-		else if (strcasecmp(tok, "write") == 0)
-			*ops |= ABAC_OP_WRITE;
-		else if (strcasecmp(tok, "mmap") == 0)
-			*ops |= ABAC_OP_MMAP;
-		else if (strcasecmp(tok, "link") == 0)
-			*ops |= ABAC_OP_LINK;
-		else if (strcasecmp(tok, "rename") == 0)
-			*ops |= ABAC_OP_RENAME;
-		else if (strcasecmp(tok, "unlink") == 0)
-			*ops |= ABAC_OP_UNLINK;
-		else if (strcasecmp(tok, "chdir") == 0)
-			*ops |= ABAC_OP_CHDIR;
-		else if (strcasecmp(tok, "stat") == 0)
-			*ops |= ABAC_OP_STAT;
-		else if (strcasecmp(tok, "readdir") == 0)
-			*ops |= ABAC_OP_READDIR;
-		else if (strcasecmp(tok, "create") == 0)
-			*ops |= ABAC_OP_CREATE;
-		else if (strcasecmp(tok, "setextattr") == 0)
-			*ops |= ABAC_OP_SETEXTATTR;
-		else if (strcasecmp(tok, "getextattr") == 0)
-			*ops |= ABAC_OP_GETEXTATTR;
-		else if (strcasecmp(tok, "lookup") == 0)
-			*ops |= ABAC_OP_LOOKUP;
-		else if (strcasecmp(tok, "open") == 0)
-			*ops |= ABAC_OP_OPEN;
-		else if (strcasecmp(tok, "access") == 0)
-			*ops |= ABAC_OP_ACCESS;
-		else if (strcasecmp(tok, "debug") == 0)
-			*ops |= ABAC_OP_DEBUG;
-		else if (strcasecmp(tok, "signal") == 0)
-			*ops |= ABAC_OP_SIGNAL;
-		else if (strcasecmp(tok, "sched") == 0)
-			*ops |= ABAC_OP_SCHED;
-		else if (strcasecmp(tok, "connect") == 0)
-			*ops |= ABAC_OP_CONNECT;
-		else if (strcasecmp(tok, "bind") == 0)
-			*ops |= ABAC_OP_BIND;
-		else if (strcasecmp(tok, "listen") == 0)
-			*ops |= ABAC_OP_LISTEN;
-		else if (strcasecmp(tok, "accept") == 0)
-			*ops |= ABAC_OP_ACCEPT;
-		else if (strcasecmp(tok, "send") == 0)
-			*ops |= ABAC_OP_SEND;
-		else if (strcasecmp(tok, "receive") == 0)
-			*ops |= ABAC_OP_RECEIVE;
-		else if (strcasecmp(tok, "deliver") == 0)
-			*ops |= ABAC_OP_DELIVER;
-		else if (strcasecmp(tok, "wait") == 0)
-			*ops |= ABAC_OP_WAIT;
-		else if (strcasecmp(tok, "mprotect") == 0)
-			*ops |= ABAC_OP_MPROTECT;
-		else if (strcasecmp(tok, "audit") == 0)
-			*ops |= ABAC_OP_AUDIT;
-		else if (strcasecmp(tok, "all") == 0 || strcmp(tok, "*") == 0)
+		if (strcasecmp(tok, "all") == 0 || strcmp(tok, "*") == 0) {
 			*ops |= ABAC_OP_ALL;
-		else
+			continue;
+		}
+		found = false;
+		for (i = 0; i < nitems(operation_names); i++) {
+			if (strcasecmp(tok, operation_names[i].name) == 0) {
+				*ops |= operation_names[i].operation;
+				found = true;
+				break;
+			}
+		}
+		if (!found)
 			return (-1);
 	}
 
-	if (*ops == 0)
-		*ops = ABAC_OP_ALL;
-
-	return (0);
+	return (*ops == 0 ? -1 : 0);
 }
 
 /*
@@ -212,11 +178,19 @@ parse_operations(const char *word, uint32_t *ops)
  *   key=*                  - must have key (any value)
  *   !pattern               - negate the match
  */
-static int
-parse_pattern(const char *word, struct abac_pattern_io *pattern)
+int
+mac_abacd_parse_pattern(const char *word, struct abac_pattern_io *pattern)
 {
-	const char *pattern_start;
+	char input[ABAC_PATTERN_MAX_LEN];
+	const char *pattern_start, *p, *end, *comma, *eq;
+	const char *keys[ABAC_RULE_MAX_PAIRS];
+	size_t key_lengths[ABAC_RULE_MAX_PAIRS];
+	size_t keylen, valuelen, npairs, i;
 
+	if (word == NULL || pattern == NULL ||
+	    strlcpy(input, word, sizeof(input)) >= sizeof(input))
+		return (-1);
+	word = input;
 	memset(pattern, 0, sizeof(*pattern));
 
 	/* Wildcard */
@@ -231,15 +205,88 @@ parse_pattern(const char *word, struct abac_pattern_io *pattern)
 		pattern->vp_flags |= ABAC_MATCH_NEGATE;
 		pattern_start = word + 1;
 	}
+	if (pattern_start[0] == '\0')
+		return (-1);
 
 	/* Store the pattern string directly - kernel will parse it */
-	if (strlen(pattern_start) >= sizeof(pattern->vp_pattern)) {
-		fprintf(stderr, "pattern too long: %s\n", word);
-		return (-1);
+	/* Validate delimiters, limits, and duplicate keys now, not in-kernel. */
+	p = pattern_start;
+	end = pattern_start + strlen(pattern_start);
+	npairs = 0;
+	while (p < end) {
+		comma = memchr(p, ',', end - p);
+		if (comma == NULL)
+			comma = end;
+		if (comma == p || npairs >= ABAC_RULE_MAX_PAIRS)
+			return (-1);
+		eq = memchr(p, '=', comma - p);
+		if (eq == NULL)
+			return (-1);
+		keylen = (size_t)(eq - p);
+		valuelen = (size_t)(comma - eq - 1);
+		if (keylen == 0 || keylen >= ABAC_RULE_KEY_LEN ||
+		    valuelen >= ABAC_RULE_VALUE_LEN)
+			return (-1);
+		for (i = 0; i < npairs; i++) {
+			if (key_lengths[i] == keylen &&
+			    memcmp(keys[i], p, keylen) == 0)
+				return (-1);
+		}
+		keys[npairs] = p;
+		key_lengths[npairs++] = keylen;
+		if (comma == end)
+			break;
+		p = comma + 1;
+		if (p == end)
+			return (-1);
 	}
 
 	strlcpy(pattern->vp_pattern, pattern_start, sizeof(pattern->vp_pattern));
 
+	return (0);
+}
+
+int
+mac_abacd_validate_label(const char *label)
+{
+	const char *p, *end, *comma, *eq;
+	const char *keys[ABAC_MAX_PAIRS];
+	size_t key_lengths[ABAC_MAX_PAIRS];
+	size_t keylen, valuelen, npairs, i;
+
+	if (label == NULL || label[0] == '\0' ||
+	    strlen(label) + 2 > ABAC_MAX_LABEL_LEN)
+		return (-1);
+	p = label;
+	end = label + strlen(label);
+	npairs = 0;
+	while (p < end) {
+		comma = memchr(p, ',', end - p);
+		if (comma == NULL)
+			comma = end;
+		if (comma == p || npairs >= ABAC_MAX_PAIRS)
+			return (-1);
+		eq = memchr(p, '=', comma - p);
+		if (eq == NULL)
+			return (-1);
+		keylen = (size_t)(eq - p);
+		valuelen = (size_t)(comma - eq - 1);
+		if (keylen == 0 || keylen >= ABAC_MAX_KEY_LEN ||
+		    valuelen >= ABAC_MAX_VALUE_LEN)
+			return (-1);
+		for (i = 0; i < npairs; i++) {
+			if (key_lengths[i] == keylen &&
+			    memcmp(keys[i], p, keylen) == 0)
+				return (-1);
+		}
+		keys[npairs] = p;
+		key_lengths[npairs++] = keylen;
+		if (comma == end)
+			break;
+		p = comma + 1;
+		if (p == end)
+			return (-1);
+	}
 	return (0);
 }
 
@@ -263,6 +310,8 @@ parse_context(const char *word, struct abac_context_io *ctx)
 	if (strncasecmp(word, "ctx:", 4) != 0)
 		return (-1);
 
+	if (strlen(word + 4) >= sizeof(buf))
+		return (-1);
 	strlcpy(buf, word + 4, sizeof(buf));
 
 	/* Empty ctx: is an error */
@@ -270,6 +319,9 @@ parse_context(const char *word, struct abac_context_io *ctx)
 		fprintf(stderr, "empty context constraint\n");
 		return (-1);
 	}
+	if (buf[0] == ',' || buf[strlen(buf) - 1] == ',' ||
+	    strstr(buf, ",,") != NULL)
+		return (-1);
 
 	for (tok = strtok_r(buf, ",", &p); tok != NULL;
 	     tok = strtok_r(NULL, ",", &p)) {
@@ -285,6 +337,8 @@ parse_context(const char *word, struct abac_context_io *ctx)
 		*val++ = '\0';
 
 		if (strcasecmp(key, "jail") == 0) {
+			if ((ctx->vc_flags & ABAC_CTX_JAIL) != 0)
+				return (-1);
 			ctx->vc_flags |= ABAC_CTX_JAIL;
 			if (strcasecmp(val, "host") == 0)
 				ctx->vc_jail_check = 0;
@@ -293,13 +347,16 @@ parse_context(const char *word, struct abac_context_io *ctx)
 			else {
 				errno = 0;
 				num = strtol(val, &endptr, 10);
-				if (errno != 0 || *endptr != '\0' || num < 0) {
+				if (errno != 0 || *endptr != '\0' || num < 0 ||
+				    num > INT32_MAX) {
 					fprintf(stderr, "invalid jail value: %s\n", val);
 					return (-1);
 				}
 				ctx->vc_jail_check = (int)num;
 			}
 		} else if (strcasecmp(key, "sandboxed") == 0) {
+			if ((ctx->vc_flags & ABAC_CTX_CAP_SANDBOXED) != 0)
+				return (-1);
 			ctx->vc_flags |= ABAC_CTX_CAP_SANDBOXED;
 			if (strcasecmp(val, "true") == 0 || strcmp(val, "1") == 0)
 				ctx->vc_cap_sandboxed = 1;
@@ -310,6 +367,8 @@ parse_context(const char *word, struct abac_context_io *ctx)
 				return (-1);
 			}
 		} else if (strcasecmp(key, "tty") == 0) {
+			if ((ctx->vc_flags & ABAC_CTX_HAS_TTY) != 0)
+				return (-1);
 			ctx->vc_flags |= ABAC_CTX_HAS_TTY;
 			if (strcasecmp(val, "true") == 0 || strcmp(val, "1") == 0)
 				ctx->vc_has_tty = 1;
@@ -320,36 +379,41 @@ parse_context(const char *word, struct abac_context_io *ctx)
 				return (-1);
 			}
 		} else if (strcasecmp(key, "uid") == 0) {
-			if (ctx->vc_flags & ABAC_CTX_RUID) {
+			if (ctx->vc_flags & (ABAC_CTX_UID | ABAC_CTX_RUID)) {
 				fprintf(stderr, "uid and ruid cannot be used together (both use vc_uid field)\n");
 				return (-1);
 			}
 			ctx->vc_flags |= ABAC_CTX_UID;
 			errno = 0;
 			num = strtol(val, &endptr, 10);
-			if (errno != 0 || *endptr != '\0' || num < 0) {
+			if (errno != 0 || *endptr != '\0' || num < 0 ||
+			    (uintmax_t)num > UINT32_MAX) {
 				fprintf(stderr, "invalid uid: %s\n", val);
 				return (-1);
 			}
 			ctx->vc_uid = (uint32_t)num;
 		} else if (strcasecmp(key, "gid") == 0) {
+			if ((ctx->vc_flags & ABAC_CTX_GID) != 0)
+				return (-1);
 			ctx->vc_flags |= ABAC_CTX_GID;
 			errno = 0;
 			num = strtol(val, &endptr, 10);
-			if (errno != 0 || *endptr != '\0' || num < 0) {
+			if (errno != 0 || *endptr != '\0' || num < 0 ||
+			    (uintmax_t)num > UINT32_MAX) {
 				fprintf(stderr, "invalid gid: %s\n", val);
 				return (-1);
 			}
 			ctx->vc_gid = (uint32_t)num;
 		} else if (strcasecmp(key, "ruid") == 0) {
-			if (ctx->vc_flags & ABAC_CTX_UID) {
+			if (ctx->vc_flags & (ABAC_CTX_UID | ABAC_CTX_RUID)) {
 				fprintf(stderr, "uid and ruid cannot be used together (both use vc_uid field)\n");
 				return (-1);
 			}
 			ctx->vc_flags |= ABAC_CTX_RUID;
 			errno = 0;
 			num = strtol(val, &endptr, 10);
-			if (errno != 0 || *endptr != '\0' || num < 0) {
+			if (errno != 0 || *endptr != '\0' || num < 0 ||
+			    (uintmax_t)num > UINT32_MAX) {
 				fprintf(stderr, "invalid ruid: %s\n", val);
 				return (-1);
 			}
@@ -367,7 +431,7 @@ parse_context(const char *word, struct abac_context_io *ctx)
 /*
  * Parse a rule line
  *
- * Format: action operations subject [ctx:...] -> object [ctx:...] [=> newlabel]
+ * Format: action operations subject [ctx:...] -> object [ctx:...] [set N]
  *
  * Context placement determines what it applies to:
  *   - ctx: BEFORE '->' applies to subject (caller)
@@ -384,13 +448,16 @@ parse_context(const char *word, struct abac_context_io *ctx)
 int
 mac_abacd_parse_line(const char *line, struct abac_rule_io *rule)
 {
-	char word[ABAC_PATTERN_MAX_LEN];
+	char word[ABAC_MAX_LABEL_LEN];
 	const char *p;
 	bool got_arrow = false;
 	bool got_object = false;
 	bool got_subj_ctx = false;
 	bool got_obj_ctx = false;
+	bool got_set = false;
 
+	if (line == NULL || rule == NULL)
+		return (-1);
 	memset(rule, 0, sizeof(*rule));
 	rule->vr_id = next_rule_id++;
 
@@ -402,6 +469,8 @@ mac_abacd_parse_line(const char *line, struct abac_rule_io *rule)
 
 	/* Action */
 	p = parse_word(p, word, sizeof(word));
+	if (p == NULL)
+		return (-1);
 	if (parse_action(word, &rule->vr_action) < 0) {
 		fprintf(stderr, "invalid action: %s\n", word);
 		return (-1);
@@ -409,14 +478,18 @@ mac_abacd_parse_line(const char *line, struct abac_rule_io *rule)
 
 	/* Operations */
 	p = parse_word(p, word, sizeof(word));
-	if (parse_operations(word, &rule->vr_operations) < 0) {
+	if (p == NULL)
+		return (-1);
+	if (mac_abacd_parse_operations(word, &rule->vr_operations) < 0) {
 		fprintf(stderr, "invalid operations: %s\n", word);
 		return (-1);
 	}
 
 	/* Subject pattern */
 	p = parse_word(p, word, sizeof(word));
-	if (parse_pattern(word, &rule->vr_subject) < 0) {
+	if (p == NULL)
+		return (-1);
+	if (mac_abacd_parse_pattern(word, &rule->vr_subject) < 0) {
 		fprintf(stderr, "invalid subject pattern: %s\n", word);
 		return (-1);
 	}
@@ -424,13 +497,14 @@ mac_abacd_parse_line(const char *line, struct abac_rule_io *rule)
 	/*
 	 * Now parse remaining tokens:
 	 * - "->" separates subject from object
-	 * - "=>" introduces transition label
 	 * - ctx: before -> applies to subject
 	 * - ctx: after -> applies to object
 	 */
 	p = skip_ws(p);
 	while (*p != '\0') {
 		p = parse_word(p, word, sizeof(word));
+		if (p == NULL)
+			return (-1);
 		if (word[0] == '\0')
 			break;
 
@@ -443,11 +517,13 @@ mac_abacd_parse_line(const char *line, struct abac_rule_io *rule)
 
 			/* Next word must be object pattern */
 			p = parse_word(p, word, sizeof(word));
+			if (p == NULL)
+				return (-1);
 			if (word[0] == '\0') {
 				fprintf(stderr, "missing object pattern after '->'\n");
 				return (-1);
 			}
-			if (parse_pattern(word, &rule->vr_object) < 0) {
+			if (mac_abacd_parse_pattern(word, &rule->vr_object) < 0) {
 				fprintf(stderr, "invalid object pattern: %s\n", word);
 				return (-1);
 			}
@@ -477,25 +553,18 @@ mac_abacd_parse_line(const char *line, struct abac_rule_io *rule)
 				got_obj_ctx = true;
 			}
 
-		} else if (strcmp(word, "=>") == 0) {
-			/* Transition label */
-			if (!got_arrow) {
-				fprintf(stderr, "'=>' must appear after '->'\n");
-				return (-1);
-			}
-			p = parse_word(p, word, sizeof(word));
-			if (word[0] == '\0') {
-				fprintf(stderr, "missing label after '=>'\n");
-				return (-1);
-			}
-			strlcpy(rule->vr_newlabel, word, sizeof(rule->vr_newlabel));
-
 		} else if (strcasecmp(word, "set") == 0) {
 			/* Rule set number */
 			char *endptr;
 			long set_val;
 
+			if (got_set) {
+				fprintf(stderr, "duplicate set number\n");
+				return (-1);
+			}
 			p = parse_word(p, word, sizeof(word));
+			if (p == NULL)
+				return (-1);
 			if (word[0] == '\0') {
 				fprintf(stderr, "missing set number after 'set'\n");
 				return (-1);
@@ -508,6 +577,7 @@ mac_abacd_parse_line(const char *line, struct abac_rule_io *rule)
 				return (-1);
 			}
 			rule->vr_set = (uint16_t)set_val;
+			got_set = true;
 
 		} else {
 			/* Unknown token */
@@ -527,6 +597,5 @@ mac_abacd_parse_line(const char *line, struct abac_rule_io *rule)
 		fprintf(stderr, "missing object pattern\n");
 		return (-1);
 	}
-
 	return (0);
 }

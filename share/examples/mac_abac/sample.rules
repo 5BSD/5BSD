@@ -8,12 +8,11 @@
 #   mac_abac_ctl rule add "allow exec * -> *"
 #
 # Syntax:
-#   action operations subject [ctx:...] -> object [ctx:...] [=> newlabel]
+#   action operations subject [ctx:...] -> object [ctx:...]
 #
 # Actions:
 #   allow      - permit the operation
 #   deny       - block the operation
-#   transition - allow and change process label to newlabel
 #
 # Operations (comma-separated):
 #   exec, read, write, mmap, link, rename, unlink, chdir, stat,
@@ -98,19 +97,6 @@ allow debug,signal,sched type=supervisor -> type=worker
 
 # Init can signal anything
 allow signal type=init -> *
-
-# =============================================================================
-# TRANSITIONS - Change label on exec
-# =============================================================================
-
-# User executing su becomes admin
-transition exec type=user -> type=setuid,name=su => type=admin,domain=system
-
-# User executing sudo becomes admin
-transition exec type=user -> type=setuid,name=sudo => type=admin,domain=system
-
-# Login shell transitions user
-transition exec type=login -> type=shell => type=user,domain=user
 
 # =============================================================================
 # ALLOW RULES - Permit safe operations

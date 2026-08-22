@@ -29,8 +29,6 @@
 #include <syslog.h>
 #include <unistd.h>
 
-#include <ucl.h>
-
 #include "mac_abacd.h"
 
 /* Global state */
@@ -105,7 +103,6 @@ usage(void)
 	    "Configuration directives:\n"
 	    "  mode = \"enforcing\";      # disabled, permissive, or enforcing\n"
 	    "  default_policy = \"deny\"; # allow or deny (when no rule matches)\n"
-	    "  append = true;           # append rules instead of replacing\n"
 	    "  rules = [ ... ];         # rule definitions\n",
 	    MAC_ABACD_DEFAULT_CONFIG,
 	    MAC_ABACD_DEFAULT_PIDFILE);
@@ -168,30 +165,9 @@ setup_signals(void)
 }
 
 /*
- * Clear all rules in the kernel
- */
-int
-mac_abacd_clear_rules(void)
-{
-	/* In test mode, nothing to clear */
-	if (config.test_mode)
-		return (0);
-
-	if (abac_syscall(ABAC_SYS_RULE_CLEAR, NULL) < 0) {
-		mac_abacd_log(LOG_ERR, "RULE_CLEAR: %s", strerror(errno));
-		return (-1);
-	}
-
-	if (config.verbose)
-		mac_abacd_log(LOG_DEBUG, "cleared all rules");
-
-	return (0);
-}
-
-/*
  * Set enforcement mode
  */
-int
+static int
 mac_abacd_set_mode(int mode)
 {
 	/* In test mode, just validate */
@@ -215,7 +191,7 @@ mac_abacd_set_mode(int mode)
 /*
  * Set default policy (allow=0, deny=1)
  */
-int
+static int
 mac_abacd_set_default_policy(int policy)
 {
 	/* In test mode, just validate */
@@ -296,94 +272,89 @@ log_status(void)
 	    (uintmax_t)stats.vs_denied);
 }
 
-/*
- * Build a rule_arg buffer from abac_rule_io (parser format)
- * and send it to the kernel via mac_syscall.
- */
+struct policy_buffer {
+	char		*data;
+	size_t		 used;
+	size_t		 capacity;
+	uint32_t	 count;
+};
+
+/* Append one validated parser rule in the kernel's packed load format. */
 static int
-send_rule_to_kernel(struct abac_rule_io *rule_io)
+pack_rule(struct abac_rule_io *rule_io, void *cookie)
 {
-	struct abac_rule_arg *arg;
-	char *data;
-	size_t subject_len, object_len, newlabel_len, total_len;
+	struct policy_buffer *policy;
+	struct abac_rule_arg arg;
+	char *newdata, *data;
+	size_t subject_len, object_len, total_len;
+	size_t capacity;
+
+	policy = cookie;
 
 	/* Calculate lengths (include null terminators) */
 	subject_len = strlen(rule_io->vr_subject.vp_pattern) + 1;
 	object_len = strlen(rule_io->vr_object.vp_pattern) + 1;
-	newlabel_len = (rule_io->vr_action == ABAC_ACTION_TRANSITION) ?
-	    strlen(rule_io->vr_newlabel) + 1 : 0;
+	total_len = sizeof(struct abac_rule_arg) + subject_len + object_len;
 
-	total_len = sizeof(struct abac_rule_arg) + subject_len + object_len + newlabel_len;
-
-	arg = calloc(1, total_len);
-	if (arg == NULL) {
-		mac_abacd_log(LOG_ERR, "malloc: %s", strerror(errno));
+	if (total_len > ABAC_MAX_RULE_LOAD_SIZE - policy->used ||
+	    policy->count == UINT32_MAX) {
+		errno = E2BIG;
 		return (-1);
 	}
+	if (policy->used + total_len > policy->capacity) {
+		capacity = policy->capacity == 0 ? 8192 : policy->capacity;
+		while (capacity < policy->used + total_len) {
+			if (capacity > ABAC_MAX_RULE_LOAD_SIZE / 2) {
+				capacity = ABAC_MAX_RULE_LOAD_SIZE;
+				break;
+			}
+			capacity *= 2;
+		}
+		newdata = realloc(policy->data, capacity);
+		if (newdata == NULL)
+			return (-1);
+		policy->data = newdata;
+		policy->capacity = capacity;
+	}
 
-	arg->vr_action = rule_io->vr_action;
-	arg->vr_operations = rule_io->vr_operations;
-	arg->vr_subject_flags = rule_io->vr_subject.vp_flags;
-	arg->vr_object_flags = rule_io->vr_object.vp_flags;
+	memset(&arg, 0, sizeof(arg));
+
+	arg.vr_action = rule_io->vr_action;
+	arg.vr_set = rule_io->vr_set;
+	arg.vr_operations = rule_io->vr_operations;
+	arg.vr_subject_flags = rule_io->vr_subject.vp_flags;
+	arg.vr_object_flags = rule_io->vr_object.vp_flags;
 	/* Subject context constraints */
-	arg->vr_subj_context.vc_flags = rule_io->vr_subj_context.vc_flags;
-	arg->vr_subj_context.vc_cap_sandboxed = rule_io->vr_subj_context.vc_cap_sandboxed;
-	arg->vr_subj_context.vc_has_tty = rule_io->vr_subj_context.vc_has_tty;
-	arg->vr_subj_context.vc_jail_check = rule_io->vr_subj_context.vc_jail_check;
-	arg->vr_subj_context.vc_uid = rule_io->vr_subj_context.vc_uid;
-	arg->vr_subj_context.vc_gid = rule_io->vr_subj_context.vc_gid;
+	arg.vr_subj_context.vc_flags = rule_io->vr_subj_context.vc_flags;
+	arg.vr_subj_context.vc_cap_sandboxed =
+	    rule_io->vr_subj_context.vc_cap_sandboxed;
+	arg.vr_subj_context.vc_has_tty =
+	    rule_io->vr_subj_context.vc_has_tty;
+	arg.vr_subj_context.vc_jail_check =
+	    rule_io->vr_subj_context.vc_jail_check;
+	arg.vr_subj_context.vc_uid = rule_io->vr_subj_context.vc_uid;
+	arg.vr_subj_context.vc_gid = rule_io->vr_subj_context.vc_gid;
 	/* Object context constraints */
-	arg->vr_obj_context.vc_flags = rule_io->vr_obj_context.vc_flags;
-	arg->vr_obj_context.vc_cap_sandboxed = rule_io->vr_obj_context.vc_cap_sandboxed;
-	arg->vr_obj_context.vc_has_tty = rule_io->vr_obj_context.vc_has_tty;
-	arg->vr_obj_context.vc_jail_check = rule_io->vr_obj_context.vc_jail_check;
-	arg->vr_obj_context.vc_uid = rule_io->vr_obj_context.vc_uid;
-	arg->vr_obj_context.vc_gid = rule_io->vr_obj_context.vc_gid;
-	arg->vr_subject_len = subject_len;
-	arg->vr_object_len = object_len;
-	arg->vr_newlabel_len = newlabel_len;
+	arg.vr_obj_context.vc_flags = rule_io->vr_obj_context.vc_flags;
+	arg.vr_obj_context.vc_cap_sandboxed =
+	    rule_io->vr_obj_context.vc_cap_sandboxed;
+	arg.vr_obj_context.vc_has_tty = rule_io->vr_obj_context.vc_has_tty;
+	arg.vr_obj_context.vc_jail_check =
+	    rule_io->vr_obj_context.vc_jail_check;
+	arg.vr_obj_context.vc_uid = rule_io->vr_obj_context.vc_uid;
+	arg.vr_obj_context.vc_gid = rule_io->vr_obj_context.vc_gid;
+	arg.vr_subject_len = subject_len;
+	arg.vr_object_len = object_len;
 
 	/* Copy strings after the header */
-	data = (char *)arg + sizeof(*arg);
+	memcpy(policy->data + policy->used, &arg, sizeof(arg));
+	data = policy->data + policy->used + sizeof(arg);
 	memcpy(data, rule_io->vr_subject.vp_pattern, subject_len);
 	data += subject_len;
 	memcpy(data, rule_io->vr_object.vp_pattern, object_len);
-	data += object_len;
-	if (newlabel_len > 0)
-		memcpy(data, rule_io->vr_newlabel, newlabel_len);
 
-	/* Send to kernel */
-	if (abac_syscall(ABAC_SYS_RULE_ADD, arg) < 0) {
-		mac_abacd_log(LOG_ERR, "RULE_ADD: %s", strerror(errno));
-		free(arg);
-		return (-1);
-	}
-
-	free(arg);
-	return (0);
-}
-
-/*
- * Add a rule to the kernel
- */
-int
-mac_abacd_add_rule(struct abac_rule_io *rule)
-{
-	/* In test mode, just validate - don't send to kernel */
-	if (config.test_mode) {
-		if (config.verbose)
-			mac_abacd_log(LOG_DEBUG, "validated rule %u: action=%d ops=0x%x",
-			    rule->vr_id, rule->vr_action, rule->vr_operations);
-		return (0);
-	}
-
-	if (send_rule_to_kernel(rule) < 0)
-		return (-1);
-
-	if (config.verbose)
-		mac_abacd_log(LOG_DEBUG, "added rule %u: action=%d ops=0x%x",
-		    rule->vr_id, rule->vr_action, rule->vr_operations);
-
+	policy->used += total_len;
+	policy->count++;
 	return (0);
 }
 
@@ -393,54 +364,47 @@ mac_abacd_add_rule(struct abac_rule_io *rule)
 static int
 load_policy(const char *path)
 {
-	int error;
-	bool append_mode = false;
+	struct mac_abac_policy_settings settings;
+	struct abac_rule_load_arg load;
+	struct policy_buffer policy;
+	int error = -1;
 
 	mac_abacd_log(LOG_INFO, "loading policy from %s", path);
+	memset(&policy, 0, sizeof(policy));
 
-	/* Parse the file first to check append mode */
-	/* Note: We need to parse twice - once to check append, once to load rules */
-	/* This is a bit wasteful but keeps the API clean */
-
-	/* Clear existing rules unless append mode is set */
-	if (!config.test_mode) {
-		/* Peek at the file to check for append = true */
-		struct ucl_parser *parser;
-		ucl_object_t *root;
-		const ucl_object_t *obj;
-
-		parser = ucl_parser_new(UCL_PARSER_KEY_LOWERCASE);
-		if (parser != NULL) {
-			ucl_parser_set_filevars(parser, path, true);
-			if (ucl_parser_add_file(parser, path)) {
-				root = ucl_parser_get_object(parser);
-				if (root != NULL) {
-					obj = ucl_object_lookup(root, "append");
-					if (obj != NULL && ucl_object_type(obj) == UCL_BOOLEAN)
-						append_mode = ucl_object_toboolean(obj);
-					ucl_object_unref(root);
-				}
-			}
-			ucl_parser_free(parser);
-		}
-
-		if (!append_mode) {
-			if (mac_abacd_clear_rules() < 0)
-				return (-1);
-		} else {
-			mac_abacd_log(LOG_INFO, "append mode: keeping existing rules");
-		}
-	}
-
-	/* Determine format and parse */
-	error = mac_abacd_parse_ucl(path, config.verbose);
-	if (error != 0) {
+	if (mac_abacd_compile_ucl(path, config.verbose, pack_rule, &policy,
+	    &settings) != 0) {
 		mac_abacd_log(LOG_ERR, "failed to parse policy: %s", path);
-		return (-1);
+		goto out;
 	}
 
-	mac_abacd_log(LOG_INFO, "policy loaded successfully");
-	return (0);
+	if (config.test_mode) {
+		mac_abacd_log(LOG_INFO, "validated %u rules", policy.count);
+		error = 0;
+		goto out;
+	}
+
+	memset(&load, 0, sizeof(load));
+	load.vrl_count = policy.count;
+	load.vrl_buflen = policy.used;
+	load.vrl_buf = policy.data;
+	if (abac_syscall(ABAC_SYS_RULE_LOAD, &load) < 0) {
+		mac_abacd_log(LOG_ERR, "RULE_LOAD: %s", strerror(errno));
+		goto out;
+	}
+	if (settings.has_default_policy &&
+	    mac_abacd_set_default_policy(settings.default_policy) != 0)
+		goto out;
+	/* Apply mode last so a newly enforcing policy is complete first. */
+	if (settings.has_mode && mac_abacd_set_mode(settings.mode) != 0)
+		goto out;
+
+	mac_abacd_log(LOG_INFO, "policy loaded successfully (%u rules)",
+	    policy.count);
+	error = 0;
+out:
+	free(policy.data);
+	return (error);
 }
 
 static void
@@ -556,8 +520,8 @@ main(int argc, char *argv[])
 	if (argc != 0)
 		usage();
 
-	/* Must be root */
-	if (geteuid() != 0)
+	/* Validation is deliberately available to unprivileged policy authors. */
+	if (!config.test_mode && geteuid() != 0)
 		errx(1, "must be run as root");
 
 	/* Setup signal handlers */

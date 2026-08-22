@@ -31,7 +31,6 @@ mode = "permissive";
 rules = [
     {
         # Block execution of untrusted binaries (set 0 - base policy)
-        id = 1;
         set = 0;
         action = "deny";
         operations = ["exec"];
@@ -41,7 +40,6 @@ rules = [
     {
         # Web domain isolation - processes can only access their domain
         # (set 100 - can be disabled without affecting base policy)
-        id = 10;
         set = 100;
         action = "allow";
         operations = ["read", "write", "open", "stat", "mmap"];
@@ -51,7 +49,6 @@ rules = [
 
     {
         # Database domain isolation (set 100)
-        id = 11;
         set = 100;
         action = "allow";
         operations = ["read", "write", "open", "stat"];
@@ -61,7 +58,6 @@ rules = [
 
     {
         # Admin tools only on host system (not in jails)
-        id = 20;
         action = "allow";
         operations = ["exec"];
         subject = { type = "admin"; };
@@ -71,7 +67,6 @@ rules = [
 
     {
         # Block admin tools from jails
-        id = 21;
         action = "deny";
         operations = ["exec"];
         object = { type = "admin-tool"; };
@@ -80,7 +75,6 @@ rules = [
 
     {
         # Sandboxed processes can only access sandbox resources
-        id = 30;
         action = "allow";
         operations = ["read", "write"];
         subject = "*";
@@ -90,7 +84,6 @@ rules = [
 
     {
         # Non-sandboxed processes denied sandbox resources
-        id = 31;
         action = "deny";
         operations = ["read", "write", "exec"];
         object = { level = "sandbox-only"; };
@@ -99,7 +92,6 @@ rules = [
 
     {
         # Protect debuggers - only supervisors can debug workers
-        id = 40;
         action = "allow";
         operations = ["debug", "signal", "sched"];
         subject = { type = "supervisor"; };
@@ -108,7 +100,6 @@ rules = [
 
     {
         # Block unauthorized debugging
-        id = 41;
         action = "deny";
         operations = ["debug"];
         subject = "*";
@@ -117,28 +108,7 @@ rules = [
     },
 
     {
-        # Transition: user executing su becomes admin
-        id = 50;
-        action = "transition";
-        operations = ["exec"];
-        subject = { type = "user"; };
-        object = { type = "setuid"; name = "su"; };
-        newlabel = "type=admin,domain=system";
-    },
-
-    {
-        # Transition: user executing sudo becomes admin
-        id = 51;
-        action = "transition";
-        operations = ["exec"];
-        subject = { type = "user"; };
-        object = { type = "setuid"; name = "sudo"; };
-        newlabel = "type=admin,domain=system";
-    },
-
-    {
         # Negation: deny access to everything NOT marked trusted
-        id = 60;
         action = "deny";
         operations = ["exec"];
         subject = { type = "restricted"; };
@@ -147,7 +117,6 @@ rules = [
 
     {
         # Trusted processes have full access
-        id = 100;
         action = "allow";
         operations = ["all"];
         subject = { type = "trusted"; };
@@ -156,7 +125,6 @@ rules = [
 
     {
         # System domain has full access
-        id = 101;
         action = "allow";
         operations = ["all"];
         subject = { domain = "system"; };
@@ -165,7 +133,6 @@ rules = [
 
     {
         # Root (uid 0) has full access
-        id = 102;
         action = "allow";
         operations = ["all"];
         subject = "*";
@@ -175,7 +142,6 @@ rules = [
 
     {
         # Default deny (optional - see security.mac.mac_abac.default_policy)
-        id = 999;
         action = "deny";
         operations = ["all"];
         subject = "*";

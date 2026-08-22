@@ -95,8 +95,26 @@ SYSCTL_INT(_security_mac_mac_abac, OID_AUTO, rule_count, CTLFLAG_RD,
  */
 int abac_default_policy = 0;
 
-SYSCTL_INT(_security_mac_mac_abac, OID_AUTO, default_policy, CTLFLAG_RW,
-    &abac_default_policy, 0,
+static int
+sysctl_abac_default_policy(SYSCTL_HANDLER_ARGS)
+{
+	int error, value;
+
+	value = abac_default_policy;
+	error = sysctl_handle_int(oidp, &value, 0, req);
+	if (error != 0 || req->newptr == NULL)
+		return (error);
+	if (abac_locked)
+		return (EPERM);
+	if (value != 0 && value != 1)
+		return (EINVAL);
+	abac_default_policy = value;
+	return (0);
+}
+
+SYSCTL_PROC(_security_mac_mac_abac, OID_AUTO, default_policy,
+	CTLTYPE_INT | CTLFLAG_RW | CTLFLAG_MPSAFE, NULL, 0,
+	sysctl_abac_default_policy, "I",
     "Default policy when no rule matches (0=allow, 1=deny)");
 
 /*
@@ -136,8 +154,6 @@ abac_rules_destroy(void)
 		rule = abac_rules[i];
 		if (rule != NULL) {
 			abac_rules[i] = NULL;
-			if (rule->vr_newlabel != NULL)
-				free(rule->vr_newlabel, M_TEMP);
 			free(rule, M_TEMP);
 		}
 	}
@@ -211,8 +227,7 @@ abac_rules_check(struct ucred *cred, struct abac_label *subj,
 				    rule->vr_id, rule->vr_action, op);
 				matched_rule_id = rule->vr_id;
 
-				if (rule->vr_action == ABAC_ACTION_ALLOW ||
-				    rule->vr_action == ABAC_ACTION_TRANSITION)
+				if (rule->vr_action == ABAC_ACTION_ALLOW)
 					result = 0;
 				else
 					result = EACCES;
@@ -254,123 +269,6 @@ out:
 }
 
 /*
- * Check if exec will cause a label transition
- *
- * Returns true if a TRANSITION rule matches, false otherwise.
- * Uses set-ordered evaluation (set 0 first, then 1, etc.).
- */
-bool
-abac_rules_will_transition(struct ucred *cred, struct abac_label *subj,
-    struct abac_label *obj)
-{
-	const struct abac_rule *rule;
-	bool result = false;
-	int i, si;
-	uint16_t set;
-
-	if (subj == NULL || obj == NULL)
-		return (false);
-
-	rw_rlock(&abac_rules_lock);
-
-	/* Iterate sets in ascending order */
-	for (si = 0; si < abac_active_set_count; si++) {
-		set = abac_active_sets[si];
-
-		/* Skip disabled sets */
-		if (!ABAC_SET_IS_ENABLED(set))
-			continue;
-
-		for (i = 0; i < abac_rule_end; i++) {
-			rule = abac_rules[i];
-			if (rule == NULL)
-				continue;
-
-			/* Only consider rules in the current set */
-			if (rule->vr_set != set)
-				continue;
-
-			/* Only check EXEC operations for transitions */
-			if ((rule->vr_operations & ABAC_OP_EXEC) == 0)
-				continue;
-
-			if (rule->vr_action != ABAC_ACTION_TRANSITION)
-				continue;
-
-			/* Transitions don't need object context (no target process) */
-			if (abac_rule_matches(rule, subj, obj, ABAC_OP_EXEC, cred, NULL)) {
-				result = true;
-				goto out;
-			}
-		}
-	}
-
-out:
-	rw_runlock(&abac_rules_lock);
-	return (result);
-}
-
-/*
- * Get the new label for a transition
- *
- * Returns 0 and copies the new label if a TRANSITION rule matches,
- * returns ENOENT if no transition rule matches.
- * Uses set-ordered evaluation (set 0 first, then 1, etc.).
- */
-int
-abac_rules_get_transition(struct ucred *cred, struct abac_label *subj,
-    struct abac_label *obj, struct abac_label *newlabel)
-{
-	const struct abac_rule *rule;
-	int i, si, result = ENOENT;
-	uint16_t set;
-
-	if (subj == NULL || obj == NULL || newlabel == NULL)
-		return (EINVAL);
-
-	rw_rlock(&abac_rules_lock);
-
-	/* Iterate sets in ascending order */
-	for (si = 0; si < abac_active_set_count; si++) {
-		set = abac_active_sets[si];
-
-		/* Skip disabled sets */
-		if (!ABAC_SET_IS_ENABLED(set))
-			continue;
-
-		for (i = 0; i < abac_rule_end; i++) {
-			rule = abac_rules[i];
-			if (rule == NULL)
-				continue;
-
-			/* Only consider rules in the current set */
-			if (rule->vr_set != set)
-				continue;
-
-			/* Only check EXEC operations for transitions */
-			if ((rule->vr_operations & ABAC_OP_EXEC) == 0)
-				continue;
-
-			if (rule->vr_action != ABAC_ACTION_TRANSITION)
-				continue;
-
-			/* Transitions don't need object context (no target process) */
-			if (abac_rule_matches(rule, subj, obj, ABAC_OP_EXEC, cred, NULL)) {
-				if (rule->vr_newlabel != NULL) {
-					abac_label_copy(rule->vr_newlabel, newlabel);
-					result = 0;
-				}
-				goto out;
-			}
-		}
-	}
-
-out:
-	rw_runlock(&abac_rules_lock);
-	return (result);
-}
-
-/*
  * Remove a rule by ID
  *
  * Returns:
@@ -393,8 +291,6 @@ abac_rule_remove(uint32_t id)
 			rw_wunlock(&abac_rules_lock);
 			/* DTrace: rule removed */
 			SDT_PROBE1(abac, rules, rule, remove, id);
-			if (rule->vr_newlabel != NULL)
-				free(rule->vr_newlabel, M_TEMP);
 			free(rule, M_TEMP);
 			return (0);
 		}
@@ -420,8 +316,6 @@ abac_rules_clear(void)
 		rule = abac_rules[i];
 		if (rule != NULL) {
 			abac_rules[i] = NULL;
-			if (rule->vr_newlabel != NULL)
-				free(rule->vr_newlabel, M_TEMP);
 			free(rule, M_TEMP);
 			cleared++;
 		}
@@ -519,7 +413,7 @@ abac_rebuild_active_sets(void)
 void
 abac_set_enable_range(uint16_t start, uint16_t end)
 {
-	uint16_t s;
+	uint32_t s;
 
 	rw_wlock(&abac_rules_lock);
 	for (s = start; s <= end; s++)
@@ -533,7 +427,7 @@ abac_set_enable_range(uint16_t start, uint16_t end)
 void
 abac_set_disable_range(uint16_t start, uint16_t end)
 {
-	uint16_t s;
+	uint32_t s;
 
 	rw_wlock(&abac_rules_lock);
 	for (s = start; s <= end; s++)
@@ -639,8 +533,6 @@ abac_set_clear(uint16_t set)
 		if (rule->vr_set == set) {
 			abac_rules[i] = NULL;
 			abac_rule_count--;
-			if (rule->vr_newlabel != NULL)
-				free(rule->vr_newlabel, M_TEMP);
 			free(rule, M_TEMP);
 			cleared++;
 		}
@@ -662,7 +554,8 @@ abac_set_get_info(struct abac_set_list_arg *arg)
 {
 	const struct abac_rule *rule;
 	uint32_t calc_end;
-	uint16_t s, end_set;
+	uint16_t end_set;
+	uint32_t s;
 	int i, idx;
 
 	if (arg->vsl_count == 0 || arg->vsl_count > 256)

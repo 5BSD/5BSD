@@ -17,39 +17,27 @@
  * # Rules are evaluated in order (first match wins)
  * rules = [
  *     {
- *         id = 1;
  *         action = "deny";
  *         operations = ["exec"];
  *         object = { type = "untrusted"; };
  *     },
  *     {
- *         id = 2;
  *         action = "allow";
  *         operations = ["read", "write"];
  *         subject = { domain = "web"; };
  *         object = { domain = "web"; };
  *     },
  *     {
- *         id = 3;
  *         action = "allow";
  *         operations = ["exec"];
  *         subject = { type = "admin"; };
  *         subj_ctx = { jail = "host"; };
  *     },
  *     {
- *         id = 4;
  *         action = "deny";
  *         operations = ["debug"];
  *         obj_ctx = { sandboxed = true; };
  *     },
- *     {
- *         id = 100;
- *         action = "transition";
- *         operations = ["exec"];
- *         subject = { type = "user"; };
- *         object = { type = "setuid"; name = "su"; };
- *         newlabel = "type=admin,domain=system";
- *     }
  * ];
  */
 
@@ -66,42 +54,6 @@
 
 #include "mac_abacd.h"
 
-/* Operation name to bitmask mapping */
-static const struct {
-	const char	*name;
-	uint32_t	 op;
-} op_map[] = {
-	{ "exec",	ABAC_OP_EXEC },
-	{ "read",	ABAC_OP_READ },
-	{ "write",	ABAC_OP_WRITE },
-	{ "mmap",	ABAC_OP_MMAP },
-	{ "link",	ABAC_OP_LINK },
-	{ "rename",	ABAC_OP_RENAME },
-	{ "unlink",	ABAC_OP_UNLINK },
-	{ "chdir",	ABAC_OP_CHDIR },
-	{ "stat",	ABAC_OP_STAT },
-	{ "readdir",	ABAC_OP_READDIR },
-	{ "create",	ABAC_OP_CREATE },
-	{ "setextattr",	ABAC_OP_SETEXTATTR },
-	{ "getextattr",	ABAC_OP_GETEXTATTR },
-	{ "lookup",	ABAC_OP_LOOKUP },
-	{ "open",	ABAC_OP_OPEN },
-	{ "access",	ABAC_OP_ACCESS },
-	{ "debug",	ABAC_OP_DEBUG },
-	{ "signal",	ABAC_OP_SIGNAL },
-	{ "sched",	ABAC_OP_SCHED },
-	{ "connect",	ABAC_OP_CONNECT },
-	{ "bind",	ABAC_OP_BIND },
-	{ "listen",	ABAC_OP_LISTEN },
-	{ "accept",	ABAC_OP_ACCEPT },
-	{ "send",	ABAC_OP_SEND },
-	{ "receive",	ABAC_OP_RECEIVE },
-	{ "deliver",	ABAC_OP_DELIVER },
-	{ "all",	ABAC_OP_ALL },
-	{ "*",		ABAC_OP_ALL },
-	{ NULL,		0 }
-};
-
 /* Action name to value mapping */
 static const struct {
 	const char	*name;
@@ -109,7 +61,6 @@ static const struct {
 } action_map[] = {
 	{ "allow",	ABAC_ACTION_ALLOW },
 	{ "deny",	ABAC_ACTION_DENY },
-	{ "transition",	ABAC_ACTION_TRANSITION },
 	{ NULL,		0 }
 };
 
@@ -132,41 +83,38 @@ log_verbose(const char *fmt, ...)
 /*
  * Parse operation list (array of strings or single string)
  */
-static uint32_t
-parse_operations(const ucl_object_t *obj)
+static int
+parse_operations(const ucl_object_t *obj, uint32_t *operations)
 {
 	const ucl_object_t *elem;
 	ucl_object_iter_t it = NULL;
-	uint32_t ops = 0;
+	uint32_t op;
 	const char *str;
-	int i;
 
-	if (obj == NULL)
-		return (ABAC_OP_ALL);
+	*operations = 0;
+	if (obj == NULL) {
+		*operations = ABAC_OP_ALL;
+		return (0);
+	}
 
 	if (ucl_object_type(obj) == UCL_STRING) {
 		str = ucl_object_tostring(obj);
-		for (i = 0; op_map[i].name != NULL; i++) {
-			if (strcasecmp(str, op_map[i].name) == 0) {
-				ops |= op_map[i].op;
-				break;
-			}
-		}
+		if (mac_abacd_parse_operations(str, &op) != 0)
+			return (-1);
+		*operations = op;
 	} else if (ucl_object_type(obj) == UCL_ARRAY) {
 		while ((elem = ucl_object_iterate(obj, &it, true)) != NULL) {
 			if (ucl_object_type(elem) != UCL_STRING)
-				continue;
+				return (-1);
 			str = ucl_object_tostring(elem);
-			for (i = 0; op_map[i].name != NULL; i++) {
-				if (strcasecmp(str, op_map[i].name) == 0) {
-					ops |= op_map[i].op;
-					break;
-				}
-			}
+			if (mac_abacd_parse_operations(str, &op) != 0)
+				return (-1);
+			*operations |= op;
 		}
-	}
+	} else
+		return (-1);
 
-	return (ops);
+	return (*operations == 0 ? -1 : 0);
 }
 
 /*
@@ -207,38 +155,37 @@ parse_action(const ucl_object_t *obj, uint8_t *action)
  *
  * The pattern string format is: "key1=val1,key2=val2,..."
  */
-static void
+static int
 parse_pattern(const ucl_object_t *obj, struct abac_pattern_io *pattern)
 {
 	const ucl_object_t *val;
 	ucl_object_iter_t it = NULL;
 	const char *key, *str;
-	size_t pos;
+	size_t keylen, strlen_value, needed, pos;
 	bool first;
 	bool negate = false;
 
 	memset(pattern, 0, sizeof(*pattern));
 
-	if (obj == NULL)
-		return;
+	if (obj == NULL) {
+		strlcpy(pattern->vp_pattern, "*", sizeof(pattern->vp_pattern));
+		return (0);
+	}
 
 	/* Handle string form: "*" or "type=app,domain=web" */
 	if (ucl_object_type(obj) == UCL_STRING) {
 		str = ucl_object_tostring(obj);
-		if (str[0] == '!') {
-			pattern->vp_flags |= ABAC_MATCH_NEGATE;
-			str++;
-		}
-		strlcpy(pattern->vp_pattern, str, sizeof(pattern->vp_pattern));
-		return;
+		return (mac_abacd_parse_pattern(str, pattern));
 	}
 
 	if (ucl_object_type(obj) != UCL_OBJECT)
-		return;
+		return (-1);
 
 	/* Check for negate flag in object */
 	val = ucl_object_lookup(obj, "negate");
-	if (val != NULL && ucl_object_type(val) == UCL_BOOLEAN) {
+	if (val != NULL) {
+		if (ucl_object_type(val) != UCL_BOOLEAN)
+			return (-1);
 		negate = ucl_object_toboolean(val);
 	}
 
@@ -247,44 +194,30 @@ parse_pattern(const ucl_object_t *obj, struct abac_pattern_io *pattern)
 	first = true;
 
 	while ((val = ucl_object_iterate(obj, &it, true)) != NULL) {
-		size_t copied;
-
 		key = ucl_object_key(val);
 
 		/* Skip special keys */
-		if (strcmp(key, "negate") == 0)
+		if (key != NULL && strcmp(key, "negate") == 0)
 			continue;
 
-		if (ucl_object_type(val) != UCL_STRING)
-			continue;
+		if (key == NULL || ucl_object_type(val) != UCL_STRING)
+			return (-1);
 
 		str = ucl_object_tostring(val);
-
-		/* Skip wildcard values */
-		if (strcmp(str, "*") == 0)
-			continue;
-
-		/* Append "key=value" to pattern */
-		if (!first && pos < sizeof(pattern->vp_pattern) - 1) {
+		keylen = strlen(key);
+		strlen_value = strlen(str);
+		needed = keylen + 1 + strlen_value + (first ? 0 : 1);
+		if (needed >= sizeof(pattern->vp_pattern) - pos)
+			return (-1);
+		if (!first)
 			pattern->vp_pattern[pos++] = ',';
-		}
 		first = false;
-
-		/*
-		 * strlcpy returns total length it tried to copy, not actual.
-		 * Clamp position to avoid buffer overflow on truncation.
-		 */
-		copied = strlcpy(pattern->vp_pattern + pos, key,
-		    sizeof(pattern->vp_pattern) - pos);
-		pos = (pos + copied >= sizeof(pattern->vp_pattern)) ?
-		    sizeof(pattern->vp_pattern) - 1 : pos + copied;
-		if (pos < sizeof(pattern->vp_pattern) - 1) {
-			pattern->vp_pattern[pos++] = '=';
-		}
-		copied = strlcpy(pattern->vp_pattern + pos, str,
-		    sizeof(pattern->vp_pattern) - pos);
-		pos = (pos + copied >= sizeof(pattern->vp_pattern)) ?
-		    sizeof(pattern->vp_pattern) - 1 : pos + copied;
+		memcpy(pattern->vp_pattern + pos, key, keylen);
+		pos += keylen;
+		pattern->vp_pattern[pos++] = '=';
+		memcpy(pattern->vp_pattern + pos, str, strlen_value);
+		pos += strlen_value;
+		pattern->vp_pattern[pos] = '\0';
 	}
 
 	/* If pattern is empty, treat as wildcard */
@@ -292,8 +225,11 @@ parse_pattern(const ucl_object_t *obj, struct abac_pattern_io *pattern)
 		strlcpy(pattern->vp_pattern, "*", sizeof(pattern->vp_pattern));
 	}
 
+	if (mac_abacd_parse_pattern(pattern->vp_pattern, pattern) != 0)
+		return (-1);
 	if (negate)
 		pattern->vp_flags |= ABAC_MATCH_NEGATE;
+	return (0);
 }
 
 /*
@@ -303,14 +239,31 @@ parse_pattern(const ucl_object_t *obj, struct abac_pattern_io *pattern)
 static int
 parse_context(const ucl_object_t *obj, struct abac_context_io *ctx)
 {
-	const ucl_object_t *val;
+	const ucl_object_t *val, *entry;
 	const ucl_object_t *uid_val, *ruid_val;
+	ucl_object_iter_t it = NULL;
 	const char *str;
+	const char *key;
+	int64_t number;
 
 	memset(ctx, 0, sizeof(*ctx));
 
-	if (obj == NULL || ucl_object_type(obj) != UCL_OBJECT)
+	if (obj == NULL)
 		return (0);
+	if (ucl_object_type(obj) != UCL_OBJECT)
+		return (-1);
+
+	while ((entry = ucl_object_iterate(obj, &it, true)) != NULL) {
+		key = ucl_object_key(entry);
+		if (key == NULL || (strcmp(key, "jail") != 0 &&
+		    strcmp(key, "sandboxed") != 0 && strcmp(key, "tty") != 0 &&
+		    strcmp(key, "uid") != 0 && strcmp(key, "gid") != 0 &&
+		    strcmp(key, "ruid") != 0)) {
+			mac_abacd_log(LOG_ERR, "unknown context key: %s",
+			    key != NULL ? key : "(null)");
+			return (-1);
+		}
+	}
 
 	/* Check for conflicting uid and ruid */
 	uid_val = ucl_object_lookup(obj, "uid");
@@ -339,47 +292,72 @@ parse_context(const ucl_object_t *obj, struct abac_context_io *ctx)
 				if (errno != 0 || *endptr != '\0' || jid < 0) {
 					mac_abacd_log(LOG_WARNING,
 					    "invalid jail ID: %s", str);
-					ctx->vc_jail_check = 0;
+					return (-1);
 				} else {
+					if (jid > INT32_MAX)
+						return (-1);
 					ctx->vc_jail_check = (int)jid;
 				}
 			}
 		} else if (ucl_object_type(val) == UCL_INT) {
-			ctx->vc_jail_check = ucl_object_toint(val);
-		}
+			number = ucl_object_toint(val);
+			if (number < 0 || number > INT32_MAX)
+				return (-1);
+			ctx->vc_jail_check = (int32_t)number;
+		} else
+			return (-1);
 	}
 
 	/* sandboxed: true/false */
 	val = ucl_object_lookup(obj, "sandboxed");
-	if (val != NULL && ucl_object_type(val) == UCL_BOOLEAN) {
+	if (val != NULL) {
+		if (ucl_object_type(val) != UCL_BOOLEAN)
+			return (-1);
 		ctx->vc_flags |= ABAC_CTX_CAP_SANDBOXED;
 		ctx->vc_cap_sandboxed = ucl_object_toboolean(val);
 	}
 
 	/* tty: true/false */
 	val = ucl_object_lookup(obj, "tty");
-	if (val != NULL && ucl_object_type(val) == UCL_BOOLEAN) {
+	if (val != NULL) {
+		if (ucl_object_type(val) != UCL_BOOLEAN)
+			return (-1);
 		ctx->vc_flags |= ABAC_CTX_HAS_TTY;
 		ctx->vc_has_tty = ucl_object_toboolean(val);
 	}
 
 	/* uid */
-	if (uid_val != NULL && ucl_object_type(uid_val) == UCL_INT) {
+	if (uid_val != NULL) {
+		if (ucl_object_type(uid_val) != UCL_INT)
+			return (-1);
+		number = ucl_object_toint(uid_val);
+		if (number < 0 || (uint64_t)number > UINT32_MAX)
+			return (-1);
 		ctx->vc_flags |= ABAC_CTX_UID;
-		ctx->vc_uid = ucl_object_toint(uid_val);
+		ctx->vc_uid = (uint32_t)number;
 	}
 
 	/* gid */
 	val = ucl_object_lookup(obj, "gid");
-	if (val != NULL && ucl_object_type(val) == UCL_INT) {
+	if (val != NULL) {
+		if (ucl_object_type(val) != UCL_INT)
+			return (-1);
+		number = ucl_object_toint(val);
+		if (number < 0 || (uint64_t)number > UINT32_MAX)
+			return (-1);
 		ctx->vc_flags |= ABAC_CTX_GID;
-		ctx->vc_gid = ucl_object_toint(val);
+		ctx->vc_gid = (uint32_t)number;
 	}
 
 	/* ruid (real uid) */
-	if (ruid_val != NULL && ucl_object_type(ruid_val) == UCL_INT) {
+	if (ruid_val != NULL) {
+		if (ucl_object_type(ruid_val) != UCL_INT)
+			return (-1);
+		number = ucl_object_toint(ruid_val);
+		if (number < 0 || (uint64_t)number > UINT32_MAX)
+			return (-1);
 		ctx->vc_flags |= ABAC_CTX_RUID;
-		ctx->vc_uid = ucl_object_toint(ruid_val);
+		ctx->vc_uid = (uint32_t)number;
 	}
 
 	return (0);
@@ -389,26 +367,40 @@ parse_context(const ucl_object_t *obj, struct abac_context_io *ctx)
  * Parse a single rule object
  */
 static int
-parse_rule(const ucl_object_t *obj, struct abac_rule_io *rule)
+parse_rule(const ucl_object_t *obj, struct abac_rule_io *rule,
+    uint32_t source_id)
 {
-	const ucl_object_t *val;
+	const ucl_object_t *val, *entry;
+	ucl_object_iter_t it = NULL;
+	const char *key;
 
 	memset(rule, 0, sizeof(*rule));
+	rule->vr_id = source_id;
 
 	if (obj == NULL || ucl_object_type(obj) != UCL_OBJECT)
 		return (-1);
-
-	/* id (required) */
-	val = ucl_object_lookup(obj, "id");
-	if (val == NULL || ucl_object_type(val) != UCL_INT) {
-		mac_abacd_log(LOG_ERR, "rule missing 'id' field");
-		return (-1);
+	while ((entry = ucl_object_iterate(obj, &it, true)) != NULL) {
+		key = ucl_object_key(entry);
+		if (key == NULL || (strcmp(key, "set") != 0 &&
+		    strcmp(key, "action") != 0 &&
+		    strcmp(key, "operations") != 0 &&
+		    strcmp(key, "subject") != 0 && strcmp(key, "object") != 0 &&
+		    strcmp(key, "subj_ctx") != 0 &&
+		    strcmp(key, "obj_ctx") != 0)) {
+			mac_abacd_log(LOG_ERR, "unknown rule key: %s",
+			    key != NULL ? key : "(null)");
+			return (-1);
+		}
 	}
-	rule->vr_id = ucl_object_toint(val);
 
 	/* set (optional, defaults to 0) */
 	val = ucl_object_lookup(obj, "set");
-	if (val != NULL && ucl_object_type(val) == UCL_INT) {
+	if (val != NULL) {
+		if (ucl_object_type(val) != UCL_INT) {
+			mac_abacd_log(LOG_ERR, "rule %u: set must be an integer",
+			    rule->vr_id);
+			return (-1);
+		}
 		int64_t set_val = ucl_object_toint(val);
 		if (set_val < 0 || set_val >= ABAC_MAX_SETS) {
 			mac_abacd_log(LOG_ERR, "rule %u: invalid set %jd",
@@ -430,17 +422,27 @@ parse_rule(const ucl_object_t *obj, struct abac_rule_io *rule)
 
 	/* operations */
 	val = ucl_object_lookup(obj, "operations");
-	rule->vr_operations = parse_operations(val);
-	if (rule->vr_operations == 0)
-		rule->vr_operations = ABAC_OP_ALL;
+	if (parse_operations(val, &rule->vr_operations) < 0) {
+		mac_abacd_log(LOG_ERR, "rule %u: invalid operations",
+		    rule->vr_id);
+		return (-1);
+	}
 
 	/* subject pattern */
 	val = ucl_object_lookup(obj, "subject");
-	parse_pattern(val, &rule->vr_subject);
+	if (parse_pattern(val, &rule->vr_subject) < 0) {
+		mac_abacd_log(LOG_ERR, "rule %u: invalid subject pattern",
+		    rule->vr_id);
+		return (-1);
+	}
 
 	/* object pattern */
 	val = ucl_object_lookup(obj, "object");
-	parse_pattern(val, &rule->vr_object);
+	if (parse_pattern(val, &rule->vr_object) < 0) {
+		mac_abacd_log(LOG_ERR, "rule %u: invalid object pattern",
+		    rule->vr_id);
+		return (-1);
+	}
 
 	/* subject context constraints */
 	val = ucl_object_lookup(obj, "subj_ctx");
@@ -452,15 +454,6 @@ parse_rule(const ucl_object_t *obj, struct abac_rule_io *rule)
 	if (parse_context(val, &rule->vr_obj_context) < 0)
 		return (-1);
 
-	/* newlabel (for transition rules) */
-	if (rule->vr_action == ABAC_ACTION_TRANSITION) {
-		val = ucl_object_lookup(obj, "newlabel");
-		if (val != NULL && ucl_object_type(val) == UCL_STRING) {
-			strlcpy(rule->vr_newlabel, ucl_object_tostring(val),
-			    sizeof(rule->vr_newlabel));
-		}
-	}
-
 	log_verbose("  rule %u: action=%d ops=0x%x subj_flags=0x%x obj_flags=0x%x",
 	    rule->vr_id, rule->vr_action, rule->vr_operations,
 	    rule->vr_subject.vp_flags, rule->vr_object.vp_flags);
@@ -469,197 +462,86 @@ parse_rule(const ucl_object_t *obj, struct abac_rule_io *rule)
 }
 
 /*
- * Parse the rules array
- */
-static int
-parse_rules(const ucl_object_t *obj)
-{
-	const ucl_object_t *rule_obj;
-	ucl_object_iter_t it = NULL;
-	struct abac_rule_io rule;
-	int count = 0;
-	int errors = 0;
-
-	if (obj == NULL || ucl_object_type(obj) != UCL_ARRAY) {
-		mac_abacd_log(LOG_WARNING, "no 'rules' array found in policy");
-		return (0);
-	}
-
-	while ((rule_obj = ucl_object_iterate(obj, &it, true)) != NULL) {
-		if (parse_rule(rule_obj, &rule) < 0) {
-			errors++;
-			continue;
-		}
-
-		if (mac_abacd_add_rule(&rule) < 0) {
-			errors++;
-			continue;
-		}
-
-		count++;
-	}
-
-	mac_abacd_log(LOG_INFO, "loaded %d rules (%d errors)", count, errors);
-
-	return (errors > 0 ? -1 : 0);
-}
-
-/*
  * Parse mode setting
  */
 static int
-parse_mode(const ucl_object_t *obj)
+decode_mode(const ucl_object_t *obj, bool *present, int *mode)
 {
 	const char *str;
-	int mode;
 
-	if (obj == NULL || ucl_object_type(obj) != UCL_STRING)
+	*present = false;
+	if (obj == NULL)
 		return (0);
+	if (ucl_object_type(obj) != UCL_STRING)
+		return (-1);
+	*present = true;
 
 	str = ucl_object_tostring(obj);
 	if (strcasecmp(str, "disabled") == 0)
-		mode = ABAC_MODE_DISABLED;
+		*mode = ABAC_MODE_DISABLED;
 	else if (strcasecmp(str, "permissive") == 0)
-		mode = ABAC_MODE_PERMISSIVE;
+		*mode = ABAC_MODE_PERMISSIVE;
 	else if (strcasecmp(str, "enforcing") == 0)
-		mode = ABAC_MODE_ENFORCING;
+		*mode = ABAC_MODE_ENFORCING;
 	else {
 		mac_abacd_log(LOG_ERR, "invalid mode: %s", str);
 		return (-1);
 	}
 
-	log_verbose("setting mode to %s (%d)", str, mode);
-
-	return mac_abacd_set_mode(mode);
+	return (0);
 }
 
 /*
  * Parse default_policy setting
  */
 static int
-parse_default_policy(const ucl_object_t *obj)
+decode_default_policy(const ucl_object_t *obj, bool *present, int *policy)
 {
 	const char *str;
-	int policy;
 
-	if (obj == NULL || ucl_object_type(obj) != UCL_STRING)
+	*present = false;
+	if (obj == NULL)
 		return (0);
+	if (ucl_object_type(obj) != UCL_STRING)
+		return (-1);
+	*present = true;
 
 	str = ucl_object_tostring(obj);
 	if (strcasecmp(str, "allow") == 0)
-		policy = 0;
+		*policy = 0;
 	else if (strcasecmp(str, "deny") == 0)
-		policy = 1;
+		*policy = 1;
 	else {
 		mac_abacd_log(LOG_ERR, "invalid default_policy: %s", str);
 		return (-1);
 	}
 
-	log_verbose("setting default_policy to %s (%d)", str, policy);
-
-	return mac_abacd_set_default_policy(policy);
+	return (0);
 }
 
 /*
  * Parse append setting - if true, don't clear existing rules
  */
-static bool
-parse_append(const ucl_object_t *obj)
-{
-	if (obj == NULL)
-		return (false);
-
-	if (ucl_object_type(obj) == UCL_BOOLEAN)
-		return ucl_object_toboolean(obj);
-
-	return (false);
-}
-
-/*
- * Internal UCL parsing function with append mode support
- */
 static int
-parse_ucl_internal(const char *path, bool verbose, bool *append_mode)
+validate_root(const ucl_object_t *root)
 {
-	struct ucl_parser *parser;
-	ucl_object_t *root;
-	const ucl_object_t *obj;
-	const char *errmsg;
-	int error = 0;
+	const ucl_object_t *entry;
+	ucl_object_iter_t it = NULL;
+	const char *key;
 
-	verbose_mode = verbose;
-	if (append_mode != NULL)
-		*append_mode = false;
-
-	log_verbose("parsing UCL file: %s", path);
-
-	parser = ucl_parser_new(UCL_PARSER_KEY_LOWERCASE);
-	if (parser == NULL) {
-		mac_abacd_log(LOG_ERR, "ucl_parser_new failed");
+	if (root == NULL || ucl_object_type(root) != UCL_OBJECT)
 		return (-1);
+	while ((entry = ucl_object_iterate(root, &it, true)) != NULL) {
+		key = ucl_object_key(entry);
+		if (key == NULL || (strcmp(key, "mode") != 0 &&
+		    strcmp(key, "default_policy") != 0 &&
+		    strcmp(key, "rules") != 0)) {
+			mac_abacd_log(LOG_ERR, "unknown policy key: %s",
+			    key != NULL ? key : "(null)");
+			return (-1);
+		}
 	}
-
-	/* Enable include support */
-	ucl_parser_set_filevars(parser, path, true);
-
-	if (!ucl_parser_add_file(parser, path)) {
-		errmsg = ucl_parser_get_error(parser);
-		mac_abacd_log(LOG_ERR, "parse error: %s", errmsg ? errmsg : "unknown");
-		ucl_parser_free(parser);
-		return (-1);
-	}
-
-	root = ucl_parser_get_object(parser);
-	ucl_parser_free(parser);
-
-	if (root == NULL) {
-		mac_abacd_log(LOG_ERR, "failed to get UCL object");
-		return (-1);
-	}
-
-	/* Parse append flag first - determines if we should clear rules */
-	obj = ucl_object_lookup(root, "append");
-	if (append_mode != NULL)
-		*append_mode = parse_append(obj);
-
-	/* Parse mode */
-	obj = ucl_object_lookup(root, "mode");
-	if (parse_mode(obj) < 0)
-		error = -1;
-
-	/* Parse default_policy */
-	obj = ucl_object_lookup(root, "default_policy");
-	if (parse_default_policy(obj) < 0)
-		error = -1;
-
-	/* Note: audit is now handled by FreeBSD's standard audit subsystem */
-
-	/* Parse rules */
-	obj = ucl_object_lookup(root, "rules");
-	if (parse_rules(obj) < 0)
-		error = -1;
-
-	ucl_object_unref(root);
-
-	return (error);
-}
-
-/*
- * Main UCL parsing function (legacy interface)
- */
-int
-mac_abacd_parse_ucl(const char *path, bool verbose)
-{
-	return parse_ucl_internal(path, verbose, NULL);
-}
-
-/*
- * UCL parsing with append mode check
- */
-int
-mac_abacd_parse_ucl_check_append(const char *path, bool verbose, bool *append_mode)
-{
-	return parse_ucl_internal(path, verbose, append_mode);
+	return (0);
 }
 
 /*
@@ -676,12 +558,12 @@ parse_rules_with_callback(const ucl_object_t *obj,
 	int errors = 0;
 
 	if (obj == NULL || ucl_object_type(obj) != UCL_ARRAY) {
-		mac_abacd_log(LOG_WARNING, "no 'rules' array found in policy");
-		return (0);
+		mac_abacd_log(LOG_ERR, "policy requires a 'rules' array");
+		return (-1);
 	}
 
 	while ((rule_obj = ucl_object_iterate(obj, &it, true)) != NULL) {
-		if (parse_rule(rule_obj, &rule) < 0) {
+		if (parse_rule(rule_obj, &rule, (uint32_t)count + 1) < 0) {
 			errors++;
 			continue;
 		}
@@ -705,8 +587,9 @@ parse_rules_with_callback(const ucl_object_t *obj,
  * rather than sending rules directly to kernel.
  */
 int
-mac_abacd_parse_ucl_with_callback(const char *path, bool verbose,
-    abac_rule_callback_t callback, void *ctx)
+mac_abacd_compile_ucl(const char *path, bool verbose,
+    abac_rule_callback_t callback, void *ctx,
+    struct mac_abac_policy_settings *settings)
 {
 	struct ucl_parser *parser;
 	ucl_object_t *root;
@@ -715,6 +598,9 @@ mac_abacd_parse_ucl_with_callback(const char *path, bool verbose,
 	int error = 0;
 
 	verbose_mode = verbose;
+	if (path == NULL || callback == NULL || settings == NULL)
+		return (-1);
+	memset(settings, 0, sizeof(*settings));
 
 	log_verbose("parsing UCL file: %s", path);
 
@@ -741,10 +627,22 @@ mac_abacd_parse_ucl_with_callback(const char *path, bool verbose,
 		mac_abacd_log(LOG_ERR, "failed to get UCL object");
 		return (-1);
 	}
+	if (validate_root(root) != 0) {
+		ucl_object_unref(root);
+		return (-1);
+	}
 
-	/* Parse rules only - mode is not handled by mac_abac_ctl load */
+	obj = ucl_object_lookup(root, "mode");
+	if (decode_mode(obj, &settings->has_mode, &settings->mode) < 0)
+		error = -1;
+	obj = ucl_object_lookup(root, "default_policy");
+	if (decode_default_policy(obj, &settings->has_default_policy,
+	    &settings->default_policy) < 0)
+		error = -1;
+
+	/* Do not invoke callbacks for a document with invalid global settings. */
 	obj = ucl_object_lookup(root, "rules");
-	if (parse_rules_with_callback(obj, callback, ctx) < 0)
+	if (error == 0 && parse_rules_with_callback(obj, callback, ctx) < 0)
 		error = -1;
 
 	ucl_object_unref(root);

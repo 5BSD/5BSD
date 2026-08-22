@@ -44,28 +44,12 @@ struct mac_abacd_config {
 void mac_abacd_log(int priority, const char *fmt, ...);
 
 /*
- * Kernel communication functions (mac_abacd.c)
- */
-int mac_abacd_add_rule(struct abac_rule_io *rule);
-int mac_abacd_clear_rules(void);
-int mac_abacd_set_mode(int mode);
-int mac_abacd_set_default_policy(int policy);
-
-/*
- * Policy parsing functions (parse_ucl.c)
- *
- * mac_abacd_parse_ucl_check_append: Parse and check if append mode is set
- *   Returns: 0 = success (no append), 1 = success (append mode), -1 = error
- *
- * mac_abacd_parse_ucl: Parse and load rules (legacy interface)
- */
-int mac_abacd_parse_ucl(const char *path, bool verbose);
-int mac_abacd_parse_ucl_check_append(const char *path, bool verbose, bool *append_mode);
-
-/*
  * Line format parsing (parse_line.c)
  */
 int mac_abacd_parse_line(const char *line, struct abac_rule_io *rule);
+int mac_abacd_parse_operations(const char *text, uint32_t *operations);
+int mac_abacd_parse_pattern(const char *text, struct abac_pattern_io *pattern);
+int mac_abacd_validate_label(const char *text);
 
 /*
  * Callback type for rule iteration during UCL parsing
@@ -73,11 +57,16 @@ int mac_abacd_parse_line(const char *line, struct abac_rule_io *rule);
  */
 typedef int (*abac_rule_callback_t)(struct abac_rule_io *rule, void *ctx);
 
-/*
- * Parse UCL file and call callback for each rule (parse_ucl.c)
- * Used by mac_abac_ctl for building packed rule buffers
- */
-int mac_abacd_parse_ucl_with_callback(const char *path, bool verbose,
-    abac_rule_callback_t callback, void *ctx);
+struct mac_abac_policy_settings {
+	bool	 has_mode;
+	int	 mode;
+	bool	 has_default_policy;
+	int	 default_policy;
+};
+
+/* Parse and validate a complete UCL policy without changing kernel state. */
+int mac_abacd_compile_ucl(const char *path, bool verbose,
+    abac_rule_callback_t callback, void *ctx,
+    struct mac_abac_policy_settings *settings);
 
 #endif /* !_MAC_ABACD_H_ */

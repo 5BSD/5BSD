@@ -29,8 +29,7 @@
 
 /*
  * Maximum rule line size for file parsing.
- * A full rule: action + ops + subject + "->" + object + contexts + "=>" + newlabel
- * Approximately: 12 + 200 + 1040 + 4 + 1040 + 200 + 4 + 1040 = ~3540 bytes
+ * A full rule contains an action, operations, two patterns, and contexts.
  */
 #define ABAC_MAX_RULE_LINE	(3 * ABAC_PATTERN_MAX_LEN + 512)
 
@@ -51,10 +50,19 @@ struct ucl_load_ctx {
 	int	 set_override;	/* -1 = use parsed value, >= 0 = override */
 };
 
-/*
- * Stub implementations for mac_abacd functions used by parse_ucl.c
- * These are only needed when linking parse_ucl.o into mac_abac_ctl.
- */
+struct validate_ucl_ctx {
+	uint32_t count;
+};
+
+static int
+validate_ucl_rule(struct abac_rule_io *rule __unused, void *cookie)
+{
+	struct validate_ucl_ctx *ctx = cookie;
+
+	ctx->count++;
+	return (0);
+}
+
 void
 mac_abacd_log(int priority __unused, const char *fmt, ...)
 {
@@ -64,27 +72,6 @@ mac_abacd_log(int priority __unused, const char *fmt, ...)
 	vfprintf(stderr, fmt, ap);
 	fprintf(stderr, "\n");
 	va_end(ap);
-}
-
-int
-mac_abacd_set_mode(int mode __unused)
-{
-	/* mac_abac_ctl doesn't use mode from UCL files - use 'mac_abac_ctl mode' */
-	return (0);
-}
-
-int
-mac_abacd_set_default_policy(int policy __unused)
-{
-	/* mac_abac_ctl doesn't use default policy from UCL files - use 'mac_abac_ctl default' */
-	return (0);
-}
-
-int
-mac_abacd_add_rule(struct abac_rule_io *rule __unused)
-{
-	/* Not used - we use the callback interface instead */
-	return (0);
 }
 
 /*
@@ -117,7 +104,7 @@ build_rule_arg_with_set(const char *rule_str, char **bufp, size_t *lenp, int set
 	struct abac_rule_io rule_io;
 	struct abac_rule_arg *arg;
 	char *buf, *data;
-	size_t subject_len, object_len, newlabel_len, total_len;
+	size_t subject_len, object_len, total_len;
 	int ret;
 
 	/* Parse using existing parser */
@@ -128,10 +115,7 @@ build_rule_arg_with_set(const char *rule_str, char **bufp, size_t *lenp, int set
 	/* Calculate lengths (include null terminators) */
 	subject_len = strlen(rule_io.vr_subject.vp_pattern) + 1;
 	object_len = strlen(rule_io.vr_object.vp_pattern) + 1;
-	newlabel_len = (rule_io.vr_action == ABAC_ACTION_TRANSITION) ?
-	    strlen(rule_io.vr_newlabel) + 1 : 0;
-
-	total_len = sizeof(struct abac_rule_arg) + subject_len + object_len + newlabel_len;
+	total_len = sizeof(struct abac_rule_arg) + subject_len + object_len;
 
 	buf = calloc(1, total_len);
 	if (buf == NULL)
@@ -159,16 +143,12 @@ build_rule_arg_with_set(const char *rule_str, char **bufp, size_t *lenp, int set
 	arg->vr_obj_context.vc_gid = rule_io.vr_obj_context.vc_gid;
 	arg->vr_subject_len = subject_len;
 	arg->vr_object_len = object_len;
-	arg->vr_newlabel_len = newlabel_len;
 
 	/* Copy strings */
 	data = buf + sizeof(struct abac_rule_arg);
 	memcpy(data, rule_io.vr_subject.vp_pattern, subject_len);
 	data += subject_len;
 	memcpy(data, rule_io.vr_object.vp_pattern, object_len);
-	data += object_len;
-	if (newlabel_len > 0)
-		memcpy(data, rule_io.vr_newlabel, newlabel_len);
 
 	*bufp = buf;
 	*lenp = total_len;
@@ -194,15 +174,12 @@ build_rule_arg_from_io_with_set(struct abac_rule_io *rule_io, char **bufp, size_
 {
 	struct abac_rule_arg *arg;
 	char *buf, *data;
-	size_t subject_len, object_len, newlabel_len, total_len;
+	size_t subject_len, object_len, total_len;
 
 	/* Calculate lengths (include null terminators) */
 	subject_len = strlen(rule_io->vr_subject.vp_pattern) + 1;
 	object_len = strlen(rule_io->vr_object.vp_pattern) + 1;
-	newlabel_len = (rule_io->vr_action == ABAC_ACTION_TRANSITION) ?
-	    strlen(rule_io->vr_newlabel) + 1 : 0;
-
-	total_len = sizeof(struct abac_rule_arg) + subject_len + object_len + newlabel_len;
+	total_len = sizeof(struct abac_rule_arg) + subject_len + object_len;
 
 	buf = calloc(1, total_len);
 	if (buf == NULL)
@@ -230,16 +207,12 @@ build_rule_arg_from_io_with_set(struct abac_rule_io *rule_io, char **bufp, size_
 	arg->vr_obj_context.vc_gid = rule_io->vr_obj_context.vc_gid;
 	arg->vr_subject_len = subject_len;
 	arg->vr_object_len = object_len;
-	arg->vr_newlabel_len = newlabel_len;
 
 	/* Copy strings */
 	data = buf + sizeof(struct abac_rule_arg);
 	memcpy(data, rule_io->vr_subject.vp_pattern, subject_len);
 	data += subject_len;
 	memcpy(data, rule_io->vr_object.vp_pattern, object_len);
-	data += object_len;
-	if (newlabel_len > 0)
-		memcpy(data, rule_io->vr_newlabel, newlabel_len);
 
 	*bufp = buf;
 	*lenp = total_len;
@@ -297,11 +270,13 @@ load_ucl_rules(const char *path, int set_override)
 {
 	struct ucl_load_ctx ctx;
 	struct abac_rule_load_arg load_arg;
+	struct mac_abac_policy_settings settings;
 
 	memset(&ctx, 0, sizeof(ctx));
 	ctx.set_override = set_override;
 
-	if (mac_abacd_parse_ucl_with_callback(path, false, ucl_rule_callback, &ctx) < 0) {
+	if (mac_abacd_compile_ucl(path, false, ucl_rule_callback, &ctx,
+	    &settings) < 0) {
 		free(ctx.buf);
 		return (-1);
 	}
@@ -414,6 +389,15 @@ cmd_rule(int argc, char *argv[])
 
 		while (fgets(line, sizeof(line), fp) != NULL) {
 			lineno++;
+			if (strchr(line, '\n') == NULL && !feof(fp)) {
+				int ch;
+				while ((ch = fgetc(fp)) != '\n' && ch != EOF)
+					;
+				warnx("%s:%d: rule line exceeds %u bytes", argv[1],
+				    lineno, (unsigned)sizeof(line) - 1);
+				errors++;
+				continue;
+			}
 
 			/* Strip comments */
 			comment = strchr(line, '#');
@@ -424,6 +408,8 @@ cmd_rule(int argc, char *argv[])
 			start = line;
 			while (*start == ' ' || *start == '\t')
 				start++;
+			if (*start == '\0')
+				continue;
 
 			/* Trim trailing whitespace */
 			end = start + strlen(start) - 1;
@@ -580,6 +566,15 @@ cmd_rule(int argc, char *argv[])
 		/* First pass: parse all rules into buffer */
 		while (fgets(line, sizeof(line), fp) != NULL) {
 			lineno++;
+			if (strchr(line, '\n') == NULL && !feof(fp)) {
+				int ch;
+				while ((ch = fgetc(fp)) != '\n' && ch != EOF)
+					;
+				warnx("%s:%d: rule line exceeds %u bytes", filepath,
+				    lineno, (unsigned)sizeof(line) - 1);
+				errors++;
+				continue;
+			}
 
 			/* Strip comments */
 			comment = strchr(line, '#');
@@ -590,6 +585,8 @@ cmd_rule(int argc, char *argv[])
 			start = line;
 			while (*start == ' ' || *start == '\t')
 				start++;
+			if (*start == '\0')
+				continue;
 
 			/* Trim trailing whitespace */
 			end = start + strlen(start) - 1;
@@ -674,10 +671,11 @@ cmd_rule(int argc, char *argv[])
 
 	} else if (strcmp(argv[0], "list") == 0) {
 		struct abac_rule_list_arg list_arg;
-		struct abac_rule_out *out;
-		char *buf, *p;
+		struct abac_rule_out out;
+		char *buf, *p, *end;
 		uint32_t i;
 		const char *action_str;
+		size_t record_size;
 
 		/* Query rule count first */
 		memset(&list_arg, 0, sizeof(list_arg));
@@ -690,8 +688,11 @@ cmd_rule(int argc, char *argv[])
 		}
 
 		/* Allocate buffer for rules (estimate size per rule) */
+		if (list_arg.vrl_total > UINT32_MAX /
+		    (sizeof(struct abac_rule_out) + 2 * ABAC_PATTERN_MAX_LEN))
+			err(EX_OSERR, "rule list is too large");
 		list_arg.vrl_buflen = list_arg.vrl_total *
-		    (sizeof(struct abac_rule_out) + 3 * ABAC_PATTERN_MAX_LEN);
+		    (sizeof(struct abac_rule_out) + 2 * ABAC_PATTERN_MAX_LEN);
 		buf = malloc(list_arg.vrl_buflen);
 		if (buf == NULL)
 			err(EX_OSERR, "malloc");
@@ -708,103 +709,117 @@ cmd_rule(int argc, char *argv[])
 
 		/* Parse and print rules */
 		p = buf;
+		end = buf + list_arg.vrl_buflen;
 		for (i = 0; i < list_arg.vrl_count; i++) {
 			char opsbuf[128];
-			const char *subject, *object, *newlabel;
+			const char *subject, *object;
 
-			out = (struct abac_rule_out *)p;
+			if ((size_t)(end - p) < sizeof(out)) {
+				free(buf);
+				errx(EX_PROTOCOL, "truncated rule-list response");
+			}
+			memcpy(&out, p, sizeof(out));
+			if (out.vr_subject_len == 0 || out.vr_object_len == 0 ||
+			    out.vr_subject_len > ABAC_PATTERN_MAX_LEN ||
+			    out.vr_object_len > ABAC_PATTERN_MAX_LEN) {
+				free(buf);
+				errx(EX_PROTOCOL, "invalid rule-list response lengths");
+			}
+			record_size = sizeof(out) + out.vr_subject_len +
+			    out.vr_object_len;
+			if (record_size > (size_t)(end - p)) {
+				free(buf);
+				errx(EX_PROTOCOL, "truncated rule-list response data");
+			}
 			subject = p + sizeof(struct abac_rule_out);
-			object = subject + out->vr_subject_len;
-			newlabel = object + out->vr_object_len;
+			object = subject + out.vr_subject_len;
+			if (subject[out.vr_subject_len - 1] != '\0' ||
+			    object[out.vr_object_len - 1] != '\0') {
+				free(buf);
+				errx(EX_PROTOCOL, "unterminated rule-list response");
+			}
 
-			switch (out->vr_action) {
+			switch (out.vr_action) {
 			case ABAC_ACTION_ALLOW:
 				action_str = "allow";
 				break;
 			case ABAC_ACTION_DENY:
 				action_str = "deny";
 				break;
-			case ABAC_ACTION_TRANSITION:
-				action_str = "transition";
-				break;
 			default:
 				action_str = "unknown";
 				break;
 			}
 
-			printf("  [%u", out->vr_id);
-			if (out->vr_set != 0)
-				printf(" set %u", out->vr_set);
+			printf("  [%u", out.vr_id);
+			if (out.vr_set != 0)
+				printf(" set %u", out.vr_set);
 			printf("] %s %s %s%s -> %s%s",
 			    action_str,
-			    ops_to_string(out->vr_operations, opsbuf, sizeof(opsbuf)),
-			    (out->vr_subject_flags & ABAC_MATCH_NEGATE) ? "!" : "",
+			    ops_to_string(out.vr_operations, opsbuf, sizeof(opsbuf)),
+			    (out.vr_subject_flags & ABAC_MATCH_NEGATE) ? "!" : "",
 			    subject[0] ? subject : "*",
-			    (out->vr_object_flags & ABAC_MATCH_NEGATE) ? "!" : "",
+			    (out.vr_object_flags & ABAC_MATCH_NEGATE) ? "!" : "",
 			    object[0] ? object : "*");
 
-			if (out->vr_action == ABAC_ACTION_TRANSITION &&
-			    out->vr_newlabel_len > 0)
-				printf(" => %s", newlabel);
-
 			/* Print subject context constraints if any */
-			if (out->vr_subj_context.vc_flags != 0) {
+			if (out.vr_subj_context.vc_flags != 0) {
 				printf(" subj_context:");
 				int first = 1;
-				if (out->vr_subj_context.vc_flags & ABAC_CTX_CAP_SANDBOXED) {
+				if (out.vr_subj_context.vc_flags & ABAC_CTX_CAP_SANDBOXED) {
 					printf("%ssandboxed=%s", first ? "" : ",",
-					    out->vr_subj_context.vc_cap_sandboxed ? "true" : "false");
+					    out.vr_subj_context.vc_cap_sandboxed ? "true" : "false");
 					first = 0;
 				}
-				if (out->vr_subj_context.vc_flags & ABAC_CTX_JAIL) {
-					if (out->vr_subj_context.vc_jail_check == 0)
+				if (out.vr_subj_context.vc_flags & ABAC_CTX_JAIL) {
+					if (out.vr_subj_context.vc_jail_check == 0)
 						printf("%sjail=host", first ? "" : ",");
-					else if (out->vr_subj_context.vc_jail_check == -1)
+					else if (out.vr_subj_context.vc_jail_check == -1)
 						printf("%sjail=any", first ? "" : ",");
 					else
 						printf("%sjail=%d", first ? "" : ",",
-						    out->vr_subj_context.vc_jail_check);
+						    out.vr_subj_context.vc_jail_check);
 					first = 0;
 				}
-				if (out->vr_subj_context.vc_flags & ABAC_CTX_UID) {
+				if (out.vr_subj_context.vc_flags & ABAC_CTX_UID) {
 					printf("%suid=%u", first ? "" : ",",
-					    out->vr_subj_context.vc_uid);
+					    out.vr_subj_context.vc_uid);
 					first = 0;
 				}
-				if (out->vr_subj_context.vc_flags & ABAC_CTX_GID) {
+				if (out.vr_subj_context.vc_flags & ABAC_CTX_GID) {
 					printf("%sgid=%u", first ? "" : ",",
-					    out->vr_subj_context.vc_gid);
+					    out.vr_subj_context.vc_gid);
 					first = 0;
 				}
 			}
 
 			/* Print object context constraints if any */
-			if (out->vr_obj_context.vc_flags != 0) {
+			if (out.vr_obj_context.vc_flags != 0) {
 				printf(" obj_context:");
 				int first = 1;
-				if (out->vr_obj_context.vc_flags & ABAC_CTX_CAP_SANDBOXED) {
+				if (out.vr_obj_context.vc_flags & ABAC_CTX_CAP_SANDBOXED) {
 					printf("%ssandboxed=%s", first ? "" : ",",
-					    out->vr_obj_context.vc_cap_sandboxed ? "true" : "false");
+					    out.vr_obj_context.vc_cap_sandboxed ? "true" : "false");
 					first = 0;
 				}
-				if (out->vr_obj_context.vc_flags & ABAC_CTX_JAIL) {
-					if (out->vr_obj_context.vc_jail_check == 0)
+				if (out.vr_obj_context.vc_flags & ABAC_CTX_JAIL) {
+					if (out.vr_obj_context.vc_jail_check == 0)
 						printf("%sjail=host", first ? "" : ",");
-					else if (out->vr_obj_context.vc_jail_check == -1)
+					else if (out.vr_obj_context.vc_jail_check == -1)
 						printf("%sjail=any", first ? "" : ",");
 					else
 						printf("%sjail=%d", first ? "" : ",",
-						    out->vr_obj_context.vc_jail_check);
+						    out.vr_obj_context.vc_jail_check);
 					first = 0;
 				}
-				if (out->vr_obj_context.vc_flags & ABAC_CTX_UID) {
+				if (out.vr_obj_context.vc_flags & ABAC_CTX_UID) {
 					printf("%suid=%u", first ? "" : ",",
-					    out->vr_obj_context.vc_uid);
+					    out.vr_obj_context.vc_uid);
 					first = 0;
 				}
-				if (out->vr_obj_context.vc_flags & ABAC_CTX_GID) {
+				if (out.vr_obj_context.vc_flags & ABAC_CTX_GID) {
 					printf("%sgid=%u", first ? "" : ",",
-					    out->vr_obj_context.vc_gid);
+					    out.vr_obj_context.vc_gid);
 					first = 0;
 				}
 			}
@@ -812,9 +827,7 @@ cmd_rule(int argc, char *argv[])
 			printf("\n");
 
 			/* Advance to next rule */
-			p += sizeof(struct abac_rule_out) +
-			    out->vr_subject_len + out->vr_object_len +
-			    out->vr_newlabel_len;
+			p += record_size;
 		}
 
 		free(buf);
@@ -841,6 +854,20 @@ cmd_rule(int argc, char *argv[])
 
 			if (argc < 3)
 				errx(EX_USAGE, "rule validate -f requires a file path");
+			if (is_ucl_file(argv[2])) {
+				struct mac_abac_policy_settings settings;
+				struct validate_ucl_ctx validate;
+
+				memset(&validate, 0, sizeof(validate));
+				if (mac_abacd_compile_ucl(argv[2], false,
+				    validate_ucl_rule, &validate, &settings) != 0) {
+					printf("ERROR: invalid policy\n");
+					return (1);
+				}
+				printf("Validation complete: %u valid, 0 warnings, 0 errors\n",
+				    validate.count);
+				return (0);
+			}
 
 			fp = fopen(argv[2], "r");
 			if (fp == NULL)
@@ -850,6 +877,15 @@ cmd_rule(int argc, char *argv[])
 
 			while (fgets(line, sizeof(line), fp) != NULL) {
 				lineno++;
+				if (strchr(line, '\n') == NULL && !feof(fp)) {
+					int ch;
+					while ((ch = fgetc(fp)) != '\n' && ch != EOF)
+						;
+					printf("  %s:%d: ERROR: rule line exceeds %u bytes\n",
+					    argv[2], lineno, (unsigned)sizeof(line) - 1);
+					error_count++;
+					continue;
+				}
 
 				/* Strip comments */
 				comment = strchr(line, '#');
@@ -860,6 +896,8 @@ cmd_rule(int argc, char *argv[])
 				start = line;
 				while (*start == ' ' || *start == '\t')
 					start++;
+				if (*start == '\0')
+					continue;
 
 				/* Trim trailing whitespace */
 				end = start + strlen(start) - 1;
@@ -884,14 +922,6 @@ cmd_rule(int argc, char *argv[])
 				if (ret > 0) /* empty after parsing */
 					continue;
 
-				/* Check for warnings */
-				if (rule_io.vr_action == ABAC_ACTION_TRANSITION &&
-				    rule_io.vr_newlabel[0] == '\0') {
-					printf("  %s:%d: WARNING: transition without newlabel: %s\n",
-					    argv[2], lineno, start);
-					warning_count++;
-				}
-
 				valid_count++;
 			}
 
@@ -914,14 +944,6 @@ cmd_rule(int argc, char *argv[])
 			if (ret > 0) {
 				printf("ERROR: empty rule\n");
 				return (1);
-			}
-
-			/* Check for warnings */
-			if (rule_io.vr_action == ABAC_ACTION_TRANSITION &&
-			    rule_io.vr_newlabel[0] == '\0') {
-				printf("WARNING: transition rule without newlabel\n");
-				printf("OK (with warnings)\n");
-				return (0);
 			}
 
 			printf("OK\n");

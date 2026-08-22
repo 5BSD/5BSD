@@ -101,6 +101,7 @@ abac_context_matches(const struct abac_context *ctx,
 {
 	struct ucred *check_cred;
 	struct proc *check_proc;
+	bool match;
 
 	/* If no context flags set, match everything */
 	if (ctx->vc_flags == 0)
@@ -112,10 +113,14 @@ abac_context_matches(const struct abac_context *ctx,
 	 * For object context: use proc's credential (target)
 	 */
 	if (cred != NULL) {
-		check_cred = cred;
+		check_cred = crhold(cred);
 		check_proc = curproc;
 	} else if (proc != NULL) {
+		PROC_LOCK(proc);
 		check_cred = proc->p_ucred;
+		if (check_cred != NULL)
+			crhold(check_cred);
+		PROC_UNLOCK(proc);
 		check_proc = proc;
 	} else {
 		/* No context info available, can't match constraints */
@@ -125,6 +130,7 @@ abac_context_matches(const struct abac_context *ctx,
 	if (check_cred == NULL) {
 		return (false);
 	}
+	match = true;
 
 	/* Check capability mode (sandboxed) */
 	if (ctx->vc_flags & ABAC_CTX_CAP_SANDBOXED) {
@@ -139,26 +145,14 @@ abac_context_matches(const struct abac_context *ctx,
 			struct thread *td = curthread;
 			if (td != NULL)
 				is_sandboxed = IN_CAPABILITY_MODE(td);
-		} else if (proc != NULL) {
-			/*
-			 * Object: check target process's credential for capmode.
-			 * Hold a reference to the credential to prevent it from
-			 * being freed while we're checking it.
-			 */
-			struct ucred *proc_cred;
-			PROC_LOCK(proc);
-			proc_cred = proc->p_ucred;
-			if (proc_cred != NULL)
-				crhold(proc_cred);
-			PROC_UNLOCK(proc);
-			if (proc_cred != NULL) {
-				is_sandboxed = (proc_cred->cr_flags & CRED_FLAG_CAPMODE) != 0;
-				crfree(proc_cred);
-			}
-		}
+		} else
+			is_sandboxed =
+			    (check_cred->cr_flags & CRED_FLAG_CAPMODE) != 0;
 
-		if (is_sandboxed != ctx->vc_cap_sandboxed)
-			return (false);
+		if (is_sandboxed != ctx->vc_cap_sandboxed) {
+			match = false;
+			goto out;
+		}
 	}
 
 	/* Check jail context */
@@ -171,37 +165,45 @@ abac_context_matches(const struct abac_context *ctx,
 		case 0:
 			/* Must be on host (jail 0) */
 			if (jailid != 0)
-				return (false);
+				match = false;
 			break;
 		case -1:
 			/* Must be in any jail (not host) */
 			if (jailid == 0)
-				return (false);
+				match = false;
 			break;
 		default:
 			/* Must be in specific jail */
 			if (jailid != ctx->vc_jail_check)
-				return (false);
+				match = false;
 			break;
 		}
+		if (!match)
+			goto out;
 	}
 
 	/* Check effective UID */
 	if (ctx->vc_flags & ABAC_CTX_UID) {
-		if (check_cred->cr_uid != ctx->vc_uid)
-			return (false);
+		if (check_cred->cr_uid != ctx->vc_uid) {
+			match = false;
+			goto out;
+		}
 	}
 
 	/* Check effective GID */
 	if (ctx->vc_flags & ABAC_CTX_GID) {
-		if (check_cred->cr_gid != ctx->vc_gid)
-			return (false);
+		if (check_cred->cr_gid != ctx->vc_gid) {
+			match = false;
+			goto out;
+		}
 	}
 
 	/* Check real UID */
 	if (ctx->vc_flags & ABAC_CTX_RUID) {
-		if (check_cred->cr_ruid != ctx->vc_uid)
-			return (false);
+		if (check_cred->cr_ruid != ctx->vc_uid) {
+			match = false;
+			goto out;
+		}
 	}
 
 	/* Check session/login context - via process's session */
@@ -220,10 +222,12 @@ abac_context_matches(const struct abac_context *ctx,
 		}
 
 		if (has_tty != ctx->vc_has_tty)
-			return (false);
+			match = false;
 	}
 
-	return (true);
+out:
+	crfree(check_cred);
+	return (match);
 }
 
 /*
@@ -324,19 +328,31 @@ abac_rule_pattern_to_string(const struct abac_rule_pattern *pattern,
  * CLI users provide labels like "type=user,domain=web" but abac_label_parse
  * expects newline-separated format like "type=user\ndomain=web\n".
  */
-void
+int
 abac_convert_label_format(const char *src, char *dst, size_t dstlen)
 {
 	size_t i, j;
 
+	if (src == NULL || dst == NULL || dstlen == 0)
+		return (EINVAL);
 	for (i = 0, j = 0; src[i] != '\0' && j < dstlen - 1; i++) {
 		if (src[i] == ',')
 			dst[j++] = '\n';
 		else
 			dst[j++] = src[i];
 	}
+	if (src[i] != '\0') {
+		dst[0] = '\0';
+		return (E2BIG);
+	}
 	/* Ensure trailing newline for proper parsing */
-	if (j > 0 && j < dstlen - 1 && dst[j - 1] != '\n')
+	if (j > 0 && dst[j - 1] != '\n') {
+		if (j >= dstlen - 1) {
+			dst[0] = '\0';
+			return (E2BIG);
+		}
 		dst[j++] = '\n';
+	}
 	dst[j] = '\0';
+	return (0);
 }

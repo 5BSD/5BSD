@@ -177,6 +177,7 @@ parse_kv_pair(const char *str, size_t len, struct abac_label *vl)
 	struct abac_pair *pair;
 	const char *eq;
 	size_t keylen, valuelen;
+	uint32_t i;
 
 	/* Check if we have room for another pair */
 	if (vl->vl_npairs >= ABAC_MAX_PAIRS)
@@ -196,6 +197,14 @@ parse_kv_pair(const char *str, size_t len, struct abac_label *vl)
 		return (EINVAL);
 	if (valuelen >= ABAC_MAX_VALUE_LEN)
 		return (EINVAL);
+	if (memchr(str, '\0', len) != NULL || memchr(str, '\r', len) != NULL ||
+	    memchr(str, ',', len) != NULL)
+		return (EINVAL);
+	for (i = 0; i < vl->vl_npairs; i++) {
+		if (strlen(vl->vl_pairs[i].vp_key) == keylen &&
+		    memcmp(vl->vl_pairs[i].vp_key, str, keylen) == 0)
+			return (EEXIST);
+	}
 
 	/* Store in the next available pair slot */
 	pair = &vl->vl_pairs[vl->vl_npairs];
@@ -234,7 +243,7 @@ abac_label_parse(const char *str, size_t len, struct abac_label *vl)
 
 	/* Empty string is valid - means unlabeled/default */
 	if (len == 0) {
-		memset(vl, 0, sizeof(*vl));
+		abac_label_set_default(vl, false);
 		return (0);
 	}
 
@@ -255,23 +264,29 @@ abac_label_parse(const char *str, size_t len, struct abac_label *vl)
 	while (p < end) {
 		/* Find next newline or end of string */
 		nl = memchr(p, '\n', end - p);
-		if (nl == NULL)
+		if (nl == NULL) {
 			nl = end;
-
-		/* Parse this pair (skip empty lines) */
-		if (nl > p) {
-			error = parse_kv_pair(p, nl - p, vl);
-			if (error != 0) {
-				atomic_add_64(&abac_parse_errors, 1);
-				return (error);
-			}
+		} else if (nl == p) {
+			error = EINVAL;
+			goto fail;
 		}
 
+		error = parse_kv_pair(p, nl - p, vl);
+		if (error != 0)
+			goto fail;
+
 		/* Move past newline */
+		if (nl == end)
+			break;
 		p = nl + 1;
 	}
 
 	return (0);
+
+fail:
+	memset(vl, 0, sizeof(*vl));
+	atomic_add_64(&abac_parse_errors, 1);
+	return (error);
 }
 
 /*
@@ -427,6 +442,8 @@ abac_rule_pattern_parse(const char *str, size_t len,
 	/* Empty or "*" means wildcard - match everything */
 	if (len == 0 || (len == 1 && str[0] == '*'))
 		return (0);
+	if (str[len - 1] == ',')
+		return (EINVAL);
 
 	/* Parse comma-separated key=value pairs */
 	p = str;
@@ -438,11 +455,9 @@ abac_rule_pattern_parse(const char *str, size_t len,
 		if (comma == NULL)
 			comma = end;
 
-		/* Skip empty segments */
-		if (comma == p) {
-			p = comma + 1;
-			continue;
-		}
+		/* Empty segments are ambiguous and therefore non-canonical. */
+		if (comma == p)
+			return (EINVAL);
 
 		/* Check pair limit */
 		if (pattern->vrp_npairs >= ABAC_RULE_MAX_PAIRS)
@@ -461,6 +476,14 @@ abac_rule_pattern_parse(const char *str, size_t len,
 			return (EINVAL);
 		if (valuelen >= ABAC_RULE_VALUE_LEN)
 			return (EINVAL);
+		if (memchr(p, '\0', comma - p) != NULL ||
+		    memchr(p, '\r', comma - p) != NULL)
+			return (EINVAL);
+		for (uint32_t i = 0; i < pattern->vrp_npairs; i++) {
+			if (strlen(pattern->vrp_pairs[i].vrp_key) == keylen &&
+			    memcmp(pattern->vrp_pairs[i].vrp_key, p, keylen) == 0)
+				return (EEXIST);
+		}
 
 		/* Store this pair */
 		pair = &pattern->vrp_pairs[pattern->vrp_npairs];

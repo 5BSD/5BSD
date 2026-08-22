@@ -65,7 +65,7 @@ SDT_PROBE_DECLARE(abac, rules, check, deny);
  *
  * rule-match: Fired when a rule matches (before action applied)
  *   arg0: rule ID (uint32_t)
- *   arg1: action (0=allow, 1=deny, 2=transition)
+ *   arg1: action (0=allow, 1=deny)
  *   arg2: operation bitmask (uint32_t)
  *
  * rule-nomatch: Fired when no rule matches (default policy used)
@@ -74,17 +74,6 @@ SDT_PROBE_DECLARE(abac, rules, check, deny);
  */
 SDT_PROBE_DECLARE(abac, rules, rule, match);
 SDT_PROBE_DECLARE(abac, rules, rule, nomatch);
-
-/*
- * Label transition probes
- *
- * transition: Fired when a process label changes on exec
- *   arg0: old label string (char *)
- *   arg1: new label string (char *)
- *   arg2: executable label string (char *)
- *   arg3: pid (pid_t)
- */
-SDT_PROBE_DECLARE(abac, cred, transition, exec);
 
 /*
  * Label read probes

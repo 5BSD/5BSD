@@ -32,6 +32,34 @@ extern int abac_rule_count;
 extern int abac_rule_end;
 extern struct rwlock abac_rules_lock;
 extern uint32_t abac_next_rule_id;
+extern uint16_t abac_active_sets[];
+extern uint16_t abac_active_set_count;
+
+static bool
+abac_packed_string_valid(const char *str, uint16_t len)
+{
+	const char *nul;
+
+	if (str == NULL || len == 0 || len > ABAC_MAX_LABEL_LEN)
+		return (false);
+	nul = memchr(str, '\0', len);
+	return (nul == str + len - 1);
+}
+
+static bool
+abac_context_arg_valid(const struct abac_context_arg *ctx)
+{
+
+	if ((ctx->vc_flags & ~ABAC_CTX_ALL) != 0 ||
+	    (ctx->vc_flags & (ABAC_CTX_UID | ABAC_CTX_RUID)) ==
+	    (ABAC_CTX_UID | ABAC_CTX_RUID) ||
+	    ctx->vc_cap_sandboxed > 1 || ctx->vc_has_tty > 1)
+		return (false);
+	if ((ctx->vc_flags & ABAC_CTX_JAIL) != 0 &&
+	    ctx->vc_jail_check < -1)
+		return (false);
+	return (true);
+}
 
 /*
  * Internal: create and populate a rule structure from syscall argument.
@@ -41,7 +69,7 @@ extern uint32_t abac_next_rule_id;
  * does NOT acquire locks or insert into the rule table.
  *
  * The data buffer contains variable-length strings:
- *   subject[vr_subject_len], object[vr_object_len], newlabel[vr_newlabel_len]
+ *   subject[vr_subject_len], object[vr_object_len]
  *
  * On success, *rulep points to the newly allocated rule (caller must free
  * on error after this function returns).
@@ -56,9 +84,7 @@ abac_rule_create(struct abac_rule_arg *arg, const char *data,
     struct abac_rule **rulep)
 {
 	struct abac_rule *newrule;
-	struct abac_label *newlabel;
-	const char *subject_str, *object_str, *newlabel_str;
-	char *converted;
+	const char *subject_str, *object_str;
 	int error;
 
 	if (arg == NULL || data == NULL || rulep == NULL)
@@ -66,56 +92,51 @@ abac_rule_create(struct abac_rule_arg *arg, const char *data,
 
 	*rulep = NULL;
 
-	/* Validate action */
-	if (arg->vr_action > ABAC_ACTION_TRANSITION)
+	/* Validate the fixed header and exact packed-string boundaries. */
+	if (arg->vr_action > ABAC_ACTION_DENY || arg->vr_reserved != 0 ||
+	    arg->vr_reserved2 != 0 || arg->vr_operations == 0 ||
+	    (arg->vr_operations & ~ABAC_OP_ALL) != 0 ||
+	    (arg->vr_subject_flags & ~ABAC_MATCH_NEGATE) != 0 ||
+	    (arg->vr_object_flags & ~ABAC_MATCH_NEGATE) != 0 ||
+	    !abac_context_arg_valid(&arg->vr_subj_context) ||
+	    !abac_context_arg_valid(&arg->vr_obj_context) ||
+	    !abac_packed_string_valid(data, arg->vr_subject_len) ||
+	    !abac_packed_string_valid(data + arg->vr_subject_len,
+	    arg->vr_object_len))
 		return (EINVAL);
 
 	/* Extract string pointers from data buffer */
 	subject_str = data;
 	object_str = data + arg->vr_subject_len;
-	newlabel_str = data + arg->vr_subject_len + arg->vr_object_len;
-
-	/*
-	 * Allocate conversion buffer dynamically - 4KB is too large
-	 * for the kernel stack.
-	 */
-	converted = malloc(ABAC_MAX_LABEL_LEN, M_TEMP, M_WAITOK);
 
 	/* Allocate the rule */
 	newrule = malloc(sizeof(*newrule), M_TEMP, M_NOWAIT | M_ZERO);
-	if (newrule == NULL) {
-		free(converted, M_TEMP);
+	if (newrule == NULL)
 		return (ENOMEM);
-	}
 
 	/* Fill in basic fields */
 	newrule->vr_action = arg->vr_action;
 	newrule->vr_set = arg->vr_set;
 	newrule->vr_operations = arg->vr_operations;
-	newrule->vr_newlabel = NULL;
 
 	/* Parse subject pattern (uses compact rule pattern) */
 	newrule->vr_subject.vrp_flags = arg->vr_subject_flags;
-	if (arg->vr_subject_len > 0 && subject_str[0] != '\0' &&
-	    subject_str[0] != '*') {
+	if (subject_str[0] != '\0' && strcmp(subject_str, "*") != 0) {
 		error = abac_rule_pattern_parse(subject_str, strlen(subject_str),
 		    &newrule->vr_subject);
 		if (error) {
 			free(newrule, M_TEMP);
-			free(converted, M_TEMP);
 			return (error);
 		}
 	}
 
 	/* Parse object pattern (uses compact rule pattern) */
 	newrule->vr_object.vrp_flags = arg->vr_object_flags;
-	if (arg->vr_object_len > 0 && object_str[0] != '\0' &&
-	    object_str[0] != '*') {
+	if (object_str[0] != '\0' && strcmp(object_str, "*") != 0) {
 		error = abac_rule_pattern_parse(object_str, strlen(object_str),
 		    &newrule->vr_object);
 		if (error) {
 			free(newrule, M_TEMP);
-			free(converted, M_TEMP);
 			return (error);
 		}
 	}
@@ -136,34 +157,12 @@ abac_rule_create(struct abac_rule_arg *arg, const char *data,
 	newrule->vr_obj_context.vc_uid = arg->vr_obj_context.vc_uid;
 	newrule->vr_obj_context.vc_gid = arg->vr_obj_context.vc_gid;
 
-	/* Parse newlabel for TRANSITION rules (separately allocated) */
-	if (arg->vr_action == ABAC_ACTION_TRANSITION &&
-	    arg->vr_newlabel_len > 0 && newlabel_str[0] != '\0') {
-		newlabel = malloc(sizeof(*newlabel), M_TEMP, M_NOWAIT | M_ZERO);
-		if (newlabel == NULL) {
-			free(newrule, M_TEMP);
-			free(converted, M_TEMP);
-			return (ENOMEM);
-		}
-		abac_convert_label_format(newlabel_str, converted, ABAC_MAX_LABEL_LEN);
-		error = abac_label_parse(converted, strlen(converted), newlabel);
-		if (error) {
-			free(newlabel, M_TEMP);
-			free(newrule, M_TEMP);
-			free(converted, M_TEMP);
-			return (error);
-		}
-		newrule->vr_newlabel = newlabel;
-	}
-
-	free(converted, M_TEMP);
-
 	*rulep = newrule;
 	return (0);
 }
 
 /*
- * Free a rule structure and its associated newlabel if present.
+ * Free a rule structure.
  */
 static void
 abac_rule_free(struct abac_rule *rule)
@@ -171,8 +170,6 @@ abac_rule_free(struct abac_rule *rule)
 
 	if (rule == NULL)
 		return;
-	if (rule->vr_newlabel != NULL)
-		free(rule->vr_newlabel, M_TEMP);
 	free(rule, M_TEMP);
 }
 
@@ -180,7 +177,7 @@ abac_rule_free(struct abac_rule *rule)
  * Add a rule from syscall argument
  *
  * The data buffer contains variable-length strings:
- *   subject[vr_subject_len], object[vr_object_len], newlabel[vr_newlabel_len]
+ *   subject[vr_subject_len], object[vr_object_len]
  *
  * Returns:
  *   0 = success
@@ -283,6 +280,7 @@ abac_rules_load(struct abac_rule_load_arg *load_arg)
 {
 	struct abac_rule **old_rules;
 	int old_count, old_end;
+	uint32_t old_next_rule_id;
 	char *kbuf;
 	size_t offset;
 	uint32_t i, loaded;
@@ -291,14 +289,21 @@ abac_rules_load(struct abac_rule_load_arg *load_arg)
 	if (load_arg == NULL)
 		return (EINVAL);
 
-	if (load_arg->vrl_count > ABAC_MAX_RULES)
+	if (load_arg->vrl_reserved != 0)
+		return (EINVAL);
+	if (load_arg->vrl_count > ABAC_MAX_RULES ||
+	    load_arg->vrl_buflen > ABAC_MAX_RULE_LOAD_SIZE)
 		return (E2BIG);
 
-	if (load_arg->vrl_buf == NULL || load_arg->vrl_buflen == 0) {
+	if (load_arg->vrl_count == 0) {
+		if (load_arg->vrl_buf != NULL || load_arg->vrl_buflen != 0)
+			return (EINVAL);
 		abac_rules_clear();
 		load_arg->vrl_loaded = 0;
 		return (0);
 	}
+	if (load_arg->vrl_buf == NULL || load_arg->vrl_buflen == 0)
+		return (EINVAL);
 
 	/* Copy buffer from userland */
 	kbuf = malloc(load_arg->vrl_buflen, M_TEMP, M_WAITOK);
@@ -321,6 +326,7 @@ abac_rules_load(struct abac_rule_load_arg *load_arg)
 	/* Save old rules for rollback */
 	old_count = abac_rule_count;
 	old_end = abac_rule_end;
+	old_next_rule_id = abac_next_rule_id;
 	for (i = 0; i < ABAC_MAX_RULES; i++) {
 		old_rules[i] = abac_rules[i];
 		abac_rules[i] = NULL;
@@ -334,7 +340,7 @@ abac_rules_load(struct abac_rule_load_arg *load_arg)
 	error = 0;
 
 	for (i = 0; i < load_arg->vrl_count && offset < load_arg->vrl_buflen; i++) {
-		struct abac_rule_arg *arg;
+		struct abac_rule_arg arg;
 		const char *data;
 		size_t rule_size;
 
@@ -343,35 +349,38 @@ abac_rules_load(struct abac_rule_load_arg *load_arg)
 			break;
 		}
 
-		arg = (struct abac_rule_arg *)(kbuf + offset);
+		/* Packed records need not preserve native structure alignment. */
+		memcpy(&arg, kbuf + offset, sizeof(arg));
 		data = kbuf + offset + sizeof(struct abac_rule_arg);
 
 		/*
 		 * Validate length fields before calculating rule_size to
 		 * prevent integer overflow. Each length must be reasonable.
 		 */
-		if (arg->vr_subject_len > ABAC_MAX_LABEL_LEN ||
-		    arg->vr_object_len > ABAC_MAX_LABEL_LEN ||
-		    arg->vr_newlabel_len > ABAC_MAX_LABEL_LEN) {
+		if (arg.vr_subject_len > ABAC_MAX_LABEL_LEN ||
+		    arg.vr_object_len > ABAC_MAX_LABEL_LEN) {
 			error = EINVAL;
 			break;
 		}
 
 		rule_size = sizeof(struct abac_rule_arg) +
-		    arg->vr_subject_len + arg->vr_object_len + arg->vr_newlabel_len;
+		    arg.vr_subject_len + arg.vr_object_len;
 
 		if (offset + rule_size > load_arg->vrl_buflen) {
 			error = EINVAL;
 			break;
 		}
 
-		error = abac_rule_add_locked(arg, data);
+		error = abac_rule_add_locked(&arg, data);
 		if (error)
 			break;
 
 		loaded++;
 		offset += rule_size;
 	}
+	if (error == 0 && (loaded != load_arg->vrl_count ||
+	    offset != load_arg->vrl_buflen))
+		error = EINVAL;
 
 	if (error) {
 		/* Rollback: restore old rules, free new rules */
@@ -381,6 +390,7 @@ abac_rules_load(struct abac_rule_load_arg *load_arg)
 		}
 		abac_rule_count = old_count;
 		abac_rule_end = old_end;
+		abac_next_rule_id = old_next_rule_id;
 		abac_rebuild_active_sets();
 	} else {
 		/* Success: free old rules */
@@ -404,36 +414,30 @@ abac_rules_load(struct abac_rule_load_arg *load_arg)
  * Uses dynamic allocation to avoid 8KB+ stack buffers for pattern strings.
  */
 static size_t
+abac_pattern_out_size(const struct abac_rule_pattern *pattern)
+{
+	size_t size;
+	uint32_t i;
+
+	if (pattern->vrp_npairs == 0)
+		return (2); /* "*" plus NUL */
+	size = 1; /* NUL */
+	for (i = 0; i < pattern->vrp_npairs; i++) {
+		if (i != 0)
+			size++;
+		size += strlen(pattern->vrp_pairs[i].vrp_key) + 1 +
+		    strlen(pattern->vrp_pairs[i].vrp_value);
+	}
+	return (size);
+}
+
+static size_t
 abac_rule_out_size(const struct abac_rule *rule)
 {
-	char *subj_buf, *obj_buf;
-	size_t subj_len, obj_len, newlabel_len, total;
 
-	subj_buf = malloc(ABAC_MAX_LABEL_LEN, M_TEMP, M_WAITOK);
-	obj_buf = malloc(ABAC_MAX_LABEL_LEN, M_TEMP, M_WAITOK);
-
-	subj_len = abac_rule_pattern_to_string(&rule->vr_subject, subj_buf,
-	    ABAC_MAX_LABEL_LEN) + 1;
-	obj_len = abac_rule_pattern_to_string(&rule->vr_object, obj_buf,
-	    ABAC_MAX_LABEL_LEN) + 1;
-
-	/* Calculate newlabel length if transition rule */
-	newlabel_len = 0;
-	if (rule->vr_action == ABAC_ACTION_TRANSITION &&
-	    rule->vr_newlabel != NULL) {
-		char *newlabel_buf = malloc(ABAC_MAX_LABEL_LEN, M_TEMP, M_WAITOK);
-		int len = abac_label_to_string(rule->vr_newlabel, newlabel_buf,
-		    ABAC_MAX_LABEL_LEN);
-		newlabel_len = (len > 0) ? len + 1 : 0;
-		free(newlabel_buf, M_TEMP);
-	}
-
-	total = sizeof(struct abac_rule_out) + subj_len + obj_len + newlabel_len;
-
-	free(subj_buf, M_TEMP);
-	free(obj_buf, M_TEMP);
-
-	return total;
+	return (sizeof(struct abac_rule_out) +
+	    abac_pattern_out_size(&rule->vr_subject) +
+	    abac_pattern_out_size(&rule->vr_object));
 }
 
 /*
@@ -442,75 +446,51 @@ abac_rule_out_size(const struct abac_rule *rule)
  * Uses dynamic allocation to avoid 8KB+ stack buffers for pattern strings.
  */
 static size_t
-abac_rule_serialize(const struct abac_rule *rule, char *buf, size_t buflen)
+abac_rule_serialize(const struct abac_rule *rule, char *buf, size_t buflen,
+    char *subj_buf, char *obj_buf)
 {
-	struct abac_rule_out *out = (struct abac_rule_out *)buf;
+	struct abac_rule_out out;
 	char *data;
-	char *subj_buf, *obj_buf, *newlabel_buf;
-	size_t subj_len, obj_len, newlabel_len, total;
-
-	subj_buf = malloc(ABAC_MAX_LABEL_LEN, M_TEMP, M_WAITOK);
-	obj_buf = malloc(ABAC_MAX_LABEL_LEN, M_TEMP, M_WAITOK);
-	newlabel_buf = malloc(ABAC_MAX_LABEL_LEN, M_TEMP, M_WAITOK);
+	size_t subj_len, obj_len, total;
 
 	subj_len = abac_rule_pattern_to_string(&rule->vr_subject, subj_buf,
 	    ABAC_MAX_LABEL_LEN) + 1;
 	obj_len = abac_rule_pattern_to_string(&rule->vr_object, obj_buf,
 	    ABAC_MAX_LABEL_LEN) + 1;
 
-	/* Convert newlabel if transition rule */
-	newlabel_len = 0;
-	if (rule->vr_action == ABAC_ACTION_TRANSITION &&
-	    rule->vr_newlabel != NULL) {
-		int len = abac_label_to_string(rule->vr_newlabel, newlabel_buf,
-		    ABAC_MAX_LABEL_LEN);
-		newlabel_len = (len > 0) ? len + 1 : 0;
-	}
-
-	total = sizeof(struct abac_rule_out) + subj_len + obj_len + newlabel_len;
-	if (total > buflen) {
-		free(subj_buf, M_TEMP);
-		free(obj_buf, M_TEMP);
-		free(newlabel_buf, M_TEMP);
+	total = sizeof(struct abac_rule_out) + subj_len + obj_len;
+	if (total > buflen)
 		return (0);
-	}
 
 	/* Fill header */
-	memset(out, 0, sizeof(*out));
-	out->vr_id = rule->vr_id;
-	out->vr_action = rule->vr_action;
-	out->vr_set = rule->vr_set;
-	out->vr_operations = rule->vr_operations;
-	out->vr_subject_flags = rule->vr_subject.vrp_flags;
-	out->vr_object_flags = rule->vr_object.vrp_flags;
-	out->vr_subj_context.vc_flags = rule->vr_subj_context.vc_flags;
-	out->vr_subj_context.vc_cap_sandboxed = rule->vr_subj_context.vc_cap_sandboxed;
-	out->vr_subj_context.vc_has_tty = rule->vr_subj_context.vc_has_tty;
-	out->vr_subj_context.vc_jail_check = rule->vr_subj_context.vc_jail_check;
-	out->vr_subj_context.vc_uid = rule->vr_subj_context.vc_uid;
-	out->vr_subj_context.vc_gid = rule->vr_subj_context.vc_gid;
-	out->vr_obj_context.vc_flags = rule->vr_obj_context.vc_flags;
-	out->vr_obj_context.vc_cap_sandboxed = rule->vr_obj_context.vc_cap_sandboxed;
-	out->vr_obj_context.vc_has_tty = rule->vr_obj_context.vc_has_tty;
-	out->vr_obj_context.vc_jail_check = rule->vr_obj_context.vc_jail_check;
-	out->vr_obj_context.vc_uid = rule->vr_obj_context.vc_uid;
-	out->vr_obj_context.vc_gid = rule->vr_obj_context.vc_gid;
-	out->vr_subject_len = subj_len;
-	out->vr_object_len = obj_len;
-	out->vr_newlabel_len = newlabel_len;
+	memset(&out, 0, sizeof(out));
+	out.vr_id = rule->vr_id;
+	out.vr_action = rule->vr_action;
+	out.vr_set = rule->vr_set;
+	out.vr_operations = rule->vr_operations;
+	out.vr_subject_flags = rule->vr_subject.vrp_flags;
+	out.vr_object_flags = rule->vr_object.vrp_flags;
+	out.vr_subj_context.vc_flags = rule->vr_subj_context.vc_flags;
+	out.vr_subj_context.vc_cap_sandboxed = rule->vr_subj_context.vc_cap_sandboxed;
+	out.vr_subj_context.vc_has_tty = rule->vr_subj_context.vc_has_tty;
+	out.vr_subj_context.vc_jail_check = rule->vr_subj_context.vc_jail_check;
+	out.vr_subj_context.vc_uid = rule->vr_subj_context.vc_uid;
+	out.vr_subj_context.vc_gid = rule->vr_subj_context.vc_gid;
+	out.vr_obj_context.vc_flags = rule->vr_obj_context.vc_flags;
+	out.vr_obj_context.vc_cap_sandboxed = rule->vr_obj_context.vc_cap_sandboxed;
+	out.vr_obj_context.vc_has_tty = rule->vr_obj_context.vc_has_tty;
+	out.vr_obj_context.vc_jail_check = rule->vr_obj_context.vc_jail_check;
+	out.vr_obj_context.vc_uid = rule->vr_obj_context.vc_uid;
+	out.vr_obj_context.vc_gid = rule->vr_obj_context.vc_gid;
+	out.vr_subject_len = subj_len;
+	out.vr_object_len = obj_len;
 
 	/* Copy strings */
 	data = buf + sizeof(struct abac_rule_out);
+	memcpy(buf, &out, sizeof(out));
 	memcpy(data, subj_buf, subj_len);
 	data += subj_len;
 	memcpy(data, obj_buf, obj_len);
-	data += obj_len;
-	if (newlabel_len > 0)
-		memcpy(data, newlabel_buf, newlabel_len);
-
-	free(subj_buf, M_TEMP);
-	free(obj_buf, M_TEMP);
-	free(newlabel_buf, M_TEMP);
 
 	return (total);
 }
@@ -525,7 +505,7 @@ abac_rules_list(struct abac_rule_list_arg *list_arg)
 	uint32_t copied = 0;
 	uint32_t offset;
 	size_t buf_used = 0;
-	char *kbuf = NULL;
+	char *kbuf = NULL, *subj_buf = NULL, *obj_buf = NULL;
 	int i, slot, error = 0;
 
 	if (list_arg == NULL)
@@ -535,6 +515,8 @@ abac_rules_list(struct abac_rule_list_arg *list_arg)
 
 	if (list_arg->vrl_buf != NULL && list_arg->vrl_buflen > 0) {
 		kbuf = malloc(list_arg->vrl_buflen, M_TEMP, M_WAITOK);
+		subj_buf = malloc(ABAC_MAX_LABEL_LEN, M_TEMP, M_WAITOK);
+		obj_buf = malloc(ABAC_MAX_LABEL_LEN, M_TEMP, M_WAITOK);
 	}
 
 	rw_rlock(&abac_rules_lock);
@@ -560,7 +542,8 @@ abac_rules_list(struct abac_rule_list_arg *list_arg)
 				break;
 
 			size_t written = abac_rule_serialize(rule,
-			    kbuf + buf_used, list_arg->vrl_buflen - buf_used);
+			    kbuf + buf_used, list_arg->vrl_buflen - buf_used,
+			    subj_buf, obj_buf);
 			if (written == 0)
 				break;
 			buf_used += written;
@@ -578,6 +561,10 @@ abac_rules_list(struct abac_rule_list_arg *list_arg)
 
 	if (kbuf != NULL)
 		free(kbuf, M_TEMP);
+	if (subj_buf != NULL)
+		free(subj_buf, M_TEMP);
+	if (obj_buf != NULL)
+		free(obj_buf, M_TEMP);
 
 	return (error);
 }
@@ -593,9 +580,15 @@ abac_rules_test_access(const char *subject, size_t subject_len,
 	struct abac_label *subj_label, *obj_label;
 	char *converted;
 	const struct abac_rule *rule;
-	int i, error;
+	int i, si, error;
+	uint16_t set;
 
-	if (result == NULL)
+	if (result == NULL || subject_len > UINT16_MAX ||
+	    object_len > UINT16_MAX ||
+	    !abac_packed_string_valid(subject, (uint16_t)subject_len) ||
+	    !abac_packed_string_valid(object, (uint16_t)object_len) ||
+	    operation == 0 || (operation & ~ABAC_OP_ALL) != 0 ||
+	    (operation & (operation - 1)) != 0)
 		return (EINVAL);
 
 	/* Allocate labels dynamically - too large for stack */
@@ -607,13 +600,23 @@ abac_rules_test_access(const char *subject, size_t subject_len,
 
 	/* Parse labels */
 	if (subject != NULL && subject_len > 0 && subject[0] != '\0') {
-		abac_convert_label_format(subject, converted, ABAC_MAX_LABEL_LEN);
-		abac_label_parse(converted, strlen(converted), subj_label);
+		error = abac_convert_label_format(subject, converted,
+		    ABAC_MAX_LABEL_LEN);
+		if (error == 0)
+			error = abac_label_parse(converted, strlen(converted),
+			    subj_label);
+		if (error != 0)
+			goto out_free;
 	}
 
 	if (object != NULL && object_len > 0 && object[0] != '\0') {
-		abac_convert_label_format(object, converted, ABAC_MAX_LABEL_LEN);
-		abac_label_parse(converted, strlen(converted), obj_label);
+		error = abac_convert_label_format(object, converted,
+		    ABAC_MAX_LABEL_LEN);
+		if (error == 0)
+			error = abac_label_parse(converted, strlen(converted),
+			    obj_label);
+		if (error != 0)
+			goto out_free;
 	}
 
 	*result = EACCES;
@@ -622,30 +625,32 @@ abac_rules_test_access(const char *subject, size_t subject_len,
 
 	rw_rlock(&abac_rules_lock);
 
-	for (i = 0; i < abac_rule_end; i++) {
-		rule = abac_rules[i];
-		if (rule == NULL)
+	for (si = 0; si < abac_active_set_count; si++) {
+		set = abac_active_sets[si];
+		if (!ABAC_SET_IS_ENABLED(set))
 			continue;
+		for (i = 0; i < abac_rule_end; i++) {
+			rule = abac_rules[i];
+			if (rule == NULL || rule->vr_set != set ||
+			    (rule->vr_operations & operation) == 0)
+				continue;
 
-		if ((rule->vr_operations & operation) == 0)
-			continue;
+			/* The dry-run ABI has no process context to evaluate. */
+			if (rule->vr_subj_context.vc_flags != 0 ||
+			    rule->vr_obj_context.vc_flags != 0)
+				continue;
+			if (!abac_rule_pattern_match(subj_label, &rule->vr_subject) ||
+			    !abac_rule_pattern_match(obj_label, &rule->vr_object))
+				continue;
 
-		if (!abac_rule_pattern_match(subj_label, &rule->vr_subject))
-			continue;
-
-		if (!abac_rule_pattern_match(obj_label, &rule->vr_object))
-			continue;
-
-		/* Rule matches (skip context in test mode) */
-		if (rule_id != NULL)
-			*rule_id = rule->vr_id;
-		if (rule->vr_action == ABAC_ACTION_ALLOW ||
-		    rule->vr_action == ABAC_ACTION_TRANSITION) {
-			*result = 0;
-		} else {
-			*result = EACCES;
+			if (rule_id != NULL)
+				*rule_id = rule->vr_id;
+			if (rule->vr_action == ABAC_ACTION_ALLOW)
+				*result = 0;
+			else
+				*result = EACCES;
+			goto out;
 		}
-		goto out;
 	}
 
 	/* No rule matched - use default policy */
@@ -654,6 +659,7 @@ abac_rules_test_access(const char *subject, size_t subject_len,
 out:
 	rw_runlock(&abac_rules_lock);
 
+out_free:
 	free(converted, M_TEMP);
 	free(obj_label, M_TEMP);
 	free(subj_label, M_TEMP);

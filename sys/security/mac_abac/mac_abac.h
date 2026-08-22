@@ -29,6 +29,10 @@
 #ifndef _SECURITY_MAC_ABAC_H_
 #define _SECURITY_MAC_ABAC_H_
 
+#if !defined(__LP64__)
+#error "MAC ABAC is available only on 64-bit platforms"
+#endif
+
 /*
  * ABAC MAC Policy Module
  *
@@ -106,6 +110,7 @@
  *   Longest observed in real policies: ~21 characters.
  */
 #define ABAC_MAX_RULES		4096	/* Max rules in kernel */
+#define ABAC_MAX_RULE_LOAD_SIZE	(64U * 1024U * 1024U)
 #define ABAC_RULE_MAX_PAIRS		8	/* Max pairs per rule pattern */
 #define ABAC_RULE_KEY_LEN		64	/* Max key length in rules */
 #define ABAC_RULE_VALUE_LEN		64	/* Max value length in rules */
@@ -161,11 +166,46 @@
 #define ABAC_OP_ALL			0x1FFFFFFF
 
 /*
+ * Single source of truth for public operation names.  Userland parsers,
+ * formatters, and tests expand this list so a newly added operation cannot be
+ * silently accepted by one policy format and rejected by another.
+ */
+#define ABAC_OPERATION_LIST(X) \
+	X(exec, ABAC_OP_EXEC) \
+	X(read, ABAC_OP_READ) \
+	X(write, ABAC_OP_WRITE) \
+	X(mmap, ABAC_OP_MMAP) \
+	X(link, ABAC_OP_LINK) \
+	X(rename, ABAC_OP_RENAME) \
+	X(unlink, ABAC_OP_UNLINK) \
+	X(chdir, ABAC_OP_CHDIR) \
+	X(stat, ABAC_OP_STAT) \
+	X(readdir, ABAC_OP_READDIR) \
+	X(create, ABAC_OP_CREATE) \
+	X(setextattr, ABAC_OP_SETEXTATTR) \
+	X(getextattr, ABAC_OP_GETEXTATTR) \
+	X(lookup, ABAC_OP_LOOKUP) \
+	X(open, ABAC_OP_OPEN) \
+	X(access, ABAC_OP_ACCESS) \
+	X(debug, ABAC_OP_DEBUG) \
+	X(signal, ABAC_OP_SIGNAL) \
+	X(sched, ABAC_OP_SCHED) \
+	X(connect, ABAC_OP_CONNECT) \
+	X(bind, ABAC_OP_BIND) \
+	X(listen, ABAC_OP_LISTEN) \
+	X(accept, ABAC_OP_ACCEPT) \
+	X(send, ABAC_OP_SEND) \
+	X(receive, ABAC_OP_RECEIVE) \
+	X(wait, ABAC_OP_WAIT) \
+	X(mprotect, ABAC_OP_MPROTECT) \
+	X(audit, ABAC_OP_AUDIT) \
+	X(deliver, ABAC_OP_DELIVER)
+
+/*
  * Rule actions
  */
 #define ABAC_ACTION_ALLOW		0
 #define ABAC_ACTION_DENY		1
-#define ABAC_ACTION_TRANSITION	2	/* Allow and transition to new label */
 
 /*
  * Enforcement modes
@@ -187,6 +227,8 @@
 #define ABAC_CTX_GID			0x00000008	/* Effective GID */
 #define ABAC_CTX_RUID			0x00000020	/* Real UID (uses vc_uid) */
 #define ABAC_CTX_HAS_TTY		0x00000080
+#define ABAC_CTX_ALL			(ABAC_CTX_CAP_SANDBOXED | ABAC_CTX_JAIL | \
+	ABAC_CTX_UID | ABAC_CTX_GID | ABAC_CTX_RUID | ABAC_CTX_HAS_TTY)
 
 /*
  * Pattern match flags
@@ -253,7 +295,6 @@ struct abac_rule_io {
 	struct abac_pattern_io vr_object;
 	struct abac_context_io vr_subj_context;  /* Subject context (caller) */
 	struct abac_context_io vr_obj_context;   /* Object context (target) */
-	char			vr_newlabel[ABAC_PATTERN_MAX_LEN];
 };
 
 /*
@@ -294,6 +335,7 @@ struct abac_rule_io {
 /* Logging operations */
 #define ABAC_SYS_GETLOGLEVEL	32	/* arg: int* (out) */
 #define ABAC_SYS_SETLOGLEVEL	33	/* arg: int* (in) */
+#define ABAC_SYS_REMOVELABEL	34	/* arg: int* (in: file descriptor) */
 
 /*
  * Log levels for abac audit/logging
@@ -360,11 +402,10 @@ struct abac_context_arg {
  *   struct abac_rule_arg header
  *   char subject[vr_subject_len]   (null-terminated)
  *   char object[vr_object_len]     (null-terminated)
- *   char newlabel[vr_newlabel_len] (null-terminated, only for TRANSITION)
  */
 struct abac_rule_arg {
 	uint32_t		vr_id;		/* Out: assigned rule ID */
-	uint8_t			vr_action;	/* ALLOW/DENY/TRANSITION */
+	uint8_t			vr_action;	/* ABAC_ACTION_ALLOW or DENY */
 	uint8_t			vr_reserved;
 	uint16_t		vr_set;		/* Rule set (0-65535) */
 	uint32_t		vr_operations;	/* Operation bitmask */
@@ -374,9 +415,8 @@ struct abac_rule_arg {
 	struct abac_context_arg vr_obj_context;   /* Object context constraints */
 	uint16_t		vr_subject_len;	/* Length including null */
 	uint16_t		vr_object_len;
-	uint16_t		vr_newlabel_len; /* 0 if not transition */
-	uint16_t		vr_reserved2;
-	/* Variable data follows: subject, object, newlabel */
+	uint32_t		vr_reserved2;
+	/* Variable data follows: subject, object */
 };
 
 /*
@@ -396,8 +436,7 @@ struct abac_rule_out {
 	struct abac_context_arg vr_obj_context;   /* Object context constraints */
 	uint16_t		vr_subject_len;
 	uint16_t		vr_object_len;
-	uint16_t		vr_newlabel_len;
-	uint16_t		vr_reserved2;
+	uint32_t		vr_reserved2;
 	/* Variable data follows */
 };
 
@@ -423,7 +462,7 @@ struct abac_rule_list_arg {
  * Rule load argument - atomic rule replacement (like PF's pfctl -f)
  *
  * Buffer contains packed abac_rule_arg structures with their variable data.
- * Each rule is: struct abac_rule_arg + subject + object + newlabel
+ * Each rule is: struct abac_rule_arg + subject + object.
  *
  * On success, all existing rules are cleared and replaced with the new set.
  * On failure, existing rules remain unchanged.
@@ -578,23 +617,16 @@ struct abac_context {
  * Uses abac_rule_pattern (1KB each) instead of abac_pattern (5KB each),
  * reducing per-rule memory from ~19KB to ~2.1KB.
  *
- * Transition labels are allocated separately (vr_newlabel pointer) rather
- * than embedded, saving ~5KB for non-transition rules.
- *
  * Size breakdown:
  *   - vr_id, vr_action, vr_operations: ~12 bytes
  *   - vr_subject (abac_rule_pattern): 1,032 bytes
  *   - vr_object (abac_rule_pattern): 1,032 bytes
  *   - vr_subj_context, vr_obj_context: ~48 bytes
- *   - vr_newlabel (pointer): 8 bytes
- *   Total: ~2,132 bytes (non-transition)
- *
- * For transition rules, vr_newlabel points to a separately allocated
- * abac_label (~5KB). This is freed when the rule is removed.
+ *   Total: ~2,124 bytes
  */
 struct abac_rule {
 	uint32_t		  vr_id;	   /* Rule identifier */
-	uint8_t			  vr_action;	   /* ALLOW, DENY, or TRANSITION */
+	uint8_t			  vr_action;	   /* ALLOW or DENY */
 	uint8_t			  vr_reserved;
 	uint16_t		  vr_set;	   /* Rule set (0-65535) */
 	uint32_t		  vr_operations;   /* Bitmask of operations */
@@ -602,7 +634,6 @@ struct abac_rule {
 	struct abac_rule_pattern vr_object;	   /* Object (file) pattern */
 	struct abac_context	  vr_subj_context; /* Subject context constraints */
 	struct abac_context	  vr_obj_context;  /* Object context constraints */
-	struct abac_label	 *vr_newlabel;	   /* Transition label (or NULL) */
 };
 
 /*
@@ -643,6 +674,8 @@ extern int abac_enabled;
 extern int abac_mode;
 extern int abac_initialized;
 extern int abac_default_policy;	/* 0=allow, 1=deny when no rule matches */
+extern int abac_locked;
+extern int abac_log_level;
 
 /*
  * Debug output - use DTrace only
@@ -690,7 +723,7 @@ bool abac_rule_matches(const struct abac_rule *rule,
     uint32_t op, struct ucred *subj_cred, struct proc *obj_proc);
 size_t abac_rule_pattern_to_string(const struct abac_rule_pattern *pattern,
     char *buf, size_t buflen);
-void abac_convert_label_format(const char *src, char *dst, size_t dstlen);
+int abac_convert_label_format(const char *src, char *dst, size_t dstlen);
 
 /*
  * Function prototypes - abac_rules.c
@@ -699,10 +732,6 @@ void abac_rules_init(void);
 void abac_rules_destroy(void);
 int abac_rules_check(struct ucred *cred, struct abac_label *subj,
     struct abac_label *obj, uint32_t op, struct proc *obj_proc);
-bool abac_rules_will_transition(struct ucred *cred, struct abac_label *subj,
-    struct abac_label *obj);
-int abac_rules_get_transition(struct ucred *cred, struct abac_label *subj,
-    struct abac_label *obj, struct abac_label *newlabel);
 int abac_rule_remove(uint32_t id);
 void abac_rules_clear(void);
 void abac_rules_get_stats(struct abac_stats *stats);
@@ -766,12 +795,6 @@ int abac_cred_check_setaudit(struct ucred *cred, struct auditinfo *ai);
 int abac_cred_check_setaudit_addr(struct ucred *cred,
     struct auditinfo_addr *aia);
 int abac_cred_check_setauid(struct ucred *cred, uid_t auid);
-void abac_execve_transition(struct ucred *old, struct ucred *new,
-    struct vnode *vp, struct label *vplabel, struct label *interpvplabel,
-    struct image_params *imgp, struct label *execlabel);
-int abac_execve_will_transition(struct ucred *old, struct vnode *vp,
-    struct label *vplabel, struct label *interpvplabel,
-    struct image_params *imgp, struct label *execlabel);
 
 /*
  * Function prototypes - abac_vnode.c
