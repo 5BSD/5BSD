@@ -15,7 +15,7 @@
 
 #define	PARENT_RIGHTS	(ZH_CREATE | ZH_DESTROY | ZH_SNAPSHOT | \
 	ZH_SNAP_DESTROY | ZH_CLONE_SRC | ZH_SEND | ZH_HOLD | \
-	ZH_ROLLBACK | ZH_PROPS_WRITE)
+	ZH_RELEASE | ZH_ROLLBACK | ZH_PROPS_WRITE | ZH_PROMOTE | ZH_BOOKMARK)
 
 static void
 zht_setup(const atf_tc_t *tc, char *ds, size_t dslen)
@@ -174,8 +174,8 @@ ATF_TC_BODY(holds_and_bookmarks, tc)
 	int zfd, sfd;
 
 	zht_setup(tc, ds, sizeof(ds));
-	zfd = tzfs_open(ds, ZH_SNAPSHOT | ZH_SNAP_DESTROY | ZH_HOLD,
-	    ZHF_SUBTREE);
+	zfd = tzfs_open(ds, ZH_SNAPSHOT | ZH_SNAP_DESTROY | ZH_HOLD |
+	    ZH_RELEASE | ZH_BOOKMARK, ZHF_SUBTREE);
 	ATF_REQUIRE(zfd >= 0);
 	ATF_REQUIRE_EQ(0, tzfs_snapshot(zfd, "s1"));
 
@@ -261,7 +261,7 @@ ATF_TC_BODY(send_once, tc)
 	int zfd, sfd, fd;
 
 	zht_setup(tc, ds, sizeof(ds));
-	zfd = tzfs_open(ds, ZH_SNAPSHOT | ZH_SEND, 0);
+	zfd = tzfs_open(ds, ZH_SNAPSHOT | ZH_SEND, ZHF_SEND_ONCE);
 	ATF_REQUIRE(zfd >= 0);
 	ATF_REQUIRE_EQ(0, tzfs_snapshot(zfd, "s1"));
 
@@ -270,7 +270,7 @@ ATF_TC_BODY(send_once, tc)
 	ATF_REQUIRE(sfd >= 0);
 	fd = open("stream1.zfs", O_RDWR | O_CREAT | O_TRUNC, 0600);
 	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE_EQ(0, tzfs_send(sfd, NULL, NULL, fd, ZFD_SEND_ONCE));
+	ATF_REQUIRE_EQ(0, tzfs_send(sfd, NULL, NULL, fd, 0));
 	ATF_REQUIRE(lseek(fd, 0, SEEK_SET) == 0);
 	ATF_REQUIRE_ERRNO(EALREADY,
 	    tzfs_send(sfd, NULL, NULL, fd, 0) == -1);
@@ -278,14 +278,16 @@ ATF_TC_BODY(send_once, tc)
 	ATF_REQUIRE_EQ(0, zfd_stat(sfd, &st));
 	close(fd);
 	close(sfd);
+	close(zfd);
 
 	/* Case ONCE|CONSUME: the handle is invalidated after the send. */
+	zfd = tzfs_open(ds, ZH_SEND, ZHF_SEND_ONCE | ZHF_SEND_CONSUME);
+	ATF_REQUIRE(zfd >= 0);
 	sfd = tzfs_openat(zfd, "@s1", ZH_SEND, 0);
 	ATF_REQUIRE(sfd >= 0);
 	fd = open("stream2.zfs", O_RDWR | O_CREAT | O_TRUNC, 0600);
 	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE_EQ(0, tzfs_send(sfd, NULL, NULL, fd,
-	    ZFD_SEND_ONCE | ZFD_SEND_CONSUME));
+	ATF_REQUIRE_EQ(0, tzfs_send(sfd, NULL, NULL, fd, 0));
 	ATF_REQUIRE_ERRNO(ENXIO, zfd_stat(sfd, &st) == -1);
 	close(fd);
 	close(sfd);

@@ -4,10 +4,9 @@ TrustedZFS makes ZFS storage a thing a program is handed, not a place it
 goes. It adds first-class file descriptors — dataset handles (zfd) and pool
 handles (zpd) — over the ZFS management plane, so a process can be granted
 "this dataset, these operations, nothing else" as an unforgeable object.
-All four design phases plus an extended verb set are implemented, committed,
-and validated in the bhyve guest rig (36/36 ATF tests at the 2026-08-14
-snapshot; the suite has since grown to 52 cases across nine suites under
-`tests/sys/zfshandle/`).
+All four design phases plus an extended verb set are implemented and validated
+in a 64-bit QEMU guest with WITNESS enabled.  The 2026-08-21 hardening run
+passed all 82 cases across 13 ATF programs.
 
 ## Why the ZFS control plane needed this
 
@@ -50,11 +49,11 @@ and `ZFD_INFO` returns `ENXIO` and the handle's kqueue fires `INVALIDATED`.
 Each handle carries a rights mask fixed at creation — `ZH_PROPS_READ`,
 `ZH_PROPS_WRITE`, `ZH_SNAPSHOT`, `ZH_SNAP_DESTROY`, `ZH_ROLLBACK`,
 `ZH_CLONE_SRC`, `ZH_CREATE`, `ZH_DESTROY`, `ZH_SEND`, `ZH_RECV`,
-`ZH_MOUNT`, `ZH_HOLD`, `ZH_EVENT` — plus a subtree flag covering
+`ZH_MOUNT`, `ZH_HOLD`, `ZH_RELEASE`, `ZH_RENAME`, `ZH_PROMOTE`,
+`ZH_BOOKMARK`, `ZH_EVENT` — plus a subtree flag covering
 descendants. Two monotonic derivations narrow authority:
 
-- `ZFD_DERIVE(mask)` — same object, fewer rights (optionally a
-  per-property allowlist for `PROPS_WRITE`);
+- `ZFD_DERIVE(mask)` — same object, fewer rights;
 - `ZFD_OPENAT(relname, mask)` — open a child dataset or snapshot through a
   subtree handle. Relative names only; no `..`, no absolute names.
 
@@ -74,16 +73,16 @@ snapshot/snap-destroy/rollback/promote, holds and bookmarks, `ZFD_SEND` /
 / `ZFD_DESTROY` / `ZFD_RENAME` (all handle-relative), the two-handle
 `ZFD_CLONE` (called on the destination parent with the origin passed as an
 fd, so "CI can clone the template into its workspace and nowhere else"
-falls out of the rights), `ZFD_MOUNT` / `ZFD_BLKOPEN`, and `ZFD_WAIT`.
+falls out of the rights), and `ZFD_MOUNT` / `ZFD_BLKOPEN`.
 
 Send-once is enforced in kernel handle state, so it survives fd passing:
-`ZFD_SEND_ONCE` refuses a second stream (`EALREADY`);
-`ZFD_SEND_CONSUME` additionally invalidates the handle — an unforgeable
+`ZHF_SEND_ONCE` refuses a second successful stream across the complete
+derived/opened handle lineage (`EALREADY`);
+`ZHF_SEND_CONSUME` additionally invalidates that lineage — an unforgeable
 "one backup stream, then spent" grant.
 
-Pool handles carry the thin delegable sliver: `ZPD_STAT`, props read/write
-with a per-prop allowlist (the motivating writer is `bootfs`, for
-boot-environment activation), `ZPD_SCRUB`, `ZPD_ROOT_OPEN`, `ZPD_WAIT`,
+Pool handles carry the thin delegable sliver: `ZPD_STAT`, property reads and
+`bootfs`-only writes for boot-environment activation, `ZPD_SCRUB`, `ZPD_ROOT_OPEN`,
 and kqueue events. Import/export, vdev topology changes, and upgrade are
 deliberately not delegable — they reshape the pool and stay ambient-admin.
 

@@ -1,0 +1,5 @@
+FBSD_1.9 {
+	global:
+		free_sized;
+		free_aligned_sized;
+};

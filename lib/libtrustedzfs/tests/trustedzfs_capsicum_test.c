@@ -13,6 +13,7 @@
 
 #include <errno.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -40,6 +41,15 @@ require_ioctl_set(int fd, const cap_ioctl_t *expected, size_t nexpected)
 	nactual = cap_ioctls_get(fd, actual, nitems(actual));
 	ATF_REQUIRE_MSG(nactual >= 0, "cap_ioctls_get: %s",
 	    strerror(errno));
+	if (nexpected != (size_t)nactual) {
+		fprintf(stderr, "expected ioctls:");
+		for (i = 0; i < nexpected; i++)
+			fprintf(stderr, " %#lx", (unsigned long)expected[i]);
+		fprintf(stderr, "\nactual ioctls:");
+		for (i = 0; i < (size_t)nactual; i++)
+			fprintf(stderr, " %#lx", (unsigned long)actual[i]);
+		fprintf(stderr, "\n");
+	}
 	ATF_REQUIRE_EQ_MSG(nexpected, (size_t)nactual,
 	    "expected %zu commands, got %zd", nexpected, nactual);
 	for (i = 0; i < nexpected; i++) {
@@ -49,6 +59,13 @@ require_ioctl_set(int fd, const cap_ioctl_t *expected, size_t nexpected)
 				found = true;
 				break;
 			}
+		}
+		if (!found) {
+			fprintf(stderr, "missing %#lx; actual ioctls:",
+			    (unsigned long)expected[i]);
+			for (j = 0; j < (size_t)nactual; j++)
+				fprintf(stderr, " %#lx", (unsigned long)actual[j]);
+			fprintf(stderr, "\n");
 		}
 		ATF_REQUIRE_MSG(found, "missing ioctl %#lx",
 		    (unsigned long)expected[i]);
@@ -63,13 +80,13 @@ ATF_TC_HEAD(dataset_exact, tc)
 ATF_TC_BODY(dataset_exact, tc)
 {
 	const cap_ioctl_t expected[] = {
-		ZFD_INFO, ZFD_STAT, ZFD_SNAPSHOT, ZFD_WAIT,
+		ZFD_LIMIT, ZFD_INFO, ZFD_STAT, ZFD_SNAPSHOT,
 	};
 	int fd;
 
 	fd = test_fd();
 	ATF_REQUIRE_EQ(0, tzfs_limit_dataset_ioctls(fd,
-	    TZFS_OP_INFO | TZFS_OP_STAT | TZFS_OP_SNAPSHOT | TZFS_OP_WAIT));
+	    TZFS_OP_INFO | TZFS_OP_STAT | TZFS_OP_SNAPSHOT));
 	require_ioctl_set(fd, expected, nitems(expected));
 	(void)close(fd);
 }
@@ -80,14 +97,35 @@ ATF_TC_HEAD(dataset_rights_profile, tc)
 	atf_tc_set_md_var(tc, "descr",
 	    "dataset ZH rights and subtree flag map to the complete verb set");
 }
+
+ATF_TC(dataset_non_subtree_profile);
+ATF_TC_HEAD(dataset_non_subtree_profile, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "non-subtree profiles retain only snapshot-self OPENAT");
+}
+ATF_TC_BODY(dataset_non_subtree_profile, tc)
+{
+	/* OPENAT is retained for "@snapshot"; descendants remain kernel-gated. */
+	const cap_ioctl_t expected[] = {
+		ZFD_LIMIT, ZFD_INFO, ZFD_DERIVE, ZFD_OPENAT, ZFD_STAT,
+		ZFD_GET_PROPS, ZFD_GET_ONE_PROP, ZFD_LIST_SNAPS, ZFD_HOLDS,
+		ZFD_LIST_BOOKMARKS,
+	};
+	int fd;
+
+	fd = test_fd();
+	ATF_REQUIRE_EQ(0, tzfs_limit_dataset_ioctls_by_rights(fd, 0, 0));
+	require_ioctl_set(fd, expected, nitems(expected));
+	(void)close(fd);
+}
 ATF_TC_BODY(dataset_rights_profile, tc)
 {
 	const cap_ioctl_t expected[] = {
-		ZFD_INFO, ZFD_DERIVE, ZFD_OPENAT, ZFD_STAT, ZFD_GET_PROPS,
+		ZFD_LIMIT, ZFD_INFO, ZFD_DERIVE, ZFD_OPENAT, ZFD_STAT, ZFD_GET_PROPS,
 		ZFD_GET_ONE_PROP, ZFD_LIST_CHILDREN, ZFD_LIST_SNAPS, ZFD_HOLDS,
 		ZFD_LIST_BOOKMARKS, ZFD_SET_PROP, ZFD_INHERIT, ZFD_SNAPSHOT,
-		ZFD_BOOKMARK, ZFD_CREATE, ZFD_CLONE, ZFD_PROMOTE, ZFD_DESTROY,
-		ZFD_RENAME, ZFD_HOLD, ZFD_RELEASE, ZFD_WAIT,
+		ZFD_CREATE, ZFD_CLONE, ZFD_DESTROY, ZFD_HOLD,
 	};
 	const uint64_t rights = ZH_PROPS_WRITE | ZH_SNAPSHOT | ZH_CREATE |
 	    ZH_DESTROY | ZH_HOLD;
@@ -108,8 +146,8 @@ ATF_TC_HEAD(pool_rights_profile, tc)
 ATF_TC_BODY(pool_rights_profile, tc)
 {
 	const cap_ioctl_t expected[] = {
-		ZFD_INFO, ZFD_DERIVE, ZPD_STAT, ZPD_GET_PROPS,
-		ZPD_SET_PROP, ZPD_SCRUB, ZPD_ROOT_OPEN, ZPD_WAIT,
+		ZFD_LIMIT, ZFD_INFO, ZFD_DERIVE, ZPD_STAT, ZPD_GET_PROPS,
+		ZPD_SET_PROP, ZPD_SCRUB, ZPD_ROOT_OPEN,
 	};
 	int fd;
 
@@ -129,13 +167,13 @@ ATF_TC_HEAD(all_dataset_rights_profile, tc)
 ATF_TC_BODY(all_dataset_rights_profile, tc)
 {
 	const cap_ioctl_t expected[] = {
-		ZFD_INFO, ZFD_DERIVE, ZFD_OPENAT, ZFD_STAT, ZFD_GET_PROPS,
+		ZFD_LIMIT, ZFD_INFO, ZFD_DERIVE, ZFD_OPENAT, ZFD_STAT, ZFD_GET_PROPS,
 		ZFD_GET_ONE_PROP, ZFD_LIST_CHILDREN, ZFD_LIST_SNAPS, ZFD_HOLDS,
 		ZFD_LIST_BOOKMARKS, ZFD_SET_PROP, ZFD_INHERIT, ZFD_SNAPSHOT,
 		ZFD_BOOKMARK, ZFD_SNAP_DESTROY, ZFD_DESTROY_BOOKMARK,
 		ZFD_ROLLBACK, ZFD_CREATE, ZFD_DESTROY, ZFD_RENAME, ZFD_CLONE,
 		ZFD_PROMOTE, ZFD_SEND, ZFD_RECV, ZFD_HOLD, ZFD_RELEASE,
-		ZFD_BLKOPEN, ZFD_MOUNT, ZFD_UNMOUNT, ZFD_WAIT,
+		ZFD_BLKOPEN, ZFD_MOUNT, ZFD_UNMOUNT,
 	};
 	int fd;
 
@@ -169,7 +207,9 @@ ATF_TC_BODY(kind_and_mask_validation, tc)
 	ATF_REQUIRE_ERRNO(EINVAL, tzfs_limit_dataset_ioctls_by_rights(fd,
 	    ZH_ALL_RIGHTS + 1, 0) == -1);
 	ATF_REQUIRE_ERRNO(EINVAL, tzfs_limit_dataset_ioctls_by_rights(fd,
-	    0, ZHF_SUBTREE << 1) == -1);
+	    0, UINT32_C(0x80000000)) == -1);
+	ATF_REQUIRE_ERRNO(EINVAL, tzfs_limit_dataset_ioctls_by_rights(fd,
+	    0, ZHF_SEND_CONSUME) == -1);
 	ATF_REQUIRE_EQ(CAP_IOCTLS_ALL, cap_ioctls_get(fd, NULL, 0));
 	(void)close(fd);
 }
@@ -181,7 +221,7 @@ ATF_TC_HEAD(monotonic_narrowing, tc)
 }
 ATF_TC_BODY(monotonic_narrowing, tc)
 {
-	const cap_ioctl_t expected[] = { ZFD_INFO };
+	const cap_ioctl_t expected[] = { ZFD_LIMIT, ZFD_INFO };
 	int fd;
 
 	fd = test_fd();
@@ -205,7 +245,9 @@ ATF_TC_BODY(empty_profile, tc)
 
 	fd = test_fd();
 	ATF_REQUIRE_EQ(0, tzfs_limit_dataset_ioctls(fd, 0));
-	require_ioctl_set(fd, NULL, 0);
+	const cap_ioctl_t expected[] = { ZFD_LIMIT };
+
+	require_ioctl_set(fd, expected, nitems(expected));
 	(void)close(fd);
 }
 
@@ -221,7 +263,7 @@ ATF_TC_BODY(scm_rights_preserves_profile, tc)
 		struct cmsghdr hdr;
 		char buf[CMSG_SPACE(sizeof(int))];
 	} control;
-	const cap_ioctl_t expected[] = { ZFD_INFO, ZFD_STAT };
+	const cap_ioctl_t expected[] = { ZFD_LIMIT, ZFD_INFO, ZFD_STAT };
 	struct cmsghdr *cm;
 	struct iovec iov;
 	struct msghdr msg;
@@ -276,6 +318,7 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, dataset_exact);
 	ATF_TP_ADD_TC(tp, dataset_rights_profile);
+	ATF_TP_ADD_TC(tp, dataset_non_subtree_profile);
 	ATF_TP_ADD_TC(tp, pool_rights_profile);
 	ATF_TP_ADD_TC(tp, all_dataset_rights_profile);
 	ATF_TP_ADD_TC(tp, kind_and_mask_validation);

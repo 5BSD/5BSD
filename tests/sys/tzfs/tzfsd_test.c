@@ -12,8 +12,10 @@
 #include <sys/capsicum.h>
 #include <sys/param.h>
 #include <sys/stat.h>
+#include <sys/socket.h>
 
 #include <errno.h>
+#include <poll.h>
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
@@ -94,6 +96,7 @@ ATF_TC_BODY(bare_ephemeral, tc)
 	req.lifetime = TZFSD_EPHEMERAL;
 	ATF_REQUIRE_EQ(0, tzfsd_request(chan, &req, &g));
 	ATF_CHECK(strstr(g.dataset, "/ephemeral/t1") != NULL);
+	ATF_CHECK((fcntl(g.handle_fd, F_GETFD) & FD_CLOEXEC) != 0);
 
 	dir = tzfsd_mount_dir(g.handle_fd, 0);
 	ATF_REQUIRE(dir != -1);
@@ -159,9 +162,9 @@ ATF_TC_BODY(rights_attenuation, tc)
 	struct tzfsd_grant g;
 	struct zfd_info_args info;
 	const cap_ioctl_t expected[] = {
-		ZFD_INFO, ZFD_DERIVE, ZFD_STAT, ZFD_GET_PROPS,
+		ZFD_LIMIT, ZFD_INFO, ZFD_DERIVE, ZFD_OPENAT, ZFD_STAT, ZFD_GET_PROPS,
 		ZFD_GET_ONE_PROP, ZFD_LIST_SNAPS, ZFD_HOLDS,
-		ZFD_LIST_BOOKMARKS, ZFD_WAIT,
+		ZFD_LIST_BOOKMARKS,
 	};
 	cap_ioctl_t cmds[16];
 	ssize_t ncmds;
@@ -277,13 +280,95 @@ ATF_TC_BODY(persistent_and_badname, tc)
 	memset(&req, 0, sizeof(req));
 	strlcpy(req.name, "badflags", sizeof(req.name));
 	req.rights = ZH_PROPS_READ;
-	req.flags = ZHF_SUBTREE << 1;
+	req.flags = UINT32_C(0x80000000);
 	req.lifetime = TZFSD_EPHEMERAL;
 	ATF_CHECK_EQ(-1, tzfsd_request(chan, &req, &g));
 	ATF_CHECK_EQ(EINVAL, errno);
 	(void)close(chan);
 }
 ATF_TC_CLEANUP(persistent_and_badname, tc) { tzt_cleanup(); }
+
+static int
+raw_request(int chan, const void *request, size_t len, struct tzfsd_reply *rp)
+{
+	ssize_t n;
+
+	n = send(chan, request, len, MSG_NOSIGNAL);
+	if (n != (ssize_t)len)
+		return (-1);
+	n = recv(chan, rp, sizeof(*rp), 0);
+	return (n == (ssize_t)sizeof(*rp) ? 0 : -1);
+}
+
+ATF_TC_WITH_CLEANUP(protocol_malformed);
+ATF_TC_HEAD(protocol_malformed, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "daemon rejects short, unterminated, reserved, and ambiguous requests");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(protocol_malformed, tc)
+{
+	struct tzfsd_request rq;
+	struct tzfsd_reply rp;
+	int chan;
+
+	tzt_require(); tzt_pool_create(tc); tzt_daemon_start();
+	chan = tzfsd_connect();
+	ATF_REQUIRE(chan >= 0);
+	memset(&rq, 0, sizeof(rq)); rq.op = TZFSD_OP_PING;
+	ATF_REQUIRE_EQ(0, raw_request(chan, &rq, sizeof(rq) - 1, &rp));
+	ATF_CHECK_EQ(EPROTO, rp.status);
+	ATF_REQUIRE_EQ(0, tzfsd_ping(chan));
+
+	memset(&rq, 0, sizeof(rq)); rq.op = TZFSD_OP_REQUEST;
+	rq.rights = ZH_PROPS_READ; rq.lifetime = TZFSD_EPHEMERAL;
+	memset(rq.name, 'x', sizeof(rq.name));
+	ATF_REQUIRE_EQ(0, raw_request(chan, &rq, sizeof(rq), &rp));
+	ATF_CHECK_EQ(EINVAL, rp.status);
+
+	memset(&rq, 0, sizeof(rq)); rq.op = TZFSD_OP_REQUEST;
+	rq.rights = ZH_PROPS_READ; rq.lifetime = TZFSD_EPHEMERAL;
+	strlcpy(rq.name, "reserved", sizeof(rq.name)); rq._reserved[3] = 1;
+	ATF_REQUIRE_EQ(0, raw_request(chan, &rq, sizeof(rq), &rp));
+	ATF_CHECK_EQ(EINVAL, rp.status);
+
+	memset(&rq, 0, sizeof(rq)); rq.op = TZFSD_OP_PING; rq.rights = 1;
+	ATF_REQUIRE_EQ(0, raw_request(chan, &rq, sizeof(rq), &rp));
+	ATF_CHECK_EQ(EINVAL, rp.status);
+	memset(&rq, 0, sizeof(rq)); rq.op = UINT32_MAX;
+	ATF_REQUIRE_EQ(0, raw_request(chan, &rq, sizeof(rq), &rp));
+	ATF_CHECK_EQ(EOPNOTSUPP, rp.status);
+	close(chan);
+}
+ATF_TC_CLEANUP(protocol_malformed, tc) { tzt_cleanup(); }
+
+ATF_TC_WITH_CLEANUP(idle_client_isolated);
+ATF_TC_HEAD(idle_client_isolated, tc)
+{
+	atf_tc_set_md_var(tc, "descr", "an idle client cannot block another client");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(idle_client_isolated, tc)
+{
+	struct tzfsd_request rq;
+	struct tzfsd_reply rp;
+	struct pollfd pfd;
+	int idle, active;
+
+	tzt_require(); tzt_pool_create(tc); tzt_daemon_start();
+	idle = tzfsd_connect();
+	active = tzfsd_connect();
+	ATF_REQUIRE(idle >= 0 && active >= 0);
+	memset(&rq, 0, sizeof(rq)); rq.op = TZFSD_OP_PING;
+	ATF_REQUIRE_EQ((ssize_t)sizeof(rq), send(active, &rq, sizeof(rq), 0));
+	pfd.fd = active; pfd.events = POLLIN; pfd.revents = 0;
+	ATF_REQUIRE_EQ(1, poll(&pfd, 1, 2000));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(rp), recv(active, &rp, sizeof(rp), 0));
+	ATF_CHECK_EQ(0, rp.status);
+	close(active); close(idle);
+}
+ATF_TC_CLEANUP(idle_client_isolated, tc) { tzt_cleanup(); }
 
 ATF_TP_ADD_TCS(tp)
 {
@@ -293,5 +378,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rights_attenuation);
 	ATF_TP_ADD_TC(tp, unknown_flavor);
 	ATF_TP_ADD_TC(tp, persistent_and_badname);
+	ATF_TP_ADD_TC(tp, protocol_malformed);
+	ATF_TP_ADD_TC(tp, idle_client_isolated);
 	return (atf_no_error());
 }

@@ -28,7 +28,7 @@
 #include <atf-c.h>
 
 #define	ZHT_VDEV_FILE	"vdev.img"
-#define	ZHT_VDEV_SIZE	"256m"
+#define	ZHT_VDEV_SIZE	"1g"
 
 static char zht_pool[128];
 

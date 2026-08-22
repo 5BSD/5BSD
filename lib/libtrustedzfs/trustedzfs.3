@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 5BSD Project
-.Dd August 16, 2026
+.Dd August 21, 2026
 .Dt TRUSTEDZFS 3
 .Os
 .Sh NAME
@@ -18,6 +18,15 @@
 .Nm tzfs_rollback ,
 .Nm tzfs_hold ,
 .Nm tzfs_release ,
+.Nm tzfs_list_children ,
+.Nm tzfs_list_snapshots ,
+.Nm tzfs_holds ,
+.Nm tzfs_list_bookmarks ,
+.Nm tzfs_get_one_prop ,
+.Nm tzfs_inherit ,
+.Nm tzfs_promote ,
+.Nm tzfs_bookmark ,
+.Nm tzfs_destroy_bookmark ,
 .Nm tzfs_create ,
 .Nm tzfs_create_volume ,
 .Nm tzfs_destroy ,
@@ -26,6 +35,14 @@
 .Nm tzfs_send ,
 .Nm tzfs_recv ,
 .Nm tzfs_blkopen ,
+.Nm tzfs_mount ,
+.Nm tzfs_unmount ,
+.Nm tzfs_pool_open ,
+.Nm tzfs_pool_stat ,
+.Nm tzfs_pool_get_props ,
+.Nm tzfs_pool_set_prop_string ,
+.Nm tzfs_pool_scrub ,
+.Nm tzfs_pool_root_open ,
 .Nm tzfs_limit_dataset_ioctls ,
 .Nm tzfs_limit_pool_ioctls ,
 .Nm tzfs_limit_dataset_ioctls_by_rights ,
@@ -63,6 +80,24 @@
 .Ft int
 .Fn tzfs_release "int zfd" "const char *snap" "const char *tag"
 .Ft int
+.Fn tzfs_list_children "int zfd" "void **bufp" "size_t *lenp"
+.Ft int
+.Fn tzfs_list_snapshots "int zfd" "void **bufp" "size_t *lenp"
+.Ft int
+.Fn tzfs_holds "int zfd" "void **bufp" "size_t *lenp"
+.Ft int
+.Fn tzfs_list_bookmarks "int zfd" "void **bufp" "size_t *lenp"
+.Ft int
+.Fn tzfs_get_one_prop "int zfd" "const char *prop" "char *strval" "size_t strvallen" "uint64_t *intval" "int *is_string" "uint32_t *source"
+.Ft int
+.Fn tzfs_inherit "int zfd" "const char *prop" "bool received"
+.Ft int
+.Fn tzfs_promote "int zfd"
+.Ft int
+.Fn tzfs_bookmark "int zfd" "const char *snap" "const char *bookmark"
+.Ft int
+.Fn tzfs_destroy_bookmark "int zfd" "const char *bookmark"
+.Ft int
 .Fn tzfs_create "int zfd" "const char *relname" "uint32_t handle_flags"
 .Ft int
 .Fn tzfs_create_volume "int zfd" "const char *relname" "uint64_t volsize" "uint64_t volblocksize"
@@ -78,6 +113,22 @@
 .Fn tzfs_recv "int zfd" "const char *reltarget" "int in_fd" "bool force"
 .Ft int
 .Fn tzfs_blkopen "int zfd" "bool writable"
+.Ft int
+.Fn tzfs_mount "int zfd" "bool rdonly"
+.Ft int
+.Fn tzfs_unmount "int zfd"
+.Ft int
+.Fn tzfs_pool_open "const char *pool" "uint64_t rights"
+.Ft int
+.Fn tzfs_pool_stat "int zpd" "struct zpd_stat_args *st"
+.Ft int
+.Fn tzfs_pool_get_props "int zpd" "void **bufp" "size_t *lenp"
+.Ft int
+.Fn tzfs_pool_set_prop_string "int zpd" "const char *prop" "const char *val"
+.Ft int
+.Fn tzfs_pool_scrub "int zpd" "uint32_t cmd"
+.Ft int
+.Fn tzfs_pool_root_open "int zpd" "uint64_t rights" "uint32_t flags"
 .Ft int
 .Fn tzfs_limit_dataset_ioctls "int zfd" "tzfs_opset_t ops"
 .Ft int
@@ -119,9 +170,10 @@ capability mode, with the exception of
 The rights bits are
 .Dv ZH_PROPS_READ , ZH_PROPS_WRITE , ZH_SNAPSHOT , ZH_SNAP_DESTROY ,
 .Dv ZH_ROLLBACK , ZH_CLONE_SRC , ZH_CREATE , ZH_DESTROY , ZH_SEND ,
-.Dv ZH_RECV , ZH_MOUNT ,
+.Dv ZH_RECV , ZH_MOUNT , ZH_HOLD , ZH_RENAME , ZH_PROMOTE ,
+.Dv ZH_BOOKMARK ,
 and
-.Dv ZH_HOLD ;
+.Dv ZH_RELEASE ;
 .Dv ZH_PROPS_READ
 and
 .Dv ZH_EVENT
@@ -163,24 +215,24 @@ constructs the complete dataset ioctl profile permitted by the supplied
 rights and
 .Dv ZHF_SUBTREE
 scope.
-It includes the implicit inspection and wait operations, permits descendant
+It includes the implicit inspection operations, permits descendant
 open and enumeration only for a subtree grant, and includes
 .Dv ZFD_RENAME
-only when both
-.Dv ZH_CREATE
-and
-.Dv ZH_DESTROY
-are present.
+only for
+.Dv ZH_RENAME .
 .Fn tzfs_limit_pool_ioctls_by_rights
 does the corresponding mapping for pool handles.
-These helpers add a per-descriptor Capsicum ceiling; they do not replace the
-immutable rights enforced by the TrustedZFS kernel handle.
+These helpers install both a kernel operation ceiling and a per-descriptor
+Capsicum ceiling; they do not replace the immutable rights enforced by the
+TrustedZFS kernel handle.
 .Pp
-An ioctl that returns a new descriptor, including derive, openat, create,
-clone, pool-root-open, block-open, and mount, does not copy the parent's
-per-descriptor ioctl allowlist to that result.
-Code retaining such a result must call the appropriate limiter on the new
-descriptor before using or transferring it.
+An ioctl that returns a new handle descriptor, including derive, openat,
+create, clone, and pool-root-open, inherits the parent's kernel operation
+ceiling even though it does not copy the Capsicum per-descriptor allowlist.
+This prevents a child descriptor from escaping through a command omitted by
+the grantor.
+Code retaining such a result should still call the appropriate limiter to
+install the matching Capsicum fast-path before using or transferring it.
 An allowlist is preserved by ordinary descriptor duplication and
 .Dv SCM_RIGHTS
 transfer.
@@ -248,6 +300,20 @@ and therefore fails with
 in capability mode; open before
 .Xr cap_enter 2 .
 .Pp
+.Fn tzfs_pool_open
+mints a pool handle.
+.Fn tzfs_pool_get_props
+returns the pool property nvlist, while
+.Fn tzfs_pool_set_prop_string
+accepts only the string property
+.Dv bootfs ;
+all broader pool-property mutations fail with
+.Er EPERM .
+.Fn tzfs_pool_scrub
+controls scrub state, and
+.Fn tzfs_pool_root_open
+returns a rights-limited handle for the pool root dataset.
+.Pp
 .Fn tzfs_list_children ,
 .Fn tzfs_list_snapshots ,
 .Fn tzfs_holds ,
@@ -259,6 +325,13 @@ in a
 .Xr malloc 3 Ns ed
 buffer (iterate with
 .Xr nvlist_next_nvpair 3 ) .
+One cursor-free enumeration is limited to
+.Dv ZFSHANDLE_ENUM_MAX_ENTRIES ;
+larger sets fail with
+.Er E2BIG .
+The read-only boot tunable
+.Va vfs.zfs.trustedzfs.enum_max_entries
+may lower, but cannot raise, that production maximum.
 .Fn tzfs_list_children
 requires a
 .Dv ZHF_SUBTREE
@@ -274,21 +347,17 @@ promotes a clone above its origin snapshot.
 and
 .Fn tzfs_destroy_bookmark
 manage bookmarks, the persistent incremental-send anchors.
-.Fn tzfs_wait
-and
-.Fn tzfs_pool_wait
-block until background activity of the given kind drains.
-.Pp
-The send-once flags to
-.Fn tzfs_send
-are enforced in kernel handle state and so survive being passed to another
-process:
-.Dv ZFD_SEND_ONCE
-makes the handle refuse further sends after the stream
+The send-once handle flags are fixed at mint time and enforced in shared
+kernel lineage state, so deriving, opening a child, duplicating, forking, or
+passing the descriptor cannot reset them.
+.Dv ZHF_SEND_ONCE
+makes every handle in the lineage refuse further sends after one successful
+stream
 .Pq Er EALREADY ,
 and
-.Dv ZFD_SEND_CONSUME
-additionally invalidates the handle.
+.Dv ZHF_SEND_CONSUME
+additionally invalidates the entire lineage.
+A failed send does not consume the one attempt.
 The output descriptor is never closed by the kernel; that remains the
 caller's responsibility.
 .Sh RETURN VALUES
@@ -304,6 +373,11 @@ exported, fail with
 kevent
 .Dv EVFILT_READ
 on the handle reports invalidation.
+.Pp
+Every descriptor returned by this interface has
+.Dv FD_CLOEXEC
+set.
+TrustedZFS is available only to 64-bit kernels and 64-bit user ABIs.
 .Sh SEE ALSO
 .Xr cap_ioctls_limit 2 ,
 .Xr cap_rights_limit 2 ,

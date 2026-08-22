@@ -19,6 +19,20 @@
 
 #include "tzfsd.h"
 
+#define	TZFSD_MAX_REPLY_FDS	16
+
+static bool
+all_zero(const void *buf, size_t len)
+{
+	const unsigned char *p = buf;
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		if (p[i] != 0)
+			return (false);
+	return (true);
+}
+
 int
 tzfsd_connect(void)
 {
@@ -73,11 +87,13 @@ recv_reply(int chan, void *reply, size_t rlen, int *fdp)
 	struct iovec iov;
 	union {
 		struct cmsghdr align;
-		char buf[CMSG_SPACE(sizeof(int))];
+		char buf[CMSG_SPACE(sizeof(int) * TZFSD_MAX_REPLY_FDS)];
 	} cbuf;
 	struct cmsghdr *cmsg;
 	ssize_t n;
-	int got = -1;
+	int got[TZFSD_MAX_REPLY_FDS];
+	size_t i, nfds = 0;
+	bool malformed = false;
 
 	if (fdp != NULL)
 		*fdp = -1;
@@ -86,33 +102,46 @@ recv_reply(int chan, void *reply, size_t rlen, int *fdp)
 	iov.iov_len = rlen;
 	msg.msg_iov = &iov;
 	msg.msg_iovlen = 1;
-	if (fdp != NULL) {
-		memset(&cbuf, 0, sizeof(cbuf));
-		msg.msg_control = cbuf.buf;
-		msg.msg_controllen = sizeof(cbuf.buf);
-	}
+	memset(&cbuf, 0, sizeof(cbuf));
+	msg.msg_control = cbuf.buf;
+	msg.msg_controllen = sizeof(cbuf.buf);
 	n = recvmsg(chan, &msg, MSG_CMSG_CLOEXEC);
 	if (n == -1)
 		return (-1);
-	if (fdp != NULL) {
-		for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
-		    cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-			if (cmsg->cmsg_level == SOL_SOCKET &&
-			    cmsg->cmsg_type == SCM_RIGHTS &&
-			    cmsg->cmsg_len == CMSG_LEN(sizeof(int))) {
-				memcpy(&got, CMSG_DATA(cmsg), sizeof(int));
-				break;
-			}
+	if ((msg.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0)
+		malformed = true;
+	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+	    cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+		size_t bytes, count;
+
+		if (cmsg->cmsg_level != SOL_SOCKET ||
+		    cmsg->cmsg_type != SCM_RIGHTS ||
+		    cmsg->cmsg_len < CMSG_LEN(0)) {
+			malformed = true;
+			continue;
 		}
+		bytes = cmsg->cmsg_len - CMSG_LEN(0);
+		if (bytes == 0 || bytes % sizeof(int) != 0) {
+			malformed = true;
+			continue;
+		}
+		count = bytes / sizeof(int);
+		if (count > TZFSD_MAX_REPLY_FDS - nfds) {
+			malformed = true;
+			count = TZFSD_MAX_REPLY_FDS - nfds;
+		}
+		memcpy(&got[nfds], CMSG_DATA(cmsg), count * sizeof(int));
+		nfds += count;
 	}
-	if (n != (ssize_t)rlen) {
-		if (got != -1)
-			(void)close(got);
-		errno = EIO;
+	if (n != (ssize_t)rlen || malformed ||
+	    (fdp == NULL && nfds != 0) || (fdp != NULL && nfds > 1)) {
+		for (i = 0; i < nfds; i++)
+			(void)close(got[i]);
+		errno = EPROTO;
 		return (-1);
 	}
-	if (fdp != NULL)
-		*fdp = got;
+	if (fdp != NULL && nfds == 1)
+		*fdp = got[0];
 	return (0);
 }
 
@@ -127,6 +156,8 @@ tzfsd_request(int chan, const struct tzfsd_req *req, struct tzfsd_grant *out)
 		errno = EINVAL;
 		return (-1);
 	}
+	out->handle_fd = -1;
+	out->dataset[0] = '\0';
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_REQUEST;
 	rq.flags = req->flags;
@@ -142,6 +173,16 @@ tzfsd_request(int chan, const struct tzfsd_req *req, struct tzfsd_grant *out)
 		return (-1);
 	if (recv_reply(chan, &rp, sizeof(rp), &handle) == -1)
 		return (-1);
+	if (rp._reserved != 0 ||
+	    memchr(rp.dataset, '\0', sizeof(rp.dataset)) == NULL ||
+	    rp.status < 0 || rp.status > ELAST ||
+	    (rp.status == 0 && rp.dataset[0] == '\0') ||
+	    (rp.status != 0 && (rp.dataset[0] != '\0' || handle != -1))) {
+		if (handle != -1)
+			(void)close(handle);
+		errno = EPROTO;
+		return (-1);
+	}
 	if (rp.status != 0) {
 		if (handle != -1)
 			(void)close(handle);
@@ -178,6 +219,11 @@ tzfsd_release(int chan, const char *name)
 		return (-1);
 	if (recv_reply(chan, &rp, sizeof(rp), NULL) == -1)
 		return (-1);
+	if (rp._reserved != 0 || rp.dataset[0] != '\0' || rp.status < 0 ||
+	    rp.status > ELAST) {
+		errno = EPROTO;
+		return (-1);
+	}
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -192,7 +238,7 @@ tzfsd_list_flavors(int chan, struct tzfsd_flavor_info *list, size_t max)
 	struct tzfsd_flavor_list rl;
 	uint32_t i, n;
 
-	if (list == NULL) {
+	if (list == NULL && max != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -202,13 +248,27 @@ tzfsd_list_flavors(int chan, struct tzfsd_flavor_info *list, size_t max)
 		return (-1);
 	if (recv_reply(chan, &rl, sizeof(rl), NULL) == -1)
 		return (-1);
+	if (rl.status < 0 || rl.status > ELAST ||
+	    rl.count > TZFSD_MAX_FLAVORS ||
+	    (rl.status != 0 && rl.count != 0)) {
+		errno = EPROTO;
+		return (-1);
+	}
 	if (rl.status != 0) {
 		errno = rl.status;
 		return (-1);
 	}
 	n = rl.count;
-	if (n > TZFSD_MAX_FLAVORS)
-		n = TZFSD_MAX_FLAVORS;
+	for (i = 0; i < n; i++) {
+		if (memchr(rl.flavors[i].name, '\0',
+		    sizeof(rl.flavors[i].name)) == NULL ||
+		    rl.flavors[i].is_default > 1 ||
+		    !all_zero(rl.flavors[i]._reserved,
+		    sizeof(rl.flavors[i]._reserved))) {
+			errno = EPROTO;
+			return (-1);
+		}
+	}
 	if ((size_t)n > max)
 		n = (uint32_t)max;
 	for (i = 0; i < n; i++) {
@@ -231,6 +291,11 @@ tzfsd_ping(int chan)
 		return (-1);
 	if (recv_reply(chan, &rp, sizeof(rp), NULL) == -1)
 		return (-1);
+	if (rp._reserved != 0 || rp.dataset[0] != '\0' || rp.status < 0 ||
+	    rp.status > ELAST) {
+		errno = EPROTO;
+		return (-1);
+	}
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);

@@ -72,12 +72,13 @@ write_ready(void)
 		(void)close(fd);
 }
 
-static void
+static int
 enter_capability_mode(void)
 {
 
-	if (cap_enter() == -1 && errno != ENOSYS)
-		syslog(LOG_WARNING, "cap_enter: %m (continuing uncontained)");
+	if (cap_enter() == -1)
+		return (-1);
+	return (0);
 }
 
 static void
@@ -111,6 +112,7 @@ main(int argc, char **argv)
 
 	openlog("tzfsd", LOG_PID | (foreground ? LOG_PERROR : 0), LOG_DAEMON);
 	(void)signal(SIGPIPE, SIG_IGN);
+	(void)signal(SIGCHLD, SIG_IGN);
 
 	memset(&st, 0, sizeof(st));
 	st.persistent_fd = st.ephemeral_fd = st.templates_fd = -1;
@@ -142,7 +144,10 @@ main(int argc, char **argv)
 	syslog(LOG_NOTICE, "tzfsd ready on %s (pool %s)", TZFSD_SOCK_PATH,
 	    st.cfg.pool);
 
-	enter_capability_mode();
+	if (enter_capability_mode() == -1) {
+		(void)unlink(TZFSD_READY_PATH);
+		err(1, "cap_enter");
+	}
 	tzfsd_serve(&st);
 
 	return (0);

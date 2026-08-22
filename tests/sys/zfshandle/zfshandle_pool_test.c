@@ -67,6 +67,8 @@ ATF_TC_BODY(pool_props_bootfs, tc)
 
 	ATF_REQUIRE_MSG(tzfs_pool_set_prop_string(zpd, "bootfs", ds) == 0,
 	    "set bootfs: %s", strerror(errno));
+	ATF_REQUIRE_ERRNO(EPERM,
+	    tzfs_pool_set_prop_string(zpd, "comment", "too broad") == -1);
 	ATF_REQUIRE_EQ(0, zht_systemf(
 	    "zpool get -H -o value bootfs %s | grep -qx %s", zht_pool, ds));
 

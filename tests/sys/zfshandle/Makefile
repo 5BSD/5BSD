@@ -15,6 +15,7 @@ ATF_TESTS_C+=	zfshandle_pool_test
 ATF_TESTS_C+=	zfshandle_security_test
 ATF_TESTS_C+=	zfshandle_verbs_test
 ATF_TESTS_C+=	zfshandle_negative_test
+ATF_TESTS_C+=	zfshandle_hardening_test
 SCRIPTS+=	run_tests.sh
 BINDIR=		${TESTSDIR}
 
@@ -24,12 +25,14 @@ CFLAGS.zfshandle_pool_test.c+=		-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS.zfshandle_security_test.c+=	-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS.zfshandle_verbs_test.c+=		-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS.zfshandle_negative_test.c+=	-I${SRCTOP}/lib/libtrustedzfs
+CFLAGS.zfshandle_hardening_test.c+=	-I${SRCTOP}/lib/libtrustedzfs
 LIBADD.zfshandle_phase2_test+=		trustedzfs
 LIBADD.zfshandle_mount_test+=		trustedzfs
 LIBADD.zfshandle_pool_test+=		trustedzfs
 LIBADD.zfshandle_security_test+=	trustedzfs
 LIBADD.zfshandle_verbs_test+=		trustedzfs
 LIBADD.zfshandle_negative_test+=	trustedzfs
+LIBADD.zfshandle_hardening_test+=	trustedzfs
 LIBADD.zfshandle_rights_test+=	util
 
 .include <bsd.test.mk>

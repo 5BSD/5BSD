@@ -31,14 +31,51 @@ static bool
 valid_name(const char *name)
 {
 
+	if (memchr(name, '\0', TZFSD_NAME_MAX) == NULL)
+		return (false);
 	if (name[0] == '\0' || strcmp(name, ".") == 0 ||
 	    strcmp(name, "..") == 0)
 		return (false);
 	if (strchr(name, '/') != NULL)
 		return (false);
-	if (memchr(name, '\0', TZFSD_NAME_MAX) == NULL)
-		return (false);
 	return (true);
+}
+
+static bool
+all_zero(const void *buf, size_t len)
+{
+	const unsigned char *p = buf;
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		if (p[i] != 0)
+			return (false);
+	return (true);
+}
+
+/* Reject malformed and ambiguous protocol messages before dispatch. */
+static bool
+valid_request(const struct tzfsd_request *rq)
+{
+
+	if (!all_zero(rq->_reserved, sizeof(rq->_reserved)) ||
+	    memchr(rq->flavor, '\0', sizeof(rq->flavor)) == NULL ||
+	    memchr(rq->name, '\0', sizeof(rq->name)) == NULL)
+		return (false);
+	switch (rq->op) {
+	case TZFSD_OP_REQUEST:
+		return (true);
+	case TZFSD_OP_RELEASE:
+		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
+		    rq->flavor[0] == '\0');
+	case TZFSD_OP_LIST_FLAVORS:
+	case TZFSD_OP_PING:
+		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
+		    rq->flavor[0] == '\0' && rq->name[0] == '\0');
+	default:
+		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
+		    rq->flavor[0] == '\0' && rq->name[0] == '\0');
+	}
 }
 
 /* Send a fixed reply, optionally with one SCM_RIGHTS fd. */
@@ -246,6 +283,10 @@ handle_conn(struct tzfsd_state *st, int c)
 			reply_status(c, EPROTO);
 			continue;
 		}
+		if (!valid_request(&rq)) {
+			reply_status(c, EINVAL);
+			continue;
+		}
 		switch (rq.op) {
 		case TZFSD_OP_REQUEST:
 			handle_request(st, c, &rq);
@@ -271,7 +312,8 @@ tzfsd_serve(struct tzfsd_state *st)
 {
 
 	for (;;) {
-		int c = accept(st->listen_fd, NULL, NULL);
+		pid_t pid;
+		int c = accept4(st->listen_fd, NULL, NULL, SOCK_CLOEXEC);
 
 		if (c == -1) {
 			if (errno == EINTR || errno == ECONNABORTED)
@@ -279,7 +321,18 @@ tzfsd_serve(struct tzfsd_state *st)
 			syslog(LOG_ERR, "accept: %m");
 			return;
 		}
-		handle_conn(st, c);
+		pid = fork();
+		if (pid == -1) {
+			syslog(LOG_ERR, "fork: %m");
+			(void)close(c);
+			continue;
+		}
+		if (pid == 0) {
+			(void)close(st->listen_fd);
+			handle_conn(st, c);
+			(void)close(c);
+			_exit(0);
+		}
 		(void)close(c);
 	}
 }

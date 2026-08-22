@@ -15,7 +15,7 @@
 
 #define	PARENT_RIGHTS	(ZH_CREATE | ZH_DESTROY | ZH_SNAPSHOT | \
 	ZH_SNAP_DESTROY | ZH_CLONE_SRC | ZH_SEND | ZH_RECV | ZH_HOLD | \
-	ZH_MOUNT | ZH_ROLLBACK | ZH_PROPS_WRITE)
+	ZH_RELEASE | ZH_MOUNT | ZH_ROLLBACK | ZH_PROPS_WRITE | ZH_RENAME)
 
 static void
 zht_setup(const atf_tc_t *tc, char *ds, size_t dslen)

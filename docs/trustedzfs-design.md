@@ -108,7 +108,11 @@ allowlists command numbers before `fo_ioctl` is reached):
 |                  | right can read every byte, by design, visibly) |
 | `ZH_RECV`        | receive streams into scope                     |
 | `ZH_MOUNT`       | anonymous mount → dirfd; zvol → block fd       |
-| `ZH_HOLD`        | snapshot holds/releases                        |
+| `ZH_HOLD`        | create snapshot holds                          |
+| `ZH_RELEASE`     | release snapshot holds                         |
+| `ZH_RENAME`      | rename datasets                                |
+| `ZH_PROMOTE`     | promote clones                                 |
+| `ZH_BOOKMARK`    | create bookmarks                               |
 | `ZH_EVENT`       | kqueue attachment (implicit, always on)        |
 
 Plus a **subtree flag**: the handle covers descendants (list, openat,
@@ -123,9 +127,8 @@ Two derivation operations, both monotonic (result rights ⊆ source rights):
   a subtree handle; the openat() of the design. Relative names only; no
   `..`, no absolute names, no escaping the grant via rename.
 
-Open design decision (resolve during Phase 2): whether `ZH_CREATE` implies
-destroy-what-you-created without `ZH_DESTROY` (the jail self-service case
-wants it; it complicates the model — leaning **no**, grant both instead).
+`ZH_CREATE` does not imply destroy-what-you-created: grant `ZH_DESTROY`
+explicitly when that lifecycle is required.
 
 ### 3.3 Pool handles and derivation topology
 
@@ -195,28 +198,28 @@ semantics.
 | `ZFD_SNAPSHOT(name)` | `SNAPSHOT` | atomic across a subtree handle (one txg, as `zfs snapshot -r`) |
 | `ZFD_SNAP_DESTROY(name)` | `SNAP_DESTROY` | |
 | `ZFD_ROLLBACK(snap)` | `ROLLBACK` | |
-| `ZFD_PROMOTE` | `CREATE` | promote a clone above its origin |
-| `ZFD_HOLD(snap, tag)` / `ZFD_RELEASE` | `HOLD` | pins snapshots against concurrent pruners mid-send |
+| `ZFD_PROMOTE` | `PROMOTE` | promote a clone above its origin; root-only at mint because origin authority is dynamic |
+| `ZFD_HOLD(snap, tag)` / `ZFD_RELEASE` | `HOLD` / `RELEASE` | pins snapshots against concurrent pruners mid-send |
 | `ZFD_HOLDS` | `PROPS_READ` | enumerate a snapshot's user holds |
-| `ZFD_BOOKMARK(snap, book)` / `ZFD_DESTROY_BOOKMARK` | `SNAPSHOT` / `SNAP_DESTROY` | persistent incremental-send anchors |
+| `ZFD_BOOKMARK(snap, book)` / `ZFD_DESTROY_BOOKMARK` | `BOOKMARK` / `SNAP_DESTROY` | persistent incremental-send anchors |
 | `ZFD_LIST_BOOKMARKS` | `PROPS_READ` | packed name-set of full `fs#name` bookmarks |
 | `ZFD_SEND(snap, from_snap, out_fd, flags)` | `SEND` | stream to a plain fd (pipe/socket/vsock); fd checked via access-aware `zfs_file_get`. `flags` includes send-once (see below) |
 | `ZFD_RECV(in_fd, reltarget, flags)` | `RECV` | target relative to handle, never absolute |
 | `ZFD_CREATE(relname, props)` | `CREATE` | returns new zfd for the child |
 | `ZFD_DESTROY(relname)` | `DESTROY` | |
-| `ZFD_RENAME(relfrom, relto)` | `CREATE`+`DESTROY` | both ends inside the subtree |
+| `ZFD_RENAME(relfrom, relto)` | `RENAME` | both ends inside the subtree |
 | `ZFD_CLONE(origin_fd, relname)` | `CREATE` here, `CLONE_SRC` on origin | the deliberately two-handle verb: called on the destination parent, origin passed as an fd. "CI can clone the template into its workspace and nowhere else" falls out of the rights with no policy code |
 | `ZFD_MOUNT(flags)` / `ZFD_UNMOUNT` | `MOUNT` | returns a **dirfd of an anonymous mount** — see §5.3 |
 | `ZFD_BLKOPEN(flags)` | `MOUNT` | zvol handles: returns a block-device fd |
-| `ZFD_WAIT(activity)` | implicit | block until background activity (deleteq) drains |
 
-**Send-once (`ZFD_SEND` flags).** A survey of the send path confirmed the
+**Send-once (immutable handle flags).** A survey of the send path confirmed the
 kernel never closes the caller's output fd — it drops only its own
 `zfs_file_get` reference — so "close after send" was only ever a userland
 convention. The send-once semantics therefore govern the SEND *right on
 the handle*, enforced in kernel handle state so they survive SCM_RIGHTS:
-`ZFD_SEND_ONCE` makes the handle refuse further sends after one stream
-(`EALREADY`); `ZFD_SEND_CONSUME` additionally invalidates the handle
+`ZHF_SEND_ONCE` makes the complete derived/opened lineage refuse further
+sends after one successful stream (`EALREADY`); `ZHF_SEND_CONSUME`
+additionally invalidates the lineage
 (`ENXIO`). This gives serviced/tzfsd an unforgeable "one backup stream,
 then spent" grant. The output fd's lifetime remains the caller's business.
 
@@ -228,7 +231,7 @@ code (§8).
 ### 4.4 Pool handle verbs
 
 `ZPD_STAT`, `ZPD_GET_PROPS`/`ZPD_SET_PROP` (allowlist), `ZPD_SCRUB`,
-`ZPD_ROOT_OPEN(rights)`, `ZPD_WAIT(activity)`, kqueue events per §3.3.
+`ZPD_ROOT_OPEN(rights)`, and kqueue events per §3.3.
 
 ### 4.5 Coverage against zfs(8)/zpool(8)
 
@@ -464,7 +467,7 @@ libcapbundle_internal.h}`, `lib/libcapbundle/serviced_manifest.h`,
 `usr.sbin/serviced/{oracle_client.c,execute.c,svc_proto.c}`,
 `usr.sbin/oracled/{oracle_proto.c,mac_capability_mint.c}`, and
 optionally a new `usr.sbin/tzfsd/` + its `.cap` bundle.  Send-once
-(`ZFD_SEND_ONCE`) is the natural grant shape for a backup service's
+(`ZHF_SEND_ONCE`) is the natural grant shape for a backup service's
 stanza.
 
 ## 7. Observability
@@ -564,20 +567,23 @@ rollback needs Phase 1 + the `bootfs` sliver.
 
 ## 9a. Implementation status (2026-08-14)
 
-**All four phases plus the extended verb set are implemented, committed,
-and validated in the bhyve guest** — a full ATF sweep across all eight
-suites passes 36/36 on the shipping module.  Committed on `dev`:
+All four phases plus the extended verb set are implemented.  The current
+hardening suite covers rights and delegation matrices, derive/openat and
+operation-ceiling propagation, guid pinning and namespace churn, lifecycle
+and streams, send-once lineage races, anonymous-mount concurrency, pool
+handles, Capsicum and SCM_RIGHTS, strict raw ABI negatives, MAC hook reach,
+daemon protocol framing/concurrency, and bounded enumeration.
 
 - `08539165` — phases 1-4 (handles, library, tests, DTrace, procstat).
 - `f81f9f05` — extended verbs: enumeration (children/snaps/holds/
-  bookmarks), single-property get, inherit, promote, bookmarks, wait,
-  and send-once (`ZFD_SEND_ONCE`/`_CONSUME`).  Suite: 6/6.
+  bookmarks), single-property get, inherit, promote, bookmarks, and
+  send-once (subsequently moved to immutable `ZHF_SEND_ONCE`/
+  `ZHF_SEND_CONSUME` lineage flags).
 - `05f99b2a` — the oracled boot-health / shutdown-wedge fix this work
   surfaced (deferred signal shield, control-socket rebind, stale
   serviced.ready unlink, 30s self-heal, loud shutdown(8) failure).
 
-Per-suite: rights 4, derive 4, pin 4, phase2 5, mount 4, pool 5,
-security 4, verbs 6 = 36/36.  All 7 SDT probes live.  Two latent VFS
+All 7 SDT probes live.  Two latent VFS
 contract details were found
 by the Phase 3 tests and are load-bearing knowledge for anyone touching
 mounts: `vfs_mount_alloc()` returns the mount BOTH busied (mnt_lockref)
@@ -640,10 +646,9 @@ Phase 1 status:
   op-return/denied/invalidate) + `share/dtrace/trustedzfs-handles` and
   `trustedzfs-denials`.
 
-Phase 1 deviations from the spec above, to resolve in Phase 2:
-- Verbs that end in name-based DSL entry points (snapshot, rollback,
-  props) re-resolve the name after dropping the object hold — a tiny
-  resolve-to-call window remains (commented in `zfs_handle.c`).
+Remaining deliberate constraints:
+- Verbs that end in name-based DSL entry points are protected from
+  resolve-to-call replacement by the FreeBSD namespace gate.
 - Non-root minting of `ZH_PROPS_WRITE` is refused pending per-prop
   allowlists.
 - Subtree `ZFD_SNAPSHOT` snapshots only the handle's own dataset

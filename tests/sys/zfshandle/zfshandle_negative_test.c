@@ -17,7 +17,8 @@
 
 #define	ALL_DS_RIGHTS	(ZH_PROPS_WRITE | ZH_SNAPSHOT | ZH_SNAP_DESTROY | \
 	ZH_ROLLBACK | ZH_CLONE_SRC | ZH_CREATE | ZH_DESTROY | ZH_SEND | \
-	ZH_RECV | ZH_MOUNT | ZH_HOLD)
+	ZH_RECV | ZH_MOUNT | ZH_HOLD | ZH_RENAME | ZH_PROMOTE | \
+	ZH_BOOKMARK | ZH_RELEASE)
 
 static void
 zht_setup(const atf_tc_t *tc, char *ds, size_t dslen)
@@ -58,10 +59,14 @@ ATF_TC_BODY(missing_right_refused, tc)
 	ATF_REQUIRE_ERRNO(EPERM, tzfs_inherit(fd, "zht:k", false) == -1);
 	close(fd);
 
-	/* SNAPSHOT gates snapshot and bookmark. */
+	/* SNAPSHOT gates snapshot only. */
 	fd = WITHOUT(ZH_SNAPSHOT);
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_ERRNO(EPERM, tzfs_snapshot(fd, "n") == -1);
+	close(fd);
+
+	fd = WITHOUT(ZH_BOOKMARK);
+	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_ERRNO(EPERM, tzfs_bookmark(fd, "s", "b") == -1);
 	close(fd);
 
@@ -80,12 +85,21 @@ ATF_TC_BODY(missing_right_refused, tc)
 	fd = WITHOUT(ZH_CREATE);
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_ERRNO(EPERM, tzfs_create(fd, "nope", 0) == -1);
+	close(fd);
+
+	fd = WITHOUT(ZH_PROMOTE);
+	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_ERRNO(EPERM, tzfs_promote(fd) == -1);
 	close(fd);
 
 	fd = WITHOUT(ZH_DESTROY);
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_ERRNO(EPERM, tzfs_destroy(fd, "c") == -1);
+	close(fd);
+
+	fd = WITHOUT(ZH_RENAME);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_ERRNO(EPERM, tzfs_rename(fd, "c", "renamed") == -1);
 	close(fd);
 
 	fd = WITHOUT(ZH_SEND);
@@ -97,6 +111,11 @@ ATF_TC_BODY(missing_right_refused, tc)
 	fd = WITHOUT(ZH_HOLD);
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_ERRNO(EPERM, tzfs_hold(fd, "s", "t") == -1);
+	close(fd);
+
+	fd = WITHOUT(ZH_RELEASE);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_ERRNO(EPERM, tzfs_release(fd, "s", "t") == -1);
 	close(fd);
 
 	/* CLONE_SRC on the origin: a full-rights dest, origin lacking it. */
@@ -278,17 +297,17 @@ ATF_TC_BODY(dead_handle_refuses_all, tc)
 	ATF_REQUIRE_EQ(0, info.zi_valid);
 	close(fd);
 
-	/* Consumed by ZFD_SEND_CONSUME: same dead behavior. */
+	/* Consumed by ZHF_SEND_CONSUME: same dead behavior. */
 	ATF_REQUIRE_EQ(0, zht_systemf("zfs create %s", ds));
-	fd = tzfs_open(ds, ZH_SNAPSHOT | ZH_SEND, 0);
+	fd = tzfs_open(ds, ZH_SNAPSHOT | ZH_SEND,
+	    ZHF_SEND_ONCE | ZHF_SEND_CONSUME);
 	ATF_REQUIRE(fd >= 0);
 	ATF_REQUIRE_EQ(0, tzfs_snapshot(fd, "s1"));
 	sfd = tzfs_openat(fd, "@s1", ZH_SEND, 0);
 	ATF_REQUIRE(sfd >= 0);
 	streamfd = open("out.zfs", O_RDWR | O_CREAT | O_TRUNC, 0600);
 	ATF_REQUIRE(streamfd >= 0);
-	ATF_REQUIRE_EQ(0, tzfs_send(sfd, NULL, NULL, streamfd,
-	    ZFD_SEND_ONCE | ZFD_SEND_CONSUME));
+	ATF_REQUIRE_EQ(0, tzfs_send(sfd, NULL, NULL, streamfd, 0));
 	ATF_REQUIRE_ERRNO(ENXIO, zfd_stat(sfd, &st) == -1);
 	ATF_REQUIRE_ERRNO(ENXIO,
 	    tzfs_send(sfd, NULL, NULL, streamfd, 0) == -1);

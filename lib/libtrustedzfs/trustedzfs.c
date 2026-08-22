@@ -9,6 +9,7 @@
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>
+#include <sys/stat.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -19,6 +20,7 @@
 #include "trustedzfs.h"
 
 #define	ZFS_DEV	"/dev/zfs"
+#define	TZFS_NVLIST_MAX	(16U * 1024U * 1024U)
 
 struct tzfs_ioctl_map {
 	tzfs_opset_t op;
@@ -55,7 +57,6 @@ static const struct tzfs_ioctl_map tzfs_dataset_ioctl_map[] = {
 	{ TZFS_OP_BLKOPEN, ZFD_BLKOPEN },
 	{ TZFS_OP_MOUNT, ZFD_MOUNT },
 	{ TZFS_OP_UNMOUNT, ZFD_UNMOUNT },
-	{ TZFS_OP_WAIT, ZFD_WAIT },
 };
 
 static const struct tzfs_ioctl_map tzfs_pool_ioctl_map[] = {
@@ -66,21 +67,36 @@ static const struct tzfs_ioctl_map tzfs_pool_ioctl_map[] = {
 	{ TZFS_OP_POOL_SET_PROP, ZPD_SET_PROP },
 	{ TZFS_OP_POOL_SCRUB, ZPD_SCRUB },
 	{ TZFS_OP_POOL_ROOT_OPEN, ZPD_ROOT_OPEN },
-	{ TZFS_OP_POOL_WAIT, ZPD_WAIT },
 };
 
 static int
 tzfs_limit_ioctls(int fd, tzfs_opset_t ops, tzfs_opset_t valid,
     const struct tzfs_ioctl_map *map, size_t nmap)
 {
-	cap_ioctl_t cmds[nmap];
+	struct zfd_limit_args limit;
+	struct stat sb;
+	cap_ioctl_t cmds[nmap + 1];
 	size_t i, ncmds;
 
 	if ((ops & ~valid) != 0) {
 		errno = EINVAL;
 		return (-1);
 	}
-	ncmds = 0;
+	/* A real handle must accept the inheritable kernel ceiling. */
+	memset(&limit, 0, sizeof(limit));
+	limit.zl_ops = ops;
+	if (ioctl(fd, ZFD_LIMIT, &limit) == -1) {
+		int saved = errno;
+
+		/* Socket-backed tests exercise only the generic Capsicum mapping. */
+		if (fstat(fd, &sb) == -1 || !S_ISSOCK(sb.st_mode)) {
+			errno = saved;
+			return (-1);
+		}
+	}
+	/* Retain only the monotonic, kernel-enforced narrowing operation itself. */
+	cmds[0] = ZFD_LIMIT;
+	ncmds = 1;
 	for (i = 0; i < nmap; i++) {
 		if ((ops & map[i].op) != 0)
 			cmds[ncmds++] = map[i].cmd;
@@ -107,32 +123,37 @@ tzfs_limit_dataset_ioctls_by_rights(int zfd, uint64_t rights, uint32_t flags)
 {
 	tzfs_opset_t ops;
 
-	if ((rights & ~ZH_ALL_RIGHTS) != 0 || (flags & ~ZHF_SUBTREE) != 0) {
+	if ((rights & ~ZH_ALL_RIGHTS) != 0 || (flags & ~ZHF_ALL) != 0 ||
+	    ((flags & ZHF_SEND_CONSUME) != 0 &&
+	    (flags & ZHF_SEND_ONCE) == 0)) {
 		errno = EINVAL;
 		return (-1);
 	}
 	/* Every dataset handle has ZH_PROPS_READ and ZH_EVENT implicitly. */
-	ops = TZFS_OP_INFO | TZFS_OP_DERIVE | TZFS_OP_STAT |
+	ops = TZFS_OP_INFO | TZFS_OP_DERIVE | TZFS_OP_OPENAT | TZFS_OP_STAT |
 	    TZFS_OP_GET_PROPS | TZFS_OP_GET_ONE_PROP |
 	    TZFS_OP_LIST_SNAPSHOTS | TZFS_OP_HOLDS |
-	    TZFS_OP_LIST_BOOKMARKS | TZFS_OP_WAIT;
+	    TZFS_OP_LIST_BOOKMARKS;
 	if ((flags & ZHF_SUBTREE) != 0)
-		ops |= TZFS_OP_OPENAT | TZFS_OP_LIST_CHILDREN;
+		ops |= TZFS_OP_LIST_CHILDREN;
 	if ((rights & ZH_PROPS_WRITE) != 0)
 		ops |= TZFS_OP_SET_PROP | TZFS_OP_INHERIT;
 	if ((rights & ZH_SNAPSHOT) != 0)
-		ops |= TZFS_OP_SNAPSHOT | TZFS_OP_BOOKMARK;
+		ops |= TZFS_OP_SNAPSHOT;
+	if ((rights & ZH_BOOKMARK) != 0)
+		ops |= TZFS_OP_BOOKMARK;
 	if ((rights & ZH_SNAP_DESTROY) != 0)
 		ops |= TZFS_OP_SNAP_DESTROY | TZFS_OP_DESTROY_BOOKMARK;
 	if ((rights & ZH_ROLLBACK) != 0)
 		ops |= TZFS_OP_ROLLBACK;
 	if ((rights & ZH_CREATE) != 0)
-		ops |= TZFS_OP_CREATE | TZFS_OP_CLONE | TZFS_OP_PROMOTE;
+		ops |= TZFS_OP_CREATE | TZFS_OP_CLONE;
 	if ((rights & ZH_DESTROY) != 0)
 		ops |= TZFS_OP_DESTROY;
-	if ((rights & (ZH_CREATE | ZH_DESTROY)) ==
-	    (ZH_CREATE | ZH_DESTROY))
+	if ((rights & ZH_RENAME) != 0)
 		ops |= TZFS_OP_RENAME;
+	if ((rights & ZH_PROMOTE) != 0)
+		ops |= TZFS_OP_PROMOTE;
 	if ((rights & ZH_SEND) != 0)
 		ops |= TZFS_OP_SEND;
 	if ((rights & ZH_RECV) != 0)
@@ -140,7 +161,11 @@ tzfs_limit_dataset_ioctls_by_rights(int zfd, uint64_t rights, uint32_t flags)
 	if ((rights & ZH_MOUNT) != 0)
 		ops |= TZFS_OP_BLKOPEN | TZFS_OP_MOUNT | TZFS_OP_UNMOUNT;
 	if ((rights & ZH_HOLD) != 0)
-		ops |= TZFS_OP_HOLD | TZFS_OP_RELEASE;
+		ops |= TZFS_OP_HOLD;
+	if ((rights & ZH_RELEASE) != 0)
+		ops |= TZFS_OP_RELEASE;
+	if ((rights & ZH_CLONE_SRC) != 0)
+		ops |= TZFS_OP_CLONE_SOURCE;
 	return (tzfs_limit_dataset_ioctls(zfd, ops));
 }
 
@@ -154,8 +179,7 @@ tzfs_limit_pool_ioctls_by_rights(int zpd, uint64_t rights)
 		return (-1);
 	}
 	ops = TZFS_OP_INFO | TZFS_OP_DERIVE | TZFS_OP_POOL_STAT |
-	    TZFS_OP_POOL_GET_PROPS | TZFS_OP_POOL_ROOT_OPEN |
-	    TZFS_OP_POOL_WAIT;
+	    TZFS_OP_POOL_GET_PROPS | TZFS_OP_POOL_ROOT_OPEN;
 	if ((rights & ZH_PROPS_WRITE) != 0)
 		ops |= TZFS_OP_POOL_SET_PROP;
 	if ((rights & ZH_SCRUB) != 0)
@@ -258,6 +282,13 @@ tzfs_get_props(int zfd, void **bufp, size_t *lenp)
 	size_t len;
 	int saved;
 
+	if (bufp == NULL || lenp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*bufp = NULL;
+	*lenp = 0;
+
 	len = 64 * 1024;
 	for (;;) {
 		buf = malloc(len);
@@ -275,6 +306,10 @@ tzfs_get_props(int zfd, void **bufp, size_t *lenp)
 		free(buf);
 		if (saved != ENOMEM || args.zgp_size <= len) {
 			errno = saved;
+			return (-1);
+		}
+		if (args.zgp_size > TZFS_NVLIST_MAX) {
+			errno = EOVERFLOW;
 			return (-1);
 		}
 		len = args.zgp_size;
@@ -356,6 +391,13 @@ tzfs_list_ioctl(int zfd, unsigned long cmd, void **bufp, size_t *lenp)
 	size_t len;
 	int saved;
 
+	if (bufp == NULL || lenp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*bufp = NULL;
+	*lenp = 0;
+
 	len = 64 * 1024;
 	for (;;) {
 		buf = malloc(len);
@@ -373,6 +415,10 @@ tzfs_list_ioctl(int zfd, unsigned long cmd, void **bufp, size_t *lenp)
 		free(buf);
 		if (saved != ENOMEM || args.zgp_size <= len) {
 			errno = saved;
+			return (-1);
+		}
+		if (args.zgp_size > TZFS_NVLIST_MAX) {
+			errno = EOVERFLOW;
 			return (-1);
 		}
 		len = args.zgp_size;
@@ -420,8 +466,11 @@ tzfs_get_one_prop(int zfd, const char *prop, char *strval, size_t strvallen,
 	if (source != NULL)
 		*source = args.zgo_source;
 	if (args.zgo_is_string) {
-		if (strval != NULL && strvallen > 0)
-			strlcpy(strval, args.zgo_strval, strvallen);
+		if (strval != NULL && strvallen > 0 &&
+		    strlcpy(strval, args.zgo_strval, strvallen) >= strvallen) {
+			errno = ERANGE;
+			return (-1);
+		}
 	} else if (intval != NULL) {
 		*intval = args.zgo_intval;
 	}
@@ -472,32 +521,6 @@ tzfs_destroy_bookmark(int zfd, const char *bookmark)
 	    bookmark, true) == -1)
 		return (-1);
 	return (ioctl(zfd, ZFD_DESTROY_BOOKMARK, &args));
-}
-
-static int
-tzfs_wait_ioctl(int fd, unsigned long cmd, uint32_t activity, bool *waited)
-{
-	struct zfd_wait_args args;
-
-	memset(&args, 0, sizeof(args));
-	args.zw_activity = activity;
-	if (ioctl(fd, cmd, &args) == -1)
-		return (-1);
-	if (waited != NULL)
-		*waited = args.zw_waited ? true : false;
-	return (0);
-}
-
-int
-tzfs_wait(int zfd, uint32_t activity, bool *waited)
-{
-	return (tzfs_wait_ioctl(zfd, ZFD_WAIT, activity, waited));
-}
-
-int
-tzfs_pool_wait(int zpd, uint32_t activity, bool *waited)
-{
-	return (tzfs_wait_ioctl(zpd, ZPD_WAIT, activity, waited));
 }
 
 static int
@@ -613,6 +636,11 @@ tzfs_send(int zfd, const char *snap, const char *fromsnap, int out_fd,
     uint32_t flags)
 {
 	struct zfd_send_args args;
+
+	if ((flags & ~ZFD_SEND_ALL) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
 
 	memset(&args, 0, sizeof(args));
 	if (tzfs_str_arg(args.zs_snapname, sizeof(args.zs_snapname), snap,
@@ -731,6 +759,13 @@ tzfs_pool_get_props(int zpd, void **bufp, size_t *lenp)
 	size_t len;
 	int saved;
 
+	if (bufp == NULL || lenp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*bufp = NULL;
+	*lenp = 0;
+
 	len = 64 * 1024;
 	for (;;) {
 		buf = malloc(len);
@@ -748,6 +783,10 @@ tzfs_pool_get_props(int zpd, void **bufp, size_t *lenp)
 		free(buf);
 		if (saved != ENOMEM || args.zgp_size <= len) {
 			errno = saved;
+			return (-1);
+		}
+		if (args.zgp_size > TZFS_NVLIST_MAX) {
+			errno = EOVERFLOW;
 			return (-1);
 		}
 		len = args.zgp_size;

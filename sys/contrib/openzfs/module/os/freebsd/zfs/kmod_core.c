@@ -148,8 +148,12 @@ zfsdev_ioctl(struct cdev *dev, ulong_t zcmd, caddr_t arg, int flag,
 	void *uaddr;
 
 	/* 5BSD: TrustedZFS handle minting; see zfs_handle.c. */
-	if (zfs_handle_is_mint_ioctl(zcmd))
-		return (zfs_handle_mint_ioctl(zcmd, arg, td));
+	if (zfs_handle_is_mint_ioctl(zcmd)) {
+		zfs_handle_mint_enter();
+		error = zfs_handle_mint_ioctl(zcmd, arg, td);
+		zfs_handle_mint_exit();
+		return (error);
+	}
 
 	len = IOCPARM_LEN(zcmd);
 	vecnum = zcmd & 0xff;
@@ -186,7 +190,9 @@ zfsdev_ioctl(struct cdev *dev, ulong_t zcmd, caddr_t arg, int flag,
 		error = SET_ERROR(EFAULT);
 		goto out;
 	}
+	zfs_handle_upstream_enter();
 	error = zfsdev_ioctl_common(vecnum, zc, 0);
+	zfs_handle_upstream_exit();
 	SDT_PROBE4(zfs, , , ioc, vecnum, zc->zc_name,
 	    (uint64_t)td->td_ucred->cr_uid, error);
 #ifdef ZFS_LEGACY_SUPPORT
@@ -282,10 +288,12 @@ zfs__init(void)
 	    ZFS_MIN_KSTACK_PAGES);
 #endif
 	zfs_root_token = root_mount_hold("ZFS");
+	zfs_handle_init();
 	if ((error = zfs_kmod_init()) != 0) {
 		printf("ZFS: Failed to Load ZFS Filesystem"
 		    ", rc = %d\n", error);
 		root_mount_rel(zfs_root_token);
+		zfs_handle_fini();
 		return (error);
 	}
 
@@ -302,12 +310,13 @@ zfs__init(void)
 int
 zfs__fini(void)
 {
-	if (zfs_busy() || zvol_busy() ||
+	if (zfs_busy() || zvol_busy() || zfs_handle_busy() ||
 	    zio_injection_enabled) {
 		return (EBUSY);
 	}
 	zfs_kmod_fini();
 	tsd_destroy(&zfs_geom_probe_vdev_key);
+	zfs_handle_fini();
 	return (0);
 }
 

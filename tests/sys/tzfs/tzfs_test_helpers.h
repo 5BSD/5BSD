@@ -27,7 +27,7 @@
 
 #include "tzfsd.h"
 
-#define	TZT_VDEV_SIZE	"256m"
+#define	TZT_VDEV_SIZE	"1g"
 #define	TZFSD_BIN	"/usr/sbin/tzfsd"
 
 static char tzt_pool[128];
@@ -93,7 +93,8 @@ tzt_daemon_start(void)
 		struct stat sb;
 		struct timespec ts = { 0, 50 * 1000 * 1000 };
 
-		if (stat(TZFSD_SOCK_PATH, &sb) == 0)
+		if (stat(TZFSD_SOCK_PATH, &sb) == 0 &&
+		    stat(TZFSD_READY_PATH, &sb) == 0)
 			return;
 		(void)nanosleep(&ts, NULL);
 	}

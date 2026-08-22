@@ -35,60 +35,46 @@ __BEGIN_DECLS
  * handles.  Dataset and pool operation bits must not be mixed when calling
  * the corresponding limiter.
  */
-typedef uint64_t tzfs_opset_t;
+typedef zfd_opset_t tzfs_opset_t;
 
-#define	TZFS_OP_INFO			(UINT64_C(1) << 0)
-#define	TZFS_OP_DERIVE			(UINT64_C(1) << 1)
-
-#define	TZFS_OP_OPENAT			(UINT64_C(1) << 2)
-#define	TZFS_OP_STAT			(UINT64_C(1) << 3)
-#define	TZFS_OP_GET_PROPS		(UINT64_C(1) << 4)
-#define	TZFS_OP_GET_ONE_PROP		(UINT64_C(1) << 5)
-#define	TZFS_OP_LIST_CHILDREN		(UINT64_C(1) << 6)
-#define	TZFS_OP_LIST_SNAPSHOTS		(UINT64_C(1) << 7)
-#define	TZFS_OP_HOLDS			(UINT64_C(1) << 8)
-#define	TZFS_OP_LIST_BOOKMARKS		(UINT64_C(1) << 9)
-#define	TZFS_OP_SET_PROP		(UINT64_C(1) << 10)
-#define	TZFS_OP_INHERIT			(UINT64_C(1) << 11)
-#define	TZFS_OP_SNAPSHOT		(UINT64_C(1) << 12)
-#define	TZFS_OP_BOOKMARK		(UINT64_C(1) << 13)
-#define	TZFS_OP_SNAP_DESTROY		(UINT64_C(1) << 14)
-#define	TZFS_OP_DESTROY_BOOKMARK	(UINT64_C(1) << 15)
-#define	TZFS_OP_ROLLBACK		(UINT64_C(1) << 16)
-#define	TZFS_OP_CREATE			(UINT64_C(1) << 17)
-#define	TZFS_OP_DESTROY			(UINT64_C(1) << 18)
-#define	TZFS_OP_RENAME			(UINT64_C(1) << 19)
-#define	TZFS_OP_CLONE			(UINT64_C(1) << 20)
-#define	TZFS_OP_PROMOTE			(UINT64_C(1) << 21)
-#define	TZFS_OP_SEND			(UINT64_C(1) << 22)
-#define	TZFS_OP_RECV			(UINT64_C(1) << 23)
-#define	TZFS_OP_HOLD			(UINT64_C(1) << 24)
-#define	TZFS_OP_RELEASE			(UINT64_C(1) << 25)
-#define	TZFS_OP_BLKOPEN			(UINT64_C(1) << 26)
-#define	TZFS_OP_MOUNT			(UINT64_C(1) << 27)
-#define	TZFS_OP_UNMOUNT			(UINT64_C(1) << 28)
-#define	TZFS_OP_WAIT			(UINT64_C(1) << 29)
-
-#define	TZFS_OP_POOL_STAT		(UINT64_C(1) << 32)
-#define	TZFS_OP_POOL_GET_PROPS		(UINT64_C(1) << 33)
-#define	TZFS_OP_POOL_SET_PROP		(UINT64_C(1) << 34)
-#define	TZFS_OP_POOL_SCRUB		(UINT64_C(1) << 35)
-#define	TZFS_OP_POOL_ROOT_OPEN		(UINT64_C(1) << 36)
-#define	TZFS_OP_POOL_WAIT		(UINT64_C(1) << 37)
-
-#define	TZFS_OP_COMMON_ALL	(TZFS_OP_INFO | TZFS_OP_DERIVE)
-#define	TZFS_OP_DATASET_ALL	(TZFS_OP_COMMON_ALL | TZFS_OP_OPENAT | \
-	TZFS_OP_STAT | TZFS_OP_GET_PROPS | TZFS_OP_GET_ONE_PROP | \
-	TZFS_OP_LIST_CHILDREN | TZFS_OP_LIST_SNAPSHOTS | TZFS_OP_HOLDS | \
-	TZFS_OP_LIST_BOOKMARKS | TZFS_OP_SET_PROP | TZFS_OP_INHERIT | \
-	TZFS_OP_SNAPSHOT | TZFS_OP_BOOKMARK | TZFS_OP_SNAP_DESTROY | \
-	TZFS_OP_DESTROY_BOOKMARK | TZFS_OP_ROLLBACK | TZFS_OP_CREATE | \
-	TZFS_OP_DESTROY | TZFS_OP_RENAME | TZFS_OP_CLONE | TZFS_OP_PROMOTE | \
-	TZFS_OP_SEND | TZFS_OP_RECV | TZFS_OP_HOLD | TZFS_OP_RELEASE | \
-	TZFS_OP_BLKOPEN | TZFS_OP_MOUNT | TZFS_OP_UNMOUNT | TZFS_OP_WAIT)
-#define	TZFS_OP_POOL_ALL	(TZFS_OP_COMMON_ALL | TZFS_OP_POOL_STAT | \
-	TZFS_OP_POOL_GET_PROPS | TZFS_OP_POOL_SET_PROP | TZFS_OP_POOL_SCRUB | \
-	TZFS_OP_POOL_ROOT_OPEN | TZFS_OP_POOL_WAIT)
+#define	TZFS_OP_INFO			ZFD_OP_INFO
+#define	TZFS_OP_DERIVE			ZFD_OP_DERIVE
+#define	TZFS_OP_OPENAT			ZFD_OP_OPENAT
+#define	TZFS_OP_STAT			ZFD_OP_STAT
+#define	TZFS_OP_GET_PROPS		ZFD_OP_GET_PROPS
+#define	TZFS_OP_GET_ONE_PROP		ZFD_OP_GET_ONE_PROP
+#define	TZFS_OP_LIST_CHILDREN		ZFD_OP_LIST_CHILDREN
+#define	TZFS_OP_LIST_SNAPSHOTS		ZFD_OP_LIST_SNAPSHOTS
+#define	TZFS_OP_HOLDS			ZFD_OP_HOLDS
+#define	TZFS_OP_LIST_BOOKMARKS		ZFD_OP_LIST_BOOKMARKS
+#define	TZFS_OP_SET_PROP		ZFD_OP_SET_PROP
+#define	TZFS_OP_INHERIT			ZFD_OP_INHERIT
+#define	TZFS_OP_SNAPSHOT		ZFD_OP_SNAPSHOT
+#define	TZFS_OP_BOOKMARK		ZFD_OP_BOOKMARK
+#define	TZFS_OP_SNAP_DESTROY		ZFD_OP_SNAP_DESTROY
+#define	TZFS_OP_DESTROY_BOOKMARK	ZFD_OP_DESTROY_BOOKMARK
+#define	TZFS_OP_ROLLBACK		ZFD_OP_ROLLBACK
+#define	TZFS_OP_CREATE			ZFD_OP_CREATE
+#define	TZFS_OP_DESTROY			ZFD_OP_DESTROY
+#define	TZFS_OP_RENAME			ZFD_OP_RENAME
+#define	TZFS_OP_CLONE			ZFD_OP_CLONE
+#define	TZFS_OP_PROMOTE			ZFD_OP_PROMOTE
+#define	TZFS_OP_SEND			ZFD_OP_SEND
+#define	TZFS_OP_RECV			ZFD_OP_RECV
+#define	TZFS_OP_HOLD			ZFD_OP_HOLD
+#define	TZFS_OP_RELEASE			ZFD_OP_RELEASE
+#define	TZFS_OP_BLKOPEN			ZFD_OP_BLKOPEN
+#define	TZFS_OP_MOUNT			ZFD_OP_MOUNT
+#define	TZFS_OP_UNMOUNT			ZFD_OP_UNMOUNT
+#define	TZFS_OP_CLONE_SOURCE		ZFD_OP_CLONE_SOURCE
+#define	TZFS_OP_POOL_STAT		ZFD_OP_POOL_STAT
+#define	TZFS_OP_POOL_GET_PROPS		ZFD_OP_POOL_GET_PROPS
+#define	TZFS_OP_POOL_SET_PROP		ZFD_OP_POOL_SET_PROP
+#define	TZFS_OP_POOL_SCRUB		ZFD_OP_POOL_SCRUB
+#define	TZFS_OP_POOL_ROOT_OPEN		ZFD_OP_POOL_ROOT_OPEN
+#define	TZFS_OP_COMMON_ALL		ZFD_OP_COMMON_ALL
+#define	TZFS_OP_DATASET_ALL		ZFD_OP_DATASET_ALL
+#define	TZFS_OP_POOL_ALL		ZFD_OP_POOL_ALL
 
 /* Exact operation masks, and convenient complete profiles for ZH_* grants. */
 int	tzfs_limit_dataset_ioctls(int zfd, tzfs_opset_t ops);
@@ -151,8 +137,6 @@ int	tzfs_destroy_bookmark(int zfd, const char *bookmark);
 
 /* Wait for background activity (currently deleteq for datasets). */
 #define	TZFS_WAIT_DELETEQ	0
-int	tzfs_wait(int zfd, uint32_t activity, bool *waited);
-int	tzfs_pool_wait(int zpd, uint32_t activity, bool *waited);
 
 /*
  * Dataset lifecycle.  Relative names resolve under the handle (subtree
@@ -174,10 +158,9 @@ int	tzfs_clone(int zfd, int origin_zfd, const char *origin_snap,
  * into reltarget ("child@snap" or "@snap"); in_fd needs CAP_READ.
  *
  * The kernel never closes the output fd -- that is the caller's business.
- * The send-once flags govern the SEND right on the handle, not the fd:
- *   ZFD_SEND_ONCE     after this send, further sends fail with EALREADY.
- *   ZFD_SEND_CONSUME  with ONCE, also invalidate the handle (ENXIO after).
- * These are enforced in kernel handle state, so they survive SCM_RIGHTS.
+ * ZHF_SEND_ONCE and ZHF_SEND_CONSUME are immutable handle restrictions,
+ * selected when the handle is minted/opened.  Their state is shared by every
+ * derived descendant so neither derive nor SCM_RIGHTS can reset the budget.
  */
 int	tzfs_send(int zfd, const char *snap, const char *fromsnap,
 	    int out_fd, uint32_t flags);

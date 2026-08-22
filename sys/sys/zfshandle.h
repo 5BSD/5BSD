@@ -18,6 +18,10 @@
 #include <sys/ioccom.h>
 #include <sys/types.h>
 
+#if !defined(__LP64__)
+#error "TrustedZFS is available only with a 64-bit kernel and user ABI"
+#endif
+
 #define	ZFSHANDLE_NAME_MAX	256	/* == ZFS_MAX_DATASET_NAME_LEN */
 
 /*
@@ -39,12 +43,79 @@
 #define	ZH_HOLD		0x0000000000000800ULL	/* snapshot holds */
 #define	ZH_EVENT	0x0000000000001000ULL	/* kqueue (implicit) */
 #define	ZH_SCRUB	0x0000000000002000ULL	/* pool handles: scrub ctl */
+#define	ZH_RENAME	0x0000000000004000ULL	/* rename datasets */
+#define	ZH_PROMOTE	0x0000000000008000ULL	/* promote clones */
+#define	ZH_BOOKMARK	0x0000000000010000ULL	/* create bookmarks */
+#define	ZH_RELEASE	0x0000000000020000ULL	/* release snapshot holds */
 
 #define	ZH_IMPLICIT_RIGHTS	(ZH_PROPS_READ | ZH_EVENT)
-#define	ZH_ALL_RIGHTS		0x0000000000003fffULL
+#define	ZH_ALL_RIGHTS		0x000000000003ffffULL
 
 /* Handle flags. */
 #define	ZHF_SUBTREE	0x00000001	/* handle covers descendants */
+#define	ZHF_SEND_ONCE	0x00000002	/* one successful send per lineage */
+#define	ZHF_SEND_CONSUME 0x00000004	/* invalidate lineage after send */
+#define	ZHF_ALL		(ZHF_SUBTREE | ZHF_SEND_ONCE | ZHF_SEND_CONSUME)
+
+/*
+ * Kernel-enforced operation ceilings.  Unlike cap_ioctls_limit(2), this
+ * ceiling belongs to the handle object and is inherited by every descriptor
+ * returned from it.  The libtrustedzfs TZFS_OP_* names map directly to these
+ * bits.
+ */
+typedef uint64_t zfd_opset_t;
+
+#define	ZFD_OP_INFO			(UINT64_C(1) << 0)
+#define	ZFD_OP_DERIVE			(UINT64_C(1) << 1)
+#define	ZFD_OP_OPENAT			(UINT64_C(1) << 2)
+#define	ZFD_OP_STAT			(UINT64_C(1) << 3)
+#define	ZFD_OP_GET_PROPS		(UINT64_C(1) << 4)
+#define	ZFD_OP_GET_ONE_PROP		(UINT64_C(1) << 5)
+#define	ZFD_OP_LIST_CHILDREN		(UINT64_C(1) << 6)
+#define	ZFD_OP_LIST_SNAPSHOTS		(UINT64_C(1) << 7)
+#define	ZFD_OP_HOLDS			(UINT64_C(1) << 8)
+#define	ZFD_OP_LIST_BOOKMARKS		(UINT64_C(1) << 9)
+#define	ZFD_OP_SET_PROP			(UINT64_C(1) << 10)
+#define	ZFD_OP_INHERIT			(UINT64_C(1) << 11)
+#define	ZFD_OP_SNAPSHOT			(UINT64_C(1) << 12)
+#define	ZFD_OP_BOOKMARK			(UINT64_C(1) << 13)
+#define	ZFD_OP_SNAP_DESTROY		(UINT64_C(1) << 14)
+#define	ZFD_OP_DESTROY_BOOKMARK		(UINT64_C(1) << 15)
+#define	ZFD_OP_ROLLBACK			(UINT64_C(1) << 16)
+#define	ZFD_OP_CREATE			(UINT64_C(1) << 17)
+#define	ZFD_OP_DESTROY			(UINT64_C(1) << 18)
+#define	ZFD_OP_RENAME			(UINT64_C(1) << 19)
+#define	ZFD_OP_CLONE			(UINT64_C(1) << 20)
+#define	ZFD_OP_PROMOTE			(UINT64_C(1) << 21)
+#define	ZFD_OP_SEND			(UINT64_C(1) << 22)
+#define	ZFD_OP_RECV			(UINT64_C(1) << 23)
+#define	ZFD_OP_HOLD			(UINT64_C(1) << 24)
+#define	ZFD_OP_RELEASE			(UINT64_C(1) << 25)
+#define	ZFD_OP_BLKOPEN			(UINT64_C(1) << 26)
+#define	ZFD_OP_MOUNT			(UINT64_C(1) << 27)
+#define	ZFD_OP_UNMOUNT			(UINT64_C(1) << 28)
+#define	ZFD_OP_CLONE_SOURCE		(UINT64_C(1) << 30)
+
+#define	ZFD_OP_POOL_STAT		(UINT64_C(1) << 32)
+#define	ZFD_OP_POOL_GET_PROPS		(UINT64_C(1) << 33)
+#define	ZFD_OP_POOL_SET_PROP		(UINT64_C(1) << 34)
+#define	ZFD_OP_POOL_SCRUB		(UINT64_C(1) << 35)
+#define	ZFD_OP_POOL_ROOT_OPEN		(UINT64_C(1) << 36)
+
+#define	ZFD_OP_COMMON_ALL	(ZFD_OP_INFO | ZFD_OP_DERIVE)
+#define	ZFD_OP_DATASET_ALL	(ZFD_OP_COMMON_ALL | ZFD_OP_OPENAT | \
+	ZFD_OP_STAT | ZFD_OP_GET_PROPS | ZFD_OP_GET_ONE_PROP | \
+	ZFD_OP_LIST_CHILDREN | ZFD_OP_LIST_SNAPSHOTS | ZFD_OP_HOLDS | \
+	ZFD_OP_LIST_BOOKMARKS | ZFD_OP_SET_PROP | ZFD_OP_INHERIT | \
+	ZFD_OP_SNAPSHOT | ZFD_OP_BOOKMARK | ZFD_OP_SNAP_DESTROY | \
+	ZFD_OP_DESTROY_BOOKMARK | ZFD_OP_ROLLBACK | ZFD_OP_CREATE | \
+	ZFD_OP_DESTROY | ZFD_OP_RENAME | ZFD_OP_CLONE | ZFD_OP_PROMOTE | \
+	ZFD_OP_SEND | ZFD_OP_RECV | ZFD_OP_HOLD | ZFD_OP_RELEASE | \
+	ZFD_OP_BLKOPEN | ZFD_OP_MOUNT | ZFD_OP_UNMOUNT | \
+	ZFD_OP_CLONE_SOURCE)
+#define	ZFD_OP_POOL_ALL	(ZFD_OP_COMMON_ALL | ZFD_OP_POOL_STAT | \
+	ZFD_OP_POOL_GET_PROPS | ZFD_OP_POOL_SET_PROP | ZFD_OP_POOL_SCRUB | \
+	ZFD_OP_POOL_ROOT_OPEN)
 
 /*
  * Minting (on /dev/zfs).  Command numbers live above the upstream OpenZFS
@@ -128,6 +199,10 @@ struct zfd_derive_args {
 	uint32_t	zd_pad;
 };
 
+struct zfd_limit_args {
+	zfd_opset_t	zl_ops;		/* in: subset of current ceiling */
+};
+
 struct zfd_openat_args {
 	char		zo_relname[ZFSHANDLE_NAME_MAX]; /* in: child or @snap */
 	uint64_t	zo_rights;		/* in: subset of parent */
@@ -187,13 +262,6 @@ struct zfd_bookmark_args {
 			    component (the part after '#') */
 };
 
-#define	ZFD_WAIT_DELETEQ	0	/* == ZFS_WAIT_DELETEQ */
-
-struct zfd_wait_args {
-	uint32_t	zw_activity;		/* in: ZFD_WAIT_* */
-	uint32_t	zw_waited;		/* out: did we block? */
-};
-
 struct zfd_set_prop_args {
 	char		zsp_name[ZFSHANDLE_NAME_MAX];	/* in: property name */
 	char		zsp_strval[ZFSHANDLE_NAME_MAX];	/* in: string value */
@@ -218,8 +286,6 @@ struct zfd_create_args {
 
 struct zfd_destroy_args {
 	char		zd_relname[ZFSHANDLE_NAME_MAX]; /* in: "" = self */
-	uint32_t	zd_defer;		/* in: defer snapshots */
-	uint32_t	zd_pad;
 };
 
 struct zfd_rename_args {
@@ -246,13 +312,13 @@ struct zfd_clone_args {
  * SCM_RIGHTS and cannot be evaded by a non-cooperating holder).  The
  * output fd is never touched by the kernel — closing it is the caller's
  * business; these flags govern the SEND right on the handle itself:
- *   ZFD_SEND_ONCE      after this send, refuse further sends (EALREADY).
- *   ZFD_SEND_CONSUME   with ONCE, fully invalidate the handle afterward
- *                      (ENXIO on everything) rather than leaving it open
- *                      and merely unsendable.
+ * ZHF_SEND_ONCE is fixed when the handle is minted and, after one successful
+ * send in that handle lineage, refuses further sends (EALREADY).
+ * ZHF_SEND_CONSUME implies ZHF_SEND_ONCE and additionally invalidates every
+ * handle in the lineage after the successful send (ENXIO except INFO).
  */
-#define	ZFD_SEND_ONCE		0x10
-#define	ZFD_SEND_CONSUME	0x20
+#define	ZFD_SEND_ALL		(ZFD_SEND_EMBED | ZFD_SEND_LARGEBLOCK | \
+	ZFD_SEND_COMPRESS | ZFD_SEND_RAW)
 
 struct zfd_send_args {
 	char		zs_snapname[ZFSHANDLE_NAME_MAX]; /* in: snap component;
@@ -331,8 +397,11 @@ struct zfd_mount_args {
 #define	ZFD_BOOKMARK	_IOW('z', 0x20, struct zfd_bookmark_args)
 #define	ZFD_LIST_BOOKMARKS _IOWR('z', 0x21, struct zfd_get_props_args)
 #define	ZFD_DESTROY_BOOKMARK _IOW('z', 0x22, struct zfd_bookmark_args)
-#define	ZFD_WAIT	_IOWR('z', 0x23, struct zfd_wait_args)
-#define	ZPD_WAIT	_IOWR('z', 0x24, struct zfd_wait_args)
+/* 0x23-0x24 reserved; blocking name-based waits are intentionally absent. */
+#define	ZFD_LIMIT	_IOW('z', 0x25, struct zfd_limit_args)
+
+/* Bound kernel memory used by one cursor-free enumeration operation. */
+#define	ZFSHANDLE_ENUM_MAX_ENTRIES	16384
 
 #ifdef _KERNEL
 struct thread;
@@ -340,6 +409,13 @@ struct thread;
 /* Hooks called from the FreeBSD zfs module's /dev/zfs ioctl entry. */
 int	zfs_handle_is_mint_ioctl(u_long cmd);
 int	zfs_handle_mint_ioctl(u_long cmd, void *arg, struct thread *td);
+void	zfs_handle_init(void);
+void	zfs_handle_fini(void);
+int	zfs_handle_busy(void);
+void	zfs_handle_upstream_enter(void);
+void	zfs_handle_upstream_exit(void);
+void	zfs_handle_mint_enter(void);
+void	zfs_handle_mint_exit(void);
 #endif
 
 #endif /* !_SYS_ZFSHANDLE_H_ */

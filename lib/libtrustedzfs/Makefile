@@ -9,6 +9,7 @@ SHLIB_MAJOR=	1
 SRCS=		trustedzfs.c
 INCS=		trustedzfs.h
 MAN=		trustedzfs.3
+CFLAGS+=	-I${SRCTOP}/sys
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
@@ -50,9 +51,7 @@ MLINKS+=	trustedzfs.3 tzfs_open.3 \
 		trustedzfs.3 tzfs_inherit.3 \
 		trustedzfs.3 tzfs_promote.3 \
 		trustedzfs.3 tzfs_bookmark.3 \
-		trustedzfs.3 tzfs_destroy_bookmark.3 \
-		trustedzfs.3 tzfs_wait.3 \
-		trustedzfs.3 tzfs_pool_wait.3
+		trustedzfs.3 tzfs_destroy_bookmark.3
 
 MLINKS+=	trustedzfs.3 tzfs_limit_dataset_ioctls.3 \
 		trustedzfs.3 tzfs_limit_pool_ioctls.3 \
