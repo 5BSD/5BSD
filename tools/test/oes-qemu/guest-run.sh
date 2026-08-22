@@ -13,6 +13,17 @@ fi
 echo "== guest =="
 uname -a
 
+if [ -f "$media/kernel" ] && ! cmp -s "$media/kernel" \
+    /boot/kernel/kernel; then
+	echo "== install matching test kernel and reboot =="
+	install -m 555 "$media/kernel" /boot/kernel/kernel
+	if [ -f "$media/zfs.ko" ]; then
+		install -m 555 "$media/zfs.ko" /boot/kernel/zfs.ko
+	fi
+	shutdown -r now
+	exit 0
+fi
+
 echo "== install current OES userspace ABI =="
 mkdir -p /usr/include/security/oes
 cp "$media/include/security/oes/oes.h" \
@@ -42,4 +53,14 @@ if [ "$test_status" -ne 0 ] || [ "$report_status" -ne 0 ]; then
 	kyua report --verbose
 	exit 1
 fi
+
+echo "== unread SCM_RIGHTS vnode-close regressions =="
+for socket_type in stream dgram; do
+	work=$(mktemp -d "/tmp/unix-passfd-${socket_type}.XXXXXX") || exit 1
+	if ! (cd "$work" && \
+	    "$media/kern-tests/unix_passfd_${socket_type}" devfs_orphan); then
+		echo "unix_passfd_${socket_type}:devfs_orphan failed" >&2
+		exit 1
+	fi
+done
 exit 0

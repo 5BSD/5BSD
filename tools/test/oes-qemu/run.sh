@@ -38,17 +38,20 @@ module_obj=$(make -C "$src/sys/modules/oes" -V .OBJDIR)
 tests_obj=$(make -C "$src/tests/sys/security/oes" -V .OBJDIR)
 lib_obj=$(make -C "$src/lib/liboes" -V .OBJDIR)
 logger_obj=$(make -C "$src/usr.sbin/oeslogger" -V .OBJDIR)
+kern_tests_obj=$(make -C "$src/tests/sys/kern" -V .OBJDIR)
+kernel_obj=${OES_KERNEL_OBJ:-}
 
 make -C "$src/sys/modules/oes"
 make -C "$src/lib/liboes"
 make -C "$src/usr.sbin/oeslogger"
 make -C "$src/tests/sys/security/oes"
+make -C "$src/tests/sys/kern" unix_passfd_stream unix_passfd_dgram
 
 work=${OES_VM_WORKDIR:-$(mktemp -d /tmp/oes-qemu.XXXXXX)}
 payload=$work/payload
 iso=$work/oes-tests.iso
 mkdir -p "$payload/tests" "$payload/include/security/oes" \
-	"$payload/lib" "$payload/bin"
+	"$payload/lib" "$payload/bin" "$payload/kern-tests"
 
 cp "$tests_obj/Kyuafile" "$payload/tests/"
 awk -F'"' '/_test_program\{name=/{print $2}' "$tests_obj/Kyuafile" |
@@ -56,6 +59,23 @@ while read testname; do
 	cp "$tests_obj/$testname" "$payload/tests/"
 done
 cp "$module_obj/oes.ko" "$payload/"
+cp "$kern_tests_obj/unix_passfd_stream" \
+	"$kern_tests_obj/unix_passfd_dgram" "$payload/kern-tests/"
+
+# A built-in kernel fix cannot be tested by loading only oes.ko.  When a
+# matching kernel object directory is supplied, stage its kernel and tied ZFS
+# module; guest-run.sh installs them and reboots before running the suite.
+if [ -n "$kernel_obj" ]; then
+	test -f "$kernel_obj/kernel" || {
+		echo "OES_KERNEL_OBJ does not contain kernel" >&2
+		exit 66
+	}
+	cp "$kernel_obj/kernel" "$payload/kernel"
+	if [ -f "$kernel_obj/modules/usr/src/sys/modules/zfs/zfs.ko" ]; then
+		cp "$kernel_obj/modules/usr/src/sys/modules/zfs/zfs.ko" \
+			"$payload/zfs.ko"
+	fi
+fi
 cp "$lib_obj/liboes.so.1" "$payload/lib/"
 cp "$logger_obj/oeslogger" "$payload/bin/"
 cp "$src/sys/security/oes/oes.h" \
@@ -79,4 +99,4 @@ exec "$qemu" "$@" -machine q35 -accel "$accel" \
 	-cpu max -smp "$cpus" -m "$memory" \
 	-snapshot -drive "file=$image,format=raw,if=virtio" \
 	-drive "file=$iso,format=raw,media=cdrom,readonly=on" \
-	-boot c -display none -serial stdio -monitor none -no-reboot
+	-boot c -nic none -display none -serial stdio -monitor none

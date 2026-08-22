@@ -598,8 +598,14 @@ vn_close1(struct vnode *vp, int flags, struct ucred *file_cred,
 	 * A close cannot be denied, so the result is advisory only: the hook
 	 * exists to deliver a close notification (for example to oes(4)).  The
 	 * vnode is locked here, as the vnode check contract requires.
+	 *
+	 * td is NULL when the close is not on behalf of a thread, e.g. when
+	 * unp_discard() disposes of a descriptor that was in flight in a
+	 * SCM_RIGHTS message on a closed socket; attribute those closes to
+	 * curthread, as devfs_close_f() does.
 	 */
-	(void)mac_vnode_check_close(td->td_ucred, vp);
+	(void)mac_vnode_check_close(
+	    td != NULL ? td->td_ucred : curthread->td_ucred, vp);
 #endif
 	error = VOP_CLOSE(vp, flags, file_cred, td);
 	if (keep_ref)

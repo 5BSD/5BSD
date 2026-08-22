@@ -4,6 +4,8 @@
  * not deniable, so this is a NOTIFY-only event.
  */
 #include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/wait.h>
 
 #include <errno.h>
@@ -94,6 +96,65 @@ main(void)
 		    (int)pid);
 
 	(void)waitpid(pid, &status, 0);
+
+	/*
+	 * Regression for closef_nothread(): an unread SCM_RIGHTS descriptor is
+	 * disposed with td == NULL when the receiving socket closes.  OES close
+	 * notification must use curthread credentials and must not dereference
+	 * the absent td (the historical failure was a kernel panic here).
+	 */
+	pid = fork();
+	if (pid < 0) {
+		TEST_FAIL("fork orphan close: %s", strerror(errno));
+		close(fd);
+		return (1);
+	}
+	if (pid == 0) {
+		union {
+			struct cmsghdr align;
+			char buf[CMSG_SPACE(sizeof(int))];
+		} control;
+		struct cmsghdr *cm;
+		struct iovec iov;
+		struct msghdr msg;
+		char byte;
+		int nullfd, sv[2];
+
+		if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0)
+			_exit(2);
+		nullfd = open("/dev/null", O_RDONLY);
+		if (nullfd < 0)
+			_exit(3);
+		memset(&control, 0, sizeof(control));
+		memset(&msg, 0, sizeof(msg));
+		byte = 'x';
+		iov.iov_base = &byte;
+		iov.iov_len = sizeof(byte);
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		msg.msg_control = control.buf;
+		msg.msg_controllen = sizeof(control.buf);
+		cm = CMSG_FIRSTHDR(&msg);
+		cm->cmsg_level = SOL_SOCKET;
+		cm->cmsg_type = SCM_RIGHTS;
+		cm->cmsg_len = CMSG_LEN(sizeof(nullfd));
+		memcpy(CMSG_DATA(cm), &nullfd, sizeof(nullfd));
+		if (sendmsg(sv[0], &msg, 0) != (ssize_t)sizeof(byte))
+			_exit(4);
+		close(nullfd);
+		close(sv[0]);
+		close(sv[1]);
+		_exit(0);
+	}
+	if (test_wait_event_pid(fd, pid, OES_EVENT_NOTIFY_CLOSE, 5000,
+	    &evmsg) == 0)
+		TEST_PASS();
+	else
+		TEST_FAIL("no orphaned-fd NOTIFY_CLOSE observed for child pid %d",
+		    (int)pid);
+	(void)waitpid(pid, &status, 0);
+	if (!WIFEXITED(status) || WEXITSTATUS(status) != 0)
+		TEST_FAIL("orphan-close child status %#x", status);
 	close(fd);
 	TEST_SUITE_END("notify_close");
 	return (0);	/* harness forces non-zero exit if any assertion failed */

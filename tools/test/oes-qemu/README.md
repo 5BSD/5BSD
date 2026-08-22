@@ -20,3 +20,9 @@ prints a verbose report on failure.
 `OES_VM_WORKDIR`, and `SRCTOP` may be used to override defaults. TCG is the
 default accelerator, so the harness does not require `/dev/vmm` or root access
 on the host.
+
+Set `OES_KERNEL_OBJ` to a completed kernel object directory when the change
+under test is built into the kernel rather than `oes.ko`.  The first guest-run
+invocation installs that kernel (and its tied ZFS module) and reboots; run the
+same guest command again to execute the OES suite plus both stock
+`unix_passfd_*:devfs_orphan` SCM_RIGHTS regressions.
