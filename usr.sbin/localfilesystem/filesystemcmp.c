@@ -62,7 +62,6 @@ audit_policy(struct auditcmp_client *audit, const char *label,
  * A session channel and the worker side of the readiness barrier cross
  * exactly one pdfork, then become non-propagating in both processes.
  */
-#ifndef FILESYSTEMCMP_TESTING
 static int
 harden_worker_fd(int fd)
 {
@@ -78,9 +77,10 @@ harden_resource_fd(int fd, bool readonly)
 	struct stat status;
 	cap_rights_t rights;
 
-	if (fstat(fd, &status) == -1 || !S_ISDIR(status.st_mode)) {
-		if (errno == 0)
-			errno = ENOTDIR;
+	if (fstat(fd, &status) == -1)
+		return (-1);
+	if (!S_ISDIR(status.st_mode)) {
+		errno = ENOTDIR;
 		return (-1);
 	}
 	cap_rights_init(&rights, CAP_READ, CAP_PREAD, CAP_SEEK, CAP_FCNTL,
@@ -93,7 +93,6 @@ harden_resource_fd(int fd, bool readonly)
 	    cap_fcntls_limit(fd, 0) == -1 ||
 	    harden_worker_fd(fd) == -1 ? -1 : 0);
 }
-#endif
 
 static int
 send_reply(struct channel_message *request_message,
@@ -412,6 +411,13 @@ filesystemcmp_test_serve(int fd, struct filesystem_store *store,
 {
 
 	return (serve_session(fd, store, NULL, label));
+}
+
+int
+filesystemcmp_test_harden_resource_fd(int fd, bool readonly)
+{
+
+	return (harden_resource_fd(fd, readonly));
 }
 #endif
 

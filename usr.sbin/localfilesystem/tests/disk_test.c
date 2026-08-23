@@ -20,11 +20,11 @@
 static int
 temporary_root(const atf_tc_t *tc)
 {
-	const char *path;
 	int fd;
 
-	path = atf_tc_get_config_var(tc, "srcdir");
-	fd = open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	(void)tc;
+	/* ATF gives every case a private writable working directory. */
+	fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	ATF_REQUIRE(fd >= 0);
 	return (fd);
 }

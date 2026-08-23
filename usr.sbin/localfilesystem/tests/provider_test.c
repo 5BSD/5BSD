@@ -408,10 +408,26 @@ ATF_TC_BODY(arguments, tc)
 	filesystem_store_destroy(store);
 }
 
+ATF_TC_WITHOUT_HEAD(resource_fd_type_validation);
+ATF_TC_BODY(resource_fd_type_validation, tc)
+{
+	char path[] = "resource-file.XXXXXX";
+	int fd;
+
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(ENOTDIR,
+	    filesystemcmp_test_harden_resource_fd(fd, true) == -1);
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_REQUIRE_EQ(0, unlink(path));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, provider_object_lifecycle);
 	ATF_TP_ADD_TC(tp, provider_errors_and_malformed_channel);
 	ATF_TP_ADD_TC(tp, arguments);
+	ATF_TP_ADD_TC(tp, resource_fd_type_validation);
 	return (atf_no_error());
 }
