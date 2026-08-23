@@ -43,7 +43,7 @@ security_contract_head()
 }
 security_contract_body()
 {
-	source="@SRCTOP@/usr.sbin/bsdnotify/notifycmp.c"
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	for token in cap_enter SERVICE_PROTECT_NOFDRECV CAP_XFER_ONCE \
 	    auditcmp_client_prepare auditcmp_client_adopt auditcmp_submit \
 	    service_listener_accept EVFILT_TIMER
@@ -74,15 +74,15 @@ observability_contract_head()
 }
 observability_contract_body()
 {
-	provider="@SRCTOP@/lib/libnotifycmp/notifycmp_provider.d"
-	source="@SRCTOP@/lib/libnotifycmp/notifycmp.c"
+	provider="@SRCTOP@/lib/libnotify/notify_provider.d"
+	source="@SRCTOP@/lib/libnotify/notify.c"
 	daemon_provider="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify_provider.d"
-	daemon_source="@SRCTOP@/usr.sbin/bsdnotify/notifycmp.c"
+	daemon_source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	for probe in rpc publish next reject reconnect; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
 	done
-	for macro in NOTIFYCMP_PROBE_RPC NOTIFYCMP_PROBE_REJECT \
-	    NOTIFYCMP_PROBE_RECONNECT; do
+	for macro in NOTIFY_PROBE_RPC NOTIFY_PROBE_REJECT \
+	    NOTIFY_PROBE_RECONNECT; do
 		atf_check -s exit:0 -o ignore grep "$macro" "$source"
 	done
 	for probe in session__start session__end subscribe publish deliver timer \
@@ -100,7 +100,7 @@ observability_contract_body()
 }
 router_async_contract_body()
 {
-	source="@SRCTOP@/usr.sbin/bsdnotify/notifycmp.c"
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'ROUTER_MAX_SESSIONS' \
 	    grep 'ROUTER_MAX_SESSIONS' "${source}"
 	atf_check -s exit:0 -o match:'channel_set_request_handler' \
@@ -114,7 +114,7 @@ router_async_contract_body()
 }
 router_lifecycle_contract_body()
 {
-	source="@SRCTOP@/usr.sbin/bsdnotify/notifycmp.c"
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'channel_send_event' \
 	    grep channel_send_event "${source}"
 	atf_check -s exit:0 -o match:'service_session_receive_event' \
@@ -133,7 +133,7 @@ worker_channel_contract_head()
 }
 worker_channel_contract_body()
 {
-	source="@SRCTOP@/usr.sbin/bsdnotify/notifycmp.c"
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'service_provider_worker_channel' \
 	    grep service_provider_worker_channel "${source}"
 	atf_check -s exit:0 -o match:'CAP_XFER_TWICE' \

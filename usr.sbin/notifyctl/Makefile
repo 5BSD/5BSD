@@ -6,10 +6,10 @@ MAN=		notifyctl.8
 SRCS=		notifyctl.c policy.c
 
 .PATH:		${SRCTOP}/usr.sbin/bsdnotify
-CFLAGS+=	-I${SRCTOP}/lib/libnotifycmp
+CFLAGS+=	-I${SRCTOP}/lib/libnotify
 CFLAGS+=	-I${SRCTOP}/usr.sbin/bsdnotify
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		notifycmp ucl
+LIBADD=		notify ucl
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

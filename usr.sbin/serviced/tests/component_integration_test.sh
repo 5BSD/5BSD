@@ -205,7 +205,7 @@ atf_test_case notify_global_sessions cleanup
 notify_global_sessions_head()
 {
 	atf_set "descr" \
-	    "libnotifycmp opens independent global sessions with safe default-deny policy"
+	    "libnotify opens independent global sessions with safe default-deny policy"
 	local_component_test_head
 }
 notify_global_sessions_body()
@@ -216,7 +216,7 @@ notify_global_sessions_body()
 	install_audit_service
 	install_global_service notify-service \
 	    "@OBJTOP@/usr.sbin/bsdnotify/bsdnotify" "org.5bsd.notify" \
-	    "org.5bsd.NotifyCmp"
+	    "org.5bsd.Notify"
 	make_boot_consumer notify-consumer \
 	    "[\"notify-subscriber\", \"${WORK}/notify-result.out\"]" ""
 	reload_stack

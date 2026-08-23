@@ -5,20 +5,23 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <notifycmp.h>
-#include <notifycmp_server.h>
+#include <notify.h>
+#include <notify_server.h>
 
-struct notifycmp_client { int open; };
-static struct notifycmp_client client;
-static char subscribed[NOTIFYCMP_MAX_TOPIC + 1];
+struct notify_client { int open; };
+static struct notify_client client;
+static char subscribed[NOTIFY_MAX_TOPIC + 1];
+static uint64_t active_timer;
+static uint64_t timer_sequence;
+static int timer_periodic;
 
 int
-notifycmp_validate_topic(const char *topic, size_t length)
+notify_validate_topic(const char *topic, size_t length)
 {
 	size_t i, segment;
 	unsigned char character;
 
-	if (topic == NULL || length == 0 || length > NOTIFYCMP_MAX_TOPIC) {
+	if (topic == NULL || length == 0 || length > NOTIFY_MAX_TOPIC) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -59,17 +62,20 @@ fail(const char *operation)
 }
 
 int
-notifycmp_client_open(struct notifycmp_client **result)
+notify_client_open(struct notify_client **result)
 {
 	if (result == NULL || fail("open") == -1)
 		return (-1);
 	client.open = 1;
+	subscribed[0] = '\0';
+	active_timer = 0;
+	timer_periodic = 0;
 	*result = &client;
 	return (0);
 }
 
 void
-notifycmp_client_close(struct notifycmp_client *value)
+notify_client_close(struct notify_client *value)
 {
 	if (value == &client) {
 		client.open = 0;
@@ -79,7 +85,7 @@ notifycmp_client_close(struct notifycmp_client *value)
 }
 
 int
-notifycmp_subscribe(struct notifycmp_client *value, const char *topic)
+notify_subscribe(struct notify_client *value, const char *topic)
 {
 	if (value != &client || !client.open || topic == NULL ||
 	    strlcpy(subscribed, topic, sizeof(subscribed)) >= sizeof(subscribed)) {
@@ -90,7 +96,24 @@ notifycmp_subscribe(struct notifycmp_client *value, const char *topic)
 }
 
 int
-notifycmp_publish(struct notifycmp_client *value, const char *topic,
+notify_unsubscribe(struct notify_client *value, const char *topic)
+{
+
+	if (value != &client || !client.open || topic == NULL ||
+	    strcmp(subscribed, topic) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (fail("unsubscribe") == -1)
+		return (-1);
+	subscribed[0] = '\0';
+	if (getenv("CMP_TEST_TRACE_UNSUBSCRIBE") != NULL)
+		fprintf(stderr, "unsubscribed\n");
+	return (0);
+}
+
+int
+notify_publish(struct notify_client *value, const char *topic,
     const void *payload, size_t length)
 {
 	if (value != &client || !client.open ||
@@ -103,7 +126,7 @@ notifycmp_publish(struct notifycmp_client *value, const char *topic,
 }
 
 int
-notifycmp_state_set(struct notifycmp_client *value, const char *topic,
+notify_state_set(struct notify_client *value, const char *topic,
     uint64_t state)
 {
 	if (value != &client || !client.open ||
@@ -115,8 +138,8 @@ notifycmp_state_set(struct notifycmp_client *value, const char *topic,
 }
 
 int
-notifycmp_state_get(struct notifycmp_client *value, const char *topic,
-    struct notifycmp_state_reply *state)
+notify_state_get(struct notify_client *value, const char *topic,
+    struct notify_state_reply *state)
 {
 	if (value != &client || !client.open || state == NULL ||
 	    strcmp(topic, "org.5bsd.test.changed") != 0) {
@@ -125,13 +148,13 @@ notifycmp_state_get(struct notifycmp_client *value, const char *topic,
 	}
 	if (fail("state-get") == -1)
 		return (-1);
-	*state = (struct notifycmp_state_reply){
+	*state = (struct notify_state_reply){
 	    .router_epoch = 7, .generation = 8, .state = 42 };
 	return (0);
 }
 
 ssize_t
-notifycmp_next(struct notifycmp_client *value, struct notifycmp_event *event,
+notify_next(struct notify_client *value, struct notify_event *event,
     size_t capacity, uint32_t timeout)
 {
 	static const char publisher[] = "org.5bsd.provider/service";
@@ -140,6 +163,31 @@ notifycmp_next(struct notifycmp_client *value, struct notifycmp_event *event,
 	uint8_t *cursor;
 
 	topic_length = strlen(subscribed);
+	if (active_timer != 0) {
+		if (value != &client || !client.open || event == NULL ||
+		    capacity < sizeof(*event) || (timeout != 25 &&
+		    timeout != NOTIFY_TIMEOUT_INFINITE)) {
+			errno = EINVAL;
+			return (-1);
+		}
+		if (getenv("CMP_TEST_TIMEOUT") != NULL) {
+			errno = ETIMEDOUT;
+			return (-1);
+		}
+		if (fail("next") == -1)
+			return (-1);
+		memset(event, 0, sizeof(*event));
+		event->type = NOTIFY_EVENT_TIMER;
+		event->router_epoch = 7;
+		event->sequence = ++timer_sequence;
+		event->timestamp_ns = 123456789;
+		event->timer_id = active_timer;
+		if (getenv("CMP_TEST_BAD_TIMER_EVENT") != NULL)
+			event->timer_id++;
+		if (!timer_periodic)
+			active_timer = 0;
+		return (sizeof(*event));
+	}
 	length = sizeof(*event) + sizeof(publisher) - 1 + topic_length +
 	    sizeof(payload) - 1;
 	if (value != &client || !client.open || event == NULL ||
@@ -150,7 +198,7 @@ notifycmp_next(struct notifycmp_client *value, struct notifycmp_event *event,
 	if (fail("next") == -1)
 		return (-1);
 	memset(event, 0, sizeof(*event));
-	event->type = NOTIFYCMP_EVENT_PUBLISH;
+	event->type = NOTIFY_EVENT_PUBLISH;
 	event->router_epoch = 7;
 	event->sequence = 9;
 	event->generation = 8;
@@ -168,7 +216,43 @@ notifycmp_next(struct notifycmp_client *value, struct notifycmp_event *event,
 }
 
 int
-notifycmp_stats(struct notifycmp_client *value, struct notifycmp_stats *stats)
+notify_timer_add(struct notify_client *value, uint64_t timer_id,
+    uint32_t interval, uint32_t flags)
+{
+
+	if (value != &client || !client.open || timer_id != 99 ||
+	    interval != 10 || (flags != 0 && flags != NOTIFY_TIMER_F_PERIODIC)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (fail("timer-add") == -1)
+		return (-1);
+	active_timer = timer_id;
+	timer_periodic = flags == NOTIFY_TIMER_F_PERIODIC;
+	timer_sequence = 0;
+	return (0);
+}
+
+int
+notify_timer_cancel(struct notify_client *value, uint64_t timer_id)
+{
+
+	if (value != &client || !client.open || timer_id != active_timer ||
+	    !timer_periodic) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (fail("timer-cancel") == -1)
+		return (-1);
+	active_timer = 0;
+	timer_periodic = 0;
+	if (getenv("CMP_TEST_TRACE_TIMER_CANCEL") != NULL)
+		fprintf(stderr, "timer-canceled\n");
+	return (0);
+}
+
+int
+notify_stats(struct notify_client *value, struct notify_stats *stats)
 {
 	if (value != &client || !client.open || stats == NULL) {
 		errno = EINVAL;

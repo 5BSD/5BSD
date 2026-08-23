@@ -143,7 +143,7 @@ pkgbase_component_metadata_body()
 	    libservice libservice-tests \
 	    libfilesystemcmp libfilesystemcmp-tests \
 	    liblogcmp liblogcmp-tests \
-	    libnotifycmp libnotifycmp-tests \
+	    libnotify libnotify-tests \
 	    libtracecmp libtracecmp-tests \
 	    libnetworkcmp libnetworkcmp-tests \
 	    libshmring libshmring-tests
@@ -167,7 +167,7 @@ pkgbase_component_metadata_body()
 	    libservice-tests \
 	    liblogcmp-tests \
 	    libtracecmp-tests \
-	    libnotifycmp-tests \
+	    libnotify-tests \
 	    libfilesystemcmp-tests libnetworkcmp-tests libshmring-tests
 	do
 		atf_check -s exit:0 -o match:'set = "tests"' \
@@ -205,10 +205,10 @@ pkgbase_component_metadata_body()
 	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
 	    grep '^PACKAGE' "${src}/lib/libtracecmp/Makefile"
 	atf_check -s exit:0 -o match:'PACKAGE=lib.*LIB' \
-	    grep '^PACKAGE' "${src}/lib/libnotifycmp/Makefile"
+	    grep '^PACKAGE' "${src}/lib/libnotify/Makefile"
 	for package in libauditcmp libchannel libshmring libfilesystemcmp \
 	    libnetworkcmp \
-	    liblogcmp libnotifycmp libtracecmp localfilesystem localnetwork \
+	    liblogcmp libnotify libtracecmp localfilesystem localnetwork \
 	    auditbrokerd logd bsdnotify traced
 	do
 		atf_check -s exit:0 -o match:"WORLDPACKAGE=.*${package}" \
@@ -220,7 +220,7 @@ pkgbase_component_metadata_body()
 	done
 	for package in libauditcmp libchannel libshmring libfilesystemcmp \
 	    libnetworkcmp \
-	    liblogcmp libnotifycmp libtracecmp localfilesystem localnetwork \
+	    liblogcmp libnotify libtracecmp localfilesystem localnetwork \
 	    auditbrokerd logd bsdnotify traced
 	do
 		atf_check -s exit:0 \
@@ -281,7 +281,7 @@ pkgbase_component_metadata_body()
 	    'service_protocol\\.(c|h)|SERVICE_PROTOCOL_HEADER_FIELDS' \
 	    "${src}/lib/libservice/Makefile" \
 	    "${src}/lib/libservice/libservice.h"
-	for typed in auditcmp filesystemcmp networkcmp logcmp notifycmp tracecmp; do
+	for typed in auditcmp filesystemcmp networkcmp logcmp notify tracecmp; do
 		atf_check -s exit:0 -o match:"${typed}_message_init" \
 		    grep "${typed}_message_init" \
 		    "${src}/lib/lib${typed}/${typed}_server.h"
@@ -291,7 +291,7 @@ pkgbase_component_metadata_body()
 		atf_check -s exit:1 -o empty grep 'service_protocol.h' \
 		    "${src}/lib/lib${typed}/${typed}_protocol.h"
 	done
-	for typed in auditcmp filesystemcmp networkcmp logcmp notifycmp tracecmp; do
+	for typed in auditcmp filesystemcmp networkcmp logcmp notify tracecmp; do
 		atf_check -s exit:0 -o match:'STATIC_CFLAGS.*PICFLAG' \
 		    grep 'STATIC_CFLAGS.*PICFLAG' \
 		    "${src}/lib/lib${typed}/Makefile"
@@ -307,7 +307,7 @@ pkgbase_component_metadata_body()
 	    'localnetwork:NETWORKCMP:localnetwork' \
 	    'logd:LOGCMP:logd' \
 	    'traced:TRACECMP:traced' \
-	    'bsdnotify:NOTIFYCMP:bsdnotify'; do
+	    'bsdnotify:NOTIFY:bsdnotify'; do
 		dir=${spec%%:*}
 		rest=${spec#*:}
 		prefix=${rest%%:*}
@@ -329,7 +329,7 @@ pkgbase_component_metadata_body()
 
 	for event in AUE_SERVICED_COMPONENT \
 	    AUE_NETWORKCMP_POLICY AUE_FILESYSTEMCMP_POLICY AUE_LOGCMP_POLICY \
-	    AUE_TRACECMP_POLICY AUE_NOTIFYCMP_POLICY
+	    AUE_TRACECMP_POLICY AUE_NOTIFY_POLICY
 	do
 		atf_check -s exit:0 -o match:"${event}" \
 		    grep "${event}" "${src}/sys/bsm/audit_kevents.h"
@@ -351,15 +351,15 @@ pkgbase_component_metadata_body()
 	atf_check -s exit:0 -o match:'^43332:AUE_TRACECMP_POLICY:.*:ad$' \
 	    grep '^43332:AUE_TRACECMP_POLICY:' \
 	    "${src}/contrib/openbsm/etc/audit_event"
-	atf_check -s exit:0 -o match:'^43333:AUE_NOTIFYCMP_POLICY:.*:ad$' \
-	    grep '^43333:AUE_NOTIFYCMP_POLICY:' \
+	atf_check -s exit:0 -o match:'^43333:AUE_NOTIFY_POLICY:.*:ad$' \
+	    grep '^43333:AUE_NOTIFY_POLICY:' \
 	    "${src}/contrib/openbsm/etc/audit_event"
 	for provider in localfilesystem localnetwork logd bsdnotify; do
 		case ${provider} in
 		localfilesystem) source=filesystemcmp.c ;;
 		localnetwork) source=networkcmp.c ;;
 		logd) source=logcmp.c ;;
-		bsdnotify) source=notifycmp.c ;;
+		bsdnotify) source=notify.c ;;
 		esac
 		atf_check -s exit:0 -o match:'auditcmp_submit' \
 		    grep auditcmp_submit \
@@ -368,7 +368,7 @@ pkgbase_component_metadata_body()
 		    "${src}/usr.sbin/${provider}/${source}"
 	done
 	for event in AUE_FILESYSTEMCMP_POLICY AUE_NETWORKCMP_POLICY \
-	    AUE_LOGCMP_POLICY AUE_NOTIFYCMP_POLICY; do
+	    AUE_LOGCMP_POLICY AUE_NOTIFY_POLICY; do
 		atf_check -s exit:0 -o match:"${event}" grep "${event}" \
 		    "${src}/usr.sbin/auditbrokerd/auditcmp_policy.c"
 	done
@@ -420,7 +420,7 @@ pkgbase_component_metadata_body()
 	    "${src}/lib/libfilesystemcmp/filesystemcmp_provider.d" \
 	    "${src}/lib/liblogcmp/logcmp_provider.d" \
 	    "${src}/lib/libtracecmp/tracecmp_provider.d" \
-	    "${src}/lib/libnotifycmp/notifycmp_provider.d" \
+	    "${src}/lib/libnotify/notify_provider.d" \
 	    "${src}/lib/libchannel/channel_provider.d" \
 	    "${src}/lib/libshmring/shmring_provider.d"
 	do
@@ -450,7 +450,7 @@ component_selector_contract_body()
 		atf_check -s exit:1 -o empty -e empty \
 		    grep '_ENV' "${src}/lib/lib${library}/${library}.h"
 	done
-	for library in logcmp tracecmp notifycmp; do
+	for library in logcmp tracecmp notify; do
 		atf_check -s exit:0 -o match:'service_connect' \
 		    grep service_connect "${src}/lib/lib${library}/${library}.c"
 		atf_check -s exit:1 -o empty -e empty \
@@ -550,20 +550,20 @@ operational_name_contract_body()
 	# deployment boundaries.  Internal protocol identifiers are deliberately
 	# outside this check.
 	atf_check -s exit:1 -o empty -e empty grep -E \
-		'/var/run/(trailbossd|wranglerd)([./"]|$)|/var/db/wranglerd([/"]|$)|/etc/(trailbossd|logcmp|notifycmp|tracecmp|auditcmp)([.]|/|"|$)' \
+		'/var/run/(trailbossd|wranglerd)([./"]|$)|/var/db/wranglerd([/"]|$)|/etc/(trailbossd|logcmp|notify|tracecmp|auditcmp)([.]|/|"|$)' \
 	    "${rcscript}" "${rcconf}" \
 	    "${src}/usr.sbin/oracled/oracled.conf" \
 	    "${src}/usr.sbin/oracled/oracled.conf.5"
 	atf_check -s exit:1 -o empty -e empty grep -E \
-		'^\\.Xr (filesystemcmp|networkcmp|logcmp|notifycmp|tracecmp|auditcmp|trailbossd|wranglerd) 8' \
+		'^\\.Xr (filesystemcmp|networkcmp|logcmp|notify|tracecmp|auditcmp|trailbossd|wranglerd) 8' \
 	    "${src}/lib/libfilesystemcmp/libfilesystemcmp.3" \
 	    "${src}/lib/libnetworkcmp/libnetworkcmp.3" \
 	    "${src}/lib/liblogcmp/liblogcmp.3" \
-	    "${src}/lib/libnotifycmp/libnotifycmp.3" \
+	    "${src}/lib/libnotify/libnotify.3" \
 	    "${src}/lib/libtracecmp/libtracecmp.3" \
 	    "${src}/lib/libauditcmp/libauditcmp.3"
 	atf_check -s exit:1 -o empty -e empty grep -E \
-	    '@OBJTOP@/usr.sbin/(filesystemcmp|networkcmp|logcmp|notifycmp|tracecmp|auditcmp)/' \
+	    '@OBJTOP@/usr.sbin/(filesystemcmp|networkcmp|logcmp|notify|tracecmp|auditcmp)/' \
 	    "${src}/usr.sbin/serviced/tests/component_integration_test.sh"
 	atf_check -s exit:0 -o match:'cap_openlog.*"logd"' \
 	    grep 'cap_openlog.*"logd"' \
@@ -580,7 +580,7 @@ typed_header_boundaries_body()
 {
 	src="@SRCTOP@"
 
-	for library in filesystemcmp networkcmp logcmp notifycmp tracecmp \
+	for library in filesystemcmp networkcmp logcmp notify tracecmp \
 	    auditcmp
 	do
 		client="${src}/lib/lib${library}/${library}.h"

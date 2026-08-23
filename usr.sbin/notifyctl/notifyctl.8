@@ -1,10 +1,10 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 31, 2026
+.Dd August 23, 2026
 .Dt NOTIFYCTL 8
 .Os
 .Sh NAME
 .Nm notifyctl
-.Nd validate and operate the NotifyCmp service
+.Nd validate and operate the Notify service
 .Sh SYNOPSIS
 .Nm
 .Cm configtest
@@ -20,6 +20,10 @@
 .Cm state-set
 .Ar topic value
 .Nm
+.Cm timer
+.Ar timer-id interval-ms
+.Op Ar count Op Ar timeout-ms
+.Nm
 .Cm watch
 .Ar topic
 .Op Ar timeout-ms
@@ -30,7 +34,7 @@
 is the administrator and diagnostic client for
 .Xr bsdnotify 8 .
 It uses
-.Xr libnotifycmp 3
+.Xr libnotify 3
 for all live service operations and is therefore subject to the immutable
 serviced identity policy of the invoking service.
 It receives no implicit administrative bypass.
@@ -44,12 +48,27 @@ It does not modify or reload the running service.
 .Cm publish ,
 .Cm state-get ,
 .Cm state-set ,
+.Cm timer ,
 .Cm watch ,
 and
 .Cm stats
 provide bounded diagnostic access to the corresponding public API.
 Payload output is written as opaque bytes after one metadata line.
+.Pp
+The
+.Cm timer
+command adds an owner-scoped timer and waits for its events on the same
+session.
+The timer identifier must be nonzero and the interval must be between one
+millisecond and 24 hours.
+The default count is one, producing a one-shot timer.
+A count greater than one requests a periodic timer and cancels it after
+exactly that many events.
+The optional receive timeout applies separately to each event.
+The
+.Cm watch
+command explicitly unsubscribes after receiving its event.
 .Sh SEE ALSO
-.Xr libnotifycmp 3 ,
+.Xr libnotify 3 ,
 .Xr bsdnotify 8 ,
 .Xr serviced 8

@@ -17,8 +17,8 @@ ATF_TC_BODY(identity_map, tc)
 	    auditcmp_policy_event("org.5bsd.NetworkCmp"));
 	ATF_CHECK_EQ(AUE_LOGCMP_POLICY,
 	    auditcmp_policy_event("org.5bsd.LogCmp"));
-	ATF_CHECK_EQ(AUE_NOTIFYCMP_POLICY,
-	    auditcmp_policy_event("org.5bsd.NotifyCmp"));
+	ATF_CHECK_EQ(AUE_BSDNOTIFY_POLICY,
+	    auditcmp_policy_event("org.5bsd.Notify"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("org.5bsd.FileSystemCmp.child"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("*"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event(""));

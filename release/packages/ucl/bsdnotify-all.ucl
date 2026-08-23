@@ -1,6 +1,6 @@
-comment = "Capability-mode NotifyCmp provider"
+comment = "Capability-mode BsdNotify provider"
 
 desc = <<EOD
-The NotifyCmp provider and verified /Capabilities/System/BsdNotify.cap bundle,
+The BsdNotify provider and verified /Capabilities/System/BsdNotify.cap bundle,
 with a system router and coalition-scoped consumer relays.
 EOD

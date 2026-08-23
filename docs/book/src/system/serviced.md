@@ -162,7 +162,7 @@ all under `usr.sbin/`, run as the pkgbase `capability` user:
 | `localfilesystem` | `org.5bsd.FileSystemCmp` | scratch, persistent, and read-only-bundle namespaces with durable object/byte quotas | `filesystemcmpctl` |
 | `localnetwork` | `org.5bsd.NetworkCmp` | kernel TCP/UDP through a provider-owned socket table; per-session Casper DNS | `networkcmpctl` |
 | `logd` | `org.5bsd.LogCmp` / `org.5bsd.log` | structured persistent logging with identity-scoped retained queries | `logctl` |
-| `bsdnotify` | `org.5bsd.NotifyCmp` / `org.5bsd.notify` | global event service; default-deny publish/subscribe until an identity ACL is granted | `notifyctl` |
+| `bsdnotify` | `org.5bsd.Notify` / `org.5bsd.notify` | global event service; default-deny publish/subscribe until an identity ACL is granted | `notifyctl` |
 | `localcrypto` | `org.5bsd.CryptoCmp` | local authority-replacement provider for `DTYPE_CRYPTO` | — |
 
 Each ctl tool is a strict `configtest` validator plus a bounded diagnostic

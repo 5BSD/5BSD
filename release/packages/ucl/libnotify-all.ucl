@@ -1,4 +1,4 @@
-comment = "NotifyCmp client library"
+comment = "Notify client library"
 
 desc = <<EOD
 Typed global-service API and validated protocol for policy-controlled publish,

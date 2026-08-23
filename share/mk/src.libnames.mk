@@ -196,7 +196,7 @@ _LIBRARIES=	\
 		kldmgr \
 		l \
 		logcmp \
-		notifycmp \
+		notify \
 		rebootctl \
 		tracecmp \
 		lzma \
@@ -345,7 +345,7 @@ _DP_filesystemcmp=	pthread service
 _DP_cryptocmp=	pthread service
 _DP_logcmp=	pthread service shmring
 _DP_kldmgr=	service
-_DP_notifycmp=	pthread service
+_DP_notify=	pthread service
 _DP_oes=
 _DP_rebootctl=	service
 _DP_tracecmp=	dtrace service

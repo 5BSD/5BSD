@@ -7,16 +7,16 @@ PROGS+=		notifyctl_success_bin
 BINDIR_notifyctl_test_bin=	${TESTSDIR}
 SRCS.notifyctl_test_bin=	notifyctl.c policy.c
 NO_SHARED.notifyctl_test_bin=	yes
-CFLAGS.notifyctl_test_bin+=	-I${SRCTOP}/lib/libnotifycmp
+CFLAGS.notifyctl_test_bin+=	-I${SRCTOP}/lib/libnotify
 CFLAGS.notifyctl_test_bin+=	-I${SRCTOP}/usr.sbin/bsdnotify
 CFLAGS.notifyctl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD.notifyctl_test_bin+=	notifycmp ucl
+LIBADD.notifyctl_test_bin+=	notify ucl
 
 BINDIR_notifyctl_success_bin=	${TESTSDIR}
 SRCS.notifyctl_success_bin=	notifyctl_success_impl.c \
-	notifycmp_policy_success_impl.c fake_notifycmp.c
+	notify_policy_success_impl.c fake_notify.c
 NO_SHARED.notifyctl_success_bin=	yes
-CFLAGS.notifyctl_success_bin+=	-I${SRCTOP}/lib/libnotifycmp
+CFLAGS.notifyctl_success_bin+=	-I${SRCTOP}/lib/libnotify
 CFLAGS.notifyctl_success_bin+=	-I${SRCTOP}/usr.sbin/bsdnotify
 CFLAGS.notifyctl_success_bin+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.notifyctl_success_bin+=	ucl

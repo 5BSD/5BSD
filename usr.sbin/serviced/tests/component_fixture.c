@@ -26,7 +26,7 @@
 #include <filesystemcmp.h>
 #include <logcmp.h>
 #include <networkcmp.h>
-#include <notifycmp.h>
+#include <notify.h>
 #include <tracecmp.h>
 
 static struct service_context *fixture_service_context;
@@ -57,7 +57,7 @@ struct log_thread_context {
 };
 
 struct notify_thread_context {
-	struct notifycmp_client	*client;
+	struct notify_client	*client;
 	unsigned		 count;
 	int			 error;
 };
@@ -177,12 +177,12 @@ static void *
 notify_thread(void *argument)
 {
 	struct notify_thread_context *context;
-	struct notifycmp_stats stats;
+	struct notify_stats stats;
 	unsigned i;
 
 	context = argument;
 	for (i = 0; i < context->count; i++)
-		if (notifycmp_stats(context->client, &stats) == -1) {
+		if (notify_stats(context->client, &stats) == -1) {
 			context->error = errno;
 			break;
 		}
@@ -498,8 +498,8 @@ static int
 run_notify_subscriber(const char *output_path)
 {
 	struct notify_thread_context contexts[2];
-	struct notifycmp_client *client, *second, *reopened;
-	struct notifycmp_stats stats;
+	struct notify_client *client, *second, *reopened;
+	struct notify_stats stats;
 	pthread_t threads[2];
 	int inherited[64], j, out, status;
 	pid_t child;
@@ -507,19 +507,19 @@ run_notify_subscriber(const char *output_path)
 	out = open(output_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 	if (out == -1 || fixture_service_initialize() == -1 ||
 	    service_authorize_capabilities(fixture_service_context) == -1 ||
-	    notifycmp_client_open(&client) == -1 ||
-	    notifycmp_client_open(&second) == -1 ||
+	    notify_client_open(&client) == -1 ||
+	    notify_client_open(&second) == -1 ||
 	    (child = fork()) == -1)
 		return (1);
 	if (child == 0) {
-		if (notifycmp_stats(client, &stats) != -1)
+		if (notify_stats(client, &stats) != -1)
 			_exit(1);
 		for (j = 0; j < (int)nitems(inherited); j++) {
 			inherited[j] = open("/dev/null", O_RDONLY | O_CLOEXEC);
 			if (inherited[j] == -1)
 				_exit(1);
 		}
-		notifycmp_client_close(client);
+		notify_client_close(client);
 		for (j = 0; j < (int)nitems(inherited); j++) {
 			if (fcntl(inherited[j], F_GETFD) == -1)
 				_exit(1);
@@ -534,15 +534,15 @@ run_notify_subscriber(const char *output_path)
 	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1)
 		return (1);
 	errno = 0;
-	if (notifycmp_subscribe(client, "integration.forbidden") != -1 ||
+	if (notify_subscribe(client, "integration.forbidden") != -1 ||
 	    errno != EACCES)
 		return (1);
 	errno = 0;
-	if (notifycmp_publish(client, "integration.ready", "denied", 6) != -1 ||
+	if (notify_publish(client, "integration.ready", "denied", 6) != -1 ||
 	    errno != EACCES)
 		return (1);
 	errno = 0;
-	if (notifycmp_timer_add(client, 42, 10, 0) != -1 ||
+	if (notify_timer_add(client, 42, 10, 0) != -1 ||
 	    errno != EACCES || fixture_service_ready() == -1)
 		return (1);
 	memset(contexts, 0, sizeof(contexts));
@@ -556,16 +556,16 @@ run_notify_subscriber(const char *output_path)
 	    pthread_join(threads[1], NULL) != 0 ||
 	    contexts[0].error != 0 || contexts[1].error != 0)
 		return (1);
-	notifycmp_client_close(second);
-	if (notifycmp_client_open(&reopened) == -1 ||
-	    notifycmp_stats(reopened, &stats) == -1)
+	notify_client_close(second);
+	if (notify_client_open(&reopened) == -1 ||
+	    notify_stats(reopened, &stats) == -1)
 		return (1);
 	if (dprintf(out,
 	    "notification=ok\ndefault_deny=ok\nmulti_open=ok\n"
 	    "concurrent=ok\nclose_reopen=ok\nfork_isolated=ok\n") < 0)
 		return (1);
-	notifycmp_client_close(reopened);
-	notifycmp_client_close(client);
+	notify_client_close(reopened);
+	notify_client_close(client);
 	close(out);
 	return (0);
 }
@@ -573,28 +573,28 @@ run_notify_subscriber(const char *output_path)
 static int
 run_notify_publisher(void)
 {
-	struct notifycmp_client *client;
+	struct notify_client *client;
 
 	if (fixture_service_initialize() == -1 || service_authorize_capabilities(fixture_service_context) == -1 ||
 	    service_worker_protect(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1 ||
-	    notifycmp_client_open(&client) == -1 ||
+	    notify_client_open(&client) == -1 ||
 	    fixture_service_ready() == -1)
 		return (1);
 	errno = 0;
-	if (notifycmp_publish(client, "integration.forbidden", "no", 2) != -1 ||
+	if (notify_publish(client, "integration.forbidden", "no", 2) != -1 ||
 	    errno != EACCES)
 		return (1);
 	errno = 0;
-	if (notifycmp_subscribe(client, "integration.ready") != -1 ||
+	if (notify_subscribe(client, "integration.ready") != -1 ||
 	    errno != EACCES)
 		return (1);
 	errno = 0;
-	if (notifycmp_timer_add(client, 9, 10, 0) != -1 ||
+	if (notify_timer_add(client, 9, 10, 0) != -1 ||
 	    errno != EACCES)
 		return (1);
-	notifycmp_client_close(client);
+	notify_client_close(client);
 	return (0);
 }
 

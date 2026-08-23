@@ -16,8 +16,8 @@
 
 #include <ucl.h>
 
-#include <notifycmp.h>
-#include <notifycmp_server.h>
+#include <notify.h>
+#include <notify_server.h>
 
 #include "policy.h"
 
@@ -28,7 +28,7 @@ valid_client_label(const char *label, size_t length)
 	size_t i;
 	unsigned char character;
 
-	if (label == NULL || length < 3 || length > NOTIFYCMP_MAX_PUBLISHER ||
+	if (label == NULL || length < 3 || length > NOTIFY_MAX_PUBLISHER ||
 	    label[0] == '/' || label[length - 1] == '/')
 		return (false);
 	separator = false;
@@ -51,7 +51,7 @@ valid_client_label(const char *label, size_t length)
 
 static int
 parse_topics(const ucl_object_t *root, const char *key,
-    struct notifycmp_policy_topic topics[static NOTIFYCMP_POLICY_TOPIC_MAX],
+    struct notify_policy_topic topics[static NOTIFY_POLICY_TOPIC_MAX],
     size_t *count, bool *all)
 {
 	const ucl_object_t *array, *entry;
@@ -69,11 +69,15 @@ parse_topics(const ucl_object_t *root, const char *key,
 	iterator = NULL;
 	while ((entry = ucl_object_iterate(array, &iterator, true)) != NULL) {
 		if (ucl_object_type(entry) != UCL_STRING ||
-		    *count == NOTIFYCMP_POLICY_TOPIC_MAX) {
+		    *count == NOTIFY_POLICY_TOPIC_MAX) {
 			errno = EINVAL;
 			return (-1);
 		}
 		name = ucl_object_tostring(entry);
+		if (name == NULL) {
+			errno = EINVAL;
+			return (-1);
+		}
 		length = strlen(name);
 		if (strcmp(name, "*") == 0) {
 			if (*all || *count != 0) {
@@ -83,7 +87,7 @@ parse_topics(const ucl_object_t *root, const char *key,
 			*all = true;
 			continue;
 		}
-		if (*all || notifycmp_validate_topic(name, length) == -1)
+		if (*all || notify_validate_topic(name, length) == -1)
 			return (-1);
 		for (size_t i = 0; i < *count; i++)
 			if (topics[i].length == length &&
@@ -99,7 +103,7 @@ parse_topics(const ucl_object_t *root, const char *key,
 }
 
 int
-notifycmp_policy_parse(const char *json, struct notifycmp_policy *policy)
+notify_policy_parse(const char *json, struct notify_policy *policy)
 {
 	static const char *const names[] = {
 		"publish", "subscribe", "timers"
@@ -132,6 +136,10 @@ notifycmp_policy_parse(const char *json, struct notifycmp_policy *policy)
 	iterator = NULL;
 	while ((entry = ucl_object_iterate(root, &iterator, true)) != NULL) {
 		key = ucl_object_key(entry);
+		if (key == NULL) {
+			errno = EINVAL;
+			goto fail_root;
+		}
 		for (i = 0; i < nitems(names); i++)
 			if (strcmp(key, names[i]) == 0)
 				break;
@@ -169,7 +177,7 @@ fail:
 }
 
 static bool
-topic_allowed(const struct notifycmp_policy_topic *topics, size_t count,
+topic_allowed(const struct notify_policy_topic *topics, size_t count,
     bool all, const char *topic, size_t length)
 {
 	size_t i;
@@ -184,7 +192,7 @@ topic_allowed(const struct notifycmp_policy_topic *topics, size_t count,
 }
 
 bool
-notifycmp_policy_can_publish(const struct notifycmp_policy *policy,
+notify_policy_can_publish(const struct notify_policy *policy,
     const char *topic, size_t length)
 {
 
@@ -193,7 +201,7 @@ notifycmp_policy_can_publish(const struct notifycmp_policy *policy,
 }
 
 bool
-notifycmp_policy_can_subscribe(const struct notifycmp_policy *policy,
+notify_policy_can_subscribe(const struct notify_policy *policy,
     const char *topic, size_t length)
 {
 
@@ -202,7 +210,7 @@ notifycmp_policy_can_subscribe(const struct notifycmp_policy *policy,
 }
 
 static int
-policy_db_from_root(const ucl_object_t *root, struct notifycmp_policy_db *db)
+policy_db_from_root(const ucl_object_t *root, struct notify_policy_db *db)
 {
 	const ucl_object_t *clients, *entry, *top;
 	ucl_object_iter_t iterator;
@@ -216,11 +224,14 @@ policy_db_from_root(const ucl_object_t *root, struct notifycmp_policy_db *db)
 		return (-1);
 	}
 	iterator = NULL;
-	while ((top = ucl_object_iterate(root, &iterator, true)) != NULL)
-		if (strcmp(ucl_object_key(top), "clients") != 0) {
+	while ((top = ucl_object_iterate(root, &iterator, true)) != NULL) {
+		const char *key = ucl_object_key(top);
+
+		if (key == NULL || strcmp(key, "clients") != 0) {
 			errno = EINVAL;
 			return (-1);
 		}
+	}
 	clients = ucl_object_lookup(root, "clients");
 	if (ucl_object_type(clients) != UCL_OBJECT) {
 		errno = EINVAL;
@@ -228,7 +239,7 @@ policy_db_from_root(const ucl_object_t *root, struct notifycmp_policy_db *db)
 	}
 	iterator = NULL;
 	while ((entry = ucl_object_iterate(clients, &iterator, true)) != NULL) {
-		if (db->nclients == NOTIFYCMP_POLICY_CLIENT_MAX ||
+		if (db->nclients == NOTIFY_POLICY_CLIENT_MAX ||
 		    ucl_object_type(entry) != UCL_OBJECT) {
 			errno = E2BIG;
 			return (-1);
@@ -239,14 +250,14 @@ policy_db_from_root(const ucl_object_t *root, struct notifycmp_policy_db *db)
 			errno = EINVAL;
 			return (-1);
 		}
-		if (notifycmp_policy_db_lookup(db, label) != NULL) {
+		if (notify_policy_db_lookup(db, label) != NULL) {
 			errno = EEXIST;
 			return (-1);
 		}
 		encoded = ucl_object_emit(entry, UCL_EMIT_JSON_COMPACT);
 		if (encoded == NULL)
 			return (-1);
-		if (notifycmp_policy_parse(encoded,
+		if (notify_policy_parse(encoded,
 		    &db->clients[db->nclients].policy) == -1) {
 			free(encoded);
 			return (-1);
@@ -259,7 +270,7 @@ policy_db_from_root(const ucl_object_t *root, struct notifycmp_policy_db *db)
 }
 
 int
-notifycmp_policy_db_parse(const char *text, struct notifycmp_policy_db *db)
+notify_policy_db_parse(const char *text, struct notify_policy_db *db)
 {
 	struct ucl_parser *parser;
 	ucl_object_t *root;
@@ -279,7 +290,7 @@ notifycmp_policy_db_parse(const char *text, struct notifycmp_policy_db *db)
 	}
 	root = ucl_parser_get_object(parser);
 	result = policy_db_from_root(root, db);
-	error = errno;
+	error = result == -1 ? (errno != 0 ? errno : EINVAL) : 0;
 	ucl_object_unref(root);
 	ucl_parser_free(parser);
 	errno = error;
@@ -292,7 +303,7 @@ fail:
 }
 
 int
-notifycmp_policy_db_load(const char *path, struct notifycmp_policy_db *db)
+notify_policy_db_load(const char *path, struct notify_policy_db *db)
 {
 	struct stat status;
 	char *text;
@@ -321,17 +332,17 @@ notifycmp_policy_db_load(const char *path, struct notifycmp_policy_db *db)
 		errno = EPERM;
 		goto fail;
 	}
-	if (status.st_size < 0 || status.st_size > NOTIFYCMP_POLICY_FILE_MAX) {
+	if (status.st_size < 0 || status.st_size > NOTIFY_POLICY_FILE_MAX) {
 		errno = EFBIG;
 		goto fail;
 	}
-	text = malloc(NOTIFYCMP_POLICY_FILE_MAX + 2);
+	text = malloc(NOTIFY_POLICY_FILE_MAX + 2);
 	if (text == NULL)
 		goto fail;
 	done = 0;
 	for (;;) {
 		amount = read(fd, text + done,
-		    NOTIFYCMP_POLICY_FILE_MAX + 1 - done);
+		    NOTIFY_POLICY_FILE_MAX + 1 - done);
 		if (amount == -1 && errno == EINTR)
 			continue;
 		if (amount == -1)
@@ -339,7 +350,7 @@ notifycmp_policy_db_load(const char *path, struct notifycmp_policy_db *db)
 		if (amount == 0)
 			break;
 		done += (size_t)amount;
-		if (done > NOTIFYCMP_POLICY_FILE_MAX) {
+		if (done > NOTIFY_POLICY_FILE_MAX) {
 			errno = EFBIG;
 			goto fail_text;
 		}
@@ -350,7 +361,7 @@ notifycmp_policy_db_load(const char *path, struct notifycmp_policy_db *db)
 		goto fail_text_closed;
 	}
 	text[done] = '\0';
-	result = notifycmp_policy_db_parse(text, db);
+	result = notify_policy_db_parse(text, db);
 	error = result == -1 ? errno : 0;
 	free(text);
 	errno = error;
@@ -374,8 +385,8 @@ fail:
 	return (-1);
 }
 
-const struct notifycmp_policy *
-notifycmp_policy_db_lookup(const struct notifycmp_policy_db *db,
+const struct notify_policy *
+notify_policy_db_lookup(const struct notify_policy_db *db,
     const char *label)
 {
 	size_t i;

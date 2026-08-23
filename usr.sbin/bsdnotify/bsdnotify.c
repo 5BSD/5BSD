@@ -27,14 +27,14 @@
 #include <libservice.h>
 
 #include "broker.h"
-#include "notifycmp.h"
-#include <notifycmp_server.h>
+#include "notify.h"
+#include <notify_server.h>
 #include "bsdnotify_probes.h"
 #include "policy.h"
 #include "transport.h"
 
-#define	NOTIFYCMP_PROVIDER_NAME	NOTIFYCMP_INTERFACE
-#define	NOTIFYCMP_POLICY_PATH \
+#define	NOTIFY_PROVIDER_NAME	NOTIFY_INTERFACE
+#define	NOTIFY_POLICY_PATH \
 	"/etc/bsdnotify.conf"
 #define	ROUTER_CONTROL_MAGIC	0x4e524354U
 #define	ROUTER_EVENT_CONTROL	1
@@ -43,15 +43,15 @@
 #define	ROUTER_EVENT_NEXT_TIMER	4
 #define	ROUTER_MAX_SESSIONS	65536U
 
-union notifycmp_buffer {
+union notify_buffer {
 	max_align_t align;
-	uint8_t bytes[NOTIFYCMP_MAX_MESSAGE];
+	uint8_t bytes[NOTIFY_MAX_MESSAGE];
 };
 
 struct router_control {
 	uint32_t	magic;
 	uint32_t	queue_depth;
-	char		label[NOTIFYCMP_MAX_PUBLISHER + 1];
+	char		label[NOTIFY_MAX_PUBLISHER + 1];
 };
 
 struct router_control_reply {
@@ -110,28 +110,28 @@ struct router_timer {
 struct router_session {
 	struct event_source		 source;
 	struct router_session		*next;
-	struct notifycmp_broker_client	*client;
+	struct notify_broker_client	*client;
 	struct router			*router;
 	struct channel			*channel;
-	const struct notifycmp_policy	*policy;
+	const struct notify_policy	*policy;
 	struct router_timer		*timers;
 	struct router_timer		*next_timer;
 	struct channel_message		*pending;
-	struct notifycmp_msg		 pending_wire;
+	struct notify_msg		 pending_wire;
 	bool				 pending_active;
 	size_t				 timer_count;
 	int				 terminal_error;
 	int				 fd;
-	char				 label[NOTIFYCMP_MAX_PUBLISHER + 1];
+	char				 label[NOTIFY_MAX_PUBLISHER + 1];
 };
 
 struct router {
-	struct notifycmp_broker	*broker;
+	struct notify_broker	*broker;
 	struct router_session	*sessions;
 	struct event_source	 control_source;
 	struct router_session	*garbage_sessions;
 	struct router_timer	*garbage_timers;
-	const struct notifycmp_policy_db *policy_db;
+	const struct notify_policy_db *policy_db;
 	struct auditcmp_client	*audit;
 	struct channel		*control_channel;
 	size_t			 nsessions;
@@ -154,11 +154,11 @@ router_label_valid(const char *label)
 
 	if (label == NULL)
 		return (false);
-	length = strnlen(label, NOTIFYCMP_MAX_PUBLISHER + 1);
-	return (length != 0 && length <= NOTIFYCMP_MAX_PUBLISHER);
+	length = strnlen(label, NOTIFY_MAX_PUBLISHER + 1);
+	return (length != 0 && length <= NOTIFY_MAX_PUBLISHER);
 }
 
-#ifndef NOTIFYCMP_ROUTER_TEST
+#ifndef NOTIFY_ROUTER_TEST
 static void router_channel_request(struct channel *, struct channel_message *,
     void *);
 static void router_control_request(struct channel *, struct channel_message *,
@@ -195,43 +195,43 @@ harden_transfer_channel(int fd)
 #endif
 
 static int
-send_reply(int fd, const struct notifycmp_msg *request, int error,
+send_reply(int fd, const struct notify_msg *request, int error,
     const void *payload, size_t payload_length)
 {
-	union notifycmp_buffer buffer;
-	struct notifycmp_msg *reply;
+	union notify_buffer buffer;
+	struct notify_msg *reply;
 
 	memset(&buffer, 0, sizeof(buffer));
 	reply = (void *)buffer.bytes;
-	if (notifycmp_message_init_reply(reply, request,
+	if (notify_message_init_reply(reply, request,
 	    error == 0 ? 0 : -error) == -1)
 		return (-1);
 	if (error == 0 && payload_length != 0)
 		memcpy(reply + 1, payload, payload_length);
 	return (internal_send(fd, reply,
 	    sizeof(*reply) + (error == 0 ? payload_length : 0),
-	    NOTIFYCMP_MESSAGE_REPLY));
+	    NOTIFY_MESSAGE_REPLY));
 }
 
 static int
 send_channel_reply(struct channel_message *request_message,
-    const struct notifycmp_msg *request, int error, const void *payload,
+    const struct notify_msg *request, int error, const void *payload,
     size_t payload_length)
 {
-	union notifycmp_buffer buffer;
-	struct notifycmp_msg *reply;
+	union notify_buffer buffer;
+	struct notify_msg *reply;
 	size_t length;
 
 	memset(&buffer, 0, sizeof(buffer));
 	reply = (void *)buffer.bytes;
-	if (notifycmp_message_init_reply(reply, request,
+	if (notify_message_init_reply(reply, request,
 	    error == 0 ? 0 : -error) == -1)
 		return (-1);
 	if (error == 0 && payload_length != 0)
 		memcpy(reply + 1, payload, payload_length);
 	length = sizeof(*reply) + (error == 0 ? payload_length : 0);
-	if (notifycmp_validate_message(reply, length,
-	    NOTIFYCMP_MESSAGE_REPLY) == -1)
+	if (notify_validate_message(reply, length,
+	    NOTIFY_MESSAGE_REPLY) == -1)
 		return (-1);
 	return (channel_send_reply(request_message,
 	    &(struct channel_outgoing)CHANNEL_OUTGOING_INITIALIZER(reply,
@@ -241,7 +241,7 @@ send_channel_reply(struct channel_message *request_message,
 static int
 router_send_reply(struct router_session *session,
     struct channel_message *request_message,
-    const struct notifycmp_msg *request, int error, const void *payload,
+    const struct notify_msg *request, int error, const void *payload,
     size_t payload_length)
 {
 	int result;
@@ -249,7 +249,7 @@ router_send_reply(struct router_session *session,
 	if (request_message != NULL) {
 		result = send_channel_reply(request_message, request, error, payload,
 		    payload_length);
-#ifndef NOTIFYCMP_ROUTER_TEST
+#ifndef NOTIFY_ROUTER_TEST
 		if (result == 0)
 			result = router_sync_write(session->router, session);
 #endif
@@ -268,7 +268,7 @@ router_change(struct router *router, uintptr_t ident, int16_t filter,
 	return (kevent(router->kq, &change, 1, NULL, 0, NULL));
 }
 
-#ifndef NOTIFYCMP_ROUTER_TEST
+#ifndef NOTIFY_ROUTER_TEST
 static int
 router_sync_write(struct router *router, struct router_session *session)
 {
@@ -325,7 +325,7 @@ router_remove_session(struct router *router, struct router_session *session)
 		router_delete_timer(router, session->timers);
 	if (session->pending != NULL)
 		channel_message_free(session->pending);
-	notifycmp_broker_remove(router->broker, session->client);
+	notify_broker_remove(router->broker, session->client);
 	if (session->channel != NULL)
 		channel_destroy(session->channel);
 	else if (session->fd >= 0)
@@ -406,7 +406,7 @@ router_add_timer(struct router *router, struct router_session *session,
 	timer->flags = flags;
 	event_flags = EV_ADD | EV_ENABLE;
 	if (source_type == ROUTER_EVENT_NEXT_TIMER ||
-	    (flags & NOTIFYCMP_TIMER_F_PERIODIC) == 0)
+	    (flags & NOTIFY_TIMER_F_PERIODIC) == 0)
 		event_flags |= EV_ONESHOT;
 	if (router_change(router, timer->ident, EVFILT_TIMER, event_flags,
 	    NOTE_MSECONDS, interval_ms, timer) == -1) {
@@ -426,15 +426,15 @@ router_add_timer(struct router *router, struct router_session *session,
 static int
 router_deliver(struct router *router, struct router_session *session)
 {
-	union notifycmp_buffer buffer;
-	struct notifycmp_event *event;
+	union notify_buffer buffer;
+	struct notify_event *event;
 	ssize_t length;
 	int error;
 
 	if (!session->pending_active)
 		return (0);
 	event = (void *)buffer.bytes;
-	length = notifycmp_broker_next(session->client, event, sizeof(buffer));
+	length = notify_broker_next(session->client, event, sizeof(buffer));
 	if (length == -1) {
 		if (errno == EAGAIN)
 			return (0);
@@ -474,25 +474,25 @@ static int
 router_handle_request(struct router *router, struct router_session *session,
     struct channel_message *request_message)
 {
-	union notifycmp_buffer buffer;
-	struct notifycmp_hello_reply hello;
-	const struct notifycmp_msg *message;
-	const struct notifycmp_publish_request *publish;
-	const struct notifycmp_timer_cancel_request *cancel;
-	const struct notifycmp_timer_request *timer_request;
-	const struct notifycmp_topic_request *topic;
-	struct notifycmp_stats stats;
-	struct notifycmp_state_reply state_reply;
-	const struct notifycmp_state_set_request *state_set;
+	union notify_buffer buffer;
+	struct notify_hello_reply hello;
+	const struct notify_msg *message;
+	const struct notify_publish_request *publish;
+	const struct notify_timer_cancel_request *cancel;
+	const struct notify_timer_request *timer_request;
+	const struct notify_topic_request *topic;
+	struct notify_stats stats;
+	struct notify_state_reply state_reply;
+	const struct notify_state_set_request *state_set;
 	struct router_timer *timer;
-	char topic_name[NOTIFYCMP_MAX_TOPIC + 1];
+	char topic_name[NOTIFY_MAX_TOPIC + 1];
 	int error;
 
 	if (request_message == NULL) {
 		ssize_t received;
 
 		received = internal_receive(session->fd, buffer.bytes,
-		    sizeof(buffer), NOTIFYCMP_MESSAGE_REQUEST);
+		    sizeof(buffer), NOTIFY_MESSAGE_REQUEST);
 		if (received == -1)
 			return (-1);
 		message = (const void *)buffer.bytes;
@@ -504,32 +504,32 @@ router_handle_request(struct router *router, struct router_session *session,
 		    NULL, 0));
 	error = 0;
 	switch (message->opcode) {
-	case NOTIFYCMP_OP_HELLO:
+	case NOTIFY_OP_HELLO:
 		memset(&hello, 0, sizeof(hello));
-		hello.version = NOTIFYCMP_ABI_VERSION;
-		hello.features = NOTIFYCMP_FEATURE_PUBSUB |
-		    NOTIFYCMP_FEATURE_TIMERS |
-		    NOTIFYCMP_FEATURE_BOUNDED_QUEUE |
-		    NOTIFYCMP_FEATURE_STATE |
-		    NOTIFYCMP_FEATURE_LOSS_REPORTING;
-		hello.max_topic = NOTIFYCMP_MAX_TOPIC;
-		hello.max_payload = NOTIFYCMP_MAX_PAYLOAD;
-		hello.max_subscriptions = NOTIFYCMP_MAX_SUBSCRIPTIONS;
-		hello.queue_depth = NOTIFYCMP_DEFAULT_QUEUE;
-		hello.max_timers = NOTIFYCMP_MAX_TIMERS;
-		hello.max_states = NOTIFYCMP_MAX_STATES;
-		hello.router_epoch = notifycmp_broker_epoch(router->broker);
+		hello.version = NOTIFY_ABI_VERSION;
+		hello.features = NOTIFY_FEATURE_PUBSUB |
+		    NOTIFY_FEATURE_TIMERS |
+		    NOTIFY_FEATURE_BOUNDED_QUEUE |
+		    NOTIFY_FEATURE_STATE |
+		    NOTIFY_FEATURE_LOSS_REPORTING;
+		hello.max_topic = NOTIFY_MAX_TOPIC;
+		hello.max_payload = NOTIFY_MAX_PAYLOAD;
+		hello.max_subscriptions = NOTIFY_MAX_SUBSCRIPTIONS;
+		hello.queue_depth = NOTIFY_DEFAULT_QUEUE;
+		hello.max_timers = NOTIFY_MAX_TIMERS;
+		hello.max_states = NOTIFY_MAX_STATES;
+		hello.router_epoch = notify_broker_epoch(router->broker);
 		return (router_send_reply(session, request_message, message, 0, &hello,
 		    sizeof(hello)));
-	case NOTIFYCMP_OP_SUBSCRIBE:
-	case NOTIFYCMP_OP_UNSUBSCRIBE:
+	case NOTIFY_OP_SUBSCRIBE:
+	case NOTIFY_OP_UNSUBSCRIBE:
 		topic = (const void *)(message + 1);
-		if (message->opcode == NOTIFYCMP_OP_SUBSCRIBE)
-			error = notifycmp_broker_subscribe(router->broker,
+		if (message->opcode == NOTIFY_OP_SUBSCRIBE)
+			error = notify_broker_subscribe(router->broker,
 			    session->client, topic->topic,
 			    topic->topic_length) == -1 ? errno : 0;
 		else
-			error = notifycmp_broker_unsubscribe(router->broker,
+			error = notify_broker_unsubscribe(router->broker,
 			    session->client, topic->topic,
 			    topic->topic_length) == -1 ? errno : 0;
 		memcpy(topic_name, topic->topic, topic->topic_length);
@@ -537,9 +537,9 @@ router_handle_request(struct router *router, struct router_session *session,
 		BSDNOTIFY_PROBE_SUBSCRIBE(
 		    __DECONST(char *, session->label), topic_name, error);
 		break;
-	case NOTIFYCMP_OP_PUBLISH:
+	case NOTIFY_OP_PUBLISH:
 		publish = (const void *)(message + 1);
-		error = notifycmp_broker_publish(router->broker,
+		error = notify_broker_publish(router->broker,
 		    session->client, publish->topic, publish->topic_length,
 		    publish + 1, publish->payload_length) == -1 ? errno : 0;
 		memcpy(topic_name, publish->topic, publish->topic_length);
@@ -549,8 +549,8 @@ router_handle_request(struct router *router, struct router_session *session,
 		if (error == 0)
 			(void)router_deliver_pending(router);
 		break;
-	case NOTIFYCMP_OP_NEXT: {
-		const struct notifycmp_next_request *next_request;
+	case NOTIFY_OP_NEXT: {
+		const struct notify_next_request *next_request;
 
 		next_request = (const void *)(message + 1);
 		session->pending = request_message;
@@ -566,7 +566,7 @@ router_handle_request(struct router *router, struct router_session *session,
 			return (router_send_reply(session, request_message, message, EAGAIN,
 			    NULL, 0));
 		}
-		if (next_request->timeout_ms != NOTIFYCMP_TIMEOUT_INFINITE &&
+		if (next_request->timeout_ms != NOTIFY_TIMEOUT_INFINITE &&
 		    router_add_timer(router, session, 0,
 		    next_request->timeout_ms, 0,
 		    ROUTER_EVENT_NEXT_TIMER) == -1) {
@@ -578,7 +578,7 @@ router_handle_request(struct router *router, struct router_session *session,
 		}
 		return (request_message != NULL ? 1 : 0);
 	}
-	case NOTIFYCMP_OP_TIMER_ADD:
+	case NOTIFY_OP_TIMER_ADD:
 		timer_request = (const void *)(message + 1);
 		for (timer = session->timers; timer != NULL; timer = timer->next)
 			if (timer->user_id == timer_request->timer_id) {
@@ -586,14 +586,14 @@ router_handle_request(struct router *router, struct router_session *session,
 				break;
 			}
 		if (error == 0 &&
-		    session->timer_count == NOTIFYCMP_MAX_TIMERS)
+		    session->timer_count == NOTIFY_MAX_TIMERS)
 			error = ENOSPC;
 		if (error == 0 && router_add_timer(router, session,
 		    timer_request->timer_id, timer_request->interval_ms,
 		    timer_request->flags, ROUTER_EVENT_USER_TIMER) == -1)
 			error = errno;
 		break;
-	case NOTIFYCMP_OP_TIMER_CANCEL:
+	case NOTIFY_OP_TIMER_CANCEL:
 		cancel = (const void *)(message + 1);
 		for (timer = session->timers; timer != NULL; timer = timer->next)
 			if (timer->user_id == cancel->timer_id)
@@ -603,13 +603,13 @@ router_handle_request(struct router *router, struct router_session *session,
 		else
 			router_delete_timer(router, timer);
 		break;
-	case NOTIFYCMP_OP_STATS:
-		notifycmp_broker_stats(session->client, &stats);
+	case NOTIFY_OP_STATS:
+		notify_broker_stats(session->client, &stats);
 		return (router_send_reply(session, request_message, message, 0, &stats,
 		    sizeof(stats)));
-	case NOTIFYCMP_OP_STATE_SET:
+	case NOTIFY_OP_STATE_SET:
 		state_set = (const void *)(message + 1);
-		error = notifycmp_broker_state_set(router->broker,
+		error = notify_broker_state_set(router->broker,
 		    session->client, state_set->topic, state_set->topic_length,
 		    state_set->state, &state_reply) == -1 ? errno : 0;
 		if (error == 0) {
@@ -618,9 +618,9 @@ router_handle_request(struct router *router, struct router_session *session,
 			    sizeof(state_reply)));
 		}
 		break;
-	case NOTIFYCMP_OP_STATE_GET:
+	case NOTIFY_OP_STATE_GET:
 		topic = (const void *)(message + 1);
-		error = notifycmp_broker_state_get(router->broker, topic->topic,
+		error = notify_broker_state_get(router->broker, topic->topic,
 		    topic->topic_length, &state_reply) == -1 ? errno : 0;
 		if (error == 0)
 			return (router_send_reply(session, request_message, message, 0, &state_reply,
@@ -634,12 +634,12 @@ router_handle_request(struct router *router, struct router_session *session,
 	    0));
 }
 
-#ifndef NOTIFYCMP_ROUTER_TEST
+#ifndef NOTIFY_ROUTER_TEST
 static int
 router_add_session(struct router *router, const struct router_control *control,
     int fd)
 {
-	static const struct notifycmp_policy default_deny;
+	static const struct notify_policy default_deny;
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct router_session *session;
@@ -647,7 +647,7 @@ router_add_session(struct router *router, const struct router_control *control,
 	if (control == NULL || fd < 0 ||
 	    control->magic != ROUTER_CONTROL_MAGIC ||
 	    control->queue_depth == 0 ||
-	    control->queue_depth > NOTIFYCMP_DEFAULT_QUEUE ||
+	    control->queue_depth > NOTIFY_DEFAULT_QUEUE ||
 	    !router_label_valid(control->label)) {
 		if (fd >= 0)
 			close(fd);
@@ -668,11 +668,11 @@ router_add_session(struct router *router, const struct router_control *control,
 	session->fd = -1;
 	session->router = router;
 	memcpy(session->label, control->label, sizeof(session->label));
-	session->policy = notifycmp_policy_db_lookup(router->policy_db,
+	session->policy = notify_policy_db_lookup(router->policy_db,
 	    session->label);
 	if (session->policy == NULL)
 		session->policy = &default_deny;
-	session->client = notifycmp_broker_add(router->broker, session->label,
+	session->client = notify_broker_add(router->broker, session->label,
 	    control->queue_depth);
 	if (session->client == NULL ||
 	    harden_channel(fd, CAP_CLOFORK_LOCKED) == -1 ||
@@ -680,7 +680,7 @@ router_add_session(struct router *router, const struct router_control *control,
 	    channel_set_request_handler(session->channel,
 	    router_channel_request, session) == -1) {
 		if (session->client != NULL)
-			notifycmp_broker_remove(router->broker, session->client);
+			notify_broker_remove(router->broker, session->client);
 		if (session->channel != NULL)
 			channel_destroy(session->channel);
 		else
@@ -693,7 +693,7 @@ router_add_session(struct router *router, const struct router_control *control,
 	    EV_ADD | EV_ENABLE, 0, 0, session) == -1 ||
 	    router_change(router, session->fd, EVFILT_WRITE,
 	    EV_ADD | EV_DISABLE, 0, 0, session) == -1) {
-		notifycmp_broker_remove(router->broker, session->client);
+		notify_broker_remove(router->broker, session->client);
 		channel_destroy(session->channel);
 		free(session);
 		return (-1);
@@ -738,7 +738,7 @@ router_control_request(struct channel *channel __unused,
 }
 
 static int
-router_main(int control, const struct notifycmp_policy_db *policy_db,
+router_main(int control, const struct notify_policy_db *policy_db,
     int audit_fd)
 {
 	struct channel_options control_options =
@@ -755,7 +755,7 @@ router_main(int control, const struct notifycmp_policy_db *policy_db,
 	router.control = control;
 	router.policy_db = policy_db;
 	router.control_source.type = ROUTER_EVENT_CONTROL;
-	router.broker = notifycmp_broker_create();
+	router.broker = notify_broker_create();
 	router.kq = kqueue();
 	if (router.broker == NULL || router.kq == -1 ||
 	    auditcmp_client_adopt(audit_fd, &router.audit) == -1 ||
@@ -853,12 +853,12 @@ router_main(int control, const struct notifycmp_policy_db *policy_db,
 					router_remove_session(&router, session);
 				continue;
 			}
-			(void)notifycmp_broker_timer(router.broker,
+			(void)notify_broker_timer(router.broker,
 			    session->client, timer->user_id);
 			BSDNOTIFY_PROBE_TIMER(
 			    __DECONST(char *, session->label),
 			    timer->user_id, 0);
-			if ((timer->flags & NOTIFYCMP_TIMER_F_PERIODIC) == 0) {
+			if ((timer->flags & NOTIFY_TIMER_F_PERIODIC) == 0) {
 				/* EV_ONESHOT has already removed the kevent. */
 				timer->ident = 0;
 				router_delete_timer(&router, timer);
@@ -903,40 +903,40 @@ router_watch(void *argument)
 }
 
 static bool
-relay_authorized(const struct notifycmp_policy *policy,
-    const struct notifycmp_msg *message, const char **operation)
+relay_authorized(const struct notify_policy *policy,
+    const struct notify_msg *message, const char **operation)
 {
-	const struct notifycmp_publish_request *publish;
-	const struct notifycmp_topic_request *topic;
-	const struct notifycmp_state_set_request *state_set;
+	const struct notify_publish_request *publish;
+	const struct notify_topic_request *topic;
+	const struct notify_state_set_request *state_set;
 
 	switch (message->opcode) {
-	case NOTIFYCMP_OP_SUBSCRIBE:
-	case NOTIFYCMP_OP_UNSUBSCRIBE:
-		*operation = message->opcode == NOTIFYCMP_OP_SUBSCRIBE ?
+	case NOTIFY_OP_SUBSCRIBE:
+	case NOTIFY_OP_UNSUBSCRIBE:
+		*operation = message->opcode == NOTIFY_OP_SUBSCRIBE ?
 		    "subscribe" : "unsubscribe";
 		topic = (const void *)(message + 1);
-		return (notifycmp_policy_can_subscribe(policy, topic->topic,
+		return (notify_policy_can_subscribe(policy, topic->topic,
 		    topic->topic_length));
-	case NOTIFYCMP_OP_PUBLISH:
+	case NOTIFY_OP_PUBLISH:
 		*operation = "publish";
 		publish = (const void *)(message + 1);
-		return (notifycmp_policy_can_publish(policy, publish->topic,
+		return (notify_policy_can_publish(policy, publish->topic,
 		    publish->topic_length));
-	case NOTIFYCMP_OP_STATE_SET:
+	case NOTIFY_OP_STATE_SET:
 		*operation = "state-set";
 		state_set = (const void *)(message + 1);
-		return (notifycmp_policy_can_publish(policy, state_set->topic,
+		return (notify_policy_can_publish(policy, state_set->topic,
 		    state_set->topic_length));
-	case NOTIFYCMP_OP_STATE_GET:
+	case NOTIFY_OP_STATE_GET:
 		*operation = "state-get";
 		topic = (const void *)(message + 1);
-		return (notifycmp_policy_can_subscribe(policy, topic->topic,
+		return (notify_policy_can_subscribe(policy, topic->topic,
 		    topic->topic_length));
-	case NOTIFYCMP_OP_TIMER_ADD:
+	case NOTIFY_OP_TIMER_ADD:
 		*operation = "timer-add";
 		return (policy->timers);
-	case NOTIFYCMP_OP_TIMER_CANCEL:
+	case NOTIFY_OP_TIMER_CANCEL:
 		*operation = "timer-cancel";
 		return (policy->timers);
 	default:
@@ -950,16 +950,16 @@ router_channel_request(struct channel *channel __unused,
     struct channel_message *request_message, void *argument)
 {
 	struct router_session *session;
-	const struct notifycmp_msg *message;
+	const struct notify_msg *message;
 	const char *operation;
 	int result;
 
 	session = argument;
 	message = channel_message_data(request_message);
 	if (channel_message_fd_count(request_message) != 0 ||
-	    notifycmp_validate_message(message,
+	    notify_validate_message(message,
 	    channel_message_length(request_message),
-	    NOTIFYCMP_MESSAGE_REQUEST) == -1) {
+	    NOTIFY_MESSAGE_REQUEST) == -1) {
 		audit_policy(session->router->audit, session->label,
 		    channel_message_fd_count(request_message) != 0 ?
 		    "descriptor-attachment" : "malformed-message", EPROTO);
@@ -1009,7 +1009,7 @@ router_start_session(int fd, const char *peer_label,
 	}
 	memset(&control, 0, sizeof(control));
 	control.magic = ROUTER_CONTROL_MAGIC;
-	control.queue_depth = NOTIFYCMP_DEFAULT_QUEUE;
+	control.queue_depth = NOTIFY_DEFAULT_QUEUE;
 	strlcpy(control.label, peer_label, sizeof(control.label));
 	memset(&message, 0, sizeof(message));
 	message.size = sizeof(message);
@@ -1039,7 +1039,7 @@ reject:
 int
 main(void)
 {
-	struct notifycmp_policy_db *policy_db;
+	struct notify_policy_db *policy_db;
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
@@ -1064,7 +1064,7 @@ main(void)
 	atomic_init(&watch_context.exited, false);
 	policy_db = calloc(1, sizeof(*policy_db));
 	if (policy_db == NULL ||
-	    notifycmp_policy_db_load(NOTIFYCMP_POLICY_PATH, policy_db) == -1 ||
+	    notify_policy_db_load(NOTIFY_POLICY_PATH, policy_db) == -1 ||
 	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    auditcmp_client_prepare(&audit_fd) == -1 ||
@@ -1104,7 +1104,7 @@ main(void)
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
 	    SERVICE_PROTECT_NOEXEC |
 	    SERVICE_PROTECT_NOSOCK) == -1 ||
-	    service_provider_expose(provider, NOTIFYCMP_PROVIDER_NAME,
+	    service_provider_expose(provider, NOTIFY_PROVIDER_NAME,
 	    &listener) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)

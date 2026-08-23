@@ -14,8 +14,8 @@
 #include <unistd.h>
 
 #include <libservice.h>
-#include <notifycmp.h>
-#include <notifycmp_server.h>
+#include <notify.h>
+#include <notify_server.h>
 
 #include "fake_service.h"
 
@@ -29,7 +29,7 @@ static unsigned max_concurrent;
 static uint16_t fail_opcode;
 static uint64_t epoch = 101;
 static enum fake_service_fault next_fault;
-static uint8_t last_payload[NOTIFYCMP_MAX_PAYLOAD];
+static uint8_t last_payload[NOTIFY_MAX_PAYLOAD];
 static size_t last_payload_length;
 
 void
@@ -58,7 +58,7 @@ void
 fake_service_fail_next(void)
 {
 	pthread_mutex_lock(&lock);
-	fail_opcode = NOTIFYCMP_OP_NEXT;
+	fail_opcode = NOTIFY_OP_NEXT;
 	pthread_mutex_unlock(&lock);
 }
 
@@ -120,7 +120,7 @@ service_connect(struct service_context *service, const char *name, int *fd)
 {
 
 	if (service != &context || name == NULL ||
-	    strcmp(name, NOTIFYCMP_INTERFACE) != 0 || fd == NULL) {
+	    strcmp(name, NOTIFY_INTERFACE) != 0 || fd == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -190,14 +190,14 @@ service_session_call(struct service_session *session,
 {
 	union {
 		max_align_t align;
-		uint8_t bytes[NOTIFYCMP_MAX_MESSAGE];
+		uint8_t bytes[NOTIFY_MAX_MESSAGE];
 	} storage;
-	struct notifycmp_hello_reply *hello;
-	struct notifycmp_state_reply *state;
-	struct notifycmp_state_set_request state_request;
-	const struct notifycmp_msg *request;
-	const struct notifycmp_publish_request *publish_request;
-	struct notifycmp_msg *response;
+	struct notify_hello_reply *hello;
+	struct notify_state_reply *state;
+	struct notify_state_set_request state_request;
+	const struct notify_msg *request;
+	const struct notify_publish_request *publish_request;
+	struct notify_msg *response;
 	enum fake_service_fault fault;
 	bool fail;
 	int result;
@@ -218,9 +218,9 @@ service_session_call(struct service_session *session,
 	next_fault = FAKE_SERVICE_FAULT_NONE;
 	if (fail)
 		fail_opcode = 0;
-	if (request->opcode == NOTIFYCMP_OP_SUBSCRIBE)
+	if (request->opcode == NOTIFY_OP_SUBSCRIBE)
 		subscriptions++;
-	if (!fail && request->opcode == NOTIFYCMP_OP_PUBLISH) {
+	if (!fail && request->opcode == NOTIFY_OP_PUBLISH) {
 		publishes++;
 		publish_request = (const void *)(request + 1);
 		if (outgoing->length >= sizeof(*request) +
@@ -234,7 +234,7 @@ service_session_call(struct service_session *session,
 		}
 	}
 	pthread_mutex_unlock(&lock);
-	if (request->opcode != NOTIFYCMP_OP_HELLO)
+	if (request->opcode != NOTIFY_OP_HELLO)
 		usleep((session->ident & 1U) != 0 ? 60000 : 5000);
 	if (fail || fault == FAKE_SERVICE_FAULT_TIMEOUT) {
 		pthread_mutex_lock(&lock);
@@ -245,36 +245,36 @@ service_session_call(struct service_session *session,
 	}
 	memset(&storage, 0, sizeof(storage));
 	response = (void *)storage.bytes;
-	if (notifycmp_message_init_reply(response, request, 0) == -1)
+	if (notify_message_init_reply(response, request, 0) == -1)
 		return (-1);
 	length = sizeof(*response);
 	switch (request->opcode) {
-	case NOTIFYCMP_OP_HELLO:
+	case NOTIFY_OP_HELLO:
 		hello = (void *)(response + 1);
-		hello->version = NOTIFYCMP_ABI_VERSION;
-		hello->features = NOTIFYCMP_FEATURE_PUBSUB |
-		    NOTIFYCMP_FEATURE_TIMERS | NOTIFYCMP_FEATURE_BOUNDED_QUEUE |
-		    NOTIFYCMP_FEATURE_STATE | NOTIFYCMP_FEATURE_LOSS_REPORTING;
-		hello->max_topic = NOTIFYCMP_MAX_TOPIC;
-		hello->max_payload = NOTIFYCMP_MAX_PAYLOAD;
-		hello->max_subscriptions = NOTIFYCMP_MAX_SUBSCRIPTIONS;
-		hello->queue_depth = NOTIFYCMP_DEFAULT_QUEUE;
-		hello->max_timers = NOTIFYCMP_MAX_TIMERS;
-		hello->max_states = NOTIFYCMP_MAX_STATES;
+		hello->version = NOTIFY_ABI_VERSION;
+		hello->features = NOTIFY_FEATURE_PUBSUB |
+		    NOTIFY_FEATURE_TIMERS | NOTIFY_FEATURE_BOUNDED_QUEUE |
+		    NOTIFY_FEATURE_STATE | NOTIFY_FEATURE_LOSS_REPORTING;
+		hello->max_topic = NOTIFY_MAX_TOPIC;
+		hello->max_payload = NOTIFY_MAX_PAYLOAD;
+		hello->max_subscriptions = NOTIFY_MAX_SUBSCRIPTIONS;
+		hello->queue_depth = NOTIFY_DEFAULT_QUEUE;
+		hello->max_timers = NOTIFY_MAX_TIMERS;
+		hello->max_states = NOTIFY_MAX_STATES;
 		hello->router_epoch = epoch;
 		length += sizeof(*hello);
 		if (fault == FAKE_SERVICE_FAULT_INVALID_HELLO)
 			hello->features = 0;
 		break;
-	case NOTIFYCMP_OP_STATS:
-		length += sizeof(struct notifycmp_stats);
+	case NOTIFY_OP_STATS:
+		length += sizeof(struct notify_stats);
 		break;
-	case NOTIFYCMP_OP_STATE_SET:
-	case NOTIFYCMP_OP_STATE_GET:
+	case NOTIFY_OP_STATE_SET:
+	case NOTIFY_OP_STATE_GET:
 		state = (void *)(response + 1);
 		state->router_epoch = epoch;
 		state->generation = 1;
-		if (request->opcode == NOTIFYCMP_OP_STATE_SET) {
+		if (request->opcode == NOTIFY_OP_STATE_SET) {
 			memcpy(&state_request, request + 1, sizeof(state_request));
 			state->state = state_request.state;
 		}
@@ -282,7 +282,7 @@ service_session_call(struct service_session *session,
 			state->generation = 0;
 		length += sizeof(*state);
 		break;
-	case NOTIFYCMP_OP_NEXT:
+	case NOTIFY_OP_NEXT:
 		response->status = -EAGAIN;
 		break;
 	default:
@@ -291,8 +291,8 @@ service_session_call(struct service_session *session,
 	if (fault == FAKE_SERVICE_FAULT_TRUNCATE)
 		length = sizeof(*response) - 1;
 	else if (fault == FAKE_SERVICE_FAULT_WRONG_OPCODE)
-		response->opcode = request->opcode == NOTIFYCMP_OP_STATS ?
-		    NOTIFYCMP_OP_PUBLISH : NOTIFYCMP_OP_STATS;
+		response->opcode = request->opcode == NOTIFY_OP_STATS ?
+		    NOTIFY_OP_PUBLISH : NOTIFY_OP_STATS;
 	else if (fault == FAKE_SERVICE_FAULT_STATUS) {
 		response->status = -EPERM;
 		length = sizeof(*response);

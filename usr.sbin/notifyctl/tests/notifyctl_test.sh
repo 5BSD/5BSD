@@ -26,10 +26,12 @@ config_errors_body()
 configtest_body()
 {
 	notifyctl="$(atf_get_srcdir)/notifyctl_test_bin"
+	cp "$(atf_get_srcdir)/valid.conf" valid.conf
+	cp "$(atf_get_srcdir)/invalid.conf" invalid.conf
 	atf_check -s exit:0 -o match:'valid \(1 client\)' \
-	    "$notifyctl" configtest "$(atf_get_srcdir)/valid.conf"
+	    "$notifyctl" configtest valid.conf
 	atf_check -s exit:65 -e match:invalid.conf \
-	    "$notifyctl" configtest "$(atf_get_srcdir)/invalid.conf"
+	    "$notifyctl" configtest invalid.conf
 }
 
 atf_test_case arguments
@@ -47,9 +49,29 @@ arguments_body()
 	    "$notifyctl" watch org.5bsd.test.changed 4294967296
 	atf_check -s exit:64 -e match:'invalid timeout' \
 	    "$notifyctl" watch org.5bsd.test.changed invalid
+	atf_check -s exit:64 -e match:'invalid timer id' \
+	    "$notifyctl" timer invalid 10
+	atf_check -s exit:64 -e match:'timer id must be nonzero' \
+	    "$notifyctl" timer 0 10
+	atf_check -s exit:64 -e match:'interval must be between' \
+	    "$notifyctl" timer 1 0
+	atf_check -s exit:64 -e match:'interval must be between' \
+	    "$notifyctl" timer 1 86400001
+	atf_check -s exit:64 -e match:'invalid interval' \
+	    "$notifyctl" timer 1 invalid
+	atf_check -s exit:64 -e match:'count must be between' \
+	    "$notifyctl" timer 1 10 0
+	atf_check -s exit:64 -e match:'count must be between' \
+	    "$notifyctl" timer 1 10 4294967296
+	atf_check -s exit:64 -e match:'invalid count' \
+	    "$notifyctl" timer 1 10 invalid
+	atf_check -s exit:64 -e match:'timeout exceeds' \
+	    "$notifyctl" timer 1 10 1 4294967296
+	atf_check -s exit:64 -e match:'invalid timeout' \
+	    "$notifyctl" timer 1 10 1 invalid
 	for command in 'configtest a b' 'publish' 'publish a b c' 'state-get' \
 	    'state-set a' 'state-set a b c' 'watch' 'watch a b c' \
-	    'stats extra' unknown; do
+	    'timer' 'timer 1' 'timer 1 2 3 4 5' 'stats extra' unknown; do
 		atf_check -s exit:64 -e match:'usage: notifyctl' \
 		    "$notifyctl" $command
 	done
@@ -77,7 +99,7 @@ unavailable_head()
 atf_test_case successful_commands
 successful_commands_head()
 {
-	atf_set "descr" "all live commands use the typed NotifyCmp API and render data"
+	atf_set "descr" "all live commands use the typed Notify API and render data"
 }
 successful_commands_body()
 {
@@ -89,9 +111,15 @@ successful_commands_body()
 	    -e empty "$notifyctl" state-get "$topic"
 	atf_check -s exit:0 -o empty -e empty \
 	    "$notifyctl" state-set "$topic" 42
-	atf_check -s exit:0 -o match:'type=1 epoch=7 sequence=9 generation=8 state=42' \
+	atf_check -s exit:0 -o match:'type=1 flags=0x00000000 epoch=7 sequence=9' \
+	    -o match:'timer_id=0 generation=8 state=42' \
 	    -o match:'publisher=org.5bsd.provider/service topic=org.5bsd.test.changed payload_length=12' \
 	    -o match:'payload-data' -e empty "$notifyctl" watch "$topic" 25
+	atf_check -s exit:0 -o match:'type=2.*timer_id=99' \
+	    -o match:'timestamp_ns=123456789' -o match:'sequence=3' -e empty \
+	    "$notifyctl" timer 99 10 3 25
+	atf_check -s exit:0 -o match:'type=2.*sequence=1.*timer_id=99' \
+	    -e empty "$notifyctl" timer 99 10
 	atf_check -s exit:0 \
 	    -o inline:'published=1 delivered=2 dropped=3 rejected=4 timer_events=5\n' \
 	    -e empty "$notifyctl" stats
@@ -121,8 +149,31 @@ operation_failures_body()
 	    -e match:'client-closed' env CMP_TEST_FAIL=subscribe \
 	    CMP_TEST_TRACE_CLOSE=1 "$notifyctl" watch "$topic" 25
 	atf_check -s exit:69 -e match:'receive.*Input/output error' \
-	    -e match:'client-closed' env CMP_TEST_FAIL=next \
+	    -e match:'unsubscribed' -e match:'client-closed' \
+	    env CMP_TEST_FAIL=next CMP_TEST_TRACE_UNSUBSCRIBE=1 \
 	    CMP_TEST_TRACE_CLOSE=1 "$notifyctl" watch "$topic" 25
+	atf_check -s exit:69 -e match:'unsubscribe.*Input/output error' \
+	    -e match:'client-closed' env CMP_TEST_FAIL=unsubscribe \
+	    CMP_TEST_TRACE_CLOSE=1 "$notifyctl" watch "$topic" 25
+	atf_check -s exit:69 -e match:'timer-add.*Input/output error' \
+	    -e match:'client-closed' env CMP_TEST_FAIL=timer-add \
+	    CMP_TEST_TRACE_CLOSE=1 "$notifyctl" timer 99 10 3 25
+	atf_check -s exit:69 -e match:'receive timer.*Input/output error' \
+	    -e match:'timer-canceled' -e match:'client-closed' \
+	    env CMP_TEST_FAIL=next CMP_TEST_TRACE_TIMER_CANCEL=1 \
+	    CMP_TEST_TRACE_CLOSE=1 "$notifyctl" timer 99 10 3 25
+	atf_check -s exit:75 -e match:'receive timer.*timed out' \
+	    -e match:'timer-canceled' -e match:'client-closed' \
+	    env CMP_TEST_TIMEOUT=1 CMP_TEST_TRACE_TIMER_CANCEL=1 \
+	    CMP_TEST_TRACE_CLOSE=1 "$notifyctl" timer 99 10 3 25
+	atf_check -s exit:76 -e match:'receive timer.*Protocol error' \
+	    -e match:'timer-canceled' -e match:'client-closed' \
+	    env CMP_TEST_BAD_TIMER_EVENT=1 CMP_TEST_TRACE_TIMER_CANCEL=1 \
+	    CMP_TEST_TRACE_CLOSE=1 "$notifyctl" timer 99 10 3 25
+	atf_check -s exit:69 -o match:'timer_id=99' \
+	    -e match:'timer-cancel.*Input/output error' \
+	    -e match:'client-closed' env CMP_TEST_FAIL=timer-cancel \
+	    CMP_TEST_TRACE_CLOSE=1 "$notifyctl" timer 99 10 3 25
 }
 unavailable_body()
 {
@@ -131,6 +182,7 @@ unavailable_body()
 	for command in 'publish org.5bsd.test.changed value' \
 	    'state-get org.5bsd.test.changed' \
 	    'state-set org.5bsd.test.changed 18446744073709551615' \
+	    'timer 99 10 3 25' \
 	    'watch org.5bsd.test.changed 1'; do
 		atf_check -s exit:69 -e match:'open org.5bsd.notify' \
 		    "$notifyctl" $command

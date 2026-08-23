@@ -67,12 +67,12 @@ CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/sys
 
 
-LIBADD.component_fixture+=	filesystemcmp logcmp networkcmp notifycmp tracecmp service pthread
+LIBADD.component_fixture+=	filesystemcmp logcmp networkcmp notify tracecmp service pthread
 CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libfilesystemcmp
 CFLAGS.component_fixture+=	-I${SRCTOP}/lib/liblogcmp
 CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libnetworkcmp
-CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libnotifycmp
+CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libnotify
 CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libtracecmp
 CFLAGS.component_fixture+=	-I${SRCTOP}/sys
 

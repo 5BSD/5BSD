@@ -15,7 +15,7 @@ broken, and 178 root-only tests skipped across 34 suites:
 
 - `libcapability`, `libchannel`, `libservice`, `libcapbundle`, `libshmring`,
   `liboraclectl`, and `liboraclert`;
-- `libfilesystemcmp`, `libnetworkcmp`, `liblogcmp`, `libnotifycmp`,
+- `libfilesystemcmp`, `libnetworkcmp`, `liblogcmp`, `libnotify`,
   `libtracecmp`, `libauditcmp`, `libkldmgr`, and `librebootctl`;
 - `localfilesystem`, `localnetwork`, `logd`, `bsdnotify`, `traced`,
   `auditbrokerd`, `kldmgrd`, and `rebootd`;
@@ -36,7 +36,7 @@ The per-suite result counts were:
 | libfilesystemcmp | 20 | 0 |
 | libnetworkcmp | 13 | 0 |
 | liblogcmp | 29 | 0 |
-| libnotifycmp | 15 | 0 |
+| libnotify | 15 | 0 |
 | libtracecmp | 9 | 0 |
 | libauditcmp | 10 | 0 |
 | libkldmgr | 12 | 0 |
@@ -150,7 +150,7 @@ clean-built against fresh DTrace-enabled object-tree archives. This prevents
 pkgbase builds from accidentally succeeding only because an older installed
 archive lacked probe relocations.
 
-NotifyCmp no longer blocks a relay inside a private router receive while a
+Notify no longer blocks a relay inside a private router receive while a
 `NEXT` request is pending. The relay polls and dispatches both endpoints,
 retains the exact channel request until the router replies, rejects a second
 in-flight router operation with `EBUSY`, and releases the retained request and

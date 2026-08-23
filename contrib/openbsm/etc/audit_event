@@ -715,7 +715,7 @@
 43330:AUE_FILESYSTEMCMP_POLICY:FileSystemCmp policy:fa
 43331:AUE_LOGCMP_POLICY:LogCmp policy:ad
 43332:AUE_TRACECMP_POLICY:TraceCmp policy:ad
-43333:AUE_NOTIFYCMP_POLICY:NotifyCmp policy:ad
+43333:AUE_NOTIFY_POLICY:Notify policy:ad
 #
 # OpenBSM-managed application event space.
 #

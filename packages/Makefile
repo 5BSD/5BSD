@@ -57,7 +57,7 @@ SUBDIR=	blocklist \
 	libfilesystemcmp \
 	liblogcmp \
 	libnetworkcmp \
-	libnotifycmp \
+	libnotify \
 	liboraclectl \
 	liboraclert \
 	libservice \
@@ -191,7 +191,7 @@ SUBDIR.${MK_TESTS}+=		libauditcmp-tests auditbrokerd-tests
 SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
 SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
 SUBDIR.${MK_TESTS}+=		libfilesystemcmp-tests libnetworkcmp-tests
-SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotifycmp-tests
+SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
 SUBDIR.${MK_TESTS}+=		liboraclectl-tests liboraclert-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests

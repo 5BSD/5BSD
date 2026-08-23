@@ -76,7 +76,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libkldelf \
 	libkvm \
 	liblogcmp \
-	libnotifycmp \
+	libnotify \
 	libtracecmp \
 	liblua \
 	liblzma \
@@ -164,7 +164,7 @@ SUBDIR_DEPEND_libmagic= libz
 SUBDIR_DEPEND_liblogcmp= libservice libshmring
 SUBDIR_DEPEND_libmemstat= libkvm
 SUBDIR_DEPEND_libnetworkcmp= libservice libshmring
-SUBDIR_DEPEND_libnotifycmp= libservice
+SUBDIR_DEPEND_libnotify= libservice
 SUBDIR_DEPEND_libpam= libcrypt ${_libradius} librpcsvc libtacplus libutil ${_libypclnt} ${_libcom_err}
 SUBDIR_DEPEND_libpjdlog= libutil
 SUBDIR_DEPEND_libprocstat= libkvm libutil

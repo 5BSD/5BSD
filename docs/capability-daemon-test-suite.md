@@ -12,7 +12,7 @@ The scope is:
 - `liboraclert`, `libcapability`, `libchannel`, `libservice`, `libshmring`,
   `libcapbundle`, and every typed service library;
 - `oracled`, `serviced`, `oraclectl`, and `servicectl`;
-- FileSystemCmp, NetworkCmp, LogCmp, NotifyCmp, TraceCmp, and AuditCmp;
+- FileSystemCmp, NetworkCmp, LogCmp, Notify, TraceCmp, and AuditCmp;
 - privileged managed services such as `kldmgrd` and `rebootd`;
 - capability-managed device brokers such as `blued`.
 
@@ -244,7 +244,7 @@ state-transition cases.
   `liblogcmp` covers shared process lifecycle, lazy ring activation and
   promotion, coalesced wakeups, bounded drain-before-detach, ambiguous RPC
   failure, descriptor baselines, corrupt-ring recovery, flush, and fork;
-  `libnotifycmp` covers independent sessions, events, default denial, and
+  `libnotify` covers independent sessions, events, default denial, and
   saturating timeout boundaries;
   `libtracecmp` covers raw ownership and tuned libdtrace construction;
   `libauditcmp`, `libkldmgr`, and `librebootctl` cover typed global requests;
@@ -602,7 +602,7 @@ and provider/tool grouping. A full package archive install/upgrade/removal run
 remains pending because unrelated base-tree buildworld failures prevent
 producing the complete package set.
 
-NotifyCmp is default-deny for publish, subscribe, state, and timers. Beacon's
+Notify is default-deny for publish, subscribe, state, and timers. Beacon's
 runtime policy is loaded before sandbox entry from `/etc/bsdnotify.conf`,
 keyed by the immutable serviced client label, and enforced in each relay
 before forwarding to the shared router. Unit and dispatcher tests cover
@@ -687,7 +687,7 @@ install/upgrade/removal gates pass on release-equivalent systems.
 
 The naming contract rejects stale daemon manual-page references and ties every
 public name to its `PROG`, package, bundle path, and rc boundary. Internal wire
-identifiers and typed library names such as `notifycmp` and `logcmp` are not
+identifiers and typed library names such as `notify` and `logcmp` are not
 daemon aliases and remain intentionally descriptive.
 The final audit also corrected Rebootd's authenticated Beacon policy identity,
 Ledger's syslog tag, and every root-only provider object path; those are now

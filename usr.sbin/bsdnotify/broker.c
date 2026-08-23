@@ -12,32 +12,32 @@
 
 #include "broker.h"
 
-#define	NOTIFYCMP_TOPIC_BUCKETS	257
+#define	NOTIFY_TOPIC_BUCKETS	257
 
 struct broker_event {
 	size_t		length;
 	size_t		references;
-	struct notifycmp_event event;
+	struct notify_event event;
 };
 
 struct broker_subscription {
 	struct broker_subscription	*bucket_next;
 	struct broker_subscription	*client_next;
-	struct notifycmp_broker_client	*client;
+	struct notify_broker_client	*client;
 	size_t				 topic_length;
-	char				 topic[NOTIFYCMP_MAX_TOPIC];
+	char				 topic[NOTIFY_MAX_TOPIC];
 };
 
-struct notifycmp_broker_client {
-	struct notifycmp_broker_client	*next;
+struct notify_broker_client {
+	struct notify_broker_client	*next;
 	struct broker_subscription	*subscriptions;
 	struct broker_event		**queue;
 	size_t				 queue_depth;
 	size_t				 queue_head;
 	size_t				 queue_count;
 	size_t				 subscription_count;
-	char				 label[NOTIFYCMP_MAX_PUBLISHER + 1];
-	struct notifycmp_stats		 stats;
+	char				 label[NOTIFY_MAX_PUBLISHER + 1];
+	struct notify_stats		 stats;
 	uint64_t			 lost_pending;
 	uint64_t			 epoch;
 };
@@ -47,16 +47,16 @@ struct broker_topic_state {
 	size_t			 topic_length;
 	uint64_t		 generation;
 	uint64_t		 state;
-	char			 topic[NOTIFYCMP_MAX_TOPIC];
+	char			 topic[NOTIFY_MAX_TOPIC];
 };
 
-struct notifycmp_broker {
-	struct notifycmp_broker_client	*clients;
-	struct broker_subscription	*buckets[NOTIFYCMP_TOPIC_BUCKETS];
+struct notify_broker {
+	struct notify_broker_client	*clients;
+	struct broker_subscription	*buckets[NOTIFY_TOPIC_BUCKETS];
 	uint64_t			 sequence;
 	uint64_t			 epoch;
 	size_t				 nstates;
-	struct broker_topic_state	*states[NOTIFYCMP_TOPIC_BUCKETS];
+	struct broker_topic_state	*states[NOTIFY_TOPIC_BUCKETS];
 };
 
 static unsigned int
@@ -70,7 +70,7 @@ topic_hash(const char *topic, size_t length)
 		hash ^= (unsigned char)topic[i];
 		hash *= 16777619U;
 	}
-	return (hash % NOTIFYCMP_TOPIC_BUCKETS);
+	return (hash % NOTIFY_TOPIC_BUCKETS);
 }
 
 static void
@@ -82,7 +82,7 @@ event_release(struct broker_event *event)
 }
 
 static struct broker_event *
-event_create(struct notifycmp_broker *broker, uint32_t type,
+event_create(struct notify_broker *broker, uint32_t type,
     const char *publisher, const char *topic, size_t topic_length,
     const void *payload, size_t payload_length, uint64_t timer_id)
 {
@@ -126,7 +126,7 @@ event_create(struct notifycmp_broker *broker, uint32_t type,
 }
 
 static void
-enqueue(struct notifycmp_broker_client *client, struct broker_event *event)
+enqueue(struct notify_broker_client *client, struct broker_event *event)
 {
 	size_t tail;
 
@@ -144,10 +144,10 @@ enqueue(struct notifycmp_broker_client *client, struct broker_event *event)
 	client->stats.delivered++;
 }
 
-struct notifycmp_broker *
-notifycmp_broker_create(void)
+struct notify_broker *
+notify_broker_create(void)
 {
-	struct notifycmp_broker *broker;
+	struct notify_broker *broker;
 
 	broker = calloc(1, sizeof(*broker));
 	if (broker != NULL) {
@@ -159,7 +159,7 @@ notifycmp_broker_create(void)
 }
 
 void
-notifycmp_broker_destroy(struct notifycmp_broker *broker)
+notify_broker_destroy(struct notify_broker *broker)
 {
 	struct broker_topic_state *state;
 	size_t i;
@@ -167,7 +167,7 @@ notifycmp_broker_destroy(struct notifycmp_broker *broker)
 	if (broker == NULL)
 		return;
 	while (broker->clients != NULL)
-		notifycmp_broker_remove(broker, broker->clients);
+		notify_broker_remove(broker, broker->clients);
 	for (i = 0; i < nitems(broker->states); i++)
 		while ((state = broker->states[i]) != NULL) {
 			broker->states[i] = state->next;
@@ -177,14 +177,14 @@ notifycmp_broker_destroy(struct notifycmp_broker *broker)
 }
 
 uint64_t
-notifycmp_broker_epoch(const struct notifycmp_broker *broker)
+notify_broker_epoch(const struct notify_broker *broker)
 {
 
 	return (broker != NULL ? broker->epoch : 0);
 }
 
 void
-notifycmp_broker_test_set_sequence(struct notifycmp_broker *broker,
+notify_broker_test_set_sequence(struct notify_broker *broker,
     uint64_t sequence)
 {
 
@@ -192,20 +192,20 @@ notifycmp_broker_test_set_sequence(struct notifycmp_broker *broker,
 		broker->sequence = sequence;
 }
 
-struct notifycmp_broker_client *
-notifycmp_broker_add(struct notifycmp_broker *broker, const char *label,
+struct notify_broker_client *
+notify_broker_add(struct notify_broker *broker, const char *label,
     size_t queue_depth)
 {
-	struct notifycmp_broker_client *client;
+	struct notify_broker_client *client;
 	size_t label_length;
 
 	if (broker == NULL || label == NULL || queue_depth == 0 ||
-	    queue_depth > NOTIFYCMP_DEFAULT_QUEUE) {
+	    queue_depth > NOTIFY_DEFAULT_QUEUE) {
 		errno = EINVAL;
 		return (NULL);
 	}
-	label_length = strnlen(label, NOTIFYCMP_MAX_PUBLISHER + 1);
-	if (label_length == 0 || label_length > NOTIFYCMP_MAX_PUBLISHER) {
+	label_length = strnlen(label, NOTIFY_MAX_PUBLISHER + 1);
+	if (label_length == 0 || label_length > NOTIFY_MAX_PUBLISHER) {
 		errno = EINVAL;
 		return (NULL);
 	}
@@ -226,10 +226,10 @@ notifycmp_broker_add(struct notifycmp_broker *broker, const char *label,
 }
 
 void
-notifycmp_broker_remove(struct notifycmp_broker *broker,
-    struct notifycmp_broker_client *client)
+notify_broker_remove(struct notify_broker *broker,
+    struct notify_broker_client *client)
 {
-	struct notifycmp_broker_client **cursor;
+	struct notify_broker_client **cursor;
 	struct broker_subscription **bucket_cursor, *subscription;
 	size_t bucket;
 
@@ -263,14 +263,14 @@ notifycmp_broker_remove(struct notifycmp_broker *broker,
 }
 
 int
-notifycmp_broker_subscribe(struct notifycmp_broker *broker,
-    struct notifycmp_broker_client *client, const char *topic, size_t length)
+notify_broker_subscribe(struct notify_broker *broker,
+    struct notify_broker_client *client, const char *topic, size_t length)
 {
 	struct broker_subscription *subscription;
 	unsigned int bucket;
 
 	if (broker == NULL || client == NULL ||
-	    notifycmp_validate_topic(topic, length) == -1)
+	    notify_validate_topic(topic, length) == -1)
 		return (-1);
 	for (subscription = client->subscriptions; subscription != NULL;
 	    subscription = subscription->client_next)
@@ -279,7 +279,7 @@ notifycmp_broker_subscribe(struct notifycmp_broker *broker,
 			errno = EEXIST;
 			return (-1);
 		}
-	if (client->subscription_count == NOTIFYCMP_MAX_SUBSCRIPTIONS) {
+	if (client->subscription_count == NOTIFY_MAX_SUBSCRIPTIONS) {
 		errno = ENOSPC;
 		return (-1);
 	}
@@ -299,15 +299,15 @@ notifycmp_broker_subscribe(struct notifycmp_broker *broker,
 }
 
 int
-notifycmp_broker_unsubscribe(struct notifycmp_broker *broker,
-    struct notifycmp_broker_client *client, const char *topic, size_t length)
+notify_broker_unsubscribe(struct notify_broker *broker,
+    struct notify_broker_client *client, const char *topic, size_t length)
 {
 	struct broker_subscription **client_cursor, **bucket_cursor;
 	struct broker_subscription *subscription;
 	unsigned int bucket;
 
 	if (broker == NULL || client == NULL ||
-	    notifycmp_validate_topic(topic, length) == -1)
+	    notify_validate_topic(topic, length) == -1)
 		return (-1);
 	client_cursor = &client->subscriptions;
 	while (*client_cursor != NULL &&
@@ -332,8 +332,8 @@ notifycmp_broker_unsubscribe(struct notifycmp_broker *broker,
 }
 
 int
-notifycmp_broker_publish(struct notifycmp_broker *broker,
-    struct notifycmp_broker_client *publisher, const char *topic,
+notify_broker_publish(struct notify_broker *broker,
+    struct notify_broker_client *publisher, const char *topic,
     size_t topic_length, const void *payload, size_t payload_length)
 {
 	struct broker_subscription *subscription;
@@ -341,13 +341,13 @@ notifycmp_broker_publish(struct notifycmp_broker *broker,
 	unsigned int bucket;
 
 	if (broker == NULL || publisher == NULL ||
-	    notifycmp_validate_topic(topic, topic_length) == -1 ||
-	    payload_length > NOTIFYCMP_MAX_PAYLOAD ||
+	    notify_validate_topic(topic, topic_length) == -1 ||
+	    payload_length > NOTIFY_MAX_PAYLOAD ||
 	    (payload_length != 0 && payload == NULL)) {
 		errno = EINVAL;
 		return (-1);
 	}
-	event = event_create(broker, NOTIFYCMP_EVENT_PUBLISH, publisher->label,
+	event = event_create(broker, NOTIFY_EVENT_PUBLISH, publisher->label,
 	    topic, topic_length, payload, payload_length, 0);
 	if (event == NULL)
 		return (-1);
@@ -363,7 +363,7 @@ notifycmp_broker_publish(struct notifycmp_broker *broker,
 }
 
 static struct broker_topic_state *
-state_find(struct notifycmp_broker *broker, const char *topic, size_t length)
+state_find(struct notify_broker *broker, const char *topic, size_t length)
 {
 	struct broker_topic_state *state;
 
@@ -376,9 +376,9 @@ state_find(struct notifycmp_broker *broker, const char *topic, size_t length)
 }
 
 int
-notifycmp_broker_state_set(struct notifycmp_broker *broker,
-    struct notifycmp_broker_client *publisher, const char *topic,
-    size_t topic_length, uint64_t value, struct notifycmp_state_reply *reply)
+notify_broker_state_set(struct notify_broker *broker,
+    struct notify_broker_client *publisher, const char *topic,
+    size_t topic_length, uint64_t value, struct notify_state_reply *reply)
 {
 	struct broker_subscription *subscription;
 	struct broker_topic_state *state;
@@ -386,7 +386,7 @@ notifycmp_broker_state_set(struct notifycmp_broker *broker,
 	unsigned int bucket;
 
 	if (broker == NULL || publisher == NULL || reply == NULL ||
-	    notifycmp_validate_topic(topic, topic_length) == -1)
+	    notify_validate_topic(topic, topic_length) == -1)
 		return (-1);
 	bucket = topic_hash(topic, topic_length);
 	state = state_find(broker, topic, topic_length);
@@ -394,11 +394,11 @@ notifycmp_broker_state_set(struct notifycmp_broker *broker,
 		errno = EOVERFLOW;
 		return (-1);
 	}
-	if (state == NULL && broker->nstates == NOTIFYCMP_MAX_STATES) {
+	if (state == NULL && broker->nstates == NOTIFY_MAX_STATES) {
 		errno = ENOSPC;
 		return (-1);
 	}
-	event = event_create(broker, NOTIFYCMP_EVENT_STATE, publisher->label,
+	event = event_create(broker, NOTIFY_EVENT_STATE, publisher->label,
 	    topic, topic_length, NULL, 0, 0);
 	if (event == NULL)
 		return (-1);
@@ -432,13 +432,13 @@ notifycmp_broker_state_set(struct notifycmp_broker *broker,
 }
 
 int
-notifycmp_broker_state_get(struct notifycmp_broker *broker, const char *topic,
-    size_t topic_length, struct notifycmp_state_reply *reply)
+notify_broker_state_get(struct notify_broker *broker, const char *topic,
+    size_t topic_length, struct notify_state_reply *reply)
 {
 	struct broker_topic_state *state;
 
 	if (broker == NULL || reply == NULL ||
-	    notifycmp_validate_topic(topic, topic_length) == -1)
+	    notify_validate_topic(topic, topic_length) == -1)
 		return (-1);
 	state = state_find(broker, topic, topic_length);
 	if (state == NULL) {
@@ -452,8 +452,8 @@ notifycmp_broker_state_get(struct notifycmp_broker *broker, const char *topic,
 }
 
 int
-notifycmp_broker_timer(struct notifycmp_broker *broker,
-    struct notifycmp_broker_client *client, uint64_t timer_id)
+notify_broker_timer(struct notify_broker *broker,
+    struct notify_broker_client *client, uint64_t timer_id)
 {
 	struct broker_event *event;
 
@@ -461,7 +461,7 @@ notifycmp_broker_timer(struct notifycmp_broker *broker,
 		errno = EINVAL;
 		return (-1);
 	}
-	event = event_create(broker, NOTIFYCMP_EVENT_TIMER, client->label, NULL,
+	event = event_create(broker, NOTIFY_EVENT_TIMER, client->label, NULL,
 	    0, NULL, 0, timer_id);
 	if (event == NULL)
 		return (-1);
@@ -472,8 +472,8 @@ notifycmp_broker_timer(struct notifycmp_broker *broker,
 }
 
 ssize_t
-notifycmp_broker_next(struct notifycmp_broker_client *client,
-    struct notifycmp_event *event, size_t capacity)
+notify_broker_next(struct notify_broker_client *client,
+    struct notify_event *event, size_t capacity)
 {
 	struct broker_event *queued;
 	size_t length;
@@ -488,8 +488,8 @@ notifycmp_broker_next(struct notifycmp_broker_client *client,
 			return (-1);
 		}
 		memset(event, 0, sizeof(*event));
-		event->type = NOTIFYCMP_EVENT_GAP;
-		event->flags = NOTIFYCMP_EVENT_F_GAP;
+		event->type = NOTIFY_EVENT_GAP;
+		event->flags = NOTIFY_EVENT_F_GAP;
 		event->router_epoch = client->epoch;
 		event->lost_count = client->lost_pending;
 		client->lost_pending = 0;
@@ -514,8 +514,8 @@ notifycmp_broker_next(struct notifycmp_broker_client *client,
 }
 
 void
-notifycmp_broker_stats(const struct notifycmp_broker_client *client,
-    struct notifycmp_stats *stats)
+notify_broker_stats(const struct notify_broker_client *client,
+    struct notify_stats *stats)
 {
 
 	if (client == NULL || stats == NULL)

@@ -70,7 +70,7 @@ The smallest real in-tree manifest,
 ```ucl
 schema = "org.5bsd.serviced.service";
 schema_version = "1.0.0";
-bundle_id = "org.5bsd.NotifyCmp";
+bundle_id = "org.5bsd.Notify";
 version = "1.0.0";
 author = "5BSD";
 

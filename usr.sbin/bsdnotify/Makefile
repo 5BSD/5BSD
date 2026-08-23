@@ -3,28 +3,28 @@
 PACKAGE=	bsdnotify
 PROG=		bsdnotify
 MAN=		bsdnotify.8
-SRCS=		notifycmp.c broker.c policy.c transport.c
-LIBADD=		auditcmp channel notifycmp pthread service ucl
+SRCS=		bsdnotify.c broker.c policy.c transport.c
+LIBADD=		auditcmp channel notify pthread service ucl
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
-CFLAGS+=	-I${SRCTOP}/lib/libnotifycmp
+CFLAGS+=	-I${SRCTOP}/lib/libnotify
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
 
-DIRS+=		NOTIFYCMP_CAP NOTIFYCMP_CAP_BIN NOTIFYCMP_CAP_ETC
-NOTIFYCMP_CAP=	/Capabilities/System/BsdNotify.cap
-NOTIFYCMP_CAPPACKAGE=	bsdnotify
-NOTIFYCMP_CAP_BIN=	/Capabilities/System/BsdNotify.cap/bin
-NOTIFYCMP_CAP_BINPACKAGE=	bsdnotify
-NOTIFYCMP_CAP_ETC=	/Capabilities/System/BsdNotify.cap/etc
-NOTIFYCMP_CAP_ETCPACKAGE=	bsdnotify
+DIRS+=		NOTIFY_CAP NOTIFY_CAP_BIN NOTIFY_CAP_ETC
+NOTIFY_CAP=	/Capabilities/System/BsdNotify.cap
+NOTIFY_CAPPACKAGE=	bsdnotify
+NOTIFY_CAP_BIN=	/Capabilities/System/BsdNotify.cap/bin
+NOTIFY_CAP_BINPACKAGE=	bsdnotify
+NOTIFY_CAP_ETC=	/Capabilities/System/BsdNotify.cap/etc
+NOTIFY_CAP_ETCPACKAGE=	bsdnotify
 
-BINDIR=		${NOTIFYCMP_CAP_BIN}
+BINDIR=		${NOTIFY_CAP_BIN}
 
 FILESGROUPS=	SERVICES
 SERVICES=	capbundle/bsdnotify.ucl
-SERVICESDIR=	${NOTIFYCMP_CAP_ETC}
+SERVICESDIR=	${NOTIFY_CAP_ETC}
 SERVICESNAME_capbundle/bsdnotify.ucl=	bsdnotify.ucl
 
 CONFS=		capbundle/bsdnotify.conf
@@ -41,4 +41,4 @@ CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
 
 .include <bsd.prog.mk>
 
-_proginstall: installdirs-NOTIFYCMP_CAP_BIN
+_proginstall: installdirs-NOTIFY_CAP_BIN

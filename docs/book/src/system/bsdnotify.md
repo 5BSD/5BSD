@@ -3,7 +3,7 @@
 BSDNotify is the system-wide notification component exposed as
 `org.5bsd.notify` by `bsdnotify(8)`. It gives capability-mode services
 bounded exact-topic publish/subscribe, retained 64-bit state, and monotonic
-timers through `libnotifycmp(3)`. It is system-wide in deployment—one broker
+timers through `libnotify(3)`. It is system-wide in deployment—one broker
 routes sessions for the host—but it is not an unrestricted global broadcast
 API. Every session has an authenticated serviced label and an independent,
 default-deny policy, subscription set, queue, request stream, and timer
@@ -12,10 +12,10 @@ namespace.
 | Component | Location |
 |-----------|----------|
 | Provider, router, policy, and transport | `usr.sbin/bsdnotify/` |
-| Client library and protocol | `lib/libnotifycmp/` |
+| Client library and protocol | `lib/libnotify/` |
 | Operator tool | `usr.sbin/notifyctl/` |
 | Service bundle and policy | `usr.sbin/bsdnotify/capbundle/` |
-| Tests | `usr.sbin/bsdnotify/tests/`, `lib/libnotifycmp/tests/`, `usr.sbin/notifyctl/tests/` |
+| Tests | `usr.sbin/bsdnotify/tests/`, `lib/libnotify/tests/`, `usr.sbin/notifyctl/tests/` |
 
 ## Router and session model
 
@@ -37,19 +37,19 @@ controls, and embedded NULs are rejected.
 The client surface is:
 
 ```c
-notifycmp_client_open(&client);
-notifycmp_subscribe(client, "service.ready");
-notifycmp_publish(client, "service.ready", payload, payload_len);
-notifycmp_state_set(client, "service.health", value);
-notifycmp_state_get(client, "service.health", &state);
-notifycmp_timer_add(client, timer_id, interval_ms, flags);
-notifycmp_next(client, event, capacity, timeout_ms);
-notifycmp_stats(client, &stats);
+notify_client_open(&client);
+notify_subscribe(client, "service.ready");
+notify_publish(client, "service.ready", payload, payload_len);
+notify_state_set(client, "service.health", value);
+notify_state_get(client, "service.health", &state);
+notify_timer_add(client, timer_id, interval_ms, flags);
+notify_next(client, event, capacity, timeout_ms);
+notify_stats(client, &stats);
 ```
 
 State publications retain one 64-bit value and advance a broker generation.
 One-shot and periodic timers are owner-scoped and use monotonic time. Finite
-wait deadlines use saturating arithmetic; `NOTIFYCMP_TIMEOUT_INFINITE` cannot
+wait deadlines use saturating arithmetic; `NOTIFY_TIMEOUT_INFINITE` cannot
 wrap into a short wait.
 
 ## Delivery semantics
@@ -68,7 +68,7 @@ with the loss count. A successful publish means the router evaluated the
 request and attempted fanout, not that every subscriber durably received it.
 
 Each router start chooses a nonzero random epoch. If a provider connection
-dies, `notifycmp_next()` reconnects, restores exact-topic subscriptions, and
+dies, `notify_next()` reconnects, restores exact-topic subscriptions, and
 returns a RESET event for the new epoch rather than pretending the stream was
 continuous. Other operations report the transport failure because acceptance
 is unknown and are never replayed; their next call opens a clean session.
@@ -126,6 +126,6 @@ fork rejection, disconnect/reconnect, subscription restoration, RESET
 semantics, and non-replay of ambiguous operations. Bundle tests verify the
 Capsicum, coalition, and linear-transfer confinement contract.
 
-BSDNotify, `libnotifycmp`, `notifyctl`, Crypto, EnvFD, flavors, and TrustedZFS
+BSDNotify, `libnotify`, `notifyctl`, Crypto, EnvFD, flavors, and TrustedZFS
 are also exercised together under a matching WITNESS/INVARIANTS kernel by the
 disposable amd64 harness in `tools/test/capability-qemu/`.
