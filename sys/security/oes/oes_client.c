@@ -2439,8 +2439,10 @@ oes_fill_file(oes_file_t *ef, struct vnode *vp, struct ucred *cred,
 	/* Get vnode attributes using provided credential */
 	if (cred != NULL)
 		error = VOP_GETATTR(vp, &va, cred);
-	else
+	else if (curthread != NULL && curthread->td_ucred != NULL)
 		error = VOP_GETATTR(vp, &va, curthread->td_ucred);
+	else
+		error = EACCES;
 	if (error == 0) {
 		ef->ef_ino = va.va_fileid;
 		ef->ef_dev = va.va_fsid;

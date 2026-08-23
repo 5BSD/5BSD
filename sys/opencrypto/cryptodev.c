@@ -972,7 +972,8 @@ cryptodesc_install(struct thread *td, struct csession *cse, uint32_t type,
 	int error, fd;
 
 	now = time_second;
-	if ((rights & ~CRYPTODESC_RIGHT_ALL) != 0 || rights == 0 ||
+	if ((type == 0) != (cse != NULL) ||
+	    (rights & ~CRYPTODESC_RIGHT_ALL) != 0 || rights == 0 ||
 	    private_key_len > sizeof(cd->cd_private) ||
 	    public_key_len > sizeof(cd->cd_public) ||
 	    (ttl != 0 && now > INT64_MAX - ttl)) {
@@ -1312,7 +1313,8 @@ cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
 
 	derive->cd_fd = -1;
 	salt = info = output = NULL;
-	if (cd->cd_type != 0 || derive->session.ses != 0 ||
+	if (cd->cd_type != 0 || cd->cd_session == NULL ||
+	    derive->session.ses != 0 ||
 	    derive->session.key != NULL || derive->session.mackey != NULL ||
 	    derive->cd_salt_len > CRYPTODESC_MAX_DERIVE_SALT ||
 	    derive->cd_info_len > CRYPTODESC_MAX_DERIVE_INFO ||
@@ -1633,6 +1635,8 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 	case CIOCCRYPT:
 		if (cd->cd_type != 0)
 			return (EPROTONOSUPPORT);
+		if (cd->cd_session == NULL)
+			return (EIO);
 		cop = data;
 		csp = crypto_get_params(cd->cd_session->cses);
 		if (csp->csp_mode == CSP_MODE_DIGEST)
@@ -1655,6 +1659,8 @@ cryptodesc_ioctl(struct file *fp, u_long cmd, void *data,
 	case CIOCCRYPTAEAD:
 		if (cd->cd_type != 0)
 			return (EPROTONOSUPPORT);
+		if (cd->cd_session == NULL)
+			return (EIO);
 		caead = data;
 		required = caead->op == COP_ENCRYPT ?
 		    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_AUTH :
@@ -1743,7 +1749,7 @@ cryptodesc_fill_kinfo(struct file *fp, struct kinfo_file *kif,
 		provider_flags = crypto_ses2caps(cd->cd_session->cses);
 	}
 	kif->kf_type = KF_TYPE_CRYPTO;
-	if (cd->cd_type == 0) {
+	if (cd->cd_type == 0 && cd->cd_session != NULL) {
 		csp = crypto_get_params(cd->cd_session->cses);
 		snprintf(kif->kf_path, sizeof(kif->kf_path),
 		    "crypto:mode=%d:cipher=%d:auth=%d:rights=%#x:revoked=%d:"

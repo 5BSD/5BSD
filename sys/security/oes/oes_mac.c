@@ -231,7 +231,7 @@ oes_proc_get_exec_id(struct proc *p)
 	PROC_LOCK_ASSERT(p, MA_OWNED);
 
 	cred = p->p_ucred;
-	if (cred->cr_label == NULL)
+	if (cred == NULL || cred->cr_label == NULL)
 		return (0);
 
 	ecl = SLOT(cred->cr_label);
@@ -1884,6 +1884,8 @@ oes_vfs_event_mounted(void *arg __unused, struct mount *mp,
 
 	if (!oes_softc.sc_active)
 		return;
+	if (td == NULL || td->td_proc == NULL)
+		return;
 
 	p = td->td_proc;
 	PROC_LOCK(p);
@@ -1938,6 +1940,8 @@ oes_vfs_event_unmounted(void *arg __unused, struct mount *mp,
 	struct statfs *sp;
 
 	if (!oes_softc.sc_active)
+		return;
+	if (td == NULL || td->td_proc == NULL)
 		return;
 
 	p = td->td_proc;

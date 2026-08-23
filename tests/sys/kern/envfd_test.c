@@ -539,6 +539,22 @@ ATF_TC_BODY(write_once_pass_and_fork, tc)
 	close(sv[1]);
 }
 
+ATF_TC_WITHOUT_HEAD(orphaned_scm_rights_close);
+ATF_TC_BODY(orphaned_scm_rights_close, tc)
+{
+	int fd, sv[2];
+
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
+	fd = new_envfd("orphaned-passfd", ENVFD_WRITE_ONCE, 8);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(5, write(fd, "value", 5));
+	send_fd(sv[0], fd);
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_REQUIRE_EQ(0, close(sv[0]));
+	/* unp_dispose() closes the unread EnvFD through closef_nothread(). */
+	ATF_REQUIRE_EQ(0, close(sv[1]));
+}
+
 static void
 get_event(int kq, struct kevent *event, int expected)
 {
@@ -1121,6 +1137,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, concurrent_snapshots);
 	ATF_TP_ADD_TC(tp, write_once_shared_and_atomic);
 	ATF_TP_ADD_TC(tp, write_once_pass_and_fork);
+	ATF_TP_ADD_TC(tp, orphaned_scm_rights_close);
 	ATF_TP_ADD_TC(tp, kqueue_notifications);
 	ATF_TP_ADD_TC(tp, capsicum_rights);
 	ATF_TP_ADD_TC(tp, capmode_only);

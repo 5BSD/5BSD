@@ -1362,6 +1362,31 @@ ATF_TC_BODY(passable_descriptor, tc)
 	close(control);
 }
 
+ATF_TC(orphaned_scm_rights_close);
+ATF_TC_HEAD(orphaned_scm_rights_close, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "an unread SCM_RIGHTS crypto descriptor closes without a thread");
+	atf_tc_set_md_var(tc, "require.kmods", "cryptodev");
+}
+ATF_TC_BODY(orphaned_scm_rights_close, tc)
+{
+	int control, fd, sockets[2];
+
+	ATF_REQUIRE_SYSCTL_INT("kern.crypto.allow_soft", 1);
+	control = open_control();
+	fd = mint_descriptor(control, CRYPTO_AES_CBC, 0, sizeof(aes_iv), 0,
+	    CRYPTODESC_RIGHT_ENCRYPT | CRYPTODESC_RIGHT_DECRYPT);
+	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sockets));
+	ATF_REQUIRE_MSG(send_fd(sockets[0], fd) == 1, "sendmsg: %s",
+	    strerror(errno));
+	ATF_REQUIRE_EQ(0, close(fd));
+	ATF_REQUIRE_EQ(0, close(sockets[0]));
+	/* unp_dispose() closes the unread descriptor via closef_nothread(). */
+	ATF_REQUIRE_EQ(0, close(sockets[1]));
+	ATF_REQUIRE_EQ(0, close(control));
+}
+
 ATF_TC(aead_rights_and_integrity);
 ATF_TC_HEAD(aead_rights_and_integrity, tc)
 {
@@ -1464,6 +1489,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, asymmetric_capabilities);
 	ATF_TP_ADD_TC(tp, concurrent_descriptor_use);
 	ATF_TP_ADD_TC(tp, passable_descriptor);
+	ATF_TP_ADD_TC(tp, orphaned_scm_rights_close);
 	ATF_TP_ADD_TC(tp, aead_rights_and_integrity);
 	return (atf_no_error());
 }
