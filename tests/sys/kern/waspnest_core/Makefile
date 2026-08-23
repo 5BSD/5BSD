@@ -11,6 +11,9 @@ ATF_TESTS_C+=	vsock_test
 CFLAGS.vsock_test+=	-I${SRCTOP}/sys
 LIBADD.vsock_test+=	pthread
 CWARNFLAGS.vsock_test.c+=	-Wno-cast-align
+TEST_METADATA.vsock_test+=	required_user="root"
+TEST_METADATA.vsock_test+=	required_kmods="vsock"
+TEST_METADATA.vsock_test+=	timeout="60"
 
 ATF_TESTS_C+=	vsock_wire_test
 CFLAGS.vsock_wire_test+=	-I${SRCTOP}/sys

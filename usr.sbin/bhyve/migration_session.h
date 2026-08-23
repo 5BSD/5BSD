@@ -398,7 +398,14 @@ struct migration_session_config {
  *                     the same generation from where it left off.  *converged is
  *                     meaningful on the final chunk (*more == false).
  *   so_precopy_disable stop dirty logging (retire the bitmap)
- *   so_quiesce        event-fence: pause every vCPU/device/backend/timer
+ *   so_quiesce        event-fence: pause every vCPU/device/backend/timer.  On
+ *                     failure (nonzero return) the implementation MUST set
+ *                     *source_runnable to report whether the source is still a
+ *                     running copy: true if it fully rolled back the partial
+ *                     quiesce, false if the source is wedged (vCPUs and/or the
+ *                     device fabric left paused and unrecoverable).  On success
+ *                     *source_runnable is unused (the source is intentionally
+ *                     quiesced for the cut).
  *   so_resume         rollback: resume the source (must leave it runnable)
  *   so_dev_state      serialize device/backend/CPU/kernel state at cutover into
  *                     a freshly heap-allocated buffer (*buf, *len); the session
@@ -415,7 +422,7 @@ struct migration_source_ops {
 	    uint8_t *buf, size_t cap, size_t *written, uint64_t *dirty_pages,
 	    bool *converged, bool *more);
 	int (*so_precopy_disable)(void *);
-	int (*so_quiesce)(void *);
+	int (*so_quiesce)(void *, bool *source_runnable);
 	int (*so_resume)(void *);
 	int (*so_dev_state)(void *, uint8_t **buf, size_t *len);
 	void (*so_defunct)(void *);

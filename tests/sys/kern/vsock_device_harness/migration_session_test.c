@@ -446,6 +446,8 @@ struct source_model {
 	int converge_after;	/* declare converged at this round (<=0 never) */
 	int fail_dev_state;	/* errno to fail so_dev_state with */
 	int fail_resume;	/* errno to fail source rollback resume with */
+	int fail_quiesce;	/* errno to fail so_quiesce with */
+	bool quiesce_wedged;	/* if failing quiesce, source is unrecoverable */
 	const uint8_t *dev_override;	/* large dev-state blob (else guest.dev_state) */
 	size_t dev_override_len;
 	bool quiesced;
@@ -602,10 +604,19 @@ src_precopy_disable(void *arg)
 }
 
 static int
-src_quiesce(void *arg)
+src_quiesce(void *arg, bool *source_runnable)
 {
 	struct source_model *m = arg;
 
+	if (m->fail_quiesce != 0) {
+		/*
+		 * A wedged quiesce leaves the source stopped; a clean quiesce
+		 * failure rolled back and kept it running.
+		 */
+		m->quiesced = m->quiesce_wedged;
+		*source_runnable = !m->quiesce_wedged;
+		return (m->fail_quiesce);
+	}
 	m->quiesced = true;
 	return (0);
 }
@@ -1300,6 +1311,77 @@ ATF_TC_BODY(source_resume_failure_stays_fail_closed, tc)
 	ATF_CHECK(!dstate->committed);
 	ATF_CHECK(!dstate->resumed);
 	ATF_CHECK(dstate->discarded);
+}
+
+/*
+ * A quiesce that fails but cleanly rolls back leaves the source running: it
+ * must be reported runnable and never marked quiesced.
+ */
+ATF_TC_WITHOUT_HEAD(source_quiesce_failure_rolls_back_runnable);
+ATF_TC_BODY(source_quiesce_failure_rolls_back_runnable, tc)
+{
+	struct source_model src;
+	struct dest_model dst;
+	struct migration_source_result sres;
+	struct migration_session_config cfg;
+	struct dest_model *dstate;
+	int serr, derr;
+
+	(void)tc;
+	memset(&src, 0, sizeof(src));
+	memset(&dst, 0, sizeof(dst));
+	src.converge_after = 2;
+	src.fail_quiesce = EBUSY;
+	src.quiesce_wedged = false;	/* rolled back cleanly */
+	cfg = base_config();
+
+	run_loopback(&src, &dst, &cfg, &cfg, &sres, &dstate, &serr, &derr);
+
+	ATF_CHECK_EQ(serr, EBUSY);
+	ATF_CHECK(sres.source_runnable);
+	ATF_CHECK(!src.quiesced);
+	ATF_CHECK(!src.defunct);
+	ATF_CHECK_EQ(sres.phase, (uint32_t)MIGRATION_PHASE_FAILED);
+	ATF_CHECK_EQ(sres.reason, (uint32_t)MIGRATION_REASON_STATE);
+	ATF_CHECK(!dstate->committed);
+	ATF_CHECK(!dstate->resumed);
+}
+
+/*
+ * A quiesce that fails AND cannot roll back leaves the source wedged (vCPUs and
+ * devices stopped, unrecoverable).  The session MUST report the source as NOT
+ * runnable so the control plane never resumes a second copy elsewhere -- the
+ * split-brain guard.
+ */
+ATF_TC_WITHOUT_HEAD(source_quiesce_wedged_reports_not_runnable);
+ATF_TC_BODY(source_quiesce_wedged_reports_not_runnable, tc)
+{
+	struct source_model src;
+	struct dest_model dst;
+	struct migration_source_result sres;
+	struct migration_session_config cfg;
+	struct dest_model *dstate;
+	int serr, derr;
+
+	(void)tc;
+	memset(&src, 0, sizeof(src));
+	memset(&dst, 0, sizeof(dst));
+	src.converge_after = 2;
+	src.fail_quiesce = EIO;
+	src.quiesce_wedged = true;	/* rollback failed: source stopped */
+	cfg = base_config();
+
+	run_loopback(&src, &dst, &cfg, &cfg, &sres, &dstate, &serr, &derr);
+
+	ATF_CHECK_EQ(serr, EIO);
+	ATF_CHECK(!sres.source_runnable);	/* the split-brain guard */
+	ATF_CHECK(src.quiesced);
+	ATF_CHECK(!src.defunct);
+	ATF_CHECK_EQ(sres.phase, (uint32_t)MIGRATION_PHASE_FAILED);
+	ATF_CHECK_EQ(sres.reason, (uint32_t)MIGRATION_REASON_STATE);
+	/* Destination must not have committed or resumed. */
+	ATF_CHECK(!dstate->committed);
+	ATF_CHECK(!dstate->resumed);
 }
 
 /* ------------------------------------------------------------------------- */
@@ -2128,10 +2210,11 @@ hm_src_precopy_disable(void *arg)
 }
 
 static int
-hm_src_quiesce(void *arg)
+hm_src_quiesce(void *arg, bool *source_runnable)
 {
 	struct hm_source *m = arg;
 
+	(void)source_runnable;
 	m->quiesced = true;
 	return (0);
 }
@@ -2368,6 +2451,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, destination_without_release_does_not_run);
 	ATF_TP_ADD_TC(tp, source_rolls_back_when_dev_state_fails);
 	ATF_TP_ADD_TC(tp, source_resume_failure_stays_fail_closed);
+	ATF_TP_ADD_TC(tp, source_quiesce_failure_rolls_back_runnable);
+	ATF_TP_ADD_TC(tp, source_quiesce_wedged_reports_not_runnable);
 	ATF_TP_ADD_TC(tp, chunk_validate_rejects_gap_dup_oversize);
 	ATF_TP_ADD_TC(tp, loopback_multiframe_dev_state_reassembles);
 	ATF_TP_ADD_TC(tp, source_rolls_back_on_midchunk_dev_state_failure);

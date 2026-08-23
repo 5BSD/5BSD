@@ -40,10 +40,48 @@ static unsigned int notification_retry_calls;
 static int notification_retry_error;
 static int connection_reset_error;
 static unsigned int needs_reset_calls;
+/* Controls for the request/notification/init coverage cases (defaults are the
+ * historical always-empty-ring behaviour so pre-existing cases are unchanged). */
+static int vq_has_descs_result;
+static int vq_getchain_result;
+static struct vi_req vq_getchain_req_template;
+static int connection_submit_error;
+static unsigned int connection_submit_calls;
+static bool connection_active_result = true;
+static int connection_set_discard_error;
+static int connection_set_reset_complete_error;
+static int connection_set_notification_error;
+static unsigned int connection_set_discard_calls;
+static unsigned int connection_set_reset_complete_calls;
+static unsigned int connection_set_notification_calls;
+static int connection_progress_error;
+static int connection_control_status_result;
+static int connection_begin_quiesce_result;
+static int connection_begin_thaw_saved_error;
+static size_t buf_to_iov_result;
+static bool buf_to_iov_result_valid;
+static unsigned int buf_to_iov_calls;
+static unsigned int vi_intr_init_calls;
+static int vi_intr_init_error;
+static int vi_pci_modern_init_error;
+static int vi_pci_select_transport_error;
+static unsigned int vi_pci_modern_queue_reset_complete_calls;
+static unsigned int vi_pci_modern_set_identity_calls;
+static unsigned int pci_set_cfgdata8_calls;
+static unsigned int vi_softc_linkup_calls;
+/* Config-node map consulted by the get_config_*_node() mocks. */
+static const char *cfg_path;
+static const char *cfg_tag;
+static const char *cfg_identity;
+static const char *cfg_queues;
+static bool cfg_notifications;
+static bool cfg_packed;
+static int connect_required_error;
 
 #ifdef BHYVE_SNAPSHOT
 static int restore_session_calls;
 static int checkpoint_contract_calls;
+static int checkpoint_contract_error;
 static int checkpoint_copy_error;
 static int checkpoint_thaw_error;
 static int checkpoint_thaw_calls;
@@ -211,15 +249,17 @@ vq_has_descs(struct vqueue_info *vq __unused)
 {
 
 	vq_has_descs_calls++;
-	return (0);
+	return (vq_has_descs_result);
 }
 
 int
 vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov __unused,
-    int niov __unused, struct vi_req *request __unused)
+    int niov __unused, struct vi_req *request)
 {
 
-	return (0);
+	if (request != NULL)
+		*request = vq_getchain_req_template;
+	return (vq_getchain_result);
 }
 
 void
@@ -250,6 +290,8 @@ virtio_fs_connection_connect_required(const char *path __unused,
     struct virtio_fs_connection **connection)
 {
 
+	if (connect_required_error != 0)
+		return (connect_required_error);
 	if (connection != NULL)
 		*connection = (struct virtio_fs_connection *)(uintptr_t)1;
 	return (0);
@@ -289,7 +331,7 @@ virtio_fs_connection_progress(
     bool readable __unused, bool writable __unused)
 {
 
-	return (0);
+	return (connection_progress_error);
 }
 
 uint32_t
@@ -314,6 +356,8 @@ virtio_fs_connection_checkpoint_contract(
     struct virtio_fs_backend_session *backend_session)
 {
 	checkpoint_contract_calls++;
+	if (checkpoint_contract_error != 0)
+		return (checkpoint_contract_error);
 
 	if (backend_session == NULL)
 		return (EINVAL);
@@ -367,7 +411,8 @@ virtio_fs_connection_submit_on(
     uintptr_t token __unused)
 {
 
-	return (0);
+	connection_submit_calls++;
+	return (connection_submit_error);
 }
 
 int
@@ -386,7 +431,7 @@ virtio_fs_connection_begin_quiesce(
     struct virtio_fs_connection *connection __unused)
 {
 
-	return (0);
+	return (connection_begin_quiesce_result);
 }
 
 void
@@ -410,7 +455,7 @@ virtio_fs_connection_begin_thaw_saved(
     struct virtio_fs_connection *connection __unused)
 {
 
-	return (0);
+	return (connection_begin_thaw_saved_error);
 }
 
 int
@@ -418,7 +463,7 @@ virtio_fs_connection_control_status(
     const struct virtio_fs_connection *connection __unused)
 {
 
-	return (0);
+	return (connection_control_status_result);
 }
 
 int
@@ -427,6 +472,269 @@ virtio_fs_connection_abort_control(
 {
 
 	return (0);
+}
+
+bool
+virtio_fs_connection_active(
+    const struct virtio_fs_connection *connection __unused)
+{
+
+	return (connection_active_result);
+}
+
+int
+virtio_fs_connection_set_discard(struct virtio_fs_connection *connection __unused,
+    virtio_fs_queue_discard_cb callback __unused, void *argument __unused)
+{
+
+	connection_set_discard_calls++;
+	return (connection_set_discard_error);
+}
+
+int
+virtio_fs_connection_set_reset_complete(
+    struct virtio_fs_connection *connection __unused,
+    virtio_fs_queue_reset_complete_cb callback __unused,
+    void *argument __unused)
+{
+
+	connection_set_reset_complete_calls++;
+	return (connection_set_reset_complete_error);
+}
+
+int
+virtio_fs_connection_set_notification(
+    struct virtio_fs_connection *connection __unused,
+    virtio_fs_connection_notify_cb callback __unused, void *argument __unused)
+{
+
+	connection_set_notification_calls++;
+	return (connection_set_notification_error);
+}
+
+size_t
+buf_to_iov(const void *buf __unused, size_t buflen,
+    const struct iovec *iov __unused, size_t niov __unused)
+{
+
+	buf_to_iov_calls++;
+	return (buf_to_iov_result_valid ? buf_to_iov_result : buflen);
+}
+
+const char *
+get_config_value_node(const nvlist_t *parent __unused, const char *name)
+{
+
+	if (strcmp(name, "path") == 0)
+		return (cfg_path);
+	if (strcmp(name, "tag") == 0)
+		return (cfg_tag);
+	if (strcmp(name, "identity") == 0)
+		return (cfg_identity);
+	if (strcmp(name, "queues") == 0)
+		return (cfg_queues);
+	return (NULL);
+}
+
+bool
+get_config_bool_node_default(const nvlist_t *parent __unused, const char *name,
+    bool value)
+{
+
+	if (strcmp(name, "notifications") == 0)
+		return (cfg_notifications);
+	if (strcmp(name, "packed") == 0)
+		return (cfg_packed);
+	return (value);
+}
+
+void
+pci_set_cfgdata8(struct pci_devinst *pi __unused, int offset __unused,
+    uint8_t value __unused)
+{
+
+	pci_set_cfgdata8_calls++;
+}
+
+int
+fbsdrun_virtio_msix(void)
+{
+
+	return (1);
+}
+
+void
+vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *consts,
+    void *pci_virtio_softc, struct pci_devinst *pi,
+    struct vqueue_info *queues)
+{
+
+	vi_softc_linkup_calls++;
+	vs->vs_vc = consts;
+	vs->vs_pi = pi;
+	vs->vs_queues = queues;
+	if (pi != NULL)
+		pi->pi_arg = pci_virtio_softc;
+}
+
+/*
+ * Release everything a successful pci_vtfs_init() allocated.  Mirrors the
+ * teardown order of the init failure path without re-entering the (mocked)
+ * transport, so composed init cases stay leak-free.
+ */
+static void
+pci_vtfs_test_teardown(struct pci_vtfs_softc *sc)
+{
+
+	if (sc == NULL)
+		return;
+	pci_vtfs_disconnect_sync(sc);
+	pthread_cond_destroy(&sc->vsc_checkpoint_cv);
+	free(sc->vsc_vs.vs_modern);
+	pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc->vsc_notify_pending);
+	free(sc->vsc_reset);
+	free(sc->vsc_vq);
+#ifdef BHYVE_SNAPSHOT
+	pci_vtfs_checkpoint_state_clear(sc);
+#endif
+	free(sc->vsc_backend_identity);
+	free(sc->vsc_backend_path);
+	free(sc);
+}
+
+int
+vi_pci_select_transport(struct virtio_softc *vs __unused,
+    const nvlist_t *nvl __unused,
+    enum virtio_pci_transport_policy policy __unused)
+{
+
+	return (vi_pci_select_transport_error);
+}
+
+void
+vi_pci_modern_set_identity(struct virtio_softc *vs __unused,
+    uint16_t device_id __unused)
+{
+
+	vi_pci_modern_set_identity_calls++;
+}
+
+int
+vi_intr_init(struct virtio_softc *vs, int barnum __unused, int use_msix __unused)
+{
+
+	if (vi_intr_init_error != 0)
+		return (vi_intr_init_error);
+	vi_intr_init_calls++;
+	(void)pthread_mutex_init(&vs->vs_isr_mtx, NULL);
+	return (0);
+}
+
+int
+vi_pci_modern_init(struct virtio_softc *vs __unused, int barnum __unused)
+{
+
+	return (vi_pci_modern_init_error);
+}
+
+void
+vi_pci_modern_queue_reset_complete(struct vqueue_info *vq __unused,
+    uint64_t generation __unused, int error __unused)
+{
+
+	vi_pci_modern_queue_reset_complete_calls++;
+}
+
+int
+vi_pci_modern_cfgread(struct pci_devinst *pi __unused, int offset __unused,
+    int size __unused, uint32_t *value __unused)
+{
+
+	return (0);
+}
+
+int
+vi_pci_modern_cfgwrite(struct pci_devinst *pi __unused, int offset __unused,
+    int size __unused, uint32_t value __unused)
+{
+
+	return (0);
+}
+
+uint64_t
+vi_pci_read(struct pci_devinst *pi __unused, int baridx __unused,
+    uint64_t offset __unused, int size __unused)
+{
+
+	return (0);
+}
+
+void
+vi_pci_write(struct pci_devinst *pi __unused, int baridx __unused,
+    uint64_t offset __unused, int size __unused, uint64_t value __unused)
+{
+}
+
+/* Reset every mock control to its default before each composed case. */
+static void
+reset_mock_state(void)
+{
+
+	vq_has_descs_calls = 0;
+	vq_relchain_calls = 0;
+	vq_has_descs_result = 0;
+	vq_getchain_result = 0;
+	memset(&vq_getchain_req_template, 0, sizeof(vq_getchain_req_template));
+	connection_events = 0;
+	connection_submit_error = 0;
+	connection_submit_calls = 0;
+	connection_active_result = true;
+	connection_set_discard_error = 0;
+	connection_set_reset_complete_error = 0;
+	connection_set_notification_error = 0;
+	connection_set_discard_calls = 0;
+	connection_set_reset_complete_calls = 0;
+	connection_set_notification_calls = 0;
+	connection_progress_error = 0;
+	connection_control_status_result = 0;
+	connection_begin_quiesce_result = 0;
+	connection_begin_thaw_saved_error = 0;
+	connection_reset_error = 0;
+	notification_retry_calls = 0;
+	notification_retry_error = 0;
+	buf_to_iov_result = 0;
+	buf_to_iov_result_valid = false;
+	buf_to_iov_calls = 0;
+	mevent_enable_error = 0;
+	mevent_enable_read_error = 0;
+	mevent_enable_write_error = 0;
+	mevent_disable_error = 0;
+	needs_reset_calls = 0;
+	vi_intr_init_calls = 0;
+	vi_intr_init_error = 0;
+	vi_pci_modern_init_error = 0;
+	vi_pci_select_transport_error = 0;
+	vi_pci_modern_queue_reset_complete_calls = 0;
+	vi_pci_modern_set_identity_calls = 0;
+	pci_set_cfgdata8_calls = 0;
+	vi_softc_linkup_calls = 0;
+	cfg_path = NULL;
+	cfg_tag = NULL;
+	cfg_identity = NULL;
+	cfg_queues = NULL;
+	cfg_notifications = false;
+	cfg_packed = false;
+	connect_required_error = 0;
+#ifdef BHYVE_SNAPSHOT
+	checkpoint_contract_error = 0;
+	checkpoint_copy_error = 0;
+	checkpoint_thaw_error = 0;
+	checkpoint_thaw_calls = 0;
+	restore_session_calls = 0;
+	checkpoint_contract_calls = 0;
+#endif
 }
 
 ATF_TC_WITHOUT_HEAD(option_bounds);
@@ -493,7 +801,8 @@ ATF_TC_BODY(device_contract, tc)
 	ATF_CHECK_STREQ(vtfs_vi_consts.vc_name, "vtfs");
 	ATF_CHECK_EQ(vtfs_vi_consts.vc_cfgsize,
 	    BHYVE_VIRTIO_FS_CONFIG_BASE_SIZE);
-	ATF_CHECK_EQ(vtfs_vi_consts.vc_hv_caps, VIRTIO_F_RING_RESET);
+	ATF_CHECK_EQ(vtfs_vi_consts.vc_hv_caps,
+	    VIRTIO14_F_RING_INDIRECT_DESC | VIRTIO_F_RING_RESET);
 	ATF_CHECK(vtfs_vi_consts.vc_reset == pci_vtfs_reset);
 	ATF_CHECK(vtfs_vi_consts.vc_qnotify == pci_vtfs_notify);
 	ATF_CHECK(vtfs_vi_consts.vc_qreset == pci_vtfs_qreset);
@@ -514,16 +823,19 @@ ATF_TC_BODY(suspend_capability_requires_reconstructible_backend, tc)
 	memset(&sc, 0, sizeof(sc));
 	sc.vsc_consts = vtfs_vi_consts;
 	pci_vtfs_configure_instance_features(&sc);
-	ATF_CHECK_EQ(sc.vsc_consts.vc_hv_caps, VIRTIO_F_RING_RESET);
+	ATF_CHECK_EQ(sc.vsc_consts.vc_hv_caps,
+	    VIRTIO14_F_RING_INDIRECT_DESC | VIRTIO_F_RING_RESET);
 
 	sc.vsc_backend_identity = __DECONST(char *, "backend-identity");
 	pci_vtfs_configure_instance_features(&sc);
 	ATF_CHECK_EQ(sc.vsc_consts.vc_hv_caps,
-	    VIRTIO14_F_RING_RESET | VIRTIO14_F_SUSPEND);
+	    VIRTIO14_F_RING_INDIRECT_DESC | VIRTIO14_F_RING_RESET |
+	    VIRTIO14_F_SUSPEND);
 
 	sc.vsc_backend_identity = NULL;
 	pci_vtfs_configure_instance_features(&sc);
-	ATF_CHECK_EQ(sc.vsc_consts.vc_hv_caps, VIRTIO_F_RING_RESET);
+	ATF_CHECK_EQ(sc.vsc_consts.vc_hv_caps,
+	    VIRTIO14_F_RING_INDIRECT_DESC | VIRTIO_F_RING_RESET);
 }
 
 ATF_TC_WITHOUT_HEAD(restored_suspend_selects_destination_state);
@@ -1106,6 +1418,998 @@ ATF_TC_BODY(notification_queue_reset_defers_delivery, tc)
 	notification_retry_error = 0;
 }
 
+/*
+ * Drive the full device-model init composition.  The transport, interrupt and
+ * config-space primitives are mocked; the spec-derived expectations are the
+ * VirtIO 5.11 queue topology (hiprio + request [+ notification]) and the
+ * feature bits the device offers.
+ */
+ATF_TC_WITHOUT_HEAD(init_composes_device_topology);
+ATF_TC_BODY(init_composes_device_topology, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtfs_softc *sc;
+
+	reset_mock_state();
+	memset(&pi, 0, sizeof(pi));
+	cfg_path = "/nonexistent.sock";
+	cfg_tag = "waspnest";
+	/* Default request-queue count is one; total queues = hiprio + request. */
+	ATF_REQUIRE_EQ(pci_vtfs_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vsc_num_request_queues, VTFS_DEFAULT_REQUEST_QUEUES);
+	ATF_CHECK_EQ(sc->vsc_nvq, VTFS_DEFAULT_REQUEST_QUEUES + 1);
+	ATF_CHECK_EQ((int)sc->vsc_consts.vc_nvq, (int)sc->vsc_nvq);
+	ATF_CHECK_EQ(sc->vsc_consts.vc_cfgsize,
+	    BHYVE_VIRTIO_FS_CONFIG_BASE_SIZE);
+	/* No identity => no guest-visible suspend capability. */
+	ATF_CHECK_EQ(sc->vsc_consts.vc_hv_caps &
+	    VIRTIO14_F_SUSPEND, 0U);
+	ATF_CHECK_EQ(vi_softc_linkup_calls, 1U);
+	ATF_CHECK_EQ(vi_pci_modern_set_identity_calls, 1U);
+	ATF_CHECK_EQ(pci_set_cfgdata8_calls, 2U);
+	for (uint32_t i = 0; i < sc->vsc_nvq; i++)
+		ATF_CHECK_EQ(sc->vsc_vq[i].vq_qsize, VTFS_RINGSZ);
+	pci_vtfs_test_teardown(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(init_enables_notifications_packed_and_suspend);
+ATF_TC_BODY(init_enables_notifications_packed_and_suspend, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtfs_softc *sc;
+
+	reset_mock_state();
+	memset(&pi, 0, sizeof(pi));
+	cfg_path = "/nonexistent.sock";
+	cfg_tag = "waspnest";
+	cfg_identity = "backend-identity";
+	cfg_queues = "4";
+	cfg_notifications = true;
+	cfg_packed = true;
+	ATF_REQUIRE_EQ(pci_vtfs_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vsc_num_request_queues, 4U);
+	/* hiprio + four request + notification queues. */
+	ATF_CHECK_EQ(sc->vsc_nvq, 4U + 1U + 1U);
+	ATF_CHECK(sc->vsc_notifications);
+	ATF_CHECK_EQ(sc->vsc_consts.vc_cfgsize, BHYVE_VIRTIO_FS_CONFIG_SIZE);
+	ATF_CHECK((sc->vsc_consts.vc_hv_caps &
+	    BHYVE_VIRTIO_FS_F_NOTIFICATION) != 0);
+	ATF_CHECK((sc->vsc_consts.vc_hv_caps & VIRTIO_F_RING_PACKED) != 0);
+	/* identity= makes the instance advertise VIRTIO_F_SUSPEND. */
+	ATF_CHECK((sc->vsc_consts.vc_hv_caps & VIRTIO14_F_SUSPEND) != 0);
+	pci_vtfs_test_teardown(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(init_rejects_invalid_configuration);
+ATF_TC_BODY(init_rejects_invalid_configuration, tc)
+{
+	struct pci_devinst pi;
+
+	memset(&pi, 0, sizeof(pi));
+
+	reset_mock_state();
+	cfg_tag = "t"; /* no path */
+	ATF_CHECK_EQ(pci_vtfs_init(&pi, NULL), 1);
+
+	reset_mock_state();
+	cfg_path = "/s"; /* no tag */
+	ATF_CHECK_EQ(pci_vtfs_init(&pi, NULL), 1);
+
+	reset_mock_state();
+	cfg_path = "/s";
+	cfg_tag = "t";
+	cfg_identity = ""; /* empty identity is invalid */
+	ATF_CHECK_EQ(pci_vtfs_init(&pi, NULL), 1);
+
+	reset_mock_state();
+	cfg_path = "/s";
+	cfg_tag = "t";
+	cfg_queues = "0"; /* below the minimum of one */
+	ATF_CHECK_EQ(pci_vtfs_init(&pi, NULL), 1);
+
+	reset_mock_state();
+	cfg_path = "/s";
+	cfg_tag = "t";
+	cfg_queues = "65"; /* above VTFS_MAX_REQUEST_QUEUES */
+	ATF_CHECK_EQ(pci_vtfs_init(&pi, NULL), 1);
+}
+
+ATF_TC_WITHOUT_HEAD(init_unwinds_on_transport_failures);
+ATF_TC_BODY(init_unwinds_on_transport_failures, tc)
+{
+	struct pci_devinst pi;
+
+	memset(&pi, 0, sizeof(pi));
+
+	reset_mock_state();
+	cfg_path = "/s";
+	cfg_tag = "t";
+	vi_pci_select_transport_error = EINVAL;
+	ATF_CHECK_EQ(pci_vtfs_init(&pi, NULL), 1);
+
+	reset_mock_state();
+	cfg_path = "/s";
+	cfg_tag = "t";
+	vi_intr_init_error = EBUSY;
+	ATF_CHECK_EQ(pci_vtfs_init(&pi, NULL), 1);
+
+	reset_mock_state();
+	cfg_path = "/s";
+	cfg_tag = "t";
+	vi_pci_modern_init_error = EIO;
+	ATF_CHECK_EQ(pci_vtfs_init(&pi, NULL), 1);
+}
+
+ATF_TC_WITHOUT_HEAD(init_fails_when_backend_connect_fails);
+ATF_TC_BODY(init_fails_when_backend_connect_fails, tc)
+{
+	struct pci_devinst pi;
+
+	memset(&pi, 0, sizeof(pi));
+	reset_mock_state();
+	cfg_path = "/s";
+	cfg_tag = "t";
+	connect_required_error = ECONNREFUSED;
+	ATF_CHECK_EQ(pci_vtfs_init(&pi, NULL), 1);
+	connect_required_error = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(install_callbacks_registers_all_handlers);
+ATF_TC_BODY(install_callbacks_registers_all_handlers, tc)
+{
+	struct pci_vtfs_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mock_state();
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+
+	/* Inactive connection is a no-op success. */
+	connection_active_result = false;
+	ATF_CHECK_EQ(pci_vtfs_install_callbacks(&sc), 0);
+	ATF_CHECK(!sc.vsc_callbacks_set);
+
+	/* Active, no notifications: discard + reset-complete only. */
+	connection_active_result = true;
+	ATF_CHECK_EQ(pci_vtfs_install_callbacks(&sc), 0);
+	ATF_CHECK(sc.vsc_callbacks_set);
+	ATF_CHECK_EQ(connection_set_discard_calls, 1U);
+	ATF_CHECK_EQ(connection_set_reset_complete_calls, 1U);
+	ATF_CHECK_EQ(connection_set_notification_calls, 0U);
+
+	/* Already installed short-circuits. */
+	ATF_CHECK_EQ(pci_vtfs_install_callbacks(&sc), 0);
+	ATF_CHECK_EQ(connection_set_discard_calls, 1U);
+
+	/* With notifications, the notification handler is also registered. */
+	sc.vsc_callbacks_set = false;
+	sc.vsc_notifications = true;
+	ATF_CHECK_EQ(pci_vtfs_install_callbacks(&sc), 0);
+	ATF_CHECK_EQ(connection_set_notification_calls, 1U);
+
+	/* Each setter failure is propagated. */
+	sc.vsc_callbacks_set = false;
+	connection_set_discard_error = EIO;
+	ATF_CHECK_EQ(pci_vtfs_install_callbacks(&sc), EIO);
+	connection_set_discard_error = 0;
+
+	sc.vsc_callbacks_set = false;
+	connection_set_reset_complete_error = EBUSY;
+	ATF_CHECK_EQ(pci_vtfs_install_callbacks(&sc), EBUSY);
+	connection_set_reset_complete_error = 0;
+
+	sc.vsc_callbacks_set = false;
+	connection_set_notification_error = ENOSPC;
+	ATF_CHECK_EQ(pci_vtfs_install_callbacks(&sc), ENOSPC);
+	connection_set_notification_error = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(notify_forwards_requests_to_backend);
+ATF_TC_BODY(notify_forwards_requests_to_backend, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	bool notify_pending[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_callbacks_set = true;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	vq[0].vq_num = 0; /* hiprio */
+	vq[0].vq_qsize = 1;
+	vq[1].vq_num = 1; /* request */
+	vq[1].vq_qsize = 1;
+	vq_getchain_req_template.readable = 2;
+	vq_getchain_req_template.writable = 1;
+	vq_getchain_req_template.ordered = true;
+
+	/* One descriptor available, submit succeeds: request forwarded. */
+	vq_has_descs_result = 1;
+	vq_getchain_result = 3;
+	connection_submit_calls = 0;
+	pci_vtfs_notify(&sc, &vq[0]);
+	ATF_CHECK_EQ(connection_submit_calls, 1U);
+
+	/* Backend backpressure retains the chain and defers a retry. */
+	notify_pending[1] = false;
+	connection_submit_error = ENOBUFS;
+	pci_vtfs_notify(&sc, &vq[1]);
+	ATF_CHECK(notify_pending[1]);
+
+	/* A hard submit error requests a device reset. */
+	connection_submit_error = EIO;
+	needs_reset_calls = 0;
+	pci_vtfs_notify(&sc, &vq[1]);
+	ATF_CHECK(needs_reset_calls >= 1U);
+
+	/* Empty getchain simply stops draining the ring. */
+	connection_submit_error = 0;
+	vq_getchain_result = 0;
+	pci_vtfs_notify(&sc, &vq[1]);
+
+	/* vq_num beyond the device topology forces a reset. */
+	vq[1].vq_num = 99;
+	needs_reset_calls = 0;
+	pci_vtfs_notify(&sc, &vq[1]);
+	ATF_CHECK_EQ(needs_reset_calls, 1U);
+
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_defers_when_callbacks_absent);
+ATF_TC_BODY(notify_defers_when_callbacks_absent, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	bool notify_pending[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_callbacks_set = false;
+	vq[1].vq_num = 1;
+
+	pci_vtfs_notify(&sc, &vq[1]);
+	ATF_CHECK(notify_pending[1]);
+}
+
+ATF_TC_WITHOUT_HEAD(receive_notification_publishes_to_queue);
+ATF_TC_BODY(receive_notification_publishes_to_queue, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	static const uint8_t payload[] = { 0x7f, 0x45, 0x4c, 0x46 };
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	reset_mock_state();
+	sc.vsc_notifications = true;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	vq[1].vq_num = 1;
+
+	/* Rejected shapes: null/empty/oversized payload, no notifications. */
+	ATF_CHECK_EQ(pci_vtfs_receive_notification(&sc, NULL,
+	    sizeof(payload)), EPROTO);
+	ATF_CHECK_EQ(pci_vtfs_receive_notification(&sc, payload, 0), EPROTO);
+	ATF_CHECK_EQ(pci_vtfs_receive_notification(&sc, payload,
+	    BHYVE_VIRTIO_FS_NOTIFY_BUF_SIZE + 1U), EPROTO);
+
+	/* No guest descriptor: retained for a later retry. */
+	vq_has_descs_result = 0;
+	ATF_CHECK_EQ(pci_vtfs_receive_notification(&sc, payload,
+	    sizeof(payload)), EAGAIN);
+
+	/* getchain failure is a protocol error. */
+	vq_has_descs_result = 1;
+	vq_getchain_result = 0;
+	ATF_CHECK_EQ(pci_vtfs_receive_notification(&sc, payload,
+	    sizeof(payload)), EPROTO);
+
+	/* A read-only / unordered / too-small buffer is rejected. */
+	vq_getchain_result = 1;
+	vq_getchain_req_template.ordered = false;
+	ATF_CHECK_EQ(pci_vtfs_receive_notification(&sc, payload,
+	    sizeof(payload)), EPROTO);
+	vq_getchain_req_template.ordered = true;
+	vq_getchain_req_template.readable = 0;
+	vq_getchain_req_template.writable = 1;
+	vq_getchain_req_template.writable_bytes = sizeof(payload);
+
+	/* Short copy into the guest buffer is a protocol error. */
+	buf_to_iov_result_valid = true;
+	buf_to_iov_result = sizeof(payload) - 1U;
+	ATF_CHECK_EQ(pci_vtfs_receive_notification(&sc, payload,
+	    sizeof(payload)), EPROTO);
+
+	/* Full copy publishes the notification. */
+	buf_to_iov_result = sizeof(payload);
+	vq_relchain_calls = 0;
+	ATF_CHECK_EQ(pci_vtfs_receive_notification(&sc, payload,
+	    sizeof(payload)), 0);
+	ATF_CHECK_EQ(vq_relchain_calls, 1U);
+
+	/* A device without a notification queue cannot receive one. */
+	sc.vsc_nvq = 1;
+	ATF_CHECK_EQ(pci_vtfs_receive_notification(&sc, payload,
+	    sizeof(payload)), EPROTO);
+}
+
+ATF_TC_WITHOUT_HEAD(discard_callback_cancels_request);
+ATF_TC_BODY(discard_callback_cancels_request, tc)
+{
+	struct pci_vtfs_request *request;
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq;
+	struct timespec now;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	vq.vq_num = 1;
+
+	/* submitted_valid with a past timestamp exercises the elapsed-ns math. */
+	request = calloc(1, sizeof(*request));
+	ATF_REQUIRE(request != NULL);
+	request->vq = &vq;
+	ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &now), 0);
+	request->submitted_valid = true;
+	request->submitted.tv_sec = now.tv_sec - 1;
+	request->submitted.tv_nsec = 999999999L; /* forces the borrow branch */
+	pci_vtfs_discard(&sc, (uintptr_t)request);
+
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(complete_discards_stale_generation);
+ATF_TC_BODY(complete_discards_stale_generation, tc)
+{
+	struct pci_vtfs_request *request;
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	vq.vq_num = 1;
+	vq.vq_generation = 5;
+
+	request = calloc(1, sizeof(*request));
+	ATF_REQUIRE(request != NULL);
+	request->vq = &vq;
+	request->generation = 4; /* stale relative to the queue generation */
+	vq_relchain_calls = 0;
+	/* A stale completion is discarded rather than published. */
+	pci_vtfs_complete(&sc, (uintptr_t)request, 32);
+	ATF_CHECK_EQ(vq_relchain_calls, 0U);
+
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(take_reset_completions_skips_and_clamps);
+ATF_TC_BODY(take_reset_completions_skips_and_clamps, tc)
+{
+	struct pci_vtfs_reset_completion completions[1];
+	struct pci_vtfs_reset resets[3];
+	struct pci_vtfs_softc sc;
+	struct vqueue_info queues[3];
+	size_t count;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(resets, 0, sizeof(resets));
+	memset(queues, 0, sizeof(queues));
+	reset_mock_state();
+	sc.vsc_nvq = nitems(resets);
+	sc.vsc_reset = resets;
+	/* Index 0 incomplete (continue), 1 and 2 complete (clamped by capacity). */
+	resets[1] = (struct pci_vtfs_reset){ .vq = &queues[1], .complete = true };
+	resets[2] = (struct pci_vtfs_reset){ .vq = &queues[2], .complete = true };
+	count = pci_vtfs_take_reset_completions(&sc, completions,
+	    nitems(completions));
+	ATF_CHECK_EQ(count, 1U);
+	ATF_CHECK(completions[0].vq == &queues[1]);
+	/* Capacity stopped collection before index 2 was cleared. */
+	ATF_CHECK(resets[2].complete);
+}
+
+ATF_TC_WITHOUT_HEAD(qreset_rejects_out_of_range_and_notification);
+ATF_TC_BODY(qreset_rejects_out_of_range_and_notification, tc)
+{
+	struct pci_vtfs_reset reset[3];
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	memset(reset, 0, sizeof(reset));
+	reset_mock_state();
+	sc.vsc_notifications = true;
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(reset);
+	sc.vsc_reset = reset;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+
+	/* Queue index outside the topology is invalid. */
+	vq.vq_num = 99;
+	ATF_CHECK_EQ(pci_vtfs_qreset(&sc, &vq, 1), EINVAL);
+
+	/* The notification queue (index 1) is never guest-resettable. */
+	vq.vq_num = 1;
+	ATF_CHECK_EQ(pci_vtfs_qreset(&sc, &vq, 1), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(event_processes_progress_and_completions);
+ATF_TC_BODY(event_processes_progress_and_completions, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	struct pci_vtfs_reset reset[2];
+	bool notify_pending[2];
+	pthread_condattr_t condattr;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	memset(reset, 0, sizeof(reset));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_init(&condattr), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vsc_checkpoint_cv, &condattr), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_destroy(&condattr), 0);
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	sc.vsc_reset = reset;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_read_event = (struct mevent *)(uintptr_t)1;
+	sc.vsc_write_event = (struct mevent *)(uintptr_t)2;
+	vq[0].vq_num = 0;
+	vq[1].vq_num = 1;
+	/* A pending kick is retried once callbacks install. */
+	notify_pending[0] = true;
+	/* A completed queue reset is delivered after the lock is dropped. */
+	reset[1].vq = &vq[1];
+	reset[1].generation = 3;
+	reset[1].complete = true;
+	sc.vsc_checkpoint_waiting = true;
+	connection_control_status_result = 0; /* != EINPROGRESS -> broadcast */
+
+	pci_vtfs_event(-1, EVF_READ, &sc);
+	ATF_CHECK(sc.vsc_callbacks_set);
+	ATF_CHECK_EQ(vi_pci_modern_queue_reset_complete_calls, 1U);
+
+	/* A backend progress error requests a reset. */
+	sc.vsc_callbacks_set = false;
+	connection_progress_error = EIO;
+	needs_reset_calls = 0;
+	pci_vtfs_event(-1, EVF_WRITE, &sc);
+	ATF_CHECK(needs_reset_calls >= 1U);
+
+	/* A reconnecting device drops the event immediately. */
+	connection_progress_error = 0;
+	sc.vsc_reconnecting = true;
+	vq_has_descs_calls = 0;
+	pci_vtfs_event(-1, EVF_READ, &sc);
+
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&sc.vsc_checkpoint_cv), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(reset_reconnects_backend);
+ATF_TC_BODY(reset_reconnects_backend, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	struct pci_vtfs_reset reset[2];
+	bool notify_pending[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	memset(reset, 0, sizeof(reset));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	sc.vsc_reset = reset;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_backend_path = strdup("/s");
+	ATF_REQUIRE(sc.vsc_backend_path != NULL);
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_read_event = (struct mevent *)(uintptr_t)1;
+	sc.vsc_write_event = (struct mevent *)(uintptr_t)2;
+
+	/* Reset is entered with the device mutex held. */
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	pci_vtfs_reset(&sc);
+	ATF_CHECK(!sc.vsc_reconnecting);
+	ATF_CHECK(!sc.vsc_guest_suspended);
+	/* A fresh connection was established by the reconnect. */
+	ATF_CHECK(sc.vsc_connection != NULL);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+
+	pci_vtfs_disconnect_sync(&sc);
+	free(sc.vsc_backend_path);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(reset_reconnect_failure_sets_needs_reset);
+ATF_TC_BODY(reset_reconnect_failure_sets_needs_reset, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	struct pci_vtfs_reset reset[2];
+	bool notify_pending[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	memset(reset, 0, sizeof(reset));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	sc.vsc_reset = reset;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_backend_path = strdup("/s");
+	ATF_REQUIRE(sc.vsc_backend_path != NULL);
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+
+	connect_required_error = ECONNREFUSED;
+	needs_reset_calls = 0;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	pci_vtfs_reset(&sc);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(needs_reset_calls, 1U);
+	connect_required_error = 0;
+
+	pci_vtfs_disconnect_sync(&sc);
+	free(sc.vsc_backend_path);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(suspend_and_resume_device_quiesce_backend);
+ATF_TC_BODY(suspend_and_resume_device_quiesce_backend, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct pci_vtfs_reset reset[2];
+	pthread_condattr_t condattr;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(reset, 0, sizeof(reset));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_init(&condattr), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vsc_checkpoint_cv, &condattr), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_destroy(&condattr), 0);
+	sc.vsc_nvq = nitems(reset);
+	sc.vsc_reset = reset;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+
+	/* Without an installed backend suspend is refused. */
+	ATF_CHECK_EQ(pci_vtfs_suspend_device(&sc), EBUSY);
+
+	/* A quiesced backend suspends: begin_quiesce completes immediately. */
+	sc.vsc_callbacks_set = true;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(pci_vtfs_suspend_device(&sc), 0);
+	ATF_CHECK(sc.vsc_guest_suspended);
+
+	/* Resume thaws the backend back to a runnable state. */
+	ATF_CHECK_EQ(pci_vtfs_resume_device(&sc), 0);
+	ATF_CHECK(!sc.vsc_guest_suspended);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+
+	/* Resume without a prior suspend is invalid. */
+	ATF_CHECK_EQ(pci_vtfs_resume_device(&sc), EINVAL);
+
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&sc.vsc_checkpoint_cv), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+#ifdef BHYVE_SNAPSHOT
+ATF_TC_WITHOUT_HEAD(snapshot_validate_serializes_with_device_lock);
+ATF_TC_BODY(snapshot_validate_serializes_with_device_lock, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct pci_devinst pi;
+	struct vm_snapshot_meta meta = { .op = VM_SNAPSHOT_SAVE };
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&pi, 0, sizeof(pi));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+
+	/* Argument validation. */
+	ATF_CHECK_EQ(pci_vtfs_snapshot_validate(NULL), EINVAL);
+	meta.op = VM_SNAPSHOT_SAVE;
+	ATF_CHECK_EQ(pci_vtfs_snapshot_validate(&meta), EINVAL);
+	meta.op = VM_SNAPSHOT_VALIDATE;
+	ATF_CHECK_EQ(pci_vtfs_snapshot_validate(&meta), EINVAL);
+	meta.dev_data = &pi;
+	pi.pi_arg = NULL;
+	ATF_CHECK_EQ(pci_vtfs_snapshot_validate(&meta), EINVAL);
+
+	/* Valid path acquires the device mutex around vi_pci_snapshot(). */
+	pi.pi_arg = &sc;
+	ATF_CHECK_EQ(pci_vtfs_snapshot_validate(&meta), 0);
+	ATF_CHECK(!pthread_mutex_isowned_np(&sc.vsc_mtx));
+
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+#endif
+
+ATF_TC_WITHOUT_HEAD(qreset_pending_and_success);
+ATF_TC_BODY(qreset_pending_and_success, tc)
+{
+	struct pci_vtfs_reset reset[2];
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq;
+	bool notify_pending[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	memset(reset, 0, sizeof(reset));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(reset);
+	sc.vsc_reset = reset;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	vq.vq_num = 1;
+
+	/* Synchronous success: backend cancels immediately, readiness re-armed. */
+	connection_reset_error = 0;
+	ATF_CHECK_EQ(pci_vtfs_qreset(&sc, &vq, 5), 0);
+	ATF_CHECK(!reset[1].pending);
+
+	/* A second reset while one is pending is rejected. */
+	reset[1].pending = true;
+	ATF_CHECK_EQ(pci_vtfs_qreset(&sc, &vq, 6), EBUSY);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_notification_queue_retry_error);
+ATF_TC_BODY(notify_notification_queue_retry_error, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	bool notify_pending[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_notifications = true;
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_callbacks_set = true;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	vq[1].vq_num = 1; /* notification queue */
+
+	/* A hard retry failure on the notification queue forces a reset. */
+	notification_retry_error = EIO;
+	needs_reset_calls = 0;
+	pci_vtfs_notify(&sc, &vq[1]);
+	ATF_CHECK_EQ(notification_retry_calls, 1U);
+	ATF_CHECK_EQ(needs_reset_calls, 1U);
+
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_event_arm_failure_sets_needs_reset);
+ATF_TC_BODY(notify_event_arm_failure_sets_needs_reset, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	bool notify_pending[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_callbacks_set = true;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_read_event = (struct mevent *)(uintptr_t)1;
+	vq[1].vq_num = 1;
+	vq[1].vq_qsize = 1;
+
+	/* Empty ring, but re-arming readiness fails: request a reset. */
+	vq_has_descs_result = 0;
+	connection_events = VIRTIO_FS_CONNECTION_READ;
+	mevent_enable_read_error = EIO;
+	needs_reset_calls = 0;
+	pci_vtfs_notify(&sc, &vq[1]);
+	ATF_CHECK(needs_reset_calls >= 1U);
+
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(event_install_failure_and_arm_failure);
+ATF_TC_BODY(event_install_failure_and_arm_failure, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct vqueue_info vq[2];
+	struct pci_vtfs_reset reset[2];
+	bool notify_pending[2];
+	pthread_condattr_t condattr;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(vq, 0, sizeof(vq));
+	memset(reset, 0, sizeof(reset));
+	memset(notify_pending, 0, sizeof(notify_pending));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_init(&condattr), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vsc_checkpoint_cv, &condattr), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_destroy(&condattr), 0);
+	sc.vsc_num_request_queues = 1;
+	sc.vsc_nvq = nitems(vq);
+	sc.vsc_vq = vq;
+	sc.vsc_reset = reset;
+	sc.vsc_notify_pending = notify_pending;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_read_event = (struct mevent *)(uintptr_t)1;
+	vq[1].vq_num = 1;
+
+	/* Progress succeeds but installing the callbacks fails. */
+	connection_set_discard_error = EIO;
+	connection_events = VIRTIO_FS_CONNECTION_READ;
+	mevent_enable_read_error = EBUSY; /* also fails the final re-arm */
+	needs_reset_calls = 0;
+	pci_vtfs_event(-1, EVF_READ, &sc);
+	ATF_CHECK(needs_reset_calls >= 2U);
+
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&sc.vsc_checkpoint_cv), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(resume_device_restored_state_and_sync_failure);
+ATF_TC_BODY(resume_device_restored_state_and_sync_failure, tc)
+{
+	struct pci_vtfs_softc sc;
+	uint8_t *state;
+	pthread_condattr_t condattr;
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_init(&condattr), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vsc_checkpoint_cv, &condattr), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_destroy(&condattr), 0);
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_guest_suspended = true;
+	state = malloc(4);
+	ATF_REQUIRE(state != NULL);
+	memset(state, 0x5a, 4);
+	sc.vsc_checkpoint_backend_state = state;
+	sc.vsc_checkpoint_backend_state_len = 4;
+
+	/* A restored thaw blob selects begin_thaw() and then completes. */
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(pci_vtfs_resume_device(&sc), 0);
+	ATF_CHECK(!sc.vsc_guest_suspended);
+	ATF_CHECK(sc.vsc_checkpoint_backend_state == NULL);
+
+	/* A sync-events failure after thaw requests a device reset. */
+	sc.vsc_guest_suspended = true;
+	connection_events = VIRTIO_FS_CONNECTION_READ;
+	sc.vsc_read_event = (struct mevent *)(uintptr_t)1;
+	mevent_enable_read_error = EIO;
+	needs_reset_calls = 0;
+	ATF_CHECK(pci_vtfs_resume_device(&sc) != 0);
+	ATF_CHECK(needs_reset_calls >= 1U);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&sc.vsc_checkpoint_cv), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(control_wait_times_out_and_aborts);
+ATF_TC_BODY(control_wait_times_out_and_aborts, tc)
+{
+	struct pci_vtfs_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	/*
+	 * Initialise the condition variable on CLOCK_REALTIME while the code
+	 * computes its deadline on CLOCK_MONOTONIC.  The monotonic deadline is
+	 * far in the REALTIME past, so the timed wait returns immediately and
+	 * the control wait exercises its timeout/abort path without blocking.
+	 */
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vsc_checkpoint_cv, NULL), 0);
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_guest_suspended = true;
+	connection_control_status_result = EINPROGRESS;
+	needs_reset_calls = 0;
+
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	/* resume_device drives begin_thaw_saved -> sync -> control_wait. */
+	ATF_CHECK(pci_vtfs_resume_device(&sc) != 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_CHECK(needs_reset_calls >= 1U);
+
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&sc.vsc_checkpoint_cv), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(begin_quiesce_wait_inprogress_paths);
+ATF_TC_BODY(begin_quiesce_wait_inprogress_paths, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct pci_vtfs_reset reset[2];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(reset, 0, sizeof(reset));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	/* REALTIME cond => the monotonic deadline is already past. */
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vsc_checkpoint_cv, NULL), 0);
+	sc.vsc_nvq = nitems(reset);
+	sc.vsc_reset = reset;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_callbacks_set = true;
+	sc.vsc_read_event = (struct mevent *)(uintptr_t)1;
+
+	/* begin_quiesce is in progress; re-arming readiness fails immediately. */
+	connection_begin_quiesce_result = EINPROGRESS;
+	connection_events = VIRTIO_FS_CONNECTION_READ;
+	mevent_enable_read_error = EIO;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	ATF_CHECK(pci_vtfs_suspend_device(&sc) != 0);
+
+	/* Re-arm succeeds, but the drain wait times out (past deadline). */
+	mevent_enable_read_error = 0;
+	connection_events = 0;
+	ATF_CHECK(pci_vtfs_suspend_device(&sc) != 0);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&sc.vsc_checkpoint_cv), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+#ifdef BHYVE_SNAPSHOT
+ATF_TC_WITHOUT_HEAD(pause_failure_paths_and_rollback);
+ATF_TC_BODY(pause_failure_paths_and_rollback, tc)
+{
+	struct pci_vtfs_softc sc;
+	struct pci_vtfs_reset reset[2];
+	static char identity[] = "backend-identity";
+	pthread_condattr_t condattr;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(reset, 0, sizeof(reset));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_init(&condattr), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_setclock(&condattr, CLOCK_MONOTONIC), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vsc_checkpoint_cv, &condattr), 0);
+	ATF_REQUIRE_EQ(pthread_condattr_destroy(&condattr), 0);
+	sc.vsc_nvq = nitems(reset);
+	sc.vsc_reset = reset;
+
+	/* Without identity the device is not reconstructible: ENOTSUP. */
+	ATF_CHECK_EQ(pci_vtfs_pause(&sc), ENOTSUP);
+	ATF_CHECK(!pthread_mutex_isowned_np(&sc.vsc_mtx));
+
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	sc.vsc_callbacks_set = true;
+	sc.vsc_backend_identity = identity;
+
+	/* A pending queue reset blocks a checkpoint. */
+	reset[1].pending = true;
+	ATF_CHECK_EQ(pci_vtfs_pause(&sc), EBUSY);
+	reset[1].pending = false;
+
+	/* begin_quiesce_wait failure aborts the checkpoint. */
+	connection_begin_quiesce_result = EIO;
+	ATF_CHECK_EQ(pci_vtfs_pause(&sc), EIO);
+	connection_begin_quiesce_result = 0;
+
+	/* checkpoint_copy failure triggers a quiesce rollback. */
+	checkpoint_copy_error = EIO;
+	ATF_CHECK_EQ(pci_vtfs_pause(&sc), EIO);
+	checkpoint_copy_error = 0;
+
+	/* A rollback whose thaw also fails demands a device reset. */
+	checkpoint_copy_error = EIO;
+	checkpoint_thaw_error = 0;
+	connection_begin_thaw_saved_error = EIO;
+	needs_reset_calls = 0;
+	ATF_CHECK(pci_vtfs_pause(&sc) != 0);
+	ATF_CHECK(needs_reset_calls >= 1U);
+	connection_begin_thaw_saved_error = 0;
+	checkpoint_copy_error = 0;
+
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&sc.vsc_checkpoint_cv), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(resume_restores_suspended_destination);
+ATF_TC_BODY(resume_restores_suspended_destination, tc)
+{
+	struct pci_vtfs_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mock_state();
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+	/*
+	 * The restored image is itself suspended: common resume must record the
+	 * guest-suspended state and hand ownership back without thawing.
+	 */
+	sc.vsc_vs.vs_suspended = true;
+	sc.vsc_checkpoint_lock_held = false;
+	checkpoint_thaw_calls = 0;
+	ATF_CHECK_EQ(pci_vtfs_resume(&sc), 0);
+	ATF_CHECK(sc.vsc_guest_suspended);
+	ATF_CHECK_EQ(checkpoint_thaw_calls, 0);
+	ATF_CHECK(!sc.vsc_checkpoint_lock_held);
+	ATF_CHECK(!pthread_mutex_isowned_np(&sc.vsc_mtx));
+
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_rejects_unowned_and_contract_failure);
+ATF_TC_BODY(snapshot_rejects_unowned_and_contract_failure, tc)
+{
+	struct pci_vtfs_softc sc;
+	static char identity[] = "backend-identity";
+	uint8_t image[64];
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mock_state();
+	sc.vsc_backend_identity = identity;
+	sc.vsc_connection = (struct virtio_fs_connection *)(uintptr_t)1;
+
+	/* SAVE without the pause-held lock is rejected. */
+	sc.vsc_checkpoint_lock_held = false;
+	ATF_CHECK_EQ(run_snapshot(&sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EBUSY);
+
+	/* A failed destination contract query aborts a restore. */
+	sc.vsc_checkpoint_lock_held = true;
+	checkpoint_contract_error = EIO;
+	ATF_CHECK_EQ(run_snapshot(&sc, image, sizeof(image),
+	    VM_SNAPSHOT_RESTORE, NULL), EIO);
+	checkpoint_contract_error = 0;
+}
+#endif
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1136,5 +2440,35 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, completion_uses_device_context_for_pressure);
 	ATF_TP_ADD_TC(tp, reconnecting_queue_callbacks_are_fenced);
 	ATF_TP_ADD_TC(tp, notification_queue_reset_defers_delivery);
+	ATF_TP_ADD_TC(tp, init_composes_device_topology);
+	ATF_TP_ADD_TC(tp, init_enables_notifications_packed_and_suspend);
+	ATF_TP_ADD_TC(tp, init_rejects_invalid_configuration);
+	ATF_TP_ADD_TC(tp, init_unwinds_on_transport_failures);
+	ATF_TP_ADD_TC(tp, init_fails_when_backend_connect_fails);
+	ATF_TP_ADD_TC(tp, install_callbacks_registers_all_handlers);
+	ATF_TP_ADD_TC(tp, notify_forwards_requests_to_backend);
+	ATF_TP_ADD_TC(tp, notify_defers_when_callbacks_absent);
+	ATF_TP_ADD_TC(tp, receive_notification_publishes_to_queue);
+	ATF_TP_ADD_TC(tp, discard_callback_cancels_request);
+	ATF_TP_ADD_TC(tp, complete_discards_stale_generation);
+	ATF_TP_ADD_TC(tp, take_reset_completions_skips_and_clamps);
+	ATF_TP_ADD_TC(tp, qreset_rejects_out_of_range_and_notification);
+	ATF_TP_ADD_TC(tp, event_processes_progress_and_completions);
+	ATF_TP_ADD_TC(tp, reset_reconnects_backend);
+	ATF_TP_ADD_TC(tp, reset_reconnect_failure_sets_needs_reset);
+	ATF_TP_ADD_TC(tp, suspend_and_resume_device_quiesce_backend);
+	ATF_TP_ADD_TC(tp, qreset_pending_and_success);
+	ATF_TP_ADD_TC(tp, notify_notification_queue_retry_error);
+	ATF_TP_ADD_TC(tp, notify_event_arm_failure_sets_needs_reset);
+	ATF_TP_ADD_TC(tp, event_install_failure_and_arm_failure);
+	ATF_TP_ADD_TC(tp, resume_device_restored_state_and_sync_failure);
+	ATF_TP_ADD_TC(tp, control_wait_times_out_and_aborts);
+	ATF_TP_ADD_TC(tp, begin_quiesce_wait_inprogress_paths);
+#ifdef BHYVE_SNAPSHOT
+	ATF_TP_ADD_TC(tp, snapshot_validate_serializes_with_device_lock);
+	ATF_TP_ADD_TC(tp, pause_failure_paths_and_rollback);
+	ATF_TP_ADD_TC(tp, resume_restores_suspended_destination);
+	ATF_TP_ADD_TC(tp, snapshot_rejects_unowned_and_contract_failure);
+#endif
 	return (atf_no_error());
 }

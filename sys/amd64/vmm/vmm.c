@@ -830,8 +830,11 @@ vm_unassign_pptdev(struct vm *vm, int bus, int slot, int func)
 	int error, unassign_error;
 
 	unassign_error = ppt_unassign_device(vm, bus, slot, func);
-	if (unassign_error != 0 && ppt_assigned_devices(vm) != 0)
+	if (unassign_error != 0 && ppt_assigned_devices(vm) != 0) {
+		SDT_PROBE5(vmm, kernel, vm_unassign_pptdev, passthru__unassign,
+		    vm->name, bus, slot, func, unassign_error);
 		return (unassign_error);
+	}
 
 	if (ppt_assigned_devices(vm) == 0 && vm->iommu != NULL) {
 		error = vm_iommu_unmap(vm);

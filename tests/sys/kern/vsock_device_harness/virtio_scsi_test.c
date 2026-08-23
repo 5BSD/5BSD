@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 #include <atf-c.h>
 
@@ -31,10 +32,13 @@ static void test_vq_discard_observer(struct vqueue_info *, struct vi_req *);
 	test_vq_discard_observer((_vq), (_req))
 static int test_ioctl(int, unsigned long, ...);
 static int test_clock_gettime(clockid_t, struct timespec *);
+static int test_open(const char *, int, ...);
 #define	ioctl	test_ioctl
 #define	clock_gettime	test_clock_gettime
+#define	open	test_open
 #include "virtio_scsi_event.c"
 #include "pci_virtio_scsi.c"
+#undef open
 #undef clock_gettime
 #undef ioctl
 #include "iov.c"
@@ -118,6 +122,50 @@ static bool g_snapshot_validate_saw_lock;
 static struct ctl_lun_event g_lun_events[VTSCSI_EVENT_CAPACITY + 2];
 static size_t g_lun_event_count;
 static size_t g_lun_event_next;
+/* Extended CTL_IO result controls (default reproduces the legacy behavior). */
+static bool g_ctl_alloc_fail;
+static int g_ctl_io_status;
+static uint8_t g_ctl_io_scsi_status;
+static uint32_t g_ctl_io_sense_len;
+static uint8_t g_ctl_io_sense_byte;
+static uint32_t g_ctl_io_ext_data_filled;
+static uint8_t g_ctl_io_task_status;
+static uint32_t g_ctl_io_port_status;
+static int g_ctl_io_calls;
+static uint8_t g_ctl_last_opcode;
+static int g_ctl_last_flags;
+/* clock and LUN-inventory fault injection. */
+static bool g_clock_fail;
+static int g_lun_list_force_status;	/* -1: default; else forced list.status */
+static bool g_lun_list_force_need;	/* always report NEED_MORE_SPACE */
+/* PCI/virtio init plumbing controls and observations. */
+static enum virtio_pci_transport g_init_transport;
+static int g_init_transport_error;
+static int g_intr_init_error;
+static int g_modern_init_error;
+static int g_boot_device_error;
+static bool g_subscribe_ok;
+static int g_subscribe_errno;
+static bool g_mevent_add_fail;
+static int g_mevent_add_calls;
+static int g_mevent_delete_calls;
+static int g_open_fd;
+static int g_open_calls;
+static char g_open_path[256];
+static uint16_t g_cfg_device;
+static uint16_t g_cfg_vendor;
+static uint8_t g_cfg_class;
+static uint16_t g_modern_identity;
+static int g_linkup_calls;
+/* Config-node store consulted by the mocked bhyve config API. */
+static const char *g_cfg_queues;
+static const char *g_cfg_iid;
+static const char *g_cfg_bootindex;
+static const char *g_cfg_dev;
+static bool g_cfg_packed;
+static int g_legacy_parse_calls;
+static int g_legacy_parse_ret;
+static char g_legacy_dev[256];
 
 static void
 test_vq_discard_observer(struct vqueue_info *vq __unused, struct vi_req *req)
@@ -147,6 +195,10 @@ test_clock_gettime(clockid_t clock_id, struct timespec *ts)
 	g_clock_calls++;
 	if (clock_id != CLOCK_MONOTONIC)
 		g_clock_nonmonotonic = true;
+	if (g_clock_fail) {
+		errno = EINVAL;
+		return (-1);
+	}
 	return (clock_gettime(clock_id, ts));
 }
 
@@ -170,14 +222,36 @@ test_ioctl(int fd __unused, unsigned long request, ...)
 		*event = g_lun_events[g_lun_event_next++];
 		return (0);
 	}
+	if (request == CTL_LUN_EVENT_SUBSCRIBE) {
+		va_end(ap);
+		if (g_subscribe_ok)
+			return (0);
+		errno = g_subscribe_errno;
+		return (-1);
+	}
 	if (request == CTL_IO) {
 		union ctl_io *io;
 
 		io = va_arg(ap, union ctl_io *);
 		va_end(ap);
+		g_ctl_io_calls++;
 		g_ctl_last_targ_lun = io->io_hdr.nexus.targ_lun;
+		if (io->io_hdr.io_type == CTL_IO_SCSI)
+			g_ctl_last_opcode = io->scsiio.cdb[0];
+		g_ctl_last_flags = io->io_hdr.flags;
 		if (g_ctl_io_success) {
-			io->io_hdr.status = CTL_SUCCESS;
+			io->io_hdr.status = g_ctl_io_status;
+			io->io_hdr.port_status = g_ctl_io_port_status;
+			if (io->io_hdr.io_type == CTL_IO_TASK) {
+				io->taskio.task_status = g_ctl_io_task_status;
+			} else {
+				io->scsiio.scsi_status = g_ctl_io_scsi_status;
+				io->scsiio.sense_len = g_ctl_io_sense_len;
+				io->scsiio.ext_data_filled =
+				    g_ctl_io_ext_data_filled;
+				memset(&io->scsiio.sense_data, g_ctl_io_sense_byte,
+				    sizeof(io->scsiio.sense_data));
+			}
 			return (0);
 		}
 		errno = ENOTTY;
@@ -196,6 +270,15 @@ test_ioctl(int fd __unused, unsigned long request, ...)
 	}
 	list = va_arg(ap, struct ctl_lun_list *);
 	va_end(ap);
+	if (g_lun_list_force_need) {
+		list->status = CTL_LUN_LIST_NEED_MORE_SPACE;
+		return (0);
+	}
+	if (g_lun_list_force_status >= 0) {
+		list->status = g_lun_list_force_status;
+		list->fill_len = 0;
+		return (0);
+	}
 	length = strlen(g_lun_inventory) + 1;
 	if (length > list->alloc_len) {
 		list->status = CTL_LUN_LIST_NEED_MORE_SPACE;
@@ -368,6 +451,47 @@ reset_mocks(void)
 	memset(g_lun_events, 0, sizeof(g_lun_events));
 	g_lun_event_count = 0;
 	g_lun_event_next = 0;
+	g_ctl_alloc_fail = false;
+	g_ctl_io_status = CTL_SUCCESS;
+	g_ctl_io_scsi_status = 0;
+	g_ctl_io_sense_len = 0;
+	g_ctl_io_sense_byte = 0;
+	g_ctl_io_ext_data_filled = 0;
+	g_ctl_io_task_status = 0;
+	g_ctl_io_port_status = 0;
+	g_ctl_io_calls = 0;
+	g_ctl_last_opcode = 0;
+	g_ctl_last_flags = 0;
+	g_clock_fail = false;
+	g_lun_list_force_status = -1;
+	g_lun_list_force_need = false;
+	g_init_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	g_init_transport_error = 0;
+	g_intr_init_error = 0;
+	g_modern_init_error = 0;
+	g_boot_device_error = 0;
+	g_subscribe_ok = false;
+	g_subscribe_errno = ENOTTY;
+	g_mevent_add_fail = false;
+	g_mevent_add_calls = 0;
+	g_mevent_delete_calls = 0;
+	g_open_fd = 900;
+	g_open_calls = 0;
+	memset(g_open_path, 0, sizeof(g_open_path));
+	g_cfg_device = 0;
+	g_cfg_vendor = 0;
+	g_cfg_class = 0;
+	g_modern_identity = 0;
+	g_linkup_calls = 0;
+	pci_vtscsi_debug = 0;
+	g_cfg_queues = NULL;
+	g_cfg_iid = NULL;
+	g_cfg_bootindex = NULL;
+	g_cfg_dev = "/dev/cam/ctl";
+	g_cfg_packed = false;
+	g_legacy_parse_calls = 0;
+	g_legacy_parse_ret = 0;
+	memset(g_legacy_dev, 0, sizeof(g_legacy_dev));
 }
 
 static void
@@ -456,6 +580,10 @@ ctl_scsi_alloc_io(uint32_t initid __unused)
 {
 
 	g_ctl_allocs++;
+	if (g_ctl_alloc_fail) {
+		errno = ENOMEM;
+		return (NULL);
+	}
 	memset(&g_ctl_io, 0, sizeof(g_ctl_io));
 	return (&g_ctl_io);
 }
@@ -477,6 +605,177 @@ ctl_scsi_zero_io(union ctl_io *io)
 void
 ctl_io_sbuf(union ctl_io *io __unused, struct sbuf *sb __unused)
 {
+
+	sbuf_cat(sb, "ctl-io");
+}
+
+static int
+test_open(const char *path, int flags __unused, ...)
+{
+
+	g_open_calls++;
+	strlcpy(g_open_path, path, sizeof(g_open_path));
+	if (g_open_fd < 0) {
+		errno = ENOENT;
+		return (-1);
+	}
+	return (g_open_fd);
+}
+
+/* bhyve configuration node API (single-device store). */
+const char *
+get_config_value_node(const nvlist_t *nvl __unused, const char *name)
+{
+
+	if (strcmp(name, "queues") == 0)
+		return (g_cfg_queues);
+	if (strcmp(name, "iid") == 0)
+		return (g_cfg_iid);
+	if (strcmp(name, "bootindex") == 0)
+		return (g_cfg_bootindex);
+	if (strcmp(name, "dev") == 0)
+		return (g_cfg_dev);
+	return (NULL);
+}
+
+bool
+get_config_bool_node_default(const nvlist_t *nvl __unused,
+    const char *name __unused, bool value __unused)
+{
+
+	return (g_cfg_packed);
+}
+
+void
+set_config_value_node(nvlist_t *nvl __unused, const char *name,
+    const char *value)
+{
+
+	if (strcmp(name, "dev") == 0) {
+		strlcpy(g_legacy_dev, value, sizeof(g_legacy_dev));
+		g_cfg_dev = g_legacy_dev;
+	}
+}
+
+int
+pci_parse_legacy_config(nvlist_t *nvl __unused, const char *opts __unused)
+{
+
+	g_legacy_parse_calls++;
+	return (g_legacy_parse_ret);
+}
+
+int
+pci_emul_add_boot_device(struct pci_devinst *pi __unused, int bootindex __unused)
+{
+
+	return (g_boot_device_error);
+}
+
+void
+vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc, void *arg,
+    struct pci_devinst *pi, struct vqueue_info *queues)
+{
+
+	g_linkup_calls++;
+	vs->vs_vc = vc;
+	vs->vs_pi = pi;
+	vs->vs_queues = queues;
+	pi->pi_arg = arg;
+	for (int i = 0; i < vc->vc_nvq; i++) {
+		queues[i].vq_vs = vs;
+		queues[i].vq_num = i;
+	}
+}
+
+int
+vi_pci_select_transport(struct virtio_softc *vs, const nvlist_t *nvl __unused,
+    enum virtio_pci_transport_policy policy __unused)
+{
+
+	if (g_init_transport_error != 0)
+		return (g_init_transport_error);
+	vs->vs_transport = g_init_transport;
+	return (0);
+}
+
+void
+vi_pci_modern_set_identity(struct virtio_softc *vs __unused, uint16_t devid)
+{
+
+	g_modern_identity = devid;
+}
+
+int
+vi_pci_modern_init(struct virtio_softc *vs __unused, int barnum __unused)
+{
+
+	return (g_modern_init_error);
+}
+
+void
+vi_set_io_bar(struct virtio_softc *vs __unused, int barnum __unused)
+{
+}
+
+int
+vi_intr_init(struct virtio_softc *vs, int barnum __unused, int use_msix __unused)
+{
+
+	if (g_intr_init_error != 0)
+		return (g_intr_init_error);
+	__real_pthread_mutex_init(&vs->vs_isr_mtx, NULL);
+	return (0);
+}
+
+int
+fbsdrun_virtio_msix(void)
+{
+
+	return (1);
+}
+
+void
+pci_set_cfgdata8(struct pci_devinst *pi __unused, int reg, uint8_t val)
+{
+
+	if (reg == PCIR_CLASS)
+		g_cfg_class = val;
+}
+
+void
+pci_set_cfgdata16(struct pci_devinst *pi __unused, int reg, uint16_t val)
+{
+
+	switch (reg) {
+	case PCIR_DEVICE:
+		g_cfg_device = val;
+		break;
+	case PCIR_VENDOR:
+		g_cfg_vendor = val;
+		break;
+	default:
+		break;
+	}
+}
+
+struct mevent *
+mevent_add(int fd __unused, enum ev_type type __unused,
+    void (*func)(int, enum ev_type, void *) __unused, void *param __unused)
+{
+
+	g_mevent_add_calls++;
+	if (g_mevent_add_fail)
+		return (NULL);
+	return ((struct mevent *)(uintptr_t)0x1);
+}
+
+int
+mevent_delete_sync(struct mevent *evp __unused)
+{
+
+	g_mevent_delete_calls++;
+	return (0);
 }
 
 static void
@@ -2303,6 +2602,705 @@ ATF_TC_BODY(virtio_1_4_wire_layout, tc)
 	    VIRTIO14_SCSI_CMD_RESPONSE_SENSE_OFF);
 }
 
+ATF_TC_WITHOUT_HEAD(feature_negotiation_and_reset_clock_failure);
+ATF_TC_BODY(feature_negotiation_and_reset_clock_failure, tc)
+{
+	struct pci_vtscsi_softc sc;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	/*
+	 * neg_features caches exactly the common-layer negotiated value; it is
+	 * not filtered here.
+	 */
+	ATF_CHECK_EQ(pci_vtscsi_neg_features(&sc,
+	    VIRTIO14_SCSI_F_INOUT | VIRTIO14_F_VERSION_1), 0);
+	ATF_CHECK_EQ(sc.vss_features,
+	    VIRTIO14_SCSI_F_INOUT | VIRTIO14_F_VERSION_1);
+
+	/*
+	 * A device reset which cannot read the monotonic clock cannot compute a
+	 * drain deadline.  It must still reset the common device and demand a
+	 * driver-visible reset rather than proceeding without a budget.
+	 */
+	memset(&sc, 0, sizeof(sc));
+	sc.vss_nrequestq = 1;
+	g_clock_fail = true;
+	pci_vtscsi_reset(&sc);
+	ATF_CHECK_EQ(g_clock_calls, 1);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+	/* The early failure must not have rebuilt the configuration space. */
+	ATF_CHECK_EQ(sc.vss_config.num_queues, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(request_handle_data_and_status_paths);
+ATF_TC_BODY(request_handle_data_and_status_paths, tc)
+{
+	struct pci_vtscsi_softc sc;
+	struct pci_vtscsi_request req;
+	struct pci_vtscsi_req_cmd_rd *cmd;
+	struct pci_vtscsi_req_cmd_wr resp;
+	union ctl_io io;
+	uint8_t cmd_bytes[VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t inbuf[512], outbuf[512];
+	struct iovec in_iov, out_iov;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vss_config.cdb_size = VIRTIO14_SCSI_DEFAULT_CDB_SIZE;
+	sc.vss_config.sense_size = VIRTIO14_SCSI_DEFAULT_SENSE_SIZE;
+	sc.vss_features = VIRTIO14_SCSI_F_INOUT;
+	sc.vss_iid = 1;
+	memset(cmd_bytes, 0, sizeof(cmd_bytes));
+	cmd = (struct pci_vtscsi_req_cmd_rd *)(void *)cmd_bytes;
+	cmd_bytes[VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF] =
+	    VIRTIO14_SCSI_LUN_ADDRESS_METHOD;
+	cmd_bytes[VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF + 3] = 1;
+
+	memset(&req, 0, sizeof(req));
+	req.vsr_cmd_rd = cmd;
+	req.vsr_cmd_wr = &resp;
+	req.vsr_ctl_io = &io;
+
+	/* DATA IN: writable payload, ORDERED attribute, full transfer. */
+	memset(&resp, 0, sizeof(resp));
+	memset(&io, 0, sizeof(io));
+	out_iov = (struct iovec){ .iov_base = outbuf, .iov_len = sizeof(outbuf) };
+	req.vsr_data_iov_out = &out_iov;
+	req.vsr_data_niov_out = 1;
+	req.vsr_data_iov_in = NULL;
+	req.vsr_data_niov_in = 0;
+	cmd_bytes[VIRTIO14_SCSI_CMD_REQUEST_TASK_ATTR_OFF] = VIRTIO_SCSI_S_ORDERED;
+	g_ctl_io_success = true;
+	g_ctl_io_ext_data_filled = sizeof(outbuf);
+	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), sizeof(outbuf));
+	ATF_CHECK_EQ(resp.response, VIRTIO14_SCSI_S_OK);
+	ATF_CHECK_EQ(io.scsiio.tag_type, CTL_TAG_ORDERED);
+	ATF_CHECK((g_ctl_last_flags & CTL_FLAG_DATA_MASK) == CTL_FLAG_DATA_IN);
+
+	/* DATA OUT: readable payload, HEAD attribute; no writable bytes. */
+	memset(&resp, 0, sizeof(resp));
+	memset(&io, 0, sizeof(io));
+	in_iov = (struct iovec){ .iov_base = inbuf, .iov_len = sizeof(inbuf) };
+	req.vsr_data_iov_out = NULL;
+	req.vsr_data_niov_out = 0;
+	req.vsr_data_iov_in = &in_iov;
+	req.vsr_data_niov_in = 1;
+	cmd_bytes[VIRTIO14_SCSI_CMD_REQUEST_TASK_ATTR_OFF] = VIRTIO_SCSI_S_HEAD;
+	g_ctl_io_ext_data_filled = 0;
+	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), 0);
+	ATF_CHECK_EQ(io.scsiio.tag_type, CTL_TAG_HEAD_OF_QUEUE);
+	ATF_CHECK((g_ctl_last_flags & CTL_FLAG_DATA_MASK) == CTL_FLAG_DATA_OUT);
+
+	/* SCSI error with autosense: ACA attribute, sense copied and clamped. */
+	memset(&resp, 0, sizeof(resp));
+	memset(&io, 0, sizeof(io));
+	req.vsr_data_iov_in = NULL;
+	req.vsr_data_niov_in = 0;
+	cmd_bytes[VIRTIO14_SCSI_CMD_REQUEST_TASK_ATTR_OFF] = VIRTIO_SCSI_S_ACA;
+	g_ctl_io_status = CTL_SCSI_ERROR;
+	g_ctl_io_scsi_status = SCSI_STATUS_CHECK_COND;
+	g_ctl_io_sense_len = VIRTIO14_SCSI_DEFAULT_SENSE_SIZE;
+	g_ctl_io_sense_byte = 0xab;
+	pci_vtscsi_debug = 1;	/* also exercise the ctl_io_sbuf debug leg */
+	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), 0);
+	pci_vtscsi_debug = 0;
+	ATF_CHECK_EQ(io.scsiio.tag_type, CTL_TAG_ACA);
+	ATF_CHECK_EQ(resp.status, SCSI_STATUS_CHECK_COND);
+	ATF_CHECK_EQ(pci_vtscsi_decode32(&sc, resp.sense_len),
+	    VIRTIO14_SCSI_DEFAULT_SENSE_SIZE);
+	ATF_CHECK_EQ(resp.sense[0], 0xab);
+
+	/* Overfill reports zero residual (device wrote at least the request). */
+	memset(&resp, 0, sizeof(resp));
+	memset(&io, 0, sizeof(io));
+	out_iov = (struct iovec){ .iov_base = outbuf, .iov_len = 256 };
+	req.vsr_data_iov_out = &out_iov;
+	req.vsr_data_niov_out = 1;
+	cmd_bytes[VIRTIO14_SCSI_CMD_REQUEST_TASK_ATTR_OFF] = VIRTIO_SCSI_S_SIMPLE;
+	g_ctl_io_status = CTL_SUCCESS;
+	g_ctl_io_scsi_status = 0;
+	g_ctl_io_sense_len = 0;
+	g_ctl_io_ext_data_filled = 512;	/* more than the 256-byte request */
+	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), 256);
+	ATF_CHECK_EQ(pci_vtscsi_decode32(&sc, resp.residual), 0);
+
+	/* Underfill reports the shortfall as residual. */
+	memset(&resp, 0, sizeof(resp));
+	memset(&io, 0, sizeof(io));
+	g_ctl_io_ext_data_filled = 100;
+	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), 100);
+	ATF_CHECK_EQ(pci_vtscsi_decode32(&sc, resp.residual), 256 - 100);
+
+	/* A failed ioctl is a transport failure, not a completed command. */
+	memset(&resp, 0, sizeof(resp));
+	memset(&io, 0, sizeof(io));
+	g_ctl_io_success = false;
+	ATF_CHECK_EQ(pci_vtscsi_request_handle(&sc, &req), 0);
+	ATF_CHECK_EQ(resp.response, VIRTIO14_SCSI_S_FAILURE);
+}
+
+ATF_TC_WITHOUT_HEAD(tmf_handle_task_function_mapping);
+ATF_TC_BODY(tmf_handle_task_function_mapping, tc)
+{
+	/*
+	 * VirtIO 1.4 section 5.6.6.2 assigns these fixed TMF subtype wire values.
+	 * Encode them as literals so the mapping is verified against the
+	 * specification rather than the device's own header.
+	 */
+	static const struct {
+		uint32_t subtype;
+		uint8_t action;
+	} cases[] = {
+		{ 0, CTL_TASK_ABORT_TASK },		/* ABORT TASK */
+		{ 1, CTL_TASK_ABORT_TASK_SET },		/* ABORT TASK SET */
+		{ 2, CTL_TASK_CLEAR_ACA },		/* CLEAR ACA */
+		{ 3, CTL_TASK_CLEAR_TASK_SET },		/* CLEAR TASK SET */
+		{ 4, CTL_TASK_I_T_NEXUS_RESET },	/* I_T NEXUS RESET */
+		{ 5, CTL_TASK_LUN_RESET },		/* LOGICAL UNIT RESET */
+		{ 6, CTL_TASK_QUERY_TASK },		/* QUERY TASK */
+		{ 7, CTL_TASK_QUERY_TASK_SET },		/* QUERY TASK SET */
+	};
+	struct pci_vtscsi_request req;
+	struct pci_vtscsi_softc sc;
+	union ctl_io io;
+	uint8_t cmd_rd[VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t cmd_wr[VTSCSI_MAX_OUT_HEADER_LEN];
+
+	for (size_t i = 0; i < nitems(cases); i++) {
+		struct {
+			max_align_t alignment;
+			uint8_t bytes[VIRTIO14_SCSI_TMF_REQUEST_SIZE +
+			    VIRTIO14_SCSI_TMF_RESPONSE_SIZE];
+		} storage;
+		struct pci_vtscsi_ctrl_tmf *tmf;
+
+		reset_mocks();
+		setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+		memset(&storage, 0, sizeof(storage));
+		tmf = (struct pci_vtscsi_ctrl_tmf *)(void *)storage.bytes;
+		storage.bytes[VIRTIO14_SCSI_TMF_LUN_OFF] =
+		    VIRTIO14_SCSI_LUN_ADDRESS_METHOD;
+		storage.bytes[VIRTIO14_SCSI_TMF_LUN_OFF + 3] = 1;
+		virtio14_store_le32(storage.bytes +
+		    VIRTIO14_SCSI_TMF_SUBTYPE_OFF, cases[i].subtype);
+		g_ctl_io_success = true;
+		g_ctl_io_task_status = CTL_TASK_FUNCTION_SUCCEEDED;
+		if (i == 0)
+			pci_vtscsi_debug = 1;	/* debug sbuf leg once */
+		pci_vtscsi_tmf_handle(&sc, tmf);
+		pci_vtscsi_debug = 0;
+		/* tmf_handle allocates its own ctl_io via the mocked allocator. */
+		ATF_CHECK_EQ(g_ctl_io.taskio.task_action, cases[i].action);
+		ATF_CHECK_EQ(tmf->response,
+		    VIRTIO14_SCSI_S_FUNCTION_SUCCEEDED);
+		teardown_queue(&sc);
+	}
+
+	/* An unallocatable ctl_io yields a controller failure, not a crash. */
+	reset_mocks();
+	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	{
+		struct {
+			max_align_t alignment;
+			uint8_t bytes[VIRTIO14_SCSI_TMF_REQUEST_SIZE +
+			    VIRTIO14_SCSI_TMF_RESPONSE_SIZE];
+		} storage;
+		struct pci_vtscsi_ctrl_tmf *tmf;
+
+		memset(&storage, 0, sizeof(storage));
+		tmf = (struct pci_vtscsi_ctrl_tmf *)(void *)storage.bytes;
+		storage.bytes[VIRTIO14_SCSI_TMF_LUN_OFF] =
+		    VIRTIO14_SCSI_LUN_ADDRESS_METHOD;
+		storage.bytes[VIRTIO14_SCSI_TMF_LUN_OFF + 3] = 1;
+		virtio14_store_le32(storage.bytes +
+		    VIRTIO14_SCSI_TMF_SUBTYPE_OFF,
+		    VIRTIO14_SCSI_T_TMF_ABORT_TASK);
+		g_ctl_alloc_fail = true;
+		pci_vtscsi_tmf_handle(&sc, tmf);
+		ATF_CHECK_EQ(tmf->response, VIRTIO14_SCSI_S_FAILURE);
+	}
+	teardown_queue(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(control_queue_oversized_request);
+ATF_TC_BODY(control_queue_oversized_request, tc)
+{
+	struct pci_vtscsi_softc sc;
+	uint8_t huge[4096];
+	uint8_t out[16];
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vss_vq[0].vq_qsize = VTSCSI_RINGSZ;
+	memset(huge, 0, sizeof(huge));
+	set_chain(2, 1, 1, true);
+	g_chain.iov[0] = (struct iovec){
+		.iov_base = huge,
+		.iov_len = sizeof(huge),	/* exceeds the control union */
+	};
+	g_chain.iov[1] = (struct iovec){
+		.iov_base = out,
+		.iov_len = sizeof(out),
+	};
+	pci_vtscsi_controlq_notify(&sc, &sc.vss_vq[0]);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(lun_inventory_backend_faults);
+ATF_TC_BODY(lun_inventory_backend_faults, tc)
+{
+	struct pci_vtscsi_softc sc;
+	char *inventory;
+	uint32_t length;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vss_ctl_fd = 900;
+
+	/* Nominal query returns the payload without its terminating NUL. */
+	g_lun_inventory = "<ctllunlist/>";
+	ATF_REQUIRE_EQ(pci_vtscsi_lun_inventory(&sc, &inventory, &length), 0);
+	ATF_CHECK_EQ(length, strlen("<ctllunlist/>"));
+	ATF_CHECK_EQ(memcmp(inventory, "<ctllunlist/>", length), 0);
+	free(inventory);
+
+	/* An ioctl error is reported verbatim. */
+	g_lun_inventory_error = EIO;
+	ATF_CHECK_EQ(pci_vtscsi_lun_inventory(&sc, &inventory, &length), EIO);
+	ATF_CHECK(inventory == NULL);
+	g_lun_inventory_error = 0;
+
+	/* A malformed status (no fill) is a backend I/O error. */
+	g_lun_list_force_status = CTL_LUN_LIST_ERROR;
+	ATF_CHECK_EQ(pci_vtscsi_lun_inventory(&sc, &inventory, &length), EIO);
+	g_lun_list_force_status = -1;
+
+	/* Unbounded NEED_MORE_SPACE growth is capped with E2BIG. */
+	g_lun_list_force_need = true;
+	ATF_CHECK_EQ(pci_vtscsi_lun_inventory(&sc, &inventory, &length), E2BIG);
+	g_lun_list_force_need = false;
+}
+
+ATF_TC_WITHOUT_HEAD(worker_thread_processes_request);
+ATF_TC_BODY(worker_thread_processes_request, tc)
+{
+	struct pci_vtscsi_softc sc;
+	struct pci_vtscsi_queue *q;
+	struct pci_vtscsi_request *req;
+	struct iovec out_iov;
+	uint8_t response[VTSCSI_MAX_OUT_HEADER_LEN];
+	int spins;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	sc.vss_config.cdb_size = VIRTIO14_SCSI_DEFAULT_CDB_SIZE;
+	sc.vss_config.sense_size = VIRTIO14_SCSI_DEFAULT_SENSE_SIZE;
+	sc.vss_nrequestq = VTSCSI_DEFAULT_REQUESTQ;
+	sc.vss_iid = 1;
+	sc.vss_vq[2].vq_qsize = VTSCSI_RINGSZ;
+
+	/* Start the real worker pool: this covers alloc_request and proc(). */
+	ATF_REQUIRE_EQ(pci_vtscsi_init_queue(&sc, &sc.vss_queues[0], 0), 0);
+	q = &sc.vss_queues[0];
+	ATF_CHECK(q->vsq_nworkers >= VTSCSI_MIN_THR_PER_Q);
+
+	pthread_mutex_lock(&q->vsq_fmtx);
+	req = pci_vtscsi_get_request(&q->vsq_free_requests);
+	pthread_mutex_unlock(&q->vsq_fmtx);
+	ATF_REQUIRE(req != NULL);
+	((uint8_t *)req->vsr_cmd_rd)[VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF] =
+	    VIRTIO14_SCSI_LUN_ADDRESS_METHOD;
+	((uint8_t *)req->vsr_cmd_rd)[VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF + 3] = 1;
+	memset(response, 0, sizeof(response));
+	out_iov = (struct iovec){ .iov_base = response, .iov_len = sizeof(response) };
+	req->vsr_iov_out = &out_iov;
+	req->vsr_niov_out = 1;
+	req->vsr_idx = 31;
+	req->vsr_vreq.idx = 31;
+	g_ctl_io_success = true;
+
+	pthread_mutex_lock(&q->vsq_rmtx);
+	pci_vtscsi_put_request(&q->vsq_requests, req);
+	pthread_cond_broadcast(&q->vsq_cv);
+	pthread_mutex_unlock(&q->vsq_rmtx);
+
+	for (spins = 0; spins < 10000; spins++) {
+		if (g_rel_calls >= 1)
+			break;
+		usleep(1000);
+	}
+	ATF_CHECK(g_rel_calls >= 1);
+	ATF_CHECK_EQ(g_rel_idx, 31);
+
+	/* Tearing the queue down joins the workers and frees every request. */
+	pci_vtscsi_destroy_queue(q);
+	ATF_CHECK(q->vsq_sc == NULL);
+	ATF_CHECK_EQ(q->vsq_nworkers, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(request_enqueue_splits_data_segments);
+ATF_TC_BODY(request_enqueue_splits_data_segments, tc)
+{
+	struct pci_vtscsi_softc sc;
+	struct pci_vtscsi_request req;
+	struct pci_vtscsi_queue *q;
+	union ctl_io io;
+	uint8_t cmd_rd[VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t cmd_wr[VTSCSI_MAX_OUT_HEADER_LEN];
+	uint8_t hdr_in[VTSCSI_MAX_IN_HEADER_LEN];
+	uint8_t hdr_out[VTSCSI_MAX_OUT_HEADER_LEN];
+	uint8_t data_out[512], data_in[512];
+	struct pci_vtscsi_request *queued;
+	size_t in_hdr, out_hdr;
+
+	reset_mocks();
+	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	sc.vss_features = VIRTIO14_SCSI_F_INOUT;
+	sc.vss_vq[2].vq_qsize = VTSCSI_RINGSZ;
+	q = &sc.vss_queues[0];
+	in_hdr = VTSCSI_IN_HEADER_LEN((&sc));
+	out_hdr = VTSCSI_OUT_HEADER_LEN((&sc));
+
+	/*
+	 * A well-formed chain: an exact request header plus a readable DATA OUT
+	 * segment, then an exact response header plus a writable DATA IN
+	 * segment.  A valid LUN must land the request on the worker queue.
+	 */
+	memset(hdr_in, 0, sizeof(hdr_in));
+	hdr_in[VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF] =
+	    VIRTIO14_SCSI_LUN_ADDRESS_METHOD;
+	hdr_in[VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF + 3] = 1;
+	set_chain(4, 2, 2, true);
+	g_chain.req.idx = 12;
+	g_chain.iov[0] = (struct iovec){ .iov_base = hdr_in, .iov_len = in_hdr };
+	g_chain.iov[1] = (struct iovec){
+	    .iov_base = data_out, .iov_len = sizeof(data_out) };
+	g_chain.iov[2] = (struct iovec){
+	    .iov_base = hdr_out, .iov_len = out_hdr };
+	g_chain.iov[3] = (struct iovec){
+	    .iov_base = data_in, .iov_len = sizeof(data_in) };
+
+	pci_vtscsi_requestq_notify(&sc, &sc.vss_vq[2]);
+
+	/* The request is enqueued (not completed): no chain was released. */
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK(!STAILQ_EMPTY(&q->vsq_requests));
+	queued = STAILQ_FIRST(&q->vsq_requests);
+	ATF_CHECK_EQ(queued->vsr_idx, 12);
+	ATF_CHECK_EQ(queued->vsr_data_niov_in, 1);
+	ATF_CHECK_EQ(queued->vsr_data_niov_out, 1);
+	ATF_CHECK_EQ(queued->vsr_cmd_rd->lun[0],
+	    VIRTIO14_SCSI_LUN_ADDRESS_METHOD);
+
+	/* Drain so teardown starts from a clean free list. */
+	(void)pci_vtscsi_get_request(&q->vsq_requests);
+	pci_vtscsi_put_request(&q->vsq_free_requests, queued);
+	teardown_queue(&sc);
+
+	/* An output chain too short for the response header is failed inline. */
+	reset_mocks();
+	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	q = &sc.vss_queues[0];
+	memset(hdr_out, 0xa5, sizeof(hdr_out));
+	set_chain(2, 1, 1, true);
+	g_chain.iov[0] = (struct iovec){ .iov_base = hdr_in, .iov_len = in_hdr };
+	g_chain.iov[1] = (struct iovec){ .iov_base = hdr_out, .iov_len = 1 };
+	ATF_CHECK(pci_vtscsi_queue_request(&sc, &sc.vss_vq[2]));
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK(STAILQ_EMPTY(&q->vsq_requests));
+	teardown_queue(&sc);
+
+	/* An input chain too short for the request header is failed inline. */
+	reset_mocks();
+	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	q = &sc.vss_queues[0];
+	memset(hdr_out, 0, sizeof(hdr_out));
+	set_chain(2, 1, 1, true);
+	g_chain.iov[0] = (struct iovec){ .iov_base = hdr_in, .iov_len = 1 };
+	g_chain.iov[1] = (struct iovec){
+	    .iov_base = hdr_out, .iov_len = out_hdr };
+	ATF_CHECK(pci_vtscsi_queue_request(&sc, &sc.vss_vq[2]));
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK(STAILQ_EMPTY(&q->vsq_requests));
+	ATF_CHECK_EQ(hdr_out[VIRTIO14_SCSI_CMD_RESPONSE_RESPONSE_OFF],
+	    VIRTIO14_SCSI_S_FAILURE);
+	teardown_queue(&sc);
+
+	/* A syntactically valid chain to an invalid LUN yields BAD_TARGET. */
+	reset_mocks();
+	setup_queue(&sc, &req, cmd_rd, cmd_wr, &io);
+	q = &sc.vss_queues[0];
+	memset(hdr_in, 0, sizeof(hdr_in));	/* all-zero LUN is invalid */
+	memset(hdr_out, 0, sizeof(hdr_out));
+	set_chain(2, 1, 1, true);
+	g_chain.iov[0] = (struct iovec){ .iov_base = hdr_in, .iov_len = in_hdr };
+	g_chain.iov[1] = (struct iovec){
+	    .iov_base = hdr_out, .iov_len = out_hdr };
+	ATF_CHECK(pci_vtscsi_queue_request(&sc, &sc.vss_vq[2]));
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK(STAILQ_EMPTY(&q->vsq_requests));
+	ATF_CHECK_EQ(hdr_out[VIRTIO14_SCSI_CMD_RESPONSE_RESPONSE_OFF],
+	    VIRTIO14_SCSI_S_BAD_TARGET);
+	teardown_queue(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(hotplug_removal_and_admin_queue_reset);
+ATF_TC_BODY(hotplug_removal_and_admin_queue_reset, tc)
+{
+	struct virtio_scsi_event_record record;
+	struct pci_vtscsi_softc sc;
+
+	reset_mocks();
+	memset(&sc, 0, sizeof(sc));
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vss_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(virtio_scsi_event_state_init(&sc.vss_event_state,
+	    sc.vss_event_records, nitems(sc.vss_event_records)), 0);
+	sc.vss_vs.vs_status = VIRTIO14_STATUS_DRIVER_OK;
+	sc.vss_features = VIRTIO14_SCSI_F_HOTPLUG;
+	sc.vss_nrequestq = 1;
+
+	/*
+	 * VirtIO 1.4 section 5.6.6.4: a removed LUN is reported as a transport
+	 * reset carrying the "removed" reason (wire values 1 and 2).
+	 */
+	g_lun_events[0] = (struct ctl_lun_event){
+		.version = CTL_LUN_EVENT_VERSION,
+		.type = CTL_LUN_EVENT_REMOVED,
+		.lun_id = 0x10,
+		.sequence = 1,
+		.device_type = T_DIRECT,
+	};
+	g_lun_event_count = 1;
+	pci_vtscsi_ctl_event(9, EVF_READ, &sc);
+	ATF_REQUIRE(virtio_scsi_event_state_pop(&sc.vss_event_state, &record));
+	ATF_CHECK_EQ(record.event, 1);	/* TRANSPORT_RESET */
+	ATF_CHECK_EQ(record.reason, 2);	/* RESET_REMOVED */
+	ATF_CHECK_EQ(record.lun[3], 0x10);
+
+	/* Resetting the event queue (vq 1) clears device-local event state. */
+	sc.vss_vq[1].vq_num = 1;
+	g_lun_event_next = 0;
+	g_lun_event_count = 1;
+	pci_vtscsi_ctl_event(9, EVF_READ, &sc);
+	ATF_CHECK(virtio_scsi_event_state_pending(&sc.vss_event_state));
+	ATF_CHECK_EQ(pci_vtscsi_qreset(&sc, &sc.vss_vq[1], 0), 0);
+	ATF_CHECK(!virtio_scsi_event_state_pending(&sc.vss_event_state));
+
+	/* Resetting the control queue (vq 0) is a no-op success. */
+	sc.vss_vq[0].vq_num = 0;
+	ATF_CHECK_EQ(pci_vtscsi_qreset(&sc, &sc.vss_vq[0], 0), 0);
+
+	pthread_mutex_destroy(&sc.vss_mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_config_option_parsing);
+ATF_TC_BODY(legacy_config_option_parsing, tc)
+{
+
+	reset_mocks();
+	/* No options at all is a no-op success. */
+	ATF_CHECK_EQ(pci_vtscsi_legacy_config(NULL, NULL), 0);
+
+	/* A bare device path sets only "dev". */
+	ATF_CHECK_EQ(pci_vtscsi_legacy_config(NULL, "/dev/cam/ctl"), 0);
+	ATF_CHECK_STREQ(g_legacy_dev, "/dev/cam/ctl");
+	ATF_CHECK_EQ(g_legacy_parse_calls, 0);
+
+	/* A device path plus trailing options delegates the remainder. */
+	g_legacy_parse_ret = 0;
+	ATF_CHECK_EQ(pci_vtscsi_legacy_config(NULL, "/dev/other,iid=3"), 0);
+	ATF_CHECK_STREQ(g_legacy_dev, "/dev/other");
+	ATF_CHECK_EQ(g_legacy_parse_calls, 1);
+
+	/* The delegated parser's error propagates. */
+	g_legacy_parse_ret = EINVAL;
+	ATF_CHECK_EQ(pci_vtscsi_legacy_config(NULL, "/dev/x,bogus"), EINVAL);
+}
+
+static void
+destroy_scsi_device(struct pci_vtscsi_softc *sc)
+{
+	int i;
+
+	for (i = 0; i < sc->vss_nrequestq; i++)
+		pci_vtscsi_destroy_queue(&sc->vss_queues[i]);
+	pthread_mutex_destroy(&sc->vss_vs.vs_isr_mtx);
+	pthread_mutex_destroy(&sc->vss_mtx);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_lifecycle);
+ATF_TC_BODY(device_init_lifecycle, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtscsi_softc *sc;
+
+	/* Full modern multiqueue bring-up with a live CTL event source. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_queues = "4";
+	g_cfg_iid = "5";
+	g_cfg_bootindex = "1";
+	g_init_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	g_subscribe_ok = true;
+	ATF_REQUIRE_EQ(pci_vtscsi_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vss_nrequestq, 4);
+	ATF_CHECK_EQ(sc->vss_iid, 5);
+	ATF_CHECK(sc->vss_event_source);
+	ATF_CHECK_EQ(g_mevent_add_calls, 1);
+	ATF_CHECK_EQ(g_modern_identity, VIRTIO_ID_SCSI);
+	/* A modern device advertises hotplug/change once subscribed. */
+	ATF_CHECK((sc->vss_consts.vc_hv_caps &
+	    (VIRTIO14_SCSI_F_HOTPLUG | VIRTIO14_SCSI_F_CHANGE)) ==
+	    (VIRTIO14_SCSI_F_HOTPLUG | VIRTIO14_SCSI_F_CHANGE));
+	destroy_scsi_device(sc);
+
+	/* Legacy single-queue bring-up writes the transitional PCI identity. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_queues = "1";
+	g_init_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	ATF_REQUIRE_EQ(pci_vtscsi_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(g_cfg_device, VIRTIO_PCI_TRANSITIONAL_SCSI);
+	ATF_CHECK_EQ(g_cfg_class, PCIC_STORAGE);
+	ATF_CHECK(!sc->vss_event_source);
+	destroy_scsi_device(sc);
+
+	/* Rejected queue counts fail before any allocation. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_queues = "0";
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	/* An invalid initiator id fails after the softc is allocated. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_iid = "999999";
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	/* A bad bootindex is rejected. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_bootindex = "3";
+	g_boot_device_error = 1;
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	/* A CTL device that cannot be opened fails cleanly. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_open_fd = -1;
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	/* A non-ENOTTY subscription error disables events but still succeeds. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_queues = "1";
+	g_subscribe_ok = false;
+	g_subscribe_errno = EPERM;
+	ATF_REQUIRE_EQ(pci_vtscsi_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_CHECK(!sc->vss_event_source);
+	destroy_scsi_device(sc);
+
+	/* Multiqueue over a legacy transport is a configuration error. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_queues = "4";
+	g_init_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	/* Packed rings over a legacy transport are rejected. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_queues = "1";
+	g_cfg_packed = true;
+	g_init_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	/* Transport selection failure aborts bring-up. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_init_transport_error = EINVAL;
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	/* Interrupt init failure aborts bring-up. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_queues = "1";
+	g_intr_init_error = ENXIO;
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	/* Modern transport BAR init failure aborts bring-up. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_queues = "1";
+	g_init_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	g_modern_init_error = ENXIO;
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+
+	/* A failed CTL event registration tears the device back down. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_queues = "1";
+	g_subscribe_ok = true;
+	g_mevent_add_fail = true;
+	ATF_CHECK_EQ(pci_vtscsi_init(&pi, NULL), -1);
+	ATF_CHECK_EQ(g_mevent_add_calls, 1);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_backend_faults);
+ATF_TC_BODY(snapshot_backend_faults, tc)
+{
+	struct pci_vtscsi_softc source, destination;
+	uint8_t image[512], damaged[512];
+	size_t used, inv_off;
+
+	reset_mocks();
+
+	/* A save whose backend inventory query fails publishes nothing. */
+	setup_snapshot_softc(&source);
+	g_lun_inventory_error = EIO;
+	ATF_CHECK_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EIO);
+	g_lun_inventory_error = 0;
+
+	/* Produce a good image to mutate for the restore-side fault paths. */
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+
+	/* An oversized declared inventory length is rejected before any alloc. */
+	inv_off = 22 + VIRTIO14_SCSI_CONFIG_SIZE;
+	ATF_REQUIRE(inv_off + sizeof(uint32_t) <= used);
+	memcpy(damaged, image, used);
+	virtio14_store_le32(&damaged[inv_off],
+	    VTSCSI_LUN_INVENTORY_MAX + 1U);
+	setup_snapshot_softc(&destination);
+	destination.vss_iid = source.vss_iid;
+	destination.vss_nrequestq = source.vss_nrequestq;
+	destination.vss_vs.vs_negotiated_caps = source.vss_features;
+	ATF_CHECK_EQ(run_snapshot(&destination, damaged, used,
+	    VM_SNAPSHOT_RESTORE, NULL), E2BIG);
+
+	/*
+	 * A record that passes every local compatibility gate still fails if the
+	 * destination backend inventory cannot be read for comparison.
+	 */
+	setup_snapshot_softc(&destination);
+	destination.vss_iid = source.vss_iid;
+	destination.vss_nrequestq = source.vss_nrequestq;
+	destination.vss_vs.vs_negotiated_caps = source.vss_features;
+	g_lun_inventory_error = EIO;
+	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EIO);
+	g_lun_inventory_error = 0;
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, control_handler_validation);
@@ -2338,5 +3336,16 @@ ATF_TP_ADD_TCS(tp)
 	    checkpoint_multiqueue_failure_rolls_back_earlier_queues);
 	ATF_TP_ADD_TC(tp, guest_suspend_nests_with_checkpoint);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
+	ATF_TP_ADD_TC(tp, feature_negotiation_and_reset_clock_failure);
+	ATF_TP_ADD_TC(tp, request_handle_data_and_status_paths);
+	ATF_TP_ADD_TC(tp, tmf_handle_task_function_mapping);
+	ATF_TP_ADD_TC(tp, control_queue_oversized_request);
+	ATF_TP_ADD_TC(tp, lun_inventory_backend_faults);
+	ATF_TP_ADD_TC(tp, request_enqueue_splits_data_segments);
+	ATF_TP_ADD_TC(tp, hotplug_removal_and_admin_queue_reset);
+	ATF_TP_ADD_TC(tp, worker_thread_processes_request);
+	ATF_TP_ADD_TC(tp, legacy_config_option_parsing);
+	ATF_TP_ADD_TC(tp, device_init_lifecycle);
+	ATF_TP_ADD_TC(tp, snapshot_backend_faults);
 	return (atf_no_error());
 }

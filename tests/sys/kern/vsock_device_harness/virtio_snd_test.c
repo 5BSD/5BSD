@@ -58,6 +58,14 @@ static int g_audio_errno;
 static int g_audio_set_params_result;
 static int g_mevent_enable_calls, g_mevent_disable_calls;
 static int g_mevent_delete_sync_calls;
+static bool g_mevent_enable_fail;
+static const char *g_cfg_backend, *g_cfg_play, *g_cfg_record;
+static bool g_cfg_packed;
+static int g_select_transport_result;
+static int g_intr_init_result;
+static int g_modern_init_result;
+static int g_modern_set_identity_calls;
+static uint16_t g_modern_set_identity_id;
 #ifdef BHYVE_SNAPSHOT
 static int g_snapshot_validate_calls;
 static int g_snapshot_validate_result;
@@ -126,6 +134,16 @@ reset_mocks(void)
 	g_mevent_enable_calls = 0;
 	g_mevent_disable_calls = 0;
 	g_mevent_delete_sync_calls = 0;
+	g_mevent_enable_fail = false;
+	g_cfg_backend = NULL;
+	g_cfg_play = NULL;
+	g_cfg_record = NULL;
+	g_cfg_packed = false;
+	g_select_transport_result = 0;
+	g_intr_init_result = 0;
+	g_modern_init_result = 0;
+	g_modern_set_identity_calls = 0;
+	g_modern_set_identity_id = 0;
 #ifdef BHYVE_SNAPSHOT
 	g_snapshot_validate_calls = 0;
 	g_snapshot_validate_result = 0;
@@ -240,10 +258,15 @@ teardown_softc(struct pci_vtsnd_softc *sc)
 	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc->vssc_mtx), 0);
 }
 
+static bool g_audio_init_fail;
+static bool g_mevent_add_fail;
+
 struct audio *
 audio_init_nonblock(const char *path __unused, uint8_t direction __unused)
 {
 
+	if (g_audio_init_fail)
+		return (NULL);
 	return ((struct audio *)(uintptr_t)1);
 }
 
@@ -293,6 +316,8 @@ mevent_add_disabled(int fd __unused, enum ev_type type __unused,
     void *arg __unused)
 {
 
+	if (g_mevent_add_fail)
+		return (NULL);
 	return ((struct mevent *)(uintptr_t)1);
 }
 
@@ -301,6 +326,8 @@ mevent_enable(struct mevent *event __unused)
 {
 
 	g_mevent_enable_calls++;
+	if (g_mevent_enable_fail)
+		return (-1);
 	return (0);
 }
 
@@ -488,7 +515,155 @@ vi_pci_snapshot(struct vm_snapshot_meta *meta)
 	g_snapshot_validate_saw_lock = pthread_mutex_isowned_np(&sc->vssc_mtx);
 	return (g_snapshot_validate_result);
 }
+
+int
+vi_pci_snapshot_compat(struct pci_devinst *pi __unused,
+    struct pci_snapshot_compat *compat __unused)
+{
+
+	return (0);
+}
+
+int
+vi_pci_pause(struct pci_devinst *pi __unused)
+{
+
+	return (0);
+}
+
+int
+vi_pci_resume(struct pci_devinst *pi __unused)
+{
+
+	return (0);
+}
 #endif
+
+/*
+ * VirtIO PCI transport and configuration stubs.  The production device
+ * registration (pci_de_vtsnd) and initialization (pci_vtsnd_init) reference the
+ * common VirtIO/PCI plumbing that a device-composition harness deliberately
+ * does not link.  These test-controlled stubs let pci_vtsnd_init exercise every
+ * admission, backend-selection and teardown branch without a live PCI bus.
+ */
+const char *
+get_config_value_node(const nvlist_t *parent __unused, const char *name)
+{
+
+	if (strcmp(name, "backend") == 0)
+		return (g_cfg_backend);
+	if (strcmp(name, "play") == 0)
+		return (g_cfg_play);
+	if (strcmp(name, "record") == 0)
+		return (g_cfg_record);
+	return (NULL);
+}
+
+bool
+get_config_bool_node_default(const nvlist_t *parent __unused,
+    const char *name __unused, bool value)
+{
+
+	return (g_cfg_packed ? true : value);
+}
+
+void
+vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
+    void *dev_softc, struct pci_devinst *pi, struct vqueue_info *queues)
+{
+
+	vs->vs_vc = vc;
+	vs->vs_pi = pi;
+	vs->vs_queues = queues;
+	if (pi != NULL)
+		pi->pi_arg = dev_softc;
+}
+
+int
+vi_pci_select_transport(struct virtio_softc *vs __unused,
+    const struct nvlist *nvl __unused,
+    enum virtio_pci_transport_policy policy __unused)
+{
+
+	return (g_select_transport_result);
+}
+
+void
+vi_pci_modern_set_identity(struct virtio_softc *vs __unused, uint16_t device_id)
+{
+
+	g_modern_set_identity_calls++;
+	g_modern_set_identity_id = device_id;
+}
+
+int
+vi_intr_init(struct virtio_softc *vs, int barnum __unused, int use_msix __unused)
+{
+
+	if (g_intr_init_result != 0)
+		return (g_intr_init_result);
+	return (pthread_mutex_init(&vs->vs_isr_mtx, NULL));
+}
+
+int
+vi_pci_modern_init(struct virtio_softc *vs __unused, int barnum __unused)
+{
+
+	return (g_modern_init_result);
+}
+
+int
+fbsdrun_virtio_msix(void)
+{
+
+	return (1);
+}
+
+int
+vi_pci_modern_cfgread(struct pci_devinst *pi __unused, int offset __unused,
+    int size __unused, uint32_t *retval __unused)
+{
+
+	return (0);
+}
+
+int
+vi_pci_modern_cfgwrite(struct pci_devinst *pi __unused, int offset __unused,
+    int size __unused, uint32_t value __unused)
+{
+
+	return (0);
+}
+
+uint64_t
+vi_pci_read(struct pci_devinst *pi __unused, int baridx __unused,
+    uint64_t offset __unused, int size __unused)
+{
+
+	return (0);
+}
+
+void
+vi_pci_write(struct pci_devinst *pi __unused, int baridx __unused,
+    uint64_t offset __unused, int size __unused, uint64_t value __unused)
+{
+}
+
+void
+pci_set_cfgdata8(struct pci_devinst *pi, int offset, uint8_t val)
+{
+
+	ATF_REQUIRE(offset >= 0 && (size_t)offset < sizeof(pi->pi_cfgdata));
+	pi->pi_cfgdata[offset] = val;
+}
+
+uint8_t
+pci_get_cfgdata8(struct pci_devinst *pi, int offset)
+{
+
+	ATF_REQUIRE(offset >= 0 && (size_t)offset < sizeof(pi->pi_cfgdata));
+	return (pi->pi_cfgdata[offset]);
+}
 
 static void
 configure_playback(struct pci_vtsnd_softc *sc)
@@ -1563,9 +1738,415 @@ ATF_TC_BODY(checkpoint_restore_runnable_reopens_prior_suspend_fence, tc)
 }
 #endif
 
+static void
+cleanup_after_init(struct pci_vtsnd_softc *sc)
+{
+
+	pci_vtsnd_delete_audio_events(sc);
+	for (uint32_t stream_id = 0;
+	    stream_id < nitems(sc->vssc_audio_event); stream_id++)
+		audio_destroy(sc->vssc_audio[stream_id]);
+	if (sc->vssc_async != NULL)
+		(void)virtio_snd_async_destroy(sc->vssc_async);
+	virtio_snd_host_destroy(sc->vssc_host);
+	free(sc->vssc_vs.vs_modern);
+	pthread_mutex_destroy(&sc->vssc_vs.vs_isr_mtx);
+	pthread_mutex_destroy(&sc->vssc_mtx);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_admits_and_rejects_configurations);
+ATF_TC_BODY(device_init_admits_and_rejects_configurations, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtsnd_softc *sc;
+
+	/*
+	 * A default (null-backend) device admits and links up the modern
+	 * transport, publishing the multimedia/audio PCI class identity.
+	 */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	ATF_REQUIRE_EQ(pci_vtsnd_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vssc_backend, VTSND_BACKEND_KIND_NULL);
+	ATF_CHECK_EQ(g_modern_set_identity_calls, 1);
+	ATF_CHECK_EQ(g_modern_set_identity_id, VIRTIO_ID_SOUND);
+	ATF_CHECK_EQ(pci_get_cfgdata8(&pi, PCIR_CLASS), PCIC_MULTIMEDIA);
+	ATF_CHECK_EQ(pci_get_cfgdata8(&pi, PCIR_SUBCLASS),
+	    PCIS_MULTIMEDIA_AUDIO);
+	ATF_CHECK_EQ(sc->vssc_progress, pci_vtsnd_null_progress);
+	cleanup_after_init(sc);
+
+	/* An explicit null backend with a packed-ring request is honoured. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_backend = "null";
+	g_cfg_packed = true;
+	ATF_REQUIRE_EQ(pci_vtsnd_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK((sc->vssc_consts.vc_hv_caps & VIRTIO_F_RING_PACKED) != 0);
+	cleanup_after_init(sc);
+
+	/* An OSS backend opens both paths and installs the OSS progress hook. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_backend = "oss";
+	g_cfg_play = "/dev/dsp0";
+	g_cfg_record = "/dev/dsp1";
+	ATF_REQUIRE_EQ(pci_vtsnd_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vssc_backend, VTSND_BACKEND_KIND_OSS);
+	ATF_CHECK_STREQ(sc->vssc_play_path, "/dev/dsp0");
+	ATF_CHECK_STREQ(sc->vssc_record_path, "/dev/dsp1");
+	ATF_CHECK_EQ(sc->vssc_progress, pci_vtsnd_oss_progress);
+	cleanup_after_init(sc);
+
+	/* OSS with defaulted paths falls back to /dev/dsp for both streams. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_backend = "oss";
+	ATF_REQUIRE_EQ(pci_vtsnd_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_STREQ(sc->vssc_play_path, "/dev/dsp");
+	ATF_CHECK_STREQ(sc->vssc_record_path, "/dev/dsp");
+	cleanup_after_init(sc);
+
+	/* An unknown backend name is rejected before any allocation. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_backend = "pulse";
+	ATF_CHECK_EQ(pci_vtsnd_init(&pi, NULL), 1);
+	ATF_CHECK(pi.pi_arg == NULL);
+
+	/* play/record are meaningful only for the OSS backend. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_play = "/dev/dsp0";
+	ATF_CHECK_EQ(pci_vtsnd_init(&pi, NULL), 1);
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_record = "/dev/dsp1";
+	ATF_CHECK_EQ(pci_vtsnd_init(&pi, NULL), 1);
+
+	/* An over-long OSS path is rejected. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_backend = "oss";
+	static char long_path[512];
+	memset(long_path, 'a', sizeof(long_path) - 1);
+	g_cfg_play = long_path;
+	ATF_CHECK_EQ(pci_vtsnd_init(&pi, NULL), 1);
+
+	/* Transport, interrupt and modern-init failures each unwind cleanly. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_select_transport_result = EINVAL;
+	ATF_CHECK_EQ(pci_vtsnd_init(&pi, NULL), 1);
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_intr_init_result = ENXIO;
+	ATF_CHECK_EQ(pci_vtsnd_init(&pi, NULL), 1);
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_modern_init_result = ENXIO;
+	ATF_CHECK_EQ(pci_vtsnd_init(&pi, NULL), 1);
+
+	/* An OSS backend which cannot open its dsp nodes unwinds. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_backend = "oss";
+	g_audio_init_fail = true;
+	ATF_CHECK_EQ(pci_vtsnd_init(&pi, NULL), 1);
+	g_audio_init_fail = false;
+
+	/* An OSS backend which cannot register readiness events unwinds. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_backend = "oss";
+	g_mevent_add_fail = true;
+	ATF_CHECK_EQ(pci_vtsnd_init(&pi, NULL), 1);
+	g_mevent_add_fail = false;
+
+	/* A numeric BHYVE_VIRTIO_DEBUG selects the diagnostic verbosity. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	ATF_REQUIRE_EQ(setenv("BHYVE_VIRTIO_DEBUG", "3", 1), 0);
+	ATF_REQUIRE_EQ(pci_vtsnd_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vssc_debug, 3u);
+	cleanup_after_init(sc);
+
+	/* A non-numeric value leaves the verbosity at its default. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	ATF_REQUIRE_EQ(setenv("BHYVE_VIRTIO_DEBUG", "loud", 1), 0);
+	ATF_REQUIRE_EQ(pci_vtsnd_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vssc_debug, 0u);
+	cleanup_after_init(sc);
+	ATF_REQUIRE_EQ(unsetenv("BHYVE_VIRTIO_DEBUG"), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(diagnostic_and_defensive_edges);
+ATF_TC_BODY(diagnostic_and_defensive_edges, tc)
+{
+	struct pci_vtsnd_softc sc;
+	struct virtio_snd_host_params params;
+	struct pci_vtsnd_pending fake_pending;
+	struct vqueue_info *one_past;
+	uint8_t buffer[64];
+	uint8_t state[PCI_VTSND_STATE_SIZE];
+	size_t progress;
+
+	reset_mocks();
+	setup_softc(&sc);
+
+	/* Verbose accounting emits playback and capture diagnostics. */
+	sc.vssc_debug = 2;
+	ATF_CHECK_EQ(pci_vtsnd_playback(&sc, 0, buffer, 10), 0);
+	ATF_CHECK_EQ(pci_vtsnd_capture(&sc, 1, buffer, 8), 0);
+	ATF_CHECK_EQ(sc.vssc_playback_bytes, 10);
+	ATF_CHECK_EQ(sc.vssc_capture_bytes, 8);
+
+	/* Verbose release logs the running byte totals. */
+	sc.vssc_debug = 1;
+	ATF_CHECK_EQ(pci_vtsnd_release(&sc, 0), 0);
+	sc.vssc_debug = 0;
+
+	/* set_params rejects a non-S16 format on an open OSS stream. */
+	sc.vssc_backend = VTSND_BACKEND_KIND_OSS;
+	sc.vssc_audio[0] = (struct audio *)(uintptr_t)1;
+	params = (struct virtio_snd_host_params){
+		.channels = 2,
+		.format = 0xff,
+		.rate = BHYVE_VTSND_RATE_48000,
+	};
+	ATF_CHECK_EQ(pci_vtsnd_set_params(&sc, 0, &params), EINVAL);
+
+	/* null and OSS progress reject an unknown transfer direction. */
+	ATF_CHECK_EQ(pci_vtsnd_null_progress(&sc,
+	    (enum virtio_snd_async_direction)99, buffer, sizeof(buffer),
+	    &progress), EINVAL);
+	ATF_CHECK_EQ(pci_vtsnd_oss_progress(&sc,
+	    (enum virtio_snd_async_direction)99, buffer, sizeof(buffer),
+	    &progress), EINVAL);
+	/* OSS progress reports ENXIO when the stream device is absent. */
+	sc.vssc_audio[0] = NULL;
+	ATF_CHECK_EQ(pci_vtsnd_oss_progress(&sc, BHYVE_VTSND_ASYNC_PLAYBACK,
+	    buffer, sizeof(buffer), &progress), ENXIO);
+	sc.vssc_backend = VTSND_BACKEND_KIND_NULL;
+
+	/* async_progress surfaces ENXIO when no backend hook is installed. */
+	sc.vssc_progress = NULL;
+	ATF_CHECK_EQ(pci_vtsnd_async_progress(&sc, BHYVE_VTSND_ASYNC_PLAYBACK,
+	    buffer, sizeof(buffer), &progress), ENXIO);
+	ATF_CHECK_EQ(progress, 0);
+	sc.vssc_progress = pci_vtsnd_null_progress;
+	sc.vssc_progress_arg = &sc;
+
+	/* backend_ready validates its stream id and honours the reset fence. */
+	ATF_CHECK_EQ(pci_vtsnd_backend_ready(&sc, 99), EINVAL);
+	ATF_CHECK_EQ(pci_vtsnd_backend_ready(NULL, 0), EINVAL);
+	sc.vssc_resetting = true;
+	ATF_CHECK_EQ(pci_vtsnd_backend_ready(&sc, 0), EBUSY);
+	sc.vssc_resetting = false;
+
+	/* cancel_pending rejects an out-of-range stream id. */
+	ATF_CHECK_EQ(pci_vtsnd_cancel_pending(&sc, 99), EINVAL);
+
+	/* audio_event ignores a foreign pending and a mismatched event type. */
+	memset(&fake_pending, 0, sizeof(fake_pending));
+	fake_pending.sc = &sc;
+	pci_vtsnd_audio_event(3, EVF_WRITE, &fake_pending);
+	pci_vtsnd_audio_event(3, EVF_READ, &sc.vssc_pending[0]);
+	pci_vtsnd_audio_event(3, EVF_WRITE, &sc.vssc_pending[1]);
+	ATF_CHECK_EQ(g_completion_count, 0);
+
+	/* async_complete latches NEEDS_RESET on an unowned token. */
+	pci_vtsnd_async_complete(&sc, (uintptr_t)&fake_pending,
+	    BHYVE_VTSND_ASYNC_OK, NULL, 0);
+	ATF_CHECK(g_needs_reset > 0);
+	g_needs_reset = 0;
+
+	/* qreset ignores control/event queues and rejects a foreign vq. */
+	ATF_CHECK_EQ(pci_vtsnd_qreset(&sc, &sc.vssc_vq[VTSND_CONTROLQ], 0), 0);
+	one_past = sc.vssc_vq + VTSND_NVQ;
+	ATF_CHECK_EQ(pci_vtsnd_qreset(&sc, one_past, 0), EINVAL);
+
+	/* The data paths reject a non-stream queue with NEEDS_RESET. */
+	g_needs_reset = 0;
+	ATF_CHECK(!pci_vtsnd_drain_data(&sc, &sc.vssc_vq[VTSND_CONTROLQ]));
+	ATF_CHECK(!pci_vtsnd_fail_data(&sc, &sc.vssc_vq[VTSND_CONTROLQ]));
+	ATF_CHECK_EQ(g_needs_reset, 2);
+	g_needs_reset = 0;
+
+	/* A direct guest SUSPEND with no retained work takes and drops vssc_mtx. */
+	ATF_CHECK_EQ(pci_vtsnd_suspend(&sc), 0);
+	ATF_CHECK(!pthread_mutex_isowned_np(&sc.vssc_mtx));
+	ATF_CHECK(sc.vssc_async->quiescing);
+	ATF_CHECK_EQ(pci_vtsnd_resume_device(&sc), 0);
+	ATF_CHECK(!sc.vssc_async->quiescing);
+
+	/* state_restore forwards a validation failure. */
+	memset(state, 0, sizeof(state));
+	ATF_CHECK_EQ(pci_vtsnd_state_restore(&sc, state, sizeof(state) - 1),
+	    EINVAL);
+
+	/* A null-backend image with a non-empty path field is rejected. */
+	le32enc(state, PCI_VTSND_STATE_MAGIC);
+	le16enc(state + 4, PCI_VTSND_STATE_VERSION);
+	le16enc(state + 6, PCI_VTSND_STATE_HEADER_SIZE);
+	le32enc(state + 8, VTSND_BACKEND_KIND_NULL);
+	state[16] = 1;
+	ATF_CHECK_EQ(pci_vtsnd_state_validate(&sc, state, sizeof(state)),
+	    EINVAL);
+
+	/* An OSS image whose path field never terminates is rejected. */
+	memset(state, 0, sizeof(state));
+	le32enc(state, PCI_VTSND_STATE_MAGIC);
+	le16enc(state + 4, PCI_VTSND_STATE_VERSION);
+	le16enc(state + 6, PCI_VTSND_STATE_HEADER_SIZE);
+	le32enc(state + 8, VTSND_BACKEND_KIND_OSS);
+	memset(state + 16, 'x', 64);
+	ATF_CHECK_EQ(pci_vtsnd_state_validate(&sc, state, sizeof(state)),
+	    EINVAL);
+
+#ifdef BHYVE_SNAPSHOT
+	/* snapshot_validate rejects a missing meta or an unbound instance. */
+	ATF_CHECK_EQ(pci_vtsnd_snapshot_validate(NULL), EINVAL);
+	{
+		struct pci_devinst pi2;
+		struct vm_snapshot_meta m = {
+			.op = VM_SNAPSHOT_VALIDATE,
+			.dev_data = &pi2,
+		};
+
+		memset(&pi2, 0, sizeof(pi2));
+		pi2.pi_arg = NULL;
+		ATF_CHECK_EQ(pci_vtsnd_snapshot_validate(&m), EINVAL);
+	}
+#endif
+	teardown_softc(&sc);
+
+	/*
+	 * A retained request makes portable-state capture unavailable: the host
+	 * codec refuses to serialize live stream ownership.
+	 */
+	{
+		struct pci_vtsnd_softc s2;
+		uint8_t st[PCI_VTSND_STATE_SIZE];
+		uint8_t playback[4 + 1024];
+
+		reset_mocks();
+		setup_softc(&s2);
+		s2.vssc_backend = VTSND_BACKEND_KIND_NULL;
+		configure_playback(&s2);
+		s2.vssc_progress = stalling_progress;
+		s2.vssc_progress_arg = NULL;
+		g_use_vqs = true;
+		memset(playback, 0x42, sizeof(playback));
+		le32enc(playback, 0);
+		mock_vq_set(VTSND_TXQ, playback, sizeof(playback),
+		    VIRTIO14_SND_PCM_STATUS_SIZE);
+		pci_vtsnd_notify(&s2, &s2.vssc_vq[VTSND_TXQ]);
+		ATF_REQUIRE(s2.vssc_pending[0].active);
+		ATF_CHECK_EQ(pci_vtsnd_state_encode(&s2, st), EBUSY);
+#ifdef BHYVE_SNAPSHOT
+		{
+			uint8_t img[PCI_VTSND_STATE_SIZE];
+			struct vm_snapshot_meta m = {
+				.buffer = {
+					.buf = img,
+					.buf_rem = sizeof(img),
+				},
+				.op = VM_SNAPSHOT_SAVE,
+			};
+
+			ATF_CHECK_EQ(pci_vtsnd_snapshot(&s2, &m), EBUSY);
+		}
+#endif
+		pci_vtsnd_reset(&s2);
+		g_use_vqs = false;
+		teardown_softc(&s2);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(data_path_error_and_retain_failures);
+ATF_TC_BODY(data_path_error_and_retain_failures, tc)
+{
+	struct pci_vtsnd_softc sc;
+	struct vqueue_info *one_past;
+	uint8_t playback[4 + 1024];
+
+	/* notify rejects an out-of-range queue index with NEEDS_RESET. */
+	reset_mocks();
+	setup_softc(&sc);
+	one_past = sc.vssc_vq + VTSND_NVQ;
+	pci_vtsnd_notify(&sc, one_past);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+	teardown_softc(&sc);
+
+	/*
+	 * A running output stream that drains a malformed descriptor chain
+	 * (no writable status segment) latches NEEDS_RESET and returns the
+	 * chain with a zero used length.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	configure_playback(&sc);
+	start_stream(&sc, 0);
+	g_use_vqs = true;
+	memset(playback, 0x33, sizeof(playback));
+	le32enc(playback, 0);
+	mock_vq_set(VTSND_TXQ, playback, sizeof(playback),
+	    VIRTIO14_SND_PCM_STATUS_SIZE);
+	g_vqs[VTSND_TXQ].writable_count = 0;
+	pci_vtsnd_notify(&sc, &sc.vssc_vq[VTSND_TXQ]);
+	ATF_CHECK(g_needs_reset > 0);
+	ATF_CHECK_EQ(g_rel_len, 0);
+	g_use_vqs = false;
+	pci_vtsnd_reset(&sc);
+	teardown_softc(&sc);
+
+	/*
+	 * When a nonblocking backend retains an output request but its
+	 * readiness source cannot be enabled, drain_data() cancels the retained
+	 * request and latches NEEDS_RESET rather than leaking the descriptor.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	configure_playback(&sc);
+	sc.vssc_progress = stalling_progress;
+	sc.vssc_progress_arg = NULL;
+	sc.vssc_audio_event[0] = (struct mevent *)(uintptr_t)1;
+	g_mevent_enable_fail = true;
+	g_use_vqs = true;
+	memset(playback, 0x42, sizeof(playback));
+	le32enc(playback, 0);
+	mock_vq_set(VTSND_TXQ, playback, sizeof(playback),
+	    VIRTIO14_SND_PCM_STATUS_SIZE);
+	pci_vtsnd_notify(&sc, &sc.vssc_vq[VTSND_TXQ]);
+	ATF_CHECK_EQ(g_mevent_enable_calls, 1);
+	ATF_CHECK(g_needs_reset > 0);
+	g_mevent_enable_fail = false;
+	g_use_vqs = false;
+	pci_vtsnd_reset(&sc);
+	teardown_softc(&sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, composition_and_config);
+	ATF_TP_ADD_TC(tp, device_init_admits_and_rejects_configurations);
+	ATF_TP_ADD_TC(tp, diagnostic_and_defensive_edges);
+	ATF_TP_ADD_TC(tp, data_path_error_and_retain_failures);
 	ATF_TP_ADD_TC(tp, playback_queue_drives_backend_and_completion);
 	ATF_TP_ADD_TC(tp, control_transitions_order_pending_data);
 	ATF_TP_ADD_TC(tp,

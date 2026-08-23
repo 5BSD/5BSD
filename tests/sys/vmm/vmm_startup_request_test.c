@@ -167,6 +167,95 @@ ATF_TC_BODY(status_encoding_is_failure_atomic, tc)
 	    &status, overlap_output), EINVAL);
 }
 
+ATF_TC_WITHOUT_HEAD(committed_phase_encoding);
+ATF_TC_BODY(committed_phase_encoding, tc)
+{
+	struct vmm_startup_handshake_status status;
+	struct vmm_startup_request output, request;
+
+	(void)tc;
+	/*
+	 * A COMMITTED handshake pins the kernel as owner with a locked mode
+	 * and every expected vCPU (including the bootstrap) accounted for.
+	 * Independent oracle: the encoded request must echo those totals and
+	 * report the COMMITTED phase with kernel/prestarted encodings.
+	 */
+	request = request_fixture(VMM_STARTUP_REQUEST_STATUS);
+	memset(&status, 0, sizeof(status));
+	vmm_startup_mode_init(&status.mode);
+	ATF_REQUIRE_EQ(vmm_startup_mode_configure(&status.mode,
+	    VMM_STARTUP_OWNER_KERNEL), 0);
+	ATF_REQUIRE_EQ(vmm_startup_mode_configure_execution(&status.mode,
+	    VMM_STARTUP_EXECUTION_PRESTARTED_WAIT), 0);
+	ATF_REQUIRE_EQ(vmm_startup_mode_lock(&status.mode), 0);
+	status.generation = 11;
+	status.expected_vcpus = 4;
+	status.entered_vcpus = 4;
+	status.bootstrap_entered = 1;
+	status.phase = VMM_STARTUP_HANDSHAKE_COMMITTED;
+
+	memset(&output, 0xa5, sizeof(output));
+	ATF_REQUIRE_EQ(vmm_startup_request_encode_status(&request, 4, &status,
+	    &output), 0);
+	ATF_CHECK_EQ(output.generation, 11);
+	ATF_CHECK_EQ(output.expected_vcpus, 4);
+	ATF_CHECK_EQ(output.entered_vcpus, 4);
+	ATF_CHECK_EQ(output.bootstrap_entered, 1);
+	ATF_CHECK_EQ(output.phase, VMM_STARTUP_REQUEST_PHASE_COMMITTED);
+	ATF_CHECK_EQ(output.owner, VMM_STARTUP_REQUEST_OWNER_KERNEL);
+	ATF_CHECK_EQ(output.execution,
+	    VMM_STARTUP_REQUEST_EXECUTION_PRESTARTED);
+
+	/* A COMMITTED phase that is short a vCPU is not internally valid. */
+	status.entered_vcpus = 3;
+	ATF_CHECK_EQ(vmm_startup_request_encode_status(&request, 4, &status,
+	    &output), EINVAL);
+	status.entered_vcpus = 4;
+	/* Losing the mode lock likewise invalidates a COMMITTED status. */
+	status.mode.locked = 0;
+	ATF_CHECK_EQ(vmm_startup_request_encode_status(&request, 4, &status,
+	    &output), EINVAL);
+}
+
+ATF_TC_WITHOUT_HEAD(defensive_helpers_reject_bad_values);
+ATF_TC_BODY(defensive_helpers_reject_bad_values, tc)
+{
+	struct vmm_startup_handshake_status status;
+	uint8_t execution, owner, phase;
+	struct vmm_startup_request scratch;
+
+	(void)tc;
+	memset(&scratch, 0, sizeof(scratch));
+	/* An empty or NULL range never overlaps anything. */
+	ATF_CHECK(!vmm_startup_request_overlap(NULL, 0, &scratch,
+	    sizeof(scratch)));
+	ATF_CHECK(!vmm_startup_request_overlap(&scratch, 0, &scratch,
+	    sizeof(scratch)));
+	ATF_CHECK(!vmm_startup_request_overlap(&scratch, sizeof(scratch),
+	    NULL, 0));
+
+	/*
+	 * The value encoder rejects any enum outside the wire vocabulary.
+	 * Spec oracle: out-of-range phase/owner/execution must all map to
+	 * EINVAL rather than silently emitting a garbage wire value.
+	 */
+	memset(&status, 0, sizeof(status));
+	vmm_startup_mode_init(&status.mode);
+	status.phase = VMM_STARTUP_HANDSHAKE_PHASE_LAST;
+	ATF_CHECK_EQ(vmm_startup_request_status_encode_values(&status, &phase,
+	    &owner, &execution), EINVAL);
+
+	status.phase = VMM_STARTUP_HANDSHAKE_OPEN;
+	status.mode.owner = VMM_STARTUP_OWNER_LAST;
+	ATF_CHECK_EQ(vmm_startup_request_status_encode_values(&status, &phase,
+	    &owner, &execution), EINVAL);
+
+	status.mode.owner = VMM_STARTUP_OWNER_USERSPACE;
+	status.mode.execution = VMM_STARTUP_EXECUTION_LAST;
+	ATF_CHECK_EQ(vmm_startup_request_status_encode_values(&status, &phase,
+	    &owner, &execution), EINVAL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -174,5 +263,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, operation_specific_inputs);
 	ATF_TP_ADD_TC(tp, reserved_and_output_fields_rejected);
 	ATF_TP_ADD_TC(tp, status_encoding_is_failure_atomic);
+	ATF_TP_ADD_TC(tp, committed_phase_encoding);
+	ATF_TP_ADD_TC(tp, defensive_helpers_reject_bad_values);
 	return (atf_no_error());
 }

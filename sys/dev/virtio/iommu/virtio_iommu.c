@@ -243,6 +243,7 @@ MTX_SYSINIT(vtiommu_providers, &vtiommu_providers_mtx, "vtiommu providers",
 static int	vtiommu_probe(device_t);
 static int	vtiommu_attach(device_t);
 static int	vtiommu_detach(device_t);
+static int	vtiommu_attach_completed(device_t);
 static int	vtiommu_config_change(device_t);
 
 static int	vtiommu_setup_features(struct vtiommu_softc *);
@@ -260,8 +261,8 @@ static void	vtiommu_req_vq_intr(void *);
 static void	vtiommu_handle_fault(struct vtiommu_softc *,
 		    const struct virtio_iommu_fault *);
 
-static int	vtiommu_send_request(struct vtiommu_softc *, size_t, size_t,
-		    uint8_t *);
+static int	vtiommu_send_request(struct vtiommu_softc *, const void *,
+		    size_t, size_t, uint8_t *);
 static int	vtiommu_status_to_errno(uint8_t);
 
 /* Protocol operations (also exported through the provider vtable). */
@@ -298,6 +299,7 @@ static device_method_t vtiommu_methods[] = {
 	DEVMETHOD(device_detach,	vtiommu_detach),
 
 	/* VirtIO methods. */
+	DEVMETHOD(virtio_attach_completed, vtiommu_attach_completed),
 	DEVMETHOD(virtio_config_change,	vtiommu_config_change),
 
 	DEVMETHOD_END
@@ -395,13 +397,7 @@ vtiommu_attach(device_t dev)
 	 * Fault events are interrupt-driven.
 	 */
 	virtqueue_disable_intr(sc->vtiommu_req_vq);
-
-	error = vtiommu_populate_event_vq(sc);
-	if (error != 0) {
-		device_printf(dev, "cannot post fault event buffers\n");
-		goto fail;
-	}
-	virtqueue_enable_intr(sc->vtiommu_event_vq);
+	virtqueue_disable_intr(sc->vtiommu_event_vq);
 
 	/* Publish the protocol engine to the busdma/VIOT seam. */
 	sc->vtiommu_provider.dev = dev;
@@ -493,6 +489,28 @@ vtiommu_detach(device_t dev)
 	}
 
 	VTIOMMU_LOCK_DESTROY(sc);
+	return (0);
+}
+
+static int
+vtiommu_attach_completed(device_t dev)
+{
+	struct vtiommu_softc *sc;
+	int error;
+
+	/*
+	 * DRIVER_OK is set only after device_attach() returns, and the driver
+	 * must not notify the device before DRIVER_OK.  Post the standing
+	 * fault buffers (which kicks the event queue) and enable its interrupt
+	 * here, once the device is fully live.
+	 */
+	sc = device_get_softc(dev);
+	error = vtiommu_populate_event_vq(sc);
+	if (error != 0) {
+		device_printf(dev, "cannot post fault event buffers\n");
+		return (error);
+	}
+	vtiommu_event_vq_intr(sc);
 	return (0);
 }
 
@@ -677,14 +695,17 @@ vtiommu_free_scratch(struct vtiommu_softc *sc)
 }
 
 /*
- * Submit a request that has already been marshalled into sc->vtiommu_req
- * (req_len readable bytes) and drive it to completion synchronously.  The
- * device writes resp_len bytes into sc->vtiommu_resp, the last four of which
- * are the request tail; the status byte is returned via *statusp.
+ * Submit the request marshalled at req (req_len readable bytes) and drive it
+ * to completion synchronously.  The request is copied into the serialized
+ * scratch only once the REQ_BUSY token is held: the softc lock is dropped
+ * while an earlier caller sleeps for its completion, so marshalling into the
+ * shared scratch up front would let concurrent callers overwrite each other.
+ * The device writes up to resp_len bytes into sc->vtiommu_resp, the last four
+ * of which are the request tail; the status byte is returned via *statusp.
  */
 static int
-vtiommu_send_request(struct vtiommu_softc *sc, size_t req_len, size_t resp_len,
-    uint8_t *statusp)
+vtiommu_send_request(struct vtiommu_softc *sc, const void *req, size_t req_len,
+    size_t resp_len, uint8_t *statusp)
 {
 	struct sglist *sg;
 	struct virtio_iommu_req_tail *tail;
@@ -694,6 +715,8 @@ vtiommu_send_request(struct vtiommu_softc *sc, size_t req_len, size_t resp_len,
 	int readable, writable, error;
 
 	VTIOMMU_LOCK_ASSERT(sc);
+	KASSERT(req_len <= sizeof(sc->vtiommu_io->request),
+	    ("vtiommu: request length %zu exceeds scratch", req_len));
 
 	if (resp_len < sizeof(struct virtio_iommu_req_tail) ||
 	    resp_len > sc->vtiommu_resp_len)
@@ -715,6 +738,7 @@ vtiommu_send_request(struct vtiommu_softc *sc, size_t req_len, size_t resp_len,
 
 	sg = sc->vtiommu_sg;
 	sglist_reset(sg);
+	memcpy(sc->vtiommu_req, req, req_len);
 	bzero(sc->vtiommu_resp, resp_len);
 
 	/*
@@ -809,9 +833,22 @@ vtiommu_send_request(struct vtiommu_softc *sc, size_t req_len, size_t resp_len,
 		error = EOPNOTSUPP;
 		goto release;
 	}
+	if (len > resp_len) {
+		device_printf(sc->vtiommu_dev,
+		    "request completion overruns response buffer\n");
+		error = EIO;
+		goto release;
+	}
 
+	/*
+	 * The tail trails the device-written bytes: a PROBE that fails
+	 * validation is answered with just the four-byte tail (used == 4)
+	 * rather than a full properties region, so locating the tail at the
+	 * fixed resp_len - 4 offset would read zeroed scratch and misreport
+	 * such an error as S_OK.
+	 */
 	tail = (struct virtio_iommu_req_tail *)
-	    (sc->vtiommu_resp + resp_len - sizeof(*tail));
+	    (sc->vtiommu_resp + len - sizeof(*tail));
 	if (statusp != NULL)
 		*statusp = tail->status;
 	error = 0;
@@ -858,7 +895,7 @@ vtiommu_op_attach(device_t dev, uint32_t domain, uint32_t endpoint,
     uint32_t flags)
 {
 	struct vtiommu_softc *sc;
-	struct virtio_iommu_req_attach *req;
+	struct virtio_iommu_req_attach req;
 	struct vtiommu_domain *vd;
 	struct vtiommu_endpoint *ve;
 	uint8_t status;
@@ -869,15 +906,14 @@ vtiommu_op_attach(device_t dev, uint32_t domain, uint32_t endpoint,
 	    (sc->vtiommu_flags & VTIOMMU_FLAG_BYPASS_CFG) == 0)
 		return (EOPNOTSUPP);
 
-	VTIOMMU_LOCK(sc);
-	req = (struct virtio_iommu_req_attach *)sc->vtiommu_req;
-	bzero(req, sizeof(*req));
-	req->head.type = VIRTIO_IOMMU_T_ATTACH;
-	req->domain = htole32(domain);
-	req->endpoint = htole32(endpoint);
-	req->flags = htole32(flags);
+	bzero(&req, sizeof(req));
+	req.head.type = VIRTIO_IOMMU_T_ATTACH;
+	req.domain = htole32(domain);
+	req.endpoint = htole32(endpoint);
+	req.flags = htole32(flags);
 
-	error = vtiommu_send_request(sc, sizeof(*req),
+	VTIOMMU_LOCK(sc);
+	error = vtiommu_send_request(sc, &req, sizeof(req),
 	    sizeof(struct virtio_iommu_req_tail), &status);
 	if (error == 0)
 		error = vtiommu_status_to_errno(status);
@@ -912,21 +948,20 @@ static int
 vtiommu_op_detach(device_t dev, uint32_t domain, uint32_t endpoint)
 {
 	struct vtiommu_softc *sc;
-	struct virtio_iommu_req_detach *req;
+	struct virtio_iommu_req_detach req;
 	struct vtiommu_endpoint *ve;
 	uint8_t status;
 	int error;
 
 	sc = device_get_softc(dev);
 
-	VTIOMMU_LOCK(sc);
-	req = (struct virtio_iommu_req_detach *)sc->vtiommu_req;
-	bzero(req, sizeof(*req));
-	req->head.type = VIRTIO_IOMMU_T_DETACH;
-	req->domain = htole32(domain);
-	req->endpoint = htole32(endpoint);
+	bzero(&req, sizeof(req));
+	req.head.type = VIRTIO_IOMMU_T_DETACH;
+	req.domain = htole32(domain);
+	req.endpoint = htole32(endpoint);
 
-	error = vtiommu_send_request(sc, sizeof(*req),
+	VTIOMMU_LOCK(sc);
+	error = vtiommu_send_request(sc, &req, sizeof(req),
 	    sizeof(struct virtio_iommu_req_tail), &status);
 	if (error == 0)
 		error = vtiommu_status_to_errno(status);
@@ -952,7 +987,7 @@ vtiommu_op_map(device_t dev, uint32_t domain, uint64_t iova_start,
     uint64_t iova_end, uint64_t phys_start, uint32_t prot)
 {
 	struct vtiommu_softc *sc;
-	struct virtio_iommu_req_map *req;
+	struct virtio_iommu_req_map req;
 	struct vtiommu_domain *vd;
 	uint8_t status;
 	int error;
@@ -965,17 +1000,16 @@ vtiommu_op_map(device_t dev, uint32_t domain, uint64_t iova_start,
 	if ((prot & ~(uint32_t)VIRTIO_IOMMU_MAP_F_MASK) != 0)
 		return (EINVAL);
 
-	VTIOMMU_LOCK(sc);
-	req = (struct virtio_iommu_req_map *)sc->vtiommu_req;
-	bzero(req, sizeof(*req));
-	req->head.type = VIRTIO_IOMMU_T_MAP;
-	req->domain = htole32(domain);
-	req->virt_start = htole64(iova_start);
-	req->virt_end = htole64(iova_end);
-	req->phys_start = htole64(phys_start);
-	req->flags = htole32(prot);
+	bzero(&req, sizeof(req));
+	req.head.type = VIRTIO_IOMMU_T_MAP;
+	req.domain = htole32(domain);
+	req.virt_start = htole64(iova_start);
+	req.virt_end = htole64(iova_end);
+	req.phys_start = htole64(phys_start);
+	req.flags = htole32(prot);
 
-	error = vtiommu_send_request(sc, sizeof(*req),
+	VTIOMMU_LOCK(sc);
+	error = vtiommu_send_request(sc, &req, sizeof(req),
 	    sizeof(struct virtio_iommu_req_tail), &status);
 	if (error == 0)
 		error = vtiommu_status_to_errno(status);
@@ -999,7 +1033,7 @@ vtiommu_op_unmap(device_t dev, uint32_t domain, uint64_t iova_start,
     uint64_t iova_end)
 {
 	struct vtiommu_softc *sc;
-	struct virtio_iommu_req_unmap *req;
+	struct virtio_iommu_req_unmap req;
 	struct vtiommu_domain *vd;
 	uint8_t status;
 	int error;
@@ -1010,15 +1044,14 @@ vtiommu_op_unmap(device_t dev, uint32_t domain, uint64_t iova_start,
 	if (iova_start > iova_end)
 		return (EINVAL);
 
-	VTIOMMU_LOCK(sc);
-	req = (struct virtio_iommu_req_unmap *)sc->vtiommu_req;
-	bzero(req, sizeof(*req));
-	req->head.type = VIRTIO_IOMMU_T_UNMAP;
-	req->domain = htole32(domain);
-	req->virt_start = htole64(iova_start);
-	req->virt_end = htole64(iova_end);
+	bzero(&req, sizeof(req));
+	req.head.type = VIRTIO_IOMMU_T_UNMAP;
+	req.domain = htole32(domain);
+	req.virt_start = htole64(iova_start);
+	req.virt_end = htole64(iova_end);
 
-	error = vtiommu_send_request(sc, sizeof(*req),
+	VTIOMMU_LOCK(sc);
+	error = vtiommu_send_request(sc, &req, sizeof(req),
 	    sizeof(struct virtio_iommu_req_tail), &status);
 	if (error == 0)
 		error = vtiommu_status_to_errno(status);
@@ -1080,7 +1113,7 @@ static int
 vtiommu_op_probe(device_t dev, uint32_t endpoint)
 {
 	struct vtiommu_softc *sc;
-	struct virtio_iommu_req_probe *req;
+	struct virtio_iommu_req_probe req;
 	size_t resp_len;
 	uint8_t status;
 	int error;
@@ -1089,16 +1122,15 @@ vtiommu_op_probe(device_t dev, uint32_t endpoint)
 	if ((sc->vtiommu_flags & VTIOMMU_FLAG_PROBE) == 0)
 		return (EOPNOTSUPP);
 
-	VTIOMMU_LOCK(sc);
-	req = (struct virtio_iommu_req_probe *)sc->vtiommu_req;
-	bzero(req, sizeof(*req));
-	req->head.type = VIRTIO_IOMMU_T_PROBE;
-	req->endpoint = htole32(endpoint);
+	bzero(&req, sizeof(req));
+	req.head.type = VIRTIO_IOMMU_T_PROBE;
+	req.endpoint = htole32(endpoint);
 
 	resp_len = (size_t)sc->vtiommu_probe_cap +
 	    sizeof(struct virtio_iommu_req_tail);
 
-	error = vtiommu_send_request(sc, sizeof(*req), resp_len, &status);
+	VTIOMMU_LOCK(sc);
+	error = vtiommu_send_request(sc, &req, sizeof(req), resp_len, &status);
 	if (error == 0)
 		error = vtiommu_status_to_errno(status);
 	if (error != 0) {
@@ -1148,12 +1180,21 @@ vtiommu_populate_event_vq(struct vtiommu_softc *sc)
 	    M_VTIOMMU, M_WAITOK | M_ZERO);
 	sc->vtiommu_esg = sglist_alloc(1, M_WAITOK);
 
+	/*
+	 * The device may complete a posted buffer as soon as it is visible;
+	 * hold the lock so the interrupt handler's use of the shared event
+	 * sglist cannot interleave with the remaining postings.
+	 */
+	VTIOMMU_LOCK(sc);
 	for (i = 0; i < n; i++) {
 		error = vtiommu_enqueue_event_buf(sc, &sc->vtiommu_ebufs[i]);
-		if (error != 0)
+		if (error != 0) {
+			VTIOMMU_UNLOCK(sc);
 			return (error);
+		}
 	}
 	virtqueue_notify(sc->vtiommu_event_vq);
+	VTIOMMU_UNLOCK(sc);
 	return (0);
 }
 

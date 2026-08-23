@@ -299,6 +299,7 @@ vtmem_attach(device_t dev)
 	    sc->vtmem_region_size == 0 ||
 	    (sc->vtmem_region_size % sc->vtmem_block_size) != 0 ||
 	    (sc->vtmem_addr % sc->vtmem_block_size) != 0 ||
+	    sc->vtmem_region_size > UINT64_MAX - sc->vtmem_addr ||
 	    sc->vtmem_usable_region_size > sc->vtmem_region_size ||
 	    sc->vtmem_requested_size > sc->vtmem_usable_region_size) {
 		device_printf(dev, "invalid device configuration\n");
@@ -625,9 +626,28 @@ vtmem_unplug_all(struct vtmem_softc *sc)
 {
 	int code;
 
-	code = vtmem_send_request(sc, VIRTIO_MEM_REQ_UNPLUG_ALL, 0, 0, NULL);
-	if (code < 0)
-		return (code);
+	for (;;) {
+		code = vtmem_send_request(sc, VIRTIO_MEM_REQ_UNPLUG_ALL, 0, 0,
+		    NULL);
+		if (code < 0)
+			return (code);
+		if (code != VIRTIO_MEM_RESP_BUSY)
+			break;
+		/*
+		 * The device is temporarily unable to serve requests (the
+		 * reference device answers BUSY while a snapshot restore is
+		 * incomplete).  Back off and retry rather than failing the
+		 * device; a detach or failure wakeup aborts the wait.
+		 */
+		VTMEM_LOCK(sc);
+		if ((sc->vtmem_flags & (VTMEM_F_DETACH | VTMEM_F_FAILED)) !=
+		    0) {
+			VTMEM_UNLOCK(sc);
+			return (-ENXIO);
+		}
+		msleep(sc, &sc->vtmem_mtx, 0, "vtmemba", VTMEM_RETRY_TIMEOUT);
+		VTMEM_UNLOCK(sc);
+	}
 	if (code != VIRTIO_MEM_RESP_ACK) {
 		device_printf(sc->vtmem_dev, "UNPLUG_ALL rejected (resp %d)\n",
 		    code);
@@ -740,7 +760,8 @@ vtmem_unplug_one(struct vtmem_softc *sc)
 		if (vtmem_block_get(sc, last))
 			break;
 	}
-	if (last == 0 && !vtmem_block_get(sc, 0))
+	/* last wraps to UINT32_MAX when no plugged block was found. */
+	if (last >= sc->vtmem_nblocks)
 		return (0);
 
 	/* Extend downward across a contiguous plugged run, bounded by target. */

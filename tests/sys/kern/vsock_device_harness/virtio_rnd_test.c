@@ -3,6 +3,7 @@
 #include <sys/uio.h>
 
 #include <errno.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -15,15 +16,23 @@ static int test_close(int);
 static ssize_t test_read(int, void *, size_t);
 static ssize_t test_readv(int, const struct iovec *, int);
 
+static void *test_calloc(size_t, size_t);
+static int test_pthread_mutex_init(pthread_mutex_t *,
+    const pthread_mutexattr_t *);
+
 #define open test_open
 #define close test_close
 #define read test_read
 #define readv test_readv
+#define calloc test_calloc
+#define pthread_mutex_init test_pthread_mutex_init
 #include "pci_virtio_rnd.c"
 #undef open
 #undef close
 #undef read
 #undef readv
+#undef calloc
+#undef pthread_mutex_init
 #include "virtio_1_4_spec.h"
 
 #undef VIRTIO_F_IN_ORDER
@@ -49,6 +58,27 @@ static bool g_null_iov;
 static size_t g_iov_len;
 static uint8_t g_iov[VTRND_MAX_BYTES * 2];
 static int g_rel_calls, g_ret_calls, g_end_calls, g_needs_reset;
+static bool g_calloc_fail;
+static int g_mutex_init_result;
+static int g_select_result, g_intr_result, g_modern_init_result;
+
+static void *
+test_calloc(size_t nmemb, size_t size)
+{
+
+	if (g_calloc_fail)
+		return (NULL);
+	return (calloc(nmemb, size));
+}
+
+static int
+test_pthread_mutex_init(pthread_mutex_t *mtx, const pthread_mutexattr_t *attr)
+{
+
+	if (g_mutex_init_result != 0)
+		return (g_mutex_init_result);
+	return (pthread_mutex_init(mtx, attr));
+}
 
 int
 vi_pci_lifecycle_noop(void *vsc __unused)
@@ -80,6 +110,11 @@ reset_mocks(void)
 	g_rel_len = UINT32_MAX;
 	memset(g_rel_idx, 0, sizeof(g_rel_idx));
 	g_next_idx = 7;
+	g_calloc_fail = false;
+	g_mutex_init_result = 0;
+	g_select_result = 0;
+	g_intr_result = 0;
+	g_modern_init_result = 0;
 }
 
 bool
@@ -220,7 +255,7 @@ vi_pci_select_transport(struct virtio_softc *vs, const nvlist_t *nvl __unused,
 	ATF_CHECK(policy == VIRTIO_PCI_LEGACY_DEFAULT);
 	vs->vs_transport = g_modern ? VIRTIO_PCI_TRANSPORT_MODERN :
 	    VIRTIO_PCI_TRANSPORT_LEGACY;
-	return (0);
+	return (g_select_result);
 }
 
 bool vi_pci_is_modern(const struct virtio_softc *vs)
@@ -228,9 +263,9 @@ bool vi_pci_is_modern(const struct virtio_softc *vs)
 void vi_pci_modern_set_identity(struct virtio_softc *vs __unused,
     uint16_t id __unused) {}
 int vi_pci_modern_init(struct virtio_softc *vs __unused, int bar __unused)
-{ return (0); }
+{ return (g_modern_init_result); }
 int vi_intr_init(struct virtio_softc *vs __unused, int bar __unused,
-    int msix __unused) { return (0); }
+    int msix __unused) { return (g_intr_result); }
 void vi_set_io_bar(struct virtio_softc *vs __unused, int bar __unused) {}
 void vi_reset_dev(struct virtio_softc *vs __unused) {}
 void vi_set_needs_reset(struct virtio_softc *vs __unused)
@@ -510,8 +545,84 @@ ATF_TC_BODY(notification_budget_is_queue_bounded, tc)
 	ATF_CHECK_EQ(g_descs, 1);
 }
 
+ATF_TC_WITHOUT_HEAD(reset_quiesces_device);
+ATF_TC_BODY(reset_quiesces_device, tc)
+{
+	struct pci_vtrnd_softc sc;
+
+	/*
+	 * A device reset is a pure transport-quiesce operation for an
+	 * entropy device: it has no per-request state to drop, so it simply
+	 * delegates to the common virtio reset path.
+	 */
+	memset(&sc, 0, sizeof(sc));
+	reset_mocks();
+	sc.vrsc_vs.vs_vc = &sc.vrsc_consts;
+	pci_vtrnd_reset(&sc);
+	ATF_CHECK_EQ(0, g_read_calls);
+	ATF_CHECK_EQ(0, g_rel_calls);
+	ATF_CHECK_EQ(0, g_needs_reset);
+}
+
+ATF_TC_WITHOUT_HEAD(init_resource_failures);
+ATF_TC_BODY(init_resource_failures, tc)
+{
+	struct pci_devinst pi;
+	struct nvlist nvl;
+
+	/*
+	 * After the entropy source is successfully opened and proven seeded,
+	 * any subsequent resource-acquisition failure must abort init(),
+	 * releasing the file descriptor and heap so no partial device is
+	 * registered.  The virtio-entropy device carries no config payload,
+	 * so these are the only allocation/transport failure points.
+	 */
+
+	/* calloc() for the softc fails after fd is proven ready. */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_calloc_fail = true;
+	ATF_CHECK_EQ(1, pci_vtrnd_init(&pi, &nvl));
+	ATF_CHECK_EQ(1, g_read_calls);
+	ATF_CHECK_EQ(1, g_close_calls);
+
+	/* pthread_mutex_init() for the device mutex fails. */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_mutex_init_result = EAGAIN;
+	ATF_CHECK_EQ(1, pci_vtrnd_init(&pi, &nvl));
+	ATF_CHECK_EQ(1, g_close_calls);
+
+	/* Transport selection fails (legacy path, before intr init). */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_select_result = -1;
+	ATF_CHECK_EQ(1, pci_vtrnd_init(&pi, &nvl));
+	ATF_CHECK_EQ(1, g_close_calls);
+
+	/* Interrupt init fails (before intr_initialized becomes true). */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_intr_result = 1;
+	ATF_CHECK_EQ(1, pci_vtrnd_init(&pi, &nvl));
+	ATF_CHECK_EQ(1, g_close_calls);
+
+	/*
+	 * Modern PCI init fails after interrupts are initialized, exercising
+	 * the intr_initialized teardown branch on the failure path.
+	 */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_modern = true;
+	g_modern_init_result = -1;
+	ATF_CHECK_EQ(1, pci_vtrnd_init(&pi, &nvl));
+	ATF_CHECK_EQ(1, g_close_calls);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, reset_quiesces_device);
+	ATF_TP_ADD_TC(tp, init_resource_failures);
 	ATF_TP_ADD_TC(tp, hostile_descriptors);
 	ATF_TP_ADD_TC(tp, scatter_gather);
 	ATF_TP_ADD_TC(tp, random_read_failures);

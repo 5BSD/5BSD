@@ -61,9 +61,6 @@ ATF_TESTS_C+=	socket_splice
 # package-specific subdirectories; see TESTS_SUBDIRS below.
 
 TEST_METADATA.sigwait+=	is_exclusive="true"
-TEST_METADATA.vsock_test+=	required_user="root"
-TEST_METADATA.vsock_test+=	required_kmods="vsock"
-TEST_METADATA.vsock_test+=	timeout="60"
 .if ${MACHINE_ARCH} != "i386" && ${MACHINE_ARCH:Mpowerpc*} == ""
 ATF_TESTS_C+=	subr_physmem_test
 .endif

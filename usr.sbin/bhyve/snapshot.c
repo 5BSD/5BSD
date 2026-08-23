@@ -3698,8 +3698,14 @@ init_checkpoint_thread(struct vmctx *ctx)
 		err = -1;
 		goto fail;
 	}
-	/* Control operations can replace guest state; keep the endpoint private. */
-	if (chmod(addr.sun_path, S_IRUSR | S_IWUSR) != 0) {
+	/*
+	 * Control operations can replace guest state; keep the endpoint
+	 * private.  Use lchmod() so that if the run directory is writable by
+	 * an unprivileged user who races a symlink into our path between
+	 * bind() and here, we retarget the symlink itself rather than handing
+	 * that user an arbitrary-file chmod primitive.
+	 */
+	if (lchmod(addr.sun_path, S_IRUSR | S_IWUSR) != 0) {
 		EPRINTLN("Failed to restrict checkpoint socket \"%s\": %s\n",
 		    addr.sun_path, strerror(errno));
 		err = errno;

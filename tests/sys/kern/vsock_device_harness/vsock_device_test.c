@@ -106,6 +106,16 @@ static size_t g_rxbuf_len = sizeof(g_rxbuf);
 static int g_chain_readable = 0;
 static int g_chain_writable = 1;
 static int g_getchain_consumes;
+/*
+ * vq_getchain() fault injection for the RX inject_raw error paths.
+ * g_getchain_zero: descs present (vq_has_descs true) but getchain returns 0.
+ * g_getchain_bign: getchain returns a chain length > VTVSOCK_MAX_IOV.
+ * g_iov_null_base: getchain hands back a descriptor whose iov_base is NULL
+ * (a guest descriptor addr outside RAM).
+ */
+static int g_getchain_zero;
+static int g_getchain_bign;
+static int g_iov_null_base;
 static uint32_t g_rel_len;
 static int g_endchains;
 static int g_endchains_all;
@@ -242,7 +252,12 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	}
 	if (niov < 1 || g_rx_descs <= 0)
 		return (0);
-	iov[0].iov_base = g_rxbuf;
+	if (g_getchain_zero) {
+		if (g_getchain_consumes)
+			g_rx_descs--;
+		return (0);		/* chain unavailable despite has_descs */
+	}
+	iov[0].iov_base = g_iov_null_base ? NULL : g_rxbuf;
 	iov[0].iov_len = g_rxbuf_len;
 	req->idx = 0;
 	if (vq == g_one_shot_vq) {
@@ -254,6 +269,8 @@ vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
 	}
 	if (g_getchain_consumes)
 		g_rx_descs--;		/* let drop-everything loops terminate */
+	if (g_getchain_bign)
+		return (g_getchain_bign);	/* > VTVSOCK_MAX_IOV: over-long */
 	return (1);
 }
 void
@@ -290,12 +307,20 @@ static int g_mevent_enable_calls;
 static int g_mevent_disable_calls;
 static int g_mevent_delete_sync_calls;
 static int g_mevent_delete_close_sync_calls;
+/*
+ * mevent_add() fault injection: g_mevent_fail == N makes the N-th subsequent
+ * mevent_add() call return NULL (1 == fail the very next one).  A countdown so
+ * a specific mevent in a multi-mevent setup (e.g. device init) can be targeted.
+ */
+static int g_mevent_fail;
 struct mevent *
 mevent_add(int fd, enum ev_type t, void (*cb)(int, enum ev_type, void *),
     void *p)
 {
 	struct mevent *m;
 	(void)t; (void)cb; (void)p;
+	if (g_mevent_fail && --g_mevent_fail == 0)
+		return (NULL);
 	m = &g_mev[g_nmev++ % 128];
 	m->fd = fd;
 	m->enabled = true;
@@ -308,7 +333,8 @@ mevent_add_disabled(int fd, enum ev_type t,
 	struct mevent *m;
 
 	m = mevent_add(fd, t, cb, p);
-	m->enabled = false;
+	if (m != NULL)
+		m->enabled = false;
 	return (m);
 }
 struct mevent *
@@ -377,9 +403,11 @@ test_vtvsock_ctl_event_arg(struct pci_vtvsock_softc *sc, int fd)
 void vi_softc_linkup(struct virtio_softc *a, struct virtio_consts *b, void *c,
     struct pci_devinst *d, struct vqueue_info *e)
 { (void)a; (void)b; (void)c; (void)d; (void)e; }
+static int g_vi_transport_fail;	/* make vi_pci_select_transport() fail */
+static int g_vi_intr_fail;	/* make vi_intr_init() fail */
 int vi_pci_select_transport(struct virtio_softc *a, const nvlist_t *b,
     enum virtio_pci_transport_policy c)
-{ (void)a; (void)b; (void)c; return (0); }
+{ (void)a; (void)b; (void)c; return (g_vi_transport_fail ? -1 : 0); }
 bool vi_pci_is_modern(const struct virtio_softc *a) { (void)a; return (false); }
 int vi_pci_modern_init(struct virtio_softc *a, int b)
 { (void)a; (void)b; return (0); }
@@ -390,7 +418,7 @@ int vi_pci_modern_cfgread(struct pci_devinst *a, int b, int c, uint32_t *d)
 int vi_pci_modern_cfgwrite(struct pci_devinst *a, int b, int c, uint32_t d)
 { (void)a; (void)b; (void)c; (void)d; return (1); }
 int vi_intr_init(struct virtio_softc *a, int b, int c)
-{ (void)a; (void)b; (void)c; return (0); }
+{ (void)a; (void)b; (void)c; return (g_vi_intr_fail ? -1 : 0); }
 void vi_set_io_bar(struct virtio_softc *a, int b) { (void)a; (void)b; }
 void vi_reset_dev(struct virtio_softc *a) { (void)a; }
 int
@@ -420,10 +448,65 @@ void pci_set_cfgdata8(struct pci_devinst *a, int b, uint8_t c)
 void pci_set_cfgdata16(struct pci_devinst *a, int b, uint16_t c)
 { (void)a; (void)b; (void)c; }
 int fbsdrun_virtio_msix(void) { return (1); }
+/*
+ * Referenced only from a per-packet DPRINTF2 trace branch (debug level >= 2).
+ * With pci_vtvsock_init() now under test the compiler can no longer prove that
+ * branch dead (init sets pci_vtvsock_debug from the environment), so the call
+ * must resolve; the harness never enables level-2 tracing, so it is inert. */
+int pci_msix_enabled(struct pci_devinst *a) { (void)a; return (0); }
+/*
+ * Table-driven config mock used to drive pci_vtvsock_init().  Empty by default,
+ * so unset keys still return NULL exactly as the original stub did.  Tests call
+ * cfg_set()/cfg_reset() to stage the "cid"/"backend"/"path"/"packed" options a
+ * real bhyve config node would carry.
+ */
+#define	CFG_MAX	8
+static struct { const char *key; const char *val; } g_cfg[CFG_MAX];
+static int g_cfg_n;
+static bool g_cfg_packed;			/* value for the "packed" bool key */
+static char g_setcfg_key[64];			/* last set_config_value_node key */
+static char g_setcfg_val[256];			/* last set_config_value_node val */
+static int g_setcfg_calls;
+static void
+cfg_reset(void)
+{
+	g_cfg_n = 0;
+	g_cfg_packed = false;
+	g_setcfg_key[0] = g_setcfg_val[0] = '\0';
+	g_setcfg_calls = 0;
+}
+static void
+cfg_set(const char *key, const char *val)
+{
+	assert(g_cfg_n < CFG_MAX);
+	g_cfg[g_cfg_n].key = key;
+	g_cfg[g_cfg_n].val = val;
+	g_cfg_n++;
+}
 const char *get_config_value_node(const nvlist_t *n, const char *k)
-{ (void)n; (void)k; return (NULL); }
+{
+	(void)n;
+	for (int i = 0; i < g_cfg_n; i++)
+		if (strcmp(g_cfg[i].key, k) == 0)
+			return (g_cfg[i].val);
+	return (NULL);
+}
+bool get_config_bool_node_default(const nvlist_t *n, const char *k, bool dflt)
+{
+	(void)n;
+	if (strcmp(k, "packed") == 0)
+		return (g_cfg_packed);
+	return (dflt);
+}
 void set_config_value_node(nvlist_t *n, const char *k, const char *v)
-{ (void)n; (void)k; (void)v; }
+{
+	(void)n;
+	g_setcfg_calls++;
+	if (k != NULL)
+		strlcpy(g_setcfg_key, k, sizeof(g_setcfg_key));
+	if (v != NULL)
+		strlcpy(g_setcfg_val, v, sizeof(g_setcfg_val));
+}
 
 /* ================= wrapped host-socket syscalls ================= */
 void *__real_realloc(void *, size_t);
@@ -458,8 +541,21 @@ __wrap_realloc(void *ptr, size_t size)
 	return (__real_realloc(ptr, size));
 }
 
+int __real_socket(int, int, int);
+static bool g_use_real_socket;	/* init test: return a genuine AF_UNIX fd */
+static int g_socket_fail;	/* make the next socket() fail with EMFILE */
 int __wrap_socket(int a, int b, int c)
-{ (void)a; (void)b; (void)c; g_socket_calls++; return (g_next_fd++); }
+{
+	g_socket_calls++;
+	if (g_socket_fail) {
+		g_socket_fail = 0;
+		errno = EMFILE;
+		return (-1);
+	}
+	if (g_use_real_socket)
+		return (__real_socket(a, b, c));
+	return (g_next_fd++);
+}
 ssize_t
 __wrap_writev(int fd, const struct iovec *iov, int iovcnt)
 {
@@ -668,10 +764,17 @@ int __wrap_close(int fd) { (void)fd; return (0); }
 
 /* ---- control-socket path mocks ---- */
 static int g_socketpair_fail;		/* make socketpair() return -1/ENOMEM */
+static int g_accept_fail;		/* one-shot: next accept() fails */
+static int g_accept_errno = ECONNABORTED;
 int
 __wrap_accept(int fd, struct sockaddr *a, socklen_t *l)
 {
 	(void)fd; (void)a;
+	if (g_accept_fail) {
+		g_accept_fail = 0;
+		errno = g_accept_errno;
+		return (-1);
+	}
 	if (l != NULL) *l = 0;
 	return (g_next_fd++);		/* each ctl accept gets a fresh fake fd */
 }
@@ -684,7 +787,17 @@ __wrap_socketpair(int d, int t, int p, int sv[2])
 	sv[1] = g_next_fd++;
 	return (0);
 }
-int __wrap_fcntl(int fd, int cmd, ...) { (void)fd; (void)cmd; return (0); }
+static int g_fcntl_fail;	/* one-shot: next fcntl() fails with EINVAL */
+int __wrap_fcntl(int fd, int cmd, ...)
+{
+	(void)fd; (void)cmd;
+	if (g_fcntl_fail) {
+		g_fcntl_fail = 0;
+		errno = EINVAL;
+		return (-1);
+	}
+	return (0);
+}
 
 /*
  * Capture relay-socket buffer sizing (vtvsock_set_relay_bufsize).  Fds here are
@@ -759,6 +872,9 @@ reset_caps(void)
 	g_recv_zero_dgram = 0; g_recv_no_eor = 0;
 	g_sendmsg_override = false; g_sendmsg_result = 0; g_sendmsg_errno = 0;
 	g_chain_readable = 0; g_chain_writable = 1; g_getchain_consumes = 0;
+	g_getchain_zero = 0; g_getchain_bign = 0; g_iov_null_base = 0;
+	g_socket_fail = 0; g_mevent_fail = 0;
+	g_accept_fail = 0; g_fcntl_fail = 0; g_socketpair_fail = 0;
 	g_rel_len = 0; g_endchains = 0; g_endchains_all = -1;
 	g_mevent_enable_calls = 0;
 	g_mevent_disable_calls = 0;
@@ -4310,8 +4426,1554 @@ ATF_TC_BODY(snapshot_kernel_backend_validation, tc)
 	free(source);
 }
 
+/* =====================================================================
+ * pci_vtvsock_ctl_accept(): host control-socket listener error paths.
+ * ===================================================================== */
+ATF_TC_WITHOUT_HEAD(ctl_accept_transient_failure_ignored);
+ATF_TC_BODY(ctl_accept_transient_failure_ignored, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	reset_caps();
+	g_accept_fail = 1;
+	g_accept_errno = EAGAIN;		/* spurious wakeup, nothing to accept */
+	pci_vtvsock_ctl_accept(0, EVF_READ, sc);
+	ATF_CHECK(sc->vsc_ctl_conn_count == 0);
+	/* A hard accept() error is likewise non-fatal to the listener. */
+	g_accept_fail = 1;
+	g_accept_errno = ECONNABORTED;
+	pci_vtvsock_ctl_accept(0, EVF_READ, sc);
+	ATF_CHECK(sc->vsc_ctl_conn_count == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(ctl_accept_fcntl_failure_drops);
+ATF_TC_BODY(ctl_accept_fcntl_failure_drops, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	reset_caps();
+	g_fcntl_fail = 1;		/* O_NONBLOCK on the accepted fd fails */
+	pci_vtvsock_ctl_accept(0, EVF_READ, sc);
+	ATF_CHECK(sc->vsc_ctl_conn_count == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(ctl_accept_mevent_failure_drops);
+ATF_TC_BODY(ctl_accept_mevent_failure_drops, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	reset_caps();
+	g_mevent_fail = 1;		/* arming the ctl-conn read event fails */
+	pci_vtvsock_ctl_accept(0, EVF_READ, sc);
+	ATF_CHECK(sc->vsc_ctl_conn_count == 0);
+	free(sc);
+}
+
+/* =====================================================================
+ * pci_vtvsock_ctl_conn_cb(): control-request read/dispatch error paths.
+ * ===================================================================== */
+ATF_TC_WITHOUT_HEAD(ctl_conn_eof_removes_conn);
+ATF_TC_BODY(ctl_conn_eof_removes_conn, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+	g_recv_len = g_recv_off = 0;
+	g_recv_eof = 1;			/* peer closed the control socket */
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+	ATF_CHECK(nctlconns(sc) == 0);		/* torn down on EOF */
+	ATF_CHECK(sc->vsc_ctl_conn_count == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(ctl_conn_wouldblock_keeps_conn);
+ATF_TC_BODY(ctl_conn_wouldblock_keeps_conn, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+	g_recv_len = g_recv_off = 0;		/* recv() -> EAGAIN */
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+	ATF_CHECK(nctlconns(sc) == 1);		/* partial frame retained */
+	free(sc);
+}
+
+/* A negotiated-but-valid socket type the device does not offer is refused. */
+ATF_TC_WITHOUT_HEAD(ctl_connect_unnegotiated_type_refused);
+ATF_TC_BODY(ctl_connect_unnegotiated_type_refused, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	struct vsock_ctl_msg reply;
+
+	reset_caps();
+	sc->vsc_features = VIRTIO_VSOCK_F_STREAM;	/* SEQPACKET not offered */
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+	stage_ctl_msg(VSOCK_CTL_CONNECT, 1234, SOCK_SEQPACKET);
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+	ATF_CHECK(nconns(sc) == 0);
+	ATF_REQUIRE(g_send_len == sizeof(reply));
+	memcpy(&reply, g_send_buf, sizeof(reply));
+	ATF_CHECK(reply.status == -ESOCKTNOSUPPORT);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(ctl_connect_fcntl_failure_replies_error);
+ATF_TC_BODY(ctl_connect_fcntl_failure_replies_error, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	struct vsock_ctl_msg reply;
+
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+	stage_ctl_msg(VSOCK_CTL_CONNECT, 1234, SOCK_STREAM);
+	g_fcntl_fail = 1;		/* fcntl(pair[0], O_NONBLOCK) fails */
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+	ATF_CHECK(nconns(sc) == 0);
+	ATF_REQUIRE(g_send_len == sizeof(reply));
+	memcpy(&reply, g_send_buf, sizeof(reply));
+	ATF_CHECK(reply.status == -ENOMEM);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(ctl_connect_conn_alloc_failure_replies_error);
+ATF_TC_BODY(ctl_connect_conn_alloc_failure_replies_error, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_ctl_conn *cc;
+	struct vsock_ctl_msg reply;
+
+	reset_caps();
+	cc = mk_ctl_conn(sc, g_next_fd++, 100);
+	sc->vsc_conn_count = VTVSOCK_MAX_CONNS;	/* conn_alloc() -> NULL */
+	stage_ctl_msg(VSOCK_CTL_CONNECT, 1234, SOCK_STREAM);
+	pci_vtvsock_ctl_conn_cb(cc->fd, EVF_READ, sc);
+	ATF_REQUIRE(g_send_len == sizeof(reply));
+	memcpy(&reply, g_send_buf, sizeof(reply));
+	ATF_CHECK(reply.status == -ENOMEM);
+	sc->vsc_conn_count = 0;
+	free(sc);
+}
+
+/* =====================================================================
+ * vtvsock_conn_write_cb(): async guest->host TX backlog drainer.
+ * ===================================================================== */
+static struct vtvsock_conn *
+mk_txbuf_conn(struct pci_vtvsock_softc *sc, uint16_t type,
+    const void *data, uint32_t len, bool eor)
+{
+	struct vtvsock_conn *c = mk_established(sc, 1234, 80, type);
+
+	c->tx_buf = malloc(len);
+	assert(c->tx_buf != NULL);
+	memcpy(c->tx_buf, data, len);
+	c->tx_buf_len = len;
+	c->tx_buf_cap = len;
+	c->tx_buf_eor = eor;
+	sc->vsc_txbuf_total += len;
+	c->tx_evp = mevent_add(c->fd, EVF_WRITE, vtvsock_conn_write_cb, sc);
+	return (c);
+}
+
+ATF_TC_WITHOUT_HEAD(write_cb_no_backlog_disables_drainer);
+ATF_TC_BODY(write_cb_no_backlog_disables_drainer, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	int disables;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->tx_evp = mevent_add(c->fd, EVF_WRITE, vtvsock_conn_write_cb, sc);
+	disables = g_mevent_disable_calls;
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);	/* tx_buf_len == 0 */
+	ATF_CHECK(g_mevent_disable_calls == disables + 1);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(write_cb_stream_drains_backlog);
+ATF_TC_BODY(write_cb_stream_drains_backlog, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[32];
+
+	reset_caps();
+	memset(d, 'D', sizeof(d));
+	c = mk_txbuf_conn(sc, STREAM, d, sizeof(d), false);
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);	/* default send: full */
+	ATF_CHECK(c->tx_buf_len == 0);			/* fully drained */
+	ATF_CHECK(c->fwd_cnt == sizeof(d));		/* credit returned */
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(write_cb_stream_wouldblock_stays_armed);
+ATF_TC_BODY(write_cb_stream_wouldblock_stays_armed, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[32];
+
+	reset_caps();
+	memset(d, 'D', sizeof(d));
+	c = mk_txbuf_conn(sc, STREAM, d, sizeof(d), false);
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = EAGAIN;
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);
+	ATF_CHECK(c->tx_buf_len == sizeof(d));		/* nothing drained */
+	ATF_CHECK(nconns(sc) == 1);			/* stays armed, not reset */
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(write_cb_stream_zero_progress_stays_armed);
+ATF_TC_BODY(write_cb_stream_zero_progress_stays_armed, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[32];
+
+	reset_caps();
+	memset(d, 'D', sizeof(d));
+	c = mk_txbuf_conn(sc, STREAM, d, sizeof(d), false);
+	g_send_override = true;
+	g_send_result = 0;			/* socket accepted nothing */
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);
+	ATF_CHECK(c->tx_buf_len == sizeof(d));
+	ATF_CHECK(nconns(sc) == 1);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(write_cb_stream_error_resets);
+ATF_TC_BODY(write_cb_stream_error_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[32];
+
+	reset_caps();
+	memset(d, 'D', sizeof(d));
+	c = mk_txbuf_conn(sc, STREAM, d, sizeof(d), false);
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = ECONNRESET;
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(write_cb_seqpacket_drains_record);
+ATF_TC_BODY(write_cb_seqpacket_drains_record, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[24];
+
+	reset_caps();
+	memset(d, 'S', sizeof(d));
+	c = mk_txbuf_conn(sc, SEQPACKET, d, sizeof(d), true);
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);	/* default send: full */
+	ATF_CHECK(c->tx_buf_len == 0);
+	ATF_CHECK(c->fwd_cnt == sizeof(d));
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(write_cb_seqpacket_wouldblock_stays_armed);
+ATF_TC_BODY(write_cb_seqpacket_wouldblock_stays_armed, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[24];
+
+	reset_caps();
+	memset(d, 'S', sizeof(d));
+	c = mk_txbuf_conn(sc, SEQPACKET, d, sizeof(d), false);
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = EAGAIN;
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);
+	ATF_CHECK(c->tx_buf_len == sizeof(d));
+	ATF_CHECK(nconns(sc) == 1);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(write_cb_seqpacket_short_send_resets);
+ATF_TC_BODY(write_cb_seqpacket_short_send_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[24];
+
+	reset_caps();
+	memset(d, 'S', sizeof(d));
+	c = mk_txbuf_conn(sc, SEQPACKET, d, sizeof(d), false);
+	g_send_override = true;
+	g_send_result = sizeof(d) - 1;		/* partial record delivery */
+	vtvsock_conn_write_cb(c->fd, EVF_WRITE, sc);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* =====================================================================
+ * RX inject_raw() descriptor-validation error paths, driven through
+ * vtvsock_send_ctrl() (which injects a control packet via inject_raw).
+ * §5.10.6.4: RX chains must be wholly device-writable and large enough
+ * for the header; malformed guest descriptors are dropped, not trusted.
+ * ===================================================================== */
+ATF_TC_WITHOUT_HEAD(inject_raw_getchain_failure_drops);
+ATF_TC_BODY(inject_raw_getchain_failure_drops, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	g_rx_descs = 1;			/* vq_has_descs() true ... */
+	g_getchain_zero = 1;		/* ... but vq_getchain() yields nothing */
+	/* Parked for retry (inject failed), nothing delivered. */
+	ATF_CHECK(vtvsock_send_ctrl(sc, c, VIRTIO_VSOCK_OP_CREDIT_UPDATE, 0) == 0);
+	ATF_CHECK(g_ninject == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(inject_raw_overlong_chain_drops);
+ATF_TC_BODY(inject_raw_overlong_chain_drops, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	g_rx_descs = 1;
+	g_getchain_bign = 9999;		/* > VTVSOCK_MAX_IOV: OOB guard drops it */
+	ATF_CHECK(vtvsock_send_ctrl(sc, c, VIRTIO_VSOCK_OP_CREDIT_UPDATE, 0) == 0);
+	ATF_CHECK(g_ninject == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(inject_raw_bad_descriptor_addr_drops);
+ATF_TC_BODY(inject_raw_bad_descriptor_addr_drops, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	g_rx_descs = 1;
+	g_iov_null_base = 1;		/* descriptor addr outside guest RAM */
+	ATF_CHECK(vtvsock_send_ctrl(sc, c, VIRTIO_VSOCK_OP_CREDIT_UPDATE, 0) == 0);
+	ATF_CHECK(g_ninject == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(inject_raw_undersized_chain_drops);
+ATF_TC_BODY(inject_raw_undersized_chain_drops, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	g_rx_descs = 1;
+	g_rxbuf_len = 10;		/* < sizeof(struct virtio_vsock_hdr) */
+	ATF_CHECK(vtvsock_send_ctrl(sc, c, VIRTIO_VSOCK_OP_CREDIT_UPDATE, 0) == 0);
+	ATF_CHECK(g_ninject == 0);
+	free(sc);
+}
+
+/* =====================================================================
+ * vtvsock_conn_data_cb(): host->guest readiness callback edge states.
+ * ===================================================================== */
+ATF_TC_WITHOUT_HEAD(conn_data_cb_ignored_while_paused);
+ATF_TC_BODY(conn_data_cb_ignored_while_paused, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[8] = { 0 };
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	sc->vsc_lifecycle_paused = true;	/* snapshot/pause in progress */
+	stage_recv(d, sizeof(d));
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_ninject == 0);		/* no injection while paused */
+	ATF_CHECK(g_recv_off == 0);		/* host socket left untouched */
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(conn_data_cb_noop_while_connecting);
+ATF_TC_BODY(conn_data_cb_noop_while_connecting, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CONNECTING;		/* still awaiting OP_RESPONSE */
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_ninject == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(conn_data_cb_rcv_shutdown_disables_read);
+ATF_TC_BODY(conn_data_cb_rcv_shutdown_disables_read, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[8] = { 0 };
+	int disables;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	c->peer_shutdown = VIRTIO_VSOCK_SHUTDOWN_RCV;	/* guest half-closed RX */
+	stage_recv(d, sizeof(d));
+	disables = g_mevent_disable_calls;
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_mevent_disable_calls == disables + 1);
+	ATF_CHECK(g_ninject == 0);		/* no data injected after SHUT_RCV */
+	free(sc);
+}
+
+/* SEQPACKET host EOF (no MSG_EOR, zero bytes queued) tears down cleanly. */
+ATF_TC_WITHOUT_HEAD(conn_data_cb_seqpacket_host_eof);
+ATF_TC_BODY(conn_data_cb_seqpacket_host_eof, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	g_recv_len = g_recv_off = 0;		/* FIONREAD == 0 */
+	g_recv_eof = 1;				/* recvmsg peek: 0, no MSG_EOR */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	/* host_eof half-closes: a SHUTDOWN is sent to the guest. */
+	ATF_CHECK(g_ninject >= 1);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_SHUTDOWN);
+	free(sc);
+}
+
+/* SEQPACKET empty record (MSG_EOR, 0 bytes) is delivered as an empty OP_RW. */
+ATF_TC_WITHOUT_HEAD(conn_data_cb_seqpacket_empty_record);
+ATF_TC_BODY(conn_data_cb_seqpacket_empty_record, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	g_recv_len = g_recv_off = 0;		/* FIONREAD == 0 */
+	g_recv_zero_dgram = 1;			/* recvmsg peek: 0 bytes, MSG_EOR */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_ninject == 1);
+	ATF_CHECK(g_inject[0].op == VIRTIO_VSOCK_OP_RW);
+	ATF_CHECK(g_inject[0].len == 0);
+	ATF_CHECK((g_inject[0].flags &
+	    (VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR)) ==
+	    (uint32_t)(VIRTIO_VSOCK_SEQ_EOM | VIRTIO_VSOCK_SEQ_EOR));
+	free(sc);
+}
+
+/* SEQPACKET record larger than the guest's whole receive window resets. */
+ATF_TC_WITHOUT_HEAD(conn_data_cb_seqpacket_record_exceeds_window);
+ATF_TC_BODY(conn_data_cb_seqpacket_record_exceeds_window, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t rec[300];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	c->peer_buf_alloc = 100;	/* window < record: unreassemblable */
+	c->peer_fwd_cnt = 0;
+	c->tx_cnt = 50;			/* leaves 50 credit (< avail) so we peek */
+	memset(rec, 'Z', sizeof(rec));
+	stage_recv(rec, sizeof(rec));	/* FIONREAD=300 > credit -> full peek */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);	/* connection reset */
+	free(sc);
+}
+
+/* =====================================================================
+ * TX state machine: guest control packets that hit error/edge branches.
+ * ===================================================================== */
+
+/* A duplicate OP_REQUEST for an already-ESTABLISHED conn -> RST + close. */
+ATF_TC_WITHOUT_HEAD(tx_duplicate_request_resets);
+ATF_TC_BODY(tx_duplicate_request_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	(void)c;
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* An OP_REQUEST colliding with a pending host-initiated connect (CONNECTING)
+ * is ignored, not torn down. */
+ATF_TC_WITHOUT_HEAD(tx_request_collision_ignored);
+ATF_TC_BODY(tx_request_collision_ignored, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CONNECTING;		/* host connect awaiting RESPONSE */
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(g_ninject == 0);		/* ignored: no RST, no RESPONSE */
+	ATF_CHECK(nconns(sc) == 1);		/* pending connect preserved */
+	free(sc);
+}
+
+/* OP_REQUEST but the relay socket() fails -> RST so the guest doesn't hang. */
+ATF_TC_WITHOUT_HEAD(tx_request_socket_failure_resets);
+ATF_TC_BODY(tx_request_socket_failure_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+
+	reset_caps();
+	g_socket_fail = 1;
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(g_ninject == 1 && g_inject[0].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* OP_REQUEST succeeds but arming the read mevent fails -> RST + close. */
+ATF_TC_WITHOUT_HEAD(tx_request_mevent_failure_resets);
+ATF_TC_BODY(tx_request_mevent_failure_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+
+	reset_caps();
+	g_connectat_result = 0;		/* host listener present */
+	g_mevent_fail = 1;		/* vtvsock_event_add() -> NULL */
+	mkhdr(&h, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* Any packet's oversized advertised buf_alloc is clamped, not trusted. */
+ATF_TC_WITHOUT_HEAD(tx_peer_buf_alloc_clamped);
+ATF_TC_BODY(tx_peer_buf_alloc_clamped, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	mkhdr(&h, VIRTIO_VSOCK_OP_CREDIT_UPDATE, STREAM, 3, VSOCK_CID_HOST,
+	    1234, 80, 0, 0, 0xffffffffu /* absurd buf_alloc */, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(c->peer_buf_alloc == VTVSOCK_MAX_PEER_BUF_ALLOC);
+	free(sc);
+}
+
+/* OP_RESPONSE for a conn not in CONNECTING state is ignored. */
+ATF_TC_WITHOUT_HEAD(tx_response_wrong_state_ignored);
+ATF_TC_BODY(tx_response_wrong_state_ignored, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);	/* already ESTABLISHED */
+	(void)c;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RESPONSE, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(g_ninject == 0);
+	free(sc);
+}
+
+/* OP_RESPONSE completing a host-initiated connect: reply fd sent to the host
+ * control conn, ctl_conn cleaned up, read mevent armed. */
+ATF_TC_WITHOUT_HEAD(tx_response_completes_host_connect);
+ATF_TC_BODY(tx_response_completes_host_connect, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct vtvsock_ctl_conn *cc;
+	struct virtio_vsock_hdr h;
+	int ctlfd = g_next_fd++;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CONNECTING;
+	c->ctl_fd = ctlfd;
+	c->reply_fd = g_next_fd++;
+	cc = mk_ctl_conn(sc, ctlfd, 100);
+	(void)cc;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RESPONSE, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(c->state == CONN_ESTABLISHED);
+	ATF_CHECK(c->ctl_fd == -1 && c->reply_fd == -1);
+	ATF_CHECK(nctlconns(sc) == 0);		/* ctl_conn removed */
+	free(sc);
+}
+
+/* OP_RESPONSE completes, but arming the post-connect read mevent fails. */
+ATF_TC_WITHOUT_HEAD(tx_response_mevent_failure_resets);
+ATF_TC_BODY(tx_response_mevent_failure_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CONNECTING;		/* no ctl_fd/reply_fd */
+	g_mevent_fail = 1;
+	mkhdr(&h, VIRTIO_VSOCK_OP_RESPONSE, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* OP_RST on a host-initiated conn replies -ECONNREFUSED to the host app and
+ * closes; exercises the conn_close ctl_conn + reply_fd cleanup. */
+ATF_TC_WITHOUT_HEAD(tx_rst_host_connect_reports_refused);
+ATF_TC_BODY(tx_rst_host_connect_reports_refused, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	int ctlfd = g_next_fd++;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CONNECTING;
+	c->ctl_fd = ctlfd;
+	c->reply_fd = g_next_fd++;
+	(void)mk_ctl_conn(sc, ctlfd, 100);
+	{
+		struct virtio_vsock_hdr h;
+		mkhdr(&h, VIRTIO_VSOCK_OP_RST, STREAM, 3, VSOCK_CID_HOST, 1234,
+		    80, 0, 0, 0, 0);
+		vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	}
+	ATF_CHECK(g_send_calls >= 1);		/* refusal sent to host app */
+	ATF_CHECK(nconns(sc) == 0);
+	ATF_CHECK(nctlconns(sc) == 0);		/* ctl_conn cleaned up */
+	free(sc);
+}
+
+/* =====================================================================
+ * STREAM guest->host forwarding backpressure/error paths.
+ * ===================================================================== */
+
+/* A hard send() error on the host fd resets the connection. */
+ATF_TC_WITHOUT_HEAD(stream_tx_send_error_resets);
+ATF_TC_BODY(stream_tx_send_error_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	uint8_t data[16];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	(void)c;
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = ECONNRESET;		/* not EAGAIN -> unrecoverable */
+	memset(data, 'D', sizeof(data));
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    sizeof(data), 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, data, sizeof(data));
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* When the host fd is not writable (EAGAIN) and the per-conn backlog cap is
+ * exceeded, the connection is reset. */
+ATF_TC_WITHOUT_HEAD(stream_tx_backlog_overflow_resets);
+ATF_TC_BODY(stream_tx_backlog_overflow_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	uint8_t data[64];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->buf_alloc = 8;			/* backlog cap smaller than payload */
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = EAGAIN;			/* not writable -> must buffer */
+	memset(data, 'D', sizeof(data));
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    sizeof(data), 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, data, sizeof(data));
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* EAGAIN + append OK, but arming the TX drainer mevent fails -> reset. */
+ATF_TC_WITHOUT_HEAD(stream_tx_arm_failure_resets);
+ATF_TC_BODY(stream_tx_arm_failure_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct virtio_vsock_hdr h;
+	uint8_t data[16];
+
+	reset_caps();
+	(void)mk_established(sc, 1234, 80, STREAM);
+	g_send_override = true;
+	g_send_result = -1;
+	g_send_errno = EAGAIN;
+	g_mevent_fail = 1;			/* tx_arm's mevent_add -> NULL */
+	memset(data, 'D', sizeof(data));
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    sizeof(data), 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, data, sizeof(data));
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* =====================================================================
+ * SEQPACKET guest->host record delivery error paths (vtvsock_seqpkt_rx).
+ * A record is delivered atomically on EOM; delivery failures reset.
+ * ===================================================================== */
+static void
+seqpkt_rw(struct pci_vtvsock_softc *sc, struct vtvsock_conn *c,
+    const void *data, uint32_t len, uint32_t flags)
+{
+	struct virtio_vsock_hdr h;
+
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, SEQPACKET, 3, VSOCK_CID_HOST,
+	    c->guest_port, c->local_port, len, flags, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, data, len);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpkt_rx_send_error_resets);
+ATF_TC_BODY(seqpkt_rx_send_error_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t rec[16];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	g_send_override = true;			/* SEQPACKET delivery uses send() */
+	g_send_result = -1;
+	g_send_errno = ECONNRESET;		/* hard error on record delivery */
+	memset(rec, 'S', sizeof(rec));
+	seqpkt_rw(sc, c, rec, sizeof(rec), VIRTIO_VSOCK_SEQ_EOM);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(seqpkt_rx_arm_failure_resets);
+ATF_TC_BODY(seqpkt_rx_arm_failure_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t rec[16];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	g_send_override = true;			/* SEQPACKET delivery uses send() */
+	g_send_result = -1;
+	g_send_errno = EAGAIN;			/* not writable -> buffer the record */
+	g_mevent_fail = 1;			/* but the TX drainer cannot arm */
+	memset(rec, 'S', sizeof(rec));
+	seqpkt_rw(sc, c, rec, sizeof(rec), VIRTIO_VSOCK_SEQ_EOM);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_RST);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* =====================================================================
+ * pci_vtvsock_notify_tx(): descriptor-plumbing validation on the TX ring.
+ * §5.10.6.4: TX chains must be wholly device-readable; malformed chains
+ * are dropped so the ring keeps draining.
+ * ===================================================================== */
+static void
+tx_notify_bad_chain(struct pci_vtvsock_softc *sc)
+{
+	struct virtio_vsock_hdr *h = (void *)g_rxbuf;
+
+	/* A well-formed OP_REQUEST that WOULD act if the chain parsed. */
+	mkhdr(h, VIRTIO_VSOCK_OP_REQUEST, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, 0, 256 * 1024, 0);
+	g_chain_readable = 1;			/* TX chains are device-readable */
+	g_chain_writable = 0;
+	g_getchain_consumes = 1;
+	g_rx_descs = 1;
+	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_tx_getchain_failure_stops);
+ATF_TC_BODY(notify_tx_getchain_failure_stops, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	reset_caps();
+	g_getchain_zero = 1;			/* has_descs true, getchain 0 */
+	g_rx_descs = 1;
+	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_tx_overlong_chain_dropped);
+ATF_TC_BODY(notify_tx_overlong_chain_dropped, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	reset_caps();
+	g_getchain_bign = 9999;
+	tx_notify_bad_chain(sc);
+	ATF_CHECK(nconns(sc) == 0);		/* over-long chain dropped */
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_tx_bad_addr_dropped);
+ATF_TC_BODY(notify_tx_bad_addr_dropped, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	reset_caps();
+	g_iov_null_base = 1;
+	tx_notify_bad_chain(sc);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_tx_undersized_chain_dropped);
+ATF_TC_BODY(notify_tx_undersized_chain_dropped, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	reset_caps();
+	g_rxbuf_len = 10;			/* smaller than the header */
+	tx_notify_bad_chain(sc);
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* =====================================================================
+ * pci_vtvsock_init() and small device-registration callbacks.
+ *
+ * These exercise the device entry point exported to bhyve.  CID validation
+ * follows VirtIO 1.4 §5.10.4: guest CIDs 0/1/2 are reserved (hypervisor/
+ * host), 0xffffffff (VMADDR_CID_ANY / UINT32_MAX) is reserved, so a legal
+ * guest CID is 3 <= cid < 0xffffffff.  Assertions below are against those
+ * spec-defined bounds, not the implementation's own output.
+ * ===================================================================== */
+
+static void
+init_reset(void)
+{
+	reset_caps();
+	cfg_reset();
+	g_use_real_socket = false;
+	g_next_fd = 500;
+	g_vi_transport_fail = 0;
+	g_vi_intr_fail = 0;
+}
+
+/* Kernel backend: /dev/vsock exists in the harness environment; the attach
+ * ioctl and mevent registrations are mocked, so init runs to completion. */
+ATF_TC_WITHOUT_HEAD(init_kernel_backend_succeeds);
+ATF_TC_BODY(init_kernel_backend_succeeds, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(0, pci_vtvsock_init(&pi, NULL));
+}
+
+/* Userspace backend: bind a real AF_UNIX control socket in a temp dir. */
+ATF_TC_WITHOUT_HEAD(init_userspace_backend_succeeds);
+ATF_TC_BODY(init_userspace_backend_succeeds, tc)
+{
+	struct pci_devinst pi;
+	char dir[] = "/tmp/vtvsock_init.XXXXXX";
+
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	init_reset();
+	g_use_real_socket = true;
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "42");
+	cfg_set("backend", "userspace");
+	cfg_set("path", dir);
+	ATF_CHECK_EQ(0, pci_vtvsock_init(&pi, NULL));
+	ATF_CHECK(g_socket_calls >= 1);
+	/* Default backend (unset) is treated as userspace per vtvsock_parse. */
+	(void)unlink(dir);	/* socket file leaked via no-op close(); dir stays */
+}
+
+/* Default (unset) backend == userspace: also drives the packed-vs-legacy
+ * check, which rejects packed queues on the legacy transport. */
+ATF_TC_WITHOUT_HEAD(init_default_backend_is_userspace);
+ATF_TC_BODY(init_default_backend_is_userspace, tc)
+{
+	struct pci_devinst pi;
+	char dir[] = "/tmp/vtvsock_dfl.XXXXXX";
+
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	init_reset();
+	g_use_real_socket = true;
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "9");
+	cfg_set("path", dir);		/* no "backend" key */
+	ATF_CHECK_EQ(0, pci_vtvsock_init(&pi, NULL));
+}
+
+/* packed=on requires a modern transport; the harness reports legacy, so this
+ * must be rejected (goto failed -> cleanup runs). */
+ATF_TC_WITHOUT_HEAD(init_packed_requires_modern);
+ATF_TC_BODY(init_packed_requires_modern, tc)
+{
+	struct pci_devinst pi;
+	char dir[] = "/tmp/vtvsock_pkd.XXXXXX";
+
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	init_reset();
+	g_use_real_socket = true;
+	g_cfg_packed = true;
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "7");
+	cfg_set("backend", "userspace");
+	cfg_set("path", dir);
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_rejects_missing_cid);
+ATF_TC_BODY(init_rejects_missing_cid, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("backend", "kernel");	/* no cid */
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_rejects_malformed_cid);
+ATF_TC_BODY(init_rejects_malformed_cid, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "12x");		/* trailing junk -> *endptr != '\0' */
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+/* CIDs 0,1,2 are reserved per VirtIO 1.4 §5.10.4. */
+ATF_TC_WITHOUT_HEAD(init_rejects_reserved_low_cid);
+ATF_TC_BODY(init_rejects_reserved_low_cid, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "2");		/* < 3 */
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+/* 0xffffffff (VMADDR_CID_ANY) and above are reserved. */
+ATF_TC_WITHOUT_HEAD(init_rejects_reserved_high_cid);
+ATF_TC_BODY(init_rejects_reserved_high_cid, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "4294967295");	/* == UINT32_MAX */
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_rejects_unknown_backend);
+ATF_TC_BODY(init_rejects_unknown_backend, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "bogus");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_userspace_requires_path);
+ATF_TC_BODY(init_userspace_requires_path, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "userspace");	/* no path */
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_kernel_rejects_path);
+ATF_TC_BODY(init_kernel_rejects_path, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "kernel");
+	cfg_set("path", "/tmp");		/* invalid with kernel backend */
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+/* Userspace path open() failure: a non-directory / missing path. */
+ATF_TC_WITHOUT_HEAD(init_userspace_bad_dir_fails);
+ATF_TC_BODY(init_userspace_bad_dir_fails, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	g_use_real_socket = true;
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "userspace");
+	cfg_set("path", "/nonexistent/vtvsock/path");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+/* Legacy option-string parser turns "k=v,k=v" into config-node calls. */
+ATF_TC_WITHOUT_HEAD(legacy_config_parses_pairs);
+ATF_TC_BODY(legacy_config_parses_pairs, tc)
+{
+	init_reset();
+	ATF_CHECK_EQ(0, pci_vtvsock_legacy_config(NULL, "cid=3,backend=kernel"));
+	ATF_CHECK(g_setcfg_calls == 2);
+	/* Last pair wins in the recorded values. */
+	ATF_CHECK(strcmp(g_setcfg_key, "backend") == 0);
+	ATF_CHECK(strcmp(g_setcfg_val, "kernel") == 0);
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_config_rejects_bare_key);
+ATF_TC_BODY(legacy_config_rejects_bare_key, tc)
+{
+	init_reset();
+	/* "flag" has no '=' -> val == NULL -> error. */
+	ATF_CHECK_EQ(-1, pci_vtvsock_legacy_config(NULL, "cid=3,flag"));
+}
+
+/* Guest config space is read-only: cfgwrite always reports "unhandled" (1). */
+ATF_TC_WITHOUT_HEAD(cfgwrite_is_readonly);
+ATF_TC_BODY(cfgwrite_is_readonly, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	ATF_CHECK_EQ(1, pci_vtvsock_cfgwrite(sc, 0, 4, 0x1234));
+	free(sc);
+}
+
+/* The event virtqueue is reserved; its notify handler is a no-op that must
+ * not touch the ring or crash. */
+ATF_TC_WITHOUT_HEAD(notify_event_is_noop);
+ATF_TC_BODY(notify_event_is_noop, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	pci_vtvsock_notify_event(sc, &sc->vsc_queues[VTVSOCK_EVENTQ]);
+	free(sc);
+}
+
+/* mevent cleanup trampoline for per-connection event refs frees its arg. */
+ATF_TC_WITHOUT_HEAD(event_ref_destroy_frees_arg);
+ATF_TC_BODY(event_ref_destroy_frees_arg, tc)
+{
+	struct vtvsock_event_ref *ref = calloc(1, sizeof(*ref));
+
+	ATF_REQUIRE(ref != NULL);
+	vtvsock_event_ref_destroy(ref);	/* must free without use-after-free */
+}
+
+/* =====================================================================
+ * pci_vtvsock_init() failure/rollback branches (goto failed cleanup).
+ * ===================================================================== */
+ATF_TC_WITHOUT_HEAD(init_debug_env_enables_tracing);
+ATF_TC_BODY(init_debug_env_enables_tracing, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	setenv("BHYVE_VTVSOCK_DEBUG", "2", 1);
+	cfg_set("cid", "3");
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(0, pci_vtvsock_init(&pi, NULL));
+	unsetenv("BHYVE_VTVSOCK_DEBUG");
+	pci_vtvsock_debug = 0;			/* don't leak level-2 tracing */
+}
+
+ATF_TC_WITHOUT_HEAD(init_transport_select_failure);
+ATF_TC_BODY(init_transport_select_failure, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	g_vi_transport_fail = 1;
+	cfg_set("cid", "3");
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_intr_init_failure);
+ATF_TC_BODY(init_intr_init_failure, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	g_vi_intr_fail = 1;			/* fails at setup_pci */
+	cfg_set("cid", "3");
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_kernel_attach_ioctl_failure);
+ATF_TC_BODY(init_kernel_attach_ioctl_failure, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	g_ioctl_fail_request = VSOCK_IOC_TRANSPORT_ATTACH;
+	g_ioctl_fail_errno = EOPNOTSUPP;
+	cfg_set("cid", "3");
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_kernel_read_mevent_failure);
+ATF_TC_BODY(init_kernel_read_mevent_failure, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	g_mevent_fail = 1;			/* read-cb mevent_add -> NULL */
+	cfg_set("cid", "3");
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_kernel_write_mevent_failure);
+ATF_TC_BODY(init_kernel_write_mevent_failure, tc)
+{
+	struct pci_devinst pi;
+
+	init_reset();
+	memset(&pi, 0, sizeof(pi));
+	g_mevent_fail = 2;			/* read ok, write-cb mevent -> NULL */
+	cfg_set("cid", "3");
+	cfg_set("backend", "kernel");
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_userspace_socket_failure);
+ATF_TC_BODY(init_userspace_socket_failure, tc)
+{
+	struct pci_devinst pi;
+	char dir[] = "/tmp/vtvsock_sf.XXXXXX";
+
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	init_reset();
+	g_use_real_socket = true;
+	g_socket_fail = 1;			/* control socket() fails */
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "userspace");
+	cfg_set("path", dir);
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_userspace_fcntl_failure);
+ATF_TC_BODY(init_userspace_fcntl_failure, tc)
+{
+	struct pci_devinst pi;
+	char dir[] = "/tmp/vtvsock_ff.XXXXXX";
+
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	init_reset();
+	g_use_real_socket = true;
+	g_fcntl_fail = 1;			/* O_NONBLOCK on ctl socket fails */
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "userspace");
+	cfg_set("path", dir);
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_userspace_ctl_mevent_failure);
+ATF_TC_BODY(init_userspace_ctl_mevent_failure, tc)
+{
+	struct pci_devinst pi;
+	char dir[] = "/tmp/vtvsock_cm.XXXXXX";
+
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	init_reset();
+	g_use_real_socket = true;
+	g_mevent_fail = 1;			/* control-socket mevent -> NULL */
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "userspace");
+	cfg_set("path", dir);
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+ATF_TC_WITHOUT_HEAD(init_userspace_reap_mevent_failure);
+ATF_TC_BODY(init_userspace_reap_mevent_failure, tc)
+{
+	struct pci_devinst pi;
+	char dir[] = "/tmp/vtvsock_rm.XXXXXX";
+
+	ATF_REQUIRE(mkdtemp(dir) != NULL);
+	init_reset();
+	g_use_real_socket = true;
+	g_mevent_fail = 2;			/* ctl mevent ok, reap-timer -> NULL */
+	memset(&pi, 0, sizeof(pi));
+	cfg_set("cid", "3");
+	cfg_set("backend", "userspace");
+	cfg_set("path", dir);
+	ATF_CHECK_EQ(-1, pci_vtvsock_init(&pi, NULL));
+}
+
+/* =====================================================================
+ * conn_data_cb host->guest RX residual and injection error paths.
+ * ===================================================================== */
+
+/* An RX injection that fails (guest RX buffer too small for even the header)
+ * closes the connection with RST. */
+ATF_TC_WITHOUT_HEAD(conn_data_cb_inject_failure_resets);
+ATF_TC_BODY(conn_data_cb_inject_failure_resets, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t d[32];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	g_rx_descs = 256;
+	g_rxbuf_len = 10;		/* < header: inject_raw drops -> hard fail */
+	memset(d, 'D', sizeof(d));
+	stage_recv(d, sizeof(d));
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	/* inject_raw drops the undersized chain, so the RST itself parks on the
+	 * pending ring rather than reaching the wire; the key outcome is that
+	 * the connection is torn down. */
+	ATF_CHECK(nconns(sc) == 0);
+	free(sc);
+}
+
+/* When the guest RX ring empties mid-record, the un-injected tail is parked
+ * as rx_resid and re-injected on the next dispatch (no data loss, no reset). */
+ATF_TC_WITHOUT_HEAD(conn_data_cb_parks_and_reinjects_residual);
+ATF_TC_BODY(conn_data_cb_parks_and_reinjects_residual, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	uint8_t rec[200];
+
+	reset_caps();
+	g_rxbuf_len = 100;		/* 56 payload bytes per RX buffer */
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	memset(rec, 'X', sizeof(rec));
+	stage_recv(rec, sizeof(rec));
+	g_rx_descs = 1;			/* only one buffer: ring empties mid-record */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(c->rx_resid != NULL);		/* tail parked */
+	ATF_CHECK(g_ninject == 1);		/* one fragment delivered so far */
+
+	g_rx_descs = 256;		/* guest posts more descriptors */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(c->rx_resid == NULL);		/* residual fully drained */
+	ATF_CHECK(nconns(sc) == 1);
+	free(sc);
+}
+
+/* SEQPACKET: no bytes queued and recvmsg peek would block -> nothing happens. */
+ATF_TC_WITHOUT_HEAD(conn_data_cb_seqpacket_wouldblock);
+ATF_TC_BODY(conn_data_cb_seqpacket_wouldblock, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	g_recv_len = g_recv_off = 0;		/* FIONREAD 0, recvmsg -> EAGAIN */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_ninject == 0);
+	ATF_CHECK(nconns(sc) == 1);
+	free(sc);
+}
+
+/* SEQPACKET empty record but the RX ring is full: delivery is deferred. */
+ATF_TC_WITHOUT_HEAD(conn_data_cb_seqpacket_empty_record_ring_full);
+ATF_TC_BODY(conn_data_cb_seqpacket_empty_record_ring_full, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, SEQPACKET);
+	c->evp = mevent_add(c->fd, EVF_READ, vtvsock_conn_data_cb, sc);
+	g_recv_len = g_recv_off = 0;
+	g_recv_zero_dgram = 1;			/* empty MSG_EOR record queued */
+	g_rx_descs = 0;				/* but the RX ring is full */
+	vtvsock_conn_data_cb(c->fd, EVF_READ, sc);
+	ATF_CHECK(g_ninject == 0);		/* deferred, not delivered */
+	ATF_CHECK(nconns(sc) == 1);
+	free(sc);
+}
+
+/* =====================================================================
+ * Misc TX state-machine + reaper + device-reset branches.
+ * ===================================================================== */
+
+/* OP_SHUTDOWN(SEND) after the host already closed completes the teardown:
+ * the connection moves to CLOSING and a full SHUTDOWN is sent to the guest. */
+ATF_TC_WITHOUT_HEAD(tx_shutdown_completes_close);
+ATF_TC_BODY(tx_shutdown_completes_close, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->host_eof = true;			/* host app already closed */
+	mkhdr(&h, VIRTIO_VSOCK_OP_SHUTDOWN, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    0, VIRTIO_VSOCK_SHUTDOWN_SEND, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, NULL, 0);
+	ATF_CHECK(c->state == CONN_CLOSING);
+	ATF_CHECK(g_inject[g_ninject - 1].op == VIRTIO_VSOCK_OP_SHUTDOWN);
+	free(sc);
+}
+
+/* OP_RW to a CLOSING connection is credit-accounted but the payload dropped. */
+ATF_TC_WITHOUT_HEAD(tx_rw_on_closing_conn_discarded);
+ATF_TC_BODY(tx_rw_on_closing_conn_discarded, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	uint8_t d[16];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CLOSING;
+	memset(d, 'D', sizeof(d));
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    sizeof(d), 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, d, sizeof(d));
+	ATF_CHECK(c->fwd_cnt == sizeof(d));	/* accounted */
+	ATF_CHECK(g_send_calls == 0);		/* but not delivered */
+	ATF_CHECK(nconns(sc) == 1);
+	free(sc);
+}
+
+/* OP_RW to a still-CONNECTING connection is ignored (no host consumer yet). */
+ATF_TC_WITHOUT_HEAD(tx_rw_on_connecting_conn_ignored);
+ATF_TC_BODY(tx_rw_on_connecting_conn_ignored, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct virtio_vsock_hdr h;
+	uint8_t d[16];
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CONNECTING;
+	memset(d, 'D', sizeof(d));
+	mkhdr(&h, VIRTIO_VSOCK_OP_RW, STREAM, 3, VSOCK_CID_HOST, 1234, 80,
+	    sizeof(d), 0, 256 * 1024, 0);
+	vtvsock_process_tx_pkt(sc, &h, d, sizeof(d));
+	ATF_CHECK(g_send_calls == 0);
+	ATF_CHECK(nconns(sc) == 1);
+	free(sc);
+}
+
+/* Reaper times out a stale host-initiated CONNECTING conn and reports
+ * -ETIMEDOUT to the waiting host control connection. */
+ATF_TC_WITHOUT_HEAD(reaper_times_out_host_connect);
+ATF_TC_BODY(reaper_times_out_host_connect, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+	struct vtvsock_conn *c;
+	struct vsock_ctl_msg reply;
+	int ctlfd = g_next_fd++;
+
+	reset_caps();
+	c = mk_established(sc, 1234, 80, STREAM);
+	c->state = CONN_CONNECTING;
+	c->close_time = 1;			/* ancient: exceeds the timeout */
+	c->ctl_fd = ctlfd;
+	(void)mk_ctl_conn(sc, ctlfd, 100);
+	vtvsock_reap_stale(sc);
+	ATF_CHECK(nconns(sc) == 0);		/* timed-out conn reaped */
+	ATF_REQUIRE(g_send_len == sizeof(reply));
+	memcpy(&reply, g_send_buf, sizeof(reply));
+	ATF_CHECK(reply.status == -ETIMEDOUT);
+	free(sc);
+}
+
+/* pci_vtvsock_reset() tears down all connections and control connections and
+ * discards parked control replies. */
+ATF_TC_WITHOUT_HEAD(device_reset_closes_all);
+ATF_TC_BODY(device_reset_closes_all, tc)
+{
+	struct pci_vtvsock_softc *sc = mk_sc();
+
+	reset_caps();
+	(void)mk_established(sc, 1234, 80, STREAM);
+	(void)mk_established(sc, 1235, 81, SEQPACKET);
+	(void)mk_ctl_conn(sc, g_next_fd++, 100);
+	(void)mk_ctl_conn(sc, g_next_fd++, 100);
+	sc->vsc_pend_count = 1;			/* a parked reply to discard */
+	pci_vtvsock_reset(sc);
+	ATF_CHECK(nconns(sc) == 0);
+	ATF_CHECK(nctlconns(sc) == 0);
+	ATF_CHECK(sc->vsc_ctl_conn_count == 0);
+	ATF_CHECK(sc->vsc_pend_count == 0);
+	free(sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, tx_shutdown_completes_close);
+	ATF_TP_ADD_TC(tp, tx_rw_on_closing_conn_discarded);
+	ATF_TP_ADD_TC(tp, tx_rw_on_connecting_conn_ignored);
+	ATF_TP_ADD_TC(tp, reaper_times_out_host_connect);
+	ATF_TP_ADD_TC(tp, device_reset_closes_all);
+	ATF_TP_ADD_TC(tp, init_debug_env_enables_tracing);
+	ATF_TP_ADD_TC(tp, init_transport_select_failure);
+	ATF_TP_ADD_TC(tp, init_intr_init_failure);
+	ATF_TP_ADD_TC(tp, init_kernel_attach_ioctl_failure);
+	ATF_TP_ADD_TC(tp, init_kernel_read_mevent_failure);
+	ATF_TP_ADD_TC(tp, init_kernel_write_mevent_failure);
+	ATF_TP_ADD_TC(tp, init_userspace_socket_failure);
+	ATF_TP_ADD_TC(tp, init_userspace_fcntl_failure);
+	ATF_TP_ADD_TC(tp, init_userspace_ctl_mevent_failure);
+	ATF_TP_ADD_TC(tp, init_userspace_reap_mevent_failure);
+	ATF_TP_ADD_TC(tp, conn_data_cb_inject_failure_resets);
+	ATF_TP_ADD_TC(tp, conn_data_cb_parks_and_reinjects_residual);
+	ATF_TP_ADD_TC(tp, conn_data_cb_seqpacket_wouldblock);
+	ATF_TP_ADD_TC(tp, conn_data_cb_seqpacket_empty_record_ring_full);
+	ATF_TP_ADD_TC(tp, ctl_accept_transient_failure_ignored);
+	ATF_TP_ADD_TC(tp, ctl_accept_fcntl_failure_drops);
+	ATF_TP_ADD_TC(tp, ctl_accept_mevent_failure_drops);
+	ATF_TP_ADD_TC(tp, ctl_conn_eof_removes_conn);
+	ATF_TP_ADD_TC(tp, ctl_conn_wouldblock_keeps_conn);
+	ATF_TP_ADD_TC(tp, ctl_connect_unnegotiated_type_refused);
+	ATF_TP_ADD_TC(tp, ctl_connect_fcntl_failure_replies_error);
+	ATF_TP_ADD_TC(tp, ctl_connect_conn_alloc_failure_replies_error);
+	ATF_TP_ADD_TC(tp, write_cb_no_backlog_disables_drainer);
+	ATF_TP_ADD_TC(tp, write_cb_stream_drains_backlog);
+	ATF_TP_ADD_TC(tp, write_cb_stream_wouldblock_stays_armed);
+	ATF_TP_ADD_TC(tp, write_cb_stream_zero_progress_stays_armed);
+	ATF_TP_ADD_TC(tp, write_cb_stream_error_resets);
+	ATF_TP_ADD_TC(tp, write_cb_seqpacket_drains_record);
+	ATF_TP_ADD_TC(tp, write_cb_seqpacket_wouldblock_stays_armed);
+	ATF_TP_ADD_TC(tp, write_cb_seqpacket_short_send_resets);
+	ATF_TP_ADD_TC(tp, inject_raw_getchain_failure_drops);
+	ATF_TP_ADD_TC(tp, inject_raw_overlong_chain_drops);
+	ATF_TP_ADD_TC(tp, inject_raw_bad_descriptor_addr_drops);
+	ATF_TP_ADD_TC(tp, inject_raw_undersized_chain_drops);
+	ATF_TP_ADD_TC(tp, conn_data_cb_ignored_while_paused);
+	ATF_TP_ADD_TC(tp, conn_data_cb_noop_while_connecting);
+	ATF_TP_ADD_TC(tp, conn_data_cb_rcv_shutdown_disables_read);
+	ATF_TP_ADD_TC(tp, conn_data_cb_seqpacket_host_eof);
+	ATF_TP_ADD_TC(tp, conn_data_cb_seqpacket_empty_record);
+	ATF_TP_ADD_TC(tp, conn_data_cb_seqpacket_record_exceeds_window);
+	ATF_TP_ADD_TC(tp, tx_duplicate_request_resets);
+	ATF_TP_ADD_TC(tp, tx_request_collision_ignored);
+	ATF_TP_ADD_TC(tp, tx_request_socket_failure_resets);
+	ATF_TP_ADD_TC(tp, tx_request_mevent_failure_resets);
+	ATF_TP_ADD_TC(tp, tx_peer_buf_alloc_clamped);
+	ATF_TP_ADD_TC(tp, tx_response_wrong_state_ignored);
+	ATF_TP_ADD_TC(tp, tx_response_completes_host_connect);
+	ATF_TP_ADD_TC(tp, tx_response_mevent_failure_resets);
+	ATF_TP_ADD_TC(tp, tx_rst_host_connect_reports_refused);
+	ATF_TP_ADD_TC(tp, stream_tx_send_error_resets);
+	ATF_TP_ADD_TC(tp, stream_tx_backlog_overflow_resets);
+	ATF_TP_ADD_TC(tp, stream_tx_arm_failure_resets);
+	ATF_TP_ADD_TC(tp, seqpkt_rx_send_error_resets);
+	ATF_TP_ADD_TC(tp, seqpkt_rx_arm_failure_resets);
+	ATF_TP_ADD_TC(tp, notify_tx_getchain_failure_stops);
+	ATF_TP_ADD_TC(tp, notify_tx_overlong_chain_dropped);
+	ATF_TP_ADD_TC(tp, notify_tx_bad_addr_dropped);
+	ATF_TP_ADD_TC(tp, notify_tx_undersized_chain_dropped);
+	ATF_TP_ADD_TC(tp, init_kernel_backend_succeeds);
+	ATF_TP_ADD_TC(tp, init_userspace_backend_succeeds);
+	ATF_TP_ADD_TC(tp, init_default_backend_is_userspace);
+	ATF_TP_ADD_TC(tp, init_packed_requires_modern);
+	ATF_TP_ADD_TC(tp, init_rejects_missing_cid);
+	ATF_TP_ADD_TC(tp, init_rejects_malformed_cid);
+	ATF_TP_ADD_TC(tp, init_rejects_reserved_low_cid);
+	ATF_TP_ADD_TC(tp, init_rejects_reserved_high_cid);
+	ATF_TP_ADD_TC(tp, init_rejects_unknown_backend);
+	ATF_TP_ADD_TC(tp, init_userspace_requires_path);
+	ATF_TP_ADD_TC(tp, init_kernel_rejects_path);
+	ATF_TP_ADD_TC(tp, init_userspace_bad_dir_fails);
+	ATF_TP_ADD_TC(tp, legacy_config_parses_pairs);
+	ATF_TP_ADD_TC(tp, legacy_config_rejects_bare_key);
+	ATF_TP_ADD_TC(tp, cfgwrite_is_readonly);
+	ATF_TP_ADD_TC(tp, notify_event_is_noop);
+	ATF_TP_ADD_TC(tp, event_ref_destroy_frees_arg);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, suspend_fences_and_rearms_host_sources);

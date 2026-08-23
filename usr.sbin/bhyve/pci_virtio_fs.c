@@ -900,7 +900,14 @@ static const struct virtio_consts vtfs_vi_consts = {
 	.vc_qreset = pci_vtfs_qreset,
 	.vc_suspend = pci_vtfs_suspend_device,
 	.vc_resume_device = pci_vtfs_resume_device,
-	.vc_hv_caps = VIRTIO_F_RING_RESET,
+	/*
+	 * Indirect descriptors let a single fs request occupy one ring slot
+	 * instead of up to one slot per segment.  Both the split and packed
+	 * getchain paths bound the indirect table by vq_qsize, and the guest
+	 * driver clamps its per-request segment budget to VIRTIO_MAX_INDIRECT
+	 * (<= ring size), so the two ends agree.
+	 */
+	.vc_hv_caps = VIRTIO_F_RING_RESET | VIRTIO_RING_F_INDIRECT_DESC,
 #ifdef BHYVE_SNAPSHOT
 	.vc_pause = pci_vtfs_pause,
 	.vc_resume = pci_vtfs_resume,

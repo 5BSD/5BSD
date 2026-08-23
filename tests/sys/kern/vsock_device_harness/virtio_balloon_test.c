@@ -97,6 +97,9 @@ static unsigned int g_config_changed_calls;
 static int g_snapshot_validate_calls;
 static int g_snapshot_validate_result;
 static bool g_snapshot_validate_saw_lock;
+static bool g_transport_fail;
+static bool g_intr_fail;
+static bool g_modern_fail;
 
 void
 vm_snapshot_buf_err(const char *name __unused,
@@ -231,6 +234,9 @@ reset_mocks(void)
 	g_snapshot_validate_calls = 0;
 	g_snapshot_validate_result = 0;
 	g_snapshot_validate_saw_lock = false;
+	g_transport_fail = false;
+	g_intr_fail = false;
+	g_modern_fail = false;
 }
 
 static void
@@ -552,6 +558,8 @@ vi_pci_select_transport(struct virtio_softc *vs,
 {
 
 	ATF_CHECK_EQ(policy, VIRTIO_PCI_MODERN_ONLY);
+	if (g_transport_fail)
+		return (EINVAL);
 	vs->vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
 	return (0);
 }
@@ -559,9 +567,9 @@ vi_pci_select_transport(struct virtio_softc *vs,
 void vi_pci_modern_set_identity(struct virtio_softc *vs __unused,
     uint16_t id) { g_identity = id; }
 int vi_pci_modern_init(struct virtio_softc *vs __unused, int bar __unused)
-{ return (0); }
+{ return (g_modern_fail ? -1 : 0); }
 int vi_intr_init(struct virtio_softc *vs __unused, int bar __unused,
-    int msix __unused) { return (0); }
+    int msix __unused) { return (g_intr_fail ? -1 : 0); }
 int fbsdrun_virtio_msix(void) { return (1); }
 int vi_pci_modern_cfgread(struct pci_devinst *pi __unused,
     int off __unused, int size __unused, uint32_t *val __unused) { return (0); }
@@ -1902,6 +1910,460 @@ ATF_TC_BODY(free_page_migration_collect, tc)
 	ATF_CHECK_EQ(g_needs_reset, 0);
 }
 
+ATF_TC_WITHOUT_HEAD(migration_wait_and_lookup);
+ATF_TC_BODY(migration_wait_and_lookup, tc)
+{
+	struct pci_vtballoon_softc sc;
+	struct migration_sink_capture cap;
+
+	(void)tc;
+	setup_softc(&sc, 4096);
+	memset(&cap, 0, sizeof(cap));
+
+	/* NULL-argument contracts on the pre-copy bridge entry points. */
+	ATF_CHECK_EQ(virtio_balloon_migration_wait(NULL, 0), EINVAL);
+	ATF_CHECK(virtio_balloon_migration_complete(NULL) == false);
+	ATF_CHECK_EQ(virtio_balloon_migration_start(NULL, migration_sink, &cap),
+	    EINVAL);
+	ATF_CHECK_EQ(virtio_balloon_migration_start(&sc, NULL, &cap), EINVAL);
+	virtio_balloon_migration_finish(NULL);
+
+	/* The registry publishes the live instance for the collector. */
+	ATF_CHECK(virtio_balloon_migration_lookup() == NULL);
+	pci_vtballoon_registry = &sc;
+	ATF_CHECK(virtio_balloon_migration_lookup() == &sc);
+	pci_vtballoon_registry = NULL;
+
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_FREE_PAGE_HINT;
+	sc.vbsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+
+	/* With no round in progress the wait reports the round was cancelled. */
+	ATF_CHECK_EQ(virtio_balloon_migration_wait(&sc, 0), ECANCELED);
+
+	/* An already-complete round returns immediately without blocking. */
+	reset_mocks();
+	sc.vbsc_migration_next_cmd_id = VTBALLOON_CMD_ID_FIRST;
+	ATF_REQUIRE_EQ(virtio_balloon_migration_start(&sc, migration_sink,
+	    &cap), 0);
+	sc.vbsc_migration_complete = true;
+	ATF_CHECK_EQ(virtio_balloon_migration_wait(&sc, 100), 0);
+	virtio_balloon_migration_finish(&sc);
+
+	/* An incomplete round drains its deadline through the condition var. */
+	reset_mocks();
+	sc.vbsc_migration_next_cmd_id = VTBALLOON_CMD_ID_FIRST;
+	ATF_REQUIRE_EQ(virtio_balloon_migration_start(&sc, migration_sink,
+	    &cap), 0);
+	ATF_CHECK_EQ(virtio_balloon_migration_wait(&sc, 1), ETIMEDOUT);
+	virtio_balloon_migration_finish(&sc);
+
+	/* collect() runs start+wait+finish; a timeout still finishes cleanly. */
+	reset_mocks();
+	sc.vbsc_migration_next_cmd_id = VTBALLOON_CMD_ID_FIRST;
+	ATF_CHECK_EQ(virtio_balloon_migration_collect(&sc, migration_sink,
+	    &cap, 1), ETIMEDOUT);
+	ATF_CHECK(!sc.vbsc_migration_round);
+
+	/* collect() propagates a start failure without waiting or finishing. */
+	reset_mocks();
+	sc.vbsc_vs.vs_status = 0;
+	ATF_CHECK_EQ(virtio_balloon_migration_collect(&sc, migration_sink,
+	    &cap, 1), ENXIO);
+
+	free(sc.vbsc_bitmap);
+}
+
+ATF_TC_WITHOUT_HEAD(migration_cmd_id_rollover);
+ATF_TC_BODY(migration_cmd_id_rollover, tc)
+{
+	struct pci_vtballoon_softc sc;
+	struct migration_sink_capture cap;
+
+	(void)tc;
+	setup_softc(&sc, 4096);
+	memset(&cap, 0, sizeof(cap));
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_FREE_PAGE_HINT;
+	sc.vbsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+
+	/* A below-FIRST seed is lifted to the first legal command id. */
+	reset_mocks();
+	sc.vbsc_migration_next_cmd_id = VTBALLOON_CMD_ID_STOP;
+	sc.vbsc_free_page_hint_cmd_id = VTBALLOON_CMD_ID_DONE;
+	ATF_REQUIRE_EQ(virtio_balloon_migration_start(&sc, migration_sink,
+	    &cap), 0);
+	ATF_CHECK_EQ(sc.vbsc_free_page_hint_cmd_id, VTBALLOON_CMD_ID_FIRST);
+	virtio_balloon_migration_finish(&sc);
+
+	/* Starting a second round while one is live is rejected as busy. */
+	reset_mocks();
+	sc.vbsc_migration_next_cmd_id = VTBALLOON_CMD_ID_FIRST;
+	ATF_REQUIRE_EQ(virtio_balloon_migration_start(&sc, migration_sink,
+	    &cap), 0);
+	ATF_CHECK_EQ(virtio_balloon_migration_start(&sc, migration_sink,
+	    &cap), EBUSY);
+	virtio_balloon_migration_finish(&sc);
+
+	/* A seed colliding with the visible id is bumped one past it. */
+	reset_mocks();
+	sc.vbsc_migration_next_cmd_id = VTBALLOON_CMD_ID_FIRST;
+	sc.vbsc_free_page_hint_cmd_id = VTBALLOON_CMD_ID_FIRST;
+	ATF_REQUIRE_EQ(virtio_balloon_migration_start(&sc, migration_sink,
+	    &cap), 0);
+	ATF_CHECK_EQ(sc.vbsc_free_page_hint_cmd_id,
+	    VTBALLOON_CMD_ID_FIRST + 1);
+	virtio_balloon_migration_finish(&sc);
+
+	/* At the numeric ceiling a colliding seed wraps the publish to FIRST. */
+	reset_mocks();
+	sc.vbsc_migration_next_cmd_id = UINT32_MAX;
+	sc.vbsc_free_page_hint_cmd_id = UINT32_MAX;
+	ATF_REQUIRE_EQ(virtio_balloon_migration_start(&sc, migration_sink,
+	    &cap), 0);
+	ATF_CHECK_EQ(sc.vbsc_free_page_hint_cmd_id, VTBALLOON_CMD_ID_FIRST);
+	virtio_balloon_migration_finish(&sc);
+
+	/* A ceiling seed with no collision wraps only the stored seed. */
+	reset_mocks();
+	sc.vbsc_migration_next_cmd_id = UINT32_MAX;
+	sc.vbsc_free_page_hint_cmd_id = VTBALLOON_CMD_ID_FIRST;
+	ATF_REQUIRE_EQ(virtio_balloon_migration_start(&sc, migration_sink,
+	    &cap), 0);
+	ATF_CHECK_EQ(sc.vbsc_free_page_hint_cmd_id, UINT32_MAX);
+	ATF_CHECK_EQ(sc.vbsc_migration_next_cmd_id, VTBALLOON_CMD_ID_FIRST);
+	virtio_balloon_migration_finish(&sc);
+
+	free(sc.vbsc_bitmap);
+}
+
+ATF_TC_WITHOUT_HEAD(debug_logging_paths);
+ATF_TC_BODY(debug_logging_paths, tc)
+{
+	struct pci_vtballoon_softc sc;
+	struct vqueue_info vq;
+	struct vqueue_info *sq;
+	static const uint8_t encoded[] = {
+		/* MEMFREE (tag 4), 4096 bytes. */
+		0x04, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+	};
+
+	(void)tc;
+	setup_softc(&sc, 4096);
+	sc.vbsc_debug = 1;
+	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTBALLOON_RINGSZ;
+
+	/* Inflate request completion logging. */
+	reset_mocks();
+	vq.vq_num = VTBALLOON_INFLATE_QUEUE;
+	le32enc(g_pfn_bytes, 1);
+	pci_vtballoon_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_discard_calls, 1);
+
+	/* Free-page-hint start and per-range logging. */
+	vq.vq_num = VTBALLOON_FREE_PAGE_QUEUE;
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_FREE_PAGE_HINT;
+	sc.vbsc_free_page_hint_cmd_id = VIRTIO14_BALLOON_CMD_ID_FIRST;
+	drive_hint_command(&sc, &vq, VIRTIO14_BALLOON_CMD_ID_FIRST);
+	drive_hint_range(&sc, &vq, 0x8000, 4096);
+	ATF_CHECK_EQ(g_discard_calls, 1);
+
+	/* A failed discard logs the stop reason and ends the round. */
+	reset_mocks();
+	g_reverse_gpa = 0x8000;
+	g_pfn_len = 4096;
+	g_chain_n = 1;
+	g_readable = 0;
+	g_writable = 1;
+	g_discard_error = EIO;
+	pci_vtballoon_notify(&sc, &vq);
+	ATF_CHECK(!sc.vbsc_free_page_hint_active);
+	ATF_CHECK_EQ(sc.vbsc_free_page_hint_cmd_id, VTBALLOON_CMD_ID_STOP);
+
+	/* STOP round-done logging on the non-migration path. */
+	drive_hint_command(&sc, &vq, VTBALLOON_CMD_ID_STOP);
+	ATF_CHECK_EQ(sc.vbsc_free_page_hint_cmd_id, VTBALLOON_CMD_ID_DONE);
+
+	/* Free-page report logging. */
+	reset_mocks();
+	vq.vq_num = VTBALLOON_REPORTING_QUEUE;
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_PAGE_REPORTING;
+	g_pfn_len = 4096;
+	g_readable = 0;
+	g_writable = 1;
+	pci_vtballoon_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_discard_calls, 1);
+
+	/* Poison-preserving report logging (no discard applied). */
+	reset_mocks();
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_PAGE_REPORTING |
+	    VIRTIO_BALLOON_F_PAGE_POISON;
+	g_pfn_len = 4096;
+	g_readable = 0;
+	g_writable = 1;
+	pci_vtballoon_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_discard_calls, 0);
+
+	/* Poison config-write logging. */
+	reset_mocks();
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_PAGE_POISON;
+	sc.vbsc_vs.vs_status = 0;
+	ATF_REQUIRE_EQ(pci_vtballoon_cfgwrite(&sc,
+	    VIRTIO14_BALLOON_POISON_VAL_OFF, 4, UINT32_C(0x1234)), 0);
+
+	/* Statistics sample and timer-driven refresh logging. */
+	sq = &sc.vbsc_vq[VTBALLOON_STATS_QUEUE];
+	sq->vq_vs = &sc.vbsc_vs;
+	sq->vq_num = VTBALLOON_STATS_QUEUE;
+	sq->vq_qsize = 8;
+	sq->vq_layout = VIRTIO_QUEUE_SPLIT;
+	sq->vq_generation = 11;
+	vq_set_allocated(sq, true);
+	sc.vbsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_STATS_VQ;
+	reset_mocks();
+	memcpy(g_pfn_bytes, encoded, sizeof(encoded));
+	g_pfn_len = sizeof(encoded);
+	pci_vtballoon_notify(&sc, sq);
+	ATF_REQUIRE(sc.vbsc_stats_held);
+	pci_vtballoon_stats_timer(1000, EVF_TIMER, &sc);
+	ATF_CHECK(!sc.vbsc_stats_held);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+
+	free(sc.vbsc_bitmap);
+}
+
+ATF_TC_WITHOUT_HEAD(error_and_edge_branches);
+ATF_TC_BODY(error_and_edge_branches, tc)
+{
+	struct pci_vtballoon_softc sc;
+	struct migration_sink_capture cap;
+	struct vqueue_info vq;
+	uint32_t value;
+
+	(void)tc;
+	setup_softc(&sc, 4096);
+	memset(&cap, 0, sizeof(cap));
+	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = VTBALLOON_RINGSZ;
+
+	/* Releasing statistics with nothing retained is a no-op. */
+	reset_mocks();
+	sc.vbsc_stats_held = false;
+	ATF_REQUIRE_EQ(pci_vtballoon_suspend_device(&sc), 0);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+
+	/* A queue reset for a stale generation is refused. */
+	vq.vq_num = VTBALLOON_INFLATE_QUEUE;
+	vq.vq_generation = 5;
+	ATF_CHECK_EQ(pci_vtballoon_qreset(&sc, &vq, 6), ESTALE);
+
+	/* cfgread rejects malformed offset/size tuples. */
+	ATF_CHECK_EQ(pci_vtballoon_cfgread(&sc, -1, 4, &value), EINVAL);
+	ATF_CHECK_EQ(pci_vtballoon_cfgread(&sc, 0, 3, &value), EINVAL);
+	ATF_CHECK_EQ(pci_vtballoon_cfgread(&sc, 4096, 4, &value), EINVAL);
+
+	/* cfgwrite rejects a non-dword access width. */
+	ATF_CHECK_EQ(pci_vtballoon_cfgwrite(&sc, 4, 2, 0), EINVAL);
+
+	/* Snapshot validation rejects a device instance with no softc. */
+	{
+		struct pci_devinst pi;
+		struct vm_snapshot_meta vmeta = { .op = VM_SNAPSHOT_VALIDATE };
+
+		memset(&pi, 0, sizeof(pi));
+		pi.pi_arg = NULL;
+		vmeta.dev_data = &pi;
+		ATF_CHECK_EQ(pci_vtballoon_snapshot_validate(&vmeta), EINVAL);
+	}
+
+	/* An empty descriptor chain ends the inflate/deflate drain loop. */
+	reset_mocks();
+	vq.vq_num = VTBALLOON_INFLATE_QUEUE;
+	g_descs = 1;
+	g_chain_n = 0;
+	pci_vtballoon_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(g_end_calls, 1);
+
+	/* An empty free-page-hint chain breaks that loop and ends chains. */
+	reset_mocks();
+	vq.vq_num = VTBALLOON_FREE_PAGE_QUEUE;
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_FREE_PAGE_HINT;
+	g_descs = 1;
+	g_chain_n = 0;
+	pci_vtballoon_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_end_calls, 1);
+
+	/* An empty reporting chain breaks that loop and ends chains. */
+	reset_mocks();
+	vq.vq_num = VTBALLOON_REPORTING_QUEUE;
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_PAGE_REPORTING;
+	g_descs = 1;
+	g_chain_n = 0;
+	pci_vtballoon_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_end_calls, 1);
+
+	/* An empty statistics chain returns without endchains. */
+	reset_mocks();
+	vq.vq_num = VTBALLOON_STATS_QUEUE;
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_STATS_VQ;
+	sc.vbsc_stats_held = false;
+	g_descs = 1;
+	g_chain_n = 0;
+	pci_vtballoon_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_end_calls, 0);
+
+	/* A statistics chain carrying a writable buffer is rejected. */
+	reset_mocks();
+	g_descs = 1;
+	g_chain_n = 1;
+	g_readable = 1;
+	g_writable = 1;
+	g_pfn_len = VIRTIO14_BALLOON_STAT_SIZE;
+	pci_vtballoon_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_end_calls, 1);
+	ATF_CHECK(!sc.vbsc_stats_held);
+
+	/*
+	 * STOP under a live migration round with a ready condition variable
+	 * broadcasts to the collector; abandoning the round then releases the
+	 * retained STOP descriptor and wakes any waiter without a device reset.
+	 */
+	reset_mocks();
+	sc.vbsc_vs.vs_negotiated_caps = VIRTIO_BALLOON_F_FREE_PAGE_HINT;
+	sc.vbsc_vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	sc.vbsc_migration_cv_ready = true;
+	sc.vbsc_migration_next_cmd_id = VTBALLOON_CMD_ID_FIRST;
+	ATF_REQUIRE_EQ(virtio_balloon_migration_start(&sc, migration_sink,
+	    &cap), 0);
+	vq.vq_num = VTBALLOON_FREE_PAGE_QUEUE;
+	drive_hint_command(&sc, &vq, sc.vbsc_free_page_hint_cmd_id);
+	drive_hint_command(&sc, &vq, VTBALLOON_CMD_ID_STOP);
+	ATF_CHECK(virtio_balloon_migration_complete(&sc));
+	ATF_CHECK(sc.vbsc_migration_stop_held);
+	sc.vbsc_migration_cv_ready = true;
+	pci_vtballoon_migration_abandon(&sc);
+	ATF_CHECK(!sc.vbsc_migration_round);
+	ATF_CHECK(!sc.vbsc_migration_stop_held);
+	ATF_CHECK_EQ(g_needs_reset, 0);
+
+	free(sc.vbsc_bitmap);
+}
+
+ATF_TC_WITHOUT_HEAD(initialization_failure_paths);
+ATF_TC_BODY(initialization_failure_paths, tc)
+{
+	struct pci_devinst pi;
+	struct nvlist nvl;
+	struct pci_vtballoon_softc *sc;
+
+	(void)tc;
+	memset(&nvl, 0, sizeof(nvl));
+
+	/* The debug environment override is parsed at construction. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	setenv("BHYVE_VIRTIO_DEBUG", "2", 1);
+	ATF_REQUIRE_EQ(pci_vtballoon_init(&pi, &nvl), 0);
+	sc = (struct pci_vtballoon_softc *)pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vbsc_debug, 2u);
+	pthread_mutex_destroy(&sc->vbsc_mtx);
+	free(sc->vbsc_bitmap);
+	free(sc);
+	unsetenv("BHYVE_VIRTIO_DEBUG");
+
+	/* Transport selection failure aborts construction. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_transport_fail = true;
+	ATF_CHECK_EQ(pci_vtballoon_init(&pi, &nvl), 1);
+
+	/* Interrupt setup failure aborts construction. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_intr_fail = true;
+	ATF_CHECK_EQ(pci_vtballoon_init(&pi, &nvl), 1);
+
+	/* Modern-PCI init failure aborts construction after interrupt setup. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_modern_fail = true;
+	ATF_CHECK_EQ(pci_vtballoon_init(&pi, &nvl), 1);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_bitmap_partial_byte);
+ATF_TC_BODY(snapshot_bitmap_partial_byte, tc)
+{
+	struct pci_vtballoon_softc src, dst;
+	uint8_t image[256];
+	size_t used, bitmap_size;
+
+	(void)tc;
+	/* Seven pages: the final bitmap byte carries valid bits 0..6 only. */
+	memset(&src, 0, sizeof(src));
+	ATF_REQUIRE_EQ(virtio_balloon_tracker_required(0x7000, 0, 0,
+	    &bitmap_size), 0);
+	ATF_REQUIRE_EQ(bitmap_size, 1u);
+	src.vbsc_bitmap = calloc(1, bitmap_size);
+	ATF_REQUIRE(src.vbsc_bitmap != NULL);
+	ATF_REQUIRE_EQ(virtio_balloon_tracker_init(&src.vbsc_tracker, 0x7000,
+	    0, 0, 4096, src.vbsc_bitmap, bitmap_size), 0);
+	ATF_REQUIRE_EQ(virtio_balloon_accounting_init(&src.vbsc_accounting,
+	    0x7000, 0), 0);
+	src.vbsc_lowmem_size = 0x7000;
+	src.vbsc_consts = vtballoon_vi_consts;
+	src.vbsc_vs.vs_vc = &src.vbsc_consts;
+	src.vbsc_vs.vs_queues = src.vbsc_vq;
+
+	reset_mocks();
+	ATF_REQUIRE_EQ(run_balloon_snapshot(&src, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+
+	memset(&dst, 0, sizeof(dst));
+	dst.vbsc_bitmap = calloc(1, bitmap_size);
+	ATF_REQUIRE(dst.vbsc_bitmap != NULL);
+	ATF_REQUIRE_EQ(virtio_balloon_tracker_init(&dst.vbsc_tracker, 0x7000,
+	    0, 0, 4096, dst.vbsc_bitmap, bitmap_size), 0);
+	ATF_REQUIRE_EQ(virtio_balloon_accounting_init(&dst.vbsc_accounting,
+	    0x7000, 0), 0);
+	dst.vbsc_lowmem_size = 0x7000;
+	dst.vbsc_consts = vtballoon_vi_consts;
+	dst.vbsc_vs.vs_vc = &dst.vbsc_consts;
+	dst.vbsc_vs.vs_queues = dst.vbsc_vq;
+
+	/* A clean image with a partial trailing byte restores. */
+	ATF_REQUIRE_EQ(run_balloon_snapshot(&dst, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+
+	/* Setting an out-of-range bit in the trailing byte is rejected. */
+	image[52] = (uint8_t)0x80;
+	ATF_CHECK_EQ(run_balloon_snapshot(&dst, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+
+	free(src.vbsc_bitmap);
+	free(dst.vbsc_bitmap);
+
+	/* A zero-page device carries an empty bitmap that always validates. */
+	memset(&src, 0, sizeof(src));
+	ATF_REQUIRE_EQ(virtio_balloon_tracker_required(0, 0, 0,
+	    &bitmap_size), 0);
+	ATF_REQUIRE_EQ(bitmap_size, 0u);
+	ATF_REQUIRE_EQ(virtio_balloon_tracker_init(&src.vbsc_tracker, 0, 0, 0,
+	    4096, NULL, 0), 0);
+	ATF_REQUIRE_EQ(virtio_balloon_accounting_init(&src.vbsc_accounting,
+	    0, 0), 0);
+	src.vbsc_consts = vtballoon_vi_consts;
+	src.vbsc_vs.vs_vc = &src.vbsc_consts;
+	src.vbsc_vs.vs_queues = src.vbsc_vq;
+	reset_mocks();
+	ATF_REQUIRE_EQ(run_balloon_snapshot(&src, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE_EQ(run_balloon_snapshot(&src, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, inflate_deflate_and_host_granule);
@@ -1918,5 +2380,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, snapshot_preflight_is_locally_serialized);
 	ATF_TP_ADD_TC(tp, snapshot_wire_validation_and_repeat);
 	ATF_TP_ADD_TC(tp, statistics_snapshot_ownership);
+	ATF_TP_ADD_TC(tp, migration_wait_and_lookup);
+	ATF_TP_ADD_TC(tp, migration_cmd_id_rollover);
+	ATF_TP_ADD_TC(tp, debug_logging_paths);
+	ATF_TP_ADD_TC(tp, error_and_edge_branches);
+	ATF_TP_ADD_TC(tp, initialization_failure_paths);
+	ATF_TP_ADD_TC(tp, snapshot_bitmap_partial_byte);
 	return (atf_no_error());
 }

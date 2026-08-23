@@ -12,6 +12,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <atf-c.h>
 
@@ -622,6 +623,226 @@ void
 vi_reset_dev(struct virtio_softc *vs __unused)
 {
 	g_reset_calls++;
+}
+
+/*
+ * Mocks and controls for pci_vtnet_init().  The device-init path pulls in the
+ * config, net-backend, net-utils, and generic-virtio transport helpers that
+ * are otherwise external to this TU.  Each mock is table-driven from the g_init
+ * controls so a single test can walk the happy path and every failure branch.
+ */
+static const char *g_init_queues_value;
+static const char *g_init_mac_value;
+static const char *g_init_mtu_value;
+static const char *g_init_backend_value;
+static bool g_init_packed;
+static int g_netbe_init_result;
+static int g_netbe_init_calls;
+static uint64_t g_netbe_cap;
+static int g_netbe_cleanup_calls;
+static int g_net_parsemac_result;
+static int g_net_parsemtu_result;
+static unsigned long g_net_parsemtu_value;
+static int g_select_transport_result;
+static bool g_select_transport_modern;
+static int g_modern_init_result;
+static int g_intr_init_result;
+static int g_msix;
+static int g_linkup_calls;
+static int g_modern_identity_calls;
+static int g_set_io_bar_calls;
+
+static void
+reset_init_mocks(void)
+{
+
+	g_init_queues_value = NULL;
+	g_init_mac_value = NULL;
+	g_init_mtu_value = NULL;
+	g_init_backend_value = "tap0";
+	g_init_packed = false;
+	g_netbe_init_result = 0;
+	g_netbe_init_calls = 0;
+	g_netbe_cap = VIRTIO14_NET_F_CSUM | VIRTIO14_NET_F_HOST_TSO4 |
+	    VIRTIO14_NET_F_HOST_TSO6 | VIRTIO14_NET_F_HOST_ECN |
+	    VIRTIO14_NET_F_HOST_UFO;
+	g_netbe_cleanup_calls = 0;
+	g_net_parsemac_result = 0;
+	g_net_parsemtu_result = 0;
+	g_net_parsemtu_value = ETHERMTU;
+	g_select_transport_result = 0;
+	g_select_transport_modern = true;
+	g_modern_init_result = 0;
+	g_intr_init_result = 0;
+	g_msix = 1;
+	g_linkup_calls = 0;
+	g_modern_identity_calls = 0;
+	g_set_io_bar_calls = 0;
+	unsetenv("BHYVE_VIRTIO_DEBUG");
+}
+
+const char *
+get_config_value_node(const nvlist_t *parent __unused, const char *name)
+{
+
+	if (strcmp(name, "queues") == 0)
+		return (g_init_queues_value);
+	if (strcmp(name, "mac") == 0)
+		return (g_init_mac_value);
+	if (strcmp(name, "mtu") == 0)
+		return (g_init_mtu_value);
+	if (strcmp(name, "backend") == 0)
+		return (g_init_backend_value);
+	return (NULL);
+}
+
+bool
+get_config_bool_node_default(const nvlist_t *parent __unused,
+    const char *name __unused, bool value __unused)
+{
+
+	return (g_init_packed);
+}
+
+int
+netbe_init(net_backend_t **be, nvlist_t *nvl __unused, net_be_rxeof_t cb,
+    void *param)
+{
+
+	g_netbe_init_calls++;
+	(void)cb;
+	(void)param;
+	if (g_netbe_init_result != 0)
+		return (g_netbe_init_result);
+	*be = &g_backend;
+	return (0);
+}
+
+uint64_t
+netbe_get_cap(net_backend_t *be __unused)
+{
+
+	return (g_netbe_cap);
+}
+
+void
+netbe_cleanup(net_backend_t *be __unused)
+{
+
+	g_netbe_cleanup_calls++;
+}
+
+int
+net_parsemac(const char *mac_str __unused, uint8_t *mac_addr)
+{
+
+	if (g_net_parsemac_result == 0)
+		memset(mac_addr, 0x11, ETHER_ADDR_LEN);
+	return (g_net_parsemac_result);
+}
+
+void
+net_genmac(struct pci_devinst *pi __unused, uint8_t *macaddr)
+{
+
+	memset(macaddr, 0x22, ETHER_ADDR_LEN);
+}
+
+int
+net_parsemtu(const char *mtu_str __unused, unsigned long *mtu)
+{
+
+	if (g_net_parsemtu_result == 0)
+		*mtu = g_net_parsemtu_value;
+	return (g_net_parsemtu_result);
+}
+
+void
+vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc,
+    void *dev_softc, struct pci_devinst *pi, struct vqueue_info *queues)
+{
+
+	g_linkup_calls++;
+	vs->vs_vc = vc;
+	vs->vs_pi = pi;
+	vs->vs_queues = queues;
+	pi->pi_arg = dev_softc;
+	for (int i = 0; i < vc->vc_nvq; i++)
+		queues[i].vq_vs = vs;
+}
+
+int
+vi_pci_select_transport(struct virtio_softc *vs, const nvlist_t *nvl __unused,
+    enum virtio_pci_transport_policy policy __unused)
+{
+
+	if (g_select_transport_result != 0)
+		return (g_select_transport_result);
+	vs->vs_transport = g_select_transport_modern ?
+	    VIRTIO_PCI_TRANSPORT_MODERN : VIRTIO_PCI_TRANSPORT_LEGACY;
+	return (0);
+}
+
+void
+vi_pci_modern_set_identity(struct virtio_softc *vs __unused,
+    uint16_t device_id __unused)
+{
+
+	g_modern_identity_calls++;
+}
+
+int
+vi_pci_modern_init(struct virtio_softc *vs __unused, int barnum __unused)
+{
+
+	return (g_modern_init_result);
+}
+
+void
+vi_set_io_bar(struct virtio_softc *vs __unused, int barnum __unused)
+{
+
+	g_set_io_bar_calls++;
+}
+
+int
+vi_intr_init(struct virtio_softc *vs __unused, int barnum __unused,
+    int use_msix __unused)
+{
+
+	return (g_intr_init_result);
+}
+
+int
+fbsdrun_virtio_msix(void)
+{
+
+	return (g_msix);
+}
+
+void
+pci_set_cfgdata8(struct pci_devinst *pi, int offset, uint8_t val)
+{
+
+	pi->pi_cfgdata[offset] = val;
+}
+
+void
+pci_set_cfgdata16(struct pci_devinst *pi, int offset, uint16_t val)
+{
+
+	pi->pi_cfgdata[offset] = (uint8_t)val;
+	pi->pi_cfgdata[offset + 1] = (uint8_t)(val >> 8);
+}
+
+void
+pci_set_cfgdata32(struct pci_devinst *pi, int offset, uint32_t val)
+{
+
+	pi->pi_cfgdata[offset] = (uint8_t)val;
+	pi->pi_cfgdata[offset + 1] = (uint8_t)(val >> 8);
+	pi->pi_cfgdata[offset + 2] = (uint8_t)(val >> 16);
+	pi->pi_cfgdata[offset + 3] = (uint8_t)(val >> 24);
 }
 
 ATF_TC_WITHOUT_HEAD(transmit_validation);
@@ -3573,6 +3794,486 @@ ATF_TC_BODY(control_kick_is_deferred_and_fair, tc)
 	destroy_multiqueue_softc(&sc);
 }
 
+/*
+ * Reap a device instance created by pci_vtnet_init(): the TX worker thread is
+ * live and blocked in its condition wait, so cancel it at that cancellation
+ * point, join, and release the heap-allocated softc.
+ */
+static void
+reap_inited_device(struct pci_vtnet_softc *sc)
+{
+
+	ATF_REQUIRE_EQ(pthread_cancel(sc->tx_tid), 0);
+	ATF_REQUIRE_EQ(pthread_join(sc->tx_tid, NULL), 0);
+	pthread_cond_destroy(&sc->tx_cond);
+	pthread_mutex_destroy(&sc->tx_mtx);
+	pthread_mutex_destroy(&sc->rx_mtx);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc->vsc_vs.vs_modern);
+	free(sc);
+}
+
+/* Poll a mock counter to a target under tx_mtx for cross-thread visibility. */
+static bool
+wait_for_counter(struct pci_vtnet_softc *sc, const int *counter, int target)
+{
+
+	for (int i = 0; i < 4000; i++) {
+		int snapshot;
+
+		pthread_mutex_lock(&sc->tx_mtx);
+		snapshot = *counter;
+		pthread_mutex_unlock(&sc->tx_mtx);
+		if (snapshot >= target)
+			return (true);
+		usleep(1000);
+	}
+	return (false);
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_modern_success);
+ATF_TC_BODY(device_init_modern_success, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtnet_softc *sc;
+	nvlist_t *nvl = (nvlist_t *)(uintptr_t)0x1;
+
+	reset_mocks();
+	reset_init_mocks();
+	memset(&pi, 0, sizeof(pi));
+	pi.pi_slot = 4;
+	pi.pi_func = 2;
+
+	ATF_REQUIRE_EQ(pci_vtnet_init(&pi, nvl), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+
+	/*
+	 * VirtIO 1.4 section 5.1.4: a single-pair modern device advertises one
+	 * virtqueue pair and a link-up carrier when a backend is attached.
+	 */
+	ATF_CHECK_EQ(le16toh(sc->vsc_config.max_virtqueue_pairs), 1);
+	ATF_CHECK_EQ(le16toh(sc->vsc_config.status), 1);
+	ATF_CHECK(vi_pci_is_modern(&sc->vsc_vs));
+	ATF_CHECK_EQ(g_modern_identity_calls, 1);
+	ATF_CHECK_EQ(g_netbe_init_calls, 1);
+	ATF_CHECK_EQ(sc->rx_active_pairs, 1);
+	ATF_CHECK_EQ(sc->tx_active_pairs, 1);
+	/* section 5.1.3: MRG_RXBUF is always offered; backend caps merge in. */
+	ATF_CHECK((sc->vsc_consts.vc_hv_caps & VIRTIO14_NET_F_MRG_RXBUF) != 0);
+	ATF_CHECK((sc->vsc_consts.vc_hv_caps & VIRTIO14_NET_F_CSUM) != 0);
+	/* section 5.1.4.1: RSS geometry constants are exposed in config space. */
+	ATF_CHECK_EQ(sc->vsc_config.rss_max_key_size, VTNET_RSS_KEY_SIZE);
+	ATF_CHECK_EQ(le16toh(sc->vsc_config.rss_max_indirection_table_length),
+	    VTNET_RSS_TABLE_SIZE);
+
+	reap_inited_device(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_legacy_and_debug);
+ATF_TC_BODY(device_init_legacy_and_debug, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtnet_softc *sc;
+	nvlist_t *nvl = (nvlist_t *)(uintptr_t)0x1;
+
+	reset_mocks();
+	reset_init_mocks();
+	g_select_transport_modern = false;
+	g_init_mac_value = "02:11:22:33:44:55";
+	setenv("BHYVE_VIRTIO_DEBUG", "0", 1);
+	memset(&pi, 0, sizeof(pi));
+
+	ATF_REQUIRE_EQ(pci_vtnet_init(&pi, nvl), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK(!vi_pci_is_modern(&sc->vsc_vs));
+	/* Legacy path takes the IO BAR rather than modern init. */
+	ATF_CHECK_EQ(g_set_io_bar_calls, 1);
+	ATF_CHECK_EQ(g_modern_identity_calls, 0);
+	/* A parsed MAC must land in guest-visible config space. */
+	ATF_CHECK_EQ(sc->vsc_config.mac[0], 0x11);
+	/* Debug env below 1 clamps to 1. */
+	ATF_CHECK_EQ(pci_vtnet_debug, 1);
+
+	reap_inited_device(sc);
+	unsetenv("BHYVE_VIRTIO_DEBUG");
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_multiqueue_success);
+ATF_TC_BODY(device_init_multiqueue_success, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtnet_softc *sc;
+	nvlist_t *nvl = (nvlist_t *)(uintptr_t)0x1;
+
+	reset_mocks();
+	reset_init_mocks();
+	g_init_queues_value = "4";
+	g_init_mtu_value = "1500";
+	memset(&pi, 0, sizeof(pi));
+
+	ATF_REQUIRE_EQ(pci_vtnet_init(&pi, nvl), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	/* Requested pairs are reflected in config and consts. */
+	ATF_CHECK_EQ(le16toh(sc->vsc_config.max_virtqueue_pairs), 4);
+	ATF_CHECK_EQ(sc->vsc_max_pairs, 4);
+	ATF_CHECK_EQ(sc->vsc_consts.vc_nvq, 4 * 2 + 1);
+	/* Multi-pair modern devices offer MQ and RSS (section 5.1.3). */
+	ATF_CHECK((sc->vsc_consts.vc_hv_caps & VIRTIO14_NET_F_MQ) != 0);
+	ATF_CHECK((sc->vsc_consts.vc_hv_caps & VIRTIO14_NET_F_RSS) != 0);
+
+	reap_inited_device(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_error_paths);
+ATF_TC_BODY(device_init_error_paths, tc)
+{
+	struct pci_devinst pi;
+	nvlist_t *nvl = (nvlist_t *)(uintptr_t)0x1;
+
+	/* Invalid "queues" is rejected before any allocation. */
+	reset_mocks();
+	reset_init_mocks();
+	g_init_queues_value = "0";
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtnet_init(&pi, nvl), EINVAL);
+
+	/* A malformed MAC aborts init. */
+	reset_mocks();
+	reset_init_mocks();
+	g_init_mac_value = "zz";
+	g_net_parsemac_result = EINVAL;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK(pci_vtnet_init(&pi, nvl) != 0);
+
+	/* A malformed MTU string aborts init. */
+	reset_mocks();
+	reset_init_mocks();
+	g_init_mtu_value = "bad";
+	g_net_parsemtu_result = EINVAL;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK(pci_vtnet_init(&pi, nvl) != 0);
+
+	/* An out-of-range MTU is rejected. */
+	reset_mocks();
+	reset_init_mocks();
+	g_init_mtu_value = "60";
+	g_net_parsemtu_result = 0;
+	g_net_parsemtu_value = 60;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtnet_init(&pi, nvl), EINVAL);
+
+	/* Backend initialization failure propagates. */
+	reset_mocks();
+	reset_init_mocks();
+	g_netbe_init_result = EIO;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK(pci_vtnet_init(&pi, nvl) != 0);
+
+	/* A backend advertising bits outside the model's set is rejected. */
+	reset_mocks();
+	reset_init_mocks();
+	g_netbe_cap = VIRTIO14_NET_F_GUEST_TSO4;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtnet_init(&pi, nvl), EINVAL);
+
+	/* Transport selection failure aborts init. */
+	reset_mocks();
+	reset_init_mocks();
+	g_select_transport_result = EIO;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK(pci_vtnet_init(&pi, nvl) != 0);
+
+	/* Multiqueue over a legacy transport is unsupported. */
+	reset_mocks();
+	reset_init_mocks();
+	g_init_queues_value = "2";
+	g_select_transport_modern = false;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtnet_init(&pi, nvl), EINVAL);
+
+	/* Packed rings require the modern transport. */
+	reset_mocks();
+	reset_init_mocks();
+	g_init_packed = true;
+	g_select_transport_modern = false;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtnet_init(&pi, nvl), EINVAL);
+
+	/* Interrupt setup failure aborts init. */
+	reset_mocks();
+	reset_init_mocks();
+	g_intr_init_result = 1;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK(pci_vtnet_init(&pi, nvl) != 0);
+
+	/* Modern-transport register setup failure aborts after intr init. */
+	reset_mocks();
+	reset_init_mocks();
+	g_modern_init_result = 1;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK(pci_vtnet_init(&pi, nvl) != 0);
+
+	/* A device with no backend still initializes (carrier down). */
+	reset_mocks();
+	reset_init_mocks();
+	g_init_backend_value = NULL;
+	memset(&pi, 0, sizeof(pi));
+	ATF_REQUIRE_EQ(pci_vtnet_init(&pi, nvl), 0);
+	{
+		struct pci_vtnet_softc *sc = pi.pi_arg;
+
+		ATF_CHECK_EQ(le16toh(sc->vsc_config.status), 0);
+		reap_inited_device(sc);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_restore_staged_packet);
+ATF_TC_BODY(snapshot_restore_staged_packet, tc)
+{
+	struct pci_vtnet_softc source, destination;
+	uint8_t image[4096];
+	size_t used;
+
+	reset_mocks();
+	setup_multiqueue_softc(&source, 1);
+	source.vsc_vs.vs_negotiated_caps = VIRTIO14_NET_F_CTRL_VQ;
+	ATF_REQUIRE(pci_vtnet_apply_features(&source, VIRTIO14_NET_F_CTRL_VQ));
+	ATF_REQUIRE(source.features_negotiated);
+
+	/*
+	 * Stage a plain (GSO_NONE, no-checksum) frame.  Section 5.1.6.1 makes a
+	 * staged receive frame part of device state, so a checkpoint must carry
+	 * it and a restore must revalidate it against the negotiated header.
+	 */
+	source.rx_staged_len = source.vhdrlen + 64;
+	memset(source.vsc_rx_buf, 0, source.vhdrlen);
+	memset(source.vsc_rx_buf + source.vhdrlen, 0x5a, 64);
+	ATF_REQUIRE_EQ(run_net_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+
+	reset_mocks();
+	setup_multiqueue_softc(&destination, 1);
+	destination.vsc_vs.vs_negotiated_caps = VIRTIO14_NET_F_CTRL_VQ;
+	ATF_REQUIRE(pci_vtnet_apply_features(&destination,
+	    VIRTIO14_NET_F_CTRL_VQ));
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK_EQ(destination.rx_staged_len, source.rx_staged_len);
+	ATF_CHECK_EQ(destination.vsc_rx_buf[destination.vhdrlen], 0x5a);
+
+	/*
+	 * A staged frame shorter than the negotiated header is impossible on the
+	 * wire and must be rejected without publishing device state.
+	 */
+	reset_mocks();
+	setup_multiqueue_softc(&destination, 1);
+	destination.vsc_vs.vs_negotiated_caps = VIRTIO14_NET_F_CTRL_VQ;
+	ATF_REQUIRE(pci_vtnet_apply_features(&destination,
+	    VIRTIO14_NET_F_CTRL_VQ));
+	source.rx_staged_len = source.vhdrlen - 1;
+	ATF_REQUIRE_EQ(run_net_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_CHECK_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+
+	destroy_multiqueue_softc(&source);
+	destroy_multiqueue_softc(&destination);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_restore_rss_state);
+ATF_TC_BODY(snapshot_restore_rss_state, tc)
+{
+	struct pci_vtnet_softc source, destination;
+	uint8_t image[4096];
+	uint8_t request[VIRTIO14_NET_RSS_COMMAND_MAX];
+	uint16_t table[2] = { 1, 0 };
+	uint64_t rss_caps;
+	size_t request_size, used;
+
+	rss_caps = VIRTIO14_NET_F_CTRL_VQ | VIRTIO14_NET_F_MQ |
+	    VIRTIO14_NET_F_RSS;
+
+	reset_mocks();
+	setup_multiqueue_softc(&source, 2);
+	source.vsc_vs.vs_negotiated_caps = rss_caps;
+	ATF_REQUIRE(pci_vtnet_apply_features(&source, rss_caps));
+	request_size = build_rss_command(request, sizeof(request), 1, table,
+	    1, 2, VIRTIO14_NET_RSS_HASH_TYPE_TCPV4, rss_test_key,
+	    sizeof(rss_test_key));
+	ATF_REQUIRE_EQ(run_rss_command(&source, request, request_size),
+	    VIRTIO14_NET_CTRL_OK);
+	ATF_REQUIRE(source.rss_enabled);
+	source.rx_staged_len = 0;
+	ATF_REQUIRE_EQ(run_net_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+
+	/* An identically-negotiated destination accepts the RSS image. */
+	reset_mocks();
+	setup_multiqueue_softc(&destination, 2);
+	destination.vsc_vs.vs_negotiated_caps = rss_caps;
+	ATF_REQUIRE(pci_vtnet_apply_features(&destination, rss_caps));
+	ATF_REQUIRE_EQ(run_net_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK(destination.rss_enabled);
+	/* Section 5.1.6.5.6.4: an RSS device has no default steering pairs. */
+	ATF_CHECK_EQ(destination.rx_active_pairs, 0);
+	ATF_CHECK_EQ(destination.rss_key_length, sizeof(rss_test_key));
+	ATF_CHECK_EQ(destination.tx_active_pairs, source.rss_max_tx_vq);
+
+	destroy_multiqueue_softc(&source);
+	destroy_multiqueue_softc(&destination);
+}
+
+ATF_TC_WITHOUT_HEAD(tx_thread_processes_data_and_control);
+ATF_TC_BODY(tx_thread_processes_data_and_control, tc)
+{
+	struct pci_vtnet_softc sc;
+	uint8_t request[VIRTIO14_NET_CTRL_MQ_SIZE];
+	uint8_t ack;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.tx_features_negotiated = true;
+	sc.tx_active_pairs = 1;
+
+	/* Queue one transmit chain and start the real worker thread. */
+	add_chain(1, 1, 0, true, g_packet, sizeof(g_packet));
+	g_send_result = sizeof(g_packet) - sc.vhdrlen;
+	ATF_REQUIRE_EQ(pthread_create(&sc.tx_tid, NULL, pci_vtnet_tx_thread,
+	    &sc), 0);
+
+	pthread_mutex_lock(&sc.tx_mtx);
+	pthread_cond_signal(&sc.tx_cond);
+	pthread_mutex_unlock(&sc.tx_mtx);
+	ATF_REQUIRE(wait_for_counter(&sc, &g_rel_calls, 1));
+	ATF_CHECK_EQ(g_send_calls, 1);
+
+	/*
+	 * Now stage a well-formed control command and mark it pending.  The
+	 * shared worker must alternate to the control queue and complete it.
+	 */
+	memset(request, 0, sizeof(request));
+	request[VIRTIO14_NET_CTRL_CLASS_OFF] = VIRTIO14_NET_CTRL_MQ;
+	request[VIRTIO14_NET_CTRL_COMMAND_OFF] =
+	    VIRTIO14_NET_CTRL_MQ_VQ_PAIRS_SET;
+	virtio14_store_le16(request + VIRTIO14_NET_CTRL_DATA_OFF, 2);
+	ack = 0xff;
+
+	pthread_mutex_lock(&sc.tx_mtx);
+	g_chain_next = 0;
+	memset(g_chains, 0, sizeof(g_chains));
+	g_chains[0].n = 2;
+	g_chains[0].req.idx = 20;
+	g_chains[0].req.readable = 1;
+	g_chains[0].req.writable = 1;
+	g_chains[0].req.ordered = true;
+	g_chains[0].iov[0].iov_base = request;
+	g_chains[0].iov[0].iov_len = sizeof(request);
+	g_chains[0].iov[1].iov_base = &ack;
+	g_chains[0].iov[1].iov_len = sizeof(ack);
+	g_chain_count = 1;
+	sc.ctl_pending = true;
+	pthread_cond_signal(&sc.tx_cond);
+	pthread_mutex_unlock(&sc.tx_mtx);
+
+	ATF_REQUIRE(wait_for_counter(&sc, &g_rel_calls, 2));
+	/* Section 5.1.6.5: an accepted MQ pairs command acks with OK. */
+	ATF_CHECK_EQ(ack, VIRTIO14_NET_CTRL_OK);
+
+	/*
+	 * Terminate the perpetual worker at its condition-wait cancellation
+	 * point.  POSIX re-locks tx_mtx before unwinding a thread cancelled in
+	 * pthread_cond_wait(), so that mutex is intentionally left owned by the
+	 * defunct thread and is not destroyed here; the process exits next.
+	 */
+	ATF_REQUIRE_EQ(pthread_cancel(sc.tx_tid), 0);
+	ATF_REQUIRE_EQ(pthread_join(sc.tx_tid, NULL), 0);
+	pthread_mutex_destroy(&sc.rx_mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(queue_enable_notify);
+ATF_TC_BODY(queue_enable_notify, tc)
+{
+	struct pci_vtnet_softc sc;
+	struct vqueue_info stray;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.tx_features_negotiated = true;
+	sc.tx_active_pairs = 2;
+	sc.rx_active_pairs = 2;
+	sc.rx_enabled_mask = 3;
+
+	/* A queue not owned by this device is rejected. */
+	memset(&stray, 0, sizeof(stray));
+	stray.vq_num = 0;
+	ATF_CHECK_EQ(pci_vtnet_qenable(&sc, &stray), EINVAL);
+
+	/* Enabling the control queue is a no-op success. */
+	ATF_CHECK_EQ(pci_vtnet_qenable(&sc,
+	    &sc.vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(2)]), 0);
+
+	/* Enabling an active receive queue succeeds without backend work. */
+	ATF_CHECK_EQ(pci_vtnet_qenable(&sc,
+	    &sc.vsc_queues[VIRTIO14_NET_RXQ(1)]), 0);
+
+	/* Enabling a disabled receive queue is also a benign success. */
+	sc.rx_enabled_mask = 1;
+	ATF_CHECK_EQ(pci_vtnet_qenable(&sc,
+	    &sc.vsc_queues[VIRTIO14_NET_RXQ(1)]), 0);
+
+	/* Enabling a transmit queue wakes the worker. */
+	ATF_CHECK_EQ(pci_vtnet_qenable(&sc,
+	    &sc.vsc_queues[VIRTIO14_NET_TXQ(1)]), 0);
+
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(tx_notify_gates);
+ATF_TC_BODY(tx_notify_gates, tc)
+{
+	struct pci_vtnet_softc sc;
+
+	reset_mocks();
+	setup_multiqueue_softc(&sc, 2);
+	sc.tx_features_negotiated = true;
+	sc.tx_active_pairs = 2;
+
+	/* A kick on an even (receive) queue index is ignored by ping_txq. */
+	pci_vtnet_ping_txq(&sc, &sc.vsc_queues[VIRTIO14_NET_RXQ(0)]);
+	/* A kick on the control queue index is ignored. */
+	pci_vtnet_ping_txq(&sc,
+	    &sc.vsc_queues[VIRTIO14_NET_MQ_CONTROLQ(2)]);
+
+	/* A kick on a live transmit queue with work signals the worker. */
+	add_chain(1, 1, 0, true, g_packet, sizeof(g_packet));
+	pci_vtnet_ping_txq(&sc, &sc.vsc_queues[VIRTIO14_NET_TXQ(0)]);
+
+	destroy_multiqueue_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(rx_callback_drives_receive);
+ATF_TC_BODY(rx_callback_drives_receive, tc)
+{
+	struct pci_vtnet_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
+
+	/* A backend readiness event with a pending frame is delivered. */
+	memset(g_packet, 0xa5, sizeof(g_packet));
+	g_peek_len = 64;
+	g_recv_result = 64;
+	add_chain(1, 0, 1, true, g_packet, sizeof(g_packet));
+	pci_vtnet_rx_callback(0, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_recv_calls, 1);
+	ATF_CHECK_EQ(g_rel_len[0], VIRTIO14_NET_MODERN_HDR_SIZE + 64);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, transmit_validation);
@@ -3625,5 +4326,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, tx_idle_condition_wait);
 	ATF_TP_ADD_TC(tp, tx_idle_timeout_rolls_back_lifecycle);
 	ATF_TP_ADD_TC(tp, control_kick_is_deferred_and_fair);
+	ATF_TP_ADD_TC(tp, device_init_modern_success);
+	ATF_TP_ADD_TC(tp, device_init_legacy_and_debug);
+	ATF_TP_ADD_TC(tp, device_init_multiqueue_success);
+	ATF_TP_ADD_TC(tp, device_init_error_paths);
+	ATF_TP_ADD_TC(tp, snapshot_restore_staged_packet);
+	ATF_TP_ADD_TC(tp, snapshot_restore_rss_state);
+	ATF_TP_ADD_TC(tp, tx_thread_processes_data_and_control);
+	ATF_TP_ADD_TC(tp, queue_enable_notify);
+	ATF_TP_ADD_TC(tp, tx_notify_gates);
+	ATF_TP_ADD_TC(tp, rx_callback_drives_receive);
 	return (atf_no_error());
 }

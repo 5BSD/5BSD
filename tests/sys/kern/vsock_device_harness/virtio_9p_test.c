@@ -70,6 +70,62 @@ static uint8_t g_config[VT9P_CONFIGSPACESZ];
 static int g_snapshot_validate_calls;
 static bool g_snapshot_validate_mutex_owned;
 
+/* Init-path mocks (see scsi/console tests: the real bhyve build strips
+ * pci_vt9p_init() unless the linker set is referenced; here we drive it
+ * directly with a mocked virtio core and lib9p backend). */
+static const char *g_cfg_sharename;
+static const char *g_cfg_path;
+static bool g_cfg_ro;
+static bool g_cfg_packed;
+static enum virtio_pci_transport g_init_transport;
+static int g_init_transport_error;
+static int g_modern_init_error;
+static int g_intr_init_error;
+static int g_backend_init_error;
+static int g_server_init_error;
+static int g_msix_result;
+static uint16_t g_modern_identity;
+static int g_linkup_calls;
+static struct l9p_backend g_fs_backend;
+static struct l9p_server g_server;
+static uint16_t g_cfg_device;
+static uint16_t g_cfg_vendor;
+static uint16_t g_cfg_subdev;
+static uint16_t g_cfg_subvend;
+static uint8_t g_cfg_class;
+/* calloc/strdup fault injection: fail the Nth allocation after arming. */
+static int g_calloc_fail_at;
+static int g_calloc_calls;
+static int g_strdup_fail_at;
+static int g_strdup_calls;
+
+extern void *__real_calloc(size_t, size_t);
+extern char *__real_strdup(const char *);
+void *__wrap_calloc(size_t, size_t);
+char *__wrap_strdup(const char *);
+
+void *
+__wrap_calloc(size_t nmemb, size_t size)
+{
+
+	g_calloc_calls++;
+	if (g_calloc_fail_at != 0 && g_calloc_calls == g_calloc_fail_at)
+		return (NULL);
+	return (__real_calloc(nmemb, size));
+}
+
+char *
+__wrap_strdup(const char *s)
+{
+
+	g_strdup_calls++;
+	if (g_strdup_fail_at != 0 && g_strdup_calls == g_strdup_fail_at) {
+		errno = ENOMEM;
+		return (NULL);
+	}
+	return (__real_strdup(s));
+}
+
 int
 vi_pci_snapshot(struct vm_snapshot_meta *meta)
 {
@@ -293,18 +349,43 @@ reset_mocks(void)
 	g_notify_during_close = NULL;
 	g_drop_during_close = false;
 	g_has_fid = false;
+	g_cfg_sharename = NULL;
+	g_cfg_path = NULL;
+	g_cfg_ro = false;
+	g_cfg_packed = false;
+	g_init_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	g_init_transport_error = 0;
+	g_modern_init_error = 0;
+	g_intr_init_error = 0;
+	g_backend_init_error = 0;
+	g_server_init_error = 0;
+	g_msix_result = 1;
+	g_modern_identity = 0;
+	g_linkup_calls = 0;
+	g_calloc_fail_at = 0;
+	g_calloc_calls = 0;
+	g_strdup_fail_at = 0;
+	g_strdup_calls = 0;
 }
 
 const char *
-get_config_value_node(const nvlist_t *nvl __unused, const char *name __unused)
+get_config_value_node(const nvlist_t *nvl __unused, const char *name)
 {
+	if (name != NULL && strcmp(name, "sharename") == 0)
+		return (g_cfg_sharename);
+	if (name != NULL && strcmp(name, "path") == 0)
+		return (g_cfg_path);
 	return (NULL);
 }
 
 bool
 get_config_bool_node_default(const nvlist_t *nvl __unused,
-    const char *name __unused, bool value)
+    const char *name, bool value)
 {
+	if (name != NULL && strcmp(name, "ro") == 0)
+		return (g_cfg_ro);
+	if (name != NULL && strcmp(name, "packed") == 0)
+		return (g_cfg_packed);
 	return (value);
 }
 
@@ -428,6 +509,119 @@ l9p_connection_init(struct l9p_server *server __unused,
 	}
 	*conn = &g_connection;
 	g_connection_inits++;
+	return (0);
+}
+
+void
+vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc, void *arg,
+    struct pci_devinst *pi, struct vqueue_info *queues)
+{
+
+	g_linkup_calls++;
+	vs->vs_vc = vc;
+	vs->vs_pi = pi;
+	vs->vs_queues = queues;
+	pi->pi_arg = arg;
+	for (int i = 0; i < vc->vc_nvq; i++) {
+		queues[i].vq_vs = vs;
+		queues[i].vq_num = i;
+	}
+}
+
+int
+vi_pci_select_transport(struct virtio_softc *vs, const nvlist_t *nvl __unused,
+    enum virtio_pci_transport_policy policy __unused)
+{
+
+	if (g_init_transport_error != 0)
+		return (g_init_transport_error);
+	vs->vs_transport = g_init_transport;
+	return (0);
+}
+
+void
+vi_pci_modern_set_identity(struct virtio_softc *vs __unused, uint16_t devid)
+{
+
+	g_modern_identity = devid;
+}
+
+int
+vi_pci_modern_init(struct virtio_softc *vs __unused, int barnum __unused)
+{
+
+	return (g_modern_init_error);
+}
+
+void
+vi_set_io_bar(struct virtio_softc *vs __unused, int barnum __unused)
+{
+}
+
+int
+vi_intr_init(struct virtio_softc *vs, int barnum __unused, int use_msix __unused)
+{
+
+	if (g_intr_init_error != 0)
+		return (g_intr_init_error);
+	return (pthread_mutex_init(&vs->vs_isr_mtx, NULL));
+}
+
+int
+fbsdrun_virtio_msix(void)
+{
+
+	return (g_msix_result);
+}
+
+void
+pci_set_cfgdata8(struct pci_devinst *pi __unused, int reg, uint8_t val)
+{
+
+	if (reg == PCIR_CLASS)
+		g_cfg_class = val;
+}
+
+void
+pci_set_cfgdata16(struct pci_devinst *pi __unused, int reg, uint16_t val)
+{
+
+	switch (reg) {
+	case PCIR_DEVICE:
+		g_cfg_device = val;
+		break;
+	case PCIR_VENDOR:
+		g_cfg_vendor = val;
+		break;
+	case PCIR_SUBDEV_0:
+		g_cfg_subdev = val;
+		break;
+	case PCIR_SUBVEND_0:
+		g_cfg_subvend = val;
+		break;
+	default:
+		break;
+	}
+}
+
+int
+l9p_backend_fs_init(struct l9p_backend **backendp, int rootfd __unused,
+    bool ro __unused)
+{
+
+	if (g_backend_init_error != 0)
+		return (g_backend_init_error);
+	*backendp = &g_fs_backend;
+	return (0);
+}
+
+int
+l9p_server_init(struct l9p_server **serverp, struct l9p_backend *backend __unused)
+{
+
+	if (g_server_init_error != 0)
+		return (g_server_init_error);
+	*serverp = &g_server;
 	return (0);
 }
 
@@ -1121,6 +1315,496 @@ ATF_TC_BODY(checkpoint_rejects_live_session, tc)
 	destroy_softc(&sc);
 }
 
+ATF_TC_WITHOUT_HEAD(neg_features_records);
+ATF_TC_BODY(neg_features_records, tc)
+{
+	struct pci_vt9p_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	ATF_CHECK_EQ(pci_vt9p_neg_features(&sc,
+	    VIRTIO14_9P_F_MOUNT_TAG), 0);
+	ATF_CHECK_EQ(sc.vsc_features, VIRTIO14_9P_F_MOUNT_TAG);
+	ATF_CHECK_EQ(pci_vt9p_neg_features(&sc, 0), 0);
+	ATF_CHECK_EQ(sc.vsc_features, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(get_response_buffer_slices);
+ATF_TC_BODY(get_response_buffer_slices, tc)
+{
+	struct pci_vt9p_request preq;
+	struct l9p_request req;
+	struct iovec out[VT9P_MAX_IOV];
+	size_t niov;
+
+	memset(&preq, 0, sizeof(preq));
+	preq.vsr_niov = 4;
+	preq.vsr_respidx = 1;
+	for (size_t i = 0; i < preq.vsr_niov; i++) {
+		preq.vsr_iov[i].iov_base = (void *)(uintptr_t)(0x1000 + i);
+		preq.vsr_iov[i].iov_len = 10 + i;
+	}
+	memset(&req, 0, sizeof(req));
+	req.lr_aux = &preq;
+	niov = 0;
+	ATF_CHECK_EQ(pci_vt9p_get_buffer(&req, out, &niov, NULL), 0);
+	/*
+	 * The write-only tail begins at readable descriptors (respidx); lib9p
+	 * must receive exactly the response half of the chain, in order.
+	 */
+	ATF_CHECK_EQ(niov, preq.vsr_niov - preq.vsr_respidx);
+	for (size_t i = 0; i < niov; i++) {
+		ATF_CHECK_EQ(out[i].iov_base,
+		    preq.vsr_iov[preq.vsr_respidx + i].iov_base);
+		ATF_CHECK_EQ(out[i].iov_len,
+		    preq.vsr_iov[preq.vsr_respidx + i].iov_len);
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(qenable_rejects_foreign_queue);
+ATF_TC_BODY(qenable_rejects_foreign_queue, tc)
+{
+	struct pci_vt9p_softc sc;
+	struct vqueue_info impostor;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.vsc_vq.vq_num = 0;
+	memset(&impostor, 0, sizeof(impostor));
+	ATF_REQUIRE(pthread_mutex_lock(&sc.vsc_mtx) == 0);
+	/* Only queue 0's own vqueue_info may be re-enabled. */
+	ATF_CHECK_EQ(pci_vt9p_qenable(&sc, &impostor), EINVAL);
+	impostor = sc.vsc_vq;
+	impostor.vq_num = 1;
+	ATF_CHECK_EQ(pci_vt9p_qenable(&sc, &impostor), EINVAL);
+	sc.vsc_qreset_pending = true;
+	ATF_CHECK_EQ(pci_vt9p_qenable(&sc, &sc.vsc_vq), EINVAL);
+	sc.vsc_qreset_pending = false;
+	ATF_REQUIRE(pthread_mutex_unlock(&sc.vsc_mtx) == 0);
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(drop_relays_and_completes_reset);
+ATF_TC_BODY(drop_relays_and_completes_reset, tc)
+{
+	struct pci_vt9p_request *preq;
+	struct pci_vt9p_softc sc;
+	struct l9p_request req;
+
+	/* A current-generation drop returns the chain with zero length. */
+	reset_mocks();
+	setup_softc(&sc);
+	preq = calloc(1, sizeof(*preq));
+	ATF_REQUIRE(preq != NULL);
+	preq->vsr_sc = &sc;
+	preq->vsr_req.idx = 7;
+	preq->vsr_generation = sc.vsc_generation;
+	memset(&req, 0, sizeof(req));
+	req.lr_aux = preq;
+	pci_vt9p_drop(&req, NULL, 0, NULL);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len, 0);
+	ATF_CHECK_EQ(g_end_calls, 1);
+	ATF_CHECK_EQ(g_qreset_complete_calls, 0);
+	destroy_softc(&sc);
+
+	/* The last active drop finishes an in-progress queue reset. */
+	reset_mocks();
+	setup_softc(&sc);
+	preq = calloc(1, sizeof(*preq));
+	ATF_REQUIRE(preq != NULL);
+	preq->vsr_sc = &sc;
+	preq->vsr_req.idx = 7;
+	preq->vsr_generation = sc.vsc_generation;
+	preq->vsr_active = true;
+	sc.vsc_active_requests = 1;
+	sc.vsc_qreset_pending = true;
+	sc.vsc_qreset_vq = &sc.vsc_vq;
+	sc.vsc_qreset_generation = 99;
+	memset(&req, 0, sizeof(req));
+	req.lr_aux = preq;
+	pci_vt9p_drop(&req, NULL, 0, NULL);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(sc.vsc_active_requests, 0);
+	ATF_CHECK(!sc.vsc_qreset_pending);
+	ATF_CHECK_EQ(g_qreset_complete_calls, 1);
+	ATF_CHECK_EQ(g_qreset_complete_generation, 99);
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_stops_on_empty_chain);
+ATF_TC_BODY(notify_stops_on_empty_chain, tc)
+{
+	struct pci_vt9p_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	g_descs = 1;
+	g_chain_n = 0;
+	pci_vt9p_notify(&sc, &sc.vsc_vq);
+	ATF_CHECK_EQ(g_recv_calls, 0);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(g_end_calls, 1);
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_request_alloc_failure);
+ATF_TC_BODY(notify_request_alloc_failure, tc)
+{
+	struct pci_vt9p_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	g_calloc_calls = 0;
+	g_calloc_fail_at = 1;
+	pci_vt9p_notify(&sc, &sc.vsc_vq);
+	g_calloc_fail_at = 0;
+	ATF_CHECK_EQ(g_recv_calls, 0);
+	ATF_CHECK_EQ(sc.vsc_active_requests, 0);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len, 0);
+	ATF_CHECK_EQ(g_end_calls, 1);
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_rejects_busy_and_bad_images);
+ATF_TC_BODY(snapshot_rejects_busy_and_bad_images, tc)
+{
+	struct pci_vt9p_softc sc;
+	uint8_t image[1024];
+	size_t used;
+
+	/* A live request forbids any checkpoint transfer. */
+	reset_mocks();
+	setup_snapshot_softc(&sc);
+	sc.vsc_active_requests = 1;
+	ATF_CHECK_EQ(run_snapshot(&sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EBUSY);
+	sc.vsc_active_requests = 0;
+
+	/* A version-less session carries no negotiated I/O size. */
+	sc.vsc_conn->lc_version = L9P_INVALID_VERSION;
+	sc.vsc_conn->lc_max_io_size = 0;
+	ATF_REQUIRE_EQ(run_snapshot(&sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	sc.vsc_conn->lc_version = L9P_2000L;
+	sc.vsc_conn->lc_max_io_size = 8192 - 24;
+
+	/* Corrupted on-disk magic is rejected as an unsupported image. */
+	ATF_REQUIRE_EQ(run_snapshot(&sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	image[0] ^= 0xFF;
+	ATF_CHECK_EQ(run_snapshot(&sc, image, used, VM_SNAPSHOT_RESTORE,
+	    NULL), ENOTSUP);
+	image[0] ^= 0xFF;
+
+	/* A restore whose saved mount tag differs from ours is rejected. */
+	ATF_REQUIRE_EQ(run_snapshot(&sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	pci_vt9p_set_tag(&sc, "othershare");
+	ATF_CHECK_EQ(run_snapshot(&sc, image, used, VM_SNAPSHOT_RESTORE,
+	    NULL), EINVAL);
+	pci_vt9p_set_tag(&sc, "hostshare");
+
+	destroy_softc(&sc);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_validate_null_softc);
+ATF_TC_BODY(snapshot_validate_null_softc, tc)
+{
+	struct pci_devinst pi;
+	struct vm_snapshot_meta meta = {
+		.dev_data = &pi,
+		.op = VM_SNAPSHOT_VALIDATE,
+	};
+
+	memset(&pi, 0, sizeof(pi));
+	pi.pi_arg = NULL;
+	g_snapshot_validate_calls = 0;
+	ATF_CHECK_EQ(pci_vt9p_snapshot_validate(&meta), EINVAL);
+	ATF_CHECK_EQ(g_snapshot_validate_calls, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_config_edge_cases);
+ATF_TC_BODY(legacy_config_edge_cases, tc)
+{
+	struct nvlist nvl;
+
+	reset_mocks();
+	/* A device with no options string is a no-op success. */
+	ATF_CHECK_EQ(pci_vt9p_legacy_config(&nvl, NULL), 0);
+	ATF_CHECK_EQ(g_set_count, 0);
+
+	/* strdup failure surfaces as a parse error. */
+	g_strdup_calls = 0;
+	g_strdup_fail_at = 1;
+	ATF_CHECK_EQ(pci_vt9p_legacy_config(&nvl, "hostshare=/tmp/s"), -1);
+	g_strdup_fail_at = 0;
+}
+
+ATF_TC_WITHOUT_HEAD(confine_rootfd_rejects_bad_fd);
+ATF_TC_BODY(confine_rootfd_rejects_bad_fd, tc)
+{
+
+	/* F_GETFD on a closed descriptor fails and aborts confinement. */
+	ATF_CHECK_EQ(pci_vt9p_confine_rootfd(-1), -1);
+}
+
+static char *
+make_export_dir(char *tmpl)
+{
+
+	strcpy(tmpl, "/tmp/virtio-9p-init.XXXXXX");
+	return (mkdtemp(tmpl));
+}
+
+static void
+cleanup_inited_softc(struct pci_devinst *pi)
+{
+	struct pci_vt9p_softc *sc = pi->pi_arg;
+
+	if (sc == NULL)
+		return;
+	pthread_cond_destroy(&sc->vsc_reset_cv);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);
+	free(sc->vsc_vs.vs_modern);
+	free(sc->vsc_config);
+	free(sc->vsc_rootpath);
+	free(sc);
+	pi->pi_arg = NULL;
+}
+
+ATF_TC_WITHOUT_HEAD(init_modern_success);
+ATF_TC_BODY(init_modern_success, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vt9p_softc *sc;
+	struct nvlist nvl;
+	char dir[64];
+
+	reset_mocks();
+	ATF_REQUIRE(make_export_dir(dir) != NULL);
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "hostshare";
+	g_cfg_path = dir;
+	g_cfg_ro = false;
+	g_cfg_packed = false;
+	g_init_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+
+	ATF_REQUIRE_EQ(pci_vt9p_init(&pi, &nvl), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(g_linkup_calls, 1);
+	ATF_CHECK(!sc->vsc_readonly);
+	ATF_CHECK_EQ(sc->vsc_vq.vq_qsize, VT9P_RINGSZ);
+	/* Modern devices advertise the virtio 9P device id. */
+	ATF_CHECK_EQ(g_modern_identity, VIRTIO_ID_9P);
+	ATF_CHECK_EQ(le16toh(sc->vsc_config->tag_len),
+	    (uint16_t)strlen("hostshare"));
+	ATF_CHECK(sc->vsc_conn == &g_connection);
+	cleanup_inited_softc(&pi);
+	ATF_REQUIRE_EQ(rmdir(dir), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(init_modern_packed_success);
+ATF_TC_BODY(init_modern_packed_success, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vt9p_softc *sc;
+	struct nvlist nvl;
+	char dir[64];
+
+	reset_mocks();
+	ATF_REQUIRE(make_export_dir(dir) != NULL);
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "packshare";
+	g_cfg_path = dir;
+	g_cfg_packed = true;
+	g_init_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+
+	ATF_REQUIRE_EQ(pci_vt9p_init(&pi, &nvl), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	/* Packed queues on a modern transport advertise the packed feature. */
+	ATF_CHECK((sc->vsc_consts.vc_hv_caps & VIRTIO14_F_RING_PACKED) != 0);
+	cleanup_inited_softc(&pi);
+	ATF_REQUIRE_EQ(rmdir(dir), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(init_legacy_readonly_success);
+ATF_TC_BODY(init_legacy_readonly_success, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vt9p_softc *sc;
+	struct nvlist nvl;
+	char dir[64];
+
+	reset_mocks();
+	ATF_REQUIRE(make_export_dir(dir) != NULL);
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "roshare";
+	g_cfg_path = dir;
+	g_cfg_ro = true;
+	g_init_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+
+	ATF_REQUIRE_EQ(pci_vt9p_init(&pi, &nvl), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK(sc->vsc_readonly);
+	/* Legacy transitional 9P device id is programmed into config space. */
+	ATF_CHECK_EQ(g_cfg_device, VIRTIO_PCI_TRANSITIONAL_9P);
+	ATF_CHECK_EQ(g_cfg_subdev, VIRTIO_ID_9P);
+	ATF_CHECK_EQ(g_cfg_vendor, VIRTIO_VENDOR);
+	ATF_CHECK_EQ(g_cfg_subvend, VIRTIO_VENDOR);
+	ATF_CHECK_EQ(g_cfg_class, PCIC_STORAGE);
+	/* tag_len is host-order on legacy transports. */
+	ATF_CHECK_EQ(sc->vsc_config->tag_len, (uint16_t)strlen("roshare"));
+	cleanup_inited_softc(&pi);
+	ATF_REQUIRE_EQ(rmdir(dir), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(init_rejects_configuration_errors);
+ATF_TC_BODY(init_rejects_configuration_errors, tc)
+{
+	struct pci_devinst pi;
+	struct nvlist nvl;
+	char dir[64];
+	char longshare[VT9P_MAXTAGSZ + 2];
+
+	ATF_REQUIRE(make_export_dir(dir) != NULL);
+
+	/* Missing share name. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = NULL;
+	g_cfg_path = dir;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+	ATF_CHECK(pi.pi_arg == NULL);
+
+	/* Over-long share name. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	memset(longshare, 'a', sizeof(longshare) - 1);
+	longshare[sizeof(longshare) - 1] = '\0';
+	g_cfg_sharename = longshare;
+	g_cfg_path = dir;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	/* Missing path. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = NULL;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	/* Unopenable path. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = "/nonexistent/virtio-9p/path";
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	/* Packed queues require the modern transport. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_cfg_packed = true;
+	g_init_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	ATF_REQUIRE_EQ(rmdir(dir), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(init_cleans_up_on_late_failures);
+ATF_TC_BODY(init_cleans_up_on_late_failures, tc)
+{
+	struct pci_devinst pi;
+	struct nvlist nvl;
+	char dir[64];
+
+	ATF_REQUIRE(make_export_dir(dir) != NULL);
+
+	/* softc allocation failure (first calloc). */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_calloc_calls = 0;
+	g_calloc_fail_at = 1;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+	g_calloc_fail_at = 0;
+
+	/* rootpath strdup failure. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_strdup_calls = 0;
+	g_strdup_fail_at = 1;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+	g_strdup_fail_at = 0;
+
+	/* config-space allocation failure (second calloc). */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_calloc_calls = 0;
+	g_calloc_fail_at = 2;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+	g_calloc_fail_at = 0;
+
+	/* transport selection failure. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_init_transport_error = -1;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	/* interrupt setup failure. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_intr_init_error = -1;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	/* modern BAR init failure. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_init_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	g_modern_init_error = -1;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	/* lib9p backend / server / connection failures exercise full teardown. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_backend_init_error = -1;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_server_init_error = -1;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_cfg_sharename = "s";
+	g_cfg_path = dir;
+	g_connection_init_result = -1;
+	ATF_CHECK_EQ(pci_vt9p_init(&pi, &nvl), -1);
+
+	ATF_REQUIRE_EQ(rmdir(dir), 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, export_root_resolve_beneath);
@@ -1146,5 +1830,20 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, snapshot_identity_and_atomicity);
 	ATF_TP_ADD_TC(tp, snapshot_preflight_is_locally_serialized);
 	ATF_TP_ADD_TC(tp, checkpoint_rejects_live_session);
+	ATF_TP_ADD_TC(tp, neg_features_records);
+	ATF_TP_ADD_TC(tp, get_response_buffer_slices);
+	ATF_TP_ADD_TC(tp, qenable_rejects_foreign_queue);
+	ATF_TP_ADD_TC(tp, drop_relays_and_completes_reset);
+	ATF_TP_ADD_TC(tp, notify_stops_on_empty_chain);
+	ATF_TP_ADD_TC(tp, notify_request_alloc_failure);
+	ATF_TP_ADD_TC(tp, snapshot_rejects_busy_and_bad_images);
+	ATF_TP_ADD_TC(tp, snapshot_validate_null_softc);
+	ATF_TP_ADD_TC(tp, legacy_config_edge_cases);
+	ATF_TP_ADD_TC(tp, confine_rootfd_rejects_bad_fd);
+	ATF_TP_ADD_TC(tp, init_modern_success);
+	ATF_TP_ADD_TC(tp, init_modern_packed_success);
+	ATF_TP_ADD_TC(tp, init_legacy_readonly_success);
+	ATF_TP_ADD_TC(tp, init_rejects_configuration_errors);
+	ATF_TP_ADD_TC(tp, init_cleans_up_on_late_failures);
 	return (atf_no_error());
 }

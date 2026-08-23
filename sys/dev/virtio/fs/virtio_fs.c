@@ -206,9 +206,14 @@ static struct virtio_feature_desc vtfs_feature_desc[] = {
 /*
  * Feature bits this slice is willing to negotiate.  Deliberately empty of any
  * device-specific feature: notification, DAX and the ring extensions are not
- * enabled until each is independently implemented and tested.
+ * enabled until each is independently implemented and tested.  Indirect
+ * descriptors are negotiated because a maximal request/reply chain
+ * (vtfs_max_segs segments) would otherwise consume most or all of a ring on
+ * its own; with them each request occupies a single ring slot.  The segment
+ * budget itself is clamped to VIRTIO_MAX_INDIRECT and the ring size at
+ * attach time either way.
  */
-#define	VTFS_FEATURES		0
+#define	VTFS_FEATURES		VIRTIO_RING_F_INDIRECT_DESC
 
 /* ------------------------------------------------------------------ */
 /* FUSE opcode helpers                                                 */
@@ -303,7 +308,7 @@ vtfs_read_config(struct vtfs_softc *sc)
 {
 	device_t dev;
 	uint32_t nq;
-	uint16_t taglen;
+	uint16_t i, taglen;
 
 	dev = sc->vtfs_dev;
 
@@ -321,6 +326,13 @@ vtfs_read_config(struct vtfs_softc *sc)
 	if (taglen == 0) {
 		device_printf(dev, "device supplied an empty mount tag\n");
 		return (EINVAL);
+	}
+	for (i = taglen; i < VIRTIO_FS_TAG_SIZE; i++) {
+		if (sc->vtfs_tag[i] != '\0') {
+			device_printf(dev,
+			    "device mount tag has an embedded NUL\n");
+			return (EINVAL);
+		}
 	}
 	sc->vtfs_tag_len = taglen;
 
@@ -423,7 +435,18 @@ vtfs_attach(device_t dev)
 	 */
 	sc->vtfs_reply_max = maxphys;
 	sc->vtfs_max_segs = howmany(maxphys, PAGE_SIZE) * 2 + 4;
-	sc->vtfs_sg = sglist_alloc(sc->vtfs_max_segs, M_WAITOK);
+	/*
+	 * The segment budget doubles as the indirect-table size request, which
+	 * virtqueue_alloc() rejects outright above VIRTIO_MAX_INDIRECT (one
+	 * page of descriptors) whether or not indirect descriptors end up
+	 * negotiated.  Clamp before allocating the queues; a large maxphys is
+	 * then carried by multiple requests instead of failing attach.
+	 */
+	if (sc->vtfs_max_segs > VIRTIO_MAX_INDIRECT) {
+		sc->vtfs_max_segs = VIRTIO_MAX_INDIRECT;
+		sc->vtfs_reply_max = MIN(sc->vtfs_reply_max,
+		    (size_t)MAX(VIRTIO_MAX_INDIRECT - 8, 1) * PAGE_SIZE);
+	}
 
 	sc->vtfs_nvqs = 1 + sc->vtfs_num_request_queues;
 	sc->vtfs_vqs = malloc(sc->vtfs_nvqs * sizeof(*sc->vtfs_vqs), M_VTFS,
@@ -436,6 +459,28 @@ vtfs_attach(device_t dev)
 		device_printf(dev, "cannot allocate virtqueues: %d\n", error);
 		goto fail;
 	}
+
+	/*
+	 * A descriptor chain may not exceed the (smallest) queue size: without
+	 * indirect descriptors every segment consumes one ring descriptor, and
+	 * with them the device may still reject an indirect table with more
+	 * entries than the ring (as the bhyve transport does).  Clamp the
+	 * segment budget and the reply size so a maximal request still fits;
+	 * the margin covers the readable request segments.
+	 */
+	{
+		int i, qsize;
+
+		qsize = virtqueue_size(sc->vtfs_hiprio_vq);
+		for (i = 0; i < (int)sc->vtfs_num_request_queues; i++)
+			qsize = MIN(qsize, virtqueue_size(sc->vtfs_req_vq[i]));
+		if (sc->vtfs_max_segs > qsize) {
+			sc->vtfs_max_segs = qsize;
+			sc->vtfs_reply_max = MIN(sc->vtfs_reply_max,
+			    (size_t)MAX(qsize - 8, 1) * PAGE_SIZE);
+		}
+	}
+	sc->vtfs_sg = sglist_alloc(sc->vtfs_max_segs, M_WAITOK);
 
 	error = virtio_setup_intr(dev, INTR_TYPE_MISC | INTR_MPSAFE);
 	if (error != 0) {
@@ -483,6 +528,8 @@ vtfs_detach(device_t dev)
 	VTFS_LOCK(sc);
 	sc->vtfs_detaching = true;
 	if (sc->vtfs_busy) {
+		/* Detach failed: the device must stay usable. */
+		sc->vtfs_detaching = false;
 		VTFS_UNLOCK(sc);
 		return (EBUSY);
 	}
@@ -684,8 +731,15 @@ retry:
 	}
 
 	error = virtqueue_enqueue(vq, req, sc->vtfs_sg, readable, writable);
-	if (error == ENOSPC) {
-		/* Ring full: wait for a completion to free descriptors. */
+	if (error == ENOSPC || error == EMSGSIZE) {
+		/*
+		 * Ring full, or (EMSGSIZE, no indirect descriptors) not
+		 * enough contiguous free descriptors for the chain.  The
+		 * chain always fits an empty ring -- vtfs_max_segs is
+		 * clamped to the queue size when indirect descriptors are
+		 * not negotiated -- so wait for a completion to free
+		 * descriptors and retry.
+		 */
 		cv_wait(&sc->vtfs_submit_cv, &sc->vtfs_mtx);
 		goto retry;
 	}

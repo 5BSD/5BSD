@@ -162,10 +162,107 @@ ATF_TC_BODY(write_rejects_without_mutation, tc)
 	ATF_CHECK_EQ(vm_rdmtrr(&mtrr, UINT_MAX, &value), -1);
 }
 
+/*
+ * Exercise the full MTRR MSR register file per Intel SDM Vol. 3, 12.11.2:
+ * one MTRRcap, one IA32_MTRR_DEF_TYPE, 11 fixed-range MSRs (one 64K, two
+ * 16K, eight 4K), and VMM_MTRR_VAR_MAX physbase/physmask variable pairs at
+ * 0x200.  Assert both the write-then-read round trip and the raw MSR layout
+ * against the specification, independent of the implementation's own output.
+ */
+ATF_TC_WITHOUT_HEAD(msr_register_file_roundtrip);
+ATF_TC_BODY(msr_register_file_roundtrip, tc)
+{
+	struct vm_mtrr mtrr;
+	uint64_t value;
+	u_int i;
+
+	memset(&mtrr, 0, sizeof(mtrr));
+
+	/* IA32_MTRRcap (0xfe) is read-only and reports our fixed layout. */
+	ATF_CHECK_EQ(vm_rdmtrr(&mtrr, MSR_MTRRcap, &value), 0);
+	ATF_CHECK_EQ(value & DOC_MTRR_UC, DOC_MTRR_UC);
+	ATF_CHECK_EQ(value & UINT64_C(0xff), VMM_MTRR_VAR_MAX);
+	ATF_CHECK((value & MTRR_CAP_FIXED) != 0);
+	ATF_CHECK((value & MTRR_CAP_WC) != 0);
+
+	/* Every fixed4k MSR (0x268..0x26f) round-trips independently. */
+	for (i = 0; i < nitems(mtrr.fixed4k); i++) {
+		static const uint8_t types[5] = { DOC_MTRR_UC, DOC_MTRR_WC,
+		    DOC_MTRR_WT, DOC_MTRR_WP, DOC_MTRR_WB };
+		uint64_t pat = UINT64_C(0x0101010101010101) *
+		    types[i % nitems(types)];
+
+		ATF_REQUIRE_EQ(vm_wrmtrr(&mtrr, MSR_MTRR4kBase + i, pat,
+		    DOC_MAXPHYADDR_MAX), 0);
+		ATF_CHECK_EQ(mtrr.fixed4k[i], pat);
+		ATF_REQUIRE_EQ(vm_rdmtrr(&mtrr, MSR_MTRR4kBase + i, &value), 0);
+		ATF_CHECK_EQ(value, pat);
+	}
+	/* An invalid memory type in any lane is rejected. */
+	ATF_CHECK_EQ(vm_wrmtrr(&mtrr, MSR_MTRR4kBase + 3,
+	    UINT64_C(2) << 40, DOC_MAXPHYADDR_MAX), -1);
+
+	/* Both fixed16k MSRs (0x258..0x259). */
+	for (i = 0; i < nitems(mtrr.fixed16k); i++) {
+		uint64_t pat = (i == 0) ? valid_fixed_types() :
+		    UINT64_C(0x0400040004000400);
+
+		ATF_REQUIRE_EQ(vm_wrmtrr(&mtrr, MSR_MTRR16kBase + i, pat,
+		    DOC_MAXPHYADDR_MAX), 0);
+		ATF_CHECK_EQ(mtrr.fixed16k[i], pat);
+		ATF_REQUIRE_EQ(vm_rdmtrr(&mtrr, MSR_MTRR16kBase + i, &value), 0);
+		ATF_CHECK_EQ(value, pat);
+	}
+	ATF_CHECK_EQ(vm_wrmtrr(&mtrr, MSR_MTRR16kBase + 1,
+	    UINT64_C(3), DOC_MAXPHYADDR_MAX), -1);
+
+	/* The single fixed64k MSR (0x250). */
+	ATF_REQUIRE_EQ(vm_wrmtrr(&mtrr, MSR_MTRR64kBase, valid_fixed_types(),
+	    DOC_MAXPHYADDR_MAX), 0);
+	ATF_CHECK_EQ(mtrr.fixed64k, valid_fixed_types());
+	ATF_REQUIRE_EQ(vm_rdmtrr(&mtrr, MSR_MTRR64kBase, &value), 0);
+	ATF_CHECK_EQ(value, valid_fixed_types());
+	ATF_CHECK_EQ(vm_wrmtrr(&mtrr, MSR_MTRR64kBase, UINT64_C(7),
+	    DOC_MAXPHYADDR_MAX), -1);
+
+	/*
+	 * Every variable-range pair: even MSR offset -> IA32_MTRR_PHYSBASEn
+	 * (address bits + type in [7:0]), odd offset -> IA32_MTRR_PHYSMASKn
+	 * (address bits + VALID bit 11).
+	 */
+	for (i = 0; i < VMM_MTRR_VAR_MAX; i++) {
+		uint64_t base = (((uint64_t)(i + 1)) << 20) | DOC_MTRR_WB;
+		uint64_t mask = (UINT64_C(1) << 31) | DOC_MTRR_VALID;
+
+		ATF_REQUIRE_EQ(vm_wrmtrr(&mtrr, MSR_MTRRVarBase + i * 2, base,
+		    DOC_MAXPHYADDR_MAX), 0);
+		ATF_REQUIRE_EQ(vm_wrmtrr(&mtrr, MSR_MTRRVarBase + i * 2 + 1,
+		    mask, DOC_MAXPHYADDR_MAX), 0);
+		ATF_CHECK_EQ(mtrr.var[i].base, base);
+		ATF_CHECK_EQ(mtrr.var[i].mask, mask);
+		ATF_REQUIRE_EQ(vm_rdmtrr(&mtrr, MSR_MTRRVarBase + i * 2,
+		    &value), 0);
+		ATF_CHECK_EQ(value, base);
+		ATF_REQUIRE_EQ(vm_rdmtrr(&mtrr, MSR_MTRRVarBase + i * 2 + 1,
+		    &value), 0);
+		ATF_CHECK_EQ(value, mask);
+	}
+
+	/* Reads and writes of MSRs outside the MTRR range fail. */
+	ATF_CHECK_EQ(vm_rdmtrr(&mtrr, MSR_MTRRVarBase +
+	    (VMM_MTRR_VAR_MAX * 2), &value), -1);
+	ATF_CHECK_EQ(vm_rdmtrr(&mtrr, MSR_MTRRcap - 1, &value), -1);
+	ATF_CHECK_EQ(vm_wrmtrr(&mtrr, MSR_MTRRVarBase +
+	    (VMM_MTRR_VAR_MAX * 2), 0, DOC_MAXPHYADDR_MAX), -1);
+	ATF_CHECK_EQ(vm_wrmtrr(&mtrr, MSR_MTRRdefType + 1, 0,
+	    DOC_MAXPHYADDR_MAX), -1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, validate_architectural_types);
 	ATF_TP_ADD_TC(tp, write_rejects_without_mutation);
+	ATF_TP_ADD_TC(tp, msr_register_file_roundtrip);
 	return (atf_no_error());
 }

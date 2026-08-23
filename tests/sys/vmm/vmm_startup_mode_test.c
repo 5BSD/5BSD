@@ -1741,6 +1741,162 @@ ATF_TC_BODY(startup_wait_for_sipi_wakeup_not_lost, tc)
 	    VMM_STARTUP_DISPATCH_CONSUMED, 100, 102, &admission), EAGAIN);
 }
 
+/*
+ * A CHECKED loop records an admission whose hardware entry has not yet
+ * happened.  Rejecting that admission as a software exit must undo the pending
+ * check (so the completed record shows no fictitious entry), publish a
+ * software-exit disposition with no error, and complete the loop.  Prior
+ * committed entry history must survive intact.
+ */
+ATF_TC_WITHOUT_HEAD(entry_loop_software_exit_from_checked);
+ATF_TC_BODY(entry_loop_software_exit_from_checked, tc)
+{
+	const struct vmm_startup_entry_runtime_result enter = {
+		.error = 0,
+		.action = VMM_STARTUP_ENTRY_RUNTIME_ENTER_GUEST,
+	};
+	struct vmm_startup_entry_loop_result before_result, result;
+	struct vmm_startup_entry_loop before, loop;
+
+	(void)tc;
+
+	/* First admission ever: undoing it leaves a balanced empty record. */
+	vmm_startup_entry_loop_init(&loop);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_check(&loop, &enter), 0);
+	ATF_REQUIRE_EQ(loop.phase, VMM_STARTUP_ENTRY_LOOP_CHECKED);
+	ATF_REQUIRE_EQ(loop.check_count, 1);
+	ATF_REQUIRE_EQ(loop.entry_count, 0);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_software_exit_checked(&loop,
+	    &result), 0);
+	ATF_CHECK_EQ(loop.phase, VMM_STARTUP_ENTRY_LOOP_COMPLETE);
+	ATF_CHECK_EQ(loop.check_count, 0);
+	ATF_CHECK_EQ(loop.entry_count, 0);
+	ATF_CHECK_EQ(result.action,
+	    VMM_STARTUP_ENTRY_LOOP_RETURN_SOFTWARE_EXIT);
+	ATF_CHECK_EQ(result.error, 0);
+	ATF_CHECK_EQ(result.reserved8[0], 0);
+	ATF_CHECK_EQ(result.reserved8[1], 0);
+	ATF_CHECK_EQ(result.reserved8[2], 0);
+
+	/* A rejected re-check after a completed entry retains that entry. */
+	vmm_startup_entry_loop_init(&loop);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_check(&loop, &enter), 0);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_enter(&loop), 0);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_exit(&loop, true, 0), 0);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_check(&loop, &enter), 0);
+	ATF_REQUIRE_EQ(loop.phase, VMM_STARTUP_ENTRY_LOOP_CHECKED);
+	ATF_REQUIRE_EQ(loop.check_count, 2);
+	ATF_REQUIRE_EQ(loop.entry_count, 1);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_software_exit_checked(&loop,
+	    &result), 0);
+	ATF_CHECK_EQ(loop.phase, VMM_STARTUP_ENTRY_LOOP_COMPLETE);
+	ATF_CHECK_EQ(loop.check_count, 1);
+	ATF_CHECK_EQ(loop.entry_count, 1);
+	ATF_CHECK_EQ(result.action,
+	    VMM_STARTUP_ENTRY_LOOP_RETURN_SOFTWARE_EXIT);
+	ATF_CHECK_EQ(result.error, 0);
+
+	/* Wrong phase, NULL result, and aliasing all fail atomically. */
+	vmm_startup_entry_loop_init(&loop);
+	before = loop;
+	ATF_CHECK_EQ(vmm_startup_entry_loop_software_exit_checked(&loop,
+	    &result), EINVAL);
+	ATF_CHECK_EQ(memcmp(&loop, &before, sizeof(loop)), 0);
+
+	vmm_startup_entry_loop_init(&loop);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_check(&loop, &enter), 0);
+	memset(&result, 0xa5, sizeof(result));
+	before = loop;
+	before_result = result;
+	ATF_CHECK_EQ(vmm_startup_entry_loop_software_exit_checked(&loop, NULL),
+	    EINVAL);
+	ATF_CHECK_EQ(memcmp(&loop, &before, sizeof(loop)), 0);
+	ATF_CHECK_EQ(vmm_startup_entry_loop_software_exit_checked(&loop,
+	    (struct vmm_startup_entry_loop_result *)(void *)&loop), EINVAL);
+	ATF_CHECK_EQ(memcmp(&loop, &before, sizeof(loop)), 0);
+	ATF_CHECK_EQ(memcmp(&result, &before_result, sizeof(result)), 0);
+}
+
+/*
+ * Failing a CHECKED admission behaves like the software-exit rejection but
+ * records a terminal error disposition.  Only positive, non-EAGAIN errors are
+ * terminal; EAGAIN (replay) and non-positive values must be rejected.
+ */
+ATF_TC_WITHOUT_HEAD(entry_loop_fail_from_checked);
+ATF_TC_BODY(entry_loop_fail_from_checked, tc)
+{
+	const struct vmm_startup_entry_runtime_result enter = {
+		.error = 0,
+		.action = VMM_STARTUP_ENTRY_RUNTIME_ENTER_GUEST,
+	};
+	const int bad_errors[] = { 0, -1, EAGAIN };
+	struct vmm_startup_entry_loop_result before_result, result;
+	struct vmm_startup_entry_loop before, loop;
+	size_t i;
+
+	(void)tc;
+
+	/* A terminal failure completes the loop and undoes the pending check. */
+	vmm_startup_entry_loop_init(&loop);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_check(&loop, &enter), 0);
+	ATF_REQUIRE_EQ(loop.phase, VMM_STARTUP_ENTRY_LOOP_CHECKED);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_fail_checked(&loop, EIO,
+	    &result), 0);
+	ATF_CHECK_EQ(loop.phase, VMM_STARTUP_ENTRY_LOOP_COMPLETE);
+	ATF_CHECK_EQ(loop.check_count, 0);
+	ATF_CHECK_EQ(loop.entry_count, 0);
+	ATF_CHECK_EQ(result.action, VMM_STARTUP_ENTRY_LOOP_RETURN_ERROR);
+	ATF_CHECK_EQ(result.error, EIO);
+	ATF_CHECK_EQ(result.reserved8[0], 0);
+	ATF_CHECK_EQ(result.reserved8[1], 0);
+	ATF_CHECK_EQ(result.reserved8[2], 0);
+
+	/* Prior committed entry history survives a later terminal failure. */
+	vmm_startup_entry_loop_init(&loop);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_check(&loop, &enter), 0);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_enter(&loop), 0);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_exit(&loop, true, 0), 0);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_check(&loop, &enter), 0);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_fail_checked(&loop, EBUSY,
+	    &result), 0);
+	ATF_CHECK_EQ(loop.phase, VMM_STARTUP_ENTRY_LOOP_COMPLETE);
+	ATF_CHECK_EQ(loop.check_count, 1);
+	ATF_CHECK_EQ(loop.entry_count, 1);
+	ATF_CHECK_EQ(result.action, VMM_STARTUP_ENTRY_LOOP_RETURN_ERROR);
+	ATF_CHECK_EQ(result.error, EBUSY);
+
+	/* Non-terminal error codes are rejected atomically. */
+	for (i = 0; i < sizeof(bad_errors) / sizeof(bad_errors[0]); i++) {
+		vmm_startup_entry_loop_init(&loop);
+		ATF_REQUIRE_EQ(vmm_startup_entry_loop_check(&loop, &enter), 0);
+		memset(&result, 0xa5, sizeof(result));
+		before = loop;
+		before_result = result;
+		ATF_CHECK_EQ(vmm_startup_entry_loop_fail_checked(&loop,
+		    bad_errors[i], &result), EINVAL);
+		ATF_CHECK_EQ(memcmp(&loop, &before, sizeof(loop)), 0);
+		ATF_CHECK_EQ(memcmp(&result, &before_result, sizeof(result)),
+		    0);
+	}
+
+	/* Wrong phase, NULL result, and aliasing all fail atomically. */
+	vmm_startup_entry_loop_init(&loop);
+	before = loop;
+	ATF_CHECK_EQ(vmm_startup_entry_loop_fail_checked(&loop, EIO, &result),
+	    EINVAL);
+	ATF_CHECK_EQ(memcmp(&loop, &before, sizeof(loop)), 0);
+
+	vmm_startup_entry_loop_init(&loop);
+	ATF_REQUIRE_EQ(vmm_startup_entry_loop_check(&loop, &enter), 0);
+	before = loop;
+	ATF_CHECK_EQ(vmm_startup_entry_loop_fail_checked(&loop, EIO, NULL),
+	    EINVAL);
+	ATF_CHECK_EQ(memcmp(&loop, &before, sizeof(loop)), 0);
+	ATF_CHECK_EQ(vmm_startup_entry_loop_fail_checked(&loop, EIO,
+	    (struct vmm_startup_entry_loop_result *)(void *)&loop), EINVAL);
+	ATF_CHECK_EQ(memcmp(&loop, &before, sizeof(loop)), 0);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1778,6 +1934,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, entry_loop_requires_check_before_each_entry);
 	ATF_TP_ADD_TC(tp, entry_loop_drift_after_handled_exit_returns);
 	ATF_TP_ADD_TC(tp, entry_loop_distinguishes_no_entry_returns);
+	ATF_TP_ADD_TC(tp, entry_loop_software_exit_from_checked);
+	ATF_TP_ADD_TC(tp, entry_loop_fail_from_checked);
 	ATF_TP_ADD_TC(tp, entry_loop_owns_return_disposition);
 	ATF_TP_ADD_TC(tp, entry_loop_rejects_malformed_and_overflow);
 	ATF_TP_ADD_TC(tp, entry_guard_admission_is_failure_atomic);

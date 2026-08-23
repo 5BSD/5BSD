@@ -1482,13 +1482,18 @@ vtblk_request_execute_cb(void * callback_arg, bus_dma_segment_t * segs,
 	} else if (bp->bio_cmd == BIO_DELETE) {
 		struct virtio_blk_discard_write_zeroes *discard;
 
-		discard = malloc(sizeof(*discard), M_DEVBUF, M_NOWAIT | M_ZERO);
+		/* A requeued request already carries its allocation. */
+		discard = bp->bio_driver1;
 		if (discard == NULL) {
-			error = ENOMEM;
-			goto out;
+			discard = malloc(sizeof(*discard), M_DEVBUF,
+			    M_NOWAIT | M_ZERO);
+			if (discard == NULL) {
+				error = ENOMEM;
+				goto out;
+			}
+			bp->bio_driver1 = discard;
 		}
 
-		bp->bio_driver1 = discard;
 		discard->sector = vtblk_gtoh64(sc, bp->bio_offset / VTBLK_BSIZE);
 		discard->num_sectors = vtblk_gtoh32(sc, bp->bio_bcount / VTBLK_BSIZE);
 		error = sglist_append(sg, discard, sizeof(*discard));
@@ -2094,17 +2099,13 @@ vtblk_write_zeroes_delete_sysctl(SYSCTL_HANDLER_ARGS)
 	int enabled, error;
 
 	sc = oidp->oid_arg1;
-	VTBLK_LOCK(sc);
 	enabled = sc->vtblk_delete_uses_write_zeroes ? 1 : 0;
 	error = sysctl_handle_int(oidp, &enabled, 0, req);
-	if (error != 0 || req->newptr == NULL) {
-		VTBLK_UNLOCK(sc);
+	if (error != 0 || req->newptr == NULL)
 		return (error);
-	}
-	if (enabled != 0 && enabled != 1) {
-		VTBLK_UNLOCK(sc);
+	if (enabled != 0 && enabled != 1)
 		return (EINVAL);
-	}
+	VTBLK_LOCK(sc);
 	if ((sc->vtblk_flags & VTBLK_FLAG_DETACH) != 0 ||
 	    (enabled != 0 && sc->vtblk_max_write_zeroes_sectors == 0)) {
 		VTBLK_UNLOCK(sc);

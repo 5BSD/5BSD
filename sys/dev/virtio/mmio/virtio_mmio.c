@@ -638,8 +638,20 @@ vtmmio_alloc_virtqueues(device_t dev, int nvqs,
 		sc->vtmmio_nvqs++;
 	}
 
-	if (error)
+	if (error) {
+		/*
+		 * A partial allocation stored a live virtqueue pointer into
+		 * each driver softc slot (*info->vqai_vq) for every vq that
+		 * did allocate.  vtmmio_free_virtqueues() frees those rings
+		 * but only clears its own vtv_vq array, leaving the driver's
+		 * copies dangling -- an attach-failure detach path that
+		 * dereferences them would then touch freed memory.  Clear the
+		 * driver slots before freeing.
+		 */
+		for (idx = 0; idx < sc->vtmmio_nvqs; idx++)
+			*vq_info[idx].vqai_vq = NULL;
 		vtmmio_free_virtqueues(sc);
+	}
 
 	return (error);
 }

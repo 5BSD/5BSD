@@ -57,6 +57,8 @@ virtio_pmem_chain_prepare(const struct iovec *iov, int niov, int readable,
 	copied = 0;
 	for (int i = 0; i < readable && copied != sizeof(chain->request); i++) {
 		length = MIN(iov[i].iov_len, sizeof(chain->request) - copied);
+		if (length == 0)
+			continue;
 		memcpy(chain->request + copied, iov[i].iov_base, length);
 		copied += length;
 	}

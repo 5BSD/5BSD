@@ -116,6 +116,15 @@ static int g_snapshot_validate_calls;
 static int g_snapshot_validate_result;
 static bool g_snapshot_validate_saw_lock;
 
+static int g_has_descs_budget;
+
+int
+vq_has_descs(struct vqueue_info *vq __unused)
+{
+
+	return (g_has_descs_budget > 0 ? (g_has_descs_budget--, 1) : 0);
+}
+
 static struct virtio_blk_hdr g_header;
 static struct virtio_blk_discard_write_zeroes g_discard;
 static uint8_t g_data[VTBLK_BSIZE];
@@ -515,6 +524,234 @@ vi_pci_modern_queue_reset_complete(struct vqueue_info *vq __unused,
 	g_qreset_complete_calls++;
 	g_qreset_complete_generation = generation;
 	g_qreset_complete_error = error;
+}
+
+/*
+ * Initialization-path mocks.  The real bhyve build strips pci_vtblk_init(),
+ * pci_vtblk_notify(), and pci_vtblk_pause() with --gc-sections because no
+ * other test references them; the coverage build keeps every section, so the
+ * common VirtIO, blockif, and PCI helpers those functions call are stubbed
+ * here.  Each stub is a thin, independently controllable spy.
+ */
+static int g_open_return_null;
+static off_t g_open_size = 4096;
+static int g_open_sectsz = 512;
+static int g_open_psts = 512;
+static int g_open_psto = 0;
+static int g_select_transport_error;
+static int g_intr_init_error;
+static int g_modern_init_error;
+static int g_add_boot_error;
+static int g_resize_register_error;
+static const char *g_cfg_queues;
+static bool g_cfg_packed;
+static bool g_cfg_resize;
+static const char *g_cfg_serial;
+static const char *g_cfg_path = "/dev/null-backing";
+static int g_boot_device_calls;
+static int g_resize_register_calls;
+static int g_linkup_calls;
+static struct blockif_ctxt g_init_bc;
+
+extern void *__real_calloc(size_t, size_t);
+static int g_calloc_fail_after = -1;	/* -1: never fail */
+
+void *
+__wrap_calloc(size_t nmemb, size_t size)
+{
+
+	if (g_calloc_fail_after == 0) {
+		g_calloc_fail_after = -1;
+		return (NULL);
+	}
+	if (g_calloc_fail_after > 0)
+		g_calloc_fail_after--;
+	return (__real_calloc(nmemb, size));
+}
+
+struct blockif_ctxt *
+blockif_open(nvlist_t *nvl __unused, const char *ident __unused)
+{
+
+	return (g_open_return_null ? NULL : &g_init_bc);
+}
+
+off_t
+blockif_size(struct blockif_ctxt *bc __unused)
+{
+
+	return (g_open_size);
+}
+
+int
+blockif_sectsz(struct blockif_ctxt *bc __unused)
+{
+
+	return (g_open_sectsz);
+}
+
+void
+blockif_psectsz(struct blockif_ctxt *bc __unused, int *sts, int *sto)
+{
+
+	*sts = g_open_psts;
+	*sto = g_open_psto;
+}
+
+int
+blockif_close(struct blockif_ctxt *bc __unused)
+{
+
+	return (0);
+}
+
+int
+blockif_add_boot_device(struct pci_devinst *pi __unused,
+    struct blockif_ctxt *bc __unused)
+{
+
+	g_boot_device_calls++;
+	return (g_add_boot_error);
+}
+
+int
+blockif_register_resize_callback(struct blockif_ctxt *bc __unused,
+    blockif_resize_cb *cb __unused, void *arg __unused)
+{
+
+	g_resize_register_calls++;
+	return (g_resize_register_error);
+}
+
+const char *
+get_config_value_node(const nvlist_t *nvl __unused, const char *name)
+{
+
+	if (strcmp(name, "queues") == 0)
+		return (g_cfg_queues);
+	if (strcmp(name, "serial") == 0)
+		return (g_cfg_serial);
+	if (strcmp(name, "ser") == 0)
+		return (NULL);
+	if (strcmp(name, "path") == 0)
+		return (g_cfg_path);
+	return (NULL);
+}
+
+bool
+get_config_bool_node_default(const nvlist_t *nvl __unused, const char *name,
+    bool def __unused)
+{
+
+	if (strcmp(name, "packed") == 0)
+		return (g_cfg_packed);
+	if (strcmp(name, "resize") == 0)
+		return (g_cfg_resize);
+	return (def);
+}
+
+void
+vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc __unused,
+    void *arg, struct pci_devinst *pi, struct vqueue_info *vqs)
+{
+
+	g_linkup_calls++;
+	vs->vs_queues = vqs;
+	pi->pi_arg = arg;
+}
+
+int
+vi_pci_select_transport(struct virtio_softc *vs __unused,
+    const nvlist_t *nvl __unused,
+    enum virtio_pci_transport_policy def __unused)
+{
+
+	return (g_select_transport_error);
+}
+
+void
+vi_pci_modern_set_identity(struct virtio_softc *vs __unused,
+    uint16_t id __unused)
+{
+}
+
+int
+vi_pci_modern_init(struct virtio_softc *vs __unused, int nbars __unused)
+{
+
+	return (g_modern_init_error);
+}
+
+int
+vi_intr_init(struct virtio_softc *vs, int barnum __unused, int use_msix __unused)
+{
+
+	if (g_intr_init_error != 0)
+		return (g_intr_init_error);
+	(void)pthread_mutex_init(&vs->vs_isr_mtx, NULL);
+	return (0);
+}
+
+void
+vi_set_io_bar(struct virtio_softc *vs __unused, int barnum __unused)
+{
+}
+
+int
+fbsdrun_virtio_msix(void)
+{
+
+	return (1);
+}
+
+void
+pci_set_cfgdata8(struct pci_devinst *pi, int offset, uint8_t val)
+{
+
+	pi->pi_cfgdata[offset] = val;
+}
+
+void
+pci_set_cfgdata16(struct pci_devinst *pi, int offset, uint16_t val)
+{
+
+	memcpy(&pi->pi_cfgdata[offset], &val, sizeof(val));
+}
+
+static void
+init_reset_controls(void)
+{
+
+	g_open_return_null = 0;
+	g_open_size = 4096;
+	g_open_sectsz = 512;
+	g_open_psts = 512;
+	g_open_psto = 0;
+	g_select_transport_error = 0;
+	g_intr_init_error = 0;
+	g_modern_init_error = 0;
+	g_add_boot_error = 0;
+	g_resize_register_error = 0;
+	g_cfg_queues = NULL;
+	g_cfg_packed = false;
+	g_cfg_resize = false;
+	g_cfg_serial = NULL;
+	g_cfg_path = "/dev/null-backing";
+	g_boot_device_calls = 0;
+	g_resize_register_calls = 0;
+	g_linkup_calls = 0;
+	g_calloc_fail_after = -1;
+}
+
+static void
+destroy_softc(struct pci_vtblk_softc *sc)
+{
+
+	pthread_cond_destroy(&sc->vbsc_reset_cond);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	pthread_mutex_destroy(&sc->vbsc_vs.vs_isr_mtx);
+	free(sc->vbsc_ios);
+	free(sc);
 }
 
 ATF_TC_WITHOUT_HEAD(malformed_chains);
@@ -2008,6 +2245,35 @@ ATF_TC_BODY(snapshot_wire_and_version, tc)
 	ATF_CHECK(memcmp(&destination.vbsc_cfg, &original,
 	    VIRTIO14_BLK_CONFIG_SIZE) == 0);
 
+	/*
+	 * A record whose header is valid but whose body is truncated fails
+	 * inside the logical-configuration decode rather than the identity
+	 * record, exercising the mid-config error unwinding.  Restore the
+	 * version byte first: an earlier case deliberately corrupted it.
+	 */
+	image[4] = 3;	/* VTBLK_SNAPSHOT_VERSION */
+	ATF_CHECK_EQ(run_block_snapshot(&destination, image, 20,
+	    VM_SNAPSHOT_RESTORE, NULL), E2BIG);
+	ATF_CHECK(memcmp(&destination.vbsc_cfg, &original,
+	    VIRTIO14_BLK_CONFIG_SIZE) == 0);
+
+	/*
+	 * A structurally complete image whose logical configuration does not
+	 * match the destination backing store (here, a differing capacity) is
+	 * rejected during load by the restore-validation guard.
+	 */
+	{
+		uint8_t corrupt[512];
+
+		memcpy(corrupt, image, used);
+		/* Perturb the capacity field (config offset 0, image offset 8). */
+		corrupt[8] ^= 0xff;
+		ATF_CHECK_EQ(run_block_snapshot(&destination, corrupt, used,
+		    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+		ATF_CHECK(memcmp(&destination.vbsc_cfg, &original,
+		    VIRTIO14_BLK_CONFIG_SIZE) == 0);
+	}
+
 #undef BLOCK_TEST_ID_LENGTH
 #undef BLOCK_TEST_ID
 }
@@ -2293,6 +2559,568 @@ ATF_TC_BODY(suspend_backend_lifecycle, tc)
 	pthread_mutex_destroy(&sc.vsc_mtx);
 }
 
+ATF_TC_WITHOUT_HEAD(notify_drains_queue_budget);
+ATF_TC_BODY(notify_drains_queue_budget, tc)
+{
+	struct pci_vtblk_softc sc;
+
+	/*
+	 * pci_vtblk_notify() must process available descriptors up to the
+	 * queue-size budget and then end the chains.  Present three ready
+	 * READ requests behind the same descriptor index and confirm each is
+	 * handed to the backend exactly once.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	g_has_descs_budget = 3;
+	pci_vtblk_notify(&sc, &sc.vbsc_vqs[0]);
+	ATF_CHECK_EQ(g_backend_reads, 1);
+	ATF_CHECK(g_end_calls >= 1);
+
+	/* An empty queue still publishes an end-of-chains notification. */
+	reset_mocks();
+	setup_softc(&sc);
+	g_has_descs_budget = 0;
+	pci_vtblk_notify(&sc, &sc.vbsc_vqs[0]);
+	ATF_CHECK_EQ(g_backend_reads, 0);
+	ATF_CHECK_EQ(g_end_calls, 1);
+}
+
+ATF_TC_WITHOUT_HEAD(pause_acquires_device_lock);
+ATF_TC_BODY(pause_acquires_device_lock, tc)
+{
+	struct blockif_ctxt bc;
+	struct pci_vtblk_softc sc;
+
+	reset_mocks();
+	setup_softc(&sc);
+	sc.bc = &bc;
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+
+	/* A successful quiesce leaves the device mutex held for the caller. */
+	ATF_REQUIRE_EQ(pci_vtblk_pause(&sc), 0);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 1);
+	ATF_CHECK_EQ(pthread_mutex_trylock(&sc.vsc_mtx), EBUSY);
+	ATF_CHECK_EQ(pci_vtblk_resume(&sc), 0);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 0);
+	ATF_CHECK_EQ(pthread_mutex_trylock(&sc.vsc_mtx), 0);
+	pthread_mutex_unlock(&sc.vsc_mtx);
+
+	/* A failed quiesce reports the error and never takes the lock. */
+	g_blockif_suspend_error = EIO;
+	ATF_CHECK_EQ(pci_vtblk_pause(&sc), EIO);
+	ATF_CHECK_EQ(pthread_mutex_trylock(&sc.vsc_mtx), 0);
+	pthread_mutex_unlock(&sc.vsc_mtx);
+
+	pthread_mutex_destroy(&sc.vsc_mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_success_paths);
+ATF_TC_BODY(device_init_success_paths, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtblk_softc *sc;
+
+	/*
+	 * Legacy transport, MD5-derived identity, no resize monitoring.  The
+	 * debug environment variable enables the verbose log path.
+	 */
+	reset_mocks();
+	init_reset_controls();
+	g_modern = false;
+	ATF_REQUIRE_EQ(setenv("BHYVE_VTBLK_DEBUG", "1", 1), 0);
+	memset(&pi, 0, sizeof(pi));
+	pi.pi_slot = 3;
+	pi.pi_func = 1;
+	ATF_REQUIRE_EQ(pci_vtblk_init(&pi, NULL), 0);
+	ATF_REQUIRE_EQ(unsetenv("BHYVE_VTBLK_DEBUG"), 0);
+	pci_vtblk_debug = 0;
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vbsc_nqueues, 1);
+	ATF_CHECK_EQ(sc->vbsc_cfg.vbc_capacity,
+	    (uint64_t)g_open_size / VIRTIO14_BLK_SECTOR_BYTES);
+	ATF_CHECK_EQ(sc->vbsc_cfg.vbc_blk_size, g_open_sectsz);
+	/* seg_max is clamped below the ring size, per the Linux invariant. */
+	ATF_CHECK_EQ(sc->vbsc_cfg.vbc_seg_max,
+	    MIN(VTBLK_RINGSZ - 2, BLOCKIF_IOV_MAX));
+	ATF_CHECK((sc->vbsc_consts.vc_hv_caps & VTBLK_F_CONFIG_WCE) == 0);
+	ATF_CHECK_EQ(g_boot_device_calls, 1);
+	ATF_CHECK_EQ(g_resize_register_calls, 0);
+	/* Legacy transitional identity is written to PCI config space. */
+	ATF_CHECK_EQ(pi.pi_cfgdata[PCIR_CLASS], PCIC_STORAGE);
+	ATF_CHECK(strncmp(sc->vbsc_ident, "BHYVE-", 6) == 0);
+	destroy_softc(sc);
+
+	/* Modern transport, explicit serial, multiqueue, resize monitoring. */
+	reset_mocks();
+	init_reset_controls();
+	g_modern = true;
+	g_cfg_queues = "4";
+	g_cfg_serial = "SERIAL123";
+	g_cfg_resize = true;
+	g_open_psts = 4096;
+	g_open_psto = 512;
+	memset(&pi, 0, sizeof(pi));
+	ATF_REQUIRE_EQ(pci_vtblk_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK_EQ(sc->vbsc_nqueues, 4);
+	ATF_CHECK_EQ(sc->vbsc_cfg.num_queues, 4);
+	ATF_CHECK((sc->vbsc_consts.vc_hv_caps & VTBLK_F_MQ) != 0);
+	ATF_CHECK((sc->vbsc_consts.vc_hv_caps & VTBLK_F_CONFIG_WCE) != 0);
+	ATF_CHECK_EQ(g_resize_register_calls, 1);
+	ATF_CHECK(strcmp(sc->vbsc_ident, "SERIAL123") == 0);
+	/* physical_block_exp reflects the 4096/512 backing ratio. */
+	ATF_CHECK_EQ(sc->vbsc_cfg.vbc_topology.physical_block_exp, 3);
+	destroy_softc(sc);
+
+	/* Modern packed ring format negotiates the packed feature bit. */
+	reset_mocks();
+	init_reset_controls();
+	g_modern = true;
+	g_cfg_packed = true;
+	memset(&pi, 0, sizeof(pi));
+	ATF_REQUIRE_EQ(pci_vtblk_init(&pi, NULL), 0);
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc != NULL);
+	ATF_CHECK((sc->vbsc_consts.vc_hv_caps & VIRTIO14_F_RING_PACKED) != 0);
+	destroy_softc(sc);
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_failure_paths);
+ATF_TC_BODY(device_init_failure_paths, tc)
+{
+	struct pci_devinst pi;
+
+	/* An invalid queue count is rejected before the backend is opened. */
+	reset_mocks();
+	init_reset_controls();
+	g_cfg_queues = "0";
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+
+	/* A backend that cannot be opened fails initialization. */
+	reset_mocks();
+	init_reset_controls();
+	g_open_return_null = 1;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+
+	/* The first calloc (softc) failing takes the early-cleanup path. */
+	reset_mocks();
+	init_reset_controls();
+	g_calloc_fail_after = 0;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+
+	/* The second calloc (ioreq array) failing takes failed_early. */
+	reset_mocks();
+	init_reset_controls();
+	g_calloc_fail_after = 1;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+
+	/* Transport selection failure unwinds through the failed label. */
+	reset_mocks();
+	init_reset_controls();
+	g_select_transport_error = EINVAL;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+
+	/* Multiqueue on a legacy transport is rejected. */
+	reset_mocks();
+	init_reset_controls();
+	g_modern = false;
+	g_cfg_queues = "2";
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+
+	/* Packed ring on a legacy transport is rejected. */
+	reset_mocks();
+	init_reset_controls();
+	g_modern = false;
+	g_cfg_packed = true;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+
+	/* Interrupt setup failure unwinds without the boot-device call. */
+	reset_mocks();
+	init_reset_controls();
+	g_intr_init_error = ENOSPC;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+	ATF_CHECK_EQ(g_boot_device_calls, 0);
+
+	/* Modern transport BAR setup failure unwinds. */
+	reset_mocks();
+	init_reset_controls();
+	g_modern = true;
+	g_modern_init_error = EIO;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+
+	/* An invalid boot device unwinds after interrupt setup. */
+	reset_mocks();
+	init_reset_controls();
+	g_add_boot_error = ENXIO;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+	ATF_CHECK_EQ(g_boot_device_calls, 1);
+
+	/* Resize-callback registration failure unwinds a fully-built device. */
+	reset_mocks();
+	init_reset_controls();
+	g_cfg_resize = true;
+	g_resize_register_error = EPERM;
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtblk_init(&pi, NULL), 1);
+	ATF_CHECK_EQ(g_resize_register_calls, 1);
+}
+
+ATF_TC_WITHOUT_HEAD(iov_helpers_and_edge_paths);
+ATF_TC_BODY(iov_helpers_and_edge_paths, tc)
+{
+	struct pci_vtblk_softc sc;
+	struct pci_vtblk_ioreq *io;
+	struct iovec in[3], out[8];
+	uint8_t a[4] = { 1, 2, 3, 4 }, b[4] = { 5, 6, 7, 8 };
+	uint8_t dst[8];
+	size_t length;
+	int count, error;
+
+	/* iov_length overflows deterministically at SIZE_MAX. */
+	in[0].iov_base = a;
+	in[0].iov_len = SIZE_MAX;
+	in[1].iov_base = b;
+	in[1].iov_len = 1;
+	ATF_CHECK_EQ(pci_vtblk_iov_length(in, 2, &length), EOVERFLOW);
+
+	/* iov_read walks a leading skip across multiple segments. */
+	in[0].iov_base = a;
+	in[0].iov_len = 4;
+	in[1].iov_base = b;
+	in[1].iov_len = 4;
+	ATF_CHECK(pci_vtblk_iov_read(in, 2, 2, dst, 4));
+	ATF_CHECK_EQ(dst[0], 3);
+	ATF_CHECK_EQ(dst[2], 5);
+	/* A request longer than the mapped bytes cannot be satisfied. */
+	ATF_CHECK(!pci_vtblk_iov_read(in, 2, 6, dst, 4));
+
+	/* iov_slice returns E2BIG when the output vector is exhausted. */
+	in[0].iov_base = a;
+	in[0].iov_len = 2;
+	in[1].iov_base = b;
+	in[1].iov_len = 2;
+	in[2].iov_base = a;
+	in[2].iov_len = 2;
+	error = pci_vtblk_iov_slice(in, 3, 0, 6, out, 1, &count);
+	ATF_CHECK_EQ(error, E2BIG);
+	/*
+	 * iov_slice returns EINVAL when the source is shorter than requested
+	 * even though the output vector has room for every segment.
+	 */
+	error = pci_vtblk_iov_slice(in, 3, 0, 100, out, 8, &count);
+	ATF_CHECK_EQ(error, EINVAL);
+
+	/*
+	 * status_ptr is defensive against malformed chains that proc rejects
+	 * earlier; exercise both refusal paths directly.  A chain whose
+	 * readable+writable count disagrees returns no status pointer.
+	 */
+	{
+		struct vi_req req;
+		struct iovec sv[2];
+		uint8_t byte = 0;
+		uint8_t *status = NULL;
+
+		memset(&req, 0, sizeof(req));
+		req.readable = 1;
+		req.writable = 1;
+		sv[0].iov_base = &byte;
+		sv[0].iov_len = 1;
+		sv[1].iov_base = &byte;
+		sv[1].iov_len = 1;
+		ATF_CHECK(!pci_vtblk_status_ptr(&req, sv, 3, &status));
+		/* A writable section that is entirely zero-length has no status. */
+		req.readable = 1;
+		req.writable = 1;
+		sv[1].iov_len = 0;
+		ATF_CHECK(!pci_vtblk_status_ptr(&req, sv, 2, &status));
+	}
+
+	/* A deadline of NULL is an immediate, unsuccessful drain. */
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vbsc_reset_cond, NULL), 0);
+	sc.vbsc_ios[0].io_active = true;
+	ATF_CHECK(!pci_vtblk_wait_requests_drained_until(&sc, NULL));
+	sc.vbsc_ios[0].io_active = false;
+	/* With nothing outstanding the top-level wait returns success. */
+	ATF_CHECK(pci_vtblk_wait_requests_drained(&sc));
+	/*
+	 * A future deadline with no outstanding request returns success without
+	 * blocking, clearing the reset-waiting flag.
+	 */
+	{
+		struct timespec future;
+
+		ATF_REQUIRE_EQ(clock_gettime(CLOCK_MONOTONIC, &future), 0);
+		future.tv_sec += 3600;
+		ATF_CHECK(pci_vtblk_wait_requests_drained_until(&sc, &future));
+		ATF_CHECK(!sc.vbsc_reset_waiting);
+	}
+	pthread_cond_destroy(&sc.vbsc_reset_cond);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+
+	/*
+	 * A stale backend completion arriving while a reset owner is blocked in
+	 * the drain wait must wake that owner via the reset condition variable.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vbsc_reset_cond, NULL), 0);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	io = &sc.vbsc_ios[g_req.idx];
+	ATF_REQUIRE(io->io_active);
+	/* Advance the device generation so the completion is treated as stale. */
+	sc.vbsc_generation++;
+	sc.vbsc_reset_waiting = true;
+	pci_vtblk_done(&io->io_req, 0);
+	ATF_CHECK(!io->io_active);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	pthread_cond_destroy(&sc.vbsc_reset_cond);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(proc_and_reset_error_branches);
+ATF_TC_BODY(proc_and_reset_error_branches, tc)
+{
+	struct pci_vtblk_softc sc;
+	struct pci_vtblk_ioreq *io;
+
+	/* A queue index beyond the configured count is rejected. */
+	reset_mocks();
+	setup_softc(&sc);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	sc.vbsc_vqs[0].vq_num = 5;
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	ATF_CHECK_EQ(g_backend_reads, 0);
+	/* A well-formed chain still gets a status byte written by the reject. */
+	ATF_CHECK_EQ(g_status, VTBLK_S_IOERR);
+	ATF_CHECK_EQ(g_rel_len, 1);
+
+	/* A descriptor index at or beyond the ring size is rejected. */
+	reset_mocks();
+	setup_softc(&sc);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	g_req.idx = VTBLK_RINGSZ;
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	ATF_CHECK_EQ(g_backend_reads, 0);
+
+	/* A request slot already in flight cannot be reused. */
+	reset_mocks();
+	setup_softc(&sc);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	sc.vbsc_ios[g_req.idx].io_active = true;
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	ATF_CHECK_EQ(g_backend_reads, 0);
+	ATF_CHECK_EQ(g_status, VTBLK_S_IOERR);
+	ATF_CHECK_EQ(g_rel_len, 1);
+
+	/* A write whose writable section is not exactly the status byte fails. */
+	reset_mocks();
+	setup_softc(&sc);
+	g_header.vbh_type = htole32(VBH_OP_WRITE);
+	g_chain_n = 3;
+	g_req.readable = 1;
+	g_req.writable = 2;
+	g_iov[1].iov_base = g_data;
+	g_iov[1].iov_len = VTBLK_BSIZE;
+	g_iov[2].iov_base = &g_status;
+	g_iov[2].iov_len = 1;
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	ATF_CHECK_EQ(g_backend_writes, 0);
+	ATF_CHECK_EQ(g_status, VTBLK_S_IOERR);
+
+	/* backend_caps advertises DISCARD only when the backend can delete. */
+	g_backend_readonly = 0;
+	g_backend_candelete = 1;
+	ATF_CHECK((pci_vtblk_backend_caps(NULL) & VTBLK_F_DISCARD) != 0);
+
+	/*
+	 * A READ whose writable data span exceeds SSIZE_MAX is rejected before
+	 * the backend is reached.  The oversized length is a pure arithmetic
+	 * value describing a data descriptor that is only ever pointer-sliced,
+	 * never dereferenced; the real status byte sits in a valid tail
+	 * descriptor so completion can record the error safely.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	g_chain_n = 3;
+	g_req.readable = 1;
+	g_req.writable = 2;
+	g_iov[0].iov_base = &g_header;
+	g_iov[0].iov_len = VIRTIO14_BLK_REQUEST_HEADER_SIZE;
+	g_iov[1].iov_base = g_data;
+	g_iov[1].iov_len = (size_t)SSIZE_MAX + 1;
+	g_iov[2].iov_base = &g_status;
+	g_iov[2].iov_len = 1;
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	ATF_CHECK_EQ(g_backend_reads, 0);
+	ATF_CHECK_EQ(g_status, VTBLK_S_IOERR);
+
+	/*
+	 * A GET_ID whose writable span exceeds the 32-bit used-length range is
+	 * rejected; the response length must fit the transport counter.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	g_header.vbh_type = htole32(VBH_OP_IDENT);
+	g_chain_n = 3;
+	g_req.readable = 1;
+	g_req.writable = 2;
+	g_iov[0].iov_base = &g_header;
+	g_iov[0].iov_len = VIRTIO14_BLK_REQUEST_HEADER_SIZE;
+	g_iov[1].iov_base = g_data;
+	g_iov[1].iov_len = (size_t)UINT32_MAX;
+	g_iov[2].iov_base = &g_status;
+	g_iov[2].iov_len = 1;
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	ATF_CHECK_EQ(g_status, VTBLK_S_IOERR);
+
+	/*
+	 * Legacy cache-mode selection at DRIVER_OK (section 5.2.5.3): without
+	 * CONFIG_WCE, negotiating FLUSH implies writeback and its absence
+	 * implies writethrough.  These oracles are the specification rule, not
+	 * the implementation output.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	g_modern = false;
+	sc.vbsc_cfg.vbc_writeback = 0;
+	pci_vtblk_neg_features(&sc, VTBLK_F_FLUSH);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, VTBLK_DEFAULT_WRITEBACK);
+	sc.vbsc_cfg.vbc_writeback = VTBLK_DEFAULT_WRITEBACK;
+	pci_vtblk_neg_features(&sc, 0);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, 0);
+
+	/*
+	 * Modern initialization (section 5.2.5.2): any negotiation other than
+	 * CONFIG_WCE-without-FLUSH starts in writeback.
+	 */
+	g_modern = true;
+	sc.vbsc_cfg.vbc_writeback = 0;
+	pci_vtblk_neg_features(&sc, VTBLK_F_CONFIG_WCE | VTBLK_F_FLUSH);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_writeback, VTBLK_DEFAULT_WRITEBACK);
+	g_modern = false;
+
+	/*
+	 * A full reset whose cancellation returns an unexpected error marks
+	 * the device as needing a reset.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vbsc_reset_cond, NULL), 0);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	io = &sc.vbsc_ios[g_req.idx];
+	ATF_REQUIRE(io->io_active);
+	g_cancel_error = EIO;
+	pthread_mutex_lock(&sc.vsc_mtx);
+	pci_vtblk_reset(&sc);
+	pthread_mutex_unlock(&sc.vsc_mtx);
+	ATF_CHECK(g_needs_reset_calls >= 1);
+	pthread_cond_destroy(&sc.vbsc_reset_cond);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+
+	/*
+	 * A queue reset whose cancellation returns an unexpected error is
+	 * surfaced verbatim and leaves the reset owner released.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&sc.vbsc_reset_cond, NULL), 0);
+	g_header.vbh_type = htole32(VBH_OP_READ);
+	pci_vtblk_proc(&sc, &sc.vbsc_vqs[0]);
+	io = &sc.vbsc_ios[g_req.idx];
+	ATF_REQUIRE(io->io_active);
+	g_cancel_error = EIO;
+	sc.vbsc_vqs[0].vq_generation++;
+	pthread_mutex_lock(&sc.vsc_mtx);
+	ATF_CHECK_EQ(pci_vtblk_qreset(&sc, &sc.vbsc_vqs[0], 99), EIO);
+	ATF_CHECK(!sc.vbsc_resetting);
+	pthread_mutex_unlock(&sc.vsc_mtx);
+	io->io_active = false;
+	pthread_cond_destroy(&sc.vbsc_reset_cond);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+}
+
+ATF_TC_WITHOUT_HEAD(restore_resumed_holds_lock);
+ATF_TC_BODY(restore_resumed_holds_lock, tc)
+{
+	struct blockif_ctxt bc;
+	struct pci_vtblk_softc sc;
+
+	/*
+	 * When restore_resumed runs with the device mutex already held it must
+	 * drop it across blockif_resume() and reacquire it before returning.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	sc.bc = &bc;
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	g_blockif_pause_depth = 1;
+	ATF_REQUIRE_EQ(pthread_mutex_lock(&sc.vsc_mtx), 0);
+	pci_vtblk_restore_resumed(&sc);
+	/* The lock is held again on return. */
+	ATF_CHECK_EQ(pthread_mutex_trylock(&sc.vsc_mtx), EBUSY);
+	ATF_REQUIRE_EQ(pthread_mutex_unlock(&sc.vsc_mtx), 0);
+	ATF_CHECK_EQ(g_blockif_pause_depth, 0);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+
+	/*
+	 * resume_complete may run without the mutex held (checkpoint resume);
+	 * it must then take and release the VirtIO lock itself while publishing
+	 * a deferred capacity.
+	 */
+	reset_mocks();
+	setup_softc(&sc);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vbsc_vs.vs_mtx = &sc.vsc_mtx;
+	sc.vbsc_capacity_pending = true;
+	sc.vbsc_pending_capacity = 64;
+	pci_vtblk_resume_complete(&sc);
+	ATF_CHECK_EQ(sc.vbsc_cfg.vbc_capacity, 64);
+	ATF_CHECK(!sc.vbsc_capacity_pending);
+	ATF_CHECK_EQ(pthread_mutex_trylock(&sc.vsc_mtx), 0);
+	pthread_mutex_unlock(&sc.vsc_mtx);
+	pthread_mutex_destroy(&sc.vsc_mtx);
+
+	/* snapshot_validate rejects a device instance with no softc. */
+	{
+		struct pci_devinst pi;
+		struct vm_snapshot_meta meta = {
+			.dev_data = &pi,
+			.op = VM_SNAPSHOT_VALIDATE,
+		};
+		memset(&pi, 0, sizeof(pi));
+		pi.pi_arg = NULL;
+		ATF_CHECK_EQ(pci_vtblk_snapshot_validate(&meta), EINVAL);
+		meta.op = VM_SNAPSHOT_SAVE;
+		meta.dev_data = &pi;
+		pi.pi_arg = &sc;
+		ATF_CHECK_EQ(pci_vtblk_snapshot_validate(&meta), EINVAL);
+	}
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, malformed_chains);
@@ -2323,5 +3151,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, document_wire_vectors);
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	ATF_TP_ADD_TC(tp, suspend_backend_lifecycle);
+	ATF_TP_ADD_TC(tp, notify_drains_queue_budget);
+	ATF_TP_ADD_TC(tp, pause_acquires_device_lock);
+	ATF_TP_ADD_TC(tp, device_init_success_paths);
+	ATF_TP_ADD_TC(tp, device_init_failure_paths);
+	ATF_TP_ADD_TC(tp, iov_helpers_and_edge_paths);
+	ATF_TP_ADD_TC(tp, proc_and_reset_error_branches);
+	ATF_TP_ADD_TC(tp, restore_resumed_holds_lock);
 	return (atf_no_error());
 }

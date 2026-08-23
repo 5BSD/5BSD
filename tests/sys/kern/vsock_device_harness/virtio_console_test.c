@@ -68,14 +68,18 @@ struct mevent {
 };
 
 static const char *g_transport;
-static char g_set_name[16][32];
-static char g_set_value[16][128];
+static char g_set_name[64][32];
+static char g_set_value[64][128];
 static int g_set_count;
+static int g_mevent_add_fail;
+static int g_mevent_add_disabled_fail;
+static int g_port_node_type;
 static uint16_t g_config_nodes;
 static int g_modern_identity;
 static int g_modern_bar;
 static int g_io_bar;
 static int g_descs;
+static int g_descs_delay;
 static int g_has_descs_q;
 static int g_chain_n;
 static int g_readable;
@@ -98,9 +102,16 @@ static ssize_t g_send_result;
 static int g_send_errno;
 static int g_send_flags;
 static bool g_realloc_fail;
+static int g_calloc_fail;
+static int g_malloc_fail;
 static bool g_packed;
 static int g_snapshot_validate_calls;
 static bool g_snapshot_validate_mutex_owned;
+static const char *g_sock_path;
+static const char *g_sock_name;
+static const char *g_port_node;
+static bool g_intr_fail;
+static bool g_modern_init_fail;
 
 int
 vi_pci_snapshot(struct vm_snapshot_meta *meta)
@@ -207,6 +218,7 @@ reset_mocks(void)
 	g_modern_bar = -1;
 	g_io_bar = -1;
 	g_descs = 1;
+	g_descs_delay = 0;
 	g_has_descs_q = -1;
 	g_chain_n = 1;
 	g_readable = 1;
@@ -229,13 +241,45 @@ reset_mocks(void)
 	g_send_errno = 0;
 	g_send_flags = 0;
 	g_realloc_fail = false;
+	g_calloc_fail = 0;
+	g_malloc_fail = 0;
 	g_packed = false;
+	g_sock_path = NULL;
+	g_sock_name = NULL;
+	g_port_node = NULL;
+	g_intr_fail = false;
+	g_modern_init_fail = false;
+	g_mevent_add_fail = 0;
+	g_mevent_add_disabled_fail = 0;
+	g_port_node_type = NV_TYPE_NVLIST;
 }
 
 ssize_t __real_send(int, const void *, size_t, int);
 ssize_t __wrap_send(int, const void *, size_t, int);
 void *__real_realloc(void *, size_t);
 void *__wrap_realloc(void *, size_t);
+void *__real_calloc(size_t, size_t);
+void *__wrap_calloc(size_t, size_t);
+void *__real_malloc(size_t);
+void *__wrap_malloc(size_t);
+
+void *
+__wrap_calloc(size_t nmemb, size_t size)
+{
+
+	if (g_calloc_fail > 0 && --g_calloc_fail == 0)
+		return (NULL);
+	return (__real_calloc(nmemb, size));
+}
+
+void *
+__wrap_malloc(size_t size)
+{
+
+	if (g_malloc_fail > 0 && --g_malloc_fail == 0)
+		return (NULL);
+	return (__real_malloc(size));
+}
 
 ssize_t
 __wrap_send(int fd, const void *buf, size_t len, int flags)
@@ -263,7 +307,13 @@ __wrap_realloc(void *ptr, size_t size)
 const char *
 get_config_value_node(const nvlist_t *nvl __unused, const char *name)
 {
-	return (strcmp(name, "transport") == 0 ? g_transport : NULL);
+	if (strcmp(name, "transport") == 0)
+		return (g_transport);
+	if (strcmp(name, "path") == 0)
+		return (g_sock_path);
+	if (strcmp(name, "name") == 0)
+		return (g_sock_name);
+	return (NULL);
 }
 
 bool
@@ -312,6 +362,9 @@ find_relative_config_node(nvlist_t *nvl, const char *name)
 	char *end;
 	long value;
 
+	/* The device looks up the "port" container before enumerating ports. */
+	if (strcmp(name, "port") == 0)
+		return (g_port_node != NULL ? nvl : NULL);
 	value = strtol(name, &end, 10);
 	if (*name != '\0' && *end == '\0' && value >= 0 && value < 16 &&
 	    (g_config_nodes & ((uint16_t)1U << value)) != 0)
@@ -320,10 +373,19 @@ find_relative_config_node(nvlist_t *nvl, const char *name)
 }
 
 const char *
-nvlist_next(const nvlist_t *nvl __unused, int *type __unused,
-    void **cookie __unused)
+nvlist_next(const nvlist_t *nvl __unused, int *type, void **cookie)
 {
-	return (NULL);
+	/*
+	 * Emit a single configured port node once, then stop.  The cookie
+	 * doubles as the visited flag so the device's port-enumeration loop
+	 * terminates.
+	 */
+	if (g_port_node == NULL || *cookie != NULL)
+		return (NULL);
+	*cookie = (void *)1;
+	if (type != NULL)
+		*type = g_port_node_type;
+	return (g_port_node);
 }
 
 const nvlist_t *
@@ -338,6 +400,8 @@ mevent_add(int fd __unused, enum ev_type type __unused,
 {
 	static struct mevent ev;
 
+	if (g_mevent_add_fail > 0 && --g_mevent_add_fail == 0)
+		return (NULL);
 	return (&ev);
 }
 
@@ -347,6 +411,8 @@ mevent_add_disabled(int fd __unused, enum ev_type type __unused,
 {
 	static struct mevent ev;
 
+	if (g_mevent_add_disabled_fail > 0 && --g_mevent_add_disabled_fail == 0)
+		return (NULL);
 	return (&ev);
 }
 
@@ -378,6 +444,14 @@ int
 vq_has_descs(struct vqueue_info *vq __unused)
 {
 	g_has_descs_q = vq->vq_num;
+	/*
+	 * Model a guest that publishes descriptors between the emptiness check
+	 * and the kick-enable: the first g_descs_delay probes report empty.
+	 */
+	if (g_descs_delay > 0) {
+		g_descs_delay--;
+		return (0);
+	}
 	return (g_descs > 0);
 }
 
@@ -465,11 +539,11 @@ int
 vi_pci_modern_init(struct virtio_softc *vs __unused, int bar)
 {
 	g_modern_bar = bar;
-	return (0);
+	return (g_modern_init_fail ? -1 : 0);
 }
 
 int vi_intr_init(struct virtio_softc *vs __unused, int bar __unused,
-    int msix __unused) { return (0); }
+    int msix __unused) { return (g_intr_fail ? -1 : 0); }
 void vi_set_io_bar(struct virtio_softc *vs __unused, int bar)
 { g_io_bar = bar; }
 void vi_reset_dev(struct virtio_softc *vs __unused) {}
@@ -509,6 +583,32 @@ disable_rx_cb(struct pci_vtcon_port *port __unused, void *arg __unused)
 {
 
 	g_disable_calls++;
+}
+
+/*
+ * Release the per-port sockets attached to a stack-allocated softc without
+ * freeing the softc itself (which pci_vtcon_destroy() would do).
+ */
+static void
+free_port_socks(struct pci_vtcon_softc *sc)
+{
+	struct pci_vtcon_sock *sock;
+	int i;
+
+	for (i = 0; i < VTCON_MAXPORTS; i++) {
+		if (!sc->vsc_ports[i].vsp_enabled)
+			continue;
+		sock = sc->vsc_ports[i].vsp_arg;
+		if (sock == NULL)
+			continue;
+		if (sock->vss_conn_fd >= 0)
+			close(sock->vss_conn_fd);
+		if (sock->vss_server_fd >= 0)
+			close(sock->vss_server_fd);
+		free(sock->vss_tx_buf);
+		free(sock);
+		sc->vsc_ports[i].vsp_arg = NULL;
+	}
 }
 
 static void
@@ -1946,6 +2046,798 @@ ATF_TC_BODY(virtio_1_4_wire_layout, tc)
 	    VIRTIO14_CONSOLE_CONTROL_VALUE_OFF);
 }
 
+/*
+ * Connect a client stream socket to an AF_UNIX listener at path.  Returns the
+ * client fd (>= 0) or -1 on failure.  The listener is non-blocking, so the
+ * connect completes on the kernel accept queue without a peer accept() yet.
+ */
+static int
+connect_unix_client(const char *path)
+{
+	struct sockaddr_un sun;
+	int c;
+
+	c = socket(AF_UNIX, SOCK_STREAM, 0);
+	if (c < 0)
+		return (-1);
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	sun.sun_len = sizeof(sun);
+	if (strlcpy(sun.sun_path, path, sizeof(sun.sun_path)) >=
+	    sizeof(sun.sun_path)) {
+		close(c);
+		return (-1);
+	}
+	if (connect(c, (struct sockaddr *)&sun, sun.sun_len) < 0) {
+		close(c);
+		return (-1);
+	}
+	return (c);
+}
+
+ATF_TC_WITHOUT_HEAD(resume_device_is_a_noop);
+ATF_TC_BODY(resume_device_is_a_noop, tc)
+{
+	struct pci_vtcon_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	ATF_CHECK_EQ(pci_vtcon_suspend_device(&sc), 0);
+	ATF_CHECK_EQ(pci_vtcon_resume_device(&sc), 0);
+	ATF_CHECK(vtcon_vi_consts.vc_resume_device == pci_vtcon_resume_device);
+}
+
+ATF_TC_WITHOUT_HEAD(port_add_assigns_spec_queue_indices);
+ATF_TC_BODY(port_add_assigns_spec_queue_indices, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_port *p0, *p5;
+	int arg;
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mocks();
+
+	/*
+	 * VirtIO 1.4 5.3.2: port 0 uses queues 0/1; port N>0 uses queues
+	 * 2N+2 (rx) and 2N+3 (tx), i.e. tx=(N+1)*2, rx=tx+1.
+	 */
+	p0 = pci_vtcon_port_add(&sc, 0, "p0", capture_cb, resume_rx_cb,
+	    disable_rx_cb, &arg);
+	ATF_REQUIRE(p0 != NULL);
+	ATF_CHECK_EQ(p0->vsp_txq, 0);
+	ATF_CHECK_EQ(p0->vsp_rxq, 1);
+	ATF_CHECK(p0->vsp_enabled);
+	ATF_CHECK(p0->vsp_sc == &sc);
+	ATF_CHECK(p0->vsp_cb == capture_cb);
+
+	p5 = pci_vtcon_port_add(&sc, 5, "p5", capture_cb, NULL, NULL, &arg);
+	ATF_REQUIRE(p5 != NULL);
+	ATF_CHECK_EQ(p5->vsp_txq, (5 + 1) * 2);
+	ATF_CHECK_EQ(p5->vsp_rxq, (5 + 1) * 2 + 1);
+
+	/* A second add of an active port is rejected. */
+	errno = 0;
+	ATF_CHECK(pci_vtcon_port_add(&sc, 0, "dup", capture_cb, NULL, NULL,
+	    &arg) == NULL);
+	ATF_CHECK_EQ(errno, EBUSY);
+}
+
+ATF_TC_WITHOUT_HEAD(sock_add_argument_validation);
+ATF_TC_BODY(sock_add_argument_validation, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct nvlist nvl = { 0 };
+	static char longpath[128];
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mocks();
+
+	/* An unparseable port node is rejected before any resource is taken. */
+	ATF_CHECK_EQ(pci_vtcon_sock_add(&sc, "bogus", &nvl), -1);
+
+	/* A missing path or name is a configuration error. */
+	g_sock_path = NULL;
+	g_sock_name = "n";
+	ATF_CHECK_EQ(pci_vtcon_sock_add(&sc, "0", &nvl), -1);
+	g_sock_path = "/tmp/vtcon-x.sock";
+	g_sock_name = NULL;
+	ATF_CHECK_EQ(pci_vtcon_sock_add(&sc, "0", &nvl), -1);
+
+	/* The per-port bookkeeping allocation can fail. */
+	g_sock_path = "/tmp/vtcon-x.sock";
+	g_sock_name = "n";
+	g_calloc_fail = 1;
+	ATF_CHECK_EQ(pci_vtcon_sock_add(&sc, "0", &nvl), -1);
+
+	/* A basename longer than sun_path cannot be bound. */
+	memset(longpath, 'a', sizeof(longpath) - 1);
+	memcpy(longpath, "/tmp/", 5);
+	longpath[sizeof(longpath) - 1] = '\0';
+	g_sock_path = longpath;
+	g_sock_name = "n";
+	errno = 0;
+	ATF_CHECK_EQ(pci_vtcon_sock_add(&sc, "0", &nvl), -1);
+	ATF_CHECK_EQ(errno, ENAMETOOLONG);
+
+	/* The parent directory of the socket path must be openable. */
+	g_sock_path = "/nonexistent-vtcon-dir-9x8y7z/c.sock";
+	g_sock_name = "n";
+	ATF_CHECK_EQ(pci_vtcon_sock_add(&sc, "0", &nvl), -1);
+}
+
+ATF_TC_WITHOUT_HEAD(socket_backend_full_lifecycle);
+ATF_TC_BODY(socket_backend_full_lifecycle, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtcon_softc *sc;
+	struct pci_vtcon_sock *sock;
+	struct nvlist nvl;
+	char dir[] = "/tmp/vtcon-lc.XXXXXX";
+	char path[128];
+	int client, client2;
+
+	if (mkdtemp(dir) == NULL)
+		atf_tc_skip("mkdtemp failed: %s", strerror(errno));
+	snprintf(path, sizeof(path), "%s/c.sock", dir);
+
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_transport = "modern";
+	g_sock_path = path;
+	g_sock_name = "org.freebsd.console";
+	g_port_node = "0";
+
+	if (pci_vtcon_init(&pi, &nvl) != 0) {
+		rmdir(dir);
+		atf_tc_skip("socket backend unavailable in this environment");
+	}
+	/* vsc_vs is the first softc member, so pi_arg aliases the softc. */
+	sc = pi.pi_arg;
+	ATF_REQUIRE(sc->vsc_ports[0].vsp_enabled);
+	sock = sc->vsc_ports[0].vsp_arg;
+	ATF_REQUIRE(sock != NULL);
+	ATF_CHECK(sock->vss_server_fd >= 0);
+	ATF_CHECK(!sock->vss_open);
+	ATF_CHECK(sock->vss_conn_fd == -1);
+
+	/* No pending connection: the non-blocking accept declines cleanly. */
+	pci_vtcon_sock_accept(sock->vss_server_fd, EVF_READ, sock);
+	ATF_CHECK(!sock->vss_open);
+
+	/* A real client connection is accepted and the port is opened. */
+	client = connect_unix_client(path);
+	ATF_REQUIRE(client >= 0);
+	pci_vtcon_sock_accept(sock->vss_server_fd, EVF_READ, sock);
+	ATF_CHECK(sock->vss_open);
+	ATF_CHECK(sock->vss_conn_fd >= 0);
+	ATF_CHECK(sc->vsc_ports[0].vsp_open);
+
+	/* The receive-enable callback re-arms the connection read event. */
+	g_enable_calls = 0;
+	pci_vtcon_sock_rx_enable(sock->vss_port, sock);
+	ATF_CHECK_EQ(g_enable_calls, 1);
+	g_disable_calls = 0;
+	pci_vtcon_sock_rx_disable(sock->vss_port, sock);
+	ATF_CHECK_EQ(g_disable_calls, 1);
+
+	/* A second connection while already open is refused and closed. */
+	client2 = connect_unix_client(path);
+	ATF_REQUIRE(client2 >= 0);
+	pci_vtcon_sock_accept(sock->vss_server_fd, EVF_READ, sock);
+	ATF_CHECK(sock->vss_open);
+	close(client);
+	close(client2);
+
+	/*
+	 * Force the connection to close so the accept path can be re-driven
+	 * through its event-registration failure branches.
+	 */
+	pci_vtcon_sock_close(sock);
+	ATF_CHECK(!sock->vss_open);
+
+	/* mevent_add() for the read event fails: the accepted fd is dropped. */
+	client = connect_unix_client(path);
+	ATF_REQUIRE(client >= 0);
+	g_mevent_add_fail = 1;
+	pci_vtcon_sock_accept(sock->vss_server_fd, EVF_READ, sock);
+	ATF_CHECK(!sock->vss_open);
+	ATF_CHECK_EQ(sock->vss_conn_fd, -1);
+	close(client);
+
+	/* mevent_add_disabled() for the write event fails after the read add. */
+	client = connect_unix_client(path);
+	ATF_REQUIRE(client >= 0);
+	g_mevent_add_disabled_fail = 1;
+	pci_vtcon_sock_accept(sock->vss_server_fd, EVF_READ, sock);
+	ATF_CHECK(!sock->vss_open);
+	ATF_CHECK_EQ(sock->vss_conn_fd, -1);
+	close(client);
+
+	/*
+	 * Re-establish a live connection so device teardown must synchronously
+	 * retire the read, write, and listener events and close both fds.
+	 */
+	client = connect_unix_client(path);
+	ATF_REQUIRE(client >= 0);
+	pci_vtcon_sock_accept(sock->vss_server_fd, EVF_READ, sock);
+	ATF_REQUIRE(sock->vss_open);
+	ATF_REQUIRE(sock->vss_conn_fd >= 0);
+	close(client);
+
+	/* Device teardown frees the port, its socket, and unlinks the path. */
+	pci_vtcon_destroy(sc);
+	rmdir(dir);
+
+	/* Destroying a NULL device is a no-op. */
+	pci_vtcon_destroy(NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(sock_add_teardown_after_late_failure);
+ATF_TC_BODY(sock_add_teardown_after_late_failure, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct nvlist nvl = { 0 };
+	char dir[] = "/tmp/vtcon-tf.XXXXXX";
+	char path[128];
+
+	if (mkdtemp(dir) == NULL)
+		atf_tc_skip("mkdtemp failed: %s", strerror(errno));
+	snprintf(path, sizeof(path), "%s/c.sock", dir);
+
+	memset(&sc, 0, sizeof(sc));
+	reset_mocks();
+	g_sock_path = path;
+	g_sock_name = "console";
+	/* Pre-enable the target port so port_add fails after the bind. */
+	sc.vsc_ports[0].vsp_enabled = true;
+	ATF_CHECK_EQ(pci_vtcon_sock_add(&sc, "0", &nvl), -1);
+	/* The bound path must have been unlinked by the failure cleanup. */
+	ATF_CHECK(access(path, F_OK) != 0);
+
+	/*
+	 * Registering the listener event can fail; the half-built port is torn
+	 * down and the bound path removed.
+	 */
+	memset(&sc, 0, sizeof(sc));
+	reset_mocks();
+	g_sock_path = path;
+	g_sock_name = "console";
+	g_mevent_add_fail = 1;
+	ATF_CHECK_EQ(pci_vtcon_sock_add(&sc, "0", &nvl), -1);
+	ATF_CHECK(!sc.vsc_ports[0].vsp_enabled);
+	ATF_CHECK(access(path, F_OK) != 0);
+
+	/*
+	 * Binding a path that is already bound by another port fails.  Port 0
+	 * takes the path first, then port 1 tries to reuse it.
+	 */
+	memset(&sc, 0, sizeof(sc));
+	reset_mocks();
+	g_sock_path = path;
+	g_sock_name = "console";
+	ATF_REQUIRE_EQ(pci_vtcon_sock_add(&sc, "0", &nvl), 0);
+	ATF_CHECK_EQ(pci_vtcon_sock_add(&sc, "1", &nvl), -1);
+	free_port_socks(&sc);
+	unlink(path);
+	rmdir(dir);
+}
+
+ATF_TC_WITHOUT_HEAD(sock_close_without_read_event);
+ATF_TC_BODY(sock_close_without_read_event, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_port port;
+	struct pci_vtcon_sock sock;
+	int fd;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&port, 0, sizeof(port));
+	memset(&sock, 0, sizeof(sock));
+	reset_mocks();
+	port.vsp_sc = &sc;
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_evp = NULL;
+	fd = open("/dev/null", O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	sock.vss_conn_fd = fd;
+
+	/* With no read event registered, close() takes the raw fd path. */
+	pci_vtcon_sock_close(&sock);
+	ATF_CHECK(!sock.vss_open);
+	ATF_CHECK_EQ(sock.vss_conn_fd, -1);
+	/* The fd is closed by sock_close; a second close must report EBADF. */
+	ATF_CHECK(close(fd) == -1 && errno == EBADF);
+}
+
+ATF_TC_WITHOUT_HEAD(receive_kick_rearm_race);
+ATF_TC_BODY(receive_kick_rearm_race, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_sock sock;
+	struct mevent ev;
+	struct vring_used used;
+	char byte;
+	int sv[2];
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	memset(&sc, 0, sizeof(sc));
+	memset(&sock, 0, sizeof(sock));
+	memset(&used, 0, sizeof(used));
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
+	sc.vsc_ports[0].vsp_sc = &sc;
+	sc.vsc_ports[0].vsp_enabled = true;
+	sc.vsc_ports[0].vsp_rx_ready = true;
+	sc.vsc_ports[0].vsp_txq = 0;
+	sc.vsc_queues[0].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[0].vq_used = &used;
+	sc.vsc_queues[0].vq_num = 0;
+	sc.vsc_queues[0].vq_qsize = VTCON_RINGSZ;
+	sock.vss_sc = &sc;
+	sock.vss_port = &sc.vsc_ports[0];
+	sock.vss_open = true;
+	sock.vss_conn_fd = sv[1];
+	sock.vss_conn_evp = &ev;
+
+	reset_mocks();
+	g_descs = 1;
+	g_descs_delay = 1;	/* first probe empty, then a descriptor appears */
+	g_readable = 0;
+	g_writable = 1;
+	g_chain_iov[0] = (struct iovec){ .iov_base = &byte, .iov_len = 1 };
+	ATF_REQUIRE_EQ(write(sv[0], "z", 1), 1);
+	pci_vtcon_sock_rx(sv[1], EVF_READ, &sock);
+	ATF_CHECK_EQ(g_get_calls, 1);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len, 1);
+	ATF_CHECK(sc.vsc_ports[0].vsp_rx_ready);
+
+	close(sv[0]);
+	close(sv[1]);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(receive_eof_and_errors);
+ATF_TC_BODY(receive_eof_and_errors, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_sock sock;
+	struct pci_vtcon_port port;
+	struct mevent ev;
+	struct vring_used used;
+	char byte;
+	int sv[2], wonly;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&port, 0, sizeof(port));
+	memset(&used, 0, sizeof(used));
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
+	port.vsp_sc = &sc;
+	port.vsp_enabled = true;
+	port.vsp_rx_ready = true;
+	port.vsp_txq = 0;
+	sc.vsc_queues[0].vq_vs = &sc.vsc_vs;
+	sc.vsc_queues[0].vq_used = &used;
+	sc.vsc_queues[0].vq_num = 0;
+	sc.vsc_queues[0].vq_qsize = VTCON_RINGSZ;
+
+	/* A stale callback for a superseded connection is a NULL-port no-op. */
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_sc = &sc;
+	sock.vss_port = NULL;
+	sock.vss_open = true;
+	sock.vss_conn_fd = 200;
+	reset_mocks();
+	pci_vtcon_sock_rx(200, EVF_READ, &sock);
+	ATF_CHECK_EQ(g_get_calls, 0);
+
+	/* A closed session (vss_open false) consumes nothing. */
+	sock.vss_port = &port;
+	sock.vss_open = false;
+	reset_mocks();
+	pci_vtcon_sock_rx(200, EVF_READ, &sock);
+	ATF_CHECK_EQ(g_get_calls, 0);
+
+	/* getchain returning zero breaks the readiness loop. */
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_sc = &sc;
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = sv[1];
+	sock.vss_conn_evp = &ev;
+	port.vsp_rx_ready = true;
+	reset_mocks();
+	g_descs = 1;
+	g_chain_n = 0;
+	pci_vtcon_sock_rx(sv[1], EVF_READ, &sock);
+	ATF_CHECK_EQ(g_get_calls, 0);
+	close(sv[0]);
+	close(sv[1]);
+
+	/* An empty readv (peer hangup) closes the backend. */
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_sc = &sc;
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = sv[1];
+	sock.vss_conn_evp = &ev;
+	port.vsp_rx_ready = true;
+	reset_mocks();
+	g_descs = 1;
+	g_readable = 0;
+	g_writable = 1;
+	g_chain_iov[0] = (struct iovec){ .iov_base = &byte, .iov_len = 1 };
+	close(sv[0]);
+	pci_vtcon_sock_rx(sv[1], EVF_READ, &sock);
+	ATF_CHECK(!sock.vss_open);
+	close(sv[1]);
+
+	/* A hard read error (non-EAGAIN) also closes the backend. */
+	wonly = open("/dev/null", O_WRONLY);
+	ATF_REQUIRE(wonly >= 0);
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_sc = &sc;
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = wonly;
+	sock.vss_conn_evp = &ev;
+	port.vsp_rx_ready = true;
+	reset_mocks();
+	g_descs = 1;
+	g_readable = 0;
+	g_writable = 1;
+	g_chain_iov[0] = (struct iovec){ .iov_base = &byte, .iov_len = 1 };
+	pci_vtcon_sock_rx(wonly, EVF_READ, &sock);
+	ATF_CHECK(!sock.vss_open);
+
+	/* No host bytes yet: a non-blocking readv returns EAGAIN and defers. */
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	ATF_REQUIRE(fcntl(sv[1], F_SETFL,
+	    fcntl(sv[1], F_GETFL) | O_NONBLOCK) == 0);
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_sc = &sc;
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = sv[1];
+	sock.vss_conn_evp = &ev;
+	port.vsp_rx_ready = true;
+	reset_mocks();
+	g_descs = 1;
+	g_readable = 0;
+	g_writable = 1;
+	g_chain_iov[0] = (struct iovec){ .iov_base = &byte, .iov_len = 1 };
+	pci_vtcon_sock_rx(sv[1], EVF_READ, &sock);
+	ATF_CHECK(sock.vss_open);		/* deferred, not closed */
+	ATF_CHECK_EQ(g_ret_calls, 1);		/* descriptor returned */
+	close(sv[0]);
+	close(sv[1]);
+
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+ATF_TC_WITHOUT_HEAD(transmit_edge_conditions);
+ATF_TC_BODY(transmit_edge_conditions, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_port port;
+	struct pci_vtcon_sock sock;
+	struct mevent read_ev, write_ev;
+	struct iovec iov;
+	static uint8_t big[8192];
+	int fd;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&port, 0, sizeof(port));
+	port.vsp_sc = &sc;
+
+	/* A closed backend drops output without touching the buffer. */
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_port = &port;
+	sock.vss_open = false;
+	sock.vss_conn_fd = -1;
+	reset_mocks();
+	iov = (struct iovec){ .iov_base = big, .iov_len = 1 };
+	pci_vtcon_sock_tx(&port, &sock, &iov, 1);
+	ATF_CHECK(sock.vss_tx_buf == NULL);
+
+	/* A single chain that exceeds the hard cap closes the backend. */
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = 300;
+	sock.vss_conn_evp = &read_ev;
+	sock.vss_write_evp = &write_ev;
+	reset_mocks();
+	iov = (struct iovec){ .iov_base = big,
+	    .iov_len = (size_t)VTCON_SOCK_TX_MAX + 1 };
+	pci_vtcon_sock_tx(&port, &sock, &iov, 1);
+	ATF_CHECK(!sock.vss_open);
+
+	/* drain() with nothing pending is a no-op. */
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = 301;
+	sock.vss_write_evp = &write_ev;
+	reset_mocks();
+	pci_vtcon_sock_drain(&sock);
+	ATF_CHECK(sock.vss_open);
+
+	/* A large append grows the staging buffer through the doubling clamp. */
+	fd = open("/dev/null", O_WRONLY);
+	ATF_REQUIRE(fd >= 0);
+	memset(&sock, 0, sizeof(sock));
+	sock.vss_port = &port;
+	sock.vss_open = true;
+	sock.vss_conn_fd = fd;
+	sock.vss_conn_evp = &read_ev;
+	sock.vss_write_evp = &write_ev;
+	reset_mocks();
+	g_send_override_fd = fd;
+	g_send_result = sizeof(big);
+	iov = (struct iovec){ .iov_base = big, .iov_len = sizeof(big) };
+	pci_vtcon_sock_tx(&port, &sock, &iov, 1);
+	ATF_CHECK(sock.vss_open);
+	ATF_CHECK(sock.vss_tx_cap >= sizeof(big));
+	ATF_CHECK_EQ(sock.vss_tx_len, sock.vss_tx_off);
+	free(sock.vss_tx_buf);
+	close(fd);
+}
+
+ATF_TC_WITHOUT_HEAD(control_send_edge_conditions);
+ATF_TC_BODY(control_send_edge_conditions, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_control ctrl;
+	uint8_t out[VIRTIO14_CONSOLE_CONTROL_SIZE];
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_control_port.vsp_sc = &sc;
+	sc.vsc_control_port.vsp_txq = 2;
+	sc.vsc_queues[2].vq_num = 2;
+	sc.vsc_features = 1ULL << VTCON_F_MULTIPORT;
+	ctrl = (struct pci_vtcon_control){
+	    .id = 0, .event = VTCON_DEVICE_ADD, .value = 1,
+	};
+
+	/* A payload length that would overflow the message size is rejected. */
+	reset_mocks();
+	ATF_CHECK(!pci_vtcon_control_send(&sc, &ctrl, "x", SIZE_MAX));
+
+	/* getchain returning zero on an available queue fails the send. */
+	reset_mocks();
+	g_descs = 1;
+	g_chain_n = 0;
+	ATF_CHECK(!pci_vtcon_control_send(&sc, &ctrl, NULL, 0));
+
+	/* A message allocation failure fails the send without corrupting state. */
+	reset_mocks();
+	g_descs = 1;
+	g_chain_n = 1;
+	g_readable = 0;
+	g_writable = 1;
+	g_chain_iov[0] = (struct iovec){ .iov_base = out, .iov_len = sizeof(out) };
+	g_malloc_fail = 1;
+	ATF_CHECK(!pci_vtcon_control_send(&sc, &ctrl, NULL, 0));
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(announce_and_open_edge_conditions);
+ATF_TC_BODY(announce_and_open_edge_conditions, tc)
+{
+	struct pci_vtcon_softc sc;
+	struct pci_vtcon_port *port;
+	struct pci_vtcon_control ctrl;
+	struct iovec iov;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_control_port.vsp_sc = &sc;
+	sc.vsc_control_port.vsp_txq = 2;
+	sc.vsc_control_port.vsp_rxq = 3;
+	sc.vsc_queues[2].vq_num = 2;
+	sc.vsc_features = 1ULL << VTCON_F_MULTIPORT;
+	port = &sc.vsc_ports[0];
+	port->vsp_sc = &sc;
+	port->vsp_enabled = true;
+	port->vsp_id = 0;
+	port->vsp_name = "console";
+
+	/* PORT_NAME cannot be published when no receive buffer is available. */
+	reset_mocks();
+	g_descs = 0;
+	port->vsp_announced = true;
+	port->vsp_guest_ready = true;
+	port->vsp_named = false;
+	ATF_CHECK(!pci_vtcon_announce_port(port));
+	ATF_CHECK(!port->vsp_named);
+
+	/* open_port on a ready device announces the new host-open state. */
+	reset_mocks();
+	sc.vsc_ready = true;
+	port->vsp_announced = true;
+	port->vsp_guest_ready = false;
+	pci_vtcon_open_port(port, true);
+	ATF_CHECK(port->vsp_open);
+	ATF_CHECK(port->vsp_open_pending);
+
+	/* PORT_READY for an unannounced port is refused. */
+	sc.vsc_ready = true;
+	port->vsp_announced = false;
+	ctrl = (struct pci_vtcon_control){
+	    .id = 0, .event = VTCON_PORT_READY, .value = 1,
+	};
+	iov = (struct iovec){ .iov_base = &ctrl,
+	    .iov_len = VIRTIO14_CONSOLE_CONTROL_SIZE };
+	reset_mocks();
+	sc.vsc_vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	pci_vtcon_control_tx(&sc.vsc_control_port, NULL, &iov, 1);
+	ATF_CHECK(!port->vsp_guest_ready);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_empty_and_inactive);
+ATF_TC_BODY(notify_empty_and_inactive, tc)
+{
+	struct pci_vtcon_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_features = 1ULL << VTCON_F_MULTIPORT;
+	sc.vsc_ports[1].vsp_enabled = true;
+	sc.vsc_ports[1].vsp_cb = capture_cb;
+	sc.vsc_queues[4].vq_num = 4;
+	sc.vsc_queues[4].vq_qsize = VTCON_RINGSZ;
+
+	/* getchain returning zero breaks the transmit drain loop. */
+	reset_mocks();
+	g_descs = 1;
+	g_chain_n = 0;
+	pci_vtcon_notify_tx(&sc, &sc.vsc_queues[4]);
+	ATF_CHECK_EQ(g_callback_calls, 0);
+	ATF_CHECK_EQ(g_end_calls, 1);
+
+	/* Without multiport, the extra receive queue is inert. */
+	memset(&sc, 0, sizeof(sc));
+	sc.vsc_queues[4].vq_num = 4;
+	reset_mocks();
+	pci_vtcon_notify_rx(&sc, &sc.vsc_queues[4]);
+	ATF_CHECK_EQ(g_get_calls, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(legacy_parser_errors);
+ATF_TC_BODY(legacy_parser_errors, tc)
+{
+	struct nvlist nvl;
+	char opts[512];
+	int i, off;
+
+	/* A port entry without a path is rejected. */
+	reset_mocks();
+	ATF_CHECK_EQ(pci_vtcon_legacy_config(&nvl, "namewithoutpath"), -1);
+
+	/* More port entries than the device supports is rejected. */
+	reset_mocks();
+	off = 0;
+	for (i = 0; i < VTCON_MAXPORTS + 1; i++)
+		off += snprintf(opts + off, sizeof(opts) - off, "%sp%d=/tmp/p%d",
+		    i == 0 ? "" : ",", i, i);
+	ATF_CHECK_EQ(pci_vtcon_legacy_config(&nvl, opts), -1);
+}
+
+ATF_TC_WITHOUT_HEAD(init_failure_paths);
+ATF_TC_BODY(init_failure_paths, tc)
+{
+	struct pci_devinst pi;
+	struct nvlist nvl;
+
+	/* The softc allocation can fail. */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_calloc_fail = 1;
+	ATF_CHECK_EQ(pci_vtcon_init(&pi, &nvl), 1);
+
+	/* The config allocation (second calloc) can fail. */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_calloc_fail = 2;
+	ATF_CHECK_EQ(pci_vtcon_init(&pi, &nvl), 1);
+
+	/* An unknown transport selection fails initialization. */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_transport = "bogus";
+	ATF_CHECK_EQ(pci_vtcon_init(&pi, &nvl), 1);
+
+	/* Interrupt setup failure tears the device down. */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_intr_fail = true;
+	ATF_CHECK_EQ(pci_vtcon_init(&pi, &nvl), 1);
+
+	/* Modern transport init failure tears the device down. */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_transport = "modern";
+	g_modern_init_fail = true;
+	ATF_CHECK_EQ(pci_vtcon_init(&pi, &nvl), 1);
+
+	/* A port that cannot be created aborts initialization. */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_port_node = "0";
+	g_sock_path = NULL;	/* missing path -> sock_add fails */
+	g_sock_name = "n";
+	ATF_CHECK_EQ(pci_vtcon_init(&pi, &nvl), 1);
+
+	/* A non-nvlist entry in the port container is skipped. */
+	memset(&pi, 0, sizeof(pi));
+	reset_mocks();
+	g_port_node = "0";
+	g_port_node_type = NV_TYPE_NVLIST + 1;	/* any non-nvlist type */
+	ATF_REQUIRE_EQ(pci_vtcon_init(&pi, &nvl), 0);
+	ATF_CHECK(!((struct pci_vtcon_softc *)pi.pi_arg)->vsc_ports[0].
+	    vsp_enabled);
+	pci_vtcon_destroy(pi.pi_arg);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_negative_load_paths);
+ATF_TC_BODY(snapshot_negative_load_paths, tc)
+{
+	struct pci_vtcon_config src_config, dst_config;
+	struct pci_vtcon_sock src_sock, dst_sock;
+	struct pci_vtcon_softc source, destination;
+	uint8_t image[4096];
+	size_t used;
+
+	setup_snapshot_console(&source, &src_config, &src_sock,
+	    "console", "/tmp/vtcon-neg.sock");
+	source.vsc_ready = true;
+	ATF_REQUIRE_EQ(run_console_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+
+	/* The device-ready byte (offset 16) is a strict boolean. */
+	setup_snapshot_console(&destination, &dst_config, &dst_sock,
+	    "console", "/tmp/vtcon-neg.sock");
+	image[16] = 2;
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	image[16] = 1;
+
+	/* A features word that disagrees with the destination is rejected. */
+	setup_snapshot_console(&destination, &dst_config, &dst_sock,
+	    "console", "/tmp/vtcon-neg.sock");
+	image[8] ^= 0xff;
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+	image[8] ^= 0xff;
+
+	/*
+	 * An immutable per-port attribute that disagrees with the destination
+	 * (here the console flag on port 0) is rejected on load.
+	 */
+	setup_snapshot_console(&destination, &dst_config, &dst_sock,
+	    "console", "/tmp/vtcon-neg.sock");
+	destination.vsc_ports[0].vsp_console = true;
+	ATF_CHECK_EQ(run_console_snapshot(&destination, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EINVAL);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_validate_requires_softc);
+ATF_TC_BODY(snapshot_validate_requires_softc, tc)
+{
+	struct pci_devinst pi;
+	struct vm_snapshot_meta meta = {
+	    .dev_data = &pi,
+	    .op = VM_SNAPSHOT_VALIDATE,
+	};
+
+	memset(&pi, 0, sizeof(pi));
+	pi.pi_arg = NULL;
+	ATF_CHECK_EQ(pci_vtcon_snapshot_validate(&meta), EINVAL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
@@ -1974,5 +2866,21 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, snapshot_preflight_is_locally_serialized);
 	ATF_TP_ADD_TC(tp, snapshot_lifecycle_validation);
 	ATF_TP_ADD_TC(tp, checkpoint_rejects_active_host_socket);
+	ATF_TP_ADD_TC(tp, resume_device_is_a_noop);
+	ATF_TP_ADD_TC(tp, port_add_assigns_spec_queue_indices);
+	ATF_TP_ADD_TC(tp, sock_add_argument_validation);
+	ATF_TP_ADD_TC(tp, socket_backend_full_lifecycle);
+	ATF_TP_ADD_TC(tp, sock_add_teardown_after_late_failure);
+	ATF_TP_ADD_TC(tp, sock_close_without_read_event);
+	ATF_TP_ADD_TC(tp, receive_kick_rearm_race);
+	ATF_TP_ADD_TC(tp, receive_eof_and_errors);
+	ATF_TP_ADD_TC(tp, transmit_edge_conditions);
+	ATF_TP_ADD_TC(tp, control_send_edge_conditions);
+	ATF_TP_ADD_TC(tp, announce_and_open_edge_conditions);
+	ATF_TP_ADD_TC(tp, notify_empty_and_inactive);
+	ATF_TP_ADD_TC(tp, legacy_parser_errors);
+	ATF_TP_ADD_TC(tp, init_failure_paths);
+	ATF_TP_ADD_TC(tp, snapshot_negative_load_paths);
+	ATF_TP_ADD_TC(tp, snapshot_validate_requires_softc);
 	return (atf_no_error());
 }

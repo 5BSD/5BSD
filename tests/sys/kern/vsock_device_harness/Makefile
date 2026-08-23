@@ -30,12 +30,20 @@ ATF_TESTS_C+=	audio_test
 ATF_TESTS_C+=	bhyvegc_test
 ATF_TESTS_C+=	usb_mouse_model_test
 ATF_TESTS_C+=	pci_nvme_model_test
+ATF_TESTS_C+=	pci_nvme_full_test
 ATF_TESTS_C+=	pci_ahci_model_test
+ATF_TESTS_C+=	pci_ahci_full_test
 ATF_TESTS_C+=	pci_e82545_model_test
+ATF_TESTS_C+=	pci_e82545_full_test
 ATF_TESTS_C+=	pci_fbuf_model_test
+ATF_TESTS_C+=	pci_fbuf_full_test
 ATF_TESTS_C+=	pci_hda_model_test
+ATF_TESTS_C+=	pci_hda_full_test
 ATF_TESTS_C+=	pci_xhci_model_test
+ATF_TESTS_C+=	pci_xhci_full_test
 ATF_TESTS_C+=	uart_backend_model_test
+ATF_TESTS_C+=	uart_backend_full_test
+ATF_TESTS_C+=	uart_emul_full_test
 ATF_TESTS_C+=	console_owner_test
 ATF_TESTS_C+=	mevent_lifecycle_test
 ATF_TESTS_C+=	tpm_intf_crb_model_test
@@ -186,12 +194,19 @@ VIRTIO_VALIDATION_FILES=	virtio-1.4-requirements.tsv \
 				bhyvegc_test.c \
 				usb_mouse_model_test.c \
 				pci_nvme_model_test.c \
+				pci_nvme_full_test.c \
 				pci_ahci_model_test.c \
+				pci_ahci_full_test.c \
 				pci_e82545_model_test.c \
 				pci_fbuf_model_test.c \
 				pci_hda_model_test.c \
+				pci_hda_full_test.c \
 				pci_xhci_model_test.c \
+				pci_xhci_full_test.c \
+				xhcireg.h \
 				uart_backend_model_test.c \
+				uart_backend_full_test.c \
+				uart_emul_full_test.c \
 				console_owner_test.c \
 				mevent_lifecycle_test.c \
 				tpm_intf_crb_model_test.c \
@@ -319,11 +334,86 @@ CFLAGS.virtio_packed_model_test+= -I${.CURDIR} -I${.OBJDIR}
 CFLAGS.usb_mouse_model_test+= -I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.pci_nvme_model_test+= -I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.pci_ahci_model_test+= -I${SRCTOP}/usr.sbin/bhyve
+# pci_nvme_full_test TU-includes pci_nvme.c (copied into ${.OBJDIR}) and mocks
+# its pci_emul/vmmapi/block_if/config/snapshot dependencies; BHYVE_SNAPSHOT
+# compiles the checkpoint codec paths.
+CFLAGS.pci_nvme_full_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
+# The mocks intentionally shadow bhyve/vmmapi symbols whose real prototypes are
+# neutralized, so -Wmissing-prototypes fires on them; -Werror stays otherwise.
+CWARNFLAGS.pci_nvme_full_test.c+= -Wno-cast-align \
+				-Wno-thread-safety-analysis \
+				-Wno-missing-prototypes
+LIBADD.pci_nvme_full_test+= pthread
+pci_nvme_full_test: pci_nvme.c
+# pci_ahci_full_test TU-includes pci_ahci.c (copied into ${.OBJDIR}) and mocks
+# its pci_emul/block_if/config/snapshot dependencies; BHYVE_SNAPSHOT compiles
+# the checkpoint codec paths.
+CFLAGS.pci_ahci_full_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
+CWARNFLAGS.pci_ahci_full_test.c+= -Wno-error -Wno-cast-align \
+				-Wno-thread-safety-analysis
+LIBADD.pci_ahci_full_test+= md pthread
 CFLAGS.pci_e82545_model_test+= -I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.pci_fbuf_model_test+= -I${SRCTOP}/usr.sbin/bhyve
+# TU-include coverage harness: compiles pci_fbuf.c directly against the mocks in
+# this directory (their real bhyve include guards are pre-defined in the test).
+CFLAGS.pci_fbuf_full_test+= -DBHYVE_SNAPSHOT -ffunction-sections \
+	-fdata-sections -Wno-error=cast-align -I${.CURDIR} -I${.OBJDIR} \
+	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
+LDFLAGS.pci_fbuf_full_test+= -Wl,--gc-sections
 CFLAGS.pci_hda_model_test+= -I${SRCTOP}/usr.sbin/bhyve
+CFLAGS.pci_hda_full_test+= -DBHYVE_SNAPSHOT -DWITHOUT_CAPSICUM \
+				-ffunction-sections -fdata-sections \
+				-I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin/bhyve \
+				-I${SRCTOP}/usr.sbin -I${SRCTOP}/sys
+CWARNFLAGS.pci_hda_full_test.c+= -Wno-cast-align \
+				-Wno-thread-safety-analysis
+# No --gc-sections: the synthetic codec is registered through a linker set
+# (HDA_EMUL_SET) whose only reference is the section start/stop symbols, which
+# section GC would otherwise reclaim.
+LIBADD.pci_hda_full_test+= pthread
+pci_hda_full_test: pci_hda.c
+# TU-include coverage harness: compiles pci_e82545.c directly against the mocks
+# in this directory.  The e1000/mii register headers live under sys/dev.
+CFLAGS.pci_e82545_full_test+= -DBHYVE_SNAPSHOT -DWITHOUT_CAPSICUM \
+				-ffunction-sections -fdata-sections \
+				-I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin/bhyve \
+				-I${SRCTOP}/sys/dev/e1000 \
+				-I${SRCTOP}/sys/dev/mii \
+				-I${SRCTOP}/usr.sbin -I${SRCTOP}/sys
+CWARNFLAGS.pci_e82545_full_test.c+= -Wno-cast-align \
+				-Wno-thread-safety-analysis
+LIBADD.pci_e82545_full_test+= pthread
+pci_e82545_full_test: pci_e82545.c
 CFLAGS.pci_xhci_model_test+= -I${SRCTOP}/usr.sbin/bhyve
+# TU-include coverage harness: compiles pci_xhci.c directly against the mocks in
+# this directory (their real bhyve include guards are pre-defined in the test).
+# A local xhcireg.h shim redirects the device's <xhcireg.h> to the kernel
+# controller header reachable through -I${SRCTOP}/sys.
+CFLAGS.pci_xhci_full_test+= -DBHYVE_SNAPSHOT -ffunction-sections \
+	-fdata-sections -fcommon -I${.CURDIR} -I${.OBJDIR} \
+	-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys \
+	-I${SRCTOP}/contrib/libucl/include
+CWARNFLAGS.pci_xhci_full_test.c+= -Wno-cast-align \
+	-Wno-thread-safety-analysis -Wno-missing-prototypes \
+	-Wno-missing-variable-declarations
+LDFLAGS.pci_xhci_full_test+= -Wl,--gc-sections
+LIBADD.pci_xhci_full_test+= pthread
 CFLAGS.uart_backend_model_test+= -I${SRCTOP}/usr.sbin/bhyve
+# uart_emul_full_test TU-includes uart_emul.c and mocks its backend/mevent/
+# snapshot dependencies; BHYVE_SNAPSHOT compiles the snapshot entry points.
+CFLAGS.uart_emul_full_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
+CWARNFLAGS.uart_emul_full_test.c+= -Wno-thread-safety-analysis
+# uart_backend_full_test TU-includes uart_backend.c and mocks its mevent and
+# snapshot dependencies; BHYVE_SNAPSHOT compiles the snapshot entry points.
+CFLAGS.uart_backend_full_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
+CWARNFLAGS.uart_backend_full_test.c+= -Wno-thread-safety-analysis
+LIBADD.uart_backend_full_test+= pthread
 CFLAGS.pvpanic_model_test+= -I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.virtio_packed_engine_test+= -I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve
@@ -389,6 +479,7 @@ SRCS.virtio_pmem_pci_test=	virtio_pmem_pci_test.c \
 				virtio_pmem_host.c virtio_pmem_queue.c \
 				virtio_pmem_async.c virtio_pmem_worker.c
 LIBADD.virtio_pmem_pci_test+= pthread
+LDFLAGS.virtio_pmem_pci_test+= -Wl,--wrap=calloc
 CFLAGS.virtio_fs_host_test+= -I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.virtio_fs_backend_test+= -I${.CURDIR} -I${.OBJDIR} \
@@ -635,9 +726,17 @@ LDFLAGS.vsock_device_test+=	-Wl,--wrap=socket -Wl,--wrap=connectat \
 LDFLAGS.virtio_core_test+=	-Wl,--gc-sections
 LDFLAGS.virtio_rnd_interrupt_test+= -Wl,--gc-sections
 LDFLAGS.virtio_console_test+= -Wl,--gc-sections -Wl,--wrap=send \
-				-Wl,--wrap=realloc
+				-Wl,--wrap=realloc -Wl,--wrap=calloc \
+				-Wl,--wrap=malloc
 LDFLAGS.virtio_9p_test+=	-Wl,--gc-sections
+LDFLAGS.virtio_9p_test+=	-Wl,--wrap=calloc -Wl,--wrap=strdup
+LDFLAGS.virtio_input_test+=	-Wl,--wrap=malloc -Wl,--wrap=calloc \
+				-Wl,--wrap=realloc -Wl,--wrap=strdup \
+				-Wl,--wrap=pthread_mutexattr_init \
+				-Wl,--wrap=pthread_mutexattr_settype \
+				-Wl,--wrap=pthread_mutex_init
 LDFLAGS.virtio_block_test+=	-Wl,--gc-sections
+LDFLAGS.virtio_block_test+=	-Wl,--wrap=calloc
 LDFLAGS.block_if_test+=		-Wl,--gc-sections -Wl,--wrap=pwrite -Wl,--wrap=pwritev
 LDFLAGS.audio_test+=		-Wl,--gc-sections -Wl,--wrap=read \
 				-Wl,--wrap=write -Wl,--wrap=close
@@ -646,11 +745,14 @@ LDFLAGS.virtio_scsi_test+=	-Wl,--gc-sections \
 	-Wl,--wrap=pthread_mutex_init -Wl,--wrap=pthread_cond_init
 LDFLAGS.virtio_balloon_test+=	-Wl,--gc-sections
 LDFLAGS.virtio_rtc_test+=	-Wl,--gc-sections
-LDFLAGS.virtio_gpu_2d_pci_test+= -Wl,--gc-sections
+LDFLAGS.virtio_gpu_2d_pci_test+= -Wl,--gc-sections \
+				-Wl,--wrap=malloc -Wl,--wrap=calloc
 LIBADD.virtio_gpu_2d_pci_test+=	pthread
-LDFLAGS.virtio_iommu_pci_test+= -Wl,--gc-sections
+LDFLAGS.virtio_iommu_pci_test+= -Wl,--gc-sections \
+	-Wl,--wrap=calloc -Wl,--wrap=malloc -Wl,--wrap=pthread_mutex_init
 LDFLAGS.virtio_fs_pci_test+= -Wl,--gc-sections
-LDFLAGS.virtio_mem_test+=	-Wl,--gc-sections
+LDFLAGS.virtio_mem_test+=	-Wl,--gc-sections \
+	-Wl,--wrap=calloc -Wl,--wrap=malloc -Wl,--wrap=pthread_mutex_init
 LDFLAGS.virtio_snd_test+=	-Wl,--gc-sections
 LIBADD.vsock_device_test+=	pthread
 LIBADD.virtio_modern_test+=	pthread
@@ -669,10 +771,12 @@ CFLAGS.vmmapi_dirty_log_test+=	-I${SRCTOP}/lib/libvmmapi -I${SRCTOP}/sys \
 LIBADD.virtio_console_test+= pthread
 LIBADD.virtio_9p_test+=	pthread
 LIBADD.virtio_block_test+=	pthread
+LIBADD.virtio_block_test+=	md
 LIBADD.block_if_test+=		pthread
 LIBADD.mevent_lifecycle_test+=	pthread
 LIBADD.virtio_net_test+=	pthread
 LIBADD.virtio_scsi_test+=	pthread
+LIBADD.virtio_scsi_test+=	sbuf
 LIBADD.virtio_balloon_test+=	pthread
 LIBADD.virtio_rtc_test+=	pthread
 LIBADD.virtio_rtc_host_test+= pthread
@@ -766,6 +870,10 @@ CLEANFILES+=	virtio_dma.h
 CLEANFILES+=	checkpoint_manifest.c checkpoint_manifest.h
 CLEANFILES+=	checkpoint_numa.c checkpoint_numa.h
 CLEANFILES+=	snapshot_identity.h
+CLEANFILES+=	pci_nvme.c
+CLEANFILES+=	pci_hda.c
+CLEANFILES+=	pci_ahci.c
+CLEANFILES+=	pci_e82545.c
 CLEANFILES+=	vmmapi_memory.c vmmapi_memory.h
 CLEANFILES+=	mevent_dut.c
 
@@ -830,6 +938,10 @@ beforedepend:	virtio_state_range.h
 beforedepend:	virtio_dma.h
 beforedepend:	checkpoint_manifest.c checkpoint_manifest.h
 beforedepend:	checkpoint_numa.c checkpoint_numa.h
+beforedepend:	pci_nvme.c
+beforedepend:	pci_hda.c
+beforedepend:	pci_ahci.c
+beforedepend:	pci_e82545.c
 beforedepend:	snapshot_identity.h
 beforedepend:	vmmapi_memory.c vmmapi_memory.h
 beforedepend:	mevent_dut.c
@@ -883,6 +995,14 @@ checkpoint_numa.c: ${SRCTOP}/usr.sbin/bhyve/checkpoint_numa.c
 checkpoint_numa.h: ${SRCTOP}/usr.sbin/bhyve/checkpoint_numa.h
 	${_COPY_ATOMIC}
 snapshot_identity.h: ${SRCTOP}/usr.sbin/bhyve/snapshot_identity.h
+	${_COPY_ATOMIC}
+pci_hda.c: ${SRCTOP}/usr.sbin/bhyve/pci_hda.c
+	${_COPY_ATOMIC}
+pci_nvme.c: ${SRCTOP}/usr.sbin/bhyve/pci_nvme.c
+	${_COPY_ATOMIC}
+pci_ahci.c: ${SRCTOP}/usr.sbin/bhyve/pci_ahci.c
+	${_COPY_ATOMIC}
+pci_e82545.c: ${SRCTOP}/usr.sbin/bhyve/pci_e82545.c
 	${_COPY_ATOMIC}
 vmmapi_memory.c: ${SRCTOP}/lib/libvmmapi/vmmapi_memory.c
 	${_COPY_ATOMIC}

@@ -605,9 +605,18 @@ pci_vtpmem_init(struct pci_devinst *pi, nvlist_t *nvl)
 	return (0);
 
 fail:
-	if (sc->vsc_worker != NULL)
-		(void)virtio_pmem_worker_destroy(sc->vsc_worker,
-		    VTPMEM_DRAIN_TIMEOUT_MS);
+	if (sc->vsc_worker != NULL &&
+	    virtio_pmem_worker_destroy(sc->vsc_worker,
+	    VTPMEM_DRAIN_TIMEOUT_MS) != 0) {
+		/*
+		 * The worker could not be paused and joined (e.g. a flush is
+		 * wedged in fsync/msync).  It is still running with ops.arg
+		 * pointing at sc and it holds the backing mapping and fd, so
+		 * tearing any of that down here would be a use-after-free.
+		 * Leak deliberately rather than free state the thread owns.
+		 */
+		return (1);
+	}
 	free(sc->vsc_vs.vs_modern);
 	if (intr_initialized)
 		(void)pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);

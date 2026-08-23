@@ -24,6 +24,9 @@
 #include "virtio_gpu_2d_protocol.c"
 #include "virtio_gpu_2d_display.c"
 #include "virtio_gpu_2d_state.c"
+#include "virtio_gpu_2d_queue.c"
+
+#include <dev/virtio/gpu/virtio_gpu.h>
 
 static unsigned int blob_dma_acquires;
 static unsigned int blob_dma_releases;
@@ -42,18 +45,24 @@ bhyvegc_get_image(struct bhyvegc *gc)
 	return (gc == NULL ? NULL : gc->image);
 }
 
+static int stub_fb_register_ret;
+static int stub_fb_register_calls;
+static int stub_fb_unregister_calls;
+
 int
 console_fb_register(const char *owner __unused,
     fb_render_func_t render_cb __unused, void *arg __unused)
 {
 
-	return (0);
+	stub_fb_register_calls++;
+	return (stub_fb_register_ret);
 }
 
 int
 console_fb_unregister(const char *owner __unused, void *arg __unused)
 {
 
+	stub_fb_unregister_calls++;
 	return (0);
 }
 
@@ -192,6 +201,375 @@ vi_pci_lifecycle_noop(void *argument __unused)
 {
 
 	return (0);
+}
+
+/*
+ * Allocation fault injection.  Both malloc and calloc route through --wrap so
+ * a test can fail a chosen allocation ordinal; the default is pure
+ * pass-through, so unrelated allocations (ATF, libc) are unaffected.
+ */
+extern void *__real_malloc(size_t);
+extern void *__real_calloc(size_t, size_t);
+void *__wrap_malloc(size_t);
+void *__wrap_calloc(size_t, size_t);
+static int wrap_malloc_fail_at = -1;
+static int wrap_malloc_calls;
+static int wrap_calloc_fail_at = -1;
+static int wrap_calloc_calls;
+
+void *
+__wrap_malloc(size_t size)
+{
+
+	if (wrap_malloc_fail_at >= 0 && wrap_malloc_calls++ == wrap_malloc_fail_at)
+		return (NULL);
+	return (__real_malloc(size));
+}
+
+void *
+__wrap_calloc(size_t nmemb, size_t size)
+{
+
+	if (wrap_calloc_fail_at >= 0 && wrap_calloc_calls++ == wrap_calloc_fail_at)
+		return (NULL);
+	return (__real_calloc(nmemb, size));
+}
+
+static void
+alloc_fault_reset(void)
+{
+
+	wrap_malloc_fail_at = -1;
+	wrap_malloc_calls = 0;
+	wrap_calloc_fail_at = -1;
+	wrap_calloc_calls = 0;
+}
+
+/*
+ * Mock virtio queue transport.  Each notify test enqueues a fixed set of
+ * descriptor chains; the device drains them under its own budget loop.  Used
+ * lengths reported through vq_relchain are recorded for assertion against the
+ * VirtIO GPU wire response sizes.
+ */
+#define	MOCKQ_MAX	8
+struct mockq_chain {
+	struct iovec iov[6];
+	int n;
+	int readable;
+	bool ordered;
+	bool fail_getchain;	/* return getchain_ret instead of serving */
+	int getchain_ret;
+};
+static struct mockq_chain mockq[MOCKQ_MAX];
+static int mockq_len;
+static int mockq_pos;
+static uint32_t mockq_used[MOCKQ_MAX];
+static int mockq_used_n;
+static int mock_relchain_calls;
+static int mock_endchains_calls;
+static int mock_needs_reset_calls;
+static int mock_reset_dev_calls;
+
+static void
+mockq_reset(void)
+{
+
+	memset(mockq, 0, sizeof(mockq));
+	memset(mockq_used, 0, sizeof(mockq_used));
+	mockq_len = 0;
+	mockq_pos = 0;
+	mockq_used_n = 0;
+	mock_relchain_calls = 0;
+	mock_endchains_calls = 0;
+	mock_needs_reset_calls = 0;
+}
+
+int
+vq_has_descs(struct vqueue_info *vq __unused)
+{
+
+	return (mockq_pos < mockq_len);
+}
+
+int
+vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
+    struct vi_req *request)
+{
+	struct mockq_chain *c;
+
+	if (mockq_pos >= mockq_len)
+		return (0);
+	c = &mockq[mockq_pos++];
+	if (c->fail_getchain)
+		return (c->getchain_ret);
+	memset(request, 0, sizeof(*request));
+	for (int i = 0; i < c->n && i < niov; i++)
+		iov[i] = c->iov[i];
+	request->readable = c->readable;
+	request->writable = c->n - c->readable;
+	request->ordered = c->ordered;
+	request->idx = (unsigned int)(mockq_pos - 1);
+	return (c->n);
+}
+
+void
+vq_relchain(struct vqueue_info *vq __unused, uint16_t idx __unused,
+    uint32_t used)
+{
+
+	if (mockq_used_n < MOCKQ_MAX)
+		mockq_used[mockq_used_n++] = used;
+	mock_relchain_calls++;
+}
+
+void
+vq_retchains(struct vqueue_info *vq __unused, uint16_t count __unused)
+{
+}
+
+void
+vq_endchains(struct vqueue_info *vq __unused, int used_all_avail __unused)
+{
+
+	mock_endchains_calls++;
+}
+
+void
+vi_set_needs_reset(struct virtio_softc *vs __unused)
+{
+
+	mock_needs_reset_calls++;
+}
+
+void
+vi_reset_dev(struct virtio_softc *vs)
+{
+
+	mock_reset_dev_calls++;
+	vs->vs_status = 0;
+}
+
+/* Configurable post-init transport hooks retained by pci_de_vtgpu. */
+static int stub_select_transport_ret;
+static int stub_intr_init_ret;
+static int stub_modern_init_ret;
+static void *stub_linkup_softc;
+static struct pci_devinst *stub_linkup_pi;
+
+void
+vi_softc_linkup(struct virtio_softc *vs __unused,
+    struct virtio_consts *vc __unused, void *softc,
+    struct pci_devinst *pi, struct vqueue_info *queues __unused)
+{
+
+	stub_linkup_softc = softc;
+	stub_linkup_pi = pi;
+}
+
+int
+vi_pci_select_transport(struct virtio_softc *vs __unused,
+    const nvlist_t *nvl __unused,
+    enum virtio_pci_transport_policy policy __unused)
+{
+
+	return (stub_select_transport_ret);
+}
+
+void
+vi_pci_modern_set_identity(struct virtio_softc *vs __unused,
+    uint16_t type __unused)
+{
+}
+
+void
+vi_pci_modern_seal_shared_memory(struct virtio_softc *vs __unused)
+{
+}
+
+int
+vi_pci_modern_init(struct virtio_softc *vs __unused, int bar __unused)
+{
+
+	return (stub_modern_init_ret);
+}
+
+int
+vi_intr_init(struct virtio_softc *vs, int bar __unused, int use_msix __unused)
+{
+
+	if (stub_intr_init_ret != 0)
+		return (stub_intr_init_ret);
+	/* The device destroys this mutex on later init failures. */
+	return (pthread_mutex_init(&vs->vs_isr_mtx, NULL));
+}
+
+int
+vi_pci_modern_cfgread(struct pci_devinst *pi __unused, int offset __unused,
+    int size __unused, uint32_t *value __unused)
+{
+
+	return (0);
+}
+
+int
+vi_pci_modern_cfgwrite(struct pci_devinst *pi __unused, int offset __unused,
+    int size __unused, uint32_t value __unused)
+{
+
+	return (0);
+}
+
+uint64_t
+vi_pci_read(struct pci_devinst *pi __unused, int bar __unused,
+    uint64_t offset __unused, int size __unused)
+{
+
+	return (0);
+}
+
+void
+vi_pci_write(struct pci_devinst *pi __unused, int bar __unused,
+    uint64_t offset __unused, int size __unused, uint64_t value __unused)
+{
+}
+
+#ifdef BHYVE_SNAPSHOT
+int
+vi_pci_snapshot(struct vm_snapshot_meta *meta __unused)
+{
+
+	return (0);
+}
+
+int
+vi_pci_snapshot_compat(struct pci_devinst *pi __unused,
+    struct pci_snapshot_compat *compat __unused)
+{
+
+	return (0);
+}
+
+int
+vi_pci_pause(struct pci_devinst *pi __unused)
+{
+
+	return (0);
+}
+
+int
+vi_pci_resume(struct pci_devinst *pi __unused)
+{
+
+	return (0);
+}
+#endif
+
+void
+pci_set_cfgdata8(struct pci_devinst *pi, int offset, uint8_t value)
+{
+
+	if (pi != NULL && offset >= 0 && (size_t)offset < sizeof(pi->pi_cfgdata))
+		pi->pi_cfgdata[offset] = value;
+}
+
+int
+fbsdrun_virtio_msix(void)
+{
+
+	return (1);
+}
+
+/* Host configuration surface driven by globals for the init tests. */
+static bool cfg_blob;
+static bool cfg_display;
+static bool cfg_packed;
+static const char *cfg_width;
+static const char *cfg_height;
+
+bool
+get_config_bool_node_default(const nvlist_t *nvl __unused, const char *name,
+    bool def)
+{
+
+	if (strcmp(name, "blob") == 0)
+		return (cfg_blob);
+	if (strcmp(name, "display") == 0)
+		return (cfg_display);
+	if (strcmp(name, "packed") == 0)
+		return (cfg_packed);
+	return (def);
+}
+
+const char *
+get_config_value_node(const nvlist_t *nvl __unused, const char *name)
+{
+
+	if (strcmp(name, "width") == 0)
+		return (cfg_width);
+	if (strcmp(name, "height") == 0)
+		return (cfg_height);
+	return (NULL);
+}
+
+static void
+init_config_reset(void)
+{
+
+	cfg_blob = false;
+	cfg_display = false;
+	cfg_packed = false;
+	cfg_width = NULL;
+	cfg_height = NULL;
+	stub_select_transport_ret = 0;
+	stub_intr_init_ret = 0;
+	stub_modern_init_ret = 0;
+	stub_fb_register_ret = 0;
+	stub_fb_register_calls = 0;
+	stub_fb_unregister_calls = 0;
+	stub_linkup_softc = NULL;
+	stub_linkup_pi = NULL;
+	alloc_fault_reset();
+}
+
+/*
+ * A GPU control/cursor request is a 24-byte common header followed by a
+ * fixed command payload.  The offsets below are read directly from the VirtIO
+ * 1.4 section 5.7 command structures, independent of the device's own decoder.
+ */
+#define	GPU_REQ_BYTES	64	/* every request scratch buffer in this file */
+static void
+gpu_hdr(uint8_t *b, uint32_t type)
+{
+
+	memset(b, 0, GPU_REQ_BYTES);
+	le32enc(b, type);
+}
+
+/* Enqueue one control/cursor chain: one readable request, one writable sink. */
+static void
+mockq_push(const uint8_t *req, size_t reqlen, uint8_t *resp, size_t resplen)
+{
+	struct mockq_chain *c;
+
+	ATF_REQUIRE(mockq_len < MOCKQ_MAX);
+	c = &mockq[mockq_len++];
+	c->iov[0].iov_base = (void *)(uintptr_t)req;
+	c->iov[0].iov_len = reqlen;
+	c->readable = 1;
+	c->ordered = true;
+	if (resp != NULL && resplen != 0) {
+		c->iov[1].iov_base = resp;
+		c->iov[1].iov_len = resplen;
+		c->n = 2;
+	} else
+		c->n = 1;
+}
+
+static uint32_t
+resp_type(const uint8_t *resp)
+{
+
+	return (le32dec(resp));
 }
 
 ATF_TC_WITHOUT_HEAD(config_read_and_write_to_clear);
@@ -542,6 +920,23 @@ ATF_TC_BODY(display_renderer_copies_active_scanout, tc)
 		ATF_CHECK_EQ(output[i], 0x6b);
 	sc.vsc_display_staging_size = sizeof(output);
 
+	/*
+	 * With no cursor staging the scanout is still presented; cursor
+	 * compositing is skipped rather than dereferencing a null overlay.
+	 */
+	{
+		uint8_t *saved_cursor = sc.vsc_cursor_staging;
+
+		sc.vsc_cursor_staging = NULL;
+		memset(output, 0xa5, sizeof(output));
+		pci_vtgpu_render(&gc, &sc);
+		ATF_CHECK_EQ(memcmp(output, (uint8_t[]) {
+		    0x00, 0x00, 0xff, 0x00,
+		    0x00, 0xff, 0x00, 0x00,
+		}, sizeof(output)), 0);
+		sc.vsc_cursor_staging = saved_cursor;
+	}
+
 	/* An explicit scanout disable presents a blank display. */
 	command = (struct virtio_gpu_2d_command) {
 		.type = 0x0103,
@@ -559,6 +954,580 @@ ATF_TC_BODY(display_renderer_copies_active_scanout, tc)
 	virtio_gpu_2d_state_destroy(sc.vsc_state);
 }
 
+/*
+ * Build a device with a live 2D state engine whose DMA backing is the shared
+ * blob_guest window, matching the display test's proven setup.  The scanout is
+ * 2x1 so a single resource plus its backing fit the window.
+ */
+static void
+notify_softc_setup(struct pci_vtgpu_softc *sc)
+{
+	struct virtio_gpu_2d_limits limits;
+	struct virtio_gpu_2d_ops ops;
+
+	memset(sc, 0, sizeof(*sc));
+	sc->vsc_consts = vtgpu_vi_consts;
+	sc->vsc_vs.vs_vc = &sc->vsc_consts;
+	sc->vsc_width = 2;
+	sc->vsc_height = 1;
+	limits = (struct virtio_gpu_2d_limits) {
+		.max_resources = 4,
+		.max_host_bytes = UINT64_C(1) << 20,
+		.scanout_width = 2,
+		.scanout_height = 1,
+	};
+	ops = (struct virtio_gpu_2d_ops) {
+		.dma_validate = blob_dma_validate,
+		.dma_read = blob_dma_read,
+	};
+	ATF_REQUIRE_EQ(virtio_gpu_2d_state_create(&limits, &ops,
+	    &sc->vsc_state), 0);
+	memset(blob_guest, 0, sizeof(blob_guest));
+}
+
+static uint32_t
+notify_one(struct pci_vtgpu_softc *sc, uint16_t queue_num)
+{
+	struct vqueue_info vq;
+
+	memset(&vq, 0, sizeof(vq));
+	vq.vq_num = queue_num;
+	vq.vq_qsize = 16;
+	mockq_pos = 0;
+	mockq_used_n = 0;
+	mock_relchain_calls = 0;
+	mock_endchains_calls = 0;
+	mock_needs_reset_calls = 0;
+	pci_vtgpu_notify(sc, &vq);
+	return (mockq_used_n > 0 ? mockq_used[0] : 0);
+}
+
+ATF_TC_WITHOUT_HEAD(device_private_dma_validate_gate);
+ATF_TC_BODY(device_private_dma_validate_gate, tc)
+{
+	struct pci_vtgpu_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	blob_dma_acquire_allowed = true;
+
+	/* Only a device-read lease is a legal validation request. */
+	ATF_CHECK_EQ(pci_vtgpu_dma_validate(&sc, 0, 8,
+	    VIRTIO_GPU_2D_DMA_DEVICE_READ), 0);
+	ATF_CHECK_EQ(pci_vtgpu_dma_validate(&sc, 0, 8,
+	    (enum virtio_gpu_2d_dma_access)0), EINVAL);
+
+	/* A closed domain gate refuses before mapping. */
+	blob_dma_acquire_allowed = false;
+	ATF_CHECK_EQ(pci_vtgpu_dma_validate(&sc, 0, 8,
+	    VIRTIO_GPU_2D_DMA_DEVICE_READ), EBUSY);
+	blob_dma_acquire_allowed = true;
+
+	/* An out-of-window mapping is a fault, and the lease is still released. */
+	ATF_CHECK_EQ(pci_vtgpu_dma_validate(&sc, sizeof(blob_guest), 8,
+	    VIRTIO_GPU_2D_DMA_DEVICE_READ), EFAULT);
+}
+
+ATF_TC_WITHOUT_HEAD(device_reset_clears_events_and_state);
+ATF_TC_BODY(device_reset_clears_events_and_state, tc)
+{
+	struct pci_vtgpu_softc sc;
+
+	notify_softc_setup(&sc);
+	sc.vsc_events_read = 1;
+	sc.vsc_vs.vs_status = 0x7f;
+	mock_reset_dev_calls = 0;
+	pci_vtgpu_reset(&sc);
+	ATF_CHECK_EQ(sc.vsc_events_read, 0);
+	ATF_CHECK_EQ(mock_reset_dev_calls, 1);
+	ATF_CHECK_EQ(sc.vsc_vs.vs_status, 0);
+	virtio_gpu_2d_state_destroy(sc.vsc_state);
+}
+
+ATF_TC_WITHOUT_HEAD(control_queue_returns_display_info_and_edid);
+ATF_TC_BODY(control_queue_returns_display_info_and_edid, tc)
+{
+	struct pci_vtgpu_softc sc;
+	uint8_t req[64], resp[BHYVE_VIRTIO_GPU_EDID_RESPONSE_SIZE];
+	uint32_t used;
+
+	notify_softc_setup(&sc);
+
+	/* GET_DISPLAY_INFO yields the fixed 408-byte pmodes response. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_GET_DISPLAY_INFO);
+	mockq_reset();
+	mockq_push(req, 24, resp, sizeof(resp));
+	used = notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+	ATF_CHECK_EQ(resp_type(resp), VIRTIO_GPU_RESP_OK_DISPLAY_INFO);
+	ATF_CHECK_EQ(used, 408);
+	ATF_CHECK_EQ(mock_endchains_calls, 1);
+	ATF_CHECK_EQ(mock_relchain_calls, 1);
+
+	/* GET_EDID is gated on the negotiated EDID feature. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_GET_EDID);
+	le32enc(req + 24, 0);
+	sc.vsc_vs.vs_negotiated_caps =
+	    (UINT64_C(1) << BHYVE_VIRTIO_GPU_F_EDID);
+	mockq_reset();
+	mockq_push(req, 32, resp, sizeof(resp));
+	used = notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+	ATF_CHECK_EQ(resp_type(resp), VIRTIO_GPU_RESP_OK_EDID);
+	ATF_CHECK_EQ(used, 1056);
+
+	/* Without the feature the same command is unsupported. */
+	sc.vsc_vs.vs_negotiated_caps = 0;
+	mockq_reset();
+	mockq_push(req, 32, resp, sizeof(resp));
+	used = notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+	ATF_CHECK_EQ(resp_type(resp), VIRTIO_GPU_RESP_ERR_UNSPEC);
+	ATF_CHECK_EQ(used, 24);
+
+	virtio_gpu_2d_state_destroy(sc.vsc_state);
+}
+
+ATF_TC_WITHOUT_HEAD(control_queue_runs_2d_resource_lifecycle);
+ATF_TC_BODY(control_queue_runs_2d_resource_lifecycle, tc)
+{
+	struct pci_vtgpu_softc sc;
+	uint8_t req[64], resp[64];
+
+	notify_softc_setup(&sc);
+	/* Two B8G8R8X8 pixels live at the base of the backing window. */
+	memcpy(blob_guest, (uint8_t[]) {
+	    0x00, 0x00, 0xff, 0x00,
+	    0x00, 0xff, 0x00, 0x00,
+	}, 8);
+
+#define	RUN(len)	do {						\
+	mockq_reset();							\
+	mockq_push(req, (len), resp, sizeof(resp));			\
+	(void)notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);		\
+	ATF_CHECK_EQ(resp_type(resp), VIRTIO_GPU_RESP_OK_NODATA);	\
+} while (0)
+
+	/* RESOURCE_CREATE_2D: id 1, format B8G8R8X8 (2), 2x1. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_RESOURCE_CREATE_2D);
+	le32enc(req + 24, 1);
+	le32enc(req + 28, 2);
+	le32enc(req + 32, 2);
+	le32enc(req + 36, 1);
+	RUN(40);
+
+	/* RESOURCE_ATTACH_BACKING: id 1, one 8-byte entry at guest addr 0. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_RESOURCE_ATTACH_BACKING);
+	le32enc(req + 24, 1);
+	le32enc(req + 28, 1);
+	le64enc(req + 32, 0);
+	le32enc(req + 40, 8);
+	RUN(48);
+
+	/* TRANSFER_TO_HOST_2D: whole 2x1 rect. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_TRANSFER_TO_HOST_2D);
+	le32enc(req + 32, 2);
+	le32enc(req + 36, 1);
+	le64enc(req + 40, 0);
+	le32enc(req + 48, 1);
+	RUN(56);
+
+	/* SET_SCANOUT: bind resource 1 to scanout 0 over the 2x1 rect. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_SET_SCANOUT);
+	le32enc(req + 32, 2);
+	le32enc(req + 36, 1);
+	le32enc(req + 40, 0);
+	le32enc(req + 44, 1);
+	RUN(48);
+
+	/* RESOURCE_FLUSH: same rect. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_RESOURCE_FLUSH);
+	le32enc(req + 32, 2);
+	le32enc(req + 36, 1);
+	le32enc(req + 40, 1);
+	RUN(48);
+
+	/* Detach scanout before releasing the backing. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_SET_SCANOUT);
+	le32enc(req + 40, 0);
+	le32enc(req + 44, 0);
+	RUN(48);
+
+	/* RESOURCE_DETACH_BACKING then RESOURCE_UNREF. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_RESOURCE_DETACH_BACKING);
+	le32enc(req + 24, 1);
+	RUN(32);
+
+	gpu_hdr(req, VIRTIO_GPU_CMD_RESOURCE_UNREF);
+	le32enc(req + 24, 1);
+	RUN(32);
+#undef RUN
+
+	/* A well-formed command against a freed resource is a protocol error. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_RESOURCE_UNREF);
+	le32enc(req + 24, 1);
+	mockq_reset();
+	mockq_push(req, 32, resp, sizeof(resp));
+	(void)notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+	ATF_CHECK_EQ(resp_type(resp), VIRTIO_GPU_RESP_ERR_INVALID_RESOURCE_ID);
+
+	virtio_gpu_2d_state_destroy(sc.vsc_state);
+}
+
+ATF_TC_WITHOUT_HEAD(control_queue_error_and_transport_paths);
+ATF_TC_BODY(control_queue_error_and_transport_paths, tc)
+{
+	struct pci_vtgpu_softc sc;
+	uint8_t req[64], resp[64];
+	uint8_t hdr_lo[2], hdr_hi[62];
+	struct vqueue_info vq;
+
+	notify_softc_setup(&sc);
+
+	/* An unknown command type completes with the invalid-parameter error. */
+	gpu_hdr(req, 0x4242);
+	mockq_reset();
+	mockq_push(req, 24, resp, sizeof(resp));
+	(void)notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+	ATF_CHECK_EQ(resp_type(resp), VIRTIO_GPU_RESP_ERR_UNSPEC);
+
+	/* A short response buffer is a transport EMSGSIZE: relchained with 0. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_GET_DISPLAY_INFO);
+	mockq_reset();
+	mockq_push(req, 24, resp, 8);
+	(void)notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+	ATF_CHECK_EQ(mockq_used[0], 0);
+	ATF_CHECK_EQ(mock_needs_reset_calls, 0);
+
+	/* Header split across two readable segments exercises the copy clamp. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_GET_DISPLAY_INFO);
+	memcpy(hdr_lo, req, 2);
+	memcpy(hdr_hi, req + 2, 22);
+	mockq_reset();
+	mockq[0].iov[0].iov_base = hdr_lo;
+	mockq[0].iov[0].iov_len = 2;
+	mockq[0].iov[1].iov_base = hdr_hi;
+	mockq[0].iov[1].iov_len = 22;
+	mockq[0].iov[2].iov_base = resp;
+	mockq[0].iov[2].iov_len = sizeof(resp) < 408 ? sizeof(resp) : 408;
+	mockq[0].iov[2].iov_len = 408;
+	mockq[0].n = 3;
+	mockq[0].readable = 2;
+	mockq[0].ordered = true;
+	mockq_len = 1;
+	{
+		uint8_t big[408];
+
+		mockq[0].iov[2].iov_base = big;
+		(void)notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+		ATF_CHECK_EQ(resp_type(big), VIRTIO_GPU_RESP_OK_DISPLAY_INFO);
+		ATF_CHECK_EQ(mockq_used[0], 408);
+	}
+
+	/* An invalid descriptor chain forces a device reset. */
+	mockq_reset();
+	mockq[0].iov[0].iov_base = req;
+	mockq[0].iov[0].iov_len = 24;
+	mockq[0].n = 1;
+	mockq[0].readable = 1;
+	mockq[0].ordered = false;	/* rejected by chain_valid */
+	mockq_len = 1;
+	(void)notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+	ATF_CHECK_EQ(mock_needs_reset_calls, 1);
+	ATF_CHECK_EQ(mockq_used[0], 0);
+
+	/* A getchain returning nothing simply ends the drain. */
+	mockq_reset();
+	mockq[0].fail_getchain = true;
+	mockq[0].getchain_ret = 0;
+	mockq[0].n = 1;
+	mockq_len = 1;
+	(void)notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+	ATF_CHECK_EQ(mock_relchain_calls, 0);
+	ATF_CHECK_EQ(mock_endchains_calls, 1);
+
+	/* An unrecognised queue index is a fatal transport violation. */
+	memset(&vq, 0, sizeof(vq));
+	vq.vq_num = 7;
+	vq.vq_qsize = 4;
+	mock_needs_reset_calls = 0;
+	pci_vtgpu_notify(&sc, &vq);
+	ATF_CHECK_EQ(mock_needs_reset_calls, 1);
+
+	virtio_gpu_2d_state_destroy(sc.vsc_state);
+}
+
+ATF_TC_WITHOUT_HEAD(control_queue_request_alloc_failure_resets);
+ATF_TC_BODY(control_queue_request_alloc_failure_resets, tc)
+{
+	struct pci_vtgpu_softc sc;
+	uint8_t req[64], resp[408];
+
+	notify_softc_setup(&sc);
+	gpu_hdr(req, VIRTIO_GPU_CMD_GET_DISPLAY_INFO);
+	mockq_reset();
+	mockq_push(req, 24, resp, sizeof(resp));
+	/* Fail the request-gather allocation inside the queue processor. */
+	wrap_malloc_calls = 0;
+	wrap_malloc_fail_at = 0;
+	(void)notify_one(&sc, VIRTIO_GPU_2D_CONTROL_QUEUE);
+	wrap_malloc_fail_at = -1;
+	ATF_CHECK_EQ(mock_needs_reset_calls, 1);
+	ATF_CHECK_EQ(mockq_used[0], 0);
+
+	virtio_gpu_2d_state_destroy(sc.vsc_state);
+}
+
+ATF_TC_WITHOUT_HEAD(cursor_queue_updates_with_and_without_sink);
+ATF_TC_BODY(cursor_queue_updates_with_and_without_sink, tc)
+{
+	struct pci_vtgpu_softc sc;
+	uint8_t req[64], resp[64];
+	uint32_t used;
+
+	notify_softc_setup(&sc);
+
+	/* UPDATE_CURSOR with no writable sink is consumed without a response. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_UPDATE_CURSOR);
+	mockq_reset();
+	mockq_push(req, 56, NULL, 0);
+	used = notify_one(&sc, VIRTIO_GPU_2D_CURSOR_QUEUE);
+	ATF_CHECK_EQ(used, 0);
+	ATF_CHECK_EQ(mock_relchain_calls, 1);
+
+	/* MOVE_CURSOR with a sink returns a nodata acknowledgement. */
+	gpu_hdr(req, VIRTIO_GPU_CMD_MOVE_CURSOR);
+	mockq_reset();
+	mockq_push(req, 56, resp, sizeof(resp));
+	used = notify_one(&sc, VIRTIO_GPU_2D_CURSOR_QUEUE);
+	ATF_CHECK_EQ(resp_type(resp), VIRTIO_GPU_RESP_OK_NODATA);
+	ATF_CHECK_EQ(used, 24);
+
+	virtio_gpu_2d_state_destroy(sc.vsc_state);
+}
+
+static void
+init_cleanup(void)
+{
+	struct pci_vtgpu_softc *sc;
+
+	sc = stub_linkup_softc;
+	if (sc == NULL)
+		return;
+	if (sc->vsc_display_registered)
+		(void)console_fb_unregister("virtio-gpu", sc);
+	free(sc->vsc_cursor_staging);
+	free(sc->vsc_display_staging);
+	virtio_gpu_2d_state_destroy(sc->vsc_state);
+	free(sc->vsc_vs.vs_modern);
+	pthread_mutex_destroy(&sc->vsc_vs.vs_isr_mtx);
+	pthread_mutex_destroy(&sc->vsc_mtx);
+	free(sc);
+	stub_linkup_softc = NULL;
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_construction_paths);
+ATF_TC_BODY(device_init_construction_paths, tc)
+{
+	struct pci_devinst pi;
+
+	/* Default construction with no options. */
+	memset(&pi, 0, sizeof(pi));
+	init_config_reset();
+	ATF_REQUIRE_EQ(pci_vtgpu_init(&pi, NULL), 0);
+	ATF_REQUIRE(stub_linkup_softc != NULL);
+	ATF_CHECK_EQ(((struct pci_vtgpu_softc *)stub_linkup_softc)->vsc_width,
+	    VTGPU_DEFAULT_WIDTH);
+	ATF_CHECK_EQ(pi.pi_cfgdata[PCIR_CLASS], PCIC_DISPLAY);
+	ATF_CHECK_EQ(pi.pi_cfgdata[PCIR_SUBCLASS], PCIS_DISPLAY_OTHER);
+	init_cleanup();
+
+	/* Explicit dimensions plus blob and packed feature options. */
+	memset(&pi, 0, sizeof(pi));
+	init_config_reset();
+	cfg_width = "800";
+	cfg_height = "600";
+	cfg_blob = true;
+	cfg_packed = true;
+	ATF_REQUIRE_EQ(pci_vtgpu_init(&pi, NULL), 0);
+	{
+		struct pci_vtgpu_softc *sc = stub_linkup_softc;
+
+		ATF_REQUIRE(sc != NULL);
+		ATF_CHECK_EQ(sc->vsc_width, 800);
+		ATF_CHECK_EQ(sc->vsc_height, 600);
+		ATF_CHECK((sc->vsc_consts.vc_hv_caps &
+		    (UINT64_C(1) << BHYVE_VIRTIO_GPU_F_RESOURCE_BLOB)) != 0);
+		ATF_CHECK((sc->vsc_consts.vc_hv_caps & VIRTIO14_F_RING_PACKED) !=
+		    0);
+	}
+	init_cleanup();
+
+	/* Display option allocates staging and registers the framebuffer. */
+	memset(&pi, 0, sizeof(pi));
+	init_config_reset();
+	cfg_display = true;
+	ATF_REQUIRE_EQ(pci_vtgpu_init(&pi, NULL), 0);
+	{
+		struct pci_vtgpu_softc *sc = stub_linkup_softc;
+
+		ATF_REQUIRE(sc != NULL);
+		ATF_CHECK(sc->vsc_display_registered);
+		ATF_CHECK(sc->vsc_display_staging != NULL);
+		ATF_CHECK(sc->vsc_cursor_staging != NULL);
+	}
+	ATF_CHECK_EQ(stub_fb_register_calls, 1);
+	init_cleanup();
+}
+
+ATF_TC_WITHOUT_HEAD(device_init_rejects_and_unwinds);
+ATF_TC_BODY(device_init_rejects_and_unwinds, tc)
+{
+	struct pci_devinst pi;
+
+	/* Malformed and out-of-range dimensions are rejected before setup. */
+	init_config_reset();
+	cfg_width = "-1";
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+
+	init_config_reset();
+	cfg_height = "notanumber";
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+
+	init_config_reset();
+	cfg_width = "5000";	/* exceeds the 4095 timing bound */
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+
+	/* The initial softc allocation failing aborts immediately. */
+	init_config_reset();
+	wrap_calloc_fail_at = 0;
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+	alloc_fault_reset();
+
+	/* State-engine allocation failing unwinds the mutex. */
+	init_config_reset();
+	wrap_calloc_fail_at = 1;	/* softc ok, state calloc fails */
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+	alloc_fault_reset();
+
+	/* Transport selection failure unwinds the mutex. */
+	init_config_reset();
+	stub_select_transport_ret = 1;
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+
+	/* Interrupt setup failure unwinds the created state. */
+	init_config_reset();
+	stub_intr_init_ret = 1;
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+
+	/* Modern transport init failure unwinds the interrupt mutex. */
+	init_config_reset();
+	stub_modern_init_ret = 1;
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+
+	/* Display staging allocation failure unwinds without registering. */
+	init_config_reset();
+	cfg_display = true;
+	wrap_malloc_fail_at = 0;
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+	ATF_CHECK_EQ(stub_fb_register_calls, 0);
+	alloc_fault_reset();
+
+	/* Cursor staging allocation failure unwinds the display staging. */
+	init_config_reset();
+	cfg_display = true;
+	wrap_malloc_fail_at = 1;
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+	alloc_fault_reset();
+
+	/* Framebuffer registration failure unwinds everything. */
+	init_config_reset();
+	cfg_display = true;
+	stub_fb_register_ret = 1;
+	ATF_CHECK_EQ(pci_vtgpu_init(&pi, NULL), 1);
+	ATF_CHECK_EQ(stub_fb_register_calls, 1);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_envelope_and_body_negatives);
+ATF_TC_BODY(snapshot_envelope_and_body_negatives, tc)
+{
+	struct pci_vtgpu_softc source, dest;
+	struct virtio_gpu_2d_limits limits;
+	struct virtio_gpu_2d_ops ops;
+	uint8_t image[8192], scratch[8192];
+	size_t used;
+
+	memset(&source, 0, sizeof(source));
+	memset(&dest, 0, sizeof(dest));
+	limits = (struct virtio_gpu_2d_limits) {
+		.max_resources = 2,
+		.max_host_bytes = 64,
+		.scanout_width = 2,
+		.scanout_height = 1,
+	};
+	ops = (struct virtio_gpu_2d_ops) {
+		.dma_validate = blob_dma_validate,
+		.dma_read = blob_dma_read,
+	};
+	ATF_REQUIRE_EQ(virtio_gpu_2d_state_create(&limits, &ops,
+	    &source.vsc_state), 0);
+	ATF_REQUIRE_EQ(virtio_gpu_2d_state_create(&limits, &ops,
+	    &dest.vsc_state), 0);
+	source.vsc_width = dest.vsc_width = 2;
+	source.vsc_height = dest.vsc_height = 1;
+
+	ATF_REQUIRE_EQ(run_snapshot(&source, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE(used > 32);
+
+	/* A mismatched scanout identity is rejected before the body is read. */
+	memcpy(scratch, image, used);
+	le32enc(scratch + 16, 999);
+	ATF_CHECK_EQ(run_snapshot(&dest, scratch, used, VM_SNAPSHOT_VALIDATE,
+	    NULL), EINVAL);
+
+	/* A non-zero reserved word is rejected. */
+	memcpy(scratch, image, used);
+	le32enc(scratch + 12, 1);
+	ATF_CHECK_EQ(run_snapshot(&dest, scratch, used, VM_SNAPSHOT_VALIDATE,
+	    NULL), EINVAL);
+
+	/* Undefined events bits are rejected. */
+	memcpy(scratch, image, used);
+	le32enc(scratch + 8, 2);
+	ATF_CHECK_EQ(run_snapshot(&dest, scratch, used, VM_SNAPSHOT_VALIDATE,
+	    NULL), EINVAL);
+
+	/* A body length below the fixed floor is too small. */
+	memcpy(scratch, image, used);
+	le64enc(scratch + 24, 10);
+	ATF_CHECK_EQ(run_snapshot(&dest, scratch, used, VM_SNAPSHOT_VALIDATE,
+	    NULL), E2BIG);
+
+	/* A body length beyond the state limit is too big. */
+	memcpy(scratch, image, used);
+	le64enc(scratch + 24, UINT64_C(1) << 40);
+	ATF_CHECK_EQ(run_snapshot(&dest, scratch, used, VM_SNAPSHOT_VALIDATE,
+	    NULL), E2BIG);
+
+	/* The working-buffer allocation failing is reported as out of memory. */
+	memcpy(scratch, image, used);
+	wrap_malloc_calls = 0;
+	wrap_malloc_fail_at = 0;
+	ATF_CHECK_EQ(run_snapshot(&dest, scratch, used, VM_SNAPSHOT_VALIDATE,
+	    NULL), ENOMEM);
+	alloc_fault_reset();
+
+	/* A corrupt state body fails validation and restore, not the envelope. */
+	memcpy(scratch, image, used);
+	scratch[32] ^= 0xff;
+	ATF_CHECK(run_snapshot(&dest, scratch, used, VM_SNAPSHOT_VALIDATE,
+	    NULL) != 0);
+	memcpy(scratch, image, used);
+	scratch[32] ^= 0xff;
+	ATF_CHECK(run_snapshot(&dest, scratch, used, VM_SNAPSHOT_RESTORE,
+	    NULL) != 0);
+
+	virtio_gpu_2d_state_destroy(dest.vsc_state);
+	virtio_gpu_2d_state_destroy(source.vsc_state);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -569,5 +1538,15 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, monitor_dimension_options);
 	ATF_TP_ADD_TC(tp, snapshot_callback_validates_before_event_publication);
 	ATF_TP_ADD_TC(tp, display_renderer_copies_active_scanout);
+	ATF_TP_ADD_TC(tp, device_private_dma_validate_gate);
+	ATF_TP_ADD_TC(tp, device_reset_clears_events_and_state);
+	ATF_TP_ADD_TC(tp, control_queue_returns_display_info_and_edid);
+	ATF_TP_ADD_TC(tp, control_queue_runs_2d_resource_lifecycle);
+	ATF_TP_ADD_TC(tp, control_queue_error_and_transport_paths);
+	ATF_TP_ADD_TC(tp, control_queue_request_alloc_failure_resets);
+	ATF_TP_ADD_TC(tp, cursor_queue_updates_with_and_without_sink);
+	ATF_TP_ADD_TC(tp, device_init_construction_paths);
+	ATF_TP_ADD_TC(tp, device_init_rejects_and_unwinds);
+	ATF_TP_ADD_TC(tp, snapshot_envelope_and_body_negatives);
 	return (atf_no_error());
 }

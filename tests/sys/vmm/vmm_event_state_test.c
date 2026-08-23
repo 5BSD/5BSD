@@ -191,6 +191,141 @@ ATF_TC_BODY(named_equality_ignores_padding, tc)
 	ATF_CHECK(!vmm_event_state_equal(NULL, &right));
 }
 
+#define	INTINFO_DF_ENTRY	(IDT_DF | VM_INTINFO_VALID | \
+	VM_INTINFO_HWEXCEPTION | VM_INTINFO_DEL_ERRCODE)
+
+static struct vm_intinfo_plan
+fold(uint64_t info1, uint64_t info2)
+{
+	struct vm_intinfo_plan plan;
+
+	memset(&plan, 0x5a, sizeof(plan));
+	ATF_REQUIRE_EQ(vm_intinfo_plan(info1, info2, &plan), 0);
+	return (plan);
+}
+
+ATF_TC_WITHOUT_HEAD(intinfo_plan_rejects_bad_inputs);
+ATF_TC_BODY(intinfo_plan_rejects_bad_inputs, tc)
+{
+	struct vm_intinfo_plan plan;
+
+	(void)tc;
+	/* A NULL result pointer is rejected before any work. */
+	ATF_CHECK_EQ(vm_intinfo_plan(0, 0, NULL), EINVAL);
+
+	/*
+	 * An error code occupying the high dword requires the DEL_ERRCODE flag;
+	 * without it the encoding is malformed.  (Intel SDM: the error code is
+	 * only meaningful for exceptions that deliver one.)
+	 */
+	memset(&plan, 0, sizeof(plan));
+	ATF_CHECK_EQ(vm_intinfo_plan(VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION |
+	    IDT_GP | (UINT64_C(1) << 32), 0, &plan), EINVAL);
+	/* Any reserved bit set is rejected. */
+	ATF_CHECK_EQ(vm_intinfo_plan(VM_INTINFO_VALID | VM_INTINFO_RSVD, 0,
+	    &plan), EINVAL);
+	/* A malformed second event is rejected just like the first. */
+	ATF_CHECK_EQ(vm_intinfo_plan(VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION |
+	    IDT_GP, VM_INTINFO_VALID | VM_INTINFO_RSVD, &plan), EINVAL);
+}
+
+ATF_TC_WITHOUT_HEAD(intinfo_plan_single_event);
+ATF_TC_BODY(intinfo_plan_single_event, tc)
+{
+	struct vm_intinfo_plan plan;
+	uint64_t info1;
+
+	(void)tc;
+	/* Only the first event valid: it is delivered unchanged. */
+	info1 = VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | IDT_GP;
+	plan = fold(info1, 0);
+	ATF_CHECK(plan.valid);
+	ATF_CHECK(!plan.triple_fault);
+	ATF_CHECK_EQ(plan.entry, info1);
+
+	/* Neither event valid: nothing to deliver. */
+	plan = fold(0, 0);
+	ATF_CHECK(!plan.valid);
+	ATF_CHECK(!plan.triple_fault);
+	ATF_CHECK_EQ(plan.entry, 0);
+}
+
+ATF_TC_WITHOUT_HEAD(intinfo_plan_benign_delivers_second);
+ATF_TC_BODY(intinfo_plan_benign_delivers_second, tc)
+{
+	struct vm_intinfo_plan plan;
+	uint64_t benign[3], second;
+	unsigned int i;
+
+	(void)tc;
+	/*
+	 * Intel SDM, Table 6-4: external interrupts, NMIs and software
+	 * interrupts are benign regardless of vector, so folding any of them
+	 * ahead of a second event simply delivers the second event.
+	 */
+	benign[0] = VM_INTINFO_VALID | VM_INTINFO_HWINTR | 0x21;
+	benign[1] = VM_INTINFO_VALID | VM_INTINFO_SWINTR | 0x80;
+	benign[2] = VM_INTINFO_VALID | VM_INTINFO_NMI | IDT_NMI;
+	second = VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | IDT_GP;
+	for (i = 0; i < 3; i++) {
+		plan = fold(benign[i], second);
+		ATF_CHECK(plan.valid);
+		ATF_CHECK(!plan.triple_fault);
+		ATF_CHECK_EQ(plan.entry, second);
+	}
+
+	/* A benign hardware exception vector (e.g. #UD) is also benign. */
+	plan = fold(VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | 6, second);
+	ATF_CHECK(plan.valid);
+	ATF_CHECK(!plan.triple_fault);
+	ATF_CHECK_EQ(plan.entry, second);
+}
+
+ATF_TC_WITHOUT_HEAD(intinfo_plan_double_fault_generation);
+ATF_TC_BODY(intinfo_plan_double_fault_generation, tc)
+{
+	struct vm_intinfo_plan plan;
+	uint64_t contributory[5];
+	uint64_t pf, second;
+	unsigned int i;
+
+	(void)tc;
+	/*
+	 * Intel SDM, Table 6-5: two contributory exceptions fold into a
+	 * double fault.  Each contributory vector (#DE, #TS, #NP, #SS, #GP)
+	 * must be recognized.
+	 */
+	contributory[0] = VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | IDT_DE;
+	contributory[1] = VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | IDT_TS;
+	contributory[2] = VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | IDT_NP;
+	contributory[3] = VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | IDT_SS;
+	contributory[4] = VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | IDT_GP;
+	second = VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | IDT_GP;
+	for (i = 0; i < 5; i++) {
+		plan = fold(contributory[i], second);
+		ATF_CHECK(plan.valid);
+		ATF_CHECK(!plan.triple_fault);
+		ATF_CHECK_EQ(plan.entry, INTINFO_DF_ENTRY);
+	}
+
+	/* Page fault followed by a contributory exception also folds to #DF. */
+	pf = VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | IDT_PF;
+	plan = fold(pf, second);
+	ATF_CHECK(plan.valid);
+	ATF_CHECK(!plan.triple_fault);
+	ATF_CHECK_EQ(plan.entry, INTINFO_DF_ENTRY);
+
+	/* Page fault followed by a benign exception delivers the second. */
+	plan = fold(pf, VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | 6);
+	ATF_CHECK(plan.valid);
+	ATF_CHECK_EQ(plan.entry, VM_INTINFO_VALID | VM_INTINFO_HWEXCEPTION | 6);
+
+	/* An exception while delivering #DF triggers shutdown (triple fault). */
+	plan = fold(INTINFO_DF_ENTRY, second);
+	ATF_CHECK(!plan.valid);
+	ATF_CHECK(plan.triple_fault);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, canonical_values);
@@ -199,5 +334,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, all_vcpu_capture_generation);
 	ATF_TP_ADD_TC(tp, capture_output_ranges);
 	ATF_TP_ADD_TC(tp, named_equality_ignores_padding);
+	ATF_TP_ADD_TC(tp, intinfo_plan_rejects_bad_inputs);
+	ATF_TP_ADD_TC(tp, intinfo_plan_single_event);
+	ATF_TP_ADD_TC(tp, intinfo_plan_benign_delivers_second);
+	ATF_TP_ADD_TC(tp, intinfo_plan_double_fault_generation);
 	return (atf_no_error());
 }

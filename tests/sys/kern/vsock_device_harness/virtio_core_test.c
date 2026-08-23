@@ -213,6 +213,7 @@ static struct guest_region g_regions[8];
 static int g_region_count;
 static int g_interrupts;
 static int g_msix_cap_count;
+static int g_msixcap_error;
 static int g_notifications;
 static int g_cfg_reads;
 static int g_cfg_writes;
@@ -3014,7 +3015,7 @@ int pci_emul_add_msixcap(struct pci_devinst *pi __unused, int count,
     int bar __unused)
 {
 	g_msix_cap_count = count;
-	return (0);
+	return (g_msixcap_error);
 }
 void pci_emul_add_msicap(struct pci_devinst *pi __unused, int count __unused) {}
 void pci_lintr_request(struct pci_devinst *pi __unused) {}
@@ -5905,6 +5906,1154 @@ ATF_TC_BODY(state_range_validation, tc)
 	ATF_CHECK(virtio_state_ranges_overlap(wrapping, 3, storage, 1));
 }
 
+/*
+ * vi_pci_get_softc is the transport-boundary accessor used to recover the
+ * softc from a bare pci_devinst.  VirtIO 1.4 has no register for this; it is a
+ * bhyve invariant that the pointer chain and the registered bar-write callback
+ * must both match before the softc is trusted.
+ */
+ATF_TC_WITHOUT_HEAD(pci_softc_accessor_identity);
+ATF_TC_BODY(pci_softc_accessor_identity, tc)
+{
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct pci_devemu de_ok;
+	struct pci_devemu de_other;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&de_ok, 0, sizeof(de_ok));
+	memset(&de_other, 0, sizeof(de_other));
+	de_ok.pe_barwrite = vi_pci_write;
+	de_other.pe_barwrite = NULL;
+
+	/* NULL device instance. */
+	ATF_CHECK(vi_pci_get_softc(NULL) == NULL);
+	/* No emulation descriptor. */
+	pi.pi_d = NULL;
+	ATF_CHECK(vi_pci_get_softc(&pi) == NULL);
+	/* Emulation descriptor without the virtio bar-write callback. */
+	pi.pi_d = &de_other;
+	pi.pi_arg = &vs;
+	ATF_CHECK(vi_pci_get_softc(&pi) == NULL);
+	/* Correct callback but no back-pointer. */
+	pi.pi_d = &de_ok;
+	pi.pi_arg = NULL;
+	ATF_CHECK(vi_pci_get_softc(&pi) == NULL);
+	/* Correct callback, softc present, but softc does not point back. */
+	pi.pi_arg = &vs;
+	vs.vs_pi = NULL;
+	ATF_CHECK(vi_pci_get_softc(&pi) == NULL);
+	/* Fully consistent chain. */
+	vs.vs_pi = &pi;
+	ATF_CHECK(vi_pci_get_softc(&pi) == &vs);
+}
+
+/*
+ * vi_set_io_bar sizes the legacy I/O BAR as VIRTIO_PCI_CONFIG_OFF(1) plus the
+ * device configuration length, and vi_intr_init lays down the MSI-X capability
+ * with one vector per stored queue plus the configuration vector.
+ */
+ATF_TC_WITHOUT_HEAD(io_bar_and_msix_interrupt_init);
+ATF_TC_BODY(io_bar_and_msix_interrupt_init, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "intr-init-test",
+		.vc_nvq = 3,
+		.vc_cfgsize = 16,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq[3];
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, vq);
+
+	/* Synchronous-device lifecycle no-op accepts any softc and succeeds. */
+	ATF_CHECK_EQ(vi_pci_lifecycle_noop(&vs), 0);
+
+	vi_set_io_bar(&vs, 0);
+
+	/* MSI-X path: one vector per queue plus the configuration vector. */
+	g_msixcap_error = 0;
+	g_msix_cap_count = 0;
+	ATF_REQUIRE_EQ(vi_intr_init(&vs, 0, 1), 0);
+	ATF_CHECK((vs.vs_flags & VIRTIO_USE_MSIX) != 0);
+	ATF_CHECK_EQ(g_msix_cap_count, (int)vc.vc_nvq + 1);
+	pthread_mutex_destroy(&vs.vs_isr_mtx);
+
+	/* MSI-X capability allocation failure unwinds and reports an error. */
+	g_msixcap_error = 1;
+	ATF_CHECK_EQ(vi_intr_init(&vs, 0, 1), 1);
+	g_msixcap_error = 0;
+}
+
+/*
+ * Exercise every legacy transport register in vi_pci_read/vi_pci_write.  The
+ * legacy register map and semantics are defined in the VirtIO 0.9.5 / 1.x
+ * transitional layout; offsets are asserted through the transitional macros.
+ */
+ATF_TC_WITHOUT_HEAD(legacy_transport_registers);
+ATF_TC_BODY(legacy_transport_registers, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "legacy-regs-test",
+		.vc_nvq = 1,
+		.vc_cfgsize = 8,
+		.vc_hv_caps = 0xf00d,
+		.vc_reset = reset_status,
+		.vc_apply_features = test_apply_features,
+		.vc_qnotify = notify_and_interrupt,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	pi.pi_msix.table_count = 4;
+	vq.vq_qsize = 8;
+	vq.vq_pfn = 0x55;
+	vq.vq_msix_idx = 2;
+	/*
+	 * With MSI-X active the device-configuration window starts after the
+	 * MSI-X vector registers, so offsets 20/22 address the vector registers
+	 * rather than device configuration.
+	 */
+	g_msix_enabled = true;
+	g_apply_features = 0;
+	g_apply_features_error = 0;
+
+	/* Read every transport register. */
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_HOST_FEATURES, 4), 0xf00d);
+	vs.vs_negotiated_caps = 0xbeef;
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_GUEST_FEATURES, 4), 0xbeef);
+	vs.vs_curq = 0;
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_QUEUE_PFN, 4), 0x55);
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_QUEUE_NUM, 2), 8);
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_QUEUE_SEL, 2), 0);
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_QUEUE_NOTIFY, 2), 0);
+	vs.vs_status = VIRTIO_CONFIG_STATUS_ACK;
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_STATUS, 1),
+	    VIRTIO_CONFIG_STATUS_ACK);
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_ISR, 1), 0);
+	vs.vs_msix_cfg_idx = 3;
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_MSI_CONFIG_VECTOR, 2), 3);
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_MSI_QUEUE_VECTOR, 2), 2);
+
+	/*
+	 * Selecting an out-of-range queue leaves QUEUE_PFN at the all-ones
+	 * default read value, while QUEUE_NUM and the queue vector report their
+	 * documented defaults.
+	 */
+	vs.vs_curq = 5;
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_QUEUE_PFN, 4), UINT32_MAX);
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_QUEUE_NUM, 2), 0);
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_MSI_QUEUE_VECTOR, 2),
+	    VIRTIO_MSI_NO_VECTOR);
+	vs.vs_curq = 0;
+
+	/* Bad size on a known register, and an unknown offset. */
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_HOST_FEATURES, 2),
+	    UINT16_MAX);
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, VIRTIO_PCI_ISR + 1, 1), UINT8_MAX);
+
+	/* Writes: feature selection is masked by the offered capabilities. */
+	vi_pci_write(&pi, 0, VIRTIO_PCI_GUEST_FEATURES, 4, 0xffff);
+	ATF_CHECK_EQ(vs.vs_negotiated_caps, 0xf00d);
+	/* Once DRIVER_OK is latched, a feature rewrite is ignored. */
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vi_pci_write(&pi, 0, VIRTIO_PCI_GUEST_FEATURES, 4, 0);
+	ATF_CHECK_EQ(vs.vs_negotiated_caps, 0xf00d);
+	vs.vs_status = 0;
+
+	/* Queue selection then PFN initialization. */
+	vi_pci_write(&pi, 0, VIRTIO_PCI_QUEUE_SEL, 2, 0);
+	ATF_CHECK_EQ(vs.vs_curq, 0);
+	/* PFN write while DRIVER_OK is latched must not reinitialize the ring. */
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vi_pci_write(&pi, 0, VIRTIO_PCI_QUEUE_PFN, 4, 0x1000);
+	vs.vs_status = 0;
+	/* PFN write against an invalid queue index is rejected. */
+	vs.vs_curq = 9;
+	vi_pci_write(&pi, 0, VIRTIO_PCI_QUEUE_PFN, 4, 0x1000);
+	vs.vs_curq = 0;
+
+	/* QueueNotify with a missing callback pair simply warns. */
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vi_pci_write(&pi, 0, VIRTIO_PCI_QUEUE_NOTIFY, 2, 0);
+	vs.vs_status = 0;
+
+	/* MSI-X vector registers: valid, no-vector, and out-of-range. */
+	vi_pci_write(&pi, 0, VIRTIO_MSI_CONFIG_VECTOR, 2, 1);
+	ATF_CHECK_EQ(vs.vs_msix_cfg_idx, 1);
+	vi_pci_write(&pi, 0, VIRTIO_MSI_CONFIG_VECTOR, 2, VIRTIO_MSI_NO_VECTOR);
+	ATF_CHECK_EQ(vs.vs_msix_cfg_idx, VIRTIO_MSI_NO_VECTOR);
+	vi_pci_write(&pi, 0, VIRTIO_MSI_CONFIG_VECTOR, 2, 99);
+	ATF_CHECK_EQ(vs.vs_msix_cfg_idx, VIRTIO_MSI_NO_VECTOR);
+	vi_pci_write(&pi, 0, VIRTIO_MSI_QUEUE_VECTOR, 2, 1);
+	ATF_CHECK_EQ(vq.vq_msix_idx, 1);
+	vi_pci_write(&pi, 0, VIRTIO_MSI_QUEUE_VECTOR, 2, 99);
+	ATF_CHECK_EQ(vq.vq_msix_idx, VIRTIO_MSI_NO_VECTOR);
+	/* QueueVector against an invalid queue index is rejected. */
+	vs.vs_curq = 9;
+	vi_pci_write(&pi, 0, VIRTIO_MSI_QUEUE_VECTOR, 2, 0);
+	vs.vs_curq = 0;
+
+	/* Read-only register write and bad-size write are both rejected. */
+	vi_pci_write(&pi, 0, VIRTIO_PCI_HOST_FEATURES, 4, 0x1234);
+	ATF_CHECK_EQ(vs.vs_negotiated_caps, 0xf00d);
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 2, 0);
+
+	/* Status write reaching DRIVER_OK applies features successfully. */
+	vs.vs_status = VIRTIO_CONFIG_STATUS_ACK | VIRTIO_CONFIG_STATUS_DRIVER;
+	g_apply_features = 0;
+	g_apply_features_error = 0;
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	ATF_CHECK_EQ(g_apply_features, 1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) != 0);
+
+	/* A failing apply_features refuses to go live and demands a reset. */
+	vs.vs_status = VIRTIO_CONFIG_STATUS_ACK | VIRTIO_CONFIG_STATUS_DRIVER;
+	g_apply_features = 0;
+	g_apply_features_error = -1;
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1,
+	    VIRTIO_CONFIG_STATUS_DRIVER_OK);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_STATUS_DRIVER_OK) == 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	g_apply_features_error = 0;
+
+	/* A status-zero write drives a full device reset. */
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vi_pci_write(&pi, 0, VIRTIO_PCI_STATUS, 1, 0);
+	ATF_CHECK_EQ(vs.vs_status, 0);
+
+	/*
+	 * MSI-X BAR accesses are forwarded to the MSI-X emulation.  The mock
+	 * table/PBA bar index is -1, so drive the access there.
+	 */
+	vs.vs_flags |= VIRTIO_USE_MSIX;
+	ATF_CHECK_EQ(vi_pci_read(&pi, -1, 0, 4), 0);
+	vi_pci_write(&pi, -1, 0, 4, 0);
+	vs.vs_flags &= ~VIRTIO_USE_MSIX;
+
+	/* A non-zero BAR index on the legacy path is inert. */
+	ATF_CHECK_EQ(vi_pci_read(&pi, 1, 0, 4), UINT32_MAX);
+	vi_pci_write(&pi, 1, 0, 4, 0);
+}
+
+/*
+ * The modern transport register windows are implemented in a separate
+ * translation unit; verify that vi_pci_read/write dispatch there when the
+ * device is modern.
+ */
+ATF_TC_WITHOUT_HEAD(modern_transport_dispatch);
+ATF_TC_BODY(modern_transport_dispatch, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "modern-dispatch-test",
+		.vc_nvq = 1,
+		.vc_cfgsize = 8,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	ATF_CHECK_EQ(vi_pci_read(&pi, 0, 0, 4), 0);
+	vi_pci_write(&pi, 0, 0, 4, 0);
+}
+
+/*
+ * vi_pci_notify_queue rejects an out-of-range queue, respects the
+ * modern enable/reset gate and the DRIVER_OK gate, and warns when no notify
+ * callback is registered.
+ */
+ATF_TC_WITHOUT_HEAD(notify_queue_edge_cases);
+ATF_TC_BODY(notify_queue_edge_cases, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "notify-edge-test",
+		.vc_nvq = 1,
+		.vc_cfgsize = 8,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+
+	/* Out-of-range queue index. */
+	vi_pci_notify_queue(&vs, 99);
+	vi_pci_notify_queue(&vs, (uint64_t)UINT32_MAX + 1);
+
+	/* Modern device: a disabled queue swallows the notify. */
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	vq.vq_enabled = false;
+	vi_pci_notify_queue(&vs, 0);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+
+	/* Before DRIVER_OK a legacy notify is latched, not delivered. */
+	vs.vs_status = 0;
+	vq.vq_notify_pending = false;
+	vi_pci_notify_queue(&vs, 0);
+	ATF_CHECK(vq.vq_notify_pending);
+
+	/* DRIVER_OK but neither vq nor vc notify callback registered. */
+	vs.vs_status = VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	vq.vq_notify = NULL;
+	vc.vc_qnotify = NULL;
+	vi_pci_notify_queue(&vs, 0);
+	ATF_CHECK(!vq.vq_notify_pending);
+}
+
+/*
+ * vq_discard_req and vq_relchain_req must fault the device when a request is
+ * returned that was never outstanding or whose ownership token cannot be
+ * consumed.
+ */
+ATF_TC_WITHOUT_HEAD(relchain_discard_ownership_faults);
+ATF_TC_BODY(relchain_discard_ownership_faults, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc desc[8];
+	struct vi_req req;
+
+	/* discard: request not outstanding faults the device. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	memset(&req, 0, sizeof(req));
+	req.outstanding = false;
+	vq_discard_req(&vq, &req);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+
+	/* discard: outstanding token that cannot be consumed faults the device. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	memset(&req, 0, sizeof(req));
+	req.outstanding = true;
+	req.queue_layout = VIRTIO_QUEUE_SPLIT;
+	req.idx = 3;
+	/* No matching owner was ever claimed, so consume fails. */
+	vq_discard_req(&vq, &req);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK(!req.outstanding);
+
+	/* relchain: request not outstanding faults the device. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	memset(&req, 0, sizeof(req));
+	req.outstanding = false;
+	vq_relchain_req(&vq, &req, 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+
+	/* relchain: outstanding token that cannot be consumed faults the device. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	memset(&req, 0, sizeof(req));
+	req.outstanding = true;
+	req.queue_layout = VIRTIO_QUEUE_SPLIT;
+	req.idx = 4;
+	vq_relchain_req(&vq, &req, 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	ATF_CHECK(!req.outstanding);
+}
+
+/*
+ * vq_relchain_group over a split ring publishes one used index after writing
+ * every element (VirtIO 1.4 section 2.7.8), and it rejects an oversized or
+ * empty group.
+ */
+ATF_TC_WITHOUT_HEAD(split_group_completion_publishes_once);
+ATF_TC_BODY(split_group_completion_publishes_once, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc desc[8];
+	struct vi_req reqs[2];
+	struct iovec iov;
+	uint32_t lengths[2];
+	uint8_t payload[16];
+
+	/* Empty group is a no-op. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vq_relchain_group(&vq, reqs, lengths, 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0);
+
+	/* Two independent split requests completed as one group. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	add_region(0x1000, payload, sizeof(payload));
+	((struct vring_avail *)avail_mem.bytes)->idx = 2;
+	((struct vring_avail *)avail_mem.bytes)->ring[0] = 0;
+	((struct vring_avail *)avail_mem.bytes)->ring[1] = 1;
+	desc[0].addr = 0x1000;
+	desc[0].len = 8;
+	desc[0].flags = VRING_DESC_F_WRITE;
+	desc[1].addr = 0x1008;
+	desc[1].len = 8;
+	desc[1].flags = VRING_DESC_F_WRITE;
+	ATF_REQUIRE_EQ(vq_getchain(&vq, &iov, 1, &reqs[0]), 1);
+	ATF_REQUIRE_EQ(vq_getchain(&vq, &iov, 1, &reqs[1]), 1);
+	lengths[0] = 4;
+	lengths[1] = 8;
+	vq_relchain_group(&vq, reqs, lengths, 2);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0);
+	ATF_CHECK_EQ(vq.vq_used->idx, 2);
+
+	/* An oversized group (nreqs > qsize) faults the device. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vq.vq_qsize = 1;
+	memset(reqs, 0, sizeof(reqs));
+	reqs[0].outstanding = true;
+	reqs[1].outstanding = true;
+	vq_relchain_group(&vq, reqs, lengths, 2);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+}
+
+/*
+ * vq_kick_enable / vq_kick_disable on a packed ring must update the device
+ * event suppression structure per VirtIO 1.4 section 2.8.10, honouring
+ * EVENT_IDX, and must fault when the event area is missing.
+ */
+ATF_TC_WITHOUT_HEAD(packed_kick_suppression_paths);
+ATF_TC_BODY(packed_kick_suppression_paths, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_packed_desc packed_desc[2];
+	struct virtio_packed_event driver_event, device_event;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+
+	(void)avail_mem;
+	(void)used_mem;
+
+	/* Packed enable/disable without EVENT_IDX toggles the ENABLE/DISABLE flag. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, packed_desc, &driver_event,
+	    &device_event, nitems(packed_desc));
+	vs.vs_negotiated_caps = 0;
+	vq_kick_enable(&vq);
+	ATF_CHECK_EQ(le16toh(device_event.flags), VIRTIO_PACKED_EVENT_F_ENABLE);
+	vq_kick_disable(&vq);
+	ATF_CHECK_EQ(le16toh(device_event.flags), VIRTIO_PACKED_EVENT_F_DISABLE);
+	vq_packed_completions_fini(&vq);
+
+	/* With EVENT_IDX, enable publishes a descriptor-position event. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, packed_desc, &driver_event,
+	    &device_event, nitems(packed_desc));
+	vs.vs_negotiated_caps = VIRTIO_RING_F_EVENT_IDX;
+	vq.vq_packed_next_avail = 1;
+	vq_kick_enable(&vq);
+	ATF_CHECK_EQ(le16toh(device_event.flags), VIRTIO_PACKED_EVENT_F_DESC);
+	vq_packed_completions_fini(&vq);
+
+	/* A missing device event area faults the device on enable and disable. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, packed_desc, &driver_event,
+	    &device_event, nitems(packed_desc));
+	vq.vq_packed_device_event = NULL;
+	vq_kick_enable(&vq);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vs.vs_status = 0;
+	vq_kick_disable(&vq);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq.vq_packed_device_event = &device_event;
+	vq_packed_completions_fini(&vq);
+}
+
+/*
+ * vq_packed_completions_init tolerates an idempotent re-init over an empty
+ * table, refuses re-init while completions are outstanding (EBUSY), and
+ * rejects an out-of-range queue size.
+ */
+ATF_TC_WITHOUT_HEAD(packed_completions_init_lifecycle);
+ATF_TC_BODY(packed_completions_init_lifecycle, tc)
+{
+	struct vqueue_info vq;
+
+	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = 0;
+	ATF_CHECK_EQ(vq_packed_completions_init(&vq), EINVAL);
+
+	vq.vq_qsize = 4;
+	ATF_REQUIRE_EQ(vq_packed_completions_init(&vq), 0);
+	/* Idempotent re-init over an empty table succeeds without churn. */
+	ATF_CHECK_EQ(vq_packed_completions_init(&vq), 0);
+
+	/* Mark a completion outstanding: re-init must report EBUSY. */
+	vq.vq_packed_completions[0].valid = true;
+	ATF_CHECK_EQ(vq_packed_completions_init(&vq), EBUSY);
+	vq.vq_packed_completions[0].valid = false;
+
+	/*
+	 * A resize request over a drained table replaces the allocation
+	 * (covers the fini-and-realloc branch).
+	 */
+	vq.vq_qsize = 8;
+	ATF_REQUIRE_EQ(vq_packed_completions_init(&vq), 0);
+	ATF_CHECK_EQ(vq.vq_packed_completion_count, 8);
+	vq_packed_completions_fini(&vq);
+}
+
+/*
+ * A fatal ring error observed while the device is mid-reset (odd reset epoch)
+ * is remembered as a deferred failure rather than immediately re-asserting
+ * NEEDS_RESET, per the reset-epoch handshake.
+ */
+ATF_TC_WITHOUT_HEAD(needs_reset_during_reset_defers);
+ATF_TC_BODY(needs_reset_during_reset_defers, tc)
+{
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+
+	memset(&vs, 0, sizeof(vs));
+	vs.vs_vc = &vc;
+	vc.vc_name = "reset-epoch-test";
+
+	/* Odd epoch means a reset is in progress. */
+	vs.vs_reset_epoch = 1;
+	vs.vs_status = 0;
+	vi_set_needs_reset(&vs);
+	ATF_CHECK(vs.vs_reset_failed);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0);
+
+	/* vs_resetting also defers. */
+	vs.vs_reset_epoch = 0;
+	vs.vs_reset_failed = false;
+	vs.vs_resetting = true;
+	vi_set_needs_reset(&vs);
+	ATF_CHECK(vs.vs_reset_failed);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0);
+}
+
+/*
+ * Drive vi_pci_snapshot() end-to-end over a legacy-transport device for save,
+ * validate, and restore, plus the restore-incomplete short circuit and the
+ * unknown-operation label path.
+ */
+ATF_TC_WITHOUT_HEAD(legacy_full_snapshot_roundtrip);
+ATF_TC_BODY(legacy_full_snapshot_roundtrip, tc)
+{
+	_Alignas(VRING_ALIGN) static uint8_t source_ring[8192];
+	_Alignas(VRING_ALIGN) static uint8_t destination_ring[8192];
+	struct virtio_softc source, destination;
+	struct virtio_consts source_vc, destination_vc;
+	struct pci_devinst source_pi, destination_pi;
+	struct vqueue_info source_vq, destination_vq;
+	struct vmctx ctx = { 0 };
+	static uint8_t image[65536];
+	size_t used;
+
+	memset(&source, 0, sizeof(source));
+	memset(&destination, 0, sizeof(destination));
+	memset(&source_vc, 0, sizeof(source_vc));
+	memset(&destination_vc, 0, sizeof(destination_vc));
+	memset(&source_pi, 0, sizeof(source_pi));
+	memset(&destination_pi, 0, sizeof(destination_pi));
+	memset(&source_vq, 0, sizeof(source_vq));
+	memset(&destination_vq, 0, sizeof(destination_vq));
+	memset(source_ring, 0x5a, sizeof(source_ring));
+	memset(destination_ring, 0xc3, sizeof(destination_ring));
+
+	source_pi.pi_arg = &source;
+	source_pi.pi_vmctx = &ctx;
+	source.vs_pi = &source_pi;
+	source.vs_vc = &source_vc;
+	source.vs_queues = &source_vq;
+	source.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	source.vs_negotiated_caps = VIRTIO_RING_F_EVENT_IDX;
+	source.vs_status = VIRTIO_CONFIG_STATUS_ACK |
+	    VIRTIO_CONFIG_STATUS_DRIVER | VIRTIO_CONFIG_STATUS_DRIVER_OK;
+	source.vs_msix_cfg_idx = VIRTIO_MSI_NO_VECTOR;
+	source_vc.vc_name = "legacy-snap";
+	source_vc.vc_nvq = 1;
+	source_vc.vc_cfgsize = 8;
+	source_vc.vc_hv_caps = VIRTIO_RING_F_EVENT_IDX;
+	source_vq.vq_vs = &source;
+	source_vq.vq_qsize = 8;
+	source_vq.vq_num = 0;
+	source_vq.vq_flags = VQ_ALLOC;
+	source_vq.vq_pfn = 0x10;
+	source_vq.vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
+	source_vq.vq_desc = (void *)source_ring;
+	source_vq.vq_avail = (void *)(source_ring +
+	    8 * VIRTIO14_SPLIT_DESC_SIZE);
+	source_vq.vq_used = (void *)roundup2(
+	    (uintptr_t)source_vq.vq_avail +
+	    VIRTIO14_SPLIT_AVAIL_HEADER_SIZE +
+	    8 * VIRTIO14_SPLIT_AVAIL_ELEM_SIZE +
+	    VIRTIO14_SPLIT_EVENT_FIELD_SIZE, VRING_ALIGN);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&source.vs_isr_mtx, NULL), 0);
+	g_region_count = 0;
+	add_region(UINT64_C(0x10000), source_ring, sizeof(source_ring));
+
+	/* An unknown snapshot op still labels its lifecycle probe and saves. */
+	{
+		struct vm_snapshot_meta bad_meta = {
+			.buffer = {
+				.buf_start = image,
+				.buf_size = sizeof(image),
+				.buf = image,
+				.buf_rem = sizeof(image),
+			},
+			.dev_data = &source_pi,
+			.op = (enum vm_snapshot_op)99,
+		};
+		(void)vi_pci_snapshot(&bad_meta);
+	}
+
+	ATF_REQUIRE_EQ(run_full_virtio_snapshot(&source_pi, image,
+	    sizeof(image), VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_REQUIRE(used > 0);
+
+	destination_pi.pi_arg = &destination;
+	destination_pi.pi_vmctx = &ctx;
+	destination.vs_pi = &destination_pi;
+	destination.vs_vc = &destination_vc;
+	destination.vs_queues = &destination_vq;
+	destination.vs_transport = VIRTIO_PCI_TRANSPORT_LEGACY;
+	destination.vs_msix_cfg_idx = VIRTIO_MSI_NO_VECTOR;
+	destination_vc.vc_name = "legacy-snap";
+	destination_vc.vc_nvq = 1;
+	destination_vc.vc_cfgsize = 8;
+	destination_vc.vc_hv_caps = VIRTIO_RING_F_EVENT_IDX;
+	destination_vq.vq_vs = &destination;
+	destination_vq.vq_qsize = 8;
+	destination_vq.vq_num = 0;
+	destination_vq.vq_flags = VQ_ALLOC;
+	destination_vq.vq_pfn = 0x10;
+	destination_vq.vq_msix_idx = VIRTIO_MSI_NO_VECTOR;
+	destination_vq.vq_desc = (void *)destination_ring;
+	destination_vq.vq_avail = (void *)(destination_ring +
+	    8 * VIRTIO14_SPLIT_DESC_SIZE);
+	destination_vq.vq_used = (void *)roundup2(
+	    (uintptr_t)destination_vq.vq_avail +
+	    VIRTIO14_SPLIT_AVAIL_HEADER_SIZE +
+	    8 * VIRTIO14_SPLIT_AVAIL_ELEM_SIZE +
+	    VIRTIO14_SPLIT_EVENT_FIELD_SIZE, VRING_ALIGN);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&destination.vs_isr_mtx, NULL), 0);
+	g_region_count = 0;
+	add_region(UINT64_C(0x10000), destination_ring, sizeof(destination_ring));
+
+	ATF_CHECK_EQ(run_full_virtio_snapshot(&destination_pi, image, used,
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	ATF_CHECK_EQ(run_full_virtio_snapshot(&destination_pi, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), 0);
+	ATF_CHECK_EQ(destination.vs_negotiated_caps, VIRTIO_RING_F_EVENT_IDX);
+
+	/* A device already marked restore-incomplete refuses further snapshots. */
+	destination.vs_restore_incomplete = true;
+	ATF_CHECK_EQ(run_full_virtio_snapshot(&destination_pi, image, used,
+	    VM_SNAPSHOT_RESTORE, NULL), EIO);
+
+	pthread_mutex_destroy(&source.vs_isr_mtx);
+	pthread_mutex_destroy(&destination.vs_isr_mtx);
+}
+
+static int g_pddo_mark_calls;
+static int g_pddo_fail_calls;
+static int g_pddo_last_error;
+
+static int
+test_pddo_mark(void *arg __unused, uint64_t gpa __unused, size_t len __unused)
+{
+
+	g_pddo_mark_calls++;
+	return (0);
+}
+
+static void
+test_pddo_fail(void *arg __unused, int error)
+{
+
+	g_pddo_fail_calls++;
+	g_pddo_last_error = error;
+}
+
+static const struct pci_dma_dirty_ops test_pddo_ops = {
+	.pddo_mark = test_pddo_mark,
+	.pddo_fail = test_pddo_fail,
+};
+
+/*
+ * The default bhyve PCI platform operations installed by vi_softc_linkup back
+ * the device-facing DMA/RAM contract onto the guest address space.  Exercise
+ * each of them through the public wrappers.
+ */
+ATF_TC_WITHOUT_HEAD(default_pci_platform_ops);
+ATF_TC_BODY(default_pci_platform_ops, tc)
+{
+	struct virtio_consts vc = {
+		.vc_name = "pci-ops-test",
+		.vc_nvq = 1,
+		.vc_cfgsize = 8,
+	};
+	struct virtio_softc vs;
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vmctx ctx = { 0 };
+	size_t page;
+	void *buf;
+	uint64_t address;
+	int error;
+
+	memset(&vs, 0, sizeof(vs));
+	memset(&pi, 0, sizeof(pi));
+	memset(&vq, 0, sizeof(vq));
+	vi_softc_linkup(&vs, &vc, &vs, &pi, &vq);
+	pi.pi_vmctx = &ctx;
+
+	page = (size_t)getpagesize();
+	ATF_REQUIRE_EQ(posix_memalign(&buf, page, page), 0);
+	g_region_count = 0;
+	add_region(UINT64_C(0x10000), buf, page);
+
+	/* Page size query reflects the host page size. */
+	ATF_CHECK_EQ(vi_platform_ram_page_size(&vs), page);
+
+	/*
+	 * A device-write mapping resolves through the guest address space and
+	 * then attempts to mark the range dirty.  With no dirty-tracking ops
+	 * registered, the mark is a silent no-op.
+	 */
+	ATF_CHECK(vi_map_dma(&vs, UINT64_C(0x10000), 64,
+	    VIRTIO_DMA_DEVICE_WRITE) == buf);
+	/* An unmapped address returns NULL. */
+	ATF_CHECK(vi_map_dma(&vs, UINT64_C(0x99990000), 64,
+	    VIRTIO_DMA_DEVICE_READ) == NULL);
+
+	/*
+	 * With dirty-tracking ops present, a failed reverse translation is
+	 * reported through the failure callback.  The reverse-map mock never
+	 * resolves, so this exercises the failure path.
+	 */
+	pi.pi_dma_dirty_ops = &test_pddo_ops;
+	pi.pi_dma_dirty_arg = &pi;
+	g_pddo_mark_calls = 0;
+	g_pddo_fail_calls = 0;
+	vi_mark_dma_dirty(&vs, buf, 64);
+	ATF_CHECK_EQ(g_pddo_mark_calls, 0);
+	ATF_CHECK_EQ(g_pddo_fail_calls, 1);
+	ATF_CHECK_EQ(g_pddo_last_error, EFAULT);
+	pi.pi_dma_dirty_ops = NULL;
+
+	/* Reverse translation: NULL argument and unresolved mapping. */
+	ATF_CHECK_EQ(vi_platform_reverse_ram(&vs, NULL, 64, &address), EINVAL);
+	ATF_CHECK_EQ(vi_platform_reverse_ram(&vs, buf, 64, &address), EFAULT);
+
+	/* Discard and undiscard a page-aligned mapped range. */
+	error = vi_platform_discard_ram(&vs, UINT64_C(0x10000), page);
+	ATF_CHECK(error == 0 || error == EINVAL);
+	error = vi_platform_undiscard_ram(&vs, UINT64_C(0x10000), page);
+	ATF_CHECK(error == 0 || error == EINVAL);
+
+	/* A page-aligned but unmapped range faults. */
+	ATF_CHECK_EQ(vi_platform_discard_ram(&vs, UINT64_C(0x8000000), page),
+	    EFAULT);
+	ATF_CHECK_EQ(vi_platform_undiscard_ram(&vs, UINT64_C(0x8000000), page),
+	    EFAULT);
+
+	free(buf);
+}
+
+/*
+ * Malformed and boundary conditions in the packed-ring descriptor parser
+ * (VirtIO 1.4 section 2.8.6-2.8.7) must each fault the device and never
+ * publish a partial request.
+ */
+ATF_TC_WITHOUT_HEAD(packed_getchain_error_paths);
+ATF_TC_BODY(packed_getchain_error_paths, tc)
+{
+	uint8_t buffer[64];
+	struct virtio_packed_desc desc[4], indirect[3];
+	struct virtio_packed_event driver_event, device_event;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct iovec iov[4];
+	struct vi_req req;
+
+	/* A NULL descriptor area faults the device. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	vq.vq_packed_desc = NULL;
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+
+	/* An out-of-range available cursor faults the device. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	vq.vq_packed_next_avail = vq.vq_qsize;
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+
+	/* A descriptor whose AVAIL bit is not yet set yields no request. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	desc[0].flags = htole16(0);
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0);
+	vq_packed_completions_fini(&vq);
+
+	/* An indirect table larger than the queue faults the device. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	desc[0].address = htole64(0x4000);
+	desc[0].length = htole32((vq.vq_qsize + 1) * VIRTIO14_PACKED_DESC_SIZE);
+	desc[0].flags = htole16(VIRTIO14_PACKED_DESC_F_AVAIL |
+	    VIRTIO14_PACKED_DESC_F_INDIRECT);
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+
+	/* An indirect table pointing outside guest memory faults the device. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	desc[0].address = htole64(0xdead0000);
+	desc[0].length = htole32(2 * VIRTIO14_PACKED_DESC_SIZE);
+	desc[0].flags = htole16(VIRTIO14_PACKED_DESC_F_AVAIL |
+	    VIRTIO14_PACKED_DESC_F_INDIRECT);
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+
+	/* An indirect entry that maps outside guest memory faults the device. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	memset(indirect, 0, sizeof(indirect));
+	add_region(0x5000, indirect, sizeof(indirect));
+	indirect[0].address = htole64(0xbeef0000);
+	indirect[0].length = htole32(8);
+	desc[0].address = htole64(0x5000);
+	desc[0].length = htole32(VIRTIO14_PACKED_DESC_SIZE);
+	desc[0].flags = htole16(VIRTIO14_PACKED_DESC_F_AVAIL |
+	    VIRTIO14_PACKED_DESC_F_INDIRECT);
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+
+	/* A valid indirect chain whose head is already outstanding faults. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	memset(indirect, 0, sizeof(indirect));
+	add_region(0x4000, buffer, sizeof(buffer));
+	add_region(0x5000, indirect, sizeof(indirect));
+	indirect[0].address = htole64(0x4000);
+	indirect[0].length = htole32(8);
+	desc[0].address = htole64(0x5000);
+	desc[0].length = htole32(VIRTIO14_PACKED_DESC_SIZE);
+	desc[0].flags = htole16(VIRTIO14_PACKED_DESC_F_AVAIL |
+	    VIRTIO14_PACKED_DESC_F_INDIRECT);
+	ATF_REQUIRE(vq_packed_owner_claim(&vq, 0, true));
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+
+	/* A direct descriptor mapping outside guest memory faults the device. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	desc[0].address = htole64(0xdead0000);
+	desc[0].length = htole32(8);
+	desc[0].flags = htole16(VIRTIO14_PACKED_DESC_F_AVAIL);
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+
+	/* A valid direct chain whose head is already outstanding faults. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	add_region(0x4000, buffer, sizeof(buffer));
+	desc[0].address = htole64(0x4000);
+	desc[0].length = htole32(8);
+	desc[0].flags = htole16(VIRTIO14_PACKED_DESC_F_AVAIL);
+	ATF_REQUIRE(vq_packed_owner_claim(&vq, 0, true));
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+
+	/* A chain that never terminates walks the whole ring and then faults. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	add_region(0x4000, buffer, sizeof(buffer));
+	for (size_t i = 0; i < nitems(desc); i++) {
+		desc[i].address = htole64(0x4000);
+		desc[i].length = htole32(8);
+		desc[i].flags = htole16(VIRTIO14_PACKED_DESC_F_AVAIL |
+		    VIRTIO14_PACKED_DESC_F_NEXT);
+	}
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+}
+
+/*
+ * Split-ring descriptor parser error and boundary paths (VirtIO 1.4 section
+ * 2.7.5): empty ring, oversized available count, forbidden and malformed
+ * indirect chains, and duplicate outstanding heads.
+ */
+ATF_TC_WITHOUT_HEAD(split_getchain_error_paths);
+ATF_TC_BODY(split_getchain_error_paths, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc desc[8], indirect[4];
+	struct vi_req req;
+	struct iovec iov[4];
+	uint8_t payload[32];
+
+	/* No new descriptors: the parser reports an empty ring. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vq.vq_last_avail = 1;	/* equals avail->idx from setup_queue */
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), 0);
+
+	/* An available count larger than the ring faults the device. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	((struct vring_avail *)avail_mem.bytes)->idx = 100;
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+
+	/* An INDIRECT flag without the negotiated feature faults the device. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vs.vs_negotiated_caps = 0;
+	desc[0].addr = 0x1000;
+	desc[0].len = VIRTIO14_SPLIT_DESC_SIZE;
+	desc[0].flags = VRING_DESC_F_INDIRECT;
+	add_region(0x1000, indirect, sizeof(indirect));
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+
+	/* An indirect table entry carrying its own INDIRECT flag faults. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	memset(indirect, 0, sizeof(indirect));
+	add_region(0x2000, indirect, sizeof(indirect));
+	indirect[0].addr = 0x1000;
+	indirect[0].len = 8;
+	indirect[0].flags = VRING_DESC_F_INDIRECT;
+	add_region(0x1000, payload, sizeof(payload));
+	desc[0].addr = 0x2000;
+	desc[0].len = 2 * VIRTIO14_SPLIT_DESC_SIZE;
+	desc[0].flags = VRING_DESC_F_INDIRECT;
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+
+	/* An indirect NEXT pointer beyond the table faults the device. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	memset(indirect, 0, sizeof(indirect));
+	add_region(0x2000, indirect, sizeof(indirect));
+	add_region(0x1000, payload, sizeof(payload));
+	indirect[0].addr = 0x1000;
+	indirect[0].len = 8;
+	indirect[0].flags = VRING_DESC_F_NEXT;
+	indirect[0].next = 99;
+	desc[0].addr = 0x2000;
+	desc[0].len = 2 * VIRTIO14_SPLIT_DESC_SIZE;
+	desc[0].flags = VRING_DESC_F_INDIRECT;
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+
+	/* An indirect chain that loops longer than the queue faults. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
+	memset(indirect, 0, sizeof(indirect));
+	add_region(0x2000, indirect, sizeof(indirect));
+	add_region(0x1000, payload, sizeof(payload));
+	for (size_t i = 0; i < nitems(indirect); i++) {
+		indirect[i].addr = 0x1000;
+		indirect[i].len = 8;
+		indirect[i].flags = VRING_DESC_F_NEXT;
+		indirect[i].next = (uint16_t)((i + 1) % nitems(indirect));
+	}
+	desc[0].addr = 0x2000;
+	desc[0].len = nitems(indirect) * VIRTIO14_SPLIT_DESC_SIZE;
+	desc[0].flags = VRING_DESC_F_INDIRECT;
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+
+	/* A descriptor head already outstanding faults the device. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	add_region(0x1000, payload, sizeof(payload));
+	desc[0].addr = 0x1000;
+	desc[0].len = 8;
+	desc[0].flags = VRING_DESC_F_WRITE;
+	ATF_REQUIRE(vq_split_owner_claim(&vq, 0));
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+}
+
+/*
+ * A revocable DMA domain that denies the per-request lease, or whose mapping
+ * generation cannot be pinned, must abort chain parsing safely.
+ */
+ATF_TC_WITHOUT_HEAD(getchain_dma_lease_failures);
+ATF_TC_BODY(getchain_dma_lease_failures, tc)
+{
+	union { max_align_t align; uint8_t bytes[64]; } avail_mem;
+	union { max_align_t align; uint8_t bytes[128]; } used_mem;
+	struct virtio_packed_desc packed_desc[2];
+	struct virtio_packed_event driver_event, device_event;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct vring_desc desc[8];
+	struct vi_req req;
+	struct iovec iov[2];
+
+	/*
+	 * Split ring: a denied lease returns "no request" without a fault.  Each
+	 * sub-case installs the domain on a freshly initialized softc, so no
+	 * inter-case teardown is required (the queues stay allocated, which the
+	 * removal path intentionally treats as busy).
+	 */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	g_domain_acquire_allowed = false;
+	g_domain_deny = false;
+	ATF_REQUIRE_EQ(vi_set_dma_domain(&vs, &test_leased_domain_ops, &pi,
+	    0x41), 0);
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0);
+	g_domain_acquire_allowed = true;
+
+	/* Split ring: a lease that cannot pin a stable mapping faults. */
+	setup_queue(&vs, &vc, &pi, &vq, desc,
+	    (struct vring_avail *)avail_mem.bytes,
+	    (struct vring_used *)used_mem.bytes);
+	vs.vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
+	vq.vq_desc_gpa = 0x1000;
+	vq.vq_driver_gpa = 0x2000;
+	vq.vq_device_gpa = 0x3000;
+	g_domain_acquire_allowed = true;
+	g_domain_deny = true;
+	ATF_REQUIRE_EQ(vi_set_dma_domain(&vs, &test_leased_domain_ops, &pi,
+	    0x42), 0);
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
+	g_domain_deny = false;
+
+	/* Packed ring: a denied lease returns "no request" without a fault. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, packed_desc, &driver_event,
+	    &device_event, nitems(packed_desc));
+	vs.vs_status = 0;
+	g_domain_acquire_allowed = false;
+	g_domain_deny = false;
+	ATF_REQUIRE_EQ(vi_set_dma_domain(&vs, &test_leased_domain_ops, &pi,
+	    0x43), 0);
+	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), 0);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) == 0);
+	g_domain_acquire_allowed = true;
+	vq_packed_completions_fini(&vq);
+}
+
+/*
+ * vq_relchain_req on a packed ring rejects a structurally invalid request and
+ * a duplicate completion at an already-staged head, faulting the device in
+ * both cases rather than publishing corrupt ownership.
+ */
+ATF_TC_WITHOUT_HEAD(packed_relchain_req_validation);
+ATF_TC_BODY(packed_relchain_req_validation, tc)
+{
+	uint8_t buffer[64];
+	struct virtio_packed_desc desc[4];
+	struct virtio_packed_event driver_event, device_event;
+	struct virtio_softc vs;
+	struct virtio_consts vc = { 0 };
+	struct pci_devinst pi;
+	struct vqueue_info vq;
+	struct iovec iov;
+	struct vi_req req;
+
+	/* A structurally invalid (zero-length) request faults the device. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	add_region(0x4000, buffer, sizeof(buffer));
+	desc[0].address = htole64(0x4000);
+	desc[0].length = htole32(8);
+	desc[0].flags = htole16(VIRTIO14_PACKED_DESC_F_AVAIL |
+	    VIRTIO14_PACKED_DESC_F_WRITE);
+	ATF_REQUIRE_EQ(vq_getchain(&vq, &iov, 1, &req), 1);
+	req.descriptor_count = 0;
+	vq_relchain_req(&vq, &req, 8);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+
+	/* A duplicate completion at an already-staged head faults the device. */
+	setup_packed_queue(&vs, &vc, &pi, &vq, desc, &driver_event,
+	    &device_event, nitems(desc));
+	add_region(0x4000, buffer, sizeof(buffer));
+	desc[0].address = htole64(0x4000);
+	desc[0].length = htole32(8);
+	desc[0].flags = htole16(VIRTIO14_PACKED_DESC_F_AVAIL |
+	    VIRTIO14_PACKED_DESC_F_WRITE);
+	ATF_REQUIRE_EQ(vq_getchain(&vq, &iov, 1, &req), 1);
+	/* Pre-stage a completion at the request head to force the conflict. */
+	vq.vq_packed_completions[req.packed_head].valid = true;
+	vq_relchain_req(&vq, &req, 8);
+	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
+	vq_packed_completions_fini(&vq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, state_range_validation);
@@ -5984,5 +7133,21 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, admin_quiesce_failure_aborts_checkpoint);
 	ATF_TP_ADD_TC(tp, admin_pause_rollback_failure_needs_reset);
 	ATF_TP_ADD_TC(tp, isr_read_serializes_intx);
+	ATF_TP_ADD_TC(tp, pci_softc_accessor_identity);
+	ATF_TP_ADD_TC(tp, io_bar_and_msix_interrupt_init);
+	ATF_TP_ADD_TC(tp, legacy_transport_registers);
+	ATF_TP_ADD_TC(tp, modern_transport_dispatch);
+	ATF_TP_ADD_TC(tp, notify_queue_edge_cases);
+	ATF_TP_ADD_TC(tp, relchain_discard_ownership_faults);
+	ATF_TP_ADD_TC(tp, split_group_completion_publishes_once);
+	ATF_TP_ADD_TC(tp, packed_kick_suppression_paths);
+	ATF_TP_ADD_TC(tp, packed_completions_init_lifecycle);
+	ATF_TP_ADD_TC(tp, needs_reset_during_reset_defers);
+	ATF_TP_ADD_TC(tp, legacy_full_snapshot_roundtrip);
+	ATF_TP_ADD_TC(tp, default_pci_platform_ops);
+	ATF_TP_ADD_TC(tp, packed_getchain_error_paths);
+	ATF_TP_ADD_TC(tp, split_getchain_error_paths);
+	ATF_TP_ADD_TC(tp, getchain_dma_lease_failures);
+	ATF_TP_ADD_TC(tp, packed_relchain_req_validation);
 	return (atf_no_error());
 }

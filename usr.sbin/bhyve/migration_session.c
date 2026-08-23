@@ -1308,11 +1308,23 @@ migration_source_run(const struct migration_transport *xp,
 		error = ECANCELED;
 		goto fail_runnable;
 	}
-	error = ops->so_quiesce(arg);
-	if (error != 0) {
-		/* Contract: a failed quiesce leaves the source runnable. */
-		out.reason = MIGRATION_REASON_STATE;
-		goto fail_runnable;
+	{
+		bool quiesce_runnable = true;
+
+		error = ops->so_quiesce(arg, &quiesce_runnable);
+		if (error != 0) {
+			out.reason = MIGRATION_REASON_STATE;
+			/*
+			 * A clean quiesce failure rolled the source back and it is
+			 * still the running copy.  A failed rollback leaves the
+			 * source wedged (vCPUs/devices paused, unrecoverable): it
+			 * must NOT be reported as runnable, or an operator could
+			 * start a second copy on the destination -> split brain.
+			 */
+			if (!quiesce_runnable)
+				goto fail_wedged;
+			goto fail_runnable;
+		}
 	}
 	quiesced = true;
 
@@ -1440,6 +1452,28 @@ fail_runnable:
 	free(topology);
 	if (error == 0)
 		error = EPROTO;
+	*result = out;
+	return (error);
+
+fail_wedged:
+	/*
+	 * so_quiesce failed AND could not roll the partial quiesce back: the
+	 * source is stopped and unrecoverable.  Retire dirty logging, tell the
+	 * destination to abort, and report the source as NOT runnable so the
+	 * control plane never resumes a second copy elsewhere.
+	 */
+	if (precopy_enabled)
+		(void)ops->so_precopy_disable(arg);
+	out.source_runnable = false;
+	out.phase = MIGRATION_PHASE_FAILED;
+	if (out.reason == MIGRATION_REASON_NONE)
+		out.reason = MIGRATION_REASON_STATE;
+	(void)migration_send_reason(&sess, MIGRATION_MSG_ABORT, out.reason, 0);
+	free(payload);
+	free(frame_payload);
+	free(topology);
+	if (error == 0)
+		error = EIO;
 	*result = out;
 	return (error);
 }
@@ -2258,21 +2292,29 @@ prod_precopy_disable(void *arg)
 }
 
 static int
-prod_quiesce(void *arg)
+prod_quiesce(void *arg, bool *source_runnable)
 {
 	struct migration_prod_source *src = arg;
 	int error;
 
+	/* Assume the worst until a path proves the source is still running. */
+	*source_runnable = false;
+
 	error = vm_suspend_all_cpus(src->ctx);
-	if (error != 0)
+	if (error != 0) {
+		/* vCPUs never stopped; the source is untouched and running. */
+		*source_runnable = true;
 		return (errno != 0 ? errno : EIO);
+	}
 	error = vm_pause_devices();
 	if (error != 0) {
 		int resume_error;
 
 		/*
 		 * vm_pause_devices() may report that its own rollback could not
-		 * resume a fabric.  Never restart vCPUs in that state.
+		 * resume a fabric.  Never restart vCPUs in that state, and tell
+		 * the session the source is wedged so it is not reported as a
+		 * runnable copy.
 		 */
 		resume_error = vm_resume_devices();
 		if (resume_error != 0) {
@@ -2280,6 +2322,7 @@ prod_quiesce(void *arg)
 			return (resume_error);
 		}
 		(void)vm_resume_all_cpus(src->ctx);
+		*source_runnable = true;
 		return (error);
 	}
 	src->quiesced = true;

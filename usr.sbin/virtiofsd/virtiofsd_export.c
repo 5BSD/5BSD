@@ -546,6 +546,21 @@ virtiofsd_export_restore_open_path(struct virtiofsd_export_restore *restore,
 		if (virtiofsd_export_restore_path_valid(path, path_len) != 0)
 			return (EPROTO);
 		slot = (size_t)slot_value - 1;
+		/*
+		 * When the handle's node is still present in the restored node
+		 * table, cross-check that the handle's path matches the node's
+		 * path (integrity: a restored handle must not disagree with a
+		 * live node about where its nodeid lives) and that the file type
+		 * agrees.  The node may legitimately be ABSENT, though: a FUSE
+		 * handle outlives FORGET of its node, so a handle checkpointed
+		 * after the guest forgot the node has no table entry to match.
+		 * That case is safe without the cross-check because export
+		 * confinement does not depend on it -- the path was already
+		 * traversal-validated above and the openat() below is pinned
+		 * under rootfd with O_RESOLVE_BENEATH|O_NOFOLLOW, so a forged
+		 * (nodeid, path) pairing can still only reach a file the guest
+		 * could open directly via LOOKUP within the same export.
+		 */
 		if (slot < restore->capacity &&
 		    restore->nodes[slot].allocated &&
 		    restore->nodes[slot].generation == generation) {

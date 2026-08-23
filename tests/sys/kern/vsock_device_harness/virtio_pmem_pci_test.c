@@ -24,12 +24,55 @@
 #define	VTPMEM_DRAIN_TIMEOUT_MS	50U
 
 #define virtio_pmem_worker_defer_reset test_worker_defer_reset
+#define virtio_pmem_worker_destroy test_worker_destroy
 #include "pci_virtio_pmem.c"
 #undef virtio_pmem_worker_defer_reset
+#undef virtio_pmem_worker_destroy
 #include "virtio_1_4_spec.h"
 #include "virtio_config_read_test_support.h"
 
 int	virtio_pmem_worker_defer_reset(struct virtio_pmem_worker *, bool);
+int	virtio_pmem_worker_destroy(struct virtio_pmem_worker *, uint32_t);
+
+/*
+ * Fault injection for pci_vtpmem_init().  The production worker-destroy in the
+ * init failure path only fails when a flush is wedged in the backend, which
+ * cannot be arranged during init (no request is ever submitted there).  Force
+ * the return value so the deliberate-leak / no-teardown path is exercised.
+ */
+static bool g_force_worker_destroy_error;
+
+int
+test_worker_destroy(struct virtio_pmem_worker *worker, uint32_t timeout_ms)
+{
+
+	if (g_force_worker_destroy_error)
+		return (EBUSY);
+	return (virtio_pmem_worker_destroy(worker, timeout_ms));
+}
+
+/*
+ * calloc(3) wrapper (installed via -Wl,--wrap=calloc).  It only diverts the
+ * exact request-object allocation performed by the device model, so the
+ * profiling runtime, ATF, and the async worker's own bookkeeping are never
+ * perturbed.  This lets the ENOMEM admission branches be reached deterministe.
+ */
+static bool g_fail_request_calloc;
+
+void	*__real_calloc(size_t, size_t);
+void	*__wrap_calloc(size_t, size_t);
+
+void *
+__wrap_calloc(size_t nmemb, size_t size)
+{
+
+	if (g_fail_request_calloc && nmemb == 1 &&
+	    size == sizeof(struct pci_vtpmem_request)) {
+		g_fail_request_calloc = false;
+		return (NULL);
+	}
+	return (__real_calloc(nmemb, size));
+}
 
 #undef VIRTIO_CONFIG_S_NEEDS_RESET
 #define VIRTIO_CONFIG_S_NEEDS_RESET VIRTIO14_STATUS_DEVICE_NEEDS_RESET
@@ -182,30 +225,211 @@ vi_reset_dev(struct virtio_softc *vs __unused)
 {
 }
 
+/*
+ * Scripted virtqueue feeder.  When g_vq.active is false the mocks report an
+ * empty ring (the historical behaviour every existing case relies on).  When
+ * active, vq_getchain hands back one crafted chain per call and records the
+ * relchain/endchains publications so a case can assert what the device model
+ * did with a request.
+ */
+static struct {
+	bool active;
+	int descs;		/* chains still available */
+	int getchain_ret;	/* <= 0: returned verbatim (error/empty) */
+	uint8_t reqbuf[16];
+	uint8_t respbuf[16];
+	struct iovec iov[VTPMEM_MAX_IOV];
+	int niov;
+	int readable;
+	int writable;
+	bool ordered;
+	uint64_t queue_generation;
+	unsigned int relchain_calls;
+	uint32_t last_relchain_len;
+	unsigned int endchains_calls;
+} g_vq;
+
 int
 vq_has_descs(struct vqueue_info *vq __unused)
 {
 
-	return (0);
+	if (!g_vq.active)
+		return (0);
+	return (g_vq.descs > 0);
 }
 
 int
-vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov __unused,
-    int niov __unused, struct vi_req *req __unused)
+vq_getchain(struct vqueue_info *vq, struct iovec *iov, int niov,
+    struct vi_req *req)
 {
 
-	return (0);
+	if (!g_vq.active || g_vq.descs <= 0)
+		return (0);
+	g_vq.descs--;
+	if (g_vq.getchain_ret <= 0)
+		return (g_vq.getchain_ret);
+	memset(req, 0, sizeof(*req));
+	for (int i = 0; i < g_vq.niov && i < niov; i++)
+		iov[i] = g_vq.iov[i];
+	req->readable = g_vq.readable;
+	req->writable = g_vq.writable;
+	req->ordered = g_vq.ordered;
+	req->idx = 1;
+	req->queue_generation = g_vq.queue_generation;
+	if (vq != NULL)
+		vq->vq_generation = g_vq.queue_generation;
+	return (g_vq.getchain_ret);
 }
 
 void
 vq_relchain(struct vqueue_info *vq __unused, uint16_t index __unused,
-    uint32_t length __unused)
+    uint32_t length)
 {
+
+	g_vq.relchain_calls++;
+	g_vq.last_relchain_len = length;
 }
 
 void
 vq_endchains(struct vqueue_info *vq __unused, int used_all __unused)
 {
+
+	g_vq.endchains_calls++;
+}
+
+/*
+ * Transport / config mocks used only by the pci_vtpmem_init() composition
+ * tests.  pci_de_vtpmem is unreferenced in this TU (PCI_EMUL_SET is nulled),
+ * so init and every helper it names are dead-code-eliminated unless a case
+ * calls init directly; these stubs supply that call graph and let each
+ * initialization step be individually failed.
+ */
+static struct {
+	const char *path;
+	const char *id;
+	bool packed;
+	int fail_select_transport;
+	int fail_intr_init;
+	int fail_modern_init;
+	int fail_alloc_bar;
+	int fail_add_shmem;
+	int fail_set_backing;
+} g_init;
+
+const char *
+get_config_value_node(const nvlist_t *parent __unused, const char *name)
+{
+
+	if (strcmp(name, "path") == 0)
+		return (g_init.path);
+	if (strcmp(name, "id") == 0)
+		return (g_init.id);
+	return (NULL);
+}
+
+bool
+get_config_bool_node_default(const nvlist_t *parent __unused,
+    const char *name __unused, bool def __unused)
+{
+
+	return (g_init.packed);
+}
+
+int
+fbsdrun_virtio_msix(void)
+{
+
+	return (0);
+}
+
+void
+pci_set_cfgdata8(struct pci_devinst *pi __unused, int offset __unused,
+    uint8_t value __unused)
+{
+}
+
+void
+vi_softc_linkup(struct virtio_softc *vs, struct virtio_consts *vc, void *sc,
+    struct pci_devinst *pi, struct vqueue_info *queues)
+{
+
+	vs->vs_vc = vc;
+	vs->vs_pi = pi;
+	pi->pi_arg = sc;
+	(void)queues;
+}
+
+int
+vi_pci_select_transport(struct virtio_softc *vs __unused,
+    const nvlist_t *nvl __unused, enum virtio_pci_transport_policy policy)
+{
+
+	ATF_REQUIRE_EQ(policy, VIRTIO_PCI_MODERN_ONLY);
+	return (g_init.fail_select_transport);
+}
+
+int
+vi_intr_init(struct virtio_softc *vs, int barnum __unused, int use_msix __unused)
+{
+
+	if (g_init.fail_intr_init != 0)
+		return (g_init.fail_intr_init);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&vs->vs_isr_mtx, NULL), 0);
+	return (0);
+}
+
+int
+vi_pci_modern_init(struct virtio_softc *vs __unused, int barnum __unused)
+{
+
+	return (g_init.fail_modern_init);
+}
+
+void
+vi_pci_modern_set_identity(struct virtio_softc *vs __unused,
+    uint16_t device_id __unused)
+{
+}
+
+int
+vi_pci_modern_add_shared_memory(struct virtio_softc *vs __unused,
+    uint8_t region_id __unused, uint8_t barnum __unused, uint64_t offset __unused,
+    uint64_t length __unused)
+{
+
+	return (g_init.fail_add_shmem);
+}
+
+int
+vi_pci_modern_set_shared_memory_backing(struct virtio_softc *vs __unused,
+    uint8_t region_id __unused, void *mapping __unused, uint64_t length __unused,
+    bool writable __unused)
+{
+
+	return (g_init.fail_set_backing);
+}
+
+void
+vi_pci_modern_seal_shared_memory(struct virtio_softc *vs __unused)
+{
+}
+
+int
+pci_emul_alloc_bar(struct pci_devinst *pdi __unused, int idx __unused,
+    enum pcibar_type type __unused, uint64_t size __unused)
+{
+
+	return (g_init.fail_alloc_bar);
+}
+
+static void
+init_defaults(const char *path)
+{
+
+	memset(&g_init, 0, sizeof(g_init));
+	g_init.path = path;
+	g_init.id = PMEM_TEST_IDENTITY;
+	g_force_worker_destroy_error = false;
 }
 
 static void
@@ -550,6 +774,431 @@ ATF_TC_BODY(snapshot_rejects_mismatch_and_truncation, tc)
 	destroy_backing(path, &sc);
 }
 
+static void
+vq_script_flush_chain(uint32_t type)
+{
+
+	memset(&g_vq, 0, sizeof(g_vq));
+	g_vq.active = true;
+	g_vq.descs = 1;
+	g_vq.getchain_ret = 2;
+	le32enc(g_vq.reqbuf, type);
+	g_vq.iov[0].iov_base = g_vq.reqbuf;
+	g_vq.iov[0].iov_len = BHYVE_VIRTIO_PMEM_REQUEST_SIZE;
+	g_vq.iov[1].iov_base = g_vq.respbuf;
+	g_vq.iov[1].iov_len = BHYVE_VIRTIO_PMEM_RESPONSE_SIZE;
+	g_vq.niov = 2;
+	g_vq.readable = 1;
+	g_vq.writable = 1;
+	g_vq.ordered = true;
+}
+
+/*
+ * A well-formed FLUSH descriptor is submitted to the worker, executed against
+ * the durable backing, and its response descriptor is published exactly once.
+ */
+ATF_TC_WITHOUT_HEAD(notify_flush_request_round_trip);
+ATF_TC_BODY(notify_flush_request_round_trip, tc)
+{
+	struct pci_vtpmem_softc sc;
+	struct vqueue_info vq;
+	char path[32];
+
+	create_backing(path, &sc);
+	create_worker(&sc);
+	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = 8;
+	vq_script_flush_chain(VIRTIO14_PMEM_REQ_TYPE_FLUSH);
+	g_needs_reset_calls = 0;
+
+	pci_vtpmem_notify(&sc, &vq);
+	/* Drain so the asynchronous completion publishes before we assert. */
+	ATF_REQUIRE_EQ(virtio_pmem_worker_reset(sc.vsc_worker, 1000, true), 0);
+
+	ATF_CHECK_EQ(g_vq.relchain_calls, 1);
+	ATF_CHECK_EQ(g_vq.last_relchain_len, BHYVE_VIRTIO_PMEM_RESPONSE_SIZE);
+	ATF_CHECK_EQ(g_needs_reset_calls, 0);
+	/* The device must write the spec's success code (0) into the response. */
+	ATF_CHECK_EQ(le32dec(g_vq.respbuf), 0);
+	memset(&g_vq, 0, sizeof(g_vq));
+	destroy_backing(path, &sc);
+}
+
+/* Malformed and unadmittable chains are each rejected on their own path. */
+ATF_TC_WITHOUT_HEAD(notify_rejects_malformed_and_unadmittable);
+ATF_TC_BODY(notify_rejects_malformed_and_unadmittable, tc)
+{
+	struct pci_vtpmem_softc sc;
+	struct vqueue_info vq;
+	char path[32];
+
+	create_backing(path, &sc);
+	create_worker(&sc);
+	memset(&vq, 0, sizeof(vq));
+	vq.vq_qsize = 8;
+
+	/* vq_getchain hard error must request a device reset. */
+	memset(&g_vq, 0, sizeof(g_vq));
+	g_vq.active = true;
+	g_vq.descs = 1;
+	g_vq.getchain_ret = -1;
+	g_needs_reset_calls = 0;
+	pci_vtpmem_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_needs_reset_calls, 1);
+
+	/* Writable-before-readable ordering violation. */
+	vq_script_flush_chain(VIRTIO14_PMEM_REQ_TYPE_FLUSH);
+	g_vq.ordered = false;
+	g_needs_reset_calls = 0;
+	g_vq.relchain_calls = 0;
+	pci_vtpmem_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_needs_reset_calls, 1);
+	ATF_CHECK_EQ(g_vq.relchain_calls, 1);
+	ATF_CHECK_EQ(g_vq.last_relchain_len, 0);
+
+	/* Request buffer shorter than the 4-byte header. */
+	vq_script_flush_chain(VIRTIO14_PMEM_REQ_TYPE_FLUSH);
+	g_vq.iov[0].iov_len = 2;
+	g_needs_reset_calls = 0;
+	g_vq.relchain_calls = 0;
+	pci_vtpmem_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_needs_reset_calls, 1);
+
+	/* Unknown request type: completed with an error, no reset. */
+	vq_script_flush_chain(VIRTIO14_PMEM_REQ_TYPE_FLUSH + 1);
+	g_needs_reset_calls = 0;
+	g_vq.relchain_calls = 0;
+	pci_vtpmem_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_needs_reset_calls, 0);
+	ATF_CHECK_EQ(g_vq.relchain_calls, 1);
+	ATF_CHECK_EQ(le32dec(g_vq.respbuf), UINT32_MAX);
+
+	/* Request-object allocation failure is completed with ENOMEM. */
+	vq_script_flush_chain(VIRTIO14_PMEM_REQ_TYPE_FLUSH);
+	g_vq.relchain_calls = 0;
+	g_fail_request_calloc = true;
+	pci_vtpmem_notify(&sc, &vq);
+	g_fail_request_calloc = false;
+	ATF_CHECK_EQ(g_vq.relchain_calls, 1);
+
+	/* Worker refusing admission (paused) is completed with an error. */
+	ATF_REQUIRE_EQ(virtio_pmem_worker_pause(sc.vsc_worker, 0), 0);
+	vq_script_flush_chain(VIRTIO14_PMEM_REQ_TYPE_FLUSH);
+	g_vq.relchain_calls = 0;
+	pci_vtpmem_notify(&sc, &vq);
+	ATF_CHECK_EQ(g_vq.relchain_calls, 1);
+	ATF_REQUIRE_EQ(virtio_pmem_worker_resume(sc.vsc_worker), 0);
+
+	memset(&g_vq, 0, sizeof(g_vq));
+	destroy_backing(path, &sc);
+}
+
+/*
+ * pci_vtpmem_complete()'s guest-request branches are driven directly so the
+ * generation/epoch fence and the response-publication failure path are both
+ * deterministic rather than racing the worker.
+ */
+ATF_TC_WITHOUT_HEAD(complete_guest_request_fence);
+ATF_TC_BODY(complete_guest_request_fence, tc)
+{
+	struct pci_vtpmem_softc sc;
+	struct vqueue_info vq;
+	struct pci_vtpmem_request *request;
+	uint8_t respbuf[BHYVE_VIRTIO_PMEM_RESPONSE_SIZE];
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&vq, 0, sizeof(vq));
+	memset(&g_vq, 0, sizeof(g_vq));
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
+	sc.vsc_consts.vc_name = "vtpmem-test";
+	vq.vq_generation = 5;
+
+	/* Matching epoch and generation: response is published. */
+	request = calloc(1, sizeof(*request));
+	ATF_REQUIRE(request != NULL);
+	request->vq = &vq;
+	request->queue_generation = 5;
+	request->epoch = 7;
+	request->chain.response[0].iov_base = respbuf;
+	request->chain.response[0].iov_len = sizeof(respbuf);
+	request->chain.response_count = 1;
+	g_vq.relchain_calls = 0;
+	g_vq.endchains_calls = 0;
+	pci_vtpmem_complete(&sc, (uintptr_t)request, 7, 0);
+	ATF_CHECK_EQ(g_vq.relchain_calls, 1);
+	ATF_CHECK_EQ(g_vq.endchains_calls, 1);
+	ATF_CHECK_EQ(le32dec(respbuf), 0);
+
+	/* Publication failure (no response iovec): discard + needs reset. */
+	request = calloc(1, sizeof(*request));
+	ATF_REQUIRE(request != NULL);
+	request->vq = &vq;
+	request->queue_generation = 5;
+	request->epoch = 7;
+	request->chain.response_count = 0;
+	g_needs_reset_calls = 0;
+	pci_vtpmem_complete(&sc, (uintptr_t)request, 7, 0);
+	ATF_CHECK_EQ(g_needs_reset_calls, 1);
+
+	/* Stale generation: silently discarded. */
+	request = calloc(1, sizeof(*request));
+	ATF_REQUIRE(request != NULL);
+	request->vq = &vq;
+	request->queue_generation = 4;
+	request->epoch = 7;
+	g_needs_reset_calls = 0;
+	pci_vtpmem_complete(&sc, (uintptr_t)request, 7, 0);
+	ATF_CHECK_EQ(g_needs_reset_calls, 0);
+
+	/* Abandoned lifecycle completion frees the request itself. */
+	request = calloc(1, sizeof(*request));
+	ATF_REQUIRE(request != NULL);
+	request->lifecycle_flush = true;
+	request->lifecycle_abandoned = true;
+	pci_vtpmem_complete(&sc, (uintptr_t)request, 0, EIO);
+
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+/* Reset, queue reset, suspend and the resume family exercise the worker. */
+ATF_TC_WITHOUT_HEAD(reset_and_lifecycle_transitions);
+ATF_TC_BODY(reset_and_lifecycle_transitions, tc)
+{
+	struct pci_vtpmem_softc sc;
+	struct vqueue_info vq;
+	char path[32];
+
+	create_backing(path, &sc);
+	create_worker(&sc);
+	memset(&vq, 0, sizeof(vq));
+	memset(&g_vq, 0, sizeof(g_vq));
+
+	VS_LOCK(&sc.vsc_vs);
+	pci_vtpmem_reset(&sc);
+	VS_UNLOCK(&sc.vsc_vs);
+
+	VS_LOCK(&sc.vsc_vs);
+	ATF_CHECK_EQ(pci_vtpmem_qreset(&sc, &vq, 0), 0);
+	VS_UNLOCK(&sc.vsc_vs);
+
+	VS_LOCK(&sc.vsc_vs);
+	ATF_CHECK_EQ(pci_vtpmem_suspend(&sc), 0);
+	VS_UNLOCK(&sc.vsc_vs);
+
+	sc.vsc_vs.vs_checkpoint_paused = true;
+	ATF_CHECK_EQ(pci_vtpmem_resume_device(&sc), 0);
+	sc.vsc_vs.vs_checkpoint_paused = false;
+	ATF_CHECK_EQ(pci_vtpmem_resume_device(&sc), 0);
+
+	pci_vtpmem_resume_complete(&sc);
+
+	sc.vsc_vs.vs_suspended = true;
+	ATF_CHECK_EQ(pci_vtpmem_resume(&sc), 0);
+	sc.vsc_vs.vs_suspended = false;
+	ATF_CHECK_EQ(pci_vtpmem_resume(&sc), 0);
+
+	destroy_backing(path, &sc);
+}
+
+/*
+ * A reset whose drain times out must fall back to installing a deferred ledger
+ * reset instead of silently proceeding.
+ */
+ATF_TC_WITHOUT_HEAD(reset_timeout_defers);
+ATF_TC_BODY(reset_timeout_defers, tc)
+{
+	struct blocked_worker_context context;
+	struct virtio_pmem_worker_ops ops;
+	struct pci_vtpmem_softc sc;
+	uint64_t epoch;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&context, 0, sizeof(context));
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vsc_mtx, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_init(&context.mutex, NULL), 0);
+	ATF_REQUIRE_EQ(pthread_cond_init(&context.condition, NULL), 0);
+	sc.vsc_vs.vs_mtx = &sc.vsc_mtx;
+	sc.vsc_consts.vc_name = "vtpmem-test";
+	ops = (struct virtio_pmem_worker_ops) {
+		.flush = blocked_worker_flush,
+		.complete = blocked_worker_complete,
+		.arg = &context,
+	};
+	ATF_REQUIRE_EQ(virtio_pmem_worker_create(1, &ops, &sc.vsc_worker), 0);
+	ATF_REQUIRE_EQ(virtio_pmem_worker_submit(sc.vsc_worker, 1, &epoch), 0);
+	blocked_worker_wait_entered(&context);
+
+	/* Drain cannot complete within the bounded timeout; reset defers. */
+	g_needs_reset_calls = 0;
+	VS_LOCK(&sc.vsc_vs);
+	pci_vtpmem_reset(&sc);
+	VS_UNLOCK(&sc.vsc_vs);
+
+	pthread_mutex_lock(&context.mutex);
+	context.release = true;
+	pthread_cond_broadcast(&context.condition);
+	pthread_mutex_unlock(&context.mutex);
+	ATF_REQUIRE_EQ(virtio_pmem_worker_destroy(sc.vsc_worker, 1000), 0);
+	ATF_REQUIRE_EQ(pthread_cond_destroy(&context.condition), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&context.mutex), 0);
+	ATF_REQUIRE_EQ(pthread_mutex_destroy(&sc.vsc_mtx), 0);
+}
+
+/* Config read rejects a missing BAR and an unencodable range. */
+ATF_TC_WITHOUT_HEAD(cfgread_error_paths);
+ATF_TC_BODY(cfgread_error_paths, tc)
+{
+	struct pci_devinst pi;
+	struct pci_vtpmem_softc sc;
+	uint32_t value;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&pi, 0, sizeof(pi));
+
+	/* No shared-memory feature and no MEM64 BAR: ENXIO. */
+	sc.vsc_vs.vs_negotiated_caps = 0;
+	sc.vsc_vs.vs_pi = NULL;
+	ATF_CHECK_EQ(pci_vtpmem_cfgread(&sc, 0, 4, &value), ENXIO);
+
+	/* BAR present but zero-size range fails config encoding. */
+	sc.vsc_vs.vs_pi = &pi;
+	pi.pi_bar[VTPMEM_SHMEM_BAR].type = PCIBAR_MEM64;
+	pi.pi_bar[VTPMEM_SHMEM_BAR].addr = 0x1000;
+	sc.vsc_backing.size = 0;
+	ATF_CHECK_EQ(pci_vtpmem_cfgread(&sc, 0, 4, &value), EINVAL);
+}
+
+/* Full device composition: success plus every initialization failure branch. */
+ATF_TC_WITHOUT_HEAD(init_composition_and_failures);
+ATF_TC_BODY(init_composition_and_failures, tc)
+{
+	struct pci_devinst pi;
+	char path[32];
+	int fd;
+
+	strlcpy(path, "/tmp/virtio-pmem-init.XXXXXX", sizeof(path));
+	fd = mkstemp(path);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(ftruncate(fd, 8192), 0);
+	ATF_REQUIRE_EQ(close(fd), 0);
+
+	/* Missing/empty path and id are rejected before any allocation. */
+	init_defaults(path);
+	g_init.path = NULL;
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+	init_defaults(path);
+	g_init.path = "";
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+	init_defaults(path);
+	g_init.id = NULL;
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+
+	/* Each post-allocation step failure must unwind to failure. */
+	init_defaults(path);
+	g_init.fail_select_transport = 1;
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+	init_defaults(path);
+	g_init.fail_intr_init = 1;
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+	init_defaults(path);
+	g_init.fail_modern_init = 1;
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+	init_defaults(path);
+	g_init.fail_alloc_bar = 1;
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+	init_defaults(path);
+	g_init.fail_add_shmem = 1;
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+	init_defaults(path);
+	g_init.fail_set_backing = 1;
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+
+	/*
+	 * Worker-destroy failure in the unwind path (review-loop UAF fix):
+	 * init must leak deliberately and still report failure rather than
+	 * tearing down state the still-running worker owns.
+	 */
+	{
+		char leak_path[32];
+		int leak_fd;
+
+		/*
+		 * Use a private file: the deliberate leak keeps the backing fd
+		 * (and its exclusive flock) alive, which would otherwise block
+		 * every later open of the shared path.
+		 */
+		strlcpy(leak_path, "/tmp/virtio-pmem-leak.XXXXXX",
+		    sizeof(leak_path));
+		leak_fd = mkstemp(leak_path);
+		ATF_REQUIRE(leak_fd >= 0);
+		ATF_REQUIRE_EQ(ftruncate(leak_fd, 8192), 0);
+		ATF_REQUIRE_EQ(close(leak_fd), 0);
+		init_defaults(leak_path);
+		memset(&pi, 0, sizeof(pi));
+		g_init.fail_intr_init = 1;
+		g_force_worker_destroy_error = true;
+		ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+		g_force_worker_destroy_error = false;
+		(void)unlink(leak_path);
+	}
+
+	/* Backing open failure (path is a directory, cannot be a pmem file). */
+	init_defaults(path);
+	g_init.path = "/";
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 1);
+
+	/*
+	 * Clean success, both split and packed layouts.  A successful init
+	 * retains the backing fd (and its exclusive flock) by design, so each
+	 * success uses its own file.
+	 */
+	init_defaults(path);
+	memset(&pi, 0, sizeof(pi));
+	ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 0);
+
+	{
+		char packed_path[32];
+		int packed_fd;
+
+		strlcpy(packed_path, "/tmp/virtio-pmem-packed.XXXXXX",
+		    sizeof(packed_path));
+		packed_fd = mkstemp(packed_path);
+		ATF_REQUIRE(packed_fd >= 0);
+		ATF_REQUIRE_EQ(ftruncate(packed_fd, 8192), 0);
+		ATF_REQUIRE_EQ(close(packed_fd), 0);
+		init_defaults(packed_path);
+		g_init.packed = true;
+		memset(&pi, 0, sizeof(pi));
+		ATF_CHECK_EQ(pci_vtpmem_init(&pi, NULL), 0);
+		(void)unlink(packed_path);
+	}
+
+	ATF_REQUIRE_EQ(unlink(path), 0);
+}
+
+/* The lifecycle-flush admission failure paths in stabilize are covered. */
+ATF_TC_WITHOUT_HEAD(stabilize_request_alloc_failure);
+ATF_TC_BODY(stabilize_request_alloc_failure, tc)
+{
+	struct pci_vtpmem_softc sc;
+	char path[32];
+
+	create_backing(path, &sc);
+	create_worker(&sc);
+	memset(&g_vq, 0, sizeof(g_vq));
+
+	/* The lifecycle-only request object fails to allocate. */
+	g_fail_request_calloc = true;
+	VS_LOCK(&sc.vsc_vs);
+	ATF_CHECK_EQ(pci_vtpmem_stabilize_locked(&sc), ENOMEM);
+	VS_UNLOCK(&sc.vsc_vs);
+	g_fail_request_calloc = false;
+	ATF_REQUIRE_EQ(virtio_pmem_worker_abort_pause(sc.vsc_worker), 0);
+
+	destroy_backing(path, &sc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -560,5 +1209,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, deferred_reset_failure_needs_reset);
 	ATF_TP_ADD_TC(tp, snapshot_wire_is_canonical_and_repeatable);
 	ATF_TP_ADD_TC(tp, snapshot_rejects_mismatch_and_truncation);
+	ATF_TP_ADD_TC(tp, notify_flush_request_round_trip);
+	ATF_TP_ADD_TC(tp, notify_rejects_malformed_and_unadmittable);
+	ATF_TP_ADD_TC(tp, complete_guest_request_fence);
+	ATF_TP_ADD_TC(tp, reset_and_lifecycle_transitions);
+	ATF_TP_ADD_TC(tp, reset_timeout_defers);
+	ATF_TP_ADD_TC(tp, cfgread_error_paths);
+	ATF_TP_ADD_TC(tp, init_composition_and_failures);
+	ATF_TP_ADD_TC(tp, stabilize_request_alloc_failure);
 	return (atf_no_error());
 }

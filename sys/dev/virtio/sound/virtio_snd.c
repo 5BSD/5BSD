@@ -433,6 +433,20 @@ vtsnd_pcm_info_query(struct vtsnd_softc *sc)
 		direction = info[24];
 		ch_max = info[26];
 
+		/*
+		 * The channel/virtqueue bindings are fixed: stream 0 is
+		 * playback (OUTPUT), stream 1 is capture (INPUT).  The
+		 * specification orders streams by direction the same way but a
+		 * device is only bound by its per-stream direction field, so
+		 * verify it rather than misdirecting PCM data.
+		 */
+		if (direction != (i == VTSND_STREAM_TX ?
+		    VIRTIO_SND_D_OUTPUT : VIRTIO_SND_D_INPUT)) {
+			device_printf(sc->vtsnd_dev,
+			    "stream %u has unexpected direction %u\n", i,
+			    direction);
+			return (ENXIO);
+		}
 		if ((formats & (UINT64_C(1) << VIRTIO_SND_PCM_FMT_S16)) == 0) {
 			device_printf(sc->vtsnd_dev,
 			    "stream %u lacks S16 support\n", i);
@@ -666,6 +680,16 @@ vtsnd_data_complete(struct vtsnd_softc *sc, struct virtqueue *vq, bool play)
 again:
 	while ((ch = virtqueue_dequeue(vq, &len)) != NULL) {
 		ch->inflight = false;
+
+		/*
+		 * A completion can retire after detach has drained the queue in
+		 * vtsnd_chan_stop() (e.g. a misbehaving device retiring a
+		 * descriptor late, after RELEASE failed or timed out).  By then
+		 * pcm_unregister() may have freed ch->chan and the sndbuf, so
+		 * do not touch any pcm(4) state once detach has begun.
+		 */
+		if (sc->vtsnd_detaching)
+			continue;
 
 		if (!play) {
 			uint32_t blksz = ch->blksz;
@@ -1200,7 +1224,9 @@ vtsnd_attach(device_t dev)
 	pcm_setflags(dev, pcm_getflags(dev) | SD_F_MPSAFE);
 	pcm_init(dev, sc);
 	pcm_addchan(dev, PCMDIR_PLAY, &vtsnd_chan_class, sc);
-	pcm_addchan(dev, PCMDIR_REC, &vtsnd_chan_class, sc);
+	/* Only expose capture if the device really has the input stream. */
+	if (sc->vtsnd_streams > VTSND_STREAM_RX)
+		pcm_addchan(dev, PCMDIR_REC, &vtsnd_chan_class, sc);
 
 	snprintf(status, SND_STATUSLEN, "on %s",
 	    device_get_nameunit(device_get_parent(dev)));
@@ -1285,9 +1311,15 @@ vtsnd_suspend(device_t dev)
 	sc = device_get_softc(dev);
 
 	VTSND_LOCK(sc);
+	/*
+	 * Block new triggers before stopping the streams: vtsnd_chan_stop()
+	 * drops the softc lock while its control commands sleep, so setting the
+	 * flag afterwards would let a PCMTRIG_START slip in and leave a stream
+	 * running (with a data descriptor outstanding) across the suspend.
+	 */
+	sc->vtsnd_suspended = true;
 	for (i = 0; i < VTSND_NSTREAM; i++)
 		vtsnd_chan_stop(sc, &sc->vtsnd_chans[i]);
-	sc->vtsnd_suspended = true;
 	VTSND_UNLOCK(sc);
 
 	/*

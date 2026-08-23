@@ -15,6 +15,46 @@
 
 #include "virtio_rtc_alarm.c"
 #include "virtio_rtc_host.c"
+
+/*
+ * Fault-injection wrappers for allocation and object construction inside
+ * pci_virtio_rtc.c only.  They are defined before the redirecting macros
+ * below so their bodies still resolve to the genuine libc/library symbols;
+ * the wrapped virtio_rtc_alarm.c above therefore keeps its real calloc and
+ * mutex, letting pci_vtrtc_init's own early-failure paths be exercised in
+ * isolation.
+ */
+static bool g_calloc_fail;
+static bool g_mtxinit_fail;
+static bool g_alarm_create_fail;
+
+static void *
+vtrtc_test_calloc(size_t nmemb, size_t size)
+{
+
+	if (g_calloc_fail)
+		return (NULL);
+	return (calloc(nmemb, size));
+}
+
+static int
+vtrtc_test_mutex_init(pthread_mutex_t *mtx, const pthread_mutexattr_t *attr)
+{
+
+	if (g_mtxinit_fail)
+		return (EAGAIN);
+	return (pthread_mutex_init(mtx, attr));
+}
+
+static int
+vtrtc_test_alarm_create(struct virtio_rtc_alarm **result)
+{
+
+	if (g_alarm_create_fail)
+		return (ENOMEM);
+	return (virtio_rtc_alarm_create(result));
+}
+
 struct mevent;
 int vtrtc_test_timerfd_create(int, int);
 int vtrtc_test_timerfd_settime(int, int, const struct itimerspec *,
@@ -30,6 +70,9 @@ int vtrtc_test_mevent_delete_close_sync(struct mevent *);
 #define	clock_gettime	vtrtc_test_clock_gettime
 #define	mevent_add	vtrtc_test_mevent_add
 #define	mevent_delete_close_sync vtrtc_test_mevent_delete_close_sync
+#define	calloc		vtrtc_test_calloc
+#define	pthread_mutex_init vtrtc_test_mutex_init
+#define	virtio_rtc_alarm_create vtrtc_test_alarm_create
 #define	BHYVE_SNAPSHOT
 #include "pci_virtio_rtc.c"
 #include "virtio_1_4_spec.h"
@@ -67,6 +110,7 @@ static uint16_t g_identity;
 static struct itimerspec g_timer_value;
 static bool g_timer_created;
 static int g_timer_error, g_timer_set_calls, g_timer_flags;
+static int g_timer_error_at;
 static int g_timer_read_error;
 static timerfd_t g_timer_expirations;
 static void (*g_timer_callback)(int, enum ev_type, void *);
@@ -74,6 +118,14 @@ static void *g_timer_callback_arg;
 static uint64_t g_clock_ns, g_clock_verify_ns;
 static bool g_clock_verify_valid;
 static unsigned int g_clock_reads;
+static int g_clock_fault, g_clock_verify_fault;
+static bool g_clock_raw;
+static time_t g_clock_raw_sec;
+static long g_clock_raw_nsec;
+static bool g_timer_short_read;
+static bool g_alarm_relaxed;
+static bool g_transport_fail, g_intr_fail, g_modern_fail;
+static bool g_timerfd_create_fail, g_mevent_fail;
 
 static void
 reset_mocks(void)
@@ -100,6 +152,7 @@ reset_mocks(void)
 	g_identity = 0;
 	memset(&g_timer_value, 0, sizeof(g_timer_value));
 	g_timer_error = 0;
+	g_timer_error_at = 0;
 	g_timer_set_calls = 0;
 	g_timer_flags = 0;
 	g_timer_read_error = 0;
@@ -110,6 +163,21 @@ reset_mocks(void)
 	g_clock_verify_ns = 0;
 	g_clock_verify_valid = false;
 	g_clock_reads = 0;
+	g_clock_fault = 0;
+	g_clock_verify_fault = 0;
+	g_clock_raw = false;
+	g_clock_raw_sec = 0;
+	g_clock_raw_nsec = 0;
+	g_timer_short_read = false;
+	g_alarm_relaxed = false;
+	g_transport_fail = false;
+	g_intr_fail = false;
+	g_modern_fail = false;
+	g_timerfd_create_fail = false;
+	g_mevent_fail = false;
+	g_calloc_fail = false;
+	g_mtxinit_fail = false;
+	g_alarm_create_fail = false;
 }
 
 void
@@ -192,6 +260,15 @@ vq_getchain(struct vqueue_info *vq __unused, struct iovec *iov, int niov,
 	req->writable = g_writable;
 	req->ordered = g_ordered;
 	if (vq->vq_num == VTRTC_ALARMQ) {
+		if (g_alarm_relaxed) {
+			/* Model a malformed alarm chain shape for validation. */
+			for (int i = 0; i < g_chain_n; i++) {
+				iov[i].iov_base = g_response;
+				iov[i].iov_len = g_response_len;
+			}
+			g_descs--;
+			return (g_chain_n);
+		}
 		ATF_REQUIRE(g_chain_n == 1);
 		ATF_REQUIRE(g_readable == 0);
 		ATF_REQUIRE(g_writable == 1);
@@ -343,6 +420,10 @@ vtrtc_test_timerfd_create(int clock_id, int flags)
 
 	ATF_CHECK_EQ(clock_id, CLOCK_REALTIME);
 	ATF_CHECK_EQ(flags, TFD_CLOEXEC | TFD_NONBLOCK);
+	if (g_timerfd_create_fail) {
+		errno = EMFILE;
+		return (-1);
+	}
 	g_timer_created = true;
 	return (7);
 }
@@ -371,6 +452,10 @@ vtrtc_test_timerfd_settime(int fd, int flags,
 		errno = g_timer_error;
 		return (-1);
 	}
+	if (g_timer_error_at != 0 && g_timer_set_calls == g_timer_error_at) {
+		errno = EIO;
+		return (-1);
+	}
 	return (0);
 }
 
@@ -379,7 +464,19 @@ vtrtc_test_clock_gettime(clockid_t clock_id, struct timespec *value)
 {
 
 	ATF_CHECK_EQ(clock_id, CLOCK_REALTIME);
-	uint64_t reading = g_clock_verify_valid && g_clock_reads++ != 0 ?
+	unsigned int call = g_clock_reads++;
+	int fault = call == 0 ? g_clock_fault : g_clock_verify_fault;
+
+	if (fault != 0) {
+		errno = fault;
+		return (-1);
+	}
+	if (g_clock_raw) {
+		value->tv_sec = g_clock_raw_sec;
+		value->tv_nsec = g_clock_raw_nsec;
+		return (0);
+	}
+	uint64_t reading = g_clock_verify_valid && call != 0 ?
 	    g_clock_verify_ns : g_clock_ns;
 
 	value->tv_sec = (time_t)(reading / VTRTC_NSEC_PER_SEC);
@@ -398,6 +495,8 @@ vtrtc_test_read(int fd, void *buffer, size_t length)
 		return (-1);
 	}
 	memcpy(buffer, &g_timer_expirations, sizeof(g_timer_expirations));
+	if (g_timer_short_read)
+		return (sizeof(g_timer_expirations) - 1);
 	return (sizeof(g_timer_expirations));
 }
 
@@ -408,6 +507,8 @@ vtrtc_test_mevent_add(int fd, enum ev_type type,
 
 	ATF_CHECK_EQ(fd, 7);
 	ATF_CHECK_EQ(type, EVF_READ);
+	if (g_mevent_fail)
+		return (NULL);
 	g_timer_callback = callback;
 	g_timer_callback_arg = arg;
 	return ((struct mevent *)(uintptr_t)1);
@@ -428,6 +529,8 @@ vi_pci_select_transport(struct virtio_softc *vs,
 {
 
 	ATF_CHECK_EQ(policy, VIRTIO_PCI_MODERN_ONLY);
+	if (g_transport_fail)
+		return (1);
 	vs->vs_transport = VIRTIO_PCI_TRANSPORT_MODERN;
 	return (0);
 }
@@ -443,14 +546,17 @@ int
 vi_pci_modern_init(struct virtio_softc *vs __unused, int bar __unused)
 {
 
-	return (0);
+	return (g_modern_fail ? 1 : 0);
 }
 
 int
-vi_intr_init(struct virtio_softc *vs __unused, int bar __unused,
+vi_intr_init(struct virtio_softc *vs, int bar __unused,
     int msix __unused)
 {
 
+	if (g_intr_fail)
+		return (1);
+	pthread_mutex_init(&vs->vs_isr_mtx, NULL);
 	return (0);
 }
 
@@ -944,6 +1050,308 @@ ATF_TC_BODY(alarm_backward_step_during_sentinel_arm, tc)
 	virtio_rtc_alarm_destroy(sc.vrsc_alarm);
 }
 
+ATF_TC_WITHOUT_HEAD(init_failure_paths_release_all_state);
+ATF_TC_BODY(init_failure_paths_release_all_state, tc)
+{
+	struct pci_devinst pi;
+	struct nvlist nvl;
+
+	memset(&nvl, 0, sizeof(nvl));
+
+	/* Softc allocation failure returns before any teardown. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_calloc_fail = true;
+	ATF_CHECK_EQ(pci_vtrtc_init(&pi, &nvl), 1);
+
+	/* Mutex construction failure takes the early failed: label. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_mtxinit_fail = true;
+	ATF_CHECK_EQ(pci_vtrtc_init(&pi, &nvl), 1);
+
+	/* Alarm-model construction failure unwinds the mutex. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_alarm_create_fail = true;
+	ATF_CHECK_EQ(pci_vtrtc_init(&pi, &nvl), 1);
+
+	/* Transport selection failure unwinds alarm + mutex. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_transport_fail = true;
+	ATF_CHECK_EQ(pci_vtrtc_init(&pi, &nvl), 1);
+
+	/* Interrupt setup failure before the ISR mutex is published. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_intr_fail = true;
+	ATF_CHECK_EQ(pci_vtrtc_init(&pi, &nvl), 1);
+
+	/* Modern-BAR failure exercises the intr_initialized cleanup. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_modern_fail = true;
+	ATF_CHECK_EQ(pci_vtrtc_init(&pi, &nvl), 1);
+
+	/* Alarm offered: timerfd creation failure. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_config_alarm = true;
+	g_timerfd_create_fail = true;
+	ATF_CHECK_EQ(pci_vtrtc_init(&pi, &nvl), 1);
+
+	/* Alarm offered: event registration failure closes the fd. */
+	reset_mocks();
+	memset(&pi, 0, sizeof(pi));
+	g_config_alarm = true;
+	g_mevent_fail = true;
+	ATF_CHECK_EQ(pci_vtrtc_init(&pi, &nvl), 1);
+	ATF_CHECK(!g_timer_created);
+}
+
+ATF_TC_WITHOUT_HEAD(alarm_queue_pending_and_chain_edges);
+ATF_TC_BODY(alarm_queue_pending_and_chain_edges, tc)
+{
+	struct pci_vtrtc_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vrsc_consts.vc_name = "vtrtc-test";
+	sc.vrsc_vs.vs_vc = &sc.vrsc_consts;
+	sc.vrsc_vs.vs_negotiated_caps = VIRTIO_RTC_F_ALARM;
+	sc.vrsc_alarm_offered = true;
+	sc.vrsc_alarm_fd = 7;
+	sc.vrsc_vq[VTRTC_ALARMQ].vq_num = VTRTC_ALARMQ;
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_create(&sc.vrsc_alarm), 0);
+
+	/* Negotiated but nothing pending: silent, no descriptor consumed. */
+	reset_mocks();
+	pci_vtrtc_alarmq_notify(&sc);
+	ATF_CHECK_EQ(g_needs_reset, 0);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(g_end_calls, 0);
+
+	/* Pending but the queue has no available descriptors. */
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_set(sc.vrsc_alarm, 10, true, 10), 0);
+	reset_mocks();
+	g_descs = 0;
+	pci_vtrtc_alarmq_notify(&sc);
+	ATF_CHECK_EQ(g_rel_calls, 0);
+	ATF_CHECK_EQ(g_end_calls, 0);
+	ATF_CHECK(virtio_rtc_alarm_pending(sc.vrsc_alarm));
+
+	/* Pending with a malformed writable-only chain shape. */
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_set(sc.vrsc_alarm, 10, true, 10), 0);
+	reset_mocks();
+	g_alarm_relaxed = true;
+	g_chain_n = 1;
+	g_readable = 1;
+	g_writable = 1;
+	pci_vtrtc_alarmq_notify(&sc);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len, 0);
+	ATF_CHECK_EQ(g_end_calls, 1);
+	virtio_rtc_alarm_destroy(sc.vrsc_alarm);
+}
+
+ATF_TC_WITHOUT_HEAD(alarm_schedule_error_paths);
+ATF_TC_BODY(alarm_schedule_error_paths, tc)
+{
+	struct pci_vtrtc_softc sc;
+	uint8_t notification[VIRTIO14_RTC_NOTIF_ALARM_SIZE];
+	size_t written;
+
+	/* State read failure when the alarm model is absent. */
+	memset(&sc, 0, sizeof(sc));
+	sc.vrsc_consts.vc_name = "vtrtc-test";
+	sc.vrsc_vs.vs_vc = &sc.vrsc_consts;
+	sc.vrsc_alarm_offered = true;
+	sc.vrsc_alarm_fd = 7;
+	sc.vrsc_alarm = NULL;
+	reset_mocks();
+	ATF_CHECK_EQ(pci_vtrtc_alarm_schedule(&sc), EINVAL);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_create(&sc.vrsc_alarm), 0);
+
+	/* Disabled alarm disarms the host timer with flags == 0. */
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_set(sc.vrsc_alarm, 10, false, 0), 0);
+	reset_mocks();
+	ATF_CHECK_EQ(pci_vtrtc_alarm_schedule(&sc), 0);
+	ATF_CHECK_EQ(g_timer_set_calls, 1);
+	ATF_CHECK_EQ(g_timer_flags, 0);
+
+	/* Disarm failure for a disabled alarm requests driver reset. */
+	reset_mocks();
+	g_timer_error = EIO;
+	ATF_CHECK_EQ(pci_vtrtc_alarm_schedule(&sc), EIO);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+
+	/* Clock read failure while the alarm is enabled and not yet due. */
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_set(sc.vrsc_alarm,
+	    20 * VTRTC_NSEC_PER_SEC, true, 10 * VTRTC_NSEC_PER_SEC), 0);
+	reset_mocks();
+	g_clock_fault = EIO;
+	ATF_CHECK_EQ(pci_vtrtc_alarm_schedule(&sc), EIO);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+
+	/* An enabled, now-due alarm disarms; a disarm failure is fatal. */
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_set(sc.vrsc_alarm,
+	    10 * VTRTC_NSEC_PER_SEC, true, 5 * VTRTC_NSEC_PER_SEC), 0);
+	reset_mocks();
+	g_clock_ns = 20 * VTRTC_NSEC_PER_SEC;
+	g_timer_error = EIO;
+	ATF_CHECK_EQ(pci_vtrtc_alarm_schedule(&sc), EIO);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+
+	/* Sentinel path: the post-arm verification read fails. */
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_set(sc.vrsc_alarm,
+	    20 * VTRTC_NSEC_PER_SEC, true, 30 * VTRTC_NSEC_PER_SEC), 0);
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_notify(sc.vrsc_alarm, notification,
+	    sizeof(notification), &written), 0);
+	reset_mocks();
+	g_clock_ns = 30 * VTRTC_NSEC_PER_SEC;
+	g_clock_verify_fault = EIO;
+	ATF_CHECK_EQ(pci_vtrtc_alarm_schedule(&sc), EIO);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+
+	/* Sentinel race: a verified backward step re-arms, and that fails. */
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_set(sc.vrsc_alarm,
+	    20 * VTRTC_NSEC_PER_SEC, true, 30 * VTRTC_NSEC_PER_SEC), 0);
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_notify(sc.vrsc_alarm, notification,
+	    sizeof(notification), &written), 0);
+	reset_mocks();
+	g_clock_ns = 30 * VTRTC_NSEC_PER_SEC;
+	g_clock_verify_ns = 15 * VTRTC_NSEC_PER_SEC;
+	g_clock_verify_valid = true;
+	g_timer_error_at = 2;
+	ATF_CHECK_EQ(pci_vtrtc_alarm_schedule(&sc), EIO);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+	ATF_CHECK_EQ(g_timer_set_calls, 2);
+	virtio_rtc_alarm_destroy(sc.vrsc_alarm);
+}
+
+ATF_TC_WITHOUT_HEAD(timerfd_callback_read_failures);
+ATF_TC_BODY(timerfd_callback_read_failures, tc)
+{
+	struct pci_vtrtc_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vrsc_consts.vc_name = "vtrtc-test";
+	sc.vrsc_vs.vs_vc = &sc.vrsc_consts;
+	sc.vrsc_alarm_offered = true;
+	sc.vrsc_alarm_fd = 7;
+	ATF_REQUIRE_EQ(pthread_mutex_init(&sc.vrsc_mtx, NULL), 0);
+	sc.vrsc_vs.vs_mtx = &sc.vrsc_mtx;
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_create(&sc.vrsc_alarm), 0);
+
+	/* EAGAIN is a spurious wakeup: return without touching the model. */
+	reset_mocks();
+	g_timer_read_error = EAGAIN;
+	pci_vtrtc_alarm_timerfd(7, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_needs_reset, 0);
+	ATF_CHECK_EQ(g_timer_set_calls, 0);
+
+	/* Any other read error is a device failure. */
+	reset_mocks();
+	g_timer_read_error = EIO;
+	pci_vtrtc_alarm_timerfd(7, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+
+	/* A short read of the expiration word is a device failure. */
+	reset_mocks();
+	g_timer_short_read = true;
+	pci_vtrtc_alarm_timerfd(7, EVF_READ, &sc);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+
+	pthread_mutex_destroy(&sc.vrsc_mtx);
+	virtio_rtc_alarm_destroy(sc.vrsc_alarm);
+}
+
+ATF_TC_WITHOUT_HEAD(read_clock_error_and_overflow);
+ATF_TC_BODY(read_clock_error_and_overflow, tc)
+{
+	uint64_t reading;
+
+	/* clock_gettime failure is surfaced as its errno. */
+	reset_mocks();
+	g_clock_fault = EPERM;
+	ATF_CHECK_EQ(pci_vtrtc_read_clock(NULL, &reading), EPERM);
+
+	/* A seconds count that cannot be scaled to ns overflows. */
+	reset_mocks();
+	g_clock_raw = true;
+	g_clock_raw_sec = (time_t)(INT64_MAX);
+	g_clock_raw_nsec = 0;
+	ATF_CHECK_EQ(pci_vtrtc_read_clock(NULL, &reading), EOVERFLOW);
+}
+
+ATF_TC_WITHOUT_HEAD(request_handler_failure_requests_reset);
+ATF_TC_BODY(request_handler_failure_requests_reset, tc)
+{
+	struct pci_vtrtc_softc sc;
+
+	memset(&sc, 0, sizeof(sc));
+	sc.vrsc_consts.vc_name = "vtrtc-test";
+	sc.vrsc_vs.vs_vc = &sc.vrsc_consts;
+	sc.vrsc_vq[VTRTC_REQUESTQ].vq_qsize = VTRTC_RINGSZ;
+	/*
+	 * Advertise ALARM but leave the model absent: the shared handler
+	 * rejects the contract violation with a hard error, which the device
+	 * turns into a needs-reset with a zero-length completion.
+	 */
+	sc.vrsc_vs.vs_negotiated_caps = VIRTIO_RTC_F_ALARM;
+	sc.vrsc_alarm_offered = true;
+	sc.vrsc_alarm = NULL;
+	reset_mocks();
+	g_request[0] = VIRTIO14_RTC_REQ_CFG & 0xff;
+	g_request[1] = VIRTIO14_RTC_REQ_CFG >> 8;
+	pci_vtrtc_notify(&sc, &sc.vrsc_vq[VTRTC_REQUESTQ]);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+	ATF_CHECK_EQ(g_rel_calls, 1);
+	ATF_CHECK_EQ(g_rel_len, 0);
+	ATF_CHECK_EQ(g_end_calls, 1);
+}
+
+ATF_TC_WITHOUT_HEAD(notify_unknown_queue_requests_reset);
+ATF_TC_BODY(notify_unknown_queue_requests_reset, tc)
+{
+	struct pci_vtrtc_softc sc;
+	struct vqueue_info other;
+
+	memset(&sc, 0, sizeof(sc));
+	memset(&other, 0, sizeof(other));
+	sc.vrsc_vs.vs_vc = &sc.vrsc_consts;
+	reset_mocks();
+	pci_vtrtc_notify(&sc, &other);
+	ATF_CHECK_EQ(g_needs_reset, 1);
+}
+
+ATF_TC_WITHOUT_HEAD(snapshot_save_error_and_valid_validate);
+ATF_TC_BODY(snapshot_save_error_and_valid_validate, tc)
+{
+	struct pci_vtrtc_softc sc;
+	uint8_t image[48];
+	size_t used;
+
+	/* A save with no alarm model propagates the model's error. */
+	memset(&sc, 0, sizeof(sc));
+	sc.vrsc_alarm = NULL;
+	reset_mocks();
+	ATF_CHECK_EQ(run_snapshot(&sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, NULL), EINVAL);
+
+	/* A well-formed image passes structural validation. */
+	ATF_REQUIRE_EQ(virtio_rtc_alarm_create(&sc.vrsc_alarm), 0);
+	ATF_REQUIRE_EQ(run_snapshot(&sc, image, sizeof(image),
+	    VM_SNAPSHOT_SAVE, &used), 0);
+	ATF_CHECK_EQ(used, sizeof(image));
+	ATF_CHECK_EQ(run_snapshot(&sc, image, sizeof(image),
+	    VM_SNAPSHOT_VALIDATE, NULL), 0);
+	virtio_rtc_alarm_destroy(sc.vrsc_alarm);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, advertised_and_initialization_contract);
@@ -957,5 +1365,13 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, alarm_clock_steps_are_event_driven);
 	ATF_TP_ADD_TC(tp, alarm_unread_clock_step_is_not_device_failure);
 	ATF_TP_ADD_TC(tp, alarm_backward_step_during_sentinel_arm);
+	ATF_TP_ADD_TC(tp, init_failure_paths_release_all_state);
+	ATF_TP_ADD_TC(tp, alarm_queue_pending_and_chain_edges);
+	ATF_TP_ADD_TC(tp, alarm_schedule_error_paths);
+	ATF_TP_ADD_TC(tp, timerfd_callback_read_failures);
+	ATF_TP_ADD_TC(tp, read_clock_error_and_overflow);
+	ATF_TP_ADD_TC(tp, request_handler_failure_requests_reset);
+	ATF_TP_ADD_TC(tp, notify_unknown_queue_requests_reset);
+	ATF_TP_ADD_TC(tp, snapshot_save_error_and_valid_validate);
 	return (atf_no_error());
 }

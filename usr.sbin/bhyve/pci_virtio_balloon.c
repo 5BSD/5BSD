@@ -463,7 +463,23 @@ pci_vtballoon_notify(void *vsc, struct vqueue_info *vq)
 				 */
 				pages_match = sc->vbsc_free_page_hint_active;
 			}
-			if (sc->vbsc_free_page_hint_active && pages_match) {
+			/*
+			 * PAGE_POISON with a non-zero poison_val requires the
+			 * content of hinted pages to be preserved (section
+			 * 5.5.6.6): the MADV_FREE-backed discard lazily
+			 * replaces the poison pattern with zeros, and marking
+			 * the range as migration-skippable would deliver
+			 * zeroed pages on the destination.  A zero poison_val
+			 * is exactly what a discard (or a skipped, zero-filled
+			 * destination page) reproduces, so the optimization
+			 * remains valid in that case.  The command protocol is
+			 * unaffected either way; the ranges are simply
+			 * acknowledged without being consumed.
+			 */
+			if (sc->vbsc_free_page_hint_active && pages_match &&
+			    ((sc->vbsc_vs.vs_negotiated_caps &
+			    VIRTIO_BALLOON_F_PAGE_POISON) == 0 ||
+			    sc->vbsc_poison_val == 0)) {
 				for (int i = req.readable; i < n; i++) {
 					uint64_t gpa;
 
