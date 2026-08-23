@@ -1,115 +1,138 @@
-# The mac_abac Module
+# Attribute-Based Access Control (mac_abac)
 
-`mac_abac` is a label-based mandatory access control policy for 5BSD
-implementing attribute-based access control (ABAC). Security labels are
-free-form sets of `key=value` attributes stored in filesystem extended
-attributes; access decisions come from an ordered, first-match rule
-table evaluated in the kernel. It loads as a standard MAC policy module
-(`kldload mac_abac`) and lives in `/usr/src/sys/security/mac_abac/`.
+`mac_abac(4)` is 5BSD's label-based mandatory access control policy. Security
+labels are sets of `key=value` attributes and kernel decisions use an ordered,
+first-match rule table. It loads as a normal MAC policy (`kldload mac_abac`),
+composes with every other MAC policy, and is implemented under
+`sys/security/mac_abac/`.
 
-## Label model
+## Labels
 
-A label is up to 16 `key=value` pairs (keys ≤ 64 bytes, values ≤ 256
-bytes), persisted for files in the system extended-attribute namespace
-under the name `mac_abac` as newline-separated pairs. Process
-(credential) labels are held in a MACF label slot; socket, pipe, and
-IPC-object labels are inherited from the creating credential. Objects
-without a label match a default subject/object label. Labels for
-vnodes are loaded lazily from the extattr and cached per-vnode in UMA
-zones. Exec-time label transitions are supported
-(`mpo_vnode_execve_transition`), and a rule action can rewrite the
-subject label.
+A label contains at most 16 pairs, with keys up to 64 bytes, values up to 256
+bytes, and a 4096-byte serialized limit. Vnode labels are stored in the system
+extended-attribute namespace as `mac_abac`, using newline-separated pairs.
+They are loaded lazily and cached in the vnode's MAC label slot. Credential
+labels occupy their own slot; sockets, pipes, POSIX and System V IPC objects
+inherit the creating credential's attributes. Unlabelled subjects and objects
+use configurable default labels.
 
-## Rule model
+Exec is an access check like any other operation. The only rule actions are
+`allow` and `deny`; a process label changes only through an explicit,
+authorized relabel operation.
 
-Rules (up to `ABAC_MAX_RULES` = 4096) are evaluated in order with
-pf-style first-match semantics. Each rule has:
-
-- **Action**: `allow`, `deny`, or `transition` (allow and switch the
-  subject to `vr_newlabel`).
-- **Operations bitmask**: which of ~29 operation classes it gates —
-  file operations (`exec`, `read`, `write`, `mmap`, `mprotect`, `link`,
-  `rename`, `unlink`, `chdir`, `stat`, `readdir`, `create`, `lookup`,
-  `open`, `access`, extattr get/set), process operations (`debug`,
-  `signal`, `sched`, `wait`), socket operations (`connect`, `bind`,
-  `listen`, `accept`, `send`, `receive`, `deliver`), and `audit`.
-- **Subject and object patterns**: up to 8 `key=value` pairs matched
-  against the caller's and target's labels; a negate flag inverts a
-  pattern.
-- **Subject and object context assertions**: non-label facts about the
-  caller or target — Capsicum capability mode, jail membership,
-  effective/real UID, GID, controlling TTY. Example from the header:
-  `deny debug * -> * ctx:sandboxed=true` protects capability-mode
-  processes from being debugged regardless of labels.
-
-Rules belong to one of 65536 **sets** (IPFW-style). Sets are evaluated
-in ascending order and can be enabled, disabled, swapped, or moved
-atomically without touching individual rules — the supported mechanism
-for hot policy reload and maintenance modes. When no rule matches, the
-`security.mac.mac_abac.default_policy` sysctl decides (0 = allow,
-1 = deny; permissive default).
-
-## What is gated
-
-Each object family has its own source file: vnodes (`abac_vnode.c` —
-the full `mpo_vnode_check_*` surface including ACLs, flags, mode,
-owner, times, revoke), credentials (`abac_cred.c` — relabel and the
-setuid/setgid/setgroups/setcred/setaudit family), processes
-(`abac_proc.c` — debug, signal, scheduling, wait), sockets
-(`abac_socket.c` — create/bind/connect/listen/accept/send/receive and
-inbound packet delivery), pipes (`abac_pipe.c`), POSIX semaphores and
-shared memory (`abac_posixsem.c`, `abac_posixshm.c`), System V IPC
-(`abac_sysv.c`), the kernel environment (`abac_kenv.c` — `kenv(2)`
-dump/get/set/unset checked against a synthetic `type=kenv` object
-label), and system-wide operations (`abac_system.c`).
-
-## Configuration
-
-Policy administration goes through `mac_syscall("mac_abac", ...)`
-(root-only) with three userspace consumers:
-
-- **`mac_abac_ctl`** (`/usr/src/usr.sbin/mac_abac_ctl/`) — CLI for
-  rules, sets, labels, modes, stats, and loading policy files.
-- **`mac_abacd`** (`/usr/src/usr.sbin/mac_abacd/`) — policy daemon
-  that loads `/etc/mac_abac.conf`.
-- Policy files in UCL/JSON or a simple line format; commented samples
-  in `/usr/src/share/examples/mac_abac/` (`sample.ucl`, `sample.json`,
-  `sample.rules`, `sample.conf`).
+`mac_abac_ctl` is also the labeling tool:
 
 ```sh
-kldload mac_abac
-mac_abac_ctl rule load /etc/mac_abac.conf     # atomic replace (RULE_LOAD)
-mac_abacd -c /etc/mac_abac.conf
+mac_abac_ctl label get /srv/app
+mac_abac_ctl label setatomic /srv/app 'domain=web,type=data'
+mac_abac_ctl label setrecursive /srv/app 'domain=web,type=data' -v
+mac_abac_ctl label refresh /srv/app
+mac_abac_ctl label remove /srv/app
 ```
 
-Operational controls:
+`set` and `setatomic` use the kernel's atomic set-label operation, which writes
+the extattr and publishes the parsed in-memory vnode label as one operation.
+This is the safe path for ZFS and other single-label filesystems where a later
+`mac_vnode_setlabel()` refresh is not available. Recursive labeling uses a
+physical FTS walk, does not follow symbolic links, can select files or
+directories, and applies the same atomic operation to every selected object.
+`refresh` is for labels written with lower-level extattr tools.
 
-- **Enforcement mode**: `disabled`, `permissive` (log, do not enforce),
-  `enforcing` (`ABAC_SYS_GETMODE`/`SETMODE`).
-- **Lock**: `ABAC_SYS_LOCK` is a one-way latch that freezes all policy
-  changes until reboot.
-- **Log levels**: none / errors / admin actions (default) / denials /
-  all checks, to the kernel message buffer and syslog.
-- **Counters**: `security.mac.mac_abac.{checks,allowed,denied,rule_count,
-  default_policy}` sysctls plus an `abac_stats` struct for tools; a
-  built-in `ABAC_SYS_TEST` command dry-runs a decision, and DTrace
-  probes are defined in `abac_dtrace.h`.
+## Rules and enforcement surface
 
-## Composition with other MAC modules
+Up to `ABAC_MAX_RULES` (4096) rules are evaluated by set number and then load
+order; the first matching rule wins. A rule contains:
 
-`mac_abac` registers with `MAC_POLICY_SET(&abac_ops, mac_abac, ...)`
-and claims a label slot, so it composes under the standard MAC
-framework rule: every loaded policy is consulted and **any denial
-wins**. `mac_abac` can therefore only further restrict what
-mac_capability's isolation/capprotect/system enforcement, Capsicum, or
-other loaded policies (e.g. `mac_bsdextended`) already permit — it can
-never re-grant access another module denied. Its labels are private to
-its own extattr name and slot and do not conflict with other
-label-bearing policies. It is enabled per-object-family only when
-rules reference that family (`ABAC_CHECK_ENABLED()` short-circuits
-when the module is disabled), keeping overhead near zero with an empty
-table.
+- an `allow` or `deny` action;
+- an operation mask covering vnode, process, socket, IPC, credential, audit,
+  kernel-environment, and system operations;
+- subject and object patterns of up to eight `key=value` assertions, with
+  wildcards and pattern negation;
+- optional subject and target context constraints for effective/real UID,
+  GID, jail membership, controlling TTY, and Capsicum mode.
 
-Packaging: the module is built from `/usr/src/sys/modules` as
-`mac_abac`, with pkgbase packages `mac-abac` and `mac-abac-tests`
-(`/usr/src/packages/`).
+For example, a rule can deny debugging any capability-mode process regardless
+of its label. When no rule matches,
+`security.mac.mac_abac.default_policy` selects allow (0) or deny (1); the
+shipped default is permissive.
+
+Rules are grouped into sets 0–65535. Disabled sets are skipped; sets can be
+enabled, disabled, cleared, moved, or atomically swapped. This makes it
+possible to prepare a replacement policy in an inactive set and publish it
+without an enforcement gap.
+
+The policy gates the full vnode check surface, credential changes, process
+debug/signal/scheduling/wait, socket lifecycle and packet delivery, pipes,
+POSIX semaphores and shared memory, System V IPC, kernel environment access,
+and system-wide operations. The implementation is split by object family in
+`sys/security/mac_abac/abac_*.c` so the hook coverage is auditable.
+
+## Policy source, compilation, and loading
+
+Administration uses root-only `mac_syscall("mac_abac", ...)`; untrusted
+processes do not receive a policy-management descriptor. Policy can be written
+as strict UCL/JSON or as the compact line format. Samples are installed from
+`share/examples/mac_abac/`.
+
+```sh
+mac_abacd -t -c /etc/mac_abac.conf            # parse and compile only
+mac_abac_ctl rule validate -f policy.ucl      # no kernel change
+mac_abac_ctl rule validate 'deny debug * -> *'
+mac_abac_ctl rule load /etc/mac_abac.conf     # atomic replacement
+```
+
+The userspace compiler rejects unknown top-level keys, unsupported actions and
+operations, malformed labels/context, invalid set
+numbers, duplicate or oversized data, and policy-wide mode/default errors. It
+packs validated rules into the pointer-free `ABAC_SYS_RULE_LOAD` format only
+when a load is requested. The kernel independently validates every record,
+length, reserved field, action, operation, pattern, and context before
+publishing the replacement table. Any failure restores the complete previous
+table; there is no partially loaded policy. The daemon applies the default
+policy after the rule table and switches enforcement mode last.
+
+`mac_abacd(8)` loads `/etc/mac_abac.conf`, supports validation-only mode, and
+reloads on signal. `mac_abac_ctl(8)` provides rule add/remove/list/append/load/
+validate, set management, labeling, status and limits, and the kernel dry-run
+decision command:
+
+```sh
+mac_abac_ctl test read 'domain=web' 'domain=database,type=data'
+```
+
+## Operational controls and composition
+
+The enforcement modes are `disabled`, `permissive` (calculate and log denials
+without enforcing), and `enforcing`. Log levels range from errors through all
+checks. Counters expose checks, allows, denials, label loads/defaults, and rule
+counts through sysctl and the tool. `ABAC_SYS_LOCK` is a one-way latch that
+freezes the rule table, mode, default decision, and set administration until
+reboot; the audit log level remains adjustable. DTrace probes cover checks,
+decisions, rule matches, label activity, and administrative operations.
+
+MAC composition is deny-wins: `mac_abac` can further restrict Capsicum,
+mac_capability, capprotect, and other MAC policies, but cannot re-grant an
+operation another policy denied. Its extattr and label slot are private. Empty
+or disabled object-family rule masks short-circuit checks to keep the unused
+cost small.
+
+## Testing and VM qualification
+
+Parser tests exercise valid allow/deny rules and malformed actions,
+operations, labels, contexts, delimiters, duplicate fields, and limits.
+Kernel tests exercise strict syscall ABI
+validation, atomic load rollback and empty replacement, set ordering and
+administration, default/mode behavior, locking, label parsing and matching,
+and enforcement hooks. Shell integration tests compile every shipped policy
+format, validate UCL without mutation, drive the labeling commands, verify
+recursive and atomic label behavior, and cover CLI failure exits.
+
+`tools/test/mac-abac-qemu/` packages the current module, public header,
+compiler/daemon, labeling tool, samples, and Kyua suite into a read-only image
+for a disposable amd64 QEMU guest. Its runner loads the matching module,
+compiles all sample formats, and runs the complete suite. Snapshot mode leaves
+the base image unchanged, and TCG permits host-side execution without root or
+`/dev/vmm`.
+
+The module and tests ship in the `mac-abac` and `mac-abac-tests` pkgbase
+packages.

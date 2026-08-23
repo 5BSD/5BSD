@@ -15,16 +15,12 @@ without one.
 
 ## Why a dedicated daemon
 
-Storage granting was originally inline in oracled
-(`handle_mint_storage()` opening `/dev/zfs` per request). Moving it into
-`tzfsd` gives storage its own configuration, its own audit identity, and
-the flavor/template system, without fracturing the mint path: serviced
-still mints every capability class over its one oracle channel, and
-oracled's `ORACLE_OP_MINT_STORAGE` is now a thin forwarder that calls
-`tzfsd_request`/`tzfsd_release` via `libtzfsd`. oracled no longer opens
-`/dev/zfs` at all, and starts `tzfsd` on demand the first time a service
-needs storage. The manifest `capabilities.storage` stanza was unchanged by
-the move — only who mints changed.
+Storage has its own configuration, audit identity, and flavor/template
+system without splitting the service mint path. serviced mints capability
+classes over its oracle channel; oracled's `ORACLE_OP_MINT_STORAGE` forwards
+to `tzfsd_request`/`tzfsd_release` through `libtzfsd` and never opens
+`/dev/zfs`. It starts `tzfsd` on demand when a service first needs storage.
+Consumers continue to declare storage through `capabilities.storage`.
 
 ## The `[TZFS]` tag
 
@@ -38,8 +34,11 @@ the authority holders apart. `tzfsd` sets it via
 
 All name-based work happens up front, then the daemon seals itself:
 
-1. Load `/etc/capability/tzfsd.ucl` (optional; built-in defaults apply),
-   then layer flavor-catalog drop-ins from `/etc/capability/tzfsd.d/`.
+1. Load `/etc/capability/tzfsd.ucl`; a missing main file selects built-in
+   defaults, while an existing invalid or unsafe file is fatal. Then layer
+   `*.ucl` flavor-catalog drop-ins from `/etc/capability/tzfsd.d/` in lexical
+   order. A missing drop-in directory is allowed; any other directory or
+   fragment error aborts startup without publishing a partial configuration.
 2. Verify ZFS is available; provision the `/Capabilities` layout
    idempotently (persistent, ephemeral, and `.templates` roots), retaining
    full-rights subtree handles on each.
@@ -114,14 +113,23 @@ named (`props_read`, `props_write`, `snapshot`, `snap_destroy`,
 ## Operations
 
 - Config: `/etc/capability/tzfsd.ucl` plus `*.ucl` drop-ins in
-  `/etc/capability/tzfsd.d/`. Every key is optional.
+  `/etc/capability/tzfsd.d/`. Files are opened with `O_NOFOLLOW`, limited to
+  1 MiB, and must be regular, owned by the effective user, and not writable by
+  group or other. Parsing is transactional; pool, dataset, mountpoint, flavor,
+  build-mode, source, enabled, and single-default invariants are validated
+  before publication.
 - Run `tzfsd -f` for foreground with stderr logging; `-c` for an alternate
   config. Logging goes to syslog facility `daemon`.
 - Readiness: the socket at `/var/run/tzfsd.sock` and the ready file; a
   startup summary logs `N/M flavors available`.
 - Manpages: `tzfsd(8)`, `tzfs.conf(5)`, `tzfsctl(8)`, `libtzfsd(3)`.
-- Tests: `tests/sys/tzfs/` (ATF, request/clone/mount/release, rights
-  attenuation, ephemeral teardown, negative paths).
+- Baked artifacts are opened with `O_NOFOLLOW` and must be nonempty regular
+  files owned by root and not writable by group or other. The absolute
+  `/usr/bin/zstd` decompressor is supervised, and both receive and child exit
+  status must succeed before the template becomes available.
+- Tests: `tests/sys/tzfs/` and the capability-VM payload cover configuration
+  overlays and failure atomicity, artifact trust checks, request/clone/mount/
+  release, rights attenuation, ephemeral teardown, and negative paths.
 
 **Status.** A boot-time `tzfsd.ready` ordering gate for services that need
 storage before the first on-demand mint is a designed Phase 4 refinement;

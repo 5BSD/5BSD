@@ -47,7 +47,7 @@ Notable 5BSD packages:
   WASPNest VMM, AF_VSOCK, VirtIO, live-guest, checkpoint, and nested-VM test
   payloads; its `-dbg` subpackage carries their symbols.
 - **tzfs-flavors** (`PACKAGE=tzfs-flavors` in
-  `usr.sbin/tzfs-flavors/Makefile`, commit `c46033b5618`): the TrustedZFS
+  `usr.sbin/tzfs-flavors/Makefile`): the TrustedZFS
   OS-image flavor catalog, deliberately decoupled from the `tzfsd`
   storage broker. It ships `flavors.ucl` as a drop-in for
   `/etc/capability/tzfsd.d/` declaring linux (Rocky) and freebsd flavors,

@@ -41,13 +41,27 @@ paired for authenticated profiles, so an encrypt-without-tag or
 decrypt-without-verify descriptor cannot be minted. Unsupported
 primitives fail `EPROTONOSUPPORT`; malformed profiles fail `EINVAL`.
 
+Named-key create, lease, rotate, and delete require descriptor authority
+recorded when `/dev/crypto` is opened. The kernel does not re-check the
+credentials of each later ioctl, so intentionally passing an already-open
+privileged control fd delegates that authority; opening the device without
+`PRIV_DRIVER` never acquires it. `localcrypto` therefore makes its control fd
+non-transferable, locks it against fork and exec, limits it to `CAP_IOCTL`, and
+installs the exact six-command allowlist needed for generated descriptors and
+named-key lifecycle before entering capability mode.
+
 Descriptors support **monotonic authority reduction**:
 `CIOCSCRYPTODESCRIGHTS` lets a receiver drop operation rights before
 passing a descriptor on, never restore them; `CIOCCRYPTODESCREVOKE`
 permanently disables a descriptor (subsequent operations fail `EACCES`).
 Descriptors may carry a TTL, after which every operation fails `ESTALE`.
 `CIOCCRYPTODESCDERIVE` implements RFC 5869 HKDF-SHA-256/512 and returns
-another opaque descriptor, never derived bytes. Every component request
+another opaque descriptor, never derived bytes. A parent must hold both
+`DERIVE` and every right requested for the child, so derivation cannot create
+authority. HKDF input is the complete cipher-plus-MAC secret, the child TTL is
+clamped to the parent's remaining lifetime, and a child of a named lease
+remains bound to the same generation so rotation or deletion revokes the
+entire derived lineage. Every component request
 is audited through the standard `Audit.cap` capability via `libauditcmp`
 (client label, operation, result — no key material); audit-broker
 failure is non-authoritative and can never widen a grant.
@@ -73,6 +87,12 @@ reboot, and each create/lease/rotate/delete attempt — including denials
 has no import, export, persistence, or restart-recovery ABI; any future
 persistence design requires a separately reviewed kernel-mediated
 wrapping boundary.
+
+Named objects are bounded by `kern.crypto.cryptokey_max_objects` (16384 by
+default) and `kern.crypto.cryptokey_max_owner_objects` (1024 per service owner
+by default). The read-only `kern.crypto.cryptokey_objects` counter exposes
+current global use. Quota reservation and release are serialized with the
+named-key registry, so concurrent creates cannot exceed either ceiling.
 
 ```text
 consumer -- named-key request --> [CRYPTO] -- policy/key lookup --> kernel key object
@@ -132,3 +152,13 @@ transfer after the original descriptor closes.
 `usr.sbin/localcrypto/tests` adds the provider policy matrix,
 asymmetric-policy and driver-selection checks, and capability-bundle
 security-contract tests.
+`lib/libcryptocmp/tests` uses a fake service to exercise every operation and
+status path plus short replies, bad magic/version/opcode/status, unexpected or
+missing descriptors, output initialization, descriptor cleanup, and rejection
+of a fork-inherited client. Named-key tests cover privilege captured at open,
+owner isolation, duplicate names, lease rights, rotate/delete invalidation,
+global and per-owner quotas, full-secret derivation, parent-right and TTL
+ceilings, lineage revocation, concurrent operation, kqueue state, SCM_RIGHTS,
+and teardown. The complete kernel, library, provider, EnvFD, BSDNotify,
+filesystem-flavor, and TrustedZFS matrix runs in the disposable matching-kernel
+guest provided by `tools/test/capability-qemu/`.

@@ -62,6 +62,21 @@ flavors {
   stream. These are build-/admin-time tools needing network access and a
   live pool.
 
+`tzfs-mkflavor` validates the pool, flavor, source directory, compression
+level, and output location before touching ZFS. It creates a private work
+directory and a uniquely named scratch dataset, refuses to reuse a preexisting
+dataset, checks both producers in its tar and `zfs send` pipelines, writes to a
+same-directory temporary file, and publishes the nonempty artifact atomically.
+Cleanup destroys only the dataset whose unique name it created.
+
+The Linux producer requires both the downloaded archive SHA-256 (`-s`) and the
+exact OCI layer SHA-256 (`-l`) and permits only HTTPS mirrors. It verifies the
+outer archive, extracts only the pinned `blobs/sha256/<digest>` member, verifies
+that layer again, and lists both archives before extraction to reject absolute
+or traversal paths. OCI whiteouts are rejected rather than misapplied as
+ordinary files; no size-based “largest blob” guess is used. The FreeBSD
+producer is a strict local-tree wrapper around the same builder.
+
 Artifacts are send streams rather than tarballs because materializing a
 template is then a `zfs recv` — fast and property-preserving. On first
 start `tzfsd` receives each declared artifact into `.templates/` and
@@ -85,8 +100,9 @@ so it is contributed as data. Consequences that fall out of the split:
 - **Independent lifecycle** — the catalog installs, upgrades, and removes
   on its own; `pkg delete tzfs-flavors` sheds the Red Hat userland from a
   host without touching the broker, `empty`, or `native`.
-- **Graceful absence** — a flavor whose artifact is missing is simply not
-  offered (`tzfsd` logs a notice; requests for it fail with `ENOENT`;
+- **Graceful absence** — a validly configured flavor whose baked artifact
+  cannot be materialized is simply not offered (`tzfsd` logs a notice;
+  requests for it fail with `ENOENT`;
   `tzfsctl list-flavors` omits it). Installing the catalog before
   producing artifacts is harmless. "Off" is a designed state, not a
   failure mode.
@@ -118,12 +134,23 @@ capabilities {
 
 **Status.** The `source` build mode (fetch/unpack from a configured URL on
 first request) is declared in the config schema but not implemented; such
-flavors are offered only if their template was pre-seeded. The design
-document's `MK_TZFS_LINUX` build knob is superseded by the package split —
-removability is delivered by `pkg delete tzfs-flavors` and the `enabled`
-config lever. Install-media integration (baked streams received at
-install/first boot per `docs/tzfsd-design.md` §3.1) depends on the
-artifacts being produced for the release media.
+flavors are offered only if their template was pre-seeded. OS-image
+removability uses `pkg delete tzfs-flavors` and the `enabled` configuration
+lever. Install-media integration (baked streams received at install/first boot
+per `docs/tzfsd-design.md` §3.1) depends on producing the artifacts for the
+release media.
+
+## Qualification
+
+Mock-driven shell suites cover invalid arguments, unsafe names, existing
+scratch datasets, tar/send/compressor failures, empty output, cleanup, and
+atomic publication without requiring a live pool. Linux-image tests cover
+required digests, HTTPS enforcement, archive and layer mismatches, missing
+pinned blobs, traversal, whiteouts, and exact layer selection. tzfsd tests
+cover strict configuration overlays and baked-artifact ownership, type,
+symlink, mode, decompressor, and receive failures. The complete flavor matrix
+runs with Crypto, EnvFD, BSDNotify, and TrustedZFS in the disposable amd64
+`tools/test/capability-qemu/` guest.
 
 Sources: `usr.sbin/tzfs-flavors/`, `usr.sbin/tzfsd/tzfs-mkflavor.sh`,
 `tzfs-flavors(7)`, `docs/tzfsd-design.md`.

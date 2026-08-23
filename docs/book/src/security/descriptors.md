@@ -4,8 +4,7 @@
 for several descriptor types, **the fd is the authority**. This chapter
 is a unified reference. The kernel type table in `sys/sys/file.h` adds
 three entries beyond stock FreeBSD (17–19); `DTYPE_JAILDESC` (16) is
-inherited from FreeBSD (commit `851dc7f859c` by Jamie Gritton) and
-extended by 5BSD with coalition enlistment:
+inherited from FreeBSD and extended by 5BSD with coalition enlistment:
 
 ```c
 #define	DTYPE_JAILDESC		16	/* jail descriptor */
@@ -135,15 +134,32 @@ Created via `__specialfd(2)` type `SPECIALFD_ENVFD` (wrapper
 `envfd_create(2)`). The name is metadata only; there is no
 lookup-by-name — the descriptor is the sole reference.
 
-**Lifecycle:** creation options fix the access mode and, unusually, the
-`CAP_XFER_*`/`CAP_CLOEXEC_*`/`CAP_CLOFORK_*` states at mint time.
+**Lifecycle:** names are metadata-only identifiers drawn from
+`[A-Za-z0-9._-]+`; there is no lookup-by-name. Creation always yields an
+`O_RDWR` descriptor because a newly created, unwritten object must remain
+writeable, and a holder can then make individual copies read- or write-only
+with Capsicum rights. Creation options fix the
+`CAP_XFER_*`/`CAP_CLOEXEC_*`/`CAP_CLOFORK_*` states at mint time, including
+`CAP_XFER_TWICE` for an exact creator-to-broker-to-worker handoff.
 `ENVFD_WRITE_ONCE` seals the shared object after the first successful
 write — through `dup()`, `fork()`, and SCM_RIGHTS alike;
-`ENVFD_CAPMODE_ONLY` makes every operation fail with `ECAPMODE`
-outside capability mode. Reads before the first write return
+`ENVFD_CAPMODE_ONLY` makes data, info, stat, and kqueue operations fail with
+`ECAPMODE` outside capability mode; close remains available. Reads before the
+first write return
 `ENOATTR`. Last close zeroes the value (`explicit_bzero`) and releases
-per-uid and global quotas (`kern.envfd.*` sysctls). `procstat` renders
-the fd as `envfd:<name>` without exposing the value.
+per-real-UID and global object/byte quotas; `kern.envfd.max_value_size`
+also caps one object. `procstat` renders the fd as `envfd:<name>` and
+reports sizes, generation, flags, and state, but `kf_envfd_addr` is always
+zero and neither the value nor a kernel address is exposed.
+
+**Qualification:** `tests/sys/kern/envfd_test.c` covers creation and strict
+options, name grammar, read/write and seek semantics, maximum value sizes,
+write-once races across duplicated descriptors, kqueue write/seal events,
+Capsicum rights and capmode-only use, initial transfer/exec/fork states,
+creator→broker→worker `TWICE` exhaustion, stat/procstat disclosure, fd
+exhaustion, global and per-real-UID quotas, cleanup, and malformed operations.
+These tests run with the other descriptor families under the matching-kernel
+`tools/test/capability-qemu/` guest.
 
 ## TrustedZFS capability fds (DTYPE_ZFSHANDLE)
 
@@ -161,10 +177,9 @@ dataset handle — a zfd can never climb to pool authority. Rights
 Fd passing is the delegation mechanism, with standard fork/dup
 semantics; the tzfsd broker mints and hands out handles.
 
-The in-kernel fileops implementation is merged: `zfshandle_ops` and the
+The in-kernel fileops implementation, `zfshandle_ops`, and the
 `finit(..., DTYPE_ZFSHANDLE, ...)` path live in
-`sys/contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c` (commits
-`08539165870`, `f81f9f054a8`), alongside the userland
+`sys/contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c`, alongside the userland
 (`lib/libtrustedzfs`, `usr.sbin/tzfsd`, `tzfsctl`) and tests. See
 [TrustedZFS](../storage/trustedzfs.md) and the
 [tzfsd broker](../storage/tzfsd.md).

@@ -27,8 +27,10 @@ sender's entry as it grants the receiver the remainder. serviced uses
 `TWICE` to give a provider an endpoint it may admit into exactly one
 router, after which the installed endpoint is non-transferable. State
 is inherited by `dup`/`dup2`/`dup3` (via `fde_copy()`) and by fork's
-bulk table copy; `cap_xfer_limit(2)` may only tighten
-(UNLIMITED→ONCE→NONE), and widening fails with `ENOTCAPABLE`.
+bulk table copy. `cap_xfer_limit(2)` follows a monotonic partial order:
+`UNLIMITED` may narrow to `TWICE`, `ONCE`, or `NONE`; `TWICE` may narrow to
+`ONCE` or `NONE`; and `ONCE` may narrow to `NONE`. Widening fails with
+`ENOTCAPABLE`.
 
 ## Post-transfer authority ceilings
 
@@ -105,6 +107,10 @@ channels that survive its one supervised exec and nothing after it.
   `_finstall()`; the design doc records the audit.
 - Kernel-created reply fds (e.g. `MAC_CAPABILITY_CALL` replies) start
   UNLIMITED by construction.
+- Descriptor constructors can install a narrower initial state directly.
+  EnvFD uses this to mint `TWICE` authority without a transient unlimited
+  window; its regression suite verifies creator → broker → worker transfer and
+  exhaustion at every endpoint.
 
 ## Tests
 
@@ -115,3 +121,7 @@ rights-orthogonality) and
 and LOCKED behavior, flag-override protection, full confinement
 end-to-end). mac_capability propagation is covered in
 `/usr/src/tests/sys/mac_capability/mac_capability_test.c`.
+The descriptor-wide disposable-VM harness in
+`/usr/src/tools/test/capability-qemu/` also exercises `TWICE` in the real
+kernel together with EnvFD, Crypto, BSDNotify, filesystem flavors, and
+TrustedZFS.

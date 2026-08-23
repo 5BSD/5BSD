@@ -4,9 +4,11 @@ TrustedZFS makes ZFS storage a thing a program is handed, not a place it
 goes. It adds first-class file descriptors — dataset handles (zfd) and pool
 handles (zpd) — over the ZFS management plane, so a process can be granted
 "this dataset, these operations, nothing else" as an unforgeable object.
-All four design phases plus an extended verb set are implemented and validated
-in a 64-bit QEMU guest with WITNESS enabled.  The 2026-08-21 hardening run
-passed all 82 cases across 13 ATF programs.
+The dataset and pool handle API, extended verb set, library, broker consumers,
+and qualification suites are implemented. TrustedZFS supports only 64-bit
+kernels and 64-bit user ABIs; every returned descriptor is close-on-exec. Its
+disposable QEMU qualification uses a matching WITNESS/INVARIANTS kernel and 82
+cases across 13 ATF programs.
 
 ## Why the ZFS control plane needed this
 
@@ -57,6 +59,12 @@ descendants. Two monotonic derivations narrow authority:
 - `ZFD_OPENAT(relname, mask)` — open a child dataset or snapshot through a
   subtree handle. Relative names only; no `..`, no absolute names.
 
+`ZFD_LIMIT` supplies a second monotonic kernel operation ceiling beneath the
+immutable `ZH_*` rights. It follows derive/openat/create/clone/pool-root-open
+results and survives duplication and SCM_RIGHTS, preventing a delegated child
+from using an ioctl omitted by its grantor. `libtrustedzfs` can install the
+corresponding Capsicum ioctl allowlist as a fast-path ceiling.
+
 Minting (name → handle) is the only name-based step, done via
 `ZFS_IOC_DATASET_OPEN` / `ZFS_IOC_POOL_OPEN` on `/dev/zfs`. It reuses the
 existing authorization layers wholesale: root mints anything, an
@@ -74,6 +82,11 @@ snapshot/snap-destroy/rollback/promote, holds and bookmarks, `ZFD_SEND` /
 `ZFD_CLONE` (called on the destination parent with the origin passed as an
 fd, so "CI can clone the template into its workspace and nowhere else"
 falls out of the rights), and `ZFD_MOUNT` / `ZFD_BLKOPEN`.
+
+Cursor-free enumeration is capped at `ZFSHANDLE_ENUM_MAX_ENTRIES` (16384).
+The read-only boot tunable `vfs.zfs.trustedzfs.enum_max_entries` may lower but
+cannot raise that ceiling; oversized enumerations fail with `E2BIG` rather
+than consuming unbounded kernel memory.
 
 Send-once is enforced in kernel handle state, so it survives fd passing:
 `ZHF_SEND_ONCE` refuses a second successful stream across the complete
@@ -111,6 +124,10 @@ Userland is `lib/libtrustedzfs` (`tzfs_*`, ~44 dependency-free functions,
 documented in `trustedzfs.3`), including Capsicum profiles
 (`tzfs_limit_dataset_ioctls()` / `tzfs_limit_pool_ioctls()`) applied per fd
 before handles cross a trust boundary.
+The wrappers validate pointers, flags, names, handle kinds, buffer lengths,
+and output ownership before issuing an ioctl; descriptor-returning calls
+initialize their result to `-1`, variable-buffer calls initialize outputs,
+and truncation is reported rather than silently accepted.
 
 ## Observability and tests
 
@@ -120,7 +137,14 @@ A `trustedzfs` SDT provider fires `mint`, `derive`, `handle-openat`,
 The ATF suites live in `tests/sys/zfshandle/` — rights matrix, derive
 monotonicity and openat containment, guid pinning under rename/destroy
 races, Capsicum behavior, mounts, pool handles, security negatives, and
-the extended verbs — running against per-test file-vdev pools.
+the extended verbs — running against per-test file-vdev pools. Additional cases
+also exercise malformed ioctl sizes and reserved fields, output contracts and
+fd exhaustion, operation-ceiling inheritance, competing send-once users,
+concurrent anonymous-mount singleton creation, unread SCM_RIGHTS teardown with
+no calling thread, mount namespace identity races, delegation permission
+matrices, and enumeration ceilings. `tools/test/trustedzfs-qemu/` installs the
+kernel, ZFS module, libraries, broker, and tests as one payload, reboots into
+that matched state, and aggregates every case in an isolated work directory.
 
 ## Consumers
 

@@ -145,14 +145,20 @@ Source: `usr.sbin/oeslogger` (sources in `share/examples/oes`).
 Streams OES NOTIFY events as NDJSON.
 
 ```
-usage: oeslogger [-p] [-o file] [event_type ...]
+usage: oeslogger [-dnp] [-m path] [-o file] [event_type ...]
+  -d       Observe this process and descendants only
+  -m path  Add a primary-path prefix mute (repeatable)
+  -n       Clear normal self and /dev/ noise mutes
   -o file  Write JSON output to file (default: stdout)
   -p       Pretty-print JSON output
   -l       List available event names
 ```
 
 With no event names it subscribes to all NOTIFY events; e.g.
-`oeslogger exec open | jq .`. AUTH (blocking) events are not exposed.
+`oeslogger exec open | jq .`. AUTH (blocking) events are not exposed. Each
+NDJSON record includes message and sequence IDs, monotonic and wall-clock
+times, AUTH-derived results, process/thread/path metadata, and event-specific
+objects.
 
 ## Observability: hwtlm, bsdinstruments, bsdtrace
 
@@ -185,3 +191,8 @@ severities `trace..fatal`), `tracectl` (`configtest [file]`),
 `networkcmpctl` (`config`, `info`, `resolve host [service]`), and
 `filesystemcmpctl` (`config`, `info`, `stat namespace path`;
 namespaces `scratch`, `persistent`, `bundle`).
+
+`notifyctl` talks to the shared BSDNotify router through a separately
+authorized session; the service is system-wide, but topic visibility and
+publish/state/timer authority are default-deny and bound to the caller's
+serviced label. See [BSDNotify](../system/bsdnotify.md).
