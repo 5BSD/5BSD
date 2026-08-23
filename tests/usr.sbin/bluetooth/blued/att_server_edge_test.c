@@ -286,17 +286,27 @@ ATF_TC_BODY(test_se_read_authen_gate, tc)
 
 	mk_read(pdu, H_AUTH);
 
-	/* Unencrypted -> Insufficient Encryption (encryption precedes authn). */
+	/*
+	 * H_AUTH carries only the *_AUTHEN permission bits, so the
+	 * authentication requirement is evaluated on its own
+	 * (att_check_read_perm).  An unmet authentication requirement yields
+	 * Insufficient Authentication irrespective of the current encryption
+	 * or key-size state (Core Spec Vol 3 Part F §3.2.5; matches
+	 * BlueZ/Zephyr for an authentication-only permission mask).
+	 */
+	/* Unencrypted, unauthenticated -> Insufficient Authentication. */
 	ac.encrypted = false;
 	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
-	    SEEDGE_ATT_ERR_INSUFF_ENCRYPTION);
+	    SEEDGE_ATT_ERR_INSUFF_AUTHEN);
 
-	/* Encrypted, small key -> Insufficient Encryption Key Size. */
+	/* Encrypted with a small key but still unauthenticated -> Insufficient
+	 * Authentication (authentication precedes the key-size test for an
+	 * authentication-only attribute). */
 	ac.encrypted = true;
 	ac.enc_key_size = 7;
 	ac.min_key_size = 16;
 	expect_err(&ac, &db, peer, pdu, 3, SEEDGE_ATT_OP_READ_REQ,
-	    SEEDGE_ATT_ERR_INSUFF_ENC_KEY_SIZE);
+	    SEEDGE_ATT_ERR_INSUFF_AUTHEN);
 
 	/* Encrypted, adequate key, but not authenticated -> Insufficient
 	 * Authentication (Core Spec Vol 3 Part F 3.4.4.4). */
@@ -1154,10 +1164,19 @@ ATF_TC_BODY(test_se_multi_notification_too_big, tc)
 	values[0] = big;
 	lengths[0] = 600;		/* 4 + 600 > 23 */
 
+	/*
+	 * C2-M4: a first entry too large for even a single-tuple Multiple HVN
+	 * is not silently dropped.  att_send_multiple_handle_value_ntf falls
+	 * back to one truncating Handle Value Notification per handle (Core
+	 * Spec Vol 3 Part F §3.4.7.1); the oversized value is clamped to
+	 * ATT_MTU-3 and delivered, so the peer does receive a notification.
+	 */
 	ret = att_send_multiple_handle_value_ntf(&ac, handles, values,
 	    lengths, 1);
-	ATF_CHECK_EQ_MSG(ret, 0, "an unsendable first entry yields no PDU");
-	ATF_CHECK(recv(peer, got, sizeof(got), MSG_DONTWAIT) < 0);
+	ATF_CHECK_EQ_MSG(ret, 0, "fallback per-handle notification succeeds");
+	ATF_CHECK_MSG(recv(peer, got, sizeof(got), MSG_DONTWAIT) >= 0,
+	    "a truncating Handle Value Notification is delivered");
+	ATF_CHECK_EQ(got[0], SEEDGE_ATT_OP_HANDLE_NOTIFY);
 
 	srv_cleanup(&ac, peer);
 }

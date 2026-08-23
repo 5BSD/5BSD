@@ -288,15 +288,15 @@ iso_remove_paths(struct blued_iso_stream *s)
 	    s->role == ISO_ROLE_CIS_PERIPHERAL) {
 		if ((s->paths_up & ISO_PATH_INPUT_UP) != 0 &&
 		    hci_le_remove_iso_data_path(fd, s->cis_handle,
-		    HCI_ISO_DIR_INPUT) == 0)
+		    HCI_ISO_REMOVE_INPUT) == 0)
 			s->paths_up &= ~ISO_PATH_INPUT_UP;
 		if ((s->paths_up & ISO_PATH_OUTPUT_UP) != 0 &&
 		    hci_le_remove_iso_data_path(fd, s->cis_handle,
-		    HCI_ISO_DIR_OUTPUT) == 0)
+		    HCI_ISO_REMOVE_OUTPUT) == 0)
 			s->paths_up &= ~ISO_PATH_OUTPUT_UP;
 	} else {
 		uint8_t dir = (s->role == ISO_ROLE_BIS_SOURCE) ?
-		    HCI_ISO_DIR_INPUT : HCI_ISO_DIR_OUTPUT;
+		    HCI_ISO_REMOVE_INPUT : HCI_ISO_REMOVE_OUTPUT;
 
 		for (i = 0; i < s->num_bis; i++) {
 			uint32_t bit = (uint32_t)1 << i;
@@ -326,21 +326,21 @@ iso_remove_paths_checked(struct blued_iso_stream *s)
 	    s->role == ISO_ROLE_CIS_PERIPHERAL) {
 		if ((s->paths_up & ISO_PATH_INPUT_UP) != 0) {
 			if (hci_le_remove_iso_data_path(fd, s->cis_handle,
-			    HCI_ISO_DIR_INPUT) < 0)
+			    HCI_ISO_REMOVE_INPUT) < 0)
 				failed = 1;
 			else
 				s->paths_up &= ~ISO_PATH_INPUT_UP;
 		}
 		if ((s->paths_up & ISO_PATH_OUTPUT_UP) != 0) {
 			if (hci_le_remove_iso_data_path(fd, s->cis_handle,
-			    HCI_ISO_DIR_OUTPUT) < 0)
+			    HCI_ISO_REMOVE_OUTPUT) < 0)
 				failed = 1;
 			else
 				s->paths_up &= ~ISO_PATH_OUTPUT_UP;
 		}
 	} else {
 		uint8_t dir = s->role == ISO_ROLE_BIS_SOURCE ?
-		    HCI_ISO_DIR_INPUT : HCI_ISO_DIR_OUTPUT;
+		    HCI_ISO_REMOVE_INPUT : HCI_ISO_REMOVE_OUTPUT;
 
 		for (uint8_t i = 0; i < s->num_bis; i++) {
 			uint32_t bit = (uint32_t)1 << i;
@@ -449,6 +449,17 @@ blued_iso_cis_create(struct blued_adapter *adp, const bdaddr_t *peer,
 	conn = blued_conn_by_peer(adp, peer, peer_type);
 	if (conn == NULL) {
 		LOG_ISO(1, "Create CIS: peer not connected");
+		return (-1);
+	}
+	/*
+	 * Only use con_handle once it is valid: a CONNECTING conn has
+	 * con_handle == 0 with the flag clear, and a reconnecting conn may hold
+	 * a stale handle (C3-H3 clears the flag, not the number).  0x0000 is a
+	 * legal HCI handle, so an unchecked read could target a different live
+	 * ACL and create the CIS on the wrong peer.
+	 */
+	if (!conn->con_handle_valid) {
+		LOG_ISO(1, "Create CIS: peer ACL not yet established");
 		return (-1);
 	}
 	acl_handle = conn->con_handle;

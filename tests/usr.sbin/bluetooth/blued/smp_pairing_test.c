@@ -749,16 +749,16 @@ ATF_TC_BODY(test_smp_pair_invalid_key_size, tc)
 
 		/*
 		 * Central must reject with Pairing Failed.  Vol 3 Part H
-		 * §2.3.4 / Table 3.7: a Max_Encryption_Key_Size outside the
-		 * [7,16] range is an out-of-range parameter => reason
-		 * "Invalid Parameters" (0x0A).
+		 * §2.3.4: a Max_Encryption_Key_Size outside the [7,16] range is
+		 * a key-size failure => reason "Encryption Key Size" (0x06),
+		 * matching the Linux and Zephyr SMP stacks (S-m6).
 		 */
 		{
 			uint8_t buf[65];
 			ssize_t rn = recv(peer_fd, buf, sizeof(buf), 0);
 			if (rn < 2 || buf[0] != BTPR_SMP_PAIRING_FAILED)
 				_exit(20);
-			if (buf[1] != BTPR_SMP_ERR_INVALID_PARAMETERS)
+			if (buf[1] != BTPR_SMP_ERR_ENCRYPTION_KEY_SIZE)
 				_exit(21);
 		}
 
@@ -4642,9 +4642,12 @@ ATF_TC_BODY(test_smp_pair_oob_sc, tc)
 	    local_pk_x) == 0);
 
 	/* Set up OOB data: peer's confirm/random, our local_random */
+	memset(&oob_sc, 0, sizeof(oob_sc));
 	memcpy(oob_sc.confirm, peer_confirm, 16);
 	memcpy(oob_sc.random, peer_random, 16);
 	memcpy(oob_sc.local_random, local_random, 16);
+	oob_sc.have_peer = true;
+	oob_sc.have_local = true;
 	memset(&oob_data, 0, sizeof(oob_data));
 	oob_data.sc = &oob_sc;
 	sc.oob = &oob_data;
@@ -5670,6 +5673,7 @@ ATF_TC_BODY(test_smp_recv_keypress_callback, tc)
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_SEQPACKET, 0, sp));
 	memset(&sc, 0, sizeof(sc));
 	sc.fd = sp[0];
+	sc.kp_negotiated = true;	/* S-m7: keypress delivery requires negotiation */
 	sc.keypress_cb = test_keypress_callback;
 	sc.keypress_cb_arg = &test_keypress_callbacks;
 	test_keypress_callbacks = 0;

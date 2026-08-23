@@ -332,6 +332,19 @@ att_open(struct att_conn *ac, const uint8_t *local_addr,
 		    &tv, sizeof(tv)) < 0)
 			warn("setsockopt SO_RCVTIMEO");
 	}
+	/*
+	 * Bound att_server_send(): it runs on the event-loop thread while
+	 * gatt_db_lock is held, so a peer whose L2CAP TX buffer is full would
+	 * otherwise stall every gatt_db_lock acquirer (the whole GATT worker
+	 * pool) until link supervision (~32s) drops the link.  5s caps that
+	 * priority inversion while staying far above any healthy backpressure.
+	 */
+	{
+		struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+		if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+		    &tv, sizeof(tv)) < 0)
+			warn("setsockopt SO_SNDTIMEO");
+	}
 
 	ac->fd = fd;
 	ac->mtu = ATT_DEFAULT_MTU;
@@ -392,6 +405,13 @@ att_open_fd(struct att_conn *ac, int fd, const uint8_t *local_addr,
 		if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO,
 		    &tv, sizeof(tv)) < 0)
 			warn("setsockopt SO_RCVTIMEO");
+	}
+	/* Bound att_server_send() under gatt_db_lock; see att_open(). */
+	{
+		struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+		if (setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO,
+		    &tv, sizeof(tv)) < 0)
+			warn("setsockopt SO_SNDTIMEO");
 	}
 
 	ac->fd = fd;

@@ -109,7 +109,8 @@ void	smp_pairing_arm(struct smp_conn *);
 bool	smp_pairing_timed_out(struct smp_conn *);
 
 /* --- Crypto (smp_crypto.c) --- */
-int	smp_validate_public_key(const uint8_t *, const uint8_t *);
+int	smp_validate_public_key(const uint8_t *, const uint8_t *,
+	    const uint8_t *);
 
 /* --- Key distribution and bond helpers (smp_keys.c) --- */
 int	smp_distribute_init_keys(struct smp_conn *, const uint8_t *,

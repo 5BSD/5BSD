@@ -107,6 +107,13 @@ int	hci_set_event_mask_page2(int hci_fd, uint64_t mask);
 /* Data_Path_Direction, §7.8.109. */
 #define HCI_ISO_DIR_INPUT	0x00	/* Host -> Controller (source) */
 #define HCI_ISO_DIR_OUTPUT	0x01	/* Controller -> Host (sink) */
+/*
+ * Remove ISO Data Path (Core 6.3 Vol 4 Part E Section 7.8.110) takes a
+ * Data_Path_Direction BITMASK, not the Setup ISO Data Path enum above:
+ * bit0 = remove input path, bit1 = remove output path (0x00 is invalid).
+ */
+#define HCI_ISO_REMOVE_INPUT	0x01
+#define HCI_ISO_REMOVE_OUTPUT	0x02
 
 /* Data_Path_ID 0x00 routes ISO data over the HCI transport, §7.8.109. */
 #define HCI_ISO_PATH_HCI	0x00

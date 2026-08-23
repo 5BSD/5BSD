@@ -240,6 +240,27 @@ blued_periph_accept(struct blued_adapter *adp)
 	ac->mtu = ATT_DEFAULT_MTU;
 	ac->min_key_size = blued_cfg.min_key_size;
 	ac->ind_timer = 0;
+	/*
+	 * Bound att_server_send() on this server socket: it runs on the
+	 * event-loop thread under gatt_db_lock, so a stalled peer must not be
+	 * able to block the whole GATT worker pool.  5s caps the priority
+	 * inversion, well above any healthy L2CAP backpressure.
+	 */
+	{
+		struct timeval tv = { .tv_sec = 5, .tv_usec = 0 };
+		if (setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO,
+		    &tv, sizeof(tv)) < 0)
+			warn("setsockopt SO_SNDTIMEO");
+	}
+	/*
+	 * calloc leaves bearer_fd == 0, which att_server_send() would select
+	 * as fd 0 for every out-of-dispatch PDU (notifications, indications,
+	 * Service Changed).  Mirror att_open()'s initializer: -1 means "use
+	 * the primary ATT socket (ac->fd)".
+	 */
+	ac->bearer_fd = -1;
+	for (int i = 0; i < ATT_MAX_EATT_BEARERS; i++)
+		ac->eatt[i].fd = -1;
 	ac->buf = malloc(ATT_MAX_MTU);
 	if (ac->buf == NULL) {
 		close(client_fd);
@@ -314,28 +335,47 @@ blued_periph_setup_fail(struct blued_conn *conn)
  * Returns -1 only when the indication was due but att_send_indication() failed,
  * so the caller must NOT advance the stored db_hash (finding 120).
  */
+/*
+ * Resolve the Service Changed characteristic value / CCCD handles and value
+ * permissions from the GATT database.  This is the ONLY part of the Service
+ * Changed path that reads the database, so callers hold gatt_db_lock across
+ * just this lookup and can then send the indication (a blocking socket write)
+ * with the lock released -- keeping the DB-mutating main event loop off a lock
+ * held across the network send.  Returns 0 on success, -1 if the characteristic
+ * is absent.
+ */
 static int
-gatt_send_service_changed(struct blued_conn *pconn, struct att_conn *ac,
-    struct att_db *db, uint16_t start, uint16_t end)
+gatt_service_changed_lookup(struct att_db *db, uint16_t *sc_handle,
+    uint16_t *cccd_handle, uint8_t *sc_perms)
 {
 	int i;
-	uint16_t sc_handle = 0;
-	uint16_t cccd_handle = 0;
-	uint8_t sc_perms = 0;
 
-	/* Find the Service Changed characteristic value handle */
+	*sc_handle = 0;
+	*cccd_handle = 0;
+	*sc_perms = 0;
 	for (i = 0; i < db->count; i++) {
 		if (db->attrs[i].uuid16 == 0x2A05 &&
 		    db->attrs[i].is_char_value) {
-			sc_handle = db->attrs[i].handle;
-			sc_perms = db->attrs[i].perms;
+			*sc_handle = db->attrs[i].handle;
+			*sc_perms = db->attrs[i].perms;
 			/* The CCCD immediately follows the char value */
 			if (i + 1 < db->count &&
 			    db->attrs[i + 1].uuid16 == GATT_UUID_CCCD)
-				cccd_handle = db->attrs[i + 1].handle;
+				*cccd_handle = db->attrs[i + 1].handle;
 			break;
 		}
 	}
+	if (*sc_handle == 0 || *cccd_handle == 0)
+		return (-1);
+	return (0);
+}
+
+static int
+gatt_send_service_changed(struct blued_conn *pconn, struct att_conn *ac,
+    uint16_t sc_handle, uint16_t cccd_handle, uint8_t sc_perms, uint16_t start,
+    uint16_t end)
+{
+	int i;
 
 	if (sc_handle == 0 || cccd_handle == 0) {
 		LOG_GATT(1, "Service Changed: characteristic not found");
@@ -478,6 +518,11 @@ blued_conn_setup_peripheral_impl(void *arg)
 			struct smp_conn sc;
 			struct pollfd pfd;
 			int smp_fd, pr;
+			/* OOB storage for the responder, valid across smp_respond(). */
+			struct smp_oob_legacy oob_lg;
+			struct smp_oob_sc oob_sc;
+			struct smp_oob_data oob_data;
+			bool have_lg = false, have_sc = false;
 
 			smp_fd = socket(PF_BLUETOOTH,
 			    SOCK_SEQPACKET | SOCK_CLOEXEC | SOCK_CLOFORK,
@@ -571,6 +616,22 @@ blued_conn_setup_peripheral_impl(void *arg)
 				 * responder (Core Spec Vol 3 Part H §3.5.1). */
 				sc.reject_pairing = !atomic_load(&blued_pairable);
 
+				/*
+				 * Wire any operator-injected OOB for this peer so
+				 * inbound SC-OOB / legacy-OOB pairing can complete
+				 * (previously the responder never consumed OOB, so
+				 * SC-OOB always fell back and failed).
+				 */
+				sc.oob = NULL;
+				if (blued_oob_take((const uint8_t *)&conn->dst,
+				    &oob_lg, &have_lg, &oob_sc, &have_sc) &&
+				    (have_lg || have_sc)) {
+					memset(&oob_data, 0, sizeof(oob_data));
+					oob_data.legacy = have_lg ? &oob_lg : NULL;
+					oob_data.sc = have_sc ? &oob_sc : NULL;
+					sc.oob = &oob_data;
+				}
+
 				if (smp_respond(&sc) == 0) {
 					/*
 					 * C3-H1: smp_respond() already waited
@@ -657,6 +718,16 @@ blued_conn_setup_peripheral_impl(void *arg)
 				}
 				smp_close(&sc);
 			}
+			/*
+			 * Clear OOB material once smp_respond() has consumed it
+			 * (success or failure).  The SC-OOB ephemeral is detached
+			 * here, not at take time (C1-H2), so the published local
+			 * public key survived through pairing.
+			 */
+			explicit_bzero(&oob_lg, sizeof(oob_lg));
+			explicit_bzero(&oob_sc, sizeof(oob_sc));
+			if (have_sc)
+				smp_sc_oob_clear_local();
 		}
 	}
 skip_smp:
@@ -715,13 +786,51 @@ skip_smp:
 		 * its attribute cache (Core Spec Vol 3 Part G 2.5.2,
 		 * 7.1).
 		 */
-		if (bond != NULL && bond->has_db_hash) {
+		/*
+		 * periph_gatt_db is guarded by gatt_db_lock, but this worker holds
+		 * only bond_db_lock.  The main thread mutates the DB in place under
+		 * gatt_db_lock (attdb_copy on GATT_COMMIT, attdb_set_char_value on
+		 * SET_NAME), so reading/hashing it here without gatt_db_lock can see
+		 * a half-copied DB and persist a torn Database Hash into the bond.
+		 *
+		 * Hold gatt_db_lock across ONLY the DB reads -- the Database Hash
+		 * computation and the Service Changed handle lookup (a sink, legally
+		 * nested inside bond_db_lock; neither callee re-acquires it).  The
+		 * Service Changed indication is a BLOCKING socket send (bounded by
+		 * SO_SNDTIMEO) and the bond commit is a disk write; both run after
+		 * the lock is dropped so a peer that stalls its L2CAP TX cannot
+		 * freeze the main event loop, which takes the same gatt_db_lock
+		 * around every ATT dispatch.
+		 */
+		if (bond != NULL) {
+			struct smp_bond previous = *bond;
 			uint8_t cur_hash[16];
+			uint16_t sc_handle = 0, cccd_handle = 0;
+			uint8_t sc_perms = 0;
+			bool send_sc = false, first_hash = false;
 
-			attdb_compute_db_hash(&periph_gatt_db, cur_hash);
-			if (memcmp(bond->db_hash, cur_hash, 16) != 0) {
-				struct smp_bond previous = *bond;
+			pthread_mutex_lock(&blued_g.gatt_db_lock);
+			if (bond->has_db_hash) {
+				attdb_compute_db_hash(&periph_gatt_db, cur_hash);
+				if (memcmp(bond->db_hash, cur_hash, 16) != 0) {
+					send_sc = true;
+					(void)gatt_service_changed_lookup(
+					    &periph_gatt_db, &sc_handle,
+					    &cccd_handle, &sc_perms);
+				}
+			} else {
+				/*
+				 * First connection after bonding -- snapshot the
+				 * server's current db_hash so future reconnects
+				 * can detect changes.
+				 */
+				attdb_compute_db_hash(&periph_gatt_db,
+				    bond->db_hash);
+				first_hash = true;
+			}
+			pthread_mutex_unlock(&blued_g.gatt_db_lock);
 
+			if (send_sc) {
 				LOG_GATT(1, "db_hash changed for bonded "
 				    "device, sending Service Changed");
 				/*
@@ -743,7 +852,8 @@ skip_smp:
 				 * stale cache forever.
 				 */
 				if (gatt_send_service_changed(conn, ac,
-				    &periph_gatt_db, 0x0001, 0xFFFF) == 0) {
+				    sc_handle, cccd_handle, sc_perms, 0x0001,
+				    0xFFFF) == 0) {
 					memcpy(bond->db_hash, cur_hash, 16);
 					if (smp_bond_db_commit_bond(
 					    blued_g.bond_db, bond,
@@ -751,24 +861,16 @@ skip_smp:
 						warnx("saving peripheral "
 						    "database hash");
 				}
+			} else if (first_hash) {
+				bond->has_db_hash = true;
+				if (smp_bond_db_commit_bond(blued_g.bond_db,
+				    bond, &previous) == 0)
+					LOG_GATT(1, "saved server db_hash for "
+					    "bonded device");
+				else
+					warnx("saving peripheral database "
+					    "hash");
 			}
-		} else if (bond != NULL && !bond->has_db_hash) {
-			struct smp_bond previous = *bond;
-
-			/*
-			 * First connection after bonding -- save the
-			 * server's current db_hash so future reconnects
-			 * can detect changes.
-			 */
-			attdb_compute_db_hash(&periph_gatt_db,
-			    bond->db_hash);
-			bond->has_db_hash = true;
-			if (smp_bond_db_commit_bond(blued_g.bond_db, bond,
-			    &previous) == 0)
-				LOG_GATT(1, "saved server db_hash for bonded "
-				    "device");
-			else
-				warnx("saving peripheral database hash");
 		}
 	}
 	pthread_mutex_unlock(&blued_g.bond_db_lock);

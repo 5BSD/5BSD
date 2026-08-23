@@ -1326,6 +1326,23 @@ handle_prepare_write(struct att_conn *ac, struct att_db *db,
 	}
 
 	/*
+	 * LOW: att_check_write_perm() only inspects the permission bits; an
+	 * attribute may advertise WRITE yet have no writable backing store
+	 * (a->value == NULL).  Such a prepared write can never be applied — the
+	 * Execute apply loop skips it — so it must be rejected here at Prepare
+	 * time (Core Spec Vol 3 Part F §3.4.6) with Write Not Permitted rather
+	 * than silently discarded at Execute, which would falsely report a
+	 * successful long write to the peer.  A NULL backing store means the
+	 * attribute cannot be written at all, so length is not the issue and
+	 * Invalid Attribute Value Length would be the wrong code.
+	 */
+	if (a->value == NULL) {
+		ATT_RSP_BUF_FREE();
+		return att_send_error(ac, ATT_OP_PREPARE_WRITE_REQ, handle,
+		    ATT_ERR_WRITE_NOT_PERMITTED);
+	}
+
+	/*
 	 * C2-M7: an AUTHORIZE attribute requires the owning app's per-access
 	 * allow/deny decision.  The direct Write path performs it by deferring
 	 * the write and awaiting the app's verdict; the batched Execute Write
@@ -1657,6 +1674,15 @@ handle_execute_write(struct att_conn *ac, struct att_db *db,
 				continue;
 			}
 
+			/*
+			 * Defense in depth: an unbacked attribute is now
+			 * rejected at Prepare time (see handle_prepare_write),
+			 * so this branch should be unreachable for a peer that
+			 * followed the protocol.  Keep the guard so a stray
+			 * queued entry can never memcpy() to a NULL destination.
+			 */
+			if (a->value == NULL)
+				continue;
 			memcpy(a->value + pe->offset, pe->value, pe->len);
 			if ((uint32_t)pe->offset + (uint32_t)pe->len >
 			    a->value_len)

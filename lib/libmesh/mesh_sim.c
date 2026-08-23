@@ -269,6 +269,18 @@ sim_now_ms(const struct mesh_sim *sim)
 	return (sim->now_ms);
 }
 
+/*
+ * Wall-clock seconds for the IV Update dwell anchor.  Uses wall_now (set by
+ * the host from CLOCK_REALTIME) so time-in-state survives a restart; falls
+ * back to the monotonic `now` when the host has not provided a wall clock.
+ */
+static uint64_t
+sim_iv_now(const struct mesh_sim *sim)
+{
+
+	return (sim->wall_now != 0 ? sim->wall_now : sim->now);
+}
+
 /* ================================================================
  * Setup.
  * ================================================================ */
@@ -315,7 +327,7 @@ mesh_sim_add_node(struct mesh_sim *sim, uint16_t addr, uint8_t n_elements)
 	node->primary_net_idx = 0;
 	if (mesh_sim_add_appkey(node, 0, 0, sim->appkey) != 0)
 		return (NULL);
-	mesh_iv_init(&node->iv, sim->iv_index, sim->now);
+	mesh_iv_init(&node->iv, sim->iv_index, sim_iv_now(sim));
 	node->seq = 0;
 	mesh_rpl_init(&node->rpl, node->rpl_store, MESH_SIM_RPL_SIZE);
 	mesh_kr_init(&node->kr);
@@ -458,6 +470,14 @@ mesh_sim_set_relay(struct mesh_node *node, int enabled)
 		return;
 	node->is_relay = enabled ? 1 : 0;
 	node->relay.enabled = enabled ? 1 : 0;
+	/*
+	 * The Directed Forwarding managed-flooding fallback IS the Relay
+	 * feature: node_recv_net always takes the DF branch (df_enabled is set
+	 * once at init) and mesh_df_forward_decide falls back to FLOOD purely on
+	 * managed_flood_relay.  Track the Relay state here too, or Config Relay
+	 * Set = 0 has no effect and the node keeps re-flooding (NB-3).
+	 */
+	node->df_feat.managed_flood_relay = enabled ? 1 : 0;
 }
 
 int
@@ -1268,17 +1288,26 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 			explicit_bzero(remote_key, sizeof(remote_key));
 			return;
 		}
-		rc = node->devkey_rx(node->devkey_rx_arg, src, dst, access,
-		    access_len, reply_access, &reply_len);
+		rc = node->devkey_rx(node->devkey_rx_arg, src, dst, net_idx,
+		    access, access_len, reply_access, &reply_len);
 		if (rc <= 0 || reply_len == 0 || reply_len > sizeof(reply_access))
 			return;
 		reply_seq = node->seq;
+		/*
+		 * The device-key nonce IV MUST match the IV the network layer
+		 * secures this reply with (mesh_iv_tx_index), not the inbound
+		 * request's decrypt IV: during an IV Update they differ, so a
+		 * reply encrypted at the request's IV is undecryptable by the
+		 * peer, and reusing the inbound IV with a fresh reply_seq risks
+		 * device-nonce reuse (NB-5).
+		 */
 		if (mesh_upper_encrypt(node->devkey, 0, 0, reply_seq, node->addr,
-		    src, iv, NULL, reply_access, reply_len, reply_upper,
-		    &reply_upper_len) != 0)
+		    src, mesh_iv_tx_index(&node->iv), NULL, reply_access,
+		    reply_len, reply_upper, &reply_upper_len) != 0)
 			return;
 		n = mesh_sim_send_upper(sim, node, src, reply_seq, reply_upper,
-		    reply_upper_len, 0, 0, 5);
+		    reply_upper_len, 0, 0,
+		    node->default_ttl ? node->default_ttl : 5);
 		if (n > 0)
 			node->seq += (uint32_t)n;
 		return;
@@ -1338,7 +1367,8 @@ node_deliver_access(struct mesh_sim *sim, struct mesh_node *node, uint16_t src,
 	    rx_app_idx, access, access_len, &reply, sim_now_ms(sim));
 	if (reply.have_reply)
 		(void)node_originate(sim, node, reply.src, reply.dst, reply.opcode,
-		    reply.params, reply.params_len, 5);
+		    reply.params, reply.params_len,
+		    node->default_ttl ? node->default_ttl : 5);
 }
 
 /* ================================================================
@@ -1445,6 +1475,15 @@ df_handle_control(struct mesh_sim *sim, struct mesh_node *node,
 			    now);
 			memset(&rep, 0, sizeof(rep));
 			rep.confirmation_request = 1;
+			/*
+			 * P-C1b (Table 3.52): mesh_df_path_reply_build() serializes
+			 * the Path Target unicast range only when Unicast_Destination
+			 * is set.  This arm is reached only when req.destination
+			 * matched a local element (always a unicast address), so set
+			 * it -- otherwise the built reply omits the target range and
+			 * the origin's range_covers() check rejects the reply.
+			 */
+			rep.unicast_destination = 1;
 			rep.forwarding_number = req.forwarding_number;
 			rep.path_origin = req.origin.range_start;
 			rep.target.range_start = node->addr;
@@ -1908,6 +1947,17 @@ node_recv_net(struct mesh_sim *sim, struct mesh_node *node,
 				if (!s->used || s->dst != pdu.src ||
 				    s->seqzero != ack.seqzero)
 					continue;
+				/*
+				 * MshPRT_v1.1 Section 3.5.3.4: a Segment Ack with
+				 * an all-zero BlockAck cancels the segmented
+				 * transmission (e.g. a busy or OBO peer), it does
+				 * NOT request a full retransmission.  Abort the
+				 * SAR context instead of re-queuing every segment.
+				 */
+				if (ack.blockack == 0) {
+					s->used = 0;
+					break;
+				}
 				s->blockack |= ack.blockack &
 				    mesh_blockack_full(s->segn);
 				sar_tx_requeue_missing(sim, s);
@@ -2178,6 +2228,14 @@ mesh_sim_node_recv_beacon(struct mesh_node *node, const uint8_t *beacon,
 	if (node == NULL || beacon == NULL)
 		return (-1);
 	/*
+	 * The IV Update dwell is anchored on the wall clock so it survives a
+	 * restart: when the host has supplied one (wall_now != 0), use it for
+	 * the mesh_iv_recv_beacon dwell checks below.  Otherwise keep the
+	 * caller's `now` (e.g. unit tests inject their own dwell clock).
+	 */
+	if (node->sim->wall_now != 0)
+		now = node->sim->wall_now;
+	/*
 	 * A beacon secured with the node's current key carries the IV state
 		 * only; the Key Refresh phase advance (Section 3.11.4) is driven by
 	 * the beacon secured with the NEW key.
@@ -2243,7 +2301,7 @@ mesh_sim_begin_iv_update(struct mesh_node *node)
 
 	if (node == NULL)
 		return (-1);
-	return (mesh_iv_begin_update(&node->iv, node->sim->now) ==
+	return (mesh_iv_begin_update(&node->iv, sim_iv_now(node->sim)) ==
 	    MESH_IV_STARTED ? 0 : -1);
 }
 
@@ -2253,7 +2311,7 @@ mesh_sim_complete_iv_update(struct mesh_node *node)
 
 	if (node == NULL)
 		return (-1);
-	return (mesh_iv_complete_update(&node->iv, node->sim->now) ==
+	return (mesh_iv_complete_update(&node->iv, sim_iv_now(node->sim)) ==
 	    MESH_IV_COMPLETED ? 0 : -1);
 }
 

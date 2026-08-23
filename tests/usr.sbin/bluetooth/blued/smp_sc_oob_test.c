@@ -340,9 +340,19 @@ child_oob_responder(int fd, uint8_t peer_pres_oob, bool check_inject)
 	pack_addr(a1, central_addr, BDADDR_LE_PUBLIC);	/* initiator = DUT */
 	pack_addr(a2, periph_addr, BDADDR_LE_PUBLIC);	/* responder = peer */
 	smp_f5(dh, na, nb, a1, a2, mackey, ltk);
-	/* OOB: Ea uses rb (peer random), Eb uses ra (initiator random). */
-	smp_f6(mackey, na, nb, g_rb, iocap_a, a1, a2, ea_v);
-	smp_f6(mackey, nb, na, g_ra, iocap_b, a2, a1, eb);
+	/*
+	 * OOB: Ea uses rb (peer random).  Eb uses ra (initiator random) ONLY
+	 * when we (the responder) actually received the initiator's OOB, i.e.
+	 * we advertised pres[2]=OOB present; otherwise ra=0 (Core Spec Vol 3
+	 * Part H Table 2.7 / §2.3.5.6.5).
+	 */
+	{
+		uint8_t ra_for_eb[16] = { 0 };
+		if (peer_pres_oob == BT_CORE63_SMP_OOB_PRESENT)
+			memcpy(ra_for_eb, g_ra, 16);
+		smp_f6(mackey, na, nb, g_rb, iocap_a, a1, a2, ea_v);
+		smp_f6(mackey, nb, na, ra_for_eb, iocap_b, a2, a1, eb);
+	}
 
 	n = recv(fd, pdu, 17, 0);
 	if (n < 2)
@@ -397,6 +407,8 @@ run_initiator(bool inject, bool dut_has_oob, uint8_t peer_pres_oob,
 		oob_sc.confirm[0] ^= 0xFF;
 	memcpy(oob_sc.random, g_rb, 16);		/* peer (rb) */
 	memcpy(oob_sc.local_random, g_ra, 16);		/* ours (ra) */
+	oob_sc.have_peer = true;	/* we received the peer's OOB */
+	oob_sc.have_local = true;	/* we generated/shared local OOB */
 	oob.legacy = NULL;
 	oob.sc = &oob_sc;
 
@@ -457,6 +469,8 @@ ATF_TC_BODY(sc_oob_initiator_success, tc)
 	    oob_sc.confirm) == 0);
 	memcpy(oob_sc.random, g_rb, 16);
 	memcpy(oob_sc.local_random, g_ra, 16);
+	oob_sc.have_peer = true;
+	oob_sc.have_local = true;
 	oob.legacy = NULL; oob.sc = &oob_sc;
 	smp_sc_ephemeral_hook = inject_hook;
 
@@ -672,6 +686,8 @@ run_responder(bool corrupt_ca, struct smp_bond_db *db_out, int *child_status)
 		oob_sc.confirm[0] ^= 0xFF;
 	memcpy(oob_sc.random, g_ra, 16);	/* peer (initiator) ra */
 	memcpy(oob_sc.local_random, g_rb, 16);	/* ours (responder) rb */
+	oob_sc.have_peer = true;
+	oob_sc.have_local = true;
 	oob.legacy = NULL; oob.sc = &oob_sc;
 
 	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_SEQPACKET, 0, smp_fds) == 0);

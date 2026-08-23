@@ -2086,8 +2086,11 @@ ATF_TC_BODY(test_smp_ah_spec_vector, tc)
  * Declared in smp_internal.h — provide local declaration for tests.
  * ================================================================ */
 
-/* Forward-declare smp_validate_public_key (from smp_internal.h) */
-int	smp_validate_public_key(const uint8_t *, const uint8_t *);
+/* Forward-declare smp_validate_public_key (from smp_internal.h).  The third
+ * argument is the local public-key X for the reflection-attack check
+ * (CVE-2020-26558); NULL skips it, which these on-curve/debug-key tests want. */
+int	smp_validate_public_key(const uint8_t *, const uint8_t *,
+	    const uint8_t *);
 
 ATF_TC_WITHOUT_HEAD(test_sc_debug_key_x_match);
 ATF_TC_BODY(test_sc_debug_key_x_match, tc)
@@ -2098,8 +2101,8 @@ ATF_TC_BODY(test_sc_debug_key_x_match, tc)
 	/*
 	 * Both X and Y match the debug key -- must be rejected.
 	 */
-	ATF_CHECK_EQ_MSG(smp_validate_public_key(sc_debug_x, sc_debug_y), -1,
-	    "smp_validate_public_key must reject the SC Debug Public Key");
+	ATF_CHECK_EQ_MSG(smp_validate_public_key(sc_debug_x, sc_debug_y, NULL),
+	    -1, "smp_validate_public_key must reject the SC Debug Public Key");
 }
 
 ATF_TC_WITHOUT_HEAD(test_sc_debug_key_y_match);
@@ -2125,8 +2128,8 @@ ATF_TC_BODY(test_sc_debug_key_y_match, tc)
 	memcpy(modified_y, sc_debug_y, 32);
 	modified_y[0] ^= 0xFF;	/* flip a byte */
 
-	ATF_CHECK_EQ_MSG(smp_validate_public_key(sc_debug_x, modified_y), -1,
-	    "modified debug key Y should be rejected (off-curve)");
+	ATF_CHECK_EQ_MSG(smp_validate_public_key(sc_debug_x, modified_y, NULL),
+	    -1, "modified debug key Y should be rejected (off-curve)");
 }
 
 ATF_TC_WITHOUT_HEAD(test_sc_debug_key_normal_key_accepted);
@@ -2160,8 +2163,8 @@ ATF_TC_BODY(test_sc_debug_key_normal_key_accepted, tc)
 	ATF_REQUIRE_EQ(pk_raw[0], 0x04);	/* uncompressed point format */
 
 	/* X = pk_raw[1..32], Y = pk_raw[33..64] (big-endian) */
-	ATF_CHECK_EQ_MSG(smp_validate_public_key(pk_raw + 1, pk_raw + 33), 0,
-	    "valid P-256 key should be accepted by smp_validate_public_key");
+	ATF_CHECK_EQ_MSG(smp_validate_public_key(pk_raw + 1, pk_raw + 33, NULL),
+	    0, "valid P-256 key should be accepted by smp_validate_public_key");
 
 	EVP_PKEY_free(pkey);
 }

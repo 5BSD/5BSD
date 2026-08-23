@@ -190,6 +190,8 @@ void	blued_mesh_demux_report(const uint8_t *ad, size_t adlen);
  * exists.
  */
 void	blued_mesh_scan_resume(void);
+void	blued_mesh_scan_reassert(void);
+void	blued_mesh_adv_reset(void);
 
 /*
  * Release a departing client's mesh subscription (implicit unsubscribe on

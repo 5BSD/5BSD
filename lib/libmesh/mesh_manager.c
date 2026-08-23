@@ -73,6 +73,15 @@ range_used(const struct mesh_mgr *mgr, uint16_t addr, uint8_t n)
 
 	if (blocks_overlap(addr, n, mgr->self_addr, mgr->self_elements))
 		return (1);
+	/*
+	 * An in-flight provisioning reservation is not yet in the roster, so it
+	 * must be checked explicitly -- otherwise import-remote-node (or a second
+	 * allocation) can hand out the block a live handshake is completing onto,
+	 * guaranteeing a unicast collision when that handshake commits (NB-21).
+	 */
+	if (mgr->pending.active &&
+	    blocks_overlap(addr, n, mgr->pending.addr, mgr->pending.num_elements))
+		return (1);
 	for (i = 0; i < mgr->n_nodes; i++) {
 		if (blocks_overlap(addr, n, mgr->nodes[i].addr,
 		    mgr->nodes[i].num_elements))
@@ -302,14 +311,17 @@ mesh_mgr_node_at(const struct mesh_mgr *mgr, size_t i)
 
 #define	MESH_MGR_MAGIC		"MSHMGR\0\1"	/* 8 octets */
 #define	MESH_MGR_MAGIC_LEN	8
-/* v2 added the persisted SEQ high-water mark; v3 adds the staged Phase-1 AppKey. */
-#define	MESH_MGR_VERSION	3
+/*
+ * v2 added the persisted SEQ high-water mark; v3 adds the staged Phase-1
+ * AppKey; v4 adds the per-node Key Refresh distribution state (kr_state) so a
+ * NetKey key-refresh in progress survives a crash instead of silently ejecting
+ * the not-yet-acked nodes at the next phase advance.
+ */
+#define	MESH_MGR_VERSION	4
 #define	MESH_MGR_HDR_LEN	20		/* magic..crc32 inclusive */
 
 /* Serialised network/self header (little-endian), 82 octets. */
 #define	MESH_MGR_NETHDR_LEN	82
-/* v2 network/self header: identical through the SEQ high-water, no appkey_new. */
-#define	MESH_MGR_NETHDR_V2_LEN	66
 
 /*
  * Reserved SEQ block persisted ahead of the in-memory high-water mark
@@ -320,8 +332,8 @@ mesh_mgr_node_at(const struct mesh_mgr *mgr, size_t i)
  * DevKey seals; every save renews the reservation.
  */
 #define	MESH_MGR_SEQ_RESERVE	100u
-/* Serialised per-node record (little-endian), 43 octets. */
-#define	MESH_MGR_NODEREC_LEN	43
+/* Serialised per-node record (little-endian), 44 octets (v4: +kr_state). */
+#define	MESH_MGR_NODEREC_LEN	44
 
 /* CRC32 (IEEE 802.3, reflected polynomial 0xEDB88320). */
 static uint32_t
@@ -431,7 +443,7 @@ get_u64(const uint8_t **pp)
 	return (v);
 }
 
-/* Serialise the network/self header into a 66-octet buffer. */
+/* Serialise the network/self header into an 82-octet buffer. */
 static void
 encode_nethdr(const struct mesh_mgr *mgr, uint8_t out[MESH_MGR_NETHDR_LEN])
 {
@@ -460,7 +472,7 @@ encode_nethdr(const struct mesh_mgr *mgr, uint8_t out[MESH_MGR_NETHDR_LEN])
 }
 
 static int
-decode_nethdr(struct mesh_mgr *mgr, const uint8_t *in, uint16_t version)
+decode_nethdr(struct mesh_mgr *mgr, const uint8_t *in)
 {
 	const uint8_t *p = in;
 
@@ -476,17 +488,7 @@ decode_nethdr(struct mesh_mgr *mgr, const uint8_t *in, uint16_t version)
 	mgr->self_elements = *p++;
 	/* Resume from the reserved-ahead SEQ (see encode_nethdr / P-H8). */
 	mgr->seq = get_u32(&p);
-	if (version >= 3) {
-		memcpy(mgr->appkey_new, p, 16);		p += 16;
-	} else {
-		/*
-		 * v2 predates the staged Phase-1 AppKey (C6-L13).  Migrate by
-		 * minting a fresh appkey_new; it has never been distributed, so a
-		 * random value is a correct staged key for the next rotation.
-		 */
-		if (RAND_bytes(mgr->appkey_new, sizeof(mgr->appkey_new)) != 1)
-			return (-1);
-	}
+	memcpy(mgr->appkey_new, p, 16);		p += 16;
 	return (0);
 }
 
@@ -500,7 +502,8 @@ encode_node(const struct mesh_mgr_node *n, uint8_t out[MESH_MGR_NODEREC_LEN])
 	put_u16(&p, n->addr);
 	put_u64(&p, n->prov_time);
 	*p++ = n->num_elements;
-	/* p - out == 43 */
+	*p++ = n->kr_state;		/* v4: Key Refresh distribution state */
+	/* p - out == 44 */
 }
 
 static void
@@ -514,6 +517,7 @@ decode_node(struct mesh_mgr_node *n, const uint8_t in[MESH_MGR_NODEREC_LEN])
 	n->addr = get_u16(&p);
 	n->prov_time = get_u64(&p);
 	n->num_elements = *p++;
+	n->kr_state = *p++;		/* v4: Key Refresh distribution state */
 }
 
 int
@@ -668,12 +672,11 @@ mesh_mgr_load(struct mesh_mgr *mgr, const char *path)
 	count = get_u16(&p);
 	(void)get_u16(&p);			/* reserved */
 	stored_crc = le32dec(hdr + MESH_MGR_HDR_LEN - 4);
-	if ((version != MESH_MGR_VERSION && version != 2) ||
-	    count > MESH_MGR_MAX_NODES) {
+	if (version != MESH_MGR_VERSION || count > MESH_MGR_MAX_NODES) {
 		(void)close(fd);
 		return (-1);
 	}
-	nethdr_len = (version >= 3) ? MESH_MGR_NETHDR_LEN : MESH_MGR_NETHDR_V2_LEN;
+	nethdr_len = MESH_MGR_NETHDR_LEN;
 
 	memset(&tmp, 0, sizeof(tmp));
 
@@ -691,7 +694,7 @@ mesh_mgr_load(struct mesh_mgr *mgr, const char *path)
 		return (-1);
 	}
 	running = mgr_crc32(running, nethdr, nethdr_len);
-	if (decode_nethdr(&tmp, nethdr, version) != 0) {
+	if (decode_nethdr(&tmp, nethdr) != 0) {
 		(void)close(fd);
 		return (-1);
 	}
@@ -752,15 +755,42 @@ mesh_mgr_provision_prepare(struct mesh_mgr *mgr, const uint8_t uuid[16],
 
 struct mesh_mgr_node *
 mesh_mgr_provision_commit(struct mesh_mgr *mgr, const uint8_t devkey[16],
-    uint64_t prov_time)
+    uint8_t dev_num_elements, uint64_t prov_time)
 {
 	struct mesh_mgr_node *n;
+	uint8_t nel;
 
 	if (mgr == NULL || devkey == NULL || !mgr->pending.active)
 		return (NULL);
-	n = mesh_mgr_add_node(mgr, mgr->pending.uuid, mgr->pending.addr,
-	    mgr->pending.num_elements, devkey, prov_time);
-	mgr->pending.active = 0;
+	/*
+	 * The unicast block was reserved from an operator-supplied element
+	 * count before the device spoke.  If the device actually has MORE
+	 * elements than reserved (NB-20), its element block would extend past
+	 * the reservation and overlap the next allocation -- refuse rather than
+	 * record a colliding node.  A device with 0 (no Capabilities seen) or
+	 * fewer elements is recorded with the reserved size.
+	 */
+	if (dev_num_elements > mgr->pending.num_elements) {
+		mgr->pending.active = 0;
+		return (NULL);
+	}
+	nel = dev_num_elements != 0 ? dev_num_elements :
+	    mgr->pending.num_elements;
+	/*
+	 * Clear the reservation BEFORE adding the node: the node is placed at
+	 * the pending block, and range_used() rejects overlap with an active
+	 * pending block (the import-collision guard), so leaving pending.active
+	 * set here would make add_node see the block overlapping itself and
+	 * fail.
+	 */
+	{
+		uint16_t addr = mgr->pending.addr;
+		uint8_t uuid[MESH_MGR_UUID_LEN];
+
+		memcpy(uuid, mgr->pending.uuid, sizeof(uuid));
+		mgr->pending.active = 0;
+		n = mesh_mgr_add_node(mgr, uuid, addr, nel, devkey, prov_time);
+	}
 	return (n);
 }
 

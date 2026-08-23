@@ -255,9 +255,13 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 	drive_responder(data, size);
 	drive_receive_peer_keys(data, size);
 
-	/* Peer ECDH public key validation: x || y, big-endian, 64 bytes. */
+	/* Peer ECDH public key validation: x || y, big-endian, 64 bytes.
+	 * NULL local-X skips the same-X reflection check (curve validation
+	 * only); exercise both by using a later slice of the input as the
+	 * local X when enough bytes are present. */
 	if (size >= 64)
-		(void)smp_validate_public_key(data, data + 32);
+		(void)smp_validate_public_key(data, data + 32,
+		    size >= 96 ? data + 64 : NULL);
 
 	return (0);
 }

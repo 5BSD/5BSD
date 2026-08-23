@@ -402,8 +402,9 @@ smp_pair_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	memcpy(pkb_le, pdu + 1, 32);
 
 	/* Validate peer public key is on P-256 curve (Core Spec 2.3.5.6.1) */
-	if (smp_validate_public_key(peer_pk_raw + 1, peer_pk_raw + 33) != 0) {
-		LOG_SMP(1, "SMP: peer public key not on P-256 curve, "
+	if (smp_validate_public_key(peer_pk_raw + 1, peer_pk_raw + 33,
+	    our_pk_raw + 1) != 0) {
+		LOG_SMP(1, "SMP: peer public key invalid or reflected, "
 		    "failing pairing");
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
@@ -804,8 +805,9 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 	memcpy(pkb_le, pdu + 1, 32);                /* save LE x-coord */
 
 	/* Validate peer public key is on P-256 curve (Core Spec 2.3.5.6.1) */
-	if (smp_validate_public_key(peer_pk_raw + 1, peer_pk_raw + 33) != 0) {
-		LOG_SMP(1, "SMP: peer public key not on P-256 curve, "
+	if (smp_validate_public_key(peer_pk_raw + 1, peer_pk_raw + 33,
+	    our_pk_raw + 1) != 0) {
+		LOG_SMP(1, "SMP: peer public key invalid or reflected, "
 		    "failing pairing");
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
@@ -858,14 +860,28 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		 */
 		/*
 		 * C1-M2: one-sided SC OOB is legal (Core Spec Vol 3 Part H
-		 * Table 2.7 / §2.3.5.6.4).  If the peer advertised OOB but we
-		 * hold no OOB data for it, do NOT reject with OOB Not Available:
-		 * proceed with the nonce exchange, skip the peer-confirm check
-		 * (nothing to verify against), and let the DHKey-check use r=0
-		 * (the r selection below already falls to 0 when sc->oob->sc is
-		 * NULL).
+		 * Table 2.7 / §2.3.5.6.4).  If we hold the peer's OOB but the
+		 * peer never received ours (or vice versa), proceed and let the
+		 * DHKey-check use r=0 for the direction that has no OOB (the
+		 * r_ea/r_eb selection below is gated on have_peer / the peer's
+		 * advertised flag).
+		 *
+		 * But if OOB was selected while we hold NO SC OOB material at all
+		 * (neither the peer's data nor our own local random), we cannot
+		 * authenticate: reject with OOB Not Available (Core Spec Vol 3
+		 * Part H §3.5.5, Table 3.7) rather than silently downgrading to an
+		 * unauthenticated r=0 (Just Works-equivalent) exchange.
 		 */
-		bool have_peer_oob = (sc->oob != NULL && sc->oob->sc != NULL);
+		if (sc->oob == NULL || sc->oob->sc == NULL ||
+		    (!sc->oob->sc->have_peer && !sc->oob->sc->have_local)) {
+			pdu[0] = SMP_PAIRING_FAILED;
+			pdu[1] = SMP_ERR_OOB_NOT_AVAILABLE;
+			smp_log_send(sc, pdu, 2);
+			errno = EACCES;
+			goto sc_jw_cleanup;	/* ret is -1 */
+		}
+		bool have_peer_oob = (sc->oob != NULL && sc->oob->sc != NULL &&
+		    sc->oob->sc->have_peer);
 
 		smp_random(na, sizeof(na));
 
@@ -1036,16 +1052,23 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 
 		/*
 		 * Per Core Spec Vol 3 Part H Section 2.3.5.6.5:
-		 * OOB: Ea uses rb (peer's OOB random), Eb uses ra (our random).
-		 * All other models: r = 0.
+		 * OOB: Ea uses rb (peer/responder's random), Eb uses ra (our,
+		 * the initiator's, random).  Each r is used only in the
+		 * direction where OOB was actually exchanged (Table 2.7):
+		 *   - r_ea = rb: only if WE received the peer's OOB (have_peer).
+		 *   - r_eb = ra: only if the PEER received our OOB, which the
+		 *     peer signals via its OOB flag pres[2] (iocap_b[1]); and
+		 *     only if we actually have local OOB (have_local).
+		 * Anything not exchanged stays 0.  Non-OOB models: both 0.
 		 */
+		memset(r_ea, 0, sizeof(r_ea));
+		memset(r_eb, 0, sizeof(r_eb));
 		if (model == SMP_MODEL_OOB && sc->oob != NULL &&
 		    sc->oob->sc != NULL) {
-			memcpy(r_ea, sc->oob->sc->random, 16);
-			memcpy(r_eb, sc->oob->sc->local_random, 16);
-		} else {
-			memset(r_ea, 0, sizeof(r_ea));
-			memset(r_eb, 0, sizeof(r_eb));
+			if (sc->oob->sc->have_peer)
+				memcpy(r_ea, sc->oob->sc->random, 16);
+			if (iocap_b[1] != 0 && sc->oob->sc->have_local)
+				memcpy(r_eb, sc->oob->sc->local_random, 16);
 		}
 		if (smp_f6(mackey, na, nb, r_ea, iocap_a, a1, a2, ea) != 0 ||
 		    smp_f6(mackey, nb, na, r_eb, iocap_b, a2, a1, eb) != 0) {
@@ -1131,9 +1154,19 @@ smp_pair_sc(struct smp_conn *sc, const uint8_t preq[7], const uint8_t pres[7],
 		memcpy(bond.ltk, ltk, 16);
 		bond.has_ltk = true;
 		bond.is_sc = true;
+		/*
+		 * OOB only provides MITM protection when WE actually received
+		 * and verified the peer's OOB data (have_peer): that is what
+		 * authenticates the remote to us and feeds a non-zero random
+		 * into the DHKey check. One-sided local-only OOB (have_peer
+		 * false) collapses to a Just Works-equivalent exchange an
+		 * active MITM can complete, so it must NOT be recorded as
+		 * authenticated (which would also mint a CTKD BR/EDR key).
+		 */
 		bond.is_mitm = (model == SMP_MODEL_PASSKEY_ENTRY ||
 		    model == SMP_MODEL_NUMERIC_COMPARISON ||
-		    model == SMP_MODEL_OOB);
+		    (model == SMP_MODEL_OOB && sc->oob != NULL &&
+		     sc->oob->sc != NULL && sc->oob->sc->have_peer));
 
 		BLUED_PROBE_SMP_PHASE(
 		    bt_ntoa((bdaddr_t *)sc->remote_addr, NULL), "key-dist");
@@ -1284,8 +1317,9 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 	memcpy(pka_le, pdu + 1, 32);		/* save LE x-coord */
 
 	/* Validate peer public key is on P-256 curve (Core Spec 2.3.5.6.1) */
-	if (smp_validate_public_key(peer_pk_raw + 1, peer_pk_raw + 33) != 0) {
-		LOG_SMP(1, "SMP: peer public key not on P-256 curve, "
+	if (smp_validate_public_key(peer_pk_raw + 1, peer_pk_raw + 33,
+	    our_pk_raw + 1) != 0) {
+		LOG_SMP(1, "SMP: peer public key invalid or reflected, "
 		    "failing pairing");
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;
@@ -1331,13 +1365,28 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		 */
 		/*
 		 * C1-M2: one-sided SC OOB is legal (Core Spec Vol 3 Part H
-		 * Table 2.7 / §2.3.5.6.4).  If the peer advertised OOB but we
-		 * hold no OOB data for it, do NOT reject with OOB Not Available:
-		 * receive Na, skip the peer-confirm check (nothing to verify
-		 * against), send Nb, and let the DHKey-check use r=0 (the r
-		 * selection below already falls to 0 when sc->oob->sc is NULL).
+		 * Table 2.7 / §2.3.5.6.4).  If we hold the peer's OOB but the
+		 * peer never received ours (or vice versa), proceed and let the
+		 * DHKey-check use r=0 for the direction that has no OOB (the
+		 * r_ea/r_eb selection below is gated on have_peer / the peer's
+		 * advertised flag).
+		 *
+		 * But if OOB was selected while we hold NO SC OOB material at all
+		 * (neither the peer's data nor our own local random), we cannot
+		 * authenticate: reject with OOB Not Available (Core Spec Vol 3
+		 * Part H §3.5.5, Table 3.7) rather than silently downgrading to an
+		 * unauthenticated r=0 (Just Works-equivalent) exchange.
 		 */
-		bool have_peer_oob = (sc->oob != NULL && sc->oob->sc != NULL);
+		if (sc->oob == NULL || sc->oob->sc == NULL ||
+		    (!sc->oob->sc->have_peer && !sc->oob->sc->have_local)) {
+			pdu[0] = SMP_PAIRING_FAILED;
+			pdu[1] = SMP_ERR_OOB_NOT_AVAILABLE;
+			smp_log_send(sc, pdu, 2);
+			errno = EACCES;
+			goto resp_sc_cleanup;	/* ret is -1 */
+		}
+		bool have_peer_oob = (sc->oob != NULL && sc->oob->sc != NULL &&
+		    sc->oob->sc->have_peer);
 
 		smp_random(nb, sizeof(nb));
 
@@ -1464,18 +1513,25 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		uint8_t r_ea[16], r_eb[16];
 
 		/*
-		 * Per Core Spec Vol 3 Part H Section 2.3.5.6.5:
-		 * OOB: Ea uses rb (responder's random = our random),
-		 *       Eb uses ra (initiator's random = peer's random).
-		 * All other models: r = 0.
+		 * Per Core Spec Vol 3 Part H Section 2.3.5.6.5, responder path:
+		 * Ea uses rb (the responder's random = OUR local random),
+		 * Eb uses ra (the initiator's random = the PEER's random).
+		 * Each r is used only where OOB was actually exchanged:
+		 *   - r_ea = rb (our random): only if the INITIATOR received our
+		 *     OOB, which it signals via its OOB flag preq[2] (iocap_a[1]),
+		 *     and only if we have local OOB (have_local).
+		 *   - r_eb = ra (peer's random): only if WE received the peer's
+		 *     OOB (have_peer).
+		 * Anything not exchanged stays 0.  Non-OOB models: both 0.
 		 */
+		memset(r_ea, 0, sizeof(r_ea));
+		memset(r_eb, 0, sizeof(r_eb));
 		if (model == SMP_MODEL_OOB && sc->oob != NULL &&
 		    sc->oob->sc != NULL) {
-			memcpy(r_ea, sc->oob->sc->local_random, 16);
-			memcpy(r_eb, sc->oob->sc->random, 16);
-		} else {
-			memset(r_ea, 0, sizeof(r_ea));
-			memset(r_eb, 0, sizeof(r_eb));
+			if (iocap_a[1] != 0 && sc->oob->sc->have_local)
+				memcpy(r_ea, sc->oob->sc->local_random, 16);
+			if (sc->oob->sc->have_peer)
+				memcpy(r_eb, sc->oob->sc->random, 16);
 		}
 		if (smp_f6(mackey, na, nb, r_ea, iocap_a, a1, a2, ea) != 0 ||
 		    smp_f6(mackey, nb, na, r_eb, iocap_b, a2, a1, eb) != 0) {
@@ -1594,9 +1650,19 @@ smp_respond_sc(struct smp_conn *sc, const uint8_t preq[7],
 		memcpy(bond.ltk, ltk, 16);
 		bond.has_ltk = true;
 		bond.is_sc = true;
+		/*
+		 * OOB only provides MITM protection when WE actually received
+		 * and verified the peer's OOB data (have_peer): that is what
+		 * authenticates the remote to us and feeds a non-zero random
+		 * into the DHKey check. One-sided local-only OOB (have_peer
+		 * false) collapses to a Just Works-equivalent exchange an
+		 * active MITM can complete, so it must NOT be recorded as
+		 * authenticated (which would also mint a CTKD BR/EDR key).
+		 */
 		bond.is_mitm = (model == SMP_MODEL_PASSKEY_ENTRY ||
 		    model == SMP_MODEL_NUMERIC_COMPARISON ||
-		    model == SMP_MODEL_OOB);
+		    (model == SMP_MODEL_OOB && sc->oob != NULL &&
+		     sc->oob->sc != NULL && sc->oob->sc->have_peer));
 
 		/* Receive initiator's keys. SC ignores EncKey;
 		 * IdKey and SignKey from pres[5] apply. */
@@ -1776,8 +1842,9 @@ smp_respond_sc_passkey(struct smp_conn *sc, const uint8_t preq[7],
 	memcpy(pka_le, pdu + 1, 32);
 
 	/* Validate peer public key is on P-256 curve (Core Spec 2.3.5.6.1) */
-	if (smp_validate_public_key(peer_pk_raw + 1, peer_pk_raw + 33) != 0) {
-		LOG_SMP(1, "SMP: peer public key not on P-256 curve, "
+	if (smp_validate_public_key(peer_pk_raw + 1, peer_pk_raw + 33,
+	    our_pk_raw + 1) != 0) {
+		LOG_SMP(1, "SMP: peer public key invalid or reflected, "
 		    "failing pairing");
 		pdu[0] = SMP_PAIRING_FAILED;
 		pdu[1] = SMP_ERR_DHKEY_CHECK_FAILED;

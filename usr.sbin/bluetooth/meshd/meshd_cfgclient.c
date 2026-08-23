@@ -68,6 +68,16 @@ meshd_cfg_client_send(struct meshd_node *nd, uint16_t dst, const uint8_t *req,
 	 * (MshPRT_v1.1 Section 3.8.4).  Seal under the live SEQ, then advance it
 	 * past every Network PDU the transmit produced.
 	 */
+	/*
+	 * A new Config verb supersedes any in-flight one (mesh_mgr_txn_begin
+	 * resets the single cfg_txn slot): abandoning the previous command and
+	 * stopping its retransmissions is the intended operator behavior.  Note
+	 * (NB-16): the mesh Config protocol carries no per-request identifier, so
+	 * a late DUPLICATE Status of the same opcode from the same node can in
+	 * principle complete a subsequent same-opcode transaction; that is an
+	 * inherent protocol limitation, not fixable by refusing new verbs (which
+	 * would break normal back-to-back configuration).
+	 */
 	seq0 = mesh_sim_node_seq(nd->self);
 	nd->mgr->seq = seq0;
 	if (mesh_mgr_txn_begin(nd->mgr, &nd->cfg_txn, node, req, req_len,
@@ -91,11 +101,57 @@ meshd_cfg_client_send(struct meshd_node *nd, uint16_t dst, const uint8_t *req,
 	return (0);
 }
 
+/*
+ * NetKey Key Refresh distribution driver (NB-14): send a Config NetKey Update
+ * carrying the operator's new NetKey to the next roster node still marked
+ * DISTRIBUTING.  One node is in flight at a time (single cfg txn slot); each
+ * node's NetKey Update Status acks it (mesh_mgr_kr_ack) and drives the next.
+ * When no DISTRIBUTING node remains, distribution is complete.
+ */
+int
+meshd_kr_send_next(struct meshd_node *nd, uint64_t now)
+{
+	uint8_t pdu[MESH_ACCESS_MAX];
+	size_t i, count, plen;
+
+	if (nd == NULL || nd->mgr == NULL || !nd->kr_distributing)
+		return (0);
+	count = mesh_mgr_node_count(nd->mgr);
+	for (i = 0; i < count; i++) {
+		const struct mesh_mgr_node *node = mesh_mgr_node_at(nd->mgr, i);
+
+		if (node == NULL || node->kr_state != MESH_MGR_KR_DISTRIBUTING)
+			continue;
+		if (mesh_mgr_cfg_netkey_update_pdu(nd->mgr,
+		    nd->mgr->netkey_index, nd->kr_net_key, pdu, &plen) != 0 ||
+		    meshd_cfg_client_send(nd, node->addr, pdu, plen,
+		    MESH_CFG_OP_NETKEY_STATUS, now, NULL, NULL, NULL) != 0) {
+			/*
+			 * Cannot start this node's NetKey Update: end the
+			 * distribution rather than leaving kr_distributing set with
+			 * nothing to drive it (and the new key lingering in
+			 * memory).  Remaining DISTRIBUTING nodes surface via
+			 * key-refresh network-status.
+			 */
+			nd->kr_distributing = 0;
+			explicit_bzero(nd->kr_net_key, sizeof(nd->kr_net_key));
+			return (-1);
+		}
+		return (1);			/* one NetKey Update in flight */
+	}
+	/* Every node acked: distribution done. */
+	nd->kr_distributing = 0;
+	explicit_bzero(nd->kr_net_key, sizeof(nd->kr_net_key));
+	return (0);
+}
+
 int
 meshd_cfg_client_rx(struct meshd_node *nd, uint32_t seq, uint16_t src,
     uint16_t dst, const uint8_t *upper, size_t upper_len)
 {
 	struct mesh_mgr_node *node;
+	uint32_t expect;
+	int r;
 
 	if (nd == NULL || upper == NULL)
 		return (-1);
@@ -106,8 +162,35 @@ meshd_cfg_client_rx(struct meshd_node *nd, uint32_t seq, uint16_t src,
 	node = mesh_mgr_find_by_addr(nd->mgr, nd->cfg_txn.node_addr);
 	if (node == NULL)
 		return (0);
-	return (mesh_mgr_txn_rx(&nd->cfg_txn, nd->mgr, node, seq, src, dst,
-	    upper, upper_len));
+	expect = nd->cfg_txn.expect_opcode;
+	r = mesh_mgr_txn_rx(&nd->cfg_txn, nd->mgr, node, seq, src, dst,
+	    upper, upper_len);
+	/*
+	 * A completed NetKey Update Status during a key-refresh distribution
+	 * acks that node and advances to the next (NB-14): mesh_mgr_kr_ack was
+	 * never being called, so NetKey key-refresh could never complete.
+	 *
+	 * Only a SUCCESS status means the node actually installed the new key.
+	 * mesh_mgr_txn_rx correlates purely on opcode, so a node answering
+	 * Cannot Update / Insufficient Resources returns 1 identically to a
+	 * success; acking it regardless would mark it done and let a later
+	 * Phase 2/3 old-key revocation silently eject a node that never took
+	 * the refresh key.  Leave it in DISTRIBUTING (network-status surfaces
+	 * it) unless the status octet says SUCCESS.
+	 */
+	if (r == 1 && nd->kr_distributing &&
+	    expect == MESH_CFG_OP_NETKEY_STATUS) {
+		uint8_t status;
+		uint16_t net_idx;
+
+		if (mesh_mgr_cfg_netkey_status_parse(nd->cfg_txn.status,
+		    nd->cfg_txn.status_len, &status, &net_idx) == 0 &&
+		    status == MESH_CFG_SUCCESS) {
+			(void)mesh_mgr_kr_ack(nd->mgr, src);
+			(void)meshd_kr_send_next(nd, nd->sim.now_ms);
+		}
+	}
+	return (r);
 }
 
 int
@@ -343,6 +426,16 @@ meshd_cfg_client_verb(struct meshd_node *nd, int argc, char **argv,
 		    (uint16_t)dst);
 		return (-1);
 	}
+
+	/*
+	 * Poll the outcome of the last remote Config operation without sending
+	 * anything (NB-15).  Over a real bearer the Status arrives after the
+	 * send returns "sent state=1", so this is how an operator reads whether
+	 * the transaction completed (and its status code), timed out, or is
+	 * still waiting.
+	 */
+	if (strcmp(v, "status") == 0)
+		return (cfg_result(nd, v, (uint16_t)dst, reply, reply_max));
 
 	/* ---- Composition Data ---- */
 	if (strcmp(v, "comp-get") == 0) {
@@ -1553,8 +1646,10 @@ meshd_rpr_client_verb(struct meshd_node *nd, int argc, char **argv,
 		if (mesh_rp_client_link_close(&nd->rpr.client_link, (uint8_t)a,
 		    pdu, &plen) != 0)
 			goto build_err;
+		/* Link Close is acknowledged with Link Status, not Link Report
+		 * (MshPRT 4.4.5, NB-30). */
 		if (meshd_cfg_client_send(nd, (uint16_t)dst, pdu, plen,
-		    MESH_RP_OP_LINK_REPORT, now, NULL, NULL, NULL) != 0)
+		    MESH_RP_OP_LINK_STATUS, now, NULL, NULL, NULL) != 0)
 			goto send_err;
 		nd->rpr.client_active = 0;
 		return (rpr_result(nd, v, (uint16_t)dst, reply, reply_max));

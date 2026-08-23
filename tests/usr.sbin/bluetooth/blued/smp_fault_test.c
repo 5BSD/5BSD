@@ -670,37 +670,37 @@ ATF_TC_BODY(validate_pubkey_faults, tc)
 {
 
 	fault_reset();
-	ATF_REQUIRE_EQ(0, smp_validate_public_key(pk_x, pk_y));
+	ATF_REQUIRE_EQ(0, smp_validate_public_key(pk_x, pk_y, NULL));
 
 	/* EC_GROUP_new_by_curve_name == NULL (smp_crypto.c:236) */
 	fault_reset();
 	fi_EC_GROUP_new_by_curve_name_at = 1;
-	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y));
+	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y, NULL));
 
 	/* EC_POINT_new == NULL (smp_crypto.c:240) */
 	fault_reset();
 	fi_EC_POINT_new_at = 1;
-	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y));
+	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y, NULL));
 
 	/* BN_bin2bn == NULL, first (x) call (smp_crypto.c:244/246) */
 	fault_reset();
 	fi_BN_bin2bn_at = 1;
-	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y));
+	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y, NULL));
 
 	/* BN_bin2bn == NULL, second (y) call (smp_crypto.c:245/246) */
 	fault_reset();
 	fi_BN_bin2bn_at = 2;
-	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y));
+	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y, NULL));
 
 	/* EC_POINT_set_affine_coordinates == 0 (smp_crypto.c:249) */
 	fault_reset();
 	fi_EC_POINT_set_affine_coordinates_at = 1;
-	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y));
+	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y, NULL));
 
 	/* EC_POINT_is_on_curve == 0 (smp_crypto.c:252) */
 	fault_reset();
 	fi_EC_POINT_is_on_curve_at = 1;
-	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y));
+	ATF_CHECK_EQ(-1, smp_validate_public_key(pk_x, pk_y, NULL));
 }
 
 /* ================================================================

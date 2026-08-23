@@ -421,20 +421,31 @@ meshctl_exchange(int fd, const char *line)
 		warn("write");
 		return (-1);
 	}
-	r = meshctl_readline(fd, buf, sizeof(buf));
-	if (r < 0) {
-		warn("read");
-		return (-1);
+	/*
+	 * Once a model is registered (app-register), meshd interleaves
+	 * asynchronous "EVENT ..." lines onto the same stream as command
+	 * replies.  Print those but keep reading, so an event that arrives
+	 * between our command and its reply is not mistaken for the reply
+	 * (which would desync every subsequent exchange by one line).
+	 */
+	for (;;) {
+		r = meshctl_readline(fd, buf, sizeof(buf));
+		if (r < 0) {
+			warn("read");
+			return (-1);
+		}
+		if (r == 0) {
+			warnx("daemon closed the connection");
+			return (-1);
+		}
+		buf[r] = '\0';
+		fputs(buf, stdout);
+		if (buf[r - 1] != '\n')
+			fputc('\n', stdout);
+		if (strncmp(buf, "EVENT ", 6) == 0)
+			continue;	/* async event, not our reply */
+		return (strncmp(buf, "OK", 2) == 0 ? 0 : 1);
 	}
-	if (r == 0) {
-		warnx("daemon closed the connection");
-		return (-1);
-	}
-	buf[r] = '\0';
-	fputs(buf, stdout);
-	if (buf[r - 1] != '\n')
-		fputc('\n', stdout);
-	return (strncmp(buf, "OK", 2) == 0 ? 0 : 1);
 }
 
 static int

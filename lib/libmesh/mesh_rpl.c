@@ -144,19 +144,16 @@ mesh_rpl_net_receive(struct mesh_rpl *rpl, const uint8_t enckey[16],
  * PDU, so exactly one candidate is ever recorded.  The RPL is enforced with
  * the IV Index that actually authenticated the PDU, preserving the Section
  * 3.9.8 ordering across the epoch boundary.  A replay verdict (rc == 0) is
- * authoritative and must NOT be retried under the other IV Index.  The
- * iv_update argument is retained for source/ABI compatibility but no longer
- * gates the retry.  Returns the same 1/0/-1 values as
- * mesh_rpl_net_receive().
+ * authoritative and must NOT be retried under the other IV Index.  Returns the
+ * same 1/0/-1 values as mesh_rpl_net_receive().
  */
 int
 mesh_rpl_net_receive_ivupd(struct mesh_rpl *rpl, const uint8_t enckey[16],
-    const uint8_t privkey[16], uint8_t nid, uint32_t iv_index, int iv_update,
+    const uint8_t privkey[16], uint8_t nid, uint32_t iv_index,
     const uint8_t *in, size_t inlen, struct mesh_net_pdu *out)
 {
 	int rc;
 
-	(void)iv_update;
 	rc = mesh_rpl_net_receive(rpl, enckey, privkey, nid, iv_index, in,
 	    inlen, out);
 	if (rc >= 0 || iv_index == 0)

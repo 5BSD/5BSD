@@ -255,11 +255,22 @@ blued_central_start_pairing(struct hogp_device *dev, struct blued_conn *conn)
 	 * for this peer.
 	 */
 	have_pb = hogp_bond_snapshot(dev, &pb);
+	/*
+	 * Finding 95: the ATT security triple (encrypted/authenticated/
+	 * enc_key_size) must be written under att_sec_lock -- the main loop's
+	 * Encryption-Change / Key-Refresh handlers write the same fields for
+	 * this handle, and att_check_security_perms reads them lock-free.  This
+	 * post-pairing write runs on the pairing worker after hci_devreq_mutex
+	 * is released, so without the lock it can interleave with a main-thread
+	 * update and leave a mixed security state on a live link.
+	 */
+	pthread_mutex_lock(&blued_g.att_sec_lock);
 	if (!att_conn_apply_encryption(&dev->att,
 	    have_pb && pb.has_ltk, have_pb && pb.is_mitm,
 	    have_pb ? pb.key_size : 0, 16))
 		LOG_HOGP(1, "post-pairing encryption not backed by stored bond; "
 		    "ATT gate stays closed");
+	pthread_mutex_unlock(&blued_g.att_sec_lock);
 
 	if (have_pb) {
 		blued_reslist_sync_remove(dev->hci_fd, pb.addr, pb.addr_type);

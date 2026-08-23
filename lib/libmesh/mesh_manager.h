@@ -262,7 +262,8 @@ int	mesh_mgr_provision_prepare(struct mesh_mgr *mgr, const uint8_t uuid[16],
  * if nothing is pending or the roster is full.
  */
 struct mesh_mgr_node *mesh_mgr_provision_commit(struct mesh_mgr *mgr,
-	    const uint8_t devkey[16], uint64_t prov_time);
+	    const uint8_t devkey[16], uint8_t dev_num_elements,
+	    uint64_t prov_time);
 
 /* Abandon a pending provisioning (the reserved address stays consumed). */
 void	mesh_mgr_provision_abort(struct mesh_mgr *mgr);

@@ -163,6 +163,8 @@ int	mesh_prov_session_poll(struct mesh_prov_session *s, uint8_t *out,
 int	mesh_prov_session_done(const struct mesh_prov_session *s);
 int	mesh_prov_session_failed(const struct mesh_prov_session *s);
 const uint8_t	*mesh_prov_session_devkey(const struct mesh_prov_session *s);
+uint8_t		mesh_prov_session_num_elements(
+		    const struct mesh_prov_session *s);
 /* Device: copy the installed provisioning data.  Returns 0, -1 if not provisioned. */
 int	mesh_prov_session_get_data(const struct mesh_prov_session *s,
 	    struct mesh_prov_data *out);

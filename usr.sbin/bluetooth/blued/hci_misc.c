@@ -127,6 +127,30 @@ hci_wait_encryption(int hci_fd, uint16_t con_handle, int timeout_sec)
 			hci_log_packet(HCI_LOG_EVT,
 			    buf + 1, (uint16_t)(n - 1), true);
 
+		/*
+		 * LE Enable Encryption (§7.8.24) returns no Command Complete;
+		 * on failure the controller reports a nonzero Command Status for
+		 * that opcode and NEVER generates an Encryption Change.  Without
+		 * inspecting it the wait would burn the full timeout holding the
+		 * adapter mutex.  Fast-fail on a nonzero status for our opcode.
+		 */
+		if (evt->event == NG_HCI_EVENT_COMMAND_STATUS &&
+		    evt->length == sizeof(ng_hci_command_status_ep)) {
+			ng_hci_command_status_ep *cs =
+			    (ng_hci_command_status_ep *)(evt + 1);
+
+			if (le16toh(cs->opcode) == NG_HCI_OPCODE(NG_HCI_OGF_LE,
+			    NG_HCI_OCF_LE_START_ENCRYPTION) && cs->status != 0) {
+				bt_devfilter(hci_fd, &oldflt, NULL);
+				pthread_mutex_unlock(hci_mtx);
+				LOG_HCI(1, "LE Enable Encryption command status "
+				    "0x%02x", cs->status);
+				errno = EIO;
+				return (-1);
+			}
+			continue;
+		}
+
 		if (evt->event == NG_HCI_EVENT_ENCRYPTION_CHANGE ||
 		    evt->event == NG_HCI_EVENT_ENCRYPTION_CHANGE_V2) {
 			uint8_t status, encryption_enable;

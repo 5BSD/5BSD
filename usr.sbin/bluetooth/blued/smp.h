@@ -123,6 +123,16 @@ struct smp_oob_sc {
 	uint8_t	confirm[16];	/* peer's OOB confirm value (Ca/Cb) */
 	uint8_t	random[16];	/* peer's OOB random value (ra/rb) */
 	uint8_t	local_random[16]; /* our OOB random value (for f6 DHKey check) */
+	/*
+	 * A pairing may have OOB in only one direction (Core Vol 3 Part H
+	 * Table 2.7 / Section 2.3.5.6.4).  have_peer: we received the peer's
+	 * {confirm,random} (so we can verify its confirm and know rb/ra).
+	 * have_local: we generated/shared local_random (so the peer may have
+	 * used it in its DHKey check).  The two are independent; the struct
+	 * being present no longer implies both.
+	 */
+	bool	have_peer;
+	bool	have_local;
 };
 
 /*

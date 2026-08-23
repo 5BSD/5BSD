@@ -588,6 +588,19 @@ mesh_prov_session_devkey(const struct mesh_prov_session *s)
 	return (s != NULL ? s->devkey : NULL);
 }
 
+/*
+ * Number of Elements the device advertised in its Capabilities PDU (MshPRT
+ * 5.4.1.2, the first octet of the Capabilities value).  0 if no Capabilities
+ * has been received yet.  Used to validate the unicast-address reservation,
+ * which was sized from an operator guess before the device spoke.
+ */
+uint8_t
+mesh_prov_session_num_elements(const struct mesh_prov_session *s)
+{
+
+	return (s != NULL ? s->caps_val[0] : 0);
+}
+
 int
 mesh_prov_session_get_data(const struct mesh_prov_session *s,
     struct mesh_prov_data *out)

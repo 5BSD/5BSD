@@ -33,8 +33,8 @@ ptap_meshd_persist_decode_sweep(const struct meshd_node *source)
 
 	/* Small persistence invariants are otherwise masked by the full decoder:
 	 * exercise both sides of their address, extent, and schema boundaries. */
-	if (!persist_version_supported(2) ||
-	    !persist_version_supported(MESHD_PERSIST_VERSION) ||
+	if (!persist_version_supported(MESHD_PERSIST_VERSION) ||
+	    persist_version_supported(2) ||
 	    persist_version_supported(1) ||
 	    persist_version_supported(MESHD_PERSIST_VERSION + 1) ||
 	    !persist_unicast_block_valid(1, 1) ||
@@ -124,8 +124,7 @@ ptap_meshd_persist_decode_sweep(const struct meshd_node *source)
 			memset(&c, 0, sizeof(c));
 			c.rbuf = work;
 			c.len = body_len;
-			if (decode_body(&c, &tmp, MESHD_PERSIST_VERSION,
-			    &high_water) == 0)
+			if (decode_body(&c, &tmp, &high_water) == 0)
 				decoded++;
 			meshd_node_fini(&tmp);
 		}
@@ -136,7 +135,7 @@ ptap_meshd_persist_decode_sweep(const struct meshd_node *source)
 	memset(&c, 0, sizeof(c));
 	c.rbuf = body;
 	c.len = body_len - 1;
-	(void)decode_body(&c, &tmp, MESHD_PERSIST_VERSION, &high_water);
+	(void)decode_body(&c, &tmp, &high_water);
 	meshd_node_fini(&tmp);
 	free(body);
 	free(work);

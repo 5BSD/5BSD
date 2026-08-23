@@ -1060,6 +1060,21 @@ mesh_scan_unref(void)
  * mesh_scan_active flag is still set from the subscription, but the controller
  * scan was turned off by the burst, so re-enable it unconditionally here.
  */
+/*
+ * Re-assert the mesh scanner after a controller reset / power cycle cleared
+ * adp->mesh_scan_active while the host still has subscribers.  Unlike
+ * blued_mesh_scan_resume(), this does NOT require the per-adapter flag to be
+ * set -- mesh_scan_apply() enables adapters whose flag is currently false and
+ * re-sets it.
+ */
+void
+blued_mesh_scan_reassert(void)
+{
+
+	if (mesh_subscribers > 0)
+		(void)mesh_scan_apply(true);
+}
+
 void
 blued_mesh_scan_resume(void)
 {
@@ -1158,6 +1173,19 @@ struct mesh_adv_frame {
 static struct mesh_adv_frame	mesh_adv_q[MESH_ADV_QUEUE_DEPTH];
 static int			mesh_adv_q_head;
 static int			mesh_adv_q_count;
+/*
+ * The adapter whose extended-adv mesh PDU is currently on air with a bounded
+ * copy count while we wait for its Advertising Set Terminated before airing the
+ * next queued PDU (NULL when idle).  Without this one-at-a-time pacing a
+ * back-to-back burst of distinct PDUs would reprogram the single mesh adv set
+ * before any but the last aired (breaking PB-ADV segmentation and relay bursts).
+ *
+ * This is scoped to the owning adapter -- not a process-global flag -- because
+ * Advertising Set Terminated events are delivered per adapter: with two or more
+ * extended-advertising adapters running mesh, a Terminated event on a NON-owning
+ * adapter must not dequeue/re-air the frame belonging to the owner.
+ */
+static struct blued_adapter	*mesh_adv_inflight_adp;
 
 /* Enqueue a framed AD; returns -1 if the FIFO is full. */
 static int
@@ -1175,19 +1203,83 @@ mesh_adv_enqueue(struct blued_adapter *adp, const uint8_t *ad, uint8_t adlen)
 	return (0);
 }
 
-/* Transmit queued mesh adv frames until empty or the controller errors. */
+/*
+ * Transmit queued mesh adv frames.  On an extended-advertising controller each
+ * PDU is aired with a bounded copy count and we STOP after starting it, waiting
+ * for its Advertising Set Terminated (blued_mesh_adv_set_terminated) before
+ * airing the next -- so every queued PDU gets on-air time instead of being
+ * clobbered by the next reprogram.  On a legacy controller there is no
+ * per-set auto-terminate, so we advance synchronously as before.
+ */
 static void
 mesh_adv_drain(void)
 {
 	while (mesh_adv_q_count > 0) {
 		struct mesh_adv_frame *f = &mesh_adv_q[mesh_adv_q_head];
+		bool ext = (f->adp->le_features & LE_FEAT_EXT_ADVERTISING) != 0;
 
+		if (ext && mesh_adv_inflight_adp != NULL)
+			return;		/* wait for the in-flight PDU to terminate */
 		if (hci_mesh_adv_burst(f->adp->hci_fd, f->adp->le_features,
 		    f->ad, f->adlen) < 0)
 			break;		/* leave backlog queued; a later send retries */
+		if (ext) {
+			/* Aired with a bounded copy count; Advertising Set
+			 * Terminated for this adapter will dequeue this frame
+			 * and air the next. */
+			mesh_adv_inflight_adp = f->adp;
+			return;
+		}
 		mesh_adv_q_head = (mesh_adv_q_head + 1) % MESH_ADV_QUEUE_DEPTH;
 		mesh_adv_q_count--;
 	}
+}
+
+/*
+ * Advertising Set Terminated fired on ADP for the mesh adv set: the in-flight
+ * PDU finished its bounded airing.  Only act if ADP actually owns the in-flight
+ * frame -- a Terminated on a different adapter must not dequeue/re-air this
+ * adapter's frame (that would double-burst a live set and skip queued PDUs).
+ * Dequeue the owner's frame and air the next queued PDU.
+ */
+static void
+blued_mesh_adv_set_terminated(struct blued_adapter *adp)
+{
+
+	if (mesh_adv_inflight_adp == NULL || adp != mesh_adv_inflight_adp)
+		return;
+	mesh_adv_inflight_adp = NULL;
+	if (mesh_adv_q_count > 0) {
+		mesh_adv_q_head = (mesh_adv_q_head + 1) % MESH_ADV_QUEUE_DEPTH;
+		mesh_adv_q_count--;
+	}
+	mesh_adv_drain();
+}
+
+/*
+ * Recover the mesh adv FIFO after a controller reset / power cycle.  A reset
+ * that lands while an extended-adv mesh PDU is in flight destroys the adv set,
+ * so its Advertising Set Terminated event will never arrive and the in-flight
+ * owner would stay stuck set -- wedging the drain (and thus all mesh TX)
+ * forever.  Clear the in-flight owner and re-air any queued PDU on the fresh
+ * controller.  This is the global recovery entry point (called from
+ * blued_adapter_controller_invalidated() when a controller goes away).
+ *
+ * RESIDUAL: this function takes no adapter argument, so it cannot tell which
+ * controller was invalidated.  If a second extended-adv adapter is invalidated
+ * while THIS adapter legitimately has a frame in flight, clearing the owner and
+ * re-draining can re-air that still-live adapter's head frame one burst early
+ * (a harmless extra enable-burst / spurious Terminated -- the Terminated path
+ * above is now scoped and absorbs the stray event).  Fully disambiguating would
+ * require threading the invalidated adapter in from blued.c; deferred to keep
+ * this change scoped to the ctl.c dequeue fix.
+ */
+void
+blued_mesh_adv_reset(void)
+{
+
+	mesh_adv_inflight_adp = NULL;
+	mesh_adv_drain();
 }
 
 static void
@@ -1363,6 +1455,7 @@ blued_oob_take(const uint8_t *addr, struct smp_oob_legacy *lg, bool *has_lg,
 
 	*has_lg = false;
 	*has_sc = false;
+	memset(scd, 0, sizeof(*scd));
 	pthread_mutex_lock(&blued_oob_lock);
 	e = blued_oob_find(addr, false);
 	if (e != NULL) {
@@ -1372,17 +1465,28 @@ blued_oob_take(const uint8_t *addr, struct smp_oob_legacy *lg, bool *has_lg,
 			found = true;
 		}
 		if (e->has_sc) {
+			/* We received the peer's OOB {confirm,random}. */
 			memcpy(scd->confirm, e->sc_confirm, 16);
 			memcpy(scd->random, e->sc_random, 16);
-			if (blued_oob_local_valid)
-				memcpy(scd->local_random,
-				    blued_oob_local_random, 16);
-			else
-				memset(scd->local_random, 0, 16);
-			*has_sc = true;
-			found = true;
+			scd->have_peer = true;
 		}
 		e->valid = false;
+	}
+	/*
+	 * Local OOB is independent of whether we received the peer's OOB
+	 * (Core Vol 3 Part H Table 2.7 allows one-sided OOB in either
+	 * direction).  Populate local_random whenever we generated/shared it,
+	 * even with no peer entry, so the DHKey check can supply our ra/rb when
+	 * the peer's OOB flag says the peer used it.
+	 */
+	if (blued_oob_local_valid) {
+		memcpy(scd->local_random, blued_oob_local_random, 16);
+		scd->have_local = true;
+	}
+	/* SC OOB is in play if we have peer OOB and/or local OOB. */
+	if (scd->have_peer || scd->have_local) {
+		*has_sc = true;
+		found = true;
 	}
 	if (*has_sc && blued_oob_local_valid) {
 		/*
@@ -1464,6 +1568,11 @@ blued_ctl_adv_set_terminated(struct blued_adapter *adp, uint8_t handle)
 
 	if (adp == NULL)
 		return;
+	if (handle == MESH_ADV_HANDLE) {
+		/* Pace the mesh adv FIFO: air the next queued PDU. */
+		blued_mesh_adv_set_terminated(adp);
+		return;
+	}
 	for (size_t i = 0; i < nitems(ctl_adv_sets); i++)
 		if (ctl_adv_sets[i].used && ctl_adv_sets[i].adapter == adp &&
 		    ctl_adv_sets[i].handle == handle)
@@ -1744,8 +1853,8 @@ ctl_acquire_chan_result(struct blued_ctl_client *client,
 	if (!client->wants_fdpass || !ctl_client_privileged(client) ||
 	    cap_sandboxed())
 		return (IPC_ERR_PERM);
-	conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index), addr,
-	    addr_type);
+	conn = blued_conn_by_peer_cmd(blued_adapter_by_index_powered(adapter_index),
+	    addr, addr_type);
 	if (conn == NULL || conn->att == NULL)
 		return (IPC_ERR_NOT_CONN);
 	if (ctl_acquire_find(adapter_index, addr, addr_type, handle, dir) != NULL)
@@ -2437,8 +2546,15 @@ ctl_att_ops_leave(struct blued_conn *conn)
 	bool last;
 
 	pthread_mutex_lock(&ctl_att_ops_lock);
+	/*
+	 * seq_cst: this decrement is the worker's store side of the
+	 * store-buffering handshake with blued_conn_disconnect (which stores
+	 * disconnect_pending then loads att_ops_active).  ctl_att_ops_lock does
+	 * not serialize it against the main thread's lock-free att_ops_active
+	 * load, so the ordering must come from a single total order.
+	 */
 	last = atomic_fetch_sub_explicit(&conn->att_ops_active, 1,
-	    memory_order_acq_rel) == 1;
+	    memory_order_seq_cst) == 1;
 	if (last)
 		blued_conn_set_att_events(conn, true);
 	pthread_mutex_unlock(&ctl_att_ops_lock);
@@ -2467,9 +2583,10 @@ blued_conn_att_ops_end(struct blued_conn *conn)
 {
 
 	(void)ctl_att_ops_leave(conn);
+	/* seq_cst load side of the SB handshake (see ctl_att_ops_leave). */
 	if (atomic_load_explicit(&conn->disconnect_pending,
-	    memory_order_acquire) && atomic_load_explicit(
-	    &conn->att_ops_active, memory_order_acquire) == 0)
+	    memory_order_seq_cst) && atomic_load_explicit(
+	    &conn->att_ops_active, memory_order_seq_cst) == 0)
 		(void)write(blued_g.setup_pipe[1], "d", 1);
 }
 
@@ -2555,7 +2672,8 @@ ctl_gatt_resolve_conn(uint8_t requested_adapter, const bdaddr_t *addr,
 	*result = NULL;
 	*actual_adapter = requested_adapter;
 	if (requested_adapter != UINT8_MAX) {
-		conn = blued_conn_by_peer(blued_adapter_by_index_powered(requested_adapter),
+		conn = blued_conn_by_peer_cmd(
+		    blued_adapter_by_index_powered(requested_adapter),
 		    addr, addr_type);
 		/*
 		 * Finding H-M7: the central setup thread publishes conn->att
@@ -2573,7 +2691,7 @@ ctl_gatt_resolve_conn(uint8_t requested_adapter, const bdaddr_t *addr,
 
 	found = NULL;
 	for (i = 0; i < BLUED_MAX_ADAPTERS; i++) {
-		conn = blued_conn_by_peer(blued_adapter_by_index_powered(i), addr,
+		conn = blued_conn_by_peer_cmd(blued_adapter_by_index_powered(i), addr,
 		    addr_type);
 		if (conn == NULL || conn->att == NULL ||
 		    atomic_load_explicit(&conn->state, memory_order_acquire) !=
@@ -2722,9 +2840,10 @@ ctl_gatt_job_run(void *arg)
 	}
 
 	(void)ctl_att_ops_leave(job->conn);
+	/* seq_cst load side of the SB handshake (see ctl_att_ops_leave). */
 	if (atomic_load_explicit(&job->conn->disconnect_pending,
-	    memory_order_acquire) && atomic_load_explicit(
-	    &job->conn->att_ops_active, memory_order_acquire) == 0)
+	    memory_order_seq_cst) && atomic_load_explicit(
+	    &job->conn->att_ops_active, memory_order_seq_cst) == 0)
 		(void)write(blued_g.setup_pipe[1], "d", 1);
 	if (job->opcode == CTL_GATT_CCCD_CLEANUP)
 		ctl_gatt_cleanup_unregister(job);
@@ -3329,8 +3448,11 @@ ctl_security_conn(uint8_t adapter_index, const bdaddr_t *addr,
     uint8_t addr_type)
 {
 
-	return (blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index), addr,
-	    addr_type));
+	/* Operator command path: accept a unique address-only match so a peer
+	 * connected with a random/RPA address is reachable without the CLI
+	 * having to restate the address type. */
+	return (blued_conn_by_peer_cmd(
+	    blued_adapter_by_index_powered(adapter_index), addr, addr_type));
 }
 
 static int
@@ -4316,12 +4438,54 @@ ctl_process_typed_adv(struct blued_ctl_client *client, const uint8_t *payload,
 		if (adp->adv_config == NULL &&
 		    (adp->adv_config = malloc(sizeof(*adp->adv_config))) == NULL)
 			error = IPC_ERR_NOMEM;
-		else if (hci_adv_configure(adp->hci_fd, adp->le_features, &cfg) < 0)
-			error = IPC_ERR_INVAL;
 		else {
-			adp->adv_configured = true;
-			adp->adv_use_extended = cfg.used_extended;
-			*adp->adv_config = cfg;
+			/*
+			 * Set Advertising Parameters is Command Disallowed
+			 * (§7.8.5 / §7.8.53) while the set is enabled -- the
+			 * default peripheral state.  Quiesce the primary set
+			 * around the reconfigure, then restore it, so the verb
+			 * is not inert in the normal running state.
+			 */
+			bool was_enabled = adp->adv_enabled;
+
+			if (was_enabled)
+				(void)(adp->adv_use_extended ?
+				    hci_le_set_ext_adv_enable(adp->hci_fd, 0,
+				    0x00) :
+				    hci_le_set_advertise_enable(adp->hci_fd,
+				    false));
+			if (hci_adv_configure(adp->hci_fd, adp->le_features,
+			    &cfg) < 0) {
+				error = IPC_ERR_INVAL;
+			} else {
+				adp->adv_configured = true;
+				adp->adv_use_extended = cfg.used_extended;
+				*adp->adv_config = cfg;
+			}
+			if (was_enabled) {
+				int renable;
+
+				renable = adp->adv_use_extended ?
+				    hci_le_set_ext_adv_enable(adp->hci_fd, 1,
+				    0x00) :
+				    hci_le_set_advertise_enable(adp->hci_fd,
+				    true);
+				if (renable < 0) {
+					/*
+					 * Re-enable failed (e.g. a legacy->ext
+					 * switch before ext adv data is
+					 * programmed -> Command Disallowed /
+					 * Invalid Params): the controller is now
+					 * silent, so reconcile the cached state
+					 * instead of leaving adv_enabled stale-
+					 * true, and surface the failure.  Do not
+					 * clobber an earlier configure error.
+					 */
+					adp->adv_enabled = false;
+					if (error == IPC_ERR_NONE)
+						error = IPC_ERR_IO;
+				}
+			}
 		}
 		break;
 	case IPC_ADV_SET_NAME:

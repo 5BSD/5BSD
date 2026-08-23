@@ -281,6 +281,7 @@ int	hci_le_add_dev_resolving_list(int hci_fd, uint8_t addr_type,
 int	hci_le_remove_dev_resolving_list(int hci_fd, uint8_t addr_type,
 	    const uint8_t addr[6]);
 int	hci_le_set_addr_resolution_enable(int hci_fd, uint8_t enable);
+int	hci_le_read_resolving_list_size(int hci_fd, uint8_t *size_out);
 int	hci_le_set_privacy_mode(int hci_fd, uint8_t addr_type,
 	    const uint8_t addr[6], uint8_t mode);
 int	hci_le_set_rpa_timeout(int hci_fd, uint16_t timeout_sec);
@@ -312,6 +313,8 @@ int	hci_le_set_ext_adv_data(int hci_fd, uint8_t handle,
 	    const uint8_t *data, uint16_t len);	/* len fragmented, finding H-M6 */
 int	hci_le_set_ext_adv_enable(int hci_fd, uint8_t enable,
 	    uint8_t handle);
+int	hci_le_set_ext_adv_enable_burst(int hci_fd, uint8_t handle,
+	    uint8_t max_events);
 int	hci_le_remove_adv_set(int hci_fd, uint8_t handle);
 
 /*

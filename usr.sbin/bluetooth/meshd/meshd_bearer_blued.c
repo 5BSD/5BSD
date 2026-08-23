@@ -30,10 +30,16 @@
 #include <unistd.h>
 
 #include "meshd_bearer_blued.h"
+#include "meshd_persist.h"
 #include "ipc_proto.h"
 
-/* Largest mesh AD payload across the three types (Net PDU = 29 octets). */
-#define	MBW_ADV_MAX		31u
+/*
+ * Largest mesh AD payload across the three types (Net PDU = 29 octets).  Must
+ * match blued's MESH_ADV_PDU_MAX (29): blued rejects a longer payload with
+ * IPC_ERR_INVAL, and the ADV_SEND is fire-and-forget, so a 30-31 byte PDU
+ * accepted here would be silently dropped by blued while we counted it sent.
+ */
+#define	MBW_ADV_MAX		29u
 
 /* Reconnect backoff ceiling (seconds); the 1 s tick drives the retry clock. */
 #define	MBW_BACKOFF_MAX		30u
@@ -74,7 +80,17 @@ mbw_transport_failed(struct meshd_blued *bc, struct meshd_node *nd)
 		nd = bc->node;
 	if (nd != NULL) {
 		meshd_proxy_gatt_cancel(nd, NULL, 0, 0);
-		meshd_pbgatt_cancel(nd);
+		/*
+		 * Do not cancel a PB-GATT provisioning that has already
+		 * completed: the pump can process the Complete frame (driving the
+		 * session to DONE) and then see transport EOF in the same drain,
+		 * before the event-loop tick commits it.  A DONE session needs no
+		 * further bearer I/O, so leave it for the tick to commit -- the
+		 * two deliberate teardown paths guard this call the same way
+		 * (NB-23).
+		 */
+		if (!meshd_pbgatt_done(nd))
+			meshd_pbgatt_cancel(nd);
 	}
 	meshd_blued_close(bc);
 	mbw_retry_failed(bc);
@@ -1581,7 +1597,8 @@ mbw_handshake_frame(struct meshd_blued *bc, uint16_t type, uint16_t arg,
 }
 
 int
-meshd_blued_pump_rx(struct meshd_blued *bc, struct meshd_node *nd, uint64_t now)
+meshd_blued_pump_rx(struct meshd_blued *bc, struct meshd_node *nd,
+    struct meshd_persist *ps, uint64_t now)
 {
 	int dispatched = 0;
 	int transport_eof = 0;
@@ -1650,9 +1667,26 @@ meshd_blued_pump_rx(struct meshd_blued *bc, struct meshd_node *nd, uint64_t now)
 			if (handshake > 0)
 				goto frame_done;
 		}
-		if (type == IPC_T_OP_EVENT)
+		if (type == IPC_T_OP_EVENT) {
+			/*
+			 * A single bearer drain can process many inbound frames,
+			 * each of which may originate access-layer replies that
+			 * advance the live SEQ (a segmented reply consumes up to
+			 * MESH_SEG_MAX SEQ, which is within the persist guard
+			 * band).  Reserve the persisted SEQ high-water ahead of
+			 * this frame's origination here -- the once-per-drain
+			 * reserve in the main loop is too coarse and would let
+			 * aired PDUs outrun the persisted mark, so a crash could
+			 * resume below already-transmitted SEQ under the same IV
+			 * (nonce reuse).  If the store cannot be written, stop
+			 * draining before originating; the frame stays buffered
+			 * and the main loop's reserve then fails and quits.
+			 */
+			if (ps != NULL && meshd_persist_seq_reserve(ps, nd) < 0)
+				break;
 			dispatched += mbw_handle_event(bc, nd, arg, payload,
 			    plen, now);
+		}
 		else if (type == IPC_T_OP_REPLY && arg == IPC_OP_DOMAIN_GATT &&
 		    plen >= IPC_OP_PREFIX_SIZE) {
 			struct meshd_blued_proxy_link *link;

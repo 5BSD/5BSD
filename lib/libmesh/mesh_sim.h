@@ -179,7 +179,13 @@ struct mesh_sim_rx {
 	uint32_t	count;		/* total messages delivered to models */
 };
 
-typedef int (*mesh_sim_devkey_rx_fn)(void *, uint16_t, uint16_t,
+/*
+ * DevKey-sealed (config) message delivered to the local node.  The uint16_t
+ * after dst is the NetKeyIndex of the subnet that secured the inbound Network
+ * PDU -- the config server needs it to honor "do not remove the NetKey that
+ * secured this message" (MshPRT 4.3.2.32).
+ */
+typedef int (*mesh_sim_devkey_rx_fn)(void *, uint16_t, uint16_t, uint16_t,
     const uint8_t *, size_t, uint8_t *, size_t *);
 typedef int (*mesh_sim_devkey_lookup_fn)(void *, uint16_t, uint8_t[16]);
 typedef int (*mesh_sim_devkey_upper_rx_fn)(void *, uint32_t, uint16_t,
@@ -193,6 +199,7 @@ typedef int (*mesh_sim_devkey_upper_rx_fn)(void *, uint32_t, uint16_t,
 struct mesh_node {
 	uint16_t		addr;		/* primary element unicast */
 	uint8_t			n_elements;
+	uint8_t			default_ttl;	/* Config Default TTL for replies/origination */
 	struct mesh_element	elems[MESH_SIM_MAX_ELEMS];
 	struct mesh_model	models[MESH_SIM_MAX_ELEMS][MESH_SIM_MAX_MODELS];
 
@@ -336,6 +343,13 @@ struct mesh_sim {
 
 	uint64_t		now;		/* protocol virtual clock, seconds */
 	uint64_t		now_ms;		/* access/runtime virtual clock */
+	/*
+	 * Wall-clock (CLOCK_REALTIME) seconds, used ONLY as the IV Update
+	 * 96-hour dwell anchor.  The dwell measures time-in-state and must
+	 * survive daemon restarts, so it cannot use the monotonic `now` (which
+	 * resets to ~0 each boot).  Defaults to `now` if the host never sets it.
+	 */
+	uint64_t		wall_now;
 
 	uint32_t		delivered;	/* total node receptions attempted */
 

@@ -66,10 +66,11 @@ static const uint8_t DEVKEY[16] = {
 static int devkey_server_seen, devkey_client_seen;
 
 static int
-devkey_server_rx(void *arg, uint16_t src, uint16_t dst,
+devkey_server_rx(void *arg, uint16_t src, uint16_t dst, uint16_t net_idx,
     const uint8_t *access, size_t access_len, uint8_t *reply,
     size_t *reply_len)
 {
+	(void)net_idx;
 	struct mesh_access_pdu ap;
 	uint8_t ttl = 7;
 
@@ -1442,8 +1443,15 @@ ATF_TC_BODY(key_refresh_phase3, tc)
 	ATF_REQUIRE_EQ(0, mesh_sim_key_refresh_advance(y));	/* Y -> Phase 2 */
 	ATF_REQUIRE_EQ(0, mesh_sim_key_refresh_advance(z));	/* Z -> Phase 2 */
 
-	/* X (Phase 1) beacons the new key with KR=0.  Phase-2 Y/Z enter
-	 * Phase 3, revoke/promote atomically, and return to state 0. */
+	/*
+	 * X completes its own refresh and settles on the promoted new key.  A
+	 * settled node beacons that key with KR=0 -- the Phase-3 trigger (a
+	 * Phase-1 node must still beacon the OLD key, MshPRT 3.11.4 / C4-M2, so
+	 * it cannot be the source here).  Phase-2 Y/Z receive it, enter Phase 3,
+	 * revoke/promote atomically, and return to state 0.
+	 */
+	ATF_REQUIRE_EQ(0, mesh_sim_key_refresh_advance(x));	/* X -> Phase 2 */
+	ATF_REQUIRE_EQ(0, mesh_sim_key_refresh_finalize(x));	/* X -> Normal, new key */
 	ATF_REQUIRE_EQ(0, mesh_sim_send_beacon(sim, x, 0));
 	ATF_CHECK_EQ(MESH_KR_PHASE_NORMAL, mesh_sim_node_kr_phase(y));
 	ATF_CHECK_EQ(MESH_KR_PHASE_NORMAL, mesh_sim_node_kr_phase(z));

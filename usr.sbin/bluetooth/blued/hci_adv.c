@@ -589,20 +589,39 @@ static uint16_t
 adv_kind_to_ext_props(enum hci_adv_kind kind)
 {
 
+	/*
+	 * These kinds are the legacy advertising PDU shapes.  On an extended
+	 * controller they MUST carry the "use legacy PDUs" bit: without it a
+	 * connectable extended set is non-scannable (rejects scan-response
+	 * data) and a scannable extended set carries no advertising data, so
+	 * the standard adv-data + scan-response plumbing (device name, UUIDs)
+	 * fails with Invalid HCI Command Parameters.  With the LEGACY bit the
+	 * property values match the legacy PDU types (ADV_IND=0x13,
+	 * ADV_SCAN_IND=0x12, ADV_NONCONN_IND=0x10, ADV_DIRECT_IND low=0x15 /
+	 * high=0x1D), where connectable+scannable coexist as they do on the
+	 * wire.  (Large-payload extended advertising uses the adv-set path,
+	 * not this legacy-shaped configure.)
+	 */
 	switch (kind) {
 	case HCI_ADV_CONN_DIR_HIGH:
-		return (BLUED_HCI_EXT_ADV_PROP_CONNECTABLE |
+		return (BLUED_HCI_EXT_ADV_PROP_LEGACY |
+		    BLUED_HCI_EXT_ADV_PROP_CONNECTABLE |
 		    BLUED_HCI_EXT_ADV_PROP_DIRECTED |
 		    BLUED_HCI_EXT_ADV_PROP_HIGH_DUTY_DIRECTED);
 	case HCI_ADV_CONN_DIR_LOW:
-		return (BLUED_HCI_EXT_ADV_PROP_CONNECTABLE |
+		return (BLUED_HCI_EXT_ADV_PROP_LEGACY |
+		    BLUED_HCI_EXT_ADV_PROP_CONNECTABLE |
 		    BLUED_HCI_EXT_ADV_PROP_DIRECTED);
 	case HCI_ADV_SCAN_UND:
-		return (BLUED_HCI_EXT_ADV_PROP_SCANNABLE);
-	case HCI_ADV_NONCONN_UND:	return (0x0000);
+		return (BLUED_HCI_EXT_ADV_PROP_LEGACY |
+		    BLUED_HCI_EXT_ADV_PROP_SCANNABLE);
+	case HCI_ADV_NONCONN_UND:
+		return (BLUED_HCI_EXT_ADV_PROP_LEGACY);
 	case HCI_ADV_CONN_UND:
 	default:
-		return (BLUED_HCI_EXT_ADV_PROP_CONNECTABLE);
+		return (BLUED_HCI_EXT_ADV_PROP_LEGACY |
+		    BLUED_HCI_EXT_ADV_PROP_CONNECTABLE |
+		    BLUED_HCI_EXT_ADV_PROP_SCANNABLE);
 	}
 }
 
@@ -828,6 +847,54 @@ hci_le_set_ext_adv_enable(int hci_fd, uint8_t enable, uint8_t handle)
 	return (0);
 }
 
+/*
+ * Enable an extended advertising set for a BOUNDED number of advertising
+ * events (Max_Extended_Advertising_Events, §7.8.56).  When the controller has
+ * sent max_events advertising events it stops the set and generates LE
+ * Advertising Set Terminated, which lets a caller air one queued PDU at a time
+ * (the mesh bearer) instead of advertising the last PDU indefinitely.
+ * max_events must be non-zero.
+ */
+int
+hci_le_set_ext_adv_enable_burst(int hci_fd, uint8_t handle, uint8_t max_events)
+{
+	struct bt_devreq r;
+	uint8_t cp[6];
+	ng_hci_status_rp rp;
+
+	if (!hci_adv_handle_valid(handle) || max_events == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(cp, 0, sizeof(cp));
+	cp[0] = 0x01;		/* enable */
+	cp[1] = 1;		/* num_sets */
+	cp[2] = handle;		/* Advertising_Handle */
+	/* cp[3..4] = duration 0 (bounded by max_events instead) */
+	cp[5] = max_events;	/* Max_Extended_Advertising_Events */
+
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_SET_EXT_ADV_ENABLE);
+	r.cparam = cp;
+	r.clen = 6;
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
+		return (-1);
+	if (rp.status != 0x00) {
+		LOG_HCI(1, "LE Set Ext Adv Enable (burst) failed, status=0x%02x",
+		    rp.status);
+		errno = EIO;
+		return (-1);
+	}
+	BLUED_PROBE_GAP_ADV_ENABLE(0x01, handle);
+	return (0);
+}
+
 int
 hci_le_remove_adv_set(int hci_fd, uint8_t handle)
 {
@@ -876,6 +943,7 @@ hci_le_remove_adv_set(int hci_fd, uint8_t handle)
  */
 #define MESH_ADV_EXT_PROPS	0x0010	/* legacy PDUs, non-conn, non-scan */
 #define MESH_ADV_INTERVAL	0x00A0	/* 160 * 0.625ms = 100ms */
+#define MESH_ADV_TX_COPIES	3	/* advertising events per queued PDU */
 #define MESH_ADV_CHANNELS	0x07	/* primary channels 37/38/39 */
 int
 hci_mesh_adv_burst(int hci_fd, uint64_t le_features, const uint8_t *ad,
@@ -908,10 +976,29 @@ hci_mesh_adv_burst(int hci_fd, uint64_t le_features, const uint8_t *ad,
 		if (hci_le_set_ext_adv_data(hci_fd, MESH_ADV_HANDLE, ad,
 		    adlen) < 0)
 			return (-1);
-		return (hci_le_set_ext_adv_enable(hci_fd, 0x01,
-		    MESH_ADV_HANDLE));
+		/*
+		 * Air this PDU a bounded number of times, then stop and fire
+		 * Advertising Set Terminated.  Previously max_events was 0
+		 * (advertise forever), so a back-to-back burst of distinct mesh
+		 * PDUs reprogrammed the single set before any but the last aired,
+		 * and the final PDU rebroadcast indefinitely.  The caller paces
+		 * the FIFO on the Terminated event, airing one PDU at a time.
+		 */
+		return (hci_le_set_ext_adv_enable_burst(hci_fd, MESH_ADV_HANDLE,
+		    MESH_ADV_TX_COPIES));
 	}
 
+	/*
+	 * Legacy (non-extended) controllers have a single advertising set that
+	 * mesh and the daemon's own connectable advertising cannot share.  Set
+	 * Advertising Parameters is Command Disallowed (§7.8.5) while advertising
+	 * is enabled, so if blued's own connectable advertising is on this burst
+	 * fails -- deliberately.  We do NOT force-disable the daemon's own
+	 * advertising to make room (that would silently make the peripheral
+	 * unconnectable while adp->adv_enabled still read true); on a legacy
+	 * controller "own advertising wins" and mesh TX is simply unavailable
+	 * while advertising.  A central-only node (no own advertising) works.
+	 */
 	if (hci_le_set_advertising_params_full(hci_fd, MESH_ADV_INTERVAL,
 	    MESH_ADV_INTERVAL, 0x03 /* ADV_NONCONN_IND */, 0x00, 0x00,
 	    MESH_ADV_CHANNELS, 0x00, NULL) < 0)

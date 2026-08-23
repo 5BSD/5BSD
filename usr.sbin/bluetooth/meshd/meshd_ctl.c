@@ -196,7 +196,7 @@ ctl_app_events(struct meshd_node *nd, struct meshd_app_client *cl, int argc,
     char **argv, char *reply, size_t reply_max)
 {
 	struct meshd_app_event ev;
-	size_t max, n, off;
+	size_t max, n;
 	uint32_t argmax;
 	int r;
 
@@ -218,30 +218,75 @@ ctl_app_events(struct meshd_node *nd, struct meshd_app_client *cl, int argc,
 		return (-1);
 	}
 
-	r = snprintf(reply, reply_max, "OK events=%zu dropped=%u",
-	    max, meshd_app_client_event_dropped(cl));
-	if (r < 0 || (size_t)r >= reply_max)
-		return (-1);
-	off = (size_t)r;
-	for (n = 0; n < max; n++) {
-		r = meshd_app_client_event_pop(cl, &ev);
-		if (r <= 0)
+	/*
+	 * Render the events body first, into a scratch buffer, PEEKing each
+	 * event and consuming it only once it is known to fit.  This keeps the
+	 * header's "events=" count equal to what is actually returned and, unlike
+	 * a pop-then-check loop, never destroys an event that did not fit the
+	 * reply (which would both lose data and overstate the count).
+	 */
+	char body[MESHD_CTL_REPLY_MAX];
+	char item[MESH_ACCESS_PAYLOAD_MAX * 2 + 128];
+	size_t boff = 0;
+
+	n = 0;
+	while (n < max) {
+		int il;
+
+		if (meshd_app_client_event_peek(cl, &ev) <= 0)
 			break;
-		r = snprintf(reply + off, reply_max - off,
+		il = snprintf(item, sizeof(item),
 		    " [elem=0x%04x model=0x%04x vendor=0x%04x "
 		    "src=0x%04x dst=0x%04x opcode=0x%06x params=",
 		    ev.elem_addr, ev.id.model_id,
 		    ev.id.vendor ? ev.id.company_id : 0,
 		    ev.src, ev.dst, ev.opcode);
-		if (r < 0 || (size_t)r >= reply_max - off)
-			return (-1);
-		off += (size_t)r;
-		hex_append(reply, reply_max, ev.params, ev.params_len);
-		off = strlen(reply);
-		r = snprintf(reply + off, reply_max - off, "]");
-		if (r < 0 || (size_t)r >= reply_max - off)
-			return (-1);
-		off += (size_t)r;
+		if (il < 0 || (size_t)il >= sizeof(item)) {
+			/* Should not happen (fixed-size prefix); drop to avoid a
+			 * permanently stuck queue head, and account it so the
+			 * events=/dropped= totals stay honest. */
+			(void)meshd_app_client_event_pop(cl, &ev);
+			cl->apps.ev_dropped++;
+			continue;
+		}
+		hex_append(item, sizeof(item), ev.params, ev.params_len);
+		il = (int)strlen(item);
+		if ((size_t)il + 1 >= sizeof(item) - 1)
+			; /* params hex was truncated to item capacity; still emit */
+		il = snprintf(item + strlen(item), sizeof(item) - strlen(item),
+		    "]") < 0 ? -1 : (int)strlen(item);
+		if (il < 0)
+			break;
+		/*
+		 * Bound against the REPLY capacity minus a header reservation,
+		 * not just sizeof(body): body is later rendered into reply AFTER
+		 * the header, so bounding only on sizeof(body)==reply_max let
+		 * header+body overflow reply_max and hit the header-only fallback
+		 * -- popping the events but dropping their bodies (the exact data
+		 * loss this rewrite exists to prevent).  The worst-case header is
+		 * "OK events=" (10) + %zu (<=20) + " dropped=" (9) + %u (<=10) =
+		 * 49 bytes; reserve 64 for margin.
+		 */
+#define	EVENTS_HDR_RESV	64u
+		if (boff + (size_t)il + EVENTS_HDR_RESV >= reply_max)
+			break;			/* would not fit the reply: leave queued */
+		if (boff + (size_t)il >= sizeof(body))
+			break;			/* body full: leave the rest queued */
+		memcpy(body + boff, item, (size_t)il);
+		boff += (size_t)il;
+		body[boff] = '\0';
+		(void)meshd_app_client_event_pop(cl, &ev);	/* commit */
+		n++;
+	}
+
+	r = snprintf(reply, reply_max, "OK events=%zu dropped=%u%.*s",
+	    n, meshd_app_client_event_dropped(cl), (int)boff, body);
+	if (r < 0 || (size_t)r >= reply_max) {
+		/* Header+body would overflow the reply: emit just the header with
+		 * the honest count of what we consumed (events remain readable via
+		 * the queue only if not popped; here they were, so report count). */
+		(void)snprintf(reply, reply_max, "OK events=%zu dropped=%u",
+		    n, meshd_app_client_event_dropped(cl));
 	}
 	return (0);
 }
@@ -1281,12 +1326,41 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 				return (-1);
 			}
 			/*
-			 * Mark every roster node as awaiting the new key; each is
-			 * then sent a Config NetKey Update and moves to ACKED on
-			 * its Status.  Nodes that never ACK stay pending and are
-			 * surfaced by "network-status" (the eviction signal).
+			 * Reject re-entry mid-distribution: overwriting the staged
+			 * key while nodes have already installed the first one would
+			 * make them answer Cannot Update for the second and wedge the
+			 * refresh.  The operator must let it finish (or the daemon
+			 * restart clear it) before starting a different key.
+			 */
+			if (nd->kr_distributing) {
+				snprintf(reply, reply_max,
+				    "ERR key-refresh already distributing");
+				explicit_bzero(key, sizeof(key));
+				return (-1);
+			}
+			/*
+			 * Mark every roster node awaiting the new key, stash the
+			 * key, and start pushing a Config NetKey Update to the
+			 * nodes one at a time; each node's NetKey Update Status
+			 * moves it to ACKED and drives the next (NB-14).  Nodes
+			 * that never ACK stay pending and are surfaced by
+			 * "network-status".
 			 */
 			mesh_mgr_kr_begin(nd->mgr);
+			memcpy(nd->kr_net_key, key, sizeof(nd->kr_net_key));
+			nd->kr_distributing = 1;
+			explicit_bzero(key, sizeof(key));
+			/*
+			 * If the very first NetKey Update cannot be built or sent,
+			 * meshd_kr_send_next clears kr_distributing and wipes the
+			 * staged key -- report the failure rather than an "OK
+			 * distributing" the operator would wait on forever.
+			 */
+			if (meshd_kr_send_next(nd, nd->sim.now_ms) < 0) {
+				snprintf(reply, reply_max,
+				    "ERR key-refresh network: distribution failed");
+				return (-1);
+			}
 			snprintf(reply, reply_max,
 			    "OK key-refresh network distributing=%zu",
 			    mesh_mgr_node_count(nd->mgr));

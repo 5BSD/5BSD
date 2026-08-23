@@ -81,6 +81,9 @@ void			 blued_conn_note_enhanced(struct blued_adapter *adapter,
 /* Find an exact peer on one controller, including its LE address type. */
 struct blued_conn	*blued_conn_by_peer(const struct blued_adapter *adapter,
 			    const bdaddr_t *addr, uint8_t addr_type);
+struct blued_conn	*blued_conn_by_peer_cmd(
+			    const struct blued_adapter *adapter,
+			    const bdaddr_t *addr, uint8_t addr_type);
 
 /*
  * Resolve the adapter index and LE address type of the live connection to a

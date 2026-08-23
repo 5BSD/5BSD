@@ -601,7 +601,7 @@ ATF_TC_BODY(app_client_io_and_event_helpers, tc)
 	ATF_CHECK(strstr(peerbuf, "EVENT elem=0x0001") != NULL);
 
 	ATF_REQUIRE_EQ(7, write(sp[1], "status\n", 7));
-	ATF_CHECK_EQ(1, meshd_client_read(nd, cl));
+	ATF_CHECK_EQ(1, meshd_client_read(nd, NULL, cl));
 	ATF_REQUIRE_EQ(0, meshd_client_write(cl));
 	n = read(sp[1], peerbuf, sizeof(peerbuf) - 1);
 	ATF_REQUIRE(n > 0);
@@ -610,10 +610,10 @@ ATF_TC_BODY(app_client_io_and_event_helpers, tc)
 
 	/* Partial input is retained until a newline completes the command. */
 	ATF_REQUIRE_EQ(3, write(sp[1], "sta", 3));
-	ATF_CHECK_EQ(0, meshd_client_read(nd, cl));
+	ATF_CHECK_EQ(0, meshd_client_read(nd, NULL, cl));
 	ATF_CHECK_EQ(3, cl->rxlen);
 	ATF_REQUIRE_EQ(4, write(sp[1], "tus\n", 4));
-	ATF_CHECK_EQ(1, meshd_client_read(nd, cl));
+	ATF_CHECK_EQ(1, meshd_client_read(nd, NULL, cl));
 	ATF_REQUIRE_EQ(0, meshd_client_write(cl));
 	(void)read(sp[1], peerbuf, sizeof(peerbuf));
 
@@ -627,10 +627,10 @@ ATF_TC_BODY(app_client_io_and_event_helpers, tc)
 	/* Input overflow and EOF are fatal to the individual client. */
 	cl->rxlen = sizeof(cl->rxbuf) - 1;
 	ATF_REQUIRE_EQ(2, write(sp[1], "xx", 2));
-	ATF_CHECK_EQ(-1, meshd_client_read(nd, cl));
+	ATF_CHECK_EQ(-1, meshd_client_read(nd, NULL, cl));
 	cl->rxlen = 0;
 	ATF_REQUIRE_EQ(0, close(sp[1]));
-	ATF_CHECK_EQ(-1, meshd_client_read(nd, cl));
+	ATF_CHECK_EQ(-1, meshd_client_read(nd, NULL, cl));
 
 	/* A closed peer surfaces the write failure without terminating meshd. */
 	(void)signal(SIGPIPE, SIG_IGN);
@@ -733,7 +733,7 @@ ATF_TC_BODY(blued_bearer_async_handshake, tc)
 	ipc_put_le32(features, IPC_FEATURE_MESH | IPC_FEATURE_EVENTS);
 	bearer_write_frame(pfd, IPC_T_HELLO, IPC_PROTO_VERSION, features,
 	    sizeof(features));
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, meshd_now()));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, meshd_now()));
 	ATF_REQUIRE_EQ(MESHD_BLUED_SUBSCRIBING, bc.state);
 	ATF_REQUIRE_EQ(0, meshd_blued_flush(&bc));
 	ATF_REQUIRE_EQ((ssize_t)sizeof(hdr), read(pfd, hdr, sizeof(hdr)));
@@ -761,7 +761,7 @@ ATF_TC_BODY(blued_bearer_async_handshake, tc)
 	ipc_op_prefix_encode(payload, request_id, IPC_ERR_NONE, 0);
 	bearer_write_frame(pfd, IPC_T_OP_REPLY, IPC_OP_DOMAIN_MESH, payload,
 	    IPC_OP_PREFIX_SIZE);
-	ATF_CHECK_EQ(2, meshd_blued_pump_rx(&bc, nd, meshd_now()));
+	ATF_CHECK_EQ(2, meshd_blued_pump_rx(&bc, nd, NULL, meshd_now()));
 	ATF_CHECK_EQ(MESHD_BLUED_READY, bc.state);
 	ATF_CHECK_EQ(0, bc.handshake_deadline);
 
@@ -924,16 +924,16 @@ ATF_TC_BODY(blued_bearer_guards_and_tx_matrix, tc)
 	ATF_CHECK_EQ(-1, meshd_blued_attach(&bc, sp[0]));
 	nd = calloc(1, sizeof(*nd));
 	ATF_REQUIRE(nd != NULL);
-	ATF_CHECK_EQ(-1, meshd_blued_pump_rx(NULL, nd, 0));
-	ATF_CHECK_EQ(-1, meshd_blued_pump_rx(&bc, NULL, 0));
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 0));
+	ATF_CHECK_EQ(-1, meshd_blued_pump_rx(NULL, nd, NULL, 0));
+	ATF_CHECK_EQ(-1, meshd_blued_pump_rx(&bc, NULL, NULL, 0));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 0));
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
 	ATF_REQUIRE_EQ(0, meshd_set_nonblock(sp[0]));
 	bc.fd = sp[0];
 	ipc_hdr_encode(hdr, IPC_MAX_PAYLOAD + 1, IPC_T_OP_EVENT,
 	    IPC_OP_DOMAIN_MESH);
 	ATF_REQUIRE_EQ((ssize_t)sizeof(hdr), write(sp[1], hdr, sizeof(hdr)));
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 0));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 0));
 	ATF_CHECK_EQ(-1, bc.fd);
 	ATF_REQUIRE_EQ(0, close(sp[1]));
 	free(nd);
@@ -971,7 +971,7 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	bearer_write_discovery_event(sp[1], request_id,
 	    IPC_GATT_EV_CHARACTERISTIC, 0x2adc, 0x0022);
 	bearer_write_reply(sp[1], request_id, IPC_ERR_NONE, 0);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 1));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 1));
 	ATF_CHECK_EQ(0x0021, bc.gatt_data_in);
 	ATF_CHECK_EQ(0x0022, bc.gatt_data_out);
 	ATF_CHECK_EQ(0, bc.gatt_discovering);
@@ -988,7 +988,7 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	body[IPC_GATT_NOTIFY_EVENT_SIZE + 1] = 0x01;
 	bearer_write_frame(sp[1], IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, payload,
 	    sizeof(payload));
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 2));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 2));
 
 	/* Proxy discovery uses an independent request and subscribes on success. */
 	nd->provisioned = 1;
@@ -1004,7 +1004,7 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	bearer_write_discovery_event(sp[1], request_id,
 	    IPC_GATT_EV_CHARACTERISTIC, MESH_PROXY_DATA_OUT_UUID, 0x0032);
 	bearer_write_reply(sp[1], request_id, IPC_ERR_NONE, 0);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 3));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 3));
 	ATF_CHECK_EQ(0, bc.proxy[0].discovering);
 	ATF_CHECK_EQ(0x0031, bc.proxy[0].data_in);
 	ATF_CHECK_EQ(0x0032, bc.proxy[0].data_out);
@@ -1023,9 +1023,9 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	body[IPC_GATT_NOTIFY_EVENT_SIZE + 1] = 0x00;
 	bearer_write_frame(sp[1], IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, payload,
 	    sizeof(payload));
-	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, 3));
+	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, NULL, 3));
 	bearer_write_ack(sp[1], request_id, IPC_ERR_NONE);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 3));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 3));
 	ATF_CHECK(!bc.proxy[0].subscribing);
 	ATF_CHECK(bc.proxy[0].subscribed);
 
@@ -1041,7 +1041,7 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	body[IPC_GATT_NOTIFY_EVENT_SIZE + 1] = 0x00;
 	bearer_write_frame(sp[1], IPC_T_OP_EVENT, IPC_OP_DOMAIN_GATT, payload,
 	    sizeof(payload));
-	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, 4));
+	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, NULL, 4));
 
 	/* A failed Write Command reply tears down exactly its Proxy bearer. */
 	ATF_REQUIRE_EQ(0, meshd_blued_proxy_tx(&bc, addr, 0,
@@ -1055,7 +1055,7 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 		}
 	ATF_REQUIRE(request_id != 0);
 	bearer_write_ack(sp[1], request_id, IPC_ERR_IO);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 4));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 4));
 	ATF_CHECK_EQ(0, bc.proxy[0].active);
 
 	/* A later GAP disconnect for the closed link remains harmless. */
@@ -1065,7 +1065,7 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	memcpy(body + 3, &ba, sizeof(ba));
 	bearer_write_frame(sp[1], IPC_T_OP_EVENT, IPC_OP_DOMAIN_GAP, payload,
 	    IPC_OP_PREFIX_SIZE + IPC_GAP_DISCONNECTED_EVENT_SIZE);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 5));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 5));
 	ATF_CHECK_EQ(0, bc.proxy[0].active);
 
 	/* A failed correlated subscription ACK closes the pending Proxy link. */
@@ -1081,10 +1081,10 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	bearer_write_discovery_event(sp[1], request_id,
 	    IPC_GATT_EV_CHARACTERISTIC, MESH_PROXY_DATA_OUT_UUID, 0x0032);
 	bearer_write_reply(sp[1], request_id, IPC_ERR_NONE, 0);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 5));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 5));
 	request_id = bc.proxy[0].subscribe_request_id;
 	bearer_write_ack(sp[1], request_id, IPC_ERR_IO);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 5));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 5));
 	ATF_CHECK_EQ(0, bc.proxy[0].active);
 
 	/* Failed discovery replies and stream errors release pending state. */
@@ -1092,22 +1092,22 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	    MESHD_ADAPTER_DEFAULT));
 	request_id = bc.proxy[0].discover_request_id;
 	bearer_write_reply(sp[1], request_id, IPC_ERR_IO, 0);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 6));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 6));
 	ATF_CHECK_EQ(0, bc.proxy[0].active);
 	ATF_REQUIRE_EQ(0, meshd_blued_proxy_open(&bc, addr, 0,
 	    MESHD_ADAPTER_DEFAULT));
 	bearer_write_frame(sp[1], IPC_T_ERROR, IPC_ERR_PROTO, NULL, 0);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 7));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 7));
 	ATF_CHECK_EQ(0, bc.proxy[0].active);
 
 	ATF_REQUIRE_EQ(0, meshd_blued_pbgatt_discover(&bc, addr, 0));
 	request_id = bc.discover_request_id;
 	bearer_write_reply(sp[1], request_id, IPC_ERR_NOT_FOUND, 0);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 8));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 8));
 	ATF_CHECK_EQ(0, bc.gatt_discovering);
 	ATF_REQUIRE_EQ(0, meshd_blued_pbgatt_discover(&bc, addr, 0));
 	bearer_write_frame(sp[1], IPC_T_ERROR, IPC_ERR_PROTO, NULL, 0);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 9));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 9));
 	ATF_CHECK_EQ(0, bc.gatt_discovering);
 
 	/* The same disconnect event clears the non-proxy PB-GATT binding. */
@@ -1120,7 +1120,7 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	bc.writes[0].request_id = 0xdead;
 	bc.writes[0].generation = bc.pbgatt_generation;
 	bearer_write_ack(sp[1], 0xdead, IPC_ERR_IO);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 10));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 10));
 	ATF_CHECK_EQ(0, bc.gatt_addr[0]);
 
 	strlcpy(bc.gatt_addr, addr, sizeof(bc.gatt_addr));
@@ -1133,7 +1133,7 @@ ATF_TC_BODY(blued_bearer_gatt_event_matrix, tc)
 	memcpy(body + 3, &ba, sizeof(ba));
 	bearer_write_frame(sp[1], IPC_T_OP_EVENT, IPC_OP_DOMAIN_GAP, payload,
 	    IPC_OP_PREFIX_SIZE + IPC_GAP_DISCONNECTED_EVENT_SIZE);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 10));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 10));
 	ATF_CHECK_EQ(0, bc.gatt_addr[0]);
 	ATF_CHECK_EQ(0, bc.gatt_data_in);
 	ATF_CHECK_EQ(0, bc.gatt_data_out);
@@ -1223,7 +1223,7 @@ ATF_TC_BODY(blued_bearer_attach_and_link_loss, tc)
 	ATF_REQUIRE(WIFEXITED(status));
 	ATF_REQUIRE_EQ(0, WEXITSTATUS(status));
 	/* The event buffered before ACK is dispatched even though EOF follows it. */
-	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, 1));
+	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, NULL, 1));
 	ATF_CHECK_EQ(-1, bc.fd);
 	/* A synchronous hard send failure tears down every node-side GATT link. */
 	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sp));
@@ -1318,7 +1318,7 @@ ATF_TC_BODY(pbgatt_timeout_failed_wire_order, tc)
 
 	/* Only the correlated successful write completion permits disconnection. */
 	bearer_write_ack(sp[1], request_id, IPC_ERR_NONE);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 1235));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 1235));
 	ATF_CHECK(!nd->pbgatt.active);
 	ATF_CHECK_EQ('\0', bc.gatt_addr[0]);
 
@@ -1335,7 +1335,7 @@ ATF_TC_BODY(pbgatt_timeout_failed_wire_order, tc)
 	bc.writes[0].generation = 9;
 	bc.writes[0].terminal = 1;
 	bearer_write_ack(sp[1], 0xfeed, IPC_ERR_IO);
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 1236));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 1236));
 	ATF_CHECK(nd->pbgatt.active);
 	ATF_CHECK_STREQ(addr, bc.gatt_addr);
 	meshd_pbgatt_cancel(nd);

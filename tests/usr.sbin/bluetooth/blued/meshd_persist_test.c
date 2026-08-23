@@ -30,6 +30,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -275,8 +276,10 @@ ATF_TC_BODY(node_state_roundtrip, tc)
 	a->self->iv.iv_index = 3;
 	a->self->iv.state = MESH_IV_UPDATE_IN_PROGRESS;
 	/*
-	 * A CLOCK_MONOTONIC-seconds dwell timestamp that will not survive a
-	 * reboot; the loader must clamp it to the current clock (finding 71).
+	 * A far-future dwell timestamp (as a persisted value would look on a host
+	 * whose wall clock has since regressed): the loader must clamp it down to
+	 * the current wall clock so no dwell-gated IV transition is wedged until
+	 * real time catches up (finding 71 / NB-7).
 	 */
 	a->self->iv.entered_time = 4000000000000ULL;
 	a->self->seq = 42;
@@ -383,9 +386,11 @@ ATF_TC_BODY(node_state_roundtrip, tc)
 	/* IV Index / phase. */
 	ATF_CHECK_EQ(3u, meshd_node_iv(b));
 	ATF_CHECK_EQ(MESH_IV_UPDATE_IN_PROGRESS, b->self->iv.state);
-	/* The dwell timestamp is clamped to this boot's monotonic clock, not
-	 * the astronomically large persisted value (finding 71). */
-	ATF_CHECK(b->self->iv.entered_time < 1000000000ULL);
+	/* The dwell timestamp is clamped down to the current wall clock, not the
+	 * astronomically large persisted value (finding 71 / NB-7): it is no
+	 * longer the stored far-future value and is not ahead of "now". */
+	ATF_CHECK(b->self->iv.entered_time < 4000000000000ULL);
+	ATF_CHECK(b->self->iv.entered_time <= (uint64_t)time(NULL));
 
 	/* AppKey + model config. */
 	ATF_CHECK_EQ(1, b->db.appkeys[0].valid);
@@ -657,33 +662,42 @@ ATF_TC_WITHOUT_HEAD(clock_tick_drives_iv_update);
 ATF_TC_BODY(clock_tick_drives_iv_update, tc)
 {
 	MESH_HEAP(struct meshd_node, a);
+	/*
+	 * The IV Update 96-hour dwell is measured against the wall clock
+	 * (CLOCK_REALTIME seconds), which meshd_node_tick seeds into the sim so
+	 * time-in-state survives a daemon restart even though the tick's own
+	 * now_ms is the monotonic clock (Sections 3.10.5 / 3.11.5).  We drive
+	 * the transitions by positioning the state machine's entered_time
+	 * relative to that wall clock, not by the synthetic tick now_ms.
+	 */
+	const uint64_t far_future = (uint64_t)1 << 40;	/* > any real wall time */
 	int iv_changed;
 
 	fresh_node(a);
-	/* Pin the IV state machine to a known epoch entered at t=0. */
-	mesh_iv_init(&a->self->iv, 0, 0);
 	a->self->seq = MESH_IV_SEQ_TRIGGER;	/* SEQ exhausted: update is due */
 
-	/* Before the 96-hour dwell elapses, no transition occurs. */
+	/* Entered_time in the future: the wall clock cannot have dwelled yet,
+	 * so no transition occurs however far the tick's now_ms is advanced. */
+	mesh_iv_init(&a->self->iv, 0, far_future);
 	ATF_REQUIRE_EQ(0, meshd_node_tick(a,
-	    MESH_IV_MIN_DWELL_SECS * 1000ULL / 2,
-	    &iv_changed));
+	    MESH_IV_MIN_DWELL_SECS * 1000ULL / 2, &iv_changed));
 	ATF_CHECK_EQ(0u, meshd_node_iv(a));
 	ATF_CHECK_EQ(MESH_IV_NORMAL, a->self->iv.state);
 	ATF_CHECK_EQ(0, iv_changed);
 
-	/* At the dwell boundary the update BEGINS (index n -> n+1, In Progress). */
+	/* Entered_time in the past: the dwell is satisfied, so the update
+	 * BEGINS (index n -> n+1, In Progress). */
+	mesh_iv_init(&a->self->iv, 0, 0);
 	ATF_REQUIRE_EQ(0, meshd_node_tick(a,
-	    MESH_IV_MIN_DWELL_SECS * 1000ULL,
-	    &iv_changed));
+	    MESH_IV_MIN_DWELL_SECS * 1000ULL, &iv_changed));
 	ATF_CHECK_EQ(1u, meshd_node_iv(a));
 	ATF_CHECK_EQ(MESH_IV_UPDATE_IN_PROGRESS, a->self->iv.state);
 	ATF_CHECK_EQ(1, iv_changed);
 
 	/* A full dwell later the update COMPLETES: back to Normal, SEQ reset. */
+	a->self->iv.entered_time = 0;
 	ATF_REQUIRE_EQ(0, meshd_node_tick(a,
-	    2 * MESH_IV_MIN_DWELL_SECS * 1000ULL,
-	    &iv_changed));
+	    2 * MESH_IV_MIN_DWELL_SECS * 1000ULL, &iv_changed));
 	ATF_CHECK_EQ(MESH_IV_NORMAL, a->self->iv.state);
 	ATF_CHECK_EQ(1u, meshd_node_iv(a));
 	ATF_CHECK_EQ(0u, meshd_node_seq(a));

@@ -115,10 +115,14 @@ meshd_pbgatt_recv_mtu(struct meshd_node *nd, const uint8_t *pdu, size_t len,
 	size_t plen;
 	int rc;
 
-	if (nd == NULL || pdu == NULL || len == 0 || !nd->pbgatt.active ||
+	if (nd == NULL || pdu == NULL || !nd->pbgatt.active ||
 	    bearer_mtu < MESHD_PBGATT_MIN_MTU ||
 	    len > (size_t)bearer_mtu - 3)
 		return (-1);
+	/* An empty notification is legal; ignore it rather than aborting the
+	 * in-flight PB-GATT provisioning on a single empty notify (NB-32). */
+	if (len == 0)
+		return (0);
 	/* Unsupported MessageTypes are ignored, not treated as link errors. */
 	if ((pdu[0] & 0x3f) != MESH_PROXY_TYPE_PROVISIONING)
 		return (0);

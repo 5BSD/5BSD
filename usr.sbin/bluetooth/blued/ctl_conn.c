@@ -365,8 +365,8 @@ ctl_disconnect_result(uint8_t adapter_index, const bdaddr_t *addr,
 	 * main event loop thread, same as blued_conn_disconnect;
 	 * (2) blued_conn_disconnect has an atomic double-disconnect guard.
 	 */
-	conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index), addr,
-	    addr_type);
+	conn = blued_conn_by_peer_cmd(blued_adapter_by_index_powered(adapter_index),
+	    addr, addr_type);
 	if (conn == NULL) {
 		return (IPC_ERR_NOT_FOUND);
 	}
@@ -395,8 +395,8 @@ ctl_conn_lookup(uint8_t adapter_index, const bdaddr_t *addr, uint8_t addr_type,
 {
 	struct blued_conn *conn;
 
-	conn = blued_conn_by_peer(blued_adapter_by_index_powered(adapter_index), addr,
-	    addr_type);
+	conn = blued_conn_by_peer_cmd(blued_adapter_by_index_powered(adapter_index),
+	    addr, addr_type);
 	if (conn == NULL) {
 		return (-2);
 	}

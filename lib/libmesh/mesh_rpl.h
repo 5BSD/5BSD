@@ -107,16 +107,13 @@ int	mesh_rpl_net_receive(struct mesh_rpl *rpl, const uint8_t enckey[16],
  * In-Progress for >=96h after this node has left it).  This wrapper tries
  * iv_index first and, only if the PDU fails to authenticate under it, retries
  * under iv_index - 1 (skipped when iv_index is 0).  A replay verdict is
- * authoritative and is never retried under the other IV Index.  The
- * iv_update argument is accepted for source/ABI compatibility but no longer
- * gates the retry.  Callers on the network receive path should prefer this
- * seam over the single-IV primitive so valid traffic is not dropped across
- * the IV-Update transition.  Returns the same 1/0/-1 values as
- * mesh_rpl_net_receive().
+ * authoritative and is never retried under the other IV Index.  Callers on the
+ * network receive path should prefer this seam over the single-IV primitive so
+ * valid traffic is not dropped across the IV-Update transition.  Returns the
+ * same 1/0/-1 values as mesh_rpl_net_receive().
  */
 int	mesh_rpl_net_receive_ivupd(struct mesh_rpl *rpl, const uint8_t enckey[16],
 	    const uint8_t privkey[16], uint8_t nid, uint32_t iv_index,
-	    int iv_update, const uint8_t *in, size_t inlen,
-	    struct mesh_net_pdu *out);
+	    const uint8_t *in, size_t inlen, struct mesh_net_pdu *out);
 
 #endif /* _MESH_RPL_H_ */

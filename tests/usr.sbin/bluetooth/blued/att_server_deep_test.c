@@ -519,10 +519,12 @@ ATF_TC_BODY(test_fbtv_perm_and_range, tc)
 
 	/*
 	 * Find By Type Value for Primary Service (0x2800) == 0x1801.
-	 * The only matching attr (handle 2) is encryption-gated and is the
-	 * first candidate, so the server returns INSUFF_ENCRYPTION
-	 * (att_server.c 993-998).  Range starts at handle 2 so handle 1 is
-	 * skipped by the range test first (att_server.c 985-986).
+	 * The only value-matching attr (handle 2) is encryption-gated.  Find
+	 * By Type Value matches the value first and treats a match the client
+	 * may not read as non-matching -- it is skipped rather than surfaced
+	 * as a security error (handle_find_by_type_value, "A-F5") so a
+	 * protected handle is not leaked through discovery.  With no reportable
+	 * match, the server returns Attribute Not Found.
 	 */
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_FIND_BY_TYPE_VALUE_REQ;
 	put_le16(pdu + 1, 0x0002);	/* start after handle 1 */
@@ -530,7 +532,7 @@ ATF_TC_BODY(test_fbtv_perm_and_range, tc)
 	put_le16(pdu + 5, GATT_UUID_PRIMARY_SERVICE);
 	put_le16(pdu + 7, 0x1801);
 	expect_err(&ac, &db, peer, pdu, 9, BT_CORE63_WIRE_ATT_OP_FIND_BY_TYPE_VALUE_REQ,
-	    BT_CORE63_WIRE_ATT_ERR_INSUFF_ENCRYPTION);
+	    BT_CORE63_WIRE_ATT_ERR_ATTR_NOT_FOUND);
 
 	srv_cleanup(&ac, peer);
 }
@@ -1148,15 +1150,23 @@ ATF_TC_BODY(test_prepare_echo_clamp, tc)
 	attrs[db.count - 1].value = val + 400;	/* give it writable storage */
 	attrs[db.count - 1].value_maxlen = 64;
 
-	/* Prepare 30 bytes at offset 0: response echo clamps to MTU. */
+	/*
+	 * A Prepare Write whose PDU exceeds the ATT_MTU is rejected with
+	 * Invalid PDU (Core Spec Vol 3 Part F §3.4.2), rather than being
+	 * accepted with its echoed Part Value truncated to the MTU: the
+	 * 35-byte request here exceeds the 23-byte default MTU.  Bounding the
+	 * request at the MTU is what lets the accepted-path echo be verbatim.
+	 */
 	pdu[0] = BT_CORE63_WIRE_ATT_OP_PREPARE_WRITE_REQ;
 	put_le16(pdu + 1, h_val);
 	put_le16(pdu + 3, 0);
 	memset(pdu + 5, 0x77, 30);
 	n = srv_xchg(&ac, &db, peer, pdu, 35, rsp, sizeof(rsp));
-	ATF_REQUIRE(n >= 5);
-	ATF_CHECK_EQ(rsp[0], BT_CORE63_WIRE_ATT_OP_PREPARE_WRITE_RSP);
-	ATF_CHECK_EQ_MSG(n, ATT_DEFAULT_MTU, "echoed value clamped to MTU");
+	ATF_REQUIRE_MSG(n == 5, "expected 5-byte error, got %zd", n);
+	ATF_CHECK_EQ(rsp[0], BT_CORE63_WIRE_ATT_OP_ERROR_RSP);
+	ATF_CHECK_EQ(rsp[1], BT_CORE63_WIRE_ATT_OP_PREPARE_WRITE_REQ);
+	ATF_CHECK_EQ_MSG(rsp[4], BT_CORE63_WIRE_ATT_ERR_INVALID_PDU,
+	    "over-MTU prepare write rejected");
 
 	srv_cleanup(&ac, peer);
 }

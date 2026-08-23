@@ -1281,7 +1281,6 @@ smp_bond_restore_cccds(const struct smp_bond *bond, struct att_conn *ac)
 #define BOND_MAGIC_ENC		"BONDE"
 #define BOND_MAGIC_ENC_LEN	5
 #define BOND_ENC_VERSION	5
-#define BOND_ENC_VERSION_MIN	4
 #define BOND_ENC_PBKDF2_ITER	100000
 #define BOND_ENC_KEYLEN		32		/* AES-256 key */
 #define BOND_ENC_IVLEN		12		/* AES-256-GCM IV (96-bit nonce) */
@@ -1300,7 +1299,6 @@ smp_bond_restore_cccds(const struct smp_bond *bond, struct att_conn *ac)
  * (or the daemon's uid) can access the secret material.
  */
 #define BOND_SECRET_LEN		32
-#define BOND_LEGACY_SECRET_FILE	BLUED_BONDDB_DEFAULT ".key"
 
 /*
  * Load or generate the bond secret key file.
@@ -1319,8 +1317,7 @@ bond_secret_load(struct smp_bond_db *db)
 	struct stat sb;
 	uint8_t secret[BOND_SECRET_LEN];
 	size_t off;
-	int fd, legacy_fd, r;
-	bool existing_db;
+	int fd, r;
 	ssize_t n;
 
 	if (db == NULL || db->dir_fd < 0 || db->file_name[0] == '\0')
@@ -1362,40 +1359,16 @@ bond_secret_load(struct smp_bond_db *db)
 		return (-1);
 
 	/*
-	 * Never mint a different root for a non-empty database.  Older versions
-	 * always used the default absolute key path even with a custom bond path;
-	 * copy that secure root into the new sibling file as a one-time migration.
+	 * The sibling key file is missing.  Refuse to mint a NEW root for a
+	 * non-empty database: doing so would re-key the AES-GCM wrapper and
+	 * silently invalidate every stored bond.  Only a fresh (empty) database
+	 * gets a freshly minted root.
 	 */
 	if (db->fd < 0 || fstat(db->fd, &sb) != 0)
 		return (-1);
-	existing_db = sb.st_size != 0;
-	if (existing_db) {
-		legacy_fd = open(BOND_LEGACY_SECRET_FILE,
-		    O_RDONLY | O_CLOEXEC | O_CLOFORK | O_NOFOLLOW);
-		if (legacy_fd < 0 || fstat(legacy_fd, &sb) != 0 ||
-		    !S_ISREG(sb.st_mode) || sb.st_uid != geteuid() ||
-		    (sb.st_mode & 077) != 0 || sb.st_size != BOND_SECRET_LEN) {
-			if (legacy_fd >= 0)
-				(void)close(legacy_fd);
-			return (-1);
-		}
-		off = 0;
-		while (off < sizeof(secret)) {
-			n = read(legacy_fd, secret + off, sizeof(secret) - off);
-			if (n < 0 && errno == EINTR)
-				continue;
-			if (n <= 0)
-				break;
-			off += (size_t)n;
-		}
-		(void)close(legacy_fd);
-		if (off != sizeof(secret)) {
-			explicit_bzero(secret, sizeof(secret));
-			return (-1);
-		}
-	} else {
-		arc4random_buf(secret, sizeof(secret));
-	}
+	if (sb.st_size != 0)
+		return (-1);
+	arc4random_buf(secret, sizeof(secret));
 
 	fd = openat(db->dir_fd, name, O_WRONLY | O_CREAT | O_EXCL |
 	    O_CLOEXEC | O_CLOFORK | O_NOFOLLOW, 0600);
@@ -1676,7 +1649,7 @@ smp_bond_db_load(struct smp_bond_db *db, int fd)
 
 	memcpy(&version, header + BOND_MAGIC_ENC_LEN, sizeof(version));
 	version = le32toh(version);
-	if (version < BOND_ENC_VERSION_MIN || version > BOND_ENC_VERSION) {
+	if (version != BOND_ENC_VERSION) {
 		warnx("bond db: unsupported version %u", version);
 		goto out;
 	}
@@ -1733,18 +1706,11 @@ smp_bond_db_load(struct smp_bond_db *db, int fd)
 		goto out;
 	}
 	expected_len = offset + 1 + (pt[offset] != 0 ? 16 : 0);
-	if (version == 4) {
-		if (pt_len != expected_len) {
-			warnx("bond db: invalid v4 plaintext length");
-			goto out;
-		}
-	} else {
-		if (expected_len >= pt_len || pt[expected_len] > 1 ||
-		    pt_len != expected_len + 1 +
-		    (pt[expected_len] != 0 ? 16 : 0)) {
-			warnx("bond db: invalid v5 plaintext length");
-			goto out;
-		}
+	if (expected_len >= pt_len || pt[expected_len] > 1 ||
+	    pt_len != expected_len + 1 +
+	    (pt[expected_len] != 0 ? 16 : 0)) {
+		warnx("bond db: invalid plaintext length");
+		goto out;
 	}
 
 	memcpy(db->bonds, pt + 2 * sizeof(uint32_t), bond_len);
@@ -1756,7 +1722,7 @@ smp_bond_db_load(struct smp_bond_db *db, int fd)
 		memcpy(db->local_irk, pt + offset + 1, 16);
 		db->has_local_irk = true;
 	}
-	if (version >= 5 && pt[expected_len] != 0) {
+	if (pt[expected_len] != 0) {
 		memcpy(db->local_csrk, pt + expected_len + 1, 16);
 		db->has_local_csrk = true;
 	}

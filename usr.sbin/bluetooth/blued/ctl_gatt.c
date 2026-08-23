@@ -1256,16 +1256,50 @@ ctl_gatt_load_persisted_services(int dirfd)
 	if (blued_persist_gattsrv_load(dirfd, rows, &nrows) != 0 || nrows == 0)
 		return;
 	pthread_mutex_lock(&blued_g.gatt_db_lock);
+	/*
+	 * Reject the whole persisted set if any row's absolute handle would
+	 * collide with, or fall inside, the freshly rebuilt base DB (built-ins +
+	 * config services).  Persisted rows carry the absolute handles they were
+	 * assigned in a prior run; if the base range grew since (a config service
+	 * added, or a built-in added by an upgrade) those handles now overlap the
+	 * base.  Appending them anyway yields duplicate / non-ascending handles
+	 * that corrupt find-by-handle, range walks, group-end derivation, and the
+	 * Database Hash.  We cannot safely renumber (characteristic declarations
+	 * embed their value handle), so drop the restore rather than corrupt.
+	 */
+	for (i = 0; i < nrows; i++) {
+		if (rows[i].handle < db->next_handle) {
+			LOG_HOGP(0, "persisted GATT services collide with base DB "
+			    "(handle 0x%04x < next 0x%04x); skipping restore",
+			    rows[i].handle, db->next_handle);
+			pthread_mutex_unlock(&blued_g.gatt_db_lock);
+			return;
+		}
+	}
 	for (i = 0; i < nrows; i++) {
 		const struct blued_persist_gatt_srv_attr *r = &rows[i];
 		struct att_attr *a;
 		uint16_t vlen = r->value_len;
+		uint16_t vmax = r->value_maxlen;
 
 		if (db->count >= db->max)
 			break;
 		if (vlen > BLUED_PERSIST_GATTSRV_VALLEN)
 			vlen = BLUED_PERSIST_GATTSRV_VALLEN;
-		if ((size_t)vlen > db->val_size - db->val_used)
+		/*
+		 * Back the FULL declared maxlen, not just value_len: every write
+		 * path (Write, Prepare/Execute Write) bounds-checks against
+		 * value_maxlen and assumes that many bytes were reserved, exactly
+		 * as attdb_add_characteristic / attdb_reserve_empty_writable do for
+		 * live attributes.  Reserving only value_len (or leaving value NULL
+		 * when value_len==0) lets a peer write past the backing / deref NULL
+		 * after a restart.
+		 */
+		if (vmax > ATT_PEND_WVAL_MAX)
+			vmax = ATT_PEND_WVAL_MAX;
+		if (vmax < vlen)
+			vmax = vlen;
+		if ((size_t)vmax > db->val_size - db->val_used)
 			break;		/* out of value backing store */
 		a = &db->attrs[db->count];
 		memset(a, 0, sizeof(*a));
@@ -1277,12 +1311,14 @@ ctl_gatt_load_persisted_services(int dirfd)
 		a->is_char_value = r->is_char_value != 0;
 		a->owner_fd = CTL_GATT_OWNER_PERSISTED;
 		a->value_len = vlen;
-		a->value_maxlen = r->value_maxlen;
+		a->value_maxlen = vmax;
 		a->end_group_handle = r->end_group_handle;
-		if (vlen > 0) {
+		if (vmax > 0) {
 			a->value = db->val_store + db->val_used;
-			memcpy(a->value, r->value, vlen);
-			db->val_used += vlen;
+			memset(a->value, 0, vmax);
+			if (vlen > 0)
+				memcpy(a->value, r->value, vlen);
+			db->val_used += vmax;
 		}
 		db->count++;
 		if (r->handle >= db->next_handle)

@@ -50,7 +50,7 @@
 #define	MESHD_DEFAULT_MGR	"/var/db/meshd.mgr"
 #define	MESHD_CTL_ARGV_MAX	16
 #define	MESHD_CTL_LINE_MAX	256
-#define	MESHD_CTL_REPLY_MAX	2048
+/* MESHD_CTL_REPLY_MAX now lives in meshd.h (shared with meshd_ctl.c). */
 
 /* Clock tick cadence: the interval at which the state machines are advanced. */
 #define	MESHD_TICK_MS		10
@@ -154,14 +154,7 @@ meshd_mgr_restore(struct meshd_node *nd, const char *path)
 		err(1, "cannot allocate manager");
 	r = meshd_persist_mgr_load(path, mgr);
 	if (r == 0) {
-		if (nd->devkey_migrated) {
-			memcpy(nd->local_devkey, mgr->self_devkey,
-			    sizeof(nd->local_devkey));
-			if (mesh_sim_set_devkey(nd->self, nd->local_devkey,
-			    nd->self->devkey_rx, nd->self->devkey_rx_arg) != 0)
-				err(1, "cannot restore local DeviceKey");
-			nd->devkey_migrated = 0;
-		} else if (timingsafe_bcmp(nd->local_devkey, mgr->self_devkey,
+		if (timingsafe_bcmp(nd->local_devkey, mgr->self_devkey,
 		    sizeof(nd->local_devkey)) != 0) {
 			free(mgr);
 			errx(1, "manager and node DeviceKeys disagree");
@@ -438,20 +431,44 @@ meshd_client_close(int kq, struct meshd_app_client *cl)
 }
 
 static int
-meshd_client_process_line(struct meshd_node *nd, struct meshd_app_client *cl,
-    char *line)
+meshd_client_process_line(struct meshd_node *nd, struct meshd_persist *ps,
+    struct meshd_app_client *cl, char *line)
 {
 	char reply[MESHD_CTL_REPLY_MAX];
 	char *argv[MESHD_CTL_ARGV_MAX];
 	int argc;
 
+	/*
+	 * Ensure the on-disk SEQ high-water leads this line's originations
+	 * BEFORE they are transmitted (NB-6).  A single control-socket drain can
+	 * execute many lines, each originating a segmented message (up to ~32
+	 * SEQ); reserving only once after the whole drain let a batch push the
+	 * live SEQ past the persisted mark, so a crash mid-batch resumed at a
+	 * lower SEQ and reused (IV,SRC,SEQ).  Reserving per line (a cheap no-op
+	 * while headroom remains) keeps the persisted mark ahead of every PDU
+	 * that reaches the air.
+	 */
+	if (ps != NULL && meshd_persist_seq_reserve(ps, nd) < 0) {
+		/*
+		 * The persisted SEQ high-water could not be advanced (store write
+		 * failed): refuse this line rather than originate PDUs whose SEQ
+		 * may reach or exceed the stale on-disk mark and reuse (IV,SRC,SEQ)
+		 * after a crash.  The main loop observes the same failure after the
+		 * drain and quits; here we make sure nothing is transmitted first.
+		 * (ps == NULL is the no-persist/test path: skip the reservation.)
+		 */
+		snprintf(reply, sizeof(reply),
+		    "ERR cannot persist SEQ reservation");
+		return (meshd_client_queue_line(cl, reply));
+	}
 	argc = meshd_ctl_tokenize(line, argv, MESHD_CTL_ARGV_MAX);
 	(void)meshd_ctl_exec_client(nd, cl, argc, argv, reply, sizeof(reply));
 	return (meshd_client_queue_line(cl, reply));
 }
 
 static int
-meshd_client_read(struct meshd_node *nd, struct meshd_app_client *cl)
+meshd_client_read(struct meshd_node *nd, struct meshd_persist *ps,
+    struct meshd_app_client *cl)
 {
 	char buf[256];
 	ssize_t n;
@@ -471,7 +488,7 @@ meshd_client_read(struct meshd_node *nd, struct meshd_app_client *cl)
 				if (cl->rxbuf[off] != '\n')
 					continue;
 				cl->rxbuf[off] = '\0';
-				if (meshd_client_process_line(nd, cl,
+				if (meshd_client_process_line(nd, ps, cl,
 				    cl->rxbuf + start) != 0)
 					return (-1);
 				handled = 1;
@@ -613,6 +630,10 @@ main(int argc, char *argv[])
 		if (meshd_persist_seq_reserve(&ps, &nd) < 0)
 			errx(1, "cannot reserve node sequence state in %s", statepath);
 		break;
+	case -2:
+		errx(1, "node state %s was written by an unsupported (older) "
+		    "format version; remove it to start fresh", statepath);
+		break;
 	default:
 		errx(1, "node state %s is corrupt", statepath);
 	}
@@ -623,6 +644,17 @@ main(int argc, char *argv[])
 	 * manages survives a restart and the Config Client can address its nodes.
 	 */
 	meshd_mgr_restore(&nd, mgrpath);
+
+	/*
+	 * Resume a NetKey key-refresh that was mid-distribution when the daemon
+	 * last stopped: the staged key and kr_distributing flag were restored
+	 * from the node store, and the per-node kr_state (DISTRIBUTING for nodes
+	 * not yet acked) came back with the manager roster, so re-kick the one-
+	 * at-a-time NetKey Update pump.  Without this the refresh would stall
+	 * silently and a later phase advance would eject the un-acked nodes.
+	 */
+	if (nd.kr_distributing)
+		(void)meshd_kr_send_next(&nd, meshd_now());
 
 	/*
 	 * Attach the radio bearer: a privileged client of skyblued.  The bearer
@@ -684,6 +716,7 @@ main(int argc, char *argv[])
 		uint64_t now;
 		int iv_changed = 0;
 		uint64_t bfd_generation;
+		uint32_t iv_epoch;
 		int bfd, i, nev;
 
 		/*
@@ -736,6 +769,9 @@ main(int argc, char *argv[])
 			nev = 0;
 		}
 
+		/* SEQ-epoch snapshot for beacon-driven IV completion (see tick). */
+		iv_epoch = (nd.self != NULL) ? nd.self->iv.iv_index : 0;
+
 		for (i = 0; i < nev; i++) {
 			if (ev[i].udata == &meshd_listen_token) {
 				for (;;) {
@@ -783,7 +819,8 @@ main(int argc, char *argv[])
 							meshd_pbgatt_cancel(&nd);
 						meshd_blued_close(&bc);
 					}
-				} else if (meshd_blued_pump_rx(&bc, &nd, now) > 0)
+				} else if (meshd_blued_pump_rx(&bc, &nd, &ps,
+				    now) > 0)
 					meshd_persist_mark_dirty(&ps, now);
 				meshd_clients_queue_events(&nd, kq);
 				continue;
@@ -796,7 +833,7 @@ main(int argc, char *argv[])
 					continue;
 				}
 				if (ev[i].filter == EVFILT_READ) {
-					int handled = meshd_client_read(&nd, cl);
+					int handled = meshd_client_read(&nd, &ps, cl);
 
 					if (handled < 0) {
 						meshd_client_close(kq, cl);
@@ -839,7 +876,17 @@ main(int argc, char *argv[])
 		 * a fresh SEQ epoch, so re-establish the reservation from zero.
 		 */
 		(void)meshd_node_tick(&nd, now, &iv_changed);
-		if (iv_changed)
+		/*
+		 * Reset the persisted SEQ reservation on any IV Index change,
+		 * whether observed by the tick (iv_changed) or completed earlier
+		 * during event drain by a Secure Network Beacon (which resets the
+		 * live SEQ to 0 in the RX pump before the tick sees Normal).  The
+		 * beacon path bumps iv.iv_index but leaves iv_changed clear, so
+		 * without the epoch comparison the old high-water would be carried
+		 * into the new epoch and burn SEQ space.
+		 */
+		if (iv_changed ||
+		    (nd.self != NULL && nd.self->iv.iv_index != iv_epoch))
 			ps.reserved = 0;
 		if (meshd_persist_seq_reserve(&ps, &nd) < 0) {
 			warn("cannot reserve node state %s", statepath);

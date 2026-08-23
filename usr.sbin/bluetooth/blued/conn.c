@@ -535,6 +535,40 @@ blued_conn_by_peer(const struct blued_adapter *adapter, const bdaddr_t *addr,
 	return (NULL);
 }
 
+/*
+ * Command-facing peer resolver.  Operator tools (bluedctl) identify a peer by
+ * address but usually cannot supply its address type (a one-shot CLI cannot
+ * remember what `connect` used), so they pass public (0) by default.  Try the
+ * exact (address, type) match first; if that misses, fall back to a match on
+ * address alone -- but only when it is UNAMBIGUOUS, i.e. exactly one connection
+ * on this adapter carries that address.  This keeps internal exact-type callers
+ * (event handling) using blued_conn_by_peer(), while letting operator commands
+ * reach a peer that connected with a random/RPA address.
+ */
+struct blued_conn *
+blued_conn_by_peer_cmd(const struct blued_adapter *adapter, const bdaddr_t *addr,
+    uint8_t addr_type)
+{
+	struct blued_conn *conn, *uniq = NULL;
+	int naddr = 0;
+
+	pthread_rwlock_rdlock(&blued_g.conns_lock);
+	LIST_FOREACH(conn, &blued_g.conns, entries) {
+		if (conn->adapter != adapter ||
+		    memcmp(&conn->dst, addr, sizeof(*addr)) != 0)
+			continue;
+		if (conn->addr_type == addr_type) {
+			pthread_rwlock_unlock(&blued_g.conns_lock);
+			return (conn);		/* exact match wins */
+		}
+		naddr++;
+		uniq = conn;
+	}
+	pthread_rwlock_unlock(&blued_g.conns_lock);
+	/* No exact match: accept the address-only match only if unique. */
+	return (naddr == 1 ? uniq : NULL);
+}
+
 bool
 blued_conn_addr_context(const bdaddr_t *addr, uint8_t *adapter_index,
     uint8_t *addr_type)

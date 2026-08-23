@@ -32,6 +32,8 @@
 
 #include "meshd.h"		/* enum meshd_pdu_class, struct meshd_node */
 
+struct meshd_persist;
+
 /* Reassembly buffer: one maximum control frame plus header slack. */
 #define	MESHD_BLUED_RXBUF	(8u + 4096u)
 #define	MESHD_BLUED_TXBUF	(16u * 1024u)
@@ -168,7 +170,7 @@ int	meshd_blued_maintain(struct meshd_blued *bc, uint64_t now);
  * a bad argument.
  */
 int	meshd_blued_pump_rx(struct meshd_blued *bc, struct meshd_node *nd,
-	    uint64_t now);
+	    struct meshd_persist *ps, uint64_t now);
 
 /*
  * The struct meshd_bearer transmit sink (arg is the struct meshd_blued *).

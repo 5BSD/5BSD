@@ -521,7 +521,8 @@ bt_devinquiry(char const *devname, time_t length, int num_rsp,
 	if (bt_devsend(s,
 		NG_HCI_OPCODE(NG_HCI_OGF_LINK_CONTROL, NG_HCI_OCF_INQUIRY),
 			cp, sizeof(*cp)) < 0) {
-		free(i);
+		free(*ii);
+		*ii = NULL;
 		bt_devclose(s);
 		return (-1);
 	}
@@ -530,13 +531,21 @@ wait_for_more:
 
 	n = bt_devrecv(s, buf, sizeof(buf), length);
 	if (n < 0) {
-		free(i);
+		/*
+		 * Free the allocation BASE, not i: i is advanced past *ii for
+		 * every response copied out of an INQUIRY_RESULT, so free(i)
+		 * on a later error would pass an interior pointer to free()
+		 * (undefined behavior) and leak the real block.
+		 */
+		free(*ii);
+		*ii = NULL;
 		bt_devclose(s);
 		return (-1);
 	}
 
 	if (n < sizeof(ng_hci_event_pkt_t)) {
-		free(i);
+		free(*ii);
+		*ii = NULL;
 		bt_devclose(s);
 		errno = EIO;
 		return (-1);

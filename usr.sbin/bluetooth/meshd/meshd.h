@@ -71,6 +71,9 @@
 #define	MESHD_BEACON_INTERVAL	10
 
 #define	MESHD_MAX_APP_CLIENTS	16
+
+/* Control-socket reply buffer size; shared by meshd.c and meshd_ctl.c. */
+#define	MESHD_CTL_REPLY_MAX	2048
 #define	MESHD_MAX_PROXY_GATT	4
 #define	MESHD_MAX_SCAN_RESULTS	16	/* unprovisioned-device discovery cache */
 
@@ -410,9 +413,11 @@ struct meshd_node {
 	uint16_t			addr;
 	uint16_t			netkey_index;	/* primary subnet index */
 	uint16_t			appkey_index;	/* bootstrap AppKey index */
+	uint16_t			rx_secure_net_idx; /* subnet that secured the
+						 * config msg being dispatched
+						 * (MshPRT 4.3.2.32) */
 	uint8_t			local_devkey[16];
 	int				have_local_devkey;
-	int				devkey_migrated;
 
 	/*
 	 * Device UUID advertised in the Unprovisioned Device Beacon while this
@@ -503,6 +508,14 @@ struct meshd_node {
 	 * One transaction at a time (the operator drives them sequentially).
 	 */
 	struct mesh_mgr_txn		cfg_txn;
+	/*
+	 * NetKey Key Refresh distribution (NB-14): the operator's new NetKey and
+	 * a flag while it is being pushed to the roster one node at a time.  Each
+	 * node's NetKey Update Status advances it to ACKED and triggers the send
+	 * to the next DISTRIBUTING node.
+	 */
+	uint8_t				kr_net_key[16];
+	int				kr_distributing;
 
 	/*
 	 * Directed Forwarding (finding 129) and Remote Provisioning (finding 128)
@@ -695,6 +708,8 @@ int	meshd_app_client_unregister_model(struct meshd_app_client *cl,
 size_t	meshd_app_client_event_count(const struct meshd_app_client *cl);
 uint32_t meshd_app_client_event_dropped(const struct meshd_app_client *cl);
 int	meshd_app_client_event_pop(struct meshd_app_client *cl,
+	    struct meshd_app_event *ev);
+int	meshd_app_client_event_peek(const struct meshd_app_client *cl,
 	    struct meshd_app_event *ev);
 int	meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 	    int argc, char **argv, char *reply, size_t reply_max);
@@ -987,6 +1002,7 @@ int	meshd_cfg_client_send(struct meshd_node *nd, uint16_t dst,
  */
 int	meshd_cfg_client_rx(struct meshd_node *nd, uint32_t seq, uint16_t src,
 	    uint16_t dst, const uint8_t *upper, size_t upper_len);
+int	meshd_kr_send_next(struct meshd_node *nd, uint64_t now);
 
 /*
  * Advance the in-flight transaction's retransmit timer to now, re-sending the

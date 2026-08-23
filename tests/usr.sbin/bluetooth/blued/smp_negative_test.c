@@ -894,20 +894,20 @@ ATF_TC_BODY(test_validate_public_key, tc)
 	/* A point that is (almost certainly) not on P-256. */
 	memset(bad_x, 0x01, sizeof(bad_x));
 	memset(bad_y, 0x02, sizeof(bad_y));
-	ATF_CHECK_EQ_MSG(smp_validate_public_key(bad_x, bad_y), -1,
+	ATF_CHECK_EQ_MSG(smp_validate_public_key(bad_x, bad_y, NULL), -1,
 	    "off-curve key must be rejected");
 
 	/* All-zero coordinates are not on the curve either. */
 	memset(bad_x, 0, sizeof(bad_x));
 	memset(bad_y, 0, sizeof(bad_y));
-	ATF_CHECK_EQ(smp_validate_public_key(bad_x, bad_y), -1);
+	ATF_CHECK_EQ(smp_validate_public_key(bad_x, bad_y, NULL), -1);
 
 	/* The SC Debug Public Key is on-curve but must be rejected. */
 	core_hex_be(sc_debug_pk_x, BT_CORE63_SMP_SC_DEBUG_X_HEX,
 	    sizeof(sc_debug_pk_x));
 	core_hex_be(sc_debug_pk_y, BT_CORE63_SMP_SC_DEBUG_Y_HEX,
 	    sizeof(sc_debug_pk_y));
-	ATF_CHECK_EQ_MSG(smp_validate_public_key(sc_debug_pk_x, sc_debug_pk_y),
+	ATF_CHECK_EQ_MSG(smp_validate_public_key(sc_debug_pk_x, sc_debug_pk_y, NULL),
 	    -1, "SC Debug Public Key must be rejected");
 
 	/* A freshly generated, valid P-256 public key must be accepted. */
@@ -923,7 +923,7 @@ ATF_TC_BODY(test_validate_public_key, tc)
 	ATF_REQUIRE_EQ(pklen, 65);	/* 0x04 || X(32) || Y(32) big-endian */
 	ATF_REQUIRE_EQ(pk_raw[0], 0x04);
 
-	ATF_CHECK_EQ_MSG(smp_validate_public_key(pk_raw + 1, pk_raw + 33), 0,
+	ATF_CHECK_EQ_MSG(smp_validate_public_key(pk_raw + 1, pk_raw + 33, NULL), 0,
 	    "valid on-curve key must be accepted");
 
 	EVP_PKEY_free(pkey);

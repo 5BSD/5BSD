@@ -148,10 +148,17 @@ meshd_proxy_gatt_recv_mtu(struct meshd_node *nd, const char *addr,
 	int complete, rc;
 
 	session = proxy_session(nd, addr, addr_type, adapter_index);
-	if (session == NULL || pdu == NULL || len == 0 ||
+	if (session == NULL || pdu == NULL ||
 	    bearer_mtu < MESHD_PBGATT_MIN_MTU ||
 	    len > (size_t)bearer_mtu - 3)
 		return (-1);
+	/*
+	 * A zero-length ATT Handle Value Notification is legal on the wire;
+	 * ignore it rather than treating it as a fatal error, which would tear
+	 * the whole proxy link down on a single empty notify (NB-32).
+	 */
+	if (len == 0)
+		return (0);
 	rc = mesh_proxy_reasm_feed(&session->rx, pdu, len, &complete,
 	    &type, msg, sizeof(msg), &msglen);
 	if (rc == MESH_PROXY_REASM_ERROR) {

@@ -218,6 +218,41 @@ hci_le_set_addr_resolution_enable(int hci_fd, uint8_t enable)
 	return (0);
 }
 
+/*
+ * LE Read Resolving List Size (Core 6.3 Vol 4 Part E Section 7.8.41): the
+ * controller's resolving-list capacity.  Callers must not program more than
+ * this many entries (Memory Capacity Exceeded otherwise) and should fall back
+ * to host-based resolution for the excess rather than treating a full list as
+ * fatal.  On any failure *size_out is left 0 and 0 is returned so the caller
+ * can proceed conservatively.
+ */
+int
+hci_le_read_resolving_list_size(int hci_fd, uint8_t *size_out)
+{
+	struct bt_devreq r;
+	struct {
+		uint8_t	status;
+		uint8_t	size;
+	} __attribute__((packed)) rp;
+
+	if (size_out != NULL)
+		*size_out = 0;
+
+	memset(&rp, 0, sizeof(rp));
+	memset(&r, 0, sizeof(r));
+	r.opcode = NG_HCI_OPCODE(NG_HCI_OGF_LE,
+	    NG_HCI_OCF_LE_READ_RESOLVING_LIST_SIZE);
+	r.rparam = &rp;
+	r.rlen = sizeof(rp);
+	r.event = NG_HCI_EVENT_COMMAND_COMPL;
+
+	if (hci_devreq_logged(hci_fd, &r, 5) < 0 || rp.status != 0x00)
+		return (0);		/* unknown size: caller stays conservative */
+	if (size_out != NULL)
+		*size_out = rp.size;
+	return (0);
+}
+
 int
 hci_le_set_privacy_mode(int hci_fd, uint8_t addr_type,
     const uint8_t addr[6], uint8_t mode)

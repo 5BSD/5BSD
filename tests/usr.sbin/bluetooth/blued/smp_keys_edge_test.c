@@ -933,7 +933,7 @@ craft_load_v4_internal(const uint8_t *pt, size_t pt_len,
 	uint8_t secret[V4_KEYLEN];
 	uint8_t *file, *ct;
 	size_t hdr, total;
-	uint32_t ver = htole32(TEST_IMPL_BOND_V4);
+	uint32_t ver = htole32(TEST_IMPL_BOND_V5);
 	uint32_t ctlen = htole32((uint32_t)pt_len);
 	EVP_CIPHER_CTX *ctx;
 	int outl, finl, rc;
@@ -1029,7 +1029,7 @@ static bool
 payload_key_available(void)
 {
 	struct smp_bond_db db;
-	uint8_t pt[8 + sizeof(struct smp_bond) + 1];
+	uint8_t pt[8 + sizeof(struct smp_bond) + 2];
 	struct smp_bond b;
 	uint32_t count = htole32(1);
 	uint32_t record_size = htole32(sizeof(struct smp_bond));
@@ -1114,7 +1114,7 @@ ATF_TC_BODY(test_bond_db_load_irk_trailer_absent, tc)
 	struct smp_bond_db db;
 	struct smp_bond expected;
 	size_t bsz = sizeof(struct smp_bond);
-	size_t pt_len = 8 + bsz + 1;	/* header + one bond + zero flag */
+	size_t pt_len = 8 + bsz + 2;	/* header + one bond + zero IRK flag + zero CSRK flag */
 	uint8_t *pt;
 	uint32_t count = htole32(1);
 	uint32_t record_size = htole32(sizeof(struct smp_bond));
@@ -1128,7 +1128,8 @@ ATF_TC_BODY(test_bond_db_load_irk_trailer_absent, tc)
 	memcpy(pt, &count, 4);
 	memcpy(pt + 4, &record_size, 4);
 	pt[8] = 0xD9;			/* bond addr[0] */
-	pt[pt_len - 1] = 0x00;		/* has_local_irk = 0 */
+	pt[8 + bsz] = 0x00;		/* has_local_irk = 0 */
+	pt[pt_len - 1] = 0x00;		/* has_local_csrk = 0 */
 	ATF_CHECK_EQ(0, craft_load_v4(pt, pt_len, &db));
 	ATF_CHECK_EQ(1, db.count);
 	ATF_CHECK_EQ(memcmp(&db.bonds[0], &expected, sizeof(expected)), 0);

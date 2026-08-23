@@ -55,8 +55,6 @@
  * Authenticated Signed Writes feature (Vol 1 Part E §2.4.2).
  */
 #define ATT_OP_LEGACY_SIGNED_WRITE_CMD	0xD2
-/* Source compatibility; new code must use the explicitly legacy name. */
-#define ATT_OP_SIGNED_WRITE_CMD		ATT_OP_LEGACY_SIGNED_WRITE_CMD
 #define ATT_OP_WRITE_CMD		0x52
 #define ATT_OP_HANDLE_NOTIFY		0x1B
 #define ATT_OP_HANDLE_IND		0x1D
@@ -129,7 +127,6 @@
 #define GATT_PROP_INDICATE		0x20
 /* 0x40 is "Previously used" in Core 6.3; legacy signed-write compatibility. */
 #define GATT_PROP_LEGACY_AUTH_SIGNED_WRITE 0x40
-#define GATT_PROP_AUTH_SIGNED_WRITE GATT_PROP_LEGACY_AUTH_SIGNED_WRITE
 #define GATT_PROP_EXTENDED		0x80
 
 /* CCCD values */

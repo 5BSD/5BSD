@@ -39,10 +39,9 @@
  * database (subnets, AppKey bindings, per-model bindings / subscriptions /
  * publications), plus nonvolatile application-model states, so a node -
  * including one provisioned over the air with no configuration file - is
- * fully itself after a restart.  Version 3 adds virtual-publication Label UUIDs,
- * version 4 the local DeviceKey, and version 5 embeds the manager identity,
- * address allocator, roster and remote DeviceKeys in the same atomic commit.
- * Versions 2 through 4 remain readable and are migrated on their next save.
+ * fully itself after a restart.  Only the current format version is accepted;
+ * a file written by any other version is rejected (the stack is unreleased, so
+ * no down-level migration is carried).
  *
  * The file holds secret key material and is written 0600; the CRC provides
  * integrity, not confidentiality.  Load treats only ENOENT as a fresh node and
@@ -114,9 +113,10 @@ int	meshd_persist_flush(struct meshd_persist *ps, struct meshd_node *nd,
  * configuration database are restored, and the next SEQ block is reserved and
  * re-persisted.  Returns 0 if state was loaded and applied, 1 if no store exists
  * (a fresh node - the caller keeps its config-derived state and should call
- * meshd_persist_seq_reserve() to establish the first block), or -1 if the store
- * is present but corrupt (missing / truncated / bad magic / bad version / CRC
- * mismatch); on -1 the node is left untouched.
+ * meshd_persist_seq_reserve() to establish the first block), -1 if the store is
+ * present but corrupt (missing / truncated / bad magic / CRC mismatch), or -2 if
+ * the store is intact but written in an unsupported (older) format version.  On
+ * a negative return the node is left untouched.
  */
 int	meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd);
 

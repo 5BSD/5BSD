@@ -1232,7 +1232,8 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 	struct blued_reslist *reslist;
 	const uint8_t *local_irk;
 	uint8_t host_rpa[6];
-	int loaded = 0;
+	uint8_t rl_size = 0;
+	int loaded = 0, rl_cap;
 
 	if (blued_cfg.privacy && blued_local_irk_ensure() != 0)
 		return (-1);
@@ -1288,6 +1289,18 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 		return (-1);
 	memset(reslist, 0, sizeof(*reslist));
 
+	/*
+	 * Controller resolving lists are small (commonly 8).  Program at most
+	 * min(controller size, host shadow BLUED_RESLIST_MAX) identities and
+	 * leave the rest to host-based resolution: exceeding the list must NOT
+	 * be fatal (it previously aborted with err(1) at startup once bonds
+	 * outnumbered the list, bricking the daemon).  A 0/unknown size falls
+	 * back to the shadow cap.
+	 */
+	(void)hci_le_read_resolving_list_size(dev->hci_fd, &rl_size);
+	rl_cap = (rl_size > 0 && rl_size < BLUED_RESLIST_MAX) ?
+	    rl_size : BLUED_RESLIST_MAX;
+
 	if (dev->bond_db == NULL && blued_runtime_resolv_count == 0)
 		return (blued_cfg.privacy ? -1 : 0);
 	for (int i = 0; dev->bond_db != NULL && i < dev->bond_db->count; i++) {
@@ -1295,6 +1308,11 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 
 		if (!b->has_irk)
 			continue;
+		if (loaded >= rl_cap) {
+			LOG_HCI(1, "resolving list full (%d); remaining peers "
+			    "use host-based resolution", rl_cap);
+			break;
+		}
 
 		uint8_t at = (b->addr_type == BDADDR_LE_RANDOM) ? 0x01 : 0x00;
 
@@ -1320,6 +1338,11 @@ load_resolving_list(struct hogp_device *dev, int rpa_timeout)
 
 		if (blued_reslist_contains(reslist, e->addr, e->addr_type))
 			continue;
+		if (loaded >= rl_cap) {
+			LOG_HCI(1, "resolving list full (%d); remaining runtime "
+			    "entries use host-based resolution", rl_cap);
+			break;
+		}
 		if (hci_le_add_dev_resolving_list(dev->hci_fd, at,
 		    e->addr, e->irk, local_irk) != 0 ||
 		    hci_le_set_privacy_mode(dev->hci_fd, at, e->addr,
@@ -1387,8 +1410,20 @@ blued_privacy_program(int hci_fd, bool on, struct blued_reslist *shadow)
 	if (!on) {
 		struct blued_adapter *adp = blued_adapter_by_fd(hci_fd);
 
-		if (adp != NULL)
+		if (adp != NULL) {
 			adp->random_addr_valid = false;
+			/*
+			 * Peer-RPA resolution is independent of LOCAL privacy: it
+			 * must stay enabled whenever the resolving list holds peer
+			 * identities (H-H5), or a bonded peer that advertises with
+			 * an RPA can no longer be resolved for auto-reconnect.  We
+			 * disabled resolution above only so the list could be
+			 * modified; here the list is left intact, so restore it.
+			 */
+			if (adp->reslist.count > 0 &&
+			    hci_le_set_addr_resolution_enable(hci_fd, 1) != 0)
+				return (-1);
+		}
 		hci_scan_set_own_address_type(hci_fd, BLUED_HCI_OWN_ADDR_PUBLIC);
 		return (0);
 	}
@@ -2333,11 +2368,20 @@ blued_adapter_hci_reset(struct blued_adapter *adp)
 	do {
 		n = recv(adp->hci_fd, buf, sizeof(buf), MSG_DONTWAIT);
 	} while (n > 0 || (n < 0 && errno == EINTR));
+	/*
+	 * controller_epoch / local_ids[] / local_id_next are read by setup
+	 * workers under conns_lock (blued_conn_apply_cached_local); publish the
+	 * new incarnation under the write lock so a worker cannot observe a torn
+	 * epoch or a half-cleared local_ids entry racing this reset.  conns_lock
+	 * is the top of the lock hierarchy and no lower lock is held here.
+	 */
+	pthread_rwlock_wrlock(&blued_g.conns_lock);
 	adp->controller_epoch++;
 	if (adp->controller_epoch == 0)
 		adp->controller_epoch++;
 	memset(adp->local_ids, 0, sizeof(adp->local_ids));
 	adp->local_id_next = 0;
+	pthread_rwlock_unlock(&blued_g.conns_lock);
 	return (0);
 }
 
@@ -2577,6 +2621,15 @@ blued_adapter_controller_invalidated(struct blued_adapter *adp)
 		blued_conn_disconnect(conn);
 	}
 	blued_rpa_retry_reconcile();
+	/*
+	 * If a mesh advertising PDU owned by this adapter was in flight when
+	 * the controller was invalidated (power-off, rollback, discoverable
+	 * fail-safe), its Advertising Set Terminated event is drained/lost by
+	 * the HCI reset and can never arrive.  Recover the one-at-a-time mesh
+	 * pacing state here so mesh TX (which shares a process-global in-flight
+	 * flag) is not wedged until the next power-on.
+	 */
+	blued_mesh_adv_reset();
 }
 
 void
@@ -2622,6 +2675,13 @@ blued_adapter_discoverable_fail_safe(struct blued_adapter *adp)
 	if (blued_adapter_hci_reset(adp) < 0)
 		return (-1);
 	blued_adapter_controller_invalidated(adp);
+	/* The reset cleared mesh_scan_active; re-assert the always-on mesh
+	 * scan if the host still has subscribers, so mesh RX survives the
+	 * fail-safe reset. */
+	blued_mesh_scan_reassert();
+	/* The reset destroyed the mesh adv set; recover the adv FIFO so a PDU
+	 * in flight at reset time cannot wedge mesh TX. */
+	blued_mesh_adv_reset();
 	return (0);
 }
 
@@ -3010,6 +3070,16 @@ blued_adapter_set_power(struct blued_adapter *adp, bool on)
 		adp->privacy = blued_cfg.privacy;
 		adp->powered = true;
 		adp->power_quiescing = false;
+		/*
+		 * The controller reset on power-down cleared mesh_scan_active,
+		 * but the mesh subscription (mesh_subscribers) is host state that
+		 * survives.  Re-assert the always-on mesh passive scan so mesh RX
+		 * is not silently dead until an UNSUBSCRIBE/SUBSCRIBE cycle.
+		 */
+		blued_mesh_scan_reassert();
+		/* Recover the mesh adv FIFO: a PDU in flight when power was cut
+		 * left mesh_adv_inflight stuck, which would wedge mesh TX. */
+		blued_mesh_adv_reset();
 		return (0);
 	}
 

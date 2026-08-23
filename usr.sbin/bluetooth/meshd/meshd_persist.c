@@ -25,14 +25,12 @@
 #include <time.h>
 #include <unistd.h>
 
-#include <openssl/rand.h>
-
 #include "meshd.h"
 #include "meshd_persist.h"
 
 #define	MESHD_PERSIST_MAGIC	"MSHNODE\1"	/* 8 octets */
 #define	MESHD_PERSIST_MAGIC_LEN	8
-#define	MESHD_PERSIST_VERSION	7	/* v7 embeds the staged Phase-1 AppKey */
+#define	MESHD_PERSIST_VERSION	9	/* v9 persists the staged key-refresh key */
 #define	MESHD_PERSIST_HDR_LEN	20		/* magic..crc32 inclusive */
 
 /* Version 6 on-disk feature octet; these are store fields, not wire bits. */
@@ -238,7 +236,7 @@ static int
 persist_version_supported(uint16_t version)
 {
 
-	return (version >= 2 && version <= MESHD_PERSIST_VERSION);
+	return (version == MESHD_PERSIST_VERSION);
 }
 
 static void
@@ -425,6 +423,30 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 		put_u16(c, e->src);
 		put_u32(c, e->iv_index);
 		put_u32(c, e->seq);
+	}
+
+	/*
+	 * Per-opcode friendship Replay Protection Lists (NB-26): the friendship
+	 * RX path keeps its own RPLs separate from the main list, so persist
+	 * them too or a Friend Request/Poll/Clear recorded before a restart
+	 * would replay cleanly afterwards.
+	 */
+	for (j = 0; j < nitems(nd->friend_rpl_store); j++) {
+		nvalid = 0;
+		for (i = 0; i < MESH_SIM_RPL_SIZE; i++)
+			if (nd->friend_rpl_store[j][i].valid)
+				nvalid++;
+		put_u16(c, (uint16_t)nvalid);
+		for (i = 0; i < MESH_SIM_RPL_SIZE; i++) {
+			const struct mesh_rpl_entry *e =
+			    &nd->friend_rpl_store[j][i];
+
+			if (!e->valid)
+				continue;
+			put_u16(c, e->src);
+			put_u32(c, e->iv_index);
+			put_u32(c, e->seq);
+		}
 	}
 
 	/* Nonvolatile application-model states. */
@@ -614,6 +636,16 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
 			put_u64(c, mn->prov_time);
 			put_u8(c, mn->kr_state);
 		}
+		/*
+		 * Staged NetKey key-refresh distribution state (meshd_node fields,
+		 * not mesh_mgr): persist so a NetKey key-refresh caught mid-
+		 * distribution survives a crash and resumes on restart, instead of
+		 * being forgotten -- which would strand the not-yet-acked nodes
+		 * (kr_state DISTRIBUTING, restored above) in KR Phase 1 holding a
+		 * key meshd no longer has, wedging the refresh (NB-2).
+		 */
+		put_u8(c, (uint8_t)(nd->kr_distributing ? 1 : 0));
+		put_bytes(c, nd->kr_net_key, 16);
 	}
 }
 
@@ -624,8 +656,7 @@ encode_body(struct cur *c, const struct meshd_persist *ps,
  * Sets *out_hw to the persisted SEQ high-water.  Returns 0, -1 on underrun.
  */
 static int
-decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
-    uint32_t *out_hw)
+decode_body(struct cur *c, struct meshd_node *nd, uint32_t *out_hw)
 {
 	uint8_t netkey[16], appkey[16];
 	uint16_t addr, netkey_index, cid, pid, vid;
@@ -650,17 +681,11 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 	iv_state = get_u8(c);
 	iv_entered = get_u64(c);
 	net_transmit = get_u8(c);
-	relay_retransmit = version >= 6 ? get_u8(c) : 0;
+	relay_retransmit = get_u8(c);
 	lpn_poll = get_u32(c);
 	get_bytes(c, netkey, 16);
 	get_bytes(c, appkey, 16);
-	if (version >= 4)
-		get_bytes(c, nd->local_devkey, sizeof(nd->local_devkey));
-	else {
-		if (RAND_bytes(nd->local_devkey, sizeof(nd->local_devkey)) != 1)
-			return (-1);
-		nd->devkey_migrated = 1;
-	}
+	get_bytes(c, nd->local_devkey, sizeof(nd->local_devkey));
 	nd->have_local_devkey = 1;
 
 	memset(&hb_pub, 0, sizeof(hb_pub));
@@ -683,6 +708,14 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 		return (-1);
 	nd->provisioned = provisioned ? 1 : 0;
 	nd->cfg.default_ttl = default_ttl;
+	/*
+	 * Mirror into the sim node too: meshd_node_restore rebuilt nd->self
+	 * (zeroed), so the init-path mirror was discarded.  Without this, sim-
+	 * originated Config/model Status replies revert to the hardcoded TTL 5
+	 * after every restart, ignoring the persisted Default TTL (NB-4).
+	 */
+	if (nd->self != NULL)
+		nd->self->default_ttl = default_ttl;
 	nd->cfg.relay = (features & MESHD_PERSIST_FEAT_RELAY) ? 1 : 0;
 	nd->cfg.gatt_proxy = (features & MESHD_PERSIST_FEAT_PROXY) ? 1 : 0;
 	nd->cfg.friend = 0;
@@ -694,21 +727,28 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 	nd->self->iv.iv_index = iv_index;
 	nd->self->iv.state = iv_state;
 	/*
-	 * entered_time is a CLOCK_MONOTONIC-seconds timestamp used to gate the
-	 * 96-hour IV Update dwell.  That clock resets on every host reboot, so a
-	 * raw restored value is meaningless against this boot's clock: a value
-	 * far in the future wedges every dwell-gated transition, and a fresh
-	 * node's 0 passes the gate trivially once uptime exceeds 96 h.  Restart
-	 * the dwell from the current monotonic time so the gate is enforced
-	 * relative to a clock that actually exists this boot (finding 71).
+	 * entered_time is a CLOCK_REALTIME (wall-clock) seconds timestamp (the
+	 * sim feeds the IV state machine wall_now), so it IS meaningful across a
+	 * reboot: restore it so accumulated time-in-state counts toward the
+	 * 96-hour IV Update dwell instead of restarting from zero every boot
+	 * (NB-7).  But clamp it to the current wall clock: a host that boots with
+	 * a regressed clock (dead RTC -> epoch, pre-NTP window) would otherwise
+	 * restore a future entered_time, and mesh_iv_dwell_elapsed() returns 0
+	 * whenever now < entered_time -- wedging EVERY dwell-gated IV transition
+	 * (initiate and beacon-accept) until the wall clock catches up, possibly
+	 * indefinitely on a device with no time source.  Clamping degrades to
+	 * "dwell restarts now" (safe: it can only delay, never skip, a transition)
+	 * instead of a permanent wedge.
 	 */
 	{
-		struct timespec ts;
+		struct timespec wts;
+		uint64_t wall_now = 0;
 
-		(void)iv_entered;
+		if (clock_gettime(CLOCK_REALTIME, &wts) == 0)
+			wall_now = (uint64_t)wts.tv_sec;
 		nd->self->iv.entered_time =
-		    (clock_gettime(CLOCK_MONOTONIC, &ts) == 0) ?
-		    (uint64_t)ts.tv_sec : 0;
+		    (wall_now != 0 && iv_entered > wall_now) ? wall_now :
+		    iv_entered;
 	}
 
 	nd->db.net_transmit = net_transmit;
@@ -827,10 +867,8 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 		m->pub.ttl = get_u8(c);
 		m->pub.period = get_u8(c);
 		m->pub.retransmit = get_u8(c);
-		if (version >= 3) {
-			m->pub_is_va = get_u8(c) ? 1 : 0;
-			get_bytes(c, m->pub_label, MESH_LABEL_UUID_LEN);
-		}
+		m->pub_is_va = get_u8(c) ? 1 : 0;
+		get_bytes(c, m->pub_label, MESH_LABEL_UUID_LEN);
 		if (m->pub_is_va) {
 			uint16_t va;
 
@@ -861,6 +899,24 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 		e->iv_index = get_u32(c);
 		e->seq = get_u32(c);
 		e->valid = 1;
+	}
+
+	/* Per-opcode friendship RPLs (NB-26), in the same order as encode_body. */
+	for (j = 0; j < nitems(nd->friend_rpl_store); j++) {
+		uint16_t fn = get_u16(c);
+
+		if (fn > MESH_SIM_RPL_SIZE)
+			return (-1);
+		mesh_rpl_init(&nd->friend_rpl[j], nd->friend_rpl_store[j],
+		    MESH_SIM_RPL_SIZE);
+		for (i = 0; i < fn; i++) {
+			struct mesh_rpl_entry *e = &nd->friend_rpl_store[j][i];
+
+			e->src = get_u16(c);
+			e->iv_index = get_u32(c);
+			e->seq = get_u32(c);
+			e->valid = 1;
+		}
 	}
 
 	{
@@ -1117,7 +1173,7 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 		}
 	}
 
-	if (version >= 5) {
+	{
 		uint8_t active = get_u8(c);
 
 		if (active > 1)
@@ -1130,18 +1186,7 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 				return (-1);
 			get_bytes(c, mgr->netkey, 16);
 			get_bytes(c, mgr->appkey, 16);
-			if (version >= 7)
-				get_bytes(c, mgr->appkey_new, 16);
-			else if (RAND_bytes(mgr->appkey_new, 16) != 1) {
-				/*
-				 * Pre-v7 node files never embedded the staged AppKey
-				 * (C6-H2).  Migrate by minting a fresh one; the pre-fix
-				 * daemon never distributed a real staged key, so a new
-				 * random value is a correct un-distributed Phase-1 key.
-				 */
-				free(mgr);
-				return (-1);
-			}
+			get_bytes(c, mgr->appkey_new, 16);
 			get_bytes(c, mgr->self_devkey, 16);
 			mgr->netkey_index = get_u16(c);
 			mgr->appkey_index = get_u16(c);
@@ -1189,6 +1234,14 @@ decode_body(struct cur *c, struct meshd_node *nd, uint16_t version,
 			}
 			mgr->n_nodes = count;
 			mgr->seq = nd->self->seq;
+			/*
+			 * Staged key-refresh state (symmetric with encode_body):
+			 * kr_distributing flag + the staged NetKey, so a crash mid-
+			 * distribution resumes rather than orphaning the DISTRIBUTING
+			 * nodes decoded above.
+			 */
+			nd->kr_distributing = get_u8(c) ? 1 : 0;
+			get_bytes(c, nd->kr_net_key, 16);
 			if (c->err || mgr->self_addr != nd->addr ||
 			    mgr->self_elements != nd->self->n_elements ||
 			    mgr->netkey_index != nd->netkey_index ||
@@ -1416,7 +1469,14 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 	(void)get_u16(&c);			/* count */
 	if (!persist_version_supported(version)) {
 		free(frame);
-		return (-1);
+		/*
+		 * A genuine older format (0 < v < current) is unsupported but not
+		 * corrupt -- report -2 so the operator gets a "remove to upgrade"
+		 * message.  Version 0 or a future version (v > current) is not a
+		 * trustworthy store at all, so treat it as corrupt (-1).
+		 */
+		return (version != 0 && version < MESHD_PERSIST_VERSION ?
+		    -2 : -1);
 	}
 
 	/* CRC over the whole frame with the crc field taken as zero. */
@@ -1433,7 +1493,7 @@ meshd_persist_load(struct meshd_persist *ps, struct meshd_node *nd)
 	memset(&c, 0, sizeof(c));
 	c.rbuf = frame + MESHD_PERSIST_HDR_LEN;
 	c.len = body_len;
-	if (decode_body(&c, &tmp, version, &seq_hw) != 0) {
+	if (decode_body(&c, &tmp, &seq_hw) != 0) {
 		meshd_node_fini(&tmp);
 		free(frame);
 		return (-1);

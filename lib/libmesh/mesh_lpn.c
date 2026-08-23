@@ -42,6 +42,12 @@ lpn_build_request(struct mesh_lpn_fsm *l, uint64_t now, struct mesh_lpn_out *out
 	req.prev_addr = l->prev_addr;
 	req.num_elements = l->num_elements;
 	req.lpn_counter = l->lpn_counter;
+	/*
+	 * The friendship security credential (MshPRT 3.6.6.2) uses the LPNCounter
+	 * carried in THIS Request, but l->lpn_counter is incremented for the next
+	 * one below; remember the wire value so the credential matches the peer.
+	 */
+	l->est_lpn_counter = l->lpn_counter;
 
 	olen = 0;
 	if (mesh_friend_request_build(&req, out->pdu, &olen) != 0)
@@ -158,6 +164,7 @@ mesh_lpn_fsm_tick(struct mesh_lpn_fsm *l, uint64_t now, struct mesh_lpn_out *out
 			/* No qualifying Offer: re-Request. */
 			return (lpn_build_request(l, now, out));
 		l->friend_addr = l->offer_addr[best];
+		l->friend_counter = l->offers[best].friend_counter;
 		if (mesh_lpn_init(&l->cadence, l->poll_timeout, now) != 0)
 			return (-1);
 		l->state = MESH_LPN_ST_ESTABLISHING;
@@ -361,6 +368,22 @@ mesh_lpn_fsm_friend(const struct mesh_lpn_fsm *l)
 {
 
 	return (l != NULL ? l->friend_addr : 0);
+}
+
+uint16_t
+mesh_lpn_fsm_friend_counter(const struct mesh_lpn_fsm *l)
+{
+
+	return (l != NULL ? l->friend_counter : 0);
+}
+
+uint16_t
+mesh_lpn_fsm_lpn_counter(const struct mesh_lpn_fsm *l)
+{
+
+	/* The friendship credential's LPNCounter is the establishing Request's
+	 * value, not the (already-incremented) next counter. */
+	return (l != NULL ? l->est_lpn_counter : 0);
 }
 
 uint32_t

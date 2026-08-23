@@ -101,6 +101,8 @@ struct mesh_lpn_fsm {
 	size_t			n_offers;
 
 	uint16_t		friend_addr;	/* selected Friend */
+	uint16_t		friend_counter;	/* selected Friend's FriendCounter */
+	uint16_t		est_lpn_counter; /* LPNCounter used in the est. Request */
 	struct mesh_lpn_state	cadence;	/* FSN + PollTimeout supervision */
 
 	/*
@@ -224,6 +226,8 @@ int	mesh_lpn_fsm_recv_subconfirm(struct mesh_lpn_fsm *l, const uint8_t *pdu,
 /* Inspection accessors. */
 int		mesh_lpn_fsm_established(const struct mesh_lpn_fsm *l);
 uint16_t	mesh_lpn_fsm_friend(const struct mesh_lpn_fsm *l);
+uint16_t	mesh_lpn_fsm_friend_counter(const struct mesh_lpn_fsm *l);
+uint16_t	mesh_lpn_fsm_lpn_counter(const struct mesh_lpn_fsm *l);
 uint32_t	mesh_lpn_fsm_iv_index(const struct mesh_lpn_fsm *l);
 uint8_t		mesh_lpn_fsm_key_refresh(const struct mesh_lpn_fsm *l);
 

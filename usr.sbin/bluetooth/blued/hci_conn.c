@@ -597,6 +597,19 @@ hci_le_create_connection_cancel(int hci_fd)
 
 	if (hci_devreq_logged(hci_fd, &r, 5) < 0)
 		return (-1);
+	/*
+	 * Command Disallowed (0x0C) means there was no create-connection
+	 * outstanding (§7.8.13) -- either none was ever issued, or a Connection
+	 * Complete already raced ahead of the cancel.  Both are the desired
+	 * end state ("no pending create"), so treat 0x0C as success; only other
+	 * statuses are real errors.  Callers otherwise mis-handle the benign
+	 * race as fatal (aborting POWER-off, wedging RPA rotation).
+	 */
+	if (rp.status == 0x0C) {
+		LOG_HCI(2, "LE Create Connection Cancel: no pending create "
+		    "(status 0x0C), treating as success");
+		return (0);
+	}
 	if (rp.status != 0x00) {
 		LOG_HCI(1, "LE Create Connection Cancel failed, "
 		    "status=0x%02x", rp.status);

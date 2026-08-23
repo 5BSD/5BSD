@@ -692,7 +692,7 @@ ATF_TC_BODY(broker_loop_inbound_roundtrip, tc)
 	/* 0x2A -> meshd_bearer_rx; delivered bytes == fed bytes. */
 	wrap_reset();
 	blued_mesh_demux_report(net_ad, sizeof(net_ad));
-	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, 0));
+	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, NULL, 0));
 	ATF_CHECK_EQ(1, wrap_net_calls);
 	ATF_CHECK_EQ(0, wrap_beacon_calls + wrap_prov_calls);
 	ATF_CHECK_EQ(3, (int)wrap_last_len);
@@ -701,7 +701,7 @@ ATF_TC_BODY(broker_loop_inbound_roundtrip, tc)
 	/* 0x2B -> meshd_beacon_rx; bytes preserved. */
 	wrap_reset();
 	blued_mesh_demux_report(beacon_ad, sizeof(beacon_ad));
-	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, 0));
+	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, NULL, 0));
 	ATF_CHECK_EQ(1, wrap_beacon_calls);
 	ATF_CHECK_EQ(0, wrap_net_calls + wrap_prov_calls);
 	ATF_CHECK_EQ(2, (int)wrap_last_len);
@@ -710,7 +710,7 @@ ATF_TC_BODY(broker_loop_inbound_roundtrip, tc)
 	/* 0x29 -> meshd_provisioner_recv; bytes preserved. */
 	wrap_reset();
 	blued_mesh_demux_report(prov_ad, sizeof(prov_ad));
-	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, 0));
+	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, NULL, 0));
 	ATF_CHECK_EQ(1, wrap_prov_calls);
 	ATF_CHECK_EQ(0, wrap_net_calls + wrap_beacon_calls);
 	ATF_CHECK_EQ(4, (int)wrap_last_len);
@@ -759,7 +759,7 @@ ATF_TC_BODY(broker_loop_inbound_leak_filter, tc)
 	/* Mixed report: exactly one PDU (AA BB) reaches bearer_rx; name dropped. */
 	wrap_reset();
 	blued_mesh_demux_report(mixed, sizeof(mixed));
-	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, 0));
+	ATF_CHECK_EQ(1, meshd_blued_pump_rx(&bc, nd, NULL, 0));
 	ATF_CHECK_EQ(1, wrap_net_calls);
 	ATF_CHECK_EQ(0, wrap_beacon_calls + wrap_prov_calls);
 	ATF_CHECK_EQ(2, (int)wrap_last_len);
@@ -769,7 +769,7 @@ ATF_TC_BODY(broker_loop_inbound_leak_filter, tc)
 	/* Non-mesh-only report: nothing crosses the wire, nothing dispatches. */
 	wrap_reset();
 	blued_mesh_demux_report(nonmesh, sizeof(nonmesh));
-	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, 0));
+	ATF_CHECK_EQ(0, meshd_blued_pump_rx(&bc, nd, NULL, 0));
 	ATF_CHECK_EQ(0, wrap_net_calls + wrap_beacon_calls + wrap_prov_calls);
 
 	loop_teardown(client, &bc, sv);
@@ -910,7 +910,7 @@ ATF_TC_BODY(broker_loop_pump_multiframe, tc)
 	blued_mesh_demux_report(net_ad, sizeof(net_ad));
 	blued_mesh_demux_report(beacon_ad, sizeof(beacon_ad));
 	do {
-		r = meshd_blued_pump_rx(&bc, nd, 0);
+		r = meshd_blued_pump_rx(&bc, nd, NULL, 0);
 		ATF_CHECK(r >= 0);
 	} while (r == 1 && wrap_net_calls + wrap_beacon_calls < 2);
 	ATF_CHECK_EQ(1, wrap_net_calls);

@@ -835,6 +835,65 @@ hci_le_scan_ex(int hci_fd, int duration_sec,
  */
 #define EXT_ADV_REPORT_HDR_LEN	24
 
+/*
+ * Small tracker of advertisers with an outstanding incomplete extended-adv
+ * fragment, so the terminal (complete) report of a fragmented advertisement --
+ * which carries only the tail, not an AD boundary -- is not AD-parsed as fresh
+ * structures.  Keyed by (address type, address, advertising SID).  Runs on the
+ * single scan-parsing thread, so no lock is needed.
+ */
+#define EXT_FRAG_SLOTS	8
+static struct ext_frag_ent {
+	bool	used;
+	uint8_t	at;
+	uint8_t	addr[6];
+	uint8_t	sid;
+} ext_frag_tbl[EXT_FRAG_SLOTS];
+
+static bool
+ext_frag_match(const struct ext_frag_ent *e, uint8_t at, const uint8_t *addr,
+    uint8_t sid)
+{
+
+	return (e->used && e->at == at && e->sid == sid &&
+	    memcmp(e->addr, addr, 6) == 0);
+}
+
+/* Record an advertiser that has more fragments coming. */
+static void
+ext_frag_mark(uint8_t at, const uint8_t *addr, uint8_t sid)
+{
+	int free_i = -1, i;
+
+	for (i = 0; i < EXT_FRAG_SLOTS; i++) {
+		if (ext_frag_match(&ext_frag_tbl[i], at, addr, sid))
+			return;			/* already tracked */
+		if (!ext_frag_tbl[i].used && free_i < 0)
+			free_i = i;
+	}
+	if (free_i < 0)
+		free_i = 0;			/* evict slot 0 if the table is full */
+	ext_frag_tbl[free_i].used = true;
+	ext_frag_tbl[free_i].at = at;
+	memcpy(ext_frag_tbl[free_i].addr, addr, 6);
+	ext_frag_tbl[free_i].sid = sid;
+}
+
+/* If this advertiser had an outstanding fragment, consume it and return true
+ * (its terminal report is a continuation tail, not a fresh AD boundary). */
+static bool
+ext_frag_take(uint8_t at, const uint8_t *addr, uint8_t sid)
+{
+	int i;
+
+	for (i = 0; i < EXT_FRAG_SLOTS; i++)
+		if (ext_frag_match(&ext_frag_tbl[i], at, addr, sid)) {
+			ext_frag_tbl[i].used = false;
+			return (true);
+		}
+	return (false);
+}
+
 /* LE Set Extended Scan Parameters, Core Vol 4 Part E §7.8.64. */
 #define HCI_SCAN_PHY_1M		0x01
 #define HCI_SCAN_PHY_CODED	0x04
@@ -926,9 +985,54 @@ hci_parse_ext_adv_report(const uint8_t *p, size_t remain,
 	 * fragment header (address/rssi) is still consumed and returned so the
 	 * remaining reports in the batch are not lost.  Reassembly of >229-byte
 	 * payloads is not attempted.  (finding 46)
+	 *
+	 * Per Core 6.3 Vol 4 Part E §7.7.65.13 a fragmented advertisement sends
+	 * every report but the last as "incomplete, more to come" (0b01) and the
+	 * LAST as "complete" (0b00) carrying only the tail -- NOT an AD-structure
+	 * boundary.  So a 0b00 report that follows an incomplete fragment from
+	 * the SAME advertiser (address+type+SID) is a continuation tail and must
+	 * NOT be AD-parsed either, or its arbitrary tail bytes fabricate a
+	 * name/UUIDs/mfr.  Track advertisers with an outstanding incomplete
+	 * fragment and suppress the parse of their terminal report.
 	 */
-	if (((event_type >> 5) & 0x03u) == 0x00u)
-		hci_parse_ad_fields(p + EXT_ADV_REPORT_HDR_LEN, data_len, sr);
+	{
+		unsigned status = (event_type >> 5) & 0x03u;
+		uint8_t sid = p[11];
+
+		/*
+		 * Anonymous advertisers (addr_type == 0xFF) carry no address:
+		 * the six p+3 octets are undefined, so keying the fragment
+		 * tracker on them would let two distinct anonymous advertisers
+		 * alias one slot (a fragment from one AD-parsed into another's
+		 * boundary) or spuriously suppress a terminal report on garbage
+		 * bytes.  There is no stable key to reassemble anonymous
+		 * fragments, so skip suppression for them and treat each
+		 * anonymous report as its own boundary.  A complete anonymous
+		 * report is therefore always AD-parsed; the only residual is
+		 * that a genuine anonymous continuation tail is parsed as fresh
+		 * AD, which stays contained to that report and never crosses
+		 * into a different advertiser's boundary.
+		 */
+		if (status == 0x01u && addr_type != 0xFF) {
+			/*
+			 * 0b01 = incomplete, MORE data to come: remember this
+			 * advertiser so its terminal (0b00) tail is not AD-parsed.
+			 * 0b10 = incomplete but truncated with NO continuation --
+			 * it is itself the last report, so do NOT mark (a stale
+			 * entry would wrongly suppress the advertiser's next
+			 * complete report or evict a live fragment).  Neither
+			 * incomplete status is AD-parsed.
+			 */
+			ext_frag_mark(addr_type, p + 3, sid);
+		} else if (status == 0x00u &&
+		    (addr_type == 0xFF || !ext_frag_take(addr_type, p + 3, sid))) {
+			/* A complete report with NO preceding fragment starts at
+			 * an AD boundary; parse it.  If it followed a fragment it
+			 * is a continuation tail (take() consumed it) -- skip. */
+			hci_parse_ad_fields(p + EXT_ADV_REPORT_HDR_LEN,
+			    data_len, sr);
+		}
+	}
 
 	return ((size_t)(EXT_ADV_REPORT_HDR_LEN + data_len));
 }

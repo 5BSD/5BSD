@@ -253,8 +253,8 @@ ptap_meshd_node_internal_state_sweep(struct meshd_node *nd)
 	bind.model = nd->db.models[0].id;
 	(void)meshd_do_bind(nd, MESH_CFG_OP_MODEL_APP_BIND, &bind);
 
-	(void)meshd_devkey_rx(NULL, 0, 0, key, sizeof(key), key, &i);
-	(void)meshd_devkey_rx(nd, 0, (uint16_t)(nd->addr + 1), key,
+	(void)meshd_devkey_rx(NULL, 0, 0, 0, key, sizeof(key), key, &i);
+	(void)meshd_devkey_rx(nd, 0, (uint16_t)(nd->addr + 1), 0, key,
 	    sizeof(key), key, &i);
 	(void)meshd_remote_devkey(NULL, 1, key);
 	(void)meshd_remote_devkey(nd, 1, NULL);

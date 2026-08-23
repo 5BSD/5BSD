@@ -232,7 +232,8 @@ smp_swap_buf(uint8_t *dst, const uint8_t *src, size_t len)
  * Returns 0 on success, -1 if the key is invalid.
  */
 int
-smp_validate_public_key(const uint8_t *pk_x, const uint8_t *pk_y)
+smp_validate_public_key(const uint8_t *pk_x, const uint8_t *pk_y,
+    const uint8_t *local_pk_x)
 {
 	EC_GROUP *group = NULL;
 	EC_POINT *point = NULL;
@@ -288,6 +289,24 @@ smp_validate_public_key(const uint8_t *pk_x, const uint8_t *pk_y)
 	/* Also reject the point at infinity */
 	if (EC_POINT_is_at_infinity(group, point))
 		goto out;
+
+	/*
+	 * Reflection-attack countermeasure (Core Spec Vol 3 Part H
+	 * Section 2.3.5.6.1, CVE-2020-26558).  "If the two public keys have
+	 * the same X coordinate and neither is the debug key, then each device
+	 * shall fail pairing" with DHKey Check Failed.  The debug key is already
+	 * rejected above, so a match here means the peer reflected our own
+	 * public key -- in SC Passkey Entry that lets an MITM recover the
+	 * passkey bit-by-bit across the commitment rounds.  local_pk_x may be
+	 * NULL to skip (e.g. before our ephemeral is known).  X is public, so a
+	 * plain compare is sufficient.
+	 */
+	if (local_pk_x != NULL && memcmp(pk_x, local_pk_x, 32) == 0) {
+		warnx("SMP: peer public key reflects local key, rejecting");
+		BLUED_LOG_SECURITY("peer public key X == local X "
+		    "(reflection), rejecting pairing");
+		goto out;
+	}
 
 	ret = 0;
 

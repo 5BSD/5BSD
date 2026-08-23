@@ -1759,9 +1759,9 @@ ATF_TC_BODY(manager_guard_matrix, tc)
 	ATF_CHECK_EQ(-1, mesh_mgr_provision_prepare(mgr, NULL, 1, &pdata));
 	ATF_CHECK_EQ(-1, mesh_mgr_provision_prepare(mgr, uuid, 0, &pdata));
 	ATF_CHECK_EQ(-1, mesh_mgr_provision_prepare(mgr, uuid, 1, NULL));
-	ATF_CHECK(mesh_mgr_provision_commit(NULL, key, 0) == NULL);
-	ATF_CHECK(mesh_mgr_provision_commit(mgr, NULL, 0) == NULL);
-	ATF_CHECK(mesh_mgr_provision_commit(mgr, key, 0) == NULL);
+	ATF_CHECK(mesh_mgr_provision_commit(NULL, key, 1, 0) == NULL);
+	ATF_CHECK(mesh_mgr_provision_commit(mgr, NULL, 1, 0) == NULL);
+	ATF_CHECK(mesh_mgr_provision_commit(mgr, key, 1, 0) == NULL);
 	mesh_mgr_provision_abort(NULL);
 
 	ATF_CHECK_EQ(-1, mesh_mgr_cfg_appkey_add_pdu(NULL, out, &outlen));

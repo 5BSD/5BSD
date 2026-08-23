@@ -1129,9 +1129,9 @@ blued_handle_readable(struct kevent *ev)
 				 * sweep finishes the teardown.
 				 */
 				atomic_store_explicit(&c->disconnect_pending,
-				    true, memory_order_release);
+				    true, memory_order_seq_cst);
 				if (atomic_load_explicit(&c->att_ops_active,
-				    memory_order_acquire) != 0)
+				    memory_order_seq_cst) != 0)
 					continue;
 				(void)atomic_exchange_explicit(
 				    &c->disconnect_pending, false,
@@ -1773,11 +1773,19 @@ blued_conn_disconnect(struct blued_conn *conn)
 	 * in the window between the load and the store, so nobody signalled the
 	 * pipe and the deferred disconnect was stranded (indication timeout,
 	 * conn up forever).  If no op is in flight, clear the flag and proceed.
+	 *
+	 * The store+load pair MUST be seq_cst: this is a store-buffering (Dekker)
+	 * handshake against the worker's own store(att_ops_active=0)+load(
+	 * disconnect_pending) pair, and release/acquire on two DISTINCT atomics
+	 * does not forbid the StoreLoad reordering where each side misses the
+	 * other's store (observable on amd64 TSO / aarch64), re-stranding the
+	 * teardown.  Both sides use memory_order_seq_cst so a single total order
+	 * guarantees at least one side observes the other's write.
 	 */
 	atomic_store_explicit(&conn->disconnect_pending, true,
-	    memory_order_release);
+	    memory_order_seq_cst);
 	if (atomic_load_explicit(&conn->att_ops_active,
-	    memory_order_acquire) != 0)
+	    memory_order_seq_cst) != 0)
 		return;
 	(void)atomic_exchange_explicit(&conn->disconnect_pending, false,
 	    memory_order_acq_rel);
