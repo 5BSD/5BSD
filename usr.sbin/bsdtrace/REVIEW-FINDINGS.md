@@ -202,6 +202,40 @@ thing the deferred-SWI design avoids):
   absolute offset so decode position stays correct; only the
   discrete overflow-warning can be lost.
 
+## Qualification re-run (2026-08-22, no-root tier)
+
+Fresh rebuild of all four components (bsdtrace, bsdinstruments,
+hwtlm, libotelexport) from clean bmake: no warnings, no breakage.
+Everything runnable without root re-passed; NO new defects found.
+
+- ATF suites (run standalone, per-case result files): libotelexport
+  11/11, bsdtrace 12/12 + 1 skip (bsdtrace_ptwrite.h not installed
+  in the session jail), hwtlm 10/10, bsdinstruments 10/10.
+- ~/ObservableBSD test-bsdtrace.sh against the BASE binary:
+  18 pass / 0 fail / 84 skipped (root + live-PT tier).
+- bsdinstruments: full sweep of all 236 profiles through
+  `generate` (params supplied where declared) — 236/236 produce
+  non-empty D.  All 236 fed to `dtrace -Z -e`: 195 compile clean
+  even with /dev/dtrace unavailable in the jail; the 41 failures
+  are all environmental (pid provider needs the device+root; args[]
+  on SDT probes cannot be typed while the probe is invisible) —
+  re-run the same loop as root on the host to close them out.
+- hwtlm: list (text + valid JSON), watch text/JSON-lines/per-core,
+  exec exit-code propagation, and --format otel end-to-end into a
+  local OTLP/HTTP sink (gzip, valid JSON, per-core dataPoints carry
+  cpu_id attributes).
+- libotelexport OTLP pipeline re-proven with a C driver against a
+  local sink: logs (attrs incl. one-shot drops counter), sum
+  metrics, histogram (bucketCounts/explicitBounds arity correct),
+  gzip content-encoding — all valid OTLP JSON.
+- bsdtrace offline decode exercised on synthetic PSB/TIP streams:
+  syncs, maps images (EXEC record addr is the relocation slide),
+  applies symbol slide, and error-paths stay clean across
+  text/json/profile/tree/collapsed/callers/speedscope (speedscope
+  output validates against its schema URL).  Fully faithful
+  packet streams need real hardware; live decode remains in the
+  root tier.
+
 ## Known limitations (documented, not defects)
 
 - A .meta path containing a literal '"' cannot round-trip through
