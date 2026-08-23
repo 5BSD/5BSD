@@ -12,10 +12,9 @@ skipped=0
 mkdir -p "$result_dir"
 export LD_LIBRARY_PATH=/lib:/usr/lib
 
-mkdir -p /usr/src/usr.sbin/tzfsd /usr/src/usr.sbin/tzfs-flavors
-cp "$payload/source/usr.sbin/tzfsd/"* /usr/src/usr.sbin/tzfsd/
-cp "$payload/source/usr.sbin/tzfs-flavors/"* \
-    /usr/src/usr.sbin/tzfs-flavors/
+mkdir -p /usr/src /usr/obj/usr/src/amd64.amd64
+cp -R "$payload/source/." /usr/src/
+cp -R "$payload/obj/." /usr/obj/usr/src/amd64.amd64/
 
 run_program()
 {
@@ -64,6 +63,9 @@ sysctl kern.crypto.allow_soft=1 >/dev/null || exit 1
 
 for program in "$payload"/tests/*; do
 	[ -x "$program" ] || continue
+	case "${program##*/}" in
+	*_bin)	continue ;;
+	esac
 	run_program "$program"
 done
 

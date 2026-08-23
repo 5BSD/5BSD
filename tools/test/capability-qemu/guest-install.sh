@@ -29,5 +29,13 @@ if ! grep -q '^vfs.zfs.trustedzfs.enum_max_entries=' \
 	    /boot/loader.conf.local
 fi
 
+# The provider transport cases must run before init claims /dev/mac_capability
+# for the system-wide service supervisor.  Single-user mode leaves the device
+# unclaimed while still loading the production MAC policies and test kernel.
+sysrc -f /boot/loader.conf.local boot_single=YES >/dev/null
+
 echo "Capability test payload installed; rebooting disposable guest"
-shutdown -r now
+# This is a throwaway snapshot and the installed files have already been
+# synchronously written.  Avoid letting unrelated service shutdown hooks block
+# the qualification reboot.
+reboot -q
