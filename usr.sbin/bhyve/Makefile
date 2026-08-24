@@ -54,6 +54,7 @@ SRCS=	\
 	pci_emul.c		\
 	pci_hda.c		\
 	pci_hostbridge.c	\
+	pci_i6300esb.c		\
 	pci_irq.c		\
 	pci_nvme.c		\
 	pci_uart.c		\
@@ -61,6 +62,7 @@ SRCS=	\
 	pci_virtio_balloon.c	\
 	pci_virtio_block.c	\
 	pci_virtio_console.c	\
+	pci_virtio_crypto.c	\
 	pci_virtio_fs.c		\
 	pci_virtio_gpu.c	\
 	pci_virtio_input.c	\

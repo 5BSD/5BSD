@@ -736,6 +736,26 @@ setting advertises
 It is valid only with
 .Cm transport=modern
 and is disabled by default.
+.It Cm virtio-crypto
+Virtio cryptographic accelerator interface, implemented from the VirtIO 1.2
+specification, section 5.9.
+This device is modern PCI only and uses device ID 20.
+It exposes one control virtqueue for session management and one or more data
+virtqueues for crypto requests.
+The advertised services are symmetric CIPHER (AES-CBC), HASH (SHA-256),
+MAC (HMAC-SHA-256) and AEAD (AES-GCM); the host backend is OpenSSL.
+The optional
+.Cm queues
+setting selects the number of data virtqueues (1 to 8, default 1) and the
+optional
+.Cm maxsessions
+setting bounds the number of concurrent host crypto sessions
+(default 64).
+For qualification of packed virtqueues, the experimental
+.Cm packed=true
+setting advertises
+.Dv VIRTIO_F_RING_PACKED
+and is disabled by default.
 .It Cm virtio-pmem
 Virtio persistent-memory interface.
 This device is modern PCI only, uses device ID 27 and non-transitional PCI
@@ -1179,6 +1199,39 @@ eXtensible Host Controller Interface (xHCI) USB controller.
 NVM Express (NVMe) controller.
 .It Cm hda
 High Definition Audio Controller.
+.It Cm i6300esb
+Intel 6300ESB PCI watchdog timer.
+The guest arms and periodically pets the two-stage watchdog through its
+memory-mapped registers.
+If the guest stops petting, the first stage expires and raises an interrupt;
+if it is still not petted, the second stage expires and
+.Nm
+applies the operator-selected action.
+The optional
+.Cm action
+setting accepts
+.Cm reset ,
+.Cm poweroff ,
+.Cm nmi ,
+or
+.Cm notify ,
+and defaults to
+.Cm reset .
+The
+.Cm reset
+and
+.Cm poweroff
+actions change the virtual machine lifecycle,
+.Cm nmi
+injects a non-maskable interrupt into the boot processor and keeps the
+watchdog running, and
+.Cm notify
+logs the expiry and leaves the guest running.
+The optional
+.Cm timeout
+setting gives the per-stage timeout in seconds
+.Pq default 30
+and is used until the guest programs its own preload values.
 .El
 .Pp
 The optional parameter

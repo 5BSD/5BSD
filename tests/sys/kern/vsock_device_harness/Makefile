@@ -48,12 +48,14 @@ ATF_TESTS_C+=	console_owner_test
 ATF_TESTS_C+=	mevent_lifecycle_test
 ATF_TESTS_C+=	tpm_intf_crb_model_test
 ATF_TESTS_C+=	pvpanic_model_test
+ATF_TESTS_C+=	pci_i6300esb_test
 ATF_TESTS_C+=	migration_dirty_test
 ATF_TESTS_C+=	migration_precopy_test
 ATF_TESTS_C+=	migration_session_test
 ATF_TESTS_C+=	vmmapi_dirty_log_test
 ATF_TESTS_C+=	virtio_net_test
 ATF_TESTS_C+=	virtio_scsi_test
+ATF_TESTS_C+=	virtio_crypto_pci_test
 ATF_TESTS_C+=	scmi_virtio_poll_test
 ATF_TESTS_C+=	virtio_guest_contract_test
 ATF_TESTS_C+=	virtio_host_contract_test
@@ -415,6 +417,13 @@ CFLAGS.uart_backend_full_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} -I${.OBJDIR} \
 CWARNFLAGS.uart_backend_full_test.c+= -Wno-thread-safety-analysis
 LIBADD.uart_backend_full_test+= pthread
 CFLAGS.pvpanic_model_test+= -I${SRCTOP}/usr.sbin/bhyve
+# pci_i6300esb_test TU-includes pci_i6300esb.c and mocks its pci_emul/mevent/
+# vmmapi/config/snapshot dependencies; BHYVE_SNAPSHOT compiles the checkpoint
+# codec paths.
+CFLAGS.pci_i6300esb_test+= -DBHYVE_SNAPSHOT -I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin/bhyve -I${SRCTOP}/sys
+CWARNFLAGS.pci_i6300esb_test.c+= -Wno-cast-align -Wno-thread-safety-analysis
+LIBADD.pci_i6300esb_test+= pthread
 CFLAGS.virtio_packed_engine_test+= -I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve
 CFLAGS.virtio_balloon_host_test+= -I${.CURDIR} -I${.OBJDIR} \
@@ -640,6 +649,12 @@ CFLAGS.virtio_scsi_test+= -DWITHOUT_CAPSICUM -ffunction-sections \
 				-fdata-sections -I${.CURDIR} -I${.OBJDIR} \
 				-I${SRCTOP}/usr.sbin/bhyve \
 				-I${SRCTOP}/usr.sbin -I${SRCTOP}/sys
+CFLAGS.virtio_crypto_pci_test+= -DWITHOUT_CAPSICUM -DBHYVE_SNAPSHOT \
+				-ffunction-sections -fdata-sections \
+				-I${.CURDIR} -I${.OBJDIR} \
+				-I${SRCTOP}/usr.sbin/bhyve \
+				-I${SRCTOP}/usr.sbin -I${SRCTOP}/sys \
+				-I${SRCTOP}/contrib/libucl/include
 CFLAGS.virtio_guest_contract_test+= -I${SRCTOP}/sys
 CFLAGS.virtio_host_contract_test+= -I${SRCTOP}/usr.sbin -I${SRCTOP}/sys
 CFLAGS.snapshot_portable_test+= -I${SRCTOP}/usr.sbin/bhyve
@@ -710,6 +725,9 @@ CWARNFLAGS.virtio_net_test.c+= -Wno-error \
 					-Wno-thread-safety-analysis
 CWARNFLAGS.virtio_scsi_test.c+= -Wno-error \
 						-Wno-thread-safety-analysis
+CWARNFLAGS.virtio_crypto_pci_test.c+= -Wno-error \
+						-Wno-thread-safety-analysis \
+						-Wno-cast-align
 CWARNFLAGS.virtio_balloon_test.c+= -Wno-error \
 					-Wno-thread-safety-analysis
 CWARNFLAGS.virtio_rtc_test.c+=	-Wno-cast-align \
@@ -777,6 +795,8 @@ LIBADD.mevent_lifecycle_test+=	pthread
 LIBADD.virtio_net_test+=	pthread
 LIBADD.virtio_scsi_test+=	pthread
 LIBADD.virtio_scsi_test+=	sbuf
+LIBADD.virtio_crypto_pci_test+=	pthread
+LIBADD.virtio_crypto_pci_test+=	crypto
 LIBADD.virtio_balloon_test+=	pthread
 LIBADD.virtio_rtc_test+=	pthread
 LIBADD.virtio_rtc_host_test+= pthread
