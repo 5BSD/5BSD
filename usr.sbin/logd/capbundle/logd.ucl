@@ -5,7 +5,7 @@ user = "capability";
 storage = [{
     name = "state";
     scope = "unit";
-    flavor = "native";
+    flavor = "empty";
     lifetime = "persistent";
     rights = "mount";
 }];
