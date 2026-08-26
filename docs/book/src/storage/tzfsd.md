@@ -11,6 +11,50 @@ converts mount-only storage into a rights-limited directory named
 privately. Only a unit requesting advanced ZFS operations receives a named
 `zfshandle`. The logical name is not a dataset name.
 
+## The backing pool at first boot
+
+`tzfsd` never creates a ZFS pool. It requires exactly one pool to already be
+imported and, inside it, provisions the whole capability layout itself: on
+first start it opens the pool root and creates
+`<pool>/Capabilities/{persistent,ephemeral,.templates}` if they do not exist
+(`tzfsd_ensure_path`). Everything below `/Capabilities` is therefore
+self-installing; the only prerequisite the operator owns is the pool.
+
+The pool name defaults to **`zroot`** and is the single knob most systems ever
+touch. Configuration lives in `/etc/capability/tzfsd.ucl`
+(with flavor-catalog drop-ins under `/etc/capability/tzfsd.d/`); every key is
+optional and the commented defaults in the shipped file are authoritative.
+
+**ZFS-rooted install (the streamlined path).** A stock ZFS-on-root system
+already has `zroot` imported at boot, so there is nothing to do: the first time
+a unit requests storage, `oracled` starts `tzfsd`, which provisions
+`zroot/Capabilities` and begins minting handles. The `native` flavor — a
+copy-on-write clone of the running boot environment — is available only on such
+a system, because it clones the live root dataset.
+
+**No suitable pool (UFS root, or a dedicated capability pool).** If `zroot`
+does not exist, `tzfsd` exits at startup with
+`layout provisioning failed (is pool <name> imported?)`. Provide a pool and
+point the daemon at it:
+
+```sh
+# One-time: create (or import) a pool for capability storage.
+zpool create capability /dev/<disk-or-file>   # or: zpool import capability
+
+# Tell tzfsd to use it.
+printf 'pool = "capability";\n' >> /etc/capability/tzfsd.ucl
+```
+
+`tzfsd` provisions `capability/Capabilities/...` on its next start. Only the
+`empty` flavor (a blank dataset) works on a system whose root is not ZFS; the
+`native` flavor and OS-image flavors from the `tzfs-flavors` package need a
+ZFS-rooted host and are simply not offered otherwise.
+
+Storage is delivered to providers that run under the unprivileged **`capability`
+sandbox account** (uid/gid 976, `Capability service sandbox`, `nologin`), which
+ships in the base `master.passwd`. `serviced` `chown`s each delivered directory
+to that account; no operator setup of the account is required.
+
 ## Dataset layout
 
 ```text
