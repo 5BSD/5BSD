@@ -567,6 +567,7 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	struct pollfd descriptors[STORAGE_MAX_SESSIONS + 1];
 	size_t i, nsessions;
 	int error, result;
+	bool control_open = true;
 
 	if (logcmp_store_open(dirfd, segment_limit, max_segments, &store) == -1) {
 		error = errno != 0 ? errno : EIO;
@@ -611,8 +612,8 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 				    (nsessions - i - 1) * sizeof(sessions[0]));
 			nsessions--;
 		}
-		descriptors[0] = (struct pollfd){ .fd = control_fd,
-		    .events = POLLIN };
+		descriptors[0] = (struct pollfd){
+		    .fd = control_open ? control_fd : -1, .events = POLLIN };
 		for (i = 0; i < nsessions; i++)
 			descriptors[i + 1] = (struct pollfd){
 			    .fd = sessions[i].fd, .events = POLLIN };
@@ -635,8 +636,20 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 			}
 			continue;
 		}
-		if ((descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0)
-			break;
+		/*
+		 * The attach-control channel closing means the provider will not
+		 * request new sessions, but sessions already handed out stay live
+		 * until their producers drain.  Stop watching control and keep
+		 * serving; exit only once the last session is gone.  Tearing the
+		 * whole manager down here would revoke every worker's storage the
+		 * moment the last attach completed.
+		 */
+		if ((descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+			control_open = false;
+			if (nsessions == 0)
+				break;
+			continue;
+		}
 		if ((descriptors[0].revents & POLLIN) != 0 &&
 		    handle_control(control_fd, sessions, &nsessions) != 0)
 			break;
@@ -660,6 +673,8 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 				    (nsessions - i - 1) * sizeof(sessions[0]));
 			nsessions--;
 		}
+		if (!control_open && nsessions == 0)
+			break;
 	}
 	for (i = 0; i < nsessions; i++) {
 		close(sessions[i].fd);

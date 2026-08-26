@@ -212,6 +212,22 @@ harden_worker_fd(int fd)
 	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
 }
 
+/*
+ * Confine a descriptor inside a leaf pool worker, which never forks again, so
+ * its descriptors must latch to CAP_CLOFORK_LOCKED.  A descriptor the parent
+ * handed across the pool fork with CAP_CLOFORK_ONCE has already spent that
+ * ONCE and is locked; re-applying ONCE here would widen it and fail
+ * ENOTCAPABLE.
+ */
+static int
+harden_worker_leaf_fd(int fd)
+{
+
+	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+}
+
 static int
 harden_transfer_fd(int fd)
 {
@@ -274,7 +290,13 @@ pool_receive_fd(int socket_fd, struct pool_control_message *control, int *fd)
 	message.msg_iovlen = 1;
 	message.msg_control = ancillary.bytes;
 	message.msg_controllen = sizeof(ancillary.bytes);
-	amount = recvmsg(socket_fd, &message, MSG_CMSG_CLOEXEC | MSG_TRUNC);
+	/*
+	 * Do not request MSG_TRUNC: this kernel reflects the recvmsg(2) input
+	 * flags back into msg_flags, so a requested MSG_TRUNC would make the
+	 * truncation check below fire on every message.  Without it, msg_flags
+	 * still reports a genuine over-length datagram as MSG_TRUNC.
+	 */
+	amount = recvmsg(socket_fd, &message, MSG_CMSG_CLOEXEC);
 	if (amount <= 0)
 		return (amount == 0 ? (errno = ECONNRESET, -1) : -1);
 	nfds = 0;
@@ -1078,7 +1100,7 @@ pool_add_session(struct pool_state *pool)
 	    pool->config->minimum_severity,
 	    pool->config->rate_limit_interval_ms,
 	    pool->config->rate_limit_burst) == -1 ||
-	    harden_worker_fd(fd) == -1 ||
+	    harden_worker_leaf_fd(fd) == -1 ||
 	    channel_create(fd, &options, &state->channel) == -1 ||
 	    channel_set_request_handler(state->channel, handle_request,
 	    state) == -1 || channel_set_event_handler(state->channel,
@@ -1138,9 +1160,10 @@ pool_worker(int control_fd, cap_channel_t *capsyslog, int audit_fd,
 	pool.work_source.source_type = POOL_SOURCE_WORK;
 	pool.kq = kqueuex(KQUEUE_CLOEXEC);
 	if (pool.kq == -1 || logcmp_storage_session_activate(storage) == -1 ||
-	    harden_worker_fd(storage->control_fd) == -1 ||
+	    harden_worker_leaf_fd(storage->control_fd) == -1 ||
 	    auditcmp_client_adopt(audit_fd, &pool.audit) == -1 ||
-	    harden_worker_fd(control_fd) == -1 || harden_worker_fd(pool.kq) == -1 ||
+	    harden_worker_leaf_fd(control_fd) == -1 ||
+	    harden_worker_leaf_fd(pool.kq) == -1 ||
 	    pool_change(&pool, control_fd, EVFILT_READ, EV_ADD | EV_ENABLE,
 	    0, 0, &pool.control_source) == -1 ||
 	    pool_change(&pool, LOGCMP_DRAIN_TIMER_IDENT, EVFILT_TIMER,
