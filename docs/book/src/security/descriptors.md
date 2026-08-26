@@ -125,6 +125,25 @@ members (signal, jail removal, instance revoke). Lifecycle events
 (member added/removed, leader died, deadline/watchdog fired) arrive
 via kqueue. Nesting is supported to depth 16.
 
+**Resource descriptors as members.** The three resource-bearing
+descriptor families below — TrustedZFS handles (`DTYPE_ZFSHANDLE`),
+environment values (`DTYPE_ENVFD`), and crypto handles (`DTYPE_CRYPTO`)
+— must be enlistable in a coalition so that terminating or closing the
+coalition drops the last reference to each member and drives that
+family's *own* last-close teardown, rather than leaking the backing
+resource. Each already has a safe last-close path that a coalition
+close simply triggers: a zfshandle force-unmounts its anon mount and
+releases the dataset handle, an envfd `explicit_bzero`s the value and
+returns its per-UID and global quotas, and a crypto handle revokes the
+key or session. The enlistment right for these follows the same rule as
+the other families — the caller must already hold the right that a last
+close would exercise (dataset/mount authority, the envfd's write/seal
+right, the crypto handle's revoke right) — so that coalition teardown
+never performs a release the enlister could not have performed itself.
+This bounds a resource's lifetime to its coalition: when the coalition
+dies, its datasets unmount, its secrets are zeroed, and its crypto
+state is revoked as one atomic teardown.
+
 ## envfd (DTYPE_ENVFD)
 
 **Represents:** a named kernel-resident environment value — an
