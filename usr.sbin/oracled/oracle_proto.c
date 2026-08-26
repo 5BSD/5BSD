@@ -58,6 +58,18 @@ static bool	nonce_set;
 static uint32_t dispatch_op;
 static int dispatch_status;
 
+static bool
+all_zero(const void *buf, size_t len)
+{
+	const unsigned char *p = buf;
+	size_t i;
+
+	for (i = 0; i < len; i++)
+		if (p[i] != 0)
+			return (false);
+	return (true);
+}
+
 /*
  * Return an owned descriptor for an existing persistent jail only when its
  * immutable launch identity matches the requested definition.  Reusing a
@@ -383,6 +395,8 @@ handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
  * so waitpid() on the spawned child returns once tzfsd is ready (or failed).
  */
 static int oracle_tzfsd_channel = -1;
+static char oracle_storage_session[TZFSD_SESSION_MAX];
+static bool oracle_storage_session_ready;
 
 static void
 tzfsd_channel_reset(void)
@@ -392,6 +406,7 @@ tzfsd_channel_reset(void)
 		close(oracle_tzfsd_channel);
 		oracle_tzfsd_channel = -1;
 	}
+	oracle_storage_session_ready = false;
 }
 
 static int
@@ -403,11 +418,11 @@ tzfsd_channel_get(void)
 	int i, status;
 
 	if (oracle_tzfsd_channel != -1)
-		return (oracle_tzfsd_channel);
+		goto begin_session;
 
 	oracle_tzfsd_channel = tzfsd_connect();
 	if (oracle_tzfsd_channel != -1)
-		return (oracle_tzfsd_channel);
+		goto begin_session;
 
 	/* Not running yet: spawn tzfsd, which provisions then daemonizes. */
 	argv[0] = __DECONST(char *, "/usr/sbin/tzfsd");
@@ -423,6 +438,21 @@ tzfsd_channel_get(void)
 
 		(void)nanosleep(&ts, NULL);
 		oracle_tzfsd_channel = tzfsd_connect();
+	}
+	if (oracle_tzfsd_channel == -1)
+		return (-1);
+begin_session:
+	if (!oracle_storage_session_ready) {
+		if (oracle_storage_session[0] == '\0' ||
+		    tzfsd_begin_session(oracle_tzfsd_channel,
+		    oracle_storage_session) == -1) {
+			int saved = errno;
+
+			tzfsd_channel_reset();
+			errno = saved;
+			return (-1);
+		}
+		oracle_storage_session_ready = true;
 	}
 	return (oracle_tzfsd_channel);
 }
@@ -445,12 +475,13 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 	req = payload;
-	if (memchr(req->name, '\0', sizeof(req->name)) == NULL ||
-	    req->name[0] == '\0' ||
+	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
+	    req->dataset[0] == '\0' ||
 	    memchr(req->flavor, '\0', sizeof(req->flavor)) == NULL ||
+	    !all_zero(req->_reserved, sizeof(req->_reserved)) ||
 	    (req->rights & ~ZH_ALL_RIGHTS) != 0 ||
 	    (req->flags & ~ZHF_SUBTREE) != 0 ||
-	    req->lifetime > ORT_STORAGE_EPHEMERAL) {
+	    req->lifetime > ORT_STORAGE_LEASE) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
@@ -464,7 +495,7 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 
 	memset(&treq, 0, sizeof(treq));
 	(void)strlcpy(treq.flavor, req->flavor, sizeof(treq.flavor));
-	(void)strlcpy(treq.name, req->name, sizeof(treq.name));
+	(void)strlcpy(treq.dataset, req->dataset, sizeof(treq.dataset));
 	treq.rights = req->rights;
 	treq.flags = req->flags;
 	treq.lifetime = req->lifetime;
@@ -480,7 +511,7 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 }
 
 /*
- * Forward an ephemeral storage teardown to tzfsd on service stop.  A missing
+ * Forward a last-holder lease storage teardown to tzfsd.  A missing
  * claim is success so stop paths stay idempotent.
  */
 static void
@@ -494,8 +525,10 @@ handle_destroy_storage(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 	req = payload;
-	if (memchr(req->name, '\0', sizeof(req->name)) == NULL ||
-	    req->name[0] == '\0') {
+	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
+	    req->dataset[0] == '\0' || req->flags != 0 || req->rights != 0 ||
+	    req->lifetime != 0 || req->flavor[0] != '\0' ||
+	    !all_zero(req->_reserved, sizeof(req->_reserved))) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
@@ -505,7 +538,7 @@ handle_destroy_storage(const void *payload, uint32_t len, uint64_t reply_token)
 		    NULL, 0);
 		return;
 	}
-	if (tzfsd_release(chan, req->name) == -1) {
+	if (tzfsd_release(chan, req->dataset) == -1) {
 		e = errno;
 		if (e == EPIPE || e == ECONNRESET || e == EBADF)
 			tzfsd_channel_reset();
@@ -1009,10 +1042,18 @@ oracle_proto_dispatch(void)
 void
 oracle_proto_init(int channel_fd)
 {
+	unsigned char random[16];
+	unsigned i;
 
 	proto_channel_fd = channel_fd;
 	serviced_ready = false;
 	nonce_set = false;
+	arc4random_buf(random, sizeof(random));
+	for (i = 0; i < nitems(random); i++)
+		(void)snprintf(oracle_storage_session + i * 2, 3, "%02x",
+		    random[i]);
+	oracle_storage_session[32] = '\0';
+	oracle_storage_session_ready = false;
 }
 
 /*
@@ -1027,6 +1068,7 @@ oracle_proto_reset(void)
 	sweep_dynamic_claims();
 	serviced_ready = false;
 	nonce_set = false;
+	oracle_storage_session_ready = false;
 }
 
 bool

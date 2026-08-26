@@ -7,9 +7,8 @@
  * derived/created/cloned/destroyed from the retained parent handles, and the
  * granted handle rides SCM_RIGHTS back to the client.
  *
- * Phase 2 uses single-level claim names (no '/').  Per-bundle namespacing
- * (bundle-id/claim, authenticated from the peer rather than claimed) lands
- * with the serviced integration in Phase 3.
+ * Dataset keys are opaque, single-level names derived by the trusted bundle
+ * parser.  tzfsd never accepts a user-facing role or path.
  */
 
 #include <sys/types.h>
@@ -28,7 +27,7 @@
 
 /* A claim name must be a single, safe path component. */
 static bool
-valid_name(const char *name)
+valid_dataset(const char *name)
 {
 
 	if (memchr(name, '\0', TZFSD_NAME_MAX) == NULL)
@@ -60,21 +59,28 @@ valid_request(const struct tzfsd_request *rq)
 
 	if (!all_zero(rq->_reserved, sizeof(rq->_reserved)) ||
 	    memchr(rq->flavor, '\0', sizeof(rq->flavor)) == NULL ||
-	    memchr(rq->name, '\0', sizeof(rq->name)) == NULL)
+	    memchr(rq->dataset, '\0', sizeof(rq->dataset)) == NULL ||
+	    memchr(rq->session, '\0', sizeof(rq->session)) == NULL)
 		return (false);
 	switch (rq->op) {
 	case TZFSD_OP_REQUEST:
-		return (true);
+		return (rq->session[0] == '\0');
 	case TZFSD_OP_RELEASE:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->flavor[0] == '\0');
+		    rq->flavor[0] == '\0' && rq->session[0] == '\0');
 	case TZFSD_OP_LIST_FLAVORS:
 	case TZFSD_OP_PING:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->flavor[0] == '\0' && rq->name[0] == '\0');
+		    rq->flavor[0] == '\0' && rq->dataset[0] == '\0' &&
+		    rq->session[0] == '\0');
+	case TZFSD_OP_BEGIN_SESSION:
+		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
+		    rq->flavor[0] == '\0' && rq->dataset[0] == '\0' &&
+		    rq->session[0] != '\0');
 	default:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->flavor[0] == '\0' && rq->name[0] == '\0');
+		    rq->flavor[0] == '\0' && rq->dataset[0] == '\0' &&
+		    rq->session[0] == '\0');
 	}
 }
 
@@ -130,9 +136,9 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 	struct tzfsd_config *cfg = &st->cfg;
 	int parent_fd, leaf_fd, granted;
 	const char *parent_name;
+	char parent_buf[TZFSD_MAXPATH];
 
-	if (rq->lifetime != TZFSD_PERSISTENT &&
-	    rq->lifetime != TZFSD_EPHEMERAL) {
+	if (rq->lifetime > TZFSD_LEASE) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -141,7 +147,7 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (!valid_name(rq->name)) {
+	if (!valid_dataset(rq->dataset)) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -150,9 +156,20 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		return (-1);
 	}
 
-	if (rq->lifetime == TZFSD_EPHEMERAL) {
-		parent_fd = st->ephemeral_fd;
-		parent_name = cfg->ephemeral;
+	if (rq->lifetime == TZFSD_BOOT) {
+		parent_fd = st->boot_fd;
+		(void)snprintf(parent_buf, sizeof(parent_buf), "%s/%s",
+		    cfg->ephemeral, st->boot_name);
+		parent_name = parent_buf;
+	} else if (rq->lifetime == TZFSD_LEASE) {
+		if (st->lease_fd == -1) {
+			errno = ENXIO;
+			return (-1);
+		}
+		parent_fd = st->lease_fd;
+		(void)snprintf(parent_buf, sizeof(parent_buf), "%s/%s",
+		    cfg->ephemeral, st->lease_name);
+		parent_name = parent_buf;
 	} else {
 		parent_fd = st->persistent_fd;
 		parent_name = cfg->persistent;
@@ -160,7 +177,7 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 
 	if (rq->flavor[0] == '\0') {
 		/* Bare dataset claim: open-or-create the leaf. */
-		leaf_fd = tzfsd_ensure_path(parent_fd, rq->name, ZH_ALL_RIGHTS);
+		leaf_fd = tzfsd_ensure_path(parent_fd, rq->dataset, ZH_ALL_RIGHTS);
 		if (leaf_fd == -1)
 			return (-1);
 	} else {
@@ -177,7 +194,7 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		if (origin_fd == -1)
 			return (-1);
 		leaf_fd = tzfs_clone(parent_fd, origin_fd,
-		    TZFSD_TEMPLATE_SNAP, rq->name);
+		    TZFSD_TEMPLATE_SNAP, rq->dataset);
 		(void)close(origin_fd);
 		if (leaf_fd == -1)
 			return (-1);
@@ -189,7 +206,7 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 	 * capable and deriving it would accidentally preserve that authority.
 	 */
 	(void)close(leaf_fd);
-	granted = tzfs_openat(parent_fd, rq->name, rq->rights, rq->flags);
+	granted = tzfs_openat(parent_fd, rq->dataset, rq->rights, rq->flags);
 	if (granted == -1)
 		return (-1);
 	/* Add a monotonic Capsicum ioctl ceiling before SCM_RIGHTS transfer. */
@@ -202,7 +219,7 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		return (-1);
 	}
 
-	(void)snprintf(dataset, dsz, "%s/%s", parent_name, rq->name);
+	(void)snprintf(dataset, dsz, "%s/%s", parent_name, rq->dataset);
 	return (granted);
 }
 
@@ -218,8 +235,8 @@ handle_request(struct tzfsd_state *st, int c, const struct tzfsd_request *rq)
 		rp.status = errno;
 		rp.dataset[0] = '\0';
 		send_reply(c, &rp, sizeof(rp), -1);
-		syslog(LOG_INFO, "REQUEST name=%s flavor=%s life=%u -> %s",
-		    rq->name, rq->flavor[0] ? rq->flavor : "-", rq->lifetime,
+		syslog(LOG_INFO, "REQUEST dataset=%s flavor=%s life=%u -> %s",
+		    rq->dataset, rq->flavor[0] ? rq->flavor : "-", rq->lifetime,
 		    strerror(rp.status));
 		return;
 	}
@@ -235,17 +252,21 @@ handle_release(struct tzfsd_state *st, int c, const struct tzfsd_request *rq)
 {
 	int rc;
 
-	if (!valid_name(rq->name)) {
+	if (!valid_dataset(rq->dataset)) {
 		reply_status(c, EINVAL);
 		return;
 	}
-	rc = tzfs_destroy(st->ephemeral_fd, rq->name);
+	if (st->lease_fd == -1) {
+		reply_status(c, ENXIO);
+		return;
+	}
+	rc = tzfsd_destroy_tree(st->lease_fd, rq->dataset);
 	if (rc == -1 && errno != ENOENT) {
 		reply_status(c, errno);
 		return;
 	}
 	reply_status(c, 0);
-	syslog(LOG_INFO, "RELEASE %s -> ok", rq->name);
+	syslog(LOG_INFO, "RELEASE %s -> ok", rq->dataset);
 }
 
 static void
@@ -299,6 +320,12 @@ handle_conn(struct tzfsd_state *st, int c)
 			break;
 		case TZFSD_OP_PING:
 			reply_status(c, 0);
+			break;
+		case TZFSD_OP_BEGIN_SESSION:
+			if (tzfsd_session_begin(st, rq.session) == -1)
+				reply_status(c, errno);
+			else
+				reply_status(c, 0);
 			break;
 		default:
 			reply_status(c, EOPNOTSUPP);

@@ -7,9 +7,18 @@ TESTSDIR=	${TESTSBASE}/lib/libcapbundle
 # Make it available when install is run from the object directory.
 .PATH:	${.CURDIR}
 
-ATF_TESTS_SH=	libcapbundle_test
-ATF_TESTS_SH_SED_libcapbundle_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
-ATF_TESTS_SH_SED_libcapbundle_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
+ATF_TESTS_SH=	capbundle_format_test
+ATF_TESTS_C+=	api_test
+ATF_TESTS_C+=	storage_key_test
+CFLAGS.api_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.api_test+=	-I${SRCTOP}/lib/liboraclert
+LIBADD.api_test+=	capbundle
+LDFLAGS.api_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
+CFLAGS.storage_key_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.storage_key_test+=	-I${SRCTOP}/lib/liboraclert
+LIBADD.storage_key_test+=	capbundle
+LDFLAGS.storage_key_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
+ATF_TESTS_SH_SED_capbundle_format_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 
 SCRIPTS+=	servicectl
 SCRIPTSDIR_servicectl=	${TESTSDIR}

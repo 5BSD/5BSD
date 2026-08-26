@@ -420,8 +420,12 @@ parse_storage_lifetime_string(const char *s, uint8_t *lifetimep)
 
 	if (s == NULL || strcmp(s, "persistent") == 0)
 		*lifetimep = ORT_STORAGE_PERSISTENT;
-	else if (strcmp(s, "ephemeral") == 0)
-		*lifetimep = ORT_STORAGE_EPHEMERAL;
+	else if (strcmp(s, "cache") == 0)
+		*lifetimep = ORT_STORAGE_CACHE;
+	else if (strcmp(s, "boot") == 0)
+		*lifetimep = ORT_STORAGE_BOOT;
+	else if (strcmp(s, "lease") == 0)
+		*lifetimep = ORT_STORAGE_LEASE;
 	else
 		return (-1);
 	return (0);

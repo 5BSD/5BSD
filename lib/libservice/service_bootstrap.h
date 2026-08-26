@@ -14,17 +14,19 @@
 #include <stdint.h>
 
 #define	SERVICE_BOOTSTRAP_MAGIC		0x53425643U	/* "CVBS" */
-#define	SERVICE_BOOTSTRAP_VERSION	3
+#define	SERVICE_BOOTSTRAP_VERSION	4
 #define	SERVICE_BOOTSTRAP_FD		5
 #define	SERVICE_BOOTSTRAP_ENV		"SERVICE_BOOTSTRAP_FD"
 #define	SERVICE_BOOTSTRAP_ENVFD_NAME	"org.5bsd.serviced.bootstrap"
+#define	SERVICE_UNIT_DIR_ENV		"CAPABILITY_UNIT_DIR"
 #define	SERVICE_NETWORKCMP_ENV		"NETWORKCMP"
 #define	SERVICE_FILESYSTEMCMP_ENV	"FILESYSTEMCMP"
 #define	SERVICE_CRYPTOCMP_ENV		"CRYPTOCMP"
 
 #define	SERVICE_BOOTSTRAP_TOKEN_MAX	128
-#define	SERVICE_BOOTSTRAP_CAPABILITY_MAX	4
-#define	SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX	16
+#define	SERVICE_BOOTSTRAP_CAPABILITY_MAX	32
+#define	SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX	64
+#define	SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX	16
 #define	SERVICE_BOOTSTRAP_LABEL_MAX	64
 
 #define	SERVICE_BOOTSTRAP_F_CAPPROTECT	0x00000001U
@@ -34,6 +36,7 @@ struct service_bootstrap_named_fd {
 	int32_t		fd;
 	uint32_t	reserved;
 	char		name[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
+	char		type[SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX];
 };
 
 struct service_bootstrap {
@@ -53,11 +56,11 @@ struct service_bootstrap {
 	    capabilities[SERVICE_BOOTSTRAP_CAPABILITY_MAX];
 };
 
-_Static_assert(sizeof(struct service_bootstrap_named_fd) == 24,
+_Static_assert(sizeof(struct service_bootstrap_named_fd) == 88,
     "service bootstrap named-fd ABI drift");
 _Static_assert(__offsetof(struct service_bootstrap, label) == 64,
     "service bootstrap header ABI drift");
-_Static_assert(sizeof(struct service_bootstrap) == 736,
+_Static_assert(sizeof(struct service_bootstrap) == 3456,
     "service bootstrap ABI drift");
 
 #endif /* !_SERVICE_BOOTSTRAP_H_ */

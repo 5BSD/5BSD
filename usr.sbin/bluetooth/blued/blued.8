@@ -121,6 +121,12 @@ and write a PID file.
 Path to the configuration file.
 Default is
 .Pa /etc/blued.conf .
+When managed by
+.Xr serviced 8 ,
+the default is
+.Pa Config/blued.conf
+below the selected
+.Ev CAPABILITY_UNIT_DIR .
 See
 .Sx CONFIGURATION FILE
 below.
@@ -593,6 +599,9 @@ Shut down the daemon gracefully.
 .It Pa /Capabilities/System/Blued.cap
 Trusted system-service bundle used by
 .Xr serviced 8 .
+.It Pa /Capabilities/System/Blued.cap/Units/blued.unit/Config/blued.conf
+Base-system instance of the configuration installed with the managed unit;
+versioned site bundles use their own selected unit directory.
 .It Pa /usr/sbin/blued
 Compatibility symlink to the executable in the system-service bundle.
 .It Pa /etc/blued.conf
@@ -603,13 +612,14 @@ PID file when running as a daemon.
 .Ux Ns -domain
 control socket.
 .It Pa /var/db/blued/bonds
-Default bond storage database.
+Standalone-mode bond storage database.
+The managed unit instead receives its persistent state directory through the
+.Dq storage:state
+descriptor.
 .It Pa /dev/vhid
 Virtual HID control device.
 .It Pa /dev/vhidN
 Virtual HID instance devices.
-.It Pa /usr/share/examples/blued/blued.conf.sample
-Sample configuration file.
 .El
 .Sh SEE ALSO
 .Xr kqueue 2 ,

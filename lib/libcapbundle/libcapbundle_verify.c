@@ -27,6 +27,8 @@ verify_tree_shape(const char *path, char *errbuf, size_t errlen)
 	FTS *fts;
 	FTSENT *ent;
 	char *paths[2];
+	uint64_t total;
+	unsigned entries;
 
 	paths[0] = __DECONST(char *, path);
 	paths[1] = NULL;
@@ -36,10 +38,23 @@ verify_tree_shape(const char *path, char *errbuf, size_t errlen)
 			snprintf(errbuf, errlen, "%s: %s", path, strerror(errno));
 		return (-1);
 	}
-	errno = 0;
-	while ((ent = fts_read(fts)) != NULL) {
+	entries = 0;
+	total = 0;
+	for (;;) {
+		errno = 0;
+		ent = fts_read(fts);
+		if (ent == NULL)
+			break;
 		if (ent->fts_info == FTS_DP)
 			continue;
+		if (++entries > CAPBUNDLE_MAX_TREE_ENTRIES) {
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen,
+				    "%s: bundle exceeds %u tree entries", path,
+				    CAPBUNDLE_MAX_TREE_ENTRIES);
+			(void)fts_close(fts);
+			return (-1);
+		}
 		if (ent->fts_info != FTS_D && ent->fts_info != FTS_F) {
 			if (errbuf != NULL)
 				snprintf(errbuf, errlen,
@@ -48,6 +63,20 @@ verify_tree_shape(const char *path, char *errbuf, size_t errlen)
 			(void)fts_close(fts);
 			return (-1);
 		}
+		if (ent->fts_info == FTS_F &&
+		    (ent->fts_statp->st_size < 0 ||
+		    (uint64_t)ent->fts_statp->st_size > CAPBUNDLE_MAX_FILE_SIZE ||
+		    (uint64_t)ent->fts_statp->st_size >
+		    CAPBUNDLE_MAX_TREE_SIZE - total)) {
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen,
+				    "%s: bundle file or total size exceeds limit",
+				    ent->fts_path);
+			(void)fts_close(fts);
+			return (-1);
+		}
+		if (ent->fts_info == FTS_F)
+			total += (uint64_t)ent->fts_statp->st_size;
 	}
 	if (errno != 0) {
 		if (errbuf != NULL)
@@ -66,6 +95,12 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 	unsigned i, j, k;
 	struct stat sb;
 
+	if (b == NULL) {
+		errno = EINVAL;
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "bundle is required");
+		return (-1);
+	}
 	if (verify_tree_shape(b->path, errbuf, errlen) != 0)
 		return (-1);
 
@@ -95,10 +130,14 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 			return (-1);
 		}
 
-		/*
-		 * A service with no exported names is an eager boot task.
-		 * Exported names turn the service into an on-demand provider.
-		 */
+		/* Activation is explicit; demand units require an IPC endpoint. */
+		if (!s->activation_boot && s->nprovides == 0) {
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen,
+				    "%s: unit '%s' has no activation trigger",
+				    b->name, s->label);
+			return (-1);
+		}
 		if (strlen(s->label) >= SERVICED_LABEL_MAX) {
 			if (errbuf)
 				snprintf(errbuf, errlen,
@@ -205,10 +244,35 @@ capbundle_check_startup_cycles(struct capbundle **bundles, unsigned nbundles,
 	unsigned i, j, k, bi, si;
 	unsigned *queue, qhead, qtail, processed;
 
-	/* Count total services. */
+	if (nbundles > 0 && bundles == NULL) {
+		errno = EINVAL;
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "bundle array is required");
+		return (-1);
+	}
+	for (bi = 0; bi < nbundles; bi++) {
+		if (bundles[bi] == NULL) {
+			errno = EINVAL;
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen, "bundle %u is NULL", bi);
+			return (-1);
+		}
+	}
+
+	/* Count total services without allowing the public API to wrap its
+	 * allocation or exceed serviced's protocol-wide registry bound. */
 	cap = 0;
-	for (bi = 0; bi < nbundles; bi++)
+	for (bi = 0; bi < nbundles; bi++) {
+		if (bundles[bi]->nservices > SERVICED_MAX_SERVICES - cap) {
+			errno = E2BIG;
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen,
+				    "more than %u services in dependency graph",
+				    SERVICED_MAX_SERVICES);
+			return (-1);
+		}
 		cap += bundles[bi]->nservices;
+	}
 
 	if (cap == 0)
 		return (0);
@@ -278,10 +342,27 @@ capbundle_check_startup_cycles(struct capbundle **bundles, unsigned nbundles,
 				}
 found:
 				if (provider_idx != (unsigned)-1) {
+					bool duplicate;
+
 					/* Edge: provider -> this node */
-					nodes[provider_idx].deps[
-					    nodes[provider_idx].ndeps++] = nnodes;
-					nodes[nnodes].in_degree++;
+					duplicate = false;
+					for (k = 0; k <
+					    nodes[provider_idx].ndeps; k++) {
+						if (nodes[provider_idx].deps[k] ==
+						    nnodes) {
+							duplicate = true;
+							break;
+						}
+					}
+					if (!duplicate) {
+						if (nodes[provider_idx].ndeps >= cap) {
+							errno = EOVERFLOW;
+							goto fail;
+						}
+						nodes[provider_idx].deps[
+						    nodes[provider_idx].ndeps++] = nnodes;
+						nodes[nnodes].in_degree++;
+					}
 				}
 			}
 			nnodes++;
@@ -331,4 +412,13 @@ found:
 		free(nodes[i].deps);
 	free(nodes);
 	return (0);
+
+fail:
+	if (errbuf != NULL)
+		snprintf(errbuf, errlen, "dependency graph edge overflow");
+	free(queue);
+	for (i = 0; i < cap; i++)
+		free(nodes[i].deps);
+	free(nodes);
+	return (-1);
 }

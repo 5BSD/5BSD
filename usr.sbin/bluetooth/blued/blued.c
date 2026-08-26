@@ -77,11 +77,19 @@ int blued_reconnect_max_delay = 60;
 static int
 blued_bond_open(const char *path)
 {
+	const char *base;
 	struct stat sb;
 	int fd;
 
-	fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC | O_CLOFORK | O_NOFOLLOW,
-	    0600);
+	base = strrchr(path, '/');
+	base = base != NULL ? base + 1 : path;
+	if (strcmp(path, BLUED_BONDDB_DEFAULT) == 0 &&
+	    blued_g.persist_dirfd >= 0)
+		fd = openat(blued_g.persist_dirfd, base, O_RDWR | O_CREAT |
+		    O_CLOEXEC | O_CLOFORK | O_NOFOLLOW, 0600);
+	else
+		fd = open(path, O_RDWR | O_CREAT | O_CLOEXEC | O_CLOFORK |
+		    O_NOFOLLOW, 0600);
 	if (fd < 0)
 		return (-1);
 	if (fstat(fd, &sb) != 0 || !S_ISREG(sb.st_mode) ||
@@ -3460,7 +3468,9 @@ blued_persist_restore(struct blued_config *cfg)
 	static struct blued_persist_adv_set advs[BLUED_PERSIST_MAX_ADV_SETS];
 	uint32_t ndev = 0, ngatt = 0, nadv = 0;
 
-	blued_g.persist_dirfd = blued_persist_open_dir(BLUED_PERSIST_DIR_DEFAULT);
+	if (blued_g.persist_dirfd < 0)
+		blued_g.persist_dirfd =
+		    blued_persist_open_dir(BLUED_PERSIST_DIR_DEFAULT);
 	if (blued_g.persist_dirfd < 0) {
 		LOG_HOGP(1, "persist: state dir %s unavailable, using defaults",
 		    BLUED_PERSIST_DIR_DEFAULT);
@@ -3742,17 +3752,23 @@ main(int argc, char *argv[])
 	struct blued_adapter *adp;
 	struct hogp_device dev;
 	const char *config_path;
+	char managed_config_path[PATH_MAX];
 	int ch, i, nfound, exit_status = 0;
 
 	/* Alias for minimal diff with existing code */
 #define cfg (*cfgp)
 
-	/* 0. serviced integration: if launched by serviced, init service lib */
-	if (getenv("ORACLED_CHANNEL_FD") != NULL) {
+	blued_g.persist_dirfd = -1;
+
+	/* 0. serviced integration: acquire declared authority by role and type. */
+	if (getenv("SERVICE_BOOTSTRAP_FD") != NULL) {
 		if (service_acquire(&blued_g.svc_ctx) == -1)
 			err(1, "initialize serviced channel");
 		if (service_authorize_capabilities(blued_g.svc_ctx) == -1)
 			err(1, "activate serviced capabilities");
+		if (service_capability_open(blued_g.svc_ctx, "storage:state",
+		    "directory", &blued_g.persist_dirfd) == -1)
+			err(1, "acquire persistent storage");
 		blued_serviced = 1;
 	}
 
@@ -3768,6 +3784,13 @@ main(int argc, char *argv[])
 			config_path = optarg;
 		else if (ch == 'h')
 			usage();
+	}
+	if (config_path == NULL && getenv(SERVICE_UNIT_DIR_ENV) != NULL) {
+		if (snprintf(managed_config_path, sizeof(managed_config_path),
+		    "%s/Config/blued.conf", getenv(SERVICE_UNIT_DIR_ENV)) >=
+		    (int)sizeof(managed_config_path))
+			errx(1, "managed configuration path is too long");
+		config_path = managed_config_path;
 	}
 
 	/* 3. Load config file (optional, ENOENT is OK) */
@@ -3832,7 +3855,6 @@ main(int argc, char *argv[])
 	blued_g.bond_lockfd = -1;
 	blued_g.vhid_ctl_fd = -1;
 	blued_g.config_fd = -1;
-	blued_g.persist_dirfd = -1;
 	/* capprotect_fd reserved for future oracled integration */
 
 	/* Record main thread for conn_by_addr safety assertion */

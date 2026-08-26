@@ -29,13 +29,12 @@ find_component_fixture()
 
 make_boot_consumer()
 {
-	local label="$1" arguments="$2" components="$3" bundle
+	local label="$1" arguments="$2" descriptors="$3" bundle
 
 	bundle=$(make_svc_bin system "${label}" \
 	    "arguments = ${arguments};
 restart = \"never\";
-${components}" "${component_fixture}")
-	sed -i '' '/^provides = /d' "${bundle}/etc/${label}.ucl"
+${descriptors}" "${component_fixture}")
 }
 
 install_local_factory()
@@ -43,24 +42,29 @@ install_local_factory()
 	local kind="$1" binary="$2" endpoint="$3" bundle
 
 	test -x "${binary}" || atf_skip "${kind} provider is unavailable"
+	# Descriptor factories must exist before any consumer launches:
+	# component delegation resolves them with a plain lookup and no
+	# on-demand fallback, exactly like the installed base bundles.
 	bundle=$(make_svc_bin system "${kind}-factory" \
-	    "provides = [\"${endpoint}\"];" "${binary}")
+	    "activation { boot = true; ipc = [\"${endpoint}\"]; }" "${binary}")
 	sed -i '' \
 	    "s/^bundle_id = .*/bundle_id = \"${endpoint}\";/" \
-	    "${bundle}/etc/${kind}-factory.ucl"
+	    "${bundle}/Bundle.ucl"
 }
 
 install_global_service()
 {
-	local label="$1" binary="$2" endpoint="$3" identity="${4:-$3}" bundle
+	local label="$1" binary="$2" endpoint="$3" identity="${4:-$3}"
+	local extra="${5:-}" bundle
 
 	test -x "${binary}" || atf_skip "${label} provider is unavailable"
 	bundle=$(make_svc_bin system "${label}" \
-	    "provides = [\"${endpoint}\"];
-restart = \"on-failure\";" "${binary}")
+	    "activation { ipc = [\"${endpoint}\"]; }
+restart = \"on-failure\";
+${extra}" "${binary}")
 	sed -i '' \
 	    "s/^bundle_id = .*/bundle_id = \"${identity}\";/" \
-	    "${bundle}/etc/${label}.ucl"
+	    "${bundle}/Bundle.ucl"
 }
 
 install_audit_service()
@@ -70,12 +74,12 @@ install_audit_service()
 	binary="@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
 	test -x "${binary}" || atf_skip "AuditCmp provider is unavailable"
 	bundle=$(make_svc_bin system audit-service \
-	    'provides = ["org.5bsd.audit"];
+	    'activation { ipc = ["org.5bsd.audit"]; }
 restart = "on-failure";
 user = "root";' "${binary}")
 	sed -i '' \
 	    's/^bundle_id = .*/bundle_id = "org.5bsd.AuditCmp";/' \
-	    "${bundle}/etc/audit-service.ucl"
+	    "${bundle}/Bundle.ucl"
 }
 
 local_component_test_head()
@@ -96,8 +100,6 @@ filesystem_local_end_to_end_body()
 {
 	require_mac_capability
 	find_component_fixture
-	install -d -o capability -g capability -m 0700 \
-	    /var/db/serviced /var/db/serviced/storage
 	start_stack
 	install_audit_service
 	install_local_factory filesystem \
@@ -105,17 +107,19 @@ filesystem_local_end_to_end_body()
 	    "org.5bsd.FileSystemCmp"
 	make_boot_consumer filesystem-consumer \
 	    "[\"filesystem-consumer\", \"${WORK}/filesystem-result.out\"]" \
-	    'components = ["filesystem"];'
+	    'storage = [{ name = "local"; scope = "unit"; rights = "mount"; }];
+protect = ["ptrace", "signal", "visible", "wait"];
+descriptors { filesystem { storage = "local"; } }'
 	reload_stack
 	wait_for_file filesystem-result.out 15 ||
 	    atf_fail "filesystem consumer did not complete"
 	for result in scratch persistent bundle bundle_readonly durable_sync \
-	    logical_cwd multi_open concurrent close_reopen; do
+	    logical_cwd multi_open concurrent close_reopen raw_storage_hidden; do
 		atf_check -s exit:0 -o match:"${result}=ok" \
 		    grep "${result}=ok" filesystem-result.out
 	done
-	atf_check -s exit:0 -o ignore test -f \
-	    /var/db/serviced/storage/filesystem-consumer/filesystem/state
+	atf_check -s exit:1 -o empty -e empty test -e \
+	    /var/db/serviced/storage/filesystem-consumer
 	atf_check -s exit:0 -o ignore \
 	    grep 'component=filesystem.*phase=delegate' "${logfile}"
 	stop_stack
@@ -123,7 +127,6 @@ filesystem_local_end_to_end_body()
 filesystem_local_end_to_end_cleanup()
 {
 	cleanup_common
-	rm -rf /var/db/serviced/storage/filesystem-consumer
 	rm -f filesystem-result.out
 }
 
@@ -145,7 +148,7 @@ network_local_end_to_end_body()
 	    "org.5bsd.NetworkCmp"
 	make_boot_consumer network-consumer \
 	    "[\"network-consumer\", \"${WORK}/network-result.out\"]" \
-	    'components = ["network"];'
+	    'descriptors { network {} }'
 	reload_stack
 	wait_for_file network-result.out 15 ||
 	    atf_fail "network consumer did not complete"
@@ -179,7 +182,9 @@ log_global_on_demand_body()
 	install_audit_service
 	install_global_service log-service \
 	    "@OBJTOP@/usr.sbin/logd/logd" "org.5bsd.log" \
-	    "org.5bsd.LogCmp"
+	    "org.5bsd.LogCmp" \
+	    'storage = [{ name = "state"; scope = "unit"; flavor = "native";
+            lifetime = "persistent"; rights = "mount"; }];'
 	make_boot_consumer log-consumer \
 	    "[\"log-consumer\", \"${WORK}/log-result.out\"]" ""
 	reload_stack

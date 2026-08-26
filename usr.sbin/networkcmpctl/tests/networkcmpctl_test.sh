@@ -4,7 +4,7 @@ atf_test_case config
 config_body()
 {
 	tool="$(atf_get_srcdir)/networkcmpctl_test_bin"
-	atf_check -s exit:0 -o inline:'components = ["network"];\n' \
+	atf_check -s exit:0 -o inline:'descriptors { network {} }\n' \
 	    -e empty "$tool" config
 }
 

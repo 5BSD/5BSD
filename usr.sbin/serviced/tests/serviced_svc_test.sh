@@ -51,9 +51,9 @@ restart_never_no_restart_body()
 	fi
 	sleep 1
 	atf_check -s exit:0 -o ignore \
-	    grep 'service exit0: exited status 0' "$logfile"
+	    grep 'service [^ ]*exit0[^ ]*: exited status 0' "$logfile"
 	atf_check -s not-exit:0 \
-	    grep 'service exit0: restarting\|service exit0: scheduling restart' "$logfile"
+	    grep 'service [^ ]*exit0[^ ]*: restarting\|service [^ ]*exit0[^ ]*: scheduling restart' "$logfile"
 	assert_stack_alive
 }
 restart_never_no_restart_cleanup()
@@ -87,9 +87,9 @@ restart_on_failure_ignores_clean_body()
 	fi
 	sleep 1
 	atf_check -s exit:0 -o ignore \
-	    grep 'service clean-exit: exited status 0' "$logfile"
+	    grep 'service [^ ]*clean-exit[^ ]*: exited status 0' "$logfile"
 	atf_check -s not-exit:0 \
-	    grep 'service clean-exit: restarting\|service clean-exit: scheduling restart' "$logfile"
+	    grep 'service [^ ]*clean-exit[^ ]*: restarting\|service [^ ]*clean-exit[^ ]*: scheduling restart' "$logfile"
 	assert_stack_alive
 }
 restart_on_failure_ignores_clean_cleanup()
@@ -126,7 +126,7 @@ restart_on_failure_restarts_on_error_body()
 		atf_fail "service did not restart"
 	fi
 	atf_check -s exit:0 -o ignore \
-	    grep 'service fail-once: exited status 1' "$logfile"
+	    grep 'service [^ ]*fail-once[^ ]*: exited status 1' "$logfile"
 	assert_stack_alive
 }
 restart_on_failure_restarts_on_error_cleanup()
@@ -194,12 +194,12 @@ circuit_breaker_disables_body()
 	    'exit 1'
 
 	start_stack
-	if ! sh -c "i=0; while ! grep -q 'service crash: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service crash: started pid' '$logfile'"; then
+	if ! sh -c "i=0; while ! grep -q 'service [^ ]*crash[^ ]*: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service [^ ]*crash[^ ]*: started pid' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "service did not start"
 	fi
 	atf_check -s exit:0 -o ignore sh -c \
-	    "i=0; while ! grep -q 'service crash: failed .* disabling' '$logfile' && [ \$i -lt 1800 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service crash: failed .* disabling' '$logfile'"
+	    "i=0; while ! grep -q 'service [^ ]*crash[^ ]*: failed .* disabling' '$logfile' && [ \$i -lt 1800 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service [^ ]*crash[^ ]*: failed .* disabling' '$logfile'"
 	assert_stack_alive
 }
 circuit_breaker_disables_cleanup()
@@ -312,7 +312,7 @@ managed_quiesce_roundtrip_body()
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin system org.test.quiesce \
-	    "provides = [\"org.test.quiesce\"];
+	    "activation { boot = true; ipc = [\"org.test.quiesce\"]; }
 stop_timeout = 5;
 arguments = [\"quiesce\", \"org.test.quiesce\", \"$(pwd)/quiesce.ready\", \"$(pwd)/quiesce.result\"];" \
 	    "$capd_service_fixture"
@@ -320,7 +320,7 @@ arguments = [\"quiesce\", \"org.test.quiesce\", \"$(pwd)/quiesce.ready\", \"$(pw
 	start_stack
 	wait_for_file quiesce.ready || atf_fail "quiesce provider did not become ready"
 	atf_check -s exit:0 -o match:"stopping" \
-	    servicectl -s "${CTL_SOCK}" stop org.test.quiesce
+	    servicectl -s "${CTL_SOCK}" stop org.test.quiesce/quiesce
 	wait_for_file quiesce.result || {
 		cat "$logfile" 2>/dev/null
 		atf_fail "provider did not complete managed quiesce"
@@ -328,7 +328,7 @@ arguments = [\"quiesce\", \"org.test.quiesce\", \"$(pwd)/quiesce.ready\", \"$(pw
 	atf_check -s exit:0 -o inline:"admission=closed
 result=complete
 " cat quiesce.result
-	atf_check -s exit:0 -o ignore grep "service org.test.quiesce: stopping" "$logfile"
+	atf_check -s exit:0 -o ignore grep "service org.test.quiesce/quiesce: stopping" "$logfile"
 	assert_stack_alive
 }
 managed_quiesce_roundtrip_cleanup()
@@ -567,7 +567,7 @@ restart_backoff_body()
 	    'exit 1'
 
 	start_stack
-	if ! sh -c "i=0; while ! grep -q 'service fastcrash: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service fastcrash: started pid' '$logfile'"; then
+	if ! sh -c "i=0; while ! grep -q 'service [^ ]*fastcrash[^ ]*: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service [^ ]*fastcrash[^ ]*: started pid' '$logfile'"; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "service did not start"
 	fi
@@ -598,7 +598,7 @@ svc_unregister_explicit_body()
 	find_serviced
 	prepare_paths
 	make_svc_bin system org.test.unreg.svc \
-	    "provides = [\"org.test.unreg.svc\"];
+	    "activation { boot = true; ipc = [\"org.test.unreg.svc\"]; }
 arguments = [\"unregister\", \"org.test.unreg.svc\", \"$(pwd)/unreg-register.out\", \"$(pwd)/unreg-result.out\"];" \
 	    "$capd_service_fixture"
 	write_config
@@ -647,7 +647,7 @@ svc_name_claim_state_machine_body()
 
 	prepare_paths
 	make_svc_bin system org.test.claim.svc \
-	    "provides = [\"org.test.claim.svc\"];
+	    "activation { boot = true; ipc = [\"org.test.claim.svc\"]; }
 arguments = [\"claim-protocol\", \"org.test.claim.svc\", \"$(pwd)/claim-state.out\"];" \
 	    "$capd_service_fixture"
 	write_config
@@ -691,17 +691,20 @@ svc_withdraw_cancels_activation_body()
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin system org.test.cancel.svc \
-	    "provides = [\"org.test.cancel.svc\"];
+	    "activation { boot = true; ipc = [\"org.test.cancel.svc\"]; }
 arguments = [\"cancel-activation\", \"org.test.cancel.svc\",
     \"$(pwd)/cancel-provider.ready\", \"$(pwd)/cancel-provider.trigger\",
     \"$(pwd)/cancel-provider.result\"];" \
 	    "$capd_service_fixture"
-	printf '%s\n' "org.test.cancel.svc" > cancel-client.target
+	# compat-lookup reads "<flattened-runtime-label>.target"; the runtime
+	# label is org.test.cancel-client/cancel-client.
+	printf '%s\n' "org.test.cancel.svc" > \
+	    org.test.cancel-client.cancel-client.target
 	client_bundle=$(make_svc_bin system cancel-client \
 	    'restart = "never"; arguments = ["compat-lookup"];' \
 	    "$capd_service_fixture")
-	sed -i '' '/^provides = /d' \
-	    "${client_bundle}/etc/cancel-client.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${client_bundle}/Units/cancel-client.unit/Unit.ucl"
 	write_config
 
 	start_stack
@@ -720,13 +723,13 @@ arguments = [\"cancel-activation\", \"org.test.cancel.svc\",
 	touch cancel-provider.trigger
 	wait_for_file cancel-provider.result ||
 	    atf_fail "provider did not report activation cancellation"
-	wait_for_file cancel-client.result ||
+	wait_for_file org.test.cancel-client.cancel-client.result ||
 	    atf_fail "queued client did not receive cancellation"
 	atf_check -s exit:0 -o inline:"withdraw=ok
 pending=ECANCELED
 late_result=EPROTO
 " cat cancel-provider.result
-	atf_check -s exit:0 -o match:'^rc=1$' cat cancel-client.result
+	atf_check -s exit:0 -o match:'^rc=1$' cat org.test.cancel-client.cancel-client.result
 	atf_check -s exit:0 -o ignore \
 	    grep "activation of endpoint 'org.test.cancel.svc'.*Operation canceled" \
 	    "$logfile"
@@ -735,7 +738,7 @@ late_result=EPROTO
 svc_withdraw_cancels_activation_cleanup()
 {
 	cleanup_common
-	rm -f cancel-client.target cancel-client.result \
+	rm -f cancel-client.target org.test.cancel-client.cancel-client.result \
 	    cancel-provider.ready cancel-provider.trigger \
 	    cancel-provider.result
 }
@@ -761,8 +764,8 @@ capmode_is_authoritative_readiness_body()
 	make_svc_bin system org.test.capmode.gate \
 	    'arguments = ["readiness-gate", "protocol-ready.out", "capmode-ready.out"];' \
 	    "$capd_service_fixture"
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/org.test.capmode.gate.cap/etc/org.test.capmode.gate.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/org.test.capmode.gate.cap/Units/gate.unit/Unit.ucl"
 	write_config
 	start_stack
 
@@ -855,6 +858,29 @@ sctl_privilege_denied_cleanup()
 	rm -f sctl-deny.out
 }
 
+atf_test_case sctl_rejects_malformed_requests cleanup
+sctl_rejects_malformed_requests_head()
+{
+	atf_set "descr" \
+	    "Control protocol rejects unknown flags and embedded NUL labels"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+sctl_rejects_malformed_requests_body()
+{
+	start_stack
+	for kind in flags nul; do
+		atf_check -s exit:0 -o match:"status=22" \
+		    "$(atf_get_srcdir)/capd_protocol_fixture" \
+		    control-invalid "${CTL_SOCK}" "$kind"
+	done
+	assert_stack_alive
+}
+sctl_rejects_malformed_requests_cleanup()
+{
+	cleanup_common
+}
+
 atf_init_test_cases()
 {
 	# Restart policies
@@ -887,4 +913,5 @@ atf_init_test_cases()
 
 	# Control-socket authorization
 	atf_add_test_case sctl_privilege_denied
+	atf_add_test_case sctl_rejects_malformed_requests
 }

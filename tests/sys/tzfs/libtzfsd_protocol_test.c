@@ -76,9 +76,9 @@ client(enum scenario sc, int fd)
 		expected = EPROTO;
 	} else {
 		memset(&req, 0, sizeof(req));
-		strlcpy(req.name, "claim", sizeof(req.name));
+		strlcpy(req.dataset, "claim", sizeof(req.dataset));
 		req.rights = ZH_PROPS_READ;
-		req.lifetime = TZFSD_EPHEMERAL;
+		req.lifetime = TZFSD_LEASE;
 		rc = tzfsd_request(fd, &req, &grant);
 		if (sc == SC_REQUEST_VALID) {
 			if (rc != 0 || grant.handle_fd < 0 ||

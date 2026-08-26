@@ -29,6 +29,16 @@ manifest_copy(const char *src, char *dst, size_t dstsz)
 
 /* --- Public API --- */
 
+bool
+capbundle_descriptor_factory_name(const char *name)
+{
+
+	return (name != NULL &&
+	    (strcmp(name, "org.5bsd.FileSystemCmp") == 0 ||
+	    strcmp(name, "org.5bsd.NetworkCmp") == 0 ||
+	    strcmp(name, "org.5bsd.CryptoCmp") == 0));
+}
+
 int
 capbundle_open(const char *path, struct capbundle **bp,
     char *errbuf, size_t errlen)
@@ -37,12 +47,24 @@ capbundle_open(const char *path, struct capbundle **bp,
 	struct stat sb;
 	DIR *d;
 	struct dirent *de;
-	char services_dir[PATH_MAX];
-	char svc_path[PATH_MAX];
+	char units_dir[PATH_MAX];
+	char unit_dir[PATH_MAX];
+	char manifest_path[PATH_MAX];
 	char *slash;
 	size_t len;
 
-	if (stat(path, &sb) == -1 || !S_ISDIR(sb.st_mode)) {
+	if (bp != NULL)
+		*bp = NULL;
+	if (errbuf != NULL && errlen > 0)
+		errbuf[0] = '\0';
+	if (path == NULL || bp == NULL) {
+		errno = EINVAL;
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "path and result are required");
+		return (-1);
+	}
+
+	if (lstat(path, &sb) == -1 || !S_ISDIR(sb.st_mode)) {
 		if (errbuf)
 			snprintf(errbuf, errlen, "%s: not a directory", path);
 		return (-1);
@@ -68,102 +90,102 @@ capbundle_open(const char *path, struct capbundle **bp,
 	if (slash != NULL)
 		memmove(b->name, slash + 1, strlen(slash + 1) + 1);
 
-	/* Check etc/ directory for service manifests. */
-	snprintf(services_dir, sizeof(services_dir),
-	    "%s/etc", b->path);
-	d = opendir(services_dir);
+	if (snprintf(manifest_path, sizeof(manifest_path), "%s/Bundle.ucl",
+	    b->path) >= (int)sizeof(manifest_path) ||
+	    capbundle_parse_bundle_ucl(manifest_path, b, errbuf, errlen) == -1) {
+		capbundle_close(b);
+		return (-1);
+	}
+	/* The root is intentionally small and closed to legacy layouts. */
+	d = opendir(b->path);
 	if (d == NULL) {
-		if (errbuf)
-			snprintf(errbuf, errlen,
-			    "%s: etc/ not found", b->name);
-		free(b);
+		capbundle_close(b);
+		return (-1);
+	}
+	while ((de = readdir(d)) != NULL) {
+		if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0 ||
+		    strcmp(de->d_name, "Bundle.ucl") == 0 ||
+		    strcmp(de->d_name, "Units") == 0 ||
+		    strcmp(de->d_name, "Shared") == 0)
+			continue;
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "%s: root entry is not allowed: %s",
+			    b->name, de->d_name);
+		closedir(d);
+		capbundle_close(b);
+		return (-1);
+	}
+	closedir(d);
+	if (snprintf(units_dir, sizeof(units_dir), "%s/Units", b->path) >=
+	    (int)sizeof(units_dir) || lstat(units_dir, &sb) == -1 ||
+	    !S_ISDIR(sb.st_mode)) {
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "%s: Units/ not found", b->name);
+		capbundle_close(b);
 		return (-1);
 	}
 
-	/* Parse each .ucl in etc/. */
-	{
-		unsigned nfailed = 0;
-		char fail_errbuf[256];
-		char first_failure[256] = "";
+	/* Parse the declared inventory in declaration order. */
+	for (unsigned i = 0; i < b->nunit_names; i++) {
+		if (snprintf(unit_dir, sizeof(unit_dir), "%s/%s.unit", units_dir,
+		    b->unit_names[i]) >= (int)sizeof(unit_dir) ||
+		    lstat(unit_dir, &sb) == -1 || !S_ISDIR(sb.st_mode)) {
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen,
+				    "%s: declared unit '%s' is missing",
+				    b->name, b->unit_names[i]);
+			capbundle_close(b);
+			return (-1);
+		}
+		if (snprintf(manifest_path, sizeof(manifest_path), "%s/Unit.ucl",
+		    unit_dir) >= (int)sizeof(manifest_path) ||
+		    capbundle_parse_unit_ucl(manifest_path, unit_dir, b,
+		    b->unit_names[i], &b->services[i], errbuf, errlen) == -1) {
+			if (errbuf != NULL && errlen > 0 && errbuf[0] == '\0')
+				snprintf(errbuf, errlen,
+				    "%s: Unit.ucl is empty or invalid", b->unit_names[i]);
+			capbundle_close(b);
+			return (-1);
+		}
+		b->nservices++;
+	}
 
-		while ((de = readdir(d)) != NULL) {
-			char parsed_id[CAPBUNDLE_ID_MAX] = "";
-			char parsed_version[CAPBUNDLE_VERSION_MAX] = "";
-			char parsed_author[CAPBUNDLE_AUTHOR_MAX] = "";
-			len = strlen(de->d_name);
-			if (len < 5 ||
-			    strcmp(de->d_name + len - 4, ".ucl") != 0)
-				continue;
-			if (b->nservices >= CAPBUNDLE_MAX_SERVICES) {
-				nfailed++;
-				if (first_failure[0] == '\0')
-					snprintf(first_failure, sizeof(first_failure),
-					    "more than %u service manifests",
-					    CAPBUNDLE_MAX_SERVICES);
+	/* Undeclared units are an error, not silently ignored policy. */
+	d = opendir(units_dir);
+	if (d == NULL) {
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "%s: cannot open Units/: %s",
+			    b->name, strerror(errno));
+		capbundle_close(b);
+		return (-1);
+	}
+	while ((de = readdir(d)) != NULL) {
+		bool found;
+
+		if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0)
+			continue;
+		found = false;
+		for (unsigned i = 0; i < b->nunit_names; i++) {
+			char expected[CAPBUNDLE_NAME_MAX + 6];
+
+			(void)snprintf(expected, sizeof(expected), "%s.unit",
+			    b->unit_names[i]);
+			if (strcmp(de->d_name, expected) == 0) {
+				found = true;
 				break;
 			}
-
-			snprintf(svc_path, sizeof(svc_path), "%s/%s",
-			    services_dir, de->d_name);
-
-			if (capbundle_parse_service_ucl(svc_path, b->path,
-			    &b->services[b->nservices],
-			    parsed_id, sizeof(parsed_id),
-			    parsed_version, sizeof(parsed_version),
-			    parsed_author, sizeof(parsed_author),
-			    fail_errbuf,
-			    sizeof(fail_errbuf)) == 0) {
-				if (b->nservices == 0) {
-					strlcpy(b->bundle_id, parsed_id,
-					    sizeof(b->bundle_id));
-					strlcpy(b->version, parsed_version,
-					    sizeof(b->version));
-					strlcpy(b->author, parsed_author,
-					    sizeof(b->author));
-				} else if (strcmp(b->bundle_id, parsed_id) != 0 ||
-				    strcmp(b->version, parsed_version) != 0 ||
-				    strcmp(b->author, parsed_author) != 0) {
-					syslog(LOG_WARNING,
-					    "capbundle %s: inconsistent metadata in %s",
-					    b->name, de->d_name);
-					nfailed++;
-					if (first_failure[0] == '\0')
-						snprintf(first_failure,
-						    sizeof(first_failure),
-						    "%s: inconsistent bundle metadata",
-						    de->d_name);
-					continue;
-				}
-				b->nservices++;
-			} else {
-				syslog(LOG_WARNING,
-				    "capbundle %s: skipping %s: %s",
-				    b->name, de->d_name, fail_errbuf);
-				nfailed++;
-				if (first_failure[0] == '\0')
-					strlcpy(first_failure, fail_errbuf,
-					    sizeof(first_failure));
-			}
 		}
-		closedir(d);
-
-		/* Fail the bundle if any Service.ucl files failed to parse. */
-		if (nfailed > 0) {
-			if (errbuf)
-				snprintf(errbuf, errlen, "%s: %u service(s) failed: %s",
-				    b->name, nfailed, first_failure);
+		if (!found) {
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen,
+				    "%s: undeclared entry in Units/: %s",
+				    b->name, de->d_name);
+			closedir(d);
 			capbundle_close(b);
 			return (-1);
 		}
 	}
-
-	if (b->nservices == 0) {
-		if (errbuf)
-			snprintf(errbuf, errlen,
-			    "%s: no valid services found", b->name);
-		free(b);
-		return (-1);
-	}
+	closedir(d);
 
 	*bp = b;
 	return (0);
@@ -180,49 +202,63 @@ const char *
 capbundle_id(const struct capbundle *b)
 {
 
-	return (b->bundle_id);
+	return (b != NULL ? b->bundle_id : NULL);
 }
 
 const char *
 capbundle_version(const struct capbundle *b)
 {
 
-	return (b->version);
+	return (b != NULL ? b->version : NULL);
 }
 
 const char *
 capbundle_author(const struct capbundle *b)
 {
 
-	return (b->author);
+	return (b != NULL ? b->author : NULL);
+}
+
+const char *
+capbundle_publisher(const struct capbundle *b)
+{
+
+	return (b != NULL ? b->publisher : NULL);
+}
+
+uint64_t
+capbundle_sequence(const struct capbundle *b)
+{
+
+	return (b != NULL ? b->sequence : 0);
 }
 
 const char *
 capbundle_path(const struct capbundle *b)
 {
 
-	return (b->path);
+	return (b != NULL ? b->path : NULL);
 }
 
 const char *
 capbundle_name(const struct capbundle *b)
 {
 
-	return (b->name);
+	return (b != NULL ? b->name : NULL);
 }
 
 unsigned
 capbundle_nservices(const struct capbundle *b)
 {
 
-	return (b->nservices);
+	return (b != NULL ? b->nservices : 0);
 }
 
 struct capbundle_service *
 capbundle_service(const struct capbundle *b, unsigned idx)
 {
 
-	if (idx >= b->nservices)
+	if (b == NULL || idx >= b->nservices)
 		return (NULL);
 	/* Safe: callers receive const pointer via the public API. */
 	return (__DECONST(struct capbundle_service *, &b->services[idx]));
@@ -232,28 +268,35 @@ const char *
 capbundle_svc_program(const struct capbundle_service *s)
 {
 
-	return (s->program);
+	return (s != NULL ? s->program : NULL);
 }
 
 const char *
 capbundle_svc_label(const struct capbundle_service *s)
 {
 
-	return (s->label);
+	return (s != NULL ? s->label : NULL);
+}
+
+bool
+capbundle_svc_activates_at_boot(const struct capbundle_service *s)
+{
+
+	return (s != NULL && s->activation_boot);
 }
 
 unsigned
 capbundle_svc_nprovides(const struct capbundle_service *s)
 {
 
-	return (s->nprovides);
+	return (s != NULL ? s->nprovides : 0);
 }
 
 const char *
 capbundle_svc_provides(const struct capbundle_service *s, unsigned idx)
 {
 
-	if (idx >= s->nprovides)
+	if (s == NULL || idx >= s->nprovides)
 		return (NULL);
 	return (s->provides[idx]);
 }
@@ -261,25 +304,26 @@ capbundle_svc_provides(const struct capbundle_service *s, unsigned idx)
 unsigned
 capbundle_svc_narguments(const struct capbundle_service *s)
 {
-	return (s->narguments);
+	return (s != NULL ? s->narguments : 0);
 }
 
 const char *
 capbundle_svc_argument(const struct capbundle_service *s, unsigned idx)
 {
-	return (idx < s->narguments ? s->arguments[idx] : NULL);
+	return (s != NULL && idx < s->narguments ? s->arguments[idx] : NULL);
 }
 
 unsigned
 capbundle_svc_nenvironment(const struct capbundle_service *s)
 {
-	return (s->nenvironment);
+	return (s != NULL ? s->nenvironment : 0);
 }
 
 const char *
 capbundle_svc_environment(const struct capbundle_service *s, unsigned idx)
 {
-	return (idx < s->nenvironment ? s->environment[idx] : NULL);
+	return (s != NULL && idx < s->nenvironment ? s->environment[idx] :
+	    NULL);
 }
 
 /*
@@ -292,6 +336,26 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 {
 	unsigned i;
 
+	if (s == NULL || m == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (s->narguments > SERVICED_MAX_ARGUMENTS ||
+	    s->nenvironment > SERVICED_MAX_ENVIRONMENT ||
+	    s->nprovides > SERVICED_MAX_PROVIDES ||
+	    s->nstartup_after > SERVICED_MAX_COMPONENTS ||
+	    s->ncomponents > SERVICED_MAX_COMPONENTS ||
+	    s->ncap_paths > SERVICED_MAX_CAP_PATHS ||
+	    s->ncap_files > SERVICED_MAX_CAP_FILES ||
+	    s->ncap_net > SERVICED_MAX_CAP_NET ||
+	    s->ncap_jail > SERVICED_MAX_CAP_JAIL ||
+	    s->ncap_vsock > SERVICED_MAX_CAP_VSOCK ||
+	    s->ncap_storage > SERVICED_MAX_CAP_STORAGE ||
+	    s->ncap_services > SERVICED_MAX_CAP_SERVICES ||
+	    s->nkmod_requires > SERVICED_MAX_KMOD_REQUIRES) {
+		errno = EOVERFLOW;
+		return (-1);
+	}
 	memset(m, 0, sizeof(*m));
 
 	if (manifest_copy(s->label, m->label, sizeof(m->label)) == -1 ||
@@ -329,11 +393,15 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	for (i = 0; i < s->ncomponents; i++) {
 		if (manifest_copy(s->components[i].name,
 		    m->components[i].name,
-		    sizeof(m->components[i].name)) == -1)
+		    sizeof(m->components[i].name)) == -1 ||
+		    manifest_copy(s->components[i].storage,
+		    m->components[i].storage,
+		    sizeof(m->components[i].storage)) == -1)
 			return (-1);
 	}
 
 	m->cap_system = s->cap_system;
+	m->protect_flags = s->protect_flags;
 	m->has_jail = s->has_jail;
 	if (manifest_copy(s->jail_name, m->jail_name,
 	    sizeof(m->jail_name)) == -1 ||
@@ -419,6 +487,10 @@ capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx)
 	char errbuf[256];
 	int ret;
 
+	if (dirpath == NULL || cb == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
 	d = opendir(dirpath);
 	if (d == NULL)
 		return (-1);

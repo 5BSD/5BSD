@@ -47,6 +47,29 @@ accept_request(int listener)
 	return (fd);
 }
 
+static int
+accept_start_request(int listener, const char *label)
+{
+	struct sctl_request request;
+	char payload[SERVICED_CTL_MAX_PAYLOAD + 1];
+	ssize_t amount;
+	int fd;
+
+	fd = accept4(listener, NULL, NULL, SOCK_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	amount = recv(fd, &request, sizeof(request), MSG_WAITALL);
+	ATF_REQUIRE_EQ(amount, (ssize_t)sizeof(request));
+	ATF_REQUIRE_EQ(request.version, SERVICED_CTL_VERSION);
+	ATF_REQUIRE_EQ(request.op, SCTL_OP_START_SVC);
+	ATF_REQUIRE_EQ(request.flags, 0);
+	ATF_REQUIRE(request.datalen < sizeof(payload));
+	amount = recv(fd, payload, request.datalen, MSG_WAITALL);
+	ATF_REQUIRE_EQ(amount, (ssize_t)request.datalen);
+	payload[request.datalen] = '\0';
+	ATF_REQUIRE_STREQ(payload, label);
+	return (fd);
+}
+
 static void
 send_reply_header(int fd, uint32_t status, uint32_t length)
 {
@@ -122,6 +145,37 @@ ATF_TC_BODY(oversized_reply_rejected, tc)
 	unlink(path);
 }
 
+ATF_TC_WITHOUT_HEAD(start_request);
+ATF_TC_BODY(start_request, tc)
+{
+	char path[sizeof(((struct sockaddr_un *)0)->sun_path)];
+	char summary[64];
+	pid_t server;
+	int listener;
+
+	(void)tc;
+	listener = listen_control(path, sizeof(path));
+	server = fork();
+	ATF_REQUIRE(server != -1);
+	if (server == 0) {
+		int fd;
+
+		fd = accept_start_request(listener, "org.test.worker");
+		send_reply_header(fd, 0, 16);
+		ATF_REQUIRE_EQ(send(fd, "start: starting\n", 16,
+		    MSG_NOSIGNAL), 16);
+		close(fd);
+		_exit(0);
+	}
+	sockpath = path;
+	ATF_REQUIRE_EQ(sctl_rpc(SCTL_OP_START_SVC, 0, "org.test.worker",
+	    summary, sizeof(summary)), 0);
+	ATF_REQUIRE_STREQ(summary, "start: starting\n");
+	wait_exit(server, 0);
+	close(listener);
+	unlink(path);
+}
+
 ATF_TC_WITHOUT_HEAD(truncated_reply_rejected);
 ATF_TC_BODY(truncated_reply_rejected, tc)
 {
@@ -156,6 +210,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, valid_reply);
+	ATF_TP_ADD_TC(tp, start_request);
 	ATF_TP_ADD_TC(tp, oversized_reply_rejected);
 	ATF_TP_ADD_TC(tp, truncated_reply_rejected);
 	return (atf_no_error());

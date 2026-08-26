@@ -12,21 +12,23 @@ manifest_body()
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/crypto.ucl"
 	bundle="${PWD}/Crypto.cap"
+	unit="${bundle}/Units/localcrypto.unit"
 
 	test -x "${servicectl}" || atf_skip "source-built servicectl is required"
 	test ! -e "${bundle}" || atf_fail "stale test bundle: ${bundle}"
-	atf_check -s exit:0 mkdir -p "${bundle}/bin" "${bundle}/etc"
-	atf_check -s exit:0 cp "${objdir}/localcrypto" "${bundle}/bin/localcrypto"
-	atf_check -s exit:0 cp "${manifest}" "${bundle}/etc/crypto.ucl"
-	atf_check -s exit:0 chmod 0555 "${bundle}" "${bundle}/bin" "${bundle}/etc" \
-	    "${bundle}/bin/localcrypto"
-	atf_check -s exit:0 chmod 0444 "${bundle}/etc/crypto.ucl"
+	atf_check -s exit:0 mkdir -p "${unit}/bin"
+	atf_check -s exit:0 cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
+	atf_check -s exit:0 cp "${objdir}/localcrypto" "${unit}/bin/localcrypto"
+	atf_check -s exit:0 cp "${manifest}" "${unit}/Unit.ucl"
+	atf_check -s exit:0 chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" \
+	    "${unit}/bin" "${unit}/bin/localcrypto"
+	atf_check -s exit:0 chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${servicectl}" verify "${bundle}"
 
-	chmod 0644 "${bundle}/etc/crypto.ucl"
-	printf '%s\n' 'ambient_authority = true;' >> "${bundle}/etc/crypto.ucl"
+	chmod 0644 "${unit}/Unit.ucl"
+	printf '%s\n' 'ambient_authority = true;' >> "${unit}/Unit.ucl"
 	atf_check -s not-exit:0 -e match:'unknown key' \
 	    "${servicectl}" verify "${bundle}"
 }

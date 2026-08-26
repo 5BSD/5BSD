@@ -21,6 +21,9 @@
 
 #include <stdint.h>
 
+/* Supervisor-owned location of the selected unit's immutable bundle files. */
+#define	SERVICE_UNIT_DIR_ENV	"CAPABILITY_UNIT_DIR"
+
 /*
  * Public process-protection flags used by service_provider_protect() and
  * service_worker_protect().  Keep kernel protocol details behind libservice
@@ -139,14 +142,14 @@ int	service_supervisor_status(struct service_context *);
 const char *service_label(struct service_context *);
 
 /*
- * Open an owned descriptor for a manifest-declared capability service.
- * Current names are "mount", "node", "accounting", and "identity".
- * These descriptors are ready for service-specific ioctls; unlike access
- * tokens, they are not activated.  The caller must close the returned
- * close-on-exec descriptor.
+ * Open an owned, type-checked descriptor declared by the manifest.  Named
+ * capability services use their interface name as the type.  Mount-only
+ * storage uses type "directory"; advanced storage uses "zfshandle".  Unlike
+ * access tokens, these descriptors are not activated.  The caller must close
+ * the returned close-on-exec descriptor.
  */
 int	service_capability_open(struct service_context *, const char *name,
-	    int *fd);
+	    const char *type, int *fd);
 
 int	service_local_component_open(struct service_context *,
 	    const char *interface, const char *version, int *session_fd);

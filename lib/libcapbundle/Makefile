@@ -2,7 +2,7 @@
 
 PACKAGE=lib${LIB}
 LIB=	capbundle
-SHLIB_MAJOR=	1
+SHLIB_MAJOR=	2
 MAN=	libcapbundle.3
 
 SRCS=	libcapbundle.c libcapbundle_parse.c libcapbundle_verify.c
@@ -20,6 +20,6 @@ SUBDIR.${MK_TESTS}+=	tests
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		oraclert ucl
+LIBADD=		oraclert ucl md
 
 .include <bsd.lib.mk>

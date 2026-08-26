@@ -46,6 +46,10 @@ PROGS+=		capd_protocol_fixture
 PROGS+=		component_fixture
 ATF_TESTS_C+=	on_demand_test
 ATF_TESTS_C+=	fd_budget_test
+ATF_TESTS_C+=	launch_limits_test
+ATF_TESTS_C+=	manifest_compare_test
+ATF_TESTS_C+=	bundle_selection_test
+ATF_TESTS_C+=	storage_lifecycle_test
 ATF_TESTS_C+=	rc_ingest_test
 BINDIR=		${TESTSDIR}
 
@@ -83,5 +87,22 @@ CFLAGS.on_demand_test+=		-I${SRCTOP}/sys
 CFLAGS.on_demand_test+=		-ffunction-sections -fdata-sections
 LDFLAGS.on_demand_test+=	-Wl,--gc-sections
 CFLAGS.fd_budget_test+=	-I${SRCTOP}/sys
+CFLAGS.launch_limits_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libservice
+CFLAGS.launch_limits_test+=	-I${SRCTOP}/sys
+SRCS.manifest_compare_test=	manifest_compare_test.c manifest_compare.c
+CFLAGS.manifest_compare_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.manifest_compare_test+=	-I${SRCTOP}/sys
+SRCS.bundle_selection_test=	bundle_selection_test.c bundle_selection.c
+CFLAGS.bundle_selection_test+=	-I${SRCTOP}/usr.sbin/serviced
+SRCS.storage_lifecycle_test=	storage_lifecycle_test.c storage_lifecycle.c
+CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/sys
 
 .include <bsd.test.mk>

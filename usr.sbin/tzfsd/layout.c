@@ -14,10 +14,12 @@
 #include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/linker.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdlib.h>
 #include <spawn.h>
 #include <stdio.h>
 #include <string.h>
@@ -176,6 +178,204 @@ tzfsd_ensure_path(int root_fd, const char *relpath, uint64_t rights)
 	return (cur);
 }
 
+static int
+path_deepest_first(const void *ap, const void *bp)
+{
+	const char *a = *(const char * const *)ap;
+	const char *b = *(const char * const *)bp;
+	size_t alen = strlen(a), blen = strlen(b);
+
+	if (alen < blen)
+		return (1);
+	if (alen > blen)
+		return (-1);
+	return (strcmp(b, a));
+}
+
+/* Destroy one capability-owned subtree, deepest datasets first. */
+int
+tzfsd_destroy_tree(int parent_fd, const char *relname)
+{
+	struct zfd_info_args info;
+	void *buf;
+	char **children, **names;
+	const char *name, *rel;
+	size_t len, prefix_len, count, nnames, i;
+	int target, saved;
+
+	if (relname == NULL || relname[0] == '\0' || strchr(relname, '/') != NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	target = tzfs_openat(parent_fd, relname, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	if (target == -1)
+		return (errno == ENOENT ? 0 : -1);
+	memset(&info, 0, sizeof(info));
+	if (tzfs_info(target, &info) == -1 ||
+	    tzfs_list_children(target, &buf, &len) == -1) {
+		saved = errno;
+		close(target);
+		errno = saved;
+		return (-1);
+	}
+	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+		saved = errno;
+		free(buf);
+		close(target);
+		errno = saved;
+		return (-1);
+	}
+	free(buf);
+	prefix_len = strlen(info.zi_name);
+	count = 0;
+	children = calloc(nnames == 0 ? 1 : nnames, sizeof(*children));
+	if (children == NULL) {
+		tzfsd_nvl_names_free(names, nnames);
+		close(target);
+		return (-1);
+	}
+	for (i = 0; i < nnames; i++) {
+		name = names[i];
+		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
+		    name[prefix_len] != '/') {
+			saved = EPROTO;
+			goto out;
+		}
+		rel = name + prefix_len + 1;
+		children[count] = strdup(rel);
+		if (children[count] == NULL) {
+			saved = errno;
+			goto out;
+		}
+		count++;
+	}
+	qsort(children, count, sizeof(*children), path_deepest_first);
+	for (i = 0; i < count; i++) {
+		if (tzfs_destroy(target, children[i]) == -1 && errno != ENOENT) {
+			saved = errno;
+			goto out;
+		}
+	}
+	close(target);
+	target = -1;
+	if (tzfs_destroy(parent_fd, relname) == -1 && errno != ENOENT) {
+		saved = errno;
+		goto out;
+	}
+	saved = 0;
+out:
+	for (i = 0; i < count; i++)
+		free(children[i]);
+	free(children);
+	tzfsd_nvl_names_free(names, nnames);
+	if (target != -1)
+		close(target);
+	if (saved != 0) {
+		errno = saved;
+		return (-1);
+	}
+	return (0);
+}
+
+static int
+reconcile_boot_generations(struct tzfsd_state *st)
+{
+	struct timeval boottime;
+	struct zfd_info_args info;
+	void *buf;
+	char **names;
+	const char *name, *rel;
+	size_t len, prefix_len, sz, nnames, i;
+
+	sz = sizeof(boottime);
+	if (sysctlbyname("kern.boottime", &boottime, &sz, NULL, 0) == -1)
+		return (-1);
+	(void)snprintf(st->boot_name, sizeof(st->boot_name),
+	    "boot-%016jx-%08lx", (uintmax_t)boottime.tv_sec,
+	    (unsigned long)boottime.tv_usec);
+	memset(&info, 0, sizeof(info));
+	if (tzfs_info(st->ephemeral_fd, &info) == -1 ||
+	    tzfs_list_children(st->ephemeral_fd, &buf, &len) == -1)
+		return (-1);
+	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+		free(buf);
+		return (-1);
+	}
+	free(buf);
+	prefix_len = strlen(info.zi_name);
+	for (i = 0; i < nnames; i++) {
+		name = names[i];
+		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
+		    name[prefix_len] != '/')
+			continue;
+		rel = name + prefix_len + 1;
+		if (strchr(rel, '/') == NULL && strncmp(rel, "boot-", 5) == 0 &&
+		    strcmp(rel, st->boot_name) != 0 &&
+		    tzfsd_destroy_tree(st->ephemeral_fd, rel) == -1) {
+			syslog(LOG_WARNING, "reconcile stale boot storage %s: %m",
+			    rel);
+		}
+	}
+	tzfsd_nvl_names_free(names, nnames);
+	st->boot_fd = tzfsd_ensure_path(st->ephemeral_fd, st->boot_name,
+	    RETAIN_RIGHTS);
+	return (st->boot_fd == -1 ? -1 : 0);
+}
+
+int
+tzfsd_session_begin(struct tzfsd_state *st, const char *session)
+{
+	struct zfd_info_args info;
+	void *buf;
+	char **names;
+	const char *name, *rel, *p;
+	char wanted[TZFSD_NAME_MAX];
+	size_t len, prefix_len, nnames, i;
+
+	if (session == NULL || strlen(session) != TZFSD_SESSION_MAX - 1) {
+		errno = EINVAL;
+		return (-1);
+	}
+	for (p = session; *p != '\0'; p++)
+		if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f'))) {
+			errno = EINVAL;
+			return (-1);
+		}
+	(void)snprintf(wanted, sizeof(wanted), "lease-%s", session);
+	memset(&info, 0, sizeof(info));
+	if (tzfs_info(st->ephemeral_fd, &info) == -1 ||
+	    tzfs_list_children(st->ephemeral_fd, &buf, &len) == -1)
+		return (-1);
+	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+		free(buf);
+		return (-1);
+	}
+	free(buf);
+	prefix_len = strlen(info.zi_name);
+	for (i = 0; i < nnames; i++) {
+		name = names[i];
+		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
+		    name[prefix_len] != '/')
+			continue;
+		rel = name + prefix_len + 1;
+		if (strchr(rel, '/') == NULL && strncmp(rel, "lease-", 6) == 0 &&
+		    strcmp(rel, wanted) != 0 &&
+		    tzfsd_destroy_tree(st->ephemeral_fd, rel) == -1) {
+			tzfsd_nvl_names_free(names, nnames);
+			return (-1);
+		}
+	}
+	tzfsd_nvl_names_free(names, nnames);
+	if (st->lease_fd != -1)
+		close(st->lease_fd);
+	st->lease_fd = tzfsd_ensure_path(st->ephemeral_fd, wanted,
+	    RETAIN_RIGHTS);
+	if (st->lease_fd == -1)
+		return (-1);
+	strlcpy(st->lease_name, wanted, sizeof(st->lease_name));
+	return (0);
+}
+
 int
 tzfsd_layout_provision(struct tzfsd_state *st)
 {
@@ -227,6 +427,10 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 		return (-1);
 	}
 	(void)close(root_fd);
+	if (reconcile_boot_generations(st) == -1) {
+		syslog(LOG_ERR, "provision current boot storage: %m");
+		return (-1);
+	}
 
 	syslog(LOG_INFO, "provisioned %s {persistent,ephemeral,.templates}",
 	    cfg->base);

@@ -1,143 +1,109 @@
-# tzfsd and tzfsctl
+# tzfsd and capability storage
 
-`tzfsd(8)` is the `[TZFS]` storage daemon: the system component that owns
-the storage plane. It holds the root-pool TrustedZFS handles, provisions
-the `/Capabilities` dataset layout, maintains the flavor templates, and
-mints rights-limited dataset handles on request, passing them back over
-`SCM_RIGHTS`. It mints and manages only — it never proxies I/O; everything
-a consumer does after receiving a handle is the `libtrustedzfs` verb
-surface. The daemon lives in `usr.sbin/tzfsd/`; the operator CLI is
-`usr.sbin/tzfsctl/`.
+`tzfsd(8)` owns the storage plane. It retains TrustedZFS parent handles,
+creates or opens application datasets, attenuates each returned handle to the
+declared rights, and passes that handle with `SCM_RIGHTS`. It never proxies
+application I/O.
 
-ZFS is a required subsystem for 5BSD (UFS remains bootable, but the
-capability storage plane assumes a ZFS pool); `tzfsd` refuses to start
-without one.
+`oracled` starts it on demand and forwards storage requests. `serviced`
+converts mount-only storage into a rights-limited directory named
+`storage:<logical-name>`. A filesystem descriptor consumes its backing handle
+privately. Only a unit requesting advanced ZFS operations receives a named
+`zfshandle`. The logical name is not a dataset name.
 
-## Why a dedicated daemon
+## Dataset layout
 
-Storage has its own configuration, audit identity, and flavor/template
-system without splitting the service mint path. serviced mints capability
-classes over its oracle channel; oracled's `ORACLE_OP_MINT_STORAGE` forwards
-to `tzfsd_request`/`tzfsd_release` through `libtzfsd` and never opens
-`/dev/zfs`. It starts `tzfsd` on demand when a service first needs storage.
-Consumers continue to declare storage through `capabilities.storage`.
-
-## The `[TZFS]` tag
-
-Every system daemon in the capability stack carries a distinguishable
-bracket tag — `[ORACLE]` (oracled/oracle-init), `[SERVICE]` (serviced),
-`[TZFS]` (tzfsd) — so `ps`, `procstat`, and capability inspectors can tell
-the authority holders apart. `tzfsd` sets it via
-`setproctitle("[TZFS] storage daemon")`.
-
-## Startup and capability confinement
-
-All name-based work happens up front, then the daemon seals itself:
-
-1. Load `/etc/capability/tzfsd.ucl`; a missing main file selects built-in
-   defaults, while an existing invalid or unsafe file is fatal. Then layer
-   `*.ucl` flavor-catalog drop-ins from `/etc/capability/tzfsd.d/` in lexical
-   order. A missing drop-in directory is allowed; any other directory or
-   fragment error aborts startup without publishing a partial configuration.
-2. Verify ZFS is available; provision the `/Capabilities` layout
-   idempotently (persistent, ephemeral, and `.templates` roots), retaining
-   full-rights subtree handles on each.
-3. Prepare flavor templates (see [Flavors](flavors.md)); a flavor that
-   cannot be materialized is simply not offered.
-4. Open the `SOCK_SEQPACKET` listener at `/var/run/tzfsd.sock`
-   (root-owned, mode 0600), daemonize, write the `tzfsd.ready` file.
-5. `cap_enter()` — the entire request loop runs in capability mode,
-   minting every grant by derive/openat/create/clone from the retained
-   handles. No request can reach a dataset outside the configured roots.
-
-## Layout
-
-```
-zroot/Capabilities                      (mountpoint /Capabilities)
-├─ persistent/<bundle-id>/<claim>       survives reboot, materialized once
-├─ ephemeral/<bundle-id>/<claim>        cloned/created at service start,
-│                                       destroyed at stop
-└─ .templates/<flavor>@ready            clone origins, not app-visible
+```text
+<pool>/Capabilities/
+├── persistent/
+│   ├── u-<192-bit-key>          unit persistent/cache storage
+│   └── s-<192-bit-key>          shared persistent/cache storage
+├── ephemeral/
+│   ├── boot-<kern.boottime>/
+│   │   └── <stable-key>         current-boot storage
+│   └── lease-<manager-session>/
+│       └── <stable-key>         last-holder lease storage
+└── .templates/
+    └── <flavor>@ready
 ```
 
-Ephemeral datasets default to `sync=disabled` for scratch throughput. All
-roots and the pool are configurable in `tzfsd.ucl` (see `tzfs.conf(5)`);
-the defaults above are the shipped opinion, applied with zero operator
-configuration.
+The key is the first 192 bits of a domain-separated SHA-256 digest over bundle
+id, scope, unit id when applicable, and descriptor name. It is stable for
+persistent identity and has 192-bit collision resistance. Scope prefixes make
+unit and shared keys visibly disjoint.
 
-## Protocol and client library
+## Lifetimes
 
-`lib/libtzfsd/` is the client (prefix `tzfsd_`), distinct from
-`libtrustedzfs` (prefix `tzfs_`, the handle verbs) because consumers link
-both. The wire protocol (`tzfsd_proto.h`, alongside the other capability
-protocols in `lib/liboraclert/`) is a reply-with-fds RPC with four ops:
-`TZFSD_OP_REQUEST` (returns the handle fd via `SCM_RIGHTS` plus the
-resolved dataset name for audit), `TZFSD_OP_RELEASE` (idempotent ephemeral
-teardown), `TZFSD_OP_LIST_FLAVORS`, and `TZFSD_OP_PING`.
+| Lifetime | Stop | `serviced` restart | `tzfsd` restart | Reboot |
+|---|---|---|---|---|
+| `persistent` | keep | keep | keep | keep |
+| `cache` | keep | keep | keep | keep, but reclaimable by policy |
+| `boot` | keep | keep | keep | reclaim old boot generation |
+| `lease` | delete after last holder | reclaim abandoned session | resume current session | reclaim old session |
 
-A service declares storage in its manifest like any other capability:
+Shared lease accounting occurs in `serviced`: every successful mint adds a
+holder and all failure/stop paths release exactly the subset actually minted.
+Only the transition from one holder to zero sends a destroy request.
+
+`tzfsd` does not erase the ephemeral root when it starts. Doing so would turn a
+storage-daemon crash into application data loss. Instead, boot generations are
+derived from `kern.boottime`; lease generations are selected by `oracled` for
+each new `serviced` instance. Reconnecting after a `tzfsd` crash resumes the
+same lease session. A new manager instance selects a new session after the old
+supervised process tree is gone and reclaims older ordinary lease trees.
+Retained snapshots make reconciliation fail visibly and leave the tree intact.
+
+## Bundle declarations
+
+Shared definition in `Bundle.ucl`:
 
 ```ucl
-capabilities {
+shared {
     storage = [{
-        name     = "rootfs";
-        flavor   = "linux";       # "" = bare dataset, no template
-        rights   = ["mount", "snapshot"];
-        lifetime = "ephemeral";
+        name = "database";
+        flavor = "native";
+        lifetime = "persistent";
     }];
 }
 ```
 
-serviced mints the handle over its oracle channel at exec and delivers it
-in the token-bootstrap fd range; ephemeral claims are destroyed at stop
-using the handle's own `DESTROY` rights.
+Per-unit grants in `Unit.ucl`:
 
-## tzfsctl
-
-`tzfsctl(8)` is the operator/inspector CLI:
-
-```sh
-tzfsctl ping                    # daemon liveness
-tzfsctl list-flavors            # available flavors (default marked)
-tzfsctl request -f linux -l ephemeral -r mount,props_read -m scratch
-tzfsctl release scratch         # destroy an ephemeral claim
+```ucl
+storage = [
+    {
+        name = "database";
+        scope = "shared";
+        rights = ["mount", "props_read", "snapshot"];
+    },
+    {
+        name = "scratch";
+        scope = "unit";
+        lifetime = "lease";
+        rights = ["mount", "props_read", "props_write"];
+    }
+];
 ```
 
-`request` drives the same path a service does: it asks for a handle,
-prints the resolved dataset, and with `-m` mounts it and prints the dirfd
-before exiting (which unmounts and closes it — `request` is a
-demonstration/health tool, not a way to hold storage open). Rights are
-named (`props_read`, `props_write`, `snapshot`, `snap_destroy`,
-`clone_src`, `create`, `destroy`, `mount`, or `all`).
+A shared reference cannot override the bundle declaration's lifetime or
+flavor. Rights remain per unit. Accepted rights include property read/write,
+snapshot lifecycle, rollback, clone source, child create/destroy, send/receive,
+mount, hold, and release operations.
 
-## Operations
+## Confinement and protocol
 
-- Config: `/etc/capability/tzfsd.ucl` plus `*.ucl` drop-ins in
-  `/etc/capability/tzfsd.d/`. Files are opened with `O_NOFOLLOW`, limited to
-  1 MiB, and must be regular, owned by the effective user, and not writable by
-  group or other. Parsing is transactional; pool, dataset, mountpoint, flavor,
-  build-mode, source, enabled, and single-default invariants are validated
-  before publication.
-- Run `tzfsd -f` for foreground with stderr logging; `-c` for an alternate
-  config. Logging goes to syslog facility `daemon`.
-- Readiness: the socket at `/var/run/tzfsd.sock` and the ready file; a
-  startup summary logs `N/M flavors available`.
-- Manpages: `tzfsd(8)`, `tzfs.conf(5)`, `tzfsctl(8)`, `libtzfsd(3)`.
-- Baked artifacts are opened with `O_NOFOLLOW` and must be nonempty regular
-  files owned by root and not writable by group or other. The absolute
-  `/usr/bin/zstd` decompressor is supervised, and both receive and child exit
-  status must succeed before the template becomes available.
-- Tests: `tests/sys/tzfs/` and the capability-VM payload cover configuration
-  overlays and failure atomicity, artifact trust checks, request/clone/mount/
-  release, rights attenuation, ephemeral teardown, and negative paths.
+Before `cap_enter()`, `tzfsd` loads its UCL configuration and flavor drop-ins,
+ensures ZFS is available, provisions roots, reconciles stale boot generations,
+and retains subtree handles. After that point every operation derives from
+those handles.
 
-**Status.** A boot-time `tzfsd.ready` ordering gate for services that need
-storage before the first on-demand mint is a designed Phase 4 refinement;
-today oracled's spawn-and-wait covers the on-demand case. The design
-document (`docs/tzfsd-design.md`) also sketches a
-`tzfsctl flavor destroy` runtime-reclaim subcommand that is not in the
-shipped CLI — flavor removal today is config (`enabled = false`) or
-removing the `tzfs-flavors` package.
+The versioned `SOCK_SEQPACKET` protocol has request, release, flavor-list,
+ping, and begin-session operations. Messages are fixed-size and reject unknown
+flags, non-zero reserved bytes, unterminated fields, unsafe dataset components,
+wrong descriptor counts, truncation, and descriptor smuggling. Release is
+idempotent and applies only to the selected lease generation.
 
-Sources: `docs/tzfsd-design.md`, `usr.sbin/tzfsd/`, `usr.sbin/tzfsctl/`,
-`lib/libtzfsd/`.
+Tests under `tests/sys/tzfs` exercise all lifetimes, daemon restart, session
+rollover, last-holder behavior, malformed sessions/messages, rights
+attenuation, clone/mount behavior, and conservative retained-snapshot failure
+in a disposable ZFS VM.

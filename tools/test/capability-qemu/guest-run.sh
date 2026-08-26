@@ -1,58 +1,27 @@
 #!/bin/sh
-# Execute every staged ATF case with an isolated work directory.
+# Execute the staged ATF suite with Kyua's production isolation semantics.
 
 set -u
 
 payload=${1:-/mnt}
-result_dir=/tmp/capability-atf
-passed=0
-failed=0
-skipped=0
-
-mkdir -p "$result_dir"
 export LD_LIBRARY_PATH=/lib:/usr/lib
 
 mkdir -p /usr/src /usr/obj/usr/src/amd64.amd64
 cp -R "$payload/source/." /usr/src/
 cp -R "$payload/obj/." /usr/obj/usr/src/amd64.amd64/
 
-run_program()
-{
-	program=$1
-	name=${program##*/}
-	for test_case in $("$program" -l |
-	    awk '/^ident: / { print $2 }'); do
-		result="$result_dir/$name.$test_case.result"
-		work="$result_dir/$name.$test_case.work"
-		mkdir -p "$work"
-		printf '%s:%s ... ' "$name" "$test_case"
-		if output=$(cd "$work" && "$program" -r "$result" \
-		    "$test_case" 2>&1); then
-			if grep -q 'skipped' "$result" 2>/dev/null; then
-				echo "SKIP $output"
-				skipped=$((skipped + 1))
-			else
-				echo PASS
-				passed=$((passed + 1))
-			fi
-		else
-			echo FAIL
-			echo "$output"
-			test ! -f "$result" || cat "$result"
-			failed=$((failed + 1))
-		fi
-		cleanup="$result_dir/$name.$test_case.cleanup"
-		if ! (cd "$work" && "$program" -r "$cleanup" \
-		    "$test_case:cleanup" >/dev/null 2>&1); then
-			echo "$name:$test_case:cleanup ... FAIL"
-			test ! -f "$cleanup" || cat "$cleanup"
-			failed=$((failed + 1))
-		fi
-	done
-}
-
 if ! kldstat -q -m cryptodev; then
 	kldload cryptodev || exit 1
+fi
+
+# The capability storage pool is file-backed and was exported before the
+# disposable reboot to avoid a suspend-on-teardown wedge.  Re-import it here,
+# in single-user, with the directory hint tzfsd's plain `zpool import` lacks
+# (it searches /dev only, never finding a file vdev).  Component-storage
+# tests mint tzfsd datasets from this pool.
+if ! zpool list capability >/dev/null 2>&1; then
+	kldload zfs 2>/dev/null || true
+	zpool import -N -d /var capability 2>/dev/null || true
 fi
 
 echo "Kernel: $(uname -K) $(uname -m)"
@@ -61,13 +30,15 @@ sysctl kern.crypto.cryptokey_objects >/dev/null || exit 1
 # standalone runner must do so explicitly or software-provider cases skip.
 sysctl kern.crypto.allow_soft=1 >/dev/null || exit 1
 
-for program in "$payload"/tests/*; do
-	[ -x "$program" ] || continue
-	case "${program##*/}" in
-	*_bin)	continue ;;
-	esac
-	run_program "$program"
-done
+command -v kyua >/dev/null 2>&1 || {
+	echo "kyua is required by the capability VM harness" >&2
+	exit 69
+}
 
-echo "Capability VM summary: $passed passed, $failed failed, $skipped skipped"
-test "$failed" -eq 0
+results=/tmp/capability-kyua.db
+status=0
+kyua -c none -v test_suites.capability.allow_sysctl_side_effects=true \
+    test -k "$payload/Kyuafile" --build-root="$payload/tests" \
+    -r "$results" || status=$?
+kyua -c none report -r "$results" --verbose
+exit "$status"

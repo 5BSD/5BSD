@@ -14,6 +14,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -34,8 +35,7 @@
 #include "transport.h"
 
 #define	NOTIFY_PROVIDER_NAME	NOTIFY_INTERFACE
-#define	NOTIFY_POLICY_PATH \
-	"/etc/bsdnotify.conf"
+#define	NOTIFY_POLICY_NAME	"bsdnotify.conf"
 #define	ROUTER_CONTROL_MAGIC	0x4e524354U
 #define	ROUTER_EVENT_CONTROL	1
 #define	ROUTER_EVENT_SESSION	2
@@ -1036,6 +1036,20 @@ reject:
 	return (result);
 }
 
+static int
+managed_policy_path(char *path, size_t path_size)
+{
+	const char *unit_dir;
+
+	unit_dir = getenv(SERVICE_UNIT_DIR_ENV);
+	if (unit_dir == NULL || unit_dir[0] == '\0')
+		return (errno = ENOENT, -1);
+	if (snprintf(path, path_size, "%s/Config/%s", unit_dir,
+	    NOTIFY_POLICY_NAME) >= (int)path_size)
+		return (errno = ENAMETOOLONG, -1);
+	return (0);
+}
+
 int
 main(void)
 {
@@ -1050,6 +1064,7 @@ main(void)
 	struct service_reply ready_event;
 	struct service_call_options ready_options =
 	    SERVICE_CALL_OPTIONS_INITIALIZER;
+	char policy_path[PATH_MAX];
 	int audit_fd, router_pair[2], router_pd, fd;
 	int watcher_error;
 	bool watcher_started;
@@ -1063,8 +1078,9 @@ main(void)
 	atomic_init(&watch_context.expected_exit, false);
 	atomic_init(&watch_context.exited, false);
 	policy_db = calloc(1, sizeof(*policy_db));
-	if (policy_db == NULL ||
-	    notify_policy_db_load(NOTIFY_POLICY_PATH, policy_db) == -1 ||
+	if (policy_db == NULL || managed_policy_path(policy_path,
+	    sizeof(policy_path)) == -1 ||
+	    notify_policy_db_load(policy_path, policy_db) == -1 ||
 	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    auditcmp_client_prepare(&audit_fd) == -1 ||

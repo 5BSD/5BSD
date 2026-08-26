@@ -12,11 +12,13 @@ manifest_body()
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/localfilesystem.ucl"
 	bundle="${PWD}/LocalFilesystem.cap"
+	unit="${bundle}/Units/localfilesystem.unit"
 
 	test -x "${servicectl}" ||
 	    atf_skip "source-built servicectl is required"
-	mkdir -p "${bundle}/bin" "${bundle}/etc"
-	cp "${objdir}/localfilesystem" "${bundle}/bin/localfilesystem"
+	mkdir -p "${unit}/bin"
+	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${objdir}/localfilesystem" "${unit}/bin/localfilesystem"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
 		    "${objdir}/localfilesystem"
@@ -24,17 +26,17 @@ manifest_body()
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
 		    "${objdir}/localfilesystem"
 	fi
-	cp "${manifest}" "${bundle}/etc/localfilesystem.ucl"
-	chmod 0555 "${bundle}" "${bundle}/bin" "${bundle}/etc" \
-	    "${bundle}/bin/localfilesystem"
-	chmod 0444 "${bundle}/etc/localfilesystem.ucl"
+	cp "${manifest}" "${unit}/Unit.ucl"
+	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
+	    "${unit}/bin/localfilesystem"
+	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${servicectl}" verify "${bundle}"
 
-	chmod 0644 "${bundle}/etc/localfilesystem.ucl"
+	chmod 0644 "${unit}/Unit.ucl"
 	printf '%s\n' 'ambient_authority = true;' >> \
-	    "${bundle}/etc/localfilesystem.ucl"
+	    "${unit}/Unit.ucl"
 	atf_check -s not-exit:0 -e match:'unknown key' \
 	    "${servicectl}" verify "${bundle}"
 }

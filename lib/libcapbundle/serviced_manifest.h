@@ -66,6 +66,8 @@ struct serviced_jail_claim {
 
 struct serviced_component {
 	char		name[SERVICED_COMPONENT_NAME_MAX];
+	/* Filesystem descriptor backing; empty for other descriptor kinds. */
+	char		storage[ORT_STORAGE_NAME_MAX];
 };
 
 /*
@@ -126,6 +128,16 @@ struct svc_manifest {
 	/* Required kernel modules (ensured by oracled before launch) */
 	char		kmod_requires[SERVICED_MAX_KMOD_REQUIRES][SERVICED_KMOD_NAME_MAX];
 	unsigned	nkmod_requires;
+
+	/*
+	 * Launcher-applied protection policy (capprotect CP_SF_* bitmask).  When
+	 * non-zero serviced shields the launched process by its process
+	 * descriptor immediately after pdfork(2), so the protection is in force
+	 * from the moment the process exists — before its program image runs and
+	 * regardless of what that image does.  Zero leaves the process to apply
+	 * its own shield (or none).
+	 */
+	uint32_t	protect_flags;
 };
 
 #endif /* SERVICED_MANIFEST_H */

@@ -2294,14 +2294,17 @@ death(void)
 	 */
 	revoke_ttys();
 
-	/* Try to run the rc.shutdown script within a period of time */
-	runshutdown();
-
 	/*
-	 * The rc world is down; drain and stop the managed capability
-	 * world through its procdesc before the global sweep.
+	 * Stop the managed capability world before rc.shutdown, not after.
+	 * The capability services belong to serviced; leaving the manager
+	 * running lets it restart providers against a world that is being
+	 * torn down, and the resulting crash-loop can stall rc.shutdown
+	 * into its watchdog.  rc.shutdown owns only the rc daemons.
 	 */
 	oi_world_stop();
+
+	/* Try to run the rc.shutdown script within a period of time */
+	runshutdown();
 
 	/* Unblock suspend if we blocked it. */
 	if (!blocked)

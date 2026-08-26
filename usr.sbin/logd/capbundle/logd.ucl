@@ -1,20 +1,11 @@
-schema = "org.5bsd.serviced.service";
-schema_version = "1.0.0";
-bundle_id = "org.5bsd.LogCmp";
-version = "1.0.0";
-author = "5BSD";
-
-program = "logd";
-provides = ["org.5bsd.log"];
+activation { boot = true; ipc = ["org.5bsd.log"]; }
 restart = "on-failure";
 user = "capability";
 
-# Path authority exists only until the provider opens and confines the state
-# directory.  The storage worker receives the resulting directory descriptor.
-capabilities {
-    files = [{
-        path = "/var/db/logd";
-        actions = ["lookup", "stat", "read", "write", "append", "create",
-            "delete", "rename_from", "rename_to", "truncate"];
-    }];
-}
+storage = [{
+    name = "state";
+    scope = "unit";
+    flavor = "native";
+    lifetime = "persistent";
+    rights = "mount";
+}];

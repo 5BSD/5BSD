@@ -1,4 +1,4 @@
-# skyblued.ucl - serviced manifest for the Bluetooth capability broker.
+# skyblued.ucl - Units/skyblued.unit/Unit.ucl example.
 #
 # skyblued is the sole owner of the Bluetooth radio.  The single
 # fully-wildcard AF_BLUETOOTH network capability below is minted to
@@ -14,11 +14,7 @@
 # all "any", direction = any.  direction MUST be "any" -- the block-all
 # gate only fires on a claim whose direction is the bind+connect union.
 
-bundle_id = "org.5bsd.skyblue";
-version = "1.0";
-author = "5BSD";
-program = "skyblued";
-provides = ["org.5bsd.bluetooth"];
+activation { ipc = ["org.5bsd.bluetooth"]; }
 restart = "on-failure";
 stop_timeout = 10;
 

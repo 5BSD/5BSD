@@ -17,6 +17,7 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fts.h>
+#include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -24,6 +25,7 @@
 
 #include <libcapbundle.h>
 
+#include "bundle_selection.h"
 #include "serviced.h"
 #include "serviced_probes.h"
 
@@ -175,7 +177,8 @@ scan_cb(struct capbundle *b, void *ctx)
 {
 	struct scan_ctx *sc = ctx;
 	char errbuf[256];
-	unsigned i, j;
+	unsigned i;
+	enum bundle_selection_result selection;
 
 	/* Validate bundle integrity. */
 	if (capbundle_verify(b, errbuf, sizeof(errbuf)) == -1) {
@@ -203,59 +206,56 @@ scan_cb(struct capbundle *b, void *ctx)
 		bundles_cap = newcap;
 	}
 
-	bundles[nbundles].bundle = b;
-	bundles[nbundles].system = sc->system;
+	/*
+	 * Installed versions are immutable directories named by identity and
+	 * sequence.  Keep exactly the highest sequence for a bundle identity.
+	 * A user bundle may never shadow a system bundle with the same identity.
+	 */
 	for (i = 0; i < nbundles; i++) {
-		if (strcmp(capbundle_id(b),
-		    capbundle_id(bundles[i].bundle)) == 0) {
-			syslog(LOG_ERR, "bundle_registry: duplicate bundle_id '%s'",
-			    capbundle_id(b));
-			capbundle_close(b);
-			bundles[nbundles].bundle = NULL;
-			return (-1);
-		}
-	}
-
-	/* Check for label collisions with already-loaded bundles. */
-	for (i = 0; i < capbundle_nservices(b); i++) {
-		struct capbundle_service *svc = capbundle_service(b, i);
-		const char *label = capbundle_svc_label(svc);
-		unsigned bi2, si2;
-
-		for (bi2 = 0; bi2 < nbundles; bi2++) {
-			struct capbundle *prev = bundles[bi2].bundle;
-			for (si2 = 0; si2 < capbundle_nservices(prev); si2++) {
-				struct capbundle_service *ps =
-				    capbundle_service(prev, si2);
-				if (strcmp(label, capbundle_svc_label(ps)) == 0) {
-					syslog(LOG_WARNING,
-					    "bundle_registry: label '%s' in "
-					    "'%s' collides with '%s'",
-					    label, capbundle_name(b),
-					    capbundle_name(prev));
-					capbundle_close(b);
-					return (-1);
-				}
-			}
-		}
-	}
-
-	/* Register all provides names. */
-	for (i = 0; i < capbundle_nservices(b); i++) {
-		struct capbundle_service *svc = capbundle_service(b, i);
-		unsigned np = capbundle_svc_nprovides(svc);
-
-		for (j = 0; j < np; j++) {
-			const char *name = capbundle_svc_provides(svc, j);
-			if (provides_insert(name, nbundles, i,
-			    sc->system) == -1) {
+		selection = bundle_selection_compare(
+		    capbundle_id(bundles[i].bundle),
+		    capbundle_sequence(bundles[i].bundle), bundles[i].system,
+		    capbundle_id(b), capbundle_sequence(b), sc->system);
+		if (selection != BUNDLE_SELECTION_DISTINCT) {
+			if (selection == BUNDLE_SELECTION_ORIGIN_CONFLICT) {
+				syslog(LOG_ERR,
+				    "bundle_registry: user bundle may not shadow system bundle_id '%s'",
+				    capbundle_id(b));
 				capbundle_close(b);
-				bundles[nbundles].bundle = NULL;
 				return (-1);
 			}
+			if (selection == BUNDLE_SELECTION_SEQUENCE_CONFLICT ||
+			    selection == BUNDLE_SELECTION_INVALID) {
+				syslog(LOG_ERR,
+				    "bundle_registry: duplicate sequence %ju for bundle_id '%s'",
+				    (uintmax_t)capbundle_sequence(b), capbundle_id(b));
+				capbundle_close(b);
+				return (-1);
+			}
+			if (selection == BUNDLE_SELECTION_KEEP_CURRENT) {
+				syslog(LOG_INFO,
+				    "bundle_registry: retaining newer '%s' sequence %ju over %ju",
+				    capbundle_id(b),
+				    (uintmax_t)capbundle_sequence(bundles[i].bundle),
+				    (uintmax_t)capbundle_sequence(b));
+				capbundle_close(b);
+				return (0);
+			}
+			if (selection != BUNDLE_SELECTION_REPLACE_CURRENT) {
+				capbundle_close(b);
+				return (-1);
+			}
+			syslog(LOG_INFO,
+			    "bundle_registry: selecting '%s' sequence %ju over %ju",
+			    capbundle_id(b), (uintmax_t)capbundle_sequence(b),
+			    (uintmax_t)capbundle_sequence(bundles[i].bundle));
+			capbundle_close(bundles[i].bundle);
+			bundles[i].bundle = b;
+			return (0);
 		}
 	}
-
+	bundles[nbundles].bundle = b;
+	bundles[nbundles].system = sc->system;
 	syslog(LOG_INFO, "bundle_registry: loaded '%s' (%u services)%s",
 	    capbundle_name(b), capbundle_nservices(b),
 	    sc->system ? " [system]" : "");
@@ -263,6 +263,43 @@ scan_cb(struct capbundle *b, void *ctx)
 	    capbundle_nservices(b), sc->system ? 1 : 0);
 	nbundles++;
 	return (0);  /* continue scanning */
+}
+
+/* Build name indexes only after version selection is complete. */
+static int
+registry_build_indexes(void)
+{
+	unsigned bi, si, bj, sj, pi;
+
+	for (bi = 0; bi < nbundles; bi++) {
+		struct capbundle *b = bundles[bi].bundle;
+
+		for (si = 0; si < capbundle_nservices(b); si++) {
+			struct capbundle_service *svc = capbundle_service(b, si);
+			const char *label = capbundle_svc_label(svc);
+
+			for (bj = 0; bj <= bi; bj++) {
+				struct capbundle *other = bundles[bj].bundle;
+				unsigned limit = bj == bi ? si :
+				    capbundle_nservices(other);
+
+				for (sj = 0; sj < limit; sj++) {
+					if (strcmp(label, capbundle_svc_label(
+					    capbundle_service(other, sj))) == 0) {
+						syslog(LOG_ERR,
+						    "bundle_registry: duplicate unit label '%s'",
+						    label);
+						return (-1);
+					}
+				}
+			}
+			for (pi = 0; pi < capbundle_svc_nprovides(svc); pi++)
+				if (provides_insert(capbundle_svc_provides(svc, pi),
+				    bi, si, bundles[bi].system) == -1)
+					return (-1);
+		}
+	}
+	return (0);
 }
 
 static int
@@ -301,15 +338,32 @@ scan_bundle_dir(const char *dirpath, bool system)
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' "
 			    "untrusted: %s", system ? "SYSTEM " : "", path,
 			    errbuf);
-			closedir(d);
-			return (-1);
+			/*
+			 * An untrusted or malformed base-system bundle is a boot
+			 * convergence failure — continuing could silently omit
+			 * required authority.  A local (user) bundle is instead
+			 * quarantined: it cannot reserve names or run, but it
+			 * never displaces the valid active registry (plan §15).
+			 */
+			if (system) {
+				closedir(d);
+				return (-1);
+			}
+			syslog(LOG_WARNING, "bundle_registry: quarantined "
+			    "user bundle '%s'", path);
+			continue;
 		}
 		if (capbundle_open(path, &b, errbuf, sizeof(errbuf)) == -1) {
 			SERVICED_PROBE_MANIFEST_REJECT(path, errbuf, system ? 1 : 0);
 			syslog(LOG_ERR, "bundle_registry: %sbundle '%s' invalid: %s",
 			    system ? "SYSTEM " : "", path, errbuf);
-			closedir(d);
-			return (-1);
+			if (system) {
+				closedir(d);
+				return (-1);
+			}
+			syslog(LOG_WARNING, "bundle_registry: quarantined "
+			    "user bundle '%s'", path);
+			continue;
 		}
 
 		ret = scan_cb(b, &ctx);
@@ -350,17 +404,37 @@ int
 bundle_registry_init(void)
 {
 	struct bundle_state *old_bundles;
-	struct provides_entry *old_hash[PROVIDES_HASH_SIZE];
-	char errbuf[512];
-	struct stat sb;
+	struct provides_entry **old_hash;
+	struct svc_manifest *manifest;
+	char *errbuf;
+	struct stat *sb;
 	struct capbundle **cycle_bundles;
 	unsigned i, old_nbundles, old_bundles_cap, nservices;
 	int cycle_ret;
 
+	/*
+	 * Keep all caller-owned buffers off the daemon stack.  Apart from the
+	 * manifest being large, the parser and graph validator are independent
+	 * trust boundaries: a bounds bug in either must not be able to overwrite
+	 * this function's return state or stack-protector canary.
+	 */
+	manifest = calloc(1, sizeof(*manifest));
+	errbuf = calloc(1, 512);
+	old_hash = calloc(PROVIDES_HASH_SIZE, sizeof(*old_hash));
+	sb = calloc(1, sizeof(*sb));
+	if (manifest == NULL || errbuf == NULL || old_hash == NULL || sb == NULL) {
+		syslog(LOG_CRIT,
+		    "bundle_registry: out of memory for registry validation");
+		free(old_hash);
+		free(errbuf);
+		free(sb);
+		free(manifest);
+		return (-1);
+	}
 	old_bundles = bundles;
 	old_nbundles = nbundles;
 	old_bundles_cap = bundles_cap;
-	memcpy(old_hash, provides_hash, sizeof(old_hash));
+	memcpy(old_hash, provides_hash, sizeof(provides_hash));
 	memset(provides_hash, 0, sizeof(provides_hash));
 	nbundles = 0;
 	bundles_cap = 0;
@@ -369,8 +443,8 @@ bundle_registry_init(void)
 	/* System bundles: optional.  Missing directory is not fatal — the
 	 * system may be running without application bundles (e.g., tests,
 	 * embedded, or early boot before the filesystem is populated). */
-	if (stat(serviced_bundle_dir_system, &sb) == 0 &&
-	    S_ISDIR(sb.st_mode)) {
+	if (stat(serviced_bundle_dir_system, sb) == 0 &&
+	    S_ISDIR(sb->st_mode)) {
 		if (scan_bundle_dir(serviced_bundle_dir_system, true) == -1) {
 			syslog(LOG_ERR,
 			    "bundle_registry: system bundle scan failed");
@@ -383,8 +457,8 @@ bundle_registry_init(void)
 	}
 
 	/* User bundle directory is optional; malformed bundles are fatal. */
-	if (stat(serviced_bundle_dir_user, &sb) == 0 &&
-	    S_ISDIR(sb.st_mode)) {
+	if (stat(serviced_bundle_dir_user, sb) == 0 &&
+	    S_ISDIR(sb->st_mode)) {
 		if (scan_bundle_dir(serviced_bundle_dir_user, false) == -1) {
 			syslog(LOG_ERR,
 			    "bundle_registry: user bundle scan failed");
@@ -399,8 +473,14 @@ bundle_registry_init(void)
 	if (nbundles == 0) {
 		syslog(LOG_WARNING, "bundle_registry: no bundles loaded");
 		registry_dispose(old_bundles, old_nbundles, old_hash);
+		free(old_hash);
+		free(errbuf);
+		free(sb);
+		free(manifest);
 		return (0);
 	}
+	if (registry_build_indexes() == -1)
+		goto fail;
 	nservices = 0;
 	for (i = 0; i < nbundles; i++) {
 		nservices += capbundle_nservices(bundles[i].bundle);
@@ -416,17 +496,16 @@ bundle_registry_init(void)
 		struct capbundle *b = bundles[i].bundle;
 		for (si = 0; si < capbundle_nservices(b); si++) {
 			struct capbundle_service *svc = capbundle_service(b, si);
-			struct svc_manifest manifest;
 
-			if (capbundle_svc_fill_manifest(svc, &manifest) == -1) {
+			if (capbundle_svc_fill_manifest(svc, manifest) == -1) {
 				syslog(LOG_CRIT,
 				    "bundle_registry: invalid service manifest %s",
 				    capbundle_svc_label(svc));
 				goto fail;
 			}
-			for (ri = 0; ri < manifest.nstartup_after; ri++) {
+			for (ri = 0; ri < manifest->nstartup_after; ri++) {
 				const char *provider =
-				    manifest.startup_after[ri];
+				    manifest->startup_after[ri];
 				if (strcmp(provider, "ORACLED") != 0 &&
 				    !provides_exists(provider)) {
 					syslog(LOG_CRIT,
@@ -458,7 +537,7 @@ bundle_registry_init(void)
 		cycle_bundles[i] = bundles[i].bundle;
 
 	cycle_ret = capbundle_check_startup_cycles(cycle_bundles, nbundles,
-	    errbuf, sizeof(errbuf));
+	    errbuf, 512);
 	free(cycle_bundles);
 	if (cycle_ret == -1) {
 		syslog(LOG_CRIT,
@@ -471,14 +550,22 @@ bundle_registry_init(void)
 	    nbundles);
 	SERVICED_PROBE_BUNDLE_SCAN("all", nbundles);
 	registry_dispose(old_bundles, old_nbundles, old_hash);
+	free(old_hash);
+	free(errbuf);
+	free(sb);
+	free(manifest);
 	return (0);
 
 fail:
+	free(manifest);
 	registry_dispose(bundles, nbundles, provides_hash);
 	bundles = old_bundles;
 	nbundles = old_nbundles;
 	bundles_cap = old_bundles_cap;
 	memcpy(provides_hash, old_hash, sizeof(provides_hash));
+	free(old_hash);
+	free(errbuf);
+	free(sb);
 	return (-1);
 }
 
@@ -529,26 +616,15 @@ bundle_registry_is_system(unsigned idx)
 }
 
 /*
- * Activation policy is a serviced property, not a manifest knob.
- * Ordinary named providers start on first lookup.  The two local component
- * factories start during bootstrap because their endpoints must exist before
- * a consumer can be executed in capability mode.
+ * Activation is explicit in Unit.ucl.  A unit may start at boot and also
+ * publish IPC names; merely publishing a name must never change lifecycle.
  */
 bool
 bundle_service_activates_on_lookup(const struct capbundle_service *service)
 {
-	const char *name;
-	unsigned i;
-
-	if (capbundle_svc_nprovides(service) == 0)
-		return (false);
-	for (i = 0; i < capbundle_svc_nprovides(service); i++) {
-		name = capbundle_svc_provides(service, i);
-		if (strcmp(name, "org.5bsd.FileSystemCmp") == 0 ||
-		    strcmp(name, "org.5bsd.NetworkCmp") == 0)
-			return (false);
-	}
-	return (true);
+	return (service != NULL &&
+	    !capbundle_svc_activates_at_boot(service) &&
+	    capbundle_svc_nprovides(service) != 0);
 }
 
 /*

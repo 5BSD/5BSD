@@ -1,202 +1,126 @@
 # serviced
 
-`serviced(8)` is 5BSD's service manager. It is started by `oracled(8)` (PID 1)
-as a single `pdfork(2)` child, inherits a `mac_capability` channel for
-requesting activation tokens, channels, coalitions, and pre-exec kernel-module
-prerequisites from the oracle, and owns the service world: native capability
-services, the transitional `/etc/rc` boot, oneshots, and on-demand
-(socket-activated) services. Sources: `usr.sbin/serviced/`,
-`usr.sbin/servicectl/`, `lib/libservice/`; design:
-`docs/service-architecture-plan.md`, status: `docs/service-daemon.md`.
+`serviced(8)` is 5BSD's system service manager. `oracled(8)` starts one
+supervised instance and supplies descriptor-based authority for service
+launches. `serviced` owns bundle discovery, explicit boot and IPC activation,
+readiness, restart policy, storage leases, and the administrative control
+socket. The authoritative pre-v1 target is the dependency-free demand model in
+`docs/service-architecture-plan.md`.
+Any remaining internal startup-edge graph is implementation debt, not manifest
+ABI or a supported dependency facility.
 
-## Architecture
+## Boot and registry model
 
-serviced generalizes its registry and dependency graph over heterogeneous
-unit kinds (`SVC_KIND_NATIVE`, `SVC_KIND_RC`, `SVC_KIND_ONESHOT`, plus
-scaffolded `TARGET` and `TIMER` kinds). At startup it:
+At startup `serviced` runs the transitional `/etc/rc autoboot` oneshot, scans
+root-owned bundles in `/Capabilities/System` and `/Capabilities`, validates the
+complete graph, starts units declaring `activation.boot=true`, then reports
+boot convergence to `oracled`. Units that declare only `activation.ipc` start
+on the first lookup of one of their reserved names.
 
-1. Inherits the oracle channel fd (`ORACLED_CHANNEL_FD`) and delegated
-   service-instance fds; registers the channel for EOF detection so oracle
-   death is observed.
-2. Applies an inherited capprotect shield (ambient signals including
-   `SIGKILL`/`SIGCONT`, ptrace, ktrace, core dumps are denied; oracled keeps
-   stop authority through the procdesc from `pdfork(2)`).
-3. Runs `/etc/rc autoboot` as a oneshot and waits for it, however long it
-   takes (transitional rc world — see the rc integration chapter).
-4. Scans capability bundles from `/Capabilities/System` and `/Capabilities`,
-   topologically sorts services (Kahn's algorithm; duplicate labels,
-   duplicate `provides` names, unknown providers, and dependency cycles are
-   fatal), and launches each via `pdfork(2)`.
-5. Binds the control socket `/var/run/serviced.sock` (only after rc has
-   remounted `/` read-write) and sends `ORACLE_OP_READY` to PID 1 —
-   the boot-convergence signal.
+Installed versions are immutable directories named
+`<bundle-id>@<20-digit-sequence>.cap`. The registry selects the highest
+sequence for each identity regardless of directory enumeration order. Equal
+sequences, user/system identity collisions, duplicate unit labels, duplicate
+IPC names, unknown descriptor providers, and dependency cycles fail the
+replacement scan today. The startup-edge and cycle checks are scheduled for
+removal as local factories become ordinary IPC-activated providers. A failed
+reload leaves the previous registry running.
 
-## Service definitions
+See [Capability bundle manifests](manifests.md) for the complete two-level
+`Bundle.ucl` and `Units/<name>.unit/Unit.ucl` format.
 
-Native services ship as verified `.cap` bundles whose manifest is a UCL
-object (format: `serviced(5)`, and [Service Manifests](manifests.md)). The
-manifest declares the program, credentials, `provides` names, required
-`components` (`filesystem`, `network`), delegated `capabilities` (paths,
-files, network, jails, vsock, services, system gates), `restart` policy,
-`stop_timeout`, `max_failures`, `kmod_requires`, and an optional execution
-jail:
+## Launch and lifecycle
 
-```ucl
-schema = "org.5bsd.serviced.service"
-schema_version = "1.0.0"
-bundle_id = "org.example.exampled"
-program = "exampled"
-provides = "org.example.exampled"
-components = [ "network" ]
-restart = "on-failure"
-stop_timeout = 10
-```
-
-There are no `requires`/`on_demand` manifest keys: global dependencies are
-acquired dynamically through the typed libraries, and all public named
-services are launched on first connection. (The `*.plist` files in the source
-tree root are clang static-analyzer output, not service definitions.)
-
-## Lifecycle
-
-Each service is launched with `pdfork(2)`; serviced watches the process
-descriptor via `EVFILT_PROCDESC` for `NOTE_EXEC`, `NOTE_CAPMODE`, and
-`NOTE_EXIT`, and enlists the service in a coalition (component workers are
-enlisted before the leader is released). States:
+Each native unit is launched with `pdfork(2)`. Before releasing the child,
+`serviced` mints every declared capability, provisions storage, constructs
+local descriptors, creates a coalition, installs a versioned bootstrap envfd,
+and applies the requested credentials and optional jail. Partial construction
+is rolled back; the program never receives an incomplete authority set.
 
 ```text
-STOPPED → STARTING (pdfork, awaiting NOTE_CAPMODE)
-        → RUNNING  (capability-mode entry independently confirmed
-                    with pdincapmode(2))
-        → STOPPING (SIGTERM via pdkill(2); SIGKILL after stop_timeout,
-                    default 5 s)
+STOPPED -> STARTING -> RUNNING -> STOPPING -> STOPPED
+                    \-> DONE (oneshot)
 ```
 
-Restart policies are `never`, `always`, and `on-failure`, with linear backoff
-for rapid deaths (2 s × restart count, capped at 30 s; counter resets after
-60 s of uptime) and a circuit breaker: after `max_failures` consecutive rapid
-failures (default 10) the service is disabled until a manifest reload. At
-launch serviced mints capability tokens over the oracle channel; unclaimed
-resources are auto-claimed dynamically with reference counts and released
-when the service exits. During daemon shutdown, services stop in reverse
-dependency order. Every lifecycle event emits a DTrace probe through the
-`serviced` provider (`svc__start`, `svc__exit`, readiness, naming, fd-reserve
-and fd-pressure events).
+`RUNNING` requires both the service protocol check-in and independently
+observed capability-mode entry. Restart policies are `never`, `always`, and
+`on-failure`. Rapid failures use bounded backoff and the `max_failures` circuit
+breaker. Shutdown proceeds in reverse dependency order today and escalates
+from graceful termination after `stop_timeout`. The target manager instead
+drains manager-visible demands and owned sessions.
 
-serviced also operates the naming registry: providers expose reverse-domain
-names, no name becomes connectable before the provider's complete check-in
-plus verified capability-mode entry, and named services launch on first
-client connection.
+Storage lifetimes are `persistent`, `cache`, `boot`, and `lease`. Shared lease
+storage is destroyed only when its last launched holder exits. Manager-session
+and boot-generation reconciliation recover abandoned lease/boot datasets after
+a crash or reboot without treating a `tzfsd` restart as a reboot.
 
-## Administration
+## Local descriptors and global IPC
 
-```sh
-servicectl status              # daemon status
-servicectl services            # per-service state
-servicectl stop <label>        # stop a service
-servicectl reload              # re-scan bundles (also: SIGHUP via oracled)
-servicectl install <path.cap>  # install a bundle
-servicectl verify <path.cap>   # verify bundle signatures/structure
-servicectl bundles             # registered bundles
-```
-
-Commands travel over `/var/run/serviced.sock`. Descriptor hygiene is
-explicit: serviced raises `RLIMIT_NOFILE` to `kern.maxfilesperproc`, keeps an
-eight-descriptor confined reserve, and fails launches or brokered connections
-with `EMFILE`/`ENFILE` before partially allocating headroom.
-
-## libservice client API
-
-Managed programs use `lib/libservice` (`libservice(3)`) rather than raw
-protocol. A provider's startup sequence makes each privilege transition
-explicit:
-
-```c
-service_provider_create(&prov);
-service_provider_authorize_capabilities(prov); /* activate minted tokens */
-service_provider_protect(prov, flags);         /* capprotect shield */
-service_provider_expose(prov, "org.example.exampled", &lsn);
-service_provider_enter_capability_mode(prov);  /* cap_enter */
-service_provider_ready(prov);                  /* readiness check-in */
-```
-
-Consumers use `service_acquire()` / `service_capability_open()` to reach
-named services, and `service_local_component_open()` for the process-local
-filesystem/network components serviced injects before exec. Channel waiting
-is kqueue-based (`channel_wait()`); capability channels are kqueue-only and
-report `POLLNVAL` to `poll(2)`.
-
-**Status.** A known open issue in libservice's `service_dispatch` loop:
-after the kqueue-only conversion, a thread blocked in `channel_wait()` is not
-promptly woken by a cross-thread `service_client_close`, and an earlier
-busy-poll behavior in the dispatch path is still being worked
-(`docs/service-daemon.md` §3a). Targets and timers (cron replacement) and
-user-scoped units are designed but not yet functional (roadmap phases 3–5).
-
-## Capability components
-
-The capability component framework (`docs/capability-components-roadmap.md`)
-distinguishes three mechanisms, and each typed client library commits to
-exactly one:
-
-1. A **local component** replaces ambient authority removed from a supervised
-   process — currently `filesystem` and `network`. serviced constructs a
-   private session with the provider *before* exec, enlists the provider
-   worker in the consumer's coalition, and injects a confined channel as the
-   `FILESYSTEMCMP` or `NETWORKCMP` bootstrap entry (a descriptor number, not
-   a name). Local components are not globally discoverable, and the injected
-   channels are non-transferable and locked against fork/exec propagation.
-2. A **global service** provides functionality under reverse-domain names
-   declared in `provides`; the provider claims each name with
-   `service_provider_expose()` and is launched on first connection.
-3. A **capability** is kernel authority delegated directly as a descriptor or
-   activation token — neither a component nor a named service.
-
-Providers are ordinary verified `.cap` bundles launched and supervised by
-serviced like any other native service (oracled stays in the loop only for
-tokens, coalitions, and kernel-module prerequisites). The base providers,
-all under `usr.sbin/`, run as the pkgbase `capability` user:
-
-| Provider | Bundle / names | Role | ctl tool |
-|---|---|---|---|
-| `localfilesystem` | `org.5bsd.FileSystemCmp` | scratch, persistent, and read-only-bundle namespaces with durable object/byte quotas | `filesystemcmpctl` |
-| `localnetwork` | `org.5bsd.NetworkCmp` | kernel TCP/UDP through a provider-owned socket table; per-session Casper DNS | `networkcmpctl` |
-| `logd` | `org.5bsd.LogCmp` / `org.5bsd.log` | structured persistent logging with identity-scoped retained queries | `logctl` |
-| `bsdnotify` | `org.5bsd.Notify` / `org.5bsd.notify` | global event service; default-deny publish/subscribe until an identity ACL is granted | `notifyctl` |
-| `localcrypto` | `org.5bsd.CryptoCmp` | local authority-replacement provider for `DTYPE_CRYPTO` | — |
-
-Each ctl tool is a strict `configtest` validator plus a bounded diagnostic
-client for its service; `tracectl` plays the same role for the tracing
-service (`org.5bsd.trace`, provider `traced`), validating the
-`/etc/traced.allow` label policy. The two local-component executables carry
-the mandatory `cmp` suffix on their bundle identity; global providers keep
-daemon names.
-
-Manifest linkage is deliberately minimal. A consumer declares only
-`components = ["filesystem", "network"]`; there is no provider selection,
-versioning, sharing, or options field — provider policy (quotas, network
-policy) is provider-owned, not manifest-injected, so a manifest cannot widen
-its own authority. A provider declares `provides` and may route each name to
-a different listener; serviced's registry reserves the complete `provides`
-set before the process exists and rejects READY until every name is claimed.
-
-Worked example — a supervised service that keeps state but has no ambient
-filesystem access:
+Local descriptors replace ambient authority for one consumer process:
 
 ```ucl
-# /Capabilities/org.example.cached.cap manifest
-program = "cached"
-provides = "org.example.cached"
-components = [ "filesystem" ]
+storage = [{
+    name = "data";
+    scope = "unit";
+    lifetime = "persistent";
+    rights = "mount";
+}];
+
+descriptors {
+    filesystem { storage = "data"; }
+    network {}
+    crypto {}
+}
 ```
 
-At launch, serviced asks `localfilesystem` (starting it on demand) for a new
-session bound to `org.example.cached`'s identity, enlists that provider
-worker in the consumer's coalition, and injects the session channel before
-exec. The program opens it with
-`service_local_component_open(ctx, interface, version, &fd)` and uses
-`libfilesystemcmp` path contexts rooted at its delegated namespace — `..`
-clamps at the root, quotas are durable, and `filesystemcmp_sync()` is the
-explicit stable-storage boundary. An operator inspects the injected session
-with `filesystemcmpctl`. Registration, routing, component construction,
-policy denials, and teardown all emit DTrace probes and BSM audit records.
+The filesystem descriptor must name storage with mount rights. `serviced`
+mounts that dataset anonymously, passes its directory and the immutable bundle
+root to `localfilesystem`, and injects only the confined session endpoint into
+the consumer. Network and crypto descriptors have no manifest-selectable
+provider or policy escape hatch.
+
+Global services instead publish reverse-domain names in `activation.ipc` and
+use `service_provider_expose()`. Providers are ordinary supervised bundles;
+examples include `org.5bsd.log`, `org.5bsd.notify`, and `org.5bsd.trace`.
+Consumers discover these names through typed libraries. Publishing a name does
+not imply boot activation.
+
+## Administration and installation
+
+```sh
+servicectl verify /path/to/App.cap
+servicectl install /path/to/App.cap
+servicectl reload
+servicectl status
+servicectl services
+servicectl bundles
+servicectl start org.example.app/worker
+servicectl stop org.example.app/worker
+```
+
+`verify` is side-effect free. `install` requires root, copies without following
+symlinks, accepts only directories and regular files, enforces bundle tree
+limits, normalizes ownership and writable bits, syncs every staged object,
+verifies the staged bytes, and atomically renames them to the canonical version
+path. Existing sequences are never overwritten. `reload` activates the
+highest valid sequence. Older immutable directories may remain while pinned by
+a running process or until garbage collection, but serviced has no rollback or
+historical-version selection interface.
+
+The control socket is `/var/run/serviced.sock`. Mutating operations require
+root. Requests and replies are fixed-size and bounded. Descriptor headroom is
+reserved before launches and IPC brokerage so `EMFILE` cannot leave a partial
+launch.
+
+## Program API
+
+Managed programs use `libservice(3)`. Providers explicitly authorize minted
+capabilities, install capprotect restrictions, expose IPC listeners, enter
+capability mode, and report readiness. Consumers use typed global-service
+libraries or local descriptor libraries such as `libfilesystemcmp`,
+`libnetworkcmp`, and `libcryptocmp`.
+
+Socket, timer, path, and user-domain activation remain future work; the
+manifest parser does not accept speculative keys for them. Dependency targets
+are not planned. The only current compatibility boundary is the deliberately
+isolated `/etc/rc` bootstrap needed to boot the existing base system.

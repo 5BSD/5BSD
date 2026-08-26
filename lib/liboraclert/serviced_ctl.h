@@ -15,7 +15,7 @@
 #include <sys/types.h>
 
 #define	SERVICED_CTL_SOCK	"/var/run/serviced.sock"
-#define	SERVICED_CTL_VERSION	1
+#define	SERVICED_CTL_VERSION	2
 #define	SERVICED_CTL_MAX_PAYLOAD	1024
 #define	SERVICED_CTL_SUMMARY_MAX	4096
 
@@ -25,9 +25,8 @@
 #define	SCTL_OP_STATUS		1	/* query serviced status (any) */
 #define	SCTL_OP_SERVICES	2	/* list loaded services (any) */
 #define	SCTL_OP_RELOAD		3	/* reload manifests (root) */
-#define	SCTL_OP_CHECK		4	/* validate manifest (root) */
-#define	SCTL_OP_LOAD		5	/* load + start service (root) */
-#define	SCTL_OP_STOP_SVC	6	/* stop a named service (root) */
+#define	SCTL_OP_START_SVC	4	/* start a loaded unit (root) */
+#define	SCTL_OP_STOP_SVC	5	/* stop a loaded unit (root) */
 
 struct sctl_request {
 	uint32_t	version;

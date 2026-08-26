@@ -48,8 +48,8 @@ capability_tokens_delivered_body()
 	}
 	arguments = ["token-inventory", "token-check.out"];
 " "$capd_service_fixture"
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/token-test.cap/etc/token-test.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/token-test.cap/Units/token-test.unit/Unit.ucl"
 	# Reload to pick up the bundle
 	reload_stack
 
@@ -58,7 +58,7 @@ capability_tokens_delivered_body()
 		atf_fail "service did not start"
 	fi
 
-	atf_check -s exit:0 -o match:"channel_fd=3" cat token-check.out
+	atf_check -s exit:0 -o match:"channel_fd=[0-9]+" cat token-check.out
 	# Every requested capability must be present before exec.  Tokens occupy
 	# a contiguous, deterministic range after the channel and capprotect fds.
 	atf_check -s exit:0 -o match:"token_fds=6,7,8" cat token-check.out
@@ -100,8 +100,8 @@ capability_tokens_require_program_activation_body()
 }
 arguments = [\"token-activate\", \"${activation_target}\", \"token-activation.out\"];" \
 	    "$capd_service_fixture"
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/token-activate.cap/etc/token-activate.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/token-activate.cap/Units/token-activate.unit/Unit.ucl"
 	reload_stack
 
 	if ! wait_for_file token-activation.out; then
@@ -150,18 +150,18 @@ incomplete_capability_set_prevents_exec_body()
 	reload_stack
 
 	i=0
-	while ! grep -q "svc_exec mint-fail: failed to mint token" \
+	while ! grep -q "svc_exec .*mint-fail.*: failed to mint token" \
 	    "$logfile" 2>/dev/null && [ "$i" -lt 100 ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
 	atf_check -s exit:0 -o ignore \
-	    grep "svc_exec mint-fail: failed to mint token" "$logfile"
+	    grep "svc_exec .*mint-fail.*: failed to mint token" "$logfile"
 
 	if [ -e mint-fail-executed.out ]; then
 		atf_fail "service executed with an incomplete capability set"
 	fi
-	if grep -q "service mint-fail: started" "$logfile"; then
+	if grep -q "service [^ ]*mint-fail[^ ]*: started" "$logfile"; then
 		atf_fail "serviced reported a start after capability mint failure"
 	fi
 
@@ -531,12 +531,19 @@ manifest_arguments_environment_body()
 	make_svc_bin system manifest-exec \
 	    'arguments = ["manifest-report", "manifest-exec.out", "literal value", "--flag"];
 environment { APP_MODE = "test"; EMPTY = ""; }' "$capd_service_fixture"
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/manifest-exec.cap/etc/manifest-exec.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/manifest-exec.cap/Units/manifest-exec.unit/Unit.ucl"
 	reload_stack
 	wait_for_file manifest-exec.out 10 || atf_fail "service did not exec"
-	atf_check -s exit:0 -o inline:'argc=3\narg1=literal value\narg2=--flag\nmode=test\nempty=\n' \
-	    cat manifest-exec.out
+	atf_check -s exit:0 -o match:'^argc=3$' grep '^argc=' manifest-exec.out
+	atf_check -s exit:0 -o match:'^arg1=literal value$' \
+	    grep '^arg1=' manifest-exec.out
+	atf_check -s exit:0 -o match:'^arg2=--flag$' grep '^arg2=' manifest-exec.out
+	atf_check -s exit:0 -o match:'^mode=test$' grep '^mode=' manifest-exec.out
+	atf_check -s exit:0 -o match:'^empty=$' grep '^empty=' manifest-exec.out
+	atf_check -s exit:0 \
+	    -o match:'/manifest-exec.cap/Units/manifest-exec.unit$' \
+	    grep '^unit_dir=' manifest-exec.out
 	stop_stack
 }
 manifest_arguments_environment_cleanup()
@@ -564,8 +571,8 @@ remaining_token_families_activate_body()
 }
 arguments = ["authorize-tokens", "token-families.out"];' \
 	    "$capd_service_fixture"
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/token-families.cap/etc/token-families.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/token-families.cap/Units/token-families.unit/Unit.ucl"
 	reload_stack
 	wait_for_file token-families.out 10 || {
 		cat "$logfile" 2>/dev/null
@@ -604,8 +611,8 @@ capability_service_descriptors_delivered_body()
 	    'capabilities { services = ["mount", "node", "accounting", "identity"]; }
 arguments = ["capability-services", "capability-services.out"];' \
 	    "$capd_service_fixture"
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/capability-services.cap/etc/capability-services.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/capability-services.cap/Units/capability-services.unit/Unit.ucl"
 	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
 	wait_for_file capability-services.out 10 || {
 		cat "$logfile" 2>/dev/null
@@ -624,6 +631,47 @@ capability_service_descriptors_delivered_cleanup()
 	    capability-services.out
 }
 
+atf_test_case mount_storage_is_a_directory cleanup
+mount_storage_is_a_directory_head()
+{
+	atf_set "descr" \
+	    "Mount-only storage is a private type-checked directory, including long logical names"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods zfs
+	atf_set "timeout" "90"
+}
+mount_storage_is_a_directory_body()
+{
+	logical="state-with-a-long-logical-name-1234567890"
+	role="storage:${logical}"
+	find_capd_service_fixture
+	start_stack
+	make_svc_bin system storage-directory \
+	    "storage = [{ name = \"${logical}\"; scope = \"unit\";
+    flavor = \"native\"; lifetime = \"lease\"; rights = \"mount\"; }];
+arguments = [\"storage-directory\", \"${role}\", \"storage-directory.out\"];" \
+	    "$capd_service_fixture"
+	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	wait_for_file storage-directory.out 20 || {
+		cat "$logfile" 2>/dev/null
+		atf_fail "storage-directory service did not complete"
+	}
+	for expected in "role=${role}" directory=ok type_mismatch=EFTYPE \
+	    write=ok confined=1; do
+		atf_check -s exit:0 -o ignore grep -Fx "$expected" \
+		    storage-directory.out
+	done
+	atf_check -s exit:0 -o ignore \
+	    servicectl -s "$CTL_SOCK" stop \
+	    "org.test.storage-directory/storage-directory"
+	stop_stack
+}
+mount_storage_is_a_directory_cleanup()
+{
+	cleanup_common
+	rm -f storage-directory.out
+}
+
 atf_test_case malformed_reload_is_transactional cleanup
 malformed_reload_is_transactional_head()
 {
@@ -639,22 +687,25 @@ malformed_reload_is_transactional_body()
 	make_svc_bin system reload-guard \
 	    'arguments = ["ready", "reload-guard.out"];' \
 	    "$capd_service_fixture"
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/reload-guard.cap/etc/reload-guard.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/reload-guard.cap/Units/reload-guard.unit/Unit.ucl"
 	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
 	wait_for_file reload-guard.out 10 || atf_fail "guard service did not start"
 
-	mkdir -p "$USER_APPS_DIR/bad.cap/etc" "$USER_APPS_DIR/bad.cap/bin"
-	printf '#!/bin/sh\nexit 0\n' > "$USER_APPS_DIR/bad.cap/bin/bad"
-	chmod 755 "$USER_APPS_DIR/bad.cap/bin/bad"
-	cat > "$USER_APPS_DIR/bad.cap/etc/bad.ucl" <<'UCL'
-bundle_id = "org.test.bad";
-program = "bad";
-provides = ["org.test.bad"];
+	write_test_bundle "$USER_APPS_DIR/bad.cap" org.test.bad bad '' \
+	    'activation { boot = true; }'
+	printf '#!/bin/sh\nexit 0\n' > \
+	    "$USER_APPS_DIR/bad.cap/Units/bad.unit/bin/bad"
+	chmod 755 "$USER_APPS_DIR/bad.cap/Units/bad.unit/bin/bad"
+	cat >> "$USER_APPS_DIR/bad.cap/Units/bad.unit/Unit.ucl" <<'UCL'
 restert = "always";
 UCL
-	atf_check -s exit:1 -o ignore -e match:'reload' \
-	    servicectl -s "$CTL_SOCK" reload
+	# Transactional per plan §15: the malformed local bundle is quarantined
+	# (skipped), while the valid active registry is retained and the reload
+	# otherwise succeeds.
+	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	atf_check -s exit:0 -o ignore \
+	    grep 'quarantined user bundle.*bad' "$logfile"
 	atf_check -s exit:0 -o match:'reload-guard' \
 	    servicectl -s "$CTL_SOCK" services
 	stop_stack
@@ -679,8 +730,12 @@ untrusted_bundle_rejected_body()
 	start_stack
 	dir=$(make_svc_bin user untrusted '' "$(pwd)/ready_svc")
 	chmod 0777 "$dir"
-	atf_check -s exit:1 -o ignore -e match:'reload' \
-	    servicectl -s "$CTL_SOCK" reload
+	# A world-writable (untrusted) local bundle is quarantined, not loaded:
+	# the reload succeeds for the valid registry while the untrusted bundle
+	# is skipped and never runs (plan §15).
+	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	atf_check -s exit:0 -o ignore \
+	    grep 'quarantined user bundle.*untrusted' "$logfile"
 	test ! -e untrusted.ready || atf_fail "untrusted service executed"
 	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" services
 	stop_stack
@@ -706,8 +761,8 @@ kmod_prerequisite_uses_oracle_body()
 	make_svc_bin system kmod-prereq \
 	    'kmod_requires = ["mac_capability"];
 arguments = ["compat-ready"];' "$(pwd)/ready_svc"
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/kmod-prereq.cap/etc/kmod-prereq.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/kmod-prereq.cap/Units/kmod-prereq.unit/Unit.ucl"
 	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
 	wait_for_file kmod-prereq.ready 10 || {
 		cat "$logfile" 2>/dev/null
@@ -739,6 +794,7 @@ atf_init_test_cases()
 	atf_add_test_case manifest_arguments_environment
 	atf_add_test_case remaining_token_families_activate
 	atf_add_test_case capability_service_descriptors_delivered
+	atf_add_test_case mount_storage_is_a_directory
 	atf_add_test_case malformed_reload_is_transactional
 	atf_add_test_case untrusted_bundle_rejected
 	atf_add_test_case kmod_prerequisite_uses_oracle

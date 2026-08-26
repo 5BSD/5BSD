@@ -12,7 +12,7 @@ is the base-system provider for
 version
 .Dq 1.0.0 .
 It is installed and executed only as
-.Pa /Capabilities/System/LocalFilesystem.cap/bin/localfilesystem ;
+.Pa /Capabilities/System/LocalFilesystem.cap/Units/localfilesystem.unit/bin/localfilesystem ;
 it is not an ambient
 .Pa /usr/sbin
 daemon.
@@ -31,11 +31,11 @@ A read-only tree rooted at the verified consumer
 bundle.
 .El
 .Pp
-By default,
+The consumer declares a storage resource and binds it in
+.Va descriptors.filesystem.storage .
 .Xr serviced 8
-creates the persistent backing directory below
-.Pa /var/db/serviced/storage/<service-label>/filesystem
-with mode 0700 and delegates only its attenuated directory descriptor.
+uses the resulting bundle-scoped TrustedZFS dataset as the persistent root
+and delegates only its attenuated anonymous directory descriptor.
 This storage is scoped by serviced identity; it is not itself a jail.
 If the consumer runs in a jail, jail membership is an independent process
 isolation boundary.

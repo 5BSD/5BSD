@@ -10,11 +10,13 @@
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/vsock.h>
+#include <sys/zfshandle.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>
 #include <netinet/in.h>
 
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
 
 #include <errno.h>
 #include <ctype.h>
@@ -23,6 +25,7 @@
 #include <string.h>
 #include <syslog.h>
 
+#include <sha256.h>
 #include <ucl.h>
 
 #include "claim_parse.h"
@@ -38,6 +41,106 @@ key_in(const char *key, const char *const *allowed, size_t nallowed)
 		if (strcmp(key, allowed[i]) == 0)
 			return (true);
 	return (false);
+}
+
+/* Match the reverse-domain syntax enforced by serviced's name registry. */
+static bool
+valid_service_name(const char *name, size_t maxlen)
+{
+	const unsigned char *p;
+	size_t len;
+	bool has_dot;
+
+	len = strlen(name);
+	if (len == 0 || len >= maxlen || name[0] == '.' ||
+	    name[len - 1] == '.')
+		return (false);
+	has_dot = false;
+	for (p = (const unsigned char *)name; *p != '\0'; p++) {
+		if (*p == '.') {
+			if (p > (const unsigned char *)name && p[-1] == '.')
+				return (false);
+			has_dot = true;
+		} else if (!((*p >= 'a' && *p <= 'z') ||
+		    (*p >= 'A' && *p <= 'Z') ||
+		    (*p >= '0' && *p <= '9') || *p == '-' || *p == '_'))
+			return (false);
+	}
+	return (has_dot);
+}
+
+static bool
+valid_program_name(const char *name)
+{
+	const unsigned char *p;
+
+	if (name[0] == '\0' || strcmp(name, ".") == 0 ||
+	    strcmp(name, "..") == 0 || strchr(name, '/') != NULL)
+		return (false);
+	for (p = (const unsigned char *)name; *p != '\0'; p++)
+		if (iscntrl(*p))
+			return (false);
+	return (true);
+}
+
+/* Unit names are stable identity components and filesystem names. */
+static bool
+valid_unit_name(const char *name)
+{
+	const unsigned char *p;
+	size_t len;
+
+	len = strlen(name);
+	if (len == 0 || len > 63 || name[0] == '-' || name[len - 1] == '-')
+		return (false);
+	for (p = (const unsigned char *)name; *p != '\0'; p++)
+		if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') ||
+		    *p == '-'))
+			return (false);
+	return (true);
+}
+
+int
+capbundle_storage_dataset_key(char out[ORT_STORAGE_DATASET_MAX],
+    const char *bundle_id, const char *unit_name, const char *name,
+    uint8_t scope)
+{
+	static const char domain[] = "org.5bsd.capability-storage.v1";
+	SHA256_CTX context;
+	unsigned char digest[SHA256_DIGEST_LENGTH];
+	const char *scope_name;
+	char prefix;
+	unsigned i;
+
+	if (out == NULL || bundle_id == NULL || name == NULL ||
+	    bundle_id[0] == '\0' || name[0] == '\0' ||
+	    (scope != ORT_STORAGE_SCOPE_UNIT &&
+	    scope != ORT_STORAGE_SCOPE_SHARED) ||
+	    (scope == ORT_STORAGE_SCOPE_UNIT &&
+	    (unit_name == NULL || unit_name[0] == '\0'))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	scope_name = scope == ORT_STORAGE_SCOPE_SHARED ? "shared" : "unit";
+	prefix = scope == ORT_STORAGE_SCOPE_SHARED ? 's' : 'u';
+	SHA256_Init(&context);
+#define HASH_FIELD(value) do { \
+	const char *field_ = (value); \
+	SHA256_Update(&context, field_, strlen(field_) + 1); \
+} while (0)
+	HASH_FIELD(domain);
+	HASH_FIELD(bundle_id);
+	HASH_FIELD(scope_name);
+	HASH_FIELD(scope == ORT_STORAGE_SCOPE_SHARED ? "" : unit_name);
+	HASH_FIELD(name);
+#undef HASH_FIELD
+	SHA256_Final(digest, &context);
+	out[0] = prefix;
+	out[1] = '-';
+	for (i = 0; i < 24; i++)
+		(void)snprintf(out + 2 + (i * 2), 3, "%02x", digest[i]);
+	out[50] = '\0';
+	return (0);
 }
 
 static int
@@ -102,11 +205,11 @@ validate_keys(const ucl_object_t *obj, const char *where,
 
 static int
 validate_string_list(const ucl_object_t *root, const char *key, unsigned max,
-    size_t maxlen, char *errbuf, size_t errlen)
+    size_t maxlen, bool unique, char *errbuf, size_t errlen)
 {
-	const ucl_object_t *arr, *v;
+	const ucl_object_t *arr, *v, *prior;
 	ucl_object_iter_t it;
-	unsigned n;
+	unsigned i, n;
 
 	arr = ucl_object_lookup(root, key);
 	if (arr == NULL)
@@ -137,23 +240,35 @@ validate_string_list(const ucl_object_t *root, const char *key, unsigned max,
 			snprintf(errbuf, errlen, "%s contains an invalid string", key);
 			return (-1);
 		}
+		if (unique) {
+			for (i = 0; i + 1 < n; i++) {
+				prior = ucl_array_find_index(arr, i);
+				if (strcmp(ucl_object_tostring(prior),
+				    ucl_object_tostring(v)) == 0) {
+					snprintf(errbuf, errlen,
+					    "%s contains duplicate '%s'", key,
+					    ucl_object_tostring(v));
+					return (-1);
+				}
+			}
+		}
 	}
 	return (0);
 }
 
 static int
-validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
+validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 {
-	static const char *const top[] = { "schema", "schema_version",
-	    "bundle_id", "version", "author",
-	    "program", "provides", "kmod_requires",
+	static const char *const top[] = {
+	    "program", "activation", "kmod_requires",
 	    "restart", "capabilities", "user", "group", "stop_timeout",
-	    "max_failures", "arguments", "environment",
-	    "components", "jail" };
+	    "max_failures", "arguments", "environment", "jail", "storage",
+	    "descriptors", "protect" };
+	static const char *const activationkeys[] = { "boot", "ipc" };
 	static const char *const capkeys[] = { "paths", "files", "network",
-	    "jails", "vsock", "services", "system", "storage" };
-	static const char *const storagekeys[] = { "name", "flavor", "rights",
-	    "lifetime" };
+	    "jails", "vsock", "services", "system" };
+	static const char *const storagekeys[] = { "name", "scope", "flavor",
+	    "rights", "lifetime" };
 	static const char *const service_names[] = { "mount", "node",
 	    "accounting", "identity" };
 	static const char *const filekeys[] = { "path", "actions" };
@@ -164,6 +279,9 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "direction" };
 	static const char *const execution_jail_keys[] = { "name", "path",
 	    "hostname", "ip4_addr" };
+	static const char *const descriptor_keys[] = { "filesystem", "network",
+	    "crypto" };
+	static const char *const filesystem_descriptor_keys[] = { "storage" };
 	const ucl_object_t *caps, *arr, *v, *x;
 	ucl_object_iter_t it;
 	bool service_seen[nitems(service_names)];
@@ -177,30 +295,9 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	}
 	if (validate_keys(root, "manifest", top, nitems(top), errbuf, errlen) != 0)
 		return (-1);
-	v = ucl_object_lookup(root, "schema");
-	x = ucl_object_lookup(root, "schema_version");
-	if ((v == NULL) != (x == NULL)) {
-		snprintf(errbuf, errlen,
-		    "schema and schema_version must be declared together");
-		return (-1);
-	}
-	if (v != NULL && (ucl_object_type(v) != UCL_STRING ||
-	    strcmp(ucl_object_tostring(v),
-	    "org.5bsd.serviced.service") != 0)) {
-		snprintf(errbuf, errlen,
-		    "schema must be 'org.5bsd.serviced.service'");
-		return (-1);
-	}
-	if (x != NULL && (ucl_object_type(x) != UCL_STRING ||
-	    strcmp(ucl_object_tostring(x), "1.0.0") != 0)) {
-		snprintf(errbuf, errlen, "schema_version must be '1.0.0'");
-		return (-1);
-	}
-	for (n = 0; n < 6; n++) {
-		static const char *const strings[] = { "bundle_id", "version",
-		    "author", "program", "user", "group" };
-		static const size_t limits[] = { CAPBUNDLE_ID_MAX,
-		    CAPBUNDLE_VERSION_MAX, CAPBUNDLE_AUTHOR_MAX, PATH_MAX, 64, 64 };
+	for (n = 0; n < 3; n++) {
+		static const char *const strings[] = { "program", "user", "group" };
+		static const size_t limits[] = { PATH_MAX, 64, 64 };
 		v = ucl_object_lookup(root, strings[n]);
 		if (v != NULL && (ucl_object_type(v) != UCL_STRING ||
 		    ucl_object_tostring(v)[0] == '\0' ||
@@ -210,9 +307,10 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			return (-1);
 		}
 	}
-	v = ucl_object_lookup(root, "bundle_id");
-	if (v == NULL) {
-		snprintf(errbuf, errlen, "bundle_id is required");
+	v = ucl_object_lookup(root, "program");
+	if (v != NULL && !valid_program_name(ucl_object_tostring(v))) {
+		snprintf(errbuf, errlen,
+		    "program must be one valid name below bin/");
 		return (-1);
 	}
 	v = ucl_object_lookup(root, "restart");
@@ -235,46 +333,49 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		snprintf(errbuf, errlen, "max_failures must be between 1 and 100");
 		return (-1);
 	}
-	if (validate_string_list(root, "provides", CAPBUNDLE_MAX_PROVIDES,
-	    CAPBUNDLE_NAME_MAX + 1, errbuf, errlen) != 0 ||
-	    validate_string_list(root, "kmod_requires", CAPBUNDLE_MAX_KMOD_REQUIRES,
-	    sizeof(((struct capbundle_service *)0)->kmod_requires[0]), errbuf,
-	    errlen) != 0 ||
+	if (validate_string_list(root, "kmod_requires", CAPBUNDLE_MAX_KMOD_REQUIRES,
+	    sizeof(((struct capbundle_service *)0)->kmod_requires[0]), true,
+	    errbuf, errlen) != 0 ||
 	    validate_string_list(root, "arguments", SERVICED_MAX_ARGUMENTS,
-	    SERVICED_ARGUMENT_MAX, errbuf, errlen) != 0 ||
-	    validate_string_list(root, "components", 3, 16, errbuf,
-	    errlen) != 0)
+	    SERVICED_ARGUMENT_MAX, false, errbuf, errlen) != 0)
 		return (-1);
 
-	arr = ucl_object_lookup(root, "components");
-	if (arr != NULL) {
-		const ucl_object_t *entry;
-		ucl_object_iter_t components_it;
-		const char *name, *first;
+	arr = ucl_object_lookup(root, "activation");
+	if (arr == NULL || validate_keys(arr, "activation", activationkeys,
+	    nitems(activationkeys), errbuf, errlen) != 0)
+		return (-1);
+	v = ucl_object_lookup(arr, "boot");
+	if (v != NULL && ucl_object_type(v) != UCL_BOOLEAN) {
+		snprintf(errbuf, errlen, "activation.boot must be a boolean");
+		return (-1);
+	}
+	if (validate_string_list(arr, "ipc", CAPBUNDLE_MAX_PROVIDES,
+	    SERVICED_LABEL_MAX, true, errbuf, errlen) != 0)
+		return (-1);
+	x = ucl_object_lookup(arr, "ipc");
+	if ((v == NULL || !ucl_object_toboolean(v)) && x == NULL) {
+		snprintf(errbuf, errlen,
+		    "activation requires boot=true or at least one ipc name");
+		return (-1);
+	}
+	if (x != NULL && ucl_object_type(x) == UCL_ARRAY &&
+	    ucl_array_size(x) == 0) {
+		snprintf(errbuf, errlen, "activation.ipc must not be empty");
+		return (-1);
+	}
 
-		first = NULL;
-		components_it = NULL;
-		do {
-			entry = ucl_object_type(arr) == UCL_STRING ? arr :
-			    ucl_object_iterate(arr, &components_it, true);
-			if (entry == NULL)
-				break;
-			name = ucl_object_tostring(entry);
-			if (strcmp(name, "filesystem") != 0 &&
-			    strcmp(name, "network") != 0 &&
-			    strcmp(name, "crypto") != 0) {
-				snprintf(errbuf, errlen,
-				    "components accepts only 'filesystem' and "
-				    "'network' and 'crypto'");
-				return (-1);
-			}
-			if (first != NULL && strcmp(first, name) == 0) {
-				snprintf(errbuf, errlen,
-				    "components contains duplicate '%s'", name);
-				return (-1);
-			}
-			first = name;
-		} while (ucl_object_type(arr) != UCL_STRING);
+	arr = x;
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_type(arr) == UCL_STRING ? arr :
+	    ucl_object_iterate(arr, &it, true)) != NULL) {
+		if (!valid_service_name(ucl_object_tostring(v),
+		    SERVICED_LABEL_MAX)) {
+			snprintf(errbuf, errlen,
+			    "activation.ipc contains an invalid reverse-domain name");
+			return (-1);
+		}
+		if (ucl_object_type(arr) == UCL_STRING)
+			break;
 	}
 
 	arr = ucl_object_lookup(root, "jail");
@@ -296,6 +397,8 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		ip4_addr = ucl_object_lookup(arr, "ip4_addr");
 		if (name == NULL || ucl_object_type(name) != UCL_STRING ||
 		    ucl_object_tostring(name)[0] == '\0' ||
+		    strcmp(ucl_object_tostring(name), ".") == 0 ||
+		    strcmp(ucl_object_tostring(name), "..") == 0 ||
 		    strlen(ucl_object_tostring(name)) >=
 		    sizeof(((struct capbundle_service *)0)->jail_name)) {
 			snprintf(errbuf, errlen,
@@ -374,11 +477,13 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			    key[0] == '\0' || strncmp(key, "ORACLED_", 8) == 0 ||
 			    strncmp(key, "SERVICED_", 9) == 0 ||
 			    strcmp(key, "SERVICE_BOOTSTRAP_FD") == 0 ||
+			    strcmp(key, "CAPABILITY_UNIT_DIR") == 0 ||
 			    strcmp(key, "NETWORKCMP") == 0 ||
 			    strcmp(key, "FILESYSTEMCMP") == 0 ||
+			    strcmp(key, "CRYPTOCMP") == 0 ||
 			    strcmp(key, "LOGCMP") == 0 ||
 			    strcmp(key, "TRACECMP") == 0 ||
-			    strcmp(key, "NOTIFYCMP") == 0 ||
+			    strcmp(key, "NOTIFY") == 0 ||
 			    ucl_object_type(v) != UCL_STRING) {
 				snprintf(errbuf, errlen, "invalid environment entry");
 				return (-1);
@@ -401,7 +506,7 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 
 	caps = ucl_object_lookup(root, "capabilities");
 	if (caps == NULL)
-		return (0);
+		goto validate_storage;
 	if (ucl_object_type(caps) != UCL_OBJECT) {
 		snprintf(errbuf, errlen, "capabilities must be an object");
 		return (-1);
@@ -427,22 +532,32 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	VALIDATE_CAP_ARRAY("jails", CAPBUNDLE_MAX_CAP_JAIL);
 	VALIDATE_CAP_ARRAY("vsock", CAPBUNDLE_MAX_CAP_VSOCK);
 	VALIDATE_CAP_ARRAY("services", CAPBUNDLE_MAX_CAP_SERVICES);
-	VALIDATE_CAP_ARRAY("storage", CAPBUNDLE_MAX_CAP_STORAGE);
 	VALIDATE_CAP_ARRAY("system", nitems(gate_names));
 #undef VALIDATE_CAP_ARRAY
 
 	arr = ucl_object_lookup(caps, "paths");
 	it = NULL;
-	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL)
+	n = 0;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
 		if (ucl_object_type(v) != UCL_STRING ||
 		    ucl_object_tostring(v)[0] != '/' ||
 		    strlen(ucl_object_tostring(v)) >= PATH_MAX) {
 			snprintf(errbuf, errlen, "invalid capabilities.paths entry");
 			return (-1);
 		}
+		for (unsigned i = 0; i < n; i++)
+			if (strcmp(ucl_object_tostring(ucl_array_find_index(arr, i)),
+			    ucl_object_tostring(v)) == 0) {
+				snprintf(errbuf, errlen,
+				    "duplicate capabilities.paths entry");
+				return (-1);
+			}
+		n++;
+	}
 
 	arr = ucl_object_lookup(caps, "system");
 	it = NULL;
+	n = 0;
 	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
 		bool found = false;
 		unsigned gi;
@@ -458,6 +573,15 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			    ucl_object_tostring(v));
 			return (-1);
 		}
+		for (unsigned i = 0; i < n; i++)
+			if (strcmp(ucl_object_tostring(ucl_array_find_index(arr, i)),
+			    ucl_object_tostring(v)) == 0) {
+				snprintf(errbuf, errlen,
+				    "duplicate system gate '%s'",
+				    ucl_object_tostring(v));
+				return (-1);
+			}
+		n++;
 	}
 
 	arr = ucl_object_lookup(caps, "services");
@@ -505,46 +629,167 @@ validate_manifest_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		}
 	}
 
-	arr = ucl_object_lookup(caps, "storage");
+validate_storage:
+	arr = ucl_object_lookup(root, "storage");
+	if (arr != NULL && (ucl_object_type(arr) != UCL_ARRAY ||
+	    ucl_array_size(arr) > CAPBUNDLE_MAX_CAP_STORAGE)) {
+		snprintf(errbuf, errlen,
+		    "storage must be an array with at most %u entries",
+		    CAPBUNDLE_MAX_CAP_STORAGE);
+		return (-1);
+	}
 	it = NULL;
+	n = 0;
 	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
 		uint64_t rights;
 		uint8_t lifetime;
-		const ucl_object_t *lt;
+		const ucl_object_t *lt, *fl, *scope;
+		const char *scope_name;
 
-		const ucl_object_t *fl;
-
-		if (validate_keys(v, "capabilities.storage entry", storagekeys,
+		if (validate_keys(v, "storage entry", storagekeys,
 		    nitems(storagekeys), errbuf, errlen) != 0)
 			return (-1);
 		x = ucl_object_lookup(v, "name");
 		if (x == NULL || ucl_object_type(x) != UCL_STRING ||
-		    ucl_object_tostring(x)[0] == '\0' ||
-		    strlen(ucl_object_tostring(x)) >= ORT_STORAGE_NAME_MAX ||
-		    strchr(ucl_object_tostring(x), '/') != NULL ||
-		    strchr(ucl_object_tostring(x), '@') != NULL ||
+		    !valid_unit_name(ucl_object_tostring(x)) ||
 		    parse_storage_rights(ucl_object_lookup(v, "rights"),
 		    &rights) != 0) {
+			snprintf(errbuf, errlen, "invalid storage entry");
+			return (-1);
+		}
+		/*
+		 * Delivery composes "storage:<name>" into a
+		 * SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX buffer; a name that
+		 * cannot fit must fail here, not at launch.
+		 */
+		if (strlen(ucl_object_tostring(x)) > 55) {
 			snprintf(errbuf, errlen,
-			    "invalid capabilities.storage entry");
+			    "storage name too long for descriptor delivery");
+			return (-1);
+		}
+		scope = ucl_object_lookup(v, "scope");
+		if (scope == NULL || ucl_object_type(scope) != UCL_STRING ||
+		    ((scope_name = ucl_object_tostring(scope)) == NULL) ||
+		    (strcmp(scope_name, "unit") != 0 &&
+		    strcmp(scope_name, "shared") != 0)) {
+			snprintf(errbuf, errlen,
+			    "storage entry requires scope 'unit' or 'shared'");
 			return (-1);
 		}
 		fl = ucl_object_lookup(v, "flavor");
 		if (fl != NULL && (ucl_object_type(fl) != UCL_STRING ||
+		    ucl_object_tostring(fl)[0] == '\0' ||
 		    strlen(ucl_object_tostring(fl)) >= ORT_STORAGE_FLAVOR_MAX)) {
-			snprintf(errbuf, errlen,
-			    "invalid capabilities.storage flavor");
+			snprintf(errbuf, errlen, "invalid storage flavor");
 			return (-1);
 		}
 		lt = ucl_object_lookup(v, "lifetime");
+		if (strcmp(scope_name, "shared") == 0 && (fl != NULL || lt != NULL)) {
+			snprintf(errbuf, errlen,
+			    "shared storage references cannot override flavor or lifetime");
+			return (-1);
+		}
+		for (unsigned i = 0; i < n; i++) {
+			const ucl_object_t *previous;
+
+			previous = ucl_array_find_index(arr, i);
+			previous = ucl_object_lookup(previous, "name");
+			if (strcmp(ucl_object_tostring(previous),
+			    ucl_object_tostring(x)) == 0) {
+				snprintf(errbuf, errlen,
+				    "duplicate storage claim '%s'",
+				    ucl_object_tostring(x));
+				return (-1);
+			}
+		}
+		n++;
 		if (lt != NULL && (ucl_object_type(lt) != UCL_STRING ||
 		    parse_storage_lifetime_string(ucl_object_tostring(lt),
 		    &lifetime) != 0)) {
-			snprintf(errbuf, errlen,
-			    "invalid capabilities.storage lifetime");
+			snprintf(errbuf, errlen, "invalid storage lifetime");
 			return (-1);
 		}
 	}
+
+	/*
+	 * Local authority replacements are descriptor factories, not ambient
+	 * service names.  Objects leave room for future descriptor-specific
+	 * restrictions without reintroducing an untyped components list.
+	 */
+	arr = ucl_object_lookup(root, "descriptors");
+	if (arr != NULL) {
+		const ucl_object_t *descriptor, *storage_name, *claims, *claim;
+		ucl_object_iter_t dit;
+		unsigned descriptor_count;
+		bool found;
+
+		if (validate_keys(arr, "descriptors", descriptor_keys,
+		    nitems(descriptor_keys), errbuf, errlen) != 0)
+			return (-1);
+		descriptor_count = 0;
+		dit = NULL;
+		while ((descriptor = ucl_object_iterate(arr, &dit, true)) != NULL) {
+			if (++descriptor_count > SERVICED_MAX_COMPONENTS ||
+			    ucl_object_type(descriptor) != UCL_OBJECT) {
+				snprintf(errbuf, errlen,
+				    "descriptor declarations must be objects");
+				return (-1);
+			}
+			if (strcmp(ucl_object_key(descriptor), "filesystem") != 0) {
+				if (ucl_object_iterate(descriptor,
+				    &(ucl_object_iter_t){ 0 }, true) != NULL) {
+					snprintf(errbuf, errlen,
+					    "descriptors.%s does not accept options",
+					    ucl_object_key(descriptor));
+					return (-1);
+				}
+				continue;
+			}
+			if (validate_keys(descriptor, "descriptors.filesystem",
+			    filesystem_descriptor_keys,
+			    nitems(filesystem_descriptor_keys), errbuf, errlen) != 0)
+				return (-1);
+			storage_name = ucl_object_lookup(descriptor, "storage");
+			if (storage_name == NULL ||
+			    ucl_object_type(storage_name) != UCL_STRING ||
+			    !valid_unit_name(ucl_object_tostring(storage_name))) {
+				snprintf(errbuf, errlen,
+				    "descriptors.filesystem requires a storage name");
+				return (-1);
+			}
+			claims = ucl_object_lookup(root, "storage");
+			claim = NULL;
+			found = false;
+			for (unsigned ci = 0; claims != NULL &&
+			    ci < ucl_array_size(claims); ci++) {
+				uint64_t claim_rights;
+
+				claim = ucl_array_find_index(claims, ci);
+				v = ucl_object_lookup(claim, "name");
+				if (strcmp(ucl_object_tostring(v),
+				    ucl_object_tostring(storage_name)) != 0)
+					continue;
+				(void)parse_storage_rights(
+				    ucl_object_lookup(claim, "rights"), &claim_rights);
+				if ((claim_rights & ZH_MOUNT) == 0) {
+					snprintf(errbuf, errlen,
+					    "filesystem storage '%s' requires mount rights",
+					    ucl_object_tostring(storage_name));
+					return (-1);
+				}
+				found = true;
+				break;
+			}
+			if (!found) {
+				snprintf(errbuf, errlen,
+				    "filesystem references undeclared storage '%s'",
+				    ucl_object_tostring(storage_name));
+				return (-1);
+			}
+		}
+	}
+	if (caps == NULL)
+		return (0);
 
 	arr = ucl_object_lookup(caps, "network");
 	it = NULL;
@@ -851,48 +1096,6 @@ parse_restart_policy(const ucl_object_t *obj, const char *path)
 	return (CAPBUNDLE_RESTART_NEVER);
 }
 
-static int
-parse_components(const ucl_object_t *root, struct capbundle_service *svc,
-    char *errbuf, size_t errlen)
-{
-	const ucl_object_t *components, *entry;
-	struct serviced_component *component;
-	ucl_object_iter_t it;
-	const char *name, *provider;
-
-	(void)errbuf;
-	(void)errlen;
-	components = ucl_object_lookup(root, "components");
-	if (components == NULL)
-		return (0);
-	it = NULL;
-	do {
-		entry = ucl_object_type(components) == UCL_STRING ?
-		    components : ucl_object_iterate(components, &it, true);
-		if (entry == NULL)
-			break;
-		name = ucl_object_tostring(entry);
-		component = &svc->components[svc->ncomponents];
-		strlcpy(component->name, name, sizeof(component->name));
-		provider = strcmp(name, "filesystem") == 0 ?
-		    "org.5bsd.FileSystemCmp" : strcmp(name, "network") == 0 ?
-		    "org.5bsd.NetworkCmp" : "org.5bsd.CryptoCmp";
-		for (unsigned i = 0; i < svc->nstartup_after; i++)
-			if (strcmp(svc->startup_after[i], provider) == 0)
-				goto dependency_present;
-		if (svc->nstartup_after >= SERVICED_MAX_COMPONENTS) {
-			snprintf(errbuf, errlen,
-			    "components exceed the startup-edge limit");
-			return (-1);
-		}
-		strlcpy(svc->startup_after[svc->nstartup_after++], provider,
-		    sizeof(svc->startup_after[0]));
-dependency_present:
-		svc->ncomponents++;
-	} while (ucl_object_type(components) != UCL_STRING);
-	return (0);
-}
-
 static uint32_t
 parse_cap_system(const ucl_object_t *obj, const char *path)
 {
@@ -934,17 +1137,289 @@ parse_cap_system(const ucl_object_t *obj, const char *path)
 }
 
 /*
- * Parse a single Service.ucl file within a bundle.
+ * Launcher-applied protection policy.  A "protect" array of flag names is
+ * mapped to a capprotect CP_SF_* bitmask that serviced installs on the process
+ * (by its process descriptor) at pdfork(2) time.  The group aliases "protect"
+ * and "restrict" expand to the standard outward and self restriction sets; the
+ * union "all" applies everything.
+ */
+static uint32_t
+parse_protect_flags(const ucl_object_t *obj, const char *path)
+{
+	static const struct { const char *name; uint32_t flag; } protect_names[] = {
+		{ "ptrace", CP_SF_PTRACE },	{ "signal", CP_SF_SIGNAL },
+		{ "visible", CP_SF_VISIBLE },	{ "wait", CP_SF_WAIT },
+		{ "sigkill", CP_SF_SIGKILL },	{ "sigcont", CP_SF_SIGCONT },
+		{ "sched", CP_SF_SCHED },	{ "core", CP_SF_CORE },
+		{ "ktrace", CP_SF_KTRACE },	{ "noprivs", CP_SF_NOPRIVS },
+		{ "nofork", CP_SF_NOFORK },	{ "noipc", CP_SF_NOIPC },
+		{ "nofdrecv", CP_SF_NOFDRECV },	{ "noexec", CP_SF_NOEXEC },
+		{ "nosock", CP_SF_NOSOCK },
+		{ "protect", CP_SF_PROTECT },	{ "restrict", CP_SF_RESTRICT },
+		{ "all", CP_SF_ALL },
+	};
+	const ucl_object_t *arr, *elem;
+	ucl_object_iter_t it;
+	uint32_t mask;
+	unsigned pi;
+	bool found;
+
+	arr = ucl_object_lookup(obj, "protect");
+	if (arr == NULL)
+		return (0);
+	mask = 0;
+	it = NULL;
+	while ((elem = ucl_object_iterate(arr, &it, true)) != NULL) {
+		if (ucl_object_type(elem) != UCL_STRING)
+			continue;
+		const char *name = ucl_object_tostring(elem);
+		found = false;
+		for (pi = 0; pi < nitems(protect_names); pi++) {
+			if (strcmp(name, protect_names[pi].name) == 0) {
+				mask |= protect_names[pi].flag;
+				found = true;
+				break;
+			}
+		}
+		if (!found)
+			syslog(LOG_WARNING,
+			    "capbundle %s: unknown protect flag: %s", path, name);
+	}
+	return (mask);
+}
+
+/*
+ * Parse the sole bundle-level manifest.  No unit metadata is accepted here,
+ * and the exact inventory is retained in declaration order.
  */
 int
-capbundle_parse_service_ucl(const char *path, const char *bundle_path,
-    struct capbundle_service *svc, char *bundle_id, size_t bundle_id_sz,
-    char *version, size_t version_sz, char *author, size_t author_sz,
+capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
     char *errbuf, size_t errlen)
+{
+	static const char *const keys[] = { "schema", "schema_version",
+	    "bundle_id", "version", "sequence", "author", "publisher",
+	    "units", "shared" };
+	static const char *const shared_keys[] = { "storage" };
+	static const char *const shared_storage_keys[] = { "name", "flavor",
+	    "lifetime" };
+	struct ucl_parser *parser;
+	ucl_object_t *root;
+	const ucl_object_t *v, *units, *entry, *shared, *storage;
+	ucl_object_iter_t it;
+	struct stat sb;
+	unsigned i;
+
+	if (bundle == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (stat(path, &sb) == -1 || !S_ISREG(sb.st_mode)) {
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "%s: missing regular Bundle.ucl", path);
+		return (-1);
+	}
+	if (sb.st_size == 0) {
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "%s: empty document", path);
+		return (-1);
+	}
+	if (sb.st_size > CAPBUNDLE_MAX_UCL_SIZE) {
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "%s: file too large", path);
+		return (-1);
+	}
+	parser = ucl_parser_new(UCL_PARSER_NO_IMPLICIT_ARRAYS |
+	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_FILEVARS);
+	if (parser == NULL)
+		return (-1);
+	if (!ucl_parser_add_file_full(parser, path, 0, UCL_DUPLICATE_ERROR,
+	    UCL_PARSE_UCL)) {
+		if (errbuf != NULL) {
+			const char *detail = ucl_parser_get_error(parser);
+
+			snprintf(errbuf, errlen, "%s: %s", path,
+			    detail != NULL ? detail : "empty or invalid document");
+		}
+		ucl_parser_free(parser);
+		return (-1);
+	}
+	root = ucl_parser_get_object(parser);
+	ucl_parser_free(parser);
+	if (root == NULL || validate_keys(root, "Bundle.ucl", keys,
+	    nitems(keys), errbuf, errlen) != 0)
+		goto invalid;
+
+	v = ucl_object_lookup(root, "schema");
+	if (v == NULL || ucl_object_type(v) != UCL_STRING ||
+	    strcmp(ucl_object_tostring(v), CAPBUNDLE_SCHEMA) != 0) {
+		snprintf(errbuf, errlen, "schema must be '%s'", CAPBUNDLE_SCHEMA);
+		goto invalid;
+	}
+	v = ucl_object_lookup(root, "schema_version");
+	if (v == NULL || ucl_object_type(v) != UCL_INT ||
+	    ucl_object_toint(v) != CAPBUNDLE_SCHEMA_VERSION) {
+		snprintf(errbuf, errlen, "schema_version must be %d",
+		    CAPBUNDLE_SCHEMA_VERSION);
+		goto invalid;
+	}
+	v = ucl_object_lookup(root, "bundle_id");
+	if (v == NULL || ucl_object_type(v) != UCL_STRING ||
+	    !valid_service_name(ucl_object_tostring(v), CAPBUNDLE_ID_MAX)) {
+		snprintf(errbuf, errlen,
+		    "bundle_id must be a valid reverse-domain identifier");
+		goto invalid;
+	}
+	strlcpy(bundle->bundle_id, ucl_object_tostring(v),
+	    sizeof(bundle->bundle_id));
+	v = ucl_object_lookup(root, "version");
+	if (v == NULL || ucl_object_type(v) != UCL_STRING ||
+	    ucl_object_tostring(v)[0] == '\0' ||
+	    strlen(ucl_object_tostring(v)) >= sizeof(bundle->version)) {
+		snprintf(errbuf, errlen, "version must be a non-empty short string");
+		goto invalid;
+	}
+	strlcpy(bundle->version, ucl_object_tostring(v), sizeof(bundle->version));
+	v = ucl_object_lookup(root, "sequence");
+	if (v == NULL || ucl_object_type(v) != UCL_INT ||
+	    ucl_object_toint(v) < 1) {
+		snprintf(errbuf, errlen, "sequence must be a positive integer");
+		goto invalid;
+	}
+	bundle->sequence = (uint64_t)ucl_object_toint(v);
+
+#define COPY_OPTIONAL_STRING(key, field) do { \
+	v = ucl_object_lookup(root, (key)); \
+	if (v != NULL && (ucl_object_type(v) != UCL_STRING || \
+	    ucl_object_tostring(v)[0] == '\0' || \
+	    strlen(ucl_object_tostring(v)) >= sizeof(bundle->field))) { \
+		snprintf(errbuf, errlen, "%s must be a non-empty short string", \
+		    (key)); \
+		goto invalid; \
+	} \
+	if (v != NULL) \
+		strlcpy(bundle->field, ucl_object_tostring(v), \
+		    sizeof(bundle->field)); \
+} while (0)
+	COPY_OPTIONAL_STRING("author", author);
+	COPY_OPTIONAL_STRING("publisher", publisher);
+#undef COPY_OPTIONAL_STRING
+
+	shared = ucl_object_lookup(root, "shared");
+	if (shared != NULL) {
+		if (validate_keys(shared, "shared", shared_keys,
+		    nitems(shared_keys), errbuf, errlen) != 0)
+			goto invalid;
+		storage = ucl_object_lookup(shared, "storage");
+		if (storage != NULL && (ucl_object_type(storage) != UCL_ARRAY ||
+		    ucl_array_size(storage) > CAPBUNDLE_MAX_CAP_STORAGE)) {
+			snprintf(errbuf, errlen,
+			    "shared.storage must be an array with at most %u entries",
+			    CAPBUNDLE_MAX_CAP_STORAGE);
+			goto invalid;
+		}
+		it = NULL;
+		while (storage != NULL &&
+		    (entry = ucl_object_iterate(storage, &it, true)) != NULL) {
+			struct capbundle_shared_storage *ss;
+			const ucl_object_t *name, *flavor, *lifetime;
+			unsigned j;
+
+			if (validate_keys(entry, "shared.storage entry",
+			    shared_storage_keys, nitems(shared_storage_keys), errbuf,
+			    errlen) != 0)
+				goto invalid;
+			name = ucl_object_lookup(entry, "name");
+			flavor = ucl_object_lookup(entry, "flavor");
+			lifetime = ucl_object_lookup(entry, "lifetime");
+			if (name == NULL || ucl_object_type(name) != UCL_STRING ||
+			    !valid_unit_name(ucl_object_tostring(name)) ||
+			    (flavor != NULL &&
+			    (ucl_object_type(flavor) != UCL_STRING ||
+			    ucl_object_tostring(flavor)[0] == '\0' ||
+			    strlen(ucl_object_tostring(flavor)) >=
+			    ORT_STORAGE_FLAVOR_MAX))) {
+				snprintf(errbuf, errlen,
+				    "invalid shared.storage entry");
+				goto invalid;
+			}
+			ss = &bundle->shared_storage[bundle->nshared_storage];
+			memset(ss, 0, sizeof(*ss));
+			ss->lifetime = ORT_STORAGE_PERSISTENT;
+			if (lifetime != NULL &&
+			    (ucl_object_type(lifetime) != UCL_STRING ||
+			    parse_storage_lifetime_string(
+			    ucl_object_tostring(lifetime), &ss->lifetime) != 0)) {
+				snprintf(errbuf, errlen,
+				    "invalid shared.storage lifetime");
+				goto invalid;
+			}
+			for (j = 0; j < bundle->nshared_storage; j++)
+				if (strcmp(bundle->shared_storage[j].name,
+				    ucl_object_tostring(name)) == 0) {
+					snprintf(errbuf, errlen,
+					    "duplicate shared storage '%s'",
+					    ucl_object_tostring(name));
+					goto invalid;
+				}
+			strlcpy(ss->name, ucl_object_tostring(name), sizeof(ss->name));
+			if (flavor != NULL)
+				strlcpy(ss->flavor, ucl_object_tostring(flavor),
+				    sizeof(ss->flavor));
+			bundle->nshared_storage++;
+		}
+	}
+
+	units = ucl_object_lookup(root, "units");
+	if (units == NULL || ucl_object_type(units) != UCL_ARRAY ||
+	    ucl_array_size(units) == 0 ||
+	    ucl_array_size(units) > CAPBUNDLE_MAX_SERVICES) {
+		snprintf(errbuf, errlen, "units must contain between 1 and %u names",
+		    CAPBUNDLE_MAX_SERVICES);
+		goto invalid;
+	}
+	it = NULL;
+	while ((entry = ucl_object_iterate(units, &it, true)) != NULL) {
+		const char *name;
+
+		if (ucl_object_type(entry) != UCL_STRING ||
+		    !valid_unit_name(name = ucl_object_tostring(entry))) {
+			snprintf(errbuf, errlen,
+			    "units contains an invalid unit name");
+			goto invalid;
+		}
+		if (strlen(bundle->bundle_id) + 1 + strlen(name) >=
+		    SERVICED_LABEL_MAX) {
+			snprintf(errbuf, errlen,
+			    "bundle_id and unit name produce an overlong identity");
+			goto invalid;
+		}
+		for (i = 0; i < bundle->nunit_names; i++)
+			if (strcmp(bundle->unit_names[i], name) == 0) {
+				snprintf(errbuf, errlen,
+				    "units contains duplicate '%s'", name);
+				goto invalid;
+			}
+		strlcpy(bundle->unit_names[bundle->nunit_names++], name,
+		    sizeof(bundle->unit_names[0]));
+	}
+	ucl_object_unref(root);
+	return (0);
+
+invalid:
+	if (root != NULL)
+		ucl_object_unref(root);
+	return (-1);
+}
+
+/* Parse one Unit.ucl file declared by Bundle.ucl. */
+int
+capbundle_parse_unit_ucl(const char *path, const char *unit_path,
+    const struct capbundle *bundle, const char *unit_name,
+    struct capbundle_service *svc, char *errbuf, size_t errlen)
 {
 	struct ucl_parser *parser;
 	ucl_object_t *root;
-	const ucl_object_t *v;
+	const ucl_object_t *v, *activation;
 	const char *program;
 	char bin_path[PATH_MAX];
 	struct stat ucl_sb;
@@ -964,6 +1439,11 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 			    path);
 		return (-1);
 	}
+	if (ucl_sb.st_size == 0) {
+		if (errbuf != NULL)
+			snprintf(errbuf, errlen, "%s: empty document", path);
+		return (-1);
+	}
 	if (ucl_sb.st_size > CAPBUNDLE_MAX_UCL_SIZE) {
 		if (errbuf)
 			snprintf(errbuf, errlen,
@@ -973,7 +1453,8 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 		return (-1);
 	}
 
-	parser = ucl_parser_new(0);
+	parser = ucl_parser_new(UCL_PARSER_NO_IMPLICIT_ARRAYS |
+	    UCL_PARSER_DISABLE_MACRO | UCL_PARSER_NO_FILEVARS);
 	if (parser == NULL) {
 		if (errbuf)
 			snprintf(errbuf, errlen, "ucl_parser_new failed");
@@ -982,9 +1463,12 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 
 	if (!ucl_parser_add_file_full(parser, path, 0, UCL_DUPLICATE_ERROR,
 	    UCL_PARSE_UCL)) {
-		if (errbuf)
+		if (errbuf) {
+			const char *detail = ucl_parser_get_error(parser);
+
 			snprintf(errbuf, errlen, "%s: %s", path,
-			    ucl_parser_get_error(parser));
+			    detail != NULL ? detail : "empty or invalid document");
+		}
 		ucl_parser_free(parser);
 		return (-1);
 	}
@@ -997,29 +1481,16 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 		return (-1);
 	}
 
-	if (validate_manifest_schema(root, errbuf, errlen) != 0) {
+	if (validate_unit_schema(root, errbuf, errlen) != 0) {
 		ucl_object_unref(root);
 		return (-1);
 	}
 
-	/* Bundle metadata (extracted from first service parsed). */
-	parse_string_field(root, "bundle_id", bundle_id, bundle_id_sz);
-	parse_string_field(root, "version", version, version_sz);
-	parse_string_field(root, "author", author, author_sz);
-
-	/* Program — relative to bin/ */
+	/* Program defaults to bin/<unit-name> within the unit bundle. */
 	v = ucl_object_lookup(root, "program");
-	if (v == NULL || ucl_object_type(v) != UCL_STRING) {
-		if (errbuf)
-			snprintf(errbuf, errlen, "%s: missing 'program' field",
-			    path);
-		ucl_object_unref(root);
-		return (-1);
-	}
-	program = ucl_object_tostring(v);
+	program = v != NULL ? ucl_object_tostring(v) : unit_name;
 	/* Reject path traversal and absolute paths in program name. */
-	if (program[0] == '/' || program[0] == '\0' ||
-	    strstr(program, "..") != NULL) {
+	if (!valid_program_name(program)) {
 		if (errbuf)
 			snprintf(errbuf, errlen,
 			    "%s: invalid program name: %s", path, program);
@@ -1027,7 +1498,7 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 		return (-1);
 	}
 	if (snprintf(bin_path, sizeof(bin_path), "%s/bin/%s",
-	    bundle_path, program) >= (int)sizeof(bin_path)) {
+	    unit_path, program) >= (int)sizeof(bin_path)) {
 		if (errbuf)
 			snprintf(errbuf, errlen,
 			    "%s: resolved program path too long", path);
@@ -1055,22 +1526,18 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 	}
 
 	/* Runtime identity is private and independent from exposed names. */
-	if (snprintf(svc->label, sizeof(svc->label), "%s/%s",
-	    ucl_object_tostring(ucl_object_lookup(root, "bundle_id")),
-	    program) >= (int)sizeof(svc->label)) {
+	if (snprintf(svc->label, sizeof(svc->label), "%s/%s", bundle->bundle_id,
+	    unit_name) >= SERVICED_LABEL_MAX) {
 		snprintf(errbuf, errlen,
 		    "bundle_id and program produce an overlong runtime identity");
 		ucl_object_unref(root);
 		return (-1);
 	}
-	parse_string_array(root, "provides", svc->provides,
+	activation = ucl_object_lookup(root, "activation");
+	v = ucl_object_lookup(activation, "boot");
+	svc->activation_boot = v != NULL && ucl_object_toboolean(v);
+	parse_string_array(activation, "ipc", svc->provides,
 	    CAPBUNDLE_MAX_PROVIDES, &svc->nprovides);
-
-	/* Locally injected authority replacements. */
-	if (parse_components(root, svc, errbuf, errlen) == -1) {
-		ucl_object_unref(root);
-		return (-1);
-	}
 
 	/* Kernel module requirements */
 	parse_string_array_n(root, "kmod_requires", svc->kmod_requires,
@@ -1096,6 +1563,9 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 
 	/* System capabilities */
 	svc->cap_system = parse_cap_system(root, path);
+
+	/* Launcher-applied protection policy */
+	svc->protect_flags = parse_protect_flags(root, path);
 
 	/* Path capabilities */
 	{
@@ -1541,8 +2011,15 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 				vsocks = ucl_object_lookup(caps, "vsock");
 				while (vsocks != NULL && (velem = ucl_object_iterate(
 				    vsocks, &vit, true)) != NULL) {
-					struct ort_vsock_claim *vc =
-					    &svc->cap_vsock[svc->ncap_vsock];
+					struct ort_vsock_claim *vc;
+
+					/* The schema validator bounds the
+					 * declaration count, but do not rely
+					 * on that pass from here. */
+					if (svc->ncap_vsock >=
+					    CAPBUNDLE_MAX_CAP_VSOCK)
+						break;
+					vc = &svc->cap_vsock[svc->ncap_vsock];
 					const char *dir;
 					memset(vc, 0, sizeof(*vc));
 					vc->cid = VSOCK_CID_ANY;
@@ -1577,57 +2054,108 @@ capbundle_parse_service_ucl(const char *path, const char *bundle_path,
 				}
 			}
 
-			{
-				const ucl_object_t *stors, *selem, *sv;
-				ucl_object_iter_t sit = NULL;
-				stors = ucl_object_lookup(caps, "storage");
-				while (stors != NULL && svc->ncap_storage <
-				    CAPBUNDLE_MAX_CAP_STORAGE &&
-				    (selem = ucl_object_iterate(stors, &sit,
-				    true)) != NULL) {
-					struct ort_storage_claim *sc =
-					    &svc->cap_storage[svc->ncap_storage];
-					const char *nm, *fv;
-
-					if (ucl_object_type(selem) != UCL_OBJECT)
-						continue;
-					memset(sc, 0, sizeof(*sc));
-					sc->lifetime = ORT_STORAGE_PERSISTENT;
-					sv = ucl_object_lookup(selem, "name");
-					if (sv == NULL ||
-					    ucl_object_type(sv) != UCL_STRING)
-						continue;
-					nm = ucl_object_tostring(sv);
-					if (strlcpy(sc->name, nm,
-					    sizeof(sc->name)) >=
-					    sizeof(sc->name))
-						continue;
-					sv = ucl_object_lookup(selem, "flavor");
-					if (sv != NULL &&
-					    ucl_object_type(sv) == UCL_STRING &&
-					    (fv = ucl_object_tostring(sv)) != NULL &&
-					    strlcpy(sc->flavor, fv,
-					    sizeof(sc->flavor)) >=
-					    sizeof(sc->flavor))
-						continue;
-					if (parse_storage_rights(
-					    ucl_object_lookup(selem, "rights"),
-					    &sc->rights) != 0)
-						continue;
-					sv = ucl_object_lookup(selem,
-					    "lifetime");
-					if (sv != NULL &&
-					    parse_storage_lifetime_string(
-					    ucl_object_tostring(sv),
-					    &sc->lifetime) != 0)
-						continue;
-					svc->ncap_storage++;
-				}
-			}
-
 			parse_string_array_n(caps, "services", svc->cap_services,
 			    sizeof(svc->cap_services[0]),
 			    CAPBUNDLE_MAX_CAP_SERVICES, &svc->ncap_services);
+		}
+	}
+
+	/* Storage is a descriptor declaration, separate from policy gates. */
+	{
+		const ucl_object_t *stors, *selem, *sv;
+		ucl_object_iter_t sit = NULL;
+
+		stors = ucl_object_lookup(root, "storage");
+		while (stors != NULL && (selem = ucl_object_iterate(stors, &sit,
+		    true)) != NULL) {
+			struct ort_storage_claim *sc;
+			const char *scope_name;
+			unsigned i;
+
+			sc = &svc->cap_storage[svc->ncap_storage];
+			memset(sc, 0, sizeof(*sc));
+			sc->lifetime = ORT_STORAGE_PERSISTENT;
+			sv = ucl_object_lookup(selem, "name");
+			strlcpy(sc->name, ucl_object_tostring(sv), sizeof(sc->name));
+			sv = ucl_object_lookup(selem, "scope");
+			scope_name = ucl_object_tostring(sv);
+			sc->scope = strcmp(scope_name, "shared") == 0 ?
+			    ORT_STORAGE_SCOPE_SHARED : ORT_STORAGE_SCOPE_UNIT;
+			if (sc->scope == ORT_STORAGE_SCOPE_SHARED) {
+				for (i = 0; i < bundle->nshared_storage; i++)
+					if (strcmp(bundle->shared_storage[i].name,
+					    sc->name) == 0)
+						break;
+				if (i == bundle->nshared_storage) {
+					snprintf(errbuf, errlen,
+					    "unit references undeclared shared storage '%s'",
+					    sc->name);
+					ucl_object_unref(root);
+					return (-1);
+				}
+				sc->lifetime = bundle->shared_storage[i].lifetime;
+				strlcpy(sc->flavor, bundle->shared_storage[i].flavor,
+				    sizeof(sc->flavor));
+			} else {
+				sv = ucl_object_lookup(selem, "flavor");
+				if (sv != NULL)
+					strlcpy(sc->flavor, ucl_object_tostring(sv),
+					    sizeof(sc->flavor));
+				sv = ucl_object_lookup(selem, "lifetime");
+				if (sv != NULL)
+					(void)parse_storage_lifetime_string(
+					    ucl_object_tostring(sv), &sc->lifetime);
+			}
+			(void)parse_storage_rights(ucl_object_lookup(selem, "rights"),
+			    &sc->rights);
+			if (capbundle_storage_dataset_key(sc->dataset,
+			    bundle->bundle_id, unit_name, sc->name, sc->scope) == -1) {
+				snprintf(errbuf, errlen,
+				    "cannot derive storage dataset key");
+				ucl_object_unref(root);
+				return (-1);
+			}
+			svc->ncap_storage++;
+		}
+	}
+
+	/* Local descriptor factories and their internal startup edges. */
+	{
+		static const struct {
+			const char *name;
+			const char *provider;
+		} descriptor_types[] = {
+			{ "filesystem", "org.5bsd.FileSystemCmp" },
+			{ "network", "org.5bsd.NetworkCmp" },
+			{ "crypto", "org.5bsd.CryptoCmp" }
+		};
+		const ucl_object_t *descriptors, *descriptor, *storage_name;
+		ucl_object_iter_t dit;
+		unsigned di;
+
+		descriptors = ucl_object_lookup(root, "descriptors");
+		dit = NULL;
+		while (descriptors != NULL && (descriptor =
+		    ucl_object_iterate(descriptors, &dit, true)) != NULL) {
+			for (di = 0; di < nitems(descriptor_types); di++)
+				if (strcmp(ucl_object_key(descriptor),
+				    descriptor_types[di].name) == 0)
+					break;
+			if (di == nitems(descriptor_types))
+				continue;
+			strlcpy(svc->components[svc->ncomponents].name,
+			    descriptor_types[di].name,
+			    sizeof(svc->components[svc->ncomponents].name));
+			if (strcmp(descriptor_types[di].name, "filesystem") == 0) {
+				storage_name = ucl_object_lookup(descriptor, "storage");
+				strlcpy(svc->components[svc->ncomponents].storage,
+				    ucl_object_tostring(storage_name),
+				    sizeof(svc->components[svc->ncomponents].storage));
+			}
+			strlcpy(svc->startup_after[svc->nstartup_after++],
+			    descriptor_types[di].provider,
+			    sizeof(svc->startup_after[0]));
+			svc->ncomponents++;
 		}
 	}
 

@@ -930,9 +930,17 @@ service_session_call(struct service_session *session,
 	    message->size < sizeof(*message) || message->data == NULL ||
 	    message->length == 0 ||
 	    (message->nfds != 0 && message->fds == NULL) ||
-	    message->nfds > CLIENT_FD_MAX ||
-	    service_structures_valid(reply, options) == -1)
+	    message->nfds > CLIENT_FD_MAX) {
+		errno = EINVAL;
 		return (-1);
+	}
+	if (service_structures_valid(reply, options) == -1)
+		return (-1);
+	/* Calls need a deadline or an explicit infinite wait; events may poll. */
+	if (options->timeout_ms == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
 	fd_capacity = reply->fd_capacity;
 	reply->length = 0;
 	reply->nfds = fd_capacity;
@@ -956,8 +964,11 @@ service_session_receive_event(struct service_session *session,
 {
 	ssize_t received;
 
-	if (session == NULL || session->client == NULL ||
-	    service_structures_valid(event, options) == -1)
+	if (session == NULL || session->client == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_structures_valid(event, options) == -1)
 		return (-1);
 	event->length = 0;
 	event->nfds = event->fd_capacity;

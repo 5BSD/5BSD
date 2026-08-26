@@ -8,10 +8,15 @@ CAPD_LEASE_FD=9
 capd_guardian_pid=
 capd_guardian_bin=
 capd_serviced_bin=
+capd_oracled_bin=
 
 capd_paths_init()
 {
 	CAPD_WORK=$(pwd)
+	# Units default to the unprivileged capability identity; fixtures and
+	# script services must still be able to create their result markers in
+	# the test work directory.
+	chmod 1777 "$CAPD_WORK"
 	CAPD_PIDFILE="${CAPD_WORK}/oracled.pid"
 	CAPD_CONFIG="${CAPD_WORK}/oracled.conf"
 	CAPD_ORACLE_SOCKET="${CAPD_WORK}/oracled.sock"
@@ -73,11 +78,16 @@ capd_find_serviced()
 	fi
 	machine=$(uname -m)
 	machine_arch=$(uname -p)
+	# Prefer the source-build serviced: qualification must exercise the
+	# same revision as the staged libraries.  An installed serviced from an
+	# older world silently reintroduces userland ABI skew (svc_manifest
+	# grew without an SHLIB_MAJOR bump, which manifested as stack-protector
+	# aborts when the installed binary ran against newer libraries).
 	for candidate in \
 	    "${CAPD_TEST_SERVICED:-}" \
-	    "$(command -v serviced 2>/dev/null)" \
+	    "/usr/obj/usr/src/${machine}.${machine_arch}/usr.sbin/serviced/serviced" \
 	    /usr/libexec/serviced \
-	    "/usr/obj/usr/src/${machine}.${machine_arch}/usr.sbin/serviced/serviced"
+	    "$(command -v serviced 2>/dev/null)"
 	do
 		if [ -n "$candidate" ] && [ -x "$candidate" ]; then
 			capd_serviced_bin=$candidate
@@ -85,6 +95,31 @@ capd_find_serviced()
 		fi
 	done
 	atf_fail "serviced is unavailable"
+}
+
+capd_find_oracled()
+{
+	local candidate machine machine_arch
+
+	if [ -n "$capd_oracled_bin" ] && [ -x "$capd_oracled_bin" ]; then
+		return 0
+	fi
+	machine=$(uname -m)
+	machine_arch=$(uname -p)
+	# Same source-build preference as capd_find_serviced, and for the same
+	# reason: an installed oracled from an older world must not be paired
+	# with the staged libraries.
+	for candidate in \
+	    "${CAPD_TEST_ORACLED:-}" \
+	    "/usr/obj/usr/src/${machine}.${machine_arch}/usr.sbin/oracled/oracled" \
+	    "$(command -v oracled 2>/dev/null)"
+	do
+		if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+			capd_oracled_bin=$candidate
+			return 0
+		fi
+	done
+	atf_fail "oracled is unavailable"
 }
 
 capd_stack_prepare()
@@ -102,6 +137,8 @@ serviced_control_socket = "$CAPD_SERVICED_SOCKET";
 EOF
 	export SERVICED_BUNDLE_DIR_SYSTEM="$CAPD_APPS_SYSTEM"
 	export SERVICED_BUNDLE_DIR_USER="$CAPD_APPS_USER"
+	# Fixture serviced must never replay the host's /etc/rc.
+	export SERVICED_SKIP_RC=1
 }
 
 capd_dump_diagnostics()
@@ -120,6 +157,11 @@ capd_dump_diagnostics()
 	if [ -n "${CAPD_LOG:-}" ] && [ -r "$CAPD_LOG" ]; then
 		tail -100 "$CAPD_LOG" >&2
 	fi
+	# Kernel wait-channel states show whether a lingering stack process is
+	# stuck in an unkillable kernel sleep rather than merely slow.
+	ps -axo pid,ppid,state,wchan,command 2>/dev/null | \
+	    grep -E 'oracled|serviced|capd_test_guardian|capd_service' | \
+	    grep -v grep >&2 || true
 }
 
 capd_guardian_is_running()
@@ -138,9 +180,10 @@ capd_launch_oracle()
 	# Open read/write before launch so neither side blocks.  Close this inherited
 	# descriptor in the guardian process; only the test shell owns the writer.
 	exec 9<>"$CAPD_LEASE"
+	capd_find_oracled
 	"$capd_guardian_bin" run -l "$CAPD_LEASE" \
 	    -s "$CAPD_GUARDIAN_SOCKET" -- \
-	    oracled -d -f "$CAPD_CONFIG" >"$CAPD_LOG" 2>&1 9>&- &
+	    "$capd_oracled_bin" -d -f "$CAPD_CONFIG" >"$CAPD_LOG" 2>&1 9>&- &
 	capd_guardian_pid=$!
 
 	i=0
@@ -211,11 +254,18 @@ capd_stop_stack()
 {
 	local graceful
 
-	if ! capd_guardian_is_running && [ ! -S "$CAPD_ORACLE_SOCKET" ]; then
+	# Socket FILES may be stale leftovers of a killed process group; only
+	# a live guardian (or an oracled that answers its socket) matters.
+	if ! capd_guardian_is_running; then
 		capd_close_lease
 		if [ -n "$capd_guardian_pid" ]; then
 			wait "$capd_guardian_pid" 2>/dev/null || true
 			capd_guardian_pid=
+		fi
+		if [ -S "$CAPD_ORACLE_SOCKET" ] &&
+		    command -v oraclectl >/dev/null 2>&1; then
+			oraclectl -s "$CAPD_ORACLE_SOCKET" shutdown \
+			    >/dev/null 2>&1 || true
 		fi
 		return 0
 	fi
@@ -265,16 +315,20 @@ capd_cleanup_stack()
 		oraclectl -s "$CAPD_ORACLE_SOCKET" shutdown \
 		    >/dev/null 2>&1 || true
 	fi
-	if [ -S "$CAPD_GUARDIAN_SOCKET" ]; then
+	# Judge the guardian by liveness, never by socket-file existence:
+	# the test-body process group is killed when the body exits, which
+	# strips the guardian of its atexit socket removal and leaves a
+	# stale file behind.
+	if capd_guardian_is_running; then
 		"$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" kill \
 		    >/dev/null 2>&1 || true
 	fi
 	i=0
-	while [ -S "$CAPD_GUARDIAN_SOCKET" ] && [ "$i" -lt 50 ]; do
+	while capd_guardian_is_running && [ "$i" -lt 50 ]; do
 		i=$((i + 1))
 		sleep 0.1
 	done
-	if [ -S "$CAPD_GUARDIAN_SOCKET" ]; then
+	if capd_guardian_is_running; then
 		capd_dump_diagnostics
 		return 1
 	fi

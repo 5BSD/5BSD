@@ -11,6 +11,7 @@
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <channel.h>
+#include <libcapbundle.h>
 #include <errno.h>
 #include <string.h>
 #include <syslog.h>
@@ -354,8 +355,7 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 		    ENAMETOOLONG, NULL, 0);
 		return (false);
 	}
-	if (strcmp(req->name, "org.5bsd.FileSystemCmp") == 0 ||
-	    strcmp(req->name, "org.5bsd.NetworkCmp") == 0) {
+	if (capbundle_descriptor_factory_name(req->name)) {
 		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, EACCES,
 		    NULL, 0);
 		return (false);
@@ -517,8 +517,12 @@ supervisor_handle_channel(struct kevent *event)
 	}
 	if (svc->control_channel == NULL)
 		return;
-	if (event->flags & EV_EOF)
+	if (event->flags & EV_EOF) {
+		/* The peer hung up; errno is stale here and must not leak
+		 * into the diagnostic. */
+		errno = ECONNRESET;
 		goto dead;
+	}
 	if (event->filter == EVFILT_WRITE) {
 		if (channel_flush(svc->control_channel) == -1)
 			goto dead;

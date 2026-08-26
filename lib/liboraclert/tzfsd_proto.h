@@ -24,9 +24,9 @@
 #include <sys/types.h>
 
 #define	TZFSD_PROTO_VERSION_MAJOR	0
-#define	TZFSD_PROTO_VERSION_MINOR	0
-#define	TZFSD_PROTO_VERSION_PATCH	1
-#define	TZFSD_PROTO_VERSION		1
+#define	TZFSD_PROTO_VERSION_MINOR	1
+#define	TZFSD_PROTO_VERSION_PATCH	0
+#define	TZFSD_PROTO_VERSION		2
 
 /* Well-known listening socket for non-sandboxed clients. */
 #define	TZFSD_SOCK_PATH			"/var/run/tzfsd.sock"
@@ -40,9 +40,10 @@
  * claim without truncation.
  */
 #define	TZFSD_FLAVOR_MAX		32	/* incl. NUL */
-#define	TZFSD_NAME_MAX			64	/* logical claim name, incl. NUL */
+#define	TZFSD_NAME_MAX			64	/* opaque dataset key, incl. NUL */
 #define	TZFSD_DATASET_MAX		256	/* == ORT_STORAGE_DATASET_MAX */
 #define	TZFSD_MAX_FLAVORS		16	/* LIST_FLAVORS reply cap */
+#define	TZFSD_SESSION_MAX		33	/* 128-bit hex id + NUL */
 
 /*
  * Lifetimes.  Numerically identical to ORT_STORAGE_* so a manifest claim's
@@ -50,15 +51,18 @@
  * not have to pull in the oraclert manifest header.
  */
 #define	TZFSD_PERSISTENT		0
-#define	TZFSD_EPHEMERAL			1
+#define	TZFSD_CACHE			1
+#define	TZFSD_BOOT			2
+#define	TZFSD_LEASE			3
 
 /*
  * Operation codes — first 4 bytes of every request payload.
  */
 #define	TZFSD_OP_REQUEST		1	/* mint/clone a storage handle */
-#define	TZFSD_OP_RELEASE		2	/* tear down an ephemeral claim */
+#define	TZFSD_OP_RELEASE		2	/* tear down a lease claim */
 #define	TZFSD_OP_LIST_FLAVORS		3	/* enumerate offered flavors */
 #define	TZFSD_OP_PING			4	/* liveness check */
+#define	TZFSD_OP_BEGIN_SESSION		5	/* select/reconcile lease generation */
 
 /*
  * TZFSD_OP_REQUEST
@@ -77,10 +81,11 @@ struct tzfsd_request {
 	uint32_t	op;			/* TZFSD_OP_REQUEST */
 	uint32_t	flags;			/* ZHF_* (subtree, etc.) */
 	uint64_t	rights;			/* ZH_* mask to grant */
-	uint8_t		lifetime;		/* TZFSD_PERSISTENT / EPHEMERAL */
+	uint8_t		lifetime;		/* TZFSD_* lifecycle */
 	uint8_t		_reserved[7];
 	char		flavor[TZFSD_FLAVOR_MAX];
-	char		name[TZFSD_NAME_MAX];	/* logical claim name */
+	char		dataset[TZFSD_NAME_MAX]; /* opaque stable leaf key */
+	char		session[TZFSD_SESSION_MAX];
 };
 
 /*
@@ -88,7 +93,7 @@ struct tzfsd_request {
  *   req:   struct tzfsd_request (op, name; flavor/rights/flags ignored)
  *   reply: struct tzfsd_reply { .status }
  *
- * Destroy the ephemeral clone previously granted under this name.  A missing
+ * Destroy the lease dataset previously granted under this key.  A missing
  * target is success (idempotent stop).
  */
 

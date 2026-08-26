@@ -11,7 +11,7 @@
 
 #include "store.h"
 
-#define	LOGCMP_CONFIG_PATH		"/etc/logd.conf"
+#define	LOGCMP_CONFIG_NAME	"logd.conf"
 #define	LOGCMP_CONFIG_MAX_SIZE		(64U * 1024)
 #define	LOGCMP_RING_SIZE_DEFAULT	(256U * 1024)
 #define	LOGCMP_RING_SIZE_MIN		(64U * 1024)

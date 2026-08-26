@@ -119,17 +119,15 @@ tzfsctl list-flavors
 # freebsd
 # linux  (default)
 
-tzfsctl request -f linux -l ephemeral -m scratch
-# granted zroot/Capabilities/ephemeral/.../scratch (flavor=linux, ephemeral)
+tzfsctl request -f linux -l lease -m scratch
+# granted zroot/Capabilities/ephemeral/lease-.../... (flavor=linux, lease)
 ```
 
 Or declaratively, in a service manifest:
 
 ```ucl
-capabilities {
-    storage = [{ name = "rootfs"; flavor = "linux";
-                 rights = ["mount", "snapshot"]; lifetime = "ephemeral"; }];
-}
+storage = [{ name = "rootfs"; scope = "unit"; flavor = "linux";
+             rights = ["mount", "snapshot"]; lifetime = "lease"; }];
 ```
 
 **Status.** The `source` build mode (fetch/unpack from a configured URL on

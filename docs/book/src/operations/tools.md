@@ -37,9 +37,9 @@ commands:
   bundles             list all registered bundles
 ```
 
-There is no separate `capctl` or `cmi` tool: `/dev/mac_capability` is
-held exclusively by oracled, and capability administration goes through
-`oraclectl` and `servicectl`.
+There is no separate low-level capability administration tool:
+`/dev/mac_capability` is held exclusively by oracled, and capability
+administration goes through `oraclectl` and `servicectl`.
 
 ## tzfsctl — TrustedZFS broker CLI
 

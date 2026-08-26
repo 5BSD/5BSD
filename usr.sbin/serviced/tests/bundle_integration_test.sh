@@ -22,16 +22,19 @@ system_bundle_startup_head() {
 	require_oracle_stack_kmods
 }
 system_bundle_startup_body() {
+	local bundle
+
 	prepare_paths
-	create_system_bundle "BootTest" "org.test.boot" "bootd" \
-	    "org.test.boot.svc"
+	bundle=$(create_system_bundle "BootTest" "org.test.boot" "bootd" \
+	    "org.test.boot.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/bootd.unit/Unit.ucl"
 
 	start_stack
 	wait_for_file "${WORK}/bootd.ready" 5
 
-	# Service should be running.  serviced identifies services by label,
-	# which is provides[0] (libcapbundle_parse.c), not the program name.
-	atf_check -s exit:0 -o match:"org.test.boot.svc.*running" \
+	# A manifest without provides is an eager boot task.  Runtime identity is
+	# bundle_id/program and remains independent from public endpoint names.
+	atf_check -s exit:0 -o match:"org.test.boot/bootd.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 
 	# Attribution should show "system"
@@ -59,8 +62,8 @@ on_demand_launch_body() {
 
 	start_stack
 
-	# Service should NOT be running yet (labelled by provides[0]).
-	atf_check -s exit:0 -o not-match:"org.test.lazy.svc.*running" \
+	# The endpoint is reserved, but its bundle_id/program runtime is absent.
+	atf_check -s exit:0 -o not-match:"org.test.lazy/lazyd.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 
 	# Trigger lookup from a client
@@ -68,7 +71,7 @@ on_demand_launch_body() {
 
 	# Now it should be running
 	wait_for_file "${WORK}/lazyd.ready" 10
-	atf_check -s exit:0 -o match:"org.test.lazy.svc.*running" \
+	atf_check -s exit:0 -o match:"org.test.lazy/lazyd.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 }
 on_demand_launch_cleanup() {
@@ -89,12 +92,7 @@ on_demand_timeout_body() {
 	build_lookup_client
 	# Create a service that never calls service_ready()
 	create_user_bundle_custom "Hang" "hangd" \
-	    'bundle_id = "org.test.hang";
-version = "1.0";
-author = "test";
-program = "hangd";
-provides = ["org.test.hang.svc"];
-'
+	    'activation { ipc = ["org.test.hang.svc"]; }'
 
 	start_stack
 
@@ -119,21 +117,44 @@ stop_service_head() {
 	require_oracle_stack_kmods
 }
 stop_service_body() {
+	local bundle
+
 	prepare_paths
-	create_system_bundle "StopMe" "org.test.stop" "stopd" \
-	    "org.test.stop.svc"
+	bundle=$(create_system_bundle "StopMe" "org.test.stop" "stopd" \
+	    "org.test.stop.svc" "stop_timeout = 1;")
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/stopd.unit/Unit.ucl"
 
 	start_stack
 	wait_for_file "${WORK}/stopd.ready" 5
 
 	# Stop it
 	atf_check -s exit:0 -o match:"stopping" \
-	    servicectl -s "${CTL_SOCK}" stop "org.test.stop.svc"
+	    servicectl -s "${CTL_SOCK}" stop "org.test.stop/stopd"
 
-	# Wait for it to actually stop
-	sleep 1
-	atf_check -s exit:0 -o match:"org.test.stop.svc.*stopped" \
+	# The compat-ready fixture blocks and does not answer QUIESCE, so it
+	# exits only when the stop_timeout SIGKILL fires (1s here).  Poll for the
+	# terminal stopped state rather than assuming a fixed settle time.
+	i=0
+	while [ "$i" -lt 60 ]; do
+		if servicectl -s "${CTL_SOCK}" status |
+		    grep -q "org.test.stop/stopd.*stopped"; then
+			break
+		fi
+		i=$((i + 1))
+		sleep 0.2
+	done
+	atf_check -s exit:0 -o match:"org.test.stop/stopd.*stopped" \
 	    servicectl -s "${CTL_SOCK}" status
+
+	# A stopped unit can be explicitly started again; a second start is
+	# rejected while it is active.
+	rm -f "${WORK}/stopd.ready"
+	atf_check -s exit:0 -o match:"starting" \
+	    servicectl -s "${CTL_SOCK}" start "org.test.stop/stopd"
+	wait_for_file "${WORK}/stopd.ready" 5 ||
+	    atf_fail "explicitly started service did not become ready"
+	atf_check -s exit:1 -e match:"not stopped" \
+	    servicectl -s "${CTL_SOCK}" start "org.test.stop/stopd"
 }
 stop_service_cleanup() {
 	cleanup_common
@@ -169,6 +190,8 @@ reload_new_service_head() {
 	require_oracle_stack_kmods
 }
 reload_new_service_body() {
+	local bundle
+
 	prepare_paths
 	start_stack
 
@@ -177,8 +200,9 @@ reload_new_service_body() {
 	    servicectl -s "${CTL_SOCK}" status
 
 	# Add a new bundle
-	create_user_bundle "NewApp" "org.test.new" "newbie" \
-	    "org.test.new.svc"
+	bundle=$(create_user_bundle "NewApp" "org.test.new" "newbie" \
+	    "org.test.new.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/newbie.unit/Unit.ucl"
 
 	# Reload.  The reply summary is "reload: N bundles, M new, ..."
 	# (supervisor_reload); one new service means "1 new".
@@ -186,7 +210,7 @@ reload_new_service_body() {
 	    servicectl -s "${CTL_SOCK}" reload
 
 	wait_for_file "${WORK}/newbie.ready" 5
-	atf_check -s exit:0 -o match:"org.test.new.svc.*running" \
+	atf_check -s exit:0 -o match:"org.test.new/newbie.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 }
 reload_new_service_cleanup() {
@@ -203,9 +227,12 @@ reload_remove_service_head() {
 	require_oracle_stack_kmods
 }
 reload_remove_service_body() {
+	local bundle
+
 	prepare_paths
-	create_user_bundle "Removable" "org.test.rm" "rmd" \
-	    "org.test.rm.svc"
+	bundle=$(create_user_bundle "Removable" "org.test.rm" "rmd" \
+	    "org.test.rm.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/rmd.unit/Unit.ucl"
 
 	start_stack
 	wait_for_file "${WORK}/rmd.ready" 5
@@ -218,9 +245,9 @@ reload_remove_service_body() {
 	atf_check -s exit:0 -o ignore \
 	    servicectl -s "${CTL_SOCK}" reload
 
-	# Service should be stopping/stopped (labelled by provides[0]).
+	# The runtime is no longer running.
 	sleep 1
-	atf_check -s exit:0 -o not-match:"org.test.rm.svc.*running" \
+	atf_check -s exit:0 -o not-match:"org.test.rm/rmd.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 }
 reload_remove_service_cleanup() {
@@ -257,15 +284,17 @@ bundles_list_head() {
 	atf_set "descr" "servicectl bundles lists registered bundles"
 }
 bundles_list_body() {
-	# This doesn't need a running serviced — it scans directories directly
-	TMPDIR=$(atf_get_srcdir)/work.$$
+	# This doesn't need a running serviced — it scans directories directly.
+	# Scratch space must live in the kyua work directory: the source
+	# directory may be a read-only medium.
+	TMPDIR=${PWD}/work.$$
 	mkdir -p "${TMPDIR}"
 
 	atf_check -s exit:0 -o match:"System bundles" \
 	    servicectl bundles
 }
 bundles_list_cleanup() {
-	rm -rf "$(atf_get_srcdir)/work.$$"
+	rm -rf "${PWD}"/work.*
 }
 
 # ---------------------------------------------------------------
@@ -280,7 +309,7 @@ dtrace_probes_head() {
 	atf_set "timeout" "60"
 }
 dtrace_probes_body() {
-	local i serviced_pid
+	local bundle i serviced_pid
 
 	prepare_paths
 	printf 'probe target\n' > "${WORK}/dtrace-token-target"
@@ -332,9 +361,10 @@ dtrace_probes_body() {
 		atf_fail "DTrace consumer did not become ready"
 	fi
 
-	create_system_bundle "Traced" "org.test.trace" "traced" \
+	bundle=$(create_system_bundle "Traced" "org.test.trace" "traced" \
 	    "org.test.trace.svc" \
-	    "capabilities { files = [ { path = \"${WORK}/dtrace-token-target\"; actions = [\"read\"]; } ]; services = [\"identity\"]; }"
+	    "capabilities { files = [ { path = \"${WORK}/dtrace-token-target\"; actions = [\"read\"]; } ]; services = [\"identity\"]; }")
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/traced.unit/Unit.ucl"
 	atf_check -s exit:0 -o ignore \
 	    servicectl -s "${CTL_SOCK}" reload
 	if ! wait_for_file "${WORK}/traced.ready" 5; then
@@ -348,7 +378,7 @@ dtrace_probes_body() {
 	while [ "$i" -lt 100 ]; do
 		if grep -q 'FILE.*dtrace-token-target' "${WORK}/dtrace.out" 2>/dev/null &&
 		    grep -q 'SERVICE identity 0' "${WORK}/dtrace.out" 2>/dev/null &&
-		    grep -q 'SVC_CAP org.test.trace.svc identity 0' \
+	    grep -q 'SVC_CAP org.test.trace/traced identity 0' \
 		    "${WORK}/dtrace.out" 2>/dev/null; then
 			break
 		fi
@@ -358,7 +388,7 @@ dtrace_probes_body() {
 	done
 	if ! grep -q 'FILE.*dtrace-token-target' "${WORK}/dtrace.out" 2>/dev/null ||
 	    ! grep -q 'SERVICE identity 0' "${WORK}/dtrace.out" 2>/dev/null ||
-	    ! grep -q 'SVC_CAP org.test.trace.svc identity 0' \
+	    ! grep -q 'SVC_CAP org.test.trace/traced identity 0' \
 	    "${WORK}/dtrace.out" 2>/dev/null; then
 		cat "${WORK}/dtrace.err" >&2
 		cat "${WORK}/dtrace.out" >&2
@@ -373,7 +403,7 @@ dtrace_probes_body() {
 	    cat "${WORK}/dtrace.out"
 	atf_check -s exit:0 -o match:"SERVICE identity 0" \
 	    cat "${WORK}/dtrace.out"
-	atf_check -s exit:0 -o match:"SVC_CAP org.test.trace.svc identity 0" \
+	atf_check -s exit:0 -o match:"SVC_CAP org.test.trace/traced identity 0" \
 	    cat "${WORK}/dtrace.out"
 }
 dtrace_probes_cleanup() {
@@ -412,20 +442,19 @@ reload_changed_bundle_head() {
 	require_oracle_stack_kmods
 }
 reload_changed_bundle_body() {
+	local bundle
+
 	prepare_paths
-	create_system_bundle "Morph" "org.test.morph" "morphd" \
-	    "org.test.morph.svc" 'restart = "never";'
+	bundle=$(create_system_bundle "Morph" "org.test.morph" "morphd" \
+	    "org.test.morph.svc" 'restart = "never";')
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/morphd.unit/Unit.ucl"
 
 	start_stack
 	wait_for_file "${WORK}/morphd.ready" 5
 
 	# Change restart policy
-	cat > "${APPS_DIR}/Morph.cap/etc/morphd.ucl" <<UCL
-bundle_id = "org.test.morph";
-version = "1.0";
-author = "test";
-program = "morphd";
-provides = ["org.test.morph.svc"];
+	cat > "${APPS_DIR}/Morph.cap/Units/morphd.unit/Unit.ucl" <<UCL
+activation { boot = true; ipc = ["org.test.morph.svc"]; }
 restart = "always";
 UCL
 
@@ -453,22 +482,25 @@ stop_already_stopped_head() {
 	require_oracle_stack_kmods
 }
 stop_already_stopped_body() {
+	local bundle
+
 	prepare_paths
-	create_system_bundle "Brief" "org.test.brief" "briefd" \
-	    "org.test.brief.svc"
+	bundle=$(create_system_bundle "Brief" "org.test.brief" "briefd" \
+	    "org.test.brief.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/briefd.unit/Unit.ucl"
 
 	start_stack
 	wait_for_file "${WORK}/briefd.ready" 5
 
 	# Stop it once (servicectl prints "stop: ... stopping" -> -o ignore).
 	atf_check -s exit:0 -o ignore \
-	    servicectl -s "${CTL_SOCK}" stop "org.test.brief.svc"
+	    servicectl -s "${CTL_SOCK}" stop "org.test.brief/briefd"
 
 	sleep 1
 
 	# Stop it again — should fail
 	atf_check -s not-exit:0 -o ignore -e ignore \
-	    servicectl -s "${CTL_SOCK}" stop "org.test.brief.svc"
+	    servicectl -s "${CTL_SOCK}" stop "org.test.brief/briefd"
 }
 stop_already_stopped_cleanup() {
 	cleanup_common
@@ -488,34 +520,25 @@ coalition_kill_on_timeout_body() {
 
 	# Create a stubborn service that ignores SIGTERM
 	local stubdir="${APPS_DIR}/Stubborn.cap"
-	mkdir -p "${stubdir}/etc"
-	mkdir -p "${stubdir}/bin"
+	write_test_bundle "$stubdir" org.test.stubborn stubbornd \
+	    'stop_timeout = 2;' 'activation { boot = true; }'
 
 	# UNQUOTED heredoc: ${WORK} is expanded at write time so the absolute
 	# path bakes into the script (services run with a minimal env and do not
 	# inherit WORK).  \$\$ stays a runtime shell variable.
-	cat > "${stubdir}/bin/stubbornd" <<SVCEOF
+	cat > "${stubdir}/Units/stubbornd.unit/bin/stubbornd" <<SVCEOF
 #!/bin/sh
 trap "" TERM
 echo \$\$ > "${WORK}/stubbornd.pid"
 while :; do sleep 1; done
 SVCEOF
-	chmod 755 "${stubdir}/bin/stubbornd"
-
-	cat > "${stubdir}/etc/stubbornd.ucl" <<UCL
-bundle_id = "org.test.stubborn";
-version = "1.0";
-author = "test";
-program = "stubbornd";
-provides = ["org.test.stubborn.svc"];
-stop_timeout = 2;
-UCL
+	chmod 755 "${stubdir}/Units/stubbornd.unit/bin/stubbornd"
 
 	start_stack
 	wait_for_file "${WORK}/stubbornd.pid" 5
 
 	# Stop the service — it will ignore SIGTERM
-	servicectl -s "${CTL_SOCK}" stop "org.test.stubborn.svc"
+	servicectl -s "${CTL_SOCK}" stop "org.test.stubborn/stubbornd"
 
 	# Wait for stop_timeout + SIGKILL + coalition terminate
 	sleep 4
@@ -558,45 +581,26 @@ on_demand_crash_relaunch_body() {
 	# Create a custom on-demand bundle whose service crashes on
 	# first invocation and runs normally on subsequent ones.
 	local dir="${APPS_DIR}/Crasher.cap"
-	mkdir -p "${dir}/etc"
-	mkdir -p "${dir}/bin"
+	write_test_bundle "$dir" org.test.crash crashd \
+	    'activation { ipc = ["org.test.crash.svc"]; }
+restart = "on-failure";' 'activation { boot = true; }'
 
-	# UNQUOTED heredoc: ${WORK} bakes in at write time; the service's own
-	# runtime shell variables ($statefile, $count, command substitutions)
-	# are escaped so they stay literal in the written script.
-	cat > "${dir}/bin/crashd" <<SVCEOF
-#!/bin/sh
-statefile="${WORK}/crashd.invocations"
-count=0
-if [ -f "\$statefile" ]; then
-	count=\$(cat "\$statefile")
-fi
-count=\$((count + 1))
-echo "\$count" > "\$statefile"
-
-if [ "\$count" -eq 1 ]; then
-	# First invocation: crash immediately.
-	exit 1
-fi
-# Subsequent invocations: hand off to the libservice ready helper so the
-# relaunched instance reports ready (reaches RUNNING) and writes crashd.ready.
-exec "${WORK}/ready_svc" crashd
-SVCEOF
-	chmod 755 "${dir}/bin/crashd"
-
-	cat > "${dir}/etc/crashd.ucl" <<-UCL
-	bundle_id = "org.test.crash";
-	version = "1.0";
-	author = "test";
-	program = "crashd";
-	provides = ["org.test.crash.svc"];
-	restart = "on-failure";
-	UCL
+	# Install the libservice ready helper directly as the service program.
+	# Its crash-once scenario exits non-zero on the first invocation and
+	# reports ready (writing crashd.ready) on every later one.  This is a
+	# single exec from serviced, so the CAP_CLOEXEC_ONCE bootstrap
+	# descriptor — which only survives one exec — reaches the helper; a
+	# wrapper script that re-exec'd a helper would lose it.
+	cp ready_svc "${dir}/Units/crashd.unit/bin/crashd"
+	chmod 755 "${dir}/Units/crashd.unit/bin/crashd"
+	printf '%s\n' \
+	    "arguments = [\"crash-once\", \"${WORK}/crashd.invocations\", \"crashd\", \"org.test.crash.svc\"];" \
+	    >> "${dir}/Units/crashd.unit/Unit.ucl"
 
 	start_stack
 
-	# Service should NOT be running yet (on-demand; labelled by provides[0]).
-	atf_check -s exit:0 -o not-match:"org.test.crash.svc.*running" \
+	# Service should not have a running bundle_id/program runtime yet.
+	atf_check -s exit:0 -o not-match:"org.test.crash/crashd.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 
 	# First lookup triggers launch -> service crashes -> restart.
@@ -612,8 +616,8 @@ SVCEOF
 	atf_check -s exit:0 -o ignore \
 	    grep "exited status 1\|crashed.*crashd" "${logfile}"
 
-	# Service should now be running (labelled by provides[0]).
-	atf_check -s exit:0 -o match:"org.test.crash.svc.*running" \
+	# The relaunched runtime is now running.
+	atf_check -s exit:0 -o match:"org.test.crash/crashd.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 
 	# State file should show at least 2 invocations.
@@ -622,6 +626,115 @@ SVCEOF
 }
 on_demand_crash_relaunch_cleanup() {
 	rm -f "${WORK}/crashd.invocations"
+	cleanup_common
+}
+
+# ---------------------------------------------------------------
+# Test: one bundle can contain eager and on-demand binaries
+# ---------------------------------------------------------------
+atf_test_case multi_binary_bundle_activation cleanup
+multi_binary_bundle_activation_head() {
+	atf_set "descr" \
+	    "One bundle parses two manifests, starts its eager binary, and activates its named binary on lookup"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+multi_binary_bundle_activation_body() {
+	local bundle endpoint
+
+	prepare_paths
+	find_capd_service_fixture
+	build_lookup_client
+	endpoint="org.test.multibin.lazy"
+	bundle="${USER_APPS_DIR}/MultiBinary.cap"
+	mkdir -p "${bundle}/Units/eagerd.unit/bin" \
+	    "${bundle}/Units/lazyd.unit/bin"
+	cat > "$bundle/Bundle.ucl" <<'UCL'
+schema = "org.5bsd.capability-bundle";
+schema_version = 1;
+bundle_id = "org.test.multibin";
+version = "1.0.0";
+sequence = 1;
+author = "test";
+publisher = "org.test";
+units = ["eagerd", "lazyd"];
+UCL
+	cp "${capd_service_fixture}" "${bundle}/Units/eagerd.unit/bin/eagerd"
+	cp "${capd_service_fixture}" "${bundle}/Units/lazyd.unit/bin/lazyd"
+	chmod 0555 "${bundle}/Units/eagerd.unit/bin/eagerd" \
+	    "${bundle}/Units/lazyd.unit/bin/lazyd"
+	cat > "${bundle}/Units/eagerd.unit/Unit.ucl" <<'UCL'
+activation { boot = true; }
+arguments = ["compat-ready"];
+UCL
+	cat > "${bundle}/Units/lazyd.unit/Unit.ucl" <<UCL
+activation { ipc = ["${endpoint}"]; }
+arguments = ["compat-ready", "${endpoint}"];
+UCL
+
+	start_stack
+	wait_for_file "${WORK}/eagerd.ready" 10 ||
+	    atf_fail "eager binary in multi-binary bundle did not start"
+	test ! -e "${WORK}/lazyd.ready" ||
+	    atf_fail "named binary started before lookup"
+	atf_check -s exit:0 -o match:'org.test.multibin/eagerd.*running' \
+	    servicectl -s "${CTL_SOCK}" status
+	atf_check -s exit:0 -o not-match:'org.test.multibin/lazyd.*running' \
+	    servicectl -s "${CTL_SOCK}" status
+
+	run_lookup_client "${endpoint}" 15 ||
+	    atf_fail "lookup did not activate named binary"
+	wait_for_file "${WORK}/lazyd.ready" 10 ||
+	    atf_fail "named binary did not report ready"
+	atf_check -s exit:0 -o match:'org.test.multibin/lazyd.*running' \
+	    servicectl -s "${CTL_SOCK}" status
+}
+multi_binary_bundle_activation_cleanup() {
+	cleanup_common
+}
+
+# ---------------------------------------------------------------
+# Test: all local factory names are boot-only and not globally connectable
+# ---------------------------------------------------------------
+atf_test_case component_factory_names_are_internal cleanup
+component_factory_names_are_internal_head() {
+	atf_set "descr" \
+	    "Filesystem, network, and crypto factories boot eagerly but reject ordinary named lookup"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+component_factory_names_are_internal_body() {
+	local endpoint kind
+
+	prepare_paths
+	find_capd_service_fixture
+	build_lookup_client
+	for kind in filesystem network crypto; do
+		case "${kind}" in
+		filesystem) endpoint="org.5bsd.FileSystemCmp" ;;
+		network) endpoint="org.5bsd.NetworkCmp" ;;
+		crypto) endpoint="org.5bsd.CryptoCmp" ;;
+		esac
+		make_svc_bin system "${kind}-factory" \
+		    "activation { boot = true; ipc = [\"${endpoint}\"]; }
+arguments = [\"compat-ready\", \"${endpoint}\"];" \
+		    "${capd_service_fixture}" >/dev/null
+	done
+
+	start_stack
+	for kind in filesystem network crypto; do
+		wait_for_file "${WORK}/${kind}-factory.ready" 10 ||
+		    atf_fail "${kind} factory did not start at boot"
+	done
+	for endpoint in org.5bsd.FileSystemCmp org.5bsd.NetworkCmp \
+	    org.5bsd.CryptoCmp
+	do
+		if run_lookup_client "${endpoint}" 3; then
+			atf_fail "internal factory ${endpoint} was globally connectable"
+		fi
+	done
+}
+component_factory_names_are_internal_cleanup() {
 	cleanup_common
 }
 
@@ -647,6 +760,8 @@ atf_init_test_cases() {
 	atf_add_test_case on_demand_crash_relaunch
 	atf_add_test_case reload_noop
 	atf_add_test_case reload_attribution
+	atf_add_test_case multi_binary_bundle_activation
+	atf_add_test_case component_factory_names_are_internal
 }
 
 # ---------------------------------------------------------------
@@ -709,7 +824,7 @@ multiple_provides_secondary_activation_body() {
 	first="org.test.multi.primary"
 	second="org.test.multi.secondary"
 	bundle=$(make_svc_bin user multi-provider \
-	    "provides = [\"${first}\", \"${second}\"];
+	    "activation { ipc = [\"${first}\", \"${second}\"]; }
 arguments = [\"multi-provider\", \"${first}\", \"${second}\",
 		    \"${WORK}/multi-registered.out\", \"${WORK}/multi-routed.out\"];
 restart = \"on-failure\";" "${capd_service_fixture}")
@@ -766,7 +881,7 @@ multiple_provides_failure_isolated_body() {
 	first="org.test.partial.primary"
 	second="org.test.partial.secondary"
 	bundle=$(make_svc_bin user partial-provider \
-	    "provides = [\"${first}\", \"${second}\"];
+	    "activation { ipc = [\"${first}\", \"${second}\"]; }
 arguments = [\"partial-provider\", \"${first}\",
 		    \"${WORK}/partial-ready.out\"];
 restart = \"never\";" "${capd_service_fixture}")
@@ -810,7 +925,7 @@ requester_crash_cancels_pending_lookup_body() {
 	find_capd_service_fixture
 	service_name="org.test.lifecycle.delayed"
 	provider_bundle=$(make_svc_bin user delayed-provider \
-	    "provides = [\"${service_name}\"];
+	    "activation { ipc = [\"${service_name}\"]; }
 restart = \"on-failure\";
 arguments = [\"delayed-provider\", \"${service_name}\", \"5000\",
     \"${WORK}/delayed-provider.started\",
@@ -874,9 +989,12 @@ reload_noop_head() {
 	require_oracle_stack_kmods
 }
 reload_noop_body() {
+	local bundle
+
 	prepare_paths
-	create_system_bundle "Steady" "org.test.steady" "steadyd" \
-	    "org.test.steady.svc"
+	bundle=$(create_system_bundle "Steady" "org.test.steady" "steadyd" \
+	    "org.test.steady.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/steadyd.unit/Unit.ucl"
 
 	start_stack
 	wait_for_file "${WORK}/steadyd.ready" 5
@@ -887,7 +1005,7 @@ reload_noop_body() {
 	    servicectl -s "${CTL_SOCK}" reload
 
 	# The already-running service is untouched by the no-op reload.
-	atf_check -s exit:0 -o match:"org.test.steady.svc.*running" \
+	atf_check -s exit:0 -o match:"org.test.steady/steadyd.*running" \
 	    servicectl -s "${CTL_SOCK}" status
 }
 reload_noop_cleanup() {
@@ -904,12 +1022,15 @@ reload_attribution_head() {
 	require_oracle_stack_kmods
 }
 reload_attribution_body() {
+	local bundle
+
 	prepare_paths
 	start_stack
 
 	# Add a user bundle after startup, then reload to launch it.
-	create_user_bundle "Late" "org.test.late" "lated" \
-	    "org.test.late.svc"
+	bundle=$(create_user_bundle "Late" "org.test.late" "lated" \
+	    "org.test.late.svc")
+	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/lated.unit/Unit.ucl"
 
 	atf_check -s exit:0 -o match:"1 new" \
 	    servicectl -s "${CTL_SOCK}" reload
@@ -917,7 +1038,7 @@ reload_attribution_body() {
 	wait_for_file "${WORK}/lated.ready" 5
 
 	# reload.c stamps launched_by="reload"; status shows it as by=reload.
-	atf_check -s exit:0 -o match:"org.test.late.svc.*by=reload" \
+	atf_check -s exit:0 -o match:"org.test.late/lated.*by=reload" \
 	    servicectl -s "${CTL_SOCK}" status
 }
 reload_attribution_cleanup() {

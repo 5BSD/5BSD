@@ -123,6 +123,24 @@ write_executable()
 	chmod +x "$path"
 }
 
+write_bundle()
+{
+	local root="$1" id="$2" unit="$3" sequence="$4" activation="$5"
+
+	mkdir -p "$root/Units/$unit.unit/bin"
+	cat > "$root/Bundle.ucl" <<EOF
+schema = "org.5bsd.capability-bundle";
+schema_version = 1;
+bundle_id = "$id";
+version = "1.0.$sequence";
+sequence = $sequence;
+author = "test";
+publisher = "org.test";
+units = ["$unit"];
+EOF
+	printf '%s\n' "$activation" > "$root/Units/$unit.unit/Unit.ucl"
+}
+
 # ===================================================================
 # servicectl status
 # ===================================================================
@@ -168,16 +186,12 @@ servicectl_services_lists_body()
 	find_servicectl
 	prepare_paths
 
-	mkdir -p "$manifestdir/long-svc.cap/etc" "$manifestdir/long-svc.cap/bin"
-	write_executable "$manifestdir/long-svc.cap/bin/long-svc" \
+	write_bundle "$manifestdir/long-svc.cap" org.test.long-svc long-svc 1 \
+	    'activation { boot = true; ipc = ["org.test.long-svc"]; }'
+	write_executable "$manifestdir/long-svc.cap/Units/long-svc.unit/bin/long-svc" \
 	    '#!/bin/sh' \
 	    'echo $$ > long-svc.pid' \
 	    'sleep 60'
-	cat > "$manifestdir/long-svc.cap/etc/long-svc.ucl" <<EOF
-bundle_id = "org.test.long-svc";
-program = "long-svc";
-provides = ["org.test.long-svc"];
-EOF
 
 	start_stack
 
@@ -226,16 +240,12 @@ servicectl_reload_body()
 	fi
 
 	# Add a manifest after startup.
-	mkdir -p "$manifestdir/reload-svc.cap/etc" "$manifestdir/reload-svc.cap/bin"
-	write_executable "$manifestdir/reload-svc.cap/bin/reload-svc" \
+	write_bundle "$manifestdir/reload-svc.cap" org.test.reload-svc reload-svc 1 \
+	    'activation { boot = true; ipc = ["org.test.reload-svc"]; }'
+	write_executable "$manifestdir/reload-svc.cap/Units/reload-svc.unit/bin/reload-svc" \
 	    '#!/bin/sh' \
 	    'echo $$ > reload-svc.pid' \
 	    'sleep 60'
-	cat > "$manifestdir/reload-svc.cap/etc/reload-svc.ucl" <<EOF
-bundle_id = "org.test.reload-svc";
-program = "reload-svc";
-provides = ["org.test.reload-svc"];
-EOF
 
 	atf_check -s exit:0 -o ignore "$servicectl_bin" -s "$sctl_sockpath" reload
 
@@ -347,17 +357,11 @@ servicectl_verify_body()
 {
 	find_servicectl
 	local bdir="$(pwd)/VerifyTest.cap"
-	mkdir -p "${bdir}/etc"
-	mkdir -p "${bdir}/bin"
-	printf '#!/bin/sh\nexec sleep 3600\n' > "${bdir}/bin/verifyd"
-	chmod 755 "${bdir}/bin/verifyd"
-	cat > "${bdir}/etc/verifyd.ucl" <<EOF
-bundle_id = "org.test.verify";
-version = "1.0";
-author = "test";
-program = "verifyd";
-provides = ["org.test.verify.svc"];
-EOF
+	write_bundle "$bdir" org.test.verify verifyd 1 \
+	    'activation { ipc = ["org.test.verify.svc"]; }'
+	printf '#!/bin/sh\nexec sleep 3600\n' > \
+	    "${bdir}/Units/verifyd.unit/bin/verifyd"
+	chmod 755 "${bdir}/Units/verifyd.unit/bin/verifyd"
 
 	atf_check -s exit:0 -o match:"PASSED" \
 	    "$servicectl_bin" verify "${bdir}"
@@ -367,37 +371,38 @@ servicectl_verify_cleanup()
 	rm -rf VerifyTest.cap
 }
 
-atf_test_case servicectl_verify_local_components cleanup
-servicectl_verify_local_components_head()
+atf_test_case servicectl_verify_local_descriptors cleanup
+servicectl_verify_local_descriptors_head()
 {
 	atf_set "descr" \
-	    "servicectl shows the effective FileSystemCmp and NetworkCmp configuration"
+	    "servicectl shows every effective local descriptor"
 }
-servicectl_verify_local_components_body()
+servicectl_verify_local_descriptors_body()
 {
 	find_servicectl
 	local bdir="$(pwd)/ComponentsTest.cap"
-	mkdir -p "${bdir}/etc" "${bdir}/bin"
-	printf '#!/bin/sh\nexit 0\n' > "${bdir}/bin/consumer"
-	chmod 755 "${bdir}/bin/consumer"
-	cat > "${bdir}/etc/consumer.ucl" <<EOF
-bundle_id = "org.test.components";
-version = "1.0";
-author = "test";
-program = "consumer";
-components = ["filesystem", "network"];
+	write_bundle "$bdir" org.test.descriptors consumer 1 \
+	    'activation { boot = true; }'
+	printf '#!/bin/sh\nexit 0\n' > \
+	    "${bdir}/Units/consumer.unit/bin/consumer"
+	chmod 755 "${bdir}/Units/consumer.unit/bin/consumer"
+	cat >> "${bdir}/Units/consumer.unit/Unit.ucl" <<EOF
+storage = [{ name = "data"; scope = "unit"; rights = "mount"; }];
+descriptors { filesystem { storage = "data"; } network {} crypto {} }
 EOF
 
 	atf_check -s exit:0 -o save:components.out \
 	    "$servicectl_bin" verify "${bdir}"
-	atf_check -s exit:0 -o match:'component: filesystem' \
-	    grep 'component:' components.out
-	atf_check -s exit:0 -o match:'component: network' \
-	    grep 'component:' components.out
+	atf_check -s exit:0 -o match:'descriptor: filesystem storage=data' \
+	    grep 'descriptor:' components.out
+	atf_check -s exit:0 -o match:'descriptor: network' \
+	    grep 'descriptor:' components.out
+	atf_check -s exit:0 -o match:'descriptor: crypto' \
+	    grep 'descriptor:' components.out
 	atf_check -s exit:0 -o match:'activation: boot' \
 	    grep 'activation:' components.out
 }
-servicectl_verify_local_components_cleanup()
+servicectl_verify_local_descriptors_cleanup()
 {
 	rm -rf ComponentsTest.cap components.out
 }
@@ -415,13 +420,8 @@ servicectl_verify_invalid_body()
 {
 	find_servicectl
 	local bdir="$(pwd)/BadBundle.cap"
-	mkdir -p "${bdir}/etc"
-	# No bin directory, no program binary
-	cat > "${bdir}/etc/bad.ucl" <<EOF
-bundle_id = "org.test.bad";
-program = "nonexistent";
-provides = ["org.test.bad.svc"];
-EOF
+	write_bundle "$bdir" org.test.bad nonexistent 1 \
+	    'activation { boot = true; }'
 
 	atf_check -s not-exit:0 -e match:"FAILED" \
 	    "$servicectl_bin" verify "${bdir}"
@@ -439,29 +439,30 @@ atf_test_case servicectl_deps cleanup
 servicectl_deps_head()
 {
 	atf_set "descr" \
-	    "servicectl deps suggests filesystem/network and ignores global service libraries"
+	    "servicectl deps suggests local descriptors and ignores global services"
 }
 servicectl_deps_body()
 {
 	find_servicectl
 
-	cp /usr/bin/true no-components
-	atf_check -s exit:0 -o match:"No local component dependencies" \
-	    "$servicectl_bin" deps no-components
+	cp /usr/bin/true no-descriptors
+	atf_check -s exit:0 -o match:"No local descriptor dependencies" \
+	    "$servicectl_bin" deps no-descriptors
 
 	atf_check -s exit:0 -o save:deps-network.out \
 	    "$servicectl_bin" deps \
 	    "$(atf_get_srcdir)/deps_network_fixture"
-	atf_check -s exit:0 -o match:'components = \["network"\];' \
-	    grep 'components' deps-network.out
+	atf_check -s exit:0 -o match:'network \{\}' \
+	    grep 'network' deps-network.out
 	atf_check -s exit:1 -o empty -e empty \
 	    grep 'provider' deps-network.out
 
 	atf_check -s exit:0 -o save:deps-both.out \
 	    "$servicectl_bin" deps "$(atf_get_srcdir)/deps_both_fixture"
-	atf_check -s exit:0 \
-	    -o match:'components = \["filesystem", "network"\];' \
-	    grep 'components' deps-both.out
+	atf_check -s exit:0 -o match:'filesystem \{ storage = "data"; \}' \
+	    grep 'filesystem' deps-both.out
+	atf_check -s exit:0 -o match:'network \{\}' grep 'network' deps-both.out
+	atf_check -s exit:0 -o match:'crypto \{\}' grep 'crypto' deps-both.out
 	atf_check -s exit:1 -o empty -e empty \
 	    grep -E 'log|trace|notify|interface|sharing' deps-both.out
 	atf_check -s exit:0 -o match:'discover their named services' \
@@ -470,13 +471,13 @@ servicectl_deps_body()
 	printf 'interface=org.5bsd.network\n' > not-elf
 	atf_check -s not-exit:0 -e match:"not an ELF object" \
 	    "$servicectl_bin" deps not-elf
-	ln -s no-components symlink-elf
+	ln -s no-descriptors symlink-elf
 	atf_check -s not-exit:0 -e ignore \
 	    "$servicectl_bin" deps symlink-elf
 }
 servicectl_deps_cleanup()
 {
-	rm -f no-components not-elf symlink-elf deps-network.out deps-both.out
+	rm -f no-descriptors not-elf symlink-elf deps-network.out deps-both.out
 }
 
 # ===================================================================
@@ -534,107 +535,171 @@ sctl_oversized_payload_cleanup()
 
 atf_test_case servicectl_install_valid cleanup
 servicectl_install_valid_head() {
-    atf_set "descr" "servicectl install copies valid bundle to install dir"
-    atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	atf_set "descr" "install atomically publishes a normalized canonical bundle version"
+	atf_set "require.user" "root"
 }
 servicectl_install_valid_body() {
-    find_servicectl
-    start_stack
-
-    local src="$(pwd)/InstallMe.cap"
-    local idir="$(pwd)/install_target"
-    mkdir -p "${src}/etc" "${src}/bin" "$idir"
-    printf '#!/bin/sh\nexec sleep 3600\n' > "${src}/bin/instd"
-    chmod 755 "${src}/bin/instd"
+	find_servicectl
+	local src="$(pwd)/InstallMe.cap"
+	local idir="$(pwd)/install_target"
+	local dst="${idir}/org.test.install@00000000000000000007.cap"
+	mkdir "$idir"
+	write_bundle "$src" org.test.install instd 7 \
+	    'activation { ipc = ["org.test.install"]; }'
+	write_executable "$src/Units/instd.unit/bin/instd" \
+	    '#!/bin/sh' 'exit 0'
 	chown -R nobody:nobody "$src"
-    cat > "${src}/etc/instd.ucl" <<EOF
-bundle_id = "org.test.install";
-version = "1.0";
-author = "test";
-program = "instd";
-provides = ["org.test.install.svc"];
-EOF
+	chmod -R go+w "$src"
 
-    export SERVICED_BUNDLE_DIR_USER="$idir"
-    atf_check -s exit:0 -o match:"copied to" \
-        "$servicectl_bin" install "$src"
-
-    # Verify bundle was copied
-    atf_check -s exit:0 test -d "${idir}/InstallMe.cap"
-    atf_check -s exit:0 test -x "${idir}/InstallMe.cap/bin/instd"
+	export SERVICED_BUNDLE_DIR_USER="$idir"
+	atf_check -s exit:0 -o match:"published $dst" \
+	    "$servicectl_bin" install "$src"
+	atf_check -s exit:0 test -x "$dst/Units/instd.unit/bin/instd"
 	atf_check -s exit:0 -o inline:'0\n' stat -f %u \
-	    "${idir}/InstallMe.cap/bin/instd"
+	    "$dst/Units/instd.unit/bin/instd"
+	atf_check -s exit:0 -o inline:'0\n' sh -c \
+	    'm=0$(stat -f %Lp "$1"); test $((m & 022)) -eq 0; echo $?' sh "$dst"
+	atf_check -s exit:0 -o match:'Verification: PASSED' \
+	    "$servicectl_bin" verify "$dst"
+	atf_check -s exit:0 -o empty -e empty sh -c \
+	    'test -z "$(find "$1" -maxdepth 1 -name ".servicectl.*" -print -quit)"' \
+	    sh "$idir"
 }
 servicectl_install_valid_cleanup() {
-    rm -rf InstallMe.cap install_target
-    cleanup_common
+	rm -rf InstallMe.cap install_target
 }
 
 # ===================================================================
 # servicectl install — path traversal rejected
 # ===================================================================
 
-atf_test_case servicectl_install_path_traversal cleanup
-servicectl_install_path_traversal_head() {
-    atf_set "descr" "servicectl install rejects path traversal in bundle name"
+atf_test_case servicectl_install_source_name_ignored cleanup
+servicectl_install_source_name_ignored_head() {
+	atf_set "descr" "source basename cannot influence the canonical destination"
+	atf_set "require.user" "root"
 }
-servicectl_install_path_traversal_body() {
-    find_servicectl
-    # Create a directory whose basename starts with ".."
-    local bad="$(pwd)/..BadName.cap"
-    mkdir -p "${bad}/etc" "${bad}/bin"
-    printf '#!/bin/sh\nsleep 3600\n' > "${bad}/bin/bad"
-    chmod 755 "${bad}/bin/bad"
-    cat > "${bad}/etc/bad.ucl" <<EOF
-bundle_id = "org.test.bad";
-program = "bad";
-provides = ["org.test.bad.svc"];
-EOF
-
-    atf_check -s not-exit:0 -e match:"invalid" \
-        "$servicectl_bin" install "$bad"
+servicectl_install_source_name_ignored_body() {
+	find_servicectl
+	local src="$(pwd)/..Misleading.cap" idir="$(pwd)/name_target"
+	mkdir "$idir"
+	write_bundle "$src" org.test.canonical worker 9 \
+	    'activation { boot = true; }'
+	write_executable "$src/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
+	export SERVICED_BUNDLE_DIR_USER="$idir"
+	atf_check -s exit:0 -o match:'org.test.canonical@00000000000000000009.cap' \
+	    "$servicectl_bin" install "$src"
+	atf_check -s exit:0 test -d \
+	    "$idir/org.test.canonical@00000000000000000009.cap"
 }
-servicectl_install_path_traversal_cleanup() {
-    rm -rf "..BadName.cap"
+servicectl_install_source_name_ignored_cleanup() {
+	rm -rf "..Misleading.cap" name_target
 }
 
 # ===================================================================
 # servicectl install — overwrite rejected
 # ===================================================================
 
-atf_test_case servicectl_install_overwrite cleanup
-servicectl_install_overwrite_head() {
-    atf_set "descr" "servicectl install rejects overwrite of existing bundle"
-    atf_set "require.user" "root"
-	require_oracle_stack_kmods
+atf_test_case servicectl_install_versions cleanup
+servicectl_install_versions_head() {
+	atf_set "descr" "immutable versions coexist and duplicate sequences fail"
+	atf_set "require.user" "root"
 }
-servicectl_install_overwrite_body() {
-    find_servicectl
-    start_stack
-
-    local src="$(pwd)/Overwrite.cap"
-    local idir="$(pwd)/install_target2"
-    mkdir -p "${src}/etc" "${src}/bin" "$idir"
-    printf '#!/bin/sh\nexec sleep 3600\n' > "${src}/bin/ovd"
-    chmod 755 "${src}/bin/ovd"
-    cat > "${src}/etc/ovd.ucl" <<EOF
-bundle_id = "org.test.overwrite";
-version = "1.0";
-author = "test";
-program = "ovd";
-provides = ["org.test.overwrite.svc"];
-EOF
-
-    export SERVICED_BUNDLE_DIR_USER="$idir"
-    atf_check -s exit:0 -o ignore "$servicectl_bin" install "$src"
-    # Second install should fail
-    atf_check -s not-exit:0 -e match:"already exists" \
-        "$servicectl_bin" install "$src"
+servicectl_install_versions_body() {
+	find_servicectl
+	local src="$(pwd)/Version.cap" idir="$(pwd)/versions"
+	mkdir "$idir"
+	write_bundle "$src" org.test.versioned worker 1 \
+	    'activation { boot = true; }'
+	write_executable "$src/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
+	export SERVICED_BUNDLE_DIR_USER="$idir"
+	atf_check -s exit:0 -o ignore "$servicectl_bin" install "$src"
+	atf_check -s exit:1 -o ignore -e match:'File exists' \
+	    "$servicectl_bin" install "$src"
+	sed -i '' 's/version = "1.0.1"/version = "2.0.0"/; s/sequence = 1/sequence = 2/' \
+	    "$src/Bundle.ucl"
+	atf_check -s exit:0 -o ignore "$servicectl_bin" install "$src"
+	atf_check -s exit:0 test -d \
+	    "$idir/org.test.versioned@00000000000000000001.cap"
+	atf_check -s exit:0 test -d \
+	    "$idir/org.test.versioned@00000000000000000002.cap"
 }
-servicectl_install_overwrite_cleanup() {
-    rm -rf Overwrite.cap install_target2
-    cleanup_common
+servicectl_install_versions_cleanup() {
+	rm -rf Version.cap versions
+}
+
+atf_test_case servicectl_install_rejects_unsafe cleanup
+servicectl_install_rejects_unsafe_head() {
+	atf_set "descr" "staged symlinks and untrusted registry roots fail without residue"
+	atf_set "require.user" "root"
+}
+servicectl_install_rejects_unsafe_body() {
+	find_servicectl
+	local src="$(pwd)/Unsafe.cap" idir="$(pwd)/unsafe_target"
+	mkdir "$idir"
+	write_bundle "$src" org.test.unsafe worker 1 \
+	    'activation { boot = true; }'
+	rm "$src/Units/worker.unit/bin/worker" 2>/dev/null || true
+	ln -s /bin/true "$src/Units/worker.unit/bin/worker"
+	export SERVICED_BUNDLE_DIR_USER="$idir"
+	atf_check -s exit:1 -o ignore -e match:'unsafe object' \
+	    "$servicectl_bin" install "$src"
+	atf_check -s exit:0 -o empty -e empty sh -c \
+	    'test -z "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit)"' \
+	    sh "$idir"
+	chmod 0777 "$idir"
+	atf_check -s exit:1 -o ignore -e match:'root-owned.*non-group/world-writable' \
+	    "$servicectl_bin" install "$src"
+}
+servicectl_install_rejects_unsafe_cleanup() {
+	rm -rf Unsafe.cap unsafe_target
+}
+
+atf_test_case servicectl_install_limits cleanup
+servicectl_install_limits_head() {
+	atf_set "descr" "install rejects oversized files and excessive entries without residue"
+	atf_set "require.user" "root"
+}
+servicectl_install_limits_body() {
+	find_servicectl
+	local src="$(pwd)/Limited.cap" idir="$(pwd)/limit_target" i
+	mkdir "$idir"
+	write_bundle "$src" org.test.limited worker 1 \
+	    'activation { boot = true; }'
+	write_executable "$src/Units/worker.unit/bin/worker" '#!/bin/sh' 'exit 0'
+	mkdir -p "$src/Shared"
+	truncate -s 536870913 "$src/Shared/oversized"
+	export SERVICED_BUNDLE_DIR_USER="$idir"
+	atf_check -s exit:1 -o ignore -e match:'exceeds limits' \
+	    "$servicectl_bin" install "$src"
+	atf_check -s exit:0 -o empty -e empty sh -c \
+	    'test -z "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit)"' \
+	    sh "$idir"
+	rm -f "$src/Shared/oversized"
+	i=0
+	while [ "$i" -lt 4100 ]; do
+	    : > "$src/Shared/entry-$i"
+	    i=$((i + 1))
+	done
+	atf_check -s exit:1 -o ignore -e match:'exceeds limits' \
+	    "$servicectl_bin" install "$src"
+	atf_check -s exit:0 -o empty -e empty sh -c \
+	    'test -z "$(find "$1" -mindepth 1 -maxdepth 1 -print -quit)"' \
+	    sh "$idir"
+}
+servicectl_install_limits_cleanup() {
+	rm -rf Limited.cap limit_target
+}
+
+atf_test_case servicectl_start_requires_label
+servicectl_start_requires_label_head() {
+	atf_set "descr" "start rejects absent and surplus labels before connecting"
+}
+servicectl_start_requires_label_body() {
+	find_servicectl
+	atf_check -s exit:64 -o empty -e match:'start requires a service label' \
+	    "$servicectl_bin" start
+	atf_check -s exit:64 -o empty -e match:'start requires a service label' \
+	    "$servicectl_bin" start one two
 }
 
 atf_init_test_cases()
@@ -649,7 +714,7 @@ atf_init_test_cases()
 	# verify/stop
 	atf_add_test_case servicectl_verify
 	atf_add_test_case servicectl_verify_invalid
-	atf_add_test_case servicectl_verify_local_components
+	atf_add_test_case servicectl_verify_local_descriptors
 	atf_add_test_case servicectl_deps
 	atf_add_test_case servicectl_stop_no_arg
 
@@ -658,6 +723,9 @@ atf_init_test_cases()
 
 	# install
 	atf_add_test_case servicectl_install_valid
-	atf_add_test_case servicectl_install_path_traversal
-	atf_add_test_case servicectl_install_overwrite
+	atf_add_test_case servicectl_install_source_name_ignored
+	atf_add_test_case servicectl_install_versions
+	atf_add_test_case servicectl_install_rejects_unsafe
+	atf_add_test_case servicectl_install_limits
+	atf_add_test_case servicectl_start_requires_label
 }

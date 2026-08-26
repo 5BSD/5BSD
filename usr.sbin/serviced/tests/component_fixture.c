@@ -201,12 +201,22 @@ run_filesystem_consumer(const char *output_path)
 	struct filesystemcmp_client *component, *reopened, *second;
 	pthread_t threads[2];
 	char cwd[32], data[8] = {};
-	int out;
+	int hidden_fd, out;
 
 	out = open(output_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 	if (out == -1 || fixture_service_initialize() == -1 ||
-	    service_authorize_capabilities(fixture_service_context) == -1 ||
-	    service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	    service_authorize_capabilities(fixture_service_context) == -1)
+		return (1);
+	/*
+	 * The raw storage backing is delivered to the filesystem component, not
+	 * to this consumer: a direct capability open of it must be denied.
+	 */
+	hidden_fd = -1;
+	errno = 0;
+	if (service_capability_open(fixture_service_context, "storage:local",
+	    "zfshandle", &hidden_fd) != -1 || errno != ENOENT || hidden_fd != -1)
+		return (1);
+	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1)
 		return (1);
@@ -286,13 +296,32 @@ run_filesystem_consumer(const char *output_path)
 	    filesystemcmp_pread(component, object.handle, data,
 	    sizeof(data), 0) != 7 || memcmp(data, "durable", 7) != 0)
 		return (1);
-	if (filesystemcmp_lookup(component, bundle, "bin", &object) == -1 ||
-	    object.type != FILESYSTEMCMP_TYPE_DIRECTORY ||
-	    filesystemcmp_lookup(component, object.handle,
-	    "component_fixture", &object) == -1 ||
-	    filesystemcmp_stat(component, object.handle, &status) == -1 ||
-	    status.type != FILESYSTEMCMP_TYPE_REGULAR || status.size == 0)
-		return (1);
+	/*
+	 * The delivered bundle namespace is the .cap root: the program lives at
+	 * Units/<unit>.unit/bin/<unit>, where <unit> is this program's name.
+	 */
+	{
+		char unit_dir[128];
+
+		if (snprintf(unit_dir, sizeof(unit_dir), "%s.unit",
+		    getprogname()) >= (int)sizeof(unit_dir))
+			return (1);
+		if (filesystemcmp_lookup(component, bundle, "Units",
+		    &object) == -1 ||
+		    object.type != FILESYSTEMCMP_TYPE_DIRECTORY ||
+		    filesystemcmp_lookup(component, object.handle, unit_dir,
+		    &object) == -1 ||
+		    object.type != FILESYSTEMCMP_TYPE_DIRECTORY ||
+		    filesystemcmp_lookup(component, object.handle, "bin",
+		    &object) == -1 ||
+		    object.type != FILESYSTEMCMP_TYPE_DIRECTORY ||
+		    filesystemcmp_lookup(component, object.handle,
+		    getprogname(), &object) == -1 ||
+		    filesystemcmp_stat(component, object.handle, &status) == -1 ||
+		    status.type != FILESYSTEMCMP_TYPE_REGULAR ||
+		    status.size == 0)
+			return (1);
+	}
 	errno = 0;
 	if (filesystemcmp_create(component, bundle, "forbidden",
 	    FILESYSTEMCMP_CREATE_EXCLUSIVE, 0600, &object) != -1 ||
@@ -306,7 +335,7 @@ run_filesystem_consumer(const char *output_path)
 	if (dprintf(out,
 	    "scratch=ok\npersistent=ok\nbundle=ok\nbundle_readonly=ok\n"
 	    "durable_sync=ok\nlogical_cwd=ok\nmulti_open=ok\nconcurrent=ok\n"
-	    "close_reopen=ok\n") < 0)
+	    "close_reopen=ok\nraw_storage_hidden=ok\n") < 0)
 		return (1);
 	close(out);
 	return (0);

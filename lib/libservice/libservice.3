@@ -32,7 +32,7 @@ Service lifecycle library
 .Ft const char *
 .Fn service_label "struct service_context *context"
 .Ft int
-.Fn service_capability_open "struct service_context *context" "const char *name" "int *fd"
+.Fn service_capability_open "struct service_context *context" "const char *name" "const char *type" "int *fd"
 .Ft int
 .Fn service_provider_create "struct service_provider **provider"
 .Ft void
@@ -161,17 +161,28 @@ The private control channel read by
 is not public.
 .Pp
 .Fn service_capability_open
-duplicates a manifest-declared kernel capability-service descriptor into
+duplicates a manifest-declared named descriptor of the requested
+.Fa type
+into
 .Fa fd .
 The caller owns the returned close-on-exec descriptor and must close it.
 Closing it never invalidates libservice's retained bootstrap descriptor or a
 later open.
-The accepted names are
+Capability-service names are
 .Dq mount ,
 .Dq node ,
 .Dq accounting ,
 and
 .Dq identity .
+Storage names use
+.Dq storage:<logical-name>
+and have type
+.Dq directory
+for mount-only authority or
+.Dq zfshandle
+for advanced ZFS authority.
+An existing name with a different type fails with
+.Er EFTYPE .
 Unknown names fail with
 .Er EINVAL ;
 an accepted but undeclared name fails with
@@ -348,6 +359,13 @@ Their environment locators and original injected descriptors are consumed
 when acquired.
 An unmanaged process cannot create authority by setting the deployment
 variable itself.
+.Pp
+.Ev CAPABILITY_UNIT_DIR
+names the selected unit directory so a managed program can locate immutable
+configuration and resources in either a base-system or versioned site bundle.
+It is location metadata, not an authority descriptor; programs must open
+needed files before entering capability mode or use a declared filesystem
+descriptor.
 .Pp
 Service names authorize discovery, not application operations.
 Typed protocols must validate magic, version, opcode, status, payload shape,

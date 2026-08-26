@@ -1,0 +1,98 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ */
+
+#include <sys/types.h>
+
+#include <stdbool.h>
+#include <string.h>
+
+#include "manifest_compare.h"
+
+bool
+serviced_manifest_equal(const struct svc_manifest *a,
+    const struct svc_manifest *b)
+{
+	unsigned i;
+
+	if (strcmp(a->label, b->label) != 0 ||
+	    strcmp(a->description, b->description) != 0 ||
+	    strcmp(a->program, b->program) != 0 ||
+	    strcmp(a->user, b->user) != 0 ||
+	    strcmp(a->group, b->group) != 0 ||
+	    a->narguments != b->narguments ||
+	    a->nenvironment != b->nenvironment ||
+	    a->restart != b->restart ||
+	    a->stop_timeout != b->stop_timeout ||
+	    a->max_failures != b->max_failures ||
+	    a->nprovides != b->nprovides ||
+	    a->nstartup_after != b->nstartup_after ||
+	    a->ncomponents != b->ncomponents ||
+	    a->nkmod_requires != b->nkmod_requires ||
+	    a->ncap_paths != b->ncap_paths ||
+	    a->ncap_net != b->ncap_net ||
+	    a->ncap_files != b->ncap_files ||
+	    a->ncap_jail != b->ncap_jail ||
+	    a->ncap_vsock != b->ncap_vsock ||
+	    a->ncap_storage != b->ncap_storage ||
+	    a->ncap_services != b->ncap_services ||
+	    a->cap_system != b->cap_system ||
+	    a->protect_flags != b->protect_flags ||
+	    a->has_jail != b->has_jail)
+		return (false);
+	for (i = 0; i < a->narguments; i++)
+		if (strcmp(a->arguments[i], b->arguments[i]) != 0)
+			return (false);
+	for (i = 0; i < a->nenvironment; i++)
+		if (strcmp(a->environment[i], b->environment[i]) != 0)
+			return (false);
+	if (a->has_jail &&
+	    (strcmp(a->jail_name, b->jail_name) != 0 ||
+	    strcmp(a->jail_path, b->jail_path) != 0 ||
+	    strcmp(a->jail_hostname, b->jail_hostname) != 0 ||
+	    strcmp(a->jail_ip4_addr, b->jail_ip4_addr) != 0))
+		return (false);
+	/* Compare only populated entries; unused trailing bytes are irrelevant. */
+	for (i = 0; i < a->nprovides; i++)
+		if (strcmp(a->provides[i], b->provides[i]) != 0)
+			return (false);
+	for (i = 0; i < a->nstartup_after; i++)
+		if (strcmp(a->startup_after[i], b->startup_after[i]) != 0)
+			return (false);
+	for (i = 0; i < a->ncomponents; i++)
+		if (memcmp(&a->components[i], &b->components[i],
+		    sizeof(a->components[i])) != 0)
+			return (false);
+	for (i = 0; i < a->nkmod_requires; i++)
+		if (strcmp(a->kmod_requires[i], b->kmod_requires[i]) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_paths; i++)
+		if (strcmp(a->cap_paths[i], b->cap_paths[i]) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_files; i++)
+		if (memcmp(&a->cap_files[i], &b->cap_files[i],
+		    sizeof(a->cap_files[i])) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_net; i++)
+		if (memcmp(&a->cap_net[i], &b->cap_net[i],
+		    sizeof(a->cap_net[i])) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_jail; i++)
+		if (memcmp(&a->cap_jail[i], &b->cap_jail[i],
+		    sizeof(a->cap_jail[i])) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_vsock; i++)
+		if (memcmp(&a->cap_vsock[i], &b->cap_vsock[i],
+		    sizeof(a->cap_vsock[i])) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_storage; i++)
+		if (memcmp(&a->cap_storage[i], &b->cap_storage[i],
+		    sizeof(a->cap_storage[i])) != 0)
+			return (false);
+	for (i = 0; i < a->ncap_services; i++)
+		if (strcmp(a->cap_services[i], b->cap_services[i]) != 0)
+			return (false);
+	return (true);
+}

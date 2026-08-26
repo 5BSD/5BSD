@@ -8,13 +8,13 @@ earlier generic component resolver.
 There are three mechanisms, and a typed library chooses exactly one.
 
 1. A local component replaces ambient authority removed from a supervised
-   process. The base system currently has only `filesystem` and `network`.
+   process. The base system has `filesystem`, `network`, and `crypto`.
    serviced constructs the session before exec, enlists the provider worker in
-   the consumer coalition, and injects a confined channel as `FILESYSTEMCMP`
-   or `NETWORKCMP`. The variable contains a descriptor number, not a service
-   name. Local components are not globally discoverable.
-2. A global service provides functionality under one or more agreed
-   reverse-domain names. Its bundle declares `provides`; its process calls
+   the consumer coalition, and injects a confined channel as `FILESYSTEMCMP`,
+   `NETWORKCMP`, or `CRYPTOCMP`. The variable contains a descriptor number,
+   not a service name. Local components are not globally discoverable.
+2. A global service exposes functionality under one or more agreed
+   reverse-domain names. Its unit declares `activation.ipc`; its process calls
    `service_provider_expose()` once per name. Every name has a separate
    listener and accept queue. `service_connect()` launches the provider on
    demand and returns a fresh connection.
@@ -83,26 +83,39 @@ intended extension point, not a compatibility escape hatch.
 
 ## Manifest contract
 
-Public services:
+Bundle metadata and a public unit:
 
 ```ucl
-program = "indexd";
-provides = [
-    "org.example.index.query",
-    "org.example.index.admin"
-];
+schema = "org.5bsd.capability-bundle";
+schema_version = 1;
+bundle_id = "org.example.index";
+version = "1.0.0";
+sequence = 1;
+author = "Example";
+publisher = "org.example";
+units = ["indexd"];
+```
+
+```ucl
+activation { ipc = ["org.example.index.query", "org.example.index.admin"]; }
 ```
 
 Local authority:
 
 ```ucl
-components = ["filesystem", "network"];
+storage = [{ name = "data"; scope = "unit"; rights = "mount"; }];
+descriptors {
+    filesystem { storage = "data"; }
+    network {}
+    crypto {}
+}
 ```
 
-There is no `implements`, `on_demand`, component provider selection, semantic
-version selection, lifetime, sharing, optional component, component options,
-or local-to-global fallback. Runtime identity is private and is derived from
-the bundle identity and program; it is not the first `provides` name.
+There is no `implements`, `on_demand`, untyped `components`, component
+provider selection, semantic-version selection, optional component,
+component options, or local-to-global fallback. Storage lifetime and unit or
+shared scope are explicit. Runtime identity is derived from bundle and unit
+identities; it is not the first activation name.
 
 ## libservice routing
 
@@ -128,9 +141,9 @@ provides a pollable readiness descriptor.
 `service_connect(context, name, &fd)` always asks for a global service. It
 never reads a component environment variable.
 
-The bundle registry reserves every name in `provides` and maps it to the same
+The bundle registry reserves every name in `activation.ipc` and maps it to the same
 bundle/service record before the provider exists. A request for any name starts
-that record. The starting-runtime check matches the complete `provides` set,
+that record. The starting-runtime check matches the complete activation set,
 so simultaneous requests for different names cannot create duplicate
 processes. The provider claims each listener with `NAME_CLAIM`; serviced
 rejects READY until the complete set is present. Process readiness is reported
@@ -159,7 +172,7 @@ Direct channels are also the peer-crash indication: closing either endpoint
 revokes the other; receive reports `ECONNRESET` and send reports `EPIPE` or
 `ECONNRESET`. If a provider exits before publication,
 serviced cancels the activation timers and immediately fails every pending
-lookup for all names in that provider's `provides` set. Serviced does not proxy
+lookup for all names in that provider's activation set. Serviced does not proxy
 the data plane. A successful send means kernel queue acceptance; typed protocol
 replies acknowledge processing. Automatic retry is limited to operations the
 typed protocol marks idempotent, and exactly-once effects across crashes require
@@ -396,7 +409,7 @@ fully implemented protocol version rather than a placeholder ABI.
 - Provider workers enter capability mode, shed inherited libservice authority,
   and join the consumer coalition before the consumer starts.
 - Global providers remain in their own coalitions.
-- A provider may expose only exact names in its `provides` declaration.
+- A provider may expose only exact names in its `activation.ipc` declaration.
 - Reserved component-factory names cannot be connected to by applications.
 - DTrace probes and BSM audit records cover registration, routing, component
   construction, policy denial, quota failure, and session teardown.
@@ -440,8 +453,9 @@ The release gate includes:
   replies, unexpected descriptors, peer death, close/reopen, and fork; each
   configurable global service must ship a strict config-test/diagnostic tool
   with argument, parser, unavailable-service, success, and operation-failure
-  tests. Local FileSystem and Network policy remains cap-bundle configuration
-  validated by servicectl rather than a second daemon configuration format;
+  tests. Local FileSystem, Network, and Crypto selection remains cap-bundle
+  configuration validated by servicectl rather than a second daemon
+  configuration format;
 - root-only live tests for Capsicum, mac_capability propagation, coalition
   teardown, jails, auditd, DTrace, and real network sockets.
 
@@ -463,6 +477,7 @@ binaries or aliases are installed:
 | service manager | `serviced` | service reservation, activation, and lifecycle |
 | FileSystemCmp | `localfilesystem` | private durable and scratch object store |
 | NetworkCmp | `localnetwork` | local network authority and socket operations |
+| CryptoCmp | `localcrypto` | local OpenCrypto descriptor operations |
 | logging | `logd` | structured persistent system record |
 | notifications | `bsdnotify` | global state and event notification |
 | tracing | `traced` | privileged tracing and diagnosis |
@@ -470,8 +485,8 @@ binaries or aliases are installed:
 | reboot coordination | `rebootd` | coordinated shutdown and reboot |
 | kernel modules | `kldmgrd` | controlled kernel-module inventory |
 
-The two local component executables retain the mandatory `cmp` suffix; global
-providers retain daemon names.  Typed library names, C symbols, manifest
+Local component bundle identities retain their `Cmp` interface suffix; global
+providers retain daemon names. Typed library names, C symbols, manifest
 component selectors, and reverse-DNS interface identifiers remain functional
 and descriptive.  The completed rename covers executable and manual names, source
 directories, cap-bundle program entries and paths, pkgbase package metadata,

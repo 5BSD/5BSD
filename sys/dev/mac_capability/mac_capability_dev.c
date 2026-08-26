@@ -805,6 +805,19 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 		/* Clamp and trim out_nfds to actual fds set by handler. */
 		if (out_nfds > MAC_CAPABILITY_MAX_FDS)
 			out_nfds = MAC_CAPABILITY_MAX_FDS;
+		/*
+		 * The handler must not exceed the caller's declared reply fd
+		 * capacity: the copyout below writes out_nfds slots into the
+		 * caller's reply_fds array, so an oversized count would
+		 * corrupt caller memory.  Drop any excess fds.
+		 */
+		while (out_nfds > (int)ca->reply_nfds) {
+			out_nfds--;
+			if (out_fds[out_nfds] != NULL) {
+				fdrop(out_fds[out_nfds], td);
+				out_fds[out_nfds] = NULL;
+			}
+		}
 		while (out_nfds > 0 && out_fds[out_nfds - 1] == NULL)
 			out_nfds--;
 
@@ -1240,23 +1253,36 @@ mac_capability_instance_close(struct file *fp, struct thread *td __unused)
 	if (svc != NULL && svc->csvc_taskq != NULL)
 		taskqueue_drain(svc->csvc_taskq, &s->ci_task);
 
-	/* Mark closed and drain RX to prevent new dispatches. */
+	struct mac_capability_msgq deadrx, deadtx;
+
+	STAILQ_INIT(&deadrx);
+	STAILQ_INIT(&deadtx);
+
+	/* Mark closed and detach RX to prevent new dispatches.  Freeing is
+	 * deferred until after ci_mtx is dropped: a queued message may carry an
+	 * attached capability fd whose fdrop re-enters this close path and
+	 * drains a taskqueue (sleepable), which must not happen under ci_mtx. */
 	mtx_lock(&s->ci_mtx);
 	s->ci_flags |= MAC_CAPABILITY_SF_CLOSED;
 
-	mac_capability_instance_drain_rxq(s);
+	STAILQ_CONCAT(&deadrx, &s->ci_rxq);
+	s->ci_rxqlen = 0;
 
 	/* Wait for in-flight handlers and calls to complete. */
 	while (s->ci_inflight > 0)
 		msleep(&s->ci_inflight, &s->ci_mtx, 0, "mac_capabilityterm", 0);
 
-	mac_capability_instance_drain_txq(s);
+	STAILQ_CONCAT(&deadtx, &s->ci_txq);
+	s->ci_txqlen = 0;
 
 	wakeup(&s->ci_txq);
 	KNOTE_LOCKED(&s->ci_rknotes, 0);
 	KNOTE_LOCKED(&s->ci_wknotes, 0);
 
 	mtx_unlock(&s->ci_mtx);
+
+	mac_capability_free_msgq(&deadrx);
+	mac_capability_free_msgq(&deadtx);
 
 	/* Post-drain: catch any task re-scheduled between the
 	 * pre-drain and the CLOSED flag.  Harmless if nothing ran. */

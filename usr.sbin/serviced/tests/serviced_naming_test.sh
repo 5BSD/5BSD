@@ -43,13 +43,13 @@ service_ready_protocol_body()
 	prepare_paths
 	install_naming_fixture ready-test \
 	    'arguments = ["ready", "ready.result"];'
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/ready-test.cap/etc/ready-test.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/ready-test.cap/Units/ready-test.unit/Unit.ucl"
 	start_stack
 	wait_naming_result ready.result
-	atf_check -s exit:0 -o match:'event=ready channel_fd=3$' cat ready.result
+	atf_check -s exit:0 -o match:'event=ready channel_fd=[0-9]+$' cat ready.result
 	atf_check -s exit:0 -o ignore \
-	    grep 'service ready-test: reported ready' "$logfile"
+	    grep -E 'ready-test.*reported ready' "$logfile"
 	finish_naming_stack
 }
 service_ready_protocol_cleanup()
@@ -68,24 +68,24 @@ naming_register_and_lookup_body()
 {
 	prepare_paths
 	install_naming_fixture org.test.ls-provider \
-	    'provides = ["org.test.ls-provider"];
+	    'activation { ipc = ["org.test.ls-provider"]; }
 arguments = ["provider", "provider-registered.result", "provider.result"];'
 	install_naming_fixture org.test.ls-client \
 	    'arguments = ["client", "client.result"];'
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/org.test.ls-client.cap/etc/org.test.ls-client.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/org.test.ls-client.cap/Units/ls-client.unit/Unit.ucl"
 	start_stack
 	wait_naming_result provider-registered.result
 	wait_naming_result client.result
 	wait_naming_result provider.result
 	atf_check -s exit:0 -o match:'greeting=hello confined=yes$' cat client.result
 	atf_check -s exit:0 \
-	    -o match:'client_label=org.test.ls-client message=world confined=yes$' \
+	    -o match:'client_label=org.test.ls-client/[^ ]* message=world confined=yes$' \
 	    cat provider.result
 	servicectl -s "${CTL_SOCK}" status > naming-status.result
 	atf_check -s exit:0 -o match:'org.test.ls-provider.*conns=1' \
 	    cat naming-status.result
-	atf_check -s exit:0 -o not-match:'org.test.ls-client.*conns=' \
+	atf_check -s exit:0 -o not-match:'org.test.ls-client/ls-client running.*conns=[1-9]' \
 	    cat naming-status.result
 	finish_naming_stack
 }
@@ -106,8 +106,8 @@ naming_lookup_nonexistent_body()
 	prepare_paths
 	install_naming_fixture lookup-client \
 	    'arguments = ["lookup-missing", "lookup.result"];'
-	sed -i '' '/^provides = /d' \
-	    "${APPS_DIR}/lookup-client.cap/etc/lookup-client.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/lookup-client.cap/Units/lookup-client.unit/Unit.ucl"
 	start_stack
 	wait_naming_result lookup.result
 	atf_check -s exit:0 -o match:'event=lookup fd=-1 errno=2$' cat lookup.result
@@ -130,17 +130,27 @@ naming_auto_unregister_on_exit_body()
 	local provider_pid
 
 	prepare_paths
-	install_naming_fixture test.unreg \
-	    'provides = ["test.unreg"];
-restart = "never"; arguments = ["register", "test.unreg", "register.result"];'
+	# A name is registered only once a consumer lookup activates the
+	# provider (demand model): a lone provider's declared endpoint stays an
+	# unactivated reservation, not a live registration.  So drive a real
+	# registration with a client, then kill the provider and confirm the
+	# now-live name is auto-unregistered on its owner's exit.
+	install_naming_fixture org.test.ls-provider \
+	    'restart = "never"; activation { ipc = ["org.test.ls-provider"]; }
+arguments = ["provider", "provider-registered.result", "provider.result"];'
+	install_naming_fixture org.test.ls-client \
+	    'arguments = ["client", "client.result"];'
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${APPS_DIR}/org.test.ls-client.cap/Units/ls-client.unit/Unit.ucl"
 	start_stack
-	wait_naming_result register.result
-	provider_pid=$(sed -n 's/.* pid=\([0-9][0-9]*\) .*/\1/p' register.result)
+	wait_naming_result provider.result
+	provider_pid=$(servicectl -s "${CTL_SOCK}" status |
+	    sed -n 's/.*org.test.ls-provider\/ls-provider running  *pid \([0-9][0-9]*\).*/\1/p')
 	case "$provider_pid" in
-	''|*[!0-9]*) atf_fail "register fixture returned an invalid PID" ;;
+	''|*[!0-9]*) atf_fail "could not determine the provider PID" ;;
 	esac
-	kill "$provider_pid" || atf_fail "could not terminate register fixture"
-	if ! wait_for_log 'auto-unregistered.*test.unreg'; then
+	kill "$provider_pid" || atf_fail "could not terminate the provider"
+	if ! wait_for_log 'auto-unregistered.*org.test.ls-provider'; then
 		capd_dump_diagnostics
 		atf_fail "serviced did not auto-unregister the exited provider"
 	fi
@@ -162,7 +172,7 @@ naming_unauthorized_name_rejected_body()
 {
 	prepare_paths
 	install_naming_fixture squat-test \
-	    'provides = ["org.test.allowed"];
+	    'activation { boot = true; ipc = ["org.test.allowed"]; }
 arguments = ["register", "com.evil.hijack", "squat.result"];'
 	start_stack
 	wait_naming_result squat.result
@@ -185,7 +195,7 @@ naming_self_lookup_eloop_body()
 {
 	prepare_paths
 	install_naming_fixture selfloop.test \
-	    'provides = ["selfloop.test"];
+	    'activation { boot = true; ipc = ["selfloop.test"]; }
 arguments = ["self-lookup", "selfloop.test", "selfloop.result"];'
 	start_stack
 	wait_naming_result selfloop.result

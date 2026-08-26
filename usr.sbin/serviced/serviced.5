@@ -1,180 +1,244 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
-.\"
-.Dd July 30, 2026
+.Dd August 23, 2026
 .Dt SERVICED 5
 .Os
 .Sh NAME
 .Nm serviced
-.Nd capability bundle service manifest format
+.Nd capability bundle and unit manifest format
 .Sh DESCRIPTION
 .Xr serviced 8
-loads service definitions from verified
+loads literal UCL from self-contained
 .Pa .cap
-bundles.
-A service manifest is a UCL object stored below the bundle's
-.Pa etc
-directory.
-Unknown keys are errors.
-.Pp
-Runtime identity and public service names are separate.
-The private identity is derived from
-.Va bundle_id
+directories.
+The bundle root contains
+.Pa Bundle.ucl ,
+optional
+.Pa Shared ,
 and
-.Va program .
-The
-.Va provides
-array contains only globally connectable endpoint names.
-.Sh TOP-LEVEL KEYS
-.Bl -tag -width max_failures
+.Pa Units .
+Each declared unit is
+.Pa Units/name.unit
+with
+.Pa Unit.ucl ,
+.Pa bin/name ,
+and optional
+.Pa Config
+and
+.Pa Resources
+directories.
+Other root or unit entries, undeclared units, symlinks, and special objects
+are rejected.
+.Pp
+Manifests are regular files no larger than 1 MiB.
+Unknown and duplicate keys, directives, includes, macros, variables, and
+implicit arrays fail closed.
+The verified tree is limited to 4096 entries, 512 MiB per file, and 2 GiB in
+total.
+.Sh BUNDLE.UCL
+Required keys are:
+.Bl -tag -width schema_version
 .It Va schema
-Optional schema identifier.
-When present it must be
-.Dq org.5bsd.serviced.service .
+Must be
+.Dq org.5bsd.capability-bundle .
 .It Va schema_version
-Required with
-.Va schema
-and currently
-.Dq 1.0.0 .
+Integer 1.
 .It Va bundle_id
-Required globally unique bundle identifier.
+Globally unique reverse-domain identity.
 .It Va version
-Bundle version.
-.It Va author
-Bundle author.
-.It Va program
-Required executable name below the bundle's
-.Pa bin
-directory.
-Absolute paths and parent traversal are rejected.
-.It Va arguments
-String array passed after
-.Va program .
-.It Va environment
-Object containing the program's explicit environment.
-It cannot override reserved component or bootstrap variables.
-.It Va user , group
-Execution credentials.
-.It Va provides
-A string or array of global names exposed by this program.
-A provider may declare and expose several names.
-Each name is routed to the listener that exposed that exact name.
-The declarations form one initial check-in transaction:
-the provider cannot report application readiness until every name is claimed.
-No name becomes connectable until that complete check-in,
-application readiness,
-.Nm serviced
-independently verifies capability-mode entry, and client demand successfully
-activates that particular name.
-Sibling names remain independently lazy after the common readiness barrier.
-All public named services are launched on first connection.
-There are no
-.Va on_demand
-or
-.Va requires
-options; global dependencies are acquired dynamically by typed libraries.
-.It Va components
-One string or an array containing
-.Dq filesystem ,
-.Dq network ,
-or both.
-No component options, provider selection, interface version, lifetime, or
-sharing keys exist.
-The declaration requests a required process-local authority replacement.
-.Xr serviced 8
-constructs the component before exec, enlists its worker in the consumer's
-coalition, and injects its channel through the fixed environment variable
-consumed by the typed library.
-.It Va restart
-One of
+Display version string.
+.It Va sequence
+Positive, monotonically increasing 64-bit installation order.
+.It Va units
+Exact array of one through 32 lower-case unit names.
+.El
+.Pp
+Optional
+.Va author
+and
+.Va publisher
+are display metadata.
+The optional
+.Va shared
+object may contain up to eight
+.Va storage
+declarations with a unique
+.Va name ,
+optional
+.Va flavor ,
+and
+.Va lifetime .
+.Sh UNIT.UCL
+The default program is
+.Pa bin/name .
+The optional
+.Va program
+is one filename in that directory, never a path.
+.Va arguments
+and
+.Va environment
+contain at most 32 literal entries each.
+Reserved bootstrap environment names, including
+.Ev SERVICE_BOOTSTRAP_FD
+and
+.Ev CAPABILITY_UNIT_DIR ,
+are rejected.
+.Va user
+and
+.Va group
+default to
+.Dq capability .
+.Pp
+Every unit requires an
+.Va activation
+object.
+.Va boot
+is a Boolean and
+.Va ipc
+is one name or an array of at most eight reverse-domain names.
+At least one trigger is required.
+Publishing IPC does not imply boot activation.
+.Pp
+.Va restart
+is
 .Dq never ,
 .Dq on-failure ,
 or
 .Dq always .
-.It Va stop_timeout
-Seconds before forced termination.
-.It Va max_failures
-Circuit-breaker threshold.
-.It Va kmod_requires
-Kernel modules that the privileged module service must ensure are loaded.
-.It Va jail
-Optional execution-jail object with
-.Va name ,
-.Va path ,
-.Va hostname ,
+.Va stop_timeout
+is 1 through 300 seconds and
+.Va max_failures
+is 1 through 100.
+.Va kmod_requires
+contains at most eight module names.
+An optional
+.Va jail
+object supplies
+.Va name , path , hostname ,
 and
 .Va ip4_addr .
-.It Va capabilities
-Direct kernel authorities delegated by the Oracle.
-Supported groups include
-.Va paths ,
-.Va files ,
-.Va network ,
-.Va jails ,
-.Va vsock ,
-.Va services ,
+.Sh STORAGE
+The top-level unit
+.Va storage
+array contains at most eight objects with:
+.Bl -tag -width lifetime
+.It Va name
+Logical descriptor name.
+.It Va scope
+Required
+.Dq unit
+or
+.Dq shared .
+.It Va rights
+One name or an array selected from
+.Dq props_read ,
+.Dq props_write ,
+.Dq snapshot ,
+.Dq snap_destroy ,
+.Dq rollback ,
+.Dq clone_src ,
+.Dq create ,
+.Dq destroy ,
+.Dq send ,
+.Dq recv ,
+.Dq mount ,
+.Dq hold ,
 and
-.Va system .
-These declarations remain distinct from local components and global services.
+.Dq release .
+.It Va flavor
+Optional for unit storage; forbidden on shared references.
+.It Va lifetime
+.Dq persistent ,
+.Dq cache ,
+.Dq boot ,
+or
+.Dq lease .
+It is optional for unit storage and forbidden on shared references.
 .El
-.Sh DESCRIPTOR LIMITS
-There is no per-service descriptor-limit key.
-.Xr serviced 8
-raises its own
-.Dv RLIMIT_NOFILE
-ceiling before launching programs; each program inherits that ceiling and may
-lower its own limits with
-.Xr setrlimit 2 .
-.Sh SERVICE EXAMPLE
+.Pp
+A shared reference must match a declaration in
+.Pa Bundle.ucl .
+Dataset paths are never supplied by the manifest.
+.Sh DESCRIPTORS
+The optional
+.Va descriptors
+object accepts the distinct keys
+.Va filesystem , network ,
+and
+.Va crypto .
+Network and crypto values are empty objects.
+Filesystem requires
+.Va storage
+naming a declared storage entry with mount rights:
 .Bd -literal -offset indent
-schema = "org.5bsd.serviced.service";
-schema_version = "1.0.0";
-bundle_id = "org.example.index";
-version = "1.0.0";
-author = "Example";
-
-program = "indexd";
-provides = [
-    "org.example.index.query",
-    "org.example.index.admin"
-];
-components = ["filesystem", "network"];
-restart = "on-failure";
+descriptors {
+    filesystem { storage = "data"; }
+    network {}
+    crypto {}
+}
 .Ed
 .Pp
-The provider calls
-.Xr service_provider_expose 3
-once for each declared name.
-Each call checks in that name's listener with
-.Nm serviced .
-The two names can use different protocols and event loops.
-.Sh SCOPE MODEL
-.Bl -tag -width "Local component"
-.It Local component
-Private to one supervised consumer and its coalition.
-It replaces ambient filesystem or network authority and is available before
-the consumer starts.
-It is never looked up by name.
-.It Global service
-Registered by a first- or third-party provider and connected by an agreed
-name.
-It runs in its own coalition and is launched on demand.
-.It Capability
-A kernel-enforced descriptor or token delegated directly to the process.
+These are private authority replacements constructed before exec, not global
+service names.
+.Sh CAPABILITIES
+The optional
+.Va capabilities
+object accepts these closed groups:
+.Bl -tag -width services
+.It Va paths
+At most 16 distinct absolute paths.
+.It Va files
+At most 16 absolute path/action objects.
+Actions are
+.Dq lookup , stat , read , write , append , create , delete ,
+.Dq rename_from , rename_to , link , exec , setattr , truncate ,
+and
+.Dq connect .
+.It Va network
+At most 16 typed IPv4, IPv6, or Bluetooth claims with compatible
+.Va domain , protocol , address , prefix , port/ports ,
+and
+.Va direction
+fields.
+.It Va jails
+At most 16 JID/name selectors with create, get, set, remove, and attach
+actions.
+.It Va vsock
+At most 16 CID, port/range, and direction objects.
+.It Va services
+At most four names selected from
+.Dq mount , node , accounting ,
+and
+.Dq identity .
+.It Va system
+Distinct gates selected from
+.Dq kldload , kldunload , kldstat , reboot , swapon , swapoff ,
+.Dq sysctl , kenv , acct , audit ,
+and
+.Dq kenv_read .
 .El
 .Pp
-Application code should use a typed library.
-The library author fixes the scope: FileSystem and Network use local
-components; global service libraries use
-.Xr service_connect 3 .
-There is no fallback between scopes.
-.Sh RESERVED INTERNAL NAMES
-The base FileSystem and Network component factories use reserved internal
-registration names.
-Ordinary client lookup of those names is denied.
-Their registration exists only so
-.Xr serviced 8
-can construct local sessions before consumer exec.
+Storage is not a capability sub-group; it is a top-level unit declaration.
+.Sh EXAMPLE
+.Bd -literal -offset indent
+# App.cap/Bundle.ucl
+schema = "org.5bsd.capability-bundle";
+schema_version = 1;
+bundle_id = "org.example.app";
+version = "2.0.0";
+sequence = 12;
+units = ["worker"];
+
+# App.cap/Units/worker.unit/Unit.ucl
+arguments = ["--foreground"];
+activation { boot = true; ipc = ["org.example.app.worker"]; }
+restart = "on-failure";
+storage = [{ name = "data"; scope = "unit";
+    lifetime = "persistent"; rights = "mount"; }];
+descriptors { filesystem { storage = "data"; } network {} }
+.Ed
 .Sh SEE ALSO
+.Xr libcapbundle 3 ,
 .Xr libservice 3 ,
-.Xr serviced 8
+.Xr serviced 8 ,
+.Xr servicectl 8

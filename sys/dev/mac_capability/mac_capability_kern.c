@@ -123,6 +123,25 @@ mac_capability_instance_drain_rxq(struct mac_capability_instance *s)
 }
 
 /*
+ * Free a list of messages previously detached from an instance queue.
+ *
+ * Must run WITHOUT ci_mtx held: a queued message can carry an attached
+ * capability descriptor whose final fdrop re-enters
+ * mac_capability_instance_close(), which drains a taskqueue — a sleepable
+ * operation that must never occur under the non-sleepable ci_mtx.
+ */
+void
+mac_capability_free_msgq(struct mac_capability_msgq *q)
+{
+	struct mac_capability_msg *msg;
+
+	while ((msg = STAILQ_FIRST(q)) != NULL) {
+		STAILQ_REMOVE_HEAD(q, cm_link);
+		mac_capability_msg_free(msg);
+	}
+}
+
+/*
  * Enqueue a message on an instance's TX queue.  Caller must hold ci_mtx.
  *
  * If 'force' is true the message bypasses the soft limit (used by
@@ -559,7 +578,10 @@ void
 mac_capability_service_destroy(struct mac_capability_service *svc)
 {
 	struct mac_capability_instance *s;
+	struct mac_capability_msgq deadq;
 	bool need_revoke;
+
+	STAILQ_INIT(&deadq);
 
 	SDT_PROBE2(mac_capability, , , service__destroy, svc->csvc_name,
 	    svc->csvc_svc_flags);
@@ -580,8 +602,13 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 		mtx_lock(&s->ci_mtx);
 		if (!(s->ci_flags & MAC_CAPABILITY_SF_DEAD)) {
 			s->ci_flags |= MAC_CAPABILITY_SF_REVOKED;
-			mac_capability_instance_drain_rxq(s);
-			mac_capability_instance_drain_txq(s);
+			/* Detach now, free after the locks drop: a queued
+			 * message's attached fd can recurse into
+			 * mac_capability_instance_close() and sleep. */
+			STAILQ_CONCAT(&deadq, &s->ci_rxq);
+			s->ci_rxqlen = 0;
+			STAILQ_CONCAT(&deadq, &s->ci_txq);
+			s->ci_txqlen = 0;
 			wakeup(&s->ci_txq);
 			KNOTE_LOCKED(&s->ci_rknotes, 0);
 			KNOTE_LOCKED(&s->ci_wknotes, 0);
@@ -589,6 +616,7 @@ mac_capability_service_destroy(struct mac_capability_service *svc)
 		mtx_unlock(&s->ci_mtx);
 	}
 	sx_xunlock(&mac_capability_registry_lock);
+	mac_capability_free_msgq(&deadq);
 
 	/* Wait for all in-flight async handlers to complete. */
 	if (svc->csvc_taskq != NULL)

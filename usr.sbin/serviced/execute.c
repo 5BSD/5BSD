@@ -238,7 +238,8 @@ open_consumer_bundle(const struct svc_manifest *manifest)
 }
 
 static int
-prepare_component_resources(const struct svc_manifest *manifest,
+prepare_component_resources(struct svc_runtime *svc,
+    const struct svc_manifest *manifest,
     const struct serviced_component *component, uid_t uid, gid_t gid,
     const int *service_fds,
     unsigned nservices,
@@ -249,7 +250,7 @@ prepare_component_resources(const struct svc_manifest *manifest,
 	cap_rights_t rights;
 	char storage_role[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
 	size_t i;
-	int error;
+	int anchor, error;
 
 	*nfdsp = 0;
 	if (strcmp(component->name, "filesystem") != 0)
@@ -267,9 +268,35 @@ prepare_component_resources(const struct svc_manifest *manifest,
 		errno = ENOENT;
 		return (-1);
 	}
-	fds[0] = tzfsd_mount_dir(service_fds[i], 0);
-	if (fds[0] == -1)
+	/*
+	 * Retain a handle reference for the life of this service before the
+	 * launch cleanup closes the delivered service descriptors.  The mount
+	 * below is anchored by the handle, and the provider worker receives
+	 * only the directory descriptor; without this anchor the mount is
+	 * force-unmounted the moment the launch drops its handle, revoking the
+	 * worker's directory descriptor mid-session.
+	 */
+	if (svc->nmount_anchors >= nitems(svc->mount_anchor_fds)) {
+		errno = ENOSPC;
 		return (-1);
+	}
+	anchor = fcntl(service_fds[i], F_DUPFD_CLOEXEC, 0);
+	if (anchor == -1)
+		return (-1);
+	if (cap_clofork_limit(anchor, CAP_CLOFORK_LOCKED) == -1) {
+		error = errno != 0 ? errno : EIO;
+		close(anchor);
+		errno = error;
+		return (-1);
+	}
+	fds[0] = tzfsd_mount_dir(service_fds[i], 0);
+	if (fds[0] == -1) {
+		error = errno != 0 ? errno : EIO;
+		close(anchor);
+		errno = error;
+		return (-1);
+	}
+	svc->mount_anchor_fds[svc->nmount_anchors++] = anchor;
 	if (fchown(fds[0], uid, gid) == -1 ||
 	    fchmod(fds[0], 0700) == -1) {
 		error = errno != 0 ? errno : EIO;
@@ -1892,6 +1919,25 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	close(L->child_end);
 	L->child_end = -1;
 	close(bootstrap_fd);
+	/*
+	 * Launcher-applied protection: shield the child by its process descriptor
+	 * now, while pd_fd is still transferable and before the child's program
+	 * image runs.  This closes the window a self-applied shield cannot cover
+	 * (the interval between fork and the new image installing its own policy)
+	 * and does not depend on the child cooperating.  Must precede the pd_fd
+	 * cap_xfer_limit(NONE) below, which would otherwise block the fd handoff
+	 * to the capprotect instance.
+	 */
+	if (L->capprotect_fd >= 0 && m->protect_flags != 0) {
+		if (mac_cap_protect(L->capprotect_fd, pd_fd,
+		    m->protect_flags) == -1)
+			syslog(LOG_WARNING, "svc_exec %s: launcher protect: %m",
+			    m->label);
+		else
+			syslog(LOG_INFO, "svc_exec %s: launcher-protected "
+			    "pid %d (flags 0x%x)", m->label, (int)pid,
+			    m->protect_flags);
+	}
 	if (L->capprotect_fd >= 0) {
 		close(L->capprotect_fd);
 		L->capprotect_fd = -1;
@@ -2093,7 +2139,7 @@ svc_launch_component_start(struct svc_runtime *svc, int kq)
 	}
 	L->session_cfd = cfd;
 	L->nresources = 0;
-	if (prepare_component_resources(m, component, L->uid, L->gid,
+	if (prepare_component_resources(svc, m, component, L->uid, L->gid,
 	    L->service_fds, L->nservices, L->service_names, L->service_types,
 	    L->resource_fds, &L->nresources) == -1) {
 		error = errno != 0 ? errno : EIO;
@@ -2108,6 +2154,13 @@ svc_launch_component_start(struct svc_runtime *svc, int kq)
 		svc_launch_abort(svc, error, kq);
 		return (-1);
 	}
+
+	/*
+	 * Record the authority handoff: the consumer's resources are being
+	 * delegated to the component provider for this session.
+	 */
+	syslog(LOG_INFO, "component=%s phase=delegate label=%s provider=%s "
+	    "resources=%zu", component->name, m->label, provider, L->nresources);
 
 	memset(&message, 0, sizeof(message));
 	message.magic = COMPONENT_SESSION_MAGIC;

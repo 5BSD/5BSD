@@ -2,7 +2,7 @@
 
 PACKAGE=lib${LIB}
 LIB=	oraclert
-SHLIB_MAJOR=	1
+SHLIB_MAJOR=	2
 
 SRCS=	claim_parse.c
 INCS=	oraclert.h claim_parse.h oracled_ctl.h \

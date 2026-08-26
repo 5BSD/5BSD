@@ -12,11 +12,13 @@ manifest_body()
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/localnetwork.ucl"
 	bundle="${PWD}/LocalNetwork.cap"
+	unit="${bundle}/Units/localnetwork.unit"
 
 	test -x "${servicectl}" ||
 	    atf_skip "source-built servicectl is required"
-	mkdir -p "${bundle}/bin" "${bundle}/etc"
-	cp "${objdir}/localnetwork" "${bundle}/bin/localnetwork"
+	mkdir -p "${unit}/bin"
+	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${objdir}/localnetwork" "${unit}/bin/localnetwork"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
 		    "${objdir}/localnetwork"
@@ -24,19 +26,19 @@ manifest_body()
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
 		    "${objdir}/localnetwork"
 	fi
-	cp "${manifest}" "${bundle}/etc/localnetwork.ucl"
-	chmod 0555 "${bundle}" "${bundle}/bin" "${bundle}/etc" \
-	    "${bundle}/bin/localnetwork"
-	chmod 0444 "${bundle}/etc/localnetwork.ucl"
+	cp "${manifest}" "${unit}/Unit.ucl"
+	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
+	    "${unit}/bin/localnetwork"
+	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${servicectl}" verify "${bundle}"
 	atf_check -s exit:0 -o match:'org.5bsd.NetworkCmp' \
-	    grep 'provides' "${manifest}"
+	    grep 'activation' "${manifest}"
 	atf_check -s exit:1 -o empty -e empty \
 	    grep 'interface' "${manifest}"
 	atf_check -s exit:0 -o match:'version = "1.0.0"' \
-	    grep 'version = "1.0.0"' "${manifest}"
+	    grep 'version = "1.0.0"' "${srcdir}/capbundle/Bundle.ucl"
 }
 manifest_cleanup()
 {

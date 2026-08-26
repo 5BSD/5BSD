@@ -63,6 +63,10 @@ struct tzfsd_state {
 	struct tzfsd_config cfg;
 	int		persistent_fd;	/* handle on cfg.persistent */
 	int		ephemeral_fd;	/* handle on cfg.ephemeral */
+	int		boot_fd;	/* current kernel-boot generation */
+	int		lease_fd;	/* current serviced session, per connection */
+	char		boot_name[TZFSD_NAME_MAX];
+	char		lease_name[TZFSD_NAME_MAX];
 	int		templates_fd;	/* handle on cfg.templates */
 	int		listen_fd;	/* TZFSD_SOCK_PATH listener */
 };
@@ -79,6 +83,12 @@ int	tzfsd_ensure_zfs(struct tzfsd_config *cfg);
 int	tzfsd_layout_provision(struct tzfsd_state *st);
 int	tzfsd_flavors_prepare(struct tzfsd_state *st);
 int	tzfsd_ensure_path(int root_fd, const char *relpath, uint64_t rights);
+int	tzfsd_destroy_tree(int parent_fd, const char *relname);
+int	tzfsd_nvl_names(const void *buf, size_t len, char ***namesp,
+	    size_t *countp);
+void	tzfsd_nvl_names_free(char **names, size_t count);
+
+int	tzfsd_session_begin(struct tzfsd_state *st, const char *session);
 
 /* request.c */
 void	tzfsd_serve(struct tzfsd_state *st);

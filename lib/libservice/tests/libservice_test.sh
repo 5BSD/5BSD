@@ -32,20 +32,27 @@ find_service_fixture()
 
 install_fixture()
 {
-	local label extra dir
+	local label extra dir unit
 
 	label=$1
 	extra=$2
+	unit=service
 	dir="${CAPD_APPS_SYSTEM}/${label}.cap"
-	mkdir -p "${dir}/etc" "${dir}/bin"
-	cp "$service_fixture" "${dir}/bin/${label}"
-	chmod 0555 "${dir}/bin/${label}"
-	cat >"${dir}/etc/${label}.ucl" <<EOF
-bundle_id = "${label}.fixture";
-version = "1.0";
+	mkdir -p "${dir}/Units/${unit}.unit/bin"
+	cp "$service_fixture" "${dir}/Units/${unit}.unit/bin/${unit}"
+	chmod 0555 "${dir}/Units/${unit}.unit/bin/${unit}"
+	cat >"${dir}/Bundle.ucl" <<EOF
+schema = "org.5bsd.capability-bundle";
+schema_version = 1;
+bundle_id = "${label}";
+version = "1.0.0";
+sequence = 1;
 author = "test";
-program = "${label}";
-provides = ["${label}"];
+publisher = "org.test";
+units = ["${unit}"];
+EOF
+	cat >"${dir}/Units/${unit}.unit/Unit.ucl" <<EOF
+activation { boot = true; ipc = ["${label}"]; }
 ${extra}
 EOF
 }
@@ -90,14 +97,14 @@ ready_reports_channel_body()
 	result="$(pwd)/ready.result"
 	install_fixture org.test.ls-ready \
 	    "arguments = [\"ready\", \"${result}\"];"
-	sed -i '' '/^provides = /d' \
-	    "${CAPD_APPS_SYSTEM}/org.test.ls-ready.cap/etc/org.test.ls-ready.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${CAPD_APPS_SYSTEM}/org.test.ls-ready.cap/Units/service.unit/Unit.ucl"
 	capd_start_stack
 	wait_for_result "$result"
-	atf_check -s exit:0 -o match:'^CAPD-TEST/1 event=ready channel_fd=3$' \
+	atf_check -s exit:0 -o match:'^CAPD-TEST/1 event=ready channel_fd=[0-9]+$' \
 	    cat "$result"
 	atf_check -s exit:0 -o ignore \
-	    grep 'service org.test.ls-ready: reported ready' "$CAPD_LOG"
+	    grep -E 'service org.test.ls-ready/service:.*reported ready' "$CAPD_LOG"
 	capd_stop_stack || atf_fail "Oracle stack did not stop cleanly"
 }
 ready_reports_channel_cleanup()
@@ -126,8 +133,8 @@ naming_exchange_confines_endpoints_body()
 	    "arguments = [\"provider\", \"${registered}\", \"${provider}\"];"
 	install_fixture org.test.ls-client \
 	    "arguments = [\"client\", \"${client}\"];"
-	sed -i '' '/^provides = /d' \
-	    "${CAPD_APPS_SYSTEM}/org.test.ls-client.cap/etc/org.test.ls-client.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${CAPD_APPS_SYSTEM}/org.test.ls-client.cap/Units/service.unit/Unit.ucl"
 	capd_start_stack
 	wait_for_result "$registered"
 	atf_check -s exit:0 -o match:'concurrent_lookup_errno=2$' \
@@ -137,7 +144,7 @@ naming_exchange_confines_endpoints_body()
 	atf_check -s exit:0 \
 	    -o match:'event=exchange greeting=hello confined=yes$' cat "$client"
 	atf_check -s exit:0 \
-	    -o match:'event=exchange client_label=.*org.test.ls-client message=world confined=yes$' \
+	    -o match:'event=exchange client_label=org.test.ls-client/[^ ]* message=world confined=yes$' \
 	    cat "$provider"
 	capd_stop_stack || atf_fail "Oracle stack did not stop cleanly"
 }
@@ -166,8 +173,8 @@ multiplexed_transport_correlates_reordered_replies_body()
 	    "arguments = [\"mux-provider\", \"${provider}\"];"
 	install_fixture org.test.transport-client \
 	    "arguments = [\"mux-client\", \"${client}\"];"
-	sed -i '' '/^provides = /d' \
-	    "${CAPD_APPS_SYSTEM}/org.test.transport-client.cap/etc/org.test.transport-client.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${CAPD_APPS_SYSTEM}/org.test.transport-client.cap/Units/service.unit/Unit.ucl"
 	capd_start_stack
 	wait_for_result "$provider"
 	wait_for_result "$client"
@@ -203,15 +210,15 @@ multiple_provides_route_independently_body()
 	install_fixture org.test.multi-provider \
 	    "arguments = [\"multi-provider\", \"org.test.multi.first\", \"org.test.multi.second\", \"${registered}\", \"${result}\"];"
 	sed -i '' \
-	    's/provides = \["org.test.multi-provider"\]/provides = ["org.test.multi.first", "org.test.multi.second"]/' \
-	    "${CAPD_APPS_SYSTEM}/org.test.multi-provider.cap/etc/org.test.multi-provider.ucl"
+	    's/ipc = \["org.test.multi-provider"\]/ipc = ["org.test.multi.first", "org.test.multi.second"]/' \
+	    "${CAPD_APPS_SYSTEM}/org.test.multi-provider.cap/Units/service.unit/Unit.ucl"
 	install_fixture org.test.multi-client-first \
 	    "arguments = [\"named-client\", \"org.test.multi.first\", \"${first}\"];"
 	install_fixture org.test.multi-client-second \
 	    "arguments = [\"named-client\", \"org.test.multi.second\", \"${second}\"];"
-	sed -i '' '/^provides = /d' \
-	    "${CAPD_APPS_SYSTEM}/org.test.multi-client-first.cap/etc/org.test.multi-client-first.ucl" \
-	    "${CAPD_APPS_SYSTEM}/org.test.multi-client-second.cap/etc/org.test.multi-client-second.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${CAPD_APPS_SYSTEM}/org.test.multi-client-first.cap/Units/service.unit/Unit.ucl" \
+	    "${CAPD_APPS_SYSTEM}/org.test.multi-client-second.cap/Units/service.unit/Unit.ucl"
 	capd_start_stack
 	wait_for_result "$registered"
 	wait_for_result "$result"
@@ -245,8 +252,8 @@ lookup_missing_returns_enoent_body()
 	result="$(pwd)/lookup.result"
 	install_fixture org.test.ls-lookup \
 	    "arguments = [\"lookup-missing\", \"${result}\"];"
-	sed -i '' '/^provides = /d' \
-	    "${CAPD_APPS_SYSTEM}/org.test.ls-lookup.cap/etc/org.test.ls-lookup.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${CAPD_APPS_SYSTEM}/org.test.ls-lookup.cap/Units/service.unit/Unit.ucl"
 	capd_start_stack
 	wait_for_result "$result"
 	atf_check -s exit:0 \
@@ -275,8 +282,8 @@ protection_denies_ktrace_body()
 	result="$(pwd)/protect.result"
 	install_fixture org.test.ls-protect \
 	    "arguments = [\"protect\", \"${result}\"];"
-	sed -i '' '/^provides = /d' \
-	    "${CAPD_APPS_SYSTEM}/org.test.ls-protect.cap/etc/org.test.ls-protect.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${CAPD_APPS_SYSTEM}/org.test.ls-protect.cap/Units/service.unit/Unit.ucl"
 	capd_start_stack
 	wait_for_result "$result"
 	atf_check -s exit:0 -o match:'protected=yes$' cat "$result"
@@ -306,13 +313,17 @@ supervisor_death_is_observable_body()
 	local i ready result serviced_pid
 
 	find_service_fixture
+	# This test alone induces a manager crash to prove supervisor loss is
+	# observable; drop the shield's ambient-SIGKILL denial for it only, so
+	# procdesc_is_only_signal_authority still verifies the default shield.
+	export SERVICED_TEST_SHIELD_NO_SIGKILL=1
 	capd_stack_prepare
 	ready="$(pwd)/supervisor-monitor.ready.result"
 	result="$(pwd)/supervisor-monitor.result"
 	install_fixture org.test.supervisor-monitor \
 	    "arguments = [\"supervisor-monitor\", \"${ready}\", \"${result}\"];"
-	sed -i '' '/^provides = /d' \
-	    "${CAPD_APPS_SYSTEM}/org.test.supervisor-monitor.cap/etc/org.test.supervisor-monitor.ucl"
+	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
+	    "${CAPD_APPS_SYSTEM}/org.test.supervisor-monitor.cap/Units/service.unit/Unit.ucl"
 	capd_start_stack
 	wait_for_result "$ready"
 	atf_check -s exit:0 -o match:'monitor_ready=1' cat "$ready"

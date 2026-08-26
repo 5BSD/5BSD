@@ -138,7 +138,7 @@ main(int argc, char **argv)
 {
 
 	if (argc == 2 && strcmp(argv[1], "config") == 0) {
-		puts("components = [\"network\"];");
+		puts("descriptors { network {} }");
 		return (0);
 	}
 	if (argc == 2 && strcmp(argv[1], "info") == 0)

@@ -12,12 +12,13 @@ Programs managed by
 .Xr serviced 8
 use typed libraries instead of ambient discovery or raw IPC protocols.
 There are two non-overlapping scopes.
-.Ss Local components
-Local components replace ambient filesystem or networking authority removed
+.Ss Local descriptors
+Local descriptors replace ambient filesystem, networking, or cryptographic authority removed
 from a sandboxed process.
 A bundle requests them with:
 .Bd -literal -offset indent
-components = ["filesystem", "network"];
+storage = [{ name = "data"; scope = "unit"; rights = "mount"; }];
+descriptors { filesystem { storage = "data"; } network {} }
 .Ed
 .Pp
 .Xr serviced 8
@@ -28,14 +29,11 @@ The FileSystem and Network libraries consume that entry and expose ordinary
 typed operations.
 The application does not select a provider, protocol version, lifetime,
 sharing mode, or options object.
-Local components are mandatory and are never looked up globally.
+Local descriptors are mandatory and are never looked up globally.
 .Ss Global services
 A provider declares one or more reverse-domain names:
 .Bd -literal -offset indent
-provides = [
-    "org.example.control",
-    "org.example.events"
-];
+activation { ipc = ["org.example.control", "org.example.events"]; }
 .Ed
 .Pp
 Any lookup of those names activates the one provider process.
@@ -45,7 +43,7 @@ The provider uses
 to expose one independent listener per name, and each incoming endpoint is
 routed only to its addressed listener.
 Registrations remain staged until the process has exposed its complete
-.Va provides
+.Va activation.ipc
 set, entered capability mode, and completed
 .Fn service_ready .
 The entire endpoint set then becomes visible atomically.
@@ -84,7 +82,7 @@ deduplication and are not implied by
 Typed application libraries own discovery and protocol validation.
 .It
 Global registration is authorized against the exact
-.Va provides
+.Va activation.ipc
 list.
 .It
 Authenticated client identity comes from serviced, not client payload.

@@ -57,6 +57,9 @@ print_bundle(const struct capbundle *b)
 	printf("  ID:      %s\n", capbundle_id(b));
 	printf("  Version: %s\n", capbundle_version(b));
 	printf("  Author:  %s\n", capbundle_author(b));
+	printf("  Publisher: %s\n", capbundle_publisher(b)[0] != '\0' ?
+	    capbundle_publisher(b) : "(unspecified)");
+	printf("  Sequence: %ju\n", (uintmax_t)capbundle_sequence(b));
 	printf("  Path:    %s\n", capbundle_path(b));
 	printf("  Services: %u\n", capbundle_nservices(b));
 	printf("\n");
@@ -84,18 +87,8 @@ print_bundle(const struct capbundle *b)
 		printf("      program:   %s\n", capbundle_svc_program(svc));
 		const char *activation;
 
-		activation = capbundle_svc_nprovides(svc) != 0 ?
-		    "first connection" : "boot";
-		for (j = 0; j < capbundle_svc_nprovides(svc); j++) {
-			const char *provided;
-
-			provided = capbundle_svc_provides(svc, j);
-			if (strcmp(provided, "org.5bsd.FileSystemCmp") == 0 ||
-			    strcmp(provided, "org.5bsd.NetworkCmp") == 0) {
-				activation = "boot (local component factory)";
-				break;
-			}
-		}
+		activation = capbundle_svc_activates_at_boot(svc) ?
+		    "boot" : "first IPC request";
 		printf("      activation: %s\n", activation);
 		printf("      restart:   %s\n", restart);
 		printf("      stop_timeout: %d\n", m.stop_timeout);
@@ -125,6 +118,8 @@ print_bundle(const struct capbundle *b)
 		    "jails=%u vsock=%u services=%u storage=%u system=0x%x\n",
 		    m.ncap_paths, m.ncap_files, m.ncap_net, m.ncap_jail,
 		    m.ncap_vsock, m.ncap_services, m.ncap_storage, m.cap_system);
+		if (m.protect_flags != 0)
+			printf("      protect: 0x%x\n", m.protect_flags);
 		for (j = 0; j < m.ncap_paths; j++)
 			printf("        path: %s\n", m.cap_paths[j]);
 		for (j = 0; j < m.ncap_files; j++)
@@ -155,16 +150,32 @@ print_bundle(const struct capbundle *b)
 			    ort_net_direction_name(m.cap_vsock[j].direction));
 		for (j = 0; j < m.ncap_services; j++)
 			printf("        service: %s\n", m.cap_services[j]);
-		for (j = 0; j < m.ncap_storage; j++)
+		for (j = 0; j < m.ncap_storage; j++) {
+			const char *lifetime;
+
+			switch (m.cap_storage[j].lifetime) {
+			case ORT_STORAGE_PERSISTENT: lifetime = "persistent"; break;
+			case ORT_STORAGE_CACHE: lifetime = "cache"; break;
+			case ORT_STORAGE_BOOT: lifetime = "boot"; break;
+			case ORT_STORAGE_LEASE: lifetime = "lease"; break;
+			default: lifetime = "invalid"; break;
+			}
 			printf("        storage: %s flavor=%s rights=0x%jx "
-			    "lifetime=%s\n", m.cap_storage[j].name,
+			    "lifetime=%s scope=%s dataset=%s\n",
+			    m.cap_storage[j].name,
 			    m.cap_storage[j].flavor[0] ? m.cap_storage[j].flavor :
 			    "(bare)", (uintmax_t)m.cap_storage[j].rights,
-			    m.cap_storage[j].lifetime == ORT_STORAGE_EPHEMERAL ?
-			    "ephemeral" : "persistent");
-		for (j = 0; j < m.ncomponents; j++)
-			printf("      component: %s\n",
+			    lifetime,
+			    m.cap_storage[j].scope == ORT_STORAGE_SCOPE_SHARED ?
+			    "shared" : "unit", m.cap_storage[j].dataset);
+		}
+		for (j = 0; j < m.ncomponents; j++) {
+			printf("      descriptor: %s",
 			    m.components[j].name);
+			if (m.components[j].storage[0] != '\0')
+				printf(" storage=%s", m.components[j].storage);
+			printf("\n");
+		}
 		if (m.has_jail)
 			printf("      jail: name=%s path=%s hostname=%s "
 			    "ip4_addr=%s persistent=yes\n",

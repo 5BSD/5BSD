@@ -5,7 +5,7 @@ runs the stock rc boot on every boot and migrates services out of it one at a
 time; a mixed system is a designed, stable operating mode. References:
 `docs/rc-integration-handbook.md` (the full rc handbook),
 `docs/freebsd-init-behavior-audit.md` (the init(8) behavior contract),
-`docs/service-architecture-plan.md` §4 (the ingest design).
+`docs/service-architecture-plan.md` §14 (the demand-driven transition plan).
 
 ## Boot ordering
 
@@ -24,8 +24,8 @@ serviced
   1. run /bin/sh /etc/rc autoboot as a oneshot, on /dev/console,
      and block until it exits (the full stock rc graph: rcorder,
      two-pass discovery, firstboot, jail keywords — unchanged)
-  2. scan /Capabilities bundles, launch native services in
-     dependency order
+  2. scan /Capabilities bundles and service demand already queued by boot or
+     IPC activation
   3. bind control sockets (now that rc remounted / read-write)
   4. send ORACLE_OP_READY to PID 1
         │
@@ -71,12 +71,13 @@ enabled legacy daemons — still boots through the stock rc graph.
 ## Migrating a service (single-owner rule)
 
 Every long-running service has exactly one owner: an rc.d script or a
-serviced bundle, never both. Migration keeps the dependency name (`PROVIDE:`
-/ manifest `provides`) stable so dependents never notice, and follows a
+serviced bundle, never both. Migration keeps the public IPC name stable so
+clients continue to discover the same service, and follows a
 one-service transaction: inventory the script's ordering, preparation,
 credentials, readiness, and shutdown behavior; author the `.cap` bundle and
 capability contract; prove one-instance boot, real readiness, `service(8)`
-operations, single-stop shutdown, and rollback; only then flip ownership.
+operations, single-stop shutdown, and recovery to the still-active owner if
+publication fails; only then flip ownership.
 An rc.d script for a control-socket daemon becomes an adapter rather than a
 signal sender:
 
@@ -110,9 +111,8 @@ the full pattern, including fail-closed stop).
   `oracled` providers; early failures land on the console and in the
   converge-or-recover shell.
 
-**Status.** Today serviced runs the monolithic `/etc/rc` ("Model A").
-Per-script ingest — parsing rcorder headers into individual serviced units so
-serviced drives the rc graph directly, with per-unit parallelism and
-readiness gating — is designed and scaffolded (`usr.sbin/serviced/rc_ingest.c`)
-but deliberately parked until a service needs it (`docs/service-daemon.md`,
-Phase 2).
+**Status.** Today serviced runs the monolithic `/etc/rc` ("Model A"). Native
+services migrate by acquiring a demand trigger and becoming the sole owner of
+their public interface. Per-script rc graph ingestion, dependency targets, and
+ordering metadata are not part of the pre-v1 design; see
+`docs/service-architecture-plan.md` §14.

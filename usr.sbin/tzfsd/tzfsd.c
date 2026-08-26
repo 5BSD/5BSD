@@ -110,12 +110,18 @@ main(int argc, char **argv)
 		}
 	}
 
-	openlog("tzfsd", LOG_PID | (foreground ? LOG_PERROR : 0), LOG_DAEMON);
+	/*
+	 * LOG_PERROR unconditionally: before daemon(3) the copies land on the
+	 * launching terminal (test harnesses capture them); after daemon(3)
+	 * stderr is /dev/null, so production logging is unaffected.
+	 */
+	openlog("tzfsd", LOG_PID | LOG_PERROR, LOG_DAEMON);
 	(void)signal(SIGPIPE, SIG_IGN);
 	(void)signal(SIGCHLD, SIG_IGN);
 
 	memset(&st, 0, sizeof(st));
 	st.persistent_fd = st.ephemeral_fd = st.templates_fd = -1;
+	st.boot_fd = st.lease_fd = -1;
 	st.listen_fd = -1;
 
 	tzfsd_config_defaults(&st.cfg);

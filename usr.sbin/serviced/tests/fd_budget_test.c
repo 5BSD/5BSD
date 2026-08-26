@@ -8,6 +8,7 @@
 #include <sys/param.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
+#include <sys/sysctl.h>
 #include <sys/un.h>
 
 #include <atf-c.h>
@@ -82,7 +83,8 @@ ATF_TC(raise_at_inherited_ceiling);
 ATF_TC_HEAD(raise_at_inherited_ceiling, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "an unprivileged serviced already at its inherited ceiling can start");
+	    "raising the budget honors the inherited ceiling without "
+	    "privilege and the kernel maximum with it");
 }
 ATF_TC_BODY(raise_at_inherited_ceiling, tc)
 {
@@ -98,11 +100,23 @@ ATF_TC_BODY(raise_at_inherited_ceiling, tc)
 	ATF_REQUIRE_EQ(0, setrlimit(RLIMIT_NOFILE, &limit));
 	ATF_REQUIRE_EQ(0, serviced_fd_budget_raise_limit());
 	ATF_REQUIRE_EQ(0, getrlimit(RLIMIT_NOFILE, &limit));
-	ATF_CHECK_EQ(64, limit.rlim_cur);
-	ATF_CHECK_EQ(64, limit.rlim_max);
+	if (geteuid() == 0) {
+		/* Root may raise the hard limit again, so the budget targets
+		 * kern.maxfilesperproc instead of the inherited ceiling. */
+		int kernel_max;
+		size_t length = sizeof(kernel_max);
+
+		ATF_REQUIRE_EQ(0, sysctlbyname("kern.maxfilesperproc",
+		    &kernel_max, &length, NULL, 0));
+		ATF_CHECK_EQ((rlim_t)kernel_max, limit.rlim_cur);
+		ATF_CHECK_EQ((rlim_t)kernel_max, limit.rlim_max);
+	} else {
+		ATF_CHECK_EQ(64, limit.rlim_cur);
+		ATF_CHECK_EQ(64, limit.rlim_max);
+	}
 	serviced_fd_budget_get_stats(&stats);
-	ATF_CHECK_EQ(64, stats.soft_limit);
-	ATF_CHECK_EQ(64, stats.hard_limit);
+	ATF_CHECK_EQ(limit.rlim_cur, stats.soft_limit);
+	ATF_CHECK_EQ(limit.rlim_max, stats.hard_limit);
 }
 
 ATF_TC(reserve_and_admission);

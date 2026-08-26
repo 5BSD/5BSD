@@ -223,6 +223,26 @@ ATF_TC_BODY(scoped_l2cap_claim, tc)
 	ATF_CHECK_EQ(FI_NET_CONNECT, req.direction);
 }
 
+ATF_TC_WITHOUT_HEAD(storage_lifetimes);
+ATF_TC_BODY(storage_lifetimes, tc)
+{
+	uint8_t lifetime;
+
+	ATF_REQUIRE_EQ(0, parse_storage_lifetime_string(NULL, &lifetime));
+	ATF_CHECK_EQ(ORT_STORAGE_PERSISTENT, lifetime);
+	ATF_REQUIRE_EQ(0, parse_storage_lifetime_string("persistent", &lifetime));
+	ATF_CHECK_EQ(ORT_STORAGE_PERSISTENT, lifetime);
+	ATF_REQUIRE_EQ(0, parse_storage_lifetime_string("cache", &lifetime));
+	ATF_CHECK_EQ(ORT_STORAGE_CACHE, lifetime);
+	ATF_REQUIRE_EQ(0, parse_storage_lifetime_string("boot", &lifetime));
+	ATF_CHECK_EQ(ORT_STORAGE_BOOT, lifetime);
+	ATF_REQUIRE_EQ(0, parse_storage_lifetime_string("lease", &lifetime));
+	ATF_CHECK_EQ(ORT_STORAGE_LEASE, lifetime);
+	ATF_CHECK(parse_storage_lifetime_string("ephemeral", &lifetime) == -1);
+	ATF_CHECK(parse_storage_lifetime_string("", &lifetime) == -1);
+	ATF_CHECK(parse_storage_lifetime_string("forever", &lifetime) == -1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -232,6 +252,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, bdaddr_malformed);
 	ATF_TP_ADD_TC(tp, wildcard_reservation_matches_kernel_schema);
 	ATF_TP_ADD_TC(tp, scoped_l2cap_claim);
+	ATF_TP_ADD_TC(tp, storage_lifetimes);
 
 	return (atf_no_error());
 }

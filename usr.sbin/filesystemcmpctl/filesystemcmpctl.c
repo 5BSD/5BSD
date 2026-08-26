@@ -117,7 +117,10 @@ main(int argc, char **argv)
 {
 
 	if (argc == 2 && strcmp(argv[1], "config") == 0) {
-		puts("components = [\"filesystem\"];");
+		puts("storage = [{ name = \"data\"; scope = \"unit\"; "
+		    "flavor = \"native\"; lifetime = \"persistent\"; "
+		    "rights = \"mount\"; }];\n"
+		    "descriptors { filesystem { storage = \"data\"; } }");
 		return (0);
 	}
 	if (argc == 2 && strcmp(argv[1], "info") == 0)

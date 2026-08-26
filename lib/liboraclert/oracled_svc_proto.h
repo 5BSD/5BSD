@@ -205,17 +205,17 @@ struct oracle_storage_req {
 	uint64_t	rights;		/* ZH_* mask (mint only) */
 	uint8_t		lifetime;	/* ORT_STORAGE_* */
 	uint8_t		_reserved[7];
-	char		name[64];	/* == ORT_STORAGE_NAME_MAX */
+	char		dataset[64];	/* == ORT_STORAGE_DATASET_MAX */
 	char		flavor[32];	/* == ORT_STORAGE_FLAVOR_MAX */
 };
 
 /*
  * ORACLE_OP_DESTROY_STORAGE
- *   req:  oracle_storage_req (op, name; flavor/rights/flags ignored)
+ *   req:  oracle_storage_req (op, dataset; other fields ignored)
  *   reply: oracle_reply { .status }
  *
- * Release an ephemeral storage claim on service stop; oracled forwards the
- * teardown to tzfsd (which destroys the ephemeral clone).  A missing claim
+ * Release a last-holder lease storage claim on service stop; oracled forwards
+ * the teardown to tzfsd.  A missing claim
  * is a no-op success so stop paths are idempotent.
  */
 

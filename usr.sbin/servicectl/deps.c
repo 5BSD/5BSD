@@ -34,7 +34,7 @@ contains(const unsigned char *data, size_t size, const char *needle)
 
 static void
 inspect_dynamic(Elf *elf, Elf_Scn *scn, const GElf_Shdr *shdr,
-    bool *filesystem, bool *network)
+    bool *filesystem, bool *network, bool *crypto)
 {
 	GElf_Dyn dyn;
 	Elf_Data *data;
@@ -66,12 +66,17 @@ inspect_dynamic(Elf *elf, Elf_Scn *scn, const GElf_Shdr *shdr,
 			    strncmp(needed, "libfilesystemcmp.so.",
 			    sizeof("libfilesystemcmp.so.") - 1) == 0)
 				*filesystem = true;
+			if (strcmp(needed, "libcryptocmp.so") == 0 ||
+			    strncmp(needed, "libcryptocmp.so.",
+			    sizeof("libcryptocmp.so.") - 1) == 0)
+				*crypto = true;
 		}
 	}
 }
 
 static void
-inspect_component_note(Elf_Scn *scn, bool *filesystem, bool *network)
+inspect_descriptor_note(Elf_Scn *scn, bool *filesystem, bool *network,
+    bool *crypto)
 {
 	Elf_Data *data;
 
@@ -85,6 +90,9 @@ inspect_component_note(Elf_Scn *scn, bool *filesystem, bool *network)
 		if (contains(data->d_buf, data->d_size,
 		    "interface=org.5bsd.filesystem"))
 			*filesystem = true;
+		if (contains(data->d_buf, data->d_size,
+		    "interface=org.5bsd.crypto"))
+			*crypto = true;
 	}
 }
 
@@ -97,7 +105,7 @@ cmd_deps(const char *program)
 	struct stat st;
 	const char *name;
 	size_t shstrndx;
-	bool filesystem, network;
+	bool crypto, filesystem, network;
 	int fd;
 
 	fd = open(program, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -120,6 +128,7 @@ cmd_deps(const char *program)
 
 	network = false;
 	filesystem = false;
+	crypto = false;
 	scn = NULL;
 	while ((scn = elf_nextscn(elf, scn)) != NULL) {
 		if (gelf_getshdr(scn, &shdr) == NULL)
@@ -129,25 +138,28 @@ cmd_deps(const char *program)
 		if (name == NULL)
 			errx(1, "%s: malformed ELF section name: %s", program,
 			    elf_errmsg(-1));
-		if (strcmp(name, ".note.5bsd.components") == 0)
-			inspect_component_note(scn, &filesystem, &network);
+		if (strcmp(name, ".note.5bsd.descriptors") == 0)
+			inspect_descriptor_note(scn, &filesystem, &network, &crypto);
 		if (shdr.sh_type == SHT_DYNAMIC)
-			inspect_dynamic(elf, scn, &shdr, &filesystem, &network);
+			inspect_dynamic(elf, scn, &shdr, &filesystem, &network,
+			    &crypto);
 	}
 
-	printf("# Suggested local authority components for %s.\n", program);
+	printf("# Suggested local descriptors for %s.\n", program);
 	printf("# Global service libraries discover their named services at runtime.\n");
-	if (!network && !filesystem) {
-		printf("# No local component dependencies found.\n");
+	if (!network && !filesystem && !crypto) {
+		printf("# No local descriptor dependencies found.\n");
 	} else {
-		printf("components = [");
+		printf("descriptors {\n");
 		if (filesystem)
-			printf("\"filesystem\"");
-		if (filesystem && network)
-			printf(", ");
+			printf("    filesystem { storage = \"data\"; }\n");
 		if (network)
-			printf("\"network\"");
-		printf("];\n");
+			printf("    network {}\n");
+		if (crypto)
+			printf("    crypto {}\n");
+		printf("}\n");
+		if (filesystem)
+			printf("# Also declare unit storage named \"data\" with mount rights.\n");
 	}
 	elf_end(elf);
 	close(fd);

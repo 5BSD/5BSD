@@ -11,20 +11,24 @@ manifest_body()
 	objdir="@OBJTOP@/usr.sbin/logd"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	bundle="${PWD}/Log.cap"
+	unit="${bundle}/Units/logd.unit"
 
 	test -x "${servicectl}" ||
 	    atf_skip "source-built servicectl is required"
-	mkdir -p "${bundle}/bin" "${bundle}/etc"
-	cp "${objdir}/logd" "${bundle}/bin/logd"
+	mkdir -p "${unit}/bin" "${unit}/Config"
+	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${objdir}/logd" "${unit}/bin/logd"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/logd"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/logd"
 	fi
-	cp "${srcdir}/capbundle/logd.ucl" "${bundle}/etc/logd.ucl"
-	chmod 0555 "${bundle}" "${bundle}/bin" "${bundle}/etc" \
-	    "${bundle}/bin/logd"
-	chmod 0444 "${bundle}/etc/logd.ucl"
+	cp "${srcdir}/capbundle/logd.ucl" "${unit}/Unit.ucl"
+	cp "${srcdir}/capbundle/logd.conf" "${unit}/Config/logd.conf"
+	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
+	    "${unit}/bin/logd" "${unit}/Config"
+	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl" \
+	    "${unit}/Config/logd.conf"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${servicectl}" verify "${bundle}"
 }

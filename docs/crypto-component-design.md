@@ -1,7 +1,7 @@
 # [CRYPTO] capability component
 
 `[CRYPTO]` is the capability-bundle front end for OpenCrypto.  A service
-declares `components = ["crypto"]`; serviced creates one private local
+declares `descriptors { crypto {} }`; serviced creates one private local
 component session, and `libcryptocmp` obtains descriptor-bound sessions from
 the provider.  The provider returns a `DTYPE_CRYPTO` attachment, never raw
 key material.

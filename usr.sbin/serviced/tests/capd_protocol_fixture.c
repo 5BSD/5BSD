@@ -76,7 +76,7 @@ control_oversized(const char *path)
 		err(1, "connect %s", path);
 	memset(&req, 0, sizeof(req));
 	req.version = SERVICED_CTL_VERSION;
-	req.op = SCTL_OP_CHECK;
+	req.op = SCTL_OP_START_SVC;
 	req.datalen = SERVICED_CTL_MAX_PAYLOAD + 1;
 	if (write(fd, &req, sizeof(req)) != (ssize_t)sizeof(req))
 		err(1, "write request");
@@ -140,12 +140,49 @@ control_deny(const char *path, const char *outpath)
 	return (0);
 }
 
+static int
+control_invalid(const char *path, const char *kind)
+{
+	static const char embedded_nul[] = { 'u', '\0', 'n', 'i', 't' };
+	struct sctl_request req;
+	struct sctl_reply reply;
+	const void *payload;
+	ssize_t n;
+	int fd;
+
+	fd = connect_local(path);
+	if (fd == -1)
+		err(1, "connect %s", path);
+	memset(&req, 0, sizeof(req));
+	req.version = SERVICED_CTL_VERSION;
+	req.op = SCTL_OP_START_SVC;
+	payload = NULL;
+	if (strcmp(kind, "flags") == 0)
+		req.flags = 1;
+	else if (strcmp(kind, "nul") == 0) {
+		req.datalen = sizeof(embedded_nul);
+		payload = embedded_nul;
+	} else
+		errx(2, "unknown invalid request kind: %s", kind);
+	if (write(fd, &req, sizeof(req)) != (ssize_t)sizeof(req) ||
+	    (payload != NULL && write(fd, payload, req.datalen) !=
+	    (ssize_t)req.datalen))
+		err(1, "write request");
+	n = read_full(fd, &reply, sizeof(reply));
+	if (n != (ssize_t)sizeof(reply))
+		errx(1, "short reply: %zd", n);
+	printf("status=%u\n", reply.status);
+	close(fd);
+	return (0);
+}
+
 static void
 usage(void)
 {
 	fprintf(stderr,
 	    "usage: capd_protocol_fixture control-oversized socket\n"
-	    "       capd_protocol_fixture control-deny socket output\n");
+	    "       capd_protocol_fixture control-deny socket output\n"
+	    "       capd_protocol_fixture control-invalid socket flags|nul\n");
 	exit(2);
 }
 
@@ -156,5 +193,7 @@ main(int argc, char **argv)
 		return (control_oversized(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "control-deny") == 0)
 		return (control_deny(argv[2], argv[3]));
+	if (argc == 4 && strcmp(argv[1], "control-invalid") == 0)
+		return (control_invalid(argv[2], argv[3]));
 	usage();
 }

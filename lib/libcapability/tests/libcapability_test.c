@@ -5,6 +5,7 @@
 #include <sys/ioctl.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -147,11 +148,49 @@ ATF_TC_BODY(live_channel_metadata, tc)
 	close(connect.fd);
 }
 
+ATF_TC(live_zero_length_kernel_call);
+ATF_TC_HEAD(live_zero_length_kernel_call, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_capprotect");
+	atf_tc_set_md_var(tc, "descr",
+	    "A successful no-reply kernel call preserves the complete userspace ABI object");
+}
+ATF_TC_BODY(live_zero_length_kernel_call, tc)
+{
+	struct mac_capability_connect_args connect;
+	struct cp_request request;
+	size_t reply_length, reply_nfds;
+	int control;
+
+	control = open("/dev/mac_capability", O_RDWR | O_CLOEXEC);
+	ATF_REQUIRE_MSG(control >= 0, "open mac_capability: %s",
+	    strerror(errno));
+	memset(&connect, 0, sizeof(connect));
+	strlcpy(connect.name, "capprotect", sizeof(connect.name));
+	ATF_REQUIRE_EQ_MSG(0, ioctl(control, MAC_CAPABILITY_CONNECT, &connect),
+	    "connect capprotect: %s", strerror(errno));
+	close(control);
+	memset(&request, 0, sizeof(request));
+	request.op = CP_OP_SHIELD;
+	request.flags = CP_SF_CORE;
+	reply_length = 0;
+	reply_nfds = 0;
+	ATF_REQUIRE_EQ_MSG(0, capability_kernel_call(connect.fd, &request,
+	    sizeof(request), NULL, 0, NULL, &reply_length, NULL, &reply_nfds),
+	    "shield call: %s", strerror(errno));
+	ATF_CHECK_EQ(0, reply_length);
+	ATF_CHECK_EQ(0, reply_nfds);
+	close(connect.fd);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, get_info_arguments);
 	ATF_TP_ADD_TC(tp, kernel_call_arguments_and_cleanup);
 	ATF_TP_ADD_TC(tp, wrong_type_preserves_request_descriptors);
 	ATF_TP_ADD_TC(tp, live_channel_metadata);
+	ATF_TP_ADD_TC(tp, live_zero_length_kernel_call);
 	return (atf_no_error());
 }

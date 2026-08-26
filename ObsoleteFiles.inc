@@ -51,6 +51,10 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260823: capability manifest/bootstrap/claim ABI revision (SHLIB_MAJOR 2)
+OLD_LIBS+=usr/lib/libcapbundle.so.1
+OLD_LIBS+=usr/lib/liboraclert.so.1
+OLD_LIBS+=usr/lib/libservice.so.1
 # 20260819: Oracle now runs exclusively as PID 1; retire migrated daemons
 OLD_FILES+=etc/rc.d/oracled
 OLD_FILES+=Capabilities/System/Kldmgr.cap/bin/.debug/kldmgrd.debug

@@ -44,7 +44,7 @@ verifies with `capability_get_info()` (from `libcapability`) that it names the
 `FI_OP_AUTHORIZE` on isolation tokens on the component's behalf.  Descriptors
 for manifest-declared capability services (`"mount"`, `"node"`,
 `"accounting"`, `"identity"`) are opened with
-`service_capability_open(ctx, name, &fd)`.
+`service_capability_open(ctx, name, expected_type, &fd)`.
 
 **Supervisors connect directly.**  `oracled(8)` and `serviced(8)` run as root
 before any claims exist, open the device, and connect by service name.  This

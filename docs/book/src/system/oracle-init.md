@@ -20,7 +20,7 @@ Oracle deliberately splits the roles launchd combines into one process:
 | Role | Process | Control tool | Owns |
 | --- | --- | --- | --- |
 | Spine (PID 1) | `oracle-init` / `oracled` | `oraclectl(8)` | System lifecycle (reboot, halt, single-user, reroot, rescan, catatonia), capability authority, global reaping, recovery console, serviced supervision |
-| Service manager | `serviced` | `servicectl(8)` | Per-service lifecycle, dependency graph, on-demand activation, `/etc/rc` |
+| Service manager | `serviced` | `servicectl(8)` | Per-service lifecycle, demand activation, trigger ownership, `/etc/rc` |
 
 Authority that must survive the service manager's death stays in the spine:
 reboot does not depend on `serviced` being alive, because during shutdown
@@ -53,7 +53,7 @@ single-user → runcom → establish_authority → read_ttys → multi_user
                           ├─ start capability engine (mac_capability,
                           │  control socket, pdfork serviced)
                           ├─ wait for serviced convergence (serviced runs
-                          │  /etc/rc, launches native services, then sends
+                          │  /etc/rc, services bounded boot demand, then sends
                           │  ORACLE_OP_READY on its authenticated channel)
                           └─ on failure: recovery single-user shell
 ```
@@ -137,6 +137,8 @@ software `watchdog(4)`.
 **Status.** `init N` (SysV telinit) is unsupported under Oracle PID 1: that
 compatibility path signals PID 1 and is deliberately not converted, so it
 silently no-ops under the shield — use `reboot(8)`/`shutdown(8)`/`halt(8)`.
-`docs/oracle-init-todo.md` tracks remaining phase work (e.g. per-service rc
-ingest, targets, timers); the boot, shutdown, and control-ABI paths described
-above are implemented and VM-validated.
+`docs/service-architecture-plan.md` is the authoritative pre-v1 service-manager
+roadmap. It deliberately rejects dependency targets and per-script rc graph
+ingestion; timers and path events are future demand sources. The boot,
+shutdown, and control-ABI paths described above are implemented and
+VM-validated.

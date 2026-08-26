@@ -87,6 +87,16 @@ struct svc_runtime {
 	struct channel	*control_channel; /* owns channel_fd */
 	int		coalition_fd;	/* coalition service instance */
 	int		jail_fd;	/* jail descriptor (-1 if no jail) */
+	/*
+	 * Anchors for anonymous storage mounts provisioned for this service's
+	 * component sessions.  serviced mounts a delivered zfshandle and passes
+	 * only the resulting directory descriptor to the provider worker; the
+	 * mount is force-unmounted when the last handle reference closes, so
+	 * serviced must retain a handle reference for the life of the service
+	 * that uses it.  Closed in svc_close_fds().
+	 */
+	int		mount_anchor_fds[SERVICED_MAX_COMPONENTS];
+	unsigned	nmount_anchors;
 	struct svc_launch *launch;	/* non-NULL while an async launch runs */
 	bool		protocol_ready;	/* SVC_OP_READY advisory received */
 	bool		lookup_activated; /* launched to satisfy a named lookup */
@@ -157,6 +167,7 @@ int	mac_cap_coalition_set_leader(int coalition_fd, int leader_fd);
 int	mac_cap_coalition_graceful(int coalition_fd, int sig, unsigned timeout_ms);
 int	mac_cap_coalition_terminate(int coalition_fd);
 int	mac_cap_mint_capprotect(void);
+int	mac_cap_protect(int capprotect_fd, int pd_fd, uint32_t flags);
 
 /* oracle_client.c — channel protocol client to oracled */
 int	oracle_mint_path(int channel_fd, const char *path);

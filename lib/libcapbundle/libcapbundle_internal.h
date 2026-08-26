@@ -28,6 +28,12 @@
 #define	CAPBUNDLE_MAX_CAP_STORAGE	SERVICED_MAX_CAP_STORAGE
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 #define	CAPBUNDLE_MAX_KMOD_REQUIRES	8
+
+struct capbundle_shared_storage {
+	char	name[ORT_STORAGE_NAME_MAX];
+	char	flavor[ORT_STORAGE_FLAVOR_MAX];
+	uint8_t	lifetime;
+};
 /* Internal service representation. */
 struct capbundle_service {
 	char	program[PATH_MAX];	/* absolute resolved path */
@@ -38,12 +44,14 @@ struct capbundle_service {
 	char	label[CAPBUNDLE_NAME_MAX + 1];
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
+	bool	activation_boot;
 	char	startup_after[SERVICED_MAX_COMPONENTS][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nstartup_after;
 	struct serviced_component components[SERVICED_MAX_COMPONENTS];
 	unsigned ncomponents;
 	int	restart;
 	uint32_t cap_system;		/* SYS_GATE_* bitmask */
+	uint32_t protect_flags;		/* capprotect CP_SF_* bitmask */
 
 	/* Path capabilities */
 	char	cap_paths[CAPBUNDLE_MAX_CAP_PATHS][PATH_MAX];
@@ -98,20 +106,38 @@ struct capbundle {
 	char	bundle_id[CAPBUNDLE_ID_MAX];
 	char	version[CAPBUNDLE_VERSION_MAX];
 	char	author[CAPBUNDLE_AUTHOR_MAX];
+	char	publisher[CAPBUNDLE_PUBLISHER_MAX];
+	uint64_t sequence;
+	char	unit_names[CAPBUNDLE_MAX_SERVICES][CAPBUNDLE_NAME_MAX + 1];
+	unsigned nunit_names;
+	struct capbundle_shared_storage shared_storage[CAPBUNDLE_MAX_CAP_STORAGE];
+	unsigned nshared_storage;
 	struct capbundle_service services[CAPBUNDLE_MAX_SERVICES];
 	unsigned nservices;
 };
 
-/* Maximum Service.ucl file size (1 MB).  Protects against OOM. */
+/* Maximum UCL file size (1 MB).  Protects against OOM. */
 #define	CAPBUNDLE_MAX_UCL_SIZE	(1024 * 1024)
+#define	CAPBUNDLE_MAX_TREE_ENTRIES	4096U
+#define	CAPBUNDLE_MAX_FILE_SIZE		(512ULL * 1024 * 1024)
+#define	CAPBUNDLE_MAX_TREE_SIZE		(2ULL * 1024 * 1024 * 1024)
 
 /*
- * Parse a single Service.ucl file within a bundle.
+ * Parse the bundle metadata and exact unit inventory.
  * Defined in libcapbundle_parse.c, called from capbundle_open().
  */
-int	capbundle_parse_service_ucl(const char *path, const char *bundle_path,
-	    struct capbundle_service *svc, char *bundle_id, size_t bundle_id_sz,
-	    char *version, size_t version_sz, char *author, size_t author_sz,
+int	capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	    char *errbuf, size_t errlen);
+
+/* Parse one Units/<name>.unit/Unit.ucl declared by Bundle.ucl. */
+int	capbundle_parse_unit_ucl(const char *path, const char *unit_path,
+	    const struct capbundle *bundle, const char *unit_name,
+	    struct capbundle_service *svc,
+	    char *errbuf, size_t errlen);
+
+/* Stable opaque ZFS leaf key; public to the parser tests, not installed ABI. */
+int	capbundle_storage_dataset_key(char out[ORT_STORAGE_DATASET_MAX],
+	    const char *bundle_id, const char *unit_name, const char *name,
+	    uint8_t scope);
 
 #endif /* LIBCAPBUNDLE_INTERNAL_H */

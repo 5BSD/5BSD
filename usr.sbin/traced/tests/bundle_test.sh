@@ -11,19 +11,21 @@ manifest_body()
 	objdir="@OBJTOP@/usr.sbin/traced"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	bundle="${PWD}/Trace.cap"
+	unit="${bundle}/Units/traced.unit"
 
 	test -x "${servicectl}" || atf_skip "test servicectl is required"
-	mkdir -p "${bundle}/bin" "${bundle}/etc"
-	cp "${objdir}/traced" "${bundle}/bin/traced"
+	mkdir -p "${unit}/bin"
+	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${objdir}/traced" "${unit}/bin/traced"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/traced"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/traced"
 	fi
-	cp "${srcdir}/capbundle/traced.ucl" "${bundle}/etc/traced.ucl"
-	chmod 0555 "${bundle}" "${bundle}/bin" "${bundle}/etc" \
-	    "${bundle}/bin/traced"
-	chmod 0444 "${bundle}/etc/traced.ucl"
+	cp "${srcdir}/capbundle/traced.ucl" "${unit}/Unit.ucl"
+	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
+	    "${unit}/bin/traced"
+	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${servicectl}" verify "${bundle}"
 }

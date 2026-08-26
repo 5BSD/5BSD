@@ -19,6 +19,7 @@
 
 #include <dev/mac_capability/mac_capability_coalition_proto.h>
 #include <dev/mac_capability/mac_capability_channel_proto.h>
+#include <dev/mac_capability/mac_capability_capprotect_proto.h>
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <errno.h>
@@ -271,4 +272,25 @@ mac_cap_mint_capprotect(void)
 		return (-1);
 	}
 	return (mint_instance(sd.capprotect_fd));
+}
+
+/*
+ * Launcher-applied protection: shield the process named by an attached process
+ * descriptor with the given CP_SF_* flag set.  Issued through a capprotect
+ * instance descriptor; the target is identified by pd_fd, which must still be
+ * transferable (call before pd_fd's cap_xfer is narrowed to NONE).
+ */
+int
+mac_cap_protect(int capprotect_fd, int pd_fd, uint32_t flags)
+{
+	struct cp_request req;
+
+	if (capprotect_fd < 0 || pd_fd < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_PROTECT;
+	req.flags = flags;
+	return (kernel_call(capprotect_fd, &req, sizeof(req), &pd_fd, 1, NULL, 0));
 }

@@ -1,7 +1,6 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
-.\"
-.Dd July 30, 2026
+.Dd August 23, 2026
 .Dt LIBCAPBUNDLE 3
 .Os
 .Sh NAME
@@ -23,66 +22,57 @@
 .Fn capbundle_scan_dir "const char *path" "capbundle_scan_cb cb" "void *arg"
 .Sh DESCRIPTION
 .Nm
-parses root-owned
-.Pa .cap
-application directories for
+parses the two-level capability bundle format used by
 .Xr serviced 8 .
-A bundle contains executables in
-.Pa bin
-and strict UCL service declarations in
-.Pa etc .
+A bundle has one
+.Pa Bundle.ucl
+and an exact inventory of
+.Pa Units/name.unit/Unit.ucl
+process manifests and
+.Pa Units/name.unit/bin/name
+executables.
+Identity, publisher metadata, version ordering, and shared storage are bundle
+fields; activation, process policy, storage grants, local descriptors, and
+capabilities are unit fields.
 .Pp
-Each declaration identifies its
-.Va bundle_id ,
-.Va program ,
-zero or more global names in
-.Va provides ,
-and delegated capabilities.
-A service with at least one
-.Va provides
-entry is activated on demand by a lookup of any provided name.
-A declaration without
-.Va provides
-is an eager boot task.
-Activation is derived and cannot be selected with a manifest option.
-.Pp
-The optional
-.Va components
-field is either one string or an array containing the distinct literals
-.Dq filesystem
+Parsing is literal and closed.
+Unknown or duplicate keys, includes, macros, variables, implicit arrays,
+invalid names, incompatible network claims, ambiguous storage, and entries
+beyond fixed limits are rejected.
+Activation is explicit under
+.Va activation.boot
 and
-.Dq network .
-These request mandatory process-local authority replacements constructed
-before exec.
-There are no provider, version, lifetime, sharing, optionality, or options
-fields, and local components do not participate in global service selection.
+.Va activation.ipc .
+Local authority replacements are typed entries in
+.Va descriptors ;
+the filesystem descriptor must name storage with mount rights.
 .Pp
-A process may advertise up to eight global names.
-The names identify independent endpoints but map to the same service runtime.
-Activation is runtime-based, while connection routing remains exact-name
-based.
-.Pp
-Parsing rejects unknown keys, wrong types, duplicate names or components,
-invalid paths and claims, reserved environment variables, malformed bundle
-identity, and entries beyond fixed limits.
 .Fn capbundle_verify
-also verifies executables and internal consistency.
+checks the exact tree shape, executable type and mode, activation triggers,
+name uniqueness, and resource limits.
 .Fn capbundle_check_startup_cycles
-validates internal component-factory startup edges across bundle sets.
+validates the derived descriptor-provider dependency graph.
 .Sh ACCESSORS
-The public header provides accessors for bundle identity, version, author,
-path and name; service count, program and derived runtime label; provided
-names; derived activation state; literal arguments and environment;
-and conversion to
+The public header exposes immutable accessors for bundle identity, display
+version, sequence, author, publisher, path, unit count, unit labels,
+activation, IPC names, arguments, environment, storage, descriptors, and
+conversion to
 .Vt struct svc_manifest .
 Returned strings remain owned by the bundle.
+.Sh TRUST
+.Nm
+rejects symlinks and special objects but does not establish ownership policy.
+.Xr serviced 8
+requires registry trees to be root-owned and not group/world writable.
+.Xr servicectl 8
+normalizes and atomically publishes staged installations.
 .Sh RETURN VALUES
 Functions returning
 .Vt int
 return zero on success and -1 on failure.
-When supplied, the error buffer receives a diagnostic suitable for
-administrative tools.
+When supplied, the error buffer receives an administrative diagnostic.
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr serviced 5 ,
-.Xr serviced 8
+.Xr serviced 8 ,
+.Xr servicectl 8

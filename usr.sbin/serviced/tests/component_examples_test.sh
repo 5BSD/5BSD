@@ -14,20 +14,30 @@ examples_verify_body()
 
 	test -x "${servicectl}" ||
 	    atf_skip "source-built servicectl is required"
-	manifest="${examples}/local-components.ucl"
-	bundle="${work}/local-components.cap"
-	program=$(sed -n 's/^[[:space:]]*program[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' \
-	    "${manifest}")
-	mkdir -p "${bundle}/bin" "${bundle}/etc"
-	printf '#!/bin/sh\nexit 0\n' > "${bundle}/bin/${program}"
-	chmod 0555 "${bundle}/bin/${program}"
-	cp "${manifest}" "${bundle}/etc/${program}.ucl"
+	manifest="${examples}/local-descriptors.ucl"
+	bundle="${work}/local-descriptors.cap"
+	program=private-web
+	mkdir -p "${bundle}/Units/${program}.unit/bin"
+	cat > "${bundle}/Bundle.ucl" <<EOF
+schema = "org.5bsd.capability-bundle";
+schema_version = 1;
+bundle_id = "org.example.private-web";
+version = "2.3.1";
+sequence = 1;
+author = "Example Operations";
+publisher = "org.example";
+units = ["${program}"];
+EOF
+	printf '#!/bin/sh\nexit 0\n' > \
+	    "${bundle}/Units/${program}.unit/bin/${program}"
+	chmod 0555 "${bundle}/Units/${program}.unit/bin/${program}"
+	cp "${manifest}" "${bundle}/Units/${program}.unit/Unit.ucl"
 	atf_check -s exit:0 -o save:effective.out \
 	    "${servicectl}" verify "${bundle}"
-	atf_check -s exit:0 -o match:'component: filesystem' \
-	    grep 'component: filesystem' effective.out
-	atf_check -s exit:0 -o match:'component: network' \
-	    grep 'component: network' effective.out
+	atf_check -s exit:0 -o match:'descriptor: filesystem storage=data' \
+	    grep 'descriptor: filesystem' effective.out
+	atf_check -s exit:0 -o match:'descriptor: network' \
+	    grep 'descriptor: network' effective.out
 	atf_check -s exit:0 -o match:'user: capability' \
 	    grep 'user:' effective.out
 	atf_check -s exit:0 -o match:'group: capability' \
@@ -103,8 +113,8 @@ pkgbase_default_identity_body()
 	atf_check -s exit:0 -o match:'kmod_requires.*vhid' \
 	    grep 'kmod_requires.*vhid' \
 	    "${src}/usr.sbin/bluetooth/blued/blued.ucl"
-	atf_check -s exit:0 -o match:'provides.*org.5bsd.blued' \
-	    grep 'provides.*org.5bsd.blued' \
+	atf_check -s exit:0 -o match:'activation.*ipc.*org.5bsd.blued' \
+	    grep 'activation.*ipc.*org.5bsd.blued' \
 	    "${src}/usr.sbin/bluetooth/blued/blued.ucl"
 	atf_check -s exit:0 -o match:'etc/rc.d/oracled' \
 	    grep 'etc/rc.d/oracled' "${src}/packages/rc/rc.ucl"
@@ -133,6 +143,7 @@ pkgbase_component_metadata_body()
 	src="@SRCTOP@"
 
 	for package in auditbrokerd auditbrokerd-tests \
+	    localcrypto localcrypto-tests \
 	    localfilesystem localfilesystem-tests logd logd-tests \
 	    bsdnotify bsdnotify-tests \
 	    traced traced-tests \
@@ -159,7 +170,8 @@ pkgbase_component_metadata_body()
 	    "${src}/packages/liboraclectl-tests/Makefile"
 	atf_check -s exit:0 -o match:'PKG_SETS=.*tests' \
 	    grep '^PKG_SETS' "${src}/packages/liboraclectl-tests/Makefile"
-	for package in auditbrokerd-tests localfilesystem-tests logd-tests \
+	for package in auditbrokerd-tests localcrypto-tests \
+	    localfilesystem-tests logd-tests \
 	    traced-tests \
 	    bsdnotify-tests \
 	    localnetwork-tests \
@@ -303,6 +315,8 @@ pkgbase_component_metadata_body()
 	done
 
 	for spec in \
+	    'auditbrokerd:AUDITCMP:auditbrokerd' \
+	    'localcrypto:CRYPTOCMP:localcrypto' \
 	    'localfilesystem:FILESYSTEMCMP:localfilesystem' \
 	    'localnetwork:NETWORKCMP:localnetwork' \
 	    'logd:LOGCMP:logd' \
@@ -312,11 +326,21 @@ pkgbase_component_metadata_body()
 		rest=${spec#*:}
 		prefix=${rest%%:*}
 		package=${rest#*:}
+		atf_check -s exit:0 -o match:"${prefix}_CAPPACKAGE=.*${package}" \
+		    grep "${prefix}_CAPPACKAGE" "${src}/usr.sbin/${dir}/Makefile"
 		atf_check -s exit:0 -o match:"${prefix}_CAP_BINPACKAGE=.*${package}" \
 		    grep "${prefix}_CAP_BINPACKAGE" "${src}/usr.sbin/${dir}/Makefile"
-		atf_check -s exit:0 -o match:"${prefix}_CAP_ETCPACKAGE=.*${package}" \
-		    grep "${prefix}_CAP_ETCPACKAGE" "${src}/usr.sbin/${dir}/Makefile"
+		atf_check -s exit:0 -o match:"${prefix}_CAP_UNITPACKAGE=.*${package}" \
+		    grep "${prefix}_CAP_UNITPACKAGE" "${src}/usr.sbin/${dir}/Makefile"
 	done
+	for group in BLUED_CAPPACKAGE BLUED_CAP_BINPACKAGE \
+	    BLUED_CAP_UNITPACKAGE BLUED_CAP_CONFIGPACKAGE; do
+		atf_check -s exit:0 -o ignore \
+		    grep -F "${group}=	\${PACKAGE}" \
+		    "${src}/usr.sbin/bluetooth/blued/Makefile"
+	done
+	atf_check -s exit:0 -o match:'^PACKAGE=.*bluetooth' \
+	    grep '^PACKAGE' "${src}/usr.sbin/bluetooth/blued/Makefile"
 	atf_check -s exit:0 -o match:'serviced.*mode=0700.*package=localfilesystem' \
 	    grep 'serviced.*mode=0700.*package=localfilesystem' \
 	    "${src}/etc/mtree/BSD.var.dist"
@@ -329,7 +353,7 @@ pkgbase_component_metadata_body()
 
 	for event in AUE_SERVICED_COMPONENT \
 	    AUE_NETWORKCMP_POLICY AUE_FILESYSTEMCMP_POLICY AUE_LOGCMP_POLICY \
-	    AUE_TRACECMP_POLICY AUE_NOTIFY_POLICY
+	    AUE_TRACECMP_POLICY AUE_BSDNOTIFY_POLICY
 	do
 		atf_check -s exit:0 -o match:"${event}" \
 		    grep "${event}" "${src}/sys/bsm/audit_kevents.h"
@@ -351,15 +375,15 @@ pkgbase_component_metadata_body()
 	atf_check -s exit:0 -o match:'^43332:AUE_TRACECMP_POLICY:.*:ad$' \
 	    grep '^43332:AUE_TRACECMP_POLICY:' \
 	    "${src}/contrib/openbsm/etc/audit_event"
-	atf_check -s exit:0 -o match:'^43333:AUE_NOTIFY_POLICY:.*:ad$' \
-	    grep '^43333:AUE_NOTIFY_POLICY:' \
+	atf_check -s exit:0 -o match:'^43333:AUE_BSDNOTIFY_POLICY:.*:ad$' \
+	    grep '^43333:AUE_BSDNOTIFY_POLICY:' \
 	    "${src}/contrib/openbsm/etc/audit_event"
 	for provider in localfilesystem localnetwork logd bsdnotify; do
 		case ${provider} in
 		localfilesystem) source=filesystemcmp.c ;;
 		localnetwork) source=networkcmp.c ;;
 		logd) source=logcmp.c ;;
-		bsdnotify) source=notify.c ;;
+	bsdnotify) source=bsdnotify.c ;;
 		esac
 		atf_check -s exit:0 -o match:'auditcmp_submit' \
 		    grep auditcmp_submit \
@@ -368,7 +392,7 @@ pkgbase_component_metadata_body()
 		    "${src}/usr.sbin/${provider}/${source}"
 	done
 	for event in AUE_FILESYSTEMCMP_POLICY AUE_NETWORKCMP_POLICY \
-	    AUE_LOGCMP_POLICY AUE_NOTIFY_POLICY; do
+	    AUE_LOGCMP_POLICY AUE_BSDNOTIFY_POLICY; do
 		atf_check -s exit:0 -o match:"${event}" grep "${event}" \
 		    "${src}/usr.sbin/auditbrokerd/auditcmp_policy.c"
 	done
@@ -502,18 +526,15 @@ operational_name_contract_body()
 	rcscript="${src}/libexec/rc/rc.d/oracled"
 	rcconf="${src}/libexec/rc/rc.conf"
 
-	atf_check -s exit:0 -o match:'^name="oracled"$' \
-	    grep '^name=' "${rcscript}"
-	atf_check -s exit:0 -o match:'^rcvar="oracled_enable"$' \
-	    grep '^rcvar=' "${rcscript}"
-	for hook in stop reload status; do
-		atf_check -s exit:0 -o match:"^oracled_${hook}\\(\\)" \
-		    grep "^oracled_${hook}()" "${rcscript}"
-	done
-	atf_check -s exit:0 -o match:'^oracled_enable=' \
-	    grep '^oracled_enable=' "${rcconf}"
-	atf_check -s exit:0 -o match:'^oracled_flags=' \
-	    grep '^oracled_flags=' "${rcconf}"
+	# Oracle is PID 1.  An rc-launched second copy would contend for the
+	# capability device, control socket, and serviced child.
+	atf_check -s exit:0 test ! -e "${rcscript}"
+	atf_check -s exit:1 -o empty -e empty \
+	    grep -E '^(oracled_enable|oracled_flags)=' "${rcconf}"
+	atf_check -s exit:0 -o match:'^ORACLE_INIT=.*oracle-init' \
+	    grep '^ORACLE_INIT=' "${src}/usr.sbin/oracled/Makefile"
+	atf_check -s exit:0 -o match:'^ORACLE_INITDIR=.*/sbin' \
+	    grep '^ORACLE_INITDIR=' "${src}/usr.sbin/oracled/Makefile"
 	atf_check -s exit:1 -o empty -e empty \
 	    grep -E '^(trailbossd_enable|trailbossd_flags|wranglerd_enable|wranglerd_flags)=' "${rcconf}"
 
@@ -551,7 +572,7 @@ operational_name_contract_body()
 	# outside this check.
 	atf_check -s exit:1 -o empty -e empty grep -E \
 		'/var/run/(trailbossd|wranglerd)([./"]|$)|/var/db/wranglerd([/"]|$)|/etc/(trailbossd|logcmp|notify|tracecmp|auditcmp)([.]|/|"|$)' \
-	    "${rcscript}" "${rcconf}" \
+	    "${rcconf}" \
 	    "${src}/usr.sbin/oracled/oracled.conf" \
 	    "${src}/usr.sbin/oracled/oracled.conf.5"
 	atf_check -s exit:1 -o empty -e empty grep -E \

@@ -193,7 +193,9 @@ resolve_call_thread(void *argument)
 	request.request.socket_type = NETWORKCMP_SOCK_ANY;
 	request.request.max_results = 1;
 	memcpy(request.host, "localhost", sizeof(request.host));
-	if (call(resolve_call->fixture, &request, sizeof(request), NULL, 0,
+	/* Exact wire length: the validator rejects tail padding. */
+	if (call(resolve_call->fixture, &request, sizeof(request.message) +
+	    sizeof(request.request) + sizeof(request.host), NULL, 0,
 	    &reply, &length) == -1) {
 		resolve_call->error = errno;
 		return (NULL);
@@ -257,8 +259,9 @@ request_status(struct fixture *fixture, uint16_t opcode, const void *payload,
 	ATF_REQUIRE_EQ(0, networkcmp_message_init(message, opcode, 0));
 	if (payload_length != 0)
 		memcpy(message + 1, payload, payload_length);
-	ATF_REQUIRE_EQ(0, call(fixture, message,
-	    sizeof(*message) + payload_length, fds, nfds, &reply, &length));
+	ATF_REQUIRE_EQ_MSG(0, call(fixture, message,
+	    sizeof(*message) + payload_length, fds, nfds, &reply, &length),
+	    "opcode %u call: %s", opcode, strerror(errno));
 	return (reply_status(&reply, length, opcode));
 }
 
@@ -429,7 +432,7 @@ ATF_TC_BODY(provider_resolver_does_not_block_session, tc)
 	ATF_REQUIRE_EQ(sizeof(byte), amount);
 
 	close_request.socket = (struct networkcmp_handle){ .handle = UINT64_MAX };
-	ATF_CHECK_EQ(ESTALE, request_status(&fixture, NETWORKCMP_OP_CLOSE,
+	ATF_CHECK_EQ(EBADF, request_status(&fixture, NETWORKCMP_OP_CLOSE,
 	    &close_request, sizeof(close_request), NULL, 0));
 
 	memset(&resolve, 0, sizeof(resolve));
@@ -439,7 +442,7 @@ ATF_TC_BODY(provider_resolver_does_not_block_session, tc)
 	resolve.request.max_results = 1;
 	memcpy(resolve.host, "localhost", sizeof(resolve.host));
 	ATF_CHECK_EQ(EBUSY, request_status(&fixture, NETWORKCMP_OP_RESOLVE,
-	    &resolve, sizeof(resolve), NULL, 0));
+	    &resolve, sizeof(resolve.request) + sizeof(resolve.host), NULL, 0));
 
 	byte = 1;
 	do {
@@ -522,13 +525,14 @@ ATF_TC_BODY(provider_all_dispatch_opcodes, tc)
 	setopt.request.value_length = sizeof(setopt.value);
 	setopt.value = 1;
 	ATF_CHECK_EQ(0, request_status(&fixture, NETWORKCMP_OP_SETOPT,
-	    &setopt, sizeof(setopt), NULL, 0));
+	    &setopt, sizeof(setopt.request) + sizeof(setopt.value), NULL, 0));
 
 	memset(&shutdown_request, 0, sizeof(shutdown_request));
 	shutdown_request.socket = (struct networkcmp_handle){ .handle = UINT64_MAX };
-	ATF_CHECK_EQ(ESTALE, request_status(&fixture, NETWORKCMP_OP_SHUTDOWN,
+	ATF_CHECK_EQ(EBADF, request_status(&fixture, NETWORKCMP_OP_SHUTDOWN,
 	    &shutdown_request, sizeof(shutdown_request), NULL, 0));
-	ATF_CHECK_EQ(EINVAL, request_status(&fixture,
+	/* CONNECT_STATUS is stream-only; a datagram socket rejects it. */
+	ATF_CHECK_EQ(EOPNOTSUPP, request_status(&fixture,
 	    NETWORKCMP_OP_CONNECT_STATUS, &close_request,
 	    sizeof(close_request), NULL, 0));
 
@@ -539,18 +543,18 @@ ATF_TC_BODY(provider_all_dispatch_opcodes, tc)
 	resolve.request.max_results = 1;
 	memcpy(resolve.host, "localhost", sizeof(resolve.host));
 	ATF_CHECK_EQ(EOPNOTSUPP, request_status(&fixture,
-	    NETWORKCMP_OP_RESOLVE, &resolve, sizeof(resolve), NULL, 0));
+	    NETWORKCMP_OP_RESOLVE, &resolve, sizeof(resolve.request) + sizeof(resolve.host), NULL, 0));
 
 	memset(&inline_request, 0, sizeof(inline_request));
 	inline_request.socket = (struct networkcmp_handle){ .handle = UINT64_MAX };
 	inline_request.length = 1;
-	ATF_CHECK_EQ(ESTALE, request_status(&fixture, NETWORKCMP_OP_SEND,
+	ATF_CHECK_EQ(EBADF, request_status(&fixture, NETWORKCMP_OP_SEND,
 	    &(struct {
 		struct networkcmp_inline_request request;
 		uint8_t byte;
 	    }){ .request = inline_request, .byte = 1 },
 	    sizeof(inline_request) + 1, NULL, 0));
-	ATF_CHECK_EQ(ESTALE, request_status(&fixture, NETWORKCMP_OP_RECV,
+	ATF_CHECK_EQ(EBADF, request_status(&fixture, NETWORKCMP_OP_RECV,
 	    &inline_request, sizeof(inline_request), NULL, 0));
 
 	ATF_CHECK_EQ(0, request_status(&fixture, NETWORKCMP_OP_CLOSE,

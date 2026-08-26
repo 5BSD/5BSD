@@ -165,7 +165,8 @@ tzfsd_request(int chan, const struct tzfsd_req *req, struct tzfsd_grant *out)
 	rq.lifetime = req->lifetime;
 	if (strlcpy(rq.flavor, req->flavor, sizeof(rq.flavor)) >=
 	    sizeof(rq.flavor) ||
-	    strlcpy(rq.name, req->name, sizeof(rq.name)) >= sizeof(rq.name)) {
+	    strlcpy(rq.dataset, req->dataset, sizeof(rq.dataset)) >=
+	    sizeof(rq.dataset)) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -200,18 +201,19 @@ tzfsd_request(int chan, const struct tzfsd_req *req, struct tzfsd_grant *out)
 }
 
 int
-tzfsd_release(int chan, const char *name)
+tzfsd_release(int chan, const char *dataset)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 
-	if (name == NULL || name[0] == '\0') {
+	if (dataset == NULL || dataset[0] == '\0') {
 		errno = EINVAL;
 		return (-1);
 	}
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_RELEASE;
-	if (strlcpy(rq.name, name, sizeof(rq.name)) >= sizeof(rq.name)) {
+	if (strlcpy(rq.dataset, dataset, sizeof(rq.dataset)) >=
+	    sizeof(rq.dataset)) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -290,6 +292,38 @@ tzfsd_ping(int chan)
 	if (send_request(chan, &rq) == -1)
 		return (-1);
 	if (recv_reply(chan, &rp, sizeof(rp), NULL) == -1)
+		return (-1);
+	if (rp._reserved != 0 || rp.dataset[0] != '\0' || rp.status < 0 ||
+	    rp.status > ELAST) {
+		errno = EPROTO;
+		return (-1);
+	}
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+tzfsd_begin_session(int chan, const char *session)
+{
+	struct tzfsd_request rq;
+	struct tzfsd_reply rp;
+
+	if (session == NULL || strlen(session) != TZFSD_SESSION_MAX - 1) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_BEGIN_SESSION;
+	if (strlcpy(rq.session, session, sizeof(rq.session)) >=
+	    sizeof(rq.session)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (send_request(chan, &rq) == -1 ||
+	    recv_reply(chan, &rp, sizeof(rp), NULL) == -1)
 		return (-1);
 	if (rp._reserved != 0 || rp.dataset[0] != '\0' || rp.status < 0 ||
 	    rp.status > ELAST) {

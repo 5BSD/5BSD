@@ -1,15 +1,17 @@
-schema = "org.5bsd.serviced.service";
-schema_version = "1.0.0";
-bundle_id = "org.5bsd.blued";
-version = "1.0";
-author = "5BSD";
-program = "blued";
-provides = ["org.5bsd.blued"];
+activation { ipc = ["org.5bsd.blued"]; }
 
 restart = "on-failure";
 stop_timeout = 10;
 max_failures = 10;
 kmod_requires = ["vhid"];
+
+storage = [{
+    name = "state";
+    scope = "unit";
+    flavor = "native";
+    lifetime = "persistent";
+    rights = "mount";
+}];
 
 capabilities {
     network = [{

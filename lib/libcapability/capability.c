@@ -12,6 +12,7 @@
 #include <errno.h>
 #include <limits.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -25,7 +26,7 @@ _Static_assert(CAPABILITY_NAME_MAX == MAC_CAPABILITY_MAXNAME,
 int
 capability_get_info(int fd, struct capability_info *information)
 {
-	struct mac_capability_info_args kernel;
+	struct mac_capability_info_args *kernel;
 
 	if (fd < 0 || information == NULL ||
 	    (information->size != 0 &&
@@ -33,22 +34,28 @@ capability_get_info(int fd, struct capability_info *information)
 		errno = EINVAL;
 		return (-1);
 	}
-	memset(&kernel, 0, sizeof(kernel));
-	if (ioctl(fd, MAC_CAPABILITY_GETINFO, &kernel) == -1)
+	kernel = calloc(1, sizeof(*kernel));
+	if (kernel == NULL)
 		return (-1);
-	if (memchr(kernel.name, '\0', sizeof(kernel.name)) == NULL) {
+	if (ioctl(fd, MAC_CAPABILITY_GETINFO, kernel) == -1) {
+		free(kernel);
+		return (-1);
+	}
+	if (memchr(kernel->name, '\0', sizeof(kernel->name)) == NULL) {
+		free(kernel);
 		errno = EPROTO;
 		return (-1);
 	}
 	memset(information, 0, sizeof(*information));
 	information->size = sizeof(*information);
-	strlcpy(information->name, kernel.name, sizeof(information->name));
-	information->badge = kernel.badge;
-	information->message_limit = kernel.msg_limit;
-	information->queue_depth = kernel.queue_depth;
-	information->transmit_limit = kernel.tx_limit;
-	information->max_fds = kernel.max_fds;
-	information->features = kernel.features;
+	strlcpy(information->name, kernel->name, sizeof(information->name));
+	information->badge = kernel->badge;
+	information->message_limit = kernel->msg_limit;
+	information->queue_depth = kernel->queue_depth;
+	information->transmit_limit = kernel->tx_limit;
+	information->max_fds = kernel->max_fds;
+	information->features = kernel->features;
+	free(kernel);
 	return (0);
 }
 
@@ -57,7 +64,7 @@ capability_kernel_call(int fd, const void *request, size_t request_length,
     const int *request_fds, size_t request_nfds, void *reply,
     size_t *reply_length, int *reply_fds, size_t *reply_nfds)
 {
-	struct mac_capability_call_args call;
+	struct mac_capability_call_args *call;
 	size_t fd_capacity, i, reply_capacity;
 	int error;
 
@@ -85,35 +92,41 @@ capability_kernel_call(int fd, const void *request, size_t request_length,
 		errno = EINVAL;
 		return (-1);
 	}
-	memset(&call, 0, sizeof(call));
-	call.req = request;
-	call.req_len = (uint32_t)request_length;
-	call.req_fds = request_fds;
-	call.req_nfds = (uint32_t)request_nfds;
-	call.reply = reply;
-	call.reply_len = (uint32_t)reply_capacity;
-	call.reply_fds = reply_fds;
-	call.reply_nfds = (uint32_t)fd_capacity;
-	if (ioctl(fd, MAC_CAPABILITY_CALL, &call) == -1) {
+	/* The ioctl writes the complete ABI object; keep it off caller stacks. */
+	call = calloc(1, sizeof(*call));
+	if (call == NULL)
+		return (-1);
+	call->req = request;
+	call->req_len = (uint32_t)request_length;
+	call->req_fds = request_fds;
+	call->req_nfds = (uint32_t)request_nfds;
+	call->reply = reply;
+	call->reply_len = (uint32_t)reply_capacity;
+	call->reply_fds = reply_fds;
+	call->reply_nfds = (uint32_t)fd_capacity;
+	if (ioctl(fd, MAC_CAPABILITY_CALL, call) == -1) {
 		error = errno;
 		for (i = 0; i < fd_capacity; i++) {
 			if (reply_fds[i] >= 0)
 				close(reply_fds[i]);
 			reply_fds[i] = -1;
 		}
+		free(call);
 		errno = error;
 		return (-1);
 	}
-	if (call.reply_len > reply_capacity || call.reply_nfds > fd_capacity) {
+	if (call->reply_len > reply_capacity || call->reply_nfds > fd_capacity) {
 		for (i = 0; i < fd_capacity; i++) {
 			if (reply_fds[i] >= 0)
 				close(reply_fds[i]);
 			reply_fds[i] = -1;
 		}
+		free(call);
 		errno = EPROTO;
 		return (-1);
 	}
-	*reply_length = call.reply_len;
-	*reply_nfds = call.reply_nfds;
+	*reply_length = call->reply_len;
+	*reply_nfds = call->reply_nfds;
+	free(call);
 	return (0);
 }

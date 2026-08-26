@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 30, 2026
+.Dd August 23, 2026
 .Dt SERVICECTL 8
 .Os
 .Sh NAME
@@ -13,7 +13,7 @@
 .Cm status | services | reload | bundles
 .Nm
 .Op Fl s Ar socket
-.Cm stop Ar label
+.Cm start | stop Ar label
 .Nm
 .Cm install Ar path.cap
 .Nm
@@ -34,6 +34,9 @@ List loaded service runtimes.
 Transactionally rescan bundles, validate the dependency graph, and apply
 additions, changes, and removals.
 Requires root.
+.It Cm start Ar label
+Start a loaded stopped unit immediately and reset its restart backoff.
+Requires root.
 .It Cm stop Ar label
 Gracefully stop a runtime, escalating after its configured timeout.
 Requires root.
@@ -45,11 +48,11 @@ Requires root.
 .It Cm verify Ar path.cap ...
 Strictly validate bundle structure, manifests, executables, unique provided
 names, and the combined dependency graph.
-The printed effective view shows derived activation and local components.
+The printed effective view shows activation and local descriptors.
 .It Cm deps Ar program
 Inspect an ELF program and print an advisory
-.Va components
-array for linked FileSystemCmp and NetworkCmp clients.
+.Va descriptors
+object for linked FileSystemCmp, NetworkCmp, and CryptoCmp clients.
 Global service libraries require no manifest declaration and are ignored.
 .It Cm bundles
 List bundles installed in

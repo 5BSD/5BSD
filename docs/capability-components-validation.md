@@ -3,6 +3,26 @@
 This record separates tests that have actually run from tests that require a
 privileged or live system.  A skipped privileged test is not a pass.
 
+## Manifest-format qualification
+
+On August 23, 2026, the serviced capability-bundle format was reviewed and
+qualified in a root QEMU guest built from the current tree. The focused guest
+run passed 50 of 50 checks with no failures or skips: all 36 libcapbundle
+parser cases, three launch-limit cases, and source-built verification of all
+11 tracked shipped and example manifests. The parser cases include the exact
+1 MiB file-size boundary, every minimum and maximum numeric value, maximum and
+maximum-plus-one cardinalities for every bounded collection, duplicate keys
+and entries, schema identity and version, literal-only parsing, executable and
+reverse-domain name validation, reserved environment names, and every
+capability group. The launch cases prove that a maximum valid manifest fits
+the bootstrap token table and that storage claims occupy token slots.
+
+On the host, the same 36 parser and three launch-limit cases passed. The
+servicectl suite passed all 11 unprivileged cases and skipped its seven
+root-only cases. Its dependency inspection now covers filesystem, network,
+and crypto local components. The historical whole-component results below
+remain dated August 1 and are not silently combined with this focused rerun.
+
 ## Unprivileged object-tree validation
 
 Validation was last updated on August 1, 2026 from

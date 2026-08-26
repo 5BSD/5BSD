@@ -6,10 +6,12 @@ manifest_body()
 	src="@SRCTOP@/usr.sbin/auditbrokerd"
 	obj="@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin"
 	bundle="${PWD}/Audit.cap"
+	unit="${bundle}/Units/auditbrokerd.unit"
 
 	test -x "${obj}" || atf_skip "servicectl test binary is required"
-	mkdir -p "${bundle}/bin" "${bundle}/etc"
-	cp "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd" "${bundle}/bin/auditbrokerd"
+	mkdir -p "${unit}/bin"
+	cp "${src}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd" "${unit}/bin/auditbrokerd"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
 		    "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
@@ -17,7 +19,7 @@ manifest_body()
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
 		    "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
 	fi
-	cp "${src}/capbundle/auditbrokerd.ucl" "${bundle}/etc/auditbrokerd.ucl"
+	cp "${src}/capbundle/auditbrokerd.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o ignore "${obj}" verify "${bundle}"
 }
 

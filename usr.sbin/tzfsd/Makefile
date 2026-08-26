@@ -4,7 +4,7 @@ PACKAGE=	runtime
 PROG=		tzfsd
 MAN=		tzfsd.8 tzfs.conf.5
 
-SRCS=		tzfsd.c config.c layout.c request.c
+SRCS=		tzfsd.c config.c layout.c nvwalk.c request.c
 
 # Flavor artifact producer (admin/build tool).
 SCRIPTS=	tzfs-mkflavor.sh
@@ -25,6 +25,6 @@ CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		trustedzfs ucl
+LIBADD=		trustedzfs ucl nvpair
 
 .include <bsd.prog.mk>

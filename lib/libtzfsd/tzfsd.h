@@ -26,11 +26,11 @@
  * Storage request.  flavor[0] == '\0' asks for a bare dataset claim (no
  * template); a named flavor ("native", "freebsd", "linux", "empty") clones
  * that flavor's template.  rights is the ZH_* mask to grant; lifetime is
- * TZFSD_PERSISTENT or TZFSD_EPHEMERAL.
+ * one of the TZFSD_* lifecycle constants.
  */
 struct tzfsd_req {
 	char		flavor[TZFSD_FLAVOR_MAX];
-	char		name[TZFSD_NAME_MAX];
+	char		dataset[TZFSD_NAME_MAX];
 	uint64_t	rights;
 	uint32_t	flags;			/* ZHF_* (0 for the common case) */
 	uint8_t		lifetime;
@@ -64,10 +64,10 @@ int	tzfsd_request(int chan, const struct tzfsd_req *req,
 	    struct tzfsd_grant *out);
 
 /*
- * Release (destroy) an ephemeral claim previously granted under this name.
+ * Release (destroy) a lease claim previously granted under this dataset key.
  * Idempotent: a missing claim is success.  Returns 0 or -1/errno.
  */
-int	tzfsd_release(int chan, const char *name);
+int	tzfsd_release(int chan, const char *dataset);
 
 /*
  * Enumerate the flavors tzfsd currently offers.  Writes up to max entries into
@@ -78,6 +78,9 @@ int	tzfsd_list_flavors(int chan, struct tzfsd_flavor_info *list, size_t max);
 
 /* Liveness check.  Returns 0 if tzfsd answered, -1/errno otherwise. */
 int	tzfsd_ping(int chan);
+
+/* Begin or resume one service-manager lease generation. */
+int	tzfsd_begin_session(int chan, const char *session);
 
 /*
  * Convenience: mount a granted handle and return a directory fd for its root

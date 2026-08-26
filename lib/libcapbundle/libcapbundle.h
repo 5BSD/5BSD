@@ -6,12 +6,13 @@
  * libcapbundle — parse and validate 5BSD .cap bundles.
  *
  * A bundle is a self-contained application directory:
- *   Name.cap/etc/svc.ucl          (service manifests)
- *   Name.cap/bin/program           (executables)
- *   Name.cap/resources/            (optional data)
+ *   Name.cap/Bundle.ucl
+ *   Name.cap/Shared/{Config,Resources,Libraries,Executables}/
+ *   Name.cap/Units/name.unit/Unit.ucl
+ *   Name.cap/Units/name.unit/bin/name
  *
- * Each Service.ucl declares bundle metadata (bundle_id, version, author)
- * alongside its service definition (program, provides, components, etc.).
+ * Bundle.ucl is the sole source of bundle identity and declares the exact
+ * unit inventory.  Unit identity comes from its .unit directory name.
  */
 
 #ifndef LIBCAPBUNDLE_H
@@ -21,39 +22,47 @@
 #include <stdbool.h>
 
 /* Limits */
+#define	CAPBUNDLE_SCHEMA		"org.5bsd.capability-bundle"
+#define	CAPBUNDLE_SCHEMA_VERSION	1
 #define	CAPBUNDLE_MAX_SERVICES		32
 #define	CAPBUNDLE_MAX_PROVIDES		8
 #define	CAPBUNDLE_ID_MAX		128
 #define	CAPBUNDLE_VERSION_MAX		32
 #define	CAPBUNDLE_AUTHOR_MAX		128
+#define	CAPBUNDLE_PUBLISHER_MAX		128
 #define	CAPBUNDLE_NAME_MAX		255
 
 struct capbundle;
 struct capbundle_service;
 
 /*
- * Open and parse a .cap bundle directory.
- * Returns 0 on success, -1 on error (details in errbuf if non-NULL).
+ * Open and parse a .cap bundle directory.  path and bp are required; *bp is
+ * cleared before any parsing is attempted.  Returns 0 on success, -1 on
+ * error with errno set (details in errbuf if non-NULL).
  */
 int	capbundle_open(const char *path, struct capbundle **bp,
 	    char *errbuf, size_t errlen);
 void	capbundle_close(struct capbundle *b);
 
-/* Bundle-level accessors. */
+/* Bundle-level accessors return NULL when passed NULL. */
 const char	*capbundle_id(const struct capbundle *b);
 const char	*capbundle_version(const struct capbundle *b);
 const char	*capbundle_author(const struct capbundle *b);
+const char	*capbundle_publisher(const struct capbundle *b);
+uint64_t	 capbundle_sequence(const struct capbundle *b);
 const char	*capbundle_path(const struct capbundle *b);
 const char	*capbundle_name(const struct capbundle *b);  /* dir basename */
 
-/* Service enumeration. */
+/* Service enumeration returns zero/NULL for a NULL bundle or bad index. */
 unsigned	 capbundle_nservices(const struct capbundle *b);
 struct capbundle_service *capbundle_service(const struct capbundle *b,
 		    unsigned idx);
 
-/* Service accessors. */
+/* Service accessors return zero/NULL for a NULL service or bad index. */
 const char	*capbundle_svc_program(const struct capbundle_service *s);
 const char	*capbundle_svc_label(const struct capbundle_service *s);
+bool		 capbundle_svc_activates_at_boot(
+		    const struct capbundle_service *s);
 unsigned	 capbundle_svc_nprovides(const struct capbundle_service *s);
 const char	*capbundle_svc_provides(const struct capbundle_service *s,
 		    unsigned idx);
@@ -64,12 +73,15 @@ unsigned	 capbundle_svc_nenvironment(const struct capbundle_service *s);
 const char	*capbundle_svc_environment(const struct capbundle_service *s,
 		    unsigned idx);
 
+/* Reserved process-local descriptor factory endpoints. */
+bool	 capbundle_descriptor_factory_name(const char *name);
+
 /*
  * Fill a svc_manifest struct from a bundle service.
  * This is the preferred way to get a complete manifest — handles all
  * capability fields, not just system gates.
  * Caller provides the struct; function fills all fields.
- * Returns 0 on success, -1 on error.
+ * s and m are required.  Returns 0 on success, -1 with errno set on error.
  */
 struct svc_manifest;
 int	capbundle_svc_fill_manifest(const struct capbundle_service *s,
@@ -78,14 +90,16 @@ int	capbundle_svc_fill_manifest(const struct capbundle_service *s,
 /*
  * Validate bundle integrity.
  * Checks structure, required fields, binary existence, internal consistency.
- * Returns 0 if valid, -1 with details in errbuf.
+ * b is required.  Returns 0 if valid, -1 with errno set and details in
+ * errbuf.
  */
 int	capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen);
 
 /*
  * Check for circular dependencies across multiple bundles.
- * Checks the internal startup edges derived from local component declarations.
- * Returns 0 if acyclic, -1 with cycle description in errbuf.
+ * Checks the internal startup edges derived from local descriptor declarations.
+ * A NULL bundle array is valid only when nbundles is zero.  Returns 0 if
+ * acyclic, -1 with errno set and a cycle or argument description in errbuf.
  */
 int	capbundle_check_startup_cycles(struct capbundle **bundles,
 	    unsigned nbundles,
@@ -95,7 +109,8 @@ int	capbundle_check_startup_cycles(struct capbundle **bundles,
  * Scan a directory for .cap bundles.
  * Calls cb for each successfully opened bundle.
  * If cb returns non-zero, scanning stops and that value is returned.
- * Returns 0 on success, -1 on a directory or malformed-bundle error.
+ * dirpath and cb are required.  Returns 0 on success, -1 with errno set on a
+ * directory, argument, or malformed-bundle error.
  * Invalid bundles stop the scan; declarations are never silently skipped.
  */
 typedef int (*capbundle_scan_cb)(struct capbundle *b, void *ctx);

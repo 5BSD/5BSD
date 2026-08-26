@@ -107,13 +107,13 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 {
 	struct serviced_fd_budget_stats fd_stats;
 	size_t off;
-	unsigned i, nrunning, nstopped, nstarting, nstopping;
+	unsigned i, ndone, nrunning, nstopped, nstarting, nstopping;
 	static const char *state_names[] = {
-		"stopped", "starting", "running", "stopping"
+		"stopped", "starting", "running", "stopping", "done"
 	};
 
 	off = 0;
-	nrunning = nstopped = nstarting = nstopping = 0;
+	ndone = nrunning = nstopped = nstarting = nstopping = 0;
 
 	if (sd.services != NULL) {
 		for (i = 0; i < sd.nservices; i++) {
@@ -122,6 +122,7 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 			case SVC_STATE_STOPPED:  nstopped++;  break;
 			case SVC_STATE_STARTING: nstarting++; break;
 			case SVC_STATE_STOPPING: nstopping++; break;
+			case SVC_STATE_DONE:     ndone++;     break;
 			}
 		}
 	}
@@ -131,8 +132,9 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 	    "services: %u loaded", sd.nservices);
 	if (sd.nservices > 0)
 		BUF_APPEND(summary, sumlen, &off,
-		    " (%u running, %u stopped, %u starting, %u stopping)",
-		    nrunning, nstopped, nstarting, nstopping);
+		    " (%u running, %u stopped, %u starting, %u stopping, "
+		    "%u done)", nrunning, nstopped, nstarting, nstopping,
+		    ndone);
 	BUF_APPEND(summary, sumlen, &off, "\n");
 	serviced_fd_budget_get_stats(&fd_stats);
 	BUF_APPEND(summary, sumlen, &off,
@@ -256,6 +258,14 @@ conn_dispatch(struct sctl_conn *c)
 		reply->status = EPROTONOSUPPORT;
 		goto write;
 	}
+	if (req->flags != 0 ||
+	    (req->datalen > 0 && memchr(c->payload, '\0', req->datalen) != NULL)) {
+		reply->status = EINVAL;
+		snprintf(c->summary, sizeof(c->summary),
+		    "invalid control request encoding");
+		reply->flags = (uint32_t)strlen(c->summary);
+		goto write;
+	}
 
 	SERVICED_PROBE_SCTL_CMD(req->op, c->euid);
 
@@ -301,16 +311,53 @@ conn_dispatch(struct sctl_conn *c)
 			reply->flags = (uint32_t)strlen(c->summary);
 		}
 		break;
-	case SCTL_OP_CHECK:
-	case SCTL_OP_LOAD:
-		/*
-		 * Legacy ops — superseded by bundle-based service
-		 * management.  Use 'servicectl install' + 'reload'.
-		 */
-		reply->status = ENOTSUP;
-		snprintf(c->summary, sizeof(c->summary),
-		    "%s: use bundle install + reload",
-		    req->op == SCTL_OP_CHECK ? "check" : "load");
+	case SCTL_OP_START_SVC:
+		if (c->euid != 0) {
+			reply->status = EPERM;
+			snprintf(c->summary, sizeof(c->summary),
+			    "start: permission denied");
+			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
+			serviced_audit(AUE_SERVICED_CTL, c->euid, EPERM,
+			    "start denied");
+		} else if (req->datalen == 0) {
+			reply->status = EINVAL;
+			snprintf(c->summary, sizeof(c->summary),
+			    "start: missing service label");
+		} else {
+			struct svc_runtime *svc;
+			int error;
+
+			svc = svc_by_label(c->payload);
+			if (svc == NULL) {
+				reply->status = ENOENT;
+				snprintf(c->summary, sizeof(c->summary),
+				    "start: service \"%s\" not found", c->payload);
+			} else if (svc->state != SVC_STATE_STOPPED &&
+			    svc->state != SVC_STATE_DONE) {
+				reply->status = EALREADY;
+				snprintf(c->summary, sizeof(c->summary),
+				    "start: \"%s\" is not stopped", c->payload);
+			} else {
+				svc_cancel_restart(svc, serviced_kq);
+				svc->state = SVC_STATE_STOPPED;
+				svc->restart_count = 0;
+				svc->lookup_activated = false;
+				strlcpy(svc->launched_by, "operator",
+				    sizeof(svc->launched_by));
+				error = svc_exec(svc, serviced_kq) == -1 ?
+				    (errno != 0 ? errno : EIO) : 0;
+				reply->status = error;
+				if (error == 0)
+					snprintf(c->summary, sizeof(c->summary),
+					    "start: \"%s\" starting", c->payload);
+				else
+					snprintf(c->summary, sizeof(c->summary),
+					    "start: \"%s\" failed: %s", c->payload,
+					    strerror(error));
+				serviced_audit(AUE_SERVICED_CTL, c->euid, error,
+				    "start svc=%s", c->payload);
+			}
+		}
 		reply->flags = (uint32_t)strlen(c->summary);
 		break;
 	case SCTL_OP_STOP_SVC:

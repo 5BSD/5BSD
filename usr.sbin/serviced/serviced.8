@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd July 31, 2026
+.Dd August 23, 2026
 .Dt SERVICED 8
 .Os
 .Sh NAME
@@ -205,13 +205,16 @@ Each
 .Pa *.ucl
 file declares one service.
 Files are parsed strictly and topologically sorted before launch.
+The schema identifier and version are mandatory.
+UCL directives, includes, interpolation, implicit arrays, and duplicate keys
+are disabled.
 An unknown key, wrong type, invalid capability, excess entry, unknown
 dependency, duplicate provided name, or dependency cycle rejects the bundle set;
 authority declarations are never silently dropped.
 .Pp
 The authoritative schema, including literal arguments, environment variables,
-restart policy, and filesystem, Internet, Bluetooth, VSOCK, jail, and system
-capabilities, is documented in
+restart policy, and filesystem, Internet, Bluetooth, VSOCK, jail, storage,
+capability-service, and system capabilities, is documented in
 .Xr serviced 5 .
 .Sh SERVICE BOOTSTRAP
 Each launched service receives one versioned, fixed-layout bootstrap object as
@@ -232,18 +235,19 @@ No token or capability-service descriptor table is encoded in
 environment strings.
 When requested by the manifest,
 .Nm
-also sets
-.Ev NETWORKCMP
-or
-.Ev FILESYSTEMCMP .
+also sets one or more of
+.Ev NETWORKCMP ,
+.Ev FILESYSTEMCMP ,
+and
+.Ev CRYPTOCMP .
 Each value is the decimal number of a pre-exec local authority channel.
 The corresponding typed library validates, duplicates, and consumes it.
 .Pp
 The service channel is fd 3, optional capprotect is fd 4, and authority
 descriptors occupy a contiguous range beginning at fd 6.
 Tokens appear first in manifest-category order: paths, files, network
-endpoints, jail operations, VSOCK endpoints, and finally one combined
-system-gate token.
+endpoints, jail operations, VSOCK endpoints, storage handles, and finally one
+combined system-gate token.
 Capability-service descriptors follow, then local component channels.
 All requested descriptors are installed before
 .Xr execve 2 ;
@@ -288,6 +292,15 @@ Home directory of the service user.
 Only set when
 .Va user
 is specified.
+.It Ev CAPABILITY_UNIT_DIR
+Absolute path of the selected immutable
+.Pa Units/name.unit
+directory.
+Managed programs use it to locate their bundled
+.Pa Config
+and
+.Pa Resources
+content without assuming a registry or versioned installation path.
 .It Ar manifest environment
 String values declared by the manifest are included.
 They may override the default
@@ -301,6 +314,7 @@ or
 .Ev SERVICED_*
 namespaces,
 .Ev SERVICE_BOOTSTRAP_FD ,
+.Ev CAPABILITY_UNIT_DIR ,
 .Ev NETWORKCMP ,
 or
 .Ev FILESYSTEMCMP .
@@ -317,8 +331,8 @@ algorithm so that providers start before their dependents.
 .Dq ORACLED
 is an implicit provider that is always satisfied.
 .Pp
-Duplicate labels or
-.Va provides
+Duplicate runtime identities or
+.Va activation.ipc
 names across manifests are fatal.
 A dependency cycle is a fatal error; no services are started.
 Unknown providers are rejected before services are launched.
@@ -591,7 +605,7 @@ utility communicates with
 over this socket.
 .Pp
 The following commands are supported:
-.Bl -tag -width "SCTL_OP_STOP_SVC (6)"
+.Bl -tag -width "SCTL_OP_START_SVC (4)"
 .It Dv SCTL_OP_STATUS (1)
 Return daemon status and a summary of all loaded services with
 their current state, PID, restart policy, and restart count.
@@ -609,27 +623,17 @@ The dependency graph is re-validated before any mutations are
 applied; if the new graph contains a cycle, the reload is
 rejected and running services are unaffected.
 Requires root.
-.It Dv SCTL_OP_CHECK (4)
-Legacy op, no longer supported.
-Returns
-.Er ENOTSUP .
-Use
-.Cm servicectl verify
-instead.
-.It Dv SCTL_OP_LOAD (5)
-Legacy op, no longer supported.
-Returns
-.Er ENOTSUP .
-Use
-.Cm servicectl install
-+
-.Cm reload
-instead.
-.It Dv SCTL_OP_STOP_SVC (6)
+.It Dv SCTL_OP_START_SVC (4)
+Start a loaded stopped unit and reset its restart backoff.
+The payload is the unit label.
+Requires root.
+.It Dv SCTL_OP_STOP_SVC (5)
 Stop a named service.
 The payload is the service label.
 Requires root.
 .El
+Unknown flags, embedded NUL bytes, oversized payloads, and unexpected
+payloads are rejected.
 .Sh SIGNALS
 PID-based signals from foreign program nonces are denied by capprotect.
 The signals below remain available to
@@ -843,14 +847,19 @@ exits with an error if the
 .Ev ORACLED_CHANNEL_FD
 environment variable is not set or the channel fd is invalid.
 .Sh EXAMPLES
-Minimal bundle service manifest:
+Minimal bundle and unit manifests:
 .Bd -literal -offset indent
-# myservice.ucl
+# MyService.cap/Bundle.ucl
+schema = "org.5bsd.capability-bundle";
+schema_version = 1;
 bundle_id = "org.example.myservice";
 version = "1.0";
+sequence = 1;
 author = "Example";
-program = "myservice";
-provides = ["org.example.myservice"];
+units = ["myservice"];
+
+# MyService.cap/Units/myservice.unit/Unit.ucl
+activation { boot = true; ipc = ["org.example.myservice"]; }
 arguments = ["--foreground"];
 environment { APP_MODE = "production"; }
 restart = "always";

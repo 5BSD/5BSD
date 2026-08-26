@@ -7,7 +7,7 @@
  *
  *   tzfsctl list-flavors
  *   tzfsctl ping
- *   tzfsctl request [-f flavor] [-l persistent|ephemeral] [-r rights] [-m] name
+ *   tzfsctl request [-f flavor] [-l persistent|cache|boot|lease] [-r rights] [-m] name
  *   tzfsctl release name
  *
  * request drives the same path a service does: it asks tzfsd for a handle,
@@ -91,7 +91,7 @@ cmd_request(int chan, int argc, char **argv)
 	struct tzfsd_req req;
 	struct tzfsd_grant grant;
 	const char *flavor = "", *rights = "mount,props_read";
-	uint8_t lifetime = TZFSD_EPHEMERAL;
+	uint8_t lifetime = TZFSD_LEASE;
 	bool domount = false;
 	int ch;
 
@@ -104,10 +104,14 @@ cmd_request(int chan, int argc, char **argv)
 		case 'l':
 			if (strcmp(optarg, "persistent") == 0)
 				lifetime = TZFSD_PERSISTENT;
-			else if (strcmp(optarg, "ephemeral") == 0)
-				lifetime = TZFSD_EPHEMERAL;
+			else if (strcmp(optarg, "cache") == 0)
+				lifetime = TZFSD_CACHE;
+			else if (strcmp(optarg, "boot") == 0)
+				lifetime = TZFSD_BOOT;
+			else if (strcmp(optarg, "lease") == 0)
+				lifetime = TZFSD_LEASE;
 			else
-				errx(1, "lifetime must be persistent|ephemeral");
+				errx(1, "lifetime must be persistent|cache|boot|lease");
 			break;
 		default:
 			errx(1, "usage: tzfsctl request [-f flavor] "
@@ -119,7 +123,7 @@ cmd_request(int chan, int argc, char **argv)
 
 	memset(&req, 0, sizeof(req));
 	(void)strlcpy(req.flavor, flavor, sizeof(req.flavor));
-	(void)strlcpy(req.name, argv[optind], sizeof(req.name));
+	(void)strlcpy(req.dataset, argv[optind], sizeof(req.dataset));
 	req.rights = parse_rights(rights);
 	req.lifetime = lifetime;
 	if (domount)
@@ -127,9 +131,8 @@ cmd_request(int chan, int argc, char **argv)
 
 	if (tzfsd_request(chan, &req, &grant) == -1)
 		err(1, "request %s", argv[optind]);
-	printf("granted %s (flavor=%s, %s)\n", grant.dataset,
-	    flavor[0] ? flavor : "bare",
-	    lifetime == TZFSD_EPHEMERAL ? "ephemeral" : "persistent");
+	printf("granted %s (flavor=%s, lifetime=%u)\n", grant.dataset,
+	    flavor[0] ? flavor : "bare", lifetime);
 
 	if (domount) {
 		int dir = tzfsd_mount_dir(grant.handle_fd, 0);

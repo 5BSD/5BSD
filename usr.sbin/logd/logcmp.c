@@ -18,6 +18,7 @@
 #include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdatomic.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -1535,6 +1536,20 @@ dispatch_to_pool(struct pool_parent *pools, uint32_t npools,
 	return (errno = last_error, -1);
 }
 
+static int
+managed_config_path(char *path, size_t path_size)
+{
+	const char *unit_dir;
+
+	unit_dir = getenv(SERVICE_UNIT_DIR_ENV);
+	if (unit_dir == NULL || unit_dir[0] == '\0')
+		return (errno = ENOENT, -1);
+	if (snprintf(path, path_size, "%s/Config/%s", unit_dir,
+	    LOGCMP_CONFIG_NAME) >= (int)path_size)
+		return (errno = ENAMETOOLONG, -1);
+	return (0);
+}
+
 int
 main(void)
 {
@@ -1542,17 +1557,20 @@ main(void)
 	cap_channel_t *casper;
 	struct pool_parent *pools;
 	struct service_identity identity;
+	struct service_context *context;
 	struct service_listener *listener;
 	struct service_provider *provider;
 	struct logcmp_config config;
+	char config_path[PATH_MAX];
 	_Atomic uint32_t *admitted;
 	uint64_t instance;
 	uint32_t capacity, cursor, i, remainder, started_pools;
 	int fd, storage_control, storage_dir, storage_process;
 
 	openlog("logd", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	if (logcmp_config_load(LOGCMP_CONFIG_PATH, &config) == -1) {
-		syslog(LOG_ERR, "cannot load %s: %m", LOGCMP_CONFIG_PATH);
+	if (managed_config_path(config_path, sizeof(config_path)) == -1 ||
+	    logcmp_config_load(config_path, &config) == -1) {
+		syslog(LOG_ERR, "cannot load managed configuration: %m");
 		return (1);
 	}
 	storage_control = -1;
@@ -1562,12 +1580,16 @@ main(void)
 	started_pools = 0;
 	admitted = MAP_FAILED;
 	casper = cap_init();
+	context = NULL;
 	if (casper == NULL || harden_factory_channel(casper) == -1 ||
+	    service_acquire(&context) == -1 ||
+	    service_capability_open(context, "storage:state", "directory",
+	    &storage_dir) == -1 ||
 	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1)
 		goto fail;
-	storage_dir = open("/var/db/logd",
-	    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+	service_release(context);
+	context = NULL;
 	cap_rights_init(&rights, CAP_READ, CAP_LOOKUP, CAP_CREATE, CAP_UNLINKAT,
 	    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET, CAP_FSTAT, CAP_FSYNC);
 	if (storage_dir == -1 || cap_rights_limit(storage_dir, &rights) == -1 ||
@@ -1640,6 +1662,8 @@ main(void)
 	}
 
 fail:
+	if (context != NULL)
+		service_release(context);
 	if (pools != NULL && started_pools != 0)
 		(void)shutdown_pools(pools, started_pools);
 	if (storage_dir >= 0)

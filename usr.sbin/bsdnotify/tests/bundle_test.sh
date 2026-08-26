@@ -11,20 +11,21 @@ manifest_body()
 	objdir="@OBJTOP@/usr.sbin/bsdnotify"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	bundle="${PWD}/BsdNotify.cap"
+	unit="${bundle}/Units/bsdnotify.unit"
 
 	test -x "${servicectl}" || atf_skip "test servicectl is required"
-	mkdir -p "${bundle}/bin" "${bundle}/etc"
-	cp "${objdir}/bsdnotify" "${bundle}/bin/bsdnotify"
+	mkdir -p "${unit}/bin"
+	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
+	cp "${objdir}/bsdnotify" "${unit}/bin/bsdnotify"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S "${objdir}/bsdnotify"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S "${objdir}/bsdnotify"
 	fi
-	cp "${srcdir}/capbundle/bsdnotify.ucl" \
-	    "${bundle}/etc/bsdnotify.ucl"
-	chmod 0555 "${bundle}" "${bundle}/bin" "${bundle}/etc" \
-	    "${bundle}/bin/bsdnotify"
-	chmod 0444 "${bundle}/etc/bsdnotify.ucl"
+	cp "${srcdir}/capbundle/bsdnotify.ucl" "${unit}/Unit.ucl"
+	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
+	    "${unit}/bin/bsdnotify"
+	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o match:'bsdnotify.conf' \
 	    grep bsdnotify.conf "${srcdir}/Makefile"
 	atf_check -s exit:0 -o match:'Verification: PASSED' \

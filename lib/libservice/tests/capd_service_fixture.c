@@ -31,24 +31,43 @@
 static struct service_context *fixture_service_context;
 static struct service_provider *fixture_service_provider;
 
+static char result_cwd[PATH_MAX];
+static int result_dir_fd = -1;
+
 static int
 fixture_service_initialize(void)
 {
+	int error, fd;
 
 	if (fixture_service_context != NULL)
 		return (0);
 	if (service_acquire(&fixture_service_context) == -1)
-		return (-1);
+		goto fail;
 	if (service_provider_create(&fixture_service_provider) == -1) {
-		int error;
-
 		error = errno;
 		service_release(fixture_service_context);
 		fixture_service_context = NULL;
 		errno = error;
-		return (-1);
+		goto fail;
 	}
 	return (0);
+fail:
+	/* Leave a diagnostic the harness file listing will surface even
+	 * though our stderr is discarded. */
+	error = errno;
+	if (result_dir_fd >= 0)
+		fd = openat(result_dir_fd, "fixture-init-failure.result",
+		    O_WRONLY | O_CREAT | O_APPEND, 0644);
+	else
+		fd = open("fixture-init-failure.result",
+		    O_WRONLY | O_CREAT | O_APPEND, 0644);
+	if (fd >= 0) {
+		dprintf(fd, "pid=%d step=init errno=%d\n", (int)getpid(),
+		    error);
+		close(fd);
+	}
+	errno = error;
+	return (-1);
 }
 
 static int
@@ -90,20 +109,41 @@ fixture_service_label(void)
 }
 
 static int
-fixture_service_capability_open(const char *name, int *fd)
+fixture_service_capability_open(const char *name, const char *type, int *fd)
 {
 
-	return (service_capability_open(fixture_service_context, name, fd));
+	return (service_capability_open(fixture_service_context, name, type, fd));
 }
 
 static int
 fixture_service_ready(void)
 {
+	const char *step;
+	int error, fd;
 
+	step = "capmode";
 	if (service_provider_enter_capability_mode(fixture_service_provider) ==
 	    -1)
-		return (-1);
-	return (service_provider_ready(fixture_service_provider));
+		goto fail;
+	step = "ready";
+	if (service_provider_ready(fixture_service_provider) == -1)
+		goto fail;
+	return (0);
+fail:
+	error = errno;
+	if (result_dir_fd >= 0)
+		fd = openat(result_dir_fd, "fixture-init-failure.result",
+		    O_WRONLY | O_CREAT | O_APPEND, 0644);
+	else
+		fd = open("fixture-init-failure.result",
+		    O_WRONLY | O_CREAT | O_APPEND, 0644);
+	if (fd >= 0) {
+		dprintf(fd, "pid=%d step=%s errno=%d\n", (int)getpid(), step,
+		    error);
+		close(fd);
+	}
+	errno = error;
+	return (-1);
 }
 
 struct event_receive {
@@ -217,8 +257,6 @@ fixture_event_recv(int fd, void *data, size_t capacity)
 	return (receive.length);
 }
 
-static char result_cwd[PATH_MAX];
-static int result_dir_fd = -1;
 static volatile sig_atomic_t enter_requested;
 
 static ssize_t
@@ -416,6 +454,28 @@ write_result(const char *path, const char *format, ...)
 		err(1, "close %s", path);
 }
 
+/*
+ * Record a failure reason into the scenario's result file before exiting.
+ * Service-launched fixtures have no visible stderr (serviced discards it), so
+ * err()/errx() diagnostics are lost; this surfaces the reason to the test.
+ */
+static void fixture_fail(const char *result, const char *fmt, ...) __dead2;
+static void
+fixture_fail(const char *result, const char *fmt, ...)
+{
+	va_list ap;
+	char detail[224];
+	int saved_errno;
+
+	saved_errno = errno;
+	va_start(ap, fmt);
+	(void)vsnprintf(detail, sizeof(detail), fmt, ap);
+	va_end(ap);
+	write_result(result, "event=fixture-error errno=%d detail=%s\n",
+	    saved_errno, detail);
+	_exit(1);
+}
+
 static void hold(void) __dead2;
 static void
 hold(void)
@@ -429,8 +489,15 @@ static void
 require_confined_endpoint(int fd)
 {
 
+	/*
+	 * A delivered endpoint has already been attenuated: the client end to
+	 * CAP_XFER_NONE, the provider end to CAP_XFER_ONCE (it may still hand
+	 * off to one worker).  Neither may be raised back toward the maximal
+	 * transfer budget; cap_xfer_limit only reduces, so requesting
+	 * CAP_XFER_TWICE must fail with ENOTCAPABLE for both.
+	 */
 	errno = 0;
-	if (cap_xfer_limit(fd, CAP_XFER_ONCE) != -1 || errno != ENOTCAPABLE)
+	if (cap_xfer_limit(fd, CAP_XFER_TWICE) != -1 || errno != ENOTCAPABLE)
 		errx(1, "peer endpoint is not transfer-confined");
 }
 
@@ -599,10 +666,10 @@ scenario_mux_client(const char *result)
 	int fd, i, terminal_error;
 
 	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
-		err(1, "mux client initialization");
+		fixture_fail(result, "mux client initialization");
 	fd = fixture_service_connect("org.test.transport-mux");
 	if (fd == -1 || service_session_create(fd, &client) == -1)
-		err(1, "mux client connect");
+		fixture_fail(result, "mux client connect fd=%d", fd);
 	memset(calls, 0, sizeof(calls));
 	for (i = 0; i < 3; i++) {
 		calls[i].client = client;
@@ -610,28 +677,33 @@ scenario_mux_client(const char *result)
 		    "request-%d", i);
 		if (pthread_create(&threads[i], NULL, mux_call_thread,
 		    &calls[i]) != 0)
-			errx(1, "mux pthread_create");
+			fixture_fail(result, "mux pthread_create");
 	}
 	for (i = 0; i < 3; i++) {
 		if (pthread_join(threads[i], NULL) != 0)
-			errx(1, "mux pthread_join");
+			fixture_fail(result, "mux pthread_join");
 		if (calls[i].received <= 0 || calls[i].error != 0 ||
 		    strcmp(calls[i].request, calls[i].reply) != 0)
-			errx(1, "reply correlation failed for call %d", i);
+			fixture_fail(result, "reply correlation failed call=%d "
+			    "received=%zd error=%d req=%s reply=%s", i,
+			    calls[i].received, calls[i].error, calls[i].request,
+			    calls[i].reply);
 	}
 	memset(&metadata, 0, sizeof(metadata));
 	metadata.size = sizeof(metadata);
 	received = fixture_session_event(client, event, sizeof(event),
 	    &metadata, 5000);
 	if (received != 6 || strcmp(event, "event") != 0)
-		errx(1, "unsolicited event routing failed");
+		fixture_fail(result, "unsolicited event routing failed "
+		    "received=%zd", received);
 	errno = 0;
 	received = fixture_session_call(client, "late", 5, late,
 	    sizeof(late), 1000);
 	terminal_error = received == -1 ? errno : 0;
 	if (received != -1 ||
 	    (terminal_error != ECONNRESET && terminal_error != EPIPE))
-		errx(1, "peer death was not reported: %d", terminal_error);
+		fixture_fail(result, "peer death was not reported: %d",
+		    terminal_error);
 	service_session_close(client);
 	write_result(result,
 	    "calls=3\ncorrelated=yes\nevent=event\npeer_death_errno=%d\n",
@@ -672,12 +744,17 @@ scenario_provider(const char *registered, const char *result)
 	accepted.fd = -1;
 	if (pthread_create(&thread, NULL, accept_thread, &accepted) != 0)
 		errx(1, "pthread_create");
+	write_result(registered, "step=pre-concurrent-lookup\n");
 	errno = 0;
 	peer = fixture_service_connect("no.such.concurrent-service");
 	lookup_errno = errno;
-	if (peer != -1 || lookup_errno != ENOENT)
+	if (peer != -1 || lookup_errno != ENOENT) {
+		write_result(registered,
+		    "step=concurrent-lookup fd=%d errno=%d\n", peer,
+		    lookup_errno);
 		errx(1, "concurrent lookup returned fd=%d errno=%d", peer,
 		    lookup_errno);
+	}
 	write_result(registered,
 	    "CAPD-TEST/1 event=registered name=org.test.ls-provider "
 	    "concurrent_lookup_errno=%d\n", lookup_errno);
@@ -716,10 +793,16 @@ scenario_client(const char *result)
 		err(1, "service_lookup");
 	require_confined_endpoint(peer);
 	n = fixture_event_recv(peer, message, sizeof(message));
-	if (n == -1)
+	if (n == -1) {
+		write_result(result, "event=exchange error=recv errno=%d\n",
+		    errno);
 		err(1, "channel_dispatch");
-	if (fixture_event_send(peer, "world", 6) == -1)
+	}
+	if (fixture_event_send(peer, "world", 6) == -1) {
+		write_result(result, "event=exchange error=send errno=%d\n",
+		    errno);
 		err(1, "channel_send_event");
+	}
 	write_result(result,
 	    "CAPD-TEST/1 event=exchange greeting=%.*s confined=yes\n",
 	    (int)n, message);
@@ -769,7 +852,12 @@ scenario_multi_provider(const char *first, const char *second,
 		if (fixture_event_send(accepted[i].fd, accepted[i].service_name,
 		    strlen(accepted[i].service_name) + 1) == -1)
 			err(1, "channel_send_event");
-		close(accepted[i].fd);
+		/*
+		 * Keep the accepted endpoint open: a fire-and-forget event is
+		 * only queued on the peer, and closing here revokes the peer
+		 * before the client has received it.  A real provider holds
+		 * the session for its lifetime; hold() below keeps these live.
+		 */
 	}
 	write_result(result,
 	    "first=%s\nsecond=%s\nfirst_client=%s\nsecond_client=%s\n"
@@ -791,10 +879,11 @@ scenario_partial_provider(const char *first, const char *result)
 	if (fixture_service_initialize() == -1 ||
 	    service_provider_expose(fixture_service_provider, first,
 	    &listener) == -1)
-		err(1, "partial-provider initialization");
+		fixture_fail(result, "partial-provider initialization");
 	errno = 0;
 	if (fixture_service_ready() != -1)
-		errx(1, "incomplete provides set unexpectedly became ready");
+		fixture_fail(result, "incomplete provides set unexpectedly "
+		    "became ready");
 	ready_error = errno;
 	write_result(result, "process_ready=0\nready_errno=%d\n",
 	    ready_error);
@@ -832,7 +921,9 @@ scenario_delayed_provider(const char *name, const char *delay_text,
 		err(1, "delayed-provider send");
 	write_result(result, "accepted=%s\nclient=%s\n", name,
 	    identity.client_label);
-	close(client);
+	/* Hold the endpoint open past the fire-and-forget send (see the
+	 * multi-provider note): closing here would revoke the client's peer
+	 * before it receives the queued event. */
 	hold();
 }
 
@@ -870,12 +961,19 @@ scenario_named_client(const char *name, const char *result)
 	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
 		err(1, "named-client initialization");
 	fd = fixture_service_connect(name);
-	if (fd == -1)
+	if (fd == -1) {
+		write_result(result, "requested=%s\nerror=connect\nerrno=%d\n",
+		    name, errno);
 		err(1, "service_connect %s", name);
+	}
 	received = fixture_event_recv(fd, routed, sizeof(routed));
 	if (received <= 0 || (size_t)received > sizeof(routed) ||
-	    routed[received - 1] != '\0')
+	    routed[received - 1] != '\0') {
+		write_result(result,
+		    "requested=%s\nerror=event_recv\nreceived=%zd\nerrno=%d\n",
+		    name, received, errno);
 		errx(1, "invalid routed-name reply");
+	}
 	write_result(result, "requested=%s\nrouted=%s\n", name, routed);
 	close(fd);
 	hold();
@@ -1018,7 +1116,7 @@ scenario_token_activate(const char *target, const char *result)
 static int
 scenario_manifest_report(int argc, char **argv)
 {
-	const char *empty, *mode;
+	const char *empty, *mode, *unit_dir;
 
 	if (argc != 5)
 		errx(1, "manifest-report requires result and two literal arguments");
@@ -1026,10 +1124,12 @@ scenario_manifest_report(int argc, char **argv)
 		err(1, "fixture_service_initialize");
 	mode = getenv("APP_MODE");
 	empty = getenv("EMPTY");
+	unit_dir = getenv(SERVICE_UNIT_DIR_ENV);
 	write_result(argv[2],
-	    "argc=3\narg1=%s\narg2=%s\nmode=%s\nempty=%s\n",
+	    "argc=3\narg1=%s\narg2=%s\nmode=%s\nempty=%s\nunit_dir=%s\n",
 	    argv[3], argv[4], mode == NULL ? "missing" : mode,
-	    empty == NULL ? "missing" : empty);
+	    empty == NULL ? "missing" : empty,
+	    unit_dir == NULL ? "missing" : unit_dir);
 	if (fixture_service_ready() == -1)
 		err(1, "service_ready");
 	hold();
@@ -1072,7 +1172,7 @@ scenario_capability_services(const char *result)
 	if (out == NULL)
 		err(1, "fopen %s", result);
 	for (i = 0; i < nitems(names); i++) {
-		if (fixture_service_capability_open(names[i], &fd) == -1)
+		if (fixture_service_capability_open(names[i], names[i], &fd) == -1)
 			err(1, "service_capability_open %s", names[i]);
 		memset(&info, 0, sizeof(info));
 		if (capability_get_info(fd, &info) == -1 ||
@@ -1084,18 +1184,66 @@ scenario_capability_services(const char *result)
 		    errno == ENOTCAPABLE;
 		fprintf(out, "%s=valid confined=%d\n", names[i], confined);
 		close(fd);
-		if (fixture_service_capability_open(names[i], &fd) == -1)
+		if (fixture_service_capability_open(names[i], names[i], &fd) == -1)
 			err(1, "reopen capability service %s", names[i]);
 		close(fd);
 	}
 	if (fclose(out) == EOF)
 		err(1, "close %s", result);
 	fd = -1;
-	if (fixture_service_capability_open("channel", &fd) != -1 ||
+	if (fixture_service_capability_open("channel", "channel", &fd) != -1 ||
 	    errno != EINVAL || fd != -1)
 		errx(1, "invalid capability service name was accepted");
+	fd = -1;
+	errno = 0;
+	if (fixture_service_capability_open("mount", "node", &fd) != -1 ||
+	    errno != EFTYPE || fd != -1)
+		errx(1, "capability service type mismatch was accepted");
 	if (fixture_service_ready() == -1)
 		err(1, "service_ready");
+	hold();
+}
+
+static int
+scenario_storage_directory(const char *role, const char *result)
+{
+	struct stat sb;
+	const char payload[] = "persistent storage probe\n";
+	int confined, dirfd, fd, mismatch;
+
+	if (fixture_service_initialize() == -1 ||
+	    service_provider_authorize_capabilities(fixture_service_provider) == -1 ||
+	    service_provider_enter_capability_mode(fixture_service_provider) == -1)
+		fixture_fail(result, "storage service initialization");
+	dirfd = -1;
+	if (fixture_service_capability_open(role, "directory", &dirfd) == -1)
+		fixture_fail(result, "open directory %s", role);
+	if (fstat(dirfd, &sb) == -1 || !S_ISDIR(sb.st_mode))
+		fixture_fail(result, "%s is not a directory mode=%#o", role,
+		    (unsigned)sb.st_mode);
+	fd = -1;
+	errno = 0;
+	mismatch = fixture_service_capability_open(role, "zfshandle", &fd);
+	if (mismatch != -1 || errno != EFTYPE || fd != -1)
+		fixture_fail(result, "%s accepted the wrong descriptor type "
+		    "rc=%d errno=%d", role, mismatch, errno);
+	fd = openat(dirfd, "storage-probe", O_WRONLY | O_CREAT | O_TRUNC |
+	    O_CLOEXEC, 0600);
+	if (fd == -1 || write(fd, payload, sizeof(payload) - 1) !=
+	    (ssize_t)(sizeof(payload) - 1) || fsync(fd) == -1)
+		fixture_fail(result, "write storage probe fd=%d", fd);
+	close(fd);
+	errno = 0;
+	confined = cap_xfer_limit(dirfd, CAP_XFER_ONCE) == -1 &&
+	    errno == ENOTCAPABLE;
+	close(dirfd);
+	if (!confined)
+		fixture_fail(result, "%s remained transferable", role);
+	if (service_provider_ready(fixture_service_provider) == -1)
+		fixture_fail(result, "service_provider_ready");
+	write_result(result,
+	    "role=%s\ndirectory=ok\ntype_mismatch=EFTYPE\n"
+	    "write=ok\nconfined=1\n", role);
 	hold();
 }
 
@@ -1229,6 +1377,58 @@ scenario_compat_ready(int argc, char **argv)
 	hold();
 }
 
+/*
+ * Crash on the first launch, then behave like compat-ready on every later one.
+ * The invocation count lives in a persistent statefile, updated before the
+ * capability sandbox is entered.  This must be a single-exec service program:
+ * the bootstrap descriptor is CAP_CLOEXEC_ONCE and would not survive a wrapper
+ * script re-exec'ing a separate helper.
+ */
+static int
+scenario_crash_once(const char *statefile, const char *ready_name,
+    const char *expose_name)
+{
+	struct service_listener *listener;
+	char path[256];
+	long count;
+	FILE *sf;
+
+	count = 0;
+	sf = fopen(statefile, "r");
+	if (sf != NULL) {
+		if (fscanf(sf, "%ld", &count) != 1)
+			count = 0;
+		fclose(sf);
+	}
+	count++;
+	sf = fopen(statefile, "w");
+	if (sf != NULL) {
+		fprintf(sf, "%ld\n", count);
+		fclose(sf);
+	}
+	if (count <= 1)
+		_exit(1);
+	if (fixture_service_initialize() == -1)
+		err(1, "crash-once init");
+	/*
+	 * Claim the declared IPC name before reporting ready: serviced rejects
+	 * a readiness that arrives before every provides[] name is claimed.
+	 */
+	listener = NULL;
+	if (expose_name != NULL && expose_name[0] != '\0' &&
+	    strcmp(expose_name, "-") != 0 &&
+	    service_provider_expose(fixture_service_provider, expose_name,
+	    &listener) == -1)
+		err(1, "crash-once expose %s", expose_name);
+	if (fixture_service_ready() == -1)
+		err(1, "crash-once readiness");
+	if (snprintf(path, sizeof(path), "%s.ready", ready_name) >=
+	    (int)sizeof(path))
+		errx(1, "crash-once ready path is too long");
+	write_result(path, "ready\n");
+	hold();
+}
+
 static int
 scenario_supervisor_monitor(const char *ready, const char *result)
 {
@@ -1271,6 +1471,13 @@ scenario_compat_lookup(void)
 	    snprintf(result_path, sizeof(result_path), "%s.result", label) >=
 	    (int)sizeof(result_path))
 		errx(1, "lookup fixture path is too long");
+	/* Runtime labels are bundle/unit; keep the marker names flat. */
+	for (char *p = target_path; *p != '\0'; p++)
+		if (*p == '/')
+			*p = '.';
+	for (char *p = result_path; *p != '\0'; p++)
+		if (*p == '/')
+			*p = '.';
 	input = fopen(target_path, "r");
 	if (input == NULL)
 		err(1, "fopen %s", target_path);
@@ -1329,12 +1536,20 @@ scenario_quiesce(const char *name, const char *ready, const char *result)
 	memset(&identity, 0, sizeof(identity));
 	identity.size = sizeof(identity);
 	errno = 0;
-	if (service_listener_accept(listener, &identity, &fd) != -1 ||
-	    errno != ECANCELED ||
-	    service_provider_quiescing(fixture_service_provider) != 1)
-		errx(1, "listener was not quiesced atomically");
+	{
+		int accept_rc, accept_errno, quiescing;
+
+		accept_rc = service_listener_accept(listener, &identity, &fd);
+		accept_errno = errno;
+		quiescing = service_provider_quiescing(fixture_service_provider);
+		if (accept_rc != -1 || accept_errno != ECANCELED ||
+		    quiescing != 1)
+			fixture_fail(result, "listener was not quiesced "
+			    "atomically accept_rc=%d accept_errno=%d "
+			    "quiescing=%d", accept_rc, accept_errno, quiescing);
+	}
 	if (service_provider_quiesce_complete(fixture_service_provider, 0) == -1)
-		err(1, "service_provider_quiesce_complete");
+		fixture_fail(result, "quiesce_complete errno=%d", errno);
 	write_result(result, "admission=closed\nresult=complete\n");
 	for (;;)
 		pause();
@@ -1371,17 +1586,20 @@ scenario_worker_channel(const char *result)
 	}
 	close(worker_fd);
 	if (fixture_service_ready() == -1)
-		err(1, "worker-channel readiness");
+		fixture_fail(result, "worker-channel readiness");
 	received = fixture_event_recv(provider_fd, message, sizeof(message));
 	if (received != 7 || strcmp(message, "worker") != 0)
-		errx(1, "worker-channel payload mismatch");
+		fixture_fail(result, "worker-channel payload mismatch "
+		    "received=%zd msg=%.*s", received,
+		    received > 0 ? (int)received : 0, message);
 	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
 	    WEXITSTATUS(status) != 0)
-		errx(1, "worker child failed: %#x", status);
+		fixture_fail(result, "worker child failed: status=%#x", status);
 	errno = 0;
 	if (cap_xfer_limit(provider_fd, CAP_XFER_ONCE) != -1 ||
 	    errno != ENOTCAPABLE)
-		errx(1, "provider endpoint remained transferable");
+		fixture_fail(result, "provider endpoint remained transferable "
+		    "errno=%d", errno);
 	close(provider_fd);
 	write_result(result,
 	    "pair=private\nprovider_in_child=closed\nworker_in_child=open\n"
@@ -1412,6 +1630,7 @@ usage(void)
 	    "       capd_service_fixture manifest-report result arg1 arg2\n"
 	    "       capd_service_fixture authorize-tokens result\n"
 	    "       capd_service_fixture capability-services result\n"
+	    "       capd_service_fixture storage-directory role result\n"
 	    "       capd_service_fixture unregister name registered result\n"
 	    "       capd_service_fixture claim-protocol name result\n"
 	    "       capd_service_fixture cancel-activation name started "
@@ -1469,6 +1688,8 @@ main(int argc, char **argv)
 		return (scenario_authorize_tokens(argv[2]));
 	if (argc == 3 && strcmp(argv[1], "capability-services") == 0)
 		return (scenario_capability_services(argv[2]));
+	if (argc == 4 && strcmp(argv[1], "storage-directory") == 0)
+		return (scenario_storage_directory(argv[2], argv[3]));
 	if (argc == 5 && strcmp(argv[1], "unregister") == 0)
 		return (scenario_unregister(argv[2], argv[3], argv[4]));
 	if (argc == 4 && strcmp(argv[1], "claim-protocol") == 0)
@@ -1481,6 +1702,8 @@ main(int argc, char **argv)
 	if ((argc == 2 || argc == 3) &&
 	    strcmp(argv[1], "compat-ready") == 0)
 		return (scenario_compat_ready(argc, argv));
+	if (argc == 5 && strcmp(argv[1], "crash-once") == 0)
+		return (scenario_crash_once(argv[2], argv[3], argv[4]));
 	if (argc == 4 && strcmp(argv[1], "supervisor-monitor") == 0)
 		return (scenario_supervisor_monitor(argv[2], argv[3]));
 	if (argc == 2 && strcmp(argv[1], "compat-lookup") == 0)

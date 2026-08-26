@@ -5,7 +5,7 @@
  */
 
 static const char component_notes[]
-    __attribute__((section(".note.5bsd.components"), used)) =
+    __attribute__((section(".note.5bsd.descriptors"), used)) =
     "interface=org.5bsd.network\n"
     "version=1.0.0\n"
     "local-name=network\n"
@@ -13,6 +13,10 @@ static const char component_notes[]
     "interface=org.5bsd.filesystem\n"
     "version=1.0.0\n"
     "local-name=filesystem\n"
+    "required=true\n"
+    "interface=org.5bsd.crypto\n"
+    "version=1.0.0\n"
+    "local-name=crypto\n"
     "required=true\n"
     "interface=org.5bsd.log\n"
     "version=1.0.0\n"

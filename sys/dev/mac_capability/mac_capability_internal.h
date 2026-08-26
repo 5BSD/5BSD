@@ -73,6 +73,9 @@ struct mac_capability_msg {
 	char		cm_data[];  /* sized by UMA zone: MAC_CAPABILITY_MSG_PAYLOAD_SIZE */
 };
 
+/* A list of messages detached from an instance queue, freed outside ci_mtx. */
+STAILQ_HEAD(mac_capability_msgq, mac_capability_msg);
+
 /* Instance flags (protected by ci_mtx). */
 #define	MAC_CAPABILITY_SF_CLOSED		0x0001
 #define	MAC_CAPABILITY_SF_REVOKED		0x0002
@@ -101,11 +104,11 @@ struct mac_capability_instance {
 	void		*ci_priv;		/* (I) service-private data */
 	uint64_t	ci_badge;		/* (I) connection badge */
 
-	STAILQ_HEAD(, mac_capability_msg) ci_txq;	/* (M) outbound queue */
+	struct mac_capability_msgq ci_txq;	/* (M) outbound queue */
 	int		ci_txqlen;		/* (M) outbound count */
 	struct knlist	ci_rknotes;		/* (M) EVFILT_READ knotes */
 
-	STAILQ_HEAD(, mac_capability_msg) ci_rxq;	/* (M) inbound queue */
+	struct mac_capability_msgq ci_rxq;	/* (M) inbound queue */
 	int		ci_rxqlen;		/* (M) inbound count */
 	int		ci_rxqlimit;		/* (I) max RX depth */
 	struct knlist	ci_wknotes;		/* (M) EVFILT_WRITE knotes */
@@ -174,6 +177,7 @@ int	mac_capability_instance_create(struct mac_capability_service *svc, struct th
 void	mac_capability_dispatch_task(void *context, int pending);
 void	mac_capability_instance_drain_txq(struct mac_capability_instance *s);
 void	mac_capability_instance_drain_rxq(struct mac_capability_instance *s);
+void	mac_capability_free_msgq(struct mac_capability_msgq *q);
 void	mac_capability_service_free(struct mac_capability_service *svc);
 extern const struct fileops mac_capability_instance_ops;
 

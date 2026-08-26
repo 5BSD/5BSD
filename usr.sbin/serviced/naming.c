@@ -98,6 +98,17 @@ naming_find(const char *name)
 }
 
 /*
+ * Report whether a name is currently registered, without creating a
+ * session.  Used to decide launch deferral for component consumers.
+ */
+bool
+naming_exists(const char *name)
+{
+
+	return (name != NULL && naming_find(name) != NULL);
+}
+
+/*
  * Count names owned by a service.
  */
 static unsigned

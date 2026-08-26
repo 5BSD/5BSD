@@ -4,7 +4,8 @@ atf_test_case config
 config_body()
 {
 	tool="$(atf_get_srcdir)/filesystemcmpctl_test_bin"
-	atf_check -s exit:0 -o inline:'components = ["filesystem"];\n' \
+	atf_check -s exit:0 \
+	    -o inline:'storage = [{ name = "data"; scope = "unit"; flavor = "native"; lifetime = "persistent"; rights = "mount"; }];\ndescriptors { filesystem { storage = "data"; } }\n' \
 	    -e empty "$tool" config
 }
 

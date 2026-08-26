@@ -273,7 +273,7 @@ Each program has a component matrix independent of the ten cross-stack cases.
 | `oracled` | CLI/config, startup phases, claims, reload transactions, control authorization/framing, bootstrap supervision, watchdog, status, shutdown |
 | `serviced` | registry, graph, startup/on-demand, naming, token delivery, descriptor layout, reload, restart/backoff, coalition cleanup, audit |
 | `oraclectl` | CLI grammar, exact request encoding, all reply statuses, incompatible version, partial/closed socket, exit-status contract |
-| `servicectl` | CLI grammar, status/list/reload/stop, verification and installation safety, authorization, exact exit-status contract |
+| `servicectl` | CLI grammar, status/list/reload/start/stop, malformed-wire rejection, verification and installation safety, authorization, exact exit-status contract |
 | `localfilesystem` | scratch/persistent/bundle namespaces, durable byte/object quotas, reconstruction, rollback, cwd/path contexts, malformed frames, worker confinement |
 | `localnetwork` | TCP/UDP, IPv4/IPv6, DNS, nonblocking deadlines/cancellation, socket limits, malformed frames, worker confinement |
 | `logd` | independent sessions, shared-ring lifecycle, batching/coalescing, loss accounting, flush and sink failures, close/reopen/fork |

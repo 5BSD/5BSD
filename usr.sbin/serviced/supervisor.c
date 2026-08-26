@@ -67,6 +67,13 @@ svc_close_fds(struct svc_runtime *svc)
 		close(svc->jail_fd);
 		svc->jail_fd = -1;
 	}
+	/*
+	 * Drop the storage mount anchors last: closing the final handle
+	 * reference force-unmounts the anonymous mount whose directory
+	 * descriptor was delivered to the provider worker.
+	 */
+	while (svc->nmount_anchors > 0)
+		close(svc->mount_anchor_fds[--svc->nmount_anchors]);
 }
 
 /*
@@ -114,6 +121,19 @@ schedule_restart(struct svc_runtime *svc, int kq)
 		SERVICED_PROBE_TIMEOUT_ARM(svc->manifest.label,
 		    "restart", delay);
 	}
+}
+
+void
+svc_cancel_restart(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+
+	if (!svc->restart_pending || svc->timer_ident == 0)
+		return;
+	EV_SET(&kev, svc->timer_ident, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+	(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	svc->restart_pending = false;
+	svc->timer_ident = 0;
 }
 
 static void
@@ -387,14 +407,19 @@ supervisor_handle_timer(struct kevent *kev)
 		SERVICED_PROBE_TIMEOUT_FIRE(svc->manifest.label, "stop-kill");
 		syslog(LOG_WARNING, "service %s: stop timeout, "
 		    "sending SIGKILL", svc->manifest.label);
-		if (svc->coalition_fd >= 0) {
-			if (mac_cap_coalition_terminate(svc->coalition_fd) == -1)
-				syslog(LOG_WARNING,
-				    "service %s: coalition terminate: %m",
-				    svc->manifest.label);
-		} else if (svc->pd_fd >= 0) {
+		if (svc->coalition_fd >= 0 &&
+		    mac_cap_coalition_terminate(svc->coalition_fd) == -1)
+			syslog(LOG_WARNING,
+			    "service %s: coalition terminate: %m",
+			    svc->manifest.label);
+		/*
+		 * Always SIGKILL the tracked process directly as well: the
+		 * coalition sweep can miss a process that already left the
+		 * coalition, and a coalition_terminate failure must never leave
+		 * a service that ignored SIGTERM still running.
+		 */
+		if (svc->pd_fd >= 0)
 			pdkill(svc->pd_fd, SIGKILL);
-		}
 		return;
 	}
 
@@ -441,11 +466,19 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 		if (svc_channel_send_event(svc, &message, sizeof(message), NULL, 0,
 		    kq) == 0) {
 			svc->quiesce_pending = true;
+			syslog(LOG_INFO, "service %s: quiesce requested "
+			    "(reason %u deadline %ums)", svc->manifest.label,
+			    message.reason, message.deadline_ms);
 			SERVICED_PROBE_QUIESCE_REQUEST(svc->manifest.label,
 			    message.reason, message.deadline_ms);
 			return;
 		}
-	}
+		syslog(LOG_WARNING, "service %s: quiesce send failed: %m",
+		    svc->manifest.label);
+	} else
+		syslog(LOG_INFO, "service %s: no quiesce channel "
+		    "(protocol_ready=%d)", svc->manifest.label,
+		    svc->protocol_ready);
 
 	if (svc->coalition_fd >= 0) {
 		if (mac_cap_coalition_graceful(svc->coalition_fd, SIGTERM,

@@ -221,6 +221,24 @@ cmd_reload(void)
 }
 
 static int
+cmd_start(const char *label)
+{
+	char summary[SERVICED_CTL_SUMMARY_MAX];
+	int error;
+
+	summary[0] = '\0';
+	error = sctl_rpc(SCTL_OP_START_SVC, 0, label,
+	    summary, sizeof(summary));
+	if (error != 0) {
+		warnx("start: %s", summary[0] != '\0' ?
+		    summary : strerror(error));
+		return (1);
+	}
+	printf("%s\n", summary[0] != '\0' ? summary : "start: ok");
+	return (0);
+}
+
+static int
 cmd_stop(const char *label)
 {
 	char summary[SERVICED_CTL_SUMMARY_MAX];
@@ -252,6 +270,7 @@ usage(void)
 	    "  status              show serviced status and service list\n"
 	    "  services            list loaded services\n"
 	    "  reload              reload service bundles\n"
+	    "  start <label>       start a loaded service\n"
 	    "  stop <label>        stop a running service\n"
 	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
 	    "  verify <path.cap> [...] validate bundles and dependencies\n"
@@ -289,6 +308,11 @@ main(int argc, char *argv[])
 		return (cmd_services());
 	if (strcmp(cmd, "reload") == 0 && argc == 1)
 		return (cmd_reload());
+	if (strcmp(cmd, "start") == 0) {
+		if (argc != 2)
+			errx(EX_USAGE, "start requires a service label");
+		return (cmd_start(argv[1]));
+	}
 	if (strcmp(cmd, "stop") == 0) {
 		if (argc != 2)
 			errx(EX_USAGE, "stop requires a service label");

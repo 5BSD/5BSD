@@ -6,6 +6,7 @@
 #include <sys/capsicum.h>
 #include <sys/envfd.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 
 #include <dev/mac_capability/mac_capability_channel_proto.h>
@@ -32,7 +33,6 @@
 
 struct event_close_context {
 	struct service_session	*client;
-	int			 started_fd;
 	int			 error;
 };
 
@@ -189,29 +189,35 @@ capability_channel_pair(int *first, int *second)
 }
 
 static void *
-event_close_thread(void *argument)
+call_close_thread(void *argument)
 {
 	struct event_close_context *context;
-	struct service_call_options options =
-	    SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_reply incoming;
-	char byte, event[8];
+	char reply[8];
 
 	context = argument;
-	byte = 1;
-	ATF_REQUIRE(write(context->started_fd, &byte, sizeof(byte)) ==
-	    sizeof(byte));
-	memset(&incoming, 0, sizeof(incoming));
-	incoming.size = sizeof(incoming);
-	incoming.data = event;
-	incoming.capacity = sizeof(event);
 	errno = 0;
-	if (service_session_receive_event(context->client, &incoming,
-	    &options) != -1)
+	if (test_session_call(context->client, "x", 1, reply, sizeof(reply),
+	    SERVICE_CLIENT_TIMEOUT_INFINITE, NULL) != -1)
 		context->error = 0;
 	else
 		context->error = errno;
 	return (NULL);
+}
+
+static void
+receive_pending_call(int fd)
+{
+	struct mac_capability_recvmsg_args receive;
+	char request;
+
+	memset(&receive, 0, sizeof(receive));
+	receive.payload = &request;
+	receive.payload_len = sizeof(request);
+	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &receive) == 0);
+	ATF_REQUIRE_EQ(sizeof(request), receive.payload_len);
+	ATF_REQUIRE_EQ(0, receive.nfds);
+	ATF_REQUIRE(receive.reply_token != 0);
+	ATF_REQUIRE_EQ('x', request);
 }
 
 static void
@@ -348,6 +354,7 @@ install_bootstrap(const struct service_bootstrap *bootstrap, size_t size)
 {
 	struct envfd_create_options options =
 	    ENVFD_CREATE_OPTIONS_INITIALIZER(size);
+	cap_rights_t rights;
 	ssize_t written;
 	int fd;
 
@@ -363,6 +370,12 @@ install_bootstrap(const struct service_bootstrap *bootstrap, size_t size)
 			return (-1);
 		close(fd);
 	}
+	/* Match serviced's immutable bootstrap descriptor contract exactly. */
+	cap_rights_init(&rights, CAP_READ, CAP_FSTAT, CAP_IOCTL);
+	if (cap_rights_limit(SERVICE_BOOTSTRAP_FD, &rights) == -1 ||
+	    cap_ioctls_limit(SERVICE_BOOTSTRAP_FD,
+	    (const unsigned long[]){ ENVFD_GETINFO }, 1) == -1)
+		return (-1);
 	return (0);
 }
 
@@ -393,6 +406,9 @@ enum bootstrap_case {
 	BOOTSTRAP_UNUSED,
 	BOOTSTRAP_CAPPROTECT,
 	BOOTSTRAP_TOKEN_LAYOUT,
+	BOOTSTRAP_CAPABILITY_NAME,
+	BOOTSTRAP_CAPABILITY_TYPE,
+	BOOTSTRAP_CAPABILITY_DUPLICATE,
 	BOOTSTRAP_WRITABLE,
 	BOOTSTRAP_BAD_CHANNEL,
 	BOOTSTRAP_ENV_VALUE,
@@ -441,6 +457,34 @@ run_bootstrap_case(enum bootstrap_case test_case, int expected_errno)
 			if (test_case == BOOTSTRAP_TOKEN_LAYOUT) {
 				bootstrap.ntokens = 1;
 				bootstrap.token_fds[0] = 7;
+			}
+			if (test_case == BOOTSTRAP_CAPABILITY_NAME) {
+				bootstrap.ncapabilities = 1;
+				bootstrap.capabilities[0].fd = 6;
+				strlcpy(bootstrap.capabilities[0].name, "Storage:data",
+				    sizeof(bootstrap.capabilities[0].name));
+				strlcpy(bootstrap.capabilities[0].type, "zfshandle",
+				    sizeof(bootstrap.capabilities[0].type));
+			}
+			if (test_case == BOOTSTRAP_CAPABILITY_TYPE) {
+				bootstrap.ncapabilities = 1;
+				bootstrap.capabilities[0].fd = 6;
+				strlcpy(bootstrap.capabilities[0].name, "storage:data",
+				    sizeof(bootstrap.capabilities[0].name));
+				strlcpy(bootstrap.capabilities[0].type, "ZFS!",
+				    sizeof(bootstrap.capabilities[0].type));
+			}
+			if (test_case == BOOTSTRAP_CAPABILITY_DUPLICATE) {
+				bootstrap.ncapabilities = 2;
+				for (unsigned i = 0; i < 2; i++) {
+					bootstrap.capabilities[i].fd = 6 + (int)i;
+					strlcpy(bootstrap.capabilities[i].name,
+					    "storage:data",
+					    sizeof(bootstrap.capabilities[i].name));
+					strlcpy(bootstrap.capabilities[i].type,
+					    "zfshandle",
+					    sizeof(bootstrap.capabilities[i].type));
+				}
 			}
 			if (test_case == BOOTSTRAP_BAD_CHANNEL) {
 				fd = open("/dev/null", O_RDONLY);
@@ -512,7 +556,8 @@ ATF_TC_BODY(shared_context, tc)
 			_exit(1);
 		if (channel[0] != 3)
 			close(channel[0]);
-		close(channel[1]);
+		if (channel[1] != 3)
+			close(channel[1]);
 		close(SERVICE_BOOTSTRAP_FD);
 		valid_empty_bootstrap(&bootstrap);
 		if (setenv(SERVICE_BOOTSTRAP_ENV, "5", 1) == -1 ||
@@ -561,7 +606,110 @@ ATF_TC_BODY(shared_context, tc)
 	close(channel[0]);
 	close(channel[1]);
 	ATF_REQUIRE(waitpid(child, &status, 0) == child);
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "shared-context child status=%#x exit=%d", status,
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
+}
+
+static int
+run_named_directory_bootstrap(bool excessive_rights)
+{
+	static const char role[] =
+	    "storage:state-with-a-long-logical-name-1234567890";
+	struct service_bootstrap bootstrap;
+	struct service_context *context;
+	cap_rights_t rights;
+	struct stat sb;
+	pid_t child;
+	int channel[2], dirfd, fd, status;
+
+	capability_channel_pair(&channel[0], &channel[1]);
+	dirfd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	ATF_REQUIRE(dirfd >= 0);
+	/* Keep both sources outside the protocol's fixed descriptor slots. */
+	fd = fcntl(channel[0], F_DUPFD_CLOEXEC, 10);
+	ATF_REQUIRE(fd >= 0);
+	close(channel[0]);
+	channel[0] = fd;
+	fd = fcntl(dirfd, F_DUPFD_CLOEXEC, 10);
+	ATF_REQUIRE(fd >= 0);
+	close(dirfd);
+	dirfd = fd;
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child == 0) {
+		if (dup2(channel[0], 3) != 3 || dup2(dirfd, 6) != 6)
+			_exit(1);
+		if (channel[0] != 3 && channel[0] != 6)
+			close(channel[0]);
+		if (channel[1] != 3 && channel[1] != 6)
+			close(channel[1]);
+		if (dirfd != 3 && dirfd != 6)
+			close(dirfd);
+		close(SERVICE_BOOTSTRAP_FD);
+		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
+		    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
+		    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT,
+		    CAP_UNLINKAT, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+		if (!excessive_rights &&
+		    (cap_rights_limit(6, &rights) == -1 ||
+		    cap_fcntls_limit(6, 0) == -1))
+			_exit(2);
+		valid_empty_bootstrap(&bootstrap);
+		bootstrap.ncapabilities = 1;
+		bootstrap.capabilities[0].fd = 6;
+		strlcpy(bootstrap.capabilities[0].name, role,
+		    sizeof(bootstrap.capabilities[0].name));
+		strlcpy(bootstrap.capabilities[0].type, "directory",
+		    sizeof(bootstrap.capabilities[0].type));
+		if (setenv(SERVICE_BOOTSTRAP_ENV, "5", 1) == -1 ||
+		    install_bootstrap(&bootstrap, sizeof(bootstrap)) == -1)
+			_exit(3);
+		if (excessive_rights) {
+			errno = 0;
+			_exit(service_acquire(&context) == -1 && errno == EINVAL ?
+			    0 : 4);
+		}
+		if (service_acquire(&context) == -1 ||
+		    service_capability_open(context, role, "directory", &fd) == -1 ||
+		    fstat(fd, &sb) == -1 || !S_ISDIR(sb.st_mode))
+			_exit(5);
+		close(fd);
+		fd = -1;
+		errno = 0;
+		if (service_capability_open(context, role, "zfshandle", &fd) != -1 ||
+		    errno != EFTYPE || fd != -1)
+			_exit(6);
+		service_release(context);
+		_exit(0);
+	}
+	close(channel[0]);
+	close(channel[1]);
+	close(dirfd);
+	ATF_REQUIRE(waitpid(child, &status, 0) == child);
+	return (WIFEXITED(status) ? WEXITSTATUS(status) : 255);
+}
+
+ATF_TC(named_directory_bootstrap);
+ATF_TC_HEAD(named_directory_bootstrap, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Long named storage directories are type checked and excess rights are rejected");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+}
+ATF_TC_BODY(named_directory_bootstrap, tc)
+{
+	int result;
+
+	(void)tc;
+	result = run_named_directory_bootstrap(false);
+	ATF_CHECK_MSG(result == 0,
+	    "valid directory bootstrap child exited %d", result);
+	result = run_named_directory_bootstrap(true);
+	ATF_CHECK_MSG(result == 0,
+	    "excess-rights rejection child exited %d", result);
 }
 
 ATF_TC(bootstrap_validation);
@@ -584,6 +732,10 @@ ATF_TC_BODY(bootstrap_validation, tc)
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_UNUSED, EPROTO));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_CAPPROTECT, EPROTO));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_TOKEN_LAYOUT, EPROTO));
+	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_CAPABILITY_NAME, EPROTO));
+	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_CAPABILITY_TYPE, EPROTO));
+	ATF_CHECK_EQ(0,
+	    run_bootstrap_case(BOOTSTRAP_CAPABILITY_DUPLICATE, EPROTO));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_WRITABLE, EINVAL));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_BAD_CHANNEL, EINVAL));
 	ATF_CHECK_EQ(0, run_bootstrap_case(BOOTSTRAP_ENV_VALUE, EPROTO));
@@ -881,7 +1033,7 @@ ATF_TC_BODY(service_session_lifecycle, tc)
 	pthread_t thread;
 	char reply[8];
 	pid_t child;
-	int fd, peer, started[2], status;
+	int fd, peer, status;
 
 	(void)tc;
 	errno = 0;
@@ -903,25 +1055,25 @@ ATF_TC_BODY(service_session_lifecycle, tc)
 	ATF_REQUIRE_EQ(0, service_session_fail(client, EPROTO));
 	errno = 0;
 	ATF_CHECK_ERRNO(EPROTO,
-	    test_session_call(client, "x", 1, reply, sizeof(reply), 0,
+	    test_session_call(client, "x", 1, reply, sizeof(reply), 100,
 	    NULL) == -1);
 	/* A later invalidation cannot disguise the first protocol failure. */
 	ATF_REQUIRE_EQ(0, service_session_fail(client, EIO));
 	errno = 0;
 	ATF_CHECK_ERRNO(EPROTO,
-	    test_session_call(client, "x", 1, reply, sizeof(reply), 0,
+	    test_session_call(client, "x", 1, reply, sizeof(reply), 100,
 	    NULL) == -1);
 	service_session_close(client);
 	close(peer);
 	capability_channel_pair(&fd, &peer);
 	ATF_REQUIRE_EQ(0, service_session_create(fd, &client));
-	ATF_REQUIRE(pipe(started) == 0);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
 	memset(&context, 0, sizeof(context));
 	context.client = client;
-	context.started_fd = started[1];
-	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, event_close_thread,
+	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, call_close_thread,
 	    &context));
-	ATF_REQUIRE(read(started[0], reply, 1) == 1);
+	receive_pending_call(peer);
 	/*
 	 * Fork while another thread is dispatching the same client.  The
 	 * atfork registry must quiesce both mutex domains and abandon child
@@ -931,7 +1083,7 @@ ATF_TC_BODY(service_session_lifecycle, tc)
 	ATF_REQUIRE(child >= 0);
 	if (child == 0) {
 		errno = 0;
-		if (test_session_call(client, "x", 1, reply, sizeof(reply), 0,
+		if (test_session_call(client, "x", 1, reply, sizeof(reply), 100,
 		    NULL) != -1 ||
 		    errno != ECHILD)
 			_exit(1);
@@ -939,14 +1091,12 @@ ATF_TC_BODY(service_session_lifecycle, tc)
 		_exit(0);
 	}
 	ATF_REQUIRE(waitpid(child, &status, 0) == child);
-	ATF_CHECK(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "fork-safety child status=%#x exit=%d", status,
+	    WIFEXITED(status) ? WEXITSTATUS(status) : -1);
 	service_session_close(client);
 	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
 	ATF_CHECK_EQ(ECANCELED, context.error);
-	errno = 0;
-	ATF_CHECK_ERRNO(EBADF, fcntl(fd, F_GETFD) == -1);
-	close(started[0]);
-	close(started[1]);
 	close(peer);
 }
 
@@ -1096,25 +1246,20 @@ ATF_TC_BODY(service_session_close_cancels_event, tc)
 	struct event_close_context context;
 	struct service_session *client;
 	pthread_t thread;
-	char byte;
-	int channel[2], started[2];
+	int channel[2];
 
 	(void)tc;
 	capability_channel_pair(&channel[0], &channel[1]);
-	ATF_REQUIRE(pipe(started) == 0);
 	ATF_REQUIRE_EQ(0, service_session_create(channel[0], &client));
 	memset(&context, 0, sizeof(context));
 	context.client = client;
-	context.started_fd = started[1];
-	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, event_close_thread,
+	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, call_close_thread,
 	    &context));
-	ATF_REQUIRE(read(started[0], &byte, sizeof(byte)) == sizeof(byte));
+	receive_pending_call(channel[1]);
 	service_session_close(client);
 	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
 	ATF_CHECK_EQ(ECANCELED, context.error);
 	close(channel[1]);
-	close(started[0]);
-	close(started[1]);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -1122,6 +1267,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, bootstrap_validation);
 	ATF_TP_ADD_TC(tp, shared_context);
+	ATF_TP_ADD_TC(tp, named_directory_bootstrap);
 	ATF_TP_ADD_TC(tp, api_rejects_invalid_descriptors_and_arguments);
 	ATF_TP_ADD_TC(tp, component_bootstrap_roundtrip);
 	ATF_TP_ADD_TC(tp,

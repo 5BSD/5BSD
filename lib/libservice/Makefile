@@ -2,7 +2,7 @@
 
 PACKAGE=lib${LIB}
 LIB=	service
-SHLIB_MAJOR=	1
+SHLIB_MAJOR=	2
 MAN=	libservice.3
 MLINKS+=	libservice.3 service_acquire.3
 MLINKS+=	libservice.3 service_release.3

@@ -17,12 +17,20 @@ Every private component worker exposes three isolated namespace flavors:
 | `persistent` | Quota-bounded disk tree scoped to the serviced identity and reconstructed across restarts |
 | `bundle` | Read-only tree rooted at the consumer's verified `.cap` bundle |
 
-serviced creates persistent backing storage under
-`/var/db/serviced/storage/<service-label>/filesystem` with mode 0700 and
-delegates only an attenuated directory fd. It also passes the verified bundle
-root. The consumer never chooses either host path, never receives a backing
-descriptor, and cannot use this component to escape its service identity. A
-jail, when used, remains an independent process-isolation boundary.
+The unit declares a named storage resource and binds it to the descriptor:
+
+```ucl
+storage = [{ name = "data"; scope = "unit"; lifetime = "persistent";
+    rights = "mount"; }];
+descriptors { filesystem { storage = "data"; } }
+```
+
+`serviced` asks `tzfsd` for the stable, bundle-scoped ZFS dataset, mounts it
+anonymously, and delegates an attenuated directory fd plus the verified bundle
+root to the provider. There is no label-derived `/var/db` backing path. The
+consumer chooses neither a host path nor a dataset name and receives only the
+private filesystem session. A jail remains an independent process-isolation
+boundary.
 
 The provider fixes initial limits at 64 MiB, 4096 objects, and 16 MiB per
 file. Persistent restart accounting includes the namespace root and every
@@ -77,6 +85,26 @@ OpenBSM covers mutation, denied resolution, and rejected sessions. The
 `localfilesystem_provider` and client `filesystemcmp` SDT providers expose
 component and protocol activity without giving the consumer backing-store
 authority.
+
+## Storage delivery and mount lifetime
+
+The persistent namespace is backed by a `tzfsd`-provisioned dataset. serviced
+mounts the delivered `zfshandle` into an **anonymous mount** (reachable only
+through the returned directory descriptor, never by path) and hands the provider
+worker that directory descriptor as a session resource. The raw handle is never
+exposed to the consumer, so a direct capability open of the backing store is
+denied.
+
+The anonymous mount is anchored by the handle: closing the last handle reference
+force-unmounts it and revokes every descriptor beneath it. Because the worker
+receives only the directory descriptor, **serviced retains a handle reference
+for the lifetime of the service that uses the mount** and releases it during
+service teardown. Dropping the handle at launch time instead — before the worker
+is finished — force-unmounts the store out from under the running session and
+turns the next descriptor-relative lookup into a spurious `ENOTDIR` against the
+revoked mount root. The service manager records the handoff with a
+`component=<name> phase=delegate` audit line when the resources are delegated to
+the provider.
 
 ## Testing and qualification
 

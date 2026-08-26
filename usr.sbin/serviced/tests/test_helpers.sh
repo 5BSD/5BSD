@@ -42,6 +42,8 @@ EOF
 	# Export bundle directory overrides so serviced scans test-local paths.
 	export SERVICED_BUNDLE_DIR_SYSTEM="${APPS_DIR}"
 	export SERVICED_BUNDLE_DIR_USER="${USER_APPS_DIR}"
+	# Fixture serviced must never replay the host's /etc/rc.
+	export SERVICED_SKIP_RC=1
 }
 
 start_stack()
@@ -208,6 +210,36 @@ APPS_DIR="${WORK}/Capabilities/System"
 USER_APPS_DIR="${WORK}/Capabilities"
 CTL_SOCK="${WORK}/serviced.sock"
 
+normalize_test_unit_extra()
+{
+	printf '%s\n' "$1"
+}
+
+write_test_bundle()
+{
+	local dir="$1" bid="$2" prog="$3" extra="$4" activation="$5"
+	local normalized
+
+	mkdir -p "$dir/Units/$prog.unit/bin"
+	cat > "$dir/Bundle.ucl" <<-UCL
+	schema = "org.5bsd.capability-bundle";
+	schema_version = 1;
+	bundle_id = "${bid}";
+	version = "1.0.0";
+	sequence = 1;
+	author = "test";
+	publisher = "org.test";
+	units = ["${prog}"];
+	UCL
+	normalized=$(normalize_test_unit_extra "$extra")
+	case "$normalized" in
+	*"activation "*) ;;
+	*) normalized="${activation}
+${normalized}" ;;
+	esac
+	printf '%s\n' "$normalized" > "$dir/Units/$prog.unit/Unit.ucl"
+}
+
 # Build ./ready_svc, a libservice service program that enters capability mode
 # through service_ready(), allowing serviced to verify NOTE_CAPMODE and promote
 # it to SVC_STATE_RUNNING.  A plain /bin/sh script that sleeps never crosses
@@ -238,26 +270,18 @@ create_system_bundle()
 	local name="$1" bid="$2" prog="$3" provides="$4" extra="${5:-}"
 	local dir="${APPS_DIR}/${name}.cap"
 
-	mkdir -p "${dir}/etc"
-	mkdir -p "${dir}/bin"
+	write_test_bundle "$dir" "$bid" "$prog" "$extra" \
+	    "activation { boot = true; ipc = [\"${provides}\"]; }"
 
 	# Install the libservice ready-reporting helper as the program so the
 	# service reaches RUNNING (a plain shell script never reports ready and
 	# stays STARTING — see build_ready_svc).  It writes "<prog>.ready" in
 	# its CWD (= WORK), which the tests wait_for_file on.
 	build_ready_svc
-	cp ready_svc "${dir}/bin/${prog}"
-	chmod 755 "${dir}/bin/${prog}"
-
-	cat > "${dir}/etc/${prog}.ucl" <<-UCL
-	bundle_id = "${bid}";
-	version = "1.0";
-	author = "test";
-	program = "${prog}";
-	provides = ["${provides}"];
-	arguments = ["compat-ready", "${provides}"];
-	${extra}
-	UCL
+	cp ready_svc "${dir}/Units/${prog}.unit/bin/${prog}"
+	chmod 755 "${dir}/Units/${prog}.unit/bin/${prog}"
+	printf '%s\n' "arguments = [\"compat-ready\", \"${provides}\"];" >> \
+	    "$dir/Units/$prog.unit/Unit.ucl"
 
 	echo "${dir}"
 }
@@ -269,24 +293,16 @@ create_user_bundle()
 	local name="$1" bid="$2" prog="$3" provides="$4" extra="${5:-}"
 	local dir="${USER_APPS_DIR}/${name}.cap"
 
-	mkdir -p "${dir}/etc"
-	mkdir -p "${dir}/bin"
+	write_test_bundle "$dir" "$bid" "$prog" "$extra" \
+	    "activation { ipc = [\"${provides}\"]; }"
 
 	# Install the libservice ready-reporting helper (see create_system_bundle
 	# and build_ready_svc) so the service reaches RUNNING.
 	build_ready_svc
-	cp ready_svc "${dir}/bin/${prog}"
-	chmod 755 "${dir}/bin/${prog}"
-
-	cat > "${dir}/etc/${prog}.ucl" <<-UCL
-	bundle_id = "${bid}";
-	version = "1.0";
-	author = "test";
-	program = "${prog}";
-	provides = ["${provides}"];
-	arguments = ["compat-ready", "${provides}"];
-	${extra}
-	UCL
+	cp ready_svc "${dir}/Units/${prog}.unit/bin/${prog}"
+	chmod 755 "${dir}/Units/${prog}.unit/bin/${prog}"
+	printf '%s\n' "arguments = [\"compat-ready\", \"${provides}\"];" >> \
+	    "$dir/Units/$prog.unit/Unit.ucl"
 
 	echo "${dir}"
 }
@@ -297,21 +313,18 @@ create_user_bundle_custom()
 	local name="$1" prog="$2" ucl_content="$3"
 	local dir="${USER_APPS_DIR}/${name}.cap"
 
-	mkdir -p "${dir}/etc"
-	mkdir -p "${dir}/bin"
+	# The custom helper is demand-activated and derives identity from name.
+	write_test_bundle "$dir" "org.test.${name}" "$prog" "$ucl_content" \
+	    'activation { boot = true; }'
 
-	printf '#!/bin/sh\nexec sleep 3600\n' > "${dir}/bin/${prog}"
-	chmod 755 "${dir}/bin/${prog}"
-
-	printf '%s\n' "${ucl_content}" > \
-	    "${dir}/etc/${prog}.ucl"
+	printf '#!/bin/sh\nexec sleep 3600\n' > \
+	    "$dir/Units/$prog.unit/bin/$prog"
+	chmod 755 "$dir/Units/$prog.unit/bin/$prog"
 
 	echo "${dir}"
 }
 
-# Create a single-service .cap bundle, migrating the legacy flat-manifest
-# model (the /etc/serviced.d UCL manifest dir removed in 7311c2d).  serviced
-# now only loads .cap bundles from the SERVICED_BUNDLE_DIR_* trees.
+# Create a single-unit .cap bundle in a test registry.
 #
 # Runtime identity is explicit and independent from provides[].
 #
@@ -326,24 +339,31 @@ create_user_bundle_custom()
 make_svc()
 {
 	local scope="$1" label="$2" extra="$3"
-	local base dir
+	local base bid dir unit
 	shift 3
 	if [ "$scope" = system ]; then
 		base="${APPS_DIR}"
 	else
 		base="${USER_APPS_DIR}"
 	fi
+	case "$label" in
+	*.*)
+		# A dotted label is a complete bundle id; the unit takes the
+		# last component.  Splitting the id off the label collides
+		# distinct bundles onto one bundle_id.
+		bid=$label
+		unit=${label##*.}
+		;;
+	*)
+		bid="org.test.${label}"
+		unit=$label
+		;;
+	esac
 	dir="${base}/${label}.cap"
-	mkdir -p "${dir}/etc" "${dir}/bin"
-	printf '%s\n' "$@" > "${dir}/bin/${label}"
-	chmod 755 "${dir}/bin/${label}"
-	cat > "${dir}/etc/${label}.ucl" <<-UCL
-	bundle_id = "org.test.${label}";
-	version = "1.0";
-	author = "test";
-	program = "${label}";
-	${extra}
-	UCL
+	write_test_bundle "$dir" "$bid" "$unit" "$extra" \
+	    'activation { boot = true; }'
+	printf '%s\n' "$@" > "$dir/Units/$unit.unit/bin/$unit"
+	chmod 755 "$dir/Units/$unit.unit/bin/$unit"
 	echo "${dir}"
 }
 
@@ -354,23 +374,30 @@ make_svc()
 make_svc_bin()
 {
 	local scope="$1" label="$2" extra="$3" bin="$4"
-	local base dir
+	local base bid dir unit
 	if [ "$scope" = system ]; then
 		base="${APPS_DIR}"
 	else
 		base="${USER_APPS_DIR}"
 	fi
+	case "$label" in
+	*.*)
+		# A dotted label is a complete bundle id; the unit takes the
+		# last component.  Splitting the id off the label collides
+		# distinct bundles onto one bundle_id.
+		bid=$label
+		unit=${label##*.}
+		;;
+	*)
+		bid="org.test.${label}"
+		unit=$label
+		;;
+	esac
 	dir="${base}/${label}.cap"
-	mkdir -p "${dir}/etc" "${dir}/bin"
-	cp "$bin" "${dir}/bin/${label}"
-	chmod 755 "${dir}/bin/${label}"
-	cat > "${dir}/etc/${label}.ucl" <<-UCL
-	bundle_id = "org.test.${label}";
-	version = "1.0";
-	author = "test";
-	program = "${label}";
-	${extra}
-	UCL
+	write_test_bundle "$dir" "$bid" "$unit" "$extra" \
+	    'activation { boot = true; }'
+	cp "$bin" "$dir/Units/$unit.unit/bin/$unit"
+	chmod 755 "$dir/Units/$unit.unit/bin/$unit"
 	echo "${dir}"
 }
 
@@ -409,17 +436,19 @@ run_lookup_client()
 	build_lookup_client
 
 	# Unique per-invocation label so concurrent lookups don't collide.
-	label=$(basename "$(mktemp -u lookupcli.XXXXXX)")
-	result="${label}.result"
+	# The bundle id needs a dot and the runtime label is bundle/unit; the
+	# fixture flattens '/' to '.' when deriving its marker file names.
+	label="org.test.$(basename "$(mktemp -u lookupcli-XXXXXX)" | tr 'A-Z' 'a-z')"
+	unit=${label##*.}
+	result="${label}.${unit}.result"
 	rm -f "$result"
-	printf '%s\n' "$name" > "${label}.target"
+	printf '%s\n' "$name" > "${label}.${unit}.target"
 
 	# Install the client as a boot-start service (runs once) and ask
 	# serviced to pick up the new bundle.
 	bundle=$(make_svc_bin user "$label" \
 	    'restart = "never"; arguments = ["compat-lookup"];' \
 	    "$(pwd)/lookup_client")
-	sed -i '' '/^provides = /d' "${bundle}/etc/${label}.ucl"
 	reload_stack
 
 	# Wait for the client to record its lookup result.

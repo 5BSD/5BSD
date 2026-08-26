@@ -871,6 +871,12 @@ FUZZ+=		fuzz/fuzz_mesh_sim.c
 # installed bluetooth-tests package.
 ATF_TESTS_SH+=	fuzz_manifest_test
 
+# The daemon is also a native capability bundle; keep its package layout and
+# storage/activation contract in the ordinary Bluetooth regression suite.
+ATF_TESTS_SH+=	bundle_test
+ATF_TESTS_SH_SED_bundle_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
+ATF_TESTS_SH_SED_bundle_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
+
 ATF_TESTS_C+=	l2cap_data_test
 SRCS.l2cap_data_test=	l2cap_data_test.c
 CFLAGS.l2cap_data_test+=	-I${SRCTOP}/sys/netgraph/bluetooth/l2cap
