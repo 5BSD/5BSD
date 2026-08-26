@@ -305,10 +305,32 @@ would_deadlock(const char *name, struct svc_runtime *requester)
 		return (false);
 
 	for (p = pending_list; p != NULL; p = p->next) {
+		struct svc_runtime *waiter;
+		unsigned j;
+
 		/* Is this pending lookup waiting on a name requester provides? */
 		for (i = 0; i < requester->manifest.nprovides; i++) {
-			if (strcmp(p->name, requester->manifest.provides[i]) == 0 &&
-			    pending_provider_matches(p, requester)) {
+			if (strcmp(p->name, requester->manifest.provides[i]) != 0 ||
+			    !pending_provider_matches(p, requester))
+				continue;
+			/*
+			 * The waiter is blocked on the requester.  That alone is
+			 * not a deadlock: the requester becomes ready once its own
+			 * dependency 'name' resolves, and the waiter's lookup then
+			 * completes.  It is a cycle only if 'name' is itself
+			 * provided by that blocked waiter — requester needs 'name'
+			 * (= the waiter) which cannot become ready because it is
+			 * waiting on the requester.  A starting provider that pulls
+			 * in an unrelated on-demand service (e.g. the audit broker)
+			 * is not circular.
+			 */
+			waiter = svc_by_label(p->requester_label);
+			if (waiter == NULL)
+				continue;
+			for (j = 0; j < waiter->manifest.nprovides; j++) {
+				if (strcmp(waiter->manifest.provides[j],
+				    name) != 0)
+					continue;
 				syslog(LOG_WARNING,
 				    "on_demand: circular dependency detected: "
 				    "'%s' needs '%s' which needs '%s'",

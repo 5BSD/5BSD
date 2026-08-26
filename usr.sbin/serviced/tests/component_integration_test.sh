@@ -57,6 +57,8 @@ install_global_service()
 	local label="$1" binary="$2" endpoint="$3" identity="${4:-$3}"
 	local extra="${5:-}" bundle
 
+	local daemon conf unit
+
 	test -x "${binary}" || atf_skip "${label} provider is unavailable"
 	bundle=$(make_svc_bin system "${label}" \
 	    "activation { ipc = [\"${endpoint}\"]; }
@@ -65,6 +67,16 @@ ${extra}" "${binary}")
 	sed -i '' \
 	    "s/^bundle_id = .*/bundle_id = \"${identity}\";/" \
 	    "${bundle}/Bundle.ucl"
+	# Providers load a managed policy from their unit Config directory and
+	# fail closed without it.  make_svc_bin builds a bare bundle, so stage the
+	# provider's default config (<daemon>.conf) alongside the copied binary.
+	daemon=$(basename "${binary}")
+	unit="${label##*.}"
+	conf="/usr/src/usr.sbin/${daemon}/capbundle/${daemon}.conf"
+	if [ -f "${conf}" ]; then
+		mkdir -p "${bundle}/Units/${unit}.unit/Config"
+		cp "${conf}" "${bundle}/Units/${unit}.unit/Config/"
+	fi
 }
 
 install_audit_service()
@@ -183,7 +195,7 @@ log_global_on_demand_body()
 	install_global_service log-service \
 	    "@OBJTOP@/usr.sbin/logd/logd" "org.5bsd.log" \
 	    "org.5bsd.LogCmp" \
-	    'storage = [{ name = "state"; scope = "unit"; flavor = "native";
+	    'storage = [{ name = "state"; scope = "unit"; flavor = "empty";
             lifetime = "persistent"; rights = "mount"; }];'
 	make_boot_consumer log-consumer \
 	    "[\"log-consumer\", \"${WORK}/log-result.out\"]" ""
