@@ -675,6 +675,31 @@ to a protected process (for lifecycle control) continues to use the mint/authori
 token path, re-keyed to the per-process identity; the launcher that applied a
 shield may act on the target it protected.
 
+### 19.4 Declaring protection in the manifest
+
+A service declares the protection it wants applied at launch with a top-level
+`protect` array in its unit manifest.  Each entry is a flag name; the group
+aliases `protect` (all outward guards), `restrict` (all self restrictions), and
+`all` (both) expand to their sets.  Unknown names are ignored with a warning so a
+newer manifest degrades safely on an older parser.
+
+```
+protect = ["ptrace", "signal", "visible", "wait", "noprivs", "nofork"];
+```
+
+serviced installs the resulting `CP_SF_*` mask on the child **by its process
+descriptor immediately after `pdfork(2)`**, before the child's program image
+runs and while the descriptor is still transferable — so the protection is in
+force from the moment the process exists, independent of anything the image
+does.  A manifest with no `protect` stanza leaves the process to shield itself
+(or not).  `servicectl verify` reports the parsed policy as `protect: 0x<mask>`.
+
+The policy is per-service because it must be: a component **factory** that
+`pdfork`s workers cannot itself carry `nofork`, while each worker it launches
+can.  Because the launcher (serviced for services, the factory for its workers)
+holds the target's procdesc, it applies exactly the policy the target should
+have without the target needing its own capprotect descriptor.
+
 ## 20. Runtime container directories
 
 Every launched process is given a private **runtime container directory**,

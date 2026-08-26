@@ -87,6 +87,30 @@ all units sharing it and is destroyed only after the last holder; crash and
 reboot reconciliation use service-manager and kernel-boot generations without
 mistaking a `tzfsd` restart for a reboot.
 
+## Process protection
+
+A unit manifest may declare a `protect` policy that the service manager applies
+to the launched process **by its process descriptor, immediately after
+`pdfork(2)`** — before the program image runs and regardless of what that image
+does:
+
+```
+protect = ["ptrace", "signal", "visible", "wait", "noprivs", "nofork"];
+```
+
+Each entry names a protection flag; the group aliases `protect` (outward guards
+against ptrace, signalling, visibility, and wait), `restrict` (self restrictions
+such as no-fork, no-exec, no-new-sockets, no-privileges), and `all` expand to
+their sets. Unknown names are ignored with a warning, so a manifest written for
+a newer flag set still loads on an older system. Because protection is keyed to
+the process and dropped when it exits, a fork is born unprotected and a reused
+PID is never falsely shielded. `servicectl verify` prints the parsed mask.
+
+The policy is per-service by necessity: a component factory that forks workers
+cannot itself carry `nofork`, while each worker it launches can — and since the
+launcher holds the worker's descriptor, it applies the worker's policy without
+the worker needing any protection authority of its own.
+
 ## No compatibility format
 
 This is a pre-v1 clean break. The former `etc/*.ucl` format, repeated schema
