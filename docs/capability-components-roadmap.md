@@ -415,6 +415,24 @@ fully implemented protocol version rather than a placeholder ABI.
   construction, policy denial, quota failure, and session teardown.
 - Unknown manifest and protocol fields fail closed.
 
+## Platform ABI: 64-bit only
+
+The capability plane is a 64-bit platform. TrustedZFS capability descriptors
+enforce this at compile time — `sys/sys/zfshandle.h` `#error`s on any non-64-bit
+kernel or user ABI — so `libtrustedzfs` (and every daemon that links it: tzfsd,
+serviced, the storage-bearing components) cannot be built 32-bit at all. A world
+build only completes with `MK_LIB32=no`.
+
+**To do — remove 32-bit support:**
+
+- Set `MK_LIB32=no` (and drop `lib32` from the default `MACHINE`/build config)
+  so `buildworld` never attempts the 32-bit shim libraries that fail on the
+  TrustedZFS ABI guard, rather than requiring the flag on every invocation.
+- Drop `i386` (and any other 32-bit `MACHINE_ARCH`) from supported targets and
+  release artifacts; the capability plane has no 32-bit story.
+- Audit for any lingering `COMPAT_FREEBSD32`/`compat32` assumptions and remove
+  them once no 32-bit userland is shipped.
+
 ## Required verification
 
 The release gate includes:
