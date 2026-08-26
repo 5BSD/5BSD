@@ -2,7 +2,8 @@
 .-include <site.sys.machine.mk>
 
 PSEUDO_MACHINE_LIST?= common host host32
-TARGET_MACHINE_LIST?= amd64 arm arm64 i386 powerpc riscv
+# 5BSD is 64-bit only: no 32-bit build targets (dropped i386 and arm/armv7).
+TARGET_MACHINE_LIST?= amd64 arm64 powerpc riscv
 
 MACHINE_ARCH_host?= ${_HOST_ARCH}
 MACHINE_ARCH_host32?= ${_HOST_ARCH32}
