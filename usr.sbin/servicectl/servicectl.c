@@ -27,7 +27,43 @@
 #include <unistd.h>
 
 /* Operator disable list; must match SERVICED_DISABLED_PATH in serviced.h. */
-#define	SERVICED_DISABLED_PATH	"/Capabilities/System/disabled"
+#define	SERVICED_DISABLED_PATH	"/Capabilities/db/serviced/disabled"
+
+/* Env override wins (for tests), else the capability-plane default. */
+static const char *
+disabled_path(void)
+{
+	const char *env = getenv("SERVICED_DISABLED_PATH");
+
+	return ((env != NULL && env[0] != '\0') ? env : SERVICED_DISABLED_PATH);
+}
+
+/*
+ * Ensure the parent directory of the disable list exists (e.g.
+ * /Capabilities/db/serviced) so the atomic temp+rename can create the file
+ * on a fresh system.  Best-effort: a real failure surfaces at mkstemp.
+ */
+static void
+ensure_parent_dir(const char *path)
+{
+	char dir[PATH_MAX], *slash;
+
+	if (strlcpy(dir, path, sizeof(dir)) >= sizeof(dir))
+		return;
+	slash = strrchr(dir, '/');
+	if (slash == NULL || slash == dir)
+		return;
+	*slash = '\0';
+	/* Create each missing component from the first slash onward. */
+	for (char *p = dir + 1; *p != '\0'; p++) {
+		if (*p == '/') {
+			*p = '\0';
+			(void)mkdir(dir, 0755);
+			*p = '/';
+		}
+	}
+	(void)mkdir(dir, 0755);
+}
 
 #include "serviced_ctl.h"
 #include "servicectl.h"
@@ -292,14 +328,15 @@ static int
 disabled_edit(const char *id, bool add, bool *changed)
 {
 	FILE *in, *out;
+	const char *path = disabled_path();
 	char tmp[PATH_MAX], *line = NULL;
 	size_t cap = 0;
 	int fd;
 	bool present = false;
 
 	*changed = false;
-	if (snprintf(tmp, sizeof(tmp), "%s.XXXXXX", SERVICED_DISABLED_PATH) >=
-	    (int)sizeof(tmp))
+	ensure_parent_dir(path);
+	if (snprintf(tmp, sizeof(tmp), "%s.XXXXXX", path) >= (int)sizeof(tmp))
 		return (errno = ENAMETOOLONG, -1);
 	fd = mkstemp(tmp);
 	if (fd == -1)
@@ -310,7 +347,7 @@ disabled_edit(const char *id, bool add, bool *changed)
 		unlink(tmp);
 		return (-1);
 	}
-	in = fopen(SERVICED_DISABLED_PATH, "re");
+	in = fopen(path, "re");
 	if (in != NULL) {
 		while (getline(&line, &cap, in) != -1) {
 			char *s = line;
@@ -344,7 +381,7 @@ disabled_edit(const char *id, bool add, bool *changed)
 		unlink(tmp);
 		return (-1);
 	}
-	if (rename(tmp, SERVICED_DISABLED_PATH) == -1) {
+	if (rename(tmp, path) == -1) {
 		unlink(tmp);
 		return (-1);
 	}
@@ -362,7 +399,7 @@ cmd_enable_disable(const char *id, bool disable)
 	if (!valid_bundle_id(id))
 		errx(EX_USAGE, "%s: invalid bundle identity '%s'", verb, id);
 	if (disabled_edit(id, disable, &changed) == -1) {
-		warn("%s: updating %s", verb, SERVICED_DISABLED_PATH);
+		warn("%s: updating %s", verb, disabled_path());
 		return (1);
 	}
 	if (!changed)

@@ -45,6 +45,7 @@
 
 # System Services
 
+- [Capability Filesystem Hierarchy](system/capability-hier.md)
 - [Oracle Init](system/oracle-init.md)
 - [serviced](system/serviced.md)
 - [BSDNotify](system/bsdnotify.md)

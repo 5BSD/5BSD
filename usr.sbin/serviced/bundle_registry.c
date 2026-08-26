@@ -193,6 +193,15 @@ disabled_set_clear(void)
 	ndisabled = 0;
 }
 
+/* Resolve the disable-list path: env override wins, else the plane default. */
+static const char *
+disabled_path(void)
+{
+	const char *env = getenv("SERVICED_DISABLED_PATH");
+
+	return ((env != NULL && env[0] != '\0') ? env : SERVICED_DISABLED_PATH);
+}
+
 static void
 disabled_set_load(void)
 {
@@ -204,12 +213,12 @@ disabled_set_load(void)
 
 	disabled_set_clear();
 	/*
-	 * The list lives beside the system bundle registry it governs so a
-	 * test that redirects SERVICED_BUNDLE_DIR_SYSTEM gets a matching list;
-	 * the default resolves to SERVICED_DISABLED_PATH.
+	 * Operator state lives under the capability plane's db/ subtree
+	 * (see docs: capability filesystem hierarchy), not beside the
+	 * read-only bundle registry.  SERVICED_DISABLED_PATH in the
+	 * environment redirects it for tests.
 	 */
-	if (snprintf(path, sizeof(path), "%s/disabled",
-	    serviced_bundle_dir_system) >= (int)sizeof(path))
+	if (strlcpy(path, disabled_path(), sizeof(path)) >= sizeof(path))
 		return;
 	f = fopen(path, "re");
 	if (f == NULL)
