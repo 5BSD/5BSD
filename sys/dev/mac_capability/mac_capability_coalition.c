@@ -38,6 +38,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/unistd.h>
 #include <sys/systm.h>
 #include <sys/kernel.h>
 #include <sys/module.h>
@@ -1851,10 +1852,22 @@ coalition_process_exit(void *arg __unused, struct proc *p)
 
 static void
 coalition_process_fork(void *arg __unused, struct proc *parent,
-    struct proc *child, int flags __unused)
+    struct proc *child, int flags)
 {
 	struct coalition_member *pcm, *ccm;
 	struct coalition *co;
+
+	/*
+	 * A process descriptor child (pdfork(2)) is not part of its creator's
+	 * process family: it is an independently launched process that whoever
+	 * holds its procdesc enlists into the appropriate coalition explicitly
+	 * (a factory hands a session worker to the consumer's coalition, for
+	 * example).  Auto-inheriting the creator's coalition would wrongly bind
+	 * it and make that later enlist fail (a process joins only one
+	 * coalition).  Ordinary fork children still inherit.
+	 */
+	if ((flags & RFPROCDESC) != 0)
+		return;
 
 	rw_rlock(&coalition_proc_hash_lock);
 	pcm = coalition_proc_hash_lookup(parent);

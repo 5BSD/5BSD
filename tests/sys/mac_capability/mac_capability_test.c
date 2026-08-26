@@ -4661,6 +4661,36 @@ capprotect_shield(uint32_t flags)
 	return (fd);
 }
 
+/*
+ * Launcher-applied protection: shield the process behind procdesc_fd (a
+ * pdfork(2) descriptor).  The returned capprotect fd is the protector's
+ * authority and is kept open by the caller.
+ */
+static int
+capprotect_protect(int procdesc_fd, uint32_t flags)
+{
+	struct mac_capability_call_args ca;
+	struct cp_request req;
+	int fd;
+
+	fd = mac_capability_connect("capprotect");
+	if (fd < 0)
+		return (-1);
+	memset(&req, 0, sizeof(req));
+	req.op = CP_OP_PROTECT;
+	req.flags = flags;
+	memset(&ca, 0, sizeof(ca));
+	ca.req = &req;
+	ca.req_len = sizeof(req);
+	ca.req_fds = &procdesc_fd;
+	ca.req_nfds = 1;
+	if (ioctl(fd, MAC_CAPABILITY_CALL, &ca) != 0) {
+		close(fd);
+		return (-1);
+	}
+	return (fd);
+}
+
 ATF_TC(cap_pro_shield_basic);
 ATF_TC_HEAD(cap_pro_shield_basic, tc)
 {
@@ -4678,15 +4708,59 @@ ATF_TC_BODY(cap_pro_shield_basic, tc)
 	close(fd);
 }
 
-ATF_TC(cap_pro_same_nonce_allowed);
-ATF_TC_HEAD(cap_pro_same_nonce_allowed, tc)
+ATF_TC(cap_pro_protector_can_act);
+ATF_TC_HEAD(cap_pro_protector_can_act, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Same program (same nonce) can ptrace/signal shielded child");
+	    "The launcher that protected a target (CP_OP_PROTECT) may act on it; "
+	    "a foreign process may not");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(cap_pro_same_nonce_allowed, tc)
+ATF_TC_BODY(cap_pro_protector_can_act, tc)
+{
+	int sv[2], pd, cfd;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char buf;
+		close(sv[0]);
+		/* The child does NOT shield itself; its launcher protects it. */
+		write(sv[1], "r", 1);
+		read(sv[1], &buf, 1);
+		close(sv[1]);
+		_exit(0);
+	}
+	close(sv[1]);
+	{ char buf; read(sv[0], &buf, 1); }
+
+	cfd = capprotect_protect(pd, CP_SF_SIGNAL);
+	ATF_REQUIRE(cfd >= 0);
+
+	/* Protector may signal the target (signal 0 checks permission only). */
+	ATF_CHECK(kill(pid, 0) == 0);
+	/* A foreign process may not. */
+	ATF_CHECK_EQ(run_shield_helper("signal", pid), 0);
+
+	write(sv[0], "g", 1);
+	close(cfd);
+	close(pd);		/* reaps the procdesc-owned child */
+	close(sv[0]);
+}
+
+ATF_TC(cap_pro_selfshield_blocks_parent);
+ATF_TC_HEAD(cap_pro_selfshield_blocks_parent, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "A self-shielded child blocks even its own parent (which is not the "
+	    "protector) from signalling it");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_selfshield_blocks_parent, tc)
 {
 	int sv[2], status;
 	pid_t pid;
@@ -4698,27 +4772,63 @@ ATF_TC_BODY(cap_pro_same_nonce_allowed, tc)
 		char buf;
 		int fd;
 		close(sv[0]);
-		fd = capprotect_shield(CP_SF_PROTECT);
+		fd = capprotect_shield(CP_SF_SIGNAL);
 		if (fd < 0) _exit(10);
 		write(sv[1], "s", 1);
 		read(sv[1], &buf, 1);
-		close(fd);
-		close(sv[1]);
-		_exit(0);
+		close(fd); close(sv[1]); _exit(0);
 	}
 	close(sv[1]);
 	{ char buf; read(sv[0], &buf, 1); }
 
-	/* Signal 0 checks permission without delivering. */
-	ATF_CHECK(kill(pid, 0) == 0);
-
-	ATF_CHECK(ptrace(PT_ATTACH, pid, NULL, 0) == 0);
-	waitpid(pid, &status, WUNTRACED);
-	ptrace(PT_DETACH, pid, NULL, 0);
+	/* Parent is not the protector; the shield blocks it too. */
+	errno = 0;
+	ATF_CHECK(kill(pid, 0) == -1);
+	ATF_CHECK_EQ(errno, EACCES);
 
 	write(sv[0], "g", 1);
 	waitpid(pid, &status, 0);
 	close(sv[0]);
+}
+
+ATF_TC(cap_pro_protect_via_procdesc);
+ATF_TC_HEAD(cap_pro_protect_via_procdesc, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "CP_OP_PROTECT shields a target that never shielded itself; a "
+	    "foreign process is then blocked");
+	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(cap_pro_protect_via_procdesc, tc)
+{
+	int sv[2], pd, cfd;
+	pid_t pid;
+
+	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv) == 0);
+	pid = pdfork(&pd, 0);
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		char buf;
+		close(sv[0]);
+		write(sv[1], "r", 1);
+		read(sv[1], &buf, 1);
+		close(sv[1]); _exit(0);
+	}
+	close(sv[1]);
+	{ char buf; read(sv[0], &buf, 1); }
+
+	/* Before protection, a foreign process can ptrace the child. */
+	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 1);
+
+	cfd = capprotect_protect(pd, CP_SF_PTRACE);
+	ATF_REQUIRE(cfd >= 0);
+
+	/* After launcher protection, the foreign ptrace is blocked. */
+	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
+
+	write(sv[0], "g", 1);
+	close(cfd); close(pd); close(sv[0]);
 }
 
 ATF_TC(cap_pro_foreign_ptrace_blocked);
@@ -5285,15 +5395,16 @@ ATF_TC_BODY(cap_pro_all_flags_blocks_all, tc)
 	close(sv[0]);
 }
 
-ATF_TC(cap_pro_close_unshields);
-ATF_TC_HEAD(cap_pro_close_unshields, tc)
+ATF_TC(cap_pro_close_does_not_unshield);
+ATF_TC_HEAD(cap_pro_close_does_not_unshield, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Closing shield fd removes protection");
+	    "Closing the shield fd does NOT remove protection; a per-process "
+	    "shield lives for the process's lifetime and is dropped on exit");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(cap_pro_close_unshields, tc)
+ATF_TC_BODY(cap_pro_close_does_not_unshield, tc)
 {
 	int sv[2], status;
 	pid_t pid;
@@ -5309,7 +5420,7 @@ ATF_TC_BODY(cap_pro_close_unshields, tc)
 		if (fd < 0) _exit(10);
 		write(sv[1], "s", 1);
 		read(sv[1], &buf, 1);
-		close(fd);
+		close(fd);		/* closing the fd must NOT unshield */
 		write(sv[1], "u", 1);
 		sleep(5);
 		close(sv[1]); _exit(0);
@@ -5319,7 +5430,8 @@ ATF_TC_BODY(cap_pro_close_unshields, tc)
 	  ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 	  write(sv[0], "g", 1);
 	  read(sv[0], &buf, 1); }
-	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 1);
+	/* Still blocked after the descriptor is closed (exit is the bound). */
+	ATF_CHECK_EQ(run_shield_helper("ptrace", pid), 0);
 	kill(pid, SIGKILL);
 	waitpid(pid, &status, 0);
 	close(sv[0]);
@@ -5512,15 +5624,16 @@ ATF_TC_BODY(cap_pro_bad_flags, tc)
 	close(fd);
 }
 
-ATF_TC(cap_pro_fork_child_shielded);
-ATF_TC_HEAD(cap_pro_fork_child_shielded, tc)
+ATF_TC(cap_pro_fork_not_inherited);
+ATF_TC_HEAD(cap_pro_fork_not_inherited, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Shield covers fork children (same nonce)");
+	    "A shield is per-process: a fork child is NOT covered by the "
+	    "parent's shield (born unprotected)");
 	atf_tc_set_md_var(tc, "require.kmods", "mac_capability mac_capability_capprotect");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(cap_pro_fork_child_shielded, tc)
+ATF_TC_BODY(cap_pro_fork_not_inherited, tc)
 {
 	int sv[2], status;
 	pid_t child_pid, grandchild_pid;
@@ -5533,9 +5646,9 @@ ATF_TC_BODY(cap_pro_fork_child_shielded, tc)
 		pid_t gc;
 		char buf;
 		close(sv[0]);
-		shield_fd = capprotect_shield(CP_SF_PROTECT);
+		shield_fd = capprotect_shield(CP_SF_PTRACE);
 		if (shield_fd < 0) _exit(10);
-		gc = fork();
+		gc = fork();		/* child born after the parent shielded */
 		if (gc < 0) _exit(11);
 		if (gc == 0) { close(shield_fd); sleep(5); _exit(0); }
 		write(sv[1], &gc, sizeof(gc));
@@ -5548,14 +5661,9 @@ ATF_TC_BODY(cap_pro_fork_child_shielded, tc)
 	ATF_REQUIRE(read(sv[0], &grandchild_pid, sizeof(grandchild_pid))
 	    == (ssize_t)sizeof(grandchild_pid));
 	usleep(200000);
-	/*
-	 * This test is about nonce-scoped inheritance across fork, not
-	 * ptrace attach semantics.  Visibility is the least coupled check:
-	 * a foreign post-exec helper should not be able to see either the
-	 * shielded child or its fork descendant.
-	 */
-	ATF_CHECK_EQ(run_shield_helper("visibility", child_pid), 0);
-	ATF_CHECK_EQ(run_shield_helper("visibility", grandchild_pid), 0);
+	/* The shielded process is protected; its fork child is NOT. */
+	ATF_CHECK_EQ(run_shield_helper("ptrace", child_pid), 0);
+	ATF_CHECK_EQ(run_shield_helper("ptrace", grandchild_pid), 1);
 	write(sv[0], "g", 1);
 	waitpid(child_pid, &status, 0);
 	close(sv[0]);
@@ -7995,7 +8103,9 @@ ATF_TP_ADD_TCS(tp)
 
 	/* Capability Protection */
 	ATF_TP_ADD_TC(tp, cap_pro_shield_basic);
-	ATF_TP_ADD_TC(tp, cap_pro_same_nonce_allowed);
+	ATF_TP_ADD_TC(tp, cap_pro_protector_can_act);
+	ATF_TP_ADD_TC(tp, cap_pro_selfshield_blocks_parent);
+	ATF_TP_ADD_TC(tp, cap_pro_protect_via_procdesc);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_ptrace_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_signal_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_sigkill_blocked);
@@ -8011,7 +8121,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_visible_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_selective_flags);
 	ATF_TP_ADD_TC(tp, cap_pro_all_flags_blocks_all);
-	ATF_TP_ADD_TC(tp, cap_pro_close_unshields);
+	ATF_TP_ADD_TC(tp, cap_pro_close_does_not_unshield);
 	ATF_TP_ADD_TC(tp, cap_pro_double_shield_idempotent);
 	ATF_TP_ADD_TC(tp, cap_pro_mint_returns_token);
 	ATF_TP_ADD_TC(tp, cap_pro_mint_without_shield_fails);
@@ -8019,7 +8129,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, cap_pro_authorize_on_shield_fails);
 	ATF_TP_ADD_TC(tp, cap_pro_bad_op);
 	ATF_TP_ADD_TC(tp, cap_pro_bad_flags);
-	ATF_TP_ADD_TC(tp, cap_pro_fork_child_shielded);
+	ATF_TP_ADD_TC(tp, cap_pro_fork_not_inherited);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_sched_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_wait_blocked);
 	ATF_TP_ADD_TC(tp, cap_pro_foreign_ktrace_blocked);
