@@ -89,6 +89,33 @@ usage(void)
 	exit(1);
 }
 
+/*
+ * Guarantee fds 0/1/2 are open before any capability handle is created, so a
+ * handle can never occupy a stdio slot.  tzfsd is launched by oracled without
+ * a controlling terminal, and daemon(3) later redirects 0/1/2 to /dev/null: a
+ * capability handle that landed on fd 0/1/2 would be silently replaced by
+ * /dev/null, and every subsequent ZFD_OPENAT/ZFD_* on it would fail ENOTTY —
+ * breaking every storage request while start-up provisioning (done before
+ * daemon(3)) still appeared to work.
+ */
+static void
+reserve_stdio(void)
+{
+	int fd, nfd;
+
+	for (fd = 0; fd <= 2; fd++) {
+		if (fcntl(fd, F_GETFD) != -1)
+			continue;
+		nfd = open("/dev/null", O_RDWR);
+		if (nfd == -1)
+			continue;
+		if (nfd != fd) {
+			(void)dup2(nfd, fd);
+			(void)close(nfd);
+		}
+	}
+}
+
 int
 main(int argc, char **argv)
 {
@@ -118,6 +145,9 @@ main(int argc, char **argv)
 	openlog("tzfsd", LOG_PID | LOG_PERROR, LOG_DAEMON);
 	(void)signal(SIGPIPE, SIG_IGN);
 	(void)signal(SIGCHLD, SIG_IGN);
+
+	/* Before opening any capability handle (see reserve_stdio). */
+	reserve_stdio();
 
 	memset(&st, 0, sizeof(st));
 	st.persistent_fd = st.ephemeral_fd = st.templates_fd = -1;
