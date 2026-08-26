@@ -246,11 +246,30 @@ DTBs, and now `loader.efi`); only the root partition changes from UFS to a
    load it (in the pool, alongside the kernel), and that the arm64 `loader.efi`
    with ZFS is the one copied to the FAT partition.
 
-Open items before this is the default: validating GPU-firmware → U-Boot →
-`loader.efi` ZFS discovery on real RPi 4 / RPi 5 hardware, confirming pool
-`ashift`/feature flags the arm64 loader accepts, and deciding whether the RPi
-firmware's first-FAT-partition requirement coexists with `mkimg`'s ESP or needs
-the two-partition (firmware-FAT + ZFS) `arm.subr` layout retained. Until that is
-proven on hardware, board images remain UFS and the "no ZFS pool" fallback in
-this chapter applies to them; see `docs/rpi5-bringup-plan.md` for the wider
-Raspberry Pi bring-up.
+A software audit of the boot chain found no blocker: `makefs -t zfs` builds the
+pool image on any host (it is userland and needs no kernel ZFS), the arm64
+`loader_lua.efi` is built with `-DLOADER_ZFS_SUPPORT` and carries the
+arch-common `efi_zfs_probe` that enumerates EFI block devices for pools,
+`stand/common/disk.c` traverses MBR and `bsddisklabel` partitions, and
+`rc.d/growfs` already grows a ZFS root (`zpool online -e`). The remaining work
+is build wiring in `arm.subr` plus a hardware boot test.
+
+Milestones, in order:
+
+1. **Buildable Pi 4 ZFS image.** Add a `ROOTFS=zfs` path to `arm.subr` that
+   stages the tree, images the root with the `makefs -t zfs` invocation above,
+   and stages DTBs/loader from the tree rather than from a live mount (a
+   `makefs` ZFS image is not mountable on a non-ZFS build host). The Pi 4 is the
+   first target because its U-Boot EFI + SD/USB block path is the most mature.
+   Keep UFS the default so existing board images do not regress.
+2. **Hardware boot validation (Pi 4).** Confirm GPU-firmware → U-Boot →
+   `loader_lua.efi` ZFS discovery on real hardware, and the pool
+   `ashift`/feature flags the arm64 loader accepts.
+3. **Pi 5 and the other boards.** Extend the same path once Pi 4 boots, and
+   decide whether the RPi firmware's first-FAT-partition requirement coexists
+   with `mkimg`'s ESP or the two-partition (firmware-FAT + ZFS) `arm.subr`
+   layout is retained.
+
+Until milestone 2 passes, board images remain UFS and the "no ZFS pool"
+fallback in this chapter applies to them; see `docs/rpi5-bringup-plan.md` for
+the wider Raspberry Pi bring-up.
