@@ -423,15 +423,24 @@ kernel or user ABI — so `libtrustedzfs` (and every daemon that links it: tzfsd
 serviced, the storage-bearing components) cannot be built 32-bit at all. A world
 build only completes with `MK_LIB32=no`.
 
-**To do — remove 32-bit support:**
+**To do — remove 32-bit support entirely.** 5BSD is 64-bit only: no 32-bit
+libraries, no 32-bit userland, no 32-bit install path, none of it.
 
-- Set `MK_LIB32=no` (and drop `lib32` from the default `MACHINE`/build config)
-  so `buildworld` never attempts the 32-bit shim libraries that fail on the
-  TrustedZFS ABI guard, rather than requiring the flag on every invocation.
-- Drop `i386` (and any other 32-bit `MACHINE_ARCH`) from supported targets and
-  release artifacts; the capability plane has no 32-bit story.
-- Audit for any lingering `COMPAT_FREEBSD32`/`compat32` assumptions and remove
-  them once no 32-bit userland is shipped.
+- **No lib32.** Make `MK_LIB32=no` the built-in default (drop `lib32` from the
+  default build config) so `buildworld` never attempts the 32-bit shim
+  libraries — they can't build against the TrustedZFS ABI guard anyway. Ship no
+  `/usr/lib32` and no `lib32` packages.
+- **No 32-bit userland compat.** Remove `COMPAT_FREEBSD32` from the kernel
+  configs and drop the 32-bit syscall/ioctl shims; a 64-bit kernel need not run
+  32-bit binaries.
+- **No 32-bit targets or media.** Drop `i386` (and any other 32-bit
+  `MACHINE_ARCH`) from supported targets, release builds, and artifacts. No
+  i386 images, ISOs, or memstick media.
+- **No bsdinstall 32-bit support.** Remove any 32-bit architecture choices,
+  `lib32`/`compat` distribution-set options, and i386 media handling from
+  bsdinstall so the installer only ever offers 64-bit.
+- Sweep the tree for lingering `compat32`/`lib32`/`i386` assumptions and remove
+  them.
 
 ## Planned rename: Oracle → Caspian
 
