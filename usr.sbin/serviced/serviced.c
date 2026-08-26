@@ -488,10 +488,11 @@ main(int argc, char *argv[])
 	}
 
 	/*
-	 * Set up the control socket only now.  /etc/rc (run inside
-	 * startup_launch_system) has remounted / read-write and populated
-	 * /var/run; binding earlier fails with EROFS and the socket would
-	 * never appear (clients then see "Bad file descriptor").
+	 * Set up the control socket only now, after startup_launch_system.
+	 * sctl_setup mounts serviced's own tmpfs runtime home and binds the
+	 * socket there, so this no longer depends on /etc/rc having remounted /
+	 * read-write; it stays here so the rendezvous appears once the plane is
+	 * far enough up to serve control clients.
 	 */
 	if (sctl_setup() == 0) {
 		EV_SET(&kev, sctl_fd(), EVFILT_READ, EV_ADD, 0, 0, NULL);

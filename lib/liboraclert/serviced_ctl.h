@@ -14,7 +14,13 @@
 
 #include <sys/types.h>
 
-#define	SERVICED_CTL_SOCK	"/var/run/serviced.sock"
+/*
+ * serviced's single control-plane rendezvous.  It lives on a private tmpfs at
+ * serviced's runtime home (mounted by serviced before it binds), so no ZFS
+ * snapshot or `zfs send` backup can ever capture the socket node and a reboot
+ * leaves no stale node behind.  Override with SERVICED_CONTROL_SOCKET.
+ */
+#define	SERVICED_CTL_SOCK	"/Capabilities/serviced/control.sock"
 #define	SERVICED_CTL_VERSION	2
 #define	SERVICED_CTL_MAX_PAYLOAD	1024
 #define	SERVICED_CTL_SUMMARY_MAX	4096

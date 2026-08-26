@@ -17,9 +17,11 @@
 #include <sys/types.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/mount.h>
 #include <sys/queue.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/uio.h>
 #include <sys/un.h>
 
 #include <errno.h>
@@ -563,6 +565,49 @@ conn_handle_write(struct sctl_conn *c)
  * Public API
  * ---------------------------------------------------------------- */
 
+/*
+ * Back serviced's control-socket directory with a private tmpfs, so the socket
+ * node is memory-resident: no ZFS snapshot or `zfs send -R` backup can capture
+ * it, and a reboot leaves no stale node to fight the next bind.  Idempotent and
+ * best-effort — if the mount fails serviced still binds on the plain directory.
+ * Only used for the default path; a SERVICED_CONTROL_SOCKET override (tests)
+ * is left exactly where the caller put it.
+ */
+static void
+ensure_socket_home(const char *sockpath)
+{
+	struct statfs sfs;
+	struct iovec iov[4];
+	char dir[PATH_MAX], *slash;
+
+	if (strlcpy(dir, sockpath, sizeof(dir)) >= sizeof(dir))
+		return;
+	slash = strrchr(dir, '/');
+	if (slash == NULL || slash == dir)
+		return;
+	*slash = '\0';
+	if (mkdir(dir, 0755) == -1 && errno != EEXIST) {
+		syslog(LOG_WARNING, "sctl: mkdir %s: %m", dir);
+		return;
+	}
+	/* Already our tmpfs? (serviced restart) — nothing to do. */
+	if (statfs(dir, &sfs) == 0 &&
+	    strcmp(sfs.f_fstypename, "tmpfs") == 0 &&
+	    strcmp(sfs.f_mntonname, dir) == 0)
+		return;
+	iov[0].iov_base = __DECONST(void *, "fstype");
+	iov[0].iov_len = sizeof("fstype");
+	iov[1].iov_base = __DECONST(void *, "tmpfs");
+	iov[1].iov_len = sizeof("tmpfs");
+	iov[2].iov_base = __DECONST(void *, "fspath");
+	iov[2].iov_len = sizeof("fspath");
+	iov[3].iov_base = dir;
+	iov[3].iov_len = strlen(dir) + 1;
+	if (nmount(iov, 4, 0) == -1)
+		syslog(LOG_WARNING,
+		    "sctl: tmpfs on %s: %m (binding on plain dir)", dir);
+}
+
 int
 sctl_setup(void)
 {
@@ -575,9 +620,11 @@ sctl_setup(void)
 		env_path = getenv("SERVICED_CONTROL_SOCKET");
 		if (env_path != NULL && env_path[0] != '\0')
 			strlcpy(sctl_path, env_path, sizeof(sctl_path));
-		else
+		else {
 			strlcpy(sctl_path, SERVICED_CTL_SOCK,
 			    sizeof(sctl_path));
+			ensure_socket_home(sctl_path);
+		}
 	}
 
 	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
