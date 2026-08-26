@@ -131,6 +131,15 @@ struct svc_runtime {
 #define	SERVICED_BUNDLE_DIR_SYSTEM_DEFAULT	"/Capabilities/System"
 #define	SERVICED_BUNDLE_DIR_USER_DEFAULT		"/Capabilities"
 
+/*
+ * Operator disable list: bundle identities (one per line, '#' comments) that
+ * serviced skips at scan time even though their bundles are installed.  This
+ * is the persistent enablement toggle behind servicectl enable/disable and the
+ * installer's capability-selection step.  It lives under /Capabilities with the
+ * bundle registry it governs, not in a UNIX state directory.
+ */
+#define	SERVICED_DISABLED_PATH			"/Capabilities/System/disabled"
+
 extern const char *serviced_bundle_dir_system;
 extern const char *serviced_bundle_dir_user;
 

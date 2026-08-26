@@ -11,16 +11,23 @@
 
 #include <sys/types.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/un.h>
 
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
+#include <limits.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
+
+/* Operator disable list; must match SERVICED_DISABLED_PATH in serviced.h. */
+#define	SERVICED_DISABLED_PATH	"/Capabilities/System/disabled"
 
 #include "serviced_ctl.h"
 #include "servicectl.h"
@@ -259,6 +266,122 @@ cmd_stop(const char *label)
 	return (0);
 }
 
+static bool
+valid_bundle_id(const char *id)
+{
+	size_t i, n;
+
+	n = strlen(id);
+	if (n == 0 || n >= 256)
+		return (false);
+	for (i = 0; i < n; i++) {
+		unsigned char c = (unsigned char)id[i];
+
+		if (!isalnum(c) && c != '.' && c != '-' && c != '_')
+			return (false);
+	}
+	return (true);
+}
+
+/*
+ * Rewrite the disable list with id added (add) or removed, atomically via a
+ * temp file and rename(2).  Sets *changed when the effective set differs.  The
+ * list is a plain one-identity-per-line file under /Capabilities.
+ */
+static int
+disabled_edit(const char *id, bool add, bool *changed)
+{
+	FILE *in, *out;
+	char tmp[PATH_MAX], *line = NULL;
+	size_t cap = 0;
+	int fd;
+	bool present = false;
+
+	*changed = false;
+	if (snprintf(tmp, sizeof(tmp), "%s.XXXXXX", SERVICED_DISABLED_PATH) >=
+	    (int)sizeof(tmp))
+		return (errno = ENAMETOOLONG, -1);
+	fd = mkstemp(tmp);
+	if (fd == -1)
+		return (-1);
+	out = fdopen(fd, "w");
+	if (out == NULL) {
+		close(fd);
+		unlink(tmp);
+		return (-1);
+	}
+	in = fopen(SERVICED_DISABLED_PATH, "re");
+	if (in != NULL) {
+		while (getline(&line, &cap, in) != -1) {
+			char *s = line;
+
+			while (*s == ' ' || *s == '\t')
+				s++;
+			s[strcspn(s, " \t\r\n")] = '\0';
+			if (*s == '\0' || *s == '#')
+				continue;
+			if (strcmp(s, id) == 0) {
+				present = true;
+				if (!add)
+					continue;	/* drop it */
+			}
+			fprintf(out, "%s\n", s);
+		}
+		free(line);
+		fclose(in);
+	}
+	if (add && !present) {
+		fprintf(out, "%s\n", id);
+		*changed = true;
+	} else if (!add && present)
+		*changed = true;
+	if (fflush(out) != 0 || fsync(fileno(out)) != 0) {
+		fclose(out);
+		unlink(tmp);
+		return (-1);
+	}
+	if (fclose(out) != 0) {
+		unlink(tmp);
+		return (-1);
+	}
+	if (rename(tmp, SERVICED_DISABLED_PATH) == -1) {
+		unlink(tmp);
+		return (-1);
+	}
+	return (0);
+}
+
+static int
+cmd_enable_disable(const char *id, bool disable)
+{
+	const char *verb = disable ? "disable" : "enable";
+	char summary[SERVICED_CTL_SUMMARY_MAX];
+	bool changed;
+	int error;
+
+	if (!valid_bundle_id(id))
+		errx(EX_USAGE, "%s: invalid bundle identity '%s'", verb, id);
+	if (disabled_edit(id, disable, &changed) == -1) {
+		warn("%s: updating %s", verb, SERVICED_DISABLED_PATH);
+		return (1);
+	}
+	if (!changed)
+		printf("%s: %s already %sd\n", verb, id, verb);
+	/* Apply immediately: a reload re-scans and honors the updated list. */
+	summary[0] = '\0';
+	error = sctl_rpc(SCTL_OP_RELOAD, 0, NULL, summary, sizeof(summary));
+	if (error != 0) {
+		warnx("%s: recorded, but reload failed: %s -- run "
+		    "'servicectl reload'", verb, strerror(error));
+		return (1);
+	}
+	if (summary[0] != '\0')
+		printf("%s", summary);
+	else
+		printf("%s: %s\n", verb, id);
+	return (0);
+}
+
 static void
 usage(void)
 {
@@ -272,6 +395,8 @@ usage(void)
 	    "  reload              reload service bundles\n"
 	    "  start <label>       start a loaded service\n"
 	    "  stop <label>        stop a running service\n"
+	    "  enable <bundle-id>  clear a bundle's operator-disabled state\n"
+	    "  disable <bundle-id> keep a bundle installed but unregistered\n"
 	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
 	    "  verify <path.cap> [...] validate bundles and dependencies\n"
 	    "  deps <program>      suggest component manifest dependencies\n"
@@ -317,6 +442,16 @@ main(int argc, char *argv[])
 		if (argc != 2)
 			errx(EX_USAGE, "stop requires a service label");
 		return (cmd_stop(argv[1]));
+	}
+	if (strcmp(cmd, "enable") == 0) {
+		if (argc != 2)
+			errx(EX_USAGE, "enable requires a bundle identity");
+		return (cmd_enable_disable(argv[1], false));
+	}
+	if (strcmp(cmd, "disable") == 0) {
+		if (argc != 2)
+			errx(EX_USAGE, "disable requires a bundle identity");
+		return (cmd_enable_disable(argv[1], true));
 	}
 	if (strcmp(cmd, "install") == 0) {
 		if (argc != 2)

@@ -172,6 +172,81 @@ struct scan_ctx {
 	bool system;
 };
 
+/*
+ * Operator disable list.  Reloaded from SERVICED_DISABLED_PATH at the start of
+ * every registry (re)build so servicectl enable/disable takes effect on the
+ * next reload.  An installed but disabled bundle is skipped: it neither
+ * reserves names nor runs, but stays on disk to re-enable without reinstall.
+ */
+static char **disabled_ids;
+static unsigned ndisabled;
+
+static void
+disabled_set_clear(void)
+{
+	unsigned i;
+
+	for (i = 0; i < ndisabled; i++)
+		free(disabled_ids[i]);
+	free(disabled_ids);
+	disabled_ids = NULL;
+	ndisabled = 0;
+}
+
+static void
+disabled_set_load(void)
+{
+	FILE *f;
+	char *line = NULL;
+	char path[PATH_MAX];
+	size_t cap = 0;
+	char **np;
+
+	disabled_set_clear();
+	/*
+	 * The list lives beside the system bundle registry it governs so a
+	 * test that redirects SERVICED_BUNDLE_DIR_SYSTEM gets a matching list;
+	 * the default resolves to SERVICED_DISABLED_PATH.
+	 */
+	if (snprintf(path, sizeof(path), "%s/disabled",
+	    serviced_bundle_dir_system) >= (int)sizeof(path))
+		return;
+	f = fopen(path, "re");
+	if (f == NULL)
+		return;
+	while (getline(&line, &cap, f) != -1) {
+		char *s = line;
+
+		while (*s == ' ' || *s == '\t')
+			s++;
+		s[strcspn(s, " \t\r\n")] = '\0';
+		if (*s == '\0' || *s == '#')
+			continue;
+		np = reallocarray(disabled_ids, ndisabled + 1,
+		    sizeof(*disabled_ids));
+		if (np == NULL)
+			break;
+		disabled_ids = np;
+		disabled_ids[ndisabled] = strdup(s);
+		if (disabled_ids[ndisabled] == NULL)
+			break;
+		ndisabled++;
+	}
+	free(line);
+	fclose(f);
+}
+
+static bool
+bundle_is_disabled(const char *id)
+{
+	unsigned i;
+
+	for (i = 0; i < ndisabled; i++)
+		if (strcmp(disabled_ids[i], id) == 0)
+			return (true);
+	return (false);
+}
+
 static int
 scan_cb(struct capbundle *b, void *ctx)
 {
@@ -188,6 +263,15 @@ scan_cb(struct capbundle *b, void *ctx)
 		    sc->system ? "SYSTEM " : "", capbundle_name(b), errbuf);
 		capbundle_close(b);
 		return (-1);
+	}
+
+	/* Skip an operator-disabled bundle: installed, but not registered. */
+	if (bundle_is_disabled(capbundle_id(b))) {
+		syslog(LOG_INFO, "bundle_registry: %sbundle '%s' disabled by "
+		    "operator, skipping", sc->system ? "SYSTEM " : "",
+		    capbundle_id(b));
+		capbundle_close(b);
+		return (0);
 	}
 
 	/* Grow array if needed. */
@@ -431,6 +515,9 @@ bundle_registry_init(void)
 		free(manifest);
 		return (-1);
 	}
+	/* Refresh the operator disable list before (re)scanning. */
+	disabled_set_load();
+
 	old_bundles = bundles;
 	old_nbundles = nbundles;
 	old_bundles_cap = bundles_cap;
