@@ -7,6 +7,7 @@
 #include <sys/event.h>
 #include <sys/procdesc.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -893,7 +894,7 @@ router_watch(void *argument)
 	int status;
 
 	context = argument;
-	while (pdwait(context->process_fd, &status, 0, NULL, NULL) == -1)
+	while (pdwait(context->process_fd, &status, WEXITED, NULL, NULL) == -1)
 		if (errno != EINTR)
 			break;
 	atomic_store_explicit(&context->exited, true, memory_order_release);

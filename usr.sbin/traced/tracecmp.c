@@ -465,7 +465,7 @@ worker_remove(struct trace_worker **workers, struct trace_worker *worker,
 		;
 	if (*cursor == worker)
 		*cursor = worker->next;
-	(void)pdwait(worker->pd, &status, WNOHANG, NULL, NULL);
+	(void)pdwait(worker->pd, &status, WEXITED | WNOHANG, NULL, NULL);
 	close(worker->pd);
 	free(worker);
 	if (*count != 0)
@@ -511,7 +511,7 @@ workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 		(void)pdkill(worker->pd, SIGKILL);
 	for (worker = *workers; worker != NULL; worker = next) {
 		next = worker->next;
-		(void)pdwait(worker->pd, &status, 0, NULL, NULL);
+		(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
 		close(worker->pd);
 		free(worker);
 	}
@@ -599,7 +599,7 @@ main(void)
 		    NOTE_EXIT, 0, worker);
 		if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
 			(void)pdkill(worker->pd, SIGKILL);
-			(void)pdwait(worker->pd, &status, 0, NULL, NULL);
+			(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
 			close(worker->pd);
 			free(worker);
 			continue;

@@ -6,6 +6,7 @@
 #include <sys/param.h>
 #include <sys/procdesc.h>
 #include <sys/socket.h>
+#include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -801,7 +802,7 @@ logcmp_storage_start(int dirfd, uint64_t segment_limit, uint32_t max_segments,
 	    cap_cloexec_limit(pd, CAP_CLOEXEC_LOCKED) == -1) {
 		error = errno;
 		(void)pdkill(pd, SIGKILL);
-		while (pdwait(pd, NULL, 0, NULL, NULL) == -1 && errno == EINTR)
+		while (pdwait(pd, NULL, WEXITED, NULL, NULL) == -1 && errno == EINTR)
 			;
 		close(pd);
 		close(sockets[0]);
