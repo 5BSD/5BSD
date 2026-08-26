@@ -10,8 +10,6 @@
 local sys_wait = require("posix.sys.wait")
 local unistd = require("posix.unistd")
 
-local all_libcompats <const> = "%%_ALL_libcompats%%"
-
 -- Run a command using the OS shell and capture the stdout
 -- Strips exactly one trailing newline if present, does not strip any other whitespace.
 -- Asserts that the command exits cleanly
@@ -85,7 +83,6 @@ local function select_components(components, options)
 		["base-jail"] = "The complete base system (includes devel and optional)",
 		["src"] = "System source tree",
 		["tests"] = "Test suite",
-		["lib32"] = "32-bit compatibility libraries",
 		["debug"] = "Debug symbols for the selected components",
 	}
 
@@ -96,11 +93,6 @@ local function select_components(components, options)
 		["base-jail"] = "on",
 		["kernel-dbg"] = "on",
 	}
-	-- Enable compat sets by default.
-	for compat in all_libcompats:gmatch("%S+") do
-		defaults["lib" .. compat] = "on"
-	end
-
 	-- Sorting the components is necessary to ensure that the ordering is
 	-- consistent in the UI.
 	local sorted_components = {}
