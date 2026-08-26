@@ -442,6 +442,25 @@ libraries, no 32-bit userland, no 32-bit install path, none of it.
 - Sweep the tree for lingering `compat32`/`lib32`/`i386` assumptions and remove
   them.
 
+## Base install: pkgbase only
+
+5BSD delivers and updates its base system exclusively through **pkgbase**
+(packaged base). The traditional monolithic `installworld`/`distributeworld`
+install path is to be retired as a supported flow — base install, upgrade, and
+image assembly all go through pkgbase packages.
+
+**To do — pkgbase only, disable installworld:**
+
+- Make `make packages` (pkgbase) the sole supported base-install mechanism;
+  disable/remove `installworld`, `distributeworld`, and `installkernel` as
+  user-facing install targets (keep `buildworld`/`buildkernel` — they still
+  produce the objects the packages are built from).
+- Build release images and the guest/VM test images from pkgbase sets, not from
+  a `DESTDIR` installworld staging tree.
+- Point bsdinstall at pkgbase repositories for the base system instead of
+  distribution tarballs.
+- Update all build/test docs and rig scripts to the pkgbase flow.
+
 ## Planned rename: Oracle → Caspian
 
 The Oracle capability authority is to be renamed **Caspian** throughout. This is
