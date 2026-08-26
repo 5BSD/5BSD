@@ -433,6 +433,25 @@ build only completes with `MK_LIB32=no`.
 - Audit for any lingering `COMPAT_FREEBSD32`/`compat32` assumptions and remove
   them once no 32-bit userland is shipped.
 
+## Planned rename: Oracle → Caspian
+
+The Oracle capability authority is to be renamed **Caspian** throughout. This is
+a mechanical but wide rename touching code, on-disk names, protocol, and docs;
+do it as one coordinated sweep, not piecemeal.
+
+**To do — rename Oracle → Caspian:**
+
+- Daemon and binaries: `oracled` → `caspiand`; the PID 1 entry `/sbin/oracle-init`
+  → `/sbin/caspian-init`; `oracle_init.c` and friends.
+- Protocol and API: `ORACLE_OP_*`, `oracle_client.c`, `oracle_mint_*`,
+  `oracle_ensure_kmod`, the `[ORACLE]` log tag, and any `ORACLE_*`/`ort_*`
+  identifiers.
+- Config and paths: `oracled.conf`, `/etc/rc` hooks, loader `init_path`, and any
+  `oracle`-named files under the tree.
+- Docs and the 5BSD Epic: every user-facing "Oracle" reference (keep no
+  superseded name behind — Caspian only once the sweep lands).
+- Preserve behavior exactly (oracled stays PID 1); this is a name change only.
+
 ## Required verification
 
 The release gate includes:
