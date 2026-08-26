@@ -30,6 +30,11 @@ sysctl kern.crypto.cryptokey_objects >/dev/null || exit 1
 # standalone runner must do so explicitly or software-provider cases skip.
 sysctl kern.crypto.allow_soft=1 >/dev/null || exit 1
 
+# rc(8) is skipped in this single-user harness, so the loopback interface never
+# receives 127.0.0.1.  The network component tests connect to loopback; without
+# it the provider's connect(2) fails ENETUNREACH.  Configure it explicitly.
+ifconfig lo0 inet 127.0.0.1/8 >/dev/null 2>&1 || true
+
 command -v kyua >/dev/null 2>&1 || {
 	echo "kyua is required by the capability VM harness" >&2
 	exit 69
