@@ -42,6 +42,8 @@ int	logcmp_storage_append(struct logcmp_storage_session *,
 int	logcmp_storage_append_for(struct logcmp_storage_session *, const char *,
 	    const struct logcmp_record *, size_t);
 int	logcmp_storage_flush(struct logcmp_storage_session *, uint32_t);
+int	logcmp_storage_count(struct logcmp_storage_session *, const char *,
+	    size_t, uint64_t *);
 int	logcmp_storage_query_next(struct logcmp_storage_session *, uint32_t,
 	    struct logcmp_store_cursor *, void *, size_t, size_t *, uint32_t);
 int	logcmp_storage_query_next_for(struct logcmp_storage_session *,

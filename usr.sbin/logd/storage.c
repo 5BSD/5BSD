@@ -40,7 +40,18 @@ enum storage_operation {
 	STORAGE_OP_ATTACH,
 	STORAGE_OP_NOTIFY,
 	STORAGE_OP_FLUSH,
-	STORAGE_OP_QUERY
+	STORAGE_OP_QUERY,
+	STORAGE_OP_COUNT
+};
+
+struct storage_count_request {
+	uint16_t label_length;
+	uint16_t reserved;
+	char label[STORAGE_LABEL_MAX + 1];
+};
+
+struct storage_count_reply {
+	uint64_t count;
 };
 
 struct storage_message {
@@ -115,7 +126,7 @@ message_valid(const struct storage_message *message, size_t received,
 	    message->magic == STORAGE_MAGIC &&
 	    message->version == STORAGE_VERSION &&
 	    message->operation >= STORAGE_OP_READY &&
-	    message->operation <= STORAGE_OP_QUERY &&
+	    message->operation <= STORAGE_OP_COUNT &&
 	    message->flags == 0 && message->reserved == 0 &&
 	    (reply || message->status == 0) &&
 	    (!reply || (message->status <= 0 && message->status >= -ELAST)));
@@ -136,7 +147,7 @@ message_error(const struct storage_message *message, size_t received)
 	if (message->version != STORAGE_VERSION)
 		return (EPROTONOSUPPORT);
 	if (message->operation < STORAGE_OP_READY ||
-	    message->operation > STORAGE_OP_QUERY)
+	    message->operation > STORAGE_OP_COUNT)
 		return (ENOSYS);
 	if (message->flags != 0 || message->reserved != 0 ||
 	    message->status != 0)
@@ -552,6 +563,37 @@ handle_session(struct storage_session *session, struct logcmp_store *store)
 		    NULL, 0) == -1)
 			return (1);
 		break;
+	case STORAGE_OP_COUNT: {
+		struct storage_count_request *count_req;
+		struct storage_count_reply count_reply;
+
+		if (message->length != sizeof(*count_req)) {
+			(void)send_status(session->fd, STORAGE_OP_COUNT, EPROTO);
+			return (1);
+		}
+		count_req = (void *)(message + 1);
+		if (count_req->reserved != 0 || count_req->label_length == 0 ||
+		    count_req->label_length > STORAGE_LABEL_MAX ||
+		    memchr(count_req->label, '\0', count_req->label_length) != NULL ||
+		    (!session->multiplex &&
+		    (strlen(session->label) != count_req->label_length ||
+		    memcmp(session->label, count_req->label,
+		    count_req->label_length) != 0))) {
+			(void)send_status(session->fd, STORAGE_OP_COUNT, EINVAL);
+			break;
+		}
+		count_req->label[count_req->label_length] = '\0';
+		memset(&count_reply, 0, sizeof(count_reply));
+		count_reply.count = logcmp_store_label_count(store,
+		    count_req->label);
+		message_init(&buffer.wire.message, STORAGE_OP_COUNT, 0,
+		    sizeof(count_reply));
+		memcpy(buffer.wire.payload, &count_reply, sizeof(count_reply));
+		if (send_packet(session->fd, &buffer,
+		    sizeof(buffer.wire.message) + sizeof(count_reply), NULL, 0) == -1)
+			return (1);
+		break;
+	}
 	default:
 		return (1);
 	}
@@ -1029,6 +1071,52 @@ logcmp_storage_flush(struct logcmp_storage_session *session,
 		return (-1);
 	return (receive_status_until(session->control_fd, STORAGE_OP_FLUSH,
 	    &deadline));
+}
+
+int
+logcmp_storage_count(struct logcmp_storage_session *session, const char *label,
+    size_t label_length, uint64_t *countp)
+{
+	union storage_buffer buffer;
+	struct storage_message *message;
+	struct storage_count_request *request;
+	struct storage_count_reply *reply;
+	struct timespec deadline;
+	uint32_t remaining;
+	ssize_t amount;
+
+	if (session == NULL || session->control_fd < 0 || countp == NULL ||
+	    label == NULL || label_length == 0 ||
+	    label_length > STORAGE_LABEL_MAX)
+		return (errno = EINVAL, -1);
+	message = &buffer.wire.message;
+	message_init(message, STORAGE_OP_COUNT, 0, sizeof(*request));
+	request = (void *)(message + 1);
+	memset(request, 0, sizeof(*request));
+	request->label_length = (uint16_t)label_length;
+	memcpy(request->label, label, label_length);
+	if (deadline_create(LOGCMP_STORAGE_TIMEOUT_MS, &deadline) == -1)
+		return (-1);
+	if (send_packet_until(session->control_fd, &buffer,
+	    sizeof(*message) + sizeof(*request), &deadline) == -1)
+		return (-1);
+	if (deadline_remaining(&deadline, &remaining) == -1 ||
+	    wait_fd(session->control_fd, POLLIN, remaining) == -1)
+		return (-1);
+	amount = receive_packet(session->control_fd, &buffer, sizeof(buffer),
+	    NULL, 0, NULL);
+	if (amount <= 0 || !message_valid(message, (size_t)amount, true)) {
+		errno = amount == 0 ? ECONNRESET : EPROTO;
+		return (-1);
+	}
+	if (message->status != 0)
+		return (errno = -message->status, -1);
+	if (message->operation != STORAGE_OP_COUNT ||
+	    message->length != sizeof(*reply))
+		return (errno = EPROTO, -1);
+	reply = (void *)(message + 1);
+	*countp = reply->count;
+	return (0);
 }
 
 int

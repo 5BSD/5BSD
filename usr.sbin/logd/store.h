@@ -46,6 +46,7 @@ int	logcmp_store_flush(struct logcmp_store *);
 int	logcmp_store_query_next(struct logcmp_store *, const char *, uint32_t,
 	    struct logcmp_store_cursor *, void *, size_t, size_t *);
 uint64_t logcmp_store_generation(const struct logcmp_store *);
+uint64_t logcmp_store_label_count(const struct logcmp_store *, const char *);
 off_t	logcmp_store_offset(const struct logcmp_store *);
 void	logcmp_store_close(struct logcmp_store *);
 

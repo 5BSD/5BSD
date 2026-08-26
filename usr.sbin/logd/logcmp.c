@@ -1096,6 +1096,20 @@ pool_add_session(struct pool_state *pool)
 	state->storage_query = storage_query;
 	state->storage_context = pool->storage;
 	logcmp_session_init(&state->session, LOGCMP_MAX_RECORD);
+	/*
+	 * Seed the accepted counter with the records already durably held for
+	 * this consumer's label so that stats.accepted is a cumulative total
+	 * that survives the consumer closing and reopening its client, rather
+	 * than resetting to zero for each new session.  Best-effort: a failed
+	 * query just leaves the counter at zero for this session.
+	 */
+	{
+		uint64_t persisted = 0;
+
+		if (logcmp_storage_count(pool->storage, state->label,
+		    strlen(state->label), &persisted) == 0)
+			state->session.stats.accepted = persisted;
+	}
 	if (logcmp_session_configure(&state->session,
 	    pool->config->minimum_severity,
 	    pool->config->rate_limit_interval_ms,

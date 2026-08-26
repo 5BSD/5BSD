@@ -36,6 +36,13 @@
 #define	STORE_BODY_HEADER	4U
 #define	STORE_LABEL_MAX		63U
 
+#define	STORE_LABEL_COUNTERS	128U
+
+struct store_label_count {
+	char		label[STORE_LABEL_MAX + 1];
+	uint64_t	count;
+};
+
 struct logcmp_store {
 	int		fd;
 	int		dirfd;
@@ -44,6 +51,8 @@ struct logcmp_store {
 	uint32_t	max_segments;
 	off_t		offset;
 	uint8_t		privacy_key[LOGCMP_STORE_PRIVACY_KEY_SIZE];
+	size_t		nlabel_counts;
+	struct store_label_count label_counts[STORE_LABEL_COUNTERS];
 };
 
 static int
@@ -629,6 +638,44 @@ rotate_segment(struct logcmp_store *store)
 	return (0);
 }
 
+/*
+ * Track the number of records persisted per label so an attaching session can
+ * seed its accepted counter with the total already durably held for that
+ * consumer.  The table is bounded; a label that overflows it simply stops
+ * contributing to the persisted total (the counter degrades, it never lies
+ * high).
+ */
+static void
+store_label_bump(struct logcmp_store *store, const char *label)
+{
+	size_t i;
+
+	for (i = 0; i < store->nlabel_counts; i++)
+		if (strcmp(store->label_counts[i].label, label) == 0) {
+			store->label_counts[i].count++;
+			return;
+		}
+	if (store->nlabel_counts >= STORE_LABEL_COUNTERS)
+		return;
+	strlcpy(store->label_counts[i].label, label,
+	    sizeof(store->label_counts[i].label));
+	store->label_counts[i].count = 1;
+	store->nlabel_counts++;
+}
+
+uint64_t
+logcmp_store_label_count(const struct logcmp_store *store, const char *label)
+{
+	size_t i;
+
+	if (store == NULL || label == NULL)
+		return (0);
+	for (i = 0; i < store->nlabel_counts; i++)
+		if (strcmp(store->label_counts[i].label, label) == 0)
+			return (store->label_counts[i].count);
+	return (0);
+}
+
 int
 logcmp_store_append(struct logcmp_store *store, const char *label,
     const struct logcmp_record *record, size_t length, bool durable)
@@ -675,6 +722,7 @@ logcmp_store_append(struct logcmp_store *store, const char *label,
 		return (-1);
 	}
 	store->offset += (off_t)entry_length;
+	store_label_bump(store, label);
 	if (durable && fdatasync(store->fd) == -1) {
 		LOGD_PROBE_PERSIST(label, store->generation, store->offset,
 		    redacted_length, errno != 0 ? errno : EIO);
