@@ -133,7 +133,8 @@ service_atfork_init(void)
 
 #define	SERVICE_CAPABILITY_MAX	SERVICE_BOOTSTRAP_CAPABILITY_MAX
 struct service_capability_entry {
-	char name[16];
+	char name[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
+	char type[SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX];
 	int fd;
 };
 static struct service_capability_entry capability_fds[SERVICE_CAPABILITY_MAX];
@@ -154,9 +155,60 @@ static unsigned nactivated_token_fds;
 static bool
 service_capability_name_valid(const char *name)
 {
+	const unsigned char *p;
+	size_t len;
 
-	return (strcmp(name, "mount") == 0 || strcmp(name, "node") == 0 ||
-	    strcmp(name, "accounting") == 0 || strcmp(name, "identity") == 0);
+	if (name == NULL)
+		return (false);
+	if (strcmp(name, "mount") == 0 || strcmp(name, "node") == 0 ||
+	    strcmp(name, "accounting") == 0 || strcmp(name, "identity") == 0)
+		return (true);
+	if (strncmp(name, "storage:", 8) != 0)
+		return (false);
+	name += 8;
+	len = strlen(name);
+	if (len == 0 || len >= SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX - 8 ||
+	    name[0] == '-' || name[len - 1] == '-')
+		return (false);
+	for (p = (const unsigned char *)name; *p != '\0'; p++)
+		if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') ||
+		    *p == '-'))
+			return (false);
+	return (true);
+}
+
+static bool
+service_capability_type_valid(const char *type)
+{
+	const unsigned char *p;
+	size_t len;
+
+	if (type == NULL || (len = strlen(type)) == 0 ||
+	    len >= SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX)
+		return (false);
+	for (p = (const unsigned char *)type; *p != '\0'; p++)
+		if (!((*p >= 'a' && *p <= 'z') || (*p >= '0' && *p <= '9') ||
+		    *p == '_') )
+			return (false);
+	return (true);
+}
+
+static bool
+service_directory_descriptor_valid(int fd)
+{
+	cap_rights_t actual, expected;
+	uint32_t fcntls;
+	struct stat sb;
+
+	cap_rights_init(&expected, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
+	    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
+	    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT, CAP_UNLINKAT,
+	    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+	return (fstat(fd, &sb) == 0 && S_ISDIR(sb.st_mode) &&
+	    cap_rights_get(fd, &actual) == 0 &&
+	    cap_rights_contains(&actual, &expected) &&
+	    cap_rights_contains(&expected, &actual) &&
+	    cap_fcntls_get(fd, &fcntls) == 0 && fcntls == 0);
 }
 
 static bool
@@ -259,7 +311,11 @@ parse_service_bootstrap(void)
 		    !zero_padded_string(bootstrap->capabilities[i].name,
 		    sizeof(bootstrap->capabilities[i].name), false) ||
 		    !service_capability_name_valid(
-		    bootstrap->capabilities[i].name))
+		    bootstrap->capabilities[i].name) ||
+		    !zero_padded_string(bootstrap->capabilities[i].type,
+		    sizeof(bootstrap->capabilities[i].type), false) ||
+		    !service_capability_type_valid(
+		    bootstrap->capabilities[i].type))
 			goto protocol;
 		for (j = 0; j < i; j++)
 			if (strcmp(bootstrap->capabilities[i].name,
@@ -297,13 +353,20 @@ parse_service_bootstrap(void)
 			goto invalid_descriptor;
 	}
 	for (i = 0; i < bootstrap->ncapabilities; i++) {
-		memset(&info, 0, sizeof(info));
-		if (fcntl(bootstrap->capabilities[i].fd, F_GETFD) == -1 ||
-		    capability_get_info(bootstrap->capabilities[i].fd,
-		    &info) == -1 ||
-		    strncmp(info.name, bootstrap->capabilities[i].name,
-		    sizeof(info.name)) != 0)
+		if (fcntl(bootstrap->capabilities[i].fd, F_GETFD) == -1)
 			goto invalid_descriptor;
+		if (strcmp(bootstrap->capabilities[i].type, "directory") == 0) {
+			if (!service_directory_descriptor_valid(
+			    bootstrap->capabilities[i].fd))
+				goto invalid_descriptor;
+		} else {
+			memset(&info, 0, sizeof(info));
+			if (capability_get_info(bootstrap->capabilities[i].fd,
+			    &info) == -1 ||
+			    strncmp(info.name, bootstrap->capabilities[i].type,
+			    sizeof(info.name)) != 0)
+				goto invalid_descriptor;
+		}
 	}
 	pair_fd = bootstrap->channel_fd;
 	capprotect_fd = bootstrap->capprotect_fd;
@@ -315,6 +378,8 @@ parse_service_bootstrap(void)
 		capability_fds[i].fd = bootstrap->capabilities[i].fd;
 		strlcpy(capability_fds[i].name, bootstrap->capabilities[i].name,
 		    sizeof(capability_fds[i].name));
+		strlcpy(capability_fds[i].type, bootstrap->capabilities[i].type,
+		    sizeof(capability_fds[i].type));
 	}
 	strlcpy(service_label_value, bootstrap->label,
 	    sizeof(service_label_value));
@@ -582,9 +647,14 @@ service_after_fork_child(void)
 		listener->overflow = false;
 	}
 	service_listeners = NULL;
-	if (capprotect_fd >= 0)
-		(void)close(capprotect_fd);
-	capprotect_fd = -1;
+	/*
+	 * Deliberately retain capprotect_fd here.  A provider forks its session
+	 * workers with pdfork(2), whose child runs this handler before the
+	 * worker body; the worker must still hold the capprotect descriptor to
+	 * apply its own shield via service_worker_protect().  The descriptor is
+	 * released explicitly in service_worker_drop_inherited_authority(),
+	 * which the worker calls only after shielding.
+	 */
 	for (i = 0; i < ncapability_fds; i++) {
 		if (capability_fds[i].fd >= 0)
 			(void)close(capability_fds[i].fd);
@@ -1437,7 +1507,7 @@ service_label(struct service_context *context)
 
 int
 service_capability_open(struct service_context *context, const char *name,
-    int *fdp)
+    const char *type, int *fdp)
 {
 	int fd;
 	unsigned i;
@@ -1448,13 +1518,18 @@ service_capability_open(struct service_context *context, const char *name,
 		return (-1);
 	}
 	*fdp = -1;
-	if (name == NULL || !service_capability_name_valid(name)) {
+	if (name == NULL || !service_capability_name_valid(name) ||
+	    type == NULL || !service_capability_type_valid(type)) {
 		errno = EINVAL;
 		return (-1);
 	}
 	for (i = 0; i < ncapability_fds; i++) {
 		if (strcmp(capability_fds[i].name, name) != 0)
 			continue;
+		if (strcmp(capability_fds[i].type, type) != 0) {
+			errno = EFTYPE;
+			return (-1);
+		}
 		fd = fcntl(capability_fds[i].fd, F_DUPFD_CLOEXEC, 0);
 		if (fd == -1)
 			return (-1);
@@ -1679,12 +1754,15 @@ void
 service_worker_drop_inherited_authority(void)
 {
 	/*
-	 * pdfork(2) callers must not depend on pthread_atfork(3) having run.
-	 * Close both the control channel and any client endpoints that the
-	 * parent's dispatcher had queued before dropping the remaining sealed
-	 * bootstrap authority.
+	 * Close the control channel and any client endpoints that the parent's
+	 * dispatcher had queued, then release the capprotect descriptor.  The
+	 * shared after-fork path intentionally leaves capprotect_fd open so the
+	 * worker could shield itself first; now that it has, drop it too.
 	 */
 	service_after_fork_child();
+	if (capprotect_fd >= 0)
+		(void)close(capprotect_fd);
+	capprotect_fd = -1;
 }
 
 static int

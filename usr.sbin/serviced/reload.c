@@ -22,6 +22,7 @@
 #include <libcapbundle.h>
 
 #include "serviced.h"
+#include "manifest_compare.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
 
@@ -49,6 +50,11 @@ svc_remove(unsigned idx)
 	if (idx >= sd.nservices)
 		return;
 
+	/* Abandon any async launch on the slot before it is overwritten, so
+	 * its descriptors are released and its session event is unregistered. */
+	if (sd.services[idx].launch != NULL)
+		svc_launch_cancel(&sd.services[idx], serviced_kq);
+
 	for (i = idx; i < sd.nservices - 1; i++) {
 		sd.services[i] = sd.services[i + 1];
 		naming_rebind_owner(&sd.services[i + 1], &sd.services[i]);
@@ -59,90 +65,6 @@ svc_remove(unsigned idx)
 	/* Clear the vacated slot. */
 	memset(&sd.services[sd.nservices], 0, sizeof(sd.services[0]));
 	svc_runtime_init_fds(&sd.services[sd.nservices]);
-}
-
-static bool
-manifest_equal(const struct svc_manifest *a, const struct svc_manifest *b)
-{
-	unsigned i;
-
-	if (strcmp(a->label, b->label) != 0 ||
-	    strcmp(a->program, b->program) != 0 ||
-	    strcmp(a->user, b->user) != 0 ||
-	    strcmp(a->group, b->group) != 0 ||
-	    a->narguments != b->narguments ||
-	    a->nenvironment != b->nenvironment ||
-	    a->restart != b->restart ||
-	    a->stop_timeout != b->stop_timeout ||
-	    a->max_failures != b->max_failures ||
-	    a->nprovides != b->nprovides ||
-	    a->nstartup_after != b->nstartup_after ||
-	    a->ncomponents != b->ncomponents ||
-	    a->nkmod_requires != b->nkmod_requires ||
-	    a->ncap_paths != b->ncap_paths ||
-	    a->ncap_net != b->ncap_net ||
-	    a->ncap_files != b->ncap_files ||
-	    a->ncap_jail != b->ncap_jail ||
-	    a->ncap_vsock != b->ncap_vsock ||
-	    a->ncap_services != b->ncap_services ||
-	    a->cap_system != b->cap_system ||
-	    a->has_jail != b->has_jail)
-		return (false);
-	for (i = 0; i < a->narguments; i++)
-		if (strcmp(a->arguments[i], b->arguments[i]) != 0)
-			return (false);
-	for (i = 0; i < a->nenvironment; i++)
-		if (strcmp(a->environment[i], b->environment[i]) != 0)
-			return (false);
-	if (a->has_jail &&
-	    (strcmp(a->jail_name, b->jail_name) != 0 ||
-	    strcmp(a->jail_path, b->jail_path) != 0 ||
-	    strcmp(a->jail_hostname, b->jail_hostname) != 0 ||
-	    strcmp(a->jail_ip4_addr, b->jail_ip4_addr) != 0))
-		return (false);
-	/*
-	 * Compare only the populated entries.  The counts above are already
-	 * known equal; comparing the full fixed-size arrays would let stale
-	 * bytes in unused trailing slots (strlcpy does not zero-fill) trigger
-	 * spurious inequality and needless service restarts on reload.  Use
-	 * strcmp for the string arrays so bytes past the NUL never matter.
-	 */
-	for (i = 0; i < a->nprovides; i++)
-		if (strcmp(a->provides[i], b->provides[i]) != 0)
-			return (false);
-	for (i = 0; i < a->nstartup_after; i++)
-		if (strcmp(a->startup_after[i], b->startup_after[i]) != 0)
-			return (false);
-	for (i = 0; i < a->ncomponents; i++)
-		if (memcmp(&a->components[i], &b->components[i],
-		    sizeof(a->components[i])) != 0)
-			return (false);
-	for (i = 0; i < a->nkmod_requires; i++)
-		if (strcmp(a->kmod_requires[i], b->kmod_requires[i]) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_paths; i++)
-		if (strcmp(a->cap_paths[i], b->cap_paths[i]) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_files; i++)
-		if (memcmp(&a->cap_files[i], &b->cap_files[i],
-		    sizeof(a->cap_files[i])) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_net; i++)
-		if (memcmp(&a->cap_net[i], &b->cap_net[i],
-		    sizeof(a->cap_net[i])) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_jail; i++)
-		if (memcmp(&a->cap_jail[i], &b->cap_jail[i],
-		    sizeof(a->cap_jail[i])) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_vsock; i++)
-		if (memcmp(&a->cap_vsock[i], &b->cap_vsock[i],
-		    sizeof(a->cap_vsock[i])) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_services; i++)
-		if (strcmp(a->cap_services[i], b->cap_services[i]) != 0)
-			return (false);
-	return (true);
 }
 
 static bool
@@ -206,6 +128,12 @@ svc_reregister_kevents(int kq)
 	for (i = 0; i < sd.nservices; i++) {
 		struct svc_runtime *svc = &sd.services[i];
 
+		/* A pending async launch keeps a session-channel event whose
+		 * udata must follow the moved svc_runtime, even though the unit
+		 * is still STOPPED. */
+		if (svc->launch != NULL)
+			svc_launch_reregister(svc, kq);
+
 		if (svc->state == SVC_STATE_STOPPED &&
 		    !svc->restart_pending)
 			continue;
@@ -260,6 +188,9 @@ svc_reregister_kevents(int kq)
 int
 supervisor_reload(int kq, char *summary, size_t sumlen)
 {
+	/* The daemon is single-threaded; keep the 80-KiB scratch manifest off
+	 * its deliberately small control-path stack. */
+	static struct svc_manifest desired;
 	unsigned i;
 	unsigned reload_nremoved, reload_nchanged, reload_nnew;
 
@@ -310,7 +241,6 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		nstopped = 0;
 		for (si = 0; si < sd.nservices; si++) {
 			struct svc_runtime *svc = &sd.services[si];
-			struct svc_manifest desired;
 
 			/* Check if this service's label still exists. */
 			if (desired_service_manifest(svc->manifest.label,
@@ -362,14 +292,13 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		nchanged = 0;
 		for (si = 0; si < sd.nservices; si++) {
 			struct svc_runtime *svc = &sd.services[si];
-			struct svc_manifest desired;
 
 			if (svc->remove_pending)
 				continue;
 			if (!desired_service_manifest(svc->manifest.label,
 			    &desired))
 				continue;
-			if (manifest_equal(&svc->manifest, &desired))
+			if (serviced_manifest_equal(&svc->manifest, &desired))
 				continue;
 
 			nchanged++;
@@ -471,7 +400,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 		for (i = first_new; i < first_new + nnew_collected; i++) {
 			struct svc_runtime *svc = &sd.services[i];
 
-			if (svc_exec(svc, kq) == 0) {
+			if (svc_launch_or_await(svc, kq) == 0) {
 				syslog(LOG_INFO,
 				    "reload: launched '%s'",
 				    svc->manifest.label);

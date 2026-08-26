@@ -72,6 +72,8 @@ enum svc_kind {
  * The pd_fd, channel_fd, and coalition_fd are registered on the main
  * kqueue with 'this' as udata for event dispatch.
  */
+struct svc_launch;	/* opaque async-launch context, defined in execute.c */
+
 struct svc_runtime {
 	struct svc_manifest	manifest;
 	enum svc_kind	kind;		/* launch method + readiness contract */
@@ -85,6 +87,7 @@ struct svc_runtime {
 	struct channel	*control_channel; /* owns channel_fd */
 	int		coalition_fd;	/* coalition service instance */
 	int		jail_fd;	/* jail descriptor (-1 if no jail) */
+	struct svc_launch *launch;	/* non-NULL while an async launch runs */
 	bool		protocol_ready;	/* SVC_OP_READY advisory received */
 	bool		lookup_activated; /* launched to satisfy a named lookup */
 	bool		want_console;	/* stdio on /dev/console (rc bootstrap) */
@@ -182,6 +185,11 @@ int	oracle_release_jail(int channel_fd, const struct serviced_jail_claim *jc);
 int	oracle_release_system(int channel_fd, uint32_t gates);
 int	oracle_release_manifest(int channel_fd, const struct svc_manifest *m);
 
+/* storage_lifecycle.c — last-holder accounting for lease storage. */
+void	storage_lifecycle_reset(void);
+int	storage_lease_acquire(const struct ort_storage_claim *sc);
+int	storage_lease_release(const struct ort_storage_claim *sc);
+
 /* kldmgr_client.c — kernel module loading */
 int	kldmgr_ensure_loaded(const struct svc_manifest *m, bool system_bundle,
 	    int kq);
@@ -191,6 +199,8 @@ int	depgraph_sort(struct svc_runtime *svcs, unsigned nsvc);
 
 /* execute.c — service fork/exec */
 int	svc_exec(struct svc_runtime *svc, int kq);
+const char *svc_exec_blocking_provider(const struct svc_manifest *m);
+int	svc_launch_or_await(struct svc_runtime *svc, int kq);
 
 /* supervisor.c — service lifecycle orchestration */
 void	supervisor_handle_procdesc(struct kevent *kev);
@@ -199,11 +209,24 @@ void	supervisor_stop(int kq);
 bool	supervisor_is_stopped(void);
 void	supervisor_teardown_state(void);
 void	svc_graceful_stop(struct svc_runtime *svc, int kq);
+void	svc_cancel_restart(struct svc_runtime *svc, int kq);
 void	svc_quiesce_complete(struct svc_runtime *, int status, int kq);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 
 /* svc_proto.c — service channel protocol dispatch */
 void	supervisor_handle_channel(struct kevent *kev);
+/*
+ * Async component-launch machinery (execute.c).  A native unit that consumes
+ * components does not block svc_exec: it mints, opens each component session
+ * asynchronously, and forks only once every session reply is in.  The event
+ * loop routes a launch's in-flight session-channel readiness here.
+ */
+bool	svc_launch_owns_event(const struct svc_runtime *svc, uintptr_t ident);
+void	svc_launch_channel_event(struct svc_runtime *svc, int kq);
+void	svc_launch_reregister(struct svc_runtime *svc, int kq);
+void	svc_launch_cancel(struct svc_runtime *svc, int kq);
+bool	svc_launch_timer_owns(uintptr_t ident);
+void	svc_launch_timer_fire(uintptr_t ident, int kq);
 int	svc_channel_attach(struct svc_runtime *, int);
 int	svc_channel_rebind(struct svc_runtime *);
 void	svc_channel_close(struct svc_runtime *);
@@ -249,6 +272,7 @@ bool	on_demand_is_timer(uintptr_t ident);
 void	on_demand_teardown(int kq);
 
 /* naming.c — reverse-domain-name service registry */
+bool	naming_exists(const char *name);
 int	naming_register(const char *name, struct svc_runtime *owner);
 int	naming_unregister(const char *name, struct svc_runtime *owner);
 void	naming_remove_owner(struct svc_runtime *owner);

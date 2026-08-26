@@ -27,6 +27,7 @@
 #include <sys/procdesc.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/zfshandle.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -46,8 +47,11 @@
 #include <component_session.h>
 #include <service_bootstrap.h>
 #include <channel.h>
+#include <tzfsd.h>
 
 #include "serviced.h"
+#include "launch_limits.h"
+#include "storage_delivery.h"
 #include "fd_budget.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
@@ -61,14 +65,37 @@
  * both.  Zero is reserved for a runtime that has not been launched.
  */
 static uint64_t svc_launch_sequence;
+
+/*
+ * Timer-ident domain for the async launch deadline.  The high bits of a
+ * uintptr_t tag which subsystem owns an EVFILT_TIMER ident (see the matching
+ * STOP_TIMER_BIT / ON_DEMAND_TIMER_BIT / SCTL_CONN_TIMER_BIT allocators);
+ * bit (n-4) is reserved here.  Idents are routed back by value, so the tag is
+ * immune to services[] compaction moving the owning svc_runtime.
+ */
+#define	SVC_LAUNCH_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 4))
+#define	SVC_LAUNCH_TIMEOUT_SEC	20	/* provider on-demand launch + reply */
+static uintptr_t svc_launch_timer_next = SVC_LAUNCH_TIMER_BIT | 1;
+
 #define	SVC_TOKEN_BASE	6	/* after the typed bootstrap descriptor */
-#define	SVC_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + SERVICED_MAX_CAP_FILES + \
-				    SERVICED_MAX_CAP_NET + SERVICED_MAX_CAP_JAIL + \
-				    SERVICED_MAX_CAP_VSOCK + 1)
+#define	SVC_MAX_TOKENS	SVC_LAUNCH_MAX_TOKENS
 #define	SVC_INTERNAL_ENV	10	/* PATH, bootstrap, selectors, USER/HOME, NULL */
 #define	SVC_MAX_ENV	(SVC_INTERNAL_ENV + SERVICED_MAX_ENVIRONMENT)
-#define	SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS	2000
-#define	SVC_STORAGE_ROOT	"/var/db/serviced/storage"
+/*
+ * A component provider forks and initialises a per-session worker before it
+ * acknowledges the bootstrap.  On emulated hardware that setup (fork, sandbox
+ * entry, and the filesystem provider's mount handoff) runs well past two
+ * seconds, so a tight bound timed out every first component session.  Real
+ * hardware acknowledges in a few milliseconds; this ceiling is only ever
+ * approached on the first, cold session.
+ */
+#define	SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS	15000
+/*
+ * Longest a single wait for the session reply blocks before the main loop's
+ * service channels are pumped, so a provider mid-bootstrap can resolve its own
+ * IPC dependencies instead of deadlocking against this blocked svc_exec.
+ */
+#define	SVC_COMPONENT_BOOTSTRAP_PUMP_MS		50
 
 _Static_assert(SVC_CHANNEL_FD < SERVICE_BOOTSTRAP_FD,
     "service channel overlaps bootstrap descriptor");
@@ -78,7 +105,7 @@ _Static_assert(SVC_TOKEN_BASE == SERVICE_BOOTSTRAP_FD + 1,
     "token layout must follow bootstrap descriptor");
 _Static_assert(SVC_MAX_TOKENS <= SERVICE_BOOTSTRAP_TOKEN_MAX,
     "bootstrap token table is too small");
-_Static_assert(SERVICED_MAX_CAP_SERVICES <=
+_Static_assert(SVC_LAUNCH_MAX_NAMED_FDS <=
     SERVICE_BOOTSTRAP_CAPABILITY_MAX,
     "bootstrap capability table is too small");
 _Static_assert(SERVICED_CAP_SERVICE_NAME_MAX <=
@@ -97,6 +124,25 @@ local_component_provider(const struct serviced_component *component)
 		return ("org.5bsd.NetworkCmp");
 	if (strcmp(component->name, "crypto") == 0)
 		return ("org.5bsd.CryptoCmp");
+	return (NULL);
+}
+
+/*
+ * Return the first component provider name this manifest needs that is not
+ * registered yet, or NULL when every provider is available.  Callers defer
+ * the launch on that name instead of failing the exec with ENOENT.
+ */
+const char *
+svc_exec_blocking_provider(const struct svc_manifest *m)
+{
+	const char *provider;
+	unsigned i;
+
+	for (i = 0; i < m->ncomponents; i++) {
+		provider = local_component_provider(&m->components[i]);
+		if (provider != NULL && !naming_exists(provider))
+			return (provider);
+	}
 	return (NULL);
 }
 
@@ -168,196 +214,16 @@ component_reply(struct channel_request *request,
 }
 
 static int
-bootstrap_component(int fd, const struct svc_manifest *m,
-    const struct serviced_component *component, const int *fds, size_t nfds,
-    int *member_fd)
-{
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
-	struct component_call_state state;
-	struct channel *channel;
-	struct timespec deadline, now;
-	struct component_session_bootstrap message;
-	const char *interface;
-	int64_t milliseconds;
-	int owned, ready, result, timeout, wants_write;
-
-	if (member_fd == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	*member_fd = -1;
-	interface = local_component_interface(component);
-	if (interface == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(&message, 0, sizeof(message));
-	message.magic = COMPONENT_SESSION_MAGIC;
-	message.version = COMPONENT_SESSION_VERSION;
-	message.header_size = sizeof(message);
-	arc4random_buf(&message.instance_id, sizeof(message.instance_id));
-	strlcpy(message.name, component->name, sizeof(message.name));
-	strlcpy(message.interface, interface, sizeof(message.interface));
-	strlcpy(message.interface_version, "1.0.0",
-	    sizeof(message.interface_version));
-	strlcpy(message.client_label, m->label, sizeof(message.client_label));
-	owned = fcntl(fd, F_DUPFD_CLOEXEC, 0);
-	if (owned == -1)
-		return (-1);
-	if (channel_create(owned, &options, &channel) == -1) {
-		result = errno;
-		close(owned);
-		errno = result;
-		return (-1);
-	}
-	memset(&state, 0, sizeof(state));
-	state.instance_id = message.instance_id;
-	state.member_fd = -1;
-	if (channel_send_request(channel,
-	    &(struct channel_outgoing){
-		.size = sizeof(struct channel_outgoing),
-		.data = &message,
-		.length = sizeof(message),
-		.fds = fds,
-		.nfds = nfds
-	    }, component_reply, &state, &state.request) == -1)
-		goto fail;
-	if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
-		goto fail;
-	deadline.tv_sec += SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS / 1000;
-	deadline.tv_nsec +=
-	    (SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS % 1000) * 1000000;
-	if (deadline.tv_nsec >= 1000000000) {
-		deadline.tv_sec++;
-		deadline.tv_nsec -= 1000000000;
-	}
-	while (!state.done) {
-		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
-			goto fail;
-		milliseconds = (deadline.tv_sec - now.tv_sec) * 1000 +
-		    (deadline.tv_nsec - now.tv_nsec + 999999) / 1000000;
-		if (milliseconds <= 0) {
-			errno = ETIMEDOUT;
-			goto fail;
-		}
-		timeout = milliseconds > SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS ?
-		    SVC_COMPONENT_BOOTSTRAP_TIMEOUT_MS : (int)milliseconds;
-		wants_write = channel_wants_write(channel);
-		if (wants_write == -1)
-			goto fail;
-		ready = channel_wait(channel, wants_write, timeout);
-		if (ready == 0) {
-			errno = ETIMEDOUT;
-			goto fail;
-		}
-		if (ready == -1 ||
-		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1) ||
-		    ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1))
-			goto fail;
-	}
-	if (state.error != 0) {
-		errno = state.error;
-		goto fail;
-	}
-	*member_fd = state.member_fd;
-	channel_destroy(channel);
-	return (0);
-
-fail:
-	result = errno;
-	if (state.request != NULL) {
-		(void)channel_request_cancel(state.request);
-		channel_request_release(state.request);
-	}
-	if (state.member_fd >= 0)
-		close(state.member_fd);
-	channel_destroy(channel);
-	errno = result;
-	return (-1);
-}
-
-static bool
-safe_storage_name(const char *name)
-{
-
-	return (name != NULL && name[0] != '\0' &&
-	    strcmp(name, ".") != 0 && strcmp(name, "..") != 0 &&
-	    strchr(name, '/') == NULL);
-}
-
-static int
-open_component_storage(const char *label, const char *component)
-{
-	struct passwd *account;
-	int base, service_dir, result, error;
-
-	if (!safe_storage_name(label) || !safe_storage_name(component)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	account = getpwnam(SERVICED_DEFAULT_USER);
-	if (account == NULL) {
-		errno = ENOENT;
-		return (-1);
-	}
-	base = open(SVC_STORAGE_ROOT,
-	    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-	if (base == -1)
-		return (-1);
-	if (mkdirat(base, label, 0700) == -1 && errno != EEXIST)
-		goto fail_base;
-	service_dir = openat(base, label,
-	    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-	if (service_dir == -1)
-		goto fail_base;
-	if (fchown(service_dir, account->pw_uid, account->pw_gid) == -1 ||
-	    fchmod(service_dir, 0700) == -1 ||
-	    (mkdirat(service_dir, component, 0700) == -1 && errno != EEXIST)) {
-		error = errno;
-		close(service_dir);
-		close(base);
-		errno = error;
-		return (-1);
-	}
-	result = openat(service_dir, component,
-	    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
-	error = errno;
-	if (result != -1 &&
-	    (fchown(result, account->pw_uid, account->pw_gid) == -1 ||
-	    fchmod(result, 0700) == -1)) {
-		error = errno;
-		close(result);
-		result = -1;
-	}
-	close(service_dir);
-	close(base);
-	errno = error;
-	return (result);
-
-fail_base:
-	error = errno;
-	close(base);
-	errno = error;
-	return (-1);
-}
-
-static int
 open_consumer_bundle(const struct svc_manifest *manifest)
 {
 	char path[PATH_MAX];
-	char *marker, *next;
+	char *marker;
 
 	if (strlcpy(path, manifest->program, sizeof(path)) >= sizeof(path)) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
-	marker = NULL;
-	for (next = strstr(path, "/bin/"); next != NULL;
-	    next = strstr(next + 1, "/bin/"))
-		marker = next;
+	marker = strstr(path, "/Units/");
 	if (marker == NULL) {
 		errno = EINVAL;
 		return (-1);
@@ -373,19 +239,44 @@ open_consumer_bundle(const struct svc_manifest *manifest)
 
 static int
 prepare_component_resources(const struct svc_manifest *manifest,
-    const struct serviced_component *component, int fds[static
-    COMPONENT_SESSION_RESOURCE_MAX], size_t *nfdsp)
+    const struct serviced_component *component, uid_t uid, gid_t gid,
+    const int *service_fds,
+    unsigned nservices,
+    char names[][SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX],
+    char types[][SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX],
+    int fds[static COMPONENT_SESSION_RESOURCE_MAX], size_t *nfdsp)
 {
 	cap_rights_t rights;
+	char storage_role[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
 	size_t i;
 	int error;
 
 	*nfdsp = 0;
 	if (strcmp(component->name, "filesystem") != 0)
 		return (0);
-	fds[0] = open_component_storage(manifest->label, component->name);
+	if (snprintf(storage_role, sizeof(storage_role), "storage:%s",
+	    component->storage) >= (int)sizeof(storage_role)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	for (i = 0; i < nservices; i++)
+		if (strcmp(names[i], storage_role) == 0 &&
+		    strcmp(types[i], "zfshandle") == 0)
+			break;
+	if (i == nservices) {
+		errno = ENOENT;
+		return (-1);
+	}
+	fds[0] = tzfsd_mount_dir(service_fds[i], 0);
 	if (fds[0] == -1)
 		return (-1);
+	if (fchown(fds[0], uid, gid) == -1 ||
+	    fchmod(fds[0], 0700) == -1) {
+		error = errno != 0 ? errno : EIO;
+		close(fds[0]);
+		errno = error;
+		return (-1);
+	}
 	fds[1] = open_consumer_bundle(manifest);
 	if (fds[1] == -1) {
 		error = errno != 0 ? errno : EIO;
@@ -393,9 +284,17 @@ prepare_component_resources(const struct svc_manifest *manifest,
 		errno = error;
 		return (-1);
 	}
+	/*
+	 * Grant CAP_FLOCK on both resource descriptors.  A component provider
+	 * hardens the descriptors it receives with cap_rights_limit(2), and
+	 * that only ever narrows a right set — a provider that locks its
+	 * backing directory (the filesystem component does) therefore requires
+	 * CAP_FLOCK to already be present, or its harden step fails
+	 * ENOTCAPABLE and rejects every session.
+	 */
 	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
 	    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
-	    CAP_FTRUNCATE, CAP_FSYNC,
+	    CAP_FTRUNCATE, CAP_FSYNC, CAP_FLOCK,
 	    CAP_CREATE, CAP_MKDIRAT, CAP_UNLINKAT, CAP_RENAMEAT_SOURCE,
 	    CAP_RENAMEAT_TARGET);
 	if (cap_rights_limit(fds[0], &rights) == -1)
@@ -403,7 +302,7 @@ prepare_component_resources(const struct svc_manifest *manifest,
 	if (cap_fcntls_limit(fds[0], 0) == -1)
 		goto fail;
 	cap_rights_init(&rights, CAP_READ, CAP_PREAD, CAP_SEEK, CAP_FCNTL,
-	    CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT);
+	    CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT, CAP_FLOCK);
 	if (cap_rights_limit(fds[1], &rights) == -1)
 		goto fail;
 	if (cap_fcntls_limit(fds[1], 0) == -1)
@@ -425,10 +324,89 @@ fail:
 	return (-1);
 }
 
+static bool
+storage_is_filesystem_backing(const struct svc_manifest *manifest,
+    const char *name)
+{
+	unsigned i;
+
+	for (i = 0; i < manifest->ncomponents; i++)
+		if (strcmp(manifest->components[i].name, "filesystem") == 0 &&
+		    strcmp(manifest->components[i].storage, name) == 0)
+			return (true);
+	return (false);
+}
+
+/*
+ * Finalize storage delivery after descriptor factories consumed their private
+ * backing handles.  Mount-only claims become ordinary directory capabilities;
+ * a filesystem descriptor's backing store is not also exposed to its client.
+ */
+static int
+finalize_storage_descriptors(const struct svc_manifest *manifest, uid_t uid,
+    gid_t gid, int *fds, unsigned *nfdsp,
+    char names[][SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX],
+    char types[][SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX])
+{
+	cap_rights_t rights;
+	char role[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
+	unsigned claim, i, j;
+	int dirfd, error;
+	enum storage_delivery_kind delivery;
+
+	for (claim = 0; claim < manifest->ncap_storage; claim++) {
+		if (snprintf(role, sizeof(role), "storage:%s",
+		    manifest->cap_storage[claim].name) >= (int)sizeof(role))
+			return (errno = EOVERFLOW, -1);
+		for (i = 0; i < *nfdsp; i++)
+			if (strcmp(names[i], role) == 0 &&
+			    strcmp(types[i], "zfshandle") == 0)
+				break;
+		if (i == *nfdsp)
+			return (errno = ENOENT, -1);
+		delivery = storage_delivery_select(
+		    manifest->cap_storage[claim].rights,
+		    storage_is_filesystem_backing(manifest,
+		    manifest->cap_storage[claim].name));
+		if (delivery == STORAGE_DELIVERY_PRIVATE) {
+			close(fds[i]);
+			for (j = i + 1; j < *nfdsp; j++) {
+				fds[j - 1] = fds[j];
+				memcpy(names[j - 1], names[j], sizeof(names[j - 1]));
+				memcpy(types[j - 1], types[j], sizeof(types[j - 1]));
+			}
+			(*nfdsp)--;
+			continue;
+		}
+		if (delivery == STORAGE_DELIVERY_ZFSHANDLE)
+			continue;
+		dirfd = tzfsd_mount_dir(fds[i], 0);
+		if (dirfd == -1)
+			return (-1);
+		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
+		    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
+		    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT,
+		    CAP_UNLINKAT, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+		if (fchown(dirfd, uid, gid) == -1 || fchmod(dirfd, 0700) == -1 ||
+		    cap_rights_limit(dirfd, &rights) == -1 ||
+		    cap_fcntls_limit(dirfd, 0) == -1) {
+			error = errno != 0 ? errno : EIO;
+			close(dirfd);
+			return (errno = error, -1);
+		}
+		close(fds[i]);
+		fds[i] = dirfd;
+		strlcpy(types[i], "directory", sizeof(types[i]));
+	}
+	return (0);
+}
+
 /* Build the immutable descriptor bootstrap consumed by libservice. */
 static int
 create_service_bootstrap(const struct svc_manifest *m, unsigned ntokens,
-    unsigned nservices, bool have_capprotect)
+    unsigned nservices,
+    char names[][SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX],
+    char types[][SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX], bool have_capprotect)
 {
 	struct envfd_create_options options =
 	    ENVFD_CREATE_OPTIONS_INITIALIZER(sizeof(struct service_bootstrap));
@@ -464,8 +442,10 @@ create_service_bootstrap(const struct svc_manifest *m, unsigned ntokens,
 		bootstrap.token_fds[i] = SVC_TOKEN_BASE + i;
 	for (i = 0; i < nservices; i++) {
 		bootstrap.capabilities[i].fd = SVC_TOKEN_BASE + ntokens + i;
-		strlcpy(bootstrap.capabilities[i].name, m->cap_services[i],
+		strlcpy(bootstrap.capabilities[i].name, names[i],
 		    sizeof(bootstrap.capabilities[i].name));
+		strlcpy(bootstrap.capabilities[i].type, types[i],
+		    sizeof(bootstrap.capabilities[i].type));
 	}
 	written = write(fd, &bootstrap, sizeof(bootstrap));
 	explicit_bzero(&bootstrap, sizeof(bootstrap));
@@ -502,6 +482,22 @@ prepare_child_descriptor(int fd)
 	    cap_cloexec_limit(fd, CAP_CLOEXEC_ONCE) == -1 ? -1 : 0);
 }
 
+/*
+ * Confine a descriptor for the launched program but leave it fork-inheritable
+ * (CAP_CLOFORK_UNLOCKED).  Used for the capprotect shield instance: a provider
+ * must be able to pass it across the pdfork(2) it does per session so each
+ * worker can apply its own protection policy.  CLOFORK_ONCE would survive only
+ * the launch fork and then latch to LOCKED, dropping the descriptor in every
+ * subsequent worker.  Transfer and exec are still confined.
+ */
+static int
+prepare_child_descriptor_forkable(int fd)
+{
+
+	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_ONCE) == -1 ? -1 : 0);
+}
+
 static bool
 manifest_has_env(const struct svc_manifest *m, const char *name)
 {
@@ -528,6 +524,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
     gid_t *groups, int ngroups)
 {
 	char user_env[128], home_env[PATH_MAX + 8];
+	char unit_dir[PATH_MAX], unit_dir_env[PATH_MAX + 32];
 	char bootstrap_env[32];
 	char network_component_env[32];
 	char filesystem_component_env[32];
@@ -698,6 +695,25 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	(void)snprintf(bootstrap_env, sizeof(bootstrap_env),
 	    "%s=%d", SERVICE_BOOTSTRAP_ENV, SERVICE_BOOTSTRAP_FD);
 	env[envc++] = bootstrap_env;
+	if (strlcpy(unit_dir, m->program, sizeof(unit_dir)) >=
+	    sizeof(unit_dir))
+		_exit(126);
+	{
+		char *cursor, *marker;
+
+		marker = NULL;
+		for (cursor = unit_dir;
+		    (cursor = strstr(cursor, "/bin/")) != NULL; cursor += 5)
+			marker = cursor;
+		if (marker == NULL || marker[5] == '\0')
+			_exit(126);
+		*marker = '\0';
+	}
+	if (manifest_has_env(m, SERVICE_UNIT_DIR_ENV) ||
+	    snprintf(unit_dir_env, sizeof(unit_dir_env), "%s=%s",
+	    SERVICE_UNIT_DIR_ENV, unit_dir) >= (int)sizeof(unit_dir_env))
+		_exit(126);
+	env[envc++] = unit_dir_env;
 
 	/*
 	 * Local components are authority descriptors, not discoverable names.
@@ -800,6 +816,11 @@ int
 svc_exec(struct svc_runtime *svc, int kq)
 {
 
+	/* An async native launch is already coming up; do not start a second. */
+	if (svc->launch != NULL) {
+		errno = EALREADY;
+		return (-1);
+	}
 	switch (svc->kind) {
 	case SVC_KIND_NATIVE:
 		return (svc_exec_native(svc, kq));
@@ -967,9 +988,16 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[])
 			    setgid(gid) == -1 || setuid(uid) == -1)
 				_exit(126);
 		}
+		/*
+		 * Reset every disposition: the manager ignores the signals it
+		 * consumes through kqueue, and SIG_IGN survives exec — without
+		 * this, every launched service (including the rc world) is
+		 * born deaf to SIGTERM.
+		 */
+		for (int sig = 1; sig < NSIG; sig++)
+			(void)signal(sig, SIG_DFL);
 		sigemptyset(&mask);
 		(void)sigprocmask(SIG_SETMASK, &mask, NULL);
-		(void)signal(SIGPIPE, SIG_DFL);
 		execv(argv[0], argv);
 		_exit(127);
 	}
@@ -1032,29 +1060,91 @@ svc_exec_oneshot(struct svc_runtime *svc, int kq)
 	return (svc_exec_command(svc, kq, argv));
 }
 
+/*
+ * Async native-launch context.  A native unit that consumes components cannot
+ * be launched by a single straight-line svc_exec: opening a component session
+ * makes the provider resolve its OWN IPC dependencies (e.g. the filesystem
+ * component connecting to the audit component), which serviced must broker
+ * from its event loop.  Blocking the loop for the session reply would deadlock
+ * against that.  So svc_exec_native mints synchronously, snapshots every
+ * pre-fork descriptor into this heap context, and then drives the component
+ * sessions asynchronously: each session's request is sent, its reply channel
+ * is armed on the main kqueue, and only once every session has completed does
+ * the launch fork and exec.  All descriptors here are parent-owned until the
+ * fork consumes them (or an abort closes them).
+ */
+struct svc_launch {
+	struct svc_manifest minted;	/* released to oracle on abort */
+	struct timespec	exec_start;
+
+	int		oracle_end;
+	int		child_end;
+	int		coalition_fd;
+	int		capprotect_fd;
+
+	int		token_fds[SVC_MAX_TOKENS];
+	unsigned	ntokens;
+	unsigned	expected_tokens;
+
+	int		service_fds[SERVICE_BOOTSTRAP_CAPABILITY_MAX];
+	char		service_names[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
+			    [SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
+	char		service_types[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
+			    [SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX];
+	unsigned	nservices;
+
+	int		component_fds[SERVICED_MAX_COMPONENTS];
+	unsigned	component_indices[SERVICED_MAX_COMPONENTS];
+	unsigned	ncomponents;		/* completed sessions */
+
+	uid_t		uid;
+	gid_t		gid;
+	gid_t		groups[NGROUPS_MAX + 1];
+	int		ngroups;
+	bool		have_creds;
+	char		homedir[PATH_MAX];
+
+	/* In-flight component session (component_indices[ncomponents..]). */
+	unsigned	comp_cursor;		/* index into m->components */
+	int		session_cfd;		/* the component fd being injected */
+	struct channel *session;		/* wraps a dup of session_cfd */
+	int		session_fd;		/* channel_fd(session); armed on kq */
+	struct component_call_state call;
+	int		resource_fds[COMPONENT_SESSION_RESOURCE_MAX];
+	size_t		nresources;
+	uintptr_t	timer_ident;		/* EVFILT_TIMER; 0 = unarmed */
+};
+
+static void svc_launch_advance(struct svc_runtime *svc, int kq);
+static void svc_launch_finish(struct svc_runtime *svc, int kq);
+static void svc_launch_abort(struct svc_runtime *svc, int error, int kq);
+static int svc_launch_component_start(struct svc_runtime *svc, int kq);
+
 static int
 svc_exec_native(struct svc_runtime *svc, int kq)
 {
+	/* serviced launches on one event-loop thread.  This large rollback
+	 * record must not consume the process stack. */
+	static struct svc_manifest minted_manifest;
 	struct svc_manifest *m;
-	struct kevent kev[3];
+	struct svc_launch *L;		/* heap snapshot handed to the async path */
 	struct passwd *pw;
 	struct group *gr;
 	struct timespec exec_start;
 	char homedir[PATH_MAX];
-	struct svc_manifest minted_manifest;
-	int oracle_end, child_end, coalition_fd, capprotect_fd, bootstrap_fd;
+	int oracle_end, child_end, coalition_fd, capprotect_fd;
 	int token_fds[SVC_MAX_TOKENS];
-	int service_fds[SERVICED_MAX_CAP_SERVICES];
-	int component_fds[SERVICED_MAX_COMPONENTS];
-	unsigned component_indices[SERVICED_MAX_COMPONENTS];
-	unsigned ntokens, nservices, ncomponents;
+	int service_fds[SERVICE_BOOTSTRAP_CAPABILITY_MAX];
+	char service_names[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
+	    [SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
+	char service_types[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
+	    [SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX];
+	unsigned ntokens, nservices;
 	uid_t uid;
 	gid_t gid;
 	gid_t groups[NGROUPS_MAX + 1];
 	int ngroups;
 	bool have_creds;
-	pid_t pid;
-	int pd_fd;
 	int saved_errno __unused = 0;	/* consumed only by the DTrace probe */
 	unsigned expected_tokens, i;
 
@@ -1093,21 +1183,13 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * manifest can never overrun token_fds[] or reach pdfork() partially
 	 * provisioned.
 	 */
-	if (m->ncap_paths > SERVICED_MAX_CAP_PATHS ||
-	    m->ncap_files > SERVICED_MAX_CAP_FILES ||
-	    m->ncap_net > SERVICED_MAX_CAP_NET ||
-	    m->ncap_jail > SERVICED_MAX_CAP_JAIL ||
-	    m->ncap_vsock > SERVICED_MAX_CAP_VSOCK ||
-	    m->ncap_services > SERVICED_MAX_CAP_SERVICES ||
-	    m->ncomponents > SERVICED_MAX_COMPONENTS) {
+	if (!svc_launch_counts_valid(m)) {
 		/* Keep count validation next to the launch barrier. */
 		syslog(LOG_ERR, "svc_exec %s: invalid capability counts",
 		    m->label);
 		return (-1);
 	}
-	expected_tokens = m->ncap_paths + m->ncap_files + m->ncap_net +
-	    m->ncap_jail + m->ncap_vsock + m->ncap_storage +
-	    (m->cap_system != 0 ? 1u : 0u);
+	expected_tokens = svc_launch_token_count(m);
 	if (expected_tokens > SVC_MAX_TOKENS) {
 		syslog(LOG_ERR, "svc_exec %s: too many capability tokens: %u",
 		    m->label, expected_tokens);
@@ -1121,7 +1203,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * and local-component descriptors are added explicitly.
 	 */
 	if (serviced_fd_budget_check((size_t)expected_tokens +
-	    m->ncap_services + m->ncomponents + 12,
+	    m->ncap_storage + m->ncap_services + m->ncomponents + 12,
 	    "service launch") == -1) {
 		saved_errno = errno;
 		syslog(LOG_ERR,
@@ -1184,7 +1266,6 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		}
 	}
 
-	bootstrap_fd = -1;
 	svc->jail_fd = -1;
 
 	/* Ensure required kernel modules are loaded before launch. */
@@ -1263,8 +1344,17 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * timeout.  Track total elapsed time and abort if the mint
 	 * phase exceeds SVC_MINT_DEADLINE_MS to avoid blocking the
 	 * event loop for an unbounded duration.
+	 *
+	 * The ceiling must clear the one-time cost of a cold storage
+	 * provider: the first ORACLE_OP_MINT_STORAGE makes oracled
+	 * posix_spawn(2) tzfsd, which imports the pool and creates the
+	 * dataset before replying.  On emulated hardware that cold start
+	 * alone can exceed two seconds; a tighter ceiling aborted every
+	 * first component/storage launch.  Subsequent mints reuse the
+	 * resident tzfsd and return in well under a millisecond, so this
+	 * bound is only ever approached once per boot.
 	 */
-#define	SVC_MINT_DEADLINE_MS	2000	/* max total mint phase */
+#define	SVC_MINT_DEADLINE_MS	15000	/* max total mint phase */
 	{
 	struct timespec mint_start, mint_now;
 	uint64_t elapsed_ms;
@@ -1272,7 +1362,6 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	clock_gettime(CLOCK_MONOTONIC, &mint_start);
 	ntokens = 0;
 	nservices = 0;
-	ncomponents = 0;
 
 #define	MINT_CHECK_DEADLINE() do {					\
 	clock_gettime(CLOCK_MONOTONIC, &mint_now);			\
@@ -1381,8 +1470,29 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 			SERVICED_PROBE_CAP_MINT(m->label, "storage", -1);
 			goto fail_tokens;
 		}
+		if (m->cap_storage[i].lifetime == ORT_STORAGE_LEASE &&
+		    storage_lease_acquire(&m->cap_storage[i]) == -1) {
+			int saved = errno;
+
+			close(tfd);
+			(void)oracle_destroy_storage(sd.oracle_channel_fd,
+			    &m->cap_storage[i]);
+			errno = saved;
+			goto fail_tokens;
+		}
 		SERVICED_PROBE_CAP_MINT(m->label, "storage", 0);
-		token_fds[ntokens++] = tfd;
+		if (nservices >= SERVICE_BOOTSTRAP_CAPABILITY_MAX ||
+		    snprintf(service_names[nservices],
+		    sizeof(service_names[nservices]), "storage:%s",
+		    m->cap_storage[i].name) >=
+		    (int)sizeof(service_names[nservices])) {
+			close(tfd);
+			errno = EOVERFLOW;
+			goto fail_tokens;
+		}
+		strlcpy(service_types[nservices], "zfshandle",
+		    sizeof(service_types[nservices]));
+		service_fds[nservices++] = tfd;
 		minted_manifest.cap_storage[minted_manifest.ncap_storage++] =
 		    m->cap_storage[i];
 		MINT_CHECK_DEADLINE();
@@ -1413,6 +1523,15 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 			    m->cap_services[i], -1);
 			goto fail_tokens;
 		}
+		if (nservices >= SERVICE_BOOTSTRAP_CAPABILITY_MAX) {
+			close(sfd);
+			errno = EOVERFLOW;
+			goto fail_tokens;
+		}
+		strlcpy(service_names[nservices], m->cap_services[i],
+		    sizeof(service_names[nservices]));
+		strlcpy(service_types[nservices], m->cap_services[i],
+		    sizeof(service_types[nservices]));
 		service_fds[nservices++] = sfd;
 		SERVICED_PROBE_CAP_SERVICE(m->label, m->cap_services[i], 0);
 		MINT_CHECK_DEADLINE();
@@ -1426,10 +1545,12 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * pdfork().  The child receives only the complete manifest token set;
 	 * any missing token takes the fail_tokens cleanup path instead.
 	 */
-	if (ntokens != expected_tokens || nservices != m->ncap_services) {
+	if (ntokens != expected_tokens ||
+	    nservices != m->ncap_storage + m->ncap_services) {
 		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
 		    "(%u/%u tokens, %u/%u services)", m->label, ntokens,
-		    expected_tokens, nservices, m->ncap_services);
+		    expected_tokens, nservices,
+		    m->ncap_storage + m->ncap_services);
 		goto fail_tokens;
 	}
 
@@ -1439,387 +1560,64 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * and per-manifest protocol options are deliberately not part of the
 	 * application model.
 	 */
-	for (i = 0; i < m->ncomponents; i++) {
-		const struct serviced_component *component;
-		const char *provider;
-		cap_rights_t component_rights;
-		cap_ioctl_t component_ioctls[] = {
-			MAC_CAPABILITY_SENDMSG,
-			MAC_CAPABILITY_RECVMSG,
-			MAC_CAPABILITY_GETINFO
-		};
-		int resource_fds[COMPONENT_SESSION_RESOURCE_MAX];
-		size_t nresources, resource_index;
-		int error, cfd, member_fd;
-
-		component = &m->components[i];
-		provider = local_component_provider(component);
-		if (provider == NULL) {
-			syslog(LOG_ERR, "svc_exec %s: invalid component %s",
-			    m->label, component->name);
-			goto fail_tokens;
-		}
-		SERVICED_PROBE_COMPONENT_RESOLVE(m->label, component->name,
-		    provider);
-		cfd = naming_lookup(provider, svc, &error);
-		if (cfd == -1) {
-			syslog(LOG_ERR,
-			    "svc_exec %s: component %s provider %s: %s",
-			    m->label, component->name, provider,
-			    strerror(error));
-			SERVICED_PROBE_COMPONENT_SESSION(m->label,
-			    component->name, provider, error);
-			serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
-			    "svc=%s component=%s provider=%s phase=resolve",
-			    m->label, component->name, provider);
-			goto fail_tokens;
-		}
-		nresources = 0;
-		error = 0;
-		member_fd = -1;
-		if (prepare_component_resources(m, component, resource_fds,
-		    &nresources) == -1)
-			error = errno != 0 ? errno : EIO;
-		else if (cap_xfer_limit(cfd, CAP_XFER_NONE) == -1 ||
-		    cap_cloexec_limit(cfd, CAP_CLOEXEC_ONCE) == -1)
-			error = errno != 0 ? errno : EIO;
-		else if (bootstrap_component(cfd, m, component,
-		    resource_fds, nresources, &member_fd) == -1)
-			error = errno != 0 ? errno : EIO;
-		for (resource_index = 0; resource_index < nresources;
-		    resource_index++)
-			close(resource_fds[resource_index]);
-		if (error != 0) {
-			close(cfd);
-			syslog(LOG_ERR,
-			    "svc_exec %s: component %s bootstrap: %s",
-			    m->label, component->name, strerror(error));
-			SERVICED_PROBE_COMPONENT_SESSION(m->label,
-			    component->name, provider, error);
-			serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
-			    "svc=%s component=%s provider=%s phase=bootstrap",
-			    m->label, component->name, provider);
-			goto fail_tokens;
-		}
-		error = cap_xfer_limit(member_fd, CAP_XFER_ONCE) == -1 ?
-		    errno : mac_cap_coalition_enlist(coalition_fd, member_fd);
-		if (error == -1)
-			error = errno;
-		if (error != 0) {
-			close(member_fd);
-			close(cfd);
-			syslog(LOG_ERR,
-			    "svc_exec %s: component %s coalition enlist: %s",
-			    m->label, component->name, strerror(error));
-			SERVICED_PROBE_COMPONENT_SESSION(m->label,
-			    component->name, provider, error);
-			serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
-			    "svc=%s component=%s provider=%s "
-			    "phase=coalition-enlist",
-			    m->label, component->name, provider);
-			goto fail_tokens;
-		}
-		close(member_fd);
-		cap_rights_init(&component_rights, CAP_EVENT, CAP_FCNTL,
-		    CAP_FSTAT, CAP_IOCTL);
-		if (cap_rights_limit(cfd, &component_rights) == -1 ||
-		    cap_fcntls_limit(cfd, 0) == -1 ||
-		    cap_ioctls_limit(cfd, component_ioctls,
-		    nitems(component_ioctls)) == -1) {
-			error = errno;
-			close(cfd);
-			syslog(LOG_ERR,
-			    "svc_exec %s: component %s channel confinement: %s",
-			    m->label, component->name, strerror(error));
-			SERVICED_PROBE_COMPONENT_SESSION(m->label,
-			    component->name, provider, error);
-			serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
-			    "svc=%s component=%s provider=%s "
-			    "phase=channel-confinement",
-			    m->label, component->name, provider);
-			goto fail_tokens;
-		}
-		component_fds[ncomponents] = cfd;
-		component_indices[ncomponents] = i;
-		ncomponents++;
-		SERVICED_PROBE_COMPONENT_SESSION(m->label, component->name,
-		    provider, 0);
-		SERVICED_PROBE_COMPONENT_INJECT(m->label, component->name, cfd);
-		serviced_audit(AUE_SERVICED_COMPONENT, getuid(), 0,
-		    "svc=%s component=%s provider=%s phase=delegate",
-		    m->label, component->name, provider);
-	}
-
-	if (ntokens > 0)
-		syslog(LOG_DEBUG, "svc_exec %s: minted %u tokens",
-		    m->label, ntokens);
-
-	/* Create jail via oracle if manifest specifies one. */
-	if (m->has_jail) {
-		svc->jail_fd = oracle_create_jail(sd.oracle_channel_fd,
-		    m->jail_name, m->jail_path,
-		    m->jail_hostname, m->jail_ip4_addr);
-		if (svc->jail_fd == -1) {
-			saved_errno = errno;
-			syslog(LOG_ERR, "svc_exec %s: failed to create jail %s: %m",
-			    m->label, m->jail_name);
-			SERVICED_PROBE_CAP_MINT(m->label, "jail-create", -1);
-			serviced_audit(AUE_SERVICED_CAP_MINT, getuid(),
-			    saved_errno,
-			    "svc=%s jail=%s phase=ensure-persistent",
-			    m->label, m->jail_name);
-			errno = saved_errno;
-			goto fail_tokens;
-		}
-		syslog(LOG_INFO, "svc_exec %s: created jail %s jd=%d",
-		    m->label, m->jail_name, svc->jail_fd);
-		SERVICED_PROBE_CAP_MINT(m->label, "jail-create", 0);
-		serviced_audit(AUE_SERVICED_CAP_MINT, getuid(), 0,
-		    "svc=%s jail=%s phase=ensure-persistent",
-		    m->label, m->jail_name);
-	}
-
-	if (prepare_child_descriptor(child_end) == -1 ||
-	    (capprotect_fd >= 0 &&
-	    prepare_child_descriptor(capprotect_fd) == -1))
-		goto fail_child_confinement;
-	for (i = 0; i < ntokens; i++)
-		if (prepare_child_descriptor(token_fds[i]) == -1)
-			goto fail_child_confinement;
-	for (i = 0; i < nservices; i++)
-		if (prepare_child_descriptor(service_fds[i]) == -1)
-			goto fail_child_confinement;
-	for (i = 0; i < ncomponents; i++)
-		if (prepare_child_descriptor(component_fds[i]) == -1)
-			goto fail_child_confinement;
-
-	bootstrap_fd = create_service_bootstrap(m, ntokens, nservices,
-	    capprotect_fd >= 0);
-	if (bootstrap_fd == -1) {
-		saved_errno = errno;
-		syslog(LOG_ERR, "svc_exec %s: bootstrap descriptor: %m",
-		    m->label);
-		SERVICED_PROBE_BOOTSTRAP_CREATE(m->label, ntokens,
-		    nservices + ncomponents, saved_errno);
-		SERVICED_PROBE_SVC_EXEC_FAIL(m->label, saved_errno);
-		serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(), saved_errno,
-		    "svc=%s phase=bootstrap tokens=%u descriptors=%u",
-		    m->label, ntokens, nservices + ncomponents);
-		errno = saved_errno;
+	/*
+	 * Minting is complete.  Snapshot every parent-held pre-fork descriptor
+	 * into a heap launch context and drive the component sessions
+	 * asynchronously; the fork happens later, once every session reply is
+	 * in (svc_launch_finish).  From here the descriptors are owned by the
+	 * launch context, not this stack frame.
+	 */
+	L = calloc(1, sizeof(*L));
+	if (L == NULL) {
+		errno = ENOMEM;
 		goto fail_tokens;
 	}
-	SERVICED_PROBE_BOOTSTRAP_CREATE(m->label, ntokens,
-	    nservices + ncomponents, 0);
-
-	/* Fork via pdfork for process descriptor. */
-	pid = pdfork(&pd_fd, PD_CLOEXEC);
-	if (pid == -1) {
-		syslog(LOG_ERR, "svc_exec %s: pdfork: %m", m->label);
-		goto fail_tokens;
-	}
-
-	if (pid == 0) {
-		/* Child — does not return. */
-		child_exec(m, child_end, capprotect_fd, bootstrap_fd, token_fds,
-		    ntokens, service_fds, nservices, component_fds,
-		    component_indices, ncomponents, svc->jail_fd,
-		    uid, gid, have_creds,
-		    homedir[0] != '\0' ? homedir : NULL,
-		    groups, ngroups);
-		/* NOTREACHED */
-	}
-
-	/* Parent. */
-	close(child_end);
-	close(bootstrap_fd);
-	if (capprotect_fd >= 0)
-		close(capprotect_fd);
+	L->minted = minted_manifest;
+	L->exec_start = exec_start;
+	L->oracle_end = oracle_end;
+	L->child_end = child_end;
+	L->coalition_fd = coalition_fd;
+	L->capprotect_fd = capprotect_fd;
+	L->ntokens = ntokens;
+	L->expected_tokens = expected_tokens;
 	for (i = 0; i < ntokens; i++)
-		close(token_fds[i]);
-	for (i = 0; i < nservices; i++)
-		close(service_fds[i]);
-	for (i = 0; i < ncomponents; i++)
-		close(component_fds[i]);
-	if (svc->jail_fd >= 0 &&
-	    (cap_xfer_limit(svc->jail_fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(svc->jail_fd, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(svc->jail_fd, CAP_CLOEXEC_LOCKED) == -1)) {
-		saved_errno = errno;
-		syslog(LOG_ERR, "svc_exec %s: jail fd confinement: %m",
-		    m->label);
-		goto fail_postfork;
+		L->token_fds[i] = token_fds[i];
+	L->nservices = nservices;
+	for (i = 0; i < nservices; i++) {
+		L->service_fds[i] = service_fds[i];
+		strlcpy(L->service_names[i], service_names[i],
+		    sizeof(L->service_names[i]));
+		strlcpy(L->service_types[i], service_types[i],
+		    sizeof(L->service_types[i]));
 	}
-
-	/* Enlist in coalition and set as leader. */
-	if (mac_cap_coalition_enlist(coalition_fd, pd_fd) != 0) {
-		saved_errno = errno;
-		syslog(LOG_ERR, "svc_exec %s: coalition enlist: %m",
-		    m->label);
-		goto fail_postfork;
-	}
-	if (mac_cap_coalition_set_leader(coalition_fd, pd_fd) != 0) {
-		saved_errno = errno;
-		syslog(LOG_ERR, "svc_exec %s: coalition set_leader: %m",
-		    m->label);
-		goto fail_postfork;
-	}
-
-	/* Freeze all supervisor-owned authority before another service fork. */
-	{
-		cap_rights_t rights;
-
-		cap_rights_init(&rights, CAP_PDKILL, CAP_PDGETPID, CAP_EVENT);
-		if (cap_rights_limit(pd_fd, &rights) == -1 ||
-		    cap_xfer_limit(pd_fd, CAP_XFER_NONE) == -1 ||
-		    cap_clofork_limit(pd_fd, CAP_CLOFORK_LOCKED) == -1 ||
-		    cap_cloexec_limit(pd_fd, CAP_CLOEXEC_LOCKED) == -1 ||
-		    cap_clofork_limit(oracle_end, CAP_CLOFORK_LOCKED) == -1 ||
-		    cap_cloexec_limit(oracle_end, CAP_CLOEXEC_LOCKED) == -1 ||
-		    cap_clofork_limit(coalition_fd, CAP_CLOFORK_LOCKED) == -1 ||
-		    cap_cloexec_limit(coalition_fd, CAP_CLOEXEC_LOCKED) == -1) {
-			saved_errno = errno;
-			syslog(LOG_ERR,
-			    "svc_exec %s: supervisor fd confinement: %m",
-			    m->label);
-			goto fail_postfork;
-		}
-	}
-
-	/* Store state. */
-	svc->pid = pid;
-	svc->launch_id = ++svc_launch_sequence;
-	if (svc->launch_id == 0)
-		svc->launch_id = ++svc_launch_sequence;
-	svc->pd_fd = pd_fd;
-	if (svc_channel_attach(svc, oracle_end) == -1) {
-		saved_errno = errno;
-		oracle_end = -1;
-		syslog(LOG_ERR, "svc_exec %s: control channel: %m",
-		    m->label);
-		goto fail_postfork;
-	}
-	oracle_end = -1;
-	svc->coalition_fd = coalition_fd;
-	svc->state = SVC_STATE_STARTING;
-	svc->protocol_ready = false;
-	memset(svc->name_state, SVC_NAME_UNCLAIMED,
-	    sizeof(svc->name_state));
-	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
-
-	/* Register on kqueue. */
-	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,
-	    NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
-	EV_SET(&kev[1], svc->channel_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
-	EV_SET(&kev[2], coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
-
-	if (kevent(kq, kev, 3, NULL, 0, NULL) == -1) {
-		syslog(LOG_ERR, "svc_exec %s: kevent register: %m",
-		    m->label);
-		pdkill(pd_fd, SIGKILL);
-		waitpid(pid, NULL, WNOHANG);
-		oracle_release_manifest(sd.oracle_channel_fd,
-		    &minted_manifest);
-		close(svc->pd_fd);
-		svc->pd_fd = -1;
-		svc_channel_close(svc);
-		close(svc->coalition_fd);
-		svc->coalition_fd = -1;
-		if (svc->jail_fd >= 0) {
-			jail_remove_jd(svc->jail_fd);
-			close(svc->jail_fd);
-			svc->jail_fd = -1;
-		}
-		svc->pid = 0;
-		svc->state = SVC_STATE_STOPPED;
+	L->uid = uid;
+	L->gid = gid;
+	L->ngroups = ngroups;
+	for (i = 0; i < (unsigned)ngroups && i < nitems(L->groups); i++)
+		L->groups[i] = groups[i];
+	L->have_creds = have_creds;
+	strlcpy(L->homedir, homedir, sizeof(L->homedir));
+	L->comp_cursor = 0;
+	L->ncomponents = 0;
+	L->session = NULL;
+	L->session_fd = -1;
+	L->session_cfd = -1;
+	svc->launch = L;
+	/*
+	 * Drive the launch.  A unit with no components resolves synchronously
+	 * (advance -> finish -> fork) and returns here already STARTING or, on
+	 * failure, aborted back to STOPPED with launch cleared.  A unit with
+	 * components suspends with launch != NULL until its session replies
+	 * arrive.  Report the synchronous outcome so callers that expect a -1
+	 * on a failed launch still get one.
+	 */
+	svc_launch_advance(svc, kq);
+	if (svc->launch == NULL && svc->state != SVC_STATE_STARTING) {
+		errno = EIO;
 		return (-1);
-	}
-	svc_channel_sync_events(svc, kq);
-
-	syslog(LOG_INFO, "service %s: started pid %jd",
-	    m->label, (intmax_t)pid);
-	SERVICED_PROBE_SVC_START(m->label, pid);
-
-	/*
-	 * Audit the launch before a fast child can be promoted to RUNNING.
-	 * Executing under changed credentials is a security-relevant
-	 * transition, so record the resulting principal in the trusted trail.
-	 */
-	serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(), 0,
-	    "svc=%s pid=%jd uid=%u gid=%u creds_changed=%d",
-	    m->label, (intmax_t)pid, (unsigned)uid, (unsigned)gid,
-	    have_creds ? 1 : 0);
-
-	/*
-	 * Close the registration race with a fast child that reaches
-	 * cap_enter() before EVFILT_PROCDESC is installed.  Registration
-	 * precedes the query: a later transition produces NOTE_CAPMODE,
-	 * while an earlier transition is observed here.  The supervisor's
-	 * STARTING-state guard makes the event/query overlap idempotent.
-	 */
-	switch (pdincapmode(pd_fd)) {
-	case 1:
-		memset(&kev[0], 0, sizeof(kev[0]));
-		kev[0].filter = EVFILT_PROCDESC;
-		kev[0].fflags = NOTE_CAPMODE;
-		kev[0].udata = svc;
-		supervisor_handle_procdesc(&kev[0]);
-		break;
-	case 0:
-		break;
-	default: {
-		int query_error;
-
-		query_error = errno;
-		syslog(LOG_ERR, "svc_exec %s: initial pdincapmode: %s",
-		    m->label, strerror(query_error));
-		SERVICED_PROBE_SVC_EXEC_FAIL(m->label, query_error);
-		serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(), query_error,
-		    "svc=%s phase=capmode-registration-query", m->label);
-		break;
-	}
-	}
-
-	{
-		struct timespec exec_end;
-		uint64_t dur __unused;
-
-		clock_gettime(CLOCK_MONOTONIC, &exec_end);
-		dur = (uint64_t)(exec_end.tv_sec - exec_start.tv_sec) *
-		    1000000000ULL +
-		    (uint64_t)(exec_end.tv_nsec - exec_start.tv_nsec);
-		SERVICED_PROBE_SVC_EXEC_DONE(m->label, dur, ntokens);
 	}
 	return (0);
 
-fail_child_confinement:
-	saved_errno = errno;
-	syslog(LOG_ERR, "svc_exec %s: child descriptor confinement: %m",
-	    m->label);
-	SERVICED_PROBE_SVC_EXEC_FAIL(m->label, saved_errno);
-	serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(), saved_errno,
-	    "svc=%s phase=child-descriptor-confinement tokens=%u "
-	    "services=%u components=%u", m->label, ntokens, nservices,
-	    ncomponents);
-	errno = saved_errno;
-	goto fail_tokens;
-
-fail_postfork:
-	/* child_end and token_fds already closed by parent path above.
-	 * Report the errno captured at the failure site: the intervening
-	 * syslog() and the cleanup syscalls below can clobber errno. */
-	SERVICED_PROBE_SVC_EXEC_FAIL(m->label, saved_errno);
-	pdkill(pd_fd, SIGKILL);
-	waitpid(pid, NULL, WNOHANG);
-	oracle_release_manifest(sd.oracle_channel_fd, &minted_manifest);
-	close(pd_fd);
-	close(oracle_end);
-	close(coalition_fd);
-	if (svc->jail_fd >= 0) {
-		jail_remove_jd(svc->jail_fd);
-		close(svc->jail_fd);
-		svc->jail_fd = -1;
-	}
-	return (-1);
 
 fail_tokens:
 	/*
@@ -1836,18 +1634,658 @@ fail_tokens:
 	close(coalition_fd);
 	if (capprotect_fd >= 0)
 		close(capprotect_fd);
-	if (bootstrap_fd >= 0)
-		close(bootstrap_fd);
 	for (i = 0; i < ntokens; i++)
 		close(token_fds[i]);
 	for (i = 0; i < nservices; i++)
 		close(service_fds[i]);
-	for (i = 0; i < ncomponents; i++)
-		close(component_fds[i]);
 	if (svc->jail_fd >= 0) {
 		jail_remove_jd(svc->jail_fd);
 		close(svc->jail_fd);
 		svc->jail_fd = -1;
 	}
 	return (-1);
+}
+
+/*
+ * Arm the overall launch deadline once, at the start of the first component
+ * session.  A single EV_ONESHOT timer bounds the entire async launch: if any
+ * provider fails to broker its session in time (or hangs after accepting the
+ * connection) the launch is aborted rather than pinned open forever.  The
+ * ident is tagged and routed by value, so it survives services[] compaction
+ * without a udata re-point.
+ */
+static void
+svc_launch_arm_timer(struct svc_runtime *svc, int kq)
+{
+	struct svc_launch *L = svc->launch;
+	struct kevent kev;
+
+	if (L == NULL || L->timer_ident != 0)
+		return;
+	L->timer_ident = svc_launch_timer_next;
+	svc_launch_timer_next = SVC_LAUNCH_TIMER_BIT |
+	    ((svc_launch_timer_next + 1) & (SVC_LAUNCH_TIMER_BIT - 1));
+	EV_SET(&kev, L->timer_ident, EVFILT_TIMER, EV_ADD | EV_ONESHOT,
+	    NOTE_SECONDS, SVC_LAUNCH_TIMEOUT_SEC, svc);
+	(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+}
+
+/* Cancel the launch deadline (idempotent). */
+static void
+svc_launch_disarm_timer(struct svc_runtime *svc, int kq)
+{
+	struct svc_launch *L = svc->launch;
+	struct kevent kev;
+
+	if (L == NULL || L->timer_ident == 0)
+		return;
+	EV_SET(&kev, L->timer_ident, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+	(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	L->timer_ident = 0;
+}
+
+/*
+ * Arm (or re-arm) the in-flight component session channel on the main kqueue.
+ * READ is always watched for the reply; WRITE is watched only while the
+ * request still needs flushing.  udata is the svc_runtime so the event loop
+ * can route readiness back to svc_launch_channel_event().
+ */
+static void
+svc_launch_arm(struct svc_runtime *svc, int kq)
+{
+	struct svc_launch *L = svc->launch;
+	struct kevent kev[2];
+	int wants_write, n;
+
+	if (L == NULL || L->session == NULL || L->session_fd < 0)
+		return;
+	n = 0;
+	EV_SET(&kev[n++], L->session_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+	wants_write = channel_wants_write(L->session);
+	EV_SET(&kev[n++], L->session_fd, EVFILT_WRITE,
+	    wants_write > 0 ? EV_ADD : EV_DELETE, 0, 0, svc);
+	(void)kevent(kq, kev, n, NULL, 0, NULL);
+}
+
+/*
+ * Re-point a pending launch's session-channel events at the (possibly moved)
+ * svc_runtime.  Called from svc_reregister_kevents after services[] compaction,
+ * mirroring how pd_fd/channel_fd/coalition_fd udata is refreshed.
+ */
+void
+svc_launch_reregister(struct svc_runtime *svc, int kq)
+{
+
+	svc_launch_arm(svc, kq);
+}
+
+/* Tear down the in-flight session channel (kqueue events + channel + cfd). */
+static void
+svc_launch_drop_session(struct svc_runtime *svc, int kq)
+{
+	struct svc_launch *L = svc->launch;
+	struct kevent kev[2];
+	size_t r;
+
+	if (L == NULL)
+		return;
+	if (L->session_fd >= 0) {
+		EV_SET(&kev[0], L->session_fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+		EV_SET(&kev[1], L->session_fd, EVFILT_WRITE, EV_DELETE, 0, 0,
+		    NULL);
+		(void)kevent(kq, kev, 2, NULL, 0, NULL);
+		L->session_fd = -1;
+	}
+	if (L->call.request != NULL) {
+		(void)channel_request_cancel(L->call.request);
+		channel_request_release(L->call.request);
+		L->call.request = NULL;
+	}
+	if (L->session != NULL) {
+		channel_destroy(L->session);
+		L->session = NULL;
+	}
+	for (r = 0; r < L->nresources; r++)
+		if (L->resource_fds[r] >= 0)
+			close(L->resource_fds[r]);
+	L->nresources = 0;
+	if (L->session_cfd >= 0) {
+		close(L->session_cfd);
+		L->session_cfd = -1;
+	}
+}
+
+/*
+ * Abandon an async launch before the fork: release the minted manifest, close
+ * every parent-held descriptor, and return the unit to STOPPED.  Restart
+ * policy (if any) re-triggers a fresh launch later; a component consumer whose
+ * provider is up will simply be relaunched on the next lookup.
+ */
+static void
+svc_launch_abort(struct svc_runtime *svc, int error, int kq)
+{
+	struct svc_launch *L = svc->launch;
+	unsigned i;
+
+	if (L == NULL)
+		return;
+	syslog(LOG_ERR, "svc_exec %s: async launch aborted: %s",
+	    svc->manifest.label, strerror(error != 0 ? error : EIO));
+	SERVICED_PROBE_SVC_EXEC_FAIL(svc->manifest.label, error);
+	svc_launch_disarm_timer(svc, kq);
+	svc_launch_drop_session(svc, kq);
+	oracle_release_manifest(sd.oracle_channel_fd, &L->minted);
+	if (L->oracle_end >= 0)
+		close(L->oracle_end);
+	if (L->child_end >= 0)
+		close(L->child_end);
+	if (L->coalition_fd >= 0)
+		close(L->coalition_fd);
+	if (L->capprotect_fd >= 0)
+		close(L->capprotect_fd);
+	for (i = 0; i < L->ntokens; i++)
+		if (L->token_fds[i] >= 0)
+			close(L->token_fds[i]);
+	for (i = 0; i < L->nservices; i++)
+		if (L->service_fds[i] >= 0)
+			close(L->service_fds[i]);
+	for (i = 0; i < L->ncomponents; i++)
+		if (L->component_fds[i] >= 0)
+			close(L->component_fds[i]);
+	if (svc->jail_fd >= 0) {
+		jail_remove_jd(svc->jail_fd);
+		close(svc->jail_fd);
+		svc->jail_fd = -1;
+	}
+	free(L);
+	svc->launch = NULL;
+	svc->pid = 0;
+	svc->state = SVC_STATE_STOPPED;
+}
+
+/*
+ * All component sessions are established: finalize storage delivery, create
+ * the jail, confine child descriptors, and fork/exec.  Mirrors the tail of the
+ * former synchronous svc_exec_native, operating on the launch context.
+ */
+static void
+svc_launch_finish(struct svc_runtime *svc, int kq)
+{
+	struct svc_launch *L = svc->launch;
+	struct svc_manifest *m = &svc->manifest;
+	struct kevent kev[3];
+	int bootstrap_fd = -1;
+	int pd_fd = -1;
+	pid_t pid;
+	int saved_errno = 0;
+	unsigned i;
+
+	/* Every session is in hand; the launch deadline no longer applies. */
+	svc_launch_disarm_timer(svc, kq);
+
+	if (finalize_storage_descriptors(m, L->uid, L->gid, L->service_fds,
+	    &L->nservices, L->service_names, L->service_types) == -1) {
+		syslog(LOG_ERR, "svc_exec %s: storage descriptor delivery: %m",
+		    m->label);
+		svc_launch_abort(svc, errno, kq);
+		return;
+	}
+	if (L->ntokens > 0)
+		syslog(LOG_DEBUG, "svc_exec %s: minted %u tokens", m->label,
+		    L->ntokens);
+
+	if (m->has_jail) {
+		svc->jail_fd = oracle_create_jail(sd.oracle_channel_fd,
+		    m->jail_name, m->jail_path, m->jail_hostname,
+		    m->jail_ip4_addr);
+		if (svc->jail_fd == -1) {
+			syslog(LOG_ERR, "svc_exec %s: failed to create jail %s: "
+			    "%m", m->label, m->jail_name);
+			svc_launch_abort(svc, errno, kq);
+			return;
+		}
+		syslog(LOG_INFO, "svc_exec %s: created jail %s jd=%d", m->label,
+		    m->jail_name, svc->jail_fd);
+	}
+
+	if (prepare_child_descriptor(L->child_end) == -1 ||
+	    (L->capprotect_fd >= 0 &&
+	    prepare_child_descriptor_forkable(L->capprotect_fd) == -1))
+		goto fail_prefork;
+	for (i = 0; i < L->ntokens; i++)
+		if (prepare_child_descriptor(L->token_fds[i]) == -1)
+			goto fail_prefork;
+	for (i = 0; i < L->nservices; i++)
+		if (prepare_child_descriptor(L->service_fds[i]) == -1)
+			goto fail_prefork;
+	for (i = 0; i < L->ncomponents; i++)
+		if (prepare_child_descriptor(L->component_fds[i]) == -1)
+			goto fail_prefork;
+
+	bootstrap_fd = create_service_bootstrap(m, L->ntokens, L->nservices,
+	    L->service_names, L->service_types, L->capprotect_fd >= 0);
+	if (bootstrap_fd == -1) {
+		syslog(LOG_ERR, "svc_exec %s: bootstrap descriptor: %m",
+		    m->label);
+		svc_launch_abort(svc, errno, kq);
+		return;
+	}
+
+	pid = pdfork(&pd_fd, PD_CLOEXEC);
+	if (pid == -1) {
+		syslog(LOG_ERR, "svc_exec %s: pdfork: %m", m->label);
+		close(bootstrap_fd);
+		svc_launch_abort(svc, errno, kq);
+		return;
+	}
+	if (pid == 0) {
+		child_exec(m, L->child_end, L->capprotect_fd, bootstrap_fd,
+		    L->token_fds, L->ntokens, L->service_fds, L->nservices,
+		    L->component_fds, L->component_indices, L->ncomponents,
+		    svc->jail_fd, L->uid, L->gid, L->have_creds,
+		    L->homedir[0] != '\0' ? L->homedir : NULL, L->groups,
+		    L->ngroups);
+		/* NOTREACHED */
+	}
+
+	/* Parent: the child owns its copies now. */
+	close(L->child_end);
+	L->child_end = -1;
+	close(bootstrap_fd);
+	if (L->capprotect_fd >= 0) {
+		close(L->capprotect_fd);
+		L->capprotect_fd = -1;
+	}
+	for (i = 0; i < L->ntokens; i++)
+		close(L->token_fds[i]);
+	L->ntokens = 0;
+	for (i = 0; i < L->nservices; i++)
+		close(L->service_fds[i]);
+	L->nservices = 0;
+	for (i = 0; i < L->ncomponents; i++)
+		close(L->component_fds[i]);
+	L->ncomponents = 0;
+
+	if (svc->jail_fd >= 0 &&
+	    (cap_xfer_limit(svc->jail_fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(svc->jail_fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(svc->jail_fd, CAP_CLOEXEC_LOCKED) == -1)) {
+		saved_errno = errno;
+		syslog(LOG_ERR, "svc_exec %s: jail fd confinement: %m",
+		    m->label);
+		goto fail_postfork;
+	}
+	if (mac_cap_coalition_enlist(L->coalition_fd, pd_fd) != 0) {
+		saved_errno = errno;
+		syslog(LOG_ERR, "svc_exec %s: coalition enlist: %m", m->label);
+		goto fail_postfork;
+	}
+	if (mac_cap_coalition_set_leader(L->coalition_fd, pd_fd) != 0) {
+		saved_errno = errno;
+		syslog(LOG_ERR, "svc_exec %s: coalition set_leader: %m",
+		    m->label);
+		goto fail_postfork;
+	}
+	{
+		cap_rights_t rights;
+
+		cap_rights_init(&rights, CAP_PDKILL, CAP_PDGETPID, CAP_EVENT);
+		if (cap_rights_limit(pd_fd, &rights) == -1 ||
+		    cap_xfer_limit(pd_fd, CAP_XFER_NONE) == -1 ||
+		    cap_clofork_limit(pd_fd, CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(pd_fd, CAP_CLOEXEC_LOCKED) == -1 ||
+		    cap_clofork_limit(L->oracle_end, CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(L->oracle_end, CAP_CLOEXEC_LOCKED) == -1 ||
+		    cap_clofork_limit(L->coalition_fd,
+		    CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(L->coalition_fd,
+		    CAP_CLOEXEC_LOCKED) == -1) {
+			saved_errno = errno;
+			syslog(LOG_ERR, "svc_exec %s: supervisor fd "
+			    "confinement: %m", m->label);
+			goto fail_postfork;
+		}
+	}
+
+	svc->pid = pid;
+	svc->launch_id = ++svc_launch_sequence;
+	if (svc->launch_id == 0)
+		svc->launch_id = ++svc_launch_sequence;
+	svc->pd_fd = pd_fd;
+	if (svc_channel_attach(svc, L->oracle_end) == -1) {
+		saved_errno = errno;
+		L->oracle_end = -1;
+		syslog(LOG_ERR, "svc_exec %s: control channel: %m", m->label);
+		goto fail_postfork;
+	}
+	L->oracle_end = -1;
+	svc->coalition_fd = L->coalition_fd;
+	L->coalition_fd = -1;
+	svc->state = SVC_STATE_STARTING;
+	svc->protocol_ready = false;
+	memset(svc->name_state, SVC_NAME_UNCLAIMED, sizeof(svc->name_state));
+	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
+
+	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,
+	    NOTE_EXIT | NOTE_EXEC | NOTE_CAPMODE, 0, svc);
+	EV_SET(&kev[1], svc->channel_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+	EV_SET(&kev[2], svc->coalition_fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+	if (kevent(kq, kev, 3, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "svc_exec %s: kevent register: %m", m->label);
+		pdkill(pd_fd, SIGKILL);
+		waitpid(pid, NULL, WNOHANG);
+		oracle_release_manifest(sd.oracle_channel_fd, &L->minted);
+		close(svc->pd_fd);
+		svc->pd_fd = -1;
+		svc_channel_close(svc);
+		close(svc->coalition_fd);
+		svc->coalition_fd = -1;
+		if (svc->jail_fd >= 0) {
+			jail_remove_jd(svc->jail_fd);
+			close(svc->jail_fd);
+			svc->jail_fd = -1;
+		}
+		svc->pid = 0;
+		svc->state = SVC_STATE_STOPPED;
+		free(L);
+		svc->launch = NULL;
+		return;
+	}
+	svc_channel_sync_events(svc, kq);
+
+	syslog(LOG_INFO, "service %s: started pid %jd uid %ju gid %ju",
+	    m->label, (intmax_t)pid, (uintmax_t)L->uid, (uintmax_t)L->gid);
+	SERVICED_PROBE_SVC_START(m->label, pid);
+	serviced_audit(AUE_SERVICED_SVC_EXEC, getuid(), 0,
+	    "svc=%s pid=%jd uid=%u gid=%u creds_changed=%d", m->label,
+	    (intmax_t)pid, (unsigned)L->uid, (unsigned)L->gid,
+	    L->have_creds ? 1 : 0);
+
+	{
+		struct timespec exec_end;
+		uint64_t dur __unused;
+
+		clock_gettime(CLOCK_MONOTONIC, &exec_end);
+		dur = (uint64_t)(exec_end.tv_sec - L->exec_start.tv_sec) *
+		    1000000000ULL +
+		    (uint64_t)(exec_end.tv_nsec - L->exec_start.tv_nsec);
+		SERVICED_PROBE_SVC_EXEC_DONE(m->label, dur, L->ntokens);
+	}
+
+	/* Launch context is spent; the descriptors it carried now live on the
+	 * child, svc->control_channel, and svc->coalition_fd. */
+	free(L);
+	svc->launch = NULL;
+
+	switch (pdincapmode(pd_fd)) {
+	case 1:
+		memset(&kev[0], 0, sizeof(kev[0]));
+		kev[0].filter = EVFILT_PROCDESC;
+		kev[0].fflags = NOTE_CAPMODE;
+		kev[0].udata = svc;
+		supervisor_handle_procdesc(&kev[0]);
+		break;
+	case 0:
+		break;
+	default:
+		syslog(LOG_ERR, "svc_exec %s: initial pdincapmode: %m",
+		    m->label);
+		break;
+	}
+	return;
+
+fail_prefork:
+	saved_errno = errno;
+	syslog(LOG_ERR, "svc_exec %s: child descriptor confinement: %m",
+	    m->label);
+	if (bootstrap_fd >= 0)
+		close(bootstrap_fd);
+	svc_launch_abort(svc, saved_errno, kq);
+	return;
+
+fail_postfork:
+	SERVICED_PROBE_SVC_EXEC_FAIL(m->label, saved_errno);
+	pdkill(pd_fd, SIGKILL);
+	waitpid(pid, NULL, WNOHANG);
+	close(pd_fd);
+	/* child_end/bootstrap_fd/token/service/component fds already closed. */
+	svc->pid = 0;
+	svc->pd_fd = -1;
+	svc_launch_abort(svc, saved_errno, kq);
+}
+
+/*
+ * Open the next component session asynchronously.  Resolve the provider,
+ * mint its resources, send the session request, and arm the reply channel;
+ * the fork waits until svc_launch_channel_event() has completed every session.
+ */
+static int
+svc_launch_component_start(struct svc_runtime *svc, int kq)
+{
+	struct svc_launch *L = svc->launch;
+	struct svc_manifest *m = &svc->manifest;
+	const struct serviced_component *component;
+	const char *provider, *interface;
+	struct component_session_bootstrap message;
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	int cfd, owned, error;
+
+	/* Bound the whole async launch the first time we open a session. */
+	svc_launch_arm_timer(svc, kq);
+
+	component = &m->components[L->comp_cursor];
+	provider = local_component_provider(component);
+	interface = local_component_interface(component);
+	if (provider == NULL || interface == NULL) {
+		syslog(LOG_ERR, "svc_exec %s: invalid component %s", m->label,
+		    component->name);
+		svc_launch_abort(svc, EINVAL, kq);
+		return (-1);
+	}
+	SERVICED_PROBE_COMPONENT_RESOLVE(m->label, component->name, provider);
+	cfd = naming_lookup(provider, svc, &error);
+	if (cfd == -1) {
+		syslog(LOG_ERR, "svc_exec %s: component %s provider %s: %s",
+		    m->label, component->name, provider, strerror(error));
+		svc_launch_abort(svc, error, kq);
+		return (-1);
+	}
+	L->session_cfd = cfd;
+	L->nresources = 0;
+	if (prepare_component_resources(m, component, L->uid, L->gid,
+	    L->service_fds, L->nservices, L->service_names, L->service_types,
+	    L->resource_fds, &L->nresources) == -1) {
+		error = errno != 0 ? errno : EIO;
+		syslog(LOG_ERR, "svc_exec %s: component %s resources: %s",
+		    m->label, component->name, strerror(error));
+		svc_launch_abort(svc, error, kq);
+		return (-1);
+	}
+	if (cap_xfer_limit(cfd, CAP_XFER_NONE) == -1 ||
+	    cap_cloexec_limit(cfd, CAP_CLOEXEC_ONCE) == -1) {
+		error = errno != 0 ? errno : EIO;
+		svc_launch_abort(svc, error, kq);
+		return (-1);
+	}
+
+	memset(&message, 0, sizeof(message));
+	message.magic = COMPONENT_SESSION_MAGIC;
+	message.version = COMPONENT_SESSION_VERSION;
+	message.header_size = sizeof(message);
+	arc4random_buf(&message.instance_id, sizeof(message.instance_id));
+	strlcpy(message.name, component->name, sizeof(message.name));
+	strlcpy(message.interface, interface, sizeof(message.interface));
+	strlcpy(message.interface_version, "1.0.0",
+	    sizeof(message.interface_version));
+	strlcpy(message.client_label, m->label, sizeof(message.client_label));
+
+	owned = fcntl(cfd, F_DUPFD_CLOEXEC, 0);
+	if (owned == -1) {
+		svc_launch_abort(svc, errno, kq);
+		return (-1);
+	}
+	if (channel_create(owned, &options, &L->session) == -1) {
+		error = errno;
+		close(owned);
+		svc_launch_abort(svc, error, kq);
+		return (-1);
+	}
+	memset(&L->call, 0, sizeof(L->call));
+	L->call.instance_id = message.instance_id;
+	L->call.member_fd = -1;
+	if (channel_send_request(L->session,
+	    &(struct channel_outgoing){
+		.size = sizeof(struct channel_outgoing),
+		.data = &message,
+		.length = sizeof(message),
+		.fds = L->resource_fds,
+		.nfds = L->nresources
+	    }, component_reply, &L->call, &L->call.request) == -1) {
+		error = errno;
+		svc_launch_drop_session(svc, kq);
+		svc_launch_abort(svc, error, kq);
+		return (-1);
+	}
+	L->session_fd = channel_fd(L->session);
+	svc_launch_arm(svc, kq);
+	return (0);
+}
+
+/*
+ * A component session reply (or writable request) fired.  Flush any pending
+ * request, dispatch the reply, and — once the session is complete — enlist and
+ * confine the injected descriptor, then advance to the next component.
+ */
+void
+svc_launch_channel_event(struct svc_runtime *svc, int kq)
+{
+	struct svc_launch *L = svc->launch;
+	struct svc_manifest *m = &svc->manifest;
+	const struct serviced_component *component;
+	cap_rights_t component_rights;
+	cap_ioctl_t component_ioctls[] = {
+		MAC_CAPABILITY_SENDMSG, MAC_CAPABILITY_RECVMSG,
+		MAC_CAPABILITY_GETINFO
+	};
+	int member_fd, error;
+
+	if (L == NULL || L->session == NULL)
+		return;
+	if (channel_wants_write(L->session) > 0 &&
+	    channel_flush(L->session) == -1) {
+		svc_launch_abort(svc, errno != 0 ? errno : EIO, kq);
+		return;
+	}
+	if (channel_dispatch(L->session) == -1) {
+		svc_launch_abort(svc, errno != 0 ? errno : ECONNRESET, kq);
+		return;
+	}
+	if (!L->call.done) {
+		svc_launch_arm(svc, kq);
+		return;
+	}
+	if (L->call.error != 0) {
+		component = &m->components[L->comp_cursor];
+		syslog(LOG_ERR, "svc_exec %s: component %s bootstrap: %s",
+		    m->label, component->name, strerror(L->call.error));
+		svc_launch_abort(svc, L->call.error, kq);
+		return;
+	}
+	member_fd = L->call.member_fd;
+	L->call.member_fd = -1;
+
+	error = cap_xfer_limit(member_fd, CAP_XFER_ONCE) == -1 ? errno :
+	    mac_cap_coalition_enlist(L->coalition_fd, member_fd);
+	if (error != 0) {
+		if (member_fd >= 0)
+			close(member_fd);
+		svc_launch_abort(svc, error, kq);
+		return;
+	}
+	if (member_fd >= 0)
+		close(member_fd);
+
+	cap_rights_init(&component_rights, CAP_EVENT, CAP_FCNTL, CAP_FSTAT,
+	    CAP_IOCTL);
+	if (cap_rights_limit(L->session_cfd, &component_rights) == -1 ||
+	    cap_fcntls_limit(L->session_cfd, 0) == -1 ||
+	    cap_ioctls_limit(L->session_cfd, component_ioctls,
+	    nitems(component_ioctls)) == -1) {
+		svc_launch_abort(svc, errno, kq);
+		return;
+	}
+
+	/* Session established: keep the injected cfd, retire the session dup. */
+	L->component_fds[L->ncomponents] = L->session_cfd;
+	L->component_indices[L->ncomponents] = L->comp_cursor;
+	L->ncomponents++;
+	L->session_cfd = -1;	/* ownership moved into component_fds[] */
+	svc_launch_drop_session(svc, kq);
+	SERVICED_PROBE_COMPONENT_SESSION(m->label,
+	    m->components[L->comp_cursor].name,
+	    local_component_provider(&m->components[L->comp_cursor]), 0);
+	L->comp_cursor++;
+	svc_launch_advance(svc, kq);
+}
+
+static void
+svc_launch_advance(struct svc_runtime *svc, int kq)
+{
+	struct svc_launch *L = svc->launch;
+
+	if (L == NULL)
+		return;
+	if (L->comp_cursor < svc->manifest.ncomponents) {
+		(void)svc_launch_component_start(svc, kq);
+		return;
+	}
+	svc_launch_finish(svc, kq);
+}
+
+bool
+svc_launch_owns_event(const struct svc_runtime *svc, uintptr_t ident)
+{
+
+	return (svc->launch != NULL && svc->launch->session_fd >= 0 &&
+	    (int)ident == svc->launch->session_fd);
+}
+
+/* True if this EVFILT_TIMER ident belongs to an async launch deadline. */
+bool
+svc_launch_timer_owns(uintptr_t ident)
+{
+
+	return ((ident & SVC_LAUNCH_TIMER_BIT) != 0);
+}
+
+/*
+ * A launch deadline fired.  Locate the owning unit by ident (compaction-safe)
+ * and abort its launch.  The one-shot timer has already been consumed by the
+ * kernel, so svc_launch_disarm_timer inside the abort only clears the tag.
+ */
+void
+svc_launch_timer_fire(uintptr_t ident, int kq)
+{
+	unsigned i;
+
+	for (i = 0; i < sd.nservices; i++) {
+		struct svc_runtime *svc = &sd.services[i];
+
+		if (svc->launch != NULL && svc->launch->timer_ident == ident) {
+			syslog(LOG_ERR, "svc_exec %s: async launch timed out "
+			    "after %d s", svc->manifest.label,
+			    SVC_LAUNCH_TIMEOUT_SEC);
+			svc_launch_abort(svc, ETIMEDOUT, kq);
+			return;
+		}
+	}
+}
+
+void
+svc_launch_cancel(struct svc_runtime *svc, int kq)
+{
+
+	if (svc->launch != NULL)
+		svc_launch_abort(svc, ECANCELED, kq);
 }

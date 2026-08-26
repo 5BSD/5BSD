@@ -28,6 +28,7 @@
 #include <libcapbundle.h>
 
 #include "serviced.h"
+#include "launch_limits.h"
 #include "serviced_probes.h"
 
 #define	TIER_READY_TIMEOUT_SEC	10
@@ -53,14 +54,13 @@ log_loaded_manifest(const struct svc_manifest *m)
 		syslog(LOG_INFO, "startup: %s local component: %s",
 		    m->label, m->components[j].name);
 
-	if (m->ncap_paths + m->ncap_files + m->ncap_net + m->ncap_jail +
-	    m->ncap_vsock + m->ncap_services + (m->cap_system != 0) > 0)
+	if (svc_launch_token_count(m) + svc_launch_named_fd_count(m) > 0)
 		syslog(LOG_INFO, "startup: %s capabilities: "
 		    "paths=%u files=%u network=%u jails=%u vsock=%u "
-		    "services=%u system=0x%x",
+		    "storage=%u services=%u system=0x%x",
 		    m->label, m->ncap_paths, m->ncap_files,
 		    m->ncap_net, m->ncap_jail, m->ncap_vsock,
-		    m->ncap_services, m->cap_system);
+		    m->ncap_storage, m->ncap_services, m->cap_system);
 
 	if (m->has_jail)
 		syslog(LOG_INFO, "startup: %s jail: %s path=%s",
@@ -163,10 +163,24 @@ wait_tier_ready(struct svc_runtime *svcs, unsigned n, unsigned tier,
 				supervisor_handle_procdesc(&events[i]);
 			else if ((events[i].filter == EVFILT_READ ||
 			    events[i].filter == EVFILT_WRITE) &&
-			    events[i].udata != NULL)
-				supervisor_handle_channel(&events[i]);
-			else if (events[i].filter == EVFILT_TIMER)
-				supervisor_handle_timer(&events[i]);
+			    events[i].udata != NULL) {
+				struct svc_runtime *svc = events[i].udata;
+
+				if (svc_launch_owns_event(svc, events[i].ident))
+					svc_launch_channel_event(svc,
+					    serviced_kq);
+				else
+					supervisor_handle_channel(&events[i]);
+			} else if (events[i].filter == EVFILT_TIMER) {
+				if (on_demand_is_timer(events[i].ident))
+					on_demand_timeout(events[i].ident,
+					    serviced_kq);
+				else if (svc_launch_timer_owns(events[i].ident))
+					svc_launch_timer_fire(events[i].ident,
+					    serviced_kq);
+				else
+					supervisor_handle_timer(&events[i]);
+			}
 			else if (events[i].filter == EVFILT_SIGNAL) {
 				int sig = (int)events[i].ident;
 
@@ -318,8 +332,21 @@ startup_launch_system(int kq)
 	 * is reported so the caller can signal non-convergence, but native
 	 * services still launch.  (Per-service rc units replace this
 	 * monolithic step in a later phase.)
+	 *
+	 * Test fixtures must not replay the host's /etc/rc: a fixture
+	 * serviced that runs the real rc sequence flips the machine's
+	 * runlevel state from inside a test.  The same environment channel
+	 * that overrides the bundle directories opts out of rc ownership.
 	 */
-	(void)run_rc_bootstrap(kq);
+	{
+		const char *skip_rc = getenv("SERVICED_SKIP_RC");
+
+		if (skip_rc != NULL && skip_rc[0] == '1')
+			syslog(LOG_INFO,
+			    "startup: /etc/rc skipped by environment");
+		else
+			(void)run_rc_bootstrap(kq);
+	}
 
 	/* Collect all non-on-demand service manifests from bundles. */
 	manifests = calloc(SERVICED_MAX_SERVICES, sizeof(*manifests));
@@ -413,9 +440,13 @@ startup_launch_system(int kq)
 		for (i = 0; i < sd.nservices; i++) {
 			if (tiers[i] != tier)
 				continue;
+			/* A lookup may already have activated this unit; a
+			 * second exec would create a duplicate runtime. */
+			if (sd.services[i].state != SVC_STATE_STOPPED)
+				continue;
 			syslog(LOG_INFO, "startup: service: %s",
 			    sd.services[i].manifest.label);
-			if (svc_exec(&sd.services[i], kq) == 0)
+			if (svc_launch_or_await(&sd.services[i], kq) == 0)
 				launched++;
 			else
 				syslog(LOG_ERR, "startup: failed to launch '%s'",

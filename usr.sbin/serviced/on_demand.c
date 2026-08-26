@@ -64,10 +64,18 @@ pending_provider_matches(const struct pending_lookup *pending,
     const struct svc_runtime *provider)
 {
 
-	return (pending != NULL && provider != NULL &&
-	    pending->provider_pid == provider->pid &&
-	    pending->provider_launch_id == provider->launch_id &&
-	    strcmp(pending->provider_label, provider->manifest.label) == 0);
+	if (pending == NULL || provider == NULL ||
+	    strcmp(pending->provider_label, provider->manifest.label) != 0)
+		return (false);
+	/*
+	 * A waiter registered while the provider's own launch was still
+	 * deferred has no pid/launch generation to pin; the label alone
+	 * identifies whichever launch eventually satisfies it.
+	 */
+	if (pending->provider_pid <= 0)
+		return (true);
+	return (pending->provider_pid == provider->pid &&
+	    pending->provider_launch_id == provider->launch_id);
 }
 
 static struct svc_runtime *
@@ -81,6 +89,22 @@ pending_requester(const struct pending_lookup *pending)
 	    requester->channel_fd < 0)
 		return (NULL);
 	return (requester);
+}
+
+/*
+ * Resolve the unit whose deferred launch a request==NULL pending entry
+ * represents.  The unit was never launched, so only the label identifies
+ * it; a slot that moved on to another state no longer wants the launch.
+ */
+static struct svc_runtime *
+pending_launch_waiter(const struct pending_lookup *pending)
+{
+	struct svc_runtime *waiter;
+
+	waiter = svc_by_label(pending->requester_label);
+	if (waiter == NULL || waiter->state != SVC_STATE_STOPPED)
+		return (NULL);
+	return (waiter);
 }
 
 static bool
@@ -324,20 +348,25 @@ on_demand_broker(const char *name, struct svc_runtime *req_svc,
 		status = 0;
 		if (cap_xfer_limit(client_fd, CAP_XFER_ONCE) == -1)
 			status = errno;
-		if (status == 0)
-			(void)channel_send_reply(request,
+		if (status == 0) {
+			if (channel_send_reply(request,
 			    &(struct channel_outgoing){
 				.size = sizeof(struct channel_outgoing),
 				.data = &status,
 				.length = sizeof(status),
 				.fds = &client_fd,
 				.nfds = 1
-			    });
-		else
-			(void)channel_send_reply(request,
-			    &(struct channel_outgoing)
-			    CHANNEL_OUTGOING_INITIALIZER(&status,
-			    sizeof(status)));
+			    }) == -1)
+				syslog(LOG_WARNING,
+				    "on_demand: lookup reply with endpoint "
+				    "failed: %m");
+		} else if (channel_send_reply(request,
+		    &(struct channel_outgoing)
+		    CHANNEL_OUTGOING_INITIALIZER(&status,
+		    sizeof(status))) == -1) {
+			syslog(LOG_WARNING,
+			    "on_demand: lookup status reply failed: %m");
+		}
 		close(client_fd);
 		channel_message_free(request);
 		svc_channel_sync_events(req_svc, serviced_kq);
@@ -376,6 +405,34 @@ send_activation(struct svc_runtime *provider, const char *name)
  * Returns 0 if launch initiated (reply deferred), -1 on immediate failure.
  * Sets errno to EDEADLK if circular dependency detected.
  */
+/*
+ * Launch a unit, or defer the launch while a component provider it needs
+ * is not registered yet.  Deferral rides the pending-lookup machinery with
+ * a NULL request: the unit itself is the requester, which also gives the
+ * deadlock walk a real chain to inspect.  Demand-driven replacement for
+ * dependency-ordered startup.
+ */
+int
+svc_launch_or_await(struct svc_runtime *svc, int kq)
+{
+	const char *blocked;
+
+	blocked = svc_exec_blocking_provider(&svc->manifest);
+	if (blocked != NULL) {
+		if (on_demand_launch(blocked, svc, NULL, kq) == 0) {
+			syslog(LOG_INFO,
+			    "on_demand: launch of '%s' deferred until "
+			    "provider '%s' is ready",
+			    svc->manifest.label, blocked);
+			return (0);
+		}
+		syslog(LOG_WARNING,
+		    "on_demand: cannot await provider '%s' for '%s': %m; "
+		    "attempting direct launch", blocked, svc->manifest.label);
+	}
+	return (svc_exec(svc, kq));
+}
+
 int
 on_demand_launch(const char *name, struct svc_runtime *requester,
     struct channel_message *request, int kq)
@@ -442,6 +499,32 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		if (asvc == NULL)
 			goto fail_timer;
 
+		/*
+		 * A boot-activated unit may already own a runtime slot that
+		 * has not launched yet (or is between states).  Appending a
+		 * second runtime under the same label would race the boot
+		 * launch with this activation and leave one instance losing
+		 * its name claims.  Launch through the existing slot instead.
+		 */
+		target = svc_by_label(capbundle_svc_label(asvc));
+		if (target != NULL) {
+			if (target->state == SVC_STATE_STOPPED) {
+				if (svc_launch_or_await(target, kq) == -1) {
+					syslog(LOG_ERR,
+				    "on_demand: failed to launch '%s': %m", name);
+					goto fail_timer;
+				}
+				syslog(LOG_INFO,
+				    "on_demand: launching existing unit '%s' "
+				    "(requested by '%s')",
+				    target->manifest.label,
+				    pl->requester_label);
+			} else {
+				SERVICED_PROBE_ON_DEMAND_COALESCE(name);
+			}
+			goto have_target;
+		}
+
 		/* Find a free slot in sd.services[]. */
 		if (sd.services == NULL) {
 			/* Service array was never allocated (startup OOM). */
@@ -485,9 +568,9 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		sd.nservices++;
 
 		/* Launch the service. */
-		if (svc_exec(target, kq) == -1) {
+		if (svc_launch_or_await(target, kq) == -1) {
 			syslog(LOG_ERR,
-			    "on_demand: failed to launch '%s'", name);
+				    "on_demand: failed to launch '%s': %m", name);
 			sd.nservices--;
 			memset(target, 0, sizeof(*target));
 			svc_runtime_init_fds(target);
@@ -505,6 +588,7 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		SERVICED_PROBE_ON_DEMAND_COALESCE(name);
 	}
 
+have_target:
 	strlcpy(pl->provider_label, target->manifest.label,
 	    sizeof(pl->provider_label));
 	pl->provider_pid = target->pid;
@@ -601,7 +685,26 @@ on_demand_name_ready(struct svc_runtime *svc, const char *name, int kq)
 			pp = &pl->next;
 			continue;
 		}
-		(void)on_demand_broker(name, pending_requester(pl), pl->request);
+		if (pl->request == NULL) {
+			struct svc_runtime *waiter;
+
+			/* Deferred launch: the provider this unit's
+			 * components need is now ready. */
+			waiter = pending_launch_waiter(pl);
+			if (waiter != NULL) {
+				syslog(LOG_INFO,
+				    "on_demand: provider '%s' ready; launching "
+				    "deferred unit '%s'", name,
+				    waiter->manifest.label);
+				if (svc_launch_or_await(waiter, kq) == -1)
+					syslog(LOG_ERR,
+					    "on_demand: deferred launch of "
+					    "'%s' failed: %m",
+					    waiter->manifest.label);
+			}
+		} else
+			(void)on_demand_broker(name, pending_requester(pl),
+			    pl->request);
 		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
 		    EV_DELETE, 0, 0, NULL);
 		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
@@ -812,8 +915,10 @@ on_demand_timeout(uintptr_t ident, int kq)
 
 		/* Send ETIMEDOUT reply.  Re-resolve the requester by
 		 * label — the original channel_fd may be stale if the
-		 * requester was restarted since the lookup. */
-		{
+		 * requester was restarted since the lookup.  Deferred
+		 * launches carry no request; the unit simply stays
+		 * stopped and a later demand may retry it. */
+		if (pl->request != NULL) {
 			struct svc_runtime *req;
 			int32_t status = ETIMEDOUT;
 
