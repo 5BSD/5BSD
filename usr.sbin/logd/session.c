@@ -197,10 +197,13 @@ logcmp_session_drain_budget(struct logcmp_session *session,
 	}
 	if (more != NULL)
 		*more = false;
-	if (session->ring == NULL) {
-		errno = ENOTCONN;
-		return (-1);
-	}
+	/*
+	 * A session that never promoted to a shared-memory ring carries its
+	 * records inline and has nothing to drain here; report success so an
+	 * explicit flush of an inline-only session does not fail.
+	 */
+	if (session->ring == NULL)
+		return (0);
 	for (drained = 0; drained < budget; drained++) {
 		length = shmring_read_record(session->ring, record, sizeof(record));
 		if (length == -1) {
