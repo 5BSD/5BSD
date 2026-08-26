@@ -2208,8 +2208,15 @@ svc_launch_channel_event(struct svc_runtime *svc, int kq)
 
 	cap_rights_init(&component_rights, CAP_EVENT, CAP_FCNTL, CAP_FSTAT,
 	    CAP_IOCTL);
+	/*
+	 * The consumer drives this channel from a non-blocking event loop
+	 * (libchannel toggles O_NONBLOCK with F_GETFL/F_SETFL), so the injected
+	 * descriptor must permit those two status-flag fcntls.  Everything else
+	 * — descriptor duplication or ownership changes — stays denied.
+	 */
 	if (cap_rights_limit(L->session_cfd, &component_rights) == -1 ||
-	    cap_fcntls_limit(L->session_cfd, 0) == -1 ||
+	    cap_fcntls_limit(L->session_cfd,
+	    CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1 ||
 	    cap_ioctls_limit(L->session_cfd, component_ioctls,
 	    nitems(component_ioctls)) == -1) {
 		svc_launch_abort(svc, errno, kq);
