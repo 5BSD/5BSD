@@ -138,7 +138,7 @@ struct svc_runtime {
  * installer's capability-selection step.  It lives under /Capabilities with the
  * bundle registry it governs, not in a UNIX state directory.
  */
-#define	SERVICED_DISABLED_PATH			"/Capabilities/db/serviced/disabled"
+#define	SERVICED_DISABLED_PATH			"/Capabilities/Config/serviced/disabled"
 
 extern const char *serviced_bundle_dir_system;
 extern const char *serviced_bundle_dir_user;

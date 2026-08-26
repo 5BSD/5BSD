@@ -27,7 +27,7 @@
 #include <unistd.h>
 
 /* Operator disable list; must match SERVICED_DISABLED_PATH in serviced.h. */
-#define	SERVICED_DISABLED_PATH	"/Capabilities/db/serviced/disabled"
+#define	SERVICED_DISABLED_PATH	"/Capabilities/Config/serviced/disabled"
 
 /* Env override wins (for tests), else the capability-plane default. */
 static const char *

@@ -1,86 +1,94 @@
 # Capability filesystem hierarchy
 
-Capability programs — `oracled`, `serviced`, `tzfsd`, the descriptor factories,
-and the component providers — do not scatter their files across the classic
-UNIX directories. Those (`/etc`, `/var`, `/usr/local`, `/var/run`, `/var/db`,
-`/var/log`) remain the home of classic UNIX software. Everything the capability
-plane owns lives under a single, self-describing tree at **`/Capabilities`**.
+Capability programs do not scatter their files across the classic UNIX
+directories, and they do not clone them either. Classic UNIX lays out `/etc`,
+`/var/run`, `/var/db`, and `/var/log` *by type* because classic programs share
+global namespaces — every daemon's config piles into one `/etc`, every socket
+into one `/var/run`. Capability programs don't share those namespaces: each one
+ships as a self-contained bundle and each active one is handed its own
+storage by `tzfsd`. So the capability plane is laid out **by capability, not by
+type**. Everything lives under `/Capabilities`, and each capability owns a
+self-contained subtree there.
 
-`/Capabilities` is a directory on the root dataset — not a separate mount — so
-its static children exist from early boot, before the storage daemon runs. Its
-storage subtrees are individually provisioned by `tzfsd` at runtime. This is the
-same hybrid FreeBSD itself uses: `/` and `/etc` are present the instant the root
-mounts, while `/usr`, `/home`, and the `tmpfs` on `/var/run` arrive as the boot
-proceeds.
+## The two halves of a capability
 
-## The tree
+Every capability is a **static half** and a **dynamic half**:
+
+- **Static half — the bundle.** `/Capabilities/System/<Name>.cap` ships
+  everything fixed about the capability: its binary, its manifest, and its
+  configuration defaults. It is installed read-only by pkgbase and is present
+  the instant the root dataset mounts. This is the capability's definition.
+- **Dynamic half — the runtime home.** `/Capabilities/<Name>/` is the
+  capability's own directory, provisioned by `tzfsd` when the capability
+  activates. Its control socket, persistent state, cache, and logs all live
+  here — in *its* home, not in any shared global directory. Because each home
+  is a distinct `tzfsd` handle, capabilities cannot see into one another's
+  runtime state; the isolation is structural, not conventional.
 
 ```text
 /Capabilities/
-├── System/        installed capability bundles (*.cap)   static, read-only
-├── etc/           capability-daemon configuration        static, early, mutable by admin
-├── run/           control sockets, pid files             tmpfs, early, ephemeral
-├── db/            persistent daemon state                on root, early, survives reboot
-├── persistent/    unit/shared persistent storage         tzfsd dataset, runtime
-├── ephemeral/     boot- and lease-lifetime storage       tzfsd dataset, runtime
-└── .templates/    flavor clone origins (<flavor>@ready)   tzfsd dataset, runtime
+├── System/            shipped bundle definitions        static, read-only, at boot
+│   ├── Log.cap
+│   ├── BsdNotify.cap
+│   └── Filesystem.cap
+├── Config/            minimal pre-storage plane config   static, admin-mutable, at boot
+│   ├── tzfsd.ucl          storage pool + layout
+│   ├── tzfsd.d/           drop-ins
+│   └── serviced/disabled  operator disable list
+└── <Name>/            per-capability runtime home        tzfsd-provisioned, at runtime
+    ├── control.sock       the capability's own endpoint      (ephemeral)
+    ├── state/             persistent state                   (tzfsd persistent)
+    ├── cache/             discardable working data           (tzfsd ephemeral)
+    └── log/               the capability's logs              (tzfsd persistent)
 ```
 
-| Subtree | Analogous to | Backing | Available |
-|---|---|---|---|
-| `System/` | `/usr` (shipped, immutable) | root dataset | at boot |
-| `etc/` | `/etc` | root dataset | at boot |
-| `run/` | `/var/run` | tmpfs | very early (before any daemon binds) |
-| `db/` | `/var/db` | root dataset | at boot |
-| `persistent/`, `ephemeral/`, `.templates/` | separately mounted `/home`, `/usr` | `tzfsd`-owned ZFS datasets / anonymous mounts | runtime, once `tzfsd` is up |
+There is deliberately **no `/Capabilities/run`, no `/Capabilities/db`, no
+`/Capabilities/log`.** A socket, a state file, and a log for the `Log`
+capability all live under `/Capabilities/Log/`; the same for every other
+capability. The plane reads as a list of capabilities, each with its own home —
+the way the security model already thinks about them.
 
-## Why the split — the bootstrap ordering
+## The one static exception: `Config/`
 
-The capability daemons come up in a fixed order and the tree matches it:
+Two core daemons run *before* the storage plane they depend on exists, so they
+cannot read their configuration from a `tzfsd`-provisioned home — that home
+doesn't exist yet:
 
-1. **`oracled` (PID 1)** starts. It needs *no* filesystem rendezvous: the
-   `oracled → serviced → tzfsd` handshake is carried on **inherited capability
-   descriptors**, never on named sockets or paths. This is the invariant that
-   makes the whole scheme safe — the bootstrap can never deadlock on a
-   directory that is not mounted yet.
-2. The **root dataset is mounted** (ZFS root), so `/Capabilities/System`,
-   `/Capabilities/etc`, and `/Capabilities/db` are already present. `run/` is a
-   small `tmpfs` mounted here as well, so control sockets have a home before any
-   daemon binds one.
-3. **`serviced`** reads `/Capabilities/etc`, scans `/Capabilities/System` for
-   bundles, consults `/Capabilities/db` for operator state, and binds its
-   control socket under `/Capabilities/run`.
-4. **`tzfsd`** provisions and owns the storage subtrees, handing
-   `/Capabilities/{persistent,ephemeral}` out as rights-limited handles and
-   anonymous mounts. Nothing earlier in the sequence depends on these, so it is
-   safe for them to arrive last.
+- **`tzfsd`** must know its pool and layout before it can mount anything.
+- **`serviced`** consults the operator disable list while building its bundle
+  registry, before it activates (and therefore before any runtime home exists).
 
-The rule that keeps this sound: **anything needed before `tzfsd` is up must live
-on a subtree that is static (root dataset) or a `tmpfs` (`run/`); only the
-storage subtrees may be `tzfsd`-mounted.** A capability daemon must never place
-a file it needs at startup on a subtree that only exists once the storage plane
-is running.
+Their bootstrap configuration is the *only* thing kept in a shared static
+directory, `/Capabilities/Config/`, on the root dataset and present at boot. It
+is kept deliberately minimal — genuine pre-storage bootstrap config, nothing
+that could instead live in a capability's own home. Everything a capability
+needs *after* the storage plane is up belongs in its runtime home, not here.
 
-## Placement rules
+## Why the split is safe — the bootstrap ordering
 
-- **Bundles** → `/Capabilities/System/<Name>.cap`, installed read-only by
-  pkgbase. Immutable, versioned; never write daemon state here.
-- **Configuration** → `/Capabilities/etc/` (for example the storage broker's
-  `tzfsd.ucl` and its `tzfsd.d/` drop-ins). Admin-editable, read at startup.
-- **Control sockets and pid files** → `/Capabilities/run/`. Ephemeral; recreated
-  each boot; never carry state across a reboot here.
-- **Persistent daemon state** → `/Capabilities/db/<daemon>/` (for example the
-  operator disable list at `/Capabilities/db/serviced/disabled`). Survives
-  reboot; small and daemon-private.
-- **Application storage** → `/Capabilities/{persistent,ephemeral}` only, and
-  only via `tzfsd` handles — a daemon never reaches into these datasets by path.
+1. **`oracled` (PID 1)** starts. The `oracled → serviced → tzfsd` handshake
+   rides **inherited capability descriptors**, never a named socket or path, so
+   the bootstrap can never block on a directory that is not mounted yet. This is
+   the invariant the whole layout rests on.
+2. The **root dataset mounts**, so `/Capabilities/System` (definitions) and
+   `/Capabilities/Config` (bootstrap config) are present.
+3. **`serviced`** reads `/Capabilities/Config/serviced/disabled`, scans
+   `/Capabilities/System` for bundles, and builds its registry.
+4. **`tzfsd`** reads `/Capabilities/Config/tzfsd.ucl`, brings up the storage
+   plane, and begins handing out per-capability runtime homes.
+5. Each activated capability — `serviced` and the core daemons included — gets
+   its `/Capabilities/<Name>/` home and creates its control socket, state, and
+   logs there.
+
+The rule that keeps it sound: **the only things needed before `tzfsd` is up are
+the read-only definitions in `System/` and the minimal `Config/`; everything
+else is a per-capability runtime home that arrives with the storage plane.**
 
 ## What stays in the classic hierarchy
 
-Classic UNIX programs keep using `/etc`, `/var`, `/usr`, and friends unchanged;
-the capability plane simply does not add to them. The one deliberate bridge is
-the legacy `rc` bootstrap: `oracled` still executes `/etc/rc` to converge a
-classic multi-user system alongside the capability plane, because rc and the
-programs it starts are classic UNIX software. That is the boundary — capability
-programs own `/Capabilities`, classic programs own the classic tree, and only
-the rc hand-off crosses it.
+Classic UNIX programs keep `/etc`, `/var`, and `/usr` unchanged; the capability
+plane adds nothing to them. The one deliberate bridge is the legacy `rc`
+bootstrap: `oracled` still executes `/etc/rc` to converge a classic multi-user
+system, because rc and the programs it starts are classic UNIX software. That is
+the boundary — capability programs own `/Capabilities`, each with its own home;
+classic programs own the classic tree; only the rc hand-off crosses it.

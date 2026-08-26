@@ -213,10 +213,11 @@ disabled_set_load(void)
 
 	disabled_set_clear();
 	/*
-	 * Operator state lives under the capability plane's db/ subtree
-	 * (see docs: capability filesystem hierarchy), not beside the
-	 * read-only bundle registry.  SERVICED_DISABLED_PATH in the
-	 * environment redirects it for tests.
+	 * The disable list is pre-storage bootstrap state: serviced reads it
+	 * while building the registry, before tzfsd provisions any runtime
+	 * home, so it lives in the minimal static Config/ area rather than a
+	 * per-capability home (see docs: capability filesystem hierarchy).
+	 * SERVICED_DISABLED_PATH in the environment redirects it for tests.
 	 */
 	if (strlcpy(path, disabled_path(), sizeof(path)) >= sizeof(path))
 		return;
