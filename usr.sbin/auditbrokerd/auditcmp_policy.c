@@ -22,12 +22,22 @@ static const struct auditcmp_identity_event events[] = {
 int
 auditcmp_policy_event(const char *identity)
 {
-	size_t i;
+	const char *slash;
+	size_t i, idlen;
 
 	if (identity == NULL)
 		return (0);
+	/*
+	 * The policy is keyed by a provider's bundle id, but a connecting
+	 * client presents its full unit label "<bundle-id>/<unit>".  Match
+	 * only the bundle-id component so any unit of a recognized provider
+	 * is granted its audit event class.
+	 */
+	slash = strchr(identity, '/');
+	idlen = slash != NULL ? (size_t)(slash - identity) : strlen(identity);
 	for (i = 0; i < sizeof(events) / sizeof(events[0]); i++)
-		if (strcmp(events[i].identity, identity) == 0)
+		if (strlen(events[i].identity) == idlen &&
+		    strncmp(events[i].identity, identity, idlen) == 0)
 			return (events[i].event);
 	return (0);
 }
