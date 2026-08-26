@@ -1262,7 +1262,7 @@ pool_watch(void *argument)
 	int status;
 
 	pool = argument;
-	while (pdwait(pool->process_fd, &status, 0, NULL, NULL) == -1)
+	while (pdwait(pool->process_fd, &status, WEXITED, NULL, NULL) == -1)
 		if (errno != EINTR)
 			break;
 	atomic_store_explicit(&pool->exited, true, memory_order_release);
@@ -1343,7 +1343,7 @@ start_pool(struct pool_parent *parent, cap_channel_t *casper,
 	error = pthread_create(&parent->watcher, NULL, pool_watch, parent);
 	if (error != 0) {
 		(void)pdkill(pd, SIGKILL);
-		while (pdwait(pd, NULL, 0, NULL, NULL) == -1 && errno == EINTR)
+		while (pdwait(pd, NULL, WEXITED, NULL, NULL) == -1 && errno == EINTR)
 			;
 		close(pd);
 		close(sockets[0]);
@@ -1462,7 +1462,7 @@ shutdown_storage(int *control_fdp, int *process_fdp)
 		deadline.tv_sec += LOGCMP_SHUTDOWN_TIMEOUT_MS / 1000;
 	pause = (struct timespec){ .tv_nsec = 10000000L };
 	while (error == 0) {
-		result = pdwait(*process_fdp, &status, WNOHANG, NULL, NULL);
+		result = pdwait(*process_fdp, &status, WEXITED | WNOHANG, NULL, NULL);
 		if (result > 0 || (result == -1 && errno == ECHILD))
 			break;
 		if (result == -1) {
@@ -1485,7 +1485,7 @@ shutdown_storage(int *control_fdp, int *process_fdp)
 	}
 	if (error != 0) {
 		(void)pdkill(*process_fdp, SIGKILL);
-		while (pdwait(*process_fdp, &status, 0, NULL, NULL) == -1 &&
+		while (pdwait(*process_fdp, &status, WEXITED, NULL, NULL) == -1 &&
 		    errno == EINTR)
 			;
 	}
@@ -1590,10 +1590,21 @@ main(void)
 		goto fail;
 	service_release(context);
 	context = NULL;
-	cap_rights_init(&rights, CAP_READ, CAP_LOOKUP, CAP_CREATE, CAP_UNLINKAT,
-	    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET, CAP_FSTAT, CAP_FSYNC);
+	/*
+	 * The segment store creates and reopens files under this directory with
+	 * openat(2); an openat(2)ed file never carries a right or status-flag
+	 * fcntl its parent directory lacks.  The directory therefore has to hold
+	 * every right the store limits its file descriptors to (see store.c's
+	 * harden_file) and keep the GETFL|SETFL fcntls the store uses to set
+	 * O_APPEND, or storage startup fails ENOTCAPABLE.
+	 */
+	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
+	    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_CREATE, CAP_UNLINKAT,
+	    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET, CAP_FSTAT, CAP_FSTATAT,
+	    CAP_FTRUNCATE, CAP_FSYNC);
 	if (storage_dir == -1 || cap_rights_limit(storage_dir, &rights) == -1 ||
-	    cap_fcntls_limit(storage_dir, 0) == -1 ||
+	    cap_fcntls_limit(storage_dir,
+	    CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1 ||
 	    cap_xfer_limit(storage_dir, CAP_XFER_NONE) == -1 ||
 	    cap_cloexec_limit(storage_dir, CAP_CLOEXEC_LOCKED) == -1 ||
 	    logcmp_storage_start(storage_dir, config.segment_size,

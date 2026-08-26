@@ -208,7 +208,8 @@ service_directory_descriptor_valid(int fd)
 	    cap_rights_get(fd, &actual) == 0 &&
 	    cap_rights_contains(&actual, &expected) &&
 	    cap_rights_contains(&expected, &actual) &&
-	    cap_fcntls_get(fd, &fcntls) == 0 && fcntls == 0);
+	    cap_fcntls_get(fd, &fcntls) == 0 &&
+	    fcntls == (CAP_FCNTL_GETFL | CAP_FCNTL_SETFL));
 }
 
 static bool

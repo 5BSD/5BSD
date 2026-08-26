@@ -370,7 +370,8 @@ storage_is_filesystem_backing(const struct svc_manifest *manifest,
  * a filesystem descriptor's backing store is not also exposed to its client.
  */
 static int
-finalize_storage_descriptors(const struct svc_manifest *manifest, uid_t uid,
+finalize_storage_descriptors(struct svc_runtime *svc,
+    const struct svc_manifest *manifest, uid_t uid,
     gid_t gid, int *fds, unsigned *nfdsp,
     char names[][SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX],
     char types[][SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX])
@@ -378,7 +379,7 @@ finalize_storage_descriptors(const struct svc_manifest *manifest, uid_t uid,
 	cap_rights_t rights;
 	char role[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
 	unsigned claim, i, j;
-	int dirfd, error;
+	int anchor, dirfd, error;
 	enum storage_delivery_kind delivery;
 
 	for (claim = 0; claim < manifest->ncap_storage; claim++) {
@@ -407,16 +408,46 @@ finalize_storage_descriptors(const struct svc_manifest *manifest, uid_t uid,
 		}
 		if (delivery == STORAGE_DELIVERY_ZFSHANDLE)
 			continue;
-		dirfd = tzfsd_mount_dir(fds[i], 0);
-		if (dirfd == -1)
+		/*
+		 * The anon mount below is anchored by the storage handle; the
+		 * provider receives only the directory descriptor.  Retain a
+		 * handle reference for the life of the service before the launch
+		 * cleanup closes the delivered handle, or the mount is
+		 * force-unmounted the moment the launch drops it and every
+		 * fstat(2) on the delivered directory fails EBADF.
+		 */
+		if (svc->nmount_anchors >= nitems(svc->mount_anchor_fds))
+			return (errno = ENOSPC, -1);
+		anchor = fcntl(fds[i], F_DUPFD_CLOEXEC, 0);
+		if (anchor == -1)
 			return (-1);
+		if (cap_clofork_limit(anchor, CAP_CLOFORK_LOCKED) == -1) {
+			error = errno != 0 ? errno : EIO;
+			close(anchor);
+			return (errno = error, -1);
+		}
+		dirfd = tzfsd_mount_dir(fds[i], 0);
+		if (dirfd == -1) {
+			error = errno != 0 ? errno : EIO;
+			close(anchor);
+			return (errno = error, -1);
+		}
+		svc->mount_anchor_fds[svc->nmount_anchors++] = anchor;
 		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
 		    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
 		    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT,
 		    CAP_UNLINKAT, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+		/*
+		 * Status-flag fcntls must survive onto files the provider opens
+		 * under this directory: a provider that keeps an append-mode log
+		 * (logd) sets O_APPEND with F_SETFL, and an openat(2)ed file never
+		 * carries an fcntl its parent directory lacks.  Grant GETFL|SETFL
+		 * here so those files can, matching the injected-channel policy.
+		 */
 		if (fchown(dirfd, uid, gid) == -1 || fchmod(dirfd, 0700) == -1 ||
 		    cap_rights_limit(dirfd, &rights) == -1 ||
-		    cap_fcntls_limit(dirfd, 0) == -1) {
+		    cap_fcntls_limit(dirfd,
+		    CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1) {
 			error = errno != 0 ? errno : EIO;
 			close(dirfd);
 			return (errno = error, -1);
@@ -1850,7 +1881,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	/* Every session is in hand; the launch deadline no longer applies. */
 	svc_launch_disarm_timer(svc, kq);
 
-	if (finalize_storage_descriptors(m, L->uid, L->gid, L->service_fds,
+	if (finalize_storage_descriptors(svc, m, L->uid, L->gid, L->service_fds,
 	    &L->nservices, L->service_names, L->service_types) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: storage descriptor delivery: %m",
 		    m->label);
@@ -1882,9 +1913,24 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	for (i = 0; i < L->ntokens; i++)
 		if (prepare_child_descriptor(L->token_fds[i]) == -1)
 			goto fail_prefork;
-	for (i = 0; i < L->nservices; i++)
-		if (prepare_child_descriptor(L->service_fds[i]) == -1)
+	for (i = 0; i < L->nservices; i++) {
+		int prepared;
+
+		/*
+		 * A storage directory must stay fork-inheritable: a provider
+		 * that runs its storage backend in a pdfork(2)ed child (logd)
+		 * hands the directory to that child by inheritance.  Hardening
+		 * it to CLOFORK_ONCE here latches it to CLOFORK_LOCKED after the
+		 * launch fork, and the provider can no longer share it.
+		 */
+		if (strcmp(L->service_types[i], "directory") == 0)
+			prepared = prepare_child_descriptor_forkable(
+			    L->service_fds[i]);
+		else
+			prepared = prepare_child_descriptor(L->service_fds[i]);
+		if (prepared == -1)
 			goto fail_prefork;
+	}
 	for (i = 0; i < L->ncomponents; i++)
 		if (prepare_child_descriptor(L->component_fds[i]) == -1)
 			goto fail_prefork;
