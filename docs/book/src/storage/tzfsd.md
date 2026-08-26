@@ -80,6 +80,36 @@ sandbox account** (uid/gid 976, `Capability service sandbox`, `nologin`), which
 ships in the base `master.passwd`. `serviced` `chown`s each delivered directory
 to that account; no operator setup of the account is required.
 
+## Installer integration (bsdinstall)
+
+Two `bsdinstall` behaviors follow from ZFS being mandatory and from the
+capability component model.
+
+**ZFS is the default, UFS is the labeled fallback.** On every arch that can boot
+ZFS (`amd64`, `arm64`, `i386`, `riscv`) the guided installer lists **Auto (ZFS)
+— Guided Root-on-ZFS** first and pre-selects it (`--default-item`), so the
+operator who presses Enter gets a pool. "Auto (UFS)" remains, but as an
+explicitly chosen, second-class option — consistent with the "no ZFS pool is a
+degraded configuration" rule above. Automated installs get the same default:
+the unattended `bsdinstall` path uses the ZFS layout unless a script overrides
+it. (Board images are the exception until the ARM ZFS-root work below lands.)
+
+**A capability-selection step.** Because the capability daemons broker a menu of
+independent components — logging, notifications, tracing, the filesystem and
+network components, crypto, audit — the installer offers a checklist for which
+ones start at first boot, modeled on the existing `services` and `hardening`
+screens and slotted into the same post-extract sequence
+(`… → services → capabilities → hardening → …`). The core plane
+(`oracled`/`serviced`/`tzfsd`) is always on and not listed; the checklist covers
+the optional providers. A selected component has its capability bundle marked
+active (boot activation or on-demand); an unselected one is still installed but
+inactive, so it can be enabled later with `servicectl` without a reinstall. The
+defaults enable the commonly expected providers and leave specialized ones off,
+matching how `services` seeds `sshd` on and the rest off. See
+[serviced](../system/serviced.md) and
+[Service Manifests](../system/manifests.md) for what "active" means at the
+bundle level.
+
 ## Dataset layout
 
 ```text
