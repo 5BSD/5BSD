@@ -12,6 +12,14 @@
 #include "store.h"
 
 #define	LOGCMP_CONFIG_NAME	"logd.conf"
+/*
+ * Default config path for the logctl(8) operator tool's `configtest` with no
+ * explicit argument: the config installed inside the Log.cap bundle.  The
+ * daemon itself receives its config through the bundle at launch and does not
+ * consult this path.
+ */
+#define	LOGCMP_CONFIG_PATH \
+	"/Capabilities/System/Log.cap/Units/logd.unit/Config/" LOGCMP_CONFIG_NAME
 #define	LOGCMP_CONFIG_MAX_SIZE		(64U * 1024)
 #define	LOGCMP_RING_SIZE_DEFAULT	(256U * 1024)
 #define	LOGCMP_RING_SIZE_MIN		(64U * 1024)
