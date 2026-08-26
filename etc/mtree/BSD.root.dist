@@ -6,6 +6,16 @@
 .
     bin     tags=package=runtime
     ..
+    Capabilities    tags=package=runtime
+        Run     mode=0700 tags=package=runtime
+        ..
+        State   mode=0700 tags=package=runtime
+            serviced        mode=0700 tags=package=runtime
+            ..
+        ..
+        System  tags=package=runtime
+        ..
+    ..
 /set tags=package=bootloader
     boot
         defaults
