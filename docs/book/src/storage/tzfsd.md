@@ -11,6 +11,31 @@ converts mount-only storage into a rights-limited directory named
 privately. Only a unit requesting advanced ZFS operations receives a named
 `zfshandle`. The logical name is not a dataset name.
 
+## ZFS is a platform requirement
+
+5BSD requires ZFS, and the installer must place the system on a ZFS pool. This
+is not a preference — it is structural. The core capability daemons (`tzfsd`,
+`serviced`, `logd`, and the descriptor factories) are the programs that expose
+the system's storage, logging, and component APIs, and they run **confined in
+capability mode**: after startup they hold only the descriptors they were
+handed and can no longer reach the global namespace, run `zpool(8)`, or create
+a pool. A daemon cannot bootstrap the very storage plane it confines itself
+inside. The pool must therefore exist **before** the storage plane comes up —
+which in practice means it must be created at install time.
+
+Consequently `bsdinstall` provisions a ZFS pool by default (the guided
+"Auto (ZFS)" path is the standard 5BSD installation), and ZFS is the default
+root filesystem on every platform that can boot from it. A UFS-only or
+pool-less install is a degraded configuration: the daemons still start, but
+every storage-backed capability (persistent unit state, the log store, the
+filesystem component's namespaces) is unavailable until an operator creates a
+pool by hand as described below. Treat "no ZFS pool" as an installation error
+to correct, not a supported mode.
+
+> Platform status: amd64 installs onto a ZFS root out of the box. Bringing the
+> same ZFS-root default to the arm64 board images (Raspberry Pi in particular)
+> is in progress; see "ZFS root on ARM board images" at the end of this chapter.
+
 ## The backing pool at first boot
 
 `tzfsd` never creates a ZFS pool. It requires exactly one pool to already be
@@ -151,3 +176,81 @@ Tests under `tests/sys/tzfs` exercise all lifetimes, daemon restart, session
 rollover, last-holder behavior, malformed sessions/messages, rights
 attenuation, clone/mount behavior, and conservative retained-snapshot failure
 in a disposable ZFS VM.
+
+## Boot environments (ZFS multiboot)
+
+Because ZFS is mandatory (above), every 5BSD root install uses the boot
+environment layout — `zroot/ROOT/<be>` with `canmount=noauto`, and the pool's
+`bootfs` naming the active one (`zroot/ROOT/default` by default). The
+`makefs -t zfs` image build and `bsdinstall`'s `zfsboot` script both lay the
+pool out this way, so multiboot is present by construction rather than as an
+opt-in.
+
+Three layers make it usable, and all three ship in base:
+
+- **Selection (loader).** The Lua loader enumerates bootable environments from
+  the pool (`stand/lua/core.lua`: `bootenvList`, `zfs_be_active`) and offers the
+  boot-environment menu, so a different BE can be booted without touching disk.
+  On arm64 this is the same EFI `loader.efi` used by the board images, so the
+  menu works on Raspberry Pi exactly as on amd64.
+- **Management (tool + API).** `bectl(8)` creates, activates, mounts, renames,
+  and destroys environments; `libbe(3)` is the C API beneath it. Use these —
+  not raw `zfs(8)` — to add or promote an environment, so `bootfs` and the
+  `canmount`/`mountpoint` invariants the loader relies on stay correct.
+- **Capability storage (native flavor).** `tzfsd`'s `native` flavor is itself a
+  boot-environment clone: `build_native_live()` snapshots the running BE
+  (`f_mntfromname`, e.g. `zroot/ROOT/default`) as `@tzfs-native` and clones the
+  template from it. A unit that requests `flavor = "native"` therefore boots
+  into a copy-on-write image of the exact environment the system is currently
+  running, and it costs nothing until written. This is why `native` is offered
+  only on a ZFS root: without a boot environment there is nothing to clone.
+
+The upshot for the capability platform: an operator can `bectl create` a new
+environment, install or upgrade into it, and activate it for the next boot,
+while `tzfsd` keeps handing units `native` clones of whichever environment is
+live — the two mechanisms share one substrate.
+
+## ZFS root on ARM board images
+
+amd64 and the arm64 *VM* images already build a ZFS root: `release/tools/
+vmimage.subr` builds the pool image offline with `makefs -t zfs` (the
+`zroot/ROOT/default` layout above) and lets `mkimg` place it as a
+`freebsd-zfs` partition behind an EFI System Partition, and the
+`arm64:aarch64` case already carries the ESP path. Nothing on that path needs a
+live `zpool create`, so it works inside the release chroot.
+
+The **embedded board images** (`release/arm64/RPI.conf` and friends, assembled
+by `release/tools/arm.subr`) are the remaining gap: `arm_create_disk()` still
+partitions a `freebsd-ufs` root and `newfs`es it, and writes an `/etc/fstab`
+that mounts `/dev/ufs/rootfs`. Those images boot UFS today.
+
+The boot chain that has to be satisfied for a ZFS root on Raspberry Pi is:
+
+```text
+SoC ROM → GPU firmware (start*.elf on the FAT) → u-boot.bin → EFI →
+loader.efi (MK_LOADER_ZFS, reads zroot) → kernel + zfs.ko → zfs:zroot/ROOT/default
+```
+
+The FAT partition keeps its current role (GPU firmware, `config.txt`, U-Boot,
+DTBs, and now `loader.efi`); only the root partition changes from UFS to a
+`freebsd-zfs` pool. Concretely, converting `arm.subr` means:
+
+1. Build the root as a pool image with the same `makefs -t zfs …
+   -o poolname=zroot -o bootfs=zroot/ROOT/default …` invocation the VM path
+   uses, instead of `newfs` on a mounted partition, and `dd`/`mkimg` it into the
+   `freebsd-zfs` root partition.
+2. Replace the UFS `fstab` root line with none (ZFS mounts the root) and set
+   `zfs_load="YES"` plus `vfs.root.mountfrom="zfs:zroot/ROOT/default"` in the
+   FAT-side `loader.conf`, keeping the existing EFI/DTB entries.
+3. Ensure `zfs.ko` matching the `VBSD` kernel is stored where `loader.efi` can
+   load it (in the pool, alongside the kernel), and that the arm64 `loader.efi`
+   with ZFS is the one copied to the FAT partition.
+
+Open items before this is the default: validating GPU-firmware → U-Boot →
+`loader.efi` ZFS discovery on real RPi 4 / RPi 5 hardware, confirming pool
+`ashift`/feature flags the arm64 loader accepts, and deciding whether the RPi
+firmware's first-FAT-partition requirement coexists with `mkimg`'s ESP or needs
+the two-partition (firmware-FAT + ZFS) `arm.subr` layout retained. Until that is
+proven on hardware, board images remain UFS and the "no ZFS pool" fallback in
+this chapter applies to them; see `docs/rpi5-bringup-plan.md` for the wider
+Raspberry Pi bring-up.
