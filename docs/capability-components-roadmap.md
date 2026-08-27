@@ -476,37 +476,41 @@ dead weight. Evaluate and prune:
   64-bit FreeBSD binaries (if that compatibility is even a goal — the primary
   ABI is Linux).
 
-## Heterogeneous-core (AMP) scheduling
+## Heterogeneous-core scheduling: SCHED_MIC (Michelangelo)
 
 ULE is only SMT- and cache-topology aware; it has no notion of core *capacity*,
-so on hybrid CPUs (Intel P/E cores, ARM big.LITTLE) a latency-sensitive thread
-can land on an efficiency core and background work can hog performance cores.
-Add asymmetric-core scheduling, using **XNU's Edge/Clutch/AMP scheduler as the
-reference design** (not Linux EAS):
+so on hybrid CPUs a latency-sensitive thread can land on an efficiency core and
+background work can hog performance cores. The answer is a new scheduler in
+-CURRENT: **SCHED_MIC** (the "Michelangelo" scheduler), based on ULE with
+awareness of asymmetric x86 topologies.
 
-- **Detection — the x86 substrate already exists.** `initcpu.c` already reads
-  **CPUID leaf 0x1A** per-core and classifies `CPUID_HYBRID_SMALL_CORE` (E) vs
-  `CPUID_HYBRID_LARGE_CORE` (P) (`sys/x86/include/specialreg.h`) — but only to
-  drive the Alder/Raptor Lake page-invalidation errata (`pcid_invlpg_workaround`);
-  the P/E result is never surfaced. Work: record per-CPU core type/capacity
-  where the scheduler can see it. arm64: derive per-cluster capacity
-  (DMIPS/MPIDR cluster topology from ACPI/FDT).
-- **Topology.** Extend the `cpu_group`/`tdq` model with a cluster-type and
-  capacity field and build P-cluster/E-cluster groupings (XNU's per-cluster
-  runqueues), each tracking a per-priority (QoS-like) on-core latency metric.
-- **Placement policy.** Give threads a recommended cluster by class:
-  interactive/latency-sensitive prefer the P-cluster, batch/idle pack onto the
-  E-cluster. Mirror XNU's **spill / steal / rebalance across cluster edges**
-  (an idle core steals, a running foreign thread is IPI-rebalanced back to its
-  recommended cluster) and a **stir-the-pot** anti-starvation rotation so
-  long-running work does not strand on a slow core.
-- **Optional controller.** A performance-controller analog (cf. XNU's CLPC)
-  could feed per-workload cluster recommendations; 5BSD's coalition/thread-group
-  grouping is a natural hook for XNU-style thread-group recommendations.
+> **Status: in development — DO NOT enable `SCHED_MIC` in any build, image, or
+> kernel config yet.** The default and only supported scheduler for now is
+> `SCHED_ULE` (VBSD). MIC is not ready for use.
 
-Substantial kernel work (detection + topology + ULE placement), VM/hardware
-validated. Reference: XNU `doc/scheduler/sched_clutch_edge.md`,
-`osfmk/kern/sched_amp*`, `sched_clutch*`.
+Design (initial):
+
+- **Hardware awareness (CPU-detection based, no Intel Thread Director yet).**
+  Intel: performance (P), efficiency (E), and low-power (LP) cores. AMD: X3D
+  dual-CCD parts (the V-Cache "cache" CCD vs the higher-clocking "frequency"
+  CCD) and dense "c" cores (Zen `c`).
+- **Default policy.** Prefer **performance cores** on Intel; prefer the **cache
+  CCD** on AMD X3D. A **toggle** switches to **E-cores** (Intel) / **compute
+  cores** (AMD) — efficiency cores win on laptops most of the time (except heavy
+  sustained work), while P-cores suit desktops.
+- **Initial placement order:** P core → P hyperthread (if present) → E core →
+  LP core (last). The HT-vs-E-core ordering may swap pending testing.
+- **Later evolution.** Feedback-driven placement (when a Thread-Director-like
+  signal exists) can follow XNU's Edge/Clutch/AMP model — per-cluster runqueues,
+  QoS-recommended placement, spill/steal/rebalance, and a CLPC-style controller
+  hookable to 5BSD coalitions (`doc/scheduler/sched_clutch_edge.md`,
+  `osfmk/kern/sched_amp*`). That is a second phase, not the initial MIC.
+
+Detection substrate already present on x86: `initcpu.c` reads **CPUID leaf 0x1A**
+per-core (`CPUID_HYBRID_SMALL_CORE` = E, `CPUID_HYBRID_LARGE_CORE` = P in
+`sys/x86/include/specialreg.h`) for the Alder/Raptor Lake page-invalidation
+errata; MIC surfaces that classification (plus AMD CCD/`c`-core detection) to the
+scheduler.
 
 ## Base install: pkgbase only
 
