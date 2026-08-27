@@ -499,12 +499,37 @@ Design (initial):
   cores** (AMD) — efficiency cores win on laptops most of the time (except heavy
   sustained work), while P-cores suit desktops.
 - **Initial placement order:** P core → P hyperthread (if present) → E core →
-  LP core (last). The HT-vs-E-core ordering may swap pending testing.
-- **Later evolution.** Feedback-driven placement (when a Thread-Director-like
-  signal exists) can follow XNU's Edge/Clutch/AMP model — per-cluster runqueues,
-  QoS-recommended placement, spill/steal/rebalance, and a CLPC-style controller
-  hookable to 5BSD coalitions (`doc/scheduler/sched_clutch_edge.md`,
-  `osfmk/kern/sched_amp*`). That is a second phase, not the initial MIC.
+  LP core (last). The HT-vs-E-core ordering may swap pending testing. This order
+  is the *within-tier tiebreak*, not the whole policy — see the design direction
+  below.
+
+**Clean-room, open source.** MIC is a fresh BSD-licensed implementation that
+derives *lessons* from Apple's scheduler design, not its code. XNU is APSL-2.0
+(weak file-level copyleft, GPL-incompatible, non-relicensable to BSD-2-Clause)
+and is fused to Mach/IOKit primitives 5BSD does not have (`processor_set`,
+`thread_group`, IOKit `IOPerfControl`), so its source cannot and should not be
+copied in. The concepts below are reimplemented against ULE's own model
+(`struct thread`/`tdq`/`cpu_group`, coalitions).
+
+**Design direction (chosen): follow Apple's QoS model, not a static global
+preference.** Rather than "prefer P by default + a whole-system toggle," place
+each thread by its *intent*: a **per-thread QoS/scheduling class** maps to a
+cluster (interactive → P/large, utility/background → E/small, low-power → LP).
+That auto-handles the laptop-vs-desktop *and* light-vs-heavy cases without a
+manual switch — on a laptop most work is background → E (efficiency), a heavy
+foreground task is high-QoS → P. The toggle becomes a **bias on the QoS→cluster
+mapping** (desktop favors P, laptop favors E), not the only mechanism. Static
+CPU detection fills the topology (P/E/LP, AMD X3D CCD, `c`-cores); the placement
+order above is the fallback within a chosen tier.
+
+- **Feedback phase (the CLPC role — achievable on x86).** Add dynamic
+  adjustment from the hardware feedback signals: **Intel Thread Director /
+  Hardware Feedback Interface (HFI)** (MSR per-class/per-core perf & efficiency
+  hints) and **AMD CPPC preferred cores** (preferred-core ranking; identifies
+  the X3D cache CCD). Hook the "workload" grouping to **5BSD coalitions** (the
+  thread-group equivalent), following XNU's Edge/Clutch/AMP + CLPC layering
+  (`doc/scheduler/sched_clutch_edge.md`, `osfmk/kern/sched_amp*`). Keep the
+  placement mechanism in-kernel; keep the QoS/coalition/HFI inputs declarative.
 
 Detection substrate already present on x86: `initcpu.c` reads **CPUID leaf 0x1A**
 per-core (`CPUID_HYBRID_SMALL_CORE` = E, `CPUID_HYBRID_LARGE_CORE` = P in
