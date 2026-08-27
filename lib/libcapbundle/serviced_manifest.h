@@ -87,11 +87,9 @@ struct svc_manifest {
 	char		user[64];
 	char		group[64];
 
-	/* Publication and internal component-startup edges. */
+	/* Capability endpoints this service publishes. */
 	char		provides[SERVICED_MAX_PROVIDES][SERVICED_LABEL_MAX];
 	unsigned	nprovides;
-	char		startup_after[SERVICED_MAX_COMPONENTS][SERVICED_LABEL_MAX];
-	unsigned	nstartup_after;
 
 	/* Local authority-replacement components consumed by this service. */
 	struct serviced_component components[SERVICED_MAX_COMPONENTS];

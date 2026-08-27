@@ -2152,9 +2152,6 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 				    ucl_object_tostring(storage_name),
 				    sizeof(svc->components[svc->ncomponents].storage));
 			}
-			strlcpy(svc->startup_after[svc->nstartup_after++],
-			    descriptor_types[di].provider,
-			    sizeof(svc->startup_after[0]));
 			svc->ncomponents++;
 		}
 	}

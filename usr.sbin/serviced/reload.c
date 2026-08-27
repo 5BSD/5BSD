@@ -116,8 +116,7 @@ desired_service_manifest(const char *label, struct svc_manifest *m)
 
 /*
  * Re-register kevent udata pointers for all running services.
- * Called after svc_remove() shifts array entries (Phase 1) or
- * after depgraph_sort() reorders entries (Phase 3).
+ * Called after svc_remove() shifts array entries (Phase 1).
  */
 void
 svc_reregister_kevents(int kq)
@@ -384,19 +383,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			}
 		}
 
-		/* 3b: Sort new services by dependency order. */
-		if (nnew_collected > 1) {
-			if (depgraph_sort(&sd.services[first_new],
-			    nnew_collected) == -1) {
-				syslog(LOG_ERR,
-				    "reload: dependency sort failed "
-				    "for new services, removing them");
-				sd.nservices = first_new;
-				nnew_collected = 0;
-			}
-		}
-
-		/* 3c: Launch in sorted order. */
+		/* 3b: Launch new services in parallel (no startup ordering). */
 		for (i = first_new; i < first_new + nnew_collected; i++) {
 			struct svc_runtime *svc = &sd.services[i];
 

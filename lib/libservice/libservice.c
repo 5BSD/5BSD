@@ -1348,6 +1348,22 @@ service_ready(struct service_context *context)
 }
 
 int
+service_idle_shutdown(struct service_context *context, unsigned seconds)
+{
+	struct svc_idle_req req;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_IDLE;
+	req.seconds = seconds;
+	return (rpc(&req, sizeof(req), NULL));
+}
+
+int
 service_provider_enter_capability_mode(struct service_provider *provider)
 {
 

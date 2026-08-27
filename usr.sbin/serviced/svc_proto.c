@@ -176,6 +176,28 @@ handle_quiesce_result(struct svc_runtime *svc,
 }
 
 static void
+handle_idle(struct svc_runtime *svc, struct channel_message *request)
+{
+	const struct svc_idle_req *req;
+	int error;
+
+	error = 0;
+	if (channel_message_length(request) != sizeof(*req))
+		error = EINVAL;
+	else if (svc->state != SVC_STATE_RUNNING || !svc->protocol_ready)
+		error = EBUSY;
+	else {
+		req = channel_message_data(request);
+		svc->idle_timeout_sec = req->seconds;
+		if (req->seconds > 0)
+			arm_idle_timer(svc, serviced_kq);
+		else
+			cancel_idle_timer(svc, serviced_kq);
+	}
+	(void)svc_channel_reply(svc, request, SVC_OP_IDLE, error, NULL, 0);
+}
+
+static void
 handle_worker_channel(struct svc_runtime *svc,
     struct channel_message *request)
 {
@@ -418,6 +440,9 @@ svc_request(struct channel *channel, struct channel_message *request,
 		break;
 	case SVC_OP_QUIESCE_RESULT:
 		handle_quiesce_result(svc, request);
+		break;
+	case SVC_OP_IDLE:
+		handle_idle(svc, request);
 		break;
 	case SVC_OP_LOOKUP:
 		retained = handle_lookup(svc, request);

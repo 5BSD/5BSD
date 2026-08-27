@@ -30,6 +30,7 @@
 #include <component_session.h>
 #include <libservice.h>
 #include <service_bootstrap.h>
+#include <serviced_svc_proto.h>
 
 struct event_close_context {
 	struct service_session	*client;
@@ -773,6 +774,10 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	ATF_CHECK_ERRNO(EINVAL,
 	    service_provider_worker_channel(NULL, &fd, &fd) == -1);
 	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_idle_shutdown(NULL, 30) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_idle_shutdown(NULL, 0) == -1);
+	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_provider_quiescing(NULL) == -1);
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL,
@@ -1262,6 +1267,170 @@ ATF_TC_BODY(service_session_close_cancels_event, tc)
 	close(channel[1]);
 }
 
+/*
+ * service_idle_shutdown wire behavior: the call must place exactly one
+ * SVC_OP_IDLE request carrying the requested timeout onto the serviced
+ * channel, and surface a sane error when the channel is unusable.
+ */
+struct idle_capture {
+	uint32_t	op;
+	uint32_t	seconds;
+	bool		got;
+	int		error;
+};
+
+static void
+idle_capture_request(struct channel *channel, struct channel_message *message,
+    void *argument)
+{
+	struct idle_capture *capture;
+	struct svc_reply reply;
+
+	(void)channel;
+	capture = argument;
+	if (channel_message_length(message) == sizeof(struct svc_idle_req) &&
+	    channel_message_fd_count(message) == 0) {
+		const struct svc_idle_req *req = channel_message_data(message);
+
+		capture->op = req->op;
+		capture->seconds = req->seconds;
+		capture->got = true;
+		memset(&reply, 0, sizeof(reply));
+		reply.status = 0;
+		if (channel_send_reply(message,
+		    &(struct channel_outgoing){
+			.size = sizeof(struct channel_outgoing),
+			.data = &reply,
+			.length = sizeof(reply)
+		    }) == -1)
+			capture->error = errno;
+	} else
+		capture->error = EPROTO;
+	channel_message_free(message);
+}
+
+/*
+ * Drive the serviced side of the channel until the child's idle request has
+ * been captured and its reply flushed.
+ */
+static void
+idle_serviced_peer(int fd, struct idle_capture *capture)
+{
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	struct channel *channel;
+	int result, wants_write;
+
+	ATF_REQUIRE_EQ(0, channel_create(fd, &options, &channel));
+	ATF_REQUIRE_EQ(0, channel_set_request_handler(channel,
+	    idle_capture_request, capture));
+	for (;;) {
+		wants_write = channel_wants_write(channel);
+		ATF_REQUIRE(wants_write >= 0);
+		if (capture->got && wants_write == 0)
+			break;
+		result = channel_wait(channel, wants_write, 5000);
+		ATF_REQUIRE(result > 0);
+		if ((result & CHANNEL_WAIT_WRITE) != 0)
+			ATF_REQUIRE(channel_flush(channel) == 0);
+		if ((result & CHANNEL_WAIT_READ) != 0 &&
+		    channel_dispatch(channel) == -1)
+			break;
+	}
+	channel_destroy(channel);
+}
+
+static pid_t
+idle_shutdown_child(int child_fd, unsigned seconds, bool expect_success)
+{
+	struct service_bootstrap bootstrap;
+	struct service_context *context;
+	pid_t child;
+	int result;
+
+	child = fork();
+	ATF_REQUIRE(child >= 0);
+	if (child != 0)
+		return (child);
+	if (dup2(child_fd, 3) != 3)
+		_exit(1);
+	if (child_fd != 3)
+		close(child_fd);
+	close(SERVICE_BOOTSTRAP_FD);
+	valid_empty_bootstrap(&bootstrap);
+	if (setenv(SERVICE_BOOTSTRAP_ENV, "5", 1) == -1 ||
+	    install_bootstrap(&bootstrap, sizeof(bootstrap)) == -1)
+		_exit(2);
+	if (service_acquire(&context) == -1)
+		_exit(3);
+	errno = 0;
+	result = service_idle_shutdown(context, seconds);
+	if (expect_success)
+		_exit(result == 0 ? 0 : 10);
+	/* Channel is unusable: a failure with a sane errno, no crash. */
+	_exit(result == -1 && errno != 0 ? 0 : 11);
+}
+
+ATF_TC(service_idle_shutdown_wire);
+ATF_TC_HEAD(service_idle_shutdown_wire, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "service_idle_shutdown emits one SVC_OP_IDLE request carrying the "
+	    "requested timeout (arm and cancel forms) and fails cleanly on a "
+	    "dead channel");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(service_idle_shutdown_wire, tc)
+{
+	struct idle_capture capture;
+	pid_t child;
+	int channel[2], status;
+
+	(void)tc;
+
+	/* Arm form: seconds == 30 travels on the wire verbatim. */
+	capability_channel_pair(&channel[0], &channel[1]);
+	child = idle_shutdown_child(channel[0], 30, true);
+	close(channel[0]);
+	memset(&capture, 0, sizeof(capture));
+	idle_serviced_peer(channel[1], &capture);
+	ATF_REQUIRE(waitpid(child, &status, 0) == child);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "arm child status=%#x", status);
+	ATF_CHECK(capture.got);
+	ATF_CHECK_EQ(SVC_OP_IDLE, capture.op);
+	ATF_CHECK_EQ(30, capture.seconds);
+	ATF_CHECK_EQ(0, capture.error);
+	close(channel[1]);
+
+	/* Cancel form: seconds == 0. */
+	capability_channel_pair(&channel[0], &channel[1]);
+	child = idle_shutdown_child(channel[0], 0, true);
+	close(channel[0]);
+	memset(&capture, 0, sizeof(capture));
+	idle_serviced_peer(channel[1], &capture);
+	ATF_REQUIRE(waitpid(child, &status, 0) == child);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "cancel child status=%#x", status);
+	ATF_CHECK(capture.got);
+	ATF_CHECK_EQ(SVC_OP_IDLE, capture.op);
+	ATF_CHECK_EQ(0, capture.seconds);
+	ATF_CHECK_EQ(0, capture.error);
+	close(channel[1]);
+
+	/* Dead channel: the serviced end is closed before the request lands. */
+	capability_channel_pair(&channel[0], &channel[1]);
+	child = idle_shutdown_child(channel[0], 30, false);
+	close(channel[0]);
+	close(channel[1]);
+	ATF_REQUIRE(waitpid(child, &status, 0) == child);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "dead-channel child status=%#x", status);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1276,5 +1445,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, service_session_lifecycle);
 	ATF_TP_ADD_TC(tp, service_session_payload_and_attachment_lifecycle);
 	ATF_TP_ADD_TC(tp, service_session_close_cancels_event);
+	ATF_TP_ADD_TC(tp, service_idle_shutdown_wire);
 	return (atf_no_error());
 }

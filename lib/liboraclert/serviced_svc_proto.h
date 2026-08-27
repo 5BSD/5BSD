@@ -47,6 +47,7 @@
 #define	SVC_OP_NAME_CLAIM	5	/* claim one provides[] listener */
 #define	SVC_OP_QUIESCE_RESULT	6	/* managed shutdown completion */
 #define	SVC_OP_WORKER_CHANNEL	7	/* private provider/worker channel */
+#define	SVC_OP_IDLE		8	/* provider requests idle-timeout shutdown */
 
 /*
  * Serviced → service (notifications):
@@ -69,6 +70,23 @@ struct svc_quiesce_msg {
 struct svc_quiesce_result_req {
 	uint32_t	op;		/* SVC_OP_QUIESCE_RESULT */
 	int32_t		status;		/* zero or positive errno */
+};
+
+/*
+ * SVC_OP_IDLE
+ *   req:  svc_idle_req
+ *   reply: svc_reply { .status }
+ *
+ * A running provider declares that it has no active clients and requests that
+ * serviced stop it after `seconds` of no new demand.  serviced arms a one-shot
+ * idle timer; a new client lookup before it fires cancels the timer, while an
+ * expiry gracefully stops the provider yet keeps its name reservations so the
+ * next lookup relaunches it on demand.  seconds == 0 cancels a pending idle
+ * timer; a fresh call re-arms (resetting the countdown).
+ */
+struct svc_idle_req {
+	uint32_t	op;		/* SVC_OP_IDLE */
+	uint32_t	seconds;	/* idle timeout; 0 cancels pending timer */
 };
 
 /*

@@ -22,6 +22,8 @@ Service lifecycle library
 .Ft int
 .Fn service_ready "struct service_context *context"
 .Ft int
+.Fn service_idle_shutdown "struct service_context *context" "unsigned seconds"
+.Ft int
 .Fn service_connect "struct service_context *context" "const char *name" "int *session_fd"
 .Ft int
 .Fn service_local_component_open "struct service_context *context" "const char *interface" "const char *version" "int *session_fd"
@@ -150,6 +152,18 @@ never changes security state and fails with
 unless capability mode has already been entered.
 These context operations are used by managed processes that are not global
 providers.
+.Pp
+.Fn service_idle_shutdown
+requests that
+.Nm serviced
+stop this provider after
+.Fa seconds
+of no new client demand; a subsequent lookup relaunches it on demand.
+A provider calls it when it goes idle and calls it again after handling a
+client to re-arm the timer, or with
+.Fa seconds
+set to zero to cancel a pending idle shutdown.
+New client demand arriving before the timer fires cancels it automatically.
 .Pp
 .Fn service_supervisor_fd
 returns a borrowed event descriptor which becomes readable after permanent

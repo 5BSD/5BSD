@@ -96,16 +96,6 @@ int	capbundle_svc_fill_manifest(const struct capbundle_service *s,
 int	capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen);
 
 /*
- * Check for circular dependencies across multiple bundles.
- * Checks the internal startup edges derived from local descriptor declarations.
- * A NULL bundle array is valid only when nbundles is zero.  Returns 0 if
- * acyclic, -1 with errno set and a cycle or argument description in errbuf.
- */
-int	capbundle_check_startup_cycles(struct capbundle **bundles,
-	    unsigned nbundles,
-	    char *errbuf, size_t errlen);
-
-/*
  * Scan a directory for .cap bundles.
  * Calls cb for each successfully opened bundle.
  * If cb returns non-zero, scanning stops and that value is returned.

@@ -45,6 +45,14 @@
 static uintptr_t timer_next_ident = 10000;
 #define	STOP_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 1))
 static uintptr_t stop_timer_next_ident = STOP_TIMER_BIT;
+/*
+ * Idle-shutdown timers carry a distinct high bit so their idents never
+ * collide with restart, stop-kill, on-demand, or async-launch timers.  Bit
+ * (width-3) is unused by those ranges, so the event loop routes these to
+ * supervisor_handle_timer(), which matches them per-service.
+ */
+#define	IDLE_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 3))
+static uintptr_t idle_timer_next_ident = IDLE_TIMER_BIT;
 
 /*
  * Close all service fds and reset runtime state.
@@ -134,6 +142,45 @@ svc_cancel_restart(struct svc_runtime *svc, int kq)
 	(void)kevent(kq, &kev, 1, NULL, 0, NULL);
 	svc->restart_pending = false;
 	svc->timer_ident = 0;
+}
+
+/*
+ * Cancel a pending provider idle-shutdown timer.  No-op if none is armed.
+ */
+void
+cancel_idle_timer(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+
+	if (svc->idle_timer_ident == 0)
+		return;
+	EV_SET(&kev, svc->idle_timer_ident, EVFILT_TIMER, EV_DELETE, 0, 0, NULL);
+	(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+	svc->idle_timer_ident = 0;
+}
+
+/*
+ * Arm (or re-arm) the provider idle-shutdown timer for svc->idle_timeout_sec.
+ * Re-arming resets the countdown.  No-op when no idle timeout is requested.
+ */
+void
+arm_idle_timer(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+
+	if (svc->idle_timeout_sec == 0)
+		return;
+	cancel_idle_timer(svc, kq);
+	svc->idle_timer_ident = idle_timer_next_ident++;
+	EV_SET(&kev, svc->idle_timer_ident, EVFILT_TIMER,
+	    EV_ADD | EV_ONESHOT, 0, svc->idle_timeout_sec * 1000, svc);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "service %s: idle timer: %m",
+		    svc->manifest.label);
+		svc->idle_timer_ident = 0;
+	} else
+		SERVICED_PROBE_TIMEOUT_ARM(svc->manifest.label, "idle",
+		    svc->idle_timeout_sec);
 }
 
 static void
@@ -314,6 +361,12 @@ supervisor_handle_procdesc(struct kevent *kev)
 
 		waitpid(svc->pid, NULL, WNOHANG);
 		cancel_stop_timer(svc);
+		/*
+		 * The process is gone, so any idle timer armed for it (e.g. a
+		 * crash while an idle countdown was pending) is stale and must
+		 * be dropped before a restart reuses this slot.
+		 */
+		cancel_idle_timer(svc, serviced_kq);
 		on_demand_provider_failed(svc,
 		    was_stopping ? ESHUTDOWN : ECONNRESET, serviced_kq);
 		on_demand_requester_gone(svc, serviced_kq);
@@ -344,6 +397,32 @@ supervisor_handle_procdesc(struct kevent *kev)
 				syslog(LOG_ERR,
 				    "service %s: reload re-exec failed; "
 				    "left stopped", svc->manifest.label);
+			return;
+		}
+
+		/*
+		 * Idle stop: the provider was gracefully stopped because it went
+		 * idle.  Keep the runtime slot, its manifest, and its bundle
+		 * origin so the next lookup relaunches it on demand.  Reset the
+		 * slot to the same fresh, relaunchable state an on-demand launch
+		 * starts from: every name_state[] entry returns to
+		 * SVC_NAME_UNCLAIMED (via svc_runtime_init_fds) so the relaunched
+		 * process re-claims each provides[] name from scratch.  The
+		 * published names were already dropped by naming_remove_owner()
+		 * above, so a lookup now misses and triggers on_demand relaunch.
+		 */
+		if (svc->idle_stop_pending) {
+			svc->pid = 0;
+			svc->launch_id = 0;
+			svc->quiesce_pending = false;
+			svc->restart_count = 0;
+			svc->idle_stop_pending = false;
+			svc->idle_timeout_sec = 0;
+			svc_runtime_init_fds(svc);
+			svc->state = SVC_STATE_STOPPED;
+			syslog(LOG_INFO, "service %s: stopped for idle; "
+			    "reservations kept for on-demand relaunch",
+			    svc->manifest.label);
 			return;
 		}
 
@@ -435,6 +514,23 @@ supervisor_handle_timer(struct kevent *kev)
 		syslog(LOG_INFO, "service %s: restart timer fired",
 		    svc->manifest.label);
 		svc_exec(svc, serviced_kq);
+		return;
+	}
+
+	if (svc->idle_timer_ident != 0 && kev->ident == svc->idle_timer_ident) {
+		svc->idle_timer_ident = 0;
+		SERVICED_PROBE_TIMEOUT_FIRE(svc->manifest.label, "idle");
+		/*
+		 * Only a still-running provider is idle-stopped.  If it already
+		 * left RUNNING for any other reason the expiry is moot.
+		 */
+		if (svc->state != SVC_STATE_RUNNING)
+			return;
+		syslog(LOG_INFO, "service %s: idle timeout, stopping "
+		    "(reservations kept for on-demand relaunch)",
+		    svc->manifest.label);
+		svc->idle_stop_pending = true;
+		svc_graceful_stop(svc, serviced_kq);
 	}
 }
 
@@ -452,6 +548,12 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 		return;
 
 	svc->state = SVC_STATE_STOPPING;
+	/*
+	 * Once a stop is under way any pending idle timer is moot.  The
+	 * idle-fire path clears idle_timer_ident before calling in here, so
+	 * this is a no-op for an idle stop and preserves idle_stop_pending.
+	 */
+	cancel_idle_timer(svc, kq);
 	syslog(LOG_INFO, "service %s: stopping (pid %jd)",
 	    svc->manifest.label, (intmax_t)svc->pid);
 	SERVICED_PROBE_SVC_STOP(svc->manifest.label, svc->pid);

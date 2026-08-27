@@ -881,6 +881,155 @@ sctl_rejects_malformed_requests_cleanup()
 	cleanup_common
 }
 
+# ===================================================================
+# Provider-driven idle shutdown: stop after timeout, relaunch on demand
+# ===================================================================
+
+atf_test_case idle_stop_and_relaunch cleanup
+idle_stop_and_relaunch_head()
+{
+	atf_set "descr" "a provider that opts into idle shutdown is stopped after the timeout, keeps its name reservation, and is relaunched by the next lookup"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+idle_stop_and_relaunch_body()
+{
+	local pid1 pid2
+
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin system org.test.idle.svc \
+	    "activation { boot = true; ipc = [\"org.test.idle.svc\"]; }
+arguments = [\"idle-provider\", \"org.test.idle.svc\", \"1\", \"$(pwd)/idlep\"];" \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+	if ! wait_for_file idlep.launch1; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "idle provider did not become ready"
+	fi
+	pid1=$(sed -n 's/^pid=//p' idlep.launch1)
+	[ -n "$pid1" ] || atf_fail "first launch did not record a pid"
+
+	# serviced must idle-stop it, keeping reservations for on-demand relaunch.
+	atf_check -s exit:0 -o ignore sh -c \
+	    "i=0; while ! grep -q 'org.test.idle.svc.*idle timeout, stopping' '$logfile' && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'idle timeout, stopping' '$logfile'"
+	# It must not still be running, and must not have been removed entirely.
+	atf_check -s exit:0 -o not-match:"org.test.idle.svc.*running" \
+	    servicectl -s "${CTL_SOCK}" status
+	atf_check -s exit:0 -o match:"org.test.idle.svc" \
+	    servicectl -s "${CTL_SOCK}" status
+
+	# A lookup relaunches it on demand and succeeds.
+	if ! run_lookup_client org.test.idle.svc 15; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "on-demand lookup of the idle-stopped provider failed"
+	fi
+	if ! wait_for_file idlep.launch2; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "provider was not relaunched on demand"
+	fi
+	pid2=$(sed -n 's/^pid=//p' idlep.launch2)
+	[ -n "$pid2" ] && [ "$pid2" != "$pid1" ] ||
+	    atf_fail "relaunch pid ($pid2) did not differ from first pid ($pid1)"
+	assert_stack_alive
+}
+idle_stop_and_relaunch_cleanup()
+{
+	cleanup_common
+	rm -f idlep.count idlep.launch1 idlep.launch2
+}
+
+# ===================================================================
+# Demand before the idle timeout keeps the provider running
+# ===================================================================
+
+atf_test_case idle_demand_cancels_stop cleanup
+idle_demand_cancels_stop_head()
+{
+	atf_set "descr" "a lookup before the idle timeout cancels the pending idle stop; the provider keeps running"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+idle_demand_cancels_stop_body()
+{
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin system org.test.idle.demand \
+	    "activation { boot = true; ipc = [\"org.test.idle.demand\"]; }
+arguments = [\"idle-provider\", \"org.test.idle.demand\", \"5\", \"$(pwd)/idled\"];" \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+	if ! wait_for_file idled.launch1; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "idle provider did not become ready"
+	fi
+
+	# Create demand well inside the 5s window; the naming broker cancels the
+	# idle timer.
+	if ! run_lookup_client org.test.idle.demand 10; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "lookup that should keep the provider alive failed"
+	fi
+
+	# Wait past the original timeout and confirm it never idle-stopped or
+	# relaunched.
+	sleep 6
+	atf_check -s not-exit:0 \
+	    grep 'org.test.idle.demand.*idle timeout, stopping' "$logfile"
+	atf_check -s exit:0 -o match:"org.test.idle.demand.*running" \
+	    servicectl -s "${CTL_SOCK}" status
+	[ ! -f idled.launch2 ] ||
+	    atf_fail "provider was relaunched despite demand keeping it alive"
+	assert_stack_alive
+}
+idle_demand_cancels_stop_cleanup()
+{
+	cleanup_common
+	rm -f idled.count idled.launch1 idled.launch2
+}
+
+# ===================================================================
+# Provider cancels its own pending idle stop with seconds == 0
+# ===================================================================
+
+atf_test_case idle_cancel_keeps_running cleanup
+idle_cancel_keeps_running_head()
+{
+	atf_set "descr" "service_idle_shutdown(ctx, 0) clears a pending idle stop so the provider keeps running"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+idle_cancel_keeps_running_body()
+{
+	find_capd_service_fixture
+	prepare_paths
+	make_svc_bin system org.test.idle.cancel \
+	    "activation { boot = true; ipc = [\"org.test.idle.cancel\"]; }
+arguments = [\"idle-cancel\", \"org.test.idle.cancel\", \"1\", \"$(pwd)/idlec.ready\"];" \
+	    "$capd_service_fixture"
+	write_config
+	start_stack
+	if ! wait_for_file idlec.ready; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "idle-cancel provider did not become ready"
+	fi
+
+	# Past the armed (then cancelled) 1s timeout: it must still be running.
+	sleep 3
+	atf_check -s not-exit:0 \
+	    grep 'org.test.idle.cancel.*idle timeout, stopping' "$logfile"
+	atf_check -s exit:0 -o match:"org.test.idle.cancel.*running" \
+	    servicectl -s "${CTL_SOCK}" status
+	assert_stack_alive
+}
+idle_cancel_keeps_running_cleanup()
+{
+	cleanup_common
+	rm -f idlec.ready
+}
+
 atf_init_test_cases()
 {
 	# Restart policies
@@ -914,4 +1063,9 @@ atf_init_test_cases()
 	# Control-socket authorization
 	atf_add_test_case sctl_privilege_denied
 	atf_add_test_case sctl_rejects_malformed_requests
+
+	# Provider-driven idle shutdown
+	atf_add_test_case idle_stop_and_relaunch
+	atf_add_test_case idle_demand_cancels_stop
+	atf_add_test_case idle_cancel_keeps_running
 }

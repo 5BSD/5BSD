@@ -17,8 +17,6 @@
 .Ft int
 .Fn capbundle_verify "const struct capbundle *b" "char *errbuf" "size_t errlen"
 .Ft int
-.Fn capbundle_check_startup_cycles "struct capbundle **bundles" "unsigned nbundles" "char *errbuf" "size_t errlen"
-.Ft int
 .Fn capbundle_scan_dir "const char *path" "capbundle_scan_cb cb" "void *arg"
 .Sh DESCRIPTION
 .Nm
@@ -50,8 +48,6 @@ the filesystem descriptor must name storage with mount rights.
 .Fn capbundle_verify
 checks the exact tree shape, executable type and mode, activation triggers,
 name uniqueness, and resource limits.
-.Fn capbundle_check_startup_cycles
-validates the derived descriptor-provider dependency graph.
 .Sh ACCESSORS
 The public header exposes immutable accessors for bundle identity, display
 version, sequence, author, publisher, path, unit count, unit labels,

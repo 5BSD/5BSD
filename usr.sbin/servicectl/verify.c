@@ -222,11 +222,6 @@ cmd_verify(int argc, char *argv[])
 			}
 		}
 	}
-	if (capbundle_check_startup_cycles(bundles, (unsigned)argc, errbuf,
-	    sizeof(errbuf)) == -1) {
-		warnx("verify: dependency graph FAILED — %s", errbuf);
-		goto out;
-	}
 	printf("Effective configuration:\n\n");
 	for (i = 0; i < argc; i++)
 		print_bundle(bundles[i]);

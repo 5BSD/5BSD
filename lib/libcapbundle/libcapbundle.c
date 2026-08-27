@@ -343,7 +343,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	if (s->narguments > SERVICED_MAX_ARGUMENTS ||
 	    s->nenvironment > SERVICED_MAX_ENVIRONMENT ||
 	    s->nprovides > SERVICED_MAX_PROVIDES ||
-	    s->nstartup_after > SERVICED_MAX_COMPONENTS ||
 	    s->ncomponents > SERVICED_MAX_COMPONENTS ||
 	    s->ncap_paths > SERVICED_MAX_CAP_PATHS ||
 	    s->ncap_files > SERVICED_MAX_CAP_FILES ||
@@ -378,14 +377,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	for (i = 0; i < s->nprovides && i < CAPBUNDLE_MAX_PROVIDES; i++) {
 		if (manifest_copy(s->provides[i], m->provides[i],
 		    sizeof(m->provides[i])) == -1)
-			return (-1);
-	}
-
-	m->nstartup_after = s->nstartup_after;
-	for (i = 0; i < s->nstartup_after && i < SERVICED_MAX_COMPONENTS;
-	    i++) {
-		if (manifest_copy(s->startup_after[i], m->startup_after[i],
-		    sizeof(m->startup_after[i])) == -1)
 			return (-1);
 	}
 

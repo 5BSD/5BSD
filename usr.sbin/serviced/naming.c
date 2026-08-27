@@ -388,6 +388,13 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	 */
 	provider->connection_count++;
 
+	/*
+	 * New client demand means the provider is no longer idle; drop any
+	 * pending idle-shutdown timer.  The provider re-arms it via SVC_OP_IDLE
+	 * once it next goes idle.
+	 */
+	cancel_idle_timer(provider, serviced_kq);
+
 	*errp = 0;
 	return (client_end);
 }

@@ -83,9 +83,13 @@ CFLAGS.component_fixture+=	-I${SRCTOP}/sys
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libchannel
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/liboraclert
+CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libservice
 CFLAGS.on_demand_test+=		-I${SRCTOP}/sys
 CFLAGS.on_demand_test+=		-ffunction-sections -fdata-sections
 LDFLAGS.on_demand_test+=	-Wl,--gc-sections
+# The idle-shutdown cases pull supervisor.c + svc_proto.c into the unit, which
+# reach libchannel and (in the mac_capability-gated case) a provider thread.
+LIBADD.on_demand_test+=		channel pthread
 CFLAGS.fd_budget_test+=	-I${SRCTOP}/sys
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libcapbundle

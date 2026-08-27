@@ -29,9 +29,6 @@ sample_manifest(void)
 	m.nenvironment = 1;
 	strlcpy(m.provides[0], "org.test.endpoint", sizeof(m.provides[0]));
 	m.nprovides = 1;
-	strlcpy(m.startup_after[0], "org.5bsd.CryptoCmp",
-	    sizeof(m.startup_after[0]));
-	m.nstartup_after = 1;
 	strlcpy(m.components[0].name, "crypto", sizeof(m.components[0].name));
 	strlcpy(m.components[0].storage, "data",
 	    sizeof(m.components[0].storage));
@@ -110,7 +107,6 @@ ATF_TC_BODY(identity_and_execution_changes, tc)
 	CHECK_CHANGE(b.stop_timeout++);
 	CHECK_CHANGE(b.max_failures++);
 	CHECK_CHANGE(b.provides[0][0] = 'x');
-	CHECK_CHANGE(b.startup_after[0][0] = 'x');
 	CHECK_CHANGE(b.components[0].name[0] = 'x');
 	CHECK_CHANGE(b.components[0].storage[0] = 'x');
 	CHECK_CHANGE(b.kmod_requires[0][0] = 'x');

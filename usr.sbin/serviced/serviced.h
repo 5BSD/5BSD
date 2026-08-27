@@ -34,11 +34,12 @@ struct channel_message;
  * current capability-service behavior and every existing code path is
  * unchanged until a unit is explicitly given another kind.
  *
- * The unit's stable identity is its manifest.label: the dependency graph
- * node is keyed by label, so a unit may migrate between kinds (an rc
- * service rewritten as a .cap bundle: RC -> NATIVE) without changing its
- * graph node or disturbing dependents.  bundle_idx is merely origin and
- * is only meaningful for bundle-sourced units.
+ * The unit's stable identity is its manifest.label: runtime state is keyed
+ * by label, so a unit may migrate between kinds (an rc service rewritten as
+ * a .cap bundle: RC -> NATIVE) without changing its identity or disturbing
+ * consumers.  Units carry no startup ordering; they launch in parallel and
+ * satisfy inter-service needs on demand via IPC activation.  bundle_idx is
+ * merely origin and is only meaningful for bundle-sourced units.
  *
  * SVC_KIND_RC provides rc(8) compatibility — serviced can run existing
  * rc.d services via service(8) so the base boots and migrates one service
@@ -114,6 +115,11 @@ struct svc_runtime {
 	bool		reload_pending;		/* swap manifest after NOTE_EXIT */
 	struct svc_manifest pending_manifest;
 	struct timespec	last_start;
+
+	/* Provider-driven idle shutdown (SVC_OP_IDLE) */
+	unsigned	idle_timeout_sec;	/* 0 = idle shutdown not requested */
+	uintptr_t	idle_timer_ident;	/* 0 = no idle timer armed */
+	bool		idle_stop_pending;	/* idle timer fired; keep slot for relaunch */
 
 	/* Attribution */
 	char		launched_by[SERVICED_LABEL_MAX]; /* who triggered launch */
@@ -214,9 +220,6 @@ int	storage_lease_release(const struct ort_storage_claim *sc);
 int	kldmgr_ensure_loaded(const struct svc_manifest *m, bool system_bundle,
 	    int kq);
 
-/* depgraph.c — dependency graph */
-int	depgraph_sort(struct svc_runtime *svcs, unsigned nsvc);
-
 /* execute.c — service fork/exec */
 int	svc_exec(struct svc_runtime *svc, int kq);
 const char *svc_exec_blocking_provider(const struct svc_manifest *m);
@@ -230,6 +233,8 @@ bool	supervisor_is_stopped(void);
 void	supervisor_teardown_state(void);
 void	svc_graceful_stop(struct svc_runtime *svc, int kq);
 void	svc_cancel_restart(struct svc_runtime *svc, int kq);
+void	arm_idle_timer(struct svc_runtime *svc, int kq);
+void	cancel_idle_timer(struct svc_runtime *svc, int kq);
 void	svc_quiesce_complete(struct svc_runtime *, int status, int kq);
 void	schedule_restart(struct svc_runtime *svc, int kq);
 

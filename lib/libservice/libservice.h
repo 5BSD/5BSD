@@ -107,6 +107,13 @@ int	service_enter_capability_mode(struct service_context *);
 int	service_ready(struct service_context *);
 
 /*
+ * Request that serviced stop this provider after `seconds` of no new client
+ * demand; a subsequent lookup relaunches it on demand.  Call again after
+ * handling a client to re-arm, or with 0 to cancel.
+ */
+int	service_idle_shutdown(struct service_context *, unsigned seconds);
+
+/*
  * A provider owns global-name exposure and makes the capability-mode security
  * transition explicit.  service_provider_ready() never enters capability
  * mode; callers must seal the process first.

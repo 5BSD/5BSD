@@ -1607,6 +1607,85 @@ scenario_worker_channel(const char *result)
 	hold();
 }
 
+/*
+ * Provider-driven idle shutdown (Phase 2).  After becoming ready the provider
+ * declares an idle timeout; serviced stops it after that interval yet keeps
+ * its name reservation so the next lookup relaunches it.  Only the first
+ * incarnation arms idle (tracked in a statefile) so a relaunched provider
+ * stays up for the test's assertions.  Each launch records its pid under a
+ * distinct marker so the harness can prove the process actually changed.
+ */
+static int
+scenario_idle(const char *name, const char *seconds_str, const char *prefix)
+{
+	struct service_listener *listener;
+	char statefile[256], marker[256];
+	const char *errstr;
+	unsigned seconds;
+	long count;
+	FILE *sf;
+
+	if (snprintf(statefile, sizeof(statefile), "%s.count", prefix) >=
+	    (int)sizeof(statefile))
+		errx(1, "idle statefile path too long");
+	count = 0;
+	sf = fopen(statefile, "r");
+	if (sf != NULL) {
+		if (fscanf(sf, "%ld", &count) != 1)
+			count = 0;
+		fclose(sf);
+	}
+	count++;
+	sf = fopen(statefile, "w");
+	if (sf != NULL) {
+		fprintf(sf, "%ld\n", count);
+		fclose(sf);
+	}
+	seconds = (unsigned)strtonum(seconds_str, 0, 3600, &errstr);
+	if (errstr != NULL)
+		errx(1, "idle seconds '%s': %s", seconds_str, errstr);
+	listener = NULL;
+	if (fixture_service_initialize() == -1 ||
+	    service_provider_expose(fixture_service_provider, name,
+	    &listener) == -1 || fixture_service_ready() == -1)
+		err(1, "idle provider initialization");
+	if (snprintf(marker, sizeof(marker), "%s.launch%ld", prefix, count) >=
+	    (int)sizeof(marker))
+		errx(1, "idle marker path too long");
+	write_result(marker, "pid=%jd\n", (intmax_t)getpid());
+	if (count == 1 &&
+	    service_idle_shutdown(fixture_service_context, seconds) == -1)
+		err(1, "service_idle_shutdown");
+	hold();
+}
+
+/*
+ * Arm an idle timeout, then immediately cancel it with seconds == 0.  serviced
+ * must clear the pending stop, so the provider stays running past the timeout.
+ */
+static int
+scenario_idle_cancel(const char *name, const char *seconds_str,
+    const char *ready)
+{
+	struct service_listener *listener;
+	const char *errstr;
+	unsigned seconds;
+
+	seconds = (unsigned)strtonum(seconds_str, 1, 3600, &errstr);
+	if (errstr != NULL)
+		errx(1, "idle seconds '%s': %s", seconds_str, errstr);
+	listener = NULL;
+	if (fixture_service_initialize() == -1 ||
+	    service_provider_expose(fixture_service_provider, name,
+	    &listener) == -1 || fixture_service_ready() == -1)
+		err(1, "idle-cancel provider initialization");
+	if (service_idle_shutdown(fixture_service_context, seconds) == -1 ||
+	    service_idle_shutdown(fixture_service_context, 0) == -1)
+		err(1, "service_idle_shutdown");
+	write_result(ready, "pid=%jd cancelled=1\n", (intmax_t)getpid());
+	hold();
+}
+
 static void
 usage(void)
 {
@@ -1641,7 +1720,9 @@ usage(void)
 	    "       capd_service_fixture compat-lookup\n"
 	    "       capd_service_fixture readiness-gate protocol capmode\n"
 	    "       capd_service_fixture quiesce name ready result\n"
-	    "       capd_service_fixture worker-channel result\n");
+	    "       capd_service_fixture worker-channel result\n"
+	    "       capd_service_fixture idle-provider name seconds prefix\n"
+	    "       capd_service_fixture idle-cancel name seconds ready\n");
 	exit(64);
 }
 
@@ -1714,5 +1795,9 @@ main(int argc, char **argv)
 		return (scenario_quiesce(argv[2], argv[3], argv[4]));
 	if (argc == 3 && strcmp(argv[1], "worker-channel") == 0)
 		return (scenario_worker_channel(argv[2]));
+	if (argc == 5 && strcmp(argv[1], "idle-provider") == 0)
+		return (scenario_idle(argv[2], argv[3], argv[4]));
+	if (argc == 5 && strcmp(argv[1], "idle-cancel") == 0)
+		return (scenario_idle_cancel(argv[2], argv[3], argv[4]));
 	usage();
 }

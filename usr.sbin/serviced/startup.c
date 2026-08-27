@@ -3,13 +3,11 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Tier-based parallel service startup for serviced.
+ * Parallel service startup for serviced.
  *
- * After topological sort, services are grouped into tiers (layers
- * of the dependency DAG).  All services in a tier launch in parallel.
- * We wait for all services in a tier to report ready before launching
- * the next tier.  This minimizes startup time while respecting
- * inter-service dependencies.
+ * Services carry no startup ordering.  Every boot service launches in
+ * parallel with no sequencing; inter-service needs are satisfied on
+ * demand through IPC activation as they arise.
  */
 
 #include <sys/types.h>
@@ -31,8 +29,6 @@
 #include "launch_limits.h"
 #include "serviced_probes.h"
 
-#define	TIER_READY_TIMEOUT_SEC	10
-
 /*
  * Log a loaded manifest's key attributes for operational visibility.
  */
@@ -47,9 +43,6 @@ log_loaded_manifest(const struct svc_manifest *m)
 	for (j = 0; j < m->nprovides; j++)
 		syslog(LOG_INFO, "startup: %s provides: %s",
 		    m->label, m->provides[j]);
-	for (j = 0; j < m->nstartup_after; j++)
-		syslog(LOG_INFO, "startup: %s starts after: %s",
-		    m->label, m->startup_after[j]);
 	for (j = 0; j < m->ncomponents; j++)
 		syslog(LOG_INFO, "startup: %s local component: %s",
 		    m->label, m->components[j].name);
@@ -65,153 +58,6 @@ log_loaded_manifest(const struct svc_manifest *m)
 	if (m->has_jail)
 		syslog(LOG_INFO, "startup: %s jail: %s path=%s",
 		    m->label, m->jail_name, m->jail_path);
-}
-
-/*
- * Assign tiers based on dependency depth.
- * Tier 0 = no dependencies.  Tier N follows each derived component factory.
- *
- * svcs must already be topologically sorted.
- * Returns the maximum tier number.
- */
-static unsigned
-assign_tiers(struct svc_runtime *svcs, unsigned n, unsigned *tiers)
-{
-	unsigned i, j, k, max_tier;
-
-	max_tier = 0;
-	for (i = 0; i < n; i++) {
-		tiers[i] = 0;
-		for (j = 0; j < svcs[i].manifest.nstartup_after; j++) {
-			/* Find the tier of the required service. */
-			for (k = 0; k < i; k++) {
-				unsigned p;
-				for (p = 0; p < svcs[k].manifest.nprovides; p++) {
-					if (strcmp(
-					    svcs[i].manifest.startup_after[j],
-					    svcs[k].manifest.provides[p]) == 0) {
-						if (tiers[k] + 1 > tiers[i])
-							tiers[i] = tiers[k] + 1;
-					}
-				}
-			}
-		}
-		if (tiers[i] > max_tier)
-			max_tier = tiers[i];
-	}
-	return (max_tier);
-}
-
-/*
- * Wait for all services in a tier to report SVC_OP_READY.
- * Returns 0 if all ready, -1 if timeout (some services may be stuck).
- */
-static int
-wait_tier_ready(struct svc_runtime *svcs, unsigned n, unsigned tier,
-    unsigned *tiers, int kq)
-{
-	struct kevent events[16];
-	struct timespec deadline, now;
-	unsigned ready_count, needed;
-	unsigned i;
-	int nev;
-
-	/* Count how many services we need to wait for. */
-	needed = 0;
-	for (i = 0; i < n; i++) {
-		if (tiers[i] == tier &&
-		    svcs[i].state == SVC_STATE_STARTING)
-			needed++;
-	}
-
-	if (needed == 0)
-		return (0);
-
-	clock_gettime(CLOCK_MONOTONIC, &deadline);
-	deadline.tv_sec += TIER_READY_TIMEOUT_SEC;
-
-	ready_count = 0;
-	while (ready_count < needed) {
-		struct timespec remain;
-
-		clock_gettime(CLOCK_MONOTONIC, &now);
-		if (now.tv_sec > deadline.tv_sec ||
-		    (now.tv_sec == deadline.tv_sec &&
-		    now.tv_nsec >= deadline.tv_nsec)) {
-			syslog(LOG_WARNING,
-			    "startup: tier %u timeout (%u/%u ready)",
-			    tier, ready_count, needed);
-			return (-1);
-		}
-
-		remain.tv_sec = deadline.tv_sec - now.tv_sec;
-		remain.tv_nsec = deadline.tv_nsec - now.tv_nsec;
-		if (remain.tv_nsec < 0) {
-			remain.tv_sec--;
-			remain.tv_nsec += 1000000000L;
-		}
-
-		nev = kevent(kq, NULL, 0, events, 16, &remain);
-		if (nev == -1) {
-			if (errno == EINTR)
-				continue;
-			return (-1);
-		}
-
-		for (i = 0; (int)i < nev; i++) {
-			if (events[i].filter == EVFILT_PROCDESC)
-				supervisor_handle_procdesc(&events[i]);
-			else if ((events[i].filter == EVFILT_READ ||
-			    events[i].filter == EVFILT_WRITE) &&
-			    events[i].udata != NULL) {
-				struct svc_runtime *svc = events[i].udata;
-
-				if (svc_launch_owns_event(svc, events[i].ident))
-					svc_launch_channel_event(svc,
-					    serviced_kq);
-				else
-					supervisor_handle_channel(&events[i]);
-			} else if (events[i].filter == EVFILT_TIMER) {
-				if (on_demand_is_timer(events[i].ident))
-					on_demand_timeout(events[i].ident,
-					    serviced_kq);
-				else if (svc_launch_timer_owns(events[i].ident))
-					svc_launch_timer_fire(events[i].ident,
-					    serviced_kq);
-				else
-					supervisor_handle_timer(&events[i]);
-			}
-			else if (events[i].filter == EVFILT_SIGNAL) {
-				int sig = (int)events[i].ident;
-
-				if (sig == SIGTERM || sig == SIGINT) {
-					syslog(LOG_INFO,
-					    "startup: signal %d during "
-					    "tier wait, aborting", sig);
-					sd.running = false;
-					return (-1);
-				}
-			}
-		}
-
-		/* Recount ready + crashed services. */
-		ready_count = 0;
-		for (i = 0; i < n; i++) {
-			if (tiers[i] != tier)
-				continue;
-			/*
-			 * RUNNING = ready (native capmode, or RC "started");
-			 * DONE = oneshot completed; STOPPED = crashed/failed,
-			 * which still unblocks the tier so boot proceeds.
-			 */
-			if (svcs[i].state == SVC_STATE_RUNNING ||
-			    svcs[i].state == SVC_STATE_DONE ||
-			    svcs[i].state == SVC_STATE_STOPPED)
-				ready_count++;
-		}
-	}
-
-	return (0);
 }
 
 /*
@@ -303,21 +149,18 @@ run_rc_bootstrap(int kqunused)
 }
 
 /*
- * Launch all system services using tier-based parallelism.
+ * Launch all system services in parallel.
  *
  * 1. Scan bundle registry for non-on-demand services
  * 2. Fill svc_runtime array with manifests from bundles
- * 3. Topological sort
- * 4. Assign tiers
- * 5. For each tier: launch all, wait for ready
+ * 3. Launch every service with no ordering
  */
 int
 startup_launch_system(int kq)
 {
 	struct svc_manifest *manifests;
 	unsigned nmanifests, i, bi, si;
-	unsigned *tiers;
-	unsigned max_tier, tier;
+	unsigned launched;
 	struct capbundle *b;
 	struct capbundle_service *asvc;
 	struct timespec start_ts;
@@ -415,62 +258,28 @@ startup_launch_system(int kq)
 	sd.nservices = nmanifests;
 	free(manifests);
 
-	/* Topological sort. */
-	if (depgraph_sort(sd.services, sd.nservices) == -1) {
-		syslog(LOG_ERR, "startup: dependency sort failed");
-		return (-1);
-	}
-
-	/* Assign tiers. */
-	tiers = calloc(sd.nservices, sizeof(*tiers));
-	if (tiers == NULL) {
-		syslog(LOG_ERR, "startup: calloc tiers: %m");
-		return (-1);
-	}
-	max_tier = assign_tiers(sd.services, sd.nservices, tiers);
-
-	syslog(LOG_INFO, "startup: %u services in %u tiers",
-	    sd.nservices, max_tier + 1);
-	SERVICED_PROBE_STARTUP_BEGIN(sd.nservices, max_tier + 1);
-
-	/* Launch tier by tier. */
-	for (tier = 0; tier <= max_tier; tier++) {
-		unsigned launched = 0;
-
-		for (i = 0; i < sd.nservices; i++) {
-			if (tiers[i] != tier)
-				continue;
-			/* A lookup may already have activated this unit; a
-			 * second exec would create a duplicate runtime. */
-			if (sd.services[i].state != SVC_STATE_STOPPED)
-				continue;
-			syslog(LOG_INFO, "startup: service: %s",
+	/*
+	 * Launch every service in parallel with no startup ordering.
+	 * Inter-service needs are satisfied on demand via IPC activation.
+	 */
+	SERVICED_PROBE_STARTUP_BEGIN(sd.nservices, 1);
+	launched = 0;
+	for (i = 0; i < sd.nservices; i++) {
+		/* A lookup may already have activated this unit; a second
+		 * exec would create a duplicate runtime. */
+		if (sd.services[i].state != SVC_STATE_STOPPED)
+			continue;
+		syslog(LOG_INFO, "startup: service: %s",
+		    sd.services[i].manifest.label);
+		if (svc_launch_or_await(&sd.services[i], kq) == 0)
+			launched++;
+		else
+			syslog(LOG_ERR, "startup: failed to launch '%s'",
 			    sd.services[i].manifest.label);
-			if (svc_launch_or_await(&sd.services[i], kq) == 0)
-				launched++;
-			else
-				syslog(LOG_ERR, "startup: failed to launch '%s'",
-				    sd.services[i].manifest.label);
-		}
-
-		syslog(LOG_INFO, "startup: tier %u — launched %u services",
-		    tier, launched);
-		SERVICED_PROBE_STARTUP_TIER(tier, launched);
-
-		/* Wait for this tier to become ready before next tier. */
-		if (tier < max_tier && launched > 0) {
-			if (wait_tier_ready(sd.services, sd.nservices,
-			    tier, tiers, kq) == -1) {
-				syslog(LOG_ERR,
-				    "startup: tier %u did not become ready",
-				    tier);
-				free(tiers);
-				return (-1);
-			}
-		}
 	}
 
-	free(tiers);
+	syslog(LOG_INFO, "startup: launched %u services", launched);
+	SERVICED_PROBE_STARTUP_TIER(0, launched);
 
 	{
 		struct timespec end_ts;

@@ -24,6 +24,7 @@ CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/sys
 CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/libchannel
+CFLAGS.libservice_api_test+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS.libservice_api_test+=	-I${SRCTOP}/sys
 
 ${PACKAGE}FILES+=	capd_test_harness.sh

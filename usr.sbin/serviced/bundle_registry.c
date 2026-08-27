@@ -118,16 +118,6 @@ provides_hashfn(const char *s)
 	return (serviced_hash_djb2(s) % PROVIDES_HASH_SIZE);
 }
 
-static bool
-provides_exists(const char *name)
-{
-	struct provides_entry *e;
-	for (e = provides_hash[provides_hashfn(name)]; e != NULL; e = e->next)
-		if (strcmp(e->name, name) == 0)
-			return (true);
-	return (false);
-}
-
 /*
  * Insert a provides entry into the hash table.
  * Returns 0 on success, -1 if duplicate (logs warning).
@@ -500,27 +490,22 @@ bundle_registry_init(void)
 	struct bundle_state *old_bundles;
 	struct provides_entry **old_hash;
 	struct svc_manifest *manifest;
-	char *errbuf;
 	struct stat *sb;
-	struct capbundle **cycle_bundles;
 	unsigned i, old_nbundles, old_bundles_cap, nservices;
-	int cycle_ret;
 
 	/*
 	 * Keep all caller-owned buffers off the daemon stack.  Apart from the
-	 * manifest being large, the parser and graph validator are independent
-	 * trust boundaries: a bounds bug in either must not be able to overwrite
-	 * this function's return state or stack-protector canary.
+	 * manifest being large, the parser is an independent trust boundary: a
+	 * bounds bug in it must not be able to overwrite this function's return
+	 * state or stack-protector canary.
 	 */
 	manifest = calloc(1, sizeof(*manifest));
-	errbuf = calloc(1, 512);
 	old_hash = calloc(PROVIDES_HASH_SIZE, sizeof(*old_hash));
 	sb = calloc(1, sizeof(*sb));
-	if (manifest == NULL || errbuf == NULL || old_hash == NULL || sb == NULL) {
+	if (manifest == NULL || old_hash == NULL || sb == NULL) {
 		syslog(LOG_CRIT,
 		    "bundle_registry: out of memory for registry validation");
 		free(old_hash);
-		free(errbuf);
 		free(sb);
 		free(manifest);
 		return (-1);
@@ -571,7 +556,6 @@ bundle_registry_init(void)
 		syslog(LOG_WARNING, "bundle_registry: no bundles loaded");
 		registry_dispose(old_bundles, old_nbundles, old_hash);
 		free(old_hash);
-		free(errbuf);
 		free(sb);
 		free(manifest);
 		return (0);
@@ -589,7 +573,7 @@ bundle_registry_init(void)
 		}
 	}
 	for (i = 0; i < nbundles; i++) {
-		unsigned si, ri;
+		unsigned si;
 		struct capbundle *b = bundles[i].bundle;
 		for (si = 0; si < capbundle_nservices(b); si++) {
 			struct capbundle_service *svc = capbundle_service(b, si);
@@ -600,55 +584,13 @@ bundle_registry_init(void)
 				    capbundle_svc_label(svc));
 				goto fail;
 			}
-			for (ri = 0; ri < manifest->nstartup_after; ri++) {
-				const char *provider =
-				    manifest->startup_after[ri];
-				if (strcmp(provider, "ORACLED") != 0 &&
-				    !provides_exists(provider)) {
-					syslog(LOG_CRIT,
-					    "bundle_registry: %s has unknown startup provider %s",
-					    capbundle_svc_label(svc), provider);
-					SERVICED_PROBE_MANIFEST_REJECT(
-					    capbundle_name(b), "unknown provider",
-					    bundles[i].system ? 1 : 0);
-					goto fail;
-				}
-			}
 		}
 	}
 
-	/*
-	 * Cross-bundle circular dependency check.  Size the working array
-	 * from the actual bundle count — a previous fixed 128-entry cap
-	 * silently skipped cycles involving any bundle past index 128 while
-	 * still reporting the graph acyclic.
-	 */
-	cycle_bundles = reallocarray(NULL, nbundles, sizeof(*cycle_bundles));
-	if (cycle_bundles == NULL) {
-		syslog(LOG_CRIT,
-		    "bundle_registry: out of memory for cycle check — "
-		    "cannot start");
-		goto fail;
-	}
-	for (i = 0; i < nbundles; i++)
-		cycle_bundles[i] = bundles[i].bundle;
-
-	cycle_ret = capbundle_check_startup_cycles(cycle_bundles, nbundles,
-	    errbuf, 512);
-	free(cycle_bundles);
-	if (cycle_ret == -1) {
-		syslog(LOG_CRIT,
-		    "bundle_registry: %s — cannot start", errbuf);
-		goto fail;
-	}
-
-	syslog(LOG_INFO,
-	    "bundle_registry: %u bundles loaded, dependency graph acyclic",
-	    nbundles);
+	syslog(LOG_INFO, "bundle_registry: %u bundles loaded", nbundles);
 	SERVICED_PROBE_BUNDLE_SCAN("all", nbundles);
 	registry_dispose(old_bundles, old_nbundles, old_hash);
 	free(old_hash);
-	free(errbuf);
 	free(sb);
 	free(manifest);
 	return (0);
@@ -661,7 +603,6 @@ fail:
 	bundles_cap = old_bundles_cap;
 	memcpy(provides_hash, old_hash, sizeof(provides_hash));
 	free(old_hash);
-	free(errbuf);
 	free(sb);
 	return (-1);
 }

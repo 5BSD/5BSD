@@ -45,8 +45,6 @@ struct capbundle_service {
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
 	bool	activation_boot;
-	char	startup_after[SERVICED_MAX_COMPONENTS][CAPBUNDLE_NAME_MAX + 1];
-	unsigned nstartup_after;
 	struct serviced_component components[SERVICED_MAX_COMPONENTS];
 	unsigned ncomponents;
 	int	restart;
