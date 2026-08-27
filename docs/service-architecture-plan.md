@@ -570,6 +570,11 @@ parser, network broker, or mutable state store.
   user-domain channel that its descendants inherit.
 - Do not add a second manager process until isolation or scale demonstrates a
   need.
+- Retire the `descriptors.network {}` manifest block (deferred from Phase 3): it
+  is currently the NetworkCmp broker-session delivery trigger and is distinct
+  from a `capabilities.network` kernel socket-authority gate.  Once §21/§22
+  ambient-IPC lookup delivers the broker session, remove the descriptor block
+  and switch delivery to the lookup channel.
 
 ## 17. Required tests and review gates
 
