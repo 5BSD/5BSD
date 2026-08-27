@@ -525,8 +525,17 @@ parser, network broker, or mutable state store.
 
 - Hold reservations before providers start.
 - Queue requests across startup and release them only after real readiness.
-- Implement idle notification and bounded idle shutdown.
-- Persist enable/disable and circuit-breaker state.
+- Implement idle notification and bounded idle shutdown.  Idle is
+  provider-driven: serviced brokers a direct client->provider descriptor and
+  cannot observe disconnects, so a provider declares idle intent through a
+  client API (`service_idle_shutdown(ctx, seconds)`).  serviced arms a timer;
+  new demand cancels it; on expiry the provider is gracefully stopped but its
+  name reservations are kept, so the next lookup relaunches it on demand.
+- Persist enable/disable state (done).  **Do NOT persist circuit-breaker
+  state:** the in-memory breaker stops a crash-looping service at runtime, but
+  carrying a tripped breaker across reboot would silently mask a real bug — a
+  service that should be fixed would stay parked with no signal.  Operator
+  enable/disable already covers deliberate parking.
 
 ### Phase 3: replace NetworkCmp proxying
 
