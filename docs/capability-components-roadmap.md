@@ -481,13 +481,16 @@ dead weight. Evaluate and prune:
 ULE is only SMT- and cache-topology aware; it has no notion of core *capacity*,
 so on hybrid CPUs (Intel P/E cores, ARM big.LITTLE) a latency-sensitive thread
 can land on an efficiency core and background work can hog performance cores.
-The kernel does not even detect core types today. Add asymmetric-core
-scheduling, using **XNU's Edge/Clutch/AMP scheduler as the reference design**
-(not Linux EAS):
+Add asymmetric-core scheduling, using **XNU's Edge/Clutch/AMP scheduler as the
+reference design** (not Linux EAS):
 
-- **Detection.** x86: read **CPUID leaf 0x1A** (core-type: performance vs
-  Atom/efficiency). arm64: derive per-cluster capacity (DMIPS/MPIDR cluster
-  topology from ACPI/FDT).
+- **Detection — the x86 substrate already exists.** `initcpu.c` already reads
+  **CPUID leaf 0x1A** per-core and classifies `CPUID_HYBRID_SMALL_CORE` (E) vs
+  `CPUID_HYBRID_LARGE_CORE` (P) (`sys/x86/include/specialreg.h`) — but only to
+  drive the Alder/Raptor Lake page-invalidation errata (`pcid_invlpg_workaround`);
+  the P/E result is never surfaced. Work: record per-CPU core type/capacity
+  where the scheduler can see it. arm64: derive per-cluster capacity
+  (DMIPS/MPIDR cluster topology from ACPI/FDT).
 - **Topology.** Extend the `cpu_group`/`tdq` model with a cluster-type and
   capacity field and build P-cluster/E-cluster groupings (XNU's per-cluster
   runqueues), each tracking a per-priority (QoS-like) on-core latency metric.
