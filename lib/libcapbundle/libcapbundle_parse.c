@@ -279,6 +279,15 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "direction" };
 	static const char *const execution_jail_keys[] = { "name", "path",
 	    "hostname", "ip4_addr" };
+	/*
+	 * A "network" descriptor delivers the version-1 org.5bsd.network broker
+	 * session (bounded DNS plus connected, rights-limited sockets).  It
+	 * takes no options: the broker returns real descriptors and proxies no
+	 * data.  Protocol space for future userspace networking (listeners,
+	 * protocol stacks, virtual interfaces) is reserved but implemented as
+	 * none.  This is distinct from a capabilities.network claim, which is a
+	 * kernel socket-authority gate for a unit that opens its own sockets.
+	 */
 	static const char *const descriptor_keys[] = { "filesystem", "network",
 	    "crypto" };
 	static const char *const filesystem_descriptor_keys[] = { "storage" };

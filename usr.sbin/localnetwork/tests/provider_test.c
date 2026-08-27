@@ -2,6 +2,7 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
 #include <sys/param.h>
 #include <sys/socket.h>
@@ -13,6 +14,7 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <netinet/in.h>
 #include <pthread.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -44,8 +46,8 @@ struct resolve_call {
 	int status;
 };
 
-static int call(struct fixture *, const void *, size_t, const int *, size_t,
-    union wire_buffer *, size_t *);
+static int call(struct fixture *, const void *, size_t, union wire_buffer *,
+    size_t *, int *);
 
 static int
 capability_connect(const char *name)
@@ -90,26 +92,33 @@ channel_pair(int *client, int *provider)
 }
 
 static void
-fixture_create(struct fixture *fixture)
+fixture_create_policy(struct fixture *fixture,
+    const struct networkcmp_policy *policy)
 {
-	struct networkcmp_policy policy;
 	int client, provider;
 
 	memset(fixture, 0, sizeof(*fixture));
 	fixture->resolver_ready = -1;
 	fixture->resolver_release = -1;
-	ATF_REQUIRE_EQ(0, networkcmp_policy_default(&policy));
-	policy.max_sockets = 2;
 	channel_pair(&client, &provider);
 	fixture->child = fork();
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
-		_exit(networkcmp_test_serve(provider, NULL, &policy,
+		_exit(networkcmp_test_serve(provider, NULL, policy,
 		    "org.test.network"));
 	}
 	close(provider);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+}
+
+static void
+fixture_create(struct fixture *fixture)
+{
+	struct networkcmp_policy policy;
+
+	ATF_REQUIRE_EQ(0, networkcmp_policy_default(&policy));
+	fixture_create_policy(fixture, &policy);
 }
 
 static void
@@ -123,7 +132,6 @@ fixture_create_blocked_resolver_timeout(struct fixture *fixture,
 	fixture->resolver_ready = -1;
 	fixture->resolver_release = -1;
 	ATF_REQUIRE_EQ(0, networkcmp_policy_default(&policy));
-	policy.max_sockets = 2;
 	ATF_REQUIRE_EQ(0, pipe(ready));
 	ATF_REQUIRE_EQ(0, pipe(release));
 	channel_pair(&client, &provider);
@@ -195,8 +203,8 @@ resolve_call_thread(void *argument)
 	memcpy(request.host, "localhost", sizeof(request.host));
 	/* Exact wire length: the validator rejects tail padding. */
 	if (call(resolve_call->fixture, &request, sizeof(request.message) +
-	    sizeof(request.request) + sizeof(request.host), NULL, 0,
-	    &reply, &length) == -1) {
+	    sizeof(request.request) + sizeof(request.host), &reply, &length,
+	    NULL) == -1) {
 		resolve_call->error = errno;
 		return (NULL);
 	}
@@ -205,21 +213,20 @@ resolve_call_thread(void *argument)
 		resolve_call->error = errno;
 		return (NULL);
 	}
-	resolve_call->status = -((struct networkcmp_msg *)(void *)reply.bytes)->status;
+	resolve_call->status =
+	    -((struct networkcmp_msg *)(void *)reply.bytes)->status;
 	return (NULL);
 }
 
 static int
 call(struct fixture *fixture, const void *request, size_t request_length,
-    const int *fds, size_t nfds, union wire_buffer *reply, size_t *reply_length)
+    union wire_buffer *reply, size_t *reply_length, int *out_fd)
 {
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_message message = {
 		.size = sizeof(message),
 		.data = request,
 		.length = request_length,
-		.fds = fds,
-		.nfds = nfds,
 	};
 	struct service_reply response = {
 		.size = sizeof(response),
@@ -227,6 +234,11 @@ call(struct fixture *fixture, const void *request, size_t request_length,
 		.capacity = sizeof(reply->bytes),
 	};
 
+	if (out_fd != NULL) {
+		*out_fd = -1;
+		response.fds = out_fd;
+		response.fd_capacity = 1;
+	}
 	if (service_session_call(fixture->session, &message, &response,
 	    &options) == -1)
 		return (-1);
@@ -245,46 +257,56 @@ reply_status(union wire_buffer *wire, size_t length, uint16_t opcode)
 	return (-message->status);
 }
 
-static int
-request_status(struct fixture *fixture, uint16_t opcode, const void *payload,
-    size_t payload_length, const int *fds, size_t nfds)
+/* Fill a networkcmp_endpoint from an IPv4 loopback address and port. */
+static void
+loopback_endpoint(struct networkcmp_endpoint *endpoint, uint16_t port)
 {
-	union wire_buffer request, reply;
-	struct networkcmp_msg *message;
-	size_t length;
+	struct in_addr loopback;
 
-	ATF_REQUIRE(payload_length <= sizeof(request.bytes) - sizeof(*message));
-	memset(&request, 0, sizeof(request));
-	message = (void *)request.bytes;
-	ATF_REQUIRE_EQ(0, networkcmp_message_init(message, opcode, 0));
-	if (payload_length != 0)
-		memcpy(message + 1, payload, payload_length);
-	ATF_REQUIRE_EQ_MSG(0, call(fixture, message,
-	    sizeof(*message) + payload_length, fds, nfds, &reply, &length),
-	    "opcode %u call: %s", opcode, strerror(errno));
-	return (reply_status(&reply, length, opcode));
+	memset(endpoint, 0, sizeof(*endpoint));
+	endpoint->family = NETWORKCMP_AF_INET4;
+	endpoint->port = port;
+	loopback.s_addr = htonl(INADDR_LOOPBACK);
+	memcpy(endpoint->address, &loopback, sizeof(loopback));
 }
 
-ATF_TC(provider_socket_lifecycle);
-ATF_TC_HEAD(provider_socket_lifecycle, tc)
+/* Bind a listening (stream) or bound (datagram) loopback socket. */
+static int
+open_loopback(int type, uint16_t *port)
+{
+	struct sockaddr_in sin;
+	socklen_t length;
+	int fd;
+
+	fd = socket(AF_INET, type | SOCK_CLOEXEC, 0);
+	ATF_REQUIRE(fd >= 0);
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_len = sizeof(sin);
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	ATF_REQUIRE_EQ(0, bind(fd, (struct sockaddr *)&sin, sizeof(sin)));
+	if (type == SOCK_STREAM)
+		ATF_REQUIRE_EQ(0, listen(fd, 4));
+	length = sizeof(sin);
+	ATF_REQUIRE_EQ(0, getsockname(fd, (struct sockaddr *)&sin, &length));
+	*port = ntohs(sin.sin_port);
+	return (fd);
+}
+
+ATF_TC(provider_hello);
+ATF_TC_HEAD(provider_hello, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
-	    "The real dispatcher allocates bounded sockets, applies policy, and rejects stale handles");
+	    "HELLO negotiates the version-1 broker features and resolve bound");
 }
-ATF_TC_BODY(provider_socket_lifecycle, tc)
+ATF_TC_BODY(provider_hello, tc)
 {
 	struct fixture fixture;
 	union wire_buffer request, reply;
 	struct networkcmp_msg *message;
 	struct networkcmp_hello *hello_request;
 	struct networkcmp_hello_reply *hello;
-	struct networkcmp_socket_request *socket_request;
-	struct networkcmp_handle_reply *handle_reply;
-	struct networkcmp_endpoint_request *endpoint_request;
-	struct networkcmp_inline_request *inline_request;
-	struct networkcmp_close_request *close_request;
-	struct networkcmp_handle socket;
 	size_t length;
 
 	fixture_create(&fixture);
@@ -296,68 +318,193 @@ ATF_TC_BODY(provider_socket_lifecycle, tc)
 	hello_request->min_version = NETWORKCMP_ABI_VERSION;
 	hello_request->max_version = NETWORKCMP_ABI_VERSION;
 	ATF_REQUIRE_EQ(0, call(&fixture, message,
-	    sizeof(*message) + sizeof(*hello_request), NULL, 0, &reply,
-	    &length));
+	    sizeof(*message) + sizeof(*hello_request), &reply, &length, NULL));
 	ATF_REQUIRE_EQ(0, reply_status(&reply, length, NETWORKCMP_OP_HELLO));
 	hello = (void *)(reply.bytes + sizeof(*message));
-	ATF_CHECK_EQ(2, hello->max_sockets);
+	ATF_CHECK_EQ(NETWORKCMP_ABI_VERSION, hello->version);
+	ATF_CHECK((hello->features & NETWORKCMP_FEATURE_TCP) != 0);
 	ATF_CHECK((hello->features & NETWORKCMP_FEATURE_UDP) != 0);
-	ATF_CHECK_EQ(NETWORKCMP_INLINE_MAX, hello->max_inline);
-	ATF_CHECK_EQ(NETWORKCMP_INLINE_MAX, hello->max_datagram);
-	ATF_CHECK_EQ(NETWORKCMP_IO_TIMEOUT_MAX, hello->io_timeout_max);
+	ATF_CHECK((hello->features & NETWORKCMP_FEATURE_DNS) != 0);
+	ATF_CHECK_EQ(16, hello->max_resolve_results);
+	fixture_destroy(&fixture, 0);
+}
+
+/*
+ * Send CONNECT/UDP and assert the reply status and, on success, that the
+ * received descriptor is present.  Returns the errno-style status.
+ */
+static int
+broker_request(struct fixture *fixture, uint16_t opcode,
+    const struct networkcmp_endpoint *endpoint, int *out_fd)
+{
+	union wire_buffer request, reply;
+	struct networkcmp_msg *message;
+	struct networkcmp_connect_request *connect;
+	size_t length;
+	int status;
 
 	memset(&request, 0, sizeof(request));
 	message = (void *)request.bytes;
-	ATF_REQUIRE_EQ(0, networkcmp_message_init(message,
-	    NETWORKCMP_OP_SOCKET, 0));
-	socket_request = (void *)(message + 1);
-	socket_request->family = NETWORKCMP_AF_INET4;
-	socket_request->type = NETWORKCMP_SOCK_DGRAM;
-	ATF_REQUIRE_EQ(0, call(&fixture, message,
-	    sizeof(*message) + sizeof(*socket_request), NULL, 0, &reply,
-	    &length));
-	ATF_REQUIRE_EQ(0, reply_status(&reply, length, NETWORKCMP_OP_SOCKET));
-	handle_reply = (void *)(reply.bytes + sizeof(*message));
-	socket = handle_reply->socket;
+	ATF_REQUIRE_EQ(0, networkcmp_message_init(message, opcode, 0));
+	connect = (void *)(message + 1);
+	connect->endpoint = *endpoint;
+	ATF_REQUIRE_EQ(0, call(fixture, message,
+	    sizeof(*message) + sizeof(*connect), &reply, &length, out_fd));
+	status = reply_status(&reply, length, opcode);
+	return (status);
+}
 
-	memset(&request, 0, sizeof(request));
-	message = (void *)request.bytes;
-	ATF_REQUIRE_EQ(0, networkcmp_message_init(message,
-	    NETWORKCMP_OP_BIND, 0));
-	endpoint_request = (void *)(message + 1);
-	endpoint_request->socket = socket;
-	endpoint_request->endpoint.family = NETWORKCMP_AF_INET4;
-	ATF_REQUIRE_EQ(0, call(&fixture, message,
-	    sizeof(*message) + sizeof(*endpoint_request), NULL, 0, &reply,
-	    &length));
-	ATF_CHECK_EQ(EACCES, reply_status(&reply, length, NETWORKCMP_OP_BIND));
+/* Assert the delivered socket carries only data-transfer rights. */
+static void
+check_delivered_rights(int fd)
+{
+	cap_rights_t rights, expected;
 
-	memset(&request, 0, sizeof(request));
-	message = (void *)request.bytes;
-	ATF_REQUIRE_EQ(0, networkcmp_message_init(message,
-	    NETWORKCMP_OP_RECV, 0));
-	inline_request = (void *)(message + 1);
-	inline_request->socket = socket;
-	inline_request->length = 16;
-	ATF_REQUIRE_EQ(0, call(&fixture, message,
-	    sizeof(*message) + sizeof(*inline_request), NULL, 0, &reply,
-	    &length));
-	ATF_CHECK_EQ(EAGAIN, reply_status(&reply, length, NETWORKCMP_OP_RECV));
+	ATF_REQUIRE_EQ(0, cap_rights_get(fd, &rights));
+	cap_rights_init(&expected, CAP_READ, CAP_WRITE, CAP_EVENT,
+	    CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT, CAP_FCNTL, CAP_FSTAT,
+	    CAP_IOCTL);
+	ATF_CHECK(cap_rights_contains(&expected, &rights));
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_READ));
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_WRITE));
+	/* The client cannot bind, connect, listen, accept, or peel off. */
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_BIND));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_CONNECT));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_LISTEN));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_ACCEPT));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_PEELOFF));
+}
 
-	memset(&request, 0, sizeof(request));
-	message = (void *)request.bytes;
-	ATF_REQUIRE_EQ(0, networkcmp_message_init(message,
-	    NETWORKCMP_OP_CLOSE, 0));
-	close_request = (void *)(message + 1);
-	close_request->socket = socket;
-	ATF_REQUIRE_EQ(0, call(&fixture, message,
-	    sizeof(*message) + sizeof(*close_request), NULL, 0, &reply,
-	    &length));
-	ATF_CHECK_EQ(0, reply_status(&reply, length, NETWORKCMP_OP_CLOSE));
-	ATF_REQUIRE_EQ(0, call(&fixture, message,
-	    sizeof(*message) + sizeof(*close_request), NULL, 0, &reply,
-	    &length));
-	ATF_CHECK_EQ(ESTALE, reply_status(&reply, length, NETWORKCMP_OP_CLOSE));
+ATF_TC(provider_connect_returns_fd);
+ATF_TC_HEAD(provider_connect_returns_fd, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "CONNECT returns a connected, rights-limited descriptor the client "
+	    "owns");
+}
+ATF_TC_BODY(provider_connect_returns_fd, tc)
+{
+	struct fixture fixture;
+	struct networkcmp_endpoint endpoint;
+	char buffer[4];
+	uint16_t port;
+	int listener, accepted, fd, flags;
+
+	fixture_create(&fixture);
+	listener = open_loopback(SOCK_STREAM, &port);
+	loopback_endpoint(&endpoint, port);
+	fd = -1;
+	ATF_REQUIRE_EQ(0, broker_request(&fixture, NETWORKCMP_OP_CONNECT,
+	    &endpoint, &fd));
+	ATF_REQUIRE(fd >= 0);
+	check_delivered_rights(fd);
+	/* The delivered descriptor toggles O_NONBLOCK through fcntl. */
+	flags = fcntl(fd, F_GETFL);
+	ATF_REQUIRE(flags != -1);
+	ATF_CHECK_EQ(0, fcntl(fd, F_SETFL, flags | O_NONBLOCK));
+	/* The socket is really connected: bytes flow end to end. */
+	accepted = accept(listener, NULL, NULL);
+	ATF_REQUIRE(accepted >= 0);
+	ATF_REQUIRE_EQ(4, write(fd, "ping", 4));
+	ATF_REQUIRE_EQ(4, read(accepted, buffer, sizeof(buffer)));
+	ATF_CHECK_EQ(0, memcmp(buffer, "ping", 4));
+	close(accepted);
+	close(fd);
+	close(listener);
+	fixture_destroy(&fixture, 0);
+}
+
+ATF_TC(provider_udp_returns_fd);
+ATF_TC_HEAD(provider_udp_returns_fd, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "UDP returns a connected datagram descriptor bound to the peer");
+}
+ATF_TC_BODY(provider_udp_returns_fd, tc)
+{
+	struct fixture fixture;
+	struct networkcmp_endpoint endpoint;
+	char buffer[8];
+	uint16_t port;
+	int peer, fd;
+
+	fixture_create(&fixture);
+	peer = open_loopback(SOCK_DGRAM, &port);
+	loopback_endpoint(&endpoint, port);
+	fd = -1;
+	ATF_REQUIRE_EQ(0, broker_request(&fixture, NETWORKCMP_OP_UDP,
+	    &endpoint, &fd));
+	ATF_REQUIRE(fd >= 0);
+	check_delivered_rights(fd);
+	/* A connected UDP socket sends to its peer with send(2). */
+	ATF_REQUIRE_EQ(5, write(fd, "hello", 5));
+	ATF_REQUIRE_EQ(5, recv(peer, buffer, sizeof(buffer), 0));
+	ATF_CHECK_EQ(0, memcmp(buffer, "hello", 5));
+	close(fd);
+	close(peer);
+	fixture_destroy(&fixture, 0);
+}
+
+ATF_TC(provider_connect_denied);
+ATF_TC_HEAD(provider_connect_denied, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "Immutable session policy denies connect and udp and returns no fd");
+}
+ATF_TC_BODY(provider_connect_denied, tc)
+{
+	struct networkcmp_policy policy;
+	struct fixture fixture;
+	struct networkcmp_endpoint endpoint;
+	uint16_t port;
+	int listener, fd;
+
+	ATF_REQUIRE_EQ(0, networkcmp_policy_default(&policy));
+	policy.allow_connect = false;
+	policy.allow_udp = false;
+	fixture_create_policy(&fixture, &policy);
+	listener = open_loopback(SOCK_STREAM, &port);
+	loopback_endpoint(&endpoint, port);
+	fd = -1;
+	ATF_CHECK_EQ(EACCES, broker_request(&fixture, NETWORKCMP_OP_CONNECT,
+	    &endpoint, &fd));
+	ATF_CHECK_EQ(-1, fd);
+	fd = -1;
+	ATF_CHECK_EQ(EACCES, broker_request(&fixture, NETWORKCMP_OP_UDP,
+	    &endpoint, &fd));
+	ATF_CHECK_EQ(-1, fd);
+	close(listener);
+	fixture_destroy(&fixture, 0);
+}
+
+ATF_TC(provider_connect_refused);
+ATF_TC_HEAD(provider_connect_refused, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A refused connect returns the connect errno and no descriptor");
+}
+ATF_TC_BODY(provider_connect_refused, tc)
+{
+	struct fixture fixture;
+	struct networkcmp_endpoint endpoint;
+	uint16_t port;
+	int listener, fd, status;
+
+	fixture_create(&fixture);
+	/* Bind then close a listener so its port is (very likely) unused. */
+	listener = open_loopback(SOCK_STREAM, &port);
+	close(listener);
+	loopback_endpoint(&endpoint, port);
+	fd = -1;
+	status = broker_request(&fixture, NETWORKCMP_OP_CONNECT, &endpoint,
+	    &fd);
+	ATF_CHECK(status == ECONNREFUSED || status == EADDRNOTAVAIL ||
+	    status == ETIMEDOUT);
+	ATF_CHECK_EQ(-1, fd);
 	fixture_destroy(&fixture, 0);
 }
 
@@ -366,7 +513,46 @@ ATF_TC_HEAD(provider_malformed_channel, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
-	    "Unexpected descriptors terminate a provider channel without being interpreted");
+	    "Unexpected descriptors terminate a provider channel without being "
+	    "interpreted");
+}
+ATF_TC_BODY(provider_malformed_channel, tc)
+{
+	struct fixture fixture;
+	union wire_buffer reply;
+	struct networkcmp_msg message;
+	struct networkcmp_hello *hello;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply response;
+	uint8_t request[sizeof(struct networkcmp_msg) +
+	    sizeof(struct networkcmp_hello)];
+	int pipefd[2];
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, pipe(pipefd));
+	memset(request, 0, sizeof(request));
+	ATF_REQUIRE_EQ(0, networkcmp_message_init(&message,
+	    NETWORKCMP_OP_HELLO, 0));
+	memcpy(request, &message, sizeof(message));
+	hello = (void *)(request + sizeof(message));
+	hello->min_version = NETWORKCMP_ABI_VERSION;
+	hello->max_version = NETWORKCMP_ABI_VERSION;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = request;
+	outgoing.length = sizeof(request);
+	outgoing.fds = &pipefd[0];
+	outgoing.nfds = 1;
+	memset(&response, 0, sizeof(response));
+	response.size = sizeof(response);
+	response.data = reply.bytes;
+	response.capacity = sizeof(reply.bytes);
+	ATF_CHECK_EQ(-1, service_session_call(fixture.session, &outgoing,
+	    &response, &options));
+	close(pipefd[0]);
+	close(pipefd[1]);
+	fixture_destroy(&fixture, 1);
 }
 
 ATF_TC(provider_resolver_does_not_block_session);
@@ -374,7 +560,73 @@ ATF_TC_HEAD(provider_resolver_does_not_block_session, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
-	    "A stalled resolver does not block other RPCs and overlapping resolves are bounded");
+	    "A stalled resolver does not block other RPCs and overlapping "
+	    "resolves are bounded");
+}
+ATF_TC_BODY(provider_resolver_does_not_block_session, tc)
+{
+	struct {
+		struct networkcmp_msg message;
+		struct networkcmp_resolve_request request;
+		char host[9];
+	} resolve;
+	struct networkcmp_endpoint endpoint;
+	struct resolve_call resolve_call;
+	struct fixture fixture;
+	union wire_buffer reply;
+	pthread_t thread;
+	uint8_t byte;
+	size_t length;
+	ssize_t amount;
+	uint16_t port;
+	int error, listener, fd;
+
+	fixture_create_blocked_resolver(&fixture);
+	memset(&resolve_call, 0, sizeof(resolve_call));
+	resolve_call.fixture = &fixture;
+	error = pthread_create(&thread, NULL, resolve_call_thread, &resolve_call);
+	ATF_REQUIRE_EQ_MSG(0, error, "pthread_create: %s", strerror(error));
+	do {
+		amount = read(fixture.resolver_ready, &byte, sizeof(byte));
+	} while (amount == -1 && errno == EINTR);
+	ATF_REQUIRE_EQ(sizeof(byte), amount);
+
+	/* A CONNECT still completes while the resolver is stalled. */
+	listener = open_loopback(SOCK_STREAM, &port);
+	loopback_endpoint(&endpoint, port);
+	fd = -1;
+	ATF_CHECK_EQ(0, broker_request(&fixture, NETWORKCMP_OP_CONNECT,
+	    &endpoint, &fd));
+	ATF_CHECK(fd >= 0);
+	if (fd >= 0)
+		close(fd);
+	close(listener);
+
+	/* A second, overlapping resolve is bounded. */
+	memset(&resolve, 0, sizeof(resolve));
+	ATF_REQUIRE_EQ(0, networkcmp_message_init(&resolve.message,
+	    NETWORKCMP_OP_RESOLVE, 0));
+	resolve.request.host_length = sizeof(resolve.host);
+	resolve.request.family = NETWORKCMP_AF_UNSPEC;
+	resolve.request.socket_type = NETWORKCMP_SOCK_ANY;
+	resolve.request.max_results = 1;
+	memcpy(resolve.host, "localhost", sizeof(resolve.host));
+	ATF_REQUIRE_EQ(0, call(&fixture, &resolve, sizeof(resolve.message) +
+	    sizeof(resolve.request) + sizeof(resolve.host), &reply, &length,
+	    NULL));
+	ATF_CHECK_EQ(EBUSY, reply_status(&reply, length,
+	    NETWORKCMP_OP_RESOLVE));
+
+	byte = 1;
+	do {
+		amount = write(fixture.resolver_release, &byte, sizeof(byte));
+	} while (amount == -1 && errno == EINTR);
+	ATF_REQUIRE_EQ(sizeof(byte), amount);
+	error = pthread_join(thread, NULL);
+	ATF_REQUIRE_EQ_MSG(0, error, "pthread_join: %s", strerror(error));
+	ATF_CHECK_EQ(0, resolve_call.error);
+	ATF_CHECK_EQ(EOPNOTSUPP, resolve_call.status);
+	fixture_destroy(&fixture, 0);
 }
 
 ATF_TC(provider_resolver_deadline_terminates_session);
@@ -382,7 +634,8 @@ ATF_TC_HEAD(provider_resolver_deadline_terminates_session, tc)
 {
 	atf_tc_set_md_var(tc, "require.user", "root");
 	atf_tc_set_md_var(tc, "descr",
-	    "A resolver that exceeds its provider deadline cannot retain the session indefinitely");
+	    "A resolver that exceeds its provider deadline cannot retain the "
+	    "session indefinitely");
 }
 ATF_TC_BODY(provider_resolver_deadline_terminates_session, tc)
 {
@@ -407,183 +660,6 @@ ATF_TC_BODY(provider_resolver_deadline_terminates_session, tc)
 	    resolve_call.error == EPIPE || resolve_call.error == ETIMEDOUT);
 	fixture_destroy(&fixture, 1);
 }
-ATF_TC_BODY(provider_resolver_does_not_block_session, tc)
-{
-	struct {
-		struct networkcmp_resolve_request request;
-		char host[9];
-	} resolve;
-	struct networkcmp_close_request close_request;
-	struct resolve_call resolve_call;
-	struct fixture fixture;
-	pthread_t thread;
-	uint8_t byte;
-	ssize_t amount;
-	int error;
-
-	fixture_create_blocked_resolver(&fixture);
-	memset(&resolve_call, 0, sizeof(resolve_call));
-	resolve_call.fixture = &fixture;
-	error = pthread_create(&thread, NULL, resolve_call_thread, &resolve_call);
-	ATF_REQUIRE_EQ_MSG(0, error, "pthread_create: %s", strerror(error));
-	do {
-		amount = read(fixture.resolver_ready, &byte, sizeof(byte));
-	} while (amount == -1 && errno == EINTR);
-	ATF_REQUIRE_EQ(sizeof(byte), amount);
-
-	close_request.socket = (struct networkcmp_handle){ .handle = UINT64_MAX };
-	ATF_CHECK_EQ(EBADF, request_status(&fixture, NETWORKCMP_OP_CLOSE,
-	    &close_request, sizeof(close_request), NULL, 0));
-
-	memset(&resolve, 0, sizeof(resolve));
-	resolve.request.host_length = sizeof(resolve.host);
-	resolve.request.family = NETWORKCMP_AF_UNSPEC;
-	resolve.request.socket_type = NETWORKCMP_SOCK_ANY;
-	resolve.request.max_results = 1;
-	memcpy(resolve.host, "localhost", sizeof(resolve.host));
-	ATF_CHECK_EQ(EBUSY, request_status(&fixture, NETWORKCMP_OP_RESOLVE,
-	    &resolve, sizeof(resolve.request) + sizeof(resolve.host), NULL, 0));
-
-	byte = 1;
-	do {
-		amount = write(fixture.resolver_release, &byte, sizeof(byte));
-	} while (amount == -1 && errno == EINTR);
-	ATF_REQUIRE_EQ(sizeof(byte), amount);
-	error = pthread_join(thread, NULL);
-	ATF_REQUIRE_EQ_MSG(0, error, "pthread_join: %s", strerror(error));
-	ATF_CHECK_EQ(0, resolve_call.error);
-	ATF_CHECK_EQ(EOPNOTSUPP, resolve_call.status);
-	fixture_destroy(&fixture, 0);
-}
-
-ATF_TC(provider_all_dispatch_opcodes);
-ATF_TC_HEAD(provider_all_dispatch_opcodes, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "descr",
-	    "Every NetworkCmp production dispatcher opcode returns a validated correlated reply");
-}
-ATF_TC_BODY(provider_all_dispatch_opcodes, tc)
-{
-	struct {
-		struct networkcmp_setopt_request request;
-		int value;
-	} setopt;
-	struct {
-		struct networkcmp_resolve_request request;
-		char host[9];
-	} resolve;
-	struct networkcmp_close_request close_request;
-	struct networkcmp_endpoint_request endpoint;
-	struct networkcmp_inline_request inline_request;
-	struct networkcmp_listen_request listen_request;
-	struct networkcmp_shutdown_request shutdown_request;
-	struct networkcmp_socket_request socket_request;
-	struct networkcmp_handle socket;
-	struct networkcmp_handle_reply *handle_reply;
-	struct fixture fixture;
-	union wire_buffer request, reply;
-	struct networkcmp_msg *message;
-	size_t length;
-
-	fixture_create(&fixture);
-	memset(&request, 0, sizeof(request));
-	message = (void *)request.bytes;
-	ATF_REQUIRE_EQ(0, networkcmp_message_init(message,
-	    NETWORKCMP_OP_SOCKET, 0));
-	socket_request = (struct networkcmp_socket_request){
-		.family = NETWORKCMP_AF_INET4,
-		.type = NETWORKCMP_SOCK_DGRAM,
-	};
-	memcpy(message + 1, &socket_request, sizeof(socket_request));
-	ATF_REQUIRE_EQ(0, call(&fixture, message,
-	    sizeof(*message) + sizeof(socket_request), NULL, 0, &reply,
-	    &length));
-	ATF_REQUIRE_EQ(0, reply_status(&reply, length, NETWORKCMP_OP_SOCKET));
-	handle_reply = (void *)(reply.bytes + sizeof(*message));
-	socket = handle_reply->socket;
-
-	memset(&endpoint, 0, sizeof(endpoint));
-	endpoint.socket = socket;
-	endpoint.endpoint.family = NETWORKCMP_AF_INET4;
-	ATF_CHECK_EQ(EOPNOTSUPP, request_status(&fixture,
-	    NETWORKCMP_OP_CONNECT, &endpoint, sizeof(endpoint), NULL, 0));
-
-	memset(&listen_request, 0, sizeof(listen_request));
-	listen_request.socket = socket;
-	listen_request.backlog = 1;
-	ATF_CHECK_EQ(EACCES, request_status(&fixture, NETWORKCMP_OP_LISTEN,
-	    &listen_request, sizeof(listen_request), NULL, 0));
-	close_request.socket = socket;
-	ATF_CHECK_EQ(EACCES, request_status(&fixture, NETWORKCMP_OP_ACCEPT,
-	    &close_request, sizeof(close_request), NULL, 0));
-
-	memset(&setopt, 0, sizeof(setopt));
-	setopt.request.socket = socket;
-	setopt.request.level = SOL_SOCKET;
-	setopt.request.option = SO_REUSEADDR;
-	setopt.request.value_length = sizeof(setopt.value);
-	setopt.value = 1;
-	ATF_CHECK_EQ(0, request_status(&fixture, NETWORKCMP_OP_SETOPT,
-	    &setopt, sizeof(setopt.request) + sizeof(setopt.value), NULL, 0));
-
-	memset(&shutdown_request, 0, sizeof(shutdown_request));
-	shutdown_request.socket = (struct networkcmp_handle){ .handle = UINT64_MAX };
-	ATF_CHECK_EQ(EBADF, request_status(&fixture, NETWORKCMP_OP_SHUTDOWN,
-	    &shutdown_request, sizeof(shutdown_request), NULL, 0));
-	/* CONNECT_STATUS is stream-only; a datagram socket rejects it. */
-	ATF_CHECK_EQ(EOPNOTSUPP, request_status(&fixture,
-	    NETWORKCMP_OP_CONNECT_STATUS, &close_request,
-	    sizeof(close_request), NULL, 0));
-
-	memset(&resolve, 0, sizeof(resolve));
-	resolve.request.host_length = sizeof(resolve.host);
-	resolve.request.family = NETWORKCMP_AF_UNSPEC;
-	resolve.request.socket_type = NETWORKCMP_SOCK_ANY;
-	resolve.request.max_results = 1;
-	memcpy(resolve.host, "localhost", sizeof(resolve.host));
-	ATF_CHECK_EQ(EOPNOTSUPP, request_status(&fixture,
-	    NETWORKCMP_OP_RESOLVE, &resolve, sizeof(resolve.request) + sizeof(resolve.host), NULL, 0));
-
-	memset(&inline_request, 0, sizeof(inline_request));
-	inline_request.socket = (struct networkcmp_handle){ .handle = UINT64_MAX };
-	inline_request.length = 1;
-	ATF_CHECK_EQ(EBADF, request_status(&fixture, NETWORKCMP_OP_SEND,
-	    &(struct {
-		struct networkcmp_inline_request request;
-		uint8_t byte;
-	    }){ .request = inline_request, .byte = 1 },
-	    sizeof(inline_request) + 1, NULL, 0));
-	ATF_CHECK_EQ(EBADF, request_status(&fixture, NETWORKCMP_OP_RECV,
-	    &inline_request, sizeof(inline_request), NULL, 0));
-
-	ATF_CHECK_EQ(0, request_status(&fixture, NETWORKCMP_OP_CLOSE,
-	    &close_request, sizeof(close_request), NULL, 0));
-	fixture_destroy(&fixture, 0);
-}
-ATF_TC_BODY(provider_malformed_channel, tc)
-{
-	struct fixture fixture;
-	union wire_buffer request, reply;
-	struct networkcmp_msg *message = (void *)request.bytes;
-	struct networkcmp_hello *hello;
-	size_t length;
-	int pipefd[2];
-
-	fixture_create(&fixture);
-	memset(&request, 0, sizeof(request));
-	ATF_REQUIRE_EQ(0, pipe(pipefd));
-	ATF_REQUIRE_EQ(0, networkcmp_message_init(message,
-	    NETWORKCMP_OP_HELLO, 0));
-	hello = (void *)(message + 1);
-	hello->min_version = NETWORKCMP_ABI_VERSION;
-	hello->max_version = NETWORKCMP_ABI_VERSION;
-	ATF_CHECK_EQ(-1, call(&fixture, message,
-	    sizeof(*message) + sizeof(*hello), &pipefd[0], 1, &reply, &length));
-	close(pipefd[0]);
-	close(pipefd[1]);
-	fixture_destroy(&fixture, 1);
-}
 
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
@@ -595,18 +671,17 @@ ATF_TC_BODY(arguments, tc)
 	    networkcmp_test_serve(-1, NULL, &policy, "org.test") == -1);
 	ATF_CHECK_ERRNO(EINVAL,
 	    networkcmp_test_serve(0, NULL, NULL, "org.test") == -1);
-	policy.max_sockets = 0;
-	ATF_CHECK_ERRNO(EINVAL,
-	    networkcmp_test_serve(0, NULL, &policy, "org.test") == -1);
-	policy.max_sockets = 1;
 	ATF_CHECK_ERRNO(EINVAL,
 	    networkcmp_test_serve(0, NULL, &policy, "") == -1);
 }
 
 ATF_TP_ADD_TCS(tp)
 {
-	ATF_TP_ADD_TC(tp, provider_socket_lifecycle);
-	ATF_TP_ADD_TC(tp, provider_all_dispatch_opcodes);
+	ATF_TP_ADD_TC(tp, provider_hello);
+	ATF_TP_ADD_TC(tp, provider_connect_returns_fd);
+	ATF_TP_ADD_TC(tp, provider_udp_returns_fd);
+	ATF_TP_ADD_TC(tp, provider_connect_denied);
+	ATF_TP_ADD_TC(tp, provider_connect_refused);
 	ATF_TP_ADD_TC(tp, provider_malformed_channel);
 	ATF_TP_ADD_TC(tp, provider_resolver_does_not_block_session);
 	ATF_TP_ADD_TC(tp, provider_resolver_deadline_terminates_session);

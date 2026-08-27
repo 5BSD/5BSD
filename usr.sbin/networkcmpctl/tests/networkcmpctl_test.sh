@@ -29,7 +29,7 @@ successful_commands_body()
 {
 	tool="$(atf_get_srcdir)/networkcmpctl_success_bin"
 	atf_check -s exit:0 -o match:'version=1 features=0x0000000b' \
-	    -o match:'max_sockets=32.*max_datagram=12288' -e empty "$tool" info
+	    -o match:'max_resolve_results=16' -e empty "$tool" info
 	atf_check -s exit:0 -o match:'count=1 ttl_seconds=60 canonname=localhost' \
 	    -o match:'family=inet4 address=127.0.0.1 port=80' \
 	    -o match:'socket_type=1 protocol=6' -e empty \

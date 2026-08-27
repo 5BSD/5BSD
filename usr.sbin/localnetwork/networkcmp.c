@@ -6,6 +6,7 @@
 
 #include <sys/capsicum.h>
 #include <sys/param.h>
+#include <sys/filio.h>
 #include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -16,12 +17,10 @@
 #include <libcasper.h>
 #include <casper/cap_net.h>
 #include <netinet/in.h>
-#include <netinet/tcp.h>
 
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
-#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
@@ -40,9 +39,7 @@
 #include <networkcmp_server.h>
 
 #include "localnetwork_probes.h"
-#include "io.h"
 #include "policy.h"
-#include "session.h"
 #ifdef NETWORKCMP_TESTING
 #include "networkcmp_test.h"
 #endif
@@ -85,8 +82,8 @@ struct session_state {
 	cap_channel_t		*capnet;
 	cap_channel_t		*resolver_capnet;
 	struct auditcmp_client	*audit;
+	/* Immutable session policy; set once at session creation. */
 	struct networkcmp_policy policy;
-	struct networkcmp_session sockets;
 	const char		*label;
 	struct resolver_job	*resolver;
 	int			 resolver_pipe[2];
@@ -143,46 +140,81 @@ endpoint_sockaddr(const struct networkcmp_endpoint *endpoint,
 	return (-1);
 }
 
+/*
+ * Limit a connected socket to exactly the rights a data-transfer client needs
+ * before it is handed off via SCM_RIGHTS.  The client may read/write, receive
+ * events, shut down, get/set socket options, query and toggle O_NONBLOCK, and
+ * fstat.  It may not bind, connect, listen, accept, or peel off, and the
+ * descriptor may be transferred exactly once (this delivery) and no further.
+ * CAP_RECV/CAP_SEND are aliases of CAP_READ/CAP_WRITE.  CAP_IOCTL is present
+ * only so the FIONREAD/FIONBIO/FIOASYNC allow-list below has effect.
+ */
 static int
-endpoint_request(struct session_state *state, uint16_t opcode,
-    const struct networkcmp_endpoint_request *request)
+harden_delivered_socket(int fd)
+{
+	static const unsigned long ioctls[] = { FIONREAD, FIONBIO, FIOASYNC };
+	cap_rights_t rights;
+
+	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_EVENT, CAP_SHUTDOWN,
+	    CAP_GETSOCKOPT, CAP_SETSOCKOPT, CAP_FCNTL, CAP_FSTAT, CAP_IOCTL);
+	return (cap_rights_limit(fd, &rights) == -1 ||
+	    cap_ioctls_limit(fd, ioctls, nitems(ioctls)) == -1 ||
+	    cap_fcntls_limit(fd, CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1 ||
+	    cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+}
+
+static int
+broker_perform_connect(struct session_state *state, int fd,
+    const struct sockaddr *sa, socklen_t length)
+{
+
+#ifdef NETWORKCMP_TESTING
+	(void)state;
+	return (connect(fd, sa, length));
+#else
+	return (cap_connect(state->capnet, fd, sa, length));
+#endif
+}
+
+/*
+ * Create and connect a socket to the requested endpoint under the immutable
+ * session policy, then rights-limit it for delivery.  On success *out_fd holds
+ * a connected, transfer-limited descriptor owned by the caller.
+ */
+static int
+broker_connect(struct session_state *state, uint16_t opcode,
+    const struct networkcmp_endpoint *endpoint, int *out_fd)
 {
 	struct sockaddr_storage storage;
-	struct networkcmp_session_socket *socket;
 	socklen_t length;
+	int fd, domain, type, error;
+	bool udp;
 
-	socket = networkcmp_session_lookup(&state->sockets, request->socket);
-	if (socket == NULL)
-		return (-1);
-	if ((socket->family == NETWORKCMP_AF_INET4 &&
-	    request->endpoint.family != NETWORKCMP_AF_INET4) ||
-	    (socket->family == NETWORKCMP_AF_INET6 &&
-	    request->endpoint.family != NETWORKCMP_AF_INET6)) {
+	*out_fd = -1;
+	udp = opcode == NETWORKCMP_OP_UDP;
+	if ((endpoint->family == NETWORKCMP_AF_INET4 && !state->policy.ipv4) ||
+	    (endpoint->family == NETWORKCMP_AF_INET6 && !state->policy.ipv6)) {
 		errno = EAFNOSUPPORT;
 		return (-1);
 	}
-	if (endpoint_sockaddr(&request->endpoint, &storage, &length) == -1)
+	if (endpoint_sockaddr(endpoint, &storage, &length) == -1)
 		return (-1);
-#ifdef NETWORKCMP_TESTING
-	(void)opcode;
-	(void)storage;
-	(void)length;
-	errno = EOPNOTSUPP;
-	return (-1);
-#else
-	if (opcode == NETWORKCMP_OP_BIND)
-		return (cap_bind(state->capnet, socket->fd,
-		    (const void *)&storage, length));
-	if (cap_connect(state->capnet, socket->fd,
-	    (const void *)&storage, length) == 0) {
-		socket->connect_started = true;
-		socket->connect_complete = true;
-		return (0);
+	domain = endpoint->family == NETWORKCMP_AF_INET4 ? AF_INET : AF_INET6;
+	type = udp ? SOCK_DGRAM : SOCK_STREAM;
+	fd = socket(domain, type | SOCK_CLOEXEC, 0);
+	if (fd == -1)
+		return (-1);
+	if (broker_perform_connect(state, fd, (const void *)&storage,
+	    length) == -1 || harden_delivered_socket(fd) == -1) {
+		error = errno;
+		close(fd);
+		errno = error;
+		return (-1);
 	}
-	if (errno == EINPROGRESS)
-		socket->connect_started = true;
-	return (-1);
-#endif
+	*out_fd = fd;
+	return (0);
 }
 
 static void
@@ -241,11 +273,12 @@ harden_worker_fd(int fd)
 static int
 send_reply(struct channel_message *request_message,
     const char *label __unused, const struct networkcmp_msg *request, int error,
-    const void *payload, size_t payload_length)
+    const void *payload, size_t payload_length, int attached_fd)
 {
 	union provider_buffer buffer;
 	struct networkcmp_msg *reply;
-	size_t length;
+	const int *fds;
+	size_t length, nfds;
 	int result, saved_error;
 
 	memset(&buffer, 0, sizeof(buffer));
@@ -259,16 +292,24 @@ send_reply(struct channel_message *request_message,
 	if (error == 0 && payload_length != 0)
 		memcpy(reply + 1, payload, payload_length);
 	length = sizeof(*reply) + (error == 0 ? payload_length : 0);
+	fds = (error == 0 && attached_fd >= 0) ? &attached_fd : NULL;
+	nfds = (error == 0 && attached_fd >= 0) ? 1 : 0;
 	if (networkcmp_validate_message(reply, length,
 	    NETWORKCMP_MESSAGE_REPLY) == -1 ||
-	    networkcmp_validate_fds(reply, 0, NETWORKCMP_MESSAGE_REPLY) == -1) {
+	    networkcmp_validate_fds(reply, nfds,
+	    NETWORKCMP_MESSAGE_REPLY) == -1) {
 		LOCALNETWORK_REQUEST_DONE(__DECONST(char *, label),
 		    request->opcode, errno);
 		return (-1);
 	}
 	result = channel_send_reply(request_message,
-	    &(struct channel_outgoing)
-	    CHANNEL_OUTGOING_INITIALIZER(reply, length));
+	    &(struct channel_outgoing){
+		.size = sizeof(struct channel_outgoing),
+		.data = reply,
+		.length = length,
+		.fds = fds,
+		.nfds = nfds
+	    });
 	saved_error = result == -1 ? errno : error;
 	LOCALNETWORK_REQUEST_DONE(__DECONST(char *, label),
 	    request->opcode, saved_error);
@@ -551,7 +592,7 @@ finish_resolve(struct session_state *state)
 	result = send_reply(job->request_message, state->label,
 	    &job->request_header, job->error,
 	    job->error == 0 ? job->payload : NULL,
-	    job->error == 0 ? job->payload_length : 0);
+	    job->error == 0 ? job->payload_length : 0, -1);
 	error = result == -1 ? errno : 0;
 	channel_message_free(job->request_message);
 	state->resolver = NULL;
@@ -566,168 +607,52 @@ dispatch(struct channel_message *request_message,
     struct session_state *state, const struct networkcmp_msg *message,
     const char *label)
 {
-	const struct networkcmp_close_request *close_request;
-	const struct networkcmp_endpoint_request *endpoint;
-	const struct networkcmp_listen_request *listen_request;
-	const struct networkcmp_shutdown_request *shutdown_request;
-	const struct networkcmp_socket_request *create_request;
-	const struct networkcmp_setopt_request *setopt_request;
-	const struct networkcmp_inline_request *inline_request;
-	struct networkcmp_handle_reply handle_reply;
-	union provider_buffer inline_reply;
-	struct networkcmp_inline_reply *inline_result;
+	const struct networkcmp_connect_request *connect_request;
 	struct networkcmp_hello_reply hello;
-	struct networkcmp_session_socket *socket;
-	int accepted, error;
+	int fd, error, result;
+	bool udp;
 
 	switch (message->opcode) {
 	case NETWORKCMP_OP_HELLO:
 		memset(&hello, 0, sizeof(hello));
 		hello.version = NETWORKCMP_ABI_VERSION;
-		/* TCP and UDP are available through bounded inline operations. */
 		hello.features = NETWORKCMP_FEATURE_DNS |
-		    NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
+		    (state->policy.allow_connect ? NETWORKCMP_FEATURE_TCP : 0) |
+		    (state->policy.allow_udp ? NETWORKCMP_FEATURE_UDP : 0) |
 		    (state->policy.ipv6 ? NETWORKCMP_FEATURE_IPV6 : 0);
-		hello.max_sockets = state->policy.max_sockets;
-		hello.max_inline = NETWORKCMP_INLINE_MAX;
-		hello.max_datagram = NETWORKCMP_INLINE_MAX;
 		hello.max_resolve_results = state->policy.max_results;
-		hello.io_timeout_max = NETWORKCMP_IO_TIMEOUT_MAX;
 		return (send_reply(request_message, label, message, 0, &hello,
-		    sizeof(hello)));
-	case NETWORKCMP_OP_SOCKET:
-		create_request = (const void *)(message + 1);
-		memset(&handle_reply, 0, sizeof(handle_reply));
-		if ((create_request->family == NETWORKCMP_AF_INET4 &&
-		    !state->policy.ipv4) ||
-		    (create_request->family == NETWORKCMP_AF_INET6 &&
-		    !state->policy.ipv6))
-			error = EAFNOSUPPORT;
-		else
-			error = networkcmp_session_socket(&state->sockets,
-			    create_request, &handle_reply) == -1 ? errno : 0;
-		audit_policy(state->audit, label, "socket", error);
-		return (send_reply(request_message, label, message, error, &handle_reply,
-		    sizeof(handle_reply)));
-	case NETWORKCMP_OP_BIND:
+		    sizeof(hello), -1));
 	case NETWORKCMP_OP_CONNECT:
-		endpoint = (const void *)(message + 1);
-		if ((message->opcode == NETWORKCMP_OP_BIND &&
-		    !state->policy.allow_bind) ||
-		    (message->opcode == NETWORKCMP_OP_CONNECT &&
-		    !state->policy.allow_connect))
+	case NETWORKCMP_OP_UDP:
+		connect_request = (const void *)(message + 1);
+		udp = message->opcode == NETWORKCMP_OP_UDP;
+		fd = -1;
+		if ((udp && !state->policy.allow_udp) ||
+		    (!udp && !state->policy.allow_connect))
 			error = EACCES;
 		else
-			error = endpoint_request(state, message->opcode,
-			    endpoint) == -1 ? errno : 0;
-		audit_policy(state->audit, label,
-		    message->opcode == NETWORKCMP_OP_BIND ?
-		    "bind" : "connect", error);
-		return (send_reply(request_message, label, message, error, NULL, 0));
-	case NETWORKCMP_OP_LISTEN:
-		listen_request = (const void *)(message + 1);
-		if (!state->policy.allow_bind)
-			error = EACCES;
-		else {
-			socket = networkcmp_session_lookup(&state->sockets,
-			    listen_request->socket);
-			error = socket == NULL ? errno :
-			    (listen(socket->fd, (int)MIN(
-			    listen_request->backlog, SOMAXCONN)) == -1 ?
-			    errno : 0);
-		}
-		audit_policy(state->audit, label, "listen", error);
-		return (send_reply(request_message, label, message, error, NULL, 0));
-	case NETWORKCMP_OP_ACCEPT:
-		close_request = (const void *)(message + 1);
-		socket = NULL;
-		accepted = -1;
-		if (!state->policy.allow_bind)
-			error = EACCES;
-		else {
-			socket = networkcmp_session_lookup(&state->sockets,
-			    close_request->socket);
-			accepted = socket == NULL ? -1 :
-			    accept4(socket->fd, NULL, NULL,
-			    SOCK_CLOEXEC | SOCK_NONBLOCK);
-			error = accepted == -1 ? errno : 0;
-		}
-		memset(&handle_reply, 0, sizeof(handle_reply));
-		if (error == 0 && networkcmp_session_allocate(&state->sockets,
-		    accepted, socket->family, socket->type,
-		    &handle_reply.socket) == -1) {
-			error = errno;
-			close(accepted);
-		}
-		if (error == 0) {
-			struct networkcmp_session_socket *accepted_socket;
-
-			accepted_socket = networkcmp_session_lookup(&state->sockets,
-			    handle_reply.socket);
-			if (accepted_socket != NULL) {
-				accepted_socket->connect_started = true;
-				accepted_socket->connect_complete = true;
-			}
-		}
-		audit_policy(state->audit, label, "accept", error);
-		return (send_reply(request_message, label, message, error, &handle_reply,
-		    sizeof(handle_reply)));
-	case NETWORKCMP_OP_CONNECT_STATUS:
-		close_request = (const void *)(message + 1);
-		error = networkcmp_session_connect_status(&state->sockets,
-		    close_request->socket) == -1 ? errno : 0;
-		audit_policy(state->audit, label, "connect-status", error);
-		return (send_reply(request_message, label, message, error, NULL, 0));
-	case NETWORKCMP_OP_SETOPT:
-		setopt_request = (const void *)(message + 1);
-		error = networkcmp_session_setopt(&state->sockets,
-		    setopt_request->socket, setopt_request->level,
-		    setopt_request->option, setopt_request + 1,
-		    setopt_request->value_length) == -1 ? errno : 0;
-		audit_policy(state->audit, label, "setopt", error);
-		return (send_reply(request_message, label, message, error, NULL, 0));
-	case NETWORKCMP_OP_SHUTDOWN:
-		shutdown_request = (const void *)(message + 1);
-		socket = networkcmp_session_lookup(&state->sockets,
-		    shutdown_request->socket);
-		error = socket == NULL ? errno :
-		    (shutdown(socket->fd, (int)shutdown_request->how) == -1 ?
-		    errno : 0);
-		return (send_reply(request_message, label, message, error, NULL, 0));
-	case NETWORKCMP_OP_CLOSE:
-		close_request = (const void *)(message + 1);
-		error = networkcmp_session_close(&state->sockets,
-		    close_request->socket) == -1 ? errno : 0;
-		return (send_reply(request_message, label, message, error, NULL, 0));
-	case NETWORKCMP_OP_SEND:
-		inline_request = (const void *)(message + 1);
-		inline_result = (void *)inline_reply.wire.payload;
-		error = networkcmp_io_send(&state->sockets, inline_request,
-		    inline_result) == -1 ?
-		    errno : 0;
-		return (send_reply(request_message, label, message, error, inline_result,
-		    sizeof(*inline_result)));
-	case NETWORKCMP_OP_RECV:
-		inline_request = (const void *)(message + 1);
-		inline_result = (void *)inline_reply.wire.payload;
-		error = networkcmp_io_recv(&state->sockets, inline_request,
-		    inline_result,
-		    inline_result + 1) == -1 ? errno : 0;
-		return (send_reply(request_message, label, message, error, inline_result,
-		    sizeof(*inline_result) +
-		    (error == 0 ? inline_result->length : 0)));
+			error = broker_connect(state, message->opcode,
+			    &connect_request->endpoint, &fd) == -1 ? errno : 0;
+		audit_policy(state->audit, label, udp ? "udp" : "connect",
+		    error);
+		result = send_reply(request_message, label, message, error,
+		    NULL, 0, error == 0 ? fd : -1);
+		if (fd >= 0)
+			close(fd);
+		return (result);
 	case NETWORKCMP_OP_RESOLVE:
 		if (start_resolve(state, request_message, message) == -1) {
 			error = errno;
 			audit_policy(state->audit, label, "resolve", error);
 			return (send_reply(request_message, label, message, error,
-			    NULL, 0));
+			    NULL, 0, -1));
 		}
 		return (NETWORKCMP_DISPATCH_ASYNC);
 	default:
 		audit_policy(state->audit, label, "unsupported", EOPNOTSUPP);
-		return (send_reply(request_message, label, message, EOPNOTSUPP, NULL,
-		    0));
+		return (send_reply(request_message, label, message, EOPNOTSUPP,
+		    NULL, 0, -1));
 	}
 }
 
@@ -782,8 +707,7 @@ serve_session(int fd, cap_channel_t *capnet, cap_channel_t *resolver_capnet,
 	bool chan_read, chan_write, pipe_read;
 	uint64_t now, remaining;
 
-	if (fd < 0 || policy == NULL || policy->max_sockets == 0 ||
-	    label == NULL || label[0] == '\0' ||
+	if (fd < 0 || policy == NULL || label == NULL || label[0] == '\0' ||
 	    resolver_pipe == NULL || resolver_pipe[0] < 0 || resolver_pipe[1] < 0)
 		return (errno = EINVAL, -1);
 	channel = NULL;
@@ -802,14 +726,11 @@ serve_session(int fd, cap_channel_t *capnet, cap_channel_t *resolver_capnet,
 	state.test_release_fd = test_release_fd;
 #endif
 	state.policy = *policy;
-	if (networkcmp_session_init(&state.sockets, policy->max_sockets) == -1)
-		goto fail;
 	if (channel_create(fd, &options, &channel) == -1 ||
 	    channel_set_request_handler(channel, handle_request, &state) ==
 	    -1) {
 		if (channel != NULL)
 			channel_destroy(channel);
-		networkcmp_session_destroy(&state.sockets);
 		goto fail;
 	}
 	/*
@@ -888,7 +809,6 @@ serve_session(int fd, cap_channel_t *capnet, cap_channel_t *resolver_capnet,
 	}
 	if (kq != -1)
 		close(kq);
-	networkcmp_session_destroy(&state.sockets);
 	channel_destroy(channel);
 	if (state.resolver == NULL) {
 		close(state.resolver_pipe[0]);
@@ -913,8 +833,7 @@ networkcmp_test_serve(int fd, cap_channel_t *capnet,
 {
 	int resolver_pipe[2];
 
-	if (fd < 0 || policy == NULL || policy->max_sockets == 0 ||
-	    label == NULL || label[0] == '\0')
+	if (fd < 0 || policy == NULL || label == NULL || label[0] == '\0')
 		return (errno = EINVAL, -1);
 	if (pipe2(resolver_pipe, O_CLOEXEC | O_NONBLOCK) == -1)
 		return (-1);
@@ -929,8 +848,8 @@ networkcmp_test_serve_blocked_resolver(int fd, cap_channel_t *capnet,
 {
 	int resolver_pipe[2];
 
-	if (fd < 0 || policy == NULL || policy->max_sockets == 0 ||
-	    label == NULL || label[0] == '\0' || ready_fd < 0 || release_fd < 0)
+	if (fd < 0 || policy == NULL || label == NULL || label[0] == '\0' ||
+	    ready_fd < 0 || release_fd < 0)
 		return (errno = EINVAL, -1);
 	if (pipe2(resolver_pipe, O_CLOEXEC | O_NONBLOCK) == -1)
 		return (-1);
@@ -945,9 +864,8 @@ networkcmp_test_serve_blocked_resolver_timeout(int fd, cap_channel_t *capnet,
 {
 	int resolver_pipe[2];
 
-	if (fd < 0 || policy == NULL || policy->max_sockets == 0 ||
-	    label == NULL || label[0] == '\0' || ready_fd < 0 || release_fd < 0 ||
-	    timeout_ms == 0)
+	if (fd < 0 || policy == NULL || label == NULL || label[0] == '\0' ||
+	    ready_fd < 0 || release_fd < 0 || timeout_ms == 0)
 		return (errno = EINVAL, -1);
 	if (pipe2(resolver_pipe, O_CLOEXEC | O_NONBLOCK) == -1)
 		return (-1);
@@ -1007,7 +925,7 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label)
 	struct networkcmp_policy policy;
 	cap_channel_t *capnet, *resolver_capnet;
 	cap_net_limit_t *limit;
-	int families[2], mode;
+	int families[2];
 	size_t nfamilies;
 	int syncfd[2], resolver_pipe[2], pd, audit_fd, child_error, error;
 	pid_t pid;
@@ -1050,12 +968,11 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label)
 		error = errno;
 		goto reject;
 	}
-	mode = 0;
-	if (policy.allow_connect)
-		mode |= CAPNET_CONNECT;
-	if (policy.allow_bind)
-		mode |= CAPNET_BIND;
-	limit = cap_net_limit_init(capnet, mode);
+	/*
+	 * The broker performs connect on the client's behalf; bind, listen and
+	 * accept are not part of the version-1 client API.
+	 */
+	limit = cap_net_limit_init(capnet, CAPNET_CONNECT);
 	if (limit == NULL || cap_net_limit(limit) == -1) {
 		error = errno;
 		cap_close(capnet);

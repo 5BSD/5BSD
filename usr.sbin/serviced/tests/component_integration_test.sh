@@ -164,7 +164,7 @@ network_local_end_to_end_body()
 	reload_stack
 	wait_for_file network-result.out 15 ||
 	    atf_fail "network consumer did not complete"
-	for result in network nonblocking connect_status connect_only \
+	for result in network connect_broker rights_limited connect_only \
 	    provider_owned_sockets multi_session concurrent close_reopen; do
 		atf_check -s exit:0 -o match:"${result}=ok" \
 		    grep "${result}=ok" network-result.out

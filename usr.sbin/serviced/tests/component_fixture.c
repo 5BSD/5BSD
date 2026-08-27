@@ -417,16 +417,33 @@ run_log_consumer(const char *output_path)
 	return (0);
 }
 
+/* The delivered socket carries only data-transfer rights, never CAP_CONNECT. */
+static int
+network_fd_is_rights_limited(int fd)
+{
+	cap_rights_t rights, expected;
+
+	if (cap_rights_get(fd, &rights) == -1)
+		return (0);
+	cap_rights_init(&expected, CAP_READ, CAP_WRITE, CAP_EVENT,
+	    CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT, CAP_FCNTL, CAP_FSTAT,
+	    CAP_IOCTL);
+	return (cap_rights_contains(&expected, &rights) &&
+	    cap_rights_is_set(&rights, CAP_READ) &&
+	    !cap_rights_is_set(&rights, CAP_CONNECT) &&
+	    !cap_rights_is_set(&rights, CAP_BIND) &&
+	    !cap_rights_is_set(&rights, CAP_LISTEN));
+}
+
 static int
 run_network_consumer(const char *output_path)
 {
 	struct network_thread_context contexts[2];
-	struct networkcmp_endpoint endpoint;
-	struct networkcmp_handle socket;
+	struct sockaddr_in sin;
 	struct networkcmp_hello_reply hello;
 	struct networkcmp_client *client, *reopened, *second;
 	pthread_t threads[2];
-	int out, status, i;
+	int out, fd, status, rights_ok;
 
 	out = open(output_path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
 	if (out == -1 || fixture_service_initialize() == -1 ||
@@ -458,39 +475,39 @@ run_network_consumer(const char *output_path)
 	    networkcmp_hello(reopened, &hello) == -1)
 		return (1);
 	networkcmp_client_close(reopened);
-	memset(&endpoint, 0, sizeof(endpoint));
-	endpoint.family = NETWORKCMP_AF_INET4;
-	endpoint.address[0] = 127;
-	endpoint.address[3] = 1;
-	endpoint.port = 9;
-	if (networkcmp_socket(client, NETWORKCMP_AF_INET4,
-	    NETWORKCMP_SOCK_STREAM, IPPROTO_TCP, 0, &socket) == -1)
-		return (1);
-	errno = 0;
-	if (networkcmp_bind(client, socket, &endpoint) != -1 ||
-	    errno != EACCES)
-		return (1);
-	status = networkcmp_connect(client, socket, &endpoint);
-	if (status == -1 && errno != EINPROGRESS && errno != ECONNREFUSED)
-		return (1);
-	for (i = 0; status == -1 && errno == EINPROGRESS && i < 200; i++) {
-		status = networkcmp_connect_status(client, socket);
-		if (status == 0)
-			break;
-		if (errno == ECONNREFUSED)
-			break;
-		if (errno != EINPROGRESS)
+	/*
+	 * The broker returns a real connected descriptor; the client, which is
+	 * NOSOCK and never calls socket(2), owns all I/O on it.
+	 */
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_len = sizeof(sin);
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons(9);
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	fd = -1;
+	rights_ok = 0;
+	status = networkcmp_connect(client, (struct sockaddr *)&sin,
+	    sizeof(sin), &fd);
+	if (status == 0) {
+		rights_ok = network_fd_is_rights_limited(fd);
+		close(fd);
+		if (!rights_ok)
 			return (1);
-		usleep(5000);
-	}
-	if (i == 200 || networkcmp_close_socket(client, socket) == -1)
+	} else if (errno != ECONNREFUSED && errno != EACCES &&
+	    errno != EADDRNOTAVAIL && errno != ETIMEDOUT) {
 		return (1);
+	} else {
+		/* A policy/refusal path returns an error and no descriptor. */
+		if (fd != -1)
+			return (1);
+		rights_ok = 1;
+	}
 	networkcmp_client_close(client);
 	if (networkcmp_client_open(&reopened) == -1 ||
 	    networkcmp_hello(reopened, &hello) == -1)
 		return (1);
 	networkcmp_client_close(reopened);
-	if (dprintf(out, "network=ok\nnonblocking=ok\nconnect_status=ok\n"
+	if (dprintf(out, "network=ok\nconnect_broker=ok\nrights_limited=ok\n"
 	    "connect_only=ok\nprovider_owned_sockets=ok\nmulti_session=ok\n"
 	    "concurrent=ok\nclose_reopen=ok\n") < 0)
 		return (1);

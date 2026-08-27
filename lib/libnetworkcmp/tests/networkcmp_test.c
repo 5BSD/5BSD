@@ -1,9 +1,11 @@
+/* SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/types.h>
 #include <sys/socket.h>
 
 #include <atf-c.h>
 #include <errno.h>
 #include <netdb.h>
+#include <netinet/in.h>
 #include <stddef.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -62,20 +64,24 @@ ATF_TC_BODY(common_header, tc)
 	union message_buffer buffer;
 	struct networkcmp_msg *msg;
 
-	msg = make_message(&buffer, NETWORKCMP_OP_CLOSE, false,
-	    sizeof(struct networkcmp_close_request));
+	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, false,
+	    sizeof(struct networkcmp_connect_request));
+	((struct networkcmp_connect_request *)(msg + 1))->endpoint.family =
+	    NETWORKCMP_AF_INET4;
 	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length,
 	    wire_role));
 #define	REJECT(field, value) do {					\
-	msg = make_message(&buffer, NETWORKCMP_OP_CLOSE, false,		\
-	    sizeof(struct networkcmp_close_request));			\
+	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, false,	\
+	    sizeof(struct networkcmp_connect_request));			\
+	((struct networkcmp_connect_request *)(msg + 1))->endpoint.family = \
+	    NETWORKCMP_AF_INET4;					\
 	msg->field = (value);						\
 	reject(msg, wire_length);					\
 } while (0)
 	REJECT(magic, 0);
 	REJECT(version, NETWORKCMP_ABI_VERSION + 1);
 	REJECT(opcode, 0);
-	REJECT(opcode, NETWORKCMP_OP_CONNECT_STATUS + 1);
+	REJECT(opcode, NETWORKCMP_OP_UDP + 1);
 	REJECT(flags, 0x80000000U);
 	REJECT(status, -EPERM);
 #undef REJECT
@@ -83,10 +89,9 @@ ATF_TC_BODY(common_header, tc)
 	msg->status = -ELAST - 1;
 	reject(msg, wire_length);
 	reject(NULL, 0);
-	msg = make_message(&buffer, NETWORKCMP_OP_CLOSE, false,
-	    sizeof(struct networkcmp_close_request));
+	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, false,
+	    sizeof(struct networkcmp_connect_request));
 	reject(msg, sizeof(*msg) - 1);
-	reject(msg, sizeof(*msg) + 1);
 }
 
 ATF_TC(component_binding);
@@ -113,12 +118,6 @@ ATF_TC_BODY(component_binding, tc)
 	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));
 	ATF_CHECK_EQ(EBADF, errno);
 	ATF_REQUIRE_EQ(0, unsetenv("NETWORKCMP"));
-
-	ATF_REQUIRE_EQ(0, setenv("NETWORKCMP", "", 1));
-	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));
-	ATF_CHECK_EQ(EBADF, errno);
-	ATF_REQUIRE_EQ(0, unsetenv("NETWORKCMP"));
 }
 
 ATF_TC(request_shapes);
@@ -131,87 +130,47 @@ ATF_TC_BODY(request_shapes, tc)
 {
 	union message_buffer buffer;
 	struct networkcmp_msg *msg;
-	struct networkcmp_setopt_request *setopt;
-	size_t sizes[] = {
-		[NETWORKCMP_OP_HELLO] = sizeof(struct networkcmp_hello),
-		[NETWORKCMP_OP_SOCKET] =
-		    sizeof(struct networkcmp_socket_request),
-		[NETWORKCMP_OP_BIND] =
-		    sizeof(struct networkcmp_endpoint_request),
-		[NETWORKCMP_OP_CONNECT] =
-		    sizeof(struct networkcmp_endpoint_request),
-		[NETWORKCMP_OP_LISTEN] =
-		    sizeof(struct networkcmp_listen_request),
-		[NETWORKCMP_OP_ACCEPT] =
-		    sizeof(struct networkcmp_close_request),
-		[NETWORKCMP_OP_SHUTDOWN] =
-		    sizeof(struct networkcmp_shutdown_request),
-		[NETWORKCMP_OP_CLOSE] =
-		    sizeof(struct networkcmp_close_request),
-		[NETWORKCMP_OP_RESOLVE] =
-		    sizeof(struct networkcmp_resolve_request) + 3 + 2,
-		[NETWORKCMP_OP_SEND] =
-		    sizeof(struct networkcmp_inline_request) + 3,
-		[NETWORKCMP_OP_RECV] =
-		    sizeof(struct networkcmp_inline_request),
-		[NETWORKCMP_OP_CONNECT_STATUS] =
-		    sizeof(struct networkcmp_close_request),
-	};
-	unsigned opcode;
+	struct networkcmp_connect_request *connect;
+	struct networkcmp_resolve_request *resolve;
 
-	for (opcode = NETWORKCMP_OP_HELLO;
-	    opcode <= NETWORKCMP_OP_CONNECT_STATUS;
-	    opcode++) {
-		if (opcode == NETWORKCMP_OP_SETOPT ||
-		    opcode == NETWORKCMP_OP_RESOLVE)
-			continue;
-		msg = make_message(&buffer, opcode, false, sizes[opcode]);
-		switch (opcode) {
-		case NETWORKCMP_OP_HELLO:
-			((struct networkcmp_hello *)(msg + 1))->max_version =
-			    NETWORKCMP_ABI_VERSION;
-			break;
-		case NETWORKCMP_OP_SOCKET:
-			((struct networkcmp_socket_request *)(msg + 1))->family =
-			    NETWORKCMP_AF_INET4;
-			((struct networkcmp_socket_request *)(msg + 1))->type =
-			    NETWORKCMP_SOCK_STREAM;
-			break;
-		case NETWORKCMP_OP_BIND:
-		case NETWORKCMP_OP_CONNECT:
-			((struct networkcmp_endpoint_request *)(msg + 1))->
-			    endpoint.family = NETWORKCMP_AF_INET4;
-			break;
-		case NETWORKCMP_OP_SEND:
-		case NETWORKCMP_OP_RECV:
-			((struct networkcmp_inline_request *)(msg + 1))->length = 3;
-			break;
-		default:
-			break;
-		}
-		ATF_CHECK_EQ_MSG(0, networkcmp_validate_message(msg, wire_length, wire_role),
-		    "opcode %u", opcode);
+	/* HELLO */
+	msg = make_message(&buffer, NETWORKCMP_OP_HELLO, false,
+	    sizeof(struct networkcmp_hello));
+	((struct networkcmp_hello *)(msg + 1))->max_version =
+	    NETWORKCMP_ABI_VERSION;
+	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
+	wire_length++;
+	reject(msg, wire_length);
+
+	/* CONNECT and UDP share the endpoint request shape. */
+	for (uint16_t opcode = NETWORKCMP_OP_CONNECT;
+	    opcode <= NETWORKCMP_OP_UDP; opcode++) {
+		msg = make_message(&buffer, opcode, false,
+		    sizeof(struct networkcmp_connect_request));
+		connect = (void *)(msg + 1);
+		connect->endpoint.family = NETWORKCMP_AF_INET4;
+		ATF_CHECK_EQ_MSG(0, networkcmp_validate_message(msg, wire_length,
+		    wire_role), "opcode %u", opcode);
+		connect->endpoint.family = NETWORKCMP_AF_UNSPEC;
+		reject(msg, wire_length);
+		connect->endpoint.family = NETWORKCMP_AF_INET4;
 		wire_length++;
 		reject(msg, wire_length);
 	}
-	msg = make_message(&buffer, NETWORKCMP_OP_SETOPT, false,
-	    sizeof(*setopt) + 8);
-	setopt = (void *)(msg + 1);
-	setopt->value_length = 8;
-	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	setopt->value_length = UINT32_MAX;
-	reject(msg, wire_length);
 
+	/* RESOLVE */
 	msg = make_message(&buffer, NETWORKCMP_OP_RESOLVE, false,
 	    sizeof(struct networkcmp_resolve_request) + 3 + 2);
-	struct networkcmp_resolve_request *resolve = (void *)(msg + 1);
+	resolve = (void *)(msg + 1);
 	resolve->host_length = 3;
 	resolve->service_length = 2;
 	resolve->family = NETWORKCMP_AF_UNSPEC;
 	resolve->socket_type = NETWORKCMP_SOCK_STREAM;
 	resolve->max_results = 4;
 	memcpy(resolve + 1, "www53", 5);
-	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
+	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
 	resolve->max_results = 0;
 	reject(msg, wire_length);
 	resolve->max_results = 4;
@@ -222,17 +181,6 @@ ATF_TC_BODY(request_shapes, tc)
 	reject(msg, wire_length);
 	resolve->host_length = 3;
 	((char *)(resolve + 1))[1] = '\0';
-	reject(msg, wire_length);
-
-	msg = make_message(&buffer, NETWORKCMP_OP_LISTEN, false,
-	    sizeof(struct networkcmp_listen_request));
-	((struct networkcmp_listen_request *)(msg + 1))->reserved = 1;
-	reject(msg, wire_length);
-	msg = make_message(&buffer, NETWORKCMP_OP_BIND, false,
-	    sizeof(struct networkcmp_endpoint_request));
-	((struct networkcmp_endpoint_request *)(msg + 1))->endpoint.family =
-	    NETWORKCMP_AF_INET4;
-	((struct networkcmp_endpoint_request *)(msg + 1))->endpoint.prefix = 1;
 	reject(msg, wire_length);
 }
 
@@ -252,37 +200,26 @@ ATF_TC_BODY(reply_shapes, tc)
 	*(struct networkcmp_hello_reply *)(msg + 1) =
 	    (struct networkcmp_hello_reply){
 		.version = NETWORKCMP_ABI_VERSION,
-		.max_sockets = 1,
-		.max_inline = NETWORKCMP_INLINE_MAX,
-		.max_datagram = NETWORKCMP_INLINE_MAX,
 		.max_resolve_results = 1,
-		.io_timeout_max = NETWORKCMP_IO_TIMEOUT_MAX,
 	    };
-	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	msg = make_message(&buffer, NETWORKCMP_OP_SOCKET, true,
-	    sizeof(struct networkcmp_handle_reply));
-	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
+	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
+
+	/* A successful CONNECT or UDP reply carries no payload body. */
 	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, true, 0);
-	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
+	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
+	msg = make_message(&buffer, NETWORKCMP_OP_UDP, true, 0);
+	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
 	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, true, 0);
 	msg->status = -ECONNREFUSED;
-	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
+	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
 	wire_length++;
 	reject(msg, wire_length);
 	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, true, 0);
 	msg->status = 1;
-	reject(msg, wire_length);
-
-	msg = make_message(&buffer, NETWORKCMP_OP_SEND, true,
-	    sizeof(struct networkcmp_inline_reply));
-	((struct networkcmp_inline_reply *)(msg + 1))->length = 3;
-	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	msg = make_message(&buffer, NETWORKCMP_OP_RECV, true,
-	    sizeof(struct networkcmp_inline_reply) + 3);
-	((struct networkcmp_inline_reply *)(msg + 1))->length = 3;
-	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	((struct networkcmp_inline_reply *)(msg + 1))->flags =
-	    ~NETWORKCMP_IO_F_MASK;
 	reject(msg, wire_length);
 
 	msg = make_message(&buffer, NETWORKCMP_OP_RESOLVE, true,
@@ -298,7 +235,8 @@ ATF_TC_BODY(reply_shapes, tc)
 	results[1].endpoint.family = NETWORKCMP_AF_INET6;
 	results[1].socket_type = NETWORKCMP_SOCK_STREAM;
 	memcpy(results + 2, "example", 7);
-	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
+	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
 	resolve->result_count = NETWORKCMP_RESOLVE_MAX_RESULTS + 1;
 	reject(msg, wire_length);
 	resolve->result_count = 2;
@@ -318,17 +256,14 @@ ATF_TC_BODY(semantic_invariants, tc)
 	struct networkcmp_msg *msg;
 	struct networkcmp_hello *hello;
 	struct networkcmp_hello_reply *hello_reply;
-	struct networkcmp_socket_request *socket;
-	struct networkcmp_endpoint_request *endpoint;
-	struct networkcmp_setopt_request *setopt;
-	struct networkcmp_shutdown_request *shutdown;
-	struct networkcmp_inline_request *io;
+	struct networkcmp_connect_request *connect;
 
 	msg = make_message(&buffer, NETWORKCMP_OP_HELLO, false,
 	    sizeof(*hello));
 	hello = (void *)(msg + 1);
 	hello->max_version = NETWORKCMP_ABI_VERSION;
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
+	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
 	hello->reserved = 1;
 	reject(msg, wire_length);
 	hello->reserved = 0;
@@ -340,100 +275,43 @@ ATF_TC_BODY(semantic_invariants, tc)
 	hello->features = 0x80000000U;
 	reject(msg, wire_length);
 
-	msg = make_message(&buffer, NETWORKCMP_OP_SOCKET, false,
-	    sizeof(*socket));
-	socket = (void *)(msg + 1);
-	socket->family = NETWORKCMP_AF_INET4;
-	socket->type = NETWORKCMP_SOCK_STREAM;
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	socket->flags = 1;
-	reject(msg, wire_length);
-	socket->flags = 0;
-	socket->family = NETWORKCMP_AF_UNSPEC;
-	reject(msg, wire_length);
-	socket->family = NETWORKCMP_AF_INET4;
-	socket->type = NETWORKCMP_SOCK_ANY;
-	reject(msg, wire_length);
-
 	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, false,
-	    sizeof(*endpoint));
-	endpoint = (void *)(msg + 1);
-	endpoint->endpoint.family = NETWORKCMP_AF_INET4;
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	endpoint->endpoint.scope_id = 1;
+	    sizeof(*connect));
+	connect = (void *)(msg + 1);
+	connect->endpoint.family = NETWORKCMP_AF_INET4;
+	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
+	connect->endpoint.scope_id = 1;
 	reject(msg, wire_length);
-	endpoint->endpoint.scope_id = 0;
-	endpoint->endpoint.address[15] = 1;
+	connect->endpoint.scope_id = 0;
+	connect->endpoint.address[15] = 1;
 	reject(msg, wire_length);
-	endpoint->endpoint.address[15] = 0;
-	endpoint->endpoint.family = NETWORKCMP_AF_UNSPEC;
+	connect->endpoint.address[15] = 0;
+	connect->endpoint.prefix = 1;
 	reject(msg, wire_length);
-
-	msg = make_message(&buffer, NETWORKCMP_OP_SETOPT, false,
-	    sizeof(*setopt));
-	setopt = (void *)(msg + 1);
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	setopt->reserved = 1;
-	reject(msg, wire_length);
-
-	msg = make_message(&buffer, NETWORKCMP_OP_SHUTDOWN, false,
-	    sizeof(*shutdown));
-	shutdown = (void *)(msg + 1);
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	shutdown->how = 3;
-	reject(msg, wire_length);
-	shutdown->how = 0;
-	shutdown->reserved = 1;
+	connect->endpoint.prefix = 0;
+	connect->endpoint.family = NETWORKCMP_AF_UNSPEC;
 	reject(msg, wire_length);
 
 	msg = make_message(&buffer, NETWORKCMP_OP_HELLO, true,
 	    sizeof(*hello_reply));
 	hello_reply = (void *)(msg + 1);
 	hello_reply->version = NETWORKCMP_ABI_VERSION;
-	hello_reply->max_inline = NETWORKCMP_INLINE_MAX;
-	hello_reply->max_datagram = NETWORKCMP_INLINE_MAX;
 	hello_reply->max_resolve_results = NETWORKCMP_RESOLVE_MAX_RESULTS;
-	hello_reply->io_timeout_max = NETWORKCMP_IO_TIMEOUT_MAX;
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
+	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length,
+	    wire_role));
 	hello_reply->version = 0;
 	reject(msg, wire_length);
 	hello_reply->version = NETWORKCMP_ABI_VERSION;
 	hello_reply->features = 0x80000000U;
 	reject(msg, wire_length);
 	hello_reply->features = 0;
-	hello_reply->max_inline = 0;
+	hello_reply->reserved = 1;
 	reject(msg, wire_length);
-	hello_reply->max_inline = NETWORKCMP_INLINE_MAX;
-	hello_reply->max_datagram = NETWORKCMP_INLINE_MAX + 1;
-	reject(msg, wire_length);
-	hello_reply->max_datagram = NETWORKCMP_INLINE_MAX;
+	hello_reply->reserved = 0;
 	hello_reply->max_resolve_results = 0;
 	reject(msg, wire_length);
-	hello_reply->max_resolve_results = NETWORKCMP_RESOLVE_MAX_RESULTS;
-	hello_reply->io_timeout_max = NETWORKCMP_IO_TIMEOUT_MAX + 1;
-	reject(msg, wire_length);
-
-	msg = make_message(&buffer, NETWORKCMP_OP_RECV, false, sizeof(*io));
-	io = (void *)(msg + 1);
-	io->length = 1;
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	io->length = 0;
-	reject(msg, wire_length);
-	io->length = 1;
-	io->timeout_ms = 1;
-	reject(msg, wire_length);
-	io->timeout_ms = NETWORKCMP_IO_TIMEOUT_MAX + 1;
-	reject(msg, wire_length);
-	io->timeout_ms = 0;
-	io->flags = 1;
-	reject(msg, wire_length);
-
-	msg = make_message(&buffer, NETWORKCMP_OP_SEND, false,
-	    sizeof(*io) + 1);
-	io = (void *)(msg + 1);
-	io->length = 1;
-	ATF_REQUIRE_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
-	io->timeout_ms = 1;
+	hello_reply->max_resolve_results = NETWORKCMP_RESOLVE_MAX_RESULTS + 1;
 	reject(msg, wire_length);
 }
 
@@ -441,21 +319,46 @@ ATF_TC(descriptor_contract);
 ATF_TC_HEAD(descriptor_contract, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "The baseline NetworkCmp protocol accepts no descriptors");
+	    "Only a successful CONNECT or UDP reply carries one descriptor");
 }
 ATF_TC_BODY(descriptor_contract, tc)
 {
 	union message_buffer buffer;
 	struct networkcmp_msg *msg;
 
-	msg = make_message(&buffer, NETWORKCMP_OP_SOCKET, false,
-	    sizeof(struct networkcmp_socket_request));
+	/* Requests never carry descriptors. */
+	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, false,
+	    sizeof(struct networkcmp_connect_request));
 	ATF_CHECK_EQ(0, networkcmp_validate_fds(msg, 0, wire_role));
 	ATF_CHECK_EQ(-1, networkcmp_validate_fds(msg, 1, wire_role));
 	ATF_CHECK_EQ(EPROTO, errno);
-	wire_role = NETWORKCMP_MESSAGE_REPLY;
-	ATF_CHECK_EQ(0, networkcmp_validate_fds(msg, 0, wire_role));
-	ATF_CHECK_EQ(-1, networkcmp_validate_fds(NULL, 0, wire_role));
+
+	/* A successful CONNECT reply carries exactly one descriptor. */
+	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, true, 0);
+	ATF_CHECK_EQ(0, networkcmp_validate_fds(msg, 1,
+	    NETWORKCMP_MESSAGE_REPLY));
+	ATF_CHECK_EQ(-1, networkcmp_validate_fds(msg, 0,
+	    NETWORKCMP_MESSAGE_REPLY));
+	ATF_CHECK_EQ(EPROTO, errno);
+	msg = make_message(&buffer, NETWORKCMP_OP_UDP, true, 0);
+	ATF_CHECK_EQ(0, networkcmp_validate_fds(msg, 1,
+	    NETWORKCMP_MESSAGE_REPLY));
+
+	/* A failed CONNECT reply carries none. */
+	msg = make_message(&buffer, NETWORKCMP_OP_CONNECT, true, 0);
+	msg->status = -ECONNREFUSED;
+	ATF_CHECK_EQ(0, networkcmp_validate_fds(msg, 0,
+	    NETWORKCMP_MESSAGE_REPLY));
+	ATF_CHECK_EQ(-1, networkcmp_validate_fds(msg, 1,
+	    NETWORKCMP_MESSAGE_REPLY));
+	ATF_CHECK_EQ(EPROTO, errno);
+
+	/* A HELLO reply carries none. */
+	msg = make_message(&buffer, NETWORKCMP_OP_HELLO, true, 0);
+	ATF_CHECK_EQ(0, networkcmp_validate_fds(msg, 0,
+	    NETWORKCMP_MESSAGE_REPLY));
+	ATF_CHECK_EQ(-1, networkcmp_validate_fds(NULL, 0,
+	    NETWORKCMP_MESSAGE_REPLY));
 	ATF_CHECK_EQ(EINVAL, errno);
 }
 
@@ -473,16 +376,15 @@ ATF_TC_BODY(abi, tc)
 	ATF_CHECK_STREQ("1.0.0", NETWORKCMP_INTERFACE_VERSION);
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_msg));
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_hello));
-	ATF_CHECK_EQ(36, sizeof(struct networkcmp_hello_reply));
-	ATF_CHECK_EQ(16, sizeof(struct networkcmp_handle));
-	ATF_CHECK_EQ(40, sizeof(struct networkcmp_endpoint_request));
+	ATF_CHECK_EQ(16, sizeof(struct networkcmp_hello_reply));
+	ATF_CHECK_EQ(24, sizeof(struct networkcmp_endpoint));
+	ATF_CHECK_EQ(24, sizeof(struct networkcmp_connect_request));
 	ATF_CHECK_EQ(24, sizeof(struct networkcmp_resolve_request));
 	ATF_CHECK_EQ(32, sizeof(struct networkcmp_resolve_result));
-	ATF_CHECK_EQ(32, sizeof(struct networkcmp_inline_request));
-	ATF_CHECK_EQ(16, sizeof(struct networkcmp_inline_reply));
-	ATF_CHECK_EQ(11, NETWORKCMP_OP_SEND);
-	ATF_CHECK_EQ(12, NETWORKCMP_OP_RECV);
-	ATF_CHECK_EQ(13, NETWORKCMP_OP_CONNECT_STATUS);
+	ATF_CHECK_EQ(1, NETWORKCMP_OP_HELLO);
+	ATF_CHECK_EQ(2, NETWORKCMP_OP_RESOLVE);
+	ATF_CHECK_EQ(3, NETWORKCMP_OP_CONNECT);
+	ATF_CHECK_EQ(4, NETWORKCMP_OP_UDP);
 }
 
 ATF_TC(typed_api_arguments);
@@ -493,40 +395,55 @@ ATF_TC_HEAD(typed_api_arguments, tc)
 }
 ATF_TC_BODY(typed_api_arguments, tc)
 {
-	struct networkcmp_handle handle;
 	struct networkcmp_resolve_result result;
+	struct sockaddr_in sin;
+	struct sockaddr_un {
+		unsigned char sun_len;
+		unsigned char sun_family;
+		char sun_path[104];
+	} sun;
 	struct addrinfo hints, *addresses;
 	size_t nresults;
-	char byte;
-	int error;
+	int fd, error;
 
-	byte = 0;
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_len = sizeof(sin);
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons(443);
+
+	/* A NULL out_fd is rejected before any transport. */
 	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_socket(NULL, NETWORKCMP_AF_UNSPEC,
-	    NETWORKCMP_SOCK_STREAM, 0, 0, &handle));
+	ATF_CHECK_EQ(-1, networkcmp_connect(NULL, (struct sockaddr *)&sin,
+	    sizeof(sin), NULL));
+	ATF_CHECK_EQ(EINVAL, errno);
+	errno = 0;
+	ATF_CHECK_EQ(-1, networkcmp_udp(NULL, (struct sockaddr *)&sin,
+	    sizeof(sin), NULL));
 	ATF_CHECK_EQ(EINVAL, errno);
 
+	/* A NULL address is rejected. */
+	fd = 0;
 	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_send_inline(NULL, handle, NULL, 1));
+	ATF_CHECK_EQ(-1, networkcmp_connect(NULL, NULL, 0, &fd));
 	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(-1, fd);
+
+	/* An unsupported address family is rejected before transport. */
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_len = sizeof(sun);
+	sun.sun_family = AF_UNIX;
+	fd = 0;
 	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_send_inline(NULL, handle, &byte, 0));
-	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(-1, networkcmp_connect(NULL, (struct sockaddr *)&sun,
+	    sizeof(sun), &fd));
+	ATF_CHECK_EQ(EAFNOSUPPORT, errno);
+	ATF_CHECK_EQ(-1, fd);
+
+	/* A short address buffer is rejected. */
+	fd = 0;
 	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_send_inline(NULL, handle, &byte,
-	    NETWORKCMP_INLINE_MAX + 1));
-	ATF_CHECK_EQ(EINVAL, errno);
-	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_recv_inline(NULL, handle, NULL, 1, 0,
-	    NULL));
-	ATF_CHECK_EQ(EINVAL, errno);
-	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_recv_inline(NULL, handle, &byte, 0, 0,
-	    NULL));
-	ATF_CHECK_EQ(EINVAL, errno);
-	errno = 0;
-	ATF_CHECK_EQ(-1, networkcmp_recv_inline(NULL, handle, &byte, 1,
-	    NETWORKCMP_IO_TIMEOUT_MAX + 1, NULL));
+	ATF_CHECK_EQ(-1, networkcmp_connect(NULL, (struct sockaddr *)&sin,
+	    sizeof(sin) - 1, &fd));
 	ATF_CHECK_EQ(EINVAL, errno);
 
 	errno = 0;

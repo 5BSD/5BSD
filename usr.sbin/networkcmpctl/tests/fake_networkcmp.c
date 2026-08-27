@@ -38,11 +38,7 @@ networkcmp_client_open(struct networkcmp_client **result)
 	    .version = 1,
 	    .features = NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
 	        NETWORKCMP_FEATURE_DNS,
-	    .max_sockets = 32,
-	    .max_inline = NETWORKCMP_INLINE_MAX,
-	    .max_datagram = NETWORKCMP_INLINE_MAX,
 	    .max_resolve_results = 16,
-	    .io_timeout_max = NETWORKCMP_IO_TIMEOUT_MAX,
 	};
 	*result = &client;
 	return (0);

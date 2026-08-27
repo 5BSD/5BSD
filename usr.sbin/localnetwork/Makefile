@@ -3,7 +3,7 @@
 PACKAGE=	localnetwork
 PROG=		localnetwork
 MAN=		localnetwork.8
-SRCS=		io.c networkcmp.c policy.c session.c
+SRCS=		networkcmp.c policy.c
 
 CFLAGS+=	-DWITH_CASPER
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp

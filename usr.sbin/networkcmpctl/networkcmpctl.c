@@ -54,11 +54,8 @@ info(void)
 		errno = error;
 		err(EX_PROTOCOL, "limits");
 	}
-	printf("version=%u features=0x%08x max_sockets=%u max_inline=%u"
-	    " max_datagram=%u max_resolve_results=%u io_timeout_max=%u\n",
-	    limits->version, limits->features, limits->max_sockets,
-	    limits->max_inline, limits->max_datagram,
-	    limits->max_resolve_results, limits->io_timeout_max);
+	printf("version=%u features=0x%08x max_resolve_results=%u\n",
+	    limits->version, limits->features, limits->max_resolve_results);
 	networkcmp_client_close(client);
 	return (0);
 }

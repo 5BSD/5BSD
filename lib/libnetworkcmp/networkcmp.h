@@ -8,6 +8,7 @@
 #define	_NETWORKCMP_H_
 
 #include <sys/types.h>
+#include <sys/socket.h>
 
 #include <stddef.h>
 #include <stdint.h>
@@ -17,6 +18,15 @@
 struct addrinfo;
 struct networkcmp_client;
 
+/*
+ * The network broker returns real, rights-limited, connected socket
+ * descriptors.  A CONNECT or UDP call hands back a descriptor received via
+ * SCM_RIGHTS; the caller owns all subsequent I/O (read/write/recv/send,
+ * shutdown, get/setsockopt, and O_NONBLOCK through fcntl) on that descriptor.
+ * The descriptor cannot bind, listen, accept, reconnect, or be re-sent.  The
+ * broker never proxies application data.
+ */
+
 __BEGIN_DECLS
 
 int	networkcmp_client_open(struct networkcmp_client **client);
@@ -25,40 +35,20 @@ const struct networkcmp_hello_reply *
 void	networkcmp_client_close(struct networkcmp_client *client);
 int	networkcmp_hello(struct networkcmp_client *,
 	    struct networkcmp_hello_reply *reply);
-int	networkcmp_socket(struct networkcmp_client *, uint32_t family,
-	    uint32_t type,
-	    uint32_t protocol, uint32_t flags,
-	    struct networkcmp_handle *socket);
-int	networkcmp_bind(struct networkcmp_client *,
-	    struct networkcmp_handle socket,
-	    const struct networkcmp_endpoint *endpoint);
+/*
+ * Policy-check and open a connected TCP socket to the destination address,
+ * returning the connected descriptor in *out_fd on success.
+ */
 int	networkcmp_connect(struct networkcmp_client *,
-	    struct networkcmp_handle socket,
-	    const struct networkcmp_endpoint *endpoint);
-int	networkcmp_connect_status(struct networkcmp_client *,
-	    struct networkcmp_handle socket);
-int	networkcmp_listen(struct networkcmp_client *,
-	    struct networkcmp_handle socket,
-	    uint32_t backlog);
-int	networkcmp_accept(struct networkcmp_client *,
-	    struct networkcmp_handle socket,
-	    struct networkcmp_handle *accepted);
-int	networkcmp_setopt(struct networkcmp_client *,
-	    struct networkcmp_handle socket,
-	    uint32_t level, uint32_t option, const void *value,
-	    size_t value_length);
-int	networkcmp_shutdown(struct networkcmp_client *,
-	    struct networkcmp_handle socket,
-	    uint32_t how);
-int	networkcmp_close_socket(struct networkcmp_client *,
-	    struct networkcmp_handle socket);
-ssize_t	networkcmp_send_inline(struct networkcmp_client *,
-	    struct networkcmp_handle socket,
-	    const void *buffer, size_t length);
-ssize_t	networkcmp_recv_inline(struct networkcmp_client *,
-	    struct networkcmp_handle socket,
-	    void *buffer, size_t capacity, uint32_t timeout_ms,
-	    uint32_t *flags);
+	    const struct sockaddr *address, socklen_t address_length,
+	    int *out_fd);
+/*
+ * Policy-check and open a connected UDP socket bound to the peer address,
+ * returning the connected descriptor in *out_fd on success.  The datagram
+ * socket accepts only send/recv to that peer.
+ */
+int	networkcmp_udp(struct networkcmp_client *,
+	    const struct sockaddr *peer, socklen_t peer_length, int *out_fd);
 int	networkcmp_resolve(struct networkcmp_client *, const char *host,
 	    const char *service,
 	    uint32_t family, uint32_t socket_type, uint32_t flags,

@@ -12,17 +12,11 @@ ATF_TESTS_SH_SED_bundle_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 ATF_TESTS_SH_SED_bundle_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 ATF_TESTS_SH_SED_bundle_test+=	-e 's,@MK_DTRACE@,${MK_DTRACE},g'
 
-ATF_TESTS_C+=	session_test
-SRCS.session_test=	session_test.c session.c
-
-ATF_TESTS_C+=	io_test
-SRCS.io_test=	io_test.c io.c session.c
-
 ATF_TESTS_C+=	policy_test
 SRCS.policy_test=	policy_test.c policy.c
 
 ATF_TESTS_C+=	provider_test
-SRCS.provider_test=	provider_test.c networkcmp.c io.c policy.c session.c
+SRCS.provider_test=	provider_test.c networkcmp.c policy.c
 CFLAGS.provider_test+=	-DNETWORKCMP_TESTING -DWITH_CASPER
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libchannel

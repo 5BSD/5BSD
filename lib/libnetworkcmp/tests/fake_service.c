@@ -162,11 +162,7 @@ service_session_call(struct service_session *session,
 		hello->version = NETWORKCMP_ABI_VERSION;
 		hello->features = NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
 		    NETWORKCMP_FEATURE_IPV6 | NETWORKCMP_FEATURE_DNS;
-		hello->max_sockets = 128;
-		hello->max_inline = NETWORKCMP_INLINE_MAX;
-		hello->max_datagram = NETWORKCMP_INLINE_MAX;
 		hello->max_resolve_results = NETWORKCMP_RESOLVE_MAX_RESULTS;
-		hello->io_timeout_max = NETWORKCMP_IO_TIMEOUT_MAX;
 		length += sizeof(*hello);
 	}
 	if (reply->capacity < length) {

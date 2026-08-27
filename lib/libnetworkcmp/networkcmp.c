@@ -129,7 +129,7 @@ networkcmp_header_validate(const struct networkcmp_msg *msg, size_t received,
 	    msg->magic != NETWORKCMP_MAGIC ||
 	    msg->version != NETWORKCMP_ABI_VERSION ||
 	    msg->opcode < NETWORKCMP_OP_HELLO ||
-	    msg->opcode > NETWORKCMP_OP_CONNECT_STATUS ||
+	    msg->opcode > NETWORKCMP_OP_UDP ||
 	    (msg->flags & ~NETWORKCMP_MSG_F_MASK) != 0 ||
 	    (role != NETWORKCMP_MESSAGE_REPLY && msg->status != 0) ||
 	    (role == NETWORKCMP_MESSAGE_REPLY &&
@@ -146,7 +146,7 @@ networkcmp_message_init(struct networkcmp_msg *msg, uint16_t opcode,
 {
 
 	if (msg == NULL || opcode < NETWORKCMP_OP_HELLO ||
-	    opcode > NETWORKCMP_OP_CONNECT_STATUS ||
+	    opcode > NETWORKCMP_OP_UDP ||
 	    (flags & ~NETWORKCMP_MSG_F_MASK) != 0) {
 		errno = EINVAL;
 		return (-1);
@@ -203,46 +203,24 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 			if (payload == expected) {
 				hello = (const void *)(msg + 1);
 				if (hello->version != NETWORKCMP_ABI_VERSION ||
-				    hello->reserved[0] != 0 ||
-				    hello->reserved[1] != 0 ||
+				    hello->reserved != 0 ||
 				    (hello->features &
 				    ~(NETWORKCMP_FEATURE_TCP |
 				    NETWORKCMP_FEATURE_UDP |
 				    NETWORKCMP_FEATURE_IPV6 |
 				    NETWORKCMP_FEATURE_DNS)) != 0 ||
-				    hello->max_inline == 0 ||
-				    hello->max_inline > NETWORKCMP_INLINE_MAX ||
-				    hello->max_datagram == 0 ||
-				    hello->max_datagram > hello->max_inline ||
 				    hello->max_resolve_results == 0 ||
 				    hello->max_resolve_results >
-				    NETWORKCMP_RESOLVE_MAX_RESULTS ||
-				    hello->io_timeout_max == 0 ||
-				    hello->io_timeout_max > NETWORKCMP_IO_TIMEOUT_MAX)
+				    NETWORKCMP_RESOLVE_MAX_RESULTS)
 					goto reject;
 			}
 			break;
 		}
-		case NETWORKCMP_OP_SOCKET:
-		case NETWORKCMP_OP_ACCEPT:
-			expected = sizeof(struct networkcmp_handle_reply);
+		case NETWORKCMP_OP_CONNECT:
+		case NETWORKCMP_OP_UDP:
+			/* The connected descriptor arrives out of band. */
+			expected = 0;
 			break;
-		case NETWORKCMP_OP_SEND:
-			expected = sizeof(struct networkcmp_inline_reply);
-			break;
-		case NETWORKCMP_OP_RECV: {
-			const struct networkcmp_inline_reply *io;
-
-			if (payload < sizeof(*io))
-				goto reject;
-			io = (const void *)(msg + 1);
-			if (io->length > NETWORKCMP_INLINE_MAX ||
-			    (io->flags & ~NETWORKCMP_IO_F_MASK) != 0 ||
-			    io->reserved[0] != 0 || io->reserved[1] != 0)
-				goto reject;
-			expected = sizeof(*io) + io->length;
-			break;
-		}
 		case NETWORKCMP_OP_RESOLVE: {
 			const struct networkcmp_resolve_reply *resolve;
 			const struct networkcmp_resolve_result *results;
@@ -306,67 +284,15 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 			}
 			break;
 		}
-		case NETWORKCMP_OP_SOCKET: {
-			const struct networkcmp_socket_request *socket;
+		case NETWORKCMP_OP_CONNECT:
+		case NETWORKCMP_OP_UDP: {
+			const struct networkcmp_connect_request *connect;
 
-			expected = sizeof(struct networkcmp_socket_request);
+			expected = sizeof(struct networkcmp_connect_request);
 			if (payload == expected) {
-				socket = (const void *)(msg + 1);
-				if (socket->family < NETWORKCMP_AF_INET4 ||
-				    socket->family > NETWORKCMP_AF_INET6 ||
-				    socket->type < NETWORKCMP_SOCK_STREAM ||
-				    socket->type > NETWORKCMP_SOCK_DGRAM ||
-				    socket->flags != 0)
-					goto reject;
-			}
-			break;
-		}
-		case NETWORKCMP_OP_BIND:
-		case NETWORKCMP_OP_CONNECT: {
-			const struct networkcmp_endpoint_request *endpoint;
-
-			expected = sizeof(struct networkcmp_endpoint_request);
-			if (payload == expected) {
-				endpoint = (const void *)(msg + 1);
+				connect = (const void *)(msg + 1);
 				if (!networkcmp_endpoint_valid(
-				    &endpoint->endpoint))
-					goto reject;
-			}
-			break;
-		}
-		case NETWORKCMP_OP_LISTEN: {
-			const struct networkcmp_listen_request *listen;
-
-			expected = sizeof(struct networkcmp_listen_request);
-			if (payload == expected) {
-				listen = (const void *)(msg + 1);
-				if (listen->reserved != 0)
-					goto reject;
-			}
-			break;
-		}
-		case NETWORKCMP_OP_ACCEPT:
-		case NETWORKCMP_OP_CLOSE:
-		case NETWORKCMP_OP_CONNECT_STATUS:
-			expected = sizeof(struct networkcmp_close_request);
-			break;
-		case NETWORKCMP_OP_SETOPT:
-			if (payload < sizeof(struct networkcmp_setopt_request))
-				goto reject;
-			const struct networkcmp_setopt_request *setopt;
-
-			setopt = (const void *)(msg + 1);
-			if (setopt->reserved != 0)
-				goto reject;
-			expected = sizeof(*setopt) + setopt->value_length;
-			break;
-		case NETWORKCMP_OP_SHUTDOWN: {
-			const struct networkcmp_shutdown_request *shutdown;
-
-			expected = sizeof(struct networkcmp_shutdown_request);
-			if (payload == expected) {
-				shutdown = (const void *)(msg + 1);
-				if (shutdown->how > 2 || shutdown->reserved != 0)
+				    &connect->endpoint))
 					goto reject;
 			}
 			break;
@@ -397,21 +323,6 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 				goto reject;
 			break;
 		}
-		case NETWORKCMP_OP_SEND:
-		case NETWORKCMP_OP_RECV: {
-			const struct networkcmp_inline_request *io;
-
-			if (payload < sizeof(*io))
-				goto reject;
-			io = (const void *)(msg + 1);
-			if (io->length == 0 || io->length > NETWORKCMP_INLINE_MAX ||
-			    io->flags != 0 || io->reserved != 0 ||
-			    io->timeout_ms != 0)
-				goto reject;
-			expected = sizeof(*io) +
-			    (msg->opcode == NETWORKCMP_OP_SEND ? io->length : 0);
-			break;
-		}
 		default:
 			goto reject;
 		}
@@ -431,29 +342,36 @@ int
 networkcmp_validate_fds(const struct networkcmp_msg *msg, size_t nfds,
     enum networkcmp_message_role role)
 {
+	size_t expected;
+
 	if (msg == NULL || (role != NETWORKCMP_MESSAGE_REQUEST &&
 	    role != NETWORKCMP_MESSAGE_REPLY &&
 	    role != NETWORKCMP_MESSAGE_EVENT)) {
 		errno = EINVAL;
 		return (-1);
 	}
-	if (nfds != 0) {
+	/*
+	 * Only a successful CONNECT or UDP reply carries exactly one
+	 * descriptor: the connected socket.  Every other message carries none.
+	 */
+	expected = role == NETWORKCMP_MESSAGE_REPLY && msg->status == 0 &&
+	    (msg->opcode == NETWORKCMP_OP_CONNECT ||
+	    msg->opcode == NETWORKCMP_OP_UDP) ? 1 : 0;
+	if (nfds != expected) {
 		errno = EPROTO;
 		return (-1);
 	}
 	return (0);
 }
 
-static int networkcmp_rpc_fds(struct networkcmp_client *, uint16_t,
-    const void *, size_t,
-    const int *, size_t, union networkcmp_buffer *, size_t *)
+static int networkcmp_call(struct networkcmp_client *, uint16_t,
+    const void *, size_t, union networkcmp_buffer *, size_t *, int *)
     __no_lock_analysis;
 
 static int
-networkcmp_rpc_fds(struct networkcmp_client *client, uint16_t opcode,
-    const void *payload,
-    size_t payload_length, const int *fds, size_t nfds,
-    union networkcmp_buffer *reply, size_t *reply_length)
+networkcmp_call(struct networkcmp_client *client, uint16_t opcode,
+    const void *payload, size_t payload_length,
+    union networkcmp_buffer *reply, size_t *reply_length, int *out_fd)
 {
 	union networkcmp_buffer request;
 	struct service_call_options options =
@@ -462,8 +380,11 @@ networkcmp_rpc_fds(struct networkcmp_client *client, uint16_t opcode,
 	struct service_reply incoming;
 	struct networkcmp_msg *msg;
 	size_t received, request_length;
-	int terminal_error;
+	int terminal_error, received_fd;
 
+	if (out_fd != NULL)
+		*out_fd = -1;
+	received_fd = -1;
 	if (client == NULL || client->owner != getpid() ||
 	    client->channel == NULL || payload_length >
 	    NETWORKCMP_MAX_MESSAGE - sizeof(struct networkcmp_msg) ||
@@ -481,18 +402,19 @@ networkcmp_rpc_fds(struct networkcmp_client *client, uint16_t opcode,
 	if (payload_length != 0)
 		memcpy(msg + 1, payload, payload_length);
 	request_length = sizeof(*msg) + payload_length;
-	NETWORKCMP_PROBE_SEND(opcode, (uint32_t)request_length,
-	    (uint32_t)nfds, 0);
+	NETWORKCMP_PROBE_SEND(opcode, (uint32_t)request_length, 0, 0);
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
 	outgoing.data = msg;
 	outgoing.length = request_length;
-	outgoing.fds = fds;
-	outgoing.nfds = nfds;
 	memset(&incoming, 0, sizeof(incoming));
 	incoming.size = sizeof(incoming);
 	incoming.data = reply;
 	incoming.capacity = sizeof(*reply);
+	if (out_fd != NULL) {
+		incoming.fds = &received_fd;
+		incoming.fd_capacity = 1;
+	}
 	options.timeout_ms = 30000;
 	if (service_session_call(client->channel, &outgoing, &incoming,
 	    &options) == -1) {
@@ -501,11 +423,12 @@ networkcmp_rpc_fds(struct networkcmp_client *client, uint16_t opcode,
 	}
 	received = incoming.length;
 	msg = &reply->wire.msg;
-	if (incoming.nfds != 0 ||
-	    networkcmp_validate_message(msg, received,
+	if (networkcmp_validate_message(msg, received,
 	    NETWORKCMP_MESSAGE_REPLY) == -1 ||
 	    networkcmp_validate_fds(msg, incoming.nfds,
 	    NETWORKCMP_MESSAGE_REPLY) == -1 || msg->opcode != opcode) {
+		if (incoming.nfds != 0 && received_fd >= 0)
+			(void)close(received_fd);
 		errno = EPROTO;
 		atomic_store(&client->terminal_error, EPROTO);
 		NETWORKCMP_PROBE_REJECT(opcode, (uint32_t)received, EPROTO);
@@ -517,18 +440,10 @@ networkcmp_rpc_fds(struct networkcmp_client *client, uint16_t opcode,
 		errno = -msg->status;
 		return (-1);
 	}
+	if (out_fd != NULL)
+		*out_fd = received_fd;
 	*reply_length = (size_t)received;
 	return (0);
-}
-
-static int
-networkcmp_rpc(struct networkcmp_client *client, uint16_t opcode,
-    const void *payload,
-    size_t payload_length, union networkcmp_buffer *reply, size_t *reply_length)
-{
-
-	return (networkcmp_rpc_fds(client, opcode, payload, payload_length,
-	    NULL, 0, reply, reply_length));
 }
 
 int
@@ -548,8 +463,8 @@ networkcmp_hello(struct networkcmp_client *client,
 	request.max_version = NETWORKCMP_ABI_VERSION;
 	request.features = NETWORKCMP_FEATURE_TCP | NETWORKCMP_FEATURE_UDP |
 	    NETWORKCMP_FEATURE_IPV6 | NETWORKCMP_FEATURE_DNS;
-	if (networkcmp_rpc(client, NETWORKCMP_OP_HELLO, &request,
-	    sizeof(request), &reply, &length) == -1)
+	if (networkcmp_call(client, NETWORKCMP_OP_HELLO, &request,
+	    sizeof(request), &reply, &length, NULL) == -1)
 		return (-1);
 	memcpy(reply_value, &reply.wire.msg + 1, sizeof(*reply_value));
 	return (0);
@@ -679,277 +594,97 @@ networkcmp_client_close(struct networkcmp_client *client) __no_lock_analysis
 	(void)pthread_mutex_unlock(&networkcmp_registry_lock);
 }
 
-int
-networkcmp_socket(struct networkcmp_client *client, uint32_t family,
-    uint32_t type, uint32_t protocol, uint32_t flags,
-    struct networkcmp_handle *socket)
+static int
+networkcmp_sockaddr_endpoint(const struct sockaddr *sa, socklen_t salen,
+    struct networkcmp_endpoint *endpoint)
 {
-	union networkcmp_buffer reply;
-	struct networkcmp_socket_request request;
-	const struct networkcmp_handle_reply *result;
-	size_t length;
 
-	if (socket == NULL || family < NETWORKCMP_AF_INET4 ||
-	    family > NETWORKCMP_AF_INET6 || type < NETWORKCMP_SOCK_STREAM ||
-	    type > NETWORKCMP_SOCK_DGRAM) {
+	if (sa == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
-	memset(&request, 0, sizeof(request));
-	request.family = family;
-	request.type = type;
-	request.protocol = protocol;
-	request.flags = flags;
-	if (networkcmp_rpc(client, NETWORKCMP_OP_SOCKET, &request,
-	    sizeof(request), &reply, &length) == -1)
+	memset(endpoint, 0, sizeof(*endpoint));
+	switch (sa->sa_family) {
+	case AF_INET: {
+		const struct sockaddr_in *sin = (const void *)sa;
+
+		if (salen < (socklen_t)sizeof(*sin)) {
+			errno = EINVAL;
+			return (-1);
+		}
+		endpoint->family = NETWORKCMP_AF_INET4;
+		endpoint->port = ntohs(sin->sin_port);
+		memcpy(endpoint->address, &sin->sin_addr,
+		    sizeof(sin->sin_addr));
+		return (0);
+	}
+	case AF_INET6: {
+		const struct sockaddr_in6 *sin6 = (const void *)sa;
+
+		if (salen < (socklen_t)sizeof(*sin6)) {
+			errno = EINVAL;
+			return (-1);
+		}
+		endpoint->family = NETWORKCMP_AF_INET6;
+		endpoint->port = ntohs(sin6->sin6_port);
+		endpoint->scope_id = sin6->sin6_scope_id;
+		memcpy(endpoint->address, &sin6->sin6_addr,
+		    sizeof(sin6->sin6_addr));
+		return (0);
+	}
+	default:
+		errno = EAFNOSUPPORT;
 		return (-1);
-	result = (const void *)(&reply.wire.msg + 1);
-	*socket = result->socket;
-	return (0);
+	}
 }
 
 static int
-networkcmp_endpoint_rpc(struct networkcmp_client *client, uint16_t opcode,
-    struct networkcmp_handle socket,
-    const struct networkcmp_endpoint *endpoint)
+networkcmp_endpoint_op(struct networkcmp_client *client, uint16_t opcode,
+    const struct sockaddr *sa, socklen_t salen, int *out_fd)
 {
 	union networkcmp_buffer reply;
-	struct networkcmp_endpoint_request request;
+	struct networkcmp_connect_request request;
 	size_t length;
+	int fd;
 
-	if (endpoint == NULL ||
-	    (endpoint->family != NETWORKCMP_AF_INET4 &&
-	    endpoint->family != NETWORKCMP_AF_INET6)) {
+	if (out_fd == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
+	*out_fd = -1;
 	memset(&request, 0, sizeof(request));
-	request.socket = socket;
-	request.endpoint = *endpoint;
-	return (networkcmp_rpc(client, opcode, &request, sizeof(request),
-	    &reply, &length));
-}
-
-int
-networkcmp_bind(struct networkcmp_client *client,
-    struct networkcmp_handle socket,
-    const struct networkcmp_endpoint *endpoint)
-{
-
-	return (networkcmp_endpoint_rpc(client, NETWORKCMP_OP_BIND, socket,
-	    endpoint));
+	if (networkcmp_sockaddr_endpoint(sa, salen, &request.endpoint) == -1)
+		return (-1);
+	fd = -1;
+	if (networkcmp_call(client, opcode, &request, sizeof(request), &reply,
+	    &length, &fd) == -1)
+		return (-1);
+	if (fd < 0) {
+		/* A successful broker reply must carry the connected socket. */
+		errno = EPROTO;
+		atomic_store(&client->terminal_error, EPROTO);
+		return (-1);
+	}
+	*out_fd = fd;
+	return (0);
 }
 
 int
 networkcmp_connect(struct networkcmp_client *client,
-    struct networkcmp_handle socket,
-    const struct networkcmp_endpoint *endpoint)
+    const struct sockaddr *address, socklen_t address_length, int *out_fd)
 {
 
-	return (networkcmp_endpoint_rpc(client, NETWORKCMP_OP_CONNECT, socket,
-	    endpoint));
+	return (networkcmp_endpoint_op(client, NETWORKCMP_OP_CONNECT, address,
+	    address_length, out_fd));
 }
 
 int
-networkcmp_connect_status(struct networkcmp_client *client,
-    struct networkcmp_handle socket)
+networkcmp_udp(struct networkcmp_client *client, const struct sockaddr *peer,
+    socklen_t peer_length, int *out_fd)
 {
-	union networkcmp_buffer reply;
-	struct networkcmp_close_request request;
-	size_t length;
 
-	memset(&request, 0, sizeof(request));
-	request.socket = socket;
-	return (networkcmp_rpc(client, NETWORKCMP_OP_CONNECT_STATUS, &request,
-	    sizeof(request), &reply, &length));
-}
-
-int
-networkcmp_listen(struct networkcmp_client *client,
-    struct networkcmp_handle socket, uint32_t backlog)
-{
-	union networkcmp_buffer reply;
-	struct networkcmp_listen_request request;
-	size_t length;
-
-	memset(&request, 0, sizeof(request));
-	request.socket = socket;
-	request.backlog = backlog;
-	return (networkcmp_rpc(client, NETWORKCMP_OP_LISTEN, &request,
-	    sizeof(request), &reply, &length));
-}
-
-int
-networkcmp_accept(struct networkcmp_client *client,
-    struct networkcmp_handle socket,
-    struct networkcmp_handle *accepted)
-{
-	union networkcmp_buffer reply;
-	struct networkcmp_close_request request;
-	const struct networkcmp_handle_reply *result;
-	size_t length;
-
-	if (accepted == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(&request, 0, sizeof(request));
-	request.socket = socket;
-	if (networkcmp_rpc(client, NETWORKCMP_OP_ACCEPT, &request,
-	    sizeof(request), &reply, &length) == -1)
-		return (-1);
-	result = (const void *)(&reply.wire.msg + 1);
-	*accepted = result->socket;
-	return (0);
-}
-
-int
-networkcmp_setopt(struct networkcmp_client *client,
-    struct networkcmp_handle socket, uint32_t level, uint32_t option,
-    const void *value, size_t value_length)
-{
-	union networkcmp_buffer request, reply;
-	struct networkcmp_setopt_request *setopt;
-	size_t length;
-
-	if (value_length > NETWORKCMP_MAX_MESSAGE -
-	    sizeof(struct networkcmp_msg) - sizeof(*setopt) ||
-	    (value_length != 0 && value == NULL)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(&request, 0, sizeof(request));
-	setopt = (void *)request.wire.payload;
-	setopt->socket = socket;
-	setopt->level = level;
-	setopt->option = option;
-	setopt->value_length = (uint32_t)value_length;
-	if (value_length != 0)
-		memcpy(setopt + 1, value, value_length);
-	return (networkcmp_rpc(client, NETWORKCMP_OP_SETOPT, setopt,
-	    sizeof(*setopt) + value_length, &reply, &length));
-}
-
-int
-networkcmp_shutdown(struct networkcmp_client *client,
-    struct networkcmp_handle socket, uint32_t how)
-{
-	union networkcmp_buffer reply;
-	struct networkcmp_shutdown_request request;
-	size_t length;
-
-	memset(&request, 0, sizeof(request));
-	request.socket = socket;
-	request.how = how;
-	return (networkcmp_rpc(client, NETWORKCMP_OP_SHUTDOWN, &request,
-	    sizeof(request), &reply, &length));
-}
-
-int
-networkcmp_close_socket(struct networkcmp_client *client,
-    struct networkcmp_handle socket)
-{
-	union networkcmp_buffer reply;
-	struct networkcmp_close_request request;
-	size_t length;
-
-	memset(&request, 0, sizeof(request));
-	request.socket = socket;
-	return (networkcmp_rpc(client, NETWORKCMP_OP_CLOSE, &request,
-	    sizeof(request), &reply, &length));
-}
-
-ssize_t
-networkcmp_send_inline(struct networkcmp_client *client,
-    struct networkcmp_handle socket,
-    const void *buffer, size_t length)
-{
-	union networkcmp_buffer request, reply;
-	struct networkcmp_inline_request *io;
-	const struct networkcmp_inline_reply *result;
-	size_t reply_length;
-
-	if (buffer == NULL || length == 0 || length > NETWORKCMP_INLINE_MAX) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(&request, 0, sizeof(request));
-	io = (void *)request.wire.payload;
-	io->socket = socket;
-	io->length = (uint32_t)length;
-	memcpy(io + 1, buffer, length);
-	if (networkcmp_rpc(client, NETWORKCMP_OP_SEND, io,
-	    sizeof(*io) + length,
-	    &reply, &reply_length) == -1)
-		return (-1);
-	result = (const void *)(&reply.wire.msg + 1);
-	if (result->length > length) {
-		errno = EPROTO;
-		return (-1);
-	}
-	return ((ssize_t)result->length);
-}
-
-ssize_t
-networkcmp_recv_inline(struct networkcmp_client *client,
-    struct networkcmp_handle socket, void *buffer, size_t capacity,
-    uint32_t timeout_ms, uint32_t *flags)
-{
-	union networkcmp_buffer reply;
-	struct networkcmp_inline_request request;
-	const struct networkcmp_inline_reply *result;
-	struct timespec deadline, now, pause;
-	size_t reply_length;
-	int64_t remaining;
-
-	if (buffer == NULL || capacity == 0 || capacity > NETWORKCMP_INLINE_MAX ||
-	    timeout_ms > NETWORKCMP_IO_TIMEOUT_MAX) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(&request, 0, sizeof(request));
-	request.socket = socket;
-	request.length = (uint32_t)capacity;
-	request.timeout_ms = 0;
-	if (timeout_ms != 0) {
-		if (clock_gettime(CLOCK_MONOTONIC, &deadline) == -1)
-			return (-1);
-		deadline.tv_sec += timeout_ms / 1000;
-		deadline.tv_nsec += (timeout_ms % 1000) * 1000000L;
-		if (deadline.tv_nsec >= 1000000000L) {
-			deadline.tv_sec++;
-			deadline.tv_nsec -= 1000000000L;
-		}
-	}
-	for (;;) {
-		if (networkcmp_rpc(client, NETWORKCMP_OP_RECV, &request,
-		    sizeof(request), &reply, &reply_length) == 0)
-			break;
-		if (errno != EAGAIN || timeout_ms == 0)
-			return (-1);
-		if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
-			return (-1);
-		remaining = (deadline.tv_sec - now.tv_sec) * 1000000000LL +
-		    deadline.tv_nsec - now.tv_nsec;
-		if (remaining <= 0) {
-			errno = ETIMEDOUT;
-			return (-1);
-		}
-		pause.tv_sec = 0;
-		pause.tv_nsec = MIN(remaining, 10000000LL);
-		while (nanosleep(&pause, &pause) == -1)
-			if (errno != EINTR)
-				return (-1);
-	}
-	result = (const void *)(&reply.wire.msg + 1);
-	if (result->length > capacity) {
-		errno = EPROTO;
-		return (-1);
-	}
-	memcpy(buffer, result + 1, result->length);
-	if (flags != NULL)
-		*flags = result->flags;
-	return ((ssize_t)result->length);
+	return (networkcmp_endpoint_op(client, NETWORKCMP_OP_UDP, peer,
+	    peer_length, out_fd));
 }
 
 int
@@ -994,9 +729,9 @@ networkcmp_resolve(struct networkcmp_client *client, const char *host,
 	if (service_length != 0)
 		memcpy((char *)(resolve + 1) + host_length, service,
 		    service_length);
-	if (networkcmp_rpc(client, NETWORKCMP_OP_RESOLVE, resolve,
+	if (networkcmp_call(client, NETWORKCMP_OP_RESOLVE, resolve,
 	    sizeof(*resolve) + host_length + service_length, &reply,
-	    &length) == -1)
+	    &length, NULL) == -1)
 		return (-1);
 	resolved = (const void *)(&reply.wire.msg + 1);
 	if (resolved->result_count > capacity) {

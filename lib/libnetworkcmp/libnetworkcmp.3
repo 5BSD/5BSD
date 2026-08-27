@@ -1,28 +1,19 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd July 31, 2026
+.Dd August 27, 2026
 .Dt LIBNETWORKCMP 3
 .Os
 .Sh NAME
 .Nm networkcmp_hello ,
-.Nm networkcmp_socket ,
-.Nm networkcmp_bind ,
 .Nm networkcmp_connect ,
-.Nm networkcmp_connect_status ,
-.Nm networkcmp_listen ,
-.Nm networkcmp_accept ,
-.Nm networkcmp_setopt ,
-.Nm networkcmp_shutdown ,
-.Nm networkcmp_close_socket ,
+.Nm networkcmp_udp ,
 .Nm networkcmp_resolve ,
 .Nm networkcmp_getaddrinfo ,
 .Nm networkcmp_freeaddrinfo ,
 .Nm networkcmp_client_open ,
 .Nm networkcmp_client_limits ,
-.Nm networkcmp_client_close ,
-.Nm networkcmp_send_inline ,
-.Nm networkcmp_recv_inline
-.Nd public client transport for NetworkCmp providers
+.Nm networkcmp_client_close
+.Nd public client for the system network broker
 .Sh LIBRARY
 .Li libnetworkcmp
 .Pq Fl lnetworkcmp
@@ -37,11 +28,9 @@
 .Ft int
 .Fn networkcmp_hello "struct networkcmp_client *client" "struct networkcmp_hello_reply *reply"
 .Ft int
-.Fn networkcmp_connect_status "struct networkcmp_client *client" "struct networkcmp_handle socket"
-.Ft ssize_t
-.Fn networkcmp_send_inline "struct networkcmp_client *client" "struct networkcmp_handle socket" "const void *buffer" "size_t length"
-.Ft ssize_t
-.Fn networkcmp_recv_inline "struct networkcmp_client *client" "struct networkcmp_handle socket" "void *buffer" "size_t capacity" "uint32_t timeout_ms" "uint32_t *flags"
+.Fn networkcmp_connect "struct networkcmp_client *client" "const struct sockaddr *address" "socklen_t address_length" "int *out_fd"
+.Ft int
+.Fn networkcmp_udp "struct networkcmp_client *client" "const struct sockaddr *peer" "socklen_t peer_length" "int *out_fd"
 .Ft int
 .Fn networkcmp_resolve "struct networkcmp_client *client" "const char *host" "const char *service" "uint32_t family" "uint32_t socket_type" "uint32_t flags" "struct networkcmp_resolve_result *results" "size_t *nresults" "char *canonname" "size_t canonname_size" "uint32_t *ttl_seconds"
 .Ft int
@@ -51,78 +40,75 @@
 .Sh DESCRIPTION
 The
 .Nm
-library defines the provider-neutral
-.Dv org.5bsd.network
-version
+library is the client for the version
 .Dv 1.0.0
-interface.
-Applications communicate with private or shared NetworkCmp instances through
-brokered
-.Xr libservice 3
-channels.
-No provider-specific networking structure is part of the public ABI.
+.Dv org.5bsd.network
+system network broker.
+The broker follows the Casper model: it performs DNS and socket operations
+under an immutable, session-derived policy and returns
+.Em real, connected, rights-limited socket descriptors .
+It never proxies application data and exposes no emulated socket handle.
+The caller owns all I/O on the returned descriptor.
 .Pp
 The
 .Fn networkcmp_client_open
-function consumes the local component channel that
+function consumes the local broker session channel that
 .Xr serviced 8
-injects through
-.Ev NETWORKCMP .
-The variable contains the decimal descriptor number; the descriptor itself is
-the authority.
-The common
-.Xr libservice 3
-helper validates the descriptor type and removes the variable from the
-environment.
-There is no global lookup or fallback path.
-.Pp
-Control operations use bounded messages with opaque, generation-tagged
-handles.
-.Fn networkcmp_hello
-performs feature negotiation.
-The library creates one process-wide, token-correlated client session,
-performs the initial negotiation, and records the selected values.
-Repeated opens return references to that same local authority.
+injects.
+The library creates one process-wide, token-correlated session, performs the
+initial negotiation with
+.Fn networkcmp_hello ,
+and records the negotiated values; repeated opens return references to that
+same authority.
 The reply returned by
 .Fn networkcmp_client_limits
-is the binding contract for limits and negotiated features.
-Negotiation occurs once at initial contact, not for each socket or packet.
-Typed functions are provided for socket creation, bind, connect, listen,
-accept, options, shutdown, close, and name resolution.
+is the binding contract for the protocol version, features, and the resolve
+result bound.
+There is no global lookup or fallback path.
+.Pp
 .Fn networkcmp_connect
-starts a nonblocking connection and may return
-.Er EINPROGRESS .
-.Fn networkcmp_connect_status
-polls completion without blocking and returns
-.Er EINPROGRESS
-while pending or the final socket error.
-Callers impose their own deadline and cancel by closing the opaque socket.
-.Fn networkcmp_accept
-is nonblocking and returns
-.Er EAGAIN
-when no connection is queued.
-.Fn networkcmp_send_inline
+policy-checks the destination
+.Fa address ,
+opens and connects a TCP socket to it, and stores the connected descriptor in
+.Fa out_fd .
+.Fn networkcmp_udp
+opens a datagram socket, connects it to
+.Fa peer ,
+and returns that descriptor; a connected UDP socket exchanges datagrams only
+with its peer.
+Both accept an
+.Vt AF_INET
+or
+.Vt AF_INET6
+.Vt sockaddr .
+The returned descriptor is delivered out of band over the session channel with
+.Dv SCM_RIGHTS
+and is limited before delivery to only the rights a data path needs:
+.Dv CAP_READ ,
+.Dv CAP_WRITE ,
+.Dv CAP_EVENT ,
+.Dv CAP_SHUTDOWN ,
+.Dv CAP_GETSOCKOPT ,
+.Dv CAP_SETSOCKOPT ,
+.Dv CAP_FCNTL
+.Pq Dv F_GETFL and Dv F_SETFL for Dv O_NONBLOCK ,
+.Dv CAP_FSTAT ,
 and
-.Fn networkcmp_recv_inline
-provide the universally available bounded data path for connected TCP and UDP
-sockets.
-Each operation transfers at most
-.Dv NETWORKCMP_INLINE_MAX
-bytes.
-Send is nonblocking and may return a short stream write or
-.Er EAGAIN .
-Receive waits for at most
-.Fa timeout_ms
-milliseconds, where zero is a nonblocking poll.
-The library implements the deadline with nonblocking provider requests;
-the provider never sleeps on behalf of one request and can continue serving
-other calls on the session.
-It reports
-.Dv NETWORKCMP_IO_F_EOF
-for an orderly stream shutdown and
-.Dv NETWORKCMP_IO_F_TRUNCATED
-when a datagram exceeds the supplied capacity.
-Connected UDP preserves one datagram per call.
+.Dv CAP_IOCTL
+restricted to
+.Dv FIONREAD , FIONBIO ,
+and
+.Dv FIOASYNC .
+It cannot bind, connect, listen, accept, or be transferred again.
+A denied or failed request returns
+.Li -1 ,
+sets
+.Va errno
+to the broker's connect status, and leaves
+.Fa out_fd
+set to
+.Li -1 .
+.Pp
 .Fn networkcmp_resolve
 implements bounded
 .Xr getaddrinfo 3 Ns -style
@@ -130,11 +116,10 @@ forward resolution without exposing provider or resolver descriptors.
 The caller supplies the result-array capacity through
 .Fa nresults ;
 on success it contains the number returned.
-An optional canonical-name buffer and TTL output may be supplied.
-A TTL of zero means the selected provider does not expose TTL information.
-The base provider resolves independently of its socket RPC loop and permits
-one active resolution per private component session.
-An overlapping resolution fails with
+An optional canonical-name buffer and TTL output may be supplied; a TTL of
+zero means the provider does not expose TTL information.
+The broker resolves independently of its request loop and permits one active
+resolution per session; an overlapping resolution fails with
 .Er EBUSY .
 .Fn networkcmp_getaddrinfo
 is the familiar convenience interface.
@@ -147,48 +132,30 @@ The resulting list must be released with
 .Fn networkcmp_freeaddrinfo ,
 not
 .Xr freeaddrinfo 3 .
-Protocol and resolver failures return
-.Li -1
-and set
-.Va errno .
 .Pp
-Typed operations are synchronous conveniences over asynchronous
-.Xr libchannel 3
-requests.
 Kernel channel reply tokens correlate concurrent calls so threads cannot
 consume one another's replies.
-A reply acknowledges provider processing, not remote-host receipt.
-Socket creation, connect, send, bind, accept, and shutdown are not
-automatically replayed after an ambiguous channel failure.
 The opaque client is process-bound.
-The injected component session is retained as process-lifetime authority;
+The injected broker session is retained as process-lifetime authority;
 .Fn networkcmp_client_close
 releases a library borrow, and a later
 .Fn networkcmp_client_open
 reacquires the same managed session without creating another channel reader.
-If the provider returns a malformed typed reply, the library marks this
-process-lifetime authority terminal.
-The failing operation and every later operation return
+If the broker returns a malformed reply, the library marks this authority
+terminal: the failing operation and every later operation return
 .Er EPROTO
-without sending another request, including after public close and reopen.
-This fail-closed state prevents continued use of a provider that has violated
-the negotiated protocol.
+without sending another request.
 After
 .Xr fork 2 ,
 the child cannot reuse the parent's session and must open a separately
 injected authority if one exists.
 .Pp
-Version 1 deliberately exposes only the bounded inline data path.
-Any future bulk transport will use a separately negotiated protocol version
-rather than reserving public structures and operations before their semantics
-are implemented and tested.
-.Pp
-NetworkCmp transports bytes and datagrams only.
-It does not open or save files and receives no filesystem capability.
-An application that wants persistence reads from NetworkCmp and writes through
-its independently injected FileSystemCmp.
-The injected channel is non-transferable and locked against propagation
-beyond the supervised exec.
+Version 1 provides only DNS resolution and connected TCP and UDP sockets.
+Listeners are declared through
+.Fn activation.socket
+and are not created through this client API.
+Protocol space for future userspace networking is reserved but implemented as
+none; any such behavior requires a separately negotiated protocol version.
 .Pp
 The
 .Ql networkcmp
@@ -197,6 +164,7 @@ message-reject probes.
 Provider daemons audit policy decisions through OpenBSM; client-library
 activity is operational telemetry and is not audited.
 .Sh SEE ALSO
+.Xr cap_net 3 ,
 .Xr getaddrinfo 3 ,
 .Xr libchannel 3 ,
 .Xr libservice 3

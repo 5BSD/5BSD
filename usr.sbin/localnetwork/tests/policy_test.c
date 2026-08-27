@@ -8,7 +8,6 @@
 #include <atf-c.h>
 
 #include "policy.h"
-#include "session.h"
 
 ATF_TC(defaults);
 ATF_TC_HEAD(defaults, tc)
@@ -26,9 +25,8 @@ ATF_TC_BODY(defaults, tc)
 	ATF_CHECK(policy.ipv4);
 	ATF_CHECK(policy.ipv6);
 	ATF_CHECK(policy.allow_connect);
-	ATF_CHECK(!policy.allow_bind);
+	ATF_CHECK(policy.allow_udp);
 	ATF_CHECK_EQ(16, policy.max_results);
-	ATF_CHECK_EQ(NETWORKCMP_SESSION_MAX_SOCKETS, policy.max_sockets);
 }
 
 ATF_TC(independent_initialization);
@@ -42,11 +40,11 @@ ATF_TC_BODY(independent_initialization, tc)
 	struct networkcmp_policy policy;
 
 	ATF_REQUIRE(networkcmp_policy_default(&policy) == 0);
-	policy.allow_bind = true;
-	policy.max_sockets = 1;
+	policy.allow_connect = false;
+	policy.max_results = 1;
 	ATF_REQUIRE(networkcmp_policy_default(&policy) == 0);
-	ATF_CHECK(!policy.allow_bind);
-	ATF_CHECK_EQ(NETWORKCMP_SESSION_MAX_SOCKETS, policy.max_sockets);
+	ATF_CHECK(policy.allow_connect);
+	ATF_CHECK_EQ(16, policy.max_results);
 }
 
 ATF_TC(arguments);

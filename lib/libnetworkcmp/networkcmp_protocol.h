@@ -15,13 +15,11 @@
 #define	NETWORKCMP_ABI_VERSION		1
 #define	NETWORKCMP_INTERFACE		"org.5bsd.network"
 #define	NETWORKCMP_INTERFACE_VERSION	"1.0.0"
-#define	NETWORKCMP_MAX_MESSAGE		14336
+#define	NETWORKCMP_MAX_MESSAGE		2048
 #define	NETWORKCMP_NAME_MAX		253
 #define	NETWORKCMP_SERVICE_MAX		32
 #define	NETWORKCMP_CANONNAME_MAX	253
 #define	NETWORKCMP_RESOLVE_MAX_RESULTS	32
-#define	NETWORKCMP_INLINE_MAX		12288U
-#define	NETWORKCMP_IO_TIMEOUT_MAX	60000U
 
 #define	NETWORKCMP_MSG_F_MASK		0U
 
@@ -36,25 +34,24 @@
 #define	NETWORKCMP_RESOLVE_F_NUMERIC_SERVICE	0x00000008U
 #define	NETWORKCMP_RESOLVE_F_MASK		0x0000000fU
 
+/*
+ * Protocol version 1 is a connection broker.  RESOLVE performs a bounded
+ * getaddrinfo under policy and returns address results as data; CONNECT and
+ * UDP perform a real socket()+connect() under policy and hand the connected,
+ * rights-limited descriptor back over the session channel via SCM_RIGHTS.
+ * The client owns all subsequent I/O on that descriptor.  There is no data
+ * proxying and no emulated socket handle.
+ *
+ * Protocol space is deliberately reserved for future userspace networking
+ * (listeners, protocol stacks, virtual interfaces); none of it is implemented
+ * by version 1 and any such behavior requires a negotiated protocol version.
+ */
 enum networkcmp_opcode {
 	NETWORKCMP_OP_HELLO = 1,
-	NETWORKCMP_OP_SOCKET,
-	NETWORKCMP_OP_BIND,
-	NETWORKCMP_OP_CONNECT,
-	NETWORKCMP_OP_LISTEN,
-	NETWORKCMP_OP_ACCEPT,
-	NETWORKCMP_OP_SETOPT,
-	NETWORKCMP_OP_SHUTDOWN,
-	NETWORKCMP_OP_CLOSE,
 	NETWORKCMP_OP_RESOLVE,
-	NETWORKCMP_OP_SEND,
-	NETWORKCMP_OP_RECV,
-	NETWORKCMP_OP_CONNECT_STATUS
+	NETWORKCMP_OP_CONNECT,
+	NETWORKCMP_OP_UDP
 };
-
-#define	NETWORKCMP_IO_F_EOF		0x00000001U
-#define	NETWORKCMP_IO_F_TRUNCATED	0x00000002U
-#define	NETWORKCMP_IO_F_MASK		0x00000003U
 
 enum networkcmp_family {
 	NETWORKCMP_AF_UNSPEC = 0,
@@ -103,58 +100,17 @@ struct networkcmp_hello {
 struct networkcmp_hello_reply {
 	uint32_t	version;
 	uint32_t	features;
-	uint32_t	max_sockets;
-	uint32_t	max_inline;
-	uint32_t	max_datagram;
 	uint32_t	max_resolve_results;
-	uint32_t	io_timeout_max;
-	uint32_t	reserved[2];
+	uint32_t	reserved;
 };
 
-struct networkcmp_handle {
-	uint64_t	handle;
-	uint64_t	generation;
-};
-
-struct networkcmp_socket_request {
-	uint32_t	family;
-	uint32_t	type;
-	uint32_t	protocol;
-	uint32_t	flags;
-};
-
-struct networkcmp_handle_reply {
-	struct networkcmp_handle socket;
-};
-
-struct networkcmp_endpoint_request {
-	struct networkcmp_handle socket;
+/*
+ * CONNECT and UDP carry a single fully-specified destination endpoint.  A
+ * successful reply carries no payload; the connected descriptor is delivered
+ * out of band via SCM_RIGHTS and the status field conveys the connect result.
+ */
+struct networkcmp_connect_request {
 	struct networkcmp_endpoint endpoint;
-};
-
-struct networkcmp_listen_request {
-	struct networkcmp_handle socket;
-	uint32_t	backlog;
-	uint32_t	reserved;
-};
-
-struct networkcmp_close_request {
-	struct networkcmp_handle socket;
-};
-
-struct networkcmp_setopt_request {
-	struct networkcmp_handle socket;
-	uint32_t	level;
-	uint32_t	option;
-	uint32_t	value_length;
-	uint32_t	reserved;
-	/* value_length bytes follow. */
-};
-
-struct networkcmp_shutdown_request {
-	struct networkcmp_handle socket;
-	uint32_t	how;
-	uint32_t	reserved;
 };
 
 /*
@@ -183,22 +139,6 @@ struct networkcmp_resolve_result {
 	struct networkcmp_endpoint endpoint;
 	uint32_t	socket_type;
 	uint32_t	protocol;
-};
-
-struct networkcmp_inline_request {
-	struct networkcmp_handle socket;
-	uint32_t	length;
-	uint32_t	flags;
-	uint32_t	timeout_ms;
-	uint32_t	reserved;
-	/* SEND carries length bytes.  RECV carries no trailing bytes. */
-};
-
-struct networkcmp_inline_reply {
-	uint32_t	length;
-	uint32_t	flags;
-	uint32_t	reserved[2];
-	/* A successful RECV carries length bytes. */
 };
 
 #endif /* !_NETWORKCMP_PROTOCOL_H_ */
