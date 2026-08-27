@@ -476,6 +476,35 @@ dead weight. Evaluate and prune:
   64-bit FreeBSD binaries (if that compatibility is even a goal — the primary
   ABI is Linux).
 
+## Heterogeneous-core (AMP) scheduling
+
+ULE is only SMT- and cache-topology aware; it has no notion of core *capacity*,
+so on hybrid CPUs (Intel P/E cores, ARM big.LITTLE) a latency-sensitive thread
+can land on an efficiency core and background work can hog performance cores.
+The kernel does not even detect core types today. Add asymmetric-core
+scheduling, using **XNU's Edge/Clutch/AMP scheduler as the reference design**
+(not Linux EAS):
+
+- **Detection.** x86: read **CPUID leaf 0x1A** (core-type: performance vs
+  Atom/efficiency). arm64: derive per-cluster capacity (DMIPS/MPIDR cluster
+  topology from ACPI/FDT).
+- **Topology.** Extend the `cpu_group`/`tdq` model with a cluster-type and
+  capacity field and build P-cluster/E-cluster groupings (XNU's per-cluster
+  runqueues), each tracking a per-priority (QoS-like) on-core latency metric.
+- **Placement policy.** Give threads a recommended cluster by class:
+  interactive/latency-sensitive prefer the P-cluster, batch/idle pack onto the
+  E-cluster. Mirror XNU's **spill / steal / rebalance across cluster edges**
+  (an idle core steals, a running foreign thread is IPI-rebalanced back to its
+  recommended cluster) and a **stir-the-pot** anti-starvation rotation so
+  long-running work does not strand on a slow core.
+- **Optional controller.** A performance-controller analog (cf. XNU's CLPC)
+  could feed per-workload cluster recommendations; 5BSD's coalition/thread-group
+  grouping is a natural hook for XNU-style thread-group recommendations.
+
+Substantial kernel work (detection + topology + ULE placement), VM/hardware
+validated. Reference: XNU `doc/scheduler/sched_clutch_edge.md`,
+`osfmk/kern/sched_amp*`, `sched_clutch*`.
+
 ## Base install: pkgbase only
 
 5BSD delivers and updates its base system exclusively through **pkgbase**
