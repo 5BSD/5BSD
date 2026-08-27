@@ -447,6 +447,35 @@ arch-neutral and wholly inert when no compat libraries are enabled — with
 build machinery. Likewise, `stand/i386/*` boot files (pmbr, gptboot,
 gptzfsboot) are x86 BIOS/GPT boot code used by **amd64** and must stay.
 
+## Remove the disabled 32-bit compatibility code
+
+VBSD already `nooptions COMPAT_FREEBSD32`, but the 32-bit compat *source* still
+resides in the tree. Since 5BSD is 64-bit only, delete it outright:
+
+- `sys/compat/freebsd32` and `sys/compat/ia32` (the 32-bit FreeBSD/x86 syscall
+  ABI on a 64-bit kernel), plus their hooks in the syscall tables / `sysent`.
+- `COMPAT_LINUX32` (32-bit Linux ABI) and `COMPAT_AOUT` (a.out binaries) options
+  and their supporting code.
+- Any `freebsd32`/`compat32`/`ia32` machinery left in `Makefile.inc1` and the
+  kernel build once the above are gone.
+
+This is deeper than the `nooptions` disable already done — `freebsd32` is woven
+into the syscall dispatch — so it is a dedicated task, not a batch edit. OSF/1,
+SVR4, iBCS2, and PE/COFF are already absent upstream; this finishes the job for
+32-bit.
+
+## Prune ancient version compatibility
+
+For a 64-bit, Linux-ABI-first OS, the old FreeBSD/BSD syscall-version shims are
+dead weight. Evaluate and prune:
+
+- `COMPAT_FREEBSD4` through `COMPAT_FREEBSD11` (binaries from 2000–2013) and
+  `COMPAT_43`/`COMPAT_43TTY` (4.3BSD, 1986) — remove from GENERIC/VBSD and,
+  where 5BSD carries no obligation to run those binaries, from the tree.
+- Keep only the recent `COMPAT_FREEBSD12`/`13`/`14` needed to run current-era
+  64-bit FreeBSD binaries (if that compatibility is even a goal — the primary
+  ABI is Linux).
+
 ## Base install: pkgbase only
 
 5BSD delivers and updates its base system exclusively through **pkgbase**
