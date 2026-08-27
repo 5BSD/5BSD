@@ -417,30 +417,35 @@ fully implemented protocol version rather than a placeholder ABI.
 
 ## Platform ABI: 64-bit only
 
-The capability plane is a 64-bit platform. TrustedZFS capability descriptors
-enforce this at compile time — `sys/sys/zfshandle.h` `#error`s on any non-64-bit
-kernel or user ABI — so `libtrustedzfs` (and every daemon that links it: tzfsd,
-serviced, the storage-bearing components) cannot be built 32-bit at all. A world
-build only completes with `MK_LIB32=no`.
+**5BSD is a 64-bit-only operating system. There is no 32-bit support: no 32-bit
+libraries, no 32-bit userland, no 32-bit binary compatibility, no 32-bit build
+targets, and no 32-bit install options.** TrustedZFS capability descriptors make
+this structural — `sys/sys/zfshandle.h` `#error`s on any non-64-bit kernel or
+user ABI, so `libtrustedzfs` and every daemon that links it (tzfsd, serviced,
+the storage-bearing components) cannot be built 32-bit at all.
 
-**To do — remove 32-bit support entirely.** 5BSD is 64-bit only: no 32-bit
-libraries, no 32-bit userland, no 32-bit install path, none of it.
+Implemented:
 
-- **No lib32.** Make `MK_LIB32=no` the built-in default (drop `lib32` from the
-  default build config) so `buildworld` never attempts the 32-bit shim
-  libraries — they can't build against the TrustedZFS ABI guard anyway. Ship no
-  `/usr/lib32` and no `lib32` packages.
-- **No 32-bit userland compat.** Remove `COMPAT_FREEBSD32` from the kernel
-  configs and drop the 32-bit syscall/ioctl shims; a 64-bit kernel need not run
-  32-bit binaries.
-- **No 32-bit targets or media.** Drop `i386` (and any other 32-bit
-  `MACHINE_ARCH`) from supported targets, release builds, and artifacts. No
-  i386 images, ISOs, or memstick media.
-- **No bsdinstall 32-bit support.** Remove any 32-bit architecture choices,
-  `lib32`/`compat` distribution-set options, and i386 media handling from
-  bsdinstall so the installer only ever offers 64-bit.
-- Sweep the tree for lingering `compat32`/`lib32`/`i386` assumptions and remove
-  them.
+- **No lib32.** `LIB32` is unconditionally `BROKEN` (`share/mk/src.opts.mk`):
+  `MK_LIB32` is always `no`, `buildworld` never attempts the 32-bit shim
+  libraries, and it cannot be force-enabled. No `/usr/lib32`, no `lib32`
+  packages.
+- **No 32-bit binary compat.** The VBSD kernel drops `COMPAT_FREEBSD32`
+  (`nooptions` in `sys/amd64/conf/VBSD`); it runs no 32-bit binaries.
+- **No 32-bit build targets.** `TARGET_MACHINE_LIST`
+  (`share/mk/local.sys.machine.mk`) drops `i386` and `arm` (armv7);
+  `universe`/`tinderbox` build only 64-bit targets (amd64, arm64/aarch64,
+  powerpc64/le, riscv64), and release no longer emits i386 VM images.
+- **No bsdinstall 32-bit options.** The pkgbase installer's `lib32` component and
+  the compat-set defaults are removed (`usr.sbin/bsdinstall/scripts/pkgbase.in`);
+  the installer only ever offers 64-bit.
+
+Deliberately left in place: the generic `libcompat`/`host32` build
+infrastructure (`Makefile.inc1`, `share/mk/dirdeps.mk`, `host-target.mk`) is
+arch-neutral and wholly inert when no compat libraries are enabled — with
+`MK_LIB32` broken it never runs — so it is not worth the risk of surgery on core
+build machinery. Likewise, `stand/i386/*` boot files (pmbr, gptboot,
+gptzfsboot) are x86 BIOS/GPT boot code used by **amd64** and must stay.
 
 ## Base install: pkgbase only
 

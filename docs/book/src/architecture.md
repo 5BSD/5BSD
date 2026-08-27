@@ -4,6 +4,18 @@
 Linuxulator is treated as the primary application binary interface and a
 capability-oriented security stack enforces policy beneath it.
 
+## 64-bit only
+
+5BSD is a **64-bit-only** operating system — there is no 32-bit support of any
+kind: no 32-bit libraries (`lib32`), no 32-bit userland, no 32-bit binary
+compatibility (`COMPAT_FREEBSD32`), no 32-bit build targets (i386, armv7), and
+no 32-bit installer options. This is structural, not merely a default:
+TrustedZFS capability descriptors — the foundation of the storage plane —
+`#error` at compile time on any non-64-bit kernel or user ABI, so the capability
+daemons cannot be built 32-bit at all. Supported architectures are the 64-bit
+ones: `amd64`, `arm64` (aarch64), `powerpc64`/`powerpc64le`, and `riscv64`.
+`MK_LIB32` is unconditionally off and cannot be enabled.
+
 ## The enforcement stack
 
 ```
