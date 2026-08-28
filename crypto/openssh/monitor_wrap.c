@@ -78,6 +78,9 @@
 
 #include "ssherr.h"
 
+/* 5BSD §21: privileged ambient lookup-channel provisioning */
+#include <libservice.h>
+
 /* Imports */
 extern struct monitor *pmonitor;
 extern struct sshbuf *loginmsg;
@@ -691,6 +694,47 @@ mm_pty_allocate(int *ptyfd, int *ttyfd, char *namebuf, size_t namebuflen)
 
 	/* Success */
 	return (1);
+}
+
+/*
+ * 5BSD §21: ask the privileged monitor to provision this session's ambient
+ * lookup channel for the target uid and receive the resulting descriptor.
+ * Best-effort: returns 0 with *out_fd set on success, -1 otherwise.
+ */
+int
+mm_provision_session(uid_t uid, int *out_fd)
+{
+	struct sshbuf *m;
+	u_int status = 0;
+	int fd = -1, r;
+
+	if (out_fd == NULL)
+		return (-1);
+	*out_fd = -1;
+
+	if ((m = sshbuf_new()) == NULL)
+		fatal_f("sshbuf_new failed");
+	if ((r = sshbuf_put_u32(m, (u_int)uid)) != 0)
+		fatal_fr(r, "assemble uid");
+	mm_request_send(pmonitor->m_recvfd, MONITOR_REQ_PROVISION, m);
+
+	debug3_f("waiting for MONITOR_ANS_PROVISION");
+	mm_request_receive_expect(pmonitor->m_recvfd, MONITOR_ANS_PROVISION, m);
+
+	if ((r = sshbuf_get_u32(m, &status)) != 0)
+		fatal_fr(r, "parse status");
+	sshbuf_free(m);
+
+	if (status != 0) {
+		debug3_f("provision failed: %s", strerror((int)status));
+		return (-1);
+	}
+	if ((fd = mm_receive_fd(pmonitor->m_recvfd)) == -1) {
+		error_f("receive provision fd failed");
+		return (-1);
+	}
+	*out_fd = fd;
+	return (0);
 }
 
 void

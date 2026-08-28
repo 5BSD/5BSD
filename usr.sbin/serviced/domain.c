@@ -582,7 +582,6 @@ domain_provision_session(uid_t requester_euid, uid_t target_uid, int *out_fd,
     int kq)
 {
 	enum svc_domain_kind kind;
-	int error;
 
 	*out_fd = -1;
 
@@ -599,14 +598,17 @@ domain_provision_session(uid_t requester_euid, uid_t target_uid, int *out_fd,
 	if (domain_mint_session_channel(kind, target_uid, out_fd, kq) == -1)
 		return (-1);
 
-	/* NON-TRANSFERABILITY: consume-on-first-transfer over the socket. */
-	if (cap_xfer_limit(*out_fd, CAP_XFER_ONCE) == -1) {
-		error = errno != 0 ? errno : EIO;
-		(void)close(*out_fd);
-		*out_fd = -1;
-		errno = error;
-		return (-1);
-	}
+	/*
+	 * serviced hands the session channel to the requester with full transfer
+	 * authority and does NOT restrict it here.  Restriction is the receiver's
+	 * job: whichever process finally installs the channel for a session leader
+	 * (login/su via service_install_ambient_lookup, or sshd in do_child)
+	 * tightens it to CAP_XFER_NONE, and any in-between relay (sshd's monitor)
+	 * simply closes its own copy once it has passed the descriptor on.  This is
+	 * the single-transfer model: authority flows, each owner restricts what it
+	 * holds — no multi-hop transfer budget is needed.  (Fork inheritance by the
+	 * session's descendants is CAP_CLOFORK_UNLOCKED, a separate axis.)
+	 */
 	return (0);
 }
 

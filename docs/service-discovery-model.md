@@ -171,6 +171,28 @@ security gain, and it is now MORE central (the provisioning anchor). So the sock
 is kept and hardened rather than removed. Physical removal is a surface-vs-
 complexity call for later, not a security improvement.
 
+## Descriptor delivery model: single transfer, sender closes
+
+The rule for handing a channel descriptor across processes is: **do not
+pre-lock it; each program that sends it onward closes (or locks) its own copy
+once the send completes, and the final holder simply keeps it.** No multi-hop
+transfer budget is minted at the source — that was a wrong turn (`CAP_XFER_TWICE`
+is not used here).
+
+Concretely for ssh session provisioning (serviced → sshd's privileged monitor →
+the user's session child, `mm_send_fd` like the pty):
+- **serviced** mints the channel with full (default) transfer authority and,
+  after the SCM_RIGHTS send, closes its own copy (`sctl.c`: `fd_passed`,
+  `close(pass_fd)`).
+- **the monitor** (an in-between relay) receives it, sends it to the child, then
+  closes its own copy — it is done.
+- **the session child** (the leaf) installs it and holds it; it does not send it
+  onward, so it does not lock it.
+Fork inheritance by the session's descendants is `CAP_CLOFORK_UNLOCKED`, a
+separate axis from SCM_RIGHTS transfer. (The console/su mint path already
+delivers a channel that is exhausted after its single hop; same end, sender
+side.)
+
 ## Model status: the design is complete.
 Landed + clean-VM validated: discovery/management split, management class (§5),
 uid-aware mint (§6), session provisioning for console (getty) and ssh (socket),

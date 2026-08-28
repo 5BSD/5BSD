@@ -90,6 +90,9 @@
 #include "sk-api.h"
 #include "srclimit.h"
 
+/* 5BSD §21: privileged ambient lookup-channel provisioning */
+#include <libservice.h>
+
 #ifdef GSSAPI
 static Gssctxt *gsscontext = NULL;
 #endif
@@ -120,6 +123,7 @@ int mm_answer_keyallowed(struct ssh *, int, struct sshbuf *);
 int mm_answer_keyverify(struct ssh *, int, struct sshbuf *);
 int mm_answer_pty(struct ssh *, int, struct sshbuf *);
 int mm_answer_pty_cleanup(struct ssh *, int, struct sshbuf *);
+int mm_answer_provision(struct ssh *, int, struct sshbuf *);	/* 5BSD §21 */
 int mm_answer_term(struct ssh *, int, struct sshbuf *);
 int mm_answer_state(struct ssh *, int, struct sshbuf *);
 
@@ -226,6 +230,8 @@ struct mon_table mon_dispatch_postauth20[] = {
     {MONITOR_REQ_SIGN, 0, mm_answer_sign},
     {MONITOR_REQ_PTY, 0, mm_answer_pty},
     {MONITOR_REQ_PTYCLEANUP, 0, mm_answer_pty_cleanup},
+    /* 5BSD §21: session-time, post-authentication only */
+    {MONITOR_REQ_PROVISION, 0, mm_answer_provision},
     {MONITOR_REQ_TERM, 0, mm_answer_term},
 #ifdef SSH_AUDIT_EVENTS
     {MONITOR_REQ_AUDIT_EVENT, MON_PERMIT, mm_answer_audit_event},
@@ -438,6 +444,8 @@ monitor_child_postauth(struct ssh *ssh, struct monitor *pmonitor)
 	monitor_permit(mon_dispatch, MONITOR_REQ_MODULI, 1);
 	monitor_permit(mon_dispatch, MONITOR_REQ_SIGN, 1);
 	monitor_permit(mon_dispatch, MONITOR_REQ_TERM, 1);
+	/* 5BSD §21: session-time ambient lookup-channel provisioning. */
+	monitor_permit(mon_dispatch, MONITOR_REQ_PROVISION, 1);
 
 	if (auth_opts->permit_pty_flag) {
 		monitor_permit(mon_dispatch, MONITOR_REQ_PTY, 1);
@@ -1784,6 +1792,47 @@ mm_answer_pty_cleanup(struct ssh *ssh, int sock, struct sshbuf *m)
 		mm_session_close(s);
 	sshbuf_reset(m);
 	free(tty);
+	return (0);
+}
+
+/*
+ * 5BSD §21: mint this session's ambient lookup channel in the privileged
+ * monitor and pass the resulting descriptor back to the (unprivileged) user
+ * child.  serviced authenticates the control socket with getpeereid() and only
+ * root may provision, so this must run here rather than in the dropped-priv
+ * child.  Strictly best-effort: any failure yields a non-zero status and no
+ * descriptor — never fatal, never break the session.
+ */
+int
+mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
+{
+	u_int uid = 0;
+	int fd = -1, status, r;
+
+	debug3_f("entering");
+
+	if ((r = sshbuf_get_u32(m, &uid)) != 0)
+		fatal_fr(r, "parse uid");
+
+	if (service_provision_session((uid_t)uid, &fd) == 0 && fd >= 0)
+		status = 0;
+	else {
+		status = errno != 0 ? errno : EIO;
+		debug_f("service_provision_session(uid=%u) failed: %s",
+		    uid, strerror(status));
+		fd = -1;
+	}
+
+	sshbuf_reset(m);
+	if ((r = sshbuf_put_u32(m, (u_int)status)) != 0)
+		fatal_fr(r, "assemble status");
+	mm_request_send(sock, MONITOR_ANS_PROVISION, m);
+
+	if (status == 0) {
+		if (mm_send_fd(sock, fd) == -1)
+			error_f("mm_send_fd of provision channel failed");
+		close(fd);
+	}
 	return (0);
 }
 

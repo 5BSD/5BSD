@@ -122,6 +122,12 @@ static int ambient_prov_fd = -1;
  */
 #ifdef DISABLE_FD_PASSING
 #define mm_pty_allocate pty_allocate
+/*
+ * 5BSD §21: without FD passing the post-auth privsep child retains root
+ * (privsep_postauth skip_privdrop), so it can provision the ambient lookup
+ * channel directly rather than routing through the monitor.
+ */
+#define mm_provision_session service_provision_session
 #endif
 
 #define IS_INTERNAL_SFTP(c) \
@@ -1556,7 +1562,7 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 	 * installed at the fixed descriptor and spared from the closefrom below.
 	 */
 	ambient_prov_fd = -1;
-	(void)service_provision_session(pw->pw_uid, &ambient_prov_fd);
+	(void)mm_provision_session(pw->pw_uid, &ambient_prov_fd);
 	do_setusercontext(pw);
 	/*
 	 * PAM session modules in do_setusercontext may have

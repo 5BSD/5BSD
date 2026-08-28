@@ -91,6 +91,7 @@ void mm_audit_run_command(const char *);
 struct Session;
 void mm_terminate(void);
 int mm_pty_allocate(int *, int *, char *, size_t);
+int mm_provision_session(uid_t, int *);	/* 5BSD §21 */
 void mm_session_pty_cleanup2(struct Session *);
 
 void mm_send_keystate(struct ssh *, struct monitor*);
