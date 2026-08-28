@@ -53,6 +53,7 @@ CFLAGS+= -I${SRCTOP}/lib/libcapability
 CFLAGS+= -I${SRCTOP}/lib/liboraclert
 CFLAGS+= -I${SRCTOP}/lib/libcapbundle
 CFLAGS+= -I${SRCTOP}/lib/libtzfsd
+CFLAGS+= -I${SRCTOP}/lib/libservice
 CFLAGS+= -I${SRCTOP}/contrib/libucl/include
 LIBADD= capability crypt jail oraclert tzfsd ucl util
 

@@ -40,6 +40,7 @@
 #include <unistd.h>
 
 #include "oracled.h"
+#include "oracle_init.h"
 #include "oracled_svc_proto.h"
 #include "tzfsd.h"		/* libtzfsd client: forward storage to tzfsd(8) */
 #include "mac_capability_priv.h"
@@ -792,6 +793,36 @@ handle_ping(uint64_t reply_token)
 	proto_reply(0, reply_token, NULL, 0);
 }
 
+/*
+ * ORACLE_OP_SET_AMBIENT_LOOKUP (§21): serviced forwarded a dup of its SYSTEM
+ * ambient lookup channel client end so oracle-init can carry it into
+ * interactive logins.  Takes ownership of fd (installs or closes it).
+ *
+ * Best-effort: a malformed request or a failed install is reported in the
+ * status reply and never disturbs the event loop.  The reply carries no fds.
+ */
+static void
+handle_set_ambient_lookup(uint32_t len, int fd, uint64_t reply_token)
+{
+
+	if (len != sizeof(struct oracle_req_hdr) || fd < 0) {
+		if (fd >= 0)
+			(void)close(fd);
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	if (oracle_init_set_ambient_lookup(fd) == -1) {
+		/* set_ambient_lookup already closed fd on failure. */
+		syslog(LOG_NOTICE,
+		    "oracle_proto: ambient lookup install failed: %m");
+		proto_reply(errno, reply_token, NULL, 0);
+		return;
+	}
+	syslog(LOG_INFO, "oracle_proto: ambient lookup channel installed for "
+	    "interactive logins");
+	proto_reply(0, reply_token, NULL, 0);
+}
+
 static void
 handle_ensure_kmod(const void *payload, uint32_t len, uint64_t reply_token)
 {
@@ -879,10 +910,18 @@ proto_dispatch_one(void)
 		struct oracle_req_hdr hdr;
 	} buf;
 	uint32_t op;
+	int recv_fd = -1;
 
 	memset(&ra, 0, sizeof(ra));
 	ra.payload = &buf;
 	ra.payload_len = sizeof(buf);
+	/*
+	 * Accept at most one attached descriptor.  Only
+	 * ORACLE_OP_SET_AMBIENT_LOOKUP (§21) sends one; any stray fd on another
+	 * op is closed below rather than leaked.
+	 */
+	ra.fds = &recv_fd;
+	ra.nfds = 1;
 
 	if (ioctl(proto_channel_fd, MAC_CAPABILITY_RECVMSG, &ra) == -1) {
 		if (errno == EAGAIN)
@@ -894,6 +933,8 @@ proto_dispatch_one(void)
 	if (ra.payload_len < sizeof(uint32_t)) {
 		syslog(LOG_WARNING, "oracle_proto: short message (%u bytes)",
 		    ra.payload_len);
+		if (recv_fd >= 0)
+			(void)close(recv_fd);
 		return (0);
 	}
 
@@ -907,6 +948,8 @@ proto_dispatch_one(void)
 		    (uintmax_t)ra.trailer.nonce,
 		    (uintmax_t)serviced_nonce);
 		proto_reply(EACCES, ra.reply_token, NULL, 0);
+		if (recv_fd >= 0)
+			(void)close(recv_fd);
 		return (0);
 	}
 
@@ -973,6 +1016,12 @@ proto_dispatch_one(void)
 		else
 			handle_ping(ra.reply_token);
 		break;
+	case ORACLE_OP_SET_AMBIENT_LOOKUP:
+		/* Consumes recv_fd (installs or closes it). */
+		handle_set_ambient_lookup(ra.payload_len, recv_fd,
+		    ra.reply_token);
+		recv_fd = -1;
+		break;
 	case ORACLE_OP_ENSURE_KMOD:
 		handle_ensure_kmod(&buf, ra.payload_len, ra.reply_token);
 		break;
@@ -1020,6 +1069,10 @@ proto_dispatch_one(void)
 	    (uint64_t)(ts_end.tv_nsec - ts_start.tv_nsec);
 	ORACLED_PROBE_IPC_DISPATCH_DONE(op, dispatch_status, dur);
 	}
+
+	/* Close any descriptor an op did not consume (only §21 sends one). */
+	if (recv_fd >= 0)
+		(void)close(recv_fd);
 
 	return (0);
 }

@@ -44,6 +44,7 @@
 #define	ORACLE_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
 #define	ORACLE_OP_MINT_STORAGE		24	/* mint TrustedZFS dataset handle */
 #define	ORACLE_OP_DESTROY_STORAGE	25	/* destroy an ephemeral dataset */
+#define	ORACLE_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in oracle-init */
 
 /*
  * Common request header — used for operations with no extra parameters
@@ -303,6 +304,26 @@ struct oracle_system_req {
  *   reply: oracle_reply { .status = 0 }
  *
  * Liveness request sent by serviced; oracled replies.
+ */
+
+/*
+ * ORACLE_OP_SET_AMBIENT_LOOKUP
+ *   req:  oracle_req_hdr { .op = ORACLE_OP_SET_AMBIENT_LOOKUP }
+ *   req_fds[0] = ambient lookup channel client end (SCM_RIGHTS)
+ *   reply: oracle_reply { .status }
+ *
+ * serviced sends a dup of its retained SYSTEM ambient lookup channel client end
+ * so oracle-init (PID 1) can carry it into interactive logins.  oracle-init is
+ * the parent of the getty/login sessions spawned from /etc/ttys; those are
+ * siblings of /etc/rc and never inherit serviced's SERVICE_LOOKUP_FD
+ * environment.  oracle-init stores the fd, makes it fork/exec-durable, and
+ * dup2()s it to SERVICE_LOOKUP_FIXED_FD just before exec'ing each getty so
+ * login inherits the discovery channel at the fixed number.
+ *
+ * Strictly best-effort: the rc path already carries the channel by environment
+ * inheritance, so any failure here (send, receive, or install) is logged and
+ * ignored on both ends and never disrupts boot, the oracle event loop, or a
+ * login.  The reply is status-only with no attached fds.
  */
 
 /*

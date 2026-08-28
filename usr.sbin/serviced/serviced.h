@@ -263,6 +263,7 @@ int	oracle_create_coalition(int channel_fd);
 int	oracle_ensure_kmod(int channel_fd, const char *name);
 int	oracle_delegate_service(int channel_fd, const char *name);
 int	oracle_send_ready(int channel_fd);
+int	oracle_set_ambient_lookup(int channel_fd, int lookup_fd);
 int	oracle_claim_path(int channel_fd, const char *path);
 int	oracle_claim_net(int channel_fd, const struct ort_net_claim *nc);
 int	oracle_claim_jail(int channel_fd, const struct serviced_jail_claim *jc);

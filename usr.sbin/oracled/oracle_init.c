@@ -66,6 +66,7 @@
 
 #include <sys/param.h>
 #include <sys/boottrace.h>
+#include <sys/capsicum.h>
 #include <sys/event.h>
 #include <sys/ioctl.h>
 #include <sys/mount.h>
@@ -100,6 +101,7 @@
 #include "oracled_ctl.h"
 #include "oracle_init.h"
 #include "mac_capability_priv.h"
+#include "service_bootstrap.h"	/* SERVICE_LOOKUP_FIXED_FD (§21 getty carry) */
 
 #define	_PATH_INITLOG		"/var/log/init.log"
 #define	_PATH_RUNCOM		"/etc/rc"
@@ -177,6 +179,16 @@ static int  oi_kq = -1;
 static bool oi_engine_up;
 static bool oi_mac_up;
 static bool oi_ctl_up;
+
+/*
+ * Ambient lookup channel (§21) carried into interactive logins.  serviced
+ * hands us a dup of its SYSTEM ambient lookup client end over the oracle
+ * channel (ORACLE_OP_SET_AMBIENT_LOOKUP); we pin it here and dup2() it to
+ * SERVICE_LOOKUP_FIXED_FD in each getty child so login inherits it across the
+ * hand-built getty environment.  -1 means "no channel"; the whole mechanism is
+ * best-effort and never gates getty, login, or boot.
+ */
+static int oi_ambient_lookup_fd = -1;
 static void oi_engine_start(void);
 static void oi_dispatch(struct kevent *);
 static void oi_lifecycle_apply(int op);
@@ -1839,6 +1851,43 @@ start_window_system(session_t *sp)
 	_exit(1);
 }
 
+/*
+ * Store the ambient lookup channel client end serviced forwarded (§21) and
+ * make it durable across the getty fork/exec: unlock its clofork limit so it
+ * survives fork(2) and clear FD_CLOEXEC so it survives execve(2).  A previously
+ * installed channel is replaced (serviced sends this once per session, but a
+ * serviced restart may resend).  Best-effort throughout: on any failure the fd
+ * is dropped and oi_ambient_lookup_fd left at -1, so getty spawning simply
+ * proceeds without an ambient channel.
+ */
+int
+oracle_init_set_ambient_lookup(int fd)
+{
+
+	int saved;
+
+	if (fd < 0) {
+		errno = EBADF;
+		return (-1);
+	}
+	if (cap_clofork_limit(fd, CAP_CLOFORK_UNLOCKED) == -1) {
+		saved = errno;
+		(void)close(fd);
+		errno = saved;
+		return (-1);
+	}
+	if (fcntl(fd, F_SETFD, 0) == -1) {
+		saved = errno;
+		(void)close(fd);
+		errno = saved;
+		return (-1);
+	}
+	if (oi_ambient_lookup_fd >= 0)
+		(void)close(oi_ambient_lookup_fd);
+	oi_ambient_lookup_fd = fd;
+	return (0);
+}
+
 static pid_t
 start_getty(session_t *sp)
 {
@@ -1892,6 +1941,20 @@ start_getty(session_t *sp)
 		env[1] = NULL;
 	} else
 		env[0] = NULL;
+	/*
+	 * §21 getty carry: pin the ambient lookup channel at the fixed
+	 * descriptor number so login (which getty execs with a rebuilt
+	 * environment, dropping SERVICE_LOOKUP_FD) inherits it.  Post-fork
+	 * child: async-signal-safe calls only (dup2/fcntl), no malloc, no
+	 * logging.  Best-effort -- a dup2/fcntl failure must never stop getty,
+	 * so we ignore errors and fall through to execve regardless.
+	 */
+	if (oi_ambient_lookup_fd >= 0 &&
+	    oi_ambient_lookup_fd != SERVICE_LOOKUP_FIXED_FD) {
+		if (dup2(oi_ambient_lookup_fd, SERVICE_LOOKUP_FIXED_FD) != -1)
+			(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
+	} else if (oi_ambient_lookup_fd == SERVICE_LOOKUP_FIXED_FD)
+		(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
 	execve(sp->se_getty_argv[0], sp->se_getty_argv, env);
 	stall("can't exec getty '%s' for port %s: %m",
 		sp->se_getty_argv[0], sp->se_device);

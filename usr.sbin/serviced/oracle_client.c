@@ -31,13 +31,14 @@ static volatile uint64_t next_reply_token = 1;
 #define	ORACLE_DRAIN_REPOLL_MS	10	/* short re-poll for stragglers */
 
 /*
- * Send a request and wait for the reply.
- * On success, fills reply_fds[0..max_reply_fds-1] with received fds
- * and returns the status from oracled (0 = success, errno on failure).
- * Returns -1 on communication error (sets errno).
+ * Send a request (optionally with attached descriptors) and wait for the reply.
+ * On success, fills reply_fds[0..max_reply_fds-1] with received fds and returns
+ * the status from oracled (0 = success, errno on failure).  Returns -1 on
+ * communication error (sets errno).
  */
 static int
-oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
+oracle_rpc_fds(int channel_fd, const void *req, uint32_t reqlen,
+    const int *send_fds, uint32_t send_nfds,
     int *reply_fds, int max_reply_fds, int *nfds_out)
 {
 	struct mac_capability_sendmsg_args sa;
@@ -52,6 +53,8 @@ oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
 	memset(&sa, 0, sizeof(sa));
 	sa.payload = req;
 	sa.payload_len = reqlen;
+	sa.fds = send_fds;
+	sa.nfds = send_nfds;
 	sa.reply_token = token;
 
 	if (ioctl(channel_fd, MAC_CAPABILITY_SENDMSG, &sa) == -1) {
@@ -172,6 +175,18 @@ retry:
 		*nfds_out = (int)ra.nfds;
 
 	return (rpl.status);
+}
+
+/*
+ * Send a request with no attached descriptors and wait for the reply.
+ */
+static int
+oracle_rpc(int channel_fd, const void *req, uint32_t reqlen,
+    int *reply_fds, int max_reply_fds, int *nfds_out)
+{
+
+	return (oracle_rpc_fds(channel_fd, req, reqlen, NULL, 0,
+	    reply_fds, max_reply_fds, nfds_out));
 }
 
 /*
@@ -558,6 +573,34 @@ oracle_send_ready(int channel_fd)
 	if (status < 0)
 		return (-1);
 	return (status);
+}
+
+/*
+ * Forward the ambient lookup channel client end to oracle-init (§21) so it can
+ * carry the channel into interactive logins spawned from /etc/ttys.  lookup_fd
+ * is duped across as an attached descriptor; the caller retains its own copy.
+ *
+ * Best-effort discovery plumbing, never authority: the rc path already carries
+ * the channel by environment inheritance, so the caller treats any failure as
+ * "no interactive carry" and continues.  Returns 0 on success, -1 (errno set)
+ * on any communication or install failure.
+ */
+int
+oracle_set_ambient_lookup(int channel_fd, int lookup_fd)
+{
+	struct oracle_req_hdr req;
+	int status;
+
+	if (lookup_fd < 0) {
+		errno = EBADF;
+		return (-1);
+	}
+	memset(&req, 0, sizeof(req));
+	req.op = ORACLE_OP_SET_AMBIENT_LOOKUP;
+
+	status = oracle_rpc_fds(channel_fd, &req, sizeof(req), &lookup_fd, 1,
+	    NULL, 0, NULL);
+	return (check_status(status));
 }
 
 /*

@@ -214,8 +214,47 @@ lookup_channel_request(struct channel *channel,
 	}
 	opp = channel_message_data(request);
 	memcpy(&op, opp, sizeof(op));
+	if (op == SVC_OP_MINT_DOMAIN) {
+		/*
+		 * A session leader narrows its ambient channel (§21.3): a login
+		 * or su holding the SYSTEM channel mints the per-uid USER channel
+		 * it hands to the session.  Only a SYSTEM-domain channel may mint
+		 * — domains only ever narrow, so a request arriving on an
+		 * already-narrowed USER channel is refused.  This is the same
+		 * operation handle_mint_domain() serves on a unit control channel;
+		 * the ambient lookup channel has no backing unit, so it is served
+		 * here.
+		 */
+		const struct svc_mint_domain_req *mreq;
+		int minted_fd, merror;
+
+		if (!svc_domain_may_mint(&lc->domain)) {
+			lookup_channel_reply(request, EPERM, NULL, 0);
+			goto out;
+		}
+		if (channel_message_length(request) != sizeof(*mreq)) {
+			lookup_channel_reply(request, EINVAL, NULL, 0);
+			goto out;
+		}
+		mreq = channel_message_data(request);
+		if (mreq->flags != 0 || mreq->reserved != 0) {
+			lookup_channel_reply(request, EINVAL, NULL, 0);
+			goto out;
+		}
+		minted_fd = -1;
+		if (domain_mint_user_channel((uid_t)mreq->uid, &minted_fd,
+		    serviced_kq) == -1)
+			merror = errno != 0 ? errno : EIO;
+		else
+			merror = 0;
+		lookup_channel_reply(request, merror,
+		    merror == 0 ? &minted_fd : NULL, merror == 0 ? 1 : 0);
+		if (merror == 0)
+			close(minted_fd);
+		goto out;
+	}
 	if (op != SVC_OP_LOOKUP) {
-		/* A user-domain channel is a discovery channel only. */
+		/* Any other op on a lookup channel is unsupported. */
 		lookup_channel_reply(request, ENOTSUP, NULL, 0);
 		goto out;
 	}

@@ -57,21 +57,35 @@ service_ambient_lookup_fd(void)
 	char *end;
 	long fd;
 
+	/*
+	 * Preferred source: the fd number advertised in SERVICE_LOOKUP_ENV.
+	 * This covers the login->shell hop and every process serviced or a
+	 * login shell launched directly, all of which inherit and re-advertise
+	 * the variable.
+	 */
 	value = getenv(SERVICE_LOOKUP_ENV);
-	if (value == NULL || value[0] == '\0') {
-		errno = ENOENT;
-		return (-1);
+	if (value != NULL && value[0] != '\0') {
+		errno = 0;
+		fd = strtol(value, &end, 10);
+		if (errno == 0 && end != value && *end == '\0' &&
+		    fd >= 0 && fd <= INT_MAX &&
+		    ambient_fd_is_channel((int)fd))
+			return ((int)fd);
 	}
-	errno = 0;
-	fd = strtol(value, &end, 10);
-	if (errno != 0 || end == value || *end != '\0' ||
-	    fd < 0 || fd > INT_MAX) {
-		errno = EINVAL;
-		return (-1);
-	}
-	if (!ambient_fd_is_channel((int)fd))
-		return (-1);
-	return ((int)fd);
+
+	/*
+	 * Fallback source: the getty-path carry.  oracle-init cannot pass the
+	 * environment variable across its hand-built getty environment, so it
+	 * pins the channel at the fixed descriptor number instead.  Probe that
+	 * number and accept it only if it is a live mac_capability channel; a
+	 * stale or unrelated fd 3 is rejected and the caller degrades to "no
+	 * ambient channel".  The env source above always wins.
+	 */
+	if (ambient_fd_is_channel(SERVICE_LOOKUP_FIXED_FD))
+		return (SERVICE_LOOKUP_FIXED_FD);
+
+	errno = ENOENT;
+	return (-1);
 }
 
 int

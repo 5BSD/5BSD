@@ -241,7 +241,32 @@ main(int argc, char *argv[])
 
 	setproctitle("-%s", getprogname());
 
-	closefrom(3);
+	/*
+	 * Capture the inherited SYSTEM ambient lookup channel (§21) BEFORE
+	 * reclaiming inherited descriptors: on the getty path oracle-init (PID
+	 * 1) carries the channel as a bare inherited descriptor pinned at
+	 * SERVICE_LOOKUP_FIXED_FD (fd 3) — precisely the range closefrom(3)
+	 * would reclaim — because getty rebuilds login's environment and drops
+	 * SERVICE_LOOKUP_FD.  The environment still names the fd on the rare
+	 * non-getty login, and service_ambient_lookup_fd() prefers it; either
+	 * way the channel is pinned to fd 3 and only descriptors above it are
+	 * reclaimed, so the capture survives.  Best-effort discovery, never
+	 * authority: a -1 (or any relocation failure) simply means this session
+	 * carries no ambient channel and login proceeds exactly as before.
+	 */
+	syschan = service_ambient_lookup_fd();
+	if (syschan >= 3 && syschan != SERVICE_LOOKUP_FIXED_FD) {
+		if (dup2(syschan, SERVICE_LOOKUP_FIXED_FD) ==
+		    SERVICE_LOOKUP_FIXED_FD) {
+			(void)close(syschan);
+			syschan = SERVICE_LOOKUP_FIXED_FD;
+		} else
+			syschan = -1;
+	}
+	if (syschan == SERVICE_LOOKUP_FIXED_FD)
+		closefrom(SERVICE_LOOKUP_FIXED_FD + 1);
+	else
+		closefrom(3);
 
 	/*
 	 * Get current TTY
@@ -523,13 +548,10 @@ main(int argc, char *argv[])
 	 */
 	term = getenv("TERM");
 	/*
-	 * Capture the inherited SYSTEM ambient lookup channel (§21) before the
-	 * environment is destroyed below: SERVICE_LOOKUP_FD names it, and the
-	 * wipe would otherwise erase the name.  The descriptor itself survives.
-	 * This is best-effort discovery, never authority — a -1 here simply
-	 * means this session gets no ambient channel and never fails login.
+	 * The SYSTEM ambient lookup channel (§21) was already captured above,
+	 * before closefrom(3) could reclaim its fixed descriptor; syschan holds
+	 * it (or -1).  It is narrowed to a per-uid USER channel below.
 	 */
-	syschan = service_ambient_lookup_fd();
 	if (!pflag)
 		environ = envinit;
 	if (term != NULL)
