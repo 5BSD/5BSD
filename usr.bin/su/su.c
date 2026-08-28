@@ -543,6 +543,36 @@ main(int argc, char *argv[])
 		login_close(lc);
 
 		/*
+		 * fd hygiene across the uid transition (§11a D4).  su changed
+		 * principal above (setusercontext ran setuid), so no descriptor
+		 * inherited from the caller may leak into the target shell —
+		 * most dangerously a capability channel carried in from a
+		 * bootstrap-launched service (its unit control/bootstrap fds all
+		 * sit at numbers >= 3).  Relocate the captured ambient channel to
+		 * the fixed slot the same way login does, then reclaim every
+		 * other inherited descriptor above it; the fresh USER channel
+		 * minted just below is the only channel that survives.  A stale
+		 * SERVICE_LOOKUP_FD (su -m preserves the caller's environ) is
+		 * unset here so it never names a now-closed or reused fd; the
+		 * successful narrow below re-advertises a correct one.
+		 */
+		if (syschan >= 3 && syschan != SERVICE_LOOKUP_FIXED_FD) {
+			if (dup2(syschan, SERVICE_LOOKUP_FIXED_FD) ==
+			    SERVICE_LOOKUP_FIXED_FD) {
+				(void)close(syschan);
+				syschan = SERVICE_LOOKUP_FIXED_FD;
+			} else {
+				(void)close(syschan);
+				syschan = -1;
+			}
+		}
+		if (syschan == SERVICE_LOOKUP_FIXED_FD)
+			closefrom(SERVICE_LOOKUP_FIXED_FD + 1);
+		else
+			closefrom(3);
+		(void)unsetenv(SERVICE_LOOKUP_ENV);
+
+		/*
 		 * Narrow the inherited SYSTEM ambient lookup channel (§21/§22)
 		 * to a USER-domain channel for the TARGET uid and install it as
 		 * this session's ambient channel, so the spawned shell and its

@@ -66,6 +66,8 @@
 
 /* Local headers */
 
+#include <service_bootstrap.h>
+
 #include "gloadavg.h"
 #define MAIN
 #include "privs.h"
@@ -328,6 +330,16 @@ run_file(const char *filename, uid_t uid, gid_t gid)
 	    perr("cannot set user id");
 #endif /* LOGIN_CAP */
 
+	/*
+	 * fd hygiene across the uid transition (service-discovery-model §11a
+	 * D3).  atrun runs under serviced holding the SYSTEM ambient lookup
+	 * channel; the job now runs as its owner (setuid above), so that
+	 * channel and every other inherited descriptor above the three std
+	 * streams wired to the job files must not leak into the user job.
+	 */
+	(void)unsetenv(SERVICE_LOOKUP_ENV);
+	closefrom(3);
+
 	if (chdir(pentry->pw_dir))
 		chdir("/");
 
@@ -373,6 +385,14 @@ run_file(const char *filename, uid_t uid, gid_t gid)
 	if (setuid(uid) < 0 || seteuid(uid) < 0)
 	    perr("cannot set user id");
 #endif /* LOGIN_CAP */
+
+	/*
+	 * Same fd hygiene before the mailer runs as the job owner (§11a D3):
+	 * sendmail must not inherit the SYSTEM ambient lookup channel or any
+	 * other descriptor above stdin (the job output feeding the mail).
+	 */
+	(void)unsetenv(SERVICE_LOOKUP_ENV);
+	closefrom(3);
 
 	if (chdir(pentry->pw_dir))
 		chdir("/");

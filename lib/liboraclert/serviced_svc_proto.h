@@ -30,7 +30,7 @@
 
 #include <sys/types.h>
 
-#define	SERVICED_SVC_PROTO_VERSION	6
+#define	SERVICED_SVC_PROTO_VERSION	7
 
 /* Maximum reverse-domain name length. */
 #define	SERVICED_NAME_MAX		255
@@ -49,6 +49,7 @@
 #define	SVC_OP_WORKER_CHANNEL	7	/* private provider/worker channel */
 #define	SVC_OP_IDLE		8	/* provider requests idle-timeout shutdown */
 #define	SVC_OP_MINT_DOMAIN	9	/* mint a narrowed (USER, uid) lookup channel */
+#define	SVC_OP_AMBIENT_HELLO	10	/* behavioral probe: is this THE lookup channel? */
 
 /*
  * Serviced → service (notifications):
@@ -111,6 +112,37 @@ struct svc_mint_domain_req {
 	uint32_t	flags;		/* reserved, must be 0 */
 	uint32_t	uid;		/* target uid for the user domain */
 	uint32_t	reserved;	/* reserved, must be 0 */
+};
+
+/*
+ * SVC_OP_AMBIENT_HELLO
+ *   req:  svc_ambient_hello_req  { .op = SVC_OP_AMBIENT_HELLO }
+ *   reply: svc_ambient_hello_reply { .status = 0, .magic = SVC_AMBIENT_HELLO_MAGIC }
+ *
+ * A behavioral handshake that lets an inheriting process confirm the fd it
+ * probes really is a serviced ambient LOOKUP channel and not some other
+ * mac_capability channel that happens to answer MAC_CAPABILITY_GETINFO — most
+ * dangerously a service's unit control channel, which shares fd 3
+ * (SVC_CHANNEL_FD == SERVICE_LOOKUP_FIXED_FD) and the generic per-instance
+ * channel identity, so name/badge cannot discriminate it.
+ *
+ * Only a lookup-channel handler (domain.c) answers this op with status 0 and
+ * the magic ack.  A unit control channel's dispatcher (svc_proto.c) does NOT
+ * list SVC_OP_AMBIENT_HELLO and returns ENOTSUP from its default case — exactly
+ * the discriminator.  The probe is best-effort and strictly bounded: a timeout,
+ * an error, a wrong/short reply, or an ENOTSUP all mean "not the lookup
+ * channel", and the caller degrades to holding no ambient channel.  It must
+ * never block a login or an su.
+ */
+#define	SVC_AMBIENT_HELLO_MAGIC	0x414d4248U	/* "AMBH" */
+
+struct svc_ambient_hello_req {
+	uint32_t	op;		/* SVC_OP_AMBIENT_HELLO */
+};
+
+struct svc_ambient_hello_reply {
+	int32_t		status;		/* 0 on a genuine lookup channel */
+	uint32_t	magic;		/* SVC_AMBIENT_HELLO_MAGIC when status == 0 */
 };
 
 /*

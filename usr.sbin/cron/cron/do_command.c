@@ -419,6 +419,19 @@ child_process(entry *e, user *u)
 			login_close(lc);
 #endif
 
+		/* fd hygiene across the uid transition (service-discovery-model
+		 * §11a D2).  serviced launches cron holding the SYSTEM ambient
+		 * lookup channel as an open, non-close-on-exec descriptor; the
+		 * job now runs as the crontab's user (setuid above), so that
+		 * channel — and any other descriptor cron inherited above the
+		 * three std streams it just wired to the job pipes — must not
+		 * leak system-domain discovery into an arbitrary user job.
+		 * environ was set to NULL above, so the SERVICE_LOOKUP_FD
+		 * advertisement is already gone; this closes the open fd behind
+		 * it.  std{in,out,err} (0,1,2) are preserved.
+		 */
+		closefrom(3);
+
 		/* For compatibility, we chdir to the value of HOME if it was
 		 * specified explicitly in the crontab file, but not if it was
 		 * set in the environment by some other mechanism. We chdir to

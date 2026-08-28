@@ -33,13 +33,87 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "libservice.h"
+#include "serviced_svc_proto.h"
 #include "service_bootstrap.h"
 
 /*
- * A mac_capability channel answers MAC_CAPABILITY_GETINFO; an ordinary
- * descriptor (pipe, socket, file) does not.  This both proves the fd is open
- * and rejects a stale or spoofed SERVICE_LOOKUP_FD that names some unrelated
- * inherited descriptor.
+ * Bound for the ambient HELLO handshake.  The probe must never block a login or
+ * an su indefinitely, so it gives up after this many milliseconds and treats a
+ * silent channel as "not the lookup channel".  A genuine lookup channel (or a
+ * unit control channel answering ENOTSUP) replies far inside this window; the
+ * timeout only guards a wedged or half-open peer.  Same order as the other
+ * bounded serviced RPCs (component_request's 2s bootstrap deadline).
+ */
+#define	AMBIENT_HELLO_TIMEOUT_MS	2000U
+
+/*
+ * Behavioral handshake (§11a D1): a MAC_CAPABILITY_GETINFO check proves the fd
+ * is an open mac_capability channel, but it does NOT prove it is THE ambient
+ * lookup channel — a service's unit control channel sits at the same fd 3
+ * (SVC_CHANNEL_FD == SERVICE_LOOKUP_FIXED_FD) and answers GETINFO identically,
+ * and all anonymous channels share one generic name/badge, so neither
+ * discriminates.  So after the cheap GETINFO gate we send SVC_OP_AMBIENT_HELLO
+ * and accept the fd only if serviced's lookup-channel handler answers with the
+ * magic ack inside a bounded timeout.  A unit control channel returns ENOTSUP
+ * (its dispatcher has no case for this op); a wedged peer times out; either way
+ * the fd is rejected.
+ *
+ * Strictly non-fatal and bounded: every failure path returns false and the
+ * caller degrades to "no ambient channel".  fd is borrowed — service_session_*
+ * takes ownership of the descriptor it is handed, so we probe over a private
+ * duplicate and never disturb the caller's fd.
+ */
+static bool
+ambient_fd_speaks_hello(int fd)
+{
+	struct svc_ambient_hello_req req;
+	struct svc_ambient_hello_reply reply_data;
+	struct service_message message = {
+		.size = sizeof(message),
+		.data = &req,
+		.length = sizeof(req),
+	};
+	struct service_reply reply = {
+		.size = sizeof(reply),
+		.data = &reply_data,
+		.capacity = sizeof(reply_data),
+	};
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session;
+	int dupfd, saved;
+	bool ok;
+
+	dupfd = fcntl(fd, F_DUPFD_CLOEXEC, 0);
+	if (dupfd == -1)
+		return (false);
+	if (service_session_create(dupfd, &session) == -1) {
+		(void)close(dupfd);
+		return (false);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_AMBIENT_HELLO;
+	memset(&reply_data, 0, sizeof(reply_data));
+	options.timeout_ms = AMBIENT_HELLO_TIMEOUT_MS;
+
+	ok = false;
+	if (service_session_call(session, &message, &reply, &options) == 0 &&
+	    reply.length == sizeof(reply_data) && reply_data.status == 0 &&
+	    reply_data.magic == SVC_AMBIENT_HELLO_MAGIC)
+		ok = true;
+
+	saved = errno;
+	service_session_close(session);
+	errno = saved;
+	return (ok);
+}
+
+/*
+ * A candidate ambient fd must be an open mac_capability channel (cheap GETINFO
+ * gate) AND prove it is the lookup channel by answering the HELLO handshake.
+ * Rejecting on either count keeps a stale, spoofed, or wrong-kind fd (a unit
+ * control channel, a pipe) from being handed back as the ambient channel.
  */
 static bool
 ambient_fd_is_channel(int fd)
@@ -47,7 +121,9 @@ ambient_fd_is_channel(int fd)
 	struct mac_capability_info_args info;
 
 	memset(&info, 0, sizeof(info));
-	return (ioctl(fd, MAC_CAPABILITY_GETINFO, &info) == 0);
+	if (ioctl(fd, MAC_CAPABILITY_GETINFO, &info) != 0)
+		return (false);
+	return (ambient_fd_speaks_hello(fd));
 }
 
 int

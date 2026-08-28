@@ -489,6 +489,171 @@ ATF_TC_BODY(minted_system_channel_scoped, tc)
 	close(kq);
 }
 
+/*
+ * Drive the SVC_OP_AMBIENT_HELLO handshake against a minted lookup channel of
+ * the given kind and assert the magic ack.  This is the serviced side of the
+ * D1 behavioral probe: a lookup channel answers HELLO with status 0 and
+ * SVC_AMBIENT_HELLO_MAGIC.  Gated on the channel device.
+ */
+static void
+hello_ack_over_minted_channel(const atf_tc_t *tc, enum svc_domain_kind kind)
+{
+	struct svc_ambient_hello_req req;
+	struct svc_ambient_hello_reply reply_data;
+	struct service_message message = {
+		.size = sizeof(message),
+		.data = &req,
+		.length = sizeof(req),
+	};
+	struct service_reply reply = {
+		.size = sizeof(reply),
+		.data = &reply_data,
+		.capacity = sizeof(reply_data),
+	};
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session;
+	struct pump_ctx ctx;
+	pthread_t pump;
+	int minted_fd, kq, dupfd, rv;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	serviced_kq = kq;
+
+	minted_fd = -1;
+	if (kind == SVC_DOMAIN_USER)
+		rv = domain_mint_user_channel(4321, &minted_fd, kq);
+	else
+		rv = domain_mint_system_channel(&minted_fd, kq);
+	if (rv == -1) {
+		if (errno == ENODEV)
+			atf_tc_skip("mac_capability channel device unavailable");
+		atf_tc_fail("domain_mint_*_channel: %s", strerror(errno));
+	}
+
+	ctx.kq = kq;
+	ctx.stop = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
+
+	dupfd = fcntl(minted_fd, F_DUPFD_CLOEXEC, 0);
+	ATF_REQUIRE(dupfd >= 0);
+	ATF_REQUIRE_EQ(0, service_session_create(dupfd, &session));
+
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_AMBIENT_HELLO;
+	memset(&reply_data, 0, sizeof(reply_data));
+	options.timeout_ms = 2000;
+
+	ATF_CHECK_EQ(0, service_session_call(session, &message, &reply,
+	    &options));
+	ATF_CHECK_EQ(sizeof(reply_data), reply.length);
+	ATF_CHECK_EQ(0, reply_data.status);
+	ATF_CHECK_EQ(SVC_AMBIENT_HELLO_MAGIC, reply_data.magic);
+	ATF_CHECK_EQ(0, reply.nfds);
+
+	ctx.stop = 1;
+	(void)pthread_join(pump, NULL);
+	service_session_close(session);
+	domain_channel_teardown();
+	close(minted_fd);
+	close(kq);
+	(void)tc;
+}
+
+ATF_TC(hello_ack_over_user_channel);
+ATF_TC_HEAD(hello_ack_over_user_channel, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "a USER lookup channel answers SVC_OP_AMBIENT_HELLO with the magic");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(hello_ack_over_user_channel, tc)
+{
+
+	hello_ack_over_minted_channel(tc, SVC_DOMAIN_USER);
+}
+
+ATF_TC(hello_ack_over_system_channel);
+ATF_TC_HEAD(hello_ack_over_system_channel, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "a SYSTEM lookup channel answers SVC_OP_AMBIENT_HELLO with the magic");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(hello_ack_over_system_channel, tc)
+{
+
+	hello_ack_over_minted_channel(tc, SVC_DOMAIN_SYSTEM);
+}
+
+ATF_TC(unknown_op_over_lookup_channel_enotsup);
+ATF_TC_HEAD(unknown_op_over_lookup_channel_enotsup, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "an unrecognized op on a lookup channel returns ENOTSUP — the same "
+	    "default a unit control channel gives SVC_OP_AMBIENT_HELLO, which is "
+	    "the discriminator the ambient probe relies on");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(unknown_op_over_lookup_channel_enotsup, tc)
+{
+	uint32_t op;
+	struct svc_reply reply_data;
+	struct service_message message = {
+		.size = sizeof(message),
+		.data = &op,
+		.length = sizeof(op),
+	};
+	struct service_reply reply = {
+		.size = sizeof(reply),
+		.data = &reply_data,
+		.capacity = sizeof(reply_data),
+	};
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session;
+	struct pump_ctx ctx;
+	pthread_t pump;
+	int minted_fd, kq, dupfd;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	serviced_kq = kq;
+
+	minted_fd = -1;
+	if (domain_mint_user_channel(4321, &minted_fd, kq) == -1) {
+		if (errno == ENODEV)
+			atf_tc_skip("mac_capability channel device unavailable");
+		atf_tc_fail("domain_mint_user_channel: %s", strerror(errno));
+	}
+
+	ctx.kq = kq;
+	ctx.stop = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
+
+	dupfd = fcntl(minted_fd, F_DUPFD_CLOEXEC, 0);
+	ATF_REQUIRE(dupfd >= 0);
+	ATF_REQUIRE_EQ(0, service_session_create(dupfd, &session));
+
+	op = 0xdeadbeefU;		/* not READY/LOOKUP/MINT/HELLO */
+	memset(&reply_data, 0, sizeof(reply_data));
+	options.timeout_ms = 2000;
+
+	ATF_CHECK_EQ(0, service_session_call(session, &message, &reply,
+	    &options));
+	ATF_CHECK_EQ(sizeof(reply_data), reply.length);
+	ATF_CHECK_EQ(ENOTSUP, reply_data.status);
+
+	ctx.stop = 1;
+	(void)pthread_join(pump, NULL);
+	service_session_close(session);
+	domain_channel_teardown();
+	close(minted_fd);
+	close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -500,5 +665,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, user_scope_hides_registered_name);
 	ATF_TP_ADD_TC(tp, minted_channel_user_scoped);
 	ATF_TP_ADD_TC(tp, minted_system_channel_scoped);
+	ATF_TP_ADD_TC(tp, hello_ack_over_user_channel);
+	ATF_TP_ADD_TC(tp, hello_ack_over_system_channel);
+	ATF_TP_ADD_TC(tp, unknown_op_over_lookup_channel_enotsup);
 	return (atf_no_error());
 }

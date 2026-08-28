@@ -253,6 +253,36 @@ lookup_channel_request(struct channel *channel,
 			close(minted_fd);
 		goto out;
 	}
+	if (op == SVC_OP_AMBIENT_HELLO) {
+		/*
+		 * Behavioral handshake (§11a D1): confirm to a probing inheritor
+		 * that this really is a serviced ambient LOOKUP channel.  Only a
+		 * lookup channel answers with the magic ack; a unit control
+		 * channel's dispatcher (svc_proto.c) has no case for this op and
+		 * returns ENOTSUP from its default, which is exactly how the
+		 * probe tells the two fd-3 channels apart.  Served on BOTH SYSTEM
+		 * and USER lookup channels — either is a valid ambient carrier.
+		 */
+		struct svc_ambient_hello_reply hello;
+
+		if (channel_message_length(request) !=
+		    sizeof(struct svc_ambient_hello_req)) {
+			lookup_channel_reply(request, EINVAL, NULL, 0);
+			goto out;
+		}
+		hello.status = 0;
+		hello.magic = SVC_AMBIENT_HELLO_MAGIC;
+		if (channel_send_reply(request,
+		    &(struct channel_outgoing){
+			.size = sizeof(struct channel_outgoing),
+			.data = &hello,
+			.length = sizeof(hello),
+			.fds = NULL,
+			.nfds = 0
+		    }) == -1)
+			syslog(LOG_WARNING, "domain: hello reply: %m");
+		goto out;
+	}
 	if (op != SVC_OP_LOOKUP) {
 		/* Any other op on a lookup channel is unsupported. */
 		lookup_channel_reply(request, ENOTSUP, NULL, 0);

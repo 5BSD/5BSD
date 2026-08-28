@@ -3,41 +3,61 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Ambient lookup-channel helper tests (§21).
+ * Ambient lookup-channel helper tests (§21, §11a D1).
  *
  * The environment round-trip, the ambient descriptor marking, and the
- * rejection of an absent or non-channel SERVICE_LOOKUP_FD run anywhere.  The
- * one case that proves service_ambient_lookup_fd() accepts a genuine
- * mac_capability channel needs the channel device and is gated: it skips
- * cleanly when the device is unavailable.
+ * rejection of an absent, non-channel, or wrong-kind SERVICE_LOOKUP_FD run
+ * anywhere that needs no capability device.  The cases that prove
+ * service_ambient_lookup_fd()'s BEHAVIORAL handshake — a genuine lookup channel
+ * (one that answers SVC_OP_AMBIENT_HELLO with SVC_AMBIENT_HELLO_MAGIC) is
+ * accepted, while a mac_capability channel that does NOT speak the lookup
+ * protocol (a stand-in for a service's unit control channel, which returns
+ * ENOTSUP) is REJECTED — need the channel device and are gated: they skip
+ * cleanly when it is unavailable.
+ *
+ * The wrong-kind rejection is the D1 fix: before the handshake, ANY
+ * mac_capability channel at fd 3 (including a unit control channel that shares
+ * the number and the generic channel identity) was accepted as the ambient
+ * lookup channel.  Now only a channel that answers HELLO is.
  */
 
 #include <sys/types.h>
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
 
+#include <dev/mac_capability/mac_capability_channel_proto.h>
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <atf-c.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+#include <channel.h>
+
+#include "serviced_svc_proto.h"
 #include "service_bootstrap.h"
 
 /*
- * Create one genuine mac_capability instance descriptor (it answers
- * MAC_CAPABILITY_GETINFO), or -1 with errno == ENODEV when the device is
- * unavailable so the gated case can skip.
+ * Create a connected mac_capability channel pair via the channel device, or -1
+ * with errno == ENODEV when the device is unavailable so a gated case can skip.
+ * *client_end is the endpoint an inheritor probes; *serviced_end is the end the
+ * test's responder drives.  Both are returned as bare descriptors.
  */
 static int
-make_capability_fd(void)
+create_channel_pair(int *client_end, int *serviced_end)
 {
 	struct mac_capability_connect_args connect;
-	int control, error;
+	struct mac_capability_sendmsg_args send;
+	struct mac_capability_recvmsg_args receive;
+	uint32_t op;
+	int control, first, second, error;
 
 	control = open("/dev/mac_capability", O_RDWR);
 	if (control == -1) {
@@ -53,8 +73,145 @@ make_capability_fd(void)
 		return (-1);
 	}
 	close(control);
-	return (connect.fd);
+	first = connect.fd;
+
+	op = CHANNEL_OP_CREATE;
+	memset(&send, 0, sizeof(send));
+	send.payload = &op;
+	send.payload_len = sizeof(op);
+	if (ioctl(first, MAC_CAPABILITY_SENDMSG, &send) == -1) {
+		error = errno;
+		close(first);
+		errno = error;
+		return (-1);
+	}
+	second = -1;
+	memset(&receive, 0, sizeof(receive));
+	receive.fds = &second;
+	receive.nfds = 1;
+	if (ioctl(first, MAC_CAPABILITY_RECVMSG, &receive) == -1 ||
+	    receive.nfds != 1 || second < 0) {
+		error = errno != 0 ? errno : EIO;
+		close(first);
+		errno = error;
+		return (-1);
+	}
+	*serviced_end = first;
+	*client_end = second;
+	return (0);
 }
+
+/*
+ * A minimal serviced-side responder that pumps one channel from a helper thread
+ * and answers SVC_OP_AMBIENT_HELLO.  In RESP_LOOKUP mode it replies with the
+ * magic ack (modeling domain.c's lookup channel); in RESP_ENOTSUP mode it
+ * replies ENOTSUP (modeling svc_proto.c's unit control channel default), so the
+ * probe must reject it.
+ */
+enum responder_mode {
+	RESP_LOOKUP = 0,
+	RESP_ENOTSUP = 1
+};
+
+struct responder {
+	struct channel		*chan;
+	enum responder_mode	 mode;
+	pthread_t		 thread;
+	volatile int		 stop;
+};
+
+static void
+responder_request(struct channel *ch, struct channel_message *req, void *ctx)
+{
+	struct responder *r = ctx;
+	uint32_t op = 0;
+
+	(void)ch;
+	if (channel_message_length(req) >= sizeof(op))
+		memcpy(&op, channel_message_data(req), sizeof(op));
+	if (op == SVC_OP_AMBIENT_HELLO && r->mode == RESP_LOOKUP) {
+		struct svc_ambient_hello_reply rep = {
+			.status = 0,
+			.magic = SVC_AMBIENT_HELLO_MAGIC,
+		};
+
+		(void)channel_send_reply(req, &(struct channel_outgoing){
+			.size = sizeof(struct channel_outgoing),
+			.data = &rep,
+			.length = sizeof(rep),
+		});
+	} else {
+		struct svc_reply rep = { .status = ENOTSUP };
+
+		(void)channel_send_reply(req, &(struct channel_outgoing){
+			.size = sizeof(struct channel_outgoing),
+			.data = &rep,
+			.length = sizeof(rep),
+		});
+	}
+	channel_message_free(req);
+}
+
+static void *
+responder_thread(void *arg)
+{
+	struct responder *r = arg;
+
+	while (!r->stop) {
+		int wants, ready;
+
+		wants = channel_wants_write(r->chan);
+		if (wants == -1)
+			wants = 0;
+		ready = channel_wait(r->chan, wants, 20);
+		if (ready <= 0)
+			continue;
+		if ((ready & CHANNEL_WAIT_WRITE) != 0)
+			(void)channel_flush(r->chan);
+		if ((ready & CHANNEL_WAIT_READ) != 0)
+			(void)channel_dispatch(r->chan);
+	}
+	return (NULL);
+}
+
+static int
+responder_start(struct responder *r, int serviced_end, enum responder_mode mode)
+{
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+
+	memset(r, 0, sizeof(*r));
+	r->mode = mode;
+	if (channel_create(serviced_end, &options, &r->chan) == -1)
+		return (-1);
+	if (channel_set_request_handler(r->chan, responder_request, r) == -1) {
+		channel_destroy(r->chan);
+		r->chan = NULL;
+		return (-1);
+	}
+	if (pthread_create(&r->thread, NULL, responder_thread, r) != 0) {
+		channel_destroy(r->chan);
+		r->chan = NULL;
+		return (-1);
+	}
+	return (0);
+}
+
+static void
+responder_stop(struct responder *r)
+{
+
+	if (r->chan == NULL)
+		return;
+	r->stop = 1;
+	(void)pthread_join(r->thread, NULL);
+	channel_destroy(r->chan);
+	r->chan = NULL;
+}
+
+/* ------------------------------------------------------------------ */
+/* Device-free cases (run anywhere).                                   */
+/* ------------------------------------------------------------------ */
 
 ATF_TC_WITHOUT_HEAD(absent_env_returns_minus1);
 ATF_TC_BODY(absent_env_returns_minus1, tc)
@@ -85,8 +242,9 @@ ATF_TC_BODY(non_channel_fd_rejected, tc)
 
 	/*
 	 * A SERVICE_LOOKUP_FD that names an open descriptor which is NOT a
-	 * mac_capability channel (here a pipe) is rejected: discovery must not
-	 * hand back an arbitrary inherited fd.
+	 * mac_capability channel (here a pipe) is rejected at the GETINFO gate,
+	 * before any handshake: discovery must not hand back an arbitrary
+	 * inherited fd.
 	 */
 	ATF_REQUIRE_EQ(0, pipe(pfd));
 	(void)snprintf(buf, sizeof(buf), "%d", pfd[0]);
@@ -132,31 +290,6 @@ ATF_TC_BODY(install_marks_ambient_and_sets_env, tc)
 	close(pfd[1]);
 }
 
-ATF_TC(roundtrip_real_channel);
-ATF_TC_HEAD(roundtrip_real_channel, tc)
-{
-
-	atf_tc_set_md_var(tc, "descr",
-	    "install then lookup round-trips a genuine mac_capability channel");
-}
-ATF_TC_BODY(roundtrip_real_channel, tc)
-{
-	int fd, got;
-
-	fd = make_capability_fd();
-	if (fd == -1)
-		atf_tc_skip("mac_capability channel device unavailable");
-
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(fd));
-
-	got = service_ambient_lookup_fd();
-	ATF_CHECK_EQ(fd, got);
-
-	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	close(fd);
-}
-
 ATF_TC_WITHOUT_HEAD(fixed_fd_non_channel_rejected);
 ATF_TC_BODY(fixed_fd_non_channel_rejected, tc)
 {
@@ -190,38 +323,145 @@ ATF_TC_BODY(fixed_fd_non_channel_rejected, tc)
 	}
 }
 
-ATF_TC(fixed_fd_probed_when_env_absent);
-ATF_TC_HEAD(fixed_fd_probed_when_env_absent, tc)
+/* ------------------------------------------------------------------ */
+/* Behavioral-handshake cases (channel device; else skip).             */
+/* ------------------------------------------------------------------ */
+
+ATF_TC(env_lookup_channel_accepted);
+ATF_TC_HEAD(env_lookup_channel_accepted, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
-	    "env absent: a genuine channel at the fixed fd is discovered");
+	    "an env-named channel that answers HELLO with the magic is accepted");
 }
-ATF_TC_BODY(fixed_fd_probed_when_env_absent, tc)
+ATF_TC_BODY(env_lookup_channel_accepted, tc)
 {
-	int fd, saved, got;
+	struct responder r;
+	int client_end, serviced_end, got;
+
+	if (create_channel_pair(&client_end, &serviced_end) == -1)
+		atf_tc_skip("mac_capability channel device unavailable");
+	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_LOOKUP));
+
+	(void)unsetenv(SERVICE_LOOKUP_ENV);
+	ATF_REQUIRE_EQ(0, service_install_ambient_lookup(client_end));
+
+	got = service_ambient_lookup_fd();
+	ATF_CHECK_EQ(client_end, got);
+
+	(void)unsetenv(SERVICE_LOOKUP_ENV);
+	responder_stop(&r);
+	close(client_end);
+}
+
+ATF_TC(env_non_lookup_channel_rejected);
+ATF_TC_HEAD(env_non_lookup_channel_rejected, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "an env-named mac_capability channel that returns ENOTSUP (a unit "
+	    "control channel stand-in) is rejected, not accepted");
+}
+ATF_TC_BODY(env_non_lookup_channel_rejected, tc)
+{
+	struct responder r;
+	int client_end, serviced_end;
+	char buf[16];
+
+	/*
+	 * The D1 fix: this channel answers MAC_CAPABILITY_GETINFO (so the old
+	 * validator accepted it) but does NOT speak the lookup protocol — it
+	 * returns ENOTSUP exactly as a service's unit control channel does.  It
+	 * must be rejected.
+	 */
+	if (create_channel_pair(&client_end, &serviced_end) == -1)
+		atf_tc_skip("mac_capability channel device unavailable");
+	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_ENOTSUP));
+
+	(void)snprintf(buf, sizeof(buf), "%d", client_end);
+	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, buf, 1));
+
+	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
+
+	(void)unsetenv(SERVICE_LOOKUP_ENV);
+	responder_stop(&r);
+	close(client_end);
+}
+
+ATF_TC(fixed_fd_lookup_channel_accepted);
+ATF_TC_HEAD(fixed_fd_lookup_channel_accepted, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "env absent: a HELLO-answering channel at the fixed fd is accepted");
+}
+ATF_TC_BODY(fixed_fd_lookup_channel_accepted, tc)
+{
+	struct responder r;
+	int client_end, serviced_end, saved, got;
 
 	/*
 	 * The getty-path carry: oracle-init pins the channel at
 	 * SERVICE_LOOKUP_FIXED_FD with no environment variable set.  A genuine
-	 * mac_capability channel parked there must be discovered and returned.
-	 * Gated on the channel device; skips cleanly when unavailable.
+	 * lookup channel parked there must pass the handshake and be returned.
 	 */
-	fd = make_capability_fd();
-	if (fd == -1)
+	if (create_channel_pair(&client_end, &serviced_end) == -1)
 		atf_tc_skip("mac_capability channel device unavailable");
+	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_LOOKUP));
 
 	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
 
 	saved = dup(SERVICE_LOOKUP_FIXED_FD);
-	ATF_REQUIRE(dup2(fd, SERVICE_LOOKUP_FIXED_FD) ==
+	ATF_REQUIRE(dup2(client_end, SERVICE_LOOKUP_FIXED_FD) ==
 	    SERVICE_LOOKUP_FIXED_FD);
-	if (fd != SERVICE_LOOKUP_FIXED_FD)
-		close(fd);
+	if (client_end != SERVICE_LOOKUP_FIXED_FD)
+		close(client_end);
 
 	got = service_ambient_lookup_fd();
 	ATF_CHECK_EQ(SERVICE_LOOKUP_FIXED_FD, got);
 
+	responder_stop(&r);
+	(void)close(SERVICE_LOOKUP_FIXED_FD);
+	if (saved >= 0) {
+		(void)dup2(saved, SERVICE_LOOKUP_FIXED_FD);
+		close(saved);
+	}
+}
+
+ATF_TC(fixed_fd_non_lookup_channel_rejected);
+ATF_TC_HEAD(fixed_fd_non_lookup_channel_rejected, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "env absent: a unit-control-channel stand-in at fd 3 is rejected");
+}
+ATF_TC_BODY(fixed_fd_non_lookup_channel_rejected, tc)
+{
+	struct responder r;
+	int client_end, serviced_end, saved;
+
+	/*
+	 * The core D1 scenario: a bootstrap-launched service's unit control
+	 * channel sits at fd 3 (SVC_CHANNEL_FD == SERVICE_LOOKUP_FIXED_FD) and
+	 * answers GETINFO.  A login or su probing fd 3 must NOT mistake it for
+	 * the ambient lookup channel; the handshake returns ENOTSUP, so
+	 * discovery yields -1.
+	 */
+	if (create_channel_pair(&client_end, &serviced_end) == -1)
+		atf_tc_skip("mac_capability channel device unavailable");
+	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_ENOTSUP));
+
+	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
+
+	saved = dup(SERVICE_LOOKUP_FIXED_FD);
+	ATF_REQUIRE(dup2(client_end, SERVICE_LOOKUP_FIXED_FD) ==
+	    SERVICE_LOOKUP_FIXED_FD);
+	if (client_end != SERVICE_LOOKUP_FIXED_FD)
+		close(client_end);
+
+	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
+
+	responder_stop(&r);
 	(void)close(SERVICE_LOOKUP_FIXED_FD);
 	if (saved >= 0) {
 		(void)dup2(saved, SERVICE_LOOKUP_FIXED_FD);
@@ -234,50 +474,54 @@ ATF_TC_HEAD(env_takes_precedence_over_fixed_fd, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
-	    "a valid env-named channel wins over the fixed-fd fallback");
+	    "a valid env-named lookup channel wins over the fixed-fd fallback");
 }
 ATF_TC_BODY(env_takes_precedence_over_fixed_fd, tc)
 {
-	int envfd, fixedfd, saved, got;
+	struct responder renv, rfixed;
+	int envc, envs, fixedc, fixeds, saved, got;
 	char buf[16];
 
 	/*
-	 * When SERVICE_LOOKUP_FD names a live channel, the env source wins even
-	 * if a different channel also sits at the fixed fd; the fixed fd is only
-	 * a fallback for the getty hop.  Two channels are needed, so this is
-	 * gated on the device.
+	 * When SERVICE_LOOKUP_FD names a live lookup channel, the env source
+	 * wins even if a different lookup channel also sits at the fixed fd; the
+	 * fixed fd is only a fallback for the getty hop.  Two channels are
+	 * needed, so this is gated on the device.
 	 */
-	envfd = make_capability_fd();
-	if (envfd == -1)
+	if (create_channel_pair(&envc, &envs) == -1)
 		atf_tc_skip("mac_capability channel device unavailable");
-	fixedfd = make_capability_fd();
-	if (fixedfd == -1) {
-		close(envfd);
+	if (create_channel_pair(&fixedc, &fixeds) == -1) {
+		close(envc);
+		close(envs);
 		atf_tc_skip("mac_capability channel device unavailable");
 	}
+	ATF_REQUIRE_EQ(0, responder_start(&renv, envs, RESP_LOOKUP));
+	ATF_REQUIRE_EQ(0, responder_start(&rfixed, fixeds, RESP_LOOKUP));
 
 	saved = dup(SERVICE_LOOKUP_FIXED_FD);
-	/* Keep envfd off the fixed slot so the two are distinct. */
-	if (envfd == SERVICE_LOOKUP_FIXED_FD) {
-		int moved = fcntl(envfd, F_DUPFD, SERVICE_LOOKUP_FIXED_FD + 1);
+	/* Keep envc off the fixed slot so the two are distinct. */
+	if (envc == SERVICE_LOOKUP_FIXED_FD) {
+		int moved = fcntl(envc, F_DUPFD, SERVICE_LOOKUP_FIXED_FD + 1);
 
 		ATF_REQUIRE(moved >= 0);
-		close(envfd);
-		envfd = moved;
+		close(envc);
+		envc = moved;
 	}
-	ATF_REQUIRE(dup2(fixedfd, SERVICE_LOOKUP_FIXED_FD) ==
+	ATF_REQUIRE(dup2(fixedc, SERVICE_LOOKUP_FIXED_FD) ==
 	    SERVICE_LOOKUP_FIXED_FD);
-	if (fixedfd != SERVICE_LOOKUP_FIXED_FD)
-		close(fixedfd);
+	if (fixedc != SERVICE_LOOKUP_FIXED_FD)
+		close(fixedc);
 
-	(void)snprintf(buf, sizeof(buf), "%d", envfd);
+	(void)snprintf(buf, sizeof(buf), "%d", envc);
 	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, buf, 1));
 
 	got = service_ambient_lookup_fd();
-	ATF_CHECK_EQ(envfd, got);
+	ATF_CHECK_EQ(envc, got);
 
 	(void)unsetenv(SERVICE_LOOKUP_ENV);
-	close(envfd);
+	responder_stop(&renv);
+	responder_stop(&rfixed);
+	close(envc);
 	(void)close(SERVICE_LOOKUP_FIXED_FD);
 	if (saved >= 0) {
 		(void)dup2(saved, SERVICE_LOOKUP_FIXED_FD);
@@ -292,9 +536,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, malformed_env_returns_minus1);
 	ATF_TP_ADD_TC(tp, non_channel_fd_rejected);
 	ATF_TP_ADD_TC(tp, install_marks_ambient_and_sets_env);
-	ATF_TP_ADD_TC(tp, roundtrip_real_channel);
 	ATF_TP_ADD_TC(tp, fixed_fd_non_channel_rejected);
-	ATF_TP_ADD_TC(tp, fixed_fd_probed_when_env_absent);
+	ATF_TP_ADD_TC(tp, env_lookup_channel_accepted);
+	ATF_TP_ADD_TC(tp, env_non_lookup_channel_rejected);
+	ATF_TP_ADD_TC(tp, fixed_fd_lookup_channel_accepted);
+	ATF_TP_ADD_TC(tp, fixed_fd_non_lookup_channel_rejected);
 	ATF_TP_ADD_TC(tp, env_takes_precedence_over_fixed_fd);
 	return (atf_no_error());
 }
