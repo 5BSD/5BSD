@@ -50,6 +50,7 @@ ATF_TESTS_C+=	on_demand_test
 ATF_TESTS_C+=	fd_budget_test
 ATF_TESTS_C+=	launch_limits_test
 ATF_TESTS_C+=	manifest_compare_test
+ATF_TESTS_C+=	management_enforce_test
 ATF_TESTS_C+=	bundle_selection_test
 ATF_TESTS_C+=	storage_lifecycle_test
 ATF_TESTS_C+=	rc_ingest_test
@@ -123,6 +124,14 @@ CFLAGS.manifest_compare_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/liboraclert
 CFLAGS.manifest_compare_test+=	-I${SRCTOP}/sys
+# management_enforce_test compiles management.c directly (pure class logic, no
+# daemon event loop).  management.c comes from the serviced source dir via the
+# .PATH above; referencing it by basename keeps its object in the objdir.
+SRCS.management_enforce_test=	management_enforce_test.c management.c
+CFLAGS.management_enforce_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.management_enforce_test+=	-I${SRCTOP}/sys
 SRCS.bundle_selection_test=	bundle_selection_test.c bundle_selection.c
 CFLAGS.bundle_selection_test+=	-I${SRCTOP}/usr.sbin/serviced
 SRCS.storage_lifecycle_test=	storage_lifecycle_test.c storage_lifecycle.c

@@ -54,6 +54,26 @@
 #define	SVC_RESTART_ALWAYS		1
 #define	SVC_RESTART_ON_FAILURE		2
 
+/*
+ * Service management class (§5 of the service-discovery model).  Governs who
+ * may load/unload/start/stop the unit at runtime — orthogonal to discovery and
+ * to the launcher process shield (protect_flags).  Values are chosen so that a
+ * zero-initialised manifest (calloc / memset) is SVC_MGMT_SYSTEM, preserving
+ * today's all-system behaviour for the base bundles and any manifest that omits
+ * the key.
+ *
+ *   SYSTEM  root only (default).  Base daemons and adopted rc.d services.
+ *   CORE    nobody — not even root — may stop/unload it at runtime; only the
+ *           boot/shutdown lifecycle and reload-on-manifest-change touch it.
+ *   USER    the owning uid (and root).  Per-user agents.
+ *
+ * Only the absolute CORE rule is enforced today; the SYSTEM=root-only and
+ * USER=owning-uid rules need the channel principal and land in a later step.
+ */
+#define	SVC_MGMT_SYSTEM			0
+#define	SVC_MGMT_CORE			1
+#define	SVC_MGMT_USER			2
+
 struct serviced_file_cap {
 	char		path[PATH_MAX];
 	uint64_t	actions;	/* FI_FS_* mask */
@@ -141,6 +161,7 @@ struct svc_manifest {
 	char		jail_ip4_addr[64];
 
 	int		restart;	/* SVC_RESTART_* */
+	int		management;	/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
 	int		stop_timeout;	/* seconds before SIGKILL (default 5) */
 	unsigned	max_failures;	/* circuit breaker threshold (default 10) */
 	/* Required kernel modules (ensured by oracled before launch) */

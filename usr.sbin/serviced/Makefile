@@ -5,7 +5,7 @@ PROG=	serviced
 BINDIR=	/usr/libexec
 MAN=	serviced.5 serviced.8
 SRCS=	serviced.c activation.c bundle_registry.c bundle_selection.c domain.c mac_capability_direct.c execute.c \
-	fd_budget.c manifest_compare.c \
+	fd_budget.c management.c manifest_compare.c \
 	storage_lifecycle.c \
 	kldmgr_client.c naming.c on_demand.c oracle_client.c rc_ingest.c \
 	reload.c sctl.c serviced_audit.c startup.c svc_proto.c supervisor.c

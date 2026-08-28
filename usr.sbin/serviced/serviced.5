@@ -158,6 +158,27 @@ is
 .Dq on-failure ,
 or
 .Dq always .
+.Va management
+selects the unit's management class and is
+.Dq core ,
+.Dq system ,
+or
+.Dq user ;
+it defaults to
+.Dq system
+when the key is absent.
+The class governs who may stop, restart, unload, or disable the unit at
+runtime.
+A
+.Dq core
+unit cannot be stopped or unloaded at runtime by anyone, including the
+superuser; only the boot and shutdown lifecycle, and an in-place restart when
+its manifest changes, may act on it.
+The
+.Dq system
+and
+.Dq user
+classes behave as today until principal-scoped authorization arrives.
 .Va stop_timeout
 is 1 through 300 seconds and
 .Va max_failures

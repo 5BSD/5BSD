@@ -292,6 +292,13 @@ capbundle_svc_nprovides(const struct capbundle_service *s)
 	return (s != NULL ? s->nprovides : 0);
 }
 
+int
+capbundle_svc_management_class(const struct capbundle_service *s)
+{
+
+	return (s != NULL ? s->management : CAPBUNDLE_MGMT_SYSTEM);
+}
+
 unsigned
 capbundle_svc_timer_interval(const struct capbundle_service *s)
 {
@@ -435,6 +442,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	    sizeof(m->jail_ip4_addr)) == -1)
 		return (-1);
 	m->restart = s->restart;
+	m->management = s->management;
 	m->timer_interval_sec = s->timer_interval_sec;
 	if (manifest_copy(s->activation_path, m->activation_path,
 	    sizeof(m->activation_path)) == -1)

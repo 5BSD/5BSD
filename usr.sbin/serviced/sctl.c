@@ -36,6 +36,7 @@
 #include "serviced_audit.h"
 #include "serviced_ctl.h"
 #include "fd_budget.h"
+#include "management.h"
 #include "serviced_probes.h"
 
 /* Module-private state. */
@@ -170,6 +171,9 @@ sctl_cmd_status(struct sctl_reply *reply, char *summary, size_t sumlen)
 
 			BUF_APPEND(summary, sumlen, &off, " restart=%s",
 			    restart_policy_name(svc->manifest.restart));
+
+			BUF_APPEND(summary, sumlen, &off, " mgmt=%s",
+			    svc_management_name(svc->manifest.management));
 
 			if (svc->restart_count > 0)
 				BUF_APPEND(summary, sumlen, &off,
@@ -393,6 +397,20 @@ conn_dispatch(struct sctl_conn *c)
 				snprintf(c->summary, sizeof(c->summary),
 				    "stop: service \"%s\" not found",
 				    c->payload);
+			} else if (svc_management_check_op(svc, "stopped") != 0) {
+				/*
+				 * Absolute management-class rule (§5): a core
+				 * unit cannot be stopped at runtime, not even by
+				 * root.  svc_management_check_op() has already
+				 * logged the refusal.
+				 */
+				reply->status = EPERM;
+				snprintf(c->summary, sizeof(c->summary),
+				    "stop: \"%s\" is management class core and "
+				    "cannot be stopped at runtime", c->payload);
+				SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
+				serviced_audit(AUE_SERVICED_CTL, c->euid, EPERM,
+				    "stop denied (core) svc=%s", c->payload);
 			} else if (svc->state == SVC_STATE_STOPPED) {
 				reply->status = EALREADY;
 				snprintf(c->summary, sizeof(c->summary),

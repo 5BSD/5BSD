@@ -68,6 +68,7 @@ print_bundle(const struct capbundle *b)
 		struct capbundle_service *svc = capbundle_service(b, i);
 		struct svc_manifest m;
 		const char *restart;
+		const char *management;
 
 		if (capbundle_svc_fill_manifest(svc, &m) == -1)
 			err(1, "capbundle_svc_fill_manifest");
@@ -80,6 +81,17 @@ print_bundle(const struct capbundle *b)
 			break;
 		default:
 			restart = "never";
+			break;
+		}
+		switch (m.management) {
+		case SVC_MGMT_CORE:
+			management = "core";
+			break;
+		case SVC_MGMT_USER:
+			management = "user";
+			break;
+		default:
+			management = "system";
 			break;
 		}
 
@@ -102,6 +114,7 @@ print_bundle(const struct capbundle *b)
 			printf(" path=%s", capbundle_svc_activation_path(svc));
 		printf("\n");
 		printf("      restart:   %s\n", restart);
+		printf("      management: %s\n", management);
 		printf("      stop_timeout: %d\n", m.stop_timeout);
 		printf("      max_failures: %u\n", m.max_failures);
 		printf("      user: %s\n", m.user[0] != '\0' ? m.user : "(default)");

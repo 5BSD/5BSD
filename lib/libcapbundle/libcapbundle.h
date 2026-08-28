@@ -65,6 +65,12 @@ bool		 capbundle_svc_activates_at_boot(
 		    const struct capbundle_service *s);
 unsigned	 capbundle_svc_nprovides(const struct capbundle_service *s);
 /*
+ * Management class (§5): one of CAPBUNDLE_MGMT_* below, governing who may
+ * stop/unload the unit at runtime.  Returns CAPBUNDLE_MGMT_SYSTEM (0) for a
+ * NULL service, matching the absent-key default.
+ */
+int		 capbundle_svc_management_class(const struct capbundle_service *s);
+/*
  * Activation sources (Phase 5).  timer interval is a monotonic period in
  * seconds (0 = no timer source); activation path is an absolute path watched
  * via kqueue vnode events ("" = no path source).  Both return zero/"" for a
@@ -129,5 +135,10 @@ int	capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx);
 #define	CAPBUNDLE_RESTART_NEVER		0
 #define	CAPBUNDLE_RESTART_ALWAYS	1
 #define	CAPBUNDLE_RESTART_ON_FAILURE	2
+
+/* Management class constants (matches serviced SVC_MGMT_*, §5). */
+#define	CAPBUNDLE_MGMT_SYSTEM		0
+#define	CAPBUNDLE_MGMT_CORE		1
+#define	CAPBUNDLE_MGMT_USER		2
 
 #endif /* LIBCAPBUNDLE_H */

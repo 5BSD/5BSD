@@ -25,6 +25,7 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	    a->narguments != b->narguments ||
 	    a->nenvironment != b->nenvironment ||
 	    a->restart != b->restart ||
+	    a->management != b->management ||
 	    a->stop_timeout != b->stop_timeout ||
 	    a->max_failures != b->max_failures ||
 	    a->nprovides != b->nprovides ||

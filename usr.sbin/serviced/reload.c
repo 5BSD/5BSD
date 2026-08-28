@@ -22,6 +22,7 @@
 #include <libcapbundle.h>
 
 #include "serviced.h"
+#include "management.h"
 #include "manifest_compare.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
@@ -252,6 +253,17 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			if (desired_service_manifest(svc->manifest.label,
 			    &desired))
 				continue;  /* still provided by a bundle */
+
+			/*
+			 * Absolute management-class rule (§5): a core unit may
+			 * not be unloaded at runtime, even when its bundle has
+			 * gone away (operator disable/uninstall).  Retain it —
+			 * only the shutdown lifecycle tears a core unit down.
+			 * This is orthogonal to reload-on-manifest-change
+			 * (Phase 2), which still restarts core units in place.
+			 */
+			if (svc_management_check_op(svc, "unloaded") != 0)
+				continue;
 
 			/* Service removed — stop it or remove its stopped slot. */
 			if (svc->state == SVC_STATE_RUNNING ||

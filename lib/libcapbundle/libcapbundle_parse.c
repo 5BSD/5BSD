@@ -531,9 +531,9 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 {
 	static const char *const top[] = {
 	    "program", "activation", "kmod_requires",
-	    "restart", "capabilities", "user", "group", "stop_timeout",
-	    "max_failures", "arguments", "environment", "jail", "storage",
-	    "descriptors", "protect" };
+	    "restart", "management", "capabilities", "user", "group",
+	    "stop_timeout", "max_failures", "arguments", "environment", "jail",
+	    "storage", "descriptors", "protect" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket" };
 	static const char *const timerkeys[] = { "interval" };
@@ -601,6 +601,15 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    strcmp(ucl_object_tostring(v), "always") != 0 &&
 	    strcmp(ucl_object_tostring(v), "on-failure") != 0))) {
 		snprintf(errbuf, errlen, "invalid restart policy");
+		return (-1);
+	}
+	v = ucl_object_lookup(root, "management");
+	if (v != NULL && (ucl_object_type(v) != UCL_STRING ||
+	    (strcmp(ucl_object_tostring(v), "core") != 0 &&
+	    strcmp(ucl_object_tostring(v), "system") != 0 &&
+	    strcmp(ucl_object_tostring(v), "user") != 0))) {
+		snprintf(errbuf, errlen,
+		    "management must be \"core\", \"system\", or \"user\"");
 		return (-1);
 	}
 	v = ucl_object_lookup(root, "stop_timeout");
@@ -1479,6 +1488,36 @@ parse_restart_policy(const ucl_object_t *obj, const char *path)
 	return (CAPBUNDLE_RESTART_NEVER);
 }
 
+/*
+ * Management class (§5).  Absent key defaults to SVC_MGMT_SYSTEM, preserving
+ * the historical all-system behaviour of the base bundles.  The schema
+ * validator has already rejected any string other than core/system/user, so an
+ * unrecognised value here can only mean the parser was invoked without that
+ * validation; fail safe to the most restrictive interpretation that is still a
+ * valid default (system) and log it.
+ */
+static int
+parse_management_class(const ucl_object_t *obj, const char *path)
+{
+	const ucl_object_t *v;
+	const char *s;
+
+	v = ucl_object_lookup(obj, "management");
+	if (v == NULL || ucl_object_type(v) != UCL_STRING)
+		return (SVC_MGMT_SYSTEM);
+
+	s = ucl_object_tostring(v);
+	if (strcmp(s, "system") == 0)
+		return (SVC_MGMT_SYSTEM);
+	if (strcmp(s, "core") == 0)
+		return (SVC_MGMT_CORE);
+	if (strcmp(s, "user") == 0)
+		return (SVC_MGMT_USER);
+	syslog(LOG_WARNING, "capbundle %s: unknown management class: %s",
+	    path, s);
+	return (SVC_MGMT_SYSTEM);
+}
+
 static uint32_t
 parse_cap_system(const ucl_object_t *obj, const char *path)
 {
@@ -1984,6 +2023,9 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 
 	/* Restart policy */
 	svc->restart = parse_restart_policy(root, path);
+
+	/* Management class (§5) */
+	svc->management = parse_management_class(root, path);
 
 	/* Named persistent execution jail. */
 	v = ucl_object_lookup(root, "jail");

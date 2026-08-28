@@ -71,6 +71,7 @@ struct capbundle_service {
 	struct serviced_component components[SERVICED_MAX_COMPONENTS];
 	unsigned ncomponents;
 	int	restart;
+	int	management;		/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
 	uint32_t cap_system;		/* SYS_GATE_* bitmask */
 	uint32_t protect_flags;		/* capprotect CP_SF_* bitmask */
 

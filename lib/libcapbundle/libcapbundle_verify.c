@@ -225,6 +225,17 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 				    b->name, s->label);
 			return (-1);
 		}
+
+		/* Management class must be a known enumerant (§5). */
+		if (s->management != SVC_MGMT_SYSTEM &&
+		    s->management != SVC_MGMT_CORE &&
+		    s->management != SVC_MGMT_USER) {
+			if (errbuf)
+				snprintf(errbuf, errlen,
+				    "%s: unit '%s' has an invalid management "
+				    "class", b->name, s->label);
+			return (-1);
+		}
 		for (j = 0; j < s->nprovides; j++) {
 			if (strlen(s->provides[j]) >= SERVICED_LABEL_MAX) {
 				if (errbuf)
