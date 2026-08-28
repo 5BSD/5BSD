@@ -1,0 +1,53 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * authorityd-ipc -- trace authority protocol messages on the pair channel.
+ *
+ * Shows each request received from serviced and the reply status.
+ *
+ * Usage: authorityd-ipc
+ */
+
+#pragma D option quiet
+
+inline string authority_op[uint32_t op] =
+	op == 1 ? "MINT_PATH" :
+	op == 2 ? "MINT_NET" :
+	op == 3 ? "MINT_SYSTEM" :
+	op == 4 ? "CREATE_PAIR" :
+	op == 5 ? "CREATE_COALITION" :
+	op == 6 ? "READY" :
+	op == 7 ? "PING" :
+	op == 8 ? "MINT_FILE" :
+	op == 9 ? "MINT_JAIL" :
+	"UNKNOWN";
+
+dtrace:::BEGIN
+{
+	printf("Tracing authority protocol IPC... Ctrl-C for summary.\n\n");
+	printf("%-20s %-6s %-18s\n", "TIME", "PID", "OPERATION");
+}
+
+authorityd*:::ipc-recv
+{
+	printf("%-20Y %-6d %-18s\n", walltimestamp, pid,
+	    authority_op[arg0]);
+	@ops[authority_op[arg0]] = count();
+}
+
+authorityd*:::ipc-dispatch-done
+{
+	this->us = arg2 / 1000;
+	@lat[authority_op[arg0]] = quantize(this->us);
+}
+
+dtrace:::END
+{
+	printf("\n--- Message counts ---\n");
+	printa("  %-18s %@d\n", @ops);
+	printf("\n--- Dispatch latency by operation (microseconds) ---\n");
+	printa(@lat);
+}

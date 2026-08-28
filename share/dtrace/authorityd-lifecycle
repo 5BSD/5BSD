@@ -1,0 +1,80 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * authorityd-lifecycle -- trace daemon startup and shutdown events.
+ *
+ * Shows the complete lifecycle: config load, claims, integrity
+ * activation, and shutdown with reason.
+ *
+ * Usage: authorityd-lifecycle
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing authorityd lifecycle... Ctrl-C to stop.\n\n");
+}
+
+authorityd*:::config-load
+{
+	printf("[%Y] config loaded: %s\n", walltimestamp,
+	    copyinstr(arg0));
+}
+
+authorityd*:::claim-path
+{
+	printf("[%Y] claimed path: %s\n", walltimestamp,
+	    copyinstr(arg0));
+}
+
+authorityd*:::claim-net
+/arg0 == arg1/
+{
+	printf("[%Y] claimed port: %d/%s\n", walltimestamp,
+	    arg0, arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+}
+
+authorityd*:::claim-net
+/arg0 != arg1/
+{
+	printf("[%Y] claimed port: %d-%d/%s\n", walltimestamp,
+	    arg0, arg1, arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+}
+
+authorityd*:::integrity
+{
+	printf("[%Y] integrity flags: 0x%x\n", walltimestamp, arg0);
+}
+
+authorityd*:::startup
+{
+	printf("[%Y] *** authorityd started ***\n", walltimestamp);
+}
+
+authorityd*:::shutdown
+{
+	printf("[%Y] *** authorityd shutdown (reason=%d) ***\n",
+	    walltimestamp, arg0);
+}
+
+authorityd*:::reload-claims-start
+{
+	printf("[%Y] reload claims: acquiring %d, releasing %d\n",
+	    walltimestamp, arg0, arg1);
+}
+
+authorityd*:::reload-claims-done
+{
+	printf("[%Y] reload claims done: acquired %d, released %d, failed %d\n",
+	    walltimestamp, arg0, arg1, arg2);
+}
+
+authorityd*:::error
+{
+	printf("[%Y] ERROR %s: %s\n", walltimestamp,
+	    copyinstr(arg0), copyinstr(arg1));
+}

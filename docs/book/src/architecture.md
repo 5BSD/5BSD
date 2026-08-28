@@ -134,14 +134,14 @@ product stacks, each covered in its own section:
 
 | Stack | Components | Section |
 |-------|-----------|---------|
-| Init & services | `oracled` (PID 1 capable), `serviced`, `oraclectl` | [System Services](system/oracle-init.md) |
+| Init & services | `authorityd` (PID 1 capable), `serviced`, `authorityctl` | [System Services](system/authority-init.md) |
 | Virtualization | WASPNest (bhyve), VirtIO models, vsock, migration | [Virtualization](virtualization/overview.md) |
 | Bluetooth | `blued`, `meshd`, `bluedctl`/`meshctl` (skyblue rename pending) | [Bluetooth](bluetooth/overview.md) |
 | Storage | TrustedZFS, `tzfsd`, `tzfsctl`, tzfs-flavors | [Storage](storage/trustedzfs.md) |
 | Endpoint security | OES clients over MACF | [Endpoint Security](security/endpoint-security.md) |
 | Observability | libotelexport, bsdinstruments, hwtlm, DTrace | [Observability](observability/observablebsd.md) |
 
-Daemons log with subsystem tags (`[ORACLE]`, `[SERVICE]`, `[TZFS]`) into the
+Daemons log with subsystem tags (`[AUTHORITY]`, `[SERVICE]`, `[TZFS]`) into the
 unified logging design. Services declare their needs via manifest files and
 capability bundles (see [Service Manifests](system/manifests.md) and
 [Capability Bundles](security/capability-bundles.md)).

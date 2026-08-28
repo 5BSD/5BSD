@@ -411,7 +411,7 @@ is a string description.
 .Sh EXAMPLES
 Create a coalition, enlist two processes, set a deadline, and terminate:
 .Bd -literal -offset indent
-/* Obtain coalition fd from oracled. */
+/* Obtain coalition fd from authorityd. */
 int co_fd = obtain_coalition_fd();
 
 /* Enlist a process descriptor. */
@@ -481,7 +481,7 @@ The coalition is in a terminating or grace state and rejects new members.
 .Xr mac_capability 4 ,
 .Xr mac_capability_capprotect 4 ,
 .Xr mac_capability_system 4 ,
-.Xr oracled 8 ,
+.Xr authorityd 8 ,
 .Xr serviced 8
 .Sh HISTORY
 The

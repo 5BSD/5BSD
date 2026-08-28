@@ -19,7 +19,7 @@ atf_test_case system_bundle_startup cleanup
 system_bundle_startup_head() {
 	atf_set "descr" "System bundle services start at boot"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 system_bundle_startup_body() {
 	local bundle
@@ -52,7 +52,7 @@ atf_test_case on_demand_launch cleanup
 on_demand_launch_head() {
 	atf_set "descr" "On-demand service launches on first lookup"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 on_demand_launch_body() {
 	prepare_paths
@@ -85,7 +85,7 @@ atf_test_case on_demand_timeout cleanup
 on_demand_timeout_head() {
 	atf_set "descr" "On-demand launch times out if service never reports ready"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 on_demand_timeout_body() {
 	prepare_paths
@@ -114,7 +114,7 @@ atf_test_case stop_service cleanup
 stop_service_head() {
 	atf_set "descr" "Stop a running service via servicectl stop"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 stop_service_body() {
 	local bundle
@@ -167,7 +167,7 @@ atf_test_case stop_nonexistent cleanup
 stop_nonexistent_head() {
 	atf_set "descr" "Stop returns ENOENT for unknown service label"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 stop_nonexistent_body() {
 	prepare_paths
@@ -187,7 +187,7 @@ atf_test_case reload_new_service cleanup
 reload_new_service_head() {
 	atf_set "descr" "Reload detects and launches newly added bundle services"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 reload_new_service_body() {
 	local bundle
@@ -224,7 +224,7 @@ atf_test_case reload_remove_service cleanup
 reload_remove_service_head() {
 	atf_set "descr" "Reload stops services whose bundle was removed"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 reload_remove_service_body() {
 	local bundle
@@ -261,7 +261,7 @@ atf_test_case missing_system_bundle_optional cleanup
 missing_system_bundle_optional_head() {
 	atf_set "descr" "Missing /Capabilities/System is optional"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 missing_system_bundle_optional_body() {
 	prepare_paths
@@ -305,7 +305,7 @@ dtrace_probes_head() {
 	atf_set "descr" "DTrace startup schema is registered and capability orchestration probes fire"
 	atf_set "require.user" "root"
 	atf_set "require.progs" "dtrace"
-	require_oracle_stack_kmods mac_capability_identity
+	require_authority_stack_kmods mac_capability_identity
 	atf_set "timeout" "60"
 }
 dtrace_probes_body() {
@@ -344,8 +344,8 @@ dtrace_probes_body() {
 
 	dtrace -n 'BEGIN { printf("CONSUMER_READY\n"); }' \
 	    -n "serviced${serviced_pid}:::cap-service { printf(\"SVC_CAP %s %s %d\\n\", copyinstr(arg0), copyinstr(arg1), arg2); }" \
-	    -n "oracled${daemon_pid}:::mint-file { printf(\"FILE %s 0x%x %d\\n\", copyinstr(arg0), arg1, arg2); }" \
-	    -n "oracled${daemon_pid}:::service-delegate { printf(\"SERVICE %s %d\\n\", copyinstr(arg0), arg1); }" \
+	    -n "authorityd${daemon_pid}:::mint-file { printf(\"FILE %s 0x%x %d\\n\", copyinstr(arg0), arg1, arg2); }" \
+	    -n "authorityd${daemon_pid}:::service-delegate { printf(\"SERVICE %s %d\\n\", copyinstr(arg0), arg1); }" \
 	    -o "${WORK}/dtrace.out" 2>"${WORK}/dtrace.err" &
 	DTRACE_PID=$!
 	printf '%s\n' "$DTRACE_PID" > "${WORK}/dtrace.pid"
@@ -439,7 +439,7 @@ atf_test_case reload_changed_bundle cleanup
 reload_changed_bundle_head() {
 	atf_set "descr" "Reload restarts service when bundle manifest changes"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 reload_changed_bundle_body() {
 	local bundle
@@ -479,7 +479,7 @@ atf_test_case stop_already_stopped cleanup
 stop_already_stopped_head() {
 	atf_set "descr" "Stop on already-stopped service returns error"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 stop_already_stopped_body() {
 	local bundle
@@ -513,7 +513,7 @@ atf_test_case coalition_kill_on_timeout cleanup
 coalition_kill_on_timeout_head() {
 	atf_set "descr" "Service ignoring SIGTERM is killed via coalition after stop_timeout"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 coalition_kill_on_timeout_body() {
 	prepare_paths
@@ -571,7 +571,7 @@ atf_test_case on_demand_crash_relaunch cleanup
 on_demand_crash_relaunch_head() {
 	atf_set "descr" "On-demand service that crashes is relaunched on next lookup"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 on_demand_crash_relaunch_body() {
 	prepare_paths
@@ -637,7 +637,7 @@ multi_binary_bundle_activation_head() {
 	atf_set "descr" \
 	    "One bundle parses two manifests, starts its eager binary, and activates its named binary on lookup"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 multi_binary_bundle_activation_body() {
 	local bundle endpoint
@@ -701,7 +701,7 @@ component_factory_names_are_internal_head() {
 	atf_set "descr" \
 	    "Filesystem, network, and crypto factories boot eagerly but reject ordinary named lookup"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 component_factory_names_are_internal_body() {
 	local endpoint kind
@@ -771,7 +771,7 @@ atf_test_case on_demand_concurrent_lookup cleanup
 on_demand_concurrent_lookup_head() {
 	atf_set "descr" "Multiple concurrent lookups for same on-demand service produce one launch"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 on_demand_concurrent_lookup_body() {
 	prepare_paths
@@ -813,7 +813,7 @@ multiple_provides_secondary_activation_head() {
 	atf_set "descr" \
 	    "Concurrent lookups of two provided names launch one process and route each endpoint"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 multiple_provides_secondary_activation_body() {
 	local bundle first second p1 p2
@@ -870,7 +870,7 @@ multiple_provides_failure_isolated_head() {
 	atf_set "descr" \
 	    "a provider cannot become ready until every declared name has a listener"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 multiple_provides_failure_isolated_body() {
 	local bundle first second
@@ -916,7 +916,7 @@ requester_crash_cancels_pending_lookup_head() {
 	atf_set "descr" \
 	    "a crashed requester loses its pending token and its restarted incarnation receives only its own reply"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 requester_crash_cancels_pending_lookup_body() {
 	local client_bundle first_pid i provider_bundle service_name
@@ -986,7 +986,7 @@ atf_test_case reload_noop cleanup
 reload_noop_head() {
 	atf_set "descr" "Reload with no bundle changes reports zero deltas and leaves services running"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 reload_noop_body() {
 	local bundle
@@ -1019,7 +1019,7 @@ atf_test_case reload_attribution cleanup
 reload_attribution_head() {
 	atf_set "descr" "A service launched by reload is attributed by=reload in status"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 reload_attribution_body() {
 	local bundle

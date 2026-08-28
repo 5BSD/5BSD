@@ -23,8 +23,8 @@ SUBDIR=	blocklist \
 	clibs \
 	cron \
 	ctl \
-	oracled \
-	oraclectl \
+	authorityd \
+	authorityctl \
 	oes \
 	serviced \
 	servicectl \
@@ -58,8 +58,8 @@ SUBDIR=	blocklist \
 	liblogcmp \
 	libnetworkcmp \
 	libnotify \
-	liboraclectl \
-	liboraclert \
+	libauthorityctl \
+	libauthorityrt \
 	libservice \
 	libshmring \
 	libtracecmp \
@@ -184,7 +184,7 @@ SUBDIR.${MK_TESTS}+=		bluetooth-tests
 .if ${MK_BHYVE} != "no"
 SUBDIR.${MK_TESTS}+=		waspnest-tests
 .endif
-SUBDIR.${MK_TESTS}+=		oracled-tests oraclectl-tests
+SUBDIR.${MK_TESTS}+=		authorityd-tests authorityctl-tests
 SUBDIR.${MK_TESTS}+=		serviced-tests servicectl-tests
 SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
 SUBDIR.${MK_TESTS}+=		libauditcmp-tests auditbrokerd-tests
@@ -193,7 +193,7 @@ SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
 SUBDIR.${MK_TESTS}+=		libfilesystemcmp-tests libnetworkcmp-tests
 SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
-SUBDIR.${MK_TESTS}+=		liboraclectl-tests liboraclert-tests libservice-tests
+SUBDIR.${MK_TESTS}+=		libauthorityctl-tests libauthorityrt-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
 SUBDIR.${MK_TESTS}+=		mac-abac-tests oes-tests
 SUBDIR.${MK_TESTS}+=		localfilesystem-tests localnetwork-tests

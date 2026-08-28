@@ -52,7 +52,7 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "oracled_ctl.h"
+#include "authorityd_ctl.h"
 
 #ifdef DEBUG
 #undef _PATH_NOLOGIN
@@ -90,18 +90,18 @@ static char mbuf[BUFSIZ];
 static const char *nosync, *whom;
 
 static void badtime(void);
-static int oracle_lifecycle(uint32_t op);
+static int authority_lifecycle(uint32_t op);
 static void die_you_gravy_sucking_pig_dog(void);
 
 /*
- * Ask oracle-init to perform a lifecycle transition over its control
+ * Ask authority-init to perform a lifecycle transition over its control
  * socket.  Returns 0 if accepted, an errno on a daemon-reported refusal,
  * or -1 (errno set) when the socket is absent/unusable so the caller
- * falls back to the signal ABI.  Inlined rather than using liboraclectl:
+ * falls back to the signal ABI.  Inlined rather than using libauthorityctl:
  * shutdown(8) is a /sbin tool and must not depend on /usr.
  */
 static int
-oracle_lifecycle(uint32_t op)
+authority_lifecycle(uint32_t op)
 {
 	struct sockaddr_un un;
 	struct ctl_request req;
@@ -115,7 +115,7 @@ oracle_lifecycle(uint32_t op)
 		return (-1);
 	memset(&un, 0, sizeof(un));
 	un.sun_family = AF_LOCAL;
-	strlcpy(un.sun_path, ORACLED_CTL_SOCK, sizeof(un.sun_path));
+	strlcpy(un.sun_path, AUTHORITYD_CTL_SOCK, sizeof(un.sun_path));
 	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
 		saved = errno;
 		close(fd);
@@ -465,14 +465,14 @@ die_you_gravy_sucking_pig_dog(void)
 			      docycle ? CTL_OP_POWERCYCLE :
 			      CTL_OP_SINGLE;
 		/*
-		 * Prefer oracle-init's authenticated control socket; fall
+		 * Prefer authority-init's authenticated control socket; fall
 		 * back to the signal ABI on any failure — the socket being
-		 * absent (stock init) or a refusal from a non-PID-1 oracled
+		 * absent (stock init) or a refusal from a non-PID-1 authorityd
 		 * that is not the real init.  Only a clean accept skips the
 		 * signal.
 		 */
-		if (oracle_lifecycle(op) == 0) {
-			BOOTTRACE("lifecycle op %u to oracle-init...", op);
+		if (authority_lifecycle(op) == 0) {
+			BOOTTRACE("lifecycle op %u to authority-init...", op);
 		} else {
 			BOOTTRACE("signal to init(8)...");
 			if (kill(1, doreboot ? SIGINT :		/* reboot */
@@ -531,10 +531,10 @@ die_you_gravy_sucking_pig_dog(void)
 		/*
 		 * Reached for oflag single-user, or as a last resort if the
 		 * fastboot/fasthalt exec above failed.  Prefer the socket
-		 * (oracle-init is signal-shielded); fall back to SIGTERM.
+		 * (authority-init is signal-shielded); fall back to SIGTERM.
 		 */
 		BOOTTRACE("single-user to init(8)...");
-		if (oracle_lifecycle(CTL_OP_SINGLE) != 0)
+		if (authority_lifecycle(CTL_OP_SINGLE) != 0)
 			(void)kill(1, SIGTERM);		/* to single-user */
 	}
 #endif

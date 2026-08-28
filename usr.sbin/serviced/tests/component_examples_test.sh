@@ -167,10 +167,10 @@ pkgbase_default_identity_body()
 	atf_check -s exit:0 -o match:'activation.*ipc.*org.5bsd.blued' \
 	    grep 'activation.*ipc.*org.5bsd.blued' \
 	    "${src}/usr.sbin/bluetooth/blued/blued.ucl"
-	atf_check -s exit:0 -o match:'etc/rc.d/oracled' \
-	    grep 'etc/rc.d/oracled' "${src}/packages/rc/rc.ucl"
-	atf_check -s exit:0 -o match:'OLD_FILES.*etc/rc.d/oracled' \
-	    grep -F 'OLD_FILES+=etc/rc.d/oracled' "${src}/ObsoleteFiles.inc"
+	atf_check -s exit:0 -o match:'etc/rc.d/authorityd' \
+	    grep 'etc/rc.d/authorityd' "${src}/packages/rc/rc.ucl"
+	atf_check -s exit:0 -o match:'OLD_FILES.*etc/rc.d/authorityd' \
+	    grep -F 'OLD_FILES+=etc/rc.d/authorityd' "${src}/ObsoleteFiles.inc"
 	for bundle in Reboot Kldmgr; do
 		atf_check -s exit:0 \
 		    -o match:"Capabilities/System/${bundle}.cap" \
@@ -215,13 +215,13 @@ pkgbase_component_metadata_body()
 		test -s "${file}" ||
 		    atf_fail "missing pkgbase metadata for ${package}"
 	done
-	test -s "${src}/packages/liboraclectl-tests/Makefile" ||
-	    atf_fail "missing liboraclectl-tests pkgbase metadata"
-	atf_check -s exit:0 -o match:'WORLDPACKAGE=.*liboraclectl-tests' \
+	test -s "${src}/packages/libauthorityctl-tests/Makefile" ||
+	    atf_fail "missing libauthorityctl-tests pkgbase metadata"
+	atf_check -s exit:0 -o match:'WORLDPACKAGE=.*libauthorityctl-tests' \
 	    grep '^WORLDPACKAGE' \
-	    "${src}/packages/liboraclectl-tests/Makefile"
+	    "${src}/packages/libauthorityctl-tests/Makefile"
 	atf_check -s exit:0 -o match:'PKG_SETS=.*tests' \
-	    grep '^PKG_SETS' "${src}/packages/liboraclectl-tests/Makefile"
+	    grep '^PKG_SETS' "${src}/packages/libauthorityctl-tests/Makefile"
 	for package in auditbrokerd-tests localcrypto-tests \
 	    localfilesystem-tests logd-tests \
 	    traced-tests \
@@ -241,7 +241,7 @@ pkgbase_component_metadata_body()
 
 	# Every packaged Kyua suite needs an install root in BSD.tests.dist.
 	mtree="${src}/etc/mtree/BSD.tests.dist"
-	for testdir in libauditcmp liboraclectl liboraclert \
+	for testdir in libauditcmp libauthorityctl libauthorityrt \
 	    auditbrokerd filesystemcmpctl logctl \
 	    networkcmpctl notifyctl tracectl
 	do
@@ -323,13 +323,13 @@ pkgbase_component_metadata_body()
 	atf_check -s exit:0 -o match:'_DP_service=.*channel' \
 	    grep '^_DP_service' "${src}/share/mk/src.libnames.mk"
 	atf_check -s exit:1 -o empty -e empty grep -E \
-	    'LIBADD=.*oraclectl' "${src}/usr.sbin/servicectl/Makefile"
+	    'LIBADD=.*authorityctl' "${src}/usr.sbin/servicectl/Makefile"
 	atf_check -s exit:1 -o empty -e empty grep -E \
-	    'PKG_DEPS\.servicectl.*liboraclectl' \
+	    'PKG_DEPS\.servicectl.*libauthorityctl' \
 	    "${src}/packages/servicectl/Makefile"
 	atf_check -s exit:1 -o empty -e empty grep -E \
-	    'oraclectl_(readn|writen)' \
-	    "${src}/lib/liboraclectl/oraclectl.h"
+	    'authorityctl_(readn|writen)' \
+	    "${src}/lib/libauthorityctl/authorityctl.h"
 	atf_check -s exit:0 test ! -e "${src}/lib/liblwipcmp/Makefile"
 	atf_check -s exit:0 -o match:'lib/libcapability lib/libchannel' \
 	    grep 'lib/libcapability lib/libchannel' \
@@ -577,22 +577,22 @@ operational_name_contract_body()
 {
 	require_srctree
 	src="@SRCTOP@"
-	rcscript="${src}/libexec/rc/rc.d/oracled"
+	rcscript="${src}/libexec/rc/rc.d/authorityd"
 	rcconf="${src}/libexec/rc/rc.conf"
 
-	# Oracle is PID 1.  An rc-launched second copy would contend for the
+	# Authority is PID 1.  An rc-launched second copy would contend for the
 	# capability device, control socket, and serviced child.
 	atf_check -s exit:0 test ! -e "${rcscript}"
 	atf_check -s exit:1 -o empty -e empty \
-	    grep -E '^(oracled_enable|oracled_flags)=' "${rcconf}"
-	atf_check -s exit:0 -o match:'^ORACLE_INIT=.*oracle-init' \
-	    grep '^ORACLE_INIT=' "${src}/usr.sbin/oracled/Makefile"
-	atf_check -s exit:0 -o match:'^ORACLE_INITDIR=.*/sbin' \
-	    grep '^ORACLE_INITDIR=' "${src}/usr.sbin/oracled/Makefile"
+	    grep -E '^(authorityd_enable|authorityd_flags)=' "${rcconf}"
+	atf_check -s exit:0 -o match:'^AUTHORITY_INIT=.*authority-init' \
+	    grep '^AUTHORITY_INIT=' "${src}/usr.sbin/authorityd/Makefile"
+	atf_check -s exit:0 -o match:'^AUTHORITY_INITDIR=.*/sbin' \
+	    grep '^AUTHORITY_INITDIR=' "${src}/usr.sbin/authorityd/Makefile"
 	atf_check -s exit:1 -o empty -e empty \
 	    grep -E '^(trailbossd_enable|trailbossd_flags|wranglerd_enable|wranglerd_flags)=' "${rcconf}"
 
-	for daemon in oracled serviced localfilesystem localnetwork logd \
+	for daemon in authorityd serviced localfilesystem localnetwork logd \
 	    bsdnotify traced auditbrokerd; do
 		makefile="${src}/usr.sbin/${daemon}/Makefile"
 		atf_check -s exit:0 -o match:"^PROG[[:space:]]*=.*${daemon}$" \
@@ -627,8 +627,8 @@ operational_name_contract_body()
 	atf_check -s exit:1 -o empty -e empty grep -E \
 		'/var/run/(trailbossd|wranglerd)([./"]|$)|/var/db/wranglerd([/"]|$)|/etc/(trailbossd|logcmp|notify|tracecmp|auditcmp)([.]|/|"|$)' \
 	    "${rcconf}" \
-	    "${src}/usr.sbin/oracled/oracled.conf" \
-	    "${src}/usr.sbin/oracled/oracled.conf.5"
+	    "${src}/usr.sbin/authorityd/authorityd.conf" \
+	    "${src}/usr.sbin/authorityd/authorityd.conf.5"
 	atf_check -s exit:1 -o empty -e empty grep -E \
 		'^\\.Xr (filesystemcmp|networkcmp|logcmp|notify|tracecmp|auditcmp|trailbossd|wranglerd) 8' \
 	    "${src}/lib/libfilesystemcmp/libfilesystemcmp.3" \

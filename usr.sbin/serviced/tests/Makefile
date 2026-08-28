@@ -3,7 +3,7 @@
 PACKAGE=	serviced-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/serviced
 
-.PATH: ${SRCTOP}/usr.sbin/oracled/tests
+.PATH: ${SRCTOP}/usr.sbin/authorityd/tests
 .PATH: ${SRCTOP}/lib/libservice/tests
 .PATH: ${SRCTOP}/usr.sbin/serviced
 
@@ -22,8 +22,8 @@ ATF_TESTS_SH_SED_component_integration_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 ${PACKAGE}FILES+=	test_helpers.sh
 ${PACKAGE}FILES+=	capd_test_harness.sh
 ${PACKAGE}FILES+=	CapabilityKyuafile
-${PACKAGE}FILES+=	run_oracled_serviced_capability_tests.sh
-${PACKAGE}FILESMODE_run_oracled_serviced_capability_tests.sh=	0555
+${PACKAGE}FILES+=	run_authorityd_serviced_capability_tests.sh
+${PACKAGE}FILESMODE_run_authorityd_serviced_capability_tests.sh=	0555
 
 # ATF shell programs execute from the object directory before installation.
 # Keep their shared harnesses beside them so raw object-tree test runs are as
@@ -33,7 +33,7 @@ ${.OBJDIR}/test_helpers.sh: ${.CURDIR}/test_helpers.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
 ${.OBJDIR}/capd_test_harness.sh: \
-    ${SRCTOP}/usr.sbin/oracled/tests/capd_test_harness.sh
+    ${SRCTOP}/usr.sbin/authorityd/tests/capd_test_harness.sh
 	${CP} ${.ALLSRC} ${.TARGET}
 
 all: ${.OBJDIR}/test_helpers.sh ${.OBJDIR}/capd_test_harness.sh
@@ -61,9 +61,9 @@ BINDIR=		${TESTSDIR}
 # shared by more than one test program is built once with the common CFLAGS —
 # the per-program CFLAGS.<prog> do not reach a shared object — so the include
 # paths rc_ingest.c needs (serviced_manifest.h in libcapbundle, which pulls in
-# oraclert.h from liboraclert) must be global.
+# authorityrt.h from libauthorityrt) must be global.
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
 
 # rc_ingest_test compiles the parser directly (pure logic, no daemon deps).
 # rc_ingest.c comes from the serviced source dir via .PATH above; referencing
@@ -82,18 +82,18 @@ CFLAGS.rc_ingest_test+=	-I${SRCTOP}/lib/libcapbundle
 SRCS.rc_adopt_test=	rc_adopt_test.c rc_adopt.c rc_ingest.c
 CFLAGS.rc_adopt_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.rc_adopt_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.rc_adopt_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.rc_adopt_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.rc_adopt_test+=	-I${SRCTOP}/sys
 CFLAGS.rc_adopt_test+=	-ffunction-sections -fdata-sections
 LDFLAGS.rc_adopt_test+=	-Wl,--gc-sections
 
-CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 
 LIBADD.capd_service_fixture+=	capability channel service pthread
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapability
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libservice
-CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/sys
 
 
@@ -108,7 +108,7 @@ CFLAGS.component_fixture+=	-I${SRCTOP}/sys
 
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libchannel
-CFLAGS.activation_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.activation_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libcapability
 CFLAGS.activation_test+=	-I${SRCTOP}/sys
@@ -117,7 +117,7 @@ LDFLAGS.activation_test+=	-Wl,--gc-sections
 LIBADD.activation_test+=	capbundle
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libchannel
-CFLAGS.domain_test+=		-I${SRCTOP}/lib/liboraclert
+CFLAGS.domain_test+=		-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.domain_test+=		-I${SRCTOP}/lib/libservice
 CFLAGS.domain_test+=		-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.domain_test+=		-I${SRCTOP}/sys
@@ -128,7 +128,7 @@ LDFLAGS.domain_test+=		-Wl,--gc-sections
 LIBADD.domain_test+=		channel service pthread
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libchannel
-CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/liboraclert
+CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libservice
 CFLAGS.on_demand_test+=		-I${SRCTOP}/sys
 CFLAGS.on_demand_test+=		-ffunction-sections -fdata-sections
@@ -139,13 +139,13 @@ LIBADD.on_demand_test+=		channel pthread
 CFLAGS.fd_budget_test+=	-I${SRCTOP}/sys
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.launch_limits_test+=	-I${SRCTOP}/sys
 SRCS.manifest_compare_test=	manifest_compare_test.c manifest_compare.c
 CFLAGS.manifest_compare_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.manifest_compare_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.manifest_compare_test+=	-I${SRCTOP}/sys
 # management_enforce_test compiles management.c directly (pure class logic, no
 # daemon event loop).  management.c comes from the serviced source dir via the
@@ -153,14 +153,14 @@ CFLAGS.manifest_compare_test+=	-I${SRCTOP}/sys
 SRCS.management_enforce_test=	management_enforce_test.c management.c
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/sys
 SRCS.bundle_selection_test=	bundle_selection_test.c bundle_selection.c
 CFLAGS.bundle_selection_test+=	-I${SRCTOP}/usr.sbin/serviced
 SRCS.storage_lifecycle_test=	storage_lifecycle_test.c storage_lifecycle.c
 CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/sys
 
 .include <bsd.test.mk>

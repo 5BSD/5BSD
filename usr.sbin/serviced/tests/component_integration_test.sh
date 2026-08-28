@@ -97,7 +97,7 @@ user = "root";' "${binary}")
 local_component_test_head()
 {
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 

@@ -2,6 +2,6 @@ comment = "Tests for the 5BSD capability-aware service manager"
 
 desc = <<EOD
 ATF/Kyua unit and integration tests for serviced, including the focused
-Oracle/serviced capability suite, its helper scripts, and suite metadata.
+Authority/serviced capability suite, its helper scripts, and suite metadata.
 They are installed under /usr/tests separately from the daemon.
 EOD

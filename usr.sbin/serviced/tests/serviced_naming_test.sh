@@ -28,7 +28,7 @@ wait_naming_result()
 
 finish_naming_stack()
 {
-	stop_stack || atf_fail "Oracle stack did not stop cleanly"
+	stop_stack || atf_fail "Authority stack did not stop cleanly"
 }
 
 atf_test_case service_ready_protocol cleanup
@@ -36,7 +36,7 @@ service_ready_protocol_head()
 {
 	atf_set "descr" "service READY transitions its serviced state to running"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 service_ready_protocol_body()
 {
@@ -62,7 +62,7 @@ naming_register_and_lookup_head()
 {
 	atf_set "descr" "declared provider and client labels complete a brokered exchange"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 naming_register_and_lookup_body()
 {
@@ -99,7 +99,7 @@ naming_lookup_nonexistent_head()
 {
 	atf_set "descr" "lookup of an unregistered name returns ENOENT"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 naming_lookup_nonexistent_body()
 {
@@ -123,7 +123,7 @@ naming_auto_unregister_on_exit_head()
 {
 	atf_set "descr" "service exit removes every name owned by that service"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 naming_auto_unregister_on_exit_body()
 {
@@ -166,7 +166,7 @@ naming_unauthorized_name_rejected_head()
 {
 	atf_set "descr" "service cannot register a name absent from its manifest"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 naming_unauthorized_name_rejected_body()
 {
@@ -189,7 +189,7 @@ naming_self_lookup_eloop_head()
 {
 	atf_set "descr" "a service looking up its own registered name receives ELOOP"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 naming_self_lookup_eloop_body()
 {

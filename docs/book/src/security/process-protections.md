@@ -45,7 +45,7 @@ confinement operations (`CP_OP_CAPMODE` enters Capsicum capability mode,
 Shields interact with normal supervision: 5BSD's own `serviced` applies
 its shield last, after readiness signalling, and omits `CP_SF_VISIBLE`
 (which blocks syslog delivery) and `CP_SF_SIGNAL` (which blocks `pdkill`
-from its supervisor). System daemons such as `oracled` run shielded, with
+from its supervisor). System daemons such as `authorityd` run shielded, with
 init-integrity tests covering the configuration.
 
 ## vnode_claim — per-descriptor identity binding
@@ -114,7 +114,7 @@ Beyond stock Capsicum, 5BSD adds descriptor-lifecycle limits in
 - `cap_xfer_fcntls_limit(fd, rights)` — bound the fcntl rights an fd
   carries after transfer.
 
-Supervision code uses these to pin inherited descriptors: `oracled` locks
+Supervision code uses these to pin inherited descriptors: `authorityd` locks
 its channel end with `cap_xfer_limit(fd, CAP_XFER_NONE)` so the fd cannot
 leak to a third process.
 

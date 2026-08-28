@@ -866,7 +866,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		while ((v = ucl_object_iterate(arr, &it, true)) != NULL) {
 			const char *key = ucl_object_key(v), *p;
 			if (++n > SERVICED_MAX_ENVIRONMENT || key == NULL ||
-			    key[0] == '\0' || strncmp(key, "ORACLED_", 8) == 0 ||
+			    key[0] == '\0' || strncmp(key, "AUTHORITYD_", 8) == 0 ||
 			    strncmp(key, "SERVICED_", 9) == 0 ||
 			    strcmp(key, "SERVICE_BOOTSTRAP_FD") == 0 ||
 			    strcmp(key, "CAPABILITY_UNIT_DIR") == 0 ||

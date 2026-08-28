@@ -51,7 +51,7 @@ open_listener(void)
 		(void)close(fd);
 		return (-1);
 	}
-	/* Root-only: peers are oracled/serviced/tzfsctl, or passed channels. */
+	/* Root-only: peers are authorityd/serviced/tzfsctl, or passed channels. */
 	(void)chmod(TZFSD_SOCK_PATH, 0600);
 	if (listen(fd, 64) == -1) {
 		syslog(LOG_ERR, "listen: %m");
@@ -91,7 +91,7 @@ usage(void)
 
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created, so a
- * handle can never occupy a stdio slot.  tzfsd is launched by oracled without
+ * handle can never occupy a stdio slot.  tzfsd is launched by authorityd without
  * a controlling terminal, and daemon(3) later redirects 0/1/2 to /dev/null: a
  * capability handle that landed on fd 0/1/2 would be silently replaced by
  * /dev/null, and every subsequent ZFD_OPENAT/ZFD_* on it would fail ENOTTY —

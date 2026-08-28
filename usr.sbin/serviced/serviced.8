@@ -13,12 +13,12 @@
 .Nm
 is the service manager for 5BSD.
 It is started by
-.Xr oracled 8
+.Xr authorityd 8
 as a single child process via
 .Xr pdfork 2
 and inherits a mac_capability channel for requesting activation tokens,
 channels, coalitions, named capability-service descriptors, and pre-exec
-kernel-module prerequisites from the oracle.
+kernel-module prerequisites from the authority.
 .Pp
 .Nm
 scans capability bundles from
@@ -78,7 +78,7 @@ executes the following phases during startup:
 .Bl -enum
 .It
 Inherit the channel fd from the
-.Ev ORACLED_CHANNEL_FD
+.Ev AUTHORITYD_CHANNEL_FD
 environment variable and optional delegated service instance fds from
 .Ev SERVICED_CHANNEL_SVC_FD ,
 .Ev SERVICED_COALITION_SVC_FD ,
@@ -87,7 +87,7 @@ and
 .It
 Create a
 .Xr kqueue 2
-and register the oracle channel fd for EOF detection (oracle death).
+and register the authority channel fd for EOF detection (authority death).
 .It
 Create a control socket at
 .Pa /var/run/serviced.sock .
@@ -108,7 +108,7 @@ wait, scheduler manipulation, core dumps, and ktrace.
 The shield fd is retained for the lifetime of
 .Nm ;
 failure to activate it is fatal.
-.Xr oracled 8
+.Xr authorityd 8
 retains explicit signal authority through the process descriptor returned by
 .Xr pdfork 2 ,
 so
@@ -116,9 +116,9 @@ so
 does not require a capprotect authorization token.
 .It
 Send
-.Dv ORACLE_OP_READY
+.Dv AUTHORITY_OP_READY
 to
-.Xr oracled 8
+.Xr authorityd 8
 on the channel only after descriptor confinement and protection are active.
 .It
 Scan application bundles, topologically sort services
@@ -132,11 +132,11 @@ and restart timers.
 .Sh INHERITED FILE DESCRIPTORS
 .Nm
 inherits the following file descriptors from
-.Xr oracled 8 :
+.Xr authorityd 8 :
 .Bl -tag -width "capprotect (fd 6)"
 .It channel (fd 3)
 Mac_capability channel back to
-.Xr oracled 8 .
+.Xr authorityd 8 .
 Used to request activation tokens, channels, coalitions, named
 capability-service descriptors, and pre-exec kernel-module prerequisites.
 Always required.
@@ -146,7 +146,7 @@ Allows
 .Nm
 to create channels for its children directly, without
 round-tripping through
-.Xr oracled 8 .
+.Xr authorityd 8 .
 Optional.
 .It coalition_svc (fd 5)
 Delegated mac_capability coalition service instance.
@@ -168,9 +168,9 @@ Descriptors intentionally delegated to a service cross only that service's
 fork/exec boundary and are non-transferable.
 .Sh ENVIRONMENT
 .Bl -tag -width "SERVICED_COALITION_SVC_FD"
-.It Ev ORACLED_CHANNEL_FD
+.It Ev AUTHORITYD_CHANNEL_FD
 File descriptor number for the mac_capability channel back to
-.Xr oracled 8 .
+.Xr authorityd 8 .
 Always 3.
 Required.
 .It Ev SERVICED_CHANNEL_SVC_FD
@@ -309,7 +309,7 @@ They may override the default
 and
 .Ev HOME
 values, but not reserved
-.Ev ORACLED_*
+.Ev AUTHORITYD_*
 or
 .Ev SERVICED_*
 namespaces,
@@ -328,7 +328,7 @@ All file descriptors above the bootstrap authority range are closed via
 .Ss Dependency Sorting
 Before launch, manifests are topologically sorted using Kahn's
 algorithm so that providers start before their dependents.
-.Dq ORACLED
+.Dq AUTHORITYD
 is an implicit provider that is always satisfied.
 .Pp
 Duplicate runtime identities or
@@ -412,10 +412,10 @@ control socket command will re-evaluate the manifest.
 .Ss Dynamic Claims
 When
 .Nm
-launches a service, it mints capability tokens via the oracle
+launches a service, it mints capability tokens via the authority
 channel.
-If the requested resource is not already claimed by the oracle,
-the oracle auto-claims it dynamically with a global reference count.
+If the requested resource is not already claimed by the authority,
+the authority auto-claims it dynamically with a global reference count.
 .Pp
 When a service exits,
 .Nm
@@ -423,17 +423,17 @@ releases all capabilities from the service's manifest via the
 channel.
 Release messages are sent for every path, network endpoint, jail,
 and system gate in the manifest.
-The oracle decrements refcounts for dynamic claims; claims whose
+The authority decrements refcounts for dynamic claims; claims whose
 refcount reaches zero are released from the kernel.
 Policy claims
-.Pq from Xr oracled.conf 5
+.Pq from Xr authorityd.conf 5
 return
 .Er EPERM
 on release, which is silently ignored.
 .Pp
 If
 .Nm
-itself exits or crashes, the oracle sweeps all dynamic claims,
+itself exits or crashes, the authority sweeps all dynamic claims,
 releasing them from the kernel.
 Policy claims survive across
 .Nm
@@ -637,7 +637,7 @@ payloads are rejected.
 .Sh SIGNALS
 PID-based signals from foreign program nonces are denied by capprotect.
 The signals below remain available to
-.Xr oracled 8
+.Xr authorityd 8
 through its exclusive process descriptor and
 .Xr pdkill 2 .
 .Bl -tag -width "SIGTERM"
@@ -820,11 +820,11 @@ is non-zero for a system bundle.
 A bundle directory scan completed.
 .El
 .Ss Errors
-.Bl -tag -width "oracle-disconnected()" -compact
+.Bl -tag -width "authority-disconnected()" -compact
 .It Li error(subsys, msg)
 Error occurred in subsystem.
-.It Li oracle-disconnected()
-Oracle channel closed unexpectedly.
+.It Li authority-disconnected()
+Authority channel closed unexpectedly.
 .El
 .Sh FILES
 .Bl -tag -width "/var/run/serviced.sock"
@@ -844,7 +844,7 @@ rejected before parsing.
 .Pp
 .Nm
 exits with an error if the
-.Ev ORACLED_CHANNEL_FD
+.Ev AUTHORITYD_CHANNEL_FD
 environment variable is not set or the channel fd is invalid.
 .Sh EXAMPLES
 Minimal bundle and unit manifests:
@@ -873,9 +873,9 @@ for complete capability examples.
 .Xr pdfork 2 ,
 .Xr libservice 3 ,
 .Xr mac_capability 4 ,
-.Xr oracled 8 ,
+.Xr authorityd 8 ,
 .Xr servicectl 8
 .Sh HISTORY
 .Nm
-first appeared in 5BSD as the service manager for the Oracle
+first appeared in 5BSD as the service manager for the Authority
 capability world.

@@ -9,7 +9,7 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD=		capbundle ucl elf
 

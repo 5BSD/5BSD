@@ -18,9 +18,9 @@ CONFSDIR=	/etc/capability
 DIRS+=		TZFSSHARE
 TZFSSHARE=	/usr/share/tzfs
 
-# tzfsd_proto.h (liboraclert), tzfs_* verbs (libtrustedzfs), sys/zfshandle.h,
+# tzfsd_proto.h (libauthorityrt), tzfs_* verbs (libtrustedzfs), sys/zfshandle.h,
 # and the UCL config parser.
-CFLAGS+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include

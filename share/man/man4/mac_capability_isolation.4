@@ -436,7 +436,7 @@ struct fi_jail_request jr = {
     .jid = 5,
     .actions = FI_JAIL_ALL,
 };
-strlcpy(jr.name, "oracled.net", sizeof(jr.name));
+strlcpy(jr.name, "authorityd.net", sizeof(jr.name));
 struct mac_capability_call_args ca = {
     .req = &jr, .req_len = sizeof(jr)
 };
@@ -511,7 +511,7 @@ struct fi_vsock_request {
 .Xr mac_capability 4 ,
 .Xr mac_capability_capprotect 4 ,
 .Xr mac_capability_system 4 ,
-.Xr oracled 8
+.Xr authorityd 8
 .Sh HISTORY
 The
 .Nm

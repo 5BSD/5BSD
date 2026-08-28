@@ -56,6 +56,6 @@ SUBDIR.${MK_TESTS}+=	tests
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/lib/libcapability
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
-CFLAGS+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
 
 .include <bsd.lib.mk>

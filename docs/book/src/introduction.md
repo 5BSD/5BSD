@@ -44,8 +44,8 @@ Beyond the security core, 5BSD ships:
   ([Bluetooth](bluetooth/overview.md)).
 - **TrustedZFS** — a capability-fd API over ZFS with a storage broker daemon
   ([Storage](storage/trustedzfs.md)).
-- **Oracle / serviced** — a capability-brokered init and service-management
-  stack that coexists with `rc(8)` ([System Services](system/oracle-init.md)).
+- **Authority / serviced** — a capability-brokered init and service-management
+  stack that coexists with `rc(8)` ([System Services](system/authority-init.md)).
 - **ObservableBSD** — OpenTelemetry export, instruments, and hardware
   telemetry in base ([Observability](observability/observablebsd.md)).
 
@@ -64,7 +64,7 @@ That said, **5BSD is a separate project, not a FreeBSD distribution**.
 system over time, and **FreeBSD 16 is the last version 5BSD adopts
 wholesale** — future FreeBSD releases will be sources of selectively
 merged improvements, not a base to track. The divergence is already
-underway: init duties have moved to `oracled`/`serviced`, and bhyve is
+underway: init duties have moved to `authorityd`/`serviced`, and bhyve is
 becoming WASPNest. Wherever 5BSD has
 diverged from FreeBSD — whether by adding, changing, or removing a
 subsystem — **the Epic is the source of truth**, and the FreeBSD

@@ -10,10 +10,10 @@
  * exec()s the program from the manifest.  Registers the process
  * descriptor and channel on the kqueue for supervision.
  *
- * Unlike oracled, serviced does not hold /dev/mac_capability directly.
+ * Unlike authorityd, serviced does not hold /dev/mac_capability directly.
  * Channel and coalition creation use the delegated mac_capability fd
- * (mac_cap_direct.c).  Token minting goes through the oracle
- * channel (oracle_client.c).
+ * (mac_cap_direct.c).  Token minting goes through the authority
+ * channel (authority_client.c).
  */
 
 #include <sys/types.h>
@@ -968,7 +968,7 @@ command_resolve_creds(const struct svc_manifest *m, uid_t *uidp, gid_t *gidp,
  * supervises only the start command.  Readiness is delivered later, on
  * NOTE_EXIT, by the supervisor (RC exit 0 -> RUNNING/"started";
  * ONESHOT exit 0 -> DONE).  The child gets a clean fd table (closefrom)
- * so it never inherits serviced's oracle channel, kqueue, or sockets.
+ * so it never inherits serviced's authority channel, kqueue, or sockets.
  */
 static int
 svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
@@ -1059,7 +1059,7 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		}
 		/*
 		 * Scrub the fd table so the child never inherits serviced's
-		 * oracle channel, kqueue, or sockets — but spare the SYSTEM
+		 * authority channel, kqueue, or sockets — but spare the SYSTEM
 		 * ambient lookup channel (§21) when one is installed, so rc and
 		 * everything it launches keeps service discovery.  The channel
 		 * was made CAP_CLOFORK_UNLOCKED at install, so it survived the
@@ -1209,10 +1209,10 @@ svc_exec_oneshot(struct svc_runtime *svc, int kq)
  * fork consumes them (or an abort closes them).
  */
 struct svc_launch {
-	struct svc_manifest minted;	/* released to oracle on abort */
+	struct svc_manifest minted;	/* released to authority on abort */
 	struct timespec	exec_start;
 
-	int		oracle_end;
+	int		authority_end;
 	int		child_end;
 	int		coalition_fd;
 	int		capprotect_fd;
@@ -1267,7 +1267,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	struct group *gr;
 	struct timespec exec_start;
 	char homedir[PATH_MAX];
-	int oracle_end, child_end, coalition_fd, capprotect_fd;
+	int authority_end, child_end, coalition_fd, capprotect_fd;
 	int token_fds[SVC_MAX_TOKENS];
 	int service_fds[SERVICE_BOOTSTRAP_CAPABILITY_MAX];
 	char service_names[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
@@ -1424,33 +1424,33 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		}
 	}
 
-	/* Create channel via oracle. */
+	/* Create channel via authority. */
 	if (mac_cap_create_channel(
-	    &oracle_end, &child_end) == -1) {
+	    &authority_end, &child_end) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: failed to create channel",
 		    m->label);
 		SERVICED_PROBE_CAP_CHANNEL(m->label, -1);
 		return (-1);
 	}
-	if (cap_xfer_limit(oracle_end, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(oracle_end, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(oracle_end, CAP_CLOEXEC_LOCKED) == -1 ||
+	if (cap_xfer_limit(authority_end, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(authority_end, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(authority_end, CAP_CLOEXEC_LOCKED) == -1 ||
 	    cap_xfer_limit(child_end, CAP_XFER_NONE) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: channel confinement: %m",
 		    m->label);
-		close(oracle_end);
+		close(authority_end);
 		close(child_end);
 		return (-1);
 	}
 	SERVICED_PROBE_CAP_CHANNEL(m->label, 0);
 
-	/* Create coalition via oracle. */
+	/* Create coalition via authority. */
 	coalition_fd = mac_cap_create_coalition();
 	if (coalition_fd == -1) {
 		syslog(LOG_ERR, "svc_exec %s: failed to create coalition",
 		    m->label);
 		SERVICED_PROBE_CAP_COALITION(m->label, -1);
-		close(oracle_end);
+		close(authority_end);
 		close(child_end);
 		return (-1);
 	}
@@ -1459,7 +1459,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	    cap_cloexec_limit(coalition_fd, CAP_CLOEXEC_LOCKED) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: coalition confinement: %m",
 		    m->label);
-		close(oracle_end);
+		close(authority_end);
 		close(child_end);
 		close(coalition_fd);
 		return (-1);
@@ -1475,7 +1475,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	    cap_xfer_limit(capprotect_fd, CAP_XFER_NONE) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: capprotect confinement: %m",
 		    m->label);
-		close(oracle_end);
+		close(authority_end);
 		close(child_end);
 		close(coalition_fd);
 		close(capprotect_fd);
@@ -1483,7 +1483,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 
 	/*
-	 * Mint tokens via oracle.  The oracle auto-claims resources
+	 * Mint tokens via authority.  The authority auto-claims resources
 	 * not already in its manifest — one trip per token.
 	 *
 	 * Each mint is a synchronous RPC with SERVICED_RPC_TIMEOUT_MS
@@ -1492,7 +1492,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * event loop for an unbounded duration.
 	 *
 	 * The ceiling must clear the one-time cost of a cold storage
-	 * provider: the first ORACLE_OP_MINT_STORAGE makes oracled
+	 * provider: the first AUTHORITY_OP_MINT_STORAGE makes authorityd
 	 * posix_spawn(2) tzfsd, which imports the pool and creates the
 	 * dataset before replying.  On emulated hardware that cold start
 	 * alone can exceed two seconds; a tighter ceiling aborted every
@@ -1532,7 +1532,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 } while (0)
 
 	for (i = 0; i < m->ncap_paths; i++) {
-		int tfd = oracle_mint_path(sd.oracle_channel_fd,
+		int tfd = authority_mint_path(sd.authority_channel_fd,
 		    m->cap_paths[i]);
 
 		if (tfd == -1) {
@@ -1549,7 +1549,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_files; i++) {
-		int tfd = oracle_mint_file(sd.oracle_channel_fd,
+		int tfd = authority_mint_file(sd.authority_channel_fd,
 		    m->cap_files[i].path, m->cap_files[i].actions);
 
 		if (tfd == -1) {
@@ -1566,7 +1566,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_net; i++) {
-		int tfd = oracle_mint_net(sd.oracle_channel_fd, &m->cap_net[i]);
+		int tfd = authority_mint_net(sd.authority_channel_fd, &m->cap_net[i]);
 
 		if (tfd == -1) {
 			syslog(LOG_ERR, "svc_exec %s: failed to mint "
@@ -1581,7 +1581,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_jail; i++) {
-		int tfd = oracle_mint_jail(sd.oracle_channel_fd,
+		int tfd = authority_mint_jail(sd.authority_channel_fd,
 		    &m->cap_jail[i]);
 
 		if (tfd == -1) {
@@ -1597,7 +1597,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_vsock; i++) {
-		int tfd = oracle_mint_vsock(sd.oracle_channel_fd,
+		int tfd = authority_mint_vsock(sd.authority_channel_fd,
 		    &m->cap_vsock[i]);
 		if (tfd == -1) {
 			SERVICED_PROBE_CAP_MINT(m->label, "vsock", -1);
@@ -1610,7 +1610,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_storage; i++) {
-		int tfd = oracle_mint_storage(sd.oracle_channel_fd,
+		int tfd = authority_mint_storage(sd.authority_channel_fd,
 		    &m->cap_storage[i]);
 		if (tfd == -1) {
 			SERVICED_PROBE_CAP_MINT(m->label, "storage", -1);
@@ -1621,7 +1621,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 			int saved = errno;
 
 			close(tfd);
-			(void)oracle_destroy_storage(sd.oracle_channel_fd,
+			(void)authority_destroy_storage(sd.authority_channel_fd,
 			    &m->cap_storage[i]);
 			errno = saved;
 			goto fail_tokens;
@@ -1644,7 +1644,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	if (m->cap_system != 0) {
-		int tfd = oracle_mint_system(sd.oracle_channel_fd,
+		int tfd = authority_mint_system(sd.authority_channel_fd,
 		    m->cap_system);
 
 		if (tfd == -1) {
@@ -1658,7 +1658,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		minted_manifest.cap_system = m->cap_system;
 	}
 	for (i = 0; i < m->ncap_services; i++) {
-		int sfd = oracle_delegate_service(sd.oracle_channel_fd,
+		int sfd = authority_delegate_service(sd.authority_channel_fd,
 		    m->cap_services[i]);
 
 		if (sfd == -1) {
@@ -1748,7 +1748,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 	L->minted = minted_manifest;
 	L->exec_start = exec_start;
-	L->oracle_end = oracle_end;
+	L->authority_end = authority_end;
 	L->child_end = child_end;
 	L->coalition_fd = coalition_fd;
 	L->capprotect_fd = capprotect_fd;
@@ -1802,8 +1802,8 @@ fail_tokens:
 	 */
 	serviced_audit(AUE_SERVICED_CAP_MINT, getuid(), EIO,
 	    "svc=%s capability mint failed after %u tokens", m->label, ntokens);
-	oracle_release_manifest(sd.oracle_channel_fd, &minted_manifest);
-	close(oracle_end);
+	authority_release_manifest(sd.authority_channel_fd, &minted_manifest);
+	close(authority_end);
 	close(child_end);
 	close(coalition_fd);
 	if (capprotect_fd >= 0)
@@ -1948,9 +1948,9 @@ svc_launch_abort(struct svc_runtime *svc, int error, int kq)
 	SERVICED_PROBE_SVC_EXEC_FAIL(svc->manifest.label, error);
 	svc_launch_disarm_timer(svc, kq);
 	svc_launch_drop_session(svc, kq);
-	oracle_release_manifest(sd.oracle_channel_fd, &L->minted);
-	if (L->oracle_end >= 0)
-		close(L->oracle_end);
+	authority_release_manifest(sd.authority_channel_fd, &L->minted);
+	if (L->authority_end >= 0)
+		close(L->authority_end);
 	if (L->child_end >= 0)
 		close(L->child_end);
 	if (L->coalition_fd >= 0)
@@ -2009,7 +2009,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		    L->ntokens);
 
 	if (m->has_jail) {
-		svc->jail_fd = oracle_create_jail(sd.oracle_channel_fd,
+		svc->jail_fd = authority_create_jail(sd.authority_channel_fd,
 		    m->jail_name, m->jail_path, m->jail_hostname,
 		    m->jail_ip4_addr);
 		if (svc->jail_fd == -1) {
@@ -2142,8 +2142,8 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		    cap_xfer_limit(pd_fd, CAP_XFER_NONE) == -1 ||
 		    cap_clofork_limit(pd_fd, CAP_CLOFORK_LOCKED) == -1 ||
 		    cap_cloexec_limit(pd_fd, CAP_CLOEXEC_LOCKED) == -1 ||
-		    cap_clofork_limit(L->oracle_end, CAP_CLOFORK_LOCKED) == -1 ||
-		    cap_cloexec_limit(L->oracle_end, CAP_CLOEXEC_LOCKED) == -1 ||
+		    cap_clofork_limit(L->authority_end, CAP_CLOFORK_LOCKED) == -1 ||
+		    cap_cloexec_limit(L->authority_end, CAP_CLOEXEC_LOCKED) == -1 ||
 		    cap_clofork_limit(L->coalition_fd,
 		    CAP_CLOFORK_LOCKED) == -1 ||
 		    cap_cloexec_limit(L->coalition_fd,
@@ -2160,13 +2160,13 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	if (svc->launch_id == 0)
 		svc->launch_id = ++svc_launch_sequence;
 	svc->pd_fd = pd_fd;
-	if (svc_channel_attach(svc, L->oracle_end) == -1) {
+	if (svc_channel_attach(svc, L->authority_end) == -1) {
 		saved_errno = errno;
-		L->oracle_end = -1;
+		L->authority_end = -1;
 		syslog(LOG_ERR, "svc_exec %s: control channel: %m", m->label);
 		goto fail_postfork;
 	}
-	L->oracle_end = -1;
+	L->authority_end = -1;
 	svc->coalition_fd = L->coalition_fd;
 	L->coalition_fd = -1;
 	svc->state = SVC_STATE_STARTING;
@@ -2182,7 +2182,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		syslog(LOG_ERR, "svc_exec %s: kevent register: %m", m->label);
 		pdkill(pd_fd, SIGKILL);
 		waitpid(pid, NULL, WNOHANG);
-		oracle_release_manifest(sd.oracle_channel_fd, &L->minted);
+		authority_release_manifest(sd.authority_channel_fd, &L->minted);
 		close(svc->pd_fd);
 		svc->pd_fd = -1;
 		svc_channel_close(svc);

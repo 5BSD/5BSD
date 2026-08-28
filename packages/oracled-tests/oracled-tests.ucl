@@ -1,6 +1,0 @@
-comment = "Tests for the 5BSD capability oracle daemon"
-
-desc = <<EOD
-ATF/Kyua unit, protocol, bootstrap, and lifecycle tests for oracled.
-The test programs and suite metadata are installed under /usr/tests.
-EOD

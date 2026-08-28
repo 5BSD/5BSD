@@ -150,7 +150,7 @@ service_ambient_lookup_fd(void)
 	}
 
 	/*
-	 * Fallback source: the getty-path carry.  oracle-init cannot pass the
+	 * Fallback source: the getty-path carry.  authority-init cannot pass the
 	 * environment variable across its hand-built getty environment, so it
 	 * pins the channel at the fixed descriptor number instead.  Probe that
 	 * number and accept it only if it is a live mac_capability channel; a

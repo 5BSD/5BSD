@@ -4,7 +4,7 @@
 
 This document records the complete externally meaningful behavior of the
 `init(8)` implementation in this source tree as reviewed on 2026-07-19.  It is
-the compatibility baseline for making Oracle PID 1.  It describes what the
+the compatibility baseline for making Authority PID 1.  It describes what the
 code does, including obscure recovery and failure paths; it does not assume
 that every historical behavior must be copied unchanged.
 
@@ -52,7 +52,7 @@ These properties have consequences for a replacement:
 - if PID 1 exits outside the kernel's deliberate reboot path, the kernel
   panics with the equivalent of “Going nowhere without my init!”.
 
-Oracle must treat remaining alive as a safety property.  A normal daemon's
+Authority must treat remaining alive as a safety property.  A normal daemon's
 “log and exit” error path is not acceptable in PID-1 mode.
 
 ## 2. Build-time personalities and installed recovery copy
@@ -70,7 +70,7 @@ backup init image as `init.bak`.  The kernel's default search path makes that
 backup, and then the rescue init, operational rollback mechanisms rather than
 mere packaging artifacts.
 
-An Oracle rollout must preserve an independently bootable binary in
+An Authority rollout must preserve an independently bootable binary in
 `kern.init_path`; replacing every candidate with the same implementation
 would defeat the fallback design.
 
@@ -122,7 +122,7 @@ Init recognizes these kernel environment variables:
 
 The order is security- and deployment-relevant.  `init_exec` and
 `init_script` are considered before `init_chroot`, and all three precede
-init's devfs detection and mount.  Therefore an Oracle entered through
+init's devfs detection and mount.  Therefore an Authority entered through
 `init_exec` cannot depend on stock init having prepared `/dev`; it must do so
 itself or be statically able to continue to recovery.
 
@@ -145,7 +145,7 @@ The diagnostic functions have intentionally different severity:
 Fatal handlers cover `SIGABRT`, `SIGFPE`, `SIGILL`, `SIGSEGV`, `SIGBUS`,
 `SIGSYS`, `SIGXCPU`, and `SIGXFSZ`.  The handler logs the disaster, sleeps for
 30 seconds, and terminates with the signal number.  For PID 1 that termination
-is intentionally catastrophic and must not be copied blindly by Oracle; a
+is intentionally catastrophic and must not be copied blindly by Authority; a
 replacement needs a minimal, async-safe recovery/reboot policy.
 
 Opening the console revokes prior users of the console device, opens it
@@ -154,7 +154,7 @@ the controlling terminal.  If that fails, init uses `/dev/null` for input and
 tries `/var/log/init.log` (mode 0644) for output.  If the log cannot be opened,
 output also goes to `/dev/null`.
 
-Thus neither syslog nor a working console is assumed.  Oracle needs the same
+Thus neither syslog nor a working console is assumed.  Authority needs the same
 early-boot independence and must avoid making `/var` a prerequisite for
 survival.
 
@@ -265,7 +265,7 @@ Failure to create this database stalls and retries instead of abandoning PID
 `TTY_IFEXISTS` and `TTY_IFCONSOLE` entries are conditional.  Init probes the
 named device nonblocking; a missing path suppresses the session.  The ttys
 interface also permits non-device names, and the manual explicitly supports
-using entries to supervise arbitrary daemon commands.  Oracle must either
+using entries to supervise arbitrary daemon commands.  Authority must either
 retain this compatibility or clearly migrate every such deployment.
 
 ## 10. Starting windows and gettys
@@ -328,7 +328,7 @@ normal exit and collection completes the transition safely.
 One implementation quirk must be treated explicitly: reconciliation does not
 recompute `TTY_IFEXISTS` or `TTY_IFCONSOLE` flags for an already existing
 session.  Changing only those flags may therefore require a full init/session
-restart to take effect.  Oracle should test compatible behavior or document
+restart to take effect.  Authority should test compatible behavior or document
 that it intentionally fixes this limitation.
 
 ## 13. Catatonia
@@ -339,7 +339,7 @@ restarted, and then continues reaping in the multi-user loop.  It does not by
 itself stop all services or reboot the machine.
 
 This is both an administrative “stop spawning logins” operation and a
-coordination primitive used by low-level reboot paths.  Oracle needs an
+coordination primitive used by low-level reboot paths.  Authority needs an
 explicit equivalent even if it moves from signals to a control protocol.
 
 ## 14. Signal-to-transition protocol
@@ -363,14 +363,14 @@ requests are resolved by the current handler and state rather than queued as
 independent transactions.
 
 `shutdown(8)`, `reboot(8)`, and `halt(8)` depend on this ABI.  A mandatory
-Oracle signal shield blocks it unless the tools and rc integration use an
-authorized Oracle control endpoint.  The desired end state is a capability
+Authority signal shield blocks it unless the tools and rc integration use an
+authorized Authority control endpoint.  The desired end state is a capability
 control protocol with explicit authority, but compatibility must not be
 removed until every base-system caller has migrated or a narrowly defined
 bridge remains.
 
 Init also emits boot/shutdown trace events for lifecycle transitions.  An
-Oracle replacement should preserve equivalent observability even if it uses
+Authority replacement should preserve equivalent observability even if it uses
 a different tracing provider.
 
 ## 15. Orderly shutdown
@@ -397,7 +397,7 @@ orders scripts carrying the `shutdown` keyword in reverse dependency order,
 and invokes `faststop`, with jail filtering.  Its own `rcshutdown_timeout`
 watchdog is distinct from init's outer script deadline.
 
-For Oracle, the managed capability world must become an explicit stage
+For Authority, the managed capability world must become an explicit stage
 inside this bounded sequence: inhibit new work, ask `serviced` to quiesce,
 use the retained procdesc authority if it misses its deadline, then continue
 with the Unix/rc world.
@@ -417,7 +417,7 @@ broadcasts.  If no targets or no children remain, init advances immediately.
 If processes survive both rounds, init logs the condition and still enters
 single-user/final-reboot handling rather than waiting forever.
 
-An Oracle implementation must distinguish its procdesc-controlled managed
+An Authority implementation must distinguish its procdesc-controlled managed
 tree from this final global sweep.  The procdesc path supplies race-free,
 delegated authority for `serviced`; the global PID-1 cleanup remains necessary
 for unrelated Unix processes and adopted orphans.
@@ -431,7 +431,7 @@ does not impose a timeout and does not make reboot contingent on the exit
 status.
 
 The absence of a timeout is an important existing behavior and a potential
-reliability defect.  Oracle must make an explicit compatibility decision:
+reliability defect.  Authority must make an explicit compatibility decision:
 preserve it, add a documented deadline, or offer a compatibility mode.  It
 must not acquire an accidental infinite wait merely because the behavior was
 not noticed.
@@ -457,7 +457,7 @@ roots.  It then obtains `init_path` from the kernel environment or
 Failure returns to single-user recovery.  Ordinary startup removes stale
 reroot mount state.
 
-Oracle cannot claim init compatibility without either implementing this
+Authority cannot claim init compatibility without either implementing this
 trampoline safely or deliberately retaining stock init for reroot requests.
 
 ## 19. Resource classes and child execution context
@@ -470,7 +470,7 @@ environment, priority, resource-limit, login-class, and CPU-mask controls:
 
 Child paths also deliberately restore signal masks and dispositions before
 exec.  A replacement must audit both inherited descriptors and inherited
-process state.  Oracle's monotonic descriptor policy should close or limit
+process state.  Authority's monotonic descriptor policy should close or limit
 authority before exec, while login-class compatibility preserves traditional
 resource policy.  These mechanisms solve different problems and both matter.
 
@@ -478,11 +478,11 @@ resource policy.  These mechanisms solve different problems and both matter.
 
 Init does not implement individual daemon dependency policy.  `/etc/rc`,
 `rcorder`, rc.d scripts, and service-specific control methods do that.  Init
-does not decide that `service oracled stop` means `SIGTERM`; the Oracle rc.d
+does not decide that `service authorityd stop` means `SIGTERM`; the Authority rc.d
 script can and should translate it into an authenticated control operation.
 
 Init also does not use procdescs for ordinary session children, distribute
-capability tokens, activate program capabilities, or understand Oracle's
+capability tokens, activate program capabilities, or understand Authority's
 managed service graph.  Those are additions to the model, not compatibility
 behaviors to infer from init.
 
@@ -536,11 +536,11 @@ replacement must choose tested semantics rather than copying prose blindly:
   kernel behavior is a panic; whether that panic subsequently reboots depends
   on kernel panic policy.
 
-These are documentation defects or historical seams, not additional Oracle
+These are documentation defects or historical seams, not additional Authority
 requirements.  Each should receive a regression test and an explicit
 compatibility choice before migration.
 
-## 23. Legacy failure seams Oracle must not inherit accidentally
+## 23. Legacy failure seams Authority must not inherit accidentally
 
 Stock init favors continued operation in many failures, but it is not a
 memory-safe transaction engine with recovery on every allocation or syscall
@@ -559,44 +559,44 @@ failure.  Observable examples in this version include:
 - `rc.final` can wait forever; and
 - after both global signal rounds, init proceeds even if processes remain.
 
-Compatibility does not require reproducing these defects.  Oracle should
+Compatibility does not require reproducing these defects.  Authority should
 define safer behavior while preserving the operator-visible transition:
 early failures reach recovery, shutdown remains bounded, and PID 1 never
 returns or exits unintentionally.  Fault-injection tests must cover allocation,
 fork, exec, wait, console, mount, sysctl, capability-device, and control-loop
 failures.
 
-## 24. Oracle compatibility decisions and required work
+## 24. Authority compatibility decisions and required work
 
-The detailed work list lives in `docs/oracle-init-todo.md`.  This audit makes
+The detailed work list lives in `docs/authority-init-todo.md`.  This audit makes
 the following architectural decisions clear:
 
 1. Keep the PID-1 survival, global-reaper, recovery-console, and final reboot
-   mechanisms inside Oracle, independent of `serviced`.
-2. Keep `serviced` as the manager of the capability service world.  Oracle
+   mechanisms inside Authority, independent of `serviced`.
+2. Keep `serviced` as the manager of the capability service world.  Authority
    retains a close-on-exec, non-transferable procdesc authority to terminate
    it, and treats channel loss as a lifecycle event.
-3. Treat Oracle's PID-1 conversion and daemon migration as independent.  Until
-   each daemon is explicitly migrated, Oracle runs the complete required rc
+3. Treat Authority's PID-1 conversion and daemon migration as independent.  Until
+   each daemon is explicitly migrated, Authority runs the complete required rc
    sequence and rc remains that daemon's sole owner.  Mixed rc/`serviced`
    operation is a supported production state, not a brief best-effort bridge.
 4. Move daemons one at a time using an authoritative ownership registry,
    retained rc ordering and one-shot preparation, readiness handshakes,
    delegated `service(8)` adapters, shutdown tests, and per-service rollback.
    Never permit rc and `serviced` to launch the same daemon.
-5. Continue accepting `service oracled stop`, but implement it through the
-   rc.d script and Oracle's control socket rather than ambient signals.
+5. Continue accepting `service authorityd stop`, but implement it through the
+   rc.d script and Authority's control socket rather than ambient signals.
 6. Preserve traditional PID-1 signal compatibility only as a migration
    bridge.  Signal shielding and an unmodified signal-only administration
    toolset are mutually incompatible.
 7. Enter initially through `init_rc` for boot-flow testing, then through
-   `init_exec` only after Oracle owns all early `/dev`, console, recovery, and
+   `init_exec` only after Authority owns all early `/dev`, console, recovery, and
    fatal-path requirements.  Direct `kern.init_path` replacement is the last
    deployment step.
 8. Treat `/etc/ttys`, reroot, login classes, tracing, fallback init images,
    and loader overrides as explicit compatibility items.  None may disappear
    silently.
-9. Test every state and failure edge in a VM before making Oracle the first
+9. Test every state and failure edge in a VM before making Authority the first
    candidate in `kern.init_path`.
 
 ## 25. Transitional rc design checked against stock init
@@ -617,7 +617,7 @@ boundaries:
   running” checks, so duplicate prevention for migrated services must come
   from authoritative ownership rather than pidfile probing;
 - `run_rc_scripts()` does not fail fast or aggregate individual script errors,
-  and stock `/etc/rc` ends with `exit 0`.  Oracle therefore needs explicit
+  and stock `/etc/rc` ends with `exit 0`.  Authority therefore needs explicit
   required-target validation; merely checking the rc child's exit status does
   not prove that all required services started;
 - rc configuration may be reloaded during boot on `SIGALRM`, and the local
@@ -627,13 +627,13 @@ boundaries:
   their rcorder result, invokes `faststop`, ignores individual return values,
   and exits zero unless the script itself is interrupted or killed; and
 - `/etc/rc` requests a firstboot reboot with `kill -INT 1`, which mandatory
-  Oracle signal shielding would reject unless this call is migrated to the
+  Authority signal shielding would reject unless this call is migrated to the
   authorized lifecycle protocol.
 
 Consequently the safe mixed-world design uses rc as the common scheduler.
 `serviced` is available but does not independently autostart transitional
 units.  A migrated rc.d adapter requests start/readiness or stop at the same
-graph position as the old daemon operation.  During shutdown Oracle freezes
+graph position as the old daemon operation.  During shutdown Authority freezes
 new work, keeps `serviced` alive while reverse rc order is executed, drains
 anything left afterward, terminates `serviced` through its procdesc, and only
 then performs PID 1's global Unix-process sweep.  Stopping all managed units
@@ -644,5 +644,5 @@ still depend on one of them.
 
 Any change to the reviewed init, kernel PID-1 code, reboot/shutdown utilities,
 or rc entry points must update this audit or state why observable behavior is
-unchanged.  Every retained behavior should map to an Oracle test; every
+unchanged.  Every retained behavior should map to an Authority test; every
 intentional incompatibility should have a migration note and rollback path.

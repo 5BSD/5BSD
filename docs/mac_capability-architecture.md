@@ -847,11 +847,11 @@ sys/dev/mac_capability/
     mac_capability_test_kernelstore.c  test fixture: sync key-value store
     mac_capability_test_keystore.c     test fixture: async key-value store
 
-usr.sbin/oracled/         oracle authority daemon
+usr.sbin/authorityd/         authority authority daemon
 usr.sbin/serviced/        service manager daemon
 
 share/dtrace/mac_capability-*     DTrace scripts (14 mac_capability scripts)
-share/dtrace/oracled-*    DTrace scripts (8 oracled)
+share/dtrace/authorityd-*    DTrace scripts (8 authorityd)
 share/dtrace/serviced-*   DTrace scripts (10 serviced)
 
 tests/sys/mac_capability/         ATF kernel tests via kyua
@@ -1014,7 +1014,7 @@ Phases 1-7 are complete: program identity (nonces), capability
 protection (MACF shields), file/network/jail isolation (claims and
 tokens), resource groups (coalitions), per-process control (node),
 accounting (racct/rctl), capability pairs, filesystem mounting,
-system gate enforcement, and the two-daemon architecture (oracled +
+system gate enforcement, and the two-daemon architecture (authorityd +
 serviced).
 
 ### Kernel-to-kernel capability communication

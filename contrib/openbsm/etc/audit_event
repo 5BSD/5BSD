@@ -709,7 +709,7 @@
 43323:AUE_SERVICED_CAP_MINT:serviced capability mint:ad
 43324:AUE_SERVICED_RELOAD:serviced configuration reload:ad
 43325:AUE_SERVICED_ONDEMAND:serviced on-demand activation:pc
-43326:AUE_SERVICED_ORACLE:serviced oracle disconnect:ad
+43326:AUE_SERVICED_AUTHORITY:serviced authority disconnect:ad
 43327:AUE_SERVICED_COMPONENT:serviced component session:pc
 43329:AUE_NETWORKCMP_POLICY:NetworkCmp policy:nt
 43330:AUE_FILESYSTEMCMP_POLICY:FileSystemCmp policy:fa

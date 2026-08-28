@@ -1,0 +1,5 @@
+comment = "Tests for the Authorityd control client library"
+
+desc = <<EOD
+ATF/Kyua transport, framing, error, and ownership tests for libauthorityctl.
+EOD

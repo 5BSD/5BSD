@@ -1,7 +1,7 @@
 # TrustedZFS: a capability API over the ZFS storage API
 
 Companion to `mac_capability-architecture.md` (the fd-type and SDT house
-pattern this follows), `oracle-control-abi-design.md` (the capability-token
+pattern this follows), `authority-control-abi-design.md` (the capability-token
 grant model that consumes this), and `capability-components-roadmap.md`.
 This records the design of dataset and pool *handles* — first-class file
 descriptors that make ZFS storage a thing a program is handed, not a place
@@ -25,7 +25,7 @@ visibility, or root). Consequences:
 - **No delegable events.** Watching for snapshot/pool events means being
   zed, a single privileged process draining a global event ioctl.
 
-Our fork's direction — Oracle capability tokens, `mac_capability` fds,
+Our fork's direction — Authority capability tokens, `mac_capability` fds,
 Capsicum-aware zfs ioctls (commit 47195449a23) — makes storage the odd
 subsystem out. TrustedZFS closes that gap.
 
@@ -149,7 +149,7 @@ and the only thing the coupling would express — handles die with the pool
 Pool rights are the thin sliver the use cases actually demanded:
 `ZPD_STAT` (health, capacity, scan progress, error counts), props
 read/write with per-prop allowlist (sole motivating writer: `bootfs`, for
-boot-environment activation by oracle-init), `ZPD_SCRUB` behind its own
+boot-environment activation by authority-init), `ZPD_SCRUB` behind its own
 right, `ZPD_ROOT_OPEN`, and kqueue events (`STATE_CHANGED`,
 `SCRUB_FINISHED`, `RESILVER_FINISHED`, `VDEV_FAULTED`, `INVALIDATED`).
 Explicitly **not** delegable: import/export, vdev topology changes,
@@ -358,7 +358,7 @@ First consumers, which double as the proof the primitive earns its keep:
    PROPS_WRITE|SNAPSHOT`), materializes the child, derives the service's
    handle (typically `MOUNT|SNAPSHOT|PROPS_READ`) and passes it over the
    control socket. serviced itself never holds `SEND`/`RECV`.
-2. **oracle-init boot-environment rollback** — `SNAPSHOT|SNAP_DESTROY|
+2. **authority-init boot-environment rollback** — `SNAPSHOT|SNAP_DESTROY|
    ROLLBACK` on the BE dataset (stamp last-known-good on successful
    converge; roll back after N failed boots) plus a `bootfs`-only pool
    handle for BE switching.
@@ -379,22 +379,22 @@ First consumers, which double as the proof the primitive earns its keep:
 Endgame: boot mounts only what config declares shared; services see
 storage exclusively through granted dirfds; the global namespace becomes a
 compatibility view rather than the security boundary — the same
-trajectory as the rest of the Oracle work.
+trajectory as the rest of the Authority work.
 
 ## 6a. Storage integration: the `[TZFS]` grant path
 
 **Status (2026-08-14): manifest → mint → exec-grant built and committed.**
 - Manifest `capabilities.storage` stanza parses to `ort_storage_claim`
   (dataset, ZH_* rights, lifetime); libcapbundle test passes.
-- `ORACLE_OP_MINT_STORAGE`: serviced `oracle_mint_storage()` →
-  oracled `handle_mint_storage()` opens `/dev/zfs` and
+- `AUTHORITY_OP_MINT_STORAGE`: serviced `authority_mint_storage()` →
+  authorityd `handle_mint_storage()` opens `/dev/zfs` and
   `ZFS_IOC_DATASET_OPEN`, passing the rights-limited handle fd back.
 - serviced grants the handle at exec, in the token-bootstrap range,
   for datasets that already exist (persistent case).
 - Ephemeral lifecycle (create-on-start, destroy-on-stop) built and
   committed; clean-VM validated 2026-08-14.
 - **Remaining is now its own effort:** the `tzfsd` daemon takes storage
-  ownership from oracled and adds the flavor/image system (native /
+  ownership from authorityd and adds the flavor/image system (native /
   freebsd / linux=Rocky / empty). ZFS is a required subsystem for 5BSD
   (UFS still bootable). See **`docs/tzfsd-design.md`** — that supersedes
   the "optional broker" sketch below.
@@ -408,8 +408,8 @@ way it grants every other capability.  Grounded in a survey of the
 serviced manifest and mint machinery, the design is:
 
 **Naming.** Every system daemon carries a distinguishable bracket tag so
-`ps`/`procstat`/capability inspectors can tell them apart: `[ORACLE]`
-(oracled / oracle-init), `[SERVICE]` (serviced), `[TZFS]` (the storage
+`ps`/`procstat`/capability inspectors can tell them apart: `[AUTHORITY]`
+(authorityd / authority-init), `[SERVICE]` (serviced), `[TZFS]` (the storage
 grant broker, `tzfsd`).  One tag each.
 
 **Manifest stanza (UCL, matches the existing `capabilities {}` style).**
@@ -435,9 +435,9 @@ mirror of `parse_file_actions`), landing in a POD `serviced_storage_claim`
 claim arrays.
 
 **Grant delivery (push at exec, like every other token).** serviced mints
-one handle per storage claim over its oracle channel
-(`ORACLE_OP_MINT_STORAGE`, new in `oracled_svc_proto.h`; `handle_mint_
-storage()` in oracled calling `ZFS_IOC_DATASET_OPEN`), remaps the handle
+one handle per storage claim over its authority channel
+(`AUTHORITY_OP_MINT_STORAGE`, new in `authorityd_svc_proto.h`; `handle_mint_
+storage()` in authorityd calling `ZFS_IOC_DATASET_OPEN`), remaps the handle
 fd into the child's `SVC_TOKEN_BASE` range, and describes it in the
 existing `struct service_bootstrap` (`token_fds[]` already generic — no
 transport ABI break).  `persistent` datasets are materialized once and
@@ -463,9 +463,9 @@ before — or independent of — its full capability grant being installed.
 **Files this touches** (from the survey, for when it is built):
 `lib/libcapbundle/{libcapbundle_parse.c,libcapbundle.c,
 libcapbundle_internal.h}`, `lib/libcapbundle/serviced_manifest.h`,
-`lib/liboraclert/{oraclert.h,oracled_svc_proto.h,serviced_svc_proto.h}`,
-`usr.sbin/serviced/{oracle_client.c,execute.c,svc_proto.c}`,
-`usr.sbin/oracled/{oracle_proto.c,mac_capability_mint.c}`, and
+`lib/libauthorityrt/{authorityrt.h,authorityd_svc_proto.h,serviced_svc_proto.h}`,
+`usr.sbin/serviced/{authority_client.c,execute.c,svc_proto.c}`,
+`usr.sbin/authorityd/{authority_proto.c,mac_capability_mint.c}`, and
 optionally a new `usr.sbin/tzfsd/` + its `.cap` bundle.  Send-once
 (`ZHF_SEND_ONCE`) is the natural grant shape for a backup service's
 stanza.
@@ -560,9 +560,9 @@ rig, not the host.
 | 1 | DTYPE + fileops; mint hook in `zfsdev_ioctl`; `INFO`/`DERIVE`/`OPENAT`; verbs: props/stat/snapshot/snap-destroy/rollback; tests 1-3, 9, 10; probes mint/op/denied/invalidate; scripts -handles/-denials; kinfo+libprocstat | 1,500 LoC kernel + 1,200 tests |
 | 2 | send/recv/hold (access-aware `zfs_file_get`); create/destroy/rename; two-handle clone; prop allowlists; jail interop; userland lib; tests 4-6; -lineage/-ops scripts | 1,000 + 800 |
 | 3 | `vfs_domount_anon` + `ZFD_MOUNT` dirfd + fd-anchored teardown; `ZFD_BLKOPEN`; tests 7-8; mount probes | 800 + 500 |
-| 4 | Rich kqueue notes (needs hooks in shared DSL paths — the one place the merge-burden goal gets pressure; optional, last); thin pool handle (`ZPD_*`); `bootfs` sliver may be pulled forward for oracle-init | 600 |
+| 4 | Rich kqueue notes (needs hooks in shared DSL paths — the one place the merge-burden goal gets pressure; optional, last); thin pool handle (`ZPD_*`); `bootfs` sliver may be pulled forward for authority-init | 600 |
 
-Phase 1 alone dogfoods the serviced storage stanza; oracle-init BE
+Phase 1 alone dogfoods the serviced storage stanza; authority-init BE
 rollback needs Phase 1 + the `bootfs` sliver.
 
 ## 9a. Implementation status (2026-08-14)
@@ -579,7 +579,7 @@ daemon protocol framing/concurrency, and bounded enumeration.
   bookmarks), single-property get, inherit, promote, bookmarks, and
   send-once (subsequently moved to immutable `ZHF_SEND_ONCE`/
   `ZHF_SEND_CONSUME` lineage flags).
-- `05f99b2a` — the oracled boot-health / shutdown-wedge fix this work
+- `05f99b2a` — the authorityd boot-health / shutdown-wedge fix this work
   surfaced (deferred signal shield, control-socket rebind, stale
   serviced.ready unlink, 30s self-heal, loud shutdown(8) failure).
 
@@ -606,7 +606,7 @@ busy-drain sleep.  Highlights beyond the plan above:
   `ZPD_SET_PROP` and `ZPD_SCRUB` via the FKIOCTL bridge, and
   `ZPD_ROOT_OPEN` minting a rights-limited dataset handle.  Pool minting
   beyond the implicit rights requires root (no zfs-allow analogue).
-- The **shutdown-wedge and boot-health fixes** in oracled that this work
+- The **shutdown-wedge and boot-health fixes** in authorityd that this work
   surfaced are documented in the git log: deferred CP_SF_SIGNAL shield,
   control-socket rebind after rc's /var/run cleanup, stale
   serviced.ready unlink, and a 30s self-heal retry in the PID 1 event

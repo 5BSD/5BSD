@@ -76,7 +76,7 @@ wait_for_result()
 cleanup_case()
 {
 	if ! capd_cleanup_stack; then
-		atf_fail "guardian could not clean the Oracle stack"
+		atf_fail "guardian could not clean the Authority stack"
 	fi
 	rm -f ./*.result
 }
@@ -105,7 +105,7 @@ ready_reports_channel_body()
 	    cat "$result"
 	atf_check -s exit:0 -o ignore \
 	    grep -E 'service org.test.ls-ready/service:.*reported ready' "$CAPD_LOG"
-	capd_stop_stack || atf_fail "Oracle stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
 }
 ready_reports_channel_cleanup()
 {
@@ -146,7 +146,7 @@ naming_exchange_confines_endpoints_body()
 	atf_check -s exit:0 \
 	    -o match:'event=exchange client_label=org.test.ls-client/[^ ]* message=world confined=yes$' \
 	    cat "$provider"
-	capd_stop_stack || atf_fail "Oracle stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
 }
 naming_exchange_confines_endpoints_cleanup()
 {
@@ -182,7 +182,7 @@ multiplexed_transport_correlates_reordered_replies_body()
 	atf_check -s exit:0 -o match:'correlated=yes' cat "$client"
 	atf_check -s exit:0 -o match:'event=event' cat "$client"
 	atf_check -s exit:0 -o match:'peer_death_errno=' cat "$client"
-	capd_stop_stack || atf_fail "Oracle stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
 }
 multiplexed_transport_correlates_reordered_replies_cleanup()
 {
@@ -229,7 +229,7 @@ multiple_provides_route_independently_body()
 	atf_check -s exit:0 -o match:'second=org.test.multi.second' cat "$result"
 	atf_check -s exit:0 -o match:'routed=org.test.multi.first' cat "$first"
 	atf_check -s exit:0 -o match:'routed=org.test.multi.second' cat "$second"
-	capd_stop_stack || atf_fail "Oracle stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
 }
 multiple_provides_route_independently_cleanup()
 {
@@ -258,7 +258,7 @@ lookup_missing_returns_enoent_body()
 	wait_for_result "$result"
 	atf_check -s exit:0 \
 	    -o match:'^CAPD-TEST/1 event=lookup fd=-1 errno=2$' cat "$result"
-	capd_stop_stack || atf_fail "Oracle stack did not stop cleanly"
+	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
 }
 lookup_missing_returns_enoent_cleanup()
 {

@@ -43,7 +43,7 @@ serviced*:::conn-close
 	printf("%-20Y %-16s %d\n", walltimestamp, "connections", arg0);
 }
 
-oracled*:::conn-count
+authorityd*:::conn-count
 {
 	printf("%-20Y %-16s %d\n", walltimestamp, "ctl-connections", arg0);
 	@hwm["ctl-connections"] = max(arg0);

@@ -274,7 +274,7 @@ main(int argc, char *argv[])
 
 	/*
 	 * Capture the inherited SYSTEM ambient lookup channel (§21) BEFORE
-	 * reclaiming inherited descriptors: on the getty path oracle-init (PID
+	 * reclaiming inherited descriptors: on the getty path authority-init (PID
 	 * 1) carries the channel as a bare inherited descriptor pinned at
 	 * SERVICE_LOOKUP_FIXED_FD (fd 3) — precisely the range closefrom(3)
 	 * would reclaim — because getty rebuilds login's environment and drops

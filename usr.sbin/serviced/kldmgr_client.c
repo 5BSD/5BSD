@@ -4,8 +4,8 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Ensures required kernel modules are loaded before a service is launched.
- * The operation is delegated to oracled so serviced never needs ambient
- * KLDSTAT/KLDLOAD authority.  Oracle owns both pre-exec and runtime module
+ * The operation is delegated to authorityd so serviced never needs ambient
+ * KLDSTAT/KLDLOAD authority.  Authority owns both pre-exec and runtime module
  * requests.
  */
 
@@ -16,7 +16,7 @@
 
 /*
  * Ensure all kernel modules required by manifest m are loaded.
- * Oracled checks whether each module is already present and loads it if not.
+ * Authorityd checks whether each module is already present and loads it if not.
  *
  * Returns 0 if all modules are loaded, -1 on failure.
  */
@@ -41,7 +41,7 @@ kldmgr_ensure_loaded(const struct svc_manifest *m, bool system_bundle,
 	for (i = 0; i < m->nkmod_requires; i++) {
 		const char *name = m->kmod_requires[i];
 
-		if (oracle_ensure_kmod(sd.oracle_channel_fd, name) == -1) {
+		if (authority_ensure_kmod(sd.authority_channel_fd, name) == -1) {
 			syslog(LOG_ERR, "kldmgr: failed to load %s: %m",
 			    name);
 			return (-1);

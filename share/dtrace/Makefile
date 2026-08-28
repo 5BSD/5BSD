@@ -37,14 +37,14 @@ SCRIPTS=	blued-att \
 		hotopen \
 		nfsattrstats \
 		nfsclienttime \
-		oracled-bootstrap \
-		oracled-claims \
-		oracled-control \
-		oracled-errors \
-		oracled-ipc \
-		oracled-latency \
-		oracled-lifecycle \
-		oracled-minting \
+		authorityd-bootstrap \
+		authorityd-claims \
+		authorityd-control \
+		authorityd-errors \
+		authorityd-ipc \
+		authorityd-latency \
+		authorityd-lifecycle \
+		authorityd-minting \
 		serviced-capabilities \
 		serviced-connections \
 		serviced-exec-latency \

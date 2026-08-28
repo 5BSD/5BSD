@@ -31,5 +31,5 @@ desc = <<EOD
 libcapbundle is a library for parsing and validating .cap capability bundles.
 It reads the Name.cap/etc/*.ucl manifest format and provides
 the capbundle_open/verify/close API used by serviced(8), servicectl(8), and
-oracled(8).
+authorityd(8).
 EOD

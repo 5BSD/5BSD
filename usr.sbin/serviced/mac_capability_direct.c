@@ -5,12 +5,12 @@
  *
  * Direct mac_capability operations for serviced.
  *
- * Uses delegated service instance fds (inherited from oracled) to
+ * Uses delegated service instance fds (inherited from authorityd) to
  * create channels and coalitions via MAC_CAPABILITY_MINT_INSTANCE — no /dev/mac_capability
- * access needed.  oracled hands serviced one instance of each
+ * access needed.  authorityd hands serviced one instance of each
  * mintable service; serviced mints fresh instances from those.
  *
- * If a delegated fd is not available, falls back to the oracle
+ * If a delegated fd is not available, falls back to the authority
  * channel protocol client.
  */
 
@@ -74,7 +74,7 @@ mint_instance(int svc_fd)
 /*
  * Create a channel using the delegated channel service instance.
  * Mints a fresh channel instance, sends CHANNEL_OP_CREATE, gets the peer.
- * Falls back to oracle protocol if channel_svc_fd unavailable.
+ * Falls back to authority protocol if channel_svc_fd unavailable.
  */
 int
 mac_cap_create_channel(int *our_end, int *child_end)
@@ -85,13 +85,13 @@ mac_cap_create_channel(int *our_end, int *child_end)
 	int channel_fd, peer_fd;
 
 	if (sd.channel_svc_fd == -1)
-		return (oracle_create_channel(sd.oracle_channel_fd,
+		return (authority_create_channel(sd.authority_channel_fd,
 		    our_end, child_end));
 
 	channel_fd = mint_instance(sd.channel_svc_fd);
 	if (channel_fd == -1) {
 		syslog(LOG_WARNING, "mac_cap_direct: channel mint: %m");
-		return (oracle_create_channel(sd.oracle_channel_fd,
+		return (authority_create_channel(sd.authority_channel_fd,
 		    our_end, child_end));
 	}
 
@@ -169,7 +169,7 @@ mac_cap_create_channel(int *our_end, int *child_end)
 /*
  * Create a coalition using the delegated coalition service instance.
  * Mints a fresh coalition instance.
- * Falls back to oracle protocol if coalition_svc_fd unavailable.
+ * Falls back to authority protocol if coalition_svc_fd unavailable.
  */
 int
 mac_cap_create_coalition(void)
@@ -177,12 +177,12 @@ mac_cap_create_coalition(void)
 	int fd;
 
 	if (sd.coalition_svc_fd == -1)
-		return (oracle_create_coalition(sd.oracle_channel_fd));
+		return (authority_create_coalition(sd.authority_channel_fd));
 
 	fd = mint_instance(sd.coalition_svc_fd);
 	if (fd == -1) {
 		syslog(LOG_WARNING, "mac_cap_direct: coalition mint: %m");
-		return (oracle_create_coalition(sd.oracle_channel_fd));
+		return (authority_create_coalition(sd.authority_channel_fd));
 	}
 
 	(void)fcntl(fd, F_SETFL, O_NONBLOCK);

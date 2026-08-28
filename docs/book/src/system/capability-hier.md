@@ -66,7 +66,7 @@ needs *after* the storage plane is up belongs in its runtime home, not here.
 
 ## Why the split is safe — the bootstrap ordering
 
-1. **`oracled` (PID 1)** starts. The `oracled → serviced → tzfsd` handshake
+1. **`authorityd` (PID 1)** starts. The `authorityd → serviced → tzfsd` handshake
    rides **inherited capability descriptors**, never a named socket or path, so
    the bootstrap can never block on a directory that is not mounted yet. This is
    the invariant the whole layout rests on.
@@ -88,7 +88,7 @@ else is a per-capability runtime home that arrives with the storage plane.**
 
 Classic UNIX programs keep `/etc`, `/var`, and `/usr` unchanged; the capability
 plane adds nothing to them. The one deliberate bridge is the legacy `rc`
-bootstrap: `oracled` still executes `/etc/rc` to converge a classic multi-user
+bootstrap: `authorityd` still executes `/etc/rc` to converge a classic multi-user
 system, because rc and the programs it starts are classic UNIX software. That is
 the boundary — capability programs own `/Capabilities`, each with its own home;
 classic programs own the classic tree; only the rc hand-off crosses it.

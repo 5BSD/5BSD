@@ -234,7 +234,7 @@ overrun guard, device-entry bounds) all clean.
    *2026-08-12 revalidation: STILL PRESENT — svm.c:1363 (`errcode_valid` uninit); the IDT_DB arm (1454-1517) assigns nothing on the non-stepped reflect path; injected at 1562. File is mid-edit by concurrent work.*
 9. **[P3, likely self-healing] svm.c:2276-2292 — event left in EVENTINJ when the startup-entry-
    owner guard aborts entry before VMRUN**
-   When the oracle-init startup owner guard returns a non-ENTER action, the loop breaks after
+   When the authority-init startup owner guard returns a non-ENTER action, the loop breaks after
    `svm_inj_interrupts()` already programmed `ctrl->eventinj` but before VMRUN. Traced re-entry
    appears to self-heal (stale VALID bit defers new injection, next VMRUN delivers the accepted
    event) without hitting the KASSERT or double-injecting; flagged only as an invariant deviation

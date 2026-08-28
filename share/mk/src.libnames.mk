@@ -215,8 +215,8 @@ _LIBRARIES=	\
 		nvpair \
 		oes \
 		opencsd \
-		oraclectl \
-		oraclert \
+		authorityctl \
+		authorityrt \
 		pam \
 		panel \
 		panelw \
@@ -335,8 +335,8 @@ LIBVERIEXEC?=	${LIBVERIEXECDIR}/libveriexec.a
 _DP_80211=	sbuf bsdxml
 _DP_9p=		sbuf
 _DP_auditcmp=	service
-_DP_capbundle=	oraclert ucl md
-_DP_oraclert=	ucl
+_DP_capbundle=	authorityrt ucl md
+_DP_authorityrt=	ucl
 _DP_tzfsd=	trustedzfs
 _DP_service=	capability channel pthread
 _DP_shmring=

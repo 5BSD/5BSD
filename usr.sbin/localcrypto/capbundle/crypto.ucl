@@ -3,5 +3,5 @@ activation { boot = true; ipc = ["org.5bsd.CryptoCmp"]; }
 restart = "on-failure";
 user = "capability";
 # The DTYPE_CRYPTO provider needs /dev/crypto; ensure cryptodev is loaded
-# before launch (serviced loads required modules via oracled's kld authority).
+# before launch (serviced loads required modules via authorityd's kld authority).
 kmod_requires = ["cryptodev"];

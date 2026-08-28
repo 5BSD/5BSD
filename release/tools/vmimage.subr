@@ -173,8 +173,8 @@ vm_install_base() {
 		echo "zfs_load=YES" >> ${DESTDIR}/boot/loader.conf
 		metalog_add_data ./boot/loader.conf
 	fi
-	if [ -x ${DESTDIR}/sbin/oracle-init ]; then
-		echo 'init_path="/sbin/oracle-init:/sbin/init:/sbin/init.bak:/rescue/init"' \
+	if [ -x ${DESTDIR}/sbin/authority-init ]; then
+		echo 'init_path="/sbin/authority-init:/sbin/init:/sbin/init.bak:/rescue/init"' \
 			>> ${DESTDIR}/boot/loader.conf
 		metalog_add_data ./boot/loader.conf
 	fi

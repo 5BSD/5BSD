@@ -1,6 +1,6 @@
 # rc Integration
 
-5BSD does not replace the rc.d world in a flag day. The Oracle/serviced stack
+5BSD does not replace the rc.d world in a flag day. The Authority/serviced stack
 runs the stock rc boot on every boot and migrates services out of it one at a
 time; a mixed system is a designed, stable operating mode. References:
 `docs/rc-integration-handbook.md` (the full rc handbook),
@@ -10,10 +10,10 @@ time; a mixed system is a designed, stable operating mode. References:
 ## Boot ordering
 
 Under stock FreeBSD, `init(8)` runs `/etc/rc`. Under 5BSD, PID 1
-(oracle-init) does not run rc at all — serviced owns rc startup:
+(authority-init) does not run rc at all — serviced owns rc startup:
 
 ```text
-kernel → oracle-init (PID 1)
+kernel → authority-init (PID 1)
   ├─ single-user if requested; console recovery always available
   ├─ establish_authority: mac_capability, control socket,
   │  pdfork serviced
@@ -27,10 +27,10 @@ serviced
   2. scan /Capabilities bundles and service demand already queued by boot or
      IPC activation
   3. bind control sockets (now that rc remounted / read-write)
-  4. send ORACLE_OP_READY to PID 1
+  4. send AUTHORITY_OP_READY to PID 1
         │
         ▼
-oracle-init: read /etc/ttys → getty/login (multi-user)
+authority-init: read /etc/ttys → getty/login (multi-user)
 ```
 
 Two properties matter to operators. First, rc semantics are preserved exactly:
@@ -52,17 +52,17 @@ descriptor, performs the global `SIGTERM`/`SIGKILL` sweep, runs
 
 ## What moved out of rc
 
-- **oracled itself.** rc no longer starts oracled; it *is* PID 1 (there is no
-  `rc.d/oracled` script — a duplicate daemon instance at boot would conflict
+- **authorityd itself.** rc no longer starts authorityd; it *is* PID 1 (there is no
+  `rc.d/authorityd` script — a duplicate daemon instance at boot would conflict
   with the spine).
 - **Reboot and module-load orchestration.** Reboot is a PID 1 control-ABI
-  operation; kernel-module loading is brokered by oracled's
-  `ORACLE_OP_ENSURE_KMOD` channel operation, driven by `kmod_requires` in
+  operation; kernel-module loading is brokered by authorityd's
+  `AUTHORITY_OP_ENSURE_KMOD` channel operation, driven by `kmod_requires` in
   service manifests. No standalone daemons exist for either.
 - **Native capability services** are launched by serviced from `.cap`
   bundles, not by rc.d scripts.
 - **Lifecycle signalling of PID 1.** `reboot(8)`, `halt(8)`, and
-  `shutdown(8)` use the authenticated oracled control socket, with a signal
+  `shutdown(8)` use the authenticated authorityd control socket, with a signal
   fallback for stock-init systems.
 
 Everything else — filesystem mounts, network configuration, syslogd, and all
@@ -99,16 +99,16 @@ the full pattern, including fail-closed stop).
 
 - `sysrc`, `service <name> start|stop|status`, and rc.conf layering work
   unchanged for rc-owned services. Use `servicectl services` for the managed
-  world and `oraclectl status` for the spine and claims.
-- `init 0/1/6` (SysV telinit) is unsupported under Oracle PID 1; use
+  world and `authorityctl status` for the spine and claims.
+- `init 0/1/6` (SysV telinit) is unsupported under Authority PID 1; use
   `shutdown(8)`, `reboot(8)`, `halt(8)`.
 - Rollback: stock `/sbin/init` stays installed and selectable. The shipped
-  `init_path` (`/boot/loader.conf.d/oracle-init.conf`) falls back through
+  `init_path` (`/boot/loader.conf.d/authority-init.conf`) falls back through
   `/sbin/init:/sbin/init.bak:/rescue/init`; from the loader prompt, set
   `init_path="/sbin/init"` to boot entirely on stock init and rc.
 - Boot diagnostics: serviced logs with `LOG_CONS` before syslogd is up, and
   boot-path lifecycle events emit DTrace probes via the `serviced` and
-  `oracled` providers; early failures land on the console and in the
+  `authorityd` providers; early failures land on the console and in the
   converge-or-recover shell.
 
 **Status.** Today serviced runs the monolithic `/etc/rc` ("Model A"). Native

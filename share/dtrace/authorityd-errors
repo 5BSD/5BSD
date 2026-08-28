@@ -1,0 +1,59 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * authorityd-errors -- trace error events across authorityd and serviced.
+ *
+ * Shows every error probe firing with subsystem and message.
+ * Summarizes error counts by subsystem on exit.
+ *
+ * Usage: authorityd-errors
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing authorityd/serviced errors... Ctrl-C for summary.\n\n");
+	printf("%-20s %-10s %-14s %s\n",
+	    "TIME", "DAEMON", "SUBSYSTEM", "MESSAGE");
+}
+
+authorityd*:::error
+{
+	printf("%-20Y %-10s %-14s %s\n", walltimestamp,
+	    "authorityd", copyinstr(arg0), copyinstr(arg1));
+	@by_subsys["authorityd", copyinstr(arg0)] = count();
+}
+
+serviced*:::error
+{
+	printf("%-20Y %-10s %-14s %s\n", walltimestamp,
+	    "serviced", copyinstr(arg0), copyinstr(arg1));
+	@by_subsys["serviced", copyinstr(arg0)] = count();
+}
+
+authorityd*:::ctl-deny
+{
+	@denials["authorityd", "ctl-deny"] = count();
+}
+
+serviced*:::sctl-deny
+{
+	@denials["serviced", "sctl-deny"] = count();
+}
+
+serviced*:::naming-deny
+{
+	@denials["serviced", "naming-deny"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Errors by subsystem ---\n");
+	printa("  %-10s %-14s %@d\n", @by_subsys);
+	printf("\n--- Denials ---\n");
+	printa("  %-10s %-14s %@d\n", @denials);
+}

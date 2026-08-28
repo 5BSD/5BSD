@@ -45,7 +45,7 @@ rootdir="${PKG_ROOTDIR}"
 
 # Remove retired policy trees.  Leaving a removed system bundle installed is
 # boot-fatal because serviced intentionally fails closed on invalid system
-# policy.  rebootd and kldmgrd moved into Oracle before these bundles vanished.
+# policy.  rebootd and kldmgrd moved into Authority before these bundles vanished.
 /bin/rm -rf "$rootdir/System/Applications" \
     "$rootdir/Capabilities/System/Reboot.cap" \
     "$rootdir/Capabilities/System/Kldmgr.cap"

@@ -53,10 +53,10 @@
 
 # 20260823: capability manifest/bootstrap/claim ABI revision (SHLIB_MAJOR 2)
 OLD_LIBS+=usr/lib/libcapbundle.so.1
-OLD_LIBS+=usr/lib/liboraclert.so.1
+OLD_LIBS+=usr/lib/libauthorityrt.so.1
 OLD_LIBS+=usr/lib/libservice.so.1
-# 20260819: Oracle now runs exclusively as PID 1; retire migrated daemons
-OLD_FILES+=etc/rc.d/oracled
+# 20260819: Authority now runs exclusively as PID 1; retire migrated daemons
+OLD_FILES+=etc/rc.d/authorityd
 OLD_FILES+=Capabilities/System/Kldmgr.cap/bin/.debug/kldmgrd.debug
 OLD_FILES+=Capabilities/System/Kldmgr.cap/bin/kldmgrd
 OLD_FILES+=Capabilities/System/Kldmgr.cap/etc/kldmgrd.ucl

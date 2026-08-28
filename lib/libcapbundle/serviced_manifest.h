@@ -21,7 +21,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <oraclert.h>
+#include <authorityrt.h>
 
 /*
  * Limits.
@@ -164,7 +164,7 @@ struct svc_manifest {
 	int		management;	/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
 	int		stop_timeout;	/* seconds before SIGKILL (default 5) */
 	unsigned	max_failures;	/* circuit breaker threshold (default 10) */
-	/* Required kernel modules (ensured by oracled before launch) */
+	/* Required kernel modules (ensured by authorityd before launch) */
 	char		kmod_requires[SERVICED_MAX_KMOD_REQUIRES][SERVICED_KMOD_NAME_MAX];
 	unsigned	nkmod_requires;
 

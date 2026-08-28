@@ -7,7 +7,7 @@ Supersedes the "optional broker" sketch in `trustedzfs-design.md §6a`; that
 section now points here.
 
 `tzfsd` is the system component that owns the **storage plane**. It takes the
-storage-granting responsibility that oracled carried inline
+storage-granting responsibility that authorityd carried inline
 (`handle_mint_storage`) and turns it into a first-class daemon with its own
 configuration, its own `[TZFS]` audit identity, and an opinionated
 out-of-the-box experience: a service (or an interactive request) asks for a
@@ -189,7 +189,7 @@ Two libraries, cleanly separated:
 - **`libtzfsd`** (new) — the client to tzfsd, function prefix `tzfsd_`. What
   you use to *obtain* a handle. Distinct prefix because consumers link both
   libraries (`libtrustedzfs` already owns `tzfs_`); named parallel to how
-  `liboraclert` hosts the `oracle_*` client for oracled.
+  `libauthorityrt` hosts the `authority_*` client for authorityd.
 
 ### 5.1 `libtzfsd` API
 
@@ -224,7 +224,7 @@ template.
 
 ### 5.2 Wire protocol (`tzfsd_proto.h`)
 
-Modeled on the oracled reply-with-fds RPC. Ops:
+Modeled on the authorityd reply-with-fds RPC. Ops:
 
 - `TZFS_OP_REQUEST` — `struct tzfs_req` → reply carries `handle_fd` via
   SCM_RIGHTS + resolved dataset name.
@@ -232,31 +232,31 @@ Modeled on the oracled reply-with-fds RPC. Ops:
 - `TZFS_OP_LIST_FLAVORS` — enumerate available flavors (for tooling/`tzfsctl`).
 - `TZFS_OP_PING` — liveness.
 
-Socket: `/var/run/tzfsd.sock` (root-owned; peers are oracled/serviced, and —
+Socket: `/var/run/tzfsd.sock` (root-owned; peers are authorityd/serviced, and —
 via a passed channel — sandboxed services). tzfsd `cap_enter()`s after opening
 its pool handle and socket, so it runs the whole request loop in capability
 mode, minting handles from its retained `zpd`.
 
 ---
 
-## 6. Responsibility transfer from oracled
+## 6. Responsibility transfer from authorityd
 
-Today: serviced `oracle_mint_storage()` → oracled `handle_mint_storage()`
+Today: serviced `authority_mint_storage()` → authorityd `handle_mint_storage()`
 opens `/dev/zfs` and mints. After the move:
 
 - The `storage_open_handle` / `storage_create_ephemeral` / `storage_split`
   logic **moved into tzfsd** (extended with clone-from-flavor). **Built.**
-- oracled keeps `ORACLE_OP_MINT_STORAGE` as a thin **forwarder** to tzfsd via
+- authorityd keeps `AUTHORITY_OP_MINT_STORAGE` as a thin **forwarder** to tzfsd via
   `libtzfsd` (`handle_mint_storage`/`handle_destroy_storage` in
-  `oracle_proto.c` now call `tzfsd_request`/`tzfsd_release`; oracled no longer
+  `authority_proto.c` now call `tzfsd_request`/`tzfsd_release`; authorityd no longer
   opens `/dev/zfs`). **Built.** This was chosen over serviced-talks-to-tzfsd-
   directly because `serviced` mints *every* capability class (path/file/net/
-  jail/vsock/storage/system) uniformly over its one oracle channel; making
+  jail/vsock/storage/system) uniformly over its one authority channel; making
   storage the sole exception would fracture that pattern for no real gain.
-  oracled forwarding relocates the full ZFS authority to tzfsd while keeping
+  authorityd forwarding relocates the full ZFS authority to tzfsd while keeping
   the mint path uniform. serviced-direct remains a possible later
   optimization (design unaffected — it is the same grant semantics).
-- **Startup:** oracled starts tzfsd on demand the first time a service needs
+- **Startup:** authorityd starts tzfsd on demand the first time a service needs
   storage (`posix_spawn` + `waitpid`; tzfsd provisions synchronously then
   daemonizes, so the wait returns once it is ready). A boot-time
   `tzfsd.ready` gate for services that need storage before first-mint is a
@@ -300,7 +300,7 @@ Boot 5BSD and Linux storage is simply *there*, first-class beside native.
 - **`usr.sbin/tzfsd/`** — daemon (config, pool handle, layout, templates,
   request loop), `[TZFS]` tagged.
 - **`lib/libtzfs/`** — client library + `tzfs.h` + `libtzfs.3`.
-- **`lib/liboraclert/tzfsd_proto.h`** — wire protocol (lives with the other
+- **`lib/libauthorityrt/tzfsd_proto.h`** — wire protocol (lives with the other
   capability protocols).
 - **`usr.sbin/tzfsctl/`** — inspector (`list-flavors`, `list`, `request`).
 - **Man pages:** `tzfsd.8`, `tzfs.conf.5`, `libtzfs.3`, `tzfsctl.8`.
@@ -319,7 +319,7 @@ Boot 5BSD and Linux storage is simply *there*, first-class beside native.
 1. **Protocol + `libtzfs`** — `tzfsd_proto.h`, client lib, `flavor=""` path.
 2. **Daemon core** — config, pool `zpd`, layout auto-provision, request loop,
    `empty`/`native` live-built flavors, clone+mint, ephemeral teardown.
-3. **Responsibility transfer** — serviced → tzfsd channel; oracled out of the
+3. **Responsibility transfer** — serviced → tzfsd channel; authorityd out of the
    data path; boot-order + readiness handshake; `flavor` in the manifest.
 4. **Foreign flavors** — `freebsd`/`linux`(Rocky) send-stream artifacts,
    producer tooling, install-time recv, live-build/source fallbacks.

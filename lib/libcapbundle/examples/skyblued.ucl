@@ -2,7 +2,7 @@
 #
 # skyblued is the sole owner of the Bluetooth radio.  The single
 # fully-wildcard AF_BLUETOOTH network capability below is minted to
-# skyblued's nonce by the oracle at launch: registering it trips the
+# skyblued's nonce by the authority at launch: registering it trips the
 # mac_capability_isolation "block all networking" gate for the whole
 # AF_BLUETOOTH domain, so socket(PF_BLUETOOTH, ...) -- HCI raw, L2CAP,
 # RFCOMM, SCO and ISO alike -- succeeds only for skyblued's nonce and

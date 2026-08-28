@@ -38,7 +38,7 @@ serviced*:::conn-close
 	@sctl_rate["close"] = count();
 }
 
-oracled*:::conn-count
+authorityd*:::conn-count
 {
 	printf("%-20Y %-8s %-6s %-6d\n", walltimestamp,
 	    "ctl", "COUNT", arg0);
@@ -46,11 +46,11 @@ oracled*:::conn-count
 	@ctl_rate["change"] = count();
 }
 
-serviced*:::oracle-disconnected
+serviced*:::authority-disconnected
 {
 	printf("%-20Y %-8s %-6s %-6d\n", walltimestamp,
-	    "oracle", "DISCON", 0);
-	@sctl_rate["oracle-dc"] = count();
+	    "authority", "DISCON", 0);
+	@sctl_rate["authority-dc"] = count();
 }
 
 dtrace:::END
@@ -58,7 +58,7 @@ dtrace:::END
 	printf("\n--- serviced control socket ---\n");
 	printa("  %-8s %@d\n", @sctl_rate);
 	printf("  high-water: %d\n", sctl_hwm);
-	printf("\n--- oracled control socket ---\n");
+	printf("\n--- authorityd control socket ---\n");
 	printa("  %-8s %@d\n", @ctl_rate);
 	printf("  high-water: %d\n", ctl_hwm);
 }

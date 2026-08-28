@@ -51,7 +51,7 @@ Primary references:
 
 ## 2. Responsibility boundaries
 
-### oracle-init / oracled
+### authority-init / authorityd
 
 PID 1 owns only authority and recovery mechanisms that must survive a service
 manager failure:
@@ -564,7 +564,7 @@ parser, network broker, or mutable state store.
 ### Phase 6: user domains
 
 - Add per-uid namespaces, storage roots, control authorization, quotas, and
-  oracled-enforced authority ceilings.
+  authorityd-enforced authority ceilings.
 - Realise the lookup domains of §22 (System/User, optionally Session/Instance)
   and the ambient/narrowed lookup channel of §21, so a login session is handed a
   user-domain channel that its descendants inherit.
@@ -785,7 +785,7 @@ When a user reaches a terminal, the session-establishing program — `getty`/
 `login`, `sshd`, or `su` — carries the lookup channel into the session leader,
 and **that session and every descendant it forks or execs holds it**.  Any
 program in the session can then look up and connect to services without opening
-`/var/run/…`.  The chain of custody is oracle-init (PID 1) → serviced → the
+`/var/run/…`.  The chain of custody is authority-init (PID 1) → serviced → the
 login path → the user's shell → its children.
 
 ### 21.2 Discovery is not authority

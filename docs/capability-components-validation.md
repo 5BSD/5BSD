@@ -34,12 +34,12 @@ state.  The reviewed Kyua accounting records 493 passed, zero failed, zero
 broken, and 178 root-only tests skipped across 34 suites:
 
 - `libcapability`, `libchannel`, `libservice`, `libcapbundle`, `libshmring`,
-  `liboraclectl`, and `liboraclert`;
+  `libauthorityctl`, and `libauthorityrt`;
 - `libfilesystemcmp`, `libnetworkcmp`, `liblogcmp`, `libnotify`,
   `libtracecmp`, `libauditcmp`, `libkldmgr`, and `librebootctl`;
 - `localfilesystem`, `localnetwork`, `logd`, `bsdnotify`, `traced`,
   `auditbrokerd`, `kldmgrd`, and `rebootd`;
-- `oracled` and `serviced`; and
+- `authorityd` and `serviced`; and
 - all nine control-tool suites.
 
 The per-suite result counts were:
@@ -51,8 +51,8 @@ The per-suite result counts were:
 | libservice | 2 | 14 |
 | libshmring | 14 | 0 |
 | libcapbundle | 30 | 0 |
-| liboraclectl | 6 | 0 |
-| liboraclert | 6 | 0 |
+| libauthorityctl | 6 | 0 |
+| libauthorityrt | 6 | 0 |
 | libfilesystemcmp | 20 | 0 |
 | libnetworkcmp | 13 | 0 |
 | liblogcmp | 29 | 0 |
@@ -69,7 +69,7 @@ The per-suite result counts were:
 | auditbrokerd | 14 | 3 |
 | kldmgrd | 22 | 9 |
 | rebootd | 30 | 7 |
-| oracled | 26 | 42 |
+| authorityd | 26 | 42 |
 | serviced | 16 | 71 |
 | nine control suites | 59 | 10 |
 
@@ -87,7 +87,7 @@ reply validation, attachment ownership, timeouts, close/reopen, fork
 rejection, concurrent use, malformed provider replies, and provider death.
 The FileSystemCmp and NetworkCmp configuration/diagnostic tools are included
 with their providers.  Together with `logctl`, `notifyctl`, `tracectl`,
-`kldmgrctl`, `rebootctl`, `servicectl`, and `oraclectl`, the nine command-line
+`kldmgrctl`, `rebootctl`, `servicectl`, and `authorityctl`, the nine command-line
 suites passed 59 unprivileged tests and skipped ten root-only cases.
 
 A clean `MK_DTRACE=no` matrix for the five DTrace-aware typed libraries and
@@ -145,19 +145,19 @@ client saturation test also proves that recovery emits one typed synthetic
 loss record while preserving cumulative per-severity drop counters.
 
 `libcapability` remains the kernel-only `GETINFO`/`CALL` wrapper needed by
-serviced, oracled, and libservice. Its former runtime-compiled shell fixture was
+serviced, authorityd, and libservice. Its former runtime-compiled shell fixture was
 replaced with normal build-time ATF cases covering invalid capacities, reply
 slot cleanup, wrong-type descriptors, borrowed request-descriptor ownership,
 and a root-only live kernel metadata query. `libchannel` remains exclusively
 on `SENDMSG`/`RECVMSG` and does not link or expose `MAC_CAPABILITY_CALL`.
 
-The Oracled control client now uses `MSG_NOSIGNAL`, applies a bounded send
+The Authorityd control client now uses `MSG_NOSIGNAL`, applies a bounded send
 timeout as well as its receive timeout, rejects summary lengths above the wire
 protocol maximum, and reports daemon and transport failures consistently.
 Six direct library tests cover dead peers, truncated and oversized replies,
 safe caller-buffer truncation, path bounds, and daemon error propagation. Its
 test package has an explicit `-tests` suffix and installed Kyua mtree root.
-`servicectl` no longer links this Oracled-specific library merely for raw
+`servicectl` no longer links this Authorityd-specific library merely for raw
 socket loops; it owns bounded `MSG_NOSIGNAL` control I/O, validates request and
 reply protocol limits, and has three isolated valid/truncated/oversized reply
 tests.
@@ -252,7 +252,7 @@ doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/traced/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/auditbrokerd/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/kldmgrd/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/rebootd/tests/Kyuafile
-doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/oracled/tests/Kyuafile
+doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/authorityd/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/serviced/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/servicectl/tests/Kyuafile
 ```
@@ -497,8 +497,8 @@ they remain required runs and are not counted as passes.
 - **Kldmgrd:** use a dedicated signed test module to cover load, duplicate load,
   dependency ordering, unload refusal, rollback, worker crash, and concurrent
   requests. Confirm that policy denial never calls the kernel backend.
-- **Oracled:** exercise every capability service with wrong versions,
-  malformed attachment counts, descriptor pressure, revocation, oracle
+- **Authorityd:** exercise every capability service with wrong versions,
+  malformed attachment counts, descriptor pressure, revocation, authority
   restart, and 50,000 concurrent capability objects. Audit and DTrace must
   agree on result and identity.
 - **Serviced:** repeat activation, multiple provides, provider replacement,

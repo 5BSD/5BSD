@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Dynamic claim/release integration tests for the oracled + serviced stack.
+# Dynamic claim/release integration tests for the authorityd + serviced stack.
 #
 # Tests verify refcount-based dynamic claim lifecycle:
 # - auto-claim on mint creates dynamic claims with refcounting
@@ -48,7 +48,7 @@ shared_path_survives_exit_head()
 {
 	atf_set "descr" "Shared dynamic claim survives when one user exits"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 shared_path_survives_exit_body()
@@ -86,7 +86,7 @@ shared_path_survives_exit_body()
 	atf_check -s exit:0 -o ignore grep "auto-claimed /var/tmp" "$logfile"
 
 	# Verify status shows the dynamic claim with refcount=2
-	oraclectl -s "$sockpath" status > status-both.out 2>&1
+	authorityctl -s "$sockpath" status > status-both.out 2>&1
 	atf_check -s exit:0 -o match:"/var/tmp.*service.*refcount=2" \
 	    cat status-both.out
 
@@ -100,7 +100,7 @@ shared_path_survives_exit_body()
 	sleep 1
 
 	# Verify /var/tmp is still claimed with refcount=1
-	oraclectl -s "$sockpath" status > status-after.out 2>&1
+	authorityctl -s "$sockpath" status > status-after.out 2>&1
 	atf_check -s exit:0 -o match:"/var/tmp.*service.*refcount=1" \
 	    cat status-after.out
 }
@@ -116,7 +116,7 @@ shared_path_survives_exit_cleanup()
 #
 # A single service auto-claims a path (refcount=1).  When it
 # exits, the refcount drops to 0 and the claim is released from
-# the kernel and removed from the oracle's state.
+# the kernel and removed from the authority's state.
 # ===================================================================
 
 atf_test_case dynamic_claim_fully_released cleanup
@@ -124,7 +124,7 @@ dynamic_claim_fully_released_head()
 {
 	atf_set "descr" "Dynamic claim released from kernel when last user exits"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 dynamic_claim_fully_released_body()
@@ -147,7 +147,7 @@ dynamic_claim_fully_released_body()
 	fi
 
 	# Verify claim exists as dynamic
-	oraclectl -s "$sockpath" status > status-before.out 2>&1
+	authorityctl -s "$sockpath" status > status-before.out 2>&1
 	atf_check -s exit:0 -o match:"/var/tmp.*service" cat status-before.out
 
 	# Kill the service — claim should be fully released
@@ -158,7 +158,7 @@ dynamic_claim_fully_released_body()
 	sleep 1
 
 	# Verify /var/tmp is gone from status
-	oraclectl -s "$sockpath" status > status-after.out 2>&1
+	authorityctl -s "$sockpath" status > status-after.out 2>&1
 	if grep -q "/var/tmp" status-after.out; then
 		cat status-after.out
 		atf_fail "/var/tmp claim still present after last user exited"
@@ -174,8 +174,8 @@ dynamic_claim_fully_released_cleanup()
 # ===================================================================
 # policy_claim_immune_to_release
 #
-# A path claimed via oracled.conf (CLAIM_SOURCE_POLICY) must
-# survive service exit.  The oracle returns EPERM for the
+# A path claimed via authorityd.conf (CLAIM_SOURCE_POLICY) must
+# survive service exit.  The authority returns EPERM for the
 # release, which is harmless and silently drained.
 # ===================================================================
 
@@ -184,7 +184,7 @@ policy_claim_immune_to_release_head()
 {
 	atf_set "descr" "Policy claims survive service exit (EPERM on release)"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 policy_claim_immune_to_release_body()
@@ -230,7 +230,7 @@ EOF
 	fi
 
 	# Verify claim is policy
-	oraclectl -s "$sockpath" status > status-before.out 2>&1
+	authorityctl -s "$sockpath" status > status-before.out 2>&1
 	atf_check -s exit:0 -o match:"/var/tmp.*policy" cat status-before.out
 
 	# Kill the service — policy claim must survive
@@ -241,7 +241,7 @@ EOF
 	sleep 1
 
 	# Verify /var/tmp is still present as policy
-	oraclectl -s "$sockpath" status > status-after.out 2>&1
+	authorityctl -s "$sockpath" status > status-after.out 2>&1
 	atf_check -s exit:0 -o match:"/var/tmp.*policy" cat status-after.out
 }
 policy_claim_immune_to_release_cleanup()
@@ -264,7 +264,7 @@ multi_cap_batched_release_head()
 {
 	atf_set "descr" "Multiple dynamic claims all released on service exit"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 multi_cap_batched_release_body()
@@ -287,7 +287,7 @@ multi_cap_batched_release_body()
 	fi
 
 	# Verify both claims exist
-	oraclectl -s "$sockpath" status > status-before.out 2>&1
+	authorityctl -s "$sockpath" status > status-before.out 2>&1
 	atf_check -s exit:0 -o match:"/var/tmp.*service" cat status-before.out
 	atf_check -s exit:0 -o match:"/tmp.*service" cat status-before.out
 
@@ -301,7 +301,7 @@ multi_cap_batched_release_body()
 	sleep 1
 
 	# Verify both claims are gone
-	oraclectl -s "$sockpath" status > status-after.out 2>&1
+	authorityctl -s "$sockpath" status > status-after.out 2>&1
 	if grep -q "/var/tmp.*service" status-after.out; then
 		cat status-after.out
 		atf_fail "/var/tmp claim still present after exit"
@@ -347,7 +347,7 @@ duplicate_release_no_underflow_head()
 {
 	atf_set "descr" "Duplicate release returns error, does not underflow refcount"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 duplicate_release_no_underflow_body()
@@ -392,7 +392,7 @@ duplicate_release_no_underflow_body()
 	fi
 
 	# Verify fresh claim with refcount=1 (not UINT32_MAX)
-	oraclectl -s "$sockpath" status > status-dup.out 2>&1
+	authorityctl -s "$sockpath" status > status-dup.out 2>&1
 	atf_check -s exit:0 -o match:"/var/tmp.*service.*refcount=1" \
 	    cat status-dup.out
 }
@@ -416,7 +416,7 @@ sweep_all_claim_types_head()
 {
 	atf_set "descr" "Sweep on serviced exit releases path and network claims"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 sweep_all_claim_types_body()
@@ -442,7 +442,7 @@ sweep_all_claim_types_body()
 	fi
 
 	# Verify both claim types exist
-	oraclectl -s "$sockpath" status > status-sweep-before.out 2>&1
+	authorityctl -s "$sockpath" status > status-sweep-before.out 2>&1
 	atf_check -s exit:0 -o match:"/var/tmp.*service" \
 	    cat status-sweep-before.out
 
@@ -452,7 +452,7 @@ sweep_all_claim_types_body()
 	sleep 1
 
 	# Verify /var/tmp is gone
-	oraclectl -s "$sockpath" status > status-sweep-after.out 2>&1
+	authorityctl -s "$sockpath" status > status-sweep-after.out 2>&1
 	if grep -q "/var/tmp.*service" status-sweep-after.out; then
 		cat status-sweep-after.out
 		atf_fail "path claim survived sweep"

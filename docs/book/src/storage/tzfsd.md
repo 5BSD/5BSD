@@ -5,7 +5,7 @@ creates or opens application datasets, attenuates each returned handle to the
 declared rights, and passes that handle with `SCM_RIGHTS`. It never proxies
 application I/O.
 
-`oracled` starts it on demand and forwards storage requests. `serviced`
+`authorityd` starts it on demand and forwards storage requests. `serviced`
 converts mount-only storage into a rights-limited directory named
 `storage:<logical-name>`. A filesystem descriptor consumes its backing handle
 privately. Only a unit requesting advanced ZFS operations receives a named
@@ -52,7 +52,7 @@ optional and the commented defaults in the shipped file are authoritative.
 
 **ZFS-rooted install (the streamlined path).** A stock ZFS-on-root system
 already has `zroot` imported at boot, so there is nothing to do: the first time
-a unit requests storage, `oracled` starts `tzfsd`, which provisions
+a unit requests storage, `authorityd` starts `tzfsd`, which provisions
 `zroot/Capabilities` and begins minting handles. The `native` flavor — a
 copy-on-write clone of the running boot environment — is available only on such
 a system, because it clones the live root dataset.
@@ -100,7 +100,7 @@ network components, crypto, audit — the installer offers a checklist for which
 ones start at first boot, modeled on the existing `services` and `hardening`
 screens and slotted into the same post-extract sequence
 (`… → services → capabilities → hardening → …`). The core plane
-(`oracled`/`serviced`/`tzfsd`) is always on and not listed; the checklist covers
+(`authorityd`/`serviced`/`tzfsd`) is always on and not listed; the checklist covers
 the optional providers. A selected component has its capability bundle marked
 active (boot activation or on-demand); an unselected one is still installed but
 inactive, so it can be enabled later with `servicectl` without a reinstall. The
@@ -146,7 +146,7 @@ Only the transition from one holder to zero sends a destroy request.
 
 `tzfsd` does not erase the ephemeral root when it starts. Doing so would turn a
 storage-daemon crash into application data loss. Instead, boot generations are
-derived from `kern.boottime`; lease generations are selected by `oracled` for
+derived from `kern.boottime`; lease generations are selected by `authorityd` for
 each new `serviced` instance. Reconnecting after a `tzfsd` crash resumes the
 same lease session. A new manager instance selects a new session after the old
 supervised process tree is gone and reclaims older ordinary lease trees.

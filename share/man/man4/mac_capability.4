@@ -46,14 +46,14 @@ structured ioctls.
 The
 .Pa /dev/mac_capability
 device is normally claimed exclusively by
-.Xr oracled 8
+.Xr authorityd 8
 at boot via the isolation service.
 Once claimed, only
-.Xr oracled 8
+.Xr authorityd 8
 can open the device; all other processes receive
 .Er EACCES .
 Administrative access to capability services is provided through
-.Xr oraclectl 8 .
+.Xr authorityctl 8 .
 .Pp
 The framework supports two messaging models:
 .Bl -tag -width "Synchronous"
@@ -563,7 +563,7 @@ if (kevent(kq, NULL, 0, &ev, 1, NULL) > 0) {
 .Xr mac_capability_node 4 ,
 .Xr mac_capability_channel 4 ,
 .Xr mac_capability_system 4 ,
-.Xr oracled 8
+.Xr authorityd 8
 .Sh HISTORY
 The
 .Nm

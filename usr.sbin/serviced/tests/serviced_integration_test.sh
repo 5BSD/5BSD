@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Integration tests for the full oracled + serviced stack.
+# Integration tests for the full authorityd + serviced stack.
 #
 # Tests exercise capability token delivery, crash recovery,
 # circuit breaker, graceful shutdown, dependency ordering,
@@ -19,9 +19,9 @@
 atf_test_case capability_tokens_delivered cleanup
 capability_tokens_delivered_head()
 {
-	atf_set "descr" "Service receives capability token fds from oracle"
+	atf_set "descr" "Service receives capability token fds from authority"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 capability_tokens_delivered_body()
@@ -84,7 +84,7 @@ capability_tokens_require_program_activation_head()
 {
 	atf_set "descr" "libservice activates delivered tokens and retains their kernel authorization lease after consuming the inherited descriptors"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 capability_tokens_require_program_activation_body()
@@ -130,7 +130,7 @@ incomplete_capability_set_prevents_exec_head()
 {
 	atf_set "descr" "A failed mint cleans partial claims and prevents service exec"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 incomplete_capability_set_prevents_exec_body()
@@ -167,7 +167,7 @@ incomplete_capability_set_prevents_exec_body()
 
 	# The first token was minted before the second failed.  Its dynamic
 	# claim must be rolled back along with the token fd.
-	oraclectl -s "$sockpath" status > mint-fail-status.out 2>&1
+	authorityctl -s "$sockpath" status > mint-fail-status.out 2>&1
 	if grep -Fq "$valid_target" mint-fail-status.out; then
 		cat mint-fail-status.out
 		atf_fail "partial capability claim was not released"
@@ -190,7 +190,7 @@ crash_recovery_restarts_head()
 {
 	atf_set "descr" "Service with restart=on-failure restarts after crash"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 crash_recovery_restarts_body()
 {
@@ -229,7 +229,7 @@ circuit_breaker_stops_restarts_head()
 {
 	atf_set "descr" "Circuit breaker disables service after max_failures"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 circuit_breaker_stops_restarts_body()
 {
@@ -266,7 +266,7 @@ graceful_shutdown_sigterm_head()
 {
 	atf_set "descr" "Service receives SIGTERM on graceful shutdown"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 graceful_shutdown_sigterm_body()
 {
@@ -286,7 +286,7 @@ graceful_shutdown_sigterm_body()
 
 	# Shut down the stack — this sends SIGTERM to services
 	atf_check -s exit:0 -o match:"shutdown initiated" \
-	    oraclectl -s "$sockpath" shutdown
+	    authorityctl -s "$sockpath" shutdown
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
 
@@ -312,9 +312,9 @@ graceful_shutdown_sigterm_cleanup()
 atf_test_case procdesc_is_only_signal_authority cleanup
 procdesc_is_only_signal_authority_head()
 {
-	atf_set "descr" "ambient SIGKILL is denied but Oracle can stop serviced through its procdesc"
+	atf_set "descr" "ambient SIGKILL is denied but Authority can stop serviced through its procdesc"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 procdesc_is_only_signal_authority_body()
@@ -337,14 +337,14 @@ procdesc_is_only_signal_authority_body()
 		atf_fail "serviced died after denied ambient SIGKILL"
 	fi
 
-	# Oracle is protected from ambient signals too.  Ask it to shut down over
+	# Authority is protected from ambient signals too.  Ask it to shut down over
 	# its administrative channel; bootstrap_stop() then signals this exact
-	# serviced instance through Oracle's procdesc, bypassing the ambient
+	# serviced instance through Authority's procdesc, bypassing the ambient
 	# capprotect signal check.  Waiting for socket removal first gives this
 	# asynchronous path a hard diagnostic deadline instead of hanging in
 	# wait(1) if shutdown regresses.
 	atf_check -s exit:0 -o match:"shutdown initiated" \
-	    oraclectl -s "$sockpath" shutdown
+	    authorityctl -s "$sockpath" shutdown
 	i=0
 	while [ -S "$sockpath" ] && [ "$i" -lt 350 ]; do
 		i=$((i + 1))
@@ -352,7 +352,7 @@ procdesc_is_only_signal_authority_body()
 	done
 	if [ -S "$sockpath" ]; then
 		cat "$logfile" 2>/dev/null
-		atf_fail "Oracle control socket remained after shutdown deadline"
+		atf_fail "Authority control socket remained after shutdown deadline"
 	fi
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
@@ -362,7 +362,7 @@ procdesc_is_only_signal_authority_body()
 		sleep 0.1
 	done
 	if ps -p "$serviced_pid" >/dev/null 2>&1; then
-		atf_fail "serviced survived the last close of Oracle's procdesc"
+		atf_fail "serviced survived the last close of Authority's procdesc"
 	fi
 }
 procdesc_is_only_signal_authority_cleanup()
@@ -380,7 +380,7 @@ reload_adds_service_head()
 {
 	atf_set "descr" "SIGHUP reload picks up new manifest and starts service"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 reload_adds_service_body()
 {
@@ -415,7 +415,7 @@ reload_removes_service_head()
 {
 	atf_set "descr" "Removing manifest and reloading stops the service"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 reload_removes_service_body()
 {
@@ -469,7 +469,7 @@ audit_records_best_effort_head()
 {
 	atf_set "descr" "serviced emits BSM audit records (best effort; skips if audit unavailable)"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 }
 audit_records_best_effort_body()
 {
@@ -521,7 +521,7 @@ manifest_arguments_environment_head()
 {
 	atf_set "descr" "Manifest arguments and environment reach execve literally"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 manifest_arguments_environment_body()
@@ -557,7 +557,7 @@ remaining_token_families_activate_head()
 {
 	atf_set "descr" "Jail, VSOCK, and system manifest tokens mint and activate after exec"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 remaining_token_families_activate_body()
@@ -580,7 +580,7 @@ arguments = ["authorize-tokens", "token-families.out"];' \
 	}
 	atf_check -s exit:0 -o match:'fds=6,7,8' cat token-families.out
 	atf_check -s exit:0 -o match:'authorized=yes' cat token-families.out
-	oraclectl -s "$sockpath" status > token-families-status.out
+	authorityctl -s "$sockpath" status > token-families-status.out
 	atf_check -s exit:0 -o match:'vsock:[[:space:]]+1' \
 	    cat token-families-status.out
 	atf_check -s exit:0 -o match:'ports=48001-48001 connect.*refcount=1' \
@@ -599,7 +599,7 @@ capability_service_descriptors_delivered_head()
 {
 	atf_set "descr" "Manifest capability services arrive named and non-transferable"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods mac_capability_mount mac_capability_node \
+	require_authority_stack_kmods mac_capability_mount mac_capability_node \
 	    mac_capability_accounting mac_capability_identity
 	atf_set "timeout" "60"
 }
@@ -637,7 +637,7 @@ mount_storage_is_a_directory_head()
 	atf_set "descr" \
 	    "Mount-only storage is a private type-checked directory, including long logical names"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods zfs
+	require_authority_stack_kmods zfs
 	atf_set "timeout" "90"
 }
 mount_storage_is_a_directory_body()
@@ -677,7 +677,7 @@ malformed_reload_is_transactional_head()
 {
 	atf_set "descr" "Malformed bundle rejects reload without replacing the live registry"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 malformed_reload_is_transactional_body()
@@ -721,7 +721,7 @@ untrusted_bundle_rejected_head()
 {
 	atf_set "descr" "Writable bundle policy cannot be loaded by serviced"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
 untrusted_bundle_rejected_body()
@@ -746,15 +746,15 @@ untrusted_bundle_rejected_cleanup()
 	cleanup_common
 }
 
-atf_test_case kmod_prerequisite_uses_oracle cleanup
-kmod_prerequisite_uses_oracle_head()
+atf_test_case kmod_prerequisite_uses_authority cleanup
+kmod_prerequisite_uses_authority_head()
 {
-	atf_set "descr" "System bundle module prerequisites execute under Oracle authority"
+	atf_set "descr" "System bundle module prerequisites execute under Authority authority"
 	atf_set "require.user" "root"
-	require_oracle_stack_kmods
+	require_authority_stack_kmods
 	atf_set "timeout" "60"
 }
-kmod_prerequisite_uses_oracle_body()
+kmod_prerequisite_uses_authority_body()
 {
 	build_ready_svc
 	start_stack
@@ -772,7 +772,7 @@ arguments = ["compat-ready"];' "$(pwd)/ready_svc"
 	    grep 'ensured kernel module mac_capability' "$logfile"
 	stop_stack
 }
-kmod_prerequisite_uses_oracle_cleanup()
+kmod_prerequisite_uses_authority_cleanup()
 {
 	cleanup_common
 }
@@ -797,5 +797,5 @@ atf_init_test_cases()
 	atf_add_test_case mount_storage_is_a_directory
 	atf_add_test_case malformed_reload_is_transactional
 	atf_add_test_case untrusted_bundle_rejected
-	atf_add_test_case kmod_prerequisite_uses_oracle
+	atf_add_test_case kmod_prerequisite_uses_authority
 }

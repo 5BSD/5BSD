@@ -1,6 +1,0 @@
-comment = "Tests for the 5BSD Oracle control utility"
-
-desc = <<EOD
-ATF/Kyua tests for the oraclectl command-line client, installed separately
-from the runtime utility under /usr/tests.
-EOD

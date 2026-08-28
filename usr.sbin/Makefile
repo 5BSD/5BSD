@@ -71,8 +71,8 @@ SUBDIR=	adduser \
 	nfsuserd \
 	nmtree \
 	nologin \
-	oracled \
-	oraclectl \
+	authorityd \
+	authorityctl \
 	pciconf \
 	periodic \
 	pnfsdscopymr \

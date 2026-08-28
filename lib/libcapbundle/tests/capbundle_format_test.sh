@@ -492,7 +492,7 @@ process_policy_matrix_body()
 	    'max_failures = 0;' 'max_failures = 101;' \
 	    'arguments = "--shell split";' 'arguments = [4];' \
 	    'environment = [];' 'environment { 2BAD = "x"; }' \
-	    'environment { ORACLED_CHANNEL_FD = "9"; }' \
+	    'environment { AUTHORITYD_CHANNEL_FD = "9"; }' \
 	    'environment { SERVICE_BOOTSTRAP_FD = "9"; }' \
 	    'environment { CAPABILITY_UNIT_DIR = "/tmp/override"; }' \
 	    'kmod_requires = ["bad/name"];' \

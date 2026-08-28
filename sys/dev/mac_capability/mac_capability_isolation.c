@@ -318,7 +318,7 @@ fi_jail_req_matches(const struct fi_jail_request *claim,
 	/*
 	 * When the claim specifies both JID and name, require both keys
 	 * to be present in the request and both to match.  This prevents
-	 * a token for jail "oracled.net" JID 5 from authorizing
+	 * a token for jail "authorityd.net" JID 5 from authorizing
 	 * operations keyed only by JID 5 (which could be reused).
 	 *
 	 * Exception: FI_JAIL_CREATE requests may have JID 0 because the

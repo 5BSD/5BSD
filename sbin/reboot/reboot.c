@@ -55,7 +55,7 @@
 #include <unistd.h>
 #include <utmpx.h>
 
-#include "oracled_ctl.h"
+#include "authorityd_ctl.h"
 
 extern char **environ;
 
@@ -236,17 +236,17 @@ add_env(char **env, const char *key, const char *value)
 }
 
 /*
- * Ask oracle-init to perform a lifecycle transition over its control
+ * Ask authority-init to perform a lifecycle transition over its control
  * socket.  Returns 0 if accepted, an errno on a daemon-reported refusal,
  * or -1 (with errno) if the socket is absent/unusable — signalling that
  * the caller should fall back to the signal ABI.
  *
- * A minimal inline client is used deliberately rather than liboraclectl:
+ * A minimal inline client is used deliberately rather than libauthorityctl:
  * reboot(8)/halt(8) live in /sbin and must not acquire a /usr runtime
  * dependency, since they have to work before /usr is mounted.
  */
 static int
-oracle_lifecycle(uint32_t op)
+authority_lifecycle(uint32_t op)
 {
 	struct sockaddr_un un;
 	struct ctl_request req;
@@ -260,12 +260,12 @@ oracle_lifecycle(uint32_t op)
 		return (-1);
 	memset(&un, 0, sizeof(un));
 	un.sun_family = AF_LOCAL;
-	strlcpy(un.sun_path, ORACLED_CTL_SOCK, sizeof(un.sun_path));
+	strlcpy(un.sun_path, AUTHORITYD_CTL_SOCK, sizeof(un.sun_path));
 	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
 		saved = errno;
 		close(fd);
 		errno = saved;
-		return (-1);		/* no oracle-init socket: fall back */
+		return (-1);		/* no authority-init socket: fall back */
 	}
 
 	memset(&req, 0, sizeof(req));
@@ -313,25 +313,25 @@ reboot_request(int howto)
 	int error;
 
 	/*
-	 * Prefer the authenticated Oracle control socket: when PID 1 is
-	 * oracle-init, it is shielded from the signal ABI and lifecycle
+	 * Prefer the authenticated Authority control socket: when PID 1 is
+	 * authority-init, it is shielded from the signal ABI and lifecycle
 	 * requests arrive over the socket.  Fall back to signalling init
-	 * directly when the socket is absent (stock init, or oracle-init
+	 * directly when the socket is absent (stock init, or authority-init
 	 * before its capability engine has started).
 	 */
-	error = oracle_lifecycle(op);
+	error = authority_lifecycle(op);
 	if (error == 0) {
-		BOOTTRACE("lifecycle op %u to oracle-init", op);
+		BOOTTRACE("lifecycle op %u to authority-init", op);
 		exit(0);
 	}
 	if (error > 0) {
 		/*
 		 * Socket present but the request was refused — e.g. a
-		 * non-PID-1 oracled owns the socket while the real init is
+		 * non-PID-1 authorityd owns the socket while the real init is
 		 * a signalable stock init.  Fall back to the signal ABI
 		 * rather than failing outright.
 		 */
-		warnx("oracle-init lifecycle request refused (%s); "
+		warnx("authority-init lifecycle request refused (%s); "
 		    "signalling init", strerror(error));
 	}
 
@@ -565,14 +565,14 @@ main(int argc, char *argv[])
 		reboot_request(howto);
 
 	/*
-	 * Stop init from respawning gettys during teardown.  oracle-init
+	 * Stop init from respawning gettys during teardown.  authority-init
 	 * is signal-shielded, so prefer the control socket (CATATONIA);
 	 * fall back to SIGTSTP for stock init.  Best-effort: reboot(2)
 	 * below still completes if init cannot be quiesced, so this must
 	 * not be fatal (a fatal error here would abort the fast reboot).
 	 */
 	BOOTTRACE("quiescing init(8)...");
-	if (oracle_lifecycle(CTL_OP_CATATONIA) != 0 && kill(1, SIGTSTP) == -1)
+	if (authority_lifecycle(CTL_OP_CATATONIA) != 0 && kill(1, SIGTSTP) == -1)
 		warn("could not quiesce init; continuing");
 
 	/* Send a SIGTERM first, a chance to save the buffers. */

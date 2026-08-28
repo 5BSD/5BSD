@@ -146,29 +146,29 @@ run_rc_bootstrap(int kqunused)
 	/*
 	 * Carry the ambient lookup channel into interactive logins (§21).  rc
 	 * and its descendants inherit SERVICE_LOOKUP_FD by environment, but the
-	 * getty/login sessions oracle-init spawns from /etc/ttys are siblings of
-	 * rc and never see that environment.  Hand oracle-init (PID 1) a dup of
+	 * getty/login sessions authority-init spawns from /etc/ttys are siblings of
+	 * rc and never see that environment.  Hand authority-init (PID 1) a dup of
 	 * the retained client end so it can pin the channel at
 	 * SERVICE_LOOKUP_FIXED_FD when it execs each getty.
 	 *
 	 * Strictly best-effort: the rc path already works, so any failure here
-	 * (no channel, no oracle link, dup or send error) is logged at
+	 * (no channel, no authority link, dup or send error) is logged at
 	 * LOG_NOTICE and boot proceeds unchanged.
 	 */
-	if (serviced_ambient_lookup_fd >= 0 && sd.oracle_channel_fd >= 0) {
+	if (serviced_ambient_lookup_fd >= 0 && sd.authority_channel_fd >= 0) {
 		int dupfd = dup(serviced_ambient_lookup_fd);
 
 		if (dupfd == -1)
 			syslog(LOG_NOTICE, "startup: cannot dup ambient lookup "
 			    "channel for interactive carry: %m");
 		else {
-			if (oracle_set_ambient_lookup(sd.oracle_channel_fd,
+			if (authority_set_ambient_lookup(sd.authority_channel_fd,
 			    dupfd) == -1)
-				syslog(LOG_NOTICE, "startup: oracle-init "
+				syslog(LOG_NOTICE, "startup: authority-init "
 				    "interactive ambient carry unavailable: %m");
 			else
 				syslog(LOG_INFO, "startup: ambient lookup "
-				    "channel handed to oracle-init for logins");
+				    "channel handed to authority-init for logins");
 			(void)close(dupfd);
 		}
 	}

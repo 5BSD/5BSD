@@ -431,7 +431,7 @@ ATF_TC_BODY(fixed_fd_lookup_channel_accepted, tc)
 	int client_end, serviced_end, saved, got;
 
 	/*
-	 * The getty-path carry: oracle-init pins the channel at
+	 * The getty-path carry: authority-init pins the channel at
 	 * SERVICE_LOOKUP_FIXED_FD with no environment variable set.  A genuine
 	 * lookup channel parked there must pass the handshake and be returned.
 	 */

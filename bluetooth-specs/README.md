@@ -408,8 +408,8 @@ after setup. If btled ever exec'd a helper (e.g., a passkey prompt UI),
 these fds would not leak. cap_clofork_limit on the SMP socket prevents
 forked children from inheriting a parent's active pairing session.
 
-**oracled/serviced integration:**
-btled can be managed as a serviced bundle — oracled provides supervised
+**authorityd/serviced integration:**
+btled can be managed as a serviced bundle — authorityd provides supervised
 restart, capability-mediated HCI device access via MAC_CAPABILITY claims, and
 automatic cleanup on crash. The bond database fd can be a MAC_CAPABILITY-claimed
 vnode so access is revocable.
@@ -424,7 +424,7 @@ blockers for initial functionality.
 The end-state is a Bluetooth service daemon (`btd`) that owns the radio
 and hands out capability-mediated handles to client applications.  This
 replaces the current btled model (one monolithic daemon per device) with
-a multi-client service integrated with serviced and oracled.
+a multi-client service integrated with serviced and authorityd.
 
 ### Design principles
 
@@ -469,7 +469,7 @@ a multi-client service integrated with serviced and oracled.
   │  └─────────┘  └──────┘  └────────┘  │
   └──────────────────┬───────────────────┘
                      │ raw HCI socket
-                     │ (MAC_CAPABILITY claimed via oracled)
+                     │ (MAC_CAPABILITY claimed via authorityd)
                      v
   ┌──────────────────────────────────────┐
   │           kernel (ng_hci +           │   netgraph stack
@@ -575,7 +575,7 @@ shields: [ptrace, signal, visible, ktrace]
 coalition: btd-workers
 ```
 
-oracled grants btd access to `/dev/ubt0` via a MAC_CAPABILITY claim.  If btd
+authorityd grants btd access to `/dev/ubt0` via a MAC_CAPABILITY claim.  If btd
 crashes, serviced restarts it.  The coalition tears down any worker
 children.  The bond database fd is a MAC_CAPABILITY-claimed vnode — access
 is revocable if btd is compromised.
@@ -668,8 +668,8 @@ This architecture requires serviced to support:
 
 1. **Service name registration** — btd registers as "com.5bsd.bluetooth",
    clients look it up by name to get the Unix socket path.
-2. **MAC_CAPABILITY claims for devices** — btd claims /dev/ubt0 via oracled.
-   If the adapter is unplugged/replugged, oracled re-grants access.
+2. **MAC_CAPABILITY claims for devices** — btd claims /dev/ubt0 via authorityd.
+   If the adapter is unplugged/replugged, authorityd re-grants access.
 3. **Supervised restart** — if btd crashes, serviced restarts it.
    Clients detect disconnection (Unix socket EOF) and reconnect.
 4. **Coalition support** — btd's worker processes (if any) are in a

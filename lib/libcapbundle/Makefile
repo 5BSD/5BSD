@@ -18,8 +18,8 @@ HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
 CFLAGS+=	-I${SRCTOP}/sys
-CFLAGS+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		oraclert ucl md
+LIBADD=		authorityrt ucl md
 
 .include <bsd.lib.mk>

@@ -1,6 +1,6 @@
 # serviced
 
-`serviced(8)` is 5BSD's system service manager. `oracled(8)` starts one
+`serviced(8)` is 5BSD's system service manager. `authorityd(8)` starts one
 supervised instance and supplies descriptor-based authority for service
 launches. `serviced` owns bundle discovery, explicit boot and IPC activation,
 readiness, restart policy, storage leases, and the administrative control
@@ -14,7 +14,7 @@ ABI or a supported dependency facility.
 At startup `serviced` runs the transitional `/etc/rc autoboot` oneshot, scans
 root-owned bundles in `/Capabilities/System` and `/Capabilities`, validates the
 complete graph, starts units declaring `activation.boot=true`, then reports
-boot convergence to `oracled`. Units that declare only `activation.ipc` start
+boot convergence to `authorityd`. Units that declare only `activation.ipc` start
 on the first lookup of one of their reserved names.
 
 Installed versions are immutable directories named

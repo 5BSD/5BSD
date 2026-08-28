@@ -149,7 +149,7 @@ that matched state, and aggregates every case in an isolated work directory.
 ## Consumers
 
 serviced grants storage per manifest stanza the same way it grants files
-and network (see [tzfsd](tzfsd.md)); oracle-init uses snapshot/rollback
+and network (see [tzfsd](tzfsd.md)); authority-init uses snapshot/rollback
 handles plus a `bootfs`-only pool handle for boot-environment management;
 WASPNest VMs get zvol checkpoint handles, golden-image `CLONE_SRC`
 handles, and send-only migration handles; jails get subtree handles that

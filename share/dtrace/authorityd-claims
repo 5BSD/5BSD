@@ -1,0 +1,106 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * authorityd-claims -- trace resource claims at startup and runtime.
+ *
+ * Shows each path and network claim with success/failure status.
+ * On exit, prints a summary of claims by status.
+ *
+ * Usage: authorityd-claims
+ */
+
+#pragma D option quiet
+
+dtrace:::BEGIN
+{
+	printf("Tracing authorityd claims... Ctrl-C for summary.\n\n");
+	printf("%-6s %-8s %s\n", "PID", "STATUS", "RESOURCE");
+}
+
+authorityd*:::claim-path
+{
+	printf("%-6d %-8s %s\n", pid, "OK", copyinstr(arg0));
+	@status["paths claimed"] = count();
+}
+
+authorityd*:::claim-path-fail
+{
+	printf("%-6d %-8s %s\n", pid, "FAIL", copyinstr(arg0));
+	@status["paths failed"] = count();
+}
+
+authorityd*:::claim-net
+/arg0 == arg1/
+{
+	printf("%-6d %-8s port %d/%s\n", pid, "OK", arg0,
+	    arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+	@status["network claimed"] = count();
+}
+
+authorityd*:::claim-net
+/arg0 != arg1/
+{
+	printf("%-6d %-8s port %d-%d/%s\n", pid, "OK", arg0, arg1,
+	    arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+	@status["network claimed"] = count();
+}
+
+authorityd*:::claim-net-fail
+/arg0 == arg1/
+{
+	printf("%-6d %-8s port %d/%s\n", pid, "FAIL", arg0,
+	    arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+	@status["network failed"] = count();
+}
+
+authorityd*:::claim-net-fail
+/arg0 != arg1/
+{
+	printf("%-6d %-8s port %d-%d/%s\n", pid, "FAIL", arg0, arg1,
+	    arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+	@status["network failed"] = count();
+}
+
+authorityd*:::claim-path-release
+{
+	printf("%-6d %-8s %s\n", pid, "RELEASE", copyinstr(arg0));
+	@status["paths released"] = count();
+}
+
+authorityd*:::claim-net-release
+/arg0 == arg1/
+{
+	printf("%-6d %-8s port %d/%s\n", pid, "RELEASE", arg0,
+	    arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+	@status["network released"] = count();
+}
+
+authorityd*:::claim-net-release
+/arg0 != arg1/
+{
+	printf("%-6d %-8s port %d-%d/%s\n", pid, "RELEASE", arg0, arg1,
+	    arg2 == 6 ? "tcp" : arg2 == 17 ? "udp" : "?");
+	@status["network released"] = count();
+}
+
+authorityd*:::claim-jail-release
+{
+	printf("%-6d %-8s jail %s actions=0x%x\n", pid, "RELEASE",
+	    copyinstr(arg0), arg1);
+	@status["jails released"] = count();
+}
+
+authorityd*:::claim-system-release
+{
+	printf("%-6d %-8s system gates=0x%x\n", pid, "RELEASE", arg0);
+	@status["system released"] = count();
+}
+
+dtrace:::END
+{
+	printf("\n--- Claim summary ---\n");
+	printa("  %-20s %@d\n", @status);
+}

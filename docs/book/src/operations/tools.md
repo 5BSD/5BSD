@@ -3,16 +3,16 @@
 Operator CLIs shipped in the 5BSD base system. Synopses below are taken
 from each tool's `usage()` output in `/usr/src`.
 
-## oraclectl — control oracled(8)
+## authorityctl — control authorityd(8)
 
-Source: `usr.sbin/oraclectl`. One connection, one command, over the
-oracled control socket (`-s socket` overrides the path).
+Source: `usr.sbin/authorityctl`. One connection, one command, over the
+authorityd control socket (`-s socket` overrides the path).
 
 ```
-usage: oraclectl [-s socket] command
-       oraclectl status
-       oraclectl reload
-       oraclectl shutdown
+usage: authorityctl [-s socket] command
+       authorityctl status
+       authorityctl reload
+       authorityctl shutdown
 ```
 
 `status` prints running state, uptime, and a summary block; `reload`
@@ -38,8 +38,8 @@ commands:
 ```
 
 There is no separate low-level capability administration tool:
-`/dev/mac_capability` is held exclusively by oracled, and capability
-administration goes through `oraclectl` and `servicectl`.
+`/dev/mac_capability` is held exclusively by authorityd, and capability
+administration goes through `authorityctl` and `servicectl`.
 
 ## tzfsctl — TrustedZFS broker CLI
 

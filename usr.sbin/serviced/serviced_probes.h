@@ -188,7 +188,7 @@
 	DTRACE_PROBE2(serviced, error, subsys, msg)
 #define	SERVICED_PROBE_SVC_EXEC_FAIL(label, error)	\
 	DTRACE_PROBE2(serviced, svc__exec__fail, label, error)
-#define	SERVICED_PROBE_ORACLE_DISCONNECTED()	\
-	DTRACE_PROBE(serviced, oracle__disconnected)
+#define	SERVICED_PROBE_AUTHORITY_DISCONNECTED()	\
+	DTRACE_PROBE(serviced, authority__disconnected)
 
 #endif /* SERVICED_PROBES_H */

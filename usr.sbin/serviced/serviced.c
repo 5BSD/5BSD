@@ -5,19 +5,19 @@
  *
  * serviced — service manager and naming registry.
  *
- * Started by oracled as its single child.  Inherits a mac_capability channel
+ * Started by authorityd as its single child.  Inherits a mac_capability channel
  * on fd 3 for requesting activation tokens, channels, coalitions, named
  * capability-service descriptors, and kernel-module prerequisites from the
- * oracle.  Scans capability bundles, dependency-sorts, pdfork/execs
+ * authority.  Scans capability bundles, dependency-sorts, pdfork/execs
  * services, and manages their lifecycle (restart, shutdown).
  *
  * Startup sequence:
- *   1. Inherit channel fd from ORACLED_CHANNEL_FD env (fd 3)
+ *   1. Inherit channel fd from AUTHORITYD_CHANNEL_FD env (fd 3)
  *   2. Create kqueue, register channel + signals
  *   3. Scan bundle directories
  *   4. Dependency sort
- *   5. Run /etc/rc, then fork/exec services (requesting tokens from oracled)
- *   6. Send ORACLE_OP_READY to oracled to confirm this boot converged
+ *   5. Run /etc/rc, then fork/exec services (requesting tokens from authorityd)
+ *   6. Send AUTHORITY_OP_READY to authorityd to confirm this boot converged
  *   7. Enter event loop
  */
 
@@ -124,16 +124,16 @@ event_loop(void)
 			}
 
 			if (kev->filter == EVFILT_READ &&
-			    (int)kev->ident == sd.oracle_channel_fd) {
+			    (int)kev->ident == sd.authority_channel_fd) {
 				if (kev->flags & EV_EOF) {
 					syslog(LOG_CRIT,
-					    "oracle died, stopping all services");
-					SERVICED_PROBE_ORACLE_DISCONNECTED();
+					    "authority died, stopping all services");
+					SERVICED_PROBE_AUTHORITY_DISCONNECTED();
 					/* Loss of the capability-minting authority
 					 * is a security-relevant integrity event. */
-					serviced_audit(AUE_SERVICED_ORACLE,
+					serviced_audit(AUE_SERVICED_AUTHORITY,
 					    getuid(), EIO,
-					    "oracle channel disconnected; "
+					    "authority channel disconnected; "
 					    "stopping all services");
 					sd.shutting_down = true;
 					sd.running = false;
@@ -277,7 +277,7 @@ main(int argc, char *argv[])
 	int ch;
 
 	memset(&sd, 0, sizeof(sd));
-	sd.oracle_channel_fd = -1;
+	sd.authority_channel_fd = -1;
 	sd.channel_svc_fd = -1;
 	sd.coalition_svc_fd = -1;
 	sd.capprotect_fd = -1;
@@ -302,7 +302,7 @@ main(int argc, char *argv[])
 	}
 
 	/* Inherit channel fd. */
-	channel_fd_str = getenv("ORACLED_CHANNEL_FD");
+	channel_fd_str = getenv("AUTHORITYD_CHANNEL_FD");
 	if (channel_fd_str != NULL) {
 		char *endp;
 		long val;
@@ -311,18 +311,18 @@ main(int argc, char *argv[])
 		val = strtol(channel_fd_str, &endp, 10);
 		if (errno != 0 || *endp != '\0' ||
 		    val < 0 || val > INT_MAX) {
-			syslog(LOG_ERR, "invalid ORACLED_CHANNEL_FD: %s",
+			syslog(LOG_ERR, "invalid AUTHORITYD_CHANNEL_FD: %s",
 			    channel_fd_str);
 			return (1);
 		}
-		sd.oracle_channel_fd = (int)val;
+		sd.authority_channel_fd = (int)val;
 	} else {
-		syslog(LOG_ERR, "ORACLED_CHANNEL_FD not set");
+		syslog(LOG_ERR, "AUTHORITYD_CHANNEL_FD not set");
 		return (1);
 	}
 
-	/* Non-blocking so oracle_rpc can timeout instead of hanging. */
-	(void)fcntl(sd.oracle_channel_fd, F_SETFL, O_NONBLOCK);
+	/* Non-blocking so authority_rpc can timeout instead of hanging. */
+	(void)fcntl(sd.authority_channel_fd, F_SETFL, O_NONBLOCK);
 
 	/* Inherit delegated service instance fds (optional). */
 	{
@@ -389,14 +389,14 @@ main(int argc, char *argv[])
 		serviced_bundle_dir_user = s;
 
 	/*
-	 * Lock down inherited descriptors.  The oracle channel and delegate
+	 * Lock down inherited descriptors.  The authority channel and delegate
 	 * fds are for serviced only — they must not be inherited by
 	 * child services (clofork), leaked via exec (cloexec), or
 	 * transferred over a channel (xfer=none).
 	 */
 	{
 		int lockfds[] = {
-			sd.oracle_channel_fd,
+			sd.authority_channel_fd,
 			sd.channel_svc_fd,
 			sd.coalition_svc_fd,
 			sd.capprotect_fd,
@@ -444,8 +444,8 @@ main(int argc, char *argv[])
 		return (1);
 	}
 
-	/* Register oracle channel for read (detect EOF = oracle died). */
-	EV_SET(&kev, sd.oracle_channel_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+	/* Register authority channel for read (detect EOF = authority died). */
+	EV_SET(&kev, sd.authority_channel_fd, EVFILT_READ, EV_ADD, 0, 0, NULL);
 	if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1) {
 		syslog(LOG_ERR, "kevent channel: %m");
 		return (1);
@@ -468,7 +468,7 @@ main(int argc, char *argv[])
 	/*
 	 * Apply the shield only after setup, but before READY or launching any
 	 * service.  Ambient signal paths are blocked, including SIGKILL and
-	 * SIGCONT.  Oracled retains control through the procdesc returned by
+	 * SIGCONT.  Authorityd retains control through the procdesc returned by
 	 * pdfork(2); pdkill(2) is explicit capability authority and deliberately
 	 * bypasses the ambient credential/MAC signal path.
 	 *
@@ -490,7 +490,7 @@ main(int argc, char *argv[])
 		/*
 		 * Test harnesses need to induce a manager crash to prove
 		 * supervisor loss is observable; the shield otherwise denies
-		 * ambient SIGKILL by design.  Only oracled's environment
+		 * ambient SIGKILL by design.  Only authorityd's environment
 		 * allowlist can set this.
 		 */
 		if (getenv("SERVICED_TEST_SHIELD_NO_SIGKILL") != NULL)
@@ -547,8 +547,8 @@ main(int argc, char *argv[])
 	 * Individual service failures do not block convergence; only serviced
 	 * never reaching this point (crash or wedge) triggers PID 1 recovery.
 	 */
-	if (oracle_send_ready(sd.oracle_channel_fd) != 0) {
-		syslog(LOG_ERR, "failed to send convergence READY to oracled");
+	if (authority_send_ready(sd.authority_channel_fd) != 0) {
+		syslog(LOG_ERR, "failed to send convergence READY to authorityd");
 		return (1);
 	}
 

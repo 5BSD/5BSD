@@ -94,7 +94,7 @@ naming_remove_owner(struct svc_runtime *owner)
 }
 
 int
-oracle_release_manifest(int channel_fd, const struct svc_manifest *m)
+authority_release_manifest(int channel_fd, const struct svc_manifest *m)
 {
 
 	(void)channel_fd;

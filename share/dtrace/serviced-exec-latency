@@ -7,7 +7,7 @@
  * serviced-exec-latency -- measure service exec setup time.
  *
  * Shows the total time to create a pair, mint tokens, and pdfork
- * each service.  Helps identify slow oracle round-trips.
+ * each service.  Helps identify slow authority round-trips.
  *
  * Usage: serviced-exec-latency
  */

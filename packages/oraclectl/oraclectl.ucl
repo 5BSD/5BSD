@@ -1,7 +1,0 @@
-comment = "Control utility for the 5BSD capability oracle"
-
-desc = <<EOD
-oraclectl is the command-line client for inspecting and controlling oracled.
-It is packaged separately so administrative clients do not own the daemon's
-files or lifecycle.
-EOD

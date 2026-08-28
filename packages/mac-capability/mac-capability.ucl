@@ -8,7 +8,7 @@ comment = "mac_capability MAC policy modules for the 5BSD capability subsystem"
 
 desc = <<EOD
 Kernel MAC policy modules implementing the mac_capability security model that
-oracled(8) and serviced(8) build on: message-passing capability channels,
+authorityd(8) and serviced(8) build on: message-passing capability channels,
 credential identity nonces, isolation enforcement, capability-protection
 shields, coalitions, nodes, accounting, mount and system gates.
 EOD

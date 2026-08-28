@@ -13,8 +13,8 @@ ownership of files, sockets, network endpoints, vsock endpoints, and jails.
 There are two paths, and which one a program uses is a design decision, not a
 convenience choice.
 
-**Managed components never open `/dev/mac_capability`.**  `oracled(8)` claims
-the device node itself at boot (`usr.sbin/oracled/mac_capability_claims.c`
+**Managed components never open `/dev/mac_capability`.**  `authorityd(8)` claims
+the device node itself at boot (`usr.sbin/authorityd/mac_capability_claims.c`
 always claims `/dev/mac_capability`), so a foreign-nonce open is denied by the
 MACF hooks.  A component managed by `serviced(8)` instead receives its
 capability descriptors by *session injection*: `serviced` delivers narrowed
@@ -46,7 +46,7 @@ for manifest-declared capability services (`"mount"`, `"node"`,
 `"accounting"`, `"identity"`) are opened with
 `service_capability_open(ctx, name, expected_type, &fd)`.
 
-**Supervisors connect directly.**  `oracled(8)` and `serviced(8)` run as root
+**Supervisors connect directly.**  `authorityd(8)` and `serviced(8)` run as root
 before any claims exist, open the device, and connect by service name.  This
 is the pattern to copy for a new supervisor-level component:
 
@@ -77,7 +77,7 @@ isolation_connect(void)
 There is no library wrapper for `MAC_CAPABILITY_CONNECT`; every in-tree
 consumer issues this ioctl directly.  Calls on the instance fd, however,
 should go through `libcapability`'s `capability_kernel_call()` rather than a
-hand-rolled `MAC_CAPABILITY_CALL` ioctl — this is what `oracled` does
+hand-rolled `MAC_CAPABILITY_CALL` ioctl — this is what `authorityd` does
 (`mac_capability_do_call()` in `mac_capability_setup.c` is a thin
 length-checking shim over it):
 
@@ -251,6 +251,6 @@ from the same nonce transfers ownership to the newest instance.
 
 The canonical, exhaustively-tested call sequences for every operation above
 are in `tests/sys/mac_capability/mac_capability_isolation_test.c`, and
-`oracled`'s claim path (`usr.sbin/oracled/mac_capability_claims.c` with the
-`claims` section of `oracled.conf(5)`) is the production reference for a
+`authorityd`'s claim path (`usr.sbin/authorityd/mac_capability_claims.c` with the
+`claims` section of `authorityd.conf(5)`) is the production reference for a
 claiming supervisor.

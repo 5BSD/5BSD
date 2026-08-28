@@ -453,9 +453,9 @@
         ..
         libnotify
         ..
-        liboraclectl
+        libauthorityctl
         ..
-        liboraclert
+        libauthorityrt
         ..
         libtracecmp
         ..
@@ -1359,7 +1359,7 @@
         ..
         notifyctl
         ..
-        oracled
+        authorityd
         ..
         praudit
         ..

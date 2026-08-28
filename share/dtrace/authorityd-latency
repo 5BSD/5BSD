@@ -1,0 +1,48 @@
+#!/usr/sbin/dtrace -s
+/*
+ * Copyright (c) 2026 Kory Heard
+ *
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * authorityd-latency -- measure control command latency.
+ *
+ * Prints each completed command with its total latency (accept to
+ * reply) and builds a histogram of latencies by command type.
+ *
+ * Usage: authorityd-latency
+ */
+
+#pragma D option quiet
+
+inline string ctl_op[uint32_t op] =
+	op == 1 ? "shutdown" :
+	op == 2 ? "status" :
+	op == 3 ? "reload" :
+	op == 4 ? "kldload" :
+	op == 5 ? "kldunload" :
+	op == 6 ? "reboot" :
+	op == 7 ? "check" :
+	op == 8 ? "load" :
+	op == 9 ? "services" :
+	"unknown";
+
+dtrace:::BEGIN
+{
+	printf("Tracing authorityd ctl latency... Ctrl-C for histograms.\n\n");
+	printf("%-20s %-12s %-6s %-8s %s\n",
+	    "TIME", "COMMAND", "UID", "STATUS", "LATENCY");
+}
+
+authorityd*:::ctl-cmd-done
+{
+	this->us = arg3 / 1000;
+	printf("%-20Y %-12s %-6d %-8d %d us\n", walltimestamp,
+	    ctl_op[arg0], arg1, arg2, this->us);
+	@lat[ctl_op[arg0]] = quantize(this->us);
+}
+
+dtrace:::END
+{
+	printf("\n--- Latency by command (microseconds) ---\n");
+	printa(@lat);
+}

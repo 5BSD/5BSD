@@ -19,12 +19,12 @@
 #include <time.h>
 
 #include "serviced_manifest.h"
-#include "oracled_svc_proto.h"
+#include "authorityd_svc_proto.h"
 
 struct channel;
 struct channel_message;
 
-/* Timeout for mac_capability channel RPC calls (oracle and direct). */
+/* Timeout for mac_capability channel RPC calls (authority and direct). */
 #define	SERVICED_RPC_TIMEOUT_MS		100
 
 /*
@@ -44,7 +44,7 @@ struct channel_message;
  * SVC_KIND_RC provides rc(8) compatibility — serviced can run existing
  * rc.d services via service(8) so the base boots and migrates one service
  * at a time.  (This is unrelated to daemon version compatibility, which we
- * do not support: serviced and oracled are always built and run together.)
+ * do not support: serviced and authorityd are always built and run together.)
  */
 enum svc_kind {
 	SVC_KIND_NATIVE = 0,	/* .cap bundle: cap mode + minted tokens */
@@ -115,7 +115,7 @@ struct svc_runtime {
 	pid_t		pid;
 	uint64_t	launch_id;	/* unique for each exec attempt */
 	int		pd_fd;		/* process descriptor (parent holds) */
-	int		channel_fd;	/* oracle's end of channel */
+	int		channel_fd;	/* authority's end of channel */
 	struct channel	*control_channel; /* owns channel_fd */
 	int		coalition_fd;	/* coalition service instance */
 	int		jail_fd;	/* jail descriptor (-1 if no jail) */
@@ -204,7 +204,7 @@ extern const char *serviced_bundle_dir_system;
 extern const char *serviced_bundle_dir_user;
 
 struct serviced_state {
-	int		oracle_channel_fd;	/* channel to oracled (fd 3) */
+	int		authority_channel_fd;	/* channel to authorityd (fd 3) */
 	int		channel_svc_fd;		/* channel service instance (fd 4) */
 	int		coalition_svc_fd;	/* coalition service instance (fd 5) */
 	int		capprotect_fd;		/* capprotect service instance (fd 6) */
@@ -247,33 +247,33 @@ int	mac_cap_coalition_terminate(int coalition_fd);
 int	mac_cap_mint_capprotect(void);
 int	mac_cap_protect(int capprotect_fd, int pd_fd, uint32_t flags);
 
-/* oracle_client.c — channel protocol client to oracled */
-int	oracle_mint_path(int channel_fd, const char *path);
-int	oracle_mint_file(int channel_fd, const char *path, uint64_t actions);
-int	oracle_mint_net(int channel_fd, const struct ort_net_claim *nc);
-int	oracle_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
-int	oracle_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc);
-int	oracle_mint_storage(int channel_fd, const struct ort_storage_claim *sc);
-int	oracle_destroy_storage(int channel_fd,
+/* authority_client.c — channel protocol client to authorityd */
+int	authority_mint_path(int channel_fd, const char *path);
+int	authority_mint_file(int channel_fd, const char *path, uint64_t actions);
+int	authority_mint_net(int channel_fd, const struct ort_net_claim *nc);
+int	authority_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
+int	authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc);
+int	authority_mint_storage(int channel_fd, const struct ort_storage_claim *sc);
+int	authority_destroy_storage(int channel_fd,
 	    const struct ort_storage_claim *sc);
-int	oracle_mint_system(int channel_fd, uint32_t gates);
-int	oracle_create_jail(int channel_fd, const char *name, const char *path,
+int	authority_mint_system(int channel_fd, uint32_t gates);
+int	authority_create_jail(int channel_fd, const char *name, const char *path,
 	    const char *hostname, const char *ip4_addr);
-int	oracle_create_channel(int channel_fd, int *our_end, int *child_end);
-int	oracle_create_coalition(int channel_fd);
-int	oracle_ensure_kmod(int channel_fd, const char *name);
-int	oracle_delegate_service(int channel_fd, const char *name);
-int	oracle_send_ready(int channel_fd);
-int	oracle_set_ambient_lookup(int channel_fd, int lookup_fd);
-int	oracle_claim_path(int channel_fd, const char *path);
-int	oracle_claim_net(int channel_fd, const struct ort_net_claim *nc);
-int	oracle_claim_jail(int channel_fd, const struct serviced_jail_claim *jc);
-int	oracle_claim_system(int channel_fd, uint32_t gates);
-int	oracle_release_path(int channel_fd, const char *path);
-int	oracle_release_net(int channel_fd, const struct ort_net_claim *nc);
-int	oracle_release_jail(int channel_fd, const struct serviced_jail_claim *jc);
-int	oracle_release_system(int channel_fd, uint32_t gates);
-int	oracle_release_manifest(int channel_fd, const struct svc_manifest *m);
+int	authority_create_channel(int channel_fd, int *our_end, int *child_end);
+int	authority_create_coalition(int channel_fd);
+int	authority_ensure_kmod(int channel_fd, const char *name);
+int	authority_delegate_service(int channel_fd, const char *name);
+int	authority_send_ready(int channel_fd);
+int	authority_set_ambient_lookup(int channel_fd, int lookup_fd);
+int	authority_claim_path(int channel_fd, const char *path);
+int	authority_claim_net(int channel_fd, const struct ort_net_claim *nc);
+int	authority_claim_jail(int channel_fd, const struct serviced_jail_claim *jc);
+int	authority_claim_system(int channel_fd, uint32_t gates);
+int	authority_release_path(int channel_fd, const char *path);
+int	authority_release_net(int channel_fd, const struct ort_net_claim *nc);
+int	authority_release_jail(int channel_fd, const struct serviced_jail_claim *jc);
+int	authority_release_system(int channel_fd, uint32_t gates);
+int	authority_release_manifest(int channel_fd, const struct svc_manifest *m);
 
 /* storage_lifecycle.c — last-holder accounting for lease storage. */
 void	storage_lifecycle_reset(void);

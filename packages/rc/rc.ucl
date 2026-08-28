@@ -29,8 +29,8 @@ scripts: {
     rootdir="${PKG_ROOTDIR}"
     [ -n "$rootdir" ] || rootdir=/
 
-    # Oracle is PID 1 now.  pkg/installworld preserve removed configuration
+    # Authority is PID 1 now.  pkg/installworld preserve removed configuration
     # files, and this obsolete script would start a competing daemon instance.
-    /bin/rm -f "$rootdir/etc/rc.d/oracled"
+    /bin/rm -f "$rootdir/etc/rc.d/authorityd"
 EOD
 }

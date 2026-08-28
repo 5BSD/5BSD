@@ -112,7 +112,7 @@ breakage-hunt findings.
 
 **Modified-software inventory (the takeover surface).** Injecting the channel
 required patching a specific set of base/third-party programs — PID 1 plus every
-login/session/batch entry point (`oracle-init`, `login`, `su`, `sshd`/OpenSSH,
+login/session/batch entry point (`authority-init`, `login`, `su`, `sshd`/OpenSSH,
 `cron`, `atrun`; `getty` inherits only). This set is exactly what a downstream
 merge or FreeBSD rebase must carry forward, or the plane silently stops reaching
 sessions. The per-program table (files touched, what each injects, why it's core)
@@ -276,7 +276,7 @@ CAP_XFER_ONCE comments (now describe the single-transfer/sender-closes model).
   authority model.
 - `SCHED_MIC` heterogeneous-core scheduler (in dev — DO NOT ENABLE yet).
 - Deferred platform cleanup: delete the disabled 32-bit compat, prune ancient
-  version shims, pkgbase-only base install, Oracle→Caspian rename.
+  version shims, pkgbase-only base install, Authority→Caspian rename.
 
 ## Model status: the design is complete.
 Landed + clean-VM validated: discovery/management split, management class (§5),

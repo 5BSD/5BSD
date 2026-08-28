@@ -1,0 +1,7 @@
+comment = "Control utility for the 5BSD capability authority"
+
+desc = <<EOD
+authorityctl is the command-line client for inspecting and controlling authorityd.
+It is packaged separately so administrative clients do not own the daemon's
+files or lifecycle.
+EOD

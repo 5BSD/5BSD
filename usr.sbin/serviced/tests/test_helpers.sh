@@ -24,7 +24,7 @@ prepare_paths()
 	capd_paths_init
 	pidfile=$CAPD_PIDFILE
 	conffile=$CAPD_CONFIG
-	sockpath=$CAPD_ORACLE_SOCKET
+	sockpath=$CAPD_AUTHORITY_SOCKET
 	logfile=$CAPD_LOG
 	mkdir -p "${APPS_DIR}" "${USER_APPS_DIR}"
 }
@@ -87,10 +87,10 @@ wait_for_log()
 reload_stack()
 {
 	if [ ! -S "$sockpath" ]; then
-		atf_fail "Oracle control socket is unavailable for reload"
+		atf_fail "Authority control socket is unavailable for reload"
 	fi
 	atf_check -s exit:0 -o ignore \
-	    oraclectl -s "$sockpath" reload
+	    authorityctl -s "$sockpath" reload
 }
 
 stop_stack()
@@ -112,7 +112,7 @@ stop_stack()
 		read -r target <"$pidfile" || target=
 	fi
 	if [ -S "$sockpath" ]; then
-		oraclectl -s "$sockpath" shutdown >/dev/null 2>&1 || true
+		authorityctl -s "$sockpath" shutdown >/dev/null 2>&1 || true
 	fi
 	case "$target" in
 	''|*[!0-9]*) return 0 ;;
@@ -125,7 +125,7 @@ stop_stack()
 	done
 	daemon_pid=
 	if ps -p "$target" -o pid= 2>/dev/null | grep -q '[0-9]'; then
-		echo "test cleanup: Oracle $target did not exit" >&2
+		echo "test cleanup: Authority $target did not exit" >&2
 		return 1
 	fi
 	return 0
@@ -143,8 +143,8 @@ cleanup_common()
 	stop_stack || true
 	capd_cleanup_stack || cleanup_status=1
 	sleep 0.2
-	rm -rf oracled.pid oracled.conf oracled.sock \
-	    serviced.sock oracled.log lookup-name *.out *.pid *.sh *.c \
+	rm -rf authorityd.pid authorityd.conf authorityd.sock \
+	    serviced.sock authorityd.log lookup-name *.out *.pid *.sh *.c \
 	    provider_svc client_svc ready_svc squat_svc \
 	    lookup_client lookup_client.build.log ready_svc.build.log \
 	    *.target *.result *.ready
@@ -160,12 +160,12 @@ write_executable()
 	chmod +x "$path"
 }
 
-# Every test that launches Oracle also exercises its mandatory capability
+# Every test that launches Authority also exercises its mandatory capability
 # services, even when the test itself is concerned with only one of them.
 # Declare the complete baseline in the test head so Kyua can load modules
 # before entering the body.  Additional capability-service modules may be
 # supplied by callers as positional arguments.
-require_oracle_stack_kmods()
+require_authority_stack_kmods()
 {
 	capd_require_stack_kmods "$@"
 }
@@ -246,7 +246,7 @@ ${normalized}" ;;
 # that boundary and therefore remains STARTING.
 #
 # Behaviour: enter the sandbox and report ready, then
-# write "<name>.ready" in the CWD (the test work dir — oracled runs foreground
+# write "<name>.ready" in the CWD (the test work dir — authorityd runs foreground
 # so services inherit WORK as their CWD), then block.  The fixture pre-opens
 # that directory, so marker creation remains descriptor-relative after
 # cap_enter().  The 200ms pause closes the race where the marker appears before
@@ -473,7 +473,7 @@ start_stack_expect_failure()
 	prepare_paths
 	write_config
 	capd_find_guardian
-	capd_launch_oracle
+	capd_launch_authority
 	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
 	    sed -n 's/^running pid=//p')
 	i=0
@@ -482,7 +482,7 @@ start_stack_expect_failure()
 		i=$((i + 1))
 		sleep 0.1
 	done
-	# Oracle is allowed to remain healthy and supervise restart attempts; the
+	# Authority is allowed to remain healthy and supervise restart attempts; the
 	# contract under test is that serviced never reports ready with an invalid
 	# registry.  Always use the authenticated shutdown path for cleanup.
 	if grep -q "serviced ready" "$logfile" 2>/dev/null; then
