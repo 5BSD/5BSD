@@ -270,10 +270,9 @@ int	service_mint_user_domain(int syschan, uid_t uid, int *out_fd);
  * SYSTEM channel — it is the path for a login that cannot inherit one (an ssh
  * network session).  serviced chooses the scope from the TARGET uid (SYSTEM/
  * admin for root or a wheel member, USER otherwise) and permits ONLY a root
- * peer (EPERM otherwise).  On success *out_fd is ambient (survives fork/exec)
- * and non-transferable (CAP_XFER_ONCE, consumed by the handoff).  Best-effort
- * and bounded: any failure returns -1 (errno set) and the caller must proceed
- * with no ambient channel.
+ * peer (EPERM otherwise).  On success *out_fd is ambient (survives fork/exec);
+ * the caller installs it and closes its own copy.  Best-effort and bounded: any
+ * failure returns -1 (errno set) and the caller must proceed with no channel.
  */
 int	service_provision_session(uid_t uid, int *out_fd);
 

@@ -193,6 +193,83 @@ separate axis from SCM_RIGHTS transfer. (The console/su mint path already
 delivers a channel that is exhausted after its single hop; same end, sender
 side.)
 
+## Roadmap — next steps (captured 2026-08-28)
+
+Everything discussed this session, so we don't lose context. Ordered.
+
+### 0. Quality pass (in progress) — before anything else
+- Synthesize the four adversarial reviews (auth/provisioning, domain/mint/
+  escalation/D1, fd-hygiene/non-fatal, Phase-4-launch/rc/mgmt); fix the real,
+  verified bugs; re-validate in a clean VM; commit.
+- Reconcile stale comments: `domain_provision_session` header + `sctl.c` still
+  claim `CAP_XFER_ONCE` but the single-transfer model no longer applies it —
+  fix the comments (not the code) to match "serviced sends full authority; each
+  sender closes its copy; the leaf holds it."
+- Trim verbose comments across this session's code to concise KNF density.
+- Bring the pre-existing `naming.c` `CAP_XFER_TWICE` (multi-hop worker handoff)
+  in line with the single-transfer / sender-closes rule.
+- Review design notes to weigh: over-channel mint trusts login/su to pass the
+  correct domain (socket path derives it from the target uid — asymmetry);
+  `SVC_DOMAIN_SYSTEM == 0` is fail-open on zero-init (latent).
+
+### 0a. Deferred low-severity review findings (tracked, not yet fixed)
+- **E** `principal_is_admin`→`getgrouplist` can block on a slow NSS backend in the
+  post-auth login/su child (no watchdog). Fine for local `files`; bound or note.
+- **F** cron's mailer runs in the never-dropped middle process, keeping the SYSTEM
+  channel + `SERVICE_LOOKUP_FD` — system→system (not a uid-transition leak), but a
+  defense-in-depth gap vs atrun (which unset+closefrom before its mailer).
+- **G** a `core`-class unit that requests provider idle-stop is not class-gated on
+  the idle path (theoretical — core units don't request idle).
+- **H** stopping an RC unit while STARTING SIGKILLs the onestart wrapper mid-start
+  (narrow race).
+- **I** over-channel SYSTEM mint trusts login/su to pass the right domain (the
+  socket path derives it from the target uid — asymmetry; make login-side the
+  single source or add a symmetric check).
+- **J** `SVC_DOMAIN_SYSTEM == 0` is fail-open on zero-init (latent; all current
+  paths set it explicitly).
+FIXED this pass: monitor wire-uid escalation (keyed on authctxt->pw), idle-stop
+listener clobber (state preserved), unbounded mint RPC (2s bound), and the stale
+CAP_XFER_ONCE comments (now describe the single-transfer/sender-closes model).
+
+### 1. Descriptor-based isolation — the main architectural next piece
+- `claim_fd` primitive: isolate the exact vnode behind a held descriptor (the
+  policy already keys on vnodes) — no path TOCTOU.
+- Shift confinement from global path-claims → per-process capability delivery +
+  `cap_enter` (already partly true); retire blunt boot-time path-claims.
+- Identity service for credentials: put `master.passwd` behind a service that
+  hands out narrowed file tokens (`MINT_FILE`), not a global claim that hides the
+  file — the right answer to the isolation bug we fixed this session.
+- Migrate remaining boot-time path-claims into per-service manifest descriptors
+  (claimed at launch, released on stop).
+
+### 2. Finish the service plane
+- **User agents** — per-user serviced-managed services (launchd LaunchAgents
+  shape); the payoff of the USER domain + per-uid session provisioning. Highest-
+  value follow-on.
+- **Retire /etc/rc progressively** — widen rc adoption service by service until
+  the shim is empty, then delete it; `servicectl` becomes the full `service(8)`
+  replacement plus a compatibility shim.
+- **Management-over-channel, done right** (deferred #30) — keep the socket as the
+  bootstrap/provisioning anchor (getpeereid is the correct primitive), but add an
+  explicit *management capability* so control can also ride the authenticated
+  channel. Non-admin su/sudo re-provisioning uses the same monitor pattern built
+  for sshd.
+
+### 3. Harden the substrate
+- **Stand up the kyua VM test harness** (repeatable MK_TESTS=yes image) so the
+  hundreds of tests written this session run for real, not just unit-local + hand
+  VM checks. Worth doing early.
+- **mac_capability driver hardening** — the WITNESS malloc-under-mutex lock-order
+  warning at boot (`mac_capability_dev.c:324`, `filecaps_copy` under the instance
+  mutex) + an audit for similar; unify the `cap_xfer` model across all users.
+
+### 4. Wider platform (parked; each is its own effort, pick deliberately)
+- Other capability planes: `tzfsd` (storage daemon), completing the network
+  authority model.
+- `SCHED_MIC` heterogeneous-core scheduler (in dev — DO NOT ENABLE yet).
+- Deferred platform cleanup: delete the disabled 32-bit compat, prune ancient
+  version shims, pkgbase-only base install, Oracle→Caspian rename.
+
 ## Model status: the design is complete.
 Landed + clean-VM validated: discovery/management split, management class (§5),
 uid-aware mint (§6), session provisioning for console (getty) and ssh (socket),

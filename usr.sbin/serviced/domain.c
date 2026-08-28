@@ -567,15 +567,12 @@ domain_uid_is_admin(uid_t uid)
  * per-uid USER channel that resolves only the user-domain allow-list.  So even
  * a root requester provisioning for a regular uid hands out a narrowed channel.
  *
- * NON-TRANSFERABILITY: the minted client endpoint is marked CAP_XFER_ONCE, so
- * the single SCM_RIGHTS handoff over the control socket to the requesting root
- * process consumes the transfer budget (leaving CAP_XFER_NONE in the receiver).
- * It therefore cannot be passed onward to a lower-privilege process, exactly as
- * lookup_channel_reply() enforces on the over-channel mint path.  On success
- * *out_fd is that endpoint; the caller sends it and closes its own copy.
+ * DELIVERY: the endpoint is handed over with full transfer authority; serviced
+ * does not pre-limit it.  Each sender closes its own copy after the SCM_RIGHTS
+ * send (the control-socket handler; sshd's monitor relay), and the session leaf
+ * simply holds it — the single-transfer model.
  *
- * Non-fatal to serviced: every failure returns -1 with errno set and leaves the
- * daemon running; the control-socket handler turns it into an error reply.
+ * Non-fatal: every failure returns -1 with errno set, leaving serviced running.
  */
 int
 domain_provision_session(uid_t requester_euid, uid_t target_uid, int *out_fd,
@@ -598,17 +595,7 @@ domain_provision_session(uid_t requester_euid, uid_t target_uid, int *out_fd,
 	if (domain_mint_session_channel(kind, target_uid, out_fd, kq) == -1)
 		return (-1);
 
-	/*
-	 * serviced hands the session channel to the requester with full transfer
-	 * authority and does NOT restrict it here.  Restriction is the receiver's
-	 * job: whichever process finally installs the channel for a session leader
-	 * (login/su via service_install_ambient_lookup, or sshd in do_child)
-	 * tightens it to CAP_XFER_NONE, and any in-between relay (sshd's monitor)
-	 * simply closes its own copy once it has passed the descriptor on.  This is
-	 * the single-transfer model: authority flows, each owner restricts what it
-	 * holds — no multi-hop transfer budget is needed.  (Fork inheritance by the
-	 * session's descendants is CAP_CLOFORK_UNLOCKED, a separate axis.)
-	 */
+	/* Handed over with full authority; see the delivery note above. */
 	return (0);
 }
 

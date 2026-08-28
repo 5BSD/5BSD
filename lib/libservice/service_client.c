@@ -1039,6 +1039,15 @@ service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
 	reply_fd = -1;
 
 	/*
+	 * Bound the mint RPC.  It runs in a login/su session leader after
+	 * authentication has already succeeded and the login watchdog is
+	 * disabled, so an unbounded call to a wedged serviced would hang the
+	 * session (and the tty) forever.  Cap it like the HELLO probe; the
+	 * caller treats a timeout as "no ambient channel" and proceeds.
+	 */
+	options.timeout_ms = 2000U;
+
+	/*
 	 * service_session_create() takes ownership of the descriptor it is
 	 * given (it re-duplicates and closes it), so hand it a private
 	 * duplicate and leave the borrowed syschan untouched.
@@ -1140,8 +1149,8 @@ provision_write_all(int fd, const void *buf, size_t len)
  * permitted, so the caller must still be privileged when it calls this.
  *
  * The returned descriptor is ambient (serviced marks it CAP_CLOFORK_UNLOCKED
- * and clears close-on-exec) and non-transferable (CAP_XFER_ONCE, consumed by
- * this very handoff — it cannot be relayed onward).  Strictly best-effort and
+ * and clears close-on-exec); it is handed over with full transfer authority and
+ * the caller closes its own copy after installing it.  Strictly best-effort and
  * bounded: connect/mint/EPERM/short-read failures all return -1 with errno set,
  * and the caller must proceed with no ambient channel.  Never blocks
  * indefinitely (a receive deadline bounds a wedged serviced).

@@ -465,6 +465,24 @@ supervisor_handle_procdesc(struct kevent *kev)
 		 * above, so a lookup now misses and triggers on_demand relaunch.
 		 */
 		if (svc->idle_stop_pending) {
+			int saved_listen[SERVICED_MAX_ACTIVATION_SOCKETS];
+			unsigned saved_nlisten;
+			int saved_path_fd;
+
+			/*
+			 * Activation sources (socket listeners, path watch)
+			 * OUTLIVE the unit's stop cycles — they must keep firing
+			 * to re-activate it on demand.  svc_runtime_init_fds()
+			 * would reset them to -1 WITHOUT closing the fds or
+			 * removing their kevents (leaking the listener and
+			 * orphaning a level-triggered registration).  Snapshot
+			 * and restore them across the fresh-slot reset.
+			 */
+			memcpy(saved_listen, svc->activation_listen_fds,
+			    sizeof(saved_listen));
+			saved_nlisten = svc->nactivation_listen;
+			saved_path_fd = svc->activation_path_fd;
+
 			svc->pid = 0;
 			svc->launch_id = 0;
 			svc->quiesce_pending = false;
@@ -472,6 +490,10 @@ supervisor_handle_procdesc(struct kevent *kev)
 			svc->idle_stop_pending = false;
 			svc->idle_timeout_sec = 0;
 			svc_runtime_init_fds(svc);
+			memcpy(svc->activation_listen_fds, saved_listen,
+			    sizeof(saved_listen));
+			svc->nactivation_listen = saved_nlisten;
+			svc->activation_path_fd = saved_path_fd;
 			svc->state = SVC_STATE_STOPPED;
 			syslog(LOG_INFO, "service %s: stopped for idle; "
 			    "reservations kept for on-demand relaunch",

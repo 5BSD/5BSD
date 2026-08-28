@@ -1806,20 +1806,30 @@ mm_answer_pty_cleanup(struct ssh *ssh, int sock, struct sshbuf *m)
 int
 mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
 {
-	u_int uid = 0;
+	u_int wire_uid = 0;	/* ignored — see below */
 	int fd = -1, status, r;
 
 	debug3_f("entering");
 
-	if ((r = sshbuf_get_u32(m, &uid)) != 0)
+	/*
+	 * The request carries a uid for wire symmetry, but the monitor MUST NOT
+	 * trust it: the post-auth child is untrusted under privsep.  Provision
+	 * only for the AUTHENTICATED principal (authctxt->pw), never a uid the
+	 * child chose — otherwise a compromised child could request uid 0 and
+	 * obtain a SYSTEM admin channel.
+	 */
+	if ((r = sshbuf_get_u32(m, &wire_uid)) != 0)
 		fatal_fr(r, "parse uid");
+	(void)wire_uid;
 
-	if (service_provision_session((uid_t)uid, &fd) == 0 && fd >= 0)
+	if (authctxt == NULL || authctxt->pw == NULL) {
+		status = EPERM;			/* not authenticated */
+		fd = -1;
+	} else if (service_provision_session(authctxt->pw->pw_uid, &fd) == 0 &&
+	    fd >= 0)
 		status = 0;
 	else {
 		status = errno != 0 ? errno : EIO;
-		debug_f("service_provision_session(uid=%u) failed: %s",
-		    uid, strerror(status));
 		fd = -1;
 	}
 

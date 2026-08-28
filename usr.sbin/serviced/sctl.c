@@ -460,8 +460,8 @@ conn_dispatch(struct sctl_conn *c)
 		 * an arbitrary target uid, so a non-root caller is refused with
 		 * EPERM and NO descriptor.  On success the minted channel is
 		 * scoped by the TARGET uid (root/wheel -> SYSTEM admin, else USER)
-		 * and stashed in c->pass_fd for the reply's SCM_RIGHTS send; it is
-		 * marked CAP_XFER_ONCE so it cannot be relayed onward.  A mint
+		 * and stashed in c->pass_fd for the reply's SCM_RIGHTS send; after
+		 * the send serviced closes its own copy (fd_passed).  A mint
 		 * failure is a plain error reply — serviced never crashes.
 		 */
 		if (c->euid != 0) {
