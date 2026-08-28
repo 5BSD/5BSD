@@ -20,12 +20,15 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
 
 #include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
+#include <pwd.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -506,6 +509,105 @@ domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd,
 
 	return (domain_mint_channel(kind,
 	    kind == SVC_DOMAIN_USER ? uid : 0, out_fd, kq));
+}
+
+/*
+ * Whether the target principal is an administrator (§6): root, or a member of
+ * the "wheel" group.  Computed from the passwd/group database for the target
+ * uid — getpwuid resolves its name and getgrouplist its full group set —
+ * entirely independent of the requesting process's credentials, because
+ * provisioning scopes by the TARGET uid, never the requester.  Mirrors the
+ * principal_is_admin() helper login(1)/su(1) apply on the getty-inheritance
+ * path.  Best-effort: any lookup failure fails safe to "not admin", i.e. the
+ * narrower USER scope.
+ */
+static bool
+domain_uid_is_admin(uid_t uid)
+{
+	gid_t groups[NGROUPS_MAX];
+	struct passwd *pw;
+	struct group *wheel;
+	int ngroups, i;
+
+	if (uid == 0)
+		return (true);
+	pw = getpwuid(uid);
+	if (pw == NULL)
+		return (false);
+	if ((wheel = getgrnam("wheel")) == NULL)
+		return (false);
+	ngroups = nitems(groups);
+	if (getgrouplist(pw->pw_name, pw->pw_gid, groups, &ngroups) == -1)
+		ngroups = nitems(groups);	/* truncated: scan what fit */
+	for (i = 0; i < ngroups && i < (int)nitems(groups); i++) {
+		if (groups[i] == wheel->gr_gid)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * Socket-authenticated session provisioning (§21/§22, item 4).  serviced's
+ * control socket authenticates its peer with getpeereid(3) — a kernel-attested
+ * euid — and the caller passes that euid here as requester_euid.  This is the
+ * userspace analogue of the getty-inheritance mint that login(1)/su(1) perform
+ * over an inherited SYSTEM channel, for the one login path that cannot inherit
+ * one: an ssh network session, whose sshd fills fds 0-4 with /dev/null and
+ * closefrom()s the rest at startup, destroying any inherited channel.
+ *
+ * AUTH (the security boundary): provisioning mints a channel that speaks for an
+ * ARBITRARY target uid, so only root may request it.  A non-root requester is
+ * refused with EPERM and no descriptor — the kernel-attested peer euid is the
+ * whole gate.  (The over-channel mint path in lookup_channel_request() keeps
+ * its own escalation guard: a USER session channel can never widen to SYSTEM.
+ * This socket path is disjoint from that and does not weaken it.)
+ *
+ * SCOPE is chosen by the TARGET uid, never the requester: uid 0 or a wheel
+ * member gets a SYSTEM (full-discovery admin) channel; every other uid gets a
+ * per-uid USER channel that resolves only the user-domain allow-list.  So even
+ * a root requester provisioning for a regular uid hands out a narrowed channel.
+ *
+ * NON-TRANSFERABILITY: the minted client endpoint is marked CAP_XFER_ONCE, so
+ * the single SCM_RIGHTS handoff over the control socket to the requesting root
+ * process consumes the transfer budget (leaving CAP_XFER_NONE in the receiver).
+ * It therefore cannot be passed onward to a lower-privilege process, exactly as
+ * lookup_channel_reply() enforces on the over-channel mint path.  On success
+ * *out_fd is that endpoint; the caller sends it and closes its own copy.
+ *
+ * Non-fatal to serviced: every failure returns -1 with errno set and leaves the
+ * daemon running; the control-socket handler turns it into an error reply.
+ */
+int
+domain_provision_session(uid_t requester_euid, uid_t target_uid, int *out_fd,
+    int kq)
+{
+	enum svc_domain_kind kind;
+	int error;
+
+	*out_fd = -1;
+
+	/* AUTH: only the root peer may provision for an arbitrary uid. */
+	if (requester_euid != 0) {
+		errno = EPERM;
+		return (-1);
+	}
+
+	/* SCOPE by target uid: admin (SYSTEM) for root/wheel, else USER. */
+	kind = domain_uid_is_admin(target_uid) ? SVC_DOMAIN_SYSTEM :
+	    SVC_DOMAIN_USER;
+
+	if (domain_mint_session_channel(kind, target_uid, out_fd, kq) == -1)
+		return (-1);
+
+	/* NON-TRANSFERABILITY: consume-on-first-transfer over the socket. */
+	if (cap_xfer_limit(*out_fd, CAP_XFER_ONCE) == -1) {
+		error = errno != 0 ? errno : EIO;
+		(void)close(*out_fd);
+		*out_fd = -1;
+		errno = error;
+		return (-1);
+	}
+	return (0);
 }
 
 bool

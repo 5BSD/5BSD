@@ -91,6 +91,20 @@
 #include "sftp.h"
 #include "atomicio.h"
 
+/* 5BSD: ambient service lookup-channel session provisioning (§21/§22). */
+#include <sys/capsicum.h>
+#include <libservice.h>
+#include <service_bootstrap.h>
+
+/*
+ * The ambient lookup channel serviced provisions for this session (mint for the
+ * target uid over serviced's getpeereid-authenticated control socket).  A file
+ * static because do_child provisions it while still root and do_setup_env (a
+ * separate function) advertises it in the child's environment; the sshd session
+ * child is single-threaded and execs once, so a static is safe.  -1 = none.
+ */
+static int ambient_prov_fd = -1;
+
 #if defined(KRB5) && defined(USE_AFS)
 #include <kafs.h>
 #endif
@@ -1165,6 +1179,20 @@ do_setup_env(struct ssh *ssh, Session *s, const char *shell)
 		for (i = 0; env[i]; i++)
 			fprintf(stderr, "  %.200s\n", env[i]);
 	}
+
+	/*
+	 * 5BSD §21: advertise the provisioned ambient lookup channel to the
+	 * session.  The descriptor itself is installed at SERVICE_LOOKUP_FIXED_FD
+	 * by do_child just before execve; a stale value here (if that install
+	 * later fails) is caught by the client's channel-identity handshake, so
+	 * this is safe to set unconditionally when a channel was provisioned.
+	 */
+	if (ambient_prov_fd >= 0) {
+		char fdbuf[16];
+
+		snprintf(fdbuf, sizeof(fdbuf), "%d", SERVICE_LOOKUP_FIXED_FD);
+		child_set_env(&env, &envsize, "SERVICE_LOOKUP_FD", fdbuf);
+	}
 	return env;
 }
 
@@ -1520,6 +1548,15 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 	/* When PAM is enabled we rely on it to do the nologin check */
 	if (!options.use_pam)
 		do_nologin(pw);
+	/*
+	 * 5BSD §21: while still privileged, ask serviced (over its
+	 * getpeereid-authenticated control socket) to mint this session's
+	 * ambient lookup channel, scoped to the target uid.  Best-effort and
+	 * non-fatal — on any failure the session simply gets no channel; it is
+	 * installed at the fixed descriptor and spared from the closefrom below.
+	 */
+	ambient_prov_fd = -1;
+	(void)service_provision_session(pw->pw_uid, &ambient_prov_fd);
 	do_setusercontext(pw);
 	/*
 	 * PAM session modules in do_setusercontext may have
@@ -1610,7 +1647,31 @@ do_child(struct ssh *ssh, Session *s, const char *command)
 			exit(1);
 	}
 
-	closefrom(STDERR_FILENO + 1);
+	/*
+	 * 5BSD §21: install the provisioned ambient lookup channel at the fixed
+	 * descriptor and spare it from the closefrom, so the user's shell and
+	 * its descendants inherit it.  Non-fatal: a failed install just drops the
+	 * channel and the normal closefrom runs.
+	 */
+	{
+		int spared = 0;
+
+		if (ambient_prov_fd >= 0) {
+			if (dup2(ambient_prov_fd, SERVICE_LOOKUP_FIXED_FD) != -1) {
+				(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
+				(void)cap_clofork_limit(SERVICE_LOOKUP_FIXED_FD,
+				    CAP_CLOFORK_UNLOCKED);
+				spared = 1;
+			}
+			if (ambient_prov_fd != SERVICE_LOOKUP_FIXED_FD)
+				close(ambient_prov_fd);
+			ambient_prov_fd = -1;
+		}
+		if (spared)
+			closefrom(SERVICE_LOOKUP_FIXED_FD + 1);
+		else
+			closefrom(STDERR_FILENO + 1);
+	}
 
 	do_rc_files(ssh, s, shell);
 

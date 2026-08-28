@@ -7,6 +7,8 @@
  */
 
 #include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -14,6 +16,7 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -22,6 +25,7 @@
 #include <channel.h>
 
 #include "libservice.h"
+#include "serviced_ctl.h"
 #include "serviced_svc_proto.h"
 
 #define	CLIENT_EVENT_MAX	64
@@ -1095,4 +1099,200 @@ service_mint_user_domain(int syschan, uid_t uid, int *out_fd)
 
 	return (service_mint_session_domain(syschan, SERVICE_MINT_USER, uid,
 	    out_fd));
+}
+
+/* Bounded I/O deadline for the control-socket provisioning round-trip. */
+#define	PROVISION_IO_TIMEOUT_SEC	2
+
+/*
+ * Write the whole buffer to a blocking socket, retrying short and interrupted
+ * writes.  Returns 0 on success, -1 (errno set) on failure.
+ */
+static int
+provision_write_all(int fd, const void *buf, size_t len)
+{
+	const char *p = buf;
+	size_t off;
+	ssize_t n;
+
+	for (off = 0; off < len; off += (size_t)n) {
+		n = send(fd, p + off, len - off, MSG_NOSIGNAL);
+		if (n == -1) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (n == 0) {
+			errno = ECONNRESET;
+			return (-1);
+		}
+	}
+	return (0);
+}
+
+/*
+ * Socket-authenticated session provisioning (§21/§22, item 4).  Connect to
+ * serviced's control socket and ask it, over the getpeereid(3)-authenticated
+ * channel, to mint this session's ambient lookup channel for `uid`, returning
+ * the caller-owned endpoint in *out_fd.  This is the path a caller uses when it
+ * cannot inherit serviced's SYSTEM channel (an ssh network login): serviced
+ * scopes the minted channel by the TARGET uid and only a root peer is
+ * permitted, so the caller must still be privileged when it calls this.
+ *
+ * The returned descriptor is ambient (serviced marks it CAP_CLOFORK_UNLOCKED
+ * and clears close-on-exec) and non-transferable (CAP_XFER_ONCE, consumed by
+ * this very handoff — it cannot be relayed onward).  Strictly best-effort and
+ * bounded: connect/mint/EPERM/short-read failures all return -1 with errno set,
+ * and the caller must proceed with no ambient channel.  Never blocks
+ * indefinitely (a receive deadline bounds a wedged serviced).
+ */
+int
+service_provision_session(uid_t uid, int *out_fd)
+{
+	struct sockaddr_un un;
+	struct sctl_request req;
+	struct sctl_reply reply;
+	struct timeval tv;
+	char payload[16];
+	const char *sockpath;
+	int fd, recvd, saved;
+	int len;
+	size_t off;
+
+	if (out_fd == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*out_fd = -1;
+
+	sockpath = getenv("SERVICED_CONTROL_SOCKET");
+	if (sockpath == NULL || sockpath[0] == '\0')
+		sockpath = SERVICED_CTL_SOCK;
+	if (strlen(sockpath) >= sizeof(un.sun_path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+
+	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (fd == -1)
+		return (-1);
+
+	memset(&un, 0, sizeof(un));
+	un.sun_family = AF_LOCAL;
+	strlcpy(un.sun_path, sockpath, sizeof(un.sun_path));
+	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
+		saved = errno;
+		(void)close(fd);
+		errno = saved;
+		return (-1);
+	}
+
+	/* Bound both directions so a wedged serviced cannot stall a login. */
+	tv.tv_sec = PROVISION_IO_TIMEOUT_SEC;
+	tv.tv_usec = 0;
+	(void)setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+	(void)setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+	/* Target uid as decimal ASCII: no NUL, so it clears the encoding gate. */
+	len = snprintf(payload, sizeof(payload), "%u", (unsigned)uid);
+	if (len < 0 || (size_t)len >= sizeof(payload)) {
+		(void)close(fd);
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.version = SERVICED_CTL_VERSION;
+	req.op = SCTL_OP_PROVISION_SESSION;
+	req.flags = 0;
+	req.datalen = (uint32_t)len;
+	if (provision_write_all(fd, &req, sizeof(req)) == -1 ||
+	    provision_write_all(fd, payload, (size_t)len) == -1) {
+		saved = errno;
+		(void)close(fd);
+		errno = saved;
+		return (-1);
+	}
+
+	/*
+	 * Receive the fixed-size reply header; the minted descriptor rides the
+	 * ancillary data of the first bytes.  Only the first recvmsg carries the
+	 * control buffer — the reply is 8 bytes and arrives in one datagram-like
+	 * chunk on a local stream socket — and any residual bytes are drained
+	 * with plain recv.
+	 */
+	recvd = -1;
+	off = 0;
+	while (off < sizeof(reply)) {
+		struct msghdr msg;
+		struct iovec iov;
+		union {
+			struct cmsghdr	align;
+			char		buf[CMSG_SPACE(sizeof(int))];
+		} cmsgbuf;
+		ssize_t n;
+
+		memset(&msg, 0, sizeof(msg));
+		iov.iov_base = (char *)&reply + off;
+		iov.iov_len = sizeof(reply) - off;
+		msg.msg_iov = &iov;
+		msg.msg_iovlen = 1;
+		if (off == 0) {
+			memset(&cmsgbuf, 0, sizeof(cmsgbuf));
+			msg.msg_control = cmsgbuf.buf;
+			msg.msg_controllen = sizeof(cmsgbuf.buf);
+		}
+		n = recvmsg(fd, &msg, 0);
+		if (n == -1) {
+			if (errno == EINTR)
+				continue;
+			saved = errno;
+			if (recvd >= 0)
+				(void)close(recvd);
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+		if (n == 0) {
+			if (recvd >= 0)
+				(void)close(recvd);
+			(void)close(fd);
+			errno = ECONNRESET;
+			return (-1);
+		}
+		if (off == 0) {
+			struct cmsghdr *cmsg;
+
+			for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
+			    cmsg = CMSG_NXTHDR(&msg, cmsg)) {
+				if (cmsg->cmsg_level == SOL_SOCKET &&
+				    cmsg->cmsg_type == SCM_RIGHTS &&
+				    cmsg->cmsg_len == CMSG_LEN(sizeof(int))) {
+					memcpy(&recvd, CMSG_DATA(cmsg),
+					    sizeof(int));
+					break;
+				}
+			}
+			if ((msg.msg_flags & MSG_CTRUNC) != 0 && recvd >= 0) {
+				(void)close(recvd);
+				recvd = -1;
+			}
+		}
+		off += (size_t)n;
+	}
+
+	(void)close(fd);
+
+	if (reply.status != 0) {
+		if (recvd >= 0)
+			(void)close(recvd);
+		errno = (int)reply.status;
+		return (-1);
+	}
+	if (recvd < 0) {
+		errno = EBADMSG;
+		return (-1);
+	}
+	*out_fd = recvd;
+	return (0);
 }

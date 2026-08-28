@@ -23,6 +23,9 @@ MAN=
 
 # pam should always happen before ssh here for static linking
 LIBADD=	pam ssh util
+# 5BSD: ambient service lookup-channel session provisioning (§21) in session.c.
+LIBADD+=	service
+CFLAGS+=	-I${SRCTOP}/lib/libservice
 
 .if ${MK_AUDIT} != "no"
 CFLAGS+= -DUSE_BSM_AUDIT=1 -DHAVE_GETAUDIT_ADDR=1

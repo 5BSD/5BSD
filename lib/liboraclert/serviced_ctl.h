@@ -33,6 +33,20 @@
 #define	SCTL_OP_RELOAD		3	/* reload manifests (root) */
 #define	SCTL_OP_START_SVC	4	/* start a loaded unit (root) */
 #define	SCTL_OP_STOP_SVC	5	/* stop a loaded unit (root) */
+/*
+ * SCTL_OP_PROVISION_SESSION — socket-authenticated session provisioning (§21/
+ * §22, item 4).  ROOT ONLY: the handler requires the getpeereid(3)-attested
+ * peer euid to be 0, since provisioning speaks for an arbitrary target uid.
+ * The request payload is the target uid as a decimal ASCII string (no NUL, so
+ * it passes the control channel's text-payload encoding check); serviced mints
+ * the session lookup channel scoped by that TARGET uid — SYSTEM/admin for uid 0
+ * or a wheel member, USER otherwise — and returns the caller's ambient,
+ * CAP_XFER_ONCE endpoint attached to the reply via SCM_RIGHTS.  A non-root peer
+ * gets EPERM and no fd.  This is the unified backend login(1)/su(1) provision
+ * over getty inheritance; it exists for ssh network logins that cannot inherit
+ * the SYSTEM channel.
+ */
+#define	SCTL_OP_PROVISION_SESSION	6	/* mint session channel for uid (root) */
 
 struct sctl_request {
 	uint32_t	version;
@@ -41,6 +55,13 @@ struct sctl_request {
 	uint32_t	datalen;
 } __packed;
 
+/*
+ * status is 0 on success or a positive errno.  flags carries the summary text
+ * length that follows the reply header.  For SCTL_OP_PROVISION_SESSION a
+ * successful reply carries no summary (flags == 0) and instead has the minted
+ * session-channel descriptor attached to the reply header via SCM_RIGHTS; an
+ * error reply carries a summary and no descriptor.
+ */
 struct sctl_reply {
 	uint32_t	status;		/* 0 = ok, nonzero = errno */
 	uint32_t	flags;		/* summary text length */

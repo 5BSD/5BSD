@@ -389,6 +389,8 @@ int	domain_mint_user_channel(uid_t uid, int *out_fd, int kq);
 int	domain_mint_system_channel(int *out_fd, int kq);
 int	domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
 	    int *out_fd, int kq);
+int	domain_provision_session(uid_t requester_euid, uid_t target_uid,
+	    int *out_fd, int kq);
 int	svc_mint_domain_kind(const struct svc_domain *requester,
 	    uint32_t wire_domain, enum svc_domain_kind *kind);
 bool	domain_channel_owns_event(uintptr_t ident);

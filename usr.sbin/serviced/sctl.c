@@ -26,6 +26,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -82,6 +83,15 @@ struct sctl_conn {
 	uint32_t		summary_len;
 
 	char			payload[SERVICED_CTL_MAX_PAYLOAD + 1];
+
+	/*
+	 * A descriptor to attach to the reply header via SCM_RIGHTS (currently
+	 * only SCTL_OP_PROVISION_SESSION's minted session channel), or -1 when
+	 * the reply carries no descriptor.  fd_passed guards against a double
+	 * send/close once the kernel has taken ownership.
+	 */
+	int			pass_fd;
+	bool			fd_passed;
 
 	uintptr_t		timer_ident;
 	struct timespec		accept_ts;	/* monotonic time at accept */
@@ -214,6 +224,16 @@ conn_destroy(struct sctl_conn *c)
 		    EV_DELETE, 0, 0, NULL);
 		(void)kevent(serviced_kq, &kev, 1, NULL, 0, NULL);
 	}
+
+	/*
+	 * Drop an unsent minted descriptor.  If the reply's SCM_RIGHTS send
+	 * already handed it to the kernel (fd_passed), the kernel owns it and
+	 * pass_fd was cleared; otherwise (an aborted or timed-out connection)
+	 * close our copy so the minted channel does not leak — serviced's own
+	 * end then sees EOF and reaps the lookup-channel registration.
+	 */
+	if (c->pass_fd >= 0 && !c->fd_passed)
+		close(c->pass_fd);
 
 	close(c->fd);
 	TAILQ_REMOVE(&conn_list, c, entry);
@@ -432,6 +452,73 @@ conn_dispatch(struct sctl_conn *c)
 			reply->flags = (uint32_t)strlen(c->summary);
 		}
 		break;
+	case SCTL_OP_PROVISION_SESSION:
+		/*
+		 * Socket-authenticated session provisioning (§21/§22, item 4).
+		 * AUTH (security boundary): the getpeereid(3) peer euid captured
+		 * at accept time (c->euid) MUST be root — provisioning speaks for
+		 * an arbitrary target uid, so a non-root caller is refused with
+		 * EPERM and NO descriptor.  On success the minted channel is
+		 * scoped by the TARGET uid (root/wheel -> SYSTEM admin, else USER)
+		 * and stashed in c->pass_fd for the reply's SCM_RIGHTS send; it is
+		 * marked CAP_XFER_ONCE so it cannot be relayed onward.  A mint
+		 * failure is a plain error reply — serviced never crashes.
+		 */
+		if (c->euid != 0) {
+			reply->status = EPERM;
+			snprintf(c->summary, sizeof(c->summary),
+			    "provision: permission denied");
+			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
+			serviced_audit(AUE_SERVICED_CTL, c->euid, EPERM,
+			    "provision denied (non-root)");
+		} else if (req->datalen == 0) {
+			reply->status = EINVAL;
+			snprintf(c->summary, sizeof(c->summary),
+			    "provision: missing target uid");
+		} else {
+			char *endp;
+			unsigned long val;
+			uid_t target;
+			int provisioned, perr;
+
+			errno = 0;
+			val = strtoul(c->payload, &endp, 10);
+			if (endp == c->payload || *endp != '\0' ||
+			    (val == ULONG_MAX && errno == ERANGE) ||
+			    val > (unsigned long)UID_MAX) {
+				reply->status = EINVAL;
+				snprintf(c->summary, sizeof(c->summary),
+				    "provision: malformed target uid");
+			} else {
+				target = (uid_t)val;
+				provisioned = -1;
+				if (domain_provision_session(c->euid, target,
+				    &provisioned, serviced_kq) == -1) {
+					perr = errno != 0 ? errno : EIO;
+					reply->status = perr;
+					snprintf(c->summary, sizeof(c->summary),
+					    "provision: uid %u failed: %s",
+					    (unsigned)target, strerror(perr));
+					serviced_audit(AUE_SERVICED_CTL,
+					    c->euid, perr,
+					    "provision uid=%u failed",
+					    (unsigned)target);
+				} else {
+					c->pass_fd = provisioned;
+					reply->status = 0;
+					/*
+					 * Success carries the fd via SCM_RIGHTS
+					 * and no summary text (flags stays 0).
+					 */
+					c->summary[0] = '\0';
+					serviced_audit(AUE_SERVICED_CTL,
+					    c->euid, 0,
+					    "provision uid=%u", (unsigned)target);
+				}
+			}
+		}
+		reply->flags = (uint32_t)strlen(c->summary);
+		break;
 	default:
 		reply->status = ENOTSUP;
 		snprintf(c->summary, sizeof(c->summary),
@@ -528,6 +615,42 @@ conn_handle_read(struct sctl_conn *c)
 }
 
 /*
+ * Send the reply header carrying a descriptor via SCM_RIGHTS.  Used only while
+ * writing the fixed-size reply of an op that provisions a descriptor
+ * (SCTL_OP_PROVISION_SESSION).  The descriptor is delivered with whatever data
+ * bytes this single sendmsg(2) transmits — the reply is 8 bytes and goes in one
+ * shot on a local stream socket — so the caller marks it passed on the first
+ * successful send and any residual reply bytes then go via plain write(2).
+ */
+static ssize_t
+conn_send_reply_fd(struct sctl_conn *c, const char *src, size_t len)
+{
+	struct msghdr msg;
+	struct iovec iov;
+	union {
+		struct cmsghdr	align;
+		char		buf[CMSG_SPACE(sizeof(int))];
+	} cmsgbuf;
+	struct cmsghdr *cmsg;
+
+	memset(&msg, 0, sizeof(msg));
+	iov.iov_base = __DECONST(void *, src);
+	iov.iov_len = len;
+	msg.msg_iov = &iov;
+	msg.msg_iovlen = 1;
+	memset(&cmsgbuf, 0, sizeof(cmsgbuf));
+	msg.msg_control = cmsgbuf.buf;
+	msg.msg_controllen = sizeof(cmsgbuf.buf);
+	cmsg = CMSG_FIRSTHDR(&msg);
+	cmsg->cmsg_level = SOL_SOCKET;
+	cmsg->cmsg_type = SCM_RIGHTS;
+	cmsg->cmsg_len = CMSG_LEN(sizeof(int));
+	memcpy(CMSG_DATA(cmsg), &c->pass_fd, sizeof(int));
+	msg.msg_controllen = cmsg->cmsg_len;
+	return (sendmsg(c->fd, &msg, 0));
+}
+
+/*
  * Handle partial writes: reply header first, then summary payload.
  */
 static void
@@ -535,6 +658,7 @@ conn_handle_write(struct sctl_conn *c)
 {
 	const char *src;
 	size_t total;
+	bool sending_fd;
 	ssize_t n;
 
 	switch (c->state) {
@@ -551,7 +675,16 @@ conn_handle_write(struct sctl_conn *c)
 		return;
 	}
 
-	n = write(c->fd, src, total - c->offset);
+	/*
+	 * Attach the provisioned descriptor to the very first bytes of the
+	 * reply header; every later byte (reply residue or summary) is plain.
+	 */
+	sending_fd = (c->state == SCTL_CONN_WRITING_REPLY &&
+	    c->pass_fd >= 0 && !c->fd_passed);
+	if (sending_fd)
+		n = conn_send_reply_fd(c, src, total - c->offset);
+	else
+		n = write(c->fd, src, total - c->offset);
 	if (n == -1) {
 		if (errno == EINTR || errno == EAGAIN)
 			return;
@@ -561,6 +694,18 @@ conn_handle_write(struct sctl_conn *c)
 	if (n == 0) {
 		c->state = SCTL_CONN_DONE;
 		return;
+	}
+
+	/*
+	 * The descriptor rides the ancillary data of this sendmsg regardless of
+	 * how many payload bytes it carried, so once any bytes are out the kernel
+	 * owns the fd: mark it passed and drop serviced's copy.  Residual reply
+	 * bytes fall through to plain write(2) on the next writable event.
+	 */
+	if (sending_fd) {
+		c->fd_passed = true;
+		(void)close(c->pass_fd);
+		c->pass_fd = -1;
 	}
 
 	c->offset += (size_t)n;
@@ -760,6 +905,8 @@ sctl_accept(void)
 	c->fd = cfd;
 	c->euid = euid;
 	c->state = SCTL_CONN_READING_HDR;
+	c->pass_fd = -1;	/* calloc gives 0, a valid fd; force "none" */
+	c->fd_passed = false;
 	clock_gettime(CLOCK_MONOTONIC, &c->accept_ts);
 
 	TAILQ_INSERT_TAIL(&conn_list, c, entry);
