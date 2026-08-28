@@ -292,6 +292,20 @@ capbundle_svc_nprovides(const struct capbundle_service *s)
 	return (s != NULL ? s->nprovides : 0);
 }
 
+unsigned
+capbundle_svc_timer_interval(const struct capbundle_service *s)
+{
+
+	return (s != NULL ? s->timer_interval_sec : 0);
+}
+
+const char *
+capbundle_svc_activation_path(const struct capbundle_service *s)
+{
+
+	return (s != NULL ? s->activation_path : "");
+}
+
 const char *
 capbundle_svc_provides(const struct capbundle_service *s, unsigned idx)
 {
@@ -404,6 +418,10 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	    sizeof(m->jail_ip4_addr)) == -1)
 		return (-1);
 	m->restart = s->restart;
+	m->timer_interval_sec = s->timer_interval_sec;
+	if (manifest_copy(s->activation_path, m->activation_path,
+	    sizeof(m->activation_path)) == -1)
+		return (-1);
 	m->stop_timeout = s->stop_timeout > 0 ? s->stop_timeout : 5;
 	m->max_failures = s->max_failures > 0 ? s->max_failures : 10;
 

@@ -22,6 +22,7 @@
 #include <channel.h>
 
 #include "libservice.h"
+#include "serviced_svc_proto.h"
 
 #define	CLIENT_EVENT_MAX	64
 #define	CLIENT_POLL_MS		25
@@ -982,5 +983,97 @@ service_session_receive_event(struct service_session *session,
 		return (-1);
 	}
 	event->length = (size_t)received;
+	return (0);
+}
+
+/*
+ * Ask serviced, over an inherited system (or otherwise SYSTEM-domain) lookup
+ * channel, to mint a narrowed lookup channel bound to the user domain for uid
+ * and return the caller's endpoint in *out_fd (§21/§22).
+ *
+ * syschan is borrowed: this call neither closes it nor keeps a reference.  The
+ * returned descriptor is ambient — serviced marks it CAP_CLOFORK_UNLOCKED and
+ * clears its close-on-exec flag — so the login/session path can install it as
+ * a session leader's inherited lookup channel and every descendant shares the
+ * user domain.  Because domains only narrow, the request succeeds only when
+ * syschan is itself a SYSTEM-domain channel; serviced returns EPERM otherwise.
+ */
+int
+service_mint_user_domain(int syschan, uid_t uid, int *out_fd)
+{
+	struct svc_mint_domain_req req;
+	struct svc_reply reply_data;
+	struct service_message message = {
+		.size = sizeof(message),
+		.data = &req,
+		.length = sizeof(req),
+		.fds = NULL,
+		.nfds = 0,
+	};
+	int reply_fd;
+	struct service_reply reply = {
+		.size = sizeof(reply),
+		.data = &reply_data,
+		.capacity = sizeof(reply_data),
+		.fds = &reply_fd,
+		.fd_capacity = 1,
+	};
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session;
+	int dupfd, error;
+
+	if (syschan < 0 || out_fd == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*out_fd = -1;
+	reply_fd = -1;
+
+	/*
+	 * service_session_create() takes ownership of the descriptor it is
+	 * given (it re-duplicates and closes it), so hand it a private
+	 * duplicate and leave the borrowed syschan untouched.
+	 */
+	dupfd = fcntl(syschan, F_DUPFD_CLOEXEC, 0);
+	if (dupfd == -1)
+		return (-1);
+	if (service_session_create(dupfd, &session) == -1) {
+		error = errno;
+		(void)close(dupfd);
+		errno = error;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_MINT_DOMAIN;
+	req.uid = (uint32_t)uid;
+
+	if (service_session_call(session, &message, &reply, &options) == -1) {
+		error = errno;
+		service_session_close(session);
+		errno = error;
+		return (-1);
+	}
+	service_session_close(session);
+
+	if (reply.length != sizeof(reply_data)) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+	if (reply_data.status != 0) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = reply_data.status;
+		return (-1);
+	}
+	if (reply.nfds != 1 || reply_fd < 0) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+	*out_fd = reply_fd;
 	return (0);
 }

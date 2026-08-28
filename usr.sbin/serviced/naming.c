@@ -293,14 +293,35 @@ naming_rebind_owner(struct svc_runtime *old_owner,
  * end to the caller.
  *
  * Returns the client's fd on success, -1 on failure (sets *errp).
+ *
+ * domain scopes the requesting channel (§22): SVC_DOMAIN_SYSTEM resolves every
+ * registered name, while a narrowed domain resolves only names in its scope.
+ * The scope check runs FIRST, before the registry is consulted, so a name that
+ * is out of scope is reported as ENOENT indistinguishably from a name that was
+ * never registered — the requester learns nothing about names it may not see.
+ * requester is the owning unit for a unit control channel and NULL for a
+ * minted domain channel that has no backing process; the self-connection guard
+ * applies only when there is a requester.  Per-name authorization in the
+ * provider is unchanged: domain scoping narrows discovery, it never grants
+ * access.
  */
 int
-naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
+naming_lookup(const char *name, struct svc_runtime *requester,
+    const struct svc_domain *domain, int *errp)
 {
 	struct naming_entry *e;
 	struct svc_runtime *provider;
 	struct svc_new_client_msg notify;
 	int provider_end, client_end;
+
+	/*
+	 * Domain scope is layered on top of the registry and checked first: an
+	 * out-of-scope name is indistinguishable from an unregistered one.
+	 */
+	if (!svc_domain_resolves(domain, name)) {
+		*errp = ENOENT;
+		return (-1);
+	}
 
 	e = naming_find(name);
 	/* A name becomes visible only after its independent activation succeeds. */
@@ -312,8 +333,8 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 
 	provider = e->owner;
 
-	/* Don't let a service connect to itself. */
-	if (provider == requester) {
+	/* Don't let a service connect to itself (unit channels only). */
+	if (requester != NULL && provider == requester) {
 		*errp = ELOOP;
 		return (-1);
 	}
@@ -362,8 +383,9 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	memset(&notify, 0, sizeof(notify));
 	notify.op = SVC_OP_NEW_CLIENT;
 	strlcpy(notify.service_name, name, sizeof(notify.service_name));
-	strlcpy(notify.client_label, requester->manifest.label,
-	    sizeof(notify.client_label));
+	strlcpy(notify.client_label,
+	    requester != NULL ? requester->manifest.label :
+	    "org.5bsd.user-session", sizeof(notify.client_label));
 
 	if (svc_channel_send_event(provider, &notify, sizeof(notify),
 	    &provider_end, 1, serviced_kq) == -1) {
@@ -379,8 +401,8 @@ naming_lookup(const char *name, struct svc_runtime *requester, int *errp)
 	close(provider_end);	/* kernel copied it into the message */
 
 	syslog(LOG_DEBUG, "naming: '%s' connected '%s' to '%s'",
-	    name, requester->manifest.label, provider->manifest.label);
-	SERVICED_PROBE_NAMING_LOOKUP(name, requester->manifest.label);
+	    name, notify.client_label, provider->manifest.label);
+	SERVICED_PROBE_NAMING_LOOKUP(name, notify.client_label);
 	/*
 	 * Count at the one common broker point.  Both immediately published
 	 * and on-demand names pass through here, and the count belongs to the

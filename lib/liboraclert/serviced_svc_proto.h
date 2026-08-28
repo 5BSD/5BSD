@@ -30,7 +30,7 @@
 
 #include <sys/types.h>
 
-#define	SERVICED_SVC_PROTO_VERSION	5
+#define	SERVICED_SVC_PROTO_VERSION	6
 
 /* Maximum reverse-domain name length. */
 #define	SERVICED_NAME_MAX		255
@@ -48,6 +48,7 @@
 #define	SVC_OP_QUIESCE_RESULT	6	/* managed shutdown completion */
 #define	SVC_OP_WORKER_CHANNEL	7	/* private provider/worker channel */
 #define	SVC_OP_IDLE		8	/* provider requests idle-timeout shutdown */
+#define	SVC_OP_MINT_DOMAIN	9	/* mint a narrowed (USER, uid) lookup channel */
 
 /*
  * Serviced → service (notifications):
@@ -87,6 +88,29 @@ struct svc_quiesce_result_req {
 struct svc_idle_req {
 	uint32_t	op;		/* SVC_OP_IDLE */
 	uint32_t	seconds;	/* idle timeout; 0 cancels pending timer */
+};
+
+/*
+ * SVC_OP_MINT_DOMAIN
+ *   req:  svc_mint_domain_req
+ *   reply: svc_reply { .status }
+ *   reply_fds[0] = narrowed lookup channel endpoint (on success)
+ *
+ * Mint a fresh lookup channel bound to the user domain (SVC_DOMAIN_USER, uid)
+ * and return the caller's endpoint.  Only a SYSTEM-domain caller may mint: a
+ * request arriving on an already-narrowed (user-domain) channel is refused with
+ * EPERM, because domains only ever narrow and never broaden.  The returned
+ * descriptor is an ambient descriptor (survives every fork, survives exec, and
+ * is usable in capability mode) so the login/session path can install it as a
+ * session leader's inherited lookup channel (§21).  A lookup over the returned
+ * channel is scoped to the user domain: it resolves only the user-domain
+ * allow-list, and every out-of-scope name returns ENOENT.
+ */
+struct svc_mint_domain_req {
+	uint32_t	op;		/* SVC_OP_MINT_DOMAIN */
+	uint32_t	flags;		/* reserved, must be 0 */
+	uint32_t	uid;		/* target uid for the user domain */
+	uint32_t	reserved;	/* reserved, must be 0 */
 };
 
 /*

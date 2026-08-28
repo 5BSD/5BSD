@@ -128,6 +128,21 @@ struct svc_manifest {
 	unsigned	nkmod_requires;
 
 	/*
+	 * Activation sources (Phase 5).  These describe how THIS unit is
+	 * activated on demand while it is stopped; they are not dependency
+	 * ordering.  A timer or path source names the unit in its own bundle and
+	 * creates demand for it when it fires (§13).
+	 *
+	 * timer_interval_sec: monotonic period in seconds; 0 = no timer source.
+	 *   v1 supports monotonic intervals only — calendar/cron expressions are
+	 *   rejected at parse time.
+	 * activation_path: absolute path watched via kqueue vnode events; empty =
+	 *   no path source.  Events are hints, never proof the path is unchanged.
+	 */
+	unsigned	timer_interval_sec;
+	char		activation_path[PATH_MAX];
+
+	/*
 	 * Launcher-applied protection policy (capprotect CP_SF_* bitmask).  When
 	 * non-zero serviced shields the launched process by its process
 	 * descriptor immediately after pdfork(2), so the protection is in force

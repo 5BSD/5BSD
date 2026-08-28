@@ -222,6 +222,16 @@ int	service_listener_accept(struct service_listener *,
 int	service_connect(struct service_context *, const char *name,
 	    int *session_fd);
 
+/*
+ * Mint a user-domain lookup channel (§21/§22) over a borrowed SYSTEM-domain
+ * lookup channel (syschan).  On success *out_fd is a new, caller-owned ambient
+ * descriptor bound to the user domain for uid: it survives fork and exec and is
+ * usable in capability mode, ready to be installed as a session leader's
+ * inherited lookup channel.  Fails with EPERM if syschan is not a SYSTEM-domain
+ * channel, because domains only ever narrow.
+ */
+int	service_mint_user_domain(int syschan, uid_t uid, int *out_fd);
+
 #define	SERVICE_CLIENT_TIMEOUT_INFINITE	UINT32_MAX
 
 struct service_message {

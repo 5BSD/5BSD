@@ -18,6 +18,17 @@
 #define	SERVICE_BOOTSTRAP_FD		5
 #define	SERVICE_BOOTSTRAP_ENV		"SERVICE_BOOTSTRAP_FD"
 #define	SERVICE_BOOTSTRAP_ENVFD_NAME	"org.5bsd.serviced.bootstrap"
+
+/*
+ * Ambient lookup-channel convention (§21).  Distinct from the typed bootstrap
+ * descriptor above: SERVICE_BOOTSTRAP_FD is the per-unit launch table serviced
+ * hands a service it starts, whereas the ambient lookup channel is a bare
+ * "ask serviced" discovery channel carried through the boot/login path into
+ * every process — including interactive sessions serviced never launched.  The
+ * environment variable names the inherited fd number; there is no fixed fd
+ * because login and su re-narrow and re-advertise it per session.
+ */
+#define	SERVICE_LOOKUP_ENV		"SERVICE_LOOKUP_FD"
 #define	SERVICE_UNIT_DIR_ENV		"CAPABILITY_UNIT_DIR"
 #define	SERVICE_NETWORKCMP_ENV		"NETWORKCMP"
 #define	SERVICE_FILESYSTEMCMP_ENV	"FILESYSTEMCMP"
@@ -62,5 +73,25 @@ _Static_assert(__offsetof(struct service_bootstrap, label) == 64,
     "service bootstrap header ABI drift");
 _Static_assert(sizeof(struct service_bootstrap) == 3456,
     "service bootstrap ABI drift");
+
+/*
+ * Ambient lookup-channel helpers (§21), shared by serviced, login, and su.
+ * Both are best-effort discovery plumbing and never authority: a caller that
+ * gets -1 must degrade to its prior behavior, never fail.
+ *
+ * service_ambient_lookup_fd() returns the inherited ambient lookup fd named by
+ * SERVICE_LOOKUP_ENV, after validating that it is an open mac_capability
+ * channel; it returns -1 (errno set) when the variable is absent, unparsable,
+ * closed, or not a channel.
+ *
+ * service_install_ambient_lookup() makes fd ambient (survives every fork via
+ * CAP_CLOFORK_UNLOCKED, survives exec by clearing FD_CLOEXEC) and advertises
+ * its number in SERVICE_LOOKUP_ENV so descendants inherit it.  The descriptor
+ * is left at its own number.  Returns 0 on success, -1 (errno set) on failure.
+ */
+__BEGIN_DECLS
+int	service_ambient_lookup_fd(void);
+int	service_install_ambient_lookup(int fd);
+__END_DECLS
 
 #endif /* !_SERVICE_BOOTSTRAP_H_ */

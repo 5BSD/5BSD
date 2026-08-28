@@ -67,6 +67,30 @@ enum svc_kind {
 #define	SVC_NAME_READY			3
 
 /*
+ * Lookup domain — a scope over the naming layer (§22).  A domain does not add
+ * a namespace; it narrows *which* registered names a lookup channel may
+ * resolve, layered on top of the existing per-name authorization.  Domains
+ * only ever NARROW: SYSTEM (the default, value 0) resolves every registered
+ * name, while USER resolves only an explicit allow-list of system names (plus
+ * future user-scoped services).  A minted user-domain channel can therefore
+ * never see more than the system channel that minted it, only less.
+ *
+ * uid is meaningful only for SVC_DOMAIN_USER; a SYSTEM domain ignores it.
+ * Because SVC_DOMAIN_SYSTEM == 0, a calloc'd svc_runtime (and any zero-filled
+ * requester state) defaults to the system domain and every existing lookup
+ * path keeps its current behavior.
+ */
+enum svc_domain_kind {
+	SVC_DOMAIN_SYSTEM = 0,	/* root scope: all registered names */
+	SVC_DOMAIN_USER,	/* per-uid scope: allow-list + user services */
+};
+
+struct svc_domain {
+	enum svc_domain_kind	kind;
+	uid_t			uid;	/* meaningful only for SVC_DOMAIN_USER */
+};
+
+/*
  * Runtime state for a launched service.
  *
  * Wraps svc_manifest with process state, fds, and restart tracking.
@@ -78,6 +102,13 @@ struct svc_launch;	/* opaque async-launch context, defined in execute.c */
 struct svc_runtime {
 	struct svc_manifest	manifest;
 	enum svc_kind	kind;		/* launch method + readiness contract */
+
+	/*
+	 * Lookup domain for SVC_OP_LOOKUP arriving on this unit's control
+	 * channel.  Zero-initialized to SVC_DOMAIN_SYSTEM: serviced-launched
+	 * system units resolve every registered name, exactly as before.
+	 */
+	struct svc_domain	domain;
 
 	/* Process state */
 	int		state;		/* SVC_STATE_* */
@@ -120,6 +151,17 @@ struct svc_runtime {
 	unsigned	idle_timeout_sec;	/* 0 = idle shutdown not requested */
 	uintptr_t	idle_timer_ident;	/* 0 = no idle timer armed */
 	bool		idle_stop_pending;	/* idle timer fired; keep slot for relaunch */
+
+	/*
+	 * Activation sources (Phase 5).  These outlive the unit's own
+	 * start/stop cycles: the timer keeps firing and the vnode watch keeps
+	 * reporting while the activated unit is stopped, each fire creating
+	 * fresh demand.  activation_timer_ident carries the ACTIVATION_TIMER_BIT
+	 * tag and is matched per-unit; activation_path_fd is the watched vnode
+	 * descriptor (its value is the EVFILT_VNODE ident).
+	 */
+	uintptr_t	activation_timer_ident;	/* 0 = no periodic timer armed */
+	int		activation_path_fd;	/* -1 = no path watch open */
 
 	/* Attribution */
 	char		launched_by[SERVICED_LABEL_MAX]; /* who triggered launch */
@@ -165,6 +207,15 @@ struct serviced_state {
 
 extern struct serviced_state sd;
 extern int serviced_kq;
+
+/*
+ * serviced's retained client end of the SYSTEM ambient lookup channel (§21),
+ * or -1 if none was installed.  Held open for the life of the daemon so every
+ * process serviced forks for the rc world (and everything rc launches)
+ * inherits it; svc_exec_command spares it from the child's closefrom(2).
+ * Installed once in startup.c before /etc/rc runs.
+ */
+extern int serviced_ambient_lookup_fd;
 
 /* sctl.c — control socket */
 int	sctl_setup(void);
@@ -280,6 +331,14 @@ void	bundle_registry_teardown(void);
 /* startup.c — tier-based parallel service launch */
 int	startup_launch_system(int kq);
 
+/* activation.c — timer and path activation sources (Phase 5) */
+int	activation_register_all(int kq);
+void	activation_source_arm(struct svc_runtime *svc, int kq);
+void	activation_source_teardown(struct svc_runtime *svc, int kq);
+bool	activation_timer_owns(uintptr_t ident);
+void	activation_timer_fire(uintptr_t ident, int kq);
+void	activation_path_event(struct kevent *kev, int kq);
+
 /* on_demand.c — on-demand service launch for user bundles */
 int	on_demand_launch(const char *name, struct svc_runtime *requester,
 	    struct channel_message *request, int kq);
@@ -304,7 +363,17 @@ void	naming_remove_owner(struct svc_runtime *owner);
 void	naming_rebind_owner(struct svc_runtime *old_owner,
 	    struct svc_runtime *new_owner);
 int	naming_lookup(const char *name, struct svc_runtime *requester,
-	    int *errp);
+	    const struct svc_domain *domain, int *errp);
+
+/* domain.c — lookup-domain scoping and minted user-domain channels (§21/§22) */
+bool	svc_domain_resolves(const struct svc_domain *domain, const char *name);
+bool	svc_domain_may_mint(const struct svc_domain *domain);
+int	svc_fd_make_ambient(int fd);
+int	domain_mint_user_channel(uid_t uid, int *out_fd, int kq);
+int	domain_mint_system_channel(int *out_fd, int kq);
+bool	domain_channel_owns_event(uintptr_t ident);
+void	domain_channel_event(struct kevent *kev, int kq);
+void	domain_channel_teardown(void);
 
 /*
  * DJB2 hash function, shared between naming.c and bundle_registry.c.
@@ -334,6 +403,7 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 	svc->control_channel = NULL;
 	svc->coalition_fd = -1;
 	svc->jail_fd = -1;
+	svc->activation_path_fd = -1;
 	svc->protocol_ready = false;
 	memset(svc->name_state, SVC_NAME_UNCLAIMED,
 	    sizeof(svc->name_state));

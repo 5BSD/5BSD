@@ -365,7 +365,7 @@ on_demand_broker(const char *name, struct svc_runtime *req_svc,
 		return (false);
 	}
 
-	client_fd = naming_lookup(name, req_svc, &error);
+	client_fd = naming_lookup(name, req_svc, &req_svc->domain, &error);
 	if (client_fd >= 0) {
 		status = 0;
 		if (cap_xfer_limit(client_fd, CAP_XFER_ONCE) == -1)

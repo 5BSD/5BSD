@@ -304,7 +304,13 @@ cp "$src/usr.sbin/bsdnotify/Makefile" \
 	"$src/usr.sbin/bsdnotify/bsdnotify_provider.d" \
 	"$payload/source/usr.sbin/bsdnotify/"
 cp "$src/usr.sbin/bsdnotify/capbundle/bsdnotify.ucl" \
+	"$src/usr.sbin/bsdnotify/capbundle/bsdnotify.conf" \
 	"$payload/source/usr.sbin/bsdnotify/capbundle/"
+# Global-service integration cases build bare provider bundles and stage the
+# daemon's managed config from the source tree; ship the ones they reference.
+mkdir -p "$payload/source/usr.sbin/logd/capbundle"
+cp "$src/usr.sbin/logd/capbundle/logd.conf" \
+	"$payload/source/usr.sbin/logd/capbundle/"
 cp "$src/lib/libnotify/notify.c" \
 	"$src/lib/libnotify/notify_provider.d" \
 	"$payload/source/lib/libnotify/"

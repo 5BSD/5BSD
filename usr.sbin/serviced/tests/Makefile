@@ -44,6 +44,8 @@ PROGS+=		capd_test_guardian
 PROGS+=		capd_service_fixture
 PROGS+=		capd_protocol_fixture
 PROGS+=		component_fixture
+ATF_TESTS_C+=	activation_test
+ATF_TESTS_C+=	domain_test
 ATF_TESTS_C+=	on_demand_test
 ATF_TESTS_C+=	fd_budget_test
 ATF_TESTS_C+=	launch_limits_test
@@ -80,6 +82,26 @@ CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libnotify
 CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libtracecmp
 CFLAGS.component_fixture+=	-I${SRCTOP}/sys
 
+CFLAGS.activation_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.activation_test+=	-I${SRCTOP}/lib/libchannel
+CFLAGS.activation_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.activation_test+=	-I${SRCTOP}/lib/libservice
+CFLAGS.activation_test+=	-I${SRCTOP}/lib/libcapability
+CFLAGS.activation_test+=	-I${SRCTOP}/sys
+CFLAGS.activation_test+=	-ffunction-sections -fdata-sections
+LDFLAGS.activation_test+=	-Wl,--gc-sections
+LIBADD.activation_test+=	capbundle
+CFLAGS.domain_test+=		-I${SRCTOP}/lib/libcapbundle
+CFLAGS.domain_test+=		-I${SRCTOP}/lib/libchannel
+CFLAGS.domain_test+=		-I${SRCTOP}/lib/liboraclert
+CFLAGS.domain_test+=		-I${SRCTOP}/lib/libservice
+CFLAGS.domain_test+=		-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.domain_test+=		-I${SRCTOP}/sys
+CFLAGS.domain_test+=		-ffunction-sections -fdata-sections
+LDFLAGS.domain_test+=		-Wl,--gc-sections
+# domain.c/naming.c reach libchannel; the minted-channel case drives the
+# serviced side from a helper thread and plays the client with libservice.
+LIBADD.domain_test+=		channel service pthread
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libcapbundle
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/libchannel
 CFLAGS.on_demand_test+=		-I${SRCTOP}/lib/liboraclert

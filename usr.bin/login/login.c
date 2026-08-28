@@ -71,6 +71,9 @@
 #include <security/pam_appl.h>
 #include <security/openpam.h>
 
+#include <libservice.h>
+#include <service_bootstrap.h>
+
 #include "login.h"
 #include "login_probes.h"
 #include "pathnames.h"
@@ -159,6 +162,7 @@ main(int argc, char *argv[])
 	struct stat st;
 	int retries, backoff;
 	int ask, ch, cnt, quietlog, rootlogin, rval;
+	int syschan;			/* inherited SYSTEM ambient lookup channel */
 	uid_t uid, euid;
 	gid_t egid;
 	char *term;
@@ -518,6 +522,14 @@ main(int argc, char *argv[])
 	 * preservation - but preserve TERM in all cases
 	 */
 	term = getenv("TERM");
+	/*
+	 * Capture the inherited SYSTEM ambient lookup channel (§21) before the
+	 * environment is destroyed below: SERVICE_LOOKUP_FD names it, and the
+	 * wipe would otherwise erase the name.  The descriptor itself survives.
+	 * This is best-effort discovery, never authority — a -1 here simply
+	 * means this session gets no ambient channel and never fails login.
+	 */
+	syschan = service_ambient_lookup_fd();
 	if (!pflag)
 		environ = envinit;
 	if (term != NULL)
@@ -608,6 +620,33 @@ main(int argc, char *argv[])
 	(void)setenv("LOGNAME", username, 1);
 	(void)setenv("USER", username, 1);
 	(void)setenv("PATH", rootlogin ? _PATH_STDPATH : _PATH_DEFPATH, 0);
+
+	/*
+	 * Narrow the inherited SYSTEM ambient lookup channel (§21/§22) to a
+	 * per-uid USER-domain channel and install it as this session leader's
+	 * ambient channel, so the shell and its descendants inherit a lookup
+	 * channel that resolves only user-domain names.  Entirely best-effort:
+	 * on any failure the session simply carries no ambient channel (the
+	 * unnarrowed SYSTEM channel is never handed to the user shell) and login
+	 * proceeds exactly as before.  Never fatal.
+	 */
+	if (syschan >= 0) {
+		int user_fd = -1;
+
+		if (service_mint_user_domain(syschan, pwd->pw_uid,
+		    &user_fd) == 0 &&
+		    service_install_ambient_lookup(user_fd) == 0) {
+			syslog(LOG_DEBUG, "login: user-domain lookup channel "
+			    "for uid %u on fd %d", (unsigned)pwd->pw_uid,
+			    user_fd);
+		} else {
+			syslog(LOG_NOTICE, "login: no user-domain lookup "
+			    "channel for uid %u: %m", (unsigned)pwd->pw_uid);
+			if (user_fd >= 0)
+				(void)close(user_fd);
+		}
+		(void)close(syschan);
+	}
 
 	if (!quietlog) {
 		const char *cw;

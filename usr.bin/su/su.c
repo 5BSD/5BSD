@@ -86,6 +86,9 @@
 #include <security/pam_appl.h>
 #include <security/openpam.h>
 
+#include <libservice.h>
+#include <service_bootstrap.h>
+
 #include "su_probes.h"
 
 #define PAM_END() do {							\
@@ -156,6 +159,7 @@ main(int argc, char *argv[])
 	const void	*v;
 	struct sigaction sa, sa_int, sa_quit, sa_pipe;
 	int temp, fds[2];
+	int syschan;			/* inherited SYSTEM ambient lookup channel */
 #ifdef USE_BSM_AUDIT
 	const char	*aerr;
 	au_id_t		 auid;
@@ -429,6 +433,13 @@ main(int argc, char *argv[])
 	sa.sa_handler = SIG_DFL;
 	sigaction(SIGTSTP, &sa, NULL);
 	statusp = 1;
+	/*
+	 * Capture the inherited SYSTEM ambient lookup channel (§21) before the
+	 * child may replace its environment: SERVICE_LOOKUP_FD names it there.
+	 * Best-effort discovery only — a -1 here means the session gets no
+	 * ambient channel and su proceeds exactly as before.
+	 */
+	syschan = service_ambient_lookup_fd();
 	if (pipe(fds) == -1) {
 		PAM_END();
 		err(1, "pipe");
@@ -530,6 +541,35 @@ main(int argc, char *argv[])
 			}
 		}
 		login_close(lc);
+
+		/*
+		 * Narrow the inherited SYSTEM ambient lookup channel (§21/§22)
+		 * to a USER-domain channel for the TARGET uid and install it as
+		 * this session's ambient channel, so the spawned shell and its
+		 * descendants inherit a lookup channel scoped to the target
+		 * user.  We are already the target uid here (setusercontext
+		 * above ran setuid).  Best-effort only: on any failure the
+		 * session carries no ambient channel (the unnarrowed SYSTEM
+		 * channel is never handed to the shell) and su proceeds exactly
+		 * as before.  Never fatal.
+		 */
+		if (syschan >= 0) {
+			int user_fd = -1;
+
+			if (service_mint_user_domain(syschan, pwd->pw_uid,
+			    &user_fd) == 0 &&
+			    service_install_ambient_lookup(user_fd) == 0) {
+				syslog(LOG_DEBUG, "su: user-domain lookup "
+				    "channel for uid %u", (unsigned)pwd->pw_uid);
+			} else {
+				syslog(LOG_NOTICE, "su: no user-domain lookup "
+				    "channel for uid %u: %m",
+				    (unsigned)pwd->pw_uid);
+				if (user_fd >= 0)
+					(void)close(user_fd);
+			}
+			(void)close(syschan);
+		}
 
 		if (iscsh == YES) {
 			if (fastlogin)

@@ -96,8 +96,26 @@ object.
 is a Boolean and
 .Va ipc
 is one name or an array of at most eight reverse-domain names.
-At least one trigger is required.
-Publishing IPC does not imply boot activation.
+.Va timer
+is an object with a single
+.Va interval
+key, an unsigned count of monotonic seconds; the unit is activated on demand
+every interval while it is stopped.
+Only monotonic intervals are supported: calendar and cron expressions are
+rejected.
+.Va path
+is an object with a single absolute
+.Va path
+string; a change to that path
+.Pq Dv NOTE_WRITE , NOTE_DELETE , NOTE_RENAME , NOTE_EXTEND , NOTE_ATTRIB
+activates the unit on demand.
+Path events are only hints: after activation the unit must inspect the current
+state of the path itself.
+At least one trigger
+.Pq Va boot , ipc , timer , No or Va path
+is required.
+Publishing IPC does not imply boot activation, and a timer or path source does
+not launch the unit at boot; it stays stopped until the source fires.
 .Pp
 .Va restart
 is

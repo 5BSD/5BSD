@@ -85,11 +85,22 @@ print_bundle(const struct capbundle *b)
 
 		printf("  [%u] %s\n", i, capbundle_svc_label(svc));
 		printf("      program:   %s\n", capbundle_svc_program(svc));
-		const char *activation;
 
-		activation = capbundle_svc_activates_at_boot(svc) ?
-		    "boot" : "first IPC request";
-		printf("      activation: %s\n", activation);
+		/*
+		 * A unit may declare several activation sources; report each.
+		 * boot launches at boot; an IPC name, a timer, or a path each
+		 * create demand while the unit is stopped.
+		 */
+		printf("      activation:");
+		if (capbundle_svc_activates_at_boot(svc))
+			printf(" boot");
+		if (capbundle_svc_nprovides(svc) != 0)
+			printf(" ipc");
+		if (capbundle_svc_timer_interval(svc) != 0)
+			printf(" timer=%us", capbundle_svc_timer_interval(svc));
+		if (capbundle_svc_activation_path(svc)[0] != '\0')
+			printf(" path=%s", capbundle_svc_activation_path(svc));
+		printf("\n");
 		printf("      restart:   %s\n", restart);
 		printf("      stop_timeout: %d\n", m.stop_timeout);
 		printf("      max_failures: %u\n", m.max_failures);

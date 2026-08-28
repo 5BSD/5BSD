@@ -38,9 +38,15 @@ Unknown or duplicate keys, includes, macros, variables, implicit arrays,
 invalid names, incompatible network claims, ambiguous storage, and entries
 beyond fixed limits are rejected.
 Activation is explicit under
-.Va activation.boot
+.Va activation.boot ,
+.Va activation.ipc ,
+.Va activation.timer
+.Pq an object with a monotonic Va interval in seconds ,
 and
-.Va activation.ipc .
+.Va activation.path
+.Pq an object with an absolute Va path watched for change events .
+Calendar and cron timer expressions are rejected; only monotonic intervals
+are accepted.
 Local authority replacements are typed entries in
 .Va descriptors ;
 the filesystem descriptor must name storage with mount rights.
@@ -51,8 +57,8 @@ name uniqueness, and resource limits.
 .Sh ACCESSORS
 The public header exposes immutable accessors for bundle identity, display
 version, sequence, author, publisher, path, unit count, unit labels,
-activation, IPC names, arguments, environment, storage, descriptors, and
-conversion to
+activation, IPC names, timer interval, activation path, arguments,
+environment, storage, descriptors, and conversion to
 .Vt struct svc_manifest .
 Returned strings remain owned by the bundle.
 .Sh TRUST

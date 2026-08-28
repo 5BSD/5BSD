@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include <libcapbundle.h>
+#include <service_bootstrap.h>
 
 #include "serviced.h"
 #include "launch_limits.h"
@@ -111,6 +112,35 @@ run_rc_bootstrap(int kqunused)
 	rc.state = SVC_STATE_STOPPED;
 	rc.want_console = true;		/* rc progress must be visible on console */
 	svc_runtime_init_fds(&rc);
+
+	/*
+	 * Install the SYSTEM ambient lookup channel (§21) before exec'ing rc so
+	 * rc, getty, login, su, and every other boot descendant inherits system
+	 * service discovery.  serviced keeps the retained client end open for the
+	 * life of the daemon; svc_exec_command spares it from the rc child's
+	 * closefrom(2) and SERVICE_LOOKUP_FD (set in serviced's environment by
+	 * service_install_ambient_lookup) names it for the child's execv(2).
+	 *
+	 * This is best-effort discovery, never authority: if minting or install
+	 * fails, log and run rc exactly as before with no ambient channel.  A
+	 * broken ambient carry must never prevent the system from booting.
+	 */
+	if (serviced_ambient_lookup_fd < 0) {
+		int lookup_fd = -1;
+
+		if (domain_mint_system_channel(&lookup_fd, serviced_kq) == -1)
+			syslog(LOG_NOTICE, "startup: no system ambient lookup "
+			    "channel (mint failed): %m");
+		else if (service_install_ambient_lookup(lookup_fd) == -1) {
+			syslog(LOG_NOTICE, "startup: no system ambient lookup "
+			    "channel (install failed): %m");
+			(void)close(lookup_fd);
+		} else {
+			serviced_ambient_lookup_fd = lookup_fd;
+			syslog(LOG_INFO, "startup: system ambient lookup channel "
+			    "on fd %d", lookup_fd);
+		}
+	}
 
 	syslog(LOG_INFO, "startup: running /etc/rc");
 	if (svc_exec(&rc, rckq) == -1) {
@@ -208,7 +238,14 @@ startup_launch_system(int kq)
 			asvc = capbundle_service(b, si);
 			if (asvc == NULL)
 				continue;
-			if (bundle_service_activates_on_lookup(asvc))
+			/*
+			 * Only boot units are launched here.  Units activated
+			 * on demand — by IPC lookup, by a timer, or by a path
+			 * event (Phase 5) — stay stopped until their source
+			 * fires.  Timer/path units get their persistent runtime
+			 * slot from activation_register_all(), not from startup.
+			 */
+			if (!capbundle_svc_activates_at_boot(asvc))
 				continue;
 			if (nmanifests >= SERVICED_MAX_SERVICES) {
 				syslog(LOG_WARNING,

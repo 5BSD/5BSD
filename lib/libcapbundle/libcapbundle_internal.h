@@ -28,6 +28,12 @@
 #define	CAPBUNDLE_MAX_CAP_STORAGE	SERVICED_MAX_CAP_STORAGE
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 #define	CAPBUNDLE_MAX_KMOD_REQUIRES	8
+/*
+ * Upper bound on a monotonic activation.timer interval: 366 days in seconds.
+ * A period longer than a year is far past the point where a monotonic timer is
+ * the right mechanism (that is calendar/persistent territory, deferred in v1).
+ */
+#define	CAPBUNDLE_MAX_TIMER_INTERVAL	(366 * 24 * 3600)
 
 struct capbundle_shared_storage {
 	char	name[ORT_STORAGE_NAME_MAX];
@@ -45,6 +51,14 @@ struct capbundle_service {
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
 	bool	activation_boot;
+	/*
+	 * Activation sources (Phase 5).  timer_interval_sec is the monotonic
+	 * period in seconds (0 = none); activation_path is an absolute path
+	 * watched via kqueue vnode events (empty = none).  Both name this unit
+	 * in its own bundle and create demand for it, without dependency order.
+	 */
+	unsigned timer_interval_sec;
+	char	activation_path[PATH_MAX];
 	struct serviced_component components[SERVICED_MAX_COMPONENTS];
 	unsigned ncomponents;
 	int	restart;

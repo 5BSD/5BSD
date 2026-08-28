@@ -382,7 +382,7 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 		    NULL, 0);
 		return (false);
 	}
-	client_fd = naming_lookup(req->name, svc, &error);
+	client_fd = naming_lookup(req->name, svc, &svc->domain, &error);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
 			if (on_demand_launch(req->name, svc, request,
@@ -399,6 +399,52 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 	    &client_fd, 1);
 	close(client_fd);
 	return (false);
+}
+
+/*
+ * SVC_OP_MINT_DOMAIN — mint a narrowed (USER, uid) lookup channel and return
+ * the caller's endpoint.  Only a SYSTEM-domain caller may mint: a request on an
+ * already-narrowed channel is refused, because domains only narrow and never
+ * broaden.  The returned descriptor is ambient (survives fork and exec, usable
+ * in capability mode); serviced retains the other end, scoped to the user
+ * domain, and dispatches lookups on it in domain.c.
+ */
+static void
+handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
+{
+	const struct svc_mint_domain_req *req;
+	int minted_fd, error;
+
+	minted_fd = -1;
+	if (channel_message_length(request) != sizeof(*req)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
+		    EINVAL, NULL, 0);
+		return;
+	}
+	req = channel_message_data(request);
+	if (req->flags != 0 || req->reserved != 0) {
+		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
+		    EINVAL, NULL, 0);
+		return;
+	}
+	/* Domains only narrow: a non-system caller may not mint. */
+	if (!svc_domain_may_mint(&svc->domain)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
+		    EPERM, NULL, 0);
+		return;
+	}
+	if (domain_mint_user_channel((uid_t)req->uid, &minted_fd,
+	    serviced_kq) == -1)
+		error = errno != 0 ? errno : EIO;
+	else
+		error = 0;
+	serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
+	    "mint user-domain channel svc=%s uid=%u", svc->manifest.label,
+	    (unsigned)req->uid);
+	(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN, error,
+	    error == 0 ? &minted_fd : NULL, error == 0 ? 1 : 0);
+	if (minted_fd >= 0)
+		close(minted_fd);
 }
 
 static void
@@ -453,6 +499,9 @@ svc_request(struct channel *channel, struct channel_message *request,
 			    NULL, 0);
 		else
 			handle_worker_channel(svc, request);
+		break;
+	case SVC_OP_MINT_DOMAIN:
+		handle_mint_domain(svc, request);
 		break;
 	default:
 		syslog(LOG_WARNING, "service %s: unknown channel op %u",

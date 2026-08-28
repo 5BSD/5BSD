@@ -148,7 +148,16 @@ event_loop(void)
 				continue;
 			}
 
-			/* Restart, stop-kill, on-demand, and launch timers. */
+			/* Path (vnode) activation sources. */
+			if (kev->filter == EVFILT_VNODE) {
+				activation_path_event(kev, serviced_kq);
+				continue;
+			}
+
+			/*
+			 * Restart, stop-kill, on-demand, launch, and periodic
+			 * activation timers.
+			 */
 			if (kev->filter == EVFILT_TIMER) {
 				if (on_demand_is_timer(kev->ident))
 					on_demand_timeout(kev->ident,
@@ -156,8 +165,19 @@ event_loop(void)
 				else if (svc_launch_timer_owns(kev->ident))
 					svc_launch_timer_fire(kev->ident,
 					    serviced_kq);
+				else if (activation_timer_owns(kev->ident))
+					activation_timer_fire(kev->ident,
+					    serviced_kq);
 				else
 					supervisor_handle_timer(kev);
+				continue;
+			}
+
+			/* Minted user-domain lookup channels (§21/§22). */
+			if ((kev->filter == EVFILT_READ ||
+			    kev->filter == EVFILT_WRITE) &&
+			    domain_channel_owns_event(kev->ident)) {
+				domain_channel_event(kev, serviced_kq);
 				continue;
 			}
 
@@ -488,6 +508,13 @@ main(int argc, char *argv[])
 	}
 
 	/*
+	 * Arm timer and path activation sources (Phase 5).  These create demand
+	 * for their units; a purely timer/path-activated unit gets its stopped
+	 * runtime slot here, since startup only launches boot units.
+	 */
+	(void)activation_register_all(serviced_kq);
+
+	/*
 	 * Set up the control socket only now, after startup_launch_system.
 	 * sctl_setup mounts serviced's own tmpfs runtime home and binds the
 	 * socket there, so this no longer depends on /etc/rc having remounted /
@@ -553,6 +580,7 @@ main(int argc, char *argv[])
 		}
 	}
 	on_demand_teardown(serviced_kq);
+	domain_channel_teardown();
 	supervisor_teardown_state();
 	bundle_registry_teardown();
 	sctl_teardown();

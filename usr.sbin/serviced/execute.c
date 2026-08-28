@@ -67,6 +67,15 @@
 static uint64_t svc_launch_sequence;
 
 /*
+ * serviced's retained client end of the SYSTEM ambient lookup channel (§21).
+ * -1 until startup.c installs it before running /etc/rc.  Every rc/oneshot
+ * child inherits it across pdfork (it is CAP_CLOFORK_UNLOCKED) and svc_exec_command
+ * spares it from the child's closefrom(2), so rc and everything it launches —
+ * getty, login, su — carries system service discovery.
+ */
+int serviced_ambient_lookup_fd = -1;
+
+/*
  * Timer-ident domain for the async launch deadline.  The high bits of a
  * uintptr_t tag which subsystem owns an EVFILT_TIMER ident (see the matching
  * STOP_TIMER_BIT / ON_DEMAND_TIMER_BIT / SCTL_CONN_TIMER_BIT allocators);
@@ -1002,7 +1011,7 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[])
 	}
 	if (pid == 0) {
 		sigset_t mask;
-		int nullfd;
+		int nullfd, lookup_fd;
 
 		/*
 		 * stdio.  Ordinary commands get /dev/null.  The rc bootstrap
@@ -1040,7 +1049,25 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[])
 			if (nullfd > STDERR_FILENO)
 				(void)close(nullfd);
 		}
-		closefrom(STDERR_FILENO + 1);
+		/*
+		 * Scrub the fd table so the child never inherits serviced's
+		 * oracle channel, kqueue, or sockets — but spare the SYSTEM
+		 * ambient lookup channel (§21) when one is installed, so rc and
+		 * everything it launches keeps service discovery.  The channel
+		 * was made CAP_CLOFORK_UNLOCKED at install, so it survived the
+		 * pdfork at its parent number; SERVICE_LOOKUP_FD in the inherited
+		 * environment already names it.  closefrom cannot skip a middle
+		 * fd, so close around it explicitly.
+		 */
+		lookup_fd = serviced_ambient_lookup_fd;
+		if (lookup_fd > STDERR_FILENO) {
+			int scan;
+
+			closefrom(lookup_fd + 1);
+			for (scan = STDERR_FILENO + 1; scan < lookup_fd; scan++)
+				(void)close(scan);
+		} else
+			closefrom(STDERR_FILENO + 1);
 		if (have_creds) {
 			if (setgroups(ngroups, groups) == -1 ||
 			    setgid(gid) == -1 || setuid(uid) == -1)
@@ -2176,7 +2203,7 @@ svc_launch_component_start(struct svc_runtime *svc, int kq)
 		return (-1);
 	}
 	SERVICED_PROBE_COMPONENT_RESOLVE(m->label, component->name, provider);
-	cfd = naming_lookup(provider, svc, &error);
+	cfd = naming_lookup(provider, svc, &svc->domain, &error);
 	if (cfd == -1) {
 		syslog(LOG_ERR, "svc_exec %s: component %s provider %s: %s",
 		    m->label, component->name, provider, strerror(error));

@@ -64,6 +64,15 @@ const char	*capbundle_svc_label(const struct capbundle_service *s);
 bool		 capbundle_svc_activates_at_boot(
 		    const struct capbundle_service *s);
 unsigned	 capbundle_svc_nprovides(const struct capbundle_service *s);
+/*
+ * Activation sources (Phase 5).  timer interval is a monotonic period in
+ * seconds (0 = no timer source); activation path is an absolute path watched
+ * via kqueue vnode events ("" = no path source).  Both return zero/"" for a
+ * NULL service.
+ */
+unsigned	 capbundle_svc_timer_interval(const struct capbundle_service *s);
+const char	*capbundle_svc_activation_path(
+		    const struct capbundle_service *s);
 const char	*capbundle_svc_provides(const struct capbundle_service *s,
 		    unsigned idx);
 unsigned	 capbundle_svc_narguments(const struct capbundle_service *s);

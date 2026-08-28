@@ -49,6 +49,49 @@ examples_verify_cleanup()
 	rm -f effective.out
 }
 
+atf_test_case activation_examples_verify cleanup
+activation_examples_verify_head()
+{
+	atf_set "descr" \
+	    "The installed timer and path activation examples are complete, "\
+"registerable manifests"
+}
+activation_examples_verify_body()
+{
+	examples="@SRCTOP@/usr.sbin/serviced/examples"
+	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
+	work="${PWD}/activation-examples-work.$$"
+
+	test -x "${servicectl}" ||
+	    atf_skip "source-built servicectl is required"
+
+	for spec in "timer-activation:timer-task" "path-activation:path-watcher"; do
+		manifest="${examples}/${spec%%:*}.ucl"
+		program="${spec#*:}"
+		bundle="${work}/${program}.cap"
+		mkdir -p "${bundle}/Units/${program}.unit/bin"
+		cat > "${bundle}/Bundle.ucl" <<EOF
+schema = "org.5bsd.capability-bundle";
+schema_version = 1;
+bundle_id = "org.example.${program}";
+version = "1.0.0";
+sequence = 1;
+author = "Example Operations";
+publisher = "org.example";
+units = ["${program}"];
+EOF
+		printf '#!/bin/sh\nexit 0\n' > \
+		    "${bundle}/Units/${program}.unit/bin/${program}"
+		chmod 0555 "${bundle}/Units/${program}.unit/bin/${program}"
+		cp "${manifest}" "${bundle}/Units/${program}.unit/Unit.ucl"
+		atf_check -s exit:0 -o ignore "${servicectl}" verify "${bundle}"
+	done
+}
+activation_examples_verify_cleanup()
+{
+	rm -rf "${PWD}"/activation-examples-work.*
+}
+
 atf_test_case pkgbase_default_identity
 pkgbase_default_identity_head()
 {
@@ -655,6 +698,7 @@ serviced_channel_layering_body()
 atf_init_test_cases()
 {
 	atf_add_test_case examples_verify
+	atf_add_test_case activation_examples_verify
 	atf_add_test_case pkgbase_default_identity
 	atf_add_test_case pkgbase_component_metadata
 	atf_add_test_case component_selector_contract

@@ -264,7 +264,10 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "restart", "capabilities", "user", "group", "stop_timeout",
 	    "max_failures", "arguments", "environment", "jail", "storage",
 	    "descriptors", "protect" };
-	static const char *const activationkeys[] = { "boot", "ipc" };
+	static const char *const activationkeys[] = { "boot", "ipc", "timer",
+	    "path" };
+	static const char *const timerkeys[] = { "interval" };
+	static const char *const pathkeys[] = { "path" };
 	static const char *const capkeys[] = { "paths", "files", "network",
 	    "jails", "vsock", "services", "system" };
 	static const char *const storagekeys[] = { "name", "scope", "flavor",
@@ -362,9 +365,99 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    SERVICED_LABEL_MAX, true, errbuf, errlen) != 0)
 		return (-1);
 	x = ucl_object_lookup(arr, "ipc");
-	if ((v == NULL || !ucl_object_toboolean(v)) && x == NULL) {
+
+	/*
+	 * activation.timer — monotonic interval source (Phase 5).  v1 supports
+	 * only a fixed monotonic period, so interval must be a positive integer
+	 * count of seconds.  Calendar/cron strings, persistent catch-up, and
+	 * user schedules are deliberately rejected (fail closed) until their
+	 * clock-change/suspend/duplicate-fire/crash semantics are specified.
+	 */
+	{
+		const ucl_object_t *timer, *interval;
+
+		timer = ucl_object_lookup(arr, "timer");
+		if (timer != NULL) {
+			if (ucl_object_type(timer) != UCL_OBJECT) {
+				snprintf(errbuf, errlen,
+				    "activation.timer must be an object with an "
+				    "integer 'interval' (monotonic seconds)");
+				return (-1);
+			}
+			if (validate_keys(timer, "activation.timer", timerkeys,
+			    nitems(timerkeys), errbuf, errlen) != 0)
+				return (-1);
+			interval = ucl_object_lookup(timer, "interval");
+			if (interval == NULL) {
+				snprintf(errbuf, errlen,
+				    "activation.timer requires an 'interval' "
+				    "(monotonic seconds)");
+				return (-1);
+			}
+			if (ucl_object_type(interval) != UCL_INT) {
+				snprintf(errbuf, errlen,
+				    "activation.timer.interval must be an integer "
+				    "count of monotonic seconds; calendar and cron "
+				    "expressions are not supported");
+				return (-1);
+			}
+			if (ucl_object_toint(interval) < 1 ||
+			    ucl_object_toint(interval) > CAPBUNDLE_MAX_TIMER_INTERVAL) {
+				snprintf(errbuf, errlen,
+				    "activation.timer.interval must be between 1 and "
+				    "%d seconds", CAPBUNDLE_MAX_TIMER_INTERVAL);
+				return (-1);
+			}
+		}
+	}
+
+	/*
+	 * activation.path — kqueue vnode source (Phase 5).  An absolute,
+	 * length-bounded path serviced watches for change events.  Events are
+	 * only hints: the consumer must re-inspect the path after activation.
+	 */
+	{
+		const ucl_object_t *pathobj, *pv;
+		const char *ps;
+
+		pathobj = ucl_object_lookup(arr, "path");
+		if (pathobj != NULL) {
+			if (ucl_object_type(pathobj) != UCL_OBJECT) {
+				snprintf(errbuf, errlen,
+				    "activation.path must be an object with an "
+				    "absolute 'path' string");
+				return (-1);
+			}
+			if (validate_keys(pathobj, "activation.path", pathkeys,
+			    nitems(pathkeys), errbuf, errlen) != 0)
+				return (-1);
+			pv = ucl_object_lookup(pathobj, "path");
+			if (pv == NULL || ucl_object_type(pv) != UCL_STRING) {
+				snprintf(errbuf, errlen,
+				    "activation.path requires a 'path' string");
+				return (-1);
+			}
+			ps = ucl_object_tostring(pv);
+			if (ps[0] != '/') {
+				snprintf(errbuf, errlen,
+				    "activation.path.path must be absolute");
+				return (-1);
+			}
+			if (ps[0] == '\0' || strlen(ps) >= PATH_MAX) {
+				snprintf(errbuf, errlen,
+				    "activation.path.path must be a non-empty "
+				    "string shorter than %d bytes", PATH_MAX);
+				return (-1);
+			}
+		}
+	}
+
+	if ((v == NULL || !ucl_object_toboolean(v)) && x == NULL &&
+	    ucl_object_lookup(arr, "timer") == NULL &&
+	    ucl_object_lookup(arr, "path") == NULL) {
 		snprintf(errbuf, errlen,
-		    "activation requires boot=true or at least one ipc name");
+		    "activation requires boot=true, at least one ipc name, "
+		    "a timer, or a path");
 		return (-1);
 	}
 	if (x != NULL && ucl_object_type(x) == UCL_ARRAY &&
@@ -1547,6 +1640,26 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	svc->activation_boot = v != NULL && ucl_object_toboolean(v);
 	parse_string_array(activation, "ipc", svc->provides,
 	    CAPBUNDLE_MAX_PROVIDES, &svc->nprovides);
+
+	/*
+	 * Activation sources (Phase 5).  Validated by validate_unit_schema()
+	 * above; here we only record the accepted values.
+	 */
+	{
+		const ucl_object_t *timer, *interval, *pathobj;
+
+		timer = ucl_object_lookup(activation, "timer");
+		if (timer != NULL) {
+			interval = ucl_object_lookup(timer, "interval");
+			if (interval != NULL)
+				svc->timer_interval_sec =
+				    (unsigned)ucl_object_toint(interval);
+		}
+		pathobj = ucl_object_lookup(activation, "path");
+		if (pathobj != NULL)
+			parse_string_field(pathobj, "path", svc->activation_path,
+			    sizeof(svc->activation_path));
+	}
 
 	/* Kernel module requirements */
 	parse_string_array_n(root, "kmod_requires", svc->kmod_requires,

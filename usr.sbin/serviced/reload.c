@@ -55,6 +55,13 @@ svc_remove(unsigned idx)
 	if (sd.services[idx].launch != NULL)
 		svc_launch_cancel(&sd.services[idx], serviced_kq);
 
+	/*
+	 * Tear down this unit's activation sources (Phase 5) before the slot is
+	 * shifted away: the periodic timer and vnode watch outlive the unit's
+	 * own start/stop cycles, so removal is the only point they are dropped.
+	 */
+	activation_source_teardown(&sd.services[idx], serviced_kq);
+
 	for (i = idx; i < sd.nservices - 1; i++) {
 		sd.services[i] = sd.services[i + 1];
 		naming_rebind_owner(&sd.services[i + 1], &sd.services[i]);
@@ -352,8 +359,15 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				struct svc_runtime *svc;
 
 				asvc = capbundle_service(ab, si);
+				/*
+				 * Only boot units are launched on reload.  Units
+				 * activated on demand — by IPC lookup, timer, or
+				 * path (Phase 5) — get their stopped slot and
+				 * armed source from activation_register_all()
+				 * below, not an eager launch here.
+				 */
 				if (asvc == NULL ||
-				    bundle_service_activates_on_lookup(asvc))
+				    !capbundle_svc_activates_at_boot(asvc))
 					continue;
 				if (svc_by_label(capbundle_svc_label(asvc))
 				    != NULL)
@@ -417,6 +431,13 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			    reload_nchanged, reload_nremoved);
 		}
 	}
+
+	/*
+	 * Register timer/path activation sources (Phase 5) for any newly added
+	 * demand-activated units, and arm newly declared sources on units that
+	 * persisted.  Idempotent: sources already armed are left in place.
+	 */
+	(void)activation_register_all(kq);
 
 	syslog(LOG_INFO, "reload: %u new, %u changed, %u removed",
 	    reload_nnew, reload_nchanged, reload_nremoved);

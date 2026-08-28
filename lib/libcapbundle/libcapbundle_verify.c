@@ -130,8 +130,12 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 			return (-1);
 		}
 
-		/* Activation is explicit; demand units require an IPC endpoint. */
-		if (!s->activation_boot && s->nprovides == 0) {
+		/*
+		 * Activation is explicit; a unit must declare at least one
+		 * trigger — boot, an IPC endpoint, a timer, or a path (Phase 5).
+		 */
+		if (!s->activation_boot && s->nprovides == 0 &&
+		    s->timer_interval_sec == 0 && s->activation_path[0] == '\0') {
 			if (errbuf != NULL)
 				snprintf(errbuf, errlen,
 				    "%s: unit '%s' has no activation trigger",

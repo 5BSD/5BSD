@@ -1,0 +1,372 @@
+/*-
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * Copyright (c) 2026 Kory Heard
+ *
+ * Timer and path activation sources for serviced (Phase 5, plan §13).
+ *
+ * These are demand sources, not dependency units and not ordering.  A source
+ * names one unit in its own bundle and creates demand for that unit when it
+ * fires, exactly as a lookup would: if the unit is stopped it is launched
+ * (svc_launch_or_await); if it is already starting or running the fire
+ * coalesces.  Sources outlive the unit's own start/stop cycles — the timer
+ * keeps firing and the vnode watch keeps reporting while the activated unit is
+ * stopped, so the next interval or change re-activates it.
+ *
+ *   activation { timer = { interval = 30; } }   monotonic seconds
+ *   activation { path  = { path = "/some/dir"; } } kqueue vnode events
+ *
+ * Timer idents carry ACTIVATION_TIMER_BIT so the main event loop routes them
+ * here; they are matched to their unit by value, immune to services[]
+ * compaction.  Path watches use EVFILT_VNODE whose ident is the watched
+ * descriptor, so they are routed and matched by fd.  Path events are hints:
+ * bursts coalesce (EV_CLEAR), and a delete/rename triggers a re-open so an
+ * atomic replacement keeps being watched, or the watch is dropped and logged.
+ */
+
+#include <sys/types.h>
+#include <sys/event.h>
+#include <sys/param.h>
+
+#include <errno.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <syslog.h>
+#include <time.h>
+#include <unistd.h>
+
+#include <libcapbundle.h>
+
+#include "serviced.h"
+#include "serviced_audit.h"
+#include "serviced_probes.h"
+
+/*
+ * Timer-ident domain for periodic activation timers.  The high bits of a
+ * uintptr_t tag which subsystem owns an EVFILT_TIMER ident (see the matching
+ * STOP_TIMER_BIT / ON_DEMAND_TIMER_BIT / IDLE_TIMER_BIT / SVC_LAUNCH_TIMER_BIT
+ * allocators, at bits width-1..width-4); bit (width-5) is reserved here.
+ */
+#define	ACTIVATION_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 5))
+static uintptr_t activation_timer_next = ACTIVATION_TIMER_BIT | 1;
+
+/* Vnode events that mean "the watched path may have changed". */
+#define	ACTIVATION_VNODE_FFLAGS	\
+	(NOTE_WRITE | NOTE_DELETE | NOTE_RENAME | NOTE_EXTEND | NOTE_ATTRIB)
+
+/*
+ * Locate the unit that owns a periodic activation timer ident.  Matching by
+ * value (not by a udata pointer) survives services[] compaction moving the
+ * owning svc_runtime.
+ */
+static struct svc_runtime *
+timer_owner(uintptr_t ident)
+{
+	unsigned i;
+
+	for (i = 0; i < sd.nservices; i++)
+		if (sd.services[i].activation_timer_ident == ident)
+			return (&sd.services[i]);
+	return (NULL);
+}
+
+/*
+ * Locate the unit watching a given vnode descriptor.  The EVFILT_VNODE ident
+ * is the descriptor, which is unique among open fds and moves with the struct
+ * across compaction, so a scan by fd is stable.
+ */
+static struct svc_runtime *
+path_owner(int fd)
+{
+	unsigned i;
+
+	for (i = 0; i < sd.nservices; i++)
+		if (sd.services[i].activation_path_fd == fd)
+			return (&sd.services[i]);
+	return (NULL);
+}
+
+/*
+ * Create demand for a unit from an activation source.  Identical in effect to
+ * a lookup arriving for the unit: a stopped (or completed-oneshot) unit is
+ * launched; a unit that is already starting, running, or stopping coalesces so
+ * repeated fires never stack duplicate launches.
+ */
+static void
+activation_create_demand(struct svc_runtime *svc, const char *source, int kq)
+{
+
+	if (svc->state != SVC_STATE_STOPPED && svc->state != SVC_STATE_DONE) {
+		/* A previous activation is still in flight; coalesce. */
+		SERVICED_PROBE_ON_DEMAND_COALESCE(svc->manifest.label);
+		return;
+	}
+	svc->state = SVC_STATE_STOPPED;
+	strlcpy(svc->launched_by, source, sizeof(svc->launched_by));
+	clock_gettime(CLOCK_MONOTONIC, &svc->launch_time);
+	if (svc_launch_or_await(svc, kq) == -1) {
+		syslog(LOG_ERR, "activation: %s launch of '%s' failed: %m",
+		    source, svc->manifest.label);
+		return;
+	}
+	SERVICED_PROBE_ON_DEMAND_LAUNCH(svc->manifest.label, source);
+	serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), 0,
+	    "activation launch svc=%s source=%s", svc->manifest.label, source);
+	syslog(LOG_INFO, "activation: %s activated '%s'", source,
+	    svc->manifest.label);
+}
+
+/*
+ * Open and register the vnode watch for a unit's activation path.  The path
+ * may be a directory or a file; O_RDONLY is sufficient for kqueue to observe
+ * it and avoids demanding write authority over an operand we only watch.  On
+ * failure the watch is simply not armed (the timer source, if any, is
+ * independent), and a diagnostic is logged.
+ */
+static void
+arm_path(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+	int fd;
+
+	if (svc->manifest.activation_path[0] == '\0' ||
+	    svc->activation_path_fd >= 0)
+		return;
+
+	fd = open(svc->manifest.activation_path, O_RDONLY | O_CLOEXEC);
+	if (fd == -1) {
+		syslog(LOG_WARNING, "activation: %s: cannot watch path %s: %m",
+		    svc->manifest.label, svc->manifest.activation_path);
+		return;
+	}
+	/*
+	 * EV_CLEAR makes the watch edge-triggered: a burst of writes between
+	 * two trips through the event loop is reported once, which is exactly
+	 * the coalescing the plan requires for path hints.
+	 */
+	EV_SET(&kev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+	    ACTIVATION_VNODE_FFLAGS, 0, svc);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "activation: %s: kevent vnode for %s: %m",
+		    svc->manifest.label, svc->manifest.activation_path);
+		(void)close(fd);
+		return;
+	}
+	svc->activation_path_fd = fd;
+	syslog(LOG_INFO, "activation: %s watching path %s", svc->manifest.label,
+	    svc->manifest.activation_path);
+}
+
+/*
+ * Arm a unit's declared activation sources.  Idempotent: an already-armed
+ * source is left in place, so it is safe to call at startup and again on
+ * reload without stacking duplicate timers or watches.
+ */
+void
+activation_source_arm(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+
+	if (svc == NULL)
+		return;
+
+	if (svc->manifest.timer_interval_sec > 0 &&
+	    svc->activation_timer_ident == 0) {
+		uintptr_t ident;
+
+		ident = activation_timer_next++;
+		/*
+		 * A periodic timer (no EV_ONESHOT) re-arms itself in the kernel,
+		 * so it keeps firing every interval while the unit is stopped
+		 * with no per-fire re-registration.
+		 */
+		EV_SET(&kev, ident, EVFILT_TIMER, EV_ADD, NOTE_SECONDS,
+		    svc->manifest.timer_interval_sec, svc);
+		if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1)
+			syslog(LOG_ERR, "activation: %s: kevent timer: %m",
+			    svc->manifest.label);
+		else {
+			svc->activation_timer_ident = ident;
+			SERVICED_PROBE_TIMEOUT_ARM(svc->manifest.label, "timer",
+			    svc->manifest.timer_interval_sec);
+			syslog(LOG_INFO,
+			    "activation: %s armed timer every %us",
+			    svc->manifest.label,
+			    svc->manifest.timer_interval_sec);
+		}
+	}
+
+	arm_path(svc, kq);
+}
+
+/*
+ * Tear a unit's activation sources down.  Called from svc_remove() (the single
+ * chokepoint for unit removal on reload and shutdown), so a removed unit never
+ * leaves a live timer or vnode watch behind.
+ */
+void
+activation_source_teardown(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+
+	if (svc == NULL)
+		return;
+
+	if (svc->activation_timer_ident != 0) {
+		EV_SET(&kev, svc->activation_timer_ident, EVFILT_TIMER,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		svc->activation_timer_ident = 0;
+	}
+	if (svc->activation_path_fd >= 0) {
+		/* Closing the descriptor removes its EVFILT_VNODE registration. */
+		(void)close(svc->activation_path_fd);
+		svc->activation_path_fd = -1;
+	}
+}
+
+bool
+activation_timer_owns(uintptr_t ident)
+{
+
+	return ((ident & ACTIVATION_TIMER_BIT) != 0);
+}
+
+/*
+ * A periodic activation timer fired: create demand for its unit.  The kernel
+ * has already re-armed the periodic timer, so nothing is re-registered here.
+ */
+void
+activation_timer_fire(uintptr_t ident, int kq)
+{
+	struct svc_runtime *svc;
+
+	svc = timer_owner(ident);
+	if (svc == NULL)
+		return;		/* stale ident for an already-removed unit */
+	activation_create_demand(svc, "timer", kq);
+}
+
+/*
+ * An EVFILT_VNODE event fired on a watched path.  Events are hints, so we
+ * create demand on any change and, when the watched name is deleted or
+ * renamed out from under us, attempt to re-open the path (handling atomic
+ * replace) or drop the watch and log.
+ */
+void
+activation_path_event(struct kevent *kev, int kq)
+{
+	struct svc_runtime *svc;
+	int fd;
+
+	fd = (int)kev->ident;
+	svc = path_owner(fd);
+	if (svc == NULL) {
+		/*
+		 * No unit owns this descriptor any more (removed between the
+		 * kernel queuing the event and us draining it).  Closing the fd
+		 * elsewhere already removed the filter; nothing to do.
+		 */
+		return;
+	}
+
+	/* Any reported change is demand. */
+	activation_create_demand(svc, "path", kq);
+
+	/*
+	 * The watched name went away.  The open descriptor still refers to the
+	 * now-unlinked or renamed vnode, so re-open by path: an atomic replace
+	 * (write-new + rename-over) leaves a fresh file at the path we resume
+	 * watching; a plain removal leaves nothing and we drop the watch.
+	 */
+	if (kev->fflags & (NOTE_DELETE | NOTE_RENAME) ||
+	    kev->flags & EV_EOF) {
+		char path[PATH_MAX];
+
+		strlcpy(path, svc->manifest.activation_path, sizeof(path));
+		(void)close(svc->activation_path_fd);
+		svc->activation_path_fd = -1;
+		arm_path(svc, kq);
+		if (svc->activation_path_fd < 0)
+			syslog(LOG_WARNING,
+			    "activation: %s: watch on %s dropped after "
+			    "delete/rename", svc->manifest.label, path);
+		else
+			syslog(LOG_INFO,
+			    "activation: %s: re-registered watch on %s after "
+			    "delete/rename", svc->manifest.label, path);
+	}
+}
+
+/*
+ * Arm activation sources for every unit that declares one.  A unit activated
+ * purely by a timer or path has no boot launch and no IPC name, so startup
+ * never gave it a runtime slot; create a stopped slot here so its source has a
+ * unit to activate.  Units that already have a slot (boot units, or units that
+ * also publish IPC names) are found by label and only have their sources
+ * armed.  Idempotent, so it is safe to call again on reload.
+ */
+int
+activation_register_all(int kq)
+{
+	struct capbundle *b;
+	struct capbundle_service *asvc;
+	struct svc_runtime *svc;
+	unsigned bi, si, armed;
+
+	if (sd.services == NULL)
+		return (-1);
+
+	armed = 0;
+	for (bi = 0; bi < bundle_registry_count(); bi++) {
+		b = bundle_registry_get(bi);
+		if (b == NULL)
+			continue;
+		for (si = 0; si < capbundle_nservices(b); si++) {
+			asvc = capbundle_service(b, si);
+			if (asvc == NULL)
+				continue;
+			if (capbundle_svc_timer_interval(asvc) == 0 &&
+			    capbundle_svc_activation_path(asvc)[0] == '\0')
+				continue;
+
+			svc = svc_by_label(capbundle_svc_label(asvc));
+			if (svc == NULL) {
+				if (sd.nservices >= SERVICED_MAX_SERVICES) {
+					syslog(LOG_WARNING,
+					    "activation: service limit reached, "
+					    "cannot register '%s'",
+					    capbundle_svc_label(asvc));
+					continue;
+				}
+				svc = &sd.services[sd.nservices];
+				memset(svc, 0, sizeof(*svc));
+				svc_runtime_init_fds(svc);
+				svc->state = SVC_STATE_STOPPED;
+				svc->bundle_idx = bi;
+				svc->bundle_svc_idx = si;
+				if (capbundle_svc_fill_manifest(asvc,
+				    &svc->manifest) == -1) {
+					syslog(LOG_WARNING,
+					    "activation: invalid bundle service "
+					    "'%s'", capbundle_svc_label(asvc));
+					memset(svc, 0, sizeof(*svc));
+					svc_runtime_init_fds(svc);
+					continue;
+				}
+				strlcpy(svc->launched_by, "activation",
+				    sizeof(svc->launched_by));
+				clock_gettime(CLOCK_MONOTONIC,
+				    &svc->launch_time);
+				sd.nservices++;
+			}
+			activation_source_arm(svc, kq);
+			armed++;
+		}
+	}
+	if (armed != 0)
+		syslog(LOG_INFO, "activation: %u activation source%s registered",
+		    armed, armed == 1 ? "" : "s");
+	return (0);
+}

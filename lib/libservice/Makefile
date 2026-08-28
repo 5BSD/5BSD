@@ -46,7 +46,7 @@ MLINKS+=	libservice.3 service_component_abort.3
 MLINKS+=	libservice.3 service_worker_protect.3
 MLINKS+=	libservice.3 service_worker_drop_inherited_authority.3
 
-SRCS=	component_request.c libservice.c service_client.c
+SRCS=	component_request.c libservice.c service_ambient.c service_client.c
 INCS=	libservice.h
 LIBADD=	capability channel pthread
 
