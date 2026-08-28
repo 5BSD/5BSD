@@ -302,6 +302,57 @@ cmd_stop(const char *label)
 	return (0);
 }
 
+/*
+ * restart = stop, then start, driving the same serviced control ops the stop
+ * and start verbs use (toward service(8) parity).  serviced's stop is
+ * asynchronous — the unit passes through STOPPING before it reaches STOPPED —
+ * so a start issued immediately can race the shutdown and be refused with
+ * EALREADY ("not stopped").  Retry the start briefly so restart is reliable
+ * without serviced needing a dedicated restart op.  A unit already stopped is
+ * fine: the stop reports EALREADY and we proceed to start it.
+ */
+static int
+cmd_restart(const char *label)
+{
+	char summary[SERVICED_CTL_SUMMARY_MAX];
+	int error, attempt;
+
+	summary[0] = '\0';
+	error = sctl_rpc(SCTL_OP_STOP_SVC, 0, label, summary, sizeof(summary));
+	/*
+	 * EALREADY means the unit was already stopped or already stopping —
+	 * both are fine for a restart.  Any other error (ENOENT, EPERM for a
+	 * core unit, ...) is fatal and reported as the stop failure.
+	 */
+	if (error != 0 && error != EALREADY) {
+		warnx("restart: %s", summary[0] != '\0' ?
+		    summary : strerror(error));
+		return (1);
+	}
+
+	/* Poll for up to ~15s (comfortably past the default 5s stop timeout and
+	 * its SIGKILL escalation) for the unit to reach STOPPED, then start. */
+	for (attempt = 0; attempt < 150; attempt++) {
+		summary[0] = '\0';
+		error = sctl_rpc(SCTL_OP_START_SVC, 0, label,
+		    summary, sizeof(summary));
+		if (error == 0) {
+			printf("%s\n", summary[0] != '\0' ?
+			    summary : "restart: ok");
+			return (0);
+		}
+		/* Still shutting down: wait for STOPPED and retry. */
+		if (error == EALREADY) {
+			usleep(100000);
+			continue;
+		}
+		break;
+	}
+
+	warnx("restart: %s", summary[0] != '\0' ? summary : strerror(error));
+	return (1);
+}
+
 static bool
 valid_bundle_id(const char *id)
 {
@@ -432,6 +483,7 @@ usage(void)
 	    "  reload              reload service bundles\n"
 	    "  start <label>       start a loaded service\n"
 	    "  stop <label>        stop a running service\n"
+	    "  restart <label>     stop then start a service\n"
 	    "  enable <bundle-id>  clear a bundle's operator-disabled state\n"
 	    "  disable <bundle-id> keep a bundle installed but unregistered\n"
 	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
@@ -479,6 +531,11 @@ main(int argc, char *argv[])
 		if (argc != 2)
 			errx(EX_USAGE, "stop requires a service label");
 		return (cmd_stop(argv[1]));
+	}
+	if (strcmp(cmd, "restart") == 0) {
+		if (argc != 2)
+			errx(EX_USAGE, "restart requires a service label");
+		return (cmd_restart(argv[1]));
 	}
 	if (strcmp(cmd, "enable") == 0) {
 		if (argc != 2)

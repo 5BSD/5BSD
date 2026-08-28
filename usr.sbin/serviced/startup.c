@@ -28,6 +28,7 @@
 
 #include "serviced.h"
 #include "launch_limits.h"
+#include "rc_adopt.h"
 #include "serviced_probes.h"
 
 /*
@@ -307,12 +308,6 @@ startup_launch_system(int kq)
 
 	syslog(LOG_INFO, "startup: %u services loaded", nmanifests);
 
-	if (nmanifests == 0) {
-		syslog(LOG_INFO, "startup: no boot services to launch");
-		free(manifests);
-		return (0);
-	}
-
 	/* Copy manifests into runtime slots. */
 	for (i = 0; i < nmanifests; i++) {
 		sd.services[i].manifest = manifests[i];
@@ -324,6 +319,19 @@ startup_launch_system(int kq)
 	}
 	sd.nservices = nmanifests;
 	free(manifests);
+
+	/*
+	 * Curated rc adoption (§8): serviced natively supervises a small
+	 * allow-list of rc.d services (initially cron) as SVC_KIND_RC units.
+	 * Append them to sd.services now — after the bundle boot units, before
+	 * the launch loop — so the loop below starts each adopted unit in
+	 * parallel with the capability components, independent of the /etc/rc
+	 * oneshot.  Never fatal: an absent rc.d service logs NOTICE and boot
+	 * proceeds (see rc_adopt_register).  The de-dup is by rc.conf: each
+	 * adopted service is <name>_enable="NO" in the image so /etc/rc skips
+	 * it, and svc_exec_rc uses service(8) "onestart" (ignores the rcvar).
+	 */
+	(void)rc_adopt_register(kq);
 
 	/*
 	 * Launch every service in parallel with no startup ordering.

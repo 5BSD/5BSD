@@ -51,6 +51,7 @@
 
 #include "serviced.h"
 #include "launch_limits.h"
+#include "rc_adopt.h"
 #include "storage_delivery.h"
 #include "fd_budget.h"
 #include "serviced_audit.h"
@@ -970,7 +971,7 @@ command_resolve_creds(const struct svc_manifest *m, uid_t *uidp, gid_t *gidp,
  * so it never inherits serviced's oracle channel, kqueue, or sockets.
  */
 static int
-svc_exec_command(struct svc_runtime *svc, int kq, char *argv[])
+svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 {
 	struct svc_manifest *m = &svc->manifest;
 	struct kevent kev;
@@ -982,7 +983,14 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[])
 	pid_t pid;
 	int pd_fd;
 
-	if (svc->state != SVC_STATE_STOPPED && svc->state != SVC_STATE_DONE) {
+	/*
+	 * A start launch requires the unit be stopped/done.  A stop launch
+	 * (for_stop) runs the "onestop" command against a unit the caller has
+	 * already moved to SVC_STATE_STOPPING, so it skips that guard; the
+	 * caller is responsible for having closed any stale process descriptor.
+	 */
+	if (!for_stop && svc->state != SVC_STATE_STOPPED &&
+	    svc->state != SVC_STATE_DONE) {
 		syslog(LOG_WARNING, "unit %s: not stopped (state %d)",
 		    m->label, svc->state);
 		return (-1);
@@ -1090,7 +1098,13 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[])
 	svc->pid = pid;
 	svc->pd_fd = pd_fd;
 	svc->launch_id++;
-	svc->state = SVC_STATE_STARTING;
+	/*
+	 * A stop command runs while the unit stays SVC_STATE_STOPPING; only a
+	 * start moves it to STARTING.  The command's exit is disambiguated by
+	 * svc->rc_stopping in the supervisor, not by the state alone.
+	 */
+	if (!for_stop)
+		svc->state = SVC_STATE_STARTING;
 	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
 	SERVICED_PROBE_SVC_START(m->label, pid);
 
@@ -1106,21 +1120,57 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[])
 
 /*
  * RC unit: start the rc.d service via service(8), which sources rc.conf,
- * applies jail/KEYWORD filtering, and starts the daemon exactly as a
- * normal boot would.  The unit's label is the rc.d service name.
+ * applies jail/KEYWORD filtering, and starts the daemon.  The unit's label is
+ * the rc.d service name.
+ *
+ * "onestart" (not "faststart") is deliberate: the "one" prefix forces the
+ * service to start regardless of its rc.conf <name>_enable rcvar.  serviced
+ * adopts a curated rc.d service by setting <name>_enable="NO" in the image so
+ * the /etc/rc shim skips it (no double-start); serviced must still be able to
+ * start the very service /etc/rc was told not to.  faststart honors the rcvar
+ * and would refuse a disabled service, so it cannot be used here.
  */
 static int
 svc_exec_rc(struct svc_runtime *svc, int kq)
 {
-	char service_cmd[] = "/usr/sbin/service";
-	char faststart[] = "faststart";
+	const char *launch[4];
 	char *argv[4];
+	unsigned i;
 
-	argv[0] = service_cmd;
-	argv[1] = svc->manifest.label;
-	argv[2] = faststart;
-	argv[3] = NULL;
-	return (svc_exec_command(svc, kq, argv));
+	/* Shared with rc_adopt's test so the verb ("onestart") and layout
+	 * cannot drift.  execv(2) never modifies the argv strings, so casting
+	 * the const builder output to the char *[] svc_exec_command wants is
+	 * safe. */
+	rc_adopt_launch_argv(svc->manifest.label, launch);
+	for (i = 0; i < 4; i++)
+		argv[i] = (char *)(uintptr_t)launch[i];
+	return (svc_exec_command(svc, kq, argv, false));
+}
+
+/*
+ * RC unit stop: run "service <label> onestop", which reads the daemon's
+ * pidfile and signals the real (init-reparented) process.  This is the ONLY
+ * correct way to stop an adopted rc.d daemon — serviced's process descriptor
+ * refers to the long-exited "onestart" wrapper, not the daemon, so signalling
+ * it does nothing.  The unit must already be in SVC_STATE_STOPPING; the caller
+ * (svc_graceful_stop) has closed the stale descriptor.  The onestop command's
+ * exit is delivered on NOTE_EXIT and, with svc->rc_stopping set, transitions
+ * the unit to STOPPED.  Reuses svc_exec_command so onestop gets the same clean
+ * fd table, a fresh process descriptor, and NOTE_EXIT registration as onestart.
+ */
+int
+svc_exec_rc_stop(struct svc_runtime *svc, int kq)
+{
+	const char *launch[4];
+	char *argv[4];
+	unsigned i;
+
+	/* Shared with rc_adopt's test so the verb ("onestop") and layout cannot
+	 * drift.  execv(2) never modifies the argv strings. */
+	rc_adopt_stop_argv(svc->manifest.label, launch);
+	for (i = 0; i < 4; i++)
+		argv[i] = (char *)(uintptr_t)launch[i];
+	return (svc_exec_command(svc, kq, argv, true));
 }
 
 /*
@@ -1142,7 +1192,7 @@ svc_exec_oneshot(struct svc_runtime *svc, int kq)
 	for (i = 0; i < m->narguments && i < SERVICED_MAX_ARGUMENTS; i++)
 		argv[i + 1] = m->arguments[i];
 	argv[i + 1] = NULL;
-	return (svc_exec_command(svc, kq, argv));
+	return (svc_exec_command(svc, kq, argv, false));
 }
 
 /*

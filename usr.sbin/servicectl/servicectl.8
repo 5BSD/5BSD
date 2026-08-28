@@ -13,7 +13,7 @@
 .Cm status | services | reload | bundles
 .Nm
 .Op Fl s Ar socket
-.Cm start | stop Ar label
+.Cm start | stop | restart Ar label
 .Nm
 .Cm install Ar path.cap
 .Nm
@@ -39,6 +39,13 @@ Start a loaded stopped unit immediately and reset its restart backoff.
 Requires root.
 .It Cm stop Ar label
 Gracefully stop a runtime, escalating after its configured timeout.
+Requires root.
+.It Cm restart Ar label
+Stop the unit and then start it again, driving the same control operations as
+.Cm stop
+and
+.Cm start .
+A unit that is already stopped is simply started.
 Requires root.
 .It Cm install Ar path.cap
 Verify and copy a bundle into

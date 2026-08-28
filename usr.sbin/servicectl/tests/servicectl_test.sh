@@ -702,6 +702,102 @@ servicectl_start_requires_label_body() {
 	    "$servicectl_bin" start one two
 }
 
+atf_test_case servicectl_restart_requires_label
+servicectl_restart_requires_label_head() {
+	atf_set "descr" "restart rejects absent and surplus labels before connecting"
+}
+servicectl_restart_requires_label_body() {
+	find_servicectl
+	atf_check -s exit:64 -o empty -e match:'restart requires a service label' \
+	    "$servicectl_bin" restart
+	atf_check -s exit:64 -o empty -e match:'restart requires a service label' \
+	    "$servicectl_bin" restart one two
+}
+
+atf_test_case servicectl_restart_help
+servicectl_restart_help_head() {
+	atf_set "descr" "restart is advertised in usage"
+}
+servicectl_restart_help_body() {
+	find_servicectl
+	atf_check -s not-exit:0 -e match:'restart <label>' "$servicectl_bin"
+}
+
+# ===================================================================
+# servicectl restart — stop+start a running service (new pid)
+# ===================================================================
+
+atf_test_case servicectl_restart cleanup
+servicectl_restart_head()
+{
+	atf_set "descr" "servicectl restart stops and starts a service (new pid)"
+	atf_set "require.user" "root"
+	require_oracle_stack_kmods
+}
+servicectl_restart_body()
+{
+	find_servicectl
+	prepare_paths
+
+	write_bundle "$manifestdir/restart-svc.cap" org.test.restart-svc \
+	    restart-svc 1 \
+	    'activation { boot = true; ipc = ["org.test.restart-svc"]; }'
+	write_executable \
+	    "$manifestdir/restart-svc.cap/Units/restart-svc.unit/bin/restart-svc" \
+	    '#!/bin/sh' \
+	    'echo $$ > restart-svc.pid' \
+	    'sleep 60'
+
+	start_stack
+
+	if [ ! -S "$sctl_sockpath" ]; then
+		cat "$logfile" 2>/dev/null
+		atf_skip "serviced control socket not available"
+	fi
+
+	# Wait for the first instance to record its pid.
+	i=0
+	while [ ! -s restart-svc.pid ] && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ ! -s restart-svc.pid ]; then
+		cat "$logfile" 2>/dev/null
+		atf_skip "restart-svc did not start"
+	fi
+	oldpid=$(cat restart-svc.pid)
+
+	atf_check -s exit:0 -o ignore \
+	    "$servicectl_bin" -s "$sctl_sockpath" restart restart-svc
+
+	# Wait for a new instance with a different pid.
+	i=0
+	newpid=$oldpid
+	while [ "$i" -lt 150 ]; do
+		newpid=$(cat restart-svc.pid 2>/dev/null)
+		if [ -n "$newpid" ] && [ "$newpid" != "$oldpid" ] &&
+		    kill -0 "$newpid" 2>/dev/null; then
+			break
+		fi
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ "$newpid" = "$oldpid" ]; then
+		cat "$logfile" 2>/dev/null
+		atf_fail "service was not restarted (pid unchanged: $oldpid)"
+	fi
+	atf_check -s exit:0 kill -0 "$newpid"
+	# The old instance must be gone.
+	atf_check -s not-exit:0 kill -0 "$oldpid"
+}
+servicectl_restart_cleanup()
+{
+	if [ -f restart-svc.pid ]; then
+		kill "$(cat restart-svc.pid)" 2>/dev/null || true
+	fi
+	cleanup_common
+}
+
 atf_init_test_cases()
 {
 	atf_add_test_case servicectl_status
@@ -717,6 +813,9 @@ atf_init_test_cases()
 	atf_add_test_case servicectl_verify_local_descriptors
 	atf_add_test_case servicectl_deps
 	atf_add_test_case servicectl_stop_no_arg
+	atf_add_test_case servicectl_restart_requires_label
+	atf_add_test_case servicectl_restart_help
+	atf_add_test_case servicectl_restart
 
 	# adversarial
 	atf_add_test_case sctl_oversized_payload

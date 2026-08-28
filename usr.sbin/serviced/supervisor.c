@@ -219,6 +219,38 @@ cancel_stop_timer(struct svc_runtime *svc)
 }
 
 /*
+ * Post-STOPPED handling shared by every way an RC unit reaches STOPPED (a
+ * clean onestop exit, an onestop launch failure, or the onestop backstop
+ * timer): honour a pending remove (shutdown / servicectl remove) and a pending
+ * reload (swap the manifest and re-exec).  A servicectl restart is driven
+ * client-side — it stops, then retries start once the unit is STOPPED — so no
+ * server-side restart_pending handling is needed here.  svc is left STOPPED on
+ * entry; callers must have cleared rc_stopping and released the descriptor.
+ */
+static void
+supervisor_rc_post_stop(struct svc_runtime *svc)
+{
+
+	if (svc->remove_pending) {
+		unsigned idx;
+
+		idx = (unsigned)(svc - sd.services);
+		svc_remove(idx);
+		svc_reregister_kevents(serviced_kq);
+		return;
+	}
+	if (svc->reload_pending) {
+		svc->manifest = svc->pending_manifest;
+		memset(&svc->pending_manifest, 0, sizeof(svc->pending_manifest));
+		svc->reload_pending = false;
+		svc->restart_count = 0;
+		if (svc_exec(svc, serviced_kq) == -1)
+			syslog(LOG_ERR, "service %s: reload re-exec failed; "
+			    "left stopped", svc->manifest.label);
+	}
+}
+
+/*
  * NOTE_EXIT handling for RC and ONESHOT units.  The process that exited is
  * the start (or stop) command, not a supervised daemon: an rc daemon
  * daemonizes and reparents to init, so serviced tracks only the command's
@@ -226,13 +258,19 @@ cancel_stop_timer(struct svc_runtime *svc)
  * completed (ONESHOT -> DONE); a stop command completing => STOPPED.  None
  * of the native teardown (naming, dynamic claims, on-demand, channel and
  * coalition fds) applies — these units have none of that.
+ *
+ * An RC unit running its "onestop" command is flagged by svc->rc_stopping;
+ * that flag, not the unit state, is what tells this exit apart from an
+ * onestart exit, and it drives the transition to STOPPED plus the shared
+ * post-stop handling.
  */
 static void
 supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 {
-	bool ok, was_stopping;
+	bool ok, was_stopping, rc_stopping;
 
 	ok = WIFEXITED(exit_status) && WEXITSTATUS(exit_status) == 0;
+	rc_stopping = svc->rc_stopping;
 	was_stopping = (svc->state == SVC_STATE_STOPPING);
 
 	waitpid(svc->pid, NULL, WNOHANG);
@@ -242,6 +280,21 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 		svc->pd_fd = -1;
 	}
 	svc->pid = 0;
+
+	if (rc_stopping) {
+		/* The "service <label> onestop" command completed. */
+		svc->rc_stopping = false;
+		svc->state = SVC_STATE_STOPPED;
+		if (ok)
+			syslog(LOG_INFO, "rc unit %s: stopped",
+			    svc->manifest.label);
+		else
+			syslog(LOG_WARNING, "rc unit %s: onestop failed "
+			    "(status %#x); forcing stopped",
+			    svc->manifest.label, exit_status);
+		supervisor_rc_post_stop(svc);
+		return;
+	}
 
 	if (was_stopping) {
 		svc->state = SVC_STATE_STOPPED;
@@ -263,7 +316,7 @@ supervisor_command_exited(struct svc_runtime *svc, int exit_status)
 	if (ok)
 		syslog(LOG_INFO, "rc unit %s: started", svc->manifest.label);
 	else
-		syslog(LOG_ERR, "rc unit %s: faststart failed (status %#x)",
+		syslog(LOG_ERR, "rc unit %s: onestart failed (status %#x)",
 		    svc->manifest.label, exit_status);
 }
 
@@ -484,6 +537,27 @@ supervisor_handle_timer(struct kevent *kev)
 		svc->stop_kill_pending = false;
 		svc->stop_timer_ident = 0;
 		SERVICED_PROBE_TIMEOUT_FIRE(svc->manifest.label, "stop-kill");
+		/*
+		 * RC-unit backstop: the "onestop" command did not finish in
+		 * time.  There is no meaningful process to SIGKILL — serviced's
+		 * descriptor refers to the exited onestart wrapper, and the
+		 * daemon reparented to init — so force the unit STOPPED rather
+		 * than signal a dead descriptor, then run the shared post-stop
+		 * handling.
+		 */
+		if (svc->rc_stopping) {
+			syslog(LOG_WARNING, "rc unit %s: onestop timed out; "
+			    "forcing stopped", svc->manifest.label);
+			svc->rc_stopping = false;
+			if (svc->pd_fd >= 0) {
+				(void)close(svc->pd_fd);
+				svc->pd_fd = -1;
+			}
+			svc->pid = 0;
+			svc->state = SVC_STATE_STOPPED;
+			supervisor_rc_post_stop(svc);
+			return;
+		}
 		syslog(LOG_WARNING, "service %s: stop timeout, "
 		    "sending SIGKILL", svc->manifest.label);
 		if (svc->coalition_fd >= 0 &&
@@ -535,6 +609,48 @@ supervisor_handle_timer(struct kevent *kev)
 }
 
 /*
+ * Stop an adopted RC unit by running "service <label> onestop".  An rc.d
+ * daemon daemonizes and reparents to init, so the process descriptor serviced
+ * holds refers to the long-exited "onestart" wrapper — signalling it (as the
+ * native path does) never reaches the daemon and the unit wedges in STOPPING.
+ * onestop instead reads the daemon's pidfile and signals the real process.
+ *
+ * This path deliberately skips the native teardown entirely: no quiesce
+ * (there is no control channel), no coalition action, no pdkill.  It closes
+ * the stale descriptor (auto-removing its NOTE_EXIT registration) so the fresh
+ * descriptor svc_exec_rc_stop installs is the only one armed, marks the unit
+ * STOPPING with rc_stopping set, and arms the stop-kill timer as a backstop
+ * that force-stops the unit if onestop hangs (supervisor_handle_timer treats
+ * an rc_stopping backstop as force-stop, not SIGKILL).  A launch failure is
+ * best-effort: the unit is forced STOPPED rather than left wedged.
+ */
+static void
+svc_rc_graceful_stop(struct svc_runtime *svc, int kq)
+{
+
+	svc->state = SVC_STATE_STOPPING;
+	cancel_idle_timer(svc, kq);
+	if (svc->pd_fd >= 0) {
+		(void)close(svc->pd_fd);	/* EVFILT_PROCDESC auto-removed */
+		svc->pd_fd = -1;
+	}
+	syslog(LOG_INFO, "rc unit %s: stopping via service onestop",
+	    svc->manifest.label);
+	SERVICED_PROBE_SVC_STOP(svc->manifest.label, svc->pid);
+	if (svc_exec_rc_stop(svc, kq) == -1) {
+		syslog(LOG_ERR, "rc unit %s: onestop launch failed; "
+		    "forcing stopped", svc->manifest.label);
+		svc->rc_stopping = false;
+		svc->pid = 0;
+		svc->state = SVC_STATE_STOPPED;
+		supervisor_rc_post_stop(svc);
+		return;
+	}
+	svc->rc_stopping = true;
+	schedule_stop_kill(svc, kq);
+}
+
+/*
  * Gracefully stop a single service: SIGTERM via pdkill,
  * then kqueue timer-driven SIGKILL if still alive.
  */
@@ -546,6 +662,16 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 	if (svc->state != SVC_STATE_RUNNING &&
 	    svc->state != SVC_STATE_STARTING)
 		return;
+
+	/*
+	 * Adopted rc.d units cannot be stopped by signalling a process
+	 * descriptor; they run their own onestop command.  Cleanly separated
+	 * so the native/oneshot path below is untouched.
+	 */
+	if (svc->kind == SVC_KIND_RC) {
+		svc_rc_graceful_stop(svc, kq);
+		return;
+	}
 
 	svc->state = SVC_STATE_STOPPING;
 	/*

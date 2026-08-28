@@ -54,7 +54,16 @@ ATF_TESTS_C+=	management_enforce_test
 ATF_TESTS_C+=	bundle_selection_test
 ATF_TESTS_C+=	storage_lifecycle_test
 ATF_TESTS_C+=	rc_ingest_test
+ATF_TESTS_C+=	rc_adopt_test
 BINDIR=		${TESTSDIR}
+
+# rc_ingest.c is compiled into BOTH rc_ingest_test and rc_adopt_test.  A source
+# shared by more than one test program is built once with the common CFLAGS —
+# the per-program CFLAGS.<prog> do not reach a shared object — so the include
+# paths rc_ingest.c needs (serviced_manifest.h in libcapbundle, which pulls in
+# oraclert.h from liboraclert) must be global.
+CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS+=	-I${SRCTOP}/lib/liboraclert
 
 # rc_ingest_test compiles the parser directly (pure logic, no daemon deps).
 # rc_ingest.c comes from the serviced source dir via .PATH above; referencing
@@ -63,6 +72,20 @@ BINDIR=		${TESTSDIR}
 SRCS.rc_ingest_test=	rc_ingest_test.c rc_ingest.c
 CFLAGS.rc_ingest_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.rc_ingest_test+=	-I${SRCTOP}/lib/libcapbundle
+
+# rc_adopt_test compiles the adoption selection + unit-building logic directly
+# (pure logic, no daemon event loop).  --gc-sections drops rc_adopt_register(),
+# the only function that touches sd.services/svc_by_label, so the unit needs no
+# daemon objects to link.  rc_adopt.c and rc_ingest.c come from the serviced
+# source dir via the .PATH above; referencing them by basename keeps their
+# objects in the objdir.
+SRCS.rc_adopt_test=	rc_adopt_test.c rc_adopt.c rc_ingest.c
+CFLAGS.rc_adopt_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.rc_adopt_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.rc_adopt_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.rc_adopt_test+=	-I${SRCTOP}/sys
+CFLAGS.rc_adopt_test+=	-ffunction-sections -fdata-sections
+LDFLAGS.rc_adopt_test+=	-Wl,--gc-sections
 
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/liboraclert
 

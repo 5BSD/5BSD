@@ -144,6 +144,7 @@ struct svc_runtime {
 	uintptr_t	stop_timer_ident;
 	bool		remove_pending;		/* remove after NOTE_EXIT */
 	bool		reload_pending;		/* swap manifest after NOTE_EXIT */
+	bool		rc_stopping;		/* RC unit running "service <label> onestop" */
 	struct svc_manifest pending_manifest;
 	struct timespec	last_start;
 
@@ -285,6 +286,7 @@ int	kldmgr_ensure_loaded(const struct svc_manifest *m, bool system_bundle,
 
 /* execute.c — service fork/exec */
 int	svc_exec(struct svc_runtime *svc, int kq);
+int	svc_exec_rc_stop(struct svc_runtime *svc, int kq);
 const char *svc_exec_blocking_provider(const struct svc_manifest *m);
 int	svc_launch_or_await(struct svc_runtime *svc, int kq);
 

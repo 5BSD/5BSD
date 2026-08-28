@@ -77,6 +77,15 @@ svc_exec(struct svc_runtime *svc, int kq)
 	return (0);
 }
 
+int
+svc_exec_rc_stop(struct svc_runtime *svc, int kq)
+{
+
+	(void)svc;
+	(void)kq;
+	return (0);
+}
+
 void
 naming_remove_owner(struct svc_runtime *owner)
 {
