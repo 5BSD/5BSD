@@ -36,6 +36,8 @@ Service lifecycle library
 .Ft int
 .Fn service_capability_open "struct service_context *context" "const char *name" "const char *type" "int *fd"
 .Ft int
+.Fn service_activation_socket "const char *name"
+.Ft int
 .Fn service_provider_create "struct service_provider **provider"
 .Ft void
 .Fn service_provider_destroy "struct service_provider *provider"
@@ -201,6 +203,39 @@ Unknown names fail with
 .Er EINVAL ;
 an accepted but undeclared name fails with
 .Er ENOENT .
+.Pp
+.Fn service_activation_socket
+returns the manager-owned socket-activation listener delivered under the logical
+.Fa name ,
+or
+.Va -1
+with
+.Va errno
+set to
+.Er ENOENT
+when the process was launched with no such listener
+.Po
+.Er EINVAL
+for a malformed name
+.Pc .
+A socket-activation source is declared in the unit manifest as
+.Li activation { socket = { name = ...; listen = ...; } } :
+.Nm serviced
+itself binds and
+.Xr listen 2 Ns s
+the socket and holds it open, so it survives this provider's crashes,
+idle stops, and restarts with its backlog intact
+.Pq a queued connection is never dropped .
+The first inbound connection is the demand that launches the unit.
+Unlike
+.Fn service_capability_open ,
+this call returns the retained descriptor itself, not a duplicate:
+it is owned by libservice and remains valid for the life of the process, so the
+caller
+.Xr accept 2 Ns s
+or receives on it but must
+.Em not
+close it.
 .Sh GLOBAL PROVIDERS
 .Fn service_provider_create
 creates the provider lifecycle object and acquires the shared context.

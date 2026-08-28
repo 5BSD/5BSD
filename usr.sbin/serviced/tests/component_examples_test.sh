@@ -53,8 +53,8 @@ atf_test_case activation_examples_verify cleanup
 activation_examples_verify_head()
 {
 	atf_set "descr" \
-	    "The installed timer and path activation examples are complete, "\
-"registerable manifests"
+	    "The installed timer, path, and socket activation examples are "\
+"complete, registerable manifests"
 }
 activation_examples_verify_body()
 {
@@ -65,7 +65,8 @@ activation_examples_verify_body()
 	test -x "${servicectl}" ||
 	    atf_skip "source-built servicectl is required"
 
-	for spec in "timer-activation:timer-task" "path-activation:path-watcher"; do
+	for spec in "timer-activation:timer-task" "path-activation:path-watcher" \
+	    "socket-activation:socket-greeter"; do
 		manifest="${examples}/${spec%%:*}.ucl"
 		program="${spec#*:}"
 		bundle="${work}/${program}.cap"

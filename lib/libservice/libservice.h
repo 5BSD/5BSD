@@ -158,6 +158,16 @@ const char *service_label(struct service_context *);
 int	service_capability_open(struct service_context *, const char *name,
 	    const char *type, int *fd);
 
+/*
+ * Return the manager-owned socket-activation listener (Phase 4) delivered under
+ * the given logical name, or -1 with errno ENOENT if the process has none by
+ * that name (EINVAL for a malformed name).  serviced binds, listen(2)s, and
+ * holds the socket, so it survives this provider's restarts with its backlog
+ * intact; the returned descriptor is owned by libservice for the life of the
+ * process — accept(2)/recv on it, but do not close it.
+ */
+int	service_activation_socket(const char *name);
+
 int	service_local_component_open(struct service_context *,
 	    const char *interface, const char *version, int *session_fd);
 

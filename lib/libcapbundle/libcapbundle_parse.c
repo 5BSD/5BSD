@@ -32,6 +32,9 @@
 #include "gates.h"
 #include "libcapbundle_internal.h"
 
+/* Keys accepted inside an activation.socket object (Phase 4). */
+static const char *const socket_object_keys[] = { "name", "listen", "backlog" };
+
 static bool
 key_in(const char *key, const char *const *allowed, size_t nallowed)
 {
@@ -256,6 +259,273 @@ validate_string_list(const ucl_object_t *root, const char *key, unsigned max,
 	return (0);
 }
 
+/*
+ * A socket activation logical name (Phase 4): the label the listener is
+ * delivered to the provider under.  Bounded and restricted to a conservative
+ * label charset so it round-trips through the bootstrap capability table.
+ */
+static bool
+socket_name_valid(const char *name)
+{
+	const unsigned char *p;
+	size_t len;
+
+	if (name == NULL)
+		return (false);
+	len = strlen(name);
+	if (len == 0 || len >= SERVICED_LABEL_MAX)
+		return (false);
+	for (p = (const unsigned char *)name; *p != '\0'; p++)
+		if (!(isalnum(*p) || *p == '.' || *p == '_' || *p == '-'))
+			return (false);
+	return (true);
+}
+
+/*
+ * Parse an activation.socket "listen" string into an svc_activation_socket.
+ * Accepted forms (Phase 4):
+ *
+ *   tcp:ADDR:PORT   tcp6:ADDR:PORT   udp:ADDR:PORT   udp6:ADDR:PORT
+ *   unix:/abs/path
+ *
+ * ADDR may be "*" or empty for any (stored as an all-zero address).  For the
+ * INET forms ADDR is validated with inet_pton(3) and PORT must be 1..65535.
+ * The port sits after the LAST colon so IPv6 literals (which embed colons)
+ * parse correctly.  Fills only the domain/socktype/addr/port/unixpath fields;
+ * the caller supplies name and backlog.  Returns 0 on success, -1 with a
+ * diagnostic in errbuf.
+ */
+static int
+parse_listen_spec(const char *listen, struct svc_activation_socket *s,
+    char *errbuf, size_t errlen)
+{
+	const char *rest, *portstr;
+	char addr[INET6_ADDRSTRLEN];
+	char *end;
+	const char *colon;
+	unsigned long port;
+	size_t schemelen, addrlen;
+
+	if (listen == NULL || listen[0] == '\0') {
+		snprintf(errbuf, errlen, "activation.socket.listen is empty");
+		return (-1);
+	}
+	rest = strchr(listen, ':');
+	if (rest == NULL) {
+		snprintf(errbuf, errlen,
+		    "activation.socket.listen must be scheme:...");
+		return (-1);
+	}
+	schemelen = (size_t)(rest - listen);
+	rest++;
+	if (schemelen == 4 && strncmp(listen, "unix", 4) == 0) {
+		if (rest[0] != '/') {
+			snprintf(errbuf, errlen,
+			    "activation.socket unix path must be absolute");
+			return (-1);
+		}
+		if (strlen(rest) >= sizeof(s->unixpath)) {
+			snprintf(errbuf, errlen,
+			    "activation.socket unix path too long (max %zu)",
+			    sizeof(s->unixpath) - 1);
+			return (-1);
+		}
+		s->domain = AF_UNIX;
+		s->socktype = SOCK_STREAM;
+		s->port = 0;
+		memset(s->addr, 0, sizeof(s->addr));
+		strlcpy(s->unixpath, rest, sizeof(s->unixpath));
+		return (0);
+	}
+	if (schemelen == 3 && strncmp(listen, "tcp", 3) == 0) {
+		s->domain = AF_INET;
+		s->socktype = SOCK_STREAM;
+	} else if (schemelen == 4 && strncmp(listen, "tcp6", 4) == 0) {
+		s->domain = AF_INET6;
+		s->socktype = SOCK_STREAM;
+	} else if (schemelen == 3 && strncmp(listen, "udp", 3) == 0) {
+		s->domain = AF_INET;
+		s->socktype = SOCK_DGRAM;
+	} else if (schemelen == 4 && strncmp(listen, "udp6", 4) == 0) {
+		s->domain = AF_INET6;
+		s->socktype = SOCK_DGRAM;
+	} else {
+		snprintf(errbuf, errlen,
+		    "activation.socket.listen has an unknown scheme");
+		return (-1);
+	}
+	s->unixpath[0] = '\0';
+
+	/* The port follows the final colon; everything before it is ADDR. */
+	colon = strrchr(rest, ':');
+	if (colon == NULL) {
+		snprintf(errbuf, errlen,
+		    "activation.socket.listen must be scheme:ADDR:PORT");
+		return (-1);
+	}
+	portstr = colon + 1;
+	addrlen = (size_t)(colon - rest);
+	if (addrlen >= sizeof(addr)) {
+		snprintf(errbuf, errlen, "activation.socket address too long");
+		return (-1);
+	}
+	memcpy(addr, rest, addrlen);
+	addr[addrlen] = '\0';
+
+	errno = 0;
+	port = strtoul(portstr, &end, 10);
+	if (errno != 0 || end == portstr || *end != '\0' ||
+	    port < 1 || port > 65535) {
+		snprintf(errbuf, errlen,
+		    "activation.socket port must be 1..65535");
+		return (-1);
+	}
+	s->port = (uint16_t)port;
+
+	memset(s->addr, 0, sizeof(s->addr));
+	if (addr[0] == '\0' || strcmp(addr, "*") == 0)
+		return (0);		/* any address */
+	if (s->domain == AF_INET) {
+		struct in_addr in4;
+
+		if (inet_pton(AF_INET, addr, &in4) != 1) {
+			snprintf(errbuf, errlen,
+			    "activation.socket has an invalid IPv4 address");
+			return (-1);
+		}
+		memcpy(s->addr, &in4, sizeof(in4));
+	} else {
+		struct in6_addr in6;
+
+		if (inet_pton(AF_INET6, addr, &in6) != 1) {
+			snprintf(errbuf, errlen,
+			    "activation.socket has an invalid IPv6 address");
+			return (-1);
+		}
+		memcpy(s->addr, &in6, sizeof(in6));
+	}
+	return (0);
+}
+
+/*
+ * Validate one activation.socket object and, on success, return its parsed
+ * form in *out for the caller's duplicate-name bookkeeping.
+ */
+static int
+validate_socket_object(const ucl_object_t *obj, const char *const *socketkeys,
+    size_t nsocketkeys, struct svc_activation_socket *out, char *errbuf,
+    size_t errlen)
+{
+	const ucl_object_t *nameobj, *listenobj, *backlogobj;
+	const char *name;
+
+	if (ucl_object_type(obj) != UCL_OBJECT) {
+		snprintf(errbuf, errlen,
+		    "activation.socket must be an object or array of objects");
+		return (-1);
+	}
+	if (validate_keys(obj, "activation.socket", socketkeys, nsocketkeys,
+	    errbuf, errlen) != 0)
+		return (-1);
+	memset(out, 0, sizeof(*out));
+
+	nameobj = ucl_object_lookup(obj, "name");
+	if (nameobj == NULL || ucl_object_type(nameobj) != UCL_STRING ||
+	    !socket_name_valid(name = ucl_object_tostring(nameobj))) {
+		snprintf(errbuf, errlen,
+		    "activation.socket requires a valid non-empty 'name'");
+		return (-1);
+	}
+	strlcpy(out->name, name, sizeof(out->name));
+
+	listenobj = ucl_object_lookup(obj, "listen");
+	if (listenobj == NULL || ucl_object_type(listenobj) != UCL_STRING) {
+		snprintf(errbuf, errlen,
+		    "activation.socket requires a 'listen' string");
+		return (-1);
+	}
+	if (parse_listen_spec(ucl_object_tostring(listenobj), out, errbuf,
+	    errlen) != 0)
+		return (-1);
+
+	out->backlog = 128;
+	backlogobj = ucl_object_lookup(obj, "backlog");
+	if (backlogobj != NULL) {
+		if (ucl_object_type(backlogobj) != UCL_INT ||
+		    ucl_object_toint(backlogobj) < 1 ||
+		    ucl_object_toint(backlogobj) > 1024) {
+			snprintf(errbuf, errlen,
+			    "activation.socket.backlog must be 1..1024");
+			return (-1);
+		}
+		out->backlog = (int)ucl_object_toint(backlogobj);
+	}
+	return (0);
+}
+
+/*
+ * Validate the whole activation.socket knob: a single object or an array of
+ * objects.  Enforces the per-unit socket cap and unique logical names.
+ */
+static int
+validate_socket_block(const ucl_object_t *arr, const char *const *socketkeys,
+    size_t nsocketkeys, char *errbuf, size_t errlen)
+{
+	struct svc_activation_socket parsed[SERVICED_MAX_ACTIVATION_SOCKETS];
+	const ucl_object_t *sockobj, *it_obj;
+	ucl_object_iter_t it;
+	unsigned n, i;
+
+	sockobj = ucl_object_lookup(arr, "socket");
+	if (sockobj == NULL)
+		return (0);
+
+	n = 0;
+	if (ucl_object_type(sockobj) == UCL_OBJECT) {
+		if (validate_socket_object(sockobj, socketkeys, nsocketkeys,
+		    &parsed[0], errbuf, errlen) != 0)
+			return (-1);
+		n = 1;
+	} else if (ucl_object_type(sockobj) == UCL_ARRAY) {
+		if (ucl_array_size(sockobj) == 0) {
+			snprintf(errbuf, errlen,
+			    "activation.socket must not be empty");
+			return (-1);
+		}
+		it = NULL;
+		while ((it_obj = ucl_object_iterate(sockobj, &it, true)) !=
+		    NULL) {
+			if (n >= SERVICED_MAX_ACTIVATION_SOCKETS) {
+				snprintf(errbuf, errlen,
+				    "activation.socket has more than %d entries",
+				    SERVICED_MAX_ACTIVATION_SOCKETS);
+				return (-1);
+			}
+			if (validate_socket_object(it_obj, socketkeys,
+			    nsocketkeys, &parsed[n], errbuf, errlen) != 0)
+				return (-1);
+			n++;
+		}
+	} else {
+		snprintf(errbuf, errlen,
+		    "activation.socket must be an object or array of objects");
+		return (-1);
+	}
+
+	for (i = 0; i < n; i++) {
+		unsigned j;
+
+		for (j = i + 1; j < n; j++)
+			if (strcmp(parsed[i].name, parsed[j].name) == 0) {
+				snprintf(errbuf, errlen,
+				    "activation.socket has duplicate name '%s'",
+				    parsed[i].name);
+				return (-1);
+			}
+	}
+	return (0);
+}
+
 static int
 validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 {
@@ -265,7 +535,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "max_failures", "arguments", "environment", "jail", "storage",
 	    "descriptors", "protect" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
-	    "path" };
+	    "path", "socket" };
 	static const char *const timerkeys[] = { "interval" };
 	static const char *const pathkeys[] = { "path" };
 	static const char *const capkeys[] = { "paths", "files", "network",
@@ -452,12 +722,23 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		}
 	}
 
+	/*
+	 * activation.socket — manager-owned listener source (Phase 4).  serviced
+	 * binds and holds the listening socket; the first inbound connection is
+	 * the demand that launches the unit, and the listener is delivered to it
+	 * by logical name.  A single object or an array of objects is accepted.
+	 */
+	if (validate_socket_block(arr, socket_object_keys,
+	    nitems(socket_object_keys), errbuf, errlen) != 0)
+		return (-1);
+
 	if ((v == NULL || !ucl_object_toboolean(v)) && x == NULL &&
 	    ucl_object_lookup(arr, "timer") == NULL &&
-	    ucl_object_lookup(arr, "path") == NULL) {
+	    ucl_object_lookup(arr, "path") == NULL &&
+	    ucl_object_lookup(arr, "socket") == NULL) {
 		snprintf(errbuf, errlen,
 		    "activation requires boot=true, at least one ipc name, "
-		    "a timer, or a path");
+		    "a timer, a path, or a socket");
 		return (-1);
 	}
 	if (x != NULL && ucl_object_type(x) == UCL_ARRAY &&
@@ -1659,6 +1940,41 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		if (pathobj != NULL)
 			parse_string_field(pathobj, "path", svc->activation_path,
 			    sizeof(svc->activation_path));
+	}
+
+	/*
+	 * Socket activation sources (Phase 4).  Already validated above; record
+	 * the accepted single object or array.  parse_listen_spec() cannot fail
+	 * here because the same string passed validation.
+	 */
+	{
+		const ucl_object_t *sockobj, *it_obj;
+		ucl_object_iter_t it;
+		char errscratch[256];
+
+		sockobj = ucl_object_lookup(activation, "socket");
+		svc->nactivation_sockets = 0;
+		if (sockobj != NULL && ucl_object_type(sockobj) == UCL_OBJECT) {
+			(void)validate_socket_object(sockobj, socket_object_keys,
+			    nitems(socket_object_keys),
+			    &svc->activation_sockets[0], errscratch,
+			    sizeof(errscratch));
+			svc->nactivation_sockets = 1;
+		} else if (sockobj != NULL &&
+		    ucl_object_type(sockobj) == UCL_ARRAY) {
+			it = NULL;
+			while ((it_obj = ucl_object_iterate(sockobj, &it, true)) !=
+			    NULL &&
+			    svc->nactivation_sockets <
+			    SERVICED_MAX_ACTIVATION_SOCKETS) {
+				(void)validate_socket_object(it_obj, socket_object_keys,
+				    nitems(socket_object_keys),
+				    &svc->activation_sockets[
+				    svc->nactivation_sockets], errscratch,
+				    sizeof(errscratch));
+				svc->nactivation_sockets++;
+			}
+		}
 	}
 
 	/* Kernel module requirements */

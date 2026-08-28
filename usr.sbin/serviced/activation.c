@@ -3,7 +3,8 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * Timer and path activation sources for serviced (Phase 5, plan §13).
+ * Timer, path, and socket activation sources for serviced (Phase 5 timer/path,
+ * plan §13; Phase 4 socket).
  *
  * These are demand sources, not dependency units and not ordering.  A source
  * names one unit in its own bundle and creates demand for that unit when it
@@ -22,14 +23,34 @@
  * descriptor, so they are routed and matched by fd.  Path events are hints:
  * bursts coalesce (EV_CLEAR), and a delete/rename triggers a re-open so an
  * atomic replacement keeps being watched, or the watch is dropped and logged.
+ *
+ *   activation { socket = { name = "l"; listen = "tcp:*:80"; } }
+ *
+ * A socket source is the manager-OWNED listener: serviced binds and listen(2)s
+ * the socket itself (never through the network broker — that would be a boot
+ * chicken-and-egg, since the broker is itself an on-demand service) and holds
+ * it open.  The first inbound connection makes the listen fd readable, which is
+ * the demand that launches the unit; the listener is delivered to the provider
+ * by logical name and, because serviced keeps its own copy open across the
+ * unit's start/stop cycles, a queued connection is never dropped on restart.
+ * Listen fds are routed and matched by fd like path watches, and their
+ * EVFILT_READ is deliberately level-triggered (NOT EV_CLEAR): a slow provider
+ * that has not yet accept(2)ed keeps the level asserted, so repeated demand
+ * coalesces until the backlog drains.  All socket-creation policy is isolated
+ * in listener_create() so it can later be swapped to a broker mint.
  */
 
 #include <sys/types.h>
 #include <sys/event.h>
 #include <sys/param.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+#include <netinet/in.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -84,6 +105,27 @@ path_owner(int fd)
 	for (i = 0; i < sd.nservices; i++)
 		if (sd.services[i].activation_path_fd == fd)
 			return (&sd.services[i]);
+	return (NULL);
+}
+
+/*
+ * Locate the unit that owns a given socket-activation listen descriptor.  Like
+ * path watches, the EVFILT_READ ident is the descriptor, unique among open fds
+ * and stable across services[] compaction, so a scan by fd is safe.  The listen
+ * fd set is disjoint from every channel/control fd, so matching by fd here can
+ * never mistake a listener for another EVFILT_READ user.
+ */
+static struct svc_runtime *
+listen_owner(int fd)
+{
+	unsigned i, j;
+
+	if (fd < 0)
+		return (NULL);
+	for (i = 0; i < sd.nservices; i++)
+		for (j = 0; j < sd.services[i].nactivation_listen; j++)
+			if (sd.services[i].activation_listen_fds[j] == fd)
+				return (&sd.services[i]);
 	return (NULL);
 }
 
@@ -159,6 +201,138 @@ arm_path(struct svc_runtime *svc, int kq)
 }
 
 /*
+ * Create the manager-owned listening socket for one socket activation source.
+ * serviced binds and listen(2)s directly — deliberately NOT through the network
+ * broker, which is itself an on-demand service and cannot be required to mint
+ * serviced's own boot listeners without a chicken-and-egg hazard.  All socket
+ * creation policy lives here in one place so a future policy could swap this
+ * for a broker mint without touching any caller.  Returns the listen fd, or -1
+ * with errno set; the caller logs and skips a failed listener (never fatal).
+ */
+static int
+listener_create(const struct svc_activation_socket *s)
+{
+	struct sockaddr_storage ss;
+	socklen_t slen;
+	int fd, on, saved;
+
+	memset(&ss, 0, sizeof(ss));
+	switch (s->domain) {
+	case AF_INET: {
+		struct sockaddr_in *sin = (struct sockaddr_in *)&ss;
+
+		sin->sin_family = AF_INET;
+		sin->sin_port = htons(s->port);
+		memcpy(&sin->sin_addr, s->addr, sizeof(sin->sin_addr));
+		slen = sizeof(*sin);
+		break;
+	}
+	case AF_INET6: {
+		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)&ss;
+
+		sin6->sin6_family = AF_INET6;
+		sin6->sin6_port = htons(s->port);
+		memcpy(&sin6->sin6_addr, s->addr, sizeof(sin6->sin6_addr));
+		slen = sizeof(*sin6);
+		break;
+	}
+	case AF_UNIX: {
+		struct sockaddr_un *sun = (struct sockaddr_un *)&ss;
+
+		sun->sun_family = AF_UNIX;
+		if (strlcpy(sun->sun_path, s->unixpath, sizeof(sun->sun_path)) >=
+		    sizeof(sun->sun_path)) {
+			errno = ENAMETOOLONG;
+			return (-1);
+		}
+		slen = (socklen_t)(offsetof(struct sockaddr_un, sun_path) +
+		    strlen(sun->sun_path) + 1);
+		break;
+	}
+	default:
+		errno = EAFNOSUPPORT;
+		return (-1);
+	}
+
+	fd = socket(s->domain, s->socktype | SOCK_CLOEXEC, 0);
+	if (fd == -1)
+		return (-1);
+	on = 1;
+	(void)setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+	/*
+	 * A stale AF_UNIX node from a previous boot would make bind(2) fail
+	 * EADDRINUSE; unlink it first.  This is safe because serviced owns the
+	 * path (it is the sole binder of this activation socket).
+	 */
+	if (s->domain == AF_UNIX)
+		(void)unlink(s->unixpath);
+	if (bind(fd, (struct sockaddr *)&ss, slen) == -1) {
+		saved = errno;
+		(void)close(fd);
+		errno = saved;
+		return (-1);
+	}
+	if (s->socktype == SOCK_STREAM && listen(fd, s->backlog) == -1) {
+		saved = errno;
+		(void)close(fd);
+		errno = saved;
+		return (-1);
+	}
+	return (fd);
+}
+
+/*
+ * Arm a unit's declared socket activation listeners.  Each not-yet-armed
+ * listener is created and registered with a level-triggered EVFILT_READ so a
+ * slow provider keeps demand asserted (see the file banner).  A listener that
+ * fails to bind (EADDRINUSE, EMFILE, ...) is logged and skipped — mirroring
+ * arm_path(), it never aborts serviced and never blocks the other listeners or
+ * units from arming.  Idempotent: an already-open listen fd is left in place.
+ */
+static void
+arm_sockets(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+	unsigned i;
+	int fd;
+
+	if (svc->manifest.nactivation_sockets == 0)
+		return;
+	svc->nactivation_listen = svc->manifest.nactivation_sockets;
+	for (i = 0; i < svc->manifest.nactivation_sockets; i++) {
+		const struct svc_activation_socket *s =
+		    &svc->manifest.activation_sockets[i];
+
+		if (svc->activation_listen_fds[i] >= 0)
+			continue;	/* already armed */
+		fd = listener_create(s);
+		if (fd == -1) {
+			syslog(LOG_WARNING,
+			    "activation: %s: cannot bind socket '%s': %m",
+			    svc->manifest.label, s->name);
+			continue;
+		}
+		/*
+		 * Level-triggered (no EV_CLEAR): while the provider has not yet
+		 * accept(2)ed, the listener stays readable and demand coalesces
+		 * via activation_create_demand until the backlog drains.
+		 */
+		EV_SET(&kev, fd, EVFILT_READ, EV_ADD, 0, 0, svc);
+		if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+			syslog(LOG_ERR,
+			    "activation: %s: kevent listener '%s': %m",
+			    svc->manifest.label, s->name);
+			(void)close(fd);
+			continue;
+		}
+		svc->activation_listen_fds[i] = fd;
+		SERVICED_PROBE_TIMEOUT_ARM(svc->manifest.label, "socket", 0);
+		syslog(LOG_INFO, "activation: %s listening for socket '%s'",
+		    svc->manifest.label, s->name);
+	}
+}
+
+/*
  * Arm a unit's declared activation sources.  Idempotent: an already-armed
  * source is left in place, so it is safe to call at startup and again on
  * reload without stacking duplicate timers or watches.
@@ -198,6 +372,7 @@ activation_source_arm(struct svc_runtime *svc, int kq)
 	}
 
 	arm_path(svc, kq);
+	arm_sockets(svc, kq);
 }
 
 /*
@@ -223,6 +398,25 @@ activation_source_teardown(struct svc_runtime *svc, int kq)
 		/* Closing the descriptor removes its EVFILT_VNODE registration. */
 		(void)close(svc->activation_path_fd);
 		svc->activation_path_fd = -1;
+	}
+	/*
+	 * Close the manager-owned listen fds ONLY here (unit removal).  They are
+	 * deliberately untouched by svc_close_fds() on provider stop/restart so a
+	 * queued connection survives across restarts; only removing the unit
+	 * retires the listener.
+	 */
+	while (svc->nactivation_listen > 0) {
+		unsigned i = --svc->nactivation_listen;
+		int fd = svc->activation_listen_fds[i];
+
+		if (fd < 0)
+			continue;
+		EV_SET(&kev, fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		(void)close(fd);
+		svc->activation_listen_fds[i] = -1;
+		if (svc->manifest.activation_sockets[i].domain == AF_UNIX)
+			(void)unlink(svc->manifest.activation_sockets[i].unixpath);
 	}
 }
 
@@ -300,6 +494,44 @@ activation_path_event(struct kevent *kev, int kq)
 }
 
 /*
+ * True when fd is a manager-owned socket-activation listener.  The main event
+ * loop calls this to route an EVFILT_READ before its generic channel handling,
+ * so a listener fd is never mistaken for a control/channel descriptor.
+ */
+bool
+activation_socket_owns(int fd)
+{
+
+	return (listen_owner(fd) != NULL);
+}
+
+/*
+ * A socket-activation listener became readable: an inbound connection (or, for
+ * SOCK_DGRAM, a waiting datagram) is the demand that launches the unit.  We do
+ * NOT accept()/recv() — the connection/datagram stays queued in the kernel for
+ * the provider to take once it is up.  The EVFILT_READ stays registered
+ * (level-triggered), so while the provider is still coming up the still-readable
+ * listener keeps coalescing demand via activation_create_demand; once the
+ * provider accepts and the backlog drains, the level clears on its own.
+ */
+void
+activation_socket_event(struct kevent *kev, int kq)
+{
+	struct svc_runtime *svc;
+
+	svc = listen_owner((int)kev->ident);
+	if (svc == NULL) {
+		/*
+		 * No unit owns this descriptor any more (removed between the
+		 * kernel queuing the event and us draining it).  Teardown
+		 * already deleted the filter and closed the fd; nothing to do.
+		 */
+		return;
+	}
+	activation_create_demand(svc, "socket", kq);
+}
+
+/*
  * Arm activation sources for every unit that declares one.  A unit activated
  * purely by a timer or path has no boot launch and no IPC name, so startup
  * never gave it a runtime slot; create a stopped slot here so its source has a
@@ -328,7 +560,8 @@ activation_register_all(int kq)
 			if (asvc == NULL)
 				continue;
 			if (capbundle_svc_timer_interval(asvc) == 0 &&
-			    capbundle_svc_activation_path(asvc)[0] == '\0')
+			    capbundle_svc_activation_path(asvc)[0] == '\0' &&
+			    capbundle_svc_nactivation_sockets(asvc) == 0)
 				continue;
 
 			svc = svc_by_label(capbundle_svc_label(asvc));

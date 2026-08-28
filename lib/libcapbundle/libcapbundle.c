@@ -306,6 +306,22 @@ capbundle_svc_activation_path(const struct capbundle_service *s)
 	return (s != NULL ? s->activation_path : "");
 }
 
+unsigned
+capbundle_svc_nactivation_sockets(const struct capbundle_service *s)
+{
+
+	return (s != NULL ? s->nactivation_sockets : 0);
+}
+
+const struct svc_activation_socket *
+capbundle_svc_activation_socket(const struct capbundle_service *s, unsigned i)
+{
+
+	if (s == NULL || i >= s->nactivation_sockets)
+		return (NULL);
+	return (&s->activation_sockets[i]);
+}
+
 const char *
 capbundle_svc_provides(const struct capbundle_service *s, unsigned idx)
 {
@@ -365,6 +381,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	    s->ncap_vsock > SERVICED_MAX_CAP_VSOCK ||
 	    s->ncap_storage > SERVICED_MAX_CAP_STORAGE ||
 	    s->ncap_services > SERVICED_MAX_CAP_SERVICES ||
+	    s->nactivation_sockets > SERVICED_MAX_ACTIVATION_SOCKETS ||
 	    s->nkmod_requires > SERVICED_MAX_KMOD_REQUIRES) {
 		errno = EOVERFLOW;
 		return (-1);
@@ -422,6 +439,10 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	if (manifest_copy(s->activation_path, m->activation_path,
 	    sizeof(m->activation_path)) == -1)
 		return (-1);
+	m->nactivation_sockets = MIN(s->nactivation_sockets,
+	    SERVICED_MAX_ACTIVATION_SOCKETS);
+	for (i = 0; i < m->nactivation_sockets; i++)
+		m->activation_sockets[i] = s->activation_sockets[i];
 	m->stop_timeout = s->stop_timeout > 0 ? s->stop_timeout : 5;
 	m->max_failures = s->max_failures > 0 ? s->max_failures : 10;
 

@@ -45,6 +45,7 @@
 #define	SERVICED_ENVIRONMENT_MAX	1024
 #define	SERVICED_MAX_COMPONENTS		8
 #define	SERVICED_COMPONENT_NAME_MAX	64
+#define	SERVICED_MAX_ACTIVATION_SOCKETS	4
 #define	SERVICED_DEFAULT_USER		"capability"
 #define	SERVICED_DEFAULT_GROUP		"capability"
 
@@ -68,6 +69,25 @@ struct serviced_component {
 	char		name[SERVICED_COMPONENT_NAME_MAX];
 	/* Filesystem descriptor backing; empty for other descriptor kinds. */
 	char		storage[ORT_STORAGE_NAME_MAX];
+};
+
+/*
+ * Socket activation source (Phase 4).  serviced binds and holds a
+ * listening socket; the first inbound connection is the demand that
+ * launches this unit, and the listener is delivered to it by logical
+ * name.  The listener outlives the unit's start/stop cycles, so a
+ * provider restart never drops a queued connection.  domain and socktype are
+ * stored as their AF_ and SOCK_ integer values (assigned by the parser, so
+ * this header needs no sys/socket.h).
+ */
+struct svc_activation_socket {
+	char		name[SERVICED_LABEL_MAX];  /* logical name delivered */
+	int		domain;			/* AF_INET / AF_INET6 / AF_UNIX */
+	int		socktype;		/* SOCK_STREAM / SOCK_DGRAM */
+	uint8_t		addr[16];		/* v4/v6 address, 0 = any */
+	uint16_t	port;			/* host order; 0 for AF_UNIX */
+	char		unixpath[104];		/* AF_UNIX path; empty otherwise */
+	int		backlog;		/* listen(2) backlog; default 128 */
 };
 
 /*
@@ -141,6 +161,18 @@ struct svc_manifest {
 	 */
 	unsigned	timer_interval_sec;
 	char		activation_path[PATH_MAX];
+
+	/*
+	 * Socket activation source (Phase 4).  serviced binds and holds a
+	 * listening socket; the first inbound connection is the demand that
+	 * launches this unit, and the listener is delivered to it by logical
+	 * name.  The listener outlives the unit's start/stop cycles, so a
+	 * provider restart never drops a queued connection.  nactivation_sockets
+	 * == 0 = no socket source.
+	 */
+	struct svc_activation_socket
+			activation_sockets[SERVICED_MAX_ACTIVATION_SOCKETS];
+	unsigned	nactivation_sockets;
 
 	/*
 	 * Launcher-applied protection policy (capprotect CP_SF_* bitmask).  When

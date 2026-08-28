@@ -21,7 +21,8 @@ CAPABILITIES_SYSTEMPACKAGE=	serviced
 FILESGROUPS+=	CMP_EXAMPLES
 CMP_EXAMPLES=	examples/local-descriptors.ucl \
 		examples/timer-activation.ucl \
-		examples/path-activation.ucl
+		examples/path-activation.ucl \
+		examples/socket-activation.ucl
 CMP_EXAMPLESDIR=	${SHAREDIR}/examples/serviced
 CMP_EXAMPLESPACKAGE=	serviced
 

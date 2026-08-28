@@ -1224,7 +1224,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	    [SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
 	char service_types[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
 	    [SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX];
-	unsigned ntokens, nservices;
+	unsigned ntokens, nservices, nlisteners;
 	uid_t uid;
 	gid_t gid;
 	gid_t groups[NGROUPS_MAX + 1];
@@ -1287,9 +1287,20 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * and peak queued attachment duplicates.  Capability, named-service,
 	 * and local-component descriptors are added explicitly.
 	 */
+	/*
+	 * Count the manager-owned socket-activation listeners to deliver.  Each
+	 * live listen fd is dup'd into the child (serviced keeps its own copy),
+	 * so it adds one descriptor to both the fd budget and the bootstrap
+	 * capability table.
+	 */
+	nlisteners = 0;
+	for (i = 0; i < svc->nactivation_listen; i++)
+		if (svc->activation_listen_fds[i] >= 0)
+			nlisteners++;
+
 	if (serviced_fd_budget_check((size_t)expected_tokens +
-	    m->ncap_storage + m->ncap_services + m->ncomponents + 12,
-	    "service launch") == -1) {
+	    m->ncap_storage + m->ncap_services + m->ncomponents + nlisteners +
+	    12, "service launch") == -1) {
 		saved_errno = errno;
 		syslog(LOG_ERR,
 		    "svc_exec %s: descriptor admission denied: %s",
@@ -1626,16 +1637,44 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 
 	/*
+	 * Deliver the manager-owned socket-activation listeners (Phase 4) as
+	 * ordinary bootstrap capabilities of type "socket", keyed by their
+	 * logical name.  The listen fd is dup'd so the child receives its own
+	 * copy through the same remap/dup2 machinery as every other capability
+	 * fd; serviced keeps svc->activation_listen_fds[i] open across this and
+	 * every future restart, so a queued connection is never dropped.
+	 */
+	for (i = 0; i < svc->nactivation_listen; i++) {
+		int lfd = svc->activation_listen_fds[i];
+		int dfd;
+
+		if (lfd < 0)
+			continue;
+		if (nservices >= SERVICE_BOOTSTRAP_CAPABILITY_MAX) {
+			errno = EOVERFLOW;
+			goto fail_tokens;
+		}
+		dfd = fcntl(lfd, F_DUPFD_CLOEXEC, 0);
+		if (dfd == -1)
+			goto fail_tokens;
+		strlcpy(service_names[nservices], m->activation_sockets[i].name,
+		    sizeof(service_names[nservices]));
+		strlcpy(service_types[nservices], "socket",
+		    sizeof(service_types[nservices]));
+		service_fds[nservices++] = dfd;
+	}
+
+	/*
 	 * This is the final all-or-nothing barrier before jail creation and
 	 * pdfork().  The child receives only the complete manifest token set;
 	 * any missing token takes the fail_tokens cleanup path instead.
 	 */
 	if (ntokens != expected_tokens ||
-	    nservices != m->ncap_storage + m->ncap_services) {
+	    nservices != m->ncap_storage + m->ncap_services + nlisteners) {
 		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
 		    "(%u/%u tokens, %u/%u services)", m->label, ntokens,
 		    expected_tokens, nservices,
-		    m->ncap_storage + m->ncap_services);
+		    m->ncap_storage + m->ncap_services + nlisteners);
 		goto fail_tokens;
 	}
 

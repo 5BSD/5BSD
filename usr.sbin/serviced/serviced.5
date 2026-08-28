@@ -111,11 +111,46 @@ string; a change to that path
 activates the unit on demand.
 Path events are only hints: after activation the unit must inspect the current
 state of the path itself.
+.Va socket
+is a single object, or an array of at most four objects, each with a
+.Va name
+(the logical name the listener is delivered under), a
+.Va listen
+string of the form
+.Dq tcp:ADDR:PORT ,
+.Dq tcp6:ADDR:PORT ,
+.Dq udp:ADDR:PORT ,
+.Dq udp6:ADDR:PORT ,
+or
+.Dq unix:/abs/path
+.Po
+.Va ADDR
+may be
+.Dq *
+or empty for any address
+.Pc ,
+and an optional
+.Va backlog
+.Pq 1 Ns .. Ns 1024 , default 128 .
+.Nm
+itself binds and
+.Xr listen 2 Ns s
+the socket and holds it open; the first inbound connection activates the unit on
+demand.
+Because the listener is owned by
+.Nm
+it survives the unit's stop, idle-stop, and restart cycles with its backlog
+intact, and it is delivered to the launched process as a bootstrap capability of
+type
+.Dq socket
+retrieved with
+.Xr service_activation_socket 3 .
 At least one trigger
-.Pq Va boot , ipc , timer , No or Va path
+.Pq Va boot , ipc , timer , path , No or Va socket
 is required.
-Publishing IPC does not imply boot activation, and a timer or path source does
-not launch the unit at boot; it stays stopped until the source fires.
+Publishing IPC does not imply boot activation, and a timer, path, or socket
+source does not launch the unit at boot; it stays stopped until the source
+fires.
 .Pp
 .Va restart
 is

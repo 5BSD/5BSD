@@ -7,6 +7,7 @@
  */
 
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/param.h>
 
@@ -135,12 +136,87 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 		 * trigger — boot, an IPC endpoint, a timer, or a path (Phase 5).
 		 */
 		if (!s->activation_boot && s->nprovides == 0 &&
-		    s->timer_interval_sec == 0 && s->activation_path[0] == '\0') {
+		    s->timer_interval_sec == 0 && s->activation_path[0] == '\0' &&
+		    s->nactivation_sockets == 0) {
 			if (errbuf != NULL)
 				snprintf(errbuf, errlen,
 				    "%s: unit '%s' has no activation trigger",
 				    b->name, s->label);
 			return (-1);
+		}
+
+		/*
+		 * Socket activation sources (Phase 4).  Mirror the parser's
+		 * bounds and invariants at the verify boundary: the per-unit
+		 * cap, non-empty unique logical names, a supported domain and
+		 * socktype, and the AF_UNIX-vs-INET split on port/unixpath.
+		 */
+		if (s->nactivation_sockets > SERVICED_MAX_ACTIVATION_SOCKETS) {
+			if (errbuf != NULL)
+				snprintf(errbuf, errlen,
+				    "%s: unit '%s' has too many activation "
+				    "sockets", b->name, s->label);
+			return (-1);
+		}
+		for (j = 0; j < s->nactivation_sockets; j++) {
+			const struct svc_activation_socket *as =
+			    &s->activation_sockets[j];
+
+			if (as->name[0] == '\0' ||
+			    strlen(as->name) >= SERVICED_LABEL_MAX) {
+				if (errbuf != NULL)
+					snprintf(errbuf, errlen,
+					    "%s: unit '%s' socket name invalid",
+					    b->name, s->label);
+				return (-1);
+			}
+			if (as->domain != AF_INET && as->domain != AF_INET6 &&
+			    as->domain != AF_UNIX) {
+				if (errbuf != NULL)
+					snprintf(errbuf, errlen,
+					    "%s: unit '%s' socket '%s' has an "
+					    "invalid domain", b->name, s->label,
+					    as->name);
+				return (-1);
+			}
+			if (as->socktype != SOCK_STREAM &&
+			    as->socktype != SOCK_DGRAM) {
+				if (errbuf != NULL)
+					snprintf(errbuf, errlen,
+					    "%s: unit '%s' socket '%s' has an "
+					    "invalid socktype", b->name, s->label,
+					    as->name);
+				return (-1);
+			}
+			if (as->domain == AF_UNIX) {
+				if (as->unixpath[0] != '/' || as->port != 0) {
+					if (errbuf != NULL)
+						snprintf(errbuf, errlen,
+						    "%s: unit '%s' unix socket "
+						    "'%s' needs an absolute path "
+						    "and no port", b->name,
+						    s->label, as->name);
+					return (-1);
+				}
+			} else if (as->port == 0) {
+				if (errbuf != NULL)
+					snprintf(errbuf, errlen,
+					    "%s: unit '%s' inet socket '%s' "
+					    "needs a non-zero port", b->name,
+					    s->label, as->name);
+				return (-1);
+			}
+			for (k = j + 1; k < s->nactivation_sockets; k++) {
+				if (strcmp(as->name,
+				    s->activation_sockets[k].name) == 0) {
+					if (errbuf != NULL)
+						snprintf(errbuf, errlen,
+						    "%s: unit '%s' duplicate "
+						    "socket name '%s'", b->name,
+						    s->label, as->name);
+					return (-1);
+				}
+			}
 		}
 		if (strlen(s->label) >= SERVICED_LABEL_MAX) {
 			if (errbuf)

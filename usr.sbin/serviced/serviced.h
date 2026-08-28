@@ -162,6 +162,17 @@ struct svc_runtime {
 	 */
 	uintptr_t	activation_timer_ident;	/* 0 = no periodic timer armed */
 	int		activation_path_fd;	/* -1 = no path watch open */
+	/*
+	 * Manager-owned socket activation listeners (Phase 4).  serviced binds
+	 * and holds each listening socket declared by the unit; the first inbound
+	 * connection creates demand.  These outlive the unit's start/stop cycles
+	 * and, crucially, are NOT closed on provider stop/restart (only on unit
+	 * removal via activation_source_teardown), so a queued connection is never
+	 * dropped across a restart.  Each entry is -1 when unarmed; entry i
+	 * corresponds to manifest.activation_sockets[i].
+	 */
+	int		activation_listen_fds[SERVICED_MAX_ACTIVATION_SOCKETS];
+	unsigned	nactivation_listen;
 
 	/* Attribution */
 	char		launched_by[SERVICED_LABEL_MAX]; /* who triggered launch */
@@ -338,6 +349,8 @@ void	activation_source_teardown(struct svc_runtime *svc, int kq);
 bool	activation_timer_owns(uintptr_t ident);
 void	activation_timer_fire(uintptr_t ident, int kq);
 void	activation_path_event(struct kevent *kev, int kq);
+bool	activation_socket_owns(int fd);
+void	activation_socket_event(struct kevent *kev, int kq);
 
 /* on_demand.c — on-demand service launch for user bundles */
 int	on_demand_launch(const char *name, struct svc_runtime *requester,
@@ -404,6 +417,9 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 	svc->coalition_fd = -1;
 	svc->jail_fd = -1;
 	svc->activation_path_fd = -1;
+	for (unsigned aidx = 0; aidx < SERVICED_MAX_ACTIVATION_SOCKETS; aidx++)
+		svc->activation_listen_fds[aidx] = -1;
+	svc->nactivation_listen = 0;
 	svc->protocol_ready = false;
 	memset(svc->name_state, SVC_NAME_UNCLAIMED,
 	    sizeof(svc->name_state));

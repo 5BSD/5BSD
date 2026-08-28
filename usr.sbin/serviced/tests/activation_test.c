@@ -15,7 +15,11 @@
 
 #include <sys/types.h>
 #include <sys/event.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <atf-c.h>
 #include <errno.h>
@@ -409,6 +413,351 @@ ATF_TC_BODY(register_all_creates_slot, tc)
 	(void)close(kq);
 }
 
+/* --- Phase 4: socket activation --- */
+
+/* Fill a loopback TCP stream socket spec with an ephemeral (port 0) bind. */
+static void
+socket_spec_tcp_loopback(struct svc_activation_socket *s, const char *name)
+{
+
+	memset(s, 0, sizeof(*s));
+	strlcpy(s->name, name, sizeof(s->name));
+	s->domain = AF_INET;
+	s->socktype = SOCK_STREAM;
+	s->addr[0] = 127;
+	s->addr[1] = 0;
+	s->addr[2] = 0;
+	s->addr[3] = 1;
+	s->port = 0;		/* ephemeral: no conflict with the host */
+	s->backlog = 8;
+}
+
+/* Report whether a stream socket is in the listening state. */
+static bool
+fd_is_listening(int fd)
+{
+	socklen_t len = sizeof(int);
+	int accepting = 0;
+
+	if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &accepting, &len) == -1)
+		return (false);
+	return (accepting != 0);
+}
+
+/* Return the bound port of a listen fd (host order), or 0 on failure. */
+static uint16_t
+fd_bound_port(int fd)
+{
+	struct sockaddr_in sin;
+	socklen_t len = sizeof(sin);
+
+	memset(&sin, 0, sizeof(sin));
+	if (getsockname(fd, (struct sockaddr *)&sin, &len) == -1)
+		return (0);
+	return (ntohs(sin.sin_port));
+}
+
+/* Connect a fresh client socket to 127.0.0.1:port; returns the client fd. */
+static int
+connect_loopback(uint16_t port)
+{
+	struct sockaddr_in sin;
+	int c;
+
+	c = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (c == -1)
+		return (-1);
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_family = AF_INET;
+	sin.sin_port = htons(port);
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	if (connect(c, (struct sockaddr *)&sin, sizeof(sin)) == -1) {
+		(void)close(c);
+		return (-1);
+	}
+	return (c);
+}
+
+/*
+ * listener_create() binds and listens: the returned descriptor is a listening
+ * stream socket, and SO_REUSEADDR lets a fresh listener rebind the same port
+ * after the first is closed.
+ */
+ATF_TC(socket_listener_create_binds_and_listens);
+ATF_TC_HEAD(socket_listener_create_binds_and_listens, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "listener_create binds+listens a stream socket (SO_ACCEPTCONN true) "
+	    "and SO_REUSEADDR permits a rebind of the same port");
+}
+ATF_TC_BODY(socket_listener_create_binds_and_listens, tc)
+{
+	struct svc_activation_socket spec;
+	uint16_t port;
+	int fd, fd2;
+
+	socket_spec_tcp_loopback(&spec, "listen");
+	fd = listener_create(&spec);
+	ATF_REQUIRE(fd >= 0);
+	ATF_CHECK(fd_is_listening(fd));
+
+	/* Pin the ephemeral port, close, and rebind it via SO_REUSEADDR. */
+	port = fd_bound_port(fd);
+	ATF_REQUIRE(port != 0);
+	(void)close(fd);
+	spec.port = port;
+	fd2 = listener_create(&spec);
+	ATF_REQUIRE_MSG(fd2 >= 0, "rebind failed: %s", strerror(errno));
+	ATF_CHECK(fd_is_listening(fd2));
+	ATF_CHECK_EQ(port, fd_bound_port(fd2));
+	(void)close(fd2);
+}
+
+/*
+ * Arming a socket source registers a level-triggered EVFILT_READ owned by the
+ * unit; an inbound connect makes the listener readable, and routing that event
+ * through activation_socket_event creates exactly one demand, coalescing while
+ * the unit is still starting.  The connection is left queued (not accepted).
+ */
+ATF_TC(socket_arm_connect_demand_and_coalesce);
+ATF_TC_HEAD(socket_arm_connect_demand_and_coalesce, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "arming a socket source registers a listener; an inbound connect "
+	    "makes it readable and creates one demand, coalescing while starting");
+}
+ATF_TC_BODY(socket_arm_connect_demand_and_coalesce, tc)
+{
+	struct kevent ev;
+	struct timespec ts = { 2, 0 };
+	uint16_t port;
+	int kq, client, n, listen_fd;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	reset_globals(kq);
+
+	sd.services = calloc(1, sizeof(*sd.services));
+	ATF_REQUIRE(sd.services != NULL);
+	runtime_init(&sd.services[0], "org.test/sockunit");
+	socket_spec_tcp_loopback(&sd.services[0].manifest.activation_sockets[0],
+	    "listen");
+	sd.services[0].manifest.nactivation_sockets = 1;
+	sd.nservices = 1;
+
+	activation_source_arm(&sd.services[0], kq);
+	listen_fd = sd.services[0].activation_listen_fds[0];
+	ATF_REQUIRE(listen_fd >= 0);
+	ATF_CHECK(fd_is_listening(listen_fd));
+	ATF_CHECK(activation_socket_owns(listen_fd));
+	ATF_CHECK_EQ(1U, sd.services[0].nactivation_listen);
+
+	/* Idempotent arm keeps the same listen fd. */
+	activation_source_arm(&sd.services[0], kq);
+	ATF_CHECK_EQ(listen_fd, sd.services[0].activation_listen_fds[0]);
+
+	port = fd_bound_port(listen_fd);
+	ATF_REQUIRE(port != 0);
+	client = connect_loopback(port);
+	ATF_REQUIRE_MSG(client >= 0, "connect failed: %s", strerror(errno));
+
+	/* The listener is now readable; the loop hands us the EVFILT_READ. */
+	n = kevent(kq, NULL, 0, &ev, 1, &ts);
+	ATF_REQUIRE_MSG(n == 1, "expected a readable event, got %d", n);
+	ATF_CHECK_EQ(EVFILT_READ, ev.filter);
+	ATF_CHECK_EQ((uintptr_t)listen_fd, ev.ident);
+	ATF_CHECK(activation_socket_owns((int)ev.ident));
+
+	activation_socket_event(&ev, kq);
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_EQ(&sd.services[0], last_launched);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+
+	/* A second readable event while starting coalesces (no new launch). */
+	activation_socket_event(&ev, kq);
+	ATF_CHECK_EQ(1, launch_calls);
+
+	/* We never accepted: the connection is still queued for the provider. */
+	ATF_CHECK(fd_is_listening(listen_fd));
+
+	(void)close(client);
+	activation_source_teardown(&sd.services[0], kq);
+	ATF_CHECK_EQ(-1, sd.services[0].activation_listen_fds[0]);
+	ATF_CHECK_EQ(0U, sd.services[0].nactivation_listen);
+
+	free(sd.services);
+	sd.services = NULL;
+	sd.nservices = 0;
+	(void)close(kq);
+}
+
+/*
+ * A provider stop/restart must not disturb the manager-owned listener: only
+ * activation_source_teardown (unit removal) closes it.  Simulate the provider
+ * exiting (state back to STOPPED) and assert the listen fd is unchanged, still
+ * listening, and a second connect re-arms demand on the very same descriptor.
+ */
+ATF_TC(socket_restart_preserves_listener);
+ATF_TC_HEAD(socket_restart_preserves_listener, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a provider stop/restart leaves the listen fd open and listening; "
+	    "only teardown retires it, so a queued connection is never dropped");
+}
+ATF_TC_BODY(socket_restart_preserves_listener, tc)
+{
+	struct kevent ev;
+	struct timespec ts = { 2, 0 };
+	uint16_t port;
+	int kq, client, n, listen_fd;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	reset_globals(kq);
+
+	sd.services = calloc(1, sizeof(*sd.services));
+	ATF_REQUIRE(sd.services != NULL);
+	runtime_init(&sd.services[0], "org.test/sockunit");
+	socket_spec_tcp_loopback(&sd.services[0].manifest.activation_sockets[0],
+	    "listen");
+	sd.services[0].manifest.nactivation_sockets = 1;
+	sd.nservices = 1;
+
+	activation_source_arm(&sd.services[0], kq);
+	listen_fd = sd.services[0].activation_listen_fds[0];
+	ATF_REQUIRE(listen_fd >= 0);
+	port = fd_bound_port(listen_fd);
+
+	/* First demand cycle. */
+	client = connect_loopback(port);
+	ATF_REQUIRE(client >= 0);
+	n = kevent(kq, NULL, 0, &ev, 1, &ts);
+	ATF_REQUIRE_EQ(1, n);
+	activation_socket_event(&ev, kq);
+	ATF_CHECK_EQ(1, launch_calls);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, sd.services[0].state);
+	(void)close(client);
+
+	/*
+	 * Provider exits: mirror svc_close_fds() which deliberately does NOT
+	 * touch activation_listen_fds.  The listener fd and its registration
+	 * must survive untouched.
+	 */
+	sd.services[0].state = SVC_STATE_STOPPED;
+	ATF_CHECK_EQ(listen_fd, sd.services[0].activation_listen_fds[0]);
+	ATF_CHECK(fd_is_listening(listen_fd));
+
+	/* Re-arm is idempotent (does not replace the live listener). */
+	activation_source_arm(&sd.services[0], kq);
+	ATF_CHECK_EQ(listen_fd, sd.services[0].activation_listen_fds[0]);
+
+	/* A fresh connection re-creates demand on the same descriptor. */
+	client = connect_loopback(port);
+	ATF_REQUIRE(client >= 0);
+	n = kevent(kq, NULL, 0, &ev, 1, &ts);
+	ATF_REQUIRE_EQ(1, n);
+	ATF_CHECK_EQ((uintptr_t)listen_fd, ev.ident);
+	activation_socket_event(&ev, kq);
+	ATF_CHECK_EQ(2, launch_calls);
+
+	(void)close(client);
+	activation_source_teardown(&sd.services[0], kq);
+	free(sd.services);
+	sd.services = NULL;
+	sd.nservices = 0;
+	(void)close(kq);
+}
+
+/*
+ * Two listeners on the same addr:port conflict: the second listener_create
+ * fails EADDRINUSE and is logged/skipped, while the first is unaffected.  A
+ * failed listener simply leaves its slot fd at -1 (arm is non-fatal).
+ */
+ATF_TC(socket_address_conflict_second_fails);
+ATF_TC_HEAD(socket_address_conflict_second_fails, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a second listener on an already-bound addr:port fails EADDRINUSE "
+	    "and is skipped; the first listener is unaffected");
+}
+ATF_TC_BODY(socket_address_conflict_second_fails, tc)
+{
+	struct svc_activation_socket spec;
+	uint16_t port;
+	int first, second;
+
+	/* Bind the first listener on an ephemeral port and pin it. */
+	socket_spec_tcp_loopback(&spec, "a");
+	first = listener_create(&spec);
+	ATF_REQUIRE(first >= 0);
+	port = fd_bound_port(first);
+	ATF_REQUIRE(port != 0);
+
+	/* A second create on the SAME concrete addr:port must fail EADDRINUSE
+	 * (SO_REUSEADDR does not permit stealing an active listener). */
+	spec.port = port;
+	errno = 0;
+	second = listener_create(&spec);
+	ATF_CHECK_EQ(-1, second);
+	ATF_CHECK_EQ(EADDRINUSE, errno);
+
+	/* First listener is unaffected. */
+	ATF_CHECK(fd_is_listening(first));
+	ATF_CHECK_EQ(port, fd_bound_port(first));
+
+	(void)close(first);
+}
+
+/*
+ * activation_register_all() creates a stopped slot for a socket-only unit that
+ * startup never launched, and arms its listener.
+ */
+ATF_TC(register_all_creates_socket_slot);
+ATF_TC_HEAD(register_all_creates_socket_slot, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "register_all allocates a stopped slot for a socket-only unit and "
+	    "arms its listener");
+}
+ATF_TC_BODY(register_all_creates_socket_slot, tc)
+{
+	struct capbundle_service *cs;
+	int kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	reset_globals(kq);
+
+	sd.services = calloc(SERVICED_MAX_SERVICES, sizeof(*sd.services));
+	ATF_REQUIRE(sd.services != NULL);
+	sd.nservices = 0;
+
+	memset(&reg_bundle, 0, sizeof(reg_bundle));
+	strlcpy(reg_bundle.bundle_id, "org.test.sock",
+	    sizeof(reg_bundle.bundle_id));
+	reg_bundle.nservices = 1;
+	cs = &reg_bundle.services[0];
+	strlcpy(cs->label, "org.test.sock/listener", sizeof(cs->label));
+	strlcpy(cs->program, "/dev/null", sizeof(cs->program));
+	socket_spec_tcp_loopback(&cs->activation_sockets[0], "listen");
+	cs->nactivation_sockets = 1;
+	reg_present = true;
+
+	ATF_CHECK_EQ(0, activation_register_all(kq));
+	ATF_CHECK_EQ(1, sd.nservices);
+	ATF_CHECK_STREQ("org.test.sock/listener",
+	    sd.services[0].manifest.label);
+	ATF_CHECK_EQ(SVC_STATE_STOPPED, sd.services[0].state);
+	ATF_CHECK(sd.services[0].activation_listen_fds[0] >= 0);
+	ATF_CHECK(fd_is_listening(sd.services[0].activation_listen_fds[0]));
+
+	activation_source_teardown(&sd.services[0], kq);
+	free(sd.services);
+	sd.services = NULL;
+	sd.nservices = 0;
+	(void)close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -417,6 +766,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, path_arm_write_and_teardown);
 	ATF_TP_ADD_TC(tp, path_delete_reopen_and_drop);
 	ATF_TP_ADD_TC(tp, register_all_creates_slot);
+	ATF_TP_ADD_TC(tp, socket_listener_create_binds_and_listens);
+	ATF_TP_ADD_TC(tp, socket_arm_connect_demand_and_coalesce);
+	ATF_TP_ADD_TC(tp, socket_restart_preserves_listener);
+	ATF_TP_ADD_TC(tp, socket_address_conflict_second_fails);
+	ATF_TP_ADD_TC(tp, register_all_creates_socket_slot);
 
 	return (atf_no_error());
 }

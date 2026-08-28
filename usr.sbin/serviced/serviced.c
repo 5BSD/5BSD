@@ -155,6 +155,19 @@ event_loop(void)
 			}
 
 			/*
+			 * Socket activation sources — manager-owned listeners.
+			 * Checked before the generic EVFILT_READ channel handling
+			 * so a listen fd (armed with udata=svc) is routed by fd
+			 * ownership and never mistaken for a control/channel fd;
+			 * the two fd sets are disjoint.
+			 */
+			if (kev->filter == EVFILT_READ &&
+			    activation_socket_owns((int)kev->ident)) {
+				activation_socket_event(kev, serviced_kq);
+				continue;
+			}
+
+			/*
 			 * Restart, stop-kill, on-demand, launch, and periodic
 			 * activation timers.
 			 */

@@ -59,6 +59,15 @@ struct capbundle_service {
 	 */
 	unsigned timer_interval_sec;
 	char	activation_path[PATH_MAX];
+	/*
+	 * Socket activation sources (Phase 4).  serviced binds and holds each
+	 * listening socket and delivers it to this unit by logical name; the
+	 * first inbound connection is the demand that launches the unit.
+	 * nactivation_sockets == 0 = no socket source.
+	 */
+	struct svc_activation_socket
+		activation_sockets[SERVICED_MAX_ACTIVATION_SOCKETS];
+	unsigned nactivation_sockets;
 	struct serviced_component components[SERVICED_MAX_COMPONENTS];
 	unsigned ncomponents;
 	int	restart;

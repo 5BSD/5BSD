@@ -1,0 +1,33 @@
+# Unit.ucl example: a greeter service activated by an inbound connection.
+#
+# serviced itself binds and listen(2)s the declared socket and HOLDS it open —
+# the listener is owned by the manager, not by the provider, and deliberately
+# not minted through the network broker (that broker is itself an on-demand
+# service, so requiring it to create serviced's own boot listeners would be a
+# chicken-and-egg hazard).  The first inbound connection makes the listener
+# readable, which is the demand that launches this unit exactly as a lookup
+# would.
+#
+# Because serviced keeps its own copy of the listen fd across the unit's start,
+# stop, idle-stop, and restart cycles, a queued connection is NEVER dropped: a
+# crash or idle shutdown leaves the backlog intact for the next launch.  The
+# listener is delivered to the launched process as a bootstrap capability of
+# type "socket" under its logical `name`; retrieve it with
+# service_activation_socket("listen") and accept(2) on it.  libservice retains
+# ownership of the descriptor, so do not close it.
+arguments = ["--accept"];
+
+activation {
+    # serviced binds+listens tcp/127.0.0.1:9000 and delivers it as "listen".
+    # A single object is shown here; an array of objects declares several
+    # listeners for one unit.  Accepted listen forms:
+    #   tcp:ADDR:PORT  tcp6:ADDR:PORT  udp:ADDR:PORT  udp6:ADDR:PORT
+    #   unix:/abs/path
+    # ADDR may be "*" or empty for any address.  backlog defaults to 128.
+    socket = { name = "listen"; listen = "tcp:127.0.0.1:9000"; backlog = 128; }
+}
+
+# A restart-on-failure resident service: if it crashes, serviced relaunches it
+# and re-delivers the same held listener with its backlog untouched.
+restart = "on-failure";
+stop_timeout = 10;

@@ -13,6 +13,7 @@
 #include <sys/envfd.h>
 #include <sys/param.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 
 #include <dev/mac_capability/mac_capability_capprotect_proto.h>
@@ -193,6 +194,59 @@ service_capability_type_valid(const char *type)
 	return (true);
 }
 
+/*
+ * A socket-activation listener (Phase 4) is delivered under an arbitrary
+ * logical name rather than one of the fixed capability-service names, so it has
+ * its own conservative label charset: non-empty, bounded, [A-Za-z0-9._-].  This
+ * mirrors the manifest-side name validation so a name that parsed also passes
+ * here.
+ */
+static bool
+service_socket_name_valid(const char *name)
+{
+	const unsigned char *p;
+	size_t len;
+
+	if (name == NULL)
+		return (false);
+	len = strlen(name);
+	if (len == 0 || len >= SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX)
+		return (false);
+	for (p = (const unsigned char *)name; *p != '\0'; p++)
+		if (!((*p >= 'a' && *p <= 'z') || (*p >= 'A' && *p <= 'Z') ||
+		    (*p >= '0' && *p <= '9') || *p == '.' || *p == '_' ||
+		    *p == '-'))
+			return (false);
+	return (true);
+}
+
+/*
+ * Validate a delivered socket-activation descriptor.  Unlike a capability
+ * descriptor it carries no capability_info, so it is checked structurally: it
+ * must be a socket whose type is SOCK_STREAM (and then listening, per
+ * SO_ACCEPTCONN) or SOCK_DGRAM.  This is the socket analogue of
+ * service_directory_descriptor_valid().
+ */
+static bool
+service_socket_descriptor_valid(int fd)
+{
+	socklen_t len;
+	int type, accepting;
+
+	len = sizeof(type);
+	if (getsockopt(fd, SOL_SOCKET, SO_TYPE, &type, &len) == -1 ||
+	    len != sizeof(type))
+		return (false);
+	if (type == SOCK_STREAM) {
+		len = sizeof(accepting);
+		if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, &accepting,
+		    &len) == -1)
+			return (false);
+		return (accepting != 0);
+	}
+	return (type == SOCK_DGRAM);
+}
+
 static bool
 service_directory_descriptor_valid(int fd)
 {
@@ -304,19 +358,28 @@ parse_service_bootstrap(void)
 		goto fail_storage;
 	}
 	for (i = 0; i < bootstrap->ncapabilities; i++, expected_fd++) {
+		const char *cname = bootstrap->capabilities[i].name;
+		const char *ctype = bootstrap->capabilities[i].type;
+
 		if (bootstrap->capabilities[i].fd != expected_fd ||
 		    bootstrap->capabilities[i].reserved != 0 ||
-		    strnlen(bootstrap->capabilities[i].name,
-		    SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX) ==
+		    strnlen(cname, SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX) ==
 		    SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX ||
-		    !zero_padded_string(bootstrap->capabilities[i].name,
+		    !zero_padded_string(cname,
 		    sizeof(bootstrap->capabilities[i].name), false) ||
-		    !service_capability_name_valid(
-		    bootstrap->capabilities[i].name) ||
-		    !zero_padded_string(bootstrap->capabilities[i].type,
+		    !zero_padded_string(ctype,
 		    sizeof(bootstrap->capabilities[i].type), false) ||
-		    !service_capability_type_valid(
-		    bootstrap->capabilities[i].type))
+		    !service_capability_type_valid(ctype))
+			goto protocol;
+		/*
+		 * A socket-activation listener carries an arbitrary logical
+		 * name, not one of the fixed capability-service names, so
+		 * validate it against the looser logical-name charset.
+		 */
+		if (strcmp(ctype, "socket") == 0) {
+			if (!service_socket_name_valid(cname))
+				goto protocol;
+		} else if (!service_capability_name_valid(cname))
 			goto protocol;
 		for (j = 0; j < i; j++)
 			if (strcmp(bootstrap->capabilities[i].name,
@@ -358,6 +421,11 @@ parse_service_bootstrap(void)
 			goto invalid_descriptor;
 		if (strcmp(bootstrap->capabilities[i].type, "directory") == 0) {
 			if (!service_directory_descriptor_valid(
+			    bootstrap->capabilities[i].fd))
+				goto invalid_descriptor;
+		} else if (strcmp(bootstrap->capabilities[i].type,
+		    "socket") == 0) {
+			if (!service_socket_descriptor_valid(
 			    bootstrap->capabilities[i].fd))
 				goto invalid_descriptor;
 		} else {
@@ -1552,6 +1620,33 @@ service_capability_open(struct service_context *context, const char *name,
 			return (-1);
 		*fdp = fd;
 		return (0);
+	}
+	errno = ENOENT;
+	return (-1);
+}
+
+/*
+ * Return the manager-owned socket-activation listener delivered under the given
+ * logical name (Phase 4), or -1 with errno set to ENOENT when the process was
+ * not launched with such a listener.  The returned descriptor is owned by
+ * libservice and stays valid for the life of the process; the caller accepts(2)
+ * or receives on it but must not close it.  EINVAL is returned for a malformed
+ * name.
+ */
+int
+service_activation_socket(const char *name)
+{
+	unsigned i;
+
+	if (name == NULL || !service_socket_name_valid(name)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	for (i = 0; i < ncapability_fds; i++) {
+		if (strcmp(capability_fds[i].type, "socket") != 0)
+			continue;
+		if (strcmp(capability_fds[i].name, name) == 0)
+			return (capability_fds[i].fd);
 	}
 	errno = ENOENT;
 	return (-1);

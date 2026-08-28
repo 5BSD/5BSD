@@ -73,6 +73,16 @@ unsigned	 capbundle_svc_nprovides(const struct capbundle_service *s);
 unsigned	 capbundle_svc_timer_interval(const struct capbundle_service *s);
 const char	*capbundle_svc_activation_path(
 		    const struct capbundle_service *s);
+/*
+ * Socket activation sources (Phase 4).  serviced binds and holds each listening
+ * socket and delivers it to the unit by logical name.  Returns 0/NULL for a
+ * NULL service or out-of-range index.
+ */
+struct svc_activation_socket;
+unsigned	 capbundle_svc_nactivation_sockets(
+		    const struct capbundle_service *s);
+const struct svc_activation_socket *capbundle_svc_activation_socket(
+		    const struct capbundle_service *s, unsigned i);
 const char	*capbundle_svc_provides(const struct capbundle_service *s,
 		    unsigned idx);
 unsigned	 capbundle_svc_narguments(const struct capbundle_service *s);
