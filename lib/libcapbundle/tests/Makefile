@@ -30,7 +30,6 @@ CFLAGS.storage_key_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.storage_key_test+=	-I${SRCTOP}/lib/liboraclert
 LIBADD.storage_key_test+=	capbundle
 LDFLAGS.storage_key_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
-ATF_TESTS_SH_SED_capbundle_format_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 
 SCRIPTS+=	servicectl
 SCRIPTSDIR_servicectl=	${TESTSDIR}

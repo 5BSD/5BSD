@@ -1,5 +1,15 @@
 #!/usr/libexec/atf-sh
 
+# These cases assert source- and object-tree contracts (grep the daemon
+# sources, syscall tables and DTrace providers; inspect the built binary).
+# Those trees are absent on an installed system, so skip cleanly there rather
+# than failing on missing files.
+require_srctree()
+{
+	test -d "@SRCTOP@" ||
+	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+}
+
 atf_test_case manifest cleanup
 manifest_head()
 {
@@ -61,6 +71,7 @@ observability_contract_head()
 }
 observability_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/localfilesystem/filesystemcmp.c"
 	provider="@SRCTOP@/usr.sbin/localfilesystem/localfilesystem_provider.d"
 
@@ -80,6 +91,7 @@ observability_contract_body()
 }
 provider_security_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/localfilesystem/filesystemcmp.c"
 
 	atf_check -s exit:0 -o match:'SERVICE_PROTECT_NOFORK' \

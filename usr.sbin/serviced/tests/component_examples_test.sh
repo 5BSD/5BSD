@@ -1,5 +1,11 @@
 #!/usr/libexec/atf-sh
 
+require_srctree()
+{
+	test -d "@SRCTOP@" ||
+	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+}
+
 atf_test_case examples_verify cleanup
 examples_verify_head()
 {
@@ -101,6 +107,7 @@ pkgbase_default_identity_head()
 }
 pkgbase_default_identity_body()
 {
+	require_srctree
 	src="@SRCTOP@"
 
 	passwd_line=$(awk -F: '$1 == "capability" { print; n++ }
@@ -184,6 +191,7 @@ pkgbase_component_metadata_head()
 }
 pkgbase_component_metadata_body()
 {
+	require_srctree
 	src="@SRCTOP@"
 
 	for package in auditbrokerd auditbrokerd-tests \
@@ -505,6 +513,7 @@ component_selector_contract_head()
 }
 component_selector_contract_body()
 {
+	require_srctree
 	src="@SRCTOP@"
 
 	atf_check -s exit:1 -o empty -e empty \
@@ -566,6 +575,7 @@ operational_name_contract_head()
 }
 operational_name_contract_body()
 {
+	require_srctree
 	src="@SRCTOP@"
 	rcscript="${src}/libexec/rc/rc.d/oracled"
 	rcconf="${src}/libexec/rc/rc.conf"
@@ -643,6 +653,7 @@ typed_header_boundaries_head()
 }
 typed_header_boundaries_body()
 {
+	require_srctree
 	src="@SRCTOP@"
 
 	for library in filesystemcmp networkcmp logcmp notify tracecmp \
@@ -670,6 +681,7 @@ typed_header_boundaries_body()
 }
 serviced_channel_layering_body()
 {
+	require_srctree
 	src="@SRCTOP@"
 	manager="${src}/usr.sbin/serviced"
 

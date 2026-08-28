@@ -1,5 +1,15 @@
 #!/usr/libexec/atf-sh
 
+# These cases assert source- and object-tree contracts (grep the daemon
+# sources, syscall tables and DTrace providers; inspect the built binary).
+# Those trees are absent on an installed system, so skip cleanly there rather
+# than failing on missing files.
+require_srctree()
+{
+	test -d "@SRCTOP@" ||
+	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+}
+
 atf_test_case manifest cleanup
 manifest_head()
 {
@@ -7,6 +17,7 @@ manifest_head()
 }
 manifest_body()
 {
+	require_srctree
 	srcdir="@SRCTOP@/usr.sbin/localnetwork"
 	objdir="@OBJTOP@/usr.sbin/localnetwork"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
@@ -61,6 +72,7 @@ observability_contract_head()
 }
 observability_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
 	provider="@SRCTOP@/usr.sbin/localnetwork/localnetwork_provider.d"
 
@@ -81,6 +93,7 @@ observability_contract_body()
 }
 kernel_security_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
 
 	atf_check -s exit:0 -o match:'NETWORKCMP_FEATURE_DNS' \

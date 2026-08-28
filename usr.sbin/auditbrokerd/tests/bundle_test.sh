@@ -1,5 +1,15 @@
 #!/usr/libexec/atf-sh
 
+# These cases assert source- and object-tree contracts (grep the daemon
+# sources, syscall tables and DTrace providers; inspect the built binary).
+# Those trees are absent on an installed system, so skip cleanly there rather
+# than failing on missing files.
+require_srctree()
+{
+	test -d "@SRCTOP@" ||
+	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+}
+
 atf_test_case manifest
 manifest_body()
 {
@@ -26,6 +36,7 @@ manifest_body()
 atf_test_case security_contract
 security_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
 	manifest="@SRCTOP@/usr.sbin/auditbrokerd/capbundle/auditbrokerd.ucl"
 	syscalls="@SRCTOP@/sys/kern/syscalls.master"
@@ -59,6 +70,7 @@ security_contract_body()
 atf_test_case observability_contract
 observability_contract_body()
 {
+	require_srctree
 	provider="@SRCTOP@/usr.sbin/auditbrokerd/auditbrokerd_provider.d"
 	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
 	for probe in session submit reject; do
@@ -73,6 +85,7 @@ observability_contract_body()
 atf_test_case bounded_worker_lifecycle
 bounded_worker_lifecycle_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
 	for token in AUDITCMP_MAX_WORKERS EVFILT_PROCDESC NOTE_EXIT \
 	    service_provider_quiescing service_provider_quiesce_complete \

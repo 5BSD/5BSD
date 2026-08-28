@@ -46,6 +46,37 @@ descriptor-based rather than ambient.
   `service <name> onestart|onestop`; the rest keep running under the `/etc/rc`
   shim.
 
+## 2a. The injection surface — base software we modified to take over
+
+The plane "takes over" the machine by **injecting an ambient lookup channel into
+every process's descriptor table** and re-scoping it at each privilege/identity
+boundary. That required patching a specific, security-critical set of base and
+third-party programs — PID 1 and the login/session entry points. This inventory
+**is** the takeover surface; record it deliberately, because these are the base
+programs a downstream merge (or a FreeBSD rebase) must carry forward or the plane
+silently stops reaching sessions. Every patch is **strictly non-fatal** (invariant
+§4.5): a failure degrades to "no channel," never blocks boot/login.
+
+| Program | Files | What the patch injects | Why it's core to takeover |
+|---|---|---|---|
+| **oracle-init (PID 1)** | `usr.sbin/oracled/oracle_init.c`, `oracle_proto.c`, `oracle_init.h`, `Makefile` | Receives the ambient channel from serviced (`ORACLE_OP_SET_AMBIENT_LOOKUP`); spawns the console getty with the channel on fixed fd 3. | Root of the carry chain — every init-spawned login inherits the channel from here. Nothing downstream has a channel without it. |
+| **login** | `usr.bin/login/login.c`, `Makefile` | Carries the inherited channel into the user shell; fd-hygiene (closefrom / unset on the uid transition). | The console→user handoff; establishes the interactive session's authority. |
+| **su** | `usr.bin/su/su.c`, `Makefile` | Mints a per-target-uid–narrowed channel; fd-hygiene on the uid transition. | Identity change must re-scope authority (root→user narrows; the SYSTEM channel must not leak down). |
+| **sshd (OpenSSH)** | `crypto/openssh/{monitor.c,monitor.h,monitor_wrap.c,monitor_wrap.h,session.c}`, `secure/libexec/sshd-{session,auth}/Makefile` | The privileged monitor provisions a session channel for the **authenticated** uid and fd-passes it to the already-dropped child (`MONITOR_REQ_PROVISION`, pty pattern). | Remote login is the other entry point; privsep means only the root monitor may safely mint for the target uid. |
+| **cron** | `usr.sbin/cron/cron/do_command.c` | fd-hygiene: closefrom + unset `SERVICE_LOOKUP_FD` before running a user's job. | Batch entry point crossing into a user context; must not leak the SYSTEM channel. |
+| **atrun** | `libexec/atrun/atrun.c`, `Makefile` | Same fd-hygiene for `at` jobs. | Second batch entry point crossing into a user context. |
+
+**Not patched, inherit-only:** `getty` execs `login` and passes fd 3 through by
+plain inheritance — no code change needed. Recorded so a future reader doesn't hunt
+for a getty patch that doesn't exist.
+
+**Shared mechanism:** the channel is an unforgeable `mac_capability` descriptor at a
+fixed fd (`SERVICE_LOOKUP_FIXED_FD=3`), inherited like stdio; the D1
+`SVC_OP_AMBIENT_HELLO` handshake lets a receiver confirm fd 3 really is a lookup
+channel (not a stray unit control channel). The `Makefile` edits (each adds
+`LIBADD+= service`) are themselves part of the surface — they record which base
+programs now link the plane.
+
 ## 3. Commit-by-commit (oldest → newest)
 
 | Commit | What / why |
@@ -110,14 +141,83 @@ the ambient probe, and bounds/validation gaps in the wire protocols
   service_ambient, etc.), built `-Werror`. **Many device-gated cases (needing
   `/dev/mac_capability`) have never actually RUN** — no kyua harness stood up; they
   pass device-free or skip.
-- **NOT yet representative of a real install** (in progress, task #35): the VM is
-  built via `installworld` + custom oracle-init staging + test conveniences
-  (autologin root, empty root password, `SSH_TEST` hacks), NOT via **pkgbase**
-  (`pkg -r <root> install`, the real mechanism). A fresh-install harness is being
-  built to prove a genuine install boots the plane and passes kyua. **Finding
-  already surfaced**: the capability plane is NOT a dependency of `base`/`runtime`
-  — it is an opt-in set of `5BSD-*` packages, so a *default* install boots plain
-  `/sbin/init`, not the plane.
+- **Packaging correctness — AUDITED (pass), 2026-08-28.** The built `5BSD-*`
+  packages were inspected directly (`pkg info -F`, no repo/root needed):
+  - `5BSD-oracled` ships the boot integration a fresh install needs —
+    `/boot/loader.conf.d/oracle-init.conf` (the `init_path` snippet), `/sbin/oracle-init`,
+    `/usr/sbin/oracled`, the de-isolated `/etc/oracled.conf` — deps `serviced` +
+    `libcapability` + `liboraclert`.
+  - The injection surface is packaged correctly: patched `5BSD-ssh` declares
+    `libservice.so.2` as a **required shlib**, so an install auto-pulls `5BSD-libservice`.
+    `servicectl` is its own package.
+  - All 8 capability bundles ship under `/Capabilities/System/*.cap/` (Bundle.ucl +
+    Unit.ucl + bin): Audit, Blued, BsdNotify, Crypto, LocalFilesystem, LocalNetwork,
+    Log, Trace.
+  - **`5BSD-set-minimal` is the plane metapackage** — pulls oracled + serviced + the
+    7 system components + syslogd. `Blued` is in `set-optional`. Opt-in is at the
+    *set* level: `set-base` boots plain `/sbin/init`; `set-minimal` boots the plane.
+- **Boot-from-pkgbase-install — PROVEN, 2026-08-28.** A real `pkg`-installed root
+  was built and booted (`pkg-static repo` + `pkg -r /mnt install 5BSD-set-minimal
+  5BSD-kernel-vbsd 5BSD-ssh` run **inside a native VM** — the session jail can't run
+  `pkg repo`, see [[pkg-in-jail-limits]]), configured with a **real root password,
+  a normal user, no autologin/SSH_TEST hacks**, then booted standalone:
+  - `oracle-init` is PID 1 (from the package); serviced came up; **6/7 system
+    components running** (bsdnotify, auditbrokerd, localfilesystem, localcrypto,
+    localnetwork, traced); ambient lookup channel installed for logins.
+  - **Real console login** (password auth) works; the session gets
+    `SERVICE_LOOKUP_FD=6`.
+  - **Non-root ssh login** works; the monitor provisions the ambient channel to the
+    session (`SERVICE_LOOKUP_FD=3`, uid=1001) — the #28/#33 fix, on a real install.
+  - `servicectl status` works over the ambient channel in both sessions.
+  - **Real findings surfaced by the fresh install** (would never appear in the
+    installworld-staged VM): (1) *task #37* — packages don't preload the
+    `mac_capability` module stack, so a pure install falls back to `/sbin/init`
+    (no plane); the loader snippet must ship in a package. (2) `logd` fails
+    (`cannot load managed configuration`) — stays stopped; likely chains from
+    `tzfsd` needing a ZFS `zroot` that a UFS install lacks. (3) `cron` (rc-adopted)
+    shows stopped in the plane on a fresh UFS boot. Findings (2)/(3) filed.
+- **kyua on the fresh install — RUN 2026-08-28** (installed the full `-tests` set +
+  `5BSD-kyua`, ran on the booted plane). Per-suite passed/failed/skipped:
+  serviced 71/7/87 · oracled 30/8/41 · servicectl 19/0/6 · logd 51/7/1 ·
+  localnetwork 4/10/1 · auditbrokerd 10/6/1 · libservice 8/9/15 · libcapability
+  3/2/0 · libcapbundle 36/20/0 · liboraclert 7/7 (all pass). Two failure classes,
+  **neither a plane runtime bug** (boot/login/ssh/servicectl all proven working):
+  1. **Device-gated tests can't run on a booted plane** (the dominant bucket — 87
+     serviced skips, most localnetwork/libservice/libcapbundle failures). The MAC
+     policy denies *all* direct `open("/dev/mac_capability")` — even `ls -l` on it is
+     `Permission denied`; capability access is only via inherited **channels**
+     (`fstat` shows `mac_capability:channel[5]`, never a device fd). The tests try to
+     open the device directly, so they EPERM/skip. They need either a test-only
+     device mode / pre-plane single-user run, or to be rewritten to acquire capability
+     via an inherited channel like real programs do. **This is why the "device-gated
+     cases have never actually RUN" — on a live plane they architecturally can't.**
+  2. **Contract/metadata tests assume a source/build-tree layout**, not a
+     pkgbase-installed `/usr/tests`: e.g. `pkgbase_default_identity` fails
+     "capability must occur exactly once in master.passwd" although the system is
+     correct (`grep -c '^capability:' /etc/master.passwd` == 1, uid 976); likewise
+     "missing pkgbase metadata for auditbrokerd" / "missing filesystemcmp server
+     header". Test-environment assumptions, not product defects.
+  Device-independent suites largely pass (servicectl 19/25, liboraclert 7/7, logd
+  51/59, serviced's 71 non-device cases). Filed as test-harness work.
+- **Fixes landed + VALIDATED live, 2026-08-28** (task #39):
+  - **A — permissive test mode**: `mac_capability_isolation.c` gains a boot-only
+    `kern.mac_capability_isolation.enforce` tunable (`CTLFLAG_RDTUN`, default 1). At
+    `enforce=0` the 8 resource-access denials are traced-but-allowed via a `fi_deny()`
+    helper; the 3 ownership denials (release/mint/jail-claim wrong-nonce) stay hard.
+    Built the module, booted the fresh-install target with `enforce=0`: `ls -l
+    /dev/mac_capability` now succeeds (was `Permission denied`), and the serviced
+    suite's **device-skips went 87 → 0** — the tests now execute. The live plane
+    stays healthy under `enforce=0`. **Caveat**: tests that spin up their *own* full
+    `oracled` (bootstrap cases) still can't run against a live PID 1 plane (it owns
+    the isolation service) — those need a plane-free run (single-user, or a test image
+    that doesn't launch the plane); `enforce=0` is necessary, not sufficient, for them.
+  - **B/C — test portability**: functional `libcapbundle/capbundle_format_test.sh`
+    now uses the co-located `servicectl` helper (installed `/usr/sbin/servicectl`
+    fallback); the 7 component `bundle_test.sh` + serviced `component_examples_test.sh`
+    got a `require_srctree` guard so source-contract cases **skip cleanly** off-tree.
+    Validated on the target: auditbrokerd `bundle_test` now **0 failed / 4 skipped**
+    (was 3 failed), skipping with "source tree (/usr/src) required for contract
+    checks". All 10 edited scripts pass `sh -n`.
 
 So: a reviewer should trust the *runtime behavior* but treat *install-path* and
 *device-gated test* claims as not-yet-proven.

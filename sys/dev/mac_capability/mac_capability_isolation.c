@@ -221,6 +221,19 @@ static volatile u_int		 fi_auth_count;
 
 static u_int fi_max_auth = 4096;
 
+/*
+ * Enforcement mode.  1 (default) enforces isolation.  0 is permissive/test
+ * mode: every denial is still evaluated and traced through the DTrace deny
+ * probes, but resource-ACCESS denials are downgraded to "allow", so
+ * device-gated tests can open /dev/mac_capability and drive the plane
+ * directly.  Ownership/management denials (claim release, mint, jail-claim
+ * wrong-nonce) are NOT downgraded -- permissive access must never let a test
+ * tamper with another principal's claims.  Boot-only (CTLFLAG_RDTUN): a
+ * runtime compromise cannot flip it, and a test image opts in via
+ * kern.mac_capability_isolation.enforce=0 in loader.conf.
+ */
+static int fi_enforce = 1;
+
 SYSCTL_NODE(_kern, OID_AUTO, mac_capability_isolation,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability isolation");
 SYSCTL_UINT(_kern_mac_capability_isolation, OID_AUTO, max_auth, CTLFLAG_RDTUN,
@@ -229,6 +242,20 @@ SYSCTL_UINT(_kern_mac_capability_isolation, OID_AUTO, max_auth, CTLFLAG_RDTUN,
 SYSCTL_UINT(_kern_mac_capability_isolation, OID_AUTO, auth_count, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &fi_auth_count), 0,
     "Current number of authorization entries");
+SYSCTL_INT(_kern_mac_capability_isolation, OID_AUTO, enforce, CTLFLAG_RDTUN,
+    &fi_enforce, 1,
+    "Enforce isolation access denials (0 = permissive/test mode: trace but "
+    "allow resource access; ownership checks stay enforced)");
+
+/*
+ * Downgrade a resource-access denial to "allow" in permissive mode.  Callers
+ * emit the deny DTrace probe first, so the would-be denial stays observable.
+ */
+static __inline int
+fi_deny(int error)
+{
+	return (fi_enforce ? error : 0);
+}
 
 static LIST_HEAD(, fi_jail_claim) fi_jail_claims;
 static struct rwlock		 fi_jail_lock;
@@ -673,7 +700,7 @@ fi_check_vp_common(struct ucred *cred, struct vnode *vp,
 	SDT_PROBE5(mac_capability_isolation, , , deny__action, probe_name,
 	    owner_nonce, caller_nonce, claim_id, actions);
 	rw_runlock(&fi_lock);
-	return (EACCES);
+	return (fi_deny(EACCES));
 }
 
 /*
@@ -1344,7 +1371,7 @@ fi_net_check(struct ucred *cred, int domain, int protocol,
 			if (caller_nonce != 0)
 				rw_runlock(&fi_auth_lock);
 			rw_runlock(&fi_net_lock);
-			return (EACCES);
+			return (fi_deny(EACCES));
 		}
 	}
 
@@ -1461,7 +1488,7 @@ fi_check_socket_create(struct ucred *cred, int domain, int type __unused,
 		SDT_PROBE6(mac_capability_isolation, , , deny__net,
 		    denied_nonce, caller_nonce, denied_id, domain,
 		    ((uint32_t)protocol << 8) | FI_NET_ANY, 0);
-		return (EACCES);
+		return (fi_deny(EACCES));
 	}
 	return (0);
 }
@@ -1771,7 +1798,7 @@ fi_vsock_check(struct ucred *cred, struct sockaddr *sa, uint8_t direction)
 		    "vsock_connect"), denied_nonce, caller_nonce);
 		SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
 		    denied_nonce, caller_nonce, denied_id, cid, port, direction);
-		return (EACCES);
+		return (fi_deny(EACCES));
 	}
 	return (0);
 }
@@ -1847,7 +1874,7 @@ fi_vsock_check_create(struct ucred *cred)
 		SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
 		    denied_nonce, caller_nonce, denied_id, VSOCK_CID_ANY, 0,
 		    FI_NET_ANY);
-		return (EACCES);
+		return (fi_deny(EACCES));
 	}
 	return (0);
 }
@@ -1945,7 +1972,7 @@ remember_denial:
 	SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
 	    denied_nonce, caller_nonce, denied_id, cid, 0,
 	    FI_VSOCK_PROVIDER);
-	return (EACCES);
+	return (fi_deny(EACCES));
 }
 
 static int
@@ -2024,7 +2051,7 @@ remember_denial:
 	SDT_PROBE6(mac_capability_isolation, , , deny__vsock,
 	    denied_nonce, caller_nonce, denied_id, cid, 0,
 	    FI_VSOCK_PROVIDER);
-	return (EACCES);
+	return (fi_deny(EACCES));
 }
 
 /* ----------------------------------------------------------------
@@ -3547,7 +3574,7 @@ fi_check_jail_common(struct ucred *cred, int32_t jid, const char *name,
 		SDT_PROBE6(mac_capability_isolation, , , deny__jail,
 		    denied_nonce, caller_nonce, denied_id, jid, denied_name,
 		    actions);
-		return (EACCES);
+		return (fi_deny(EACCES));
 	}
 	return (0);
 }

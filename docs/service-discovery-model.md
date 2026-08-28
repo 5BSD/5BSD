@@ -110,6 +110,14 @@ Live breakage that motivates this: `su` currently EPERMs on the re-narrow and th
 target session loses the channel (fails safe). See §11 test matrix and the
 breakage-hunt findings.
 
+**Modified-software inventory (the takeover surface).** Injecting the channel
+required patching a specific set of base/third-party programs — PID 1 plus every
+login/session/batch entry point (`oracle-init`, `login`, `su`, `sshd`/OpenSSH,
+`cron`, `atrun`; `getty` inherits only). This set is exactly what a downstream
+merge or FreeBSD rebase must carry forward, or the plane silently stops reaching
+sessions. The per-program table (files touched, what each injects, why it's core)
+lives in [`service-plane-review-brief.md` §2a](service-plane-review-brief.md).
+
 ## 8. rc compatibility and covering service(8)
 
 - serviced **adopts rc.d services as `SVC_KIND_RC` units** (supervised;

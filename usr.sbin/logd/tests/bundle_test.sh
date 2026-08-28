@@ -1,5 +1,15 @@
 #!/usr/libexec/atf-sh
 
+# These cases assert source- and object-tree contracts (grep the daemon
+# sources, syscall tables and DTrace providers; inspect the built binary).
+# Those trees are absent on an installed system, so skip cleanly there rather
+# than failing on missing files.
+require_srctree()
+{
+	test -d "@SRCTOP@" ||
+	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+}
+
 atf_test_case manifest cleanup
 manifest_head()
 {
@@ -58,6 +68,7 @@ bounded_pool_contract_head()
 }
 bounded_pool_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/logd/logcmp.c"
 	config="@SRCTOP@/usr.sbin/logd/capbundle/logd.conf"
 	for token in pool_worker dispatch_to_pool logcmp_storage_attach_pool \
@@ -71,6 +82,7 @@ bounded_pool_contract_body()
 }
 observability_contract_body()
 {
+	require_srctree
 	provider="@SRCTOP@/usr.sbin/logd/logd_provider.d"
 	client="@SRCTOP@/lib/liblogcmp/logcmp_provider.d"
 	for probe in pool__start pool__admit pool__shutdown session__start session__end record__write record__drop wakeup__receive \
@@ -94,6 +106,7 @@ observability_contract_body()
 }
 security_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/logd/logcmp.c"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOSOCK \

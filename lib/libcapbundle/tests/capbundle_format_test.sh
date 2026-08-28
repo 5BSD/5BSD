@@ -5,9 +5,13 @@
 # Clean-break Bundle.ucl/Unit.ucl contract tests.  Each matrix row is an
 # independent parser invocation so one rejection cannot mask another.
 
-SERVICETCL="@OBJTOP@/usr.sbin/servicectl/servicectl"
-LD_LIBRARY_PATH="@OBJTOP@/lib/libcapbundle:@OBJTOP@/lib/liboraclert${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-export LD_LIBRARY_PATH
+# Resolve servicectl through the co-located helper, which uses the object-tree
+# binary when TEST_OBJTOP is set and otherwise the installed /usr/sbin one.  This
+# keeps the test runnable both in-tree and from an installed /usr/tests.
+servicetcl()
+{
+	"$(atf_get_srcdir)/servicectl" "$@"
+}
 
 setup_work()
 {
@@ -44,7 +48,7 @@ make_bundle()
 verify_ok()
 {
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    "$SERVICETCL" verify "$1"
+	    servicetcl verify "$1"
 }
 
 verify_bad()
@@ -52,7 +56,7 @@ verify_bad()
 	pattern=$1
 	shift
 	atf_check -s exit:1 -o ignore -e match:"$pattern" \
-	    "$SERVICETCL" verify "$1"
+	    servicetcl verify "$1"
 }
 
 cleanup_work()
@@ -73,7 +77,7 @@ valid_contract_body()
 	    -o match:'Sequence: 7' \
 	    -o match:'org.test.good/worker' \
 	    -o match:'activation: boot' \
-	    "$SERVICETCL" verify "$dir"
+	    servicetcl verify "$dir"
 }
 valid_contract_cleanup() { cleanup_work; }
 
@@ -89,24 +93,24 @@ protect_policy_body()
 	printf '%s\n' 'activation { boot = true; }
 protect = ["ptrace", "noprivs", "nofork"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x601' \
-	    "$SERVICETCL" verify "$dir"
+	    servicetcl verify "$dir"
 
 	# The "protect" group alias expands to the full outward set (0x1ff).
 	printf '%s\n' 'activation { boot = true; }
 protect = ["protect"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x1ff' \
-	    "$SERVICETCL" verify "$dir"
+	    servicetcl verify "$dir"
 
 	# Unknown flag names are ignored (still verifies), known ones still apply.
 	printf '%s\n' 'activation { boot = true; }
 protect = ["visible", "bogus"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x4' \
-	    "$SERVICETCL" verify "$dir"
+	    servicetcl verify "$dir"
 
 	# No protect stanza: nothing printed.
 	printf '%s\n' 'activation { boot = true; }' > "$unit"
 	atf_check -s exit:0 -o not-match:'protect:' \
-	    "$SERVICETCL" verify "$dir"
+	    servicetcl verify "$dir"
 }
 protect_policy_cleanup() { cleanup_work; }
 
@@ -324,7 +328,7 @@ multi_unit_order_body()
 	    -o match:'org.test.multi/gamma' \
 	    -o match:'org.test.multi/alpha' \
 	    -o match:'org.test.multi/beta' \
-	    "$SERVICETCL" verify "$dir"
+	    servicetcl verify "$dir"
 }
 multi_unit_order_cleanup() { cleanup_work; }
 
@@ -339,7 +343,7 @@ storage_contract_body()
 		    "storage = [{ name = \"data\"; scope = \"unit\"; rights = [\"mount\", \"props_read\"]; lifetime = \"$lifetime\"; }];" > \
 		    "$dir/Units/worker.unit/Unit.ucl"
 		atf_check -s exit:0 -o match:"lifetime=$lifetime scope=unit dataset=u-[0-9a-f]{48}" \
-		    "$SERVICETCL" verify "$dir"
+		    servicetcl verify "$dir"
 	done
 	for lifetime in persistent cache boot lease; do
 		dir=$(make_bundle "shared-$lifetime")
@@ -349,7 +353,7 @@ storage_contract_body()
 		    'storage = [{ name = "data"; scope = "shared"; rights = "mount"; }];' > \
 		    "$dir/Units/worker.unit/Unit.ucl"
 		atf_check -s exit:0 -o match:"flavor=native.*lifetime=$lifetime scope=shared dataset=s-[0-9a-f]{48}" \
-		    "$SERVICETCL" verify "$dir"
+		    servicetcl verify "$dir"
 	done
 }
 storage_contract_cleanup() { cleanup_work; }
@@ -419,7 +423,7 @@ descriptor_contract_body()
 	}
 	EOF
 	atf_check -s exit:0 -o save:descriptor.out \
-	    "$SERVICETCL" verify "$dir"
+	    servicetcl verify "$dir"
 	for expected in \
 	    'descriptor: filesystem storage=data' \
 	    'descriptor: network' \
@@ -539,7 +543,7 @@ capability_contract_body()
 	    -o match:'paths=2 files=2 network=3 jails=3 vsock=1 services=4' \
 	    -o match:'network: domain=bluetooth protocol=l2cap' \
 	    -o match:'vsock: cid=3 ports=1024-2048 direction=connect' \
-	    "$SERVICETCL" verify "$dir"
+	    servicetcl verify "$dir"
 }
 capability_contract_cleanup() { cleanup_work; }
 

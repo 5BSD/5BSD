@@ -1,5 +1,15 @@
 #!/usr/libexec/atf-sh
 
+# These cases assert source- and object-tree contracts (grep the daemon
+# sources, syscall tables and DTrace providers; inspect the built binary).
+# Those trees are absent on an installed system, so skip cleanly there rather
+# than failing on missing files.
+require_srctree()
+{
+	test -d "@SRCTOP@" ||
+	    atf_skip "source tree (@SRCTOP@) required for contract checks"
+}
+
 atf_test_case manifest cleanup
 manifest_head()
 {
@@ -7,6 +17,7 @@ manifest_head()
 }
 manifest_body()
 {
+	require_srctree
 	srcdir="@SRCTOP@/usr.sbin/bsdnotify"
 	objdir="@OBJTOP@/usr.sbin/bsdnotify"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
@@ -44,6 +55,7 @@ security_contract_head()
 }
 security_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	for token in cap_enter SERVICE_PROTECT_NOFDRECV CAP_XFER_ONCE \
 	    auditcmp_client_prepare auditcmp_client_adopt auditcmp_submit \
@@ -75,6 +87,7 @@ observability_contract_head()
 }
 observability_contract_body()
 {
+	require_srctree
 	provider="@SRCTOP@/lib/libnotify/notify_provider.d"
 	source="@SRCTOP@/lib/libnotify/notify.c"
 	daemon_provider="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify_provider.d"
@@ -101,6 +114,7 @@ observability_contract_body()
 }
 router_async_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'ROUTER_MAX_SESSIONS' \
 	    grep 'ROUTER_MAX_SESSIONS' "${source}"
@@ -115,6 +129,7 @@ router_async_contract_body()
 }
 router_lifecycle_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'channel_send_event' \
 	    grep channel_send_event "${source}"
@@ -134,6 +149,7 @@ worker_channel_contract_head()
 }
 worker_channel_contract_body()
 {
+	require_srctree
 	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'service_provider_worker_channel' \
 	    grep service_provider_worker_channel "${source}"
