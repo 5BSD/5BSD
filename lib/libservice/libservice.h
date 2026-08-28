@@ -233,12 +233,32 @@ int	service_connect(struct service_context *, const char *name,
 	    int *session_fd);
 
 /*
- * Mint a user-domain lookup channel (§21/§22) over a borrowed SYSTEM-domain
- * lookup channel (syschan).  On success *out_fd is a new, caller-owned ambient
- * descriptor bound to the user domain for uid: it survives fork and exec and is
- * usable in capability mode, ready to be installed as a session leader's
- * inherited lookup channel.  Fails with EPERM if syschan is not a SYSTEM-domain
- * channel, because domains only ever narrow.
+ * Which session channel a mint request asks serviced to create (§6).  The
+ * numeric values are the wire domain values SVC_OP_MINT_DOMAIN carries, with
+ * USER == 0 so a zero-initialized request defaults to the scoped channel.
+ */
+enum service_mint_kind {
+	SERVICE_MINT_USER = 0,		/* per-uid scoped channel */
+	SERVICE_MINT_SYSTEM = 1,	/* full-discovery admin channel */
+};
+
+/*
+ * Mint a session lookup channel (§6/§21/§22) over a borrowed SYSTEM-domain
+ * lookup channel (syschan).  `kind` selects the minted channel's scope:
+ * SERVICE_MINT_USER binds a per-uid scoped channel; SERVICE_MINT_SYSTEM binds a
+ * full-discovery admin channel (for a root/wheel session) and uid is ignored.
+ * On success *out_fd is a new, caller-owned ambient descriptor: it survives fork
+ * and exec and is usable in capability mode, ready to be installed as a session
+ * leader's inherited lookup channel.  Fails with EPERM if syschan is not a
+ * SYSTEM-domain channel (domains only ever narrow), or — for a SERVICE_MINT_SYSTEM
+ * request — if serviced refuses the privilege for the requesting channel.
+ */
+int	service_mint_session_domain(int syschan, enum service_mint_kind kind,
+	    uid_t uid, int *out_fd);
+
+/*
+ * Thin backward-compatible wrapper: mint a per-uid USER-domain channel.
+ * Equivalent to service_mint_session_domain(syschan, SERVICE_MINT_USER, ...).
  */
 int	service_mint_user_domain(int syschan, uid_t uid, int *out_fd);
 

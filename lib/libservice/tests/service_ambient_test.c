@@ -41,6 +41,7 @@
 
 #include <channel.h>
 
+#include "libservice.h"
 #include "serviced_svc_proto.h"
 #include "service_bootstrap.h"
 
@@ -110,7 +111,8 @@ create_channel_pair(int *client_end, int *serviced_end)
  */
 enum responder_mode {
 	RESP_LOOKUP = 0,
-	RESP_ENOTSUP = 1
+	RESP_ENOTSUP = 1,
+	RESP_MINT_CAPTURE = 2
 };
 
 struct responder {
@@ -118,6 +120,10 @@ struct responder {
 	enum responder_mode	 mode;
 	pthread_t		 thread;
 	volatile int		 stop;
+	/* RESP_MINT_CAPTURE: the fields of the last SVC_OP_MINT_DOMAIN seen. */
+	volatile int		 mint_seen;
+	uint32_t		 mint_uid;
+	uint32_t		 mint_domain;
 };
 
 static void
@@ -129,6 +135,30 @@ responder_request(struct channel *ch, struct channel_message *req, void *ctx)
 	(void)ch;
 	if (channel_message_length(req) >= sizeof(op))
 		memcpy(&op, channel_message_data(req), sizeof(op));
+	if (op == SVC_OP_MINT_DOMAIN && r->mode == RESP_MINT_CAPTURE) {
+		struct svc_mint_domain_req mreq;
+		struct svc_reply rep = { .status = 0 };
+
+		/*
+		 * Capture the wire request so the test can assert which domain
+		 * field service_mint_session_domain() transmitted, then reply
+		 * with no attached fd — the client fails EBADMSG after the round
+		 * trip, which is irrelevant to what we are checking here.
+		 */
+		if (channel_message_length(req) >= sizeof(mreq)) {
+			memcpy(&mreq, channel_message_data(req), sizeof(mreq));
+			r->mint_uid = mreq.uid;
+			r->mint_domain = mreq.domain;
+			r->mint_seen = 1;
+		}
+		(void)channel_send_reply(req, &(struct channel_outgoing){
+			.size = sizeof(struct channel_outgoing),
+			.data = &rep,
+			.length = sizeof(rep),
+		});
+		channel_message_free(req);
+		return;
+	}
 	if (op == SVC_OP_AMBIENT_HELLO && r->mode == RESP_LOOKUP) {
 		struct svc_ambient_hello_reply rep = {
 			.status = 0,
@@ -529,6 +559,109 @@ ATF_TC_BODY(env_takes_precedence_over_fixed_fd, tc)
 	}
 }
 
+/* ------------------------------------------------------------------ */
+/* service_mint_session_domain() transport (§6).                        */
+/* ------------------------------------------------------------------ */
+
+ATF_TC_WITHOUT_HEAD(mint_session_domain_rejects_bad_kind);
+ATF_TC_BODY(mint_session_domain_rejects_bad_kind, tc)
+{
+	int out = -1;
+
+	/*
+	 * An out-of-range kind is rejected with EINVAL before any channel work,
+	 * so it never coerces to a scope the caller did not ask for.  The kind is
+	 * validated ahead of touching syschan, so a harmless fd (0) suffices and
+	 * this case needs no device.
+	 */
+	errno = 0;
+	ATF_CHECK_EQ(-1, service_mint_session_domain(0, (enum service_mint_kind)7,
+	    1001, &out));
+	ATF_CHECK_EQ(EINVAL, errno);
+	ATF_CHECK_EQ(-1, out);
+}
+
+/*
+ * Drive service_mint_session_domain()/service_mint_user_domain() against the
+ * capture responder and assert the wire `domain` field carried the expected
+ * value.  Gated on the channel device.
+ */
+static void
+check_mint_transmits_domain(const atf_tc_t *tc, bool use_wrapper,
+    enum service_mint_kind kind, uid_t uid, uint32_t expect_domain)
+{
+	struct responder r;
+	int client_end, serviced_end, out;
+
+	(void)tc;
+	if (create_channel_pair(&client_end, &serviced_end) == -1)
+		atf_tc_skip("mac_capability channel device unavailable");
+	ATF_REQUIRE_EQ(0, responder_start(&r, serviced_end, RESP_MINT_CAPTURE));
+
+	/*
+	 * The mint reply carries no fd, so the client returns -1 (EBADMSG); the
+	 * value under test is the captured request, read after responder_stop()
+	 * joins the pump thread (happens-before).
+	 */
+	out = -1;
+	if (use_wrapper)
+		(void)service_mint_user_domain(client_end, uid, &out);
+	else
+		(void)service_mint_session_domain(client_end, kind, uid, &out);
+
+	responder_stop(&r);
+
+	ATF_CHECK_EQ(1, r.mint_seen);
+	ATF_CHECK_EQ(expect_domain, r.mint_domain);
+	ATF_CHECK_EQ((uint32_t)uid, r.mint_uid);
+	if (out >= 0)
+		close(out);
+	close(client_end);
+}
+
+ATF_TC(mint_session_domain_user_sets_wire_user);
+ATF_TC_HEAD(mint_session_domain_user_sets_wire_user, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "SERVICE_MINT_USER transmits domain == SVC_MINT_DOMAIN_USER");
+}
+ATF_TC_BODY(mint_session_domain_user_sets_wire_user, tc)
+{
+
+	check_mint_transmits_domain(tc, false, SERVICE_MINT_USER, 1001,
+	    SVC_MINT_DOMAIN_USER);
+}
+
+ATF_TC(mint_session_domain_system_sets_wire_system);
+ATF_TC_HEAD(mint_session_domain_system_sets_wire_system, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "SERVICE_MINT_SYSTEM transmits domain == SVC_MINT_DOMAIN_SYSTEM");
+}
+ATF_TC_BODY(mint_session_domain_system_sets_wire_system, tc)
+{
+
+	check_mint_transmits_domain(tc, false, SERVICE_MINT_SYSTEM, 0,
+	    SVC_MINT_DOMAIN_SYSTEM);
+}
+
+ATF_TC(mint_user_domain_wrapper_sets_wire_user);
+ATF_TC_HEAD(mint_user_domain_wrapper_sets_wire_user, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "the service_mint_user_domain() compat wrapper transmits the USER "
+	    "domain (SVC_MINT_DOMAIN_USER), preserving existing-caller behavior");
+}
+ATF_TC_BODY(mint_user_domain_wrapper_sets_wire_user, tc)
+{
+
+	check_mint_transmits_domain(tc, true, SERVICE_MINT_USER, 4242,
+	    SVC_MINT_DOMAIN_USER);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -542,5 +675,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, fixed_fd_lookup_channel_accepted);
 	ATF_TP_ADD_TC(tp, fixed_fd_non_lookup_channel_rejected);
 	ATF_TP_ADD_TC(tp, env_takes_precedence_over_fixed_fd);
+	ATF_TP_ADD_TC(tp, mint_session_domain_rejects_bad_kind);
+	ATF_TP_ADD_TC(tp, mint_session_domain_user_sets_wire_user);
+	ATF_TP_ADD_TC(tp, mint_session_domain_system_sets_wire_system);
+	ATF_TP_ADD_TC(tp, mint_user_domain_wrapper_sets_wire_user);
 	return (atf_no_error());
 }

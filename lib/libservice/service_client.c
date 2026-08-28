@@ -987,19 +987,23 @@ service_session_receive_event(struct service_session *session,
 }
 
 /*
- * Ask serviced, over an inherited system (or otherwise SYSTEM-domain) lookup
- * channel, to mint a narrowed lookup channel bound to the user domain for uid
- * and return the caller's endpoint in *out_fd (§21/§22).
+ * Ask serviced, over an inherited SYSTEM-domain lookup channel, to mint a
+ * session lookup channel and return the caller's endpoint in *out_fd (§6/§21/
+ * §22).  `kind` selects the scope: SERVICE_MINT_USER mints a per-uid scoped
+ * channel; SERVICE_MINT_SYSTEM mints a full-discovery admin channel (uid is
+ * ignored for SYSTEM).
  *
  * syschan is borrowed: this call neither closes it nor keeps a reference.  The
  * returned descriptor is ambient — serviced marks it CAP_CLOFORK_UNLOCKED and
  * clears its close-on-exec flag — so the login/session path can install it as
  * a session leader's inherited lookup channel and every descendant shares the
- * user domain.  Because domains only narrow, the request succeeds only when
- * syschan is itself a SYSTEM-domain channel; serviced returns EPERM otherwise.
+ * minted domain.  Because domains only narrow, the request succeeds only when
+ * syschan is itself a SYSTEM-domain channel; serviced returns EPERM otherwise,
+ * and likewise refuses a SERVICE_MINT_SYSTEM request from a non-SYSTEM channel.
  */
 int
-service_mint_user_domain(int syschan, uid_t uid, int *out_fd)
+service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
+    int *out_fd)
 {
 	struct svc_mint_domain_req req;
 	struct svc_reply reply_data;
@@ -1022,7 +1026,8 @@ service_mint_user_domain(int syschan, uid_t uid, int *out_fd)
 	struct service_session *session;
 	int dupfd, error;
 
-	if (syschan < 0 || out_fd == NULL) {
+	if (syschan < 0 || out_fd == NULL ||
+	    (kind != SERVICE_MINT_USER && kind != SERVICE_MINT_SYSTEM)) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -1047,6 +1052,8 @@ service_mint_user_domain(int syschan, uid_t uid, int *out_fd)
 	memset(&req, 0, sizeof(req));
 	req.op = SVC_OP_MINT_DOMAIN;
 	req.uid = (uint32_t)uid;
+	req.domain = kind == SERVICE_MINT_SYSTEM ?
+	    SVC_MINT_DOMAIN_SYSTEM : SVC_MINT_DOMAIN_USER;
 
 	if (service_session_call(session, &message, &reply, &options) == -1) {
 		error = errno;
@@ -1076,4 +1083,16 @@ service_mint_user_domain(int syschan, uid_t uid, int *out_fd)
 	}
 	*out_fd = reply_fd;
 	return (0);
+}
+
+/*
+ * Backward-compatible wrapper for existing USER-domain callers: mint a per-uid
+ * scoped session channel.  See service_mint_session_domain().
+ */
+int
+service_mint_user_domain(int syschan, uid_t uid, int *out_fd)
+{
+
+	return (service_mint_session_domain(syschan, SERVICE_MINT_USER, uid,
+	    out_fd));
 }

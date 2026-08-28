@@ -208,6 +208,62 @@ ATF_TC_BODY(mint_authorization, tc)
 	ATF_CHECK(!svc_domain_may_mint(&user));
 }
 
+ATF_TC_WITHOUT_HEAD(mint_domain_kind_escalation_guard);
+ATF_TC_BODY(mint_domain_kind_escalation_guard, tc)
+{
+	struct svc_domain system = { .kind = SVC_DOMAIN_SYSTEM, .uid = 0 };
+	struct svc_domain user = { .kind = SVC_DOMAIN_USER, .uid = 1001 };
+	enum svc_domain_kind kind;
+
+	/*
+	 * The SYSTEM-mint escalation guard (§6), unit-tested deterministically.
+	 * svc_mint_domain_kind() resolves the wire `domain` field to the kind to
+	 * mint AND refuses a SYSTEM request from any channel that is not itself
+	 * SYSTEM — a user session must never widen its own scope.
+	 */
+
+	/* A SYSTEM channel may request either kind. */
+	kind = (enum svc_domain_kind)0xdead;
+	ATF_CHECK_EQ(0, svc_mint_domain_kind(&system, SVC_MINT_DOMAIN_USER,
+	    &kind));
+	ATF_CHECK_EQ(SVC_DOMAIN_USER, kind);
+	kind = (enum svc_domain_kind)0xdead;
+	ATF_CHECK_EQ(0, svc_mint_domain_kind(&system, SVC_MINT_DOMAIN_SYSTEM,
+	    &kind));
+	ATF_CHECK_EQ(SVC_DOMAIN_SYSTEM, kind);
+
+	/* A NULL requester is the default authority (SYSTEM): may ask SYSTEM. */
+	kind = (enum svc_domain_kind)0xdead;
+	ATF_CHECK_EQ(0, svc_mint_domain_kind(NULL, SVC_MINT_DOMAIN_SYSTEM,
+	    &kind));
+	ATF_CHECK_EQ(SVC_DOMAIN_SYSTEM, kind);
+
+	/*
+	 * The adversarial case: a USER channel asking for SYSTEM is REFUSED with
+	 * EPERM.  This is the privilege boundary the guard exists to hold.
+	 */
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_mint_domain_kind(&user, SVC_MINT_DOMAIN_SYSTEM,
+	    &kind));
+	ATF_CHECK_EQ(EPERM, errno);
+
+	/*
+	 * A USER channel asking for USER passes this resolver (the kind itself is
+	 * in-policy); minting is still blocked one layer up by svc_domain_may_mint
+	 * — a USER channel may not mint AT ALL — verified in mint_authorization
+	 * and end-to-end in user_channel_mints_neither.
+	 */
+	kind = (enum svc_domain_kind)0xdead;
+	ATF_CHECK_EQ(0, svc_mint_domain_kind(&user, SVC_MINT_DOMAIN_USER,
+	    &kind));
+	ATF_CHECK_EQ(SVC_DOMAIN_USER, kind);
+
+	/* An unknown wire domain value is EINVAL, never silently coerced. */
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_mint_domain_kind(&system, 0x5eU, &kind));
+	ATF_CHECK_EQ(EINVAL, errno);
+}
+
 ATF_TC_WITHOUT_HEAD(ambient_descriptor_marking);
 ATF_TC_BODY(ambient_descriptor_marking, tc)
 {
@@ -654,17 +710,166 @@ ATF_TC_BODY(unknown_op_over_lookup_channel_enotsup, tc)
 	close(kq);
 }
 
+/*
+ * Count registered serviced-side lookup channels matching a domain kind (and,
+ * when match_uid is set, uid).  Used after the pump thread is joined so the
+ * list read has a happens-before against the mint that mutated it.
+ */
+static int
+count_domain_entries(enum svc_domain_kind kind, uid_t uid, bool match_uid)
+{
+	struct svc_lookup_channel *lc;
+	int n = 0;
+
+	for (lc = lookup_channels; lc != NULL; lc = lc->next) {
+		if (lc->domain.kind == kind &&
+		    (!match_uid || lc->domain.uid == uid))
+			n++;
+	}
+	return (n);
+}
+
+ATF_TC(system_channel_mints_both);
+ATF_TC_HEAD(system_channel_mints_both, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "a SYSTEM lookup channel may mint BOTH a SYSTEM channel and a USER "
+	    "channel; the minted USER channel records the requested uid");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(system_channel_mints_both, tc)
+{
+	struct pump_ctx ctx;
+	pthread_t pump;
+	int minted_fd, sysfd, userfd, kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	serviced_kq = kq;
+
+	/* The ambient SYSTEM channel a login/su holds (the getty carry). */
+	minted_fd = -1;
+	if (domain_mint_system_channel(&minted_fd, kq) == -1) {
+		if (errno == ENODEV)
+			atf_tc_skip("mac_capability channel device unavailable");
+		atf_tc_fail("domain_mint_system_channel: %s", strerror(errno));
+	}
+
+	ctx.kq = kq;
+	ctx.stop = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
+
+	/*
+	 * Drive the real client (service_mint_session_domain) against the real
+	 * mint handler (lookup_channel_request, pumped above).  A SYSTEM channel
+	 * is authorized to mint a SYSTEM (admin) channel — the root/wheel session
+	 * case (§6) — and a USER channel for a target uid.
+	 */
+	sysfd = -1;
+	ATF_CHECK_EQ(0, service_mint_session_domain(minted_fd,
+	    SERVICE_MINT_SYSTEM, 0, &sysfd));
+	ATF_CHECK(sysfd >= 0);
+
+	userfd = -1;
+	ATF_CHECK_EQ(0, service_mint_session_domain(minted_fd,
+	    SERVICE_MINT_USER, 7777, &userfd));
+	ATF_CHECK(userfd >= 0);
+
+	ctx.stop = 1;
+	(void)pthread_join(pump, NULL);
+
+	/*
+	 * The recorded domains: the minted USER channel is tagged {USER, 7777},
+	 * and there are now at least two SYSTEM channels (the ambient one plus the
+	 * freshly minted admin channel).
+	 */
+	ATF_CHECK(count_domain_entries(SVC_DOMAIN_USER, 7777, true) >= 1);
+	ATF_CHECK(count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false) >= 2);
+
+	if (sysfd >= 0)
+		close(sysfd);
+	if (userfd >= 0)
+		close(userfd);
+	domain_channel_teardown();
+	close(minted_fd);
+	close(kq);
+}
+
+ATF_TC(user_channel_mints_neither);
+ATF_TC_HEAD(user_channel_mints_neither, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "the adversarial escalation guard: a USER lookup channel may mint "
+	    "NEITHER a SYSTEM nor a USER channel — both are refused with EPERM");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(user_channel_mints_neither, tc)
+{
+	struct pump_ctx ctx;
+	pthread_t pump;
+	int minted_fd, out, kq;
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	serviced_kq = kq;
+
+	/* An already-narrowed USER session channel. */
+	minted_fd = -1;
+	if (domain_mint_user_channel(1001, &minted_fd, kq) == -1) {
+		if (errno == ENODEV)
+			atf_tc_skip("mac_capability channel device unavailable");
+		atf_tc_fail("domain_mint_user_channel: %s", strerror(errno));
+	}
+
+	ctx.kq = kq;
+	ctx.stop = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
+
+	/*
+	 * Domains only ever narrow: a USER channel cannot mint at all.  A request
+	 * for a USER channel is refused (svc_domain_may_mint), and — the privilege
+	 * boundary — a request for a SYSTEM channel is refused too (a user session
+	 * can never widen its scope).  Both return EPERM.
+	 */
+	out = -1;
+	ATF_CHECK_EQ(-1, service_mint_session_domain(minted_fd,
+	    SERVICE_MINT_USER, 1001, &out));
+	ATF_CHECK_EQ(EPERM, errno);
+	ATF_CHECK_EQ(-1, out);
+
+	out = -1;
+	ATF_CHECK_EQ(-1, service_mint_session_domain(minted_fd,
+	    SERVICE_MINT_SYSTEM, 0, &out));
+	ATF_CHECK_EQ(EPERM, errno);
+	ATF_CHECK_EQ(-1, out);
+
+	/* No channel escaped: only the original USER channel is registered. */
+	ctx.stop = 1;
+	(void)pthread_join(pump, NULL);
+	ATF_CHECK_EQ(0, count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false));
+	ATF_CHECK_EQ(1, count_domain_entries(SVC_DOMAIN_USER, 1001, true));
+
+	domain_channel_teardown();
+	close(minted_fd);
+	close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, scope_system_resolves_all);
 	ATF_TP_ADD_TC(tp, scope_user_allow_list);
 	ATF_TP_ADD_TC(tp, mint_authorization);
+	ATF_TP_ADD_TC(tp, mint_domain_kind_escalation_guard);
 	ATF_TP_ADD_TC(tp, ambient_descriptor_marking);
 	ATF_TP_ADD_TC(tp, default_requester_is_system);
 	ATF_TP_ADD_TC(tp, user_scope_hides_registered_name);
 	ATF_TP_ADD_TC(tp, minted_channel_user_scoped);
 	ATF_TP_ADD_TC(tp, minted_system_channel_scoped);
+	ATF_TP_ADD_TC(tp, system_channel_mints_both);
+	ATF_TP_ADD_TC(tp, user_channel_mints_neither);
 	ATF_TP_ADD_TC(tp, hello_ack_over_user_channel);
 	ATF_TP_ADD_TC(tp, hello_ack_over_system_channel);
 	ATF_TP_ADD_TC(tp, unknown_op_over_lookup_channel_enotsup);

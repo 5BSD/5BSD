@@ -402,17 +402,21 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 }
 
 /*
- * SVC_OP_MINT_DOMAIN — mint a narrowed (USER, uid) lookup channel and return
- * the caller's endpoint.  Only a SYSTEM-domain caller may mint: a request on an
- * already-narrowed channel is refused, because domains only narrow and never
- * broaden.  The returned descriptor is ambient (survives fork and exec, usable
- * in capability mode); serviced retains the other end, scoped to the user
- * domain, and dispatches lookups on it in domain.c.
+ * SVC_OP_MINT_DOMAIN — mint a session lookup channel and return the caller's
+ * endpoint.  The request's `domain` field selects USER (per-uid, scoped) or
+ * SYSTEM (full-discovery admin).  Only a SYSTEM-domain caller may mint at all:
+ * a request on an already-narrowed channel is refused, because domains only
+ * narrow and never broaden.  Additionally, minting a SYSTEM channel is a
+ * privilege escalation, so it is refused unless the requesting channel is
+ * itself SYSTEM (§6).  The returned descriptor is ambient (survives fork and
+ * exec, usable in capability mode); serviced retains the other end, scoped to
+ * the minted domain, and dispatches lookups on it in domain.c.
  */
 static void
 handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 {
 	const struct svc_mint_domain_req *req;
+	enum svc_domain_kind kind;
 	int minted_fd, error;
 
 	minted_fd = -1;
@@ -422,24 +426,36 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 		return;
 	}
 	req = channel_message_data(request);
-	if (req->flags != 0 || req->reserved != 0) {
+	if (req->flags != 0) {
 		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
 		    EINVAL, NULL, 0);
 		return;
 	}
-	/* Domains only narrow: a non-system caller may not mint. */
+	/* Domains only narrow: a non-system caller may not mint at all. */
 	if (!svc_domain_may_mint(&svc->domain)) {
 		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
 		    EPERM, NULL, 0);
 		return;
 	}
-	if (domain_mint_user_channel((uid_t)req->uid, &minted_fd,
+	/*
+	 * Escalation guard (§6): resolve the requested kind and refuse a SYSTEM
+	 * mint unless this channel is itself SYSTEM.  The may_mint gate above
+	 * already limits minting to SYSTEM channels; this explicit re-check is
+	 * the privilege boundary that must hold even if that policy widens.
+	 */
+	if (svc_mint_domain_kind(&svc->domain, req->domain, &kind) == -1) {
+		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
+		    errno != 0 ? errno : EPERM, NULL, 0);
+		return;
+	}
+	if (domain_mint_session_channel(kind, (uid_t)req->uid, &minted_fd,
 	    serviced_kq) == -1)
 		error = errno != 0 ? errno : EIO;
 	else
 		error = 0;
 	serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
-	    "mint user-domain channel svc=%s uid=%u", svc->manifest.label,
+	    "mint %s-domain channel svc=%s uid=%u",
+	    kind == SVC_DOMAIN_SYSTEM ? "system" : "user", svc->manifest.label,
 	    (unsigned)req->uid);
 	(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN, error,
 	    error == 0 ? &minted_fd : NULL, error == 0 ? 1 : 0);

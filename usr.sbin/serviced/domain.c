@@ -99,6 +99,41 @@ svc_domain_may_mint(const struct svc_domain *domain)
 }
 
 /*
+ * Resolve a SVC_OP_MINT_DOMAIN request's wire `domain` field to the domain kind
+ * to mint, enforcing the SYSTEM-mint escalation guard (§6): minting a SYSTEM
+ * (full-discovery admin) channel is a privilege, so it is permitted only when
+ * the REQUESTING channel is itself SYSTEM.  A USER channel that asks for SYSTEM
+ * is refused with EPERM — it can never widen its own scope.  A USER mint is
+ * always in-policy for a caller that may mint at all (svc_domain_may_mint()
+ * already gates that a USER channel cannot mint anything).
+ *
+ * Returns 0 with *kind set on success; -1 with errno set on failure: EPERM for
+ * a non-SYSTEM channel requesting SYSTEM, EINVAL for an unknown domain value.
+ * A NULL requester is treated as SYSTEM (the default authority).
+ */
+int
+svc_mint_domain_kind(const struct svc_domain *requester, uint32_t wire_domain,
+    enum svc_domain_kind *kind)
+{
+
+	switch (wire_domain) {
+	case SVC_MINT_DOMAIN_USER:
+		*kind = SVC_DOMAIN_USER;
+		return (0);
+	case SVC_MINT_DOMAIN_SYSTEM:
+		if (requester != NULL && requester->kind != SVC_DOMAIN_SYSTEM) {
+			errno = EPERM;
+			return (-1);
+		}
+		*kind = SVC_DOMAIN_SYSTEM;
+		return (0);
+	default:
+		errno = EINVAL;
+		return (-1);
+	}
+}
+
+/*
  * Mark a descriptor ambient (§21.1): it survives every fork
  * (CAP_CLOFORK_UNLOCKED), survives exec (close-on-exec cleared), and — being a
  * mac_capability channel endpoint — remains usable in capability mode.  A
@@ -216,16 +251,20 @@ lookup_channel_request(struct channel *channel,
 	memcpy(&op, opp, sizeof(op));
 	if (op == SVC_OP_MINT_DOMAIN) {
 		/*
-		 * A session leader narrows its ambient channel (§21.3): a login
-		 * or su holding the SYSTEM channel mints the per-uid USER channel
-		 * it hands to the session.  Only a SYSTEM-domain channel may mint
-		 * — domains only ever narrow, so a request arriving on an
-		 * already-narrowed USER channel is refused.  This is the same
+		 * A session leader provisions its session's ambient channel
+		 * (§21.3, §6): a login or su holding the SYSTEM channel mints the
+		 * channel appropriate to the target principal — a per-uid USER
+		 * channel for a regular user, or a SYSTEM (admin) channel for a
+		 * root/wheel session.  Only a SYSTEM-domain channel may mint —
+		 * domains only ever narrow, so a request arriving on an
+		 * already-narrowed USER channel is refused; and a SYSTEM mint is
+		 * refused unless this channel is itself SYSTEM.  This is the same
 		 * operation handle_mint_domain() serves on a unit control channel;
 		 * the ambient lookup channel has no backing unit, so it is served
 		 * here.
 		 */
 		const struct svc_mint_domain_req *mreq;
+		enum svc_domain_kind mkind;
 		int minted_fd, merror;
 
 		if (!svc_domain_may_mint(&lc->domain)) {
@@ -237,13 +276,26 @@ lookup_channel_request(struct channel *channel,
 			goto out;
 		}
 		mreq = channel_message_data(request);
-		if (mreq->flags != 0 || mreq->reserved != 0) {
+		if (mreq->flags != 0) {
 			lookup_channel_reply(request, EINVAL, NULL, 0);
 			goto out;
 		}
+		/*
+		 * Escalation guard (§6): a SYSTEM mint is allowed only when this
+		 * channel is itself SYSTEM.  svc_domain_may_mint() above already
+		 * confirms that, so a USER channel is refused for both kinds; the
+		 * explicit re-check here is the security boundary that must hold
+		 * even if minting policy widens later.
+		 */
+		if (svc_mint_domain_kind(&lc->domain, mreq->domain,
+		    &mkind) == -1) {
+			lookup_channel_reply(request,
+			    errno != 0 ? errno : EPERM, NULL, 0);
+			goto out;
+		}
 		minted_fd = -1;
-		if (domain_mint_user_channel((uid_t)mreq->uid, &minted_fd,
-		    serviced_kq) == -1)
+		if (domain_mint_session_channel(mkind, (uid_t)mreq->uid,
+		    &minted_fd, serviced_kq) == -1)
 			merror = errno != 0 ? errno : EIO;
 		else
 			merror = 0;
@@ -439,6 +491,21 @@ domain_mint_system_channel(int *out_fd, int kq)
 {
 
 	return (domain_mint_channel(SVC_DOMAIN_SYSTEM, 0, out_fd, kq));
+}
+
+/*
+ * Mint the session channel a mint request selected (§6): SVC_DOMAIN_USER binds
+ * the recorded uid, SVC_DOMAIN_SYSTEM ignores it (a SYSTEM channel resolves
+ * every name, so uid is meaningless and recorded as 0).  The caller has already
+ * run svc_mint_domain_kind() to authorize the requested kind.
+ */
+int
+domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd,
+    int kq)
+{
+
+	return (domain_mint_channel(kind,
+	    kind == SVC_DOMAIN_USER ? uid : 0, out_fd, kq));
 }
 
 bool

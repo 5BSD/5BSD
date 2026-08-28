@@ -385,6 +385,10 @@ bool	svc_domain_may_mint(const struct svc_domain *domain);
 int	svc_fd_make_ambient(int fd);
 int	domain_mint_user_channel(uid_t uid, int *out_fd, int kq);
 int	domain_mint_system_channel(int *out_fd, int kq);
+int	domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
+	    int *out_fd, int kq);
+int	svc_mint_domain_kind(const struct svc_domain *requester,
+	    uint32_t wire_domain, enum svc_domain_kind *kind);
 bool	domain_channel_owns_event(uintptr_t ident);
 void	domain_channel_event(struct kevent *kev, int kq);
 void	domain_channel_teardown(void);

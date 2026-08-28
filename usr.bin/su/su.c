@@ -134,8 +134,38 @@ static int	chshell(const char *);
 static void	usage(void) __dead2;
 static void	export_pam_environment(void);
 static int	ok_to_export(const char *);
+static int	principal_is_admin(const struct passwd *);
 
 extern char	**environ;
+
+/*
+ * Whether the target principal is an administrator (§6): root, or a member of
+ * the "wheel" group.  An admin session is provisioned a SYSTEM (full-discovery)
+ * ambient channel; every other user gets a per-uid USER channel.  Membership is
+ * computed from the passwd/group database for pwd, independent of the current
+ * process credentials.  Best-effort: any lookup failure fails safe to "not
+ * admin" (the narrower USER scope).
+ */
+static int
+principal_is_admin(const struct passwd *pwd)
+{
+	gid_t groups[NGROUPS_MAX];
+	struct group *wheel;
+	int ngroups, i;
+
+	if (pwd->pw_uid == 0)
+		return (1);
+	if ((wheel = getgrnam("wheel")) == NULL)
+		return (0);
+	ngroups = nitems(groups);
+	if (getgrouplist(pwd->pw_name, pwd->pw_gid, groups, &ngroups) == -1)
+		ngroups = nitems(groups);	/* truncated: scan what fit */
+	for (i = 0; i < ngroups && i < (int)nitems(groups); i++) {
+		if (groups[i] == wheel->gr_gid)
+			return (1);
+	}
+	return (0);
+}
 
 int
 main(int argc, char *argv[])
@@ -573,28 +603,36 @@ main(int argc, char *argv[])
 		(void)unsetenv(SERVICE_LOOKUP_ENV);
 
 		/*
-		 * Narrow the inherited SYSTEM ambient lookup channel (§21/§22)
-		 * to a USER-domain channel for the TARGET uid and install it as
-		 * this session's ambient channel, so the spawned shell and its
-		 * descendants inherit a lookup channel scoped to the target
-		 * user.  We are already the target uid here (setusercontext
-		 * above ran setuid).  Best-effort only: on any failure the
-		 * session carries no ambient channel (the unnarrowed SYSTEM
-		 * channel is never handed to the shell) and su proceeds exactly
-		 * as before.  Never fatal.
+		 * Provision this session's ambient lookup channel from the
+		 * inherited SYSTEM ambient channel (§6/§7/§21/§22), keyed to the
+		 * TARGET principal: the target uid 0 or a member of group wheel
+		 * gets a SYSTEM (admin) channel with full discovery; every other
+		 * target gets a per-uid USER channel scoped to that user.  We are
+		 * already the target uid here (setusercontext above ran setuid).
+		 * This is a fresh provision, not a re-narrow: an su from a
+		 * root/admin session holds the mintable SYSTEM channel, so
+		 * `su <user>` now mints the target USER channel and `su root`
+		 * mints SYSTEM — fixing the previously-EPERMing re-narrow (§7).
+		 * Best-effort only: on any failure the session carries no ambient
+		 * channel (the unnarrowed SYSTEM channel is never handed to the
+		 * shell) and su proceeds exactly as before.  Never fatal.
 		 */
 		if (syschan >= 0) {
+			enum service_mint_kind kind;
 			int user_fd = -1;
 
-			if (service_mint_user_domain(syschan, pwd->pw_uid,
-			    &user_fd) == 0 &&
+			kind = principal_is_admin(pwd) ? SERVICE_MINT_SYSTEM :
+			    SERVICE_MINT_USER;
+			if (service_mint_session_domain(syschan, kind,
+			    pwd->pw_uid, &user_fd) == 0 &&
 			    service_install_ambient_lookup(user_fd) == 0) {
-				syslog(LOG_DEBUG, "su: user-domain lookup "
-				    "channel for uid %u", (unsigned)pwd->pw_uid);
+				syslog(LOG_DEBUG, "su: %s-domain lookup "
+				    "channel for uid %u",
+				    kind == SERVICE_MINT_SYSTEM ? "system" :
+				    "user", (unsigned)pwd->pw_uid);
 			} else {
-				syslog(LOG_NOTICE, "su: no user-domain lookup "
-				    "channel for uid %u: %m",
-				    (unsigned)pwd->pw_uid);
+				syslog(LOG_NOTICE, "su: no lookup channel for "
+				    "uid %u: %m", (unsigned)pwd->pw_uid);
 				if (user_fd >= 0)
 					(void)close(user_fd);
 			}

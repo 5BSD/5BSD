@@ -30,7 +30,7 @@
 
 #include <sys/types.h>
 
-#define	SERVICED_SVC_PROTO_VERSION	7
+#define	SERVICED_SVC_PROTO_VERSION	8
 
 /* Maximum reverse-domain name length. */
 #define	SERVICED_NAME_MAX		255
@@ -95,23 +95,35 @@ struct svc_idle_req {
  * SVC_OP_MINT_DOMAIN
  *   req:  svc_mint_domain_req
  *   reply: svc_reply { .status }
- *   reply_fds[0] = narrowed lookup channel endpoint (on success)
+ *   reply_fds[0] = minted lookup channel endpoint (on success)
  *
- * Mint a fresh lookup channel bound to the user domain (SVC_DOMAIN_USER, uid)
- * and return the caller's endpoint.  Only a SYSTEM-domain caller may mint: a
- * request arriving on an already-narrowed (user-domain) channel is refused with
- * EPERM, because domains only ever narrow and never broaden.  The returned
- * descriptor is an ambient descriptor (survives every fork, survives exec, and
- * is usable in capability mode) so the login/session path can install it as a
- * session leader's inherited lookup channel (§21).  A lookup over the returned
- * channel is scoped to the user domain: it resolves only the user-domain
- * allow-list, and every out-of-scope name returns ENOENT.
+ * Mint a fresh lookup channel for a session and return the caller's endpoint.
+ * The `domain` field selects the minted channel's scope:
+ *
+ *   SVC_MINT_DOMAIN_USER (0, the zero-init default)
+ *       a per-uid USER channel — resolves only the user-domain allow-list;
+ *       every out-of-scope name returns ENOENT (§6 regular user).
+ *   SVC_MINT_DOMAIN_SYSTEM (1)
+ *       a SYSTEM (admin) channel — full discovery, resolves every registered
+ *       name (§6 root/wheel session).  Minting SYSTEM is a privilege: it is
+ *       refused with EPERM unless the REQUESTING channel is itself SYSTEM, so a
+ *       user session can never widen its own scope.
+ *
+ * Only a SYSTEM-domain caller may mint AT ALL: a request arriving on an
+ * already-narrowed (user-domain) channel is refused with EPERM, because domains
+ * only ever narrow and never broaden.  The returned descriptor is an ambient
+ * descriptor (survives every fork, survives exec, and is usable in capability
+ * mode) so the login/session path can install it as a session leader's
+ * inherited lookup channel (§21).
  */
+#define	SVC_MINT_DOMAIN_USER	0U	/* per-uid scoped channel (default) */
+#define	SVC_MINT_DOMAIN_SYSTEM	1U	/* full-discovery admin channel */
+
 struct svc_mint_domain_req {
 	uint32_t	op;		/* SVC_OP_MINT_DOMAIN */
 	uint32_t	flags;		/* reserved, must be 0 */
-	uint32_t	uid;		/* target uid for the user domain */
-	uint32_t	reserved;	/* reserved, must be 0 */
+	uint32_t	uid;		/* target uid for a USER domain */
+	uint32_t	domain;		/* SVC_MINT_DOMAIN_USER | _SYSTEM */
 };
 
 /*

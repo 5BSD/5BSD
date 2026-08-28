@@ -61,6 +61,7 @@
 #include <pwd.h>
 #include <setjmp.h>
 #include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -154,6 +155,36 @@ static int		 pam_err;
 static int		 pam_silent = PAM_SILENT;
 static int		 pam_cred_established;
 static int		 pam_session_established;
+
+/*
+ * Whether the target principal is an administrator (§6): root, or a member of
+ * the "wheel" group.  An admin session is provisioned a SYSTEM (full-discovery)
+ * ambient channel; every other user gets a per-uid USER channel.  Membership is
+ * computed from the passwd/group database for pwd (getgrouplist resolves the
+ * primary gid and every supplementary group), independent of the current
+ * process credentials.  Best-effort: any lookup failure is treated as "not
+ * admin", which fails safe to the narrower USER scope.
+ */
+static bool
+principal_is_admin(const struct passwd *tpwd)
+{
+	gid_t groups[NGROUPS_MAX];
+	struct group *wheel;
+	int ngroups, i;
+
+	if (tpwd->pw_uid == 0)
+		return (true);
+	if ((wheel = getgrnam("wheel")) == NULL)
+		return (false);
+	ngroups = nitems(groups);
+	if (getgrouplist(tpwd->pw_name, tpwd->pw_gid, groups, &ngroups) == -1)
+		ngroups = nitems(groups);	/* truncated: scan what fit */
+	for (i = 0; i < ngroups && i < (int)nitems(groups); i++) {
+		if (groups[i] == wheel->gr_gid)
+			return (true);
+	}
+	return (false);
+}
 
 int
 main(int argc, char *argv[])
@@ -644,26 +675,33 @@ main(int argc, char *argv[])
 	(void)setenv("PATH", rootlogin ? _PATH_STDPATH : _PATH_DEFPATH, 0);
 
 	/*
-	 * Narrow the inherited SYSTEM ambient lookup channel (§21/§22) to a
-	 * per-uid USER-domain channel and install it as this session leader's
-	 * ambient channel, so the shell and its descendants inherit a lookup
-	 * channel that resolves only user-domain names.  Entirely best-effort:
-	 * on any failure the session simply carries no ambient channel (the
-	 * unnarrowed SYSTEM channel is never handed to the user shell) and login
-	 * proceeds exactly as before.  Never fatal.
+	 * Provision this session's ambient lookup channel from the inherited
+	 * SYSTEM ambient channel (§6/§21/§22).  The mint is keyed to the target
+	 * principal: root or a member of group wheel gets a SYSTEM (admin)
+	 * channel with full discovery; every other user gets a per-uid USER
+	 * channel that resolves only user-domain names.  It is installed as this
+	 * session leader's ambient channel so the shell and its descendants
+	 * inherit it.  Entirely best-effort: on any failure the session simply
+	 * carries no ambient channel (the unnarrowed SYSTEM channel is never
+	 * handed to the user shell) and login proceeds exactly as before.  Never
+	 * fatal.
 	 */
 	if (syschan >= 0) {
+		enum service_mint_kind kind;
 		int user_fd = -1;
 
-		if (service_mint_user_domain(syschan, pwd->pw_uid,
+		kind = principal_is_admin(pwd) ? SERVICE_MINT_SYSTEM :
+		    SERVICE_MINT_USER;
+		if (service_mint_session_domain(syschan, kind, pwd->pw_uid,
 		    &user_fd) == 0 &&
 		    service_install_ambient_lookup(user_fd) == 0) {
-			syslog(LOG_DEBUG, "login: user-domain lookup channel "
-			    "for uid %u on fd %d", (unsigned)pwd->pw_uid,
-			    user_fd);
+			syslog(LOG_DEBUG, "login: %s-domain lookup channel "
+			    "for uid %u on fd %d",
+			    kind == SERVICE_MINT_SYSTEM ? "system" : "user",
+			    (unsigned)pwd->pw_uid, user_fd);
 		} else {
-			syslog(LOG_NOTICE, "login: no user-domain lookup "
-			    "channel for uid %u: %m", (unsigned)pwd->pw_uid);
+			syslog(LOG_NOTICE, "login: no lookup channel for "
+			    "uid %u: %m", (unsigned)pwd->pw_uid);
 			if (user_fd >= 0)
 				(void)close(user_fd);
 		}
