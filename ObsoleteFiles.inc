@@ -51,12 +51,54 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260828: oracle subsystem renamed to authority
+OLD_FILES+=boot/loader.conf.d/oracle-init.conf
+OLD_FILES+=etc/oracled.conf
+OLD_FILES+=sbin/oracle-init
+OLD_FILES+=usr/include/oraclectl.h
+OLD_FILES+=usr/include/oracled_ctl.h
+OLD_FILES+=usr/include/oracled_svc_proto.h
+OLD_FILES+=usr/include/oraclert.h
+OLD_FILES+=usr/lib/debug/usr/lib/liboraclectl.so.1.debug
+OLD_FILES+=usr/lib/debug/usr/lib/liboraclert.so.2.debug
+OLD_FILES+=usr/lib/debug/usr/sbin/oraclectl.debug
+OLD_FILES+=usr/lib/debug/usr/sbin/oracled.debug
+OLD_FILES+=usr/lib/liboraclectl.a
+OLD_FILES+=usr/lib/liboraclectl.so
+OLD_LIBS+=usr/lib/liboraclectl.so.1
+OLD_FILES+=usr/lib/liboraclert.a
+OLD_FILES+=usr/lib/liboraclert.so
+OLD_LIBS+=usr/lib/liboraclert.so.2
+OLD_FILES+=usr/sbin/oraclectl
+OLD_FILES+=usr/sbin/oracled
+OLD_FILES+=usr/share/dtrace/oracled-bootstrap
+OLD_FILES+=usr/share/dtrace/oracled-claims
+OLD_FILES+=usr/share/dtrace/oracled-control
+OLD_FILES+=usr/share/dtrace/oracled-errors
+OLD_FILES+=usr/share/dtrace/oracled-ipc
+OLD_FILES+=usr/share/dtrace/oracled-latency
+OLD_FILES+=usr/share/dtrace/oracled-lifecycle
+OLD_FILES+=usr/share/dtrace/oracled-minting
+OLD_DIRS+=usr/share/examples/oracled
+OLD_FILES+=usr/share/examples/oracled/desktop.conf
+OLD_FILES+=usr/share/examples/oracled/dynamic_claims.d
+OLD_FILES+=usr/share/examples/oracled/embedded.conf
+OLD_FILES+=usr/share/examples/oracled/server.conf
+OLD_FILES+=usr/share/examples/oracled/skyblue-broker.conf
+OLD_FILES+=usr/share/man/man3/oraclectl_open.3.gz
+OLD_FILES+=usr/share/man/man3/oraclectl_reload.3.gz
+OLD_FILES+=usr/share/man/man3/oraclectl_shutdown.3.gz
+OLD_FILES+=usr/share/man/man3/oraclectl_status.3.gz
+OLD_FILES+=usr/share/man/man3/liboraclectl.3.gz
+OLD_FILES+=usr/share/man/man3/service_worker_drop_inherited_oracle.3.gz
+OLD_FILES+=usr/share/man/man8/oraclectl.8.gz
+OLD_FILES+=usr/share/man/man8/oracled.8.gz
 # 20260823: capability manifest/bootstrap/claim ABI revision (SHLIB_MAJOR 2)
 OLD_LIBS+=usr/lib/libcapbundle.so.1
-OLD_LIBS+=usr/lib/libauthorityrt.so.1
+OLD_LIBS+=usr/lib/liboraclert.so.1
 OLD_LIBS+=usr/lib/libservice.so.1
-# 20260819: Authority now runs exclusively as PID 1; retire migrated daemons
-OLD_FILES+=etc/rc.d/authorityd
+# 20260819: Oracle now runs exclusively as PID 1; retire migrated daemons
+OLD_FILES+=etc/rc.d/oracled
 OLD_FILES+=Capabilities/System/Kldmgr.cap/bin/.debug/kldmgrd.debug
 OLD_FILES+=Capabilities/System/Kldmgr.cap/bin/kldmgrd
 OLD_FILES+=Capabilities/System/Kldmgr.cap/etc/kldmgrd.ucl
