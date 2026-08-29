@@ -335,11 +335,7 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				    &msg->cm_fcaps[i], true);
 				filecaps_intersect(&msg->cm_fcaps[i],
 				    &fde->fde_xfer_caps);
-				if (fde->fde_xfer_state == CAP_XFER_TWICE) {
-					fde->fde_xfer_state = CAP_XFER_NONE;
-					msg->cm_xfer_state[i] = CAP_XFER_ONCE;
-				} else if (fde->fde_xfer_state ==
-				    CAP_XFER_ONCE) {
+				if (fde->fde_xfer_state == CAP_XFER_ONCE) {
 					fde->fde_xfer_state = CAP_XFER_NONE;
 					msg->cm_xfer_state[i] = CAP_XFER_NONE;
 				} else {
@@ -748,12 +744,6 @@ mac_capability_instance_ioctl(struct file *fp, u_long cmd, void *data,
 						    &call_fcaps[i],
 						    &fde->fde_xfer_caps);
 						if (fde->fde_xfer_state ==
-						    CAP_XFER_TWICE) {
-							fde->fde_xfer_state =
-							    CAP_XFER_NONE;
-							call_xfer_state[i] =
-							    CAP_XFER_ONCE;
-						} else if (fde->fde_xfer_state ==
 						    CAP_XFER_ONCE) {
 							fde->fde_xfer_state =
 							    CAP_XFER_NONE;

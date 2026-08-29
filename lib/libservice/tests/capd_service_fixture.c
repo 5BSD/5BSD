@@ -490,14 +490,13 @@ require_confined_endpoint(int fd)
 {
 
 	/*
-	 * A delivered endpoint has already been attenuated: the client end to
-	 * CAP_XFER_NONE, the provider end to CAP_XFER_ONCE (it may still hand
-	 * off to one worker).  Neither may be raised back toward the maximal
-	 * transfer budget; cap_xfer_limit only reduces, so requesting
-	 * CAP_XFER_TWICE must fail with ENOTCAPABLE for both.
+	 * A delivered client endpoint has been attenuated to CAP_XFER_NONE: the
+	 * single delivery send consumed its CAP_XFER_ONCE budget.  cap_xfer_limit
+	 * only tightens, so trying to raise it back toward CAP_XFER_UNLIMITED must
+	 * fail with ENOTCAPABLE.
 	 */
 	errno = 0;
-	if (cap_xfer_limit(fd, CAP_XFER_TWICE) != -1 || errno != ENOTCAPABLE)
+	if (cap_xfer_limit(fd, CAP_XFER_UNLIMITED) != -1 || errno != ENOTCAPABLE)
 		errx(1, "peer endpoint is not transfer-confined");
 }
 
@@ -1768,7 +1767,7 @@ scenario_helper_open(const char *name, const char *result)
 	}
 	/* A delivered endpoint is transfer-confined to the consumer. */
 	errno = 0;
-	confined = cap_xfer_limit(fd, CAP_XFER_TWICE) == -1 &&
+	confined = cap_xfer_limit(fd, CAP_XFER_UNLIMITED) == -1 &&
 	    errno == ENOTCAPABLE;
 	n = fixture_event_recv(fd, message, sizeof(message));
 	if (n <= 0 || (size_t)n > sizeof(message) || message[n - 1] != '\0') {
@@ -1807,7 +1806,7 @@ scenario_connect(const char *name, const char *result)
 		hold();
 	}
 	errno = 0;
-	confined = cap_xfer_limit(fd, CAP_XFER_TWICE) == -1 &&
+	confined = cap_xfer_limit(fd, CAP_XFER_UNLIMITED) == -1 &&
 	    errno == ENOTCAPABLE;
 	write_result(result, "connect=ok\nname=%s\nfd_valid=1\nconfined=%d\n",
 	    name, confined);

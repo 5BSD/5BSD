@@ -4033,16 +4033,7 @@ unp_internalize(struct mbuf *control, struct mchain *mc, struct thread *td,
 				    &fdep[i]->fde_caps, true);
 				filecaps_intersect(&fdep[i]->fde_caps,
 				    &fde->fde_xfer_caps);
-				if (fde->fde_xfer_state == CAP_XFER_TWICE) {
-					fde->fde_xfer_state = CAP_XFER_NONE;
-					fdep[i]->fde_xfer_state =
-					    CAP_XFER_ONCE;
-					SDT_PROBE6(fd, , , xfer__consume,
-					    fde->fde_file, *fdp,
-					    td->td_proc->p_pid, td->td_ucred,
-					    fde->fde_file->f_type, oldfds);
-				} else if (fde->fde_xfer_state ==
-				    CAP_XFER_ONCE) {
+				if (fde->fde_xfer_state == CAP_XFER_ONCE) {
 					fde->fde_xfer_state = CAP_XFER_NONE;
 					fdep[i]->fde_xfer_state = CAP_XFER_NONE;
 					SDT_PROBE6(fd, , , xfer__consume,

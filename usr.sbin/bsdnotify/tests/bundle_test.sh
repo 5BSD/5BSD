@@ -145,7 +145,7 @@ atf_test_case worker_channel_contract
 worker_channel_contract_head()
 {
 	atf_set "descr" \
-	    "Beacon uses an unnamed capability channel and a two-hop linear session budget without SCM_RIGHTS"
+	    "Beacon uses an unnamed capability channel and per-hop session attenuation (CAP_XFER_ONCE before the worker forward) without raw SCM_RIGHTS"
 }
 worker_channel_contract_body()
 {
@@ -153,8 +153,11 @@ worker_channel_contract_body()
 	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'service_provider_worker_channel' \
 	    grep service_provider_worker_channel "${source}"
-	atf_check -s exit:0 -o match:'CAP_XFER_TWICE' \
-	    grep CAP_XFER_TWICE "@SRCTOP@/usr.sbin/serviced/naming.c"
+	# The router forward is attenuated per hop: bsdnotify tightens the
+	# session to CAP_XFER_ONCE before handing it on, so the router lands at
+	# CAP_XFER_NONE without any kernel-baked multi-hop transfer budget.
+	atf_check -s exit:0 -o match:'CAP_XFER_ONCE' \
+	    grep CAP_XFER_ONCE "${source}"
 	atf_check -s exit:0 -o match:'SERVICE_PROTECT_NOFDRECV' \
 	    grep SERVICE_PROTECT_NOFDRECV "${source}"
 	atf_check -s exit:0 -o match:'router_admission_classify' \

@@ -2420,7 +2420,7 @@ _finstall_prop(struct filedesc *fdp, struct file *fp, int fd, int flags,
 	MPASS(fp != NULL);
 	if (fcaps != NULL)
 		filecaps_validate(fcaps, __func__);
-	MPASS(prop == NULL || prop->fip_xfer_state <= CAP_XFER_TWICE);
+	MPASS(prop == NULL || prop->fip_xfer_state <= CAP_XFER_NONE);
 	MPASS(prop == NULL ||
 	    prop->fip_cloexec_state <= CAP_CLOEXEC_ONCE);
 	MPASS(prop == NULL ||

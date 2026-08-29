@@ -51,10 +51,6 @@
 #define	CAP_XFER_UNLIMITED	0
 #define	CAP_XFER_ONCE		1
 #define	CAP_XFER_NONE		2
-#define	CAP_XFER_TWICE		3
-#endif
-#ifndef CAP_XFER_TWICE
-#define	CAP_XFER_TWICE		3
 #endif
 #ifndef CAP_CLOEXEC_ONCE
 #define	CAP_CLOEXEC_ONCE	2
@@ -111,67 +107,6 @@ mac_capability_recv(int fd, void *buf, uint32_t *lenp, uint64_t *tokenp)
 			*tokenp = ra.reply_token;
 	}
 	return (ret);
-}
-
-static int
-send_right(int socket, int fd)
-{
-	struct msghdr message;
-	struct iovec iov;
-	union {
-		struct cmsghdr header;
-		char bytes[CMSG_SPACE(sizeof(int))];
-	} control;
-	struct cmsghdr *header;
-	char byte;
-
-	memset(&message, 0, sizeof(message));
-	byte = 0;
-	iov.iov_base = &byte;
-	iov.iov_len = sizeof(byte);
-	message.msg_iov = &iov;
-	message.msg_iovlen = 1;
-	message.msg_control = control.bytes;
-	message.msg_controllen = sizeof(control.bytes);
-	header = CMSG_FIRSTHDR(&message);
-	header->cmsg_level = SOL_SOCKET;
-	header->cmsg_type = SCM_RIGHTS;
-	header->cmsg_len = CMSG_LEN(sizeof(fd));
-	memcpy(CMSG_DATA(header), &fd, sizeof(fd));
-	return (sendmsg(socket, &message, 0));
-}
-
-static int
-recv_right(int socket)
-{
-	struct msghdr message;
-	struct iovec iov;
-	union {
-		struct cmsghdr header;
-		char bytes[CMSG_SPACE(sizeof(int))];
-	} control;
-	struct cmsghdr *header;
-	char byte;
-	int fd;
-
-	memset(&message, 0, sizeof(message));
-	iov.iov_base = &byte;
-	iov.iov_len = sizeof(byte);
-	message.msg_iov = &iov;
-	message.msg_iovlen = 1;
-	message.msg_control = control.bytes;
-	message.msg_controllen = sizeof(control.bytes);
-	if (recvmsg(socket, &message, 0) != sizeof(byte))
-		return (-1);
-	header = CMSG_FIRSTHDR(&message);
-	if (header == NULL || header->cmsg_level != SOL_SOCKET ||
-	    header->cmsg_type != SCM_RIGHTS ||
-	    header->cmsg_len != CMSG_LEN(sizeof(fd))) {
-		errno = EPROTO;
-		return (-1);
-	}
-	memcpy(&fd, CMSG_DATA(header), sizeof(fd));
-	return (fd);
 }
 
 static void
@@ -4034,95 +3969,6 @@ ATF_TC_BODY(xfer_sendmsg_once_consumed, tc)
 	close(pipefd[0]);
 	close(pipefd[1]);
 	close(fd);
-}
-
-ATF_TC(xfer_sendmsg_twice_bounded);
-ATF_TC_HEAD(xfer_sendmsg_twice_bounded, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "XFER_TWICE permits exactly two hops and never restores authority");
-	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_test_keystore");
-}
-ATF_TC_BODY(xfer_sendmsg_twice_bounded, tc)
-{
-	struct mac_capability_recvmsg_args ra;
-	struct mac_capability_sendmsg_args sa;
-	struct ks_request req;
-	char buf[64];
-	int fd, pipefd[2], received;
-
-	fd = mac_capability_connect("test_keystore");
-	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE(pipe(pipefd) == 0);
-	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_TWICE) == 0);
-
-	req.op = KS_OP_FETCH;
-	req.keyid = mac_capability_missing_key();
-	memset(&sa, 0, sizeof(sa));
-	sa.payload = &req;
-	sa.payload_len = sizeof(req);
-	sa.fds = &pipefd[0];
-	sa.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == 0);
-
-	/* The keystore's return is the second hop, so it arrives exhausted. */
-	memset(&ra, 0, sizeof(ra));
-	ra.payload = buf;
-	ra.payload_len = sizeof(buf);
-	ra.fds = &received;
-	ra.nfds = 1;
-	ATF_REQUIRE(ioctl(fd, MAC_CAPABILITY_RECVMSG, &ra) == 0);
-	ATF_REQUIRE_EQ(1, ra.nfds);
-	ATF_CHECK_ERRNO(ENOTCAPABLE,
-	    cap_xfer_limit(received, CAP_XFER_ONCE) == -1);
-	close(received);
-
-	/* The first sender is exhausted; the transfer budget cannot branch. */
-	ATF_CHECK_ERRNO(ENOTCAPABLE,
-	    ioctl(fd, MAC_CAPABILITY_SENDMSG, &sa) == -1);
-
-	close(pipefd[0]);
-	close(pipefd[1]);
-	close(fd);
-}
-
-ATF_TC(xfer_scm_rights_twice_linear);
-ATF_TC_HEAD(xfer_scm_rights_twice_linear, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "SCM_RIGHTS consumes a two-hop budget linearly without branching");
-}
-ATF_TC_BODY(xfer_scm_rights_twice_linear, tc)
-{
-	int first, pipefd[2], second, sv1[2], sv2[2];
-
-	ATF_REQUIRE(pipe(pipefd) == 0);
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv1) == 0);
-	ATF_REQUIRE(socketpair(AF_UNIX, SOCK_STREAM, 0, sv2) == 0);
-	ATF_REQUIRE(cap_xfer_limit(pipefd[0], CAP_XFER_TWICE) == 0);
-
-	ATF_REQUIRE(send_right(sv1[0], pipefd[0]) == 1);
-	first = recv_right(sv1[1]);
-	ATF_REQUIRE(first >= 0);
-	ATF_CHECK_ERRNO(ENOTCAPABLE,
-	    send_right(sv1[0], pipefd[0]) == -1);
-
-	ATF_REQUIRE(send_right(sv2[0], first) == 1);
-	second = recv_right(sv2[1]);
-	ATF_REQUIRE(second >= 0);
-	ATF_CHECK_ERRNO(ENOTCAPABLE, send_right(sv2[0], first) == -1);
-	ATF_CHECK_ERRNO(ENOTCAPABLE,
-	    cap_xfer_limit(second, CAP_XFER_ONCE) == -1);
-
-	close(second);
-	close(first);
-	close(sv2[0]);
-	close(sv2[1]);
-	close(sv1[0]);
-	close(sv1[1]);
-	close(pipefd[0]);
-	close(pipefd[1]);
 }
 
 ATF_TC(xfer_sendmsg_multi_atomic);
@@ -8037,8 +7883,6 @@ ATF_TP_ADD_TCS(tp)
 	/* CAP_XFER enforcement — mac_capability paths */
 	ATF_TP_ADD_TC(tp, xfer_sendmsg_none_blocks);
 	ATF_TP_ADD_TC(tp, xfer_sendmsg_once_consumed);
-	ATF_TP_ADD_TC(tp, xfer_sendmsg_twice_bounded);
-	ATF_TP_ADD_TC(tp, xfer_scm_rights_twice_linear);
 	ATF_TP_ADD_TC(tp, xfer_sendmsg_multi_atomic);
 	ATF_TP_ADD_TC(tp, xfer_recvmsg_unlimited_preserved);
 	ATF_TP_ADD_TC(tp, xfer_recvmsg_once_arrives_none);

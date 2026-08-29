@@ -53,7 +53,6 @@
 #define	CAP_XFER_UNLIMITED	0	/* no restriction (default) */
 #define	CAP_XFER_ONCE		1	/* one send, then exhausted */
 #define	CAP_XFER_NONE		2	/* no transfer permitted */
-#define	CAP_XFER_TWICE		3	/* two-hop linear transfer budget */
 
 /*
  * Close-on-exec propagation state (fde_cloexec_state).

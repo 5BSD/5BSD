@@ -355,13 +355,17 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		return (-1);
 	}
 	/*
-	 * The provider endpoint may cross one additional, linear process edge to
-	 * an already-created worker.  The first delivery installs CAP_XFER_ONCE
-	 * at the provider; a worker handoff then installs CAP_XFER_NONE.  The
-	 * client endpoint is never delegable after delivery.
+	 * The provider endpoint stays transfer-unlimited: it is the provider's
+	 * own end, and a provider that hands each session to a worker attenuates
+	 * it to CAP_XFER_ONCE itself right before the SCM_RIGHTS forward (so the
+	 * worker lands at CAP_XFER_NONE) — multi-hop delegation is built from
+	 * explicit per-hop attenuation, not a kernel-baked budget.  The client
+	 * endpoint is limited to CAP_XFER_ONCE, which the single delivery send to
+	 * the consumer consumes to CAP_XFER_NONE: the consumer cannot delegate it
+	 * further.  (An opt-in sendable session would instead leave the client
+	 * end unlimited.)
 	 */
-	if (cap_xfer_limit(provider_end, CAP_XFER_TWICE) == -1 ||
-	    cap_xfer_limit(client_end, CAP_XFER_ONCE) == -1) {
+	if (cap_xfer_limit(client_end, CAP_XFER_ONCE) == -1) {
 		close(provider_end);
 		close(client_end);
 		*errp = ENOTCAPABLE;

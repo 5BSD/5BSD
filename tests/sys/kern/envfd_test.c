@@ -250,7 +250,7 @@ ATF_TC_BODY(validation_and_access, tc)
 	options.eco_fdflags = O_CLOEXEC;
 	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("fdflags", &options) == -1);
 	options.eco_fdflags = 0;
-	options.eco_xfer_state = CAP_XFER_TWICE + 1;
+	options.eco_xfer_state = CAP_XFER_NONE + 1;
 	ATF_REQUIRE_ERRNO(EINVAL, envfd_create("xfer-state", &options) == -1);
 	options.eco_xfer_state = CAP_XFER_UNLIMITED;
 	options.eco_cloexec_state = 3;
@@ -847,28 +847,6 @@ ATF_TC_BODY(initial_descriptor_confinement, tc)
 	send_fd(sv[0], fd);
 	received = recv_fd(sv[1]);
 	ATF_CHECK_EQ(ENOTCAPABLE, try_send_fd(sv[0], fd));
-	ATF_CHECK_EQ(ENOTCAPABLE, try_send_fd(sv[1], received));
-	close(received);
-	close(sv[0]);
-	close(sv[1]);
-	close(fd);
-
-	/* A two-hop budget permits creator-to-broker-to-worker only. */
-	options = (struct envfd_create_options)
-	    ENVFD_CREATE_OPTIONS_INITIALIZER(1);
-	options.eco_xfer_state = CAP_XFER_TWICE;
-	fd = envfd_create("xfer-twice", &options);
-	ATF_REQUIRE(fd >= 0);
-	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	send_fd(sv[0], fd);
-	received = recv_fd(sv[1]);
-	ATF_CHECK_EQ(ENOTCAPABLE, try_send_fd(sv[0], fd));
-	close(sv[0]);
-	close(sv[1]);
-	ATF_REQUIRE_EQ(0, socketpair(AF_UNIX, SOCK_STREAM, 0, sv));
-	send_fd(sv[0], received);
-	close(received);
-	received = recv_fd(sv[1]);
 	ATF_CHECK_EQ(ENOTCAPABLE, try_send_fd(sv[1], received));
 	close(received);
 	close(sv[0]);

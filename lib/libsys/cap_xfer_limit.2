@@ -65,15 +65,9 @@ argument must be one of the following values:
 .It Dv CAP_XFER_UNLIMITED
 No transfer restriction.
 This is the default state for newly created descriptors.
-.It Dv CAP_XFER_TWICE
-The descriptor may be transferred across two descriptor-passing boundaries.
-After the first successful transfer, the sending descriptor has
-.Dv CAP_XFER_NONE
-state and the received descriptor has
+A multi-hop delegation is expressed by attenuating the descriptor to
 .Dv CAP_XFER_ONCE
-state.
-This prevents the remaining transfer budget from branching through retained
-aliases.
+before each forwarding transfer, rather than a kernel-tracked hop budget.
 .It Dv CAP_XFER_ONCE
 The descriptor may be transferred exactly once.
 After a successful transfer, the state automatically transitions to
@@ -86,8 +80,6 @@ Transfer states are monotonically decreasing: a descriptor's state can
 only be tightened, never relaxed.
 The ordering is
 .Dv CAP_XFER_UNLIMITED
-\*(Gt
-.Dv CAP_XFER_TWICE
 \*(Gt
 .Dv CAP_XFER_ONCE
 \*(Gt

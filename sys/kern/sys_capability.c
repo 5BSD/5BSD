@@ -792,7 +792,7 @@ kern_cap_xfer_limit(struct thread *td, int fd, int state)
 	struct filedescent *fdep;
 	int error, old_state = -1;
 
-	if (state != CAP_XFER_UNLIMITED && state != CAP_XFER_TWICE &&
+	if (state != CAP_XFER_UNLIMITED &&
 	    state != CAP_XFER_ONCE && state != CAP_XFER_NONE)
 		return (EINVAL);
 
@@ -806,9 +806,6 @@ kern_cap_xfer_limit(struct thread *td, int fd, int state)
 	}
 	old_state = fdep->fde_xfer_state;
 	if (old_state != CAP_XFER_UNLIMITED &&
-	    !(old_state == CAP_XFER_TWICE &&
-	    (state == CAP_XFER_TWICE || state == CAP_XFER_ONCE ||
-	    state == CAP_XFER_NONE)) &&
 	    !(old_state == CAP_XFER_ONCE &&
 	    (state == CAP_XFER_ONCE || state == CAP_XFER_NONE)) &&
 	    !(old_state == CAP_XFER_NONE && state == CAP_XFER_NONE)) {

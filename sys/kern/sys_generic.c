@@ -982,7 +982,6 @@ specialfd_envfd_validate(const struct specialfd_envfd *se)
 	case CAP_XFER_UNLIMITED:
 	case CAP_XFER_ONCE:
 	case CAP_XFER_NONE:
-	case CAP_XFER_TWICE:
 		break;
 	default:
 		return (EINVAL);
