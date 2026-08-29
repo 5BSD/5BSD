@@ -42,6 +42,42 @@ does not daemonize; it runs the Authority init state machine, starts
 .Xr serviced 8
 as its first managed child, and remains the system lifecycle authority.
 .Pp
+.Sy Plane-free boot .
+When the loader tunable
+.Va capability_plane
+is set to
+.Dq NO
+(also
+.Dq off
+or
+.Dq 0 ) ,
+.Nm
+running as PID 1 immediately hands control to the stock
+.Pa /sbin/init
+and the capability plane never starts.
+The kernel and any preloaded
+.Xr mac_capability 4
+modules still load; only the plane supervisor stays down.
+This yields an ordinary
+.Fx
+boot for recovery and a run environment for the
+.Pa /dev/mac_capability
+device tests, which must open the control device and drive freshly loaded
+modules without a live
+.Xr serviced 8
+owning it.
+A single-user request
+.Pq Fl s
+is forwarded to
+.Pa /sbin/init .
+Set it at the loader prompt with
+.Dq Li set capability_plane=\&"NO\&" ,
+or persistently in
+.Xr loader.conf 5 .
+If the handoff exec fails,
+.Nm
+falls through and boots the plane, so PID 1 is never left dead.
+.Pp
 .Nm
 does not start or manage services directly.
 It mints capability tokens on request from

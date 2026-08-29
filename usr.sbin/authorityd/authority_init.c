@@ -92,6 +92,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <syslog.h>
 #include <time.h>
 #include <ttyent.h>
@@ -297,6 +298,36 @@ authority_init_main(int argc, char *argv[])
 
 	if (optind != argc)
 		warning("ignoring excess arguments");
+
+	/*
+	 * Plane-free boot escape hatch.  When the loader sets
+	 * capability_plane="NO" (or off/0), authority-init hands PID 1 to
+	 * stock /sbin/init and the capability plane never starts.  This gives
+	 * a normal FreeBSD boot for recovery and, crucially, a run environment
+	 * for the mac_capability device tests: kyua must open
+	 * /dev/mac_capability and drive freshly loaded modules without a live
+	 * serviced owning the control device or capability-mode confining the
+	 * test runner.  We check before any plane state is built.  On exec
+	 * failure we fall through and boot the plane -- PID 1 is never left
+	 * dead.  The single-user request (-s) is forwarded so a plane-free
+	 * boot can still drop to single user.
+	 */
+	if (kenv(KENV_GET, "capability_plane", kenv_value, sizeof(kenv_value)) >
+	    0 && (strcasecmp(kenv_value, "NO") == 0 ||
+	    strcasecmp(kenv_value, "off") == 0 ||
+	    strcmp(kenv_value, "0") == 0)) {
+		char *stock_argv[3];
+		int n = 0;
+
+		warning("capability_plane=%s: handing PID 1 to /sbin/init "
+		    "(plane-free boot)", kenv_value);
+		stock_argv[n++] = __DECONST(char *, "/sbin/init");
+		if (initial_transition == single_user)
+			stock_argv[n++] = __DECONST(char *, "-s");
+		stock_argv[n] = NULL;
+		execv("/sbin/init", stock_argv);
+		warning("exec /sbin/init failed: %m; continuing with the plane");
+	}
 
 	/*
 	 * We catch or block signals rather than ignore them,

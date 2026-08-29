@@ -6,6 +6,16 @@
 # Core MAC_CAPABILITY must be loaded at boot via loader.conf:
 #   echo 'mac_capability_load="YES"' >> /boot/loader.conf
 #
+# These are kernel-integration tests: each opens /dev/mac_capability and
+# drives the module directly.  They must run PLANE-FREE -- on a normal
+# capability-plane boot, authority-init is PID 1 and serviced owns the
+# control device, so the runner cannot claim it (and capability-mode would
+# confine the test process).  Boot the test host with the plane disabled so
+# stock /sbin/init runs instead:
+#   at the loader prompt:  set capability_plane="NO"  (then boot)
+#   or persistently:       echo 'capability_plane="NO"' >> /boot/loader.conf
+# The kernel + mac_capability modules still load; only the plane stays down.
+#
 
 set -e
 
@@ -39,6 +49,23 @@ done
 
 # Check root
 [ "$(id -u)" -eq 0 ] || die "must be root"
+
+# Refuse to run on a live capability plane: authority-init as PID 1 means
+# serviced owns /dev/mac_capability and the runner cannot claim it.  Direct
+# the operator to boot plane-free instead of failing later with an opaque
+# EBUSY/EPERM on the control device.
+_pid1_comm=$(ps -p 1 -o comm= 2>/dev/null || true)
+case "$_pid1_comm" in
+*[Aa]uthority*|*authority-init*)
+	echo ""
+	echo "A live capability plane is running (PID 1 = ${_pid1_comm})."
+	echo "These tests need a plane-free boot.  Reboot with the plane"
+	echo "disabled so stock /sbin/init runs:"
+	echo "  at the loader:  set capability_plane=\"NO\"   (then boot)"
+	echo "  persistently:   echo 'capability_plane=\"NO\"' >> /boot/loader.conf"
+	die "capability plane active; boot plane-free to run these tests"
+	;;
+esac
 
 # Verify test binary exists
 [ -x "$MAC_CAPABILITY_TEST_BIN" ] || die "mac_capability_test not found at $MAC_CAPABILITY_TEST_BIN"
