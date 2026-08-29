@@ -1,7 +1,7 @@
 # BSDNotify
 
 BSDNotify is the system-wide notification component exposed as
-`org.5bsd.notify` by `bsdnotify(8)`. It gives capability-mode services
+`system.Notify` by `bsdnotify(8)`. It gives capability-mode services
 bounded exact-topic publish/subscribe, retained 64-bit state, and monotonic
 timers through `libnotify(3)`. It is system-wide in deployment—one broker
 routes sessions for the host—but it is not an unrestricted global broadcast
@@ -28,7 +28,7 @@ request receives `EBUSY`, while unrelated sessions continue to dispatch.
 Client death closes its endpoint immediately and removes its subscriptions,
 timers, and queued events without affecting other services.
 
-The interface is `org.5bsd.notify` 2.0.0 with wire ABI 2. The public limits are
+The interface is `system.Notify` 2.0.0 with wire ABI 2. The public limits are
 128-byte topics, 2048-byte opaque payloads, 64 subscriptions, a 256-event
 default queue, 64 timers per session, and 4096 retained state topics. Topics
 are validated dot-separated identifiers: empty segments, path syntax,

@@ -129,11 +129,11 @@ local_component_provider(const struct serviced_component *component)
 {
 
 	if (strcmp(component->name, "filesystem") == 0)
-		return ("org.5bsd.FileSystemCmp");
+		return ("system.Filesystem");
 	if (strcmp(component->name, "network") == 0)
-		return ("org.5bsd.NetworkCmp");
+		return ("system.Network");
 	if (strcmp(component->name, "crypto") == 0)
-		return ("org.5bsd.CryptoCmp");
+		return ("system.Crypto");
 	return (NULL);
 }
 
@@ -161,11 +161,11 @@ local_component_interface(const struct serviced_component *component)
 {
 
 	if (strcmp(component->name, "filesystem") == 0)
-		return ("org.5bsd.filesystem");
+		return ("system.Filesystem");
 	if (strcmp(component->name, "network") == 0)
-		return ("org.5bsd.network");
+		return ("system.Network");
 	if (strcmp(component->name, "crypto") == 0)
-		return ("org.5bsd.crypto");
+		return ("system.Crypto");
 	return (NULL);
 }
 

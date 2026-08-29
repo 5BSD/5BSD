@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-#define	NOTIFY_INTERFACE		"org.5bsd.notify"
+#define	NOTIFY_INTERFACE		"system.Notify"
 #define	NOTIFY_INTERFACE_VERSION	"2.0.0"
 #define	NOTIFY_MAGIC			0x4e544643U	/* "NTFC" */
 #define	NOTIFY_ABI_VERSION		2

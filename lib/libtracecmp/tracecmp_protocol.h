@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-#define	TRACECMP_INTERFACE		"org.5bsd.trace"
+#define	TRACECMP_INTERFACE		"system.Trace"
 #define	TRACECMP_INTERFACE_VERSION	"1.0.0"
 #define	TRACECMP_MAGIC			0x54524343U	/* "TRCC" */
 #define	TRACECMP_ABI_VERSION		1

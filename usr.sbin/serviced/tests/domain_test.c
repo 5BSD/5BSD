@@ -47,9 +47,9 @@ int serviced_kq = -1;
  * A system-only provider name (never on the user allow-list) and the two
  * allow-listed names.  Keep these in sync with user_system_allow[] in domain.c.
  */
-#define	SYSTEM_ONLY_NAME	"org.5bsd.Storage"
-#define	ALLOW_LOG_NAME		"org.5bsd.Log"
-#define	ALLOW_NOTIFY_NAME	"org.5bsd.Notify"
+#define	SYSTEM_ONLY_NAME	"system.Storage"
+#define	ALLOW_LOG_NAME		"system.Log"
+#define	ALLOW_NOTIFY_NAME	"system.Notify"
 
 /*
  * Leaf serviced symbols owned by other translation units.  The scope-decision

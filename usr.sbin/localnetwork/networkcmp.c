@@ -44,7 +44,7 @@
 #include "networkcmp_test.h"
 #endif
 
-#define	LOCALNETWORK_NAME	"org.5bsd.NetworkCmp"
+#define	LOCALNETWORK_NAME	"system.Network"
 #define	NETWORKCMP_RESOLVER_TIMEOUT_MS	30000U
 
 union provider_buffer {

@@ -13,10 +13,10 @@ struct auditcmp_identity_event {
 };
 
 static const struct auditcmp_identity_event events[] = {
-	{ "org.5bsd.FileSystemCmp", AUE_FILESYSTEMCMP_POLICY },
-	{ "org.5bsd.LogCmp", AUE_LOGCMP_POLICY },
-	{ "org.5bsd.NetworkCmp", AUE_NETWORKCMP_POLICY },
-	{ "org.5bsd.Notify", AUE_BSDNOTIFY_POLICY },
+	{ "system.Filesystem", AUE_FILESYSTEMCMP_POLICY },
+	{ "system.Log", AUE_LOGCMP_POLICY },
+	{ "system.Network", AUE_NETWORKCMP_POLICY },
+	{ "system.Notify", AUE_BSDNOTIFY_POLICY },
 };
 
 int

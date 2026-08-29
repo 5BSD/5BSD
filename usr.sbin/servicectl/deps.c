@@ -85,13 +85,13 @@ inspect_descriptor_note(Elf_Scn *scn, bool *filesystem, bool *network,
 		if (data->d_buf == NULL)
 			continue;
 		if (contains(data->d_buf, data->d_size,
-		    "interface=org.5bsd.network"))
+		    "interface=system.Network"))
 			*network = true;
 		if (contains(data->d_buf, data->d_size,
-		    "interface=org.5bsd.filesystem"))
+		    "interface=system.Filesystem"))
 			*filesystem = true;
 		if (contains(data->d_buf, data->d_size,
-		    "interface=org.5bsd.crypto"))
+		    "interface=system.Crypto"))
 			*crypto = true;
 	}
 }

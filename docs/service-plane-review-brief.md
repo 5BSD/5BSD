@@ -34,7 +34,7 @@ descriptor-based rather than ambient.
   like stdio (`SERVICE_LOOKUP_FD` / fixed fd `SERVICE_LOOKUP_FIXED_FD=3`), used to
   resolve/connect to services. Bootstrap-port shaped (cf. macOS launchd).
 - **Domains (§22)** — narrow *which* names a channel resolves. `SYSTEM` resolves
-  all; `USER` resolves an allow-list (`org.5bsd.Log`, `org.5bsd.Notify`). Domains
+  all; `USER` resolves an allow-list (`system.Log`, `system.Notify`). Domains
   only ever narrow. `svc_mint_domain_kind` is the escalation guard.
 - **Session provisioning (§21)** — login (getty fixed-fd carry), su (per-uid
   narrow), and sshd (privileged-monitor provision, fd-passed like the pty) each

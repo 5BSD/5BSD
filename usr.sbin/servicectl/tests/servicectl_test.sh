@@ -468,7 +468,7 @@ servicectl_deps_body()
 	atf_check -s exit:0 -o match:'discover their named services' \
 	    grep 'discover' deps-both.out
 
-	printf 'interface=org.5bsd.network\n' > not-elf
+	printf 'interface=system.Network\n' > not-elf
 	atf_check -s not-exit:0 -e match:"not an ELF object" \
 	    "$servicectl_bin" deps not-elf
 	ln -s no-descriptors symlink-elf

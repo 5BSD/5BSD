@@ -462,7 +462,7 @@ ATF_TC_BODY(abi, tc)
 {
 
 	ATF_CHECK_EQ(0x46434d50U, FILESYSTEMCMP_MAGIC);
-	ATF_CHECK_STREQ("org.5bsd.filesystem",
+	ATF_CHECK_STREQ("system.Filesystem",
 	    FILESYSTEMCMP_INTERFACE);
 	ATF_CHECK_STREQ("1.0.0", FILESYSTEMCMP_INTERFACE_VERSION);
 	ATF_CHECK_EQ(16, sizeof(struct filesystemcmp_msg));

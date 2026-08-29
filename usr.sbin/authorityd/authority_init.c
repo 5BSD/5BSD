@@ -257,6 +257,9 @@ authority_init_main(int argc, char *argv[])
 	if (init_path_argv0 == NULL)
 		init_path_argv0 = __DECONST(char *, "/sbin/authority-init");
 
+	/* Present as "Authority" in ps/top -- the plane's spine, not base init. */
+	setproctitle("-Authority");
+
 	BOOTTRACE("authority-init starting...");
 
 	/* LOG_CONS keeps early diagnostics on the console until syslogd

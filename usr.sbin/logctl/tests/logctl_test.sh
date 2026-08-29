@@ -77,7 +77,7 @@ severity_names_body()
 {
 	logctl="$(atf_get_srcdir)/logctl_test_bin"
 	for severity in trace debug info warn error fatal; do
-		atf_check -s exit:69 -e match:'open org.5bsd.log' \
+		atf_check -s exit:69 -e match:'open system.Log' \
 		    "$logctl" emit tests tool "$severity" message
 	done
 }
@@ -125,16 +125,16 @@ operation_failures_body()
 	atf_check -s exit:69 -e match:'stats: Input/output error' \
 	    -e match:'client-closed' env CMP_TEST_FAIL=stats \
 	    CMP_TEST_TRACE_CLOSE=1 "$logctl" stats
-	atf_check -s exit:69 -e match:'query org.5bsd.log: Input/output error' \
+	atf_check -s exit:69 -e match:'query system.Log: Input/output error' \
 	    -e match:'client-closed' env CMP_TEST_FAIL=query \
 	    CMP_TEST_TRACE_CLOSE=1 "$logctl" show
 }
 unavailable_body()
 {
 	logctl="$(atf_get_srcdir)/logctl_test_bin"
-	atf_check -s exit:69 -e match:'open org.5bsd.log' "$logctl" stats
-	atf_check -s exit:69 -e match:'open org.5bsd.log' "$logctl" flush
-	atf_check -s exit:69 -e match:'open org.5bsd.log' \
+	atf_check -s exit:69 -e match:'open system.Log' "$logctl" stats
+	atf_check -s exit:69 -e match:'open system.Log' "$logctl" flush
+	atf_check -s exit:69 -e match:'open system.Log' \
 	    "$logctl" emit tests tool info message
 }
 

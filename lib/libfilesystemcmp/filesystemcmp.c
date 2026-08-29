@@ -24,7 +24,7 @@
 
 static const char filesystemcmp_dependency_note[]
     __attribute__((section(".note.5bsd.descriptors"), used)) =
-    "interface=org.5bsd.filesystem\n"
+    "interface=system.Filesystem\n"
     "version=1.0.0\n"
     "local-name=filesystem\n"
     "required=true\n";

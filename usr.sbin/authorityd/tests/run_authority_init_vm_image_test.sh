@@ -63,7 +63,7 @@ validate_image_root()
 	    exec /usr/sbin/servicectl verify "$@"
 	' >"$verify_log" || fail "image root contains invalid system bundles"
 	grep -q 'kmod_requires: \[vhid\]' "$verify_log" ||
-		fail "Blued.cap does not declare its vhid kernel prerequisite"
+		fail "Bluetooth.cap does not declare its vhid kernel prerequisite"
 	awk '
 	    /^  \[[0-9]+\] org\.5bsd\.blued\/blued$/ {
 		blued = 1
@@ -73,7 +73,7 @@ validate_image_root()
 	    blued && /^  \[[0-9]+\]/ { blued = 0 }
 	    END { exit !lazy }
 	' "$verify_log" ||
-		fail "Blued.cap is not activated on first connection"
+		fail "Bluetooth.cap is not activated on first connection"
 	file -b "$root/boot/images/5bsd-logo.png" | grep -q \
 	    '^PNG image data, 960 x 384, 8-bit/color RGBA, non-interlaced$' ||
 		fail "image root contains an unsupported boot splash"

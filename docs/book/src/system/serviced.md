@@ -81,7 +81,7 @@ provider or policy escape hatch.
 
 Global services instead publish reverse-domain names in `activation.ipc` and
 use `service_provider_expose()`. Providers are ordinary supervised bundles;
-examples include `org.5bsd.log`, `org.5bsd.notify`, and `org.5bsd.trace`.
+examples include `system.Log`, `system.Notify`, and `system.Trace`.
 Consumers discover these names through typed libraries. Publishing a name does
 not imply boot activation.
 

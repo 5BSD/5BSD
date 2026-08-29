@@ -2,6 +2,7 @@
 
 PACKAGE=	localfilesystem
 PROG=		localfilesystem
+PROGNAME=	Filesystem
 MAN=		localfilesystem.8
 SRCS=		disk.c filesystemcmp.c scratch.c store.c
 
@@ -14,7 +15,7 @@ LIBADD=		auditcmp channel filesystemcmp service
 
 DIRS+=		FILESYSTEMCMP_CAP FILESYSTEMCMP_CAP_UNITS \
 		FILESYSTEMCMP_CAP_UNIT FILESYSTEMCMP_CAP_BIN
-FILESYSTEMCMP_CAP=	/Capabilities/System/LocalFilesystem.cap
+FILESYSTEMCMP_CAP=	/Capabilities/System/Filesystem.cap
 FILESYSTEMCMP_CAPPACKAGE=	localfilesystem
 FILESYSTEMCMP_CAP_UNITS=	${FILESYSTEMCMP_CAP}/Units
 FILESYSTEMCMP_CAP_UNIT=	${FILESYSTEMCMP_CAP_UNITS}/localfilesystem.unit

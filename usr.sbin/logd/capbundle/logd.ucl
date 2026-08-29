@@ -1,4 +1,5 @@
-activation { boot = true; ipc = ["org.5bsd.log"]; }
+activation { boot = true; ipc = ["system.Log"]; }
+program = "Log";
 restart = "on-failure";
 user = "capability";
 

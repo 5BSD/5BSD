@@ -18,18 +18,18 @@ manifest_head()
 manifest_body()
 {
 	require_srctree
-	srcdir="@SRCTOP@/usr.sbin/localnetwork"
-	objdir="@OBJTOP@/usr.sbin/localnetwork"
+	srcdir="@SRCTOP@/usr.sbin/Network"
+	objdir="@OBJTOP@/usr.sbin/Network"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/localnetwork.ucl"
-	bundle="${PWD}/LocalNetwork.cap"
+	bundle="${PWD}/Network.cap"
 	unit="${bundle}/Units/localnetwork.unit"
 
 	test -x "${servicectl}" ||
 	    atf_skip "source-built servicectl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/localnetwork" "${unit}/bin/localnetwork"
+	cp "${objdir}/localnetwork" "${unit}/bin/Network"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
 		    "${objdir}/localnetwork"
@@ -39,12 +39,12 @@ manifest_body()
 	fi
 	cp "${manifest}" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
-	    "${unit}/bin/localnetwork"
+	    "${unit}/bin/Network"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
 	    "${servicectl}" verify "${bundle}"
-	atf_check -s exit:0 -o match:'org.5bsd.NetworkCmp' \
+	atf_check -s exit:0 -o match:'system.Network' \
 	    grep 'activation' "${manifest}"
 	atf_check -s exit:1 -o empty -e empty \
 	    grep 'interface' "${manifest}"
@@ -53,8 +53,8 @@ manifest_body()
 }
 manifest_cleanup()
 {
-	chmod -R u+w "${PWD}/LocalNetwork.cap" 2>/dev/null || true
-	rm -rf "${PWD}/LocalNetwork.cap"
+	chmod -R u+w "${PWD}/Network.cap" 2>/dev/null || true
+	rm -rf "${PWD}/Network.cap"
 }
 
 atf_test_case kernel_security_contract
@@ -73,8 +73,8 @@ observability_contract_head()
 observability_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
-	provider="@SRCTOP@/usr.sbin/localnetwork/localnetwork_provider.d"
+	source="@SRCTOP@/usr.sbin/Network/networkcmp.c"
+	provider="@SRCTOP@/usr.sbin/Network/localnetwork_provider.d"
 
 	for probe in SESSION_START SESSION_END REQUEST_DONE RESOLVE_START \
 	    RESOLVE_DONE REJECT
@@ -94,7 +94,7 @@ observability_contract_body()
 kernel_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
+	source="@SRCTOP@/usr.sbin/Network/networkcmp.c"
 
 	atf_check -s exit:0 -o match:'NETWORKCMP_FEATURE_DNS' \
 	    grep NETWORKCMP_FEATURE_DNS "${source}"

@@ -49,7 +49,7 @@
 The
 .Nm
 library implements version 5 of the global
-.Dq org.5bsd.log
+.Dq system.Log
 service.
 Applications use this typed API; the library performs serviced discovery,
 session negotiation, shared-memory attachment, framing, and descriptor
@@ -101,7 +101,7 @@ Ring saturation returns
 and increments the client drop counter.
 After capacity recovers, the next publication first emits one public synthetic
 event with subsystem
-.Ql org.5bsd.logcmp ,
+.Ql system.Log ,
 category
 .Ql delivery ,
 event name

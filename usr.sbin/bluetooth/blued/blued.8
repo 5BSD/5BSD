@@ -89,7 +89,7 @@ When launched by
 .Nm
 is a named, on-demand service and is not launched as part of system boot.
 The first managed client connection to
-.Dq org.5bsd.blued
+.Dq system.Bluetooth
 activates the service and its
 .Pa vhid.ko
 kernel-module prerequisite.
@@ -104,7 +104,7 @@ After initialization it selects the external capprotect shield itself;
 .Xr serviced 8
 retains shutdown authority through the process descriptor.
 It registers the name
-.Dq org.5bsd.blued
+.Dq system.Bluetooth
 and reports readiness only after initialization completes.
 .Pp
 The options are as follows:
@@ -596,13 +596,13 @@ Shut down the daemon gracefully.
 .El
 .Sh FILES
 .Bl -tag -width "/usr/share/examples/blued/blued.conf.sample" -compact
-.It Pa /Capabilities/System/Blued.cap
+.It Pa /Capabilities/System/Bluetooth.cap
 Trusted system-service bundle used by
 .Xr serviced 8 .
-.It Pa /Capabilities/System/Blued.cap/Units/blued.unit/Config/blued.conf
+.It Pa /Capabilities/System/Bluetooth.cap/Units/blued.unit/Config/blued.conf
 Base-system instance of the configuration installed with the managed unit;
 versioned site bundles use their own selected unit directory.
-.It Pa /usr/sbin/blued
+.It Pa /usr/sbin/Bluetooth
 Compatibility symlink to the executable in the system-service bundle.
 .It Pa /etc/blued.conf
 Default configuration file (UCL format).

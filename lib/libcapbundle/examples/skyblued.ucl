@@ -14,7 +14,7 @@
 # all "any", direction = any.  direction MUST be "any" -- the block-all
 # gate only fires on a claim whose direction is the bind+connect union.
 
-activation { ipc = ["org.5bsd.bluetooth"]; }
+activation { ipc = ["system.Bluetooth"]; }
 restart = "on-failure";
 stop_timeout = 10;
 

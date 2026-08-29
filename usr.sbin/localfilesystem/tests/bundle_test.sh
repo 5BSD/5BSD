@@ -17,18 +17,18 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/localfilesystem"
-	objdir="@OBJTOP@/usr.sbin/localfilesystem"
+	srcdir="@SRCTOP@/usr.sbin/Filesystem"
+	objdir="@OBJTOP@/usr.sbin/Filesystem"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/localfilesystem.ucl"
-	bundle="${PWD}/LocalFilesystem.cap"
+	bundle="${PWD}/Filesystem.cap"
 	unit="${bundle}/Units/localfilesystem.unit"
 
 	test -x "${servicectl}" ||
 	    atf_skip "source-built servicectl is required"
 	mkdir -p "${unit}/bin"
 	cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "${objdir}/localfilesystem" "${unit}/bin/localfilesystem"
+	cp "${objdir}/localfilesystem" "${unit}/bin/Filesystem"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
 		    "${objdir}/localfilesystem"
@@ -38,7 +38,7 @@ manifest_body()
 	fi
 	cp "${manifest}" "${unit}/Unit.ucl"
 	chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" "${unit}/bin" \
-	    "${unit}/bin/localfilesystem"
+	    "${unit}/bin/Filesystem"
 	chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
@@ -52,8 +52,8 @@ manifest_body()
 }
 manifest_cleanup()
 {
-	chmod -R u+w "${PWD}/LocalFilesystem.cap" 2>/dev/null || true
-	rm -rf "${PWD}/LocalFilesystem.cap"
+	chmod -R u+w "${PWD}/Filesystem.cap" 2>/dev/null || true
+	rm -rf "${PWD}/Filesystem.cap"
 }
 
 atf_test_case provider_security_contract
@@ -72,8 +72,8 @@ observability_contract_head()
 observability_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/localfilesystem/filesystemcmp.c"
-	provider="@SRCTOP@/usr.sbin/localfilesystem/localfilesystem_provider.d"
+	source="@SRCTOP@/usr.sbin/Filesystem/filesystemcmp.c"
+	provider="@SRCTOP@/usr.sbin/Filesystem/localfilesystem_provider.d"
 
 	for probe in LOCALFILESYSTEM_PROBE_SESSION \
 	    LOCALFILESYSTEM_PROBE_SESSION_END LOCALFILESYSTEM_PROBE_REQUEST
@@ -92,7 +92,7 @@ observability_contract_body()
 provider_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/localfilesystem/filesystemcmp.c"
+	source="@SRCTOP@/usr.sbin/Filesystem/filesystemcmp.c"
 
 	atf_check -s exit:0 -o match:'SERVICE_PROTECT_NOFORK' \
 	    grep SERVICE_PROTECT_NOFORK "${source}"
@@ -125,7 +125,7 @@ provider_security_contract_body()
 	    grep LOCALFILESYSTEM_PROBE_REQUEST "${source}"
 	atf_check -s exit:0 -o match:'request__done' \
 	    grep request__done \
-	    "@SRCTOP@/usr.sbin/localfilesystem/localfilesystem_provider.d"
+	    "@SRCTOP@/usr.sbin/Filesystem/localfilesystem_provider.d"
 }
 
 atf_init_test_cases()

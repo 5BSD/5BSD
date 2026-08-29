@@ -2,6 +2,7 @@
 
 PACKAGE=	bsdnotify
 PROG=		bsdnotify
+PROGNAME=	Notify
 MAN=		bsdnotify.8
 SRCS=		bsdnotify.c broker.c policy.c transport.c
 LIBADD=		auditcmp channel notify pthread service ucl
@@ -14,7 +15,7 @@ CFLAGS+=	-I${SRCTOP}/sys
 
 DIRS+=		NOTIFY_CAP NOTIFY_CAP_UNITS NOTIFY_CAP_UNIT NOTIFY_CAP_BIN \
 		NOTIFY_CAP_CONFIG
-NOTIFY_CAP=	/Capabilities/System/BsdNotify.cap
+NOTIFY_CAP=	/Capabilities/System/Notify.cap
 NOTIFY_CAPPACKAGE=	bsdnotify
 NOTIFY_CAP_UNITS=	${NOTIFY_CAP}/Units
 NOTIFY_CAP_UNIT=	${NOTIFY_CAP_UNITS}/bsdnotify.unit

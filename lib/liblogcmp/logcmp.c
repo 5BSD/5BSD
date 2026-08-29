@@ -733,7 +733,7 @@ client_promote_ring(struct logcmp_client *client)
 static int
 client_emit_loss_record(struct logcmp_client *client)
 {
-	static const char subsystem[] = "org.5bsd.logcmp";
+	static const char subsystem[] = "system.Log";
 	static const char category[] = "delivery";
 	static const char event_name[] = "records-dropped";
 	static const char message[] = "records were dropped before delivery";

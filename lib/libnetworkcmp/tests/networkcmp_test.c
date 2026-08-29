@@ -372,7 +372,7 @@ ATF_TC_BODY(abi, tc)
 {
 
 	ATF_CHECK_EQ(0x4e434d50U, NETWORKCMP_MAGIC);
-	ATF_CHECK_STREQ("org.5bsd.network", NETWORKCMP_INTERFACE);
+	ATF_CHECK_STREQ("system.Network", NETWORKCMP_INTERFACE);
 	ATF_CHECK_STREQ("1.0.0", NETWORKCMP_INTERFACE_VERSION);
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_msg));
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_hello));

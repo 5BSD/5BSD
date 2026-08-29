@@ -178,13 +178,13 @@ operation_failures_body()
 unavailable_body()
 {
 	notifyctl="$(atf_get_srcdir)/notifyctl_test_bin"
-	atf_check -s exit:69 -e match:'open org.5bsd.notify' "$notifyctl" stats
+	atf_check -s exit:69 -e match:'open system.Notify' "$notifyctl" stats
 	for command in 'publish org.5bsd.test.changed value' \
 	    'state-get org.5bsd.test.changed' \
 	    'state-set org.5bsd.test.changed 18446744073709551615' \
 	    'timer 99 10 3 25' \
 	    'watch org.5bsd.test.changed 1'; do
-		atf_check -s exit:69 -e match:'open org.5bsd.notify' \
+		atf_check -s exit:69 -e match:'open system.Notify' \
 		    "$notifyctl" $command
 	done
 }

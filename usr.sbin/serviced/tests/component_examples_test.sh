@@ -164,8 +164,8 @@ pkgbase_default_identity_body()
 	atf_check -s exit:0 -o match:'kmod_requires.*vhid' \
 	    grep 'kmod_requires.*vhid' \
 	    "${src}/usr.sbin/bluetooth/blued/blued.ucl"
-	atf_check -s exit:0 -o match:'activation.*ipc.*org.5bsd.blued' \
-	    grep 'activation.*ipc.*org.5bsd.blued' \
+	atf_check -s exit:0 -o match:'activation.*ipc.*system.Bluetooth' \
+	    grep 'activation.*ipc.*system.Bluetooth' \
 	    "${src}/usr.sbin/bluetooth/blued/blued.ucl"
 	atf_check -s exit:0 -o match:'etc/rc.d/authorityd' \
 	    grep 'etc/rc.d/authorityd' "${src}/packages/rc/rc.ucl"
@@ -608,10 +608,10 @@ operational_name_contract_body()
 	done
 
 	for mapping in \
-	    'localfilesystem:LocalFilesystem.cap' \
-	    'localnetwork:LocalNetwork.cap' \
+	    'localfilesystem:Filesystem.cap' \
+	    'localnetwork:Network.cap' \
 	    'logd:Log.cap' \
-	    'bsdnotify:BsdNotify.cap' \
+	    'bsdnotify:Notify.cap' \
 	    'traced:Trace.cap' \
 	    'auditbrokerd:Audit.cap'; do
 		daemon=${mapping%%:*}

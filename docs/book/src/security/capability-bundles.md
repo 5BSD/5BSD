@@ -54,6 +54,51 @@ container is runtime state, never a source of authority, and is safe to delete
 and recreate. It is distinct from provisioned storage leases and component
 scratch, which are minted TrustedZFS datasets delivered as descriptors.
 
+## Naming
+
+A capability is identified by a hierarchical name in the `system.` namespace —
+`system.Log`, `system.Network`, `system.Storage`, `system.Bluetooth`, and so on.
+This name is what a program looks up to reach the capability and what a bundle
+claims in order to provide it; it is declared once as the bundle's `bundle_id`
+and on the listener the unit activates (`activation { ipc = ["system.Log"]; }`).
+
+**The name is the contract.** A capability *is* its claimed name, not the daemon
+behind it. To replace a provider — swap the storage broker, ship an alternate
+logger — you publish a bundle that claims the same `system.<Capability>` name;
+consumers are unaffected because they resolve the name, never the binary. This is
+the decoupling launchd draws between a service label and its executable.
+
+The `system.` prefix is reserved for base-system capabilities (it is also the
+namespace casper uses — `system.pwd`, `system.syslog`). Third-party or
+out-of-tree capabilities use a reverse-DNS namespace (`org.example.Thing`) so
+they never collide with the base set.
+
+### Process names
+
+Each capability's launched executable is named for the capability in title case
+— `Log`, `Network`, `Storage`, `Bluetooth`, plus `Authority` (PID 1) and
+`Serviced` for the plane's spine. Because base daemons are conventionally
+lowercase (`sshd`, `cron`, `syslogd`), the plane stands out at a glance in
+`ps(1)` and `top(1)`:
+
+```text
+  PID COMMAND
+    1 Authority
+   18 Serviced
+ 1408 Audit
+ 1430 Filesystem
+ 1432 Network
+  ... Storage
+  952 syslogd
+  971 cron
+```
+
+The name shown in `top` is the same identity a program resolves. Components get
+it from their bundle's `bin/<Capability>` executable (serviced sets `argv[0]` to
+the basename); the spine daemons set it with `setproctitle(3)`. Brackets —
+`[name]` — are deliberately *not* used: `ps`/`top` reserve those for kernel and
+`P_SYSTEM` processes, which the plane daemons are not.
+
 ## Layout and installation
 
 Base provider Makefiles install `Bundle.ucl`, `Unit.ucl`, executables, and

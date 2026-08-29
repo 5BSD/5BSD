@@ -36,7 +36,7 @@
 #define	DEFAULT_MAX_BYTES	(64ULL * 1024 * 1024)
 #define	DEFAULT_MAX_OBJECTS	4096
 #define	DEFAULT_MAX_FILE_BYTES	(16U * 1024 * 1024)
-#define	LOCALFILESYSTEM_NAME	"org.5bsd.FileSystemCmp"
+#define	LOCALFILESYSTEM_NAME	"system.Filesystem"
 
 union wire_buffer {
 	max_align_t align;

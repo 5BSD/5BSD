@@ -1,5 +1,6 @@
 # [CRYPTO] is the local authority-replacement provider for DTYPE_CRYPTO.
-activation { boot = true; ipc = ["org.5bsd.CryptoCmp"]; }
+activation { boot = true; ipc = ["system.Crypto"]; }
+program = "Crypto";
 restart = "on-failure";
 user = "capability";
 # The DTYPE_CRYPTO provider needs /dev/crypto; ensure cryptodev is loaded

@@ -1,3 +1,4 @@
-activation { boot = true; ipc = ["org.5bsd.FileSystemCmp"]; }
+activation { boot = true; ipc = ["system.Filesystem"]; }
+program = "Filesystem";
 restart = "on-failure";
 user = "capability";

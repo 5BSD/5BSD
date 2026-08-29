@@ -1717,13 +1717,13 @@ service_local_component_open(struct service_context *context,
 		return (-1);
 	}
 	*session_fdp = -1;
-	if (strcmp(interface, "org.5bsd.filesystem") == 0) {
+	if (strcmp(interface, "system.Filesystem") == 0) {
 		environment_name = SERVICE_FILESYSTEMCMP_ENV;
 		expected_version = "1.0.0";
-	} else if (strcmp(interface, "org.5bsd.network") == 0) {
+	} else if (strcmp(interface, "system.Network") == 0) {
 		environment_name = SERVICE_NETWORKCMP_ENV;
 		expected_version = "1.0.0";
-	} else if (strcmp(interface, "org.5bsd.crypto") == 0) {
+	} else if (strcmp(interface, "system.Crypto") == 0) {
 		environment_name = SERVICE_CRYPTOCMP_ENV;
 		expected_version = "1.0.0";
 	} else {

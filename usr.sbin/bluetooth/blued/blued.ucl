@@ -1,4 +1,5 @@
-activation { ipc = ["org.5bsd.blued"]; }
+activation { ipc = ["system.Bluetooth"]; }
+program = "Bluetooth";
 
 restart = "on-failure";
 stop_timeout = 10;

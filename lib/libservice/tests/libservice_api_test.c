@@ -568,7 +568,7 @@ ATF_TC_BODY(shared_context, tc)
 		    service_acquire(&second) == -1 || first != second)
 			_exit(3);
 		errno = 0;
-		if (service_local_component_open(first, "org.5bsd.filesystem",
+		if (service_local_component_open(first, "system.Filesystem",
 		    "2.0.0", &channel[0]) != -1 ||
 		    errno != EPROTONOSUPPORT)
 			_exit(11);
@@ -577,7 +577,7 @@ ATF_TC_BODY(shared_context, tc)
 		    "1.0.0", &channel[0]) != -1 || errno != ENOENT)
 			_exit(12);
 		errno = 0;
-		if (service_local_component_open(first, "org.5bsd.filesystem",
+		if (service_local_component_open(first, "system.Filesystem",
 		    "1.0.0", &channel[0]) != -1 || errno != ENOENT)
 			_exit(13);
 		if (service_provider_create(&provider) == -1)

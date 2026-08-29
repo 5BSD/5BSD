@@ -17,8 +17,8 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/localcrypto"
-	objdir="@OBJTOP@/usr.sbin/localcrypto"
+	srcdir="@SRCTOP@/usr.sbin/Crypto"
+	objdir="@OBJTOP@/usr.sbin/Crypto"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/crypto.ucl"
 	bundle="${PWD}/Crypto.cap"
@@ -28,10 +28,10 @@ manifest_body()
 	test ! -e "${bundle}" || atf_fail "stale test bundle: ${bundle}"
 	atf_check -s exit:0 mkdir -p "${unit}/bin"
 	atf_check -s exit:0 cp "${srcdir}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	atf_check -s exit:0 cp "${objdir}/localcrypto" "${unit}/bin/localcrypto"
+	atf_check -s exit:0 cp "${objdir}/localcrypto" "${unit}/bin/Crypto"
 	atf_check -s exit:0 cp "${manifest}" "${unit}/Unit.ucl"
 	atf_check -s exit:0 chmod 0555 "${bundle}" "${bundle}/Units" "${unit}" \
-	    "${unit}/bin" "${unit}/bin/localcrypto"
+	    "${unit}/bin" "${unit}/bin/Crypto"
 	atf_check -s exit:0 chmod 0444 "${bundle}/Bundle.ucl" "${unit}/Unit.ucl"
 
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
@@ -56,8 +56,8 @@ provider_security_contract_head()
 provider_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/localcrypto/localcrypto.c"
-	srcdir="@SRCTOP@/usr.sbin/localcrypto"
+	source="@SRCTOP@/usr.sbin/Crypto/localcrypto.c"
+	srcdir="@SRCTOP@/usr.sbin/Crypto"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOIPC \
 	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOEXEC SERVICE_PROTECT_NOSOCK \

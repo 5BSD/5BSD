@@ -1,6 +1,7 @@
 .include <src.opts.mk>
 
 PROG=	blued
+PROGNAME=	Bluetooth
 SRCS=	blued.c blued_event.c blued_central.c blued_peripheral.c hogp_report.c \
 	att.c att_server.c att_server_dispatch.c att_server_notify.c \
 	att_server_hash.c config.c conn.c blued_persist.c blued_devmgr.c \
@@ -12,7 +13,7 @@ SRCS=	blued.c blued_event.c blued_central.c blued_peripheral.c hogp_report.c \
 
 PACKAGE=	bluetooth
 
-BLUED_CAP=	/Capabilities/System/Blued.cap
+BLUED_CAP=	/Capabilities/System/Bluetooth.cap
 BLUED_CAP_UNITS=	${BLUED_CAP}/Units
 BLUED_CAP_UNIT=	${BLUED_CAP_UNITS}/blued.unit
 BLUED_CAP_BIN=	${BLUED_CAP_UNIT}/bin

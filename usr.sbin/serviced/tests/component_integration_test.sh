@@ -86,11 +86,11 @@ install_audit_service()
 	binary="@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
 	test -x "${binary}" || atf_skip "AuditCmp provider is unavailable"
 	bundle=$(make_svc_bin system audit-service \
-	    'activation { ipc = ["org.5bsd.audit"]; }
+	    'activation { ipc = ["system.Audit"]; }
 restart = "on-failure";
 user = "root";' "${binary}")
 	sed -i '' \
-	    's/^bundle_id = .*/bundle_id = "org.5bsd.AuditCmp";/' \
+	    's/^bundle_id = .*/bundle_id = "system.Audit";/' \
 	    "${bundle}/Bundle.ucl"
 }
 
@@ -116,7 +116,7 @@ filesystem_local_end_to_end_body()
 	install_audit_service
 	install_local_factory filesystem \
 	    "@OBJTOP@/usr.sbin/localfilesystem/localfilesystem" \
-	    "org.5bsd.FileSystemCmp"
+	    "system.Filesystem"
 	make_boot_consumer filesystem-consumer \
 	    "[\"filesystem-consumer\", \"${WORK}/filesystem-result.out\"]" \
 	    'storage = [{ name = "local"; scope = "unit"; rights = "mount"; }];
@@ -157,7 +157,7 @@ network_local_end_to_end_body()
 	install_audit_service
 	install_local_factory network \
 	    "@OBJTOP@/usr.sbin/localnetwork/localnetwork" \
-	    "org.5bsd.NetworkCmp"
+	    "system.Network"
 	make_boot_consumer network-consumer \
 	    "[\"network-consumer\", \"${WORK}/network-result.out\"]" \
 	    'descriptors { network {} }'
@@ -193,8 +193,8 @@ log_global_on_demand_body()
 	start_stack
 	install_audit_service
 	install_global_service log-service \
-	    "@OBJTOP@/usr.sbin/logd/logd" "org.5bsd.log" \
-	    "org.5bsd.LogCmp" \
+	    "@OBJTOP@/usr.sbin/logd/logd" "system.Log" \
+	    "system.Log" \
 	    'storage = [{ name = "state"; scope = "unit"; flavor = "empty";
             lifetime = "persistent"; rights = "mount"; }];'
 	make_boot_consumer log-consumer \
@@ -232,8 +232,8 @@ notify_global_sessions_body()
 	start_stack
 	install_audit_service
 	install_global_service notify-service \
-	    "@OBJTOP@/usr.sbin/bsdnotify/bsdnotify" "org.5bsd.notify" \
-	    "org.5bsd.Notify"
+	    "@OBJTOP@/usr.sbin/bsdnotify/bsdnotify" "system.Notify" \
+	    "system.Notify"
 	make_boot_consumer notify-consumer \
 	    "[\"notify-subscriber\", \"${WORK}/notify-result.out\"]" ""
 	reload_stack
@@ -265,7 +265,7 @@ trace_global_safe_api_body()
 	find_component_fixture
 	start_stack
 	install_global_service trace-service \
-	    "@OBJTOP@/usr.sbin/traced/traced" "org.5bsd.trace"
+	    "@OBJTOP@/usr.sbin/traced/traced" "system.Trace"
 	make_boot_consumer trace-consumer \
 	    "[\"trace-consumer\", \"${WORK}/trace-result.out\"]" ""
 	reload_stack

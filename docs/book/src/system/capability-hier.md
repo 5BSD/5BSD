@@ -29,7 +29,7 @@ Every capability is a **static half** and a **dynamic half**:
 /Capabilities/
 ├── System/            shipped bundle definitions        static, read-only, at boot
 │   ├── Log.cap
-│   ├── BsdNotify.cap
+│   ├── Notify.cap
 │   └── Filesystem.cap
 ├── Config/            minimal pre-storage plane config   static, admin-mutable, at boot
 │   ├── tzfsd.ucl          storage pool + layout

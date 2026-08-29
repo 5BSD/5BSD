@@ -186,7 +186,7 @@ storage = [{
 }];
 
 capabilities {
-    ipc = ["org.5bsd.log"];
+    ipc = ["system.Log"];
     system = [];
 }
 ```
@@ -298,7 +298,7 @@ handle-based socket emulation, and inline data transfer.  That is too much
 mechanism for the initial goal.
 
 The replacement is one system-wide provider, provisionally `socketbrokerd`,
-published as `org.5bsd.network`.  It follows the Casper model but returns
+published as `system.Network`.  It follows the Casper model but returns
 usable, rights-limited sockets rather than proxying application data.
 
 Initial operations are deliberately small:

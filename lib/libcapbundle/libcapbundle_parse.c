@@ -553,7 +553,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const execution_jail_keys[] = { "name", "path",
 	    "hostname", "ip4_addr" };
 	/*
-	 * A "network" descriptor delivers the version-1 org.5bsd.network broker
+	 * A "network" descriptor delivers the version-1 system.Network broker
 	 * session (bounded DNS plus connected, rights-limited sockets).  It
 	 * takes no options: the broker returns real descriptors and proxies no
 	 * data.  Protocol space for future userspace networking (listeners,
@@ -2605,9 +2605,9 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 			const char *name;
 			const char *provider;
 		} descriptor_types[] = {
-			{ "filesystem", "org.5bsd.FileSystemCmp" },
-			{ "network", "org.5bsd.NetworkCmp" },
-			{ "crypto", "org.5bsd.CryptoCmp" }
+			{ "filesystem", "system.Filesystem" },
+			{ "network", "system.Network" },
+			{ "crypto", "system.Crypto" }
 		};
 		const ucl_object_t *descriptors, *descriptor, *storage_name;
 		ucl_object_iter_t dit;

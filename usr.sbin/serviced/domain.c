@@ -48,8 +48,8 @@
  * unprivileged session can discover.
  */
 static const char *const user_system_allow[] = {
-	"org.5bsd.Log",		/* logging */
-	"org.5bsd.Notify",	/* notifications */
+	"system.Log",		/* logging */
+	"system.Notify",	/* notifications */
 };
 
 /*

@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-#define	LOGCMP_INTERFACE		"org.5bsd.log"
+#define	LOGCMP_INTERFACE		"system.Log"
 #define	LOGCMP_INTERFACE_VERSION	"5.0.0"
 #define	LOGCMP_MAGIC			0x4c4f4743U	/* "LOGC" */
 #define	LOGCMP_ABI_VERSION		5

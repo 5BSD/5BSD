@@ -2,6 +2,7 @@
 
 PACKAGE=	auditbrokerd
 PROG=		auditbrokerd
+PROGNAME=	Audit
 MAN=		auditbrokerd.8
 SRCS=		auditcmp.c auditcmp_policy.c auditcmp_rate.c auditcmp_submit.c
 LIBADD=		auditcmp bsm channel service

@@ -1,10 +1,10 @@
 # Filesystem Component
 
 `localfilesystem(8)` is the base provider for the
-`org.5bsd.filesystem` 1.0.0 component. It gives each service an opaque,
+`system.Filesystem` 1.0.0 component. It gives each service an opaque,
 handle-relative filesystem rather than a host pathname or vnode descriptor.
 The provider is installed only inside
-`/Capabilities/System/LocalFilesystem.cap`; it is not an ambient `/usr/sbin`
+`/Capabilities/System/Filesystem.cap`; it is not an ambient `/usr/sbin`
 daemon.
 
 ## Namespace flavors

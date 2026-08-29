@@ -4704,7 +4704,7 @@ main(int argc, char *argv[])
 		    SERVICE_PROTECT_EXTERNAL) == -1)
 			err(1, "protect serviced process");
 		if (service_provider_expose(blued_g.svc_provider,
-		    "org.5bsd.blued", &blued_g.svc_listener) == -1)
+		    "system.Bluetooth", &blued_g.svc_listener) == -1)
 			err(1, "expose serviced name");
 		/*
 		 * The supervisor fd (successor to the old service_channel_fd)

@@ -184,7 +184,7 @@ fake_service_last_loss_count(void)
 static void
 inspect_record_locked(const struct logcmp_record *record)
 {
-	static const char subsystem[] = "org.5bsd.logcmp";
+	static const char subsystem[] = "system.Log";
 	static const char event_name[] = "records-dropped";
 	const uint8_t *cursor;
 	struct logcmp_attribute_wire attribute;

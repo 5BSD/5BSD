@@ -19,7 +19,7 @@
 
 #include "policy.h"
 
-#define CRYPTOCMP_NAME "org.5bsd.CryptoCmp"
+#define CRYPTOCMP_NAME "system.Crypto"
 static int control_fd;
 struct crypto_worker {
 	char	owner[CRYPTODESC_KEY_OWNER_MAX];

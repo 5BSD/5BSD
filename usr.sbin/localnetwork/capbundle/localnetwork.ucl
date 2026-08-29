@@ -1,3 +1,4 @@
-activation { boot = true; ipc = ["org.5bsd.NetworkCmp"]; }
+activation { boot = true; ipc = ["system.Network"]; }
+program = "Network";
 restart = "on-failure";
 user = "capability";

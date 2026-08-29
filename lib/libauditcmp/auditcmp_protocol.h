@@ -7,7 +7,7 @@
 
 #include <stdint.h>
 
-#define	AUDITCMP_INTERFACE		"org.5bsd.audit"
+#define	AUDITCMP_INTERFACE		"system.Audit"
 #define	AUDITCMP_INTERFACE_VERSION	"1.0.0"
 #define	AUDITCMP_MAGIC			0x41554443U	/* "AUDC" */
 #define	AUDITCMP_ABI_VERSION		1

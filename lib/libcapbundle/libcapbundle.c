@@ -34,9 +34,9 @@ capbundle_descriptor_factory_name(const char *name)
 {
 
 	return (name != NULL &&
-	    (strcmp(name, "org.5bsd.FileSystemCmp") == 0 ||
-	    strcmp(name, "org.5bsd.NetworkCmp") == 0 ||
-	    strcmp(name, "org.5bsd.CryptoCmp") == 0));
+	    (strcmp(name, "system.Filesystem") == 0 ||
+	    strcmp(name, "system.Network") == 0 ||
+	    strcmp(name, "system.Crypto") == 0));
 }
 
 int

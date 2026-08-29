@@ -2,6 +2,7 @@
 
 PACKAGE=	traced
 PROG=	traced
+PROGNAME=	Trace
 MAN=	traced.8
 SRCS=	tracecmp.c tracecmp_policy.c
 LIBADD=	bsm channel tracecmp service

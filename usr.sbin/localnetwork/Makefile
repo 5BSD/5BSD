@@ -2,6 +2,7 @@
 
 PACKAGE=	localnetwork
 PROG=		localnetwork
+PROGNAME=	Network
 MAN=		localnetwork.8
 SRCS=		networkcmp.c policy.c
 
@@ -15,7 +16,7 @@ LIBADD=		auditcmp cap_net casper channel networkcmp pthread service
 
 DIRS+=		NETWORKCMP_CAP NETWORKCMP_CAP_UNITS NETWORKCMP_CAP_UNIT \
 		NETWORKCMP_CAP_BIN
-NETWORKCMP_CAP=	/Capabilities/System/LocalNetwork.cap
+NETWORKCMP_CAP=	/Capabilities/System/Network.cap
 NETWORKCMP_CAPPACKAGE=	localnetwork
 NETWORKCMP_CAP_UNITS=	${NETWORKCMP_CAP}/Units
 NETWORKCMP_CAP_UNIT=	${NETWORKCMP_CAP_UNITS}/localnetwork.unit

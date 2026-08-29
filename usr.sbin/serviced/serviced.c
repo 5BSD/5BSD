@@ -276,6 +276,9 @@ main(int argc, char *argv[])
 	const char *channel_fd_str, *s;
 	int ch;
 
+	/* Present as "Serviced" in ps/top, distinct from lowercase base daemons. */
+	setproctitle("-Serviced");
+
 	memset(&sd, 0, sizeof(sd));
 	sd.authority_channel_fd = -1;
 	sd.channel_svc_fd = -1;

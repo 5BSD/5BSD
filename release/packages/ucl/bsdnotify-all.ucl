@@ -1,6 +1,6 @@
 comment = "Capability-mode BsdNotify provider"
 
 desc = <<EOD
-The BsdNotify provider and verified /Capabilities/System/BsdNotify.cap bundle,
+The BsdNotify provider and verified /Capabilities/System/Notify.cap bundle,
 with a system router and coalition-scoped consumer relays.
 EOD

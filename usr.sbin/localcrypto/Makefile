@@ -2,6 +2,7 @@
 
 PACKAGE=localcrypto
 PROG=localcrypto
+PROGNAME=	Crypto
 MAN=
 SRCS=localcrypto.c policy.c
 CFLAGS+=-I${SRCTOP}/lib/libauditcmp -I${SRCTOP}/lib/libchannel -I${SRCTOP}/lib/libcryptocmp -I${SRCTOP}/lib/libcryptodesc -I${SRCTOP}/lib/libservice -I${SRCTOP}/sys

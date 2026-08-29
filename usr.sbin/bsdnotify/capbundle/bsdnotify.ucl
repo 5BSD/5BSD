@@ -1,3 +1,4 @@
-activation { boot = true; ipc = ["org.5bsd.notify"]; }
+activation { boot = true; ipc = ["system.Notify"]; }
+program = "Notify";
 restart = "on-failure";
 user = "capability";

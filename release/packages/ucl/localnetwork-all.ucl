@@ -3,7 +3,7 @@ comment = "Capability-mode NetworkCmp TCP/UDP provider"
 desc = <<EOD
 The base NetworkCmp provider and networkcmpctl diagnostic client, installed as
 the verified
-/Capabilities/System/LocalNetwork.cap bundle.  It provides bounded DNS, TCP,
+/Capabilities/System/Network.cap bundle.  It provides bounded DNS, TCP,
 connected UDP, endpoint policy, socket lifecycle, and inline data movement
 without delegating kernel socket descriptors to consumers.  DNS resolution
 uses a separate attenuated Casper channel and cannot block other session RPCs.

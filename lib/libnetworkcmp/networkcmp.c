@@ -34,7 +34,7 @@
  */
 static const char networkcmp_dependency_note[]
     __attribute__((section(".note.5bsd.descriptors"), used)) =
-    "interface=org.5bsd.network\n"
+    "interface=system.Network\n"
     "version=1.0.0\n"
     "local-name=network\n"
     "required=true\n";

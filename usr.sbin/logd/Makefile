@@ -2,6 +2,7 @@
 
 PACKAGE=	logd
 PROG=		logd
+PROGNAME=	Log
 MAN=		logd.8
 SRCS=		logcmp.c session.c config.c store.c storage.c
 

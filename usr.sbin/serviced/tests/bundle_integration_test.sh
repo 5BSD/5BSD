@@ -711,9 +711,9 @@ component_factory_names_are_internal_body() {
 	build_lookup_client
 	for kind in filesystem network crypto; do
 		case "${kind}" in
-		filesystem) endpoint="org.5bsd.FileSystemCmp" ;;
-		network) endpoint="org.5bsd.NetworkCmp" ;;
-		crypto) endpoint="org.5bsd.CryptoCmp" ;;
+		filesystem) endpoint="system.Filesystem" ;;
+		network) endpoint="system.Network" ;;
+		crypto) endpoint="system.Crypto" ;;
 		esac
 		make_svc_bin system "${kind}-factory" \
 		    "activation { boot = true; ipc = [\"${endpoint}\"]; }
@@ -726,8 +726,8 @@ arguments = [\"compat-ready\", \"${endpoint}\"];" \
 		wait_for_file "${WORK}/${kind}-factory.ready" 10 ||
 		    atf_fail "${kind} factory did not start at boot"
 	done
-	for endpoint in org.5bsd.FileSystemCmp org.5bsd.NetworkCmp \
-	    org.5bsd.CryptoCmp
+	for endpoint in system.Filesystem system.Network \
+	    system.Crypto
 	do
 		if run_lookup_client "${endpoint}" 3; then
 			atf_fail "internal factory ${endpoint} was globally connectable"

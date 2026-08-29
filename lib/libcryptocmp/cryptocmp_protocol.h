@@ -4,7 +4,7 @@
 #include <stdint.h>
 #define CRYPTOCMP_MAGIC 0x43434d50U
 #define CRYPTOCMP_VERSION 3
-#define CRYPTOCMP_INTERFACE "org.5bsd.crypto"
+#define CRYPTOCMP_INTERFACE "system.Crypto"
 #define CRYPTOCMP_INTERFACE_VERSION "3.0.0"
 #define CRYPTOCMP_OP_GENERATE 1
 #define CRYPTOCMP_OP_GENERATE_KEY 2

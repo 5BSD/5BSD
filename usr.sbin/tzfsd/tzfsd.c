@@ -180,7 +180,7 @@ main(int argc, char **argv)
 	if (!foreground && daemon(0, 0) == -1)
 		err(1, "daemon");
 
-	setproctitle("[TZFS] storage daemon");
+	setproctitle("-Storage");
 	write_ready();
 	syslog(LOG_NOTICE, "tzfsd ready on %s (pool %s)", TZFSD_SOCK_PATH,
 	    st.cfg.pool);
