@@ -513,8 +513,7 @@ networkcmp_client_open(struct networkcmp_client **clientp) __no_lock_analysis
 		goto fail;
 	if (service_acquire(&service) == -1)
 		goto fail;
-	if (service_local_component_open(service, NETWORKCMP_INTERFACE,
-	    NETWORKCMP_INTERFACE_VERSION, &fd) == -1) {
+	if (service_connect(service, NETWORKCMP_INTERFACE, &fd) == -1) {
 		error = errno;
 		service_release(service);
 		errno = error;

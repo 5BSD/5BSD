@@ -72,11 +72,10 @@ service_release(struct service_context *service __unused)
 }
 
 int
-service_local_component_open(struct service_context *service,
-    const char *interface, const char *version, int *fd)
+service_connect(struct service_context *service, const char *name, int *fd)
 {
-	if (service != &context || strcmp(interface, NETWORKCMP_INTERFACE) != 0 ||
-	    strcmp(version, NETWORKCMP_INTERFACE_VERSION) != 0 || fd == NULL) {
+	if (service != &context || strcmp(name, NETWORKCMP_INTERFACE) != 0 ||
+	    fd == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}

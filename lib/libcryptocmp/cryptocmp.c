@@ -35,7 +35,7 @@ cryptocmp_open(struct cryptocmp_client **out)
 	*out = NULL;
 	if ((client = calloc(1, sizeof(*client))) == NULL || service_acquire(&context) == -1)
 		goto fail;
-	if (service_local_component_open(context, CRYPTOCMP_INTERFACE, CRYPTOCMP_INTERFACE_VERSION, &fd) == -1) { service_release(context); goto fail; }
+	if (service_connect(context, CRYPTOCMP_INTERFACE, &fd) == -1) { service_release(context); goto fail; }
 	service_release(context);
 	if (service_session_create(fd, &client->session) == -1) { close(fd); goto fail; }
 	client->owner = getpid(); *out = client; return (0);

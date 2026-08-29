@@ -921,7 +921,6 @@ fail:
 static int
 start_session(int fd, cap_channel_t *casper, const char *peer_label)
 {
-	struct service_component_bootstrap *bootstrap;
 	struct networkcmp_policy policy;
 	cap_channel_t *capnet, *resolver_capnet;
 	cap_net_limit_t *limit;
@@ -932,24 +931,10 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label)
 	char byte;
 	ssize_t n;
 
-	bootstrap = NULL;
 	audit_fd = -1;
 	capnet = NULL;
 	resolver_capnet = NULL;
 	resolver_pipe[0] = resolver_pipe[1] = -1;
-	if (service_component_accept(fd, &bootstrap) == -1)
-		return (-1);
-	if (service_component_resource_count(bootstrap) != 0) {
-		error = EPROTO;
-		goto reject;
-	}
-	if (strcmp(service_component_interface(bootstrap),
-	    NETWORKCMP_INTERFACE) != 0 ||
-	    strcmp(service_component_interface_version(bootstrap),
-	    NETWORKCMP_INTERFACE_VERSION) != 0) {
-		error = EOPNOTSUPP;
-		goto reject;
-	}
 	if (harden_worker_fd(fd) == -1) {
 		error = errno;
 		goto reject;
@@ -1051,16 +1036,6 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label)
 		close(syncfd[0]);
 		goto reject;
 	}
-	if (service_component_complete(bootstrap,
-	    SERVICE_COMPONENT_MEMBER_PROCDESC, pd) == -1) {
-		bootstrap = NULL;
-		error = errno;
-		(void)pdkill(pd, SIGKILL);
-		close(pd);
-		close(syncfd[0]);
-		return (-1);
-	}
-	bootstrap = NULL;
 	close(pd);
 	byte = 1;
 	(void)write(syncfd[0], &byte, 1);
@@ -1078,10 +1053,6 @@ reject:
 		cap_close(resolver_capnet);
 	if (capnet != NULL)
 		cap_close(capnet);
-	if (bootstrap != NULL) {
-		(void)service_component_fail(bootstrap, error);
-		bootstrap = NULL;
-	}
 	errno = error;
 	return (-1);
 }

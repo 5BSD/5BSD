@@ -100,13 +100,11 @@ service_release(struct service_context *service __unused)
 }
 
 int
-service_local_component_open(struct service_context *service,
-    const char *interface, const char *version, int *fd)
+service_connect(struct service_context *service, const char *name, int *fd)
 {
 
-	if (service != &context || interface == NULL || version == NULL ||
-	    fd == NULL || strcmp(interface, CRYPTOCMP_INTERFACE) != 0 ||
-	    strcmp(version, CRYPTOCMP_INTERFACE_VERSION) != 0) {
+	if (service != &context || name == NULL || fd == NULL ||
+	    strcmp(name, CRYPTOCMP_INTERFACE) != 0) {
 		errno = EINVAL;
 		return (-1);
 	}

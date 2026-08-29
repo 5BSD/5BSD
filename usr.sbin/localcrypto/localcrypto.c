@@ -257,50 +257,27 @@ out:
 }
 
 static int
-start_session(int fd)
+start_session(int fd, const char *peer_label)
 {
-	struct service_component_bootstrap *boot;
 	int audit_fd, pd;
 	pid_t pid;
 	char owner[CRYPTODESC_KEY_OWNER_MAX];
 
-	boot = NULL;
 	audit_fd = -1;
-	if (service_component_accept(fd, &boot) == -1)
+	if (strnlen(peer_label, sizeof(owner)) == 0 ||
+	    strnlen(peer_label, sizeof(owner)) == sizeof(owner))
+		return (errno = EINVAL, -1);
+	strlcpy(owner, peer_label, sizeof(owner));
+	if (auditcmp_client_prepare(&audit_fd) == -1)
 		return (-1);
-	if (strcmp(service_component_interface(boot), CRYPTOCMP_INTERFACE) != 0 ||
-	    strcmp(service_component_interface_version(boot),
-	    CRYPTOCMP_INTERFACE_VERSION) != 0 ||
-	    service_component_resource_count(boot) != 0) {
-		(void)service_component_fail(boot, EPROTO);
-		return (-1);
-	}
-	if (strnlen(service_component_client_label(boot), sizeof(owner)) == 0 ||
-	    strnlen(service_component_client_label(boot), sizeof(owner)) ==
-	    sizeof(owner)) {
-		(void)service_component_fail(boot, EINVAL);
-		return (-1);
-	}
-	strlcpy(owner, service_component_client_label(boot), sizeof(owner));
-	if (auditcmp_client_prepare(&audit_fd) == -1) {
-		(void)service_component_fail(boot, errno);
-		return (-1);
-	}
 	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
 	if (pid == -1) {
 		close(audit_fd);
-		(void)service_component_fail(boot, errno);
 		return (-1);
 	}
 	if (pid == 0)
 		_exit(worker(fd, audit_fd, owner));
 	close(audit_fd);
-	if (service_component_complete(boot, SERVICE_COMPONENT_MEMBER_PROCDESC,
-	    pd) == -1) {
-		(void)pdkill(pd, SIGKILL);
-		close(pd);
-		return (-1);
-	}
 	close(pd);
 	return (0);
 }
@@ -325,7 +302,7 @@ main(void)
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (1);
-		(void)start_session(fd);
+		(void)start_session(fd, id.client_label);
 		close(fd);
 	}
 }

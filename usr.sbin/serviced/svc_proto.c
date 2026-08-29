@@ -386,11 +386,6 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 		    NULL, 0);
 		return (false);
 	}
-	if (capbundle_descriptor_factory_name(req->name)) {
-		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, EACCES,
-		    NULL, 0);
-		return (false);
-	}
 	client_fd = naming_lookup(req->name, svc, &svc->domain, &error);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
