@@ -1782,6 +1782,39 @@ scenario_helper_open(const char *name, const char *result)
 	hold();
 }
 
+/*
+ * Lazy capability-service delegation probe.  A managed boot unit (which, unlike
+ * an interactive login, holds a real bootstrap lookup channel) resolves a
+ * global service name at runtime with service_connect() and records whether the
+ * service manager delegated a session — the runtime replacement for the removed
+ * eager `descriptors {}` brokering.  Holds on every path so the ephemeral Run
+ * container and its result survive for inspection.
+ */
+static int
+scenario_connect(const char *name, const char *result)
+{
+	int confined, fd, saved_errno;
+
+	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		fixture_fail(result, "connect init errno=%d", errno);
+	write_result(result, "connect=started\nname=%s\n", name);
+	fd = -1;
+	errno = 0;
+	if (service_connect(fixture_service_context, name, &fd) == -1) {
+		saved_errno = errno;
+		write_result(result, "connect=failed\nname=%s\nerrno=%d\n",
+		    name, saved_errno);
+		hold();
+	}
+	errno = 0;
+	confined = cap_xfer_limit(fd, CAP_XFER_TWICE) == -1 &&
+	    errno == ENOTCAPABLE;
+	write_result(result, "connect=ok\nname=%s\nfd_valid=1\nconfined=%d\n",
+	    name, confined);
+	close(fd);
+	hold();
+}
+
 static void
 usage(void)
 {
@@ -1901,5 +1934,7 @@ main(int argc, char **argv)
 		return (scenario_helper_provider(argv[2]));
 	if (argc == 4 && strcmp(argv[1], "helper-open") == 0)
 		return (scenario_helper_open(argv[2], argv[3]));
+	if (argc == 4 && strcmp(argv[1], "connect") == 0)
+		return (scenario_connect(argv[2], argv[3]));
 	usage();
 }
