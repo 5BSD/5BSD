@@ -77,6 +77,13 @@ svc_exec(struct svc_runtime *svc, int kq)
 	return (0);
 }
 
+void
+svc_run_container_remove(const char *label)
+{
+
+	(void)label;
+}
+
 int
 svc_exec_rc_stop(struct svc_runtime *svc, int kq)
 {

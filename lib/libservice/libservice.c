@@ -165,7 +165,8 @@ service_capability_name_valid(const char *name)
 	if (name == NULL)
 		return (false);
 	if (strcmp(name, "mount") == 0 || strcmp(name, "node") == 0 ||
-	    strcmp(name, "accounting") == 0 || strcmp(name, "identity") == 0)
+	    strcmp(name, "accounting") == 0 || strcmp(name, "identity") == 0 ||
+	    strcmp(name, "container") == 0 || strcmp(name, "bundle") == 0)
 		return (true);
 	if (strncmp(name, "storage:", 8) != 0)
 		return (false);

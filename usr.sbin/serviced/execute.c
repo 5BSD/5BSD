@@ -30,6 +30,7 @@
 #include <sys/wait.h>
 #include <sys/zfshandle.h>
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -418,6 +419,150 @@ finalize_storage_descriptors(const struct svc_manifest *manifest, int *fds,
 		(*nfdsp)--;
 	}
 	return (0);
+}
+
+#define	SERVICED_RUN_DIR	"/Capabilities/Run"
+
+/*
+ * Fold a unit label into a single path component: '/' and '.' become '_'.
+ * The per-instance runtime container is named for the unit, like a bundle.
+ */
+static void
+svc_run_container_leaf(const char *label, char *buf, size_t len)
+{
+	size_t i, n;
+
+	for (i = 0, n = 0; label[i] != '\0' && n + 1 < len; i++)
+		buf[n++] = (label[i] == '/' || label[i] == '.') ? '_' : label[i];
+	buf[n] = '\0';
+}
+
+static void
+svc_run_container_path(const char *label, char *buf, size_t len)
+{
+	char leaf[NAME_MAX + 1];
+
+	svc_run_container_leaf(label, leaf, sizeof(leaf));
+	(void)snprintf(buf, len, "%s/%s", SERVICED_RUN_DIR, leaf);
+}
+
+/*
+ * Create (or reuse) a unit's per-instance runtime container under
+ * /Capabilities/Run, owned by the launched service, and return an O_DIRECTORY
+ * descriptor.  The container is the unit's read-write scratch/home (macOS-style
+ * app container): created before exec, delivered as the "container" capability,
+ * and removed on stop.  Confinement is by capabilities and the jail rooted here,
+ * not by the name.
+ */
+static int
+svc_run_container_open(const char *label, uid_t uid, gid_t gid)
+{
+	char path[PATH_MAX];
+	cap_rights_t rights;
+	int fd, saved;
+
+	(void)mkdir(SERVICED_RUN_DIR, 0700);
+	svc_run_container_path(label, path, sizeof(path));
+	if (mkdir(path, 0700) == -1 && errno != EEXIST)
+		return (-1);
+	fd = open(path, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	if (fd == -1)
+		return (-1);
+	/*
+	 * Deliver with exactly the rights libservice's directory-descriptor
+	 * validation expects (a read-write scratch dir whose openat(2)ed files
+	 * keep GETFL|SETFL for O_APPEND), matching the former storage-directory
+	 * delivery so a plain open()'s ambient rights do not fail validation.
+	 */
+	cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
+	    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
+	    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT, CAP_UNLINKAT,
+	    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+	if (fchown(fd, uid, gid) == -1 || fchmod(fd, 0700) == -1 ||
+	    cap_rights_limit(fd, &rights) == -1 ||
+	    cap_fcntls_limit(fd, CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1) {
+		saved = errno;
+		(void)close(fd);
+		errno = saved;
+		return (-1);
+	}
+	return (fd);
+}
+
+/* Best-effort recursive removal of a directory tree by descriptor. */
+static void
+svc_rmtree_at(int parent, const char *name)
+{
+	int fd;
+	DIR *dir;
+	struct dirent *de;
+
+	fd = openat(parent, name, O_DIRECTORY | O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd == -1) {
+		(void)unlinkat(parent, name, 0);
+		return;
+	}
+	dir = fdopendir(fd);
+	if (dir == NULL) {
+		(void)close(fd);
+		return;
+	}
+	while ((de = readdir(dir)) != NULL) {
+		if (de->d_name[0] == '.' && (de->d_name[1] == '\0' ||
+		    (de->d_name[1] == '.' && de->d_name[2] == '\0')))
+			continue;
+		if (de->d_type == DT_DIR)
+			svc_rmtree_at(fd, de->d_name);
+		else
+			(void)unlinkat(fd, de->d_name, 0);
+	}
+	(void)closedir(dir);
+	(void)unlinkat(parent, name, AT_REMOVEDIR);
+}
+
+/*
+ * Sweep every leftover runtime container at startup.  On a clean stop serviced
+ * removes a unit's container itself; this reclaims containers stranded by a
+ * crash or panic (the belt-and-suspenders behind putting /Capabilities/Run on
+ * a volatile filesystem, which wipes the tree on reboot regardless).
+ */
+void
+svc_run_container_sweep(void)
+{
+	int base;
+	DIR *dir;
+	struct dirent *de;
+
+	base = open(SERVICED_RUN_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	if (base == -1)
+		return;
+	dir = fdopendir(base);
+	if (dir == NULL) {
+		(void)close(base);
+		return;
+	}
+	while ((de = readdir(dir)) != NULL) {
+		if (de->d_name[0] == '.' && (de->d_name[1] == '\0' ||
+		    (de->d_name[1] == '.' && de->d_name[2] == '\0')))
+			continue;
+		svc_rmtree_at(base, de->d_name);
+	}
+	(void)closedir(dir);
+}
+
+/* Remove a unit's runtime container and its contents (best effort). */
+void
+svc_run_container_remove(const char *label)
+{
+	char leaf[NAME_MAX + 1];
+	int base;
+
+	base = open(SERVICED_RUN_DIR, O_DIRECTORY | O_RDONLY | O_CLOEXEC);
+	if (base == -1)
+		return;
+	svc_run_container_leaf(label, leaf, sizeof(leaf));
+	svc_rmtree_at(base, leaf);
+	(void)close(base);
 }
 
 /* Build the immutable descriptor bootstrap consumed by libservice. */
@@ -1734,16 +1879,41 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 
 	/*
+	 * Per-instance runtime container (macOS-style app container): the unit's
+	 * read-write scratch/home, created before exec and delivered as the
+	 * "container" capability.  Every unit gets one; it is removed on stop.
+	 */
+	if (nservices >= SERVICE_BOOTSTRAP_CAPABILITY_MAX) {
+		errno = EOVERFLOW;
+		goto fail_tokens;
+	} else {
+		int cfd = svc_run_container_open(m->label, have_creds ? uid : 0,
+		    have_creds ? gid : 0);
+
+		if (cfd == -1) {
+			syslog(LOG_ERR, "svc_exec %s: runtime container: %m",
+			    m->label);
+			goto fail_tokens;
+		}
+		strlcpy(service_names[nservices], "container",
+		    sizeof(service_names[nservices]));
+		strlcpy(service_types[nservices], "directory",
+		    sizeof(service_types[nservices]));
+		service_fds[nservices++] = cfd;
+	}
+
+	/*
 	 * This is the final all-or-nothing barrier before jail creation and
-	 * pdfork().  The child receives only the complete manifest token set;
-	 * any missing token takes the fail_tokens cleanup path instead.
+	 * pdfork().  The child receives only the complete manifest token set
+	 * plus the one runtime container; any missing token takes the
+	 * fail_tokens cleanup path instead.
 	 */
 	if (ntokens != expected_tokens ||
-	    nservices != m->ncap_storage + m->ncap_services + nlisteners) {
+	    nservices != m->ncap_storage + m->ncap_services + nlisteners + 1) {
 		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
 		    "(%u/%u tokens, %u/%u services)", m->label, ntokens,
 		    expected_tokens, nservices,
-		    m->ncap_storage + m->ncap_services + nlisteners);
+		    m->ncap_storage + m->ncap_services + nlisteners + 1);
 		goto fail_tokens;
 	}
 

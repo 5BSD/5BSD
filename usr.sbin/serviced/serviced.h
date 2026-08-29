@@ -356,6 +356,8 @@ bool	activation_timer_owns(uintptr_t ident);
 void	activation_timer_fire(uintptr_t ident, int kq);
 void	activation_path_event(struct kevent *kev, int kq);
 void	activation_mount_event(struct kevent *kev, int kq);
+void	svc_run_container_remove(const char *label);
+void	svc_run_container_sweep(void);
 bool	activation_socket_owns(int fd);
 void	activation_socket_event(struct kevent *kev, int kq);
 

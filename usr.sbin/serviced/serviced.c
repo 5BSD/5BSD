@@ -523,6 +523,9 @@ main(int argc, char *argv[])
 	    "serviced started, %u bundles registered",
 	    bundle_registry_count());
 
+	/* Reclaim any runtime containers stranded by a prior crash. */
+	svc_run_container_sweep();
+
 	/* Launch system services (tier-based parallel). */
 	if (startup_launch_system(serviced_kq) != 0) {
 		syslog(LOG_ERR, "startup: system service launch failed");

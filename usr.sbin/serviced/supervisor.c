@@ -82,6 +82,9 @@ svc_close_fds(struct svc_runtime *svc)
 	 */
 	while (svc->nmount_anchors > 0)
 		close(svc->mount_anchor_fds[--svc->nmount_anchors]);
+
+	/* Remove the per-instance runtime container (recreated on next launch). */
+	svc_run_container_remove(svc->manifest.label);
 }
 
 /*
