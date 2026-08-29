@@ -40,3 +40,33 @@ tags
 .ccls-cache
 sys/*/compile
 /src.conf
+
+# --- local scratch & generated artifacts (repo-root litter) ---
+/*.plist
+/*.tsv
+/*.log
+/*.profraw
+/*.core
+/.plist
+/work.[0-9]*/
+/bluetooth-specs/
+
+# coverage / pycache anywhere in the tree
+*.profraw
+__pycache__/
+
+# generated kernel-module build outputs
+/sys/modules/*/*_if.h
+/sys/modules/*/*_if.c
+/sys/modules/*/opt_*.h
+/sys/modules/*/*_assym.h
+/sys/modules/*/export_syms
+/sys/modules/*/offset.inc
+/sys/modules/*/*.ko
+
+# test-runner scratch
+/tests/**/default.profraw
+/tests/sys/vmm/created_jails.lst
+/tests/sys/kern/helper
+/tests/usr.sbin/bluetooth/blued/fuzz/corpus/
+/tests/usr.sbin/bluetooth/blued/fuzz/smoke/
