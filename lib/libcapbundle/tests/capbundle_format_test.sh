@@ -404,65 +404,6 @@ storage_negative_matrix_body()
 }
 storage_negative_matrix_cleanup() { cleanup_work; }
 
-atf_test_case descriptor_contract cleanup
-descriptor_contract_head() { atf_set descr "Local descriptors are typed and filesystem storage is explicit"; }
-descriptor_contract_body()
-{
-	setup_work
-	dir=$(make_bundle descriptors)
-	cat > "$dir/Units/worker.unit/Unit.ucl" <<-'EOF'
-	activation { boot = true; }
-	storage = [{
-	    name = "data"; scope = "unit"; lifetime = "persistent";
-	    rights = ["mount", "props_read"];
-	}];
-	descriptors {
-	    filesystem { storage = "data"; }
-	    network {}
-	    crypto {}
-	}
-	EOF
-	atf_check -s exit:0 -o save:descriptor.out \
-	    servicetcl verify "$dir"
-	for expected in \
-	    'descriptor: filesystem storage=data' \
-	    'descriptor: network' \
-	    'descriptor: crypto'; do
-		atf_check -s exit:0 -o match:"$expected" grep descriptor descriptor.out
-	done
-}
-descriptor_contract_cleanup() { rm -f descriptor.out; cleanup_work; }
-
-atf_test_case descriptor_negative_matrix cleanup
-descriptor_negative_matrix_head() { atf_set descr "Descriptor declarations reject ambiguity and authority mismatches"; }
-descriptor_negative_matrix_body()
-{
-	setup_work
-	i=0
-	for declaration in \
-	    'descriptors = [];' \
-	    'descriptors { unknown {} }' \
-	    'descriptors { filesystem = true; }' \
-	    'descriptors { filesystem {} }' \
-	    'descriptors { filesystem { storage = "Data"; } }' \
-	    'descriptors { filesystem { storage = "missing"; } }' \
-	    'descriptors { filesystem { storage = "data"; typo = true; } }' \
-	    'descriptors { network = true; }' \
-	    'descriptors { network { policy = "ambient"; } }' \
-	    'descriptors { crypto = false; }' \
-	    'descriptors { crypto { provider = "other"; } }'; do
-		i=$((i + 1))
-		dir=$(make_bundle "bad-descriptor-$i")
-		cat > "$dir/Units/worker.unit/Unit.ucl" <<-EOF
-		activation { boot = true; }
-		storage = [{ name = "data"; scope = "unit"; rights = "props_read"; }];
-		$declaration
-		EOF
-		verify_bad 'descriptor|filesystem|unknown key|mount rights|object' "$dir"
-	done
-}
-descriptor_negative_matrix_cleanup() { cleanup_work; }
-
 atf_test_case process_policy_matrix cleanup
 process_policy_matrix_head() { atf_set descr "Process policy fields accept bounded explicit values"; }
 process_policy_matrix_body()
@@ -647,8 +588,6 @@ atf_init_test_cases()
 	atf_add_test_case multi_unit_order
 	atf_add_test_case storage_contract
 	atf_add_test_case storage_negative_matrix
-	atf_add_test_case descriptor_contract
-	atf_add_test_case descriptor_negative_matrix
 	atf_add_test_case process_policy_matrix
 	atf_add_test_case capability_contract
 	atf_add_test_case capability_negative_matrix

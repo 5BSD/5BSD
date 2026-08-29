@@ -57,7 +57,6 @@ ATF_TC_BODY(null_inputs, tc)
 	ATF_CHECK_EQ(NULL, capbundle_svc_argument(NULL, 0));
 	ATF_CHECK_EQ(0, capbundle_svc_nenvironment(NULL));
 	ATF_CHECK_EQ(NULL, capbundle_svc_environment(NULL, 0));
-	ATF_CHECK(!capbundle_descriptor_factory_name(NULL));
 
 	errno = 0;
 	ATF_CHECK_EQ(-1, capbundle_svc_fill_manifest(NULL, &manifest));

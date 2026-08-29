@@ -164,7 +164,6 @@ _LIBRARIES=	\
 		elf \
 		execinfo \
 		fetch \
-		filesystemcmp \
 		figpar \
 		formw \
 		geom \
@@ -341,7 +340,6 @@ _DP_tzfsd=	trustedzfs
 _DP_service=	capability channel pthread tzfsd
 _DP_shmring=
 _DP_networkcmp=	pthread service
-_DP_filesystemcmp=	pthread service
 _DP_cryptocmp=	pthread service
 _DP_logcmp=	pthread service shmring
 _DP_kldmgr=	service

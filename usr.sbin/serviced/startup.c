@@ -45,10 +45,6 @@ log_loaded_manifest(const struct svc_manifest *m)
 	for (j = 0; j < m->nprovides; j++)
 		syslog(LOG_INFO, "startup: %s provides: %s",
 		    m->label, m->provides[j]);
-	for (j = 0; j < m->ncomponents; j++)
-		syslog(LOG_INFO, "startup: %s local component: %s",
-		    m->label, m->components[j].name);
-
 	if (svc_launch_token_count(m) + svc_launch_named_fd_count(m) > 0)
 		syslog(LOG_INFO, "startup: %s capabilities: "
 		    "paths=%u files=%u network=%u jails=%u vsock=%u "

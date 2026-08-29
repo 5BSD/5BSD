@@ -749,7 +749,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "program", "activation", "kmod_requires",
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment", "jail",
-	    "storage", "descriptors", "protect", "limits", "umask", "band" };
+	    "storage", "protect", "limits", "umask", "band" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
@@ -771,18 +771,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "direction" };
 	static const char *const execution_jail_keys[] = { "name", "path",
 	    "hostname", "ip4_addr" };
-	/*
-	 * A "network" descriptor delivers the version-1 system.Network broker
-	 * session (bounded DNS plus connected, rights-limited sockets).  It
-	 * takes no options: the broker returns real descriptors and proxies no
-	 * data.  Protocol space for future userspace networking (listeners,
-	 * protocol stacks, virtual interfaces) is reserved but implemented as
-	 * none.  This is distinct from a capabilities.network claim, which is a
-	 * kernel socket-authority gate for a unit that opens its own sockets.
-	 */
-	static const char *const descriptor_keys[] = { "filesystem", "network",
-	    "crypto" };
-	static const char *const filesystem_descriptor_keys[] = { "storage" };
 	const ucl_object_t *caps, *arr, *v, *x;
 	ucl_object_iter_t it;
 	bool service_seen[nitems(service_names)];
@@ -1477,83 +1465,6 @@ validate_storage:
 		}
 	}
 
-	/*
-	 * Local authority replacements are descriptor factories, not ambient
-	 * service names.  Objects leave room for future descriptor-specific
-	 * restrictions without reintroducing an untyped components list.
-	 */
-	arr = ucl_object_lookup(root, "descriptors");
-	if (arr != NULL) {
-		const ucl_object_t *descriptor, *storage_name, *claims, *claim;
-		ucl_object_iter_t dit;
-		unsigned descriptor_count;
-		bool found;
-
-		if (validate_keys(arr, "descriptors", descriptor_keys,
-		    nitems(descriptor_keys), errbuf, errlen) != 0)
-			return (-1);
-		descriptor_count = 0;
-		dit = NULL;
-		while ((descriptor = ucl_object_iterate(arr, &dit, true)) != NULL) {
-			if (++descriptor_count > SERVICED_MAX_COMPONENTS ||
-			    ucl_object_type(descriptor) != UCL_OBJECT) {
-				snprintf(errbuf, errlen,
-				    "descriptor declarations must be objects");
-				return (-1);
-			}
-			if (strcmp(ucl_object_key(descriptor), "filesystem") != 0) {
-				if (ucl_object_iterate(descriptor,
-				    &(ucl_object_iter_t){ 0 }, true) != NULL) {
-					snprintf(errbuf, errlen,
-					    "descriptors.%s does not accept options",
-					    ucl_object_key(descriptor));
-					return (-1);
-				}
-				continue;
-			}
-			if (validate_keys(descriptor, "descriptors.filesystem",
-			    filesystem_descriptor_keys,
-			    nitems(filesystem_descriptor_keys), errbuf, errlen) != 0)
-				return (-1);
-			storage_name = ucl_object_lookup(descriptor, "storage");
-			if (storage_name == NULL ||
-			    ucl_object_type(storage_name) != UCL_STRING ||
-			    !valid_unit_name(ucl_object_tostring(storage_name))) {
-				snprintf(errbuf, errlen,
-				    "descriptors.filesystem requires a storage name");
-				return (-1);
-			}
-			claims = ucl_object_lookup(root, "storage");
-			claim = NULL;
-			found = false;
-			for (unsigned ci = 0; claims != NULL &&
-			    ci < ucl_array_size(claims); ci++) {
-				uint64_t claim_rights;
-
-				claim = ucl_array_find_index(claims, ci);
-				v = ucl_object_lookup(claim, "name");
-				if (strcmp(ucl_object_tostring(v),
-				    ucl_object_tostring(storage_name)) != 0)
-					continue;
-				(void)parse_storage_rights(
-				    ucl_object_lookup(claim, "rights"), &claim_rights);
-				if ((claim_rights & ZH_MOUNT) == 0) {
-					snprintf(errbuf, errlen,
-					    "filesystem storage '%s' requires mount rights",
-					    ucl_object_tostring(storage_name));
-					return (-1);
-				}
-				found = true;
-				break;
-			}
-			if (!found) {
-				snprintf(errbuf, errlen,
-				    "filesystem references undeclared storage '%s'",
-				    ucl_object_tostring(storage_name));
-				return (-1);
-			}
-		}
-	}
 	if (caps == NULL)
 		return (0);
 
@@ -3071,43 +2982,6 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 				return (-1);
 			}
 			svc->ncap_storage++;
-		}
-	}
-
-	/* Local descriptor factories and their internal startup edges. */
-	{
-		static const struct {
-			const char *name;
-			const char *provider;
-		} descriptor_types[] = {
-			{ "filesystem", "system.Filesystem" },
-			{ "network", "system.Network" },
-			{ "crypto", "system.Crypto" }
-		};
-		const ucl_object_t *descriptors, *descriptor, *storage_name;
-		ucl_object_iter_t dit;
-		unsigned di;
-
-		descriptors = ucl_object_lookup(root, "descriptors");
-		dit = NULL;
-		while (descriptors != NULL && (descriptor =
-		    ucl_object_iterate(descriptors, &dit, true)) != NULL) {
-			for (di = 0; di < nitems(descriptor_types); di++)
-				if (strcmp(ucl_object_key(descriptor),
-				    descriptor_types[di].name) == 0)
-					break;
-			if (di == nitems(descriptor_types))
-				continue;
-			strlcpy(svc->components[svc->ncomponents].name,
-			    descriptor_types[di].name,
-			    sizeof(svc->components[svc->ncomponents].name));
-			if (strcmp(descriptor_types[di].name, "filesystem") == 0) {
-				storage_name = ucl_object_lookup(descriptor, "storage");
-				strlcpy(svc->components[svc->ncomponents].storage,
-				    ucl_object_tostring(storage_name),
-				    sizeof(svc->components[svc->ncomponents].storage));
-			}
-			svc->ncomponents++;
 		}
 	}
 

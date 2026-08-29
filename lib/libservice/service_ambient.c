@@ -43,7 +43,7 @@
  * silent channel as "not the lookup channel".  A genuine lookup channel (or a
  * unit control channel answering ENOTSUP) replies far inside this window; the
  * timeout only guards a wedged or half-open peer.  Same order as the other
- * bounded serviced RPCs (component_request's 2s bootstrap deadline).
+ * bounded serviced RPCs.
  */
 #define	AMBIENT_HELLO_TIMEOUT_MS	2000U
 

@@ -19,7 +19,6 @@ PKG_DEPS.serviced-tests+=	libservice-dev
 PKG_DEPS.serviced-tests+=	libauthorityrt-dev
 PKG_DEPS.serviced-tests+=	clang
 PKG_DEPS.serviced-tests+=	dtrace
-PKG_DEPS.serviced-tests+=	localfilesystem
 PKG_DEPS.serviced-tests+=	logd
 PKG_DEPS.serviced-tests+=	localnetwork
 PKG_DEPS.serviced-tests+=	bsdnotify

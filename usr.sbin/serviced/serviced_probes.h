@@ -94,13 +94,6 @@
 #define	SERVICED_PROBE_IDENTITY_VALIDATE(user, group, result)	\
 	DTRACE_PROBE3(serviced, identity__validate, user, group, result)
 
-/* Component session delegation */
-#define	SERVICED_PROBE_COMPONENT_RESOLVE(label, name, provider)	\
-	DTRACE_PROBE3(serviced, component__resolve, label, name, provider)
-#define	SERVICED_PROBE_COMPONENT_SESSION(label, name, provider, result)	\
-	DTRACE_PROBE4(serviced, component__session, label, name, provider, result)
-#define	SERVICED_PROBE_COMPONENT_INJECT(label, name, fd)	\
-	DTRACE_PROBE3(serviced, component__inject, label, name, fd)
 #define	SERVICED_PROBE_BOOTSTRAP_CREATE(label, ntokens, ndescs, result) \
 	DTRACE_PROBE4(serviced, bootstrap__create, label, ntokens, ndescs, result)
 

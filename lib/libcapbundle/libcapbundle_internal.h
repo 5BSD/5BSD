@@ -69,8 +69,6 @@ struct capbundle_service {
 	struct svc_activation_socket
 		activation_sockets[SERVICED_MAX_ACTIVATION_SOCKETS];
 	unsigned nactivation_sockets;
-	struct serviced_component components[SERVICED_MAX_COMPONENTS];
-	unsigned ncomponents;
 	int	restart;
 	int	management;		/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
 	uint32_t cap_system;		/* SYS_GATE_* bitmask */

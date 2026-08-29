@@ -247,8 +247,8 @@ CAP_XFER_ONCE comments (now describe the single-transfer/sender-closes model).
 - Identity service for credentials: put `master.passwd` behind a service that
   hands out narrowed file tokens (`MINT_FILE`), not a global claim that hides the
   file — the right answer to the isolation bug we fixed this session.
-- Migrate remaining boot-time path-claims into per-service manifest descriptors
-  (claimed at launch, released on stop).
+- Migrate remaining boot-time path-claims into per-process capability delivery
+  (minted at launch, released on stop).
 
 ### 2. Finish the service plane
 - **User agents** — per-user serviced-managed services (launchd LaunchAgents

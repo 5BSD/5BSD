@@ -1,12 +1,11 @@
 # Cryptographic Services
 
 5BSD delivers cryptography to services as **capability descriptors, not
-key bytes**. The `[CRYPTO]` capability component fronts the kernel
-OpenCrypto framework: a service that declares `descriptors { crypto {} }`
-gets a private component session from `serviced`, and the consumer
-library `libcryptocmp` obtains descriptor-bound crypto sessions from the
-provider. What comes back is a `DTYPE_CRYPTO` file descriptor — never
-raw key material.
+key bytes**. The `system.Crypto` capability service fronts the kernel
+OpenCrypto framework: a service links `libcryptocmp`, which connects to
+`system.Crypto` at first use over `service_connect()`, and obtains
+descriptor-bound crypto sessions from the provider. What comes back is a
+`DTYPE_CRYPTO` file descriptor — never raw key material.
 
 ## Component architecture
 

@@ -31,7 +31,6 @@ ATF_TC_BODY(maximum_counts, tc)
 	m.ncap_vsock = SERVICED_MAX_CAP_VSOCK;
 	m.ncap_storage = SERVICED_MAX_CAP_STORAGE;
 	m.ncap_services = SERVICED_MAX_CAP_SERVICES;
-	m.ncomponents = SERVICED_MAX_COMPONENTS;
 	m.cap_system = 1;
 
 	ATF_REQUIRE(svc_launch_counts_valid(&m));
@@ -57,12 +56,11 @@ ATF_TC_BODY(each_count_overflow, tc)
 	struct svc_manifest m;
 	unsigned *counts[] = { &m.ncap_paths, &m.ncap_files, &m.ncap_net,
 	    &m.ncap_jail, &m.ncap_vsock, &m.ncap_storage,
-	    &m.ncap_services, &m.ncomponents };
+	    &m.ncap_services };
 	const unsigned maxima[] = { SERVICED_MAX_CAP_PATHS,
 	    SERVICED_MAX_CAP_FILES, SERVICED_MAX_CAP_NET,
 	    SERVICED_MAX_CAP_JAIL, SERVICED_MAX_CAP_VSOCK,
-	    SERVICED_MAX_CAP_STORAGE, SERVICED_MAX_CAP_SERVICES,
-	    SERVICED_MAX_COMPONENTS };
+	    SERVICED_MAX_CAP_STORAGE, SERVICED_MAX_CAP_SERVICES };
 	size_t i;
 
 	for (i = 0; i < nitems(counts); i++) {

@@ -29,10 +29,6 @@ sample_manifest(void)
 	m.nenvironment = 1;
 	strlcpy(m.provides[0], "org.test.endpoint", sizeof(m.provides[0]));
 	m.nprovides = 1;
-	strlcpy(m.components[0].name, "crypto", sizeof(m.components[0].name));
-	strlcpy(m.components[0].storage, "data",
-	    sizeof(m.components[0].storage));
-	m.ncomponents = 1;
 	strlcpy(m.kmod_requires[0], "testmod", sizeof(m.kmod_requires[0]));
 	m.nkmod_requires = 1;
 	strlcpy(m.cap_paths[0], "/tmp", sizeof(m.cap_paths[0]));
@@ -107,8 +103,6 @@ ATF_TC_BODY(identity_and_execution_changes, tc)
 	CHECK_CHANGE(b.stop_timeout++);
 	CHECK_CHANGE(b.max_failures++);
 	CHECK_CHANGE(b.provides[0][0] = 'x');
-	CHECK_CHANGE(b.components[0].name[0] = 'x');
-	CHECK_CHANGE(b.components[0].storage[0] = 'x');
 	CHECK_CHANGE(b.kmod_requires[0][0] = 'x');
 	CHECK_CHANGE(b.has_jail = false);
 	CHECK_CHANGE(b.jail_name[0] = 'x');

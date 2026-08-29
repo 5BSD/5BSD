@@ -4,7 +4,7 @@ atf_test_case config
 config_body()
 {
 	tool="$(atf_get_srcdir)/networkcmpctl_test_bin"
-	atf_check -s exit:0 -o inline:'descriptors { network {} }\n' \
+	atf_check -s exit:0 -o match:'No manifest declaration is required' \
 	    -e empty "$tool" config
 }
 

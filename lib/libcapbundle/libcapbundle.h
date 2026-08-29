@@ -98,9 +98,6 @@ unsigned	 capbundle_svc_nenvironment(const struct capbundle_service *s);
 const char	*capbundle_svc_environment(const struct capbundle_service *s,
 		    unsigned idx);
 
-/* Reserved process-local descriptor factory endpoints. */
-bool	 capbundle_descriptor_factory_name(const char *name);
-
 /*
  * Fill a svc_manifest struct from a bundle service.
  * This is the preferred way to get a complete manifest — handles all

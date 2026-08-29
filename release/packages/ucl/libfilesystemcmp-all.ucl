@@ -1,8 +1,0 @@
-comment = "Public FileSystemCmp protocol library"
-
-desc = <<EOD
-The typed injected-component API and versioned protocol for capability-sandboxed
-filesystem services, including explicit persistent-storage synchronization and
-per-caller UNIX-like logical current directories confined to delegated
-namespace roots.
-EOD

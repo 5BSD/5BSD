@@ -181,9 +181,6 @@ event_loop(void)
 				if (on_demand_is_timer(kev->ident))
 					on_demand_timeout(kev->ident,
 					    serviced_kq);
-				else if (svc_launch_timer_owns(kev->ident))
-					svc_launch_timer_fire(kev->ident,
-					    serviced_kq);
 				else if (activation_timer_owns(kev->ident))
 					activation_timer_fire(kev->ident,
 					    serviced_kq);
@@ -204,16 +201,7 @@ event_loop(void)
 			if ((kev->filter == EVFILT_READ ||
 			    kev->filter == EVFILT_WRITE) &&
 			    kev->udata != NULL) {
-				struct svc_runtime *svc = kev->udata;
-
-				/* An async launch's in-flight component-session
-				 * channel is armed with the svc as udata; route
-				 * its readiness to the launch state machine. */
-				if (svc_launch_owns_event(svc, kev->ident))
-					svc_launch_channel_event(svc,
-					    serviced_kq);
-				else
-					supervisor_handle_channel(kev);
+				supervisor_handle_channel(kev);
 				continue;
 			}
 		}

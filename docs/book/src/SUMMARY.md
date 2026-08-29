@@ -49,7 +49,6 @@
 - [Authority Init](system/authority-init.md)
 - [serviced](system/serviced.md)
 - [BSDNotify](system/bsdnotify.md)
-- [Filesystem Component](system/filesystem-component.md)
 - [rc Integration](system/rc-integration.md)
 - [Service Manifests](system/manifests.md)
 

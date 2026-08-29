@@ -27,7 +27,6 @@
 
 #include <atf-c.h>
 #include <channel.h>
-#include <component_session.h>
 #include <libservice.h>
 #include <service_bootstrap.h>
 #include <serviced_svc_proto.h>
@@ -71,81 +70,6 @@ test_session_call(struct service_session *session, const void *request,
 	if (received != NULL)
 		*received = incoming.length;
 	return (0);
-}
-
-struct component_provider_context {
-	int			 fd;
-	int			 member_fd;
-	int			 error;
-	size_t			 nfds;
-	struct component_session_bootstrap bootstrap;
-};
-
-struct component_reply_context {
-	bool			 done;
-	int			 error;
-	int			 member_fd;
-	uint64_t		 reply_token;
-	struct component_session_reply reply;
-};
-
-static void *
-component_provider_thread(void *argument)
-{
-	struct component_provider_context *context;
-	struct service_component_bootstrap *bootstrap;
-	size_t i, nfds;
-	int fd;
-
-	context = argument;
-	bootstrap = NULL;
-	if (service_component_accept(context->fd, &bootstrap) == -1) {
-		context->error = errno;
-		return (NULL);
-	}
-	context->bootstrap.instance_id =
-	    service_component_instance_id(bootstrap);
-	nfds = service_component_resource_count(bootstrap);
-	context->nfds = nfds;
-	for (i = 0; i < nfds; i++) {
-		fd = service_component_take_resource(bootstrap, i);
-		if (fd == -1) {
-			context->error = errno;
-			service_component_abort(bootstrap);
-			return (NULL);
-		}
-		close(fd);
-	}
-	if (service_component_complete(bootstrap,
-	    SERVICE_COMPONENT_MEMBER_PROCDESC, context->member_fd) == -1)
-		context->error = errno;
-	return (NULL);
-}
-
-static void
-component_client_reply(struct channel_request *request,
-    struct channel_message *message, int error, void *argument)
-{
-	struct component_reply_context *context;
-
-	context = argument;
-	if (error != 0)
-		context->error = error;
-	else if (channel_message_length(message) != sizeof(context->reply) ||
-	    channel_message_fd_count(message) != 1)
-		context->error = EPROTO;
-	else {
-		context->reply_token = channel_message_token(message);
-		memcpy(&context->reply, channel_message_data(message),
-		    sizeof(context->reply));
-		context->member_fd = channel_message_take_fd(message, 0);
-		if (context->member_fd == -1)
-			context->error = errno;
-	}
-	if (message != NULL)
-		channel_message_free(message);
-	channel_request_release(request);
-	context->done = true;
 }
 
 static int
@@ -567,19 +491,6 @@ ATF_TC_BODY(shared_context, tc)
 		if (service_acquire(&first) == -1 ||
 		    service_acquire(&second) == -1 || first != second)
 			_exit(3);
-		errno = 0;
-		if (service_local_component_open(first, "system.Filesystem",
-		    "2.0.0", &channel[0]) != -1 ||
-		    errno != EPROTONOSUPPORT)
-			_exit(11);
-		errno = 0;
-		if (service_local_component_open(first, "org.test.unknown",
-		    "1.0.0", &channel[0]) != -1 || errno != ENOENT)
-			_exit(12);
-		errno = 0;
-		if (service_local_component_open(first, "system.Filesystem",
-		    "1.0.0", &channel[0]) != -1 || errno != ENOENT)
-			_exit(13);
 		if (service_provider_create(&provider) == -1)
 			_exit(9);
 		errno = 0;
@@ -752,7 +663,6 @@ ATF_TC_HEAD(api_rejects_invalid_descriptors_and_arguments, tc)
 
 ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 {
-	struct service_component_bootstrap *component_bootstrap;
 	struct service_listener *listener;
 	struct service_session *session;
 	char longname[512];
@@ -788,22 +698,10 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_connect(NULL, NULL, &fd) == -1);
 	errno = 0;
-	ATF_CHECK_ERRNO(EINVAL,
-	    service_component_accept(-1, &component_bootstrap) == -1);
-	errno = 0;
-	ATF_CHECK_ERRNO(EINVAL, service_component_accept(fd, NULL) == -1);
-	errno = 0;
 	ATF_CHECK(service_session_create(fd, &session) == -1);
 	ATF_CHECK(fcntl(fd, F_GETFD) != -1);
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_session_fail(NULL, EPROTO) == -1);
-	errno = 0;
-	ATF_CHECK_ERRNO(EINVAL,
-	    service_component_complete(NULL,
-	    SERVICE_COMPONENT_MEMBER_PROCDESC, -1) == -1);
-	errno = 0;
-	ATF_CHECK_ERRNO(EINVAL,
-	    service_component_fail(NULL, EACCES) == -1);
 	/* service_storage_open argument validation (no plane required). */
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL, service_storage_open(NULL, "state", NULL) == -1);
@@ -817,217 +715,6 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	ATF_CHECK_ERRNO(ENAMETOOLONG,
 	    service_storage_open(NULL, longname, &sdir) == -1);
 	close(fd);
-}
-
-ATF_TC(component_bootstrap_roundtrip);
-ATF_TC_HEAD(component_bootstrap_roundtrip, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "component bootstrap keeps semantic instance identity separate from channel correlation and preserves attachment order");
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_channel");
-}
-
-ATF_TC_BODY(component_bootstrap_roundtrip, tc)
-{
-	struct channel_options channel_options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
-	struct component_session_bootstrap message;
-	struct component_provider_context provider;
-	struct component_reply_context reply;
-	struct channel_request *request;
-	struct channel *channel;
-	pthread_t thread;
-	int endpoints[2], member[2], resource[2], result, wants_write;
-
-	(void)tc;
-	capability_channel_pair(&endpoints[0], &endpoints[1]);
-	ATF_REQUIRE(pipe(member) == 0);
-	ATF_REQUIRE(pipe(resource) == 0);
-	memset(&provider, 0, sizeof(provider));
-	provider.fd = endpoints[1];
-	provider.member_fd = member[0];
-	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL,
-	    component_provider_thread, &provider));
-	ATF_REQUIRE(channel_create(endpoints[0], &channel_options, &channel) ==
-	    0);
-	memset(&message, 0, sizeof(message));
-	message.magic = COMPONENT_SESSION_MAGIC;
-	message.version = COMPONENT_SESSION_VERSION;
-	message.header_size = sizeof(message);
-	message.instance_id = UINT64_C(0x1122334455667788);
-	strlcpy(message.name, "filesystem", sizeof(message.name));
-	strlcpy(message.interface, "org.5bsd.component.filesystem",
-	    sizeof(message.interface));
-	strlcpy(message.interface_version, "1.0.0",
-	    sizeof(message.interface_version));
-	strlcpy(message.client_label, "org.test.component-client",
-	    sizeof(message.client_label));
-	memset(&reply, 0, sizeof(reply));
-	reply.member_fd = -1;
-	ATF_REQUIRE(channel_send_request(channel,
-	    &(struct channel_outgoing){
-		.size = sizeof(struct channel_outgoing),
-		.data = &message,
-		.length = sizeof(message),
-		.fds = &resource[0],
-		.nfds = 1
-	    }, component_client_reply, &reply, &request) == 0);
-	while (!reply.done) {
-		wants_write = channel_wants_write(channel);
-		ATF_REQUIRE(wants_write >= 0);
-		result = channel_wait(channel, wants_write, 5000);
-		ATF_REQUIRE(result > 0);
-		if ((result & CHANNEL_WAIT_WRITE) != 0)
-			ATF_REQUIRE(channel_flush(channel) == 0);
-		if ((result & CHANNEL_WAIT_READ) != 0) {
-			/*
-			 * The provider thread closes its channel immediately
-			 * after sending the reply, so the reply and the peer
-			 * EOF can arrive in the same dispatch batch: the reply
-			 * is delivered (reply.done set via the callback) and
-			 * channel_dispatch then reports the EOF as -1.  That is
-			 * expected -- only a failure that leaves the reply
-			 * undelivered is fatal.
-			 */
-			if (channel_dispatch(channel) == -1)
-				ATF_REQUIRE(reply.done);
-		}
-	}
-	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
-	ATF_CHECK_EQ(0, provider.error);
-	ATF_CHECK_EQ(1, provider.nfds);
-	ATF_CHECK_EQ(message.instance_id,
-	    provider.bootstrap.instance_id);
-	ATF_CHECK_EQ(0, reply.error);
-	ATF_CHECK(reply.member_fd >= 0);
-	ATF_CHECK(reply.reply_token != 0);
-	ATF_CHECK(reply.reply_token != message.instance_id);
-	ATF_CHECK_EQ(message.instance_id, reply.reply.instance_id);
-	ATF_CHECK_EQ(COMPONENT_SESSION_MEMBER_PROCDESC,
-	    reply.reply.member_type);
-	close(reply.member_fd);
-	channel_destroy(channel);
-	close(endpoints[1]);
-	close(member[0]);
-	close(member[1]);
-	close(resource[0]);
-	close(resource[1]);
-}
-
-static int
-reject_component_bootstrap(const void *payload, size_t length)
-{
-	struct mac_capability_sendmsg_args send;
-	struct component_provider_context provider;
-	pthread_t thread;
-	int endpoints[2], error;
-
-	capability_channel_pair(&endpoints[0], &endpoints[1]);
-	memset(&provider, 0, sizeof(provider));
-	provider.fd = endpoints[1];
-	provider.member_fd = -1;
-	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL,
-	    component_provider_thread, &provider));
-	memset(&send, 0, sizeof(send));
-	send.payload = payload;
-	send.payload_len = length;
-	send.reply_token = 1;
-	ATF_REQUIRE(ioctl(endpoints[0], MAC_CAPABILITY_SENDMSG, &send) == 0);
-	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
-	error = provider.error;
-	close(endpoints[0]);
-	close(endpoints[1]);
-	return (error);
-}
-
-ATF_TC(component_bootstrap_rejects_obsolete_and_malformed_fields);
-ATF_TC_HEAD(component_bootstrap_rejects_obsolete_and_malformed_fields, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "component bootstrap rejects obsolete trailing options, reserved "
-	    "fields, versions, and unterminated identity fields");
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_channel");
-}
-
-ATF_TC_BODY(component_bootstrap_rejects_obsolete_and_malformed_fields, tc)
-{
-	struct {
-		struct component_session_bootstrap header;
-		uint32_t obsolete_options;
-	} extended;
-	struct component_session_bootstrap message;
-
-	(void)tc;
-	memset(&message, 0, sizeof(message));
-	message.magic = COMPONENT_SESSION_MAGIC;
-	message.version = COMPONENT_SESSION_VERSION;
-	message.header_size = sizeof(message);
-	message.instance_id = 1;
-	strlcpy(message.name, "filesystem", sizeof(message.name));
-	strlcpy(message.interface, "org.5bsd.component.filesystem",
-	    sizeof(message.interface));
-	strlcpy(message.interface_version, "1.0.0",
-	    sizeof(message.interface_version));
-	strlcpy(message.client_label, "org.test.client",
-	    sizeof(message.client_label));
-
-	message.version--;
-	ATF_CHECK_EQ(EPROTO,
-	    reject_component_bootstrap(&message, sizeof(message)));
-	message.version = COMPONENT_SESSION_VERSION;
-	message.reserved[0] = 1;
-	ATF_CHECK_EQ(EPROTO,
-	    reject_component_bootstrap(&message, sizeof(message)));
-	message.reserved[0] = 0;
-	memset(message.interface, 'x', sizeof(message.interface));
-	ATF_CHECK_EQ(EPROTO,
-	    reject_component_bootstrap(&message, sizeof(message)));
-
-	memset(&extended, 0, sizeof(extended));
-	extended.header = message;
-	strlcpy(extended.header.interface, "org.5bsd.component.filesystem",
-	    sizeof(extended.header.interface));
-	extended.obsolete_options = 3;
-	ATF_CHECK_EQ(EPROTO,
-	    reject_component_bootstrap(&extended, sizeof(extended)));
-}
-
-ATF_TC(component_bootstrap_timeout);
-ATF_TC_HEAD(component_bootstrap_timeout, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "a connected peer that never bootstraps cannot pin a component factory");
-	atf_tc_set_md_var(tc, "require.user", "root");
-	atf_tc_set_md_var(tc, "require.kmods",
-	    "mac_capability mac_capability_channel");
-	atf_tc_set_md_var(tc, "timeout", "15");
-}
-
-ATF_TC_BODY(component_bootstrap_timeout, tc)
-{
-	struct service_component_bootstrap *bootstrap;
-	struct timespec before, after;
-	int endpoints[2], saved_errno;
-	double elapsed;
-
-	(void)tc;
-	capability_channel_pair(&endpoints[0], &endpoints[1]);
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &before) == 0);
-	errno = 0;
-	ATF_CHECK(service_component_accept(endpoints[1], &bootstrap) == -1);
-	saved_errno = errno;
-	ATF_REQUIRE(clock_gettime(CLOCK_MONOTONIC, &after) == 0);
-	elapsed = after.tv_sec - before.tv_sec +
-	    (after.tv_nsec - before.tv_nsec) / 1000000000.0;
-	ATF_CHECK_EQ(ETIMEDOUT, saved_errno);
-	ATF_CHECK(elapsed >= 1.5);
-	ATF_CHECK(elapsed < 5.0);
-	close(endpoints[0]);
-	close(endpoints[1]);
 }
 
 ATF_TC(service_session_lifecycle);
@@ -1451,10 +1138,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, shared_context);
 	ATF_TP_ADD_TC(tp, named_directory_bootstrap);
 	ATF_TP_ADD_TC(tp, api_rejects_invalid_descriptors_and_arguments);
-	ATF_TP_ADD_TC(tp, component_bootstrap_roundtrip);
-	ATF_TP_ADD_TC(tp,
-	    component_bootstrap_rejects_obsolete_and_malformed_fields);
-	ATF_TP_ADD_TC(tp, component_bootstrap_timeout);
 	ATF_TP_ADD_TC(tp, service_session_lifecycle);
 	ATF_TP_ADD_TC(tp, service_session_payload_and_attachment_lifecycle);
 	ATF_TP_ADD_TC(tp, service_session_close_cancels_event);

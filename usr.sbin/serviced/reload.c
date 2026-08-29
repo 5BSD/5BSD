@@ -135,12 +135,6 @@ svc_reregister_kevents(int kq)
 	for (i = 0; i < sd.nservices; i++) {
 		struct svc_runtime *svc = &sd.services[i];
 
-		/* A pending async launch keeps a session-channel event whose
-		 * udata must follow the moved svc_runtime, even though the unit
-		 * is still STOPPED. */
-		if (svc->launch != NULL)
-			svc_launch_reregister(svc, kq);
-
 		if (svc->state == SVC_STATE_STOPPED &&
 		    !svc->restart_pending)
 			continue;

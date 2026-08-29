@@ -34,7 +34,7 @@ contains(const unsigned char *data, size_t size, const char *needle)
 
 static void
 inspect_dynamic(Elf *elf, Elf_Scn *scn, const GElf_Shdr *shdr,
-    bool *filesystem, bool *network, bool *crypto)
+    bool *network, bool *crypto)
 {
 	GElf_Dyn dyn;
 	Elf_Data *data;
@@ -62,10 +62,6 @@ inspect_dynamic(Elf *elf, Elf_Scn *scn, const GElf_Shdr *shdr,
 			    strncmp(needed, "libnetworkcmp.so.",
 			    sizeof("libnetworkcmp.so.") - 1) == 0)
 				*network = true;
-			if (strcmp(needed, "libfilesystemcmp.so") == 0 ||
-			    strncmp(needed, "libfilesystemcmp.so.",
-			    sizeof("libfilesystemcmp.so.") - 1) == 0)
-				*filesystem = true;
 			if (strcmp(needed, "libcryptocmp.so") == 0 ||
 			    strncmp(needed, "libcryptocmp.so.",
 			    sizeof("libcryptocmp.so.") - 1) == 0)
@@ -75,8 +71,7 @@ inspect_dynamic(Elf *elf, Elf_Scn *scn, const GElf_Shdr *shdr,
 }
 
 static void
-inspect_descriptor_note(Elf_Scn *scn, bool *filesystem, bool *network,
-    bool *crypto)
+inspect_descriptor_note(Elf_Scn *scn, bool *network, bool *crypto)
 {
 	Elf_Data *data;
 
@@ -87,9 +82,6 @@ inspect_descriptor_note(Elf_Scn *scn, bool *filesystem, bool *network,
 		if (contains(data->d_buf, data->d_size,
 		    "interface=system.Network"))
 			*network = true;
-		if (contains(data->d_buf, data->d_size,
-		    "interface=system.Filesystem"))
-			*filesystem = true;
 		if (contains(data->d_buf, data->d_size,
 		    "interface=system.Crypto"))
 			*crypto = true;
@@ -105,7 +97,7 @@ cmd_deps(const char *program)
 	struct stat st;
 	const char *name;
 	size_t shstrndx;
-	bool crypto, filesystem, network;
+	bool crypto, network;
 	int fd;
 
 	fd = open(program, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
@@ -127,7 +119,6 @@ cmd_deps(const char *program)
 		    elf_errmsg(-1));
 
 	network = false;
-	filesystem = false;
 	crypto = false;
 	scn = NULL;
 	while ((scn = elf_nextscn(elf, scn)) != NULL) {
@@ -139,28 +130,20 @@ cmd_deps(const char *program)
 			errx(1, "%s: malformed ELF section name: %s", program,
 			    elf_errmsg(-1));
 		if (strcmp(name, ".note.5bsd.descriptors") == 0)
-			inspect_descriptor_note(scn, &filesystem, &network, &crypto);
+			inspect_descriptor_note(scn, &network, &crypto);
 		if (shdr.sh_type == SHT_DYNAMIC)
-			inspect_dynamic(elf, scn, &shdr, &filesystem, &network,
-			    &crypto);
+			inspect_dynamic(elf, scn, &shdr, &network, &crypto);
 	}
 
-	printf("# Suggested local descriptors for %s.\n", program);
-	printf("# Global service libraries discover their named services at runtime.\n");
-	if (!network && !filesystem && !crypto) {
-		printf("# No local descriptor dependencies found.\n");
-	} else {
-		printf("descriptors {\n");
-		if (filesystem)
-			printf("    filesystem { storage = \"data\"; }\n");
-		if (network)
-			printf("    network {}\n");
-		if (crypto)
-			printf("    crypto {}\n");
-		printf("}\n");
-		if (filesystem)
-			printf("# Also declare unit storage named \"data\" with mount rights.\n");
-	}
+	printf("# %s discovers its capability services at runtime via\n", program);
+	printf("# service_connect(3); no manifest descriptor declaration is required.\n");
+	/*
+	 * The eager descriptor model was retired: capability libraries
+	 * (libnetworkcmp, libcryptocmp, ...) connect to their system.* service
+	 * lazily on first use.  The detected linkage is now informational only.
+	 */
+	(void)network;
+	(void)crypto;
 	elf_end(elf);
 	close(fd);
 	return (0);

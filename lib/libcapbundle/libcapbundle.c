@@ -29,16 +29,6 @@ manifest_copy(const char *src, char *dst, size_t dstsz)
 
 /* --- Public API --- */
 
-bool
-capbundle_descriptor_factory_name(const char *name)
-{
-
-	return (name != NULL &&
-	    (strcmp(name, "system.Filesystem") == 0 ||
-	    strcmp(name, "system.Network") == 0 ||
-	    strcmp(name, "system.Crypto") == 0));
-}
-
 int
 capbundle_open(const char *path, struct capbundle **bp,
     char *errbuf, size_t errlen)
@@ -380,7 +370,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	if (s->narguments > SERVICED_MAX_ARGUMENTS ||
 	    s->nenvironment > SERVICED_MAX_ENVIRONMENT ||
 	    s->nprovides > SERVICED_MAX_PROVIDES ||
-	    s->ncomponents > SERVICED_MAX_COMPONENTS ||
 	    s->ncap_paths > SERVICED_MAX_CAP_PATHS ||
 	    s->ncap_files > SERVICED_MAX_CAP_FILES ||
 	    s->ncap_net > SERVICED_MAX_CAP_NET ||
@@ -415,17 +404,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	for (i = 0; i < s->nprovides && i < CAPBUNDLE_MAX_PROVIDES; i++) {
 		if (manifest_copy(s->provides[i], m->provides[i],
 		    sizeof(m->provides[i])) == -1)
-			return (-1);
-	}
-
-	m->ncomponents = s->ncomponents;
-	for (i = 0; i < s->ncomponents; i++) {
-		if (manifest_copy(s->components[i].name,
-		    m->components[i].name,
-		    sizeof(m->components[i].name)) == -1 ||
-		    manifest_copy(s->components[i].storage,
-		    m->components[i].storage,
-		    sizeof(m->components[i].storage)) == -1)
 			return (-1);
 	}
 

@@ -64,7 +64,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libexecinfo \
 	libexpat \
 	libfetch \
-	libfilesystemcmp \
 	libgcc_eh \
 	libgcc_s \
 	libgeom \
@@ -155,7 +154,6 @@ SUBDIR_DEPEND_libcrypt= libmd
 SUBDIR_DEPEND_libdevstat= libkvm
 SUBDIR_DEPEND_libdpv= libfigpar ncurses libutil
 SUBDIR_DEPEND_libedit= ncurses
-SUBDIR_DEPEND_libfilesystemcmp= libservice
 SUBDIR_DEPEND_libgeom= libexpat libsbuf
 .if ${MK_MITKRB5} == "no"
 SUBDIR_DEPEND_librpcsec_gss= libgssapi

@@ -120,16 +120,16 @@ struct svc_runtime {
 	int		coalition_fd;	/* coalition service instance */
 	int		jail_fd;	/* jail descriptor (-1 if no jail) */
 	/*
-	 * Anchors for anonymous storage mounts provisioned for this service's
-	 * component sessions.  serviced mounts a delivered zfshandle and passes
-	 * only the resulting directory descriptor to the provider worker; the
-	 * mount is force-unmounted when the last handle reference closes, so
-	 * serviced must retain a handle reference for the life of the service
-	 * that uses it.  Closed in svc_close_fds().
+	 * Anchors for anonymous storage mounts provisioned for this service.
+	 * serviced mounts a delivered zfshandle and passes only the resulting
+	 * directory descriptor to the consumer; the mount is force-unmounted
+	 * when the last handle reference closes, so serviced must retain a
+	 * handle reference for the life of the service that uses it.  Closed in
+	 * svc_close_fds().
 	 */
-	int		mount_anchor_fds[SERVICED_MAX_COMPONENTS];
+	int		mount_anchor_fds[SERVICED_MAX_CAP_STORAGE];
 	unsigned	nmount_anchors;
-	struct svc_launch *launch;	/* non-NULL while an async launch runs */
+	struct svc_launch *launch;	/* non-NULL while a launch is in progress */
 	bool		protocol_ready;	/* SVC_OP_READY advisory received */
 	bool		lookup_activated; /* launched to satisfy a named lookup */
 	bool		want_console;	/* stdio on /dev/console (rc bootstrap) */
@@ -290,7 +290,6 @@ int	kldmgr_ensure_loaded(const struct svc_manifest *m, bool system_bundle,
 /* execute.c — service fork/exec */
 int	svc_exec(struct svc_runtime *svc, int kq);
 int	svc_exec_rc_stop(struct svc_runtime *svc, int kq);
-const char *svc_exec_blocking_provider(const struct svc_manifest *m);
 int	svc_launch_or_await(struct svc_runtime *svc, int kq);
 
 /* supervisor.c — service lifecycle orchestration */
@@ -309,17 +308,10 @@ void	schedule_restart(struct svc_runtime *svc, int kq);
 /* svc_proto.c — service channel protocol dispatch */
 void	supervisor_handle_channel(struct kevent *kev);
 /*
- * Async component-launch machinery (execute.c).  A native unit that consumes
- * components does not block svc_exec: it mints, opens each component session
- * asynchronously, and forks only once every session reply is in.  The event
- * loop routes a launch's in-flight session-channel readiness here.
+ * Native-launch machinery (execute.c).  svc_exec mints synchronously and forks
+ * straight through; svc_launch_cancel aborts an in-progress launch context.
  */
-bool	svc_launch_owns_event(const struct svc_runtime *svc, uintptr_t ident);
-void	svc_launch_channel_event(struct svc_runtime *svc, int kq);
-void	svc_launch_reregister(struct svc_runtime *svc, int kq);
 void	svc_launch_cancel(struct svc_runtime *svc, int kq);
-bool	svc_launch_timer_owns(uintptr_t ident);
-void	svc_launch_timer_fire(uintptr_t ident, int kq);
 int	svc_channel_attach(struct svc_runtime *, int);
 int	svc_channel_rebind(struct svc_runtime *);
 void	svc_channel_close(struct svc_runtime *);

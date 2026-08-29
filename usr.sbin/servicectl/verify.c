@@ -193,13 +193,6 @@ print_bundle(const struct capbundle *b)
 			    m.cap_storage[j].scope == ORT_STORAGE_SCOPE_SHARED ?
 			    "shared" : "unit", m.cap_storage[j].dataset);
 		}
-		for (j = 0; j < m.ncomponents; j++) {
-			printf("      descriptor: %s",
-			    m.components[j].name);
-			if (m.components[j].storage[0] != '\0')
-				printf(" storage=%s", m.components[j].storage);
-			printf("\n");
-		}
 		if (m.has_jail)
 			printf("      jail: name=%s path=%s hostname=%s "
 			    "ip4_addr=%s persistent=yes\n",

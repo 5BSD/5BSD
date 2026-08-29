@@ -32,9 +32,9 @@ See [Capability bundle manifests](manifests.md) for the complete two-level
 ## Launch and lifecycle
 
 Each native unit is launched with `pdfork(2)`. Before releasing the child,
-`serviced` mints every declared capability, provisions storage, constructs
-local descriptors, creates a coalition, installs a versioned bootstrap envfd,
-and applies the requested credentials and optional jail. Partial construction
+`serviced` mints every declared capability, provisions storage, creates a
+coalition, installs a versioned bootstrap envfd, and applies the requested
+credentials and optional jail. Partial construction
 is rolled back; the program never receives an incomplete authority set.
 
 ```text
@@ -54,9 +54,29 @@ storage is destroyed only when its last launched holder exits. Manager-session
 and boot-generation reconciliation recover abandoned lease/boot datasets after
 a crash or reboot without treating a `tzfsd` restart as a reboot.
 
-## Local descriptors and global IPC
+## Capability services and global IPC
 
-Local descriptors replace ambient authority for one consumer process:
+A unit needs no manifest declaration to use a capability service. It links the
+matching typed library and reaches the service lazily, on first use, over
+`service_connect()`:
+
+| Library | Service |
+| --- | --- |
+| `liblogcmp` | `system.Log` |
+| `libnotify` | `system.Notify` |
+| `libtracecmp` | `system.Trace` |
+| `libnetworkcmp` | `system.Network` (bounded DNS plus connected, rights-limited sockets) |
+| `libcryptocmp` | `system.Crypto` |
+
+Each provider is an ordinary supervised bundle that publishes its
+reverse-domain name in `activation.ipc` and answers with
+`service_provider_expose()`. Every successful connect yields a fresh, direct,
+transfer-confined session; the supervisor is not a data-plane proxy. Publishing
+a name does not imply boot activation — a provider stays stopped until its first
+lookup.
+
+Storage is the one resource still delivered by the manifest, because it must be
+minted before the process starts:
 
 ```ucl
 storage = [{
@@ -65,25 +85,22 @@ storage = [{
     lifetime = "persistent";
     rights = "mount";
 }];
-
-descriptors {
-    filesystem { storage = "data"; }
-    network {}
-    crypto {}
-}
 ```
 
-The filesystem descriptor must name storage with mount rights. `serviced`
-mounts that dataset anonymously, passes its directory and the immutable bundle
-root to `localfilesystem`, and injects only the confined session endpoint into
-the consumer. Network and crypto descriptors have no manifest-selectable
-provider or policy escape hatch.
+`serviced` mints a rights-limited `zfshandle` for each claim; a mount-rights
+consumer mounts it lazily with `service_storage_open()` and holds the handle for
+its lifetime (the handle anchors the mount).
 
-Global services instead publish reverse-domain names in `activation.ipc` and
-use `service_provider_expose()`. Providers are ordinary supervised bundles;
-examples include `system.Log`, `system.Notify`, and `system.Trace`.
-Consumers discover these names through typed libraries. Publishing a name does
-not imply boot activation.
+### Private helpers
+
+A bundle may ship a *private helper*: a unit marked
+`activation { helper = true }` that publishes no `system.*` name and is launched
+only on request by a sibling unit in the same bundle, through
+`service_helper_open("<unit>")`. `serviced` resolves it under a synthetic
+bundle-local name that ordinary global lookup cannot reach, activates it on
+demand, and returns a confined channel. The helper joins its parent's coalition
+and so shares its lifetime — an XPC-style privilege-separation boundary that
+stays inside the bundle.
 
 ## Administration and installation
 
@@ -109,16 +126,15 @@ historical-version selection interface.
 
 The control socket is `/var/run/serviced.sock`. Mutating operations require
 root. Requests and replies are fixed-size and bounded. Descriptor headroom is
-reserved before launches and IPC brokerage so `EMFILE` cannot leave a partial
-launch.
+reserved before each launch so `EMFILE` cannot leave a partial launch.
 
 ## Program API
 
 Managed programs use `libservice(3)`. Providers explicitly authorize minted
 capabilities, install capprotect restrictions, expose IPC listeners, enter
-capability mode, and report readiness. Consumers use typed global-service
-libraries or local descriptor libraries such as `libfilesystemcmp`,
-`libnetworkcmp`, and `libcryptocmp`.
+capability mode, and report readiness. Consumers reach a service through its
+typed library — `liblogcmp`, `libnotify`, `libtracecmp`, `libnetworkcmp`,
+`libcryptocmp` — which connects lazily on first use.
 
 Socket, timer, path, calendar (`schedule`), `queue_directory`, and `on_mount`
 activation are all implemented demand sources; only user-domain schedules

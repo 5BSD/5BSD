@@ -1,10 +1,9 @@
 # [CRYPTO] capability component
 
-`[CRYPTO]` is the capability-bundle front end for OpenCrypto.  A service
-declares `descriptors { crypto {} }`; serviced creates one private local
-component session, and `libcryptocmp` obtains descriptor-bound sessions from
-the provider.  The provider returns a `DTYPE_CRYPTO` attachment, never raw
-key material.
+`[CRYPTO]` is the capability-bundle front end for OpenCrypto.  A service links
+`libcryptocmp`, which connects to `system.Crypto` lazily on first use over
+`service_connect(3)` and obtains descriptor-bound sessions from the provider.
+The provider returns a `DTYPE_CRYPTO` attachment, never raw key material.
 
 The kernel descriptor is intentionally independent of the provider.  Its
 session algorithms and `CRYPTODESC_RIGHT_*` operation mask are immutable,

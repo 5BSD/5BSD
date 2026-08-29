@@ -428,30 +428,14 @@ send_activation(struct svc_runtime *provider, const char *name)
  * Sets errno to EDEADLK if circular dependency detected.
  */
 /*
- * Launch a unit, or defer the launch while a component provider it needs
- * is not registered yet.  Deferral rides the pending-lookup machinery with
- * a NULL request: the unit itself is the requester, which also gives the
- * deadlock walk a real chain to inspect.  Demand-driven replacement for
- * dependency-ordered startup.
+ * Launch a unit.  Every capability service a unit depends on is now reached
+ * lazily at runtime (service_connect), so there is no pre-exec provider to
+ * await; the launch proceeds immediately.
  */
 int
 svc_launch_or_await(struct svc_runtime *svc, int kq)
 {
-	const char *blocked;
 
-	blocked = svc_exec_blocking_provider(&svc->manifest);
-	if (blocked != NULL) {
-		if (on_demand_launch(blocked, svc, NULL, kq) == 0) {
-			syslog(LOG_INFO,
-			    "on_demand: launch of '%s' deferred until "
-			    "provider '%s' is ready",
-			    svc->manifest.label, blocked);
-			return (0);
-		}
-		syslog(LOG_WARNING,
-		    "on_demand: cannot await provider '%s' for '%s': %m; "
-		    "attempting direct launch", blocked, svc->manifest.label);
-	}
 	return (svc_exec(svc, kq));
 }
 

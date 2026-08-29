@@ -712,7 +712,6 @@
 43326:AUE_SERVICED_AUTHORITY:serviced authority disconnect:ad
 43327:AUE_SERVICED_COMPONENT:serviced component session:pc
 43329:AUE_NETWORKCMP_POLICY:NetworkCmp policy:nt
-43330:AUE_FILESYSTEMCMP_POLICY:FileSystemCmp policy:fa
 43331:AUE_LOGCMP_POLICY:LogCmp policy:ad
 43332:AUE_TRACECMP_POLICY:TraceCmp policy:ad
 43333:AUE_BSDNOTIFY_POLICY:BsdNotify policy:ad

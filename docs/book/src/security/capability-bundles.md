@@ -51,8 +51,8 @@ container by pathname — it is confined to capability mode and the directory is
 not world-reachable — so `serviced` passes an `O_DIRECTORY` descriptor into the
 child's bootstrap and the program uses `*at(2)` calls relative to it. The
 container is runtime state, never a source of authority, and is safe to delete
-and recreate. It is distinct from provisioned storage leases and component
-scratch, which are minted TrustedZFS datasets delivered as descriptors.
+and recreate. It is distinct from provisioned storage leases, which are minted
+TrustedZFS datasets delivered as `zfshandle` descriptors.
 
 ## Naming
 
@@ -122,10 +122,10 @@ role and type are validated independently. Storage is delivered as a
 rights-limited `zfshandle`: the consumer mounts a mount-rights claim itself
 with `service_storage_open(3)` and holds the handle for its lifetime (the
 handle anchors the mount), so the service manager never mounts on its behalf —
-`tzfsd` sets the dataset root's owner at mint so the service can write. Filesystem-descriptor
-backing is private to its factory. Because the consumer mounts and hardens the
-directory itself, granting itself `CAP_MMAP_R` there is all that is needed to
-`mmap(2)` its own storage — no manifest opt-in.
+`tzfsd` sets the dataset root's owner at mint so the service can write. Because
+the consumer mounts and hardens the directory itself, granting itself
+`CAP_MMAP_R` there is all that is needed to `mmap(2)` its own storage — no
+manifest opt-in.
 
 Providers claim only IPC names declared under `activation.ipc`. A provider is
 not ready until its complete declared set is claimed and capability-mode entry
@@ -156,14 +156,17 @@ a newer flag set still loads on an older system. Because protection is keyed to
 the process and dropped when it exits, a fork is born unprotected and a reused
 PID is never falsely shielded. `servicectl verify` prints the parsed mask.
 
-The policy is per-service by necessity: a component factory that forks workers
-cannot itself carry `nofork`, while each worker it launches can — and since the
-launcher holds the worker's descriptor, it applies the worker's policy without
-the worker needing any protection authority of its own.
+The policy is per-service by necessity: a capability provider that forks a
+per-connection worker cannot itself carry `nofork`, while each worker it
+launches can — and since the launcher holds the worker's descriptor, it applies
+the worker's policy without the worker needing any protection authority of its
+own.
 
 ## No compatibility format
 
 This is a pre-v1 clean break. The former `etc/*.ucl` format, repeated schema
 metadata in each process manifest, inferred `provides` activation,
-`capabilities.storage`, and `components=[...]` declarations are rejected.
-They are not silently translated.
+`capabilities.storage`, `components=[...]`, and the eager `descriptors {}`
+factory block are rejected. They are not silently translated. A unit reaches a
+capability service at runtime through its typed library and `service_connect()`,
+not through a manifest declaration.

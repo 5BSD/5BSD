@@ -43,8 +43,6 @@
 #define	SERVICED_ARGUMENT_MAX		256
 #define	SERVICED_MAX_ENVIRONMENT	32
 #define	SERVICED_ENVIRONMENT_MAX	1024
-#define	SERVICED_MAX_COMPONENTS		8
-#define	SERVICED_COMPONENT_NAME_MAX	64
 #define	SERVICED_MAX_ACTIVATION_SOCKETS	4
 #define	SERVICED_DEFAULT_USER		"capability"
 #define	SERVICED_DEFAULT_GROUP		"capability"
@@ -133,12 +131,6 @@ struct serviced_jail_claim {
 	char		name[64];	/* empty=not specified */
 };
 
-struct serviced_component {
-	char		name[SERVICED_COMPONENT_NAME_MAX];
-	/* Filesystem descriptor backing; empty for other descriptor kinds. */
-	char		storage[ORT_STORAGE_NAME_MAX];
-};
-
 /*
  * Socket activation source (Phase 4).  serviced binds and holds a
  * listening socket; the first inbound connection is the demand that
@@ -186,10 +178,6 @@ struct svc_manifest {
 	 * parent's coalition.
 	 */
 	bool		is_helper;
-
-	/* Local authority-replacement components consumed by this service. */
-	struct serviced_component components[SERVICED_MAX_COMPONENTS];
-	unsigned	ncomponents;
 
 	/* Capabilities to delegate */
 	char		cap_paths[SERVICED_MAX_CAP_PATHS][PATH_MAX];

@@ -136,18 +136,14 @@ capabilities {
     }];
     system = [];
 }
-
-descriptors {
-    filesystem { storage = "queue"; }
-    network {}
-    crypto {}
-}
 ```
 
 Activation is always explicit. `boot=true` starts the unit during convergence.
 Each `ipc` name reserves a reverse-domain endpoint and permits launch on first
 lookup. At least one activation mode is required. `provides`, `on_demand`,
-`requires`, and `components` are not aliases and are rejected.
+`requires`, `components`, and the eager `descriptors {}` block are not aliases
+and are rejected; a unit reaches a capability service at runtime through its
+typed library and `service_connect()`.
 
 ### Demand sources
 

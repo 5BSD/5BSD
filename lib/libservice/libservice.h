@@ -61,13 +61,7 @@ struct service_listener;
 struct service_session;
 struct service_context;
 struct service_provider;
-struct service_component_bootstrap;
 typedef int (*service_activation_handler)(const char *name, void *context);
-
-enum service_component_member_type {
-	SERVICE_COMPONENT_MEMBER_PROCDESC = 1,
-	SERVICE_COMPONENT_MEMBER_COALITION = 2
-};
 
 struct service_identity {
 	size_t	size;
@@ -169,35 +163,6 @@ int	service_capability_open(struct service_context *, const char *name,
  * process — accept(2)/recv on it, but do not close it.
  */
 int	service_activation_socket(const char *name);
-
-int	service_local_component_open(struct service_context *,
-	    const char *interface, const char *version, int *session_fd);
-
-/*
- * Provider-side local-component bootstrap.  The opaque object owns every
- * received descriptor until its attachment slot is explicitly taken.
- * complete() and fail() consume the object on both success and failure.
- */
-int	service_component_accept(int fd,
-	    struct service_component_bootstrap **);
-const char *service_component_name(
-	    const struct service_component_bootstrap *);
-const char *service_component_interface(
-	    const struct service_component_bootstrap *);
-const char *service_component_interface_version(
-	    const struct service_component_bootstrap *);
-const char *service_component_client_label(
-	    const struct service_component_bootstrap *);
-uint64_t service_component_instance_id(
-	    const struct service_component_bootstrap *);
-size_t	service_component_resource_count(
-	    const struct service_component_bootstrap *);
-int	service_component_take_resource(
-	    struct service_component_bootstrap *, size_t slot);
-int	service_component_complete(struct service_component_bootstrap *,
-	    enum service_component_member_type, int member_fd);
-int	service_component_fail(struct service_component_bootstrap *, int error);
-void	service_component_abort(struct service_component_bootstrap *);
 
 /*
  * Activate every isolation token delivered in the bootstrap descriptor.

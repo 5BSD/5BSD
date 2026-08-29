@@ -12,14 +12,8 @@ ATF_TESTS_SH+=	serviced_svc_test
 ATF_TESTS_SH+=	serviced_integration_test
 ATF_TESTS_SH+=	serviced_dynamic_claims_test
 ATF_TESTS_SH+=	bundle_integration_test
-ATF_TESTS_SH+=	component_examples_test
-ATF_TESTS_SH+=	component_integration_test
 ATF_TESTS_SH+=	helper_integration_test
 ATF_TESTS_SH_SED_helper_integration_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
-ATF_TESTS_SH_SED_component_examples_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
-ATF_TESTS_SH_SED_component_examples_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
-ATF_TESTS_SH_SED_component_integration_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
-ATF_TESTS_SH_SED_component_integration_test+=	-e 's,@OBJTOP@,${OBJTOP},g'
 
 ${PACKAGE}FILES+=	test_helpers.sh
 ${PACKAGE}FILES+=	capd_test_harness.sh
@@ -45,7 +39,6 @@ CLEANFILES+=	test_helpers.sh capd_test_harness.sh
 PROGS+=		capd_test_guardian
 PROGS+=		capd_service_fixture
 PROGS+=		capd_protocol_fixture
-PROGS+=		component_fixture
 ATF_TESTS_C+=	activation_test
 ATF_TESTS_C+=	domain_test
 ATF_TESTS_C+=	on_demand_test
@@ -108,15 +101,6 @@ CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/sys
 
-
-LIBADD.component_fixture+=	filesystemcmp logcmp networkcmp notify tracecmp service pthread
-CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libservice
-CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libfilesystemcmp
-CFLAGS.component_fixture+=	-I${SRCTOP}/lib/liblogcmp
-CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libnetworkcmp
-CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libnotify
-CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libtracecmp
-CFLAGS.component_fixture+=	-I${SRCTOP}/sys
 
 # activation_test.c #includes ../activation.c inline; that now calls into the
 # calendar math, so activation_calendar.c is linked alongside (by basename via

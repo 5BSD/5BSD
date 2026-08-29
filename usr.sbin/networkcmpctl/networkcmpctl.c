@@ -135,7 +135,9 @@ main(int argc, char **argv)
 {
 
 	if (argc == 2 && strcmp(argv[1], "config") == 0) {
-		puts("descriptors { network {} }");
+		puts("# No manifest declaration is required: link libnetworkcmp and");
+		puts("# call networkcmp_*().  The system.Network service is reached at");
+		puts("# runtime via service_connect(3), like any global service.");
 		return (0);
 	}
 	if (argc == 2 && strcmp(argv[1], "info") == 0)

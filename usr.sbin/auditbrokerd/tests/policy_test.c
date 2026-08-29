@@ -11,15 +11,12 @@ ATF_TC_WITHOUT_HEAD(identity_map);
 ATF_TC_BODY(identity_map, tc)
 {
 
-	ATF_CHECK_EQ(AUE_FILESYSTEMCMP_POLICY,
-	    auditcmp_policy_event("system.Filesystem"));
 	ATF_CHECK_EQ(AUE_NETWORKCMP_POLICY,
 	    auditcmp_policy_event("system.Network"));
 	ATF_CHECK_EQ(AUE_LOGCMP_POLICY,
 	    auditcmp_policy_event("system.Log"));
 	ATF_CHECK_EQ(AUE_BSDNOTIFY_POLICY,
 	    auditcmp_policy_event("system.Notify"));
-	ATF_CHECK_EQ(0, auditcmp_policy_event("system.Filesystem.child"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event("*"));
 	ATF_CHECK_EQ(0, auditcmp_policy_event(""));
 	ATF_CHECK_EQ(0, auditcmp_policy_event(NULL));

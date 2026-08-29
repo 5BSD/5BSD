@@ -12,13 +12,9 @@ ATF_TESTS_C+=	transport_test
 
 PROGS+=		capd_test_guardian
 PROGS+=		capd_protocol_fixture
-PROGS+=		deps_network_fixture
-PROGS+=		deps_both_fixture
 PROGS+=		servicectl_test_bin
 BINDIR=		${TESTSDIR}
 
-SRCS.deps_network_fixture=	deps_network_fixture.c
-SRCS.deps_both_fixture=	deps_both_fixture.c
 SRCS.servicectl_test_bin=	servicectl.c deps.c install.c verify.c
 NO_SHARED.servicectl_test_bin=	yes
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libcapbundle

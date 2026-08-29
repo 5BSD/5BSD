@@ -28,9 +28,7 @@ SUBDIR=	adduser \
 	extattrctl \
 	oeslogger \
 	fifolog \
-	localfilesystem \
 	localcrypto \
-	filesystemcmpctl \
 	fstyp \
 	fwcontrol \
 	fwget \

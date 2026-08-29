@@ -445,8 +445,6 @@
         ..
         libexecinfo
         ..
-        libfilesystemcmp
-        ..
         libkvm
         ..
         liblogcmp
@@ -1330,10 +1328,6 @@
         etcupdate
         ..
         extattr
-        ..
-        localfilesystem
-        ..
-        filesystemcmpctl
         ..
         fstyp
         ..

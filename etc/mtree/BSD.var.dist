@@ -39,10 +39,6 @@
     db
         blued           mode=0700 tags=package=bluetooth
         ..
-        serviced      mode=0700 tags=package=localfilesystem
-            storage    mode=0700 tags=package=localfilesystem
-            ..
-        ..
         entropy         uname=operator gname=operator mode=0700
         ..
         freebsd-update  mode=0700

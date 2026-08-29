@@ -371,42 +371,6 @@ servicectl_verify_cleanup()
 	rm -rf VerifyTest.cap
 }
 
-atf_test_case servicectl_verify_local_descriptors cleanup
-servicectl_verify_local_descriptors_head()
-{
-	atf_set "descr" \
-	    "servicectl shows every effective local descriptor"
-}
-servicectl_verify_local_descriptors_body()
-{
-	find_servicectl
-	local bdir="$(pwd)/ComponentsTest.cap"
-	write_bundle "$bdir" org.test.descriptors consumer 1 \
-	    'activation { boot = true; }'
-	printf '#!/bin/sh\nexit 0\n' > \
-	    "${bdir}/Units/consumer.unit/bin/consumer"
-	chmod 755 "${bdir}/Units/consumer.unit/bin/consumer"
-	cat >> "${bdir}/Units/consumer.unit/Unit.ucl" <<EOF
-storage = [{ name = "data"; scope = "unit"; rights = "mount"; }];
-descriptors { filesystem { storage = "data"; } network {} crypto {} }
-EOF
-
-	atf_check -s exit:0 -o save:components.out \
-	    "$servicectl_bin" verify "${bdir}"
-	atf_check -s exit:0 -o match:'descriptor: filesystem storage=data' \
-	    grep 'descriptor:' components.out
-	atf_check -s exit:0 -o match:'descriptor: network' \
-	    grep 'descriptor:' components.out
-	atf_check -s exit:0 -o match:'descriptor: crypto' \
-	    grep 'descriptor:' components.out
-	atf_check -s exit:0 -o match:'activation: boot' \
-	    grep 'activation:' components.out
-}
-servicectl_verify_local_descriptors_cleanup()
-{
-	rm -rf ComponentsTest.cap components.out
-}
-
 # ===================================================================
 # servicectl verify — rejects invalid bundle
 # ===================================================================
@@ -429,55 +393,6 @@ servicectl_verify_invalid_body()
 servicectl_verify_invalid_cleanup()
 {
 	rm -rf BadBundle.cap
-}
-
-# ===================================================================
-# servicectl deps — suggests only local authority components
-# ===================================================================
-
-atf_test_case servicectl_deps cleanup
-servicectl_deps_head()
-{
-	atf_set "descr" \
-	    "servicectl deps suggests local descriptors and ignores global services"
-}
-servicectl_deps_body()
-{
-	find_servicectl
-
-	cp /usr/bin/true no-descriptors
-	atf_check -s exit:0 -o match:"No local descriptor dependencies" \
-	    "$servicectl_bin" deps no-descriptors
-
-	atf_check -s exit:0 -o save:deps-network.out \
-	    "$servicectl_bin" deps \
-	    "$(atf_get_srcdir)/deps_network_fixture"
-	atf_check -s exit:0 -o match:'network \{\}' \
-	    grep 'network' deps-network.out
-	atf_check -s exit:1 -o empty -e empty \
-	    grep 'provider' deps-network.out
-
-	atf_check -s exit:0 -o save:deps-both.out \
-	    "$servicectl_bin" deps "$(atf_get_srcdir)/deps_both_fixture"
-	atf_check -s exit:0 -o match:'filesystem \{ storage = "data"; \}' \
-	    grep 'filesystem' deps-both.out
-	atf_check -s exit:0 -o match:'network \{\}' grep 'network' deps-both.out
-	atf_check -s exit:0 -o match:'crypto \{\}' grep 'crypto' deps-both.out
-	atf_check -s exit:1 -o empty -e empty \
-	    grep -E 'log|trace|notify|interface|sharing' deps-both.out
-	atf_check -s exit:0 -o match:'discover their named services' \
-	    grep 'discover' deps-both.out
-
-	printf 'interface=system.Network\n' > not-elf
-	atf_check -s not-exit:0 -e match:"not an ELF object" \
-	    "$servicectl_bin" deps not-elf
-	ln -s no-descriptors symlink-elf
-	atf_check -s not-exit:0 -e ignore \
-	    "$servicectl_bin" deps symlink-elf
-}
-servicectl_deps_cleanup()
-{
-	rm -f no-descriptors not-elf symlink-elf deps-network.out deps-both.out
 }
 
 # ===================================================================
@@ -810,8 +725,6 @@ atf_init_test_cases()
 	# verify/stop
 	atf_add_test_case servicectl_verify
 	atf_add_test_case servicectl_verify_invalid
-	atf_add_test_case servicectl_verify_local_descriptors
-	atf_add_test_case servicectl_deps
 	atf_add_test_case servicectl_stop_no_arg
 	atf_add_test_case servicectl_restart_requires_label
 	atf_add_test_case servicectl_restart_help

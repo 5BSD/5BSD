@@ -20,8 +20,7 @@ CAPABILITIES_SYSTEM=	/Capabilities/System
 CAPABILITIES_SYSTEMPACKAGE=	serviced
 
 FILESGROUPS+=	CMP_EXAMPLES
-CMP_EXAMPLES=	examples/local-descriptors.ucl \
-		examples/timer-activation.ucl \
+CMP_EXAMPLES=	examples/timer-activation.ucl \
 		examples/path-activation.ucl \
 		examples/socket-activation.ucl
 CMP_EXAMPLESDIR=	${SHAREDIR}/examples/serviced

@@ -30,7 +30,6 @@ svc_launch_counts_valid(const struct svc_manifest *m)
 	    m->ncap_vsock <= SERVICED_MAX_CAP_VSOCK &&
 	    m->ncap_storage <= SERVICED_MAX_CAP_STORAGE &&
 	    m->ncap_services <= SERVICED_MAX_CAP_SERVICES &&
-	    m->ncomponents <= SERVICED_MAX_COMPONENTS &&
 	    m->ncap_storage + m->ncap_services <=
 	    SERVICE_BOOTSTRAP_CAPABILITY_MAX);
 }

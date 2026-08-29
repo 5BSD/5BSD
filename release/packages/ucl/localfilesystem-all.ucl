@@ -1,9 +1,0 @@
-comment = "Capability-mode FileSystemCmp provider"
-
-desc = <<EOD
-The base FileSystemCmp provider and filesystemcmpctl diagnostic client,
-installed as the verified
-/Capabilities/System/Filesystem.cap bundle, with private scratch,
-persistent service storage with explicit sync, and read-only consumer-bundle
-namespaces.
-EOD

@@ -300,27 +300,6 @@ It is optional for unit storage and forbidden on shared references.
 A shared reference must match a declaration in
 .Pa Bundle.ucl .
 Dataset paths are never supplied by the manifest.
-.Sh DESCRIPTORS
-The optional
-.Va descriptors
-object accepts the distinct keys
-.Va filesystem , network ,
-and
-.Va crypto .
-Network and crypto values are empty objects.
-Filesystem requires
-.Va storage
-naming a declared storage entry with mount rights:
-.Bd -literal -offset indent
-descriptors {
-    filesystem { storage = "data"; }
-    network {}
-    crypto {}
-}
-.Ed
-.Pp
-These are private authority replacements constructed before exec, not global
-service names.
 .Sh CAPABILITIES
 The optional
 .Va capabilities
@@ -376,8 +355,13 @@ activation { boot = true; ipc = ["org.example.app.worker"]; }
 restart = "on-failure";
 storage = [{ name = "data"; scope = "unit";
     lifetime = "persistent"; rights = "mount"; }];
-descriptors { filesystem { storage = "data"; } network {} }
 .Ed
+.Pp
+A unit needs no manifest declaration to use a capability service: it links the
+matching library
+.Pq Xr libnetworkcmp 3 , Xr libcryptocmp 3 , Xr liblogcmp 3 , ...
+and reaches the service lazily at first use over
+.Xr service_connect 3 .
 .Sh SEE ALSO
 .Xr libcapbundle 3 ,
 .Xr libservice 3 ,

@@ -72,8 +72,8 @@
 /*
  * Timer-ident domain for periodic activation timers.  The high bits of a
  * uintptr_t tag which subsystem owns an EVFILT_TIMER ident (see the matching
- * STOP_TIMER_BIT / ON_DEMAND_TIMER_BIT / IDLE_TIMER_BIT / SVC_LAUNCH_TIMER_BIT
- * allocators, at bits width-1..width-4); bit (width-5) is reserved here.
+ * STOP_TIMER_BIT / ON_DEMAND_TIMER_BIT / IDLE_TIMER_BIT allocators, at bits
+ * width-1..width-3); bit (width-5) is reserved here.
  */
 #define	ACTIVATION_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 5))
 static uintptr_t activation_timer_next = ACTIVATION_TIMER_BIT | 1;

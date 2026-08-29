@@ -37,12 +37,6 @@ provider serviced {
 	probe cap__coalition(const char *label, int result);
 	probe identity__validate(const char *user, const char *group, int result);
 
-	/* Component session delegation */
-	probe component__resolve(const char *label, const char *name,
-		    const char *provider_name);
-	probe component__session(const char *label, const char *name,
-		    const char *provider_name, int result);
-	probe component__inject(const char *label, const char *name, int fd);
 	probe bootstrap__create(const char *label, unsigned int ntokens,
 		    unsigned int ndescriptors, int result);
 
