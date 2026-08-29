@@ -57,6 +57,7 @@ __pycache__/
 
 # generated kernel-module build outputs
 /sys/modules/*/*_if.h
+/sys/modules/*/vnode_if*.h
 /sys/modules/*/*_if.c
 /sys/modules/*/opt_*.h
 /sys/modules/*/*_assym.h
