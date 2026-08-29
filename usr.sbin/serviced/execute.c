@@ -932,6 +932,22 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	env[envc] = NULL;
 
 	/*
+	 * Enter the per-instance runtime container as the working directory: the
+	 * unit's writable home (macOS-style app container).  Done while still
+	 * privileged so the 0700 container is enterable; relative paths and the
+	 * shell's notion of "." then resolve inside the container.  Capsicum, not
+	 * a chroot, is the confinement, so this is a chdir rather than a jail root.
+	 */
+	{
+		char container_path[PATH_MAX];
+
+		svc_run_container_path(m->label, container_path,
+		    sizeof(container_path));
+		if (chdir(container_path) == -1)
+			_exit(126);
+	}
+
+	/*
 	 * Pre-exec resource + scheduling policy (launchd Hard/SoftResourceLimits,
 	 * ProcessType, Umask).  Applied in the child while still privileged (nice
 	 * reductions and hard-limit raises need root) and before exec, so the
