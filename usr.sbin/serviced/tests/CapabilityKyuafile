@@ -9,6 +9,7 @@ test_suite("AuthorityServicedCapability")
 
 atf_test_program{name="serviced_integration_test", is_exclusive=true}
 atf_test_program{name="bundle_integration_test", is_exclusive=true}
+atf_test_program{name="helper_integration_test", is_exclusive=true}
 atf_test_program{name="libcapbundle_test", is_exclusive=true}
 atf_test_program{name="libcapability_test", is_exclusive=true}
 atf_test_program{name="claim_parse_test", is_exclusive=true}

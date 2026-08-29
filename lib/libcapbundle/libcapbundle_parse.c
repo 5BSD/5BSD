@@ -2347,6 +2347,27 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	svc->is_helper = v != NULL && ucl_object_toboolean(v);
 	parse_string_array(activation, "ipc", svc->provides,
 	    CAPBUNDLE_MAX_PROVIDES, &svc->nprovides);
+	/*
+	 * A private helper publishes no ipc name; synthesize a bundle-local
+	 * provider name so service_helper_open() can reach it through the
+	 * on-demand provider machinery, while global lookup — which rejects the
+	 * reserved "helper." prefix — cannot.  The name uses the provider-name
+	 * charset ([A-Za-z0-9._-], dotted), so the label's '/' becomes '.':
+	 * "<bundle-id>/<unit>" -> "helper.<bundle-id>.<unit>".  Injecting it into
+	 * provides[] here (rather than only when the manifest is later filled)
+	 * ensures the bundle registry indexes the name so on-demand resolution
+	 * finds the helper; handle_helper_open() reconstructs the identical name.
+	 */
+	if (svc->is_helper) {
+		char *p;
+
+		(void)snprintf(svc->provides[0], sizeof(svc->provides[0]),
+		    "helper.%s", svc->label);
+		for (p = svc->provides[0]; *p != '\0'; p++)
+			if (*p == '/')
+				*p = '.';
+		svc->nprovides = 1;
+	}
 
 	/*
 	 * Activation sources (Phase 5).  Validated by validate_unit_schema()

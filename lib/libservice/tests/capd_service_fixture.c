@@ -1686,6 +1686,102 @@ scenario_idle_cancel(const char *name, const char *seconds_str,
 	hold();
 }
 
+/*
+ * Private-helper provider (§ service_helper_open).  A helper unit publishes no
+ * ipc name; serviced injects the synthetic bundle-local provider name
+ * "helper.<bundle-id>.<unit>" into its manifest.  The helper program does not
+ * receive that name as an argument — it reconstructs it from its own runtime
+ * label ("<bundle-id>/<unit>", '/' flattened to '.') exactly as libcapbundle
+ * does — then exposes it and serves one client.  Reaching this scenario at all
+ * proves the parent's service_helper_open() drove an on-demand launch of the
+ * declared helper; the "pong" exchange proves the delivered channel works.
+ */
+static int
+scenario_helper_provider(const char *result)
+{
+	struct service_identity identity;
+	struct service_listener *listener;
+	const char *label;
+	char synthetic[SERVICED_NAME_MAX + 1];
+	char *p;
+	int client;
+
+	if (fixture_service_initialize() == -1)
+		fixture_fail(result, "helper-provider init errno=%d", errno);
+	label = fixture_service_label();
+	if (label == NULL || label[0] == '\0')
+		fixture_fail(result, "helper-provider label unavailable");
+	if (snprintf(synthetic, sizeof(synthetic), "helper.%s", label) >=
+	    (int)sizeof(synthetic))
+		fixture_fail(result, "helper-provider synthetic name too long");
+	for (p = synthetic; *p != '\0'; p++)
+		if (*p == '/')
+			*p = '.';
+	if (service_provider_expose(fixture_service_provider, synthetic,
+	    &listener) == -1)
+		fixture_fail(result, "helper-provider expose %s errno=%d",
+		    synthetic, errno);
+	if (fixture_service_ready() == -1)
+		fixture_fail(result, "helper-provider readiness errno=%d", errno);
+	write_result(result, "helper=exposed\nname=%s\n", synthetic);
+	memset(&identity, 0, sizeof(identity));
+	identity.size = sizeof(identity);
+	if (service_listener_accept(listener, &identity, &client) == -1)
+		fixture_fail(result, "helper-provider accept errno=%d", errno);
+	if (fixture_event_send(client, "pong", 5) == -1)
+		fixture_fail(result, "helper-provider send errno=%d", errno);
+	/* Hold the endpoint open past the fire-and-forget send (see the
+	 * multi-provider note); closing here would revoke the parent's peer. */
+	hold();
+}
+
+/*
+ * Private-helper consumer.  A boot-start parent unit that opens a helper
+ * declared in its own bundle by short unit name.  service_helper_open() drives
+ * the on-demand launch and returns a confined client endpoint; the parent reads
+ * the helper's "pong" to prove the channel is live end to end.
+ */
+static int
+scenario_helper_open(const char *name, const char *result)
+{
+	char message[64];
+	ssize_t n;
+	int confined, fd, saved_errno;
+
+	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		fixture_fail(result, "helper-open init errno=%d", errno);
+	/*
+	 * Breadcrumb: record that the parent launched and reported ready before
+	 * attempting the open.  Every later path overwrites this and then holds,
+	 * so the runtime container (and this result) survives for inspection
+	 * whether the open succeeds or fails — a restart="never" unit that exits
+	 * would have its container reclaimed, erasing the evidence.
+	 */
+	write_result(result, "helper_open=started\nname=%s\n", name);
+	fd = -1;
+	errno = 0;
+	if (service_helper_open(fixture_service_context, name, &fd) == -1) {
+		saved_errno = errno;
+		write_result(result, "helper_open=failed\nname=%s\nerrno=%d\n",
+		    name, saved_errno);
+		hold();
+	}
+	/* A delivered endpoint is transfer-confined to the consumer. */
+	errno = 0;
+	confined = cap_xfer_limit(fd, CAP_XFER_TWICE) == -1 &&
+	    errno == ENOTCAPABLE;
+	n = fixture_event_recv(fd, message, sizeof(message));
+	if (n <= 0 || (size_t)n > sizeof(message) || message[n - 1] != '\0') {
+		write_result(result, "helper_open=connected\nname=%s\n"
+		    "exchange=failed\nreceived=%zd\nerrno=%d\n", name, n, errno);
+		hold();
+	}
+	write_result(result, "helper_open=ok\nname=%s\nreceived=%.*s\n"
+	    "confined=%d\n", name, (int)n, message, confined);
+	close(fd);
+	hold();
+}
+
 static void
 usage(void)
 {
@@ -1722,7 +1818,9 @@ usage(void)
 	    "       capd_service_fixture quiesce name ready result\n"
 	    "       capd_service_fixture worker-channel result\n"
 	    "       capd_service_fixture idle-provider name seconds prefix\n"
-	    "       capd_service_fixture idle-cancel name seconds ready\n");
+	    "       capd_service_fixture idle-cancel name seconds ready\n"
+	    "       capd_service_fixture helper-provider result\n"
+	    "       capd_service_fixture helper-open name result\n");
 	exit(64);
 }
 
@@ -1799,5 +1897,9 @@ main(int argc, char **argv)
 		return (scenario_idle(argv[2], argv[3], argv[4]));
 	if (argc == 5 && strcmp(argv[1], "idle-cancel") == 0)
 		return (scenario_idle_cancel(argv[2], argv[3], argv[4]));
+	if (argc == 3 && strcmp(argv[1], "helper-provider") == 0)
+		return (scenario_helper_provider(argv[2]));
+	if (argc == 4 && strcmp(argv[1], "helper-open") == 0)
+		return (scenario_helper_open(argv[2], argv[3]));
 	usage();
 }

@@ -394,7 +394,13 @@ ATF_TC_BODY(helper_unit_parses, tc)
 	    "unexpected error: %s", err);
 	ATF_CHECK(svc.is_helper);
 	ATF_CHECK(!svc.activation_boot);
-	ATF_CHECK_EQ(0U, svc.nprovides);
+	/*
+	 * A helper publishes no ipc name, but the parser injects a synthetic
+	 * bundle-local provider name ("helper.<bundle-id>.<unit>") into
+	 * provides[] so the on-demand registry can resolve service_helper_open().
+	 */
+	ATF_CHECK_EQ(1U, svc.nprovides);
+	ATF_CHECK(strncmp(svc.provides[0], "helper.", 7) == 0);
 }
 
 ATF_TC_WITHOUT_HEAD(helper_with_ipc_rejected);

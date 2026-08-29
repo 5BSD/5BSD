@@ -133,11 +133,17 @@ capbundle_verify(const struct capbundle *b, char *errbuf, size_t errlen)
 
 		/*
 		 * Activation is explicit; a unit must declare at least one
-		 * trigger — boot, an IPC endpoint, a timer, or a path (Phase 5).
+		 * demand source.  This mirrors the parser's activation contract
+		 * (validate_unit_schema): boot, an IPC endpoint, a timer, a
+		 * path, a socket, a calendar schedule, a queue directory, an
+		 * on-mount trigger, or helper=true (a private helper is launched
+		 * only on request by a bundle sibling, so it needs no other
+		 * source).
 		 */
-		if (!s->activation_boot && s->nprovides == 0 &&
+		if (!s->activation_boot && !s->is_helper && s->nprovides == 0 &&
 		    s->timer_interval_sec == 0 && s->activation_path[0] == '\0' &&
-		    s->nactivation_sockets == 0) {
+		    s->nactivation_sockets == 0 && !s->has_calendar &&
+		    s->queue_directory[0] == '\0' && !s->activation_on_mount) {
 			if (errbuf != NULL)
 				snprintf(errbuf, errlen,
 				    "%s: unit '%s' has no activation trigger",
