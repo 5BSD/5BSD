@@ -1,0 +1,28 @@
+# Unit.ucl example: a unit activated when a watched directory changes.
+#
+# serviced watches the declared path with native kqueue vnode events
+# (NOTE_WRITE | NOTE_DELETE | NOTE_RENAME | NOTE_EXTEND | NOTE_ATTRIB).  On any
+# change it creates demand for this unit exactly as a lookup would.  The watch
+# outlives the activated unit's own start/stop cycles: it keeps reporting while
+# the unit is stopped, re-activating it on the next change.
+#
+# Path events are only HINTS.  Bursts coalesce, and a delete or rename of the
+# watched name triggers a re-open (so an atomic write-new+rename-over keeps
+# being watched) or a logged drop.  After activation the unit must inspect the
+# current state of the path itself: observing one event never proves the path
+# is unchanged, present, or complete.
+arguments = ["--scan", "/var/spool/incoming"];
+
+activation {
+    # Absolute path to a directory (or file) whose changes create demand.
+    path = { path = "/var/spool/incoming"; }
+}
+
+restart = "never";
+stop_timeout = 10;
+
+capabilities {
+    # The unit still needs its own authority to read what changed; the watch
+    # itself grants nothing to the activated process.
+    paths = ["/var/spool/incoming"];
+}

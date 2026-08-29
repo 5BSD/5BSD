@@ -1,0 +1,23 @@
+# Unit.ucl example: a oneshot activated by a monotonic timer.
+#
+# This is the native replacement for a simple cron entry: serviced arms a
+# periodic monotonic timer and, every `interval` seconds, creates demand for
+# this unit exactly as a lookup would.  While the unit is stopped the timer
+# keeps running and re-activates it on the next interval; if a previous run is
+# still in flight the fire coalesces instead of launching a duplicate.
+#
+# v1 supports monotonic intervals only.  Calendar/cron expressions, persistent
+# catch-up, and user schedules are deliberately rejected until their
+# clock-change, suspend/resume, duplicate-fire, and crash-persistence
+# semantics are specified (plan §13).
+arguments = ["--once"];
+
+activation {
+    # Fire every 30 seconds of monotonic time.
+    timer = { interval = 30; }
+}
+
+# A timer task runs to completion and is re-run on the next fire; it is not a
+# resident service, so it does not restart on its own.
+restart = "never";
+stop_timeout = 10;
