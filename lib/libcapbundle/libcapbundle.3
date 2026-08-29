@@ -55,9 +55,6 @@ A monotonic
 and a wall-clock
 .Va schedule
 are mutually exclusive.
-Local authority replacements are typed entries in
-.Va descriptors ;
-the filesystem descriptor must name storage with mount rights.
 .Pp
 .Fn capbundle_verify
 checks the exact tree shape, executable type and mode, activation triggers,
@@ -66,7 +63,7 @@ name uniqueness, and resource limits.
 The public header exposes immutable accessors for bundle identity, display
 version, sequence, author, publisher, path, unit count, unit labels,
 activation, IPC names, timer interval, activation path, arguments,
-environment, storage, descriptors, and conversion to
+environment, storage, and conversion to
 .Vt struct svc_manifest .
 Returned strings remain owned by the bundle.
 .Sh TRUST

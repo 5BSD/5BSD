@@ -720,7 +720,7 @@ on_demand_name_ready(struct svc_runtime *svc, const char *name, int kq)
 			struct svc_runtime *waiter;
 
 			/* Deferred launch: the provider this unit's
-			 * components need is now ready. */
+			 * peer dependencies need is now ready. */
 			waiter = pending_launch_waiter(pl);
 			if (waiter != NULL) {
 				syslog(LOG_INFO,

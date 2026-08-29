@@ -106,7 +106,7 @@ Beyond stock Capsicum, 5BSD adds descriptor-lifecycle limits in
 `sys/kern/sys_capability.c`, exported from libc at `FBSD_1.9`:
 
 - `cap_xfer_limit(fd, state)` — restrict how many times an fd may be
-  passed over `SCM_RIGHTS`: `CAP_XFER_UNLIMITED`, `_TWICE`, `_ONCE`, or
+  passed over `SCM_RIGHTS`: `CAP_XFER_UNLIMITED`, `_ONCE`, or
   `_NONE`.
 - `cap_cloexec_limit(fd, state)` / `cap_clofork_limit(fd, state)` — force
   and optionally lock close-on-exec / close-on-fork behavior

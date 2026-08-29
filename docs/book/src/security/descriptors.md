@@ -18,17 +18,17 @@ inherited from FreeBSD and extended by 5BSD with coalition enlistment:
 Every fd slot (`struct filedescent`, `sys/sys/filedesc.h`) carries an
 `fde_xfer_state` and a `fde_xfer_caps` rights ceiling. Transfer states
 (`sys/sys/capsicum.h`): `CAP_XFER_UNLIMITED` (default), `CAP_XFER_ONCE`
-(one send, then exhausted), `CAP_XFER_TWICE` (two-hop linear budget),
-`CAP_XFER_NONE`. Companion `CAP_CLOEXEC_*` and `CAP_CLOFORK_*` states
+(one send, then exhausted), `CAP_XFER_NONE`. Companion `CAP_CLOEXEC_*`
+and `CAP_CLOFORK_*` states
 control survival across exec and fork, including `..._ONCE` variants
 (survive one exec / inherit into one child, then lock).
 
 Enforcement lives in `unp_internalize()` (`sys/kern/uipc_usrreq.c`):
 every SCM_RIGHTS send checks `DFLAG_PASSABLE` (`EOPNOTSUPP`) and then
 the xfer state (`ENOTCAPABLE` if `CAP_XFER_NONE`), emitting the
-`fd:::pass__deny` / `fd:::xfer__deny` DTrace probes. A `TWICE` send
-leaves the sender at `NONE` and the receiver at `ONCE`; an `ONCE` send
-leaves the receiver at `NONE`. Rights are intersected with
+`fd:::pass__deny` / `fd:::xfer__deny` DTrace probes. An `ONCE` send is a
+single hop: it leaves **both** the sender and the receiver at `NONE`, so
+the receiver cannot forward it again. Rights are intersected with
 `fde_xfer_caps` at transfer. The controlling syscalls are
 `cap_xfer_limit(2)`, `cap_cloexec_limit(2)`, `cap_clofork_limit(2)`,
 `cap_xfer_rights_limit(2)`, `cap_xfer_ioctls_limit(2)`, and
@@ -159,7 +159,7 @@ lookup-by-name — the descriptor is the sole reference.
 writeable, and a holder can then make individual copies read- or write-only
 with Capsicum rights. Creation options fix the
 `CAP_XFER_*`/`CAP_CLOEXEC_*`/`CAP_CLOFORK_*` states at mint time, including
-`CAP_XFER_TWICE` for an exact creator-to-broker-to-worker handoff.
+`CAP_XFER_ONCE` for an exact single-hop creator-to-consumer handoff.
 `ENVFD_WRITE_ONCE` seals the shared object after the first successful
 write — through `dup()`, `fork()`, and SCM_RIGHTS alike;
 `ENVFD_CAPMODE_ONLY` makes data, info, stat, and kqueue operations fail with
@@ -175,7 +175,7 @@ zero and neither the value nor a kernel address is exposed.
 options, name grammar, read/write and seek semantics, maximum value sizes,
 write-once races across duplicated descriptors, kqueue write/seal events,
 Capsicum rights and capmode-only use, initial transfer/exec/fork states,
-creator→broker→worker `TWICE` exhaustion, stat/procstat disclosure, fd
+creator→consumer `ONCE` exhaustion, stat/procstat disclosure, fd
 exhaustion, global and per-real-UID quotas, cleanup, and malformed operations.
 These tests run with the other descriptor families under the matching-kernel
 `tools/test/capability-qemu/` guest.

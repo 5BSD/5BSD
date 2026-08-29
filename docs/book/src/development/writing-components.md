@@ -1,6 +1,6 @@
-# Writing a Component
+# Writing a Service Provider
 
-A 5BSD component is a userland program built around one or more kernel
+A 5BSD service provider is a userland program built around one or more kernel
 capability services.  The services live under `sys/dev/mac_capability/` as
 loadable modules and are reached through file descriptors: a process opens
 `/dev/mac_capability`, connects to a service by name, and receives an
@@ -13,13 +13,13 @@ ownership of files, sockets, network endpoints, vsock endpoints, and jails.
 There are two paths, and which one a program uses is a design decision, not a
 convenience choice.
 
-**Managed components never open `/dev/mac_capability`.**  `authorityd(8)` claims
+**Managed providers never open `/dev/mac_capability`.**  `authorityd(8)` claims
 the device node itself at boot (`usr.sbin/authorityd/mac_capability_claims.c`
 always claims `/dev/mac_capability`), so a foreign-nonce open is denied by the
-MACF hooks.  A component managed by `serviced(8)` instead receives its
+MACF hooks.  A provider managed by `serviced(8)` instead receives its
 capability descriptors by *session injection*: `serviced` delivers narrowed
 access tokens and capability descriptors in the bootstrap that accompanies the
-inherited pair fd, and the component activates them through `libservice`:
+inherited pair fd, and the provider activates them through `libservice`:
 
 ```c
 #include <libservice.h>
@@ -37,18 +37,20 @@ if (service_provider_create(&provider) == -1 ||
 	err(1, "bootstrap");
 ```
 
-This is the exact startup sequence of `usr.sbin/localnetwork/networkcmp.c`.
+This is the exact startup sequence of the `networkcmp` peer provider daemon
+(`usr.sbin/localnetwork/networkcmp.c`), a managed service reached lazily by its
+consumers through `service_connect()`.
 `service_provider_authorize_capabilities()` walks every bootstrap token,
 verifies with `capability_get_info()` (from `libcapability`) that it names the
 `isolation` or `system` service, and activates each one — issuing
-`FI_OP_AUTHORIZE` on isolation tokens on the component's behalf.  Descriptors
+`FI_OP_AUTHORIZE` on isolation tokens on the provider's behalf.  Descriptors
 for manifest-declared capability services (`"mount"`, `"node"`,
 `"accounting"`, `"identity"`) are opened with
 `service_capability_open(ctx, name, expected_type, &fd)`.
 
 **Supervisors connect directly.**  `authorityd(8)` and `serviced(8)` run as root
 before any claims exist, open the device, and connect by service name.  This
-is the pattern to copy for a new supervisor-level component:
+is the pattern to copy for a new supervisor-level provider:
 
 ```c
 #include <sys/ioctl.h>
@@ -224,7 +226,7 @@ capability_kernel_call(token, &req, sizeof(req), NULL, 0,
 
 Authorization is a descriptor lease: it adds the caller's nonce to the
 claim's authorized set for exactly as long as the token fd stays open.
-Closing the token revokes it.  Managed components never do this by hand —
+Closing the token revokes it.  Managed providers never do this by hand —
 `service_authorize_capabilities()` activates every injected token, and
 `libservice` retains private close-on-exec references so a later program
 image cannot reactivate them under a rotated nonce.

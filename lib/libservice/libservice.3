@@ -28,8 +28,6 @@ Service lifecycle library
 .Ft int
 .Fn service_helper_open "struct service_context *context" "const char *name" "int *session_fd"
 .Ft int
-.Fn service_local_component_open "struct service_context *context" "const char *interface" "const char *version" "int *session_fd"
-.Ft int
 .Fn service_storage_open "struct service_context *context" "const char *name" "int *dirfd"
 .Ft int
 .Fn service_supervisor_fd "struct service_context *context"
@@ -68,28 +66,6 @@ Service lifecycle library
 .Ft int
 .Fn service_listener_accept "struct service_listener *listener" "struct service_identity *identity" "int *session_fd"
 .Ft int
-.Fn service_component_accept "int fd" "struct service_component_bootstrap **bootstrap"
-.Ft const char *
-.Fn service_component_name "const struct service_component_bootstrap *bootstrap"
-.Ft const char *
-.Fn service_component_interface "const struct service_component_bootstrap *bootstrap"
-.Ft const char *
-.Fn service_component_interface_version "const struct service_component_bootstrap *bootstrap"
-.Ft const char *
-.Fn service_component_client_label "const struct service_component_bootstrap *bootstrap"
-.Ft uint64_t
-.Fn service_component_instance_id "const struct service_component_bootstrap *bootstrap"
-.Ft size_t
-.Fn service_component_resource_count "const struct service_component_bootstrap *bootstrap"
-.Ft int
-.Fn service_component_take_resource "struct service_component_bootstrap *bootstrap" "size_t slot"
-.Ft int
-.Fn service_component_complete "struct service_component_bootstrap *bootstrap" "enum service_component_member_type membership_type" "int membership_fd"
-.Ft int
-.Fn service_component_fail "struct service_component_bootstrap *bootstrap" "int error"
-.Ft void
-.Fn service_component_abort "struct service_component_bootstrap *bootstrap"
-.Ft int
 .Fn service_worker_protect "uint32_t flags"
 .Ft void
 .Fn service_worker_drop_inherited_authority "void"
@@ -113,15 +89,8 @@ Service-specific libraries remain the normal application interface and use
 .Nm
 internally.
 .Pp
-There are two deliberately distinct discovery classes:
-.Bl -tag -width "Local component"
-.It Local component
-A pre-exec descriptor replaces ambient authority for one process or
-coalition.
-The typed library calls
-.Fn service_local_component_open
-with a fixed interface and version.
-There is no local-to-global fallback.
+The primary discovery class is the global service:
+.Bl -tag -width "Global service"
 .It Global service
 A manifest-declared name is reserved by
 .Xr serviced 8 ,
@@ -131,7 +100,9 @@ for each successful
 The supervisor is not a data-plane proxy.
 .El
 .Pp
-Applications do not select between these classes.
+A bundle may also reach a private helper unit of its own through
+.Fn service_helper_open ,
+which is resolved bundle-locally and is not part of the global namespace.
 The service-specific library fixes the discovery class and wire protocol.
 .Sh SHARED CONTEXT
 .Fn service_acquire
@@ -352,47 +323,14 @@ The pair is never entered in the global service namespace.
 Providers use
 .Xr libchannel 3
 or a managed session on these endpoints; libservice assigns no payload schema.
-.Sh LOCAL COMPONENT BOOTSTRAP
-.Fn service_component_accept
-duplicates and validates a local factory session, waits for exactly one
-bounded bootstrap request, and returns an opaque object.
-The object exposes semantic fields through accessors and retains all attached
-descriptors by zero-based slot.
-.Pp
-.Fn service_component_take_resource
-transfers one slot to the provider.
-Every untaken descriptor is closed by
-.Fn service_component_abort ,
-.Fn service_component_complete ,
-or
-.Fn service_component_fail .
-Completion attaches exactly one procdesc or coalition membership descriptor;
-serviced enlists it into the client's coalition before allowing client exec.
-Completion and failure consume the opaque object even when reply delivery
-fails.
-The public
-.Dv SERVICE_COMPONENT_MEMBER_*
-values identify the returned membership descriptor.
-The bootstrap carries no manifest-selected scope, sharing mode, or arbitrary
-options: every component is a required local authority replacement, and its
-typed provider owns the fixed policy for that interface.
-The raw component and inherited-bootstrap wire structures are private to
-.Nm
-and
-.Xr serviced 8 .
-.Pp
-After a component factory forks a per-consumer worker,
+.Sh WORKER PROTECTION
+After a provider forks a per-request worker,
 .Fn service_worker_protect
 activates its assigned process-protection policy without requiring an inherited
 context object.
 .Fn service_worker_drop_inherited_authority
 then discards every private descriptor retained by libservice before the
 worker enters capability mode.
-.Pp
-The channel transport preserves attachment order but does not assign
-application meaning to slots.
-The component protocol defines each slot's type and purpose.
-Sender descriptor numbers are never transmitted.
 .Sh MANAGED SESSIONS
 .Fn service_session_create
 consumes
@@ -440,7 +378,6 @@ session.
 .Bl -bullet
 .It
 .Fn service_connect ,
-.Fn service_local_component_open ,
 .Fn service_listener_accept ,
 and both outputs from
 .Fn service_provider_worker_channel
@@ -458,8 +395,7 @@ Supervisor, label, and capability accessors return borrowed process-context
 state.
 .El
 .Sh SECURITY
-Local component descriptors are injected only from a validated serviced
-bootstrap.
+Bootstrap descriptors are injected only from a validated serviced bootstrap.
 Their environment locators and original injected descriptors are consumed
 when acquired.
 An unmanaged process cannot create authority by setting the deployment

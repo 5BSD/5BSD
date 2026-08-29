@@ -643,8 +643,8 @@ These results do not yet constitute a release sign-off. The Beacon descriptor
 admission conflict is resolved without weakening `SERVICE_PROTECT_NOFDRECV`:
 the provider and fixed router now use an unnamed mac_capability channel created
 through `service_provider_worker_channel()`. Provider session endpoints start
-with `CAP_XFER_TWICE`; delivery to the provider leaves `CAP_XFER_ONCE`, and the
-single router handoff installs `CAP_XFER_NONE`. The private pair is itself
+with `CAP_XFER_ONCE` (a single hop); the router handoff consumes that hop and
+installs `CAP_XFER_NONE`. The private pair is itself
 non-transferable and has one-fork propagation bounds. The obsolete UNIX-domain
 `SCM_RIGHTS` helpers and tests were removed, while malformed attachment counts,
 bounded replies, peer death, and descriptor-bearing client requests continue

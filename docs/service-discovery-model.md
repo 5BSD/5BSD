@@ -184,8 +184,10 @@ complexity call for later, not a security improvement.
 The rule for handing a channel descriptor across processes is: **do not
 pre-lock it; each program that sends it onward closes (or locks) its own copy
 once the send completes, and the final holder simply keeps it.** No multi-hop
-transfer budget is minted at the source — that was a wrong turn (`CAP_XFER_TWICE`
-is not used here).
+transfer budget is minted at the source — that was a wrong turn. The old
+two-hop `TWICE` transfer budget has since been removed entirely; the transfer
+lattice is now `UNLIMITED > ONCE > NONE` with per-hop attenuation, and an
+`ONCE` send is a single hop that leaves both ends at `NONE`.
 
 Concretely for ssh session provisioning (serviced → sshd's privileged monitor →
 the user's session child, `mm_send_fd` like the pty):
@@ -214,8 +216,9 @@ Everything discussed this session, so we don't lose context. Ordered.
   fix the comments (not the code) to match "serviced sends full authority; each
   sender closes its copy; the leaf holds it."
 - Trim verbose comments across this session's code to concise KNF density.
-- Bring the pre-existing `naming.c` `CAP_XFER_TWICE` (multi-hop worker handoff)
-  in line with the single-transfer / sender-closes rule.
+- The former `naming.c` two-hop `TWICE` worker handoff has been
+  removed; the model is per-hop attenuation (`ONCE` is a single hop), already in
+  line with the single-transfer / sender-closes rule.
 - Review design notes to weigh: over-channel mint trusts login/su to pass the
   correct domain (socket path derives it from the target uid — asymmetry);
   `SVC_DOMAIN_SYSTEM == 0` is fail-open on zero-init (latent).

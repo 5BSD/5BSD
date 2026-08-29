@@ -175,7 +175,7 @@ bookkeeping but no live transport.
 
 5BSD extends Capsicum with transfer and inheritance limits
 (`sys/capsicum.h`): `cap_xfer_limit()` bounds how many times a descriptor may
-be passed (`CAP_XFER_NONE`, `CAP_XFER_ONCE`, `CAP_XFER_TWICE`), and
+be passed (`CAP_XFER_NONE`, `CAP_XFER_ONCE`), and
 `cap_cloexec_limit()`/`cap_clofork_limit()` monotonically lock close-on-exec
 and close-on-fork (`*_LOCKED` forces the flag forever; `*_ONCE` survives one
 exec or fork, then locks).  Combined with classic `cap_rights_limit()` and

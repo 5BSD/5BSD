@@ -100,7 +100,7 @@ naming_find(const char *name)
 
 /*
  * Report whether a name is currently registered, without creating a
- * session.  Used to decide launch deferral for component consumers.
+ * session.  Used to decide launch deferral for lazy peer consumers.
  */
 bool
 naming_exists(const char *name)

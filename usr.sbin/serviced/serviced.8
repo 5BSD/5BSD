@@ -233,40 +233,30 @@ The non-authoritative
 entry provides classic environment-based discovery.
 No token or capability-service descriptor table is encoded in
 environment strings.
-When requested by the manifest,
-.Nm
-also sets one or more of
-.Ev NETWORKCMP ,
-.Ev FILESYSTEMCMP ,
-and
-.Ev CRYPTOCMP .
-Each value is the decimal number of a pre-exec local authority channel.
-The corresponding typed library validates, duplicates, and consumes it.
 .Pp
 The service channel is fd 3, optional capprotect is fd 4, and authority
 descriptors occupy a contiguous range beginning at fd 6.
 Tokens appear first in manifest-category order: paths, files, network
 endpoints, jail operations, VSOCK endpoints, storage handles, and finally one
 combined system-gate token.
-Capability-service descriptors follow, then local component channels.
+Capability-service descriptors follow.
 All requested descriptors are installed before
 .Xr execve 2 ;
 failure to construct or validate the complete set prevents normal service
 initialization.
 .Pp
-Before delegation of a local component session,
+A unit reaches network, crypto, and other peers lazily as global services:
+the typed library calls
+.Fn service_connect
+on demand, and
 .Nm
-contacts the fixed internal factory, performs a typed bootstrap handshake,
-requires a procdesc or
-nested coalition descriptor for the assigned worker set, and enlists that set
-in the consumer coalition.
-Component channels are non-transferable and restricted to event polling,
-metadata, and the required mac_capability transport ioctls.
+activates the peer provider and returns a new direct channel session.
+.Nm
+is not a data-plane proxy for these sessions.
 .Pp
 .Fn service_acquire ,
 .Fn service_authorize_capabilities ,
 .Fn service_capability_open ,
-.Fn service_local_component_open ,
 .Fn service_connect ,
 .Fn service_worker_protect ,
 and
@@ -277,7 +267,7 @@ are the supported interfaces to this state.
 Applications normally use a service-specific typed library, which calls
 the one acquisition function appropriate to its fixed scope and hides
 descriptor ownership and the wire protocol.
-No interface tries local and global discovery.
+Global discovery and private bundle-local helpers are the only discovery paths.
 .Sh SERVICE ENVIRONMENT
 Each launched service receives a minimal, non-authority environment:
 .Bl -tag -width "PATH"
@@ -314,10 +304,8 @@ or
 .Ev SERVICED_*
 namespaces,
 .Ev SERVICE_BOOTSTRAP_FD ,
-.Ev CAPABILITY_UNIT_DIR ,
-.Ev NETWORKCMP ,
 or
-.Ev FILESYSTEMCMP .
+.Ev CAPABILITY_UNIT_DIR .
 .El
 .Pp
 Standard I/O (fds 0, 1, 2) is redirected to
@@ -360,7 +348,7 @@ it is non-transferable and locked against later fork or exec propagation.
 Each service is enlisted in a coalition.
 The process descriptor is set as the coalition leader, providing
 resource grouping for the service and any children it creates.
-Assigned component workers are enlisted before the leader is released.
+Assigned workers are enlisted before the leader is released.
 A provider returns either a worker procdesc or a nested worker coalition;
 the consuming process never receives coalition-management authority.
 .Ss Service States
@@ -738,19 +726,8 @@ Channel created.
 .It Li cap-coalition(label, result)
 Coalition created.
 .El
-.Ss Components
-.Bl -tag -width "component-resolve(label, name, provider)" -compact
-.It Li component-resolve(label, name, provider)
-Provider resolution began.
-.It Li component-session(label, name, provider, result)
-Bootstrap, membership validation, and session setup completed or failed.
-.It Li component-inject(label, name, fd)
-An attenuated component client channel was selected for exec.
-.El
 .Ss Exec Setup
-.Bl -tag -width "bootstrap-create(label, ntokens, ndescriptors, result)" -compact
-.It Li bootstrap-create(label, ntokens, ndescriptors, result)
-Typed bootstrap descriptor creation completed or failed.
+.Bl -tag -width "svc-exec-done(label, duration_ns, ntokens)" -compact
 .It Li svc-exec-done(label, duration_ns, ntokens)
 Service exec setup completed.
 .It Li svc-exec-fail(label, errno)

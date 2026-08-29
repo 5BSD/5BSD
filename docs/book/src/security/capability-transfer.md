@@ -5,7 +5,7 @@ descriptor travel without limit: `SCM_RIGHTS` to any process, inherited
 by every fork, surviving every exec. For a capability system that is a
 hole — a supervisor cannot hand a worker a credential and be sure it
 stays there. `cap_xfer` closes it with per-descriptor, monotonically
-tightening **transfer, exec, and fork budgets**, plus ceilings on the
+tightening **transfer, exec, and fork limits**, plus ceilings on the
 authority a permitted transfer conveys. Design document:
 `/usr/src/DESIGN_CAP_XFER.md`.
 
@@ -18,19 +18,18 @@ change it. States (declared in `/usr/src/sys/sys/capsicum.h`):
 | State | Semantics on send |
 |---|---|
 | `CAP_XFER_UNLIMITED` (0) | default; sender and receiver stay unlimited |
-| `CAP_XFER_TWICE` (3) | two-hop linear budget: sender becomes `NONE`, receiver gets `ONCE` |
 | `CAP_XFER_ONCE` (1) | one send; sender **and** receiver become `NONE` |
 | `CAP_XFER_NONE` (2) | send fails with `ENOTCAPABLE` |
 
-The budget is linear, not per-copy: consuming a hop exhausts the
-sender's entry as it grants the receiver the remainder. serviced uses
-`TWICE` to give a provider an endpoint it may admit into exactly one
-router, after which the installed endpoint is non-transferable. State
+Transfer is per-hop, not a multi-hop budget: an `ONCE` send is a single
+hop that exhausts the sender's entry and installs the receiver's endpoint
+as `NONE`, so the receiver cannot forward it again. serviced uses `ONCE`
+to give a consumer an endpoint it may use but not re-send; longer chains
+are built by re-attenuating each hop explicitly. State
 is inherited by `dup`/`dup2`/`dup3` (via `fde_copy()`) and by fork's
 bulk table copy. `cap_xfer_limit(2)` follows a monotonic partial order:
-`UNLIMITED` may narrow to `TWICE`, `ONCE`, or `NONE`; `TWICE` may narrow to
-`ONCE` or `NONE`; and `ONCE` may narrow to `NONE`. Widening fails with
-`ENOTCAPABLE`.
+`UNLIMITED` may narrow to `ONCE` or `NONE`, and `ONCE` may narrow to
+`NONE`. Widening fails with `ENOTCAPABLE`.
 
 ## Post-transfer authority ceilings
 
@@ -64,7 +63,7 @@ counterparts:
 | `CAP_CLOFORK_ONCE` | inherit into exactly one child, then LOCK **both** the parent and child entries |
 
 Set via `cap_cloexec_limit(2)` and `cap_clofork_limit(2)`; monotonic
-like everything else here. This is how serviced injects component
+like everything else here. This is how serviced injects bootstrap
 channels that survive its one supervised exec and nothing after it.
 
 ## Exported symbols
@@ -97,7 +96,7 @@ channels that survive its one supervised exec and nothing after it.
 - **Orthogonal to Capsicum rights.** `cap_rights_limit()`,
   `cap_rights_clear()`, and `CAP_ALL` neither observe nor modify xfer
   state (verified by the `xfer_orthogonal_to_rights` test).
-- **No TOCTOU on consume.** The ONCE/TWICE decrement is a write, so
+- **No TOCTOU on consume.** The ONCE consume is a write, so
   `unp_internalize()` was upgraded to `FILEDESC_XLOCK`; receive installs
   the fd and writes its state under a single `XLOCK`. No new locks were
   introduced.
@@ -108,8 +107,8 @@ channels that survive its one supervised exec and nothing after it.
 - Kernel-created reply fds (e.g. `MAC_CAPABILITY_CALL` replies) start
   UNLIMITED by construction.
 - Descriptor constructors can install a narrower initial state directly.
-  EnvFD uses this to mint `TWICE` authority without a transient unlimited
-  window; its regression suite verifies creator → broker → worker transfer and
+  EnvFD uses this to mint `ONCE` authority without a transient unlimited
+  window; its regression suite verifies creator → consumer transfer and
   exhaustion at every endpoint.
 
 ## Tests
@@ -122,6 +121,6 @@ and LOCKED behavior, flag-override protection, full confinement
 end-to-end). mac_capability propagation is covered in
 `/usr/src/tests/sys/mac_capability/mac_capability_test.c`.
 The descriptor-wide disposable-VM harness in
-`/usr/src/tools/test/capability-qemu/` also exercises `TWICE` in the real
+`/usr/src/tools/test/capability-qemu/` also exercises `ONCE` in the real
 kernel together with EnvFD, Crypto, BSDNotify, filesystem flavors, and
 TrustedZFS.

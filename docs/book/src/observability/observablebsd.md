@@ -28,7 +28,7 @@ is `lib/libotelexport/otelexport.h`; ATF-C unit tests live in
 `cddl/usr.sbin/bsdinstruments` is a `MK_DTRACE`-gated DTrace profiler that
 renders a catalog of 236 bundled `.d` templates covering syscalls, the
 scheduler, TCP/UDP/IP, VFS/VM, locks, USDT-instrumented applications, and
-5BSD-specific providers (capability runtime, oracle, casper, audit, bhyve).
+5BSD-specific providers (capability runtime, authority, casper, audit, bhyve).
 Profiles install to `/usr/share/bsdinstruments/profiles`. The tool applies
 CLI filter/parameter/stack/duration flags, runs the profile through
 libdtrace, and streams results as text, JSONL, folded stacks, or OTLP via

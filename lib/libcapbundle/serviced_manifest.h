@@ -6,10 +6,9 @@
  * Service manifest types — shared between serviced and libcapbundle.
  *
  * This header defines the manifest struct and claim types used by both
- * the legacy manifest parser (manifest.c) and the bundle parser
- * (libcapbundle).  It deliberately has no daemon-internal state so that
- * libraries can include it without pulling in kqueue, runtime structs,
- * or function prototypes.
+ * serviced and the bundle parser (libcapbundle).  It deliberately has no
+ * daemon-internal state so that libraries can include it without pulling in
+ * kqueue, runtime structs, or function prototypes.
  */
 
 #ifndef SERVICED_MANIFEST_H
@@ -153,8 +152,8 @@ struct svc_activation_socket {
 /*
  * Parsed service manifest.
  *
- * Produced by manifest_load_file() (legacy UCL) or
- * capbundle_svc_fill_manifest() (bundle).  Immutable after loading.
+ * Produced by capbundle_svc_fill_manifest() from a parsed bundle.  Immutable
+ * after loading.
  */
 struct svc_manifest {
 	char		label[SERVICED_LABEL_MAX];

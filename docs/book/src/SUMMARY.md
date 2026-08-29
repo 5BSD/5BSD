@@ -20,7 +20,7 @@
 
 # Developer Guide
 
-- [Writing a Component](development/writing-components.md)
+- [Writing a Service Provider](development/writing-components.md)
 - [Using Process Protections](development/using-protections.md)
 
 # Virtualization (WASPNest)

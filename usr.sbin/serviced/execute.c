@@ -1290,7 +1290,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * posix_spawn(2) tzfsd, which imports the pool and creates the
 	 * dataset before replying.  On emulated hardware that cold start
 	 * alone can exceed two seconds; a tighter ceiling aborted every
-	 * first component/storage launch.  Subsequent mints reuse the
+	 * first peer/storage launch.  Subsequent mints reuse the
 	 * resident tzfsd and return in well under a millisecond, so this
 	 * bound is only ever approached once per boot.
 	 */

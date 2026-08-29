@@ -91,8 +91,8 @@ and files over 64 KiB, and completes parsing before sandbox entry.
 
 Consumer channels and installed router endpoints are non-transferable and
 locked against fork and exec. serviced gives the provider a
-`CAP_XFER_TWICE` endpoint: admission consumes the final hop, so the router sees
-a non-transferable session. The router enters capability mode with no ambient
+`CAP_XFER_ONCE` endpoint: the single admitted hop consumes it, so the router
+sees a non-transferable session. The router enters capability mode with no ambient
 filesystem, socket-creation, fork, exec, or SCM_RIGHTS authority. Provider and
 router share their own coalition, separate from every consumer.
 

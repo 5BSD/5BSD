@@ -88,7 +88,7 @@ troubleshooting.
 
 Release work is validated by booting the produced images. The serial
 console default above exists for this purpose, and the tree carries
-Oracle-init VM boot tests exercised against release-built images
+authority-init VM boot tests exercised against release-built images
 (commits `9b148611045` "release: extend Oracle VM boot testing" and
 `495541ff50d` "release: make Oracle PID 1 VM test reproducible"). Related
 hardening: `b6fff311996` makes source-tree VM images fail safely and
