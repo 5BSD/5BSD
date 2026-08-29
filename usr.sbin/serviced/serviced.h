@@ -275,14 +275,6 @@ int	authority_ensure_kmod(int channel_fd, const char *name);
 int	authority_delegate_service(int channel_fd, const char *name);
 int	authority_send_ready(int channel_fd);
 int	authority_set_ambient_lookup(int channel_fd, int lookup_fd);
-int	authority_claim_path(int channel_fd, const char *path);
-int	authority_claim_net(int channel_fd, const struct ort_net_claim *nc);
-int	authority_claim_jail(int channel_fd, const struct serviced_jail_claim *jc);
-int	authority_claim_system(int channel_fd, uint32_t gates);
-int	authority_release_path(int channel_fd, const char *path);
-int	authority_release_net(int channel_fd, const struct ort_net_claim *nc);
-int	authority_release_jail(int channel_fd, const struct serviced_jail_claim *jc);
-int	authority_release_system(int channel_fd, uint32_t gates);
 int	authority_release_manifest(int channel_fd, const struct svc_manifest *m);
 
 /* storage_lifecycle.c — last-holder accounting for lease storage. */
@@ -341,7 +333,6 @@ int	bundle_registry_lookup(const char *name, unsigned *bundle_idx,
 struct capbundle *bundle_registry_get(unsigned idx);
 bool	bundle_registry_is_system(unsigned idx);
 unsigned bundle_registry_count(void);
-bool	bundle_service_activates_on_lookup(const struct capbundle_service *);
 void	bundle_registry_teardown(void);
 
 /* startup.c — tier-based parallel service launch */

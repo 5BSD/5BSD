@@ -94,9 +94,6 @@
 #define	SERVICED_PROBE_IDENTITY_VALIDATE(user, group, result)	\
 	DTRACE_PROBE3(serviced, identity__validate, user, group, result)
 
-#define	SERVICED_PROBE_BOOTSTRAP_CREATE(label, ntokens, ndescs, result) \
-	DTRACE_PROBE4(serviced, bootstrap__create, label, ntokens, ndescs, result)
-
 /* Service exec setup duration */
 #define	SERVICED_PROBE_SVC_EXEC_DONE(label, duration_ns, ntokens)	\
 	DTRACE_PROBE3(serviced, svc__exec__done, label, duration_ns, ntokens)

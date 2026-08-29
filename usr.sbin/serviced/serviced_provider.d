@@ -37,9 +37,6 @@ provider serviced {
 	probe cap__coalition(const char *label, int result);
 	probe identity__validate(const char *user, const char *group, int result);
 
-	probe bootstrap__create(const char *label, unsigned int ntokens,
-		    unsigned int ndescriptors, int result);
-
 	/* Service exec setup duration (channel + tokens + fork) */
 	probe svc__exec__done(const char *label, uint64_t duration_ns, unsigned int ntokens);
 

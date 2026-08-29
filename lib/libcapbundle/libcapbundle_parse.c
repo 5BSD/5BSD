@@ -1246,7 +1246,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			    strcmp(key, "SERVICE_BOOTSTRAP_FD") == 0 ||
 			    strcmp(key, "CAPABILITY_UNIT_DIR") == 0 ||
 			    strcmp(key, "NETWORKCMP") == 0 ||
-			    strcmp(key, "FILESYSTEMCMP") == 0 ||
 			    strcmp(key, "CRYPTOCMP") == 0 ||
 			    strcmp(key, "LOGCMP") == 0 ||
 			    strcmp(key, "TRACECMP") == 0 ||

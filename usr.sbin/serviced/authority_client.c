@@ -606,68 +606,6 @@ authority_set_ambient_lookup(int channel_fd, int lookup_fd)
 	return (check_status(status));
 }
 
-/*
- * --- Dynamic claim/release operations ---
- *
- * These are generated with macros because claim and release share
- * identical fill-and-RPC logic — only the op code differs.
- */
-
-#define	AUTHORITY_PATH_OP(fname, op)					\
-int									\
-fname(int channel_fd, const char *path)					\
-{									\
-	struct authority_path_req req;					\
-									\
-	if (fill_path_req(&req, (op), path) != 0)			\
-		return (-1);						\
-	return (check_status(authority_rpc(channel_fd, &req,			\
-	    sizeof(req), NULL, 0, NULL)));				\
-}
-
-#define	AUTHORITY_NET_OP(fname, op)					\
-int									\
-fname(int channel_fd, const struct ort_net_claim *nc)			\
-{									\
-	struct authority_net_req req;					\
-									\
-	fill_net_req(&req, (op), nc);					\
-	return (check_status(authority_rpc(channel_fd, &req,			\
-	    sizeof(req), NULL, 0, NULL)));				\
-}
-
-#define	AUTHORITY_JAIL_OP(fname, op)					\
-int									\
-fname(int channel_fd, const struct serviced_jail_claim *jc)		\
-{									\
-	struct authority_jail_req req;					\
-									\
-	fill_jail_req(&req, (op), jc);					\
-	return (check_status(authority_rpc(channel_fd, &req,			\
-	    sizeof(req), NULL, 0, NULL)));				\
-}
-
-#define	AUTHORITY_SYSTEM_OP(fname, op)					\
-int									\
-fname(int channel_fd, uint32_t gates)					\
-{									\
-	struct authority_system_req req;					\
-									\
-	fill_system_req(&req, (op), gates);				\
-	return (check_status(authority_rpc(channel_fd, &req,			\
-	    sizeof(req), NULL, 0, NULL)));				\
-}
-
-AUTHORITY_PATH_OP(authority_claim_path, AUTHORITY_OP_CLAIM_PATH)
-AUTHORITY_NET_OP(authority_claim_net, AUTHORITY_OP_CLAIM_NET)
-AUTHORITY_JAIL_OP(authority_claim_jail, AUTHORITY_OP_CLAIM_JAIL)
-AUTHORITY_SYSTEM_OP(authority_claim_system, AUTHORITY_OP_CLAIM_SYSTEM)
-
-AUTHORITY_PATH_OP(authority_release_path, AUTHORITY_OP_RELEASE_PATH)
-AUTHORITY_NET_OP(authority_release_net, AUTHORITY_OP_RELEASE_NET)
-AUTHORITY_JAIL_OP(authority_release_jail, AUTHORITY_OP_RELEASE_JAIL)
-AUTHORITY_SYSTEM_OP(authority_release_system, AUTHORITY_OP_RELEASE_SYSTEM)
-
 /* --- Batched release --- */
 
 /*

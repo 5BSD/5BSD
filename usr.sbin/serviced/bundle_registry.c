@@ -654,18 +654,6 @@ bundle_registry_is_system(unsigned idx)
 }
 
 /*
- * Activation is explicit in Unit.ucl.  A unit may start at boot and also
- * publish IPC names; merely publishing a name must never change lifecycle.
- */
-bool
-bundle_service_activates_on_lookup(const struct capbundle_service *service)
-{
-	return (service != NULL &&
-	    !capbundle_svc_activates_at_boot(service) &&
-	    capbundle_svc_nprovides(service) != 0);
-}
-
-/*
  * Get total number of registered bundles.
  */
 unsigned
