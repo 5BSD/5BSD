@@ -6,10 +6,11 @@ declared rights, and passes that handle with `SCM_RIGHTS`. It never proxies
 application I/O.
 
 `authorityd` starts it on demand and forwards storage requests. `serviced`
-converts mount-only storage into a rights-limited directory named
-`storage:<logical-name>`. A filesystem descriptor consumes its backing handle
-privately. Only a unit requesting advanced ZFS operations receives a named
-`zfshandle`. The logical name is not a dataset name.
+delivers mount-only storage as a rights-limited `zfshandle` named
+`storage:<logical-name>`; the unit mounts it itself with `service_storage_open(3)`
+and holds the handle for its lifetime (the handle anchors the mount). A
+filesystem descriptor consumes its backing handle privately. The logical name
+is not a dataset name.
 
 ## ZFS is a platform requirement
 
@@ -77,8 +78,10 @@ ZFS-rooted host and are simply not offered otherwise.
 
 Storage is delivered to providers that run under the unprivileged **`capability`
 sandbox account** (uid/gid 976, `Capability service sandbox`, `nologin`), which
-ships in the base `master.passwd`. `serviced` `chown`s each delivered directory
-to that account; no operator setup of the account is required.
+ships in the base `master.passwd`. `tzfsd` sets the dataset root's owner to
+that account at mint (the uid is threaded `serviced` → `authorityd` → `tzfsd`),
+so the unit can write once it mounts the handle; no operator setup of the
+account is required.
 
 ## Installer integration (bsdinstall)
 

@@ -28,6 +28,8 @@ Service lifecycle library
 .Ft int
 .Fn service_local_component_open "struct service_context *context" "const char *interface" "const char *version" "int *session_fd"
 .Ft int
+.Fn service_storage_open "struct service_context *context" "const char *name" "int *dirfd"
+.Ft int
 .Fn service_supervisor_fd "struct service_context *context"
 .Ft int
 .Fn service_supervisor_status "struct service_context *context"
@@ -192,17 +194,34 @@ and
 .Dq identity .
 Storage names use
 .Dq storage:<logical-name>
-and have type
-.Dq directory
-for mount-only authority or
-.Dq zfshandle
-for advanced ZFS authority.
+and are delivered with type
+.Dq zfshandle .
+A mount-rights consumer mounts the handle lazily with
+.Fn service_storage_open
+rather than opening it as a raw capability.
 An existing name with a different type fails with
 .Er EFTYPE .
 Unknown names fail with
 .Er EINVAL ;
 an accepted but undeclared name fails with
 .Er ENOENT .
+.Pp
+.Fn service_storage_open
+mounts the delivered
+.Dq storage: Ns Fa name
+capability and returns its directory root in
+.Fa dirfd .
+The service manager delivers storage as a rights-limited
+.Dq zfshandle ;
+this call mounts it (the service manager no longer mounts on the unit's behalf)
+and retains the handle for the life of the process, because the anonymous mount
+is anchored by it \(em dropping the handle would force-unmount the directory.
+The caller hardens the returned directory's rights itself.
+Returns 0 on success, or
+.Va -1
+with
+.Va errno
+set.
 .Pp
 .Fn service_activation_socket
 returns the manager-owned socket-activation listener delivered under the logical

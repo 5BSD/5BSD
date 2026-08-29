@@ -118,9 +118,14 @@ the previous running registry in place.
 Direct file, socket, jail, vsock, and system authority arrives through
 rights-limited kernel descriptors or activation tokens. Named capability
 services and storage occupy a separate named-descriptor bootstrap table. The
-role and type are validated independently. A mount-only `storage:data` is a
-directory, filesystem-descriptor backing is private to its factory, and only
-advanced ZFS operations expose a `zfshandle`.
+role and type are validated independently. Storage is delivered as a
+rights-limited `zfshandle`: the consumer mounts a mount-rights claim itself
+with `service_storage_open(3)` and holds the handle for its lifetime (the
+handle anchors the mount), so the service manager never mounts on its behalf —
+`tzfsd` sets the dataset root's owner at mint so the service can write. Filesystem-descriptor
+backing is private to its factory. Because the consumer mounts and hardens the
+directory itself, granting itself `CAP_MMAP_R` there is all that is needed to
+`mmap(2)` its own storage — no manifest opt-in.
 
 Providers claim only IPC names declared under `activation.ipc`. A provider is
 not ready until its complete declared set is claimed and capability-mode entry

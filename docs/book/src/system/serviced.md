@@ -45,9 +45,9 @@ STOPPED -> STARTING -> RUNNING -> STOPPING -> STOPPED
 `RUNNING` requires both the service protocol check-in and independently
 observed capability-mode entry. Restart policies are `never`, `always`, and
 `on-failure`. Rapid failures use bounded backoff and the `max_failures` circuit
-breaker. Shutdown proceeds in reverse dependency order today and escalates
-from graceful termination after `stop_timeout`. The target manager instead
-drains manager-visible demands and owned sessions.
+breaker. Shutdown drains manager-visible demands and owned sessions and
+escalates from graceful termination to `SIGKILL` after `stop_timeout`; there
+is no dependency graph to reverse.
 
 Storage lifetimes are `persistent`, `cache`, `boot`, and `lease`. Shared lease
 storage is destroyed only when its last launched holder exits. Manager-session
@@ -120,7 +120,8 @@ capability mode, and report readiness. Consumers use typed global-service
 libraries or local descriptor libraries such as `libfilesystemcmp`,
 `libnetworkcmp`, and `libcryptocmp`.
 
-Socket, timer, path, and user-domain activation remain future work; the
-manifest parser does not accept speculative keys for them. Dependency targets
-are not planned. The only current compatibility boundary is the deliberately
-isolated `/etc/rc` bootstrap needed to boot the existing base system.
+Socket, timer, path, calendar (`schedule`), `queue_directory`, and `on_mount`
+activation are all implemented demand sources; only user-domain schedules
+remain future work. Dependency targets are not planned. The only current
+compatibility boundary is the deliberately isolated `/etc/rc` bootstrap needed
+to boot the existing base system.

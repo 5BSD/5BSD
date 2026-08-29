@@ -42,11 +42,19 @@ Activation is explicit under
 .Va activation.ipc ,
 .Va activation.timer
 .Pq an object with a monotonic Va interval in seconds ,
-and
+.Va activation.schedule
+.Pq a calendar cron string or named alias, optionally with Va persistent ,
 .Va activation.path
-.Pq an object with an absolute Va path watched for change events .
-Calendar and cron timer expressions are rejected; only monotonic intervals
-are accepted.
+.Pq an object with an absolute Va path watched for change events ,
+.Va activation.queue_directory ,
+.Va activation.on_mount ,
+and
+.Va activation.socket .
+A monotonic
+.Va timer
+and a wall-clock
+.Va schedule
+are mutually exclusive.
 Local authority replacements are typed entries in
 .Va descriptors ;
 the filesystem descriptor must name storage with mount rights.

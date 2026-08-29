@@ -20,13 +20,16 @@ Both are satisfied by a **default** 5BSD install — `bsdinstall` and the VM ima
 builder select **Auto (ZFS)** by default on amd64/arm64/i386/riscv — but they
 matter for anyone partitioning manually or building a custom image:
 
-- **The `mac_capability` policy modules must be loaded at boot.** Authority (PID 1)
+- **The `mac_capability` policy modules are loaded at boot.** Authority (PID 1)
   opens `/dev/mac_capability` before it can do anything; without the device the
   kernel falls through `init_path` to stock `/sbin/init` and no plane comes up.
-  The `authorityd` package ships `/boot/loader.conf.d/mac_capability.conf`, which
-  preloads the stack (`mac_capability` plus `_mount`, `_identity`, `_isolation`,
-  `_capprotect`, `_accounting`, `_system`). Installing the plane arranges this
-  automatically; a base install without the plane never loads the policy.
+  The full stack — the `mac_capability` core plus `_channel`, `_node`,
+  `_coalition`, `_mount`, `_identity`, `_isolation`, `_capprotect`, `_accounting`,
+  `_system` — is preloaded by `/boot/defaults/loader.conf`, which ships in the
+  `bootloader` package that every bootable install carries, so the device is
+  present on any 5BSD system. (Each satellite policy `MODULE_DEPEND`s on the core;
+  the core itself has no dependencies, so the set is enumerated explicitly rather
+  than auto-resolved from one entry.)
 
 - **A ZFS root pool (`zroot`) is required.** The storage broker `tzfsd(8)` and the
   managed-configuration store that `logd` and other components read are built on
@@ -164,6 +167,7 @@ compatibility path signals PID 1 and is deliberately not converted, so it
 silently no-ops under the shield — use `reboot(8)`/`shutdown(8)`/`halt(8)`.
 `docs/service-architecture-plan.md` is the authoritative pre-v1 service-manager
 roadmap. It deliberately rejects dependency targets and per-script rc graph
-ingestion; timers and path events are future demand sources. The boot,
+ingestion. Timer, path, socket, calendar, queue-directory, and mount demand
+sources are implemented; only user-domain schedules remain future work. The boot,
 shutdown, and control-ABI paths described above are implemented and
 VM-validated.

@@ -97,6 +97,16 @@ stop_timeout = 10;
 max_failures = 10;
 kmod_requires = ["zfs"];
 
+# Pre-exec process policy (setrlimit / umask / scheduling band).
+limits {
+    memory = "512M";   # RLIMIT_AS; K/M/G/T suffixes accepted
+    nproc  = 64;        # fork-bomb ceiling
+    nofile = 1024;
+    core   = 0;         # no core dumps (the default even when omitted)
+}
+umask = "0077";
+band  = "standard";     # background | standard | interactive
+
 storage = [
     {
         name = "maildata";
@@ -139,13 +149,53 @@ Each `ipc` name reserves a reverse-domain endpoint and permits launch on first
 lookup. At least one activation mode is required. `provides`, `on_demand`,
 `requires`, and `components` are not aliases and are rejected.
 
+### Demand sources
+
+Beyond `boot`, `ipc`, and `socket`, a unit may declare any of these inside
+`activation` (see `serviced(5)`); a demand source keeps the unit stopped until
+it fires:
+
+- `timer { interval = N; }` — every `N` monotonic seconds.
+- `schedule = "…"` — a wall-clock calendar: a five-field cron string
+  (`"30 3 * * *"`, each field a number or `*`) or an alias (`hourly`, `daily`,
+  `weekly`, `monthly`, `yearly`). Every specified field must match
+  (launchd-style **AND**), so `"0 0 13 * 5"` is a Friday the 13th. Add
+  `persistent = true` for anacron-style catch-up: a fire missed while the
+  manager was down runs once at startup. `timer` and `schedule` are mutually
+  exclusive. This is the plane's cron replacement.
+- `path { path = "/abs"; }` — a change to the path (a hint; re-inspect after).
+- `queue_directory = "/abs"` — run while the directory holds work, re-run after
+  each exit until it drains (spool pattern).
+- `on_mount = true` — run whenever a filesystem is mounted.
+
+### Process policy
+
+`limits`, `umask`, and `band` are **policy applied before the program runs** —
+`serviced` sets them in the child after `pdfork(2)` and before `exec`, so they
+bind the image from its first instruction and a service cannot opt out:
+
+- `limits { memory, cpu, nproc, nofile, stack, fsize, core }` become
+  `setrlimit(2)` ceilings (DoS containment). Byte fields take `K`/`M`/`G`/`T`
+  suffixes; an omitted limit is inherited, and `core` defaults to `0`.
+- `umask` is the file-creation mask (default `0077`).
+- `band` (`background`/`standard`/`interactive`) maps to `nice(3)` priority so a
+  batch or scheduled unit cannot starve interactive work.
+
+The MAC integrity shield (`protect`) already covers no-new-privileges, W^X,
+core-dump suppression, and ptrace/signal isolation, so those are not repeated
+here. The execution `jail` is the unit's container; its `path` is optional and
+defaults to the managed per-instance runtime directory.
+
 ## Storage descriptors
 
 Storage is a top-level unit descriptor declaration, not a member of
-`capabilities`. A direct mount-only entry becomes a rights-limited directory
-available as `storage:<name>`. Storage used to back a `filesystem` descriptor
-is private to that descriptor factory and is not also exposed to the client.
-Only claims requesting advanced ZFS operations receive a `zfshandle`.
+`capabilities`. Every non-private claim is delivered as a rights-limited
+`zfshandle` under `storage:<name>`; the consumer mounts it itself with
+`service_storage_open(3)` and holds the handle for its lifetime (the handle
+anchors the mount), so the service manager never mounts on its behalf.
+`tzfsd` sets the dataset root's owner to the service at mint, so it can write.
+Storage used to back a `filesystem` descriptor is private to that descriptor
+factory and is not exposed to the client.
 
 - `scope="unit"` creates storage private to the bundle/unit/name tuple. Flavor
   and lifetime may be declared here.

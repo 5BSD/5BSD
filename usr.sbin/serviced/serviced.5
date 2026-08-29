@@ -101,8 +101,30 @@ is an object with a single
 .Va interval
 key, an unsigned count of monotonic seconds; the unit is activated on demand
 every interval while it is stopped.
-Only monotonic intervals are supported: calendar and cron expressions are
-rejected.
+Only monotonic intervals are supported here; use
+.Va schedule
+for wall-clock times.
+.Va schedule
+is a calendar string that activates the unit on demand at matching local times:
+a five-field cron expression
+.Pq Dq Ar min hour mday month wday , No each a number or Dq * ,
+or a named alias
+.Pq Dq hourly , Dq daily , Dq weekly , Dq monthly , No or Dq yearly .
+Every specified field must match
+.Pq launchd Ns -style AND semantics ,
+so
+.Dq 0 0 13 \(** 5
+is a Friday that is also the 13th.
+.Va persistent
+is a Boolean that requires a
+.Va schedule ;
+when true, a matching time that elapsed while
+.Nm
+was not running triggers one catch-up activation at startup.
+.Va timer
+and
+.Va schedule
+are mutually exclusive.
 .Va path
 is an object with a single absolute
 .Va path
@@ -111,6 +133,11 @@ string; a change to that path
 activates the unit on demand.
 Path events are only hints: after activation the unit must inspect the current
 state of the path itself.
+.Va queue_directory
+is an absolute directory; while it holds any entry the unit is activated to
+drain it and re-activated after each exit until the directory empties.
+.Va on_mount
+is a Boolean that activates the unit whenever a filesystem is mounted.
 .Va socket
 is a single object, or an array of at most four objects, each with a
 .Va name
@@ -146,11 +173,10 @@ type
 retrieved with
 .Xr service_activation_socket 3 .
 At least one trigger
-.Pq Va boot , ipc , timer , path , No or Va socket
+.Pq Va boot , ipc , timer , schedule , path , queue_directory , on_mount , No or Va socket
 is required.
-Publishing IPC does not imply boot activation, and a timer, path, or socket
-source does not launch the unit at boot; it stays stopped until the source
-fires.
+Publishing IPC does not imply boot activation, and a demand source does not
+launch the unit at boot; it stays stopped until the source fires.
 .Pp
 .Va restart
 is
@@ -185,12 +211,46 @@ is 1 through 300 seconds and
 is 1 through 100.
 .Va kmod_requires
 contains at most eight module names.
+.Pp
+The optional
+.Va limits
+object sets pre-exec resource ceilings applied with
+.Xr setrlimit 2 :
+.Va memory
+.Pq Dv RLIMIT_AS ,
+.Va cpu , nproc , nofile , stack , fsize ,
+and
+.Va core .
+Byte quantities accept a
+.Dq K , M , G , No or Dq T
+suffix; an unset limit is inherited from
+.Nm ,
+and
+.Va core
+defaults to 0 (no core dumps).
+.Va umask
+is an octal string or integer file-creation mask, default
+.Dq 0077 .
+.Va band
+is the scheduling class
+.Dq background , Dq standard No (the default), or Dq interactive ,
+applied as a process
+.Xr nice 3
+priority.
+All three are applied in the child after
+.Xr pdfork 2
+and before the program image runs.
+.Pp
 An optional
 .Va jail
 object supplies
-.Va name , path , hostname ,
+.Va name , hostname ,
 and
-.Va ip4_addr .
+.Va ip4_addr ;
+.Va path
+is optional and, when omitted,
+.Nm
+roots the execution jail at the unit's managed runtime container.
 .Sh STORAGE
 The top-level unit
 .Va storage

@@ -170,9 +170,12 @@ the ambient probe, and bounds/validation gaps in the wire protocols
     session (`SERVICE_LOOKUP_FD=3`, uid=1001) — the #28/#33 fix, on a real install.
   - `servicectl status` works over the ambient channel in both sessions.
   - **Real findings surfaced by the fresh install** (would never appear in the
-    installworld-staged VM): (1) *task #37* — packages don't preload the
-    `mac_capability` module stack, so a pure install falls back to `/sbin/init`
-    (no plane); the loader snippet must ship in a package. (2) `logd` fails
+    installworld-staged VM): (1) *task #37 — RETRACTED*: the concern that
+    packages don't preload the `mac_capability` stack was mistaken. The modules
+    are loaded on every bootable install by `/boot/defaults/loader.conf` (the
+    `bootloader` package); a pkgbase install brings up the plane with no extra
+    snippet. The earlier conclusion came from inspecting only the packaged
+    `authority-init.conf` and missing the bootloader defaults. (2) `logd` fails
     (`cannot load managed configuration`) — stays stopped; likely chains from
     `tzfsd` needing a ZFS `zroot` that a UFS install lacks. (3) `cron` (rc-adopted)
     shows stopped in the plane on a fresh UFS boot. Findings (2)/(3) filed.
