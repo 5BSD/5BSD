@@ -158,7 +158,6 @@ struct svc_activation_socket {
  */
 struct svc_manifest {
 	char		label[SERVICED_LABEL_MAX];
-	char		description[256];
 	char		program[PATH_MAX];
 	char		arguments[SERVICED_MAX_ARGUMENTS][SERVICED_ARGUMENT_MAX];
 	unsigned	narguments;

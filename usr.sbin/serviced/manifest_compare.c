@@ -18,7 +18,6 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	unsigned i;
 
 	if (strcmp(a->label, b->label) != 0 ||
-	    strcmp(a->description, b->description) != 0 ||
 	    strcmp(a->program, b->program) != 0 ||
 	    strcmp(a->user, b->user) != 0 ||
 	    strcmp(a->group, b->group) != 0 ||

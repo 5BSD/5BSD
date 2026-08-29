@@ -18,7 +18,6 @@ sample_manifest(void)
 
 	memset(&m, 0, sizeof(m));
 	strlcpy(m.label, "org.test.bundle/program", sizeof(m.label));
-	strlcpy(m.description, "test service", sizeof(m.description));
 	strlcpy(m.program, "/Capabilities/Test.cap/bin/program",
 	    sizeof(m.program));
 	strlcpy(m.user, "capability", sizeof(m.user));
@@ -93,7 +92,6 @@ ATF_TC_BODY(identity_and_execution_changes, tc)
 	struct svc_manifest a, b;
 
 	CHECK_CHANGE(b.label[0] = 'x');
-	CHECK_CHANGE(b.description[0] = 'x');
 	CHECK_CHANGE(b.program[0] = 'x');
 	CHECK_CHANGE(b.user[0] = 'x');
 	CHECK_CHANGE(b.group[0] = 'x');
