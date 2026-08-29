@@ -18,8 +18,8 @@ manifest_head()
 manifest_body()
 {
 	require_srctree
-	srcdir="@SRCTOP@/usr.sbin/Notify"
-	objdir="@OBJTOP@/usr.sbin/Notify"
+	srcdir="@SRCTOP@/usr.sbin/bsdnotify"
+	objdir="@OBJTOP@/usr.sbin/bsdnotify"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	bundle="${PWD}/Notify.cap"
 	unit="${bundle}/Units/bsdnotify.unit"
@@ -56,7 +56,7 @@ security_contract_head()
 security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Notify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	for token in cap_enter SERVICE_PROTECT_NOFDRECV CAP_XFER_ONCE \
 	    auditcmp_client_prepare auditcmp_client_adopt auditcmp_submit \
 	    service_listener_accept EVFILT_TIMER
@@ -90,8 +90,8 @@ observability_contract_body()
 	require_srctree
 	provider="@SRCTOP@/lib/libnotify/notify_provider.d"
 	source="@SRCTOP@/lib/libnotify/notify.c"
-	daemon_provider="@SRCTOP@/usr.sbin/Notify/bsdnotify_provider.d"
-	daemon_source="@SRCTOP@/usr.sbin/Notify/bsdnotify.c"
+	daemon_provider="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify_provider.d"
+	daemon_source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	for probe in rpc publish next reject reconnect; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
 	done
@@ -115,7 +115,7 @@ observability_contract_body()
 router_async_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Notify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'ROUTER_MAX_SESSIONS' \
 	    grep 'ROUTER_MAX_SESSIONS' "${source}"
 	atf_check -s exit:0 -o match:'channel_set_request_handler' \
@@ -130,7 +130,7 @@ router_async_contract_body()
 router_lifecycle_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Notify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'channel_send_event' \
 	    grep channel_send_event "${source}"
 	atf_check -s exit:0 -o match:'service_session_receive_event' \
@@ -138,7 +138,7 @@ router_lifecycle_contract_body()
 	atf_check -s exit:0 -o match:'pdwait' grep pdwait "${source}"
 	atf_check -s exit:0 -o match:'restart = "on-failure"' \
 	    grep restart \
-	    "@SRCTOP@/usr.sbin/Notify/capbundle/bsdnotify.ucl"
+	    "@SRCTOP@/usr.sbin/bsdnotify/capbundle/bsdnotify.ucl"
 }
 
 atf_test_case worker_channel_contract
@@ -150,7 +150,7 @@ worker_channel_contract_head()
 worker_channel_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Notify/bsdnotify.c"
+	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
 	atf_check -s exit:0 -o match:'service_provider_worker_channel' \
 	    grep service_provider_worker_channel "${source}"
 	atf_check -s exit:0 -o match:'CAP_XFER_TWICE' \

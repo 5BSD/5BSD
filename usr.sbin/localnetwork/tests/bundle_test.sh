@@ -18,8 +18,8 @@ manifest_head()
 manifest_body()
 {
 	require_srctree
-	srcdir="@SRCTOP@/usr.sbin/Network"
-	objdir="@OBJTOP@/usr.sbin/Network"
+	srcdir="@SRCTOP@/usr.sbin/localnetwork"
+	objdir="@OBJTOP@/usr.sbin/localnetwork"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/localnetwork.ucl"
 	bundle="${PWD}/Network.cap"
@@ -73,8 +73,8 @@ observability_contract_head()
 observability_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Network/networkcmp.c"
-	provider="@SRCTOP@/usr.sbin/Network/localnetwork_provider.d"
+	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
+	provider="@SRCTOP@/usr.sbin/localnetwork/localnetwork_provider.d"
 
 	for probe in SESSION_START SESSION_END REQUEST_DONE RESOLVE_START \
 	    RESOLVE_DONE REJECT
@@ -94,7 +94,7 @@ observability_contract_body()
 kernel_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Network/networkcmp.c"
+	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
 
 	atf_check -s exit:0 -o match:'NETWORKCMP_FEATURE_DNS' \
 	    grep NETWORKCMP_FEATURE_DNS "${source}"

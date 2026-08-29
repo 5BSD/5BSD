@@ -13,7 +13,7 @@ require_srctree()
 atf_test_case manifest
 manifest_body()
 {
-	src="@SRCTOP@/usr.sbin/Audit"
+	src="@SRCTOP@/usr.sbin/auditbrokerd"
 	obj="@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin"
 	bundle="${PWD}/Audit.cap"
 	unit="${bundle}/Units/auditbrokerd.unit"
@@ -21,13 +21,13 @@ manifest_body()
 	test -x "${obj}" || atf_skip "servicectl test binary is required"
 	mkdir -p "${unit}/bin"
 	cp "${src}/capbundle/Bundle.ucl" "${bundle}/Bundle.ucl"
-	cp "@OBJTOP@/usr.sbin/Audit/auditbrokerd" "${unit}/bin/Audit"
+	cp "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd" "${unit}/bin/Audit"
 	if [ "@MK_DTRACE@" = "yes" ]; then
 		atf_check -s exit:0 -o match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/Audit/auditbrokerd"
+		    "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
 	else
 		atf_check -s exit:0 -o not-match:'.SUNW_dof' readelf -S \
-		    "@OBJTOP@/usr.sbin/Audit/auditbrokerd"
+		    "@OBJTOP@/usr.sbin/auditbrokerd/auditbrokerd"
 	fi
 	cp "${src}/capbundle/auditbrokerd.ucl" "${unit}/Unit.ucl"
 	atf_check -s exit:0 -o ignore "${obj}" verify "${bundle}"
@@ -37,8 +37,8 @@ atf_test_case security_contract
 security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Audit/auditcmp.c"
-	manifest="@SRCTOP@/usr.sbin/Audit/capbundle/auditbrokerd.ucl"
+	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
+	manifest="@SRCTOP@/usr.sbin/auditbrokerd/capbundle/auditbrokerd.ucl"
 	syscalls="@SRCTOP@/sys/kern/syscalls.master"
 	wrappers="@SRCTOP@/contrib/openbsm/libbsm/bsm_wrappers.c"
 	for token in auditcmp_policy_event SERVICE_PROTECT_NOFORK \
@@ -71,8 +71,8 @@ atf_test_case observability_contract
 observability_contract_body()
 {
 	require_srctree
-	provider="@SRCTOP@/usr.sbin/Audit/auditbrokerd_provider.d"
-	source="@SRCTOP@/usr.sbin/Audit/auditcmp.c"
+	provider="@SRCTOP@/usr.sbin/auditbrokerd/auditbrokerd_provider.d"
+	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
 	for probe in session submit reject; do
 		atf_check -s exit:0 -o ignore grep "probe ${probe}" "$provider"
 	done
@@ -86,7 +86,7 @@ atf_test_case bounded_worker_lifecycle
 bounded_worker_lifecycle_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Audit/auditcmp.c"
+	source="@SRCTOP@/usr.sbin/auditbrokerd/auditcmp.c"
 	for token in AUDITCMP_MAX_WORKERS EVFILT_PROCDESC NOTE_EXIT \
 	    service_provider_quiescing service_provider_quiesce_complete \
 	    pdkill pdwait; do

@@ -17,8 +17,8 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/Filesystem"
-	objdir="@OBJTOP@/usr.sbin/Filesystem"
+	srcdir="@SRCTOP@/usr.sbin/localfilesystem"
+	objdir="@OBJTOP@/usr.sbin/localfilesystem"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/localfilesystem.ucl"
 	bundle="${PWD}/Filesystem.cap"
@@ -72,8 +72,8 @@ observability_contract_head()
 observability_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Filesystem/filesystemcmp.c"
-	provider="@SRCTOP@/usr.sbin/Filesystem/localfilesystem_provider.d"
+	source="@SRCTOP@/usr.sbin/localfilesystem/filesystemcmp.c"
+	provider="@SRCTOP@/usr.sbin/localfilesystem/localfilesystem_provider.d"
 
 	for probe in LOCALFILESYSTEM_PROBE_SESSION \
 	    LOCALFILESYSTEM_PROBE_SESSION_END LOCALFILESYSTEM_PROBE_REQUEST
@@ -92,7 +92,7 @@ observability_contract_body()
 provider_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Filesystem/filesystemcmp.c"
+	source="@SRCTOP@/usr.sbin/localfilesystem/filesystemcmp.c"
 
 	atf_check -s exit:0 -o match:'SERVICE_PROTECT_NOFORK' \
 	    grep SERVICE_PROTECT_NOFORK "${source}"
@@ -125,7 +125,7 @@ provider_security_contract_body()
 	    grep LOCALFILESYSTEM_PROBE_REQUEST "${source}"
 	atf_check -s exit:0 -o match:'request__done' \
 	    grep request__done \
-	    "@SRCTOP@/usr.sbin/Filesystem/localfilesystem_provider.d"
+	    "@SRCTOP@/usr.sbin/localfilesystem/localfilesystem_provider.d"
 }
 
 atf_init_test_cases()

@@ -17,8 +17,8 @@ manifest_head()
 }
 manifest_body()
 {
-	srcdir="@SRCTOP@/usr.sbin/Crypto"
-	objdir="@OBJTOP@/usr.sbin/Crypto"
+	srcdir="@SRCTOP@/usr.sbin/localcrypto"
+	objdir="@OBJTOP@/usr.sbin/localcrypto"
 	servicectl="${SERVICECTL:-@OBJTOP@/usr.sbin/servicectl/tests/servicectl_test_bin}"
 	manifest="${srcdir}/capbundle/crypto.ucl"
 	bundle="${PWD}/Crypto.cap"
@@ -56,8 +56,8 @@ provider_security_contract_head()
 provider_security_contract_body()
 {
 	require_srctree
-	source="@SRCTOP@/usr.sbin/Crypto/localcrypto.c"
-	srcdir="@SRCTOP@/usr.sbin/Crypto"
+	source="@SRCTOP@/usr.sbin/localcrypto/localcrypto.c"
+	srcdir="@SRCTOP@/usr.sbin/localcrypto"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOIPC \
 	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOEXEC SERVICE_PROTECT_NOSOCK \
