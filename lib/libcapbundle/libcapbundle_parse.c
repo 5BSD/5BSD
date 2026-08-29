@@ -1121,6 +1121,19 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			    "activation.ipc contains an invalid reverse-domain name");
 			return (-1);
 		}
+		/*
+		 * The "helper." prefix is reserved for the bundle-local names
+		 * that service_helper_open() reaches (synthesized below from a
+		 * helper unit's own label).  A unit must never publish one via
+		 * activation.ipc: that would let a hostile bundle claim/register
+		 * another bundle's private-helper name and impersonate or DoS it.
+		 */
+		if (strncmp(ucl_object_tostring(v), "helper.", 7) == 0) {
+			snprintf(errbuf, errlen,
+			    "activation.ipc must not use the reserved "
+			    "\"helper.\" prefix");
+			return (-1);
+		}
 		if (ucl_object_type(arr) == UCL_STRING)
 			break;
 	}

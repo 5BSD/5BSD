@@ -185,6 +185,32 @@ ATF_TC_BODY(timer_and_ipc_coexist, tc)
 	ATF_CHECK_EQ(1U, svc.nprovides);
 }
 
+ATF_TC_WITHOUT_HEAD(ipc_reserved_helper_prefix_rejected);
+ATF_TC_BODY(ipc_reserved_helper_prefix_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/*
+	 * The "helper." prefix names a bundle-local private helper endpoint,
+	 * synthesized by the parser from a helper unit's own label and reached
+	 * only via service_helper_open().  A unit must not publish one through
+	 * activation.ipc: allowing it would let a hostile bundle claim and
+	 * register another bundle's private-helper name and impersonate or DoS
+	 * it.  It is a syntactically valid reverse-domain name, so only the
+	 * reservation check rejects it.
+	 */
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { ipc = [\"helper.org.test.victim.worker\"]; }\n", &svc,
+	    err, sizeof(err)));
+	ATF_CHECK(strstr(err, "helper.") != NULL);
+
+	/* A name that merely contains "helper" without the prefix is fine. */
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { ipc = [\"org.test.helperish\"]; }\n", &svc, err,
+	    sizeof(err)), "unexpected error: %s", err);
+}
+
 /* --- Phase 4: socket activation --- */
 
 ATF_TC_WITHOUT_HEAD(socket_single_tcp_parses);
@@ -369,6 +395,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, path_missing_key_rejected);
 	ATF_TP_ADD_TC(tp, empty_activation_still_rejected);
 	ATF_TP_ADD_TC(tp, timer_and_ipc_coexist);
+	ATF_TP_ADD_TC(tp, ipc_reserved_helper_prefix_rejected);
 	ATF_TP_ADD_TC(tp, socket_single_tcp_parses);
 	ATF_TP_ADD_TC(tp, socket_any_and_backlog_parses);
 	ATF_TP_ADD_TC(tp, socket_unix_parses);

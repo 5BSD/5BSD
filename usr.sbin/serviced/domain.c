@@ -365,6 +365,17 @@ lookup_channel_request(struct channel *channel,
 		lookup_channel_reply(request, ENAMETOOLONG, NULL, 0);
 		goto out;
 	}
+	/*
+	 * The reserved "helper." namespace is private to a bundle and reachable
+	 * only through SVC_OP_HELPER_OPEN, never global lookup.  handle_lookup()
+	 * enforces this on the per-provider channel; the ambient lookup channel
+	 * (which resolves everything on a SYSTEM domain) must enforce it too, or
+	 * a SYSTEM-domain holder could reach another bundle's private helper.
+	 */
+	if (strncmp(req->name, "helper.", 7) == 0) {
+		lookup_channel_reply(request, EACCES, NULL, 0);
+		goto out;
+	}
 	client_fd = naming_lookup(req->name, NULL, &lc->domain, &error,
 	    &sendable);
 	if (client_fd < 0) {
