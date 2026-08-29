@@ -233,6 +233,8 @@ int	service_listener_accept(struct service_listener *,
  */
 int	service_connect(struct service_context *, const char *name,
 	    int *session_fd);
+int	service_helper_open(struct service_context *, const char *name,
+	    int *session_fd);
 
 /*
  * Which session channel a mint request asks serviced to create (§6).  The

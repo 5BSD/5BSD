@@ -444,6 +444,25 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->restart = s->restart;
 	m->management = s->management;
 	m->is_helper = s->is_helper;
+	/*
+	 * A private helper publishes no ipc name; give it a synthetic bundle-local
+	 * provider name so service_helper_open() can reach it through the on-demand
+	 * provider machinery, while global lookup — which rejects the reserved
+	 * "helper." prefix — cannot.  The name must use the provider-name charset
+	 * ([A-Za-z0-9._-], dotted), so the label's '/' becomes '.':
+	 * "<bundle-id>/<unit>" -> "helper.<bundle-id>.<unit>".  handle_helper_open
+	 * reconstructs the same name from the caller's bundle id and unit name.
+	 */
+	if (m->is_helper) {
+		char *p;
+
+		(void)snprintf(m->provides[0], sizeof(m->provides[0]),
+		    "helper.%s", m->label);
+		for (p = m->provides[0]; *p != '\0'; p++)
+			if (*p == '/')
+				*p = '.';
+		m->nprovides = 1;
+	}
 	m->timer_interval_sec = s->timer_interval_sec;
 	if (manifest_copy(s->activation_path, m->activation_path,
 	    sizeof(m->activation_path)) == -1)

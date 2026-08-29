@@ -377,6 +377,15 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 		    ENAMETOOLONG, NULL, 0);
 		return (false);
 	}
+	/*
+	 * The reserved "helper." namespace is private to a bundle: it is
+	 * reachable only through SVC_OP_HELPER_OPEN, never global lookup.
+	 */
+	if (strncmp(req->name, "helper.", 7) == 0) {
+		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, EACCES,
+		    NULL, 0);
+		return (false);
+	}
 	if (capbundle_descriptor_factory_name(req->name)) {
 		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, EACCES,
 		    NULL, 0);
@@ -396,6 +405,69 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 		return (false);
 	}
 	(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, 0,
+	    &client_fd, 1);
+	close(client_fd);
+	return (false);
+}
+
+/*
+ * SVC_OP_HELPER_OPEN — launch and connect a private helper declared in the
+ * caller's own bundle.  The helper is reached through the on-demand provider
+ * machinery under a synthetic bundle-local name "helper.<bundle-id>.<unit>"
+ * that global lookup rejects, so it is invisible outside its bundle.  Returns
+ * true when on-demand state retained the request (reply comes later).
+ */
+static bool
+handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
+{
+	const struct svc_helper_req *req;
+	char synthetic[SERVICED_NAME_MAX + 1];
+	const char *slash;
+	int client_fd, error;
+	size_t blen;
+
+	if (channel_message_length(request) != sizeof(*req)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, EINVAL,
+		    NULL, 0);
+		return (false);
+	}
+	req = channel_message_data(request);
+	if (req->flags != 0 ||
+	    strnlen(req->name, sizeof(req->name)) >= sizeof(req->name) ||
+	    req->name[0] == '\0' || strchr(req->name, '/') != NULL ||
+	    strchr(req->name, '.') != NULL || strchr(req->name, ':') != NULL) {
+		(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, EINVAL,
+		    NULL, 0);
+		return (false);
+	}
+	/* The caller's bundle id is the part of its label before '/'. */
+	slash = strchr(svc->manifest.label, '/');
+	if (slash == NULL) {
+		(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, EINVAL,
+		    NULL, 0);
+		return (false);
+	}
+	blen = (size_t)(slash - svc->manifest.label);
+	if (snprintf(synthetic, sizeof(synthetic), "helper.%.*s.%s",
+	    (int)blen, svc->manifest.label, req->name) >= (int)sizeof(synthetic)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN,
+		    ENAMETOOLONG, NULL, 0);
+		return (false);
+	}
+	client_fd = naming_lookup(synthetic, svc, &svc->domain, &error);
+	if (client_fd < 0) {
+		if (error == ENOENT) {
+			if (on_demand_launch(synthetic, svc, request,
+			    serviced_kq) == 0)
+				return (true);
+			if (errno == EDEADLK)
+				error = EDEADLK;
+		}
+		(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, error,
+		    NULL, 0);
+		return (false);
+	}
+	(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, 0,
 	    &client_fd, 1);
 	close(client_fd);
 	return (false);
@@ -508,6 +580,9 @@ svc_request(struct channel *channel, struct channel_message *request,
 		break;
 	case SVC_OP_LOOKUP:
 		retained = handle_lookup(svc, request);
+		break;
+	case SVC_OP_HELPER_OPEN:
+		retained = handle_helper_open(svc, request);
 		break;
 	case SVC_OP_WORKER_CHANNEL:
 		if (channel_message_length(request) != sizeof(struct svc_req_hdr))

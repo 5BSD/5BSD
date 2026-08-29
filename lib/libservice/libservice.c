@@ -2003,6 +2003,44 @@ service_connect(struct service_context *context, const char *name,
 	return (0);
 }
 
+/*
+ * Launch and connect a private helper declared in this unit's own bundle.
+ * serviced resolves the name bundle-locally (never the global system.*
+ * namespace) and returns a connected channel in *session_fdp.  ENOENT if the
+ * bundle has no such helper unit.
+ */
+int
+service_helper_open(struct service_context *context, const char *name,
+    int *session_fdp)
+{
+	struct svc_helper_req req;
+	int fd;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid() || name == NULL || session_fdp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*session_fdp = -1;
+	if (strlen(name) > SERVICED_NAME_MAX) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_HELPER_OPEN;
+	strlcpy(req.name, name, sizeof(req.name));
+
+	if (rpc(&req, sizeof(req), &fd) == -1)
+		return (-1);
+	if (fd < 0) {
+		errno = EIO;
+		return (-1);
+	}
+	*session_fdp = fd;
+	return (0);
+}
+
 static int
 service_expose_internal(struct service_provider *provider, const char *name,
     service_activation_handler activate, void *context,
