@@ -50,6 +50,7 @@
 #define	SVC_OP_IDLE		8	/* provider requests idle-timeout shutdown */
 #define	SVC_OP_MINT_DOMAIN	9	/* mint a narrowed (USER, uid) lookup channel */
 #define	SVC_OP_AMBIENT_HELLO	10	/* behavioral probe: is this THE lookup channel? */
+#define	SVC_OP_HELPER_OPEN	11	/* launch + connect a bundle-local private helper */
 
 /*
  * Serviced → service (notifications):
@@ -248,6 +249,24 @@ struct svc_name_withdraw_req {
  */
 struct svc_lookup_req {
 	uint32_t	op;		/* SVC_OP_LOOKUP */
+	uint32_t	flags;		/* reserved, must be 0 */
+	char		name[SERVICED_NAME_MAX + 1];
+};
+
+/*
+ * SVC_OP_HELPER_OPEN
+ *   req:   svc_helper_req { .op, .name = bundle-local helper unit name }
+ *   reply: svc_req_hdr { .status } + one fd (the caller's channel end)
+ *
+ * Launch a private helper unit declared in the CALLER's own bundle and return
+ * a connected channel to it.  serviced resolves the name bundle-locally (never
+ * the global system.* namespace), launches the helper in the caller's
+ * coalition so it dies with the parent, and returns the caller's socketpair
+ * end.  ENOENT if the caller's bundle has no such helper unit; EACCES if the
+ * named unit exists but is not a helper.
+ */
+struct svc_helper_req {
+	uint32_t	op;		/* SVC_OP_HELPER_OPEN */
 	uint32_t	flags;		/* reserved, must be 0 */
 	char		name[SERVICED_NAME_MAX + 1];
 };
