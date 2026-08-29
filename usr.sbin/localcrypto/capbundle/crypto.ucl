@@ -3,6 +3,9 @@ activation { boot = true; ipc = ["system.Crypto"]; }
 program = "Crypto";
 restart = "on-failure";
 user = "capability";
+
+limits { nofile = 512; nproc = 64; core = 0; }
+umask = "0077";
 # The DTYPE_CRYPTO provider needs /dev/crypto; ensure cryptodev is loaded
 # before launch (serviced loads required modules via authorityd's kld authority).
 kmod_requires = ["cryptodev"];

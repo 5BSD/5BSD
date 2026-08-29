@@ -2,3 +2,6 @@ activation { boot = true; ipc = ["system.Notify"]; }
 program = "Notify";
 restart = "on-failure";
 user = "capability";
+
+limits { nofile = 1024; nproc = 64; core = 0; }
+umask = "0077";

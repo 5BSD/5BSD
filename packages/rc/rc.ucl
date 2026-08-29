@@ -31,6 +31,6 @@ scripts: {
 
     # Authority is PID 1 now.  pkg/installworld preserve removed configuration
     # files, and this obsolete script would start a competing daemon instance.
-    /bin/rm -f "$rootdir/etc/rc.d/authorityd"
+    /bin/rm -f "$rootdir/etc/rc.d/oracled"
 EOD
 }

@@ -2,3 +2,6 @@ activation { boot = true; ipc = ["system.Network"]; }
 program = "Network";
 restart = "on-failure";
 user = "capability";
+
+limits { nofile = 1024; nproc = 128; core = 0; }
+umask = "0077";

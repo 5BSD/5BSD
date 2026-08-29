@@ -2,3 +2,7 @@ activation { boot = true; ipc = ["system.Filesystem"]; }
 program = "Filesystem";
 restart = "on-failure";
 user = "capability";
+
+# The factory forks a worker per client, so a roomier process ceiling.
+limits { nofile = 1024; nproc = 256; core = 0; }
+umask = "0077";

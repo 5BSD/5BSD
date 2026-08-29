@@ -2,3 +2,7 @@ activation { boot = true; ipc = ["system.Audit"]; }
 program = "Audit";
 restart = "on-failure";
 user = "root";
+
+# The broker fans out to many subscribers, so a roomier descriptor ceiling.
+limits { nofile = 2048; nproc = 64; core = 0; }
+umask = "0077";
