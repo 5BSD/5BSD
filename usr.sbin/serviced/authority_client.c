@@ -387,7 +387,8 @@ authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc)
 }
 
 int
-authority_mint_storage(int channel_fd, const struct ort_storage_claim *sc)
+authority_mint_storage(int channel_fd, const struct ort_storage_claim *sc,
+    uid_t owner_uid, gid_t owner_gid)
 {
 	struct authority_storage_req req;
 	int handle_fd, status;
@@ -396,6 +397,8 @@ authority_mint_storage(int channel_fd, const struct ort_storage_claim *sc)
 	req.op = AUTHORITY_OP_MINT_STORAGE;
 	req.rights = sc->rights;
 	req.lifetime = sc->lifetime;
+	req.owner_uid = owner_uid;
+	req.owner_gid = owner_gid;
 	if (strlcpy(req.dataset, sc->dataset, sizeof(req.dataset)) >=
 	    sizeof(req.dataset) ||
 	    strlcpy(req.flavor, sc->flavor, sizeof(req.flavor)) >=

@@ -526,6 +526,222 @@ validate_socket_block(const ucl_object_t *arr, const char *const *socketkeys,
 	return (0);
 }
 
+/*
+ * Parse a resource-limit value.  Accepts a plain integer (bytes/seconds/count)
+ * or, for byte quantities, a size string with a K/M/G/T suffix ("512M").
+ * Returns 0 and stores the value, or -1 (with *err) on a bad value.  A value
+ * of 0 is legal (e.g. core=0 means no core dumps).
+ */
+static int
+cap_parse_size(const ucl_object_t *o, const char *key, int64_t *out,
+    char *err, size_t errlen)
+{
+	if (ucl_object_type(o) == UCL_INT) {
+		int64_t v = ucl_object_toint(o);
+		if (v < 0) {
+			snprintf(err, errlen, "limits.%s must not be negative",
+			    key);
+			return (-1);
+		}
+		*out = v;
+		return (0);
+	}
+	if (ucl_object_type(o) == UCL_STRING) {
+		const char *s = ucl_object_tostring(o);
+		char *endp = NULL;
+		long long v;
+		int shift;
+
+		errno = 0;
+		v = strtoll(s, &endp, 10);
+		if (endp == s || v < 0 || errno != 0) {
+			snprintf(err, errlen, "limits.%s: bad size '%s'", key, s);
+			return (-1);
+		}
+		while (*endp == ' ')
+			endp++;
+		switch (*endp) {
+		case 'T': case 't': shift = 4; endp++; break;
+		case 'G': case 'g': shift = 3; endp++; break;
+		case 'M': case 'm': shift = 2; endp++; break;
+		case 'K': case 'k': shift = 1; endp++; break;
+		case '\0': shift = 0; break;
+		default:
+			snprintf(err, errlen, "limits.%s: bad suffix in '%s'",
+			    key, s);
+			return (-1);
+		}
+		if (*endp != '\0') {
+			snprintf(err, errlen, "limits.%s: trailing junk in '%s'",
+			    key, s);
+			return (-1);
+		}
+		/* Apply the 1024^shift multiplier with an overflow guard. */
+		while (shift-- > 0) {
+			if (v > INT64_MAX / 1024) {
+				snprintf(err, errlen,
+				    "limits.%s: value '%s' overflows", key, s);
+				return (-1);
+			}
+			v *= 1024;
+		}
+		*out = (int64_t)v;
+		return (0);
+	}
+	snprintf(err, errlen, "limits.%s must be an integer or size string", key);
+	return (-1);
+}
+
+/*
+ * Parse the "umask" key: an octal string ("0077") or an integer.  Stores a
+ * mask in [0,0777].  Returns 0 or -1 (with *err).
+ */
+static int
+cap_parse_umask(const ucl_object_t *o, int *out, char *err, size_t errlen)
+{
+	long v;
+
+	if (ucl_object_type(o) == UCL_STRING) {
+		const char *s = ucl_object_tostring(o);
+		char *endp = NULL;
+
+		v = strtol(s, &endp, 8);
+		if (endp == s || *endp != '\0') {
+			snprintf(err, errlen, "umask: bad octal '%s'", s);
+			return (-1);
+		}
+	} else if (ucl_object_type(o) == UCL_INT) {
+		v = (long)ucl_object_toint(o);
+	} else {
+		snprintf(err, errlen, "umask must be an octal string or integer");
+		return (-1);
+	}
+	if (v < 0 || v > 0777) {
+		snprintf(err, errlen, "umask must be in the range 0000..0777");
+		return (-1);
+	}
+	*out = (int)v;
+	return (0);
+}
+
+/*
+ * Parse the "band" key into SVC_BAND_*.  Returns 0 or -1 (with *err).
+ */
+static int
+cap_parse_band(const ucl_object_t *o, int *out, char *err, size_t errlen)
+{
+	const char *s;
+
+	if (ucl_object_type(o) != UCL_STRING) {
+		snprintf(err, errlen, "band must be a string");
+		return (-1);
+	}
+	s = ucl_object_tostring(o);
+	if (strcmp(s, "standard") == 0)
+		*out = SVC_BAND_STANDARD;
+	else if (strcmp(s, "background") == 0)
+		*out = SVC_BAND_BACKGROUND;
+	else if (strcmp(s, "interactive") == 0)
+		*out = SVC_BAND_INTERACTIVE;
+	else {
+		snprintf(err, errlen,
+		    "band must be background, standard, or interactive");
+		return (-1);
+	}
+	return (0);
+}
+
+/* Parse one cron field: '*' (wildcard) or a decimal in [lo,hi]. */
+static int
+cap_parse_cal_field(const char *tok, int lo, int hi, int *out, char *err,
+    size_t errlen)
+{
+	char *endp = NULL;
+	long v;
+
+	if (strcmp(tok, "*") == 0) {
+		*out = SVC_CAL_ANY;
+		return (0);
+	}
+	v = strtol(tok, &endp, 10);
+	if (endp == tok || *endp != '\0' || v < lo || v > hi) {
+		snprintf(err, errlen, "schedule: field '%s' out of range %d..%d",
+		    tok, lo, hi);
+		return (-1);
+	}
+	*out = (int)v;
+	return (0);
+}
+
+/*
+ * Parse a calendar activation spec (launchd StartCalendarInterval).  Accepts a
+ * cron-style 5-field string "MIN HOUR MDAY MONTH WDAY" (number or '*'), or a
+ * named alias (hourly/daily/midnight/weekly/monthly/yearly).  Returns 0 filling
+ * *cal, or -1 (with *err).
+ */
+static int
+cap_parse_calendar(const char *spec, struct svc_calendar *cal, char *err,
+    size_t errlen)
+{
+	char buf[128], *fields[5], *p, *save;
+	int n;
+
+	cal->minute = cal->hour = cal->mday = cal->month = cal->wday =
+	    SVC_CAL_ANY;
+
+	/* Named aliases. */
+	if (strcmp(spec, "hourly") == 0) {
+		cal->minute = 0;
+		return (0);
+	}
+	if (strcmp(spec, "daily") == 0 || strcmp(spec, "midnight") == 0) {
+		cal->minute = cal->hour = 0;
+		return (0);
+	}
+	if (strcmp(spec, "weekly") == 0) {
+		cal->minute = cal->hour = cal->wday = 0;
+		return (0);
+	}
+	if (strcmp(spec, "monthly") == 0) {
+		cal->minute = cal->hour = 0;
+		cal->mday = 1;
+		return (0);
+	}
+	if (strcmp(spec, "yearly") == 0 || strcmp(spec, "annually") == 0) {
+		cal->minute = cal->hour = 0;
+		cal->mday = cal->month = 1;
+		return (0);
+	}
+
+	if (strlcpy(buf, spec, sizeof(buf)) >= sizeof(buf)) {
+		snprintf(err, errlen, "schedule: expression too long");
+		return (-1);
+	}
+	n = 0;
+	for (p = strtok_r(buf, " \t", &save); p != NULL;
+	    p = strtok_r(NULL, " \t", &save)) {
+		if (n >= 5) {
+			snprintf(err, errlen,
+			    "schedule: expected 5 cron fields or an alias");
+			return (-1);
+		}
+		fields[n++] = p;
+	}
+	if (n != 5) {
+		snprintf(err, errlen,
+		    "schedule: expected 5 cron fields (min hour mday month wday) "
+		    "or an alias (hourly/daily/weekly/monthly)");
+		return (-1);
+	}
+	if (cap_parse_cal_field(fields[0], 0, 59, &cal->minute, err, errlen) ||
+	    cap_parse_cal_field(fields[1], 0, 23, &cal->hour, err, errlen) ||
+	    cap_parse_cal_field(fields[2], 1, 31, &cal->mday, err, errlen) ||
+	    cap_parse_cal_field(fields[3], 1, 12, &cal->month, err, errlen) ||
+	    cap_parse_cal_field(fields[4], 0, 6, &cal->wday, err, errlen))
+		return (-1);
+	return (0);
+}
+
 static int
 validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 {
@@ -533,11 +749,14 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "program", "activation", "kmod_requires",
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment", "jail",
-	    "storage", "descriptors", "protect" };
+	    "storage", "descriptors", "protect", "limits", "umask", "band" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
-	    "path", "socket" };
+	    "path", "socket", "schedule", "persistent", "queue_directory",
+	    "on_mount" };
 	static const char *const timerkeys[] = { "interval" };
 	static const char *const pathkeys[] = { "path" };
+	static const char *const limitskeys[] = { "memory", "cpu", "nproc",
+	    "nofile", "stack", "fsize", "core" };
 	static const char *const capkeys[] = { "paths", "files", "network",
 	    "jails", "vsock", "services", "system" };
 	static const char *const storagekeys[] = { "name", "scope", "flavor",
@@ -624,6 +843,50 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		snprintf(errbuf, errlen, "max_failures must be between 1 and 100");
 		return (-1);
 	}
+
+	/*
+	 * limits{} — pre-exec setrlimit ceilings.  Each present key must parse as
+	 * a non-negative integer or (for byte quantities) a K/M/G/T size string.
+	 */
+	v = ucl_object_lookup(root, "limits");
+	if (v != NULL) {
+		const ucl_object_t *lv;
+		unsigned li;
+		int64_t scratch;
+
+		if (ucl_object_type(v) != UCL_OBJECT) {
+			snprintf(errbuf, errlen, "limits must be an object");
+			return (-1);
+		}
+		if (validate_keys(v, "limits", limitskeys, nitems(limitskeys),
+		    errbuf, errlen) != 0)
+			return (-1);
+		for (li = 0; li < nitems(limitskeys); li++) {
+			lv = ucl_object_lookup(v, limitskeys[li]);
+			if (lv != NULL && cap_parse_size(lv, limitskeys[li],
+			    &scratch, errbuf, errlen) != 0)
+				return (-1);
+		}
+	}
+
+	/* umask — octal string or integer in 0000..0777. */
+	v = ucl_object_lookup(root, "umask");
+	if (v != NULL) {
+		int scratch;
+
+		if (cap_parse_umask(v, &scratch, errbuf, errlen) != 0)
+			return (-1);
+	}
+
+	/* band — scheduling class name. */
+	v = ucl_object_lookup(root, "band");
+	if (v != NULL) {
+		int scratch;
+
+		if (cap_parse_band(v, &scratch, errbuf, errlen) != 0)
+			return (-1);
+	}
+
 	if (validate_string_list(root, "kmod_requires", CAPBUNDLE_MAX_KMOD_REQUIRES,
 	    sizeof(((struct capbundle_service *)0)->kmod_requires[0]), true,
 	    errbuf, errlen) != 0 ||
@@ -732,6 +995,85 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	}
 
 	/*
+	 * activation.schedule — calendar source (launchd StartCalendarInterval).
+	 * A cron-style 5-field string or a named alias; validated by parsing it.
+	 * activation.persistent — anacron-style catch-up (boolean); only
+	 * meaningful with a schedule.
+	 */
+	{
+		const ucl_object_t *sched, *pers;
+		struct svc_calendar caltmp;
+
+		sched = ucl_object_lookup(arr, "schedule");
+		if (sched != NULL) {
+			if (ucl_object_type(sched) != UCL_STRING) {
+				snprintf(errbuf, errlen,
+				    "activation.schedule must be a cron string or "
+				    "alias");
+				return (-1);
+			}
+			if (cap_parse_calendar(ucl_object_tostring(sched),
+			    &caltmp, errbuf, errlen) != 0)
+				return (-1);
+			/*
+			 * A unit has one timer slot: a monotonic interval and a
+			 * wall-clock schedule cannot both drive it.
+			 */
+			if (ucl_object_lookup(arr, "timer") != NULL) {
+				snprintf(errbuf, errlen,
+				    "activation.timer and activation.schedule are "
+				    "mutually exclusive");
+				return (-1);
+			}
+		}
+		pers = ucl_object_lookup(arr, "persistent");
+		if (pers != NULL && ucl_object_type(pers) != UCL_BOOLEAN) {
+			snprintf(errbuf, errlen,
+			    "activation.persistent must be a boolean");
+			return (-1);
+		}
+		if (pers != NULL && sched == NULL) {
+			snprintf(errbuf, errlen,
+			    "activation.persistent requires a schedule");
+			return (-1);
+		}
+	}
+
+	/*
+	 * activation.queue_directory — spool-drain source (launchd
+	 * QueueDirectories): an absolute directory kept drained while non-empty.
+	 * activation.on_mount — start on any filesystem mount (boolean).
+	 */
+	{
+		const ucl_object_t *qd, *om;
+
+		qd = ucl_object_lookup(arr, "queue_directory");
+		if (qd != NULL) {
+			const char *qs;
+
+			if (ucl_object_type(qd) != UCL_STRING) {
+				snprintf(errbuf, errlen,
+				    "activation.queue_directory must be an absolute "
+				    "path string");
+				return (-1);
+			}
+			qs = ucl_object_tostring(qd);
+			if (qs[0] != '/' || strlen(qs) >= PATH_MAX) {
+				snprintf(errbuf, errlen,
+				    "activation.queue_directory must be absolute and "
+				    "shorter than %d bytes", PATH_MAX);
+				return (-1);
+			}
+		}
+		om = ucl_object_lookup(arr, "on_mount");
+		if (om != NULL && ucl_object_type(om) != UCL_BOOLEAN) {
+			snprintf(errbuf, errlen,
+			    "activation.on_mount must be a boolean");
+			return (-1);
+		}
+	}
+
+	/*
 	 * activation.socket — manager-owned listener source (Phase 4).  serviced
 	 * binds and holds the listening socket; the first inbound connection is
 	 * the demand that launches the unit, and the listener is delivered to it
@@ -744,10 +1086,14 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	if ((v == NULL || !ucl_object_toboolean(v)) && x == NULL &&
 	    ucl_object_lookup(arr, "timer") == NULL &&
 	    ucl_object_lookup(arr, "path") == NULL &&
-	    ucl_object_lookup(arr, "socket") == NULL) {
+	    ucl_object_lookup(arr, "socket") == NULL &&
+	    ucl_object_lookup(arr, "schedule") == NULL &&
+	    ucl_object_lookup(arr, "queue_directory") == NULL &&
+	    ucl_object_lookup(arr, "on_mount") == NULL) {
 		snprintf(errbuf, errlen,
 		    "activation requires boot=true, at least one ipc name, "
-		    "a timer, a path, or a socket");
+		    "a timer, a path, a socket, a schedule, a queue_directory, "
+		    "or on_mount");
 		return (-1);
 	}
 	if (x != NULL && ucl_object_type(x) == UCL_ARRAY &&
@@ -805,12 +1151,19 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 				return (-1);
 			}
 		}
-		if (jail_path == NULL ||
-		    ucl_object_type(jail_path) != UCL_STRING ||
+		/*
+		 * path is optional: when omitted, serviced roots the execution
+		 * jail at the managed per-instance container
+		 * (/Capabilities/Run/<unit-instance>/), keeping host paths out of
+		 * the manifest.  When present it must be absolute and bounded.
+		 */
+		if (jail_path != NULL &&
+		    (ucl_object_type(jail_path) != UCL_STRING ||
 		    ucl_object_tostring(jail_path)[0] != '/' ||
-		    strlen(ucl_object_tostring(jail_path)) >= PATH_MAX) {
+		    strlen(ucl_object_tostring(jail_path)) >= PATH_MAX)) {
 			snprintf(errbuf, errlen,
-			    "jail requires an absolute path");
+			    "jail path, when set, must be an absolute path "
+			    "shorter than %d bytes", PATH_MAX);
 			return (-1);
 		}
 		if (hostname != NULL &&
@@ -1848,6 +2201,17 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 
 	memset(svc, 0, sizeof(*svc));
 
+	/*
+	 * Policy defaults that differ from a zeroed struct.  Unspecified rlimits
+	 * inherit (SVC_LIMIT_UNSET) rather than clamp to zero; core stays 0 (the
+	 * no-core default from memset).  umask_val -1 means "apply the plane
+	 * default (0077)".  band 0 is SVC_BAND_STANDARD already.
+	 */
+	svc->limits.mem = svc->limits.cpu = svc->limits.nproc =
+	    svc->limits.nofile = svc->limits.stack = svc->limits.fsize =
+	    SVC_LIMIT_UNSET;
+	svc->umask_val = -1;
+
 	/* Reject unreasonably large files before parsing. */
 	if (stat(path, &ucl_sb) == -1) {
 		if (errbuf)
@@ -1982,6 +2346,31 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	}
 
 	/*
+	 * Calendar / queue-directory / mount activation sources.  Validated
+	 * above, so the calendar spec re-parses without error here.
+	 */
+	{
+		const ucl_object_t *sched, *pers, *qd, *om;
+		char errscratch[128];
+
+		sched = ucl_object_lookup(activation, "schedule");
+		if (sched != NULL &&
+		    cap_parse_calendar(ucl_object_tostring(sched), &svc->calendar,
+		    errscratch, sizeof(errscratch)) == 0) {
+			svc->has_calendar = true;
+			pers = ucl_object_lookup(activation, "persistent");
+			svc->calendar_persistent =
+			    pers != NULL && ucl_object_toboolean(pers);
+		}
+		qd = ucl_object_lookup(activation, "queue_directory");
+		if (qd != NULL)
+			(void)strlcpy(svc->queue_directory,
+			    ucl_object_tostring(qd), sizeof(svc->queue_directory));
+		om = ucl_object_lookup(activation, "on_mount");
+		svc->activation_on_mount = om != NULL && ucl_object_toboolean(om);
+	}
+
+	/*
 	 * Socket activation sources (Phase 4).  Already validated above; record
 	 * the accepted single object or array.  parse_listen_spec() cannot fail
 	 * here because the same string passed validation.
@@ -2026,6 +2415,48 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 
 	/* Management class (§5) */
 	svc->management = parse_management_class(root, path);
+
+	/*
+	 * Pre-exec process policy: limits{} / umask / band.  Validated above, so
+	 * the parse helpers cannot fail here; each unset field keeps its default
+	 * (limits inherited, umask -1 = plane default, band STANDARD).
+	 */
+	{
+		const ucl_object_t *lim, *lv;
+		char errscratch[128];
+
+		lim = ucl_object_lookup(root, "limits");
+		if (lim != NULL) {
+			if ((lv = ucl_object_lookup(lim, "memory")) != NULL)
+				(void)cap_parse_size(lv, "memory", &svc->limits.mem,
+				    errscratch, sizeof(errscratch));
+			if ((lv = ucl_object_lookup(lim, "cpu")) != NULL)
+				(void)cap_parse_size(lv, "cpu", &svc->limits.cpu,
+				    errscratch, sizeof(errscratch));
+			if ((lv = ucl_object_lookup(lim, "nproc")) != NULL)
+				(void)cap_parse_size(lv, "nproc", &svc->limits.nproc,
+				    errscratch, sizeof(errscratch));
+			if ((lv = ucl_object_lookup(lim, "nofile")) != NULL)
+				(void)cap_parse_size(lv, "nofile",
+				    &svc->limits.nofile, errscratch,
+				    sizeof(errscratch));
+			if ((lv = ucl_object_lookup(lim, "stack")) != NULL)
+				(void)cap_parse_size(lv, "stack", &svc->limits.stack,
+				    errscratch, sizeof(errscratch));
+			if ((lv = ucl_object_lookup(lim, "fsize")) != NULL)
+				(void)cap_parse_size(lv, "fsize", &svc->limits.fsize,
+				    errscratch, sizeof(errscratch));
+			if ((lv = ucl_object_lookup(lim, "core")) != NULL)
+				(void)cap_parse_size(lv, "core", &svc->limits.core,
+				    errscratch, sizeof(errscratch));
+		}
+		if ((lv = ucl_object_lookup(root, "umask")) != NULL)
+			(void)cap_parse_umask(lv, &svc->umask_val, errscratch,
+			    sizeof(errscratch));
+		if ((lv = ucl_object_lookup(root, "band")) != NULL)
+			(void)cap_parse_band(lv, &svc->band, errscratch,
+			    sizeof(errscratch));
+	}
 
 	/* Named persistent execution jail. */
 	v = ucl_object_lookup(root, "jail");

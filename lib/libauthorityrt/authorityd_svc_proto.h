@@ -205,7 +205,9 @@ struct authority_storage_req {
 	uint32_t	flags;		/* ZHF_* */
 	uint64_t	rights;		/* ZH_* mask (mint only) */
 	uint8_t		lifetime;	/* ORT_STORAGE_* */
-	uint8_t		_reserved[7];
+	uint8_t		_reserved[3];
+	uint32_t	owner_uid;	/* chown dataset root at mint; 0 = skip */
+	uint32_t	owner_gid;
 	char		dataset[64];	/* == ORT_STORAGE_DATASET_MAX */
 	char		flavor[32];	/* == ORT_STORAGE_FLAVOR_MAX */
 };

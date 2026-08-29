@@ -82,7 +82,9 @@ struct tzfsd_request {
 	uint32_t	flags;			/* ZHF_* (subtree, etc.) */
 	uint64_t	rights;			/* ZH_* mask to grant */
 	uint8_t		lifetime;		/* TZFSD_* lifecycle */
-	uint8_t		_reserved[7];
+	uint8_t		_reserved[3];
+	uint32_t	owner_uid;		/* chown dataset root at mint; 0=skip */
+	uint32_t	owner_gid;
 	char		flavor[TZFSD_FLAVOR_MAX];
 	char		dataset[TZFSD_NAME_MAX]; /* opaque stable leaf key */
 	char		session[TZFSD_SESSION_MAX];

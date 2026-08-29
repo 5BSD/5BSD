@@ -42,15 +42,20 @@
 
 #include <sys/types.h>
 #include <sys/event.h>
+#include <sys/mount.h>
 #include <sys/param.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 
 #include <netinet/in.h>
 
+#include <sys/stat.h>
+
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -62,6 +67,7 @@
 #include "serviced.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
+#include "activation_calendar.h"
 
 /*
  * Timer-ident domain for periodic activation timers.  The high bits of a
@@ -71,6 +77,9 @@
  */
 #define	ACTIVATION_TIMER_BIT	((uintptr_t)1 << (sizeof(uintptr_t) * 8 - 5))
 static uintptr_t activation_timer_next = ACTIVATION_TIMER_BIT | 1;
+
+/* EVFILT_FS is a distinct filter, so its idents live in their own space. */
+static uintptr_t activation_mount_next = 1;
 
 /* Vnode events that mean "the watched path may have changed". */
 #define	ACTIVATION_VNODE_FFLAGS	\
@@ -106,6 +115,65 @@ path_owner(int fd)
 		if (sd.services[i].activation_path_fd == fd)
 			return (&sd.services[i]);
 	return (NULL);
+}
+
+/* Locate the unit watching a given queue-directory descriptor. */
+static struct svc_runtime *
+queue_owner(int fd)
+{
+	unsigned i;
+
+	for (i = 0; i < sd.nservices; i++)
+		if (sd.services[i].activation_queue_fd == fd)
+			return (&sd.services[i]);
+	return (NULL);
+}
+
+/* Locate the unit that owns a given EVFILT_FS (mount) ident. */
+static struct svc_runtime *
+mount_owner(uintptr_t ident)
+{
+	unsigned i;
+
+	for (i = 0; i < sd.nservices; i++)
+		if (sd.services[i].activation_mount_ident == ident)
+			return (&sd.services[i]);
+	return (NULL);
+}
+
+/*
+ * True if a directory holds any entry other than "." and "..".  Used to gate
+ * queue-directory activation on there actually being work to drain.  Operates
+ * on a dup of the watch fd so the caller's descriptor position is untouched.
+ */
+static bool
+dir_nonempty(int dirfd)
+{
+	int fd;
+	DIR *dir;
+	struct dirent *de;
+	bool any = false;
+
+	fd = dup(dirfd);
+	if (fd == -1)
+		return (true);	/* fail toward activating rather than stalling */
+	if (lseek(fd, 0, SEEK_SET) == -1) {
+		/* not seekable is unexpected for a dir; fall through to opendir */
+	}
+	dir = fdopendir(fd);
+	if (dir == NULL) {
+		(void)close(fd);
+		return (true);
+	}
+	while ((de = readdir(dir)) != NULL) {
+		if (de->d_name[0] == '.' && (de->d_name[1] == '\0' ||
+		    (de->d_name[1] == '.' && de->d_name[2] == '\0')))
+			continue;
+		any = true;
+		break;
+	}
+	closedir(dir);
+	return (any);
 }
 
 /*
@@ -282,6 +350,78 @@ listener_create(const struct svc_activation_socket *s)
 }
 
 /*
+ * Arm a queue-directory source (launchd QueueDirectories): watch the directory
+ * with the same edge-triggered EVFILT_VNODE as arm_path.  A vnode event gates
+ * demand on the directory actually being non-empty, so the unit runs only when
+ * there is work to drain.  If the directory already holds work when serviced
+ * starts, demand it immediately.  Idempotent; failures are logged and skipped.
+ */
+static void
+arm_queue(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+	int fd;
+
+	if (svc->manifest.queue_directory[0] == '\0' ||
+	    svc->activation_queue_fd >= 0)
+		return;
+
+	fd = open(svc->manifest.queue_directory,
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+	if (fd == -1) {
+		syslog(LOG_WARNING, "activation: %s: cannot watch queue %s: %m",
+		    svc->manifest.label, svc->manifest.queue_directory);
+		return;
+	}
+	EV_SET(&kev, fd, EVFILT_VNODE, EV_ADD | EV_CLEAR,
+	    ACTIVATION_VNODE_FFLAGS, 0, svc);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "activation: %s: kevent queue for %s: %m",
+		    svc->manifest.label, svc->manifest.queue_directory);
+		(void)close(fd);
+		return;
+	}
+	svc->activation_queue_fd = fd;
+	syslog(LOG_INFO, "activation: %s watching queue %s", svc->manifest.label,
+	    svc->manifest.queue_directory);
+	/* Backlog present at startup: drain it now. */
+	if (dir_nonempty(fd))
+		activation_create_demand(svc, "queue", kq);
+}
+
+/*
+ * Arm a mount source (launchd StartOnMount): a single EVFILT_FS registration
+ * whose events fire on any filesystem mount/unmount.  Edge-triggered; on a
+ * mount the unit is demanded.  Idempotent.
+ */
+static void
+arm_mount(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+	uintptr_t ident;
+
+	if (!svc->manifest.activation_on_mount ||
+	    svc->activation_mount_ident != 0)
+		return;
+
+	ident = activation_mount_next++;
+	/*
+	 * filt_fsevent only reports events whose hint intersects the registered
+	 * fflags, so VQ_MOUNT must be requested explicitly — a zero mask would
+	 * make the knote never fire.  We watch mounts, not unmounts.
+	 */
+	EV_SET(&kev, ident, EVFILT_FS, EV_ADD | EV_CLEAR, VQ_MOUNT, 0, svc);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "activation: %s: kevent EVFILT_FS: %m",
+		    svc->manifest.label);
+		return;
+	}
+	svc->activation_mount_ident = ident;
+	syslog(LOG_INFO, "activation: %s watching for filesystem mounts",
+	    svc->manifest.label);
+}
+
+/*
  * Arm a unit's declared socket activation listeners.  Each not-yet-armed
  * listener is created and registered with a level-triggered EVFILT_READ so a
  * slow provider keeps demand asserted (see the file banner).  A listener that
@@ -333,6 +473,111 @@ arm_sockets(struct svc_runtime *svc, int kq)
 }
 
 /*
+ * Persistent-schedule last-run marker.  A calendar unit with persistent=true
+ * records each fire under a per-unit file; on the next arm, if a scheduled
+ * occurrence elapsed since that run (the machine was down when it was due), the
+ * unit is demanded once immediately — anacron-style catch-up.
+ */
+#define	CALENDAR_STATE_DIR	"/var/db/serviced/calendar"
+
+static void
+calendar_marker_path(const char *label, char *buf, size_t len)
+{
+	size_t i;
+
+	(void)snprintf(buf, len, "%s/", CALENDAR_STATE_DIR);
+	for (i = strlen(buf); *label != '\0' && i + 1 < len; label++)
+		buf[i++] = (*label == '/' || *label == '.') ? '_' : *label;
+	buf[i] = '\0';
+}
+
+static time_t
+calendar_last_run(const char *label)
+{
+	char path[PATH_MAX];
+	FILE *f;
+	long long v = 0;
+
+	calendar_marker_path(label, path, sizeof(path));
+	if ((f = fopen(path, "r")) == NULL)
+		return (0);
+	if (fscanf(f, "%lld", &v) != 1)
+		v = 0;
+	(void)fclose(f);
+	return ((time_t)v);
+}
+
+static void
+calendar_record_run(const char *label, time_t when)
+{
+	char path[PATH_MAX];
+	FILE *f;
+
+	(void)mkdir(CALENDAR_STATE_DIR, 0700);
+	calendar_marker_path(label, path, sizeof(path));
+	if ((f = fopen(path, "w")) == NULL)
+		return;
+	(void)fprintf(f, "%lld\n", (long long)when);
+	(void)fclose(f);
+}
+
+/*
+ * Arm (or re-arm) a unit's calendar activation as a one-shot EVFILT_TIMER for
+ * the next wall-clock match.  Called at startup and again from the fire handler
+ * — a one-shot timer auto-deletes on fire, so each occurrence arms the next.
+ */
+static void
+arm_calendar(struct svc_runtime *svc, int kq)
+{
+	struct kevent kev;
+	time_t now, next;
+	long delay;
+	uintptr_t ident;
+
+	if (!svc->manifest.has_calendar || svc->activation_timer_ident != 0)
+		return;
+	now = time(NULL);
+
+	/*
+	 * Anacron-style catch-up: if a scheduled occurrence elapsed since the
+	 * last recorded run, fire once now.  A just-fired re-arm sees last_run ==
+	 * the occurrence it recorded, so it never double-fires.
+	 */
+	if (svc->manifest.calendar_persistent) {
+		time_t prev = calendar_prev(&svc->manifest.calendar, now);
+
+		if (prev != (time_t)-1 &&
+		    prev > calendar_last_run(svc->manifest.label)) {
+			syslog(LOG_INFO, "activation: %s persistent catch-up",
+			    svc->manifest.label);
+			calendar_record_run(svc->manifest.label, now);
+			activation_create_demand(svc, "catchup", kq);
+		}
+	}
+	next = calendar_next(&svc->manifest.calendar, now);
+	if (next == (time_t)-1) {
+		syslog(LOG_ERR, "activation: %s: unsatisfiable schedule",
+		    svc->manifest.label);
+		return;
+	}
+	delay = (long)(next - now);
+	if (delay < 1)
+		delay = 1;	/* never arm a zero/negative one-shot */
+	ident = activation_timer_next++;
+	EV_SET(&kev, ident, EVFILT_TIMER, EV_ADD | EV_ONESHOT, NOTE_SECONDS,
+	    delay, svc);
+	if (kevent(kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_ERR, "activation: %s: kevent calendar: %m",
+		    svc->manifest.label);
+		return;
+	}
+	svc->activation_timer_ident = ident;
+	SERVICED_PROBE_TIMEOUT_ARM(svc->manifest.label, "calendar", delay);
+	syslog(LOG_INFO, "activation: %s scheduled, next fire in %lds",
+	    svc->manifest.label, delay);
+}
+
+/*
  * Arm a unit's declared activation sources.  Idempotent: an already-armed
  * source is left in place, so it is safe to call at startup and again on
  * reload without stacking duplicate timers or watches.
@@ -371,7 +616,10 @@ activation_source_arm(struct svc_runtime *svc, int kq)
 		}
 	}
 
+	arm_calendar(svc, kq);
 	arm_path(svc, kq);
+	arm_queue(svc, kq);
+	arm_mount(svc, kq);
 	arm_sockets(svc, kq);
 }
 
@@ -398,6 +646,16 @@ activation_source_teardown(struct svc_runtime *svc, int kq)
 		/* Closing the descriptor removes its EVFILT_VNODE registration. */
 		(void)close(svc->activation_path_fd);
 		svc->activation_path_fd = -1;
+	}
+	if (svc->activation_queue_fd >= 0) {
+		(void)close(svc->activation_queue_fd);
+		svc->activation_queue_fd = -1;
+	}
+	if (svc->activation_mount_ident != 0) {
+		EV_SET(&kev, svc->activation_mount_ident, EVFILT_FS, EV_DELETE,
+		    0, 0, NULL);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		svc->activation_mount_ident = 0;
 	}
 	/*
 	 * Close the manager-owned listen fds ONLY here (unit removal).  They are
@@ -439,7 +697,35 @@ activation_timer_fire(uintptr_t ident, int kq)
 	svc = timer_owner(ident);
 	if (svc == NULL)
 		return;		/* stale ident for an already-removed unit */
-	activation_create_demand(svc, "timer", kq);
+	activation_create_demand(svc,
+	    svc->manifest.has_calendar ? "calendar" : "timer", kq);
+	if (svc->manifest.has_calendar) {
+		/*
+		 * A calendar timer is one-shot: the kernel deleted it on fire, so
+		 * clear the recorded ident and arm the following occurrence.  Record
+		 * the run first so persistent catch-up on the re-arm sees it.
+		 */
+		if (svc->manifest.calendar_persistent)
+			calendar_record_run(svc->manifest.label, time(NULL));
+		svc->activation_timer_ident = 0;
+		arm_calendar(svc, kq);
+	}
+}
+
+/*
+ * An EVFILT_FS event fired: a filesystem was mounted or unmounted.  Create
+ * demand for the unit that armed this ident.  The watch is edge-triggered and
+ * kernel-persistent (not one-shot), so nothing is re-registered here.
+ */
+void
+activation_mount_event(struct kevent *kev, int kq)
+{
+	struct svc_runtime *svc;
+
+	svc = mount_owner(kev->ident);
+	if (svc == NULL)
+		return;		/* stale ident for an already-removed unit */
+	activation_create_demand(svc, "mount", kq);
 }
 
 /*
@@ -455,6 +741,20 @@ activation_path_event(struct kevent *kev, int kq)
 	int fd;
 
 	fd = (int)kev->ident;
+
+	/*
+	 * A queue-directory watch shares the EVFILT_VNODE filter but is gated on
+	 * the directory still holding work: demand only while there is something
+	 * to drain.  The watch is level-in-spirit — each relaunch re-checks on
+	 * the next change event until the directory empties.
+	 */
+	svc = queue_owner(fd);
+	if (svc != NULL) {
+		if (dir_nonempty(fd))
+			activation_create_demand(svc, "queue", kq);
+		return;
+	}
+
 	svc = path_owner(fd);
 	if (svc == NULL) {
 		/*

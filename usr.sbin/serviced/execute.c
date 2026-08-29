@@ -25,6 +25,7 @@
 #include <sys/jail.h>
 #include <sys/mman.h>
 #include <sys/procdesc.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <sys/zfshandle.h>
@@ -376,21 +377,21 @@ storage_is_filesystem_backing(const struct svc_manifest *manifest,
 
 /*
  * Finalize storage delivery after descriptor factories consumed their private
- * backing handles.  Mount-only claims become ordinary directory capabilities;
- * a filesystem descriptor's backing store is not also exposed to its client.
+ * backing handles.  Private (filesystem-backing) claims are withdrawn from the
+ * bootstrap set; every other claim is delivered as the raw "zfshandle" it was
+ * minted as.  A mount-rights consumer mounts it lazily via
+ * service_storage_open(3) and holds the handle for its lifetime — the handle
+ * anchors the mount — so serviced no longer mounts on the service's behalf, and
+ * tzfsd already set the dataset root's owner at mint (see authority_mint_storage).
  */
 static int
-finalize_storage_descriptors(struct svc_runtime *svc,
-    const struct svc_manifest *manifest, uid_t uid,
-    gid_t gid, int *fds, unsigned *nfdsp,
+finalize_storage_descriptors(const struct svc_manifest *manifest, int *fds,
+    unsigned *nfdsp,
     char names[][SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX],
     char types[][SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX])
 {
-	cap_rights_t rights;
 	char role[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
 	unsigned claim, i, j;
-	int anchor, dirfd, error;
-	enum storage_delivery_kind delivery;
 
 	for (claim = 0; claim < manifest->ncap_storage; claim++) {
 		if (snprintf(role, sizeof(role), "storage:%s",
@@ -402,69 +403,19 @@ finalize_storage_descriptors(struct svc_runtime *svc,
 				break;
 		if (i == *nfdsp)
 			return (errno = ENOENT, -1);
-		delivery = storage_delivery_select(
-		    manifest->cap_storage[claim].rights,
+		if (storage_delivery_select(manifest->cap_storage[claim].rights,
 		    storage_is_filesystem_backing(manifest,
-		    manifest->cap_storage[claim].name));
-		if (delivery == STORAGE_DELIVERY_PRIVATE) {
-			close(fds[i]);
-			for (j = i + 1; j < *nfdsp; j++) {
-				fds[j - 1] = fds[j];
-				memcpy(names[j - 1], names[j], sizeof(names[j - 1]));
-				memcpy(types[j - 1], types[j], sizeof(types[j - 1]));
-			}
-			(*nfdsp)--;
-			continue;
-		}
-		if (delivery == STORAGE_DELIVERY_ZFSHANDLE)
-			continue;
-		/*
-		 * The anon mount below is anchored by the storage handle; the
-		 * provider receives only the directory descriptor.  Retain a
-		 * handle reference for the life of the service before the launch
-		 * cleanup closes the delivered handle, or the mount is
-		 * force-unmounted the moment the launch drops it and every
-		 * fstat(2) on the delivered directory fails EBADF.
-		 */
-		if (svc->nmount_anchors >= nitems(svc->mount_anchor_fds))
-			return (errno = ENOSPC, -1);
-		anchor = fcntl(fds[i], F_DUPFD_CLOEXEC, 0);
-		if (anchor == -1)
-			return (-1);
-		if (cap_clofork_limit(anchor, CAP_CLOFORK_LOCKED) == -1) {
-			error = errno != 0 ? errno : EIO;
-			close(anchor);
-			return (errno = error, -1);
-		}
-		dirfd = tzfsd_mount_dir(fds[i], 0);
-		if (dirfd == -1) {
-			error = errno != 0 ? errno : EIO;
-			close(anchor);
-			return (errno = error, -1);
-		}
-		svc->mount_anchor_fds[svc->nmount_anchors++] = anchor;
-		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_PREAD, CAP_PWRITE,
-		    CAP_SEEK, CAP_FCNTL, CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT,
-		    CAP_FTRUNCATE, CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT,
-		    CAP_UNLINKAT, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
-		/*
-		 * Status-flag fcntls must survive onto files the provider opens
-		 * under this directory: a provider that keeps an append-mode log
-		 * (logd) sets O_APPEND with F_SETFL, and an openat(2)ed file never
-		 * carries an fcntl its parent directory lacks.  Grant GETFL|SETFL
-		 * here so those files can, matching the injected-channel policy.
-		 */
-		if (fchown(dirfd, uid, gid) == -1 || fchmod(dirfd, 0700) == -1 ||
-		    cap_rights_limit(dirfd, &rights) == -1 ||
-		    cap_fcntls_limit(dirfd,
-		    CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1) {
-			error = errno != 0 ? errno : EIO;
-			close(dirfd);
-			return (errno = error, -1);
-		}
+		    manifest->cap_storage[claim].name)) !=
+		    STORAGE_DELIVERY_PRIVATE)
+			continue;	/* deliver the zfshandle unchanged */
+		/* Private backing: withdraw the handle from the bootstrap set. */
 		close(fds[i]);
-		fds[i] = dirfd;
-		strlcpy(types[i], "directory", sizeof(types[i]));
+		for (j = i + 1; j < *nfdsp; j++) {
+			fds[j - 1] = fds[j];
+			memcpy(names[j - 1], names[j], sizeof(names[j - 1]));
+			memcpy(types[j - 1], types[j], sizeof(types[j - 1]));
+		}
+		(*nfdsp)--;
 	}
 	return (0);
 }
@@ -834,6 +785,67 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	}
 
 	env[envc] = NULL;
+
+	/*
+	 * Pre-exec resource + scheduling policy (launchd Hard/SoftResourceLimits,
+	 * ProcessType, Umask).  Applied in the child while still privileged (nice
+	 * reductions and hard-limit raises need root) and before exec, so the
+	 * ceilings bind the program image from its first instruction.  A failure
+	 * is fatal: a unit that asked to be contained must not run uncontained.
+	 */
+	{
+		struct rlimit rl;
+
+		/* core=0 (no dumps) applies even when limits{} is omitted. */
+		rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.core;
+		if (setrlimit(RLIMIT_CORE, &rl) == -1)
+			_exit(126);
+		if (m->limits.mem != SVC_LIMIT_UNSET) {
+			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.mem;
+			if (setrlimit(RLIMIT_AS, &rl) == -1)
+				_exit(126);
+		}
+		if (m->limits.cpu != SVC_LIMIT_UNSET) {
+			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.cpu;
+			if (setrlimit(RLIMIT_CPU, &rl) == -1)
+				_exit(126);
+		}
+		if (m->limits.nproc != SVC_LIMIT_UNSET) {
+			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.nproc;
+			if (setrlimit(RLIMIT_NPROC, &rl) == -1)
+				_exit(126);
+		}
+		if (m->limits.nofile != SVC_LIMIT_UNSET) {
+			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.nofile;
+			if (setrlimit(RLIMIT_NOFILE, &rl) == -1)
+				_exit(126);
+		}
+		if (m->limits.stack != SVC_LIMIT_UNSET) {
+			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.stack;
+			if (setrlimit(RLIMIT_STACK, &rl) == -1)
+				_exit(126);
+		}
+		if (m->limits.fsize != SVC_LIMIT_UNSET) {
+			rl.rlim_cur = rl.rlim_max = (rlim_t)m->limits.fsize;
+			if (setrlimit(RLIMIT_FSIZE, &rl) == -1)
+				_exit(126);
+		}
+
+		/*
+		 * Scheduling band → nice(2).  Background work yields to
+		 * interactive; interactive gets a modest boost (root, so the
+		 * negative nice is permitted, applied before the credential drop).
+		 * FreeBSD has no base per-process I/O-priority API, so band maps to
+		 * CPU nice only.
+		 */
+		if (m->band == SVC_BAND_BACKGROUND)
+			(void)setpriority(PRIO_PROCESS, 0, 10);
+		else if (m->band == SVC_BAND_INTERACTIVE)
+			(void)setpriority(PRIO_PROCESS, 0, -5);
+
+		/* File-creation mask: explicit value, else the plane default. */
+		(void)umask(m->umask_val >= 0 ? (mode_t)m->umask_val : 0077);
+	}
 
 	/* Set credentials if specified.  Failures are fatal — running
 	 * as root when the manifest requested an unprivileged user
@@ -1610,8 +1622,15 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		MINT_CHECK_DEADLINE();
 	}
 	for (i = 0; i < m->ncap_storage; i++) {
+		/*
+		 * Convey the service's uid/gid so tzfsd owns the dataset root to
+		 * it at mint; the service then mounts the delivered handle lazily
+		 * and can write its own storage.  have_creds false leaves 0 (root),
+		 * which tzfsd treats as "no chown".
+		 */
 		int tfd = authority_mint_storage(sd.authority_channel_fd,
-		    &m->cap_storage[i]);
+		    &m->cap_storage[i], have_creds ? uid : 0,
+		    have_creds ? gid : 0);
 		if (tfd == -1) {
 			SERVICED_PROBE_CAP_MINT(m->label, "storage", -1);
 			goto fail_tokens;
@@ -1997,7 +2016,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	/* Every session is in hand; the launch deadline no longer applies. */
 	svc_launch_disarm_timer(svc, kq);
 
-	if (finalize_storage_descriptors(svc, m, L->uid, L->gid, L->service_fds,
+	if (finalize_storage_descriptors(m, L->service_fds,
 	    &L->nservices, L->service_names, L->service_types) == -1) {
 		syslog(LOG_ERR, "svc_exec %s: storage descriptor delivery: %m",
 		    m->label);

@@ -55,6 +55,7 @@ ATF_TESTS_C+=	bundle_selection_test
 ATF_TESTS_C+=	storage_lifecycle_test
 ATF_TESTS_C+=	rc_ingest_test
 ATF_TESTS_C+=	rc_adopt_test
+ATF_TESTS_C+=	activation_calendar_test
 BINDIR=		${TESTSDIR}
 
 # rc_ingest.c is compiled into BOTH rc_ingest_test and rc_adopt_test.  A source
@@ -87,6 +88,15 @@ CFLAGS.rc_adopt_test+=	-I${SRCTOP}/sys
 CFLAGS.rc_adopt_test+=	-ffunction-sections -fdata-sections
 LDFLAGS.rc_adopt_test+=	-Wl,--gc-sections
 
+# activation_calendar_test compiles the pure calendar math directly (no daemon
+# event loop or kqueue).  activation_calendar.c comes from the serviced source
+# dir via the .PATH above; referencing it by basename keeps its object in the
+# objdir.
+SRCS.activation_calendar_test=	activation_calendar_test.c activation_calendar.c
+CFLAGS.activation_calendar_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libauthorityrt
+
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 
 LIBADD.capd_service_fixture+=	capability channel service pthread
@@ -106,6 +116,11 @@ CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libnotify
 CFLAGS.component_fixture+=	-I${SRCTOP}/lib/libtracecmp
 CFLAGS.component_fixture+=	-I${SRCTOP}/sys
 
+# activation_test.c #includes ../activation.c inline; that now calls into the
+# calendar math, so activation_calendar.c is linked alongside (by basename via
+# .PATH).  --gc-sections drops the unreferenced daemon-state functions.
+SRCS.activation_test=	activation_test.c activation_calendar.c
+CFLAGS.activation_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.activation_test+=	-I${SRCTOP}/lib/libauthorityrt

@@ -500,6 +500,8 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 	treq.rights = req->rights;
 	treq.flags = req->flags;
 	treq.lifetime = req->lifetime;
+	treq.owner_uid = req->owner_uid;
+	treq.owner_gid = req->owner_gid;
 	if (tzfsd_request(chan, &treq, &grant) == -1) {
 		e = errno;
 		if (e == EPIPE || e == ECONNRESET || e == EBADF)

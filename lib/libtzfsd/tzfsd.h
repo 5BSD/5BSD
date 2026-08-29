@@ -34,6 +34,8 @@ struct tzfsd_req {
 	uint64_t	rights;
 	uint32_t	flags;			/* ZHF_* (0 for the common case) */
 	uint8_t		lifetime;
+	uint32_t	owner_uid;		/* chown dataset root at mint; 0=skip */
+	uint32_t	owner_gid;
 };
 
 struct tzfsd_grant {

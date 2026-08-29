@@ -29,11 +29,14 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 #include <capability.h>
 #include <channel.h>
+
+#include <tzfsd.h>
 
 #include "libservice.h"
 #include "service_private.h"
@@ -428,6 +431,15 @@ parse_service_bootstrap(void)
 			if (!service_socket_descriptor_valid(
 			    bootstrap->capabilities[i].fd))
 				goto invalid_descriptor;
+		} else if (strcmp(bootstrap->capabilities[i].type,
+		    "zfshandle") == 0) {
+			/*
+			 * A storage zfshandle is a TrustedZFS handle, not a
+			 * mac_capability token, so capability_get_info() does not
+			 * describe it — its authority is the kernel rights carried
+			 * on the handle itself.  The fd's liveness is already
+			 * verified above; accept it (service_storage_open mounts it).
+			 */
 		} else {
 			memset(&info, 0, sizeof(info));
 			if (capability_get_info(bootstrap->capabilities[i].fd,
@@ -1623,6 +1635,51 @@ service_capability_open(struct service_context *context, const char *name,
 	}
 	errno = ENOENT;
 	return (-1);
+}
+
+/*
+ * Mount a delivered storage capability and return its directory root.  serviced
+ * delivers "storage:<name>" as a rights-limited "zfshandle"; a mount-rights
+ * consumer calls this at startup to mount it lazily (serviced no longer mounts
+ * on its behalf).  The handle is RETAINED for the process lifetime because the
+ * anonymous mount is anchored by it — dropping it would force-unmount and every
+ * access on the returned directory would fail.  The caller hardens the returned
+ * directory's rights itself (an openat(2)ed file cannot exceed the directory).
+ */
+static int service_storage_anchor_fds[SERVICE_TOKEN_MAX];
+static unsigned service_storage_nanchors;
+
+int
+service_storage_open(struct service_context *context, const char *name,
+    int *dirfdp)
+{
+	char role[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
+	int handle = -1, dir, saved;
+
+	if (dirfdp == NULL || name == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*dirfdp = -1;
+	if (snprintf(role, sizeof(role), "storage:%s", name) >=
+	    (int)sizeof(role)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (service_capability_open(context, role, "zfshandle", &handle) == -1)
+		return (-1);
+	dir = tzfsd_mount_dir(handle, 0);
+	if (dir == -1) {
+		saved = errno != 0 ? errno : EIO;
+		(void)close(handle);
+		errno = saved;
+		return (-1);
+	}
+	if (service_storage_nanchors < nitems(service_storage_anchor_fds))
+		service_storage_anchor_fds[service_storage_nanchors++] = handle;
+	/* else retain by leaving the descriptor open; it still anchors. */
+	*dirfdp = dir;
+	return (0);
 }
 
 /*

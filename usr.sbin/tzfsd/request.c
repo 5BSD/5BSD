@@ -201,6 +201,34 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 	}
 
 	/*
+	 * Set the dataset root's owner to the requesting service so it can write
+	 * its own storage once it mounts the handle lazily — serviced no longer
+	 * mounts (and chowns) on the service's behalf.  This runs on the
+	 * full-rights leaf (before the ioctl ceiling is applied to the delivered
+	 * handle): a rights-limited handle would be denied ZFD_UNMOUNT, stranding
+	 * the transient mount and making the consumer's later mount fail EINVAL.
+	 * The ownership persists in the dataset.  Failure is fatal to the mint —
+	 * unwritable storage must not be delivered as if it were usable.
+	 */
+	if (rq->owner_uid != 0 && (rq->rights & ZH_MOUNT) != 0) {
+		int dfd = tzfs_mount(leaf_fd, false);
+
+		if (dfd == -1 ||
+		    fchown(dfd, rq->owner_uid, rq->owner_gid) == -1) {
+			int saved = errno;
+
+			if (dfd != -1)
+				(void)close(dfd);
+			(void)tzfs_unmount(leaf_fd);
+			(void)close(leaf_fd);
+			errno = saved;
+			return (-1);
+		}
+		(void)close(dfd);
+		(void)tzfs_unmount(leaf_fd);
+	}
+
+	/*
 	 * Re-open from the retained parent so both rights and subtree scope are
 	 * exactly those requested.  The provisioning leaf is always subtree-
 	 * capable and deriving it would accidentally preserve that authority.

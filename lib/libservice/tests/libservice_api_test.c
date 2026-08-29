@@ -755,7 +755,8 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	struct service_component_bootstrap *component_bootstrap;
 	struct service_listener *listener;
 	struct service_session *session;
-	int fd;
+	char longname[512];
+	int fd, sdir;
 
 	(void)tc;
 	fd = open("/dev/null", O_RDONLY);
@@ -803,6 +804,18 @@ ATF_TC_BODY(api_rejects_invalid_descriptors_and_arguments, tc)
 	errno = 0;
 	ATF_CHECK_ERRNO(EINVAL,
 	    service_component_fail(NULL, EACCES) == -1);
+	/* service_storage_open argument validation (no plane required). */
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open(NULL, "state", NULL) == -1);
+	errno = 0;
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open(NULL, NULL, &sdir) == -1);
+	errno = 0;	/* valid args, bogus context -> EINVAL from capability_open */
+	ATF_CHECK_ERRNO(EINVAL, service_storage_open(NULL, "state", &sdir) == -1);
+	memset(longname, 'a', sizeof(longname) - 1);
+	longname[sizeof(longname) - 1] = '\0';
+	errno = 0;
+	ATF_CHECK_ERRNO(ENAMETOOLONG,
+	    service_storage_open(NULL, longname, &sdir) == -1);
 	close(fd);
 }
 

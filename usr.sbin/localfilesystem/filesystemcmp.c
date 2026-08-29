@@ -85,10 +85,19 @@ harden_resource_fd(int fd, bool readonly)
 	}
 	cap_rights_init(&rights, CAP_READ, CAP_PREAD, CAP_SEEK, CAP_FCNTL,
 	    CAP_LOOKUP, CAP_FSTAT, CAP_FSTATAT, CAP_FLOCK);
+	/*
+	 * Memory-map right (CAP_MMAP_R implies CAP_MMAP + CAP_READ).  A file
+	 * openat(2)ed under this directory never gains a right the directory
+	 * lacks, so read-mmap has to be granted here for a consumer to mmap
+	 * broker-supplied files at all (databases, indexes, mapped readers).
+	 * Executable mappings (CAP_MMAP_X) are deliberately withheld — a file
+	 * broker is not an image loader.
+	 */
+	cap_rights_set(&rights, CAP_MMAP_R);
 	if (!readonly)
 		cap_rights_set(&rights, CAP_WRITE, CAP_PWRITE, CAP_FTRUNCATE,
 		    CAP_FSYNC, CAP_CREATE, CAP_MKDIRAT, CAP_UNLINKAT,
-		    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
+		    CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET, CAP_MMAP_W);
 	return (cap_rights_limit(fd, &rights) == -1 ||
 	    cap_fcntls_limit(fd, 0) == -1 ||
 	    harden_worker_fd(fd) == -1 ? -1 : 0);

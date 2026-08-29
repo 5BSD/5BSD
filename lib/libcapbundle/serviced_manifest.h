@@ -74,6 +74,54 @@
 #define	SVC_MGMT_CORE			1
 #define	SVC_MGMT_USER			2
 
+/*
+ * Scheduling band (launchd ProcessType analogue).  Governs the CPU/IO priority
+ * serviced applies to the launched process.  A zero-initialised manifest is
+ * SVC_BAND_STANDARD, so an omitted "band" key keeps today's neutral behaviour.
+ *
+ *   STANDARD     default; no special scheduling treatment.
+ *   BACKGROUND   throttled CPU/IO — batch, periodic, and drain work that must
+ *                not starve interactive units (positive nice + low-prio IO).
+ *   INTERACTIVE  latency-sensitive; no imposed throttle (slight nice boost).
+ */
+#define	SVC_BAND_STANDARD		0
+#define	SVC_BAND_BACKGROUND		1
+#define	SVC_BAND_INTERACTIVE		2
+
+/*
+ * Pre-exec resource limits (setrlimit, launchd Hard/SoftResourceLimits).  Each
+ * field is a byte/second/count ceiling, or SVC_LIMIT_UNSET to leave the
+ * inherited limit in place.  serviced applies these in the child after pdfork
+ * and before exec, so the ceilings are in force from the first instruction of
+ * the program image.  core defaults to 0 (no core dumps) unless overridden.
+ */
+#define	SVC_LIMIT_UNSET			((int64_t)-1)
+struct svc_limits {
+	int64_t		mem;		/* RLIMIT_AS, bytes */
+	int64_t		cpu;		/* RLIMIT_CPU, seconds */
+	int64_t		nproc;		/* RLIMIT_NPROC, processes */
+	int64_t		nofile;		/* RLIMIT_NOFILE, descriptors */
+	int64_t		stack;		/* RLIMIT_STACK, bytes */
+	int64_t		fsize;		/* RLIMIT_FSIZE, bytes */
+	int64_t		core;		/* RLIMIT_CORE, bytes (default 0) */
+};
+
+/*
+ * Calendar activation (launchd StartCalendarInterval).  Each field holds the
+ * matched value, or SVC_CAL_ANY for a wildcard.  A fire is due when every set
+ * field matches wall-clock local time; omitted fields match anything.  This is
+ * the cron/periodic replacement — one supervisor owns timers, so cron need not
+ * run as a separate adopted rc unit.
+ */
+#define	SVC_CAL_ANY			(-1)
+struct svc_calendar {
+	int		minute;		/* 0-59  or SVC_CAL_ANY */
+	int		hour;		/* 0-23  or SVC_CAL_ANY */
+	int		mday;		/* 1-31  or SVC_CAL_ANY */
+	int		month;		/* 1-12  or SVC_CAL_ANY */
+	int		wday;		/* 0-6, Sun=0, or SVC_CAL_ANY */
+};
+
 struct serviced_file_cap {
 	char		path[PATH_MAX];
 	uint64_t	actions;	/* FI_FS_* mask */
@@ -164,6 +212,16 @@ struct svc_manifest {
 	int		management;	/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
 	int		stop_timeout;	/* seconds before SIGKILL (default 5) */
 	unsigned	max_failures;	/* circuit breaker threshold (default 10) */
+
+	/*
+	 * Pre-exec process policy (applied in the child before exec).
+	 *   limits:  setrlimit ceilings; SVC_LIMIT_UNSET fields are inherited.
+	 *   band:    SVC_BAND_* scheduling class (default SVC_BAND_STANDARD).
+	 *   umask:   file-creation mask, or -1 for the plane default (0077).
+	 */
+	struct svc_limits limits;
+	int		band;
+	int		umask_val;
 	/* Required kernel modules (ensured by authorityd before launch) */
 	char		kmod_requires[SERVICED_MAX_KMOD_REQUIRES][SERVICED_KMOD_NAME_MAX];
 	unsigned	nkmod_requires;
@@ -182,6 +240,31 @@ struct svc_manifest {
 	 */
 	unsigned	timer_interval_sec;
 	char		activation_path[PATH_MAX];
+
+	/*
+	 * Calendar activation source (launchd StartCalendarInterval).  When
+	 * has_calendar is set, serviced computes the next wall-clock match of
+	 * `calendar` and arms a one-shot timer; on fire it re-arms for the
+	 * following match.  calendar_persistent requests anacron-style catch-up:
+	 * if a due fire was missed while serviced (or the machine) was down, run
+	 * once at startup.  This supersedes timer_interval_sec for wall-clock work.
+	 */
+	bool		has_calendar;
+	struct svc_calendar calendar;
+	bool		calendar_persistent;
+
+	/*
+	 * Queue-directory activation (launchd QueueDirectories).  While
+	 * queue_directory is non-empty (holds any non-dot entry), serviced keeps
+	 * the unit started, relaunching it after each exit until the directory
+	 * drains — the spool-drain pattern, layered on the same EVFILT_VNODE
+	 * watch as activation_path.  Empty string = no queue source.
+	 *
+	 * activation_on_mount (launchd StartOnMount): (re)start the unit whenever
+	 * a filesystem is mounted.
+	 */
+	char		queue_directory[PATH_MAX];
+	bool		activation_on_mount;
 
 	/*
 	 * Socket activation source (Phase 4).  serviced binds and holds a

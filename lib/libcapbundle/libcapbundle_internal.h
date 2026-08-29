@@ -119,6 +119,20 @@ struct capbundle_service {
 	/* Stop timeout */
 	int	stop_timeout;
 	unsigned max_failures;
+
+	/* Pre-exec process policy (setrlimit / scheduling band / umask). */
+	struct svc_limits limits;
+	int	band;			/* SVC_BAND_* (default SVC_BAND_STANDARD) */
+	int	umask_val;		/* mask, or -1 for the plane default */
+
+	/* Calendar activation source (launchd StartCalendarInterval). */
+	bool	has_calendar;
+	struct svc_calendar calendar;
+	bool	calendar_persistent;
+
+	/* Queue-directory / mount activation sources. */
+	char	queue_directory[PATH_MAX];
+	bool	activation_on_mount;
 };
 
 /* Internal bundle representation. */

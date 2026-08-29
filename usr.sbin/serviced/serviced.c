@@ -148,9 +148,15 @@ event_loop(void)
 				continue;
 			}
 
-			/* Path (vnode) activation sources. */
+			/* Path and queue-directory (vnode) activation sources. */
 			if (kev->filter == EVFILT_VNODE) {
 				activation_path_event(kev, serviced_kq);
+				continue;
+			}
+
+			/* Mount (EVFILT_FS) activation sources. */
+			if (kev->filter == EVFILT_FS) {
+				activation_mount_event(kev, serviced_kq);
 				continue;
 			}
 

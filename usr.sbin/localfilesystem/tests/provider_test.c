@@ -3,6 +3,7 @@
  */
 
 #include <sys/ioctl.h>
+#include <sys/capsicum.h>
 #include <sys/param.h>
 #include <sys/wait.h>
 
@@ -423,11 +424,55 @@ ATF_TC_BODY(resource_fd_type_validation, tc)
 	ATF_REQUIRE_EQ(0, unlink(path));
 }
 
+/*
+ * A hardened resource directory grants read-mmap so consumers can mmap
+ * broker-supplied files; write-mmap follows the writable/read-only split, and
+ * executable mappings are never granted.
+ */
+ATF_TC_WITHOUT_HEAD(resource_fd_grants_mmap);
+ATF_TC_BODY(resource_fd_grants_mmap, tc)
+{
+	char tmpl[] = "resdir.XXXXXX";
+	char *dir;
+	cap_rights_t rights, want;
+	int fd;
+
+	dir = mkdtemp(tmpl);
+	ATF_REQUIRE(dir != NULL);
+
+	/* Read-only root: read-mmap granted, write-mmap and exec-mmap withheld. */
+	fd = open(dir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, filesystemcmp_test_harden_resource_fd(fd, true));
+	ATF_REQUIRE_EQ(0, cap_rights_get(fd, &rights));
+	cap_rights_init(&want, CAP_MMAP_R);
+	ATF_CHECK(cap_rights_contains(&rights, &want));
+	cap_rights_init(&want, CAP_MMAP_W);
+	ATF_CHECK(!cap_rights_contains(&rights, &want));
+	cap_rights_init(&want, CAP_MMAP_X);
+	ATF_CHECK(!cap_rights_contains(&rights, &want));
+	ATF_REQUIRE_EQ(0, close(fd));
+
+	/* Writable root: read- and write-mmap granted, exec-mmap still withheld. */
+	fd = open(dir, O_RDONLY | O_DIRECTORY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(0, filesystemcmp_test_harden_resource_fd(fd, false));
+	ATF_REQUIRE_EQ(0, cap_rights_get(fd, &rights));
+	cap_rights_init(&want, CAP_MMAP_R, CAP_MMAP_W);
+	ATF_CHECK(cap_rights_contains(&rights, &want));
+	cap_rights_init(&want, CAP_MMAP_X);
+	ATF_CHECK(!cap_rights_contains(&rights, &want));
+	ATF_REQUIRE_EQ(0, close(fd));
+
+	ATF_REQUIRE_EQ(0, rmdir(dir));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, provider_object_lifecycle);
 	ATF_TP_ADD_TC(tp, provider_errors_and_malformed_channel);
 	ATF_TP_ADD_TC(tp, arguments);
 	ATF_TP_ADD_TC(tp, resource_fd_type_validation);
+	ATF_TP_ADD_TC(tp, resource_fd_grants_mmap);
 	return (atf_no_error());
 }

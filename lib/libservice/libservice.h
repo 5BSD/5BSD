@@ -155,6 +155,8 @@ const char *service_label(struct service_context *);
  * access tokens, these descriptors are not activated.  The caller must close
  * the returned close-on-exec descriptor.
  */
+int	service_storage_open(struct service_context *, const char *name,
+	    int *dirfdp);
 int	service_capability_open(struct service_context *, const char *name,
 	    const char *type, int *fd);
 

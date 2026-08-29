@@ -1620,8 +1620,7 @@ main(void)
 	context = NULL;
 	if (casper == NULL || harden_factory_channel(casper) == -1 ||
 	    service_acquire(&context) == -1 ||
-	    service_capability_open(context, "storage:state", "directory",
-	    &storage_dir) == -1 ||
+	    service_storage_open(context, "state", &storage_dir) == -1 ||
 	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1)
 		goto fail;

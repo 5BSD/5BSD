@@ -163,6 +163,8 @@ tzfsd_request(int chan, const struct tzfsd_req *req, struct tzfsd_grant *out)
 	rq.flags = req->flags;
 	rq.rights = req->rights;
 	rq.lifetime = req->lifetime;
+	rq.owner_uid = req->owner_uid;
+	rq.owner_gid = req->owner_gid;
 	if (strlcpy(rq.flavor, req->flavor, sizeof(rq.flavor)) >=
 	    sizeof(rq.flavor) ||
 	    strlcpy(rq.dataset, req->dataset, sizeof(rq.dataset)) >=

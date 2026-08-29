@@ -32,17 +32,6 @@ AUTHORITY_INIT_LOADERMODE= 444
 AUTHORITY_INIT_LOADERPACKAGE= authorityd
 FILESGROUPS+= AUTHORITY_INIT AUTHORITY_INIT_LOADER
 
-# Load the mac_capability policy stack the plane requires (see the .conf file).
-# Shipped with the plane so a pkgbase install of authorityd brings up the
-# device; a base install without the plane never loads the policy.
-MAC_CAPABILITY_LOADER= mac_capability.conf
-MAC_CAPABILITY_LOADERDIR= /boot/loader.conf.d
-MAC_CAPABILITY_LOADEROWN= ${BINOWN}
-MAC_CAPABILITY_LOADERGRP= ${BINGRP}
-MAC_CAPABILITY_LOADERMODE= 444
-MAC_CAPABILITY_LOADERPACKAGE= authorityd
-FILESGROUPS+= MAC_CAPABILITY_LOADER
-
 authority-init: ${PROG}
 	${CP} ${.ALLSRC} ${.TARGET}
 CLEANFILES+= authority-init

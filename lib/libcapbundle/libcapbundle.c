@@ -454,6 +454,20 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->stop_timeout = s->stop_timeout > 0 ? s->stop_timeout : 5;
 	m->max_failures = s->max_failures > 0 ? s->max_failures : 10;
 
+	/* Pre-exec process policy: limits / band / umask. */
+	m->limits = s->limits;
+	m->band = s->band;
+	m->umask_val = s->umask_val;
+
+	/* Calendar / queue-directory / mount activation sources. */
+	m->has_calendar = s->has_calendar;
+	m->calendar = s->calendar;
+	m->calendar_persistent = s->calendar_persistent;
+	if (manifest_copy(s->queue_directory, m->queue_directory,
+	    sizeof(m->queue_directory)) == -1)
+		return (-1);
+	m->activation_on_mount = s->activation_on_mount;
+
 	/* Path capabilities */
 	m->ncap_paths = MIN(s->ncap_paths, SERVICED_MAX_CAP_PATHS);
 	for (i = 0; i < m->ncap_paths; i++) {

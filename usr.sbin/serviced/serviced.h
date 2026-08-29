@@ -163,6 +163,8 @@ struct svc_runtime {
 	 */
 	uintptr_t	activation_timer_ident;	/* 0 = no periodic timer armed */
 	int		activation_path_fd;	/* -1 = no path watch open */
+	int		activation_queue_fd;	/* -1 = no queue-dir watch open */
+	uintptr_t	activation_mount_ident;	/* 0 = no EVFILT_FS mount watch */
 	/*
 	 * Manager-owned socket activation listeners (Phase 4).  serviced binds
 	 * and holds each listening socket declared by the unit; the first inbound
@@ -253,7 +255,8 @@ int	authority_mint_file(int channel_fd, const char *path, uint64_t actions);
 int	authority_mint_net(int channel_fd, const struct ort_net_claim *nc);
 int	authority_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
 int	authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc);
-int	authority_mint_storage(int channel_fd, const struct ort_storage_claim *sc);
+int	authority_mint_storage(int channel_fd, const struct ort_storage_claim *sc,
+	    uid_t owner_uid, gid_t owner_gid);
 int	authority_destroy_storage(int channel_fd,
 	    const struct ort_storage_claim *sc);
 int	authority_mint_system(int channel_fd, uint32_t gates);
@@ -352,6 +355,7 @@ void	activation_source_teardown(struct svc_runtime *svc, int kq);
 bool	activation_timer_owns(uintptr_t ident);
 void	activation_timer_fire(uintptr_t ident, int kq);
 void	activation_path_event(struct kevent *kev, int kq);
+void	activation_mount_event(struct kevent *kev, int kq);
 bool	activation_socket_owns(int fd);
 void	activation_socket_event(struct kevent *kev, int kq);
 
@@ -426,6 +430,8 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 	svc->coalition_fd = -1;
 	svc->jail_fd = -1;
 	svc->activation_path_fd = -1;
+	svc->activation_queue_fd = -1;
+	svc->activation_mount_ident = 0;
 	for (unsigned aidx = 0; aidx < SERVICED_MAX_ACTIVATION_SOCKETS; aidx++)
 		svc->activation_listen_fds[aidx] = -1;
 	svc->nactivation_listen = 0;

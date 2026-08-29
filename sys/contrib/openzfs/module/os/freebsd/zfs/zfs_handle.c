@@ -2277,6 +2277,7 @@ zfshandle_anon_mount(struct thread *td, const char *osname,
 	struct vfsoptlist *opts;
 	struct vfsconf *vfsp;
 	struct mount *mp;
+	cred_t *saved_cred;
 	int error, niov;
 	static const char fstype[] = "zfs";
 	static const char fspath[] = "[anon]";
@@ -2310,12 +2311,23 @@ zfshandle_anon_mount(struct thread *td, const char *osname,
 	if (error != 0)
 		return (error);
 
-	mp = vfs_mount_alloc(NULL, vfsp, fspath, td->td_ucred);
+	/*
+	 * ZFD_MOUNT verified ZH_MOUNT on the handle before dispatching here, so
+	 * the capability — not the caller's uid — is the authorization.  Install
+	 * the kernel cred across mount allocation and VFS_MOUNT so the ambient
+	 * secpolicy_fs_mount() re-check (which reads curthread's cred) does not
+	 * reject an unprivileged capability holder; the mount is thus root-owned
+	 * exactly as a serviced-initiated mount was.  The dir fd opened below
+	 * still uses the caller's restored cred.
+	 */
+	saved_cred = zfshandle_cred_enter();
+	mp = vfs_mount_alloc(NULL, vfsp, fspath, curthread->td_ucred);
 	mp->mnt_optnew = opts;
 	if (rdonly)
 		mp->mnt_flag |= MNT_RDONLY;
 
 	error = VFS_MOUNT(mp);
+	zfshandle_cred_exit(saved_cred);
 	if (error != 0) {
 		vfs_freeopts(mp->mnt_optnew);
 		mp->mnt_optnew = NULL;

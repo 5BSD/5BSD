@@ -344,7 +344,7 @@ ATF_TC_BODY(protocol_malformed, tc)
 
 	memset(&rq, 0, sizeof(rq)); rq.op = TZFSD_OP_REQUEST;
 	rq.rights = ZH_PROPS_READ; rq.lifetime = TZFSD_LEASE;
-	strlcpy(rq.dataset, "reserved", sizeof(rq.dataset)); rq._reserved[3] = 1;
+	strlcpy(rq.dataset, "reserved", sizeof(rq.dataset)); rq._reserved[2] = 1;
 	ATF_REQUIRE_EQ(0, raw_request(chan, &rq, sizeof(rq), &rp));
 	ATF_CHECK_EQ(EINVAL, rp.status);
 
