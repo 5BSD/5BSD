@@ -708,6 +708,12 @@ void abac_label_set_default(struct abac_label *vl, bool is_subject);
 const char *abac_label_get_value(const struct abac_label *vl, const char *key);
 uint32_t abac_label_hash(const char *str, size_t len);
 int abac_label_to_string(const struct abac_label *vl, char *buf, size_t buflen);
+bool abac_label_is_default(const struct abac_label *vl);
+bool abac_label_equal(const struct abac_label *a, const struct abac_label *b);
+bool abac_label_dominates(const struct abac_label *cur,
+    const struct abac_label *newlabel);
+int abac_label_check_relabel(struct ucred *cred, const struct abac_label *cur,
+    const struct abac_label *newlabel, const char *what);
 int abac_rule_pattern_parse(const char *str, size_t len,
     struct abac_rule_pattern *pattern);
 

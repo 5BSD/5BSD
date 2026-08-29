@@ -498,3 +498,65 @@ abac_rule_pattern_parse(const char *str, size_t len,
 
 	return (0);
 }
+
+/*
+ * Label-integrity helpers.  Labels are unordered attribute sets, so dominance
+ * is attribute refinement: an unconfined label dominates everything, while a
+ * confined label dominates only labels preserving all of its key/value pairs.
+ */
+bool
+abac_label_is_default(const struct abac_label *vl)
+{
+	const char *v;
+
+	if (vl == NULL || vl == ABAC_LABEL_NEEDS_LOAD)
+		return (true);
+	if (vl->vl_npairs == 0)
+		return (true);
+	if (vl->vl_npairs == 1) {
+		v = abac_label_get_value(vl, "type");
+		if (v != NULL && strcmp(v, "unlabeled") == 0)
+			return (true);
+	}
+	return (false);
+}
+
+bool
+abac_label_equal(const struct abac_label *a, const struct abac_label *b)
+{
+	uint32_t i;
+	const char *v;
+
+	if (a == b)
+		return (true);
+	if (a == NULL || b == NULL || a == ABAC_LABEL_NEEDS_LOAD ||
+	    b == ABAC_LABEL_NEEDS_LOAD)
+		return (false);
+	if (a->vl_npairs != b->vl_npairs)
+		return (false);
+	for (i = 0; i < a->vl_npairs; i++) {
+		v = abac_label_get_value(b, a->vl_pairs[i].vp_key);
+		if (v == NULL || strcmp(v, a->vl_pairs[i].vp_value) != 0)
+			return (false);
+	}
+	return (true);
+}
+
+bool
+abac_label_dominates(const struct abac_label *cur,
+    const struct abac_label *newlabel)
+{
+	uint32_t i;
+	const char *v;
+
+	if (abac_label_is_default(cur))
+		return (true);
+	if (newlabel == NULL || newlabel == ABAC_LABEL_NEEDS_LOAD)
+		return (false);
+	for (i = 0; i < cur->vl_npairs; i++) {
+		v = abac_label_get_value(newlabel, cur->vl_pairs[i].vp_key);
+		if (v == NULL || strcmp(v, cur->vl_pairs[i].vp_value) != 0)
+			return (false);
+	}
+	return (true);
+}

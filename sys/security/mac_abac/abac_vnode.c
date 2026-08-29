@@ -15,7 +15,10 @@
 #include <sys/malloc.h>
 #include <sys/mount.h>
 #include <sys/namei.h>
+#include <sys/priv.h>
+#include <sys/proc.h>
 #include <sys/sbuf.h>
+#include <sys/syslog.h>
 #include <sys/ucred.h>
 #include <sys/vnode.h>
 #include <sys/extattr.h>
@@ -507,6 +510,17 @@ abac_vnode_check_deleteextattr(struct ucred *cred, struct vnode *vp,
 		obj = SLOT(vplabel);
 		if (obj == NULL)
 			obj = &abac_default_object;
+
+		/* A confined subject may not drop an object's mac_abac label. */
+		if (!abac_label_is_default(subj)) {
+			if (abac_log_level >= ABAC_LOG_DENY)
+				log(LOG_WARNING, "abac: direct deleteextattr of "
+				    "mac_abac label denied for confined subject,"
+				    " pid %d uid %d\n",
+				    curproc != NULL ? curproc->p_pid : 0,
+				    (int)cred->cr_uid);
+			return (EPERM);
+		}
 
 		/* Check setextattr operation - deletion is a form of modification */
 		error = abac_rules_check(cred, subj, obj, ABAC_OP_SETEXTATTR, NULL);
@@ -1001,7 +1015,7 @@ int
 abac_vnode_check_relabel(struct ucred *cred, struct vnode *vp,
     struct label *vplabel, struct label *newlabel)
 {
-	struct abac_label *subj, *obj;
+	struct abac_label *subj, *obj, *newvl;
 	int error;
 
 	ABAC_CHECK_ENABLED();
@@ -1020,6 +1034,17 @@ abac_vnode_check_relabel(struct ucred *cred, struct vnode *vp,
 	obj = SLOT(vplabel);
 	if (obj == NULL)
 		obj = &abac_default_object;
+
+	/* Enforce privilege and no-upgrade before any permissive rule handling. */
+	if (newlabel != NULL) {
+		newvl = SLOT(newlabel);
+		if (newvl != NULL) {
+			error = abac_label_check_relabel(cred, subj, newvl,
+			    "vnode");
+			if (error != 0)
+				return (error);
+		}
+	}
 
 	/* Use SETEXTATTR as proxy for relabeling */
 	error = abac_rules_check(cred, subj, obj, ABAC_OP_SETEXTATTR, NULL);
@@ -1202,6 +1227,20 @@ abac_vnode_check_setextattr(struct ucred *cred, struct vnode *vp,
 		obj = SLOT(vplabel);
 		if (obj == NULL || obj == ABAC_LABEL_NEEDS_LOAD)
 			obj = &abac_default_object;
+
+		/*
+		 * This hook cannot inspect the value being written, so a confined
+		 * subject must use the checked ABAC_SYS_SETLABEL path instead.
+		 */
+		if (!abac_label_is_default(subj)) {
+			if (abac_log_level >= ABAC_LOG_DENY)
+				log(LOG_WARNING, "abac: direct setextattr of "
+				    "mac_abac label denied for confined subject,"
+				    " pid %d uid %d\n",
+				    curproc != NULL ? curproc->p_pid : 0,
+				    (int)cred->cr_uid);
+			return (EPERM);
+		}
 
 		/* Check setextattr operation */
 		error = abac_rules_check(cred, subj, obj, ABAC_OP_SETEXTATTR, NULL);

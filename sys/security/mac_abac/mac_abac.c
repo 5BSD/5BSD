@@ -847,7 +847,7 @@ abac_syscall(struct thread *td, int call, void *arg)
 			struct abac_setlabel_arg setlabel_arg;
 			struct file *fp;
 			struct vnode *vp;
-			struct abac_label *old, *parsed;
+			struct abac_label *old, *parsed, *subj;
 			char *label_buf;
 			size_t label_len;
 
@@ -888,6 +888,21 @@ abac_syscall(struct thread *td, int call, void *arg)
 				break;
 			}
 			error = abac_label_parse(label_buf, label_len, parsed);
+			if (error != 0) {
+				abac_label_free(parsed);
+				free(label_buf, M_TEMP);
+				break;
+			}
+
+			/*
+			 * The syscall-wide privilege check separates administrators from
+			 * other callers.  Also prevent a confined administrator from
+			 * assigning a label outside its own current label's refinement.
+			 */
+			subj = (td->td_ucred->cr_label != NULL) ?
+			    SLOT(td->td_ucred->cr_label) : NULL;
+			error = abac_label_check_relabel(td->td_ucred, subj, parsed,
+			    "setlabel");
 			if (error != 0) {
 				abac_label_free(parsed);
 				free(label_buf, M_TEMP);
@@ -953,9 +968,22 @@ abac_syscall(struct thread *td, int call, void *arg)
 		if (error)
 			break;
 		{
-			struct abac_label *old;
+			struct abac_label *old, *subj;
 			struct file *fp;
 			struct vnode *vp;
+
+			/*
+			 * Removing a label assigns the default/unlabeled state.  Apply
+			 * the same no-upgrade rule as SETLABEL so a confined
+			 * administrator cannot use this local-only command to escape the
+			 * upstream label-integrity gate.
+			 */
+			subj = (td->td_ucred->cr_label != NULL) ?
+			    SLOT(td->td_ucred->cr_label) : NULL;
+			error = abac_label_check_relabel(td->td_ucred, subj,
+			    &abac_default_object, "removelabel");
+			if (error != 0)
+				break;
 
 			error = fget(td, val, &cap_no_rights, &fp);
 			if (error)
