@@ -1814,6 +1814,38 @@ scenario_connect(const char *name, const char *result)
 	hold();
 }
 
+/*
+ * A provider that exposes its name as sendable (service_provider_expose_sendable):
+ * the sessions it hands out are delivered transfer-UNLIMITED, so a consumer that
+ * connects sees a non-confined endpoint it may re-send.  Pairs with the "connect"
+ * scenario, whose confined=0 result proves the provider's declared policy took
+ * effect.
+ */
+static int
+scenario_sendable_provider(const char *name, const char *result)
+{
+	struct service_identity identity;
+	struct service_listener *listener;
+	int client;
+
+	if (fixture_service_initialize() == -1)
+		fixture_fail(result, "sendable-provider init errno=%d", errno);
+	if (service_provider_expose_sendable(fixture_service_provider, name,
+	    &listener) == -1)
+		fixture_fail(result, "expose_sendable %s errno=%d", name, errno);
+	if (fixture_service_ready() == -1)
+		fixture_fail(result, "sendable-provider readiness errno=%d", errno);
+	write_result(result, "sendable=exposed\nname=%s\n", name);
+	memset(&identity, 0, sizeof(identity));
+	identity.size = sizeof(identity);
+	if (service_listener_accept(listener, &identity, &client) == -1)
+		fixture_fail(result, "sendable-provider accept errno=%d", errno);
+	if (fixture_event_send(client, "pong", 5) == -1)
+		fixture_fail(result, "sendable-provider send errno=%d", errno);
+	/* Hold the endpoint open past the fire-and-forget send. */
+	hold();
+}
+
 static void
 usage(void)
 {
@@ -1935,5 +1967,7 @@ main(int argc, char **argv)
 		return (scenario_helper_open(argv[2], argv[3]));
 	if (argc == 4 && strcmp(argv[1], "connect") == 0)
 		return (scenario_connect(argv[2], argv[3]));
+	if (argc == 4 && strcmp(argv[1], "sendable-provider") == 0)
+		return (scenario_sendable_provider(argv[2], argv[3]));
 	usage();
 }

@@ -1847,7 +1847,7 @@ service_worker_drop_inherited_authority(void)
 }
 
 static int
-service_claim_name(const char *name)
+service_claim_name(const char *name, bool sendable)
 {
 	struct svc_name_claim_req req;
 
@@ -1857,6 +1857,7 @@ service_claim_name(const char *name)
 	}
 	memset(&req, 0, sizeof(req));
 	req.op = SVC_OP_NAME_CLAIM;
+	req.flags = sendable ? SVC_NAME_CLAIM_SENDABLE : 0;
 	strlcpy(req.name, name, sizeof(req.name));
 	return (rpc(&req, sizeof(req), NULL));
 }
@@ -1954,7 +1955,7 @@ service_helper_open(struct service_context *context, const char *name,
 
 static int
 service_expose_internal(struct service_provider *provider, const char *name,
-    service_activation_handler activate, void *context,
+    service_activation_handler activate, void *context, bool sendable,
     struct service_listener **listenerp)
     __no_lock_analysis
 {
@@ -2002,7 +2003,7 @@ service_expose_internal(struct service_provider *provider, const char *name,
 	listener->next = service_listeners;
 	service_listeners = listener;
 	(void)pthread_mutex_unlock(&service_state_lock);
-	if (service_claim_name(name) == -1)
+	if (service_claim_name(name, sendable) == -1)
 		goto fail_registered;
 	listener->claimed = true;
 	*listenerp = listener;
@@ -2058,7 +2059,7 @@ service_provider_expose_lazy(struct service_provider *provider,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (service_expose_internal(provider, name, activate, context,
+	if (service_expose_internal(provider, name, activate, context, false,
 	    &listener) == -1)
 		return (-1);
 	*listenerp = listener;
@@ -2072,6 +2073,23 @@ service_provider_expose(struct service_provider *provider, const char *name,
 
 	return (service_provider_expose_lazy(provider, name, NULL, NULL,
 	    listenerp));
+}
+
+int
+service_provider_expose_sendable(struct service_provider *provider,
+    const char *name, struct service_listener **listenerp)
+{
+	struct service_listener *listener;
+
+	if (!service_provider_valid(provider)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_expose_internal(provider, name, NULL, NULL, true,
+	    &listener) == -1)
+		return (-1);
+	*listenerp = listener;
+	return (0);
 }
 
 int

@@ -202,14 +202,14 @@ lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq)
 }
 
 static void
-lookup_channel_reply(struct channel_message *request, int status, int *fds,
-    size_t nfds)
+lookup_channel_reply_ex(struct channel_message *request, int status, int *fds,
+    size_t nfds, bool cap_xfer)
 {
 	struct svc_reply reply;
 	size_t i;
 
 	reply.status = status;
-	for (i = 0; i < nfds; i++) {
+	for (i = 0; cap_xfer && i < nfds; i++) {
 		if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
 			reply.status = errno;
 			fds = NULL;
@@ -228,6 +228,14 @@ lookup_channel_reply(struct channel_message *request, int status, int *fds,
 		syslog(LOG_WARNING, "domain: channel reply: %m");
 }
 
+static void
+lookup_channel_reply(struct channel_message *request, int status, int *fds,
+    size_t nfds)
+{
+
+	lookup_channel_reply_ex(request, status, fds, nfds, true);
+}
+
 /*
  * Request handler for a minted user-domain channel.  It serves only
  * SVC_OP_LOOKUP, scoped to the channel's domain; every other operation is
@@ -241,6 +249,7 @@ lookup_channel_request(struct channel *channel,
 	const struct svc_lookup_req *req;
 	const uint32_t *opp;
 	uint32_t op;
+	bool sendable;
 	int client_fd, error;
 
 	(void)channel;
@@ -356,12 +365,13 @@ lookup_channel_request(struct channel *channel,
 		lookup_channel_reply(request, ENAMETOOLONG, NULL, 0);
 		goto out;
 	}
-	client_fd = naming_lookup(req->name, NULL, &lc->domain, &error);
+	client_fd = naming_lookup(req->name, NULL, &lc->domain, &error,
+	    &sendable);
 	if (client_fd < 0) {
 		lookup_channel_reply(request, error, NULL, 0);
 		goto out;
 	}
-	lookup_channel_reply(request, 0, &client_fd, 1);
+	lookup_channel_reply_ex(request, 0, &client_fd, 1, !sendable);
 	close(client_fd);
 out:
 	channel_message_free(request);

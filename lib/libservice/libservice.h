@@ -120,6 +120,14 @@ int	service_provider_worker_channel(struct service_provider *,
 int	service_provider_protect(struct service_provider *, uint32_t flags);
 int	service_provider_expose(struct service_provider *, const char *name,
 	    struct service_listener **);
+/*
+ * Like service_provider_expose(), but declares that sessions delivered for
+ * this name may be forwarded: the consumer receives a transfer-unlimited
+ * endpoint it can re-send (attenuating per hop) instead of the default
+ * non-transferable one.  This is the provider's own protocol contract.
+ */
+int	service_provider_expose_sendable(struct service_provider *,
+	    const char *name, struct service_listener **);
 int	service_provider_expose_lazy(struct service_provider *, const char *name,
 	    service_activation_handler, void *, struct service_listener **);
 int	service_provider_enter_capability_mode(struct service_provider *);

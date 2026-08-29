@@ -15,6 +15,7 @@ MLINKS+=	libservice.3 service_provider_authorize_capabilities.3
 MLINKS+=	libservice.3 service_provider_worker_channel.3
 MLINKS+=	libservice.3 service_provider_protect.3
 MLINKS+=	libservice.3 service_provider_expose.3
+MLINKS+=	libservice.3 service_provider_expose_sendable.3
 MLINKS+=	libservice.3 service_provider_expose_lazy.3
 MLINKS+=	libservice.3 service_provider_enter_capability_mode.3
 MLINKS+=	libservice.3 service_provider_ready.3

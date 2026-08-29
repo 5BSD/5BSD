@@ -1858,6 +1858,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	svc->state = SVC_STATE_STARTING;
 	svc->protocol_ready = false;
 	memset(svc->name_state, SVC_NAME_UNCLAIMED, sizeof(svc->name_state));
+	memset(svc->name_sendable, 0, sizeof(svc->name_sendable));
 	clock_gettime(CLOCK_MONOTONIC, &svc->last_start);
 
 	EV_SET(&kev[0], pd_fd, EVFILT_PROCDESC, EV_ADD,

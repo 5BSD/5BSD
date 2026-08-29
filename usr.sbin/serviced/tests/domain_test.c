@@ -160,7 +160,7 @@ provider_register(struct svc_runtime *svc, const char *name)
 	svc->manifest.nprovides = 1;
 	svc->protocol_ready = true;
 	svc->state = SVC_STATE_RUNNING;
-	ATF_REQUIRE_EQ(0, naming_register(name, svc));
+	ATF_REQUIRE_EQ(0, naming_register(name, svc, false));
 	ATF_REQUIRE(naming_exists(name));
 }
 
@@ -305,7 +305,7 @@ ATF_TC_BODY(default_requester_is_system, tc)
 	ATF_CHECK_EQ(SVC_DOMAIN_SYSTEM, requester.domain.kind);
 	error = 0;
 	rv = naming_lookup("org.5bsd.Nonexistent", &requester,
-	    &requester.domain, &error);
+	    &requester.domain, &error, NULL);
 	ATF_CHECK_EQ(-1, rv);
 	ATF_CHECK_EQ(ENOENT, error);
 }
@@ -326,12 +326,12 @@ ATF_TC_BODY(user_scope_hides_registered_name, tc)
 	provider_register(&provider, SYSTEM_ONLY_NAME);
 
 	error = 0;
-	rv = naming_lookup(SYSTEM_ONLY_NAME, NULL, &user, &error);
+	rv = naming_lookup(SYSTEM_ONLY_NAME, NULL, &user, &error, NULL);
 	ATF_CHECK_EQ(-1, rv);
 	ATF_CHECK_EQ(ENOENT, error);		/* registered, but out of scope */
 
 	error = 0;
-	rv = naming_lookup("org.5bsd.NeverRegistered", NULL, &user, &error);
+	rv = naming_lookup("org.5bsd.NeverRegistered", NULL, &user, &error, NULL);
 	ATF_CHECK_EQ(-1, rv);
 	ATF_CHECK_EQ(ENOENT, error);		/* unregistered: same answer */
 

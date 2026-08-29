@@ -37,6 +37,7 @@ struct naming_entry {
 	struct naming_entry	*next;
 	char			 name[SERVICED_NAME_MAX + 1];
 	struct svc_runtime	*owner;		/* owning service */
+	bool			 sendable;	/* provider allows session forwarding */
 };
 
 static struct naming_entry *naming_hash[NAMING_HASH_SIZE];
@@ -128,7 +129,7 @@ naming_count_owner(struct svc_runtime *owner)
 }
 
 int
-naming_register(const char *name, struct svc_runtime *owner)
+naming_register(const char *name, struct svc_runtime *owner, bool sendable)
 {
 	struct naming_entry *e;
 	unsigned h;
@@ -192,6 +193,7 @@ naming_register(const char *name, struct svc_runtime *owner)
 
 	strlcpy(e->name, name, sizeof(e->name));
 	e->owner = owner;
+	e->sendable = sendable;
 
 	h = name_hash(name);
 	e->next = naming_hash[h];
@@ -307,13 +309,15 @@ naming_rebind_owner(struct svc_runtime *old_owner,
  */
 int
 naming_lookup(const char *name, struct svc_runtime *requester,
-    const struct svc_domain *domain, int *errp)
+    const struct svc_domain *domain, int *errp, bool *sendablep)
 {
 	struct naming_entry *e;
 	struct svc_runtime *provider;
 	struct svc_new_client_msg notify;
 	int provider_end, client_end;
 
+	if (sendablep != NULL)
+		*sendablep = false;
 	/*
 	 * Domain scope is layered on top of the registry and checked first: an
 	 * out-of-scope name is indistinguishable from an unregistered one.
@@ -359,13 +363,18 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	 * own end, and a provider that hands each session to a worker attenuates
 	 * it to CAP_XFER_ONCE itself right before the SCM_RIGHTS forward (so the
 	 * worker lands at CAP_XFER_NONE) — multi-hop delegation is built from
-	 * explicit per-hop attenuation, not a kernel-baked budget.  The client
-	 * endpoint is limited to CAP_XFER_ONCE, which the single delivery send to
-	 * the consumer consumes to CAP_XFER_NONE: the consumer cannot delegate it
-	 * further.  (An opt-in sendable session would instead leave the client
-	 * end unlimited.)
+	 * explicit per-hop attenuation, not a kernel-baked budget.
+	 *
+	 * The client endpoint's transfer policy is the provider's own contract,
+	 * declared when it exposed this name.  By default it is limited to
+	 * CAP_XFER_ONCE, which the single delivery send to the consumer consumes
+	 * to CAP_XFER_NONE: the consumer cannot delegate it further.  If the
+	 * provider marked the name sendable, the client endpoint is left
+	 * CAP_XFER_UNLIMITED so the consumer may re-send it (attenuating per hop
+	 * as it chooses); it can only ever tighten from there.
 	 */
-	if (cap_xfer_limit(client_end, CAP_XFER_ONCE) == -1) {
+	if (!e->sendable &&
+	    cap_xfer_limit(client_end, CAP_XFER_ONCE) == -1) {
 		close(provider_end);
 		close(client_end);
 		*errp = ENOTCAPABLE;
@@ -421,6 +430,8 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	 */
 	cancel_idle_timer(provider, serviced_kq);
 
+	if (sendablep != NULL)
+		*sendablep = e->sendable;
 	*errp = 0;
 	return (client_end);
 }

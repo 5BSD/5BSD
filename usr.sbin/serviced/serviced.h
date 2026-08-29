@@ -134,6 +134,13 @@ struct svc_runtime {
 	bool		lookup_activated; /* launched to satisfy a named lookup */
 	bool		want_console;	/* stdio on /dev/console (rc bootstrap) */
 	uint8_t		name_state[SERVICED_MAX_PROVIDES];
+	/*
+	 * Per-provides transfer policy the provider set at claim time (its own
+	 * protocol contract, not manifest policy): true leaves each delivered
+	 * session CAP_XFER_UNLIMITED (the consumer may forward it), false (the
+	 * default) attenuates it to CAP_XFER_NONE.
+	 */
+	bool		name_sendable[SERVICED_MAX_PROVIDES];
 
 	/* Restart tracking */
 	unsigned	restart_count;
@@ -358,7 +365,8 @@ int	on_demand_launch(const char *name, struct svc_runtime *requester,
 	    struct channel_message *request, int kq);
 void	on_demand_check_ready(struct svc_runtime *svc, int kq);
 bool	on_demand_name_activating(struct svc_runtime *, const char *);
-int	on_demand_name_claim(struct svc_runtime *, const char *);
+int	on_demand_name_claim(struct svc_runtime *, const char *, bool sendable);
+bool	on_demand_name_sendable(const struct svc_runtime *, const char *);
 bool	on_demand_all_names_claimed(const struct svc_runtime *);
 int	on_demand_name_withdraw(struct svc_runtime *, const char *, int);
 void	on_demand_name_ready(struct svc_runtime *, const char *, int);
@@ -371,13 +379,14 @@ void	on_demand_teardown(int kq);
 
 /* naming.c — reverse-domain-name service registry */
 bool	naming_exists(const char *name);
-int	naming_register(const char *name, struct svc_runtime *owner);
+int	naming_register(const char *name, struct svc_runtime *owner,
+	    bool sendable);
 int	naming_unregister(const char *name, struct svc_runtime *owner);
 void	naming_remove_owner(struct svc_runtime *owner);
 void	naming_rebind_owner(struct svc_runtime *old_owner,
 	    struct svc_runtime *new_owner);
 int	naming_lookup(const char *name, struct svc_runtime *requester,
-	    const struct svc_domain *domain, int *errp);
+	    const struct svc_domain *domain, int *errp, bool *sendablep);
 
 /* domain.c — lookup-domain scoping and minted user-domain channels (§21/§22) */
 bool	svc_domain_resolves(const struct svc_domain *domain, const char *name);

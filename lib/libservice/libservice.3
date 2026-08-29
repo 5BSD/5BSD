@@ -54,6 +54,8 @@ Service lifecycle library
 .Ft int
 .Fn service_provider_expose "struct service_provider *provider" "const char *name" "struct service_listener **listener"
 .Ft int
+.Fn service_provider_expose_sendable "struct service_provider *provider" "const char *name" "struct service_listener **listener"
+.Ft int
 .Fn service_provider_expose_lazy "struct service_provider *provider" "const char *name" "service_activation_handler activate" "void *argument" "struct service_listener **listener"
 .Ft int
 .Fn service_provider_enter_capability_mode "struct service_provider *provider"
@@ -292,6 +294,16 @@ its corresponding listener.
 An undeclared name fails with
 .Er EACCES ,
 and duplicate local or supervisor claims are rejected.
+.Pp
+.Fn service_provider_expose_sendable
+is identical except that it declares the name's delivered sessions
+.Em sendable :
+the service manager leaves each consumer's endpoint transfer-unlimited so the
+consumer may re-send it
+.Pq attenuating per hop with Xr cap_xfer_limit 2 ,
+rather than the default of attenuating it so it cannot be forwarded.
+Whether a service's sessions may propagate is the provider's own protocol
+contract, so it is declared here in the provider's code, not in the manifest.
 .Pp
 The manifest reserves names before launch; exposure checks in the corresponding
 listener without making the name connectable.

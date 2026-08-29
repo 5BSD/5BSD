@@ -183,7 +183,7 @@ provided_name_index(const struct svc_runtime *svc, const char *name)
 }
 
 int
-on_demand_name_claim(struct svc_runtime *svc, const char *name)
+on_demand_name_claim(struct svc_runtime *svc, const char *name, bool sendable)
 {
 	int index;
 
@@ -195,7 +195,24 @@ on_demand_name_claim(struct svc_runtime *svc, const char *name)
 	if (svc->name_state[index] != SVC_NAME_UNCLAIMED)
 		return (EALREADY);
 	svc->name_state[index] = SVC_NAME_INACTIVE;
+	svc->name_sendable[index] = sendable;
 	return (0);
+}
+
+/*
+ * The provider's declared transfer policy for a claimed name (see
+ * name_sendable): true if delivered sessions may be forwarded.  Read when the
+ * name activates and its naming entry is registered.
+ */
+bool
+on_demand_name_sendable(const struct svc_runtime *svc, const char *name)
+{
+	int index;
+
+	if (svc == NULL || name == NULL)
+		return (false);
+	index = provided_name_index(svc, name);
+	return (index >= 0 && svc->name_sendable[index]);
 }
 
 bool
@@ -357,6 +374,7 @@ static bool
 on_demand_broker(const char *name, struct svc_runtime *req_svc,
     struct channel_message *request)
 {
+	bool sendable;
 	int client_fd, error;
 	int32_t status;
 
@@ -365,10 +383,17 @@ on_demand_broker(const char *name, struct svc_runtime *req_svc,
 		return (false);
 	}
 
-	client_fd = naming_lookup(name, req_svc, &req_svc->domain, &error);
+	client_fd = naming_lookup(name, req_svc, &req_svc->domain, &error,
+	    &sendable);
 	if (client_fd >= 0) {
 		status = 0;
-		if (cap_xfer_limit(client_fd, CAP_XFER_ONCE) == -1)
+		/*
+		 * A sendable session is delivered at the CAP_XFER_UNLIMITED
+		 * state naming_lookup() left it (the consumer may re-send it);
+		 * every other session is attenuated to CAP_XFER_ONCE so the
+		 * single delivery send consumes it to CAP_XFER_NONE.
+		 */
+		if (!sendable && cap_xfer_limit(client_fd, CAP_XFER_ONCE) == -1)
 			status = errno;
 		if (status == 0) {
 			if (channel_send_reply(request,

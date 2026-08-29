@@ -215,9 +215,19 @@ struct svc_name_result_req {
  * Claiming does not publish or initialize the endpoint; client demand still
  * drives ACTIVATE_NAME independently for each name.
  */
+/*
+ * The provider decides, in its own code at expose time, whether the sessions
+ * delivered for this name may be forwarded.  Default (0): serviced attenuates
+ * each delivered client endpoint to CAP_XFER_NONE.  With SENDABLE the endpoint
+ * is left CAP_XFER_UNLIMITED, so the consumer may re-send it (and attenuate per
+ * hop).  This is the service's own protocol contract, not operator policy, so
+ * it rides the claim rather than the manifest.
+ */
+#define	SVC_NAME_CLAIM_SENDABLE	0x1u
+
 struct svc_name_claim_req {
 	uint32_t	op;		/* SVC_OP_NAME_CLAIM */
-	uint32_t	flags;		/* reserved, must be 0 */
+	uint32_t	flags;		/* SVC_NAME_CLAIM_* */
 	char		name[SERVICED_NAME_MAX + 1];
 };
 

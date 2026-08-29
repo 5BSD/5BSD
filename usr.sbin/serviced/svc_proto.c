@@ -23,15 +23,23 @@
 #include "serviced_probes.h"
 #include "serviced_svc_proto.h"
 
+/*
+ * Deliver a control reply, optionally attaching descriptors.  cap_xfer is true
+ * for every delivery except a sendable session endpoint: each attached fd is
+ * limited to CAP_XFER_ONCE so the single delivery send consumes it to
+ * CAP_XFER_NONE at the receiver (non-forwardable).  A sendable session is left
+ * at the transfer state naming_lookup() chose (CAP_XFER_UNLIMITED), so the
+ * consumer may re-send it.
+ */
 static int
-svc_channel_reply(struct svc_runtime *svc, struct channel_message *request,
-    uint32_t op, int status, int *fds, size_t nfds)
+svc_channel_reply_ex(struct svc_runtime *svc, struct channel_message *request,
+    uint32_t op, int status, int *fds, size_t nfds, bool cap_xfer)
 {
 	struct svc_reply reply;
 	size_t i;
 
 	reply.status = status;
-	for (i = 0; i < nfds; i++) {
+	for (i = 0; cap_xfer && i < nfds; i++) {
 		if (cap_xfer_limit(fds[i], CAP_XFER_ONCE) == -1) {
 			reply.status = errno;
 			fds = NULL;
@@ -67,6 +75,14 @@ svc_channel_reply(struct svc_runtime *svc, struct channel_message *request,
 	SERVICED_PROBE_IPC_REPLY(svc->manifest.label, op, reply.status);
 	svc_channel_sync_events(svc, serviced_kq);
 	return (0);
+}
+
+static int
+svc_channel_reply(struct svc_runtime *svc, struct channel_message *request,
+    uint32_t op, int status, int *fds, size_t nfds)
+{
+
+	return (svc_channel_reply_ex(svc, request, op, status, fds, nfds, true));
 }
 
 void
@@ -233,13 +249,14 @@ handle_name_claim(struct svc_runtime *svc, struct channel_message *request)
 		return;
 	}
 	req = channel_message_data(request);
-	if (req->flags != 0 ||
+	if ((req->flags & ~SVC_NAME_CLAIM_SENDABLE) != 0 ||
 	    strnlen(req->name, sizeof(req->name)) >= sizeof(req->name)) {
 		(void)svc_channel_reply(svc, request, SVC_OP_NAME_CLAIM,
 		    EINVAL, NULL, 0);
 		return;
 	}
-	error = on_demand_name_claim(svc, req->name);
+	error = on_demand_name_claim(svc, req->name,
+	    (req->flags & SVC_NAME_CLAIM_SENDABLE) != 0);
 	SERVICED_PROBE_ENDPOINT_CLAIM(svc->manifest.label, req->name, error);
 	serviced_audit(AUE_SERVICED_ONDEMAND, getuid(), error,
 	    "endpoint claim svc=%s name=%s", svc->manifest.label, req->name);
@@ -278,7 +295,8 @@ handle_name_result(struct svc_runtime *svc, struct channel_message *request)
 		return;
 	}
 	if (req->status == 0) {
-		error = naming_register(req->name, svc);
+		error = naming_register(req->name, svc,
+		    on_demand_name_sendable(svc, req->name));
 		if (error == 0) {
 			/*
 			 * Queue the publication acknowledgement before releasing
@@ -359,6 +377,7 @@ static bool
 handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 {
 	const struct svc_lookup_req *req;
+	bool sendable;
 	int client_fd, error;
 
 	if (channel_message_length(request) != sizeof(*req)) {
@@ -386,7 +405,9 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 		    NULL, 0);
 		return (false);
 	}
-	client_fd = naming_lookup(req->name, svc, &svc->domain, &error);
+	sendable = false;
+	client_fd = naming_lookup(req->name, svc, &svc->domain, &error,
+	    &sendable);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
 			if (on_demand_launch(req->name, svc, request,
@@ -399,8 +420,8 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 		    NULL, 0);
 		return (false);
 	}
-	(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, 0,
-	    &client_fd, 1);
+	(void)svc_channel_reply_ex(svc, request, SVC_OP_LOOKUP, 0,
+	    &client_fd, 1, !sendable);
 	close(client_fd);
 	return (false);
 }
@@ -418,6 +439,7 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 	const struct svc_helper_req *req;
 	char synthetic[SERVICED_NAME_MAX + 1];
 	const char *slash;
+	bool sendable;
 	int client_fd, error;
 	size_t blen;
 
@@ -449,7 +471,8 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 		    ENAMETOOLONG, NULL, 0);
 		return (false);
 	}
-	client_fd = naming_lookup(synthetic, svc, &svc->domain, &error);
+	client_fd = naming_lookup(synthetic, svc, &svc->domain, &error,
+	    &sendable);
 	if (client_fd < 0) {
 		if (error == ENOENT) {
 			if (on_demand_launch(synthetic, svc, request,
@@ -462,8 +485,8 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 		    NULL, 0);
 		return (false);
 	}
-	(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, 0,
-	    &client_fd, 1);
+	(void)svc_channel_reply_ex(svc, request, SVC_OP_HELPER_OPEN, 0,
+	    &client_fd, 1, !sendable);
 	close(client_fd);
 	return (false);
 }
