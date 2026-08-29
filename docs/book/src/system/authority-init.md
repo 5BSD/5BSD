@@ -13,6 +13,31 @@ if (getpid() == 1)
         authority_init_main(argc, argv);
 ```
 
+## System requirements
+
+The capability plane imposes two requirements a plain FreeBSD install does not.
+Both are satisfied by a **default** 5BSD install — `bsdinstall` and the VM image
+builder select **Auto (ZFS)** by default on amd64/arm64/i386/riscv — but they
+matter for anyone partitioning manually or building a custom image:
+
+- **The `mac_capability` policy modules must be loaded at boot.** Authority (PID 1)
+  opens `/dev/mac_capability` before it can do anything; without the device the
+  kernel falls through `init_path` to stock `/sbin/init` and no plane comes up.
+  The `authorityd` package ships `/boot/loader.conf.d/mac_capability.conf`, which
+  preloads the stack (`mac_capability` plus `_mount`, `_identity`, `_isolation`,
+  `_capprotect`, `_accounting`, `_system`). Installing the plane arranges this
+  automatically; a base install without the plane never loads the policy.
+
+- **A ZFS root pool (`zroot`) is required.** The storage broker `tzfsd(8)` and the
+  managed-configuration store that `logd` and other components read are built on
+  TrustedZFS and open the `zroot` pool at startup. On a UFS-only root `tzfsd`
+  fails (`pool_open zroot: No such file or directory`), `logd` cannot load its
+  managed configuration, and those components stay stopped — the rest of the plane
+  still runs, but it is a **degraded** configuration. **ZFS is the supported root
+  for the plane.** `bsdinstall` (Auto (ZFS), the default menu item) and the image
+  builder both default to it; a manual UFS install remains valid for the base
+  system but is not a supported plane configuration.
+
 ## Architecture: spine and service manager
 
 Authority deliberately splits the roles launchd combines into one process:
