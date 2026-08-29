@@ -51,6 +51,7 @@ struct capbundle_service {
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
 	bool	activation_boot;
+	bool	is_helper;		/* private helper: launched on request only */
 	/*
 	 * Activation sources (Phase 5).  timer_interval_sec is the monotonic
 	 * period in seconds (0 = none); activation_path is an absolute path

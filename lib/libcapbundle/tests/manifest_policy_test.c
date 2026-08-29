@@ -380,8 +380,52 @@ ATF_TC_BODY(jail_relative_path_rejected, tc)
 	ATF_CHECK(strstr(err, "path") != NULL);
 }
 
+/* ---- private helper units --------------------------------------------- */
+
+ATF_TC_WITHOUT_HEAD(helper_unit_parses);
+ATF_TC_BODY(helper_unit_parses, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* helper=true is a complete activation: no boot/ipc/timer needed. */
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { helper = true; }\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK(svc.is_helper);
+	ATF_CHECK(!svc.activation_boot);
+	ATF_CHECK_EQ(0U, svc.nprovides);
+}
+
+ATF_TC_WITHOUT_HEAD(helper_with_ipc_rejected);
+ATF_TC_BODY(helper_with_ipc_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* A private helper must not publish a system.* name. */
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { helper = true; ipc = [\"system.Thing\"]; }\n", &svc,
+	    err, sizeof(err)));
+	ATF_CHECK(strstr(err, "helper") != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(non_helper_defaults_false);
+ATF_TC_BODY(non_helper_defaults_false, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit("activation { boot = true; }\n", &svc,
+	    err, sizeof(err)), "unexpected error: %s", err);
+	ATF_CHECK(!svc.is_helper);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, helper_unit_parses);
+	ATF_TP_ADD_TC(tp, helper_with_ipc_rejected);
+	ATF_TP_ADD_TC(tp, non_helper_defaults_false);
 	ATF_TP_ADD_TC(tp, limits_defaults_when_absent);
 	ATF_TP_ADD_TC(tp, limits_integers_parse);
 	ATF_TP_ADD_TC(tp, limits_size_suffixes_parse);

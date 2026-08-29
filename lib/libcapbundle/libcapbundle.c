@@ -443,6 +443,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 		return (-1);
 	m->restart = s->restart;
 	m->management = s->management;
+	m->is_helper = s->is_helper;
 	m->timer_interval_sec = s->timer_interval_sec;
 	if (manifest_copy(s->activation_path, m->activation_path,
 	    sizeof(m->activation_path)) == -1)

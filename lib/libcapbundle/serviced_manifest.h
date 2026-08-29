@@ -179,6 +179,14 @@ struct svc_manifest {
 	char		provides[SERVICED_MAX_PROVIDES][SERVICED_LABEL_MAX];
 	unsigned	nprovides;
 
+	/*
+	 * Private helper (XPC-style): launched on request by a bundle sibling via
+	 * service_helper_open(), never published under a system.* name and never
+	 * boot-activated.  Resolved bundle-locally and scoped to the requesting
+	 * parent's coalition.
+	 */
+	bool		is_helper;
+
 	/* Local authority-replacement components consumed by this service. */
 	struct serviced_component components[SERVICED_MAX_COMPONENTS];
 	unsigned	ncomponents;

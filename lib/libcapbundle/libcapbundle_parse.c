@@ -752,7 +752,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "storage", "descriptors", "protect", "limits", "umask", "band" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
-	    "on_mount" };
+	    "on_mount", "helper" };
 	static const char *const timerkeys[] = { "interval" };
 	static const char *const pathkeys[] = { "path" };
 	static const char *const limitskeys[] = { "memory", "cpu", "nproc",
@@ -1083,18 +1083,39 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    nitems(socket_object_keys), errbuf, errlen) != 0)
 		return (-1);
 
-	if ((v == NULL || !ucl_object_toboolean(v)) && x == NULL &&
-	    ucl_object_lookup(arr, "timer") == NULL &&
-	    ucl_object_lookup(arr, "path") == NULL &&
-	    ucl_object_lookup(arr, "socket") == NULL &&
-	    ucl_object_lookup(arr, "schedule") == NULL &&
-	    ucl_object_lookup(arr, "queue_directory") == NULL &&
-	    ucl_object_lookup(arr, "on_mount") == NULL) {
-		snprintf(errbuf, errlen,
-		    "activation requires boot=true, at least one ipc name, "
-		    "a timer, a path, a socket, a schedule, a queue_directory, "
-		    "or on_mount");
-		return (-1);
+	{
+		const ucl_object_t *helper = ucl_object_lookup(arr, "helper");
+
+		if (helper != NULL && ucl_object_type(helper) != UCL_BOOLEAN) {
+			snprintf(errbuf, errlen,
+			    "activation.helper must be a boolean");
+			return (-1);
+		}
+		/*
+		 * A private helper is launched on request by a bundle sibling
+		 * (service_helper_open), so it needs no other demand source and
+		 * publishes no system.* ipc name.
+		 */
+		if (helper != NULL && ucl_object_toboolean(helper) &&
+		    x != NULL) {
+			snprintf(errbuf, errlen,
+			    "a helper unit must not publish an ipc name");
+			return (-1);
+		}
+		if ((v == NULL || !ucl_object_toboolean(v)) && x == NULL &&
+		    (helper == NULL || !ucl_object_toboolean(helper)) &&
+		    ucl_object_lookup(arr, "timer") == NULL &&
+		    ucl_object_lookup(arr, "path") == NULL &&
+		    ucl_object_lookup(arr, "socket") == NULL &&
+		    ucl_object_lookup(arr, "schedule") == NULL &&
+		    ucl_object_lookup(arr, "queue_directory") == NULL &&
+		    ucl_object_lookup(arr, "on_mount") == NULL) {
+			snprintf(errbuf, errlen,
+			    "activation requires boot=true, at least one ipc "
+			    "name, a timer, a path, a socket, a schedule, a "
+			    "queue_directory, on_mount, or helper=true");
+			return (-1);
+		}
 	}
 	if (x != NULL && ucl_object_type(x) == UCL_ARRAY &&
 	    ucl_array_size(x) == 0) {
@@ -2322,6 +2343,8 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	activation = ucl_object_lookup(root, "activation");
 	v = ucl_object_lookup(activation, "boot");
 	svc->activation_boot = v != NULL && ucl_object_toboolean(v);
+	v = ucl_object_lookup(activation, "helper");
+	svc->is_helper = v != NULL && ucl_object_toboolean(v);
 	parse_string_array(activation, "ipc", svc->provides,
 	    CAPBUNDLE_MAX_PROVIDES, &svc->nprovides);
 
