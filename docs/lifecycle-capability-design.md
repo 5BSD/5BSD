@@ -1,10 +1,42 @@
 # System lifecycle as a capability — design options
 
-Status: **decision doc** (P4b of the capability-authority migration). Companion
-to [capability-authority-model.md](capability-authority-model.md). This exists
-to choose *the* architecture for how a principal asks the system to change run
-state (reboot / halt / poweroff / powercycle / reroot / rescan / catatonia /
+Status: **decided** (P4b of the capability-authority migration). Companion
+to [capability-authority-model.md](capability-authority-model.md). This chose
+*the* architecture for how a principal asks the system to change run state
+(reboot / halt / poweroff / powercycle / reroot / rescan / catatonia /
 single-user) in the object-capability model, before any boot-critical code moves.
+
+## 0. Decision (2026-08-30): capability *beside* BSD
+
+The guiding principle is that the capability world sits **next to** the BSD
+world, not carved through it. `authority_init` (PID 1) is already the bridge — it
+is BSD `init(8)` (signals, getty, rc, `reboot(2)`) *and* the capability spine.
+BSD tools reach it the BSD way; capability tools reach it the capability way,
+because it is both. So for lifecycle:
+
+- **Stock `reboot`/`halt`/`shutdown` stay BSD.** They signal init, and init *is*
+  `authority_init`, which already handles those signals. We **revert** the
+  authorityd-socket code we added to `reboot.c`/`shutdown.c` — this *shrinks* our
+  stock-BSD footprint rather than growing it, and puts no capability/`/usr`
+  dependency in `/sbin`.
+- **The capability path is a new capability-world tool, `authorityctl`**, living
+  in `/usr` — the capability-native control CLI for the authority/spine, the
+  exact parallel of `servicectl` for serviced. It covers the *whole* authorityd
+  control surface (`authorityctl reboot|halt|poweroff|…`, `authorityctl status`,
+  `authorityctl reload`), which is what lets the getpeereid socket be deleted
+  outright. Routing is R1 (serviced self-serves the name, ADMIN-gated, and relays
+  to authorityd over the existing authority channel).
+- **The signal-to-init path stays.** It is how BSD tools reach init;
+  `authority_init` handles it; it is already root- and MAC-gated. This
+  deliberately **revises** the earlier P4b goal of deleting `kill(1,SIG*)`:
+  coexistence keeps it as the BSD tools' legacy door, with the capability door
+  (`authorityctl` → `system.lifecycle`/`system.authority`) beside it.
+- **The authorityd getpeereid *socket* is still deleted** (§7): its ops are now
+  reached by signal (BSD tools) or by `authorityctl` (capability plane).
+
+The sections below (§3–§4) record the option analysis that led here; the client
+question they weigh (inline vs static vs new tool) is now moot — the answer is a
+new `/usr` tool and *no* change to `/sbin`.
 
 ## 1. The problem
 
