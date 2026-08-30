@@ -52,6 +52,14 @@ struct pending_lookup {
 	char			 requester_label[SERVICED_LABEL_MAX];
 	pid_t			 requester_pid;
 	uint64_t		 requester_launch_id;
+	/*
+	 * An ambient requester (a login-session lookup channel, §21) has no
+	 * svc_runtime: ambient_lc identifies it and ambient_domain carries its
+	 * scope by value.  NULL ambient_lc means a service-to-service requester
+	 * tracked by requester_label/pid/launch_id above.
+	 */
+	struct svc_lookup_channel *ambient_lc;
+	struct svc_domain	 ambient_domain;
 	struct channel_message	*request;
 	uintptr_t		 timeout_ident;
 };
@@ -363,28 +371,45 @@ would_deadlock(const char *name, struct svc_runtime *requester)
 /*
  * Broker a resolved lookup to a waiting requester.
  *
- * Resolves 'name' on behalf of req_svc and sends the reply on the
- * requester's *current* channel — never a cached fd, which may have been
- * recycled once the requester exited.  If the requester is gone (req_svc
- * NULL) or has no channel, there is nobody to answer, so nothing is sent.
+ * Resolves pl->name on behalf of the pending's requester and sends the reply
+ * on the requester's *current* channel — never a cached fd, which may have
+ * been recycled once the requester exited.  Two requester kinds are served:
+ * a service-to-service requester (a live svc_runtime), and an ambient login-
+ * session lookup channel (§21) that owns no svc_runtime.  If the requester is
+ * gone (service exited, or the lookup channel closed), there is nobody to
+ * answer, so nothing is sent.  Domain scope is the requester's own: a service
+ * uses its channel's domain, an ambient requester the domain captured at
+ * launch — so activation never widens a caller's authority.
  *
  * Returns true if a client fd was delivered.
  */
 static bool
-on_demand_broker(const char *name, struct svc_runtime *req_svc,
-    struct channel_message *request)
+on_demand_broker(struct pending_lookup *pl, int kq)
 {
-	bool sendable;
+	struct channel_message *request = pl->request;
+	struct svc_runtime *req_svc = NULL;
+	const struct svc_domain *domain;
+	bool ambient, sendable;
 	int client_fd, error;
 	int32_t status;
 
-	if (req_svc == NULL || req_svc->channel_fd < 0) {
-		channel_message_free(request);
-		return (false);
+	ambient = (pl->ambient_lc != NULL);
+	if (ambient) {
+		if (!lookup_channel_is_live(pl->ambient_lc)) {
+			channel_message_free(request);
+			return (false);
+		}
+		domain = &pl->ambient_domain;
+	} else {
+		req_svc = pending_requester(pl);
+		if (req_svc == NULL || req_svc->channel_fd < 0) {
+			channel_message_free(request);
+			return (false);
+		}
+		domain = &req_svc->domain;
 	}
 
-	client_fd = naming_lookup(name, req_svc, &req_svc->domain, &error,
-	    &sendable);
+	client_fd = naming_lookup(pl->name, req_svc, domain, &error, &sendable);
 	if (client_fd >= 0) {
 		status = 0;
 		/*
@@ -416,15 +441,49 @@ on_demand_broker(const char *name, struct svc_runtime *req_svc,
 		}
 		close(client_fd);
 		channel_message_free(request);
-		svc_channel_sync_events(req_svc, serviced_kq);
+		if (ambient)
+			lookup_channel_sync_events(pl->ambient_lc, kq);
+		else
+			svc_channel_sync_events(req_svc, kq);
 		return (status == 0);
 	}
 	status = error;
 	(void)channel_send_reply(request, &(struct channel_outgoing)
 	    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
 	channel_message_free(request);
-	svc_channel_sync_events(req_svc, serviced_kq);
+	if (ambient)
+		lookup_channel_sync_events(pl->ambient_lc, kq);
+	else
+		svc_channel_sync_events(req_svc, kq);
 	return (false);
+}
+
+/*
+ * Send a status-only reply to a pending's requester (service or ambient),
+ * flushing the appropriate channel.  Reply-only: the caller still owns and
+ * frees pl->request.  A requester that has since gone away is silently skipped.
+ */
+static void
+pending_reply_status(struct pending_lookup *pl, int32_t status, int kq)
+{
+
+	if (pl->request == NULL)
+		return;
+	if (pl->ambient_lc != NULL) {
+		if (!lookup_channel_is_live(pl->ambient_lc))
+			return;
+		(void)channel_send_reply(pl->request, &(struct channel_outgoing)
+		    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
+		lookup_channel_sync_events(pl->ambient_lc, kq);
+	} else {
+		struct svc_runtime *req = pending_requester(pl);
+
+		if (req == NULL)
+			return;
+		(void)channel_send_reply(pl->request, &(struct channel_outgoing)
+		    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
+		svc_channel_sync_events(req, kq);
+	}
 }
 
 static int
@@ -464,8 +523,9 @@ svc_launch_or_await(struct svc_runtime *svc, int kq)
 	return (svc_exec(svc, kq));
 }
 
-int
-on_demand_launch(const char *name, struct svc_runtime *requester,
+static int
+od_launch(const char *name, struct svc_runtime *requester,
+    struct svc_lookup_channel *ambient_lc, const struct svc_domain *ambient_domain,
     struct channel_message *request, int kq)
 {
 	unsigned bundle_idx, service_idx;
@@ -508,6 +568,12 @@ on_demand_launch(const char *name, struct svc_runtime *requester,
 		    sizeof(pl->requester_label));
 		pl->requester_pid = requester->pid;
 		pl->requester_launch_id = requester->launch_id;
+	} else if (ambient_lc != NULL) {
+		strlcpy(pl->requester_label, "ambient",
+		    sizeof(pl->requester_label));
+		pl->requester_pid = -1;
+		pl->ambient_lc = ambient_lc;
+		pl->ambient_domain = *ambient_domain;
 	} else {
 		strlcpy(pl->requester_label, "unknown",
 		    sizeof(pl->requester_label));
@@ -646,6 +712,32 @@ fail_waiter:
 }
 
 /*
+ * Activate an on-demand name for a service-to-service requester.  Returns 0 if
+ * the launch was initiated (reply deferred, request retained), -1 otherwise.
+ */
+int
+on_demand_launch(const char *name, struct svc_runtime *requester,
+    struct channel_message *request, int kq)
+{
+
+	return (od_launch(name, requester, NULL, NULL, request, kq));
+}
+
+/*
+ * Activate an on-demand name for an ambient (login-session lookup channel)
+ * requester (§21).  The reply is later delivered over `lc`, scoped to `domain`
+ * (carried by value so it survives the async gap).  Returns 0 if the launch was
+ * initiated (request retained), -1 otherwise.
+ */
+int
+on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
+    const struct svc_domain *domain, struct channel_message *request, int kq)
+{
+
+	return (od_launch(name, NULL, lc, domain, request, kq));
+}
+
+/*
  * Request activation of each pending name once the process itself is ready.
  */
 void
@@ -734,8 +826,7 @@ on_demand_name_ready(struct svc_runtime *svc, const char *name, int kq)
 					    waiter->manifest.label);
 			}
 		} else
-			(void)on_demand_broker(name, pending_requester(pl),
-			    pl->request);
+			(void)on_demand_broker(pl, kq);
 		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
 		    EV_DELETE, 0, 0, NULL);
 		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
@@ -762,7 +853,6 @@ on_demand_name_failed(struct svc_runtime *svc, const char *name, int error,
     int kq)
 {
 	struct pending_lookup **pp, *pl;
-	struct svc_runtime *requester;
 	struct kevent kev;
 	unsigned failed;
 	int index;
@@ -782,14 +872,7 @@ on_demand_name_failed(struct svc_runtime *svc, const char *name, int error,
 			pp = &pl->next;
 			continue;
 		}
-		requester = pending_requester(pl);
-		if (requester != NULL) {
-			(void)channel_send_reply(pl->request,
-			    &(struct channel_outgoing)
-			    CHANNEL_OUTGOING_INITIALIZER(&status,
-			    sizeof(status)));
-			svc_channel_sync_events(requester, kq);
-		}
+		pending_reply_status(pl, status, kq);
 		channel_message_free(pl->request);
 		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
 		    EV_DELETE, 0, 0, NULL);
@@ -821,7 +904,6 @@ void
 on_demand_provider_failed(struct svc_runtime *svc, int error, int kq)
 {
 	struct pending_lookup **pp, *pl;
-	struct svc_runtime *requester;
 	struct kevent kev;
 	unsigned failed;
 	int32_t status;
@@ -838,14 +920,7 @@ on_demand_provider_failed(struct svc_runtime *svc, int error, int kq)
 			continue;
 		}
 
-		requester = pending_requester(pl);
-		if (requester != NULL) {
-			(void)channel_send_reply(pl->request,
-			    &(struct channel_outgoing)
-			    CHANNEL_OUTGOING_INITIALIZER(&status,
-			    sizeof(status)));
-			svc_channel_sync_events(requester, kq);
-		}
+		pending_reply_status(pl, status, kq);
 		channel_message_free(pl->request);
 		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
 		    EV_DELETE, 0, 0, NULL);
@@ -914,6 +989,43 @@ on_demand_requester_gone(struct svc_runtime *svc, int kq)
 }
 
 /*
+ * Drop every pending lookup parked on an ambient lookup channel that is being
+ * torn down (its login session ended).  The retained request tokens reference
+ * that channel, so they must be released before the channel is destroyed; the
+ * channel is going away, so there is nobody to reply to — just free and remove.
+ * Called from domain.c lookup_channel_close() before the channel is freed.
+ */
+void
+on_demand_lookup_channel_gone(struct svc_lookup_channel *lc, int kq)
+{
+	struct pending_lookup **pp, *pl;
+	struct kevent kev;
+	unsigned canceled;
+
+	canceled = 0;
+	pp = &pending_list;
+	while (*pp != NULL) {
+		pl = *pp;
+		if (pl->ambient_lc != lc) {
+			pp = &pl->next;
+			continue;
+		}
+		EV_SET(&kev, pl->timeout_ident, EVFILT_TIMER,
+		    EV_DELETE, 0, 0, NULL);
+		(void)kevent(kq, &kev, 1, NULL, 0, NULL);
+		channel_message_free(pl->request);
+		*pp = pl->next;
+		free(pl);
+		npending--;
+		canceled++;
+	}
+	if (canceled != 0)
+		syslog(LOG_INFO,
+		    "on_demand: canceled %u pending lookup%s for closed ambient "
+		    "channel", canceled, canceled == 1 ? "" : "s");
+}
+
+/*
  * Handle on-demand timeout.
  * Reply ETIMEDOUT to all waiters for the timed-out service.
  */
@@ -950,17 +1062,7 @@ on_demand_timeout(uintptr_t ident, int kq)
 		 * launches carry no request; the unit simply stays
 		 * stopped and a later demand may retry it. */
 		if (pl->request != NULL) {
-			struct svc_runtime *req;
-			int32_t status = ETIMEDOUT;
-
-			req = pending_requester(pl);
-			if (req != NULL) {
-				(void)channel_send_reply(pl->request,
-				    &(struct channel_outgoing)
-				    CHANNEL_OUTGOING_INITIALIZER(&status,
-				    sizeof(status)));
-				svc_channel_sync_events(req, kq);
-			}
+			pending_reply_status(pl, ETIMEDOUT, kq);
 			channel_message_free(pl->request);
 		}
 

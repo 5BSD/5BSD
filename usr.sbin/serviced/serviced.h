@@ -351,9 +351,19 @@ void	svc_run_container_sweep(void);
 bool	activation_socket_owns(int fd);
 void	activation_socket_event(struct kevent *kev, int kq);
 
+/*
+ * A serviced-held lookup channel (defined in domain.c).  on_demand.c only ever
+ * holds it as an opaque handle for an ambient (login-session) requester.
+ */
+struct svc_lookup_channel;
+
 /* on_demand.c — on-demand service launch for user bundles */
 int	on_demand_launch(const char *name, struct svc_runtime *requester,
 	    struct channel_message *request, int kq);
+int	on_demand_launch_ambient(const char *name,
+	    struct svc_lookup_channel *lc, const struct svc_domain *domain,
+	    struct channel_message *request, int kq);
+void	on_demand_lookup_channel_gone(struct svc_lookup_channel *lc, int kq);
 void	on_demand_check_ready(struct svc_runtime *svc, int kq);
 bool	on_demand_name_activating(struct svc_runtime *, const char *);
 int	on_demand_name_claim(struct svc_runtime *, const char *, bool sendable);
@@ -380,6 +390,8 @@ int	naming_lookup(const char *name, struct svc_runtime *requester,
 	    const struct svc_domain *domain, int *errp, bool *sendablep);
 
 /* domain.c — lookup-domain scoping and minted user-domain channels (§21/§22) */
+bool	lookup_channel_is_live(const struct svc_lookup_channel *lc);
+void	lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq);
 bool	svc_domain_resolves(const struct svc_domain *domain, const char *name);
 bool	svc_domain_may_mint(const struct svc_domain *domain);
 int	svc_fd_make_ambient(int fd);

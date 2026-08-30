@@ -66,6 +66,33 @@ serviced_fd_budget_check(size_t count, const char *what)
 	return (0);
 }
 
+/*
+ * On-demand activation lives in on_demand.c (not linked here).  The unit tests
+ * exercise only the direct resolve/miss paths, where a miss returns ENOENT
+ * without activating, so the stub simply reports "no on-demand launch".
+ */
+int
+on_demand_launch_ambient(const char *name, struct svc_lookup_channel *lc,
+    const struct svc_domain *domain, struct channel_message *request, int kq)
+{
+
+	(void)name;
+	(void)lc;
+	(void)domain;
+	(void)request;
+	(void)kq;
+	errno = ENOENT;
+	return (-1);
+}
+
+void
+on_demand_lookup_channel_gone(struct svc_lookup_channel *lc, int kq)
+{
+
+	(void)lc;
+	(void)kq;
+}
+
 int
 svc_channel_send_event(struct svc_runtime *svc, const void *data, size_t length,
     const int *fds, size_t nfds, int kq)

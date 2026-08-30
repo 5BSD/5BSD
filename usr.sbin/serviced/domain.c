@@ -171,6 +171,12 @@ lookup_channel_close(struct svc_lookup_channel *lc)
 {
 	struct svc_lookup_channel **pp;
 
+	/*
+	 * Drop any on-demand lookups still parked on this channel before the
+	 * channel (and the retained request tokens that reference it) go away,
+	 * or the deferred reply would touch freed channel state.
+	 */
+	on_demand_lookup_channel_gone(lc, serviced_kq);
 	for (pp = &lookup_channels; *pp != NULL; pp = &(*pp)->next) {
 		if (*pp == lc) {
 			*pp = lc->next;
@@ -184,7 +190,24 @@ lookup_channel_close(struct svc_lookup_channel *lc)
 	free(lc);
 }
 
-static void
+/*
+ * Whether `lc` is still a live, registered lookup channel.  on_demand uses this
+ * to confirm an ambient requester survived the async activation gap before
+ * replying over its channel.
+ */
+bool
+lookup_channel_is_live(const struct svc_lookup_channel *lc)
+{
+	const struct svc_lookup_channel *p;
+
+	for (p = lookup_channels; p != NULL; p = p->next) {
+		if (p == lc)
+			return (true);
+	}
+	return (false);
+}
+
+void
 lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq)
 {
 	struct kevent change;
@@ -379,6 +402,19 @@ lookup_channel_request(struct channel *channel,
 	client_fd = naming_lookup(req->name, NULL, &lc->domain, &error,
 	    &sendable);
 	if (client_fd < 0) {
+		/*
+		 * A miss on an on-demand name activates its provider, exactly as
+		 * a service-to-service lookup does (svc_proto.c handle_lookup).
+		 * on_demand_launch_ambient() takes ownership of `request` and
+		 * replies over this lookup channel once the provider checks in;
+		 * return without freeing so the reply token survives.  Domain
+		 * scope is carried by value so activation stays scoped to this
+		 * channel's authority.
+		 */
+		if (error == ENOENT &&
+		    on_demand_launch_ambient(req->name, lc, &lc->domain,
+		    request, serviced_kq) == 0)
+			return;
 		lookup_channel_reply(request, error, NULL, 0);
 		goto out;
 	}

@@ -93,6 +93,27 @@ svc_exec_rc_stop(struct svc_runtime *svc, int kq)
 	return (0);
 }
 
+/*
+ * Ambient lookup channels live in domain.c (not linked here).  These tests use
+ * only service-to-service requesters (ambient_lc == NULL), so the ambient
+ * branches never run; the stubs exist only to resolve at link time.
+ */
+bool
+lookup_channel_is_live(const struct svc_lookup_channel *lc)
+{
+
+	(void)lc;
+	return (false);
+}
+
+void
+lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq)
+{
+
+	(void)lc;
+	(void)kq;
+}
+
 void
 naming_remove_owner(struct svc_runtime *owner)
 {
