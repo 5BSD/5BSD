@@ -274,6 +274,23 @@ enum service_mint_kind {
 	SERVICE_MINT_SYSTEM = 1,	/* full-discovery admin channel */
 };
 
+struct passwd;
+
+/*
+ * Which discovery scope a login session's principal is entitled to
+ * (docs/capability-authority-model.md, phase P1).  This is the single seam
+ * where the principal->bundle policy is consulted: login/su/sshd call it
+ * instead of testing the uid inline, so the admin decision lives in one place
+ * ready to become an explicit policy (and, later, an auth-agent lookup).
+ *
+ * Default policy (no policy source configured): an administrator is root or a
+ * member of group "wheel" -- exactly the historical rule -- and gets a SYSTEM
+ * (full-discovery) channel; every other principal gets a per-uid USER channel.
+ * Best-effort: any lookup failure is treated as "not admin", failing safe to
+ * the narrower scope.
+ */
+bool	service_principal_is_admin(const struct passwd *pwd);
+
 /*
  * Mint a session lookup channel (§6/§21/§22) over a borrowed SYSTEM-domain
  * lookup channel (syschan).  `kind` selects the minted channel's scope:

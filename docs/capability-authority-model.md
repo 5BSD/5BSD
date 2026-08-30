@@ -204,10 +204,20 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   that ignores rights, or checks them, behaves exactly as before. No caller
   scopes rights yet. *(Done: rights delivered per-grant over the wire arrives in
   P3; caretaker-based selective revocation composes on the epoch primitive.)*
-- **P1 — auth boundary.** Stand up the auth agent + principal→bundle policy.
-  `login`/`su`/`sshd` call it. The initial policy grants exactly what uid-based
-  logic grants today (admin principals → broad bundle), so behavior is
-  identical — but the decision is now explicit policy, not inline `uid==0`.
+- **P1 — auth boundary.** Two sub-steps.
+  - **P1a — the seam (done).** Collapse the triplicated inline admin test into a
+    single `service_principal_is_admin()` in libservice that `login`/`su` call;
+    the body is still the historical rule (root or wheel), so behavior is
+    identical, but the principal→bundle decision now lives in one place ready
+    for policy to plug in. VM-verified no-op: root→SYSTEM, a non-wheel user via
+    `su`→USER. (`sshd`'s decision is serviced-side in `domain_provision_session`
+    and moves with the provision path in P4.)
+  - **P1b — policy + agent.** Back `service_principal_is_admin()` (and its
+    successor, which returns a full bundle, not a bool) with a UCL
+    principal→bundle policy read by a small capsicum-sandboxed auth agent that
+    holds the session-mint cap; `authority-init` delegates that cap to it. The
+    initial policy reproduces the P1a default, so behavior stays identical while
+    the decision becomes explicit data at the auth boundary.
 - **P2 — one service converts.** `bsdnotify` first (it is the model): drop the
   `sender_uid` check; require a presented topic capability; the auth bundle now
   includes those caps. Prove the pattern end to end in the VM.

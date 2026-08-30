@@ -10,10 +10,14 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 
+#include <sys/param.h>
+
 #include <errno.h>
 #include <fcntl.h>
+#include <grp.h>
 #include <poll.h>
 #include <pthread.h>
+#include <pwd.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -989,6 +993,39 @@ service_session_receive_event(struct service_session *session,
 	}
 	event->length = (size_t)received;
 	return (0);
+}
+
+/*
+ * The single principal->bundle decision (capability-authority-model.md, P1).
+ * login/su/sshd call this instead of testing the uid inline, so the admin
+ * decision lives in one place.  Today it is the historical rule -- root, or a
+ * member of group "wheel" -- computed from the passwd/group databases for the
+ * TARGET principal (getgrouplist resolves the primary and every supplementary
+ * group), independent of the calling process's credentials.  A later phase
+ * replaces this body with an explicit policy consulted at the auth boundary;
+ * the call sites do not change when it does.
+ */
+bool
+service_principal_is_admin(const struct passwd *pwd)
+{
+	gid_t groups[NGROUPS_MAX];
+	struct group *wheel;
+	int ngroups, i;
+
+	if (pwd == NULL)
+		return (false);
+	if (pwd->pw_uid == 0)
+		return (true);
+	if ((wheel = getgrnam("wheel")) == NULL)
+		return (false);
+	ngroups = nitems(groups);
+	if (getgrouplist(pwd->pw_name, pwd->pw_gid, groups, &ngroups) == -1)
+		ngroups = nitems(groups);	/* truncated: scan what fit */
+	for (i = 0; i < ngroups && i < (int)nitems(groups); i++) {
+		if (groups[i] == wheel->gr_gid)
+			return (true);
+	}
+	return (false);
 }
 
 /*

@@ -157,39 +157,10 @@ static int		 pam_cred_established;
 static int		 pam_session_established;
 
 /*
- * MIGRATION (docs/capability-authority-model.md, phases P1/P5): deriving the
- * session's discovery scope from uid (root/wheel -> SYSTEM) is transitional.
- * The end state asks the auth agent for the authenticated principal's capability
- * bundle by explicit policy; login stops making the admin decision inline.
- *
- * Whether the target principal is an administrator (§6): root, or a member of
- * the "wheel" group.  An admin session is provisioned a SYSTEM (full-discovery)
- * ambient channel; every other user gets a per-uid USER channel.  Membership is
- * computed from the passwd/group database for pwd (getgrouplist resolves the
- * primary gid and every supplementary group), independent of the current
- * process credentials.  Best-effort: any lookup failure is treated as "not
- * admin", which fails safe to the narrower USER scope.
+ * The principal->bundle admin decision has moved to a single seam,
+ * service_principal_is_admin() in libservice (capability-authority-model.md,
+ * P1), so login no longer tests the uid inline.
  */
-static bool
-principal_is_admin(const struct passwd *tpwd)
-{
-	gid_t groups[NGROUPS_MAX];
-	struct group *wheel;
-	int ngroups, i;
-
-	if (tpwd->pw_uid == 0)
-		return (true);
-	if ((wheel = getgrnam("wheel")) == NULL)
-		return (false);
-	ngroups = nitems(groups);
-	if (getgrouplist(tpwd->pw_name, tpwd->pw_gid, groups, &ngroups) == -1)
-		ngroups = nitems(groups);	/* truncated: scan what fit */
-	for (i = 0; i < ngroups && i < (int)nitems(groups); i++) {
-		if (groups[i] == wheel->gr_gid)
-			return (true);
-	}
-	return (false);
-}
 
 int
 main(int argc, char *argv[])
@@ -695,7 +666,7 @@ main(int argc, char *argv[])
 		enum service_mint_kind kind;
 		int user_fd = -1;
 
-		kind = principal_is_admin(pwd) ? SERVICE_MINT_SYSTEM :
+		kind = service_principal_is_admin(pwd) ? SERVICE_MINT_SYSTEM :
 		    SERVICE_MINT_USER;
 		if (service_mint_session_domain(syschan, kind, pwd->pw_uid,
 		    &user_fd) == 0 &&
