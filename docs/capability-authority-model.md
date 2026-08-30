@@ -257,6 +257,31 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   ambient lookup channel all come up).
 - **P3 — control planes.** serviced and tzfsd control become presented `:admin`
   capabilities (rights on the grant); delete their getpeereid sockets.
+
+  *Settled design (serviced).* serviced self-serves a plain SYSTEM name
+  `system.serviced` — **not** a `.Control` name (the `.Control` convention is a
+  uid-derived-domain relic retired in P5; routing new control code through it
+  would only be deleted again, twice-editing the spine). This reuses P2's mint
+  verbatim: `naming_lookup` already grants `SVC_RIGHTS_ADMIN` only to an ambient
+  (`requester == NULL`) lookup on a `SVC_DOMAIN_SYSTEM` channel — i.e. an admin
+  login session — so a root shell's `servicectl` receives an ADMIN-bearing
+  channel while a USER session and any service-to-service lookup do not. The
+  lookup path **forks** for this one name: after minting the channel pair and
+  computing rights, serviced keeps the provider end and adopts it into its own
+  kqueue as an in-process control connection carrying those rights (rather than
+  `SVC_OP_NEW_CLIENT`-notifying an external provider), and returns the client end
+  to the caller as usual. The in-process handler runs the existing sctl dispatch
+  but gates `RELOAD`/`START`/`STOP` on
+  `service_rights_allow(rights, SERVICE_RIGHTS_ADMIN)` instead of the
+  `getpeereid` euid; `STATUS`/`SERVICES` need no admin right. Because the only
+  fd-passing op — `PROVISION_SESSION`, the kernel-attested login/sshd bridge —
+  stays on its socket until P4, the capability path is a clean fd-less
+  request→reply message exchange (no SCM_RIGHTS). Rollout is **dual-path**: the
+  capability endpoint lands alongside the working socket, `servicectl` resolves
+  `system.serviced` over the ambient plane, and only once boot-validated does the
+  socket's admin-op handling get removed (the socket then carries
+  `PROVISION_SESSION` alone, for P4 to retire). tzfsd's socket is the separate
+  filesystem-socket→discovery concern, tracked independently.
 - **P4 — lifecycle.** `lifecycle` capability served by the spine; `reboot`
   presents it; delete the authorityd socket and the signal-authority path;
   `reboot(2)` stays as the kernel escape.
