@@ -1510,8 +1510,31 @@ child_close_fds(struct ssh *ssh)
 	 * hanging around in clients.  Note that we want to do this after
 	 * initgroups, because at least on Solaris 2.3 it leaves file
 	 * descriptors open.
+	 *
+	 * 5BSD Â§21: the ambient lookup channel was provisioned into a high fd and
+	 * SERVICE_LOOKUP_FD was already advertised as SERVICE_LOOKUP_FIXED_FD in
+	 * the child env.  This closefrom() is what closes that provisioned fd,
+	 * so the later install in do_child dup2()s an already-closed source and
+	 * the shell inherits SERVICE_LOOKUP_FD pointing at a dead fd.  Install
+	 * it at the fixed descriptor here -- where it is still valid -- and
+	 * closefrom() above it so it survives into the user's shell.
 	 */
-	closefrom(STDERR_FILENO + 1);
+	if (ambient_prov_fd >= 0 &&
+	    dup2(ambient_prov_fd, SERVICE_LOOKUP_FIXED_FD) != -1) {
+		if (ambient_prov_fd != SERVICE_LOOKUP_FIXED_FD)
+			(void)close(ambient_prov_fd);
+		ambient_prov_fd = SERVICE_LOOKUP_FIXED_FD;
+		(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
+		(void)cap_clofork_limit(SERVICE_LOOKUP_FIXED_FD,
+		    CAP_CLOFORK_UNLOCKED);
+		closefrom(SERVICE_LOOKUP_FIXED_FD + 1);
+	} else {
+		if (ambient_prov_fd >= 0) {
+			(void)close(ambient_prov_fd);
+			ambient_prov_fd = -1;
+		}
+		closefrom(STDERR_FILENO + 1);
+	}
 }
 
 /*
