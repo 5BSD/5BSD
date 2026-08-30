@@ -82,6 +82,7 @@ struct worker_state {
 	struct tracecmp_stats	stats;
 	const char		*client_label;
 	uint64_t		 instance_id;
+	service_rights_t	 rights;	/* granted to this session (P5) */
 	int			 dtrace_fd;
 	bool			 authorized;
 	int			 device_error;
@@ -190,9 +191,8 @@ handle_request(struct channel *channel __unused,
 	struct worker_state *state;
 	struct tracecmp_hello_reply hello;
 	const struct tracecmp_msg *message;
-	const struct channel_sender *sender;
 	size_t length;
-	bool caller_root;
+	bool admin;
 	int error;
 
 	state = argument;
@@ -209,34 +209,31 @@ handle_request(struct channel *channel __unused,
 	}
 
 	/*
-	 * MIGRATION (docs/capability-authority-model.md, phase P5): this uid gate
-	 * is transitional; the end state authorizes OPEN by a presented trace:raw
-	 * capability, not by the caller's uid or a label allowlist.
-	 *
-	 * Until then, authorization gates on the caller's authenticated uid: root
-	 * (uid 0) may obtain the raw DTrace consumer fd regardless of the label
-	 * allowlist, matching the plane-wide "root may do anything" rule; a
-	 * non-root caller is delegated the fd only if its client label is in
-	 * the traced allowlist (the mechanism that lets specific unprivileged
-	 * labels drive DTrace).  The uid is the kernel-stamped per-request
-	 * sender credential, not a session-time cache, so it cannot be spoofed.
+	 * Authorization is by the rights held on this session, not the caller's
+	 * uid (docs/capability-authority-model.md, P5).  serviced stamps
+	 * SERVICE_RIGHTS_ADMIN onto the grant only for an admin login session, and
+	 * that right is the capability replacement for the old "root may do
+	 * anything" bypass: a session holding it may obtain the raw DTrace consumer
+	 * fd regardless of the label allowlist.  Any other session is delegated the
+	 * fd only if its client label is in the traced allowlist (the mechanism
+	 * that lets specific unprivileged labels drive DTrace).  The rights ride the
+	 * session's grant and cannot be widened by the client.
 	 */
-	sender = channel_message_sender(request_message);
-	caller_root = (sender != NULL && sender->uid == 0);
+	admin = service_rights_allow(state->rights, SERVICE_RIGHTS_ADMIN);
 
 	error = 0;
 	switch (message->opcode) {
 	case TRACECMP_OP_HELLO:
 		memset(&hello, 0, sizeof(hello));
 		hello.version = TRACECMP_ABI_VERSION;
-		hello.features = (caller_root || state->authorized) &&
+		hello.features = (admin || state->authorized) &&
 		    state->dtrace_fd >= 0 ? TRACECMP_FEATURE_RAW_DTRACE_FD : 0;
 		if (send_reply(request_message, message, 0, &hello,
 		    sizeof(hello), -1) == -1)
 			state->terminal_error = errno;
 		break;
 	case TRACECMP_OP_OPEN:
-		if (!(caller_root || state->authorized))
+		if (!(admin || state->authorized))
 			error = EACCES;
 		else if (state->dtrace_fd < 0)
 			error = state->device_error != 0 ?
@@ -283,7 +280,7 @@ handle_request(struct channel *channel __unused,
 
 static int
 serve_session(int fd, int dtrace_fd, bool authorized, int device_error,
-    const char *client_label, uint64_t instance_id)
+    const char *client_label, service_rights_t rights, uint64_t instance_id)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -294,6 +291,7 @@ serve_session(int fd, int dtrace_fd, bool authorized, int device_error,
 
 	memset(&state, 0, sizeof(state));
 	state.client_label = client_label;
+	state.rights = rights;
 	state.instance_id = instance_id;
 	state.dtrace_fd = dtrace_fd;
 	state.authorized = authorized;
@@ -349,19 +347,19 @@ serve_session(int fd, int dtrace_fd, bool authorized, int device_error,
 #ifdef TRACECMP_TESTING
 int
 tracecmp_test_serve(int fd, int dtrace_fd, bool authorized, int device_error,
-    const char *client_label)
+    const char *client_label, service_rights_t rights)
 {
 
 	if (fd < 0 || dtrace_fd < -1 || device_error < 0 ||
 	    client_label == NULL || client_label[0] == '\0')
 		return (errno = EINVAL, -1);
 	return (serve_session(fd, dtrace_fd, authorized, device_error,
-	    client_label, 0));
+	    client_label, rights, 0));
 }
 #else
 static int
 worker(int fd, int barrier, int dtrace_fd, bool authorized,
-    int device_error, const char *client_label,
+    int device_error, const char *client_label, service_rights_t rights,
     uint64_t instance_id __unused)
 {
 	char byte;
@@ -383,12 +381,12 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 		return (1);
 	close(barrier);
 	return (serve_session(fd, dtrace_fd, authorized, device_error,
-	    client_label, instance_id));
+	    client_label, rights, instance_id));
 }
 
 static int
 start_session(int fd, int dtrace_directory, bool authorized,
-    const char *peer_label, int *pdp, pid_t *pidp)
+    const char *peer_label, service_rights_t rights, int *pdp, pid_t *pidp)
 {
 	static uint64_t next_instance;
 	char byte;
@@ -441,7 +439,7 @@ start_session(int fd, int dtrace_directory, bool authorized,
 	if (pid == 0) {
 		close(syncfd[0]);
 		_exit(worker(fd, syncfd[1], dtrace_fd, authorized, device_error,
-		    peer_label, instance_id));
+		    peer_label, rights, instance_id));
 	}
 	if (dtrace_fd >= 0)
 		close(dtrace_fd);
@@ -614,7 +612,8 @@ main(void)
 		worker = calloc(1, sizeof(*worker));
 		if (worker == NULL || start_session(fd, dtrace_directory,
 		    tracecmp_policy_allows(&policy, identity.client_label),
-		    identity.client_label, &worker->pd, &worker->pid) == -1) {
+		    identity.client_label, identity.rights, &worker->pd,
+		    &worker->pid) == -1) {
 			syslog(LOG_WARNING, "session for %s rejected: %m",
 			    identity.client_label);
 			free(worker);

@@ -96,8 +96,14 @@ fixture_create(struct fixture *fixture, bool authorized, int device_error)
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
+		/*
+		 * The session holds SERVICE_RIGHTS_ADMIN (P5): the capability
+		 * replacement for the old root bypass the tests relied on (they
+		 * run as root).  A session with the admin right obtains the raw
+		 * DTrace fd regardless of the label allowlist.
+		 */
 		_exit(tracecmp_test_serve(provider, dtrace_fd, authorized,
-		    device_error, "org.test.trace"));
+		    device_error, "org.test.trace", SERVICE_RIGHTS_ADMIN));
 	}
 	close(provider);
 	if (dtrace_fd >= 0)
@@ -276,13 +282,17 @@ ATF_TC_BODY(arguments, tc)
 {
 
 	ATF_CHECK_ERRNO(EINVAL,
-	    tracecmp_test_serve(-1, -1, false, 0, "test") == -1);
+	    tracecmp_test_serve(-1, -1, false, 0, "test",
+	    SERVICE_RIGHTS_ADMIN) == -1);
 	ATF_CHECK_ERRNO(EINVAL,
-	    tracecmp_test_serve(0, -2, false, 0, "test") == -1);
+	    tracecmp_test_serve(0, -2, false, 0, "test",
+	    SERVICE_RIGHTS_ADMIN) == -1);
 	ATF_CHECK_ERRNO(EINVAL,
-	    tracecmp_test_serve(0, -1, false, -1, "test") == -1);
+	    tracecmp_test_serve(0, -1, false, -1, "test",
+	    SERVICE_RIGHTS_ADMIN) == -1);
 	ATF_CHECK_ERRNO(EINVAL,
-	    tracecmp_test_serve(0, -1, false, 0, "") == -1);
+	    tracecmp_test_serve(0, -1, false, 0, "",
+	    SERVICE_RIGHTS_ADMIN) == -1);
 }
 
 ATF_TC_WITHOUT_HEAD(worker_descriptors_cross_exactly_one_fork);
