@@ -38,6 +38,7 @@
 #include "serviced_audit.h"
 #include "serviced_ctl.h"
 #include "serviced_svc_proto.h"
+#include "authorityd_ctl.h"
 #include "fd_budget.h"
 #include "management.h"
 #include "serviced_probes.h"
@@ -910,11 +911,80 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 	sctl_cap_sync_events(c);
 }
 
+/*
+ * Request handler for a system.lifecycle capability connection (P4b): relay an
+ * authorized lifecycle op to authorityd.  authorityctl(8) speaks the same
+ * ctl_request/CTL_OP_* protocol the legacy authorityd socket used, now carried
+ * over an ADMIN-gated capability channel and forwarded to the spine.
+ */
+static void
+sctl_authority_request(struct channel *ch __unused,
+    struct channel_message *request, void *arg)
+{
+	struct sctl_conn *c = arg;
+	const struct ctl_request *req;
+	struct ctl_reply reply;
+	const void *data;
+	size_t len;
+	int status;
+
+	memset(&reply, 0, sizeof(reply));
+	data = channel_message_data(request);
+	len = channel_message_length(request);
+
+	if (data == NULL || len != sizeof(*req)) {
+		reply.status = EINVAL;
+	} else {
+		req = data;
+		if (req->version != CTL_VERSION || req->flags != 0 ||
+		    req->datalen != 0) {
+			reply.status = EINVAL;
+		} else if ((c->cap_rights & SVC_RIGHTS_ADMIN) == 0) {
+			reply.status = EPERM;
+		} else {
+			switch (req->op) {
+			case CTL_OP_REBOOT:
+			case CTL_OP_HALT:
+			case CTL_OP_POWEROFF:
+			case CTL_OP_POWERCYCLE:
+			case CTL_OP_SINGLE:
+			case CTL_OP_REROOT:
+			case CTL_OP_RESCAN:
+			case CTL_OP_CATATONIA:
+				status = authority_lifecycle(sd.authority_channel_fd,
+				    req->op);
+				reply.status = (status < 0) ? EIO :
+				    (uint32_t)status;
+				if (reply.status == 0)
+					syslog(LOG_NOTICE, "sctl: relayed "
+					    "lifecycle op %u to authority",
+					    req->op);
+				break;
+			default:
+				reply.status = ENOTSUP;
+				break;
+			}
+		}
+	}
+
+	if (channel_send_reply(request,
+	    &(struct channel_outgoing){
+		.size = sizeof(struct channel_outgoing),
+		.data = &reply,
+		.length = sizeof(reply),
+		.fds = NULL,
+		.nfds = 0
+	    }) == -1)
+		syslog(LOG_WARNING, "sctl: authority lifecycle reply: %m");
+	sctl_cap_sync_events(c);
+}
+
 int
-sctl_adopt_channel(int provider_fd, uint64_t rights)
+sctl_adopt_channel(int provider_fd, uint64_t rights, bool authority_relay)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	channel_request_handler handler;
 	struct sctl_conn *c;
 	struct kevent kev;
 	int error;
@@ -958,8 +1028,13 @@ sctl_adopt_channel(int provider_fd, uint64_t rights)
 	c->cap_rights = rights;
 	c->pass_fd = -1;
 	c->fd = channel_fd(c->cap_channel);
-	if (channel_set_request_handler(c->cap_channel, sctl_cap_request,
-	    c) == -1) {
+	/*
+	 * system.serviced connections run the serviced control dispatch;
+	 * system.lifecycle connections relay to authorityd (P4b).  Both share the
+	 * adopt/kqueue/channel machinery — only the request handler differs.
+	 */
+	handler = authority_relay ? sctl_authority_request : sctl_cap_request;
+	if (channel_set_request_handler(c->cap_channel, handler, c) == -1) {
 		error = errno;
 		channel_destroy(c->cap_channel);
 		free(c);

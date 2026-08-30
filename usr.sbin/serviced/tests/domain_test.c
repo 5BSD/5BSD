@@ -72,10 +72,11 @@ serviced_fd_budget_check(size_t count, const char *what)
  * not here.  Take ownership of the provider fd (close it) and report success.
  */
 int
-sctl_adopt_channel(int provider_fd, uint64_t rights)
+sctl_adopt_channel(int provider_fd, uint64_t rights, bool authority_relay)
 {
 
 	(void)rights;
+	(void)authority_relay;
 	if (provider_fd >= 0)
 		(void)close(provider_fd);
 	return (0);

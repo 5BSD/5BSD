@@ -1332,6 +1332,26 @@ oi_lifecycle_apply(int op)
 }
 
 /*
+ * Public entry for the capability lifecycle path (docs/lifecycle-capability-
+ * design.md, P4b): serviced relays an AUTHORITY_OP_LIFECYCLE it authorized over
+ * its ADMIN-gated system.lifecycle capability, and authority_proto_dispatch()
+ * calls this from within oi_dispatch() — the same PID-1 context the control
+ * socket path uses.  Only meaningful when Authority is PID 1 (a plane-free boot
+ * runs stock init and has no lifecycle authority here); returns 0 when applied,
+ * EPERM otherwise.  Setting requested_transition is picked up by the
+ * state-machine loop exactly as a control-socket lifecycle request is.
+ */
+int
+authority_init_lifecycle(int op)
+{
+
+	if (getpid() != 1)
+		return (EPERM);
+	oi_lifecycle_apply(op);
+	return (0);
+}
+
+/*
  * Dispatch one non-SIGCHLD kevent for the Authority engine.  Mirrors the
  * non-signal dispatch in event.c's event_loop().
  */

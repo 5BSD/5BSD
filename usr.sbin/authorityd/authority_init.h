@@ -21,4 +21,11 @@ void	authority_init_main(int argc, char *argv[]) __dead2;
  */
 int	authority_init_set_ambient_lookup(int fd);
 
+/*
+ * Apply a system lifecycle transition requested over the capability plane
+ * (docs/lifecycle-capability-design.md, P4b).  op is a CTL_OP_* lifecycle
+ * opcode.  Returns 0 when applied, EPERM when Authority is not PID 1.
+ */
+int	authority_init_lifecycle(int op);
+
 #endif /* AUTHORITY_INIT_H */

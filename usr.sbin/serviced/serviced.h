@@ -253,7 +253,7 @@ bool	sctl_is_conn_event(struct kevent *kev);
  * privileged ops on SVC_RIGHTS_ADMIN present in rights rather than a peer euid.
  * Takes ownership of provider_fd (closes it on failure).
  */
-int	sctl_adopt_channel(int provider_fd, uint64_t rights);
+int	sctl_adopt_channel(int provider_fd, uint64_t rights, bool authority_relay);
 
 /* mac_capability_direct.c — direct mac_capability operations using delegated fd */
 int	mac_cap_create_channel(int *our_end, int *child_end);
@@ -284,6 +284,12 @@ int	authority_ensure_kmod(int channel_fd, const char *name);
 int	authority_delegate_service(int channel_fd, const char *name);
 int	authority_send_ready(int channel_fd);
 int	authority_set_ambient_lookup(int channel_fd, int lookup_fd);
+/*
+ * Relay a system lifecycle op (a CTL_OP_* lifecycle opcode) to authorityd
+ * (docs/lifecycle-capability-design.md, P4b).  Returns the authority's status
+ * (0 = accepted), or -1 on a channel/transport failure.
+ */
+int	authority_lifecycle(int channel_fd, uint32_t lifecycle_op);
 int	authority_release_manifest(int channel_fd, const struct svc_manifest *m);
 
 /* storage_lifecycle.c — last-holder accounting for lease storage. */

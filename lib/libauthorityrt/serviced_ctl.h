@@ -30,6 +30,15 @@
  * and remains on the socket until the lifecycle phase (P4).
  */
 #define	SERVICED_CONTROL_NAME	"system.serviced"
+/*
+ * The capability lifecycle endpoint (docs/lifecycle-capability-design.md, P4b).
+ * serviced self-serves this SYSTEM name over the ambient discovery plane; an
+ * admin login session's lookup receives an ADMIN-bearing channel over which
+ * authorityctl(8) presents a lifecycle op (reboot/halt/...).  serviced relays the
+ * op to authorityd (the spine, PID 1) rather than handling it itself.  The
+ * everyday reboot/halt/shutdown(8) keep their stock BSD signal-to-init path.
+ */
+#define	SERVICED_LIFECYCLE_NAME	"system.lifecycle"
 #define	SERVICED_CTL_VERSION	2
 #define	SERVICED_CTL_MAX_PAYLOAD	1024
 #define	SERVICED_CTL_SUMMARY_MAX	4096

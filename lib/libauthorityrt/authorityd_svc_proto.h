@@ -45,6 +45,26 @@
 #define	AUTHORITY_OP_MINT_STORAGE		24	/* mint TrustedZFS dataset handle */
 #define	AUTHORITY_OP_DESTROY_STORAGE	25	/* destroy an ephemeral dataset */
 #define	AUTHORITY_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in authority-init */
+#define	AUTHORITY_OP_LIFECYCLE		27	/* apply a system lifecycle transition (P4b) */
+
+/*
+ * AUTHORITY_OP_LIFECYCLE
+ *   req:  authority_lifecycle_req
+ *   reply: authority_reply { .status }  (0 = accepted; the transition runs
+ *          after the reply is queued, so the caller's ack precedes the death
+ *          sweep — same ordering as the legacy control-socket path)
+ *
+ * serviced relays a lifecycle request it received over its ADMIN-gated
+ * system.lifecycle capability (docs/lifecycle-capability-design.md, P4b).
+ * authorityd, which is PID 1, translates lifecycle_op into a state transition
+ * via oi_lifecycle_apply() exactly as the control-socket path does.  lifecycle_op
+ * is a CTL_OP_* lifecycle opcode (authorityd_ctl.h): REBOOT/HALT/POWEROFF/
+ * POWERCYCLE/SINGLE/REROOT/RESCAN/CATATONIA.
+ */
+struct authority_lifecycle_req {
+	uint32_t	op;		/* AUTHORITY_OP_LIFECYCLE */
+	uint32_t	lifecycle_op;	/* CTL_OP_* lifecycle opcode */
+};
 
 /*
  * Common request header — used for operations with no extra parameters

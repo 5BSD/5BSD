@@ -1,111 +1,80 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd May 27, 2026
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd August 30, 2026
 .Dt AUTHORITYCTL 8
 .Os
 .Sh NAME
 .Nm authorityctl
-.Nd control interface for authorityd
+.Nd capability-native control for the system authority
 .Sh SYNOPSIS
 .Nm
-.Op Fl s Ar socket
-.Cm status
-.Nm
-.Op Fl s Ar socket
-.Cm shutdown
-.Nm
-.Op Fl s Ar socket
-.Cm reload
+.Ar command
 .Sh DESCRIPTION
 .Nm
-sends administrative commands to a running
-.Xr authorityd 8
-instance via its control socket.
+is the capability-native control tool for the system authority \(em the PID 1
+spine
+.Pq Xr authorityd 8 as Xr init 8 .
+It is the parallel of
+.Xr servicectl 8
+for
+.Xr serviced 8 :
+it resolves the ADMIN-gated
+.Dq Li system.lifecycle
+capability over the ambient discovery plane a login session inherits, presents a
+lifecycle request, and
+.Xr serviced 8
+relays it to the spine, which applies the transition.
+.Pp
+.Nm
+sits
+.Em beside
+the traditional
+.Xr reboot 8 ,
+.Xr halt 8 ,
+and
+.Xr shutdown 8 ,
+which keep their stock behaviour of signalling
+.Xr init 8 .
+Use
+.Nm
+for a capability-native shutdown, or from automation that already holds the
+capability plane.
 .Pp
 The
-.Fl s
-option specifies an alternate socket path (default:
-.Pa /var/run/authorityd.sock ) .
-This is needed when
-.Xr authorityd 8
-is configured with a non-default
-.Va control_socket
-path.
-Each invocation connects, sends a single command, prints the
-result, and exits.
-.Pp
-The following commands are available:
-.Bl -tag -width "shutdown"
-.It Cm status
-Query the daemon's status and uptime.
-The output includes:
-.Bl -tag -width "SERVICED" -compact
-.It Sy CONFIG
-Configuration file path and service manager binary.
-.It Sy INTEGRITY
-Active
-.Xr mac_capability_capprotect 4
-shield flags.
-.It Sy CLAIMS
-All active resource claims, grouped by type (paths, network, jails,
-system gates).
-Each claim is annotated with its provenance:
-.Ql [policy]
-for claims from
-.Xr authorityd.conf 5
-or
-.Ql [service, refcount=N]
-for dynamic claims created at runtime.
-Each claim is verified against the kernel via
-.Dv FI_OP_QUERY ;
-claims the kernel no longer holds are marked
-.Ql [NOT HELD] .
-.It Sy SERVICED
-Ready/not-ready status and PID of
-.Xr serviced 8 .
-.El
-.Pp
-This command does not require root privileges.
-.It Cm shutdown
-Request a graceful shutdown of
-.Xr authorityd 8 .
-The daemon terminates its process subtree, releases all capability
-runtime resources, and exits.
-Requires root.
-.It Cm reload
-Reload
-.Xr authorityd.conf 5
-claims and forward
-.Dv SIGHUP
-to
-.Xr serviced 8 ,
-which re-scans capability bundles.
-Prints a summary of claim changes.
-Requires root.
-.El
-.Sh FILES
-.Bl -tag -width "/var/run/authorityd.sock"
-.It Pa /var/run/authorityd.sock
-Unix domain socket used to communicate with
-.Xr authorityd 8 .
+.Ar command
+is one of:
+.Bl -tag -width "powercycle" -compact -offset indent
+.It Cm reboot
+Reboot the system.
+.It Cm halt
+Halt the system.
+.It Cm poweroff
+Halt and power off.
+.It Cm powercycle
+Power off, then power on.
+.It Cm single
+Bring the system to single-user.
+.It Cm reroot
+Re-root and restart
+.Xr init 8 .
+.It Cm rescan
+Rescan
+.Xr ttys 5 .
+.It Cm catatonia
+Quiesce for a fast, non-clean teardown.
 .El
 .Sh EXIT STATUS
 .Ex -std
-.Pp
-Privileged commands return
-.Er EX_NOPERM
-when executed by a non-root user.
-If
-.Xr authorityd 8
-is not running,
-.Nm
-exits with
-.Er EX_UNAVAILABLE .
+A non-zero status is returned if the authority rejects the request (for example,
+the caller does not hold the administrative right) or the capability plane is
+unreachable.
 .Sh SEE ALSO
-.Xr mac_capability 4 ,
+.Xr servicectl 8 ,
+.Xr shutdown 8 ,
 .Xr authorityd 8 ,
-.Xr servicectl 8
-.Sh HISTORY
-.Nm
-first appeared in 5BSD.
+.Xr serviced 8
+.Sh AUTHORS
+.An Kory Heard

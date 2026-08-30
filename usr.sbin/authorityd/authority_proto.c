@@ -797,6 +797,33 @@ handle_ping(uint64_t reply_token)
  * Best-effort: a malformed request or a failed install is reported in the
  * status reply and never disturbs the event loop.  The reply carries no fds.
  */
+/*
+ * Apply a system lifecycle transition serviced relayed from its ADMIN-gated
+ * system.lifecycle capability (docs/lifecycle-capability-design.md, P4b).  The
+ * ack is queued before the transition runs — authority_init_lifecycle() only
+ * *sets* the requested transition, which the state-machine loop applies after
+ * this dispatch returns, so the caller's reply precedes the death sweep (same
+ * ordering as the legacy control-socket path).
+ */
+static void
+handle_lifecycle(const void *payload, uint32_t len, uint64_t reply_token)
+{
+	const struct authority_lifecycle_req *req;
+	int error;
+
+	if (len != sizeof(*req)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	req = payload;
+	error = authority_init_lifecycle((int)req->lifecycle_op);
+	if (error == 0)
+		syslog(LOG_NOTICE,
+		    "authority_proto: capability lifecycle op %u accepted",
+		    req->lifecycle_op);
+	proto_reply(error, reply_token, NULL, 0);
+}
+
 static void
 handle_set_ambient_lookup(uint32_t len, int fd, uint64_t reply_token)
 {
@@ -1053,6 +1080,9 @@ proto_dispatch_one(void)
 		break;
 	case AUTHORITY_OP_RELEASE_VSOCK:
 		handle_release_vsock(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case AUTHORITY_OP_LIFECYCLE:
+		handle_lifecycle(&buf, ra.payload_len, ra.reply_token);
 		break;
 	default:
 		syslog(LOG_WARNING, "authority_proto: unknown op %u", op);

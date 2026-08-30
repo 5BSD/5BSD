@@ -3,163 +3,125 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * authorityctl — command-line interface to authorityd(8).
+ * authorityctl -- capability-native control CLI for the authority (the PID 1
+ * spine), the parallel of servicectl(8) for serviced.  It presents a lifecycle
+ * op over the ADMIN-gated system.lifecycle capability, which serviced relays to
+ * authorityd (docs/lifecycle-capability-design.md, P4b).
  *
- * Thin CLI wrapper around libauthorityctl.  Each invocation opens a
- * connection, sends one command, prints the result, and exits.
+ * This is the capability path.  The everyday reboot(8)/halt(8)/shutdown(8) keep
+ * their stock BSD signal-to-init behaviour; authorityctl sits beside them for a
+ * capability-native shutdown (and for automation that already holds the plane).
  */
 
+#include <sys/param.h>
+#include <sys/types.h>
+
 #include <err.h>
-#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sysexits.h>
 #include <unistd.h>
 
-#include <authorityctl.h>
+#include <libservice.h>
 
-static const char *sockpath;
+#include "authorityd_ctl.h"
+#include "serviced_ctl.h"
 
-static int
-open_or_die(void)
-{
-	int fd;
+static const struct {
+	const char	*verb;
+	uint32_t	 op;
+} verbs[] = {
+	{ "reboot",	CTL_OP_REBOOT },
+	{ "halt",	CTL_OP_HALT },
+	{ "poweroff",	CTL_OP_POWEROFF },
+	{ "powercycle",	CTL_OP_POWERCYCLE },
+	{ "single",	CTL_OP_SINGLE },
+	{ "reroot",	CTL_OP_REROOT },
+	{ "rescan",	CTL_OP_RESCAN },
+	{ "catatonia",	CTL_OP_CATATONIA },
+};
 
-	fd = authorityctl_open(sockpath);
-	if (fd == -1)
-		err(EX_UNAVAILABLE, "connect %s",
-		    sockpath != NULL ? sockpath : AUTHORITYD_CTL_SOCK);
-	return (fd);
-}
-
-static int
-check(int error, const char *cmd)
-{
-
-	if (error == 0)
-		return (0);
-	warnx("%s: %s", cmd, strerror(error));
-	return (error == EPERM ? EX_NOPERM : 1);
-}
-
-/* ----------------------------------------------------------------
- * Commands
- * ---------------------------------------------------------------- */
-
-static int
-cmd_status(void)
-{
-	struct authorityctl_status st;
-	char summary[AUTHORITYCTL_SUMMARY_MAX];
-	uint64_t up;
-	int fd, error;
-
-	fd = open_or_die();
-	error = authorityctl_status(fd, &st, summary, sizeof(summary));
-	close(fd);
-
-	if (error != 0)
-		return (check(error, "status"));
-
-	up = st.uptime_usec;
-	printf("authorityd: running\n");
-	if (up < 1000000ULL)
-		printf("uptime:  %llu ms\n",
-		    (unsigned long long)(up / 1000));
-	else if (up < 60000000ULL)
-		printf("uptime:  %llu seconds\n",
-		    (unsigned long long)(up / 1000000));
-	else if (up < 3600000000ULL)
-		printf("uptime:  %llu minutes\n",
-		    (unsigned long long)(up / 60000000));
-	else
-		printf("uptime:  %llu hours\n",
-		    (unsigned long long)(up / 3600000000ULL));
-
-	if (summary[0] != '\0')
-		printf("\n%s", summary);
-	return (0);
-}
-
-static int
-cmd_shutdown(void)
-{
-	int fd, error;
-
-	fd = open_or_die();
-	error = authorityctl_shutdown(fd);
-	close(fd);
-
-	if (error != 0)
-		return (check(error, "shutdown"));
-	printf("authorityd: shutdown initiated\n");
-	return (0);
-}
-
-static int
-cmd_reload(void)
-{
-	char summary[AUTHORITYCTL_SUMMARY_MAX];
-	int fd, error;
-
-	fd = open_or_die();
-	error = authorityctl_reload(fd, summary, sizeof(summary));
-	close(fd);
-
-	if (error != 0)
-		return (check(error, "reload"));
-	if (summary[0] != '\0')
-		printf("%s", summary);
-	else
-		printf("reload: no changes\n");
-	return (0);
-}
-/* ----------------------------------------------------------------
- * Main
- * ---------------------------------------------------------------- */
-
-static void usage(void) __dead2;
-
-static void
+static void __dead2
 usage(void)
 {
 
-	fprintf(stderr,
-	    "usage: authorityctl [-s socket] command\n"
-	    "       authorityctl status\n"
-	    "       authorityctl reload\n"
-	    "       authorityctl shutdown\n");
+	fprintf(stderr, "usage: authorityctl "
+	    "reboot|halt|poweroff|powercycle|single|reroot|rescan|catatonia\n");
 	exit(EX_USAGE);
 }
 
-int
-main(int argc, char *argv[])
+/*
+ * Resolve system.lifecycle over the ambient discovery plane and present the op.
+ * Returns the authority's status (0 = accepted).
+ */
+static int
+authctl_lifecycle(uint32_t op)
 {
-	int ch;
+	struct service_session *session;
+	struct service_message message;
+	struct service_reply reply;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct ctl_request req;
+	struct ctl_reply rpl;
+	int fd;
 
-	while ((ch = getopt(argc, argv, "s:")) != -1) {
-		switch (ch) {
-		case 's':
-			sockpath = optarg;
-			break;
-		default:
-			usage();
-		}
+	if (service_open(SERVICED_LIFECYCLE_NAME, &fd) != 0)
+		err(EX_UNAVAILABLE,
+		    "cannot reach the system lifecycle capability");
+	if (service_session_create(fd, &session) != 0) {
+		(void)close(fd);
+		err(EX_UNAVAILABLE, "lifecycle session");
 	}
-	argc -= optind;
-	argv += optind;
 
-	if (argc < 1)
+	memset(&req, 0, sizeof(req));
+	req.version = CTL_VERSION;
+	req.op = op;
+
+	memset(&message, 0, sizeof(message));
+	message.size = sizeof(message);
+	message.data = &req;
+	message.length = sizeof(req);
+
+	memset(&reply, 0, sizeof(reply));
+	reply.size = sizeof(reply);
+	reply.data = &rpl;
+	reply.capacity = sizeof(rpl);
+	options.timeout_ms = 30000;
+
+	if (service_session_call(session, &message, &reply, &options) != 0) {
+		service_session_close(session);
+		err(EX_UNAVAILABLE, "lifecycle request");
+	}
+	if (reply.length != sizeof(rpl)) {
+		service_session_close(session);
+		errx(EX_PROTOCOL, "short lifecycle reply");
+	}
+	service_session_close(session);
+	return ((int)rpl.status);
+}
+
+int
+main(int argc, char **argv)
+{
+	unsigned i;
+	int status;
+
+	if (argc != 2)
 		usage();
 
-	if (strcmp(argv[0], "status") == 0 && argc == 1)
-		return (cmd_status());
-	if (strcmp(argv[0], "shutdown") == 0 && argc == 1)
-		return (cmd_shutdown());
-	if (strcmp(argv[0], "reload") == 0 && argc == 1)
-		return (cmd_reload());
+	for (i = 0; i < nitems(verbs); i++) {
+		if (strcmp(argv[1], verbs[i].verb) != 0)
+			continue;
+		status = authctl_lifecycle(verbs[i].op);
+		if (status != 0) {
+			warnc(status, "%s", argv[1]);
+			return (1);
+		}
+		/* Accepted: the machine is going down; nothing more to print. */
+		return (0);
+	}
 
+	warnx("unknown command: %s", argv[1]);
 	usage();
-	return (EX_USAGE);
 }

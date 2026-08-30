@@ -579,6 +579,28 @@ authority_send_ready(int channel_fd)
 }
 
 /*
+ * Relay a system lifecycle transition to authorityd (docs/lifecycle-capability-
+ * design.md, P4b): serviced authorized the request over its ADMIN-gated
+ * system.lifecycle capability and forwards the opcode to the spine, which is
+ * PID 1 and applies it.  Returns the authority's status (0 = accepted).
+ */
+int
+authority_lifecycle(int channel_fd, uint32_t lifecycle_op)
+{
+	struct authority_lifecycle_req req;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = AUTHORITY_OP_LIFECYCLE;
+	req.lifecycle_op = lifecycle_op;
+
+	status = authority_rpc(channel_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status < 0)
+		return (-1);
+	return (status);
+}
+
+/*
  * Forward the ambient lookup channel client end to authority-init (§21) so it can
  * carry the channel into interactive logins spawned from /etc/ttys.  lookup_fd
  * is duped across as an attached descriptor; the caller retains its own copy.
