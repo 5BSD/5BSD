@@ -397,22 +397,25 @@ ATF_TC_BODY(user_scope_hides_registered_name, tc)
 	int error, rv;
 
 	/*
-	 * A system-only name that IS registered is invisible to a USER domain:
-	 * the scope check runs before the registry, returns ENOENT, and never
-	 * mints a channel.  ENOENT is therefore indistinguishable from a name
-	 * that was never registered — the requester learns nothing.
+	 * A system-only name that is out of a USER domain's scope never mints a
+	 * channel, whether it is registered or not.  naming_lookup() signals the
+	 * out-of-scope case with EACCES *internally* so the caller fails fast
+	 * (no on-demand launch the requester could never reach); the caller then
+	 * maps EACCES to ENOENT on the wire, so the requester still cannot tell
+	 * an out-of-scope name from an unregistered one (verified in the channel
+	 * cases below).
 	 */
 	provider_register(&provider, SYSTEM_ONLY_NAME);
 
 	error = 0;
 	rv = naming_lookup(SYSTEM_ONLY_NAME, NULL, &user, &error, NULL);
 	ATF_CHECK_EQ(-1, rv);
-	ATF_CHECK_EQ(ENOENT, error);		/* registered, but out of scope */
+	ATF_CHECK_EQ(EACCES, error);		/* registered, but out of scope */
 
 	error = 0;
 	rv = naming_lookup("org.5bsd.NeverRegistered", NULL, &user, &error, NULL);
 	ATF_CHECK_EQ(-1, rv);
-	ATF_CHECK_EQ(ENOENT, error);		/* unregistered: same answer */
+	ATF_CHECK_EQ(EACCES, error);		/* unregistered + out of scope */
 
 	naming_remove_owner(&provider);
 }

@@ -468,7 +468,13 @@ lookup_channel_request(struct channel *channel,
 		    on_demand_launch_ambient(req->name, lc, &lc->domain,
 		    request, serviced_kq) == 0)
 			return;
-		lookup_channel_reply(request, error, NULL, 0);
+		/*
+		 * EACCES means out-of-scope for this channel's domain: fail fast
+		 * (no on-demand) and report ENOENT so the client cannot tell an
+		 * out-of-scope name from an unregistered one.
+		 */
+		lookup_channel_reply(request, error == EACCES ? ENOENT : error,
+		    NULL, 0);
 		goto out;
 	}
 	lookup_channel_reply_ex(request, 0, &client_fd, 1, !sendable);

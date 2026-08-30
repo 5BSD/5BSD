@@ -447,7 +447,8 @@ on_demand_broker(struct pending_lookup *pl, int kq)
 			svc_channel_sync_events(req_svc, kq);
 		return (status == 0);
 	}
-	status = error;
+	/* Out-of-scope (EACCES) looks like unregistered (ENOENT) on the wire. */
+	status = (error == EACCES) ? ENOENT : error;
 	(void)channel_send_reply(request, &(struct channel_outgoing)
 	    CHANNEL_OUTGOING_INITIALIZER(&status, sizeof(status)));
 	channel_message_free(request);

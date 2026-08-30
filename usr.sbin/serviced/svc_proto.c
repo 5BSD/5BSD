@@ -415,6 +415,10 @@ handle_lookup(struct svc_runtime *svc, struct channel_message *request)
 				return (true);
 			if (errno == EDEADLK)
 				error = EDEADLK;
+		} else if (error == EACCES) {
+			/* Out of scope: fail fast, indistinguishable from
+			 * unregistered on the wire. */
+			error = ENOENT;
 		}
 		(void)svc_channel_reply(svc, request, SVC_OP_LOOKUP, error,
 		    NULL, 0);

@@ -331,18 +331,16 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	if (e == NULL || !e->owner->protocol_ready ||
 	    e->owner->state != SVC_STATE_RUNNING) {
 		/*
-		 * Not (yet) registered.  Preserve on-demand gating: an out-of-
-		 * scope name is indistinguishable from an unregistered one, and a
-		 * denied scope must not trigger an on-demand launch the caller
-		 * could never reach.  (Control names are eagerly registered, so
-		 * svc_domain_resolves already returns false for a CONTROL channel
-		 * here — no control name is ever on-demand.)
+		 * Not registered.  If the name is also out of this channel's
+		 * scope, report EACCES *internally* so the caller fails fast
+		 * without an on-demand launch it could never reach (the caller
+		 * maps EACCES to ENOENT on the wire, so the client still cannot
+		 * distinguish out-of-scope from unregistered).  Otherwise ENOENT
+		 * marks it on-demand-eligible.  (Control names are eagerly
+		 * registered, so svc_domain_resolves already denies a CONTROL
+		 * channel here -- no control name is ever on-demand.)
 		 */
-		if (!svc_domain_resolves(domain, name)) {
-			*errp = ENOENT;
-			return (-1);
-		}
-		*errp = ENOENT;
+		*errp = svc_domain_resolves(domain, name) ? ENOENT : EACCES;
 		return (-1);
 	}
 
@@ -351,11 +349,12 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	 * domain.  This is the structural separation between the SYSTEM/USER
 	 * service plane and the CONTROL admin plane -- a control name resolves
 	 * only through a CONTROL channel, and a CONTROL channel resolves only
-	 * control names.  An out-of-scope hit is reported as ENOENT, exactly like
-	 * an unregistered name.
+	 * control names.  An out-of-scope hit returns EACCES internally (the
+	 * caller maps it to ENOENT on the wire and does NOT on-demand it): the
+	 * name exists but this channel may never reach it.
 	 */
 	if (!svc_domain_permits(domain, e->domain, name)) {
-		*errp = ENOENT;
+		*errp = EACCES;
 		return (-1);
 	}
 
