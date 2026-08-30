@@ -4,6 +4,16 @@ Status: design note / proposal. Extends the "move to an explicit minted
 lifecycle capability token" TODO in
 [`authority-control-abi-design.md`](authority-control-abi-design.md).
 
+> **Superseded by [`capability-authority-model.md`](capability-authority-model.md).**
+> The end state is not a separate CONTROL *domain* / `.Control` name reached by
+> a domain-scoped channel, but a **`lifecycle` capability** — an endpoint with
+> lifecycle rights, held by an admin principal's bundle and served by the spine
+> (`authority-init`) so it survives serviced's death. `reboot` presents the
+> capability; there is no `getpid()==1` authority check and no signal-authority
+> path (`reboot(2)` remains only as the kernel escape). The socket-inventory and
+> serviced-death constraints below are still correct; the *replacement
+> mechanism* is a held capability, not a control domain.
+
 ## The gap
 
 The lifecycle control ABI (reboot/halt/poweroff/single-user/reroot/rescan/

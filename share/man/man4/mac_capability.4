@@ -326,6 +326,44 @@ Sync-only shared key-value store (256 keys, 4096 bytes per value).
 .It Sy mac_capability_test_keystore
 Async key-value store.
 .El
+.Sh AUTHORITY MODEL
+Authority in the capability plane is a
+.Em held capability ,
+never an identity.
+A capability is a channel endpoint bound to an
+.Pq Do object , rights Dc
+pair: the descriptor is the credential, holding it is holding the authority,
+and using it is presenting the capability.
+A service acts on a request because of which endpoint it arrived on and the
+rights that endpoint carries \(em it does not consult the caller's uid, gid,
+pathname, or process id to authorize.
+.Pp
+Four operations define the model.
+.Bl -tag -width delegate
+.It Sy present
+Send a request on the endpoint; the service honors it if the endpoint's rights
+permit the operation.
+.It Sy delegate
+Hand the endpoint to another holder by passing the descriptor; whether it may be
+re-delegated is an attenuable property of the descriptor
+.Pq see Xr cap_xfer_rights_limit 2 .
+.It Sy attenuate
+Mint a strictly weaker capability \(em fewer rights, or a narrower object \(em
+from one already held; attenuation is one-way.
+.It Sy revoke
+Invalidate a capability and, transitively, everything minted from it.
+.El
+.Pp
+Identity becomes capability at exactly one boundary: the kernel mints
+unforgeable endpoints, PID\ 1
+.Pq Xr authorityd 8
+holds the root capability at boot, and an authentication agent exchanges a
+proven credential for that principal's capability bundle by explicit policy.
+Above that boundary no component derives authority from a uid; uids name
+principals and protect the POSIX substrate only.
+This is the target model that new code is written to; the phased migration of
+existing authorization onto it, and the locked design decisions, are recorded in
+.Pa /usr/src/docs/capability-authority-model.md .
 .Sh LIMITS
 .Bl -tag -width MAC_CAPABILITY_MSG_PAYLOAD_SIZE
 .It Dv MAC_CAPABILITY_MSG_PAYLOAD_SIZE

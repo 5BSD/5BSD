@@ -157,6 +157,11 @@ static int		 pam_cred_established;
 static int		 pam_session_established;
 
 /*
+ * MIGRATION (docs/capability-authority-model.md, phases P1/P5): deriving the
+ * session's discovery scope from uid (root/wheel -> SYSTEM) is transitional.
+ * The end state asks the auth agent for the authenticated principal's capability
+ * bundle by explicit policy; login stops making the admin decision inline.
+ *
  * Whether the target principal is an administrator (§6): root, or a member of
  * the "wheel" group.  An admin session is provisioned a SYSTEM (full-discovery)
  * ambient channel; every other user gets a per-uid USER channel.  Membership is

@@ -1,5 +1,14 @@
 # Authority lifecycle control ABI: moving PID 1 off the signal interface
 
+> **Authorization superseded by [`capability-authority-model.md`](capability-authority-model.md).**
+> This document's authenticated **control socket** (getpeereid + root euid) is a
+> transitional step, not the end state. The target is a held **`lifecycle`
+> capability** presented over a channel — no socket path, no `getpeereid`, no
+> `euid==0` check, and no `getpid()==1` authority (the capability *is* the
+> authority). `reboot(2)` remains only as the kernel escape hatch. The opcode
+> semantics and shutdown orchestration below are unchanged; only how the
+> endpoint is named and authorized changes.
+
 Companion to `authority-init-todo.md` (Phase 9) and `freebsd-init-behavior-audit.md`
 (section 14, the signal ABI). This records the decision to replace the
 traditional PID 1 signal ABI with an authenticated control-socket ABI, and how

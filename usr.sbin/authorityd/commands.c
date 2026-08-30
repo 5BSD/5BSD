@@ -152,6 +152,13 @@ int
 cmd_lifecycle(uid_t euid, uint32_t op, struct ctl_reply *reply)
 {
 
+	/*
+	 * MIGRATION (docs/capability-authority-model.md, phase P4): the getpid()==1
+	 * and euid==0 gates below are transitional.  The end state authorizes by a
+	 * presented lifecycle capability served by the spine (so it survives
+	 * serviced's death); the capability is the authority, not the PID or uid.
+	 * reboot(2) remains only as the kernel escape hatch.
+	 */
 	if (getpid() != 1) {
 		reply->status = EPERM;
 		syslog(LOG_WARNING,

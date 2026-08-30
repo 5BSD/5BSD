@@ -293,6 +293,13 @@ conn_dispatch(struct sctl_conn *c)
 		goto write;
 	}
 
+	/*
+	 * MIGRATION (docs/capability-authority-model.md, phase P3): the per-op
+	 * getpeereid/euid gate below is transitional.  The end state serves these
+	 * admin operations over a presented serviced:admin capability (read-only
+	 * ops at a lesser right) with no socket and no uid check; provision-session
+	 * remains kernel-attested until phase P4.
+	 */
 	SERVICED_PROBE_SCTL_CMD(req->op, c->euid);
 
 	switch (req->op) {

@@ -970,9 +970,14 @@ router_channel_request(struct channel *channel __unused,
 		return;
 	}
 	/*
-	 * Authorization gates on the caller's authenticated uid: root (uid 0)
-	 * may perform any operation on any topic, every other uid is bound by
-	 * its per-client topic policy.  The connection itself is always
+	 * MIGRATION (docs/capability-authority-model.md, phase P2): this uid gate
+	 * is transitional.  The end state authorizes by a presented topic
+	 * capability (an endpoint whose rights carry publish/subscribe/etc.), not
+	 * by the caller's uid; bsdnotify is the first service to convert.
+	 *
+	 * Until then, authorization gates on the caller's authenticated uid: root
+	 * (uid 0) may perform any operation on any topic, every other uid is bound
+	 * by its per-client topic policy.  The connection itself is always
 	 * accepted; only privileged operations are restricted.  The uid is the
 	 * kernel-stamped sender credential on this request, not a session-time
 	 * cache, so it cannot be spoofed by the client.

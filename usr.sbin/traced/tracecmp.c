@@ -209,8 +209,12 @@ handle_request(struct channel *channel __unused,
 	}
 
 	/*
-	 * Authorization gates on the caller's authenticated uid: root (uid 0)
-	 * may obtain the raw DTrace consumer fd regardless of the label
+	 * MIGRATION (docs/capability-authority-model.md, phase P5): this uid gate
+	 * is transitional; the end state authorizes OPEN by a presented trace:raw
+	 * capability, not by the caller's uid or a label allowlist.
+	 *
+	 * Until then, authorization gates on the caller's authenticated uid: root
+	 * (uid 0) may obtain the raw DTrace consumer fd regardless of the label
 	 * allowlist, matching the plane-wide "root may do anything" rule; a
 	 * non-root caller is delegated the fd only if its client label is in
 	 * the traced allowlist (the mechanism that lets specific unprivileged

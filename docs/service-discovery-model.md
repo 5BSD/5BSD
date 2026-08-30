@@ -2,7 +2,16 @@
 
 Status: design, in implementation. Foundation (§21 ambient carry, §21.3 session
 narrowing) committed (b56ab8808af). This document is the source of truth for the
-service-discovery, domain, and management-authorization rework.
+service-discovery and domain *mechanism*.
+
+> **Authorization superseded.** Wherever this document authorizes by uid, by a
+> domain chosen from a uid (root/wheel → SYSTEM), or by a socket peer, that
+> framing is replaced by [`capability-authority-model.md`](capability-authority-model.md):
+> authority is a **held capability**, not a uid. The SYSTEM/USER/CONTROL domains
+> are reinterpreted there as *discovery capabilities* minted by an explicit
+> auth-boundary policy rather than by uid, and the `.Control` convention is
+> retired in favor of held control capabilities. The channel/discovery
+> *plumbing* below stands; the *authorization* does not.
 
 ## 1. Goals and truths
 
