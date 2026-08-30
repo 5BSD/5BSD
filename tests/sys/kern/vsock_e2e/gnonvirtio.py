@@ -7,11 +7,14 @@ case merely by appearing at that address.
 """
 
 import argparse
+import fcntl
 import glob
 import mmap
 import os
 import stat
+import struct
 import tempfile
+import time
 
 
 MODELS = {
@@ -23,6 +26,11 @@ MODELS = {
     "fbuf": (0xFB5D, 0x40FB, 0x030000),
     "pci-uart": (0x131F, 0x2000, 0x070002),
     "hostbridge": (0x1275, 0x1275, 0x060000),
+    # i6300esb PCI watchdog: base class 0x08 (system peripheral), subclass
+    # 0x80 (other), prog-if 0x00 -> class code 0x088000.  Non-VirtIO; the guest
+    # driver is Linux "i6300esb" (/dev/watchdogN) or 5BSD "i6300esbwd"
+    # (watchdog(4) via /dev/fido).
+    "i6300esb": (0x8086, 0x25AB, 0x088000),
 }
 DISPLAY_FIRST_PIXEL = bytes((0x13, 0x57, 0x9B, 0x00))
 DISPLAY_LAST_PIXEL = bytes((0x24, 0x68, 0xAC, 0x00))
@@ -164,6 +172,147 @@ def pvpanic(event, port_path="/dev/port"):
         os.close(fd)
 
 
+# ---- i6300esb PCI watchdog ---------------------------------------------------
+#
+# The verifier confirms that the emulated i6300esb is bound to the platform
+# watchdog driver, that the no-feed reset is armed, and that a keepalive/pat is
+# accepted.  The DEFAULT path never lets the watchdog lapse: it pats once and
+# then disarms cleanly, so a self-check can never destroy the VM.  The
+# destructive "let it fire and observe the host action" behaviour is gated
+# behind WATCHDOG_EXPECT_RESET and is only used by the live case, exactly as
+# pvpanic neutralises its panic at the device (action=none / action=notify).
+
+# Linux <linux/watchdog.h> ioctls (WATCHDOG_IOCTL_BASE == 'W').
+WDIOC_KEEPALIVE = 0x80045705
+WDIOC_SETTIMEOUT = 0xC0045706
+WDIOC_GETTIMEOUT = 0x80045707
+
+# 5BSD/FreeBSD <sys/watchdog.h> ioctls (sbintime_t == int64).
+WD_FREEBSD_SETTIMEOUT = 0x80085735  # _IOW('W', 53, sbintime_t)
+WD_FREEBSD_GETTIMEOUT = 0x40085736  # _IOR('W', 54, sbintime_t)
+WD_FREEBSD_CONTROL = 0x80045733     # _IOW('W', 51, int)
+WD_CTRL_DISABLE = 0x00000000
+SBT_1S = 1 << 32
+
+# Short lapse target for the destructive case so a live reset observation does
+# not stall the lab; the emulated timer is two-stage, so the host action lands
+# near 2x this value.
+WATCHDOG_FIRE_TIMEOUT = 2
+
+
+def read_int(path):
+    with open(path, encoding="ascii") as source:
+        return int(source.read().strip(), 10)
+
+
+def watchdog_node_linux(path, sys_root="/sys", dev_root="/dev"):
+    real = os.path.realpath(path)
+    matches = []
+    for entry in glob.glob(sys_root + "/class/watchdog/watchdog[0-9]*"):
+        owner = os.path.realpath(entry + "/device")
+        if owner == real or owner.startswith(real + os.sep):
+            node = os.path.join(dev_root, os.path.basename(entry))
+            if os.path.exists(node):
+                matches.append((entry, node))
+    if len(matches) != 1:
+        raise RuntimeError(
+            f"expected one watchdog below PCI function, found {matches!r}")
+    return matches[0]
+
+
+def watchdog_linux(bdf, expect_reset):
+    path = pci_device("i6300esb", bdf)
+    driver = bound_driver(path)
+    if driver != "i6300esb":
+        raise RuntimeError(f"watchdog bound to {driver!r}, expected i6300esb")
+    sysfs, node = watchdog_node_linux(path)
+    identity = "unknown"
+    identity_path = sysfs + "/identity"
+    if os.path.exists(identity_path):
+        with open(identity_path, encoding="ascii") as source:
+            identity = source.read().strip()
+    # Opening the device arms it; the countdown is now live.
+    fd = os.open(node, os.O_WRONLY)
+    try:
+        try:
+            buf = struct.pack("i", 0)
+            fcntl.ioctl(fd, WDIOC_GETTIMEOUT, buf, True)
+            timeout = struct.unpack("i", buf)[0]
+        except OSError:
+            timeout = read_int(sysfs + "/timeout") if \
+                os.path.exists(sysfs + "/timeout") else 0
+        if timeout <= 0:
+            raise RuntimeError("watchdog reports a non-positive timeout")
+        if not expect_reset:
+            # Pat once to prove the keepalive path, then disarm with the magic
+            # close so the timer can never lapse.
+            os.write(fd, b"\0")
+            os.write(fd, b"V")
+            os.close(fd)
+            fd = -1
+            return f"node={node} identity={identity} timeout={timeout} armed=yes fired=no"
+        # Destructive lane: shorten the timer if we can, stop patting, and let
+        # it lapse.  bhyve is configured action=notify, so the host merely logs
+        # and stops the timer -- the guest survives for the runner to observe.
+        try:
+            buf = struct.pack("i", WATCHDOG_FIRE_TIMEOUT)
+            fcntl.ioctl(fd, WDIOC_SETTIMEOUT, buf, True)
+            timeout = struct.unpack("i", buf)[0]
+        except OSError:
+            pass
+        os.write(fd, b"\0")
+        # Do NOT write the magic 'V': the timer must remain armed as it lapses.
+        os.close(fd)
+        fd = -1
+        time.sleep(timeout * 3 + 10)
+        return f"node={node} identity={identity} timeout={timeout} armed=yes fired=expected"
+    finally:
+        if fd >= 0:
+            try:
+                os.write(fd, b"V")
+            except OSError:
+                pass
+            os.close(fd)
+
+
+def watchdog_freebsd(expect_reset, dev_root="/dev"):
+    node = os.path.join(dev_root, "fido")
+    fd = os.open(node, os.O_RDWR)
+    try:
+        seconds = WATCHDOG_FIRE_TIMEOUT if expect_reset else 8
+        sbt = struct.pack("q", seconds * SBT_1S)
+        fcntl.ioctl(fd, WD_FREEBSD_SETTIMEOUT, sbt, False)
+        buf = struct.pack("q", 0)
+        fcntl.ioctl(fd, WD_FREEBSD_GETTIMEOUT, buf, True)
+        total = struct.unpack("q", buf)[0]
+        if total <= 0:
+            raise RuntimeError("watchdog reports a non-positive timeout")
+        if not expect_reset:
+            # Pat once more, then disable so the timer can never lapse.
+            fcntl.ioctl(fd, WD_FREEBSD_SETTIMEOUT, sbt, False)
+            fcntl.ioctl(fd, WD_FREEBSD_CONTROL,
+                        struct.pack("i", WD_CTRL_DISABLE), False)
+            return f"node={node} timeout={seconds} armed=yes fired=no"
+        # Destructive lane: stop patting and let it lapse (action=notify keeps
+        # the guest alive for the runner to observe on the host log).
+        time.sleep(seconds * 3 + 10)
+        return f"node={node} timeout={seconds} armed=yes fired=expected"
+    finally:
+        os.close(fd)
+
+
+def watchdog(bdf, expect_reset):
+    system = os.uname().sysname
+    if system == "Linux":
+        return watchdog_linux(bdf, expect_reset)
+    if system in ("FreeBSD", "5BSD"):
+        # 5BSD exposes the i6300esbwd(4) driver through watchdog(4); the PCI
+        # binding is confirmed natively by the 5BSD runner (pciconf), so here we
+        # drive the platform watchdog device directly.
+        return watchdog_freebsd(expect_reset)
+    raise RuntimeError(f"watchdog verifier does not support {system!r}")
+
+
 def self_test():
     with tempfile.TemporaryDirectory() as root:
         path = root + "/sys/bus/pci/devices/0000:00:15.0"
@@ -180,6 +329,14 @@ def self_test():
             pass
         else:
             raise RuntimeError("PCI identity mismatch was accepted")
+        watchdog = root + "/sys/bus/pci/devices/0000:00:1f.0"
+        os.makedirs(watchdog)
+        for name, value in (("vendor", "0x8086"), ("device", "0x25ab"),
+                            ("class", "0x088000")):
+            with open(watchdog + "/" + name, "w", encoding="ascii") as output:
+                output.write(value + "\n")
+        if pci_device("i6300esb", "0000:00:1f.0", root + "/sys") != watchdog:
+            raise RuntimeError("synthetic i6300esb lookup failed")
     print("SELFTEST PASS")
 
 
@@ -200,6 +357,8 @@ def main():
     display.add_argument("last_pixel", nargs="?")
     panic = subparsers.add_parser("pvpanic")
     panic.add_argument("event", type=int)
+    dog = subparsers.add_parser("watchdog")
+    dog.add_argument("bdf")
     args = parser.parse_args()
     if args.self_test:
         self_test()
@@ -227,6 +386,10 @@ def main():
     elif args.command == "pvpanic":
         pvpanic(args.event)
         print(f"PASS device=pvpanic event={args.event}")
+    elif args.command == "watchdog":
+        expect_reset = os.environ.get("WATCHDOG_EXPECT_RESET", "") not in \
+            ("", "0", "no", "false")
+        print(f"PASS device=i6300esb {watchdog(args.bdf, expect_reset)}")
     else:
         parser.error("a command is required")
 

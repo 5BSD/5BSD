@@ -146,7 +146,7 @@ NONVIRTIO_FWCFG_NAME=opt/waspnest/checkpoint
 NONVIRTIO_FWCFG_VALUE=WASPNEST-FWCFG-CURSOR-0123456789ABCDEF
 
 case "$NONVIRTIO_DEVICE" in
-none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|pvpanic|hostbridge|passthru|qemu-fwcfg) ;;
+none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|pvpanic|i6300esb|hostbridge|passthru|qemu-fwcfg) ;;
 *) echo "unknown NONVIRTIO_DEVICE: $NONVIRTIO_DEVICE" >&2; exit 2 ;;
 esac
 case "$NONVIRTIO_IMAGE_MB" in
@@ -1171,6 +1171,7 @@ launch_vm()
 	xhci) set -- "$@" -s "21,xhci,tablet" ;;
 	fbuf) set -- "$@" -s "21,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
 	pci-uart) set -- "$@" -s "21,uart,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log" ;;
+	i6300esb) set -- "$@" -s "21,i6300esb,action=notify,timeout=2" ;;
 	passthru) set -- "$@" -S -s "21,passthru,$NONVIRTIO_PASSTHRU" ;;
 	esac
 	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT"
@@ -2034,6 +2035,7 @@ provision_guest()
 	pci-uart) guest_cmd 'modprobe 8250_pci' 30 ;;
 	tpm-crb) guest_cmd 'apk add --no-cache tpm2-tools; modprobe tpm_crb' 120 ;;
 	pvpanic) guest_cmd 'modprobe pvpanic 2>/dev/null || modprobe pvpanic-pci 2>/dev/null || true' 30 ;;
+	i6300esb) guest_cmd 'modprobe i6300esb 2>/dev/null || true; i=0; while [ ! -e /sys/class/watchdog/watchdog0 ] && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done' 30 ;;
 	qemu-fwcfg)
 		guest_cmd 'apk add --no-cache build-base' 120
 		copy_guest_file "$here/freebsd-fwcfg-check.c" /tmp/fwcfg-check.c
@@ -2159,6 +2161,15 @@ run_nonvirtio()
 		grep -q 'pvpanic: guest reported event 0x02' "$bhyve_log"
 		pvpanic_event_count=$(grep -c 'pvpanic: guest reported event 0x02' "$bhyve_log")
 		;;
+	i6300esb)
+		# First, prove the safe path: arm, pat, and disarm without ever
+		# letting the timer lapse.  Then, gated by WATCHDOG_EXPECT_RESET, stop
+		# feeding and let it fire; bhyve runs action=notify so the guest
+		# survives and the host action lands in the log for us to observe.
+		guest_cmd "python3 /tmp/gnonvirtio.py watchdog 0000:00:15.0" 30
+		guest_cmd "env WATCHDOG_EXPECT_RESET=1 python3 /tmp/gnonvirtio.py watchdog 0000:00:15.0" 60
+		grep -q 'i6300esb: watchdog expired, applying action "notify"' "$bhyve_log"
+		;;
 	qemu-fwcfg)
 		guest_cmd "/tmp/fwcfg-check live '$NONVIRTIO_FWCFG_NAME' '$NONVIRTIO_FWCFG_VALUE'" 30
 		;;
@@ -2183,6 +2194,7 @@ nonvirtio_checkpoint_operation()
 	pci-uart) printf '%s' 'tty=$(basename /sys/bus/pci/devices/0000:00:15.0/tty/ttyS*); printf "PCI-UART-CHECKPOINT-%s\n" "$i" > /dev/$tty' ;;
 	lpc-uart) printf '%s' 'printf "LPC-UART-CHECKPOINT-%s\n" "$i" > /dev/ttyS1' ;;
 	pvpanic) printf '%s' 'python3 /tmp/gnonvirtio.py probe hostbridge 0000:00:00.0 >/dev/null' ;;
+	i6300esb) printf '%s' 'python3 /tmp/gnonvirtio.py watchdog 0000:00:15.0 >/dev/null' ;;
 	hostbridge) printf '%s' 'python3 /tmp/gnonvirtio.py probe hostbridge 0000:00:00.0 >/dev/null' ;;
 	*) return 1 ;;
 	esac

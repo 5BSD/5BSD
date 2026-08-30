@@ -484,7 +484,7 @@ grep -q 'release_case_resources(running.resource_allocation)' "$lab"
 # qualification composition counts alone would not identify a case silently
 # removed from the checkpoint profile while another profile still contained
 # the device.
-[ "$(grep -c '^cases=65$' "$work/checkpoint")" -eq 1 ]
+[ "$(grep -c '^cases=67$' "$work/checkpoint")" -eq 1 ]
 grep -Fq '9p:*|fs:*|gpu:*' "$tree_root/tests/sys/kern/vsock_e2e/run-alpine-auto.sh"
 tab=$(printf '\t')
 for checkpoint_case in \
@@ -849,7 +849,7 @@ grep -q '^cases=7$' "$work/soak-smoke-plan"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/qualification"
-grep -q '^cases=219$' "$work/qualification"
+grep -q '^cases=227$' "$work/qualification"
 [ "$(grep -c '^kernel-contract-root	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-root	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^host-regression	' "$work/qualification")" -eq 1 ]
@@ -970,7 +970,7 @@ grep -q '^vmfree-nested-vmx-model-sanitized	nested-vmx-model	' \
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile intel-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/intel-qualification"
-grep -q '^cases=223$' "$work/intel-qualification"
+grep -q '^cases=231$' "$work/intel-qualification"
 [ "$(grep -c '^kernel-contract-root	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-root	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^host-regression	' "$work/intel-qualification")" -eq 1 ]
@@ -985,10 +985,10 @@ grep -q '^cases=223$' "$work/intel-qualification"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile full-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/full-qualification"
-grep -q '^cases=227$' "$work/full-qualification"
+grep -q '^cases=235$' "$work/full-qualification"
 [ "$(grep -c '^kernel-contract-root	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-root	' "$work/full-qualification")" -eq 1 ]
-[ "$(grep -c '^nonvirtio-' "$work/full-qualification")" -eq 50 ]
+[ "$(grep -c '^nonvirtio-' "$work/full-qualification")" -eq 54 ]
 [ "$(grep -c '^nested-vmx-live	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-modern	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-packed-modern	' \
@@ -1155,7 +1155,7 @@ env PLAN_ONLY=yes PROFILE=nonvirtio JOBS=1 \
     NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT='pciconf -l pci0:21:0' \
     sh "$here/run-waspnest-qualification.sh" >"$work/nonvirtio-plan.out"
 grep -q '^qualification-plan profile=nonvirtio$' "$work/nonvirtio-plan.out"
-grep -q '^cases=50$' "$work/nonvirtio-plan.out"
+grep -q '^cases=54$' "$work/nonvirtio-plan.out"
 for nonvirtio_argument in \
     NONVIRTIO_TPM_PATH=/tmp/swtpm.sock \
     NONVIRTIO_PASSTHRU=ppt0 \

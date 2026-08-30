@@ -116,7 +116,7 @@ NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT=${NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT:-$NONVIRTI
 NONVIRTIO_FWCFG_NAME=opt/waspnest/checkpoint
 NONVIRTIO_FWCFG_VALUE=WASPNEST-FWCFG-CURSOR-0123456789ABCDEF
 case "$NONVIRTIO_DEVICE" in
-none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|hostbridge|passthru|qemu-fwcfg) ;;
+none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|i6300esb|hostbridge|passthru|qemu-fwcfg) ;;
 *) echo "unknown NONVIRTIO_DEVICE: $NONVIRTIO_DEVICE" >&2; exit 2 ;;
 esac
 validate_yes_no_early()
@@ -777,6 +777,7 @@ nonvirtio_pci_identity()
 	xhci) echo 'vendor=0x8086 device=0x1e31 class=0x0c0330' ;;
 	fbuf) echo 'vendor=0xfb5d device=0x40fb class=0x030000' ;;
 	pci-uart) echo 'vendor=0x131f device=0x2000 class=0x070002' ;;
+	i6300esb) echo 'vendor=0x8086 device=0x25ab class=0x088000' ;;
 	hostbridge) echo 'vendor=0x1275 device=0x1275 class=0x060000' ;;
 	*) return 1 ;;
 	esac
@@ -786,7 +787,7 @@ run_nonvirtio_5bsd()
 {
 	case "$NONVIRTIO_DEVICE" in
 	none) return 0 ;;
-	ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|hostbridge)
+	ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|i6300esb|hostbridge)
 		identity=$(nonvirtio_pci_identity)
 		address=pci0:21:0
 		[ "$NONVIRTIO_DEVICE" != hostbridge ] || address=pci0:0:0
@@ -837,6 +838,14 @@ run_nonvirtio_5bsd()
 		;;
 	hostbridge)
 		guest_check nonvirtio_hostbridge_topology "test \"\$(pciconf -l | wc -l)\" -ge 4; devinfo -rv | grep -q 'Host to PCI bridge'"
+		;;
+	i6300esb)
+		# Confirm the in-tree i6300esbwd(4) watchdog driver binds the emulated
+		# 8086:25ab function and that the platform watchdog(4) node is present.
+		# The kernel watchdog device (/dev/fido) drives the hardware through
+		# i6300esbwd's watchdog_list handler; arming/pat is exercised on the
+		# Alpine lane via /dev/watchdog0.
+		guest_check nonvirtio_i6300esb_watchdog "set -eu; kldstat -q -m ichwd || kldload ichwd; i=0; while ! pciconf -l pci0:0:21:0 2>/dev/null | grep -q '^i6300esbwd' && [ \$i -lt 50 ]; do sleep 0.1; i=\$((i + 1)); done; pciconf -l pci0:0:21:0 | grep -q '^i6300esbwd'; sysctl -n dev.i6300esbwd.0.%desc >/dev/null; test -c /dev/fido" 60
 		;;
 	passthru) guest_check nonvirtio_passthru "$NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT" 60 ;;
 	esac
@@ -906,6 +915,7 @@ launch_nonvirtio_restore_5bsd()
 	    -s "22,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
 	fbuf) set -- "$@" -s "21,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
 	pci-uart) set -- "$@" -s "21,uart,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log" ;;
+	i6300esb) set -- "$@" -s "21,i6300esb,action=notify,timeout=2" ;;
 	none|hostbridge|lpc-uart|qemu-fwcfg) ;;
 	*) echo "restore is not supported for $NONVIRTIO_DEVICE" >&2; return 2 ;;
 	esac
@@ -957,6 +967,9 @@ start_nonvirtio_checkpoint_5bsd()
 		;;
 	hostbridge)
 		guest_cmd 'set -eu; pciconf -l | sort >/tmp/nonvirtio-topology.expected; rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (i=0; while :; do i=$((i + 1)); pciconf -l pci0:0:0 >/dev/null; echo $i >/tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
+		;;
+	i6300esb)
+		guest_cmd 'set -eu; kldstat -q -m ichwd || kldload ichwd; rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (i=0; while :; do i=$((i + 1)); pciconf -l pci0:0:21:0 | grep -q "^i6300esbwd"; echo $i >/tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
 		;;
 	qemu-fwcfg)
 		start_fwcfg_cursor_5bsd 1
@@ -1734,6 +1747,7 @@ for transport in $TRANSPORTS; do
 	    -s "22,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
 	fbuf) set -- "$@" -s "21,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
 	pci-uart) set -- "$@" -s "21,uart,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log" ;;
+	i6300esb) set -- "$@" -s "21,i6300esb,action=notify,timeout=2" ;;
 	passthru) set -- "$@" -S -s "21,passthru,$NONVIRTIO_PASSTHRU" ;;
 	esac
 	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT"

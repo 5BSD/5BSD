@@ -370,7 +370,7 @@ coverage:
   - id: devices
     profiles: [release]
     variable: DEVICES
-    values: [net, vsock, rng, balloon, rtc, block, scsi, console, 9p, fs, input, gpu, mem, pmem, sound]
+    values: [net, vsock, rng, crypto, balloon, rtc, block, scsi, console, 9p, fs, input, gpu, mem, pmem, sound]
   - id: iommu-fabric
     profiles: [release]
     variable: VIRTIO_IOMMU
@@ -933,7 +933,7 @@ coverage:
     profiles: [release]
     variable: DEVICES
     selector: { RESET_TEST: "yes" }
-    values: [net, rng, balloon, rtc, block, scsi, vsock, console, input, 9p, fs, gpu, mem, pmem, sound]
+    values: [net, rng, crypto, balloon, rtc, block, scsi, vsock, console, input, 9p, fs, gpu, mem, pmem, sound]
   - id: iommu-reset-lifecycle
     profiles: [release]
     variable: RESET_TEST
@@ -976,7 +976,7 @@ coverage:
     profiles: [checkpoint]
     variable: DEVICES
     selector: { CHECKPOINT_TEST: "yes" }
-    values: [net, rng, balloon, rtc, block, scsi, vsock, console, input, 9p, fs, gpu, mem, pmem, sound]
+    values: [net, rng, crypto, balloon, rtc, block, scsi, vsock, console, input, 9p, fs, gpu, mem, pmem, sound]
   - id: checkpoint-alpine-all-device-split-combination
     profiles: [checkpoint]
     variable: DEVICES
@@ -1005,12 +1005,12 @@ coverage:
     profiles: [nonvirtio]
     variable: NONVIRTIO_DEVICE
     selector: { CHECKPOINT_TEST: "yes" }
-    values: [qemu-fwcfg, ahci, nvme, e82545, hda, xhci, fbuf, pci-uart, lpc-uart, tpm-crb, pvpanic, hostbridge, passthru]
+    values: [qemu-fwcfg, ahci, nvme, e82545, hda, xhci, fbuf, pci-uart, lpc-uart, tpm-crb, pvpanic, i6300esb, hostbridge, passthru]
   - id: nonvirtio-fivebsd-checkpoint-devices
     profiles: [nonvirtio]
     variable: NONVIRTIO_DEVICE
     selector: { NONVIRTIO_CHECKPOINT: "yes" }
-    values: [qemu-fwcfg, ahci, nvme, e82545, hda, xhci, fbuf, pci-uart, lpc-uart, tpm-crb, hostbridge, passthru]
+    values: [qemu-fwcfg, ahci, nvme, e82545, hda, xhci, fbuf, pci-uart, lpc-uart, tpm-crb, i6300esb, hostbridge, passthru]
   - id: checkpoint-net-ring-formats
     profiles: [checkpoint]
     variable: NET_PACKED
@@ -2227,6 +2227,22 @@ cases:
     profiles: [release]
     env: { DEVICES: rng, TRANSPORTS: legacy }
 
+  - id: crypto-modern
+    executor: alpine-auto
+    profiles: [release]
+    env: { DEVICES: crypto, TRANSPORTS: modern, CRYPTO_PACKED: "no" }
+
+  - id: crypto-packed-modern
+    executor: alpine-auto
+    profiles: [release]
+    env:
+      DEVICES: crypto
+      TRANSPORTS: modern
+      CRYPTO_PACKED: "yes"
+      RESET_TEST: "yes"
+      VERIFY_DEVICE_RING_NAME: vtcrypto
+      VERIFY_DEVICE_RING_LAYOUT: packed
+
   - id: iommu-modern
     executor: alpine-auto
     profiles: [release]
@@ -2963,6 +2979,28 @@ cases:
       TRANSPORTS: modern
       RNG_PACKED: "yes"
       VERIFY_DEVICE_RING_NAME: vtrnd
+      VERIFY_DEVICE_RING_LAYOUT: packed
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-crypto-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: crypto
+      TRANSPORTS: modern
+      CRYPTO_PACKED: "no"
+      CHECKPOINT_TEST: "yes"
+
+  - id: checkpoint-crypto-packed-modern
+    executor: alpine-auto
+    profiles: [checkpoint]
+    timeout: 2400
+    env:
+      DEVICES: crypto
+      TRANSPORTS: modern
+      CRYPTO_PACKED: "yes"
+      VERIFY_DEVICE_RING_NAME: vtcrypto
       VERIFY_DEVICE_RING_LAYOUT: packed
       CHECKPOINT_TEST: "yes"
 
@@ -3897,6 +3935,24 @@ cases:
       NONVIRTIO_DEVICE: pvpanic
       CHECKPOINT_TEST: "yes"
 
+  - id: nonvirtio-alpine-i6300esb-live
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: i6300esb
+
+  - id: nonvirtio-alpine-i6300esb-checkpoint
+    executor: alpine-auto
+    profiles: [nonvirtio]
+    timeout: 2400
+    env:
+      DEVICES: net
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: i6300esb
+      CHECKPOINT_TEST: "yes"
+
   - id: nonvirtio-alpine-hostbridge-live
     executor: alpine-auto
     profiles: [nonvirtio]
@@ -4113,6 +4169,24 @@ cases:
     env:
       TRANSPORTS: modern
       NONVIRTIO_DEVICE: tpm-crb
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  - id: nonvirtio-5bsd-i6300esb-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: i6300esb
+
+  - id: nonvirtio-5bsd-i6300esb-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: i6300esb
       NONVIRTIO_CHECKPOINT: "yes"
 
   - id: nonvirtio-5bsd-hostbridge-live
