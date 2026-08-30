@@ -218,11 +218,21 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
     holds the session-mint cap; `authority-init` delegates that cap to it. The
     initial policy reproduces the P1a default, so behavior stays identical while
     the decision becomes explicit data at the auth boundary.
+- **P-rights (done, prerequisite for P2).** The grant now carries a rights word:
+  serviced stamps `svc_new_client_msg.rights` at the broker (`SVC_RIGHTS_ALL`
+  until a policy scopes it) and libservice delivers it as `identity.rights`.
+  This is the mechanism P2 reads; landed early because a service cannot check
+  granted rights until grants carry them. VM-verified behavior-neutral (every
+  `system.*` still brokers). The *source* of scoped (non-ALL) rights is the
+  auth policy (P1b) and, ultimately, a presented capability.
 - **P2 — one service converts.** `bsdnotify` first (it is the model): drop the
-  `sender_uid` check; require a presented topic capability; the auth bundle now
-  includes those caps. Prove the pattern end to end in the VM.
+  `sender_uid` check; authorize each operation by `identity.rights`
+  (`service_rights_allow`). With grants at `SVC_RIGHTS_ALL` this reproduces
+  today's "connected clients may act"; scoping to real per-topic rights follows
+  once P1b's policy delegates topic capabilities. Depends on P1b for a
+  meaningful (non-ALL) grant, so land after P1b.
 - **P3 — control planes.** serviced and tzfsd control become presented `:admin`
-  capabilities; delete their getpeereid sockets.
+  capabilities (rights on the grant); delete their getpeereid sockets.
 - **P4 — lifecycle.** `lifecycle` capability served by the spine; `reboot`
   presents it; delete the authorityd socket and the signal-authority path;
   `reboot(2)` stays as the kernel escape.

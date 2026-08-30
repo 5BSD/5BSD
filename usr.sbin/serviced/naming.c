@@ -438,6 +438,13 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	strlcpy(notify.client_label,
 	    requester != NULL ? requester->manifest.label :
 	    "org.5bsd.user-session", sizeof(notify.client_label));
+	/*
+	 * Rights granted to this session (capability-authority-model.md).  A
+	 * resolved name grants the full, unattenuated set until an explicit
+	 * policy scopes it (phase P1b), so a provider that checks rights sees
+	 * the same authority a legacy lookup conferred.
+	 */
+	notify.rights = SVC_RIGHTS_ALL;
 
 	if (svc_channel_send_event(provider, &notify, sizeof(notify),
 	    &provider_end, 1, serviced_kq) == -1) {

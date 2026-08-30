@@ -303,11 +303,20 @@ struct svc_activate_name_msg {
  * The service should read this from its channel fd and add the
  * attached fd to its event loop.
  */
+/*
+ * Rights carried on a grant (capability-authority-model.md).  A per-service
+ * operation bitmask (the wire form of service_rights_t); SVC_RIGHTS_ALL is the
+ * unattenuated grant a resolved name still receives until an explicit policy
+ * scopes it, so a provider that ignores or checks rights behaves as before.
+ */
+#define	SVC_RIGHTS_ALL	(~(uint64_t)0)
+
 struct svc_new_client_msg {
 	uint32_t	op;		/* SVC_OP_NEW_CLIENT */
 	uint32_t	flags;		/* reserved */
 	char		service_name[SERVICED_NAME_MAX + 1];
 	char		client_label[64]; /* label of the connecting service */
+	uint64_t	rights;		/* rights granted to this session */
 };
 
 /*
