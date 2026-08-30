@@ -83,9 +83,15 @@ fixture_create(struct fixture *fixture, bool authorized, int device_error)
 
 	memset(fixture, 0, sizeof(*fixture));
 	channel_pair(&client, &provider);
-	dtrace_fd = authorized && device_error == 0 ?
+	/*
+	 * The provider opens the DTrace consumer fd whenever the device is
+	 * available, independent of the label allowlist (traced start_session):
+	 * per-request authorization (root, or an allowlisted label) is enforced
+	 * in the handler, which delegates the held fd only on an authorized OPEN.
+	 */
+	dtrace_fd = device_error == 0 ?
 	    open("/dev/null", O_RDONLY | O_CLOEXEC) : -1;
-	ATF_REQUIRE(!authorized || device_error != 0 || dtrace_fd >= 0);
+	ATF_REQUIRE(device_error != 0 || dtrace_fd >= 0);
 	fixture->child = fork();
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
@@ -234,11 +240,24 @@ ATF_TC_BODY(authorization_and_device_failures, tc)
 	union test_buffer reply;
 	struct fixture fixture;
 	struct tracecmp_msg *message;
+	int fd;
+	size_t nfds;
 
+	/*
+	 * Root (this test runs as root) bypasses the label allowlist: an
+	 * unauthorized-label session still obtains the raw DTrace fd on OPEN.
+	 * (A non-root, non-allowlisted caller is denied EACCES; that path is not
+	 * exercised here because the harness runs as root, and the label
+	 * allowlist decision itself is covered by the policy tests.)
+	 */
 	fixture_create(&fixture, false, 0);
-	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, NULL, 0, NULL);
+	fd = -1;
+	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, &fd, 1, &nfds);
 	message = (void *)reply.bytes;
-	ATF_CHECK_EQ(-EACCES, message->status);
+	ATF_CHECK_EQ(0, message->status);
+	ATF_CHECK_EQ(1, nfds);
+	if (fd >= 0)
+		close(fd);
 	fixture_destroy(&fixture);
 
 	fixture_create(&fixture, true, ENXIO);
