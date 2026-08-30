@@ -233,12 +233,23 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   granted rights until grants carry them. VM-verified behavior-neutral (every
   `system.*` still brokers). The *source* of scoped (non-ALL) rights is the
   auth policy (P1b) and, ultimately, a presented capability.
-- **P2 — one service converts.** `bsdnotify` first (it is the model): drop the
-  `sender_uid` check; authorize each operation by `identity.rights`
-  (`service_rights_allow`). With grants at `SVC_RIGHTS_ALL` this reproduces
-  today's "connected clients may act"; scoping to real per-topic rights follows
-  once P1b's policy delegates topic capabilities. Depends on P1b for a
-  meaningful (non-ALL) grant, so land after P1b.
+- **P2 — one service converts (done).** `bsdnotify` first (it is the model):
+  the per-operation `sender->uid != 0` gate is gone. serviced stamps
+  `SVC_RIGHTS_ADMIN` (bit 63) onto a grant **only** for an ambient login-session
+  lookup (`requester == NULL`) on a `SVC_DOMAIN_SYSTEM` channel; bsdnotify
+  carries that right onto the session (through the internal `router_control`
+  handshake into `router_session.rights`) and authorizes each administrative
+  operation with `service_rights_allow(session->rights, SERVICE_RIGHTS_ADMIN)`
+  instead of the caller's uid. Every non-administrative publish/subscribe still
+  runs through the per-client topic policy, unchanged. Behavior for the common
+  paths is neutral (a root shell's `notifyctl` still bypasses topic policy via
+  the ADMIN right; a non-root session and a resolving *service* are both bound by
+  policy). The one deliberate tightening: a root-running **daemon** can no longer
+  perform an unpolicied administrative notify operation on the strength of its
+  uid — administrative authority now rides the login-minted capability, which is
+  exactly the property P2 exists to establish. Rights are minted by serviced and
+  ride the trusted service↔serviced control channel, never a client message, so
+  a client cannot forge the ADMIN right.
 - **P3 — control planes.** serviced and tzfsd control become presented `:admin`
   capabilities (rights on the grant); delete their getpeereid sockets.
 - **P4 — lifecycle.** `lifecycle` capability served by the spine; `reboot`

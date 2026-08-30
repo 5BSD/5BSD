@@ -53,6 +53,7 @@ struct router_control {
 	uint32_t	magic;
 	uint32_t	queue_depth;
 	char		label[NOTIFY_MAX_PUBLISHER + 1];
+	uint64_t	rights;		/* rights granted to this session */
 };
 
 struct router_control_reply {
@@ -123,6 +124,7 @@ struct router_session {
 	size_t				 timer_count;
 	int				 terminal_error;
 	int				 fd;
+	service_rights_t		 rights;	/* granted to this session */
 	char				 label[NOTIFY_MAX_PUBLISHER + 1];
 };
 
@@ -668,6 +670,7 @@ router_add_session(struct router *router, const struct router_control *control,
 	session->source.type = ROUTER_EVENT_SESSION;
 	session->fd = -1;
 	session->router = router;
+	session->rights = control->rights;
 	memcpy(session->label, control->label, sizeof(session->label));
 	session->policy = notify_policy_db_lookup(router->policy_db,
 	    session->label);
@@ -952,7 +955,6 @@ router_channel_request(struct channel *channel __unused,
 {
 	struct router_session *session;
 	const struct notify_msg *message;
-	const struct channel_sender *sender;
 	const char *operation;
 	int result;
 
@@ -970,20 +972,16 @@ router_channel_request(struct channel *channel __unused,
 		return;
 	}
 	/*
-	 * MIGRATION (docs/capability-authority-model.md, phase P2): this uid gate
-	 * is transitional.  The end state authorizes by a presented topic
-	 * capability (an endpoint whose rights carry publish/subscribe/etc.), not
-	 * by the caller's uid; bsdnotify is the first service to convert.
-	 *
-	 * Until then, authorization gates on the caller's authenticated uid: root
-	 * (uid 0) may perform any operation on any topic, every other uid is bound
-	 * by its per-client topic policy.  The connection itself is always
-	 * accepted; only privileged operations are restricted.  The uid is the
-	 * kernel-stamped sender credential on this request, not a session-time
-	 * cache, so it cannot be spoofed by the client.
+	 * Authorization is by the rights held on this session's channel, not by
+	 * the caller's uid (docs/capability-authority-model.md).  The rights were
+	 * stamped by serviced at grant time: a session holding SERVICE_RIGHTS_ADMIN
+	 * (only minted onto an ambient login-session lookup on a SYSTEM-domain
+	 * channel) may perform any operation on any topic; every other session is
+	 * bound by its per-client topic policy.  The connection itself is always
+	 * accepted; only privileged operations are restricted.  The rights ride the
+	 * channel endpoint and cannot be widened by the client.
 	 */
-	sender = channel_message_sender(request_message);
-	if ((sender == NULL || sender->uid != 0) &&
+	if (!service_rights_allow(session->rights, SERVICE_RIGHTS_ADMIN) &&
 	    !relay_authorized(session->policy, message, &operation)) {
 		audit_policy(session->router->audit, session->label, operation,
 		    EACCES);
@@ -1005,7 +1003,7 @@ router_channel_request(struct channel *channel __unused,
 
 
 static int
-router_start_session(int fd, const char *peer_label,
+router_start_session(int fd, const char *peer_label, service_rights_t rights,
     struct service_session *router_session)
 {
 	struct router_control control;
@@ -1028,6 +1026,7 @@ router_start_session(int fd, const char *peer_label,
 	control.magic = ROUTER_CONTROL_MAGIC;
 	control.queue_depth = NOTIFY_DEFAULT_QUEUE;
 	strlcpy(control.label, peer_label, sizeof(control.label));
+	control.rights = rights;
 	memset(&message, 0, sizeof(message));
 	message.size = sizeof(message);
 	message.data = &control;
@@ -1181,7 +1180,7 @@ main(void)
 			goto fail_router;
 		}
 		watcher_error = router_start_session(fd, identity.client_label,
-		    router_session);
+		    identity.rights, router_session);
 		close(fd);
 		if (watcher_error == ROUTER_ADMISSION_FATAL)
 			goto fail_router;
