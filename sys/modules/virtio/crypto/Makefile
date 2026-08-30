@@ -22,12 +22,11 @@
 # SUCH DAMAGE.
 #
 
-SUBDIR=	virtio pci network block balloon scsi random console gpu input p9fs \
-	rtc vsock sound fs mem iommu crypto
+.PATH: ${SRCTOP}/sys/dev/virtio/crypto
 
-# The current PMEM frontend consumes the amd64-only nvdimm provider.
-.if ${MACHINE_CPUARCH} == "amd64"
-SUBDIR+=	pmem
-.endif
+KMOD=	virtio_crypto
+SRCS=	virtio_crypto.c
+SRCS+=	virtio_bus_if.h virtio_if.h
+SRCS+=	bus_if.h device_if.h cryptodev_if.h
 
-.include <bsd.subdir.mk>
+.include <bsd.kmod.mk>

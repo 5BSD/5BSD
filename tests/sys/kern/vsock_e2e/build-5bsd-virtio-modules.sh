@@ -65,6 +65,7 @@ sys/modules/virtio/p9fs
 sys/modules/virtio/rtc
 sys/modules/virtio/vsock
 sys/modules/virtio/sound
+sys/modules/virtio/crypto
 sys/modules/vsock
 sys/modules/p9fs
 '
@@ -83,6 +84,7 @@ virtio_p9fs.ko
 virtio_rtc.ko
 virtio_vsock.ko
 virtio_snd.ko
+virtio_crypto.ko
 vsock.ko
 p9fs.ko
 '

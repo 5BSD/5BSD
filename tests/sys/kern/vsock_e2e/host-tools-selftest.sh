@@ -33,7 +33,7 @@ trap 'cleanup 143' TERM
 
 for tool in unix-pipe vsock-pipe vsh-connect vsh-connect-test-server \
     uinput-inject freebsd-input-check freebsd-tpm2-check \
-    freebsd-fwcfg-check gpu-rfb-check; do
+    freebsd-fwcfg-check wdfire gpu-rfb-check vtcryptocbc; do
 	[ -x "$TOOLS/$tool" ] || {
 		echo "missing helper: $TOOLS/$tool" >&2
 		exit 1

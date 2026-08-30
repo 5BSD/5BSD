@@ -53,6 +53,7 @@ defaults:
     FIVEBSD_NINEP_PACKED: "no"
     FIVEBSD_SOUND_TEST: "no"
     FIVEBSD_SOUND_PACKED: "no"
+    FIVEBSD_CRYPTO_TEST: "no"
     FIVEBSD_MEM_TEST: "no"
     FIVEBSD_PMEM_TEST: "no"
     FIVEBSD_IOMMU_TEST: "no"
@@ -85,6 +86,8 @@ defaults:
     SCSI_EVENTS: "no"
     NONVIRTIO_DEVICE: none
     NONVIRTIO_CHECKPOINT: "no"
+    WATCHDOG_EXPECT_RESET: "0"
+    PVPANIC_EXPECT_PANIC: "no"
     NONVIRTIO_IMAGE_MB: "128"
     NONVIRTIO_HDA_PLAY: "/dev/dsp0"
     NONVIRTIO_HDA_RECORD: "/dev/dsp1"
@@ -640,6 +643,11 @@ coverage:
       FIVEBSD_SOUND_TEST: "yes"
       TRANSPORTS: modern
     values: ["no", "yes"]
+  - id: fivebsd-crypto-testing
+    profiles: [release]
+    variable: FIVEBSD_CRYPTO_TEST
+    selector: { GUEST_OS: 5bsd, TRANSPORTS: modern }
+    values: ["no", "yes"]
   - id: net-ring-formats
     profiles: [release]
     variable: NET_PACKED
@@ -1010,7 +1018,7 @@ coverage:
     profiles: [nonvirtio]
     variable: NONVIRTIO_DEVICE
     selector: { NONVIRTIO_CHECKPOINT: "yes" }
-    values: [qemu-fwcfg, ahci, nvme, e82545, hda, xhci, fbuf, pci-uart, lpc-uart, tpm-crb, i6300esb, hostbridge, passthru]
+    values: [qemu-fwcfg, ahci, nvme, e82545, hda, xhci, fbuf, pci-uart, lpc-uart, tpm-crb, pvpanic, i6300esb, hostbridge, passthru]
   - id: checkpoint-net-ring-formats
     profiles: [checkpoint]
     variable: NET_PACKED
@@ -1614,9 +1622,10 @@ cases:
       BULK_MB: "1"
       VM_FREE_GATES: "no"
 
-  # The sound lanes exercise a supported 5BSD data path.  The mem, pmem, and
-  # IOMMU definitions below are retained only as explicit prototypes: they
-  # cannot satisfy 5BSD release semantics and are outside every release group.
+  # The sound and crypto lanes exercise supported 5BSD data paths.  The mem,
+  # pmem, and IOMMU definitions further below are retained only as explicit
+  # prototypes: they cannot satisfy 5BSD release semantics and are outside
+  # every release group.
   - id: fivebsd-sound-modern
     executor: fivebsd-auto
     profiles: [release]
@@ -1643,6 +1652,26 @@ cases:
       TRANSPORTS: modern
       FIVEBSD_SOUND_TEST: "yes"
       FIVEBSD_SOUND_PACKED: "yes"
+      FIVEBSD_BLOCK_QUEUES: "1"
+      VIRTIO_DEBUG: "2"
+      BALLOON_TARGET_MB: "1"
+      BULK_MB: "1"
+      VM_FREE_GATES: "no"
+
+  # virtio-crypto is a supported 5BSD guest driver (sys/dev/virtio/crypto):
+  # it attaches as vtcrypto0 and registers an AES-CBC/SHA-256/HMAC/AES-GCM
+  # provider with opencrypto(9).  This live release lane binds the driver,
+  # confirms opencrypto registration through /dev/crypto, and drives an
+  # AES-CBC round-trip pinned to the vtcrypto crid.
+  - id: fivebsd-crypto-modern
+    executor: fivebsd-auto
+    profiles: [release]
+    timeout: 2400
+    resources: [fivebsd-image]
+    env:
+      GUEST_OS: 5bsd
+      TRANSPORTS: modern
+      FIVEBSD_CRYPTO_TEST: "yes"
       FIVEBSD_BLOCK_QUEUES: "1"
       VIRTIO_DEBUG: "2"
       BALLOON_TARGET_MB: "1"
@@ -4188,6 +4217,50 @@ cases:
       TRANSPORTS: modern
       NONVIRTIO_DEVICE: i6300esb
       NONVIRTIO_CHECKPOINT: "yes"
+
+  # Destructive i6300esb fire: arm the watchdog and let the two-stage timer
+  # lapse.  bhyve runs action=notify, so the guest survives and the host logs
+  # the applied action for the runner to observe.
+  - id: nonvirtio-5bsd-i6300esb-fire
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: i6300esb
+      WATCHDOG_EXPECT_RESET: "1"
+
+  - id: nonvirtio-5bsd-pvpanic-live
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: pvpanic
+
+  - id: nonvirtio-5bsd-pvpanic-checkpoint
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: pvpanic
+      NONVIRTIO_CHECKPOINT: "yes"
+
+  # Destructive pvpanic fire: force a real guest panic so the guest driver
+  # writes the PANICKED byte.  bhyve runs action=none, so the host only logs
+  # the event (0x01) without killing the VM.
+  - id: nonvirtio-5bsd-pvpanic-fire
+    executor: fivebsd-auto
+    profiles: [nonvirtio]
+    resources: [fivebsd-image]
+    timeout: 2400
+    env:
+      TRANSPORTS: modern
+      NONVIRTIO_DEVICE: pvpanic
+      PVPANIC_EXPECT_PANIC: "yes"
 
   - id: nonvirtio-5bsd-hostbridge-live
     executor: fivebsd-auto

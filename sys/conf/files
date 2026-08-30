@@ -3520,6 +3520,7 @@ dev/virtio/network/if_vtnet.c		optional	vtnet
 dev/virtio/balloon/virtio_balloon.c	optional	virtio_balloon
 dev/virtio/block/virtio_blk.c		optional	virtio_blk
 dev/virtio/console/virtio_console.c	optional	virtio_console
+dev/virtio/crypto/virtio_crypto.c	optional	virtio_crypto
 dev/virtio/fs/virtio_fs.c		optional	virtio_fs fusefs
 dev/virtio/gpu/virtio_gpu.c		optional	virtio_gpu
 dev/virtio/iommu/virtio_iommu.c		optional	virtio_iommu

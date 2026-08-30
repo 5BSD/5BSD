@@ -95,6 +95,7 @@ FIVEBSD_SOUND_PACKED=${FIVEBSD_SOUND_PACKED:-no}
 FIVEBSD_MEM_TEST=${FIVEBSD_MEM_TEST:-no}
 FIVEBSD_PMEM_TEST=${FIVEBSD_PMEM_TEST:-no}
 FIVEBSD_IOMMU_TEST=${FIVEBSD_IOMMU_TEST:-no}
+FIVEBSD_CRYPTO_TEST=${FIVEBSD_CRYPTO_TEST:-no}
 FIVEBSD_CHECKPOINT_TEST=${FIVEBSD_CHECKPOINT_TEST:-no}
 if [ "$FIVEBSD_MEM_TEST" = yes ] || [ "$FIVEBSD_PMEM_TEST" = yes ] ||
     [ "$FIVEBSD_IOMMU_TEST" = yes ]; then
@@ -115,8 +116,14 @@ NONVIRTIO_PASSTHRU_GUEST_ASSERT=${NONVIRTIO_PASSTHRU_GUEST_ASSERT:-}
 NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT=${NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT:-$NONVIRTIO_PASSTHRU_GUEST_ASSERT}
 NONVIRTIO_FWCFG_NAME=opt/waspnest/checkpoint
 NONVIRTIO_FWCFG_VALUE=WASPNEST-FWCFG-CURSOR-0123456789ABCDEF
+# Destructive-fire gates.  The default lanes only bind/arm/attach; a dedicated
+# fire case sets one of these to drive the emulated device all the way to its
+# host action (bhyve keeps the guest alive: i6300esb action=notify, pvpanic
+# action=none), which the runner then observes on the host log.
+WATCHDOG_EXPECT_RESET=${WATCHDOG_EXPECT_RESET:-0}
+PVPANIC_EXPECT_PANIC=${PVPANIC_EXPECT_PANIC:-no}
 case "$NONVIRTIO_DEVICE" in
-none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|i6300esb|hostbridge|passthru|qemu-fwcfg) ;;
+none|ahci|nvme|e82545|hda|xhci|fbuf|pci-uart|lpc-uart|tpm-crb|pvpanic|i6300esb|hostbridge|passthru|qemu-fwcfg) ;;
 *) echo "unknown NONVIRTIO_DEVICE: $NONVIRTIO_DEVICE" >&2; exit 2 ;;
 esac
 validate_yes_no_early()
@@ -124,6 +131,19 @@ validate_yes_no_early()
 	case "$2" in yes|no) ;; *) echo "$1 must be yes or no" >&2; exit 2 ;; esac
 }
 validate_yes_no_early NONVIRTIO_CHECKPOINT "$NONVIRTIO_CHECKPOINT"
+case "$WATCHDOG_EXPECT_RESET" in 0|1) ;; *) echo "WATCHDOG_EXPECT_RESET must be 0 or 1" >&2; exit 2 ;; esac
+validate_yes_no_early PVPANIC_EXPECT_PANIC "$PVPANIC_EXPECT_PANIC"
+# A destructive fire is confined to its own non-checkpoint case for its device.
+[ "$WATCHDOG_EXPECT_RESET" != 1 ] || {
+	[ "$NONVIRTIO_DEVICE" = i6300esb ] && [ "$NONVIRTIO_CHECKPOINT" = no ] || {
+		echo "WATCHDOG_EXPECT_RESET=1 requires NONVIRTIO_DEVICE=i6300esb without checkpoint" >&2; exit 2
+	}
+}
+[ "$PVPANIC_EXPECT_PANIC" != yes ] || {
+	[ "$NONVIRTIO_DEVICE" = pvpanic ] && [ "$NONVIRTIO_CHECKPOINT" = no ] || {
+		echo "PVPANIC_EXPECT_PANIC=yes requires NONVIRTIO_DEVICE=pvpanic without checkpoint" >&2; exit 2
+	}
+}
 case "$NONVIRTIO_IMAGE_MB" in
 ''|*[!0-9]*|0) echo "NONVIRTIO_IMAGE_MB must be positive" >&2; exit 2 ;;
 esac
@@ -469,7 +489,8 @@ else
 	tools=${TOOLS:-$here}
 fi
 for tool in unix-pipe vsh-connect vsh-connect-test-server uinput-inject \
-    freebsd-input-check freebsd-tpm2-check freebsd-fwcfg-check; do
+    freebsd-input-check freebsd-tpm2-check freebsd-fwcfg-check wdfire \
+    vtcryptocbc; do
 	[ -x "$tools/$tool" ] || {
 		echo "built helper not found: $tools/$tool" >&2
 		exit 1
@@ -843,9 +864,55 @@ run_nonvirtio_5bsd()
 		# Confirm the in-tree i6300esbwd(4) watchdog driver binds the emulated
 		# 8086:25ab function and that the platform watchdog(4) node is present.
 		# The kernel watchdog device (/dev/fido) drives the hardware through
-		# i6300esbwd's watchdog_list handler; arming/pat is exercised on the
-		# Alpine lane via /dev/watchdog0.
+		# i6300esbwd's watchdog_list handler.
 		guest_check nonvirtio_i6300esb_watchdog "set -eu; kldstat -q -m ichwd || kldload ichwd; i=0; while ! pciconf -l pci0:0:21:0 2>/dev/null | grep -q '^i6300esbwd' && [ \$i -lt 50 ]; do sleep 0.1; i=\$((i + 1)); done; pciconf -l pci0:0:21:0 | grep -q '^i6300esbwd'; sysctl -n dev.i6300esbwd.0.%desc >/dev/null; test -c /dev/fido" 60
+		# Arm and pat the watchdog through /dev/fido with the wdfire helper.
+		# The default lane disarms without ever lapsing; the fire case (gated
+		# by WATCHDOG_EXPECT_RESET) instead stops feeding so the two-stage
+		# timer lapses and bhyve applies action=notify (guest survives).
+		if [ "$WATCHDOG_EXPECT_RESET" = 1 ]; then
+			guest_check nonvirtio_i6300esb_fire \
+			    "env WATCHDOG_EXPECT_RESET=1 /tmp/wdfire /dev/fido | grep -q 'fired=expected'" 60
+			i=0
+			while [ "$i" -lt 60 ]; do
+				grep -q 'i6300esb: watchdog expired, applying action "notify"' "$bhyve_log" && break
+				sleep 1; i=$((i + 1))
+			done
+			grep -q 'i6300esb: watchdog expired, applying action "notify"' "$bhyve_log" || {
+				echo "FAIL  host_i6300esb_watchdog_action" >&2; exit 1
+			}
+			echo "PASS  host_i6300esb_watchdog_action action=notify"
+		else
+			guest_check nonvirtio_i6300esb_arm_pat_disarm \
+			    "/tmp/wdfire /dev/fido | grep -q 'armed=yes fired=no'" 30
+		fi
+		;;
+	pvpanic)
+		# Confirm the ACPI QEMU0001 pvpanic device is present and the guest
+		# acpi_pvpanic(4) driver attached (module: pvpanic).  The default lane
+		# is non-destructive; the fire case (gated by PVPANIC_EXPECT_PANIC)
+		# forces a real guest panic so the driver writes the PANICKED byte and
+		# bhyve (action=none) logs it without killing the VM.
+		guest_check nonvirtio_pvpanic_acpi "set -eu; kldload pvpanic 2>/dev/null || kldstat -q -m acpi_pvpanic || true; i=0; while ! sysctl -n dev.acpi_pvpanic.0.%desc >/dev/null 2>&1 && [ \$i -lt 50 ]; do sleep 0.1; i=\$((i + 1)); done; sysctl -n dev.acpi_pvpanic.0.%desc | grep -q pvpanic; sysctl -n dev.acpi_pvpanic.0.%pnpinfo | grep -q QEMU0001" 60
+		if [ "$PVPANIC_EXPECT_PANIC" = yes ]; then
+			# Fire-and-forget: the panic reboots the guest, so the arming
+			# command may not return cleanly.  Proceed to observe the host log.
+			guest_cmd 'sysctl debug.debugger_on_panic=0 >/dev/null 2>&1 || true; sysctl debug.kdb.panic=1 >/dev/null 2>&1 || true' 10 || true
+			i=0
+			while [ "$i" -lt 60 ]; do
+				grep -q 'pvpanic: guest reported event 0x01' "$bhyve_log" && break
+				sleep 1; i=$((i + 1))
+			done
+			grep -q 'pvpanic: guest reported event 0x01' "$bhyve_log" || {
+				echo "FAIL  host_pvpanic_panicked" >&2; exit 1
+			}
+			echo "PASS  host_pvpanic_panicked event=0x01"
+			# The guest has panicked and is gone; the case is complete.  Exit
+			# now so later guest-dependent steps do not stall on a dead VM.
+			# The EXIT trap (cleanup_all) tears down the VM and image.
+			echo "PASS nonvirtio-live guest=5bsd device=pvpanic (fire)"
+			exit 0
+		fi
 		;;
 	passthru) guest_check nonvirtio_passthru "$NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT" 60 ;;
 	esac
@@ -906,6 +973,7 @@ launch_nonvirtio_restore_5bsd()
 	[ "$FIVEBSD_MEM_TEST" = no ] || set -- "$@" -s "18,virtio-mem$mem_opt"
 	[ "$FIVEBSD_PMEM_TEST" = no ] || set -- "$@" -s "19,virtio-pmem,path=$pmem_image$pmem_opt"
 	[ "$FIVEBSD_IOMMU_TEST" = no ] || set -- "$@" -s "20,virtio-iommu$iommu_opt"
+	[ "$FIVEBSD_CRYPTO_TEST" = no ] || set -- "$@" -s "23,virtio-crypto$crypto_opt"
 	case "$NONVIRTIO_DEVICE" in
 	ahci) set -- "$@" -s "21,ahci-hd,$nonvirtio_image,checkpoint_identity=waspnest-ahci" ;;
 	nvme) set -- "$@" -s "21,nvme,$nonvirtio_image,ser=WASPNESTNVME,ioslots=64,maxq=8,qsz=64" ;;
@@ -916,7 +984,7 @@ launch_nonvirtio_restore_5bsd()
 	fbuf) set -- "$@" -s "21,fbuf,rfb=unix:$nonvirtio_fbuf_socket,w=1024,h=768,vga=off" ;;
 	pci-uart) set -- "$@" -s "21,uart,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log" ;;
 	i6300esb) set -- "$@" -s "21,i6300esb,action=notify,timeout=2" ;;
-	none|hostbridge|lpc-uart|qemu-fwcfg) ;;
+	none|hostbridge|lpc-uart|qemu-fwcfg|pvpanic) ;;
 	*) echo "restore is not supported for $NONVIRTIO_DEVICE" >&2; return 2 ;;
 	esac
 	set -- "$@" -s 31,lpc -l "com1,tcp=127.0.0.1:$CONSOLE_PORT"
@@ -924,6 +992,7 @@ launch_nonvirtio_restore_5bsd()
 	    -l "com2,tcp=127.0.0.1:$nonvirtio_uart_port,log=$nonvirtio_uart_log"
 	[ "$NONVIRTIO_DEVICE" != qemu-fwcfg ] || set -- "$@" \
 	    -l fwcfg,qemu -f "$NONVIRTIO_FWCFG_NAME,string=$NONVIRTIO_FWCFG_VALUE"
+	[ "$NONVIRTIO_DEVICE" != pvpanic ] || set -- "$@" -l pvpanic,action=none
 	set -- "$@" "$vmname"
 	env BHYVE_VIRTIO_DEBUG="$VIRTIO_DEBUG" \
 	    BHYVE_VTBLK_DEBUG="$VIRTIO_DEBUG" \
@@ -970,6 +1039,9 @@ start_nonvirtio_checkpoint_5bsd()
 		;;
 	i6300esb)
 		guest_cmd 'set -eu; kldstat -q -m ichwd || kldload ichwd; rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (i=0; while :; do i=$((i + 1)); pciconf -l pci0:0:21:0 | grep -q "^i6300esbwd"; echo $i >/tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
+		;;
+	pvpanic)
+		guest_cmd 'set -eu; kldload pvpanic 2>/dev/null || kldstat -q -m acpi_pvpanic || true; i=0; while ! sysctl -n dev.acpi_pvpanic.0.%desc >/dev/null 2>&1 && [ $i -lt 50 ]; do sleep 0.1; i=$((i + 1)); done; sysctl -n dev.acpi_pvpanic.0.%desc >/dev/null; rm -f /tmp/nonvirtio-checkpoint.count /tmp/nonvirtio-checkpoint.log; (i=0; while :; do i=$((i + 1)); sysctl -n dev.acpi_pvpanic.0.%desc >/dev/null; echo $i >/tmp/nonvirtio-checkpoint.count; sleep 0.05; done) >/tmp/nonvirtio-checkpoint.log 2>&1 & echo $! >/tmp/nonvirtio-checkpoint.pid' 30
 		;;
 	qemu-fwcfg)
 		start_fwcfg_cursor_5bsd 1
@@ -1362,13 +1434,18 @@ prepare_guest_image()
 		tail -n 40 "$fsck_log" >&2
 		return 1
 	fi
-	if [ "$FIVEBSD_INPUT_TEST" = yes ] || [ "$NONVIRTIO_DEVICE" != none ]; then
+	if [ "$FIVEBSD_INPUT_TEST" = yes ] || [ "$FIVEBSD_CRYPTO_TEST" = yes ] ||
+	    [ "$NONVIRTIO_DEVICE" != none ]; then
 		image_mount="$copy.mount"
 		mkdir -m 0700 "$image_mount"
 		mount -t ufs "$ufs_partition" "$image_mount"
 		if [ "$FIVEBSD_INPUT_TEST" = yes ]; then
 			install -m 0555 "$tools/freebsd-input-check" \
 			    "$image_mount/tmp/freebsd-input-check"
+		fi
+		if [ "$FIVEBSD_CRYPTO_TEST" = yes ]; then
+			install -m 0555 "$tools/vtcryptocbc" \
+			    "$image_mount/tmp/vtcryptocbc"
 		fi
 		if [ "$NONVIRTIO_DEVICE" != none ]; then
 			install -m 0555 "$here/freebsd-nonvirtio.sh" \
@@ -1381,6 +1458,10 @@ prepare_guest_image()
 		if [ "$NONVIRTIO_DEVICE" = qemu-fwcfg ]; then
 			install -m 0555 "$tools/freebsd-fwcfg-check" \
 			    "$image_mount/tmp/freebsd-fwcfg-check"
+		fi
+		if [ "$NONVIRTIO_DEVICE" = i6300esb ]; then
+			install -m 0555 "$tools/wdfire" \
+			    "$image_mount/tmp/wdfire"
 		fi
 		sync
 		umount "$image_mount"
@@ -1457,6 +1538,7 @@ for transport in $TRANSPORTS; do
 		mem_opt=",transport=modern,size=256M,requested=128M"
 		pmem_opt=",transport=modern"
 		iommu_opt=",transport=modern"
+		crypto_opt=",transport=modern"
 		[ "$FIVEBSD_SOUND_PACKED" = no ] ||
 		    snd_opt="$snd_opt,packed=true"
 		;;
@@ -1483,6 +1565,7 @@ for transport in $TRANSPORTS; do
 		mem_opt=
 		pmem_opt=
 		iommu_opt=
+		crypto_opt=
 		[ "$BALLOON_PACKED" = no ] || {
 			echo "BALLOON_PACKED=yes requires modern transport" >&2
 			exit 2
@@ -1510,6 +1593,7 @@ for transport in $TRANSPORTS; do
 		    [ "$FIVEBSD_MEM_TEST" = no ] &&
 		    [ "$FIVEBSD_PMEM_TEST" = no ] &&
 		    [ "$FIVEBSD_IOMMU_TEST" = no ] &&
+		    [ "$FIVEBSD_CRYPTO_TEST" = no ] &&
 		    [ "$FIVEBSD_NOTIFICATION_DATA" = no ] || {
 			echo "packed and notification-data options require modern transport" >&2
 			exit 2
@@ -1737,8 +1821,10 @@ for transport in $TRANSPORTS; do
 	    -s "19,virtio-pmem,path=$pmem_image$pmem_opt"
 	[ "$FIVEBSD_IOMMU_TEST" = no ] || set -- "$@" \
 	    -s "20,virtio-iommu$iommu_opt"
+	[ "$FIVEBSD_CRYPTO_TEST" = no ] || set -- "$@" \
+	    -s "23,virtio-crypto$crypto_opt"
 	case "$NONVIRTIO_DEVICE" in
-	none|lpc-uart|tpm-crb|hostbridge|qemu-fwcfg) ;;
+	none|lpc-uart|tpm-crb|hostbridge|qemu-fwcfg|pvpanic) ;;
 	ahci) set -- "$@" -s "21,ahci-hd,$nonvirtio_image,checkpoint_identity=waspnest-ahci" ;;
 	nvme) set -- "$@" -s "21,nvme,$nonvirtio_image,ser=WASPNESTNVME,ioslots=64,maxq=8,qsz=64" ;;
 	e82545) set -- "$@" -s "21,e1000,$tap" ;;
@@ -1757,6 +1843,7 @@ for transport in $TRANSPORTS; do
 	    -l "tpm,$NONVIRTIO_TPM_TYPE,$NONVIRTIO_TPM_PATH,version=2.0"
 	[ "$NONVIRTIO_DEVICE" != qemu-fwcfg ] || set -- "$@" \
 	    -l fwcfg,qemu -f "$NONVIRTIO_FWCFG_NAME,string=$NONVIRTIO_FWCFG_VALUE"
+	[ "$NONVIRTIO_DEVICE" != pvpanic ] || set -- "$@" -l pvpanic,action=none
 	set -- "$@" "$vmname"
 	env BHYVE_VIRTIO_DEBUG="$VIRTIO_DEBUG" \
 	    BHYVE_VTBLK_DEBUG="$VIRTIO_DEBUG" \
@@ -2057,6 +2144,41 @@ for transport in $TRANSPORTS; do
 			exit 1
 		}
 		echo "PASS  host_iommu_config_and_queue_publication"
+	fi
+	if [ "$FIVEBSD_CRYPTO_TEST" = yes ]; then
+		# virtio-crypto device id 20 -> modern PCI device 0x1054.  The 5BSD
+		# guest driver (sys/dev/virtio/crypto) attaches as vtcrypto0 and
+		# registers a CRYPTOCAP_F_HARDWARE provider with opencrypto(9); the
+		# vtcryptocbc helper resolves that provider by crid through
+		# /dev/crypto and drives an AES-CBC round-trip through the device.
+		guest_check crypto_pci \
+		    "pciconf -l | grep -Eqi 'vendor=0x1af4 device=0x1054([[:space:]]|$)'"
+		guest_check crypto_driver \
+		    "kldload virtio_crypto 2>/dev/null || kldstat -q -m virtio_crypto; devinfo -rv | grep -q 'vtcrypto0'"
+		# Queue enable is published when the driver brings its data and
+		# control virtqueues up at attach.
+		grep -Eq '^vtcrypto: modern queue enable q=0 .*enabled=1' \
+		    "$bhyve_log" || {
+			echo "FAIL  host_crypto_queue_enable" >&2
+			exit 1
+		}
+		echo "PASS  host_crypto_queue_publication"
+		# opencrypto registration: CIOCFINDDEV must resolve the vtcrypto
+		# provider to a crid.  cryptodev(4) exposes /dev/crypto.
+		guest_check crypto_opencrypto_registration \
+		    "kldload cryptodev 2>/dev/null || kldstat -q -m cryptodev; /tmp/vtcryptocbc find | grep -q 'registered=yes'" \
+		    30
+		# Functional AES-CBC round-trip pinned to the vtcrypto crid.  This
+		# submits a session request on the control queue and cipher work on
+		# a data queue, which is what drives the host-visible notifies below.
+		guest_check crypto_cbc_roundtrip \
+		    "/tmp/vtcryptocbc | grep -q 'roundtrip=ok'" \
+		    30
+		grep -Eq '^vtcrypto: modern notify q=[0-9]+' "$bhyve_log" || {
+			echo "FAIL  host_crypto_data_or_control_notify" >&2
+			exit 1
+		}
+		echo "PASS  host_crypto_request_notify"
 	fi
 	audit_5bsd_virtio_features
 	guest_check vsock_driver \

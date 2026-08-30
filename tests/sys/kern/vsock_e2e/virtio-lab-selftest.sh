@@ -762,7 +762,7 @@ grep -q -- '--case is not valid with coverage' "$work/filtered-coverage.out"
     >"$work/release"
 grep -q '^SCOPE	declarative-profile; runtime results are not implied$' \
     "$work/release"
-[ "$(grep -c '^COVERED	' "$work/release")" -eq 93 ]
+[ "$(grep -c '^COVERED	' "$work/release")" -eq 94 ]
 grep -q '^COVERED	pmem-ring-formats$' "$work/release"
 grep -q '^COVERED	pmem-capacity-boundaries$' "$work/release"
 awk '
@@ -849,7 +849,7 @@ grep -q '^cases=7$' "$work/soak-smoke-plan"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/qualification"
-grep -q '^cases=227$' "$work/qualification"
+grep -q '^cases=232$' "$work/qualification"
 [ "$(grep -c '^kernel-contract-root	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-root	' "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^host-regression	' "$work/qualification")" -eq 1 ]
@@ -884,7 +884,7 @@ grep -q '^cases=227$' "$work/qualification"
 [ "$(grep -c '^checkpoint-fs-active-packed-modern	' \
     "$work/qualification")" -eq 1 ]
 [ "$(grep -c '^soak-vsock-userspace	' "$work/qualification")" -eq 1 ]
-[ "$(grep -c '^COVERED	' "$work/qualification")" -eq 155 ]
+[ "$(grep -c '^COVERED	' "$work/qualification")" -eq 156 ]
 grep -q '^COVERED	gpu-blob-checkpoint-lifecycle$' "$work/qualification"
 grep -q '^COVERED	gpu-presentation-checkpoint-lifecycle$' "$work/qualification"
 grep -q '^COVERED	checkpoint-balloon-deflate-on-oom$' "$work/qualification"
@@ -970,7 +970,7 @@ grep -q '^vmfree-nested-vmx-model-sanitized	nested-vmx-model	' \
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile intel-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/intel-qualification"
-grep -q '^cases=231$' "$work/intel-qualification"
+grep -q '^cases=236$' "$work/intel-qualification"
 [ "$(grep -c '^kernel-contract-root	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-root	' "$work/intel-qualification")" -eq 1 ]
 [ "$(grep -c '^host-regression	' "$work/intel-qualification")" -eq 1 ]
@@ -985,10 +985,10 @@ grep -q '^cases=231$' "$work/intel-qualification"
 
 "$LUA" "$lab" plan --manifest "$manifest" --profile full-qualification \
     --fivebsd-image /tmp/disposable-5bsd.img >"$work/full-qualification"
-grep -q '^cases=235$' "$work/full-qualification"
+grep -q '^cases=240$' "$work/full-qualification"
 [ "$(grep -c '^kernel-contract-root	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^vmm-root	' "$work/full-qualification")" -eq 1 ]
-[ "$(grep -c '^nonvirtio-' "$work/full-qualification")" -eq 54 ]
+[ "$(grep -c '^nonvirtio-' "$work/full-qualification")" -eq 58 ]
 [ "$(grep -c '^nested-vmx-live	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-modern	' "$work/full-qualification")" -eq 1 ]
 [ "$(grep -c '^sound-oss-packed-modern	' \
@@ -1155,7 +1155,7 @@ env PLAN_ONLY=yes PROFILE=nonvirtio JOBS=1 \
     NONVIRTIO_PASSTHRU_FIVEBSD_ASSERT='pciconf -l pci0:21:0' \
     sh "$here/run-waspnest-qualification.sh" >"$work/nonvirtio-plan.out"
 grep -q '^qualification-plan profile=nonvirtio$' "$work/nonvirtio-plan.out"
-grep -q '^cases=54$' "$work/nonvirtio-plan.out"
+grep -q '^cases=58$' "$work/nonvirtio-plan.out"
 for nonvirtio_argument in \
     NONVIRTIO_TPM_PATH=/tmp/swtpm.sock \
     NONVIRTIO_PASSTHRU=ppt0 \
