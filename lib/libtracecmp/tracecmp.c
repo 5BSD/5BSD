@@ -318,7 +318,6 @@ tracecmp_open(int *dtracefd)
 {
 	union tracecmp_buffer reply;
 	struct tracecmp_hello_reply *hello;
-	struct service_context *service;
 	struct service_session *client;
 	int fd, error, result;
 
@@ -328,11 +327,7 @@ tracecmp_open(int *dtracefd)
 	}
 	*dtracefd = -1;
 	fd = -1;
-	if (service_acquire(&service) == -1)
-		return (-1);
-	error = service_connect(service, TRACECMP_INTERFACE, &fd) == -1 ?
-	    errno : 0;
-	service_release(service);
+	error = service_open(TRACECMP_INTERFACE, &fd) == -1 ? errno : 0;
 	if (error != 0) {
 		errno = error;
 		return (-1);

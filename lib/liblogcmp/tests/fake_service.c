@@ -240,6 +240,19 @@ service_connect(struct service_context *service, const char *name, int *fd)
 }
 
 int
+service_open(const char *name, int *fd)
+{
+	struct service_context *ctx;
+	int rv;
+
+	if (service_acquire(&ctx) == -1)
+		return (-1);
+	rv = service_connect(ctx, name, fd);
+	service_release(ctx);
+	return (rv);
+}
+
+int
 service_session_create(int fd, struct service_session **result)
 {
 	struct service_session *session;

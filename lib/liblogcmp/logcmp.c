@@ -522,15 +522,10 @@ logcmp_validate_fds(const struct logcmp_msg *msg, size_t nfds,
 static int
 logcmp_open_channel(void)
 {
-	struct service_context *service;
 	int fd, error;
 
 	fd = -1;
-	if (service_acquire(&service) == -1)
-		return (-1);
-	error = service_connect(service, LOGCMP_INTERFACE, &fd) == -1 ?
-	    errno : 0;
-	service_release(service);
+	error = service_open(LOGCMP_INTERFACE, &fd) == -1 ? errno : 0;
 	if (error != 0)
 		fd = -1;
 	LOGCMP_PROBE_OPEN(__DECONST(char *, LOGCMP_INTERFACE), error);

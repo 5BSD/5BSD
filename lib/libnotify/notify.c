@@ -517,18 +517,13 @@ fail:
 int
 notify_client_open(struct notify_client **result)
 {
-	struct service_context *service;
 	int error, fd;
 
 	if (result == NULL)
 		return (errno = EINVAL, -1);
 	*result = NULL;
-	if (service_acquire(&service) == -1)
-		return (-1);
 	fd = -1;
-	error = service_connect(service, NOTIFY_INTERFACE, &fd) == -1 ?
-	    errno : 0;
-	service_release(service);
+	error = service_open(NOTIFY_INTERFACE, &fd) == -1 ? errno : 0;
 	if (fd == -1)
 		return (errno = error, -1);
 	if (notify_client_adopt(fd, result) == -1)
@@ -564,17 +559,12 @@ reconnect_locked(struct notify_client *client)
 {
 	union notify_buffer reply;
 	struct notify_hello_reply hello;
-	struct service_context *service;
 	size_t i, payload;
 	int error, fd;
 
 	disconnect_locked(client);
-	if (service_acquire(&service) == -1)
-		return (-1);
 	fd = -1;
-	error = service_connect(service, NOTIFY_INTERFACE, &fd) == -1 ?
-	    errno : 0;
-	service_release(service);
+	error = service_open(NOTIFY_INTERFACE, &fd) == -1 ? errno : 0;
 	if (fd == -1) {
 		errno = error;
 		return (-1);

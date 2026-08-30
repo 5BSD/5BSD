@@ -25,6 +25,7 @@
 #include <channel.h>
 
 #include "libservice.h"
+#include "service_bootstrap.h"
 #include "serviced_ctl.h"
 #include "serviced_svc_proto.h"
 
@@ -1096,6 +1097,151 @@ service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
 	}
 	*out_fd = reply_fd;
 	return (0);
+}
+
+/*
+ * Connect to a named service over the ambient lookup channel.
+ *
+ * This is the client counterpart to service_connect().  service_connect()
+ * resolves a name over the bootstrap dispatch channel serviced hands a
+ * service it launches (SERVICE_BOOTSTRAP_FD); a program run from a shell has
+ * no such bootstrap, only the §21 ambient lookup channel its login session
+ * inherited (SERVICE_LOOKUP_FD).  This sends the same SVC_OP_LOOKUP over that
+ * ambient channel: serviced's lookup_channel_request() dispatches it scoped to
+ * the channel's domain and returns a connected session endpoint in the reply.
+ *
+ * On success *session_fdp is a caller-owned session channel to the provider.
+ * ENOENT if the process has no ambient lookup channel, or if the name is not
+ * resolvable in that channel's domain.  Bounded like the mint RPC so a wedged
+ * serviced cannot stall a CLI forever.
+ */
+int
+service_connect_ambient(const char *name, int *session_fdp)
+{
+	struct svc_lookup_req req;
+	struct svc_reply reply_data;
+	struct service_message message = {
+		.size = sizeof(message),
+		.data = &req,
+		.length = sizeof(req),
+		.fds = NULL,
+		.nfds = 0,
+	};
+	int reply_fd;
+	struct service_reply reply = {
+		.size = sizeof(reply),
+		.data = &reply_data,
+		.capacity = sizeof(reply_data),
+		.fds = &reply_fd,
+		.fd_capacity = 1,
+	};
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session;
+	int ambient, dupfd, error;
+
+	if (name == NULL || session_fdp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*session_fdp = -1;
+	reply_fd = -1;
+	if (strlen(name) > SERVICED_NAME_MAX) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+
+	/* No ambient lookup channel -> not reachable this way (errno ENOENT). */
+	ambient = service_ambient_lookup_fd();
+	if (ambient < 0)
+		return (-1);
+
+	options.timeout_ms = 2000U;
+
+	/*
+	 * service_session_create() takes ownership of the descriptor it is
+	 * given, so hand it a private duplicate and leave the shared ambient
+	 * channel untouched.
+	 */
+	dupfd = fcntl(ambient, F_DUPFD_CLOEXEC, 0);
+	if (dupfd == -1)
+		return (-1);
+	if (service_session_create(dupfd, &session) == -1) {
+		error = errno;
+		(void)close(dupfd);
+		errno = error;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_LOOKUP;
+	strlcpy(req.name, name, sizeof(req.name));
+
+	if (service_session_call(session, &message, &reply, &options) == -1) {
+		error = errno;
+		service_session_close(session);
+		errno = error;
+		return (-1);
+	}
+	service_session_close(session);
+
+	if (reply.length != sizeof(reply_data)) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+	if (reply_data.status != 0) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = reply_data.status;
+		return (-1);
+	}
+	if (reply.nfds != 1 || reply_fd < 0) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+	*session_fdp = reply_fd;
+	return (0);
+}
+
+/*
+ * Resolve a named service to a connected session channel, whichever context
+ * the caller runs in.  A serviced-launched service carries a bootstrap
+ * dispatch channel; a program run from a shell carries only the ambient
+ * lookup channel.  Try the bootstrap path first (it is the richer context),
+ * and fall back to the ambient channel when there is no bootstrap.  Consumer
+ * libraries (libnetworkcmp, liblogcmp, ...) call this so their client_open()
+ * works both when launched by serviced and when run as a CLI.
+ */
+int
+service_open(const char *name, int *session_fdp)
+{
+	struct service_context *service;
+	int rv, error;
+
+	if (name == NULL || session_fdp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*session_fdp = -1;
+
+	/*
+	 * Bootstrap context (serviced-launched service).  When present it is
+	 * authoritative: resolve over it and return its result verbatim -- do
+	 * not mask a genuine ENOENT by retrying on the ambient channel.
+	 */
+	if (service_acquire(&service) == 0) {
+		rv = service_connect(service, name, session_fdp);
+		error = errno;
+		service_release(service);
+		errno = error;
+		return (rv);
+	}
+
+	/* No bootstrap: a CLI or ambient client.  Use the login lookup channel. */
+	return (service_connect_ambient(name, session_fdp));
 }
 
 /*

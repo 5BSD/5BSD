@@ -197,18 +197,13 @@ auditcmp_validate_fds(const struct auditcmp_msg *msg, size_t nfds,
 int
 auditcmp_client_prepare(int *fdp)
 {
-	struct service_context *service;
 	int error, fd;
 
 	if (fdp == NULL)
 		return (errno = EINVAL, -1);
 	*fdp = -1;
 	fd = -1;
-	if (service_acquire(&service) == -1)
-		return (-1);
-	error = service_connect(service, AUDITCMP_INTERFACE, &fd) == -1 ?
-	    errno : 0;
-	service_release(service);
+	error = service_open(AUDITCMP_INTERFACE, &fd) == -1 ? errno : 0;
 	if (error == 0 &&
 	    (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
 	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||

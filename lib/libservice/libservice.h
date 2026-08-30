@@ -210,6 +210,18 @@ int	service_helper_open(struct service_context *, const char *name,
 	    int *session_fd);
 
 /*
+ * Client-side connect.  service_connect_ambient() resolves a name over the
+ * §21 ambient lookup channel a login session inherits (SERVICE_LOOKUP_FD),
+ * for a program run from a shell that has no serviced bootstrap context.
+ * service_open() is the context-agnostic front door: it uses the bootstrap
+ * dispatch channel when serviced launched the caller, and falls back to the
+ * ambient channel otherwise -- consumer client_open() paths call it so they
+ * work both as a serviced-launched service and as a standalone CLI.
+ */
+int	service_connect_ambient(const char *name, int *session_fd);
+int	service_open(const char *name, int *session_fd);
+
+/*
  * Which session channel a mint request asks serviced to create (§6).  The
  * numeric values are the wire domain values SVC_OP_MINT_DOMAIN carries, with
  * USER == 0 so a zero-initialized request defaults to the scoped channel.

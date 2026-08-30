@@ -474,7 +474,6 @@ int
 networkcmp_client_open(struct networkcmp_client **clientp) __no_lock_analysis
 {
 	struct networkcmp_client *client;
-	struct service_context *service;
 	int error, fd;
 
 	if (clientp == NULL) {
@@ -511,15 +510,8 @@ networkcmp_client_open(struct networkcmp_client **clientp) __no_lock_analysis
 	client = calloc(1, sizeof(*client));
 	if (client == NULL)
 		goto fail;
-	if (service_acquire(&service) == -1)
+	if (service_open(NETWORKCMP_INTERFACE, &fd) == -1)
 		goto fail;
-	if (service_connect(service, NETWORKCMP_INTERFACE, &fd) == -1) {
-		error = errno;
-		service_release(service);
-		errno = error;
-		goto fail;
-	}
-	service_release(service);
 	if (service_session_create(fd, &client->channel) == -1) {
 		error = errno;
 		close(fd);

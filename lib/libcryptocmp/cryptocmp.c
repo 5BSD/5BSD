@@ -30,13 +30,12 @@ reject_reply(int fd)
 int
 cryptocmp_open(struct cryptocmp_client **out)
 {
-	struct service_context *context; struct cryptocmp_client *client; int fd;
+	struct cryptocmp_client *client; int fd;
 	if (out == NULL) return (errno = EINVAL, -1);
 	*out = NULL;
-	if ((client = calloc(1, sizeof(*client))) == NULL || service_acquire(&context) == -1)
+	if ((client = calloc(1, sizeof(*client))) == NULL)
 		goto fail;
-	if (service_connect(context, CRYPTOCMP_INTERFACE, &fd) == -1) { service_release(context); goto fail; }
-	service_release(context);
+	if (service_open(CRYPTOCMP_INTERFACE, &fd) == -1) goto fail;
 	if (service_session_create(fd, &client->session) == -1) { close(fd); goto fail; }
 	client->owner = getpid(); *out = client; return (0);
 fail: free(client); return (-1);
