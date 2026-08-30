@@ -100,9 +100,21 @@
 /* Re-exec fds */
 #define REEXEC_DEVCRYPTO_RESERVED_FD	(STDERR_FILENO + 1)
 #define REEXEC_CONFIG_PASS_FD		(STDERR_FILENO + 2)
-#define REEXEC_MIN_FREE_FD		(STDERR_FILENO + 3)
+/*
+ * 5BSD capability world: the private per-connection SYSTEM lookup channel the
+ * listener minted arrives here.  main() adopts it off this slot into a private
+ * CLOEXEC descriptor early (before the privsep fds below reuse the slot), and
+ * the monitor mints the session's uid-scoped lookup channel over it in
+ * mm_answer_provision().  Must stay in lockstep with sshd.c.
+ */
+#define REEXEC_AMBIENT_LOOKUP_FD	(STDERR_FILENO + 3)
+#define REEXEC_MIN_FREE_FD		(STDERR_FILENO + 4)
 
-/* Privsep fds */
+/*
+ * Privsep fds.  PRIVSEP_LOG_FD numerically reuses the ambient-lookup slot, but
+ * only after main() has already adopted the ambient channel off it, so the two
+ * uses never overlap in time.
+ */
 #define PRIVSEP_MONITOR_FD		(STDERR_FILENO + 1)
 #define PRIVSEP_LOG_FD			(STDERR_FILENO + 2)
 #define PRIVSEP_MIN_FREE_FD		(STDERR_FILENO + 3)
@@ -111,6 +123,15 @@ extern char *__progname;
 
 /* Server configuration options. */
 ServerOptions options;
+
+/*
+ * 5BSD: this connection's private SYSTEM lookup channel, adopted off the
+ * reserved re-exec slot early in main() into a high CLOEXEC descriptor.  The
+ * monitor (monitor.c, mm_answer_provision) mints the session's uid-scoped
+ * lookup channel over it, replacing the getpeereid(2) provisioning socket.
+ * -1 when this session inherited no channel.
+ */
+int ambient_session_lookup_fd = -1;
 
 /* Name of the server configuration file. */
 char *config_file_name = _PATH_SERVER_CONFIG_FILE;
@@ -947,6 +968,19 @@ main(int ac, char **av)
 		fatal("sshd-session should not be executed directly");
 
 	closefrom(REEXEC_MIN_FREE_FD);
+
+	/*
+	 * 5BSD: adopt this connection's private lookup channel off its reserved
+	 * re-exec slot into a high CLOEXEC descriptor the monitor keeps.  Do it
+	 * now — before the reserved fds and privsep fds below reuse the slot —
+	 * so REEXEC_AMBIENT_LOOKUP_FD is free for its later privsep role, and so
+	 * the channel never leaks into sshd-auth or the user's shell (CLOEXEC).
+	 * If this session inherited no channel the slot is already closed and the
+	 * dup fails harmlessly, leaving ambient_session_lookup_fd at -1.
+	 */
+	ambient_session_lookup_fd = fcntl(REEXEC_AMBIENT_LOOKUP_FD,
+	    F_DUPFD_CLOEXEC, REEXEC_MIN_FREE_FD);
+	(void)close(REEXEC_AMBIENT_LOOKUP_FD);
 
 	platform_pre_session_start();
 

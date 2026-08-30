@@ -9,10 +9,8 @@
 .Nd control and inspect serviced
 .Sh SYNOPSIS
 .Nm
-.Op Fl s Ar socket
 .Cm status | services | reload | bundles
 .Nm
-.Op Fl s Ar socket
 .Cm start | stop | restart Ar label
 .Nm
 .Cm install Ar path.cap
@@ -66,11 +64,6 @@ List bundles installed in
 .Pa /Capabilities/System
 and
 .Pa /Capabilities .
-.El
-.Sh OPTIONS
-.Bl -tag -width "-s socket"
-.It Fl s Ar socket
-Use an alternate serviced control socket.
 .El
 .Sh EXIT STATUS
 .Ex -std

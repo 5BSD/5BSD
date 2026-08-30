@@ -240,11 +240,8 @@ extern int serviced_kq;
  */
 extern int serviced_ambient_lookup_fd;
 
-/* sctl.c — control socket */
-int	sctl_setup(void);
+/* sctl.c — capability control plane (system.serviced / system.lifecycle) */
 void	sctl_teardown(void);
-int	sctl_fd(void);
-void	sctl_accept(void);
 void	sctl_conn_event(struct kevent *kev);
 bool	sctl_is_conn_event(struct kevent *kev);
 /*
@@ -418,8 +415,6 @@ int	svc_fd_make_ambient(int fd);
 int	domain_mint_user_channel(uid_t uid, int *out_fd, int kq);
 int	domain_mint_system_channel(int *out_fd, int kq);
 int	domain_mint_session_channel(enum svc_domain_kind kind, uid_t uid,
-	    int *out_fd, int kq);
-int	domain_provision_session(uid_t requester_euid, uid_t target_uid,
 	    int *out_fd, int kq);
 int	svc_mint_domain_kind(const struct svc_domain *requester,
 	    uint32_t wire_domain, enum svc_domain_kind *kind);

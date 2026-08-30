@@ -153,6 +153,20 @@ the `.Control` convention are **retired** in favor of held control capabilities.
 All three getpeereid sockets are then deletable, because nothing authenticates a
 peer by pathname or uid any longer.
 
+> **Status (2026-08-30): all three getpeereid control sockets are now deleted.**
+> The authorityd admin socket and serviced's general control socket were retired
+> earlier; the last one — serviced's control socket, whose only remaining job was
+> ssh session provisioning — is gone as of this milestone. Session provisioning
+> no longer dials a socket: the sshd listener mints a **private per-connection
+> SYSTEM lookup channel** over the ambient channel it inherits from rc, threads
+> it through its re-exec into `sshd-session`, and the privileged monitor mints
+> the session's uid-scoped channel over it with `service_mint_session_domain()` —
+> exactly as `login(1)`/`su(1)` do over their getty-inherited SYSTEM channel.
+> Holding a SYSTEM channel *is* the authority, replacing the `getpeereid(2)` uid
+> attestation. serviced binds no control socket at all; `servicectl` and
+> `authorityctl` reach the control/lifecycle planes only over minted capability
+> channels (`system.serviced` / `system.lifecycle`).
+
 ## 7. Inventory: current ambient authority → its capability replacement
 
 | # | Current (ambient authority) | Replacement (held capability) |
@@ -210,8 +224,10 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
     the body is still the historical rule (root or wheel), so behavior is
     identical, but the principal→bundle decision now lives in one place ready
     for policy to plug in. VM-verified no-op: root→SYSTEM, a non-wheel user via
-    `su`→USER. (`sshd`'s decision is serviced-side in `domain_provision_session`
-    and moves with the provision path in P4.)
+    `su`→USER. (`sshd`'s decision is now sshd-side too: the monitor calls the
+    same `capbundle_principal_is_admin()` and mints the matching scope over its
+    inherited SYSTEM channel — the `domain_provision_session` socket backend was
+    removed with the control socket.)
   - **P1b — explicit policy (done).** The decision now reads an explicit UCL
     principal→bundle policy at `/Capabilities/Config/principal-policy.ucl`
     (`capbundle_principal_is_admin` in libcapbundle, which owns UCL); login/su

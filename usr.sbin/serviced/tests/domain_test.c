@@ -989,37 +989,9 @@ ATF_TC_BODY(user_channel_mints_neither, tc)
 	close(kq);
 }
 
-/*
- * Adversarial: session provisioning (SCTL_OP_PROVISION_SESSION backend) refuses
- * a non-root requester.  domain_provision_session enforces requester_euid == 0
- * BEFORE any mint, so this is device-free (no /dev/mac_capability needed): a
- * uid-1000 peer must get EPERM and no descriptor.  This is the socket-auth
- * security boundary that lets sshd (root) provision for a target uid while a
- * non-root process cannot provision at all.
- */
-ATF_TC_WITHOUT_HEAD(provision_requires_root);
-ATF_TC_BODY(provision_requires_root, tc)
-{
-	int out_fd = -12345;
-
-	/* Non-root requester (euid 1000) provisioning for any target uid. */
-	errno = 0;
-	ATF_REQUIRE_EQ(-1, domain_provision_session(1000, 0, &out_fd, -1));
-	ATF_REQUIRE_EQ(EPERM, errno);
-	ATF_REQUIRE_EQ_MSG(-1, out_fd, "no descriptor may be minted on refusal");
-
-	/* Same for a non-privileged target uid. */
-	out_fd = -12345;
-	errno = 0;
-	ATF_REQUIRE_EQ(-1, domain_provision_session(1000, 1000, &out_fd, -1));
-	ATF_REQUIRE_EQ(EPERM, errno);
-	ATF_REQUIRE_EQ(-1, out_fd);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, provision_requires_root);
 	ATF_TP_ADD_TC(tp, scope_system_resolves_all);
 	ATF_TP_ADD_TC(tp, scope_user_allow_list);
 	ATF_TP_ADD_TC(tp, mint_authorization);

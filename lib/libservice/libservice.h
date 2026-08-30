@@ -307,20 +307,6 @@ int	service_mint_session_domain(int syschan, enum service_mint_kind kind,
  */
 int	service_mint_user_domain(int syschan, uid_t uid, int *out_fd);
 
-/*
- * Socket-authenticated session provisioning (§21/§22, item 4).  Ask serviced,
- * over its getpeereid(3)-authenticated control socket, to mint this session's
- * ambient lookup channel for `uid`, returning the caller-owned endpoint in
- * *out_fd.  Unlike service_mint_session_domain(), this needs no inherited
- * SYSTEM channel — it is the path for a login that cannot inherit one (an ssh
- * network session).  serviced chooses the scope from the TARGET uid (SYSTEM/
- * admin for root or a wheel member, USER otherwise) and permits ONLY a root
- * peer (EPERM otherwise).  On success *out_fd is ambient (survives fork/exec);
- * the caller installs it and closes its own copy.  Best-effort and bounded: any
- * failure returns -1 (errno set) and the caller must proceed with no channel.
- */
-int	service_provision_session(uid_t uid, int *out_fd);
-
 #define	SERVICE_CLIENT_TIMEOUT_INFINITE	UINT32_MAX
 
 struct service_message {

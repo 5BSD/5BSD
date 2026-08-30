@@ -92,6 +92,7 @@
 
 /* 5BSD §21: privileged ambient lookup-channel provisioning */
 #include <libservice.h>
+#include <libcapbundle.h>	/* capbundle_principal_is_admin */
 
 #ifdef GSSAPI
 static Gssctxt *gsscontext = NULL;
@@ -101,6 +102,8 @@ static Gssctxt *gsscontext = NULL;
 extern ServerOptions options;
 extern u_int utmp_len;
 extern struct sshbuf *cfg;
+/* 5BSD: this connection's private SYSTEM lookup channel (sshd-session.c). */
+extern int ambient_session_lookup_fd;
 extern struct sshbuf *loginmsg;
 extern struct include_list includes;
 extern struct sshauthopt *auth_opts; /* XXX move to permanent ssh->authctxt? */
@@ -1796,12 +1799,18 @@ mm_answer_pty_cleanup(struct ssh *ssh, int sock, struct sshbuf *m)
 }
 
 /*
- * 5BSD §21: mint this session's ambient lookup channel in the privileged
+ * 5BSD §21/§22: mint this session's ambient lookup channel in the privileged
  * monitor and pass the resulting descriptor back to the (unprivileged) user
- * child.  serviced authenticates the control socket with getpeereid() and only
- * root may provision, so this must run here rather than in the dropped-priv
- * child.  Strictly best-effort: any failure yields a non-zero status and no
- * descriptor — never fatal, never break the session.
+ * child.  The monitor holds this connection's PRIVATE SYSTEM lookup channel
+ * (ambient_session_lookup_fd, minted per-connection by the listener and adopted
+ * in sshd-session.c); it mints the session's uid-scoped channel over it exactly
+ * as login(1)/su(1) do over their inherited SYSTEM channel — replacing the old
+ * getpeereid(2) control socket entirely (docs/capability-authority-model.md).
+ * Holding a SYSTEM channel IS the authority (the monitor is the pre-privdrop
+ * root process), so no uid attestation is needed; the scope is keyed to the
+ * AUTHENTICATED principal, never a uid the untrusted child chose.  Strictly
+ * best-effort: any failure yields a non-zero status and no descriptor — never
+ * fatal, never break the session.
  */
 int
 mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
@@ -1825,12 +1834,21 @@ mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
 	if (authctxt == NULL || authctxt->pw == NULL) {
 		status = EPERM;			/* not authenticated */
 		fd = -1;
-	} else if (service_provision_session(authctxt->pw->pw_uid, &fd) == 0 &&
-	    fd >= 0)
-		status = 0;
-	else {
-		status = errno != 0 ? errno : EIO;
+	} else if (ambient_session_lookup_fd < 0) {
+		status = ENOENT;		/* no channel inherited this session */
 		fd = -1;
+	} else {
+		enum service_mint_kind kind =
+		    capbundle_principal_is_admin(authctxt->pw) ?
+		    SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
+
+		if (service_mint_session_domain(ambient_session_lookup_fd, kind,
+		    authctxt->pw->pw_uid, &fd) == 0 && fd >= 0)
+			status = 0;
+		else {
+			status = errno != 0 ? errno : EIO;
+			fd = -1;
+		}
 	}
 
 	sshbuf_reset(m);

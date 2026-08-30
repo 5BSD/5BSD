@@ -94,14 +94,16 @@
 /* 5BSD: ambient service lookup-channel session provisioning (§21/§22). */
 #include <sys/capsicum.h>
 #include <libservice.h>
+#include <libcapbundle.h>
 #include <service_bootstrap.h>
 
 /*
- * The ambient lookup channel serviced provisions for this session (mint for the
- * target uid over serviced's getpeereid-authenticated control socket).  A file
- * static because do_child provisions it while still root and do_setup_env (a
- * separate function) advertises it in the child's environment; the sshd session
- * child is single-threaded and execs once, so a static is safe.  -1 = none.
+ * The ambient lookup channel provisioned for this session: the monitor mints
+ * the session's uid-scoped channel over this connection's private SYSTEM
+ * channel and passes it back (mm_provision_session).  A file static because
+ * do_child provisions it while still root and do_setup_env (a separate
+ * function) advertises it in the child's environment; the sshd session child is
+ * single-threaded and execs once, so a static is safe.  -1 = none.
  */
 static int ambient_prov_fd = -1;
 
@@ -123,11 +125,28 @@ static int ambient_prov_fd = -1;
 #ifdef DISABLE_FD_PASSING
 #define mm_pty_allocate pty_allocate
 /*
- * 5BSD §21: without FD passing the post-auth privsep child retains root
- * (privsep_postauth skip_privdrop), so it can provision the ambient lookup
- * channel directly rather than routing through the monitor.
+ * 5BSD §21/§22: without FD passing the post-auth privsep child retains root
+ * (privsep_postauth skip_privdrop) in the same process image, so it mints the
+ * session's uid-scoped lookup channel directly over this connection's private
+ * SYSTEM channel (adopted in sshd-session.c) rather than routing the request
+ * through the monitor.  Best-effort — a missing channel yields no provisioning.
  */
-#define mm_provision_session service_provision_session
+extern int ambient_session_lookup_fd;
+static int
+mm_provision_session(uid_t uid, int *out_fd)
+{
+	struct passwd *pw = getpwuid(uid);
+	enum service_mint_kind kind;
+
+	if (ambient_session_lookup_fd < 0 || pw == NULL) {
+		errno = ENOENT;
+		return (-1);
+	}
+	kind = capbundle_principal_is_admin(pw) ? SERVICE_MINT_SYSTEM :
+	    SERVICE_MINT_USER;
+	return (service_mint_session_domain(ambient_session_lookup_fd, kind,
+	    uid, out_fd));
+}
 #endif
 
 #define IS_INTERNAL_SFTP(c) \

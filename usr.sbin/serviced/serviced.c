@@ -109,15 +109,7 @@ event_loop(void)
 				continue;
 			}
 
-			/* Control socket — accept new connections. */
-			if (kev->filter == EVFILT_READ &&
-			    sctl_fd() >= 0 &&
-			    (int)kev->ident == sctl_fd()) {
-				sctl_accept();
-				continue;
-			}
-
-			/* Control socket — per-connection events. */
+			/* Capability control connection — per-connection events. */
 			if (sctl_is_conn_event(kev)) {
 				sctl_conn_event(kev);
 				continue;
@@ -528,17 +520,11 @@ main(int argc, char *argv[])
 	(void)activation_register_all(serviced_kq);
 
 	/*
-	 * Set up the control socket only now, after startup_launch_system.
-	 * sctl_setup mounts serviced's own tmpfs runtime home and binds the
-	 * socket there, so this no longer depends on /etc/rc having remounted /
-	 * read-write; it stays here so the rendezvous appears once the plane is
-	 * far enough up to serve control clients.
+	 * Control is served entirely over the capability discovery plane: an
+	 * admin login mints a system.serviced / system.lifecycle channel via
+	 * naming_lookup, and serviced adopts the provider end with
+	 * sctl_adopt_channel().  There is no control socket to bind.
 	 */
-	if (sctl_setup() == 0) {
-		EV_SET(&kev, sctl_fd(), EVFILT_READ, EV_ADD, 0, 0, NULL);
-		if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1)
-			syslog(LOG_WARNING, "kevent sctl: %m");
-	}
 
 	/*
 	 * Boot has converged: /etc/rc ran and native services were launched.

@@ -17,6 +17,9 @@ MAN=	sshd.8 sshd_config.5
 moduli: .MADE
 
 LIBADD=	ssh util
+# 5BSD: the listener mints a private per-connection lookup channel (§21/§22).
+LIBADD+=	service channel capability
+CFLAGS+=	-I${SRCTOP}/lib/libservice
 
 .if ${MK_KERBEROS_SUPPORT} != "no"
 .if ${MK_MITKRB5} == "no"

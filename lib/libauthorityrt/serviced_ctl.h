@@ -15,19 +15,12 @@
 #include <sys/types.h>
 
 /*
- * serviced's single control-plane rendezvous.  It lives on a private tmpfs at
- * serviced's runtime home (mounted by serviced before it binds), so no ZFS
- * snapshot or `zfs send` backup can ever capture the socket node and a reboot
- * leaves no stale node behind.  Override with SERVICED_CONTROL_SOCKET.
- */
-#define	SERVICED_CTL_SOCK	"/Capabilities/serviced/control.sock"
-/*
  * The capability control endpoint (capability-authority-model.md, P3).  serviced
  * self-serves this SYSTEM name over the ambient discovery plane; an admin login
  * session's lookup receives a channel carrying SVC_RIGHTS_ADMIN, which gates the
- * privileged control operations (reload/start/stop) in place of the socket's
- * getpeereid euid.  The one fd-passing op (PROVISION_SESSION) is not served here
- * and remains on the socket until the lifecycle phase (P4).
+ * privileged control operations (reload/start/stop).  This is the ONLY control
+ * transport: the getpeereid(2) control socket was retired, and session
+ * provisioning now mints over each caller's inherited/own SYSTEM channel.
  */
 #define	SERVICED_CONTROL_NAME	"system.serviced"
 /*
@@ -51,20 +44,7 @@
 #define	SCTL_OP_RELOAD		3	/* reload manifests (root) */
 #define	SCTL_OP_START_SVC	4	/* start a loaded unit (root) */
 #define	SCTL_OP_STOP_SVC	5	/* stop a loaded unit (root) */
-/*
- * SCTL_OP_PROVISION_SESSION — socket-authenticated session provisioning (§21/
- * §22, item 4).  ROOT ONLY: the handler requires the getpeereid(3)-attested
- * peer euid to be 0, since provisioning speaks for an arbitrary target uid.
- * The request payload is the target uid as a decimal ASCII string (no NUL, so
- * it passes the control channel's text-payload encoding check); serviced mints
- * the session lookup channel scoped by that TARGET uid — SYSTEM/admin for uid 0
- * or a wheel member, USER otherwise — and returns the caller's ambient,
- * CAP_XFER_ONCE endpoint attached to the reply via SCM_RIGHTS.  A non-root peer
- * gets EPERM and no fd.  This is the unified backend login(1)/su(1) provision
- * over getty inheritance; it exists for ssh network logins that cannot inherit
- * the SYSTEM channel.
- */
-#define	SCTL_OP_PROVISION_SESSION	6	/* mint session channel for uid (root) */
+/* Opcode 6 (SCTL_OP_PROVISION_SESSION) retired with the control socket. */
 
 struct sctl_request {
 	uint32_t	version;
@@ -75,10 +55,7 @@ struct sctl_request {
 
 /*
  * status is 0 on success or a positive errno.  flags carries the summary text
- * length that follows the reply header.  For SCTL_OP_PROVISION_SESSION a
- * successful reply carries no summary (flags == 0) and instead has the minted
- * session-channel descriptor attached to the reply header via SCM_RIGHTS; an
- * error reply carries a summary and no descriptor.
+ * length that follows the reply header.
  */
 struct sctl_reply {
 	uint32_t	status;		/* 0 = ok, nonzero = errno */
