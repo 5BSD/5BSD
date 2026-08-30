@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=	runtime
+PACKAGE=	authorityctl
 PROG=		authorityctl
 MAN=		authorityctl.8
 

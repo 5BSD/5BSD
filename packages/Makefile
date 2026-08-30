@@ -56,7 +56,6 @@ SUBDIR=	blocklist \
 	liblogcmp \
 	libnetworkcmp \
 	libnotify \
-	libauthorityctl \
 	libauthorityrt \
 	libservice \
 	libshmring \
@@ -191,7 +190,7 @@ SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
 SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests
 SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
-SUBDIR.${MK_TESTS}+=		libauthorityctl-tests libauthorityrt-tests libservice-tests
+SUBDIR.${MK_TESTS}+=		libauthorityrt-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
 SUBDIR.${MK_TESTS}+=		mac-abac-tests oes-tests
 SUBDIR.${MK_TESTS}+=		localnetwork-tests
