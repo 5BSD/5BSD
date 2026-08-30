@@ -2238,6 +2238,14 @@ service_listener_accept_fd(struct service_listener *listener,
 		    sizeof(identity->service_name));
 		strlcpy(identity->client_label, connection.msg.client_label,
 		    sizeof(identity->client_label));
+		/*
+		 * Rights granted to this session.  Until the broker carries an
+		 * explicit rights word (capability-authority-model.md phase P3),
+		 * a resolved name grants the full, unattenuated set -- so a
+		 * service that ignores rights, or checks them, behaves exactly as
+		 * before.
+		 */
+		identity->rights = SERVICE_RIGHTS_ALL;
 	}
 	return (connection.fd);
 }

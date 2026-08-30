@@ -1131,9 +1131,45 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 	    "dead-channel child status=%#x", status);
 }
 
+ATF_TC_WITHOUT_HEAD(capability_rights_algebra);
+ATF_TC_BODY(capability_rights_algebra, tc)
+{
+	/*
+	 * P0 capability primitive (docs/capability-authority-model.md): rights
+	 * are a per-service bitmask; a held capability permits an operation iff
+	 * it holds every needed bit, and attenuation is monotone (never gains a
+	 * bit).  A revocation epoch is live only at its minting generation.
+	 */
+	enum { R_READ = 1u << 0, R_WRITE = 1u << 1, R_ADMIN = 1u << 2 };
+
+	/* allow: needs every requested bit. */
+	ATF_CHECK(service_rights_allow(SERVICE_RIGHTS_ALL, R_ADMIN));
+	ATF_CHECK(service_rights_allow(R_READ | R_WRITE, R_READ));
+	ATF_CHECK(service_rights_allow(R_READ | R_WRITE, R_READ | R_WRITE));
+	ATF_CHECK(!service_rights_allow(R_READ, R_WRITE));
+	ATF_CHECK(!service_rights_allow(R_READ | R_WRITE, R_ADMIN));
+	ATF_CHECK(service_rights_allow(SERVICE_RIGHTS_NONE,
+	    SERVICE_RIGHTS_NONE));		/* needing nothing always allows */
+
+	/* attenuate: result is a subset of held, never a superset. */
+	ATF_CHECK_EQ(R_READ, service_rights_attenuate(R_READ | R_WRITE, R_READ));
+	ATF_CHECK_EQ(R_WRITE,
+	    service_rights_attenuate(SERVICE_RIGHTS_ALL, R_WRITE));
+	ATF_CHECK_EQ(SERVICE_RIGHTS_NONE,
+	    service_rights_attenuate(R_READ, R_WRITE));	/* disjoint -> nothing */
+	/* Monotonicity: attenuating can never add a bit that was not held. */
+	ATF_CHECK_EQ(R_READ,
+	    service_rights_attenuate(R_READ, R_READ | R_WRITE | R_ADMIN));
+
+	/* revocation epoch. */
+	ATF_CHECK(service_epoch_live(7, 7));
+	ATF_CHECK(!service_epoch_live(7, 8));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, capability_rights_algebra);
 	ATF_TP_ADD_TC(tp, bootstrap_validation);
 	ATF_TP_ADD_TC(tp, shared_context);
 	ATF_TP_ADD_TC(tp, named_directory_bootstrap);

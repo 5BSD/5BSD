@@ -19,6 +19,7 @@
 
 #include <sys/types.h>
 
+#include <stdbool.h>
 #include <stdint.h>
 
 /* Supervisor-owned location of the selected unit's immutable bundle files. */
@@ -63,11 +64,53 @@ struct service_context;
 struct service_provider;
 typedef int (*service_activation_handler)(const char *name, void *context);
 
+/*
+ * A capability's rights (docs/capability-authority-model.md).  A service-defined
+ * bitmask of the operations the holder of a granted session may perform; bit
+ * meanings are per-service (Capsicum-shaped).  Attenuation is monotone: a child
+ * capability may only clear bits, never set them.  SERVICE_RIGHTS_ALL is the
+ * unattenuated grant a legacy lookup (one that carries no explicit rights) still
+ * receives, so a service that ignores rights behaves exactly as before.
+ */
+typedef uint64_t service_rights_t;
+#define	SERVICE_RIGHTS_NONE	((service_rights_t)0)
+#define	SERVICE_RIGHTS_ALL	(~(service_rights_t)0)
+
+/* A held capability permits an operation iff it holds every needed right. */
+static __inline bool
+service_rights_allow(service_rights_t held, service_rights_t needed)
+{
+	return ((held & needed) == needed);
+}
+
+/* Attenuate: keep only the intersection; the result can never exceed `held`. */
+static __inline service_rights_t
+service_rights_attenuate(service_rights_t held, service_rights_t keep)
+{
+	return (held & keep);
+}
+
+/*
+ * Revocation epoch (docs/capability-authority-model.md §11.3).  A service keeps
+ * a generation per object; a capability records the epoch it was minted at, and
+ * bumping the object's epoch invalidates every capability of the prior epoch at
+ * once.  Selective revocation is composed on top with a caretaker.
+ */
+typedef uint64_t service_epoch_t;
+
+/* A capability minted at `minted` is live iff the object is still at that epoch. */
+static __inline bool
+service_epoch_live(service_epoch_t minted, service_epoch_t current)
+{
+	return (minted == current);
+}
+
 struct service_identity {
 	size_t	size;
-	char	service_name[256];
+	char	service_name[256];		/* the object this session names */
 	char	client_label[64];
-	uint64_t reserved[4];
+	service_rights_t rights;		/* rights granted to this session */
+	uint64_t reserved[3];
 };
 
 /*

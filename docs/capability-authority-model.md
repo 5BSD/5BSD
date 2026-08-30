@@ -193,8 +193,17 @@ boundary*. These remain:
 Each phase leaves the machine bootable and rebootable. Early phases make the
 policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
 
-- **P0 — primitive.** Add `(object, rights)` binding, attenuate, and revoke to
-  `mac_capability` + libservice. No behavior change; no caller uses them yet.
+- **P0 — primitive.** Add the `(object, rights)` binding, attenuation, and the
+  revocation epoch to **libservice** — no kernel change is needed, because
+  decision 1 keeps rights service-side and the kernel already provides
+  unforgeable, `cap_xfer`-attenuated endpoints. Concretely: `service_rights_t`
+  (a per-service bitmask) with `service_rights_allow`/`service_rights_attenuate`
+  (monotone), a `rights` field on `struct service_identity` (the object is its
+  `service_name`), and `service_epoch_t` + `service_epoch_live` for revocation.
+  Behavior-neutral: a resolved name grants `SERVICE_RIGHTS_ALL`, so a service
+  that ignores rights, or checks them, behaves exactly as before. No caller
+  scopes rights yet. *(Done: rights delivered per-grant over the wire arrives in
+  P3; caretaker-based selective revocation composes on the epoch primitive.)*
 - **P1 — auth boundary.** Stand up the auth agent + principal→bundle policy.
   `login`/`su`/`sshd` call it. The initial policy grants exactly what uid-based
   logic grants today (admin principals → broad bundle), so behavior is
