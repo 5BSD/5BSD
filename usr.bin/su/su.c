@@ -87,6 +87,7 @@
 #include <security/openpam.h>
 
 #include <libservice.h>
+#include <libcapbundle.h>
 #include <service_bootstrap.h>
 
 #include "su_probes.h"
@@ -138,9 +139,10 @@ static int	ok_to_export(const char *);
 extern char	**environ;
 
 /*
- * The principal->bundle admin decision has moved to a single seam,
- * service_principal_is_admin() in libservice (capability-authority-model.md,
- * P1), so su no longer tests the uid inline.
+ * The principal->bundle admin decision is a single seam,
+ * capbundle_principal_is_admin() (capability-authority-model.md, P1): it reads
+ * an explicit UCL policy, defaulting to the historical root/wheel rule.  su no
+ * longer tests the uid inline.
  */
 
 int
@@ -597,7 +599,7 @@ main(int argc, char *argv[])
 			enum service_mint_kind kind;
 			int user_fd = -1;
 
-			kind = service_principal_is_admin(pwd) ? SERVICE_MINT_SYSTEM :
+			kind = capbundle_principal_is_admin(pwd) ? SERVICE_MINT_SYSTEM :
 			    SERVICE_MINT_USER;
 			if (service_mint_session_domain(syschan, kind,
 			    pwd->pw_uid, &user_fd) == 0 &&

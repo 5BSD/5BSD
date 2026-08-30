@@ -212,12 +212,20 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
     for policy to plug in. VM-verified no-op: root→SYSTEM, a non-wheel user via
     `su`→USER. (`sshd`'s decision is serviced-side in `domain_provision_session`
     and moves with the provision path in P4.)
-  - **P1b — policy + agent.** Back `service_principal_is_admin()` (and its
-    successor, which returns a full bundle, not a bool) with a UCL
-    principal→bundle policy read by a small capsicum-sandboxed auth agent that
-    holds the session-mint cap; `authority-init` delegates that cap to it. The
-    initial policy reproduces the P1a default, so behavior stays identical while
-    the decision becomes explicit data at the auth boundary.
+  - **P1b — explicit policy (done).** The decision now reads an explicit UCL
+    principal→bundle policy at `/Capabilities/Config/principal-policy.ucl`
+    (`capbundle_principal_is_admin` in libcapbundle, which owns UCL); login/su
+    call it (the libservice P1a seam is retired). `admin { uids=[…] groups=[…] }`
+    names the admin principals; an absent or invalid policy falls back to the
+    historical root/wheel rule, so it is behavior-neutral by default. Login is
+    not PID 1, so decision-4's hard "not in PID 1" constraint holds; moving the
+    read (and the session-mint cap) into an isolated auth-agent daemon is P1c.
+    VM-verified: no policy → root=SYSTEM, testu=USER; a policy granting testu
+    admin flips testu to SYSTEM (it resolves system.Network, which USER denies).
+  - **P1c — isolated agent (todo).** Move the policy read and the session-mint
+    capability into a small capsicum-sandboxed auth-agent daemon that
+    `authority-init` delegates to; login/su ask it over a channel. The call
+    sites do not change.
 - **P-rights (done, prerequisite for P2).** The grant now carries a rights word:
   serviced stamps `svc_new_client_msg.rights` at the broker (`SVC_RIGHTS_ALL`
   until a policy scopes it) and libservice delivers it as `identity.rights`.
@@ -242,6 +250,23 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
 - **P6 — revocation + attenuation in anger.** Exercise delegation to non-root
   operators, attenuated caps, and revocation, closing the "least privilege
   without root" story.
+- **P7 — cleanup.** After the mechanism is complete: remove the dead code left
+  behind in every file the migration touched (superseded uid gates, transitional
+  shims, retired symbols, stale comments/markers); split any file that grew too
+  large into smaller, single-purpose files where it improves clarity; and do a
+  final documentation sweep — the spec, the design docs, the book, the man
+  pages, and code comments — so the docs describe the finished capability model,
+  not the migration.
+
+### Testing discipline
+
+Each phase is validated on a **fresh** VM image built by a clean
+`installworld` + `distribution` + `installkernel` of the current tree (not by
+hand-staging individual binaries onto a mutated guest root, which drifts and can
+mask a stale or mismatched component). After a major change, rebuild the image
+from scratch and **re-run the earlier phases' checks as regression** — SYSTEM
+resolves all `system.*`, a USER session narrows to its allow-list, the default
+principal policy reproduces root/wheel — before moving on.
 
 ## 10. Keep / change ledger (from recent work)
 

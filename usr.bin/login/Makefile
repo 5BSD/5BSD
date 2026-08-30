@@ -8,7 +8,8 @@ PROG=	login
 SRCS=	login.c login_fbtab.c
 CFLAGS+=-DLOGALL
 CFLAGS+=-I${SRCTOP}/lib/libservice
-LIBADD=	util pam service channel capability
+LIBADD=	util pam service channel capability capbundle
+CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 
 .if ${MK_DTRACE} != "no"
 SRCS+=		login_provider.d

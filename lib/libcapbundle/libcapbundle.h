@@ -138,4 +138,13 @@ int	capbundle_scan_dir(const char *dirpath, capbundle_scan_cb cb, void *ctx);
 #define	CAPBUNDLE_MGMT_CORE		1
 #define	CAPBUNDLE_MGMT_USER		2
 
+/*
+ * The principal->bundle admin policy (docs/capability-authority-model.md, P1).
+ * Whether a principal is entitled to an admin (full-discovery) session, per the
+ * UCL policy at /Capabilities/Config/principal-policy.ucl, defaulting to the
+ * historical rule (root or a member of "wheel") when no policy is configured.
+ */
+struct passwd;
+bool	capbundle_principal_is_admin(const struct passwd *pwd);
+
 #endif /* LIBCAPBUNDLE_H */
