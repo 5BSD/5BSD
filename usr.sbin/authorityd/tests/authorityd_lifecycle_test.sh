@@ -199,8 +199,53 @@ lifecycle_reserved_op_unsupported_body()
 	    atf_fail "expected ENOTSUP (2d) for reserved op 7, got status $reply"
 }
 
+atf_test_case reboot_path_healthy_on_pid1
+reboot_path_healthy_on_pid1_head()
+{
+	atf_set "descr" "on a live plane, reboot(8)'s control socket is present" \
+	    "and answers, and the signal fallback stays shielded"
+	atf_set "require.user" "root"
+}
+reboot_path_healthy_on_pid1_body()
+{
+	local status
+
+	# Only meaningful when authority-init is PID 1 (a live plane); off PID 1
+	# the reboot path is validated by the *_denied_off_pid1 cases above.
+	if [ "$(ps -o comm= -p 1 2>/dev/null)" != "authority-init" ]; then
+		atf_skip "authority-init is not PID 1; nothing to guard here"
+	fi
+
+	# 1. reboot(8)/halt(8)/shutdown(8) connect to $SOCK and fall back to the
+	#    (shielded) signal ABI only when it is absent.  The 2026-08 scare was
+	#    a rename skew -- PID 1 served oracled.sock while reboot(8) looked for
+	#    authorityd.sock -- so reboot fell back to the signal and died with
+	#    EPERM.  Guard the exact socket path reboot(8) uses.
+	if [ ! -S "$SOCK" ]; then
+		atf_fail "control socket $SOCK absent; reboot(8) would fall back" \
+		    "to the shielded signal and fail"
+	fi
+
+	# 2. The socket must actually answer -- a live transport, not a stale
+	#    node.  CTL_OP_STATUS (op 2) is non-destructive and safe against PID 1.
+	status=$(send_op 2 0)
+	if [ -z "$status" ]; then
+		atf_fail "control socket did not answer CTL_OP_STATUS; transport dead"
+	fi
+
+	# 3. The signal fallback MUST stay shielded, or reboot(8) could silently
+	#    use it instead of the authenticated socket.  SIGHUP is used because
+	#    it is non-destructive even if (wrongly) delivered -- init would only
+	#    re-read /etc/ttys -- so a broken shield fails the test without
+	#    rebooting or wedging the host.  Expect kill(1) to fail with EPERM.
+	if kill -s HUP 1 2>/dev/null; then
+		atf_fail "SIGHUP to PID 1 was not shielded; the signal ABI is open"
+	fi
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case reboot_path_healthy_on_pid1
 	atf_add_test_case lifecycle_reboot_denied_off_pid1
 	atf_add_test_case lifecycle_halt_denied_off_pid1
 	atf_add_test_case lifecycle_poweroff_denied_off_pid1
