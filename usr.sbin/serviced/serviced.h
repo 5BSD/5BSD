@@ -81,8 +81,10 @@ enum svc_kind {
  * path keeps its current behavior.
  */
 enum svc_domain_kind {
-	SVC_DOMAIN_SYSTEM = 0,	/* root scope: all registered names */
+	SVC_DOMAIN_SYSTEM = 0,	/* root scope: all registered SYSTEM names */
 	SVC_DOMAIN_USER,	/* per-uid scope: allow-list + user services */
+	SVC_DOMAIN_CONTROL,	/* admin scope: resolves ONLY control names,
+				 * and control names resolve ONLY here */
 };
 
 struct svc_domain {
@@ -393,6 +395,9 @@ int	naming_lookup(const char *name, struct svc_runtime *requester,
 bool	lookup_channel_is_live(const struct svc_lookup_channel *lc);
 void	lookup_channel_sync_events(struct svc_lookup_channel *lc, int kq);
 bool	svc_domain_resolves(const struct svc_domain *domain, const char *name);
+bool	name_is_control(const char *name);
+bool	svc_domain_permits(const struct svc_domain *chan,
+	    enum svc_domain_kind name_domain, const char *name);
 bool	svc_domain_may_mint(const struct svc_domain *domain);
 int	svc_fd_make_ambient(int fd);
 int	domain_mint_user_channel(uid_t uid, int *out_fd, int kq);

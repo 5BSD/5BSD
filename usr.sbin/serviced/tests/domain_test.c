@@ -291,6 +291,58 @@ ATF_TC_BODY(mint_domain_kind_escalation_guard, tc)
 	ATF_CHECK_EQ(EINVAL, errno);
 }
 
+ATF_TC_WITHOUT_HEAD(control_domain_separation);
+ATF_TC_BODY(control_domain_separation, tc)
+{
+	struct svc_domain system = { .kind = SVC_DOMAIN_SYSTEM, .uid = 0 };
+	struct svc_domain user = { .kind = SVC_DOMAIN_USER, .uid = 1001 };
+	struct svc_domain control = { .kind = SVC_DOMAIN_CONTROL, .uid = 0 };
+	enum svc_domain_kind kind;
+
+	/* Names are classified control by the reserved ".Control" namespace. */
+	ATF_CHECK(name_is_control("service.Control"));
+	ATF_CHECK(name_is_control("lifecycle.Control"));
+	ATF_CHECK(name_is_control("storage.Control"));
+	ATF_CHECK(!name_is_control("system.Network"));
+	ATF_CHECK(!name_is_control("org.5bsd.ControlPanel")); /* not a component */
+	ATF_CHECK(!name_is_control("Control"));		      /* no dot */
+
+	/* WORKS: a control name resolves through a CONTROL channel. */
+	ATF_CHECK(svc_domain_permits(&control, SVC_DOMAIN_CONTROL,
+	    "service.Control"));
+
+	/* DOESN'T: SYSTEM/USER/NULL channels cannot see a control name. */
+	ATF_CHECK(!svc_domain_permits(&system, SVC_DOMAIN_CONTROL,
+	    "service.Control"));
+	ATF_CHECK(!svc_domain_permits(&user, SVC_DOMAIN_CONTROL,
+	    "service.Control"));
+	ATF_CHECK(!svc_domain_permits(NULL, SVC_DOMAIN_CONTROL,
+	    "lifecycle.Control"));
+
+	/* DOESN'T: a CONTROL channel resolves nothing but control names. */
+	ATF_CHECK(!svc_domain_permits(&control, SVC_DOMAIN_SYSTEM,
+	    SYSTEM_ONLY_NAME));
+	ATF_CHECK(!svc_domain_permits(&control, SVC_DOMAIN_SYSTEM,
+	    ALLOW_LOG_NAME));
+
+	/* SYSTEM/USER behave exactly as before for non-control names. */
+	ATF_CHECK(svc_domain_permits(&system, SVC_DOMAIN_SYSTEM,
+	    SYSTEM_ONLY_NAME));
+	ATF_CHECK(svc_domain_permits(&user, SVC_DOMAIN_SYSTEM, ALLOW_LOG_NAME));
+	ATF_CHECK(!svc_domain_permits(&user, SVC_DOMAIN_SYSTEM,
+	    SYSTEM_ONLY_NAME));
+
+	/* Minting: only a SYSTEM (admin) channel may mint CONTROL; USER cannot. */
+	kind = (enum svc_domain_kind)0xdead;
+	ATF_CHECK_EQ(0, svc_mint_domain_kind(&system, SVC_MINT_DOMAIN_CONTROL,
+	    &kind));
+	ATF_CHECK_EQ(SVC_DOMAIN_CONTROL, kind);
+	errno = 0;
+	ATF_CHECK_EQ(-1, svc_mint_domain_kind(&user, SVC_MINT_DOMAIN_CONTROL,
+	    &kind));
+	ATF_CHECK_EQ(EPERM, errno);
+}
+
 ATF_TC_WITHOUT_HEAD(ambient_descriptor_marking);
 ATF_TC_BODY(ambient_descriptor_marking, tc)
 {
@@ -918,6 +970,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, scope_user_allow_list);
 	ATF_TP_ADD_TC(tp, mint_authorization);
 	ATF_TP_ADD_TC(tp, mint_domain_kind_escalation_guard);
+	ATF_TP_ADD_TC(tp, control_domain_separation);
 	ATF_TP_ADD_TC(tp, ambient_descriptor_marking);
 	ATF_TP_ADD_TC(tp, default_requester_is_system);
 	ATF_TP_ADD_TC(tp, user_scope_hides_registered_name);

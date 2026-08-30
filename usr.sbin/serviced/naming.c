@@ -38,6 +38,7 @@ struct naming_entry {
 	char			 name[SERVICED_NAME_MAX + 1];
 	struct svc_runtime	*owner;		/* owning service */
 	bool			 sendable;	/* provider allows session forwarding */
+	enum svc_domain_kind	 domain;	/* SYSTEM (default) or CONTROL */
 };
 
 static struct naming_entry *naming_hash[NAMING_HASH_SIZE];
@@ -194,6 +195,12 @@ naming_register(const char *name, struct svc_runtime *owner, bool sendable)
 	strlcpy(e->name, name, sizeof(e->name));
 	e->owner = owner;
 	e->sendable = sendable;
+	/*
+	 * A name in the reserved ".Control" namespace registers in the CONTROL
+	 * domain: it is invisible to SYSTEM/USER lookups and resolvable only by
+	 * a held CONTROL channel.  Everything else is a SYSTEM name.
+	 */
+	e->domain = name_is_control(name) ? SVC_DOMAIN_CONTROL : SVC_DOMAIN_SYSTEM;
 
 	h = name_hash(name);
 	e->next = naming_hash[h];
@@ -318,19 +325,36 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 
 	if (sendablep != NULL)
 		*sendablep = false;
-	/*
-	 * Domain scope is layered on top of the registry and checked first: an
-	 * out-of-scope name is indistinguishable from an unregistered one.
-	 */
-	if (!svc_domain_resolves(domain, name)) {
-		*errp = ENOENT;
-		return (-1);
-	}
 
 	e = naming_find(name);
 	/* A name becomes visible only after its independent activation succeeds. */
 	if (e == NULL || !e->owner->protocol_ready ||
 	    e->owner->state != SVC_STATE_RUNNING) {
+		/*
+		 * Not (yet) registered.  Preserve on-demand gating: an out-of-
+		 * scope name is indistinguishable from an unregistered one, and a
+		 * denied scope must not trigger an on-demand launch the caller
+		 * could never reach.  (Control names are eagerly registered, so
+		 * svc_domain_resolves already returns false for a CONTROL channel
+		 * here — no control name is ever on-demand.)
+		 */
+		if (!svc_domain_resolves(domain, name)) {
+			*errp = ENOENT;
+			return (-1);
+		}
+		*errp = ENOENT;
+		return (-1);
+	}
+
+	/*
+	 * Registered: enforce the channel's domain against the NAME's registered
+	 * domain.  This is the structural separation between the SYSTEM/USER
+	 * service plane and the CONTROL admin plane -- a control name resolves
+	 * only through a CONTROL channel, and a CONTROL channel resolves only
+	 * control names.  An out-of-scope hit is reported as ENOENT, exactly like
+	 * an unregistered name.
+	 */
+	if (!svc_domain_permits(domain, e->domain, name)) {
 		*errp = ENOENT;
 		return (-1);
 	}

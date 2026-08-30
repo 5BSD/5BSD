@@ -90,6 +90,46 @@ svc_domain_resolves(const struct svc_domain *domain, const char *name)
 }
 
 /*
+ * A control name is one whose final dot-component is "Control"
+ * (service.Control, storage.Control, lifecycle.Control).  Like the reserved
+ * "helper." prefix, this namespace is structural: a control name is registered
+ * in SVC_DOMAIN_CONTROL and is invisible to SYSTEM/USER lookups, and a CONTROL
+ * channel resolves nothing else.  This keeps the admin control plane a set of
+ * ordinary capability names reachable only by a held CONTROL channel — no
+ * getpeereid, no socket path.
+ */
+bool
+name_is_control(const char *name)
+{
+	const char *dot;
+
+	if (name == NULL)
+		return (false);
+	dot = strrchr(name, '.');
+	return (dot != NULL && strcmp(dot + 1, "Control") == 0);
+}
+
+/*
+ * Whether a channel of domain `chan` may resolve a *registered* name whose own
+ * registered domain is `name_domain`.  This is the structural separation: a
+ * control name resolves ONLY through a CONTROL channel; a CONTROL channel
+ * resolves ONLY control names; SYSTEM/USER behave as before for non-control
+ * names (SYSTEM resolves all, USER by allow-list).
+ */
+bool
+svc_domain_permits(const struct svc_domain *chan,
+    enum svc_domain_kind name_domain, const char *name)
+{
+
+	if (name_domain == SVC_DOMAIN_CONTROL)
+		return (chan != NULL && chan->kind == SVC_DOMAIN_CONTROL);
+	/* Non-control (SYSTEM) name. */
+	if (chan != NULL && chan->kind == SVC_DOMAIN_CONTROL)
+		return (false);
+	return (svc_domain_resolves(chan, name));
+}
+
+/*
  * Whether a domain may mint a narrower one.  Only a SYSTEM domain (the default)
  * may: domains only ever narrow, so a request arriving on an already-narrowed
  * channel is refused.  A NULL domain is treated as SYSTEM.
@@ -129,6 +169,19 @@ svc_mint_domain_kind(const struct svc_domain *requester, uint32_t wire_domain,
 			return (-1);
 		}
 		*kind = SVC_DOMAIN_SYSTEM;
+		return (0);
+	case SVC_MINT_DOMAIN_CONTROL:
+		/*
+		 * A CONTROL channel is a sibling of SYSTEM, not a widening of it:
+		 * only an admin session (which holds a SYSTEM channel) may mint
+		 * one, and login/su gate that request on the principal being
+		 * root/wheel.  A USER channel may mint neither.
+		 */
+		if (requester != NULL && requester->kind != SVC_DOMAIN_SYSTEM) {
+			errno = EPERM;
+			return (-1);
+		}
+		*kind = SVC_DOMAIN_CONTROL;
 		return (0);
 	default:
 		errno = EINVAL;

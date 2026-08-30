@@ -119,12 +119,13 @@ struct svc_idle_req {
  */
 #define	SVC_MINT_DOMAIN_USER	0U	/* per-uid scoped channel (default) */
 #define	SVC_MINT_DOMAIN_SYSTEM	1U	/* full-discovery admin channel */
+#define	SVC_MINT_DOMAIN_CONTROL	2U	/* admin control-name channel */
 
 struct svc_mint_domain_req {
 	uint32_t	op;		/* SVC_OP_MINT_DOMAIN */
 	uint32_t	flags;		/* reserved, must be 0 */
 	uint32_t	uid;		/* target uid for a USER domain */
-	uint32_t	domain;		/* SVC_MINT_DOMAIN_USER | _SYSTEM */
+	uint32_t	domain;		/* SVC_MINT_DOMAIN_USER|_SYSTEM|_CONTROL */
 };
 
 /*
