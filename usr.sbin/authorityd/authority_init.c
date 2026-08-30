@@ -179,7 +179,6 @@ static void write_stderr(const char *message);
 static int  oi_kq = -1;
 static bool oi_engine_up;
 static bool oi_mac_up;
-static bool oi_ctl_up;
 
 /*
  * Ambient lookup channel (§21) carried into interactive logins.  serviced
@@ -1320,44 +1319,12 @@ authority_init_lifecycle(int op)
 static void
 oi_dispatch(struct kevent *kev)
 {
-	int cfd;
 
-	cfd = oi_ctl_up ? ctl_fd() : -1;
-
-	if (kev->filter == EVFILT_READ &&
-	    (int)kev->ident == cfd && kev->udata == NULL) {
-		if (!od.shutting_down)
-			(void)ctl_accept();
-		return;
-	}
-
-	if (oi_ctl_up && ctl_is_conn_event(kev)) {
-		int action;
-
-		action = ctl_conn_event(kev);
-		if (action & CTL_ACTION_LIFECYCLE) {
-			/*
-			 * Authenticated system lifecycle request — the
-			 * control-socket replacement for init(8)'s signal
-			 * ABI.  The opcode rides in the action's high bits
-			 * (from this exact connection), so translate it into
-			 * a state transition just as transition_handler()
-			 * does for a signal, without async-signal-safety
-			 * constraints and without a shared-state race.
-			 */
-			oi_lifecycle_apply(CTL_ACTION_OP(action));
-		}
-		/*
-		 * CTL_ACTION_SHUTDOWN cannot occur here: cmd_shutdown()
-		 * rejects CTL_OP_SHUTDOWN when authorityd is PID 1.  The
-		 * whole-system shutting_down flag is owned by the death
-		 * path (oi_world_stop); it must never be set from the
-		 * multi_user dispatch, or the level-triggered listener
-		 * livelocks once new connections stop being accepted.
-		 */
-		return;
-	}
-
+	/*
+	 * The authorityd control socket is retired (P4b): lifecycle/status/reload
+	 * arrive over serviced's authority channel (authority_proto_dispatch below,
+	 * via authorityctl(8)), not a getpeereid socket.
+	 */
 	if (bootstrap_is_procdesc(kev)) {
 		bootstrap_handle_exit(kev, oi_kq);
 		return;
