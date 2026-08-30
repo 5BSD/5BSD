@@ -439,12 +439,21 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	    requester != NULL ? requester->manifest.label :
 	    "org.5bsd.user-session", sizeof(notify.client_label));
 	/*
-	 * Rights granted to this session (capability-authority-model.md).  A
-	 * resolved name grants the full, unattenuated set until an explicit
-	 * policy scopes it (phase P1b), so a provider that checks rights sees
-	 * the same authority a legacy lookup conferred.
+	 * Rights granted to this session (capability-authority-model.md).  The
+	 * administrative right -- the capability replacement for the old "root
+	 * may do anything" bypass -- is granted only to an admin login session's
+	 * grants: an ambient (login-session) lookup on a SYSTEM (full-discovery,
+	 * i.e. root/wheel) channel.  A USER login session, and any service-to-
+	 * service lookup (a service is not an admin principal), receive every
+	 * other right but not the admin bypass.  All non-admin rights are still
+	 * granted in full until a policy scopes them, so a provider that ignores
+	 * rights, or checks them, behaves exactly as before.
 	 */
-	notify.rights = SVC_RIGHTS_ALL;
+	if (requester == NULL && domain != NULL &&
+	    domain->kind == SVC_DOMAIN_SYSTEM)
+		notify.rights = SVC_RIGHTS_ALL;
+	else
+		notify.rights = SVC_RIGHTS_ALL & ~SVC_RIGHTS_ADMIN;
 
 	if (svc_channel_send_event(provider, &notify, sizeof(notify),
 	    &provider_end, 1, serviced_kq) == -1) {

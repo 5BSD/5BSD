@@ -75,6 +75,13 @@ typedef int (*service_activation_handler)(const char *name, void *context);
 typedef uint64_t service_rights_t;
 #define	SERVICE_RIGHTS_NONE	((service_rights_t)0)
 #define	SERVICE_RIGHTS_ALL	(~(service_rights_t)0)
+/*
+ * The one cross-service well-known right: administrative access, which bypasses
+ * a service's per-object policy (the capability replacement for the old
+ * "root may do anything" bypass).  serviced grants it only to an admin login
+ * session's grants.  Per-service rights use the low bits; this reserves the top.
+ */
+#define	SERVICE_RIGHTS_ADMIN	((service_rights_t)1 << 63)
 
 /* A held capability permits an operation iff it holds every needed right. */
 static __inline bool

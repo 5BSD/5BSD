@@ -309,7 +309,8 @@ struct svc_activate_name_msg {
  * unattenuated grant a resolved name still receives until an explicit policy
  * scopes it, so a provider that ignores or checks rights behaves as before.
  */
-#define	SVC_RIGHTS_ALL	(~(uint64_t)0)
+#define	SVC_RIGHTS_ALL		(~(uint64_t)0)
+#define	SVC_RIGHTS_ADMIN	((uint64_t)1 << 63)	/* administrative bypass */
 
 struct svc_new_client_msg {
 	uint32_t	op;		/* SVC_OP_NEW_CLIENT */
