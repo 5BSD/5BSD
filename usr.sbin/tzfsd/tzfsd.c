@@ -138,6 +138,17 @@ main(int argc, char **argv)
 	}
 
 	/*
+	 * When serviced launches tzfsd as a supervised unit (P4a,
+	 * docs/capability-authority-model.md) it exports CAPABILITY_UNIT_DIR
+	 * (SERVICE_UNIT_DIR_ENV).  A serviced-managed daemon must NOT detach:
+	 * serviced owns the process lifecycle through the process descriptor and
+	 * takes readiness from cap_enter() (NOTE_CAPMODE), so a daemon(3) that
+	 * reparents would make serviced see the launcher exit.  Stay foreground.
+	 */
+	if (getenv("CAPABILITY_UNIT_DIR") != NULL)
+		foreground = true;
+
+	/*
 	 * LOG_PERROR unconditionally: before daemon(3) the copies land on the
 	 * launching terminal (test harnesses capture them); after daemon(3)
 	 * stderr is /dev/null, so production logging is unaffected.

@@ -297,9 +297,40 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   socket only where no ambient channel exists. The socket is not torn down in P3
   (it still carries `PROVISION_SESSION`); P4 retires it whole. tzfsd's socket is
   the separate filesystem-socket→discovery concern, tracked independently.
-- **P4 — lifecycle.** `lifecycle` capability served by the spine; `reboot`
-  presents it; delete the authorityd socket and the signal-authority path;
-  `reboot(2)` stays as the kernel escape.
+- **P4 — lifecycle + PID-1 minimization.**
+
+  *Principle: serviced is the sole process manager.* Every long-lived daemon is
+  spawned and supervised by serviced. PID 1 (`authority-init`) supervises exactly
+  one child — serviced — and otherwise does only the irreducible init(8) duties
+  (getty on the login ttys with the ambient-channel carry, single-user shell,
+  reroot, `/etc/rc.shutdown`+`/etc/rc.final` ordering, the plane-free fallback to
+  stock init). No daemon is special-cased under PID 1.
+
+  *P4a — tzfsd under serviced (done first; subsumes the old "tzfsd socket" item).*
+  Today authorityd (PID 1) `posix_spawn`s tzfsd lazily on the first storage mint —
+  the lone exception to the principle. There is no real bootstrap-ordering reason
+  for it: serviced reads its static bundle catalog + config from a ZFS-auto-mounted
+  `/Capabilities` with no tzfsd involvement (proven at boot — serviced loads all
+  bundles and runs `/etc/rc` before tzfsd ever starts; `bundle_registry.c` calls
+  this out explicitly as "pre-storage bootstrap state"). tzfsd is needed only for
+  *runtime* storage mints. So tzfsd becomes an ordinary serviced-supervised unit:
+  a `Storage.cap` bundle (`program = /usr/sbin/tzfsd`, `user = root`, `boot`, no
+  `ipc`) that serviced launches in the foreground; readiness is the NOTE_CAPMODE
+  boundary serviced already observes (tzfsd `cap_enter`s), so no service-protocol
+  rewrite is required — tzfsd only learns to stay foreground when serviced-launched
+  (detects `SERVICE_UNIT_DIR_ENV`). authorityd drops the `posix_spawn` and just
+  connects (with its existing retry) to the now serviced-managed tzfsd. The
+  `/Capabilities` design does **not** change — the static catalog was already
+  tzfsd-independent, so no pull-back is needed. Retiring tzfsd's *filesystem
+  socket* in favour of a discovery-brokered channel is a later, separable step
+  (it is a request/reply + fd-passing protocol migration); P4a first moves the
+  *ownership* of the process to serviced.
+
+  *P4b — lifecycle capability.* A `lifecycle` capability served by the spine;
+  `reboot`/`halt`/`shutdown` present it; delete the authorityd socket and the
+  signal-authority path; `reboot(2)` stays as the kernel escape. Re-home the
+  serviced `PROVISION_SESSION` login/sshd bridge and retire the serviced socket
+  whole.
 - **P5 — retire uid-derived domains.** Discovery becomes an auth-minted
   capability; remove `principal_is_admin`-style uid tests and the `.Control`
   convention. `traced` and the remaining services convert to presented caps.

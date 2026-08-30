@@ -32,7 +32,6 @@
 #include <errno.h>
 #include <jail.h>
 #include <limits.h>
-#include <spawn.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -48,7 +47,6 @@
 #include "authority_proto_claims.h"
 #include "req_validate.h"
 
-extern char **environ;		/* for posix_spawn of tzfsd */
 
 static int	proto_channel_fd = -1;
 static bool	serviced_ready;
@@ -391,9 +389,10 @@ handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
  * authorityd forwards mint/release requests to tzfsd and relays the
  * rights-limited handle back; it no longer opens /dev/zfs itself.
  *
- * The channel to tzfsd is cached.  tzfsd is started on demand the first time
- * a service needs storage: it provisions synchronously and then daemonizes,
- * so waitpid() on the spawned child returns once tzfsd is ready (or failed).
+ * The channel to tzfsd is cached.  tzfsd is a serviced-supervised unit (P4a,
+ * docs/capability-authority-model.md) — serviced launches and restarts it, not
+ * authorityd — so this just connects, retrying briefly to cover a startup or
+ * restart race.
  */
 static int authority_tzfsd_channel = -1;
 static char authority_storage_session[TZFSD_SESSION_MAX];
@@ -413,10 +412,7 @@ tzfsd_channel_reset(void)
 static int
 tzfsd_channel_get(void)
 {
-	posix_spawn_file_actions_t fa;
-	char *argv[2];
-	pid_t pid;
-	int i, status;
+	int i;
 
 	if (authority_tzfsd_channel != -1)
 		goto begin_session;
@@ -425,15 +421,13 @@ tzfsd_channel_get(void)
 	if (authority_tzfsd_channel != -1)
 		goto begin_session;
 
-	/* Not running yet: spawn tzfsd, which provisions then daemonizes. */
-	argv[0] = __DECONST(char *, "/usr/sbin/tzfsd");
-	argv[1] = NULL;
-	(void)posix_spawn_file_actions_init(&fa);
-	if (posix_spawn(&pid, "/usr/sbin/tzfsd", &fa, NULL, argv,
-	    environ) == 0)
-		(void)waitpid(pid, &status, 0);	/* returns after daemon() */
-	posix_spawn_file_actions_destroy(&fa);
-
+	/*
+	 * Not up yet.  tzfsd is a serviced-supervised unit now (P4a,
+	 * docs/capability-authority-model.md): serviced launches and restarts it,
+	 * so authorityd no longer spawns it.  A storage request can still race
+	 * tzfsd's startup (or a restart), so retry the connect briefly while
+	 * serviced brings it up.
+	 */
 	for (i = 0; i < 100 && authority_tzfsd_channel == -1; i++) {
 		struct timespec ts = { 0, 50 * 1000 * 1000 }; /* 50ms */
 
