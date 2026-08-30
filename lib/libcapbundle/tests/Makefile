@@ -22,6 +22,13 @@ CFLAGS.management_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.management_test+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.management_test+=	capbundle
 LDFLAGS.management_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
+
+ATF_TESTS_C+=	principal_policy_test
+CFLAGS.principal_policy_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.principal_policy_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.principal_policy_test+=	-I${SRCTOP}/contrib/libucl/include
+LIBADD.principal_policy_test+=	capbundle
+LDFLAGS.principal_policy_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 ATF_TESTS_C+=	manifest_policy_test
 CFLAGS.manifest_policy_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.manifest_policy_test+=	-I${SRCTOP}/lib/libauthorityrt

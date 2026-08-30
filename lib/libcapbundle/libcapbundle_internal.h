@@ -175,4 +175,12 @@ int	capbundle_storage_dataset_key(char out[ORT_STORAGE_DATASET_MAX],
 	    const char *bundle_id, const char *unit_name, const char *name,
 	    uint8_t scope);
 
+/*
+ * Path-parameterized principal-policy core; public to the tests, not installed
+ * ABI.  capbundle_principal_is_admin() pins the real policy path.
+ */
+struct passwd;
+bool	capbundle_principal_is_admin_at(const struct passwd *pwd,
+	    const char *policy_path);
+
 #endif /* LIBCAPBUNDLE_INTERNAL_H */

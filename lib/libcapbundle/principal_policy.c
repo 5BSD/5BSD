@@ -37,6 +37,7 @@
 #include <ucl.h>
 
 #include "libcapbundle.h"
+#include "libcapbundle_internal.h"
 
 #define	PRINCIPAL_POLICY_PATH	"/Capabilities/Config/principal-policy.ucl"
 
@@ -86,8 +87,13 @@ in_policy_group(const struct passwd *pwd, const ucl_object_t *groups_arr)
 	return (false);
 }
 
+/*
+ * Path-parameterized core (see libcapbundle_internal.h): resolve the admin
+ * decision against the policy at `policy_path`.  The public entry point below
+ * pins the real path; tests drive this with a temporary policy file.
+ */
 bool
-capbundle_principal_is_admin(const struct passwd *pwd)
+capbundle_principal_is_admin_at(const struct passwd *pwd, const char *policy_path)
 {
 	struct ucl_parser *parser;
 	ucl_object_t *root;
@@ -101,7 +107,7 @@ capbundle_principal_is_admin(const struct passwd *pwd)
 	parser = ucl_parser_new(0);
 	if (parser == NULL)
 		return (default_admin(pwd));
-	if (!ucl_parser_add_file(parser, PRINCIPAL_POLICY_PATH) ||
+	if (!ucl_parser_add_file(parser, policy_path) ||
 	    ucl_parser_get_error(parser) != NULL) {
 		/* Absent, unreadable, or invalid: historical default. */
 		ucl_parser_free(parser);
@@ -132,4 +138,11 @@ capbundle_principal_is_admin(const struct passwd *pwd)
 	}
 	ucl_object_unref(root);
 	return (result);
+}
+
+bool
+capbundle_principal_is_admin(const struct passwd *pwd)
+{
+
+	return (capbundle_principal_is_admin_at(pwd, PRINCIPAL_POLICY_PATH));
 }
