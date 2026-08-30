@@ -327,6 +327,7 @@ void vm_exit_suspended(struct vcpu *vcpu, uint64_t rip);
 void vm_exit_debug(struct vcpu *vcpu, uint64_t rip);
 void vm_exit_rendezvous(struct vcpu *vcpu, uint64_t rip);
 void vm_exit_astpending(struct vcpu *vcpu, uint64_t rip);
+void vm_exit_pvclock(struct vcpu *vcpu, uint64_t rip);
 void vm_exit_reqidle(struct vcpu *vcpu, uint64_t rip);
 int vm_snapshot_req(struct vm *vm, struct vm_snapshot_meta *meta);
 void vm_event_checkpoint_deferred_apply(void *, uint16_t, uint64_t);

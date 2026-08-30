@@ -481,6 +481,7 @@ vtinput_eventq_intr(void *xsc)
 
 	sc = xsc;
 	mtx_lock(&sc->mtx);
+again:
 	while ((slot = virtqueue_dequeue(sc->eventq, &len)) != NULL) {
 		if (sc->detaching || sc->failed)
 			continue;
@@ -514,8 +515,18 @@ vtinput_eventq_intr(void *xsc)
 			    &sc->fail_task);
 		}
 	}
-	if (!sc->detaching && !sc->failed)
+	if (!sc->detaching && !sc->failed) {
 		virtqueue_notify(sc->eventq);
+		/*
+		 * The MSIX filter (virtqueue_intr_filter) disabled this
+		 * interrupt before scheduling us; re-arm it, and drain any
+		 * completion that raced the re-enable.
+		 */
+		if (virtqueue_enable_intr(sc->eventq) != 0) {
+			virtqueue_disable_intr(sc->eventq);
+			goto again;
+		}
+	}
 	mtx_unlock(&sc->mtx);
 }
 
@@ -528,6 +539,7 @@ vtinput_statusq_intr(void *xsc)
 
 	sc = xsc;
 	mtx_lock(&sc->mtx);
+again:
 	while ((slot = virtqueue_dequeue(sc->statusq, &len)) != NULL) {
 		slot->in_use = false;
 		if (!sc->detaching && !sc->failed && len != 0) {
@@ -537,6 +549,13 @@ vtinput_statusq_intr(void *xsc)
 			sc->failed = true;
 			(void)taskqueue_enqueue(taskqueue_thread,
 			    &sc->fail_task);
+		}
+	}
+	if (!sc->detaching && !sc->failed) {
+		/* See vtinput_eventq_intr: re-arm the filtered interrupt. */
+		if (virtqueue_enable_intr(sc->statusq) != 0) {
+			virtqueue_disable_intr(sc->statusq);
+			goto again;
 		}
 	}
 	mtx_unlock(&sc->mtx);

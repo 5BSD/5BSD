@@ -24,6 +24,10 @@
 /* Compile the DUT first, then obtain expectations from the 1.4 oracle. */
 #undef VIRTIO_F_RING_RESET
 #define	VIRTIO_F_RING_RESET	VIRTIO14_F_RING_RESET
+#undef VIRTIO_F_RING_PACKED
+#define	VIRTIO_F_RING_PACKED	VIRTIO14_F_RING_PACKED
+#undef VIRTIO_F_SUSPEND
+#define	VIRTIO_F_SUSPEND	VIRTIO14_F_SUSPEND
 
 static unsigned int vq_has_descs_calls;
 static unsigned int vq_relchain_calls;

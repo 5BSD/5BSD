@@ -3569,7 +3569,7 @@ rg -q -F 'vmx_nested_owner_outcome.h' "$vmx_source" ||
 rg -q -F 'vmx_nested_owner_outcome.c' "$src/sys/modules/vmm/Makefile" ||
     fail "nested VMX owner bridge is not linked into vmm.ko"
 rg -q -U --pcre2 \
-	'suspended = vcpu_suspended\(evinfo\);[\s\S]*?if \(suspended \|\| rendezvous \|\| reqidle \|\| yield \|\| debugged\)[\s\S]*?vmm_startup_entry_owner_software_exit\(entry_owner,[\s\S]*?return \(0\);[\s\S]*?vmx_msr_guest_enter\(vcpu\);' \
+	'suspended = vcpu_suspended\(evinfo\);[\s\S]*?if \(suspended \|\| rendezvous \|\| reqidle \|\| yield \|\| debugged \|\| pvclock\)[\s\S]*?vmm_startup_entry_owner_software_exit\(entry_owner,[\s\S]*?return \(0\);[\s\S]*?vmx_msr_guest_enter\(vcpu\);' \
     "$vmx_source" ||
     fail "nested VMX lifecycle owner path no longer precedes private residency"
 # private-test: attempted-entry-owner-model
@@ -9097,7 +9097,7 @@ done
 # records the common admission result, completes the selected Intel-private
 # inverse on a refusal, and only then resolves the common result.
 rg -q -U --pcre2 \
-	'vmx_run_nested\(struct vmx_vcpu \*vcpu,[\s\S]*?struct vmm_startup_entry_owner \*entry_owner\)[\s\S]*?if \(vcpu == NULL \|\| pmap == NULL \|\| evinfo == NULL[\s\S]*?suspended = vcpu_suspended\(evinfo\);[\s\S]*?if \(suspended \|\| rendezvous \|\| reqidle \|\| yield \|\| debugged\)[\s\S]*?vmm_startup_entry_owner_software_exit\(entry_owner,[\s\S]*?return \(0\);[\s\S]*?vmx_msr_guest_enter\(vcpu\);' \
+	'vmx_run_nested\(struct vmx_vcpu \*vcpu,[\s\S]*?struct vmm_startup_entry_owner \*entry_owner\)[\s\S]*?if \(vcpu == NULL \|\| pmap == NULL \|\| evinfo == NULL[\s\S]*?suspended = vcpu_suspended\(evinfo\);[\s\S]*?if \(suspended \|\| rendezvous \|\| reqidle \|\| yield \|\| debugged \|\| pvclock\)[\s\S]*?vmm_startup_entry_owner_software_exit\(entry_owner,[\s\S]*?return \(0\);[\s\S]*?vmx_msr_guest_enter\(vcpu\);' \
 	"$vmx_source" ||
 	fail "nested VMX lifecycle owner conversion is misordered"
 # A refusal must complete private cleanup before publishing the common result.
@@ -9264,7 +9264,7 @@ for contract in NVMX-EVENT-178 NVMX-PRIVATE-256; do
 	fail "nested no-entry owner boundary is not inventoried: $contract"
 done
 rg -q -U --pcre2 \
-	'vmx_run_nested\(struct vmx_vcpu \*vcpu,[\s\S]*?suspended = vcpu_suspended\(evinfo\);[\s\S]*?if \(suspended \|\| rendezvous \|\| reqidle \|\| yield \|\| debugged\)[\s\S]*?vmm_startup_entry_owner_software_exit\(entry_owner,[\s\S]*?return \(0\);[\s\S]*?vmx_msr_guest_enter\(vcpu\);' \
+	'vmx_run_nested\(struct vmx_vcpu \*vcpu,[\s\S]*?suspended = vcpu_suspended\(evinfo\);[\s\S]*?if \(suspended \|\| rendezvous \|\| reqidle \|\| yield \|\| debugged \|\| pvclock\)[\s\S]*?vmm_startup_entry_owner_software_exit\(entry_owner,[\s\S]*?return \(0\);[\s\S]*?vmx_msr_guest_enter\(vcpu\);' \
 	"$vmx_source" ||
 	fail "nested no-entry owner boundary is no longer before private residency"
 rg -q -U --pcre2 \

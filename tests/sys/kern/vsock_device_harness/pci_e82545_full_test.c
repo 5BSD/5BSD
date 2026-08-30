@@ -1813,7 +1813,8 @@ ATF_TC_WITHOUT_HEAD(tx_legacy_frame);
 ATF_TC_BODY(tx_legacy_frame, tc)
 {
 	struct e82545_softc *sc = dev_new();
-	uint8_t payload[100];
+	enum { PAYLOAD_LEN = 100 };
+	uint8_t payload[PAYLOAD_LEN];
 	size_t i;
 	union e1000_tx_udesc *dsc;
 
@@ -1831,7 +1832,7 @@ ATF_TC_BODY(tx_legacy_frame, tc)
 
 	/* One frame was transmitted with the exact payload. */
 	ATF_CHECK_EQ(1, g_txq_count);
-	ATF_CHECK_EQ(sizeof(payload), g_txq[0].len);
+	ATF_CHECK_EQ(PAYLOAD_LEN, g_txq[0].len);
 	ATF_CHECK_EQ(0, memcmp(g_txq[0].data, payload, sizeof(payload)));
 
 	/* Report-status descriptor got its Done bit + TXDW cause. */
@@ -1849,7 +1850,8 @@ ATF_TC_WITHOUT_HEAD(tx_legacy_crc_strip);
 ATF_TC_BODY(tx_legacy_crc_strip, tc)
 {
 	struct e82545_softc *sc = dev_new();
-	uint8_t payload[64];
+	enum { PAYLOAD_LEN = 64 };
+	uint8_t payload[PAYLOAD_LEN];
 
 	memset(payload, 0x5a, sizeof(payload));
 	memcpy(g_guest + GPA_TX_BUF(0), payload, sizeof(payload));
@@ -1862,7 +1864,7 @@ ATF_TC_BODY(tx_legacy_crc_strip, tc)
 	tx_run_locked(sc);
 
 	ATF_CHECK_EQ(1, g_txq_count);
-	ATF_CHECK_EQ(sizeof(payload) - 2, g_txq[0].len);
+	ATF_CHECK_EQ(PAYLOAD_LEN - 2, g_txq[0].len);
 
 	dev_free(sc);
 }
@@ -2095,7 +2097,8 @@ ATF_TC_WITHOUT_HEAD(tx_vlan_insertion);
 ATF_TC_BODY(tx_vlan_insertion, tc)
 {
 	struct e82545_softc *sc = dev_new();
-	uint8_t hdrbuf[16], payload[50];
+	enum { HDR_LEN = 16, PAYLOAD_LEN = 50, VLAN_TAG_LEN = 4 };
+	uint8_t hdrbuf[HDR_LEN], payload[PAYLOAD_LEN];
 	size_t i;
 
 	/* Enable hardware VLAN insertion (CTRL.VME) and set the VLAN ethertype. */
@@ -2121,7 +2124,7 @@ ATF_TC_BODY(tx_vlan_insertion, tc)
 
 	ATF_CHECK_EQ(1, g_txq_count);
 	/* Output is 4 bytes longer (802.1Q tag inserted after the MACs). */
-	ATF_CHECK_EQ(sizeof(hdrbuf) + sizeof(payload) + 4, g_txq[0].len);
+	ATF_CHECK_EQ(HDR_LEN + PAYLOAD_LEN + VLAN_TAG_LEN, g_txq[0].len);
 	/* The two MAC addresses are preserved ahead of the inserted tag. */
 	ATF_CHECK_EQ(0, memcmp(g_txq[0].data, hdrbuf, 12));
 	/* Inserted TPID and TCI. */

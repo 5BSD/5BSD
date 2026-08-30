@@ -3472,7 +3472,7 @@ ATF_TC_BODY(kernel_tx_pulls_synchronous_reply, tc)
 {
 	struct pci_vtvsock_softc *sc = mk_sc();
 	struct virtio_vsock_hdr *tx = (void *)g_rxbuf;
-	struct virtio_vsock_hdr reply;
+	struct virtio_vsock_hdr rst_hdr;
 	uint8_t *buffer;
 	int sv[2];
 
@@ -3498,9 +3498,9 @@ ATF_TC_BODY(kernel_tx_pulls_synchronous_reply, tc)
 	g_one_shot_vq = &sc->vsc_queues[VTVSOCK_TXQ];
 
 	/* Model the RST that /dev/vsock queues synchronously during writev. */
-	mkhdr(&reply, VIRTIO_VSOCK_OP_RST, STREAM, VSOCK_CID_HOST, 3,
+	mkhdr(&rst_hdr, VIRTIO_VSOCK_OP_RST, STREAM, VSOCK_CID_HOST, 3,
 	    7109, 1234, 0, 0, 0, 0);
-	ATF_REQUIRE(write(sv[1], &reply, VIRTIO14_VSOCK_HEADER_SIZE) ==
+	ATF_REQUIRE(write(sv[1], &rst_hdr, VIRTIO14_VSOCK_HEADER_SIZE) ==
 	    VIRTIO14_VSOCK_HEADER_SIZE);
 	pci_vtvsock_notify_tx(sc, &sc->vsc_queues[VTVSOCK_TXQ]);
 	ATF_CHECK(g_writev_calls == 1);
@@ -4784,7 +4784,7 @@ ATF_TC_BODY(inject_raw_undersized_chain_drops, tc)
 	reset_caps();
 	c = mk_established(sc, 1234, 80, STREAM);
 	g_rx_descs = 1;
-	g_rxbuf_len = 10;		/* < sizeof(struct virtio_vsock_hdr) */
+	g_rxbuf_len = 10;		/* shorter than the vsock header wire size */
 	ATF_CHECK(vtvsock_send_ctrl(sc, c, VIRTIO_VSOCK_OP_CREDIT_UPDATE, 0) == 0);
 	ATF_CHECK(g_ninject == 0);
 	free(sc);

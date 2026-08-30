@@ -716,6 +716,29 @@ i6300esb_snapshot(struct vm_snapshot_meta *meta)
 err:
 	return (ret);
 }
+
+/*
+ * Decode the checkpoint image into a throwaway candidate to prove it is
+ * well-formed before any of it is published to the live device.  This must
+ * not mutate the live softc or touch the host timer (no arm/disarm); it only
+ * exercises the same length and field validation as the restore path.
+ */
+static int
+i6300esb_snapshot_validate(struct vm_snapshot_meta *meta)
+{
+	struct i6300esb_softc candidate;
+	uint8_t buf[I6300ESB_SNAP_LEN];
+	int ret;
+
+	if (meta == NULL || meta->op != VM_SNAPSHOT_VALIDATE ||
+	    meta->dev_data == NULL)
+		return (EINVAL);
+
+	SNAPSHOT_BUF_OR_LEAVE(buf, sizeof(buf), meta, ret, err);
+	ret = i6300esb_snap_decode(&candidate, buf);
+err:
+	return (ret);
+}
 #endif /* BHYVE_SNAPSHOT */
 
 static const struct pci_devemu pci_de_i6300esb = {
@@ -727,6 +750,7 @@ static const struct pci_devemu pci_de_i6300esb = {
 	.pe_cfgread =	i6300esb_cfgread,
 #ifdef BHYVE_SNAPSHOT
 	.pe_snapshot =	i6300esb_snapshot,
+	.pe_snapshot_validate =	i6300esb_snapshot_validate,
 #endif
 };
 PCI_EMUL_SET(pci_de_i6300esb);

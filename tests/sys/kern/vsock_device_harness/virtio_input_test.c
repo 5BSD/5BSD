@@ -148,10 +148,11 @@ static int g_write_force;	/* 0: normal; -1: error; >0: short byte count */
 /*
  * Allocation and pthread fault injection via ld --wrap.  Each __wrap_ defers to
  * __real_ except when armed, so libatf and the coverage runtime are unaffected.
- * calloc failures are matched by exact byte size to isolate a single allocation
- * from unrelated internal allocations (e.g. pthread_mutex_init).
+ * calloc failures are armed by ordinal: g_calloc_fail_after counts successful
+ * calloc()s the model is allowed to make before the next one fails.  Ordinals
+ * keep the stimulus independent of any production struct layout.
  */
-static size_t g_calloc_fail_size;	/* 0 disabled; else fail calloc of this size */
+static int g_calloc_fail_after = -1;	/* -1 disabled; else fail after N callocs */
 /*
  * Fail the next malloc/realloc after arming.  Both are covered because at -O2
  * the compiler may rewrite realloc(NULL, n) into malloc(n) at inlined sites
@@ -192,10 +193,12 @@ __wrap_malloc(size_t size)
 void *
 __wrap_calloc(size_t nmemb, size_t size)
 {
-	if (g_calloc_fail_size != 0 && nmemb * size == g_calloc_fail_size) {
-		g_calloc_fail_size = 0;
+	if (g_calloc_fail_after == 0) {
+		g_calloc_fail_after = -1;
 		return (NULL);
 	}
+	if (g_calloc_fail_after > 0)
+		g_calloc_fail_after--;
 	return (__real_calloc(nmemb, size));
 }
 
@@ -394,7 +397,7 @@ reset_mocks(void)
 	g_read_short = false;
 	g_read_error_errno = 0;
 	g_write_force = 0;
-	g_calloc_fail_size = 0;
+	g_calloc_fail_after = -1;
 	g_realloc_fail_armed = false;
 	g_strdup_fail_armed = false;
 	g_pthread_fail_which = 0;
@@ -2265,7 +2268,7 @@ ATF_TC_BODY(statusq_event_variants, tc)
 	memset(&vq, 0, sizeof(vq));
 	vq.vq_qsize = VTINPUT_RINGSZ;
 	sc.vsc_fd = 10;
-	memcpy(g_iov_buf[0], &msc, sizeof(msc));
+	memcpy(g_iov_buf[0], &msc, VIRTIO14_INPUT_EVENT_SIZE);
 	g_descs = 1;
 	g_getchain_readable = 1;
 	g_getchain_writable = 0;
@@ -2277,7 +2280,7 @@ ATF_TC_BODY(statusq_event_variants, tc)
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
 	sc.vsc_fd = 10;
-	memcpy(g_iov_buf[0], &key, sizeof(key));
+	memcpy(g_iov_buf[0], &key, VIRTIO14_INPUT_EVENT_SIZE);
 	g_descs = 1;
 	g_getchain_readable = 1;
 	g_getchain_writable = 0;
@@ -2290,7 +2293,7 @@ ATF_TC_BODY(statusq_event_variants, tc)
 	reset_mocks();
 	memset(&sc, 0, sizeof(sc));
 	sc.vsc_fd = 10;
-	memcpy(g_iov_buf[0], &key, sizeof(key));
+	memcpy(g_iov_buf[0], &key, VIRTIO14_INPUT_EVENT_SIZE);
 	g_descs = 1;
 	g_getchain_readable = 1;
 	g_getchain_writable = 0;
@@ -2747,8 +2750,8 @@ ATF_TC_BODY(snapshot_restore_alloc_failure, tc)
 
 	setup_snapshot_softc(&destination, &destination_event);
 	destination.vsc_eventqueue.idx = 0;
-	/* The restore-time staging buffer allocation fails. */
-	g_calloc_fail_size = sizeof(struct vtinput_event_elem);
+	/* The restore-time staging buffer allocation fails (first calloc). */
+	g_calloc_fail_after = 0;
 	ATF_CHECK_EQ(run_snapshot(&destination, image, used,
 	    VM_SNAPSHOT_RESTORE, NULL), ENOMEM);
 	destroy_snapshot_softc(&destination);
@@ -2760,10 +2763,10 @@ ATF_TC_BODY(init_resource_failures, tc)
 	struct pci_devinst pi;
 	struct nvlist nvl;
 
-	/* softc allocation fails. */
+	/* softc allocation fails (first calloc). */
 	reset_mocks();
 	memset(&pi, 0, sizeof(pi));
-	g_calloc_fail_size = sizeof(struct pci_vtinput_softc);
+	g_calloc_fail_after = 0;
 	ATF_CHECK_EQ(pci_vtinput_init(&pi, &nvl), -1);
 
 	/* Duplicating the device path fails. */
@@ -2790,11 +2793,10 @@ ATF_TC_BODY(init_resource_failures, tc)
 	g_pthread_fail_which = 3;
 	ATF_CHECK_EQ(pci_vtinput_init(&pi, &nvl), -1);
 
-	/* Event-queue allocation fails. */
+	/* Event-queue allocation fails (second calloc, after the softc). */
 	reset_mocks();
 	memset(&pi, 0, sizeof(pi));
-	g_calloc_fail_size = (size_t)VTINPUT_MAX_PKT_LEN *
-	    sizeof(struct vtinput_event_elem);
+	g_calloc_fail_after = 1;
 	ATF_CHECK_EQ(pci_vtinput_init(&pi, &nvl), -1);
 }
 

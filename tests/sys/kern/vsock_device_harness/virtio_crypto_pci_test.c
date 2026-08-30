@@ -34,6 +34,11 @@ static int test_pthread_mutex_init(pthread_mutex_t *,
 #undef calloc
 #undef pthread_mutex_init
 
+/* Compile the DUT first, then obtain expectations from the 1.4 oracle. */
+#include "virtio_1_4_spec.h"
+#undef VIRTIO_F_RING_PACKED
+#define	VIRTIO_F_RING_PACKED	VIRTIO14_F_RING_PACKED
+
 /* ------------------------------------------------------------------ mocks */
 
 struct nvlist { int unused; };
@@ -591,48 +596,48 @@ ATF_TC_BODY(config_space, tc)
 	sc = make_device("2", "128");
 
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, status), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_STATUS_OFF, 4, &v));
 	ATF_CHECK_EQ(VIRTIO_CRYPTO_S_HW_READY, v);
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, max_dataqueues), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_MAX_DATAQUEUES_OFF, 4, &v));
 	ATF_CHECK_EQ(2u, v);
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, crypto_services), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_CRYPTO_SERVICES_OFF, 4, &v));
 	ATF_CHECK_EQ((1u << VIRTIO_CRYPTO_SERVICE_CIPHER) |
 	    (1u << VIRTIO_CRYPTO_SERVICE_HASH) |
 	    (1u << VIRTIO_CRYPTO_SERVICE_MAC) |
 	    (1u << VIRTIO_CRYPTO_SERVICE_AEAD), v);
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, cipher_algo_l), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_CIPHER_ALGO_L_OFF, 4, &v));
 	ATF_CHECK_EQ(1u << VIRTIO_CRYPTO_CIPHER_AES_CBC, v);
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, hash_algo), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_HASH_ALGO_OFF, 4, &v));
 	ATF_CHECK_EQ(1u << VIRTIO_CRYPTO_HASH_SHA_256, v);
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, mac_algo_l), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_MAC_ALGO_L_OFF, 4, &v));
 	ATF_CHECK_EQ(1u << VIRTIO_CRYPTO_MAC_HMAC_SHA_256, v);
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, aead_algo), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_AEAD_ALGO_OFF, 4, &v));
 	ATF_CHECK_EQ(1u << VIRTIO_CRYPTO_AEAD_GCM, v);
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, max_cipher_key_len), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_MAX_CIPHER_KEY_LEN_OFF, 4, &v));
 	ATF_CHECK_EQ(VTCRYPTO_MAX_KEYLEN, v);
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, max_auth_key_len), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_MAX_AUTH_KEY_LEN_OFF, 4, &v));
 	ATF_CHECK_EQ(VTCRYPTO_MAX_KEYLEN, v);
 
 	/* 64-bit max_size read as two 32-bit halves. */
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, max_size), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_MAX_SIZE_OFF, 4, &v));
 	v64 = v;
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, max_size) + 4, 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_MAX_SIZE_OFF + 4, 4, &v));
 	v64 |= (uint64_t)v << 32;
 	ATF_CHECK_EQ((uint64_t)VTCRYPTO_MAX_DATALEN, v64);
 
 	/* akcipher advertised as unsupported. */
 	ATF_REQUIRE_EQ(0, pci_vtcrypto_cfgread(sc,
-	    offsetof(struct virtio_crypto_config, akcipher_algo), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_AKCIPHER_ALGO_OFF, 4, &v));
 	ATF_CHECK_EQ(0u, v);
 
 	/* Byte and word accesses. */
@@ -645,7 +650,7 @@ ATF_TC_BODY(config_space, tc)
 	ATF_CHECK_EQ(EINVAL, pci_vtcrypto_cfgread(sc, -1, 4, &v));
 	ATF_CHECK_EQ(EINVAL, pci_vtcrypto_cfgread(sc, 0, 3, &v));
 	ATF_CHECK_EQ(EINVAL, pci_vtcrypto_cfgread(sc,
-	    sizeof(struct virtio_crypto_config), 4, &v));
+	    VIRTIO14_CRYPTO_CONFIG_SIZE, 4, &v));
 }
 
 ATF_TC_WITHOUT_HEAD(init_and_failures);
@@ -1751,9 +1756,51 @@ ATF_TC_BODY(misc_paths, tc)
 	    NULL));
 }
 
+/*
+ * Layout contract: the production struct virtio_crypto_config must match the
+ * document-derived VirtIO 1.x spec 5.9.4 oracle offsets bit-for-bit.  This is
+ * the one body permitted to assert offsetof(production) == VIRTIO14 oracle.
+ */
+ATF_TC_WITHOUT_HEAD(virtio_1_4_wire_layout);
+ATF_TC_BODY(virtio_1_4_wire_layout, tc)
+{
+
+	ATF_CHECK_EQ(sizeof(struct virtio_crypto_config),
+	    VIRTIO14_CRYPTO_CONFIG_SIZE);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, status),
+	    VIRTIO14_CRYPTO_CONFIG_STATUS_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, max_dataqueues),
+	    VIRTIO14_CRYPTO_CONFIG_MAX_DATAQUEUES_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, crypto_services),
+	    VIRTIO14_CRYPTO_CONFIG_CRYPTO_SERVICES_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, cipher_algo_l),
+	    VIRTIO14_CRYPTO_CONFIG_CIPHER_ALGO_L_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, cipher_algo_h),
+	    VIRTIO14_CRYPTO_CONFIG_CIPHER_ALGO_H_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, hash_algo),
+	    VIRTIO14_CRYPTO_CONFIG_HASH_ALGO_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, mac_algo_l),
+	    VIRTIO14_CRYPTO_CONFIG_MAC_ALGO_L_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, mac_algo_h),
+	    VIRTIO14_CRYPTO_CONFIG_MAC_ALGO_H_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, aead_algo),
+	    VIRTIO14_CRYPTO_CONFIG_AEAD_ALGO_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, max_cipher_key_len),
+	    VIRTIO14_CRYPTO_CONFIG_MAX_CIPHER_KEY_LEN_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, max_auth_key_len),
+	    VIRTIO14_CRYPTO_CONFIG_MAX_AUTH_KEY_LEN_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, akcipher_algo),
+	    VIRTIO14_CRYPTO_CONFIG_AKCIPHER_ALGO_OFF);
+	ATF_CHECK_EQ(offsetof(struct virtio_crypto_config, max_size),
+	    VIRTIO14_CRYPTO_CONFIG_MAX_SIZE_OFF);
+	ATF_CHECK_EQ(sizeof(((struct virtio_crypto_config *)0)->max_size),
+	    VIRTIO14_CRYPTO_CONFIG_MAX_SIZE_SIZE);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
+	ATF_TP_ADD_TC(tp, virtio_1_4_wire_layout);
 	ATF_TP_ADD_TC(tp, config_space);
 	ATF_TP_ADD_TC(tp, init_and_failures);
 	ATF_TP_ADD_TC(tp, session_lifecycle);

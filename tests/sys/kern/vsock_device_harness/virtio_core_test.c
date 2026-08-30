@@ -180,6 +180,10 @@ netbe_checkpoint_identity(net_backend_t *be __unused)
 #define	VIRTIO_PCI_GUEST_FEATURES	VIRTIO14_LEGACY_DRIVER_FEATURES
 #undef VIRTIO_PCI_QUEUE_PFN
 #define	VIRTIO_PCI_QUEUE_PFN		VIRTIO14_LEGACY_QUEUE_ADDRESS
+#undef VIRTIO_PCI_QUEUE_NUM
+#define	VIRTIO_PCI_QUEUE_NUM		VIRTIO14_LEGACY_QUEUE_SIZE
+#undef VIRTIO_PCI_QUEUE_SEL
+#define	VIRTIO_PCI_QUEUE_SEL		VIRTIO14_LEGACY_QUEUE_SELECT
 #undef VIRTIO_PCI_QUEUE_NOTIFY
 #define	VIRTIO_PCI_QUEUE_NOTIFY		VIRTIO14_LEGACY_QUEUE_NOTIFY
 #undef VIRTIO_PCI_STATUS
@@ -6760,7 +6764,7 @@ ATF_TC_BODY(packed_getchain_error_paths, tc)
 	    &device_event, nitems(desc));
 	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
 	memset(indirect, 0, sizeof(indirect));
-	add_region(0x5000, indirect, sizeof(indirect));
+	add_region(0x5000, indirect, nitems(indirect) * VIRTIO14_PACKED_DESC_SIZE);
 	indirect[0].address = htole64(0xbeef0000);
 	indirect[0].length = htole32(8);
 	desc[0].address = htole64(0x5000);
@@ -6777,7 +6781,7 @@ ATF_TC_BODY(packed_getchain_error_paths, tc)
 	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
 	memset(indirect, 0, sizeof(indirect));
 	add_region(0x4000, buffer, sizeof(buffer));
-	add_region(0x5000, indirect, sizeof(indirect));
+	add_region(0x5000, indirect, nitems(indirect) * VIRTIO14_PACKED_DESC_SIZE);
 	indirect[0].address = htole64(0x4000);
 	indirect[0].length = htole32(8);
 	desc[0].address = htole64(0x5000);
@@ -6868,7 +6872,7 @@ ATF_TC_BODY(split_getchain_error_paths, tc)
 	desc[0].addr = 0x1000;
 	desc[0].len = VIRTIO14_SPLIT_DESC_SIZE;
 	desc[0].flags = VRING_DESC_F_INDIRECT;
-	add_region(0x1000, indirect, sizeof(indirect));
+	add_region(0x1000, indirect, nitems(indirect) * VIRTIO14_SPLIT_DESC_SIZE);
 	ATF_CHECK_EQ(vq_getchain(&vq, iov, nitems(iov), &req), -1);
 	ATF_CHECK((vs.vs_status & VIRTIO_CONFIG_S_NEEDS_RESET) != 0);
 
@@ -6878,7 +6882,7 @@ ATF_TC_BODY(split_getchain_error_paths, tc)
 	    (struct vring_used *)used_mem.bytes);
 	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
 	memset(indirect, 0, sizeof(indirect));
-	add_region(0x2000, indirect, sizeof(indirect));
+	add_region(0x2000, indirect, nitems(indirect) * VIRTIO14_SPLIT_DESC_SIZE);
 	indirect[0].addr = 0x1000;
 	indirect[0].len = 8;
 	indirect[0].flags = VRING_DESC_F_INDIRECT;
@@ -6895,7 +6899,7 @@ ATF_TC_BODY(split_getchain_error_paths, tc)
 	    (struct vring_used *)used_mem.bytes);
 	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
 	memset(indirect, 0, sizeof(indirect));
-	add_region(0x2000, indirect, sizeof(indirect));
+	add_region(0x2000, indirect, nitems(indirect) * VIRTIO14_SPLIT_DESC_SIZE);
 	add_region(0x1000, payload, sizeof(payload));
 	indirect[0].addr = 0x1000;
 	indirect[0].len = 8;
@@ -6913,7 +6917,7 @@ ATF_TC_BODY(split_getchain_error_paths, tc)
 	    (struct vring_used *)used_mem.bytes);
 	vs.vs_negotiated_caps = VIRTIO_RING_F_INDIRECT_DESC;
 	memset(indirect, 0, sizeof(indirect));
-	add_region(0x2000, indirect, sizeof(indirect));
+	add_region(0x2000, indirect, nitems(indirect) * VIRTIO14_SPLIT_DESC_SIZE);
 	add_region(0x1000, payload, sizeof(payload));
 	for (size_t i = 0; i < nitems(indirect); i++) {
 		indirect[i].addr = 0x1000;

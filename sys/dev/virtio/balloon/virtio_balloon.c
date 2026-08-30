@@ -617,6 +617,7 @@ vtballoon_stats_vq_intr(void *xsc)
 	sc = xsc;
 
 	VTBALLOON_LOCK(sc);
+again:
 	cookie = virtqueue_dequeue(sc->vtballoon_stats_vq, NULL);
 	if (cookie == sc &&
 	    (sc->vtballoon_flags &
@@ -639,6 +640,17 @@ vtballoon_stats_vq_intr(void *xsc)
 		    "unexpected statistics virtqueue response\n");
 		sc->vtballoon_flags |= VTBALLOON_FLAG_FAILED;
 		wakeup_one(sc);
+	}
+	/*
+	 * The MSIX filter disabled this interrupt before scheduling us;
+	 * re-arm it so the host's next statistics request is seen, and
+	 * drain any completion that raced the re-enable.
+	 */
+	if ((sc->vtballoon_flags &
+	    (VTBALLOON_FLAG_DETACH | VTBALLOON_FLAG_FAILED)) == 0 &&
+	    virtqueue_enable_intr(sc->vtballoon_stats_vq) != 0) {
+		virtqueue_disable_intr(sc->vtballoon_stats_vq);
+		goto again;
 	}
 	VTBALLOON_UNLOCK(sc);
 }
@@ -809,6 +821,14 @@ vtballoon_send_page_frames(struct vtballoon_softc *sc, struct virtqueue *vq,
 			error = ECANCELED;
 			break;
 		}
+		/*
+		 * The MSIX filter (virtqueue_intr_filter) disables this
+		 * interrupt each time it schedules the wakeup handler.
+		 * Re-arm before sleeping; a nonzero return means a completion
+		 * raced the re-enable, so dequeue again instead of sleeping.
+		 */
+		if (virtqueue_enable_intr(vq) != 0)
+			continue;
 		remaining = deadline - sbinuptime();
 		if (remaining <= 0) {
 			error = EWOULDBLOCK;
@@ -907,6 +927,9 @@ vtballoon_free_page_hint_send(struct vtballoon_softc *sc, struct sglist *sg,
 			error = ECANCELED;
 			break;
 		}
+		/* See vtballoon_send_page_frames: re-arm the filtered intr. */
+		if (virtqueue_enable_intr(vq) != 0)
+			continue;
 		remaining = deadline - sbinuptime();
 		if (remaining <= 0) {
 			error = EWOULDBLOCK;

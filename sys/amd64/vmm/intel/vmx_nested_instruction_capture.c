@@ -16,7 +16,9 @@
 
 #include "vmx_nested_instruction_capture.h"
 #include "vmx_nested_instruction_gate.h"
+#include "vmx_nested_invalidate.h"
 #include "vmx_nested_state_range.h"
+#include "vmx_nested_vmcs.h"
 
 #define	NVMX_SEGMENT_SS	2
 #define	NVMX_SECONDARY_EPT	(UINT32_C(1) << 1)
@@ -43,6 +45,54 @@ nvmx_capture_operation_supported(
 	}
 }
 
+/*
+ * Intel resolves several VMfail conditions before the data memory operand is
+ * accessed: with no current VMCS, VMREAD and VMWRITE complete as
+ * VMfailInvalid before their memory operand is touched; VMREAD fails with
+ * error 12 for an unsupported component before its destination is written;
+ * and INVEPT/INVVPID fail with error 28 for an unsupported type before the
+ * 16-byte descriptor is read.  An effective-address exception must not
+ * preempt those architectural results, so the operand address is left
+ * unvalidated and the frozen handoff resolves the failure without touching
+ * guest memory.
+ */
+static bool
+nvmx_capture_address_deferred(
+    const struct vmx_nested_instruction_capture_input *input,
+    const struct vmx_nested_operand *operand)
+{
+	struct vmx_nested_vmcs_field_info field;
+	uint64_t encoding;
+
+	switch (input->operation) {
+	case VMX_NESTED_INSTRUCTION_VMREAD:
+		if (input->machine.current_vmcs_gpa == UINT64_MAX)
+			return (true);
+		encoding = input->registers[operand->register2];
+		if (!input->mode64)
+			encoding &= UINT32_MAX;
+		return (encoding > UINT32_MAX ||
+		    vmx_nested_vmcs_field_info((uint32_t)encoding,
+		    &field) != 0 ||
+		    !vmx_nested_vmcs_field_available(&input->capabilities,
+		    (uint32_t)encoding));
+	case VMX_NESTED_INSTRUCTION_VMWRITE:
+		/*
+		 * VMWRITE reads its memory source before checking the field
+		 * encoding, so only the current-VMCS check precedes it.
+		 */
+		return (input->machine.current_vmcs_gpa == UINT64_MAX);
+	case VMX_NESTED_INSTRUCTION_INVEPT:
+		return (!vmx_nested_invept_type_valid(&input->capabilities,
+		    input->registers[operand->register2]));
+	case VMX_NESTED_INSTRUCTION_INVVPID:
+		return (!vmx_nested_invvpid_type_valid(&input->capabilities,
+		    input->registers[operand->register2]));
+	default:
+		return (false);
+	}
+}
+
 static int
 nvmx_capture_operand(
     const struct vmx_nested_instruction_capture_input *input,
@@ -59,7 +109,8 @@ nvmx_capture_operand(
 	    &decode_failure);
 	if (error != 0)
 		return (EPROTO);
-	if (operand->register_operand) {
+	if (operand->register_operand ||
+	    nvmx_capture_address_deferred(input, operand)) {
 		*linear = 0;
 		return (0);
 	}

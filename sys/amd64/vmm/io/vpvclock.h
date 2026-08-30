@@ -166,15 +166,30 @@ void		 vpvclock_cleanup(struct vpvclock *pvc);
  * (vmx_msr.c and svm_msr.c).  They return 0 when the MSR belongs to the
  * pvclock device (and has been handled) or ENOENT otherwise, so the caller
  * can fall through to its default behaviour.
+ *
+ * These run inside the critical section vm_run() holds around guest entry,
+ * so they only record state under a spin mutex; the guest-page writes are
+ * deferred.  The arch run loops poll vpvclock_pending() before re-entering
+ * the guest and bail out to vm_run(), which calls vpvclock_commit() outside
+ * the critical section to map the guest page(s) and publish.
  */
 int		 vpvclock_wrmsr(struct vcpu *vcpu, u_int msr, uint64_t val);
 int		 vpvclock_rdmsr(struct vcpu *vcpu, u_int msr, uint64_t *val);
 
 /*
- * Recompute and republish a vCPU's time-info page.  Called on initial enable,
- * on a guest TSC-offset change, and on vCPU resume / migration restore.
+ * Mark a vCPU's time-info page for republish (deferred, critical-section
+ * safe).  Called on a guest TSC/TSC-offset change and on migration restore.
  */
 void		 vpvclock_vcpu_update(struct vcpu *vcpu);
+
+/*
+ * Deferred-publish plumbing: vpvclock_pending() is the lock-free check the
+ * arch run loops use before guest entry; vpvclock_commit() performs the
+ * sleepable publish and must be called outside any critical section (from
+ * vm_run() after critical_exit(), or from ioctl context with vCPUs frozen).
+ */
+bool		 vpvclock_pending(struct vcpu *vcpu);
+void		 vpvclock_commit(struct vcpu *vcpu);
 
 /*
  * Whether the KVM pvclock interface should be advertised/handled at all.

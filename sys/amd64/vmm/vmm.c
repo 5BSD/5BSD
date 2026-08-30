@@ -1606,6 +1606,24 @@ vm_exit_astpending(struct vcpu *vcpu, uint64_t rip)
 	vmm_stat_incr(vcpu, VMEXIT_ASTPENDING, 1);
 }
 
+/*
+ * A pvclock MSR write was recorded during exit emulation (inside the critical
+ * section) and its guest-page publish is deferred.  Bounce out of the arch run
+ * loop with a BOGUS exit so vm_run() reaches vpvclock_commit() after
+ * critical_exit(); userspace treats BOGUS as "just re-enter", so the publish
+ * lands before the guest executes another instruction.
+ */
+void
+vm_exit_pvclock(struct vcpu *vcpu, uint64_t rip)
+{
+	struct vm_exit *vmexit;
+
+	vmexit = vm_exitinfo(vcpu);
+	vmexit->rip = rip;
+	vmexit->inst_length = 0;
+	vmexit->exitcode = VM_EXITCODE_BOGUS;
+}
+
 int
 vm_run(struct vcpu *vcpu)
 {
@@ -1746,6 +1764,15 @@ restart:
 	vmm_stat_incr(vcpu, VCPU_TOTAL_RUNTIME, rdtsc() - tscval);
 
 	critical_exit();
+
+	/*
+	 * Publish any pvclock state the guest programmed via MSR writes during
+	 * this exit.  The MSR handlers run inside the critical section above
+	 * and may only record state; the sleepable guest-page mapping happens
+	 * here, before the loop can re-enter vmmops_run (the arch run loops
+	 * guarantee a return to this point whenever a publish is pending).
+	 */
+	vpvclock_commit(vcpu);
 	if (startup_owner_active) {
 		if (vmm_startup_entry_owner_exit_critical(&startup_owner) != 0 ||
 		    vcpu_startup_entry_owner_retire(vcpu, &startup_owner,
@@ -4029,9 +4056,12 @@ vm_restore_time(struct vm *vm)
 		 * the new host: republish each vCPU's paravirtual clock page so
 		 * the guest recomputes time from the restored tsc_timestamp and
 		 * its read algorithm does not observe time going backwards.
-		 * No-op for vCPUs that have not enabled pvclock.
+		 * No-op for vCPUs that have not enabled pvclock.  This is
+		 * ioctl context with the vCPUs frozen, not the critical
+		 * section inside vm_run(), so commit the publish directly.
 		 */
 		vpvclock_vcpu_update(vcpu);
+		vpvclock_commit(vcpu);
 	}
 
 	return (0);

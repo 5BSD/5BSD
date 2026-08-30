@@ -1248,6 +1248,7 @@ for packed_device in \
     vtballoon:pci_virtio_balloon.c \
     vtblk:pci_virtio_block.c \
     vtcon:pci_virtio_console.c \
+    vtcrypto:pci_virtio_crypto.c \
     vtfs:pci_virtio_fs.c \
     vtgpu:pci_virtio_gpu.c \
     vtinput:pci_virtio_input.c \

@@ -76,6 +76,16 @@ static int test_open(const char *, int, ...);
 	VIRTIO14_SCSI_S_TRANSPORT_FAILURE
 #undef VIRTIO_SCSI_S_FAILURE
 #define	VIRTIO_SCSI_S_FAILURE		VIRTIO14_SCSI_S_FAILURE
+#undef VIRTIO_ID_SCSI
+#define	VIRTIO_ID_SCSI			VIRTIO14_DEVICE_SCSI
+#undef VIRTIO_SCSI_S_SIMPLE
+#define	VIRTIO_SCSI_S_SIMPLE		VIRTIO14_SCSI_TASK_ATTR_SIMPLE
+#undef VIRTIO_SCSI_S_ORDERED
+#define	VIRTIO_SCSI_S_ORDERED		VIRTIO14_SCSI_TASK_ATTR_ORDERED
+#undef VIRTIO_SCSI_S_HEAD
+#define	VIRTIO_SCSI_S_HEAD		VIRTIO14_SCSI_TASK_ATTR_HEAD
+#undef VIRTIO_SCSI_S_ACA
+#define	VIRTIO_SCSI_S_ACA		VIRTIO14_SCSI_TASK_ATTR_ACA
 #undef VIRTIO_CONFIG_STATUS_DRIVER_OK
 #define	VIRTIO_CONFIG_STATUS_DRIVER_OK	VIRTIO14_STATUS_DRIVER_OK
 #undef VIRTIO_F_RING_RESET
@@ -2890,7 +2900,7 @@ ATF_TC_BODY(worker_thread_processes_request, tc)
 	struct pci_vtscsi_queue *q;
 	struct pci_vtscsi_request *req;
 	struct iovec out_iov;
-	uint8_t response[VTSCSI_MAX_OUT_HEADER_LEN];
+	uint8_t resp_buf[VTSCSI_MAX_OUT_HEADER_LEN];
 	int spins;
 
 	reset_mocks();
@@ -2913,8 +2923,8 @@ ATF_TC_BODY(worker_thread_processes_request, tc)
 	((uint8_t *)req->vsr_cmd_rd)[VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF] =
 	    VIRTIO14_SCSI_LUN_ADDRESS_METHOD;
 	((uint8_t *)req->vsr_cmd_rd)[VIRTIO14_SCSI_CMD_REQUEST_LUN_OFF + 3] = 1;
-	memset(response, 0, sizeof(response));
-	out_iov = (struct iovec){ .iov_base = response, .iov_len = sizeof(response) };
+	memset(resp_buf, 0, sizeof(resp_buf));
+	out_iov = (struct iovec){ .iov_base = resp_buf, .iov_len = sizeof(resp_buf) };
 	req->vsr_iov_out = &out_iov;
 	req->vsr_niov_out = 1;
 	req->vsr_idx = 31;

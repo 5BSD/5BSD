@@ -52,12 +52,15 @@ test_worker_destroy(struct virtio_pmem_worker *worker, uint32_t timeout_ms)
 }
 
 /*
- * calloc(3) wrapper (installed via -Wl,--wrap=calloc).  It only diverts the
- * exact request-object allocation performed by the device model, so the
- * profiling runtime, ATF, and the async worker's own bookkeeping are never
- * perturbed.  This lets the ENOMEM admission branches be reached deterministe.
+ * calloc(3) wrapper (installed via -Wl,--wrap=calloc).  The arm flag is
+ * thread-local, so it diverts only the next allocation made on the thread that
+ * armed it -- the device model's synchronous request-object allocation on the
+ * notify/caller thread.  The profiling runtime, ATF, and the async worker
+ * threads' own bookkeeping run on other threads and are never perturbed.  This
+ * keeps the stimulus independent of any production struct layout while letting
+ * the ENOMEM admission branches be reached deterministically.
  */
-static bool g_fail_request_calloc;
+static _Thread_local bool g_fail_request_calloc;
 
 void	*__real_calloc(size_t, size_t);
 void	*__wrap_calloc(size_t, size_t);
@@ -66,8 +69,7 @@ void *
 __wrap_calloc(size_t nmemb, size_t size)
 {
 
-	if (g_fail_request_calloc && nmemb == 1 &&
-	    size == sizeof(struct pci_vtpmem_request)) {
+	if (g_fail_request_calloc) {
 		g_fail_request_calloc = false;
 		return (NULL);
 	}

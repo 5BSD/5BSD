@@ -65,6 +65,7 @@
 #include "vatpic.h"
 #include "vlapic.h"
 #include "vlapic_priv.h"
+#include "vpvclock.h"
 
 #include "x86.h"
 #include "vmcb.h"
@@ -2244,6 +2245,21 @@ svm_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo,
 		if (vcpu_debugged(vcpu->vcpu)) {
 			enable_gintr();
 			vm_exit_debug(vcpu->vcpu, state->rip);
+			if (entry_owner != NULL)
+				error = vmm_startup_entry_owner_software_exit(entry_owner,
+				    &owner_result);
+			break;
+		}
+
+		/*
+		 * A pvclock MSR write emulated on the previous iteration
+		 * deferred its guest-page publish; return to vm_run() so it
+		 * can commit outside the critical section before the guest
+		 * runs again.
+		 */
+		if (vpvclock_pending(vcpu->vcpu)) {
+			enable_gintr();
+			vm_exit_pvclock(vcpu->vcpu, state->rip);
 			if (entry_owner != NULL)
 				error = vmm_startup_entry_owner_software_exit(entry_owner,
 				    &owner_result);

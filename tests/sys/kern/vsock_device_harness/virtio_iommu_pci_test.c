@@ -113,7 +113,8 @@ static int mock_dma_release_calls;
 static void *mock_translate_result;
 static uint64_t mock_generation_result;
 /* Allocation and mutex fault injection via ld --wrap. */
-static size_t mock_calloc_fail_size;
+/* Fail a calloc by ordinal (count allowed before failing), not by struct size. */
+static int mock_calloc_fail_after = -1;
 static bool mock_malloc_fail_armed;
 static int mock_mutex_init_fail_which;
 static int mock_mutex_init_calls;
@@ -130,10 +131,12 @@ void *
 __wrap_calloc(size_t nmemb, size_t size)
 {
 
-	if (mock_calloc_fail_size != 0 && nmemb * size == mock_calloc_fail_size) {
-		mock_calloc_fail_size = 0;
+	if (mock_calloc_fail_after == 0) {
+		mock_calloc_fail_after = -1;
 		return (NULL);
 	}
+	if (mock_calloc_fail_after > 0)
+		mock_calloc_fail_after--;
 	return (__real_calloc(nmemb, size));
 }
 
@@ -844,7 +847,7 @@ reset_extra_mocks(void)
 	mock_dma_release_calls = 0;
 	mock_translate_result = NULL;
 	mock_generation_result = 0;
-	mock_calloc_fail_size = 0;
+	mock_calloc_fail_after = -1;
 	mock_malloc_fail_armed = false;
 	mock_mutex_init_fail_which = 0;
 	mock_mutex_init_calls = 0;
@@ -1491,9 +1494,9 @@ ATF_TC_BODY(device_init_success_and_failures, tc)
 	free(sc->vsc_vs.vs_modern);
 	free(sc);
 
-	/* Softc allocation failure. */
+	/* Softc allocation failure (first calloc). */
 	reset_extra_mocks();
-	mock_calloc_fail_size = sizeof(struct pci_vtiommu_softc);
+	mock_calloc_fail_after = 0;
 	memset(&pi, 0, sizeof(pi));
 	ATF_CHECK_EQ(pci_vtiommu_init(&pi, NULL), ENOMEM);
 
@@ -1912,7 +1915,8 @@ ATF_TC_BODY(post_init_topology_allocation_failure, tc)
 	sc.vsc_vs.vs_modern = (struct virtio_pci_modern *)(uintptr_t)1;
 	mock_pci_add(&iommu_pi, &sc.vsc_vs);
 
-	mock_calloc_fail_size = sizeof(struct virtio_iommu_topology_entry);
+	/* Topology-entry allocation failure (first calloc in post_init). */
+	mock_calloc_fail_after = 0;
 	ATF_CHECK_EQ(pci_vtiommu_post_init(&iommu_pi), ENOMEM);
 	ATF_CHECK_EQ(sc.vsc_endpoint_count, 0U);
 }

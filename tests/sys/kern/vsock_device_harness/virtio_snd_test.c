@@ -26,6 +26,8 @@ enum {
 
 #undef VIRTIO_ID_SOUND
 #define	VIRTIO_ID_SOUND	VIRTIO14_DEVICE_SOUND
+#undef VIRTIO_F_RING_PACKED
+#define	VIRTIO_F_RING_PACKED	VIRTIO14_F_RING_PACKED
 
 static uint8_t g_readable[1032], g_writable[1032];
 static int g_descs, g_chain_n, g_readable_count, g_writable_count;

@@ -3297,17 +3297,24 @@ done:
 
 #define	MIGRATE_BLOB_HDR	16u	/* two le64 length fields */
 
-/* Create an anonymous, regular, mmap-able temp file seeded with buf. */
+/*
+ * Create an anonymous, regular, mmap-able temp file seeded with buf.
+ *
+ * This must not touch the global filesystem namespace: the source-side
+ * "migrate" IPC command runs on the checkpoint thread after cap_enter(), where
+ * any absolute-path open (e.g. mkstemp(3) in /tmp) fails with ECAPMODE.
+ * memfd_create(2) is anonymous (capability-mode safe), grows on write, and
+ * yields an fd that fstat(2) reports as a regular file and that supports
+ * lseek/read/write/mmap, which is all load_kdata_fd()/load_metadata_fd() need.
+ */
 static int
 migrate_tempfd(const void *buf, size_t len)
 {
-	char path[] = "/tmp/bhyve-migrate.XXXXXX";
 	int fd;
 
-	fd = mkostemp(path, O_CLOEXEC);
+	fd = memfd_create("bhyve-migrate", MFD_CLOEXEC);
 	if (fd < 0)
 		return (-1);
-	(void)unlink(path);
 	if (len != 0 && snapshot_write_all(fd, buf, len) != 0) {
 		close(fd);
 		return (-1);

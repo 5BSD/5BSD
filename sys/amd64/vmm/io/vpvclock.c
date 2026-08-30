@@ -64,15 +64,41 @@ SYSCTL_INT(_hw_vmm_pvclock, OID_AUTO, enabled, CTLFLAG_RDTUN,
     &vpvclock_enabled, 0,
     "Advertise and service the KVM paravirtual clock interface");
 
+/*
+ * Locking / deferral contract
+ * ---------------------------
+ * The MSR handlers (vpvclock_rdmsr/wrmsr and the MSR_TSC hook
+ * vpvclock_vcpu_update) run from the arch WRMSR/RDMSR emulation inside
+ * vmmops_run, i.e. under the critical section vm_run() holds around guest
+ * entry and with guest FPU state loaded.  They may therefore only take the
+ * spin mutex below and may never map guest memory: mapping the time-info /
+ * wall-clock pages goes through vm_slock_memsegs() (a sleepable sx lock) and
+ * vm_gpa_hold_global(), both illegal under a critical section.
+ *
+ * The MSR paths only *record* the guest's request under the spin mutex and
+ * raise a per-vCPU publish-pending flag; the arch run loops notice the flag
+ * before the next guest entry and force a return to vm_run(), which calls
+ * vpvclock_commit() after critical_exit() to perform the sleepable page
+ * publish.  The deferred publish always lands before the vCPU re-enters guest
+ * code, so the guest cannot observe the difference from an inline publish.
+ *
+ * Per-vCPU state (including the pending flags) is only written by the thread
+ * emulating that vCPU, or from ioctl context while all vCPUs are frozen
+ * (vm_restore_time), so unlocked reads of a vCPU's own state are stable on
+ * those paths.  The spin mutex serialises cross-vCPU access to the shared
+ * wall-clock fields and publication of the shared wall-clock page.
+ */
 struct vpvclock_vcpu {
 	bool		system_time_enabled;	/* guest has enabled the page */
+	bool		publish_pending;	/* time-info publish deferred */
+	bool		wall_clock_pending;	/* wall-clock publish deferred */
 	uint64_t	system_time_msr;	/* raw MSR value last written */
 	uint64_t	system_time_gpa;	/* page-info GPA (enable stripped) */
 	uint32_t	version;		/* last published (even) version */
 };
 
 struct vpvclock {
-	struct mtx		 mtx;
+	struct mtx		 mtx;		/* MTX_SPIN; see above */
 	struct vm		*vm;
 	uint16_t		 maxcpus;
 	/* Scaling derived from the virtual TSC frequency (see vpvclock.h). */
@@ -86,8 +112,8 @@ struct vpvclock {
 	struct vpvclock_vcpu	 vcpus[];
 };
 
-#define	VPVCLOCK_LOCK(pvc)	mtx_lock(&(pvc)->mtx)
-#define	VPVCLOCK_UNLOCK(pvc)	mtx_unlock(&(pvc)->mtx)
+#define	VPVCLOCK_LOCK(pvc)	mtx_lock_spin(&(pvc)->mtx)
+#define	VPVCLOCK_UNLOCK(pvc)	mtx_unlock_spin(&(pvc)->mtx)
 
 bool
 vpvclock_capable(void)
@@ -129,7 +155,7 @@ vpvclock_init(struct vm *vm)
 	pvc->maxcpus = maxcpus;
 	vpvclock_freq_to_scale(tsc_freq, &pvc->tsc_mul, &pvc->tsc_shift);
 	pvc->tsc_stable = (tsc_is_invariant && smp_tsc);
-	mtx_init(&pvc->mtx, "vpvclock", NULL, MTX_DEF);
+	mtx_init(&pvc->mtx, "vpvclock", NULL, MTX_SPIN);
 	return (pvc);
 }
 
@@ -186,28 +212,75 @@ vpvclock_unmap_guest(struct vm *vm, void *cookie)
 	vm_unlock_memsegs(vm);
 }
 
+/*
+ * Record that this vCPU's time-info page needs republishing.  Runs from the
+ * MSR emulation paths under vm_run()'s critical section, so it must not map
+ * guest memory or take any blockable lock; the actual page write happens in
+ * vpvclock_commit() once vm_run() has left the critical section.
+ *
+ * The unlocked system_time_enabled read is the disabled fast path: the flag
+ * is only written by this vCPU's own emulation thread (or with all vCPUs
+ * frozen), so it cannot change underneath us here.
+ */
 void
 vpvclock_vcpu_update(struct vcpu *vcpu)
 {
 	struct vpvclock *pvc;
 	struct vpvclock_vcpu *vv;
+
+	pvc = vm_pvclock(vcpu_vm(vcpu));
+	if (pvc == NULL)
+		return;
+	vv = &pvc->vcpus[vcpu_vcpuid(vcpu)];
+	if (!vv->system_time_enabled)
+		return;
+	VPVCLOCK_LOCK(pvc);
+	vv->publish_pending = true;
+	VPVCLOCK_UNLOCK(pvc);
+}
+
+/*
+ * Cheap unlocked check used by the arch run loops (with interrupts disabled,
+ * inside the critical section) to decide whether to bounce back out to
+ * vm_run() before re-entering the guest.  A stale false is impossible on the
+ * only path that matters: the flags are set by this same thread during exit
+ * emulation, before the run loop gets back to its pre-entry checks.
+ */
+bool
+vpvclock_pending(struct vcpu *vcpu)
+{
+	struct vpvclock *pvc;
+	struct vpvclock_vcpu *vv;
+
+	if (vpvclock_enabled == 0)
+		return (false);
+	pvc = vm_pvclock(vcpu_vm(vcpu));
+	if (pvc == NULL)
+		return (false);
+	vv = &pvc->vcpus[vcpu_vcpuid(vcpu)];
+	return (vv->publish_pending || vv->wall_clock_pending);
+}
+
+/*
+ * Publish this vCPU's time-info page from the recorded state.  Sleepable:
+ * maps the guest page under the memseg lock.  Callers must not hold the
+ * spin mutex or be inside a critical section.
+ */
+static void
+vpvclock_publish_time_info(struct vcpu *vcpu, struct vpvclock *pvc,
+    struct vpvclock_vcpu *vv)
+{
 	volatile struct pvclock_vcpu_time_info *ti;
 	struct vm *vm;
 	void *cookie;
 	uint64_t gpa, guest_tsc, system_time;
 	uint32_t base_version, mul, new_version;
-	int vcpuid;
 	int8_t shift;
 	uint8_t flags;
 
 	vm = vcpu_vm(vcpu);
-	pvc = vm_pvclock(vm);
-	if (pvc == NULL)
-		return;
-	vcpuid = vcpu_vcpuid(vcpu);
 
 	VPVCLOCK_LOCK(pvc);
-	vv = &pvc->vcpus[vcpuid];
 	if (!vv->system_time_enabled) {
 		VPVCLOCK_UNLOCK(pvc);
 		return;
@@ -303,6 +376,54 @@ vpvclock_write_wall_clock(struct vcpu *vcpu, uint64_t gpa)
 	vpvclock_unmap_guest(vm, cookie);
 }
 
+/*
+ * Consume the deferred-publish flags and perform the sleepable guest-page
+ * writes.  Called from vm_run() after critical_exit() (before the next guest
+ * entry) and, for the restore path, directly from ioctl context via
+ * vm_restore_time() while all vCPUs are frozen.
+ *
+ * The unlocked pending pre-check keeps the common no-op case (one branch per
+ * exit) off the spin mutex; the flags are only raised by this vCPU's own
+ * thread, so a raise cannot be missed here.
+ */
+void
+vpvclock_commit(struct vcpu *vcpu)
+{
+	struct vpvclock *pvc;
+	struct vpvclock_vcpu *vv;
+	uint64_t wall_gpa;
+	bool do_time, do_wall;
+
+	pvc = vm_pvclock(vcpu_vm(vcpu));
+	if (pvc == NULL)
+		return;
+	vv = &pvc->vcpus[vcpu_vcpuid(vcpu)];
+	if (!vv->publish_pending && !vv->wall_clock_pending)
+		return;
+
+	/*
+	 * Latch and clear the pending flags atomically with reading the state
+	 * they refer to, so a wrmsr that lands after this point (only possible
+	 * once this vCPU is back in the guest, i.e. after the publish below
+	 * has finished) raises the flags for the *next* commit rather than
+	 * being lost.  If the guest disabled the page after the flag was
+	 * raised, system_time_enabled is now false and the publish is
+	 * correctly skipped.
+	 */
+	VPVCLOCK_LOCK(pvc);
+	do_time = vv->publish_pending && vv->system_time_enabled;
+	do_wall = vv->wall_clock_pending && pvc->wall_clock_enabled;
+	wall_gpa = pvc->wall_clock_gpa;
+	vv->publish_pending = false;
+	vv->wall_clock_pending = false;
+	VPVCLOCK_UNLOCK(pvc);
+
+	if (do_time)
+		vpvclock_publish_time_info(vcpu, pvc, vv);
+	if (do_wall)
+		vpvclock_write_wall_clock(vcpu, wall_gpa);
+}
+
 int
 vpvclock_wrmsr(struct vcpu *vcpu, u_int msr, uint64_t val)
 {
@@ -314,12 +435,12 @@ vpvclock_wrmsr(struct vcpu *vcpu, u_int msr, uint64_t val)
 	pvc = vm_pvclock(vcpu_vm(vcpu));
 	if (pvc == NULL)
 		return (ENOENT);
+	vv = &pvc->vcpus[vcpu_vcpuid(vcpu)];
 
 	switch (msr) {
 	case VPVCLOCK_MSR_SYSTEM_TIME:
 	case VPVCLOCK_MSR_SYSTEM_TIME_NEW:
 		VPVCLOCK_LOCK(pvc);
-		vv = &pvc->vcpus[vcpu_vcpuid(vcpu)];
 		vv->system_time_msr = val;
 		if ((val & 1) != 0) {
 			/* Bit 0 is the enable bit; the rest is the GPA. */
@@ -327,20 +448,28 @@ vpvclock_wrmsr(struct vcpu *vcpu, u_int msr, uint64_t val)
 			vv->system_time_enabled = true;
 			/* Fresh registration restarts the version sequence. */
 			vv->version = 0;
-			VPVCLOCK_UNLOCK(pvc);
-			vpvclock_vcpu_update(vcpu);
+			/* Publish deferred to vpvclock_commit(). */
+			vv->publish_pending = true;
 		} else {
 			vv->system_time_enabled = false;
-			VPVCLOCK_UNLOCK(pvc);
+			/* Drop any publish the guest just revoked. */
+			vv->publish_pending = false;
 		}
+		VPVCLOCK_UNLOCK(pvc);
 		return (0);
 	case VPVCLOCK_MSR_WALL_CLOCK:
 	case VPVCLOCK_MSR_WALL_CLOCK_NEW:
 		VPVCLOCK_LOCK(pvc);
 		pvc->wall_clock_gpa = val;
 		pvc->wall_clock_enabled = true;
+		/*
+		 * The wall clock is per-VM but the deferred publish is routed
+		 * to the writing vCPU: its run loop is the one guaranteed to
+		 * pass through vpvclock_commit() before the guest instruction
+		 * after this WRMSR can execute.
+		 */
+		vv->wall_clock_pending = true;
 		VPVCLOCK_UNLOCK(pvc);
-		vpvclock_write_wall_clock(vcpu, val);
 		return (0);
 	default:
 		break;

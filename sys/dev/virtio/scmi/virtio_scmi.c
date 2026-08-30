@@ -365,12 +365,26 @@ vtscmi_vq_intr(void *arg)
 		virtio_scmi_rx_callback_t *callback;
 		void *priv;
 		uint32_t rx_len;
+		bool rearm;
 
 		mtx_lock_spin(&q->vq_mtx);
 		pdu = virtqueue_dequeue(q->vq, &rx_len);
 		mtx_unlock_spin(&q->vq_mtx);
-		if (!pdu)
+		if (!pdu) {
+			/*
+			 * The MSIX filter (virtqueue_intr_filter) disabled this
+			 * interrupt before scheduling us.  Re-arm it while a
+			 * callback consumer is registered (matching
+			 * virtio_scmi_channel_callback_set), and drain any
+			 * completion that raced the re-enable.
+			 */
+			mtx_lock(&q->cb_mtx);
+			rearm = q->rx_callback != NULL;
+			mtx_unlock(&q->cb_mtx);
+			if (rearm && virtqueue_enable_intr(q->vq) != 0)
+				continue;
 			return;
+		}
 
 		mtx_lock(&q->cb_mtx);
 		callback = q->rx_callback;

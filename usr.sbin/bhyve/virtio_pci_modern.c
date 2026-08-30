@@ -44,6 +44,7 @@
  * VIRTIO_ACTIVATION_ASSERTION: enabled-packed-vtballoon-queue
  * VIRTIO_ACTIVATION_ASSERTION: enabled-packed-vtblk-queue
  * VIRTIO_ACTIVATION_ASSERTION: enabled-packed-vtcon-queue
+ * VIRTIO_ACTIVATION_ASSERTION: enabled-packed-vtcrypto-queue
  * VIRTIO_ACTIVATION_ASSERTION: enabled-packed-vtfs-queue
  * VIRTIO_ACTIVATION_ASSERTION: enabled-packed-vtgpu-queue
  * VIRTIO_ACTIVATION_ASSERTION: enabled-packed-vtinput-queue

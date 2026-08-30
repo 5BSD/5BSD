@@ -110,6 +110,7 @@ struct pci_devemu {
 	int (*pe_cfgwrite)(struct pci_devinst *, int, int, uint32_t);
 	int (*pe_cfgread)(struct pci_devinst *, int, int, uint32_t *);
 	int (*pe_snapshot)(struct vm_snapshot_meta *);
+	int (*pe_snapshot_validate)(struct vm_snapshot_meta *);
 };
 #define	PCI_EMUL_SET(x)
 

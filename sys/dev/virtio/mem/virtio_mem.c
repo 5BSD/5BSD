@@ -584,6 +584,14 @@ vtmem_send_request(struct vtmem_softc *sc, uint16_t type, uint64_t addr,
 			VTMEM_UNLOCK(sc);
 			return (-ENXIO);
 		}
+		/*
+		 * The MSIX filter (virtqueue_intr_filter) disables this
+		 * interrupt each time it schedules the wakeup handler.
+		 * Re-arm before sleeping; a nonzero return means a completion
+		 * raced the re-enable, so dequeue again instead of sleeping.
+		 */
+		if (virtqueue_enable_intr(sc->vtmem_vq) != 0)
+			continue;
 		remaining = deadline - sbinuptime();
 		if (remaining <= 0) {
 			error = EWOULDBLOCK;

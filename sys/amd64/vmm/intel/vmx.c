@@ -75,6 +75,7 @@
 #include "vatpic.h"
 #include "vlapic.h"
 #include "vlapic_priv.h"
+#include "vpvclock.h"
 
 #include "ept.h"
 #include "vmx_cpufunc.h"
@@ -4193,6 +4194,22 @@ vmx_run(void *vcpui, register_t rip, pmap_t pmap, struct vm_eventinfo *evinfo,
 			    vmm_startup_entry_owner_software_exit(entry_owner,
 			    &owner_result) != 0)
 				panic("%s: debug startup owner", __func__);
+			break;
+		}
+
+		/*
+		 * A pvclock MSR write emulated on the previous iteration
+		 * deferred its guest-page publish; return to vm_run() so it
+		 * can commit outside the critical section before the guest
+		 * runs again.
+		 */
+		if (vpvclock_pending(vcpu->vcpu)) {
+			enable_intr();
+			vm_exit_pvclock(vcpu->vcpu, rip);
+			if (entry_owner != NULL &&
+			    vmm_startup_entry_owner_software_exit(entry_owner,
+			    &owner_result) != 0)
+				panic("%s: pvclock startup owner", __func__);
 			break;
 		}
 
@@ -12732,11 +12749,12 @@ vmx_nested_owner_settle_unwind_error(struct vmm_startup_entry_owner *owner,
 /* Publish the common outer-VMM stop result without changing interrupt state. */
 static void
 vmx_nested_publish_host_stop(struct vmx_vcpu *vcpu, register_t rip,
-    bool suspended, bool rendezvous, bool reqidle, bool yield, bool debugged)
+    bool suspended, bool rendezvous, bool reqidle, bool yield, bool debugged,
+    bool pvclock)
 {
 
-	KASSERT(suspended || rendezvous || reqidle || yield || debugged,
-	    ("nested host stop without a pending reason"));
+	KASSERT(suspended || rendezvous || reqidle || yield || debugged ||
+	    pvclock, ("nested host stop without a pending reason"));
 	if (suspended)
 		vm_exit_suspended(vcpu->vcpu, rip);
 	else if (rendezvous)
@@ -12746,8 +12764,10 @@ vmx_nested_publish_host_stop(struct vmx_vcpu *vcpu, register_t rip,
 	else if (yield) {
 		vm_exit_astpending(vcpu->vcpu, rip);
 		vmx_astpending_trace(vcpu, rip);
-	} else
+	} else if (debugged)
 		vm_exit_debug(vcpu->vcpu, rip);
+	else
+		vm_exit_pvclock(vcpu->vcpu, rip);
 }
 
 static void
@@ -12903,8 +12923,8 @@ vmx_run_nested(struct vmx_vcpu *vcpu, register_t rip, pmap_t pmap,
 	uint64_t exit_sequence;
 	uint32_t exit_reason;
 	uint16_t ldt_sel;
-	bool completed, debugged, first, hot, rendezvous, reqidle, suspended,
-	    yield;
+	bool completed, debugged, first, hot, pvclock, rendezvous, reqidle,
+	    suspended, yield;
 	int error, handled, launched, rc;
 
 	if (vcpu == NULL || pmap == NULL || evinfo == NULL ||
@@ -12928,9 +12948,10 @@ vmx_run_nested(struct vmx_vcpu *vcpu, register_t rip, pmap_t pmap,
 	reqidle = vcpu_reqidle(evinfo);
 	yield = vcpu_should_yield(vcpu->vcpu);
 	debugged = vcpu_debugged(vcpu->vcpu);
-	if (suspended || rendezvous || reqidle || yield || debugged) {
+	pvclock = vpvclock_pending(vcpu->vcpu);
+	if (suspended || rendezvous || reqidle || yield || debugged || pvclock) {
 		vmx_nested_publish_host_stop(vcpu, rip, suspended, rendezvous,
-		    reqidle, yield, debugged);
+		    reqidle, yield, debugged, pvclock);
 		/*
 		 * This is the one nested return provably before guest MSRs, a
 		 * VMCS02 selection, an EPT activation, or an L2 event transaction.
@@ -12966,8 +12987,9 @@ vmx_run_nested(struct vmx_vcpu *vcpu, register_t rip, pmap_t pmap,
 		reqidle = vcpu_reqidle(evinfo);
 		yield = vcpu_should_yield(vcpu->vcpu);
 		debugged = vcpu_debugged(vcpu->vcpu);
+		pvclock = vpvclock_pending(vcpu->vcpu);
 		if (hot && (suspended || rendezvous || reqidle || yield ||
-		    debugged)) {
+		    debugged || pvclock)) {
 			id = &vcpu->nested_vmcs02_plan.id;
 			error = vmx_nested_hot_exit_freeze_publish(
 			    &vcpu->nested, &vcpu->nested_l0_continuation,
@@ -12977,7 +12999,7 @@ vmx_run_nested(struct vmx_vcpu *vcpu, register_t rip, pmap_t pmap,
 				goto fail_intr;
 			enable_intr();
 			vmx_nested_publish_host_stop(vcpu, rip, suspended, rendezvous,
-			    reqidle, yield, debugged);
+			    reqidle, yield, debugged, pvclock);
 			if (entry_owner != NULL &&
 			    vmm_startup_entry_owner_software_exit(entry_owner,
 			    &owner_result) != 0)

@@ -15464,6 +15464,7 @@ ATF_TC_BODY(vmx_instruction_capture_model, tc)
 	vmx_nested_machine_init(&input.machine);
 	input.machine.vmxon = true;
 	input.machine.vmxon_gpa = 0x2000;
+	input.machine.current_vmcs_gpa = 0x3000;
 	input.cr0 = input.capabilities.cr0_fixed0;
 	input.cr4 = input.capabilities.cr4_fixed0 | (UINT64_C(1) << 13);
 	input.rflags = 2;
@@ -15547,13 +15548,44 @@ ATF_TC_BODY(vmx_instruction_capture_model, tc)
 	ATF_CHECK_EQ(result.request.register_value,
 	    NVMX_TEST_INVVPID_ALL_CONTEXT);
 
-	/* A noncanonical effective range injects #GP without a request. */
+	/*
+	 * With no current VMCS, VMWRITE completes as VMfailInvalid before its
+	 * memory source is accessed; a noncanonical effective address must
+	 * not preempt that result.  The same deferral covers an INVEPT
+	 * descriptor behind an unsupported type (VMfail 28).  The frozen
+	 * handoff resolves both without touching guest memory.
+	 */
 	input.capabilities = test_capabilities();
 	input.operation = VMX_NESTED_INSTRUCTION_VMWRITE;
+	input.machine.current_vmcs_gpa = UINT64_MAX;
 	input.registers[0] = UINT64_C(0x0000800000000000);
+	ATF_REQUIRE_EQ(vmx_nested_instruction_capture(&input, &result), 0);
+	ATF_CHECK_EQ(result.disposition,
+	    VMX_NESTED_INSTRUCTION_CAPTURE_REQUEST);
+	ATF_CHECK_EQ(result.request.linear_address, 0);
+	input.operation = VMX_NESTED_INSTRUCTION_INVEPT;
+	input.registers[6] = 0;
+	ATF_REQUIRE_EQ(vmx_nested_instruction_capture(&input, &result), 0);
+	ATF_CHECK_EQ(result.disposition,
+	    VMX_NESTED_INSTRUCTION_CAPTURE_REQUEST);
+	ATF_CHECK_EQ(result.request.linear_address, 0);
+
+	/* A noncanonical effective range injects #GP without a request. */
+	input.machine.current_vmcs_gpa = 0x3000;
+	input.operation = VMX_NESTED_INSTRUCTION_VMWRITE;
 	ATF_REQUIRE_EQ(vmx_nested_instruction_capture(&input, &result), 0);
 	ATF_CHECK_EQ(result.disposition, VMX_NESTED_INSTRUCTION_CAPTURE_GP);
 	ATF_CHECK_EQ(result.exception_error, 0);
+
+	/* An unsupported VMREAD component defers its destination fault. */
+	input.operation = VMX_NESTED_INSTRUCTION_VMREAD;
+	input.registers[6] = UINT64_C(0x4c02);
+	ATF_REQUIRE_EQ(vmx_nested_instruction_capture(&input, &result), 0);
+	ATF_CHECK_EQ(result.disposition,
+	    VMX_NESTED_INSTRUCTION_CAPTURE_REQUEST);
+	ATF_CHECK_EQ(result.request.linear_address, 0);
+	input.operation = VMX_NESTED_INSTRUCTION_VMWRITE;
+	input.registers[6] = UINT64_C(0x681e);
 
 	/* A legacy stack-segment limit violation maps to #SS(0). */
 	input.mode64 = false;
