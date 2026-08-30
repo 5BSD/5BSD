@@ -91,7 +91,6 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	liboes \
 	libopenbsd \
 	libotelexport \
-	libauthorityctl \
 	libauthorityrt \
 	libpam \
 	libpathconv \

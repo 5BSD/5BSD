@@ -51,6 +51,15 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260830: libauthorityctl retired (authorityd getpeereid control socket
+# deleted; authorityctl(8) now speaks the capability plane, not this socket client)
+OLD_FILES+=usr/include/authorityctl.h
+OLD_FILES+=usr/lib/libauthorityctl.a
+OLD_FILES+=usr/lib/libauthorityctl.so
+OLD_LIBS+=usr/lib/libauthorityctl.so.1
+OLD_FILES+=usr/lib/libauthorityctl_p.a
+OLD_FILES+=usr/share/man/man3/libauthorityctl.3.gz
+
 # 20260828: oracle subsystem renamed to authority
 OLD_FILES+=boot/loader.conf.d/oracle-init.conf
 OLD_FILES+=etc/oracled.conf
