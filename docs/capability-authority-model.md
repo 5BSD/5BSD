@@ -249,7 +249,12 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   uid — administrative authority now rides the login-minted capability, which is
   exactly the property P2 exists to establish. Rights are minted by serviced and
   ride the trusted service↔serviced control channel, never a client message, so
-  a client cannot forge the ADMIN right.
+  a client cannot forge the ADMIN right.  VM-validated on a fresh image
+  (2026-08-30): a root session (SYSTEM + ambient, holding ADMIN) publishes to an
+  unpolicied topic (RC 0, bypass); a `nobody` session (USER domain, no ADMIN)
+  resolves `system.Notify` but is denied that same publish (EACCES) — the held
+  right, not the uid, decides. Boot is clean (authority-init PID 1 + serviced +
+  ambient lookup channel all come up).
 - **P3 — control planes.** serviced and tzfsd control become presented `:admin`
   capabilities (rights on the grant); delete their getpeereid sockets.
 - **P4 — lifecycle.** `lifecycle` capability served by the spine; `reboot`
