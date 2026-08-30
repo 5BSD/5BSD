@@ -48,8 +48,9 @@ svc_management_check_class(int management, const char *label, const char *op)
 	 * SVC_MGMT_USER=owning-uid decisions belong here, once each request
 	 * carries the minting channel's recorded (uid, rights).  They are NOT
 	 * implemented yet — the CORE rule above is the only class rule that is
-	 * absolute and principal-independent.  Until then the pre-existing
-	 * transport gate (root-only sctl connections) is the sole authority for
+	 * absolute and principal-independent.  Until then the per-operation root
+	 * check in the control dispatcher (sctl.c conn_dispatch(): every
+	 * state-changing op requires euid==0) is the sole authority for
 	 * system/user classes, so every non-core op is permitted from here.
 	 */
 	return (0);

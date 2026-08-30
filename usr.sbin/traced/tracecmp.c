@@ -190,7 +190,9 @@ handle_request(struct channel *channel __unused,
 	struct worker_state *state;
 	struct tracecmp_hello_reply hello;
 	const struct tracecmp_msg *message;
+	const struct channel_sender *sender;
 	size_t length;
+	bool caller_root;
 	int error;
 
 	state = argument;
@@ -206,19 +208,31 @@ handle_request(struct channel *channel __unused,
 		return;
 	}
 
+	/*
+	 * Authorization gates on the caller's authenticated uid: root (uid 0)
+	 * may obtain the raw DTrace consumer fd regardless of the label
+	 * allowlist, matching the plane-wide "root may do anything" rule; a
+	 * non-root caller is delegated the fd only if its client label is in
+	 * the traced allowlist (the mechanism that lets specific unprivileged
+	 * labels drive DTrace).  The uid is the kernel-stamped per-request
+	 * sender credential, not a session-time cache, so it cannot be spoofed.
+	 */
+	sender = channel_message_sender(request_message);
+	caller_root = (sender != NULL && sender->uid == 0);
+
 	error = 0;
 	switch (message->opcode) {
 	case TRACECMP_OP_HELLO:
 		memset(&hello, 0, sizeof(hello));
 		hello.version = TRACECMP_ABI_VERSION;
-		hello.features = state->authorized && state->dtrace_fd >= 0 ?
-		    TRACECMP_FEATURE_RAW_DTRACE_FD : 0;
+		hello.features = (caller_root || state->authorized) &&
+		    state->dtrace_fd >= 0 ? TRACECMP_FEATURE_RAW_DTRACE_FD : 0;
 		if (send_reply(request_message, message, 0, &hello,
 		    sizeof(hello), -1) == -1)
 			state->terminal_error = errno;
 		break;
 	case TRACECMP_OP_OPEN:
-		if (!state->authorized)
+		if (!(caller_root || state->authorized))
 			error = EACCES;
 		else if (state->dtrace_fd < 0)
 			error = state->device_error != 0 ?
@@ -381,8 +395,17 @@ start_session(int fd, int dtrace_directory, bool authorized,
 
 	instance_id = ++next_instance;
 	device_error = 0;
-	dtrace_fd = authorized ? open_dtrace_consumer(dtrace_directory) : -1;
-	if (authorized && dtrace_fd == -1)
+	/*
+	 * Open the DTrace consumer fd whenever the device is available, not
+	 * only for allowlisted labels: the per-request authorization (root, or
+	 * an allowlisted label) is enforced in the worker's handle_request(),
+	 * which cannot open the sandboxed device itself.  The fd is held by the
+	 * worker and delegated only on an authorized OPEN, so an unprivileged
+	 * session merely holds an undelegated fd (bounded by the worker cap)
+	 * until it disconnects.
+	 */
+	dtrace_fd = open_dtrace_consumer(dtrace_directory);
+	if (dtrace_fd == -1)
 		device_error = errno;
 	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, syncfd) == -1) {
 		error = errno;
