@@ -306,6 +306,8 @@ ATF_TC_BODY(control_domain_separation, tc)
 	ATF_CHECK(!name_is_control("system.Network"));
 	ATF_CHECK(!name_is_control("org.5bsd.ControlPanel")); /* not a component */
 	ATF_CHECK(!name_is_control("Control"));		      /* no dot */
+	/* The reserved helper. namespace is never a control name. */
+	ATF_CHECK(!name_is_control("helper.org.5bsd.Net.Control"));
 
 	/* WORKS: a control name resolves through a CONTROL channel. */
 	ATF_CHECK(svc_domain_permits(&control, SVC_DOMAIN_CONTROL,
@@ -341,6 +343,39 @@ ATF_TC_BODY(control_domain_separation, tc)
 	ATF_CHECK_EQ(-1, svc_mint_domain_kind(&user, SVC_MINT_DOMAIN_CONTROL,
 	    &kind));
 	ATF_CHECK_EQ(EPERM, errno);
+}
+
+ATF_TC_WITHOUT_HEAD(control_ondemand_gating);
+ATF_TC_BODY(control_ondemand_gating, tc)
+{
+	struct svc_domain system = { .kind = SVC_DOMAIN_SYSTEM, .uid = 0 };
+	struct svc_domain control = { .kind = SVC_DOMAIN_CONTROL, .uid = 0 };
+	int error, rv;
+
+	/*
+	 * The control and service planes never cross for on-demand, either.
+	 * These names are unregistered, so naming_lookup() takes the not-found
+	 * branch and decides ENOENT (on-demand-eligible) vs EACCES (out of
+	 * scope, no launch).
+	 */
+
+	/* A SYSTEM channel must NOT be able to force-launch a control name. */
+	error = 0;
+	rv = naming_lookup("service.Control", NULL, &system, &error, NULL);
+	ATF_CHECK_EQ(-1, rv);
+	ATF_CHECK_EQ(EACCES, error);
+
+	/* A CONTROL channel MAY on-demand its own control name. */
+	error = 0;
+	rv = naming_lookup("service.Control", NULL, &control, &error, NULL);
+	ATF_CHECK_EQ(-1, rv);
+	ATF_CHECK_EQ(ENOENT, error);
+
+	/* A CONTROL channel must NOT on-demand a non-control name. */
+	error = 0;
+	rv = naming_lookup(SYSTEM_ONLY_NAME, NULL, &control, &error, NULL);
+	ATF_CHECK_EQ(-1, rv);
+	ATF_CHECK_EQ(EACCES, error);
 }
 
 ATF_TC_WITHOUT_HEAD(ambient_descriptor_marking);
@@ -974,6 +1009,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mint_authorization);
 	ATF_TP_ADD_TC(tp, mint_domain_kind_escalation_guard);
 	ATF_TP_ADD_TC(tp, control_domain_separation);
+	ATF_TP_ADD_TC(tp, control_ondemand_gating);
 	ATF_TP_ADD_TC(tp, ambient_descriptor_marking);
 	ATF_TP_ADD_TC(tp, default_requester_is_system);
 	ATF_TP_ADD_TC(tp, user_scope_hides_registered_name);

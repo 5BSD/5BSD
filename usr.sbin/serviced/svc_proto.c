@@ -484,6 +484,10 @@ handle_helper_open(struct svc_runtime *svc, struct channel_message *request)
 				return (true);
 			if (errno == EDEADLK)
 				error = EDEADLK;
+		} else if (error == EACCES) {
+			/* Out of scope: fail fast, indistinguishable from
+			 * unregistered on the wire. */
+			error = ENOENT;
 		}
 		(void)svc_channel_reply(svc, request, SVC_OP_HELPER_OPEN, error,
 		    NULL, 0);
@@ -549,8 +553,9 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 		error = 0;
 	serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
 	    "mint %s-domain channel svc=%s uid=%u",
-	    kind == SVC_DOMAIN_SYSTEM ? "system" : "user", svc->manifest.label,
-	    (unsigned)req->uid);
+	    kind == SVC_DOMAIN_SYSTEM ? "system" :
+	    kind == SVC_DOMAIN_CONTROL ? "control" : "user",
+	    svc->manifest.label, (unsigned)req->uid);
 	(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN, error,
 	    error == 0 ? &minted_fd : NULL, error == 0 ? 1 : 0);
 	if (minted_fd >= 0)

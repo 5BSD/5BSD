@@ -105,6 +105,13 @@ name_is_control(const char *name)
 
 	if (name == NULL)
 		return (false);
+	/*
+	 * The "helper." namespace is already reserved (bundle-private helpers);
+	 * a helper unit named "Control" must not be reinterpreted as a control
+	 * name.  The two reserved namespaces are disjoint.
+	 */
+	if (strncmp(name, "helper.", 7) == 0)
+		return (false);
 	dot = strrchr(name, '.');
 	return (dot != NULL && strcmp(dot + 1, "Control") == 0);
 }

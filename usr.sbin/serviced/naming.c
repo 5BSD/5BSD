@@ -331,16 +331,32 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 	if (e == NULL || !e->owner->protocol_ready ||
 	    e->owner->state != SVC_STATE_RUNNING) {
 		/*
-		 * Not registered.  If the name is also out of this channel's
-		 * scope, report EACCES *internally* so the caller fails fast
-		 * without an on-demand launch it could never reach (the caller
-		 * maps EACCES to ENOENT on the wire, so the client still cannot
-		 * distinguish out-of-scope from unregistered).  Otherwise ENOENT
-		 * marks it on-demand-eligible.  (Control names are eagerly
-		 * registered, so svc_domain_resolves already denies a CONTROL
-		 * channel here -- no control name is ever on-demand.)
+		 * Not registered.  Decide whether this channel may on-demand the
+		 * name (ENOENT, on-demand-eligible) or is out of scope (EACCES,
+		 * fail fast -- the caller maps EACCES to ENOENT on the wire, so a
+		 * client still cannot tell out-of-scope from unregistered).
+		 *
+		 * The control plane and the service plane never cross: a control
+		 * name may be on-demanded only by a CONTROL channel, and a CONTROL
+		 * channel may on-demand only control names.  Crossing that line is
+		 * out of scope and must NOT trigger a launch -- otherwise a plain
+		 * SYSTEM channel could force-launch a control provider it can
+		 * never reach (an existence/side-effect leak).  Within the service
+		 * plane, the USER allow-list still gates on-demand as before.
 		 */
-		*errp = svc_domain_resolves(domain, name) ? ENOENT : EACCES;
+		{
+			bool ctrl_name = name_is_control(name);
+			bool ctrl_chan = (domain != NULL &&
+			    domain->kind == SVC_DOMAIN_CONTROL);
+
+			if (ctrl_name != ctrl_chan)
+				*errp = EACCES;		/* cross-plane */
+			else if (ctrl_name)
+				*errp = ENOENT;		/* control<->control */
+			else
+				*errp = svc_domain_resolves(domain, name) ?
+				    ENOENT : EACCES;	/* service plane */
+		}
 		return (-1);
 	}
 
