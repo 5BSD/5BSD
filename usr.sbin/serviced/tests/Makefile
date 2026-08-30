@@ -13,6 +13,7 @@ ATF_TESTS_SH+=	serviced_integration_test
 ATF_TESTS_SH+=	serviced_dynamic_claims_test
 ATF_TESTS_SH+=	bundle_integration_test
 ATF_TESTS_SH+=	helper_integration_test
+ATF_TESTS_SH+=	service_reachability_test
 ATF_TESTS_SH_SED_helper_integration_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 
 ${PACKAGE}FILES+=	test_helpers.sh
@@ -39,6 +40,7 @@ CLEANFILES+=	test_helpers.sh capd_test_harness.sh
 PROGS+=		capd_test_guardian
 PROGS+=		capd_service_fixture
 PROGS+=		capd_protocol_fixture
+PROGS+=		service_probe
 ATF_TESTS_C+=	activation_test
 ATF_TESTS_C+=	domain_test
 ATF_TESTS_C+=	on_demand_test
@@ -100,6 +102,13 @@ CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libservice
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/sys
+
+# service_probe: the ambient-reachability helper for service_reachability_test.
+LIBADD.service_probe+=		service channel pthread
+CFLAGS.service_probe+=		-I${SRCTOP}/lib/libservice
+CFLAGS.service_probe+=		-I${SRCTOP}/lib/libchannel
+CFLAGS.service_probe+=		-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.service_probe+=		-I${SRCTOP}/sys
 
 
 # activation_test.c #includes ../activation.c inline; that now calls into the
