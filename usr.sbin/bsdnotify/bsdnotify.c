@@ -952,6 +952,7 @@ router_channel_request(struct channel *channel __unused,
 {
 	struct router_session *session;
 	const struct notify_msg *message;
+	const struct channel_sender *sender;
 	const char *operation;
 	int result;
 
@@ -968,7 +969,17 @@ router_channel_request(struct channel *channel __unused,
 		channel_message_free(request_message);
 		return;
 	}
-	if (!relay_authorized(session->policy, message, &operation)) {
+	/*
+	 * Authorization gates on the caller's authenticated uid: root (uid 0)
+	 * may perform any operation on any topic, every other uid is bound by
+	 * its per-client topic policy.  The connection itself is always
+	 * accepted; only privileged operations are restricted.  The uid is the
+	 * kernel-stamped sender credential on this request, not a session-time
+	 * cache, so it cannot be spoofed by the client.
+	 */
+	sender = channel_message_sender(request_message);
+	if ((sender == NULL || sender->uid != 0) &&
+	    !relay_authorized(session->policy, message, &operation)) {
 		audit_policy(session->router->audit, session->label, operation,
 		    EACCES);
 		BSDNOTIFY_PROBE_REJECT(__DECONST(char *, session->label),
