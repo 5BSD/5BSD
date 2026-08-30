@@ -121,9 +121,22 @@ struct svc_idle_req {
 #define	SVC_MINT_DOMAIN_SYSTEM	1U	/* full-discovery admin channel */
 #define	SVC_MINT_DOMAIN_CONTROL	2U	/* admin control-name channel */
 
+/*
+ * SVC_MINT_FLAG_RESEND: deliver the minted endpoint at its default
+ * CAP_XFER_UNLIMITED instead of attenuating it to CAP_XFER_ONCE (the normal
+ * install-only delivery, which the reply's own SCM_RIGHTS send consumes to
+ * CAP_XFER_NONE).  A caller that must forward the descriptor over ONE more
+ * SCM_RIGHTS hop before installing it needs this: sshd's privileged monitor
+ * mints the session channel, then mm_send_fd()s it to the unprivileged session
+ * child.  The monitor re-attenuates to CAP_XFER_ONCE before that send so the
+ * child still lands at CAP_XFER_NONE — identical to a login(1)/su(1) session.
+ * login/su, which install the fd by fork/exec inheritance, never set it.
+ */
+#define	SVC_MINT_FLAG_RESEND	0x1U
+
 struct svc_mint_domain_req {
 	uint32_t	op;		/* SVC_OP_MINT_DOMAIN */
-	uint32_t	flags;		/* reserved, must be 0 */
+	uint32_t	flags;		/* SVC_MINT_FLAG_* (0 for install-only) */
 	uint32_t	uid;		/* target uid for a USER domain */
 	uint32_t	domain;		/* SVC_MINT_DOMAIN_USER|_SYSTEM|_CONTROL */
 };

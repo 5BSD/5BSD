@@ -307,6 +307,15 @@ int	service_mint_session_domain(int syschan, enum service_mint_kind kind,
  */
 int	service_mint_user_domain(int syschan, uid_t uid, int *out_fd);
 
+/*
+ * Like service_mint_session_domain() but delivers a transferable descriptor for
+ * a caller that must forward it over one more SCM_RIGHTS hop before installing
+ * it (sshd's monitor -> session child).  See the implementation for the
+ * CAP_XFER contract.  Ordinary login/su sessions must NOT use this.
+ */
+int	service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
+	    uid_t uid, int *out_fd);
+
 #define	SERVICE_CLIENT_TIMEOUT_INFINITE	UINT32_MAX
 
 struct service_message {

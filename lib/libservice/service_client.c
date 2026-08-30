@@ -1006,9 +1006,9 @@ service_session_receive_event(struct service_session *session,
  * syschan is itself a SYSTEM-domain channel; serviced returns EPERM otherwise,
  * and likewise refuses a SERVICE_MINT_SYSTEM request from a non-SYSTEM channel.
  */
-int
-service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
-    int *out_fd)
+static int
+mint_session_domain_impl(int syschan, enum service_mint_kind kind, uid_t uid,
+    uint32_t reqflags, int *out_fd)
 {
 	struct svc_mint_domain_req req;
 	struct svc_reply reply_data;
@@ -1065,6 +1065,7 @@ service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
 
 	memset(&req, 0, sizeof(req));
 	req.op = SVC_OP_MINT_DOMAIN;
+	req.flags = reqflags;
 	req.uid = (uint32_t)uid;
 	req.domain = kind == SERVICE_MINT_SYSTEM ?
 	    SVC_MINT_DOMAIN_SYSTEM : SVC_MINT_DOMAIN_USER;
@@ -1097,6 +1098,33 @@ service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
 	}
 	*out_fd = reply_fd;
 	return (0);
+}
+
+int
+service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
+    int *out_fd)
+{
+
+	return (mint_session_domain_impl(syschan, kind, uid, 0, out_fd));
+}
+
+/*
+ * Like service_mint_session_domain(), but the minted descriptor is delivered
+ * transferable (default CAP_XFER_UNLIMITED) instead of install-only.  A caller
+ * that must forward it over ONE more SCM_RIGHTS hop before installing it —
+ * sshd's privileged monitor, which mints the session channel and then
+ * mm_send_fd()s it to the unprivileged session child — needs this; the monitor
+ * re-attenuates to CAP_XFER_ONCE before that send so the child still lands at
+ * CAP_XFER_NONE.  Ordinary login/su sessions install by fork/exec inheritance
+ * and must NOT use this.
+ */
+int
+service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
+    uid_t uid, int *out_fd)
+{
+
+	return (mint_session_domain_impl(syschan, kind, uid,
+	    SVC_MINT_FLAG_RESEND, out_fd));
 }
 
 /*

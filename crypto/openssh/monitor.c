@@ -91,6 +91,7 @@
 #include "srclimit.h"
 
 /* 5BSD §21: privileged ambient lookup-channel provisioning */
+#include <sys/capsicum.h>	/* cap_xfer_limit, CAP_XFER_ONCE */
 #include <libservice.h>
 #include <libcapbundle.h>	/* capbundle_principal_is_admin */
 
@@ -1842,11 +1843,21 @@ mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
 		    capbundle_principal_is_admin(authctxt->pw) ?
 		    SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
 
-		if (service_mint_session_domain(ambient_session_lookup_fd, kind,
-		    authctxt->pw->pw_uid, &fd) == 0 && fd >= 0)
+		/*
+		 * Mint transferable (RESEND) so this fd survives the reply's own
+		 * SCM_RIGHTS send with transfer authority intact, then re-attenuate
+		 * to CAP_XFER_ONCE so the single mm_send_fd() below consumes it to
+		 * CAP_XFER_NONE at the child — the session leaf cannot re-delegate
+		 * its lookup channel, exactly like a login(1)/su(1) session.
+		 */
+		if (service_mint_session_domain_resend(ambient_session_lookup_fd,
+		    kind, authctxt->pw->pw_uid, &fd) == 0 && fd >= 0 &&
+		    cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)
 			status = 0;
 		else {
 			status = errno != 0 ? errno : EIO;
+			if (fd >= 0)
+				close(fd);
 			fd = -1;
 		}
 	}

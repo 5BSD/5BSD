@@ -361,6 +361,7 @@ lookup_channel_request(struct channel *channel,
 		const struct svc_mint_domain_req *mreq;
 		enum svc_domain_kind mkind;
 		int minted_fd, merror;
+		bool resend;
 
 		if (!svc_domain_may_mint(&lc->domain)) {
 			lookup_channel_reply(request, EPERM, NULL, 0);
@@ -371,10 +372,18 @@ lookup_channel_request(struct channel *channel,
 			goto out;
 		}
 		mreq = channel_message_data(request);
-		if (mreq->flags != 0) {
+		if ((mreq->flags & ~SVC_MINT_FLAG_RESEND) != 0) {
 			lookup_channel_reply(request, EINVAL, NULL, 0);
 			goto out;
 		}
+		/*
+		 * SVC_MINT_FLAG_RESEND: deliver the endpoint at its default
+		 * CAP_XFER_UNLIMITED (skip the CAP_XFER_ONCE attenuation) so a
+		 * caller that forwards it over one more SCM_RIGHTS hop before
+		 * installing it — sshd's monitor to its session child — is not
+		 * left holding an exhausted (CAP_XFER_NONE) descriptor.
+		 */
+		resend = (mreq->flags & SVC_MINT_FLAG_RESEND) != 0;
 		/*
 		 * Escalation guard (§6): a SYSTEM mint is allowed only when this
 		 * channel is itself SYSTEM.  svc_domain_may_mint() above already
@@ -394,8 +403,9 @@ lookup_channel_request(struct channel *channel,
 			merror = errno != 0 ? errno : EIO;
 		else
 			merror = 0;
-		lookup_channel_reply(request, merror,
-		    merror == 0 ? &minted_fd : NULL, merror == 0 ? 1 : 0);
+		lookup_channel_reply_ex(request, merror,
+		    merror == 0 ? &minted_fd : NULL, merror == 0 ? 1 : 0,
+		    /*cap_xfer=*/!resend);
 		if (merror == 0)
 			close(minted_fd);
 		goto out;
