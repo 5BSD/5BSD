@@ -1138,61 +1138,23 @@ oi_await_convergence(void)
 }
 
 /*
- * Bind PID 1's control socket (/var/run/authorityd.sock), idempotently.  Called
- * from oi_engine_start (before /etc/rc) and again after convergence: the early
- * attempt fails with EROFS because / is still read-only, so the socket must be
- * retried once serviced has run /etc/rc and remounted / read-write.
+ * Close the signal ABI, idempotently.  Called from oi_engine_start (before
+ * /etc/rc) and again after convergence.
+ *
+ * P4b (docs/lifecycle-capability-design.md): the getpeereid control socket is
+ * retired.  Lifecycle, status, and reload are reached through authorityctl(8)
+ * over serviced's ADMIN-gated capability plane, and reboot(8)/shutdown(8)
+ * delegate to it (falling back to reboot(2), the kernel escape).  Nothing drives
+ * a lifecycle transition by signalling init any more, so the CP_SF_SIGNAL shield
+ * is raised unconditionally: a userland kill(1,SIG*) can never reach init's
+ * legacy transition handler.  (The shield was previously deferred until the
+ * socket was up so shutdown(8)'s signal fallback kept working; with delegation
+ * there is no such fallback to protect, and closing the door early is correct.)
  */
 static void
 oi_ctl_try_setup(void)
 {
-	struct kevent kev;
-	struct stat sb;
 
-	/*
-	 * On a read-write root (ZFS root images) the early-boot bind
-	 * SUCCEEDS — and then rc.d/cleanvar wipes /var/run, unlinking the
-	 * socket path out from under the live listener.  A path check is
-	 * therefore mandatory on the post-convergence retry: a listener
-	 * whose filesystem name is gone is unreachable by every client
-	 * and equivalent to no socket at all (this was half of the
-	 * 2026-08-14 unshutdownable-guest wedge).  Tear it down and
-	 * rebind on the now-stable /var/run.
-	 */
-	if (oi_ctl_up) {
-		if (stat(od.cfg.control_socket, &sb) == 0) {
-			/*
-			 * Socket healthy (bound early, survived rc).  The
-			 * post-convergence call still owes the deferred
-			 * signal shield; apply_signal_shield is idempotent.
-			 */
-			if (oi_engine_up && apply_signal_shield() == -1)
-				warning("signal shield not raised; "
-				    "signal ABI stays open");
-			return;
-		}
-		warning("control socket path vanished (rc cleanup?); "
-		    "rebinding");
-		ctl_teardown();
-		oi_ctl_up = false;
-	}
-	/* control.c registers connection events on event_kq. */
-	event_kq = oi_kq;
-	if (ctl_setup() == -1) {
-		warning("authority control socket unavailable (will retry): %m");
-		return;
-	}
-	oi_ctl_up = true;
-	EV_SET(&kev, ctl_fd(), EVFILT_READ, EV_ADD, 0, 0, NULL);
-	if (kevent(oi_kq, &kev, 1, NULL, 0, NULL) == -1)
-		warning("kevent control socket: %m");
-	/*
-	 * The signal ABI is now redundant: the control socket is the
-	 * authenticated lifecycle path, so the deferred CP_SF_SIGNAL
-	 * shield can go up.  Until this point shutdown(8)'s fallback
-	 * kill(1, SIGINT) must keep working, or a boot that never binds
-	 * the socket is unshutdownable.
-	 */
 	if (oi_engine_up && apply_signal_shield() == -1)
 		warning("signal shield not raised; signal ABI stays open");
 }
@@ -2132,50 +2094,22 @@ boottrace_transition(int sig)
 }
 
 /*
- * Catch a signal and request a state transition.  The traditional
- * init(8) control ABI, preserved so shutdown(8), reboot(8), and
- * halt(8) keep working during the migration.
+ * Catch a legacy init(8) lifecycle signal and IGNORE it (docs/lifecycle-
+ * capability-design.md, P4b).  The signal-driven lifecycle ABI is retired: a
+ * transition is driven only through the capability plane (authorityctl(8) ->
+ * serviced -> authority_init_lifecycle() -> oi_lifecycle_apply()) or, degraded,
+ * reboot(2), the kernel escape.  These signals are caught here — rather than
+ * left at SIG_DFL, which would terminate/stop PID 1 — so a userland
+ * kill(1, SIG*) can never drive a transition.  This closes the ambient signal
+ * door for everyone, including root (whom the MAC signal shield cannot bind);
+ * root retains only the reboot(2) authority the kernel already grants it.
  */
 static void
 transition_handler(int sig)
 {
 
 	boottrace_transition(sig);
-	switch (sig) {
-	case SIGHUP:
-		if (current_state == read_ttys || current_state == multi_user ||
-		    current_state == clean_ttys || current_state == catatonia)
-			requested_transition = clean_ttys;
-		break;
-	case SIGUSR2:
-		howto = RB_POWEROFF;
-	case SIGUSR1:
-		howto |= RB_HALT;
-	case SIGWINCH:
-	case SIGINT:
-		if (sig == SIGWINCH)
-			howto |= RB_POWERCYCLE;
-		Reboot = true;
-	case SIGTERM:
-		if (current_state == read_ttys || current_state == multi_user ||
-		    current_state == clean_ttys || current_state == catatonia)
-			requested_transition = death;
-		else
-			requested_transition = death_single;
-		break;
-	case SIGTSTP:
-		if (current_state == runcom || current_state == read_ttys ||
-		    current_state == clean_ttys ||
-		    current_state == multi_user || current_state == catatonia)
-			requested_transition = catatonia;
-		break;
-	case SIGEMT:
-		requested_transition = reroot;
-		break;
-	default:
-		requested_transition = 0;
-		break;
-	}
+	/* Intentionally no state change: the signal lifecycle ABI is closed. */
 }
 
 /*

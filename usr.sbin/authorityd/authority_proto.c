@@ -41,6 +41,9 @@
 #include "authorityd.h"
 #include "authority_init.h"
 #include "authorityd_svc_proto.h"
+#include "authorityd_ctl.h"		/* struct ctl_reply for cmd_reload() */
+#include "serviced_ctl.h"		/* SERVICED_CTL_SUMMARY_MAX */
+#include "commands.h"			/* cmd_reload() */
 #include "tzfsd.h"		/* libtzfsd client: forward storage to tzfsd(8) */
 #include "mac_capability_priv.h"
 #include "probes.h"
@@ -824,6 +827,29 @@ handle_lifecycle(const void *payload, uint32_t len, uint64_t reply_token)
 	proto_reply(error, reply_token, NULL, 0);
 }
 
+/*
+ * Reload the authority config claims, relayed from authorityctl(8) over
+ * serviced's ADMIN-gated system.lifecycle capability (P4b) in place of the
+ * getpeereid control socket.  serviced has already authorized the caller, so
+ * cmd_reload() runs with euid 0 to satisfy its transitional uid check; the
+ * summary it produces is informational and dropped (the reply is status-only).
+ */
+static void
+handle_reload(const void *payload __unused, uint32_t len, uint64_t reply_token)
+{
+	struct ctl_reply reply;
+	char summary[SERVICED_CTL_SUMMARY_MAX];
+
+	if (len != sizeof(struct authority_req_hdr)) {
+		proto_reply(EINVAL, reply_token, NULL, 0);
+		return;
+	}
+	memset(&reply, 0, sizeof(reply));
+	summary[0] = '\0';
+	cmd_reload(0, &reply, summary, sizeof(summary));
+	proto_reply((int)reply.status, reply_token, NULL, 0);
+}
+
 static void
 handle_set_ambient_lookup(uint32_t len, int fd, uint64_t reply_token)
 {
@@ -1083,6 +1109,9 @@ proto_dispatch_one(void)
 		break;
 	case AUTHORITY_OP_LIFECYCLE:
 		handle_lifecycle(&buf, ra.payload_len, ra.reply_token);
+		break;
+	case AUTHORITY_OP_RELOAD:
+		handle_reload(&buf, ra.payload_len, ra.reply_token);
 		break;
 	default:
 		syslog(LOG_WARNING, "authority_proto: unknown op %u", op);

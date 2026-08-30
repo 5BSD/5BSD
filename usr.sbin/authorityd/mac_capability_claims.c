@@ -393,27 +393,22 @@ apply_integrity(void)
 	flags = od.cfg.integrity_flags | AUTHORITYD_REQUIRED_INTEGRITY_FLAGS;
 
 	/*
-	 * When Authority is PID 1 the CP_SF_SIGNAL shield is DEFERRED until
-	 * the lifecycle control socket is actually listening (see
-	 * apply_signal_shield(), called from oi_ctl_try_setup()).
-	 * shutdown(8)/reboot(8)/halt(8) prefer the authenticated control
-	 * socket (CTL_OP_REBOOT etc., see docs/authority-control-abi-design.md)
-	 * and fall back to the signal ABI when the socket is absent.  If the
-	 * signal shield goes up before the socket exists — e.g. a boot where
-	 * serviced fails to converge and PID 1 drops to recovery — the
-	 * fallback kill(1, SIGINT) is silently denied and the machine
-	 * becomes unshutdownable (observed as a hard wedge after
-	 * shutdown(8)'s wall message, 2026-08-14).  Shield-without-socket
-	 * must therefore never occur: signal protection is raised only
-	 * once the socket replacement for the signal ABI is reachable.
-	 * The KILL/CONT shields and all other integrity flags still apply
-	 * from engine start.  Kernel-internal signals are unaffected by
-	 * the shield either way (the MAC proc_check_signal hook fires only
-	 * on the kill(2) user path), so SIGCHLD reaping, SIGALRM timeouts,
-	 * and authorityd's own pdkill authority over serviced always work.
+	 * The CP_SF_SIGNAL shield is UNCONDITIONAL, including when Authority is
+	 * PID 1 (docs/lifecycle-capability-design.md, P4b).  Lifecycle/status/
+	 * reload are reached through authorityctl(8) over serviced's capability
+	 * plane, and reboot(8)/shutdown(8)/halt(8) delegate to it (falling back to
+	 * reboot(2), the kernel escape) rather than signalling init.  Nothing
+	 * drives a lifecycle transition by kill(1, SIG*) any more, so the shield
+	 * goes up from engine start: a userland signal can never reach init's
+	 * legacy transition handler.  (This retires the former deferral, which
+	 * kept the signal ABI open until a control socket was listening so
+	 * shutdown(8)'s kill(1) fallback worked; with delegation there is no such
+	 * fallback to protect, so the earlier "unshutdownable wedge" concern no
+	 * longer applies.)  Kernel-internal signals are unaffected by the shield
+	 * (the MAC proc_check_signal hook fires only on the kill(2) user path), so
+	 * SIGCHLD reaping, SIGALRM timeouts, and authorityd's own pdkill authority
+	 * over serviced always work.
 	 */
-	if (getpid() == 1)
-		flags &= ~CP_SF_SIGNAL;
 	od.cfg.integrity_flags = flags;
 
 	memset(&req, 0, sizeof(req));

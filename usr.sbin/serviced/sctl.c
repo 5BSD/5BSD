@@ -924,11 +924,14 @@ sctl_authority_request(struct channel *ch __unused,
 	struct sctl_conn *c = arg;
 	const struct ctl_request *req;
 	struct ctl_reply reply;
+	char summary[SERVICED_CTL_SUMMARY_MAX];
+	char out[sizeof(struct ctl_reply) + SERVICED_CTL_SUMMARY_MAX];
 	const void *data;
 	size_t len;
 	int status;
 
 	memset(&reply, 0, sizeof(reply));
+	summary[0] = '\0';
 	data = channel_message_data(request);
 	len = channel_message_length(request);
 
@@ -960,6 +963,30 @@ sctl_authority_request(struct channel *ch __unused,
 					    "lifecycle op %u to authority",
 					    req->op);
 				break;
+			case CTL_OP_RELOAD:
+				status = authority_reload(sd.authority_channel_fd);
+				reply.status = (status < 0) ? EIO :
+				    (uint32_t)status;
+				if (reply.status == 0)
+					snprintf(summary, sizeof(summary),
+					    "authority claims reloaded\n");
+				break;
+			case CTL_OP_STATUS:
+				/*
+				 * Synthesized from what serviced already tracks:
+				 * the authority is PID 1 and reachable over the
+				 * authority channel.  mac_capability policy detail
+				 * lives in the mac_capability(4) device.
+				 */
+				snprintf(summary, sizeof(summary),
+				    "authority: %s (spine, PID 1)\n"
+				    "control plane: capability "
+				    "(system.lifecycle)\n"
+				    "services loaded: %u\n",
+				    sd.authority_channel_fd >= 0 ? "reachable" :
+				    "unreachable", sd.nservices);
+				reply.status = 0;
+				break;
 			default:
 				reply.status = ENOTSUP;
 				break;
@@ -967,15 +994,19 @@ sctl_authority_request(struct channel *ch __unused,
 		}
 	}
 
+	reply.flags = (uint32_t)strlen(summary);
+	memcpy(out, &reply, sizeof(reply));
+	if (reply.flags > 0)
+		memcpy(out + sizeof(reply), summary, reply.flags);
 	if (channel_send_reply(request,
 	    &(struct channel_outgoing){
 		.size = sizeof(struct channel_outgoing),
-		.data = &reply,
-		.length = sizeof(reply),
+		.data = out,
+		.length = sizeof(reply) + reply.flags,
 		.fds = NULL,
 		.nfds = 0
 	    }) == -1)
-		syslog(LOG_WARNING, "sctl: authority lifecycle reply: %m");
+		syslog(LOG_WARNING, "sctl: authority control reply: %m");
 	sctl_cap_sync_events(c);
 }
 

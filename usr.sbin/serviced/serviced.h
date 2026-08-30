@@ -290,6 +290,8 @@ int	authority_set_ambient_lookup(int channel_fd, int lookup_fd);
  * (0 = accepted), or -1 on a channel/transport failure.
  */
 int	authority_lifecycle(int channel_fd, uint32_t lifecycle_op);
+/* Relay an authority config reload to authorityd (P4b).  0 = ok, -1 = error. */
+int	authority_reload(int channel_fd);
 int	authority_release_manifest(int channel_fd, const struct svc_manifest *m);
 
 /* storage_lifecycle.c — last-holder accounting for lease storage. */

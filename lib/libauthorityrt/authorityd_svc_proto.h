@@ -46,6 +46,18 @@
 #define	AUTHORITY_OP_DESTROY_STORAGE	25	/* destroy an ephemeral dataset */
 #define	AUTHORITY_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in authority-init */
 #define	AUTHORITY_OP_LIFECYCLE		27	/* apply a system lifecycle transition (P4b) */
+#define	AUTHORITY_OP_RELOAD		28	/* reload authority config claims (P4b) */
+
+/*
+ * AUTHORITY_OP_RELOAD (docs/lifecycle-capability-design.md, P4b): the reloadable
+ * half of the authorityd control surface, re-homed onto the authority channel so
+ * authorityctl(8) reaches it through serviced's ADMIN-gated system.lifecycle
+ * capability and the getpeereid socket can be deleted.  Status-only:
+ *   req:  authority_req_hdr { .op = AUTHORITY_OP_RELOAD }
+ *   reply: authority_reply { .status }
+ * (authorityctl's `status` is synthesized by serviced from the authority
+ * reachability/readiness it already tracks, so it needs no channel op.)
+ */
 
 /*
  * AUTHORITY_OP_LIFECYCLE

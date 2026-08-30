@@ -601,6 +601,26 @@ authority_lifecycle(int channel_fd, uint32_t lifecycle_op)
 }
 
 /*
+ * Relay an authority config reload to authorityd (P4b): the reloadable half of
+ * the authorityd control surface, re-homed from the getpeereid socket onto the
+ * authority channel.  Returns the authority's status (0 = ok).
+ */
+int
+authority_reload(int channel_fd)
+{
+	struct authority_req_hdr req;
+	int status;
+
+	memset(&req, 0, sizeof(req));
+	req.op = AUTHORITY_OP_RELOAD;
+
+	status = authority_rpc(channel_fd, &req, sizeof(req), NULL, 0, NULL);
+	if (status < 0)
+		return (-1);
+	return (status);
+}
+
+/*
  * Forward the ambient lookup channel client end to authority-init (§21) so it can
  * carry the channel into interactive logins spawned from /etc/ttys.  lookup_fd
  * is duped across as an attached descriptor; the caller retains its own copy.
