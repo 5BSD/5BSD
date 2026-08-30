@@ -19,14 +19,17 @@ SRCS.servicectl_test_bin=	servicectl.c deps.c install.c verify.c
 NO_SHARED.servicectl_test_bin=	yes
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/lib/libservice
 CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD.servicectl_test_bin+=	capbundle ucl elf
+LIBADD.servicectl_test_bin+=	capbundle service ucl elf
 
 CFLAGS.transport_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.transport_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.transport_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.transport_test+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS.transport_test+=	-ffunction-sections -fdata-sections
 LDFLAGS.transport_test+=	-Wl,--gc-sections
+LIBADD.transport_test+=	service
 NO_SHARED.transport_test=	yes
 
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt

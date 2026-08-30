@@ -247,6 +247,13 @@ int	sctl_fd(void);
 void	sctl_accept(void);
 void	sctl_conn_event(struct kevent *kev);
 bool	sctl_is_conn_event(struct kevent *kev);
+/*
+ * Adopt a freshly minted provider endpoint as an in-process capability control
+ * connection (P3): serviced services SERVICED_CONTROL_NAME itself, gating
+ * privileged ops on SVC_RIGHTS_ADMIN present in rights rather than a peer euid.
+ * Takes ownership of provider_fd (closes it on failure).
+ */
+int	sctl_adopt_channel(int provider_fd, uint64_t rights);
 
 /* mac_capability_direct.c — direct mac_capability operations using delegated fd */
 int	mac_cap_create_channel(int *our_end, int *child_end);

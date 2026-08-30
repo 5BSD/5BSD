@@ -10,7 +10,8 @@ SUBDIR.${MK_TESTS}+=	tests
 
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		capbundle ucl elf
+LIBADD=		capbundle service ucl elf
 
 .include <bsd.prog.mk>

@@ -21,6 +21,15 @@
  * leaves no stale node behind.  Override with SERVICED_CONTROL_SOCKET.
  */
 #define	SERVICED_CTL_SOCK	"/Capabilities/serviced/control.sock"
+/*
+ * The capability control endpoint (capability-authority-model.md, P3).  serviced
+ * self-serves this SYSTEM name over the ambient discovery plane; an admin login
+ * session's lookup receives a channel carrying SVC_RIGHTS_ADMIN, which gates the
+ * privileged control operations (reload/start/stop) in place of the socket's
+ * getpeereid euid.  The one fd-passing op (PROVISION_SESSION) is not served here
+ * and remains on the socket until the lifecycle phase (P4).
+ */
+#define	SERVICED_CONTROL_NAME	"system.serviced"
 #define	SERVICED_CTL_VERSION	2
 #define	SERVICED_CTL_MAX_PAYLOAD	1024
 #define	SERVICED_CTL_SUMMARY_MAX	4096

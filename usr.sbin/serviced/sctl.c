@@ -24,6 +24,7 @@
 #include <sys/uio.h>
 #include <sys/un.h>
 
+#include <channel.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -36,6 +37,7 @@
 #include "serviced.h"
 #include "serviced_audit.h"
 #include "serviced_ctl.h"
+#include "serviced_svc_proto.h"
 #include "fd_budget.h"
 #include "management.h"
 #include "serviced_probes.h"
@@ -95,6 +97,17 @@ struct sctl_conn {
 
 	uintptr_t		timer_ident;
 	struct timespec		accept_ts;	/* monotonic time at accept */
+
+	/*
+	 * Capability control path (P3).  When is_capability is set this
+	 * connection is not a socket stream but a libchannel provider endpoint
+	 * that serviced minted for SERVICED_CONTROL_NAME; the socket state
+	 * machine (state/offset/req/reply/summary/timer/pass_fd) is unused, and
+	 * authorization gates on SVC_RIGHTS_ADMIN in cap_rights instead of euid.
+	 */
+	bool			is_capability;
+	struct channel		*cap_channel;
+	uint64_t		cap_rights;
 };
 
 static TAILQ_HEAD(, sctl_conn) conn_list = TAILQ_HEAD_INITIALIZER(conn_list);
@@ -213,6 +226,25 @@ conn_destroy(struct sctl_conn *c)
 {
 	struct kevent kev;
 
+	/*
+	 * Capability control connection: the read/write filters are keyed on the
+	 * channel fd, and channel_destroy() closes that fd.  None of the socket
+	 * stream state (timer, pass_fd) applies.
+	 */
+	if (c->is_capability) {
+		EV_SET(&kev, c->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
+		(void)kevent(serviced_kq, &kev, 1, NULL, 0, NULL);
+		EV_SET(&kev, c->fd, EVFILT_WRITE, EV_DELETE, 0, 0, NULL);
+		(void)kevent(serviced_kq, &kev, 1, NULL, 0, NULL);
+		if (c->cap_channel != NULL)
+			channel_destroy(c->cap_channel);
+		TAILQ_REMOVE(&conn_list, c, entry);
+		nconns--;
+		SERVICED_PROBE_CONN_CLOSE(nconns);
+		free(c);
+		return;
+	}
+
 	/* Remove kqueue filters. */
 	EV_SET(&kev, c->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
 	(void)kevent(serviced_kq, &kev, 1, NULL, 0, NULL);
@@ -264,6 +296,179 @@ conn_arm_timeout(struct sctl_conn *c)
 }
 
 /*
+ * Execute a transport-neutral control operation — the fd-less ops shared by the
+ * socket path and the capability control path: STATUS, SERVICES, RELOAD, START,
+ * STOP.  is_admin is the caller's already-made authorization decision (the socket
+ * path passes peer-euid == 0; the capability path passes SVC_RIGHTS_ADMIN held on
+ * the grant); audit_uid is what the audit trail records (the socket peer euid, or
+ * (uid_t)-1 for a capability caller whose authority is the held right, not a uid).
+ * Fills reply->status and reply->flags (the summary length) and up to summary_cap
+ * bytes of summary text.  PROVISION_SESSION (fd-passing) and unknown ops are the
+ * caller's responsibility, not handled here.
+ */
+static void
+sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
+    bool is_admin, uid_t audit_uid, struct sctl_reply *reply,
+    char *summary, size_t summary_cap)
+{
+
+	summary[0] = '\0';
+	reply->status = 0;
+	reply->flags = 0;
+
+	switch (op) {
+	case SCTL_OP_STATUS:
+	case SCTL_OP_SERVICES:
+	case SCTL_OP_RELOAD:
+		if (datalen != 0) {
+			reply->status = EINVAL;
+			snprintf(summary, summary_cap,
+			    "unexpected payload for op %u", op);
+			break;
+		}
+		if (op == SCTL_OP_STATUS || op == SCTL_OP_SERVICES) {
+			sctl_cmd_status(reply, summary, summary_cap);
+			break;
+		}
+		/* SCTL_OP_RELOAD */
+		if (!is_admin) {
+			reply->status = EPERM;
+			snprintf(summary, summary_cap,
+			    "reload: permission denied");
+			syslog(LOG_WARNING, "sctl: reload denied uid %u",
+			    (unsigned)audit_uid);
+			SERVICED_PROBE_SCTL_DENY(op, audit_uid);
+			serviced_audit(AUE_SERVICED_CTL, audit_uid, EPERM,
+			    "reload denied");
+		} else if (supervisor_reload(serviced_kq, summary,
+		    summary_cap) == -1) {
+			reply->status = EIO;
+			serviced_audit(AUE_SERVICED_CTL, audit_uid, EIO,
+			    "reload failed");
+		} else {
+			reply->status = 0;
+			serviced_audit(AUE_SERVICED_CTL, audit_uid, 0,
+			    "reload: %s", summary);
+		}
+		break;
+	case SCTL_OP_START_SVC:
+		if (!is_admin) {
+			reply->status = EPERM;
+			snprintf(summary, summary_cap,
+			    "start: permission denied");
+			SERVICED_PROBE_SCTL_DENY(op, audit_uid);
+			serviced_audit(AUE_SERVICED_CTL, audit_uid, EPERM,
+			    "start denied");
+		} else if (datalen == 0) {
+			reply->status = EINVAL;
+			snprintf(summary, summary_cap,
+			    "start: missing service label");
+		} else {
+			struct svc_runtime *svc;
+			int error;
+
+			svc = svc_by_label(payload);
+			if (svc == NULL) {
+				reply->status = ENOENT;
+				snprintf(summary, summary_cap,
+				    "start: service \"%s\" not found", payload);
+			} else if (svc->state != SVC_STATE_STOPPED &&
+			    svc->state != SVC_STATE_DONE) {
+				reply->status = EALREADY;
+				snprintf(summary, summary_cap,
+				    "start: \"%s\" is not stopped", payload);
+			} else {
+				svc_cancel_restart(svc, serviced_kq);
+				svc->state = SVC_STATE_STOPPED;
+				svc->restart_count = 0;
+				svc->lookup_activated = false;
+				strlcpy(svc->launched_by, "operator",
+				    sizeof(svc->launched_by));
+				error = svc_exec(svc, serviced_kq) == -1 ?
+				    (errno != 0 ? errno : EIO) : 0;
+				reply->status = error;
+				if (error == 0)
+					snprintf(summary, summary_cap,
+					    "start: \"%s\" starting", payload);
+				else
+					snprintf(summary, summary_cap,
+					    "start: \"%s\" failed: %s", payload,
+					    strerror(error));
+				serviced_audit(AUE_SERVICED_CTL, audit_uid,
+				    error, "start svc=%s", payload);
+			}
+		}
+		break;
+	case SCTL_OP_STOP_SVC:
+		if (!is_admin) {
+			reply->status = EPERM;
+			snprintf(summary, summary_cap,
+			    "stop: permission denied");
+			SERVICED_PROBE_SCTL_DENY(op, audit_uid);
+			serviced_audit(AUE_SERVICED_CTL, audit_uid, EPERM,
+			    "stop denied");
+		} else if (datalen == 0) {
+			reply->status = EINVAL;
+			snprintf(summary, summary_cap,
+			    "stop: missing service label");
+		} else {
+			struct svc_runtime *svc;
+			unsigned si;
+
+			svc = NULL;
+			for (si = 0; si < sd.nservices; si++) {
+				if (strcmp(sd.services[si].manifest.label,
+				    payload) == 0) {
+					svc = &sd.services[si];
+					break;
+				}
+			}
+			if (svc == NULL) {
+				reply->status = ENOENT;
+				snprintf(summary, summary_cap,
+				    "stop: service \"%s\" not found", payload);
+			} else if (svc_management_check_op(svc, "stopped") != 0) {
+				/*
+				 * Absolute management-class rule (§5): a core
+				 * unit cannot be stopped at runtime, not even with
+				 * the admin right.  svc_management_check_op() has
+				 * already logged the refusal.
+				 */
+				reply->status = EPERM;
+				snprintf(summary, summary_cap,
+				    "stop: \"%s\" is management class core and "
+				    "cannot be stopped at runtime", payload);
+				SERVICED_PROBE_SCTL_DENY(op, audit_uid);
+				serviced_audit(AUE_SERVICED_CTL, audit_uid, EPERM,
+				    "stop denied (core) svc=%s", payload);
+			} else if (svc->state == SVC_STATE_STOPPED) {
+				reply->status = EALREADY;
+				snprintf(summary, summary_cap,
+				    "stop: \"%s\" already stopped", payload);
+			} else if (svc->state == SVC_STATE_STOPPING) {
+				reply->status = EALREADY;
+				snprintf(summary, summary_cap,
+				    "stop: \"%s\" already stopping", payload);
+			} else {
+				svc_graceful_stop(svc, serviced_kq);
+				reply->status = 0;
+				snprintf(summary, summary_cap,
+				    "stop: \"%s\" stopping", payload);
+				serviced_audit(AUE_SERVICED_CTL, audit_uid, 0,
+				    "stop svc=%s", payload);
+			}
+		}
+		break;
+	default:
+		reply->status = ENOTSUP;
+		snprintf(summary, summary_cap, "unknown op %u", op);
+		break;
+	}
+
+	reply->flags = (uint32_t)strlen(summary);
+}
+
+/*
  * Dispatch the command.  Fills reply + summary, transitions to
  * writing, and switches the kqueue filter from read to write.
  */
@@ -294,11 +499,12 @@ conn_dispatch(struct sctl_conn *c)
 	}
 
 	/*
-	 * MIGRATION (docs/capability-authority-model.md, phase P3): the per-op
-	 * getpeereid/euid gate below is transitional.  The end state serves these
-	 * admin operations over a presented serviced:admin capability (read-only
-	 * ops at a lesser right) with no socket and no uid check; provision-session
-	 * remains kernel-attested until phase P4.
+	 * The privileged ops (reload/start/stop) are gated on the peer euid here
+	 * only for socket callers; the capability control path (sctl_cap_request,
+	 * SERVICED_CONTROL_NAME) runs the SAME sctl_execute_op() gated on the
+	 * SVC_RIGHTS_ADMIN held on its grant, which is the successor authority
+	 * (docs/capability-authority-model.md, P3).  PROVISION_SESSION stays
+	 * socket-only and kernel-attested until the lifecycle phase (P4).
 	 */
 	SERVICED_PROBE_SCTL_CMD(req->op, c->euid);
 
@@ -306,158 +512,11 @@ conn_dispatch(struct sctl_conn *c)
 	case SCTL_OP_STATUS:
 	case SCTL_OP_SERVICES:
 	case SCTL_OP_RELOAD:
-		/* Reject unexpected payloads on no-payload ops. */
-		if (req->datalen != 0) {
-			reply->status = EINVAL;
-			snprintf(c->summary, sizeof(c->summary),
-			    "unexpected payload for op %u", req->op);
-			reply->flags = (uint32_t)strlen(c->summary);
-			break;
-		}
-		if (req->op == SCTL_OP_STATUS || req->op == SCTL_OP_SERVICES) {
-			sctl_cmd_status(reply, c->summary,
-			    sizeof(c->summary));
-			break;
-		}
-		/* SCTL_OP_RELOAD */
-		if (c->euid != 0) {
-			reply->status = EPERM;
-			snprintf(c->summary, sizeof(c->summary),
-			    "reload: permission denied");
-			reply->flags = (uint32_t)strlen(c->summary);
-			syslog(LOG_WARNING,
-			    "sctl: reload denied uid %u", c->euid);
-			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
-			serviced_audit(AUE_SERVICED_CTL, c->euid, EPERM,
-			    "reload denied");
-		} else {
-			if (supervisor_reload(serviced_kq,
-			    c->summary, sizeof(c->summary)) == -1) {
-				reply->status = EIO;
-				serviced_audit(AUE_SERVICED_CTL, c->euid, EIO,
-				    "reload failed");
-			} else {
-				reply->status = 0;
-				serviced_audit(AUE_SERVICED_CTL, c->euid, 0,
-				    "reload: %s", c->summary);
-			}
-			reply->flags = (uint32_t)strlen(c->summary);
-		}
-		break;
 	case SCTL_OP_START_SVC:
-		if (c->euid != 0) {
-			reply->status = EPERM;
-			snprintf(c->summary, sizeof(c->summary),
-			    "start: permission denied");
-			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
-			serviced_audit(AUE_SERVICED_CTL, c->euid, EPERM,
-			    "start denied");
-		} else if (req->datalen == 0) {
-			reply->status = EINVAL;
-			snprintf(c->summary, sizeof(c->summary),
-			    "start: missing service label");
-		} else {
-			struct svc_runtime *svc;
-			int error;
-
-			svc = svc_by_label(c->payload);
-			if (svc == NULL) {
-				reply->status = ENOENT;
-				snprintf(c->summary, sizeof(c->summary),
-				    "start: service \"%s\" not found", c->payload);
-			} else if (svc->state != SVC_STATE_STOPPED &&
-			    svc->state != SVC_STATE_DONE) {
-				reply->status = EALREADY;
-				snprintf(c->summary, sizeof(c->summary),
-				    "start: \"%s\" is not stopped", c->payload);
-			} else {
-				svc_cancel_restart(svc, serviced_kq);
-				svc->state = SVC_STATE_STOPPED;
-				svc->restart_count = 0;
-				svc->lookup_activated = false;
-				strlcpy(svc->launched_by, "operator",
-				    sizeof(svc->launched_by));
-				error = svc_exec(svc, serviced_kq) == -1 ?
-				    (errno != 0 ? errno : EIO) : 0;
-				reply->status = error;
-				if (error == 0)
-					snprintf(c->summary, sizeof(c->summary),
-					    "start: \"%s\" starting", c->payload);
-				else
-					snprintf(c->summary, sizeof(c->summary),
-					    "start: \"%s\" failed: %s", c->payload,
-					    strerror(error));
-				serviced_audit(AUE_SERVICED_CTL, c->euid, error,
-				    "start svc=%s", c->payload);
-			}
-		}
-		reply->flags = (uint32_t)strlen(c->summary);
-		break;
 	case SCTL_OP_STOP_SVC:
-		if (c->euid != 0) {
-			reply->status = EPERM;
-			snprintf(c->summary, sizeof(c->summary),
-			    "stop: permission denied");
-			reply->flags = (uint32_t)strlen(c->summary);
-			SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
-			serviced_audit(AUE_SERVICED_CTL, c->euid, EPERM,
-			    "stop denied");
-		} else if (req->datalen == 0) {
-			reply->status = EINVAL;
-			snprintf(c->summary, sizeof(c->summary),
-			    "stop: missing service label");
-			reply->flags = (uint32_t)strlen(c->summary);
-		} else {
-			struct svc_runtime *svc;
-			unsigned si;
-
-			svc = NULL;
-			for (si = 0; si < sd.nservices; si++) {
-				if (strcmp(sd.services[si].manifest.label,
-				    c->payload) == 0) {
-					svc = &sd.services[si];
-					break;
-				}
-			}
-			if (svc == NULL) {
-				reply->status = ENOENT;
-				snprintf(c->summary, sizeof(c->summary),
-				    "stop: service \"%s\" not found",
-				    c->payload);
-			} else if (svc_management_check_op(svc, "stopped") != 0) {
-				/*
-				 * Absolute management-class rule (§5): a core
-				 * unit cannot be stopped at runtime, not even by
-				 * root.  svc_management_check_op() has already
-				 * logged the refusal.
-				 */
-				reply->status = EPERM;
-				snprintf(c->summary, sizeof(c->summary),
-				    "stop: \"%s\" is management class core and "
-				    "cannot be stopped at runtime", c->payload);
-				SERVICED_PROBE_SCTL_DENY(req->op, c->euid);
-				serviced_audit(AUE_SERVICED_CTL, c->euid, EPERM,
-				    "stop denied (core) svc=%s", c->payload);
-			} else if (svc->state == SVC_STATE_STOPPED) {
-				reply->status = EALREADY;
-				snprintf(c->summary, sizeof(c->summary),
-				    "stop: \"%s\" already stopped",
-				    c->payload);
-			} else if (svc->state == SVC_STATE_STOPPING) {
-				reply->status = EALREADY;
-				snprintf(c->summary, sizeof(c->summary),
-				    "stop: \"%s\" already stopping",
-				    c->payload);
-			} else {
-				svc_graceful_stop(svc, serviced_kq);
-				reply->status = 0;
-				snprintf(c->summary, sizeof(c->summary),
-				    "stop: \"%s\" stopping", c->payload);
-				serviced_audit(AUE_SERVICED_CTL, c->euid, 0,
-				    "stop svc=%s", c->payload);
-			}
-			reply->flags = (uint32_t)strlen(c->summary);
-		}
+		sctl_execute_op(req->op, c->payload, req->datalen,
+		    c->euid == 0, c->euid, reply, c->summary,
+		    sizeof(c->summary));
 		break;
 	case SCTL_OP_PROVISION_SESSION:
 		/*
@@ -732,6 +791,197 @@ conn_handle_write(struct sctl_conn *c)
 }
 
 /* ----------------------------------------------------------------
+ * Capability control path (P3)
+ *
+ * serviced self-serves SERVICED_CONTROL_NAME over the discovery plane.  A lookup
+ * from an admin login session (see naming_lookup) mints a channel pair whose
+ * grant carries SVC_RIGHTS_ADMIN; serviced adopts the provider end here and runs
+ * the shared sctl_execute_op() gated on that right — the capability successor to
+ * the socket's getpeereid euid.  The request/reply are single libchannel messages
+ * (no SCM_RIGHTS): a request is [sctl_request][payload], a reply is
+ * [sctl_reply][summary].
+ * ---------------------------------------------------------------- */
+
+/*
+ * Enable/disable the write filter to match the channel's queued-output state.
+ */
+static void
+sctl_cap_sync_events(struct sctl_conn *c)
+{
+	struct kevent change;
+	int wants;
+
+	if (c->cap_channel == NULL || c->fd < 0)
+		return;
+	wants = channel_wants_write(c->cap_channel);
+	if (wants == -1)
+		return;
+	EV_SET(&change, c->fd, EVFILT_WRITE,
+	    EV_ADD | (wants ? EV_ENABLE : EV_DISABLE), 0, 0, SCTL_CONN_PTR(c));
+	(void)kevent(serviced_kq, &change, 1, NULL, 0, NULL);
+}
+
+/*
+ * libchannel request handler for the capability control channel.
+ */
+static void
+sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
+    void *arg)
+{
+	struct sctl_conn *c = arg;
+	const struct sctl_request *req;
+	const void *data;
+	size_t len;
+	struct sctl_reply reply;
+	char summary[SERVICED_CTL_SUMMARY_MAX];
+	char payload[SERVICED_CTL_MAX_PAYLOAD + 1];
+	char out[sizeof(struct sctl_reply) + SERVICED_CTL_SUMMARY_MAX];
+
+	memset(&reply, 0, sizeof(reply));
+	summary[0] = '\0';
+	data = channel_message_data(request);
+	len = channel_message_length(request);
+
+	if (data == NULL || len < sizeof(*req)) {
+		reply.status = EINVAL;
+	} else {
+		req = data;
+		if (req->version != SERVICED_CTL_VERSION) {
+			reply.status = EPROTONOSUPPORT;
+		} else if (req->flags != 0 ||
+		    req->datalen > SERVICED_CTL_MAX_PAYLOAD ||
+		    len != sizeof(*req) + (size_t)req->datalen ||
+		    (req->datalen > 0 &&
+		    memchr((const char *)data + sizeof(*req), '\0',
+		    req->datalen) != NULL)) {
+			reply.status = EINVAL;
+			snprintf(summary, sizeof(summary),
+			    "invalid control request encoding");
+		} else {
+			bool is_admin = (c->cap_rights & SVC_RIGHTS_ADMIN) != 0;
+
+			memcpy(payload, (const char *)data + sizeof(*req),
+			    req->datalen);
+			payload[req->datalen] = '\0';
+			SERVICED_PROBE_SCTL_CMD(req->op, (uid_t)-1);
+			switch (req->op) {
+			case SCTL_OP_STATUS:
+			case SCTL_OP_SERVICES:
+			case SCTL_OP_RELOAD:
+			case SCTL_OP_START_SVC:
+			case SCTL_OP_STOP_SVC:
+				/*
+				 * Authority is the held right, not a uid; the
+				 * audit uid is (uid_t)-1 for a capability caller.
+				 */
+				sctl_execute_op(req->op, payload, req->datalen,
+				    is_admin, (uid_t)-1, &reply, summary,
+				    sizeof(summary));
+				break;
+			case SCTL_OP_PROVISION_SESSION:
+				/* Kernel-attested, socket-only until P4. */
+				reply.status = ENOTSUP;
+				snprintf(summary, sizeof(summary),
+				    "provision-session is not served over the "
+				    "capability control plane");
+				break;
+			default:
+				reply.status = ENOTSUP;
+				snprintf(summary, sizeof(summary),
+				    "unknown op %u", req->op);
+				break;
+			}
+		}
+	}
+	reply.flags = (uint32_t)strlen(summary);
+
+	memcpy(out, &reply, sizeof(reply));
+	if (reply.flags > 0)
+		memcpy(out + sizeof(reply), summary, reply.flags);
+	if (channel_send_reply(request,
+	    &(struct channel_outgoing){
+		.size = sizeof(struct channel_outgoing),
+		.data = out,
+		.length = sizeof(reply) + reply.flags,
+		.fds = NULL,
+		.nfds = 0
+	    }) == -1)
+		syslog(LOG_WARNING, "sctl: capability control reply: %m");
+	sctl_cap_sync_events(c);
+}
+
+int
+sctl_adopt_channel(int provider_fd, uint64_t rights)
+{
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	struct sctl_conn *c;
+	struct kevent kev;
+	int error;
+
+	if (provider_fd < 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (serviced_fd_budget_check(1, "capability control connection") == -1) {
+		error = errno;
+		close(provider_fd);
+		errno = error;
+		return (-1);
+	}
+	if (nconns >= SCTL_CONN_MAX) {
+		syslog(LOG_WARNING,
+		    "sctl: too many control connections, rejecting capability");
+		close(provider_fd);
+		errno = ENOSPC;
+		return (-1);
+	}
+	c = calloc(1, sizeof(*c));
+	if (c == NULL) {
+		error = errno;
+		close(provider_fd);
+		errno = error;
+		return (-1);
+	}
+	options.max_pending_requests = 8;
+	options.max_queued_messages = 32;
+	options.max_queued_bytes = 256 * 1024;
+	options.max_queued_fds = 0;
+	if (channel_create(provider_fd, &options, &c->cap_channel) == -1) {
+		error = errno;
+		free(c);
+		close(provider_fd);
+		errno = error;
+		return (-1);
+	}
+	c->is_capability = true;
+	c->cap_rights = rights;
+	c->pass_fd = -1;
+	c->fd = channel_fd(c->cap_channel);
+	if (channel_set_request_handler(c->cap_channel, sctl_cap_request,
+	    c) == -1) {
+		error = errno;
+		channel_destroy(c->cap_channel);
+		free(c);
+		errno = error;
+		return (-1);
+	}
+	TAILQ_INSERT_TAIL(&conn_list, c, entry);
+	nconns++;
+	EV_SET(&kev, c->fd, EVFILT_READ, EV_ADD, 0, 0, SCTL_CONN_PTR(c));
+	if (kevent(serviced_kq, &kev, 1, NULL, 0, NULL) == -1) {
+		syslog(LOG_WARNING, "sctl: capability kevent register: %m");
+		conn_destroy(c);
+		return (-1);
+	}
+	SERVICED_PROBE_CONN_ACCEPT((uid_t)-1, nconns);
+	syslog(LOG_INFO,
+	    "capability control connection adopted (%s)",
+	    (rights & SVC_RIGHTS_ADMIN) != 0 ? "admin" : "unprivileged");
+	return (0);
+}
+
+/* ----------------------------------------------------------------
  * Public API
  * ---------------------------------------------------------------- */
 
@@ -936,6 +1186,31 @@ sctl_conn_event(struct kevent *kev)
 	struct sctl_conn *c;
 
 	c = SCTL_GET_CONN(kev->udata);
+
+	/*
+	 * Capability control connection: driven by libchannel, not the socket
+	 * stream state machine.  A read dispatches queued requests (invoking
+	 * sctl_cap_request); a write flushes queued replies; EOF tears it down.
+	 */
+	if (c->is_capability) {
+		if (kev->flags & EV_EOF) {
+			conn_destroy(c);
+			return;
+		}
+		if (kev->filter == EVFILT_WRITE) {
+			if (channel_flush(c->cap_channel) == -1) {
+				conn_destroy(c);
+				return;
+			}
+		} else if (kev->filter == EVFILT_READ) {
+			if (channel_dispatch(c->cap_channel) == -1) {
+				conn_destroy(c);
+				return;
+			}
+		}
+		sctl_cap_sync_events(c);
+		return;
+	}
 
 	if (kev->filter == EVFILT_TIMER) {
 		syslog(LOG_WARNING, "sctl: client timeout");

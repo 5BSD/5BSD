@@ -67,6 +67,21 @@ serviced_fd_budget_check(size_t count, const char *what)
 }
 
 /*
+ * The capability control adoption (sctl.c) is not linked into this unit; the
+ * SERVICED_CONTROL_NAME self-serve path is exercised by the VM integration test,
+ * not here.  Take ownership of the provider fd (close it) and report success.
+ */
+int
+sctl_adopt_channel(int provider_fd, uint64_t rights)
+{
+
+	(void)rights;
+	if (provider_fd >= 0)
+		(void)close(provider_fd);
+	return (0);
+}
+
+/*
  * On-demand activation lives in on_demand.c (not linked here).  The unit tests
  * exercise only the direct resolve/miss paths, where a miss returns ENOENT
  * without activating, so the stub simply reports "no on-demand launch".

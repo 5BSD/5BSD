@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #include "serviced.h"
+#include "serviced_ctl.h"
 #include "fd_budget.h"
 #include "serviced_probes.h"
 #include "serviced_svc_proto.h"
@@ -314,6 +315,56 @@ naming_rebind_owner(struct svc_runtime *old_owner,
  * provider is unchanged: domain scoping narrows discovery, it never grants
  * access.
  */
+/*
+ * Resolve SERVICED_CONTROL_NAME (docs/capability-authority-model.md, P3):
+ * serviced self-serves its own control plane, so this name has no provider
+ * process and forks off the general registry path.  It is discoverable only
+ * through a full-discovery (SYSTEM) channel — a narrowed USER domain resolves
+ * nothing here, indistinguishably from an unregistered name — and only for an
+ * ambient login session (requester == NULL), never a service.  That is exactly
+ * the admin-principal test the general grant path applies, so the grant always
+ * carries SVC_RIGHTS_ADMIN; serviced adopts the provider end in-process as an
+ * ADMIN-gated control connection.  Returns the client fd, or -1 with *errp.
+ */
+static int
+naming_lookup_self_control(struct svc_runtime *requester,
+    const struct svc_domain *domain, int *errp)
+{
+	int provider_end, client_end;
+
+	if (domain == NULL || domain->kind != SVC_DOMAIN_SYSTEM) {
+		*errp = ENOENT;
+		return (-1);
+	}
+	if (requester != NULL) {
+		/* A service is not an operator; it may not open control. */
+		*errp = EACCES;
+		return (-1);
+	}
+	if (serviced_fd_budget_check(2, "capability control connection") == -1) {
+		*errp = errno;
+		return (-1);
+	}
+	if (mac_cap_create_channel(&provider_end, &client_end) != 0) {
+		*errp = errno != 0 ? errno : EIO;
+		return (-1);
+	}
+	/* Control channel is non-forwardable: single delivery, no re-send. */
+	if (cap_xfer_limit(client_end, CAP_XFER_ONCE) == -1) {
+		close(provider_end);
+		close(client_end);
+		*errp = ENOTCAPABLE;
+		return (-1);
+	}
+	if (sctl_adopt_channel(provider_end, SVC_RIGHTS_ALL) == -1) {
+		/* adopt() took ownership of provider_end (closed on failure). */
+		close(client_end);
+		*errp = errno != 0 ? errno : EIO;
+		return (-1);
+	}
+	return (client_end);
+}
+
 int
 naming_lookup(const char *name, struct svc_runtime *requester,
     const struct svc_domain *domain, int *errp, bool *sendablep)
@@ -325,6 +376,10 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 
 	if (sendablep != NULL)
 		*sendablep = false;
+
+	/* serviced self-serves its own control plane (P3): no provider process. */
+	if (strcmp(name, SERVICED_CONTROL_NAME) == 0)
+		return (naming_lookup_self_control(requester, domain, errp));
 
 	e = naming_find(name);
 	/* A name becomes visible only after its independent activation succeeds. */

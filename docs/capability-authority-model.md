@@ -255,8 +255,23 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   resolves `system.Notify` but is denied that same publish (EACCES) — the held
   right, not the uid, decides. Boot is clean (authority-init PID 1 + serviced +
   ambient lookup channel all come up).
-- **P3 — control planes.** serviced and tzfsd control become presented `:admin`
-  capabilities (rights on the grant); delete their getpeereid sockets.
+- **P3 — control planes (serviced: done, VM-validated).** serviced and tzfsd
+  control become presented `:admin` capabilities (rights on the grant); the
+  getpeereid sockets are retired with the last op that needs them (serviced's in
+  P4, with `PROVISION_SESSION`).
+
+  *Implemented + validated (serviced), 2026-08-30.* serviced self-serves
+  `system.serviced`; `servicectl` resolves it over the ambient plane and uses it
+  as the primary transport, falling back to the socket only when no ambient
+  channel is available. Fresh-image proof: with the control socket **moved away**,
+  a root `servicectl status`/`reload` still succeed (capability path only); a
+  `nobody` session cannot resolve `system.serviced` (USER domain → ENOENT) and is
+  denied. The socket's admin-op handling is **kept as a transitional fallback**
+  rather than crippled now: the socket node must survive for `PROVISION_SESSION`
+  until P4 regardless, so there is no security gain in removing only its admin
+  ops early (its getpeereid gate is still correct: socket `reload` stays
+  root-only) and a real resilience cost for no-ambient/recovery contexts. The
+  whole socket — admin ops and `PROVISION_SESSION` alike — is retired in P4.
 
   *Settled design (serviced).* serviced self-serves a plain SYSTEM name
   `system.serviced` — **not** a `.Control` name (the `.Control` convention is a
@@ -277,11 +292,11 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   fd-passing op — `PROVISION_SESSION`, the kernel-attested login/sshd bridge —
   stays on its socket until P4, the capability path is a clean fd-less
   request→reply message exchange (no SCM_RIGHTS). Rollout is **dual-path**: the
-  capability endpoint lands alongside the working socket, `servicectl` resolves
-  `system.serviced` over the ambient plane, and only once boot-validated does the
-  socket's admin-op handling get removed (the socket then carries
-  `PROVISION_SESSION` alone, for P4 to retire). tzfsd's socket is the separate
-  filesystem-socket→discovery concern, tracked independently.
+  capability endpoint lands alongside the working socket and `servicectl` resolves
+  `system.serviced` over the ambient plane, preferring it and falling back to the
+  socket only where no ambient channel exists. The socket is not torn down in P3
+  (it still carries `PROVISION_SESSION`); P4 retires it whole. tzfsd's socket is
+  the separate filesystem-socket→discovery concern, tracked independently.
 - **P4 — lifecycle.** `lifecycle` capability served by the spine; `reboot`
   presents it; delete the authorityd socket and the signal-authority path;
   `reboot(2)` stays as the kernel escape.

@@ -65,10 +65,95 @@ ensure_parent_dir(const char *path)
 	(void)mkdir(dir, 0755);
 }
 
+#include <libservice.h>
+
 #include "serviced_ctl.h"
 #include "servicectl.h"
 
 static const char *sockpath = SERVICED_CTL_SOCK;
+
+/*
+ * Capability control path (docs/capability-authority-model.md, P3): resolve
+ * SERVICED_CONTROL_NAME over the ambient discovery plane a login session
+ * inherits and issue the request/reply as a single libservice call.  Authority
+ * is the SVC_RIGHTS_ADMIN on the grant (an admin login session), not a socket
+ * peer credential.  Returns 0 and sets *status_out on a completed RPC; returns
+ * -1 (capability plane unavailable / transport error) so the caller can fall
+ * back to the getpeereid socket during the dual-path rollout.
+ */
+static int
+sctl_rpc_capability(uint32_t op, uint32_t flags, const char *payload,
+    char *summary, size_t sumlen, int *status_out)
+{
+	struct service_session *session;
+	struct service_message message;
+	struct service_reply reply;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct sctl_request *req;
+	const struct sctl_reply *rhdr;
+	char reqbuf[sizeof(struct sctl_request) + SERVICED_CTL_MAX_PAYLOAD];
+	char rplbuf[sizeof(struct sctl_reply) + SERVICED_CTL_SUMMARY_MAX];
+	size_t payload_length;
+	int fd;
+
+	payload_length = payload != NULL ? strlen(payload) : 0;
+	if (payload_length > SERVICED_CTL_MAX_PAYLOAD)
+		errx(EX_USAGE, "request payload exceeds protocol limit");
+
+	if (service_open(SERVICED_CONTROL_NAME, &fd) != 0)
+		return (-1);
+	if (service_session_create(fd, &session) != 0) {
+		(void)close(fd);
+		return (-1);
+	}
+
+	req = (struct sctl_request *)reqbuf;
+	memset(req, 0, sizeof(*req));
+	req->version = SERVICED_CTL_VERSION;
+	req->op = op;
+	req->flags = flags;
+	req->datalen = (uint32_t)payload_length;
+	if (payload_length > 0)
+		memcpy(reqbuf + sizeof(*req), payload, payload_length);
+
+	memset(&message, 0, sizeof(message));
+	message.size = sizeof(message);
+	message.data = reqbuf;
+	message.length = sizeof(*req) + payload_length;
+
+	memset(&reply, 0, sizeof(reply));
+	reply.size = sizeof(reply);
+	reply.data = rplbuf;
+	reply.capacity = sizeof(rplbuf);
+
+	options.timeout_ms = 30000;
+
+	if (service_session_call(session, &message, &reply, &options) != 0) {
+		service_session_close(session);
+		return (-1);
+	}
+	if (reply.length < sizeof(struct sctl_reply)) {
+		service_session_close(session);
+		errx(1, "short control reply");
+	}
+	rhdr = (const struct sctl_reply *)rplbuf;
+	if (rhdr->flags > SERVICED_CTL_SUMMARY_MAX ||
+	    reply.length != sizeof(struct sctl_reply) + (size_t)rhdr->flags) {
+		service_session_close(session);
+		errx(1, "invalid control reply summary length");
+	}
+	if (rhdr->flags > 0 && summary != NULL && sumlen > 0) {
+		size_t tocopy = rhdr->flags;
+
+		if (tocopy >= sumlen)
+			tocopy = sumlen - 1;
+		memcpy(summary, rplbuf + sizeof(struct sctl_reply), tocopy);
+		summary[tocopy] = '\0';
+	}
+	*status_out = (int)rhdr->status;
+	service_session_close(session);
+	return (0);
+}
 
 static int
 sctl_connect(void)
@@ -153,7 +238,16 @@ sctl_rpc(uint32_t op, uint32_t flags, const char *payload,
 	struct sctl_reply reply;
 	size_t payload_length;
 	uint32_t datalen;
-	int fd;
+	int fd, status;
+
+	/*
+	 * Prefer the capability control plane (P3).  It is the end state; the
+	 * getpeereid socket below is the transitional fallback for a context with
+	 * no ambient discovery channel (and still carries provision-session).
+	 */
+	if (sctl_rpc_capability(op, flags, payload, summary, sumlen,
+	    &status) == 0)
+		return (status);
 
 	payload_length = payload != NULL ? strlen(payload) : 0;
 	if (payload_length > SERVICED_CTL_MAX_PAYLOAD)
