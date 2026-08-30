@@ -2,10 +2,10 @@ PACKAGE=runtime
 PROG=	reboot
 MAN=	reboot.8 nextboot.8
 
-# For the authorityd control-socket wire protocol header (authorityd_ctl.h).
-# Header-only: reboot/halt stay self-contained /sbin binaries with no
-# /usr runtime dependency.
-CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+# reboot(8)/halt(8) delegate a clean shutdown to authorityctl(8) by fork+exec
+# (docs/lifecycle-capability-design.md) and fall back to reboot(2); they stay
+# self-contained /sbin binaries with no /usr runtime or capability-library
+# dependency (the exec failure is handled).
 MLINKS=	reboot.8 halt.8 reboot.8 fastboot.8 reboot.8 fasthalt.8
 
 .if exists(${.CURDIR}/boot_${MACHINE}.8)

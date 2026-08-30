@@ -36,7 +36,7 @@
 #include <sys/stat.h>
 #include <sys/syslog.h>
 #include <sys/time.h>
-#include <sys/un.h>
+#include <sys/wait.h>
 
 #include <ctype.h>
 #include <err.h>
@@ -52,12 +52,12 @@
 #include <string.h>
 #include <unistd.h>
 
-#include "authorityd_ctl.h"
-
 #ifdef DEBUG
 #undef _PATH_NOLOGIN
 #define	_PATH_NOLOGIN	"./nologin"
 #endif
+
+#define	_PATH_AUTHORITYCTL	"/usr/sbin/authorityctl"
 
 #define	H		*60*60
 #define	M		*60
@@ -90,62 +90,33 @@ static char mbuf[BUFSIZ];
 static const char *nosync, *whom;
 
 static void badtime(void);
-static int authority_lifecycle(uint32_t op);
+static int authctl_run(const char *verb);
 static void die_you_gravy_sucking_pig_dog(void);
 
 /*
- * Ask authority-init to perform a lifecycle transition over its control
- * socket.  Returns 0 if accepted, an errno on a daemon-reported refusal,
- * or -1 (errno set) when the socket is absent/unusable so the caller
- * falls back to the signal ABI.  Inlined rather than using libauthorityctl:
- * shutdown(8) is a /sbin tool and must not depend on /usr.
+ * Run authorityctl(8) once and wait for it (docs/lifecycle-capability-design.md).
+ * Returns 0 if it accepted the request, -1 otherwise (exec failed -- no /usr /
+ * plane down -- or the authority refused).  shutdown(8) is a /sbin tool and keeps
+ * no capability/protocol code and no /usr runtime dependency: it fork+execs the
+ * tool and, on any failure, falls back to the fast reboot/halt exec path (which
+ * ends in reboot(2)).
  */
 static int
-authority_lifecycle(uint32_t op)
+authctl_run(const char *verb)
 {
-	struct sockaddr_un un;
-	struct ctl_request req;
-	struct ctl_reply rpl;
-	ssize_t n;
-	size_t off;
-	int fd, saved;
+	pid_t pid;
+	int status;
 
-	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	if (fd == -1)
+	pid = fork();
+	if (pid == -1)
 		return (-1);
-	memset(&un, 0, sizeof(un));
-	un.sun_family = AF_LOCAL;
-	strlcpy(un.sun_path, AUTHORITYD_CTL_SOCK, sizeof(un.sun_path));
-	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
-		saved = errno;
-		close(fd);
-		errno = saved;
+	if (pid == 0) {
+		execl(_PATH_AUTHORITYCTL, "authorityctl", verb, (char *)NULL);
+		_exit(127);		/* no /usr / tool absent */
+	}
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
 		return (-1);
-	}
-	memset(&req, 0, sizeof(req));
-	req.version = CTL_VERSION;
-	req.op = op;
-	for (off = 0; off < sizeof(req); off += n) {
-		n = send(fd, (char *)&req + off, sizeof(req) - off,
-		    MSG_NOSIGNAL);
-		if (n <= 0) {
-			saved = (n == 0) ? EIO : errno;
-			close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
-	for (off = 0; off < sizeof(rpl); off += n) {
-		n = read(fd, (char *)&rpl + off, sizeof(rpl) - off);
-		if (n <= 0) {
-			saved = (n == 0) ? ECONNRESET : errno;
-			close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
-	close(fd);
-	return ((int)rpl.status);
+	return (WEXITSTATUS(status) == 0 ? 0 : -1);
 }
 
 static void finish(int);
@@ -458,84 +429,70 @@ die_you_gravy_sucking_pig_dog(void)
 		(void)printf(" no sync");
 	(void)printf("\nkill -HUP 1\n");
 #else
-	if (!oflag) {
-		uint32_t op = doreboot ? CTL_OP_REBOOT :
-			      dohalt ? CTL_OP_HALT :
-			      dopower ? CTL_OP_POWEROFF :
-			      docycle ? CTL_OP_POWERCYCLE :
-			      CTL_OP_SINGLE;
-		/*
-		 * Prefer authority-init's authenticated control socket; fall
-		 * back to the signal ABI on any failure — the socket being
-		 * absent (stock init) or a refusal from a non-PID-1 authorityd
-		 * that is not the real init.  Only a clean accept skips the
-		 * signal.
-		 */
-		if (authority_lifecycle(op) == 0) {
-			BOOTTRACE("lifecycle op %u to authority-init...", op);
-		} else {
-			BOOTTRACE("signal to init(8)...");
-			if (kill(1, doreboot ? SIGINT :		/* reboot */
-				      dohalt ? SIGUSR1 :	/* halt */
-				      dopower ? SIGUSR2 :	/* power-down */
-				      docycle ? SIGWINCH :	/* power-cycle */
-				      SIGTERM) == -1) {		/* single-user */
-				/*
-				 * Both lifecycle paths failed: the control
-				 * socket is absent AND init is signal-
-				 * shielded.  Exiting quietly here leaves the
-				 * operator believing shutdown is underway
-				 * when nothing will happen.
-				 */
-				syslog(LOG_ERR, "shutdown: control socket "
-				    "unavailable and signal to init "
-				    "refused: %m");
-				errx(1, "cannot reach init: control socket "
-				    "unavailable and kill(1) refused "
-				    "(errno %d); system is NOT shutting "
-				    "down", errno);
+	{
+		bool do_fast = (oflag != 0);
+
+		if (!oflag) {
+			const char *verb = doreboot ? "reboot" :
+			    dohalt ? "halt" :
+			    dopower ? "poweroff" :
+			    docycle ? "powercycle" : "single";
+			/*
+			 * Delegate the transition to the capability plane via
+			 * authorityctl(8) (docs/lifecycle-capability-design.md):
+			 * on success the authority is bringing the system down.
+			 * On failure (plane down, single-user) fall through to
+			 * the fast exec path, which ends in reboot(2).
+			 */
+			if (authctl_run(verb) == 0) {
+				BOOTTRACE("authorityctl %s accepted", verb);
+			} else {
+				BOOTTRACE("authorityctl unavailable; fast path");
+				do_fast = true;
 			}
 		}
-	} else {
-		if (doreboot) {
-			BOOTTRACE("exec reboot(8) -l...");
-			execle(_PATH_REBOOT, "fastboot", "-l", nosync,
-				(char *)NULL, empty_environ);
-			syslog(LOG_ERR, "shutdown: can't exec %s: %m.",
-				_PATH_REBOOT);
-			warn(_PATH_REBOOT);
+		if (do_fast) {
+			if (doreboot) {
+				BOOTTRACE("exec reboot(8) -l...");
+				execle(_PATH_REBOOT, "fastboot", "-l", nosync,
+					(char *)NULL, empty_environ);
+				syslog(LOG_ERR, "shutdown: can't exec %s: %m.",
+					_PATH_REBOOT);
+				warn(_PATH_REBOOT);
+			}
+			else if (dohalt) {
+				BOOTTRACE("exec halt(8) -l...");
+				execle(_PATH_HALT, "fasthalt", "-l", nosync,
+					(char *)NULL, empty_environ);
+				syslog(LOG_ERR, "shutdown: can't exec %s: %m.",
+					_PATH_HALT);
+				warn(_PATH_HALT);
+			}
+			else if (dopower) {
+				BOOTTRACE("exec halt(8) -l -p...");
+				execle(_PATH_HALT, "fasthalt", "-l", "-p", nosync,
+					(char *)NULL, empty_environ);
+				syslog(LOG_ERR, "shutdown: can't exec %s: %m.",
+					_PATH_HALT);
+				warn(_PATH_HALT);
+			}
+			else if (docycle) {
+				execle(_PATH_HALT, "fasthalt", "-l", "-c", nosync,
+					(char *)NULL, empty_environ);
+				syslog(LOG_ERR, "shutdown: can't exec %s: %m.",
+					_PATH_HALT);
+				warn(_PATH_HALT);
+			}
+			/*
+			 * oflag single-user, or a last resort if the exec above
+			 * failed: ask the authority for single-user via the
+			 * capability plane.  Best-effort.
+			 */
+			BOOTTRACE("single-user via authorityctl...");
+			if (authctl_run("single") != 0)
+				warnx("could not reach the authority for "
+				    "single-user");
 		}
-		else if (dohalt) {
-			BOOTTRACE("exec halt(8) -l...");
-			execle(_PATH_HALT, "fasthalt", "-l", nosync,
-				(char *)NULL, empty_environ);
-			syslog(LOG_ERR, "shutdown: can't exec %s: %m.",
-				_PATH_HALT);
-			warn(_PATH_HALT);
-		}
-		else if (dopower) {
-			BOOTTRACE("exec halt(8) -l -p...");
-			execle(_PATH_HALT, "fasthalt", "-l", "-p", nosync,
-				(char *)NULL, empty_environ);
-			syslog(LOG_ERR, "shutdown: can't exec %s: %m.",
-				_PATH_HALT);
-			warn(_PATH_HALT);
-		}
-		else if (docycle) {
-			execle(_PATH_HALT, "fasthalt", "-l", "-c", nosync,
-				(char *)NULL, empty_environ);
-			syslog(LOG_ERR, "shutdown: can't exec %s: %m.",
-				_PATH_HALT);
-			warn(_PATH_HALT);
-		}
-		/*
-		 * Reached for oflag single-user, or as a last resort if the
-		 * fastboot/fasthalt exec above failed.  Prefer the socket
-		 * (authority-init is signal-shielded); fall back to SIGTERM.
-		 */
-		BOOTTRACE("single-user to init(8)...");
-		if (authority_lifecycle(CTL_OP_SINGLE) != 0)
-			(void)kill(1, SIGTERM);		/* to single-user */
 	}
 #endif
 	finish(0);

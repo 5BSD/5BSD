@@ -36,7 +36,6 @@
 #include <sys/socket.h>
 #include <sys/sysctl.h>
 #include <sys/time.h>
-#include <sys/un.h>
 #include <sys/wait.h>
 
 #include <err.h>
@@ -55,11 +54,10 @@
 #include <unistd.h>
 #include <utmpx.h>
 
-#include "authorityd_ctl.h"
-
 extern char **environ;
 
 #define PATH_NEXTBOOT "/boot/nextboot.conf"
+#define	_PATH_AUTHORITYCTL	"/usr/sbin/authorityctl"
 
 static void usage(void) __dead2;
 static uint64_t get_pageins(void);
@@ -236,110 +234,67 @@ add_env(char **env, const char *key, const char *value)
 }
 
 /*
- * Ask authority-init to perform a lifecycle transition over its control
- * socket.  Returns 0 if accepted, an errno on a daemon-reported refusal,
- * or -1 (with errno) if the socket is absent/unusable — signalling that
- * the caller should fall back to the signal ABI.
- *
- * A minimal inline client is used deliberately rather than libauthorityctl:
- * reboot(8)/halt(8) live in /sbin and must not acquire a /usr runtime
- * dependency, since they have to work before /usr is mounted.
+ * Map a reboot(2) howto to the authorityctl(8) verb for the same transition.
  */
-static int
-authority_lifecycle(uint32_t op)
+static const char *
+authctl_verb(int howto)
 {
-	struct sockaddr_un un;
-	struct ctl_request req;
-	struct ctl_reply rpl;
-	ssize_t n;
-	size_t off;
-	int fd, saved;
 
-	fd = socket(PF_LOCAL, SOCK_STREAM | SOCK_CLOEXEC, 0);
-	if (fd == -1)
-		return (-1);
-	memset(&un, 0, sizeof(un));
-	un.sun_family = AF_LOCAL;
-	strlcpy(un.sun_path, AUTHORITYD_CTL_SOCK, sizeof(un.sun_path));
-	if (connect(fd, (struct sockaddr *)&un, sizeof(un)) == -1) {
-		saved = errno;
-		close(fd);
-		errno = saved;
-		return (-1);		/* no authority-init socket: fall back */
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.version = CTL_VERSION;
-	req.op = op;
-	for (off = 0; off < sizeof(req); off += n) {
-		n = send(fd, (char *)&req + off, sizeof(req) - off,
-		    MSG_NOSIGNAL);
-		if (n <= 0) {
-			saved = (n == 0) ? EIO : errno;
-			close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
-	for (off = 0; off < sizeof(rpl); off += n) {
-		n = read(fd, (char *)&rpl + off, sizeof(rpl) - off);
-		if (n <= 0) {
-			saved = (n == 0) ? ECONNRESET : errno;
-			close(fd);
-			errno = saved;
-			return (-1);
-		}
-	}
-	close(fd);
-	return ((int)rpl.status);
+	if (howto & RB_POWERCYCLE)
+		return ("powercycle");
+	if (howto & RB_POWEROFF)
+		return ("poweroff");
+	if (howto & RB_HALT)
+		return ("halt");
+	if (howto & RB_REROOT)
+		return ("reroot");
+	return ("reboot");
 }
 
+/*
+ * Run authorityctl(8) once and wait for it.  Returns 0 if it accepted the
+ * request, -1 otherwise (exec failed — no /usr / plane down — or the authority
+ * refused).  reboot(8) keeps no capability/protocol code and no /usr runtime
+ * dependency: it just fork+execs the tool and, on any failure, the caller falls
+ * back to reboot(2), the kernel escape (docs/lifecycle-capability-design.md).
+ */
+static int
+authctl_run(const char *verb)
+{
+	pid_t pid;
+	int status;
+
+	pid = fork();
+	if (pid == -1)
+		return (-1);
+	if (pid == 0) {
+		execl(_PATH_AUTHORITYCTL, "authorityctl", verb, (char *)NULL);
+		_exit(127);		/* no /usr / tool absent */
+	}
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status) == 0 ? 0 : -1);
+}
+
+/*
+ * Request a clean, service-ordered shutdown by delegating to the capability
+ * plane via authorityctl(8); fall back to reboot(2) when the plane is
+ * unreachable (single-user, early boot, or a wedged authority).
+ */
 static void
 reboot_request(int howto)
 {
-	char sigstr[SIG2STR_MAX];
-	uint32_t op =
-	    howto & RB_POWERCYCLE ? CTL_OP_POWERCYCLE :
-	    howto & RB_POWEROFF ? CTL_OP_POWEROFF :
-	    howto & RB_HALT ? CTL_OP_HALT :
-	    howto & RB_REROOT ? CTL_OP_REROOT :
-	    CTL_OP_REBOOT;
-	int signo =
-	    howto & RB_POWERCYCLE ? SIGWINCH :
-	    howto & RB_POWEROFF ? SIGUSR2 :
-	    howto & RB_HALT ? SIGUSR1 :
-	    howto & RB_REROOT ? SIGEMT :
-	    SIGINT;
-	int error;
+	const char *verb = authctl_verb(howto);
 
-	/*
-	 * Prefer the authenticated Authority control socket: when PID 1 is
-	 * authority-init, it is shielded from the signal ABI and lifecycle
-	 * requests arrive over the socket.  Fall back to signalling init
-	 * directly when the socket is absent (stock init, or authority-init
-	 * before its capability engine has started).
-	 */
-	error = authority_lifecycle(op);
-	if (error == 0) {
-		BOOTTRACE("lifecycle op %u to authority-init", op);
+	if (authctl_run(verb) == 0) {
+		BOOTTRACE("authorityctl %s accepted", verb);
 		exit(0);
 	}
-	if (error > 0) {
-		/*
-		 * Socket present but the request was refused — e.g. a
-		 * non-PID-1 authorityd owns the socket while the real init is
-		 * a signalable stock init.  Fall back to the signal ABI
-		 * rather than failing outright.
-		 */
-		warnx("authority-init lifecycle request refused (%s); "
-		    "signalling init", strerror(error));
-	}
 
-	(void)sig2str(signo, sigstr);
-	BOOTTRACE("SIG%s to init(8)...", sigstr);
-	if (kill(1, signo) == -1)
-		err(1, "SIG%s init", sigstr);
-	exit(0);
+	/* Capability plane unavailable: kernel escape. */
+	BOOTTRACE("authorityctl unavailable; reboot(2)");
+	reboot(howto);
+	err(1, "reboot");
 }
 
 /*
@@ -565,15 +520,15 @@ main(int argc, char *argv[])
 		reboot_request(howto);
 
 	/*
-	 * Stop init from respawning gettys during teardown.  authority-init
-	 * is signal-shielded, so prefer the control socket (CATATONIA);
-	 * fall back to SIGTSTP for stock init.  Best-effort: reboot(2)
-	 * below still completes if init cannot be quiesced, so this must
-	 * not be fatal (a fatal error here would abort the fast reboot).
+	 * Stop init from respawning gettys during teardown.  authority-init is
+	 * signal-shielded, so quiesce it through the capability plane
+	 * (authorityctl catatonia).  Best-effort: the reboot(2) below still
+	 * completes if init cannot be quiesced (e.g. the plane is down), so this
+	 * must not be fatal — a fatal error here would abort the fast reboot.
 	 */
 	BOOTTRACE("quiescing init(8)...");
-	if (authority_lifecycle(CTL_OP_CATATONIA) != 0 && kill(1, SIGTSTP) == -1)
-		warn("could not quiesce init; continuing");
+	if (authctl_run("catatonia") != 0)
+		warnx("could not quiesce init; continuing");
 
 	/* Send a SIGTERM first, a chance to save the buffers. */
 	BOOTTRACE("SIGTERM to all other processes...");
