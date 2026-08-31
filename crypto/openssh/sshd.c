@@ -986,32 +986,6 @@ capture_ambient_master(void)
 }
 
 /*
- * 5BSD: mint a PRIVATE per-connection SYSTEM lookup channel over the listener's
- * master channel.  Called serially from the (single-threaded) accept loop, so
- * concurrent sessions never share a channel descriptor: each connection's
- * monitor gets its own, over which it later mints the session's uid-scoped
- * channel.  Best-effort — returns -1 (no channel) on any failure.
- */
-static int
-mint_connection_lookup(void)
-{
-	int conn_fd = -1;
-
-	if (ambient_master_fd < 0)
-		return (-1);
-	/*
-	 * Hot-path mint: a tight timeout keeps a slow/wedged serviced from
-	 * stalling this single-threaded accept loop and serializing all new
-	 * connections behind one round-trip.  A failure just means this session
-	 * carries no ambient channel.
-	 */
-	if (service_mint_session_domain_hotpath(ambient_master_fd,
-	    SERVICE_MINT_SYSTEM, 0, &conn_fd) != 0)
-		return (-1);
-	return (conn_fd);
-}
-
-/*
  * The main TCP accept loop. Note that, for the non-debug case, returns
  * from this function are in a forked subprocess.
  */
@@ -1022,7 +996,6 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 	struct pollfd *pfd = NULL;
 	int i, ret, npfd, r;
 	int oactive = -1, listening = 0, lameduck = 0;
-	int ambient_conn = -1;	/* 5BSD: private per-connection lookup channel */
 	int *startup_pollfd;
 	ssize_t len;
 	const u_char *ptr;
@@ -1301,18 +1274,15 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 			}
 
 			/*
-			 * 5BSD: mint this connection's PRIVATE lookup channel
-			 * now, serially in the (single-threaded) listener, so no
-			 * two sessions ever share a channel descriptor.  The
-			 * child inherits it and pins it at REEXEC_AMBIENT_LOOKUP_FD
-			 * for the re-exec into sshd-session; the parent drops its
-			 * copy after the fork.  -1 means no channel this session.
-			 */
-			ambient_conn = mint_connection_lookup();
-
-			/*
 			 * Got connection.  Fork a child to handle it, unless
 			 * we are in debugging mode.
+			 *
+			 * 5BSD: the child inherits the listener's SYSTEM ambient
+			 * lookup channel, pinned at REEXEC_AMBIENT_LOOKUP_FD, and
+			 * carries it through the re-exec into sshd-session, whose
+			 * monitor mints the session's uid-scoped channel over it
+			 * (serialized across monitors, since the endpoint is
+			 * shared).  Nothing per-connection happens here.
 			 */
 			if (debug_flag) {
 				/*
@@ -1324,11 +1294,6 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 				close_listen_socks();
 				*sock_in = *newsock;
 				*sock_out = *newsock;
-				if (ambient_conn >= 0 && dup2(ambient_conn,
-				    REEXEC_AMBIENT_LOOKUP_FD) == -1)
-					ambient_conn = -1;
-				if (ambient_conn < 0)
-					(void)close(REEXEC_AMBIENT_LOOKUP_FD);
 				send_rexec_state(config_s[0]);
 				close(config_s[0]);
 				free(pfd);
@@ -1360,26 +1325,12 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 				*sock_in = *newsock;
 				*sock_out = *newsock;
 				/*
-				 * 5BSD: pin this connection's private lookup
-				 * channel at the reserved slot.  It overwrites
-				 * the inherited copy of the listener's master
-				 * (dropped here) and survives to the re-exec,
-				 * where sshd-session's monitor mints the
-				 * session's uid-scoped channel over it.  When
-				 * there is no per-connection channel, close the
-				 * slot so the session never inherits the shared
-				 * master (which would defeat the isolation).
+				 * 5BSD: the SYSTEM ambient lookup channel is
+				 * already inherited at REEXEC_AMBIENT_LOOKUP_FD
+				 * (the listener pinned it, non-close-on-exec), so
+				 * it carries through this re-exec to the monitor
+				 * unchanged — nothing to do here.
 				 */
-				if (ambient_conn >= 0) {
-					if (dup2(ambient_conn,
-					    REEXEC_AMBIENT_LOOKUP_FD) == -1)
-						ambient_conn = -1;
-					else if (ambient_conn !=
-					    REEXEC_AMBIENT_LOOKUP_FD)
-						(void)close(ambient_conn);
-				}
-				if (ambient_conn < 0)
-					(void)close(REEXEC_AMBIENT_LOOKUP_FD);
 				log_init(__progname,
 				    options.log_level,
 				    options.log_facility,
@@ -1399,11 +1350,6 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 
 			close(config_s[1]);
 			close(*newsock);
-			/* 5BSD: the child owns the minted channel now. */
-			if (ambient_conn >= 0) {
-				close(ambient_conn);
-				ambient_conn = -1;
-			}
 
 			/*
 			 * Ensure that our random state differs

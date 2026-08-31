@@ -1110,21 +1110,6 @@ service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
 }
 
 /*
- * Hot-path variant for the sshd listener: mints a per-connection SYSTEM channel
- * synchronously in the single-threaded accept loop, so it uses a tight timeout
- * to bound the stall a slow/wedged serviced would otherwise impose on ALL new
- * connections.  Best-effort: a timeout yields no channel and the session
- * proceeds without one.
- */
-int
-service_mint_session_domain_hotpath(int syschan, enum service_mint_kind kind,
-    uid_t uid, int *out_fd)
-{
-
-	return (mint_session_domain_impl(syschan, kind, uid, 0, 500U, out_fd));
-}
-
-/*
  * Like service_mint_session_domain(), but the minted descriptor is delivered
  * transferable (default CAP_XFER_UNLIMITED) instead of install-only.  A caller
  * that must forward it over ONE more SCM_RIGHTS hop before installing it —

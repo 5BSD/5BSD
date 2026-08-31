@@ -316,14 +316,6 @@ int	service_mint_user_domain(int syschan, uid_t uid, int *out_fd);
 int	service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
 	    uid_t uid, int *out_fd);
 
-/*
- * Hot-path variant for a synchronous minter in a single-threaded accept loop
- * (the sshd listener): a tight timeout bounds the per-connection stall a slow
- * serviced would impose on all new connections.  Best-effort like the others.
- */
-int	service_mint_session_domain_hotpath(int syschan, enum service_mint_kind kind,
-	    uid_t uid, int *out_fd);
-
 #define	SERVICE_CLIENT_TIMEOUT_INFINITE	UINT32_MAX
 
 struct service_message {
