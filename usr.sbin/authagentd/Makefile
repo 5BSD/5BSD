@@ -7,6 +7,10 @@ MAN=
 
 SRCS=		authagentd.c
 LIBADD=		service channel capability capbundle
+# The mint decision must resolve the principal's identity authoritatively
+# inside the capsicum sandbox, so Casper is required.
+LIBADD+=	casper cap_pwd cap_grp
+CFLAGS+=	-DWITH_CASPER
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle

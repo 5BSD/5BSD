@@ -596,18 +596,30 @@ main(int argc, char *argv[])
 		 * shell) and su proceeds exactly as before.  Never fatal.
 		 */
 		if (syschan >= 0) {
-			enum service_mint_kind kind;
 			int user_fd = -1;
 
-			kind = capbundle_principal_is_admin(pwd) ? SERVICE_MINT_SYSTEM :
-			    SERVICE_MINT_USER;
-			if (service_mint_session_domain(syschan, kind,
-			    pwd->pw_uid, &user_fd) == 0 &&
+			/*
+			 * Primary path: the auth-agent (system.authagent) holds
+			 * the principal->bundle policy and the mint authority;
+			 * it resolves the target uid itself and returns the
+			 * scoped channel.  su no longer decides admin-ness.  If
+			 * the agent is unreachable, fall back to minting directly
+			 * over the inherited SYSTEM channel (su classifies with
+			 * capbundle_principal_is_admin as before).
+			 */
+			if (service_mint_session_via_agent(syschan, pwd->pw_uid,
+			    0, 2000U, &user_fd) != 0) {
+				enum service_mint_kind kind =
+				    capbundle_principal_is_admin(pwd) ?
+				    SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
+
+				(void)service_mint_session_domain(syschan, kind,
+				    pwd->pw_uid, &user_fd);
+			}
+			if (user_fd >= 0 &&
 			    service_install_ambient_lookup(user_fd) == 0) {
-				syslog(LOG_DEBUG, "su: %s-domain lookup "
-				    "channel for uid %u",
-				    kind == SERVICE_MINT_SYSTEM ? "system" :
-				    "user", (unsigned)pwd->pw_uid);
+				syslog(LOG_DEBUG, "su: lookup channel for "
+				    "uid %u", (unsigned)pwd->pw_uid);
 			} else {
 				syslog(LOG_NOTICE, "su: no lookup channel for "
 				    "uid %u: %m", (unsigned)pwd->pw_uid);

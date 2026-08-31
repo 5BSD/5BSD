@@ -665,18 +665,28 @@ main(int argc, char *argv[])
 	 * fatal.
 	 */
 	if (syschan >= 0) {
-		enum service_mint_kind kind;
 		int user_fd = -1;
 
-		kind = capbundle_principal_is_admin(pwd) ? SERVICE_MINT_SYSTEM :
-		    SERVICE_MINT_USER;
-		if (service_mint_session_domain(syschan, kind, pwd->pw_uid,
-		    &user_fd) == 0 &&
+		/*
+		 * Primary path: the auth-agent (system.authagent) resolves the
+		 * principal and applies the admin policy, returning the scoped
+		 * channel; login no longer classifies the principal itself.  On
+		 * any agent failure, fall back to minting directly over the
+		 * inherited SYSTEM channel (login classifies as before).
+		 */
+		if (service_mint_session_via_agent(syschan, pwd->pw_uid, 0,
+		    2000U, &user_fd) != 0) {
+			enum service_mint_kind kind =
+			    capbundle_principal_is_admin(pwd) ?
+			    SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
+
+			(void)service_mint_session_domain(syschan, kind,
+			    pwd->pw_uid, &user_fd);
+		}
+		if (user_fd >= 0 &&
 		    service_install_ambient_lookup(user_fd) == 0) {
-			syslog(LOG_DEBUG, "login: %s-domain lookup channel "
-			    "for uid %u on fd %d",
-			    kind == SERVICE_MINT_SYSTEM ? "system" : "user",
-			    (unsigned)pwd->pw_uid, user_fd);
+			syslog(LOG_DEBUG, "login: lookup channel for uid %u "
+			    "on fd %d", (unsigned)pwd->pw_uid, user_fd);
 		} else {
 			syslog(LOG_NOTICE, "login: no lookup channel for "
 			    "uid %u: %m", (unsigned)pwd->pw_uid);

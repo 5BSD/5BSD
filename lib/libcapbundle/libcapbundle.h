@@ -155,4 +155,24 @@ bool	capbundle_principal_is_admin(const struct passwd *pwd);
  */
 bool	capbundle_principal_is_admin_fd(const struct passwd *pwd, int policy_fd);
 
+/*
+ * A group-name -> gid resolver, returning (gid_t)-1 for an unknown name.  It
+ * lets the decision core run without any group-database access of its own: a
+ * capsicum-sandboxed auth-agent backs it with Casper cap_grp; an ordinary
+ * caller backs it with getgrnam(3).
+ */
+typedef gid_t (*capbundle_group_gid_fn)(void *ctx, const char *group_name);
+
+/*
+ * The data-only decision core.  Decide admin-ness for a principal already
+ * resolved to a uid and its set of member group ids, against the policy on
+ * `policy_fd` (or the historical default when the fd is absent/unreadable),
+ * using `name2gid` to resolve any group names the policy references.  This is
+ * the entry point a sandboxed auth-agent uses after resolving the principal
+ * itself (never trusting caller-supplied attributes).
+ */
+bool	capbundle_principal_is_admin_resolved(int policy_fd, uid_t uid,
+	    const gid_t *member_gids, unsigned nmember,
+	    capbundle_group_gid_fn name2gid, void *ctx);
+
 #endif /* LIBCAPBUNDLE_H */

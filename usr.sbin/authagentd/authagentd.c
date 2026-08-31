@@ -21,17 +21,23 @@
 
 #include <err.h>
 #include <errno.h>
+#include <grp.h>
 #include <pwd.h>
+#include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
 
+#include <libcasper.h>
+#include <casper/cap_grp.h>
+#include <casper/cap_pwd.h>
+
 #include <channel.h>
 #include <libservice.h>
 #include <libcapbundle.h>
 
-#include "authagentd_proto.h"
+#include <authagent_proto.h>
 
 /* Our own consumer handle on the bootstrap channel, used to mint. */
 static struct service_context	*g_context;
@@ -43,6 +49,57 @@ static int			 g_kq = -1;
  * default.
  */
 static int			 g_policy_fd = -1;
+/*
+ * Casper channels for authoritative passwd/group resolution inside the sandbox.
+ * The agent NEVER trusts principal attributes from the wire — it resolves the
+ * uid to its passwd and group membership itself, so a compromised login client
+ * cannot claim admin membership it does not have.
+ */
+static cap_channel_t		*g_cappwd;
+static cap_channel_t		*g_capgrp;
+
+/* Group-name -> gid for the policy engine, backed by Casper cap_grp. */
+static gid_t
+agent_name2gid(void *ctx, const char *name)
+{
+	cap_channel_t *grp = ctx;
+	struct group *gr;
+
+	if (grp == NULL || (gr = cap_getgrnam(grp, name)) == NULL)
+		return ((gid_t)-1);
+	return (gr->gr_gid);
+}
+
+/*
+ * Resolve a principal's group membership authoritatively via Casper: its
+ * primary gid plus every group whose member list names it.  cap_grp exposes no
+ * getgrouplist, so scan the group database (a mint is infrequent).
+ */
+static unsigned
+agent_member_gids(const struct passwd *pw, gid_t *out, unsigned max)
+{
+	struct group *gr;
+	unsigned n = 0;
+
+	if (max == 0)
+		return (0);
+	out[n++] = pw->pw_gid;
+	if (g_capgrp == NULL)
+		return (n);
+	(void)cap_setgrent(g_capgrp);	/* rewind; a bad rewind just yields none */
+	while (n < max && (gr = cap_getgrent(g_capgrp)) != NULL) {
+		char **m;
+
+		if (gr->gr_gid == pw->pw_gid)
+			continue;
+		for (m = gr->gr_mem; m != NULL && *m != NULL; m++)
+			if (strcmp(*m, pw->pw_name) == 0) {
+				out[n++] = gr->gr_gid;
+				break;
+			}
+	}
+	return (n);
+}
 
 /*
  * One connected login program.  The channel's fd is the kqueue key; udata
@@ -114,18 +171,35 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	} else {
 		req = data;
 		if (req->version != AUTHAGENTD_PROTO_VERSION ||
-		    req->op != AUTHAGENT_OP_MINT_SESSION || req->flags != 0) {
+		    req->op != AUTHAGENT_OP_MINT_SESSION ||
+		    (req->flags & ~AUTHAGENT_FLAG_FORWARDABLE) != 0) {
 			reply.status = EINVAL;
-		} else if ((pw = getpwuid((uid_t)req->uid)) == NULL) {
+		} else if ((pw = cap_getpwuid(g_cappwd,
+		    (uid_t)req->uid)) == NULL) {
 			reply.status = ENOENT;
 		} else {
+			gid_t members[NGROUPS_MAX];
+			unsigned nmember = agent_member_gids(pw, members,
+			    nitems(members));
+			bool forwardable =
+			    (req->flags & AUTHAGENT_FLAG_FORWARDABLE) != 0;
 			enum service_mint_kind kind =
-			    capbundle_principal_is_admin_fd(pw, g_policy_fd) ?
-			    SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
+			    capbundle_principal_is_admin_resolved(g_policy_fd,
+			    (uid_t)req->uid, members, nmember, agent_name2gid,
+			    g_capgrp) ? SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
 
+			/*
+			 * A session leaf (login/su) receives the channel
+			 * non-transferable: attenuate to CAP_XFER_ONCE so the
+			 * reply's own SCM_RIGHTS send consumes it to
+			 * CAP_XFER_NONE at the caller.  A forwarding caller
+			 * (sshd monitor) receives it still-transferable and
+			 * re-attenuates before its own single forward.
+			 */
 			if (service_context_mint_domain(g_context, kind,
 			    (uid_t)req->uid, &fd) == 0 && fd >= 0 &&
-			    cap_xfer_limit(fd, CAP_XFER_ONCE) == 0) {
+			    (forwardable ||
+			    cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)) {
 				reply.status = 0;
 			} else {
 				reply.status = errno != 0 ? errno : EIO;
@@ -226,6 +300,29 @@ main(void)
 	if (service_capability_open(g_context, "principal-policy", "file",
 	    &g_policy_fd) == -1)
 		g_policy_fd = -1;
+
+	/*
+	 * Bring up Casper before entering the sandbox so the agent can resolve
+	 * a uid to its passwd and group membership authoritatively after
+	 * cap_enter — the security basis for not trusting the login client's
+	 * claims.  Limited to exactly the lookups the mint decision needs.
+	 */
+	{
+		static const char *const pwdcmds[] = { "getpwuid" };
+		static const char *const grpcmds[] = { "getgrnam",
+		    "setgrent", "getgrent" };
+		cap_channel_t *capcas = cap_init();
+
+		if (capcas == NULL ||
+		    (g_cappwd = cap_service_open(capcas, "system.pwd")) ==
+		    NULL ||
+		    (g_capgrp = cap_service_open(capcas, "system.grp")) == NULL)
+			err(1, "casper");
+		cap_close(capcas);
+		if (cap_pwd_limit_cmds(g_cappwd, pwdcmds, nitems(pwdcmds)) < 0 ||
+		    cap_grp_limit_cmds(g_capgrp, grpcmds, nitems(grpcmds)) < 0)
+			err(1, "casper limit");
+	}
 
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, listener);

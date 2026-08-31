@@ -317,6 +317,26 @@ int	service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
 	    uid_t uid, int *out_fd);
 
 /*
+ * Mint this session's lookup channel through the auth-agent (system.authagent),
+ * reached over the caller's ambient SYSTEM lookup channel.  Unlike
+ * service_mint_session_domain(), the caller does NOT decide SYSTEM vs USER and
+ * holds no mint authority: the agent resolves the principal and applies policy.
+ * A login program (login/su/sshd) uses this as the primary path and falls back
+ * to service_mint_session_domain() when the agent is unreachable.  Returns 0
+ * with *out_fd set on success; -1 (with errno) otherwise.
+ *
+ * `flags` is 0 for a session leaf that installs the channel directly (login,
+ * su): the delivered descriptor arrives non-transferable.  Pass
+ * SERVICE_MINT_AGENT_FORWARDABLE when the caller must forward the descriptor
+ * over one more SCM_RIGHTS hop before it is installed (sshd's monitor -> session
+ * child): the descriptor then arrives transferable and the caller must
+ * re-attenuate it (cap_xfer_limit CAP_XFER_ONCE) before the single forward.
+ */
+#define	SERVICE_MINT_AGENT_FORWARDABLE	0x1u
+int	service_mint_session_via_agent(int lookup_chan, uid_t uid,
+	    uint32_t flags, unsigned timeout_ms, int *out_fd);
+
+/*
  * Mint a session lookup channel over the provider's OWN bootstrap channel to
  * serviced (not a borrowed syschan).  Delivered transferable (RESEND) so the
  * caller can forward it over one more hop.  The auth-agent path; see

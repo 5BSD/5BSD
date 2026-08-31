@@ -23,6 +23,14 @@
 #define	AUTHAGENT_OP_MINT_SESSION	1U
 
 /*
+ * Request flags.  FORWARDABLE: the caller (sshd's monitor) must forward the
+ * minted descriptor over one more SCM_RIGHTS hop to the session child, so the
+ * agent delivers it still-transferable rather than consuming it to
+ * non-transferable at this caller.  A session leaf (login/su) passes 0.
+ */
+#define	AUTHAGENT_FLAG_FORWARDABLE	0x1U
+
+/*
  * AUTHAGENT_OP_MINT_SESSION
  *   request: struct authagent_mint_req
  *   reply:   struct authagent_mint_reply; on success the minted session lookup

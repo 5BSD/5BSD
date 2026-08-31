@@ -17,6 +17,7 @@ umask = "0077";
 capabilities {
     open = [
         { path = "/Capabilities/Config/principal-policy.ucl";
-          name = "principal-policy"; type = "file"; rights = "r"; },
+          name = "principal-policy"; type = "file"; rights = "r";
+          optional = true; },
     ]
 }

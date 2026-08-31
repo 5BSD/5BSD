@@ -28,6 +28,7 @@
 #include "service_bootstrap.h"
 #include "serviced_ctl.h"
 #include "serviced_svc_proto.h"
+#include "authagent_proto.h"
 
 #define	CLIENT_EVENT_MAX	64
 #define	CLIENT_POLL_MS		25
@@ -1144,8 +1145,8 @@ service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
  * resolvable in that channel's domain.  Bounded like the mint RPC so a wedged
  * serviced cannot stall a CLI forever.
  */
-int
-service_connect_ambient(const char *name, int *session_fdp)
+static int
+service_lookup_over_channel(int lookup_chan, const char *name, int *session_fdp)
 {
 	struct svc_lookup_req req;
 	struct svc_reply reply_data;
@@ -1166,32 +1167,23 @@ service_connect_ambient(const char *name, int *session_fdp)
 	};
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct service_session *session;
-	int ambient, dupfd, error;
+	int dupfd, error;
 
-	if (name == NULL || session_fdp == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
 	*session_fdp = -1;
 	reply_fd = -1;
-	if (strlen(name) > SERVICED_NAME_MAX) {
-		errno = ENAMETOOLONG;
+	if (lookup_chan < 0) {
+		errno = ENOENT;
 		return (-1);
 	}
-
-	/* No ambient lookup channel -> not reachable this way (errno ENOENT). */
-	ambient = service_ambient_lookup_fd();
-	if (ambient < 0)
-		return (-1);
 
 	options.timeout_ms = 2000U;
 
 	/*
 	 * service_session_create() takes ownership of the descriptor it is
-	 * given, so hand it a private duplicate and leave the shared ambient
+	 * given, so hand it a private duplicate and leave the borrowed lookup
 	 * channel untouched.
 	 */
-	dupfd = fcntl(ambient, F_DUPFD_CLOEXEC, 0);
+	dupfd = fcntl(lookup_chan, F_DUPFD_CLOEXEC, 0);
 	if (dupfd == -1)
 		return (-1);
 	if (service_session_create(dupfd, &session) == -1) {
@@ -1232,6 +1224,120 @@ service_connect_ambient(const char *name, int *session_fdp)
 		return (-1);
 	}
 	*session_fdp = reply_fd;
+	return (0);
+}
+
+int
+service_connect_ambient(const char *name, int *session_fdp)
+{
+
+	if (name == NULL || session_fdp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*session_fdp = -1;
+	if (strlen(name) > SERVICED_NAME_MAX) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	/* No ambient lookup channel -> not reachable this way. */
+	return (service_lookup_over_channel(service_ambient_lookup_fd(), name,
+	    session_fdp));
+}
+
+/*
+ * Mint a session lookup channel for `uid` through the auth-agent
+ * (system.authagent), reached over the caller's ambient SYSTEM lookup channel
+ * `lookup_chan`.  The agent — not the caller — holds the principal->bundle
+ * policy and the mint authority: the caller merely asserts, by holding a
+ * reachable channel, that it has authenticated the named principal.  The agent
+ * resolves the uid's identity itself and returns the scoped channel (SYSTEM for
+ * an admin principal, per-uid USER otherwise), delivered single-transfer.
+ *
+ * Returns 0 with *out_fd set on success.  On any failure (agent absent,
+ * timeout, policy/mint error) it returns -1 and the caller falls back to the
+ * direct mint path — the agent is an interposition, never a hard dependency.
+ */
+int
+service_mint_session_via_agent(int lookup_chan, uid_t uid, uint32_t flags,
+    unsigned timeout_ms, int *out_fd)
+{
+	struct authagent_mint_req req;
+	struct authagent_mint_reply reply_data;
+	struct service_message message = {
+		.size = sizeof(message),
+		.data = &req,
+		.length = sizeof(req),
+		.fds = NULL,
+		.nfds = 0,
+	};
+	int reply_fd = -1;
+	struct service_reply reply = {
+		.size = sizeof(reply),
+		.data = &reply_data,
+		.capacity = sizeof(reply_data),
+		.fds = &reply_fd,
+		.fd_capacity = 1,
+	};
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session;
+	int agent_fd, error;
+
+	if (out_fd == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*out_fd = -1;
+
+	/* Resolve system.authagent to a connected channel over the caller's
+	 * ambient lookup channel. */
+	if (service_lookup_over_channel(lookup_chan, AUTHAGENTD_NAME,
+	    &agent_fd) == -1)
+		return (-1);
+
+	options.timeout_ms = timeout_ms;
+	/* service_session_create() takes ownership of agent_fd. */
+	if (service_session_create(agent_fd, &session) == -1) {
+		error = errno;
+		(void)close(agent_fd);
+		errno = error;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.version = AUTHAGENTD_PROTO_VERSION;
+	req.op = AUTHAGENT_OP_MINT_SESSION;
+	req.uid = (uint32_t)uid;
+	req.flags = (flags & SERVICE_MINT_AGENT_FORWARDABLE) ?
+	    AUTHAGENT_FLAG_FORWARDABLE : 0;
+
+	if (service_session_call(session, &message, &reply, &options) == -1) {
+		error = errno;
+		service_session_close(session);
+		errno = error;
+		return (-1);
+	}
+	service_session_close(session);
+
+	if (reply.length != sizeof(reply_data)) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+	if (reply_data.status != 0) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = reply_data.status;
+		return (-1);
+	}
+	if (reply.nfds != 1 || reply_fd < 0) {
+		if (reply_fd >= 0)
+			(void)close(reply_fd);
+		errno = EBADMSG;
+		return (-1);
+	}
+	*out_fd = reply_fd;
 	return (0);
 }
 
