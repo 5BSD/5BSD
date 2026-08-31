@@ -9,4 +9,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
 
 LIBADD=		service
 
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+= tests
+
 .include <bsd.prog.mk>
