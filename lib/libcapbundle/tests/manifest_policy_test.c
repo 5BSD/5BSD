@@ -427,6 +427,115 @@ ATF_TC_BODY(non_helper_defaults_false, tc)
 	ATF_CHECK(!svc.is_helper);
 }
 
+/* ---- capabilities.open (serviced-delivered file/dir descriptors) ------ */
+
+ATF_TC_WITHOUT_HEAD(open_file_and_dir_parse);
+ATF_TC_BODY(open_file_and_dir_parse, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\n"
+	    "capabilities {\n"
+	    "  open = [\n"
+	    "    { path = \"/Capabilities/Config/principal-policy.ucl\";\n"
+	    "      name = \"principal-policy\"; type = \"file\"; rights = \"r\"; },\n"
+	    "    { path = \"/var/db/state\";\n"
+	    "      name = \"state\"; type = \"file\"; rights = \"rw\"; },\n"
+	    "    { path = \"/Capabilities/Config\";\n"
+	    "      name = \"config\"; type = \"dir\"; rights = \"rl\"; },\n"
+	    "  ]\n"
+	    "}\n", &svc, err, sizeof(err)), "unexpected error: %s", err);
+	ATF_REQUIRE_EQ(3u, svc.ncap_open);
+
+	ATF_CHECK_STREQ("/Capabilities/Config/principal-policy.ucl",
+	    svc.cap_open[0].path);
+	ATF_CHECK_STREQ("principal-policy", svc.cap_open[0].name);
+	ATF_CHECK_EQ(0, svc.cap_open[0].is_dir);
+	ATF_CHECK_EQ(SVC_OPEN_READ, svc.cap_open[0].rights);
+
+	ATF_CHECK_STREQ("state", svc.cap_open[1].name);
+	ATF_CHECK_EQ(0, svc.cap_open[1].is_dir);
+	ATF_CHECK_EQ(SVC_OPEN_READ | SVC_OPEN_WRITE, svc.cap_open[1].rights);
+
+	ATF_CHECK_STREQ("config", svc.cap_open[2].name);
+	ATF_CHECK_EQ(1, svc.cap_open[2].is_dir);
+	ATF_CHECK_EQ(SVC_OPEN_READ | SVC_OPEN_LOOKUP, svc.cap_open[2].rights);
+}
+
+ATF_TC_WITHOUT_HEAD(open_type_defaults_to_file);
+ATF_TC_BODY(open_type_defaults_to_file, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\n"
+	    "capabilities { open = [ { path = \"/etc/thing\";"
+	    " name = \"thing\"; rights = \"r\"; } ] }\n",
+	    &svc, err, sizeof(err)), "unexpected error: %s", err);
+	ATF_REQUIRE_EQ(1u, svc.ncap_open);
+	ATF_CHECK_EQ(0, svc.cap_open[0].is_dir);
+}
+
+ATF_TC_WITHOUT_HEAD(open_relative_path_rejected);
+ATF_TC_BODY(open_relative_path_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "capabilities { open = [ { path = \"etc/thing\";"
+	    " name = \"thing\"; rights = \"r\"; } ] }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "open path") != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(open_missing_rights_rejected);
+ATF_TC_BODY(open_missing_rights_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "capabilities { open = [ { path = \"/etc/thing\";"
+	    " name = \"thing\"; } ] }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "rights") != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(open_bad_name_rejected);
+ATF_TC_BODY(open_bad_name_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* Uppercase is outside the [a-z0-9-] capability-name charset. */
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "capabilities { open = [ { path = \"/etc/thing\";"
+	    " name = \"Thing\"; rights = \"r\"; } ] }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "open name") != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(open_bad_type_rejected);
+ATF_TC_BODY(open_bad_type_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "capabilities { open = [ { path = \"/etc/thing\";"
+	    " name = \"thing\"; type = \"socket\"; rights = \"r\"; } ] }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "file or dir") != NULL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, helper_unit_parses);
@@ -455,6 +564,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, on_mount_parses);
 	ATF_TP_ADD_TC(tp, jail_without_path_parses);
 	ATF_TP_ADD_TC(tp, jail_relative_path_rejected);
+	ATF_TP_ADD_TC(tp, open_file_and_dir_parse);
+	ATF_TP_ADD_TC(tp, open_type_defaults_to_file);
+	ATF_TP_ADD_TC(tp, open_relative_path_rejected);
+	ATF_TP_ADD_TC(tp, open_missing_rights_rejected);
+	ATF_TP_ADD_TC(tp, open_bad_name_rejected);
+	ATF_TP_ADD_TC(tp, open_bad_type_rejected);
 
 	return (atf_no_error());
 }

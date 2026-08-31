@@ -471,6 +471,19 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 		m->cap_files[i].actions = s->cap_files[i].actions;
 	}
 
+	/* Files/dirs serviced opens and delivers as named descriptors */
+	m->ncap_open = MIN(s->ncap_open, SERVICED_MAX_CAP_OPEN);
+	for (i = 0; i < m->ncap_open; i++) {
+		if (manifest_copy(s->cap_open[i].path, m->cap_open[i].path,
+		    sizeof(m->cap_open[i].path)) == -1)
+			return (-1);
+		if (manifest_copy(s->cap_open[i].name, m->cap_open[i].name,
+		    sizeof(m->cap_open[i].name)) == -1)
+			return (-1);
+		m->cap_open[i].rights = s->cap_open[i].rights;
+		m->cap_open[i].is_dir = s->cap_open[i].is_dir;
+	}
+
 	/* Network capabilities */
 	m->ncap_net = MIN(s->ncap_net, SERVICED_MAX_CAP_NET);
 	for (i = 0; i < m->ncap_net; i++)

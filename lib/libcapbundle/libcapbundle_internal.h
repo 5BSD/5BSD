@@ -27,6 +27,7 @@
 #define	CAPBUNDLE_MAX_CAP_VSOCK		16
 #define	CAPBUNDLE_MAX_CAP_STORAGE	SERVICED_MAX_CAP_STORAGE
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
+#define	CAPBUNDLE_MAX_CAP_OPEN		SERVICED_MAX_CAP_OPEN
 #define	CAPBUNDLE_MAX_KMOD_REQUIRES	8
 /*
  * Upper bound on a monotonic activation.timer interval: 366 days in seconds.
@@ -84,6 +85,10 @@ struct capbundle_service {
 		uint64_t actions;	/* FI_FS_* mask */
 	} cap_files[CAPBUNDLE_MAX_CAP_FILES];
 	unsigned ncap_files;
+
+	/* Files/dirs serviced opens and delivers as named descriptors */
+	struct serviced_open_cap cap_open[CAPBUNDLE_MAX_CAP_OPEN];
+	unsigned ncap_open;
 
 	/* Network capabilities (full: domain, address, prefix, port range) */
 	struct ort_net_claim cap_net[CAPBUNDLE_MAX_CAP_NET];

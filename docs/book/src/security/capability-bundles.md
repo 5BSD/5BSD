@@ -127,10 +127,62 @@ the consumer mounts and hardens the directory itself, granting itself
 `CAP_MMAP_R` there is all that is needed to `mmap(2)` its own storage — no
 manifest opt-in.
 
+A unit may also declare files and directories it needs as descriptors rather
+than paths, under `capabilities.open`:
+
+```
+capabilities {
+    open = [
+        { path = "/Capabilities/Config/principal-policy.ucl";
+          name = "principal-policy"; type = "file"; rights = "r"; },
+        { path = "/Capabilities/Config";
+          name = "config"; type = "dir"; rights = "rl"; },
+    ]
+}
+```
+
+The service manager resolves each path once, opens it, and attenuates the
+descriptor to exactly the rights the unit asked for — `r` read, `w` write, `x`
+execute, `l` lookup, always with `fstat` — then delivers it as a named entry in
+the same bootstrap descriptor table as capability services and storage. The
+program never opens a path; it retrieves the descriptor by name with
+`service_capability_open(3)` (`ucl_parser_add_fd` for a config file, `openat`
+under a delivered directory). This is the capsicum-clean replacement for the
+old habit of opening a config path before `cap_enter`. Acquisition is a launch
+prerequisite: if the manager cannot open a declared resource with the requested
+rights it refuses to launch the unit, exactly like a missing dependency — never
+a half-provisioned service. `capabilities.open` is distinct from
+`capabilities.files`, which is a MAC path-access grant (see below), not a
+delivered descriptor.
+
 Providers claim only IPC names declared under `activation.ipc`. A provider is
 not ready until its complete declared set is claimed and capability-mode entry
 is independently observed. Simultaneous lookups cannot create duplicate
 provider processes.
+
+## Exclusive and non-exclusive holds
+
+Capability classes divide into two kinds, and the distinction is a system
+invariant, not a stylistic one:
+
+- **Non-exclusive holds** — `paths`, `files`, and delivered `open` descriptors.
+  A file or path grant is a *reference-counted share*: any number of units may
+  hold an overlapping grant on the same path at the same time, each narrowed to
+  its own `FI_FS_*` action mask. Holding read on `/Capabilities/Config` does not
+  exclude another unit from holding it too. A delivered `open` descriptor is the
+  most non-exclusive of all — it is simply an opened file, not even a claim.
+
+- **Exclusive isolations** — `network` endpoints, `jails`, and `vsock` CIDs.
+  An isolation is owned by exactly one holder *across the whole system*. The
+  authority mints an isolation token only after `mac_capability_isolation`
+  confirms no foreign owner already holds an overlapping claim; a conflicting
+  request is rejected. The same owner re-claiming its own isolation is a
+  refcount, not a conflict. This is what makes an isolation an isolation: two
+  units cannot both own TCP :443, jail `web`, or vsock CID 42.
+
+A unit author reads this as: ask for files and `open` descriptors freely — they
+compose — but an isolation you declare is yours alone, and a second unit that
+declares the same one will fail to launch until the first releases it.
 
 Storage lifecycle is supervised. `lease` storage is reference-counted across
 all units sharing it and is destroyed only after the last holder; crash and

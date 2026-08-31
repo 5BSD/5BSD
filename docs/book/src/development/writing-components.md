@@ -5,8 +5,9 @@ capability services.  The services live under `sys/dev/mac_capability/` as
 loadable modules and are reached through file descriptors: a process opens
 `/dev/mac_capability`, connects to a service by name, and receives an
 *instance fd* that carries every subsequent operation.  This chapter walks
-through the ISOLATION service, which lets a supervisor claim exclusive
-ownership of files, sockets, network endpoints, vsock endpoints, and jails.
+through the ISOLATION service, which lets a supervisor claim network endpoints,
+vsock endpoints, and jails as *exclusive* isolations (one owner system-wide),
+and files and paths as *non-exclusive*, reference-counted access grants.
 
 ## Obtaining a mac_capability connection
 

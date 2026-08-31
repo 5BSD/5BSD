@@ -139,9 +139,11 @@ print_bundle(const struct capbundle *b)
 			printf(" [%s]", m.kmod_requires[j]);
 		printf("\n");
 		printf("      capabilities: paths=%u files=%u network=%u "
-		    "jails=%u vsock=%u services=%u storage=%u system=0x%x\n",
+		    "jails=%u vsock=%u services=%u storage=%u open=%u "
+		    "system=0x%x\n",
 		    m.ncap_paths, m.ncap_files, m.ncap_net, m.ncap_jail,
-		    m.ncap_vsock, m.ncap_services, m.ncap_storage, m.cap_system);
+		    m.ncap_vsock, m.ncap_services, m.ncap_storage, m.ncap_open,
+		    m.cap_system);
 		if (m.protect_flags != 0)
 			printf("      protect: 0x%x\n", m.protect_flags);
 		for (j = 0; j < m.ncap_paths; j++)
@@ -192,6 +194,24 @@ print_bundle(const struct capbundle *b)
 			    lifetime,
 			    m.cap_storage[j].scope == ORT_STORAGE_SCOPE_SHARED ?
 			    "shared" : "unit", m.cap_storage[j].dataset);
+		}
+		for (j = 0; j < m.ncap_open; j++) {
+			char r[5];
+			unsigned k = 0;
+
+			if (m.cap_open[j].rights & SVC_OPEN_READ)
+				r[k++] = 'r';
+			if (m.cap_open[j].rights & SVC_OPEN_WRITE)
+				r[k++] = 'w';
+			if (m.cap_open[j].rights & SVC_OPEN_EXEC)
+				r[k++] = 'x';
+			if (m.cap_open[j].rights & SVC_OPEN_LOOKUP)
+				r[k++] = 'l';
+			r[k] = '\0';
+			/* Non-exclusive: a delivered descriptor, not a claim. */
+			printf("        open: %s name=%s type=%s rights=%s\n",
+			    m.cap_open[j].path, m.cap_open[j].name,
+			    m.cap_open[j].is_dir ? "dir" : "file", r);
 		}
 		if (m.has_jail)
 			printf("      jail: name=%s path=%s hostname=%s "

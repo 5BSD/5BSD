@@ -168,9 +168,13 @@ service_capability_name_valid(const char *name)
 	    strcmp(name, "accounting") == 0 || strcmp(name, "identity") == 0 ||
 	    strcmp(name, "container") == 0 || strcmp(name, "bundle") == 0)
 		return (true);
-	if (strncmp(name, "storage:", 8) != 0)
-		return (false);
-	name += 8;
+	/*
+	 * "storage:<name>" reserves the prefix; every other capability
+	 * (including files/dirs delivered via the unit's `open` set) is a bare
+	 * [a-z0-9-] token, no leading/trailing hyphen, bounded length.
+	 */
+	if (strncmp(name, "storage:", 8) == 0)
+		name += 8;
 	len = strlen(name);
 	if (len == 0 || len >= SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX - 8 ||
 	    name[0] == '-' || name[len - 1] == '-')
@@ -441,6 +445,25 @@ parse_service_bootstrap(void)
 			 * on the handle itself.  The fd's liveness is already
 			 * verified above; accept it (service_storage_open mounts it).
 			 */
+		} else if (strcmp(bootstrap->capabilities[i].type, "file") == 0 ||
+		    strcmp(bootstrap->capabilities[i].type, "dir") == 0) {
+			/*
+			 * A file/dir descriptor the service manager opened on the
+			 * unit's behalf (capabilities.open).  Like a zfshandle it is
+			 * a raw kernel descriptor, not a mac_capability token — and
+			 * its rights are consumer-specified, so there is no fixed
+			 * rights set to match.  Liveness is checked above; assert
+			 * only that the vnode kind matches the declared type.
+			 */
+			struct stat obs;
+
+			if (fstat(bootstrap->capabilities[i].fd, &obs) == -1)
+				goto invalid_descriptor;
+			if (strcmp(bootstrap->capabilities[i].type, "dir") == 0) {
+				if (!S_ISDIR(obs.st_mode))
+					goto invalid_descriptor;
+			} else if (!S_ISREG(obs.st_mode))
+				goto invalid_descriptor;
 		} else {
 			memset(&info, 0, sizeof(info));
 			if (capability_get_info(bootstrap->capabilities[i].fd,

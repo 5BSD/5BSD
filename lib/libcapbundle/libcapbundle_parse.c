@@ -758,7 +758,9 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const limitskeys[] = { "memory", "cpu", "nproc",
 	    "nofile", "stack", "fsize", "core" };
 	static const char *const capkeys[] = { "paths", "files", "network",
-	    "jails", "vsock", "services", "system" };
+	    "jails", "vsock", "services", "system", "open" };
+	static const char *const openkeys[] = { "path", "name", "type",
+	    "rights" };
 	static const char *const storagekeys[] = { "name", "scope", "flavor",
 	    "rights", "lifetime" };
 	static const char *const service_names[] = { "mount", "node",
@@ -1299,6 +1301,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	VALIDATE_CAP_ARRAY("vsock", CAPBUNDLE_MAX_CAP_VSOCK);
 	VALIDATE_CAP_ARRAY("services", CAPBUNDLE_MAX_CAP_SERVICES);
 	VALIDATE_CAP_ARRAY("system", nitems(gate_names));
+	VALIDATE_CAP_ARRAY("open", SERVICED_MAX_CAP_OPEN);
 #undef VALIDATE_CAP_ARRAY
 
 	arr = ucl_object_lookup(caps, "paths");
@@ -1391,6 +1394,69 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		    strlen(ucl_object_tostring(x)) >= PATH_MAX ||
 		    parse_file_actions(ucl_object_lookup(v, "actions"), &actions) != 0) {
 			snprintf(errbuf, errlen, "invalid capabilities.files entry");
+			return (-1);
+		}
+	}
+
+	arr = ucl_object_lookup(caps, "open");
+	it = NULL;
+	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
+		const char *t;
+		if (validate_keys(v, "capabilities.open entry", openkeys,
+		    nitems(openkeys), errbuf, errlen) != 0)
+			return (-1);
+		x = ucl_object_lookup(v, "path");
+		if (x == NULL || ucl_object_type(x) != UCL_STRING ||
+		    ucl_object_tostring(x)[0] != '/' ||
+		    strlen(ucl_object_tostring(x)) >= PATH_MAX) {
+			snprintf(errbuf, errlen,
+			    "invalid capabilities.open path");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "name");
+		if (x == NULL || ucl_object_type(x) != UCL_STRING) {
+			snprintf(errbuf, errlen,
+			    "invalid capabilities.open name");
+			return (-1);
+		} else {
+			/*
+			 * Must satisfy service_capability_name_valid: a bare
+			 * [a-z0-9-] token, no leading/trailing hyphen, short
+			 * enough for the bootstrap name slot.  Rejecting here
+			 * turns a bad name into a config error rather than a
+			 * silent retrieval failure in the service.
+			 */
+			const char *nm = ucl_object_tostring(x);
+			size_t nl = strlen(nm);
+			const char *np;
+
+			if (nl == 0 || nl >= 56 || nm[0] == '-' ||
+			    nm[nl - 1] == '-') {
+				snprintf(errbuf, errlen,
+				    "capabilities.open name length/format");
+				return (-1);
+			}
+			for (np = nm; *np != '\0'; np++)
+				if (!((*np >= 'a' && *np <= 'z') ||
+				    (*np >= '0' && *np <= '9') || *np == '-')) {
+					snprintf(errbuf, errlen,
+					    "capabilities.open name charset");
+					return (-1);
+				}
+		}
+		x = ucl_object_lookup(v, "rights");
+		if (x == NULL || ucl_object_type(x) != UCL_STRING ||
+		    ucl_object_tostring(x)[0] == '\0') {
+			snprintf(errbuf, errlen,
+			    "capabilities.open entry requires rights");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "type");
+		if (x != NULL && (ucl_object_type(x) != UCL_STRING ||
+		    ((t = ucl_object_tostring(x)),
+		    strcmp(t, "file") != 0 && strcmp(t, "dir") != 0))) {
+			snprintf(errbuf, errlen,
+			    "capabilities.open type must be file or dir");
 			return (-1);
 		}
 	}
@@ -2528,6 +2594,126 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 				}
 			}
 
+			/*
+			 * open = [ { path, name, type=file|dir, rights } ]
+			 * Files/dirs serviced opens on the service's behalf and
+			 * delivers as named descriptors (docs/service-file-
+			 * delivery.md).  Distinct from capabilities.files, which
+			 * is a MAC path-access grant, not a delivered fd.
+			 */
+			{
+				const ucl_object_t *opens, *oelem;
+				ucl_object_iter_t oit;
+
+				opens = ucl_object_lookup(caps, "open");
+				if (opens != NULL) {
+					oit = NULL;
+					while (svc->ncap_open <
+					    CAPBUNDLE_MAX_CAP_OPEN &&
+					    (oelem = ucl_object_iterate(opens,
+					    &oit, true)) != NULL) {
+						const ucl_object_t *ov;
+						const char *op, *oname, *otype;
+						const char *orights, *rp;
+						struct serviced_open_cap *oc;
+						uint32_t rmask;
+
+						if (ucl_object_type(oelem) !=
+						    UCL_OBJECT)
+							continue;
+						ov = ucl_object_lookup(oelem,
+						    "path");
+						if (ov == NULL ||
+						    ucl_object_type(ov) !=
+						    UCL_STRING)
+							continue;
+						op = ucl_object_tostring(ov);
+						if (op[0] != '/') {
+							syslog(LOG_WARNING,
+							    "capbundle %s: open "
+							    "path must be "
+							    "absolute: %s",
+							    path, op);
+							continue;
+						}
+						ov = ucl_object_lookup(oelem,
+						    "name");
+						if (ov == NULL ||
+						    ucl_object_type(ov) !=
+						    UCL_STRING)
+							continue;
+						oname = ucl_object_tostring(ov);
+						if (oname[0] == '\0') {
+							syslog(LOG_WARNING,
+							    "capbundle %s: open "
+							    "name empty", path);
+							continue;
+						}
+						ov = ucl_object_lookup(oelem,
+						    "type");
+						otype = (ov != NULL &&
+						    ucl_object_type(ov) ==
+						    UCL_STRING) ?
+						    ucl_object_tostring(ov) :
+						    "file";
+						ov = ucl_object_lookup(oelem,
+						    "rights");
+						if (ov == NULL ||
+						    ucl_object_type(ov) !=
+						    UCL_STRING) {
+							syslog(LOG_WARNING,
+							    "capbundle %s: open "
+							    "%s: rights required",
+							    path, oname);
+							continue;
+						}
+						orights =
+						    ucl_object_tostring(ov);
+						rmask = 0;
+						for (rp = orights; *rp != '\0';
+						    rp++) {
+							switch (*rp) {
+							case 'r':
+								rmask |=
+								SVC_OPEN_READ;
+								break;
+							case 'w':
+								rmask |=
+								SVC_OPEN_WRITE;
+								break;
+							case 'x':
+								rmask |=
+								SVC_OPEN_EXEC;
+								break;
+							case 'l':
+								rmask |=
+								SVC_OPEN_LOOKUP;
+								break;
+							default:
+								break;
+							}
+						}
+						if (rmask == 0) {
+							syslog(LOG_WARNING,
+							    "capbundle %s: open "
+							    "%s: no valid rights "
+							    "in \"%s\"", path,
+							    oname, orights);
+							continue;
+						}
+						oc = &svc->cap_open[
+						    svc->ncap_open];
+						strlcpy(oc->path, op, PATH_MAX);
+						strlcpy(oc->name, oname,
+						    sizeof(oc->name));
+						oc->rights = rmask;
+						oc->is_dir = (strcmp(otype,
+						    "dir") == 0) ? 1 : 0;
+						svc->ncap_open++;
+					}
+				}
+			}
+
 			/* Network capabilities — full parsing via
 			 * parse_ucl_net_claim-style logic matching manifest.c */
 			{
@@ -3056,6 +3242,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		CHECK_CAP_COUNT("vsock", ncap_vsock);
 		CHECK_CAP_COUNT("storage", ncap_storage);
 		CHECK_CAP_COUNT("services", ncap_services);
+		CHECK_CAP_COUNT("open", ncap_open);
 #undef CHECK_CAP_COUNT
 	}
 
