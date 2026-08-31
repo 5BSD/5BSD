@@ -140,9 +140,9 @@ lives in [`service-plane-review-brief.md` §2a](service-plane-review-brief.md).
 ## 9. Eliminating the filesystem control socket
 
 Move all management ops onto the inherited channel, authorized by the minting
-principal (§4). Remove `SERVICED_CTL_SOCK`. `servicectl` uses the ambient
-channel login/ssh passed forward. **Sequenced last** — only after §5/§6 prove the
-channel authz, so admin control is never lost mid-migration.
+principal (§4). The `SERVICED_CTL_SOCK` macro is now deleted. `servicectl` uses
+the ambient channel login/ssh passed forward. **Sequenced last** — only after
+§5/§6 prove the channel authz, so admin control is never lost mid-migration.
 
 ## 10. What must be built
 
@@ -220,10 +220,9 @@ Everything discussed this session, so we don't lose context. Ordered.
 - Synthesize the four adversarial reviews (auth/provisioning, domain/mint/
   escalation/D1, fd-hygiene/non-fatal, Phase-4-launch/rc/mgmt); fix the real,
   verified bugs; re-validate in a clean VM; commit.
-- Reconcile stale comments: `domain_provision_session` header + `sctl.c` still
-  claim `CAP_XFER_ONCE` but the single-transfer model no longer applies it —
-  fix the comments (not the code) to match "serviced sends full authority; each
-  sender closes its copy; the leaf holds it."
+- (Done.) The `domain_provision_session` backend and `sctl.c` provisioning path
+  have since been removed entirely along with the control socket, so the stale
+  `CAP_XFER_ONCE` comments they carried are gone with them.
 - Trim verbose comments across this session's code to concise KNF density.
 - The former `naming.c` two-hop `TWICE` worker handoff has been
   removed; the model is per-hop attenuation (`ONCE` is a single hop), already in

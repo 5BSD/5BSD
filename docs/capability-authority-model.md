@@ -273,21 +273,18 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   ambient lookup channel all come up).
 - **P3 — control planes (serviced: done, VM-validated).** serviced and tzfsd
   control become presented `:admin` capabilities (rights on the grant); the
-  getpeereid sockets are retired with the last op that needs them (serviced's in
-  P4, with `PROVISION_SESSION`).
+  getpeereid sockets are now retired entirely — serviced's last one, along with
+  the `PROVISION_SESSION` op it carried, is gone as of this milestone.
 
   *Implemented + validated (serviced), 2026-08-30.* serviced self-serves
   `system.serviced`; `servicectl` resolves it over the ambient plane and uses it
-  as the primary transport, falling back to the socket only when no ambient
-  channel is available. Fresh-image proof: with the control socket **moved away**,
-  a root `servicectl status`/`reload` still succeed (capability path only); a
-  `nobody` session cannot resolve `system.serviced` (USER domain → ENOENT) and is
-  denied. The socket's admin-op handling is **kept as a transitional fallback**
-  rather than crippled now: the socket node must survive for `PROVISION_SESSION`
-  until P4 regardless, so there is no security gain in removing only its admin
-  ops early (its getpeereid gate is still correct: socket `reload` stays
-  root-only) and a real resilience cost for no-ambient/recovery contexts. The
-  whole socket — admin ops and `PROVISION_SESSION` alike — is retired in P4.
+  as its **only** transport — there is no socket fallback, so a caller with no
+  ambient channel simply errors. Fresh-image proof: with **no control socket at
+  all**, a root `servicectl status`/`reload` still succeed (capability path
+  only); a `nobody` session cannot resolve `system.serviced` (USER domain →
+  ENOENT) and is denied. The socket — admin ops and `PROVISION_SESSION` alike —
+  is deleted; its getpeereid uid attestation is fully replaced by the
+  SYSTEM-channel grant.
 
   *Settled design (serviced).* serviced self-serves a plain SYSTEM name
   `system.serviced` — **not** a `.Control` name (the `.Control` convention is a
@@ -304,14 +301,13 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   to the caller as usual. The in-process handler runs the existing sctl dispatch
   but gates `RELOAD`/`START`/`STOP` on
   `service_rights_allow(rights, SERVICE_RIGHTS_ADMIN)` instead of the
-  `getpeereid` euid; `STATUS`/`SERVICES` need no admin right. Because the only
-  fd-passing op — `PROVISION_SESSION`, the kernel-attested login/sshd bridge —
-  stays on its socket until P4, the capability path is a clean fd-less
-  request→reply message exchange (no SCM_RIGHTS). Rollout is **dual-path**: the
-  capability endpoint lands alongside the working socket and `servicectl` resolves
-  `system.serviced` over the ambient plane, preferring it and falling back to the
-  socket only where no ambient channel exists. The socket is not torn down in P3
-  (it still carries `PROVISION_SESSION`); P4 retires it whole. tzfsd's socket is
+  `getpeereid` euid; `STATUS`/`SERVICES` need no admin right. There is no more
+  fd-passing control op: `PROVISION_SESSION` (the old kernel-attested login/sshd
+  bridge) is gone, session provisioning having moved to a minted per-connection
+  SYSTEM channel, so the capability path is a clean fd-less request→reply message
+  exchange (no SCM_RIGHTS). The rollout is **complete, not dual-path**:
+  `servicectl` resolves `system.serviced` over the ambient plane and has no
+  socket fallback, and serviced binds no control socket at all. tzfsd's socket is
   the separate filesystem-socket→discovery concern, tracked independently.
 - **P4 — lifecycle + PID-1 minimization.**
 
@@ -344,9 +340,10 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
 
   *P4b — lifecycle capability.* A `lifecycle` capability served by the spine;
   `reboot`/`halt`/`shutdown` present it; delete the authorityd socket and the
-  signal-authority path; `reboot(2)` stays as the kernel escape. Re-home the
-  serviced `PROVISION_SESSION` login/sshd bridge and retire the serviced socket
-  whole.
+  signal-authority path; `reboot(2)` stays as the kernel escape. The serviced
+  `PROVISION_SESSION` login/sshd bridge has already been re-homed onto a minted
+  per-connection SYSTEM channel and the serviced socket retired whole (done this
+  milestone); the authorityd control socket is likewise gone.
 - **P5 — retire uid-derived domains.** Discovery becomes an auth-minted
   capability; remove `principal_is_admin`-style uid tests and the `.Control`
   convention. `traced` and the remaining services convert to presented caps.

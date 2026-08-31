@@ -95,6 +95,8 @@ CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libauthorityrt
 
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
+LIBADD.capd_protocol_fixture+=	service channel capability
 
 LIBADD.capd_service_fixture+=	capability channel service pthread
 CFLAGS.capd_service_fixture+=	-I${SRCTOP}/lib/libcapability

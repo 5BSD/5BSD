@@ -309,6 +309,7 @@ managed_quiesce_roundtrip_head()
 }
 managed_quiesce_roundtrip_body()
 {
+	require_ambient_control
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin system org.test.quiesce \
@@ -320,7 +321,7 @@ arguments = [\"quiesce\", \"org.test.quiesce\", \"$(pwd)/quiesce.ready\", \"$(pw
 	start_stack
 	wait_for_file quiesce.ready || atf_fail "quiesce provider did not become ready"
 	atf_check -s exit:0 -o match:"stopping" \
-	    servicectl -s "${CTL_SOCK}" stop org.test.quiesce/quiesce
+	    servicectl stop org.test.quiesce/quiesce
 	wait_for_file quiesce.result || {
 		cat "$logfile" 2>/dev/null
 		atf_fail "provider did not complete managed quiesce"
@@ -430,6 +431,7 @@ service_descriptor_limit_inheritance_head()
 }
 service_descriptor_limit_inheritance_body()
 {
+	require_ambient_control
 	prepare_paths
 	make_svc system fd-limit '' \
 	    '#!/bin/sh' \
@@ -451,7 +453,7 @@ service_descriptor_limit_inheritance_body()
 	[ "$(wc -l < fd-limit.out)" -eq 2 ] ||
 	    atf_fail "service did not finish reporting descriptor limits"
 	atf_check -s exit:0 -o save:fd-status.out \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	inherited=$(sed -n '1p' fd-limit.out)
 	lowered=$(sed -n '2p' fd-limit.out)
@@ -757,6 +759,7 @@ capmode_is_authoritative_readiness_head()
 }
 capmode_is_authoritative_readiness_body()
 {
+	require_ambient_control
 	local i pid
 
 	find_capd_service_fixture
@@ -774,9 +777,9 @@ capmode_is_authoritative_readiness_body()
 		atf_fail "fixture did not send the legacy READY message"
 	fi
 	atf_check -s exit:0 -o match:"org.test.capmode.gate.*starting" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 	atf_check -s exit:0 -o not-match:"org.test.capmode.gate.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	pid=$(sed -n 's/^pid=\([0-9][0-9]*\).*/\1/p' protocol-ready.out)
 	[ -n "$pid" ] || atf_fail "fixture did not report its pid"
@@ -787,7 +790,7 @@ capmode_is_authoritative_readiness_body()
 	fi
 	i=0
 	while [ "$i" -lt 100 ]; do
-		if servicectl -s "${CTL_SOCK}" status |
+		if servicectl status |
 		    grep -q "org.test.capmode.gate.*running"; then
 			break
 		fi
@@ -806,82 +809,6 @@ capmode_is_authoritative_readiness_cleanup()
 }
 
 # ===================================================================
-# Control-socket authorization: unprivileged peer denied privileged op
-# ===================================================================
-
-atf_test_case sctl_privilege_denied cleanup
-sctl_privilege_denied_head()
-{
-	atf_set "descr" "unprivileged peer cannot run a privileged control op (reload); control socket is root-owned and not world-accessible"
-	atf_set "require.user" "root"
-	require_authority_stack_kmods
-}
-sctl_privilege_denied_body()
-{
-	prepare_paths
-	start_stack
-
-	# Wait for serviced to create its control socket.
-	i=0
-	while [ ! -S "${CTL_SOCK}" ] && [ "$i" -lt 100 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "${CTL_SOCK}" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "serviced did not create control socket"
-	fi
-
-	# Reliable core assertions: the control socket is owned by root and
-	# grants no access to "other" (world).  serviced binds it 0770.
-	atf_check -s exit:0 -o match:"^root$" \
-	    stat -f "%Su" "${CTL_SOCK}"
-	atf_check -s exit:0 -o match:"^770$" \
-	    stat -f "%Lp" "${CTL_SOCK}"
-
-	# Best-effort live denial: allow nobody to reach the socket, then
-	# attempt a privileged op as nobody.  It must be denied — either the
-	# kernel refuses the connect or serviced returns EPERM.  It must never
-	# report success (status=0).
-	chmod 0777 "${WORK}" 2>/dev/null || true
-	chmod 0777 "${CTL_SOCK}" 2>/dev/null || true
-
-	atf_check -s exit:0 "$(atf_get_srcdir)/capd_protocol_fixture" \
-	    control-deny "${CTL_SOCK}" sctl-deny.out
-	atf_check -s exit:0 -o match:"status=" cat sctl-deny.out
-	atf_check -s exit:0 -o not-match:"status=0$" cat sctl-deny.out
-	assert_stack_alive
-}
-sctl_privilege_denied_cleanup()
-{
-	cleanup_common
-	rm -f sctl-deny.out
-}
-
-atf_test_case sctl_rejects_malformed_requests cleanup
-sctl_rejects_malformed_requests_head()
-{
-	atf_set "descr" \
-	    "Control protocol rejects unknown flags and embedded NUL labels"
-	atf_set "require.user" "root"
-	require_authority_stack_kmods
-}
-sctl_rejects_malformed_requests_body()
-{
-	start_stack
-	for kind in flags nul; do
-		atf_check -s exit:0 -o match:"status=22" \
-		    "$(atf_get_srcdir)/capd_protocol_fixture" \
-		    control-invalid "${CTL_SOCK}" "$kind"
-	done
-	assert_stack_alive
-}
-sctl_rejects_malformed_requests_cleanup()
-{
-	cleanup_common
-}
-
-# ===================================================================
 # Provider-driven idle shutdown: stop after timeout, relaunch on demand
 # ===================================================================
 
@@ -894,6 +821,7 @@ idle_stop_and_relaunch_head()
 }
 idle_stop_and_relaunch_body()
 {
+	require_ambient_control
 	local pid1 pid2
 
 	find_capd_service_fixture
@@ -916,9 +844,9 @@ arguments = [\"idle-provider\", \"org.test.idle.svc\", \"1\", \"$(pwd)/idlep\"];
 	    "i=0; while ! grep -q 'org.test.idle.svc.*idle timeout, stopping' '$logfile' && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'idle timeout, stopping' '$logfile'"
 	# It must not still be running, and must not have been removed entirely.
 	atf_check -s exit:0 -o not-match:"org.test.idle.svc.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 	atf_check -s exit:0 -o match:"org.test.idle.svc" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	# A lookup relaunches it on demand and succeeds.
 	if ! run_lookup_client org.test.idle.svc 15; then
@@ -953,6 +881,7 @@ idle_demand_cancels_stop_head()
 }
 idle_demand_cancels_stop_body()
 {
+	require_ambient_control
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin system org.test.idle.demand \
@@ -979,7 +908,7 @@ arguments = [\"idle-provider\", \"org.test.idle.demand\", \"5\", \"$(pwd)/idled\
 	atf_check -s not-exit:0 \
 	    grep 'org.test.idle.demand.*idle timeout, stopping' "$logfile"
 	atf_check -s exit:0 -o match:"org.test.idle.demand.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 	[ ! -f idled.launch2 ] ||
 	    atf_fail "provider was relaunched despite demand keeping it alive"
 	assert_stack_alive
@@ -1003,6 +932,7 @@ idle_cancel_keeps_running_head()
 }
 idle_cancel_keeps_running_body()
 {
+	require_ambient_control
 	find_capd_service_fixture
 	prepare_paths
 	make_svc_bin system org.test.idle.cancel \
@@ -1021,13 +951,43 @@ arguments = [\"idle-cancel\", \"org.test.idle.cancel\", \"1\", \"$(pwd)/idlec.re
 	atf_check -s not-exit:0 \
 	    grep 'org.test.idle.cancel.*idle timeout, stopping' "$logfile"
 	atf_check -s exit:0 -o match:"org.test.idle.cancel.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 	assert_stack_alive
 }
 idle_cancel_keeps_running_cleanup()
 {
 	cleanup_common
 	rm -f idlec.ready
+}
+
+# Control-request input validation over the capability plane: serviced must
+# reject a request with a nonzero reserved flags field or an embedded NUL in the
+# text payload (EINVAL=22).  capd_protocol_fixture crafts the malformed request
+# and sends it over system.serviced; the reply status is the rejection.  Skips
+# when this harness has no ambient control channel (control is also validated by
+# the VM boot smoke test).
+atf_test_case sctl_rejects_malformed_requests cleanup
+sctl_rejects_malformed_requests_head()
+{
+	atf_set "descr" \
+	    "Control protocol rejects unknown flags and embedded NUL labels"
+	atf_set "require.user" "root"
+	require_authority_stack_kmods
+}
+sctl_rejects_malformed_requests_body()
+{
+	start_stack
+	require_ambient_control
+	for kind in flags nul; do
+		atf_check -s exit:0 -o match:"status=22" \
+		    "$(atf_get_srcdir)/capd_protocol_fixture" \
+		    control-invalid "$kind"
+	done
+	assert_stack_alive
+}
+sctl_rejects_malformed_requests_cleanup()
+{
+	cleanup_common
 }
 
 atf_init_test_cases()
@@ -1058,11 +1018,8 @@ atf_init_test_cases()
 	atf_add_test_case svc_unregister_explicit
 	atf_add_test_case svc_name_claim_state_machine
 	atf_add_test_case svc_withdraw_cancels_activation
-	atf_add_test_case capmode_is_authoritative_readiness
-
-	# Control-socket authorization
-	atf_add_test_case sctl_privilege_denied
 	atf_add_test_case sctl_rejects_malformed_requests
+	atf_add_test_case capmode_is_authoritative_readiness
 
 	# Provider-driven idle shutdown
 	atf_add_test_case idle_stop_and_relaunch

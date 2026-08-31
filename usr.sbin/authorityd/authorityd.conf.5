@@ -26,7 +26,7 @@ to exit.
 Unknown keys are silently ignored.
 .Ss General
 The following top-level keys are recognized:
-.Bl -tag -width "serviced_control_socket"
+.Bl -tag -width "control_socket_mode"
 .It Va pidfile
 Path to the pidfile.
 Default:
@@ -49,13 +49,6 @@ May be overridden with
 .Xr authorityd 8 Ns 's
 .Fl b
 option.
-.It Va serviced_control_socket
-Path to the control socket for
-.Xr serviced 8 ,
-passed via the
-.Ev SERVICED_CONTROL_SOCKET
-environment variable.
-Default: empty (serviced uses its compiled-in default).
 .El
 .Ss Integrity
 The

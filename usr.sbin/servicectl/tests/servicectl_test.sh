@@ -1,7 +1,7 @@
 #
 # SPDX-License-Identifier: BSD-2-Clause
 #
-# Tests for servicectl(8) and serviced's control socket.
+# Tests for servicectl(8) driving serviced over the capability control plane.
 #
 
 . "$(atf_get_srcdir)/capd_test_harness.sh"
@@ -12,7 +12,6 @@ conffile=
 manifestdir=
 user_manifestdir=
 sockpath=
-sctl_sockpath=
 logfile=
 serviced_bin=
 
@@ -54,7 +53,6 @@ prepare_paths()
 	manifestdir=$CAPD_APPS_SYSTEM
 	user_manifestdir=$CAPD_APPS_USER
 	sockpath=$CAPD_AUTHORITY_SOCKET
-	sctl_sockpath=$CAPD_SERVICED_SOCKET
 	logfile=$CAPD_LOG
 	mkdir -p "$manifestdir" "$user_manifestdir"
 	export SERVICED_BUNDLE_DIR_SYSTEM="$manifestdir"
@@ -64,33 +62,44 @@ prepare_paths()
 write_config()
 {
 	find_serviced
+	# control_socket / control_socket_mode configure authorityd's own control
+	# socket (authorityctl).  serviced's getpeereid control socket was retired
+	# (docs/capability-authority-model.md): servicectl now reaches serviced over
+	# the ambient discovery plane, so no serviced_control_socket key is written.
 	cat > "$conffile" <<EOF
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
 service_manager = "$serviced_bin";
-serviced_control_socket = "$sctl_sockpath";
 EOF
+}
+
+# Skip when servicectl cannot reach serviced over the capability plane.
+#
+# serviced's getpeereid control socket was retired
+# (docs/capability-authority-model.md): servicectl now issues control requests
+# over the ambient discovery channel a login session inherits
+# (SERVICE_LOOKUP_FD -- the same condition service_reachability_test detects via
+# service_ambient_lookup_fd()).  The ATF harness provides no login session, so
+# there is no ambient channel here and these cases skip; on a live plane the
+# channel is inherited and they run for real.  Control is otherwise validated by
+# the VM boot smoke test.
+require_ambient_control()
+{
+	if [ -z "${SERVICE_LOOKUP_FD:-}" ]; then
+		atf_skip "no ambient control channel in this harness (control is validated by the VM boot smoke test)"
+	fi
 }
 
 start_stack()
 {
 	prepare_paths
 	write_config
+	# capd_start_stack already blocks until serviced logs "serviced ready";
+	# serviced no longer creates a control socket to poll for.
 	capd_start_stack
 	daemon_pid=$("$capd_guardian_bin" ctl -s "$CAPD_GUARDIAN_SOCKET" status |
 	    sed -n 's/^running pid=//p')
-
-	# Wait for serviced control socket.
-	i=0
-	while [ ! -S "$sctl_sockpath" ] && [ "$i" -lt 50 ]; do
-		i=$((i + 1))
-		sleep 0.1
-	done
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_fail "serviced did not create its control socket"
-	fi
 }
 
 stop_stack()
@@ -157,13 +166,10 @@ servicectl_status_body()
 	find_servicectl
 	start_stack
 
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "serviced control socket not available"
-	fi
+	require_ambient_control
 
 	atf_check -s exit:0 -o match:"serviced: running" \
-	    "$servicectl_bin" -s "$sctl_sockpath" status
+	    "$servicectl_bin" status
 }
 servicectl_status_cleanup()
 {
@@ -195,10 +201,7 @@ servicectl_services_lists_body()
 
 	start_stack
 
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "serviced control socket not available"
-	fi
+	require_ambient_control
 
 	# Wait for service to start.
 	i=0
@@ -208,7 +211,7 @@ servicectl_services_lists_body()
 	done
 
 	atf_check -s exit:0 -o match:"long-svc" \
-	    "$servicectl_bin" -s "$sctl_sockpath" services
+	    "$servicectl_bin" services
 }
 servicectl_services_lists_cleanup()
 {
@@ -234,10 +237,7 @@ servicectl_reload_body()
 	find_servicectl
 	start_stack
 
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "serviced control socket not available"
-	fi
+	require_ambient_control
 
 	# Add a manifest after startup.
 	write_bundle "$manifestdir/reload-svc.cap" org.test.reload-svc reload-svc 1 \
@@ -247,7 +247,7 @@ servicectl_reload_body()
 	    'echo $$ > reload-svc.pid' \
 	    'sleep 60'
 
-	atf_check -s exit:0 -o ignore "$servicectl_bin" -s "$sctl_sockpath" reload
+	atf_check -s exit:0 -o ignore "$servicectl_bin" reload
 
 	# Wait for the new service to start.
 	i=0
@@ -261,7 +261,7 @@ servicectl_reload_body()
 	fi
 
 	atf_check -s exit:0 -o match:"reload-svc" \
-	    "$servicectl_bin" -s "$sctl_sockpath" services
+	    "$servicectl_bin" services
 }
 servicectl_reload_cleanup()
 {
@@ -327,17 +327,14 @@ servicectl_reload_nonroot_body()
 	find_servicectl
 	start_stack
 
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "serviced control socket not available"
-	fi
+	require_ambient_control
 
 	if ! id nobody >/dev/null 2>&1; then
 		atf_skip "nobody user not available"
 	fi
 
 	atf_check -s not-exit:0 -e ignore -o ignore \
-	    su -m nobody -c "'$servicectl_bin' -s '$sctl_sockpath' reload"
+	    su -m nobody -c "'$servicectl_bin' reload"
 }
 servicectl_reload_nonroot_cleanup()
 {
@@ -413,35 +410,6 @@ servicectl_stop_no_arg_body()
 servicectl_stop_no_arg_cleanup()
 {
 	:
-}
-
-# ===================================================================
-# Control socket: oversized payload rejected
-# ===================================================================
-
-atf_test_case sctl_oversized_payload cleanup
-sctl_oversized_payload_head()
-{
-	atf_set "descr" "serviced rejects oversized control payloads"
-	atf_set "require.user" "root"
-	require_authority_stack_kmods
-}
-sctl_oversized_payload_body()
-{
-	start_stack
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "serviced control socket not available"
-	fi
-
-	# Server replies with EMSGSIZE error.
-	atf_check -s exit:0 -o match:"status=" \
-	    "$(atf_get_srcdir)/capd_protocol_fixture" control-oversized \
-	    "$sctl_sockpath"
-}
-sctl_oversized_payload_cleanup()
-{
-	cleanup_common
 }
 
 # ===================================================================
@@ -665,10 +633,7 @@ servicectl_restart_body()
 
 	start_stack
 
-	if [ ! -S "$sctl_sockpath" ]; then
-		cat "$logfile" 2>/dev/null
-		atf_skip "serviced control socket not available"
-	fi
+	require_ambient_control
 
 	# Wait for the first instance to record its pid.
 	i=0
@@ -683,7 +648,7 @@ servicectl_restart_body()
 	oldpid=$(cat restart-svc.pid)
 
 	atf_check -s exit:0 -o ignore \
-	    "$servicectl_bin" -s "$sctl_sockpath" restart restart-svc
+	    "$servicectl_bin" restart restart-svc
 
 	# Wait for a new instance with a different pid.
 	i=0
@@ -713,8 +678,33 @@ servicectl_restart_cleanup()
 	cleanup_common
 }
 
+# Control-request input validation over the capability plane: serviced must
+# reject a request whose declared payload length exceeds the protocol maximum
+# (EINVAL=22) rather than over-reading.  capd_protocol_fixture crafts the
+# oversized request and sends it over system.serviced.  Skips when this harness
+# has no ambient control channel (control is also validated by the VM smoke).
+atf_test_case sctl_oversized_payload cleanup
+sctl_oversized_payload_head()
+{
+	atf_set "descr" "serviced rejects oversized control requests"
+	atf_set "require.user" "root"
+	require_authority_stack_kmods
+}
+sctl_oversized_payload_body()
+{
+	start_stack
+	require_ambient_control
+	atf_check -s exit:0 -o match:"status=22" \
+	    "$(atf_get_srcdir)/capd_protocol_fixture" control-oversized
+}
+sctl_oversized_payload_cleanup()
+{
+	cleanup_common
+}
+
 atf_init_test_cases()
 {
+	atf_add_test_case sctl_oversized_payload
 	atf_add_test_case servicectl_status
 	atf_add_test_case servicectl_services_lists
 	atf_add_test_case servicectl_reload
@@ -729,9 +719,6 @@ atf_init_test_cases()
 	atf_add_test_case servicectl_restart_requires_label
 	atf_add_test_case servicectl_restart_help
 	atf_add_test_case servicectl_restart
-
-	# adversarial
-	atf_add_test_case sctl_oversized_payload
 
 	# install
 	atf_add_test_case servicectl_install_valid

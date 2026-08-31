@@ -605,6 +605,7 @@ capability_service_descriptors_delivered_head()
 }
 capability_service_descriptors_delivered_body()
 {
+	require_ambient_control
 	find_capd_service_fixture
 	start_stack
 	make_svc_bin system capability-services \
@@ -613,7 +614,7 @@ arguments = ["capability-services", "capability-services.out"];' \
 	    "$capd_service_fixture"
 	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
 	    "${APPS_DIR}/capability-services.cap/Units/capability-services.unit/Unit.ucl"
-	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	atf_check -s exit:0 -o ignore servicectl reload
 	wait_for_file capability-services.out 10 || {
 		cat "$logfile" 2>/dev/null
 		atf_fail "capability-service test program did not start"
@@ -642,6 +643,7 @@ mount_storage_is_a_directory_head()
 }
 mount_storage_is_a_directory_body()
 {
+	require_ambient_control
 	logical="state-with-a-long-logical-name-1234567890"
 	role="storage:${logical}"
 	find_capd_service_fixture
@@ -651,7 +653,7 @@ mount_storage_is_a_directory_body()
     flavor = \"native\"; lifetime = \"lease\"; rights = \"mount\"; }];
 arguments = [\"storage-directory\", \"${role}\", \"storage-directory.out\"];" \
 	    "$capd_service_fixture"
-	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	atf_check -s exit:0 -o ignore servicectl reload
 	wait_for_file storage-directory.out 20 || {
 		cat "$logfile" 2>/dev/null
 		atf_fail "storage-directory service did not complete"
@@ -662,7 +664,7 @@ arguments = [\"storage-directory\", \"${role}\", \"storage-directory.out\"];" \
 		    storage-directory.out
 	done
 	atf_check -s exit:0 -o ignore \
-	    servicectl -s "$CTL_SOCK" stop \
+	    servicectl stop \
 	    "org.test.storage-directory/storage-directory"
 	stop_stack
 }
@@ -682,6 +684,7 @@ malformed_reload_is_transactional_head()
 }
 malformed_reload_is_transactional_body()
 {
+	require_ambient_control
 	find_capd_service_fixture
 	start_stack
 	make_svc_bin system reload-guard \
@@ -689,7 +692,7 @@ malformed_reload_is_transactional_body()
 	    "$capd_service_fixture"
 	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
 	    "${APPS_DIR}/reload-guard.cap/Units/reload-guard.unit/Unit.ucl"
-	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	atf_check -s exit:0 -o ignore servicectl reload
 	wait_for_file reload-guard.out 10 || atf_fail "guard service did not start"
 
 	write_test_bundle "$USER_APPS_DIR/bad.cap" org.test.bad bad '' \
@@ -703,11 +706,11 @@ UCL
 	# Transactional per plan §15: the malformed local bundle is quarantined
 	# (skipped), while the valid active registry is retained and the reload
 	# otherwise succeeds.
-	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	atf_check -s exit:0 -o ignore servicectl reload
 	atf_check -s exit:0 -o ignore \
 	    grep 'quarantined user bundle.*bad' "$logfile"
 	atf_check -s exit:0 -o match:'reload-guard' \
-	    servicectl -s "$CTL_SOCK" services
+	    servicectl services
 	stop_stack
 }
 malformed_reload_is_transactional_cleanup()
@@ -726,6 +729,7 @@ untrusted_bundle_rejected_head()
 }
 untrusted_bundle_rejected_body()
 {
+	require_ambient_control
 	build_ready_svc
 	start_stack
 	dir=$(make_svc_bin user untrusted '' "$(pwd)/ready_svc")
@@ -733,11 +737,11 @@ untrusted_bundle_rejected_body()
 	# A world-writable (untrusted) local bundle is quarantined, not loaded:
 	# the reload succeeds for the valid registry while the untrusted bundle
 	# is skipped and never runs (plan §15).
-	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	atf_check -s exit:0 -o ignore servicectl reload
 	atf_check -s exit:0 -o ignore \
 	    grep 'quarantined user bundle.*untrusted' "$logfile"
 	test ! -e untrusted.ready || atf_fail "untrusted service executed"
-	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" services
+	atf_check -s exit:0 -o ignore servicectl services
 	stop_stack
 }
 untrusted_bundle_rejected_cleanup()
@@ -756,6 +760,7 @@ kmod_prerequisite_uses_authority_head()
 }
 kmod_prerequisite_uses_authority_body()
 {
+	require_ambient_control
 	build_ready_svc
 	start_stack
 	make_svc_bin system kmod-prereq \
@@ -763,7 +768,7 @@ kmod_prerequisite_uses_authority_body()
 arguments = ["compat-ready"];' "$(pwd)/ready_svc"
 	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
 	    "${APPS_DIR}/kmod-prereq.cap/Units/kmod-prereq.unit/Unit.ucl"
-	atf_check -s exit:0 -o ignore servicectl -s "$CTL_SOCK" reload
+	atf_check -s exit:0 -o ignore servicectl reload
 	wait_for_file kmod-prereq.ready 10 || {
 		cat "$logfile" 2>/dev/null
 		atf_fail "service with a loaded-module prerequisite did not start"

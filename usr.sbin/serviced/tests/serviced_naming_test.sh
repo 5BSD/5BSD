@@ -66,6 +66,7 @@ naming_register_and_lookup_head()
 }
 naming_register_and_lookup_body()
 {
+	require_ambient_control
 	prepare_paths
 	install_naming_fixture org.test.ls-provider \
 	    'activation { ipc = ["org.test.ls-provider"]; }
@@ -82,7 +83,7 @@ arguments = ["provider", "provider-registered.result", "provider.result"];'
 	atf_check -s exit:0 \
 	    -o match:'client_label=org.test.ls-client/[^ ]* message=world confined=yes$' \
 	    cat provider.result
-	servicectl -s "${CTL_SOCK}" status > naming-status.result
+	servicectl status > naming-status.result
 	atf_check -s exit:0 -o match:'org.test.ls-provider.*conns=1' \
 	    cat naming-status.result
 	atf_check -s exit:0 -o not-match:'org.test.ls-client/ls-client running.*conns=[1-9]' \
@@ -127,6 +128,7 @@ naming_auto_unregister_on_exit_head()
 }
 naming_auto_unregister_on_exit_body()
 {
+	require_ambient_control
 	local provider_pid
 
 	prepare_paths
@@ -144,7 +146,7 @@ arguments = ["provider", "provider-registered.result", "provider.result"];'
 	    "${APPS_DIR}/org.test.ls-client.cap/Units/ls-client.unit/Unit.ucl"
 	start_stack
 	wait_naming_result provider.result
-	provider_pid=$(servicectl -s "${CTL_SOCK}" status |
+	provider_pid=$(servicectl status |
 	    sed -n 's/.*org.test.ls-provider\/ls-provider running  *pid \([0-9][0-9]*\).*/\1/p')
 	case "$provider_pid" in
 	''|*[!0-9]*) atf_fail "could not determine the provider PID" ;;

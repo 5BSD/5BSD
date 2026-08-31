@@ -175,7 +175,7 @@ compiled-in defaults are used.
 Syntax errors are fatal.
 .Pp
 The following keys are supported:
-.Bl -tag -width "serviced_control_socket"
+.Bl -tag -width "control_socket_mode"
 .It Va pidfile
 Path to the pidfile.
 Default:
@@ -196,13 +196,6 @@ Default:
 If empty, no service manager is started.
 May be overridden with
 .Fl b .
-.It Va serviced_control_socket
-Path to the control socket for
-.Xr serviced 8 .
-Passed via the
-.Ev SERVICED_CONTROL_SOCKET
-environment variable.
-Default: empty.
 .El
 .Ss Integrity
 The

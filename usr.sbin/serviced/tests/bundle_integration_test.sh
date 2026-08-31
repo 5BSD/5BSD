@@ -22,6 +22,7 @@ system_bundle_startup_head() {
 	require_authority_stack_kmods
 }
 system_bundle_startup_body() {
+	require_ambient_control
 	local bundle
 
 	prepare_paths
@@ -35,11 +36,11 @@ system_bundle_startup_body() {
 	# A manifest without provides is an eager boot task.  Runtime identity is
 	# bundle_id/program and remains independent from public endpoint names.
 	atf_check -s exit:0 -o match:"org.test.boot/bootd.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	# Attribution should show "system"
 	atf_check -s exit:0 -o match:"by=system" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 }
 system_bundle_startup_cleanup() {
 	cleanup_common
@@ -55,6 +56,7 @@ on_demand_launch_head() {
 	require_authority_stack_kmods
 }
 on_demand_launch_body() {
+	require_ambient_control
 	prepare_paths
 	build_lookup_client
 	create_user_bundle "LazyApp" "org.test.lazy" "lazyd" \
@@ -64,7 +66,7 @@ on_demand_launch_body() {
 
 	# The endpoint is reserved, but its bundle_id/program runtime is absent.
 	atf_check -s exit:0 -o not-match:"org.test.lazy/lazyd.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	# Trigger lookup from a client
 	run_lookup_client "org.test.lazy.svc"
@@ -72,7 +74,7 @@ on_demand_launch_body() {
 	# Now it should be running
 	wait_for_file "${WORK}/lazyd.ready" 10
 	atf_check -s exit:0 -o match:"org.test.lazy/lazyd.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 }
 on_demand_launch_cleanup() {
 	cleanup_common
@@ -117,6 +119,7 @@ stop_service_head() {
 	require_authority_stack_kmods
 }
 stop_service_body() {
+	require_ambient_control
 	local bundle
 
 	prepare_paths
@@ -129,14 +132,14 @@ stop_service_body() {
 
 	# Stop it
 	atf_check -s exit:0 -o match:"stopping" \
-	    servicectl -s "${CTL_SOCK}" stop "org.test.stop/stopd"
+	    servicectl stop "org.test.stop/stopd"
 
 	# The compat-ready fixture blocks and does not answer QUIESCE, so it
 	# exits only when the stop_timeout SIGKILL fires (1s here).  Poll for the
 	# terminal stopped state rather than assuming a fixed settle time.
 	i=0
 	while [ "$i" -lt 60 ]; do
-		if servicectl -s "${CTL_SOCK}" status |
+		if servicectl status |
 		    grep -q "org.test.stop/stopd.*stopped"; then
 			break
 		fi
@@ -144,17 +147,17 @@ stop_service_body() {
 		sleep 0.2
 	done
 	atf_check -s exit:0 -o match:"org.test.stop/stopd.*stopped" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	# A stopped unit can be explicitly started again; a second start is
 	# rejected while it is active.
 	rm -f "${WORK}/stopd.ready"
 	atf_check -s exit:0 -o match:"starting" \
-	    servicectl -s "${CTL_SOCK}" start "org.test.stop/stopd"
+	    servicectl start "org.test.stop/stopd"
 	wait_for_file "${WORK}/stopd.ready" 5 ||
 	    atf_fail "explicitly started service did not become ready"
 	atf_check -s exit:1 -e match:"not stopped" \
-	    servicectl -s "${CTL_SOCK}" start "org.test.stop/stopd"
+	    servicectl start "org.test.stop/stopd"
 }
 stop_service_cleanup() {
 	cleanup_common
@@ -170,11 +173,12 @@ stop_nonexistent_head() {
 	require_authority_stack_kmods
 }
 stop_nonexistent_body() {
+	require_ambient_control
 	prepare_paths
 	start_stack
 
 	atf_check -s exit:1 -e match:"not found" \
-	    servicectl -s "${CTL_SOCK}" stop "org.fake.service"
+	    servicectl stop "org.fake.service"
 }
 stop_nonexistent_cleanup() {
 	cleanup_common
@@ -190,6 +194,7 @@ reload_new_service_head() {
 	require_authority_stack_kmods
 }
 reload_new_service_body() {
+	require_ambient_control
 	local bundle
 
 	prepare_paths
@@ -197,7 +202,7 @@ reload_new_service_body() {
 
 	# Initially no user services
 	atf_check -s exit:0 -o not-match:"newbie" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	# Add a new bundle
 	bundle=$(create_user_bundle "NewApp" "org.test.new" "newbie" \
@@ -207,11 +212,11 @@ reload_new_service_body() {
 	# Reload.  The reply summary is "reload: N bundles, M new, ..."
 	# (supervisor_reload); one new service means "1 new".
 	atf_check -s exit:0 -o match:"1 new" \
-	    servicectl -s "${CTL_SOCK}" reload
+	    servicectl reload
 
 	wait_for_file "${WORK}/newbie.ready" 5
 	atf_check -s exit:0 -o match:"org.test.new/newbie.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 }
 reload_new_service_cleanup() {
 	cleanup_common
@@ -227,6 +232,7 @@ reload_remove_service_head() {
 	require_authority_stack_kmods
 }
 reload_remove_service_body() {
+	require_ambient_control
 	local bundle
 
 	prepare_paths
@@ -243,12 +249,12 @@ reload_remove_service_body() {
 	# Reload.  servicectl prints a summary to stdout, so -o ignore is
 	# required (atf_check defaults to -o empty).
 	atf_check -s exit:0 -o ignore \
-	    servicectl -s "${CTL_SOCK}" reload
+	    servicectl reload
 
 	# The runtime is no longer running.
 	sleep 1
 	atf_check -s exit:0 -o not-match:"org.test.rm/rmd.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 }
 reload_remove_service_cleanup() {
 	cleanup_common
@@ -264,13 +270,14 @@ missing_system_bundle_optional_head() {
 	require_authority_stack_kmods
 }
 missing_system_bundle_optional_body() {
+	require_ambient_control
 	prepare_paths
 	# Remove the system dir
 	rmdir "${APPS_DIR}" 2>/dev/null || true
 
 	start_stack
 	atf_check -s exit:0 -o match:"serviced: running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 }
 missing_system_bundle_optional_cleanup() {
 	cleanup_common
@@ -309,6 +316,7 @@ dtrace_probes_head() {
 	atf_set "timeout" "60"
 }
 dtrace_probes_body() {
+	require_ambient_control
 	local bundle i serviced_pid
 
 	prepare_paths
@@ -366,7 +374,7 @@ dtrace_probes_body() {
 	    "capabilities { files = [ { path = \"${WORK}/dtrace-token-target\"; actions = [\"read\"]; } ]; services = [\"identity\"]; }")
 	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/traced.unit/Unit.ucl"
 	atf_check -s exit:0 -o ignore \
-	    servicectl -s "${CTL_SOCK}" reload
+	    servicectl reload
 	if ! wait_for_file "${WORK}/traced.ready" 5; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "traced service did not become ready"
@@ -442,6 +450,7 @@ reload_changed_bundle_head() {
 	require_authority_stack_kmods
 }
 reload_changed_bundle_body() {
+	require_ambient_control
 	local bundle
 
 	prepare_paths
@@ -459,7 +468,7 @@ restart = "always";
 UCL
 
 	atf_check -s exit:0 -o ignore \
-	    servicectl -s "${CTL_SOCK}" reload
+	    servicectl reload
 
 	sleep 1
 
@@ -482,6 +491,7 @@ stop_already_stopped_head() {
 	require_authority_stack_kmods
 }
 stop_already_stopped_body() {
+	require_ambient_control
 	local bundle
 
 	prepare_paths
@@ -494,13 +504,13 @@ stop_already_stopped_body() {
 
 	# Stop it once (servicectl prints "stop: ... stopping" -> -o ignore).
 	atf_check -s exit:0 -o ignore \
-	    servicectl -s "${CTL_SOCK}" stop "org.test.brief/briefd"
+	    servicectl stop "org.test.brief/briefd"
 
 	sleep 1
 
 	# Stop it again — should fail
 	atf_check -s not-exit:0 -o ignore -e ignore \
-	    servicectl -s "${CTL_SOCK}" stop "org.test.brief/briefd"
+	    servicectl stop "org.test.brief/briefd"
 }
 stop_already_stopped_cleanup() {
 	cleanup_common
@@ -516,6 +526,7 @@ coalition_kill_on_timeout_head() {
 	require_authority_stack_kmods
 }
 coalition_kill_on_timeout_body() {
+	require_ambient_control
 	prepare_paths
 
 	# Create a stubborn service that ignores SIGTERM
@@ -538,7 +549,7 @@ SVCEOF
 	wait_for_file "${WORK}/stubbornd.pid" 5
 
 	# Stop the service — it will ignore SIGTERM
-	servicectl -s "${CTL_SOCK}" stop "org.test.stubborn/stubbornd"
+	servicectl stop "org.test.stubborn/stubbornd"
 
 	# Wait for stop_timeout + SIGKILL + coalition terminate
 	sleep 4
@@ -574,6 +585,7 @@ on_demand_crash_relaunch_head() {
 	require_authority_stack_kmods
 }
 on_demand_crash_relaunch_body() {
+	require_ambient_control
 	prepare_paths
 	build_lookup_client
 	build_ready_svc
@@ -601,7 +613,7 @@ restart = "on-failure";' 'activation { boot = true; }'
 
 	# Service should not have a running bundle_id/program runtime yet.
 	atf_check -s exit:0 -o not-match:"org.test.crash/crashd.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	# First lookup triggers launch -> service crashes -> restart.
 	run_lookup_client "org.test.crash.svc" 15 || true
@@ -618,7 +630,7 @@ restart = "on-failure";' 'activation { boot = true; }'
 
 	# The relaunched runtime is now running.
 	atf_check -s exit:0 -o match:"org.test.crash/crashd.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	# State file should show at least 2 invocations.
 	atf_check -s exit:0 -o not-match:"^1$" \
@@ -640,6 +652,7 @@ multi_binary_bundle_activation_head() {
 	require_authority_stack_kmods
 }
 multi_binary_bundle_activation_body() {
+	require_ambient_control
 	local bundle endpoint
 
 	prepare_paths
@@ -678,16 +691,16 @@ UCL
 	test ! -e "${WORK}/lazyd.ready" ||
 	    atf_fail "named binary started before lookup"
 	atf_check -s exit:0 -o match:'org.test.multibin/eagerd.*running' \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 	atf_check -s exit:0 -o not-match:'org.test.multibin/lazyd.*running' \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 
 	run_lookup_client "${endpoint}" 15 ||
 	    atf_fail "lookup did not activate named binary"
 	wait_for_file "${WORK}/lazyd.ready" 10 ||
 	    atf_fail "named binary did not report ready"
 	atf_check -s exit:0 -o match:'org.test.multibin/lazyd.*running' \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 }
 multi_binary_bundle_activation_cleanup() {
 	cleanup_common
@@ -816,6 +829,7 @@ multiple_provides_secondary_activation_head() {
 	require_authority_stack_kmods
 }
 multiple_provides_secondary_activation_body() {
+	require_ambient_control
 	local bundle first second p1 p2
 
 	prepare_paths
@@ -850,7 +864,7 @@ restart = \"on-failure\";" "${capd_service_fixture}")
 	    grep publication_ack_before_accept "${WORK}/multi-routed.out"
 	atf_check -s exit:0 \
 	    -o match:'org.test.multi-provider.*conns=2' \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 	count=$(grep -c "on_demand: launching 'org.test.multi-provider/multi-provider'" \
 	    "${logfile}" 2>/dev/null || true)
 	[ "${count}" -eq 1 ] ||
@@ -989,6 +1003,7 @@ reload_noop_head() {
 	require_authority_stack_kmods
 }
 reload_noop_body() {
+	require_ambient_control
 	local bundle
 
 	prepare_paths
@@ -1002,11 +1017,11 @@ reload_noop_body() {
 	# Nothing changed on disk — reload's summary should report all zeros
 	# (supervisor_reload: "reload: N bundles, 0 new, 0 changed, 0 removed").
 	atf_check -s exit:0 -o match:"0 new, 0 changed, 0 removed" \
-	    servicectl -s "${CTL_SOCK}" reload
+	    servicectl reload
 
 	# The already-running service is untouched by the no-op reload.
 	atf_check -s exit:0 -o match:"org.test.steady/steadyd.*running" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 }
 reload_noop_cleanup() {
 	cleanup_common
@@ -1022,6 +1037,7 @@ reload_attribution_head() {
 	require_authority_stack_kmods
 }
 reload_attribution_body() {
+	require_ambient_control
 	local bundle
 
 	prepare_paths
@@ -1033,13 +1049,13 @@ reload_attribution_body() {
 	sed -i '' -e 's/ipc = \[[^]]*\];/boot = true;/' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/lated.unit/Unit.ucl"
 
 	atf_check -s exit:0 -o match:"1 new" \
-	    servicectl -s "${CTL_SOCK}" reload
+	    servicectl reload
 
 	wait_for_file "${WORK}/lated.ready" 5
 
 	# reload.c stamps launched_by="reload"; status shows it as by=reload.
 	atf_check -s exit:0 -o match:"org.test.late/lated.*by=reload" \
-	    servicectl -s "${CTL_SOCK}" status
+	    servicectl status
 }
 reload_attribution_cleanup() {
 	cleanup_common

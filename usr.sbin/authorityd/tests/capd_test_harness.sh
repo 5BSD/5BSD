@@ -133,7 +133,6 @@ pidfile = "$CAPD_PIDFILE";
 control_socket = "$CAPD_AUTHORITY_SOCKET";
 control_socket_mode = "0700";
 service_manager = "$capd_serviced_bin";
-serviced_control_socket = "$CAPD_SERVICED_SOCKET";
 EOF
 	export SERVICED_BUNDLE_DIR_SYSTEM="$CAPD_APPS_SYSTEM"
 	export SERVICED_BUNDLE_DIR_USER="$CAPD_APPS_USER"

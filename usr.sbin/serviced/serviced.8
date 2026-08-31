@@ -58,9 +58,9 @@ operation with
 or
 .Er ENFILE
 before partially allocating it.
-When descriptor exhaustion prevents an administrative socket accept, one
-reserve slot is temporarily released to accept and close a queued connection,
-preventing a persistent readable-event spin, and is then restored.
+When descriptor exhaustion prevents an administrative control-connection accept,
+one reserve slot is temporarily released to accept and close a queued
+connection, preventing a persistent readable-event spin, and is then restored.
 The control status output reports the effective soft and hard descriptor
 limits, reserve count, denied admissions, and shed control connections.
 The
@@ -71,7 +71,11 @@ DTrace probes expose initialization and pressure events.
 .Pp
 Administrative commands are sent via
 .Xr servicectl 8
-over a local control socket.
+over the
+.Ql system.serviced
+capability discovery name;
+.Nm
+binds no control socket.
 .Ss Startup Sequence
 .Nm
 executes the following phases during startup:
@@ -89,8 +93,9 @@ Create a
 .Xr kqueue 2
 and register the authority channel fd for EOF detection (authority death).
 .It
-Create a control socket at
-.Pa /var/run/serviced.sock .
+Self-serve the
+.Ql system.serviced
+control name through the naming registry; no filesystem control socket is bound.
 .It
 Register signal handlers for
 .Dv SIGTERM ,
@@ -126,7 +131,7 @@ by dependency, and fork/exec each service via
 .Xr pdfork 2 .
 .It
 Enter the event loop, monitoring services via process descriptors,
-channels, coalition events, control socket connections, signals,
+channels, coalition events, adopted in-process control connections, signals,
 and restart timers.
 .El
 .Sh INHERITED FILE DESCRIPTORS
@@ -391,7 +396,7 @@ A manifest reload via
 .Dv SIGHUP
 or the
 .Cm reload
-control socket command will re-evaluate the manifest.
+control command will re-evaluate the manifest.
 .Ss Dynamic Claims
 When
 .Nm
@@ -443,7 +448,7 @@ During daemon shutdown, services are stopped in reverse dependency
 order.
 The kevent loop is drained for up to 60 seconds, after which
 .Nm
-closes the control socket and exits.
+exits.
 .Sh NAMING REGISTRY
 .Nm
 provides a naming registry that allows services to discover
@@ -571,21 +576,26 @@ Operations may be retried after a crash only when that protocol defines them
 as idempotent.
 Exactly-once effects across provider restart require provider-owned durable
 request deduplication.
-.Sh CONTROL SOCKET
+.Sh CONTROL INTERFACE
 .Nm
-listens on a
-.Ux Ns -domain
-stream socket at
-.Pa /var/run/serviced.sock
-(mode 0700).
-A maximum of 16 simultaneous connections are accepted, each with
-a 2-second timeout.
+serves an administrative control endpoint over the capability discovery plane
+under the name
+.Ql system.serviced ;
+it binds no filesystem control socket.
+A lookup of
+.Ql system.serviced
+from an admin (SYSTEM-domain) session mints an in-process control connection
+carrying administrative rights, which
+.Nm
+adopts into its own
+.Xr kqueue 2 ;
+a USER-domain session cannot resolve the name and is denied.
 .Pp
 The
 .Xr servicectl 8
 utility communicates with
 .Nm
-over this socket.
+over this endpoint.
 .Pp
 The following commands are supported:
 .Bl -tag -width "SCTL_OP_START_SVC (4)"
@@ -701,7 +711,7 @@ Client demand requested initialization of one claimed endpoint.
 .It Li endpoint-withdraw(label, name, errno)
 A provider attempted to withdraw one claimed listener.
 .El
-.Ss Control Socket
+.Ss Control Interface
 .Bl -tag -width "sctl-cmd-done(op, uid, status, duration_ns)" -compact
 .It Li sctl-cmd(op, uid)
 Control command received.
@@ -745,9 +755,9 @@ Timer expired.
 .Ss Connections
 .Bl -tag -width "conn-close(nconns)" -compact
 .It Li conn-accept(uid, nconns)
-Control socket connection accepted.
+Control connection accepted.
 .It Li conn-close(nconns)
-Control socket connection closed.
+Control connection closed.
 .El
 .Ss Shutdown
 .Bl -tag -width "shutdown-done(duration_ns)" -compact
@@ -799,13 +809,11 @@ Error occurred in subsystem.
 Authority channel closed unexpectedly.
 .El
 .Sh FILES
-.Bl -tag -width "/var/run/serviced.sock"
+.Bl -tag -width "/Capabilities/System/"
 .It Pa /Capabilities/System/
 System capability bundles.
 .It Pa /Capabilities/
 User-installed capability bundles.
-.It Pa /var/run/serviced.sock
-Control socket (mode 0700).
 .El
 .Pp
 Both bundle directories and all loaded bundle contents must be root-owned and

@@ -32,12 +32,15 @@ prepare_paths()
 write_config()
 {
 	find_serviced
+	# control_socket / control_socket_mode configure authorityd's own control
+	# socket (authorityctl).  serviced's getpeereid control socket was retired
+	# (docs/capability-authority-model.md): servicectl now reaches serviced over
+	# the ambient discovery plane, so no serviced_control_socket key is written.
 	cat > "$conffile" <<EOF
 pidfile = "$pidfile";
 control_socket = "$sockpath";
 control_socket_mode = "0700";
 service_manager = "$serviced_bin";
-serviced_control_socket = "${CTL_SOCK}";
 EOF
 	# Export bundle directory overrides so serviced scans test-local paths.
 	export SERVICED_BUNDLE_DIR_SYSTEM="${APPS_DIR}"
@@ -180,6 +183,23 @@ require_mac_capability()
 	capd_require_device
 }
 
+# Skip when servicectl cannot reach serviced over the capability plane.
+#
+# serviced's getpeereid control socket was retired
+# (docs/capability-authority-model.md): servicectl now issues control requests
+# over the ambient discovery channel a login session inherits
+# (SERVICE_LOOKUP_FD -- the same condition service_reachability_test detects via
+# service_ambient_lookup_fd()).  The ATF harness provides no login session, so
+# there is no ambient channel here and these cases skip; on a live plane the
+# channel is inherited and they run for real.  Control is otherwise validated by
+# the VM boot smoke test.
+require_ambient_control()
+{
+	if [ -z "${SERVICE_LOOKUP_FD:-}" ]; then
+		atf_skip "no ambient control channel in this harness (control is validated by the VM boot smoke test)"
+	fi
+}
+
 capd_service_fixture=
 
 find_capd_service_fixture()
@@ -208,7 +228,6 @@ find_capd_service_fixture()
 export WORK="$(pwd)"
 APPS_DIR="${WORK}/Capabilities/System"
 USER_APPS_DIR="${WORK}/Capabilities"
-CTL_SOCK="${WORK}/serviced.sock"
 
 normalize_test_unit_extra()
 {

@@ -90,7 +90,7 @@ programs now link the plane.
 | `51957a0d918` | **Hardening**: D1 identity handshake (`SVC_OP_AMBIENT_HELLO`) so the fixed-fd probe rejects a non-lookup channel at fd 3; cron/atrun/su **fd-hygiene** (closefrom + unset on uid transition, so the SYSTEM channel can't leak into a user context). |
 | `3015486f3f5` | **uid-aware mint**: root/wheel sessions get a SYSTEM (admin) channel, others USER; escalation guard (`svc_mint_domain_kind`) — a USER channel can never obtain SYSTEM. Fixes su-from-root. |
 | `832152c015d` | **rc adoption of cron** as a supervised `SVC_KIND_RC` unit + de-dup (`cron_enable=NO` + `onestart`); `servicectl restart`. Also fixed the RC **stop** path (rc daemons detach → must `service <name> onestop`, not pdkill the wrapper). |
-| `1dc6aaa329e` | **socket-authenticated session provisioning** (`SCTL_OP_PROVISION_SESSION`): sshd asks serviced over its `getpeereid`-authenticated control socket to mint a session channel. #30 rescoped: keep the socket (getpeereid is the correct userspace peer-cred primitive), don't delete it. |
+| `1dc6aaa329e` | **socket-authenticated session provisioning** (`SCTL_OP_PROVISION_SESSION`): sshd asks serviced over its `getpeereid`-authenticated control socket to mint a session channel. #30 rescoped: keep the socket (getpeereid is the correct userspace peer-cred primitive), don't delete it. **RETIRED (2026-08-30):** this mechanism is gone — `SCTL_OP_PROVISION_SESSION` and all three getpeereid control sockets have since been deleted; sshd now provisions over a minted per-connection SYSTEM channel, not a socket. This row is historical. |
 | `f3875e4d124` | **authorityd**: stop claiming `/etc/master.passwd` (and the demo path stubs) — a global isolation claim hid it from root too, breaking `pw`/`passwd`/`vipw`/`adduser`. |
 | `71f36eacb61` | **sshd monitor provisioning**: modern OpenSSH runs `do_child` already dropped to the user, so provisioning from there failed for non-root ssh. Now the **root monitor** provisions and fd-passes the channel to the child (`mm_answer_provision`, pty pattern). Corrected the transfer model to **single-transfer, sender-closes** (no two-hop `TWICE` budget). |
 | `d0a1d4aa691` | **Quality-review fixes** (3 HIGH): monitor now keys on `authctxt->pw->pw_uid` not a child-supplied wire uid; idle-stop preserves activation-source fds (was leaking + spinning); the mint RPC is bounded (was unbounded → could hang login); stale `CAP_XFER_ONCE` comments reconciled. |
@@ -102,10 +102,13 @@ programs now link the plane.
    channel. Both mint paths (`domain.c lookup_channel_request`,
    `svc_proto.c handle_mint_domain`) must check the requester's own domain via
    `svc_domain_may_mint` then `svc_mint_domain_kind`.
-2. **Provisioning authority** — only root may provision a session channel for an
+2. **Provisioning authority** — *(historical: the socket provisioning path below
+   has since been retired.)* only root may provision a session channel for an
    arbitrary uid (`sctl.c` getpeereid `c->euid==0`; `domain.c requester_euid==0`).
    The sshd monitor must provision for the **authenticated** `pw->pw_uid`, never a
-   child-supplied uid.
+   child-supplied uid. As of 2026-08-30 the getpeereid socket path is deleted;
+   sshd mints a per-connection SYSTEM channel and the monitor scopes the session
+   over it, so the authenticated-uid invariant now lives on that channel path.
 3. **Scope by target uid** — `domain_uid_is_admin`: uid 0 or wheel → SYSTEM, else
    USER; every lookup failure must fail SAFE to USER (never default to admin).
 4. **fd-hygiene** — the SYSTEM ambient channel (and any capability fd ≥3) must
@@ -246,8 +249,9 @@ Still open (low/latent — see model doc §0a):
 
 Verified-safe under adversarial attack (do not re-litigate without new evidence):
 the escalation guard, D1 handshake, all fd-hygiene/leak-prevention paths, Phase-4
-launch packing/barrier/cleanup, RC-stop disambiguation, bootstrap socket-type
-validation, and the getpeereid auth (no TOCTOU on a local stream socket).
+launch packing/barrier/cleanup, RC-stop disambiguation, and bootstrap socket-type
+validation. (The getpeereid control-socket auth referenced here has since been
+retired — the control sockets are deleted — so that item is now historical.)
 
 ## 8. Suggested review approach
 

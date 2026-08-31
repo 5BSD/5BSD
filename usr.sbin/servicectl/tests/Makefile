@@ -23,6 +23,8 @@ CFLAGS.servicectl_test_bin+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.servicectl_test_bin+=	capbundle service ucl elf
 
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
+LIBADD.capd_protocol_fixture+=	service channel capability
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
 
