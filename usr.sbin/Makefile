@@ -3,6 +3,7 @@
 SUBDIR=	adduser \
 	arp \
 	auditbrokerd \
+	authagentd \
 	binmiscctl \
 	boottrace \
 	bsdconfig \

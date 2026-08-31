@@ -1953,6 +1953,47 @@ service_helper_open(struct service_context *context, const char *name,
 	return (0);
 }
 
+/*
+ * Mint a session lookup channel over this provider's own bootstrap channel to
+ * serviced (SVC_OP_MINT_DOMAIN).  This is the auth-agent path: a serviced-managed
+ * service whose bootstrap channel is SYSTEM-domain mints the uid-scoped channel a
+ * login program will install, then forwards it to that program — so it is minted
+ * with SVC_MINT_FLAG_RESEND (delivered transferable), and the caller re-attenuates
+ * to CAP_XFER_ONCE before the single forwarding send so the leaf lands at
+ * CAP_XFER_NONE.  See docs/auth-agent-design.md.  Runs over the same serialized
+ * bootstrap RPC as service_helper_open(), so it does not race the provider
+ * protocol on that channel.
+ */
+int
+service_context_mint_domain(struct service_context *context,
+    enum service_mint_kind kind, uid_t uid, int *out_fd)
+{
+	struct svc_mint_domain_req req;
+	int fd;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid() || out_fd == NULL ||
+	    (kind != SERVICE_MINT_USER && kind != SERVICE_MINT_SYSTEM)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*out_fd = -1;
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_MINT_DOMAIN;
+	req.flags = SVC_MINT_FLAG_RESEND;
+	req.uid = (uint32_t)uid;
+	req.domain = kind == SERVICE_MINT_SYSTEM ?
+	    SVC_MINT_DOMAIN_SYSTEM : SVC_MINT_DOMAIN_USER;
+	if (rpc(&req, sizeof(req), &fd) == -1)
+		return (-1);
+	if (fd < 0) {
+		errno = EIO;
+		return (-1);
+	}
+	*out_fd = fd;
+	return (0);
+}
+
 static int
 service_expose_internal(struct service_provider *provider, const char *name,
     service_activation_handler activate, void *context, bool sendable,

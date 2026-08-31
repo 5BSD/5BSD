@@ -1,0 +1,8 @@
+comment = "5BSD capability auth-agent: the identity->capability mint boundary"
+
+desc = <<EOD
+authagentd is the system.authagent capability service.  A login program
+(login/su/sshd), after authenticating a principal, asks the auth-agent to mint
+that session's capability bundle per the principal->bundle policy; the login
+program never holds mint authority itself.  See docs/auth-agent-design.md.
+EOD

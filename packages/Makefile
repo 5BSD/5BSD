@@ -18,6 +18,7 @@
 
 SUBDIR=	blocklist \
 	auditbrokerd \
+	authagentd \
 	bsdconfig \
 	bzip2 \
 	clibs \

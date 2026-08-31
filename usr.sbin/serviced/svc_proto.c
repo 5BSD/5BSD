@@ -516,6 +516,7 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 	const struct svc_mint_domain_req *req;
 	enum svc_domain_kind kind;
 	int minted_fd, error;
+	bool resend;
 
 	minted_fd = -1;
 	if (channel_message_length(request) != sizeof(*req)) {
@@ -524,11 +525,19 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 		return;
 	}
 	req = channel_message_data(request);
-	if (req->flags != 0) {
+	if ((req->flags & ~SVC_MINT_FLAG_RESEND) != 0) {
 		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
 		    EINVAL, NULL, 0);
 		return;
 	}
+	/*
+	 * SVC_MINT_FLAG_RESEND: deliver the endpoint transferable (default
+	 * CAP_XFER_UNLIMITED, skipping the CAP_XFER_ONCE attenuation) so a broker
+	 * that forwards it over one more SCM_RIGHTS hop before it is installed —
+	 * the auth-agent minting a session for a login program — is not left
+	 * holding an exhausted descriptor.  See docs/auth-agent-design.md.
+	 */
+	resend = (req->flags & SVC_MINT_FLAG_RESEND) != 0;
 	/* Domains only narrow: a non-system caller may not mint at all. */
 	if (!svc_domain_may_mint(&svc->domain)) {
 		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
@@ -556,8 +565,9 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 	    kind == SVC_DOMAIN_SYSTEM ? "system" :
 	    kind == SVC_DOMAIN_CONTROL ? "control" : "user",
 	    svc->manifest.label, (unsigned)req->uid);
-	(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN, error,
-	    error == 0 ? &minted_fd : NULL, error == 0 ? 1 : 0);
+	(void)svc_channel_reply_ex(svc, request, SVC_OP_MINT_DOMAIN, error,
+	    error == 0 ? &minted_fd : NULL, error == 0 ? 1 : 0,
+	    /*cap_xfer=*/!resend);
 	if (minted_fd >= 0)
 		close(minted_fd);
 }

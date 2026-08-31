@@ -1,0 +1,11 @@
+# system.authagent — the identity->capability mint boundary (P1c).
+# A boot-critical service so it is up before getty ever spawns a login.  Its
+# bootstrap channel to serviced is SYSTEM-domain (the default), which is what
+# authorizes it to mint session lookup channels via SVC_OP_MINT_DOMAIN.
+activation { boot = true; ipc = ["system.authagent"]; }
+program = "AuthAgent";
+restart = "on-failure";
+user = "root";
+
+limits { nofile = 256; nproc = 8; core = 0; }
+umask = "0077";

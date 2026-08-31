@@ -316,6 +316,15 @@ int	service_mint_user_domain(int syschan, uid_t uid, int *out_fd);
 int	service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
 	    uid_t uid, int *out_fd);
 
+/*
+ * Mint a session lookup channel over the provider's OWN bootstrap channel to
+ * serviced (not a borrowed syschan).  Delivered transferable (RESEND) so the
+ * caller can forward it over one more hop.  The auth-agent path; see
+ * docs/auth-agent-design.md.
+ */
+int	service_context_mint_domain(struct service_context *context,
+	    enum service_mint_kind kind, uid_t uid, int *out_fd);
+
 #define	SERVICE_CLIENT_TIMEOUT_INFINITE	UINT32_MAX
 
 struct service_message {
