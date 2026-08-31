@@ -135,30 +135,19 @@ extern int ambient_session_lookup_fd;
 static int
 mm_provision_session(uid_t uid, int *out_fd)
 {
-	struct passwd *pw;
-	enum service_mint_kind kind;
 
 	if (ambient_session_lookup_fd < 0) {
 		errno = ENOENT;
 		return (-1);
 	}
 	/*
-	 * Primary path: the auth-agent resolves the principal and applies the
-	 * admin policy.  This retains-root post-auth child installs the channel
-	 * directly (no forward), so it asks for a non-transferable descriptor.
-	 * Fall back to a direct mint if the agent is unreachable.
+	 * The auth-agent resolves the principal and applies the admin policy;
+	 * this retains-root post-auth child installs the channel directly (no
+	 * forward), so it asks for a non-transferable descriptor.  Direct
+	 * minting is retired, so there is no fallback.
 	 */
-	if (service_mint_session_via_agent(ambient_session_lookup_fd, uid, 0,
-	    2000U, out_fd) == 0)
-		return (0);
-	if ((pw = getpwuid(uid)) == NULL) {
-		errno = ENOENT;
-		return (-1);
-	}
-	kind = capbundle_principal_is_admin(pw) ? SERVICE_MINT_SYSTEM :
-	    SERVICE_MINT_USER;
-	return (service_mint_session_domain(ambient_session_lookup_fd, kind,
-	    uid, out_fd));
+	return (service_mint_session_via_agent(ambient_session_lookup_fd, uid,
+	    0, 2000U, out_fd));
 }
 #endif
 

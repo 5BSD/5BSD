@@ -1881,33 +1881,24 @@ mm_answer_provision(struct ssh *ssh, int sock, struct sshbuf *m)
 
 		/*
 		 * Provision for the AUTHENTICATED principal (authctxt->pw), never
-		 * the wire uid.  Primary path: the auth-agent (system.authagent)
-		 * resolves that uid itself and applies the admin policy, so the
-		 * monitor no longer classifies the principal.  It requests a
-		 * FORWARDABLE descriptor because it must forward it to the session
-		 * child; on any agent failure it falls back to a direct RESEND
-		 * mint.  Either way the fd arrives transferable and is re-attenuated
-		 * to CAP_XFER_ONCE so the single mm_send_fd() below consumes it to
-		 * CAP_XFER_NONE at the child — the session leaf cannot re-delegate
-		 * its lookup channel.  The whole round-trip runs under mint_lock()
-		 * because every monitor shares one ambient channel endpoint.
+		 * the wire uid.  The auth-agent (system.authagent) resolves that
+		 * uid itself and applies the admin policy — the monitor neither
+		 * classifies the principal nor mints (direct minting is retired).
+		 * It requests a FORWARDABLE descriptor because it must forward it
+		 * to the session child; the fd arrives transferable and is
+		 * re-attenuated to CAP_XFER_ONCE so the single mm_send_fd() below
+		 * consumes it to CAP_XFER_NONE at the child — the session leaf
+		 * cannot re-delegate its lookup channel.  The round-trip runs under
+		 * mint_lock() because every monitor shares one ambient endpoint.
 		 */
 		if (lock < 0) {
 			/* Can't serialize the shared channel — skip, don't race. */
 			status = EAGAIN;
 			fd = -1;
 		} else {
-			if (service_mint_session_via_agent(
+			(void)service_mint_session_via_agent(
 			    ambient_session_lookup_fd, authctxt->pw->pw_uid,
-			    SERVICE_MINT_AGENT_FORWARDABLE, 2000U, &fd) != 0) {
-				enum service_mint_kind kind =
-				    capbundle_principal_is_admin(authctxt->pw) ?
-				    SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
-
-				(void)service_mint_session_domain_resend(
-				    ambient_session_lookup_fd, kind,
-				    authctxt->pw->pw_uid, &fd);
-			}
+			    SERVICE_MINT_AGENT_FORWARDABLE, 2000U, &fd);
 			if (fd >= 0 && cap_xfer_limit(fd, CAP_XFER_ONCE) == 0)
 				status = 0;
 			else {

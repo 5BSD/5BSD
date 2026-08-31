@@ -346,68 +346,18 @@ lookup_channel_request(struct channel *channel,
 	memcpy(&op, opp, sizeof(op));
 	if (op == SVC_OP_MINT_DOMAIN) {
 		/*
-		 * A session leader provisions its session's ambient channel
-		 * (§21.3, §6): a login or su holding the SYSTEM channel mints the
-		 * channel appropriate to the target principal — a per-uid USER
-		 * channel for a regular user, or a SYSTEM (admin) channel for a
-		 * root/wheel session.  Only a SYSTEM-domain channel may mint —
-		 * domains only ever narrow, so a request arriving on an
-		 * already-narrowed USER channel is refused; and a SYSTEM mint is
-		 * refused unless this channel is itself SYSTEM.  This is the same
-		 * operation handle_mint_domain() serves on a unit control channel;
-		 * the ambient lookup channel has no backing unit, so it is served
-		 * here.
+		 * Direct minting over an ambient lookup channel is RETIRED (P1c).
+		 * The auth-agent (system.authagent) is the single mint boundary:
+		 * it mints session channels over its own unit bootstrap channel
+		 * (handle_mint_domain() in svc_proto.c), and a session leader
+		 * reaches it by LOOKUP over this channel.  login/su/sshd therefore
+		 * can no longer mint their own session channel here — even the
+		 * SYSTEM ambient carry serviced hands getty is now lookup-only for
+		 * this op.  Refused unconditionally; the primitives
+		 * (svc_domain_may_mint / svc_mint_domain_kind) remain for the
+		 * bootstrap-channel path that still uses them.
 		 */
-		const struct svc_mint_domain_req *mreq;
-		enum svc_domain_kind mkind;
-		int minted_fd, merror;
-		bool resend;
-
-		if (!svc_domain_may_mint(&lc->domain)) {
-			lookup_channel_reply(request, EPERM, NULL, 0);
-			goto out;
-		}
-		if (channel_message_length(request) != sizeof(*mreq)) {
-			lookup_channel_reply(request, EINVAL, NULL, 0);
-			goto out;
-		}
-		mreq = channel_message_data(request);
-		if ((mreq->flags & ~SVC_MINT_FLAG_RESEND) != 0) {
-			lookup_channel_reply(request, EINVAL, NULL, 0);
-			goto out;
-		}
-		/*
-		 * SVC_MINT_FLAG_RESEND: deliver the endpoint at its default
-		 * CAP_XFER_UNLIMITED (skip the CAP_XFER_ONCE attenuation) so a
-		 * caller that forwards it over one more SCM_RIGHTS hop before
-		 * installing it — sshd's monitor to its session child — is not
-		 * left holding an exhausted (CAP_XFER_NONE) descriptor.
-		 */
-		resend = (mreq->flags & SVC_MINT_FLAG_RESEND) != 0;
-		/*
-		 * Escalation guard (§6): a SYSTEM mint is allowed only when this
-		 * channel is itself SYSTEM.  svc_domain_may_mint() above already
-		 * confirms that, so a USER channel is refused for both kinds; the
-		 * explicit re-check here is the security boundary that must hold
-		 * even if minting policy widens later.
-		 */
-		if (svc_mint_domain_kind(&lc->domain, mreq->domain,
-		    &mkind) == -1) {
-			lookup_channel_reply(request,
-			    errno != 0 ? errno : EPERM, NULL, 0);
-			goto out;
-		}
-		minted_fd = -1;
-		if (domain_mint_session_channel(mkind, (uid_t)mreq->uid,
-		    &minted_fd, serviced_kq) == -1)
-			merror = errno != 0 ? errno : EIO;
-		else
-			merror = 0;
-		lookup_channel_reply_ex(request, merror,
-		    merror == 0 ? &minted_fd : NULL, merror == 0 ? 1 : 0,
-		    /*cap_xfer=*/!resend);
-		if (merror == 0)
-			close(minted_fd);
+		lookup_channel_reply(request, EPERM, NULL, 0);
 		goto out;
 	}
 	if (op == SVC_OP_AMBIENT_HELLO) {

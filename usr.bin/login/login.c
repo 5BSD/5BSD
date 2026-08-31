@@ -668,21 +668,15 @@ main(int argc, char *argv[])
 		int user_fd = -1;
 
 		/*
-		 * Primary path: the auth-agent (system.authagent) resolves the
-		 * principal and applies the admin policy, returning the scoped
-		 * channel; login no longer classifies the principal itself.  On
-		 * any agent failure, fall back to minting directly over the
-		 * inherited SYSTEM channel (login classifies as before).
+		 * The auth-agent (system.authagent) resolves the principal,
+		 * applies the admin policy, and mints the scoped channel; login
+		 * neither classifies the principal nor mints — direct minting
+		 * over the ambient channel is retired (serviced refuses it).
+		 * Best-effort: if the agent is unreachable the session simply
+		 * carries no lookup channel.
 		 */
-		if (service_mint_session_via_agent(syschan, pwd->pw_uid, 0,
-		    2000U, &user_fd) != 0) {
-			enum service_mint_kind kind =
-			    capbundle_principal_is_admin(pwd) ?
-			    SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
-
-			(void)service_mint_session_domain(syschan, kind,
-			    pwd->pw_uid, &user_fd);
-		}
+		(void)service_mint_session_via_agent(syschan, pwd->pw_uid, 0,
+		    2000U, &user_fd);
 		if (user_fd >= 0 &&
 		    service_install_ambient_lookup(user_fd) == 0) {
 			syslog(LOG_DEBUG, "login: lookup channel for uid %u "
