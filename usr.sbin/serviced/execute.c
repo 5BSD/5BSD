@@ -1069,6 +1069,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	char service_types[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
 	    [SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX];
 	unsigned ntokens, nservices, nlisteners;
+	unsigned open_delivered;
 	uid_t uid;
 	gid_t gid;
 	gid_t groups[NGROUPS_MAX + 1];
@@ -1549,6 +1550,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * so the service is never launched half-provisioned.
 	 * See docs/service-file-delivery.md.
 	 */
+	open_delivered = 0;
 	for (i = 0; i < m->ncap_open; i++) {
 		const struct serviced_open_cap *oc = &m->cap_open[i];
 		cap_rights_t orights;
@@ -1571,6 +1573,18 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 			    O_RDWR : O_RDONLY) | O_CLOEXEC;
 		ofd = open(oc->path, oflags);
 		if (ofd == -1) {
+			/*
+			 * An optional resource that is simply absent (or
+			 * otherwise unopenable) is skipped, not delivered — the
+			 * service checks whether service_capability_open finds
+			 * it.  A required resource fails the launch closed.
+			 */
+			if (oc->optional) {
+				syslog(LOG_NOTICE, "svc_exec %s: optional open "
+				    "%s (%s) skipped: %m", m->label, oc->name,
+				    oc->path);
+				continue;
+			}
 			syslog(LOG_ERR, "svc_exec %s: open %s (%s): %m",
 			    m->label, oc->name, oc->path);
 			SERVICED_PROBE_CAP_MINT(m->label, "open", -1);
@@ -1597,6 +1611,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		strlcpy(service_types[nservices], oc->is_dir ? "dir" : "file",
 		    sizeof(service_types[nservices]));
 		service_fds[nservices++] = ofd;
+		open_delivered++;
 		SERVICED_PROBE_CAP_MINT(m->label, "open", 0);
 	}
 
@@ -1608,12 +1623,12 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 */
 	if (ntokens != expected_tokens ||
 	    nservices != m->ncap_storage + m->ncap_services + nlisteners +
-	    m->ncap_open + 1) {
+	    open_delivered + 1) {
 		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
 		    "(%u/%u tokens, %u/%u services)", m->label, ntokens,
 		    expected_tokens, nservices,
 		    m->ncap_storage + m->ncap_services + nlisteners +
-		    m->ncap_open + 1);
+		    open_delivered + 1);
 		goto fail_tokens;
 	}
 

@@ -27,10 +27,12 @@
  */
 
 #include <sys/param.h>
+#include <sys/stat.h>
 
 #include <grp.h>
 #include <pwd.h>
 #include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -88,33 +90,17 @@ in_policy_group(const struct passwd *pwd, const ucl_object_t *groups_arr)
 }
 
 /*
- * Path-parameterized core (see libcapbundle_internal.h): resolve the admin
- * decision against the policy at `policy_path`.  The public entry point below
- * pins the real path; tests drive this with a temporary policy file.
+ * Evaluate a parsed policy against a principal.  `root` is a parsed policy
+ * document (which the caller unrefs) or NULL, in which case the historical
+ * root-or-wheel default applies.  Shared by the path and fd entry points.
  */
-bool
-capbundle_principal_is_admin_at(const struct passwd *pwd, const char *policy_path)
+static bool
+eval_admin(const struct passwd *pwd, const ucl_object_t *root)
 {
-	struct ucl_parser *parser;
-	ucl_object_t *root;
 	const ucl_object_t *admin, *uids, *groups_arr, *u;
 	ucl_object_iter_t it = NULL;
 	bool result;
 
-	if (pwd == NULL)
-		return (false);
-
-	parser = ucl_parser_new(0);
-	if (parser == NULL)
-		return (default_admin(pwd));
-	if (!ucl_parser_add_file(parser, policy_path) ||
-	    ucl_parser_get_error(parser) != NULL) {
-		/* Absent, unreadable, or invalid: historical default. */
-		ucl_parser_free(parser);
-		return (default_admin(pwd));
-	}
-	root = ucl_parser_get_object(parser);
-	ucl_parser_free(parser);
 	if (root == NULL)
 		return (default_admin(pwd));
 
@@ -136,7 +122,90 @@ capbundle_principal_is_admin_at(const struct passwd *pwd, const char *policy_pat
 				result = true;
 		}
 	}
-	ucl_object_unref(root);
+	return (result);
+}
+
+/*
+ * Path-parameterized core (see libcapbundle_internal.h): resolve the admin
+ * decision against the policy at `policy_path`.  The public entry point below
+ * pins the real path; tests drive this with a temporary policy file.
+ */
+bool
+capbundle_principal_is_admin_at(const struct passwd *pwd, const char *policy_path)
+{
+	struct ucl_parser *parser;
+	ucl_object_t *root;
+	bool result;
+
+	if (pwd == NULL)
+		return (false);
+
+	parser = ucl_parser_new(0);
+	if (parser == NULL)
+		return (default_admin(pwd));
+	if (!ucl_parser_add_file(parser, policy_path) ||
+	    ucl_parser_get_error(parser) != NULL) {
+		/* Absent, unreadable, or invalid: historical default. */
+		ucl_parser_free(parser);
+		return (default_admin(pwd));
+	}
+	root = ucl_parser_get_object(parser);
+	ucl_parser_free(parser);
+	result = eval_admin(pwd, root);
+	if (root != NULL)
+		ucl_object_unref(root);
+	return (result);
+}
+
+/*
+ * Descriptor-parameterized core: resolve the admin decision against a policy
+ * delivered as an already-open read-only descriptor (capabilities.open).  This
+ * is the capsicum-clean path — the auth-agent holds no policy path and never
+ * calls open(2).  The fd is read into a buffer and parsed as a chunk (no mmap,
+ * so CAP_READ|CAP_SEEK|CAP_FSTAT on the fd suffice).  A bad or absent fd fails
+ * safe to the historical default, exactly like an unreadable policy path.
+ */
+bool
+capbundle_principal_is_admin_fd(const struct passwd *pwd, int policy_fd)
+{
+	struct ucl_parser *parser;
+	ucl_object_t *root;
+	struct stat sb;
+	unsigned char *buf;
+	ssize_t rd;
+	bool result;
+
+	if (pwd == NULL)
+		return (false);
+	if (policy_fd < 0 || fstat(policy_fd, &sb) == -1 ||
+	    !S_ISREG(sb.st_mode) || sb.st_size <= 0 ||
+	    sb.st_size > CAPBUNDLE_MAX_UCL_SIZE)
+		return (default_admin(pwd));
+	buf = malloc((size_t)sb.st_size);
+	if (buf == NULL)
+		return (default_admin(pwd));
+	rd = pread(policy_fd, buf, (size_t)sb.st_size, 0);
+	if (rd != (ssize_t)sb.st_size) {
+		free(buf);
+		return (default_admin(pwd));
+	}
+	parser = ucl_parser_new(0);
+	if (parser == NULL) {
+		free(buf);
+		return (default_admin(pwd));
+	}
+	if (!ucl_parser_add_chunk(parser, buf, (size_t)rd) ||
+	    ucl_parser_get_error(parser) != NULL) {
+		ucl_parser_free(parser);
+		free(buf);
+		return (default_admin(pwd));
+	}
+	root = ucl_parser_get_object(parser);
+	ucl_parser_free(parser);
+	free(buf);
+	result = eval_admin(pwd, root);
+	if (root != NULL)
+		ucl_object_unref(root);
 	return (result);
 }
 

@@ -482,6 +482,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 			return (-1);
 		m->cap_open[i].rights = s->cap_open[i].rights;
 		m->cap_open[i].is_dir = s->cap_open[i].is_dir;
+		m->cap_open[i].optional = s->cap_open[i].optional;
 	}
 
 	/* Network capabilities */

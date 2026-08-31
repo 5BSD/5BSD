@@ -36,6 +36,13 @@
 /* Our own consumer handle on the bootstrap channel, used to mint. */
 static struct service_context	*g_context;
 static int			 g_kq = -1;
+/*
+ * The admin policy, delivered as a read-only descriptor (capabilities.open) so
+ * the daemon never opens a path in capability mode.  -1 when absent, in which
+ * case capbundle_principal_is_admin_fd applies the historical root-or-wheel
+ * default.
+ */
+static int			 g_policy_fd = -1;
 
 /*
  * One connected login program.  The channel's fd is the kqueue key; udata
@@ -113,7 +120,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 			reply.status = ENOENT;
 		} else {
 			enum service_mint_kind kind =
-			    capbundle_principal_is_admin(pw) ?
+			    capbundle_principal_is_admin_fd(pw, g_policy_fd) ?
 			    SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
 
 			if (service_context_mint_domain(g_context, kind,
@@ -209,6 +216,16 @@ main(void)
 	    SERVICE_PROTECT_NOEXEC) == -1 ||
 	    service_provider_expose(provider, AUTHAGENTD_NAME, &listener) == -1)
 		err(1, "initialize");
+
+	/*
+	 * Adopt the admin policy descriptor delivered via capabilities.open.
+	 * It is optional: an absent policy leaves g_policy_fd == -1 and the
+	 * mint path falls back to the historical root-or-wheel default.  Done
+	 * before cap_enter so no path is ever consulted at request time.
+	 */
+	if (service_capability_open(g_context, "principal-policy", "file",
+	    &g_policy_fd) == -1)
+		g_policy_fd = -1;
 
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,
 	    EV_ADD | EV_ENABLE, 0, 0, listener);

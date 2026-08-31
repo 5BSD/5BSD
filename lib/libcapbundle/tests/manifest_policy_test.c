@@ -464,6 +464,37 @@ ATF_TC_BODY(open_file_and_dir_parse, tc)
 	ATF_CHECK_EQ(SVC_OPEN_READ | SVC_OPEN_LOOKUP, svc.cap_open[2].rights);
 }
 
+ATF_TC_WITHOUT_HEAD(open_optional_flag_parses);
+ATF_TC_BODY(open_optional_flag_parses, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; }\n"
+	    "capabilities { open = [\n"
+	    "  { path = \"/a\"; name = \"req\"; rights = \"r\"; },\n"
+	    "  { path = \"/b\"; name = \"opt\"; rights = \"r\"; optional = true; },\n"
+	    "] }\n", &svc, err, sizeof(err)), "unexpected error: %s", err);
+	ATF_REQUIRE_EQ(2u, svc.ncap_open);
+	ATF_CHECK_EQ(0, svc.cap_open[0].optional);
+	ATF_CHECK_EQ(1, svc.cap_open[1].optional);
+}
+
+ATF_TC_WITHOUT_HEAD(open_optional_non_bool_rejected);
+ATF_TC_BODY(open_optional_non_bool_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; }\n"
+	    "capabilities { open = [ { path = \"/a\"; name = \"x\";"
+	    " rights = \"r\"; optional = \"yes\"; } ] }\n",
+	    &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "optional") != NULL);
+}
+
 ATF_TC_WITHOUT_HEAD(open_type_defaults_to_file);
 ATF_TC_BODY(open_type_defaults_to_file, tc)
 {
@@ -565,6 +596,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, jail_without_path_parses);
 	ATF_TP_ADD_TC(tp, jail_relative_path_rejected);
 	ATF_TP_ADD_TC(tp, open_file_and_dir_parse);
+	ATF_TP_ADD_TC(tp, open_optional_flag_parses);
+	ATF_TP_ADD_TC(tp, open_optional_non_bool_rejected);
 	ATF_TP_ADD_TC(tp, open_type_defaults_to_file);
 	ATF_TP_ADD_TC(tp, open_relative_path_rejected);
 	ATF_TP_ADD_TC(tp, open_missing_rights_rejected);

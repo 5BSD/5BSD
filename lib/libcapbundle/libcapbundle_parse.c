@@ -760,7 +760,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const capkeys[] = { "paths", "files", "network",
 	    "jails", "vsock", "services", "system", "open" };
 	static const char *const openkeys[] = { "path", "name", "type",
-	    "rights" };
+	    "rights", "optional" };
 	static const char *const storagekeys[] = { "name", "scope", "flavor",
 	    "rights", "lifetime" };
 	static const char *const service_names[] = { "mount", "node",
@@ -1457,6 +1457,12 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		    strcmp(t, "file") != 0 && strcmp(t, "dir") != 0))) {
 			snprintf(errbuf, errlen,
 			    "capabilities.open type must be file or dir");
+			return (-1);
+		}
+		x = ucl_object_lookup(v, "optional");
+		if (x != NULL && ucl_object_type(x) != UCL_BOOLEAN) {
+			snprintf(errbuf, errlen,
+			    "capabilities.open optional must be a boolean");
 			return (-1);
 		}
 	}
@@ -2709,6 +2715,11 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 						oc->rights = rmask;
 						oc->is_dir = (strcmp(otype,
 						    "dir") == 0) ? 1 : 0;
+						ov = ucl_object_lookup(oelem,
+						    "optional");
+						oc->optional = (ov != NULL &&
+						    ucl_object_toboolean(ov)) ?
+						    1 : 0;
 						svc->ncap_open++;
 					}
 				}

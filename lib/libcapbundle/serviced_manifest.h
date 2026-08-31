@@ -146,6 +146,8 @@ struct serviced_open_cap {
 	char		name[64];	/* == SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX */
 	uint32_t	rights;		/* SVC_OPEN_* mask (at least one bit) */
 	uint8_t		is_dir;		/* 1 = directory (O_DIRECTORY), else file */
+	uint8_t		optional;	/* 1 = skip (not deliver) if it cannot be
+					 * opened, instead of failing the launch */
 };
 
 struct serviced_jail_claim {

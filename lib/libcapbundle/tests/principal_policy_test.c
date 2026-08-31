@@ -11,6 +11,7 @@
 #include <sys/types.h>
 
 #include <atf-c.h>
+#include <fcntl.h>
 #include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -113,6 +114,35 @@ ATF_TC_BODY(null_principal_is_not_admin, tc)
 	    "/nonexistent/principal-policy.ucl"));
 }
 
+/* The fd form: same decisions, reading the policy from an open descriptor. */
+ATF_TC_WITHOUT_HEAD(policy_fd_grants_by_uid);
+ATF_TC_BODY(policy_fd_grants_by_uid, tc)
+{
+	struct passwd granted = principal(4242);
+	struct passwd other = principal(4243);
+	char path[64];
+	int fd;
+
+	write_policy(path, sizeof(path), "admin { uids = [ 4242 ] }\n");
+	fd = open(path, O_RDONLY);
+	ATF_REQUIRE(fd >= 0);
+	ATF_CHECK(capbundle_principal_is_admin_fd(&granted, fd));
+	ATF_CHECK(!capbundle_principal_is_admin_fd(&other, fd));
+	(void)close(fd);
+	(void)unlink(path);
+}
+
+ATF_TC_WITHOUT_HEAD(policy_fd_absent_defaults_to_root);
+ATF_TC_BODY(policy_fd_absent_defaults_to_root, tc)
+{
+	struct passwd root = principal(0);
+	struct passwd user = principal(1234);
+
+	/* -1 fd (policy not delivered): historical default applies. */
+	ATF_CHECK(capbundle_principal_is_admin_fd(&root, -1));
+	ATF_CHECK(!capbundle_principal_is_admin_fd(&user, -1));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -121,5 +151,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, valid_policy_is_authoritative);
 	ATF_TP_ADD_TC(tp, malformed_policy_fails_safe_to_default);
 	ATF_TP_ADD_TC(tp, null_principal_is_not_admin);
+	ATF_TP_ADD_TC(tp, policy_fd_grants_by_uid);
+	ATF_TP_ADD_TC(tp, policy_fd_absent_defaults_to_root);
 	return (atf_no_error());
 }
