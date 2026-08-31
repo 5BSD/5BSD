@@ -999,8 +999,14 @@ mint_connection_lookup(void)
 
 	if (ambient_master_fd < 0)
 		return (-1);
-	if (service_mint_session_domain(ambient_master_fd, SERVICE_MINT_SYSTEM,
-	    0, &conn_fd) != 0)
+	/*
+	 * Hot-path mint: a tight timeout keeps a slow/wedged serviced from
+	 * stalling this single-threaded accept loop and serializing all new
+	 * connections behind one round-trip.  A failure just means this session
+	 * carries no ambient channel.
+	 */
+	if (service_mint_session_domain_hotpath(ambient_master_fd,
+	    SERVICE_MINT_SYSTEM, 0, &conn_fd) != 0)
 		return (-1);
 	return (conn_fd);
 }
@@ -1364,9 +1370,14 @@ server_accept_loop(int *sock_in, int *sock_out, int *newsock, int *config_s,
 				 * slot so the session never inherits the shared
 				 * master (which would defeat the isolation).
 				 */
-				if (ambient_conn >= 0 && dup2(ambient_conn,
-				    REEXEC_AMBIENT_LOOKUP_FD) == -1)
-					ambient_conn = -1;
+				if (ambient_conn >= 0) {
+					if (dup2(ambient_conn,
+					    REEXEC_AMBIENT_LOOKUP_FD) == -1)
+						ambient_conn = -1;
+					else if (ambient_conn !=
+					    REEXEC_AMBIENT_LOOKUP_FD)
+						(void)close(ambient_conn);
+				}
 				if (ambient_conn < 0)
 					(void)close(REEXEC_AMBIENT_LOOKUP_FD);
 				log_init(__progname,

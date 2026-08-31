@@ -96,7 +96,6 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 	char channel_env[64];
 	char channel_svc_env[64], coalition_svc_env[64], capprotect_env[64];
 	char identity_env[64];
-	char ctlsock_env[PATH_MAX + 32];
 	char bundle_sys_env[PATH_MAX + 32], bundle_usr_env[PATH_MAX + 32];
 	char skip_rc_env[32], no_sigkill_env[40];
 	char *env[14];
@@ -227,13 +226,6 @@ bootstrap_child_exec(int child_channel_fd, const struct bootstrap_delegate_fds *
 		(void)snprintf(identity_env, sizeof(identity_env),
 		    "SERVICED_IDENTITY_FD=%d", SERVICED_IDENTITY_FD);
 		env[envc++] = identity_env;
-	}
-
-	if (od.cfg.serviced_control_socket[0] != '\0') {
-		(void)snprintf(ctlsock_env, sizeof(ctlsock_env),
-		    "SERVICED_CONTROL_SOCKET=%s",
-		    od.cfg.serviced_control_socket);
-		env[envc++] = ctlsock_env;
 	}
 
 	/* Forward bundle-directory overrides when present (see struct comment). */

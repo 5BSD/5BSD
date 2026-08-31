@@ -77,9 +77,6 @@ struct authorityd_config {
 	/* Service manager binary (started by bootstrap) */
 	char		service_manager[PATH_MAX];
 
-	/* Serviced control socket path (passed to serviced) */
-	char		serviced_control_socket[PATH_MAX];
-
 	/* Set by config_load if a file was actually parsed. */
 	bool		loaded_from_file;
 };

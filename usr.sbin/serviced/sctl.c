@@ -3,15 +3,16 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * serviced control socket.
+ * serviced capability control plane.
  *
- * Provides a unix domain socket at /var/run/serviced.sock for
- * administrative commands (status, reload, services).
- *
- * Each client connection is one-shot and fully nonblocking:
- * accept -> kqueue-driven read of request -> dispatch -> kqueue-
- * driven write of reply -> close.  No client can stall the
- * event loop.
+ * serviced self-serves the "system.serviced" (control) and "system.lifecycle"
+ * discovery names over the ambient plane; an admin login session's lookup
+ * mints a channel whose grant carries SVC_RIGHTS_ADMIN, and serviced adopts the
+ * provider end here (sctl_adopt_channel).  Administrative commands (status,
+ * reload, services, start, stop) arrive as single libchannel request/reply
+ * messages and are authorized by the held ADMIN right — never a peer uid.  The
+ * getpeereid(2) unix-domain control socket this file used to bind was retired
+ * (docs/capability-authority-model.md).
  */
 
 #include <sys/types.h>

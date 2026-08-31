@@ -3,6 +3,6 @@ PKG_SETS=	minimal
 
 PKG_LICENSES=	BSD2CLAUSE
 
-PKG_DEPS.authorityctl+=	libauthorityctl
+PKG_DEPS.authorityctl+=	libservice
 
 .include <bsd.pkg.mk>

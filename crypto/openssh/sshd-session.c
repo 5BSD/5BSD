@@ -111,9 +111,11 @@
 #define REEXEC_MIN_FREE_FD		(STDERR_FILENO + 4)
 
 /*
- * Privsep fds.  PRIVSEP_LOG_FD numerically reuses the ambient-lookup slot, but
- * only after main() has already adopted the ambient channel off it, so the two
- * uses never overlap in time.
+ * Privsep fds.  PRIVSEP_MIN_FREE_FD numerically coincides with the
+ * ambient-lookup slot (both == STDERR_FILENO+3): harmless, because main()
+ * adopts the ambient channel off that slot into a high CLOEXEC descriptor and
+ * closes the slot before any privsep fd setup runs, so the two uses never
+ * overlap in time.
  */
 #define PRIVSEP_MONITOR_FD		(STDERR_FILENO + 1)
 #define PRIVSEP_LOG_FD			(STDERR_FILENO + 2)

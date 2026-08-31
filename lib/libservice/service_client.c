@@ -1008,7 +1008,7 @@ service_session_receive_event(struct service_session *session,
  */
 static int
 mint_session_domain_impl(int syschan, enum service_mint_kind kind, uid_t uid,
-    uint32_t reqflags, int *out_fd)
+    uint32_t reqflags, unsigned timeout_ms, int *out_fd)
 {
 	struct svc_mint_domain_req req;
 	struct svc_reply reply_data;
@@ -1040,13 +1040,14 @@ mint_session_domain_impl(int syschan, enum service_mint_kind kind, uid_t uid,
 	reply_fd = -1;
 
 	/*
-	 * Bound the mint RPC.  It runs in a login/su session leader after
-	 * authentication has already succeeded and the login watchdog is
-	 * disabled, so an unbounded call to a wedged serviced would hang the
-	 * session (and the tty) forever.  Cap it like the HELLO probe; the
-	 * caller treats a timeout as "no ambient channel" and proceeds.
+	 * Bound the mint RPC so a wedged serviced can never hang the caller.
+	 * login/su pass a generous cap (post-auth, watchdog disabled); the sshd
+	 * listener passes a tight one because it mints synchronously in its
+	 * single-threaded accept loop, where a long stall would serialize and
+	 * throttle ALL new connections.  Either way a timeout is treated as "no
+	 * ambient channel" and the caller proceeds.
 	 */
-	options.timeout_ms = 2000U;
+	options.timeout_ms = timeout_ms;
 
 	/*
 	 * service_session_create() takes ownership of the descriptor it is
@@ -1105,7 +1106,22 @@ service_mint_session_domain(int syschan, enum service_mint_kind kind, uid_t uid,
     int *out_fd)
 {
 
-	return (mint_session_domain_impl(syschan, kind, uid, 0, out_fd));
+	return (mint_session_domain_impl(syschan, kind, uid, 0, 2000U, out_fd));
+}
+
+/*
+ * Hot-path variant for the sshd listener: mints a per-connection SYSTEM channel
+ * synchronously in the single-threaded accept loop, so it uses a tight timeout
+ * to bound the stall a slow/wedged serviced would otherwise impose on ALL new
+ * connections.  Best-effort: a timeout yields no channel and the session
+ * proceeds without one.
+ */
+int
+service_mint_session_domain_hotpath(int syschan, enum service_mint_kind kind,
+    uid_t uid, int *out_fd)
+{
+
+	return (mint_session_domain_impl(syschan, kind, uid, 0, 500U, out_fd));
 }
 
 /*
@@ -1124,7 +1140,7 @@ service_mint_session_domain_resend(int syschan, enum service_mint_kind kind,
 {
 
 	return (mint_session_domain_impl(syschan, kind, uid,
-	    SVC_MINT_FLAG_RESEND, out_fd));
+	    SVC_MINT_FLAG_RESEND, 2000U, out_fd));
 }
 
 /*
