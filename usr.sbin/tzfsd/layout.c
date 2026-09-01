@@ -319,26 +319,25 @@ reconcile_boot_generations(struct tzfsd_state *st)
 	return (st->boot_fd == -1 ? -1 : 0);
 }
 
+/*
+ * Reap orphaned ephemeral leases.  A lease (ephemeral/lease-<session>) is bound
+ * to the lifetime of the connection that began it.  Called once at daemon
+ * startup, before any connection is served: no lease has a live owner yet, so
+ * every lease-* under ephemeral is an orphan left by a prior boot and is
+ * destroyed.  This is the boot-scoped GC that tzfsd_session_begin used to do by
+ * reaping "every lease but mine" — which is unsafe once concurrent connections
+ * each own their own lease, so it lives here instead.
+ */
 int
-tzfsd_session_begin(struct tzfsd_state *st, const char *session)
+tzfsd_reap_leases(struct tzfsd_state *st)
 {
 	struct zfd_info_args info;
 	void *buf;
 	char **names;
-	const char *name, *rel, *p;
-	char wanted[TZFSD_NAME_MAX];
+	const char *name, *rel;
 	size_t len, prefix_len, nnames, i;
+	int rc = 0;
 
-	if (session == NULL || strlen(session) != TZFSD_SESSION_MAX - 1) {
-		errno = EINVAL;
-		return (-1);
-	}
-	for (p = session; *p != '\0'; p++)
-		if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f'))) {
-			errno = EINVAL;
-			return (-1);
-		}
-	(void)snprintf(wanted, sizeof(wanted), "lease-%s", session);
 	memset(&info, 0, sizeof(info));
 	if (tzfs_info(st->ephemeral_fd, &info) == -1 ||
 	    tzfs_list_children(st->ephemeral_fd, &buf, &len) == -1)
@@ -356,13 +355,38 @@ tzfsd_session_begin(struct tzfsd_state *st, const char *session)
 			continue;
 		rel = name + prefix_len + 1;
 		if (strchr(rel, '/') == NULL && strncmp(rel, "lease-", 6) == 0 &&
-		    strcmp(rel, wanted) != 0 &&
 		    tzfsd_destroy_tree(st->ephemeral_fd, rel) == -1) {
-			tzfsd_nvl_names_free(names, nnames);
-			return (-1);
+			rc = -1;
+			break;
 		}
 	}
 	tzfsd_nvl_names_free(names, nnames);
+	return (rc);
+}
+
+/*
+ * Begin (create or open) this connection's ephemeral lease.  Each live
+ * connection owns exactly one lease-<session> and this NEVER reaps another
+ * connection's lease: concurrent consumers must not delete one another's
+ * storage.  Leases orphaned across a reboot are cleared by tzfsd_reap_leases()
+ * at startup.
+ */
+int
+tzfsd_session_begin(struct tzfsd_state *st, const char *session)
+{
+	const char *p;
+	char wanted[TZFSD_NAME_MAX];
+
+	if (session == NULL || strlen(session) != TZFSD_SESSION_MAX - 1) {
+		errno = EINVAL;
+		return (-1);
+	}
+	for (p = session; *p != '\0'; p++)
+		if (!((*p >= '0' && *p <= '9') || (*p >= 'a' && *p <= 'f'))) {
+			errno = EINVAL;
+			return (-1);
+		}
+	(void)snprintf(wanted, sizeof(wanted), "lease-%s", session);
 	if (st->lease_fd != -1)
 		close(st->lease_fd);
 	st->lease_fd = tzfsd_ensure_path(st->ephemeral_fd, wanted,

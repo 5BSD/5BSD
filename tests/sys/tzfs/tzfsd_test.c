@@ -334,11 +334,24 @@ ATF_TC_BODY(lifetimes_and_session_recovery, tc)
 	strlcpy(boot_dataset, boot.dataset, sizeof(boot_dataset));
 	close(chan);
 
-	/* A storage-daemon restart preserves this boot and service session. */
+	/*
+	 * A storage-daemon restart reaps orphaned ephemeral leases at startup:
+	 * nothing is connected yet, so every lease-* is a prior-life orphan and
+	 * is destroyed.  The persistent roots and the current boot generation
+	 * survive.  The service reconnects and gets a fresh lease of the same
+	 * deterministic name.
+	 */
 	tzt_daemon_stop();
 	tzt_daemon_start();
 	chan = tzfsd_connect();
 	ATF_REQUIRE(chan >= 0);
+	ATF_CHECK_EQ(0, tzt_systemf("zfs list %s >/dev/null 2>&1",
+	    boot_dataset));
+	ATF_CHECK_EQ(0, tzt_systemf("zfs list %s >/dev/null 2>&1",
+	    persistent.dataset));
+	ATF_CHECK_EQ(0, tzt_systemf("zfs list %s >/dev/null 2>&1",
+	    cache.dataset));
+	ATF_CHECK(tzt_systemf("zfs list %s >/dev/null 2>&1", lease_dataset) != 0);
 	ATF_REQUIRE_EQ(0, tzfsd_begin_session(chan, session_a));
 	memset(&req, 0, sizeof(req));
 	strlcpy(req.dataset, "l-life", sizeof(req.dataset));
@@ -347,18 +360,22 @@ ATF_TC_BODY(lifetimes_and_session_recovery, tc)
 	ATF_REQUIRE_EQ(0, tzfsd_request(chan, &req, &resumed));
 	ATF_CHECK_STREQ(lease_dataset, resumed.dataset);
 	close(resumed.handle_fd);
-	ATF_CHECK_EQ(0, tzt_systemf("zfs list %s >/dev/null 2>&1",
-	    boot_dataset));
 
-	/* A new manager session reclaims only the abandoned lease generation. */
-	ATF_REQUIRE_EQ(0, tzfsd_begin_session(chan, session_b));
-	ATF_CHECK(tzt_systemf("zfs list %s >/dev/null 2>&1", lease_dataset) != 0);
-	ATF_CHECK_EQ(0, tzt_systemf("zfs list %s >/dev/null 2>&1",
-	    persistent.dataset));
-	ATF_CHECK_EQ(0, tzt_systemf("zfs list %s >/dev/null 2>&1",
-	    cache.dataset));
-	ATF_CHECK_EQ(0, tzt_systemf("zfs list %s >/dev/null 2>&1",
-	    boot.dataset));
+	/*
+	 * Concurrent sessions coexist: beginning a different session on another
+	 * connection never reaps a live lease begun elsewhere.  Reaping is for
+	 * orphans only, at startup — session-begin creates or opens, never
+	 * destroys a sibling's lease.
+	 */
+	{
+		int chan2 = tzfsd_connect();
+
+		ATF_REQUIRE(chan2 >= 0);
+		ATF_REQUIRE_EQ(0, tzfsd_begin_session(chan2, session_b));
+		ATF_CHECK_EQ(0, tzt_systemf("zfs list %s >/dev/null 2>&1",
+		    lease_dataset));
+		close(chan2);
+	}
 	close(chan);
 }
 ATF_TC_CLEANUP(lifetimes_and_session_recovery, tc) { tzt_cleanup(); }

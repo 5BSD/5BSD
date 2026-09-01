@@ -178,6 +178,14 @@ main(int argc, char **argv)
 		errx(1, "layout provisioning failed (is pool %s imported?)",
 		    st.cfg.pool);
 
+	/*
+	 * Boot-scoped GC of ephemeral leases orphaned by a prior boot.  Runs
+	 * once here, before any connection is served, so it never races a live
+	 * consumer's lease.  Non-fatal: a reap failure must not stop serving.
+	 */
+	if (tzfsd_reap_leases(&st) == -1)
+		syslog(LOG_WARNING, "reap orphan leases: %m");
+
 	st.listen_fd = open_listener();
 	if (st.listen_fd == -1)
 		errx(1, "cannot open %s", TZFSD_SOCK_PATH);
