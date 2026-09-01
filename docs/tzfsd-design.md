@@ -146,7 +146,7 @@ artifact (or re-enabling in config) and letting tzfsd `zfs recv` it.
 
 ---
 
-## 4. Configuration — `/etc/capability/tzfsd.ucl`
+## 4. Configuration — `/Capabilities/Config/tzfsd.ucl`
 
 ```ucl
 pool = "zroot";                        # pool backing /Capabilities

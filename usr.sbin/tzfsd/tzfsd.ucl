@@ -17,7 +17,7 @@
 # "native" (a copy-on-write clone of the running system).  OS-image flavors
 # such as "linux" (Rocky) and "freebsd" are contributed by the separately
 # packaged flavor catalog (tzfs-flavors(7)), which drops its own fragment under
-# /etc/capability/tzfsd.d/.  You can still override any flavor here, e.g.:
+# /Capabilities/Config/tzfsd.d/.  You can still override any flavor here, e.g.:
 #
 # flavors {
 #     linux { enabled = false; }      # drop the Linux userland from this host

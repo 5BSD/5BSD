@@ -62,8 +62,8 @@ fi
 # root filesystem suspends on I/O failure during the reboot sync and wedges
 # the shutdown.  tzfsd re-imports it on demand.
 zpool export capability 2>/dev/null || true
-mkdir -p /etc/capability
-printf 'pool = "capability";\n' > /etc/capability/tzfsd.ucl
+mkdir -p /Capabilities/Config
+printf 'pool = "capability";\n' > /Capabilities/Config/tzfsd.ucl
 
 # Replace the system bundle set with the one staged from this source
 # revision.  A leftover bundle from an older world is not benign: serviced

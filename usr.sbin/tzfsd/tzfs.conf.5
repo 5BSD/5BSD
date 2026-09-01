@@ -10,7 +10,7 @@
 .Nm tzfs.conf
 .Nd configuration file for the tzfsd storage daemon
 .Sh DESCRIPTION
-.Pa /etc/capability/tzfsd.ucl
+.Pa /Capabilities/Config/tzfsd.ucl
 configures
 .Xr tzfsd 8 .
 It is a
@@ -75,7 +75,7 @@ from brokering storage.
 They are contributed by the separately packaged flavor catalog,
 .Xr tzfs-flavors 7 ,
 which drops its own fragment under
-.Pa /etc/capability/tzfsd.d/ .
+.Pa /Capabilities/Config/tzfsd.d/ .
 .Pp
 The
 .Va flavors
@@ -108,10 +108,10 @@ The flavor is then simply not offered and a request for it fails with
 Marks the opinionated default flavor.
 .El
 .Sh FILES
-.Bl -tag -width ".Pa /etc/capability/tzfsd.ucl" -compact
-.It Pa /etc/capability/tzfsd.ucl
+.Bl -tag -width ".Pa /Capabilities/Config/tzfsd.ucl" -compact
+.It Pa /Capabilities/Config/tzfsd.ucl
 the file described here
-.It Pa /etc/capability/tzfsd.d/
+.It Pa /Capabilities/Config/tzfsd.d/
 flavor catalog drop-in directory; packages such as
 .Sy tzfs-flavors
 install additional flavor definitions here

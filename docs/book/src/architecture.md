@@ -4,6 +4,44 @@
 Linuxulator is treated as the primary application binary interface and a
 capability-oriented security stack enforces policy beneath it.
 
+## Design principles
+
+The shape of 5BSD follows from a handful of deliberate decisions. Read these
+first; the rest of the Epic is their consequences.
+
+- **Authority is a held capability, not a uid.** A uid, PID, path, or socket
+  peer-credential grants nothing; what a process can do is exactly what it holds
+  an unforgeable descriptor for. See [The Authority
+  Model](security/authority-model.md).
+- **A hybrid by design — the secure realm sits beside UNIX.** The
+  capability-authority plane runs *alongside* the traditional BSD system, not as
+  a replacement, so adoption is incremental and the machine stays working at
+  every step. `authority-init` can hand off to stock `init`
+  (`capability_plane="NO"`), `serviced` coexists with `rc(8)`, and
+  `reboot`/`halt`/signals stay standard. FreeBSD 16 is the last base adopted
+  wholesale; the secure realm subsumes the old model over time rather than on a
+  flag day.
+- **One mint boundary.** Authority is created in one explicit place —
+  `authority-init` at boot, and the [auth-agent](security/session-mint.md) for
+  login sessions — and flows everywhere else by delegation. `login`/`su`/`sshd`
+  do not classify principals or mint; they *ask*.
+- **Domains scope reach.** Every lookup channel carries a domain — **SYSTEM**
+  (admin, resolves everything), **USER** (per-uid, a small allow-list), or
+  **CONTROL** (the admin control plane) — and domains only ever narrow. The
+  policy that assigns a principal its domain lives in one file,
+  `/Capabilities/Config/principal-policy.ucl`.
+- **Reached through a library, never a raw protocol.** Programs use typed
+  libraries (`libservice`, `libcapbundle`, …), not hand-rolled sockets or
+  `getpeereid(3)`; operator and system policy lives in manifests, not code.
+- **`/Capabilities`, not an FHS clone.** The capability plane's files are laid
+  out per-capability, not as a `/etc`+`/var` mirror. See [Capability Filesystem
+  Hierarchy](system/capability-hier.md).
+- **Security below the API, not inside it.** Enforcement lives beneath the
+  Linux syscall boundary, on a kernel the Linux code cannot see or attack
+  through the API.
+- **64-bit only** (below), and **structured for clean upstream tracking** —
+  custom kernel work is loadable modules with minimal base-system touches.
+
 ## 64-bit only
 
 5BSD is a **64-bit-only** operating system — there is no 32-bit support of any

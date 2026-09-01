@@ -13,9 +13,9 @@ SCRIPTS=	tzfs-mkflavor.sh
 SCRIPTSNAME_tzfs-mkflavor.sh=	tzfs-mkflavor
 SCRIPTSDIR=	/usr/sbin
 
-# Default configuration under /etc/capability.
+# Default configuration under /Capabilities/Config.
 CONFS=		tzfsd.ucl
-CONFSDIR=	/etc/capability
+CONFSDIR=	/Capabilities/Config
 
 # Directory that holds baked flavor send-stream artifacts.
 DIRS+=		TZFSSHARE

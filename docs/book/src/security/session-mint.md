@@ -49,12 +49,28 @@ channel for a uid. The agent does three things:
    compromised one must not be able to claim `wheel` membership it does not
    have.
 
-2. **Applies the principal→bundle policy.** The admin decision is read from
-   `/Capabilities/Config/principal-policy.ucl` — an explicit
-   `admin { uids = [...]; groups = [...] }` policy delivered to the agent as an
-   optional [`capabilities.open`](capability-bundles.md) descriptor (so the
-   sandboxed agent reads it without a path). An absent or invalid policy falls
-   back to the historical default — **root, or a member of `wheel`**.
+2. **Applies the principal→domain policy.** This is the critical piece:
+   **`/Capabilities/Config/principal-policy.ucl` is the single config that
+   decides which authority domain a principal's session receives.** It is an
+   explicit list:
+
+   ```ucl
+   admin {
+       uids   = [ 0 ]        # principals granted the SYSTEM (admin) domain by uid
+       groups = [ "wheel" ]  # ...and by group membership
+   }
+   ```
+
+   A principal named here — by uid or by membership in a named group — gets a
+   **SYSTEM** (full-discovery admin) session; every other principal gets a
+   per-uid **USER** session (see [The Authority Model](authority-model.md) for
+   what each domain can reach). The file is delivered to the sandboxed agent as
+   an optional [`capabilities.open`](capability-bundles.md) descriptor, so the
+   agent reads it without ever opening a path. It is the one authoritative place
+   the domain assignment is stated; an absent or unparseable policy fails safe to
+   the historical default — **root, or a member of `wheel`, is admin** — so a
+   system with no policy behaves exactly as before and a typo can never lock out
+   root.
 
 3. **Mints the scoped channel and returns it.** The agent mints a SYSTEM or
    USER session lookup channel over **its own unit bootstrap channel** to

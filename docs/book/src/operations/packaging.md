@@ -50,7 +50,7 @@ Notable 5BSD packages:
   `usr.sbin/tzfs-flavors/Makefile`): the TrustedZFS
   OS-image flavor catalog, deliberately decoupled from the `tzfsd`
   storage broker. It ships `flavors.ucl` as a drop-in for
-  `/etc/capability/tzfsd.d/` declaring linux (Rocky) and freebsd flavors,
+  `/Capabilities/Config/tzfsd.d/` declaring linux (Rocky) and freebsd flavors,
   plus `tzfs-flavor-linux.sh` and `tzfs-flavor-freebsd.sh` producers and a
   `tzfs-flavors(7)` manual page. It can be installed, versioned, or
   removed independently of the broker.

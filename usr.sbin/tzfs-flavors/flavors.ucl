@@ -1,6 +1,6 @@
 # tzfs-flavors: OS-image flavor catalog for tzfsd(8).
 #
-# Installed as a drop-in under /etc/capability/tzfsd.d/ by the tzfs-flavors
+# Installed as a drop-in under /Capabilities/Config/tzfsd.d/ by the tzfs-flavors
 # package.  tzfsd(8) itself is a storage/capability broker and deliberately
 # knows nothing about any particular operating system; this fragment is how
 # OS-image flavors are contributed to it as *data*, so distro curation stays

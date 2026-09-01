@@ -47,8 +47,8 @@ first start it opens the pool root and creates
 self-installing; the only prerequisite the operator owns is the pool.
 
 The pool name defaults to **`zroot`** and is the single knob most systems ever
-touch. Configuration lives in `/etc/capability/tzfsd.ucl`
-(with flavor-catalog drop-ins under `/etc/capability/tzfsd.d/`); every key is
+touch. Configuration lives in `/Capabilities/Config/tzfsd.ucl`
+(with flavor-catalog drop-ins under `/Capabilities/Config/tzfsd.d/`); every key is
 optional and the commented defaults in the shipped file are authoritative.
 
 **ZFS-rooted install (the streamlined path).** A stock ZFS-on-root system
@@ -68,7 +68,7 @@ point the daemon at it:
 zpool create capability /dev/<disk-or-file>   # or: zpool import capability
 
 # Tell tzfsd to use it.
-printf 'pool = "capability";\n' >> /etc/capability/tzfsd.ucl
+printf 'pool = "capability";\n' >> /Capabilities/Config/tzfsd.ucl
 ```
 
 `tzfsd` provisions `capability/Capabilities/...` on its next start. Only the

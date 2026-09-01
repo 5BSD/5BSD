@@ -25,6 +25,50 @@ diverged from FreeBSD. This README is the map; the Epic is the territory.
 
 ---
 
+## A hybrid by design — the secure realm sits beside UNIX
+
+This is a deliberate architectural decision, not a transitional accident:
+**5BSD does not replace UNIX — the capability-authority realm runs *beside* the
+traditional BSD/UNIX system, and you migrate onto it over time.** The two
+coexist by design so that adoption is incremental and the machine stays working
+at every step, instead of betting everything on a single big-bang rewrite:
+
+- `authority-init` runs as PID 1, but the capability plane is a loader knob
+  (`capability_plane="NO"`) — with it off, `authority-init` hands off to stock
+  `init` and you get an ordinary FreeBSD system. The OS boots and runs either
+  way.
+- `serviced` coexists with `rc(8)`; services move under capability management
+  **progressively**, one subsystem at a time, not all at once.
+- Stock UNIX mechanisms are kept where they belong: `reboot`/`halt`/signals stay
+  standard (they signal `authority-init` as init), and the system-lifecycle
+  control socket deliberately keeps `getpeereid(3)`.
+- Ambient uid checks are being replaced by held capabilities **in phases** —
+  during the migration a capability path may still carry a uid fallback behind
+  it.
+
+The payoff is a gradual path: an operator — and the project itself, as it
+diverges from FreeBSD — grows the secure realm next to UNIX and lets it subsume
+the old model over time, rather than requiring a flag day. The
+capability-authority migration described throughout this document is exactly
+that process, and it is meant to be run incrementally.
+
+---
+
+## Reached through a library, never a raw protocol
+
+A second deliberate decision: **nothing speaks the capability wire protocols by
+hand.** A program reaches a capability service through a *typed library* —
+`libservice` (`service_open`, `service_connect`, `service_acquire`) plus
+per-service client libraries (`libcapbundle`, `libnetworkcmp`, `liblogcmp`, …) —
+which hands back a capability channel and performs the request/reply. There are
+no client-side sockets, no `getpeereid(3)` credential checks, and no ad-hoc
+framing on the consumer side. The library *is* the API surface; the wire format
+is an implementation detail behind it. Correspondingly, **operator and system
+policy lives in manifests, not in code** — only the client↔server protocol
+contract and a service's own self-hardening belong in the library.
+
+---
+
 ## The capability-authority model
 
 Traditional Unix authority is *ambient*: a process carries a uid, and code all
@@ -64,6 +108,15 @@ delegation:
 - Everything a capability service needs lives under
   **[`/Capabilities`](docs/book/src/system/capability-hier.md)**, not a Unix FHS
   clone.
+
+**Domains scope reach.** Every capability lookup channel carries a *domain*, and
+`serviced` decides which service names it may resolve: a **SYSTEM** channel
+(admin) resolves every registered service; a **USER** channel (per-uid,
+non-admin) resolves only a small allow-list; a **CONTROL** channel reaches the
+admin control plane and nothing else. Domains only ever *narrow* — a USER
+channel can never widen itself to SYSTEM. This is what gives the auth-agent's
+SYSTEM-vs-USER decision teeth: the agent picks the domain, and `serviced`
+enforces the reach at every lookup.
 
 The authoritative, code-level spec is
 [`docs/capability-authority-model.md`](docs/capability-authority-model.md).

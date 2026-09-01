@@ -34,9 +34,9 @@ The `freebsd` and `linux` (Rocky Linux 9) flavors are **not built into the
 broker**. They ship as a separate `tzfs-flavors` package
 (`usr.sbin/tzfs-flavors/`, `PACKAGE= tzfs-flavors`) consisting of:
 
-- `/etc/capability/tzfsd.d/flavors.ucl` — a config drop-in declaring each
+- `/Capabilities/Config/tzfsd.d/flavors.ucl` — a config drop-in declaring each
   flavor and its baked artifact. `tzfsd` reads every `*.ucl` fragment in
-  `/etc/capability/tzfsd.d/` after its main configuration, so the catalog
+  `/Capabilities/Config/tzfsd.d/` after its main configuration, so the catalog
   contributes flavors as data:
 
 ```ucl

@@ -10,9 +10,9 @@ SCRIPTS=	tzfs-flavor-linux.sh \
 		tzfs-flavor-freebsd.sh
 SCRIPTSDIR=	/usr/libexec
 
-# Flavor-catalog drop-in read by tzfsd(8) from /etc/capability/tzfsd.d/.
+# Flavor-catalog drop-in read by tzfsd(8) from /Capabilities/Config/tzfsd.d/.
 CONFS=		flavors.ucl
-CONFSDIR=	/etc/capability/tzfsd.d
+CONFSDIR=	/Capabilities/Config/tzfsd.d
 
 MAN=		tzfs-flavors.7
 

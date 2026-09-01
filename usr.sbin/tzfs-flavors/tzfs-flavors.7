@@ -30,14 +30,14 @@ rootfs stays decoupled from the broker itself and can be versioned or removed
 independently.
 The catalog consists of two parts:
 .Bl -tag -width Ds
-.It Pa /etc/capability/tzfsd.d/flavors.ucl
+.It Pa /Capabilities/Config/tzfsd.d/flavors.ucl
 A configuration drop-in that declares each flavor and the baked ZFS
 send-stream artifact it is built from.
 .Xr tzfsd 8
 reads every
 .Pa *.ucl
 fragment in
-.Pa /etc/capability/tzfsd.d/
+.Pa /Capabilities/Config/tzfsd.d/
 after its main configuration, so the catalog contributes flavors without the
 broker's own defaults naming any distribution.
 .It The artifacts
@@ -85,8 +85,8 @@ An output path must match the
 its flavor declares in
 .Pa flavors.ucl .
 .Sh FILES
-.Bl -tag -width "/etc/capability/tzfsd.d/flavors.ucl" -compact
-.It Pa /etc/capability/tzfsd.d/flavors.ucl
+.Bl -tag -width "/Capabilities/Config/tzfsd.d/flavors.ucl" -compact
+.It Pa /Capabilities/Config/tzfsd.d/flavors.ucl
 flavor declarations read by
 .Xr tzfsd 8
 .It Pa /usr/share/tzfs/

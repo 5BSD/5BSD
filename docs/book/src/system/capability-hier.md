@@ -59,11 +59,20 @@ doesn't exist yet:
 - **`serviced`** consults the operator disable list while building its bundle
   registry, before it activates (and therefore before any runtime home exists).
 
-Their bootstrap configuration is the *only* thing kept in a shared static
-directory, `/Capabilities/Config/`, on the root dataset and present at boot. It
-is kept deliberately minimal — genuine pre-storage bootstrap config, nothing
-that could instead live in a capability's own home. Everything a capability
-needs *after* the storage plane is up belongs in its runtime home, not here.
+Their bootstrap configuration is kept in a shared static directory,
+`/Capabilities/Config/`, on the root dataset and present at boot. It is kept
+deliberately minimal — genuine pre-storage bootstrap config, nothing that could
+instead live in a capability's own home. Everything a capability needs *after*
+the storage plane is up belongs in its runtime home, not here.
+
+One more file lives here, and it is the most security-critical config in the
+system: **`/Capabilities/Config/principal-policy.ucl` — the policy that decides
+which authority *domain* each user's session receives.** It lists the uids and
+groups that are granted the SYSTEM (admin) domain; everyone else gets a per-uid
+USER domain. It is read by the [auth-agent](../security/session-mint.md) at the
+authentication boundary, and an absent policy fails safe to *root-or-`wheel` is
+admin*. This is the single authoritative place the SYSTEM-vs-USER assignment is
+stated — the one config that says what each user can be.
 
 ## Why the split is safe — the bootstrap ordering
 

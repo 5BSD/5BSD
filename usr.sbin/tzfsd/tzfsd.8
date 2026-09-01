@@ -56,7 +56,7 @@ The options are:
 Read configuration from
 .Ar config
 instead of
-.Pa /etc/capability/tzfsd.ucl .
+.Pa /Capabilities/Config/tzfsd.ucl .
 A missing file is not an error; built-in defaults stand.
 .It Fl f
 Run in the foreground and log to stderr as well as syslog.
@@ -85,7 +85,7 @@ flavor is on by default but may be removed to slim a deployment; see
 .Xr tzfs.conf 5 .
 .Sh FILES
 .Bl -tag -width ".Pa /var/run/tzfsd.ready" -compact
-.It Pa /etc/capability/tzfsd.ucl
+.It Pa /Capabilities/Config/tzfsd.ucl
 configuration file
 .It Pa /var/run/tzfsd.sock
 request socket (root only)

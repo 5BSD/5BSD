@@ -16,8 +16,8 @@
 #include "tzfsd_proto.h"
 
 #define	TZFSD_MAXPATH		256	/* dataset name buffer */
-#define	TZFSD_DEFAULT_CONF	"/etc/capability/tzfsd.ucl"
-#define	TZFSD_DEFAULT_CONFD	"/etc/capability/tzfsd.d"	/* flavor catalog drop-ins */
+#define	TZFSD_DEFAULT_CONF	"/Capabilities/Config/tzfsd.ucl"
+#define	TZFSD_DEFAULT_CONFD	"/Capabilities/Config/tzfsd.d"	/* flavor catalog drop-ins */
 
 /* The @snapshot every flavor template exposes as its clone origin. */
 #define	TZFSD_TEMPLATE_SNAP	"ready"
