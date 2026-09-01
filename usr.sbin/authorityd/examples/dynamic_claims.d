@@ -35,12 +35,6 @@ authorityd*:::dyn-claim-net
 	    walltimestamp, "CLAIM", arg0, arg1, arg2, arg3);
 }
 
-authorityd*:::dyn-claim-jail
-{
-	printf("%-20Y %-8s jail %-35s result=%d\n",
-	    walltimestamp, "CLAIM", copyinstr(arg0), arg2);
-}
-
 authorityd*:::dyn-claim-system
 {
 	printf("%-20Y %-8s gates=0x%-32x result=%d\n",
@@ -59,12 +53,6 @@ authorityd*:::dyn-release-net
 {
 	printf("%-20Y %-8s port %d-%d proto=%d          refcount=%d result=%d\n",
 	    walltimestamp, "RELEASE", arg0, arg1, arg2, arg3, arg4);
-}
-
-authorityd*:::dyn-release-jail
-{
-	printf("%-20Y %-8s jail %-35s refcount=%d result=%d\n",
-	    walltimestamp, "RELEASE", copyinstr(arg0), arg2, arg3);
 }
 
 authorityd*:::dyn-release-system

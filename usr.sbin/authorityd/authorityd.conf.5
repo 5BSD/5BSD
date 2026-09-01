@@ -168,7 +168,7 @@ for manifest claims and
 .Ql [service, refcount=N]
 for dynamic claims.
 .Pp
-Claim limits: at most 64 paths, 32 network claims, and 32 jail claims.
+Claim limits: at most 64 paths and 32 network claims.
 .Bl -tag -width "network"
 .It Va paths
 Array of absolute paths to files or directories to claim.
@@ -262,40 +262,6 @@ Foreign nonces receive
 .Er EACCES
 on bind or connect to claimed endpoints.
 Default: empty.
-.It Va jails
-Array of jail claims.
-Each element may be:
-.Bl -dash -compact
-.It
-An integer jail ID (all actions are claimed).
-.It
-A string jail name (all actions are claimed).
-.It
-An object with the following keys:
-.Bl -tag -width "actions" -compact
-.It Va jid
-Integer jail ID.
-0 or omitted means not specified.
-.It Va name
-String jail name.
-Empty or omitted means not specified.
-.It Va actions
-.Dq *
-or
-.Dq all
-for all actions, or an array of:
-.Dq create ,
-.Dq get ,
-.Dq set ,
-.Dq remove ,
-.Dq attach .
-.It Va path
-Allowed root path prefix for jail creation.
-Optional.
-.El
-.El
-.Pp
-Default: empty.
 .It Va system
 Array of system gate names to claim via the
 .Xr mac_capability_system 4
@@ -345,7 +311,7 @@ integrity {
 .Ed
 .Pp
 Claim sensitive files, a privileged port range on a specific subnet,
-jail resources, and system operations:
+and system operations:
 .Bd -literal -offset indent
 claims {
     paths = [
@@ -367,14 +333,6 @@ claims {
             direction = "bind";
             domain = "inet6";
             address = "2001:db8::/32";
-        },
-    ];
-    jails = [
-        "webjail",
-        {
-            name = "dbjail";
-            actions = ["create", "attach"];
-            path = "/usr/local/jails/dbjail";
         },
     ];
     system = ["kldload", "kldunload", "reboot", "sysctl"];

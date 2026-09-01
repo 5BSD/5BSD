@@ -32,69 +32,6 @@
 #include "gates.h"
 #include "authorityd_ctl.h"
 
-int
-parse_ucl_jail_claim(const ucl_object_t *elem, struct authorityd_jail_claim *jc,
-    const char *label)
-{
-	const ucl_object_t *v;
-	int64_t jid;
-
-	memset(jc, 0, sizeof(*jc));
-	jc->actions = FI_JAIL_ALL;
-
-	switch (ucl_object_type(elem)) {
-	case UCL_INT:
-		jid = ucl_object_toint(elem);
-		if (jid <= 0 || jid > INT32_MAX)
-			return (-1);
-		jc->jid = (int32_t)jid;
-		return (0);
-	case UCL_STRING:
-		if (strlcpy(jc->name, ucl_object_tostring(elem),
-		    sizeof(jc->name)) >= sizeof(jc->name))
-			return (-1);
-		return (jc->name[0] != '\0' ? 0 : -1);
-	case UCL_OBJECT:
-		break;
-	default:
-		return (-1);
-	}
-
-	v = ucl_object_lookup(elem, "jid");
-	if (v != NULL) {
-		if (ucl_object_type(v) != UCL_INT)
-			return (-1);
-		jid = ucl_object_toint(v);
-		if (jid <= 0 || jid > INT32_MAX)
-			return (-1);
-		jc->jid = (int32_t)jid;
-	}
-	v = ucl_object_lookup(elem, "name");
-	if (v != NULL) {
-		if (ucl_object_type(v) != UCL_STRING)
-			return (-1);
-		if (strlcpy(jc->name, ucl_object_tostring(v),
-		    sizeof(jc->name)) >= sizeof(jc->name))
-			return (-1);
-	}
-	v = ucl_object_lookup(elem, "actions");
-	if (parse_jail_actions(v, &jc->actions) != 0) {
-		syslog(LOG_WARNING, "%s: invalid jail actions", label);
-		return (-1);
-	}
-	v = ucl_object_lookup(elem, "path");
-	if (v != NULL) {
-		if (ucl_object_type(v) != UCL_STRING)
-			return (-1);
-		if (strlcpy(jc->path, ucl_object_tostring(v),
-		    sizeof(jc->path)) >= sizeof(jc->path))
-			return (-1);
-		if (jc->path[0] != '/')
-			return (-1);
-	}
-	return ((jc->jid != 0 || jc->name[0] != '\0') ? 0 : -1);
-}
-
 /*
  * Parse a single UCL network claim object into an ort_net_claim.
  * Shared between config.c and manifest.c.
@@ -407,32 +344,6 @@ cfg_claims(const ucl_object_t *root, struct authorityd_config *cfg)
 		}
 	}
 
-	/* claims.jails — array of JIDs, names, or objects */
-	arr = ucl_object_lookup(sec, "jails");
-	if (arr == NULL)
-		arr = ucl_object_lookup(sec, "jail");
-	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
-		it = NULL;
-		while ((elem = ucl_object_iterate(arr, &it, true))
-		    != NULL) {
-			if (cfg->nclaim_jail >= AUTHORITYD_MAX_JAIL_CLAIMS) {
-				fprintf(stderr, "authorityd: too many "
-				    "jail claims (max %d)\n",
-				    AUTHORITYD_MAX_JAIL_CLAIMS);
-				break;
-			}
-			if (parse_ucl_jail_claim(elem,
-			    &cfg->claim_jail[cfg->nclaim_jail],
-			    "config") == 0) {
-				cfg->claim_jail_source[cfg->nclaim_jail] =
-				    CLAIM_SOURCE_POLICY;
-				cfg->nclaim_jail++;
-			}
-			else
-				fprintf(stderr, "authorityd: invalid jail claim\n");
-		}
-	}
-
 	/* claims.system — string array of gate names */
 	arr = ucl_object_lookup(sec, "system");
 	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
@@ -542,7 +453,7 @@ config_log(const struct authorityd_config *cfg)
 	syslog(LOG_INFO, "config: control_socket=%s mode=%04o",
 	    cfg->control_socket, cfg->control_socket_mode);
 	syslog(LOG_INFO, "config: integrity_flags=0x%x", cfg->integrity_flags);
-	syslog(LOG_INFO, "config: claims paths=%d network=%d jails=%d "
+	syslog(LOG_INFO, "config: claims paths=%d network=%d "
 	    "system=0x%x", cfg->nclaim_paths, cfg->nclaim_net,
-	    cfg->nclaim_jail, cfg->claim_system);
+	    cfg->claim_system);
 }

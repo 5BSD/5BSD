@@ -213,7 +213,7 @@ dependency, duplicate provided name, or dependency cycle rejects the bundle set;
 authority declarations are never silently dropped.
 .Pp
 The authoritative schema, including literal arguments, environment variables,
-restart policy, and filesystem, Internet, Bluetooth, VSOCK, jail,
+restart policy, and filesystem, Internet, Bluetooth, VSOCK,
 capability-service, and system capabilities, is documented in
 .Xr serviced 5 .
 .Sh SERVICE BOOTSTRAP
@@ -237,7 +237,7 @@ environment strings.
 The service channel is fd 3, optional capprotect is fd 4, and authority
 descriptors occupy a contiguous range beginning at fd 6.
 Tokens appear first in manifest-category order: paths, files, network
-endpoints, jail operations, VSOCK endpoints, and finally one
+endpoints, VSOCK endpoints, and finally one
 combined system-gate token.
 Capability-service descriptors follow.
 All requested descriptors are installed before
@@ -409,7 +409,7 @@ When a service exits,
 .Nm
 releases all capabilities from the service's manifest via the
 channel.
-Release messages are sent for every path, network endpoint, jail,
+Release messages are sent for every path, network endpoint,
 and system gate in the manifest.
 The authority decrements refcounts for dynamic claims; claims whose
 refcount reaches zero are released from the kernel.

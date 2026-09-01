@@ -555,7 +555,7 @@ manifest_arguments_environment_cleanup()
 atf_test_case remaining_token_families_activate cleanup
 remaining_token_families_activate_head()
 {
-	atf_set "descr" "Jail, VSOCK, and system manifest tokens mint and activate after exec"
+	atf_set "descr" "VSOCK and system manifest tokens mint and activate after exec"
 	atf_set "require.user" "root"
 	require_authority_stack_kmods
 	atf_set "timeout" "60"
@@ -565,7 +565,6 @@ remaining_token_families_activate_body()
 	find_capd_service_fixture
 	start_stack
 	make_svc_bin system token-families 'capabilities {
-    jails = [{ name = "org.test.token-jail"; actions = ["get"]; }];
     vsock = [{ cid = "any"; port = 48001; direction = "connect"; }];
 	    system = ["kldstat"];
 }

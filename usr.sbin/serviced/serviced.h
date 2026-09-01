@@ -255,7 +255,6 @@ int	mac_cap_protect(int capprotect_fd, int pd_fd, uint32_t flags);
 int	authority_mint_path(int channel_fd, const char *path);
 int	authority_mint_file(int channel_fd, const char *path, uint64_t actions);
 int	authority_mint_net(int channel_fd, const struct ort_net_claim *nc);
-int	authority_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
 int	authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc);
 int	authority_mint_system(int channel_fd, uint32_t gates);
 int	authority_create_channel(int channel_fd, int *our_end, int *child_end);

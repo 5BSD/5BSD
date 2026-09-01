@@ -47,7 +47,6 @@ void	mac_capability_teardown(void);
 int	mac_capability_mint_path_token(const char *path);
 int	mac_capability_mint_file_token(const char *path, uint64_t actions);
 int	mac_capability_mint_net_token(const struct ort_net_claim *nc);
-int	mac_capability_mint_jail_token(const struct authorityd_jail_claim *jc);
 int	mac_capability_mint_vsock_token(const struct ort_vsock_claim *vc);
 int	mac_capability_mint_system_token(uint32_t gates);
 int	mac_capability_create_channel(int *authority_end, int *child_end);

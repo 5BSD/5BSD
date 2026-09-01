@@ -29,27 +29,33 @@ The discovery
 .Em domain
 layer resolves
 .Dq Li system.Namespace
-only for SYSTEM-domain clients, so only
-.Xr serviced 8 ,
-which brokers jail creation while launching a jailed unit, can drive it.
+only for SYSTEM-domain clients.
+Jailing is
+.Em consumer self-service :
+a program confines itself at runtime by calling
+.Xr service_enter_namespace 3 ,
+whose library resolves
+.Nm
+and drives it.
+.Nm
+is never driven by
+.Xr serviced 8
+on a unit's behalf, and a unit does not declare a jail in its manifest.
 .Pp
 .Nm
-holds no standing jail authority of its own.
-PID 1's authority still owns the jail
-.Em claim
-and mints the jail capability token
-.Pq Xr authority 8 No MINT_JAIL .
-Each create request carries such a token as its single descriptor;
+holds no standing jail authority of its own, and self-jailing needs no
+per-caller token: because confining oneself is self-confinement,
 .Nm
-authorizes it
-.Pq adding its process nonce to the claim's authorized set
-and then calls
-.Xr jail_set 2 .
-The created jail's owning descriptor is returned as the reply's single
-descriptor, and
-.Xr serviced 8
-.Xr jail_attach_jd 2 Ns 's
-the child to it before exec.
+scopes each jail by the caller's unforgeable channel label, so one consumer
+can never name or reuse another's jail.
+.Nm
+creates the jail rooted at the requested path with
+.Dv JAIL_OWN_DESC
+and returns an owning descriptor whose stored credential
+.Pq root, from Nm
+authorizes the non-root consumer's own
+.Xr jail_attach_jd 2 ,
+so the consumer attaches itself before exec.
 .Pp
 .Nm
 is launched and supervised by
@@ -68,9 +74,10 @@ needs the classic
 .Dv PRIV_JAIL_SET
 privilege and resolves the jail root path against the global namespace, both of
 which capsicum forbids.
-Its authority is the per-request jail token, not the capsicum sandbox.
-A create request names the jail, its root path, and optionally a hostname and
-IPv4 address; if a matching jail already exists (a persistent execution
+Its authority is the caller's channel label, not the capsicum sandbox.
+A request carries the jail root path and optionally a hostname and
+IPv4 address; the jail name is derived from the caller's channel label.
+If a matching jail already exists (a persistent execution
 container reused across relaunches) its descriptor is returned unchanged.
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/System/Namespace.cap" -compact
@@ -82,6 +89,7 @@ capability bundle shipping
 .Xr jail_set 2 ,
 .Xr jail_attach_jd 2 ,
 .Xr pdfork 2 ,
+.Xr service_enter_namespace 3 ,
 .Xr mac_capability 4 ,
 .Xr authority 8 ,
 .Xr jail 8 ,

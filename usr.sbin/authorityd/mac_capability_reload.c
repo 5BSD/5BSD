@@ -52,28 +52,6 @@ net_claim_in(const struct ort_net_claim *needle,
 }
 
 static bool
-jail_claim_eq(const struct authorityd_jail_claim *a,
-    const struct authorityd_jail_claim *b)
-{
-
-	return (a->jid == b->jid && a->actions == b->actions &&
-	    strcmp(a->name, b->name) == 0);
-}
-
-static bool
-jail_claim_in(const struct authorityd_jail_claim *needle,
-    const struct authorityd_jail_claim *haystack, unsigned nhaystack)
-{
-	unsigned i;
-
-	for (i = 0; i < nhaystack; i++) {
-		if (jail_claim_eq(needle, &haystack[i]))
-			return (true);
-	}
-	return (false);
-}
-
-static bool
 path_in(const char *path, const char paths[][PATH_MAX], unsigned npaths)
 {
 	unsigned i;
@@ -110,7 +88,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 	int acquired, released, failed;
 	bool path_ok[AUTHORITYD_MAX_PATH_CLAIMS];
 	bool net_ok[AUTHORITYD_MAX_NET_CLAIMS];
-	bool jail_ok[AUTHORITYD_MAX_JAIL_CLAIMS];
 	uint32_t gates_acquired, gates_released;
 
 	oldcfg = &od.cfg;
@@ -136,11 +113,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 		    oldcfg->claim_net, oldcfg->nclaim_net))
 			nacquire++;
 	}
-	for (i = 0; i < newcfg->nclaim_jail; i++) {
-		if (!jail_claim_in(&newcfg->claim_jail[i],
-		    oldcfg->claim_jail, oldcfg->nclaim_jail))
-			nacquire++;
-	}
 	if (newcfg->claim_system != oldcfg->claim_system &&
 	    (newcfg->claim_system & ~oldcfg->claim_system) != 0)
 		nacquire++;
@@ -154,11 +126,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 		    newcfg->claim_net, newcfg->nclaim_net))
 			nrelease++;
 	}
-	for (i = 0; i < oldcfg->nclaim_jail; i++) {
-		if (!jail_claim_in(&oldcfg->claim_jail[i],
-		    newcfg->claim_jail, newcfg->nclaim_jail))
-			nrelease++;
-	}
 	if (newcfg->claim_system != oldcfg->claim_system &&
 	    (oldcfg->claim_system & ~newcfg->claim_system) != 0)
 		nrelease++;
@@ -169,8 +136,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 		path_ok[i] = true;
 	for (i = 0; i < newcfg->nclaim_net; i++)
 		net_ok[i] = true;
-	for (i = 0; i < newcfg->nclaim_jail; i++)
-		jail_ok[i] = true;
 
 	/*
 	 * Phase 1: Acquire new path claims.
@@ -197,21 +162,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 				acquired++;
 			} else {
 				net_ok[i] = false;
-				failed++;
-			}
-		}
-	}
-
-	/*
-	 * Phase 3: Acquire new jail claims.
-	 */
-	for (i = 0; i < newcfg->nclaim_jail; i++) {
-		if (!jail_claim_in(&newcfg->claim_jail[i],
-		    oldcfg->claim_jail, oldcfg->nclaim_jail)) {
-			if (mac_capability_claim_jail(&newcfg->claim_jail[i]) == 0) {
-				acquired++;
-			} else {
-				jail_ok[i] = false;
 				failed++;
 			}
 		}
@@ -266,19 +216,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 		if (!net_claim_in(&oldcfg->claim_net[i],
 		    newcfg->claim_net, newcfg->nclaim_net)) {
 			if (mac_capability_release_net(&oldcfg->claim_net[i]) == 0)
-				released++;
-			else
-				failed++;
-		}
-	}
-
-	/*
-	 * Phase 7: Release old jail claims no longer in config.
-	 */
-	for (i = 0; i < oldcfg->nclaim_jail; i++) {
-		if (!jail_claim_in(&oldcfg->claim_jail[i],
-		    newcfg->claim_jail, newcfg->nclaim_jail)) {
-			if (mac_capability_release_jail(&oldcfg->claim_jail[i]) == 0)
 				released++;
 			else
 				failed++;
@@ -403,26 +340,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 		    claim_net_refcount, oldcfg->nclaim_net,
 		    net_claim_in, AUTHORITYD_MAX_NET_CLAIMS);
 		eff->nclaim_net = n;
-
-		/* Jails: keep successful policy claims. */
-		n = 0;
-		for (i = 0; i < newcfg->nclaim_jail; i++) {
-			if (jail_ok[i]) {
-				if (n != i)
-					eff->claim_jail[n] =
-					    newcfg->claim_jail[i];
-				eff->claim_jail_source[n] = CLAIM_SOURCE_POLICY;
-				eff->claim_jail_refcount[n] = 0;
-				n++;
-			} else {
-				syslog(LOG_WARNING, "reload: dropping failed "
-				    "jail claim from effective config");
-			}
-		}
-		CARRY_FORWARD(claim_jail, claim_jail_source,
-		    claim_jail_refcount, oldcfg->nclaim_jail,
-		    jail_claim_in, AUTHORITYD_MAX_JAIL_CLAIMS);
-		eff->nclaim_jail = n;
 
 		/* VSOCK currently has service-manifest dynamic claims only. */
 		n = 0;

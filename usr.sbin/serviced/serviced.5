@@ -238,16 +238,11 @@ All three are applied in the child after
 .Xr pdfork 2
 and before the program image runs.
 .Pp
-An optional
-.Va jail
-object supplies
-.Va name , hostname ,
-and
-.Va ip4_addr ;
-.Va path
-is optional and, when omitted,
-.Nm
-roots the execution jail at the unit's managed runtime container.
+A unit does not declare a jail in its manifest.
+If it wants to be jailed it confines itself at runtime via
+.Xr service_enter_namespace 3
+.Pq the Dq system.Namespace broker, Xr warden 8 ,
+scoped to its own unforgeable channel label.
 .Sh STORAGE
 A unit does not declare storage in its manifest.
 It obtains mutable state at runtime by opening the
@@ -282,9 +277,6 @@ At most 16 typed IPv4, IPv6, or Bluetooth claims with compatible
 and
 .Va direction
 fields.
-.It Va jails
-At most 16 JID/name selectors with create, get, set, remove, and attach
-actions.
 .It Va vsock
 At most 16 CID, port/range, and direction objects.
 .It Va services

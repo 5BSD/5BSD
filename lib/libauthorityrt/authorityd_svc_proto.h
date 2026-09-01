@@ -40,7 +40,7 @@
 #define	AUTHORITY_OP_READY			6	/* serviced initialization complete */
 #define	AUTHORITY_OP_PING			7	/* liveness check */
 #define	AUTHORITY_OP_MINT_FILE		8	/* mint narrowed file token */
-#define	AUTHORITY_OP_MINT_JAIL		9	/* mint jail isolation token */
+/* Opcode 9 (MINT_JAIL) is retired: warden(8) owns jail self-service. */
 #define	AUTHORITY_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
 /* 24, 25 retired: storage moved to serviced<->tzfsd direct (was MINT/DESTROY_STORAGE) */
 #define	AUTHORITY_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in authority-init */
@@ -144,28 +144,11 @@ struct authority_net_req {
 };
 
 /*
- * AUTHORITY_OP_MINT_JAIL
- *   req:  authority_jail_req
- *   reply: authority_reply { .status }
- *   reply_fds[0] = jail isolation token fd (on success)
- *
- * Mints a jail isolation token for the requested JID/name and action
- * mask.  JID 0 means no JID key.  Empty name means no name key.
- */
-struct authority_jail_req {
-	uint32_t	op;		/* AUTHORITY_OP_MINT_JAIL / CLAIM / RELEASE */
-	uint32_t	actions;	/* FI_JAIL_* compatible mask */
-	int32_t		jid;		/* 0=not specified */
-	uint32_t	_pad;
-	char		name[64];	/* empty=not specified */
-};
-
-/*
- * Opcode 10 (CREATE_JAIL) is retired: warden(8) owns jail construction
- * (jail_set(2)).  The authority still claims the jail name and mints the jail
- * capability token (AUTHORITY_OP_MINT_JAIL); warden authorizes that token and
- * does the jail_set(2).  See docs/authorityd-serviced-layering-cleanup.md
- * (Phase 3).
+ * Jail delegation is NOT an authorityd op.  warden(8) owns jails end to end:
+ * a consumer self-attaches via libservice service_enter_namespace(3), scoped by
+ * an unforgeable label, and warden does the jail_set(2)/jail_attach(2).  PID 1
+ * neither claims jail names nor mints jail tokens.  Opcodes 9 (MINT_JAIL),
+ * 10 (CREATE_JAIL), 13 (CLAIM_JAIL), and 17 (RELEASE_JAIL) are retired.
  */
 
 /*
@@ -192,11 +175,11 @@ struct authority_jail_req {
  */
 #define	AUTHORITY_OP_CLAIM_PATH		11	/* dynamically claim a path */
 #define	AUTHORITY_OP_CLAIM_NET		12	/* dynamically claim a network endpoint */
-#define	AUTHORITY_OP_CLAIM_JAIL		13	/* dynamically claim a jail */
+/* Opcode 13 (CLAIM_JAIL) is retired: warden(8) owns jail self-service. */
 #define	AUTHORITY_OP_CLAIM_SYSTEM		14	/* dynamically claim system gates */
 #define	AUTHORITY_OP_RELEASE_PATH		15	/* release a dynamic path claim */
 #define	AUTHORITY_OP_RELEASE_NET		16	/* release a dynamic network claim */
-#define	AUTHORITY_OP_RELEASE_JAIL		17	/* release a dynamic jail claim */
+/* Opcode 17 (RELEASE_JAIL) is retired: warden(8) owns jail self-service. */
 #define	AUTHORITY_OP_RELEASE_SYSTEM	18	/* release dynamic system gates */
 #define	AUTHORITY_OP_CLAIM_VSOCK		20
 #define	AUTHORITY_OP_RELEASE_VSOCK	21

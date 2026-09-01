@@ -122,42 +122,6 @@ claim_net_covered(const struct authorityd_config *cfg,
 	return (false);
 }
 
-static inline bool
-claim_jail_entry_covers(const struct authorityd_jail_claim *claim,
-    const struct authorityd_jail_claim *req)
-{
-
-	if ((claim->actions & req->actions) != req->actions)
-		return (false);
-	if (claim->jid != 0 && claim->name[0] != '\0') {
-		if (req->jid == 0 && req->name[0] != '\0' &&
-		    req->actions == FI_JAIL_CREATE)
-			return (strcmp(claim->name, req->name) == 0);
-		return (req->jid == claim->jid &&
-		    req->name[0] != '\0' &&
-		    strcmp(claim->name, req->name) == 0);
-	}
-	if (claim->jid != 0)
-		return (req->jid != 0 && claim->jid == req->jid);
-	if (claim->name[0] != '\0')
-		return (req->name[0] != '\0' &&
-		    strcmp(claim->name, req->name) == 0);
-	return (false);
-}
-
-static inline bool
-claim_jail_covered(const struct authorityd_config *cfg,
-    const struct authorityd_jail_claim *req)
-{
-	unsigned i;
-
-	for (i = 0; i < cfg->nclaim_jail; i++) {
-		if (claim_jail_entry_covers(&cfg->claim_jail[i], req))
-			return (true);
-	}
-	return (false);
-}
-
 static inline int
 claim_gate_name_to_bit(const char *name)
 {

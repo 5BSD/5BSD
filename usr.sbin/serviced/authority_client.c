@@ -227,21 +227,6 @@ fill_net_req(struct authority_net_req *req, uint32_t op,
 }
 
 /*
- * Fill an authority_jail_req from a serviced_jail_claim.
- */
-static void
-fill_jail_req(struct authority_jail_req *req, uint32_t op,
-    const struct serviced_jail_claim *jc)
-{
-
-	memset(req, 0, sizeof(*req));
-	req->op = op;
-	req->jid = jc->jid;
-	req->actions = jc->actions;
-	strlcpy(req->name, jc->name, sizeof(req->name));
-}
-
-/*
  * Fill an authority_system_req from a gates bitmask.
  */
 static void
@@ -352,25 +337,6 @@ authority_mint_net(int channel_fd, const struct ort_net_claim *nc)
 	int token_fd, status;
 
 	fill_net_req(&req, AUTHORITY_OP_MINT_NET, nc);
-	status = authority_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
-	    NULL);
-	return (check_status_fd(status, token_fd));
-}
-
-int
-authority_mint_jail(int channel_fd, const struct serviced_jail_claim *jc)
-{
-	struct authority_jail_req req;
-	int token_fd, status;
-
-	if (jc->jid < 0 || jc->actions == 0 ||
-	    (jc->actions & ~FI_JAIL_ALL) != 0 ||
-	    (jc->jid == 0 && jc->name[0] == '\0')) {
-		errno = EINVAL;
-		return (-1);
-	}
-
-	fill_jail_req(&req, AUTHORITY_OP_MINT_JAIL, jc);
 	status = authority_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
 	return (check_status_fd(status, token_fd));
@@ -667,14 +633,6 @@ authority_release_manifest(int channel_fd, const struct svc_manifest *m)
 		struct authority_net_req req;
 
 		fill_net_req(&req, AUTHORITY_OP_RELEASE_NET, &m->cap_net[i]);
-		if (authority_release_send(channel_fd, &req, sizeof(req)) != 0)
-			nsent++;
-	}
-	for (i = 0; i < m->ncap_jail; i++) {
-		struct authority_jail_req req;
-
-		fill_jail_req(&req, AUTHORITY_OP_RELEASE_JAIL,
-		    &m->cap_jail[i]);
 		if (authority_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}

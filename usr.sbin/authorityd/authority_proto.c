@@ -15,7 +15,6 @@
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
-#include <sys/jail.h>
 #include <sys/linker.h>
 #include <sys/module.h>
 #include <sys/wait.h>
@@ -30,7 +29,6 @@
 #include <arpa/inet.h>
 
 #include <errno.h>
-#include <jail.h>
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
@@ -115,7 +113,6 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 /* Convenience wrappers using the global config. */
 #define	path_is_claimed(p)	claim_path_covered(&od.cfg, (p))
 #define	net_is_claimed(r)	claim_net_covered(&od.cfg, (r))
-#define	jail_is_claimed(r)	claim_jail_covered(&od.cfg, (r))
 
 static void
 handle_mint_path(const void *payload, uint32_t len, uint64_t reply_token)
@@ -227,38 +224,6 @@ handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 
 	AUTHORITYD_PROBE_MINT_NET(nc.port_min, nc.port_max, nc.protocol, 0);
-	proto_reply(0, reply_token, &token_fd, 1);
-	close(token_fd);
-}
-
-static void
-handle_mint_jail(const void *payload, uint32_t len, uint64_t reply_token)
-{
-	struct authorityd_jail_claim jc;
-	int err, token_fd;
-
-	if (!validate_jail_req(payload, len, &jc, &err)) {
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-
-	if (auto_claim_jail(&jc, &err) != 0 &&
-	    !jail_is_claimed(&jc)) {
-		AUTHORITYD_PROBE_MINT_JAIL(jc.jid, jc.name, jc.actions,
-		    err);
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-
-	token_fd = mac_capability_mint_jail_token(&jc);
-	if (token_fd == -1) {
-		release_auto_claim_jail(&jc);
-		AUTHORITYD_PROBE_MINT_JAIL(jc.jid, jc.name, jc.actions, EIO);
-		proto_reply(EIO, reply_token, NULL, 0);
-		return;
-	}
-
-	AUTHORITYD_PROBE_MINT_JAIL(jc.jid, jc.name, jc.actions, 0);
 	proto_reply(0, reply_token, &token_fd, 1);
 	close(token_fd);
 }
@@ -498,7 +463,6 @@ proto_dispatch_one(void)
 		struct authority_mint_file_req file;
 		struct authority_path_req path;
 		struct authority_net_req net;
-		struct authority_jail_req jail;
 		struct authority_vsock_req vsock;
 		struct authority_system_req system;
 		struct authority_service_req service;
@@ -569,9 +533,6 @@ proto_dispatch_one(void)
 	case AUTHORITY_OP_MINT_NET:
 		handle_mint_net(&buf, ra.payload_len, ra.reply_token);
 		break;
-	case AUTHORITY_OP_MINT_JAIL:
-		handle_mint_jail(&buf, ra.payload_len, ra.reply_token);
-		break;
 	case AUTHORITY_OP_MINT_VSOCK:
 		handle_mint_vsock(&buf, ra.payload_len, ra.reply_token);
 		break;
@@ -617,9 +578,6 @@ proto_dispatch_one(void)
 	case AUTHORITY_OP_CLAIM_NET:
 		handle_claim_net(&buf, ra.payload_len, ra.reply_token);
 		break;
-	case AUTHORITY_OP_CLAIM_JAIL:
-		handle_claim_jail(&buf, ra.payload_len, ra.reply_token);
-		break;
 	case AUTHORITY_OP_CLAIM_SYSTEM:
 		handle_claim_system(&buf, ra.payload_len, ra.reply_token);
 		break;
@@ -631,9 +589,6 @@ proto_dispatch_one(void)
 		break;
 	case AUTHORITY_OP_RELEASE_NET:
 		handle_release_net(&buf, ra.payload_len, ra.reply_token);
-		break;
-	case AUTHORITY_OP_RELEASE_JAIL:
-		handle_release_jail(&buf, ra.payload_len, ra.reply_token);
 		break;
 	case AUTHORITY_OP_RELEASE_SYSTEM:
 		handle_release_system(&buf, ra.payload_len, ra.reply_token);

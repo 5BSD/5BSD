@@ -36,8 +36,6 @@ sample_manifest(void)
 	m.ncap_files = 1;
 	m.cap_net[0].domain = 2;
 	m.ncap_net = 1;
-	m.cap_jail[0].jid = 7;
-	m.ncap_jail = 1;
 	m.cap_vsock[0].cid = 3;
 	m.ncap_vsock = 1;
 	strlcpy(m.cap_services[0], "identity", sizeof(m.cap_services[0]));
@@ -93,7 +91,6 @@ ATF_TC_BODY(authority_changes, tc)
 	CHECK_CHANGE(b.cap_paths[0][1] = 'x');
 	CHECK_CHANGE(b.cap_files[0].actions++);
 	CHECK_CHANGE(b.cap_net[0].domain++);
-	CHECK_CHANGE(b.cap_jail[0].jid++);
 	CHECK_CHANGE(b.cap_vsock[0].cid++);
 	CHECK_CHANGE(b.cap_services[0][0] = 'x');
 	CHECK_CHANGE(b.cap_system++);
@@ -101,7 +98,6 @@ ATF_TC_BODY(authority_changes, tc)
 	CHECK_CHANGE(b.ncap_paths = 0);
 	CHECK_CHANGE(b.ncap_files = 0);
 	CHECK_CHANGE(b.ncap_net = 0);
-	CHECK_CHANGE(b.ncap_jail = 0);
 	CHECK_CHANGE(b.ncap_vsock = 0);
 	CHECK_CHANGE(b.ncap_services = 0);
 }

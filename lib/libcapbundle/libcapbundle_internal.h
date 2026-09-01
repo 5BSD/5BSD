@@ -23,7 +23,6 @@
 #define	CAPBUNDLE_MAX_CAP_PATHS		16
 #define	CAPBUNDLE_MAX_CAP_FILES		16
 #define	CAPBUNDLE_MAX_CAP_NET		16
-#define	CAPBUNDLE_MAX_CAP_JAIL		16
 #define	CAPBUNDLE_MAX_CAP_VSOCK		16
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 #define	CAPBUNDLE_MAX_CAP_OPEN		SERVICED_MAX_CAP_OPEN
@@ -87,9 +86,6 @@ struct capbundle_service {
 	struct ort_net_claim cap_net[CAPBUNDLE_MAX_CAP_NET];
 	unsigned ncap_net;
 
-	/* Jail capabilities */
-	struct serviced_jail_claim cap_jail[CAPBUNDLE_MAX_CAP_JAIL];
-	unsigned ncap_jail;
 	struct ort_vsock_claim cap_vsock[CAPBUNDLE_MAX_CAP_VSOCK];
 	unsigned ncap_vsock;
 	char	cap_services[CAPBUNDLE_MAX_CAP_SERVICES]

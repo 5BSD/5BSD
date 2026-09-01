@@ -128,7 +128,7 @@ capabilities {
   grant on the same path. `files` is a MAC access grant (a `{path, actions}`
   pair keyed on the vnode); `open` goes further and delivers an actual
   descriptor (see below). Neither excludes another unit.
-- **Exclusive isolations** — `network`, `jails`, and `vsock`. Each is owned by
+- **Exclusive isolations** — `network` and `vsock`. Each is owned by
   exactly one holder across the whole system; the authority rejects a mint whose
   claim overlaps a foreign owner's. Two units cannot both bind TCP :25.
 
@@ -187,8 +187,9 @@ bind the image from its first instruction and a service cannot opt out:
 
 The MAC integrity shield (`protect`) already covers no-new-privileges, W^X,
 core-dump suppression, and ptrace/signal isolation, so those are not repeated
-here. The execution `jail` is the unit's container; its `path` is optional and
-defaults to the managed per-instance runtime directory.
+here. A unit does not declare a jail in its manifest; if it wants to be jailed
+it confines itself at runtime via `service_enter_namespace(3)` (warden), scoped
+to its own unforgeable channel label.
 
 ## Storage
 
@@ -214,7 +215,7 @@ Important limits are:
 | services loaded system-wide | 256 |
 | arguments / environment entries | 32 / 32 |
 | IPC names per unit | 8 |
-| paths / files / network / jails / vsock | 16 each |
+| paths / files / network / vsock | 16 each |
 | open descriptors per unit | 8 |
 | direct capability services | 4 |
 | kernel modules | 8 |

@@ -361,13 +361,12 @@ process_policy_matrix_body()
 	    'environment { AUTHORITYD_CHANNEL_FD = "9"; }' \
 	    'environment { SERVICE_BOOTSTRAP_FD = "9"; }' \
 	    'environment { CAPABILITY_UNIT_DIR = "/tmp/override"; }' \
-	    'kmod_requires = ["zfs"];' \
-	    'jail { name = "good"; path = "/j"; }'; do
+	    'kmod_requires = ["zfs"];'; do
 		i=$((i + 1))
 		dir=$(make_bundle "bad-process-$i")
 		printf '%s\n' 'activation { boot = true; }' "$declaration" > \
 		    "$dir/Units/worker.unit/Unit.ucl"
-		verify_bad 'restart|timeout|failures|arguments|environment|module|jail|invalid' "$dir"
+		verify_bad 'restart|timeout|failures|arguments|environment|module|invalid' "$dir"
 	done
 }
 process_policy_matrix_cleanup() { cleanup_work; }
@@ -394,7 +393,6 @@ capability_contract_body()
 	        { domain = "bluetooth"; protocol = "l2cap";
 	          direction = "connect"; address = "00:11:22:33:44:55"; }
 	    ];
-	    jails = [7, "named", { name = "managed"; actions = ["get", "attach"]; }];
 	    vsock = [{ cid = 3; ports = "1024-2048"; direction = "connect"; }];
 	    services = ["mount", "node", "accounting", "identity"];
 	    system = ["kldload", "kldunload", "kldstat", "reboot",
@@ -403,7 +401,7 @@ capability_contract_body()
 	}
 	EOF
 	atf_check -s exit:0 \
-	    -o match:'paths=2 files=2 network=3 jails=3 vsock=1 services=4' \
+	    -o match:'paths=2 files=2 network=3 vsock=1 services=4' \
 	    -o match:'network: domain=bluetooth protocol=l2cap' \
 	    -o match:'vsock: cid=3 ports=1024-2048 direction=connect' \
 	    servicetcl verify "$dir"
@@ -430,9 +428,6 @@ capability_negative_matrix_body()
 	    'capabilities { services = ["mount", "mount"]; }' \
 	    'capabilities { system = ["root"]; }' \
 	    'capabilities { system = ["audit", "audit"]; }' \
-	    'capabilities { jails = [0]; }' \
-	    'capabilities { jails = [{}]; }' \
-	    'capabilities { jails = [{ name = "x"; actions = "invent"; }]; }' \
 	    'capabilities { vsock = [{ port = 4; ports = 5; }]; }' \
 	    'capabilities { vsock = [{ cid = -1; }]; }' \
 	    'capabilities { vsock = [{ direction = "listen"; }]; }'; do
@@ -440,7 +435,7 @@ capability_negative_matrix_body()
 		dir=$(make_bundle "bad-capability-$i")
 		printf '%s\n' 'activation { boot = true; }' "$declaration" > \
 		    "$dir/Units/worker.unit/Unit.ucl"
-		verify_bad 'capabilities|unknown|invalid|duplicate|array|jail|vsock' "$dir"
+		verify_bad 'capabilities|unknown|invalid|duplicate|array|vsock' "$dir"
 	done
 }
 capability_negative_matrix_cleanup() { cleanup_work; }

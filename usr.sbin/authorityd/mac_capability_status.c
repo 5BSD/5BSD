@@ -113,28 +113,6 @@ query_net_claimed(const struct ort_net_claim *nc)
 }
 
 static bool
-query_jail_claimed(const struct authorityd_jail_claim *jc)
-{
-	struct fi_jail_request req;
-	struct fi_reply reply;
-
-	if (mac_capability_isolation_fd == -1)
-		return (false);
-
-	memset(&req, 0, sizeof(req));
-	req.op = FI_OP_QUERY_JAIL;
-	req.jid = jc->jid;
-	req.actions = jc->actions;
-	strlcpy(req.name, jc->name, sizeof(req.name));
-
-	if (mac_capability_do_call(mac_capability_isolation_fd, &req, sizeof(req),
-	    &reply, sizeof(reply)) == -1)
-		return (false);
-
-	return ((reply.flags & FI_QF_MINE) != 0);
-}
-
-static bool
 query_vsock_claimed(const struct ort_vsock_claim *vc)
 {
 	struct fi_vsock_request req;
@@ -230,28 +208,6 @@ mac_capability_format_status(char *buf, size_t bufsz, size_t *offp)
 			    ort_net_protocol_name(nc->protocol), portbuf,
 			    ort_net_direction_name(nc->direction),
 			    addrbuf,
-			    verified ? "" : " [NOT HELD]");
-	}
-
-	/* Jail claims — verified against kernel via FI_OP_QUERY_JAIL. */
-	BUF_APPEND(buf, bufsz, offp, "  jails:    %u\n",
-	    od.cfg.nclaim_jail);
-	for (i = 0; i < od.cfg.nclaim_jail; i++) {
-		const struct authorityd_jail_claim *jc = &od.cfg.claim_jail[i];
-		char jailbuf[AUTHORITYD_JAIL_DESC_MAX];
-
-		jail_claim_string(jc, jailbuf, sizeof(jailbuf));
-		verified = query_jail_claimed(jc);
-		if (od.cfg.claim_jail_source[i] == CLAIM_SOURCE_SERVICE)
-			BUF_APPEND(buf, bufsz, offp,
-			    "    %s actions=0x%x [service, refcount=%u]%s\n",
-			    jailbuf, jc->actions,
-			    od.cfg.claim_jail_refcount[i],
-			    verified ? "" : " [NOT HELD]");
-		else
-			BUF_APPEND(buf, bufsz, offp,
-			    "    %s actions=0x%x [policy]%s\n",
-			    jailbuf, jc->actions,
 			    verified ? "" : " [NOT HELD]");
 	}
 

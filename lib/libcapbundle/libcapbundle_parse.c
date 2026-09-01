@@ -714,7 +714,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const limitskeys[] = { "memory", "cpu", "nproc",
 	    "nofile", "stack", "fsize", "core" };
 	static const char *const capkeys[] = { "paths", "files", "network",
-	    "jails", "vsock", "services", "system", "open" };
+	    "vsock", "services", "system", "open" };
 	static const char *const openkeys[] = { "path", "name", "type",
 	    "rights", "optional" };
 	static const char *const service_names[] = { "mount", "node",
@@ -722,7 +722,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const filekeys[] = { "path", "actions" };
 	static const char *const netkeys[] = { "domain", "protocol", "port",
 	    "ports", "direction", "address", "prefix" };
-	static const char *const jailkeys[] = { "jid", "name", "actions" };
 	static const char *const vsockkeys[] = { "cid", "port", "ports",
 	    "direction" };
 	const ucl_object_t *caps, *arr, *v, *x;
@@ -1162,7 +1161,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	VALIDATE_CAP_ARRAY("paths", CAPBUNDLE_MAX_CAP_PATHS);
 	VALIDATE_CAP_ARRAY("files", CAPBUNDLE_MAX_CAP_FILES);
 	VALIDATE_CAP_ARRAY("network", CAPBUNDLE_MAX_CAP_NET);
-	VALIDATE_CAP_ARRAY("jails", CAPBUNDLE_MAX_CAP_JAIL);
 	VALIDATE_CAP_ARRAY("vsock", CAPBUNDLE_MAX_CAP_VSOCK);
 	VALIDATE_CAP_ARRAY("services", CAPBUNDLE_MAX_CAP_SERVICES);
 	VALIDATE_CAP_ARRAY("system", nitems(gate_names));
@@ -1461,55 +1459,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		}
 	}
 
-	arr = ucl_object_lookup(caps, "jails");
-	it = NULL;
-	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
-		uint32_t actions;
-		if (ucl_object_type(v) == UCL_OBJECT &&
-		    validate_keys(v, "capabilities.jails entry", jailkeys,
-		    nitems(jailkeys), errbuf, errlen) != 0)
-			return (-1);
-		if (ucl_object_type(v) != UCL_OBJECT &&
-		    ucl_object_type(v) != UCL_STRING && ucl_object_type(v) != UCL_INT) {
-			snprintf(errbuf, errlen, "invalid capabilities.jails entry");
-			return (-1);
-		}
-		if (ucl_object_type(v) == UCL_OBJECT &&
-		    parse_jail_actions(ucl_object_lookup(v, "actions"), &actions) != 0) {
-			snprintf(errbuf, errlen, "invalid jail actions");
-			return (-1);
-		}
-		if (ucl_object_type(v) == UCL_INT &&
-		    (ucl_object_toint(v) <= 0 || ucl_object_toint(v) > INT32_MAX)) {
-			snprintf(errbuf, errlen, "invalid jail jid");
-			return (-1);
-		}
-		if (ucl_object_type(v) == UCL_STRING &&
-		    (ucl_object_tostring(v)[0] == '\0' ||
-		    strlen(ucl_object_tostring(v)) >= 64)) {
-			snprintf(errbuf, errlen, "invalid jail name");
-			return (-1);
-		}
-		if (ucl_object_type(v) == UCL_OBJECT) {
-			const ucl_object_t *jid = ucl_object_lookup(v, "jid");
-			const ucl_object_t *name = ucl_object_lookup(v, "name");
-			if (jid == NULL && name == NULL) {
-				snprintf(errbuf, errlen, "jail entry requires jid or name");
-				return (-1);
-			}
-			if (jid != NULL && (ucl_object_type(jid) != UCL_INT ||
-			    ucl_object_toint(jid) <= 0 || ucl_object_toint(jid) > INT32_MAX)) {
-				snprintf(errbuf, errlen, "invalid jail jid");
-				return (-1);
-			}
-			if (name != NULL && (ucl_object_type(name) != UCL_STRING ||
-			    ucl_object_tostring(name)[0] == '\0' ||
-			    strlen(ucl_object_tostring(name)) >= 64)) {
-				snprintf(errbuf, errlen, "invalid jail name");
-				return (-1);
-			}
-		}
-	}
 	arr = ucl_object_lookup(caps, "vsock");
 	it = NULL;
 	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
@@ -2665,120 +2614,6 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 				}
 			}
 
-			/* Jail capabilities — full parsing matching
-			 * manifest.c parse_ucl_jail_claim() */
-			{
-				const ucl_object_t *jails, *jelem;
-				ucl_object_iter_t jit;
-
-				jails = ucl_object_lookup(caps, "jails");
-				if (jails != NULL) {
-					jit = NULL;
-					while (svc->ncap_jail <
-					    CAPBUNDLE_MAX_CAP_JAIL &&
-					    (jelem = ucl_object_iterate(jails,
-					    &jit, true)) != NULL) {
-						struct serviced_jail_claim *jc;
-						const ucl_object_t *jv;
-						int64_t jid;
-
-						jc = &svc->cap_jail[
-						    svc->ncap_jail];
-						memset(jc, 0, sizeof(*jc));
-						jc->actions = FI_JAIL_ALL;
-
-						switch (ucl_object_type(jelem)){
-						case UCL_INT:
-							jid = ucl_object_toint(
-							    jelem);
-							if (jid <= 0 ||
-							    jid > INT32_MAX) {
-								syslog(
-								    LOG_WARNING,
-								    "capbundle "
-								    "%s: invalid"
-								    " jail jid",
-								    path);
-								continue;
-							}
-							jc->jid =
-							    (int32_t)jid;
-							svc->ncap_jail++;
-							continue;
-						case UCL_STRING:
-							if (strlcpy(jc->name,
-							    ucl_object_tostring(
-							    jelem),
-							    sizeof(jc->name))
-							    >= sizeof(
-							    jc->name)) {
-								syslog(
-								    LOG_WARNING,
-								    "capbundle "
-								    "%s: jail "
-								    "name too "
-								    "long", path);
-								continue;
-							}
-							if (jc->name[0] ==
-							    '\0')
-								continue;
-							svc->ncap_jail++;
-							continue;
-						case UCL_OBJECT:
-							break;
-						default:
-							continue;
-						}
-
-						/* Object form */
-						jv = ucl_object_lookup(jelem,
-						    "jid");
-						if (jv != NULL) {
-							if (ucl_object_type(jv)
-							    != UCL_INT)
-								continue;
-							jid =
-							    ucl_object_toint(
-							    jv);
-							if (jid <= 0 ||
-							    jid > INT32_MAX)
-								continue;
-							jc->jid =
-							    (int32_t)jid;
-						}
-						jv = ucl_object_lookup(jelem,
-						    "name");
-						if (jv != NULL &&
-						    ucl_object_type(jv) ==
-						    UCL_STRING) {
-							if (strlcpy(jc->name,
-							    ucl_object_tostring(
-							    jv),
-							    sizeof(jc->name))
-							    >= sizeof(
-							    jc->name))
-								continue;
-						}
-						jv = ucl_object_lookup(jelem,
-						    "actions");
-						if (parse_jail_actions(jv,
-						    &jc->actions) != 0) {
-							syslog(LOG_WARNING,
-							    "capbundle %s: "
-							    "invalid jail "
-							    "actions", path);
-							continue;
-						}
-						/* Must have jid or name */
-						if (jc->jid == 0 &&
-						    jc->name[0] == '\0')
-							continue;
-						svc->ncap_jail++;
-					}
-				}
-			}
-
 			/* VSOCK endpoint capabilities. */
 			{
 				const ucl_object_t *vsocks, *velem, *vv;
@@ -2890,7 +2725,6 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		CHECK_CAP_COUNT("paths", ncap_paths);
 		CHECK_CAP_COUNT("files", ncap_files);
 		CHECK_CAP_COUNT("network", ncap_net);
-		CHECK_CAP_COUNT("jails", ncap_jail);
 		CHECK_CAP_COUNT("vsock", ncap_vsock);
 		CHECK_CAP_COUNT("services", ncap_services);
 		CHECK_CAP_COUNT("open", ncap_open);

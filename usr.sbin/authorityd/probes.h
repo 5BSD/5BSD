@@ -45,8 +45,6 @@
 	DTRACE_PROBE3(authorityd, claim__net__fail, port_min, port_max, proto)
 #define	AUTHORITYD_PROBE_CLAIM_NET_RELEASE(port_min, port_max, proto)	\
 	DTRACE_PROBE3(authorityd, claim__net__release, port_min, port_max, proto)
-#define	AUTHORITYD_PROBE_CLAIM_JAIL_RELEASE(name, actions)	\
-	DTRACE_PROBE2(authorityd, claim__jail__release, name, actions)
 #define	AUTHORITYD_PROBE_CLAIM_SYSTEM_RELEASE(gates)	\
 	DTRACE_PROBE1(authorityd, claim__system__release, gates)
 
@@ -55,8 +53,6 @@
 	DTRACE_PROBE2(authorityd, dyn__claim__path, path, result)
 #define	AUTHORITYD_PROBE_DYN_CLAIM_NET(port_min, port_max, proto, result)	\
 	DTRACE_PROBE4(authorityd, dyn__claim__net, port_min, port_max, proto, result)
-#define	AUTHORITYD_PROBE_DYN_CLAIM_JAIL(name, actions, result)	\
-	DTRACE_PROBE3(authorityd, dyn__claim__jail, name, actions, result)
 #define	AUTHORITYD_PROBE_DYN_CLAIM_SYSTEM(gates, result)	\
 	DTRACE_PROBE2(authorityd, dyn__claim__system, gates, result)
 #define	AUTHORITYD_PROBE_DYN_CLAIM_VSOCK(cid, pmin, pmax, result)	\
@@ -65,8 +61,6 @@
 	DTRACE_PROBE3(authorityd, dyn__release__path, path, refcount, result)
 #define	AUTHORITYD_PROBE_DYN_RELEASE_NET(port_min, port_max, proto, refcount, result)	\
 	DTRACE_PROBE5(authorityd, dyn__release__net, port_min, port_max, proto, refcount, result)
-#define	AUTHORITYD_PROBE_DYN_RELEASE_JAIL(name, actions, refcount, result)	\
-	DTRACE_PROBE4(authorityd, dyn__release__jail, name, actions, refcount, result)
 #define	AUTHORITYD_PROBE_DYN_RELEASE_SYSTEM(gates, released, result)	\
 	DTRACE_PROBE3(authorityd, dyn__release__system, gates, released, result)
 #define	AUTHORITYD_PROBE_DYN_RELEASE_VSOCK(cid, pmin, pmax, refcount, result) \
@@ -101,8 +95,6 @@
 	DTRACE_PROBE3(authorityd, mint__file, path, actions, result)
 #define	AUTHORITYD_PROBE_MINT_NET(port_min, port_max, proto, result)	\
 	DTRACE_PROBE4(authorityd, mint__net, port_min, port_max, proto, result)
-#define	AUTHORITYD_PROBE_MINT_JAIL(jid, name, actions, result)	\
-	DTRACE_PROBE4(authorityd, mint__jail, jid, name, actions, result)
 #define	AUTHORITYD_PROBE_MINT_SYSTEM(gates, result)	\
 	DTRACE_PROBE2(authorityd, mint__system, gates, result)
 #define	AUTHORITYD_PROBE_MINT_VSOCK(cid, pmin, pmax, result)	\

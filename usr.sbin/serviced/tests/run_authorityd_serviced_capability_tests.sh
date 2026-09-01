@@ -418,7 +418,6 @@ run_kyua_case()
 set -- \
 	manifest_network_schema=libcapbundle_test:network_capabilities \
 	manifest_file_schema=libcapbundle_test:file_capabilities \
-	manifest_jail_schema=libcapbundle_test:jail_capabilities \
 	manifest_system_schema=libcapbundle_test:all_system_gates \
 	manifest_exec_vsock_schema=libcapbundle_test:arguments_environment_and_vsock \
 	manifest_malformed_matrix=libcapbundle_test:malformed_schema_matrix \

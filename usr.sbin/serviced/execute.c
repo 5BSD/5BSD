@@ -1328,22 +1328,6 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		    m->cap_net[i];
 		MINT_CHECK_DEADLINE();
 	}
-	for (i = 0; i < m->ncap_jail; i++) {
-		int tfd = authority_mint_jail(sd.authority_channel_fd,
-		    &m->cap_jail[i]);
-
-		if (tfd == -1) {
-			syslog(LOG_ERR, "svc_exec %s: failed to mint "
-			    "jail token %u", m->label, i);
-			SERVICED_PROBE_CAP_MINT(m->label, "jail", -1);
-			goto fail_tokens;
-		}
-		SERVICED_PROBE_CAP_MINT(m->label, "jail", 0);
-		token_fds[ntokens++] = tfd;
-		minted_manifest.cap_jail[minted_manifest.ncap_jail++] =
-		    m->cap_jail[i];
-		MINT_CHECK_DEADLINE();
-	}
 	for (i = 0; i < m->ncap_vsock; i++) {
 		int tfd = authority_mint_vsock(sd.authority_channel_fd,
 		    &m->cap_vsock[i]);

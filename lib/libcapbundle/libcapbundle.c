@@ -373,7 +373,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	    s->ncap_paths > SERVICED_MAX_CAP_PATHS ||
 	    s->ncap_files > SERVICED_MAX_CAP_FILES ||
 	    s->ncap_net > SERVICED_MAX_CAP_NET ||
-	    s->ncap_jail > SERVICED_MAX_CAP_JAIL ||
 	    s->ncap_vsock > SERVICED_MAX_CAP_VSOCK ||
 	    s->ncap_services > SERVICED_MAX_CAP_SERVICES ||
 	    s->nactivation_sockets > SERVICED_MAX_ACTIVATION_SOCKETS) {
@@ -479,10 +478,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	for (i = 0; i < m->ncap_net; i++)
 		m->cap_net[i] = s->cap_net[i];
 
-	/* Jail capabilities */
-	m->ncap_jail = MIN(s->ncap_jail, SERVICED_MAX_CAP_JAIL);
-	for (i = 0; i < m->ncap_jail; i++)
-		m->cap_jail[i] = s->cap_jail[i];
 	m->ncap_vsock = s->ncap_vsock;
 	for (i = 0; i < m->ncap_vsock; i++)
 		m->cap_vsock[i] = s->cap_vsock[i];

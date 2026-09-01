@@ -271,7 +271,7 @@ including root.
 .Pa /dev/mac_capability
 is always claimed automatically.
 .Pp
-Claim limits: at most 64 paths, 32 network claims, and 32 jail claims.
+Claim limits: at most 64 paths and 32 network claims.
 .Pp
 .Bf -symbolic
 Paths on network filesystems (NFS, FUSE) may block during
@@ -370,20 +370,6 @@ optional).
 Foreign nonces receive
 .Er EACCES
 on bind or connect to claimed endpoints.
-Default: empty.
-.It Va jails
-Array of jail claims.
-Each element may be an integer JID, a string jail name, or an
-object with:
-.Va jid
-(integer),
-.Va name
-(string),
-.Va actions
-.Pq Dq * No or array of Dq create , Dq get , Dq set , Dq remove , Dq attach ,
-and optionally
-.Va path
-(jail root path).
 Default: empty.
 .It Va system
 Array of system operation names to gate via the
@@ -550,8 +536,6 @@ Network endpoint claimed.
 Network endpoint claim failed.
 .It Li claim-net-release(port_min, port_max, protocol)
 Network claim released.
-.It Li claim-jail-release(name, actions)
-Jail claim released.
 .It Li claim-system-release(gates)
 System gates released.
 .El
@@ -562,8 +546,6 @@ System gates released.
 Dynamic path claim created or refcount bumped.
 .It Li dyn-claim-net(port_min, port_max, protocol, result)
 Dynamic network claim created or refcount bumped.
-.It Li dyn-claim-jail(name, actions, result)
-Dynamic jail claim created or refcount bumped.
 .It Li dyn-claim-system(gates, result)
 Dynamic system gate claim created or refcount bumped.
 .It Li dyn-claim-vsock(cid, port_min, port_max, result)
@@ -573,8 +555,6 @@ Dynamic path claim released.
 Refcount is the value after decrement.
 .It Li dyn-release-net(port_min, port_max, protocol, refcount, result)
 Dynamic network claim released.
-.It Li dyn-release-jail(name, actions, refcount, result)
-Dynamic jail claim released.
 .It Li dyn-release-system(gates, released, result)
 Dynamic system gate claim released.
 .Ar released
@@ -619,14 +599,10 @@ Path isolation token minted.
 Action-narrowed file isolation token minted.
 .It Li mint-net(port_min, port_max, protocol, result)
 Network isolation token minted.
-.It Li mint-jail(jid, name, actions, result)
-Jail isolation token minted.
 .It Li mint-system(gates, result)
 System gate token minted.
 .It Li mint-vsock(cid, port_min, port_max, result)
 VSOCK endpoint token minted.
-.It Li create-jail(name, result)
-Jail created.
 .It Li channel-create(result)
 Channel created.
 .It Li coalition-create(result)
@@ -757,15 +733,6 @@ claims {
             direction = "bind";
             domain = "inet";
             address = "192.0.2.0/24";
-        },
-    ];
-    jails = [
-        "webjail",
-        {
-            jid = 10;
-            name = "dbjail";
-            actions = ["create", "attach"];
-            path = "/usr/local/jails/dbjail";
         },
     ];
     system = ["kldload", "kldunload", "kldstat",

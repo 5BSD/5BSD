@@ -43,12 +43,10 @@ int	claim_system_gates(void);
 /* Claim/release primitives (mac_capability_claims.c). */
 int	mac_capability_claim_path(const char *path);
 int	mac_capability_claim_net(const struct ort_net_claim *nc);
-int	mac_capability_claim_jail(const struct authorityd_jail_claim *jc);
 int	mac_capability_claim_vsock(const struct ort_vsock_claim *vc);
 int	mac_capability_claim_system_gate_bits(uint32_t gates);
 int	mac_capability_release_path(const char *path);
 int	mac_capability_release_net(const struct ort_net_claim *nc);
-int	mac_capability_release_jail(const struct authorityd_jail_claim *jc);
 int	mac_capability_release_vsock(const struct ort_vsock_claim *vc);
 int	mac_capability_release_system_gates(uint32_t gates);
 
@@ -64,18 +62,6 @@ net_claim_port_string(const struct ort_net_claim *nc, char *buf, size_t len)
 		snprintf(buf, len, "%u", nc->port_min);
 	else
 		snprintf(buf, len, "%u-%u", nc->port_min, nc->port_max);
-}
-
-static inline void
-jail_claim_string(const struct authorityd_jail_claim *jc, char *buf, size_t len)
-{
-
-	if (jc->jid != 0 && jc->name[0] != '\0')
-		snprintf(buf, len, "%s#%d", jc->name, jc->jid);
-	else if (jc->jid != 0)
-		snprintf(buf, len, "#%d", jc->jid);
-	else
-		strlcpy(buf, jc->name, len);
 }
 
 /* Integrity flag table (shared between mac_capability_claims.c and mac_capability_status.c). */

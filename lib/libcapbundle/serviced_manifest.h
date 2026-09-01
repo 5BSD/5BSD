@@ -30,7 +30,6 @@
 #define	SERVICED_MAX_CAP_PATHS		16
 #define	SERVICED_MAX_CAP_FILES		16
 #define	SERVICED_MAX_CAP_NET		16
-#define	SERVICED_MAX_CAP_JAIL		16
 #define	SERVICED_MAX_CAP_VSOCK		16
 #define	SERVICED_MAX_CAP_SERVICES	4
 #define	SERVICED_MAX_CAP_OPEN		8
@@ -147,12 +146,6 @@ struct serviced_open_cap {
 					 * opened, instead of failing the launch */
 };
 
-struct serviced_jail_claim {
-	int32_t		jid;		/* 0=not specified */
-	uint32_t	actions;	/* FI_JAIL_* mask */
-	char		name[64];	/* empty=not specified */
-};
-
 /*
  * Socket activation source (Phase 4).  serviced binds and holds a
  * listening socket; the first inbound connection is the demand that
@@ -210,16 +203,12 @@ struct svc_manifest {
 	unsigned	ncap_open;
 	struct ort_net_claim cap_net[SERVICED_MAX_CAP_NET];
 	unsigned	ncap_net;
-	struct serviced_jail_claim cap_jail[SERVICED_MAX_CAP_JAIL];
-	unsigned	ncap_jail;
 	struct ort_vsock_claim cap_vsock[SERVICED_MAX_CAP_VSOCK];
 	unsigned	ncap_vsock;
 	char		cap_services[SERVICED_MAX_CAP_SERVICES]
 		    [SERVICED_CAP_SERVICE_NAME_MAX];
 	unsigned	ncap_services;
 	uint32_t	cap_system;	/* SYS_GATE_* bitmask */
-
-	/* Jail to create and attach child into (optional). */
 
 	int		restart;	/* SVC_RESTART_* */
 	int		management;	/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */

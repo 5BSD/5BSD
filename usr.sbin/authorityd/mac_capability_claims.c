@@ -129,31 +129,6 @@ mac_capability_claim_net(const struct ort_net_claim *nc)
 }
 
 int
-mac_capability_claim_jail(const struct authorityd_jail_claim *jc)
-{
-	struct fi_jail_request req;
-	struct fi_reply reply;
-	char jailbuf[AUTHORITYD_JAIL_DESC_MAX];
-
-	memset(&req, 0, sizeof(req));
-	req.op = FI_OP_CLAIM_JAIL;
-	req.jid = jc->jid;
-	req.actions = jc->actions;
-	strlcpy(req.name, jc->name, sizeof(req.name));
-	jail_claim_string(jc, jailbuf, sizeof(jailbuf));
-
-	if (mac_capability_do_call(mac_capability_isolation_fd, &req, sizeof(req),
-	    &reply, sizeof(reply)) == -1) {
-		syslog(LOG_WARNING, "isolation: claim jail %s: %m", jailbuf);
-		return (-1);
-	}
-
-	syslog(LOG_INFO, "isolation: claimed jail %s actions=0x%x",
-	    jailbuf, jc->actions);
-	return (0);
-}
-
-int
 mac_capability_claim_vsock(const struct ort_vsock_claim *vc)
 {
 	struct fi_vsock_request req;
@@ -253,32 +228,6 @@ mac_capability_release_net(const struct ort_net_claim *nc)
 	return (0);
 }
 
-int
-mac_capability_release_jail(const struct authorityd_jail_claim *jc)
-{
-	struct fi_jail_request req;
-	struct fi_reply reply;
-	char jailbuf[AUTHORITYD_JAIL_DESC_MAX];
-
-	memset(&req, 0, sizeof(req));
-	req.op = FI_OP_RELEASE_JAIL;
-	req.jid = jc->jid;
-	req.actions = jc->actions;
-	strlcpy(req.name, jc->name, sizeof(req.name));
-	jail_claim_string(jc, jailbuf, sizeof(jailbuf));
-
-	if (mac_capability_do_call(mac_capability_isolation_fd, &req, sizeof(req),
-	    &reply, sizeof(reply)) == -1) {
-		syslog(LOG_WARNING, "isolation: release jail %s: %m",
-		    jailbuf);
-		return (-1);
-	}
-
-	syslog(LOG_INFO, "isolation: released jail %s", jailbuf);
-	AUTHORITYD_PROBE_CLAIM_JAIL_RELEASE(jc->name, jc->actions);
-	return (0);
-}
-
 /*
  * Release system gate claims.
  */
@@ -352,14 +301,6 @@ isolate_resources(void)
 	/* Claim configured network endpoints. */
 	for (i = 0; i < od.cfg.nclaim_net; i++) {
 		if (mac_capability_claim_net(&od.cfg.claim_net[i]) == 0)
-			claimed++;
-		else
-			failed++;
-	}
-
-	/* Claim configured jails. */
-	for (i = 0; i < od.cfg.nclaim_jail; i++) {
-		if (mac_capability_claim_jail(&od.cfg.claim_jail[i]) == 0)
 			claimed++;
 		else
 			failed++;

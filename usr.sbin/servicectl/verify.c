@@ -135,9 +135,9 @@ print_bundle(const struct capbundle *b)
 		printf("\n");
 
 		printf("      capabilities: paths=%u files=%u network=%u "
-		    "jails=%u vsock=%u services=%u open=%u "
+		    "vsock=%u services=%u open=%u "
 		    "system=0x%x\n",
-		    m.ncap_paths, m.ncap_files, m.ncap_net, m.ncap_jail,
+		    m.ncap_paths, m.ncap_files, m.ncap_net,
 		    m.ncap_vsock, m.ncap_services, m.ncap_open,
 		    m.cap_system);
 		if (m.protect_flags != 0)
@@ -161,10 +161,6 @@ print_bundle(const struct capbundle *b)
 			    ort_net_direction_name(m.cap_net[j].direction), address,
 			    m.cap_net[j].prefix);
 		}
-		for (j = 0; j < m.ncap_jail; j++)
-			printf("        jail: jid=%d name=%s actions=0x%x\n",
-			    m.cap_jail[j].jid, m.cap_jail[j].name,
-			    m.cap_jail[j].actions);
 		for (j = 0; j < m.ncap_vsock; j++)
 			printf("        vsock: cid=%ju ports=%u-%u "
 			    "direction=%s\n", (uintmax_t)m.cap_vsock[j].cid,

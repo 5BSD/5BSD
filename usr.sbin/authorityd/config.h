@@ -23,10 +23,8 @@
 
 #define	AUTHORITYD_MAX_PATH_CLAIMS		64
 #define	AUTHORITYD_MAX_NET_CLAIMS		32
-#define	AUTHORITYD_MAX_JAIL_CLAIMS		32
 #define	AUTHORITYD_MAX_VSOCK_CLAIMS	32
 #define	AUTHORITYD_SYSTEM_GATE_NBITS	32	/* bits in uint32_t gate bitmask */
-#define	AUTHORITYD_JAIL_DESC_MAX		96	/* jail_claim_string() output */
 
 /* Foreign-nonce ambient PID signalling is never an Authority authority. */
 #define	AUTHORITYD_REQUIRED_INTEGRITY_FLAGS	\
@@ -35,13 +33,6 @@
 /* Claim provenance — where a claim originated. */
 #define	CLAIM_SOURCE_POLICY	0x01	/* from authorityd.conf policy section */
 #define	CLAIM_SOURCE_SERVICE	0x02	/* auto-registered from service request */
-
-struct authorityd_jail_claim {
-	int32_t		jid;		/* 0=not specified */
-	uint32_t	actions;	/* FI_JAIL_* mask */
-	char		name[64];	/* empty=not specified */
-	char		path[PATH_MAX];	/* allowed root prefix, empty=any */
-};
 
 struct authorityd_config {
 	/* Paths */
@@ -61,10 +52,6 @@ struct authorityd_config {
 	uint8_t		claim_net_source[AUTHORITYD_MAX_NET_CLAIMS];
 	uint32_t	claim_net_refcount[AUTHORITYD_MAX_NET_CLAIMS];
 	unsigned int	nclaim_net;
-	struct authorityd_jail_claim claim_jail[AUTHORITYD_MAX_JAIL_CLAIMS];
-	uint8_t		claim_jail_source[AUTHORITYD_MAX_JAIL_CLAIMS];
-	uint32_t	claim_jail_refcount[AUTHORITYD_MAX_JAIL_CLAIMS];
-	unsigned int	nclaim_jail;
 	struct ort_vsock_claim claim_vsock[AUTHORITYD_MAX_VSOCK_CLAIMS];
 	uint8_t		claim_vsock_source[AUTHORITYD_MAX_VSOCK_CLAIMS];
 	uint32_t	claim_vsock_refcount[AUTHORITYD_MAX_VSOCK_CLAIMS];
@@ -89,7 +76,5 @@ void	config_log(const struct authorityd_config *cfg);
 struct ucl_object_s;	/* forward decl to avoid ucl.h dependency in header */
 int	parse_ucl_net_claim(const struct ucl_object_s *elem,
 	    struct ort_net_claim *nc, const char *label);
-int	parse_ucl_jail_claim(const struct ucl_object_s *elem,
-	    struct authorityd_jail_claim *jc, const char *label);
 
 #endif /* CONFIG_H */

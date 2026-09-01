@@ -116,37 +116,6 @@ mac_capability_mint_net_token(const struct ort_net_claim *nc)
 }
 
 int
-mac_capability_mint_jail_token(const struct authorityd_jail_claim *jc)
-{
-	struct fi_jail_request req;
-	struct fi_reply reply;
-	int token_fd;
-
-	if (mac_capability_isolation_fd == -1) {
-		syslog(LOG_WARNING, "mint_jail_token: isolation not connected");
-		return (-1);
-	}
-
-	token_fd = -1;
-
-	memset(&req, 0, sizeof(req));
-	req.op = FI_OP_MINT_JAIL;
-	req.jid = jc->jid;
-	req.actions = jc->actions;
-	strlcpy(req.name, jc->name, sizeof(req.name));
-
-	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
-	    &req, sizeof(req), NULL, 0, &reply, sizeof(reply),
-	    &token_fd, 1) == -1) {
-		syslog(LOG_WARNING, "mint_jail_token: jid=%d name=%s: %m",
-		    jc->jid, jc->name);
-		return (-1);
-	}
-
-	return (token_fd);
-}
-
-int
 mac_capability_mint_vsock_token(const struct ort_vsock_claim *vc)
 {
 	struct fi_vsock_request req;

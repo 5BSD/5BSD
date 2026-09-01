@@ -65,21 +65,6 @@ find_net_claim(const struct ort_net_claim *nc)
 }
 
 static int
-find_jail_claim(const struct authorityd_jail_claim *jc)
-{
-	unsigned i;
-
-	for (i = 0; i < od.cfg.nclaim_jail; i++) {
-		const struct authorityd_jail_claim *c = &od.cfg.claim_jail[i];
-
-		if (c->jid == jc->jid && c->actions == jc->actions &&
-		    strcmp(c->name, jc->name) == 0)
-			return ((int)i);
-	}
-	return (-1);
-}
-
-static int
 find_vsock_claim(const struct ort_vsock_claim *vc)
 {
 	unsigned i;
@@ -124,8 +109,6 @@ DEFINE_REMOVE_CLAIM(path, claim_paths, claim_path_source,
     claim_path_refcount, nclaim_paths)
 DEFINE_REMOVE_CLAIM(net, claim_net, claim_net_source,
     claim_net_refcount, nclaim_net)
-DEFINE_REMOVE_CLAIM(jail, claim_jail, claim_jail_source,
-    claim_jail_refcount, nclaim_jail)
 DEFINE_REMOVE_CLAIM(vsock, claim_vsock, claim_vsock_source,
     claim_vsock_refcount, nclaim_vsock)
 
@@ -194,38 +177,6 @@ auto_claim_net(const struct ort_net_claim *nc, int *errp)
 	    nc->port_min, nc->port_max, nc->protocol);
 	AUTHORITYD_PROBE_DYN_CLAIM_NET(nc->port_min, nc->port_max,
 	    nc->protocol, 0);
-	return (0);
-}
-
-int
-auto_claim_jail(const struct authorityd_jail_claim *jc, int *errp)
-{
-	int idx;
-
-	idx = find_jail_claim(jc);
-	if (idx >= 0) {
-		if (od.cfg.claim_jail_source[idx] == CLAIM_SOURCE_SERVICE)
-			od.cfg.claim_jail_refcount[idx]++;
-		return (0);
-	}
-
-	if (od.cfg.nclaim_jail >= AUTHORITYD_MAX_JAIL_CLAIMS) {
-		*errp = ENOSPC;
-		return (-1);
-	}
-	if (mac_capability_claim_jail(jc) != 0) {
-		*errp = EIO;
-		return (-1);
-	}
-
-	idx = (int)od.cfg.nclaim_jail;
-	od.cfg.claim_jail[idx] = *jc;
-	od.cfg.claim_jail_source[idx] = CLAIM_SOURCE_SERVICE;
-	od.cfg.claim_jail_refcount[idx] = 1;
-	od.cfg.nclaim_jail++;
-
-	syslog(LOG_INFO, "authority_proto: auto-claimed jail %s", jc->name);
-	AUTHORITYD_PROBE_DYN_CLAIM_JAIL(jc->name, jc->actions, 0);
 	return (0);
 }
 
@@ -331,27 +282,6 @@ release_auto_claim_net(const struct ort_net_claim *nc)
 }
 
 void
-release_auto_claim_jail(const struct authorityd_jail_claim *jc)
-{
-	uint32_t new_refcount;
-	int idx;
-
-	idx = find_jail_claim(jc);
-	if (idx < 0 ||
-	    od.cfg.claim_jail_source[idx] != CLAIM_SOURCE_SERVICE ||
-	    od.cfg.claim_jail_refcount[idx] == 0)
-		return;
-
-	od.cfg.claim_jail_refcount[idx]--;
-	new_refcount = od.cfg.claim_jail_refcount[idx];
-	if (new_refcount == 0) {
-		mac_capability_release_jail(&od.cfg.claim_jail[idx]);
-		remove_jail_claim((unsigned)idx);
-	}
-	AUTHORITYD_PROBE_DYN_RELEASE_JAIL(jc->name, jc->actions, new_refcount, 0);
-}
-
-void
 release_auto_claim_vsock(const struct ort_vsock_claim *vc)
 {
 	uint32_t new_refcount;
@@ -429,24 +359,6 @@ handle_claim_net(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 
 	if (auto_claim_net(&nc, &err) != 0) {
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-	proto_reply(0, reply_token, NULL, 0);
-}
-
-void
-handle_claim_jail(const void *payload, uint32_t len, uint64_t reply_token)
-{
-	struct authorityd_jail_claim jc;
-	int err;
-
-	if (!validate_jail_req(payload, len, &jc, &err)) {
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-
-	if (auto_claim_jail(&jc, &err) != 0) {
 		proto_reply(err, reply_token, NULL, 0);
 		return;
 	}
@@ -601,57 +513,6 @@ handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
 }
 
 void
-handle_release_jail(const void *payload, uint32_t len, uint64_t reply_token)
-{
-	struct authorityd_jail_claim jc;
-	int err, idx;
-
-	if (!validate_jail_req(payload, len, &jc, &err)) {
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-
-	idx = find_jail_claim(&jc);
-	if (idx < 0) {
-		AUTHORITYD_PROBE_DYN_RELEASE_JAIL(jc.name, jc.actions, 0, ENOENT);
-		proto_reply(ENOENT, reply_token, NULL, 0);
-		return;
-	}
-
-	if (od.cfg.claim_jail_source[idx] != CLAIM_SOURCE_SERVICE) {
-		AUTHORITYD_PROBE_DYN_RELEASE_JAIL(jc.name, jc.actions, 0, EPERM);
-		proto_reply(EPERM, reply_token, NULL, 0);
-		return;
-	}
-
-	if (od.cfg.claim_jail_refcount[idx] == 0) {
-		syslog(LOG_WARNING,
-		    "authority_proto: release_jail %s refcount already 0",
-		    jc.name);
-		AUTHORITYD_PROBE_DYN_RELEASE_JAIL(jc.name, jc.actions, 0,
-		    EINVAL);
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	od.cfg.claim_jail_refcount[idx]--;
-	{
-		uint32_t new_refcount = od.cfg.claim_jail_refcount[idx];
-
-		if (new_refcount == 0) {
-			mac_capability_release_jail(&od.cfg.claim_jail[idx]);
-			syslog(LOG_INFO,
-			    "authority_proto: released dynamic jail claim %s",
-			    jc.name);
-			remove_jail_claim((unsigned)idx);
-		}
-
-		AUTHORITYD_PROBE_DYN_RELEASE_JAIL(jc.name, jc.actions,
-		    new_refcount, 0);
-	}
-	proto_reply(0, reply_token, NULL, 0);
-}
-
-void
 handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct authority_system_req *req;
@@ -761,15 +622,6 @@ sweep_dynamic_claims(void)
 		}
 	}
 
-	for (i = od.cfg.nclaim_jail; i > 0; i--) {
-		if (od.cfg.claim_jail_source[i - 1] == CLAIM_SOURCE_SERVICE) {
-			mac_capability_release_jail(&od.cfg.claim_jail[i - 1]);
-			syslog(LOG_INFO,
-			    "authority_proto: sweep released jail %s",
-			    od.cfg.claim_jail[i - 1].name);
-			remove_jail_claim(i - 1);
-		}
-	}
 	for (i = od.cfg.nclaim_vsock; i > 0; i--) {
 		if (od.cfg.claim_vsock_source[i - 1] == CLAIM_SOURCE_SERVICE) {
 			(void)mac_capability_release_vsock(&od.cfg.claim_vsock[i - 1]);

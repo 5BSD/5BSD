@@ -52,13 +52,6 @@ config_apply_claims(const struct authorityd_config *newcfg)
 	memcpy(od.cfg.claim_net_refcount, newcfg->claim_net_refcount,
 	    sizeof(od.cfg.claim_net_refcount));
 	od.cfg.nclaim_net = newcfg->nclaim_net;
-	memcpy(od.cfg.claim_jail, newcfg->claim_jail,
-	    sizeof(od.cfg.claim_jail));
-	memcpy(od.cfg.claim_jail_source, newcfg->claim_jail_source,
-	    sizeof(od.cfg.claim_jail_source));
-	memcpy(od.cfg.claim_jail_refcount, newcfg->claim_jail_refcount,
-	    sizeof(od.cfg.claim_jail_refcount));
-	od.cfg.nclaim_jail = newcfg->nclaim_jail;
 	od.cfg.claim_system = newcfg->claim_system;
 	od.cfg.claim_system_policy = newcfg->claim_system_policy;
 	od.cfg.claim_system_service = newcfg->claim_system_service;

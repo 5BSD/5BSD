@@ -143,44 +143,6 @@ validate_net_req(const void *payload, uint32_t len,
 	return (true);
 }
 
-/*
- * Validate an authority_jail_req and populate an authorityd_jail_claim.
- * Returns true on success, false on validation failure with
- * *errp set.
- */
-static inline bool
-validate_jail_req(const void *payload, uint32_t len,
-    struct authorityd_jail_claim *jc, int *errp)
-{
-	const struct authority_jail_req *req;
-
-	if (len != sizeof(*req)) {
-		*errp = EINVAL;
-		return (false);
-	}
-	req = payload;
-
-	if (req->_pad != 0 || req->jid < 0 || req->actions == 0 ||
-	    (req->actions & ~FI_JAIL_ALL) != 0) {
-		*errp = EINVAL;
-		return (false);
-	}
-	if (memchr(req->name, '\0', sizeof(req->name)) == NULL) {
-		*errp = ENAMETOOLONG;
-		return (false);
-	}
-	if (req->jid == 0 && req->name[0] == '\0') {
-		*errp = EINVAL;
-		return (false);
-	}
-
-	memset(jc, 0, sizeof(*jc));
-	jc->jid = req->jid;
-	jc->actions = req->actions;
-	strlcpy(jc->name, req->name, sizeof(jc->name));
-	return (true);
-}
-
 static inline bool
 validate_vsock_req(const void *payload, uint32_t len,
     struct ort_vsock_claim *vc, int *errp)
