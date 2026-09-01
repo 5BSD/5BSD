@@ -43,9 +43,7 @@ libraries so USDT provider objects link against the target-ABI `drti.o`
 during cross builds.
 
 The in-tree toolchain is LLVM/Clang 21.1.8 (a curated import — MLIR,
-Flang, BOLT, Polly, and most of clang-tools-extra are not included). See
-`/usr/src/LLVM_CLANG_TOOLING_GUIDE.md` for a full map of the available
-compiler, binary, and debugging tools.
+Flang, BOLT, Polly, and most of clang-tools-extra are not included).
 
 ## Installer media (memstick)
 
