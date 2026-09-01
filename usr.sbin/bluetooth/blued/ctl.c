@@ -995,7 +995,7 @@ blued_ctl_iso_failed(struct blued_adapter *adp, const bdaddr_t *addr,
 /* ================================================================
  * Mesh bearer (broker step C).
  *
- * skyblued is a DUMB mesh pipe: it validates the AD type and moves bytes; it
+ * blued is a DUMB mesh pipe: it validates the AD type and moves bytes; it
  * NEVER parses mesh PDU internals (all mesh crypto/relay stays in the mesh
  * daemon).  This block implements the three privileged operations (subscribe /
  * unsubscribe / send), the mesh-subscriber-only push path, the receive-side

@@ -13,14 +13,14 @@
  * and made to talk to each other over a REAL AF_UNIX socketpair -- no
  * hand-rolled framing stands in for either peer:
  *
- *   - skyblued's side is the REAL ctl.c mesh-bearer verb handling: the HELLO
+ *   - blued's side is the REAL ctl.c mesh-bearer verb handling: the HELLO
  *     feature negotiation, MESH_ADV_SUBSCRIBE / MESH_ADV_SEND dispatch, the
  *     receive-side leak-filter demux (blued_mesh_demux_report) and the
  *     subscriber push path (blued_ctl_broadcast_mesh_adv).  Only the two HCI
  *     seams are captured (hci_mesh_adv_burst records the AD bytes that would
  *     hit the radio; hci_le_mesh_scan_set records the scanner toggles).
  *
- *   - skybluemeshd's side is the REAL meshd_bearer_blued.c client: the
+ *   - meshd's side is the REAL meshd_bearer_blued.c client: the
  *     blocking HELLO+SUBSCRIBE handshake (meshd_blued_attach), the outbound
  *     class->adtype tx sink (meshd_blued_tx) and the inbound EVENT MESH_ADV
  *     receive pump (meshd_blued_pump_rx).  The three RX seams

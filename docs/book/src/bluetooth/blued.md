@@ -1,6 +1,6 @@
-# skyblued
+# blued
 
-skyblued (currently installed as `blued(8)`; source
+`blued(8)` (source
 `/usr/src/usr.sbin/bluetooth/blued/`) is 5BSD's general-purpose Bluetooth Low
 Energy host daemon. It implements the BLE protocol stack in userland on top
 of netgraph L2CAP sockets: ATT, GATT, SMP (Legacy and Secure Connections

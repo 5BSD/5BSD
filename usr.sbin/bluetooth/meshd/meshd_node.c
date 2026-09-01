@@ -609,7 +609,7 @@ meshd_drain_tx(struct meshd_node *nd)
 		/*
 		 * A NULL/absent bearer drops the PDU per the meshd_bearer
 		 * contract.  A present bearer that reports a transmit error (the
-		 * skyblued-down reconnect window) also drops rather than retaining
+		 * blued-down reconnect window) also drops rather than retaining
 		 * the PDU: re-queuing filled the fixed 256-slot ring, stalled new
 		 * originations, then burst stale SEQs onto the air on reconnect
 		 * (finding C-m3).

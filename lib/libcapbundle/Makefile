@@ -10,8 +10,8 @@ SRCS=	libcapbundle.c libcapbundle_parse.c libcapbundle_verify.c \
 INCS=	libcapbundle.h
 
 FILESGROUPS+=	examples
-examples=	examples/skyblued.ucl \
-		examples/skybluemeshd.ucl
+examples=	examples/blued.ucl \
+		examples/meshd.ucl
 examplesDIR=	${SHAREDIR}/examples/libcapbundle
 examplesPACKAGE=	lib${LIB}
 

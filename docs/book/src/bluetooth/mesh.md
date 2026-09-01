@@ -1,9 +1,9 @@
 # BLE Mesh
 
 5BSD's Bluetooth Mesh support is split between a protocol library,
-**libblemesh**, and the mesh node daemon, **skybluemeshd** (currently
-installed as `meshd(8)`). The daemon never opens an HCI socket: its radio
-bearer is a privileged client of skyblued, which owns the radio (see the
+**libblemesh**, and the mesh node daemon, **meshd** (`meshd(8)`).
+The daemon never opens an HCI socket: its radio
+bearer is a privileged client of blued, which owns the radio (see the
 [stack overview](overview.md)).
 
 ## libblemesh
@@ -34,7 +34,7 @@ Protocol 1.1 stack as a library:
   the daemon drives as a single-node network; it also powers the multi-node
   ATF simulations. USDT probes are defined in `mesh_provider.d`.
 
-## skybluemeshd (meshd)
+## meshd
 
 `meshd(8)` is a Bluetooth Mesh node. It holds the node's security material
 (NetKey, AppKey, IV Index, sequence number, RPL), registers the Generic
@@ -56,7 +56,7 @@ relay          1
 proxy          0
 friend         0
 low_power      0
-# blued_socket /var/run/blued.sock   # skyblued mesh-bearer socket
+# blued_socket /var/run/blued.sock   # blued mesh-bearer socket
 ```
 
 A node with a `netkey` comes up already provisioned (static test networks);
@@ -113,4 +113,3 @@ Documented in-tree; nothing below is speculative:
   cases pass in ATF, largely against the simulated network engine and
   virtual controller; the stack has not shipped in a release, and internal
   IPC/persistence formats are not yet stable interfaces.
-- **Naming.** The `skybluemeshd` rename (from `meshd`) is not yet applied.

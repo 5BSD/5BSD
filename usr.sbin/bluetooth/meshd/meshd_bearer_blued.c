@@ -6,7 +6,7 @@
  */
 
 /*
- * meshd's radio bearer: a small privileged client of skyblued's mesh-bearer
+ * meshd's radio bearer: a small privileged client of blued's mesh-bearer
  * control-socket API.  See meshd_bearer_blued.h for the model.  Both daemons
  * use the shared ipc_proto.h contract for framing and typed payloads.
  */
@@ -1146,7 +1146,7 @@ meshd_blued_pbgatt_timeout(void *arg)
 
 /*
  * Dispatch one decoded EVENT MESH_ADV to the matching RX seam by AD type.  No
- * mesh crypto crosses the bearer: skyblued hands us the opaque AD payload and
+ * mesh crypto crosses the bearer: blued hands us the opaque AD payload and
  * we feed it to the seam that owns that PDU type.  Returns 1 if dispatched.
  */
 static int

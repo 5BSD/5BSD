@@ -511,7 +511,7 @@ CFLAGS.mesh_cfgsrv_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth
 SRCS.mesh_cfg_v11_test=	mesh_cfg_v11_test.c ${MESHD_ENGINE}
 CFLAGS.mesh_cfg_v11_test+=	-I${SRCTOP}/lib/libmesh -I${SRCTOP}/usr.sbin/bluetooth/meshd
 # Real-IPC LOOPBACK: links BOTH bearer halves into one binary -- the real
-# skyblued mesh-bearer verb handling (ctl.c + its dep set) and the real meshd
+# blued mesh-bearer verb handling (ctl.c + its dep set) and the real meshd
 # bearer client (meshd_bearer_blued.c) -- and makes them talk over a real
 # socketpair.  The meshd RX seams are link-wrapped so each AD type's landing is
 # observed on the far side of the wire; the blued HCI seam is captured in-test.

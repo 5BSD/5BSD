@@ -6,12 +6,12 @@
  */
 
 /*
- * meshd's radio bearer, realised as a privileged client of skyblued.
+ * meshd's radio bearer, realised as a privileged client of blued.
  *
- * meshd never opens an HCI socket itself: skyblued is the sole HCI owner, and
- * meshd reaches the radio only through skyblued's control socket using the
+ * meshd never opens an HCI socket itself: blued is the sole HCI owner, and
+ * meshd reaches the radio only through blued's control socket using the
  * mesh bearer API.  This module is a small,
- * mesh-scoped client of skyblued's length-prefixed control protocol:
+ * mesh-scoped client of blued's length-prefixed control protocol:
  *
  *   - HELLO negotiates the mesh and asynchronous-event capability bits,
  *     then MESH_ADV_SUBSCRIBE registers meshd as a mesh-adv subscriber.
@@ -85,7 +85,7 @@ struct meshd_blued_peer {
 };
 
 /*
- * The skyblued client state.  fd < 0 means the bearer is down (skyblued absent
+ * The blued client state.  fd < 0 means the bearer is down (blued absent
  * or the connection dropped); the daemon keeps running on the sim and the tick
  * loop retries meshd_blued_maintain() with backoff.  All buffers are inline so
  * the object can live on the caller's stack.
@@ -128,12 +128,12 @@ struct meshd_blued {
 	int		pbgatt_draining;
 };
 
-/* Initialise the client as down and remember the skyblued socket path. */
+/* Initialise the client as down and remember the blued socket path. */
 void	meshd_blued_init(struct meshd_blued *bc, const char *sockpath);
 void	meshd_blued_bind_node(struct meshd_blued *bc, struct meshd_node *nd);
 
 /*
- * Start a nonblocking skyblued connection.  The writable and receive pumps
+ * Start a nonblocking blued connection.  The writable and receive pumps
  * advance connect, HELLO, and MESH_ADV_SUBSCRIBE under one absolute deadline;
  * interleaved events are dispatched as complete frames arrive.  Returns 0 once
  * the attempt has started (the fd is immediately available to kqueue), or -1

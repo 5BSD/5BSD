@@ -40,7 +40,7 @@ Beyond the security core, 5BSD ships:
 - **WASPNest** — the virtualization stack (bhyve lineage) with modern VirtIO
   device models, vsock, live migration, and nested VMX
   ([Virtualization](virtualization/overview.md)).
-- **Skyblue** — a Bluetooth host and BLE mesh stack
+- **Bluetooth** — a Bluetooth host and BLE mesh stack, `blued` and `meshd`
   ([Bluetooth](bluetooth/overview.md)).
 - **TrustedZFS** — a capability-fd API over ZFS with a storage broker daemon
   ([Storage](storage/trustedzfs.md)).

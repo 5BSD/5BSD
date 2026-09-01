@@ -1,49 +1,44 @@
-# Skyblue Stack Overview
+# Bluetooth Stack Overview
 
-Skyblue is 5BSD's Bluetooth Low Energy and Bluetooth Mesh stack. It consists
+5BSD's Bluetooth Low Energy and Bluetooth Mesh stack consists
 of two cooperating userland daemons built on three in-tree libraries, running
 over the kernel's netgraph Bluetooth layer:
 
-- **skyblued** — the host daemon: HCI adapter management, ATT/GATT/SMP,
+- **blued** — the host daemon: HCI adapter management, ATT/GATT/SMP,
   central and peripheral roles, ISO streams, advertising and scanning.
   Source: `/usr/src/usr.sbin/bluetooth/blued/`.
-- **skybluemeshd** — the Bluetooth Mesh node daemon: mesh security material,
+- **meshd** — the Bluetooth Mesh node daemon: mesh security material,
   network/transport/access layers, foundation and application models.
   Source: `/usr/src/usr.sbin/bluetooth/meshd/`.
 
-**Status — naming transition.** Skyblue is the adopted product name, but the
-rename has not yet been applied to the build: the daemons still install as
-`blued(8)` and `meshd(8)`, with CLIs `bluedctl(8)` and `meshctl(8)`, and rc.d
-scripts `blued` and `meshd`. The skyblued name already appears in the mesh
-daemon's sources and man page (for example `meshd.8` and `meshd.conf.sample`
-describe the "skyblued bearer"). This chapter uses the product names; code
-paths and commands below use the current on-disk names.
+The daemons install as `blued(8)` and `meshd(8)`, with CLIs `bluedctl(8)`
+and `meshctl(8)`, and rc.d scripts `blued` and `meshd`.
 
 ## Architecture: two daemons, one radio owner
 
-skyblued owns the radio. It is the only process that opens HCI sockets and
-programs the controller. skybluemeshd never touches HCI directly; its radio
-bearer is a privileged client of skyblued's control socket, using the
+blued owns the radio. It is the only process that opens HCI sockets and
+programs the controller. meshd never touches HCI directly; its radio
+bearer is a privileged client of blued's control socket, using the
 mesh-bearer API (`MESH_ADV_ENABLE` / `MESH_ADV_SEND` commands) to transmit
 and receive mesh advertising bearer PDUs. From `meshd.c`:
 
 ```
-The radio bearer is a privileged client of skyblued ... The daemon never
-opens an HCI socket itself; skyblued owns the radio.
+The radio bearer is a privileged client of blued ... The daemon never
+opens an HCI socket itself; blued owns the radio.
 ```
 
-If skyblued is absent, the mesh node keeps running and reconnects the bearer
+If blued is absent, the mesh node keeps running and reconnects the bearer
 with backoff; originations resume when the bearer returns. The bearer socket
 defaults to `/var/run/blued.sock` (`blued_socket` key in `meshd.conf`).
 
 ## Libraries
 
-- `lib/libble` (`libble(3)`) — the client library for skyblued's control
+- `lib/libble` (`libble(3)`) — the client library for blued's control
   protocol; backs `bluedctl` and third-party clients (about 160 entry points
   in `ble.h`).
 - `lib/libmesh`, installed as **libblemesh** (`libblemesh(3)`) — the mesh
   protocol engine: crypto, network/transport/access layers, provisioning,
-  Config Client/Server, models. skybluemeshd is built on it.
+  Config Client/Server, models. meshd is built on it.
 - `lib/libbluetooth` — the traditional FreeBSD HCI utility library
   (`bt_devreq()` and friends), used for adapter I/O.
 
@@ -65,8 +60,7 @@ f7e320bcbbf bluetooth: implement mesh Friend and Low Power Node roles
 d5d7e848c2a bluetooth: fix correctness regressions and bugs from the audit follow-up
 ```
 
-The daemons are slated to become `skyblued` and `skybluemeshd` with a
-`skyblue` CLI; the two-daemon split and radio-ownership contract are stable.
+The two-daemon split and radio-ownership contract are stable.
 
 ## Spec conformance vs product completeness
 
@@ -95,10 +89,9 @@ elisions):
   validation across three or more real hops with separate daemons needs a
   live multi-node radio setup.
 - There is no mesh device-firmware-update (DFU/BLOB transfer) support in
-  libblemesh or skybluemeshd.
+  libblemesh or meshd.
 - Hardware-only test cases (`hci_hw`) require a real controller; one
   pre-existing `att_server_edge` test case fails.
-- The skyblue rename itself is outstanding.
 
-See the daemon chapters: [skyblued](skyblued.md) and
+See the daemon chapters: [blued](blued.md) and
 [BLE Mesh](mesh.md).

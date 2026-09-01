@@ -38,7 +38,7 @@ meshd_config_defaults(struct meshd_config *cfg)
 	cfg->unicast_addr = MESHD_UNICAST_MIN;
 	cfg->default_ttl = 7;			/* MshPRT default TTL */
 	cfg->features = 0;
-	/* The radio bearer is reached through skyblued's control socket. */
+	/* The radio bearer is reached through blued's control socket. */
 	(void)strlcpy(cfg->blued_socket, "/var/run/blued.sock",
 	    sizeof(cfg->blued_socket));
 }

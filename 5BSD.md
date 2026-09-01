@@ -159,8 +159,8 @@ Beyond the security core and the authority plane, 5BSD ships:
 - **[WASPNest](docs/book/src/virtualization/overview.md)** — the virtualization
   stack (bhyve lineage) with modern VirtIO device models, vsock, live migration,
   and nested VMX.
-- **[Skyblue](docs/book/src/bluetooth/overview.md)** — a Bluetooth host and BLE
-  mesh stack (in-tree rename pending).
+- **[Bluetooth](docs/book/src/bluetooth/overview.md)** — a Bluetooth host and BLE
+  mesh stack, the `blued` and `meshd` daemons.
 - **[TrustedZFS](docs/book/src/storage/trustedzfs.md)** — a capability-fd API
   over ZFS with the `tzfsd` storage broker; the capability plane's storage
   substrate.
@@ -264,7 +264,7 @@ Userland capability daemons and libraries carry their own ATF suites
 
 The capability core (MACF, `mac_capability`, capprotect, coalition, HWT/PT), the
 authority plane (`authority-init`, `serviced`, the auth-agent, capability
-bundles, TrustedZFS), and the product stacks (WASPNest, Skyblue, ObservableBSD)
+bundles, TrustedZFS), and the product stacks (WASPNest, Bluetooth, ObservableBSD)
 are committed and tested; the from-scratch build packages cleanly and boots. The
 capability-authority migration — moving every authority decision off ambient
 uid/socket checks and onto held capabilities — is the ongoing throughline;

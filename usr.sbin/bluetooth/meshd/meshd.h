@@ -104,7 +104,7 @@ struct meshd_config {
 	int		have_appkey;
 	int		have_device_key;
 	int		have_uuid;
-	char		blued_socket[104];	/* skyblued control socket path */
+	char		blued_socket[104];	/* blued control socket path */
 };
 
 void	meshd_config_defaults(struct meshd_config *cfg);
@@ -133,7 +133,7 @@ int	meshd_hexdecode(const char *hex, uint8_t *out, size_t outlen);
  * The AD-type class of an outbound mesh PDU.  meshd's three transmit sites each
  * produce a different mesh advertising AD type; the bearer sink carries this
  * discriminator so it can wrap the PDU in the correct AD structure (the radio
- * bearer, skyblued, is a dumb pipe and never parses the PDU).  The enum values
+ * bearer, blued, is a dumb pipe and never parses the PDU).  The enum values
  * ARE the wire AD types (MshPRT_v1.1) so the mapping is unambiguous.
  */
 enum meshd_pdu_class {

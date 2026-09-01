@@ -1465,7 +1465,7 @@ meshd_ctl_exec_client(struct meshd_node *nd, struct meshd_app_client *cl,
 	if (strcmp(argv[0], "provision-scan") == 0) {
 		/*
 		 * provision-scan [on|off|list].  Unprovisioned Device beacons are
-		 * captured by the radio bearer (skyblued) and parsed into the
+		 * captured by the radio bearer (blued) and parsed into the
 		 * discovery cache while scanning is enabled; the operator lists
 		 * the nearby device UUIDs and feeds one to "provision" (finding
 		 * 127).  No arg (or "list") enables scanning and lists the cache.

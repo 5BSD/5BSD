@@ -11,11 +11,11 @@
  * to the outside world.  It loads the config, brings the node up, and serves a
  * line-oriented control protocol on a UNIX-domain stream socket.
  *
- * The radio bearer is a privileged client of skyblued: meshd installs a struct
+ * The radio bearer is a privileged client of blued: meshd installs a struct
  * meshd_bearer whose sink is meshd_blued_tx() (outbound mesh adv PDUs become
- * MESH_ADV_SEND commands) and adds skyblued's control fd to the poll set, where
+ * MESH_ADV_SEND commands) and adds blued's control fd to the poll set, where
  * inbound EVENT MESH_ADV push events are pumped into the RX seams.  meshd never
- * opens an HCI socket itself; skyblued owns the radio.  If skyblued is absent
+ * opens an HCI socket itself; blued owns the radio.  If blued is absent
  * the node keeps running on libblemesh's mesh_sim(3) engine and the tick loop
  * reconnects with backoff.
  */
@@ -657,10 +657,10 @@ main(int argc, char *argv[])
 		(void)meshd_kr_send_next(&nd, meshd_now());
 
 	/*
-	 * Attach the radio bearer: a privileged client of skyblued.  The bearer
+	 * Attach the radio bearer: a privileged client of blued.  The bearer
 	 * sink is installed unconditionally so outbound PDUs route through it;
 	 * meshd_blued_tx() drops (and counts) sends while the link is down.  The
-	 * initial connect is best-effort - if skyblued is not yet up the node
+	 * initial connect is best-effort - if blued is not yet up the node
 	 * stays running and the tick loop reconnects with backoff, so daemon
 	 * boot order is not load-bearing.
 	 */
@@ -720,7 +720,7 @@ main(int argc, char *argv[])
 		int bfd, i, nev;
 
 		/*
-		 * Keep skyblued's current connection registered.  Descriptor numbers
+		 * Keep blued's current connection registered.  Descriptor numbers
 		 * can be reused immediately after close, so fd equality alone does not
 		 * identify a connection.  The generation also becomes the immutable
 		 * event token used to reject stale events already returned by kqueue.
@@ -935,7 +935,7 @@ main(int argc, char *argv[])
 		(void)meshd_cfg_client_tick(&nd, now);
 		meshd_clients_queue_events(&nd, kq);
 
-		/* Reconnect the bearer (with backoff) if skyblued dropped. */
+		/* Reconnect the bearer (with backoff) if blued dropped. */
 		(void)meshd_blued_maintain(&bc, now);
 	}
 

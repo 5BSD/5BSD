@@ -174,7 +174,7 @@ product stacks, each covered in its own section:
 |-------|-----------|---------|
 | Init & services | `authorityd` (PID 1 capable), `serviced`, `authorityctl` | [System Services](system/authority-init.md) |
 | Virtualization | WASPNest (bhyve), VirtIO models, vsock, migration | [Virtualization](virtualization/overview.md) |
-| Bluetooth | `blued`, `meshd`, `bluedctl`/`meshctl` (skyblue rename pending) | [Bluetooth](bluetooth/overview.md) |
+| Bluetooth | `blued`, `meshd`, `bluedctl`/`meshctl` | [Bluetooth](bluetooth/overview.md) |
 | Storage | TrustedZFS, `tzfsd`, `tzfsctl` | [Storage](storage/trustedzfs.md) |
 | Endpoint security | OES clients over MACF | [Endpoint Security](security/endpoint-security.md) |
 | Observability | libotelexport, bsdinstruments, hwtlm, DTrace | [Observability](observability/observablebsd.md) |

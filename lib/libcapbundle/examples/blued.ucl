@@ -1,14 +1,14 @@
-# skyblued.ucl - Units/skyblued.unit/Unit.ucl example.
+# blued.ucl - Units/blued.unit/Unit.ucl example.
 #
-# skyblued is the sole owner of the Bluetooth radio.  The single
+# blued is the sole owner of the Bluetooth radio.  The single
 # fully-wildcard AF_BLUETOOTH network capability below is minted to
-# skyblued's nonce by the authority at launch: registering it trips the
+# blued's nonce by the authority at launch: registering it trips the
 # mac_capability_isolation "block all networking" gate for the whole
 # AF_BLUETOOTH domain, so socket(PF_BLUETOOTH, ...) -- HCI raw, L2CAP,
-# RFCOMM, SCO and ISO alike -- succeeds only for skyblued's nonce and
-# returns EACCES for every other process.  Clients (skybluemeshd, CLI
+# RFCOMM, SCO and ISO alike -- succeeds only for blued's nonce and
+# returns EACCES for every other process.  Clients (meshd, CLI
 # tools) never open a Bluetooth socket directly; they receive already
-# connected, rights-limited data fds from skyblued's broker API.
+# connected, rights-limited data fds from blued's broker API.
 #
 # Wildcard reservation form: domain = bluetooth, protocol/address/port
 # all "any", direction = any.  direction MUST be "any" -- the block-all
@@ -30,6 +30,6 @@ capabilities {
     ];
 
     # Raw HCI node.  The reservation above already gates the socket;
-    # this grants skyblued the device path it opens for the adapter.
+    # this grants blued the device path it opens for the adapter.
     paths = ["/dev/hci"];
 }

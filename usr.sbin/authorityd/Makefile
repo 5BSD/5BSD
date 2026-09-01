@@ -40,7 +40,7 @@ FILESGROUPS+= examples
 examples= examples/desktop.conf \
 	 examples/server.conf \
 	 examples/embedded.conf \
-	 examples/skyblue-broker.conf \
+	 examples/broker.conf \
 	 examples/dynamic_claims.d
 examplesDIR= ${SHAREDIR}/examples/authorityd
 examplesPACKAGE= authorityd

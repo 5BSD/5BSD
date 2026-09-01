@@ -57,12 +57,10 @@ tzfsctl release name
 `props_read, props_write, snapshot, snap_destroy, clone_src, create,
 destroy, mount`, plus `all`/`*`; the default is `mount,props_read`.
 
-## bluedctl and meshctl — Bluetooth (Skyblue stack)
+## bluedctl and meshctl — Bluetooth stack
 
-**Status:** the stack's target names are `skyblued`/`skybluemeshd` with
-a `skyblue` CLI; the shipping binaries today are `blued`/`meshd` with
-`bluedctl` and `meshctl` (`usr.sbin/bluetooth/`). No `skyblue` binary
-or symlink exists yet.
+The Bluetooth stack ships as the daemons `blued`/`meshd` with the
+operator CLIs `bluedctl` and `meshctl` (`usr.sbin/bluetooth/`).
 
 ```
 usage: bluedctl [-ij] [-s socket] command [args ...]

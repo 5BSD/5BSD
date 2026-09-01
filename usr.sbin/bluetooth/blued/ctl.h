@@ -139,7 +139,7 @@ void	ctl_gatt_client_gone(struct blued_ctl_client *client);
 /*
  * Mesh bearer (broker step C).
  *
- * The three mesh AD types skyblued acts as a dumb bearer for (Bluetooth Mesh
+ * The three mesh AD types blued acts as a dumb bearer for (Bluetooth Mesh
  * Profile / Core spec assigned numbers).  These are the ONLY AD types the
  * MESH_ADV_SEND verb accepts and the ONLY ones the receive demux forwards;
  * everything else is rejected/dropped (the leak filter).

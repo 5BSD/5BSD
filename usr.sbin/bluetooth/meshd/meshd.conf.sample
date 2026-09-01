@@ -25,9 +25,9 @@
 #   low_power      <0|1>      Enable the Low Power node feature (befriend a
 #                             neighbouring Friend and poll it for messages).
 #                             Mutually exclusive with friend in practice.
-#   blued_socket   <path>     skyblued control socket for the radio bearer
+#   blued_socket   <path>     blued control socket for the radio bearer
 #                             (default /var/run/blued.sock).  meshd reaches the
-#                             radio only through skyblued's mesh-bearer API.
+#                             radio only through blued's mesh-bearer API.
 #
 # A node whose netkey is supplied here comes up already provisioned (useful
 # for a static test network).  Omit netkey to bring the node up

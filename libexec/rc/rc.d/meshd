@@ -17,7 +17,7 @@
 # meshd_socket="/var/run/meshd.sock"         # optional
 # meshd_state="/var/db/meshd.state"          # optional (node state)
 # meshd_mgr="/var/db/meshd.mgr"              # optional (network / roster)
-# meshd_blued_socket=""                      # optional skyblued ctl socket
+# meshd_blued_socket=""                      # optional blued ctl socket
 # meshd_flags=""                             # additional flags
 #
 

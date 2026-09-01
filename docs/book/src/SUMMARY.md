@@ -33,10 +33,10 @@
 - [Live Migration and Nested VMX](virtualization/migration-nested.md)
 - [Qualification and Testing](virtualization/qualification.md)
 
-# Bluetooth (Skyblue)
+# Bluetooth
 
-- [Skyblue Stack Overview](bluetooth/overview.md)
-- [skyblued](bluetooth/skyblued.md)
+- [Bluetooth Stack Overview](bluetooth/overview.md)
+- [blued](bluetooth/blued.md)
 - [BLE Mesh](bluetooth/mesh.md)
 
 # Storage
