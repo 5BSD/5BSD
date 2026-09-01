@@ -1814,6 +1814,24 @@ service_storage_open(struct service_context *context, const char *name,
 }
 
 /*
+ * Open this service's writable configuration area and return its mounted
+ * directory root.  This is the well-known "config" claim under the service's
+ * label-scoped home (persistent/u<hash-of-label>/config): a place for
+ * configuration files that live outside the shared UNIX directories, writable by
+ * the service (and by an administrator who provisions it out of band), scoped so
+ * a service only ever reaches its own config and never another's.  It is the
+ * companion of the "state" storage claim; both are just named children of the
+ * same per-service home, so this is a thin, discoverable wrapper over
+ * service_storage_open(3).  Returns 0 with *dirfdp set, or -1 with errno.
+ */
+int
+service_open_config(struct service_context *context, int *dirfdp)
+{
+
+	return (service_storage_open(context, "config", dirfdp));
+}
+
+/*
  * Ensure a named kernel extension is loaded via sysextd.  sysextd is a
  * socket-free provider: libservice opens a system.SystemExtension channel by
  * name and asks it to load the module.  The channel is cached (all of a

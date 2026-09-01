@@ -218,6 +218,14 @@ const char *service_label(struct service_context *);
  */
 int	service_storage_open(struct service_context *, const char *name,
 	    int *dirfdp);
+/*
+ * Open this service's writable, label-scoped configuration area (the well-known
+ * "config" claim under its per-service home) and return its mounted directory
+ * root.  A place for configuration files outside the shared UNIX directories,
+ * scoped so a service only ever reaches its own.  Thin wrapper over
+ * service_storage_open(3).  Returns 0 with *dirfdp set, or -1 with errno.
+ */
+int	service_open_config(struct service_context *, int *dirfdp);
 int	service_capability_open(struct service_context *, const char *name,
 	    const char *type, int *fd);
 
