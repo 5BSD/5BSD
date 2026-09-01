@@ -321,6 +321,26 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 				}
 			}
 
+			/*
+			 * Populate the per-fd rights into the (not yet
+			 * enqueued) message while holding only FILEDESC_XLOCK.
+			 * filecaps_copy() may malloc(M_WAITOK) when an fd
+			 * carries an ioctl allowlist; doing it here keeps that
+			 * sleepable allocation out from under the non-sleepable
+			 * ci_mtx.  fde stays stable because FILEDESC_XLOCK is
+			 * held continuously through the reservation below, and
+			 * on failure the message (with these caps) is freed
+			 * without any transfer authority having been consumed.
+			 */
+			for (i = 0; i < (int)args->nfds; i++) {
+				fde = &fdesc->fd_ofiles[fdbuf[i]];
+				filecaps_free(&msg->cm_fcaps[i]);
+				filecaps_copy(&fde->fde_caps,
+				    &msg->cm_fcaps[i], true);
+				filecaps_intersect(&msg->cm_fcaps[i],
+				    &fde->fde_xfer_caps);
+			}
+
 			mtx_lock(&s->ci_mtx);
 			error = mac_capability_instance_rx_ready(s);
 			if (error != 0) {
@@ -330,11 +350,6 @@ mac_capability_instance_do_sendmsg(struct mac_capability_instance *s,
 			}
 			for (i = 0; i < (int)args->nfds; i++) {
 				fde = &fdesc->fd_ofiles[fdbuf[i]];
-				filecaps_free(&msg->cm_fcaps[i]);
-				filecaps_copy(&fde->fde_caps,
-				    &msg->cm_fcaps[i], true);
-				filecaps_intersect(&msg->cm_fcaps[i],
-				    &fde->fde_xfer_caps);
 				if (fde->fde_xfer_state == CAP_XFER_ONCE) {
 					fde->fde_xfer_state = CAP_XFER_NONE;
 					msg->cm_xfer_state[i] = CAP_XFER_NONE;
