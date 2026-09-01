@@ -83,8 +83,10 @@
 #define	TZFSD_OPEN_WRITE		0x2u	/* CAP_WRITE */
 #define	TZFSD_OPEN_EXEC			0x4u	/* CAP_FEXECVE */
 #define	TZFSD_OPEN_LOOKUP		0x8u	/* CAP_LOOKUP (dirs, for openat) */
+#define	TZFSD_OPEN_IOCTL		0x10u	/* CAP_IOCTL (device control nodes) */
 #define	TZFSD_OPEN_RIGHTS_ALL \
-	(TZFSD_OPEN_READ | TZFSD_OPEN_WRITE | TZFSD_OPEN_EXEC | TZFSD_OPEN_LOOKUP)
+	(TZFSD_OPEN_READ | TZFSD_OPEN_WRITE | TZFSD_OPEN_EXEC | \
+	 TZFSD_OPEN_LOOKUP | TZFSD_OPEN_IOCTL)
 
 struct tzfsd_open_request {
 	uint32_t	op;		/* TZFSD_OP_OPEN */

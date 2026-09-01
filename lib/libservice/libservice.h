@@ -239,6 +239,7 @@ int	service_open_config(struct service_context *, int *dirfdp);
 #define	SERVICE_OPEN_WRITE	0x2u	/* CAP_WRITE */
 #define	SERVICE_OPEN_EXEC	0x4u	/* CAP_FEXECVE */
 #define	SERVICE_OPEN_LOOKUP	0x8u	/* CAP_LOOKUP (directories, for openat) */
+#define	SERVICE_OPEN_IOCTL	0x10u	/* CAP_IOCTL + CAP_EVENT (device nodes) */
 int	service_open_isolated(struct service_context *, const char *path,
 	    unsigned rights, int is_dir, int *fdp);
 

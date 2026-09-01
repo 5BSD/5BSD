@@ -264,9 +264,16 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 			    copy_string(pol->path, sizeof(pol->path), pa) == -1 ||
 			    ucl_object_type(ri) != UCL_ARRAY)
 				goto invalid;
-			/* Absolute, no traversal component: matched exactly at use. */
+			/* Absolute, no traversal component. */
 			if (pol->path[0] != '/' || strstr(pol->path, "..") != NULL)
 				goto invalid;
+			{
+				const ucl_object_t *px = ucl_object_lookup(ent,
+				    "prefix");
+
+				pol->prefix = px != NULL &&
+				    ucl_object_toboolean(px);
+			}
 			while ((rv = ucl_object_iterate(ri, &rit, true)) != NULL) {
 				const char *s = ucl_object_tostring(rv);
 
@@ -280,6 +287,8 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 					pol->rights |= TZFSD_OPEN_EXEC;
 				else if (strcmp(s, "lookup") == 0)
 					pol->rights |= TZFSD_OPEN_LOOKUP;
+				else if (strcmp(s, "ioctl") == 0)
+					pol->rights |= TZFSD_OPEN_IOCTL;
 				else
 					goto invalid;
 			}

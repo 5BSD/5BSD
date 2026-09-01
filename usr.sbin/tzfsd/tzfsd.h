@@ -28,8 +28,12 @@
 #define	TZFSD_MAX_OPEN_POLICY	32
 struct tzfsd_open_policy {
 	char		label[64];		/* == service_identity.client_label */
-	char		path[TZFSD_MAXPATH];	/* exact absolute path granted */
+	char		path[TZFSD_MAXPATH];	/* absolute path (or prefix) granted */
 	uint32_t	rights;			/* TZFSD_OPEN_* the label may request */
+	bool		prefix;			/* path is a prefix: matches path + one
+						 * trailing non-'/' component (e.g. a
+						 * device unit /dev/vhid -> /dev/vhidN),
+						 * never a subdirectory */
 };
 
 struct tzfsd_config {

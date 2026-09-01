@@ -278,14 +278,31 @@ grant_open(struct tzfsd_state *st, const char *client,
 		return (-1);
 	}
 
-	/* Default-deny: exact (label, path) match covering the requested rights. */
+	/* Default-deny: a policy entry for this label must cover path + rights. */
 	for (i = 0; i < cfg->nopen_policy; i++) {
 		const struct tzfsd_open_policy *pol = &cfg->open_policy[i];
 
-		if (strcmp(pol->label, client) == 0 &&
-		    strcmp(pol->path, rq->path) == 0 &&
-		    (rq->rights & ~pol->rights) == 0)
-			break;
+		if (strcmp(pol->label, client) != 0 ||
+		    (rq->rights & ~pol->rights) != 0)
+			continue;
+		if (pol->prefix) {
+			size_t plen = strlen(pol->path);
+			const char *suffix;
+
+			if (strncmp(pol->path, rq->path, plen) != 0)
+				continue;
+			/*
+			 * The remainder must be the exact path itself or a single
+			 * trailing component (a device unit: /dev/vhid -> vhidN),
+			 * never a subdirectory — no '/' in the suffix.
+			 */
+			suffix = rq->path + plen;
+			if (suffix[0] != '\0' && strchr(suffix, '/') != NULL)
+				continue;
+		} else if (strcmp(pol->path, rq->path) != 0) {
+			continue;
+		}
+		break;
 	}
 	if (i == cfg->nopen_policy) {
 		errno = EACCES;
@@ -317,6 +334,8 @@ grant_open(struct tzfsd_state *st, const char *client,
 		cap_rights_set(&rights, CAP_FEXECVE);
 	if (rq->rights & TZFSD_OPEN_LOOKUP)
 		cap_rights_set(&rights, CAP_LOOKUP, CAP_FSTATAT);
+	if (rq->rights & TZFSD_OPEN_IOCTL)
+		cap_rights_set(&rights, CAP_IOCTL, CAP_EVENT);
 	if (cap_rights_limit(fd, &rights) == -1) {
 		saved = errno;
 		(void)close(fd);
