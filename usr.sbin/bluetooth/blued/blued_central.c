@@ -1782,6 +1782,33 @@ hogp_setup_vhid(struct hogp_device *dev)
 	char path[32];
 	ssize_t n;
 
+	/*
+	 * Lazily acquire the vhid control node if it was not available at startup
+	 * (the filesystem daemon may have come up since).  This keeps tzfsd from
+	 * being a hard startup dependency: no device could be set up without it
+	 * anyway, so failing here just fails this one device, softly.
+	 */
+	if (dev->vhid_ctl_fd < 0 && blued_g.svc_ctx != NULL) {
+		/* Ensure the vhid module is loaded (best-effort), then open. */
+		(void)service_ensure_extension(blued_g.svc_ctx, "vhid");
+		if (service_open_isolated(blued_g.svc_ctx, "/dev/vhid",
+		    SERVICE_OPEN_READ | SERVICE_OPEN_WRITE | SERVICE_OPEN_IOCTL,
+		    0, &blued_g.vhid_ctl_fd) == -1)
+			return (-1);
+		{
+			cap_rights_t rights;
+			unsigned long vhid_ioctls[] = { VHID_CREATE };
+
+			cap_rights_init(&rights, CAP_IOCTL, CAP_READ, CAP_WRITE);
+			(void)cap_rights_limit(blued_g.vhid_ctl_fd, &rights);
+			(void)cap_ioctls_limit(blued_g.vhid_ctl_fd, vhid_ioctls,
+			    nitems(vhid_ioctls));
+		}
+		dev->vhid_ctl_fd = blued_g.vhid_ctl_fd;
+	}
+	if (dev->vhid_ctl_fd < 0)
+		return (-1);
+
 	/* Create a new vhid instance */
 	if (ioctl(dev->vhid_ctl_fd, VHID_CREATE, &dev->vhid_unit) < 0)
 		return (-1);

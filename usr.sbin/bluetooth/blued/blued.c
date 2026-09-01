@@ -4685,7 +4685,8 @@ main(int argc, char *argv[])
 	 */
 	if (blued_serviced &&
 	    service_ensure_extension(blued_g.svc_ctx, "vhid") == -1)
-		err(1, "ensure vhid module");
+		syslog(LOG_WARNING, "vhid module not loaded at startup "
+		    "(ensured on demand): %m");
 
 	/*
 	 * Open the vhid control node.  Under serviced the filesystem daemon
@@ -4696,10 +4697,20 @@ main(int argc, char *argv[])
 	 * serviced), open it directly.
 	 */
 	if (blued_serviced) {
+		/*
+		 * Ask the filesystem daemon for the vhid control node — but do
+		 * NOT make it a hard startup dependency: if it is not available
+		 * yet, warn and carry on with vhid_ctl_fd == -1.  It is acquired
+		 * lazily (hogp_setup_vhid) when the first HID device actually
+		 * needs it, so blued never dies because tzfsd is transiently down.
+		 */
 		if (service_open_isolated(blued_g.svc_ctx, "/dev/vhid",
 		    SERVICE_OPEN_READ | SERVICE_OPEN_WRITE | SERVICE_OPEN_IOCTL,
-		    0, &blued_g.vhid_ctl_fd) == -1)
-			err(1, "open /dev/vhid via filesystem daemon");
+		    0, &blued_g.vhid_ctl_fd) == -1) {
+			syslog(LOG_WARNING, "vhid control not available at "
+			    "startup (acquired on demand): %m");
+			blued_g.vhid_ctl_fd = -1;
+		}
 	} else {
 		blued_g.vhid_ctl_fd = open("/dev/vhid",
 		    O_RDWR | O_CLOEXEC | O_CLOFORK);
