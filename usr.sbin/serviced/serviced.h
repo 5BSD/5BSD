@@ -268,11 +268,12 @@ int	authority_mint_file(int channel_fd, const char *path, uint64_t actions);
 int	authority_mint_net(int channel_fd, const struct ort_net_claim *nc);
 int	authority_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
 int	authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc);
-int	authority_mint_storage(int channel_fd, const struct ort_storage_claim *sc,
-	    uid_t owner_uid, gid_t owner_gid);
-int	authority_destroy_storage(int channel_fd,
-	    const struct ort_storage_claim *sc);
 int	authority_mint_system(int channel_fd, uint32_t gates);
+
+/* storage_client.c — serviced talks to tzfsd(8) directly, not via authorityd */
+int	serviced_storage_mint(const struct ort_storage_claim *sc,
+	    uid_t owner_uid, gid_t owner_gid);
+int	serviced_storage_destroy(const struct ort_storage_claim *sc);
 int	authority_create_jail(int channel_fd, const char *name, const char *path,
 	    const char *hostname, const char *ip4_addr);
 int	authority_create_channel(int channel_fd, int *our_end, int *child_end);

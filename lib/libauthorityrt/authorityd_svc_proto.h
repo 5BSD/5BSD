@@ -42,8 +42,7 @@
 #define	AUTHORITY_OP_MINT_FILE		8	/* mint narrowed file token */
 #define	AUTHORITY_OP_MINT_JAIL		9	/* mint jail isolation token */
 #define	AUTHORITY_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
-#define	AUTHORITY_OP_MINT_STORAGE		24	/* mint TrustedZFS dataset handle */
-#define	AUTHORITY_OP_DESTROY_STORAGE	25	/* destroy an ephemeral dataset */
+/* 24, 25 retired: storage moved to serviced<->tzfsd direct (was MINT/DESTROY_STORAGE) */
 #define	AUTHORITY_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in authority-init */
 #define	AUTHORITY_OP_LIFECYCLE		27	/* apply a system lifecycle transition (P4b) */
 #define	AUTHORITY_OP_RELOAD		28	/* reload authority config claims (P4b) */
@@ -221,35 +220,9 @@ struct authority_vsock_req {
 };
 
 /*
- * AUTHORITY_OP_MINT_STORAGE
- *   req:  authority_storage_req
- *   reply: authority_reply { .status }
- *   reply_fds[0] = TrustedZFS dataset handle fd (on success)
- *
- * authorityd forwards the request to tzfsd(8) (the [TZFS] storage daemon,
- * which owns /Capabilities) and relays the rights-limited handle back over the
- * channel.  authorityd no longer opens /dev/zfs itself; tzfsd is the storage
- * authority.  The request is a bare dataset claim.
- */
-struct authority_storage_req {
-	uint32_t	op;		/* AUTHORITY_OP_MINT_STORAGE / DESTROY */
-	uint32_t	flags;		/* ZHF_* */
-	uint64_t	rights;		/* ZH_* mask (mint only) */
-	uint8_t		lifetime;	/* ORT_STORAGE_* */
-	uint8_t		_reserved[3];
-	uint32_t	owner_uid;	/* chown dataset root at mint; 0 = skip */
-	uint32_t	owner_gid;
-	char		dataset[64];	/* == ORT_STORAGE_DATASET_MAX */
-};
-
-/*
- * AUTHORITY_OP_DESTROY_STORAGE
- *   req:  authority_storage_req (op, dataset; other fields ignored)
- *   reply: authority_reply { .status }
- *
- * Release a last-holder lease storage claim on service stop; authorityd forwards
- * the teardown to tzfsd.  A missing claim
- * is a no-op success so stop paths are idempotent.
+ * Storage is NOT an authorityd op.  tzfsd(8) owns storage; serviced talks to
+ * tzfsd directly (see usr.sbin/serviced/storage_client.c).  Storage never
+ * transits the init process.  Opcodes 24/25 are retired and left unused.
  */
 
 /*

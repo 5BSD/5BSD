@@ -387,50 +387,6 @@ authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc)
 }
 
 int
-authority_mint_storage(int channel_fd, const struct ort_storage_claim *sc,
-    uid_t owner_uid, gid_t owner_gid)
-{
-	struct authority_storage_req req;
-	int handle_fd, status;
-
-	memset(&req, 0, sizeof(req));
-	req.op = AUTHORITY_OP_MINT_STORAGE;
-	req.rights = sc->rights;
-	req.lifetime = sc->lifetime;
-	req.owner_uid = owner_uid;
-	req.owner_gid = owner_gid;
-	if (strlcpy(req.dataset, sc->dataset, sizeof(req.dataset)) >=
-	    sizeof(req.dataset)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-	status = authority_rpc(channel_fd, &req, sizeof(req), &handle_fd, 1,
-	    NULL);
-	return (check_status_fd(status, handle_fd));
-}
-
-int
-authority_destroy_storage(int channel_fd, const struct ort_storage_claim *sc)
-{
-	struct authority_storage_req req;
-	int status;
-
-	memset(&req, 0, sizeof(req));
-	req.op = AUTHORITY_OP_DESTROY_STORAGE;
-	if (strlcpy(req.dataset, sc->dataset, sizeof(req.dataset)) >=
-	    sizeof(req.dataset)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-	status = authority_rpc(channel_fd, &req, sizeof(req), NULL, 0, NULL);
-	if (status > 0) {
-		errno = status;
-		return (-1);
-	}
-	return (status);
-}
-
-int
 authority_create_jail(int channel_fd, const char *name, const char *path,
     const char *hostname, const char *ip4_addr)
 {
@@ -794,22 +750,17 @@ authority_release_manifest(int channel_fd, const struct svc_manifest *m)
 		if (authority_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
-	/* Lease storage is destroyed only after its last holder stops. */
+	/*
+	 * Lease storage is destroyed only after its last holder stops.  This
+	 * goes straight to tzfsd (not the authority channel): storage never
+	 * transits authorityd.
+	 */
 	for (i = 0; i < m->ncap_storage; i++) {
-		struct authority_storage_req req;
-		int last;
-
 		if (m->cap_storage[i].lifetime != ORT_STORAGE_LEASE)
 			continue;
-		last = storage_lease_release(&m->cap_storage[i]);
-		if (last != 1)
+		if (storage_lease_release(&m->cap_storage[i]) != 1)
 			continue;
-		memset(&req, 0, sizeof(req));
-		req.op = AUTHORITY_OP_DESTROY_STORAGE;
-		if (strlcpy(req.dataset, m->cap_storage[i].dataset,
-		    sizeof(req.dataset)) >= sizeof(req.dataset))
-			continue;
-		if (authority_release_send(channel_fd, &req, sizeof(req)) != 0)
+		if (serviced_storage_destroy(&m->cap_storage[i]) == 0)
 			nsent++;
 	}
 

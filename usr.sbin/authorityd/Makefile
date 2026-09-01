@@ -52,10 +52,9 @@ CFLAGS+= -I${SRCTOP}/sys
 CFLAGS+= -I${SRCTOP}/lib/libcapability
 CFLAGS+= -I${SRCTOP}/lib/libauthorityrt
 CFLAGS+= -I${SRCTOP}/lib/libcapbundle
-CFLAGS+= -I${SRCTOP}/lib/libtzfsd
 CFLAGS+= -I${SRCTOP}/lib/libservice
 CFLAGS+= -I${SRCTOP}/contrib/libucl/include
-LIBADD= capability crypt jail authorityrt tzfsd ucl util
+LIBADD= capability crypt jail authorityrt ucl util
 
 .if ${MK_DTRACE} != "no"
 SRCS+= authorityd_provider.d

@@ -103,7 +103,7 @@ _Static_assert(SERVICED_LABEL_MAX <= SERVICE_BOOTSTRAP_LABEL_MAX,
  * "zfshandle" it was minted as: a mount-rights consumer mounts it lazily via
  * service_storage_open(3) and holds the handle for its lifetime — the handle
  * anchors the mount — so serviced no longer mounts on the service's behalf, and
- * tzfsd already set the dataset root's owner at mint (see authority_mint_storage).
+ * tzfsd already set the dataset root's owner at mint (see serviced_storage_mint).
  */
 static int
 finalize_storage_descriptors(const struct svc_manifest *manifest, int *fds __unused,
@@ -1287,13 +1287,14 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * event loop for an unbounded duration.
 	 *
 	 * The ceiling must clear the one-time cost of a cold storage
-	 * provider: the first AUTHORITY_OP_MINT_STORAGE makes authorityd
-	 * posix_spawn(2) tzfsd, which imports the pool and creates the
-	 * dataset before replying.  On emulated hardware that cold start
-	 * alone can exceed two seconds; a tighter ceiling aborted every
-	 * first peer/storage launch.  Subsequent mints reuse the
-	 * resident tzfsd and return in well under a millisecond, so this
-	 * bound is only ever approached once per boot.
+	 * provider: the first storage mint connects serviced to tzfsd (a
+	 * serviced-supervised unit) and may retry briefly while tzfsd
+	 * starts, imports the pool, and creates the dataset before
+	 * replying.  On emulated hardware that cold start alone can exceed
+	 * two seconds; a tighter ceiling aborted every first peer/storage
+	 * launch.  Subsequent mints reuse the cached tzfsd channel and
+	 * return in well under a millisecond, so this bound is only ever
+	 * approached once per boot.
 	 */
 #define	SVC_MINT_DEADLINE_MS	15000	/* max total mint phase */
 	{
@@ -1411,9 +1412,8 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		 * and can write its own storage.  have_creds false leaves 0 (root),
 		 * which tzfsd treats as "no chown".
 		 */
-		int tfd = authority_mint_storage(sd.authority_channel_fd,
-		    &m->cap_storage[i], have_creds ? uid : 0,
-		    have_creds ? gid : 0);
+		int tfd = serviced_storage_mint(&m->cap_storage[i],
+		    have_creds ? uid : 0, have_creds ? gid : 0);
 		if (tfd == -1) {
 			SERVICED_PROBE_CAP_MINT(m->label, "storage", -1);
 			goto fail_tokens;
@@ -1423,8 +1423,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 			int saved = errno;
 
 			close(tfd);
-			(void)authority_destroy_storage(sd.authority_channel_fd,
-			    &m->cap_storage[i]);
+			(void)serviced_storage_destroy(&m->cap_storage[i]);
 			errno = saved;
 			goto fail_tokens;
 		}

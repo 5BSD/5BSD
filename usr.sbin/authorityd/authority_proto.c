@@ -44,7 +44,6 @@
 #include "authorityd_ctl.h"		/* struct ctl_reply for cmd_reload() */
 #include "serviced_ctl.h"		/* SERVICED_CTL_SUMMARY_MAX */
 #include "commands.h"			/* cmd_reload() */
-#include "tzfsd.h"		/* libtzfsd client: forward storage to tzfsd(8) */
 #include "mac_capability_priv.h"
 #include "probes.h"
 #include "authority_proto_claims.h"
@@ -59,18 +58,6 @@ static bool	nonce_set;
 /* Per-dispatch tracking for the ipc-dispatch-done probe. */
 static uint32_t dispatch_op;
 static int dispatch_status;
-
-static bool
-all_zero(const void *buf, size_t len)
-{
-	const unsigned char *p = buf;
-	size_t i;
-
-	for (i = 0; i < len; i++)
-		if (p[i] != 0)
-			return (false);
-	return (true);
-}
 
 /*
  * Return an owned descriptor for an existing persistent jail only when its
@@ -384,166 +371,6 @@ handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
 	AUTHORITYD_PROBE_MINT_VSOCK(vc.cid, vc.port_min, vc.port_max, 0);
 	proto_reply(0, reply_token, &token_fd, 1);
 	close(token_fd);
-}
-
-/*
- * Storage capabilities are owned by tzfsd(8), the [TZFS] storage daemon,
- * which holds the pool and the /Capabilities layout.
- * authorityd forwards mint/release requests to tzfsd and relays the
- * rights-limited handle back; it no longer opens /dev/zfs itself.
- *
- * The channel to tzfsd is cached.  tzfsd is a serviced-supervised unit (P4a,
- * docs/capability-authority-model.md) — serviced launches and restarts it, not
- * authorityd — so this just connects, retrying briefly to cover a startup or
- * restart race.
- */
-static int authority_tzfsd_channel = -1;
-static char authority_storage_session[TZFSD_SESSION_MAX];
-static bool authority_storage_session_ready;
-
-static void
-tzfsd_channel_reset(void)
-{
-
-	if (authority_tzfsd_channel != -1) {
-		close(authority_tzfsd_channel);
-		authority_tzfsd_channel = -1;
-	}
-	authority_storage_session_ready = false;
-}
-
-static int
-tzfsd_channel_get(void)
-{
-	int i;
-
-	if (authority_tzfsd_channel != -1)
-		goto begin_session;
-
-	authority_tzfsd_channel = tzfsd_connect();
-	if (authority_tzfsd_channel != -1)
-		goto begin_session;
-
-	/*
-	 * Not up yet.  tzfsd is a serviced-supervised unit now (P4a,
-	 * docs/capability-authority-model.md): serviced launches and restarts it,
-	 * so authorityd no longer spawns it.  A storage request can still race
-	 * tzfsd's startup (or a restart), so retry the connect briefly while
-	 * serviced brings it up.
-	 */
-	for (i = 0; i < 100 && authority_tzfsd_channel == -1; i++) {
-		struct timespec ts = { 0, 50 * 1000 * 1000 }; /* 50ms */
-
-		(void)nanosleep(&ts, NULL);
-		authority_tzfsd_channel = tzfsd_connect();
-	}
-	if (authority_tzfsd_channel == -1)
-		return (-1);
-begin_session:
-	if (!authority_storage_session_ready) {
-		if (authority_storage_session[0] == '\0' ||
-		    tzfsd_begin_session(authority_tzfsd_channel,
-		    authority_storage_session) == -1) {
-			int saved = errno;
-
-			tzfsd_channel_reset();
-			errno = saved;
-			return (-1);
-		}
-		authority_storage_session_ready = true;
-	}
-	return (authority_tzfsd_channel);
-}
-
-/*
- * Forward a storage mint to tzfsd and relay the rights-limited handle back to
- * the service — a bare dataset claim.  authorityd holds no ZFS privilege of its
- * own.
- */
-static void
-handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
-{
-	const struct authority_storage_req *req;
-	struct tzfsd_req treq;
-	struct tzfsd_grant grant;
-	int chan, e;
-
-	if (len != sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	req = payload;
-	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
-	    req->dataset[0] == '\0' ||
-	    !all_zero(req->_reserved, sizeof(req->_reserved)) ||
-	    (req->rights & ~ZH_ALL_RIGHTS) != 0 ||
-	    (req->flags & ~ZHF_SUBTREE) != 0 ||
-	    req->lifetime > ORT_STORAGE_LEASE) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-
-	chan = tzfsd_channel_get();
-	if (chan == -1) {
-		proto_reply(errno != 0 ? errno : ECONNREFUSED, reply_token,
-		    NULL, 0);
-		return;
-	}
-
-	memset(&treq, 0, sizeof(treq));
-	(void)strlcpy(treq.dataset, req->dataset, sizeof(treq.dataset));
-	treq.rights = req->rights;
-	treq.flags = req->flags;
-	treq.lifetime = req->lifetime;
-	treq.owner_uid = req->owner_uid;
-	treq.owner_gid = req->owner_gid;
-	if (tzfsd_request(chan, &treq, &grant) == -1) {
-		e = errno;
-		if (e == EPIPE || e == ECONNRESET || e == EBADF)
-			tzfsd_channel_reset();
-		proto_reply(e, reply_token, NULL, 0);
-		return;
-	}
-	proto_reply(0, reply_token, &grant.handle_fd, 1);
-	close(grant.handle_fd);
-}
-
-/*
- * Forward a last-holder lease storage teardown to tzfsd.  A missing
- * claim is success so stop paths stay idempotent.
- */
-static void
-handle_destroy_storage(const void *payload, uint32_t len, uint64_t reply_token)
-{
-	const struct authority_storage_req *req;
-	int chan, e;
-
-	if (len != sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	req = payload;
-	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
-	    req->dataset[0] == '\0' || req->flags != 0 || req->rights != 0 ||
-	    req->lifetime != 0 ||
-	    !all_zero(req->_reserved, sizeof(req->_reserved))) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	chan = tzfsd_channel_get();
-	if (chan == -1) {
-		proto_reply(errno != 0 ? errno : ECONNREFUSED, reply_token,
-		    NULL, 0);
-		return;
-	}
-	if (tzfsd_release(chan, req->dataset) == -1) {
-		e = errno;
-		if (e == EPIPE || e == ECONNRESET || e == EBADF)
-			tzfsd_channel_reset();
-		proto_reply(e, reply_token, NULL, 0);
-		return;
-	}
-	proto_reply(0, reply_token, NULL, 0);
 }
 
 static void
@@ -1027,12 +854,6 @@ proto_dispatch_one(void)
 	case AUTHORITY_OP_MINT_VSOCK:
 		handle_mint_vsock(&buf, ra.payload_len, ra.reply_token);
 		break;
-	case AUTHORITY_OP_MINT_STORAGE:
-		handle_mint_storage(&buf, ra.payload_len, ra.reply_token);
-		break;
-	case AUTHORITY_OP_DESTROY_STORAGE:
-		handle_destroy_storage(&buf, ra.payload_len, ra.reply_token);
-		break;
 	case AUTHORITY_OP_MINT_SYSTEM:
 		handle_mint_system(&buf, ra.payload_len, ra.reply_token);
 		break;
@@ -1148,18 +969,10 @@ authority_proto_dispatch(void)
 void
 authority_proto_init(int channel_fd)
 {
-	unsigned char random[16];
-	unsigned i;
 
 	proto_channel_fd = channel_fd;
 	serviced_ready = false;
 	nonce_set = false;
-	arc4random_buf(random, sizeof(random));
-	for (i = 0; i < nitems(random); i++)
-		(void)snprintf(authority_storage_session + i * 2, 3, "%02x",
-		    random[i]);
-	authority_storage_session[32] = '\0';
-	authority_storage_session_ready = false;
 }
 
 /*
@@ -1174,7 +987,6 @@ authority_proto_reset(void)
 	sweep_dynamic_claims();
 	serviced_ready = false;
 	nonce_set = false;
-	authority_storage_session_ready = false;
 }
 
 bool
