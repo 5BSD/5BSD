@@ -97,6 +97,7 @@ SUBDIR=	adduser \
 	serviced \
 	services_mkdb \
 	sesutil \
+	sysextd \
 	setfib \
 	setfmac \
 	setpmac \
@@ -120,6 +121,7 @@ SUBDIR=	adduser \
 	vigr \
 	vipw \
 	wake \
+	warden \
 	watch \
 	watchdogd \
 	zdump \

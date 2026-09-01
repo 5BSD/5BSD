@@ -4,7 +4,9 @@ program = "Bluetooth";
 restart = "on-failure";
 stop_timeout = 10;
 max_failures = 10;
-kmod_requires = ["vhid"];
+# /dev/vhid comes from the vhid module; blued self-serves it at startup via
+# service_ensure_extension(3) over system.SystemExtension (sysextd), so no
+# manifest kmod declaration is needed and neither PID 1 nor serviced loads it.
 
 storage = [{
     name = "state";

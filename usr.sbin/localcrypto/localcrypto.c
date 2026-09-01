@@ -284,12 +284,26 @@ start_session(int fd, const char *peer_label)
 int
 main(void)
 {
+	struct service_context *ctx = NULL;
 	struct service_identity id;
 	struct service_listener *listener;
 	struct service_provider *provider;
 	int fd;
 
 	setproctitle("[CRYPTO] capability component");
+
+	/*
+	 * /dev/crypto is provided by the cryptodev module.  Ensure it is loaded
+	 * before opening the control device: sysextd owns kernel-module loading
+	 * (system.SystemExtension), so [CRYPTO] self-serves the module by name
+	 * rather than relying on PID 1 or serviced to load it.  This is done
+	 * before becoming a provider and entering capability mode.
+	 */
+	if (service_acquire(&ctx) == -1 ||
+	    service_ensure_extension(ctx, "cryptodev") == -1)
+		return (1);
+	service_release(ctx);
+
 	control_fd = open("/dev/crypto", O_RDWR);
 	if (control_fd < 0 || service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||

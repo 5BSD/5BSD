@@ -1,0 +1,26 @@
+# serviced unit for the namespace (jail) broker (warden), which owns jail
+# construction (jail_set(2)).  Launched and supervised by serviced like every
+# other daemon (docs/authorityd-serviced-layering-cleanup.md, Phase 3) — PID 1
+# no longer creates jails, and serviced never brokers one.
+#
+# warden is a socket-free service_provider exposing system.Namespace.  It is
+# pure consumer self-service: a jailed program's library resolves warden by name
+# (service_enter_namespace(3)), warden creates the jail rooted at the requested
+# path and returns its owning descriptor, and the program jail_attach_jd(2)s
+# itself.  No boot activation: the first consumer that self-jails pulls warden up
+# on demand, exactly like storage and module loading.
+#
+# user = root and privileged = true: jail_set(2) needs the classic
+# PRIV_JAIL_SET privilege and resolves the jail root path against the global
+# namespace, both of which capsicum forbids.  warden's jails are scoped by the
+# caller's unforgeable channel label (self-jailing is self-confinement, so no
+# per-caller token is needed).  serviced takes warden's SVC_OP_READY as the
+# readiness boundary instead of kernel-observed capability-mode entry.
+activation { ipc = ["system.Namespace"]; }
+program = "warden";
+restart = "on-failure";
+user = "root";
+privileged = true;
+
+limits { nofile = 1024; nproc = 128; core = 0; }
+umask = "0022";

@@ -28,7 +28,6 @@
 #define	CAPBUNDLE_MAX_CAP_STORAGE	SERVICED_MAX_CAP_STORAGE
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 #define	CAPBUNDLE_MAX_CAP_OPEN		SERVICED_MAX_CAP_OPEN
-#define	CAPBUNDLE_MAX_KMOD_REQUIRES	8
 /*
  * Upper bound on a monotonic activation.timer interval: 366 days in seconds.
  * A period longer than a year is far past the point where a monotonic timer is
@@ -108,20 +107,12 @@ struct capbundle_service {
 	char	user[64];
 	char	group[64];
 
-	/* Named persistent jail used as the service execution container. */
-	bool	has_jail;
-	char	jail_name[64];
-	char	jail_path[PATH_MAX];
-	char	jail_hostname[64];
-	char	jail_ip4_addr[64];
-
-	/* Required kernel modules */
-	char	kmod_requires[CAPBUNDLE_MAX_KMOD_REQUIRES][128];
-	unsigned nkmod_requires;
-
 	/* Stop timeout */
 	int	stop_timeout;
 	unsigned max_failures;
+
+	/* Privileged (non-sandboxed) provider — see svc_manifest.privileged. */
+	bool	privileged;
 
 	/* Pre-exec process policy (setrlimit / scheduling band / umask). */
 	struct svc_limits limits;

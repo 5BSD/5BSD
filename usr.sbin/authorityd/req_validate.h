@@ -30,35 +30,6 @@
 #include "config.h"
 
 static inline bool
-validate_kmod_req(const void *payload, uint32_t len,
-    const struct authority_kmod_req **reqp, int *errp)
-{
-	const struct authority_kmod_req *req;
-	size_t i, n;
-
-	if (len != sizeof(*req)) {
-		*errp = EINVAL;
-		return (false);
-	}
-	req = payload;
-	n = strnlen(req->name, sizeof(req->name));
-	if (req->_pad != 0 || n == 0 || n == sizeof(req->name)) {
-		*errp = EINVAL;
-		return (false);
-	}
-	for (i = 0; i < n; i++) {
-		if (isalnum((unsigned char)req->name[i]) ||
-		    req->name[i] == '_' || req->name[i] == '-' ||
-		    req->name[i] == '.')
-			continue;
-		*errp = EINVAL;
-		return (false);
-	}
-	*reqp = req;
-	return (true);
-}
-
-static inline bool
 validate_service_req(const void *payload, uint32_t len,
     const struct authority_service_req **reqp, int *errp)
 {

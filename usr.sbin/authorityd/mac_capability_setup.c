@@ -42,23 +42,22 @@ int mac_capability_isolation_fd = -1;
 int mac_capability_capprotect_fd = -1;
 int mac_capability_system_fd = -1;
 
-/* Freeze an authorityd-only authority into this process. */
+/*
+ * Freeze an authorityd-only authority into this process.  The mechanism lives
+ * in libcapability (capability_confine_fd); authorityd keeps the named log.
+ */
 int
 mac_capability_confine_authority_fd(int fd, const char *name)
 {
 
-	if (fd < 0)
-		return (0);
-	if (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1) {
+	if (capability_confine_fd(fd) == -1) {
 		syslog(LOG_ERR, "confine %s fd: %m", name);
 		return (-1);
 	}
 	return (0);
 }
 
-/* --- Shared helpers --- */
+/* --- Shared helpers (thin wrappers over libcapability) --- */
 
 /*
  * Perform an exact synchronous kernel-service call through libcapability.
@@ -68,26 +67,9 @@ mac_capability_do_call_fds(int fd, const void *req, size_t reqlen,
     const int *req_fds, size_t req_nfds, void *reply, size_t replylen,
     int *reply_fds, size_t expected_reply_nfds)
 {
-	size_t actual_reply_nfds, actual_replylen, i;
-	int error;
 
-	actual_replylen = replylen;
-	actual_reply_nfds = expected_reply_nfds;
-	if (capability_kernel_call(fd, req, reqlen, req_fds, req_nfds,
-	    reply, &actual_replylen, reply_fds, &actual_reply_nfds) == -1)
-		return (-1);
-	if (actual_replylen == replylen &&
-	    actual_reply_nfds == expected_reply_nfds)
-		return (0);
-	error = EPROTO;
-	for (i = 0; i < actual_reply_nfds; i++) {
-		if (reply_fds[i] >= 0) {
-			close(reply_fds[i]);
-			reply_fds[i] = -1;
-		}
-	}
-	errno = error;
-	return (-1);
+	return (capability_service_call_fds(fd, req, reqlen, req_fds, req_nfds,
+	    reply, replylen, reply_fds, expected_reply_nfds));
 }
 
 int
@@ -95,32 +77,20 @@ mac_capability_do_call(int fd, const void *req, size_t reqlen,
     void *reply, size_t replylen)
 {
 
-	return (mac_capability_do_call_fds(fd, req, reqlen, NULL, 0,
-	    reply, replylen, NULL, 0));
+	return (capability_service_call(fd, req, reqlen, reply, replylen));
 }
 
 /*
- * Helper: connect to a named mac_capability service.
+ * Connect to a named mac_capability service on authorityd's device fd.
  */
 int
 mac_capability_svc_connect(const char *name)
 {
-	struct mac_capability_connect_args conn;
 	int fd;
 
-	memset(&conn, 0, sizeof(conn));
-	strlcpy(conn.name, name, sizeof(conn.name));
-	if (ioctl(mac_capability_fd, MAC_CAPABILITY_CONNECT, &conn) == -1) {
+	fd = capability_service_connect(mac_capability_fd, name);
+	if (fd == -1)
 		syslog(LOG_ERR, "mac_capability connect %s: %m", name);
-		return (-1);
-	}
-	fd = conn.fd;
-	if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
-		syslog(LOG_WARNING, "mac_capability connect %s: fcntl CLOEXEC: %m",
-		    name);
-		close(fd);
-		return (-1);
-	}
 	return (fd);
 }
 

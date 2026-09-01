@@ -148,6 +148,13 @@ int	service_acquire(struct service_context **);
 void	service_release(struct service_context *);
 int	service_authorize_capabilities(struct service_context *);
 int	service_enter_capability_mode(struct service_context *);
+/*
+ * Finalize a privileged provider that cannot enter capability mode (its
+ * authority is a held system capability, not the capsicum sandbox — e.g. the
+ * kldload broker).  Alternative to service_enter_capability_mode; every other
+ * provider must sandbox.  service_ready() then succeeds without capability mode.
+ */
+int	service_enter_privileged(struct service_context *);
 int	service_ready(struct service_context *);
 
 /*
@@ -181,6 +188,8 @@ int	service_provider_expose_sendable(struct service_provider *,
 int	service_provider_expose_lazy(struct service_provider *, const char *name,
 	    service_activation_handler, void *, struct service_listener **);
 int	service_provider_enter_capability_mode(struct service_provider *);
+/* Privileged-provider alternative to enter_capability_mode (see above). */
+int	service_provider_enter_privileged(struct service_provider *);
 int	service_provider_ready(struct service_provider *);
 int	service_provider_quiescing(struct service_provider *);
 int	service_provider_quiesce_complete(struct service_provider *, int status);
@@ -211,6 +220,32 @@ int	service_storage_open(struct service_context *, const char *name,
 	    int *dirfdp);
 int	service_capability_open(struct service_context *, const char *name,
 	    const char *type, int *fd);
+
+/*
+ * Ensure a named kernel extension (module) is loaded.  sysextd is a socket-free
+ * provider (system.SystemExtension): libservice opens it by name and asks it to
+ * load the module.  A SYSTEM-domain caller only; the discovery domain layer
+ * makes the name unresolvable for user services, so this fails closed for them.
+ * `module` is a single, safe filename component.  Returns 0 on success
+ * (including already-loaded); -1 with errno on failure.
+ */
+int	service_ensure_extension(struct service_context *, const char *module);
+
+/*
+ * Confine this process to a jail via warden (system.Namespace).  Consumer self-
+ * service: libservice resolves warden by name, has it create a jail rooted at
+ * `path` (scoped by this process's channel label), and jail_attach_jd(2)s the
+ * process to the returned descriptor — whose root credential authorizes the
+ * attach, so a non-root caller may confine itself.  hostname/ip4_addr may be
+ * NULL.  serviced is not involved.
+ *
+ * `flags` is 0 for a persistent jail (reused by label across restarts) or
+ * SERVICE_NS_EPHEMERAL for a jail whose lifetime is bound to this process (torn
+ * down when the process exits).  Returns 0, or -1 with errno.
+ */
+#define	SERVICE_NS_EPHEMERAL	0x1u	/* jail lifetime bound to the caller */
+int	service_enter_namespace(struct service_context *, const char *path,
+	    const char *hostname, const char *ip4_addr, unsigned flags);
 
 /*
  * Return the manager-owned socket-activation listener (Phase 4) delivered under

@@ -5,11 +5,13 @@
  */
 
 #include <sys/types.h>
+#include <sys/capsicum.h>
 #include <sys/ioctl.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -128,5 +130,77 @@ capability_kernel_call(int fd, const void *request, size_t request_length,
 	*reply_length = call->reply_len;
 	*reply_nfds = call->reply_nfds;
 	free(call);
+	return (0);
+}
+
+int
+capability_service_connect(int device_fd, const char *name)
+{
+	struct mac_capability_connect_args conn;
+	int error, fd;
+
+	if (device_fd < 0 || name == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&conn, 0, sizeof(conn));
+	if (strlcpy(conn.name, name, sizeof(conn.name)) >= sizeof(conn.name)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (ioctl(device_fd, MAC_CAPABILITY_CONNECT, &conn) == -1)
+		return (-1);
+	fd = conn.fd;
+	if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
+		error = errno;
+		(void)close(fd);
+		errno = error;
+		return (-1);
+	}
+	return (fd);
+}
+
+int
+capability_service_call_fds(int fd, const void *request, size_t request_length,
+    const int *request_fds, size_t request_nfds, void *reply,
+    size_t reply_length, int *reply_fds, size_t expected_reply_nfds)
+{
+	size_t actual_length, actual_nfds, i;
+
+	actual_length = reply_length;
+	actual_nfds = expected_reply_nfds;
+	if (capability_kernel_call(fd, request, request_length, request_fds,
+	    request_nfds, reply, &actual_length, reply_fds, &actual_nfds) == -1)
+		return (-1);
+	if (actual_length == reply_length && actual_nfds == expected_reply_nfds)
+		return (0);
+	/* Wrong shape: surrender any descriptors the service handed back. */
+	for (i = 0; i < actual_nfds; i++) {
+		if (reply_fds != NULL && reply_fds[i] >= 0) {
+			(void)close(reply_fds[i]);
+			reply_fds[i] = -1;
+		}
+	}
+	errno = EPROTO;
+	return (-1);
+}
+
+int
+capability_service_call(int fd, const void *request, size_t request_length,
+    void *reply, size_t reply_length)
+{
+	return (capability_service_call_fds(fd, request, request_length, NULL, 0,
+	    reply, reply_length, NULL, 0));
+}
+
+int
+capability_confine_fd(int fd)
+{
+	if (fd < 0)
+		return (0);
+	if (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
+	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1)
+		return (-1);
 	return (0);
 }

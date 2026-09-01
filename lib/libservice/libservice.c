@@ -30,6 +30,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include <syslog.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -37,8 +38,12 @@
 #include <channel.h>
 
 #include <sys/zfshandle.h>
+#include <sys/jail.h>	/* jail_attach_jd() for service_enter_namespace() */
+
 #include <trustedzfs.h>	/* tzfs_mount() for service_storage_open() */
 #include <tzfsd_proto.h>	/* tzfsd wire protocol (system.Storage), no libtzfsd dep */
+#include <sysext_proto.h>	/* sysextd wire protocol (system.SystemExtension) */
+#include <warden_proto.h>	/* warden wire protocol (system.Namespace) */
 
 #include "libservice.h"
 #include "service_private.h"
@@ -70,6 +75,7 @@ struct service_context {
 	size_t	references;
 	bool	entered;
 	bool	ready;
+	bool	privileged;	/* provider stays out of capability mode */
 };
 struct service_provider {
 	struct service_context	*context;
@@ -1420,6 +1426,31 @@ service_enter_capability_mode(struct service_context *context)
 	return (0);
 }
 
+/*
+ * Finalize a provider that legitimately cannot enter capability mode.  The
+ * canonical case is the system-extension broker: kldload(2) needs the classic
+ * PRIV_KLD_LOAD privilege and resolves a bare module name against the global
+ * kernel module path, both of which capsicum forbids.  Such a provider's real
+ * authority is the held system capability it was delivered, not the capsicum
+ * sandbox, so it starts dispatch and is marked ready WITHOUT cap_enter().  Use
+ * only for privileged system providers; every other provider must sandbox.
+ */
+int
+service_enter_privileged(struct service_context *context)
+{
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (service_start_dispatch() == -1)
+		return (-1);
+	context->privileged = true;
+	context->entered = true;
+	return (0);
+}
+
 int
 service_ready(struct service_context *context)
 {
@@ -1435,11 +1466,17 @@ service_ready(struct service_context *context)
 		errno = EPERM;
 		return (-1);
 	}
-	if (cap_getmode(&mode) == -1)
-		return (-1);
-	if (mode == 0) {
-		errno = EPERM;
-		return (-1);
+	/*
+	 * A privileged provider (see service_enter_privileged) legitimately runs
+	 * outside capability mode; every other provider must have entered it.
+	 */
+	if (!context->privileged) {
+		if (cap_getmode(&mode) == -1)
+			return (-1);
+		if (mode == 0) {
+			errno = EPERM;
+			return (-1);
+		}
 	}
 	if (context->ready) {
 		errno = EALREADY;
@@ -1478,6 +1515,17 @@ service_provider_enter_capability_mode(struct service_provider *provider)
 		return (-1);
 	}
 	return (service_enter_capability_mode(provider->context));
+}
+
+int
+service_provider_enter_privileged(struct service_provider *provider)
+{
+
+	if (!service_provider_valid(provider)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (service_enter_privileged(provider->context));
 }
 
 int
@@ -1762,6 +1810,208 @@ service_storage_open(struct service_context *context, const char *name,
 		service_storage_anchor_fds[service_storage_nanchors++] = handle;
 	/* else retain by leaving the descriptor open; it still anchors. */
 	*dirfdp = dir;
+	return (0);
+}
+
+/*
+ * Ensure a named kernel extension is loaded via sysextd.  sysextd is a
+ * socket-free provider: libservice opens a system.SystemExtension channel by
+ * name and asks it to load the module.  The channel is cached (all of a
+ * service's ensures share it).  The discovery domain layer resolves the name
+ * only for SYSTEM-domain callers, so a user service's lookup fails closed here.
+ */
+static struct service_session *service_sysext_session;
+
+int
+service_ensure_extension(struct service_context *context, const char *module)
+{
+	struct sysext_request rq;
+	struct sysext_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int saved;
+
+	if (module == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (strnlen(module, sizeof(rq.name)) >= sizeof(rq.name)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Open the system.SystemExtension channel by name once; ensures share it. */
+	if (service_sysext_session == NULL) {
+		int fd;
+
+		if (service_open(SYSEXT_SERVICE_NAME, &fd) == -1)
+			return (-1);
+		if (service_session_create(fd, &service_sysext_session) == -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = SYSEXT_OP_ENSURE;
+	(void)strlcpy(rq.name, module, sizeof(rq.name));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	if (service_session_call(service_sysext_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp._reserved != 0 || rp.status != 0) {
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * Confine this process to its namespace (jail) via warden(8).  Consumer self-
+ * service, uniform with storage/modules: libservice opens a system.Namespace
+ * channel by name (pulling warden up on demand), asks it to create the jail
+ * rooted at `path` (named/scoped by this process's unforgeable channel label),
+ * and jail_attach_jd(2)s the process to the returned descriptor.  The
+ * descriptor carries warden's root credential, so a non-root caller may attach
+ * itself.  The program's library calls this when it decides to confine — jails
+ * are a weak, opt-in confinement and serviced is not involved at all.  hostname
+ * and ip4_addr may be NULL/empty.
+ *
+ * `flags` selects the jail lifetime: 0 for a persistent jail (reused by this
+ * process's label across restarts, outliving the consumer), or
+ * SERVICE_NS_EPHEMERAL for a jail whose lifetime is bound to this process.  In
+ * the ephemeral case warden's per-client worker holds the jail's owning
+ * descriptor and drops it when this process disconnects, so the jail is torn
+ * down when the process exits; libservice itself only attaches.  Returns 0, or
+ * -1 with errno.
+ */
+static struct service_session *service_namespace_session;
+
+int
+service_enter_namespace(struct service_context *context, const char *path,
+    const char *hostname, const char *ip4_addr, unsigned flags)
+{
+	struct warden_request rq;
+	struct warden_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int jd = -1, saved;
+
+	if (path == NULL || path[0] != '/' || (flags & ~SERVICE_NS_EPHEMERAL)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (strnlen(path, sizeof(rq.path)) >= sizeof(rq.path) ||
+	    (hostname != NULL &&
+	    strnlen(hostname, sizeof(rq.hostname)) >= sizeof(rq.hostname)) ||
+	    (ip4_addr != NULL &&
+	    strnlen(ip4_addr, sizeof(rq.ip4_addr)) >= sizeof(rq.ip4_addr))) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Open the system.Namespace channel by name once. */
+	if (service_namespace_session == NULL) {
+		int fd;
+
+		if (service_open(WARDEN_SERVICE_NAME, &fd) == -1)
+			return (-1);
+		if (service_session_create(fd, &service_namespace_session) ==
+		    -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = WARDEN_OP_ENTER_JAIL;
+	if (flags & SERVICE_NS_EPHEMERAL)
+		rq.flags |= WARDEN_F_EPHEMERAL;
+	(void)strlcpy(rq.path, path, sizeof(rq.path));
+	if (hostname != NULL)
+		(void)strlcpy(rq.hostname, hostname, sizeof(rq.hostname));
+	if (ip4_addr != NULL)
+		(void)strlcpy(rq.ip4_addr, ip4_addr, sizeof(rq.ip4_addr));
+
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	incoming.fds = &jd;
+	incoming.fd_capacity = 1;
+	if (service_session_call(service_namespace_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
+	    rp.status != 0 || incoming.nfds != 1) {
+		if (incoming.nfds == 1)
+			(void)close(jd);
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+
+	/*
+	 * A process about to be confined must not retain an open directory
+	 * descriptor: the kernel's jail-attach path (pwd_chroot_chdir ->
+	 * chroot_refuse_vdir_fds) refuses the attach with EPERM if any is held,
+	 * because a directory fd pointing outside the new root is an escape
+	 * vector (fchdir(2) out of the jail).  Dropping them is an intrinsic part
+	 * of entering the namespace; the owning jaildesc (jd) is not a directory.
+	 */
+	{
+		int fd, maxfd = getdtablesize();
+		struct stat dsb;
+
+		for (fd = 0; fd < maxfd; fd++) {
+			if (fd == jd)
+				continue;
+			if (fstat(fd, &dsb) == 0 && S_ISDIR(dsb.st_mode))
+				(void)close(fd);
+		}
+	}
+
+	/*
+	 * The descriptor's root credential authorizes this attach; it is a
+	 * non-owning descriptor, so closing it after attaching is correct for
+	 * both persistent and ephemeral jails.  An ephemeral jail's lifetime is
+	 * anchored by warden's per-client worker (which holds the jail's owning
+	 * descriptor and drops it when this process disconnects), not by this fd.
+	 */
+	if (jail_attach_jd(jd) == -1) {
+		saved = errno;
+		(void)close(jd);
+		errno = saved;
+		return (-1);
+	}
+	(void)close(jd);
 	return (0);
 }
 

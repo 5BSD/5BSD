@@ -249,28 +249,79 @@ Original transitional framing (retained for reference):
 - Validate: logd/consumers still get `persistent/u-…` + `ephemeral/lease-…`
   bare datasets; `tzfsctl ping` ok; 0 launch failures.
 
-### Phase 2 — Module loading out of PID 1
-- Introduce a minimal **module broker** (or fold into an existing low daemon)
-  that owns `modfind`/`kldload`; expose it via `DELEGATE(domain=KMOD)`.
-- Prefer making a service's kernel-module prerequisite a **loader/bundle
-  declaration** resolved before launch, so most cases need no runtime kldload
-  at all.
-- **Delete from authorityd:** `handle_ensure_kmod` + `modfind`/`kldload`.
-  **Delete from serviced:** `kldmgr_client.c`, the `execute.c:1214` call, and
-  `kmod_requires[]` handling. Remove the `control.c` "temporarily" comment.
-- Validate: a service that needs a module (e.g. a filesystem/linux consumer)
-  still launches.
+### Phase 2 — Module loading out of PID 1  *(DONE, VM-verified 2026-09-01)*
+Built **sysextd(8)** — the system-extension (kernel-module) broker.  It is a
+socket-free `service_provider` exposing `system.SystemExtension`; the discovery
+domain layer resolves that name only for SYSTEM-domain clients, so a user
+service can never load kernel code.  Consumers self-serve a module by name with
+the new `service_ensure_extension(3)` (libservice), exactly as they self-mint
+storage — serviced no longer touches modules.
 
-### Phase 3 — Jail construction out of PID 1
-- Move `jail_set()` into a **jail broker** daemon; expose via
-  `DELEGATE(domain=JAIL_CREATE)`. authorityd keeps only the kernel jail-*token*
-  mint (`MINT_JAIL`), which is a real capability mint.
-- **Delete from authorityd:** `handle_create_jail` + `jail_set`, and
-  `libjail`/`-Ijail` if now unused. **Delete from serviced:** inline
-  `has_jail/jail_name/jail_hostname/jail_ip4/jail_path` handling +
-  `authority_create_jail`; the manifest expresses "attach to jail X" as an
-  opaque JAIL_CREATE claim.
-- Validate: a jailed service still starts and is confined.
+Key facts discovered and encoded (do not re-derive):
+- **sysextd runs as root and NOT in capability mode.**  `kldload(2)` does a base
+  `priv_check(PRIV_KLD_LOAD)` (needs root) *before* the mac_capability gate, and
+  resolves a bare module name against the global kernel module path (a `namei`
+  capsicum forbids — in capmode the load fails `ENOENT` before the gate).  Module
+  loading is inherently privileged and unsandboxable.
+- **Root alone is not enough** — the mac_capability system gate denies even root
+  without an authorized token.  sysextd declares `capabilities { system =
+  ["kldload","kldstat"] }`; serviced mints the token (authorityd claims the gates
+  under its nonce) and delivers it; `service_provider_authorize_capabilities()`
+  authorizes sysextd's process nonce.  pdfork'd workers share that fork-family
+  nonce, so their `kldload` passes.
+- serviced's readiness boundary is kernel-observed `NOTE_CAPMODE`.  A non-capmode
+  provider never fires it, so a new **privileged-provider** path was added:
+  manifest `privileged = true` (libcapbundle) + `service_enter_privileged(3)`
+  (libservice, sets the context "entered" without `cap_enter`, and `service_ready`
+  skips the capmode check) + serviced `handle_ready` promoting a privileged unit
+  to RUNNING on its own `SVC_OP_READY`.
+- Extracted the mac_capability service-call layer into **libcapability**
+  (`capability_service_connect/_call/_call_fds/_confine_fd`); authorityd's
+  `mac_capability_*` primitives now delegate to it.
+
+Deleted: authorityd `handle_ensure_kmod`/`AUTHORITY_OP_ENSURE_KMOD`/
+`authority_kmod_req`/`validate_kmod_req`/kmod DTrace probe; serviced
+`kldmgr_client.c`, `authority_ensure_kmod`, the `execute.c` kmod call; the
+`kmod_requires` manifest field entirely (libcapbundle struct + parser +
+allow-list, so a manifest using it now fails validation fail-loud).  Converted
+`localcrypto` (cryptodev) and `blued` (vhid) to self-serve.
+
+VM proof: crypto self-served `cryptodev` through sysextd → `/dev/crypto`
+appeared → Crypto came up in capmode; kldload/kldstat gated for the root shell;
+single stable sysextd, zero errors, PID 1/serviced load nothing.
+
+### Phase 3 — Jail construction out of PID 1  *(built; self-service model)*
+Built **warden(8)** — the namespace (jail) broker, a socket-free
+`service_provider` exposing `system.Namespace`.  `jail_set(2)` left PID 1 **and
+serviced**: this is pure **consumer self-service**, uniform with storage and
+module loading and matching the launchd lazy-dependency model — a program's
+library confines the process; serviced never touches jails.
+
+- **serviced is completely jail-free**: removed the `has_jail` create path,
+  `svc->jail_fd`, the child `jail_attach_jd`, the cleanup, and `-ljail`.  A
+  jailed unit is launched like any other; nothing about jails is serviced's
+  concern.  (This is the template for *every* non-system feature — only core
+  system authority stays serviced-brokered, to keep pre-active windows to a
+  minimum.)
+- **libservice `service_enter_namespace(3)`**: the program's library resolves
+  warden by name (pulling it up on demand), warden creates the jail rooted at
+  the requested path with `JAIL_OWN_DESC`, and the library `jail_attach_jd(2)`s
+  the process itself.  The **owning descriptor carries warden's root credential**
+  (`sys_jail_attach_jd` checks `priv_check_cred(jdcred, …)`, not the caller), so
+  a non-root consumer attaches itself.  Self-jailing is self-confinement, so
+  **no per-caller token** is needed — warden scopes each jail by the caller's
+  unforgeable channel label, so one consumer can never name or reuse another's.
+  A jail is a weak, opt-in confinement, so the brief unconfined window before the
+  library attaches is accepted (system authority is the only pre-active feature).
+- **warden** runs root + non-capability-mode + `privileged = true` (jail_set
+  needs `PRIV_JAIL_SET` and a global-namespace path lookup, capsicum-forbidden),
+  launched **on demand** (no boot).
+- **authorityd**: deleted `handle_create_jail`/`jail_set`/`existing_jail_
+  descriptor`/`jail_path_allowed`/`AUTHORITY_OP_CREATE_JAIL`/`-ljail`.  The
+  `cap_jail[]` delegation path (`MINT_JAIL`) is untouched — a separate feature.
+- Validate: a unit that calls `service_enter_namespace(3)` self-confines; a
+  dedicated jailed test unit exercises the path end-to-end (no base unit uses
+  `jail{}` today, so it is mechanism-only).
 
 ### Phase 4 — Generalize the manifest + complete the move to (B)  *(structural)*
 Once V1–V3 prove the pattern, finish the launchd model: serviced stops

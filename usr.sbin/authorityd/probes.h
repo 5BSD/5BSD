@@ -107,14 +107,10 @@
 	DTRACE_PROBE2(authorityd, mint__system, gates, result)
 #define	AUTHORITYD_PROBE_MINT_VSOCK(cid, pmin, pmax, result)	\
 	DTRACE_PROBE4(authorityd, mint__vsock, cid, pmin, pmax, result)
-#define	AUTHORITYD_PROBE_CREATE_JAIL(name, result)	\
-	DTRACE_PROBE2(authorityd, create__jail, name, result)
 #define	AUTHORITYD_PROBE_CHANNEL_CREATE(result)	\
 	DTRACE_PROBE1(authorityd, channel__create, result)
 #define	AUTHORITYD_PROBE_COALITION_CREATE(result)	\
 	DTRACE_PROBE1(authorityd, coalition__create, result)
-#define	AUTHORITYD_PROBE_KMOD_ENSURE(name, result)	\
-	DTRACE_PROBE2(authorityd, kmod__ensure, name, result)
 #define	AUTHORITYD_PROBE_SERVICE_DELEGATE(name, result)	\
 	DTRACE_PROBE2(authorityd, service__delegate, name, result)
 

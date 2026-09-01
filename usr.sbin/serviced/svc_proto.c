@@ -150,11 +150,25 @@ handle_ready(struct svc_runtime *svc, struct channel_message *request)
 			error = EPROTO;
 		else {
 			svc->protocol_ready = true;
+			/*
+			 * A privileged provider never enters capability mode, so
+			 * the NOTE_CAPMODE boundary that normally moves the unit
+			 * to RUNNING (supervisor.c) will never fire.  For such a
+			 * unit its own SVC_OP_READY IS the readiness boundary:
+			 * promote it to RUNNING here.  Its authority is the held
+			 * system capability, not the sandbox, so no kernel-
+			 * observed capability-mode entry is expected.
+			 */
+			if (svc->state == SVC_STATE_STARTING &&
+			    svc->manifest.privileged)
+				svc->state = SVC_STATE_RUNNING;
 			syslog(LOG_INFO,
 			    "service %s: application reported ready%s",
 			    svc->manifest.label,
 			    svc->state == SVC_STATE_RUNNING ?
-			    " after sandbox entry" : "");
+			    (svc->manifest.privileged ?
+			    " (privileged, no sandbox)" : " after sandbox entry") :
+			    "");
 			if (svc->state == SVC_STATE_RUNNING)
 				on_demand_check_ready(svc, serviced_kq);
 		}

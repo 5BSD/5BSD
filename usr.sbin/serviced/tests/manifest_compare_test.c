@@ -28,8 +28,6 @@ sample_manifest(void)
 	m.nenvironment = 1;
 	strlcpy(m.provides[0], "org.test.endpoint", sizeof(m.provides[0]));
 	m.nprovides = 1;
-	strlcpy(m.kmod_requires[0], "testmod", sizeof(m.kmod_requires[0]));
-	m.nkmod_requires = 1;
 	strlcpy(m.cap_paths[0], "/tmp", sizeof(m.cap_paths[0]));
 	m.ncap_paths = 1;
 	strlcpy(m.cap_files[0].path, "/tmp/file",
@@ -52,11 +50,6 @@ sample_manifest(void)
 	strlcpy(m.cap_services[0], "identity", sizeof(m.cap_services[0]));
 	m.ncap_services = 1;
 	m.cap_system = 1;
-	m.has_jail = true;
-	strlcpy(m.jail_name, "testjail", sizeof(m.jail_name));
-	strlcpy(m.jail_path, "/jails/test", sizeof(m.jail_path));
-	strlcpy(m.jail_hostname, "test.invalid", sizeof(m.jail_hostname));
-	strlcpy(m.jail_ip4_addr, "192.0.2.1", sizeof(m.jail_ip4_addr));
 	m.restart = 1;
 	m.stop_timeout = 5;
 	m.max_failures = 10;
@@ -99,12 +92,6 @@ ATF_TC_BODY(identity_and_execution_changes, tc)
 	CHECK_CHANGE(b.stop_timeout++);
 	CHECK_CHANGE(b.max_failures++);
 	CHECK_CHANGE(b.provides[0][0] = 'x');
-	CHECK_CHANGE(b.kmod_requires[0][0] = 'x');
-	CHECK_CHANGE(b.has_jail = false);
-	CHECK_CHANGE(b.jail_name[0] = 'x');
-	CHECK_CHANGE(b.jail_path[0] = 'x');
-	CHECK_CHANGE(b.jail_hostname[0] = 'x');
-	CHECK_CHANGE(b.jail_ip4_addr[0] = 'x');
 }
 
 ATF_TC_WITHOUT_HEAD(authority_changes);

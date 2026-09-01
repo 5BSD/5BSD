@@ -357,7 +357,7 @@ manifest_has_env(const struct svc_manifest *m, const char *name)
 static void __dead2
 child_exec(struct svc_manifest *m, int child_channel_fd,
     int capprotect_fd, int bootstrap_fd, int *token_fds, unsigned ntokens,
-    int *service_fds, unsigned nservices, int jail_fd,
+    int *service_fds, unsigned nservices,
     uid_t uid, gid_t gid, bool have_creds, const char *homedir,
     gid_t *groups, int ngroups)
 {
@@ -466,15 +466,6 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		if (dup2(service_fds[i], fd) == -1)
 			_exit(126);
 		(void)close(service_fds[i]);
-	}
-
-	/* Attach to jail descriptor before closefrom() destroys it.
-	 * Must also happen before credential drop since jail_attach_jd
-	 * requires root. */
-	if (jail_fd >= 0) {
-		if (jail_attach_jd(jail_fd) == -1)
-			_exit(126);
-		(void)close(jail_fd);
 	}
 
 	closefrom(SVC_TOKEN_BASE + (int)ntokens + (int)nservices);
@@ -790,7 +781,6 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 	 */
 	svc->channel_fd = -1;
 	svc->coalition_fd = -1;
-	svc->jail_fd = -1;
 	svc->control_channel = NULL;
 
 	pid = pdfork(&pd_fd, PD_CLOEXEC);
@@ -1175,17 +1165,12 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		}
 	}
 
-	svc->jail_fd = -1;
-
-	/* Ensure required kernel modules are loaded before launch. */
-	if (m->nkmod_requires > 0) {
-		if (kldmgr_ensure_loaded(m,
-		    bundle_registry_is_system(svc->bundle_idx), kq) != 0) {
-			syslog(LOG_ERR, "svc_exec %s: kmod_requires failed",
-			    m->label);
-			return (-1);
-		}
-	}
+	/*
+	 * Kernel-module loading is no longer serviced's concern.  A service that
+	 * needs a module self-serves it at startup via service_ensure_extension(3)
+	 * over system.SystemExtension (sysextd), exactly as it self-mints storage;
+	 * serviced neither holds kld authority nor loads modules.
+	 */
 
 	/* Create channel via authority. */
 	if (mac_cap_create_channel(
@@ -1638,11 +1623,6 @@ fail_tokens:
 		close(token_fds[i]);
 	for (i = 0; i < nservices; i++)
 		close(service_fds[i]);
-	if (svc->jail_fd >= 0) {
-		jail_remove_jd(svc->jail_fd);
-		close(svc->jail_fd);
-		svc->jail_fd = -1;
-	}
 	return (-1);
 }
 
@@ -1677,11 +1657,6 @@ svc_launch_abort(struct svc_runtime *svc, int error, int kq __unused)
 	for (i = 0; i < L->nservices; i++)
 		if (L->service_fds[i] >= 0)
 			close(L->service_fds[i]);
-	if (svc->jail_fd >= 0) {
-		jail_remove_jd(svc->jail_fd);
-		close(svc->jail_fd);
-		svc->jail_fd = -1;
-	}
 	free(L);
 	svc->launch = NULL;
 	svc->pid = 0;
@@ -1708,19 +1683,14 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		syslog(LOG_DEBUG, "svc_exec %s: minted %u tokens", m->label,
 		    L->ntokens);
 
-	if (m->has_jail) {
-		svc->jail_fd = authority_create_jail(sd.authority_channel_fd,
-		    m->jail_name, m->jail_path, m->jail_hostname,
-		    m->jail_ip4_addr);
-		if (svc->jail_fd == -1) {
-			syslog(LOG_ERR, "svc_exec %s: failed to create jail %s: "
-			    "%m", m->label, m->jail_name);
-			svc_launch_abort(svc, errno, kq);
-			return;
-		}
-		syslog(LOG_INFO, "svc_exec %s: created jail %s jd=%d", m->label,
-		    m->jail_name, svc->jail_fd);
-	}
+	/*
+	 * serviced does not construct jails.  A jailed unit self-confines through
+	 * its library (service_enter_namespace(3)), which resolves warden(8) by
+	 * name and jail_attach_jd(2)s the process itself — the same on-demand,
+	 * library-driven self-service every non-system feature uses.  serviced
+	 * only launches the unit; jails (a weak, opt-in confinement) are entirely
+	 * the unit's own concern.
+	 */
 
 	if (prepare_child_descriptor(L->child_end) == -1 ||
 	    (L->capprotect_fd >= 0 &&
@@ -1767,7 +1737,7 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	if (pid == 0) {
 		child_exec(m, L->child_end, L->capprotect_fd, bootstrap_fd,
 		    L->token_fds, L->ntokens, L->service_fds, L->nservices,
-		    svc->jail_fd, L->uid, L->gid, L->have_creds,
+		    L->uid, L->gid, L->have_creds,
 		    L->homedir[0] != '\0' ? L->homedir : NULL, L->groups,
 		    L->ngroups);
 		/* NOTREACHED */
@@ -1807,15 +1777,6 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		close(L->service_fds[i]);
 	L->nservices = 0;
 
-	if (svc->jail_fd >= 0 &&
-	    (cap_xfer_limit(svc->jail_fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(svc->jail_fd, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(svc->jail_fd, CAP_CLOEXEC_LOCKED) == -1)) {
-		saved_errno = errno;
-		syslog(LOG_ERR, "svc_exec %s: jail fd confinement: %m",
-		    m->label);
-		goto fail_postfork;
-	}
 	if (mac_cap_coalition_enlist(L->coalition_fd, pd_fd) != 0) {
 		saved_errno = errno;
 		syslog(LOG_ERR, "svc_exec %s: coalition enlist: %m", m->label);
@@ -1882,11 +1843,6 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		svc_channel_close(svc);
 		close(svc->coalition_fd);
 		svc->coalition_fd = -1;
-		if (svc->jail_fd >= 0) {
-			jail_remove_jd(svc->jail_fd);
-			close(svc->jail_fd);
-			svc->jail_fd = -1;
-		}
 		svc->pid = 0;
 		svc->state = SVC_STATE_STOPPED;
 		free(L);

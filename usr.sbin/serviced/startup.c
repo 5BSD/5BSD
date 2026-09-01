@@ -52,10 +52,6 @@ log_loaded_manifest(const struct svc_manifest *m)
 		    m->label, m->ncap_paths, m->ncap_files,
 		    m->ncap_net, m->ncap_jail, m->ncap_vsock,
 		    m->ncap_storage, m->ncap_services, m->cap_system);
-
-	if (m->has_jail)
-		syslog(LOG_INFO, "startup: %s jail: %s path=%s",
-		    m->label, m->jail_name, m->jail_path);
 }
 
 /*

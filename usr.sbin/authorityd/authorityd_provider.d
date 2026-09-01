@@ -55,10 +55,8 @@ provider authorityd {
 	probe mint__system(uint32_t gates, int result);
 	probe mint__vsock(uint64_t cid, uint32_t port_min,
 	    uint32_t port_max, int result);
-	probe create__jail(const char *name, int result);
 	probe channel__create(int result);
 	probe coalition__create(int result);
-	probe kmod__ensure(const char *name, int result);
 	probe service__delegate(const char *name, int result);
 
 	/* Authority protocol IPC — channel to serviced */

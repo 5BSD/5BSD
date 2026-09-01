@@ -746,10 +746,10 @@ static int
 validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 {
 	static const char *const top[] = {
-	    "program", "activation", "kmod_requires",
+	    "program", "activation",
 	    "restart", "management", "capabilities", "user", "group",
-	    "stop_timeout", "max_failures", "arguments", "environment", "jail",
-	    "storage", "protect", "limits", "umask", "band" };
+	    "stop_timeout", "max_failures", "arguments", "environment",
+	    "storage", "protect", "limits", "umask", "band", "privileged" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
@@ -771,8 +771,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const jailkeys[] = { "jid", "name", "actions" };
 	static const char *const vsockkeys[] = { "cid", "port", "ports",
 	    "direction" };
-	static const char *const execution_jail_keys[] = { "name", "path",
-	    "hostname", "ip4_addr" };
 	const ucl_object_t *caps, *arr, *v, *x;
 	ucl_object_iter_t it;
 	bool service_seen[nitems(service_names)];
@@ -877,10 +875,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			return (-1);
 	}
 
-	if (validate_string_list(root, "kmod_requires", CAPBUNDLE_MAX_KMOD_REQUIRES,
-	    sizeof(((struct capbundle_service *)0)->kmod_requires[0]), true,
-	    errbuf, errlen) != 0 ||
-	    validate_string_list(root, "arguments", SERVICED_MAX_ARGUMENTS,
+	if (validate_string_list(root, "arguments", SERVICED_MAX_ARGUMENTS,
 	    SERVICED_ARGUMENT_MAX, false, errbuf, errlen) != 0)
 		return (-1);
 
@@ -1138,90 +1133,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		}
 		if (ucl_object_type(arr) == UCL_STRING)
 			break;
-	}
-
-	arr = ucl_object_lookup(root, "jail");
-	if (arr != NULL) {
-		const ucl_object_t *name, *jail_path, *hostname, *ip4_addr;
-		const char *p;
-		struct in_addr address;
-
-		if (ucl_object_type(arr) != UCL_OBJECT) {
-			snprintf(errbuf, errlen, "jail must be an object");
-			return (-1);
-		}
-		if (validate_keys(arr, "jail", execution_jail_keys,
-		    nitems(execution_jail_keys), errbuf, errlen) != 0)
-			return (-1);
-		name = ucl_object_lookup(arr, "name");
-		jail_path = ucl_object_lookup(arr, "path");
-		hostname = ucl_object_lookup(arr, "hostname");
-		ip4_addr = ucl_object_lookup(arr, "ip4_addr");
-		if (name == NULL || ucl_object_type(name) != UCL_STRING ||
-		    ucl_object_tostring(name)[0] == '\0' ||
-		    strcmp(ucl_object_tostring(name), ".") == 0 ||
-		    strcmp(ucl_object_tostring(name), "..") == 0 ||
-		    strlen(ucl_object_tostring(name)) >=
-		    sizeof(((struct capbundle_service *)0)->jail_name)) {
-			snprintf(errbuf, errlen,
-			    "jail requires a valid non-empty name");
-			return (-1);
-		}
-		for (p = ucl_object_tostring(name); *p != '\0'; p++) {
-			if (!(isalnum((unsigned char)*p) || *p == '.' ||
-			    *p == '_' || *p == '-')) {
-				snprintf(errbuf, errlen,
-				    "jail name contains invalid characters");
-				return (-1);
-			}
-		}
-		/*
-		 * path is optional: when omitted, serviced roots the execution
-		 * jail at the managed per-instance container
-		 * (/Capabilities/Run/<unit-instance>/), keeping host paths out of
-		 * the manifest.  When present it must be absolute and bounded.
-		 */
-		if (jail_path != NULL &&
-		    (ucl_object_type(jail_path) != UCL_STRING ||
-		    ucl_object_tostring(jail_path)[0] != '/' ||
-		    strlen(ucl_object_tostring(jail_path)) >= PATH_MAX)) {
-			snprintf(errbuf, errlen,
-			    "jail path, when set, must be an absolute path "
-			    "shorter than %d bytes", PATH_MAX);
-			return (-1);
-		}
-		if (hostname != NULL &&
-		    (ucl_object_type(hostname) != UCL_STRING ||
-		    ucl_object_tostring(hostname)[0] == '\0' ||
-		    strlen(ucl_object_tostring(hostname)) >=
-		    sizeof(((struct capbundle_service *)0)->jail_hostname))) {
-			snprintf(errbuf, errlen, "jail has an invalid hostname");
-			return (-1);
-		}
-		if (ip4_addr != NULL &&
-		    (ucl_object_type(ip4_addr) != UCL_STRING ||
-		    inet_pton(AF_INET, ucl_object_tostring(ip4_addr),
-		    &address) != 1)) {
-			snprintf(errbuf, errlen, "jail has an invalid ip4_addr");
-			return (-1);
-		}
-	}
-
-	arr = ucl_object_lookup(root, "kmod_requires");
-	if (arr != NULL) {
-		it = NULL;
-		while ((v = ucl_object_iterate(arr, &it, true)) != NULL) {
-			const char *name, *p;
-
-			name = ucl_object_tostring(v);
-			for (p = name; *p != '\0'; p++)
-				if (!(isalnum((unsigned char)*p) || *p == '_' ||
-				    *p == '-' || *p == '.')) {
-					snprintf(errbuf, errlen,
-					    "invalid kernel module name '%s'", name);
-					return (-1);
-				}
-		}
 	}
 
 	/* Arguments are deliberately an array: a scalar is too easy to mistake
@@ -2428,13 +2339,15 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		}
 	}
 
-	/* Kernel module requirements */
-	parse_string_array_n(root, "kmod_requires", svc->kmod_requires,
-	    sizeof(svc->kmod_requires[0]), CAPBUNDLE_MAX_KMOD_REQUIRES,
-	    &svc->nkmod_requires);
-
 	/* Restart policy */
 	svc->restart = parse_restart_policy(root, path);
+
+	/* Privileged (non-sandboxed) provider flag. */
+	{
+		const ucl_object_t *pv = ucl_object_lookup(root, "privileged");
+
+		svc->privileged = pv != NULL && ucl_object_toboolean(pv);
+	}
 
 	/* Management class (§5) */
 	svc->management = parse_management_class(root, path);
@@ -2479,20 +2392,6 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		if ((lv = ucl_object_lookup(root, "band")) != NULL)
 			(void)cap_parse_band(lv, &svc->band, errscratch,
 			    sizeof(errscratch));
-	}
-
-	/* Named persistent execution jail. */
-	v = ucl_object_lookup(root, "jail");
-	if (v != NULL) {
-		svc->has_jail = true;
-		parse_string_field(v, "name", svc->jail_name,
-		    sizeof(svc->jail_name));
-		parse_string_field(v, "path", svc->jail_path,
-		    sizeof(svc->jail_path));
-		parse_string_field(v, "hostname", svc->jail_hostname,
-		    sizeof(svc->jail_hostname));
-		parse_string_field(v, "ip4_addr", svc->jail_ip4_addr,
-		    sizeof(svc->jail_ip4_addr));
 	}
 
 	/* System capabilities */

@@ -475,20 +475,17 @@ the receiver as
 Authority-owned capability descriptors are irreversibly restricted against
 transfer, fork inheritance, and exec inheritance.
 .Pp
-Before launching a system-bundle service with
-.Va kmod_requires ,
-.Xr serviced 8
-sends an exact-sized
-.Dv AUTHORITY_OP_ENSURE_KMOD
-request.
+Kernel-module loading is not an
 .Nm
-temporarily claims
-.Dv SYS_GATE_KLDSTAT | SYS_GATE_KLDLOAD ,
-checks or loads the named module under its own nonce, releases the temporary
-claim, and returns only status.
-No module authority or token is delegated to
-.Xr serviced 8 .
-Module paths and malformed names are rejected.
+operation.
+.Xr sysextd 8
+owns it: it holds the
+.Dv SYS_GATE_KLDLOAD | SYS_GATE_KLDSTAT
+gates and exposes
+.Dq Li system.SystemExtension
+as a socket-free service, so a service self-serves a module by name with
+.Xr service_ensure_extension 3 .
+PID 1 loads no kernel code.
 .Pp
 For each manifest
 .Va capabilities.services

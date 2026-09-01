@@ -134,10 +134,6 @@ print_bundle(const struct capbundle *b)
 			printf(" %s", capbundle_svc_provides(svc, j));
 		printf("\n");
 
-		printf("      kmod_requires:");
-		for (j = 0; j < m.nkmod_requires; j++)
-			printf(" [%s]", m.kmod_requires[j]);
-		printf("\n");
 		printf("      capabilities: paths=%u files=%u network=%u "
 		    "jails=%u vsock=%u services=%u storage=%u open=%u "
 		    "system=0x%x\n",
@@ -212,14 +208,6 @@ print_bundle(const struct capbundle *b)
 			    m.cap_open[j].path, m.cap_open[j].name,
 			    m.cap_open[j].is_dir ? "dir" : "file", r);
 		}
-		if (m.has_jail)
-			printf("      jail: name=%s path=%s hostname=%s "
-			    "ip4_addr=%s persistent=yes\n",
-			    m.jail_name, m.jail_path,
-			    m.jail_hostname[0] != '\0' ?
-			    m.jail_hostname : m.jail_name,
-			    m.jail_ip4_addr[0] != '\0' ?
-			    m.jail_ip4_addr : "inherit");
 	}
 
 }

@@ -161,18 +161,12 @@ struct authority_jail_req {
 };
 
 /*
- * AUTHORITY_OP_CREATE_JAIL
- *   req:  authority_create_jail_req
- *   reply: authority_reply { .status }
- *   reply_fds[0] = jail descriptor fd (on success)
- *
- * Creates a persist jail with the given name and path, returning a
- * jail descriptor fd.  authorityd validates that the jail name is within
- * its claimed set before creating.  The jail is created by authorityd
- * (which holds the mac_capability claim) and the descriptor is passed to
- * serviced for jail_attach_jd / jail_remove_jd.
+ * Opcode 10 (CREATE_JAIL) is retired: warden(8) owns jail construction
+ * (jail_set(2)).  The authority still claims the jail name and mints the jail
+ * capability token (AUTHORITY_OP_MINT_JAIL); warden authorizes that token and
+ * does the jail_set(2).  See docs/authorityd-serviced-layering-cleanup.md
+ * (Phase 3).
  */
-#define	AUTHORITY_OP_CREATE_JAIL		10
 
 /*
  * Dynamic claim/release operations.
@@ -206,7 +200,7 @@ struct authority_jail_req {
 #define	AUTHORITY_OP_RELEASE_SYSTEM	18	/* release dynamic system gates */
 #define	AUTHORITY_OP_CLAIM_VSOCK		20
 #define	AUTHORITY_OP_RELEASE_VSOCK	21
-#define	AUTHORITY_OP_ENSURE_KMOD		22	/* load startup prerequisite */
+/* Opcode 22 (ENSURE_KMOD) is retired: sysextd(8) owns kernel-module loading. */
 #define	AUTHORITY_OP_DELEGATE_SERVICE	23	/* delegate named service fd */
 
 struct authority_vsock_req {
@@ -226,36 +220,17 @@ struct authority_vsock_req {
  */
 
 /*
- * AUTHORITY_OP_ENSURE_KMOD
- *   req: authority_kmod_req
- *   reply: authority_reply { .status }
- *
- * Ensures a module required before service exec is loaded.  This operation
- * executes in authorityd's nonce because serviced must not retain ambient
- * KLDLOAD/KLDSTAT authority.  Only a simple module name is accepted; paths
- * and traversal components are deliberately excluded.
+ * Kernel-module loading is NOT an authorityd op.  sysextd(8) owns it: it holds
+ * the kldload/kldstat system-capability gates and exposes system.SystemExtension
+ * as a socket-free provider, so a service self-serves a module by name via
+ * service_ensure_extension(3).  PID 1 no longer loads kernel code.
  */
-#define	AUTHORITY_KMOD_NAME_MAX	128
-struct authority_kmod_req {
-	uint32_t	op;
-	uint32_t	_pad;
-	char		name[AUTHORITY_KMOD_NAME_MAX];
-};
 
 #define	AUTHORITY_SERVICE_NAME_MAX	16
 struct authority_service_req {
 	uint32_t	op;
 	uint32_t	_pad;
 	char		name[AUTHORITY_SERVICE_NAME_MAX];
-};
-
-struct authority_create_jail_req {
-	uint32_t	op;		/* AUTHORITY_OP_CREATE_JAIL */
-	uint32_t	_pad;
-	char		name[64];	/* jail name (required) */
-	char		path[PATH_MAX];	/* jail root path (required) */
-	char		hostname[64];	/* host.hostname (empty=use name) */
-	char		ip4_addr[64];	/* ip4.addr (empty=inherit) */
 };
 
 /*

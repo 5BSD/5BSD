@@ -70,11 +70,6 @@ svc_close_fds(struct svc_runtime *svc)
 		close(svc->coalition_fd);
 		svc->coalition_fd = -1;
 	}
-	if (svc->jail_fd >= 0) {
-		jail_remove_jd(svc->jail_fd);
-		close(svc->jail_fd);
-		svc->jail_fd = -1;
-	}
 	/*
 	 * Drop the storage mount anchors last: closing the final handle
 	 * reference force-unmounts the anonymous mount whose directory

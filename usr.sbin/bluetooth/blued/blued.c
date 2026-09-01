@@ -4675,6 +4675,18 @@ main(int argc, char *argv[])
 		}
 	}
 
+	/*
+	 * /dev/vhid is provided by the vhid module.  Under serviced, self-serve
+	 * the module via sysextd (system.SystemExtension) before opening the
+	 * control node: sysextd owns kernel-module loading, so blued declares no
+	 * manifest kmod requirement and neither PID 1 nor serviced loads modules
+	 * on its behalf.  Standalone (no serviced), the module is expected to be
+	 * present already.
+	 */
+	if (blued_serviced &&
+	    service_ensure_extension(blued_g.svc_ctx, "vhid") == -1)
+		err(1, "ensure vhid module");
+
 	/* Open vhid control */
 	blued_g.vhid_ctl_fd = open("/dev/vhid", O_RDWR | O_CLOEXEC | O_CLOFORK);
 	if (blued_g.vhid_ctl_fd < 0)

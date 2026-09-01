@@ -377,8 +377,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	    s->ncap_vsock > SERVICED_MAX_CAP_VSOCK ||
 	    s->ncap_storage > SERVICED_MAX_CAP_STORAGE ||
 	    s->ncap_services > SERVICED_MAX_CAP_SERVICES ||
-	    s->nactivation_sockets > SERVICED_MAX_ACTIVATION_SOCKETS ||
-	    s->nkmod_requires > SERVICED_MAX_KMOD_REQUIRES) {
+	    s->nactivation_sockets > SERVICED_MAX_ACTIVATION_SOCKETS) {
 		errno = EOVERFLOW;
 		return (-1);
 	}
@@ -409,16 +408,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 
 	m->cap_system = s->cap_system;
 	m->protect_flags = s->protect_flags;
-	m->has_jail = s->has_jail;
-	if (manifest_copy(s->jail_name, m->jail_name,
-	    sizeof(m->jail_name)) == -1 ||
-	    manifest_copy(s->jail_path, m->jail_path,
-	    sizeof(m->jail_path)) == -1 ||
-	    manifest_copy(s->jail_hostname, m->jail_hostname,
-	    sizeof(m->jail_hostname)) == -1 ||
-	    manifest_copy(s->jail_ip4_addr, m->jail_ip4_addr,
-	    sizeof(m->jail_ip4_addr)) == -1)
-		return (-1);
 	m->restart = s->restart;
 	m->management = s->management;
 	m->is_helper = s->is_helper;
@@ -438,6 +427,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 		m->activation_sockets[i] = s->activation_sockets[i];
 	m->stop_timeout = s->stop_timeout > 0 ? s->stop_timeout : 5;
 	m->max_failures = s->max_failures > 0 ? s->max_failures : 10;
+	m->privileged = s->privileged;
 
 	/* Pre-exec process policy: limits / band / umask. */
 	m->limits = s->limits;
@@ -505,12 +495,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 		if (manifest_copy(s->cap_services[i], m->cap_services[i],
 		    sizeof(m->cap_services[i])) == -1)
 			return (-1);
-
-	/* Kernel module requirements */
-	m->nkmod_requires = MIN(s->nkmod_requires, SERVICED_MAX_KMOD_REQUIRES);
-	for (i = 0; i < m->nkmod_requires; i++)
-		strlcpy(m->kmod_requires[i], s->kmod_requires[i],
-		    sizeof(m->kmod_requires[i]));
 
 	return (0);
 }

@@ -6,6 +6,7 @@ user = "capability";
 
 limits { nofile = 512; nproc = 64; core = 0; }
 umask = "0077";
-# The DTYPE_CRYPTO provider needs /dev/crypto; ensure cryptodev is loaded
-# before launch (serviced loads required modules via authorityd's kld authority).
-kmod_requires = ["cryptodev"];
+# The DTYPE_CRYPTO provider needs /dev/crypto (from the cryptodev module).  It
+# self-serves that module at startup via service_ensure_extension(3) over
+# system.SystemExtension (sysextd), so no manifest kmod declaration is needed and
+# neither PID 1 nor serviced loads modules on its behalf.

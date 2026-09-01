@@ -417,11 +417,8 @@ process_policy_matrix_body()
 	restart = "always";
 	stop_timeout = 300;
 	max_failures = 100;
-	kmod_requires = ["zfs", "if_bridge"];
 	user = "capability";
 	group = "capability";
-	jail { name = "process-jail"; path = "/jails/process";
-	    hostname = "process"; ip4_addr = "192.0.2.4"; }
 	EOF
 	verify_ok "$dir"
 
@@ -435,11 +432,8 @@ process_policy_matrix_body()
 	    'environment { AUTHORITYD_CHANNEL_FD = "9"; }' \
 	    'environment { SERVICE_BOOTSTRAP_FD = "9"; }' \
 	    'environment { CAPABILITY_UNIT_DIR = "/tmp/override"; }' \
-	    'kmod_requires = ["bad/name"];' \
-	    'jail = "named";' \
-	    'jail { name = "bad/name"; path = "/j"; }' \
-	    'jail { name = "good"; path = "relative"; }' \
-	    'jail { name = "good"; path = "/j"; ip4_addr = "999.1.1.1"; }'; do
+	    'kmod_requires = ["zfs"];' \
+	    'jail { name = "good"; path = "/j"; }'; do
 		i=$((i + 1))
 		dir=$(make_bundle "bad-process-$i")
 		printf '%s\n' 'activation { boot = true; }' "$declaration" > \

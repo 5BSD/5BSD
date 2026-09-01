@@ -54,7 +54,7 @@ CFLAGS+= -I${SRCTOP}/lib/libauthorityrt
 CFLAGS+= -I${SRCTOP}/lib/libcapbundle
 CFLAGS+= -I${SRCTOP}/lib/libservice
 CFLAGS+= -I${SRCTOP}/contrib/libucl/include
-LIBADD= capability crypt jail authorityrt ucl util
+LIBADD= capability crypt authorityrt ucl util
 
 .if ${MK_DTRACE} != "no"
 SRCS+= authorityd_provider.d

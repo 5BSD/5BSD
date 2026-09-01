@@ -387,46 +387,6 @@ authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc)
 }
 
 int
-authority_create_jail(int channel_fd, const char *name, const char *path,
-    const char *hostname, const char *ip4_addr)
-{
-	struct authority_create_jail_req req;
-	int jd;
-	int status;
-
-	if (name == NULL || name[0] == '\0' ||
-	    path == NULL || path[0] != '/') {
-		errno = EINVAL;
-		return (-1);
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.op = AUTHORITY_OP_CREATE_JAIL;
-	if (strlcpy(req.name, name, sizeof(req.name)) >= sizeof(req.name) ||
-	    strlcpy(req.path, path, sizeof(req.path)) >= sizeof(req.path)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-	if (hostname != NULL && hostname[0] != '\0') {
-		if (strlcpy(req.hostname, hostname,
-		    sizeof(req.hostname)) >= sizeof(req.hostname)) {
-			errno = ENAMETOOLONG;
-			return (-1);
-		}
-	}
-	if (ip4_addr != NULL && ip4_addr[0] != '\0') {
-		if (strlcpy(req.ip4_addr, ip4_addr,
-		    sizeof(req.ip4_addr)) >= sizeof(req.ip4_addr)) {
-			errno = ENAMETOOLONG;
-			return (-1);
-		}
-	}
-
-	status = authority_rpc(channel_fd, &req, sizeof(req), &jd, 1, NULL);
-	return (check_status_fd(status, jd));
-}
-
-int
 authority_mint_system(int channel_fd, uint32_t gates)
 {
 	struct authority_system_req req;
@@ -479,23 +439,6 @@ authority_create_coalition(int channel_fd)
 
 	status = authority_rpc(channel_fd, &req, sizeof(req), &cfd, 1, NULL);
 	return (check_status_fd(status, cfd));
-}
-
-int
-authority_ensure_kmod(int channel_fd, const char *name)
-{
-	struct authority_kmod_req req;
-	int status;
-
-	if (name == NULL || name[0] == '\0' ||
-	    strlcpy(req.name, name, sizeof(req.name)) >= sizeof(req.name)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	req.op = AUTHORITY_OP_ENSURE_KMOD;
-	req._pad = 0;
-	status = authority_rpc(channel_fd, &req, sizeof(req), NULL, 0, NULL);
-	return (check_status(status));
 }
 
 int

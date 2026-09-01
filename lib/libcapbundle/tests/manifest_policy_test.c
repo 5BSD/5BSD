@@ -5,9 +5,9 @@
  *
  * Manifest parsing for the launchd-style pre-exec policy vocabulary:
  * limits{} (setrlimit ceilings), umask, band (scheduling class), and the
- * calendar / queue_directory / on_mount activation sources, plus the relaxed
- * (optional-path) execution jail.  Exercises capbundle_parse_unit_ucl()
- * directly at the parser boundary — no daemon or capability kernel required.
+ * calendar / queue_directory / on_mount activation sources.  Exercises
+ * capbundle_parse_unit_ucl() directly at the parser boundary — no daemon or
+ * capability kernel required.
  */
 
 #include <sys/stat.h>
@@ -348,38 +348,6 @@ ATF_TC_BODY(on_mount_parses, tc)
 	ATF_CHECK(svc.activation_on_mount);
 }
 
-/* ---- execution jail: path is now optional ----------------------------- */
-
-ATF_TC_WITHOUT_HEAD(jail_without_path_parses);
-ATF_TC_BODY(jail_without_path_parses, tc)
-{
-	struct capbundle_service svc;
-	char err[256];
-
-	/* path omitted: serviced roots the jail at the managed container. */
-	ATF_REQUIRE_EQ_MSG(0, parse_unit(
-	    "activation { boot = true; }\n"
-	    "jail { name = \"log\"; hostname = \"log\"; }\n", &svc, err,
-	    sizeof(err)), "unexpected error: %s", err);
-	ATF_CHECK(svc.has_jail);
-	ATF_CHECK_EQ('\0', svc.jail_path[0]);
-	ATF_CHECK_STREQ("log", svc.jail_hostname);
-}
-
-ATF_TC_WITHOUT_HEAD(jail_relative_path_rejected);
-ATF_TC_BODY(jail_relative_path_rejected, tc)
-{
-	struct capbundle_service svc;
-	char err[256];
-
-	/* A path, when given, must still be absolute. */
-	ATF_CHECK_EQ(-1, parse_unit(
-	    "activation { boot = true; }\n"
-	    "jail { name = \"log\"; path = \"relative/root\"; }\n", &svc, err,
-	    sizeof(err)));
-	ATF_CHECK(strstr(err, "path") != NULL);
-}
-
 /* ---- private helper units --------------------------------------------- */
 
 ATF_TC_WITHOUT_HEAD(helper_unit_parses);
@@ -593,8 +561,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, queue_directory_absolute_parses);
 	ATF_TP_ADD_TC(tp, queue_directory_relative_rejected);
 	ATF_TP_ADD_TC(tp, on_mount_parses);
-	ATF_TP_ADD_TC(tp, jail_without_path_parses);
-	ATF_TP_ADD_TC(tp, jail_relative_path_rejected);
 	ATF_TP_ADD_TC(tp, open_file_and_dir_parse);
 	ATF_TP_ADD_TC(tp, open_optional_flag_parses);
 	ATF_TP_ADD_TC(tp, open_optional_non_bool_rejected);

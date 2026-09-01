@@ -28,7 +28,6 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	    a->stop_timeout != b->stop_timeout ||
 	    a->max_failures != b->max_failures ||
 	    a->nprovides != b->nprovides ||
-	    a->nkmod_requires != b->nkmod_requires ||
 	    a->ncap_paths != b->ncap_paths ||
 	    a->ncap_net != b->ncap_net ||
 	    a->ncap_files != b->ncap_files ||
@@ -39,9 +38,9 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	    a->ncap_open != b->ncap_open ||
 	    a->cap_system != b->cap_system ||
 	    a->protect_flags != b->protect_flags ||
+	    a->privileged != b->privileged ||
 	    a->timer_interval_sec != b->timer_interval_sec ||
-	    strcmp(a->activation_path, b->activation_path) != 0 ||
-	    a->has_jail != b->has_jail)
+	    strcmp(a->activation_path, b->activation_path) != 0)
 		return (false);
 	for (i = 0; i < a->narguments; i++)
 		if (strcmp(a->arguments[i], b->arguments[i]) != 0)
@@ -49,18 +48,9 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	for (i = 0; i < a->nenvironment; i++)
 		if (strcmp(a->environment[i], b->environment[i]) != 0)
 			return (false);
-	if (a->has_jail &&
-	    (strcmp(a->jail_name, b->jail_name) != 0 ||
-	    strcmp(a->jail_path, b->jail_path) != 0 ||
-	    strcmp(a->jail_hostname, b->jail_hostname) != 0 ||
-	    strcmp(a->jail_ip4_addr, b->jail_ip4_addr) != 0))
-		return (false);
 	/* Compare only populated entries; unused trailing bytes are irrelevant. */
 	for (i = 0; i < a->nprovides; i++)
 		if (strcmp(a->provides[i], b->provides[i]) != 0)
-			return (false);
-	for (i = 0; i < a->nkmod_requires; i++)
-		if (strcmp(a->kmod_requires[i], b->kmod_requires[i]) != 0)
 			return (false);
 	for (i = 0; i < a->ncap_paths; i++)
 		if (strcmp(a->cap_paths[i], b->cap_paths[i]) != 0)

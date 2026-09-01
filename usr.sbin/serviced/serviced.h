@@ -120,7 +120,6 @@ struct svc_runtime {
 	int		channel_fd;	/* authority's end of channel */
 	struct channel	*control_channel; /* owns channel_fd */
 	int		coalition_fd;	/* coalition service instance */
-	int		jail_fd;	/* jail descriptor (-1 if no jail) */
 	/*
 	 * Anchors for anonymous storage mounts provisioned for this service.
 	 * serviced mounts a delivered zfshandle and passes only the resulting
@@ -269,11 +268,8 @@ int	authority_mint_net(int channel_fd, const struct ort_net_claim *nc);
 int	authority_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
 int	authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc);
 int	authority_mint_system(int channel_fd, uint32_t gates);
-int	authority_create_jail(int channel_fd, const char *name, const char *path,
-	    const char *hostname, const char *ip4_addr);
 int	authority_create_channel(int channel_fd, int *our_end, int *child_end);
 int	authority_create_coalition(int channel_fd);
-int	authority_ensure_kmod(int channel_fd, const char *name);
 int	authority_delegate_service(int channel_fd, const char *name);
 int	authority_send_ready(int channel_fd);
 int	authority_set_ambient_lookup(int channel_fd, int lookup_fd);
@@ -287,9 +283,6 @@ int	authority_lifecycle(int channel_fd, uint32_t lifecycle_op);
 int	authority_reload(int channel_fd);
 int	authority_release_manifest(int channel_fd, const struct svc_manifest *m);
 
-/* kldmgr_client.c — kernel module loading */
-int	kldmgr_ensure_loaded(const struct svc_manifest *m, bool system_bundle,
-	    int kq);
 
 /* execute.c — service fork/exec */
 int	svc_exec(struct svc_runtime *svc, int kq);
@@ -440,7 +433,6 @@ svc_runtime_init_fds(struct svc_runtime *svc)
 	svc->channel_fd = -1;
 	svc->control_channel = NULL;
 	svc->coalition_fd = -1;
-	svc->jail_fd = -1;
 	svc->activation_path_fd = -1;
 	svc->activation_queue_fd = -1;
 	svc->activation_mount_ident = 0;

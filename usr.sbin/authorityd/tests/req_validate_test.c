@@ -77,26 +77,6 @@ ATF_TC_BODY(strict_wire_shape, tc)
 	ATF_CHECK(!validate_net_req(&req, sizeof(req), &claim, &error));
 }
 
-ATF_TC_WITHOUT_HEAD(kmod_request_validation);
-ATF_TC_BODY(kmod_request_validation, tc)
-{
-	struct authority_kmod_req req;
-	const struct authority_kmod_req *validated;
-	int error;
-
-	memset(&req, 0, sizeof(req));
-	req.op = AUTHORITY_OP_ENSURE_KMOD;
-	strlcpy(req.name, "mac_capability", sizeof(req.name));
-	ATF_CHECK(validate_kmod_req(&req, sizeof(req), &validated, &error));
-	ATF_CHECK_STREQ(req.name, validated->name);
-	ATF_CHECK(!validate_kmod_req(&req, sizeof(req) - 1, &validated,
-	    &error));
-	strlcpy(req.name, "../evil.ko", sizeof(req.name));
-	ATF_CHECK(!validate_kmod_req(&req, sizeof(req), &validated, &error));
-	req.name[0] = '\0';
-	ATF_CHECK(!validate_kmod_req(&req, sizeof(req), &validated, &error));
-}
-
 ATF_TC_WITHOUT_HEAD(service_request_validation);
 ATF_TC_BODY(service_request_validation, tc)
 {
@@ -134,7 +114,6 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, bluetooth_network_requests);
 	ATF_TP_ADD_TC(tp, strict_wire_shape);
-	ATF_TP_ADD_TC(tp, kmod_request_validation);
 	ATF_TP_ADD_TC(tp, service_request_validation);
 	return (atf_no_error());
 }

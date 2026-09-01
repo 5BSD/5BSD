@@ -1,0 +1,101 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 1, 2026
+.Dt WARDEN 8
+.Os
+.Sh NAME
+.Nm warden
+.Nd namespace (jail) broker
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The
+.Nm
+daemon owns construction of jails
+.Pq Xr jail_set 2 ,
+a duty removed from
+.Xr init 8
+and the capability
+.Xr authority 8 .
+It is a socket-free capability-plane service: it exposes the well-known name
+.Dq Li system.Namespace
+and serves each client on its own
+.Xr mac_capability 4
+channel.
+The discovery
+.Em domain
+layer resolves
+.Dq Li system.Namespace
+only for SYSTEM-domain clients, so only
+.Xr serviced 8 ,
+which brokers jail creation while launching a jailed unit, can drive it.
+.Pp
+.Nm
+holds no standing jail authority of its own.
+PID 1's authority still owns the jail
+.Em claim
+and mints the jail capability token
+.Pq Xr authority 8 No MINT_JAIL .
+Each create request carries such a token as its single descriptor;
+.Nm
+authorizes it
+.Pq adding its process nonce to the claim's authorized set
+and then calls
+.Xr jail_set 2 .
+The created jail's owning descriptor is returned as the reply's single
+descriptor, and
+.Xr serviced 8
+.Xr jail_attach_jd 2 Ns 's
+the child to it before exec.
+.Pp
+.Nm
+is launched and supervised by
+.Xr serviced 8
+from the
+.Pa /Capabilities/System/Namespace.cap
+bundle; it is not started by
+.Xr init 8 ,
+and it is not intended to be run from the command line.
+.Ss Operation
+.Nm
+runs as root and, unlike most capability-plane providers, NOT in capability
+mode:
+.Xr jail_set 2
+needs the classic
+.Dv PRIV_JAIL_SET
+privilege and resolves the jail root path against the global namespace, both of
+which capsicum forbids.
+Its authority is the per-request jail token, not the capsicum sandbox.
+A create request names the jail, its root path, and optionally a hostname and
+IPv4 address; if a matching jail already exists (a persistent execution
+container reused across relaunches) its descriptor is returned unchanged.
+.Sh FILES
+.Bl -tag -width ".Pa /Capabilities/System/Namespace.cap" -compact
+.It Pa /Capabilities/System/Namespace.cap
+capability bundle shipping
+.Nm
+.El
+.Sh SEE ALSO
+.Xr jail_set 2 ,
+.Xr jail_attach_jd 2 ,
+.Xr pdfork 2 ,
+.Xr mac_capability 4 ,
+.Xr authority 8 ,
+.Xr jail 8 ,
+.Xr serviced 8 ,
+.Xr sysextd 8
+.Sh HISTORY
+The
+.Nm
+daemon appeared in
+.Fx 5BSD .
+It takes over jail construction formerly performed inside the capability
+authority
+.Pq Xr authority 8
+as part of moving privileged work out of PID 1 and behind named,
+domain-restricted, socket-free services.
+.Sh AUTHORS
+.An Kory Heard

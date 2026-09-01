@@ -1,0 +1,103 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 1, 2026
+.Dt SYSEXTD 8
+.Os
+.Sh NAME
+.Nm sysextd
+.Nd system-extension (kernel module) broker
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The
+.Nm
+daemon owns loading of kernel
+.Em system extensions
+(kernel modules), a duty removed from
+.Xr init 8
+and the capability
+.Xr authority 8 .
+It is a socket-free capability-plane service: it exposes the well-known name
+.Dq Li system.SystemExtension
+and serves each client on its own
+.Xr mac_capability 4
+channel.
+A client asks
+.Nm
+to ensure a named extension is loaded; the discovery
+.Em domain
+layer resolves
+.Dq Li system.SystemExtension
+only for SYSTEM-domain clients, so an ordinary user service can never reach
+.Nm
+and therefore can never cause kernel code to load.
+.Pp
+.Nm
+is launched and supervised by
+.Xr serviced 8
+from the
+.Pa /Capabilities/System/SystemExtension.cap
+bundle; it is not started by
+.Xr init 8 ,
+and it is not intended to be run from the command line.
+.Ss Operation
+During startup, before entering its capability-mode sandbox,
+.Nm
+opens the root-only
+.Pa /dev/mac_capability
+device, connects to the kernel
+.Dq system
+service, and claims the
+.Dq kldload
+and
+.Dq kldstat
+gates so that its process nonce owns them.
+It holds that claim for its entire lifetime.
+It then exposes its service name, enters capability mode, and dispatches each
+accepted client on its own
+.Xr pdfork 2 Ns 'd
+worker.
+Because a worker shares the daemon's fork-family nonce, its
+.Xr kldload 2
+passes the gate under the standing claim; no access token is minted or
+delivered, and no socket appears anywhere in the path.
+.Pp
+A request names a single kernel module as a safe filename component: a name
+containing a slash, or equal to
+.Dq \&.
+or
+.Dq \&.. ,
+is rejected.
+The module is loaded from the kernel module path with
+.Xr kldload 2 ;
+a module that is already present is reported as success.
+.Sh FILES
+.Bl -tag -width ".Pa /dev/mac_capability" -compact
+.It Pa /dev/mac_capability
+kernel capability device used to claim the load gates
+.It Pa /Capabilities/System/SystemExtension.cap
+capability bundle shipping
+.Nm
+.El
+.Sh SEE ALSO
+.Xr kldload 2 ,
+.Xr pdfork 2 ,
+.Xr mac_capability 4 ,
+.Xr authority 8 ,
+.Xr kldload 8 ,
+.Xr serviced 8
+.Sh HISTORY
+The
+.Nm
+daemon appeared in
+.Fx 5BSD .
+It takes over the kernel-module loading duty formerly performed inside the
+capability authority
+.Pq Xr authority 8
+as part of moving privileged work out of PID 1 and behind named,
+domain-restricted, socket-free services.
+.Sh AUTHORS
+.An Kory Heard
