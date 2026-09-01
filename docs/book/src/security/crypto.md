@@ -159,5 +159,5 @@ owner isolation, duplicate names, lease rights, rotate/delete invalidation,
 global and per-owner quotas, full-secret derivation, parent-right and TTL
 ceilings, lineage revocation, concurrent operation, kqueue state, SCM_RIGHTS,
 and teardown. The complete kernel, library, provider, EnvFD, BSDNotify,
-filesystem-flavor, and TrustedZFS matrix runs in the disposable matching-kernel
+TrustedZFS matrix runs in the disposable matching-kernel
 guest provided by `tools/test/capability-qemu/`.

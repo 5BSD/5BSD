@@ -42,21 +42,18 @@ to correct, not a supported mode.
 `tzfsd` never creates a ZFS pool. It requires exactly one pool to already be
 imported and, inside it, provisions the whole capability layout itself: on
 first start it opens the pool root and creates
-`<pool>/Capabilities/{persistent,ephemeral,.templates}` if they do not exist
+`<pool>/Capabilities/{persistent,ephemeral}` if they do not exist
 (`tzfsd_ensure_path`). Everything below `/Capabilities` is therefore
 self-installing; the only prerequisite the operator owns is the pool.
 
 The pool name defaults to **`zroot`** and is the single knob most systems ever
-touch. Configuration lives in `/Capabilities/Config/tzfsd.ucl`
-(with flavor-catalog drop-ins under `/Capabilities/Config/tzfsd.d/`); every key is
+touch. Configuration lives in `/Capabilities/Config/tzfsd.ucl`; every key is
 optional and the commented defaults in the shipped file are authoritative.
 
 **ZFS-rooted install (the streamlined path).** A stock ZFS-on-root system
 already has `zroot` imported at boot, so there is nothing to do: the first time
 a unit requests storage, `authorityd` starts `tzfsd`, which provisions
-`zroot/Capabilities` and begins minting handles. The `native` flavor — a
-copy-on-write clone of the running boot environment — is available only on such
-a system, because it clones the live root dataset.
+`zroot/Capabilities` and begins minting handles.
 
 **No suitable pool (UFS root, or a dedicated capability pool).** If `zroot`
 does not exist, `tzfsd` exits at startup with
@@ -71,10 +68,7 @@ zpool create capability /dev/<disk-or-file>   # or: zpool import capability
 printf 'pool = "capability";\n' >> /Capabilities/Config/tzfsd.ucl
 ```
 
-`tzfsd` provisions `capability/Capabilities/...` on its next start. Only the
-`empty` flavor (a blank dataset) works on a system whose root is not ZFS; the
-`native` flavor and OS-image flavors from the `tzfs-flavors` package need a
-ZFS-rooted host and are simply not offered otherwise.
+`tzfsd` provisions `capability/Capabilities/...` on its next start.
 
 Storage is delivered to providers that run under the unprivileged **`capability`
 sandbox account** (uid/gid 976, `Capability service sandbox`, `nologin`), which
@@ -120,13 +114,11 @@ bundle level.
 ├── persistent/
 │   ├── u-<192-bit-key>          unit persistent/cache storage
 │   └── s-<192-bit-key>          shared persistent/cache storage
-├── ephemeral/
-│   ├── boot-<kern.boottime>/
-│   │   └── <stable-key>         current-boot storage
-│   └── lease-<manager-session>/
-│       └── <stable-key>         last-holder lease storage
-└── .templates/
-    └── <flavor>@ready
+└── ephemeral/
+    ├── boot-<kern.boottime>/
+    │   └── <stable-key>         current-boot storage
+    └── lease-<manager-session>/
+        └── <stable-key>         last-holder lease storage
 ```
 
 The key is the first 192 bits of a domain-separated SHA-256 digest over bundle
@@ -163,7 +155,6 @@ Shared definition in `Bundle.ucl`:
 shared {
     storage = [{
         name = "database";
-        flavor = "native";
         lifetime = "persistent";
     }];
 }
@@ -187,19 +178,19 @@ storage = [
 ];
 ```
 
-A shared reference cannot override the bundle declaration's lifetime or
-flavor. Rights remain per unit. Accepted rights include property read/write,
+A shared reference cannot override the bundle declaration's lifetime.
+Rights remain per unit. Accepted rights include property read/write,
 snapshot lifecycle, rollback, clone source, child create/destroy, send/receive,
 mount, hold, and release operations.
 
 ## Confinement and protocol
 
-Before `cap_enter()`, `tzfsd` loads its UCL configuration and flavor drop-ins,
+Before `cap_enter()`, `tzfsd` loads its UCL configuration,
 ensures ZFS is available, provisions roots, reconciles stale boot generations,
 and retains subtree handles. After that point every operation derives from
 those handles.
 
-The versioned `SOCK_SEQPACKET` protocol has request, release, flavor-list,
+The versioned `SOCK_SEQPACKET` protocol has request, release,
 ping, and begin-session operations. Messages are fixed-size and reject unknown
 flags, non-zero reserved bytes, unterminated fields, unsafe dataset components,
 wrong descriptor counts, truncation, and descriptor smuggling. Release is
@@ -219,7 +210,7 @@ environment layout — `zroot/ROOT/<be>` with `canmount=noauto`, and the pool's
 pool out this way, so multiboot is present by construction rather than as an
 opt-in.
 
-Three layers make it usable, and all three ship in base:
+Two layers make it usable, and both ship in base:
 
 - **Selection (loader).** The Lua loader enumerates bootable environments from
   the pool (`stand/lua/core.lua`: `bootenvList`, `zfs_be_active`) and offers the
@@ -230,18 +221,10 @@ Three layers make it usable, and all three ship in base:
   and destroys environments; `libbe(3)` is the C API beneath it. Use these —
   not raw `zfs(8)` — to add or promote an environment, so `bootfs` and the
   `canmount`/`mountpoint` invariants the loader relies on stay correct.
-- **Capability storage (native flavor).** `tzfsd`'s `native` flavor is itself a
-  boot-environment clone: `build_native_live()` snapshots the running BE
-  (`f_mntfromname`, e.g. `zroot/ROOT/default`) as `@tzfs-native` and clones the
-  template from it. A unit that requests `flavor = "native"` therefore boots
-  into a copy-on-write image of the exact environment the system is currently
-  running, and it costs nothing until written. This is why `native` is offered
-  only on a ZFS root: without a boot environment there is nothing to clone.
 
-The upshot for the capability platform: an operator can `bectl create` a new
+The upshot for the operator: an operator can `bectl create` a new
 environment, install or upgrade into it, and activate it for the next boot,
-while `tzfsd` keeps handing units `native` clones of whichever environment is
-live — the two mechanisms share one substrate.
+all without disturbing the environment the system is currently running.
 
 ## ZFS root on ARM board images
 

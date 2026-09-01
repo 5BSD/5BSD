@@ -38,7 +38,6 @@
 
 struct capbundle_shared_storage {
 	char	name[ORT_STORAGE_NAME_MAX];
-	char	flavor[ORT_STORAGE_FLAVOR_MAX];
 	uint8_t	lifetime;
 };
 /* Internal service representation. */

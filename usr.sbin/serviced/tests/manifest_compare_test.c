@@ -46,8 +46,6 @@ sample_manifest(void)
 	    sizeof(m.cap_storage[0].name));
 	strlcpy(m.cap_storage[0].dataset, "u-test",
 	    sizeof(m.cap_storage[0].dataset));
-	strlcpy(m.cap_storage[0].flavor, "native",
-	    sizeof(m.cap_storage[0].flavor));
 	m.cap_storage[0].rights = 1;
 	m.cap_storage[0].scope = ORT_STORAGE_SCOPE_UNIT;
 	m.ncap_storage = 1;
@@ -122,7 +120,6 @@ ATF_TC_BODY(authority_changes, tc)
 	CHECK_CHANGE(b.cap_storage[0].rights++);
 	CHECK_CHANGE(b.cap_storage[0].name[0] = 'x');
 	CHECK_CHANGE(b.cap_storage[0].dataset[0] = 'x');
-	CHECK_CHANGE(b.cap_storage[0].flavor[0] = 'x');
 	CHECK_CHANGE(b.cap_storage[0].lifetime++);
 	CHECK_CHANGE(b.cap_storage[0].scope++);
 	CHECK_CHANGE(b.cap_services[0][0] = 'x');

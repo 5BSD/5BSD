@@ -43,7 +43,6 @@
 
 - [TrustedZFS](storage/trustedzfs.md)
 - [tzfsd Storage Broker](storage/tzfsd.md)
-- [TZFS Flavors](storage/flavors.md)
 
 # System Services
 

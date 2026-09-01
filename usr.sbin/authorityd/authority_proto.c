@@ -388,7 +388,7 @@ handle_mint_vsock(const void *payload, uint32_t len, uint64_t reply_token)
 
 /*
  * Storage capabilities are owned by tzfsd(8), the [TZFS] storage daemon,
- * which holds the pool, the /Capabilities layout, and the flavor templates.
+ * which holds the pool and the /Capabilities layout.
  * authorityd forwards mint/release requests to tzfsd and relays the
  * rights-limited handle back; it no longer opens /dev/zfs itself.
  *
@@ -457,8 +457,8 @@ begin_session:
 
 /*
  * Forward a storage mint to tzfsd and relay the rights-limited handle back to
- * the service.  flavor[0] == '\0' is a bare dataset claim; a named flavor
- * clones that template.  authorityd holds no ZFS privilege of its own.
+ * the service — a bare dataset claim.  authorityd holds no ZFS privilege of its
+ * own.
  */
 static void
 handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
@@ -475,7 +475,6 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 	req = payload;
 	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
 	    req->dataset[0] == '\0' ||
-	    memchr(req->flavor, '\0', sizeof(req->flavor)) == NULL ||
 	    !all_zero(req->_reserved, sizeof(req->_reserved)) ||
 	    (req->rights & ~ZH_ALL_RIGHTS) != 0 ||
 	    (req->flags & ~ZHF_SUBTREE) != 0 ||
@@ -492,7 +491,6 @@ handle_mint_storage(const void *payload, uint32_t len, uint64_t reply_token)
 	}
 
 	memset(&treq, 0, sizeof(treq));
-	(void)strlcpy(treq.flavor, req->flavor, sizeof(treq.flavor));
 	(void)strlcpy(treq.dataset, req->dataset, sizeof(treq.dataset));
 	treq.rights = req->rights;
 	treq.flags = req->flags;
@@ -527,7 +525,7 @@ handle_destroy_storage(const void *payload, uint32_t len, uint64_t reply_token)
 	req = payload;
 	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL ||
 	    req->dataset[0] == '\0' || req->flags != 0 || req->rights != 0 ||
-	    req->lifetime != 0 || req->flavor[0] != '\0' ||
+	    req->lifetime != 0 ||
 	    !all_zero(req->_reserved, sizeof(req->_reserved))) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;

@@ -58,7 +58,6 @@ valid_request(const struct tzfsd_request *rq)
 {
 
 	if (!all_zero(rq->_reserved, sizeof(rq->_reserved)) ||
-	    memchr(rq->flavor, '\0', sizeof(rq->flavor)) == NULL ||
 	    memchr(rq->dataset, '\0', sizeof(rq->dataset)) == NULL ||
 	    memchr(rq->session, '\0', sizeof(rq->session)) == NULL)
 		return (false);
@@ -67,20 +66,16 @@ valid_request(const struct tzfsd_request *rq)
 		return (rq->session[0] == '\0');
 	case TZFSD_OP_RELEASE:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->flavor[0] == '\0' && rq->session[0] == '\0');
-	case TZFSD_OP_LIST_FLAVORS:
+		    rq->session[0] == '\0');
 	case TZFSD_OP_PING:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->flavor[0] == '\0' && rq->dataset[0] == '\0' &&
-		    rq->session[0] == '\0');
+		    rq->dataset[0] == '\0' && rq->session[0] == '\0');
 	case TZFSD_OP_BEGIN_SESSION:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->flavor[0] == '\0' && rq->dataset[0] == '\0' &&
-		    rq->session[0] != '\0');
+		    rq->dataset[0] == '\0' && rq->session[0] != '\0');
 	default:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->flavor[0] == '\0' && rq->dataset[0] == '\0' &&
-		    rq->session[0] == '\0');
+		    rq->dataset[0] == '\0' && rq->session[0] == '\0');
 	}
 }
 
@@ -151,10 +146,6 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (memchr(rq->flavor, '\0', sizeof(rq->flavor)) == NULL) {
-		errno = EINVAL;
-		return (-1);
-	}
 
 	if (rq->lifetime == TZFSD_BOOT) {
 		parent_fd = st->boot_fd;
@@ -175,30 +166,10 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		parent_name = cfg->persistent;
 	}
 
-	if (rq->flavor[0] == '\0') {
-		/* Bare dataset claim: open-or-create the leaf. */
-		leaf_fd = tzfsd_ensure_path(parent_fd, rq->dataset, ZH_ALL_RIGHTS);
-		if (leaf_fd == -1)
-			return (-1);
-	} else {
-		/* Flavor clone: templates/<flavor>@ready -> parent/<name>. */
-		struct tzfsd_flavor_def *f = tzfsd_flavor_find(cfg, rq->flavor);
-		int origin_fd;
-
-		if (f == NULL || !f->available) {
-			errno = ENOENT;
-			return (-1);
-		}
-		origin_fd = tzfs_openat(st->templates_fd, rq->flavor,
-		    ZH_CLONE_SRC, 0);
-		if (origin_fd == -1)
-			return (-1);
-		leaf_fd = tzfs_clone(parent_fd, origin_fd,
-		    TZFSD_TEMPLATE_SNAP, rq->dataset);
-		(void)close(origin_fd);
-		if (leaf_fd == -1)
-			return (-1);
-	}
+	/* Bare dataset claim: open-or-create the leaf. */
+	leaf_fd = tzfsd_ensure_path(parent_fd, rq->dataset, ZH_ALL_RIGHTS);
+	if (leaf_fd == -1)
+		return (-1);
 
 	/*
 	 * Set the dataset root's owner to the requesting service so it can write
@@ -263,16 +234,15 @@ handle_request(struct tzfsd_state *st, int c, const struct tzfsd_request *rq)
 		rp.status = errno;
 		rp.dataset[0] = '\0';
 		send_reply(c, &rp, sizeof(rp), -1);
-		syslog(LOG_INFO, "REQUEST dataset=%s flavor=%s life=%u -> %s",
-		    rq->dataset, rq->flavor[0] ? rq->flavor : "-", rq->lifetime,
-		    strerror(rp.status));
+		syslog(LOG_INFO, "REQUEST dataset=%s life=%u -> %s",
+		    rq->dataset, rq->lifetime, strerror(rp.status));
 		return;
 	}
 	rp.status = 0;
 	send_reply(c, &rp, sizeof(rp), handle);
 	(void)close(handle);
-	syslog(LOG_INFO, "REQUEST %s flavor=%s life=%u -> granted",
-	    rp.dataset, rq->flavor[0] ? rq->flavor : "-", rq->lifetime);
+	syslog(LOG_INFO, "REQUEST %s life=%u -> granted",
+	    rp.dataset, rq->lifetime);
 }
 
 static void
@@ -295,27 +265,6 @@ handle_release(struct tzfsd_state *st, int c, const struct tzfsd_request *rq)
 	}
 	reply_status(c, 0);
 	syslog(LOG_INFO, "RELEASE %s -> ok", rq->dataset);
-}
-
-static void
-handle_list(struct tzfsd_state *st, int c)
-{
-	struct tzfsd_flavor_list rl;
-	unsigned i;
-
-	memset(&rl, 0, sizeof(rl));
-	rl.status = 0;
-	for (i = 0; i < st->cfg.nflavors && rl.count < TZFSD_MAX_FLAVORS; i++) {
-		struct tzfsd_flavor_def *f = &st->cfg.flavors[i];
-
-		if (!f->available)
-			continue;
-		(void)strlcpy(rl.flavors[rl.count].name, f->name,
-		    sizeof(rl.flavors[rl.count].name));
-		rl.flavors[rl.count].is_default = f->is_default ? 1 : 0;
-		rl.count++;
-	}
-	send_reply(c, &rl, sizeof(rl), -1);
 }
 
 static void
@@ -342,9 +291,6 @@ handle_conn(struct tzfsd_state *st, int c)
 			break;
 		case TZFSD_OP_RELEASE:
 			handle_release(st, c, &rq);
-			break;
-		case TZFSD_OP_LIST_FLAVORS:
-			handle_list(st, c);
 			break;
 		case TZFSD_OP_PING:
 			reply_status(c, 0);

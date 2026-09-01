@@ -9,7 +9,6 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
-#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <stdio.h>
@@ -36,8 +35,6 @@ derive_roots(struct tzfsd_config *cfg)
 	    "%s/persistent", cfg->base);
 	(void)snprintf(cfg->ephemeral, sizeof(cfg->ephemeral),
 	    "%s/ephemeral", cfg->base);
-	(void)snprintf(cfg->templates, sizeof(cfg->templates),
-	    "%s/.templates", cfg->base);
 }
 
 static bool
@@ -59,33 +56,6 @@ identifier_valid(const char *name, size_t capacity)
 	return (true);
 }
 
-static int
-add_flavor(struct tzfsd_config *cfg, const char *name, enum tzfsd_build build,
-    const char *source, bool is_default)
-{
-	struct tzfsd_flavor_def *f;
-
-	if (!identifier_valid(name, TZFSD_FLAVOR_MAX) ||
-	    cfg->nflavors >= TZFSD_MAX_FLAVORS) {
-		errno = cfg->nflavors >= TZFSD_MAX_FLAVORS ? ENOSPC : EINVAL;
-		return (-1);
-	}
-	if (source != NULL && strnlen(source, TZFSD_MAXPATH) == TZFSD_MAXPATH) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-	f = &cfg->flavors[cfg->nflavors++];
-	memset(f, 0, sizeof(*f));
-	(void)strlcpy(f->name, name, sizeof(f->name));
-	f->build = build;
-	if (source != NULL)
-		(void)strlcpy(f->source, source, sizeof(f->source));
-	f->enabled = true;
-	f->is_default = is_default;
-	f->available = false;
-	return (0);
-}
-
 void
 tzfsd_config_defaults(struct tzfsd_config *cfg)
 {
@@ -97,101 +67,6 @@ tzfsd_config_defaults(struct tzfsd_config *cfg)
 	    sizeof(cfg->mountpoint));
 	(void)strlcpy(cfg->ephemeral_sync, "disabled",
 	    sizeof(cfg->ephemeral_sync));
-
-	/*
-	 * The built-in flavor set is deliberately just the two that need no
-	 * external content, so the broker stays self-contained: empty is a
-	 * fresh dataset and native is a copy-on-write clone of the running boot
-	 * environment (it ships for free, not as a baked second copy).
-	 *
-	 * OS-image flavors (e.g. freebsd, linux) are *not* built in -- curating
-	 * and shipping a distro rootfs is a separate concern from brokering
-	 * storage.  They are contributed as data by a flavor-catalog package
-	 * that drops a config fragment under the conf.d directory (declaring the
-	 * flavor and its baked artifact) plus the artifact itself; tzfsd then
-	 * offers whatever templates it finds.  See tzfsd_config_load_confd().
-	 */
-	(void)add_flavor(cfg, "empty", TZFSD_BUILD_LIVE, NULL, false);
-	(void)add_flavor(cfg, "native", TZFSD_BUILD_LIVE, NULL, false);
-}
-
-struct tzfsd_flavor_def *
-tzfsd_flavor_find(struct tzfsd_config *cfg, const char *name)
-{
-	unsigned i;
-
-	for (i = 0; i < cfg->nflavors; i++)
-		if (strcmp(cfg->flavors[i].name, name) == 0)
-			return (&cfg->flavors[i]);
-	return (NULL);
-}
-
-static int
-build_from_string(const char *s, enum tzfsd_build *build)
-{
-
-	if (s == NULL || build == NULL)
-		return (errno = EINVAL, -1);
-	if (strcmp(s, "live") == 0)
-		*build = TZFSD_BUILD_LIVE;
-	else if (strcmp(s, "baked") == 0)
-		*build = TZFSD_BUILD_BAKED;
-	else if (strcmp(s, "source") == 0)
-		*build = TZFSD_BUILD_SOURCE;
-	else
-		return (errno = EINVAL, -1);
-	return (0);
-}
-
-static int
-apply_flavors(struct tzfsd_config *cfg, const ucl_object_t *flavors)
-{
-	ucl_object_iter_t it = NULL;
-	const ucl_object_t *fo;
-
-	if (ucl_object_type(flavors) != UCL_OBJECT)
-		return (errno = EINVAL, -1);
-	while ((fo = ucl_object_iterate(flavors, &it, true)) != NULL) {
-		const char *key = ucl_object_key(fo);
-		const ucl_object_t *v;
-		struct tzfsd_flavor_def *f;
-
-		if (key == NULL || !identifier_valid(key, TZFSD_FLAVOR_MAX) ||
-		    ucl_object_type(fo) != UCL_OBJECT)
-			return (errno = EINVAL, -1);
-		f = tzfsd_flavor_find(cfg, key);
-		if (f == NULL) {
-			/* A config-declared flavor not in the default set. */
-			if (add_flavor(cfg, key, TZFSD_BUILD_SOURCE, NULL,
-			    false) == -1)
-				return (-1);
-			f = tzfsd_flavor_find(cfg, key);
-			if (f == NULL)
-				return (errno = EINVAL, -1);
-		}
-		if ((v = ucl_object_lookup(fo, "build")) != NULL &&
-		    (ucl_object_type(v) != UCL_STRING ||
-		    build_from_string(ucl_object_tostring(v), &f->build) == -1))
-			return (errno = EINVAL, -1);
-		if ((v = ucl_object_lookup(fo, "source")) != NULL) {
-			if (ucl_object_type(v) != UCL_STRING ||
-			    ucl_object_tostring(v) == NULL ||
-			    strlcpy(f->source, ucl_object_tostring(v),
-			    sizeof(f->source)) >= sizeof(f->source))
-				return (errno = EINVAL, -1);
-		}
-		if ((v = ucl_object_lookup(fo, "enabled")) != NULL) {
-			if (ucl_object_type(v) != UCL_BOOLEAN)
-				return (errno = EINVAL, -1);
-			f->enabled = ucl_object_toboolean(v);
-		}
-		if ((v = ucl_object_lookup(fo, "default")) != NULL) {
-			if (ucl_object_type(v) != UCL_BOOLEAN)
-				return (errno = EINVAL, -1);
-			f->is_default = ucl_object_toboolean(v);
-		}
-	}
-	return (0);
 }
 
 static int
@@ -261,34 +136,15 @@ absolute_path_valid(const char *path)
 static int
 config_validate(const struct tzfsd_config *cfg)
 {
-	const struct tzfsd_flavor_def *flavor;
-	unsigned defaults, i;
 
 	if (!identifier_valid(cfg->pool, sizeof(cfg->pool)) ||
 	    !dataset_under_pool(cfg->pool, cfg->base) ||
 	    !dataset_under_pool(cfg->pool, cfg->persistent) ||
 	    !dataset_under_pool(cfg->pool, cfg->ephemeral) ||
-	    !dataset_under_pool(cfg->pool, cfg->templates) ||
 	    !absolute_path_valid(cfg->mountpoint) ||
 	    (strcmp(cfg->ephemeral_sync, "disabled") != 0 &&
 	    strcmp(cfg->ephemeral_sync, "standard") != 0 &&
 	    strcmp(cfg->ephemeral_sync, "always") != 0))
-		return (errno = EINVAL, -1);
-	defaults = 0;
-	for (i = 0; i < cfg->nflavors; i++) {
-		flavor = &cfg->flavors[i];
-		if (!identifier_valid(flavor->name, sizeof(flavor->name)) ||
-		    (flavor->is_default && !flavor->enabled) ||
-		    (flavor->build == TZFSD_BUILD_BAKED &&
-		    !absolute_path_valid(flavor->source)) ||
-		    (flavor->build == TZFSD_BUILD_LIVE &&
-		    strcmp(flavor->name, "empty") != 0 &&
-		    strcmp(flavor->name, "native") != 0))
-			return (errno = EINVAL, -1);
-		if (flavor->is_default)
-			defaults++;
-	}
-	if (defaults > 1)
 		return (errno = EINVAL, -1);
 	return (0);
 }
@@ -364,9 +220,6 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 		if ((o = ucl_object_lookup(roots, "ephemeral")) != NULL &&
 		    copy_string(cfg->ephemeral, sizeof(cfg->ephemeral), o) == -1)
 			goto invalid;
-		if ((o = ucl_object_lookup(roots, "templates")) != NULL &&
-		    copy_string(cfg->templates, sizeof(cfg->templates), o) == -1)
-			goto invalid;
 		if ((o = ucl_object_lookup(roots, "mountpoint")) != NULL &&
 		    copy_string(cfg->mountpoint, sizeof(cfg->mountpoint), o) == -1)
 			goto invalid;
@@ -381,9 +234,6 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 			goto invalid;
 	}
 
-	if ((o = ucl_object_lookup(root, "flavors")) != NULL &&
-	    apply_flavors(cfg, o) == -1)
-		goto invalid;
 	if (config_validate(cfg) == -1)
 		goto invalid;
 
@@ -398,45 +248,4 @@ invalid:
 	ucl_parser_free(p);
 	errno = error;
 	return (-1);
-}
-
-/*
- * Overlay every *.ucl fragment in a conf.d directory, in lexical order, on top
- * of the already-loaded configuration.  This is the seam that keeps OS-image
- * curation out of the broker: a separately-packaged flavor catalog contributes
- * its flavors (freebsd, linux, ...) by dropping a fragment here plus the baked
- * artifact it points at, and tzfsd offers whatever it finds.  A missing or
- * unreadable directory is not an error -- the built-in defaults stand.
- */
-int
-tzfsd_config_load_confd(struct tzfsd_config *cfg, const char *dir)
-{
-	struct dirent **names;
-	int n, i;
-
-	n = scandir(dir, &names, NULL, alphasort);
-	if (n < 0)
-		return (errno == ENOENT ? 0 : -1);
-	for (i = 0; i < n; i++) {
-		const char *nm = names[i]->d_name;
-		size_t len = strlen(nm);
-
-		if (len > 4 && strcmp(nm + len - 4, ".ucl") == 0) {
-			char path[TZFSD_MAXPATH];
-
-			(void)snprintf(path, sizeof(path), "%s/%s", dir, nm);
-			if (tzfsd_config_load(cfg, path) == -1) {
-				int error = errno;
-
-				while (i < n)
-					free(names[i++]);
-				free(names);
-				errno = error;
-				return (-1);
-			}
-		}
-		free(names[i]);
-	}
-	free(names);
-	return (0);
 }

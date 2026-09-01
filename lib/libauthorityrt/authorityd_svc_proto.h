@@ -227,10 +227,9 @@ struct authority_vsock_req {
  *   reply_fds[0] = TrustedZFS dataset handle fd (on success)
  *
  * authorityd forwards the request to tzfsd(8) (the [TZFS] storage daemon,
- * which owns /Capabilities and the flavor templates) and relays the
- * rights-limited handle back over the channel.  authorityd no longer opens
- * /dev/zfs itself; tzfsd is the storage authority.  flavor[0] == '\0'
- * requests a bare dataset claim; a named flavor clones that template.
+ * which owns /Capabilities) and relays the rights-limited handle back over the
+ * channel.  authorityd no longer opens /dev/zfs itself; tzfsd is the storage
+ * authority.  The request is a bare dataset claim.
  */
 struct authority_storage_req {
 	uint32_t	op;		/* AUTHORITY_OP_MINT_STORAGE / DESTROY */
@@ -241,7 +240,6 @@ struct authority_storage_req {
 	uint32_t	owner_uid;	/* chown dataset root at mint; 0 = skip */
 	uint32_t	owner_gid;
 	char		dataset[64];	/* == ORT_STORAGE_DATASET_MAX */
-	char		flavor[32];	/* == ORT_STORAGE_FLAVOR_MAX */
 };
 
 /*

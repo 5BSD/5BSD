@@ -39,10 +39,8 @@
  * dataset name length) so a resolved name round-trips through the manifest
  * claim without truncation.
  */
-#define	TZFSD_FLAVOR_MAX		32	/* incl. NUL */
 #define	TZFSD_NAME_MAX			64	/* opaque dataset key, incl. NUL */
 #define	TZFSD_DATASET_MAX		256	/* == ORT_STORAGE_DATASET_MAX */
-#define	TZFSD_MAX_FLAVORS		16	/* LIST_FLAVORS reply cap */
 #define	TZFSD_SESSION_MAX		33	/* 128-bit hex id + NUL */
 
 /*
@@ -58,9 +56,8 @@
 /*
  * Operation codes — first 4 bytes of every request payload.
  */
-#define	TZFSD_OP_REQUEST		1	/* mint/clone a storage handle */
+#define	TZFSD_OP_REQUEST		1	/* mint a storage handle */
 #define	TZFSD_OP_RELEASE		2	/* tear down a lease claim */
-#define	TZFSD_OP_LIST_FLAVORS		3	/* enumerate offered flavors */
 #define	TZFSD_OP_PING			4	/* liveness check */
 #define	TZFSD_OP_BEGIN_SESSION		5	/* select/reconcile lease generation */
 
@@ -70,12 +67,10 @@
  *   reply: struct tzfsd_reply { .status, .dataset }
  *   reply_fds[0] = TrustedZFS dataset handle fd (on success)
  *
- * flavor[0] == '\0' requests a bare dataset claim (no template): the named
- * dataset is opened (persistent) or created then opened (ephemeral), exactly
- * as authorityd's handle_mint_storage did.  A non-empty flavor clones that
- * flavor's template origin into the bundle's ephemeral/persistent space and
- * returns a handle on the clone.  rights are the ZH_* mask to grant; the
- * returned handle carries no more than these.
+ * A bare dataset claim: the named dataset is opened (persistent) or created
+ * then opened (ephemeral), exactly as authorityd's handle_mint_storage did.
+ * rights are the ZH_* mask to grant; the returned handle carries no more than
+ * these.
  */
 struct tzfsd_request {
 	uint32_t	op;			/* TZFSD_OP_REQUEST */
@@ -85,14 +80,13 @@ struct tzfsd_request {
 	uint8_t		_reserved[3];
 	uint32_t	owner_uid;		/* chown dataset root at mint; 0=skip */
 	uint32_t	owner_gid;
-	char		flavor[TZFSD_FLAVOR_MAX];
 	char		dataset[TZFSD_NAME_MAX]; /* opaque stable leaf key */
 	char		session[TZFSD_SESSION_MAX];
 };
 
 /*
  * TZFSD_OP_RELEASE
- *   req:   struct tzfsd_request (op, name; flavor/rights/flags ignored)
+ *   req:   struct tzfsd_request (op, name; rights/flags ignored)
  *   reply: struct tzfsd_reply { .status }
  *
  * Destroy the lease dataset previously granted under this key.  A missing
@@ -108,26 +102,6 @@ struct tzfsd_reply {
 	int32_t		status;			/* 0 or errno */
 	uint32_t	_reserved;
 	char		dataset[TZFSD_DATASET_MAX];
-};
-
-/*
- * TZFSD_OP_LIST_FLAVORS
- *   req:   struct tzfsd_request (op only)
- *   reply: struct tzfsd_flavor_list
- *
- * Enumerates the flavors tzfsd currently offers.  A flavor whose template is
- * unavailable (not baked, not built, disabled) is omitted, so the list is the
- * exact set tzfsd_request will honor.
- */
-struct tzfsd_flavor {
-	char		name[TZFSD_FLAVOR_MAX];
-	uint8_t		is_default;		/* the opinionated default */
-	uint8_t		_reserved[7];
-};
-struct tzfsd_flavor_list {
-	int32_t		status;			/* 0 or errno */
-	uint32_t	count;			/* valid entries in flavors[] */
-	struct tzfsd_flavor flavors[TZFSD_MAX_FLAVORS];
 };
 
 #endif /* TZFSD_PROTO_H */

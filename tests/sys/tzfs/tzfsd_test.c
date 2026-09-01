@@ -4,8 +4,8 @@
  * Copyright (c) 2026 Kory Heard
  *
  * Integration tests for tzfsd(8): start the real daemon on a scratch pool and
- * drive it through libtzfsd, covering flavor listing, bare and flavor-clone
- * requests, the anonymous mount, rights attenuation, lifetime, and negatives.
+ * drive it through libtzfsd, covering bare dataset requests, the anonymous
+ * mount, rights attenuation, lifetime, and negatives.
  */
 
 #include <sys/types.h>
@@ -45,38 +45,6 @@ begin_test_session(int chan)
 	ATF_REQUIRE_EQ(0, tzfsd_begin_session(chan,
 	    "00000000000000000000000000000001"));
 }
-
-/* list-flavors always offers at least "empty" (built live). */
-ATF_TC_WITH_CLEANUP(list_flavors);
-ATF_TC_HEAD(list_flavors, tc)
-{
-	atf_tc_set_md_var(tc, "descr", "list-flavors offers the live 'empty'");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(list_flavors, tc)
-{
-	struct tzfsd_flavor_info fl[TZFSD_MAX_FLAVORS];
-	int chan, n, i;
-	bool found_empty = false;
-
-	tzt_require();
-	tzt_pool_create(tc);
-	tzt_daemon_start();
-
-	chan = tzfsd_connect();
-	ATF_REQUIRE(chan != -1);
-	begin_test_session(chan);
-	ATF_REQUIRE_EQ(0, tzfsd_ping(chan));
-
-	n = tzfsd_list_flavors(chan, fl, TZFSD_MAX_FLAVORS);
-	ATF_REQUIRE(n >= 1);
-	for (i = 0; i < n; i++)
-		if (strcmp(fl[i].name, "empty") == 0)
-			found_empty = true;
-	ATF_CHECK(found_empty);
-	(void)close(chan);
-}
-ATF_TC_CLEANUP(list_flavors, tc) { tzt_cleanup(); }
 
 /* A bare lease claim: create, mount to a dir, release. */
 ATF_TC_WITH_CLEANUP(bare_lease);
@@ -121,44 +89,6 @@ ATF_TC_BODY(bare_lease, tc)
 	(void)close(chan);
 }
 ATF_TC_CLEANUP(bare_lease, tc) { tzt_cleanup(); }
-
-/* Clone the live 'empty' flavor. */
-ATF_TC_WITH_CLEANUP(empty_clone);
-ATF_TC_HEAD(empty_clone, tc)
-{
-	atf_tc_set_md_var(tc, "descr", "flavor=empty clones and mounts");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(empty_clone, tc)
-{
-	struct tzfsd_req req;
-	struct tzfsd_grant g;
-	int chan, dir;
-
-	tzt_require();
-	tzt_pool_create(tc);
-	tzt_daemon_start();
-
-	chan = tzfsd_connect();
-	ATF_REQUIRE(chan != -1);
-	begin_test_session(chan);
-
-	memset(&req, 0, sizeof(req));
-	strlcpy(req.flavor, "empty", sizeof(req.flavor));
-	strlcpy(req.dataset, "c1", sizeof(req.dataset));
-	req.rights = ZH_MOUNT | ZH_PROPS_READ;
-	req.lifetime = TZFSD_LEASE;
-	ATF_REQUIRE_EQ(0, tzfsd_request(chan, &req, &g));
-
-	dir = tzfsd_mount_dir(g.handle_fd, 0);
-	ATF_CHECK(dir != -1);
-	if (dir != -1)
-		(void)close(dir);
-	(void)close(g.handle_fd);
-	ATF_CHECK_EQ(0, tzfsd_release(chan, "c1"));
-	(void)close(chan);
-}
-ATF_TC_CLEANUP(empty_clone, tc) { tzt_cleanup(); }
 
 /* A handle granted without ZH_MOUNT cannot be mounted. */
 ATF_TC_WITH_CLEANUP(rights_attenuation);
@@ -217,39 +147,6 @@ ATF_TC_BODY(rights_attenuation, tc)
 	(void)close(chan);
 }
 ATF_TC_CLEANUP(rights_attenuation, tc) { tzt_cleanup(); }
-
-/* An unavailable flavor is refused with ENOENT. */
-ATF_TC_WITH_CLEANUP(unknown_flavor);
-ATF_TC_HEAD(unknown_flavor, tc)
-{
-	atf_tc_set_md_var(tc, "descr", "request for an unavailable flavor fails ENOENT");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(unknown_flavor, tc)
-{
-	struct tzfsd_req req;
-	struct tzfsd_grant g;
-	int chan;
-
-	tzt_require();
-	tzt_pool_create(tc);
-	tzt_daemon_start();
-
-	chan = tzfsd_connect();
-	ATF_REQUIRE(chan != -1);
-	begin_test_session(chan);
-
-	memset(&req, 0, sizeof(req));
-	/* linux has no baked artifact on the scratch pool -> unavailable. */
-	strlcpy(req.flavor, "linux", sizeof(req.flavor));
-	strlcpy(req.dataset, "u1", sizeof(req.dataset));
-	req.rights = ZH_MOUNT;
-	req.lifetime = TZFSD_LEASE;
-	ATF_CHECK_EQ(-1, tzfsd_request(chan, &req, &g));
-	ATF_CHECK_EQ(ENOENT, errno);
-	(void)close(chan);
-}
-ATF_TC_CLEANUP(unknown_flavor, tc) { tzt_cleanup(); }
 
 /* A persistent claim's dataset survives; a bad name is rejected. */
 ATF_TC_WITH_CLEANUP(persistent_and_badname);
@@ -501,11 +398,8 @@ ATF_TC_CLEANUP(session_reconcile_refuses_snapshot_loss, tc) { tzt_cleanup(); }
 
 ATF_TP_ADD_TCS(tp)
 {
-	ATF_TP_ADD_TC(tp, list_flavors);
 	ATF_TP_ADD_TC(tp, bare_lease);
-	ATF_TP_ADD_TC(tp, empty_clone);
 	ATF_TP_ADD_TC(tp, rights_attenuation);
-	ATF_TP_ADD_TC(tp, unknown_flavor);
 	ATF_TP_ADD_TC(tp, persistent_and_badname);
 	ATF_TP_ADD_TC(tp, protocol_malformed);
 	ATF_TP_ADD_TC(tp, idle_client_isolated);

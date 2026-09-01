@@ -63,9 +63,7 @@ The optional
 object may contain up to eight
 .Va storage
 declarations with a unique
-.Va name ,
-optional
-.Va flavor ,
+.Va name
 and
 .Va lifetime .
 .Sh UNIT.UCL
@@ -286,8 +284,6 @@ One name or an array selected from
 .Dq hold ,
 and
 .Dq release .
-.It Va flavor
-Optional for unit storage; forbidden on shared references.
 .It Va lifetime
 .Dq persistent ,
 .Dq cache ,

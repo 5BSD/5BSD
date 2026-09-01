@@ -186,11 +186,10 @@ print_bundle(const struct capbundle *b)
 			case ORT_STORAGE_LEASE: lifetime = "lease"; break;
 			default: lifetime = "invalid"; break;
 			}
-			printf("        storage: %s flavor=%s rights=0x%jx "
+			printf("        storage: %s rights=0x%jx "
 			    "lifetime=%s scope=%s dataset=%s\n",
 			    m.cap_storage[j].name,
-			    m.cap_storage[j].flavor[0] ? m.cap_storage[j].flavor :
-			    "(bare)", (uintmax_t)m.cap_storage[j].rights,
+			    (uintmax_t)m.cap_storage[j].rights,
 			    lifetime,
 			    m.cap_storage[j].scope == ORT_STORAGE_SCOPE_SHARED ?
 			    "shared" : "unit", m.cap_storage[j].dataset);

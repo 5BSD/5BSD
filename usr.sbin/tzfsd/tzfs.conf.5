@@ -20,8 +20,8 @@ opinionated defaults in force.
 Unknown keys are ignored so the schema can grow.
 An existing configuration file must be a regular file owned by the daemon's
 effective user and must not be writable by its group or by other users.
-Symbolic links, malformed input, truncated values, invalid types, and invalid
-catalog combinations are fatal startup errors.
+Symbolic links, malformed input, truncated values, and invalid types are fatal
+startup errors.
 .Sh KEYS
 .Bl -tag -width ".Va ephemeral.sync"
 .It Va pool
@@ -43,10 +43,6 @@ Default
 Parent of ephemeral datasets, created on service start and destroyed on stop.
 Default
 .Ql <base>/ephemeral .
-.It Va roots.templates
-Parent of the flavor template datasets.
-Default
-.Ql <base>/.templates .
 .It Va roots.mountpoint
 Filesystem location of the base.
 Default
@@ -59,71 +55,12 @@ Default
 .Ql disabled
 for throughput.
 .El
-.Ss Flavors
-The broker's built-in flavors are only
-.Ql empty
-(a blank dataset) and
-.Ql native
-(a copy-on-write clone of the running boot environment); both are built live
-on first start and need no shipped content.
-OS-image flavors such as
-.Ql linux
-(Rocky) and
-.Ql freebsd
-are not built in \(em curating a distribution rootfs is a separate concern
-from brokering storage.
-They are contributed by the separately packaged flavor catalog,
-.Xr tzfs-flavors 7 ,
-which drops its own fragment under
-.Pa /Capabilities/Config/tzfsd.d/ .
-.Pp
-The
-.Va flavors
-object (in this file or in a
-.Pa tzfsd.d
-drop-in) maps a flavor name to its settings; a name not already known is
-added as a new flavor:
-.Bl -tag -width ".Va enabled" -offset indent
-.It Va build
-How the template is populated:
-.Ql live
-(built from the running system),
-.Ql baked
-(received from a shipped send-stream), or
-.Ql source
-(offered only when its template has been pre-seeded; automatic source
-materialization is not yet implemented).
-.It Va source
-Path to the baked send-stream or rootfs source.
-.It Va enabled
-Whether the flavor is offered.
-Set to
-.Ql false
-to slim a deployment; for example, disabling the
-.Ql linux
-(Rocky) flavor drops the Red Hat userland from disk.
-The flavor is then simply not offered and a request for it fails with
-.Er ENOENT .
-.It Va default
-Marks the opinionated default flavor.
-.El
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/Config/tzfsd.ucl" -compact
 .It Pa /Capabilities/Config/tzfsd.ucl
 the file described here
-.It Pa /Capabilities/Config/tzfsd.d/
-flavor catalog drop-in directory; packages such as
-.Sy tzfs-flavors
-install additional flavor definitions here
 .El
 .Sh EXAMPLES
-Turn off the bundled Linux flavor on a slimmed host:
-.Bd -literal -offset indent
-flavors {
-    linux { enabled = false; }
-}
-.Ed
-.Pp
 Back
 .Pa /Capabilities
 with a dedicated pool:

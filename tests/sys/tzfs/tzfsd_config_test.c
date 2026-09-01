@@ -31,29 +31,20 @@ write_config(const char *path, const char *contents, mode_t mode)
 ATF_TC_WITHOUT_HEAD(valid_overlay_and_defaults);
 ATF_TC_BODY(valid_overlay_and_defaults, tc)
 {
-	struct tzfsd_flavor_def *flavor;
 	struct tzfsd_config config;
 
 	tzfsd_config_defaults(&config);
 	ATF_CHECK_STREQ("zroot", config.pool);
 	ATF_CHECK_STREQ("zroot/Capabilities", config.base);
-	ATF_CHECK_EQ(2, config.nflavors);
 	write_config("valid.ucl",
 	    "pool = tank; ephemeral { sync = standard; } "
-	    "roots { mountpoint = /Caps; } "
-	    "flavors { linux { build = baked; "
-	    "source = /tmp/linux.zst; default = true; } }", 0600);
+	    "roots { mountpoint = /Caps; }", 0600);
 	ATF_REQUIRE_EQ(0, tzfsd_config_load(&config, "valid.ucl"));
 	ATF_CHECK_STREQ("tank", config.pool);
 	ATF_CHECK_STREQ("tank/Capabilities", config.base);
 	ATF_CHECK_STREQ("tank/Capabilities/persistent", config.persistent);
 	ATF_CHECK_STREQ("/Caps", config.mountpoint);
 	ATF_CHECK_STREQ("standard", config.ephemeral_sync);
-	flavor = tzfsd_flavor_find(&config, "linux");
-	ATF_REQUIRE(flavor != NULL);
-	ATF_CHECK_EQ(TZFSD_BUILD_BAKED, flavor->build);
-	ATF_CHECK(flavor->is_default);
-	ATF_CHECK_STREQ("/tmp/linux.zst", flavor->source);
 }
 
 ATF_TC_WITHOUT_HEAD(invalid_overlays_are_transactional);
@@ -69,16 +60,6 @@ ATF_TC_BODY(invalid_overlays_are_transactional, tc)
 		"roots { ephemeral = zroot/Capabilities//ephemeral; }",
 		"roots { mountpoint = /Capabilities/..; }",
 		"roots { mountpoint = /Capabilities//nested; }",
-		"flavors { \"bad/name\" { build = baked; "
-		    "source = /tmp/a; } }",
-		"flavors { \"..\" { build = baked; source = /tmp/a; } }",
-		"flavors { custom { build = mystery; } }",
-		"flavors { custom { build = live; } }",
-		"flavors { custom { build = baked; source = relative; } }",
-		"flavors { custom { build = baked; source = /tmp/../image; } }",
-		"flavors { a { build = baked; source = /a; default = true; } "
-		    "b { build = baked; source = /b; default = true; } }",
-		"flavors = [];",
 		"this is not valid UCL {{",
 	};
 	struct tzfsd_config before, config;
@@ -123,28 +104,10 @@ ATF_TC_BODY(file_security_and_missing_policy, tc)
 	    tzfsd_config_load(&config, "large.ucl") == -1);
 }
 
-ATF_TC_WITHOUT_HEAD(confd_order_and_failure);
-ATF_TC_BODY(confd_order_and_failure, tc)
-{
-	struct tzfsd_config config;
-
-	ATF_REQUIRE_EQ(0, mkdir("conf.d", 0700));
-	write_config("conf.d/10-first.ucl", "pool = tank;", 0600);
-	write_config("conf.d/20-bad.ucl", "pool = [;", 0600);
-	write_config("conf.d/30-never.ucl", "pool = later;", 0600);
-	tzfsd_config_defaults(&config);
-	ATF_REQUIRE(tzfsd_config_load_confd(&config, "conf.d") == -1);
-	ATF_CHECK_STREQ("tank", config.pool);
-	ATF_CHECK_STREQ("tank/Capabilities", config.base);
-	ATF_REQUIRE_EQ(0,
-	    tzfsd_config_load_confd(&config, "missing-conf.d"));
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, valid_overlay_and_defaults);
 	ATF_TP_ADD_TC(tp, invalid_overlays_are_transactional);
 	ATF_TP_ADD_TC(tp, file_security_and_missing_policy);
-	ATF_TP_ADD_TC(tp, confd_order_and_failure);
 	return (atf_no_error());
 }

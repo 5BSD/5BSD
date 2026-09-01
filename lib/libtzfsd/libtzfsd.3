@@ -10,7 +10,6 @@
 .Nm tzfsd_connect ,
 .Nm tzfsd_request ,
 .Nm tzfsd_release ,
-.Nm tzfsd_list_flavors ,
 .Nm tzfsd_ping ,
 .Nm tzfsd_mount_dir
 .Nd client interface to the tzfsd storage daemon
@@ -25,8 +24,6 @@
 .Ft int
 .Fn tzfsd_release "int chan" "const char *name"
 .Ft int
-.Fn tzfsd_list_flavors "int chan" "struct tzfsd_flavor_info *list" "size_t max"
-.Ft int
 .Fn tzfsd_ping "int chan"
 .Ft int
 .Fn tzfsd_mount_dir "int handle_fd" "int rdonly"
@@ -39,7 +36,7 @@ the
 storage daemon.
 A consumer asks
 .Xr tzfsd 8
-for storage of a given flavor and lifetime and receives a rights-limited
+for storage of a given lifetime and receives a rights-limited
 TrustedZFS dataset handle, which it then drives with the
 .Xr trustedzfs 3
 verb interface.
@@ -67,13 +64,6 @@ to the calls below.
 asks for a handle described by
 .Fa req :
 .Bl -tag -width ".Va lifetime" -offset indent
-.It Va flavor
-.Dv "" Ns No (empty) for a bare dataset claim, or one of
-.Dq native ,
-.Dq freebsd ,
-.Dq linux ,
-.Dq empty
-to clone that flavor's template.
 .It Va name
 logical claim name within the requesting bundle.
 .It Va rights
@@ -101,18 +91,6 @@ destroys the ephemeral claim previously granted under
 .Fa name .
 It is idempotent: a missing claim is success.
 .Pp
-.Fn tzfsd_list_flavors
-writes up to
-.Fa max
-offered flavors into
-.Fa list
-and returns the count.
-The list is exactly the set
-.Fn tzfsd_request
-will honor; unavailable or disabled flavors (for example
-.Dq linux
-on a slimmed system) are omitted.
-.Pp
 .Fn tzfsd_ping
 verifies the daemon is answering.
 .Pp
@@ -132,8 +110,6 @@ and
 return a descriptor, or -1 with
 .Va errno
 set.
-.Fn tzfsd_list_flavors
-returns a nonnegative count, or -1.
 The remaining functions return 0 on success or -1 with
 .Va errno
 set to the daemon-reported error.

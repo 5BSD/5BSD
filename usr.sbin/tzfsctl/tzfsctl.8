@@ -11,12 +11,9 @@
 .Nd inspect and exercise the tzfsd storage daemon
 .Sh SYNOPSIS
 .Nm
-.Cm list-flavors
-.Nm
 .Cm ping
 .Nm
 .Cm request
-.Op Fl f Ar flavor
 .Op Fl l Ar lifetime
 .Op Fl r Ar rights
 .Op Fl m
@@ -34,23 +31,13 @@ storage daemon.
 It connects the daemon socket and issues one request.
 .Pp
 The commands are:
-.Bl -tag -width ".Cm list-flavors"
-.It Cm list-flavors
-Print the flavors
-.Xr tzfsd 8
-currently offers, marking the default.
-The list is exactly the set
-.Cm request
-will honor.
+.Bl -tag -width ".Cm release"
 .It Cm ping
 Report whether the daemon is answering.
-.It Cm request Oo Fl f Ar flavor Oc Oo Fl l Ar lifetime Oc Oo Fl r Ar rights Oc Oo Fl m Oc Ar name
+.It Cm request Oo Fl l Ar lifetime Oc Oo Fl r Ar rights Oc Oo Fl m Oc Ar name
 Ask for a storage handle named
 .Ar name
 and print the resolved dataset.
-.Fl f
-selects a flavor to clone
-.Pq default: a bare dataset ;
 .Fl l
 is
 .Ar persistent ,
@@ -74,10 +61,9 @@ Destroy the lease claim previously granted under
 Idempotent.
 .El
 .Sh EXAMPLES
-Show what is on offer and get a Rocky Linux root as a directory:
+Get a bare dataset as a mounted directory:
 .Bd -literal -offset indent
-tzfsctl list-flavors
-tzfsctl request -f linux -l lease -m rootfs
+tzfsctl request -l lease -m rootfs
 .Ed
 .Sh SEE ALSO
 .Xr libtzfsd 3 ,

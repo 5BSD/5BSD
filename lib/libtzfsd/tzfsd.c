@@ -21,18 +21,6 @@
 
 #define	TZFSD_MAX_REPLY_FDS	16
 
-static bool
-all_zero(const void *buf, size_t len)
-{
-	const unsigned char *p = buf;
-	size_t i;
-
-	for (i = 0; i < len; i++)
-		if (p[i] != 0)
-			return (false);
-	return (true);
-}
-
 int
 tzfsd_connect(void)
 {
@@ -165,9 +153,7 @@ tzfsd_request(int chan, const struct tzfsd_req *req, struct tzfsd_grant *out)
 	rq.lifetime = req->lifetime;
 	rq.owner_uid = req->owner_uid;
 	rq.owner_gid = req->owner_gid;
-	if (strlcpy(rq.flavor, req->flavor, sizeof(rq.flavor)) >=
-	    sizeof(rq.flavor) ||
-	    strlcpy(rq.dataset, req->dataset, sizeof(rq.dataset)) >=
+	if (strlcpy(rq.dataset, req->dataset, sizeof(rq.dataset)) >=
 	    sizeof(rq.dataset)) {
 		errno = ENAMETOOLONG;
 		return (-1);
@@ -233,54 +219,6 @@ tzfsd_release(int chan, const char *dataset)
 		return (-1);
 	}
 	return (0);
-}
-
-int
-tzfsd_list_flavors(int chan, struct tzfsd_flavor_info *list, size_t max)
-{
-	struct tzfsd_request rq;
-	struct tzfsd_flavor_list rl;
-	uint32_t i, n;
-
-	if (list == NULL && max != 0) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(&rq, 0, sizeof(rq));
-	rq.op = TZFSD_OP_LIST_FLAVORS;
-	if (send_request(chan, &rq) == -1)
-		return (-1);
-	if (recv_reply(chan, &rl, sizeof(rl), NULL) == -1)
-		return (-1);
-	if (rl.status < 0 || rl.status > ELAST ||
-	    rl.count > TZFSD_MAX_FLAVORS ||
-	    (rl.status != 0 && rl.count != 0)) {
-		errno = EPROTO;
-		return (-1);
-	}
-	if (rl.status != 0) {
-		errno = rl.status;
-		return (-1);
-	}
-	n = rl.count;
-	for (i = 0; i < n; i++) {
-		if (memchr(rl.flavors[i].name, '\0',
-		    sizeof(rl.flavors[i].name)) == NULL ||
-		    rl.flavors[i].is_default > 1 ||
-		    !all_zero(rl.flavors[i]._reserved,
-		    sizeof(rl.flavors[i]._reserved))) {
-			errno = EPROTO;
-			return (-1);
-		}
-	}
-	if ((size_t)n > max)
-		n = (uint32_t)max;
-	for (i = 0; i < n; i++) {
-		(void)strlcpy(list[i].name, rl.flavors[i].name,
-		    sizeof(list[i].name));
-		list[i].is_default = rl.flavors[i].is_default ? 1 : 0;
-	}
-	return ((int)n);
 }
 
 int

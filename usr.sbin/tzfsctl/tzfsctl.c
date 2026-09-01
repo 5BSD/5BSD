@@ -5,9 +5,8 @@
  *
  * tzfsctl(8) — operator/inspector CLI for the tzfsd(8) storage daemon.
  *
- *   tzfsctl list-flavors
  *   tzfsctl ping
- *   tzfsctl request [-f flavor] [-l persistent|cache|boot|lease] [-r rights] [-m] name
+ *   tzfsctl request [-l persistent|cache|boot|lease] [-r rights] [-m] name
  *   tzfsctl release name
  *
  * request drives the same path a service does: it asks tzfsd for a handle,
@@ -67,38 +66,18 @@ parse_rights(const char *s)
 }
 
 static int
-cmd_list(int chan)
-{
-	struct tzfsd_flavor_info fl[TZFSD_MAX_FLAVORS];
-	int n, i;
-
-	n = tzfsd_list_flavors(chan, fl, nitems(fl));
-	if (n == -1)
-		err(1, "list-flavors");
-	if (n == 0) {
-		printf("(no flavors available)\n");
-		return (0);
-	}
-	for (i = 0; i < n; i++)
-		printf("%s%s\n", fl[i].name,
-		    fl[i].is_default ? "  (default)" : "");
-	return (0);
-}
-
-static int
 cmd_request(int chan, int argc, char **argv)
 {
 	struct tzfsd_req req;
 	struct tzfsd_grant grant;
-	const char *flavor = "", *rights = "mount,props_read";
+	const char *rights = "mount,props_read";
 	uint8_t lifetime = TZFSD_LEASE;
 	bool domount = false;
 	int ch;
 
 	optind = 1;
-	while ((ch = getopt(argc, argv, "f:l:r:m")) != -1) {
+	while ((ch = getopt(argc, argv, "l:r:m")) != -1) {
 		switch (ch) {
-		case 'f': flavor = optarg; break;
 		case 'r': rights = optarg; break;
 		case 'm': domount = true; break;
 		case 'l':
@@ -114,7 +93,7 @@ cmd_request(int chan, int argc, char **argv)
 				errx(1, "lifetime must be persistent|cache|boot|lease");
 			break;
 		default:
-			errx(1, "usage: tzfsctl request [-f flavor] "
+			errx(1, "usage: tzfsctl request "
 			    "[-l lifetime] [-r rights] [-m] name");
 		}
 	}
@@ -122,7 +101,6 @@ cmd_request(int chan, int argc, char **argv)
 		errx(1, "request: missing name");
 
 	memset(&req, 0, sizeof(req));
-	(void)strlcpy(req.flavor, flavor, sizeof(req.flavor));
 	(void)strlcpy(req.dataset, argv[optind], sizeof(req.dataset));
 	req.rights = parse_rights(rights);
 	req.lifetime = lifetime;
@@ -131,8 +109,7 @@ cmd_request(int chan, int argc, char **argv)
 
 	if (tzfsd_request(chan, &req, &grant) == -1)
 		err(1, "request %s", argv[optind]);
-	printf("granted %s (flavor=%s, lifetime=%u)\n", grant.dataset,
-	    flavor[0] ? flavor : "bare", lifetime);
+	printf("granted %s (lifetime=%u)\n", grant.dataset, lifetime);
 
 	if (domount) {
 		int dir = tzfsd_mount_dir(grant.handle_fd, 0);
@@ -165,7 +142,7 @@ main(int argc, char **argv)
 	int chan, rc;
 
 	if (argc < 2) {
-		fprintf(stderr, "usage: tzfsctl <list-flavors|ping|request|"
+		fprintf(stderr, "usage: tzfsctl <ping|request|"
 		    "release> [args]\n");
 		return (1);
 	}
@@ -173,9 +150,7 @@ main(int argc, char **argv)
 	if (chan == -1)
 		err(1, "connect %s", TZFSD_SOCK_PATH);
 
-	if (strcmp(argv[1], "list-flavors") == 0)
-		rc = cmd_list(chan);
-	else if (strcmp(argv[1], "ping") == 0) {
+	if (strcmp(argv[1], "ping") == 0) {
 		rc = tzfsd_ping(chan);
 		printf("%s\n", rc == 0 ? "ok" : "no response");
 	} else if (strcmp(argv[1], "request") == 0)

@@ -20,13 +20,9 @@ Unlike stock FreeBSD, 5BSD ships with the Linuxulator enabled at boot:
 5BSD does not chase every Linux distribution. The Linuxulator is developed
 and tested against the RHEL/Rocky userland — glibc and the RHEL ABI surface —
 because Rocky mirrors the library/ABI set that regulated and enterprise
-environments actually certify against (`docs/tzfsd-design.md`). This choice
-is load-bearing across the system: the TrustedZFS storage broker's default
-`linux` OS flavor is a **Rocky Linux 9** rootfs, packaged by
-`usr.sbin/tzfs-flavors` (`tzfs-flavor-linux.sh` fetches the official Rocky
-minimal container base and produces `/usr/share/tzfs/rocky9.zfs.zst`), so a
-capability-holding service can ask tzfsd for "a Rocky root, ephemeral" and
-run RHEL-compatible software immediately.
+environments actually certify against. A **Rocky Linux 9** userland — an
+official Rocky minimal container base unpacked into a jail root — is the
+reference target: RHEL-compatible software runs against it unmodified.
 
 The kernel version the Linuxulator reports defaults to 5.15.0
 (`LINUX_VERSION_STR` from `LINUX_KVERSION`/`LINUX_KPATCHLEVEL`/`LINUX_KSUBLEVEL`
@@ -135,6 +131,6 @@ assembled by supervised services without ambient mount privilege.
   `compat.linux.default_stacksize`, `compat.linux.dummy_rlimits`,
   `compat.linux.ignore_ip_recverr`, `compat.linux.preserve_vstatus`,
   `compat.linux.map_sched_prio`, and `compat.linux.setid_allowed`.
-- **Rootfs:** the supported Linux userland is the Rocky 9 root provided by
-  the `tzfs-flavors` package (`tzfs-flavors(7)`); see the storage chapters
-  for how tzfsd clones it per service.
+- **Rootfs:** the supported Linux userland is a Rocky 9 root — an official
+  Rocky minimal container base unpacked into the jail's emulation root by the
+  operator.

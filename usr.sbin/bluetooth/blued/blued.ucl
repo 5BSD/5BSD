@@ -9,7 +9,6 @@ kmod_requires = ["vhid"];
 storage = [{
     name = "state";
     scope = "unit";
-    flavor = "native";
     lifetime = "persistent";
     rights = "mount";
 }];

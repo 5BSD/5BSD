@@ -185,7 +185,6 @@ cp "$obj/usr.sbin/filesystemcmpctl/tests/filesystemcmpctl_test_bin" \
 	"$obj/usr.sbin/filesystemcmpctl/tests/filesystemcmpctl_success_bin" \
 	"$payload/tests/"
 copy_test "$obj/tests/sys/tzfs/tzfsd_config_test"
-copy_test "$obj/tests/sys/tzfs/flavor_tools_test"
 
 # Bundle, bootstrap, service-manager, and control-plane qualification.
 for name in api_test storage_key_test; do
@@ -277,11 +276,9 @@ do
 	copy_test "$path"
 done
 
-# The flavor shell test references the configured source root.  Preserve that
-# contract in the guest by staging only the scripts it exercises.
-mkdir -p "$payload/source/usr.sbin/tzfsd" \
-	"$payload/source/usr.sbin/tzfs-flavors" \
-	"$payload/source/usr.sbin/localcrypto/capbundle" \
+# Several shell integration tests reference the configured source root.
+# Preserve that contract in the guest by staging only the files they exercise.
+mkdir -p "$payload/source/usr.sbin/localcrypto/capbundle" \
 	"$payload/source/usr.sbin/bsdnotify/capbundle" \
 	"$payload/source/usr.sbin/localfilesystem/capbundle" \
 	"$payload/source/usr.sbin/serviced" \
@@ -290,10 +287,6 @@ mkdir -p "$payload/source/usr.sbin/tzfsd" \
 	"$payload/obj/usr.sbin/bsdnotify" \
 	"$payload/obj/usr.sbin/localfilesystem" \
 	"$payload/obj/usr.sbin/servicectl/tests"
-cp "$src/usr.sbin/tzfsd/tzfs-mkflavor.sh" \
-	"$payload/source/usr.sbin/tzfsd/"
-cp "$src/usr.sbin/tzfs-flavors/tzfs-flavor-linux.sh" \
-	"$payload/source/usr.sbin/tzfs-flavors/"
 cp "$src/usr.sbin/localcrypto/Makefile" \
 	"$src/usr.sbin/localcrypto/localcrypto.c" \
 	"$payload/source/usr.sbin/localcrypto/"

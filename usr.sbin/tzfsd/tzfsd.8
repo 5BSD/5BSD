@@ -19,10 +19,8 @@ is the
 .Sy [TZFS]
 system daemon that owns the storage plane of the capability system.
 It holds the root-pool handle for the pool that backs
-.Pa /Capabilities ,
-auto-provisions the persistent, ephemeral, and template dataset roots, and
-maintains a curated set of storage
-.Em flavors .
+.Pa /Capabilities
+and auto-provisions the persistent and ephemeral dataset roots.
 On request it mints a rights-limited TrustedZFS handle
 .Pq see Xr trustedzfs 3
 and passes it back to the caller over
@@ -41,7 +39,7 @@ comes up in the PID 1 boot chain, after the pool is available and before
 hands out storage to services.
 .Pp
 All name-based setup
-.Pq configuration, opening the pool, provisioning, receiving baked templates
+.Pq configuration, opening the pool, provisioning
 happens at startup.
 .Nm
 then enters capability mode with
@@ -61,28 +59,6 @@ A missing file is not an error; built-in defaults stand.
 .It Fl f
 Run in the foreground and log to stderr as well as syslog.
 .El
-.Sh FLAVORS
-A flavor is a template dataset cloned per request (instant, copy-on-write).
-The out-of-the-box set is:
-.Bl -tag -width ".Sy freebsd" -offset indent
-.It Sy empty
-a bare dataset, built live.
-.It Sy native
-a 5BSD base userland.
-.It Sy freebsd
-a FreeBSD base rootfs.
-.It Sy linux
-a Rocky Linux 9 rootfs, offered as a directory and enabled by default.
-.El
-.Pp
-A flavor whose template cannot be made available
-.Pq not baked, not built, or disabled in configuration
-is simply not offered, and a request for it fails with
-.Er ENOENT .
-The
-.Sy linux
-flavor is on by default but may be removed to slim a deployment; see
-.Xr tzfs.conf 5 .
 .Sh FILES
 .Bl -tag -width ".Pa /var/run/tzfsd.ready" -compact
 .It Pa /Capabilities/Config/tzfsd.ucl

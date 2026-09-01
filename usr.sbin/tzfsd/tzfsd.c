@@ -5,9 +5,9 @@
  *
  * tzfsd(8) — the [TZFS] storage daemon.
  *
- * Owns the storage plane: the root-pool handle, the /Capabilities layout, and
- * the curated flavor templates.  It mints rights-limited TrustedZFS handles on
- * request and passes them back over SCM_RIGHTS.  All name-based setup happens
+ * Owns the storage plane: the root-pool handle and the /Capabilities layout.
+ * It mints rights-limited TrustedZFS handles on request and passes them back
+ * over SCM_RIGHTS.  All name-based setup happens
  * up front; the daemon then cap_enter()s and serves every request from its
  * retained capability handles.
  */
@@ -161,18 +161,13 @@ main(int argc, char **argv)
 	reserve_stdio();
 
 	memset(&st, 0, sizeof(st));
-	st.persistent_fd = st.ephemeral_fd = st.templates_fd = -1;
+	st.persistent_fd = st.ephemeral_fd = -1;
 	st.boot_fd = st.lease_fd = -1;
 	st.listen_fd = -1;
 
 	tzfsd_config_defaults(&st.cfg);
 	if (tzfsd_config_load(&st.cfg, conf) == -1) {
 		syslog(LOG_ERR, "config %s: %m", conf);
-		return (1);
-	}
-	/* Flavor-catalog drop-ins (freebsd, linux, ...) layer on last. */
-	if (tzfsd_config_load_confd(&st.cfg, TZFSD_DEFAULT_CONFD) == -1) {
-		syslog(LOG_ERR, "config directory %s: %m", TZFSD_DEFAULT_CONFD);
 		return (1);
 	}
 
@@ -182,7 +177,6 @@ main(int argc, char **argv)
 	if (tzfsd_layout_provision(&st) == -1)
 		errx(1, "layout provisioning failed (is pool %s imported?)",
 		    st.cfg.pool);
-	(void)tzfsd_flavors_prepare(&st);
 
 	st.listen_fd = open_listener();
 	if (st.listen_fd == -1)

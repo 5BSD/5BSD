@@ -3,9 +3,8 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * tzfsd(8) layout provisioning and flavor preparation.  Everything here runs
- * before cap_enter(): it opens handles by name (tzfs_open needs /dev/zfs) and
- * may spawn a decompressor to receive a baked template send-stream.  The
+ * tzfsd(8) layout provisioning.  Everything here runs before cap_enter(): it
+ * opens handles by name (tzfs_open needs /dev/zfs) and imports the pool.  The
  * retained parent handles are what the request loop uses in capability mode.
  */
 
@@ -35,8 +34,6 @@ extern char **environ;
 
 #define	RETAIN_RIGHTS	ZH_ALL_RIGHTS
 #define	ZFS_DEV_PATH	"/dev/zfs"
-#define	ZSTD_PATH	"/usr/bin/zstd"
-#define	TZFSD_NATIVE_SNAP	"tzfs-native"	/* BE snapshot cloned for native */
 
 /* Run a command to completion; return its exit status, or -1 to spawn. */
 static int
@@ -401,7 +398,7 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 		return (-1);
 	}
 
-	/* base/persistent/ephemeral/templates all hang under the pool root. */
+	/* base/persistent/ephemeral all hang under the pool root. */
 	rel = rel_under(cfg->pool, cfg->persistent);
 	if (rel == NULL ||
 	    (st->persistent_fd = tzfsd_ensure_path(root_fd, rel, RETAIN_RIGHTS)) ==
@@ -418,261 +415,13 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 		(void)close(root_fd);
 		return (-1);
 	}
-	rel = rel_under(cfg->pool, cfg->templates);
-	if (rel == NULL ||
-	    (st->templates_fd = tzfsd_ensure_path(root_fd, rel, RETAIN_RIGHTS)) ==
-	    -1) {
-		syslog(LOG_ERR, "provision %s: %m", cfg->templates);
-		(void)close(root_fd);
-		return (-1);
-	}
 	(void)close(root_fd);
 	if (reconcile_boot_generations(st) == -1) {
 		syslog(LOG_ERR, "provision current boot storage: %m");
 		return (-1);
 	}
 
-	syslog(LOG_INFO, "provisioned %s {persistent,ephemeral,.templates}",
+	syslog(LOG_INFO, "provisioned %s {persistent,ephemeral}",
 	    cfg->base);
-	return (0);
-}
-
-/* Create template@ready, tolerating an existing snapshot. */
-static int
-ensure_ready_snap(int tmpl_fd)
-{
-
-	if (tzfs_snapshot(tmpl_fd, TZFSD_TEMPLATE_SNAP) == -1 &&
-	    errno != EEXIST)
-		return (-1);
-	return (0);
-}
-
-/*
- * Receive a baked send-stream into templates/<name>.  The artifact is
- * zstd-compressed; decompress it through a spawned `zstd -dc` whose stdout is
- * the recv input.  Returns 0 on success, -1 otherwise.
- */
-static int
-recv_baked(int templates_fd, struct tzfsd_flavor_def *f)
-{
-	posix_spawn_file_actions_t fa;
-	struct stat sb;
-	char *argv[4];
-	pid_t pid, waited;
-	bool fa_initialized;
-	int error, pipefd[2], srcfd, rc, status;
-
-	srcfd = open(f->source, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-	if (srcfd == -1)
-		return (-1);
-	if (fstat(srcfd, &sb) == -1) {
-		error = errno;
-		(void)close(srcfd);
-		errno = error;
-		return (-1);
-	}
-	if (!S_ISREG(sb.st_mode) || sb.st_size == 0 || sb.st_uid != 0 ||
-	    (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
-		(void)close(srcfd);
-		errno = EPERM;
-		return (-1);
-	}
-	if (pipe2(pipefd, O_CLOEXEC) == -1) {
-		(void)close(srcfd);
-		return (-1);
-	}
-
-	fa_initialized = false;
-	rc = posix_spawn_file_actions_init(&fa);
-	if (rc == 0)
-		fa_initialized = true;
-	if (rc == 0)
-		rc = posix_spawn_file_actions_adddup2(&fa, srcfd, STDIN_FILENO);
-	if (rc == 0)
-		rc = posix_spawn_file_actions_adddup2(&fa, pipefd[1], STDOUT_FILENO);
-	argv[0] = __DECONST(char *, ZSTD_PATH);
-	argv[1] = __DECONST(char *, "-dc");
-	argv[2] = NULL;
-	if (rc == 0)
-		rc = posix_spawn(&pid, ZSTD_PATH, &fa, NULL, argv, environ);
-	if (fa_initialized)
-		(void)posix_spawn_file_actions_destroy(&fa);
-	(void)close(srcfd);
-	(void)close(pipefd[1]);
-	if (rc != 0) {
-		(void)close(pipefd[0]);
-		errno = rc;
-		return (-1);
-	}
-
-	/*
-	 * The recv target is a snapshot name: a full send stream creates the
-	 * dataset and its @ready snapshot together (ZFD_RECV rejects a bare
-	 * dataset name).  mkflavor sends @ready, so receive templates/<flavor>
-	 * @ready.
-	 */
-	{
-		char target[TZFSD_FLAVOR_MAX + sizeof(TZFSD_TEMPLATE_SNAP) + 1];
-
-		(void)snprintf(target, sizeof(target), "%s@%s", f->name,
-		    TZFSD_TEMPLATE_SNAP);
-		rc = tzfs_recv(templates_fd, target, pipefd[0], false);
-	}
-	if (rc == -1)
-		syslog(LOG_ERR, "recv %s from %s: %m", f->name, f->source);
-	(void)close(pipefd[0]);
-	do {
-		waited = waitpid(pid, &status, 0);
-	} while (waited == -1 && errno == EINTR);
-	if (waited == -1) {
-		if (rc == 0)
-			rc = -1;
-	} else if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-		if (rc == 0)
-			errno = EIO;
-		rc = -1;
-	}
-	if (rc == -1)
-		return (-1);
-	return (0);
-}
-
-/*
- * Build the "native" template as a copy-on-write clone of the running boot
- * environment (the dataset mounted at "/").  This costs essentially no image
- * space: the template shares blocks with the live root until a capability
- * cloned from it diverges, so native ships "for free" rather than as a baked
- * second copy of the system.  The pinned BE snapshot is created once, on the
- * first start that materializes the template; later starts take the "already
- * present" path and never re-enter here.  Returns 0 on success, -1 otherwise.
- */
-static int
-build_native_live(struct tzfsd_state *st, struct tzfsd_flavor_def *f)
-{
-	struct tzfsd_config *cfg = &st->cfg;
-	struct statfs sfs;
-	const char *be, *rel;
-	size_t plen;
-	int zpd, root_fd, be_fd, tmpl_fd, ok = -1;
-
-	if (statfs("/", &sfs) != 0)
-		return (-1);
-	be = sfs.f_mntfromname;		/* e.g. "zroot" or "zroot/ROOT/default" */
-
-	/* The boot environment must live in our configured pool. */
-	plen = strlen(cfg->pool);
-	if (strncmp(be, cfg->pool, plen) != 0 ||
-	    (be[plen] != '\0' && be[plen] != '/'))
-		return (-1);
-	rel = (be[plen] == '/') ? be + plen + 1 : "";
-
-	zpd = tzfs_pool_open(cfg->pool, RETAIN_RIGHTS);
-	if (zpd == -1)
-		return (-1);
-	root_fd = tzfs_pool_root_open(zpd, RETAIN_RIGHTS, ZHF_SUBTREE);
-	(void)close(zpd);
-	if (root_fd == -1)
-		return (-1);
-
-	if (rel[0] == '\0') {
-		be_fd = root_fd;
-	} else {
-		be_fd = tzfs_openat(root_fd, rel, RETAIN_RIGHTS, 0);
-		if (be_fd == -1) {
-			(void)close(root_fd);
-			return (-1);
-		}
-	}
-
-	/* Snapshot the live BE (idempotent) and clone it into the template. */
-	if (tzfs_snapshot(be_fd, TZFSD_NATIVE_SNAP) == -1 && errno != EEXIST)
-		goto out;
-	tmpl_fd = tzfs_clone(st->templates_fd, be_fd, TZFSD_NATIVE_SNAP,
-	    f->name);
-	if (tmpl_fd == -1) {
-		syslog(LOG_ERR, "native: clone %s@%s: %m", be,
-		    TZFSD_NATIVE_SNAP);
-		goto out;
-	}
-	if (ensure_ready_snap(tmpl_fd) == 0)
-		ok = 0;
-	(void)close(tmpl_fd);
-out:
-	if (be_fd != root_fd)
-		(void)close(be_fd);
-	(void)close(root_fd);
-	return (ok);
-}
-
-/*
- * Make each enabled flavor's template available, per its build mode and the
- * precedence in docs/tzfsd-design.md §3.1.  Sets f->available.  A flavor that
- * cannot be made ready is simply left unavailable (and thus not offered).
- */
-int
-tzfsd_flavors_prepare(struct tzfsd_state *st)
-{
-	struct tzfsd_config *cfg = &st->cfg;
-	unsigned i, navail = 0;
-
-	for (i = 0; i < cfg->nflavors; i++) {
-		struct tzfsd_flavor_def *f = &cfg->flavors[i];
-		int tmpl_fd;
-
-		f->available = false;
-		if (!f->enabled)
-			continue;
-
-		/* Already present? Ensure its @ready snapshot and offer it. */
-		tmpl_fd = tzfs_openat(st->templates_fd, f->name,
-		    ZH_SNAPSHOT | ZH_PROPS_READ, 0);
-		if (tmpl_fd != -1) {
-			if (ensure_ready_snap(tmpl_fd) == 0)
-				f->available = true;
-			(void)close(tmpl_fd);
-			if (f->available)
-				navail++;
-			continue;
-		}
-
-		/* Not present: materialize by build mode. */
-		if (f->build == TZFSD_BUILD_LIVE &&
-		    strcmp(f->name, "empty") == 0) {
-			tmpl_fd = tzfs_create(st->templates_fd, f->name, 0);
-			if (tmpl_fd != -1) {
-				if (ensure_ready_snap(tmpl_fd) == 0)
-					f->available = true;
-				(void)close(tmpl_fd);
-			}
-		} else if (f->build == TZFSD_BUILD_LIVE) {
-			/* native: clone the running boot environment. */
-			if (build_native_live(st, f) == 0)
-				f->available = true;
-		} else if (f->build == TZFSD_BUILD_BAKED) {
-			if (recv_baked(st->templates_fd, f) == 0) {
-				tmpl_fd = tzfs_openat(st->templates_fd,
-				    f->name, ZH_SNAPSHOT | ZH_PROPS_READ, 0);
-				if (tmpl_fd != -1) {
-					if (ensure_ready_snap(tmpl_fd) == 0)
-						f->available = true;
-					(void)close(tmpl_fd);
-				}
-			}
-		}
-		/*
-		 * SOURCE fetch (fetch/unpack from a URL) is not yet
-		 * implemented; such flavors are offered only if their template
-		 * was pre-seeded (handled by the "already present" branch
-		 * above).  empty and native are built live; freebsd/linux are
-		 * baked.
-		 */
-		if (f->available)
-			navail++;
-		else
-			syslog(LOG_NOTICE, "flavor %s unavailable (no template)",
-			    f->name);
-	}
-	syslog(LOG_INFO, "%u/%u flavors available", navail, cfg->nflavors);
 	return (0);
 }

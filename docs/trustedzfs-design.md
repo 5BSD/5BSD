@@ -394,8 +394,7 @@ trajectory as the rest of the Authority work.
 - Ephemeral lifecycle (create-on-start, destroy-on-stop) built and
   committed; clean-VM validated 2026-08-14.
 - **Remaining is now its own effort:** the `tzfsd` daemon takes storage
-  ownership from authorityd and adds the flavor/image system (native /
-  freebsd / linux=Rocky / empty). ZFS is a required subsystem for 5BSD
+  ownership from authorityd. ZFS is a required subsystem for 5BSD
   (UFS still bootable). See **`docs/tzfsd-design.md`** — that supersedes
   the "optional broker" sketch below.
 
@@ -414,14 +413,12 @@ grant broker, `tzfsd`).  One tag each.
 
 **Manifest stanza (UCL, matches the existing `capabilities {}` style).**
 A service declares storage the way it declares `files`/`network`.  The
-addressing is a logical `name` under tzfsd's `/Capabilities` plus an
-optional `flavor` template (not an absolute pool path — tzfsd owns the
-layout):
+addressing is a logical `name` under tzfsd's `/Capabilities` (not an
+absolute pool path — tzfsd owns the layout):
 ```ucl
 capabilities {
     storage = [{
         name     = "mydata";
-        flavor   = "linux";        # "" = bare dataset; else clone that flavor
         rights   = ["mount", "snapshot", "props_read"];
         lifetime = "persistent";   # or "ephemeral"
     }];

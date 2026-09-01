@@ -348,11 +348,11 @@ storage_contract_body()
 	for lifetime in persistent cache boot lease; do
 		dir=$(make_bundle "shared-$lifetime")
 		printf '%s\n' \
-		    "shared { storage = [{ name = \"data\"; flavor = \"native\"; lifetime = \"$lifetime\"; }]; }" >> "$dir/Bundle.ucl"
+		    "shared { storage = [{ name = \"data\"; lifetime = \"$lifetime\"; }]; }" >> "$dir/Bundle.ucl"
 		printf '%s\n' 'activation { boot = true; }' \
 		    'storage = [{ name = "data"; scope = "shared"; rights = "mount"; }];' > \
 		    "$dir/Units/worker.unit/Unit.ucl"
-		atf_check -s exit:0 -o match:"flavor=native.*lifetime=$lifetime scope=shared dataset=s-[0-9a-f]{48}" \
+		atf_check -s exit:0 -o match:"lifetime=$lifetime scope=shared dataset=s-[0-9a-f]{48}" \
 		    servicetcl verify "$dir"
 	done
 }
@@ -374,7 +374,6 @@ storage_negative_matrix_body()
 	    'storage = [{ name = "data"; scope = "unit"; rights = []; }];' \
 	    'storage = [{ name = "data"; scope = "unit"; rights = "mount"; lifetime = "ephemeral"; }];' \
 	    'storage = [{ name = "data"; scope = "shared"; rights = "mount"; lifetime = "lease"; }];' \
-	    'storage = [{ name = "data"; scope = "shared"; rights = "mount"; flavor = "native"; }];' \
 	    'storage = [{ name = "data"; scope = "shared"; rights = "mount"; }];' \
 	    'storage = [{ name = "data"; scope = "unit"; rights = "mount"; }, { name = "data"; scope = "unit"; rights = "mount"; }];'; do
 		i=$((i + 1))

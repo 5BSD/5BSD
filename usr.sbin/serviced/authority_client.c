@@ -400,9 +400,7 @@ authority_mint_storage(int channel_fd, const struct ort_storage_claim *sc,
 	req.owner_uid = owner_uid;
 	req.owner_gid = owner_gid;
 	if (strlcpy(req.dataset, sc->dataset, sizeof(req.dataset)) >=
-	    sizeof(req.dataset) ||
-	    strlcpy(req.flavor, sc->flavor, sizeof(req.flavor)) >=
-	    sizeof(req.flavor)) {
+	    sizeof(req.dataset)) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}

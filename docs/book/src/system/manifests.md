@@ -64,7 +64,6 @@ units = ["smtpd", "indexer"];
 shared {
     storage = [{
         name = "maildata";
-        flavor = "native";
         lifetime = "persistent";
     }];
 }
@@ -116,7 +115,6 @@ storage = [
     {
         name = "queue";
         scope = "unit";
-        flavor = "native";
         lifetime = "lease";
         rights = ["mount", "props_read", "props_write"];
     }
@@ -224,10 +222,10 @@ anchors the mount), so the service manager never mounts on its behalf.
 Storage used to back a `filesystem` descriptor is private to that descriptor
 factory and is not exposed to the client.
 
-- `scope="unit"` creates storage private to the bundle/unit/name tuple. Flavor
-  and lifetime may be declared here.
+- `scope="unit"` creates storage private to the bundle/unit/name tuple. The
+  lifetime may be declared here.
 - `scope="shared"` references a declaration in `Bundle.ucl`. The unit supplies
-  only its own rights; it cannot override shared flavor or lifetime.
+  only its own rights; it cannot override the shared lifetime.
 - `persistent` survives process, manager, and machine restarts.
 - `cache` also survives restarts but is explicitly reclaimable cache; it must
   never be the only copy of data.

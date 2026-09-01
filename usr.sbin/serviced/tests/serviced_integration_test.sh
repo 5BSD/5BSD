@@ -650,7 +650,7 @@ mount_storage_is_a_directory_body()
 	start_stack
 	make_svc_bin system storage-directory \
 	    "storage = [{ name = \"${logical}\"; scope = \"unit\";
-    flavor = \"native\"; lifetime = \"lease\"; rights = \"mount\"; }];
+    lifetime = \"lease\"; rights = \"mount\"; }];
 arguments = [\"storage-directory\", \"${role}\", \"storage-directory.out\"];" \
 	    "$capd_service_fixture"
 	atf_check -s exit:0 -o ignore servicectl reload

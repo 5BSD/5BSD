@@ -122,5 +122,5 @@ end-to-end). mac_capability propagation is covered in
 `/usr/src/tests/sys/mac_capability/mac_capability_test.c`.
 The descriptor-wide disposable-VM harness in
 `/usr/src/tools/test/capability-qemu/` also exercises `ONCE` in the real
-kernel together with EnvFD, Crypto, BSDNotify, filesystem flavors, and
+kernel together with EnvFD, Crypto, BSDNotify, and
 TrustedZFS.

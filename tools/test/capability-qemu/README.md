@@ -2,7 +2,7 @@
 
 `run.sh` packages the Crypto descriptor, EnvFD, libnotify/BsdNotify,
 filesystem and network components, service-manager/control-plane, bundle
-parser, typed bootstrap, provider, flavor, CLI, and TrustedZFS regression
+parser, typed bootstrap, provider, CLI, and TrustedZFS regression
 programs with matching managers, private libraries, kernel, and modules. It
 boots the supplied raw amd64 image with QEMU's `-snapshot` option, so kernel,
 library, and test writes disappear when QEMU exits.

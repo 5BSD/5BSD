@@ -112,7 +112,6 @@ SUBDIR=	adduser \
 	tcpsso \
 	traceroute \
 	trim \
-	tzfs-flavors \
 	tzfsctl \
 	tzfsd \
 	tzsetup \

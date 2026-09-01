@@ -126,6 +126,6 @@ fork rejection, disconnect/reconnect, subscription restoration, RESET
 semantics, and non-replay of ambiguous operations. Bundle tests verify the
 Capsicum, coalition, and linear-transfer confinement contract.
 
-BSDNotify, `libnotify`, `notifyctl`, Crypto, EnvFD, flavors, and TrustedZFS
+BSDNotify, `libnotify`, `notifyctl`, Crypto, EnvFD, and TrustedZFS
 are also exercised together under a matching WITNESS/INVARIANTS kernel by the
 disposable amd64 harness in `tools/test/capability-qemu/`.

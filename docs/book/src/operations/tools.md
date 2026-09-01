@@ -47,13 +47,12 @@ Source: `usr.sbin/tzfsctl`. A demonstration/health tool for
 `tzfsd(8)`, not a way to hold storage open.
 
 ```
-tzfsctl list-flavors
 tzfsctl ping
-tzfsctl request [-f flavor] [-l persistent|ephemeral] [-r rights] [-m] name
+tzfsctl request [-l persistent|ephemeral] [-r rights] [-m] name
 tzfsctl release name
 ```
 
-`request` prints `granted <dataset> (flavor=..., ephemeral|persistent)`;
+`request` prints `granted <dataset> (ephemeral|persistent)`;
 `-m` additionally mounts and reports the dirfd. Rights names:
 `props_read, props_write, snapshot, snap_destroy, clone_src, create,
 destroy, mount`, plus `all`/`*`; the default is `mount,props_read`.

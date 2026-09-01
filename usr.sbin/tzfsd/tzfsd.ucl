@@ -7,18 +7,7 @@
 #     base        = "zroot/Capabilities";
 #     persistent  = "zroot/Capabilities/persistent";
 #     ephemeral   = "zroot/Capabilities/ephemeral";
-#     templates   = "zroot/Capabilities/.templates";
 #     mountpoint  = "/Capabilities";
 # }
 
 # ephemeral { sync = "disabled"; }   # sync= for ephemeral datasets
-
-# The broker's built-in flavors are just "empty" (a blank dataset) and
-# "native" (a copy-on-write clone of the running system).  OS-image flavors
-# such as "linux" (Rocky) and "freebsd" are contributed by the separately
-# packaged flavor catalog (tzfs-flavors(7)), which drops its own fragment under
-# /Capabilities/Config/tzfsd.d/.  You can still override any flavor here, e.g.:
-#
-# flavors {
-#     linux { enabled = false; }      # drop the Linux userland from this host
-# }

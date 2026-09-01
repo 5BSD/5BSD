@@ -5,7 +5,7 @@
  *
  * libtzfsd — client library for the tzfsd(8) storage daemon.
  *
- * A consumer asks tzfsd for storage of a given flavor and lifetime and
+ * A consumer asks tzfsd for storage of a given lifetime and
  * receives a rights-limited TrustedZFS dataset handle, which it then drives
  * with the libtrustedzfs verb API (tzfs_*).  This library only *obtains* the
  * handle; it deliberately does not duplicate the verb surface.
@@ -23,13 +23,10 @@
 #include "tzfsd_proto.h"
 
 /*
- * Storage request.  flavor[0] == '\0' asks for a bare dataset claim (no
- * template); a named flavor ("native", "freebsd", "linux", "empty") clones
- * that flavor's template.  rights is the ZH_* mask to grant; lifetime is
- * one of the TZFSD_* lifecycle constants.
+ * Storage request for a bare dataset claim.  rights is the ZH_* mask to grant;
+ * lifetime is one of the TZFSD_* lifecycle constants.
  */
 struct tzfsd_req {
-	char		flavor[TZFSD_FLAVOR_MAX];
 	char		dataset[TZFSD_NAME_MAX];
 	uint64_t	rights;
 	uint32_t	flags;			/* ZHF_* (0 for the common case) */
@@ -41,11 +38,6 @@ struct tzfsd_req {
 struct tzfsd_grant {
 	int		handle_fd;		/* the granted zfd (caller closes) */
 	char		dataset[TZFSD_DATASET_MAX];	/* resolved name, for audit */
-};
-
-struct tzfsd_flavor_info {
-	char		name[TZFSD_FLAVOR_MAX];
-	int		is_default;
 };
 
 __BEGIN_DECLS
@@ -70,13 +62,6 @@ int	tzfsd_request(int chan, const struct tzfsd_req *req,
  * Idempotent: a missing claim is success.  Returns 0 or -1/errno.
  */
 int	tzfsd_release(int chan, const char *dataset);
-
-/*
- * Enumerate the flavors tzfsd currently offers.  Writes up to max entries into
- * list[] and returns the count, or -1/errno.  The list is exactly the set that
- * tzfsd_request will honor (unavailable/disabled flavors are omitted).
- */
-int	tzfsd_list_flavors(int chan, struct tzfsd_flavor_info *list, size_t max);
 
 /* Liveness check.  Returns 0 if tzfsd answered, -1/errno otherwise. */
 int	tzfsd_ping(int chan);

@@ -46,14 +46,6 @@ Notable 5BSD packages:
   reference the new name. `packages/waspnest-tests` is the sole owner of the
   WASPNest VMM, AF_VSOCK, VirtIO, live-guest, checkpoint, and nested-VM test
   payloads; its `-dbg` subpackage carries their symbols.
-- **tzfs-flavors** (`PACKAGE=tzfs-flavors` in
-  `usr.sbin/tzfs-flavors/Makefile`): the TrustedZFS
-  OS-image flavor catalog, deliberately decoupled from the `tzfsd`
-  storage broker. It ships `flavors.ucl` as a drop-in for
-  `/Capabilities/Config/tzfsd.d/` declaring linux (Rocky) and freebsd flavors,
-  plus `tzfs-flavor-linux.sh` and `tzfs-flavor-freebsd.sh` producers and a
-  `tzfs-flavors(7)` manual page. It can be installed, versioned, or
-  removed independently of the broker.
 - **Observability tools**: `bsdinstruments`, `hwtlm`, and `bsdtrace` are
   individually packaged (see the ObservableBSD chapter); commit
   `bb9f5be0208` wired them into release package builds.

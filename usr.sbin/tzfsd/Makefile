@@ -6,18 +6,10 @@ MAN=		tzfsd.8 tzfs.conf.5
 
 SRCS=		tzfsd.c config.c layout.c nvwalk.c request.c
 
-# Flavor artifact producer (admin/build tool).  Pinned to /usr/sbin: BINDIR is
-# repointed at the capability bundle below, and this admin script must not land
-# inside the bundle.
-SCRIPTS=	tzfs-mkflavor.sh
-SCRIPTSNAME_tzfs-mkflavor.sh=	tzfs-mkflavor
-SCRIPTSDIR=	/usr/sbin
-
 # Default configuration under /Capabilities/Config.
 CONFS=		tzfsd.ucl
 CONFSDIR=	/Capabilities/Config
 
-# Directory that holds baked flavor send-stream artifacts.
 DIRS+=		TZFSSHARE
 TZFSSHARE=	/usr/share/tzfs
 

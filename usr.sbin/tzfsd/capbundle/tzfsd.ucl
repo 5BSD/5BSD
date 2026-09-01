@@ -1,5 +1,5 @@
 # serviced unit for the storage substrate (tzfsd), the [TZFS] broker that owns
-# the pool, the /Capabilities layout and the flavor templates.  Launched and
+# the pool and the /Capabilities layout.  Launched and
 # supervised by serviced like every other daemon (docs/capability-authority-
 # model.md, P4a) — PID 1 no longer spawns it.
 #

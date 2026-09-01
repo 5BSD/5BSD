@@ -761,7 +761,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "jails", "vsock", "services", "system", "open" };
 	static const char *const openkeys[] = { "path", "name", "type",
 	    "rights", "optional" };
-	static const char *const storagekeys[] = { "name", "scope", "flavor",
+	static const char *const storagekeys[] = { "name", "scope",
 	    "rights", "lifetime" };
 	static const char *const service_names[] = { "mount", "node",
 	    "accounting", "identity" };
@@ -1481,7 +1481,7 @@ validate_storage:
 	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
 		uint64_t rights;
 		uint8_t lifetime;
-		const ucl_object_t *lt, *fl, *scope;
+		const ucl_object_t *lt, *scope;
 		const char *scope_name;
 
 		if (validate_keys(v, "storage entry", storagekeys,
@@ -1514,17 +1514,10 @@ validate_storage:
 			    "storage entry requires scope 'unit' or 'shared'");
 			return (-1);
 		}
-		fl = ucl_object_lookup(v, "flavor");
-		if (fl != NULL && (ucl_object_type(fl) != UCL_STRING ||
-		    ucl_object_tostring(fl)[0] == '\0' ||
-		    strlen(ucl_object_tostring(fl)) >= ORT_STORAGE_FLAVOR_MAX)) {
-			snprintf(errbuf, errlen, "invalid storage flavor");
-			return (-1);
-		}
 		lt = ucl_object_lookup(v, "lifetime");
-		if (strcmp(scope_name, "shared") == 0 && (fl != NULL || lt != NULL)) {
+		if (strcmp(scope_name, "shared") == 0 && lt != NULL) {
 			snprintf(errbuf, errlen,
-			    "shared storage references cannot override flavor or lifetime");
+			    "shared storage references cannot override lifetime");
 			return (-1);
 		}
 		for (unsigned i = 0; i < n; i++) {
@@ -1991,7 +1984,7 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	    "bundle_id", "version", "sequence", "author", "publisher",
 	    "units", "shared" };
 	static const char *const shared_keys[] = { "storage" };
-	static const char *const shared_storage_keys[] = { "name", "flavor",
+	static const char *const shared_storage_keys[] = { "name",
 	    "lifetime" };
 	struct ucl_parser *parser;
 	ucl_object_t *root;
@@ -2112,7 +2105,7 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 		while (storage != NULL &&
 		    (entry = ucl_object_iterate(storage, &it, true)) != NULL) {
 			struct capbundle_shared_storage *ss;
-			const ucl_object_t *name, *flavor, *lifetime;
+			const ucl_object_t *name, *lifetime;
 			unsigned j;
 
 			if (validate_keys(entry, "shared.storage entry",
@@ -2120,15 +2113,9 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 			    errlen) != 0)
 				goto invalid;
 			name = ucl_object_lookup(entry, "name");
-			flavor = ucl_object_lookup(entry, "flavor");
 			lifetime = ucl_object_lookup(entry, "lifetime");
 			if (name == NULL || ucl_object_type(name) != UCL_STRING ||
-			    !valid_unit_name(ucl_object_tostring(name)) ||
-			    (flavor != NULL &&
-			    (ucl_object_type(flavor) != UCL_STRING ||
-			    ucl_object_tostring(flavor)[0] == '\0' ||
-			    strlen(ucl_object_tostring(flavor)) >=
-			    ORT_STORAGE_FLAVOR_MAX))) {
+			    !valid_unit_name(ucl_object_tostring(name))) {
 				snprintf(errbuf, errlen,
 				    "invalid shared.storage entry");
 				goto invalid;
@@ -2153,9 +2140,6 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 					goto invalid;
 				}
 			strlcpy(ss->name, ucl_object_tostring(name), sizeof(ss->name));
-			if (flavor != NULL)
-				strlcpy(ss->flavor, ucl_object_tostring(flavor),
-				    sizeof(ss->flavor));
 			bundle->nshared_storage++;
 		}
 	}
@@ -3169,13 +3153,7 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 					return (-1);
 				}
 				sc->lifetime = bundle->shared_storage[i].lifetime;
-				strlcpy(sc->flavor, bundle->shared_storage[i].flavor,
-				    sizeof(sc->flavor));
 			} else {
-				sv = ucl_object_lookup(selem, "flavor");
-				if (sv != NULL)
-					strlcpy(sc->flavor, ucl_object_tostring(sv),
-					    sizeof(sc->flavor));
 				sv = ucl_object_lookup(selem, "lifetime");
 				if (sv != NULL)
 					(void)parse_storage_lifetime_string(

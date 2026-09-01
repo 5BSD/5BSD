@@ -25,9 +25,6 @@ enum scenario {
 	SC_REQUEST_BADNAME,
 	SC_REQUEST_TWOFDS,
 	SC_REQUEST_VALID,
-	SC_LIST_COUNT,
-	SC_LIST_NAME,
-	SC_LIST_RESERVED,
 };
 
 static void
@@ -62,17 +59,12 @@ send_packet(int fd, const void *buf, size_t len, const int *fds, size_t nfds)
 static void
 client(enum scenario sc, int fd)
 {
-	struct tzfsd_flavor_info list[2];
 	struct tzfsd_req req;
 	struct tzfsd_grant grant;
 	int rc, expected;
 
 	if (sc == SC_SHORT || sc == SC_PING_FD) {
 		rc = tzfsd_ping(fd);
-		expected = EPROTO;
-	} else if (sc == SC_LIST_COUNT || sc == SC_LIST_NAME ||
-	    sc == SC_LIST_RESERVED) {
-		rc = tzfsd_list_flavors(fd, list, nitems(list));
 		expected = EPROTO;
 	} else {
 		memset(&req, 0, sizeof(req));
@@ -98,7 +90,6 @@ run_scenario(enum scenario sc)
 {
 	struct tzfsd_request request;
 	struct tzfsd_reply reply;
-	struct tzfsd_flavor_list flavors;
 	pid_t pid;
 	int sv[2], pass[2], status;
 	ssize_t n;
@@ -117,7 +108,6 @@ run_scenario(enum scenario sc)
 	pass[1] = open("/dev/null", O_RDONLY);
 	ATF_REQUIRE(pass[0] >= 0 && pass[1] >= 0);
 	memset(&reply, 0, sizeof(reply));
-	memset(&flavors, 0, sizeof(flavors));
 	switch (sc) {
 	case SC_SHORT:
 		send_packet(sv[0], &reply, sizeof(reply) - 1, NULL, 0);
@@ -141,23 +131,6 @@ run_scenario(enum scenario sc)
 		strlcpy(reply.dataset, "pool/claim", sizeof(reply.dataset));
 		send_packet(sv[0], &reply, sizeof(reply), pass, 1);
 		break;
-	case SC_LIST_COUNT:
-		flavors.count = TZFSD_MAX_FLAVORS + 1;
-		send_packet(sv[0], &flavors, sizeof(flavors), NULL, 0);
-		break;
-	case SC_LIST_NAME:
-		flavors.count = 1;
-		memset(flavors.flavors[0].name, 'x',
-		    sizeof(flavors.flavors[0].name));
-		send_packet(sv[0], &flavors, sizeof(flavors), NULL, 0);
-		break;
-	case SC_LIST_RESERVED:
-		flavors.count = 1;
-		strlcpy(flavors.flavors[0].name, "empty",
-		    sizeof(flavors.flavors[0].name));
-		flavors.flavors[0]._reserved[0] = 1;
-		send_packet(sv[0], &flavors, sizeof(flavors), NULL, 0);
-		break;
 	}
 	ATF_REQUIRE_EQ(pid, waitpid(pid, &status, 0));
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
@@ -176,9 +149,6 @@ PROTO_TC(missing_fd, SC_REQUEST_NOFD, "successful grants require one descriptor"
 PROTO_TC(unterminated_dataset, SC_REQUEST_BADNAME, "grant names must terminate")
 PROTO_TC(multiple_fds, SC_REQUEST_TWOFDS, "grants reject descriptor smuggling")
 PROTO_TC(valid_cloexec_fd, SC_REQUEST_VALID, "received descriptors are CLOEXEC")
-PROTO_TC(excess_flavor_count, SC_LIST_COUNT, "flavor counts are bounded")
-PROTO_TC(unterminated_flavor, SC_LIST_NAME, "flavor names must terminate")
-PROTO_TC(nonzero_reserved, SC_LIST_RESERVED, "reserved reply bytes must be zero")
 
 ATF_TP_ADD_TCS(tp)
 {
@@ -188,8 +158,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, unterminated_dataset);
 	ATF_TP_ADD_TC(tp, multiple_fds);
 	ATF_TP_ADD_TC(tp, valid_cloexec_fd);
-	ATF_TP_ADD_TC(tp, excess_flavor_count);
-	ATF_TP_ADD_TC(tp, unterminated_flavor);
-	ATF_TP_ADD_TC(tp, nonzero_reserved);
 	return (atf_no_error());
 }

@@ -4,8 +4,6 @@ TESTSDIR=	${TESTSBASE}/sys/tzfs
 ATF_TESTS_C+=	tzfsd_test
 ATF_TESTS_C+=	libtzfsd_protocol_test
 ATF_TESTS_C+=	tzfsd_config_test
-ATF_TESTS_SH+=	flavor_tools_test
-ATF_TESTS_SH_SED_flavor_tools_test+=	-e 's,@SRCTOP@,${SRCTOP},g'
 
 CFLAGS.tzfsd_test.c+=	-I${SRCTOP}/lib/libtzfsd
 CFLAGS.tzfsd_test.c+=	-I${SRCTOP}/lib/liboraclert
