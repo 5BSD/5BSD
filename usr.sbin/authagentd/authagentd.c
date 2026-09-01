@@ -292,12 +292,16 @@ main(void)
 		err(1, "initialize");
 
 	/*
-	 * Adopt the admin policy descriptor delivered via capabilities.open.
-	 * It is optional: an absent policy leaves g_policy_fd == -1 and the
-	 * mint path falls back to the historical root-or-wheel default.  Done
-	 * before cap_enter so no path is ever consulted at request time.
+	 * Adopt the admin policy file from the filesystem daemon (tzfsd): ask it
+	 * to open /Capabilities/Config/principal-policy.ucl on our behalf and hand
+	 * back a read-only descriptor.  Nothing is declared in the manifest;
+	 * tzfsd's own per-label policy decides whether this service may read it.
+	 * It is optional: an unreadable or ungranted policy leaves g_policy_fd ==
+	 * -1 and the mint path falls back to the historical root-or-wheel default.
+	 * Done before cap_enter so no path is ever consulted at request time.
 	 */
-	if (service_capability_open(g_context, "principal-policy", "file",
+	if (service_open_isolated(g_context,
+	    "/Capabilities/Config/principal-policy.ucl", SERVICE_OPEN_READ, 0,
 	    &g_policy_fd) == -1)
 		g_policy_fd = -1;
 

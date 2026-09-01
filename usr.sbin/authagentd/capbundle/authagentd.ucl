@@ -10,14 +10,7 @@ user = "root";
 limits { nofile = 256; nproc = 8; core = 0; }
 umask = "0077";
 
-# The admin policy is delivered as a read-only descriptor (capabilities.open)
-# rather than opened by path, so the daemon reads it after cap_enter without any
-# filesystem authority.  Absent/unreadable falls back to the historical
-# root-or-wheel default inside capbundle_principal_is_admin_fd.
-capabilities {
-    open = [
-        { path = "/Capabilities/Config/principal-policy.ucl";
-          name = "principal-policy"; type = "file"; rights = "r";
-          optional = true; },
-    ]
-}
+# The admin policy is read from the filesystem daemon (tzfsd) at startup via
+# service_open_isolated(3) — nothing is declared here.  tzfsd's own per-label
+# policy grants this service read on /Capabilities/Config/principal-policy.ucl;
+# absent/ungranted falls back to the historical root-or-wheel default.

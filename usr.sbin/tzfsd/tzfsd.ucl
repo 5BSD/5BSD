@@ -11,3 +11,13 @@
 # }
 
 # ephemeral { sync = "disabled"; }   # sync= for ephemeral datasets
+
+# Isolated-open policy (TZFSD_OP_OPEN, default-deny).  Each entry grants one
+# service label read/write/exec/lookup on one exact absolute path, replacing the
+# old manifest capabilities.open declaration.  A service reaches these via
+# service_open_isolated(3); anything not listed is denied.
+open_paths = [
+    # authagentd reads its admin principal policy.
+    { label = "system.AuthAgent/authagentd";
+      path = "/Capabilities/Config/principal-policy.ucl"; rights = ["read"]; },
+]
