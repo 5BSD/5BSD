@@ -29,16 +29,12 @@ linux_start()
 {
 	local _emul_path _tmpdir
 
+	# 5BSD is 64-bit only (no COMPAT_FREEBSD32 / 32-bit ELF), so the
+	# 32-bit 'linux' module is neither built nor loadable; load the
+	# 64-bit ABI (linux64) exclusively.
 	case `sysctl -n hw.machine_arch` in
-	aarch64)
+	aarch64|amd64)
 		load_kld -e 'linux64elf' linux64
-		;;
-	amd64)
-		load_kld -e 'linuxelf' linux
-		load_kld -e 'linux64elf' linux64
-		;;
-	i386)
-		load_kld -e 'linuxelf' linux
 		;;
 	esac
 
@@ -67,7 +63,9 @@ linux_start()
 		sysctl kern.elf64.fallback_brand=3 > /dev/null
 	fi
 
-	if [ `sysctl -ni kern.elf32.fallback_brand` -eq "-1" ]; then
+	# kern.elf32.fallback_brand only exists on kernels with 32-bit ELF
+	# support, which 5BSD omits; skip it when the node is absent.
+	if [ "`sysctl -ni kern.elf32.fallback_brand`" = "-1" ]; then
 		sysctl kern.elf32.fallback_brand=3 > /dev/null
 	fi
 

@@ -558,7 +558,10 @@ SUBDIR+=	fdt
 SUBDIR+=	linprocfs
 SUBDIR+=	linsysfs
 .endif
-.if ${MACHINE_CPUARCH} == "amd64" || ${MACHINE_CPUARCH} == "i386"
+# 5BSD is 64-bit only (no COMPAT_FREEBSD32 / 32-bit ELF activator), so the
+# 32-bit 'linux' module cannot link or load; build only the 64-bit ABI.
+# (Upstream also builds 'linux' on amd64; kept for i386, which 5BSD omits.)
+.if ${MACHINE_CPUARCH} == "i386"
 SUBDIR+=	linux
 .endif
 .if ${MACHINE_CPUARCH} == "aarch64" || ${MACHINE_CPUARCH} == "amd64"
