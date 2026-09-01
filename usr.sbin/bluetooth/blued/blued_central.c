@@ -1787,9 +1787,22 @@ hogp_setup_vhid(struct hogp_device *dev)
 		return (-1);
 
 	snprintf(path, sizeof(path), "/dev/vhid%d", dev->vhid_unit);
-	dev->vhid_fd = open(path, O_RDWR | O_CLOEXEC | O_CLOFORK);
-	if (dev->vhid_fd < 0)
-		return (-1);
+	/*
+	 * Under serviced, get the per-device node from the filesystem daemon
+	 * (its policy grants blued the /dev/vhid* prefix with read/write/ioctl);
+	 * a sandboxed blued cannot open it by path after cap_enter().  Standalone,
+	 * open it directly.  Either way the rights are narrowed further below.
+	 */
+	if (blued_g.svc_ctx != NULL) {
+		if (service_open_isolated(blued_g.svc_ctx, path,
+		    SERVICE_OPEN_READ | SERVICE_OPEN_WRITE | SERVICE_OPEN_IOCTL,
+		    0, &dev->vhid_fd) == -1)
+			return (-1);
+	} else {
+		dev->vhid_fd = open(path, O_RDWR | O_CLOEXEC | O_CLOFORK);
+		if (dev->vhid_fd < 0)
+			return (-1);
+	}
 
 	/* Limit Capsicum rights on the vhid device fd */
 	{

@@ -5,15 +5,9 @@ restart = "on-failure";
 stop_timeout = 10;
 max_failures = 10;
 # /dev/vhid comes from the vhid module; blued self-serves it at startup via
-# service_ensure_extension(3) over system.SystemExtension (sysextd), so no
-# manifest kmod declaration is needed and neither PID 1 nor serviced loads it.
-
-capabilities {
-    network = [{
-        domain = "bluetooth";
-        protocol = "any";
-        address = "*";
-        direction = "any";
-    }];
-    paths = ["/dev/vhid"];
-}
+# service_ensure_extension(3) over system.SystemExtension (sysextd).  The vhid
+# control node and its per-device /dev/vhidN units are obtained from the
+# filesystem daemon (tzfsd) via service_open_isolated(3) — tzfsd's own per-label
+# policy grants blued /dev/vhid* (read/write/ioctl), so nothing is declared here.
+# blued's radio uses AF_BLUETOOTH sockets, which are not IP-isolation endpoints,
+# so it needs no network capability either.

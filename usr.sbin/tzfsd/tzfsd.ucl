@@ -20,4 +20,8 @@ open_paths = [
     # authagentd reads its admin principal policy.
     { label = "system.AuthAgent/authagentd";
       path = "/Capabilities/Config/principal-policy.ucl"; rights = ["read"]; },
+    # blued owns the virtual-HID devices: the /dev/vhid control node and the
+    # dynamically-numbered /dev/vhidN units it creates (prefix), read/write/ioctl.
+    { label = "org.5bsd.Blued/blued"; path = "/dev/vhid"; prefix = true;
+      rights = ["read", "write", "ioctl"]; },
 ]

@@ -4687,10 +4687,25 @@ main(int argc, char *argv[])
 	    service_ensure_extension(blued_g.svc_ctx, "vhid") == -1)
 		err(1, "ensure vhid module");
 
-	/* Open vhid control */
-	blued_g.vhid_ctl_fd = open("/dev/vhid", O_RDWR | O_CLOEXEC | O_CLOFORK);
-	if (blued_g.vhid_ctl_fd < 0)
-		err(1, "open /dev/vhid");
+	/*
+	 * Open the vhid control node.  Under serviced the filesystem daemon
+	 * (tzfsd) opens it on our behalf via service_open_isolated(3) and hands
+	 * back a read/write/ioctl descriptor — its per-label policy authorizes
+	 * blued for /dev/vhid*, nothing is declared in the manifest, and a
+	 * sandboxed blued never opens the device by path.  Standalone (no
+	 * serviced), open it directly.
+	 */
+	if (blued_serviced) {
+		if (service_open_isolated(blued_g.svc_ctx, "/dev/vhid",
+		    SERVICE_OPEN_READ | SERVICE_OPEN_WRITE | SERVICE_OPEN_IOCTL,
+		    0, &blued_g.vhid_ctl_fd) == -1)
+			err(1, "open /dev/vhid via filesystem daemon");
+	} else {
+		blued_g.vhid_ctl_fd = open("/dev/vhid",
+		    O_RDWR | O_CLOEXEC | O_CLOFORK);
+		if (blued_g.vhid_ctl_fd < 0)
+			err(1, "open /dev/vhid");
+	}
 	if (blued_socket_broker_start() != 0)
 		err(1, "start L2CAP socket broker");
 
