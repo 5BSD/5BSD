@@ -1343,7 +1343,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 	/*
 	 * Storage is not delivered by serviced.  tzfsd is a socket-free
-	 * provider (system.Storage); a storage consumer opens it by name and
+	 * provider (system.Filesystem); a storage consumer opens it by name and
 	 * mints its own claim via service_storage_open(3).  tzfsd namespaces
 	 * each dataset by the consumer's unforgeable channel identity, so
 	 * serviced neither mints nor holds any storage handle.  The manifest

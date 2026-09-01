@@ -85,7 +85,7 @@ transfer-confined session; the supervisor is not a data-plane proxy. Publishing
 a name does not imply boot activation — a provider stays stopped until its first
 lookup.
 
-Storage is not delivered by the manifest. A unit opens the `system.Storage`
+Storage is not delivered by the manifest. A unit opens the `system.Filesystem`
 service (`tzfsd`) at runtime and receives its own dataset — scoped to its
 unforgeable channel label — as a rights-limited `zfshandle`, which it mounts
 lazily with `service_storage_open()` and holds for its lifetime (the handle

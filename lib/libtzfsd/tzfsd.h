@@ -42,7 +42,7 @@ struct tzfsd_grant {
 
 /*
  * Opaque client handle wrapping a held mac_capability channel to tzfsd.  tzfsd
- * is a socket-free service_provider (system.Storage); there is no socket to
+ * is a socket-free service_provider (system.Filesystem); there is no socket to
  * connect and no fd to pass around — the handle owns the channel session.
  */
 struct tzfsd_client;
@@ -50,7 +50,7 @@ struct tzfsd_client;
 __BEGIN_DECLS
 
 /*
- * Open a channel to tzfsd by name (service_open(system.Storage)).  Returns a
+ * Open a channel to tzfsd by name (service_open(system.Filesystem)).  Returns a
  * client handle the caller owns and must tzfsd_close(), or NULL with errno set.
  * A caller handed a pre-scoped storage channel at bootstrap uses
  * tzfsd_adopt() instead.

@@ -4,13 +4,13 @@
 # model.md, P4a) — PID 1 no longer spawns it.
 #
 # tzfsd is a socket-free service_provider: it exposes the well-known name
-# system.Storage and serves each client on its own mac_capability channel, so
+# system.Filesystem and serves each client on its own mac_capability channel, so
 # consumers reach storage by name (service_open) exactly like every other
 # capability-plane daemon.  boot = true because it provisions the pool/layout at
 # startup and must come up on its own.  user = root because the ZFS control
 # device (/dev/zfs) and dataset provisioning require it (tzfsd enters its own
 # capability sandbox once that name-based work is done, via service_provider).
-activation { boot = true; ipc = ["system.Storage"]; }
+activation { boot = true; ipc = ["system.Filesystem"]; }
 program = "tzfsd";
 restart = "on-failure";
 user = "root";

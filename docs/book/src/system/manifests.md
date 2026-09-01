@@ -194,7 +194,7 @@ to its own unforgeable channel label.
 ## Storage
 
 A unit does not declare storage in its manifest. Mutable state is obtained at
-runtime: the program opens the `system.Storage` service (`tzfsd`) by name and
+runtime: the program opens the `system.Filesystem` service (`tzfsd`) by name and
 receives its own dataset — scoped to the unit's unforgeable channel label — as
 a rights-limited `zfshandle`. It mounts the handle itself with
 `service_storage_open(3)` and holds it for its lifetime (the handle anchors the

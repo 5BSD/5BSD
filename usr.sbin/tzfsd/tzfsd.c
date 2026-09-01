@@ -8,7 +8,7 @@
  * Owns the storage plane: the root-pool handle and the /Capabilities layout.
  * It mints rights-limited TrustedZFS handles on request and passes them back
  * over its clients' mac_capability channels.  tzfsd is a socket-free
- * service_provider: it exposes the well-known name system.Storage and serves
+ * service_provider: it exposes the well-known name system.Filesystem and serves
  * each client on its own worker channel, exactly like every other
  * capability-plane daemon.  All name-based setup happens up front; the provider
  * then cap_enter()s and serves every request from its retained capability
@@ -127,11 +127,11 @@ main(int argc, char **argv)
 	if (st.root_fd == -1)
 		errx(1, "cannot retain root directory fd");
 
-	setproctitle("-Storage");
-	syslog(LOG_NOTICE, "tzfsd storage provider (pool %s)", st.cfg.pool);
+	setproctitle("-Filesystem");
+	syslog(LOG_NOTICE, "tzfsd filesystem provider (pool %s)", st.cfg.pool);
 
 	/*
-	 * Serve as a socket-free service_provider: expose system.Storage, enter
+	 * Serve as a socket-free service_provider: expose system.Filesystem, enter
 	 * capability mode, and dispatch each client on its own worker channel.
 	 * tzfsd_serve() owns the provider lifecycle and does not return on
 	 * success.

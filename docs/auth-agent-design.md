@@ -50,7 +50,7 @@ nonce, never a uid, so it cannot be repurposed for authorization.
 authority-init (PID 1)
    └── serviced
          ├── system.authagent      (the auth-agent — this design)
-         ├── system.Network, system.Storage, system.Audit, ...
+         ├── system.Network, system.Filesystem, system.Audit, ...
          └── (all other capability services)
 ```
 

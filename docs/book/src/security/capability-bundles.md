@@ -57,7 +57,7 @@ TrustedZFS datasets delivered as `zfshandle` descriptors.
 ## Naming
 
 A capability is identified by a hierarchical name in the `system.` namespace —
-`system.Log`, `system.Network`, `system.Storage`, `system.Bluetooth`, and so on.
+`system.Log`, `system.Network`, `system.Filesystem`, `system.Bluetooth`, and so on.
 This name is what a program looks up to reach the capability and what a bundle
 claims in order to provide it; it is declared once as the bundle's `bundle_id`
 and on the listener the unit activates (`activation { ipc = ["system.Log"]; }`).

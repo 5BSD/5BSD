@@ -32,7 +32,7 @@
 #define	TZFSD_PROTO_VERSION		2
 
 /* The well-known name a client resolves with service_open(3) to reach tzfsd. */
-#define	TZFSD_SERVICE_NAME		"system.Storage"
+#define	TZFSD_SERVICE_NAME		"system.Filesystem"
 
 /*
  * Field sizes.  dataset[] matches ORT_STORAGE_DATASET_MAX (== the ZFS max

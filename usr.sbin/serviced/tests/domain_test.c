@@ -47,7 +47,7 @@ int serviced_kq = -1;
  * A system-only provider name (never on the user allow-list) and the two
  * allow-listed names.  Keep these in sync with user_system_allow[] in domain.c.
  */
-#define	SYSTEM_ONLY_NAME	"system.Storage"
+#define	SYSTEM_ONLY_NAME	"system.Filesystem"
 #define	ALLOW_LOG_NAME		"system.Log"
 #define	ALLOW_NOTIFY_NAME	"system.Notify"
 

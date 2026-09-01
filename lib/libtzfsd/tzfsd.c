@@ -5,7 +5,7 @@
  *
  * libtzfsd — client to the tzfsd(8) storage provider.  tzfsd is socket-free:
  * clients reach it over a held mac_capability channel obtained by name
- * (service_open(system.Storage)), and drive it with the request/reply structs
+ * (service_open(system.Filesystem)), and drive it with the request/reply structs
  * in tzfsd_proto.h carried as channel messages.  See tzfsd.h.
  */
 

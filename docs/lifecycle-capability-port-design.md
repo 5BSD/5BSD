@@ -81,7 +81,7 @@ So the socket inventory collapses to name registrations:
 - `serviced` registers `system.Service` (SYSTEM/USER as today) **and**
   `service.Control` (CONTROL domain); `servicectl` resolves `service.Control`
   over its CONTROL channel. `/var/run/serviced.sock` is deleted.
-- `tzfsd` registers `system.Storage` **and** `storage.Control` (CONTROL);
+- `tzfsd` registers `system.Filesystem` **and** `storage.Control` (CONTROL);
   `tzfsctl` uses it. The `listen()` socket is deleted.
 - Either daemon may instead ship a *separate* small control program that
   registers the CONTROL name and relays to the main daemon over a private

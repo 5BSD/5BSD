@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Kory Heard
  *
  * tzfsd(8) request loop.  tzfsd is a socket-free service_provider: it exposes
- * system.Storage and serves each client on its own mac_capability worker
+ * system.Filesystem and serves each client on its own mac_capability worker
  * channel.  Every handle is derived/created/cloned/destroyed from the retained
  * parent handles in capability mode, and the granted handle rides back to the
  * client as the reply's single SCM fd.
@@ -486,7 +486,7 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client)
 }
 
 /*
- * Expose system.Storage and dispatch each accepted client on its own pdfork'd
+ * Expose system.Filesystem and dispatch each accepted client on its own pdfork'd
  * worker.  Enters capability mode before serving; returns -1 only on setup
  * failure (never on success).
  */

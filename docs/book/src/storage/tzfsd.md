@@ -149,7 +149,7 @@ Retained snapshots make reconciliation fail visibly and leave the tree intact.
 
 ## Runtime provisioning
 
-A unit does not declare storage in its manifest. It opens the `system.Storage`
+A unit does not declare storage in its manifest. It opens the `system.Filesystem`
 service (`tzfsd`) by name at runtime; `tzfsd` derives the dataset from the
 consumer's unforgeable channel label and returns it as a rights-limited
 `zfshandle`. The unit mounts the handle itself with `service_storage_open(3)`

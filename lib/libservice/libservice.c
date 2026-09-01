@@ -41,7 +41,7 @@
 #include <sys/jail.h>	/* jail_attach_jd() for service_enter_namespace() */
 
 #include <trustedzfs.h>	/* tzfs_mount() for service_storage_open() */
-#include <tzfsd_proto.h>	/* tzfsd wire protocol (system.Storage), no libtzfsd dep */
+#include <tzfsd_proto.h>	/* tzfsd wire protocol (system.Filesystem), no libtzfsd dep */
 #include <sysext_proto.h>	/* sysextd wire protocol (system.SystemExtension) */
 #include <warden_proto.h>	/* warden wire protocol (system.Namespace) */
 
@@ -1713,7 +1713,7 @@ service_capability_open(struct service_context *context, const char *name,
 
 /*
  * Open this service's storage claim and return its mounted directory root.
- * tzfsd is a socket-free provider: libservice opens a system.Storage channel by
+ * tzfsd is a socket-free provider: libservice opens a system.Filesystem channel by
  * name (service_open) and mints the claim itself — serviced does no storage
  * work.  tzfsd namespaces the dataset by this service's unforgeable channel
  * label, so `name` is only the claim key and a service can never reach another
@@ -1753,7 +1753,7 @@ service_storage_open(struct service_context *context, const char *name,
 		return (-1);
 	}
 
-	/* Open the system.Storage channel by name once; all claims share it. */
+	/* Open the system.Filesystem channel by name once; all claims share it. */
 	if (service_storage_session == NULL) {
 		int fd;
 
@@ -1868,7 +1868,7 @@ service_open_isolated(struct service_context *context, const char *path,
 		return (-1);
 	}
 
-	/* Shares the system.Storage channel with storage/config claims. */
+	/* Shares the system.Filesystem channel with storage/config claims. */
 	if (service_storage_session == NULL) {
 		int cfd;
 
