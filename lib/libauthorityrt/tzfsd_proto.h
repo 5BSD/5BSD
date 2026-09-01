@@ -24,6 +24,7 @@
 #define TZFSD_PROTO_H
 
 #include <sys/types.h>
+#include <sys/param.h>		/* PATH_MAX */
 
 #define	TZFSD_PROTO_VERSION_MAJOR	0
 #define	TZFSD_PROTO_VERSION_MINOR	1
@@ -59,6 +60,39 @@
 #define	TZFSD_OP_RELEASE		2	/* tear down a lease claim */
 #define	TZFSD_OP_PING			4	/* liveness check */
 #define	TZFSD_OP_BEGIN_SESSION		5	/* select/reconcile lease generation */
+#define	TZFSD_OP_OPEN			6	/* open an isolated path descriptor */
+
+/*
+ * TZFSD_OP_OPEN
+ *   req:   struct tzfsd_open_request
+ *   reply: struct tzfsd_reply { .status }
+ *   reply_fds[0] = the opened, rights-limited descriptor (on success)
+ *
+ * Ask tzfsd to open an existing filesystem path on the caller's behalf and hand
+ * back a Capsicum-rights-limited descriptor.  This is how a sandboxed
+ * (capability-mode) service reaches an existing path it cannot name itself — a
+ * device node, a shared directory, a socket — without the manifest declaring
+ * anything.  Authority is the connecting channel's unforgeable label: tzfsd
+ * consults its own per-label policy (default-deny) and opens only the exact
+ * paths that label is granted, so a compromised consumer cannot widen its reach.
+ * tzfsd opens relative to a root directory fd it retained before cap_enter(),
+ * so the open is capsicum-legal; the returned fd carries no more than the
+ * requested rights.
+ */
+#define	TZFSD_OPEN_READ			0x1u	/* CAP_READ */
+#define	TZFSD_OPEN_WRITE		0x2u	/* CAP_WRITE */
+#define	TZFSD_OPEN_EXEC			0x4u	/* CAP_FEXECVE */
+#define	TZFSD_OPEN_LOOKUP		0x8u	/* CAP_LOOKUP (dirs, for openat) */
+#define	TZFSD_OPEN_RIGHTS_ALL \
+	(TZFSD_OPEN_READ | TZFSD_OPEN_WRITE | TZFSD_OPEN_EXEC | TZFSD_OPEN_LOOKUP)
+
+struct tzfsd_open_request {
+	uint32_t	op;		/* TZFSD_OP_OPEN */
+	uint32_t	rights;		/* TZFSD_OPEN_* mask (at least one bit) */
+	uint8_t		is_dir;		/* 1 = require a directory (O_DIRECTORY) */
+	uint8_t		_reserved[7];
+	char		path[PATH_MAX];	/* absolute path to open */
+};
 
 /*
  * TZFSD_OP_REQUEST

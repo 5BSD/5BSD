@@ -1832,6 +1832,86 @@ service_open_config(struct service_context *context, int *dirfdp)
 }
 
 /*
+ * Open an existing filesystem path (a device node, a shared directory, a config
+ * file) via tzfsd and return a Capsicum-rights-limited descriptor.  This is how
+ * a sandboxed service reaches a path it cannot name itself, with no manifest
+ * declaration: tzfsd applies its own per-label policy (default-deny) and opens
+ * only the exact paths this service's unforgeable label is granted.  `rights` is
+ * a SERVICE_OPEN_* mask; `is_dir` requires the target to be a directory.  The
+ * returned descriptor is close-on-exec and carries no more than the requested
+ * rights.  Returns 0 with *fdp set, or -1 with errno (EACCES if not granted).
+ */
+int
+service_open_isolated(struct service_context *context, const char *path,
+    unsigned rights, int is_dir, int *fdp)
+{
+	struct tzfsd_open_request rq;
+	struct tzfsd_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd = -1, saved;
+
+	if (fdp == NULL || path == NULL || path[0] != '/' || rights == 0 ||
+	    (rights & ~(unsigned)TZFSD_OPEN_RIGHTS_ALL) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*fdp = -1;
+	if (strnlen(path, sizeof(rq.path)) >= sizeof(rq.path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Shares the system.Storage channel with storage/config claims. */
+	if (service_storage_session == NULL) {
+		int cfd;
+
+		if (service_open(TZFSD_SERVICE_NAME, &cfd) == -1)
+			return (-1);
+		if (service_session_create(cfd, &service_storage_session) == -1) {
+			saved = errno;
+			(void)close(cfd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_OPEN;
+	rq.rights = rights;
+	rq.is_dir = is_dir ? 1 : 0;
+	(void)strlcpy(rq.path, path, sizeof(rq.path));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 1;
+	if (service_session_call(service_storage_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
+	    rp.status != 0 || incoming.nfds != 1) {
+		if (incoming.nfds != 0)
+			(void)close(fd);
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+	*fdp = fd;
+	return (0);
+}
+
+/*
  * Ensure a named kernel extension is loaded via sysextd.  sysextd is a
  * socket-free provider: libservice opens a system.SystemExtension channel by
  * name and asks it to load the module.  The channel is cached (all of a

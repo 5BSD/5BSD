@@ -15,8 +15,10 @@
 
 #include <sys/types.h>
 #include <sys/procdesc.h>
+#include <sys/capsicum.h>
 
 #include <errno.h>
+#include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -244,6 +246,87 @@ grant(struct tzfsd_state *st, const char *client,
 }
 
 /*
+ * Open an isolated path descriptor for a TZFSD_OP_OPEN request from `client`.
+ * Default-deny: the client's unforgeable label and the exact path must match a
+ * configured policy entry that covers the requested rights.  The open is done
+ * relative to the retained root fd (capsicum-legal in capability mode) and the
+ * delivered fd is capped to exactly the requested rights.  Returns the fd, or
+ * -1 with errno (EACCES when the policy does not grant it).
+ */
+static int
+grant_open(struct tzfsd_state *st, const char *client,
+    const struct tzfsd_open_request *rq)
+{
+	const struct tzfsd_config *cfg = &st->cfg;
+	cap_rights_t rights;
+	unsigned i;
+	int flags, fd, saved;
+
+	if (rq->rights == 0 || (rq->rights & ~TZFSD_OPEN_RIGHTS_ALL) != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	/* Absolute, NUL-terminated, no traversal component. */
+	if (rq->path[0] != '/' ||
+	    memchr(rq->path, '\0', sizeof(rq->path)) == NULL ||
+	    strstr(rq->path, "..") != NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (st->root_fd == -1) {
+		errno = ENXIO;
+		return (-1);
+	}
+
+	/* Default-deny: exact (label, path) match covering the requested rights. */
+	for (i = 0; i < cfg->nopen_policy; i++) {
+		const struct tzfsd_open_policy *pol = &cfg->open_policy[i];
+
+		if (strcmp(pol->label, client) == 0 &&
+		    strcmp(pol->path, rq->path) == 0 &&
+		    (rq->rights & ~pol->rights) == 0)
+			break;
+	}
+	if (i == cfg->nopen_policy) {
+		errno = EACCES;
+		return (-1);
+	}
+
+	if ((rq->rights & (TZFSD_OPEN_READ | TZFSD_OPEN_WRITE)) ==
+	    (TZFSD_OPEN_READ | TZFSD_OPEN_WRITE))
+		flags = O_RDWR;
+	else if (rq->rights & TZFSD_OPEN_WRITE)
+		flags = O_WRONLY;
+	else
+		flags = O_RDONLY;	/* read/exec/lookup all open read-only */
+	flags |= O_CLOEXEC | O_NOCTTY;
+	if (rq->is_dir)
+		flags |= O_DIRECTORY;
+
+	/* Relative to the retained root fd: legal in capability mode. */
+	fd = openat(st->root_fd, rq->path + 1, flags);
+	if (fd == -1)
+		return (-1);
+
+	cap_rights_init(&rights, 0);
+	if (rq->rights & TZFSD_OPEN_READ)
+		cap_rights_set(&rights, CAP_READ, CAP_SEEK, CAP_FSTAT);
+	if (rq->rights & TZFSD_OPEN_WRITE)
+		cap_rights_set(&rights, CAP_WRITE, CAP_SEEK, CAP_FSYNC);
+	if (rq->rights & TZFSD_OPEN_EXEC)
+		cap_rights_set(&rights, CAP_FEXECVE);
+	if (rq->rights & TZFSD_OPEN_LOOKUP)
+		cap_rights_set(&rights, CAP_LOOKUP, CAP_FSTATAT);
+	if (cap_rights_limit(fd, &rights) == -1) {
+		saved = errno;
+		(void)close(fd);
+		errno = saved;
+		return (-1);
+	}
+	return (fd);
+}
+
+/*
  * Per-client channel request handler.  arg is this worker's tzfsd_state (its
  * own copy of the retained handles, plus per-connection lease state).  The
  * reply is a fixed tzfsd_reply; a granted handle rides back as its single fd.
@@ -260,8 +343,33 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 
 	memset(&rp, 0, sizeof(rp));
 
-	if (channel_message_length(m) != sizeof(*rq) ||
-	    channel_message_fd_count(m) != 0) {
+	if (channel_message_fd_count(m) != 0) {
+		rp.status = EPROTO;
+		goto reply;
+	}
+
+	/*
+	 * TZFSD_OP_OPEN carries its own, larger request struct; dispatch it by
+	 * its distinct length before the storage-shaped requests.
+	 */
+	if (channel_message_length(m) == sizeof(struct tzfsd_open_request)) {
+		const struct tzfsd_open_request *orq = channel_message_data(m);
+
+		if (orq->op == TZFSD_OP_OPEN) {
+			handle = grant_open(st, conn->client, orq);
+			if (handle == -1) {
+				rp.status = errno;
+				syslog(LOG_INFO, "OPEN rights=%#x -> %s",
+				    orq->rights, strerror(rp.status));
+			} else {
+				syslog(LOG_INFO, "OPEN %s rights=%#x -> granted",
+				    orq->path, orq->rights);
+			}
+			goto reply;
+		}
+	}
+
+	if (channel_message_length(m) != sizeof(*rq)) {
 		rp.status = EPROTO;
 		goto reply;
 	}

@@ -18,6 +18,20 @@
 #define	TZFSD_MAXPATH		256	/* dataset name buffer */
 #define	TZFSD_DEFAULT_CONF	"/Capabilities/Config/tzfsd.ucl"
 
+/*
+ * Per-label isolated-open policy (TZFSD_OP_OPEN), loaded from the config file's
+ * "open_paths" array.  Default-deny: a client may open a path only if some entry
+ * matches its unforgeable label exactly and covers the requested rights.  Exact
+ * path match only — no prefixes or globs — so a compromised consumer cannot walk
+ * outside the precise paths its label is granted.
+ */
+#define	TZFSD_MAX_OPEN_POLICY	32
+struct tzfsd_open_policy {
+	char		label[64];		/* == service_identity.client_label */
+	char		path[TZFSD_MAXPATH];	/* exact absolute path granted */
+	uint32_t	rights;			/* TZFSD_OPEN_* the label may request */
+};
+
 struct tzfsd_config {
 	char		pool[TZFSD_MAXPATH];
 	char		base[TZFSD_MAXPATH];		/* zroot/Capabilities */
@@ -25,6 +39,8 @@ struct tzfsd_config {
 	char		ephemeral[TZFSD_MAXPATH];	/* .../ephemeral */
 	char		mountpoint[TZFSD_MAXPATH];	/* /Capabilities */
 	char		ephemeral_sync[16];		/* zfs sync= value */
+	struct tzfsd_open_policy open_policy[TZFSD_MAX_OPEN_POLICY];
+	unsigned	nopen_policy;
 };
 
 /*
@@ -40,6 +56,13 @@ struct tzfsd_state {
 	int		lease_fd;	/* current serviced session, per connection */
 	char		boot_name[TZFSD_NAME_MAX];
 	char		lease_name[TZFSD_NAME_MAX];
+	/*
+	 * Plain root ("/") directory fd, opened before cap_enter().  Used to
+	 * openat(2) an isolated path descriptor for TZFSD_OP_OPEN in capability
+	 * mode (openat from a retained dir fd with a relative path is
+	 * capsicum-legal, unlike open() by absolute path).
+	 */
+	int		root_fd;
 };
 
 /* config.c */

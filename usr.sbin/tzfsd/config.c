@@ -234,6 +234,61 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 			goto invalid;
 	}
 
+	/*
+	 * Per-label isolated-open policy (default-deny).  Each entry grants one
+	 * exact absolute path to one label with a set of rights.  This is the
+	 * operator policy for TZFSD_OP_OPEN; absent = no path is openable.
+	 */
+	if ((o = ucl_object_lookup(root, "open_paths")) != NULL) {
+		const ucl_object_t *ent;
+		ucl_object_iter_t it = NULL;
+
+		if (ucl_object_type(o) != UCL_ARRAY)
+			goto invalid;
+		cfg->nopen_policy = 0;
+		while ((ent = ucl_object_iterate(o, &it, true)) != NULL) {
+			struct tzfsd_open_policy *pol;
+			const ucl_object_t *lb, *pa, *ri, *rv;
+			ucl_object_iter_t rit = NULL;
+
+			if (cfg->nopen_policy >= TZFSD_MAX_OPEN_POLICY ||
+			    ucl_object_type(ent) != UCL_OBJECT)
+				goto invalid;
+			pol = &cfg->open_policy[cfg->nopen_policy];
+			memset(pol, 0, sizeof(*pol));
+			lb = ucl_object_lookup(ent, "label");
+			pa = ucl_object_lookup(ent, "path");
+			ri = ucl_object_lookup(ent, "rights");
+			if (lb == NULL || pa == NULL || ri == NULL ||
+			    copy_string(pol->label, sizeof(pol->label), lb) == -1 ||
+			    copy_string(pol->path, sizeof(pol->path), pa) == -1 ||
+			    ucl_object_type(ri) != UCL_ARRAY)
+				goto invalid;
+			/* Absolute, no traversal component: matched exactly at use. */
+			if (pol->path[0] != '/' || strstr(pol->path, "..") != NULL)
+				goto invalid;
+			while ((rv = ucl_object_iterate(ri, &rit, true)) != NULL) {
+				const char *s = ucl_object_tostring(rv);
+
+				if (s == NULL)
+					goto invalid;
+				if (strcmp(s, "read") == 0)
+					pol->rights |= TZFSD_OPEN_READ;
+				else if (strcmp(s, "write") == 0)
+					pol->rights |= TZFSD_OPEN_WRITE;
+				else if (strcmp(s, "exec") == 0)
+					pol->rights |= TZFSD_OPEN_EXEC;
+				else if (strcmp(s, "lookup") == 0)
+					pol->rights |= TZFSD_OPEN_LOOKUP;
+				else
+					goto invalid;
+			}
+			if (pol->rights == 0)
+				goto invalid;
+			cfg->nopen_policy++;
+		}
+	}
+
 	if (config_validate(cfg) == -1)
 		goto invalid;
 

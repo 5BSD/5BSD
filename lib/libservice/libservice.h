@@ -226,6 +226,22 @@ int	service_storage_open(struct service_context *, const char *name,
  * service_storage_open(3).  Returns 0 with *dirfdp set, or -1 with errno.
  */
 int	service_open_config(struct service_context *, int *dirfdp);
+
+/*
+ * Open an existing filesystem path via tzfsd's per-label policy (default-deny)
+ * and return a Capsicum-rights-limited, close-on-exec descriptor.  Lets a
+ * sandboxed service reach a device node, shared directory, or config file it
+ * cannot open by path itself, with nothing declared in the manifest.  `rights`
+ * is a SERVICE_OPEN_* mask; `is_dir` requires a directory.  Returns 0 with *fdp
+ * set, or -1 with errno (EACCES if the label is not granted the path).
+ */
+#define	SERVICE_OPEN_READ	0x1u	/* CAP_READ */
+#define	SERVICE_OPEN_WRITE	0x2u	/* CAP_WRITE */
+#define	SERVICE_OPEN_EXEC	0x4u	/* CAP_FEXECVE */
+#define	SERVICE_OPEN_LOOKUP	0x8u	/* CAP_LOOKUP (directories, for openat) */
+int	service_open_isolated(struct service_context *, const char *path,
+	    unsigned rights, int is_dir, int *fdp);
+
 int	service_capability_open(struct service_context *, const char *name,
 	    const char *type, int *fd);
 

@@ -94,6 +94,7 @@ main(int argc, char **argv)
 	memset(&st, 0, sizeof(st));
 	st.persistent_fd = st.ephemeral_fd = -1;
 	st.boot_fd = st.lease_fd = -1;
+	st.root_fd = -1;
 
 	tzfsd_config_defaults(&st.cfg);
 	if (tzfsd_config_load(&st.cfg, conf) == -1) {
@@ -115,6 +116,16 @@ main(int argc, char **argv)
 	 */
 	if (tzfsd_reap_leases(&st) == -1)
 		syslog(LOG_WARNING, "reap orphan leases: %m");
+
+	/*
+	 * Retain a root directory fd for TZFSD_OP_OPEN before entering capability
+	 * mode.  In capability mode tzfsd can no longer open by absolute path, but
+	 * openat(2) from this retained fd with a relative path is legal, so this
+	 * is what lets it hand out isolated descriptors for existing paths.
+	 */
+	st.root_fd = open("/", O_DIRECTORY | O_CLOEXEC);
+	if (st.root_fd == -1)
+		errx(1, "cannot retain root directory fd");
 
 	setproctitle("-Storage");
 	syslog(LOG_NOTICE, "tzfsd storage provider (pool %s)", st.cfg.pool);
