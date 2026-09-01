@@ -381,10 +381,6 @@ capability_contract_body()
 	activation { boot = true; }
 	capabilities {
 	    paths = ["/var/empty", "/dev/null"];
-	    files = [
-	        { path = "/etc/ssl/cert.pem"; actions = ["read", "stat"]; },
-	        { path = "/tmp/output"; actions = "write"; }
-	    ];
 	    network = [
 	        { domain = "inet"; protocol = "tcp"; port = 443;
 	          direction = "connect"; address = "192.0.2.0/24"; },
@@ -401,7 +397,7 @@ capability_contract_body()
 	}
 	EOF
 	atf_check -s exit:0 \
-	    -o match:'paths=2 files=2 network=3 vsock=1 services=4' \
+	    -o match:'paths=2 network=3 vsock=1 services=4' \
 	    -o match:'network: domain=bluetooth protocol=l2cap' \
 	    -o match:'vsock: cid=3 ports=1024-2048 direction=connect' \
 	    servicetcl verify "$dir"
@@ -420,10 +416,6 @@ capability_negative_matrix_body()
 	    'capabilities { paths = "/tmp"; }' \
 	    'capabilities { paths = ["relative"]; }' \
 	    'capabilities { paths = ["/x", "/x"]; }' \
-	    'capabilities { files = [{ actions = "read"; }]; }' \
-	    'capabilities { files = [{ path = "relative"; actions = "read"; }]; }' \
-	    'capabilities { files = [{ path = "/x"; actions = []; }]; }' \
-	    'capabilities { files = [{ path = "/x"; actions = "invent"; }]; }' \
 	    'capabilities { services = ["unknown"]; }' \
 	    'capabilities { services = ["mount", "mount"]; }' \
 	    'capabilities { system = ["root"]; }' \

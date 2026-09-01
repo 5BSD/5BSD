@@ -100,16 +100,6 @@ umask = "0077";
 band  = "standard";     # background | standard | interactive
 
 capabilities {
-    files = [{
-        path = "/etc/ssl/cert.pem";
-        actions = ["read", "stat"];
-    }];
-    open = [{
-        path = "/Capabilities/Config/smtpd.conf";
-        name = "config";
-        type = "file";
-        rights = "r";
-    }];
     network = [{
         domain = "inet";
         protocol = "tcp";
@@ -123,28 +113,17 @@ capabilities {
 
 `capabilities` entries fall into two categories with different system semantics:
 
-- **Non-exclusive holds** — `paths`, `files`, and `open`. A path or file grant
-  is a reference-counted share; any number of units may hold an overlapping
-  grant on the same path. `files` is a MAC access grant (a `{path, actions}`
-  pair keyed on the vnode); `open` goes further and delivers an actual
-  descriptor (see below). Neither excludes another unit.
+- **Non-exclusive holds** — `paths`. A path grant is a reference-counted share;
+  any number of units may hold an overlapping grant on the same path, each
+  narrowed to its own action mask, and none excludes another unit.
 - **Exclusive isolations** — `network` and `vsock`. Each is owned by
   exactly one holder across the whole system; the authority rejects a mint whose
   claim overlaps a foreign owner's. Two units cannot both bind TCP :25.
 
-`open` delivers a file or directory as a rights-limited **descriptor** instead
-of a path, so a capsicum-mode program never has to `open()` a path. Each entry
-is `{path, name, type = "file"|"dir", rights, optional}`, where `rights` is any
-of `r` read, `w` write, `x` execute, `l` lookup (directories, for `openat`). The
-service manager opens the path, attenuates the fd to those rights, and delivers
-it in the bootstrap descriptor table under `name`; the program retrieves it with
-`service_capability_open(3)`. A **required** entry (the default) is a launch
-prerequisite — a resource that cannot be opened with the requested rights fails
-the launch, never a half-provisioned unit. Marking an entry `optional = true`
-relaxes that: if it cannot be opened it is simply skipped (not delivered) and
-the launch proceeds, so the program must check whether `service_capability_open`
-finds it. `open` is the descriptor form of a non-exclusive hold and is distinct
-from `files`, which grants path access but delivers no descriptor.
+A unit does not declare an existing file, directory, or device in the manifest.
+A service obtains one by calling `service_open_isolated(3)`; the filesystem
+daemon (`tzfsd`) opens the path under its own per-label policy and returns a
+rights-limited descriptor — nothing is declared in the manifest.
 
 Activation is always explicit. `boot=true` starts the unit during convergence.
 Each `ipc` name reserves a reverse-domain endpoint and permits launch on first
@@ -215,8 +194,7 @@ Important limits are:
 | services loaded system-wide | 256 |
 | arguments / environment entries | 32 / 32 |
 | IPC names per unit | 8 |
-| paths / files / network / vsock | 16 each |
-| open descriptors per unit | 8 |
+| paths / network / vsock | 16 each |
 | direct capability services | 4 |
 | kernel modules | 8 |
 | stop timeout | 300 seconds |

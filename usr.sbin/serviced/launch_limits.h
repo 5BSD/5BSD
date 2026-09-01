@@ -14,7 +14,7 @@
 #include "serviced_manifest.h"
 
 #define	SVC_LAUNCH_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + \
-	SERVICED_MAX_CAP_FILES + SERVICED_MAX_CAP_NET + \
+	SERVICED_MAX_CAP_NET + \
 	SERVICED_MAX_CAP_VSOCK + 1)
 /* Storage is not a delivered descriptor: consumers self-mint via tzfsd. */
 #define	SVC_LAUNCH_MAX_NAMED_FDS	(SERVICED_MAX_CAP_SERVICES)
@@ -24,7 +24,6 @@ svc_launch_counts_valid(const struct svc_manifest *m)
 {
 
 	return (m->ncap_paths <= SERVICED_MAX_CAP_PATHS &&
-	    m->ncap_files <= SERVICED_MAX_CAP_FILES &&
 	    m->ncap_net <= SERVICED_MAX_CAP_NET &&
 	    m->ncap_vsock <= SERVICED_MAX_CAP_VSOCK &&
 	    m->ncap_services <= SERVICED_MAX_CAP_SERVICES &&
@@ -35,7 +34,7 @@ static inline unsigned
 svc_launch_token_count(const struct svc_manifest *m)
 {
 
-	return (m->ncap_paths + m->ncap_files + m->ncap_net +
+	return (m->ncap_paths + m->ncap_net +
 	    m->ncap_vsock +
 	    (m->cap_system != 0 ? 1u : 0u));
 }

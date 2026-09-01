@@ -27,9 +27,7 @@ capability_tokens_delivered_head()
 capability_tokens_delivered_body()
 {
 	token_path_target="${WORK}/token-path-target"
-	token_file_target="${WORK}/token-file-target"
 	printf 'path target\n' > "$token_path_target"
-	printf 'file target\n' > "$token_file_target"
 
 	find_capd_service_fixture
 
@@ -37,7 +35,6 @@ capability_tokens_delivered_body()
 
 	make_svc_bin system token-test "capabilities {
     paths = [\"${token_path_target}\"];
-    files = [{ path = \"${token_file_target}\"; actions = \"read\"; }];
     network = [{
         domain = \"inet\";
         protocol = \"tcp\";
@@ -61,18 +58,17 @@ capability_tokens_delivered_body()
 	atf_check -s exit:0 -o match:"channel_fd=[0-9]+" cat token-check.out
 	# Every requested capability must be present before exec.  Tokens occupy
 	# a contiguous, deterministic range after the channel and capprotect fds.
-	atf_check -s exit:0 -o match:"token_fds=6,7,8" cat token-check.out
-	atf_check -s exit:0 -o match:"valid_tokens=3" cat token-check.out
-	atf_check -s exit:0 -o match:"confined_tokens=3" cat token-check.out
-	atf_check -s exit:0 -o match:"fork_hidden_tokens=3" \
+	atf_check -s exit:0 -o match:"token_fds=6,7" cat token-check.out
+	atf_check -s exit:0 -o match:"valid_tokens=2" cat token-check.out
+	atf_check -s exit:0 -o match:"confined_tokens=2" cat token-check.out
+	atf_check -s exit:0 -o match:"fork_hidden_tokens=2" \
 	    cat token-check.out
 	stop_stack
 }
 capability_tokens_delivered_cleanup()
 {
 	cleanup_common
-	rm -f token_svc token_svc.c token-check.out token-path-target \
-	    token-file-target
+	rm -f token_svc token_svc.c token-check.out token-path-target
 }
 
 # ===================================================================

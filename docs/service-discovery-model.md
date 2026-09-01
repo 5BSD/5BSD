@@ -251,13 +251,13 @@ listener clobber (state preserved), unbounded mint RPC (2s bound), and the stale
 CAP_XFER_ONCE comments (now describe the single-transfer/sender-closes model).
 
 ### 1. Descriptor-based isolation — the main architectural next piece
-- **DONE (first slice):** `capabilities.open` — a unit declares files/dirs by
-  path with the rights it needs; the service manager opens them, attenuates each
-  fd to those rights (`cap_rights_limit` + `CAP_XFER_NONE`), and delivers them as
-  named bootstrap descriptors, fail-closed. The service never opens a path. This
-  is a *non-exclusive* hold (unlike the exclusive `network`/`jail`/`vsock`
-  isolations). See docs/service-file-delivery.md. Remaining below extends the
-  same idea to vnode-pinned claims.
+- **DONE (first slice):** descriptor-based file/dir isolation — a service calls
+  `service_open_isolated(3)` and the filesystem daemon (`tzfsd`) opens the path
+  under its own per-label policy, attenuates the fd to the requested rights
+  (`cap_rights_limit` + `CAP_XFER_NONE`), and returns it. The service never opens
+  a path, and nothing is declared in the manifest. This is a *non-exclusive* hold
+  (unlike the exclusive `network`/`jail`/`vsock` isolations). Remaining below
+  extends the same idea to vnode-pinned claims.
 - `claim_fd` primitive: isolate the exact vnode behind a held descriptor (the
   policy already keys on vnodes) — no path TOCTOU.
 - Shift confinement from global path-claims → per-process capability delivery +

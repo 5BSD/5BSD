@@ -28,11 +28,9 @@
 #define	SERVICED_MAX_SERVICES		256
 #define	SERVICED_MAX_PROVIDES		8
 #define	SERVICED_MAX_CAP_PATHS		16
-#define	SERVICED_MAX_CAP_FILES		16
 #define	SERVICED_MAX_CAP_NET		16
 #define	SERVICED_MAX_CAP_VSOCK		16
 #define	SERVICED_MAX_CAP_SERVICES	4
-#define	SERVICED_MAX_CAP_OPEN		8
 #define	SERVICED_CAP_SERVICE_NAME_MAX	16
 #define	SERVICED_LABEL_MAX		64
 #define	SERVICED_MAX_ARGUMENTS		32
@@ -116,36 +114,6 @@ struct svc_calendar {
 	int		wday;		/* 0-6, Sun=0, or SVC_CAL_ANY */
 };
 
-struct serviced_file_cap {
-	char		path[PATH_MAX];
-	uint64_t	actions;	/* FI_FS_* mask */
-};
-
-/*
- * A file or directory serviced opens on the service's behalf and delivers as a
- * named descriptor in the launch bootstrap (docs/service-file-delivery.md).  The
- * service never opens the path; it retrieves the fd by name and uses it (openat
- * under a dir fd, ucl_parser_add_fd for a config file).  Unlike serviced_file_cap
- * (a MAC path-access grant), this is a real delivered descriptor, cap_rights-
- * limited to the requested rights.  Acquisition is a launch prerequisite: if
- * serviced cannot open the path with those rights it refuses to launch.
- */
-#define	SVC_OPEN_READ	0x1U	/* CAP_READ */
-#define	SVC_OPEN_WRITE	0x2U	/* CAP_WRITE */
-#define	SVC_OPEN_EXEC	0x4U	/* CAP_FEXECVE */
-#define	SVC_OPEN_LOOKUP	0x8U	/* CAP_LOOKUP (directories, for openat) */
-#define	SVC_OPEN_RIGHTS_ALL \
-	(SVC_OPEN_READ | SVC_OPEN_WRITE | SVC_OPEN_EXEC | SVC_OPEN_LOOKUP)
-
-struct serviced_open_cap {
-	char		path[PATH_MAX];
-	char		name[64];	/* == SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX */
-	uint32_t	rights;		/* SVC_OPEN_* mask (at least one bit) */
-	uint8_t		is_dir;		/* 1 = directory (O_DIRECTORY), else file */
-	uint8_t		optional;	/* 1 = skip (not deliver) if it cannot be
-					 * opened, instead of failing the launch */
-};
-
 /*
  * Socket activation source (Phase 4).  serviced binds and holds a
  * listening socket; the first inbound connection is the demand that
@@ -196,11 +164,6 @@ struct svc_manifest {
 	/* Capabilities to delegate */
 	char		cap_paths[SERVICED_MAX_CAP_PATHS][PATH_MAX];
 	unsigned	ncap_paths;
-	struct serviced_file_cap cap_files[SERVICED_MAX_CAP_FILES];
-	unsigned	ncap_files;
-	/* Files/dirs serviced opens and delivers as named descriptors. */
-	struct serviced_open_cap cap_open[SERVICED_MAX_CAP_OPEN];
-	unsigned	ncap_open;
 	struct ort_net_claim cap_net[SERVICED_MAX_CAP_NET];
 	unsigned	ncap_net;
 	struct ort_vsock_claim cap_vsock[SERVICED_MAX_CAP_VSOCK];

@@ -456,12 +456,12 @@ parse_service_bootstrap(void)
 		} else if (strcmp(bootstrap->capabilities[i].type, "file") == 0 ||
 		    strcmp(bootstrap->capabilities[i].type, "dir") == 0) {
 			/*
-			 * A file/dir descriptor the service manager opened on the
-			 * unit's behalf (capabilities.open).  Like a zfshandle it is
-			 * a raw kernel descriptor, not a mac_capability token — and
-			 * its rights are consumer-specified, so there is no fixed
-			 * rights set to match.  Liveness is checked above; assert
-			 * only that the vnode kind matches the declared type.
+			 * A file/dir descriptor delivered by name.  Like a zfshandle
+			 * it is a raw kernel descriptor, not a mac_capability token —
+			 * and its rights are consumer-specified, so there is no fixed
+			 * rights set to match.  Liveness is checked above; assert only
+			 * that the vnode kind matches the declared type.  (Services now
+			 * obtain files/dirs on demand via service_open_isolated(3).)
 			 */
 			struct stat obs;
 

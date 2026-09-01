@@ -621,14 +621,6 @@ authority_release_manifest(int channel_fd, const struct svc_manifest *m)
 		    authority_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}
-	for (i = 0; i < m->ncap_files; i++) {
-		struct authority_path_req req;
-
-		if (fill_path_req(&req, AUTHORITY_OP_RELEASE_PATH,
-		    m->cap_files[i].path) == 0 &&
-		    authority_release_send(channel_fd, &req, sizeof(req)) != 0)
-			nsent++;
-	}
 	for (i = 0; i < m->ncap_net; i++) {
 		struct authority_net_req req;
 

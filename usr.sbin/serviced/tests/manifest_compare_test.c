@@ -30,10 +30,6 @@ sample_manifest(void)
 	m.nprovides = 1;
 	strlcpy(m.cap_paths[0], "/tmp", sizeof(m.cap_paths[0]));
 	m.ncap_paths = 1;
-	strlcpy(m.cap_files[0].path, "/tmp/file",
-	    sizeof(m.cap_files[0].path));
-	m.cap_files[0].actions = 1;
-	m.ncap_files = 1;
 	m.cap_net[0].domain = 2;
 	m.ncap_net = 1;
 	m.cap_vsock[0].cid = 3;
@@ -89,14 +85,12 @@ ATF_TC_BODY(authority_changes, tc)
 	struct svc_manifest a, b;
 
 	CHECK_CHANGE(b.cap_paths[0][1] = 'x');
-	CHECK_CHANGE(b.cap_files[0].actions++);
 	CHECK_CHANGE(b.cap_net[0].domain++);
 	CHECK_CHANGE(b.cap_vsock[0].cid++);
 	CHECK_CHANGE(b.cap_services[0][0] = 'x');
 	CHECK_CHANGE(b.cap_system++);
 	CHECK_CHANGE(b.protect_flags++);
 	CHECK_CHANGE(b.ncap_paths = 0);
-	CHECK_CHANGE(b.ncap_files = 0);
 	CHECK_CHANGE(b.ncap_net = 0);
 	CHECK_CHANGE(b.ncap_vsock = 0);
 	CHECK_CHANGE(b.ncap_services = 0);

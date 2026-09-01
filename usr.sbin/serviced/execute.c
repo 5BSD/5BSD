@@ -1026,7 +1026,6 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	char service_types[SERVICE_BOOTSTRAP_CAPABILITY_MAX]
 	    [SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX];
 	unsigned ntokens, nservices, nlisteners;
-	unsigned open_delivered;
 	uid_t uid;
 	gid_t gid;
 	gid_t groups[NGROUPS_MAX + 1];
@@ -1296,23 +1295,6 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		    PATH_MAX);
 		MINT_CHECK_DEADLINE();
 	}
-	for (i = 0; i < m->ncap_files; i++) {
-		int tfd = authority_mint_file(sd.authority_channel_fd,
-		    m->cap_files[i].path, m->cap_files[i].actions);
-
-		if (tfd == -1) {
-			syslog(LOG_ERR, "svc_exec %s: failed to mint "
-			    "file token for %s", m->label,
-			    m->cap_files[i].path);
-			SERVICED_PROBE_CAP_MINT(m->label, "file", -1);
-			goto fail_tokens;
-		}
-		SERVICED_PROBE_CAP_MINT(m->label, "file", 0);
-		token_fds[ntokens++] = tfd;
-		minted_manifest.cap_files[minted_manifest.ncap_files++] =
-		    m->cap_files[i];
-		MINT_CHECK_DEADLINE();
-	}
 	for (i = 0; i < m->ncap_net; i++) {
 		int tfd = authority_mint_net(sd.authority_channel_fd, &m->cap_net[i]);
 
@@ -1445,94 +1427,17 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 
 	/*
-	 * Files/directories the unit declared under `open`: serviced resolves
-	 * the path, opens it, and attenuates the descriptor to exactly the
-	 * rights the unit asked for, then delivers it as a named bootstrap
-	 * capability (type "file"/"dir").  The service never opens a path; it
-	 * retrieves the fd by name via service_capability_open.  Acquisition is
-	 * a launch prerequisite: any open failure takes the fail_tokens path,
-	 * so the service is never launched half-provisioned.
-	 * See docs/service-file-delivery.md.
-	 */
-	open_delivered = 0;
-	for (i = 0; i < m->ncap_open; i++) {
-		const struct serviced_open_cap *oc = &m->cap_open[i];
-		cap_rights_t orights;
-		int oflags, ofd;
-
-		if (nservices >= SERVICE_BOOTSTRAP_CAPABILITY_MAX) {
-			errno = EOVERFLOW;
-			goto fail_tokens;
-		}
-		/*
-		 * A directory is opened read-only at the fd level (write to a
-		 * directory is meaningless); write/lookup within it happens via
-		 * openat under the delivered dir fd.  A regular file is opened
-		 * O_RDWR only when the unit asked for write.
-		 */
-		if (oc->is_dir)
-			oflags = O_RDONLY | O_DIRECTORY | O_CLOEXEC;
-		else
-			oflags = ((oc->rights & SVC_OPEN_WRITE) ?
-			    O_RDWR : O_RDONLY) | O_CLOEXEC;
-		ofd = open(oc->path, oflags);
-		if (ofd == -1) {
-			/*
-			 * An optional resource that is simply absent (or
-			 * otherwise unopenable) is skipped, not delivered — the
-			 * service checks whether service_capability_open finds
-			 * it.  A required resource fails the launch closed.
-			 */
-			if (oc->optional) {
-				syslog(LOG_NOTICE, "svc_exec %s: optional open "
-				    "%s (%s) skipped: %m", m->label, oc->name,
-				    oc->path);
-				continue;
-			}
-			syslog(LOG_ERR, "svc_exec %s: open %s (%s): %m",
-			    m->label, oc->name, oc->path);
-			SERVICED_PROBE_CAP_MINT(m->label, "open", -1);
-			goto fail_tokens;
-		}
-		cap_rights_init(&orights, CAP_FSTAT);
-		if (oc->rights & SVC_OPEN_READ)
-			cap_rights_set(&orights, CAP_READ, CAP_SEEK);
-		if (oc->rights & SVC_OPEN_WRITE)
-			cap_rights_set(&orights, CAP_WRITE, CAP_SEEK);
-		if (oc->rights & SVC_OPEN_EXEC)
-			cap_rights_set(&orights, CAP_FEXECVE);
-		if (oc->rights & SVC_OPEN_LOOKUP)
-			cap_rights_set(&orights, CAP_LOOKUP);
-		if (cap_rights_limit(ofd, &orights) == -1 ||
-		    cap_xfer_limit(ofd, CAP_XFER_NONE) == -1) {
-			syslog(LOG_ERR, "svc_exec %s: confine open %s: %m",
-			    m->label, oc->name);
-			close(ofd);
-			goto fail_tokens;
-		}
-		strlcpy(service_names[nservices], oc->name,
-		    sizeof(service_names[nservices]));
-		strlcpy(service_types[nservices], oc->is_dir ? "dir" : "file",
-		    sizeof(service_types[nservices]));
-		service_fds[nservices++] = ofd;
-		open_delivered++;
-		SERVICED_PROBE_CAP_MINT(m->label, "open", 0);
-	}
-
-	/*
 	 * This is the final all-or-nothing barrier before jail creation and
 	 * pdfork().  The child receives only the complete manifest token set
 	 * plus the one runtime container; any missing token takes the
 	 * fail_tokens cleanup path instead.
 	 */
 	if (ntokens != expected_tokens ||
-	    nservices != m->ncap_services + nlisteners +
-	    open_delivered + 1) {
+	    nservices != m->ncap_services + nlisteners + 1) {
 		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
 		    "(%u/%u tokens, %u/%u services)", m->label, ntokens,
 		    expected_tokens, nservices,
-		    m->ncap_services + nlisteners +
-		    open_delivered + 1);
+		    m->ncap_services + nlisteners + 1);
 		goto fail_tokens;
 	}
 

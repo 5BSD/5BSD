@@ -21,11 +21,9 @@
 
 /* Limits matching serviced.h */
 #define	CAPBUNDLE_MAX_CAP_PATHS		16
-#define	CAPBUNDLE_MAX_CAP_FILES		16
 #define	CAPBUNDLE_MAX_CAP_NET		16
 #define	CAPBUNDLE_MAX_CAP_VSOCK		16
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
-#define	CAPBUNDLE_MAX_CAP_OPEN		SERVICED_MAX_CAP_OPEN
 /*
  * Upper bound on a monotonic activation.timer interval: 366 days in seconds.
  * A period longer than a year is far past the point where a monotonic timer is
@@ -70,17 +68,6 @@ struct capbundle_service {
 	/* Path capabilities */
 	char	cap_paths[CAPBUNDLE_MAX_CAP_PATHS][PATH_MAX];
 	unsigned ncap_paths;
-
-	/* File capabilities (fine-grained, with actions) */
-	struct {
-		char	path[PATH_MAX];
-		uint64_t actions;	/* FI_FS_* mask */
-	} cap_files[CAPBUNDLE_MAX_CAP_FILES];
-	unsigned ncap_files;
-
-	/* Files/dirs serviced opens and delivers as named descriptors */
-	struct serviced_open_cap cap_open[CAPBUNDLE_MAX_CAP_OPEN];
-	unsigned ncap_open;
 
 	/* Network capabilities (full: domain, address, prefix, port range) */
 	struct ort_net_claim cap_net[CAPBUNDLE_MAX_CAP_NET];

@@ -150,8 +150,9 @@ bool	capbundle_principal_is_admin(const struct passwd *pwd);
 /*
  * As above, but read the policy from an already-open read-only descriptor
  * rather than by path — the capsicum-clean form for a sandboxed auth-agent that
- * receives principal-policy.ucl as a delivered capabilities.open descriptor.  A
- * bad or absent fd fails safe to the historical default.
+ * obtains principal-policy.ucl from the filesystem daemon (tzfsd) via
+ * service_open_isolated(3).  A bad or absent fd fails safe to the historical
+ * default.
  */
 bool	capbundle_principal_is_admin_fd(const struct passwd *pwd, int policy_fd);
 

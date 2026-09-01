@@ -64,9 +64,10 @@ channel for a uid. The agent does three things:
    A principal named here — by uid or by membership in a named group — gets a
    **SYSTEM** (full-discovery admin) session; every other principal gets a
    per-uid **USER** session (see [The Authority Model](authority-model.md) for
-   what each domain can reach). The file is delivered to the sandboxed agent as
-   an optional [`capabilities.open`](capability-bundles.md) descriptor, so the
-   agent reads it without ever opening a path. It is the one authoritative place
+   what each domain can reach). The sandboxed agent obtains the file by calling
+   `service_open_isolated(3)` — the filesystem daemon (`tzfsd`) opens it under its
+   own per-label policy and returns a rights-limited descriptor, so the agent
+   reads it without ever opening a path and nothing is declared in the manifest. It is the one authoritative place
    the domain assignment is stated; an absent or unparseable policy fails safe to
    the historical default — **root, or a member of `wheel`, is admin** — so a
    system with no policy behaves exactly as before and a typo can never lock out

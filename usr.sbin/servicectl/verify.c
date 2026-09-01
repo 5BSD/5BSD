@@ -134,20 +134,16 @@ print_bundle(const struct capbundle *b)
 			printf(" %s", capbundle_svc_provides(svc, j));
 		printf("\n");
 
-		printf("      capabilities: paths=%u files=%u network=%u "
-		    "vsock=%u services=%u open=%u "
+		printf("      capabilities: paths=%u network=%u "
+		    "vsock=%u services=%u "
 		    "system=0x%x\n",
-		    m.ncap_paths, m.ncap_files, m.ncap_net,
-		    m.ncap_vsock, m.ncap_services, m.ncap_open,
+		    m.ncap_paths, m.ncap_net,
+		    m.ncap_vsock, m.ncap_services,
 		    m.cap_system);
 		if (m.protect_flags != 0)
 			printf("      protect: 0x%x\n", m.protect_flags);
 		for (j = 0; j < m.ncap_paths; j++)
 			printf("        path: %s\n", m.cap_paths[j]);
-		for (j = 0; j < m.ncap_files; j++)
-			printf("        file: %s actions=0x%jx\n",
-			    m.cap_files[j].path,
-			    (uintmax_t)m.cap_files[j].actions);
 		for (j = 0; j < m.ncap_net; j++)
 		{
 			char address[INET6_ADDRSTRLEN];
@@ -168,24 +164,6 @@ print_bundle(const struct capbundle *b)
 			    ort_net_direction_name(m.cap_vsock[j].direction));
 		for (j = 0; j < m.ncap_services; j++)
 			printf("        service: %s\n", m.cap_services[j]);
-		for (j = 0; j < m.ncap_open; j++) {
-			char r[5];
-			unsigned k = 0;
-
-			if (m.cap_open[j].rights & SVC_OPEN_READ)
-				r[k++] = 'r';
-			if (m.cap_open[j].rights & SVC_OPEN_WRITE)
-				r[k++] = 'w';
-			if (m.cap_open[j].rights & SVC_OPEN_EXEC)
-				r[k++] = 'x';
-			if (m.cap_open[j].rights & SVC_OPEN_LOOKUP)
-				r[k++] = 'l';
-			r[k] = '\0';
-			/* Non-exclusive: a delivered descriptor, not a claim. */
-			printf("        open: %s name=%s type=%s rights=%s\n",
-			    m.cap_open[j].path, m.cap_open[j].name,
-			    m.cap_open[j].is_dir ? "dir" : "file", r);
-		}
 	}
 
 }

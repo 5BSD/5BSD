@@ -32,8 +32,7 @@ See [Capability bundle manifests](manifests.md) for the complete two-level
 ## Launch and lifecycle
 
 Each native unit is launched with `pdfork(2)`. Before releasing the child,
-`serviced` mints every declared capability, opens and
-delivers any [`capabilities.open`](manifests.md) file/dir descriptors, creates a
+`serviced` mints every declared capability, creates a
 coalition, installs a versioned bootstrap envfd, and applies the requested
 credentials. This *launch-time* capability minting is
 fail-closed: partial construction is rolled back and the program never receives
