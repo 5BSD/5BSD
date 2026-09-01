@@ -100,6 +100,43 @@ descriptors carrying rights and transfer limits, not bare Mach send rights — s
 "deliver the channel" can also carry fine-grained, pre-attenuated authority
 that launchd would have to approximate with entitlements.
 
+## Per-daemon architectural audit
+
+A full audit of the capability-plane daemons (2026-09-01). Ranked by daemon;
+"clean" = a socketless `service_provider` with per-client channels and no
+leaf-coupling. Citations are in the tracking notes; summarized here.
+
+| Daemon | Socket-free? | Key architectural issues |
+|--------|-------------|--------------------------|
+| **authorityd** (PID 1) | **No** | ① live AF_UNIX `getpeereid` control listener **in PID 1** (`control.c` — not vestigial; a fatal Phase-5 startup step) — flagship violation; ② `kldload`/`modfind` run in PID 1 (`handle_ensure_kmod`); ③ `jail_set()` in PID 1 (`handle_create_jail`); ④ hardcoded serviced fd-map + restart policy (`bootstrap.c`) |
+| **serviced** | mostly | storage over path socket via `libtzfsd` (`storage_client.c`) — **being fixed by the socketless rewrite**; else plane-conformant (libchannel control, delegates kmod). Its `activation.c` listeners are launchd socket-activation (correct) |
+| **tzfsd** | **No → converting** | UNIX socket transport — **rewrite in progress** to `system.Storage` provider |
+| **authagentd** | Yes | no per-client worker isolation — the mint authority + SYSTEM bootstrap channel are shared across all login clients (no `pdfork`/`service_worker_protect`) |
+| **localcrypto** | Yes | policy hardcoded in C (dead `crypto_policy.conf`); parent/listener not hardened with `service_provider_protect` |
+| **localnetwork** | Yes | session policy hardcoded in C, ignores `client_label` (contradicts its own header comment) |
+| **bsdnotify** | Yes | clean; single router worker (intentional); `auditcmp` coupling is via channel (fine) |
+| **auditbrokerd** | Yes | clean; provider→audit-event-class table hardcoded in C (`auditcmp_policy.c`) → manifest |
+| **traced** | Yes | ① bypasses the audit broker with raw `audit_submit`/libbsm → use libauditcmp; ② operator allowlist from hardcoded `/etc/traced.allow` → manifest |
+| **logd** | Yes | clean; fixed pool worker (intentional); `auditcmp` coupling via channel (fine) |
+| **blued** | **No** | dual/shadow control plane: exposes `system.Bluetooth` but the *live* IPC is a hand-rolled `/var/run/blued.sock` with `getpeereid` tiers (the provider listener is dormant). BT **radio** sockets + the SCM_RIGHTS L2CAP fd broker are legitimate — leave |
+| **meshd** | **No** | entirely hand-rolled `/var/run/meshd.sock` + `getpeereid`, **no** provider, **no** capability sandbox, **no** manifest; also couples into blued's source tree and speaks blued's wire protocol over a path socket |
+
+**Cross-cutting themes** (fix system-wide, not per-daemon):
+- **Socket-free**: authorityd control, blued/meshd control planes still on UNIX
+  sockets + `getpeereid`. (tzfsd in progress.)
+- **Policy-in-code vs manifest**: localcrypto, localnetwork, auditbrokerd, and
+  traced hardcode operator policy in C; authagentd's `principal-policy`
+  descriptor is the pattern to copy (deliver policy as a manifest descriptor via
+  `service_capability_open`).
+- **Per-client worker isolation**: authagentd (mint authority) shares state
+  across clients; bsdnotify/logd use single-worker models by design (fine, but
+  call it out). localcrypto/localnetwork/auditbrokerd/traced do it right
+  (`pdfork` + `service_worker_protect`).
+- **Audit-broker bypass**: traced submits audit directly instead of via
+  auditbrokerd.
+- **Privileged work misplaced in PID 1**: `kldload` and `jail_set` → dedicated
+  brokers (already tracked as the kmod/jail phases).
+
 ## Socket-free (launchd-style) — a standing mandate
 
 The capability plane is **socket-free**: a service is reached over a held
