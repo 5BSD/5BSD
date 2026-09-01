@@ -47,7 +47,6 @@
 #include <dev/mac_capability/mac_capability_ioctl.h>
 #include <service_bootstrap.h>
 #include <channel.h>
-#include <tzfsd.h>
 
 #include "serviced.h"
 #include "launch_limits.h"
@@ -1239,15 +1238,15 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * phase exceeds SVC_MINT_DEADLINE_MS to avoid blocking the
 	 * event loop for an unbounded duration.
 	 *
-	 * The ceiling must clear the one-time cost of a cold storage
-	 * provider: the first storage mint connects serviced to tzfsd (a
-	 * serviced-supervised unit) and may retry briefly while tzfsd
-	 * starts, imports the pool, and creates the dataset before
+	 * The ceiling must clear the one-time cost of a cold authority
+	 * provider: the first mint of a given kind may pull its provider up
+	 * on demand and retry briefly while it starts and initializes before
 	 * replying.  On emulated hardware that cold start alone can exceed
-	 * two seconds; a tighter ceiling aborted every first peer/storage
-	 * launch.  Subsequent mints reuse the cached tzfsd channel and
-	 * return in well under a millisecond, so this bound is only ever
-	 * approached once per boot.
+	 * two seconds; a tighter ceiling aborted every first such launch.
+	 * Subsequent mints reuse the cached channel and return in well under
+	 * a millisecond, so this bound is only ever approached once per boot.
+	 * (Storage is not among these: consumers self-mint it via tzfsd,
+	 * outside serviced's launch path entirely.)
 	 */
 #define	SVC_MINT_DEADLINE_MS	15000	/* max total mint phase */
 	{

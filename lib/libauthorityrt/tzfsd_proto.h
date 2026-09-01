@@ -5,17 +5,19 @@
  *
  * tzfsd(8) storage daemon protocol.
  *
- * Shared between tzfsd(8), its clients (libtzfsd, serviced(8), tzfsctl(8)),
- * and authorityd(8) during the storage-ownership transition.  Requests are
- * exchanged over an AF_UNIX SOCK_SEQPACKET socket; the minted TrustedZFS
- * handle is returned as an SCM_RIGHTS-attached fd on the reply, never as an
- * integer in the payload.
+ * Shared between tzfsd(8) and its clients (libtzfsd, tzfsctl(8), and
+ * libservice's service_storage_open(3)).  tzfsd is a socket-free
+ * service_provider: there is no AF_UNIX socket and no path to name.  A client
+ * reaches it over a held mac_capability channel obtained by name (service_open
+ * of TZFSD_SERVICE_NAME), exactly like every other capability-plane daemon;
+ * serviced brokers nothing here.  A request is the channel message payload and
+ * the minted TrustedZFS handle rides back as the reply's single SCM_RIGHTS fd,
+ * never as an integer in the payload.
  *
- * A non-sandboxed client connects TZFSD_SOCK_PATH; a sandboxed one (e.g. a
- * capability service, or serviced after cap_enter) is handed a pre-connected
- * channel fd at bootstrap and never names the path.  tzfsd itself cap_enter()s
- * once its pool handle and listening socket are open, and mints every handle
- * from its retained pool capability.
+ * tzfsd cap_enter()s once its pool handle is open, mints every handle from its
+ * retained pool capability, and scopes each client to a per-service dataset
+ * subtree derived from the connecting channel's unforgeable label (never a wire
+ * argument), so a client can only ever reach its own storage.
  */
 
 #ifndef TZFSD_PROTO_H
@@ -28,13 +30,7 @@
 #define	TZFSD_PROTO_VERSION_PATCH	0
 #define	TZFSD_PROTO_VERSION		2
 
-/*
- * tzfsd is a socket-free service_provider: clients reach it over a held
- * mac_capability channel obtained by name (service_open), exactly like every
- * other capability-plane daemon.  The request/reply structs below are the
- * channel message payloads (a request is the message data; a granted handle
- * rides back as the reply's single SCM fd).
- */
+/* The well-known name a client resolves with service_open(3) to reach tzfsd. */
 #define	TZFSD_SERVICE_NAME		"system.Storage"
 
 /*

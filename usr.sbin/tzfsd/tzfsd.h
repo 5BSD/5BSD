@@ -40,7 +40,6 @@ struct tzfsd_state {
 	int		lease_fd;	/* current serviced session, per connection */
 	char		boot_name[TZFSD_NAME_MAX];
 	char		lease_name[TZFSD_NAME_MAX];
-	int		listen_fd;	/* TZFSD_SOCK_PATH listener */
 };
 
 /* config.c */
