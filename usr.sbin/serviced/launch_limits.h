@@ -16,8 +16,8 @@
 #define	SVC_LAUNCH_MAX_TOKENS	(SERVICED_MAX_CAP_PATHS + \
 	SERVICED_MAX_CAP_FILES + SERVICED_MAX_CAP_NET + \
 	SERVICED_MAX_CAP_JAIL + SERVICED_MAX_CAP_VSOCK + 1)
-#define	SVC_LAUNCH_MAX_NAMED_FDS	(SERVICED_MAX_CAP_STORAGE + \
-	SERVICED_MAX_CAP_SERVICES)
+/* Storage is not a delivered descriptor: consumers self-mint via tzfsd. */
+#define	SVC_LAUNCH_MAX_NAMED_FDS	(SERVICED_MAX_CAP_SERVICES)
 
 static inline bool
 svc_launch_counts_valid(const struct svc_manifest *m)
@@ -30,8 +30,7 @@ svc_launch_counts_valid(const struct svc_manifest *m)
 	    m->ncap_vsock <= SERVICED_MAX_CAP_VSOCK &&
 	    m->ncap_storage <= SERVICED_MAX_CAP_STORAGE &&
 	    m->ncap_services <= SERVICED_MAX_CAP_SERVICES &&
-	    m->ncap_storage + m->ncap_services <=
-	    SERVICE_BOOTSTRAP_CAPABILITY_MAX);
+	    m->ncap_services <= SERVICE_BOOTSTRAP_CAPABILITY_MAX);
 }
 
 static inline unsigned
@@ -47,7 +46,7 @@ static inline unsigned
 svc_launch_named_fd_count(const struct svc_manifest *m)
 {
 
-	return (m->ncap_storage + m->ncap_services);
+	return (m->ncap_services);
 }
 
 #endif /* SERVICED_LAUNCH_LIMITS_H */

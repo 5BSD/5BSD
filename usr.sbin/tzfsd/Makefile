@@ -46,13 +46,16 @@ CAP_UNITMODE=	0444
 CAP_UNITPACKAGE=	runtime
 
 # tzfsd_proto.h (libauthorityrt), tzfs_* verbs (libtrustedzfs), sys/zfshandle.h,
-# and the UCL config parser.
+# the UCL config parser, and the socket-free service_provider transport
+# (libservice over libchannel).
 CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs
+CFLAGS+=	-I${SRCTOP}/lib/libservice
+CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		trustedzfs ucl nvpair
+LIBADD=		trustedzfs ucl nvpair service channel md
 
 .include <bsd.prog.mk>
 

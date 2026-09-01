@@ -3,16 +3,18 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * tzfsd(8) request loop.  Runs entirely in capability mode: every handle is
- * derived/created/cloned/destroyed from the retained parent handles, and the
- * granted handle rides SCM_RIGHTS back to the client.
+ * tzfsd(8) request loop.  tzfsd is a socket-free service_provider: it exposes
+ * system.Storage and serves each client on its own mac_capability worker
+ * channel.  Every handle is derived/created/cloned/destroyed from the retained
+ * parent handles in capability mode, and the granted handle rides back to the
+ * client as the reply's single SCM fd.
  *
  * Dataset keys are opaque, single-level names derived by the trusted bundle
  * parser.  tzfsd never accepts a user-facing role or path.
  */
 
 #include <sys/types.h>
-#include <sys/socket.h>
+#include <sys/procdesc.h>
 
 #include <errno.h>
 #include <stdbool.h>
@@ -21,9 +23,23 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <sha256.h>
+
+#include <channel.h>
+#include <libservice.h>
 #include <trustedzfs.h>
 
 #include "tzfsd.h"
+
+/*
+ * Per-connection worker context: the retained-handle state (a private COW copy)
+ * plus the connecting client's unforgeable label, which namespaces every leaf
+ * this client can name.
+ */
+struct tzfs_conn {
+	struct tzfsd_state	*st;
+	char			client[64];	/* == service_identity.client_label */
+};
 
 /* A claim name must be a single, safe path component. */
 static bool
@@ -79,59 +95,49 @@ valid_request(const struct tzfsd_request *rq)
 	}
 }
 
-/* Send a fixed reply, optionally with one SCM_RIGHTS fd. */
-static void
-send_reply(int c, const void *reply, size_t rlen, int passfd)
+/*
+ * Derive a client's per-service namespace: a single dataset component named by
+ * a hash of the connecting service's (unforgeable) label — set by serviced when
+ * it brokered the channel, never by the client.  Every claim a client makes is
+ * a child dataset under this namespace, so a client can only ever create or open
+ * storage inside its own subtree.  It cannot name another service's storage:
+ * authority is the held channel's identity, not a wire argument.
+ */
+static bool
+derive_ns(const char *client, char *out, size_t outsz)
 {
-	struct msghdr msg;
-	struct iovec iov;
-	union {
-		struct cmsghdr align;
-		char buf[CMSG_SPACE(sizeof(int))];
-	} cbuf;
+	SHA256_CTX ctx;
+	uint8_t digest[SHA256_DIGEST_LENGTH];
+	char hex[25];
+	unsigned i;
 
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = __DECONST(void *, reply);
-	iov.iov_len = rlen;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	if (passfd != -1) {
-		struct cmsghdr *cmsg;
-
-		memset(&cbuf, 0, sizeof(cbuf));
-		msg.msg_control = cbuf.buf;
-		msg.msg_controllen = sizeof(cbuf.buf);
-		cmsg = CMSG_FIRSTHDR(&msg);
-		cmsg->cmsg_level = SOL_SOCKET;
-		cmsg->cmsg_type = SCM_RIGHTS;
-		cmsg->cmsg_len = CMSG_LEN(sizeof(int));
-		memcpy(CMSG_DATA(cmsg), &passfd, sizeof(int));
-	}
-	(void)sendmsg(c, &msg, MSG_NOSIGNAL);
-}
-
-static void
-reply_status(int c, int status)
-{
-	struct tzfsd_reply rp;
-
-	memset(&rp, 0, sizeof(rp));
-	rp.status = status;
-	send_reply(c, &rp, sizeof(rp), -1);
+	if (client == NULL || client[0] == '\0')
+		return (false);
+	SHA256_Init(&ctx);
+	SHA256_Update(&ctx, client, strlen(client));
+	SHA256_Final(digest, &ctx);
+	for (i = 0; i < 12; i++)
+		(void)snprintf(hex + i * 2, 3, "%02x", digest[i]);
+	hex[24] = '\0';
+	if ((size_t)snprintf(out, outsz, "u%s", hex) >= outsz)
+		return (false);
+	return (true);
 }
 
 /*
- * Produce a rights-limited handle for a REQUEST.  Returns the granted fd (>=0)
- * and fills dataset[]/dsz for audit, or -1 with errno set.
+ * Produce a rights-limited handle for a REQUEST from the client identified by
+ * `client`.  Returns the granted fd (>=0) and fills dataset[]/dsz for audit, or
+ * -1 with errno set.
  */
 static int
-grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
-    size_t dsz)
+grant(struct tzfsd_state *st, const char *client,
+    const struct tzfsd_request *rq, char *dataset, size_t dsz)
 {
 	struct tzfsd_config *cfg = &st->cfg;
-	int parent_fd, leaf_fd, granted;
-	const char *parent_name;
+	int parent_fd, ns_fd, leaf_fd, granted;
+	const char *parent_name, *claim;
 	char parent_buf[TZFSD_MAXPATH];
+	char ns[TZFSD_NAME_MAX];
 
 	if (rq->lifetime > TZFSD_LEASE) {
 		errno = EINVAL;
@@ -142,10 +148,12 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		errno = EINVAL;
 		return (-1);
 	}
-	if (!valid_dataset(rq->dataset)) {
+	if (!valid_dataset(rq->dataset) ||
+	    !derive_ns(client, ns, sizeof(ns))) {
 		errno = EINVAL;
 		return (-1);
 	}
+	claim = rq->dataset;
 
 	if (rq->lifetime == TZFSD_BOOT) {
 		parent_fd = st->boot_fd;
@@ -166,15 +174,25 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		parent_name = cfg->persistent;
 	}
 
-	/* Bare dataset claim: open-or-create the leaf. */
-	leaf_fd = tzfsd_ensure_path(parent_fd, rq->dataset, ZH_ALL_RIGHTS);
-	if (leaf_fd == -1)
+	/*
+	 * Open-or-create the service's namespace subtree, then the claim child
+	 * under it.  The client can only ever reach children of its own ns.
+	 */
+	ns_fd = tzfsd_ensure_path(parent_fd, ns, ZH_ALL_RIGHTS);
+	if (ns_fd == -1)
 		return (-1);
+	leaf_fd = tzfsd_ensure_path(ns_fd, claim, ZH_ALL_RIGHTS);
+	if (leaf_fd == -1) {
+		int saved = errno;
+
+		(void)close(ns_fd);
+		errno = saved;
+		return (-1);
+	}
 
 	/*
 	 * Set the dataset root's owner to the requesting service so it can write
-	 * its own storage once it mounts the handle lazily — serviced no longer
-	 * mounts (and chowns) on the service's behalf.  This runs on the
+	 * its own storage once it mounts the handle lazily.  This runs on the
 	 * full-rights leaf (before the ioctl ceiling is applied to the delivered
 	 * handle): a rights-limited handle would be denied ZFD_UNMOUNT, stranding
 	 * the transient mount and making the consumer's later mount fail EINVAL.
@@ -192,6 +210,7 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 				(void)close(dfd);
 			(void)tzfs_unmount(leaf_fd);
 			(void)close(leaf_fd);
+			(void)close(ns_fd);
 			errno = saved;
 			return (-1);
 		}
@@ -200,12 +219,14 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 	}
 
 	/*
-	 * Re-open from the retained parent so both rights and subtree scope are
-	 * exactly those requested.  The provisioning leaf is always subtree-
-	 * capable and deriving it would accidentally preserve that authority.
+	 * Re-open the claim from its retained namespace parent so both rights and
+	 * subtree scope are exactly those requested.  The provisioning leaf is
+	 * always subtree-capable and deriving it would accidentally preserve that
+	 * authority.
 	 */
 	(void)close(leaf_fd);
-	granted = tzfs_openat(parent_fd, rq->dataset, rq->rights, rq->flags);
+	granted = tzfs_openat(ns_fd, claim, rq->rights, rq->flags);
+	(void)close(ns_fd);
 	if (granted == -1)
 		return (-1);
 	/* Add a monotonic Capsicum ioctl ceiling before SCM_RIGHTS transfer. */
@@ -218,122 +239,182 @@ grant(struct tzfsd_state *st, const struct tzfsd_request *rq, char *dataset,
 		return (-1);
 	}
 
-	(void)snprintf(dataset, dsz, "%s/%s", parent_name, rq->dataset);
+	(void)snprintf(dataset, dsz, "%s/%s/%s", parent_name, ns, claim);
 	return (granted);
 }
 
+/*
+ * Per-client channel request handler.  arg is this worker's tzfsd_state (its
+ * own copy of the retained handles, plus per-connection lease state).  The
+ * reply is a fixed tzfsd_reply; a granted handle rides back as its single fd.
+ */
 static void
-handle_request(struct tzfsd_state *st, int c, const struct tzfsd_request *rq)
+tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 {
+	struct tzfs_conn *conn = arg;
+	struct tzfsd_state *st = conn->st;
+	const struct tzfsd_request *rq;
 	struct tzfsd_reply rp;
-	int handle;
+	struct channel_outgoing out;
+	int handle = -1;
 
 	memset(&rp, 0, sizeof(rp));
-	handle = grant(st, rq, rp.dataset, sizeof(rp.dataset));
-	if (handle == -1) {
-		rp.status = errno;
-		rp.dataset[0] = '\0';
-		send_reply(c, &rp, sizeof(rp), -1);
-		syslog(LOG_INFO, "REQUEST dataset=%s life=%u -> %s",
-		    rq->dataset, rq->lifetime, strerror(rp.status));
-		return;
+
+	if (channel_message_length(m) != sizeof(*rq) ||
+	    channel_message_fd_count(m) != 0) {
+		rp.status = EPROTO;
+		goto reply;
 	}
-	rp.status = 0;
-	send_reply(c, &rp, sizeof(rp), handle);
-	(void)close(handle);
-	syslog(LOG_INFO, "REQUEST %s life=%u -> granted",
-	    rp.dataset, rq->lifetime);
+	rq = channel_message_data(m);
+	if (!valid_request(rq)) {
+		rp.status = EINVAL;
+		goto reply;
+	}
+
+	switch (rq->op) {
+	case TZFSD_OP_REQUEST:
+		handle = grant(st, conn->client, rq, rp.dataset,
+		    sizeof(rp.dataset));
+		if (handle == -1) {
+			rp.status = errno;
+			rp.dataset[0] = '\0';
+			syslog(LOG_INFO, "REQUEST claim=%s life=%u -> %s",
+			    rq->dataset, rq->lifetime, strerror(rp.status));
+		} else {
+			syslog(LOG_INFO, "REQUEST %s life=%u -> granted",
+			    rp.dataset, rq->lifetime);
+		}
+		break;
+	case TZFSD_OP_RELEASE: {
+		/* Destroy the caller's own claim under its lease namespace. */
+		char ns[TZFSD_NAME_MAX];
+		int ns_fd;
+
+		if (!valid_dataset(rq->dataset) ||
+		    !derive_ns(conn->client, ns, sizeof(ns))) {
+			rp.status = EINVAL;
+			break;
+		}
+		if (st->lease_fd == -1) {
+			rp.status = ENXIO;
+			break;
+		}
+		ns_fd = tzfs_openat(st->lease_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+		if (ns_fd == -1) {
+			/* No namespace => nothing to release (idempotent). */
+			if (errno != ENOENT)
+				rp.status = errno;
+			break;
+		}
+		if (tzfsd_destroy_tree(ns_fd, rq->dataset) == -1 &&
+		    errno != ENOENT)
+			rp.status = errno;
+		else
+			syslog(LOG_INFO, "RELEASE %s/%s -> ok", ns, rq->dataset);
+		(void)close(ns_fd);
+		break;
+	}
+	case TZFSD_OP_PING:
+		rp.status = 0;
+		break;
+	case TZFSD_OP_BEGIN_SESSION:
+		if (tzfsd_session_begin(st, rq->session) == -1)
+			rp.status = errno;
+		break;
+	default:
+		rp.status = EOPNOTSUPP;
+		break;
+	}
+
+reply:
+	memset(&out, 0, sizeof(out));
+	out.size = sizeof(out);
+	out.data = &rp;
+	out.length = sizeof(rp);
+	if (handle != -1 && rp.status == 0) {
+		out.fds = &handle;
+		out.nfds = 1;
+	}
+	(void)channel_send_reply(m, &out);
+	if (handle != -1)
+		(void)close(handle);
+	channel_message_free(m);
 }
 
-static void
-handle_release(struct tzfsd_state *st, int c, const struct tzfsd_request *rq)
+/*
+ * Serve one client on its own worker channel until the channel closes.  Runs in
+ * a pdfork'd worker with its own copy of st (so its lease state is private).
+ */
+static int
+tzfs_worker(struct tzfsd_state *st, int fd, const char *client)
 {
-	int rc;
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	struct channel *channel = NULL;
+	struct tzfs_conn conn;
+	int ready, wants_write;
 
-	if (!valid_dataset(rq->dataset)) {
-		reply_status(c, EINVAL);
-		return;
-	}
-	if (st->lease_fd == -1) {
-		reply_status(c, ENXIO);
-		return;
-	}
-	rc = tzfsd_destroy_tree(st->lease_fd, rq->dataset);
-	if (rc == -1 && errno != ENOENT) {
-		reply_status(c, errno);
-		return;
-	}
-	reply_status(c, 0);
-	syslog(LOG_INFO, "RELEASE %s -> ok", rq->dataset);
-}
+	conn.st = st;
+	(void)strlcpy(conn.client, client, sizeof(conn.client));
 
-static void
-handle_conn(struct tzfsd_state *st, int c)
-{
-	struct tzfsd_request rq;
-	ssize_t n;
-
+	if (channel_create(fd, &options, &channel) == -1)
+		return (1);
+	if (channel_set_request_handler(channel, tzfs_request, &conn) == -1) {
+		channel_destroy(channel);
+		return (1);
+	}
 	for (;;) {
-		n = recv(c, &rq, sizeof(rq), 0);
-		if (n <= 0)
-			return;
-		if ((size_t)n != sizeof(rq)) {
-			reply_status(c, EPROTO);
-			continue;
-		}
-		if (!valid_request(&rq)) {
-			reply_status(c, EINVAL);
-			continue;
-		}
-		switch (rq.op) {
-		case TZFSD_OP_REQUEST:
-			handle_request(st, c, &rq);
+		wants_write = channel_wants_write(channel);
+		if (wants_write == -1 ||
+		    (ready = channel_wait(channel, wants_write, -1)) == -1 ||
+		    ((ready & CHANNEL_WAIT_WRITE) != 0 &&
+		    channel_flush(channel) == -1) ||
+		    ((ready & CHANNEL_WAIT_READ) != 0 &&
+		    channel_dispatch(channel) == -1))
 			break;
-		case TZFSD_OP_RELEASE:
-			handle_release(st, c, &rq);
-			break;
-		case TZFSD_OP_PING:
-			reply_status(c, 0);
-			break;
-		case TZFSD_OP_BEGIN_SESSION:
-			if (tzfsd_session_begin(st, rq.session) == -1)
-				reply_status(c, errno);
-			else
-				reply_status(c, 0);
-			break;
-		default:
-			reply_status(c, EOPNOTSUPP);
-			break;
-		}
 	}
+	channel_destroy(channel);
+	return (0);
 }
 
-void
+/*
+ * Expose system.Storage and dispatch each accepted client on its own pdfork'd
+ * worker.  Enters capability mode before serving; returns -1 only on setup
+ * failure (never on success).
+ */
+int
 tzfsd_serve(struct tzfsd_state *st)
 {
+	struct service_identity id;
+	struct service_listener *listener;
+	struct service_provider *provider;
+	int fd;
+
+	if (service_provider_create(&provider) == -1 ||
+	    service_provider_authorize_capabilities(provider) == -1 ||
+	    service_provider_expose(provider, TZFSD_SERVICE_NAME, &listener) ==
+	    -1 ||
+	    service_provider_enter_capability_mode(provider) == -1 ||
+	    service_provider_ready(provider) == -1)
+		return (-1);
 
 	for (;;) {
 		pid_t pid;
-		int c = accept4(st->listen_fd, NULL, NULL, SOCK_CLOEXEC);
+		int pd;
 
-		if (c == -1) {
-			if (errno == EINTR || errno == ECONNABORTED)
-				continue;
-			syslog(LOG_ERR, "accept: %m");
-			return;
-		}
-		pid = fork();
+		memset(&id, 0, sizeof(id));
+		id.size = sizeof(id);
+		if (service_listener_accept(listener, &id, &fd) == -1)
+			return (-1);
+		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
 		if (pid == -1) {
-			syslog(LOG_ERR, "fork: %m");
-			(void)close(c);
+			syslog(LOG_ERR, "pdfork: %m");
+			(void)close(fd);
 			continue;
 		}
-		if (pid == 0) {
-			(void)close(st->listen_fd);
-			handle_conn(st, c);
-			(void)close(c);
-			_exit(0);
-		}
-		(void)close(c);
+		if (pid == 0)
+			_exit(tzfs_worker(st, fd, id.client_label));
+		(void)close(fd);
+		(void)close(pd);
 	}
 }

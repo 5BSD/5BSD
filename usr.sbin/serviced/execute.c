@@ -28,7 +28,6 @@
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
-#include <sys/zfshandle.h>
 
 #include <dirent.h>
 #include <errno.h>
@@ -53,7 +52,6 @@
 #include "serviced.h"
 #include "launch_limits.h"
 #include "rc_adopt.h"
-#include "storage_delivery.h"
 #include "fd_budget.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
@@ -97,36 +95,6 @@ _Static_assert(SERVICED_CAP_SERVICE_NAME_MAX <=
     "bootstrap capability name is too small");
 _Static_assert(SERVICED_LABEL_MAX <= SERVICE_BOOTSTRAP_LABEL_MAX,
     "bootstrap label is too small");
-
-/*
- * Validate storage delivery.  Every storage claim is delivered as the raw
- * "zfshandle" it was minted as: a mount-rights consumer mounts it lazily via
- * service_storage_open(3) and holds the handle for its lifetime — the handle
- * anchors the mount — so serviced no longer mounts on the service's behalf, and
- * tzfsd already set the dataset root's owner at mint (see serviced_storage_mint).
- */
-static int
-finalize_storage_descriptors(const struct svc_manifest *manifest, int *fds __unused,
-    unsigned *nfdsp,
-    char names[][SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX],
-    char types[][SERVICE_BOOTSTRAP_CAPABILITY_TYPE_MAX])
-{
-	char role[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
-	unsigned claim, i;
-
-	for (claim = 0; claim < manifest->ncap_storage; claim++) {
-		if (snprintf(role, sizeof(role), "storage:%s",
-		    manifest->cap_storage[claim].name) >= (int)sizeof(role))
-			return (errno = EOVERFLOW, -1);
-		for (i = 0; i < *nfdsp; i++)
-			if (strcmp(names[i], role) == 0 &&
-			    strcmp(types[i], "zfshandle") == 0)
-				break;
-		if (i == *nfdsp)
-			return (errno = ENOENT, -1);
-	}
-	return (0);
-}
 
 #define	SERVICED_RUN_DIR	"/Capabilities/Run"
 
@@ -1144,7 +1112,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 			nlisteners++;
 
 	if (serviced_fd_budget_check((size_t)expected_tokens +
-	    m->ncap_storage + m->ncap_services + nlisteners +
+	    m->ncap_services + nlisteners +
 	    12, "service launch") == -1) {
 		saved_errno = errno;
 		syslog(LOG_ERR,
@@ -1405,45 +1373,14 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		    m->cap_vsock[i];
 		MINT_CHECK_DEADLINE();
 	}
-	for (i = 0; i < m->ncap_storage; i++) {
-		/*
-		 * Convey the service's uid/gid so tzfsd owns the dataset root to
-		 * it at mint; the service then mounts the delivered handle lazily
-		 * and can write its own storage.  have_creds false leaves 0 (root),
-		 * which tzfsd treats as "no chown".
-		 */
-		int tfd = serviced_storage_mint(&m->cap_storage[i],
-		    have_creds ? uid : 0, have_creds ? gid : 0);
-		if (tfd == -1) {
-			SERVICED_PROBE_CAP_MINT(m->label, "storage", -1);
-			goto fail_tokens;
-		}
-		if (m->cap_storage[i].lifetime == ORT_STORAGE_LEASE &&
-		    storage_lease_acquire(&m->cap_storage[i]) == -1) {
-			int saved = errno;
-
-			close(tfd);
-			(void)serviced_storage_destroy(&m->cap_storage[i]);
-			errno = saved;
-			goto fail_tokens;
-		}
-		SERVICED_PROBE_CAP_MINT(m->label, "storage", 0);
-		if (nservices >= SERVICE_BOOTSTRAP_CAPABILITY_MAX ||
-		    snprintf(service_names[nservices],
-		    sizeof(service_names[nservices]), "storage:%s",
-		    m->cap_storage[i].name) >=
-		    (int)sizeof(service_names[nservices])) {
-			close(tfd);
-			errno = EOVERFLOW;
-			goto fail_tokens;
-		}
-		strlcpy(service_types[nservices], "zfshandle",
-		    sizeof(service_types[nservices]));
-		service_fds[nservices++] = tfd;
-		minted_manifest.cap_storage[minted_manifest.ncap_storage++] =
-		    m->cap_storage[i];
-		MINT_CHECK_DEADLINE();
-	}
+	/*
+	 * Storage is not delivered by serviced.  tzfsd is a socket-free
+	 * provider (system.Storage); a storage consumer opens it by name and
+	 * mints its own claim via service_storage_open(3).  tzfsd namespaces
+	 * each dataset by the consumer's unforgeable channel identity, so
+	 * serviced neither mints nor holds any storage handle.  The manifest
+	 * storage claim is declaration only.
+	 */
 	if (m->cap_system != 0) {
 		int tfd = authority_mint_system(sd.authority_channel_fd,
 		    m->cap_system);
@@ -1621,12 +1558,12 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * fail_tokens cleanup path instead.
 	 */
 	if (ntokens != expected_tokens ||
-	    nservices != m->ncap_storage + m->ncap_services + nlisteners +
+	    nservices != m->ncap_services + nlisteners +
 	    open_delivered + 1) {
 		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
 		    "(%u/%u tokens, %u/%u services)", m->label, ntokens,
 		    expected_tokens, nservices,
-		    m->ncap_storage + m->ncap_services + nlisteners +
+		    m->ncap_services + nlisteners +
 		    open_delivered + 1);
 		goto fail_tokens;
 	}
@@ -1767,13 +1704,6 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 	int saved_errno = 0;
 	unsigned i;
 
-	if (finalize_storage_descriptors(m, L->service_fds,
-	    &L->nservices, L->service_names, L->service_types) == -1) {
-		syslog(LOG_ERR, "svc_exec %s: storage descriptor delivery: %m",
-		    m->label);
-		svc_launch_abort(svc, errno, kq);
-		return;
-	}
 	if (L->ntokens > 0)
 		syslog(LOG_DEBUG, "svc_exec %s: minted %u tokens", m->label,
 		    L->ntokens);

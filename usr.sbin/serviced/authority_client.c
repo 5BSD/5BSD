@@ -751,18 +751,11 @@ authority_release_manifest(int channel_fd, const struct svc_manifest *m)
 			nsent++;
 	}
 	/*
-	 * Lease storage is destroyed only after its last holder stops.  This
-	 * goes straight to tzfsd (not the authority channel): storage never
-	 * transits authorityd.
+	 * Storage teardown is not serviced's concern: a storage consumer holds
+	 * its own tzfsd channel and its ephemeral storage is bound to that
+	 * channel's lifetime (tzfsd reaps orphaned leases).  serviced neither
+	 * mints nor releases storage.
 	 */
-	for (i = 0; i < m->ncap_storage; i++) {
-		if (m->cap_storage[i].lifetime != ORT_STORAGE_LEASE)
-			continue;
-		if (storage_lease_release(&m->cap_storage[i]) != 1)
-			continue;
-		if (serviced_storage_destroy(&m->cap_storage[i]) == 0)
-			nsent++;
-	}
 
 	/* One blocking window to drain all replies. */
 	if (nsent > 0)

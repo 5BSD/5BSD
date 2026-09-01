@@ -271,7 +271,6 @@ main(int argc, char *argv[])
 	sd.coalition_svc_fd = -1;
 	sd.capprotect_fd = -1;
 	sd.identity_fd = -1;
-	storage_lifecycle_reset();
 
 	/*
 	 * LOG_CONS: during early boot serviced runs before syslogd exists, so

@@ -49,7 +49,6 @@ ATF_TESTS_C+=	launch_limits_test
 ATF_TESTS_C+=	manifest_compare_test
 ATF_TESTS_C+=	management_enforce_test
 ATF_TESTS_C+=	bundle_selection_test
-ATF_TESTS_C+=	storage_lifecycle_test
 ATF_TESTS_C+=	rc_ingest_test
 ATF_TESTS_C+=	rc_adopt_test
 ATF_TESTS_C+=	activation_calendar_test
@@ -169,10 +168,5 @@ CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/sys
 SRCS.bundle_selection_test=	bundle_selection_test.c bundle_selection.c
 CFLAGS.bundle_selection_test+=	-I${SRCTOP}/usr.sbin/serviced
-SRCS.storage_lifecycle_test=	storage_lifecycle_test.c storage_lifecycle.c
-CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/usr.sbin/serviced
-CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/lib/libauthorityrt
-CFLAGS.storage_lifecycle_test+=	-I${SRCTOP}/sys
 
 .include <bsd.test.mk>

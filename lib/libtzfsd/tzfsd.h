@@ -40,34 +40,52 @@ struct tzfsd_grant {
 	char		dataset[TZFSD_DATASET_MAX];	/* resolved name, for audit */
 };
 
+/*
+ * Opaque client handle wrapping a held mac_capability channel to tzfsd.  tzfsd
+ * is a socket-free service_provider (system.Storage); there is no socket to
+ * connect and no fd to pass around — the handle owns the channel session.
+ */
+struct tzfsd_client;
+
 __BEGIN_DECLS
 
 /*
- * Connect the well-known tzfsd socket.  Returns a channel fd (caller closes)
- * or -1 with errno set.  Sandboxed callers that were handed a pre-connected
- * channel at bootstrap skip this and pass that fd to the calls below.
+ * Open a channel to tzfsd by name (service_open(system.Storage)).  Returns a
+ * client handle the caller owns and must tzfsd_close(), or NULL with errno set.
+ * A caller handed a pre-scoped storage channel at bootstrap uses
+ * tzfsd_adopt() instead.
  */
-int	tzfsd_connect(void);
+struct tzfsd_client	*tzfsd_connect(void);
+
+/*
+ * Wrap an already-held storage channel fd (e.g. one serviced delivered,
+ * pre-scoped to a claim) as a client handle.  Consumes fd on success.  Returns
+ * a handle or NULL with errno set.
+ */
+struct tzfsd_client	*tzfsd_adopt(int channel_fd);
+
+/* Release the client handle and its channel. */
+void	tzfsd_close(struct tzfsd_client *c);
 
 /*
  * Request a storage handle.  On success returns 0 and fills *out (out->handle_fd
  * is the granted descriptor, which the caller owns and must close).  On failure
  * returns -1 with errno set to the daemon-reported error.
  */
-int	tzfsd_request(int chan, const struct tzfsd_req *req,
+int	tzfsd_request(struct tzfsd_client *c, const struct tzfsd_req *req,
 	    struct tzfsd_grant *out);
 
 /*
  * Release (destroy) a lease claim previously granted under this dataset key.
  * Idempotent: a missing claim is success.  Returns 0 or -1/errno.
  */
-int	tzfsd_release(int chan, const char *dataset);
+int	tzfsd_release(struct tzfsd_client *c, const char *dataset);
 
 /* Liveness check.  Returns 0 if tzfsd answered, -1/errno otherwise. */
-int	tzfsd_ping(int chan);
+int	tzfsd_ping(struct tzfsd_client *c);
 
 /* Begin or resume one service-manager lease generation. */
-int	tzfsd_begin_session(int chan, const char *session);
+int	tzfsd_begin_session(struct tzfsd_client *c, const char *session);
 
 /*
  * Convenience: mount a granted handle and return a directory fd for its root

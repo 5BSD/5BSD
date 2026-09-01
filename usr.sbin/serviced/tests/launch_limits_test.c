@@ -10,14 +10,13 @@
 #include <string.h>
 
 #include "launch_limits.h"
-#include "storage_delivery.h"
 
 ATF_TC(maximum_counts);
 ATF_TC_HEAD(maximum_counts, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
-	    "All maximum manifest counts, including storage, fit the launch table");
+	    "All maximum manifest counts fit the launch table");
 }
 ATF_TC_BODY(maximum_counts, tc)
 {
@@ -37,7 +36,6 @@ ATF_TC_BODY(maximum_counts, tc)
 	ATF_CHECK_EQ(SVC_LAUNCH_MAX_TOKENS, 81);
 	ATF_CHECK_EQ(svc_launch_token_count(&m), SVC_LAUNCH_MAX_TOKENS);
 	ATF_CHECK(SVC_LAUNCH_MAX_TOKENS <= SERVICE_BOOTSTRAP_TOKEN_MAX);
-	ATF_CHECK_EQ(SVC_LAUNCH_MAX_NAMED_FDS, 12);
 	ATF_CHECK_EQ(svc_launch_named_fd_count(&m),
 	    SVC_LAUNCH_MAX_NAMED_FDS);
 	ATF_CHECK(SVC_LAUNCH_MAX_NAMED_FDS <=
@@ -71,22 +69,22 @@ ATF_TC_BODY(each_count_overflow, tc)
 	}
 }
 
-ATF_TC(storage_is_a_named_descriptor);
-ATF_TC_HEAD(storage_is_a_named_descriptor, tc)
+ATF_TC(storage_is_not_a_delivered_descriptor);
+ATF_TC_HEAD(storage_is_not_a_delivered_descriptor, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
-	    "Storage claims occupy named descriptor slots, not token slots");
+	    "Storage is self-minted by the consumer over its own tzfsd channel; "
+	    "serviced delivers no storage descriptor or token");
 }
-ATF_TC_BODY(storage_is_a_named_descriptor, tc)
+ATF_TC_BODY(storage_is_not_a_delivered_descriptor, tc)
 {
 	struct svc_manifest m;
 
 	memset(&m, 0, sizeof(m));
 	m.ncap_storage = SERVICED_MAX_CAP_STORAGE;
 	ATF_CHECK_EQ(svc_launch_token_count(&m), 0);
-	ATF_CHECK_EQ(svc_launch_named_fd_count(&m),
-	    SERVICED_MAX_CAP_STORAGE);
+	ATF_CHECK_EQ(svc_launch_named_fd_count(&m), 0);
 	m.ncap_services = SERVICED_MAX_CAP_SERVICES;
 	ATF_CHECK_EQ(svc_launch_named_fd_count(&m),
 	    SVC_LAUNCH_MAX_NAMED_FDS);
@@ -94,26 +92,11 @@ ATF_TC_BODY(storage_is_a_named_descriptor, tc)
 	ATF_CHECK_EQ(svc_launch_token_count(&m), 1);
 }
 
-ATF_TC_WITHOUT_HEAD(storage_delivery_is_least_authority);
-ATF_TC_BODY(storage_delivery_is_least_authority, tc)
-{
-
-	ATF_CHECK_EQ(STORAGE_DELIVERY_PRIVATE,
-	    storage_delivery_select(ZH_MOUNT, true));
-	ATF_CHECK_EQ(STORAGE_DELIVERY_DIRECTORY,
-	    storage_delivery_select(ZH_MOUNT, false));
-	ATF_CHECK_EQ(STORAGE_DELIVERY_ZFSHANDLE,
-	    storage_delivery_select(ZH_MOUNT | ZH_SNAPSHOT, false));
-	ATF_CHECK_EQ(STORAGE_DELIVERY_ZFSHANDLE,
-	    storage_delivery_select(ZH_PROPS_READ, false));
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, maximum_counts);
 	ATF_TP_ADD_TC(tp, each_count_overflow);
-	ATF_TP_ADD_TC(tp, storage_is_a_named_descriptor);
-	ATF_TP_ADD_TC(tp, storage_delivery_is_least_authority);
+	ATF_TP_ADD_TC(tp, storage_is_not_a_delivered_descriptor);
 	return (atf_no_error());
 }

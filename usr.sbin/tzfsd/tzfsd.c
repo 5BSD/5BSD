@@ -7,16 +7,15 @@
  *
  * Owns the storage plane: the root-pool handle and the /Capabilities layout.
  * It mints rights-limited TrustedZFS handles on request and passes them back
- * over SCM_RIGHTS.  All name-based setup happens
- * up front; the daemon then cap_enter()s and serves every request from its
- * retained capability handles.
+ * over its clients' mac_capability channels.  tzfsd is a socket-free
+ * service_provider: it exposes the well-known name system.Storage and serves
+ * each client on its own worker channel, exactly like every other
+ * capability-plane daemon.  All name-based setup happens up front; the provider
+ * then cap_enter()s and serves every request from its retained capability
+ * handles.
  */
 
 #include <sys/types.h>
-#include <sys/capsicum.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/un.h>
 
 #include <err.h>
 #include <errno.h>
@@ -31,72 +30,20 @@
 
 #include "tzfsd.h"
 
-static int
-open_listener(void)
-{
-	struct sockaddr_un sun;
-	int fd;
-
-	fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
-	if (fd == -1) {
-		syslog(LOG_ERR, "socket: %m");
-		return (-1);
-	}
-	memset(&sun, 0, sizeof(sun));
-	sun.sun_family = AF_UNIX;
-	(void)strlcpy(sun.sun_path, TZFSD_SOCK_PATH, sizeof(sun.sun_path));
-	(void)unlink(TZFSD_SOCK_PATH);
-	if (bind(fd, (struct sockaddr *)&sun, sizeof(sun)) == -1) {
-		syslog(LOG_ERR, "bind %s: %m", TZFSD_SOCK_PATH);
-		(void)close(fd);
-		return (-1);
-	}
-	/* Root-only: peers are authorityd/serviced/tzfsctl, or passed channels. */
-	(void)chmod(TZFSD_SOCK_PATH, 0600);
-	if (listen(fd, 64) == -1) {
-		syslog(LOG_ERR, "listen: %m");
-		(void)close(fd);
-		return (-1);
-	}
-	return (fd);
-}
-
-static void
-write_ready(void)
-{
-	int fd;
-
-	fd = open(TZFSD_READY_PATH, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC,
-	    0644);
-	if (fd != -1)
-		(void)close(fd);
-}
-
-static int
-enter_capability_mode(void)
-{
-
-	if (cap_enter() == -1)
-		return (-1);
-	return (0);
-}
-
 static void
 usage(void)
 {
 
-	(void)fprintf(stderr, "usage: tzfsd [-f] [-c config]\n");
+	(void)fprintf(stderr, "usage: tzfsd [-c config]\n");
 	exit(1);
 }
 
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created, so a
- * handle can never occupy a stdio slot.  tzfsd is launched by authorityd without
- * a controlling terminal, and daemon(3) later redirects 0/1/2 to /dev/null: a
- * capability handle that landed on fd 0/1/2 would be silently replaced by
- * /dev/null, and every subsequent ZFD_OPENAT/ZFD_* on it would fail ENOTTY —
- * breaking every storage request while start-up provisioning (done before
- * daemon(3)) still appeared to work.
+ * handle can never occupy a stdio slot.  tzfsd is launched by serviced without
+ * a controlling terminal: a capability handle that landed on fd 0/1/2 could be
+ * clobbered by a later /dev/null redirect, and every subsequent ZFD_* on it
+ * would fail.
  */
 static void
 reserve_stdio(void)
@@ -121,16 +68,12 @@ main(int argc, char **argv)
 {
 	struct tzfsd_state st;
 	const char *conf = TZFSD_DEFAULT_CONF;
-	bool foreground = false;
 	int ch;
 
-	while ((ch = getopt(argc, argv, "c:f")) != -1) {
+	while ((ch = getopt(argc, argv, "c:")) != -1) {
 		switch (ch) {
 		case 'c':
 			conf = optarg;
-			break;
-		case 'f':
-			foreground = true;
 			break;
 		default:
 			usage();
@@ -138,20 +81,8 @@ main(int argc, char **argv)
 	}
 
 	/*
-	 * When serviced launches tzfsd as a supervised unit (P4a,
-	 * docs/capability-authority-model.md) it exports CAPABILITY_UNIT_DIR
-	 * (SERVICE_UNIT_DIR_ENV).  A serviced-managed daemon must NOT detach:
-	 * serviced owns the process lifecycle through the process descriptor and
-	 * takes readiness from cap_enter() (NOTE_CAPMODE), so a daemon(3) that
-	 * reparents would make serviced see the launcher exit.  Stay foreground.
-	 */
-	if (getenv("CAPABILITY_UNIT_DIR") != NULL)
-		foreground = true;
-
-	/*
-	 * LOG_PERROR unconditionally: before daemon(3) the copies land on the
-	 * launching terminal (test harnesses capture them); after daemon(3)
-	 * stderr is /dev/null, so production logging is unaffected.
+	 * LOG_PERROR unconditionally: serviced captures the copies on the
+	 * launching side; there is no controlling terminal in production.
 	 */
 	openlog("tzfsd", LOG_PID | LOG_PERROR, LOG_DAEMON);
 	(void)signal(SIGPIPE, SIG_IGN);
@@ -163,7 +94,6 @@ main(int argc, char **argv)
 	memset(&st, 0, sizeof(st));
 	st.persistent_fd = st.ephemeral_fd = -1;
 	st.boot_fd = st.lease_fd = -1;
-	st.listen_fd = -1;
 
 	tzfsd_config_defaults(&st.cfg);
 	if (tzfsd_config_load(&st.cfg, conf) == -1) {
@@ -171,7 +101,7 @@ main(int argc, char **argv)
 		return (1);
 	}
 
-	/* All name-based work happens before cap_enter(). */
+	/* All name-based work happens before the provider enters capability mode. */
 	if (tzfsd_ensure_zfs(&st.cfg) == -1)
 		errx(1, "ZFS is required but not available");
 	if (tzfsd_layout_provision(&st) == -1)
@@ -186,23 +116,17 @@ main(int argc, char **argv)
 	if (tzfsd_reap_leases(&st) == -1)
 		syslog(LOG_WARNING, "reap orphan leases: %m");
 
-	st.listen_fd = open_listener();
-	if (st.listen_fd == -1)
-		errx(1, "cannot open %s", TZFSD_SOCK_PATH);
-
-	if (!foreground && daemon(0, 0) == -1)
-		err(1, "daemon");
-
 	setproctitle("-Storage");
-	write_ready();
-	syslog(LOG_NOTICE, "tzfsd ready on %s (pool %s)", TZFSD_SOCK_PATH,
-	    st.cfg.pool);
+	syslog(LOG_NOTICE, "tzfsd storage provider (pool %s)", st.cfg.pool);
 
-	if (enter_capability_mode() == -1) {
-		(void)unlink(TZFSD_READY_PATH);
-		err(1, "cap_enter");
-	}
-	tzfsd_serve(&st);
+	/*
+	 * Serve as a socket-free service_provider: expose system.Storage, enter
+	 * capability mode, and dispatch each client on its own worker channel.
+	 * tzfsd_serve() owns the provider lifecycle and does not return on
+	 * success.
+	 */
+	if (tzfsd_serve(&st) == -1)
+		errx(1, "storage provider failed");
 
 	return (0);
 }

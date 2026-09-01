@@ -6,7 +6,6 @@ BINDIR=	/usr/libexec
 MAN=	serviced.5 serviced.8
 SRCS=	serviced.c activation.c activation_calendar.c bundle_registry.c bundle_selection.c domain.c mac_capability_direct.c execute.c \
 	fd_budget.c management.c manifest_compare.c \
-	storage_lifecycle.c storage_client.c \
 	kldmgr_client.c naming.c on_demand.c authority_client.c rc_adopt.c \
 	rc_ingest.c \
 	reload.c sctl.c serviced_audit.c startup.c svc_proto.c supervisor.c
@@ -32,9 +31,8 @@ CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/lib/libcapability
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
-CFLAGS+=	-I${SRCTOP}/lib/libtzfsd
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
-LIBADD=		capability capbundle channel authorityrt service tzfsd jail ucl util bsm
+LIBADD=		capability capbundle channel authorityrt service jail ucl util bsm
 
 # Emit OpenBSM audit records for security-relevant events (control-socket
 # privileged commands, service exec under changed credentials, capability

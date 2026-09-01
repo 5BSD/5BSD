@@ -39,8 +39,8 @@ MLINKS+=	libservice.3 service_worker_drop_inherited_authority.3
 
 SRCS=	libservice.c service_ambient.c service_client.c
 INCS=	libservice.h
-CFLAGS+=	-I${SRCTOP}/lib/libtzfsd	# tzfsd.h for service_storage_open()
-LIBADD=	capability channel pthread tzfsd
+CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs	# tzfs_mount() for service_storage_open()
+LIBADD=	capability channel pthread trustedzfs
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

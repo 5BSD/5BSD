@@ -36,7 +36,9 @@
 #include <capability.h>
 #include <channel.h>
 
-#include <tzfsd.h>
+#include <sys/zfshandle.h>
+#include <trustedzfs.h>	/* tzfs_mount() for service_storage_open() */
+#include <tzfsd_proto.h>	/* tzfsd wire protocol (system.Storage), no libtzfsd dep */
 
 #include "libservice.h"
 #include "service_private.h"
@@ -1662,22 +1664,30 @@ service_capability_open(struct service_context *context, const char *name,
 }
 
 /*
- * Mount a delivered storage capability and return its directory root.  serviced
- * delivers "storage:<name>" as a rights-limited "zfshandle"; a mount-rights
- * consumer calls this at startup to mount it lazily (serviced no longer mounts
- * on its behalf).  The handle is RETAINED for the process lifetime because the
- * anonymous mount is anchored by it — dropping it would force-unmount and every
- * access on the returned directory would fail.  The caller hardens the returned
- * directory's rights itself (an openat(2)ed file cannot exceed the directory).
+ * Open this service's storage claim and return its mounted directory root.
+ * tzfsd is a socket-free provider: libservice opens a system.Storage channel by
+ * name (service_open) and mints the claim itself — serviced does no storage
+ * work.  tzfsd namespaces the dataset by this service's unforgeable channel
+ * label, so `name` is only the claim key and a service can never reach another
+ * service's storage.  The handle is RETAINED for the process lifetime because
+ * the anonymous mount is anchored by it — dropping it would force-unmount and
+ * every access on the returned directory would fail.  The caller hardens the
+ * returned directory's rights itself (an openat(2)ed file cannot exceed the
+ * directory).  The channel is cached; all of a service's claims share it.
  */
 static int service_storage_anchor_fds[SERVICE_TOKEN_MAX];
 static unsigned service_storage_nanchors;
+static struct service_session *service_storage_session;
 
 int
 service_storage_open(struct service_context *context, const char *name,
     int *dirfdp)
 {
-	char role[SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX];
+	struct tzfsd_request rq;
+	struct tzfsd_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	int handle = -1, dir, saved;
 
 	if (dirfdp == NULL || name == NULL) {
@@ -1685,14 +1695,63 @@ service_storage_open(struct service_context *context, const char *name,
 		return (-1);
 	}
 	*dirfdp = -1;
-	if (snprintf(role, sizeof(role), "storage:%s", name) >=
-	    (int)sizeof(role)) {
+	if (strnlen(name, sizeof(rq.dataset)) >= sizeof(rq.dataset)) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
-	if (service_capability_open(context, role, "zfshandle", &handle) == -1)
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
 		return (-1);
-	dir = tzfsd_mount_dir(handle, 0);
+	}
+
+	/* Open the system.Storage channel by name once; all claims share it. */
+	if (service_storage_session == NULL) {
+		int fd;
+
+		if (service_open(TZFSD_SERVICE_NAME, &fd) == -1)
+			return (-1);
+		if (service_session_create(fd, &service_storage_session) == -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_REQUEST;
+	rq.rights = ZH_MOUNT;			/* ZH_PROPS_READ is implicit */
+	rq.lifetime = TZFSD_PERSISTENT;
+	rq.owner_uid = getuid();
+	rq.owner_gid = getgid();
+	if (strlcpy(rq.dataset, name, sizeof(rq.dataset)) >=
+	    sizeof(rq.dataset)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	incoming.fds = &handle;
+	incoming.fd_capacity = 1;
+	if (service_session_call(service_storage_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
+	    rp.status != 0 || incoming.nfds != 1) {
+		if (incoming.nfds != 0)
+			(void)close(handle);
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+
+	dir = tzfs_mount(handle, false);
 	if (dir == -1) {
 		saved = errno != 0 ? errno : EIO;
 		(void)close(handle);

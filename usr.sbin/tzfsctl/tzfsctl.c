@@ -66,7 +66,7 @@ parse_rights(const char *s)
 }
 
 static int
-cmd_request(int chan, int argc, char **argv)
+cmd_request(struct tzfsd_client *chan, int argc, char **argv)
 {
 	struct tzfsd_req req;
 	struct tzfsd_grant grant;
@@ -126,7 +126,7 @@ cmd_request(int chan, int argc, char **argv)
 }
 
 static int
-cmd_release(int chan, int argc, char **argv)
+cmd_release(struct tzfsd_client *chan, int argc, char **argv)
 {
 	if (argc < 2)
 		errx(1, "release: missing name");
@@ -139,7 +139,8 @@ cmd_release(int chan, int argc, char **argv)
 int
 main(int argc, char **argv)
 {
-	int chan, rc;
+	struct tzfsd_client *chan;
+	int rc;
 
 	if (argc < 2) {
 		fprintf(stderr, "usage: tzfsctl <ping|request|"
@@ -147,8 +148,8 @@ main(int argc, char **argv)
 		return (1);
 	}
 	chan = tzfsd_connect();
-	if (chan == -1)
-		err(1, "connect %s", TZFSD_SOCK_PATH);
+	if (chan == NULL)
+		err(1, "connect %s", TZFSD_SERVICE_NAME);
 
 	if (strcmp(argv[1], "ping") == 0) {
 		rc = tzfsd_ping(chan);
@@ -160,6 +161,6 @@ main(int argc, char **argv)
 	else
 		errx(1, "unknown command: %s", argv[1]);
 
-	(void)close(chan);
+	tzfsd_close(chan);
 	return (rc == 0 ? 0 : 1);
 }

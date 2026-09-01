@@ -28,11 +28,14 @@
 #define	TZFSD_PROTO_VERSION_PATCH	0
 #define	TZFSD_PROTO_VERSION		2
 
-/* Well-known listening socket for non-sandboxed clients. */
-#define	TZFSD_SOCK_PATH			"/var/run/tzfsd.sock"
-
-/* Readiness handshake file, mirroring serviced.ready. */
-#define	TZFSD_READY_PATH		"/var/run/tzfsd.ready"
+/*
+ * tzfsd is a socket-free service_provider: clients reach it over a held
+ * mac_capability channel obtained by name (service_open), exactly like every
+ * other capability-plane daemon.  The request/reply structs below are the
+ * channel message payloads (a request is the message data; a granted handle
+ * rides back as the reply's single SCM fd).
+ */
+#define	TZFSD_SERVICE_NAME		"system.Storage"
 
 /*
  * Field sizes.  dataset[] matches ORT_STORAGE_DATASET_MAX (== the ZFS max

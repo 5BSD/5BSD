@@ -3,13 +3,14 @@
 # supervised by serviced like every other daemon (docs/capability-authority-
 # model.md, P4a) — PID 1 no longer spawns it.
 #
-# No `ipc`: tzfsd is reached over its own endpoint, not a serviced-brokered
-# name, so readiness is the cap_enter() (NOTE_CAPMODE) boundary serviced already
-# observes.  boot = true because nothing looks the service up to trigger an
-# on-demand launch; it must come up on its own.  user = root because the ZFS
-# control device (/dev/zfs) and dataset provisioning require it (tzfsd drops into
-# its own capability sandbox once that name-based work is done).
-activation { boot = true; }
+# tzfsd is a socket-free service_provider: it exposes the well-known name
+# system.Storage and serves each client on its own mac_capability channel, so
+# consumers reach storage by name (service_open) exactly like every other
+# capability-plane daemon.  boot = true because it provisions the pool/layout at
+# startup and must come up on its own.  user = root because the ZFS control
+# device (/dev/zfs) and dataset provisioning require it (tzfsd enters its own
+# capability sandbox once that name-based work is done, via service_provider).
+activation { boot = true; ipc = ["system.Storage"]; }
 program = "tzfsd";
 restart = "on-failure";
 user = "root";

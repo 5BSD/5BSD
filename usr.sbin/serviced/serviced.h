@@ -269,11 +269,6 @@ int	authority_mint_net(int channel_fd, const struct ort_net_claim *nc);
 int	authority_mint_jail(int channel_fd, const struct serviced_jail_claim *jc);
 int	authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc);
 int	authority_mint_system(int channel_fd, uint32_t gates);
-
-/* storage_client.c — serviced talks to tzfsd(8) directly, not via authorityd */
-int	serviced_storage_mint(const struct ort_storage_claim *sc,
-	    uid_t owner_uid, gid_t owner_gid);
-int	serviced_storage_destroy(const struct ort_storage_claim *sc);
 int	authority_create_jail(int channel_fd, const char *name, const char *path,
 	    const char *hostname, const char *ip4_addr);
 int	authority_create_channel(int channel_fd, int *our_end, int *child_end);
@@ -291,11 +286,6 @@ int	authority_lifecycle(int channel_fd, uint32_t lifecycle_op);
 /* Relay an authority config reload to authorityd (P4b).  0 = ok, -1 = error. */
 int	authority_reload(int channel_fd);
 int	authority_release_manifest(int channel_fd, const struct svc_manifest *m);
-
-/* storage_lifecycle.c — last-holder accounting for lease storage. */
-void	storage_lifecycle_reset(void);
-int	storage_lease_acquire(const struct ort_storage_claim *sc);
-int	storage_lease_release(const struct ort_storage_claim *sc);
 
 /* kldmgr_client.c — kernel module loading */
 int	kldmgr_ensure_loaded(const struct svc_manifest *m, bool system_bundle,

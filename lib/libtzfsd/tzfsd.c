@@ -3,144 +3,146 @@
  *
  * Copyright (c) 2026 Kory Heard
  *
- * libtzfsd — client to the tzfsd(8) storage daemon.  See tzfsd.h.
+ * libtzfsd — client to the tzfsd(8) storage provider.  tzfsd is socket-free:
+ * clients reach it over a held mac_capability channel obtained by name
+ * (service_open(system.Storage)), and drive it with the request/reply structs
+ * in tzfsd_proto.h carried as channel messages.  See tzfsd.h.
  */
 
 #include <sys/types.h>
-#include <sys/socket.h>
-#include <sys/un.h>
 
 #include <errno.h>
-#include <stdbool.h>
+#include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+#include <libservice.h>
 #include <trustedzfs.h>
 
 #include "tzfsd.h"
 
-#define	TZFSD_MAX_REPLY_FDS	16
+struct tzfsd_client {
+	struct service_session *session;
+};
 
-int
-tzfsd_connect(void)
+static struct tzfsd_client *
+client_wrap(int fd)
 {
-	struct sockaddr_un sun;
-	int fd;
+	struct tzfsd_client *c;
 
-	fd = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
-	if (fd == -1)
-		return (-1);
-	memset(&sun, 0, sizeof(sun));
-	sun.sun_family = AF_UNIX;
-	if (strlcpy(sun.sun_path, TZFSD_SOCK_PATH, sizeof(sun.sun_path)) >=
-	    sizeof(sun.sun_path)) {
-		(void)close(fd);
-		errno = ENAMETOOLONG;
-		return (-1);
+	c = calloc(1, sizeof(*c));
+	if (c == NULL)
+		return (NULL);
+	if (service_session_create(fd, &c->session) == -1) {
+		int saved = errno;
+
+		free(c);
+		errno = saved;
+		return (NULL);
 	}
-	if (connect(fd, (struct sockaddr *)&sun, sizeof(sun)) == -1) {
-		int serrno = errno;
-		(void)close(fd);
-		errno = serrno;
-		return (-1);
-	}
-	return (fd);
+	return (c);
 }
 
-/* Send exactly one request datagram. */
-static int
-send_request(int chan, const struct tzfsd_request *rq)
+struct tzfsd_client *
+tzfsd_connect(void)
 {
-	ssize_t n;
+	struct tzfsd_client *c;
+	int fd;
 
-	n = send(chan, rq, sizeof(*rq), MSG_NOSIGNAL);
-	if (n == -1)
-		return (-1);
-	if (n != (ssize_t)sizeof(*rq)) {
-		errno = EIO;
-		return (-1);
+	if (service_open(TZFSD_SERVICE_NAME, &fd) == -1)
+		return (NULL);
+	c = client_wrap(fd);
+	if (c == NULL) {
+		int saved = errno;
+
+		(void)close(fd);
+		errno = saved;
 	}
-	return (0);
+	return (c);
+}
+
+struct tzfsd_client *
+tzfsd_adopt(int channel_fd)
+{
+
+	return (client_wrap(channel_fd));
+}
+
+void
+tzfsd_close(struct tzfsd_client *c)
+{
+
+	if (c == NULL)
+		return;
+	service_session_close(c->session);
+	free(c);
 }
 
 /*
- * Receive exactly one reply datagram of rlen bytes.  If fdp != NULL, extract a
- * single SCM_RIGHTS fd into *fdp (or leave it -1 if none arrived).  Any fd on a
- * short/malformed reply is closed rather than leaked.
+ * Send one request over the channel and receive the fixed tzfsd_reply.  If
+ * fdp != NULL, a single granted fd may ride back in *fdp (else any fd is a
+ * protocol violation).  Validates reply framing before returning.
  */
 static int
-recv_reply(int chan, void *reply, size_t rlen, int *fdp)
+tzfsd_call(struct tzfsd_client *c, const struct tzfsd_request *rq,
+    struct tzfsd_reply *rp, int *fdp)
 {
-	struct msghdr msg;
-	struct iovec iov;
-	union {
-		struct cmsghdr align;
-		char buf[CMSG_SPACE(sizeof(int) * TZFSD_MAX_REPLY_FDS)];
-	} cbuf;
-	struct cmsghdr *cmsg;
-	ssize_t n;
-	int got[TZFSD_MAX_REPLY_FDS];
-	size_t i, nfds = 0;
-	bool malformed = false;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd = -1;
 
 	if (fdp != NULL)
 		*fdp = -1;
-	memset(&msg, 0, sizeof(msg));
-	iov.iov_base = reply;
-	iov.iov_len = rlen;
-	msg.msg_iov = &iov;
-	msg.msg_iovlen = 1;
-	memset(&cbuf, 0, sizeof(cbuf));
-	msg.msg_control = cbuf.buf;
-	msg.msg_controllen = sizeof(cbuf.buf);
-	n = recvmsg(chan, &msg, MSG_CMSG_CLOEXEC);
-	if (n == -1)
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = rq;
+	outgoing.length = sizeof(*rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = rp;
+	incoming.capacity = sizeof(*rp);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 1;
+	if (service_session_call(c->session, &outgoing, &incoming, &options) ==
+	    -1)
 		return (-1);
-	if ((msg.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0)
-		malformed = true;
-	for (cmsg = CMSG_FIRSTHDR(&msg); cmsg != NULL;
-	    cmsg = CMSG_NXTHDR(&msg, cmsg)) {
-		size_t bytes, count;
-
-		if (cmsg->cmsg_level != SOL_SOCKET ||
-		    cmsg->cmsg_type != SCM_RIGHTS ||
-		    cmsg->cmsg_len < CMSG_LEN(0)) {
-			malformed = true;
-			continue;
-		}
-		bytes = cmsg->cmsg_len - CMSG_LEN(0);
-		if (bytes == 0 || bytes % sizeof(int) != 0) {
-			malformed = true;
-			continue;
-		}
-		count = bytes / sizeof(int);
-		if (count > TZFSD_MAX_REPLY_FDS - nfds) {
-			malformed = true;
-			count = TZFSD_MAX_REPLY_FDS - nfds;
-		}
-		memcpy(&got[nfds], CMSG_DATA(cmsg), count * sizeof(int));
-		nfds += count;
-	}
-	if (n != (ssize_t)rlen || malformed ||
-	    (fdp == NULL && nfds != 0) || (fdp != NULL && nfds > 1)) {
-		for (i = 0; i < nfds; i++)
-			(void)close(got[i]);
+	if (incoming.length != sizeof(*rp) || rp->_reserved != 0 ||
+	    rp->status < 0 || rp->status > ELAST) {
+		if (incoming.nfds != 0)
+			(void)close(fd);
 		errno = EPROTO;
 		return (-1);
 	}
-	if (fdp != NULL && nfds == 1)
-		*fdp = got[0];
+	if (fdp == NULL) {
+		if (incoming.nfds != 0) {
+			(void)close(fd);
+			errno = EPROTO;
+			return (-1);
+		}
+		return (0);
+	}
+	/* A granted fd rides back only on success. */
+	if ((rp->status == 0 && incoming.nfds != 1) ||
+	    (rp->status != 0 && incoming.nfds != 0)) {
+		if (incoming.nfds != 0)
+			(void)close(fd);
+		errno = EPROTO;
+		return (-1);
+	}
+	*fdp = (incoming.nfds == 1) ? fd : -1;
 	return (0);
 }
 
 int
-tzfsd_request(int chan, const struct tzfsd_req *req, struct tzfsd_grant *out)
+tzfsd_request(struct tzfsd_client *c, const struct tzfsd_req *req,
+    struct tzfsd_grant *out)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 	int handle = -1;
 
-	if (req == NULL || out == NULL) {
+	if (c == NULL || req == NULL || out == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -158,28 +160,19 @@ tzfsd_request(int chan, const struct tzfsd_req *req, struct tzfsd_grant *out)
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
-	if (send_request(chan, &rq) == -1)
+	if (tzfsd_call(c, &rq, &rp, &handle) == -1)
 		return (-1);
-	if (recv_reply(chan, &rp, sizeof(rp), &handle) == -1)
-		return (-1);
-	if (rp._reserved != 0 ||
-	    memchr(rp.dataset, '\0', sizeof(rp.dataset)) == NULL ||
-	    rp.status < 0 || rp.status > ELAST ||
-	    (rp.status == 0 && rp.dataset[0] == '\0') ||
-	    (rp.status != 0 && (rp.dataset[0] != '\0' || handle != -1))) {
-		if (handle != -1)
-			(void)close(handle);
-		errno = EPROTO;
-		return (-1);
-	}
 	if (rp.status != 0) {
 		if (handle != -1)
 			(void)close(handle);
 		errno = rp.status;
 		return (-1);
 	}
-	if (handle == -1) {
-		/* Success without a handle is a protocol violation. */
+	if (handle == -1 ||
+	    memchr(rp.dataset, '\0', sizeof(rp.dataset)) == NULL ||
+	    rp.dataset[0] == '\0') {
+		if (handle != -1)
+			(void)close(handle);
 		errno = EPROTO;
 		return (-1);
 	}
@@ -189,12 +182,12 @@ tzfsd_request(int chan, const struct tzfsd_req *req, struct tzfsd_grant *out)
 }
 
 int
-tzfsd_release(int chan, const char *dataset)
+tzfsd_release(struct tzfsd_client *c, const char *dataset)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 
-	if (dataset == NULL || dataset[0] == '\0') {
+	if (c == NULL || dataset == NULL || dataset[0] == '\0') {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -205,15 +198,8 @@ tzfsd_release(int chan, const char *dataset)
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
-	if (send_request(chan, &rq) == -1)
+	if (tzfsd_call(c, &rq, &rp, NULL) == -1)
 		return (-1);
-	if (recv_reply(chan, &rp, sizeof(rp), NULL) == -1)
-		return (-1);
-	if (rp._reserved != 0 || rp.dataset[0] != '\0' || rp.status < 0 ||
-	    rp.status > ELAST) {
-		errno = EPROTO;
-		return (-1);
-	}
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -222,22 +208,19 @@ tzfsd_release(int chan, const char *dataset)
 }
 
 int
-tzfsd_ping(int chan)
+tzfsd_ping(struct tzfsd_client *c)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 
+	if (c == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_PING;
-	if (send_request(chan, &rq) == -1)
+	if (tzfsd_call(c, &rq, &rp, NULL) == -1)
 		return (-1);
-	if (recv_reply(chan, &rp, sizeof(rp), NULL) == -1)
-		return (-1);
-	if (rp._reserved != 0 || rp.dataset[0] != '\0' || rp.status < 0 ||
-	    rp.status > ELAST) {
-		errno = EPROTO;
-		return (-1);
-	}
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -246,12 +229,13 @@ tzfsd_ping(int chan)
 }
 
 int
-tzfsd_begin_session(int chan, const char *session)
+tzfsd_begin_session(struct tzfsd_client *c, const char *session)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 
-	if (session == NULL || strlen(session) != TZFSD_SESSION_MAX - 1) {
+	if (c == NULL || session == NULL ||
+	    strlen(session) != TZFSD_SESSION_MAX - 1) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -262,14 +246,8 @@ tzfsd_begin_session(int chan, const char *session)
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
-	if (send_request(chan, &rq) == -1 ||
-	    recv_reply(chan, &rp, sizeof(rp), NULL) == -1)
+	if (tzfsd_call(c, &rq, &rp, NULL) == -1)
 		return (-1);
-	if (rp._reserved != 0 || rp.dataset[0] != '\0' || rp.status < 0 ||
-	    rp.status > ELAST) {
-		errno = EPROTO;
-		return (-1);
-	}
 	if (rp.status != 0) {
 		errno = rp.status;
 		return (-1);
@@ -280,5 +258,6 @@ tzfsd_begin_session(int chan, const char *session)
 int
 tzfsd_mount_dir(int handle_fd, int rdonly)
 {
+
 	return (tzfs_mount(handle_fd, rdonly != 0));
 }

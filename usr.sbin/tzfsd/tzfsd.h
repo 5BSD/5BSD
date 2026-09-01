@@ -60,6 +60,6 @@ int	tzfsd_session_begin(struct tzfsd_state *st, const char *session);
 int	tzfsd_reap_leases(struct tzfsd_state *st);
 
 /* request.c */
-void	tzfsd_serve(struct tzfsd_state *st);
+int	tzfsd_serve(struct tzfsd_state *st);
 
 #endif /* TZFSD_H */
