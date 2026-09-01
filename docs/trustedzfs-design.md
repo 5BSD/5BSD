@@ -384,8 +384,9 @@ trajectory as the rest of the Authority work.
 ## 6a. Storage integration: the `[TZFS]` grant path
 
 **Status (2026-08-14): manifest → mint → exec-grant built and committed.**
-- Manifest `capabilities.storage` stanza parses to `ort_storage_claim`
-  (dataset, ZH_* rights, lifetime); libcapbundle test passes.
+- Storage is no longer declared in the manifest. A service self-mints its
+  dataset from `tzfsd` at runtime, addressed by its unforgeable channel label;
+  the returned rights-limited handle still carries ZH_* rights and a lifetime.
 - `AUTHORITY_OP_MINT_STORAGE`: serviced `authority_mint_storage()` →
   authorityd `handle_mint_storage()` opens `/dev/zfs` and
   `ZFS_IOC_DATASET_OPEN`, passing the rights-limited handle fd back.
@@ -411,25 +412,16 @@ serviced manifest and mint machinery, the design is:
 (authorityd / authority-init), `[SERVICE]` (serviced), `[TZFS]` (the storage
 grant broker, `tzfsd`).  One tag each.
 
-**Manifest stanza (UCL, matches the existing `capabilities {}` style).**
-A service declares storage the way it declares `files`/`network`.  The
-addressing is a logical `name` under tzfsd's `/Capabilities` (not an
-absolute pool path — tzfsd owns the layout):
-```ucl
-capabilities {
-    storage = [{
-        name     = "mydata";
-        rights   = ["mount", "snapshot", "props_read"];
-        lifetime = "persistent";   # or "ephemeral"
-    }];
-}
-```
-Parsed by `lib/libcapbundle/libcapbundle_parse.c` (add `storage` to the
-`capkeys[]` allow-list + a `storagekeys[]`/`parse_storage_rights()`
-mirror of `parse_file_actions`), landing in a POD `serviced_storage_claim`
-(`cap_storage[N]`/`ncap_storage`) in `serviced_manifest.h` — embedded
-`[N][NAME_MAX]`-style so `svc_manifest` stays memcpy-safe like the other
-claim arrays.
+**Storage addressing (runtime self-service, not a manifest stanza).**
+A service does not declare storage in its manifest. It requests a dataset from
+`tzfsd` at runtime; the addressing is a logical `name` under tzfsd's
+`/Capabilities` (not an absolute pool path — tzfsd owns the layout), and tzfsd
+derives the actual dataset from the consumer's unforgeable channel label rather
+than from anything the manifest names. The request carries the desired `rights`
+(`mount`, `snapshot`, `props_read`, …) and `lifetime`
+(`persistent`/`cache`/`boot`/`lease`), which become properties of the returned
+rights-limited handle. (This supersedes the earlier `capabilities { storage }`
+manifest stanza and its `serviced_storage_claim` parse target, both removed.)
 
 **Grant delivery (push at exec, like every other token).** serviced mints
 one handle per storage claim over its authority channel

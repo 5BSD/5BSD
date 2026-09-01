@@ -15,7 +15,7 @@ maximum-plus-one cardinalities for every bounded collection, duplicate keys
 and entries, schema identity and version, literal-only parsing, executable and
 reverse-domain name validation, reserved environment names, and every
 capability group. The launch cases prove that a maximum valid manifest fits
-the bootstrap token table and that storage claims occupy token slots.
+the bootstrap token table.
 
 On the host, the same 36 parser and three launch-limit cases passed. The
 servicectl suite passed all 11 unprivileged cases and skipped its seven

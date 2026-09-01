@@ -107,7 +107,7 @@ As implemented, delivered entries **do** reuse the capability-fd table, so
 `service_capability_open` retrieves them directly with the unit-chosen `name`
 and type `"file"`/`"dir"` — no new API. This required loosening
 `service_capability_name_valid` to accept a general `[a-z0-9-]` token (it
-previously accepted only a fixed name set plus `storage:*`); the manifest
+previously accepted only a fixed name set); the manifest
 parser enforces the same charset/length at parse time so a bad `open` name is
 a config error, not a silent retrieval miss.
 
@@ -118,7 +118,7 @@ a config error, not a silent retrieval miss.
   parsed/validated in `libcapbundle_parse.c` (key `open`), copied in
   `libcapbundle.c`, change-compared in `serviced/manifest_compare.c`.
 - Delivery: `serviced/execute.c`, in the pre-fork acquire block beside the
-  token/storage/container capabilities — opens, `cap_rights_limit`s,
+  token/container capabilities — opens, `cap_rights_limit`s,
   `cap_xfer_limit(CAP_XFER_NONE)`s, and appends as a named bootstrap capability;
   any failure takes the existing `fail_tokens` path (fail-closed). The
   all-or-nothing barrier counts `m->ncap_open`.

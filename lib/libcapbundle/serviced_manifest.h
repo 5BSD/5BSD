@@ -34,7 +34,6 @@
 #define	SERVICED_MAX_CAP_VSOCK		16
 #define	SERVICED_MAX_CAP_SERVICES	4
 #define	SERVICED_MAX_CAP_OPEN		8
-#define	SERVICED_MAX_CAP_STORAGE	8
 #define	SERVICED_CAP_SERVICE_NAME_MAX	16
 #define	SERVICED_LABEL_MAX		64
 #define	SERVICED_MAX_ARGUMENTS		32
@@ -215,8 +214,6 @@ struct svc_manifest {
 	unsigned	ncap_jail;
 	struct ort_vsock_claim cap_vsock[SERVICED_MAX_CAP_VSOCK];
 	unsigned	ncap_vsock;
-	struct ort_storage_claim cap_storage[SERVICED_MAX_CAP_STORAGE];
-	unsigned	ncap_storage;
 	char		cap_services[SERVICED_MAX_CAP_SERVICES]
 		    [SERVICED_CAP_SERVICE_NAME_MAX];
 	unsigned	ncap_services;

@@ -179,12 +179,6 @@ restart = "on-failure";
 stop_timeout = 10;
 max_failures = 10;
 
-storage = [{
-    name = "maildata";
-    scope = "shared";
-    rights = ["mount", "props_read"];
-}];
-
 capabilities {
     ipc = ["system.Log"];
     system = [];

@@ -154,7 +154,6 @@ ATF_TC_BODY(build_unit_shape, tc)
 	ATF_CHECK_EQ(-1, svc.pd_fd);
 	ATF_CHECK_EQ(-1, svc.channel_fd);
 	ATF_CHECK_EQ(-1, svc.coalition_fd);
-	ATF_CHECK_EQ(-1, svc.jail_fd);
 }
 
 ATF_TC_WITHOUT_HEAD(select_and_build_end_to_end);

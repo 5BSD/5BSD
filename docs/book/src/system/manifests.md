@@ -34,8 +34,8 @@ filename below that unit's `bin` directory, never a path.
 
 Configuration and static resources belong inside the `.cap` tree, not in
 `/etc`. Bundle-wide data goes below `Shared`; process-specific data goes below
-the corresponding unit. Mutable application data is storage, described below,
-and is not written into the installed bundle.
+the corresponding unit. Mutable application data is storage, obtained from
+`tzfsd` at runtime (see below), and is not written into the installed bundle.
 
 At launch, `CAPABILITY_UNIT_DIR` is set by `serviced` to the selected
 `Units/<name>.unit` directory. This makes `Config` and `Resources` work for
@@ -46,8 +46,8 @@ the files it needs first or request a filesystem descriptor.
 
 ## Complete bundle example
 
-`Bundle.ucl` contains only bundle identity, version ordering, the exact unit
-inventory, and declarations genuinely shared by units:
+`Bundle.ucl` contains only bundle identity, version ordering, and the exact
+unit inventory:
 
 ```ucl
 schema = "org.5bsd.capability-bundle";
@@ -60,13 +60,6 @@ author = "Example Project";
 publisher = "org.example";
 
 units = ["smtpd", "indexer"];
-
-shared {
-    storage = [{
-        name = "maildata";
-        lifetime = "persistent";
-    }];
-}
 ```
 
 `sequence` is the monotonic update order. `version` is display metadata and
@@ -105,20 +98,6 @@ limits {
 }
 umask = "0077";
 band  = "standard";     # background | standard | interactive
-
-storage = [
-    {
-        name = "maildata";
-        scope = "shared";
-        rights = ["mount", "props_read", "snapshot"];
-    },
-    {
-        name = "queue";
-        scope = "unit";
-        lifetime = "lease";
-        rights = ["mount", "props_read", "props_write"];
-    }
-];
 
 capabilities {
     files = [{
@@ -211,40 +190,17 @@ core-dump suppression, and ptrace/signal isolation, so those are not repeated
 here. The execution `jail` is the unit's container; its `path` is optional and
 defaults to the managed per-instance runtime directory.
 
-## Storage descriptors
+## Storage
 
-Storage is a top-level unit descriptor declaration, not a member of
-`capabilities`. Every non-private claim is delivered as a rights-limited
-`zfshandle` under `storage:<name>`; the consumer mounts it itself with
-`service_storage_open(3)` and holds the handle for its lifetime (the handle
-anchors the mount), so the service manager never mounts on its behalf.
-`tzfsd` sets the dataset root's owner to the service at mint, so it can write.
-Storage used to back a `filesystem` descriptor is private to that descriptor
-factory and is not exposed to the client.
-
-- `scope="unit"` creates storage private to the bundle/unit/name tuple. The
-  lifetime may be declared here.
-- `scope="shared"` references a declaration in `Bundle.ucl`. The unit supplies
-  only its own rights; it cannot override the shared lifetime.
-- `persistent` survives process, manager, and machine restarts.
-- `cache` also survives restarts but is explicitly reclaimable cache; it must
-  never be the only copy of data.
-- `boot` is shared only within the current kernel boot generation.
-- `lease` exists while at least one launched holder remains. Shared leases are
-  destroyed after the last holder, not the first unit to stop.
-
-The visible name is never used as a ZFS path. `libcapbundle` derives a
-domain-separated 192-bit SHA-256 key from bundle id, scope, unit id (for unit
-scope), and logical name. This prevents cross-bundle collisions and keeps
-filesystem-safe implementation names out of application policy.
-
-Abandoned leases are grouped under a random service-manager session. A new
-manager session reclaims older lease generations after the old supervised
-process tree has been stopped. Restarting only `tzfsd` resumes the same
-session. Boot storage uses `kern.boottime`, so a daemon restart preserves it
-while a machine reboot selects a new generation. Reconciliation is
-conservative: storage containing retained snapshots is reported and left
-intact rather than silently discarding it.
+A unit does not declare storage in its manifest. Mutable state is obtained at
+runtime: the program opens the `system.Storage` service (`tzfsd`) by name and
+receives its own dataset — scoped to the unit's unforgeable channel label — as
+a rights-limited `zfshandle`. It mounts the handle itself with
+`service_storage_open(3)` and holds it for its lifetime (the handle anchors the
+mount), so the service manager never mounts on its behalf and nothing in the
+bundle names a ZFS path. `tzfsd` sets the dataset root's owner to the service at
+mint, so it can write. See [`tzfsd`](../storage/tzfsd.md) for the storage plane,
+dataset lifetimes, and crash/reboot reconciliation.
 
 ## Closed schemas and limits
 
@@ -258,8 +214,6 @@ Important limits are:
 | services loaded system-wide | 256 |
 | arguments / environment entries | 32 / 32 |
 | IPC names per unit | 8 |
-| storage declarations per unit | 8 |
-| shared storage declarations | 8 |
 | paths / files / network / jails / vsock | 16 each |
 | open descriptors per unit | 8 |
 | direct capability services | 4 |
@@ -280,8 +234,8 @@ Base-system bundles are installed in `/Capabilities/System`; site bundles are
 installed in `/Capabilities`. Registry directories and every loaded object
 must be root-owned and not writable by group or other. Symlinks and special
 files are rejected. `servicectl verify path.cap` prints the effective unit
-configuration, including activation, storage scope/lifetime, and opaque
-dataset key, without activating the bundle.
+configuration, including activation, limits, and process policy, without
+activating the bundle.
 
 The same strict parser is used by `servicectl` and `serviced`, so validation
 and runtime loading do not have separate interpretations.

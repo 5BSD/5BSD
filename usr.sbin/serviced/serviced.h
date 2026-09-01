@@ -120,16 +120,6 @@ struct svc_runtime {
 	int		channel_fd;	/* authority's end of channel */
 	struct channel	*control_channel; /* owns channel_fd */
 	int		coalition_fd;	/* coalition service instance */
-	/*
-	 * Anchors for anonymous storage mounts provisioned for this service.
-	 * serviced mounts a delivered zfshandle and passes only the resulting
-	 * directory descriptor to the consumer; the mount is force-unmounted
-	 * when the last handle reference closes, so serviced must retain a
-	 * handle reference for the life of the service that uses it.  Closed in
-	 * svc_close_fds().
-	 */
-	int		mount_anchor_fds[SERVICED_MAX_CAP_STORAGE];
-	unsigned	nmount_anchors;
 	struct svc_launch *launch;	/* non-NULL while a launch is in progress */
 	bool		protocol_ready;	/* SVC_OP_READY advisory received */
 	bool		lookup_activated; /* launched to satisfy a named lookup */

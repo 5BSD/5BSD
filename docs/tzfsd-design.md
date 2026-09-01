@@ -166,7 +166,9 @@ opens `/dev/zfs` and mints. After the move:
   `tzfsd.ready` gate for services that need storage before first-mint is a
   Phase 4 refinement.
 
-The manifest `capabilities.storage` stanza is unchanged; only *who mints* moves.
+Services no longer declare storage in the manifest at all; a service self-mints
+its dataset from `tzfsd` at runtime, addressed by its own unforgeable channel
+label rather than any manifest-declared claim.
 
 ---
 

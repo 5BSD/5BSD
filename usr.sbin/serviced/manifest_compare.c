@@ -33,7 +33,6 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	    a->ncap_files != b->ncap_files ||
 	    a->ncap_jail != b->ncap_jail ||
 	    a->ncap_vsock != b->ncap_vsock ||
-	    a->ncap_storage != b->ncap_storage ||
 	    a->ncap_services != b->ncap_services ||
 	    a->ncap_open != b->ncap_open ||
 	    a->cap_system != b->cap_system ||
@@ -70,10 +69,6 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	for (i = 0; i < a->ncap_vsock; i++)
 		if (memcmp(&a->cap_vsock[i], &b->cap_vsock[i],
 		    sizeof(a->cap_vsock[i])) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_storage; i++)
-		if (memcmp(&a->cap_storage[i], &b->cap_storage[i],
-		    sizeof(a->cap_storage[i])) != 0)
 			return (false);
 	for (i = 0; i < a->ncap_services; i++)
 		if (strcmp(a->cap_services[i], b->cap_services[i]) != 0)

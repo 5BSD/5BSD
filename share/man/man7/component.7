@@ -17,16 +17,19 @@ Local descriptors replace ambient filesystem, networking, or cryptographic autho
 from a sandboxed process.
 A bundle requests them with:
 .Bd -literal -offset indent
-storage = [{ name = "data"; scope = "unit"; rights = "mount"; }];
-descriptors { filesystem { storage = "data"; } network {} }
+descriptors { network {} }
 .Ed
 .Pp
 .Xr serviced 8
 constructs every requested instance before exec, enlists its worker in the
 consumer coalition, and injects a confined descriptor through a fixed
 environment entry.
-The FileSystem and Network libraries consume that entry and expose ordinary
-typed operations.
+The Network library consumes that entry and exposes ordinary typed operations.
+Mutable filesystem state is not requested here; a unit obtains its own dataset
+at runtime from
+.Xr tzfsd 8
+by opening
+.Dq system.Storage .
 The application does not select a provider, protocol version, lifetime,
 sharing mode, or options object.
 Local descriptors are mandatory and are never looked up globally.

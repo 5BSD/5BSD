@@ -7,10 +7,3 @@ user = "capability";
 # descriptor ceiling; no core dumps (may hold buffered log data).
 limits { nofile = 2048; nproc = 64; core = 0; }
 umask = "0077";
-
-storage = [{
-    name = "state";
-    scope = "unit";
-    lifetime = "persistent";
-    rights = "mount";
-}];

@@ -296,7 +296,6 @@ idle_runtime_init(struct svc_runtime *svc, const char *label)
 	svc->pd_fd = -1;
 	svc->channel_fd = -1;
 	svc->coalition_fd = -1;
-	svc->jail_fd = -1;
 }
 
 ATF_TC(idle_timer_arm_cancel);

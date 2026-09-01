@@ -9,7 +9,6 @@ TESTSDIR=	${TESTSBASE}/lib/libcapbundle
 
 ATF_TESTS_SH=	capbundle_format_test
 ATF_TESTS_C+=	api_test
-ATF_TESTS_C+=	storage_key_test
 ATF_TESTS_C+=	manifest_activation_test
 CFLAGS.manifest_activation_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.manifest_activation_test+=	-I${SRCTOP}/lib/libauthorityrt
@@ -39,10 +38,6 @@ CFLAGS.api_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.api_test+=	-I${SRCTOP}/lib/libauthorityrt
 LIBADD.api_test+=	capbundle
 LDFLAGS.api_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
-CFLAGS.storage_key_test+=	-I${SRCTOP}/lib/libcapbundle
-CFLAGS.storage_key_test+=	-I${SRCTOP}/lib/libauthorityrt
-LIBADD.storage_key_test+=	capbundle
-LDFLAGS.storage_key_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 
 SCRIPTS+=	servicectl
 SCRIPTSDIR_servicectl=	${TESTSDIR}

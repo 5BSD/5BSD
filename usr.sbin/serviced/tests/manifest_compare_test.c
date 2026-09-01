@@ -40,13 +40,6 @@ sample_manifest(void)
 	m.ncap_jail = 1;
 	m.cap_vsock[0].cid = 3;
 	m.ncap_vsock = 1;
-	strlcpy(m.cap_storage[0].name, "data",
-	    sizeof(m.cap_storage[0].name));
-	strlcpy(m.cap_storage[0].dataset, "u-test",
-	    sizeof(m.cap_storage[0].dataset));
-	m.cap_storage[0].rights = 1;
-	m.cap_storage[0].scope = ORT_STORAGE_SCOPE_UNIT;
-	m.ncap_storage = 1;
 	strlcpy(m.cap_services[0], "identity", sizeof(m.cap_services[0]));
 	m.ncap_services = 1;
 	m.cap_system = 1;
@@ -72,8 +65,6 @@ ATF_TC_BODY(equal_and_unused_tail, tc)
 	b = a;
 	ATF_REQUIRE(serviced_manifest_equal(&a, &b));
 	strlcpy(b.arguments[1], "unused", sizeof(b.arguments[1]));
-	strlcpy(b.cap_storage[1].name, "unused",
-	    sizeof(b.cap_storage[1].name));
 	ATF_CHECK(serviced_manifest_equal(&a, &b));
 }
 
@@ -104,11 +95,6 @@ ATF_TC_BODY(authority_changes, tc)
 	CHECK_CHANGE(b.cap_net[0].domain++);
 	CHECK_CHANGE(b.cap_jail[0].jid++);
 	CHECK_CHANGE(b.cap_vsock[0].cid++);
-	CHECK_CHANGE(b.cap_storage[0].rights++);
-	CHECK_CHANGE(b.cap_storage[0].name[0] = 'x');
-	CHECK_CHANGE(b.cap_storage[0].dataset[0] = 'x');
-	CHECK_CHANGE(b.cap_storage[0].lifetime++);
-	CHECK_CHANGE(b.cap_storage[0].scope++);
 	CHECK_CHANGE(b.cap_services[0][0] = 'x');
 	CHECK_CHANGE(b.cap_system++);
 	CHECK_CHANGE(b.protect_flags++);
@@ -117,7 +103,6 @@ ATF_TC_BODY(authority_changes, tc)
 	CHECK_CHANGE(b.ncap_net = 0);
 	CHECK_CHANGE(b.ncap_jail = 0);
 	CHECK_CHANGE(b.ncap_vsock = 0);
-	CHECK_CHANGE(b.ncap_storage = 0);
 	CHECK_CHANGE(b.ncap_services = 0);
 }
 

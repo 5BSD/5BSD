@@ -58,14 +58,6 @@ Optional
 and
 .Va publisher
 are display metadata.
-The optional
-.Va shared
-object may contain up to eight
-.Va storage
-declarations with a unique
-.Va name
-and
-.Va lifetime .
 .Sh UNIT.UCL
 The default program is
 .Pa bin/name .
@@ -257,44 +249,18 @@ is optional and, when omitted,
 .Nm
 roots the execution jail at the unit's managed runtime container.
 .Sh STORAGE
-The top-level unit
-.Va storage
-array contains at most eight objects with:
-.Bl -tag -width lifetime
-.It Va name
-Logical descriptor name.
-.It Va scope
-Required
-.Dq unit
-or
-.Dq shared .
-.It Va rights
-One name or an array selected from
-.Dq props_read ,
-.Dq props_write ,
-.Dq snapshot ,
-.Dq snap_destroy ,
-.Dq rollback ,
-.Dq clone_src ,
-.Dq create ,
-.Dq destroy ,
-.Dq send ,
-.Dq recv ,
-.Dq mount ,
-.Dq hold ,
-and
-.Dq release .
-.It Va lifetime
-.Dq persistent ,
-.Dq cache ,
-.Dq boot ,
-or
-.Dq lease .
-It is optional for unit storage and forbidden on shared references.
-.El
-.Pp
-A shared reference must match a declaration in
-.Pa Bundle.ucl .
+A unit does not declare storage in its manifest.
+It obtains mutable state at runtime by opening the
+.Dq system.Storage
+service
+.Pq Xr tzfsd 8
+by name;
+.Xr tzfsd 8
+derives the dataset from the consumer's unforgeable channel label and returns
+it as a rights-limited
+.Vt zfshandle
+that the unit mounts itself with
+.Xr service_storage_open 3 .
 Dataset paths are never supplied by the manifest.
 .Sh CAPABILITIES
 The optional
@@ -334,7 +300,9 @@ and
 .Dq kenv_read .
 .El
 .Pp
-Storage is not a capability sub-group; it is a top-level unit declaration.
+Storage is not a capability sub-group and is not declared in the manifest at
+all; see
+.Sx STORAGE .
 .Sh EXAMPLE
 .Bd -literal -offset indent
 # App.cap/Bundle.ucl
@@ -349,8 +317,6 @@ units = ["worker"];
 arguments = ["--foreground"];
 activation { boot = true; ipc = ["org.example.app.worker"]; }
 restart = "on-failure";
-storage = [{ name = "data"; scope = "unit";
-    lifetime = "persistent"; rights = "mount"; }];
 .Ed
 .Pp
 A unit needs no manifest declaration to use a capability service: it links the
@@ -361,5 +327,7 @@ and reaches the service lazily at first use over
 .Sh SEE ALSO
 .Xr libcapbundle 3 ,
 .Xr libservice 3 ,
+.Xr service_storage_open 3 ,
 .Xr serviced 8 ,
-.Xr servicectl 8
+.Xr servicectl 8 ,
+.Xr tzfsd 8

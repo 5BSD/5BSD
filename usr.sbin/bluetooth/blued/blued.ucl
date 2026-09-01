@@ -8,13 +8,6 @@ max_failures = 10;
 # service_ensure_extension(3) over system.SystemExtension (sysextd), so no
 # manifest kmod declaration is needed and neither PID 1 nor serviced loads it.
 
-storage = [{
-    name = "state";
-    scope = "unit";
-    lifetime = "persistent";
-    rights = "mount";
-}];
-
 capabilities {
     network = [{
         domain = "bluetooth";

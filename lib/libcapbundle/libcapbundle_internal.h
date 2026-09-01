@@ -25,7 +25,6 @@
 #define	CAPBUNDLE_MAX_CAP_NET		16
 #define	CAPBUNDLE_MAX_CAP_JAIL		16
 #define	CAPBUNDLE_MAX_CAP_VSOCK		16
-#define	CAPBUNDLE_MAX_CAP_STORAGE	SERVICED_MAX_CAP_STORAGE
 #define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 #define	CAPBUNDLE_MAX_CAP_OPEN		SERVICED_MAX_CAP_OPEN
 /*
@@ -35,10 +34,6 @@
  */
 #define	CAPBUNDLE_MAX_TIMER_INTERVAL	(366 * 24 * 3600)
 
-struct capbundle_shared_storage {
-	char	name[ORT_STORAGE_NAME_MAX];
-	uint8_t	lifetime;
-};
 /* Internal service representation. */
 struct capbundle_service {
 	char	program[PATH_MAX];	/* absolute resolved path */
@@ -97,8 +92,6 @@ struct capbundle_service {
 	unsigned ncap_jail;
 	struct ort_vsock_claim cap_vsock[CAPBUNDLE_MAX_CAP_VSOCK];
 	unsigned ncap_vsock;
-	struct ort_storage_claim cap_storage[CAPBUNDLE_MAX_CAP_STORAGE];
-	unsigned ncap_storage;
 	char	cap_services[CAPBUNDLE_MAX_CAP_SERVICES]
 		    [SERVICED_CAP_SERVICE_NAME_MAX];
 	unsigned ncap_services;
@@ -140,8 +133,6 @@ struct capbundle {
 	uint64_t sequence;
 	char	unit_names[CAPBUNDLE_MAX_SERVICES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nunit_names;
-	struct capbundle_shared_storage shared_storage[CAPBUNDLE_MAX_CAP_STORAGE];
-	unsigned nshared_storage;
 	struct capbundle_service services[CAPBUNDLE_MAX_SERVICES];
 	unsigned nservices;
 };
@@ -164,11 +155,6 @@ int	capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 	    const struct capbundle *bundle, const char *unit_name,
 	    struct capbundle_service *svc,
 	    char *errbuf, size_t errlen);
-
-/* Stable opaque ZFS leaf key; public to the parser tests, not installed ABI. */
-int	capbundle_storage_dataset_key(char out[ORT_STORAGE_DATASET_MAX],
-	    const char *bundle_id, const char *unit_name, const char *name,
-	    uint8_t scope);
 
 /*
  * Path-parameterized principal-policy core; public to the tests, not installed

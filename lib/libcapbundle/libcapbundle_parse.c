@@ -25,7 +25,6 @@
 #include <string.h>
 #include <syslog.h>
 
-#include <sha256.h>
 #include <ucl.h>
 
 #include "claim_parse.h"
@@ -101,49 +100,6 @@ valid_unit_name(const char *name)
 		    *p == '-'))
 			return (false);
 	return (true);
-}
-
-int
-capbundle_storage_dataset_key(char out[ORT_STORAGE_DATASET_MAX],
-    const char *bundle_id, const char *unit_name, const char *name,
-    uint8_t scope)
-{
-	static const char domain[] = "org.5bsd.capability-storage.v1";
-	SHA256_CTX context;
-	unsigned char digest[SHA256_DIGEST_LENGTH];
-	const char *scope_name;
-	char prefix;
-	unsigned i;
-
-	if (out == NULL || bundle_id == NULL || name == NULL ||
-	    bundle_id[0] == '\0' || name[0] == '\0' ||
-	    (scope != ORT_STORAGE_SCOPE_UNIT &&
-	    scope != ORT_STORAGE_SCOPE_SHARED) ||
-	    (scope == ORT_STORAGE_SCOPE_UNIT &&
-	    (unit_name == NULL || unit_name[0] == '\0'))) {
-		errno = EINVAL;
-		return (-1);
-	}
-	scope_name = scope == ORT_STORAGE_SCOPE_SHARED ? "shared" : "unit";
-	prefix = scope == ORT_STORAGE_SCOPE_SHARED ? 's' : 'u';
-	SHA256_Init(&context);
-#define HASH_FIELD(value) do { \
-	const char *field_ = (value); \
-	SHA256_Update(&context, field_, strlen(field_) + 1); \
-} while (0)
-	HASH_FIELD(domain);
-	HASH_FIELD(bundle_id);
-	HASH_FIELD(scope_name);
-	HASH_FIELD(scope == ORT_STORAGE_SCOPE_SHARED ? "" : unit_name);
-	HASH_FIELD(name);
-#undef HASH_FIELD
-	SHA256_Final(digest, &context);
-	out[0] = prefix;
-	out[1] = '-';
-	for (i = 0; i < 24; i++)
-		(void)snprintf(out + 2 + (i * 2), 3, "%02x", digest[i]);
-	out[50] = '\0';
-	return (0);
 }
 
 static int
@@ -749,7 +705,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "program", "activation",
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
-	    "storage", "protect", "limits", "umask", "band", "privileged" };
+	    "protect", "limits", "umask", "band", "privileged" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
@@ -761,8 +717,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "jails", "vsock", "services", "system", "open" };
 	static const char *const openkeys[] = { "path", "name", "type",
 	    "rights", "optional" };
-	static const char *const storagekeys[] = { "name", "scope",
-	    "rights", "lifetime" };
 	static const char *const service_names[] = { "mount", "node",
 	    "accounting", "identity" };
 	static const char *const filekeys[] = { "path", "actions" };
@@ -1185,7 +1139,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 
 	caps = ucl_object_lookup(root, "capabilities");
 	if (caps == NULL)
-		goto validate_storage;
+		return (0);
 	if (ucl_object_type(caps) != UCL_OBJECT) {
 		snprintf(errbuf, errlen, "capabilities must be an object");
 		return (-1);
@@ -1377,84 +1331,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 			return (-1);
 		}
 	}
-
-validate_storage:
-	arr = ucl_object_lookup(root, "storage");
-	if (arr != NULL && (ucl_object_type(arr) != UCL_ARRAY ||
-	    ucl_array_size(arr) > CAPBUNDLE_MAX_CAP_STORAGE)) {
-		snprintf(errbuf, errlen,
-		    "storage must be an array with at most %u entries",
-		    CAPBUNDLE_MAX_CAP_STORAGE);
-		return (-1);
-	}
-	it = NULL;
-	n = 0;
-	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
-		uint64_t rights;
-		uint8_t lifetime;
-		const ucl_object_t *lt, *scope;
-		const char *scope_name;
-
-		if (validate_keys(v, "storage entry", storagekeys,
-		    nitems(storagekeys), errbuf, errlen) != 0)
-			return (-1);
-		x = ucl_object_lookup(v, "name");
-		if (x == NULL || ucl_object_type(x) != UCL_STRING ||
-		    !valid_unit_name(ucl_object_tostring(x)) ||
-		    parse_storage_rights(ucl_object_lookup(v, "rights"),
-		    &rights) != 0) {
-			snprintf(errbuf, errlen, "invalid storage entry");
-			return (-1);
-		}
-		/*
-		 * Delivery composes "storage:<name>" into a
-		 * SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX buffer; a name that
-		 * cannot fit must fail here, not at launch.
-		 */
-		if (strlen(ucl_object_tostring(x)) > 55) {
-			snprintf(errbuf, errlen,
-			    "storage name too long for descriptor delivery");
-			return (-1);
-		}
-		scope = ucl_object_lookup(v, "scope");
-		if (scope == NULL || ucl_object_type(scope) != UCL_STRING ||
-		    ((scope_name = ucl_object_tostring(scope)) == NULL) ||
-		    (strcmp(scope_name, "unit") != 0 &&
-		    strcmp(scope_name, "shared") != 0)) {
-			snprintf(errbuf, errlen,
-			    "storage entry requires scope 'unit' or 'shared'");
-			return (-1);
-		}
-		lt = ucl_object_lookup(v, "lifetime");
-		if (strcmp(scope_name, "shared") == 0 && lt != NULL) {
-			snprintf(errbuf, errlen,
-			    "shared storage references cannot override lifetime");
-			return (-1);
-		}
-		for (unsigned i = 0; i < n; i++) {
-			const ucl_object_t *previous;
-
-			previous = ucl_array_find_index(arr, i);
-			previous = ucl_object_lookup(previous, "name");
-			if (strcmp(ucl_object_tostring(previous),
-			    ucl_object_tostring(x)) == 0) {
-				snprintf(errbuf, errlen,
-				    "duplicate storage claim '%s'",
-				    ucl_object_tostring(x));
-				return (-1);
-			}
-		}
-		n++;
-		if (lt != NULL && (ucl_object_type(lt) != UCL_STRING ||
-		    parse_storage_lifetime_string(ucl_object_tostring(lt),
-		    &lifetime) != 0)) {
-			snprintf(errbuf, errlen, "invalid storage lifetime");
-			return (-1);
-		}
-	}
-
-	if (caps == NULL)
-		return (0);
 
 	arr = ucl_object_lookup(caps, "network");
 	it = NULL;
@@ -1893,13 +1769,10 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 {
 	static const char *const keys[] = { "schema", "schema_version",
 	    "bundle_id", "version", "sequence", "author", "publisher",
-	    "units", "shared" };
-	static const char *const shared_keys[] = { "storage" };
-	static const char *const shared_storage_keys[] = { "name",
-	    "lifetime" };
+	    "units" };
 	struct ucl_parser *parser;
 	ucl_object_t *root;
-	const ucl_object_t *v, *units, *entry, *shared, *storage;
+	const ucl_object_t *v, *units, *entry;
 	ucl_object_iter_t it;
 	struct stat sb;
 	unsigned i;
@@ -1998,62 +1871,6 @@ capbundle_parse_bundle_ucl(const char *path, struct capbundle *bundle,
 	COPY_OPTIONAL_STRING("author", author);
 	COPY_OPTIONAL_STRING("publisher", publisher);
 #undef COPY_OPTIONAL_STRING
-
-	shared = ucl_object_lookup(root, "shared");
-	if (shared != NULL) {
-		if (validate_keys(shared, "shared", shared_keys,
-		    nitems(shared_keys), errbuf, errlen) != 0)
-			goto invalid;
-		storage = ucl_object_lookup(shared, "storage");
-		if (storage != NULL && (ucl_object_type(storage) != UCL_ARRAY ||
-		    ucl_array_size(storage) > CAPBUNDLE_MAX_CAP_STORAGE)) {
-			snprintf(errbuf, errlen,
-			    "shared.storage must be an array with at most %u entries",
-			    CAPBUNDLE_MAX_CAP_STORAGE);
-			goto invalid;
-		}
-		it = NULL;
-		while (storage != NULL &&
-		    (entry = ucl_object_iterate(storage, &it, true)) != NULL) {
-			struct capbundle_shared_storage *ss;
-			const ucl_object_t *name, *lifetime;
-			unsigned j;
-
-			if (validate_keys(entry, "shared.storage entry",
-			    shared_storage_keys, nitems(shared_storage_keys), errbuf,
-			    errlen) != 0)
-				goto invalid;
-			name = ucl_object_lookup(entry, "name");
-			lifetime = ucl_object_lookup(entry, "lifetime");
-			if (name == NULL || ucl_object_type(name) != UCL_STRING ||
-			    !valid_unit_name(ucl_object_tostring(name))) {
-				snprintf(errbuf, errlen,
-				    "invalid shared.storage entry");
-				goto invalid;
-			}
-			ss = &bundle->shared_storage[bundle->nshared_storage];
-			memset(ss, 0, sizeof(*ss));
-			ss->lifetime = ORT_STORAGE_PERSISTENT;
-			if (lifetime != NULL &&
-			    (ucl_object_type(lifetime) != UCL_STRING ||
-			    parse_storage_lifetime_string(
-			    ucl_object_tostring(lifetime), &ss->lifetime) != 0)) {
-				snprintf(errbuf, errlen,
-				    "invalid shared.storage lifetime");
-				goto invalid;
-			}
-			for (j = 0; j < bundle->nshared_storage; j++)
-				if (strcmp(bundle->shared_storage[j].name,
-				    ucl_object_tostring(name)) == 0) {
-					snprintf(errbuf, errlen,
-					    "duplicate shared storage '%s'",
-					    ucl_object_tostring(name));
-					goto invalid;
-				}
-			strlcpy(ss->name, ucl_object_tostring(name), sizeof(ss->name));
-			bundle->nshared_storage++;
-		}
-	}
 
 	units = ucl_object_lookup(root, "units");
 	if (units == NULL || ucl_object_type(units) != UCL_ARRAY ||
@@ -3018,59 +2835,6 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		}
 	}
 
-	/* Storage is a descriptor declaration, separate from policy gates. */
-	{
-		const ucl_object_t *stors, *selem, *sv;
-		ucl_object_iter_t sit = NULL;
-
-		stors = ucl_object_lookup(root, "storage");
-		while (stors != NULL && (selem = ucl_object_iterate(stors, &sit,
-		    true)) != NULL) {
-			struct ort_storage_claim *sc;
-			const char *scope_name;
-			unsigned i;
-
-			sc = &svc->cap_storage[svc->ncap_storage];
-			memset(sc, 0, sizeof(*sc));
-			sc->lifetime = ORT_STORAGE_PERSISTENT;
-			sv = ucl_object_lookup(selem, "name");
-			strlcpy(sc->name, ucl_object_tostring(sv), sizeof(sc->name));
-			sv = ucl_object_lookup(selem, "scope");
-			scope_name = ucl_object_tostring(sv);
-			sc->scope = strcmp(scope_name, "shared") == 0 ?
-			    ORT_STORAGE_SCOPE_SHARED : ORT_STORAGE_SCOPE_UNIT;
-			if (sc->scope == ORT_STORAGE_SCOPE_SHARED) {
-				for (i = 0; i < bundle->nshared_storage; i++)
-					if (strcmp(bundle->shared_storage[i].name,
-					    sc->name) == 0)
-						break;
-				if (i == bundle->nshared_storage) {
-					snprintf(errbuf, errlen,
-					    "unit references undeclared shared storage '%s'",
-					    sc->name);
-					ucl_object_unref(root);
-					return (-1);
-				}
-				sc->lifetime = bundle->shared_storage[i].lifetime;
-			} else {
-				sv = ucl_object_lookup(selem, "lifetime");
-				if (sv != NULL)
-					(void)parse_storage_lifetime_string(
-					    ucl_object_tostring(sv), &sc->lifetime);
-			}
-			(void)parse_storage_rights(ucl_object_lookup(selem, "rights"),
-			    &sc->rights);
-			if (capbundle_storage_dataset_key(sc->dataset,
-			    bundle->bundle_id, unit_name, sc->name, sc->scope) == -1) {
-				snprintf(errbuf, errlen,
-				    "cannot derive storage dataset key");
-				ucl_object_unref(root);
-				return (-1);
-			}
-			svc->ncap_storage++;
-		}
-	}
-
 	/* User/group */
 	strlcpy(svc->user, SERVICED_DEFAULT_USER, sizeof(svc->user));
 	strlcpy(svc->group, SERVICED_DEFAULT_GROUP, sizeof(svc->group));
@@ -3128,7 +2892,6 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		CHECK_CAP_COUNT("network", ncap_net);
 		CHECK_CAP_COUNT("jails", ncap_jail);
 		CHECK_CAP_COUNT("vsock", ncap_vsock);
-		CHECK_CAP_COUNT("storage", ncap_storage);
 		CHECK_CAP_COUNT("services", ncap_services);
 		CHECK_CAP_COUNT("open", ncap_open);
 #undef CHECK_CAP_COUNT

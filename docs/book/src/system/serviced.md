@@ -32,7 +32,7 @@ See [Capability bundle manifests](manifests.md) for the complete two-level
 ## Launch and lifecycle
 
 Each native unit is launched with `pdfork(2)`. Before releasing the child,
-`serviced` mints every declared capability, provisions storage, opens and
+`serviced` mints every declared capability, opens and
 delivers any [`capabilities.open`](manifests.md) file/dir descriptors, creates a
 coalition, installs a versioned bootstrap envfd, and applies the requested
 credentials and optional jail. This *launch-time* capability minting is
@@ -85,21 +85,11 @@ transfer-confined session; the supervisor is not a data-plane proxy. Publishing
 a name does not imply boot activation — a provider stays stopped until its first
 lookup.
 
-Storage is the one resource still delivered by the manifest, because it must be
-minted before the process starts:
-
-```ucl
-storage = [{
-    name = "data";
-    scope = "unit";
-    lifetime = "persistent";
-    rights = "mount";
-}];
-```
-
-`serviced` mints a rights-limited `zfshandle` for each claim; a mount-rights
-consumer mounts it lazily with `service_storage_open()` and holds the handle for
-its lifetime (the handle anchors the mount).
+Storage is not delivered by the manifest. A unit opens the `system.Storage`
+service (`tzfsd`) at runtime and receives its own dataset — scoped to its
+unforgeable channel label — as a rights-limited `zfshandle`, which it mounts
+lazily with `service_storage_open()` and holds for its lifetime (the handle
+anchors the mount).
 
 ### Private helpers
 

@@ -632,48 +632,6 @@ capability_service_descriptors_delivered_cleanup()
 	    capability-services.out
 }
 
-atf_test_case mount_storage_is_a_directory cleanup
-mount_storage_is_a_directory_head()
-{
-	atf_set "descr" \
-	    "Mount-only storage is a private type-checked directory, including long logical names"
-	atf_set "require.user" "root"
-	require_authority_stack_kmods zfs
-	atf_set "timeout" "90"
-}
-mount_storage_is_a_directory_body()
-{
-	require_ambient_control
-	logical="state-with-a-long-logical-name-1234567890"
-	role="storage:${logical}"
-	find_capd_service_fixture
-	start_stack
-	make_svc_bin system storage-directory \
-	    "storage = [{ name = \"${logical}\"; scope = \"unit\";
-    lifetime = \"lease\"; rights = \"mount\"; }];
-arguments = [\"storage-directory\", \"${role}\", \"storage-directory.out\"];" \
-	    "$capd_service_fixture"
-	atf_check -s exit:0 -o ignore servicectl reload
-	wait_for_file storage-directory.out 20 || {
-		cat "$logfile" 2>/dev/null
-		atf_fail "storage-directory service did not complete"
-	}
-	for expected in "role=${role}" directory=ok type_mismatch=EFTYPE \
-	    write=ok confined=1; do
-		atf_check -s exit:0 -o ignore grep -Fx "$expected" \
-		    storage-directory.out
-	done
-	atf_check -s exit:0 -o ignore \
-	    servicectl stop \
-	    "org.test.storage-directory/storage-directory"
-	stop_stack
-}
-mount_storage_is_a_directory_cleanup()
-{
-	cleanup_common
-	rm -f storage-directory.out
-}
-
 atf_test_case malformed_reload_is_transactional cleanup
 malformed_reload_is_transactional_head()
 {
@@ -799,7 +757,6 @@ atf_init_test_cases()
 	atf_add_test_case manifest_arguments_environment
 	atf_add_test_case remaining_token_families_activate
 	atf_add_test_case capability_service_descriptors_delivered
-	atf_add_test_case mount_storage_is_a_directory
 	atf_add_test_case malformed_reload_is_transactional
 	atf_add_test_case untrusted_bundle_rejected
 	atf_add_test_case kmod_prerequisite_uses_authority

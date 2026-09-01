@@ -147,41 +147,16 @@ same lease session. A new manager instance selects a new session after the old
 supervised process tree is gone and reclaims older ordinary lease trees.
 Retained snapshots make reconciliation fail visibly and leave the tree intact.
 
-## Bundle declarations
+## Runtime provisioning
 
-Shared definition in `Bundle.ucl`:
-
-```ucl
-shared {
-    storage = [{
-        name = "database";
-        lifetime = "persistent";
-    }];
-}
-```
-
-Per-unit grants in `Unit.ucl`:
-
-```ucl
-storage = [
-    {
-        name = "database";
-        scope = "shared";
-        rights = ["mount", "props_read", "snapshot"];
-    },
-    {
-        name = "scratch";
-        scope = "unit";
-        lifetime = "lease";
-        rights = ["mount", "props_read", "props_write"];
-    }
-];
-```
-
-A shared reference cannot override the bundle declaration's lifetime.
-Rights remain per unit. Accepted rights include property read/write,
-snapshot lifecycle, rollback, clone source, child create/destroy, send/receive,
-mount, hold, and release operations.
+A unit does not declare storage in its manifest. It opens the `system.Storage`
+service (`tzfsd`) by name at runtime; `tzfsd` derives the dataset from the
+consumer's unforgeable channel label and returns it as a rights-limited
+`zfshandle`. The unit mounts the handle itself with `service_storage_open(3)`
+and holds it for its lifetime — nothing in the bundle names a ZFS path. The
+delivered handle carries only the rights the consumer needs: property
+read/write, snapshot lifecycle, rollback, clone source, child create/destroy,
+send/receive, mount, hold, and release operations.
 
 ## Confinement and protocol
 

@@ -70,13 +70,6 @@ svc_close_fds(struct svc_runtime *svc)
 		close(svc->coalition_fd);
 		svc->coalition_fd = -1;
 	}
-	/*
-	 * Drop the storage mount anchors last: closing the final handle
-	 * reference force-unmounts the anonymous mount whose directory
-	 * descriptor was delivered to the provider worker.
-	 */
-	while (svc->nmount_anchors > 0)
-		close(svc->mount_anchor_fds[--svc->nmount_anchors]);
 
 	/* Remove the per-instance runtime container (recreated on next launch). */
 	svc_run_container_remove(svc->manifest.label);

@@ -28,7 +28,6 @@ ATF_TC_BODY(maximum_counts, tc)
 	m.ncap_net = SERVICED_MAX_CAP_NET;
 	m.ncap_jail = SERVICED_MAX_CAP_JAIL;
 	m.ncap_vsock = SERVICED_MAX_CAP_VSOCK;
-	m.ncap_storage = SERVICED_MAX_CAP_STORAGE;
 	m.ncap_services = SERVICED_MAX_CAP_SERVICES;
 	m.cap_system = 1;
 
@@ -53,12 +52,12 @@ ATF_TC_BODY(each_count_overflow, tc)
 {
 	struct svc_manifest m;
 	unsigned *counts[] = { &m.ncap_paths, &m.ncap_files, &m.ncap_net,
-	    &m.ncap_jail, &m.ncap_vsock, &m.ncap_storage,
+	    &m.ncap_jail, &m.ncap_vsock,
 	    &m.ncap_services };
 	const unsigned maxima[] = { SERVICED_MAX_CAP_PATHS,
 	    SERVICED_MAX_CAP_FILES, SERVICED_MAX_CAP_NET,
 	    SERVICED_MAX_CAP_JAIL, SERVICED_MAX_CAP_VSOCK,
-	    SERVICED_MAX_CAP_STORAGE, SERVICED_MAX_CAP_SERVICES };
+	    SERVICED_MAX_CAP_SERVICES };
 	size_t i;
 
 	for (i = 0; i < nitems(counts); i++) {
@@ -69,20 +68,19 @@ ATF_TC_BODY(each_count_overflow, tc)
 	}
 }
 
-ATF_TC(storage_is_not_a_delivered_descriptor);
-ATF_TC_HEAD(storage_is_not_a_delivered_descriptor, tc)
+ATF_TC(services_are_the_only_named_descriptors);
+ATF_TC_HEAD(services_are_the_only_named_descriptors, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
 	    "Storage is self-minted by the consumer over its own tzfsd channel; "
 	    "serviced delivers no storage descriptor or token");
 }
-ATF_TC_BODY(storage_is_not_a_delivered_descriptor, tc)
+ATF_TC_BODY(services_are_the_only_named_descriptors, tc)
 {
 	struct svc_manifest m;
 
 	memset(&m, 0, sizeof(m));
-	m.ncap_storage = SERVICED_MAX_CAP_STORAGE;
 	ATF_CHECK_EQ(svc_launch_token_count(&m), 0);
 	ATF_CHECK_EQ(svc_launch_named_fd_count(&m), 0);
 	m.ncap_services = SERVICED_MAX_CAP_SERVICES;
@@ -97,6 +95,6 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, maximum_counts);
 	ATF_TP_ADD_TC(tp, each_count_overflow);
-	ATF_TP_ADD_TC(tp, storage_is_not_a_delivered_descriptor);
+	ATF_TP_ADD_TC(tp, services_are_the_only_named_descriptors);
 	return (atf_no_error());
 }

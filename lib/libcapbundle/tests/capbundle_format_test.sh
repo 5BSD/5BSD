@@ -332,77 +332,6 @@ multi_unit_order_body()
 }
 multi_unit_order_cleanup() { cleanup_work; }
 
-atf_test_case storage_contract cleanup
-storage_contract_head() { atf_set descr "Storage scopes, lifetimes, keys, and references are exact"; }
-storage_contract_body()
-{
-	setup_work
-	for lifetime in persistent cache boot lease; do
-		dir=$(make_bundle "unit-$lifetime")
-		printf '%s\n' 'activation { boot = true; }' \
-		    "storage = [{ name = \"data\"; scope = \"unit\"; rights = [\"mount\", \"props_read\"]; lifetime = \"$lifetime\"; }];" > \
-		    "$dir/Units/worker.unit/Unit.ucl"
-		atf_check -s exit:0 -o match:"lifetime=$lifetime scope=unit dataset=u-[0-9a-f]{48}" \
-		    servicetcl verify "$dir"
-	done
-	for lifetime in persistent cache boot lease; do
-		dir=$(make_bundle "shared-$lifetime")
-		printf '%s\n' \
-		    "shared { storage = [{ name = \"data\"; lifetime = \"$lifetime\"; }]; }" >> "$dir/Bundle.ucl"
-		printf '%s\n' 'activation { boot = true; }' \
-		    'storage = [{ name = "data"; scope = "shared"; rights = "mount"; }];' > \
-		    "$dir/Units/worker.unit/Unit.ucl"
-		atf_check -s exit:0 -o match:"lifetime=$lifetime scope=shared dataset=s-[0-9a-f]{48}" \
-		    servicetcl verify "$dir"
-	done
-}
-storage_contract_cleanup() { cleanup_work; }
-
-atf_test_case storage_negative_matrix cleanup
-storage_negative_matrix_head() { atf_set descr "Malformed and ambiguous storage declarations fail closed"; }
-storage_negative_matrix_body()
-{
-	setup_work
-	i=0
-	for declaration in \
-	    'storage = "data";' \
-	    'storage = [{}];' \
-	    'storage = [{ name = "Data"; scope = "unit"; rights = "mount"; }];' \
-	    'storage = [{ name = "data"; rights = "mount"; }];' \
-	    'storage = [{ name = "data"; scope = "global"; rights = "mount"; }];' \
-	    'storage = [{ name = "data"; scope = "unit"; rights = "unknown"; }];' \
-	    'storage = [{ name = "data"; scope = "unit"; rights = []; }];' \
-	    'storage = [{ name = "data"; scope = "unit"; rights = "mount"; lifetime = "ephemeral"; }];' \
-	    'storage = [{ name = "data"; scope = "shared"; rights = "mount"; lifetime = "lease"; }];' \
-	    'storage = [{ name = "data"; scope = "shared"; rights = "mount"; }];' \
-	    'storage = [{ name = "data"; scope = "unit"; rights = "mount"; }, { name = "data"; scope = "unit"; rights = "mount"; }];'; do
-		i=$((i + 1))
-		dir=$(make_bundle "bad-storage-$i")
-		printf '%s\n' 'activation { boot = true; }' "$declaration" > \
-		    "$dir/Units/worker.unit/Unit.ucl"
-		verify_bad 'storage|scope|rights|lifetime|duplicate|undeclared' "$dir"
-	done
-	dir=$(make_bundle old-storage)
-	printf '%s\n' 'activation { boot = true; }' \
-	    'capabilities { storage = [{ name = "data"; rights = "mount"; }]; }' > \
-	    "$dir/Units/worker.unit/Unit.ucl"
-	verify_bad 'unknown key.*storage' "$dir"
-	for declaration in \
-	    'shared = [];' \
-	    'shared { unknown = []; }' \
-	    'shared { storage = "data"; }' \
-	    'shared { storage = [{}]; }' \
-	    'shared { storage = [{ name = "Data"; }]; }' \
-	    'shared { storage = [{ name = "data"; lifetime = "ephemeral"; }]; }' \
-	    'shared { storage = [{ name = "data"; }, { name = "data"; }]; }'; do
-		i=$((i + 1))
-		dir=$(make_bundle "bad-shared-$i")
-		printf '%s\n' "$declaration" >> "$dir/Bundle.ucl"
-		verify_bad 'shared|storage|lifetime|duplicate|object|array' "$dir"
-	done
-}
-storage_negative_matrix_cleanup() { cleanup_work; }
-
 atf_test_case process_policy_matrix cleanup
 process_policy_matrix_head() { atf_set descr "Process policy fields accept bounded explicit values"; }
 process_policy_matrix_body()
@@ -579,8 +508,6 @@ atf_init_test_cases()
 	atf_add_test_case program_matrix
 	atf_add_test_case parser_hardening
 	atf_add_test_case multi_unit_order
-	atf_add_test_case storage_contract
-	atf_add_test_case storage_negative_matrix
 	atf_add_test_case process_policy_matrix
 	atf_add_test_case capability_contract
 	atf_add_test_case capability_negative_matrix

@@ -135,10 +135,10 @@ print_bundle(const struct capbundle *b)
 		printf("\n");
 
 		printf("      capabilities: paths=%u files=%u network=%u "
-		    "jails=%u vsock=%u services=%u storage=%u open=%u "
+		    "jails=%u vsock=%u services=%u open=%u "
 		    "system=0x%x\n",
 		    m.ncap_paths, m.ncap_files, m.ncap_net, m.ncap_jail,
-		    m.ncap_vsock, m.ncap_services, m.ncap_storage, m.ncap_open,
+		    m.ncap_vsock, m.ncap_services, m.ncap_open,
 		    m.cap_system);
 		if (m.protect_flags != 0)
 			printf("      protect: 0x%x\n", m.protect_flags);
@@ -172,24 +172,6 @@ print_bundle(const struct capbundle *b)
 			    ort_net_direction_name(m.cap_vsock[j].direction));
 		for (j = 0; j < m.ncap_services; j++)
 			printf("        service: %s\n", m.cap_services[j]);
-		for (j = 0; j < m.ncap_storage; j++) {
-			const char *lifetime;
-
-			switch (m.cap_storage[j].lifetime) {
-			case ORT_STORAGE_PERSISTENT: lifetime = "persistent"; break;
-			case ORT_STORAGE_CACHE: lifetime = "cache"; break;
-			case ORT_STORAGE_BOOT: lifetime = "boot"; break;
-			case ORT_STORAGE_LEASE: lifetime = "lease"; break;
-			default: lifetime = "invalid"; break;
-			}
-			printf("        storage: %s rights=0x%jx "
-			    "lifetime=%s scope=%s dataset=%s\n",
-			    m.cap_storage[j].name,
-			    (uintmax_t)m.cap_storage[j].rights,
-			    lifetime,
-			    m.cap_storage[j].scope == ORT_STORAGE_SCOPE_SHARED ?
-			    "shared" : "unit", m.cap_storage[j].dataset);
-		}
 		for (j = 0; j < m.ncap_open; j++) {
 			char r[5];
 			unsigned k = 0;
