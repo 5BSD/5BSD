@@ -32,10 +32,20 @@ See [Capability bundle manifests](manifests.md) for the complete two-level
 ## Launch and lifecycle
 
 Each native unit is launched with `pdfork(2)`. Before releasing the child,
-`serviced` mints every declared capability, provisions storage, creates a
+`serviced` mints every declared capability, provisions storage, opens and
+delivers any [`capabilities.open`](manifests.md) file/dir descriptors, creates a
 coalition, installs a versioned bootstrap envfd, and applies the requested
-credentials and optional jail. Partial construction
-is rolled back; the program never receives an incomplete authority set.
+credentials and optional jail. This *launch-time* capability minting is
+fail-closed: partial construction is rolled back and the program never receives
+an incomplete authority set.
+
+Distinct from launch minting is **session minting** — handing an authenticated
+login a scoped session lookup channel. `serviced` no longer honors
+`SVC_OP_MINT_DOMAIN` on an ambient lookup channel; that path is retired. The
+only minter of session channels is the [auth-agent](../security/session-mint.md)
+(`system.authagent`), itself an ordinary serviced-managed unit, which mints over
+its own bootstrap channel. `login`/`su`/`sshd` ask the agent rather than minting
+for themselves.
 
 ```text
 STOPPED -> STARTING -> RUNNING -> STOPPING -> STOPPED

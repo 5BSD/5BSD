@@ -34,6 +34,7 @@ Every capability is a **static half** and a **dynamic half**:
 ├── Config/            minimal pre-storage plane config   static, admin-mutable, at boot
 │   ├── tzfsd.ucl          storage pool + layout
 │   ├── tzfsd.d/           drop-ins
+│   ├── principal-policy.ucl  admin policy (auth-agent; optional)
 │   └── serviced/disabled  operator disable list
 └── <Name>/            per-capability runtime home        tzfsd-provisioned, at runtime
     ├── control.sock       the capability's own endpoint      (ephemeral)

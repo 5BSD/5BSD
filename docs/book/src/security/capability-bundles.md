@@ -148,10 +148,14 @@ the same bootstrap descriptor table as capability services and storage. The
 program never opens a path; it retrieves the descriptor by name with
 `service_capability_open(3)` (`ucl_parser_add_fd` for a config file, `openat`
 under a delivered directory). This is the capsicum-clean replacement for the
-old habit of opening a config path before `cap_enter`. Acquisition is a launch
-prerequisite: if the manager cannot open a declared resource with the requested
-rights it refuses to launch the unit, exactly like a missing dependency — never
-a half-provisioned service. `capabilities.open` is distinct from
+old habit of opening a config path before `cap_enter`. Acquisition of a
+required entry is a launch prerequisite: if the manager cannot open it with the
+requested rights it refuses to launch the unit, exactly like a missing
+dependency — never a half-provisioned service. An entry marked `optional = true`
+is instead skipped when it cannot be opened, and the unit launches without it
+(the program checks whether `service_capability_open` finds it) — this is how a
+genuinely optional resource, such as an absent admin policy file, avoids
+blocking a boot-critical service. `capabilities.open` is distinct from
 `capabilities.files`, which is a MAC path-access grant (see below), not a
 delivered descriptor.
 

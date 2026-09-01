@@ -157,14 +157,17 @@ capabilities {
 
 `open` delivers a file or directory as a rights-limited **descriptor** instead
 of a path, so a capsicum-mode program never has to `open()` a path. Each entry
-is `{path, name, type = "file"|"dir", rights}`, where `rights` is any of `r`
-read, `w` write, `x` execute, `l` lookup (directories, for `openat`). The
+is `{path, name, type = "file"|"dir", rights, optional}`, where `rights` is any
+of `r` read, `w` write, `x` execute, `l` lookup (directories, for `openat`). The
 service manager opens the path, attenuates the fd to those rights, and delivers
 it in the bootstrap descriptor table under `name`; the program retrieves it with
-`service_capability_open(3)`. Acquisition is a launch prerequisite — a resource
-that cannot be opened with the requested rights fails the launch, never a
-half-provisioned unit. `open` is the descriptor form of a non-exclusive hold and
-is distinct from `files`, which grants path access but delivers no descriptor.
+`service_capability_open(3)`. A **required** entry (the default) is a launch
+prerequisite — a resource that cannot be opened with the requested rights fails
+the launch, never a half-provisioned unit. Marking an entry `optional = true`
+relaxes that: if it cannot be opened it is simply skipped (not delivered) and
+the launch proceeds, so the program must check whether `service_capability_open`
+finds it. `open` is the descriptor form of a non-exclusive hold and is distinct
+from `files`, which grants path access but delivers no descriptor.
 
 Activation is always explicit. `boot=true` starts the unit during convergence.
 Each `ipc` name reserves a reverse-domain endpoint and permits launch on first

@@ -71,11 +71,20 @@ At launch, before exec, for each `open` entry:
 4. `dup2` it to that number in the child's fd setup (the same path the existing
    `capabilities[]` fds take), close-on-exec cleared as the rail requires.
 
-**Fail-closed (the key semantic):** file/dir acquisition is a launch
-prerequisite. If serviced cannot open a declared resource (missing, denied,
-wrong type), it **refuses to launch the service** — logs `open <name> (<path>):
-<errno>` and fails the launch exactly like a missing dependency, applying the
-unit's restart policy. Never a half-provisioned service.
+**Fail-closed (the key semantic):** a **required** file/dir acquisition is a
+launch prerequisite. If serviced cannot open a declared resource (missing,
+denied, wrong type), it **refuses to launch the service** — logs
+`open <name> (<path>): <errno>` and fails the launch exactly like a missing
+dependency, applying the unit's restart policy. Never a half-provisioned
+service.
+
+**Optional entries:** an entry may set `optional = true`. Such an entry is
+delivered when it can be opened and **silently skipped** (logged at `NOTICE`,
+not delivered) when it cannot — the launch proceeds, and the service checks
+whether `service_capability_open` finds the name. This preserves the fail-closed
+default while letting a genuinely optional resource — e.g. an absent admin
+policy that should fall back to a built-in default — not block a boot-critical
+service. The launch barrier counts only the entries actually delivered.
 
 ## Retrieval (libservice)
 

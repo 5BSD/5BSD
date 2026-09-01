@@ -11,6 +11,7 @@
 
 - [MAC Capability Framework](security/mac-capability.md)
 - [The Authority Model](security/authority-model.md)
+- [The Authentication Boundary](security/session-mint.md)
 - [Attribute-Based Access Control (mac_abac)](security/mac-abac.md)
 - [Capability Transfer](security/capability-transfer.md)
 - [Capability Bundles](security/capability-bundles.md)

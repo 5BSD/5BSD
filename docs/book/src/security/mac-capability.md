@@ -152,7 +152,7 @@ speaking (nonces), to whom (services), revocation, and delegation policy.
 /usr/src/sys/modules/mac_capability* module builds
 /usr/src/tests/sys/mac_capability/   ATF kernel tests (kyua)
 /usr/src/share/dtrace/mac_capability-*  DTrace scripts
-/usr/src/usr.sbin/authorityd/           authority authority daemon
+/usr/src/usr.sbin/authorityd/           authority daemon
 /usr/src/usr.sbin/serviced/          service manager daemon
 ```
 

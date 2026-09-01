@@ -6,14 +6,17 @@ grants that operation. Your uid, your pathname, your PID, and any signal you can
 send grant you *nothing*. This chapter describes that model and how it differs
 from the ambient authority a traditional Unix carries.
 
-> **Status.** This is the target architecture and the rule new code is written
-> to. The substrate it rests on — the [MAC Capability
+> **Status.** This is the architecture the system is built to, and much of it is
+> now enforced, not aspirational. The substrate — the [MAC Capability
 > Framework](mac-capability.md), [Capability Transfer](capability-transfer.md),
-> and [Capability Bundles](capability-bundles.md) — is in place. The
-> authorization *decisions* are migrating onto it in phases; during that
-> migration some services still fall back to a uid check behind the capability
-> path. The authoritative, code-level specification is
-> `docs/capability-authority-model.md` in the source tree.
+> and [Capability Bundles](capability-bundles.md) — is in place, and the
+> authentication boundary is live: `login`, `su`, and `sshd` provision their
+> sessions through the [auth-agent](session-mint.md), and direct session minting
+> has been retired (see below). A few control paths still gate on a uid behind
+> the capability path (the authorityd system-lifecycle control socket keeps
+> `getpeereid(3)` by design — reboot/halt stay stock). The authoritative,
+> code-level specification is `docs/capability-authority-model.md` in the source
+> tree.
 
 ## Ambient authority is the thing we removed
 
@@ -63,10 +66,14 @@ delegation. 5BSD's boundary has three parts:
 2. **Authority Init** (PID 1), which holds the root capability at boot and
    delegates the initial grants.
 3. The **authentication boundary** — the *only* place an identity is exchanged
-   for capabilities. When you prove a credential, a small, sandboxed **auth
-   agent** consults an explicit **principal → bundle policy** and delegates that
-   principal's capability bundle to your session. Your shell and its children
-   inherit those capabilities the way they inherit standard I/O.
+   for capabilities. When you prove a credential, `login`/`su`/`sshd` ask a
+   small, capsicum-sandboxed **auth-agent** (`system.authagent`) to mint your
+   session's capability channel; the agent resolves the principal itself (via
+   Casper) and consults an explicit **principal → bundle policy**. The login
+   programs no longer classify the principal or hold mint authority — direct
+   minting is retired. Your shell and its children inherit the scoped capability
+   the way they inherit standard I/O. This boundary is documented in full in
+   [The Authentication Boundary](session-mint.md).
 
 This is the honest analogue of what every capability system must do somewhere:
 *"this principal may hold these capabilities."* It is stated once, as policy, in
