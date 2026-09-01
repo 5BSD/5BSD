@@ -135,10 +135,8 @@ print_bundle(const struct capbundle *b)
 		printf("\n");
 
 		printf("      capabilities: paths=%u network=%u "
-		    "vsock=%u services=%u "
 		    "system=0x%x\n",
 		    m.ncap_paths, m.ncap_net,
-		    m.ncap_vsock, m.ncap_services,
 		    m.cap_system);
 		if (m.protect_flags != 0)
 			printf("      protect: 0x%x\n", m.protect_flags);
@@ -157,13 +155,6 @@ print_bundle(const struct capbundle *b)
 			    ort_net_direction_name(m.cap_net[j].direction), address,
 			    m.cap_net[j].prefix);
 		}
-		for (j = 0; j < m.ncap_vsock; j++)
-			printf("        vsock: cid=%ju ports=%u-%u "
-			    "direction=%s\n", (uintmax_t)m.cap_vsock[j].cid,
-			    m.cap_vsock[j].port_min, m.cap_vsock[j].port_max,
-			    ort_net_direction_name(m.cap_vsock[j].direction));
-		for (j = 0; j < m.ncap_services; j++)
-			printf("        service: %s\n", m.cap_services[j]);
 	}
 
 }

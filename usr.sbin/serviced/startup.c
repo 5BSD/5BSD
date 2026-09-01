@@ -45,13 +45,11 @@ log_loaded_manifest(const struct svc_manifest *m)
 	for (j = 0; j < m->nprovides; j++)
 		syslog(LOG_INFO, "startup: %s provides: %s",
 		    m->label, m->provides[j]);
-	if (svc_launch_token_count(m) + svc_launch_named_fd_count(m) > 0)
+	if (svc_launch_token_count(m) > 0)
 		syslog(LOG_INFO, "startup: %s capabilities: "
-		    "paths=%u network=%u vsock=%u "
-		    "services=%u system=0x%x",
+		    "paths=%u network=%u system=0x%x",
 		    m->label, m->ncap_paths,
-		    m->ncap_net, m->ncap_vsock,
-		    m->ncap_services, m->cap_system);
+		    m->ncap_net, m->cap_system);
 }
 
 /*

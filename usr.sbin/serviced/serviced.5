@@ -261,7 +261,7 @@ Dataset paths are never supplied by the manifest.
 The optional
 .Va capabilities
 object accepts these closed groups:
-.Bl -tag -width services
+.Bl -tag -width network
 .It Va paths
 At most 16 distinct absolute paths.
 .It Va network
@@ -270,13 +270,6 @@ At most 16 typed IPv4, IPv6, or Bluetooth claims with compatible
 and
 .Va direction
 fields.
-.It Va vsock
-At most 16 CID, port/range, and direction objects.
-.It Va services
-At most four names selected from
-.Dq mount , node , accounting ,
-and
-.Dq identity .
 .It Va system
 Distinct gates selected from
 .Dq kldload , kldunload , kldstat , reboot , swapon , swapoff ,

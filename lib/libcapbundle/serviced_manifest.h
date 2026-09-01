@@ -29,9 +29,6 @@
 #define	SERVICED_MAX_PROVIDES		8
 #define	SERVICED_MAX_CAP_PATHS		16
 #define	SERVICED_MAX_CAP_NET		16
-#define	SERVICED_MAX_CAP_VSOCK		16
-#define	SERVICED_MAX_CAP_SERVICES	4
-#define	SERVICED_CAP_SERVICE_NAME_MAX	16
 #define	SERVICED_LABEL_MAX		64
 #define	SERVICED_MAX_ARGUMENTS		32
 #define	SERVICED_ARGUMENT_MAX		256
@@ -166,11 +163,6 @@ struct svc_manifest {
 	unsigned	ncap_paths;
 	struct ort_net_claim cap_net[SERVICED_MAX_CAP_NET];
 	unsigned	ncap_net;
-	struct ort_vsock_claim cap_vsock[SERVICED_MAX_CAP_VSOCK];
-	unsigned	ncap_vsock;
-	char		cap_services[SERVICED_MAX_CAP_SERVICES]
-		    [SERVICED_CAP_SERVICE_NAME_MAX];
-	unsigned	ncap_services;
 	uint32_t	cap_system;	/* SYS_GATE_* bitmask */
 
 	int		restart;	/* SVC_RESTART_* */

@@ -238,18 +238,6 @@ fill_system_req(struct authority_system_req *req, uint32_t op, uint32_t gates)
 	req->gates = gates;
 }
 
-static void
-fill_vsock_req(struct authority_vsock_req *req, uint32_t op,
-    const struct ort_vsock_claim *vc)
-{
-	memset(req, 0, sizeof(*req));
-	req->op = op;
-	req->cid = vc->cid;
-	req->port_min = vc->port_min;
-	req->port_max = vc->port_max;
-	req->direction = vc->direction;
-}
-
 /*
  * Common status check for RPC calls that return no fds.
  * Maps authorityd error status to errno; returns 0 on success, -1 on error.
@@ -343,16 +331,6 @@ authority_mint_net(int channel_fd, const struct ort_net_claim *nc)
 }
 
 int
-authority_mint_vsock(int channel_fd, const struct ort_vsock_claim *vc)
-{
-	struct authority_vsock_req req;
-	int token_fd, status;
-	fill_vsock_req(&req, AUTHORITY_OP_MINT_VSOCK, vc);
-	status = authority_rpc(channel_fd, &req, sizeof(req), &token_fd, 1, NULL);
-	return (check_status_fd(status, token_fd));
-}
-
-int
 authority_mint_system(int channel_fd, uint32_t gates)
 {
 	struct authority_system_req req;
@@ -405,25 +383,6 @@ authority_create_coalition(int channel_fd)
 
 	status = authority_rpc(channel_fd, &req, sizeof(req), &cfd, 1, NULL);
 	return (check_status_fd(status, cfd));
-}
-
-int
-authority_delegate_service(int channel_fd, const char *name)
-{
-	struct authority_service_req req;
-	int fd, status;
-
-	if (name == NULL ||
-	    (strcmp(name, "mount") != 0 && strcmp(name, "node") != 0 &&
-	    strcmp(name, "accounting") != 0 && strcmp(name, "identity") != 0)) {
-		errno = EINVAL;
-		return (-1);
-	}
-	memset(&req, 0, sizeof(req));
-	req.op = AUTHORITY_OP_DELEGATE_SERVICE;
-	strlcpy(req.name, name, sizeof(req.name));
-	status = authority_rpc(channel_fd, &req, sizeof(req), &fd, 1, NULL);
-	return (check_status_fd(status, fd));
 }
 
 int
@@ -625,13 +584,6 @@ authority_release_manifest(int channel_fd, const struct svc_manifest *m)
 		struct authority_net_req req;
 
 		fill_net_req(&req, AUTHORITY_OP_RELEASE_NET, &m->cap_net[i]);
-		if (authority_release_send(channel_fd, &req, sizeof(req)) != 0)
-			nsent++;
-	}
-	for (i = 0; i < m->ncap_vsock; i++) {
-		struct authority_vsock_req req;
-		fill_vsock_req(&req, AUTHORITY_OP_RELEASE_VSOCK,
-		    &m->cap_vsock[i]);
 		if (authority_release_send(channel_fd, &req, sizeof(req)) != 0)
 			nsent++;
 	}

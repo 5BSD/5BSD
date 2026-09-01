@@ -30,8 +30,6 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	    a->nprovides != b->nprovides ||
 	    a->ncap_paths != b->ncap_paths ||
 	    a->ncap_net != b->ncap_net ||
-	    a->ncap_vsock != b->ncap_vsock ||
-	    a->ncap_services != b->ncap_services ||
 	    a->cap_system != b->cap_system ||
 	    a->protect_flags != b->protect_flags ||
 	    a->privileged != b->privileged ||
@@ -54,13 +52,6 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	for (i = 0; i < a->ncap_net; i++)
 		if (memcmp(&a->cap_net[i], &b->cap_net[i],
 		    sizeof(a->cap_net[i])) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_vsock; i++)
-		if (memcmp(&a->cap_vsock[i], &b->cap_vsock[i],
-		    sizeof(a->cap_vsock[i])) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_services; i++)
-		if (strcmp(a->cap_services[i], b->cap_services[i]) != 0)
 			return (false);
 	return (true);
 }

@@ -22,8 +22,6 @@
 /* Limits matching serviced.h */
 #define	CAPBUNDLE_MAX_CAP_PATHS		16
 #define	CAPBUNDLE_MAX_CAP_NET		16
-#define	CAPBUNDLE_MAX_CAP_VSOCK		16
-#define	CAPBUNDLE_MAX_CAP_SERVICES	SERVICED_MAX_CAP_SERVICES
 /*
  * Upper bound on a monotonic activation.timer interval: 366 days in seconds.
  * A period longer than a year is far past the point where a monotonic timer is
@@ -72,12 +70,6 @@ struct capbundle_service {
 	/* Network capabilities (full: domain, address, prefix, port range) */
 	struct ort_net_claim cap_net[CAPBUNDLE_MAX_CAP_NET];
 	unsigned ncap_net;
-
-	struct ort_vsock_claim cap_vsock[CAPBUNDLE_MAX_CAP_VSOCK];
-	unsigned ncap_vsock;
-	char	cap_services[CAPBUNDLE_MAX_CAP_SERVICES]
-		    [SERVICED_CAP_SERVICE_NAME_MAX];
-	unsigned ncap_services;
 
 	/* User/group for privilege drop */
 	char	user[64];

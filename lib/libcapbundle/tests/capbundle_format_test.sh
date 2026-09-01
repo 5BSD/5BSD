@@ -389,17 +389,14 @@ capability_contract_body()
 	        { domain = "bluetooth"; protocol = "l2cap";
 	          direction = "connect"; address = "00:11:22:33:44:55"; }
 	    ];
-	    vsock = [{ cid = 3; ports = "1024-2048"; direction = "connect"; }];
-	    services = ["mount", "node", "accounting", "identity"];
 	    system = ["kldload", "kldunload", "kldstat", "reboot",
 	        "swapon", "swapoff", "sysctl", "kenv", "acct", "audit",
 	        "kenv_read"];
 	}
 	EOF
 	atf_check -s exit:0 \
-	    -o match:'paths=2 network=3 vsock=1 services=4' \
+	    -o match:'paths=2 network=3' \
 	    -o match:'network: domain=bluetooth protocol=l2cap' \
-	    -o match:'vsock: cid=3 ports=1024-2048 direction=connect' \
 	    servicetcl verify "$dir"
 }
 capability_contract_cleanup() { cleanup_work; }
@@ -416,18 +413,13 @@ capability_negative_matrix_body()
 	    'capabilities { paths = "/tmp"; }' \
 	    'capabilities { paths = ["relative"]; }' \
 	    'capabilities { paths = ["/x", "/x"]; }' \
-	    'capabilities { services = ["unknown"]; }' \
-	    'capabilities { services = ["mount", "mount"]; }' \
 	    'capabilities { system = ["root"]; }' \
-	    'capabilities { system = ["audit", "audit"]; }' \
-	    'capabilities { vsock = [{ port = 4; ports = 5; }]; }' \
-	    'capabilities { vsock = [{ cid = -1; }]; }' \
-	    'capabilities { vsock = [{ direction = "listen"; }]; }'; do
+	    'capabilities { system = ["audit", "audit"]; }'; do
 		i=$((i + 1))
 		dir=$(make_bundle "bad-capability-$i")
 		printf '%s\n' 'activation { boot = true; }' "$declaration" > \
 		    "$dir/Units/worker.unit/Unit.ucl"
-		verify_bad 'capabilities|unknown|invalid|duplicate|array|vsock' "$dir"
+		verify_bad 'capabilities|unknown|invalid|duplicate|array' "$dir"
 	done
 }
 capability_negative_matrix_cleanup() { cleanup_work; }

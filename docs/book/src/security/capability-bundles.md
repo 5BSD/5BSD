@@ -115,7 +115,7 @@ the previous running registry in place.
 
 ## Runtime delivery
 
-Direct file, socket, vsock, and system authority arrives through
+Direct file, socket, and system authority arrives through
 rights-limited kernel descriptors or activation tokens. Named capability
 services and storage occupy a separate named-descriptor bootstrap table. The
 role and type are validated independently. Storage is delivered as a
@@ -149,13 +149,13 @@ invariant, not a stylistic one:
   the same time, each narrowed to its own `FI_FS_*` action mask. Holding read on
   `/Capabilities/Config` does not exclude another unit from holding it too.
 
-- **Exclusive isolations** — `network` endpoints and `vsock` CIDs.
+- **Exclusive isolations** — `network` endpoints.
   An isolation is owned by exactly one holder *across the whole system*. The
   authority mints an isolation token only after `mac_capability_isolation`
   confirms no foreign owner already holds an overlapping claim; a conflicting
   request is rejected. The same owner re-claiming its own isolation is a
   refcount, not a conflict. This is what makes an isolation an isolation: two
-  units cannot both own TCP :443 or vsock CID 42.
+  units cannot both own TCP :443.
 
 A unit author reads this as: ask for `paths` freely — they compose — but an
 isolation you declare is yours alone, and a second unit that declares the same

@@ -185,11 +185,11 @@ capabilities {
 }
 ```
 
-The proposed `capabilities.ipc` entries are authority to look up those global
-names; they are not startup edges.  The first actual lookup creates demand for
-the provider.  This field is intentionally distinct from the current
-`capabilities.services` field, which delegates named kernel capability-service
-descriptors such as `mount` or `identity` directly at launch.
+The `capabilities.ipc` entries are authority to look up those global names; they
+are not startup edges.  The first actual lookup creates demand for the provider.
+Reachability is otherwise governed entirely by the discovery domain (SYSTEM/USER)
+— a unit needs no manifest declaration to use a capability service.  (The former
+per-unit `capabilities.services` allow-list has been removed.)
 
 Packaged configuration and static resources stay in the immutable bundle.
 Before entering capability mode, serviced passes rights-limited descriptors

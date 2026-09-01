@@ -103,42 +103,6 @@ valid_unit_name(const char *name)
 }
 
 static int
-parse_vsock_ports(const ucl_object_t *v, uint32_t *minp, uint32_t *maxp)
-{
-	const char *s;
-	char *end;
-	uint64_t lo, hi;
-
-	if (v == NULL || (ucl_object_type(v) == UCL_STRING &&
-	    strcmp(ucl_object_tostring(v), "*") == 0)) {
-		*minp = 0;
-		*maxp = UINT32_MAX;
-		return (0);
-	}
-	if (ucl_object_type(v) == UCL_INT) {
-		int64_t n = ucl_object_toint(v);
-		if (n < 0 || (uint64_t)n > UINT32_MAX)
-			return (-1);
-		*minp = *maxp = (uint32_t)n;
-		return (0);
-	}
-	if (ucl_object_type(v) != UCL_STRING)
-		return (-1);
-	s = ucl_object_tostring(v);
-	errno = 0;
-	lo = strtoull(s, &end, 10);
-	if (errno != 0 || end == s || *end != '-' || lo > UINT32_MAX)
-		return (-1);
-	s = end + 1;
-	hi = strtoull(s, &end, 10);
-	if (errno != 0 || *end != '\0' || hi > UINT32_MAX || lo > hi)
-		return (-1);
-	*minp = (uint32_t)lo;
-	*maxp = (uint32_t)hi;
-	return (0);
-}
-
-static int
 validate_keys(const ucl_object_t *obj, const char *where,
     const char *const *allowed, size_t nallowed, char *errbuf, size_t errlen)
 {
@@ -714,19 +678,12 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const limitskeys[] = { "memory", "cpu", "nproc",
 	    "nofile", "stack", "fsize", "core" };
 	static const char *const capkeys[] = { "paths", "network",
-	    "vsock", "services", "system" };
-	static const char *const service_names[] = { "mount", "node",
-	    "accounting", "identity" };
+	    "system" };
 	static const char *const netkeys[] = { "domain", "protocol", "port",
 	    "ports", "direction", "address", "prefix" };
-	static const char *const vsockkeys[] = { "cid", "port", "ports",
-	    "direction" };
 	const ucl_object_t *caps, *arr, *v, *x;
 	ucl_object_iter_t it;
-	bool service_seen[nitems(service_names)];
 	unsigned n;
-
-	memset(service_seen, 0, sizeof(service_seen));
 
 	if (ucl_object_type(root) != UCL_OBJECT) {
 		snprintf(errbuf, errlen, "manifest must be an object");
@@ -1157,8 +1114,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 } while (0)
 	VALIDATE_CAP_ARRAY("paths", CAPBUNDLE_MAX_CAP_PATHS);
 	VALIDATE_CAP_ARRAY("network", CAPBUNDLE_MAX_CAP_NET);
-	VALIDATE_CAP_ARRAY("vsock", CAPBUNDLE_MAX_CAP_VSOCK);
-	VALIDATE_CAP_ARRAY("services", CAPBUNDLE_MAX_CAP_SERVICES);
 	VALIDATE_CAP_ARRAY("system", nitems(gate_names));
 #undef VALIDATE_CAP_ARRAY
 
@@ -1209,34 +1164,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 				return (-1);
 			}
 		n++;
-	}
-
-	arr = ucl_object_lookup(caps, "services");
-	it = NULL;
-	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
-		bool found = false;
-		unsigned si;
-		if (ucl_object_type(v) != UCL_STRING) {
-			snprintf(errbuf, errlen,
-			    "invalid capabilities.services entry");
-			return (-1);
-		}
-		for (si = 0; si < nitems(service_names); si++)
-			if (strcmp(ucl_object_tostring(v), service_names[si]) == 0) {
-				if (service_seen[si]) {
-					snprintf(errbuf, errlen,
-					    "duplicate capability service '%s'",
-					    service_names[si]);
-					return (-1);
-				}
-				service_seen[si] = true;
-				found = true;
-			}
-		if (!found) {
-			snprintf(errbuf, errlen, "unknown capability service '%s'",
-			    ucl_object_tostring(v));
-			return (-1);
-		}
 	}
 
 	arr = ucl_object_lookup(caps, "network");
@@ -1368,48 +1295,6 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		}
 	}
 
-	arr = ucl_object_lookup(caps, "vsock");
-	it = NULL;
-	while (arr != NULL && (v = ucl_object_iterate(arr, &it, true)) != NULL) {
-		uint32_t lo, hi;
-		if (ucl_object_type(v) != UCL_OBJECT) {
-			snprintf(errbuf, errlen,
-			    "capabilities.vsock entries must be objects");
-			return (-1);
-		}
-		if (validate_keys(v, "capabilities.vsock entry", vsockkeys,
-		    nitems(vsockkeys), errbuf, errlen) != 0)
-			return (-1);
-		if (ucl_object_lookup(v, "port") != NULL &&
-		    ucl_object_lookup(v, "ports") != NULL) {
-			snprintf(errbuf, errlen, "vsock entry has both port and ports");
-			return (-1);
-		}
-		x = ucl_object_lookup(v, "port");
-		if (x == NULL) x = ucl_object_lookup(v, "ports");
-		if (parse_vsock_ports(x, &lo, &hi) != 0) {
-			snprintf(errbuf, errlen, "invalid vsock port range");
-			return (-1);
-		}
-		x = ucl_object_lookup(v, "cid");
-		if (x != NULL && !((ucl_object_type(x) == UCL_INT &&
-		    ucl_object_toint(x) >= 0) ||
-		    (ucl_object_type(x) == UCL_STRING &&
-		    (strcmp(ucl_object_tostring(x), "*") == 0 ||
-		    strcmp(ucl_object_tostring(x), "any") == 0)))) {
-			snprintf(errbuf, errlen, "invalid vsock cid");
-			return (-1);
-		}
-		x = ucl_object_lookup(v, "direction");
-		if (x != NULL && (ucl_object_type(x) != UCL_STRING ||
-		    (strcmp(ucl_object_tostring(x), "bind") != 0 &&
-		    strcmp(ucl_object_tostring(x), "connect") != 0 &&
-		    strcmp(ucl_object_tostring(x), "any") != 0 &&
-		    strcmp(ucl_object_tostring(x), "*") != 0))) {
-			snprintf(errbuf, errlen, "invalid vsock direction");
-			return (-1);
-		}
-	}
 	return (0);
 }
 
@@ -2345,59 +2230,6 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 				}
 			}
 
-			/* VSOCK endpoint capabilities. */
-			{
-				const ucl_object_t *vsocks, *velem, *vv;
-				ucl_object_iter_t vit = NULL;
-				vsocks = ucl_object_lookup(caps, "vsock");
-				while (vsocks != NULL && (velem = ucl_object_iterate(
-				    vsocks, &vit, true)) != NULL) {
-					struct ort_vsock_claim *vc;
-
-					/* The schema validator bounds the
-					 * declaration count, but do not rely
-					 * on that pass from here. */
-					if (svc->ncap_vsock >=
-					    CAPBUNDLE_MAX_CAP_VSOCK)
-						break;
-					vc = &svc->cap_vsock[svc->ncap_vsock];
-					const char *dir;
-					memset(vc, 0, sizeof(*vc));
-					vc->cid = VSOCK_CID_ANY;
-					vc->direction = ORT_NET_DIR_BIND;
-					vv = ucl_object_lookup(velem, "port");
-					if (vv == NULL)
-						vv = ucl_object_lookup(velem, "ports");
-					if (parse_vsock_ports(vv, &vc->port_min,
-					    &vc->port_max) != 0)
-						continue;
-					vv = ucl_object_lookup(velem, "cid");
-					if (vv != NULL && ucl_object_type(vv) == UCL_INT) {
-						int64_t cid = ucl_object_toint(vv);
-						if (cid < 0)
-							continue;
-						vc->cid = (uint64_t)cid;
-					}
-					vv = ucl_object_lookup(velem, "direction");
-					if (vv != NULL) {
-						dir = ucl_object_tostring(vv);
-						if (strcmp(dir, "bind") == 0)
-							vc->direction = ORT_NET_DIR_BIND;
-						else if (strcmp(dir, "connect") == 0)
-							vc->direction = ORT_NET_DIR_CONNECT;
-						else if (strcmp(dir, "any") == 0 ||
-						    strcmp(dir, "*") == 0)
-							vc->direction = ORT_NET_DIR_ANY;
-						else
-							continue;
-					}
-					svc->ncap_vsock++;
-				}
-			}
-
-			parse_string_array_n(caps, "services", svc->cap_services,
-			    sizeof(svc->cap_services[0]),
-			    CAPBUNDLE_MAX_CAP_SERVICES, &svc->ncap_services);
 		}
 	}
 
@@ -2455,8 +2287,6 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 } while (0)
 		CHECK_CAP_COUNT("paths", ncap_paths);
 		CHECK_CAP_COUNT("network", ncap_net);
-		CHECK_CAP_COUNT("vsock", ncap_vsock);
-		CHECK_CAP_COUNT("services", ncap_services);
 #undef CHECK_CAP_COUNT
 	}
 

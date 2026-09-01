@@ -86,12 +86,6 @@ _Static_assert(SVC_TOKEN_BASE == SERVICE_BOOTSTRAP_FD + 1,
     "token layout must follow bootstrap descriptor");
 _Static_assert(SVC_MAX_TOKENS <= SERVICE_BOOTSTRAP_TOKEN_MAX,
     "bootstrap token table is too small");
-_Static_assert(SVC_LAUNCH_MAX_NAMED_FDS <=
-    SERVICE_BOOTSTRAP_CAPABILITY_MAX,
-    "bootstrap capability table is too small");
-_Static_assert(SERVICED_CAP_SERVICE_NAME_MAX <=
-    SERVICE_BOOTSTRAP_CAPABILITY_NAME_MAX,
-    "bootstrap capability name is too small");
 _Static_assert(SERVICED_LABEL_MAX <= SERVICE_BOOTSTRAP_LABEL_MAX,
     "bootstrap label is too small");
 
@@ -1100,7 +1094,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 			nlisteners++;
 
 	if (serviced_fd_budget_check((size_t)expected_tokens +
-	    m->ncap_services + nlisteners +
+	    nlisteners +
 	    12, "service launch") == -1) {
 		saved_errno = errno;
 		syslog(LOG_ERR,
@@ -1310,19 +1304,6 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		    m->cap_net[i];
 		MINT_CHECK_DEADLINE();
 	}
-	for (i = 0; i < m->ncap_vsock; i++) {
-		int tfd = authority_mint_vsock(sd.authority_channel_fd,
-		    &m->cap_vsock[i]);
-		if (tfd == -1) {
-			SERVICED_PROBE_CAP_MINT(m->label, "vsock", -1);
-			goto fail_tokens;
-		}
-		SERVICED_PROBE_CAP_MINT(m->label, "vsock", 0);
-		token_fds[ntokens++] = tfd;
-		minted_manifest.cap_vsock[minted_manifest.ncap_vsock++] =
-		    m->cap_vsock[i];
-		MINT_CHECK_DEADLINE();
-	}
 	/*
 	 * Storage is not delivered by serviced.  tzfsd is a socket-free
 	 * provider (system.Filesystem); a storage consumer opens it by name and
@@ -1345,32 +1326,6 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		token_fds[ntokens++] = tfd;
 		minted_manifest.cap_system = m->cap_system;
 	}
-	for (i = 0; i < m->ncap_services; i++) {
-		int sfd = authority_delegate_service(sd.authority_channel_fd,
-		    m->cap_services[i]);
-
-		if (sfd == -1) {
-			syslog(LOG_ERR, "svc_exec %s: failed to delegate "
-			    "capability service %s", m->label,
-			    m->cap_services[i]);
-			SERVICED_PROBE_CAP_SERVICE(m->label,
-			    m->cap_services[i], -1);
-			goto fail_tokens;
-		}
-		if (nservices >= SERVICE_BOOTSTRAP_CAPABILITY_MAX) {
-			close(sfd);
-			errno = EOVERFLOW;
-			goto fail_tokens;
-		}
-		strlcpy(service_names[nservices], m->cap_services[i],
-		    sizeof(service_names[nservices]));
-		strlcpy(service_types[nservices], m->cap_services[i],
-		    sizeof(service_types[nservices]));
-		service_fds[nservices++] = sfd;
-		SERVICED_PROBE_CAP_SERVICE(m->label, m->cap_services[i], 0);
-		MINT_CHECK_DEADLINE();
-	}
-
 #undef MINT_CHECK_DEADLINE
 	}
 
@@ -1433,11 +1388,11 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * fail_tokens cleanup path instead.
 	 */
 	if (ntokens != expected_tokens ||
-	    nservices != m->ncap_services + nlisteners + 1) {
+	    nservices != nlisteners + 1) {
 		syslog(LOG_ERR, "svc_exec %s: incomplete capability set "
 		    "(%u/%u tokens, %u/%u services)", m->label, ntokens,
 		    expected_tokens, nservices,
-		    m->ncap_services + nlisteners + 1);
+		    nlisteners + 1);
 		goto fail_tokens;
 	}
 

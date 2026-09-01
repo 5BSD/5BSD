@@ -473,25 +473,6 @@ as a socket-free service, so a service self-serves a module by name with
 .Xr service_ensure_extension 3 .
 PID 1 loads no kernel code.
 .Pp
-For each manifest
-.Va capabilities.services
-entry,
-.Xr serviced 8
-sends an exact-sized
-.Dv AUTHORITY_OP_DELEGATE_SERVICE
-request.
-Only
-.Dq mount ,
-.Dq node ,
-and
-.Dq accounting ,
-and
-.Dq identity
-are accepted.
-The resulting descriptor is transferred once and arrives confined with
-.Dv CAP_XFER_NONE ;
-malformed or unknown requests are rejected.
-.Pp
 The serviced restart policy uses exponential backoff.
 If
 .Xr serviced 8

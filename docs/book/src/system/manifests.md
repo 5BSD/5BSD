@@ -116,7 +116,7 @@ capabilities {
 - **Non-exclusive holds** — `paths`. A path grant is a reference-counted share;
   any number of units may hold an overlapping grant on the same path, each
   narrowed to its own action mask, and none excludes another unit.
-- **Exclusive isolations** — `network` and `vsock`. Each is owned by
+- **Exclusive isolations** — `network`. An endpoint is owned by
   exactly one holder across the whole system; the authority rejects a mint whose
   claim overlaps a foreign owner's. Two units cannot both bind TCP :25.
 
@@ -194,8 +194,7 @@ Important limits are:
 | services loaded system-wide | 256 |
 | arguments / environment entries | 32 / 32 |
 | IPC names per unit | 8 |
-| paths / network / vsock | 16 each |
-| direct capability services | 4 |
+| paths / network | 16 each |
 | kernel modules | 8 |
 | stop timeout | 300 seconds |
 | bundle tree entries | 4096 |

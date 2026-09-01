@@ -25,18 +25,12 @@ ATF_TC_BODY(maximum_counts, tc)
 	memset(&m, 0, sizeof(m));
 	m.ncap_paths = SERVICED_MAX_CAP_PATHS;
 	m.ncap_net = SERVICED_MAX_CAP_NET;
-	m.ncap_vsock = SERVICED_MAX_CAP_VSOCK;
-	m.ncap_services = SERVICED_MAX_CAP_SERVICES;
 	m.cap_system = 1;
 
 	ATF_REQUIRE(svc_launch_counts_valid(&m));
-	ATF_CHECK_EQ(SVC_LAUNCH_MAX_TOKENS, 49);
+	ATF_CHECK_EQ(SVC_LAUNCH_MAX_TOKENS, 33);
 	ATF_CHECK_EQ(svc_launch_token_count(&m), SVC_LAUNCH_MAX_TOKENS);
 	ATF_CHECK(SVC_LAUNCH_MAX_TOKENS <= SERVICE_BOOTSTRAP_TOKEN_MAX);
-	ATF_CHECK_EQ(svc_launch_named_fd_count(&m),
-	    SVC_LAUNCH_MAX_NAMED_FDS);
-	ATF_CHECK(SVC_LAUNCH_MAX_NAMED_FDS <=
-	    SERVICE_BOOTSTRAP_CAPABILITY_MAX);
 }
 
 ATF_TC(each_count_overflow);
@@ -49,13 +43,9 @@ ATF_TC_HEAD(each_count_overflow, tc)
 ATF_TC_BODY(each_count_overflow, tc)
 {
 	struct svc_manifest m;
-	unsigned *counts[] = { &m.ncap_paths, &m.ncap_net,
-	    &m.ncap_vsock,
-	    &m.ncap_services };
+	unsigned *counts[] = { &m.ncap_paths, &m.ncap_net };
 	const unsigned maxima[] = { SERVICED_MAX_CAP_PATHS,
-	    SERVICED_MAX_CAP_NET,
-	    SERVICED_MAX_CAP_VSOCK,
-	    SERVICED_MAX_CAP_SERVICES };
+	    SERVICED_MAX_CAP_NET };
 	size_t i;
 
 	for (i = 0; i < nitems(counts); i++) {
@@ -66,24 +56,21 @@ ATF_TC_BODY(each_count_overflow, tc)
 	}
 }
 
-ATF_TC(services_are_the_only_named_descriptors);
-ATF_TC_HEAD(services_are_the_only_named_descriptors, tc)
+ATF_TC(token_count_tracks_delegated_capabilities);
+ATF_TC_HEAD(token_count_tracks_delegated_capabilities, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
-	    "Storage is self-minted by the consumer over its own tzfsd channel; "
-	    "serviced delivers no storage descriptor or token");
+	    "The launch token count reflects only path, network, and system "
+	    "capabilities; storage and other services are self-minted by the "
+	    "consumer and deliver no serviced token");
 }
-ATF_TC_BODY(services_are_the_only_named_descriptors, tc)
+ATF_TC_BODY(token_count_tracks_delegated_capabilities, tc)
 {
 	struct svc_manifest m;
 
 	memset(&m, 0, sizeof(m));
 	ATF_CHECK_EQ(svc_launch_token_count(&m), 0);
-	ATF_CHECK_EQ(svc_launch_named_fd_count(&m), 0);
-	m.ncap_services = SERVICED_MAX_CAP_SERVICES;
-	ATF_CHECK_EQ(svc_launch_named_fd_count(&m),
-	    SVC_LAUNCH_MAX_NAMED_FDS);
 	m.cap_system = 1;
 	ATF_CHECK_EQ(svc_launch_token_count(&m), 1);
 }
@@ -93,6 +80,6 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, maximum_counts);
 	ATF_TP_ADD_TC(tp, each_count_overflow);
-	ATF_TP_ADD_TC(tp, services_are_the_only_named_descriptors);
+	ATF_TP_ADD_TC(tp, token_count_tracks_delegated_capabilities);
 	return (atf_no_error());
 }

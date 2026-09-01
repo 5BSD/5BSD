@@ -551,7 +551,7 @@ manifest_arguments_environment_cleanup()
 atf_test_case remaining_token_families_activate cleanup
 remaining_token_families_activate_head()
 {
-	atf_set "descr" "VSOCK and system manifest tokens mint and activate after exec"
+	atf_set "descr" "System manifest tokens mint and activate after exec"
 	atf_set "require.user" "root"
 	require_authority_stack_kmods
 	atf_set "timeout" "60"
@@ -561,7 +561,6 @@ remaining_token_families_activate_body()
 	find_capd_service_fixture
 	start_stack
 	make_svc_bin system token-families 'capabilities {
-    vsock = [{ cid = "any"; port = 48001; direction = "connect"; }];
 	    system = ["kldstat"];
 }
 arguments = ["authorize-tokens", "token-families.out"];' \
@@ -575,11 +574,6 @@ arguments = ["authorize-tokens", "token-families.out"];' \
 	}
 	atf_check -s exit:0 -o match:'fds=6,7,8' cat token-families.out
 	atf_check -s exit:0 -o match:'authorized=yes' cat token-families.out
-	authorityctl -s "$sockpath" status > token-families-status.out
-	atf_check -s exit:0 -o match:'vsock:[[:space:]]+1' \
-	    cat token-families-status.out
-	atf_check -s exit:0 -o match:'ports=48001-48001 connect.*refcount=1' \
-	    cat token-families-status.out
 	stop_stack
 }
 remaining_token_families_activate_cleanup()
@@ -587,44 +581,6 @@ remaining_token_families_activate_cleanup()
 	cleanup_common
 	rm -f token_families_svc token_families_svc.c token-families.out \
 	    token-families-status.out
-}
-
-atf_test_case capability_service_descriptors_delivered cleanup
-capability_service_descriptors_delivered_head()
-{
-	atf_set "descr" "Manifest capability services arrive named and non-transferable"
-	atf_set "require.user" "root"
-	require_authority_stack_kmods mac_capability_mount mac_capability_node \
-	    mac_capability_accounting mac_capability_identity
-	atf_set "timeout" "60"
-}
-capability_service_descriptors_delivered_body()
-{
-	require_ambient_control
-	find_capd_service_fixture
-	start_stack
-	make_svc_bin system capability-services \
-	    'capabilities { services = ["mount", "node", "accounting", "identity"]; }
-arguments = ["capability-services", "capability-services.out"];' \
-	    "$capd_service_fixture"
-	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
-	    "${APPS_DIR}/capability-services.cap/Units/capability-services.unit/Unit.ucl"
-	atf_check -s exit:0 -o ignore servicectl reload
-	wait_for_file capability-services.out 10 || {
-		cat "$logfile" 2>/dev/null
-		atf_fail "capability-service test program did not start"
-	}
-	for name in mount node accounting identity; do
-		atf_check -s exit:0 -o match:"${name}=valid confined=1" \
-		    grep "^${name}=" capability-services.out
-	done
-	stop_stack
-}
-capability_service_descriptors_delivered_cleanup()
-{
-	cleanup_common
-	rm -f capability_service_svc capability_service_svc.c \
-	    capability-services.out
 }
 
 atf_test_case malformed_reload_is_transactional cleanup
@@ -751,7 +707,6 @@ atf_init_test_cases()
 	atf_add_test_case audit_records_best_effort
 	atf_add_test_case manifest_arguments_environment
 	atf_add_test_case remaining_token_families_activate
-	atf_add_test_case capability_service_descriptors_delivered
 	atf_add_test_case malformed_reload_is_transactional
 	atf_add_test_case untrusted_bundle_rejected
 	atf_add_test_case kmod_prerequisite_uses_authority

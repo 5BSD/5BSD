@@ -32,10 +32,6 @@ sample_manifest(void)
 	m.ncap_paths = 1;
 	m.cap_net[0].domain = 2;
 	m.ncap_net = 1;
-	m.cap_vsock[0].cid = 3;
-	m.ncap_vsock = 1;
-	strlcpy(m.cap_services[0], "identity", sizeof(m.cap_services[0]));
-	m.ncap_services = 1;
 	m.cap_system = 1;
 	m.restart = 1;
 	m.stop_timeout = 5;
@@ -86,14 +82,10 @@ ATF_TC_BODY(authority_changes, tc)
 
 	CHECK_CHANGE(b.cap_paths[0][1] = 'x');
 	CHECK_CHANGE(b.cap_net[0].domain++);
-	CHECK_CHANGE(b.cap_vsock[0].cid++);
-	CHECK_CHANGE(b.cap_services[0][0] = 'x');
 	CHECK_CHANGE(b.cap_system++);
 	CHECK_CHANGE(b.protect_flags++);
 	CHECK_CHANGE(b.ncap_paths = 0);
 	CHECK_CHANGE(b.ncap_net = 0);
-	CHECK_CHANGE(b.ncap_vsock = 0);
-	CHECK_CHANGE(b.ncap_services = 0);
 }
 
 ATF_TP_ADD_TCS(tp)
