@@ -100,6 +100,33 @@ descriptors carrying rights and transfer limits, not bare Mach send rights — s
 "deliver the channel" can also carry fine-grained, pre-attenuated authority
 that launchd would have to approximate with entitlements.
 
+## Socket-free (launchd-style) — a standing mandate
+
+The capability plane is **socket-free**: a service is reached over a held
+`mac_capability` **channel** obtained **by name**, never a UNIX-domain socket,
+a filesystem path, or a `getpeereid(3)` peer check. This is the launchd model
+(a Mach port brokered by name) with kernel-enforced attenuation on top. Authority
+is the *held channel*, so scoping is intrinsic to the capability rather than
+bolted on with socket permissions.
+
+Any capability-plane daemon that still listens on a UNIX socket is to be
+**rewritten as a `service_provider`** (libservice: `service_provider_expose(name)`
++ per-client worker channels; clients use `service_open(name)`), matching
+`localcrypto`/`bsdnotify`/`localnetwork`/etc. which are already socketless.
+
+**Socket-free hit list (capability-plane IPC only):**
+
+| Daemon | Socket | Status |
+|--------|--------|--------|
+| `tzfsd` | `/var/run/tzfsd.sock` storage IPC | **being converted** → `system.Storage` provider |
+| `authorityd` (`control.c`) | lifecycle control socket (`getpeereid`) | to convert (retire the last plane `getpeereid`) |
+| `blued`/`meshd` (`ctl.c`) | control sockets | to convert |
+
+Explicitly **out of scope** (legitimate non-plane sockets): the Bluetooth
+**radio** sockets (HCI/L2CAP hardware transport), and stock network/base
+daemons (`nfsd`, `mountd`, `inetd`, `ppp`, `route6d`, `iscsid`, bhyve backends)
+— these speak real wire protocols, not capability-plane IPC.
+
 ## Target architecture
 
 The end-state is launchd's model, made stronger by capability attenuation:
@@ -157,8 +184,22 @@ assert the service comes up and 0 launch failures).
 - Capture a golden boot transcript + `zfs list` / service inventory as the
   regression baseline.
 
-### Phase 1 — Storage out of PID 1  *(highest value, lowest risk)*
-Storage is a pure forward and we just simplified tzfsd.
+### Phase 1 — Storage out of PID 1, then socketless  *(in progress)*
+
+Progress (committed, VM-verified):
+- **Storage out of PID 1** (`9c4d931`): authorityd links no libtzfsd, no storage
+  ops; serviced brokered tzfsd directly (transitional step A).
+- **tzfsd leases concurrent-safe** (`a601a7c`): `session_begin` create-or-open,
+  never reaps a sibling; orphan GC at daemon startup.
+
+Remaining — the **socketless rewrite** (supersedes step A; per the socket-free
+mandate): convert tzfsd to a `system.Storage` `service_provider`, rewrite
+`libtzfsd`/`tzfsctl` as `service_open` channel clients, then serviced delivers a
+scoped `system.Storage` channel by name and libservice self-mints — deleting
+`storage_client.c` + `libtzfsd` from serviced. Attenuation is intrinsic to the
+delivered channel (no `AUTHORIZE` op, no peer-uid, no socket).
+
+Original transitional framing (retained for reference):
 - Route `MINT_STORAGE`/`DESTROY_STORAGE` through `DELEGATE(domain=STORAGE)`
   (blob = the existing `authority_storage_req` body), OR — simpler — have
   **serviced talk to tzfsd directly** (it already links libtzfsd and holds the
