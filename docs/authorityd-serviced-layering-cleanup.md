@@ -108,7 +108,7 @@ leaf-coupling. Citations are in the tracking notes; summarized here.
 
 | Daemon | Socket-free? | Key architectural issues |
 |--------|-------------|--------------------------|
-| **authorityd** (PID 1) | **No** | ① live AF_UNIX `getpeereid` control listener **in PID 1** (`control.c` — not vestigial; a fatal Phase-5 startup step) — flagship violation; ② `kldload`/`modfind` run in PID 1 (`handle_ensure_kmod`); ③ `jail_set()` in PID 1 (`handle_create_jail`); ④ hardcoded serviced fd-map + restart policy (`bootstrap.c`) |
+| **authorityd** (PID 1) | n/a | `control.c`'s AF_UNIX `getpeereid` socket is an **intentional single-user-mode admin/lifecycle fallback — keep it** (not a violation). Real violations: ① `kldload`/`modfind` in PID 1 (`handle_ensure_kmod`, over the *authority channel* — Phase 2 → Sysextd `system.SystemExtension`); ② `jail_set()` in PID 1 (`handle_create_jail` — Phase 3 → Warden `system.Namespace`); ③ hardcoded serviced fd-map + restart policy (`bootstrap.c`) |
 | **serviced** | Yes | storage coupling **REMOVED** (`5583478`): links no libtzfsd, no storage code (`cap_storage` is declaration-only). Remaining typed scaffolding is net/jail/vsock — **kernel** isolation mints via authorityd, not leaf-daemon clients (Phase 4 generalizes them; still links libjail). Plane-conformant otherwise |
 | **tzfsd** | **Yes** | **DONE** (`5583478`): socket-free `system.Storage` provider; identity-scoped nested datasets `persistent/u<hash-of-label>/<claim>`; consumers self-mint via libservice |
 | **authagentd** | Yes | no per-client worker isolation — the mint authority + SYSTEM bootstrap channel are shared across all login clients (no `pdfork`/`service_worker_protect`) |
@@ -122,9 +122,10 @@ leaf-coupling. Citations are in the tracking notes; summarized here.
 | **meshd** | **No** | entirely hand-rolled `/var/run/meshd.sock` + `getpeereid`, **no** provider, **no** capability sandbox, **no** manifest; also couples into blued's source tree and speaks blued's wire protocol over a path socket |
 
 **Cross-cutting themes** (fix system-wide, not per-daemon):
-- **Socket-free**: tzfsd storage **done** (`5583478`). Remaining: authorityd
-  control (`control.c` — the last core plane socket + `getpeereid`) and the
-  blued/meshd control planes, all still on UNIX sockets + `getpeereid`.
+- **Socket-free**: tzfsd storage **done** (`5583478`). The core plane is now
+  socket-free; authorityd's `control.c` socket **stays by design** as the
+  single-user-mode admin/lifecycle fallback (the plane isn't up there).
+  Remaining plane offenders are the blued/meshd control planes.
 - **Policy-in-code vs manifest**: localcrypto, localnetwork, auditbrokerd, and
   traced hardcode operator policy in C; authagentd's `principal-policy`
   descriptor is the pattern to copy (deliver policy as a manifest descriptor via
@@ -157,7 +158,7 @@ Any capability-plane daemon that still listens on a UNIX socket is to be
 | Daemon | Socket | Status |
 |--------|--------|--------|
 | `tzfsd` | ~~`/var/run/tzfsd.sock` storage IPC~~ | **DONE** (`5583478`) — `system.Storage` provider; consumers self-mint; serviced links no libtzfsd |
-| `authorityd` (`control.c`) | lifecycle control socket (`getpeereid`) | **to convert — the last capability-plane socket + `getpeereid` in the core** |
+| `authorityd` (`control.c`) | admin/lifecycle control socket (`getpeereid`) | **KEEP — intentional single-user-mode fallback** (status/shutdown/reload/`CTL_OP_SINGLE`); the capability plane/serviced isn't up in single-user, so this socket is the control path. NOT a plane-IPC violation. Only the kldload/reboot *system-ops* riding it move out (Phase 2/3); the socket stays. |
 | `blued`/`meshd` (`ctl.c`) | control sockets | to convert |
 
 Explicitly **out of scope** (legitimate non-plane sockets): the Bluetooth
