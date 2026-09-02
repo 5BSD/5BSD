@@ -30,46 +30,6 @@
 #include "probes.h"
 
 /*
- * Mint a narrowed file isolation access token for a path.
- * Returns the token fd on success, -1 on failure.
- */
-int
-mac_capability_mint_file_token(const char *path, uint64_t actions)
-{
-	struct fi_request req;
-	struct fi_reply reply;
-	int fd, token_fd;
-
-	if (mac_capability_isolation_fd == -1) {
-		syslog(LOG_WARNING, "mint_file_token: isolation not connected");
-		return (-1);
-	}
-
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-	if (fd == -1) {
-		syslog(LOG_WARNING, "mint_file_token: open %s: %m", path);
-		return (-1);
-	}
-
-	token_fd = -1;
-
-	memset(&req, 0, sizeof(req));
-	req.op = FI_OP_MINT;
-	req.actions = actions;
-
-	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
-	    &req, sizeof(req), &fd, 1, &reply, sizeof(reply),
-	    &token_fd, 1) == -1) {
-		syslog(LOG_WARNING, "mint_file_token: mint %s: %m", path);
-		close(fd);
-		return (-1);
-	}
-
-	close(fd);
-	return (token_fd);
-}
-
-/*
  * Mint a network isolation access token for one endpoint.  The authority
  * must already hold a claim covering the endpoint.
  * Returns the token fd on success, -1 on failure.

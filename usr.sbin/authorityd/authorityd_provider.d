@@ -42,7 +42,6 @@ provider authorityd {
 	probe reload__claims__done(int acquired, int released, int failed);
 
 	/* Token minting — serviced requests capabilities for children */
-	probe mint__file(const char *path, uint64_t actions, int result);
 	probe mint__net(int port_min, int port_max, int protocol, int result);
 	probe mint__system(uint32_t gates, int result);
 	probe mint__vsock(uint64_t cid, uint32_t port_min,

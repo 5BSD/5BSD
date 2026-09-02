@@ -244,31 +244,6 @@ check_status_fd(int status, int fd)
 /* --- Mint operations (return token fds) --- */
 
 int
-authority_mint_file(int channel_fd, const char *path, uint64_t actions)
-{
-	struct authority_mint_file_req req;
-	int token_fd, status;
-
-	if (actions == 0 || (actions & ~FI_FS_ALL) != 0) {
-		errno = EINVAL;
-		return (-1);
-	}
-	if (strlen(path) >= sizeof(req.path)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.op = AUTHORITY_OP_MINT_FILE;
-	req.actions = actions;
-	strlcpy(req.path, path, sizeof(req.path));
-
-	status = authority_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
-	    NULL);
-	return (check_status_fd(status, token_fd));
-}
-
-int
 authority_mint_system(int channel_fd, uint32_t gates)
 {
 	struct authority_system_req req;

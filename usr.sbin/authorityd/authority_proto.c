@@ -114,47 +114,6 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
 #define	net_is_claimed(r)	claim_net_covered(&od.cfg, (r))
 
 static void
-handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
-{
-	const struct authority_mint_file_req *req;
-	int token_fd;
-
-	if (len != sizeof(*req)) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	req = payload;
-
-	if (req->_pad != 0) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	if (strnlen(req->path, PATH_MAX) >= PATH_MAX) {
-		proto_reply(ENAMETOOLONG, reply_token, NULL, 0);
-		return;
-	}
-	if (req->path[0] != '/') {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	if (req->actions == 0 || (req->actions & ~FI_FS_ALL) != 0) {
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-
-	token_fd = mac_capability_mint_file_token(req->path, req->actions);
-	if (token_fd == -1) {
-		AUTHORITYD_PROBE_MINT_FILE(req->path, req->actions, EIO);
-		proto_reply(EIO, reply_token, NULL, 0);
-		return;
-	}
-
-	AUTHORITYD_PROBE_MINT_FILE(req->path, req->actions, 0);
-	proto_reply(0, reply_token, &token_fd, 1);
-	close(token_fd);
-}
-
-static void
 handle_mint_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	struct ort_net_claim nc;
@@ -419,7 +378,6 @@ proto_dispatch_one(void)
 {
 	struct mac_capability_recvmsg_args ra;
 	union {
-		struct authority_mint_file_req file;
 		struct authority_net_req net;
 		struct authority_vsock_req vsock;
 		struct authority_system_req system;
@@ -482,9 +440,6 @@ proto_dispatch_one(void)
 	clock_gettime(CLOCK_MONOTONIC, &ts_start);
 
 	switch (op) {
-	case AUTHORITY_OP_MINT_FILE:
-		handle_mint_file(&buf, ra.payload_len, ra.reply_token);
-		break;
 	case AUTHORITY_OP_MINT_NET:
 		handle_mint_net(&buf, ra.payload_len, ra.reply_token);
 		break;

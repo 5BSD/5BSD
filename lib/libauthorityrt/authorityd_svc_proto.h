@@ -40,7 +40,8 @@
 #define	AUTHORITY_OP_CREATE_COALITION	5	/* create a new coalition */
 #define	AUTHORITY_OP_READY			6	/* serviced initialization complete */
 #define	AUTHORITY_OP_PING			7	/* liveness check */
-#define	AUTHORITY_OP_MINT_FILE		8	/* mint narrowed file token */
+/* Opcode 8 (MINT_FILE) is retired: file access is tzfsd(8) self-service via
+ * service_open_isolated(3); serviced no longer mints file tokens. */
 /* Opcode 9 (MINT_JAIL) is retired: warden(8) owns jail self-service. */
 #define	AUTHORITY_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
 /* 24, 25 retired: storage moved to serviced<->tzfsd direct (was MINT/DESTROY_STORAGE) */
@@ -93,22 +94,6 @@ struct authority_req_hdr {
  * Opcodes 1 (MINT_PATH), 11 (CLAIM_PATH), and 15 (RELEASE_PATH), and the
  * former struct authority_path_req, are retired.
  */
-
-/*
- * AUTHORITY_OP_MINT_FILE
- *   req:  authority_mint_file_req
- *   reply: authority_reply { .status }
- *   reply_fds[0] = isolation token fd (on success)
- *
- * Requests a narrowed file isolation token, constrained to the given FI_FS_*
- * action mask by mac_capability_isolation.
- */
-struct authority_mint_file_req {
-	uint32_t	op;		/* AUTHORITY_OP_MINT_FILE */
-	uint32_t	_pad;
-	uint64_t	actions;	/* FI_FS_* compatible mask */
-	char		path[PATH_MAX];
-};
 
 /*
  * AUTHORITY_OP_MINT_NET

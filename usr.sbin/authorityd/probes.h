@@ -83,8 +83,6 @@
 	DTRACE_PROBE3(authorityd, reload__claims__done, acquired, released, failed)
 
 /* Token minting — serviced requests capabilities for children */
-#define	AUTHORITYD_PROBE_MINT_FILE(path, actions, result)	\
-	DTRACE_PROBE3(authorityd, mint__file, path, actions, result)
 #define	AUTHORITYD_PROBE_MINT_NET(port_min, port_max, proto, result)	\
 	DTRACE_PROBE4(authorityd, mint__net, port_min, port_max, proto, result)
 #define	AUTHORITYD_PROBE_MINT_SYSTEM(gates, result)	\
