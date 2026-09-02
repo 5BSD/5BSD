@@ -32,11 +32,12 @@ See [Capability bundle manifests](manifests.md) for the complete two-level
 ## Launch and lifecycle
 
 Each native unit is launched with `pdfork(2)`. Before releasing the child,
-`serviced` mints every declared capability, creates a
-coalition, installs a versioned bootstrap envfd, and applies the requested
-credentials. This *launch-time* capability minting is
-fail-closed: partial construction is rolled back and the program never receives
-an incomplete authority set.
+`serviced` assembles its activation tokens and capability-service descriptors,
+creates a coalition, installs a versioned bootstrap envfd, and applies the
+requested credentials. A unit declares no capabilities in its manifest, so
+there is nothing to mint from the bundle — it acquires what it needs at runtime
+by name. Bootstrap construction is still fail-closed: partial construction is
+rolled back and the program never receives an incomplete authority set.
 
 Distinct from launch minting is **session minting** — handing an authenticated
 login a scoped session lookup channel. `serviced` no longer honors

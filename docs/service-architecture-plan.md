@@ -178,18 +178,15 @@ activation {
 restart = "on-failure";
 stop_timeout = 10;
 max_failures = 10;
-
-capabilities {
-    ipc = ["system.Log"];
-    system = [];
-}
 ```
 
-The `capabilities.ipc` entries are authority to look up those global names; they
-are not startup edges.  The first actual lookup creates demand for the provider.
-Reachability is otherwise governed entirely by the discovery domain (SYSTEM/USER)
-— a unit needs no manifest declaration to use a capability service.  (The former
-per-unit `capabilities.services` allow-list has been removed.)
+A unit declares no capabilities in its manifest — there is no `capabilities {}`
+block.  Reachability is governed entirely by the discovery domain (SYSTEM/USER):
+a unit needs no manifest declaration to use a capability service, and the first
+actual lookup creates demand for the provider.  (The former per-unit
+`capabilities` block — its `ipc` lookup-authority, `services` allow-list, and
+`network`/`paths`/`system` grants — has been removed; a unit acquires what it
+needs at runtime by name.)
 
 Packaged configuration and static resources stay in the immutable bundle.
 Before entering capability mode, serviced passes rights-limited descriptors

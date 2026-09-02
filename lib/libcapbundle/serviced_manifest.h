@@ -27,8 +27,6 @@
  */
 #define	SERVICED_MAX_SERVICES		256
 #define	SERVICED_MAX_PROVIDES		8
-#define	SERVICED_MAX_CAP_PATHS		16
-#define	SERVICED_MAX_CAP_NET		16
 #define	SERVICED_LABEL_MAX		64
 #define	SERVICED_MAX_ARGUMENTS		32
 #define	SERVICED_ARGUMENT_MAX		256
@@ -159,10 +157,6 @@ struct svc_manifest {
 	bool		is_helper;
 
 	/* Capabilities to delegate */
-	char		cap_paths[SERVICED_MAX_CAP_PATHS][PATH_MAX];
-	unsigned	ncap_paths;
-	struct ort_net_claim cap_net[SERVICED_MAX_CAP_NET];
-	unsigned	ncap_net;
 	uint32_t	cap_system;	/* SYS_GATE_* bitmask */
 
 	int		restart;	/* SVC_RESTART_* */

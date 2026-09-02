@@ -28,10 +28,6 @@ sample_manifest(void)
 	m.nenvironment = 1;
 	strlcpy(m.provides[0], "org.test.endpoint", sizeof(m.provides[0]));
 	m.nprovides = 1;
-	strlcpy(m.cap_paths[0], "/tmp", sizeof(m.cap_paths[0]));
-	m.ncap_paths = 1;
-	m.cap_net[0].domain = 2;
-	m.ncap_net = 1;
 	m.cap_system = 1;
 	m.restart = 1;
 	m.stop_timeout = 5;
@@ -80,12 +76,8 @@ ATF_TC_BODY(authority_changes, tc)
 {
 	struct svc_manifest a, b;
 
-	CHECK_CHANGE(b.cap_paths[0][1] = 'x');
-	CHECK_CHANGE(b.cap_net[0].domain++);
 	CHECK_CHANGE(b.cap_system++);
 	CHECK_CHANGE(b.protect_flags++);
-	CHECK_CHANGE(b.ncap_paths = 0);
-	CHECK_CHANGE(b.ncap_net = 0);
 }
 
 ATF_TP_ADD_TCS(tp)

@@ -190,43 +190,6 @@ authority_rpc(int channel_fd, const void *req, uint32_t reqlen,
 }
 
 /*
- * Fill an authority_path_req from a path string.
- * Returns 0 on success, -1 with errno set on failure.
- */
-static int
-fill_path_req(struct authority_path_req *req, uint32_t op, const char *path)
-{
-
-	if (strlen(path) >= sizeof(req->path)) {
-		errno = ENAMETOOLONG;
-		return (-1);
-	}
-	memset(req, 0, sizeof(*req));
-	req->op = op;
-	strlcpy(req->path, path, sizeof(req->path));
-	return (0);
-}
-
-/*
- * Fill an authority_net_req from an ort_net_claim.
- */
-static void
-fill_net_req(struct authority_net_req *req, uint32_t op,
-    const struct ort_net_claim *nc)
-{
-
-	memset(req, 0, sizeof(*req));
-	req->op = op;
-	req->domain = nc->domain;
-	req->protocol = nc->protocol;
-	req->port_min = nc->port_min;
-	req->port_max = nc->port_max;
-	req->direction = nc->direction;
-	req->prefix = nc->prefix;
-	memcpy(req->addr, nc->addr, sizeof(req->addr));
-}
-
-/*
  * Fill an authority_system_req from a gates bitmask.
  */
 static void
@@ -281,19 +244,6 @@ check_status_fd(int status, int fd)
 /* --- Mint operations (return token fds) --- */
 
 int
-authority_mint_path(int channel_fd, const char *path)
-{
-	struct authority_path_req req;
-	int token_fd, status;
-
-	if (fill_path_req(&req, AUTHORITY_OP_MINT_PATH, path) != 0)
-		return (-1);
-	status = authority_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
-	    NULL);
-	return (check_status_fd(status, token_fd));
-}
-
-int
 authority_mint_file(int channel_fd, const char *path, uint64_t actions)
 {
 	struct authority_mint_file_req req;
@@ -313,18 +263,6 @@ authority_mint_file(int channel_fd, const char *path, uint64_t actions)
 	req.actions = actions;
 	strlcpy(req.path, path, sizeof(req.path));
 
-	status = authority_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
-	    NULL);
-	return (check_status_fd(status, token_fd));
-}
-
-int
-authority_mint_net(int channel_fd, const struct ort_net_claim *nc)
-{
-	struct authority_net_req req;
-	int token_fd, status;
-
-	fill_net_req(&req, AUTHORITY_OP_MINT_NET, nc);
 	status = authority_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
 	return (check_status_fd(status, token_fd));
@@ -568,25 +506,10 @@ authority_release_drain(int channel_fd, unsigned expected)
 int
 authority_release_manifest(int channel_fd, const struct svc_manifest *m)
 {
-	unsigned i, nsent;
+	unsigned nsent;
 
 	nsent = 0;
 
-	for (i = 0; i < m->ncap_paths; i++) {
-		struct authority_path_req req;
-
-		if (fill_path_req(&req, AUTHORITY_OP_RELEASE_PATH,
-		    m->cap_paths[i]) == 0 &&
-		    authority_release_send(channel_fd, &req, sizeof(req)) != 0)
-			nsent++;
-	}
-	for (i = 0; i < m->ncap_net; i++) {
-		struct authority_net_req req;
-
-		fill_net_req(&req, AUTHORITY_OP_RELEASE_NET, &m->cap_net[i]);
-		if (authority_release_send(channel_fd, &req, sizeof(req)) != 0)
-			nsent++;
-	}
 	if (m->cap_system != 0) {
 		struct authority_system_req req;
 

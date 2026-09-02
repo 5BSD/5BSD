@@ -98,32 +98,24 @@ limits {
 }
 umask = "0077";
 band  = "standard";     # background | standard | interactive
-
-capabilities {
-    network = [{
-        domain = "inet";
-        protocol = "tcp";
-        port = 25;
-        direction = "bind";
-        address = "0.0.0.0";
-    }];
-    system = [];
-}
 ```
 
-`capabilities` entries fall into two categories with different system semantics:
+A unit declares **no** capabilities in its manifest — there is no
+`capabilities {}` block. The manifest says only how to launch the program
+(`program`, `user`, `activation`, `restart`, `limits`, and the like); a unit
+acquires whatever it needs at runtime, by name, and every grant is resolved on
+demand and scoped by the unit's own unforgeable channel label:
 
-- **Non-exclusive holds** — `paths`. A path grant is a reference-counted share;
-  any number of units may hold an overlapping grant on the same path, each
-  narrowed to its own action mask, and none excludes another unit.
-- **Exclusive isolations** — `network`. An endpoint is owned by
-  exactly one holder across the whole system; the authority rejects a mint whose
-  claim overlaps a foreign owner's. Two units cannot both bind TCP :25.
+- a filesystem path or device — `service_open_isolated(3)`; the filesystem
+  daemon (`tzfsd`) opens it under its own per-label policy and returns a
+  rights-limited descriptor;
+- mutable storage — `service_storage_open(3)` (see [Storage](#storage) below);
+- a jail — `service_enter_namespace(3)` (warden);
+- a kernel module — `service_ensure_extension(3)` (sysextd).
 
-A unit does not declare an existing file, directory, or device in the manifest.
-A service obtains one by calling `service_open_isolated(3)`; the filesystem
-daemon (`tzfsd`) opens the path under its own per-label policy and returns a
-rights-limited descriptor — nothing is declared in the manifest.
+Network access needs no declaration either: it is default-open, with listeners
+supplied by socket-activation. Nothing about a service's authority is named in
+the bundle.
 
 Activation is always explicit. `boot=true` starts the unit during convergence.
 Each `ipc` name reserves a reverse-domain endpoint and permits launch on first
@@ -194,17 +186,14 @@ Important limits are:
 | services loaded system-wide | 256 |
 | arguments / environment entries | 32 / 32 |
 | IPC names per unit | 8 |
-| paths / network | 16 each |
 | kernel modules | 8 |
 | stop timeout | 300 seconds |
 | bundle tree entries | 4096 |
 | one bundle file | 512 MiB |
 | total bundle bytes | 2 GiB |
 
-Capability entry fields and accepted action names are documented in
-`serviced(5)`. Network claims cover IPv4, IPv6, and Bluetooth. System gates
-are a closed set. Reserved bootstrap environment names cannot be supplied by
-the manifest.
+Manifest keys and their accepted values are documented in `serviced(5)`.
+Reserved bootstrap environment names cannot be supplied by the manifest.
 
 ## Discovery and trust
 

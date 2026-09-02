@@ -380,23 +380,13 @@ capability_contract_body()
 	cat > "$dir/Units/worker.unit/Unit.ucl" <<-'EOF'
 	activation { boot = true; }
 	capabilities {
-	    paths = ["/var/empty", "/dev/null"];
-	    network = [
-	        { domain = "inet"; protocol = "tcp"; port = 443;
-	          direction = "connect"; address = "192.0.2.0/24"; },
-	        { domain = "inet6"; protocol = "udp"; ports = "53-54";
-	          direction = "connect"; address = "2001:db8::"; prefix = 32; },
-	        { domain = "bluetooth"; protocol = "l2cap";
-	          direction = "connect"; address = "00:11:22:33:44:55"; }
-	    ];
 	    system = ["kldload", "kldunload", "kldstat", "reboot",
 	        "swapon", "swapoff", "sysctl", "kenv", "acct", "audit",
 	        "kenv_read"];
 	}
 	EOF
 	atf_check -s exit:0 \
-	    -o match:'paths=2 network=3' \
-	    -o match:'network: domain=bluetooth protocol=l2cap' \
+	    -o match:'capabilities: system=0x' \
 	    servicetcl verify "$dir"
 }
 capability_contract_cleanup() { cleanup_work; }
@@ -410,9 +400,8 @@ capability_negative_matrix_body()
 	for declaration in \
 	    'capabilities = [];' \
 	    'capabilities { typo = []; }' \
-	    'capabilities { paths = "/tmp"; }' \
-	    'capabilities { paths = ["relative"]; }' \
-	    'capabilities { paths = ["/x", "/x"]; }' \
+	    'capabilities { paths = ["/tmp"]; }' \
+	    'capabilities { network = [{ domain = "inet"; }]; }' \
 	    'capabilities { system = ["root"]; }' \
 	    'capabilities { system = ["audit", "audit"]; }'; do
 		i=$((i + 1))
@@ -423,37 +412,6 @@ capability_negative_matrix_body()
 	done
 }
 capability_negative_matrix_cleanup() { cleanup_work; }
-
-atf_test_case network_negative_matrix cleanup
-network_negative_matrix_head() { atf_set descr "Network claim domain/address/protocol combinations fail closed"; }
-network_negative_matrix_body()
-{
-	setup_work
-	i=0
-	for entry in \
-	    '{ domain = "packet"; }' \
-	    '{ protocol = "sctp"; }' \
-	    '{ domain = "inet"; protocol = "l2cap"; }' \
-	    '{ domain = "bluetooth"; protocol = "tcp"; }' \
-	    '{ port = -1; }' '{ ports = "80-20"; }' \
-	    '{ port = 80; ports = 80; }' \
-	    '{ direction = "listen"; }' \
-	    '{ domain = "inet"; address = "2001:db8::1"; }' \
-	    '{ domain = "inet6"; address = "192.0.2.1"; }' \
-	    '{ domain = "any"; address = "192.0.2.1"; }' \
-	    '{ domain = "inet"; prefix = 24; }' \
-	    '{ domain = "inet"; address = "192.0.2.1"; prefix = 64; }' \
-	    '{ domain = "bluetooth"; address = "bad"; }' \
-	    '{ domain = "bluetooth"; address = "00:11:22:33:44:55"; prefix = 24; }'; do
-		i=$((i + 1))
-		dir=$(make_bundle "bad-network-$i")
-		printf '%s\n' 'activation { boot = true; }' \
-		    "capabilities { network = [$entry]; }" > \
-		    "$dir/Units/worker.unit/Unit.ucl"
-		verify_bad 'network|domain|protocol|port|direction|address|prefix|malformed' "$dir"
-	done
-}
-network_negative_matrix_cleanup() { cleanup_work; }
 
 atf_test_case tree_limits cleanup
 tree_limits_head() { atf_set descr "Bundle resource trees have bounded size and entry counts"; }
@@ -490,6 +448,5 @@ atf_init_test_cases()
 	atf_add_test_case process_policy_matrix
 	atf_add_test_case capability_contract
 	atf_add_test_case capability_negative_matrix
-	atf_add_test_case network_negative_matrix
 	atf_add_test_case tree_limits
 }

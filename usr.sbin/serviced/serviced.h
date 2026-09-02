@@ -252,9 +252,7 @@ int	mac_cap_mint_capprotect(void);
 int	mac_cap_protect(int capprotect_fd, int pd_fd, uint32_t flags);
 
 /* authority_client.c — channel protocol client to authorityd */
-int	authority_mint_path(int channel_fd, const char *path);
 int	authority_mint_file(int channel_fd, const char *path, uint64_t actions);
-int	authority_mint_net(int channel_fd, const struct ort_net_claim *nc);
 int	authority_mint_system(int channel_fd, uint32_t gates);
 int	authority_create_channel(int channel_fd, int *our_end, int *child_end);
 int	authority_create_coalition(int channel_fd);

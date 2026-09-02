@@ -19,9 +19,6 @@
 #include "libcapbundle.h"
 #include "serviced_manifest.h"
 
-/* Limits matching serviced.h */
-#define	CAPBUNDLE_MAX_CAP_PATHS		16
-#define	CAPBUNDLE_MAX_CAP_NET		16
 /*
  * Upper bound on a monotonic activation.timer interval: 366 days in seconds.
  * A period longer than a year is far past the point where a monotonic timer is
@@ -62,14 +59,6 @@ struct capbundle_service {
 	int	management;		/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
 	uint32_t cap_system;		/* SYS_GATE_* bitmask */
 	uint32_t protect_flags;		/* capprotect CP_SF_* bitmask */
-
-	/* Path capabilities */
-	char	cap_paths[CAPBUNDLE_MAX_CAP_PATHS][PATH_MAX];
-	unsigned ncap_paths;
-
-	/* Network capabilities (full: domain, address, prefix, port range) */
-	struct ort_net_claim cap_net[CAPBUNDLE_MAX_CAP_NET];
-	unsigned ncap_net;
 
 	/* User/group for privilege drop */
 	char	user[64];

@@ -28,8 +28,6 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	    a->stop_timeout != b->stop_timeout ||
 	    a->max_failures != b->max_failures ||
 	    a->nprovides != b->nprovides ||
-	    a->ncap_paths != b->ncap_paths ||
-	    a->ncap_net != b->ncap_net ||
 	    a->cap_system != b->cap_system ||
 	    a->protect_flags != b->protect_flags ||
 	    a->privileged != b->privileged ||
@@ -45,13 +43,6 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	/* Compare only populated entries; unused trailing bytes are irrelevant. */
 	for (i = 0; i < a->nprovides; i++)
 		if (strcmp(a->provides[i], b->provides[i]) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_paths; i++)
-		if (strcmp(a->cap_paths[i], b->cap_paths[i]) != 0)
-			return (false);
-	for (i = 0; i < a->ncap_net; i++)
-		if (memcmp(&a->cap_net[i], &b->cap_net[i],
-		    sizeof(a->cap_net[i])) != 0)
 			return (false);
 	return (true);
 }

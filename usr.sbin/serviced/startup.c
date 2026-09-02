@@ -46,10 +46,8 @@ log_loaded_manifest(const struct svc_manifest *m)
 		syslog(LOG_INFO, "startup: %s provides: %s",
 		    m->label, m->provides[j]);
 	if (svc_launch_token_count(m) > 0)
-		syslog(LOG_INFO, "startup: %s capabilities: "
-		    "paths=%u network=%u system=0x%x",
-		    m->label, m->ncap_paths,
-		    m->ncap_net, m->cap_system);
+		syslog(LOG_INFO, "startup: %s capabilities: system=0x%x",
+		    m->label, m->cap_system);
 }
 
 /*

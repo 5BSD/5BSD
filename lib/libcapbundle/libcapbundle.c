@@ -370,8 +370,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	if (s->narguments > SERVICED_MAX_ARGUMENTS ||
 	    s->nenvironment > SERVICED_MAX_ENVIRONMENT ||
 	    s->nprovides > SERVICED_MAX_PROVIDES ||
-	    s->ncap_paths > SERVICED_MAX_CAP_PATHS ||
-	    s->ncap_net > SERVICED_MAX_CAP_NET ||
 	    s->nactivation_sockets > SERVICED_MAX_ACTIVATION_SOCKETS) {
 		errno = EOVERFLOW;
 		return (-1);
@@ -437,19 +435,6 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	    sizeof(m->queue_directory)) == -1)
 		return (-1);
 	m->activation_on_mount = s->activation_on_mount;
-
-	/* Path capabilities */
-	m->ncap_paths = MIN(s->ncap_paths, SERVICED_MAX_CAP_PATHS);
-	for (i = 0; i < m->ncap_paths; i++) {
-		if (manifest_copy(s->cap_paths[i], m->cap_paths[i],
-		    sizeof(m->cap_paths[i])) == -1)
-			return (-1);
-	}
-
-	/* Network capabilities */
-	m->ncap_net = MIN(s->ncap_net, SERVICED_MAX_CAP_NET);
-	for (i = 0; i < m->ncap_net; i++)
-		m->cap_net[i] = s->cap_net[i];
 
 	return (0);
 }

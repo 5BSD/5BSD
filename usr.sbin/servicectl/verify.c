@@ -24,30 +24,6 @@
 #include "servicectl.h"
 
 static void
-format_net_address(const struct ort_net_claim *nc, char *buf, size_t bufsz)
-{
-	static const uint8_t zero[16];
-
-	if (memcmp(nc->addr, zero, sizeof(zero)) == 0) {
-		strlcpy(buf, "any", bufsz);
-		return;
-	}
-	if (nc->domain == AF_INET) {
-		if (inet_ntop(AF_INET, nc->addr, buf, bufsz) != NULL)
-			return;
-	} else if (nc->domain == AF_INET6) {
-		if (inet_ntop(AF_INET6, nc->addr, buf, bufsz) != NULL)
-			return;
-	} else if (nc->domain == AF_BLUETOOTH) {
-		snprintf(buf, bufsz, "%02x:%02x:%02x:%02x:%02x:%02x",
-		    nc->addr[5], nc->addr[4], nc->addr[3], nc->addr[2],
-		    nc->addr[1], nc->addr[0]);
-		return;
-	}
-	strlcpy(buf, "invalid", bufsz);
-}
-
-static void
 print_bundle(const struct capbundle *b)
 {
 	unsigned i, j;
@@ -134,27 +110,9 @@ print_bundle(const struct capbundle *b)
 			printf(" %s", capbundle_svc_provides(svc, j));
 		printf("\n");
 
-		printf("      capabilities: paths=%u network=%u "
-		    "system=0x%x\n",
-		    m.ncap_paths, m.ncap_net,
-		    m.cap_system);
+		printf("      capabilities: system=0x%x\n", m.cap_system);
 		if (m.protect_flags != 0)
 			printf("      protect: 0x%x\n", m.protect_flags);
-		for (j = 0; j < m.ncap_paths; j++)
-			printf("        path: %s\n", m.cap_paths[j]);
-		for (j = 0; j < m.ncap_net; j++)
-		{
-			char address[INET6_ADDRSTRLEN];
-
-			format_net_address(&m.cap_net[j], address, sizeof(address));
-			printf("        network: domain=%s protocol=%s "
-			    "ports=%u-%u direction=%s address=%s prefix=%u\n",
-			    ort_net_domain_name(m.cap_net[j].domain),
-			    ort_net_protocol_name(m.cap_net[j].protocol),
-			    m.cap_net[j].port_min, m.cap_net[j].port_max,
-			    ort_net_direction_name(m.cap_net[j].direction), address,
-			    m.cap_net[j].prefix);
-		}
 	}
 
 }

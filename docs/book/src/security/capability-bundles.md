@@ -141,25 +141,30 @@ provider processes.
 
 ## Exclusive and non-exclusive holds
 
-Capability classes divide into two kinds, and the distinction is a system
-invariant, not a stylistic one:
+Nothing here is declared in the manifest — these grants are acquired at runtime
+by name. But the runtime grants a unit acquires still divide into two kinds, and
+the distinction is a system invariant, not a stylistic one:
 
-- **Non-exclusive holds** — `paths`. A path grant is a *reference-counted
-  share*: any number of units may hold an overlapping grant on the same path at
-  the same time, each narrowed to its own `FI_FS_*` action mask. Holding read on
-  `/Capabilities/Config` does not exclude another unit from holding it too.
+- **Non-exclusive holds** — filesystem paths. A path grant is a
+  *reference-counted share*: any number of units may hold an overlapping grant
+  on the same path at the same time, each narrowed to its own `FI_FS_*` action
+  mask. Holding read on `/Capabilities/Config` does not exclude another unit from
+  holding it too. A unit acquires one at runtime with `service_open_isolated(3)`;
+  the grant lives in `tzfsd`'s per-label `open_paths` policy, not in any bundle.
 
-- **Exclusive isolations** — `network` endpoints.
-  An isolation is owned by exactly one holder *across the whole system*. The
-  authority mints an isolation token only after `mac_capability_isolation`
-  confirms no foreign owner already holds an overlapping claim; a conflicting
-  request is rejected. The same owner re-claiming its own isolation is a
-  refcount, not a conflict. This is what makes an isolation an isolation: two
-  units cannot both own TCP :443.
+- **Exclusive isolations** — network endpoints. An isolation is owned by exactly
+  one holder *across the whole system*. The kernel `mac_capability` isolation
+  service is the authority: `authorityd` mints an isolation token only after
+  `mac_capability_isolation` confirms no foreign owner already holds an
+  overlapping claim (the `FI_OP_CLAIM_NET` primitive); a conflicting request is
+  rejected. The same owner re-claiming its own isolation is a refcount, not a
+  conflict. This is what makes an isolation an isolation: two units cannot both
+  own TCP :443. Endpoints are reached through socket-activation and this
+  runtime claim, never through a manifest entry.
 
-A unit author reads this as: ask for `paths` freely — they compose — but an
-isolation you declare is yours alone, and a second unit that declares the same
-one will fail to launch until the first releases it.
+A unit author reads this as: acquire paths freely — they compose — but a network
+isolation is yours alone across the system, and a second unit's overlapping claim
+is rejected until the first releases it.
 
 Storage lifecycle is supervised. `lease` storage is reference-counted across
 all units sharing it and is destroyed only after the last holder; crash and

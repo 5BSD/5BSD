@@ -1057,11 +1057,10 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 
 	/*
-	 * One token is delivered for every path, file, network, and jail
-	 * capability.  System gates are deliberately combined into one token.
-	 * Check the total before acquiring any launch resources so a malformed
-	 * manifest can never overrun token_fds[] or reach pdfork() partially
-	 * provisioned.
+	 * The only delegated capability left is the combined system-gate token
+	 * (path and network capabilities are retired).  Check the total before
+	 * acquiring any launch resources so a malformed manifest can never
+	 * overrun token_fds[] or reach pdfork() partially provisioned.
 	 */
 	if (!svc_launch_counts_valid(m)) {
 		/* Keep count validation next to the launch barrier. */
@@ -1224,94 +1223,15 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 
 	/*
 	 * Mint tokens via authority.  The authority auto-claims resources
-	 * not already in its manifest — one trip per token.
-	 *
-	 * Each mint is a synchronous RPC with SERVICED_RPC_TIMEOUT_MS
-	 * timeout.  Track total elapsed time and abort if the mint
-	 * phase exceeds SVC_MINT_DEADLINE_MS to avoid blocking the
-	 * event loop for an unbounded duration.
-	 *
-	 * The ceiling must clear the one-time cost of a cold authority
-	 * provider: the first mint of a given kind may pull its provider up
-	 * on demand and retry briefly while it starts and initializes before
-	 * replying.  On emulated hardware that cold start alone can exceed
-	 * two seconds; a tighter ceiling aborted every first such launch.
-	 * Subsequent mints reuse the cached channel and return in well under
-	 * a millisecond, so this bound is only ever approached once per boot.
-	 * (Storage is not among these: consumers self-mint it via tzfsd,
-	 * outside serviced's launch path entirely.)
+	 * not already in its manifest.  The only remaining delegated capability
+	 * is the combined system-gate token; path and network capabilities have
+	 * been retired, and storage is self-minted by the consumer via tzfsd
+	 * (system.Filesystem) outside serviced's launch path entirely.
 	 */
-#define	SVC_MINT_DEADLINE_MS	15000	/* max total mint phase */
 	{
-	struct timespec mint_start, mint_now;
-	uint64_t elapsed_ms;
-
-	clock_gettime(CLOCK_MONOTONIC, &mint_start);
 	ntokens = 0;
 	nservices = 0;
 
-#define	MINT_CHECK_DEADLINE() do {					\
-	clock_gettime(CLOCK_MONOTONIC, &mint_now);			\
-	elapsed_ms = (uint64_t)(mint_now.tv_sec - mint_start.tv_sec) *	\
-	    1000;							\
-	if (mint_now.tv_nsec >= mint_start.tv_nsec) {			\
-		elapsed_ms +=						\
-		    (uint64_t)(mint_now.tv_nsec - mint_start.tv_nsec) /	\
-		    1000000;						\
-	} else {							\
-		elapsed_ms -= 1000;					\
-		elapsed_ms +=						\
-		    (uint64_t)(1000000000L + mint_now.tv_nsec -		\
-		    mint_start.tv_nsec) / 1000000;			\
-	}								\
-	if (elapsed_ms > SVC_MINT_DEADLINE_MS) {			\
-		syslog(LOG_ERR, "svc_exec %s: mint deadline exceeded "	\
-		    "(%ju ms, %u/%u tokens)", m->label,			\
-		    (uintmax_t)elapsed_ms, ntokens, expected_tokens);	\
-		goto fail_tokens;					\
-	}								\
-} while (0)
-
-	for (i = 0; i < m->ncap_paths; i++) {
-		int tfd = authority_mint_path(sd.authority_channel_fd,
-		    m->cap_paths[i]);
-
-		if (tfd == -1) {
-			syslog(LOG_ERR, "svc_exec %s: failed to mint "
-			    "token for %s", m->label, m->cap_paths[i]);
-			SERVICED_PROBE_CAP_MINT(m->label, "path", -1);
-			goto fail_tokens;
-		}
-		SERVICED_PROBE_CAP_MINT(m->label, "path", 0);
-		token_fds[ntokens++] = tfd;
-		strlcpy(minted_manifest.cap_paths[
-		    minted_manifest.ncap_paths++], m->cap_paths[i],
-		    PATH_MAX);
-		MINT_CHECK_DEADLINE();
-	}
-	for (i = 0; i < m->ncap_net; i++) {
-		int tfd = authority_mint_net(sd.authority_channel_fd, &m->cap_net[i]);
-
-		if (tfd == -1) {
-			syslog(LOG_ERR, "svc_exec %s: failed to mint "
-			    "network token %u", m->label, i);
-			SERVICED_PROBE_CAP_MINT(m->label, "net", -1);
-			goto fail_tokens;
-		}
-		SERVICED_PROBE_CAP_MINT(m->label, "net", 0);
-		token_fds[ntokens++] = tfd;
-		minted_manifest.cap_net[minted_manifest.ncap_net++] =
-		    m->cap_net[i];
-		MINT_CHECK_DEADLINE();
-	}
-	/*
-	 * Storage is not delivered by serviced.  tzfsd is a socket-free
-	 * provider (system.Filesystem); a storage consumer opens it by name and
-	 * mints its own claim via service_storage_open(3).  tzfsd namespaces
-	 * each dataset by the consumer's unforgeable channel identity, so
-	 * serviced neither mints nor holds any storage handle.  The manifest
-	 * storage claim is declaration only.
-	 */
 	if (m->cap_system != 0) {
 		int tfd = authority_mint_system(sd.authority_channel_fd,
 		    m->cap_system);
@@ -1326,7 +1246,6 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 		token_fds[ntokens++] = tfd;
 		minted_manifest.cap_system = m->cap_system;
 	}
-#undef MINT_CHECK_DEADLINE
 	}
 
 	/*

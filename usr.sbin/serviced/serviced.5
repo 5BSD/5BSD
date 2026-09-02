@@ -258,29 +258,33 @@ that the unit mounts itself with
 .Xr service_storage_open 3 .
 Dataset paths are never supplied by the manifest.
 .Sh CAPABILITIES
-The optional
+A unit declares
+.Em no
+capabilities in its manifest: there is no
 .Va capabilities
-object accepts these closed groups:
-.Bl -tag -width network
-.It Va paths
-At most 16 distinct absolute paths.
-.It Va network
-At most 16 typed IPv4, IPv6, or Bluetooth claims with compatible
-.Va domain , protocol , address , prefix , port/ports ,
-and
-.Va direction
-fields.
-.It Va system
-Distinct gates selected from
-.Dq kldload , kldunload , kldstat , reboot , swapon , swapoff ,
-.Dq sysctl , kenv , acct , audit ,
-and
-.Dq kenv_read .
+object.
+The manifest describes only how to launch the program
+.Pq Va program , Va user , Va activation , Va restart , Va limits , ... .
+A unit acquires whatever it needs at runtime, by name, and every grant is
+resolved on demand and scoped by the unit's own unforgeable channel label:
+.Bl -tag -width Ds
+.It a filesystem path or device
+.Xr service_open_isolated 3 ;
+the filesystem daemon
+.Pq Xr tzfsd 8
+opens it under its own per-label policy and returns a rights-limited descriptor.
+.It mutable storage
+.Xr service_storage_open 3 ;
+see
+.Sx STORAGE .
+.It a jail
+.Xr service_enter_namespace 3 .
+.It a kernel module
+.Xr service_ensure_extension 3 .
 .El
 .Pp
-Storage is not a capability sub-group and is not declared in the manifest at
-all; see
-.Sx STORAGE .
+Network access is default-open, with listeners supplied by socket-activation, so
+it too is never declared.
 .Sh EXAMPLE
 .Bd -literal -offset indent
 # App.cap/Bundle.ucl
