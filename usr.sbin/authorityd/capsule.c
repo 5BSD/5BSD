@@ -128,13 +128,13 @@
 #define	RESOURCE_GETTY		"default"
 #define	SCRIPT_ARGV_SIZE	3
 
-static void oi_handle(sig_t, ...);
-static void oi_delset(sigset_t *, ...);
+static void capsule_handle(sig_t, ...);
+static void capsule_delset(sigset_t *, ...);
 
 static void stall(const char *, ...) __printflike(1, 2);
 static void warning(const char *, ...) __printflike(1, 2);
 static void emergency(const char *, ...) __printflike(1, 2);
-static void oi_fatal(const char *, ...) __printflike(1, 2) __dead2;
+static void capsule_fatal(const char *, ...) __printflike(1, 2) __dead2;
 static void disaster(int);
 static void revoke_ttys(void);
 static int  runshutdown(void);
@@ -176,9 +176,9 @@ static const char *get_shell(void);
 static void write_stderr(const char *message);
 
 /* Authority engine integration. */
-static int  oi_kq = -1;
-static bool oi_engine_up;
-static bool oi_mac_up;
+static int  capsule_kq = -1;
+static bool capsule_engine_up;
+static bool capsule_mac_up;
 
 /*
  * Ambient lookup channel (§21) carried into interactive logins.  serviced
@@ -188,14 +188,14 @@ static bool oi_mac_up;
  * hand-built getty environment.  -1 means "no channel"; the whole mechanism is
  * best-effort and never gates getty, login, or boot.
  */
-static int oi_ambient_lookup_fd = -1;
-static void oi_engine_start(void);
-static void oi_dispatch(struct kevent *);
-static void oi_lifecycle_apply(int op);
-static int oi_await_convergence(void);
-static void oi_assert_signal_shield(void);
-static void oi_drain_children(void);
-static void oi_world_stop(void);
+static int capsule_ambient_lookup_fd = -1;
+static void capsule_engine_start(void);
+static void capsule_dispatch(struct kevent *);
+static void capsule_lifecycle_apply(int op);
+static int capsule_await_convergence(void);
+static void capsule_assert_signal_shield(void);
+static void capsule_drain_children(void);
+static void capsule_world_stop(void);
 
 typedef struct init_session {
 	pid_t	se_process;		/* controlling process */
@@ -333,13 +333,13 @@ capsule_main(int argc, char *argv[])
 	 * We catch or block signals rather than ignore them,
 	 * so that they get reset on exec.
 	 */
-	oi_handle(disaster, SIGABRT, SIGFPE, SIGILL, SIGSEGV, SIGBUS, SIGSYS,
+	capsule_handle(disaster, SIGABRT, SIGFPE, SIGILL, SIGSEGV, SIGBUS, SIGSYS,
 	    SIGXCPU, SIGXFSZ, 0);
-	oi_handle(transition_handler, SIGHUP, SIGINT, SIGEMT, SIGTERM, SIGTSTP,
+	capsule_handle(transition_handler, SIGHUP, SIGINT, SIGEMT, SIGTERM, SIGTSTP,
 	    SIGUSR1, SIGUSR2, SIGWINCH, 0);
-	oi_handle(alrm_handler, SIGALRM, 0);
+	capsule_handle(alrm_handler, SIGALRM, 0);
 	sigfillset(&mask);
-	oi_delset(&mask, SIGABRT, SIGFPE, SIGILL, SIGSEGV, SIGBUS, SIGSYS,
+	capsule_delset(&mask, SIGABRT, SIGFPE, SIGILL, SIGSEGV, SIGBUS, SIGSYS,
 	    SIGXCPU, SIGXFSZ, SIGHUP, SIGINT, SIGEMT, SIGTERM, SIGTSTP,
 	    SIGALRM, SIGUSR1, SIGUSR2, SIGWINCH, 0);
 	sigprocmask(SIG_SETMASK, &mask, NULL);
@@ -359,25 +359,25 @@ capsule_main(int argc, char *argv[])
 	 * blocked (as in stock init); EVFILT_SIGNAL fires on generation
 	 * regardless, waking the loop to drain waitpid(WNOHANG).
 	 */
-	oi_kq = kqueue();
-	if (oi_kq >= 0 && oi_kq < 3) {
+	capsule_kq = kqueue();
+	if (capsule_kq >= 0 && capsule_kq < 3) {
 		/*
 		 * Keep the stdio slots free: children expect to place
 		 * their console/tty at 0-2, and a kqueue parked there
 		 * is a state no other process ever presents to the
 		 * kernel's fork/exec descriptor handling.
 		 */
-		int nfd = fcntl(oi_kq, F_DUPFD, 3);
+		int nfd = fcntl(capsule_kq, F_DUPFD, 3);
 
 		if (nfd >= 0) {
-			close(oi_kq);
-			oi_kq = nfd;
+			close(capsule_kq);
+			capsule_kq = nfd;
 		}
 	}
-	if (oi_kq >= 0) {
+	if (capsule_kq >= 0) {
 		EV_SET(&kev, SIGCHLD, EVFILT_SIGNAL, EV_ADD | EV_ENABLE,
 		    0, 0, NULL);
-		if (kevent(oi_kq, &kev, 1, NULL, 0, NULL) == -1)
+		if (kevent(capsule_kq, &kev, 1, NULL, 0, NULL) == -1)
 			warning("kevent SIGCHLD: %m");
 	} else
 		warning("kqueue: %m");
@@ -462,7 +462,7 @@ capsule_main(int argc, char *argv[])
 }
 
 static void
-oi_handle(sig_t handler, ...)
+capsule_handle(sig_t handler, ...)
 {
 	int sig;
 	struct sigaction sa;
@@ -482,7 +482,7 @@ oi_handle(sig_t handler, ...)
 }
 
 static void
-oi_delset(sigset_t *maskp, ...)
+capsule_delset(sigset_t *maskp, ...)
 {
 	int sig;
 	va_list ap;
@@ -530,7 +530,7 @@ emergency(const char *message, ...)
  * console, then reboot deliberately.
  */
 static void
-oi_fatal(const char *message, ...)
+capsule_fatal(const char *message, ...)
 {
 	va_list ap;
 	va_start(ap, message);
@@ -787,7 +787,7 @@ reroot(void)
 
 	revoke_ttys();
 	runshutdown();
-	oi_world_stop();
+	capsule_world_stop();
 
 	/*
 	 * Make sure nobody can interfere with our scheme.
@@ -892,7 +892,7 @@ single_user(void)
 		 * with defaults as a last resort. */
 		sleep(STALL_TIMEOUT);
 		reboot(RB_AUTOBOOT);
-		oi_fatal("reboot(2) is not working");
+		capsule_fatal("reboot(2) is not working");
 	}
 
 	BOOTTRACE("going to single user mode");
@@ -1063,18 +1063,18 @@ static state_func_t
 establish_authority(void)
 {
 
-	oi_engine_start();
-	if (!oi_engine_up) {
+	capsule_engine_start();
+	if (!capsule_engine_up) {
 		/* No serviced => nothing runs /etc/rc.  Recover. */
 		emergency("capability engine did not start; entering recovery");
 		return (state_func_t) single_user;
 	}
-	if (oi_await_convergence() != 0) {
+	if (capsule_await_convergence() != 0) {
 		emergency("serviced did not converge; entering recovery");
 		return (state_func_t) single_user;
 	}
 	/* Re-assert the signal shield now that /etc/rc has run (idempotent). */
-	oi_assert_signal_shield();
+	capsule_assert_signal_shield();
 	return (state_func_t) read_ttys;
 }
 
@@ -1095,7 +1095,7 @@ establish_authority(void)
  * Returns 0 on convergence, -1 if serviced has permanently failed.
  */
 static int
-oi_await_convergence(void)
+capsule_await_convergence(void)
 {
 	struct kevent kev;
 	struct timespec ts;
@@ -1112,30 +1112,30 @@ oi_await_convergence(void)
 			return (-1);
 		}
 
-		if (oi_kq < 0) {
+		if (capsule_kq < 0) {
 			sleep(1);
-			oi_drain_children();
+			capsule_drain_children();
 			continue;
 		}
 		ts.tv_sec = 1;
 		ts.tv_nsec = 0;
-		nev = kevent(oi_kq, NULL, 0, &kev, 1, &ts);
+		nev = kevent(capsule_kq, NULL, 0, &kev, 1, &ts);
 		if (nev == -1) {
 			if (errno != EINTR)
 				warning("kevent awaiting convergence: %m");
 		} else if (nev > 0) {
 			if (kev.filter == EVFILT_SIGNAL &&
 			    (int)kev.ident == SIGCHLD)
-				oi_drain_children();
+				capsule_drain_children();
 			else
-				oi_dispatch(&kev);
+				capsule_dispatch(&kev);
 		}
-		oi_drain_children();
+		capsule_drain_children();
 	}
 }
 
 /*
- * Close the signal ABI, idempotently.  Called from oi_engine_start (before
+ * Close the signal ABI, idempotently.  Called from capsule_engine_start (before
  * /etc/rc) and again after convergence.
  *
  * P4b (docs/lifecycle-capability-design.md): the getpeereid control socket is
@@ -1147,27 +1147,27 @@ oi_await_convergence(void)
  * legacy transition handler.
  */
 static void
-oi_assert_signal_shield(void)
+capsule_assert_signal_shield(void)
 {
 
-	if (oi_engine_up && apply_signal_shield() == -1)
+	if (capsule_engine_up && apply_signal_shield() == -1)
 		warning("signal shield not raised; signal ABI stays open");
 }
 
 static void
-oi_engine_start(void)
+capsule_engine_start(void)
 {
 
-	if (oi_engine_up)
+	if (capsule_engine_up)
 		return;
-	if (oi_kq < 0) {
+	if (capsule_kq < 0) {
 		emergency("no kqueue; capability world unavailable");
 		return;
 	}
 
 	BOOTTRACE("authority engine starting...");
 
-	if (!oi_mac_up) {
+	if (!capsule_mac_up) {
 		config_init_defaults(&od.cfg);
 		if (config_load(&od.cfg, AUTHORITYD_DEFAULT_CONFFILE) != 0) {
 			warning("authority: config error in %s; "
@@ -1200,20 +1200,20 @@ oi_engine_start(void)
 			    "capability world disabled");
 			return;
 		}
-		oi_mac_up = true;
+		capsule_mac_up = true;
 	}
 
-	oi_assert_signal_shield();
+	capsule_assert_signal_shield();
 
 	od.shutting_down = false;
-	if (bootstrap_start(oi_kq) == -1) {
+	if (bootstrap_start(capsule_kq) == -1) {
 		warning("bootstrap: serviced start failed; "
 		    "running with rc services only");
 		return;
 	}
 
 	od.running = true;
-	oi_engine_up = true;
+	capsule_engine_up = true;
 	syslog(LOG_INFO, "authority engine started; serviced pid %jd",
 	    (intmax_t)bootstrap_pid());
 	BOOTTRACE("authority engine started");
@@ -1227,7 +1227,7 @@ oi_engine_start(void)
  * 14), so both interfaces drive the same states.
  */
 static void
-oi_lifecycle_apply(int op)
+capsule_lifecycle_apply(int op)
 {
 	bool to_death;
 
@@ -1292,7 +1292,7 @@ oi_lifecycle_apply(int op)
  * Public entry for the capability lifecycle path (docs/lifecycle-capability-
  * design.md, P4b): serviced relays an AUTHORITY_OP_LIFECYCLE it authorized over
  * its ADMIN-gated system.lifecycle capability, and authority_proto_dispatch()
- * calls this from within oi_dispatch() — the same PID-1 context the control
+ * calls this from within capsule_dispatch() — the same PID-1 context the control
  * socket path uses.  Only meaningful when Authority is PID 1 (a plane-free boot
  * runs stock init and has no lifecycle authority here); returns 0 when applied,
  * EPERM otherwise.  Setting requested_transition is picked up by the
@@ -1304,7 +1304,7 @@ capsule_lifecycle(int op)
 
 	if (getpid() != 1)
 		return (EPERM);
-	oi_lifecycle_apply(op);
+	capsule_lifecycle_apply(op);
 	return (0);
 }
 
@@ -1313,7 +1313,7 @@ capsule_lifecycle(int op)
  * non-signal dispatch in event.c's event_loop().
  */
 static void
-oi_dispatch(struct kevent *kev)
+capsule_dispatch(struct kevent *kev)
 {
 
 	/*
@@ -1322,7 +1322,7 @@ oi_dispatch(struct kevent *kev)
 	 * via authorityctl(8)), not a getpeereid socket.
 	 */
 	if (bootstrap_is_procdesc(kev)) {
-		bootstrap_handle_exit(kev, oi_kq);
+		bootstrap_handle_exit(kev, capsule_kq);
 		return;
 	}
 
@@ -1337,7 +1337,7 @@ oi_dispatch(struct kevent *kev)
 	}
 
 	if (bootstrap_is_timer(kev)) {
-		bootstrap_handle_timer(oi_kq);
+		bootstrap_handle_timer(capsule_kq);
 		return;
 	}
 }
@@ -1348,7 +1348,7 @@ oi_dispatch(struct kevent *kev)
  * returned by waitpid(), so this cannot race bootstrap_handle_exit().
  */
 static void
-oi_drain_children(void)
+capsule_drain_children(void)
 {
 	pid_t pid;
 
@@ -1363,16 +1363,16 @@ oi_drain_children(void)
  * serviced) and before the global process sweep.
  */
 static void
-oi_world_stop(void)
+capsule_world_stop(void)
 {
 	struct kevent kev;
 	struct timespec ts;
 	time_t deadline;
 	int nev;
 
-	if (!oi_engine_up && bootstrap_is_stopped())
+	if (!capsule_engine_up && bootstrap_is_stopped())
 		return;
-	if (oi_kq < 0)
+	if (capsule_kq < 0)
 		return;
 
 	BOOTTRACE("stopping capability world");
@@ -1383,7 +1383,7 @@ oi_world_stop(void)
 	while (!bootstrap_is_stopped() && time(NULL) < deadline) {
 		ts.tv_sec = 1;
 		ts.tv_nsec = 0;
-		nev = kevent(oi_kq, NULL, 0, &kev, 1, &ts);
+		nev = kevent(capsule_kq, NULL, 0, &kev, 1, &ts);
 		if (nev == -1) {
 			if (errno == EINTR)
 				continue;
@@ -1393,11 +1393,11 @@ oi_world_stop(void)
 		if (nev > 0) {
 			if (kev.filter == EVFILT_SIGNAL &&
 			    (int)kev.ident == SIGCHLD)
-				oi_drain_children();
+				capsule_drain_children();
 			else
-				oi_dispatch(&kev);
+				capsule_dispatch(&kev);
 		}
-		oi_drain_children();
+		capsule_drain_children();
 	}
 
 	if (!bootstrap_is_stopped()) {
@@ -1408,19 +1408,19 @@ oi_world_stop(void)
 		while (!bootstrap_is_stopped() && time(NULL) < deadline) {
 			ts.tv_sec = 1;
 			ts.tv_nsec = 0;
-			nev = kevent(oi_kq, NULL, 0, &kev, 1, &ts);
+			nev = kevent(capsule_kq, NULL, 0, &kev, 1, &ts);
 			if (nev > 0) {
 				if (kev.filter == EVFILT_SIGNAL &&
 				    (int)kev.ident == SIGCHLD)
-					oi_drain_children();
+					capsule_drain_children();
 				else
-					oi_dispatch(&kev);
+					capsule_dispatch(&kev);
 			}
-			oi_drain_children();
+			capsule_drain_children();
 		}
 	}
 
-	oi_engine_up = false;
+	capsule_engine_up = false;
 	BOOTTRACE("capability world stopped");
 }
 
@@ -1836,7 +1836,7 @@ start_window_system(session_t *sp)
  * survives fork(2) and clear FD_CLOEXEC so it survives execve(2).  A previously
  * installed channel is replaced (serviced sends this once per session, but a
  * serviced restart may resend).  Best-effort throughout: on any failure the fd
- * is dropped and oi_ambient_lookup_fd left at -1, so getty spawning simply
+ * is dropped and capsule_ambient_lookup_fd left at -1, so getty spawning simply
  * proceeds without an ambient channel.
  */
 int
@@ -1861,9 +1861,9 @@ capsule_set_ambient_lookup(int fd)
 		errno = saved;
 		return (-1);
 	}
-	if (oi_ambient_lookup_fd >= 0)
-		(void)close(oi_ambient_lookup_fd);
-	oi_ambient_lookup_fd = fd;
+	if (capsule_ambient_lookup_fd >= 0)
+		(void)close(capsule_ambient_lookup_fd);
+	capsule_ambient_lookup_fd = fd;
 	return (0);
 }
 
@@ -1928,11 +1928,11 @@ start_getty(session_t *sp)
 	 * logging.  Best-effort -- a dup2/fcntl failure must never stop getty,
 	 * so we ignore errors and fall through to execve regardless.
 	 */
-	if (oi_ambient_lookup_fd >= 0 &&
-	    oi_ambient_lookup_fd != SERVICE_LOOKUP_FIXED_FD) {
-		if (dup2(oi_ambient_lookup_fd, SERVICE_LOOKUP_FIXED_FD) != -1)
+	if (capsule_ambient_lookup_fd >= 0 &&
+	    capsule_ambient_lookup_fd != SERVICE_LOOKUP_FIXED_FD) {
+		if (dup2(capsule_ambient_lookup_fd, SERVICE_LOOKUP_FIXED_FD) != -1)
 			(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
-	} else if (oi_ambient_lookup_fd == SERVICE_LOOKUP_FIXED_FD)
+	} else if (capsule_ambient_lookup_fd == SERVICE_LOOKUP_FIXED_FD)
 		(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
 	execve(sp->se_getty_argv[0], sp->se_getty_argv, env);
 	stall("can't exec getty '%s' for port %s: %m",
@@ -2060,7 +2060,7 @@ boottrace_transition(int sig)
  * Catch a legacy init(8) lifecycle signal and IGNORE it (docs/lifecycle-
  * capability-design.md, P4b).  The signal-driven lifecycle ABI is retired: a
  * transition is driven only through the capability plane (authorityctl(8) ->
- * serviced -> capsule_lifecycle() -> oi_lifecycle_apply()) or, degraded,
+ * serviced -> capsule_lifecycle() -> capsule_lifecycle_apply()) or, degraded,
  * reboot(2), the kernel escape.  These signals are caught here — rather than
  * left at SIG_DFL, which would terminate/stop PID 1 — so a userland
  * kill(1, SIG*) can never drive a transition.  This closes the ambient signal
@@ -2122,7 +2122,7 @@ multi_user(void)
 	}
 
 	while (!requested_transition) {
-		if (oi_kq < 0) {
+		if (capsule_kq < 0) {
 			/* Degraded mode: no kqueue; stock init behavior. */
 			if ((pid = waitpid(-1, (int *) 0, 0)) != -1)
 				collect_child(pid);
@@ -2134,11 +2134,11 @@ multi_user(void)
 		 * bootstrap channel, and transitions as signals — there is
 		 * nothing to poll for, so there is no timeout.
 		 */
-		nev = kevent(oi_kq, NULL, 0, &kev, 1, NULL);
+		nev = kevent(capsule_kq, NULL, 0, &kev, 1, NULL);
 		if (nev == -1) {
 			if (errno == EINTR) {
 				/* A transition signal or SIGALRM. */
-				oi_drain_children();
+				capsule_drain_children();
 				continue;
 			}
 			/*
@@ -2148,18 +2148,18 @@ multi_user(void)
 			 * livelock init.
 			 */
 			warning("kevent in multi-user: %m");
-			oi_drain_children();
+			capsule_drain_children();
 			sleep(1);
 			continue;
 		}
 		if (nev > 0) {
 			if (kev.filter == EVFILT_SIGNAL &&
 			    (int)kev.ident == SIGCHLD)
-				oi_drain_children();
+				capsule_drain_children();
 			else
-				oi_dispatch(&kev);
+				capsule_dispatch(&kev);
 		}
-		oi_drain_children();
+		capsule_drain_children();
 	}
 
 	return (state_func_t) requested_transition;
@@ -2307,7 +2307,7 @@ death(void)
 	 * torn down, and the resulting crash-loop can stall rc.shutdown
 	 * into its watchdog.  rc.shutdown owns only the rc daemons.
 	 */
-	oi_world_stop();
+	capsule_world_stop();
 
 	/* Try to run the rc.shutdown script within a period of time */
 	runshutdown();
@@ -2335,7 +2335,7 @@ death_single(void)
 
 	/* A shutdown request may arrive before boot completed;
 	 * make sure the capability world is not left running. */
-	oi_world_stop();
+	capsule_world_stop();
 
 	BOOTTRACE("start killing user processes");
 	for (i = 0; i < 2; ++i) {
