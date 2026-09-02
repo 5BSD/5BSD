@@ -1544,12 +1544,20 @@ svc_launch_finish(struct svc_runtime *svc, int kq)
 		syslog(LOG_ERR, "svc_exec %s: coalition enlist: %m", m->label);
 		goto fail_postfork;
 	}
-	if (mac_cap_coalition_set_leader(L->coalition_fd, pd_fd) != 0) {
-		saved_errno = errno;
-		syslog(LOG_ERR, "svc_exec %s: coalition set_leader: %m",
-		    m->label);
-		goto fail_postfork;
-	}
+	/*
+	 * Coalition leadership is best-effort supervision: the leader's death
+	 * tears down the coalition's orphaned descendants.  The service itself is
+	 * already enlisted (above) and its exit is observed directly through the
+	 * process descriptor, so a failed or racy leader assignment must NOT kill
+	 * an already-running, boot-critical child.  Warn and continue with
+	 * slightly degraded descendant cleanup rather than aborting the launch.
+	 * (Historically this goto fail_postfork intermittently killed
+	 * system.Notify/bsdnotify at boot when set_leader lost a race with the
+	 * freshly-forked child's kernel registration.)
+	 */
+	if (mac_cap_coalition_set_leader(L->coalition_fd, pd_fd) != 0)
+		syslog(LOG_WARNING, "svc_exec %s: coalition set_leader "
+		    "(non-fatal, descendant cleanup degraded): %m", m->label);
 	{
 		cap_rights_t rights;
 

@@ -205,6 +205,8 @@ mac_cap_coalition_enlist(int coalition_fd, int member_fd)
 	if (kernel_call(coalition_fd, &req, sizeof(req), &member_fd, 1,
 	    &reply, sizeof(reply)) == -1)
 		return (-1);
+	if (reply.status != 0)
+		errno = reply.status;
 	return (reply.status);
 }
 
@@ -220,6 +222,8 @@ mac_cap_coalition_set_leader(int coalition_fd, int leader_fd)
 	if (kernel_call(coalition_fd, &req, sizeof(req), &leader_fd, 1,
 	    &reply, sizeof(reply)) == -1)
 		return (-1);
+	if (reply.status != 0)
+		errno = reply.status;
 	return (reply.status);
 }
 
@@ -260,6 +264,8 @@ mac_cap_coalition_terminate(int coalition_fd)
 	if (kernel_call(coalition_fd, &req, sizeof(req), NULL, 0,
 	    &reply, sizeof(reply)) == -1)
 		return (-1);
+	if (reply.status != 0)
+		errno = reply.status;
 	return (reply.status);
 }
 
