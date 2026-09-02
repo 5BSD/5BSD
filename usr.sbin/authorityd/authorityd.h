@@ -44,7 +44,6 @@ extern struct authorityd_state od;
 /* mac_capability.c — MAC capability lifecycle */
 int	mac_capability_setup(void);
 void	mac_capability_teardown(void);
-int	mac_capability_mint_path_token(const char *path);
 int	mac_capability_mint_file_token(const char *path, uint64_t actions);
 int	mac_capability_mint_net_token(const struct ort_net_claim *nc);
 int	mac_capability_mint_vsock_token(const struct ort_vsock_claim *vc);

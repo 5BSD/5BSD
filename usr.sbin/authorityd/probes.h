@@ -37,8 +37,6 @@
 	DTRACE_PROBE1(authorityd, claim__path, path)
 #define	AUTHORITYD_PROBE_CLAIM_PATH_FAIL(path)	\
 	DTRACE_PROBE1(authorityd, claim__path__fail, path)
-#define	AUTHORITYD_PROBE_CLAIM_PATH_RELEASE(path)	\
-	DTRACE_PROBE1(authorityd, claim__path__release, path)
 #define	AUTHORITYD_PROBE_CLAIM_NET(port_min, port_max, proto)	\
 	DTRACE_PROBE3(authorityd, claim__net, port_min, port_max, proto)
 #define	AUTHORITYD_PROBE_CLAIM_NET_FAIL(port_min, port_max, proto)	\
@@ -49,16 +47,12 @@
 	DTRACE_PROBE1(authorityd, claim__system__release, gates)
 
 /* Dynamic claims — runtime claim/release via channel */
-#define	AUTHORITYD_PROBE_DYN_CLAIM_PATH(path, result)	\
-	DTRACE_PROBE2(authorityd, dyn__claim__path, path, result)
 #define	AUTHORITYD_PROBE_DYN_CLAIM_NET(port_min, port_max, proto, result)	\
 	DTRACE_PROBE4(authorityd, dyn__claim__net, port_min, port_max, proto, result)
 #define	AUTHORITYD_PROBE_DYN_CLAIM_SYSTEM(gates, result)	\
 	DTRACE_PROBE2(authorityd, dyn__claim__system, gates, result)
 #define	AUTHORITYD_PROBE_DYN_CLAIM_VSOCK(cid, pmin, pmax, result)	\
 	DTRACE_PROBE4(authorityd, dyn__claim__vsock, cid, pmin, pmax, result)
-#define	AUTHORITYD_PROBE_DYN_RELEASE_PATH(path, refcount, result)	\
-	DTRACE_PROBE3(authorityd, dyn__release__path, path, refcount, result)
 #define	AUTHORITYD_PROBE_DYN_RELEASE_NET(port_min, port_max, proto, refcount, result)	\
 	DTRACE_PROBE5(authorityd, dyn__release__net, port_min, port_max, proto, refcount, result)
 #define	AUTHORITYD_PROBE_DYN_RELEASE_SYSTEM(gates, released, result)	\
@@ -89,8 +83,6 @@
 	DTRACE_PROBE3(authorityd, reload__claims__done, acquired, released, failed)
 
 /* Token minting — serviced requests capabilities for children */
-#define	AUTHORITYD_PROBE_MINT_PATH(path, result)	\
-	DTRACE_PROBE2(authorityd, mint__path, path, result)
 #define	AUTHORITYD_PROBE_MINT_FILE(path, actions, result)	\
 	DTRACE_PROBE3(authorityd, mint__file, path, actions, result)
 #define	AUTHORITYD_PROBE_MINT_NET(port_min, port_max, proto, result)	\

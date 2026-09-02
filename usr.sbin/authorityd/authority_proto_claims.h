@@ -16,25 +16,19 @@ struct ort_net_claim;
 struct ort_vsock_claim;
 
 /* Auto-claim helpers (called from mint handlers in authority_proto.c). */
-int	auto_claim_path(const char *path, int *errp);
 int	auto_claim_net(const struct ort_net_claim *nc, int *errp);
 int	auto_claim_vsock(const struct ort_vsock_claim *vc, int *errp);
 int	auto_claim_system(uint32_t gates, int *errp);
-void	release_auto_claim_path(const char *path);
 void	release_auto_claim_net(const struct ort_net_claim *nc);
 void	release_auto_claim_vsock(const struct ort_vsock_claim *vc);
 void	release_auto_claim_system(uint32_t gates);
 
 /* Explicit claim/release handlers (called from dispatch switch). */
-void	handle_claim_path(const void *payload, uint32_t len,
-	    uint64_t reply_token);
 void	handle_claim_net(const void *payload, uint32_t len,
 	    uint64_t reply_token);
 void	handle_claim_system(const void *payload, uint32_t len,
 	    uint64_t reply_token);
 void	handle_claim_vsock(const void *payload, uint32_t len,
-	    uint64_t reply_token);
-void	handle_release_path(const void *payload, uint32_t len,
 	    uint64_t reply_token);
 void	handle_release_net(const void *payload, uint32_t len,
 	    uint64_t reply_token);

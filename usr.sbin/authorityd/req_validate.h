@@ -54,40 +54,6 @@ validate_service_req(const void *payload, uint32_t len,
 }
 
 /*
- * Validate an authority_path_req payload.  Returns true if the request
- * is well-formed, false otherwise.  On failure, *errp is set to the
- * appropriate errno (EINVAL or ENAMETOOLONG).
- */
-static inline bool
-validate_path_req(const void *payload, uint32_t len,
-    const struct authority_path_req **reqp, int *errp)
-{
-	const struct authority_path_req *req;
-
-	if (len != sizeof(*req)) {
-		*errp = EINVAL;
-		return (false);
-	}
-	req = payload;
-
-	if (req->_pad != 0) {
-		*errp = EINVAL;
-		return (false);
-	}
-	if (strnlen(req->path, PATH_MAX) >= PATH_MAX) {
-		*errp = ENAMETOOLONG;
-		return (false);
-	}
-	if (req->path[0] != '/') {
-		*errp = EINVAL;
-		return (false);
-	}
-
-	*reqp = req;
-	return (true);
-}
-
-/*
  * Validate an authority_net_req and populate an ort_net_claim.
  * Returns true on success, false on validation failure with
  * *errp set.

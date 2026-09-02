@@ -45,7 +45,6 @@ int	mac_capability_claim_path(const char *path);
 int	mac_capability_claim_net(const struct ort_net_claim *nc);
 int	mac_capability_claim_vsock(const struct ort_vsock_claim *vc);
 int	mac_capability_claim_system_gate_bits(uint32_t gates);
-int	mac_capability_release_path(const char *path);
 int	mac_capability_release_net(const struct ort_net_claim *nc);
 int	mac_capability_release_vsock(const struct ort_vsock_claim *vc);
 int	mac_capability_release_system_gates(uint32_t gates);

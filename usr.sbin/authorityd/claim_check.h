@@ -69,18 +69,6 @@ claim_net_addr_prefix_match(const uint8_t a[16], const uint8_t b[16],
 }
 
 static inline bool
-claim_path_covered(const struct authorityd_config *cfg, const char *path)
-{
-	unsigned i;
-
-	for (i = 0; i < cfg->nclaim_paths; i++) {
-		if (strcmp(cfg->claim_paths[i], path) == 0)
-			return (true);
-	}
-	return (false);
-}
-
-static inline bool
 claim_net_entry_covers(const struct ort_net_claim *claim,
     const struct ort_net_claim *req)
 {

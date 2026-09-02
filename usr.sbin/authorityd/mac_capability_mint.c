@@ -30,16 +30,9 @@
 #include "probes.h"
 
 /*
- * Mint an isolation access token for a claimed path.
+ * Mint a narrowed file isolation access token for a path.
  * Returns the token fd on success, -1 on failure.
  */
-int
-mac_capability_mint_path_token(const char *path)
-{
-
-	return (mac_capability_mint_file_token(path, FI_FS_ALL));
-}
-
 int
 mac_capability_mint_file_token(const char *path, uint64_t actions)
 {
@@ -48,13 +41,13 @@ mac_capability_mint_file_token(const char *path, uint64_t actions)
 	int fd, token_fd;
 
 	if (mac_capability_isolation_fd == -1) {
-		syslog(LOG_WARNING, "mint_path_token: isolation not connected");
+		syslog(LOG_WARNING, "mint_file_token: isolation not connected");
 		return (-1);
 	}
 
 	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
 	if (fd == -1) {
-		syslog(LOG_WARNING, "mint_path_token: open %s: %m", path);
+		syslog(LOG_WARNING, "mint_file_token: open %s: %m", path);
 		return (-1);
 	}
 
@@ -67,7 +60,7 @@ mac_capability_mint_file_token(const char *path, uint64_t actions)
 	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
 	    &req, sizeof(req), &fd, 1, &reply, sizeof(reply),
 	    &token_fd, 1) == -1) {
-		syslog(LOG_WARNING, "mint_path_token: mint %s: %m", path);
+		syslog(LOG_WARNING, "mint_file_token: mint %s: %m", path);
 		close(fd);
 		return (-1);
 	}

@@ -38,13 +38,6 @@ void
 config_apply_claims(const struct authorityd_config *newcfg)
 {
 
-	memcpy(od.cfg.claim_paths, newcfg->claim_paths,
-	    sizeof(od.cfg.claim_paths));
-	memcpy(od.cfg.claim_path_source, newcfg->claim_path_source,
-	    sizeof(od.cfg.claim_path_source));
-	memcpy(od.cfg.claim_path_refcount, newcfg->claim_path_refcount,
-	    sizeof(od.cfg.claim_path_refcount));
-	od.cfg.nclaim_paths = newcfg->nclaim_paths;
 	memcpy(od.cfg.claim_net, newcfg->claim_net,
 	    sizeof(od.cfg.claim_net));
 	memcpy(od.cfg.claim_net_source, newcfg->claim_net_source,

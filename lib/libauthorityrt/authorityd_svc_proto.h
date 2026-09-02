@@ -32,7 +32,8 @@
 /*
  * Operation codes — first 4 bytes of every request payload.
  */
-#define	AUTHORITY_OP_MINT_PATH		1	/* mint path isolation token */
+/* Opcode 1 (MINT_PATH) is retired: tzfsd(8) brokers filesystem paths and
+ * hands rights-limited fds directly; authorityd mints no path tokens. */
 #define	AUTHORITY_OP_MINT_NET		2	/* mint network isolation token */
 #define	AUTHORITY_OP_MINT_SYSTEM		3	/* mint system gate token */
 #define	AUTHORITY_OP_CREATE_CHANNEL	4	/* create a new channel */
@@ -86,20 +87,12 @@ struct authority_req_hdr {
 };
 
 /*
- * AUTHORITY_OP_MINT_PATH
- *   req:  authority_path_req
- *   reply: authority_reply { .status }
- *   reply_fds[0] = isolation token fd (on success)
- *
- * Requests a path isolation token.  If the path is not already held,
- * authorityd first claims it as a reference-counted service claim and then
- * mints the token.  Policy claims remain immortal.
+ * Path isolation tokens are NOT an authorityd op.  tzfsd(8) brokers filesystem
+ * paths end to end: service_open_isolated(3) opens the path and hands back a
+ * rights-limited fd, so nothing mints isolation PATH tokens from authorityd.
+ * Opcodes 1 (MINT_PATH), 11 (CLAIM_PATH), and 15 (RELEASE_PATH), and the
+ * former struct authority_path_req, are retired.
  */
-struct authority_path_req {
-	uint32_t	op;		/* AUTHORITY_OP_MINT_PATH / CLAIM / RELEASE */
-	uint32_t	_pad;
-	char		path[PATH_MAX];
-};
 
 /*
  * AUTHORITY_OP_MINT_FILE
@@ -107,10 +100,8 @@ struct authority_path_req {
  *   reply: authority_reply { .status }
  *   reply_fds[0] = isolation token fd (on success)
  *
- * Requests a narrowed file isolation token.  authorityd ensures the path is
- * held (creating a reference-counted service claim when necessary) and asks
- * mac_capability_isolation to constrain authorization to the given FI_FS_*
- * action mask.
+ * Requests a narrowed file isolation token, constrained to the given FI_FS_*
+ * action mask by mac_capability_isolation.
  */
 struct authority_mint_file_req {
 	uint32_t	op;		/* AUTHORITY_OP_MINT_FILE */
@@ -163,7 +154,7 @@ struct authority_net_req {
  * (same payload, different op).  Claims return authority_reply with no
  * attached fds.  Releases return authority_reply with no attached fds.
  *
- * Mint handlers (MINT_PATH, MINT_NET, etc.) implicitly auto-claim
+ * Mint handlers (MINT_NET, MINT_VSOCK, MINT_SYSTEM) implicitly auto-claim
  * resources not already in the authority's claimed set.  Services do
  * not need to send explicit CLAIM before MINT — the authority handles
  * it in one trip.  The refcount is bumped on each mint/claim, even
@@ -173,11 +164,11 @@ struct authority_net_req {
  *   CLAIM:   ENOSPC (array full), EIO (kernel claim failed)
  *   RELEASE: ENOENT (not found), EPERM (manifest/internal claim)
  */
-#define	AUTHORITY_OP_CLAIM_PATH		11	/* dynamically claim a path */
+/* Opcode 11 (CLAIM_PATH) is retired: tzfsd(8) brokers filesystem paths. */
 #define	AUTHORITY_OP_CLAIM_NET		12	/* dynamically claim a network endpoint */
 /* Opcode 13 (CLAIM_JAIL) is retired: warden(8) owns jail self-service. */
 #define	AUTHORITY_OP_CLAIM_SYSTEM		14	/* dynamically claim system gates */
-#define	AUTHORITY_OP_RELEASE_PATH		15	/* release a dynamic path claim */
+/* Opcode 15 (RELEASE_PATH) is retired: tzfsd(8) brokers filesystem paths. */
 #define	AUTHORITY_OP_RELEASE_NET		16	/* release a dynamic network claim */
 /* Opcode 17 (RELEASE_JAIL) is retired: warden(8) owns jail self-service. */
 #define	AUTHORITY_OP_RELEASE_SYSTEM	18	/* release dynamic system gates */

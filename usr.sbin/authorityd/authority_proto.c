@@ -110,39 +110,8 @@ proto_reply(int status, uint64_t reply_token, int *fds, int nfds)
  */
 #include "claim_check.h"
 
-/* Convenience wrappers using the global config. */
-#define	path_is_claimed(p)	claim_path_covered(&od.cfg, (p))
+/* Convenience wrapper using the global config. */
 #define	net_is_claimed(r)	claim_net_covered(&od.cfg, (r))
-
-static void
-handle_mint_path(const void *payload, uint32_t len, uint64_t reply_token)
-{
-	const struct authority_path_req *req;
-	int err, token_fd;
-
-	if (!validate_path_req(payload, len, &req, &err)) {
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-
-	if (auto_claim_path(req->path, &err) != 0) {
-		AUTHORITYD_PROBE_MINT_PATH(req->path, err);
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-
-	token_fd = mac_capability_mint_path_token(req->path);
-	if (token_fd == -1) {
-		release_auto_claim_path(req->path);
-		AUTHORITYD_PROBE_MINT_PATH(req->path, EIO);
-		proto_reply(EIO, reply_token, NULL, 0);
-		return;
-	}
-
-	AUTHORITYD_PROBE_MINT_PATH(req->path, 0);
-	proto_reply(0, reply_token, &token_fd, 1);
-	close(token_fd);
-}
 
 static void
 handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
@@ -172,19 +141,9 @@ handle_mint_file(const void *payload, uint32_t len, uint64_t reply_token)
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
-	{
-		int err;
-
-		if (auto_claim_path(req->path, &err) != 0) {
-			AUTHORITYD_PROBE_MINT_FILE(req->path, req->actions, err);
-			proto_reply(err, reply_token, NULL, 0);
-			return;
-		}
-	}
 
 	token_fd = mac_capability_mint_file_token(req->path, req->actions);
 	if (token_fd == -1) {
-		release_auto_claim_path(req->path);
 		AUTHORITYD_PROBE_MINT_FILE(req->path, req->actions, EIO);
 		proto_reply(EIO, reply_token, NULL, 0);
 		return;
@@ -461,7 +420,6 @@ proto_dispatch_one(void)
 	struct mac_capability_recvmsg_args ra;
 	union {
 		struct authority_mint_file_req file;
-		struct authority_path_req path;
 		struct authority_net_req net;
 		struct authority_vsock_req vsock;
 		struct authority_system_req system;
@@ -524,9 +482,6 @@ proto_dispatch_one(void)
 	clock_gettime(CLOCK_MONOTONIC, &ts_start);
 
 	switch (op) {
-	case AUTHORITY_OP_MINT_PATH:
-		handle_mint_path(&buf, ra.payload_len, ra.reply_token);
-		break;
 	case AUTHORITY_OP_MINT_FILE:
 		handle_mint_file(&buf, ra.payload_len, ra.reply_token);
 		break;
@@ -572,9 +527,6 @@ proto_dispatch_one(void)
 	case AUTHORITY_OP_DELEGATE_SERVICE:
 		handle_delegate_service(&buf, ra.payload_len, ra.reply_token);
 		break;
-	case AUTHORITY_OP_CLAIM_PATH:
-		handle_claim_path(&buf, ra.payload_len, ra.reply_token);
-		break;
 	case AUTHORITY_OP_CLAIM_NET:
 		handle_claim_net(&buf, ra.payload_len, ra.reply_token);
 		break;
@@ -583,9 +535,6 @@ proto_dispatch_one(void)
 		break;
 	case AUTHORITY_OP_CLAIM_VSOCK:
 		handle_claim_vsock(&buf, ra.payload_len, ra.reply_token);
-		break;
-	case AUTHORITY_OP_RELEASE_PATH:
-		handle_release_path(&buf, ra.payload_len, ra.reply_token);
 		break;
 	case AUTHORITY_OP_RELEASE_NET:
 		handle_release_net(&buf, ra.payload_len, ra.reply_token);

@@ -59,34 +59,6 @@ net_claim_address_string(const struct ort_net_claim *nc, char *buf,
 /* --- Static query helpers --- */
 
 static bool
-query_path_claimed(const char *path)
-{
-	struct fi_request req;
-	struct fi_reply reply;
-	int fd;
-
-	if (mac_capability_isolation_fd == -1)
-		return (false);
-
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-	if (fd == -1)
-		return (false);
-
-	memset(&req, 0, sizeof(req));
-	req.op = FI_OP_QUERY;
-	req.actions = FI_FS_ALL;
-
-	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
-	    &req, sizeof(req), &fd, 1, &reply, sizeof(reply), NULL, 0) == -1) {
-		close(fd);
-		return (false);
-	}
-
-	close(fd);
-	return ((reply.flags & FI_QF_MINE) != 0);
-}
-
-static bool
 query_net_claimed(const struct ort_net_claim *nc)
 {
 	struct fi_net_request req;
@@ -161,26 +133,13 @@ mac_capability_format_status(char *buf, size_t bufsz, size_t *offp)
 	}
 	BUF_APPEND(buf, bufsz, offp, "\n");
 
-	/* Path claims — verified against kernel via FI_OP_QUERY. */
+	/*
+	 * Path claims are retired: tzfsd(8) brokers filesystem paths.  The
+	 * only path authorityd holds is its own control device, claimed
+	 * unconditionally at startup (a failed claim aborts boot).
+	 */
 	BUF_APPEND(buf, bufsz, offp, "\nCLAIMS:\n");
-	BUF_APPEND(buf, bufsz, offp, "  paths:    %u",
-	    od.cfg.nclaim_paths + 1);	/* +1 for /dev/mac_capability */
-	verified = query_path_claimed("/dev/mac_capability");
-	BUF_APPEND(buf, bufsz, offp, "\n    /dev/mac_capability%s\n",
-	    verified ? "" : " [NOT HELD]");
-	for (i = 0; i < od.cfg.nclaim_paths; i++) {
-		verified = query_path_claimed(od.cfg.claim_paths[i]);
-		if (od.cfg.claim_path_source[i] == CLAIM_SOURCE_SERVICE)
-			BUF_APPEND(buf, bufsz, offp,
-			    "    %s [service, refcount=%u]%s\n",
-			    od.cfg.claim_paths[i],
-			    od.cfg.claim_path_refcount[i],
-			    verified ? "" : " [NOT HELD]");
-		else
-			BUF_APPEND(buf, bufsz, offp, "    %s [policy]%s\n",
-			    od.cfg.claim_paths[i],
-			    verified ? "" : " [NOT HELD]");
-	}
+	BUF_APPEND(buf, bufsz, offp, "  paths:    1\n    /dev/mac_capability\n");
 
 	/* Network claims — verified against kernel via FI_OP_QUERY_NET. */
 	BUF_APPEND(buf, bufsz, offp, "  network:  %u\n",

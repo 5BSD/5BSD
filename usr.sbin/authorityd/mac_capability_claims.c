@@ -144,38 +144,6 @@ mac_capability_claim_vsock(const struct ort_vsock_claim *vc)
 	    sizeof(req), &reply, sizeof(reply)));
 }
 
-/*
- * Release a single vnode claim via the isolation service.
- */
-int
-mac_capability_release_path(const char *path)
-{
-	struct fi_request req;
-	struct fi_reply reply;
-	int fd;
-
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK);
-	if (fd == -1) {
-		syslog(LOG_WARNING, "isolation: release open %s: %m", path);
-		return (-1);
-	}
-
-	memset(&req, 0, sizeof(req));
-	req.op = FI_OP_RELEASE;
-
-	if (mac_capability_do_call_fds(mac_capability_isolation_fd,
-	    &req, sizeof(req), &fd, 1, &reply, sizeof(reply), NULL, 0) == -1) {
-		syslog(LOG_WARNING, "isolation: release %s: %m", path);
-		close(fd);
-		return (-1);
-	}
-
-	close(fd);
-	syslog(LOG_INFO, "isolation: released %s", path);
-	AUTHORITYD_PROBE_CLAIM_PATH_RELEASE(path);
-	return (0);
-}
-
 int
 mac_capability_release_vsock(const struct ort_vsock_claim *vc)
 {
@@ -277,26 +245,6 @@ isolate_resources(void)
 		claimed++;
 	else
 		failed++;
-
-	/*
-	 * Claim configured paths.  Skip paths that no longer exist
-	 * so that stale entries left in authorityd.conf after an upgrade
-	 * do not prevent startup.  Other access errors (EACCES, EIO)
-	 * are still fatal — they indicate a real problem.
-	 */
-	for (i = 0; i < od.cfg.nclaim_paths; i++) {
-		if (access(od.cfg.claim_paths[i], F_OK) != 0 &&
-		    errno == ENOENT) {
-			syslog(LOG_WARNING,
-			    "isolation: skipping nonexistent claim path %s",
-			    od.cfg.claim_paths[i]);
-			continue;
-		}
-		if (mac_capability_claim_path(od.cfg.claim_paths[i]) == 0)
-			claimed++;
-		else
-			failed++;
-	}
 
 	/* Claim configured network endpoints. */
 	for (i = 0; i < od.cfg.nclaim_net; i++) {

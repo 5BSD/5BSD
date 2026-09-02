@@ -288,38 +288,6 @@ cfg_claims(const ucl_object_t *root, struct authorityd_config *cfg)
 	if (sec == NULL || ucl_object_type(sec) != UCL_OBJECT)
 		return;
 
-	/* claims.paths / claims.files — string array */
-	arr = ucl_object_lookup(sec, "paths");
-	if (arr == NULL)
-		arr = ucl_object_lookup(sec, "files");
-	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
-		it = NULL;
-		while ((elem = ucl_object_iterate(arr, &it, true))
-		    != NULL) {
-			if (ucl_object_type(elem) != UCL_STRING)
-				continue;
-			s = ucl_object_tostring(elem);
-			if (s[0] == '\0')
-				continue;
-			if (s[0] != '/') {
-				fprintf(stderr, "authorityd: claim path "
-				    "must be absolute: %s\n", s);
-				continue;
-			}
-			if (cfg->nclaim_paths >= AUTHORITYD_MAX_PATH_CLAIMS) {
-				fprintf(stderr, "authorityd: too many "
-				    "claim paths (max %d)\n",
-				    AUTHORITYD_MAX_PATH_CLAIMS);
-				break;
-			}
-			strlcpy(cfg->claim_paths[cfg->nclaim_paths],
-			    s, PATH_MAX);
-			cfg->claim_path_source[cfg->nclaim_paths] =
-			    CLAIM_SOURCE_POLICY;
-			cfg->nclaim_paths++;
-		}
-	}
-
 	/* claims.network — array of objects */
 	arr = ucl_object_lookup(sec, "network");
 	if (arr != NULL && ucl_object_type(arr) == UCL_ARRAY) {
@@ -453,7 +421,6 @@ config_log(const struct authorityd_config *cfg)
 	syslog(LOG_INFO, "config: control_socket=%s mode=%04o",
 	    cfg->control_socket, cfg->control_socket_mode);
 	syslog(LOG_INFO, "config: integrity_flags=0x%x", cfg->integrity_flags);
-	syslog(LOG_INFO, "config: claims paths=%d network=%d "
-	    "system=0x%x", cfg->nclaim_paths, cfg->nclaim_net,
-	    cfg->claim_system);
+	syslog(LOG_INFO, "config: claims network=%d system=0x%x",
+	    cfg->nclaim_net, cfg->claim_system);
 }

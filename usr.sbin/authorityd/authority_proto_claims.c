@@ -33,18 +33,6 @@
 /* --- Find helpers --- */
 
 static int
-find_path_claim(const char *path)
-{
-	unsigned i;
-
-	for (i = 0; i < od.cfg.nclaim_paths; i++) {
-		if (strcmp(od.cfg.claim_paths[i], path) == 0)
-			return ((int)i);
-	}
-	return (-1);
-}
-
-static int
 find_net_claim(const struct ort_net_claim *nc)
 {
 	unsigned i;
@@ -105,46 +93,12 @@ remove_##type##_claim(unsigned idx)					\
 	od.cfg.count = n;						\
 }
 
-DEFINE_REMOVE_CLAIM(path, claim_paths, claim_path_source,
-    claim_path_refcount, nclaim_paths)
 DEFINE_REMOVE_CLAIM(net, claim_net, claim_net_source,
     claim_net_refcount, nclaim_net)
 DEFINE_REMOVE_CLAIM(vsock, claim_vsock, claim_vsock_source,
     claim_vsock_refcount, nclaim_vsock)
 
 /* --- Auto-claim helpers --- */
-
-int
-auto_claim_path(const char *path, int *errp)
-{
-	int idx;
-
-	idx = find_path_claim(path);
-	if (idx >= 0) {
-		if (od.cfg.claim_path_source[idx] == CLAIM_SOURCE_SERVICE)
-			od.cfg.claim_path_refcount[idx]++;
-		return (0);
-	}
-
-	if (od.cfg.nclaim_paths >= AUTHORITYD_MAX_PATH_CLAIMS) {
-		*errp = ENOSPC;
-		return (-1);
-	}
-	if (mac_capability_claim_path(path) != 0) {
-		*errp = EIO;
-		return (-1);
-	}
-
-	idx = (int)od.cfg.nclaim_paths;
-	strlcpy(od.cfg.claim_paths[idx], path, PATH_MAX);
-	od.cfg.claim_path_source[idx] = CLAIM_SOURCE_SERVICE;
-	od.cfg.claim_path_refcount[idx] = 1;
-	od.cfg.nclaim_paths++;
-
-	syslog(LOG_INFO, "authority_proto: auto-claimed %s", path);
-	AUTHORITYD_PROBE_DYN_CLAIM_PATH(path, 0);
-	return (0);
-}
 
 int
 auto_claim_net(const struct ort_net_claim *nc, int *errp)
@@ -239,27 +193,6 @@ auto_claim_system(uint32_t gates, int *errp)
 }
 
 void
-release_auto_claim_path(const char *path)
-{
-	uint32_t new_refcount;
-	int idx;
-
-	idx = find_path_claim(path);
-	if (idx < 0 ||
-	    od.cfg.claim_path_source[idx] != CLAIM_SOURCE_SERVICE ||
-	    od.cfg.claim_path_refcount[idx] == 0)
-		return;
-
-	od.cfg.claim_path_refcount[idx]--;
-	new_refcount = od.cfg.claim_path_refcount[idx];
-	if (new_refcount == 0) {
-		mac_capability_release_path(path);
-		remove_path_claim((unsigned)idx);
-	}
-	AUTHORITYD_PROBE_DYN_RELEASE_PATH(path, new_refcount, 0);
-}
-
-void
 release_auto_claim_net(const struct ort_net_claim *nc)
 {
 	uint32_t new_refcount;
@@ -330,24 +263,6 @@ release_auto_claim_system(uint32_t gates)
 /* --- Explicit claim handlers --- */
 
 void
-handle_claim_path(const void *payload, uint32_t len, uint64_t reply_token)
-{
-	const struct authority_path_req *req;
-	int err;
-
-	if (!validate_path_req(payload, len, &req, &err)) {
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-
-	if (auto_claim_path(req->path, &err) != 0) {
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-	proto_reply(0, reply_token, NULL, 0);
-}
-
-void
 handle_claim_net(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	struct ort_net_claim nc;
@@ -403,62 +318,6 @@ handle_claim_vsock(const void *payload, uint32_t len, uint64_t reply_token)
 }
 
 /* --- Release handlers --- */
-
-void
-handle_release_path(const void *payload, uint32_t len, uint64_t reply_token)
-{
-	const struct authority_path_req *req;
-	int err, idx;
-
-	if (!validate_path_req(payload, len, &req, &err)) {
-		proto_reply(err, reply_token, NULL, 0);
-		return;
-	}
-
-	idx = find_path_claim(req->path);
-	if (idx < 0) {
-		AUTHORITYD_PROBE_DYN_RELEASE_PATH(req->path, 0, ENOENT);
-		proto_reply(ENOENT, reply_token, NULL, 0);
-		return;
-	}
-
-	if (od.cfg.claim_path_source[idx] != CLAIM_SOURCE_SERVICE) {
-		syslog(LOG_NOTICE,
-		    "authority_proto: release_path denied (manifest): %s",
-		    req->path);
-		AUTHORITYD_PROBE_DYN_RELEASE_PATH(req->path, 0, EPERM);
-		proto_reply(EPERM, reply_token, NULL, 0);
-		return;
-	}
-
-	if (od.cfg.claim_path_refcount[idx] == 0) {
-		syslog(LOG_WARNING,
-		    "authority_proto: release_path %s refcount already 0",
-		    req->path);
-		AUTHORITYD_PROBE_DYN_RELEASE_PATH(req->path, 0, EINVAL);
-		proto_reply(EINVAL, reply_token, NULL, 0);
-		return;
-	}
-	od.cfg.claim_path_refcount[idx]--;
-	{
-		uint32_t new_refcount = od.cfg.claim_path_refcount[idx];
-
-		if (new_refcount == 0) {
-			mac_capability_release_path(req->path);
-			syslog(LOG_INFO,
-			    "authority_proto: released dynamic claim %s",
-			    req->path);
-			remove_path_claim((unsigned)idx);
-		} else {
-			syslog(LOG_DEBUG,
-			    "authority_proto: release_path %s refcount=%u",
-			    req->path, new_refcount);
-		}
-
-		AUTHORITYD_PROBE_DYN_RELEASE_PATH(req->path, new_refcount, 0);
-	}
-	proto_reply(0, reply_token, NULL, 0);
-}
 
 void
 handle_release_net(const void *payload, uint32_t len, uint64_t reply_token)
@@ -602,16 +461,6 @@ sweep_dynamic_claims(void)
 {
 	unsigned i;
 	uint32_t release_gates;
-
-	for (i = od.cfg.nclaim_paths; i > 0; i--) {
-		if (od.cfg.claim_path_source[i - 1] == CLAIM_SOURCE_SERVICE) {
-			mac_capability_release_path(od.cfg.claim_paths[i - 1]);
-			syslog(LOG_INFO,
-			    "authority_proto: sweep released path %s",
-			    od.cfg.claim_paths[i - 1]);
-			remove_path_claim(i - 1);
-		}
-	}
 
 	for (i = od.cfg.nclaim_net; i > 0; i--) {
 		if (od.cfg.claim_net_source[i - 1] == CLAIM_SOURCE_SERVICE) {

@@ -21,7 +21,6 @@
 #define	AUTHORITYD_DEFAULT_CTLMODE	0700
 #define	AUTHORITYD_DEFAULT_SVC_MANAGER	"/usr/libexec/serviced"
 
-#define	AUTHORITYD_MAX_PATH_CLAIMS		64
 #define	AUTHORITYD_MAX_NET_CLAIMS		32
 #define	AUTHORITYD_MAX_VSOCK_CLAIMS	32
 #define	AUTHORITYD_SYSTEM_GATE_NBITS	32	/* bits in uint32_t gate bitmask */
@@ -44,10 +43,6 @@ struct authorityd_config {
 	uint32_t	integrity_flags;
 
 	/* Claims — resources under authority control */
-	char		claim_paths[AUTHORITYD_MAX_PATH_CLAIMS][PATH_MAX];
-	uint8_t		claim_path_source[AUTHORITYD_MAX_PATH_CLAIMS];
-	uint32_t	claim_path_refcount[AUTHORITYD_MAX_PATH_CLAIMS];
-	unsigned int	nclaim_paths;
 	struct ort_net_claim claim_net[AUTHORITYD_MAX_NET_CLAIMS];
 	uint8_t		claim_net_source[AUTHORITYD_MAX_NET_CLAIMS];
 	uint32_t	claim_net_refcount[AUTHORITYD_MAX_NET_CLAIMS];

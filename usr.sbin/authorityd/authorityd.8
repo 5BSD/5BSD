@@ -269,31 +269,16 @@ service.
 Once claimed, MACF hooks deny access from all other processes,
 including root.
 .Pa /dev/mac_capability
-is always claimed automatically.
-.Pp
-Claim limits: at most 64 paths and 32 network claims.
-.Pp
-.Bf -symbolic
-Paths on network filesystems (NFS, FUSE) may block during
-.Xr open 2
-if the server is unreachable.
+is always claimed automatically;
 .Nm
-opens claimed paths with
-.Dv O_NONBLOCK ,
-which prevents blocking on FIFOs and device nodes, but does not
-help with network filesystems because the block occurs during
-VFS name resolution.
-To protect a network mount point without contacting the server,
-claim the parent directory instead (e.g.,
-.Pa /mnt
-rather than
-.Pa /mnt/nfs ) .
-A future
-.Dv FI_OP_CLAIM_PATH
-operation that performs path resolution kernel-side with
-.Dv NOCROSSMOUNT
-would resolve this limitation.
-.Ef
+claims that device only.
+Filesystem paths are brokered by
+.Xr tzfsd 8 ,
+which opens a path and hands back a rights-limited descriptor, so
+.Nm
+mints no path tokens and claims no other paths.
+.Pp
+Claim limits: at most 32 network claims.
 .Ss Dynamic Claims
 Resources not pre-declared in
 .Nm authorityd.conf
@@ -338,13 +323,6 @@ for manifest claims or
 .Ql [service, refcount=N]
 for dynamic claims.
 .Bl -tag -width "network"
-.It Va paths
-Array of file and directory paths to claim.
-Claiming a file blocks open, stat, chmod, chown, and other
-vnode operations.
-Claiming a directory blocks lookup into the subtree,
-preventing access to all files within.
-Default: empty.
 .It Va network
 Array of network endpoint objects to claim.
 Each object has:
@@ -509,8 +487,6 @@ Configuration file parsed.
 File or directory claimed successfully.
 .It Li claim-path-fail(path)
 File or directory claim failed.
-.It Li claim-path-release(path)
-Path claim released.
 .It Li claim-net(port_min, port_max, protocol)
 Network endpoint claimed.
 .It Li claim-net-fail(port_min, port_max, protocol)
@@ -523,17 +499,12 @@ System gates released.
 .Pp
 .Em Dynamic Claims :
 .Bl -tag -width "dyn-release-net(port_min, port_max, protocol, refcount, result)" -compact
-.It Li dyn-claim-path(path, result)
-Dynamic path claim created or refcount bumped.
 .It Li dyn-claim-net(port_min, port_max, protocol, result)
 Dynamic network claim created or refcount bumped.
 .It Li dyn-claim-system(gates, result)
 Dynamic system gate claim created or refcount bumped.
 .It Li dyn-claim-vsock(cid, port_min, port_max, result)
 Dynamic VSOCK endpoint claim created or refcount bumped.
-.It Li dyn-release-path(path, refcount, result)
-Dynamic path claim released.
-Refcount is the value after decrement.
 .It Li dyn-release-net(port_min, port_max, protocol, refcount, result)
 Dynamic network claim released.
 .It Li dyn-release-system(gates, released, result)
@@ -574,8 +545,6 @@ Claim update complete.
 .Pp
 .Em Minting :
 .Bl -tag -width "mint-file(path, actions, result)" -compact
-.It Li mint-path(path, result)
-Path isolation token minted.
 .It Li mint-file(path, actions, result)
 Action-narrowed file isolation token minted.
 .It Li mint-net(port_min, port_max, protocol, result)
@@ -700,13 +669,9 @@ integrity {
 }
 .Ed
 .Pp
-Claim sensitive files, a privileged port range, and system operations:
+Claim a privileged port range and system operations:
 .Bd -literal -offset indent
 claims {
-    paths = [
-        "/dev/mem",
-        "/boot/kernel",
-    ];
     network = [
         {
             port = ".<1024";
@@ -728,7 +693,8 @@ claims {
 .Xr mac_capability_capprotect 4 ,
 .Xr mac_capability_isolation 4 ,
 .Xr mac_capability_system 4 ,
-.Xr serviced 8
+.Xr serviced 8 ,
+.Xr tzfsd 8
 .Sh HISTORY
 .Nm
 first appeared in 5BSD as the capability authority daemon.

@@ -51,18 +51,6 @@ net_claim_in(const struct ort_net_claim *needle,
 	return (false);
 }
 
-static bool
-path_in(const char *path, const char paths[][PATH_MAX], unsigned npaths)
-{
-	unsigned i;
-
-	for (i = 0; i < npaths; i++) {
-		if (strcmp(path, paths[i]) == 0)
-			return (true);
-	}
-	return (false);
-}
-
 /*
  * Reload resource claims and build an effective config reflecting
  * what the kernel actually holds.  Acquire new claims first, then
@@ -86,7 +74,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 	unsigned i;
 	unsigned nacquire, nrelease;
 	int acquired, released, failed;
-	bool path_ok[AUTHORITYD_MAX_PATH_CLAIMS];
 	bool net_ok[AUTHORITYD_MAX_NET_CLAIMS];
 	uint32_t gates_acquired, gates_released;
 
@@ -103,11 +90,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 
 	/* Pre-compute acquire/release counts for the start probe. */
 	nacquire = nrelease = 0;
-	for (i = 0; i < newcfg->nclaim_paths; i++) {
-		if (!path_in(newcfg->claim_paths[i],
-		    oldcfg->claim_paths, oldcfg->nclaim_paths))
-			nacquire++;
-	}
 	for (i = 0; i < newcfg->nclaim_net; i++) {
 		if (!net_claim_in(&newcfg->claim_net[i],
 		    oldcfg->claim_net, oldcfg->nclaim_net))
@@ -116,11 +98,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 	if (newcfg->claim_system != oldcfg->claim_system &&
 	    (newcfg->claim_system & ~oldcfg->claim_system) != 0)
 		nacquire++;
-	for (i = 0; i < oldcfg->nclaim_paths; i++) {
-		if (!path_in(oldcfg->claim_paths[i],
-		    newcfg->claim_paths, newcfg->nclaim_paths))
-			nrelease++;
-	}
 	for (i = 0; i < oldcfg->nclaim_net; i++) {
 		if (!net_claim_in(&oldcfg->claim_net[i],
 		    newcfg->claim_net, newcfg->nclaim_net))
@@ -132,25 +109,8 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 	AUTHORITYD_PROBE_RELOAD_CLAIMS_START(nacquire, nrelease);
 
 	/* Track which new claims succeed. */
-	for (i = 0; i < newcfg->nclaim_paths; i++)
-		path_ok[i] = true;
 	for (i = 0; i < newcfg->nclaim_net; i++)
 		net_ok[i] = true;
-
-	/*
-	 * Phase 1: Acquire new path claims.
-	 */
-	for (i = 0; i < newcfg->nclaim_paths; i++) {
-		if (!path_in(newcfg->claim_paths[i],
-		    oldcfg->claim_paths, oldcfg->nclaim_paths)) {
-			if (mac_capability_claim_path(newcfg->claim_paths[i]) == 0) {
-				acquired++;
-			} else {
-				path_ok[i] = false;
-				failed++;
-			}
-		}
-	}
 
 	/*
 	 * Phase 2: Acquire new network claims.
@@ -193,19 +153,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 				gates_acquired = new_gates;
 				acquired++;
 			}
-		}
-	}
-
-	/*
-	 * Phase 5: Release old path claims no longer in config.
-	 */
-	for (i = 0; i < oldcfg->nclaim_paths; i++) {
-		if (!path_in(oldcfg->claim_paths[i],
-		    newcfg->claim_paths, newcfg->nclaim_paths)) {
-			if (mac_capability_release_path(oldcfg->claim_paths[i]) == 0)
-				released++;
-			else
-				failed++;
 		}
 	}
 
@@ -260,22 +207,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 		 */
 		eff = __DECONST(struct authorityd_config *, newcfg);
 
-		/* Paths: keep successful policy claims. */
-		n = 0;
-		for (i = 0; i < newcfg->nclaim_paths; i++) {
-			if (path_ok[i]) {
-				if (n != i)
-					strlcpy(eff->claim_paths[n],
-					    newcfg->claim_paths[i], PATH_MAX);
-				eff->claim_path_source[n] = CLAIM_SOURCE_POLICY;
-				eff->claim_path_refcount[n] = 0;
-				n++;
-			} else {
-				syslog(LOG_WARNING, "reload: dropping failed "
-				    "claim %s from effective config",
-				    newcfg->claim_paths[i]);
-			}
-		}
 		/*
 		 * Carry forward dynamic claims from the old config.
 		 * Skip entries already covered by the new manifest.
@@ -298,29 +229,6 @@ mac_capability_reload_claims(const struct authorityd_config *newcfg)
 		n++;						\
 	}							\
 } while (0)
-
-		/* Paths: path_in has a different signature, keep inline. */
-		for (i = 0; i < oldcfg->nclaim_paths; i++) {
-			if (oldcfg->claim_path_source[i] !=
-			    CLAIM_SOURCE_SERVICE)
-				continue;
-			if (path_in(oldcfg->claim_paths[i],
-			    eff->claim_paths, n))
-				continue;
-			if (n >= AUTHORITYD_MAX_PATH_CLAIMS) {
-				syslog(LOG_WARNING,
-				    "reload: path claim table full, "
-				    "dropping orphaned dynamic claims");
-				break;
-			}
-			strlcpy(eff->claim_paths[n],
-			    oldcfg->claim_paths[i], PATH_MAX);
-			eff->claim_path_source[n] = CLAIM_SOURCE_SERVICE;
-			eff->claim_path_refcount[n] =
-			    oldcfg->claim_path_refcount[i];
-			n++;
-		}
-		eff->nclaim_paths = n;
 
 		/* Network: keep successful policy claims. */
 		n = 0;
