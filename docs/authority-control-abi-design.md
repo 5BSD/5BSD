@@ -9,7 +9,7 @@
 > semantics and shutdown orchestration below are unchanged; only how the
 > endpoint is named and authorized changes.
 
-Companion to `authority-init-todo.md` (Phase 9) and `freebsd-init-behavior-audit.md`
+Companion to `capsule-todo.md` (Phase 9) and `freebsd-init-behavior-audit.md`
 (section 14, the signal ABI). This records the decision to replace the
 traditional PID 1 signal ABI with an authenticated control-socket ABI, and how
 that decision is shaped by our two-daemon architecture rather than launchd's
@@ -42,7 +42,7 @@ with one control tool (`launchctl`). We deliberately split those roles:
 
 | Role | Process | Control tool | Owns |
 | --- | --- | --- | --- |
-| **Spine (lower half)** | `authorityd`/`authority-init` (PID 1) | `authorityctl` | system lifecycle (reboot/halt/single-user/reroot/rescan/catatonia), capability authority, reaping, `/etc/rc`, serviced supervision |
+| **Spine (lower half)** | `authorityd`/`capsule` (PID 1) | `authorityctl` | system lifecycle (reboot/halt/single-user/reroot/rescan/catatonia), capability authority, reaping, `/etc/rc`, serviced supervision |
 | **Service manager (upper half)** | `serviced` | `servicectl` | per-service start/stop/restart/reload/status, dependency graph, on-demand activation |
 
 This split is *better than launchd's* for the reboot problem specifically:
@@ -135,26 +135,26 @@ just `reboot(8)`/`shutdown(8)`'s common path — otherwise the shield turns thos
 **Known limitation — `init(8)` telinit (`init 0/1/6/…`, `COMPAT_SYSV_INIT`):**
 this SysV-compat path `kill(1, sig)`s PID 1 and is *not* converted, to keep the
 fallback `/sbin/init` binary free of any authorityd/socket dependency (it is the
-recovery init in `kern.init_path`). Under a shielded authority-init, `init N`
+recovery init in `kern.init_path`). Under a shielded capsule, `init N`
 silently no-ops. Use `reboot(8)`/`shutdown(8)`/`halt(8)`/`authorityctl` instead;
 telinit under Authority PID 1 is unsupported.
 
 ## Emergency reboot when the event loop is wedged
 
-The one robustness cost of removing signals: a wedged authority-init event loop
+The one robustness cost of removing signals: a wedged capsule event loop
 can no longer be poked by `kill`. Mitigations:
 
 1. **`reboot(2)` direct** — available today. `reboot -q` calls the `reboot(2)`
    syscall directly (reboot.c: `qflag`), touching neither the control socket
    nor init, so any root shell can force an un-orchestrated reboot regardless
-   of authority-init's state. This is the manual emergency path.
+   of capsule's state. This is the manual emergency path.
 2. **ddb** `reboot` on the console — the ultimate backstop, always present.
 3. **Platform/hypervisor watchdog** — where a deployment has a hardware BMC,
    ILOM, or hypervisor watchdog device, that layer resets a wedged system,
    exactly as Apple's SMC covers a hung launchd and Solaris service-processor
    watchdogs cover a hung svc.startd.
 
-**Decision: authority-init does NOT self-pet a `watchdog(4)`.** Neither launchd
+**Decision: capsule does NOT self-pet a `watchdog(4)`.** Neither launchd
 nor illumos SMF has its spine pet a software watchdog; both rely on the layer
 below (firmware/SMC/service-processor) plus, in SMF's case, a restartable
 brain.  Making PID 1 arm and pet a watchdog would require giving the

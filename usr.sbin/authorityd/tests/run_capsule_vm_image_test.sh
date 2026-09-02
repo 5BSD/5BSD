@@ -30,7 +30,7 @@ usage()
 
 fail()
 {
-	echo "authority-init VM image test: FAIL: $*" >&2
+	echo "capsule VM image test: FAIL: $*" >&2
 	exit 1
 }
 
@@ -85,7 +85,7 @@ validate_image_root()
 src=${SRCTOP:-/usr/src}
 [ -d "$src" ] || fail "SRCTOP is not a directory: $src"
 builder="$src/release/scripts/mk-vmimage.sh"
-boot_test="$src/usr.sbin/authorityd/tests/run_authority_init_vm_boot_test.sh"
+boot_test="$src/usr.sbin/authorityd/tests/run_capsule_vm_boot_test.sh"
 [ -x "$builder" ] || fail "VM image builder is not executable: $builder"
 [ -x "$boot_test" ] || fail "VM boot test is not executable: $boot_test"
 
@@ -131,7 +131,7 @@ cleanup()
 	if [ "$passed" = true ] && [ "$keep_image" = no ]; then
 		rm -rf "$workdir"
 	elif [ "$passed" != true ]; then
-		echo "authority-init VM image test: artifacts retained in $workdir" >&2
+		echo "capsule VM image test: artifacts retained in $workdir" >&2
 	fi
 	exit "$rc"
 }
@@ -194,7 +194,7 @@ env IMAGE="$image" VM_MEMORY="$vm_memory" BOOT_TIMEOUT="$boot_timeout" \
 
 passed=true
 if [ "$interactive" = yes ]; then
-	echo "authority-init VM image test: interactive session completed"
+	echo "capsule VM image test: interactive session completed"
 else
-	echo "authority-init VM image test: PASS"
+	echo "capsule VM image test: PASS"
 fi

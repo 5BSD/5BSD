@@ -45,11 +45,11 @@ cat $BSDINSTALL_TMPBOOT/loader.conf.* >> $BSDINSTALL_TMPBOOT/loader.conf
 rm $BSDINSTALL_TMPBOOT/loader.conf.*
 df -t zfs $BSDINSTALL_CHROOT > /dev/null && echo "zfs_load=\"YES\"" >> $BSDINSTALL_TMPBOOT/loader.conf
 
-# The base installation provides authority-init as the PID 1 program.  Put the
+# The base installation provides capsule as the PID 1 program.  Put the
 # setting in loader.conf as well as the packaged loader.conf.d fragment so
 # fresh installs work with both Lua and legacy loader implementations.
-if [ -x "$BSDINSTALL_CHROOT/sbin/authority-init" ]; then
-	echo 'init_path="/sbin/authority-init:/sbin/init:/sbin/init.bak:/rescue/init"' \
+if [ -x "$BSDINSTALL_CHROOT/sbin/capsule" ]; then
+	echo 'init_path="/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init"' \
 	    >> $BSDINSTALL_TMPBOOT/loader.conf
 fi
 

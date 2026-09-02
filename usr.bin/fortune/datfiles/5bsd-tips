@@ -23,7 +23,7 @@ Need a scratch filesystem that disappears on close? Try an ephemeral
 TrustedZFS handle: tzfsctl(8) can mint anonymous datasets backed by
 the pool configured in tzfs.conf(5).
 %
-5BSD boots through authority-init and serviced before running the classic
+5BSD boots through capsule and serviced before running the classic
 rc(8) scripts. "authorityctl status" shows the capability broker;
 "servicectl services" shows managed services.
 %

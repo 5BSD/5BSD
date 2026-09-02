@@ -63,8 +63,8 @@ explicit **mint boundary** where it is created, and derive everything else by
 delegation. 5BSD's boundary has three parts:
 
 1. The **kernel** `mac_capability` device, which makes endpoints unforgeable.
-2. **Authority Init** (PID 1), which holds the root capability at boot and
-   delegates the initial grants.
+2. **Capsule** (PID 1, the init personality of `authorityd`), which holds the
+   root capability at boot and delegates the initial grants.
 3. The **authentication boundary** — the *only* place an identity is exchanged
    for capabilities. When you prove a credential, `login`/`su`/`sshd` ask a
    small, capsicum-sandboxed **auth-agent** (`system.authagent`) to mint your

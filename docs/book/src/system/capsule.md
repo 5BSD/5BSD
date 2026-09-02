@@ -1,16 +1,17 @@
-# Authority Init
+# Capsule (PID 1)
 
-5BSD replaces `init(8)` with **Authority** as PID 1. The same binary serves two
+5BSD replaces `init(8)` with **Capsule** as PID 1. The same binary serves two
 roles: as `authorityd(8)` it is the capability broker — the authority that owns
 `mac_capability`, mints capability tokens, and supervises `serviced(8)` — and
 when it finds itself running as PID 1 it switches to a dedicated init
-personality (`usr.sbin/authorityd/authority_init.c`). The daemon path (daemonize,
-pidfile, exit-on-error) never runs at PID 1:
+personality, **Capsule** (`usr.sbin/authorityd/capsule.c`), installed as
+`/sbin/capsule`. The daemon path (daemonize, pidfile, exit-on-error) never runs
+at PID 1:
 
 ```c
 /* usr.sbin/authorityd/authorityd.c */
 if (getpid() == 1)
-        authority_init_main(argc, argv);
+        capsule_main(argc, argv);
 ```
 
 ## System requirements
@@ -47,7 +48,7 @@ Authority deliberately splits the roles launchd combines into one process:
 
 | Role | Process | Control tool | Owns |
 | --- | --- | --- | --- |
-| Spine (PID 1) | `authority-init` / `authorityd` | `authorityctl(8)` | System lifecycle (reboot, halt, single-user, reroot, rescan, catatonia), capability authority, global reaping, recovery console, serviced supervision |
+| Spine (PID 1) | `capsule` / `authorityd` | `authorityctl(8)` | System lifecycle (reboot, halt, single-user, reroot, rescan, catatonia), capability authority, global reaping, recovery console, serviced supervision |
 | Service manager | `serviced` | `servicectl(8)` | Per-service lifecycle, demand activation, trigger ownership, `/etc/rc` |
 
 Authority that must survive the service manager's death stays in the spine:
@@ -61,14 +62,14 @@ daemon.
 
 ## PID-1 boot path
 
-`/sbin/authority-init` is a second installed copy of the authorityd binary kept on
+`/sbin/capsule` is a second installed copy of the authorityd binary kept on
 the root filesystem, because `/usr` may be a separate, unmounted filesystem
 when the kernel starts init (see `usr.sbin/authorityd/Makefile`). The shipped
 loader configuration selects it with executable fallbacks:
 
 ```sh
-# /boot/loader.conf.d/authority-init.conf
-init_path="/sbin/authority-init:/sbin/init:/sbin/init.bak:/rescue/init"
+# /boot/loader.conf.d/capsule.conf
+init_path="/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init"
 ```
 
 The init personality is a port of `init(8)`'s state machine (behavior
@@ -91,13 +92,13 @@ and does not proceed to getty/login until serviced signals convergence.
 There is deliberately no clock deadline — `/etc/rc` has no knowable duration
 (fsck, key generation, entropy waits) — recovery triggers only when serviced
 *permanently* fails (its restart circuit breaker trips). The full boot flow
-authority-init → serviced → rc → native services → converge → login is validated
+capsule → serviced → rc → native services → converge → login is validated
 in a VM. Intentional divergences from stock init are logged at runtime:
 `init_exec` is ignored (it is the hook that reached this program), and
 `COMPAT_SYSV_INIT` runlevels are not accepted — stock `/sbin/init` remains
 installed for that.
 
-PID 1 compatibility invariants (from `docs/authority-init-todo.md`): never
+PID 1 compatibility invariants (from `docs/capsule-todo.md`): never
 daemonize, never exit — every stock-init exit path becomes a logged emergency
 followed by deliberate reboot or recovery; verify (not acquire) real-init
 reaper status; continuously reap all children and adopted orphans; preserve

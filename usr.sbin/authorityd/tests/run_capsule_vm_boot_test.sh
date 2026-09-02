@@ -15,7 +15,7 @@ usage()
 	usage: IMAGE=/path/to/image $0
 
 	Optional environment:
-	  VM_NAME       bhyve name (default: authority-init-boot-test-<pid>)
+	  VM_NAME       bhyve name (default: capsule-boot-test-<pid>)
 	  VM_MEMORY     guest memory (default: 1024M)
 	  BOOT_TIMEOUT  seconds to wait for RC bootstrap and login (default: 180)
 	  BOOT_LOG      serial-console log path (default: /tmp/<VM_NAME>.log)
@@ -28,7 +28,7 @@ usage()
 
 fail()
 {
-	echo "authority-init VM boot test: FAIL: $*" >&2
+	echo "capsule VM boot test: FAIL: $*" >&2
 	exit 1
 }
 
@@ -63,7 +63,7 @@ image=${IMAGE:-}
 [ -n "$image" ] || usage
 [ -f "$image" ] && [ ! -L "$image" ] || fail "image is missing or is a symlink: $image"
 
-vm_name=${VM_NAME:-authority-init-boot-test-$$}
+vm_name=${VM_NAME:-capsule-boot-test-$$}
 case "$vm_name" in
 *[!A-Za-z0-9_.-]*|'') fail "invalid VM_NAME: $vm_name" ;;
 esac
@@ -113,7 +113,7 @@ stop_bhyve()
 		tries=$((tries + 1))
 	done
 	if kill -0 "$bhyve_pid" 2>/dev/null; then
-		echo "authority-init VM boot test: forcibly stopping bhyve" >&2
+		echo "capsule VM boot test: forcibly stopping bhyve" >&2
 		kill -KILL "$bhyve_pid" 2>/dev/null || :
 	fi
 	wait "$bhyve_pid" 2>/dev/null || :
@@ -129,7 +129,7 @@ cleanup()
 	fi
 	if [ "$rc" -ne 0 ] && [ "$interactive" = no ]; then
 		if [ "$interrupted" = true ]; then
-			echo "authority-init VM boot test: FAIL: interrupted; Ctrl-C is not boot completion" >&2
+			echo "capsule VM boot test: FAIL: interrupted; Ctrl-C is not boot completion" >&2
 		fi
 		echo "serial log retained at $boot_log" >&2
 		[ ! -f "$boot_log" ] || tail -n 120 "$boot_log" >&2
@@ -182,7 +182,7 @@ while [ "$elapsed" -lt "$boot_timeout" ]; do
 		fail "clean boot started optional Blued/vhid support"
 	fi
 	if boot_completed 2>/dev/null; then
-		echo "authority-init VM boot test: PASS: serviced RC bootstrap converged and Authority-gated serial login is ready"
+		echo "capsule VM boot test: PASS: serviced RC bootstrap converged and Authority-gated serial login is ready"
 		exit 0
 	fi
 	if ! kill -0 "$bhyve_pid" 2>/dev/null; then

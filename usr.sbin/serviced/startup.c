@@ -134,8 +134,8 @@ run_rc_bootstrap(int kqunused)
 	/*
 	 * Carry the ambient lookup channel into interactive logins (§21).  rc
 	 * and its descendants inherit SERVICE_LOOKUP_FD by environment, but the
-	 * getty/login sessions authority-init spawns from /etc/ttys are siblings of
-	 * rc and never see that environment.  Hand authority-init (PID 1) a dup of
+	 * getty/login sessions capsule spawns from /etc/ttys are siblings of
+	 * rc and never see that environment.  Hand capsule (PID 1) a dup of
 	 * the retained client end so it can pin the channel at
 	 * SERVICE_LOOKUP_FIXED_FD when it execs each getty.
 	 *
@@ -152,11 +152,11 @@ run_rc_bootstrap(int kqunused)
 		else {
 			if (authority_set_ambient_lookup(sd.authority_channel_fd,
 			    dupfd) == -1)
-				syslog(LOG_NOTICE, "startup: authority-init "
+				syslog(LOG_NOTICE, "startup: capsule "
 				    "interactive ambient carry unavailable: %m");
 			else
 				syslog(LOG_INFO, "startup: ambient lookup "
-				    "channel handed to authority-init for logins");
+				    "channel handed to capsule for logins");
 			(void)close(dupfd);
 		}
 	}

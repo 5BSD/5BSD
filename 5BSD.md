@@ -33,14 +33,14 @@ traditional BSD/UNIX system, and you migrate onto it over time.** The two
 coexist by design so that adoption is incremental and the machine stays working
 at every step, instead of betting everything on a single big-bang rewrite:
 
-- `authority-init` runs as PID 1, but the capability plane is a loader knob
-  (`capability_plane="NO"`) — with it off, `authority-init` hands off to stock
+- `capsule` runs as PID 1, but the capability plane is a loader knob
+  (`capability_plane="NO"`) — with it off, `capsule` hands off to stock
   `init` and you get an ordinary FreeBSD system. The OS boots and runs either
   way.
 - `serviced` coexists with `rc(8)`; services move under capability management
   **progressively**, one subsystem at a time, not all at once.
 - Stock UNIX mechanisms are kept where they belong: `reboot`/`halt`/signals stay
-  standard (they signal `authority-init` as init), and the system-lifecycle
+  standard (they signal `capsule` as init), and the system-lifecycle
   control socket deliberately keeps `getpeereid(3)`.
 - Ambient uid checks are being replaced by held capabilities **in phases** —
   during the migration a capability path may still carry a uid fallback behind
@@ -77,7 +77,7 @@ that. Authority is created at one explicit **mint boundary** and flows by
 delegation:
 
 ```
- Authority Init (PID 1)  -- holds the root capability at boot
+ Capsule (PID 1)  -- holds the root capability at boot
         |  delegates
         v
  serviced -- launches services with fail-closed capability bundles
@@ -89,7 +89,7 @@ delegation:
  your session -- holds a scoped lookup channel; the shell inherits it
 ```
 
-- **[Authority Init](docs/book/src/system/authority-init.md)** (`authorityd`
+- **[Capsule](docs/book/src/system/capsule.md)** (`authorityd`
   running as PID 1) owns `/dev/mac_capability`, holds the root authority, and
   supervises `serviced`. `rc(8)` still runs beside it.
 - **[serviced](docs/book/src/system/serviced.md)** is the service manager.
@@ -228,7 +228,7 @@ sets, with a catalog) under `${OBJTOP}/repo/`. Installer media
   **[Packaging](docs/book/src/operations/packaging.md)**.
 
 MAC capability modules load automatically via `stand/defaults/loader.conf`;
-`authority-init` becomes PID 1 through the `init_path` loader knob.
+`capsule` becomes PID 1 through the `init_path` loader knob.
 
 ---
 
@@ -263,7 +263,7 @@ Userland capability daemons and libraries carry their own ATF suites
 ## Status
 
 The capability core (MACF, `mac_capability`, capprotect, coalition, HWT/PT), the
-authority plane (`authority-init`, `serviced`, the auth-agent, capability
+authority plane (`capsule`, `serviced`, the auth-agent, capability
 bundles, TrustedZFS), and the product stacks (WASPNest, Bluetooth, ObservableBSD)
 are committed and tested; the from-scratch build packages cleanly and boots. The
 capability-authority migration — moving every authority decision off ambient

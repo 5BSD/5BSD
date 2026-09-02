@@ -45,7 +45,7 @@
  * engine's control socket, serviced procdesc/channel, and restart
  * timers are serviced from PID 1 without threads.
  *
- * Compatibility contract (docs/authority-init-todo.md):
+ * Compatibility contract (docs/capsule-todo.md):
  *  - never daemonize, never exit: every stock init exit path becomes a
  *    logged emergency followed by deliberate reboot or recovery;
  *  - PID 1 is already the real-init reaper: verify, don't acquire;
@@ -100,7 +100,7 @@
 
 #include "authorityd.h"
 #include "authorityd_ctl.h"
-#include "authority_init.h"
+#include "capsule.h"
 #include "mac_capability_priv.h"
 #include "service_bootstrap.h"	/* SERVICE_LOOKUP_FIXED_FD (§21 getty carry) */
 
@@ -244,7 +244,7 @@ static DB *session_db;
  * The mother of all processes: PID 1 entry point.
  */
 void
-authority_init_main(int argc, char *argv[])
+capsule_main(int argc, char *argv[])
 {
 	state_t initial_transition = runcom;
 	char kenv_value[PATH_MAX];
@@ -255,12 +255,13 @@ authority_init_main(int argc, char *argv[])
 
 	init_path_argv0 = strdup(argv[0]);
 	if (init_path_argv0 == NULL)
-		init_path_argv0 = __DECONST(char *, "/sbin/authority-init");
+		init_path_argv0 = __DECONST(char *, "/sbin/capsule");
 
-	/* Present as "Authority" in ps/top -- the plane's spine, not base init. */
-	setproctitle("-Authority");
+	/* Present as "Capsule" in ps/top -- PID 1, the plane's spine, not base
+	 * init. */
+	setproctitle("-Capsule");
 
-	BOOTTRACE("authority-init starting...");
+	BOOTTRACE("capsule starting...");
 
 	/* LOG_CONS keeps early diagnostics on the console until syslogd
 	 * runs; there is no /var dependency for survival. */
@@ -300,7 +301,7 @@ authority_init_main(int argc, char *argv[])
 
 	/*
 	 * Plane-free boot escape hatch.  When the loader sets
-	 * capability_plane="NO" (or off/0), authority-init hands PID 1 to
+	 * capability_plane="NO" (or off/0), capsule hands PID 1 to
 	 * stock /sbin/init and the capability plane never starts.  This gives
 	 * a normal FreeBSD boot for recovery and, crucially, a run environment
 	 * for the mac_capability device tests: kyua must open
@@ -387,7 +388,7 @@ authority_init_main(int argc, char *argv[])
 	 * exec-loop.  Log and continue.
 	 */
 	if (kenv(KENV_GET, "init_exec", kenv_value, sizeof(kenv_value)) > 0)
-		warning("init_exec=%s ignored by authority-init", kenv_value);
+		warning("init_exec=%s ignored by capsule", kenv_value);
 
 	if (kenv(KENV_GET, "init_script", kenv_value, sizeof(kenv_value)) > 0) {
 		state_func_t next_transition;
@@ -1303,7 +1304,7 @@ oi_lifecycle_apply(int op)
  * state-machine loop exactly as a control-socket lifecycle request is.
  */
 int
-authority_init_lifecycle(int op)
+capsule_lifecycle(int op)
 {
 
 	if (getpid() != 1)
@@ -1844,7 +1845,7 @@ start_window_system(session_t *sp)
  * proceeds without an ambient channel.
  */
 int
-authority_init_set_ambient_lookup(int fd)
+capsule_set_ambient_lookup(int fd)
 {
 
 	int saved;
@@ -2064,7 +2065,7 @@ boottrace_transition(int sig)
  * Catch a legacy init(8) lifecycle signal and IGNORE it (docs/lifecycle-
  * capability-design.md, P4b).  The signal-driven lifecycle ABI is retired: a
  * transition is driven only through the capability plane (authorityctl(8) ->
- * serviced -> authority_init_lifecycle() -> oi_lifecycle_apply()) or, degraded,
+ * serviced -> capsule_lifecycle() -> oi_lifecycle_apply()) or, degraded,
  * reboot(2), the kernel escape.  These signals are caught here — rather than
  * left at SIG_DFL, which would terminate/stop PID 1 — so a userland
  * kill(1, SIG*) can never drive a transition.  This closes the ambient signal

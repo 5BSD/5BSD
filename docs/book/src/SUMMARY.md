@@ -47,7 +47,7 @@
 # System Services
 
 - [Capability Filesystem Hierarchy](system/capability-hier.md)
-- [Authority Init](system/authority-init.md)
+- [Capsule (PID 1)](system/capsule.md)
 - [serviced](system/serviced.md)
 - [BSDNotify](system/bsdnotify.md)
 - [rc Integration](system/rc-integration.md)

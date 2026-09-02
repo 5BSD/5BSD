@@ -36,7 +36,7 @@ principal may hold these capabilities."* We make that seam explicit and small:
 1. **The kernel (`mac_capability` device)** — the ultimate TCB. It creates
    unforgeable endpoints and enforces that they cannot be fabricated, only
    received. All capabilities descend from the primordial endpoint.
-2. **`authority-init` (PID 1)** — holds the root capability at boot and
+2. **`capsule` (PID 1)** — holds the root capability at boot and
    delegates the initial caps: serviced's registry cap, each launched service's
    grant set (from its manifest), and the *session-mint* cap.
 3. **The authentication boundary** — the single identity→capability translation.
@@ -141,7 +141,7 @@ the `.Control` convention are **retired** in favor of held control capabilities.
   broadly-granted capability (or a lesser right on the same endpoint).
 - **tzfsd control** — identical shape: a `tzfsd:admin` capability.
 - **lifecycle** — a `lifecycle` capability, held by admin bundles and served by
-  the **spine** (`authority-init`) so it survives serviced's death. `reboot`
+  the **spine** (`capsule`) so it survives serviced's death. `reboot`
   presents it; there is no `getpid()==1` authority check (the capability *is*
   the authority) and **no signal path** for authority. `reboot(2)` remains only
   as the kernel-level escape hatch, not an authorization mechanism.
@@ -240,7 +240,7 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
     admin flips testu to SYSTEM (it resolves system.Network, which USER denies).
   - **P1c — isolated agent (todo).** Move the policy read and the session-mint
     capability into a small capsicum-sandboxed auth-agent daemon that
-    `authority-init` delegates to; login/su ask it over a channel. The call
+    `capsule` delegates to; login/su ask it over a channel. The call
     sites do not change.
 - **P-rights (done, prerequisite for P2).** The grant now carries a rights word:
   serviced stamps `svc_new_client_msg.rights` at the broker (`SVC_RIGHTS_ALL`
@@ -269,7 +269,7 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   (2026-08-30): a root session (SYSTEM + ambient, holding ADMIN) publishes to an
   unpolicied topic (RC 0, bypass); a `nobody` session (USER domain, no ADMIN)
   resolves `system.Notify` but is denied that same publish (EACCES) — the held
-  right, not the uid, decides. Boot is clean (authority-init PID 1 + serviced +
+  right, not the uid, decides. Boot is clean (capsule PID 1 + serviced +
   ambient lookup channel all come up).
 - **P3 — control planes (serviced: done, VM-validated).** serviced and tzfsd
   control become presented `:admin` capabilities (rights on the grant); the
@@ -312,7 +312,7 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
 - **P4 — lifecycle + PID-1 minimization.**
 
   *Principle: serviced is the sole process manager.* Every long-lived daemon is
-  spawned and supervised by serviced. PID 1 (`authority-init`) supervises exactly
+  spawned and supervised by serviced. PID 1 (`capsule`) supervises exactly
   one child — serviced — and otherwise does only the irreducible init(8) duties
   (getty on the login ttys with the ambient-channel carry, single-user shell,
   reroot, `/etc/rc.shutdown`+`/etc/rc.final` ordering, the plane-free fallback to
@@ -410,9 +410,9 @@ and the trade-off accepted.
    coarse and caretakers cost a hop; together they cover real needs.
 
 4. **Auth agent — its own minimal, capsicum-sandboxed daemon, not
-   `authority-init`.** It parses untrusted input (login credentials) and the
+   `capsule`.** It parses untrusted input (login credentials) and the
    policy, which must never live in PID 1 — a credential-parsing bug must not
-   wedge the spine. `authority-init` holds the root cap and *delegates* only the
+   wedge the spine. `capsule` holds the root cap and *delegates* only the
    session-mint cap to the auth agent. Login runs while the system is up, so the
    agent may be serviced/spine-launched (unlike lifecycle, it needs no
    serviced-death survival). Precedent: KeyKOS/EROS keep the account manager out

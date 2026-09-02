@@ -150,7 +150,7 @@ that matched state, and aggregates every case in an isolated work directory.
 
 a service self-mints storage at runtime by opening `system.Filesystem`, which
 `tzfsd` scopes to the consumer's unforgeable channel label (see
-[tzfsd](tzfsd.md)); authority-init uses snapshot/rollback
+[tzfsd](tzfsd.md)); capsule uses snapshot/rollback
 handles plus a `bootfs`-only pool handle for boot-environment management;
 WASPNest VMs get zvol checkpoint handles, golden-image `CLONE_SRC`
 handles, and send-only migration handles; jails get subtree handles that

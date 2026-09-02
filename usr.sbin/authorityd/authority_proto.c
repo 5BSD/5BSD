@@ -37,7 +37,7 @@
 #include <unistd.h>
 
 #include "authorityd.h"
-#include "authority_init.h"
+#include "capsule.h"
 #include "authorityd_svc_proto.h"
 #include "authorityd_ctl.h"		/* struct ctl_reply for cmd_reload() */
 #include "serviced_ctl.h"		/* SERVICED_CTL_SUMMARY_MAX */
@@ -306,7 +306,7 @@ handle_ping(uint64_t reply_token)
 
 /*
  * AUTHORITY_OP_SET_AMBIENT_LOOKUP (§21): serviced forwarded a dup of its SYSTEM
- * ambient lookup channel client end so authority-init can carry it into
+ * ambient lookup channel client end so capsule can carry it into
  * interactive logins.  Takes ownership of fd (installs or closes it).
  *
  * Best-effort: a malformed request or a failed install is reported in the
@@ -315,7 +315,7 @@ handle_ping(uint64_t reply_token)
 /*
  * Apply a system lifecycle transition serviced relayed from its ADMIN-gated
  * system.lifecycle capability (docs/lifecycle-capability-design.md, P4b).  The
- * ack is queued before the transition runs — authority_init_lifecycle() only
+ * ack is queued before the transition runs — capsule_lifecycle() only
  * *sets* the requested transition, which the state-machine loop applies after
  * this dispatch returns, so the caller's reply precedes the death sweep (same
  * ordering as the legacy control-socket path).
@@ -331,7 +331,7 @@ handle_lifecycle(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 	req = payload;
-	error = authority_init_lifecycle((int)req->lifecycle_op);
+	error = capsule_lifecycle((int)req->lifecycle_op);
 	if (error == 0)
 		syslog(LOG_NOTICE,
 		    "authority_proto: capability lifecycle op %u accepted",
@@ -372,7 +372,7 @@ handle_set_ambient_lookup(uint32_t len, int fd, uint64_t reply_token)
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
-	if (authority_init_set_ambient_lookup(fd) == -1) {
+	if (capsule_set_ambient_lookup(fd) == -1) {
 		/* set_ambient_lookup already closed fd on failure. */
 		syslog(LOG_NOTICE,
 		    "authority_proto: ambient lookup install failed: %m");

@@ -238,7 +238,7 @@ ordinary daemon mode with scattered PID checks.
 
 ### Suggested source structure
 
-- [ ] Add a PID 1 module, for example `authority_init.c` and `authority_init.h`.
+- [ ] Add a PID 1 module, for example `capsule.c` and `capsule.h`.
 - [ ] Keep early console and recovery code independent of UCL and service
       manifests.
 - [ ] Make the ordinary Authority authority engine callable from the PID 1 state
@@ -660,11 +660,11 @@ The tree provides three useful mechanisms:
 - `init_path`: the kernel searches a colon-separated list of PID 1 binaries.
 
 - [ ] Use `init_rc` for the first integration stage.
-- [ ] Use `init_exec=/sbin/authority-init` only after recovery and shutdown work.
+- [ ] Use `init_exec=/sbin/capsule` only after recovery and shutdown work.
 - [ ] Test direct kernel launch with an ordered fallback path such as:
 
   ```text
-  /sbin/authority-init:/sbin/init:/sbin/init.bak:/rescue/init
+  /sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init
   ```
 
 - [ ] Preserve loader-console instructions for selecting stock init.

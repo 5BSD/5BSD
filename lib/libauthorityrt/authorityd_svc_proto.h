@@ -44,7 +44,7 @@
 /* Opcode 9 (MINT_JAIL) is retired: warden(8) owns jail self-service. */
 #define	AUTHORITY_OP_MINT_VSOCK		19	/* mint VSOCK isolation token */
 /* 24, 25 retired: storage moved to serviced<->tzfsd direct (was MINT/DESTROY_STORAGE) */
-#define	AUTHORITY_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in authority-init */
+#define	AUTHORITY_OP_SET_AMBIENT_LOOKUP	26	/* install ambient lookup fd in capsule */
 #define	AUTHORITY_OP_LIFECYCLE		27	/* apply a system lifecycle transition (P4b) */
 #define	AUTHORITY_OP_RELOAD		28	/* reload authority config claims (P4b) */
 
@@ -267,10 +267,10 @@ struct authority_system_req {
  *   reply: authority_reply { .status }
  *
  * serviced sends a dup of its retained SYSTEM ambient lookup channel client end
- * so authority-init (PID 1) can carry it into interactive logins.  authority-init is
+ * so capsule (PID 1) can carry it into interactive logins.  capsule is
  * the parent of the getty/login sessions spawned from /etc/ttys; those are
  * siblings of /etc/rc and never inherit serviced's SERVICE_LOOKUP_FD
- * environment.  authority-init stores the fd, makes it fork/exec-durable, and
+ * environment.  capsule stores the fd, makes it fork/exec-durable, and
  * dup2()s it to SERVICE_LOOKUP_FIXED_FD just before exec'ing each getty so
  * login inherits the discovery channel at the fixed number.
  *

@@ -40,7 +40,7 @@
 
 /*
  * System lifecycle operations.  Valid only when authorityd is PID 1
- * (authority-init); an ordinary daemon rejects them with EPERM.  These
+ * (capsule); an ordinary daemon rejects them with EPERM.  These
  * replace init(8)'s traditional signal ABI (see
  * docs/authority-control-abi-design.md).  All require root.  Opcodes 7-9
  * remain reserved (removed check/load/services); do not reuse them.

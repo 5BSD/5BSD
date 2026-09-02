@@ -16,13 +16,13 @@ first; the rest of the Epic is their consequences.
 - **A hybrid by design — the secure realm sits beside UNIX.** The
   capability-authority plane runs *alongside* the traditional BSD system, not as
   a replacement, so adoption is incremental and the machine stays working at
-  every step. `authority-init` can hand off to stock `init`
+  every step. `capsule` can hand off to stock `init`
   (`capability_plane="NO"`), `serviced` coexists with `rc(8)`, and
   `reboot`/`halt`/signals stay standard. FreeBSD 16 is the last base adopted
   wholesale; the secure realm subsumes the old model over time rather than on a
   flag day.
 - **One mint boundary.** Authority is created in one explicit place —
-  `authority-init` at boot, and the [auth-agent](security/session-mint.md) for
+  `capsule` at boot, and the [auth-agent](security/session-mint.md) for
   login sessions — and flows everywhere else by delegation. `login`/`su`/`sshd`
   do not classify principals or mint; they *ask*.
 - **Domains scope reach.** Every lookup channel carries a domain — **SYSTEM**
@@ -172,7 +172,7 @@ product stacks, each covered in its own section:
 
 | Stack | Components | Section |
 |-------|-----------|---------|
-| Init & services | `authorityd` (PID 1 capable), `serviced`, `authorityctl` | [System Services](system/authority-init.md) |
+| Init & services | `authorityd` (PID 1 capable), `serviced`, `authorityctl` | [System Services](system/capsule.md) |
 | Virtualization | WASPNest (bhyve), VirtIO models, vsock, migration | [Virtualization](virtualization/overview.md) |
 | Bluetooth | `blued`, `meshd`, `bluedctl`/`meshctl` | [Bluetooth](bluetooth/overview.md) |
 | Storage | TrustedZFS, `tzfsd`, `tzfsctl` | [Storage](storage/trustedzfs.md) |

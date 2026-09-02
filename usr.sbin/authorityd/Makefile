@@ -6,35 +6,36 @@ MAN= authorityd.8
 SRCS= authorityd.c bootstrap.c mac_capability_setup.c mac_capability_claims.c mac_capability_reload.c \
 	mac_capability_status.c mac_capability_mint.c \
 	mac_capability_coal.c commands.c config.c control.c event.c \
-	authority_init.c authority_proto.c authority_proto_claims.c proc.c
+	capsule.c authority_proto.c authority_proto_claims.c proc.c
 CONFS= authorityd.conf
 
-# Authority is also the system's PID 1 implementation.  Keep the boot copy
-# outside /usr: a fresh installation may have /usr on a separate filesystem
-# that has not been mounted when the kernel starts init.  This is a second
-# installed copy, rather than a hard link, so installation works when / and
-# /usr are distinct filesystems.
-AUTHORITY_INIT= authority-init
-AUTHORITY_INITDIR= /sbin
-AUTHORITY_INITOWN= ${BINOWN}
-AUTHORITY_INITGRP= ${BINGRP}
-AUTHORITY_INITMODE= ${BINMODE}
-AUTHORITY_INITPACKAGE= authorityd
+# authorityd is also the system's PID 1 implementation: run as PID 1 it takes on
+# the Capsule personality (capsule.c).  The boot copy is installed as
+# /sbin/capsule.  Keep it outside /usr: a fresh installation may have /usr on a
+# separate filesystem that has not been mounted when the kernel starts init.
+# This is a second installed copy, rather than a hard link, so installation works
+# when / and /usr are distinct filesystems.
+CAPSULE= capsule
+CAPSULEDIR= /sbin
+CAPSULEOWN= ${BINOWN}
+CAPSULEGRP= ${BINGRP}
+CAPSULEMODE= ${BINMODE}
+CAPSULEPACKAGE= authorityd
 
 # Lua loader reads this directory after loader.conf.  bsdinstall and VM image
 # generation also write the setting directly for loader implementations that
 # do not support loader.conf.d.
-AUTHORITY_INIT_LOADER= authority-init.conf
-AUTHORITY_INIT_LOADERDIR= /boot/loader.conf.d
-AUTHORITY_INIT_LOADEROWN= ${BINOWN}
-AUTHORITY_INIT_LOADERGRP= ${BINGRP}
-AUTHORITY_INIT_LOADERMODE= 444
-AUTHORITY_INIT_LOADERPACKAGE= authorityd
-FILESGROUPS+= AUTHORITY_INIT AUTHORITY_INIT_LOADER
+CAPSULE_LOADER= capsule.conf
+CAPSULE_LOADERDIR= /boot/loader.conf.d
+CAPSULE_LOADEROWN= ${BINOWN}
+CAPSULE_LOADERGRP= ${BINGRP}
+CAPSULE_LOADERMODE= 444
+CAPSULE_LOADERPACKAGE= authorityd
+FILESGROUPS+= CAPSULE CAPSULE_LOADER
 
-authority-init: ${PROG}
+capsule: ${PROG}
 	${CP} ${.ALLSRC} ${.TARGET}
-CLEANFILES+= authority-init
+CLEANFILES+= capsule
 
 FILESGROUPS+= examples
 examples= examples/desktop.conf \

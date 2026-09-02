@@ -45,7 +45,7 @@ Beyond the security core, 5BSD ships:
 - **TrustedZFS** — a capability-fd API over ZFS with a storage broker daemon
   ([Storage](storage/trustedzfs.md)).
 - **Authority / serviced** — a capability-brokered init and service-management
-  stack that coexists with `rc(8)` ([System Services](system/authority-init.md)).
+  stack that coexists with `rc(8)` ([System Services](system/capsule.md)).
 - **ObservableBSD** — OpenTelemetry export, instruments, and hardware
   telemetry in base ([Observability](observability/observablebsd.md)).
 

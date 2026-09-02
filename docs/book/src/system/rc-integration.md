@@ -10,10 +10,10 @@ time; a mixed system is a designed, stable operating mode. References:
 ## Boot ordering
 
 Under stock FreeBSD, `init(8)` runs `/etc/rc`. Under 5BSD, PID 1
-(authority-init) does not run rc at all — serviced owns rc startup:
+(capsule) does not run rc at all — serviced owns rc startup:
 
 ```text
-kernel → authority-init (PID 1)
+kernel → capsule (PID 1)
   ├─ single-user if requested; console recovery always available
   ├─ establish_authority: mac_capability, control socket,
   │  pdfork serviced
@@ -30,7 +30,7 @@ serviced
   4. send AUTHORITY_OP_READY to PID 1
         │
         ▼
-authority-init: read /etc/ttys → getty/login (multi-user)
+capsule: read /etc/ttys → getty/login (multi-user)
 ```
 
 Two properties matter to operators. First, rc semantics are preserved exactly:
@@ -103,7 +103,7 @@ the full pattern, including fail-closed stop).
 - `init 0/1/6` (SysV telinit) is unsupported under Authority PID 1; use
   `shutdown(8)`, `reboot(8)`, `halt(8)`.
 - Rollback: stock `/sbin/init` stays installed and selectable. The shipped
-  `init_path` (`/boot/loader.conf.d/authority-init.conf`) falls back through
+  `init_path` (`/boot/loader.conf.d/capsule.conf`) falls back through
   `/sbin/init:/sbin/init.bak:/rescue/init`; from the loader prompt, set
   `init_path="/sbin/init"` to boot entirely on stock init and rc.
 - Boot diagnostics: serviced logs with `LOG_CONS` before syslogd is up, and

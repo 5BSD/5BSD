@@ -121,7 +121,7 @@ breakage-hunt findings.
 
 **Modified-software inventory (the takeover surface).** Injecting the channel
 required patching a specific set of base/third-party programs — PID 1 plus every
-login/session/batch entry point (`authority-init`, `login`, `su`, `sshd`/OpenSSH,
+login/session/batch entry point (`capsule`, `login`, `su`, `sshd`/OpenSSH,
 `cron`, `atrun`; `getty` inherits only). This set is exactly what a downstream
 merge or FreeBSD rebase must carry forward, or the plane silently stops reaching
 sessions. The per-program table (files touched, what each injects, why it's core)

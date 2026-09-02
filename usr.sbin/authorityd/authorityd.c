@@ -35,7 +35,7 @@
 #include <unistd.h>
 
 #include "authorityd.h"
-#include "authority_init.h"
+#include "capsule.h"
 #include "probes.h"
 
 struct authorityd_state od;
@@ -65,7 +65,7 @@ main(int argc, char *argv[])
 	 * daemonize, pidfile, exit on error — must never run.
 	 */
 	if (getpid() == 1)
-		authority_init_main(argc, argv);
+		capsule_main(argc, argv);
 
 	bootstrap_override = NULL;
 	conffile = AUTHORITYD_DEFAULT_CONFFILE;

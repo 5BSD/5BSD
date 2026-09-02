@@ -59,7 +59,7 @@ silently stops reaching sessions. Every patch is **strictly non-fatal** (invaria
 
 | Program | Files | What the patch injects | Why it's core to takeover |
 |---|---|---|---|
-| **authority-init (PID 1)** | `usr.sbin/authorityd/authority_init.c`, `authority_proto.c`, `authority_init.h`, `Makefile` | Receives the ambient channel from serviced (`AUTHORITY_OP_SET_AMBIENT_LOOKUP`); spawns the console getty with the channel on fixed fd 3. | Root of the carry chain — every init-spawned login inherits the channel from here. Nothing downstream has a channel without it. |
+| **capsule (PID 1)** | `usr.sbin/authorityd/capsule.c`, `authority_proto.c`, `capsule.h`, `Makefile` | Receives the ambient channel from serviced (`AUTHORITY_OP_SET_AMBIENT_LOOKUP`); spawns the console getty with the channel on fixed fd 3. | Root of the carry chain — every init-spawned login inherits the channel from here. Nothing downstream has a channel without it. |
 | **login** | `usr.bin/login/login.c`, `Makefile` | Carries the inherited channel into the user shell; fd-hygiene (closefrom / unset on the uid transition). | The console→user handoff; establishes the interactive session's authority. |
 | **su** | `usr.bin/su/su.c`, `Makefile` | Mints a per-target-uid–narrowed channel; fd-hygiene on the uid transition. | Identity change must re-scope authority (root→user narrows; the SYSTEM channel must not leak down). |
 | **sshd (OpenSSH)** | `crypto/openssh/{monitor.c,monitor.h,monitor_wrap.c,monitor_wrap.h,session.c}`, `secure/libexec/sshd-{session,auth}/Makefile` | The privileged monitor provisions a session channel for the **authenticated** uid and fd-passes it to the already-dropped child (`MONITOR_REQ_PROVISION`, pty pattern). | Remote login is the other entry point; privsep means only the root monitor may safely mint for the target uid. |
@@ -85,7 +85,7 @@ programs now link the plane.
 | `88ada82e30f` | **Phase 3**: replace NetworkCmp inline socket proxying with a connection broker (v1 hello/resolve/connect/udp); session-derived immutable policy. |
 | `2ec63489b6e` | **Phases 5 & 6**: timer + path activation sources (`activation.c`); user domains (`domain.c`, §22); the §21 ambient-carry scaffolding. |
 | `8cf313844b6` | **Phase 4**: manager-owned listeners / socket activation — serviced binds+holds listeners, connection = demand, delivered by logical name via the bootstrap `capabilities[]` array (`type="socket"`); backlog survives restart. **Touches the launch path for every service** (execute.c). |
-| `b56ab8808af` | **§21** ambient channel reaches interactive logins: fixed-fd carry across authority-init→getty→login; `AUTHORITY_OP_SET_AMBIENT_LOOKUP`; fixed a real bug — `SVC_OP_MINT_DOMAIN` was only served on unit control channels, now on the ambient channel too. |
+| `b56ab8808af` | **§21** ambient channel reaches interactive logins: fixed-fd carry across capsule→getty→login; `AUTHORITY_OP_SET_AMBIENT_LOOKUP`; fixed a real bug — `SVC_OP_MINT_DOMAIN` was only served on unit control channels, now on the ambient channel too. |
 | `5e03d10b112` | **Management class** `core|system|user` — manifest field + serviced enforcement (`management.c`); core unstoppable. |
 | `51957a0d918` | **Hardening**: D1 identity handshake (`SVC_OP_AMBIENT_HELLO`) so the fixed-fd probe rejects a non-lookup channel at fd 3; cron/atrun/su **fd-hygiene** (closefrom + unset on uid transition, so the SYSTEM channel can't leak into a user context). |
 | `3015486f3f5` | **uid-aware mint**: root/wheel sessions get a SYSTEM (admin) channel, others USER; escalation guard (`svc_mint_domain_kind`) — a USER channel can never obtain SYSTEM. Fixes su-from-root. |
@@ -137,7 +137,7 @@ the ambient probe, and bounds/validation gaps in the wire protocols
 
 ## 6. Validation status — READ THIS
 
-- **Clean-VM validated**: every code commit was booted in an authority-init VM image
+- **Clean-VM validated**: every code commit was booted in an capsule VM image
   (`build-image-authority.sh` from an `installworld` tree) — plane 8/8, console+ssh
   login, cron adoption, escalation/non-root scope checks. Details in the model doc.
 - **Unit tests**: extensive (management, activation, domain/escalation, rc_adopt,
@@ -147,7 +147,7 @@ the ambient probe, and bounds/validation gaps in the wire protocols
 - **Packaging correctness — AUDITED (pass), 2026-08-28.** The built `5BSD-*`
   packages were inspected directly (`pkg info -F`, no repo/root needed):
   - `5BSD-authorityd` ships the boot integration a fresh install needs —
-    `/boot/loader.conf.d/authority-init.conf` (the `init_path` snippet), `/sbin/authority-init`,
+    `/boot/loader.conf.d/capsule.conf` (the `init_path` snippet), `/sbin/capsule`,
     `/usr/sbin/authorityd`, the de-isolated `/etc/authorityd.conf` — deps `serviced` +
     `libcapability` + `libauthorityrt`.
   - The injection surface is packaged correctly: patched `5BSD-ssh` declares
@@ -164,7 +164,7 @@ the ambient probe, and bounds/validation gaps in the wire protocols
   5BSD-kernel-vbsd 5BSD-ssh` run **inside a native VM** — the session jail can't run
   `pkg repo`, see [[pkg-in-jail-limits]]), configured with a **real root password,
   a normal user, no autologin/SSH_TEST hacks**, then booted standalone:
-  - `authority-init` is PID 1 (from the package); serviced came up; **6/7 system
+  - `capsule` is PID 1 (from the package); serviced came up; **6/7 system
     components running** (bsdnotify, auditbrokerd, localfilesystem, localcrypto,
     localnetwork, traced); ambient lookup channel installed for logins.
   - **Real console login** (password auth) works; the session gets
@@ -178,7 +178,7 @@ the ambient probe, and bounds/validation gaps in the wire protocols
     are loaded on every bootable install by `/boot/defaults/loader.conf` (the
     `bootloader` package); a pkgbase install brings up the plane with no extra
     snippet. The earlier conclusion came from inspecting only the packaged
-    `authority-init.conf` and missing the bootloader defaults. (2) `logd` fails
+    `capsule.conf` and missing the bootloader defaults. (2) `logd` fails
     (`cannot load managed configuration`) — stays stopped; likely chains from
     `tzfsd` needing a ZFS `zroot` that a UFS install lacks. (3) `cron` (rc-adopted)
     shows stopped in the plane on a fresh UFS boot. Findings (2)/(3) filed.
@@ -260,7 +260,7 @@ invariants: (a) auth/provisioning — `crypto/openssh/{monitor.c,monitor_wrap.c,
 session.c}`, `serviced/sctl.c`, `libservice/service_client.c`, `serviced/domain.c`;
 (b) domain/mint/D1 — `serviced/domain.c`, `serviced/svc_proto.c`,
 `libservice/service_ambient.c`; (c) fd-hygiene — `cron/do_command.c`,
-`atrun/atrun.c`, `su.c`, `login.c`, `authority_init.c`, `serviced/startup.c`;
+`atrun/atrun.c`, `su.c`, `login.c`, `capsule.c`, `serviced/startup.c`;
 (d) launch/rc/mgmt — `serviced/{execute.c,activation.c,serviced.c,rc_adopt.c,
 supervisor.c,management.c,reload.c}`, `libservice/libservice.c`. Prefer
 adversarial verification (construct a concrete trigger) over pattern-matching.

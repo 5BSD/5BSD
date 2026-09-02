@@ -8,7 +8,7 @@ lifecycle capability token" TODO in
 > The end state is not a separate CONTROL *domain* / `.Control` name reached by
 > a domain-scoped channel, but a **`lifecycle` capability** — an endpoint with
 > lifecycle rights, held by an admin principal's bundle and served by the spine
-> (`authority-init`) so it survives serviced's death. `reboot` presents the
+> (`capsule`) so it survives serviced's death. `reboot` presents the
 > capability; there is no `getpid()==1` authority check and no signal-authority
 > path (`reboot(2)` remains only as the kernel escape). The socket-inventory and
 > serviced-death constraints below are still correct; the *replacement
@@ -92,7 +92,7 @@ fine — those tools only run while the system is up.
 
 `authorityd`'s **lifecycle** control is the one name that must resolve **after
 serviced is gone** (shutdown tears serviced down). So the CONTROL domain is
-served by the **spine**: `authority-init` owns the CONTROL-domain registry for
+served by the **spine**: `capsule` owns the CONTROL-domain registry for
 lifecycle (`lifecycle.Control`) and serves it from its own event loop, and the
 CONTROL-domain lookup channel an admin session holds is spine-minted — so
 `reboot(8)` resolves `lifecycle.Control` with zero serviced dependency. Live-
@@ -109,7 +109,7 @@ socket and not a serviced-registered service, and it is the property any
 replacement must preserve:
 
 > The reboot capability must be reachable from a privileged session using only
-> state owned by the spine (authority-init), never by serviced.
+> state owned by the spine (capsule), never by serviced.
 
 This rules out "just expose `system.Lifecycle` as a normal capability service"
 — that goes through serviced naming, which is gone at shutdown.
@@ -149,7 +149,7 @@ no `getpeereid`, no uid check, no path. Optionally backstopped by a
 - **Live-system control** (`service.Control`, `storage.Control`): registered by
   `serviced`/`tzfsd` and brokered by serviced's naming, like any service. Fine
   — those tools only run while up.
-- **Lifecycle** (`lifecycle.Control`): served by the **spine**. `authority-init`
+- **Lifecycle** (`lifecycle.Control`): served by the **spine**. `capsule`
   keeps a tiny CONTROL registry for its own lifecycle name and answers lookups
   on the spine-minted CONTROL channel from its own event loop, so `reboot(8)`
   resolves it with zero serviced dependency and it survives shutdown.
@@ -161,7 +161,7 @@ lifecycle), zero sockets.
 
 1. Add `SVC_DOMAIN_CONTROL` + the provider/manifest way to register a name in
    it; mint+deliver the CONTROL lookup channel to admin sessions; have
-   `authority-init` serve `lifecycle.Control`.
+   `capsule` serve `lifecycle.Control`.
 2. Teach `reboot(8)`/`halt`/`shutdown`/`authorityctl`/`servicectl`/`tzfsctl` to
    prefer the CONTROL channel, falling back to the existing `getpeereid` socket,
    then (lifecycle only) the signal ABI. Non-fatal on each miss, as today.
@@ -174,7 +174,7 @@ lifecycle), zero sockets.
   rules, CONTROL-channel minting.
 - `lib/libservice`, `lib/libcapbundle`: provider/manifest way to declare a
   provides name's domain as CONTROL.
-- `usr.sbin/authorityd/{control.c,authority_init.c}`: serve `lifecycle.Control`
+- `usr.sbin/authorityd/{control.c,capsule.c}`: serve `lifecycle.Control`
   on a spine-minted CONTROL channel; retire the socket.
 - `usr.bin/login`, `usr.bin/su`, `crypto/openssh/monitor*`: carry the CONTROL
   lookup channel to admin sessions (parallel to the §21 lookup fd).

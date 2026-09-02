@@ -381,7 +381,7 @@ authority_reload(int channel_fd)
 }
 
 /*
- * Forward the ambient lookup channel client end to authority-init (§21) so it can
+ * Forward the ambient lookup channel client end to capsule (§21) so it can
  * carry the channel into interactive logins spawned from /etc/ttys.  lookup_fd
  * is duped across as an attached descriptor; the caller retains its own copy.
  *

@@ -51,7 +51,7 @@ Primary references:
 
 ## 2. Responsibility boundaries
 
-### authority-init / authorityd
+### capsule / authorityd
 
 PID 1 owns only authority and recovery mechanisms that must survive a service
 manager failure:
@@ -776,7 +776,7 @@ When a user reaches a terminal, the session-establishing program — `getty`/
 `login`, `sshd`, or `su` — carries the lookup channel into the session leader,
 and **that session and every descendant it forks or execs holds it**.  Any
 program in the session can then look up and connect to services without opening
-`/var/run/…`.  The chain of custody is authority-init (PID 1) → serviced → the
+`/var/run/…`.  The chain of custody is capsule (PID 1) → serviced → the
 login path → the user's shell → its children.
 
 ### 21.2 Discovery is not authority

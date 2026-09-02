@@ -520,7 +520,7 @@ main(int argc, char *argv[])
 		reboot_request(howto);
 
 	/*
-	 * Stop init from respawning gettys during teardown.  authority-init is
+	 * Stop init from respawning gettys during teardown.  capsule is
 	 * signal-shielded, so quiesce it through the capability plane
 	 * (authorityctl catatonia).  Best-effort: the reboot(2) below still
 	 * completes if init cannot be quiesced (e.g. the plane is down), so this

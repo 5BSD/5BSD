@@ -8,7 +8,7 @@
 #
 # These are kernel-integration tests: each opens /dev/mac_capability and
 # drives the module directly.  They must run PLANE-FREE -- on a normal
-# capability-plane boot, authority-init is PID 1 and serviced owns the
+# capability-plane boot, capsule is PID 1 and serviced owns the
 # control device, so the runner cannot claim it (and capability-mode would
 # confine the test process).  Boot the test host with the plane disabled so
 # stock /sbin/init runs instead:
@@ -50,13 +50,13 @@ done
 # Check root
 [ "$(id -u)" -eq 0 ] || die "must be root"
 
-# Refuse to run on a live capability plane: authority-init as PID 1 means
-# serviced owns /dev/mac_capability and the runner cannot claim it.  Direct
-# the operator to boot plane-free instead of failing later with an opaque
-# EBUSY/EPERM on the control device.
+# Refuse to run on a live capability plane: capsule (authorityd's PID 1
+# personality) as PID 1 means serviced owns /dev/mac_capability and the runner
+# cannot claim it.  Direct the operator to boot plane-free instead of failing
+# later with an opaque EBUSY/EPERM on the control device.
 _pid1_comm=$(ps -p 1 -o comm= 2>/dev/null || true)
 case "$_pid1_comm" in
-*[Aa]uthority*|*authority-init*)
+*[Cc]apsule*|*[Aa]uthority*)
 	echo ""
 	echo "A live capability plane is running (PID 1 = ${_pid1_comm})."
 	echo "These tests need a plane-free boot.  Reboot with the plane"

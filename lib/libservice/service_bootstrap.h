@@ -30,12 +30,12 @@
  * a login shell launched directly (they inherit and re-advertise it per
  * session).
  *
- * The getty path is the one hop the environment cannot cross.  authority-init
+ * The getty path is the one hop the environment cannot cross.  capsule
  * (PID 1) spawns getty from /etc/ttys with a hand-built minimal environment
- * ({TERM,NULL}), so SERVICE_LOOKUP_ENV does not survive authority-init -> getty ->
+ * ({TERM,NULL}), so SERVICE_LOOKUP_ENV does not survive capsule -> getty ->
  * login.  For that single hop the ambient channel is instead carried as a bare
  * inherited descriptor pinned to a fixed number, SERVICE_LOOKUP_FIXED_FD:
- * authority-init dup2()s the channel there (clearing FD_CLOEXEC) just before
+ * capsule dup2()s the channel there (clearing FD_CLOEXEC) just before
  * exec'ing getty, getty's login_tty(3) closes only its controlling tty, and so
  * login inherits an open channel at the fixed number.  The discovery helper
  * validates the fixed fd with MAC_CAPABILITY_GETINFO exactly as it validates

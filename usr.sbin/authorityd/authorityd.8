@@ -29,16 +29,17 @@ which reads capability bundles and supervises individual services.
 is installed both as
 .Pa /usr/sbin/authorityd
 and as
-.Pa /sbin/authority-init .
-The latter is the system PID 1 program: the installed loader configuration
-places it first in
+.Pa /sbin/capsule .
+The latter is the system PID 1 program, its
+.Em Capsule
+personality: the installed loader configuration places it first in
 .Va init_path ,
 with the stock
 .Pa /sbin/init
 and rescue init programs as execution fallbacks.
 When invoked as PID 1,
 .Nm
-does not daemonize; it runs the Authority init state machine, starts
+does not daemonize; it runs the Capsule init state machine, starts
 .Xr serviced 8
 as its first managed child, and remains the system lifecycle authority.
 .Pp

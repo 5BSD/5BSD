@@ -26,14 +26,14 @@
 
 SOCK=/var/run/authorityd.sock
 
-# Skip when the live daemon is PID 1 (authority-init): sending an accepted
+# Skip when the live daemon is PID 1 (capsule): sending an accepted
 # lifecycle op there would reboot the test machine.
 require_daemon_not_pid1()
 {
 	if [ ! -S "$SOCK" ]; then
 		atf_skip "authorityd control socket not present"
 	fi
-	if [ "$(ps -o comm= -p 1 2>/dev/null)" = "authority-init" ]; then
+	if [ "$(ps -o comm= -p 1 2>/dev/null)" = "capsule" ]; then
 		atf_skip "authorityd is PID 1; lifecycle ops would reboot the host"
 	fi
 }
@@ -175,7 +175,7 @@ lifecycle_rejects_payload_body()
 		atf_skip "authorityd control socket not present"
 	fi
 	# datalen != 0 is rejected in control.c before cmd_lifecycle() runs,
-	# so this is safe even against a PID 1 authority-init.  EINVAL = 22 (16).
+	# so this is safe even against a PID 1 capsule.  EINVAL = 22 (16).
 	reply=$(send_op 4 4)
 	[ "$reply" = "16" ] ||
 	    atf_fail "expected EINVAL (16) for payload, got status $reply"
@@ -210,10 +210,10 @@ reboot_path_healthy_on_pid1_body()
 {
 	local status
 
-	# Only meaningful when authority-init is PID 1 (a live plane); off PID 1
+	# Only meaningful when capsule is PID 1 (a live plane); off PID 1
 	# the reboot path is validated by the *_denied_off_pid1 cases above.
-	if [ "$(ps -o comm= -p 1 2>/dev/null)" != "authority-init" ]; then
-		atf_skip "authority-init is not PID 1; nothing to guard here"
+	if [ "$(ps -o comm= -p 1 2>/dev/null)" != "capsule" ]; then
+		atf_skip "capsule is not PID 1; nothing to guard here"
 	fi
 
 	# 1. reboot(8)/halt(8)/shutdown(8) connect to $SOCK and fall back to the

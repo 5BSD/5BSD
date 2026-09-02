@@ -9,7 +9,7 @@ single-user) in the object-capability model, before any boot-critical code moves
 ## 0. Decision (2026-08-30): capability *beside* BSD
 
 The guiding principle is that the capability world sits **next to** the BSD
-world, not carved through it. `authority_init` (PID 1) is already the bridge — it
+world, not carved through it. `capsule` (PID 1) is already the bridge — it
 is BSD `init(8)` (signals, getty, rc, `reboot(2)`) *and* the capability spine.
 BSD tools reach it the BSD way; capability tools reach it the capability way,
 because it is both. So for lifecycle:
@@ -177,7 +177,7 @@ deferred without reworking anything else.
                                        (ADMIN-gated, P3 self-serve pattern)
                                        relays AUTHORITY_OP_LIFECYCLE ──► authorityd
                                                                             │
-                                                          authority_init_lifecycle(op)
+                                                          capsule_lifecycle(op)
                                                                             ▼
                                                           oi_lifecycle_apply(op)
                                                           → death transition → reboot(2)
@@ -192,7 +192,7 @@ Components:
   relays the op to authorityd via a new `authority_lifecycle(op)` wrapper in
   `authority_client.c` (`AUTHORITY_OP_LIFECYCLE`).
 - **authorityd** — `authority_proto.c` gains one `case AUTHORITY_OP_LIFECYCLE`
-  that reads the op and calls a new public `authority_init_lifecycle(int op)`,
+  that reads the op and calls a new public `capsule_lifecycle(int op)`,
   which is a thin wrapper over the existing static `oi_lifecycle_apply`. No state
   machine changes: this is the same call the control-socket path makes at
   `oi_dispatch`.

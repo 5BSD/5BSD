@@ -149,7 +149,7 @@ and the only thing the coupling would express — handles die with the pool
 Pool rights are the thin sliver the use cases actually demanded:
 `ZPD_STAT` (health, capacity, scan progress, error counts), props
 read/write with per-prop allowlist (sole motivating writer: `bootfs`, for
-boot-environment activation by authority-init), `ZPD_SCRUB` behind its own
+boot-environment activation by capsule), `ZPD_SCRUB` behind its own
 right, `ZPD_ROOT_OPEN`, and kqueue events (`STATE_CHANGED`,
 `SCRUB_FINISHED`, `RESILVER_FINISHED`, `VDEV_FAULTED`, `INVALIDATED`).
 Explicitly **not** delegable: import/export, vdev topology changes,
@@ -358,7 +358,7 @@ First consumers, which double as the proof the primitive earns its keep:
    PROPS_WRITE|SNAPSHOT`), materializes the child, derives the service's
    handle (typically `MOUNT|SNAPSHOT|PROPS_READ`) and passes it over the
    control socket. serviced itself never holds `SEND`/`RECV`.
-2. **authority-init boot-environment rollback** — `SNAPSHOT|SNAP_DESTROY|
+2. **capsule boot-environment rollback** — `SNAPSHOT|SNAP_DESTROY|
    ROLLBACK` on the BE dataset (stamp last-known-good on successful
    converge; roll back after N failed boots) plus a `bootfs`-only pool
    handle for BE switching.
@@ -409,7 +409,7 @@ serviced manifest and mint machinery, the design is:
 
 **Naming.** Every system daemon carries a distinguishable bracket tag so
 `ps`/`procstat`/capability inspectors can tell them apart: `[AUTHORITY]`
-(authorityd / authority-init), `[SERVICE]` (serviced), `[TZFS]` (the storage
+(authorityd / capsule), `[SERVICE]` (serviced), `[TZFS]` (the storage
 grant broker, `tzfsd`).  One tag each.
 
 **Storage addressing (runtime self-service, not a manifest stanza).**
@@ -549,9 +549,9 @@ rig, not the host.
 | 1 | DTYPE + fileops; mint hook in `zfsdev_ioctl`; `INFO`/`DERIVE`/`OPENAT`; verbs: props/stat/snapshot/snap-destroy/rollback; tests 1-3, 9, 10; probes mint/op/denied/invalidate; scripts -handles/-denials; kinfo+libprocstat | 1,500 LoC kernel + 1,200 tests |
 | 2 | send/recv/hold (access-aware `zfs_file_get`); create/destroy/rename; two-handle clone; prop allowlists; jail interop; userland lib; tests 4-6; -lineage/-ops scripts | 1,000 + 800 |
 | 3 | `vfs_domount_anon` + `ZFD_MOUNT` dirfd + fd-anchored teardown; `ZFD_BLKOPEN`; tests 7-8; mount probes | 800 + 500 |
-| 4 | Rich kqueue notes (needs hooks in shared DSL paths — the one place the merge-burden goal gets pressure; optional, last); thin pool handle (`ZPD_*`); `bootfs` sliver may be pulled forward for authority-init | 600 |
+| 4 | Rich kqueue notes (needs hooks in shared DSL paths — the one place the merge-burden goal gets pressure; optional, last); thin pool handle (`ZPD_*`); `bootfs` sliver may be pulled forward for capsule | 600 |
 
-Phase 1 alone dogfoods the serviced storage stanza; authority-init BE
+Phase 1 alone dogfoods the serviced storage stanza; capsule BE
 rollback needs Phase 1 + the `bootfs` sliver.
 
 ## 9a. Implementation status (2026-08-14)

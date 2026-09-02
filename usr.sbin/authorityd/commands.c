@@ -130,7 +130,7 @@ cmd_shutdown(uid_t euid, struct ctl_reply *reply)
  * System lifecycle request (reboot/halt/single-user/reroot/...).  Valid
  * only when authorityd is PID 1; an ordinary daemon has no authority to
  * reboot the machine.  Records the request in od.lifecycle_request for
- * authority-init's event loop to translate into a state transition, and
+ * capsule's event loop to translate into a state transition, and
  * returns 1 so control.c sets CTL_ACTION_LIFECYCLE.  This is the
  * authenticated replacement for init(8)'s signal ABI.
  */

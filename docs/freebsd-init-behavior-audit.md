@@ -568,7 +568,7 @@ failures.
 
 ## 24. Authority compatibility decisions and required work
 
-The detailed work list lives in `docs/authority-init-todo.md`.  This audit makes
+The detailed work list lives in `docs/capsule-todo.md`.  This audit makes
 the following architectural decisions clear:
 
 1. Keep the PID-1 survival, global-reaper, recovery-console, and final reboot

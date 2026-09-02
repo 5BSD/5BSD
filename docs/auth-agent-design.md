@@ -47,7 +47,7 @@ nonce, never a uid, so it cannot be repurposed for authorization.
 ## 3. Placement: a serviced-managed service, not a PID-1 peer
 
 ```
-authority-init (PID 1)
+capsule (PID 1)
    └── serviced
          ├── system.authagent      (the auth-agent — this design)
          ├── system.Network, system.Filesystem, system.Audit, ...
@@ -68,7 +68,7 @@ and costs complexity. Net TCB = `{serviced, auth-agent}`, down from
 
 ## 4. The three parties and the trust flow
 
-1. **`authority-init` (PID 1)** — unchanged role. Starts serviced. Continues to
+1. **`capsule` (PID 1)** — unchanged role. Starts serviced. Continues to
    carry an ambient channel into getty (§21), but a **narrowed** one (see §6).
 
 2. **serviced** — starts `system.authagent` from its manifest, which grants the
@@ -111,7 +111,7 @@ channel **scoped to only `{system.authagent}`** — enough to reach the auth-age
 not to mint or to discover other names. Mechanics:
 
 - serviced mints a `{system.authagent}`-scoped lookup channel and forwards it to
-  authority-init, which installs it at `SERVICE_LOOKUP_FIXED_FD` in each getty
+  capsule, which installs it at `SERVICE_LOOKUP_FIXED_FD` in each getty
   child (the existing §21 carry, just a narrower channel).
 - `sshd` obtains the same narrow reach-channel the way it obtains the ambient
   channel today (inherited from rc), and its monitor calls the auth-agent instead
