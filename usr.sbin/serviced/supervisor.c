@@ -16,7 +16,6 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/event.h>
-#include <sys/jail.h>
 #include <sys/procdesc.h>
 #include <sys/wait.h>
 

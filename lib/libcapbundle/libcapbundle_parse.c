@@ -9,7 +9,6 @@
 #include <sys/types.h>
 #include <sys/param.h>
 #include <sys/socket.h>
-#include <sys/vsock.h>
 #include <sys/zfshandle.h>
 #include <sys/stat.h>
 #include <arpa/inet.h>

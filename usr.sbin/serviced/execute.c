@@ -22,7 +22,6 @@
 #include <sys/envfd.h>
 #include <sys/event.h>
 #include <sys/ioctl.h>
-#include <sys/jail.h>
 #include <sys/mman.h>
 #include <sys/procdesc.h>
 #include <sys/resource.h>
@@ -1077,9 +1076,9 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	/*
 	 * Admit the complete launch before acquiring its first descriptor.
 	 * The fixed margin covers the service channel pair, coalition,
-	 * capprotect lease, bootstrap envfd, process descriptor, jail handoff,
-	 * and peak queued attachment duplicates.  Capability and named-service
-	 * descriptors are added explicitly.
+	 * capprotect lease, bootstrap envfd, process descriptor, and peak queued
+	 * attachment duplicates.  Capability and named-service descriptors are
+	 * added explicitly.
 	 */
 	/*
 	 * Count the manager-owned socket-activation listeners to deliver.  Each
@@ -1301,10 +1300,11 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	}
 
 	/*
-	 * This is the final all-or-nothing barrier before jail creation and
-	 * pdfork().  The child receives only the complete manifest token set
-	 * plus the one runtime container; any missing token takes the
-	 * fail_tokens cleanup path instead.
+	 * This is the final all-or-nothing barrier before pdfork().  The child
+	 * receives only the complete manifest token set plus the one runtime
+	 * container; any missing token takes the fail_tokens cleanup path instead.
+	 * (serviced constructs no jail — a jailed unit self-confines via warden(8);
+	 * see svc_launch_finish.)
 	 */
 	if (ntokens != expected_tokens ||
 	    nservices != nlisteners + 1) {
@@ -1426,8 +1426,9 @@ svc_launch_abort(struct svc_runtime *svc, int error, int kq __unused)
 }
 
 /*
- * Finalize storage delivery, create the jail, confine child descriptors, and
- * fork/exec.  The tail of the native launch, operating on the launch context.
+ * Finalize storage delivery, confine child descriptors, and fork/exec.  The
+ * tail of the native launch, operating on the launch context.  serviced builds
+ * no jail here — a jailed unit self-confines via warden(8) (see below).
  */
 static void
 svc_launch_finish(struct svc_runtime *svc, int kq)
