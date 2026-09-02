@@ -44,6 +44,7 @@
 #include <tzfsd_proto.h>	/* tzfsd wire protocol (system.Filesystem), no libtzfsd dep */
 #include <sysext_proto.h>	/* sysextd wire protocol (system.SystemExtension) */
 #include <warden_proto.h>	/* warden wire protocol (system.Namespace) */
+#include <vmd_proto.h>	/* vmd wire protocol (system.VM) */
 
 #include "libservice.h"
 #include "service_private.h"
@@ -2110,6 +2111,92 @@ service_enter_namespace(struct service_context *context, const char *path,
 		return (-1);
 	}
 	(void)close(jd);
+	return (0);
+}
+
+/*
+ * Obtain a host-local vsock (VM socket) listener from vmd(8).  Consumer self-
+ * service, uniform with storage/jails/modules: libservice opens a system.VM
+ * channel by name (pulling vmd up on demand) and asks it to bind a listening
+ * AF_VSOCK socket.  A process in capability mode cannot bind a vsock address
+ * itself (it names a global namespace); vmd binds one on the caller's behalf in
+ * a port window scoped to the caller's unforgeable channel label and returns the
+ * listening descriptor, which the caller accept(2)s on.
+ *
+ * `port` is an index within the caller's own window (0 .. VMD_PORTS_PER_LABEL-1);
+ * vmd maps it into the label-scoped range, so the value can never name another
+ * Component's port.  `backlog` is the listen(2) backlog (0 = a sensible default).
+ * On success fdp receives the close-on-exec listening descriptor and, when
+ * non-NULL, cidp/portp receive the concrete host-local CID and port bound (for
+ * the caller to advertise to a peer).  Returns 0, or -1 with errno.
+ */
+static struct service_session *service_vm_session;
+
+int
+service_vsock_listen(struct service_context *context, unsigned port,
+    unsigned backlog, unsigned *cidp, unsigned *portp, int *fdp)
+{
+	struct vmd_request rq;
+	struct vmd_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd = -1, saved;
+
+	if (fdp == NULL || port >= VMD_PORTS_PER_LABEL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*fdp = -1;
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Open the system.VM channel by name once; listens share it. */
+	if (service_vm_session == NULL) {
+		int cfd;
+
+		if (service_open(VMD_SERVICE_NAME, &cfd) == -1)
+			return (-1);
+		if (service_session_create(cfd, &service_vm_session) == -1) {
+			saved = errno;
+			(void)close(cfd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = VMD_OP_VSOCK_BIND;
+	rq.port = port;
+	rq.backlog = backlog;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 1;
+	if (service_session_call(service_vm_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
+	    rp.status != 0 || incoming.nfds != 1) {
+		if (incoming.nfds != 0)
+			(void)close(fd);
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+	if (cidp != NULL)
+		*cidp = rp.cid;
+	if (portp != NULL)
+		*portp = rp.port;
+	*fdp = fd;
 	return (0);
 }
 

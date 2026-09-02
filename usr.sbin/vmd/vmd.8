@@ -1,0 +1,116 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 1, 2026
+.Dt VMD 8
+.Os
+.Sh NAME
+.Nm vmd
+.Nd virtual-machine component
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The
+.Nm
+daemon is the virtual-machine authority.
+Its eventual role is to run full virtual machines under
+.Xr bhyve 8 ;
+today it brokers
+.Em vsock
+.Pq VM socket
+endpoints, a duty removed from
+.Xr serviced 8
+and from the manifest capability block.
+It is a socket-free capability-plane service: it exposes the well-known name
+.Dq Li system.VM
+and serves each client on its own
+.Xr mac_capability 4
+channel.
+The discovery
+.Em domain
+layer resolves
+.Dq Li system.VM
+only for SYSTEM-domain clients.
+.Pp
+Obtaining a vsock is
+.Em consumer self-service :
+a program asks for one at runtime by calling
+.Xr service_vsock_listen 3 ,
+whose library resolves
+.Nm
+and drives it.
+A process in capability mode cannot bind a vsock address itself
+.Pq it names a global namespace ;
+.Nm ,
+which owns the vsock transport, binds a host-local
+.Pq Dv VMADDR_CID_LOCAL
+listening
+.Dv AF_VSOCK
+socket on the caller's behalf and returns the descriptor.
+.Nm
+is never driven by
+.Xr serviced 8
+on a unit's behalf, and a unit does not declare a vsock in its manifest.
+.Pp
+.Nm
+is a
+.Em broker ,
+not a second isolation authority: it holds the vsock transport and re-delivers
+endpoints, but mints no isolation claims of its own.
+It scopes each caller to a
+.Em port window
+derived from the caller's unforgeable channel label; the wire request names only
+an index within that window, so one consumer can never name or bind another's
+port.
+.Pp
+.Nm
+is launched and supervised by
+.Xr serviced 8
+from the
+.Pa /Capabilities/System/VM.cap
+bundle on demand
+.Pq the first consumer that asks for a vsock pulls it up ;
+it is not started by
+.Xr init 8 ,
+and it is not intended to be run from the command line.
+.Ss Operation
+.Nm
+runs as root and, unlike most capability-plane providers, NOT in capability
+mode: the vsock transport and
+.Xr bhyve 8
+management need device access and a global-namespace lookup
+.Pq Xr loadat 2 / Xr openat 2 of the tool and its libraries ,
+both of which capsicum forbids.
+Its authority is the caller's channel label, not the capsicum sandbox.
+Each accepted client is served on its own
+.Xr pdfork 2 Ns 'd
+worker.
+.Sh FILES
+.Bl -tag -width ".Pa /Capabilities/System/VM.cap" -compact
+.It Pa /Capabilities/System/VM.cap
+capability bundle shipping
+.Nm
+.El
+.Sh SEE ALSO
+.Xr pdfork 2 ,
+.Xr socket 2 ,
+.Xr service_vsock_listen 3 ,
+.Xr mac_capability 4 ,
+.Xr vsock 4 ,
+.Xr bhyve 8 ,
+.Xr serviced 8 ,
+.Xr warden 8
+.Sh HISTORY
+The
+.Nm
+daemon appeared in
+.Fx 5BSD .
+It takes over vsock brokering formerly performed by
+.Xr serviced 8
+as part of moving privileged work out of PID 1 and behind named,
+domain-restricted, socket-free services, and is the foundation for running full
+virtual machines as a capability-plane component.
+.Sh AUTHORS
+.An Kory Heard

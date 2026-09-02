@@ -273,6 +273,20 @@ int	service_enter_namespace(struct service_context *, const char *path,
 	    const char *hostname, const char *ip4_addr, unsigned flags);
 
 /*
+ * Obtain a host-local vsock (VM socket) listener from vmd (system.VM).  Consumer
+ * self-service: libservice resolves vmd by name (pulling it up on demand) and
+ * has it bind a listening AF_VSOCK socket on the caller's behalf — a capability-
+ * mode process cannot bind a vsock address itself.  `port` is an index within
+ * the caller's own label-scoped window (0 .. VMD_PORTS_PER_LABEL-1), so it can
+ * never name another Component's port; `backlog` is the listen backlog (0 =
+ * default).  On success fdp receives the close-on-exec listening descriptor to
+ * accept(2) on, and cidp/portp (when non-NULL) the concrete host-local CID and
+ * port bound.  Returns 0, or -1 with errno.
+ */
+int	service_vsock_listen(struct service_context *, unsigned port,
+	    unsigned backlog, unsigned *cidp, unsigned *portp, int *fdp);
+
+/*
  * Return the manager-owned socket-activation listener (Phase 4) delivered under
  * the given logical name, or -1 with errno ENOENT if the process has none by
  * that name (EINVAL for a malformed name).  serviced binds, listen(2)s, and

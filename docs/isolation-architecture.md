@@ -69,14 +69,26 @@ Network endpoint restriction is currently relaxed to default-open (a deliberate
 choice — most Components need no port restriction); the authority remains and can
 re-restrict without touching Components.
 
-### 5. The VM daemon (vmd) — `system.VM` (in progress)
+### 5. The VM daemon (vmd) — `system.VM`
 
-vmd runs virtual machines (bhyve) and owns the vsock transport. It holds the
-`/dev/vsock` provider authority (a guest CID) from authorityd's kept vsock
-machinery and brokers vsock channels to Components by label — the same
-broker-holds-a-capability, re-delivers-per-label shape as tzfsd for paths. A VM
-guest is isolated by its own CID; a Component asks vmd (via its library) to set
-up a vsock and receive the channel.
+vmd is the VM authority. Its eventual role is to run virtual machines (bhyve);
+today it brokers the **vsock** (VM socket) transport, taking that out of serviced
+and the manifest. A Component in capability mode cannot bind a vsock address
+itself (it names a global namespace), so it asks vmd via its library
+(`service_vsock_listen(3)`); vmd binds a host-local (`VMADDR_CID_LOCAL`)
+`AF_VSOCK` listening socket on the Component's behalf and hands back the
+descriptor. This is the same broker-holds-a-capability, re-delivers-per-label
+shape as tzfsd for paths and warden for jails.
+
+vmd scopes each Component to a **port window** derived from a hash of its
+unforgeable channel label (`VMD_PORT_BASE + offset*VMD_PORTS_PER_LABEL`); the
+wire request names only an index within that window, so one Component can never
+name or bind another's port. When vmd grows the full VM lifecycle it will own the
+`/dev/vsock` provider authority for a running guest's CID (a guest is isolated by
+its own CID) via authorityd's kept vsock machinery — the `ort_vsock_claim` /
+`mint_vsock_token` primitives were deliberately preserved for exactly this. vmd
+runs as a root, non-capmode privileged provider (the vsock transport and bhyve
+management need device access and a global-namespace `loadat`/`openat`).
 
 ## Who is an authority vs. a broker
 

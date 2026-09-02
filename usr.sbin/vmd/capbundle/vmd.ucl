@@ -1,0 +1,27 @@
+# serviced unit for the virtual-machine component (vmd).  vmd is the VM
+# authority: eventually it runs full virtual machines under bhyve; today it
+# brokers vsock (VM socket) endpoints, taking that out of serviced and the
+# manifest capabilities{} block.  Launched and supervised by serviced like every
+# other daemon — PID 1 does not manage VMs, and serviced never brokers a vsock.
+#
+# vmd is a socket-free service_provider exposing system.VM.  It is pure consumer
+# self-service: a program's library resolves vmd by name (service_vsock_listen(3))
+# and asks it to set up a vsock endpoint; vmd binds a host-local AF_VSOCK socket
+# in a port window scoped to the caller's unforgeable channel label and returns
+# the listening descriptor.  No boot activation: the first consumer that asks for
+# a vsock pulls vmd up on demand, exactly like jails and the filesystem.
+#
+# user = root and privileged = true: the vsock transport and bhyve management
+# need device access and a global-namespace lookup (loadat/openat of bhyve and
+# its libraries), both of which capsicum forbids.  vmd's vsock ports are scoped
+# by the caller's unforgeable channel label, so one consumer can never name or
+# bind another's port.  serviced takes vmd's SVC_OP_READY as the readiness
+# boundary instead of kernel-observed capability-mode entry.
+activation { ipc = ["system.VM"]; }
+program = "vmd";
+restart = "on-failure";
+user = "root";
+privileged = true;
+
+limits { nofile = 1024; nproc = 128; core = 0; }
+umask = "0022";
