@@ -111,7 +111,8 @@ demand and scoped by the unit's own unforgeable channel label:
   rights-limited descriptor;
 - mutable storage — `service_storage_open(3)` (see [Storage](#storage) below);
 - a jail — `service_enter_namespace(3)` (warden);
-- a kernel module — `service_ensure_extension(3)` (sysextd).
+- a kernel module — `service_ensure_extension(3)` (sysextd);
+- a vsock (VM socket) endpoint — `service_vsock_listen(3)` (vmd).
 
 Network access needs no declaration either: it is default-open, with listeners
 supplied by socket-activation. Nothing about a service's authority is named in
