@@ -422,6 +422,44 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 		return (-1);
 	}
 
+	/*
+	 * The base dataset (e.g. zroot/Capabilities) is an organizational
+	 * container, NOT a mount.  The static bundle tree /Capabilities/System is
+	 * shipped in the root (boot-environment) dataset and must stay visible at
+	 * boot.  If the base dataset mounted at /Capabilities it would shadow that
+	 * tree, and every reboot after the first would hide the bundles — serviced
+	 * would find nothing to launch.  So create the base with canmount=off (the
+	 * same container treatment /usr and /var use): only the persistent and
+	 * ephemeral children mount, as subdirectories of the root dataset's
+	 * /Capabilities.  The unmount is best-effort self-healing for a base left
+	 * mounted by an older tzfsd (canmount=off alone does not unmount a live
+	 * mount); on a fresh provision nothing is mounted yet and it is a no-op.
+	 */
+	rel = rel_under(cfg->pool, cfg->base);
+	if (rel != NULL) {
+		int base_fd = tzfsd_ensure_path(root_fd, rel, RETAIN_RIGHTS);
+
+		if (base_fd == -1) {
+			syslog(LOG_ERR, "provision %s: %m", cfg->base);
+			(void)close(root_fd);
+			return (-1);
+		}
+		/*
+		 * canmount is an integer-encoded property (ZFS_CANMOUNT_OFF ==
+		 * 0), so it MUST be set through the uint64 path — the string
+		 * path stores a raw string where the kernel's set-sync reads the
+		 * value back as an int, which panics ZFS
+		 * (dsl_prop_set_sync_impl VERIFY0(dsl_prop_get_int_ds)).
+		 */
+		if (tzfs_set_prop_uint64(base_fd, "canmount", 0) == -1)
+			syslog(LOG_WARNING, "set canmount=off on %s: %m "
+			    "(bundle tree may be shadowed after reboot)",
+			    cfg->base);
+		else
+			(void)tzfs_unmount(base_fd);
+		(void)close(base_fd);
+	}
+
 	/* base/persistent/ephemeral all hang under the pool root. */
 	rel = rel_under(cfg->pool, cfg->persistent);
 	if (rel == NULL ||
