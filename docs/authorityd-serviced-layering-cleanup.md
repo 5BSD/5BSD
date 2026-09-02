@@ -110,7 +110,8 @@ leaf-coupling. Citations are in the tracking notes; summarized here.
 |--------|-------------|--------------------------|
 | **authorityd** (PID 1) | n/a | `control.c`'s AF_UNIX `getpeereid` socket is an **intentional single-user-mode admin/lifecycle fallback — keep it** (not a violation). Real violations: ① `kldload`/`modfind` in PID 1 (`handle_ensure_kmod`, over the *authority channel* — Phase 2 → Sysextd `system.SystemExtension`); ② `jail_set()` in PID 1 (`handle_create_jail` — Phase 3 → Warden `system.Namespace`); ③ hardcoded serviced fd-map + restart policy (`bootstrap.c`) |
 | **serviced** | Yes | storage coupling **REMOVED** (`5583478`): links no libtzfsd, no storage code (`cap_storage` is declaration-only). Remaining typed scaffolding is net/jail/vsock — **kernel** isolation mints via authorityd, not leaf-daemon clients (Phase 4 generalizes them; still links libjail). Plane-conformant otherwise |
-| **tzfsd** | **Yes** | **DONE** (`5583478`): socket-free `system.Storage` provider; identity-scoped nested datasets `persistent/u<hash-of-label>/<claim>`; consumers self-mint via libservice |
+| **tzfsd** | **Yes** | **DONE** (`5583478`): socket-free `system.Filesystem` provider; identity-scoped nested datasets `persistent/u<hash-of-label>/<claim>`; consumers self-mint via libservice |
+| **vmd** | Yes | `system.VM` vsock broker (warden/tzfsd pattern); label-scoped port windows via `service_vsock_listen(3)`; kernel vsock tokens via authorityd; bhyve-VM brokering later. Plane-conformant |
 | **authagentd** | Yes | no per-client worker isolation — the mint authority + SYSTEM bootstrap channel are shared across all login clients (no `pdfork`/`service_worker_protect`) |
 | **localcrypto** | Yes | policy hardcoded in C (dead `crypto_policy.conf`); parent/listener not hardened with `service_provider_protect` |
 | **localnetwork** | Yes | session policy hardcoded in C, ignores `client_label` (contradicts its own header comment) |
@@ -157,7 +158,7 @@ Any capability-plane daemon that still listens on a UNIX socket is to be
 
 | Daemon | Socket | Status |
 |--------|--------|--------|
-| `tzfsd` | ~~`/var/run/tzfsd.sock` storage IPC~~ | **DONE** (`5583478`) — `system.Storage` provider; consumers self-mint; serviced links no libtzfsd |
+| `tzfsd` | ~~`/var/run/tzfsd.sock` storage IPC~~ | **DONE** (`5583478`) — `system.Filesystem` provider; consumers self-mint; serviced links no libtzfsd |
 | `authorityd` (`control.c`) | admin/lifecycle control socket (`getpeereid`) | **KEEP — intentional single-user-mode fallback** (status/shutdown/reload/`CTL_OP_SINGLE`); the capability plane/serviced isn't up in single-user, so this socket is the control path. NOT a plane-IPC violation. Only the kldload/reboot *system-ops* riding it move out (Phase 2/3); the socket stays. |
 | `blued`/`meshd` (`ctl.c`) | control sockets | to convert |
 
@@ -186,7 +187,7 @@ authorityd ── kernel mints only (mac_capability) + generic delegate ROUTE
    ├── (kernel) isolation tokens, channels, coalitions            ← stays
    └── DELEGATE(domain, bounds) ──► owning daemon returns an
                                      ATTENUATED channel  ──► delivered to consumer
-                                     (tzfsd, jaild, kmodd)
+                                     (tzfsd, warden, sysextd)
 ```
 
 This reconciles the two forces that first looked opposed:
@@ -223,7 +224,7 @@ assert the service comes up and 0 launch failures).
 - Capture a golden boot transcript + `zfs list` / service inventory as the
   regression baseline.
 
-### Phase 1 — Storage out of PID 1, then socketless  *(in progress)*
+### Phase 1 — Storage out of PID 1, then socketless  *(done)*
 
 Progress (committed, VM-verified):
 - **Storage out of PID 1** (`9c4d931`): authorityd links no libtzfsd, no storage
@@ -231,12 +232,13 @@ Progress (committed, VM-verified):
 - **tzfsd leases concurrent-safe** (`a601a7c`): `session_begin` create-or-open,
   never reaps a sibling; orphan GC at daemon startup.
 
-Remaining — the **socketless rewrite** (supersedes step A; per the socket-free
-mandate): convert tzfsd to a `system.Storage` `service_provider`, rewrite
-`libtzfsd`/`tzfsctl` as `service_open` channel clients, then serviced delivers a
-scoped `system.Storage` channel by name and libservice self-mints — deleting
-`storage_client.c` + `libtzfsd` from serviced. Attenuation is intrinsic to the
-delivered channel (no `AUTHORIZE` op, no peer-uid, no socket).
+Done — the **socketless rewrite** (`5583478`, supersedes step A; per the
+socket-free mandate): tzfsd is a `system.Filesystem` `service_provider`;
+`libtzfsd`/`tzfsctl` are `service_open` channel clients; a consumer opens the
+scoped `system.Filesystem` channel by name and libservice self-mints —
+`storage_client.c` + `libtzfsd` are gone from serviced, which no longer brokers
+storage at all. Attenuation is intrinsic to the delivered channel (no
+`AUTHORIZE` op, no peer-uid, no socket).
 
 Original transitional framing (retained for reference):
 - Route `MINT_STORAGE`/`DESTROY_STORAGE` through `DELEGATE(domain=STORAGE)`

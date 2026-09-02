@@ -10,8 +10,9 @@ authorize by uid, socket path, PID, or signal.
 
 This is **not a rewrite of the system.** The capability *substrate* already
 exists and is correct: the `mac_capability` kernel device, channel endpoints as
-fd-capabilities, `cap_xfer`/`cap_clofork` attenuation of transfer, manifest-
-granted caps, TrustedZFS capability-fds, capsicum sandboxing, serviced, the
+fd-capabilities, `cap_xfer`/`cap_clofork` attenuation of transfer, on-demand
+capability acquisition by channel label, TrustedZFS capability-fds, capsicum
+sandboxing, serviced, the
 service plane, and the login→session delivery plumbing all stay.
 
 This changes exactly **one layer: authorization** — *where authority comes
@@ -371,8 +372,11 @@ principal policy reproduces root/wheel — before moving on.
 ## 10. Keep / change ledger (from recent work)
 
 **Keep:** mac_capability channels; fd-cap inheritance at a fixed fd; on-demand
-activation; ambient-channel *delivery*; manifest cap grants; TrustedZFS cap-fds;
-capsicum. **Change:** every `sender_uid`/`euid`/`getpeereid`/`getpid()==1`/
+activation; ambient-channel *delivery*; on-demand capability acquisition by
+channel label; TrustedZFS cap-fds; capsicum. **Removed:** the manifest
+`capabilities {}` block (caps are now acquired on demand, by name, never
+declared or minted at launch). **Change:** every
+`sender_uid`/`euid`/`getpeereid`/`getpid()==1`/
 signal authorization → capability presentation; uid-derived domain minting →
 policy-minted discovery caps; `.Control` convention → held control caps.
 **Add:** the `(object, rights)` binding, attenuation, revocation, the auth agent

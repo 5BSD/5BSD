@@ -24,8 +24,10 @@ owns path resolution and per-vnode rights.
 ## See also
 
 - `service_open_isolated(3)` — the consumer entry point.
-- `service_storage_open(3)`, `service_open_config(3)`,
-  `service_capability_open(3)` — related descriptor-acquisition APIs.
+- `service_storage_open(3)`, `service_open_config(3)` — related
+  descriptor-acquisition APIs (all by-name, on-demand; `service_capability_open(3)`
+  has been removed).
 - `tzfsd(8)` / `system.Filesystem` — the daemon that opens paths under policy.
-- docs/book/src/security/capability-bundles.md — the manifest capability model
-  (`paths`, `network`, `vsock`, `services`).
+- docs/book/src/security/capability-bundles.md — background on the (now removed)
+  manifest capability model; capabilities are acquired on demand, by name, and
+  are no longer declared in the manifest.

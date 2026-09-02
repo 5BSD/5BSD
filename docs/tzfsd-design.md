@@ -153,13 +153,12 @@ opens `/dev/zfs` and mints. After the move:
 - authorityd keeps `AUTHORITY_OP_MINT_STORAGE` as a thin **forwarder** to tzfsd via
   `libtzfsd` (`handle_mint_storage`/`handle_destroy_storage` in
   `authority_proto.c` now call `tzfsd_request`/`tzfsd_release`; authorityd no longer
-  opens `/dev/zfs`). **Built.** This was chosen over serviced-talks-to-tzfsd-
-  directly because `serviced` mints *every* capability class (path/file/net/
-  jail/vsock/storage/system) uniformly over its one authority channel; making
-  storage the sole exception would fracture that pattern for no real gain.
-  authorityd forwarding relocates the full ZFS authority to tzfsd while keeping
-  the mint path uniform. serviced-direct remains a possible later
-  optimization (design unaffected — it is the same grant semantics).
+  opens `/dev/zfs`). **Built.** serviced mints nothing at launch: it is a pure
+  launcher + naming switchboard, and holds no capability authority. A consumer
+  self-serves storage on demand by opening the `system.Filesystem` broker (tzfsd)
+  by name — tzfsd derives the dataset from the caller's unforgeable channel
+  label. authorityd remains the one isolation authority for the kernel
+  `mac_capability` claims; storage ownership lives wholly in tzfsd.
 - **Startup:** authorityd starts tzfsd on demand the first time a service needs
   storage (`posix_spawn` + `waitpid`; tzfsd provisions synchronously then
   daemonizes, so the wait returns once it is ready). A boot-time

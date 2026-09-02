@@ -74,7 +74,6 @@ One system-wide serviced instance owns:
 - the IPC namespace and pending lookup queues;
 - trigger registration and demand accounting;
 - process launch, readiness, restart/backoff, idle exit, and shutdown;
-- storage leases and crash reconciliation;
 - manager-owned activation listeners;
 - enable/disable state and the administrative control socket.
 
@@ -534,7 +533,9 @@ parser, network broker, or mutable state store.
 - Return connected, rights-limited descriptors; remove inline send/receive and
   emulated socket handles.
 - Make policy session-derived and immutable.
-- Remove empty `descriptors.network {}` syntax.
+- (Superseded: the whole manifest `capabilities {}` block — including any
+  `descriptors.network {}` / `capabilities.network` — has since been removed
+  entirely, per §4. No network manifest syntax remains to strip.)
 - Retain explicit comments and protocol space for future userspace networking,
   but implement none of it now.
 
@@ -561,11 +562,11 @@ parser, network broker, or mutable state store.
   user-domain channel that its descendants inherit.
 - Do not add a second manager process until isolation or scale demonstrates a
   need.
-- Retire the `descriptors.network {}` manifest block (deferred from Phase 3): it
-  is currently the NetworkCmp broker-session delivery trigger and is distinct
-  from a `capabilities.network` kernel socket-authority gate.  Once §21/§22
-  ambient-IPC lookup delivers the broker session, remove the descriptor block
-  and switch delivery to the lookup channel.
+- Switch NetworkCmp broker-session delivery onto the §21/§22 ambient-IPC lookup
+  channel.  (The `descriptors.network {}` / `capabilities.network` manifest
+  blocks this bullet once planned to retire no longer exist — the whole
+  `capabilities {}` block was removed, per §4 — so there is nothing left to
+  strip; only the delivery-over-lookup switch remains.)
 
 ## 17. Required tests and review gates
 

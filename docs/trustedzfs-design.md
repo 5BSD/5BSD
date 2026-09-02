@@ -353,11 +353,12 @@ fhopen tail. Dev-mode first; geom-mode via the provider's cdev.
 
 First consumers, which double as the proof the primitive earns its keep:
 
-1. **serviced storage stanza** — manifest declares dataset + rights;
-   serviced holds a subtree zfd on `tank/svc` (`CREATE|DESTROY|
-   PROPS_WRITE|SNAPSHOT`), materializes the child, derives the service's
-   handle (typically `MOUNT|SNAPSHOT|PROPS_READ`) and passes it over the
-   control socket. serviced itself never holds `SEND`/`RECV`.
+1. **tzfsd storage self-service** — storage is *not* a manifest stanza and
+   serviced holds no storage authority. A consumer opens `system.Filesystem`
+   (tzfsd) by name via `service_storage_open(3)`; tzfsd derives the dataset
+   from the caller's unforgeable channel label, materializes the child, and
+   returns a rights-limited handle (typically `MOUNT|SNAPSHOT|PROPS_READ`).
+   The consumer never holds `SEND`/`RECV`. (See §6a for the built grant path.)
 2. **capsule boot-environment rollback** — `SNAPSHOT|SNAP_DESTROY|
    ROLLBACK` on the BE dataset (stamp last-known-good on successful
    converge; roll back after N failed boots) plus a `bootfs`-only pool
