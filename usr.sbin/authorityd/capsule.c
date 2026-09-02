@@ -193,7 +193,7 @@ static void oi_engine_start(void);
 static void oi_dispatch(struct kevent *);
 static void oi_lifecycle_apply(int op);
 static int oi_await_convergence(void);
-static void oi_ctl_try_setup(void);
+static void oi_assert_signal_shield(void);
 static void oi_drain_children(void);
 static void oi_world_stop(void);
 
@@ -1073,11 +1073,8 @@ establish_authority(void)
 		emergency("serviced did not converge; entering recovery");
 		return (state_func_t) single_user;
 	}
-	/*
-	 * / is read-write now that /etc/rc has run.  Retry the control socket
-	 * that could not bind during the read-only early boot.
-	 */
-	oi_ctl_try_setup();
+	/* Re-assert the signal shield now that /etc/rc has run (idempotent). */
+	oi_assert_signal_shield();
 	return (state_func_t) read_ttys;
 }
 
@@ -1147,12 +1144,10 @@ oi_await_convergence(void)
  * delegate to it (falling back to reboot(2), the kernel escape).  Nothing drives
  * a lifecycle transition by signalling init any more, so the CP_SF_SIGNAL shield
  * is raised unconditionally: a userland kill(1,SIG*) can never reach init's
- * legacy transition handler.  (The shield was previously deferred until the
- * socket was up so shutdown(8)'s signal fallback kept working; with delegation
- * there is no such fallback to protect, and closing the door early is correct.)
+ * legacy transition handler.
  */
 static void
-oi_ctl_try_setup(void)
+oi_assert_signal_shield(void)
 {
 
 	if (oi_engine_up && apply_signal_shield() == -1)
@@ -1208,7 +1203,7 @@ oi_engine_start(void)
 		oi_mac_up = true;
 	}
 
-	oi_ctl_try_setup();
+	oi_assert_signal_shield();
 
 	od.shutting_down = false;
 	if (bootstrap_start(oi_kq) == -1) {
@@ -2090,7 +2085,6 @@ multi_user(void)
 {
 	static bool inmultiuser = false;
 	struct kevent kev;
-	struct timespec ctl_ts;
 	pid_t pid;
 	session_t *sp;
 	int nev;
@@ -2135,19 +2129,12 @@ multi_user(void)
 			continue;
 		}
 		/*
-		 * Wake periodically to self-heal the control socket: the
-		 * one-shot post-convergence bind can fail (or the bound
-		 * path can be unlinked by rc) and a PID 1 with neither
-		 * socket nor retry is a lifecycle dead end.  The check is
-		 * one stat(2) every 30s when healthy.
+		 * Block until the next event.  PID 1 is fully event-driven:
+		 * child exits arrive as SIGCHLD, lifecycle requests over the
+		 * bootstrap channel, and transitions as signals — there is
+		 * nothing to poll for, so there is no timeout.
 		 */
-		ctl_ts.tv_sec = 30;
-		ctl_ts.tv_nsec = 0;
-		nev = kevent(oi_kq, NULL, 0, &kev, 1, &ctl_ts);
-		if (nev == 0) {
-			oi_ctl_try_setup();
-			continue;
-		}
+		nev = kevent(oi_kq, NULL, 0, &kev, 1, NULL);
 		if (nev == -1) {
 			if (errno == EINTR) {
 				/* A transition signal or SIGALRM. */
