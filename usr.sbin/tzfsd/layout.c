@@ -423,17 +423,29 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 	}
 
 	/*
-	 * The base dataset (e.g. zroot/Capabilities) is an organizational
-	 * container, NOT a mount.  The static bundle tree /Capabilities/System is
-	 * shipped in the root (boot-environment) dataset and must stay visible at
-	 * boot.  If the base dataset mounted at /Capabilities it would shadow that
-	 * tree, and every reboot after the first would hide the bundles — serviced
-	 * would find nothing to launch.  So create the base with canmount=off (the
-	 * same container treatment /usr and /var use): only the persistent and
-	 * ephemeral children mount, as subdirectories of the root dataset's
-	 * /Capabilities.  The unmount is best-effort self-healing for a base left
-	 * mounted by an older tzfsd (canmount=off alone does not unmount a live
-	 * mount); on a fresh provision nothing is mounted yet and it is a no-op.
+	 * Make the whole /Capabilities dataset subtree INVISIBLE to OS mount
+	 * management.  tzfsd's datasets are reached exclusively through capability
+	 * handles and ANONYMOUS mounts (ZFD_MOUNT / ZH_MOUNT: the objset is mounted
+	 * without any global-namespace mountpoint and accessed only through the
+	 * returned dir fd — see sys/sys/zfshandle.h).  They must therefore never be
+	 * mounted by the OS's boot-time `zfs mount -a`.  If the OS mounts one at its
+	 * inherited mountpoint, the objset is already mounted, and tzfsd's anonymous
+	 * mount (and any destroy) of the SAME dataset fails EBUSY.  That is the
+	 * second-boot collision: on a fresh boot the datasets do not exist yet, but
+	 * on every reboot the persisted datasets are OS-mounted before serviced
+	 * runs, so a reused persistent claim makes the consumer's storage request
+	 * fail EBUSY (a crash-looping logd) and a stale ephemeral generation makes
+	 * the reconcile destroy fail EBUSY.
+	 *
+	 * Setting the base dataset's mountpoint to "none" propagates by inheritance
+	 * to every child — persistent, ephemeral, per-service homes and claims,
+	 * boot/lease generations — so the OS mounts none of them, and tzfsd owns the
+	 * (anonymous) mount lifecycle completely.  It also keeps the static
+	 * /Capabilities/System bundle tree visible, since the base is not mounted
+	 * over the root dataset's /Capabilities.  canmount=off is kept as belt-and-
+	 * suspenders on the base itself (integer-encoded property, so the uint64
+	 * setter — the string path panics ZFS on an int property).  The unmount is
+	 * best-effort self-healing for a subtree left mounted by an older tzfsd.
 	 */
 	rel = rel_under(cfg->pool, cfg->base);
 	if (rel != NULL) {
@@ -444,17 +456,15 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 			(void)close(root_fd);
 			return (-1);
 		}
-		/*
-		 * canmount is an integer-encoded property (ZFS_CANMOUNT_OFF ==
-		 * 0), so it MUST be set through the uint64 path — the string
-		 * path stores a raw string where the kernel's set-sync reads the
-		 * value back as an int, which panics ZFS
-		 * (dsl_prop_set_sync_impl VERIFY0(dsl_prop_get_int_ds)).
-		 */
-		if (tzfs_set_prop_uint64(base_fd, "canmount", 0) == -1)
-			syslog(LOG_WARNING, "set canmount=off on %s: %m "
-			    "(bundle tree may be shadowed after reboot)",
+		/* mountpoint is a genuine string property; setting it "none" here
+		 * propagates to the whole subtree by inheritance and unmounts any
+		 * OS-mounted members. */
+		if (tzfs_set_prop_string(base_fd, "mountpoint", "none") == -1)
+			syslog(LOG_WARNING, "set mountpoint=none on %s: %m "
+			    "(datasets may be OS-mounted and collide after reboot)",
 			    cfg->base);
+		if (tzfs_set_prop_uint64(base_fd, "canmount", 0) == -1)
+			syslog(LOG_WARNING, "set canmount=off on %s: %m", cfg->base);
 		else
 			(void)tzfs_unmount(base_fd);
 		(void)close(base_fd);
