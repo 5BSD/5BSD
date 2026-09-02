@@ -3,7 +3,8 @@
 A `.cap` bundle is 5BSD's install, configuration, resource, execution, and
 authority boundary. It contains one `Bundle.ucl`, an exact inventory of one or
 more `.unit` directories, their executables and resources, and optional shared
-content. Mutable state is supplied separately as named storage descriptors.
+content. Mutable state is not part of the bundle; a unit obtains it at runtime
+from `tzfsd`, scoped to its own unforgeable channel label.
 
 The complete format and a fully populated example are in
 [Capability bundle manifests](../system/manifests.md).
@@ -19,9 +20,10 @@ The complete format and a fully populated example are in
 - UCL is literal: includes, macros, file variables, duplicate keys, implicit
   arrays, and unknown fields fail closed.
 - The loaded tree is root-owned and not group/world writable.
-- Kernel authority is minted before execution and delivered by descriptor.
-  Storage uses logical roles such as `storage:data`; applications never choose
-  ZFS dataset paths.
+- Kernel authority is acquired at runtime, by name, over the unit's unforgeable
+  channel — never minted before execution or declared in the manifest.
+  Applications never choose ZFS dataset paths; `tzfsd` derives each dataset from
+  the channel label.
 - A unit's runtime identity is `<bundle-id>/<unit-name>`, independent of any
   IPC name it publishes.
 
@@ -76,19 +78,22 @@ they never collide with the base set.
 ### Process names
 
 Each capability's launched executable is named for the capability in title case
-— `Log`, `Network`, `Storage`, `Bluetooth`, plus `Authority` (PID 1) and
-`Serviced` for the plane's spine. Because base daemons are conventionally
+— `Log`, `Network`, `Filesystem`, `Bluetooth`, plus `Capsule` (PID 1, the init
+personality of `authorityd`) and `Serviced` for the plane's spine. Because base
+daemons are conventionally
 lowercase (`sshd`, `cron`, `syslogd`), the plane stands out at a glance in
 `ps(1)` and `top(1)`:
 
 ```text
   PID COMMAND
-    1 Authority
+    1 Capsule
    18 Serviced
  1408 Audit
  1430 Filesystem
  1432 Network
-  ... Storage
+ 1450 Namespace
+ 1462 SystemExtension
+ 1475 VM
   952 syslogd
   971 cron
 ```
@@ -116,9 +121,11 @@ the previous running registry in place.
 ## Runtime delivery
 
 Direct file, socket, and system authority arrives through
-rights-limited kernel descriptors or activation tokens. Named capability
-services and storage occupy a separate named-descriptor bootstrap table. The
-role and type are validated independently. Storage is delivered as a
+rights-limited kernel descriptors or activation tokens, acquired at runtime by
+name over the unit's unforgeable channel — not from a launch-time bootstrap
+table. Named capability services and storage are reached the same way, on first
+use; each grant's role and type are validated independently at the moment it is
+opened. Storage is delivered as a
 rights-limited `zfshandle`: the consumer mounts a mount-rights claim itself
 with `service_storage_open(3)` and holds the handle for its lifetime (the
 handle anchors the mount), so the service manager never mounts on its behalf —

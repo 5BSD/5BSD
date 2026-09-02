@@ -56,9 +56,10 @@ descriptor, performs the global `SIGTERM`/`SIGKILL` sweep, runs
   `rc.d/authorityd` script — a duplicate daemon instance at boot would conflict
   with the spine).
 - **Reboot and module-load orchestration.** Reboot is a PID 1 control-ABI
-  operation; kernel-module loading is brokered by authorityd's
-  `AUTHORITY_OP_ENSURE_KMOD` channel operation, driven by `kmod_requires` in
-  service manifests. No standalone daemons exist for either.
+  operation; kernel-module loading is brokered by `sysextd`
+  (`system.SystemExtension`), which a unit reaches at runtime with
+  `service_ensure_extension(3)` rather than through any manifest field. No
+  standalone daemons exist for either.
 - **Native capability services** are launched by serviced from `.cap`
   bundles, not by rc.d scripts.
 - **Lifecycle signalling of PID 1.** `reboot(8)`, `halt(8)`, and

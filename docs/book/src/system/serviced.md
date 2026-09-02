@@ -3,8 +3,8 @@
 `serviced(8)` is 5BSD's system service manager. `authorityd(8)` starts one
 supervised instance and supplies descriptor-based authority for service
 launches. `serviced` owns bundle discovery, explicit boot and IPC activation,
-readiness, restart policy, storage leases, and the administrative control
-socket. The authoritative pre-v1 target is the dependency-free demand model in
+readiness, restart policy, and the administrative control socket. It holds no
+capabilities of its own — it is a pure launcher and naming switchboard. The authoritative pre-v1 target is the dependency-free demand model in
 `docs/service-architecture-plan.md`.
 Any remaining internal startup-edge graph is implementation debt, not manifest
 ABI or a supported dependency facility.
@@ -32,9 +32,8 @@ See [Capability bundle manifests](manifests.md) for the complete two-level
 ## Launch and lifecycle
 
 Each native unit is launched with `pdfork(2)`. Before releasing the child,
-`serviced` assembles its activation tokens and capability-service descriptors,
-creates a coalition, installs a versioned bootstrap envfd, and applies the
-requested credentials. A unit declares no capabilities in its manifest, so
+`serviced` sets up its activation tokens, creates a coalition, installs a
+versioned bootstrap envfd, and applies the requested credentials. A unit declares no capabilities in its manifest, so
 there is nothing to mint from the bundle — it acquires what it needs at runtime
 by name. Bootstrap construction is still fail-closed: partial construction is
 rolled back and the program never receives an incomplete authority set.
@@ -59,10 +58,13 @@ breaker. Shutdown drains manager-visible demands and owned sessions and
 escalates from graceful termination to `SIGKILL` after `stop_timeout`; there
 is no dependency graph to reverse.
 
-Storage lifetimes are `persistent`, `cache`, `boot`, and `lease`. Shared lease
-storage is destroyed only when its last launched holder exits. Manager-session
-and boot-generation reconciliation recover abandoned lease/boot datasets after
-a crash or reboot without treating a `tzfsd` restart as a reboot.
+Storage itself is owned by `tzfsd`, not `serviced`, which holds no storage
+capability. Because `serviced` launches and reaps the holders, it sends the
+destroy request only when a shared `lease` dataset's last launched holder exits;
+manager-session and boot-generation reconciliation recover abandoned lease/boot
+datasets after a crash or reboot without treating a `tzfsd` restart as a reboot.
+The storage lifetimes themselves (`persistent`, `cache`, `boot`, `lease`) are
+described in [`tzfsd`](../storage/tzfsd.md).
 
 ## Capability services and global IPC
 

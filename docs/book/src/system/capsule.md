@@ -56,8 +56,9 @@ reboot does not depend on `serviced` being alive, because during shutdown
 `serviced` is itself torn down. `serviced` runs as a `pdfork(2)` child of the
 spine and is supervised through its process descriptor; if authorityd dies, the
 kernel closes that descriptor and the exact serviced instance terminates with
-it. Reboot authority lives in PID 1 and module loading is an authorityd
-channel operation (`AUTHORITY_OP_ENSURE_KMOD`); neither has a standalone
+it. Reboot authority lives in PID 1; kernel-module loading is not a PID 1
+operation but is brokered by `sysextd` (`system.SystemExtension`), which a unit
+reaches at runtime with `service_ensure_extension(3)`. Reboot has no standalone
 daemon.
 
 ## PID-1 boot path

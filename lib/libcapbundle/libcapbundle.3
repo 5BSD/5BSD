@@ -29,14 +29,13 @@ and an exact inventory of
 process manifests and
 .Pa Units/name.unit/bin/name
 executables.
-Identity, publisher metadata, version ordering, and shared storage are bundle
-fields; activation, process policy, storage grants, local descriptors, and
-capabilities are unit fields.
+Identity, publisher metadata, and version ordering are bundle
+fields; the program, user, activation, restart policy, resource limits, and
+umask are unit fields.
 .Pp
 Parsing is literal and closed.
 Unknown or duplicate keys, includes, macros, variables, implicit arrays,
-invalid names, incompatible network claims, ambiguous storage, and entries
-beyond fixed limits are rejected.
+invalid names, and entries beyond fixed limits are rejected.
 Activation is explicit under
 .Va activation.boot ,
 .Va activation.ipc ,
@@ -63,7 +62,7 @@ name uniqueness, and resource limits.
 The public header exposes immutable accessors for bundle identity, display
 version, sequence, author, publisher, path, unit count, unit labels,
 activation, IPC names, timer interval, activation path, arguments,
-environment, storage, and conversion to
+environment, and conversion to
 .Vt struct svc_manifest .
 Returned strings remain owned by the bundle.
 .Sh TRUST

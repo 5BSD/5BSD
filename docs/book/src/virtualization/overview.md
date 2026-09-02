@@ -19,6 +19,10 @@ The stack keeps bhyve's deliberate kernel/userspace split:
   kqueue (`mevent`) reactor, and enters Capsicum capability mode before the
   guest runs.
 - `libvmmapi` (`/usr/src/lib/libvmmapi/`) wraps the `/dev/vmm` ioctl ABI.
+- `vmd` (`system.VM`) is the capability-plane broker for host-side vsock: a
+  component asks for a listener by name with `service_vsock_listen(3)` and
+  receives a port window scoped to its channel label, rather than opening
+  `AF_VSOCK` itself. (Brokering bhyve VMs themselves is planned.)
 
 A code-guided tour of the whole stack is maintained in
 `/usr/src/BHYVE_ARCHITECTURE.md`.

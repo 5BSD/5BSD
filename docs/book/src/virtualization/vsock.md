@@ -51,6 +51,13 @@ rings. Configuration options:
   the peer. Multiple concurrent guests are supported; a duplicate CID fails
   with `EADDRINUSE`.
 
+On the host, a 5BSD component does not open `AF_VSOCK` directly. Host-side
+vsock is brokered by `vmd` (`system.VM`): a unit asks for a listener by name
+with `service_vsock_listen(3)`, and `vmd` grants a port window scoped to the
+unit's unforgeable channel label. This keeps host vsock endpoints under the same
+capability discipline as the rest of the plane, above the bhyve device model
+described here.
+
 A `vsock` DTrace USDT provider (`usr.sbin/bhyve/vsock_provider.d`) exposes
 connection, credit, and overflow probes, mirroring the kernel SDT provider.
 Checkpointing is fail-closed: a snapshot is accepted only with no live

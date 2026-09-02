@@ -87,7 +87,6 @@ activation {
 restart = "on-failure";
 stop_timeout = 10;
 max_failures = 10;
-kmod_requires = ["zfs"];
 
 # Pre-exec process policy (setrlimit / umask / scheduling band).
 limits {
@@ -187,7 +186,6 @@ Important limits are:
 | services loaded system-wide | 256 |
 | arguments / environment entries | 32 / 32 |
 | IPC names per unit | 8 |
-| kernel modules | 8 |
 | stop timeout | 300 seconds |
 | bundle tree entries | 4096 |
 | one bundle file | 512 MiB |

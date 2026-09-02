@@ -5,7 +5,7 @@
 .Os
 .Sh NAME
 .Nm libservice
-.Nd serviced discovery, provider lifecycle, and typed-session support
+.Nd serviced discovery, provider lifecycle, and on-demand capability access
 .Sh LIBRARY
 Service lifecycle library
 .Pq libservice, Fl lservice
@@ -30,13 +30,21 @@ Service lifecycle library
 .Ft int
 .Fn service_storage_open "struct service_context *context" "const char *name" "int *dirfd"
 .Ft int
+.Fn service_open_config "struct service_context *context" "const char *name" "int *fd"
+.Ft int
+.Fn service_open_isolated "struct service_context *context" "const char *name" "int *dirfd"
+.Ft int
+.Fn service_enter_namespace "struct service_context *context" "const char *path"
+.Ft int
+.Fn service_ensure_extension "struct service_context *context" "const char *name"
+.Ft int
+.Fn service_vsock_listen "struct service_context *context" "unsigned index" "int *fd"
+.Ft int
 .Fn service_supervisor_fd "struct service_context *context"
 .Ft int
 .Fn service_supervisor_status "struct service_context *context"
 .Ft const char *
 .Fn service_label "struct service_context *context"
-.Ft int
-.Fn service_capability_open "struct service_context *context" "const char *name" "const char *type" "int *fd"
 .Ft int
 .Fn service_activation_socket "const char *name"
 .Ft int
@@ -153,50 +161,76 @@ The private control channel read by
 .Nm
 is not public.
 .Pp
-.Fn service_capability_open
-duplicates a manifest-declared named descriptor of the requested
-.Fa type
-into
-.Fa fd .
-The caller owns the returned close-on-exec descriptor and must close it.
-Closing it never invalidates libservice's retained bootstrap descriptor or a
-later open.
-Capability-service names are
-.Dq mount ,
-.Dq node ,
-.Dq accounting ,
-and
-.Dq identity .
-Storage names use
-.Dq storage:<logical-name>
-and are delivered with type
-.Dq zfshandle .
-A mount-rights consumer mounts the handle lazily with
-.Fn service_storage_open
-rather than opening it as a raw capability.
-An existing name with a different type fails with
-.Er EFTYPE .
-Unknown names fail with
-.Er EINVAL ;
-an accepted but undeclared name fails with
-.Er ENOENT .
-.Pp
-.Fn service_storage_open
-mounts the delivered
-.Dq storage: Ns Fa name
-capability and returns its directory root in
-.Fa dirfd .
-The service manager delivers storage as a rights-limited
-.Dq zfshandle ;
-this call mounts it (the service manager no longer mounts on the unit's behalf)
-and retains the handle for the life of the process, because the anonymous mount
-is anchored by it \(em dropping the handle would force-unmount the directory.
-The caller hardens the returned directory's rights itself.
-Returns 0 on success, or
+Capabilities are acquired on demand, by name, at runtime; no capability is
+minted or delivered at launch.
+Each of the following client entry points resolves the relevant broker over the
+process channel and drives it; the broker scopes the request by the caller's
+unforgeable channel label.
+Each returns 0 on success, or
 .Va -1
 with
 .Va errno
 set.
+.Pp
+.Fn service_storage_open
+asks the
+.Dq system.Filesystem
+provider
+.Pq Xr tzfsd 8
+for the storage dataset named
+.Fa name ,
+mounts the delivered rights-limited handle, and returns its directory root in
+.Fa dirfd .
+The call retains the handle for the life of the process, because the anonymous
+mount is anchored by it \(em dropping the handle would force-unmount the
+directory.
+The caller hardens the returned directory's rights itself.
+.Pp
+.Fn service_open_config
+asks the
+.Dq system.Filesystem
+provider for the read-only configuration object named
+.Fa name
+and returns a rights-limited descriptor in
+.Fa fd .
+.Pp
+.Fn service_open_isolated
+asks the
+.Dq system.Filesystem
+provider for a per-caller isolated scratch dataset named
+.Fa name
+and returns its mounted directory root in
+.Fa dirfd .
+.Pp
+.Fn service_enter_namespace
+asks the
+.Dq system.Namespace
+provider
+.Pq Xr warden 8
+to confine the caller in a jail rooted at
+.Fa path ;
+the caller attaches itself before exec.
+.Pp
+.Fn service_ensure_extension
+asks the
+.Dq system.SystemExtension
+provider
+.Pq Xr sysextd 8
+to ensure the kernel system extension named
+.Fa name
+is loaded.
+.Pp
+.Fn service_vsock_listen
+asks the
+.Dq system.VM
+provider
+.Pq Xr vmd 8
+for a bound host-local listening
+.Dv AF_VSOCK
+socket at
+.Fa index
+within the caller's port window and returns the descriptor in
+.Fa fd .
 .Pp
 .Fn service_helper_open
 launches and connects a private helper unit declared in the caller's own
@@ -244,8 +278,7 @@ the socket and holds it open, so it survives this provider's crashes,
 idle stops, and restarts with its backlog intact
 .Pq a queued connection is never dropped .
 The first inbound connection is the demand that launches the unit.
-Unlike
-.Fn service_capability_open ,
+Unlike the on-demand broker calls above,
 this call returns the retained descriptor itself, not a duplicate:
 it is owned by libservice and remains valid for the life of the process, so the
 caller
@@ -416,4 +449,8 @@ Delivery durability and remote cancellation remain service-specific.
 .Xr kqueue 2 ,
 .Xr libchannel 3 ,
 .Xr capsicum 4 ,
-.Xr serviced 8
+.Xr serviced 8 ,
+.Xr sysextd 8 ,
+.Xr tzfsd 8 ,
+.Xr vmd 8 ,
+.Xr warden 8

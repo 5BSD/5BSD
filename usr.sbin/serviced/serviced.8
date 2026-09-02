@@ -17,8 +17,7 @@ It is started by
 as a single child process via
 .Xr pdfork 2
 and inherits a mac_capability channel for requesting activation tokens,
-channels, coalitions, named capability-service descriptors, and pre-exec
-kernel-module prerequisites from the authority.
+channels, and coalitions from the authority.
 .Pp
 .Nm
 scans capability bundles from
@@ -142,8 +141,7 @@ inherits the following file descriptors from
 .It channel (fd 3)
 Mac_capability channel back to
 .Xr authorityd 8 .
-Used to request activation tokens, channels, coalitions, named
-capability-service descriptors, and pre-exec kernel-module prerequisites.
+Used to request activation tokens, channels, and coalitions.
 Always required.
 .It channel_svc (fd 4)
 Delegated mac_capability channel service instance.
@@ -208,13 +206,11 @@ Files are parsed strictly and topologically sorted before launch.
 The schema identifier and version are mandatory.
 UCL directives, includes, interpolation, implicit arrays, and duplicate keys
 are disabled.
-An unknown key, wrong type, invalid capability, excess entry, unknown
-dependency, duplicate provided name, or dependency cycle rejects the bundle set;
-authority declarations are never silently dropped.
+An unknown key, wrong type, excess entry, unknown
+dependency, duplicate provided name, or dependency cycle rejects the bundle set.
 .Pp
 The authoritative schema, including literal arguments, environment variables,
-restart policy, limits, activation, and capability-service discovery, is
-documented in
+restart policy, limits, and activation, is documented in
 .Xr serviced 5 .
 A unit declares no capabilities in its manifest.
 .Sh SERVICE BOOTSTRAP
@@ -223,7 +219,7 @@ a sealed, write-once
 .Xr envfd_create 2
 environment descriptor at fd 5.
 It contains the manifest label and typed tables for the service channel,
-optional capprotect instance, activation tokens, and capability services.
+optional capprotect instance, and activation tokens.
 The descriptor may cross exactly one fork and one exec boundary, is
 non-transferable, becomes close-on-fork and close-on-exec locked in the new
 image, and is closed by
@@ -232,12 +228,10 @@ after strict validation.
 The non-authoritative
 .Ev SERVICE_BOOTSTRAP_FD=5
 entry provides classic environment-based discovery.
-No token or capability-service descriptor table is encoded in
-environment strings.
+No token table is encoded in environment strings.
 .Pp
-The service channel is fd 3, optional capprotect is fd 4, and authority
-descriptors occupy a contiguous range beginning at fd 6: activation tokens
-first, then capability-service descriptors.
+The service channel is fd 3, optional capprotect is fd 4, and activation tokens
+occupy a contiguous range beginning at fd 6.
 Because a unit declares no capabilities in its manifest, no path, network, or
 system-gate tokens are minted at launch; a service acquires such grants at
 runtime by name.
@@ -257,7 +251,6 @@ is not a data-plane proxy for these sessions.
 .Pp
 .Fn service_acquire ,
 .Fn service_authorize_capabilities ,
-.Fn service_capability_open ,
 .Fn service_connect ,
 .Fn service_worker_protect ,
 and
@@ -707,11 +700,7 @@ Control command completed.
 Control command denied (insufficient privileges).
 .El
 .Ss Capabilities
-.Bl -tag -width "cap-service(label, name, result)" -compact
-.It Li cap-mint(label, type, result)
-Capability token minted.
-.It Li cap-service(label, name, result)
-Named capability-service descriptor acquired.
+.Bl -tag -width "cap-coalition(label, result)" -compact
 .It Li cap-channel(label, result)
 Channel created.
 .It Li cap-coalition(label, result)

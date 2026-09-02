@@ -172,7 +172,7 @@ product stacks, each covered in its own section:
 
 | Stack | Components | Section |
 |-------|-----------|---------|
-| Init & services | `authorityd` (PID 1 capable), `serviced`, `authorityctl` | [System Services](system/capsule.md) |
+| Init & services | `capsule` (PID 1), `authorityd`, `serviced`, `authorityctl`, and the `tzfsd`/`warden`/`sysextd`/`vmd` brokers | [System Services](system/capsule.md) |
 | Virtualization | WASPNest (bhyve), VirtIO models, vsock, migration | [Virtualization](virtualization/overview.md) |
 | Bluetooth | `blued`, `meshd`, `bluedctl`/`meshctl` | [Bluetooth](bluetooth/overview.md) |
 | Storage | TrustedZFS, `tzfsd`, `tzfsctl` | [Storage](storage/trustedzfs.md) |
@@ -180,8 +180,10 @@ product stacks, each covered in its own section:
 | Observability | libotelexport, bsdinstruments, hwtlm, DTrace | [Observability](observability/observablebsd.md) |
 
 Daemons log with subsystem tags (`[AUTHORITY]`, `[SERVICE]`, `[TZFS]`) into the
-unified logging design. Services declare their needs via manifest files and
-capability bundles (see [Service Manifests](system/manifests.md) and
+unified logging design. Services ship as capability bundles whose manifests
+declare only how to launch a program; a unit acquires whatever capabilities it
+needs at runtime, by name, scoped to its unforgeable channel label (see
+[Service Manifests](system/manifests.md) and
 [Capability Bundles](security/capability-bundles.md)).
 
 ## Installing

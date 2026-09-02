@@ -5,12 +5,12 @@ creates or opens application datasets, attenuates each returned handle to the
 declared rights, and passes that handle with `SCM_RIGHTS`. It never proxies
 application I/O.
 
-`authorityd` starts it on demand and forwards storage requests. `serviced`
-delivers mount-only storage as a rights-limited `zfshandle` named
-`storage:<logical-name>`; the unit mounts it itself with `service_storage_open(3)`
-and holds the handle for its lifetime (the handle anchors the mount). A
-filesystem descriptor consumes its backing handle privately. The logical name
-is not a dataset name.
+`authorityd` starts it on demand. A consumer opens the `system.Filesystem`
+service by name; `tzfsd` derives the dataset from the consumer's unforgeable
+channel label and returns it as a rights-limited `zfshandle`. The unit mounts it
+itself with `service_storage_open(3)` and holds the handle for its lifetime (the
+handle anchors the mount). A filesystem descriptor consumes its backing handle
+privately. Nothing in the bundle names a ZFS dataset path.
 
 ## ZFS is a platform requirement
 

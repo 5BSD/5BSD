@@ -17,10 +17,10 @@ convenience choice.
 **Managed providers never open `/dev/mac_capability`.**  `authorityd(8)` claims
 the device node itself at boot (`usr.sbin/authorityd/mac_capability_claims.c`
 always claims `/dev/mac_capability`), so a foreign-nonce open is denied by the
-MACF hooks.  A provider managed by `serviced(8)` instead receives its
-capability descriptors by *session injection*: `serviced` delivers narrowed
-access tokens and capability descriptors in the bootstrap that accompanies the
-inherited pair fd, and the provider activates them through `libservice`:
+MACF hooks.  A provider managed by `serviced(8)` never opens the device either. It is
+launched with an unforgeable service channel and acquires any capability it
+needs on demand, by name, scoped to its channel label — `serviced` mints and
+delivers nothing at launch. Its startup sequence through `libservice` is:
 
 ```c
 #include <libservice.h>
@@ -41,13 +41,14 @@ if (service_provider_create(&provider) == -1 ||
 This is the exact startup sequence of the `networkcmp` peer provider daemon
 (`usr.sbin/localnetwork/networkcmp.c`), a managed service reached lazily by its
 consumers through `service_connect()`.
-`service_provider_authorize_capabilities()` walks every bootstrap token,
-verifies with `capability_get_info()` (from `libcapability`) that it names the
-`isolation` or `system` service, and activates each one — issuing
-`FI_OP_AUTHORIZE` on isolation tokens on the provider's behalf.  Descriptors
-for manifest-declared capability services (`"mount"`, `"node"`,
-`"accounting"`, `"identity"`) are opened with
-`service_capability_open(ctx, name, expected_type, &fd)`.
+`service_provider_authorize_capabilities()` completes the provider's own
+capability-mode hardening; it does not walk a bundle-minted token set, because
+a unit declares no capabilities in its manifest and `serviced` delivers none at
+launch.  Whatever the provider needs — a filesystem path or device, mutable
+storage, a namespace — it acquires at runtime, by name, over its own unforgeable
+channel (`service_open_isolated(3)`, `service_storage_open(3)`,
+`service_enter_namespace(3)`, and the like), each grant scoped to the channel
+label rather than handed over in a launch bootstrap.
 
 **Supervisors connect directly.**  `authorityd(8)` and `serviced(8)` run as root
 before any claims exist, open the device, and connect by service name.  This
@@ -227,10 +228,10 @@ capability_kernel_call(token, &req, sizeof(req), NULL, 0,
 
 Authorization is a descriptor lease: it adds the caller's nonce to the
 claim's authorized set for exactly as long as the token fd stays open.
-Closing the token revokes it.  Managed providers never do this by hand —
-`service_authorize_capabilities()` activates every injected token, and
-`libservice` retains private close-on-exec references so a later program
-image cannot reactivate them under a rotated nonce.
+Closing the token revokes it.  Managed providers rarely do this by hand — when
+a provider acquires a capability at runtime by name, `libservice` activates the
+returned token and retains private close-on-exec references so a later program
+image cannot reactivate it under a rotated nonce.
 
 ## What enforcement looks like
 

@@ -21,11 +21,38 @@ system daemon that owns the storage plane of the capability system.
 It holds the root-pool handle for the pool that backs
 .Pa /Capabilities
 and auto-provisions the persistent and ephemeral dataset roots.
-On request it mints a rights-limited TrustedZFS handle
+It is a socket-free capability-plane service: it exposes the well-known name
+.Dq Li system.Filesystem
+and serves each client on its own
+.Xr mac_capability 4
+channel.
+The discovery
+.Em domain
+layer resolves
+.Dq Li system.Filesystem
+only for authorized clients.
+.Pp
+Obtaining storage is
+.Em consumer self-service :
+a program asks for a dataset, configuration object, or isolated scratch root at
+runtime by calling
+.Xr service_storage_open 3 ,
+.Xr service_open_config 3 ,
+or
+.Xr service_open_isolated 3 ,
+whose library resolves
+.Nm
+and drives it.
+On request
+.Nm
+mints a rights-limited TrustedZFS handle
 .Pq see Xr trustedzfs 3
-and passes it back to the caller over
-.Dv SCM_RIGHTS ;
-the caller then drives the handle with the ordinary verb interface.
+scoped to the caller's unforgeable channel label and re-delivers it over that
+channel; the consumer then mounts and drives the handle itself.
+.Nm
+is never driven by
+.Xr serviced 8
+on a unit's behalf, and a unit does not declare storage in its manifest.
 .Nm
 takes the storage-granting role that
 .Xr authorityd 8
@@ -34,9 +61,8 @@ previously performed inline.
 ZFS is a required subsystem for this system, although the host may still boot
 from UFS.
 .Nm
-comes up in the PID 1 boot chain, after the pool is available and before
-.Xr serviced 8
-hands out storage to services.
+comes up in the PID 1 boot chain, after the pool is available, and serves
+storage to consumers on demand.
 .Pp
 All name-based setup
 .Pq configuration, opening the pool, provisioning
@@ -63,15 +89,17 @@ Run in the foreground and log to stderr as well as syslog.
 .Bl -tag -width ".Pa /var/run/tzfsd.ready" -compact
 .It Pa /Capabilities/Config/tzfsd.ucl
 configuration file
-.It Pa /var/run/tzfsd.sock
-request socket (root only)
 .It Pa /var/run/tzfsd.ready
 readiness marker, written once serving begins
 .El
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr libtzfsd 3 ,
+.Xr service_open_config 3 ,
+.Xr service_open_isolated 3 ,
+.Xr service_storage_open 3 ,
 .Xr trustedzfs 3 ,
+.Xr mac_capability 4 ,
 .Xr tzfs.conf 5 ,
 .Xr tzfsctl 8 ,
 .Xr authorityd 8 ,
