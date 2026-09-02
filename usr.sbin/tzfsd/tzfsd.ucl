@@ -13,11 +13,15 @@
 # ephemeral { sync = "disabled"; }   # sync= for ephemeral datasets
 
 # Isolated-open policy (TZFSD_OP_OPEN, default-deny).  Each entry grants one
-# service label read/write/exec/lookup on one exact absolute path, replacing the
-# old manifest capabilities.open declaration.  A service reaches these via
-# service_open_isolated(3); anything not listed is denied.
+# service label read/write/exec/lookup/ioctl on one exact absolute path (or path
+# prefix), replacing the old manifest capabilities.open declaration.  A service
+# reaches these via service_open_isolated(3); anything not listed is denied.
+#
+# NB: the first array element must follow "[" directly, with no comment line in
+# between -- the bundled libucl mis-parses a comment as the first token inside an
+# array and rejects the whole file (EINVAL).  Per-entry comments are fine once at
+# least one element precedes them.
 open_paths = [
-    # authagentd reads its admin principal policy.
     { label = "system.AuthAgent/authagentd";
       path = "/Capabilities/Config/principal-policy.ucl"; rights = ["read"]; },
     # blued owns the virtual-HID devices: the /dev/vhid control node and the
