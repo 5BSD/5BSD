@@ -552,6 +552,29 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 	 * holding an exhausted descriptor.  See docs/auth-agent-design.md.
 	 */
 	resend = (req->flags & SVC_MINT_FLAG_RESEND) != 0;
+	/*
+	 * The mint boundary is the auth-agent alone (domain.c, docs/
+	 * auth-agent-design.md): it is the single component that translates an
+	 * authenticated identity into a session lookup channel.  Gate on the
+	 * caller's unforgeable channel LABEL, not its domain — every
+	 * serviced-launched unit's domain is SVC_DOMAIN_SYSTEM (zero-initialized),
+	 * so svc_domain_may_mint()/svc_mint_domain_kind() below cannot tell the
+	 * auth-agent from any other unit.  Without this check any unit could mint a
+	 * SYSTEM channel and, because a minted channel's lookups carry
+	 * requester == NULL (domain.c), obtain the ADMIN bypass — the
+	 * authority-relay control connection to authorityd (reboot/halt/lifecycle)
+	 * and third-party *.Control planes — that it can never get on its own
+	 * control channel.  Only the auth-agent legitimately calls this op
+	 * (usr.sbin/authagentd); login/su/sshd receive the minted channel from it.
+	 */
+	if (strcmp(svc->manifest.label, SVC_MINT_PRINCIPAL_LABEL) != 0) {
+		serviced_audit(AUE_SERVICED_COMPONENT, getuid(), EPERM,
+		    "mint domain refused: %s is not the mint boundary",
+		    svc->manifest.label);
+		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
+		    EPERM, NULL, 0);
+		return;
+	}
 	/* Domains only narrow: a non-system caller may not mint at all. */
 	if (!svc_domain_may_mint(&svc->domain)) {
 		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
