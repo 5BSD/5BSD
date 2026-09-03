@@ -64,11 +64,133 @@ add_signal_event(int kq, int sig)
 		syslog(LOG_CRIT, "kevent signal %d: %m", sig);
 }
 
+/*
+ * Dispatch one ready kevent.  Factored out of event_loop() so the /etc/rc
+ * bootstrap wait can drive the same dispatch on serviced_kq (answering ambient
+ * lookups and on-demand launches while rc runs) instead of blocking on a
+ * dedicated kqueue that only sees rc's exit.
+ */
+void
+serviced_dispatch_event(struct kevent *kev)
+{
+
+	if (kev->filter == EVFILT_SIGNAL) {
+		switch ((int)kev->ident) {
+		case SIGTERM:
+		case SIGINT:
+			syslog(LOG_INFO,
+			    "received signal %d, shutting down",
+			    (int)kev->ident);
+			sd.shutting_down = true;
+			sd.running = false;
+			supervisor_stop(serviced_kq);
+			break;
+		case SIGHUP:
+			syslog(LOG_INFO,
+			    "received SIGHUP, reloading");
+			supervisor_reload(serviced_kq,
+			    NULL, 0);
+			break;
+		case SIGCHLD:
+			/* Reap strays. */
+			while (waitpid(-1, NULL, WNOHANG) > 0)
+				;
+			break;
+		}
+		return;
+	}
+
+	/* Capability control connection — per-connection events. */
+	if (sctl_is_conn_event(kev)) {
+		sctl_conn_event(kev);
+		return;
+	}
+
+	if (kev->filter == EVFILT_READ &&
+	    (int)kev->ident == sd.authority_channel_fd) {
+		if (kev->flags & EV_EOF) {
+			syslog(LOG_CRIT,
+			    "authority died, stopping all services");
+			SERVICED_PROBE_AUTHORITY_DISCONNECTED();
+			/* Loss of the capability-minting authority
+			 * is a security-relevant integrity event. */
+			serviced_audit(AUE_SERVICED_AUTHORITY,
+			    getuid(), EIO,
+			    "authority channel disconnected; "
+			    "stopping all services");
+			sd.shutting_down = true;
+			sd.running = false;
+			supervisor_stop(serviced_kq);
+		}
+		return;
+	}
+
+	/* Process descriptor events — service lifecycle. */
+	if (kev->filter == EVFILT_PROCDESC) {
+		supervisor_handle_procdesc(kev);
+		return;
+	}
+
+	/* Path and queue-directory (vnode) activation sources. */
+	if (kev->filter == EVFILT_VNODE) {
+		activation_path_event(kev, serviced_kq);
+		return;
+	}
+
+	/* Mount (EVFILT_FS) activation sources. */
+	if (kev->filter == EVFILT_FS) {
+		activation_mount_event(kev, serviced_kq);
+		return;
+	}
+
+	/*
+	 * Socket activation sources — manager-owned listeners.  Checked before
+	 * the generic EVFILT_READ channel handling so a listen fd (armed with
+	 * udata=svc) is routed by fd ownership and never mistaken for a
+	 * control/channel fd; the two fd sets are disjoint.
+	 */
+	if (kev->filter == EVFILT_READ &&
+	    activation_socket_owns((int)kev->ident)) {
+		activation_socket_event(kev, serviced_kq);
+		return;
+	}
+
+	/*
+	 * Restart, stop-kill, on-demand, launch, and periodic activation timers.
+	 */
+	if (kev->filter == EVFILT_TIMER) {
+		if (on_demand_is_timer(kev->ident))
+			on_demand_timeout(kev->ident,
+			    serviced_kq);
+		else if (activation_timer_owns(kev->ident))
+			activation_timer_fire(kev->ident,
+			    serviced_kq);
+		else
+			supervisor_handle_timer(kev);
+		return;
+	}
+
+	/* Minted user-domain lookup channels (§21/§22). */
+	if ((kev->filter == EVFILT_READ ||
+	    kev->filter == EVFILT_WRITE) &&
+	    domain_channel_owns_event(kev->ident)) {
+		domain_channel_event(kev, serviced_kq);
+		return;
+	}
+
+	/* Service channel events. */
+	if ((kev->filter == EVFILT_READ ||
+	    kev->filter == EVFILT_WRITE) &&
+	    kev->udata != NULL) {
+		supervisor_handle_channel(kev);
+		return;
+	}
+}
+
 static void
 event_loop(void)
 {
 	struct kevent events[16];
-	struct kevent *kev;
 	int i, n;
 
 	while (sd.running) {
@@ -80,123 +202,8 @@ event_loop(void)
 			break;
 		}
 
-		for (i = 0; i < n; i++) {
-			kev = &events[i];
-
-			if (kev->filter == EVFILT_SIGNAL) {
-				switch ((int)kev->ident) {
-				case SIGTERM:
-				case SIGINT:
-					syslog(LOG_INFO,
-					    "received signal %d, shutting down",
-					    (int)kev->ident);
-					sd.shutting_down = true;
-					sd.running = false;
-					supervisor_stop(serviced_kq);
-					break;
-				case SIGHUP:
-					syslog(LOG_INFO,
-					    "received SIGHUP, reloading");
-					supervisor_reload(serviced_kq,
-					    NULL, 0);
-					break;
-				case SIGCHLD:
-					/* Reap strays. */
-					while (waitpid(-1, NULL, WNOHANG) > 0)
-						;
-					break;
-				}
-				continue;
-			}
-
-			/* Capability control connection — per-connection events. */
-			if (sctl_is_conn_event(kev)) {
-				sctl_conn_event(kev);
-				continue;
-			}
-
-			if (kev->filter == EVFILT_READ &&
-			    (int)kev->ident == sd.authority_channel_fd) {
-				if (kev->flags & EV_EOF) {
-					syslog(LOG_CRIT,
-					    "authority died, stopping all services");
-					SERVICED_PROBE_AUTHORITY_DISCONNECTED();
-					/* Loss of the capability-minting authority
-					 * is a security-relevant integrity event. */
-					serviced_audit(AUE_SERVICED_AUTHORITY,
-					    getuid(), EIO,
-					    "authority channel disconnected; "
-					    "stopping all services");
-					sd.shutting_down = true;
-					sd.running = false;
-					supervisor_stop(serviced_kq);
-				}
-				continue;
-			}
-
-			/* Process descriptor events — service lifecycle. */
-			if (kev->filter == EVFILT_PROCDESC) {
-				supervisor_handle_procdesc(kev);
-				continue;
-			}
-
-			/* Path and queue-directory (vnode) activation sources. */
-			if (kev->filter == EVFILT_VNODE) {
-				activation_path_event(kev, serviced_kq);
-				continue;
-			}
-
-			/* Mount (EVFILT_FS) activation sources. */
-			if (kev->filter == EVFILT_FS) {
-				activation_mount_event(kev, serviced_kq);
-				continue;
-			}
-
-			/*
-			 * Socket activation sources — manager-owned listeners.
-			 * Checked before the generic EVFILT_READ channel handling
-			 * so a listen fd (armed with udata=svc) is routed by fd
-			 * ownership and never mistaken for a control/channel fd;
-			 * the two fd sets are disjoint.
-			 */
-			if (kev->filter == EVFILT_READ &&
-			    activation_socket_owns((int)kev->ident)) {
-				activation_socket_event(kev, serviced_kq);
-				continue;
-			}
-
-			/*
-			 * Restart, stop-kill, on-demand, launch, and periodic
-			 * activation timers.
-			 */
-			if (kev->filter == EVFILT_TIMER) {
-				if (on_demand_is_timer(kev->ident))
-					on_demand_timeout(kev->ident,
-					    serviced_kq);
-				else if (activation_timer_owns(kev->ident))
-					activation_timer_fire(kev->ident,
-					    serviced_kq);
-				else
-					supervisor_handle_timer(kev);
-				continue;
-			}
-
-			/* Minted user-domain lookup channels (§21/§22). */
-			if ((kev->filter == EVFILT_READ ||
-			    kev->filter == EVFILT_WRITE) &&
-			    domain_channel_owns_event(kev->ident)) {
-				domain_channel_event(kev, serviced_kq);
-				continue;
-			}
-
-			/* Service channel events. */
-			if ((kev->filter == EVFILT_READ ||
-			    kev->filter == EVFILT_WRITE) &&
-			    kev->udata != NULL) {
-				supervisor_handle_channel(kev);
-				continue;
-			}
-		}
+		for (i = 0; i < n; i++)
+			serviced_dispatch_event(&events[i]);
 	}
 }
 

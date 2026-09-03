@@ -229,6 +229,9 @@ struct serviced_state {
 extern struct serviced_state sd;
 extern int serviced_kq;
 
+/* serviced.c — dispatch one ready serviced_kq event (main loop + rc bootstrap). */
+void	serviced_dispatch_event(struct kevent *kev);
+
 /*
  * serviced's retained client end of the SYSTEM ambient lookup channel (§21),
  * or -1 if none was installed.  Held open for the life of the daemon so every

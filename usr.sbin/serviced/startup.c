@@ -63,23 +63,10 @@ static int
 run_rc_bootstrap(int kqunused)
 {
 	static struct svc_runtime rc;	/* static: stable kevent udata */
-	struct kevent kev;
-	int rckq, nev;
+	struct kevent events[16];
+	int nev, i;
 
 	(void)kqunused;
-
-	/*
-	 * Use a dedicated kqueue so the ONLY event this wait sees is
-	 * /etc/rc's process-descriptor exit.  On the shared serviced kqueue
-	 * a level-triggered channel/socket event that we do not consume
-	 * here would be re-reported every call and starve the exit event,
-	 * wedging boot forever.
-	 */
-	rckq = kqueue();
-	if (rckq == -1) {
-		syslog(LOG_ERR, "startup: kqueue for /etc/rc: %m");
-		return (-1);
-	}
 
 	memset(&rc, 0, sizeof(rc));
 	rc.kind = SVC_KIND_ONESHOT;
@@ -162,9 +149,8 @@ run_rc_bootstrap(int kqunused)
 	}
 
 	syslog(LOG_INFO, "startup: running /etc/rc");
-	if (svc_exec(&rc, rckq) == -1) {
+	if (svc_exec(&rc, serviced_kq) == -1) {
 		syslog(LOG_ERR, "startup: cannot launch /etc/rc");
-		(void)close(rckq);
 		return (-1);
 	}
 
@@ -172,21 +158,31 @@ run_rc_bootstrap(int kqunused)
 	 * Wait for /etc/rc to finish, however long it takes.  rc has no
 	 * knowable deadline (fsck, key generation, network/entropy waits can
 	 * all be legitimately slow), and init historically waited on /etc/rc
-	 * indefinitely -- so we do the same.  Detecting a genuinely wedged
-	 * boot is left to the operator (console), exactly as before.
+	 * indefinitely -- so we do the same.
+	 *
+	 * Drive the FULL serviced dispatch on the shared serviced_kq while
+	 * waiting, rather than blocking on a private kqueue that only sees rc's
+	 * exit.  rc and its rc.d children inherit the ambient lookup channel
+	 * (SERVICE_LOOKUP_FD, installed above) and may make synchronous
+	 * capability lookups — which serviced itself answers on serviced_kq — so
+	 * a private-kqueue wait would deadlock any rc child that blocks on a
+	 * lookup that rc then waits on.  Each kevent() drains the whole ready
+	 * batch and serviced_dispatch_event() consumes every event, so no
+	 * level-triggered source can starve rc's EVFILT_PROCDESC exit (the
+	 * starvation the old dedicated kqueue guarded against).  sd.running
+	 * clears if SIGTERM or authority loss arrives mid-rc.
 	 */
-	while (rc.state == SVC_STATE_STARTING) {
-		nev = kevent(rckq, NULL, 0, &kev, 1, NULL);
+	while (rc.state == SVC_STATE_STARTING && sd.running) {
+		nev = kevent(serviced_kq, NULL, 0, events, 16, NULL);
 		if (nev == -1) {
 			if (errno == EINTR)
 				continue;
 			syslog(LOG_ERR, "startup: kevent during /etc/rc: %m");
 			break;
 		}
-		if (nev > 0 && kev.filter == EVFILT_PROCDESC)
-			supervisor_handle_procdesc(&kev);
+		for (i = 0; i < nev; i++)
+			serviced_dispatch_event(&events[i]);
 	}
-	(void)close(rckq);
 
 	if (rc.state == SVC_STATE_DONE) {
 		syslog(LOG_INFO, "startup: /etc/rc completed");

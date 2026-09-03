@@ -341,6 +341,18 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 				    svc->manifest.label);
 				svc->manifest = desired;
 				svc->restart_count = 0;
+				/*
+				 * Re-arm activation with the new manifest.  A
+				 * stopped on-demand unit keeps its activation
+				 * sources (timer/path/queue/mount/socket) armed to
+				 * trigger relaunch; tear the old ones down so the
+				 * activation_register_all() at the end of reload
+				 * re-arms them from the updated manifest (it is
+				 * idempotent and would otherwise skip the
+				 * still-armed old sources), or a changed interval /
+				 * watch path / socket is silently ignored.
+				 */
+				activation_source_teardown(svc, kq);
 			}
 		}
 		reload_nchanged = nchanged;
