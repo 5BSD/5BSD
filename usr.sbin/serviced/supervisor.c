@@ -121,6 +121,35 @@ schedule_restart(struct svc_runtime *svc, int kq)
 	}
 }
 
+/*
+ * Restart a service now, but tolerate an exec-time failure.  A plain svc_exec()
+ * that fails (fd-budget denial, calloc ENOMEM, a transient mint failure) leaves
+ * the unit STOPPED with no timer armed, and since the process never started
+ * there is no NOTE_EXIT to retrigger recovery — the daemon wedges silently until
+ * some unrelated lookup or reload happens to relaunch it.  Count the failure
+ * against the circuit breaker (so a permanently-broken exec is eventually
+ * disabled instead of spinning) and otherwise arm a backoff retry, matching the
+ * fail-soft/retry behaviour of the death path.
+ */
+static void
+svc_restart_now(struct svc_runtime *svc, int kq)
+{
+
+	if (svc_exec(svc, kq) != -1)
+		return;
+	if (++svc->restart_count >= svc->manifest.max_failures) {
+		syslog(LOG_CRIT, "service %s: exec failed %u times, disabling",
+		    svc->manifest.label, svc->restart_count);
+		SERVICED_PROBE_SVC_DISABLED(svc->manifest.label,
+		    svc->restart_count);
+		svc->state = SVC_STATE_STOPPED;
+		return;
+	}
+	syslog(LOG_WARNING, "service %s: exec failed (%u), scheduling retry",
+	    svc->manifest.label, svc->restart_count);
+	schedule_restart(svc, kq);
+}
+
 void
 svc_cancel_restart(struct svc_runtime *svc, int kq)
 {
@@ -457,21 +486,28 @@ supervisor_handle_procdesc(struct kevent *kev)
 		if (svc->idle_stop_pending) {
 			int saved_listen[SERVICED_MAX_ACTIVATION_SOCKETS];
 			unsigned saved_nlisten;
-			int saved_path_fd;
+			int saved_path_fd, saved_queue_fd;
+			uintptr_t saved_mount_ident;
 
 			/*
-			 * Activation sources (socket listeners, path watch)
-			 * OUTLIVE the unit's stop cycles — they must keep firing
-			 * to re-activate it on demand.  svc_runtime_init_fds()
-			 * would reset them to -1 WITHOUT closing the fds or
-			 * removing their kevents (leaking the listener and
-			 * orphaning a level-triggered registration).  Snapshot
-			 * and restore them across the fresh-slot reset.
+			 * Activation sources (socket listeners, path watch, queue
+			 * directory, mount watch) OUTLIVE the unit's stop cycles —
+			 * they must keep firing to re-activate it on demand.
+			 * svc_runtime_init_fds() would reset them all to -1/0
+			 * WITHOUT closing the fds or removing their kevents (leaking
+			 * the listener/queue fd and orphaning a level-triggered
+			 * registration).  Snapshot and restore ALL of them across the
+			 * fresh-slot reset — the queue fd and mount ident were
+			 * previously dropped here, so after the first idle stop a
+			 * queue_directory/on_mount unit leaked its fd and its
+			 * activation went permanently dead.
 			 */
 			memcpy(saved_listen, svc->activation_listen_fds,
 			    sizeof(saved_listen));
 			saved_nlisten = svc->nactivation_listen;
 			saved_path_fd = svc->activation_path_fd;
+			saved_queue_fd = svc->activation_queue_fd;
+			saved_mount_ident = svc->activation_mount_ident;
 
 			svc->pid = 0;
 			svc->launch_id = 0;
@@ -484,6 +520,8 @@ supervisor_handle_procdesc(struct kevent *kev)
 			    sizeof(saved_listen));
 			svc->nactivation_listen = saved_nlisten;
 			svc->activation_path_fd = saved_path_fd;
+			svc->activation_queue_fd = saved_queue_fd;
+			svc->activation_mount_ident = saved_mount_ident;
 			svc->state = SVC_STATE_STOPPED;
 			syslog(LOG_INFO, "service %s: stopped for idle; "
 			    "reservations kept for on-demand relaunch",
@@ -533,7 +571,7 @@ supervisor_handle_procdesc(struct kevent *kev)
 			syslog(LOG_INFO, "service %s: restarting "
 			    "(count %u)", svc->manifest.label,
 			    svc->restart_count);
-			svc_exec(svc, serviced_kq);
+			svc_restart_now(svc, serviced_kq);
 		}
 	}
 }
@@ -599,7 +637,7 @@ supervisor_handle_timer(struct kevent *kev)
 		}
 		syslog(LOG_INFO, "service %s: restart timer fired",
 		    svc->manifest.label);
-		svc_exec(svc, serviced_kq);
+		svc_restart_now(svc, serviced_kq);
 		return;
 	}
 

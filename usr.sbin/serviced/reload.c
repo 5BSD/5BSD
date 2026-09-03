@@ -168,11 +168,20 @@ svc_reregister_kevents(int kq)
 				    "reload: re-register coalition_fd "
 				    "for %s: %m", svc->manifest.label);
 		}
-		/* Re-schedule pending restart timers with new udata.
-		 * The old timer was cancelled before the sort; create
-		 * a fresh one with a 1-second minimum delay. */
-		if (svc->restart_pending)
+		/*
+		 * Re-schedule a pending restart timer with the post-compaction
+		 * udata.  The old timer was NOT cancelled before the reload
+		 * compaction, and its EVFILT_TIMER udata still points at this
+		 * service's pre-move slot address — which now holds a different
+		 * service — so it must be EV_DELETEd first (svc_cancel_restart),
+		 * or when it fires supervisor_handle_timer reads restart/idle
+		 * state off the wrong service.  Then arm a fresh one carrying the
+		 * correct udata.
+		 */
+		if (svc->restart_pending) {
+			svc_cancel_restart(svc, kq);
 			schedule_restart(svc, kq);
+		}
 		/* Update stop-kill timer udata if active. */
 		if (svc->stop_kill_pending && svc->stop_timer_ident != 0) {
 			EV_SET(&kev, svc->stop_timer_ident, EVFILT_TIMER,
