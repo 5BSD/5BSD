@@ -1150,7 +1150,16 @@ static void
 capsule_assert_signal_shield(void)
 {
 
-	if (capsule_engine_up && apply_signal_shield() == -1)
+	/*
+	 * Gate on capsule_mac_up, not capsule_engine_up: the shield only needs the
+	 * mac_capability device (apply_signal_shield connects to capprotect), and
+	 * capsule_engine_up is not set until AFTER bootstrap_start()/serviced.  This
+	 * function is called from capsule_engine_start() (right after the device
+	 * comes up, before /etc/rc runs) precisely to close the signal ABI for the
+	 * whole boot window; gating on capsule_engine_up short-circuited that early
+	 * raise and left CP_SF_SIGNAL down until convergence.  Idempotent.
+	 */
+	if (capsule_mac_up && apply_signal_shield() == -1)
 		warning("signal shield not raised; signal ABI stays open");
 }
 
@@ -1831,13 +1840,17 @@ start_window_system(session_t *sp)
 }
 
 /*
- * Store the ambient lookup channel client end serviced forwarded (§21) and
- * make it durable across the getty fork/exec: unlock its clofork limit so it
- * survives fork(2) and clear FD_CLOEXEC so it survives execve(2).  A previously
- * installed channel is replaced (serviced sends this once per session, but a
- * serviced restart may resend).  Best-effort throughout: on any failure the fd
- * is dropped and capsule_ambient_lookup_fd left at -1, so getty spawning simply
- * proceeds without an ambient channel.
+ * Store the ambient lookup channel client end serviced forwarded (§21).  The
+ * master must survive the getty fork(2) so the child can dup2 it onto the fixed
+ * lookup fd, so unlock its clofork limit — but it must KEEP FD_CLOEXEC set so it
+ * closes on the getty child's execve(2).  Only the dup2'd copy at
+ * SERVICE_LOOKUP_FIXED_FD (whose FD_CLOEXEC start_getty clears) is meant to reach
+ * login/the session; if the master itself survived exec, every interactive
+ * session would inherit a second, stray copy of the SYSTEM ambient channel at an
+ * unpredictable fd.  A previously installed channel is replaced (serviced sends
+ * this once per session, but a serviced restart may resend).  Best-effort
+ * throughout: on any failure the fd is dropped and capsule_ambient_lookup_fd left
+ * at -1, so getty spawning simply proceeds without an ambient channel.
  */
 int
 capsule_set_ambient_lookup(int fd)
@@ -1855,7 +1868,7 @@ capsule_set_ambient_lookup(int fd)
 		errno = saved;
 		return (-1);
 	}
-	if (fcntl(fd, F_SETFD, 0) == -1) {
+	if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
 		saved = errno;
 		(void)close(fd);
 		errno = saved;
