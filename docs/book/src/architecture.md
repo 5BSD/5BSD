@@ -1,10 +1,15 @@
 # Architecture Overview
 
-5BSD is a capability-oriented FreeBSD 16-CURRENT derivative (kernel ident
-`VBSD`): a hybrid in which the capability plane — authority as held,
-unforgeable descriptors, brokered by named services — runs beside the
-traditional BSD system, and a MAC/capability security stack in the kernel
-enforces policy beneath every application ABI, the Linuxulator included.
+5BSD is a capability-oriented FreeBSD 16-CURRENT derivative that runs its own
+custom kernel — the **5BSD kernel** (configuration `VBSD`, kernel ident
+`VBSD`, built with `KERNCONF=VBSD`). It is a hybrid: the capability plane —
+authority as held, unforgeable descriptors, brokered by named services — runs
+beside the traditional BSD system, and the kernel's MAC/capability security
+stack enforces policy beneath every application ABI, the Linuxulator included.
+The kernel modifications (the MAC_CAPABILITY framework, the new MACF hooks and
+system calls, the hardware-trace backends) are detailed below; how the `VBSD`
+configuration relates to `GENERIC` is covered in
+[Building 5BSD](operations/building.md).
 
 ## Design principles
 

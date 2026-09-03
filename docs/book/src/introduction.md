@@ -1,10 +1,14 @@
 # Introduction
 
-5BSD is a capability-oriented operating system built on a BSD kernel. It is a
-BSD you already know how to drive — `sh`, `cc`, ZFS, jails, `rc(8)`, ports and
-packages, every man page in muscle memory — with a second system running beside
-it: a **capability plane** in which authority is a held, unforgeable descriptor
-rather than a uid, a path, or a peer credential.
+5BSD is a capability-oriented operating system that runs its **own custom
+kernel — the 5BSD kernel** (config `VBSD`, kernel ident `VBSD`). The kernel is
+FreeBSD-derived but is not stock FreeBSD: it carries the MAC_CAPABILITY
+framework, 38+ new MACF hooks, fourteen new system calls, hardware-trace
+fixes, and is 64-bit only. Above it sits a BSD you already know how to drive — `sh`,
+`cc`, ZFS, jails, `rc(8)`, ports and packages, every man page in muscle
+memory — with a second system running beside it: a **capability plane** in
+which authority is a held, unforgeable descriptor rather than a uid, a path,
+or a peer credential.
 
 That pairing is the whole idea. The traditional BSD system is fully intact, so
 nothing you know stops working; the capability plane sits alongside it, so a
@@ -43,9 +47,10 @@ consequences (they are laid out in full in [Architecture](architecture.md)).
 
 ## What the platform provides
 
-The security and capability core lives in the kernel as loadable modules — no
-new syscalls are required to add a service — and is exercised by ~490 ATF test
-cases under `tests/sys/mac_capability/`:
+The security and capability core lives in the **5BSD kernel**. It is
+structured as loadable modules over a small set of base-kernel changes — adding
+a capability *service* needs no new syscall — and is exercised by ~490 ATF
+test cases under `tests/sys/mac_capability/`:
 
 | Layer | What it does |
 |-------|--------------|
@@ -96,7 +101,8 @@ was compiled for.
 
 ## Relationship to FreeBSD
 
-5BSD is derived from FreeBSD 16-CURRENT (kernel ident `VBSD`), and the
+5BSD is derived from FreeBSD 16-CURRENT, but it boots the **5BSD kernel**
+(config `VBSD`, package `5BSD-kernel-vbsd`), not a stock FreeBSD kernel. The
 inherited base — ZFS, jails, the network stack, `rc(8)`, ports and packages,
 standard userland — behaves as documented in the
 [FreeBSD Handbook](https://docs.freebsd.org/en/books/handbook/) and the FreeBSD
