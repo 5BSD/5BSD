@@ -1,8 +1,10 @@
 # Architecture Overview
 
-5BSD is a FreeBSD 16-CURRENT derivative (kernel ident `VBSD`) in which the
-Linuxulator is treated as the primary application binary interface and a
-capability-oriented security stack enforces policy beneath it.
+5BSD is a capability-oriented FreeBSD 16-CURRENT derivative (kernel ident
+`VBSD`): a hybrid in which the capability plane — authority as held,
+unforgeable descriptors, brokered by named services — runs beside the
+traditional BSD system, and a MAC/capability security stack in the kernel
+enforces policy beneath every application ABI, the Linuxulator included.
 
 ## Design principles
 
