@@ -44,8 +44,19 @@
 #include <unistd.h>
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
+#include <dev/mac_capability/mac_capability_system_proto.h>	/* SYS_GATE_* */
 #include <service_bootstrap.h>
 #include <channel.h>
+
+/*
+ * The only system gates serviced will delegate at launch: module management,
+ * sysextd's sanctioned need.  Every other SYS_GATE_* (reboot, sysctl, swapon,
+ * kenv, acct, audit, …) is an ADMIN-plane operation reached through the
+ * authenticated system.lifecycle relay, NOT a launch-time manifest delegation;
+ * refuse to mint them here regardless of what a bundle declares.
+ */
+#define	SVC_SYSTEM_GATE_DELEGATABLE \
+	(SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD | SYS_GATE_KLDSTAT)
 
 #include "serviced.h"
 #include "launch_limits.h"
@@ -1232,7 +1243,17 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	nservices = 0;
 
 	if (m->cap_system != 0) {
-		int tfd = authority_mint_system(sd.authority_channel_fd,
+		int tfd;
+
+		if ((m->cap_system & ~SVC_SYSTEM_GATE_DELEGATABLE) != 0) {
+			syslog(LOG_ERR, "svc_exec %s: refusing non-module "
+			    "system gates %#x (only module management is "
+			    "delegatable at launch)", m->label,
+			    m->cap_system & ~SVC_SYSTEM_GATE_DELEGATABLE);
+			SERVICED_PROBE_CAP_MINT(m->label, "system", -1);
+			goto fail_tokens;
+		}
+		tfd = authority_mint_system(sd.authority_channel_fd,
 		    m->cap_system);
 
 		if (tfd == -1) {
