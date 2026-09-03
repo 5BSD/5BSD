@@ -293,6 +293,83 @@ ATF_TC_BODY(driver_selection, tc)
 	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_policy_validate(&generate) == -1);
 }
 
+ATF_TC(digest_policy);
+ATF_TC_HEAD(digest_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "[CRYPTO] unkeyed-digest policy admits only plain SHA-2 hashes");
+}
+ATF_TC_BODY(digest_policy, tc)
+{
+	struct cryptocmp_digest digest;
+
+	/* The three allowed unkeyed hashes. */
+	memset(&digest, 0, sizeof(digest));
+	digest.alg = CRYPTO_SHA2_256;
+	digest.ttl = 60;
+	ATF_REQUIRE(cryptocmp_digest_policy_validate(&digest) == 0);
+	digest.alg = CRYPTO_SHA2_384;
+	ATF_REQUIRE(cryptocmp_digest_policy_validate(&digest) == 0);
+	digest.alg = CRYPTO_SHA2_512;
+	digest.ttl = 0;
+	ATF_REQUIRE(cryptocmp_digest_policy_validate(&digest) == 0);
+
+	/* A keyed HMAC selector is not an unkeyed digest. */
+	digest.alg = CRYPTO_SHA2_256_HMAC;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPROTONOSUPPORT,
+	    cryptocmp_digest_policy_validate(&digest) == -1);
+
+	/* A weak/legacy hash is rejected. */
+	digest.alg = CRYPTO_SHA1;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPROTONOSUPPORT,
+	    cryptocmp_digest_policy_validate(&digest) == -1);
+
+	/* An unknown selector is rejected. */
+	digest.alg = 999;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EPROTONOSUPPORT,
+	    cryptocmp_digest_policy_validate(&digest) == -1);
+
+	/* Nonzero flags and an over-long ttl are malformed. */
+	digest.alg = CRYPTO_SHA2_256;
+	digest.flags = 1;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_digest_policy_validate(&digest) == -1);
+	digest.flags = 0;
+	digest.ttl = 86401;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_digest_policy_validate(&digest) == -1);
+}
+
+ATF_TC(random_policy);
+ATF_TC_HEAD(random_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "[CRYPTO] CSPRNG policy bounds the requested byte count");
+}
+ATF_TC_BODY(random_policy, tc)
+{
+	struct cryptocmp_random request;
+
+	request.nbytes = 1;
+	ATF_REQUIRE(cryptocmp_random_policy_validate(&request) == 0);
+	request.nbytes = CRYPTOCMP_MAX_RANDOM_BYTES;
+	ATF_REQUIRE(cryptocmp_random_policy_validate(&request) == 0);
+
+	request.nbytes = 0;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_random_policy_validate(&request) == -1);
+	request.nbytes = CRYPTOCMP_MAX_RANDOM_BYTES + 1;
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL,
+	    cryptocmp_random_policy_validate(&request) == -1);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, valid_profiles);
@@ -301,5 +378,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, named_lifecycle_policy);
 	ATF_TP_ADD_TC(tp, rejects_invalid_profiles);
 	ATF_TP_ADD_TC(tp, driver_selection);
+	ATF_TP_ADD_TC(tp, digest_policy);
+	ATF_TP_ADD_TC(tp, random_policy);
 	return (atf_no_error());
 }

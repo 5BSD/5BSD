@@ -253,8 +253,12 @@ ATF_TC_BODY(valid_request_enforces_shape, tc)
 	(void)strlcpy(rq.path, "/jails/example", sizeof(rq.path));
 	ATF_CHECK(warden_test_valid_request(&rq));
 
-	/* The only defined flag is accepted. */
+	/* The defined flags are accepted, singly and together. */
 	rq.flags = WARDEN_F_EPHEMERAL;
+	ATF_CHECK(warden_test_valid_request(&rq));
+	rq.flags = WARDEN_F_VNET;
+	ATF_CHECK(warden_test_valid_request(&rq));
+	rq.flags = WARDEN_F_EPHEMERAL | WARDEN_F_VNET;
 	ATF_CHECK(warden_test_valid_request(&rq));
 
 	/* Unknown opcode. */
@@ -262,9 +266,9 @@ ATF_TC_BODY(valid_request_enforces_shape, tc)
 	rq.op = 0x4242;
 	ATF_CHECK(!warden_test_valid_request(&rq));
 
-	/* Unknown flag bits. */
+	/* Unknown flag bits (above the defined WARDEN_F_* set). */
 	rq.op = WARDEN_OP_ENTER_JAIL;
-	rq.flags = WARDEN_F_EPHEMERAL | 0x2u;
+	rq.flags = WARDEN_F_EPHEMERAL | 0x4u;
 	ATF_CHECK(!warden_test_valid_request(&rq));
 
 	/* Relative path. */

@@ -28,8 +28,16 @@
  * loading is inherently privileged and unsandboxable.  The mac_capability system
  * gate is what actually authorizes the load — even root is denied without the
  * held token — so root only satisfies the classical privilege underneath it.
- * modfind(2) is avoided: a kldload whose module is already present returns
- * EEXIST, which sysextd reports as success.
+ * For ENSURE, modfind(2)/kldstat(2) are avoided: a kldload whose module is
+ * already present returns EEXIST, which sysextd reports as success, so ENSURE
+ * needs only the kldload gate.  The STAT operation, in contrast, must query
+ * without loading; it uses kldfind(2) (a filename lookup that pairs with
+ * kldload's filename argument), which is what exercises the SYS_GATE_KLDSTAT
+ * gate the manifest declares alongside kldload.
+ *
+ * There is deliberately no UNLOAD operation: safe removal needs per-consumer
+ * module refcounting/ownership this broker does not track, so one SYSTEM client
+ * could otherwise unload code another still depends on.  See sysext_proto.h.
  *
  * Loading is default-deny by module name as well as by domain: sysextd carries
  * an allow-list of module names it is permitted to load (the built-in set of
@@ -272,6 +280,29 @@ ensure_extension(const char *name)
 }
 
 /*
+ * Query whether the named kernel extension is currently loaded, WITHOUT loading
+ * it.  Sets *loaded to 1 if present, 0 if not, and returns 0; on a real error
+ * returns the errno (and leaves *loaded 0).  kldfind(2) resolves a bare module
+ * name against the loaded-file list exactly as kldload resolves it against the
+ * module path (both accept the ".ko"-less name), so STAT and ENSURE agree on
+ * what a name refers to.  kldfind is the query ENSURE deliberately avoids; it is
+ * what exercises the SYS_GATE_KLDSTAT gate the manifest declares.
+ */
+static int
+stat_extension(const char *name, int *loaded)
+{
+
+	*loaded = 0;
+	if (kldfind(name) != -1) {
+		*loaded = 1;
+		return (0);
+	}
+	if (errno == ENOENT)
+		return (0);
+	return (errno);
+}
+
+/*
  * Per-client channel request handler.  arg is the connecting client's
  * unforgeable label (for the audit log only; the domain layer already gated
  * reachability).  The reply is a fixed sysext_reply.
@@ -282,9 +313,12 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	const char *client = arg;
 	const struct sysext_request *rq;
 	struct sysext_reply rp;
+	struct sysext_stat_reply srp;
 	struct channel_outgoing out;
+	int loaded;
 
 	memset(&rp, 0, sizeof(rp));
+	memset(&srp, 0, sizeof(srp));
 
 	if (channel_message_length(m) != sizeof(*rq) ||
 	    channel_message_fd_count(m) != 0) {
@@ -292,21 +326,38 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		goto reply;
 	}
 	rq = channel_message_data(m);
-	if (rq->op != SYSEXT_OP_ENSURE || !valid_module_name(rq->name)) {
+	if ((rq->op != SYSEXT_OP_ENSURE && rq->op != SYSEXT_OP_STAT) ||
+	    !valid_module_name(rq->name)) {
 		rp.status = EINVAL;
 		goto reply;
 	}
 	/*
-	 * Default-deny by name: even a syntactically valid module is refused
-	 * unless it is on the allow-list.  This is the boundary between "may
-	 * reach sysextd" (the domain gate) and "may load THIS kernel code".
+	 * Default-deny by name, for BOTH operations: even a syntactically valid
+	 * module is refused unless it is on the allow-list.  This is the boundary
+	 * between "may reach sysextd" (the domain gate) and "may act on THIS
+	 * kernel code".  A client may STAT only a module it could ENSURE, so a
+	 * non-allow-listed name is EPERM rather than a loaded/not-loaded answer —
+	 * denial leaks no information about the module set.
 	 */
 	if (!extension_allowed(&sysext_conf, rq->name)) {
 		rp.status = EPERM;
 		syslog(LOG_WARNING,
-		    "ENSURE %s (client %s) -> DENIED (not on allow-list)",
-		    rq->name, client);
+		    "%s %s (client %s) -> DENIED (not on allow-list)",
+		    rq->op == SYSEXT_OP_STAT ? "STAT" : "ENSURE", rq->name,
+		    client);
 		goto reply;
+	}
+
+	if (rq->op == SYSEXT_OP_STAT) {
+		srp.status = stat_extension(rq->name, &loaded);
+		srp.loaded = loaded;
+		if (srp.status == 0)
+			syslog(LOG_INFO, "STAT %s (client %s) -> %s", rq->name,
+			    client, srp.loaded ? "loaded" : "not loaded");
+		else
+			syslog(LOG_NOTICE, "STAT %s (client %s) -> %s", rq->name,
+			    client, strerror(srp.status));
+		goto stat_reply;
 	}
 
 	rp.status = ensure_extension(rq->name);
@@ -322,6 +373,15 @@ reply:
 	out.size = sizeof(out);
 	out.data = &rp;
 	out.length = sizeof(rp);
+	(void)channel_send_reply(m, &out);
+	channel_message_free(m);
+	return;
+
+stat_reply:
+	memset(&out, 0, sizeof(out));
+	out.size = sizeof(out);
+	out.data = &srp;
+	out.length = sizeof(srp);
 	(void)channel_send_reply(m, &out);
 	channel_message_free(m);
 }
@@ -367,9 +427,11 @@ sysext_worker(int fd, const char *client)
  * Test-only serve entry point.  Installs cfg as the resolved allow-list (which
  * every pdfork'd worker would otherwise inherit through the fork image) and
  * runs the real per-client worker on fd, so a test drives the identical
- * sysext_request path a production worker would.  It deliberately does NOT
- * kldload: every case a test drives (deny, malformed) is refused before
- * ensure_extension is reached.
+ * sysext_request path a production worker would.  ENSURE cases a test drives
+ * (deny, malformed) are refused before ensure_extension is reached, so no
+ * kldload(2) runs; STAT cases for an allow-listed name do reach kldfind(2), a
+ * read-only query that loads nothing (and, where the KLDSTAT gate is claimed by
+ * another nonce, is itself denied — a plane test skips that environment).
  */
 int
 sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)

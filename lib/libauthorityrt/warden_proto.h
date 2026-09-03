@@ -41,6 +41,8 @@
 #define	WARDEN_SERVICE_NAME	"system.Namespace"
 
 #define	WARDEN_OP_ENTER_JAIL	1	/* create/reuse the caller's jail */
+#define	WARDEN_OP_DESTROY_JAIL	2	/* remove the caller's jail */
+#define	WARDEN_OP_LIST_JAILS	3	/* report the caller's jail */
 
 /*
  * Request flags.
@@ -54,12 +56,24 @@
  * the jail it just created) rather than silently leaving a permanent jail.
  * Without this flag the jail is persistent: it is created persist=1, reused by
  * label across consumer restarts, and outlives any single consumer.
+ *
+ * WARDEN_F_VNET — the jail gets its own virtual network stack (vnet=new), a
+ * fully independent set of interfaces, addresses, and routing rather than a view
+ * onto the host's stack restricted by ip4.addr/ip6.addr.  It is part of the
+ * jail's immutable definition: a reuse whose vnet setting differs from the
+ * existing jail's is a hard EEXIST, exactly like a path/hostname/address
+ * mismatch.  Requires a VIMAGE kernel; on a kernel without it the create fails.
  */
 #define	WARDEN_F_EPHEMERAL	0x1u
+#define	WARDEN_F_VNET		0x2u
 
 /*
  * Enter-jail request.  The jail is named and scoped by the caller's channel
  * label (warden derives it), so the request carries only the jail's shape.
+ *
+ * ip4_addr/ip6_addr are the jail's addresses on the host stack (empty = none of
+ * that family).  With WARDEN_F_VNET the jail has its own stack instead; an
+ * address may still be supplied to seed that stack.
  */
 struct warden_request {
 	uint32_t	op;			/* WARDEN_OP_ENTER_JAIL */
@@ -67,6 +81,7 @@ struct warden_request {
 	char		path[PATH_MAX];		/* jail root path (required, /abs) */
 	char		hostname[64];		/* host.hostname (empty=derived) */
 	char		ip4_addr[64];		/* ip4.addr (empty=inherit) */
+	char		ip6_addr[64];		/* ip6.addr (empty=none) */
 };
 
 /*
@@ -74,10 +89,56 @@ struct warden_request {
  * jail's NON-owning descriptor (jd) the caller jail_attach_jd(2)s itself to.
  * Closing it never removes the jail; an ephemeral jail is anchored instead by
  * the owning descriptor warden's per-client worker retains (see above).
+ *
+ * warden_reply is also the reply for WARDEN_OP_DESTROY_JAIL, which carries no
+ * SCM fd (status only).
  */
 struct warden_reply {
 	int32_t		status;			/* 0, or errno */
 	uint32_t	_reserved;
+};
+
+/*
+ * Lifecycle-control request, for WARDEN_OP_DESTROY_JAIL and
+ * WARDEN_OP_LIST_JAILS.  Both ops act on the ONE jail that the caller's
+ * unforgeable channel label scopes (warden derives its name), so the request
+ * carries no arguments beyond the opcode.  Neither op carries an SCM fd, in
+ * either direction.
+ *
+ * Both are inherently OWNER-SCOPED: jail_name_from_label(caller) names exactly
+ * one jail — the caller's own — so a caller can never name, enumerate, or
+ * reclaim another label's jail.
+ *
+ * DESTROY removes the caller's jail (jail_remove(2)); it replies ENOENT if the
+ * caller has no jail, and status 0 once the jail is gone.  If the target is an
+ * ephemeral jail whose lifetime some worker anchors with an owning descriptor,
+ * jail_remove still tears it down (prison_remove overrides that anchor).
+ *
+ * LIST reports the caller's jail definition: exactly zero or one jail, since a
+ * label owns at most one.  present==1 with the fields filled when the caller has
+ * a jail, present==0 when it has none; status is 0 in both cases, or an errno on
+ * a real lookup failure.
+ */
+struct warden_control_request {
+	uint32_t	op;			/* WARDEN_OP_DESTROY/LIST */
+	uint32_t	_reserved;
+};
+
+/*
+ * LIST reply.  present==1 means the caller has a jail and jid/path/hostname/
+ * ip4_addr/ip6_addr describe it (an address field is empty if the jail has no
+ * address of that family); present==0 means the caller has no jail.  status is 0
+ * for both, or an errno on failure.
+ */
+struct warden_list_reply {
+	int32_t		status;			/* 0, or errno */
+	int32_t		present;		/* 1 = jail exists, 0 = none */
+	int32_t		jid;			/* jail id when present */
+	uint32_t	_reserved;
+	char		path[PATH_MAX];		/* jail root path */
+	char		hostname[64];		/* host.hostname */
+	char		ip4_addr[64];		/* ip4.addr (empty if none) */
+	char		ip6_addr[64];		/* ip6.addr (empty if none) */
 };
 
 #endif /* WARDEN_PROTO_H */

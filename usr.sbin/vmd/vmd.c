@@ -152,21 +152,38 @@ resolve_window(const char *label, uint32_t *base_out)
 }
 
 /*
- * op must be known, the reserved word must be zero (fail closed on unknown
- * wire bits — the client already checks the reply's _reserved), and the port
- * index must fall inside the caller's window.
+ * Validate a wire request, failing closed on any stray bit.  Each op reads only
+ * its own fields and the fields it does not use must be zero:
+ *
+ *   VSOCK_BIND: cid must be 0 (unused) and the port INDEX must fall inside the
+ *   caller's window.
+ *
+ *   VSOCK_CONNECT: backlog must be 0 (unused), cid must not be the wildcard
+ *   VMADDR_CID_ANY (you dial a concrete peer, never a wildcard), and port is a
+ *   concrete target with no window bound (connect owns/scopes nothing).
+ *
+ * An unknown op is rejected.
  */
 static bool
 valid_request(const struct vmd_request *rq)
 {
 
-	if (rq->op != VMD_OP_VSOCK_BIND)
+	switch (rq->op) {
+	case VMD_OP_VSOCK_BIND:
+		if (rq->cid != 0)
+			return (false);
+		if (rq->port >= VMD_PORTS_PER_LABEL)
+			return (false);
+		return (true);
+	case VMD_OP_VSOCK_CONNECT:
+		if (rq->backlog != 0)
+			return (false);
+		if (rq->cid == VMADDR_CID_ANY)
+			return (false);
+		return (true);
+	default:
 		return (false);
-	if (rq->_reserved != 0)
-		return (false);
-	if (rq->port >= VMD_PORTS_PER_LABEL)
-		return (false);
-	return (true);
+	}
 }
 
 /*
@@ -231,6 +248,41 @@ fail:
 }
 
 /*
+ * Dial a concrete peer AF_VSOCK endpoint (cid,port) — the address a peer
+ * advertised from its own VSOCK_BIND reply — and hand back the connected
+ * descriptor.  Connecting owns and scopes nothing: there is no window, no
+ * registry involvement; vmd merely opens the socket and connect(2)s on the
+ * Component's behalf (a capability-mode Component cannot name the global vsock
+ * namespace itself).  On success stores the fd in *fdp and returns 0; on
+ * failure returns -1 with errno set.
+ */
+static int
+connect_vsock(uint32_t cid, uint32_t port, int *fdp)
+{
+	struct sockaddr_vm sa;
+	int s, saved;
+
+	s = socket(AF_VSOCK, SOCK_STREAM, 0);
+	if (s == -1)
+		return (-1);
+
+	memset(&sa, 0, sizeof(sa));
+	sa.svm_len = sizeof(sa);
+	sa.svm_family = AF_VSOCK;
+	sa.svm_cid = cid;
+	sa.svm_port = port;
+	if (connect(s, (struct sockaddr *)&sa, sizeof(sa)) == -1) {
+		saved = errno;
+		(void)close(s);
+		errno = saved;
+		return (-1);
+	}
+
+	*fdp = s;
+	return (0);
+}
+
+/*
  * Per-client worker context: the connecting client's unforgeable label (for
  * logging) and the concrete port window the parent's registry resolved for it.
  * The worker only ever binds within window_base, so a Component can bind only
@@ -272,6 +324,43 @@ vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
 		goto reply;
 	}
 
+	if (rq->op == VMD_OP_VSOCK_CONNECT) {
+		if (connect_vsock(rq->cid, rq->port, &s) == -1) {
+			rp.status = errno;
+			syslog(LOG_ERR, "VSOCK_CONNECT cid=%u port=%u (client "
+			    "%s): %s", rq->cid, rq->port, client,
+			    strerror(rp.status));
+			goto reply;
+		}
+
+		/*
+		 * Harden the delivered connected socket: the Component reads,
+		 * writes, polls, shuts down, and (get/set)sockopts it — but must
+		 * never accept/bind/connect/listen on it — so limit its rights to
+		 * that data-plane set, and attenuate transfer to CAP_XFER_ONCE so
+		 * the reply's own SCM_RIGHTS send exhausts it (no re-delegation).
+		 */
+		cap_rights_init(&rights, CAP_READ, CAP_WRITE, CAP_EVENT,
+		    CAP_SHUTDOWN, CAP_FSTAT, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
+		if (cap_rights_limit(s, &rights) == -1 ||
+		    cap_xfer_limit(s, CAP_XFER_ONCE) == -1) {
+			rp.status = errno != 0 ? errno : EIO;
+			syslog(LOG_ERR, "VSOCK_CONNECT cid=%u port=%u (client "
+			    "%s) -> rights limit: %s", rq->cid, rq->port, client,
+			    strerror(rp.status));
+			(void)close(s);
+			s = -1;
+			goto reply;
+		}
+
+		rp.status = 0;
+		rp.cid = rq->cid;
+		rp.port = rq->port;
+		syslog(LOG_INFO, "VSOCK_CONNECT (client %s) -> cid=%u port=%u",
+		    client, rp.cid, rp.port);
+		goto reply;
+	}
+
 	s = bind_vsock(ctx->window_base, rq->port, rq->backlog, &port);
 	if (s < 0) {
 		rp.status = errno;
@@ -282,13 +371,18 @@ vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
 	}
 
 	/*
-	 * Harden the delivered listener: the Component only needs to accept(2)
-	 * (and poll/fstat) on it — never bind/connect/read/write it directly —
-	 * so limit its rights to accept-only, and attenuate transfer to
+	 * Harden the delivered listener.  accept(2) hands the accepted socket
+	 * the LISTENER's capability rights (kern_accept4 -> falloc_caps with the
+	 * listener's filecaps), so the listener must carry the data-plane rights
+	 * (read/write/shutdown/{get,set}sockopt) the accepted connections need to
+	 * be usable, in addition to accept/event/fstat for the listener itself.
+	 * We still withhold CAP_BIND/CAP_CONNECT/CAP_LISTEN so the Component can
+	 * neither rebind nor repurpose the socket, and attenuate transfer to
 	 * CAP_XFER_ONCE so the reply's own SCM_RIGHTS send consumes it to
 	 * CAP_XFER_NONE at the Component (it cannot re-delegate the listener).
 	 */
-	cap_rights_init(&rights, CAP_ACCEPT, CAP_EVENT, CAP_FSTAT);
+	cap_rights_init(&rights, CAP_ACCEPT, CAP_EVENT, CAP_FSTAT, CAP_READ,
+	    CAP_WRITE, CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
 	if (cap_rights_limit(s, &rights) == -1 ||
 	    cap_xfer_limit(s, CAP_XFER_ONCE) == -1) {
 		rp.status = errno != 0 ? errno : EIO;

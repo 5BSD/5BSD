@@ -27,9 +27,9 @@
 #include <sys/param.h>		/* PATH_MAX */
 
 #define	TZFSD_PROTO_VERSION_MAJOR	0
-#define	TZFSD_PROTO_VERSION_MINOR	1
+#define	TZFSD_PROTO_VERSION_MINOR	2
 #define	TZFSD_PROTO_VERSION_PATCH	0
-#define	TZFSD_PROTO_VERSION		2
+#define	TZFSD_PROTO_VERSION		3
 
 /* The well-known name a client resolves with service_open(3) to reach tzfsd. */
 #define	TZFSD_SERVICE_NAME		"system.Filesystem"
@@ -61,6 +61,7 @@
 #define	TZFSD_OP_PING			4	/* liveness check */
 #define	TZFSD_OP_BEGIN_SESSION		5	/* select/reconcile lease generation */
 #define	TZFSD_OP_OPEN			6	/* open an isolated path descriptor */
+#define	TZFSD_OP_DESTROY		7	/* reclaim a persistent/cache claim */
 
 /*
  * TZFSD_OP_OPEN
@@ -105,12 +106,15 @@ struct tzfsd_open_request {
  * A bare dataset claim: the named dataset is opened (persistent) or created
  * then opened (ephemeral), exactly as authorityd's handle_mint_storage did.
  * rights are the ZH_* mask to grant; the returned handle carries no more than
- * these.
+ * these.  quota, when nonzero, is this claim's refquota ceiling in bytes and
+ * overrides the daemon's configured default_refquota; 0 selects the default.
+ * A too-small quota (below the daemon's floor) is rejected with EINVAL.
  */
 struct tzfsd_request {
 	uint32_t	op;			/* TZFSD_OP_REQUEST */
 	uint32_t	flags;			/* ZHF_* (subtree, etc.) */
 	uint64_t	rights;			/* ZH_* mask to grant */
+	uint64_t	quota;			/* per-claim refquota, bytes; 0=default */
 	uint8_t		lifetime;		/* TZFSD_* lifecycle */
 	uint8_t		_reserved[3];
 	uint32_t	owner_uid;		/* chown dataset root at mint; 0=skip */
@@ -126,6 +130,23 @@ struct tzfsd_request {
  *
  * Destroy the lease dataset previously granted under this key.  A missing
  * target is success (idempotent stop).
+ */
+
+/*
+ * TZFSD_OP_DESTROY
+ *   req:   struct tzfsd_request (op, dataset, lifetime; rights/flags/quota/
+ *          session all zero)
+ *   reply: struct tzfsd_reply { .status }
+ *
+ * Reclaim a persistent (TZFSD_PERSISTENT) or cache (TZFSD_CACHE) claim
+ * previously granted under this key, freeing its pool space.  Unlike REQUEST
+ * these claims are never torn down implicitly, so without this op a claim can
+ * only ever be created — the persistent tree grows without bound.  The claim is
+ * resolved under the CALLER's own namespace (derived from the connecting
+ * channel's unforgeable label, exactly as REQUEST does), so a caller can never
+ * name — and therefore never destroy — another label's claim.  It carries no
+ * path or fd.  An absent claim replies ENOENT (not idempotent success, so a
+ * caller can tell a real reclaim from a no-op); status 0 on success.
  */
 
 /*

@@ -91,27 +91,51 @@ channel_pair(int *client, int *provider)
 }
 
 /*
- * Stand up a worker serving the default (built-in) allow-list on one end of a
- * fresh channel and a client service_session on the other.
+ * Stand up a worker serving cfg as its resolved allow-list on one end of a fresh
+ * channel and a client service_session on the other.
  */
 static void
-fixture_create(struct fixture *fixture)
+fixture_create_cfg(struct fixture *fixture, const struct sysext_config *cfg)
 {
-	struct sysext_config cfg;
 	int client, provider;
 
 	require_plane();
-	sysext_config_defaults(&cfg);
 	memset(fixture, 0, sizeof(*fixture));
 	channel_pair(&client, &provider);
 	fixture->child = fork();
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
-		_exit(sysext_test_serve(provider, "test.client", &cfg));
+		_exit(sysext_test_serve(provider, "test.client", cfg));
 	}
 	close(provider);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+}
+
+/*
+ * Convenience wrapper: serve the default (built-in) allow-list.
+ */
+static void
+fixture_create(struct fixture *fixture)
+{
+	struct sysext_config cfg;
+
+	sysext_config_defaults(&cfg);
+	fixture_create_cfg(fixture, &cfg);
+}
+
+/*
+ * Build a config whose allow-list is exactly the single module name, so a plane
+ * test can STAT a name it controls (e.g. one guaranteed loaded, or one
+ * guaranteed absent) while still exercising the real allow-list gate.
+ */
+static void
+config_allow_one(struct sysext_config *cfg, const char *name)
+{
+
+	memset(cfg, 0, sizeof(*cfg));
+	strlcpy(cfg->allow[0], name, SYSEXT_NAME_MAX);
+	cfg->nallow = 1;
 }
 
 static void
@@ -167,6 +191,51 @@ ensure_request(const char *name)
 	if (name != NULL)
 		strlcpy(rq.name, name, sizeof(rq.name));
 	return (rq);
+}
+
+static struct sysext_request
+stat_request(const char *name)
+{
+	struct sysext_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = SYSEXT_OP_STAT;
+	if (name != NULL)
+		strlcpy(rq.name, name, sizeof(rq.name));
+	return (rq);
+}
+
+/*
+ * Issue one STAT request and return the full stat reply (status + loaded).
+ * data/length describe the exact wire bytes so a test can send a wrong length;
+ * fd, when >= 0, is attached.  Requires that a correctly framed reply arrives.
+ */
+static struct sysext_stat_reply
+call_stat(struct fixture *fixture, const void *data, size_t length, int fd)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct sysext_stat_reply reply;
+
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = data;
+	outgoing.length = length;
+	if (fd >= 0) {
+		outgoing.fds = &fd;
+		outgoing.nfds = 1;
+	}
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	options.timeout_ms = 2000;
+	ATF_REQUIRE_EQ(0,
+	    service_session_call(fixture->session, &outgoing, &incoming, &options));
+	ATF_REQUIRE_EQ(sizeof(reply), incoming.length);
+	return (reply);
 }
 
 /*
@@ -281,6 +350,168 @@ ATF_TC_BODY(provider_rejects_attached_descriptor, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * STAT of an allow-listed module that IS loaded reports loaded=1, status 0,
+ * without loading anything.  "kernel" (the running kernel image, fileid 1) is
+ * guaranteed present in any kernel, so the allow-list is set to exactly
+ * {"kernel"} for this case and kldfind(2) must find it.
+ *
+ * The query itself passes through the SYS_GATE_KLDSTAT gate.  Where that gate
+ * has been claimed by another nonce (a fully-booted authority plane), this
+ * unprivileged test worker is not authorized to query and the handler returns
+ * EPERM; the case then skips rather than failing, because it can no longer
+ * observe the loaded state.  Where the gate is unclaimed (the common test-kernel
+ * case) the query runs and loaded=1 is asserted.
+ */
+ATF_TC(provider_stat_reports_loaded_module);
+ATF_TC_HEAD(provider_stat_reports_loaded_module, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_stat_reports_loaded_module, tc)
+{
+	struct sysext_config cfg;
+	struct sysext_stat_reply reply;
+	struct fixture fixture;
+	struct sysext_request rq;
+
+	config_allow_one(&cfg, "kernel");
+	fixture_create_cfg(&fixture, &cfg);
+	rq = stat_request("kernel");
+	reply = call_stat(&fixture, &rq, sizeof(rq), -1);
+	if (reply.status == EPERM) {
+		fixture_destroy(&fixture);
+		atf_tc_skip("KLDSTAT gate claimed; worker not authorized to "
+		    "query in this environment");
+	}
+	ATF_CHECK_EQ(0, reply.status);
+	ATF_CHECK_EQ(1, reply.loaded);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * STAT of an allow-listed module that is NOT loaded reports loaded=0, status 0
+ * (a completed query, not an error).  The allow-list is set to a single made-up
+ * name that no kernel has loaded, so kldfind(2) returns ENOENT and the handler
+ * maps that to the not-loaded answer.  Skips if the KLDSTAT gate is claimed (see
+ * above).
+ */
+ATF_TC(provider_stat_reports_unloaded_module);
+ATF_TC_HEAD(provider_stat_reports_unloaded_module, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_stat_reports_unloaded_module, tc)
+{
+	struct sysext_config cfg;
+	struct sysext_stat_reply reply;
+	struct fixture fixture;
+	struct sysext_request rq;
+
+	config_allow_one(&cfg, "sysext_absent_mod");
+	fixture_create_cfg(&fixture, &cfg);
+	rq = stat_request("sysext_absent_mod");
+	reply = call_stat(&fixture, &rq, sizeof(rq), -1);
+	if (reply.status == EPERM) {
+		fixture_destroy(&fixture);
+		atf_tc_skip("KLDSTAT gate claimed; worker not authorized to "
+		    "query in this environment");
+	}
+	ATF_CHECK_EQ(0, reply.status);
+	ATF_CHECK_EQ(0, reply.loaded);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * THE STAT security regression: a STAT for a module that is not on the
+ * allow-list is refused with EPERM before any query — never answered with a
+ * loaded/not-loaded result.  A client may STAT only a module it could ENSURE, so
+ * denial leaks no information about which modules exist or are loaded.  This is
+ * deterministic regardless of the KLDSTAT gate state, since the denial happens
+ * before kldfind(2) is reached.  loaded stays 0 on a denial.
+ */
+ATF_TC(provider_stat_denies_non_allowlisted_module);
+ATF_TC_HEAD(provider_stat_denies_non_allowlisted_module, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_stat_denies_non_allowlisted_module, tc)
+{
+	struct sysext_stat_reply reply;
+	struct fixture fixture;
+	struct sysext_request rq;
+
+	/* Default allow-list ({cryptodev,vhid,zfs}); "kernel" is not on it. */
+	fixture_create(&fixture);
+	rq = stat_request("kernel");
+	reply = call_stat(&fixture, &rq, sizeof(rq), -1);
+	ATF_CHECK_EQ(EPERM, reply.status);
+	ATF_CHECK_EQ(0, reply.loaded);
+	/* Syntactically valid dotted name, still not allow-listed. */
+	rq = stat_request("if_evil.ko");
+	reply = call_stat(&fixture, &rq, sizeof(rq), -1);
+	ATF_CHECK_EQ(EPERM, reply.status);
+	ATF_CHECK_EQ(0, reply.loaded);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * A STAT whose module name is not NUL-terminated within the wire buffer is
+ * rejected with EINVAL — the validator refuses it rather than reading past the
+ * field — before any allow-list or query decision.
+ */
+ATF_TC(provider_stat_rejects_unterminated_name);
+ATF_TC_HEAD(provider_stat_rejects_unterminated_name, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_stat_rejects_unterminated_name, tc)
+{
+	struct sysext_stat_reply reply;
+	struct fixture fixture;
+	struct sysext_request rq;
+
+	fixture_create(&fixture);
+	memset(&rq, 0, sizeof(rq));
+	rq.op = SYSEXT_OP_STAT;
+	memset(rq.name, 'a', sizeof(rq.name));	/* no NUL in the name field */
+	reply = call_stat(&fixture, &rq, sizeof(rq), -1);
+	ATF_CHECK_EQ(EINVAL, reply.status);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * A STAT of the wrong length is malformed and rejected with EPROTO; a STAT that
+ * carries an unexpected descriptor is likewise EPROTO (this interface takes no
+ * descriptors).  Both fail closed before any name/allow-list/query decision.
+ */
+ATF_TC(provider_stat_rejects_malformed_framing);
+ATF_TC_HEAD(provider_stat_rejects_malformed_framing, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_stat_rejects_malformed_framing, tc)
+{
+	struct sysext_stat_reply reply;
+	struct fixture fixture;
+	struct sysext_request rq;
+	int fd;
+
+	fixture_create(&fixture);
+	rq = stat_request("cryptodev");
+	/* Short by one byte: length != sizeof(struct sysext_request). */
+	reply = call_stat(&fixture, &rq, sizeof(rq) - 1, -1);
+	ATF_CHECK_EQ(EPROTO, reply.status);
+	/* An attached descriptor on a no-descriptor interface. */
+	fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	rq = stat_request("cryptodev");
+	reply = call_stat(&fixture, &rq, sizeof(rq), fd);
+	ATF_CHECK_EQ(EPROTO, reply.status);
+	close(fd);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -289,5 +520,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_rejects_unterminated_name);
 	ATF_TP_ADD_TC(tp, provider_rejects_wrong_length);
 	ATF_TP_ADD_TC(tp, provider_rejects_attached_descriptor);
+	ATF_TP_ADD_TC(tp, provider_stat_reports_loaded_module);
+	ATF_TP_ADD_TC(tp, provider_stat_reports_unloaded_module);
+	ATF_TP_ADD_TC(tp, provider_stat_denies_non_allowlisted_module);
+	ATF_TP_ADD_TC(tp, provider_stat_rejects_unterminated_name);
+	ATF_TP_ADD_TC(tp, provider_stat_rejects_malformed_framing);
 	return (atf_no_error());
 }

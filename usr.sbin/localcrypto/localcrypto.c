@@ -9,6 +9,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -68,15 +69,21 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	const struct cryptocmp_named_create *named_create;
 	const struct cryptocmp_named_lease *named_lease;
 	const struct cryptocmp_named_control *named_control;
+	const struct cryptocmp_digest *digest;
+	const struct cryptocmp_random *random_request;
 	struct cryptocmp_msg out;
 	struct cryptocmp_key_reply key_out;
 	struct cryptocmp_named_reply named_out;
+	struct cryptocmp_random_reply random_out;
 	struct session2_op session;
 	struct crypto_worker *worker;
 	const char *operation;
+	const void *reply_data;
+	size_t reply_length;
 	uint8_t public_key[CRYPTODESC_ED25519_PUBLIC_SIZE];
 	uint64_t generation;
-	int fd, error;
+	uint32_t random_bytes;
+	int fd, error, deliver_fd;
 
 	fd = -1;
 	error = EPROTO;
@@ -85,15 +92,17 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	memset(&out, 0, sizeof(out));
 	memset(&key_out, 0, sizeof(key_out));
 	memset(&named_out, 0, sizeof(named_out));
+	memset(&random_out, 0, sizeof(random_out));
 	memset(public_key, 0, sizeof(public_key));
 	generation = 0;
+	random_bytes = 0;
 	worker = arg;
 	if (channel_message_length(m) >= sizeof(*in) &&
 	    channel_message_fd_count(m) == 0 &&
 	    in->magic == CRYPTOCMP_MAGIC &&
 	    in->version == CRYPTOCMP_VERSION &&
 	    in->opcode >= CRYPTOCMP_OP_GENERATE &&
-	    in->opcode <= CRYPTOCMP_OP_NAMED_DELETE) {
+	    in->opcode <= CRYPTOCMP_OP_RANDOM) {
 		out.opcode = in->opcode;
 		if (in->opcode == CRYPTOCMP_OP_GENERATE &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*generate)) {
@@ -184,6 +193,53 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 				error = 0;
 			else
 				error = errno;
+		} else if (in->opcode == CRYPTOCMP_OP_DIGEST &&
+		    channel_message_length(m) == sizeof(*in) + sizeof(*digest)) {
+			operation = "digest";
+			digest = (const struct cryptocmp_digest *)(in + 1);
+			if (cryptocmp_digest_policy_validate(digest) != 0) {
+				error = errno;
+				goto reply;
+			}
+			/*
+			 * An unkeyed hash is an ordinary DIGEST-mode session with
+			 * no cipher and no MAC key.  It reuses the generated-session
+			 * mint path (which randomises nothing when both key lengths
+			 * are zero) and is delivered as a DTYPE_CRYPTO descriptor the
+			 * client streams data through; CRYPTODESC_RIGHT_AUTH is the
+			 * right the kernel requires to compute a digest.
+			 */
+			memset(&session, 0, sizeof(session));
+			session.cipher = 0;
+			session.mac = digest->alg;
+			session.keylen = 0;
+			session.key = NULL;
+			session.mackeylen = 0;
+			session.mackey = NULL;
+			session.crid = 0;
+			session.ivlen = 0;
+			session.maclen = 0;
+			if (cryptodesc_mint_generated(control_fd, &session,
+			    CRYPTODESC_RIGHT_AUTH, digest->ttl, &fd) == 0)
+				error = 0;
+			else
+				error = errno;
+		} else if (in->opcode == CRYPTOCMP_OP_RANDOM &&
+		    channel_message_length(m) == sizeof(*in) + sizeof(*random_request)) {
+			operation = "random";
+			random_request = (const struct cryptocmp_random *)(in + 1);
+			if (cryptocmp_random_policy_validate(random_request) != 0) {
+				error = errno;
+				goto reply;
+			}
+			/*
+			 * CSPRNG bytes are not secret-key material to confine, so
+			 * they are returned inline; the reply buffer is scrubbed
+			 * after the send regardless.
+			 */
+			random_bytes = random_request->nbytes;
+			arc4random_buf(random_out.data, random_bytes);
+			error = 0;
 		}
 	}
 
@@ -194,27 +250,56 @@ reply:
 	key_out.msg = out;
 	named_out.msg = out;
 	named_out.generation = generation;
+	random_out.msg = out;
+	random_out.nbytes = error == 0 ? random_bytes : 0;
 	audit_operation(worker, operation, error);
 	if (out.opcode == CRYPTOCMP_OP_GENERATE_KEY)
 		memcpy(key_out.public_key, public_key, sizeof(key_out.public_key));
+	/*
+	 * Select the reply shape by opcode: keyed-descriptor replies carry the
+	 * public key, named-key replies carry the generation, a random reply
+	 * carries a variable-length inline payload, and everything else (plain
+	 * descriptor mints and malformed requests) uses the bare header.  A
+	 * delivered descriptor accompanies only the successful mint/lease ops.
+	 */
+	switch (out.opcode) {
+	case CRYPTOCMP_OP_GENERATE_KEY:
+		reply_data = &key_out;
+		reply_length = sizeof(key_out);
+		break;
+	case CRYPTOCMP_OP_NAMED_CREATE:
+	case CRYPTOCMP_OP_NAMED_LEASE:
+	case CRYPTOCMP_OP_NAMED_ROTATE:
+	case CRYPTOCMP_OP_NAMED_DELETE:
+		reply_data = &named_out;
+		reply_length = sizeof(named_out);
+		break;
+	case CRYPTOCMP_OP_RANDOM:
+		reply_data = &random_out;
+		reply_length = offsetof(struct cryptocmp_random_reply, data) +
+		    (error == 0 ? random_bytes : 0);
+		break;
+	default:
+		reply_data = &out;
+		reply_length = sizeof(out);
+		break;
+	}
+	deliver_fd = error == 0 && (out.opcode == CRYPTOCMP_OP_GENERATE ||
+	    out.opcode == CRYPTOCMP_OP_GENERATE_KEY ||
+	    out.opcode == CRYPTOCMP_OP_NAMED_LEASE ||
+	    out.opcode == CRYPTOCMP_OP_DIGEST) ? 1 : 0;
 	(void)channel_send_reply(m, &(struct channel_outgoing){
 	    .size = sizeof(struct channel_outgoing),
-	    .data = out.opcode == CRYPTOCMP_OP_GENERATE_KEY ? (const void *)&key_out :
-	    out.opcode >= CRYPTOCMP_OP_NAMED_CREATE ? (const void *)&named_out :
-	    (const void *)&out,
-	    .length = out.opcode == CRYPTOCMP_OP_GENERATE_KEY ? sizeof(key_out) :
-	    out.opcode >= CRYPTOCMP_OP_NAMED_CREATE ? sizeof(named_out) : sizeof(out),
-	    .fds = error == 0 && (out.opcode == CRYPTOCMP_OP_GENERATE ||
-	    out.opcode == CRYPTOCMP_OP_GENERATE_KEY ||
-	    out.opcode == CRYPTOCMP_OP_NAMED_LEASE) ? &fd : NULL,
-	    .nfds = error == 0 && (out.opcode == CRYPTOCMP_OP_GENERATE ||
-	    out.opcode == CRYPTOCMP_OP_GENERATE_KEY ||
-	    out.opcode == CRYPTOCMP_OP_NAMED_LEASE) ? 1 : 0 });
+	    .data = reply_data,
+	    .length = reply_length,
+	    .fds = deliver_fd != 0 ? &fd : NULL,
+	    .nfds = deliver_fd });
 	if (fd >= 0)
 		close(fd);
 	explicit_bzero(public_key, sizeof(public_key));
 	explicit_bzero(&key_out, sizeof(key_out));
 	explicit_bzero(&named_out, sizeof(named_out));
+	explicit_bzero(&random_out, sizeof(random_out));
 	channel_message_free(m);
 }
 

@@ -183,7 +183,7 @@ request(struct fixture *fixture, const struct warden_request *rq, size_t length,
 
 static void
 init_request(struct warden_request *rq, uint32_t flags, const char *path,
-    const char *hostname, const char *ip4)
+    const char *hostname, const char *ip4, const char *ip6)
 {
 
 	memset(rq, 0, sizeof(*rq));
@@ -192,6 +192,55 @@ init_request(struct warden_request *rq, uint32_t flags, const char *path,
 	(void)strlcpy(rq->path, path, sizeof(rq->path));
 	(void)strlcpy(rq->hostname, hostname, sizeof(rq->hostname));
 	(void)strlcpy(rq->ip4_addr, ip4, sizeof(rq->ip4_addr));
+	(void)strlcpy(rq->ip6_addr, ip6, sizeof(rq->ip6_addr));
+}
+
+/*
+ * Issue a lifecycle-control request (DESTROY or LIST) and collect the reply.
+ * length lets a caller send a deliberately wrong-sized message; fd optionally
+ * attaches a descriptor.  On a successful transport returns 0 and copies up to
+ * rpcap reply bytes into rp (storing the actual length in *rplen when non-NULL);
+ * returns -1 when the transport rejects the message (terminal).
+ */
+static int
+control_call(struct fixture *fixture, uint32_t op, size_t length, int fd,
+    void *rp, size_t rpcap, size_t *rplen, int *out_fd)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct warden_control_request creq;
+	uint8_t buffer[sizeof(struct warden_list_reply) + 16];
+	int fdslot[1];
+
+	memset(&creq, 0, sizeof(creq));
+	creq.op = op;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &creq;
+	outgoing.length = length;
+	if (fd >= 0) {
+		fdslot[0] = fd;
+		outgoing.fds = fdslot;
+		outgoing.nfds = 1;
+	}
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = buffer;
+	incoming.capacity = sizeof(buffer);
+	incoming.fds = fdslot;
+	incoming.fd_capacity = 1;
+	options.timeout_ms = 5000;
+	if (service_session_call(fixture->session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	ATF_REQUIRE(incoming.length <= rpcap);
+	memcpy(rp, buffer, incoming.length);
+	if (rplen != NULL)
+		*rplen = incoming.length;
+	if (out_fd != NULL)
+		*out_fd = incoming.nfds >= 1 ? incoming.fds[0] : -1;
+	return (0);
 }
 
 ATF_TC(rejects_unexpected_descriptor);
@@ -208,7 +257,7 @@ ATF_TC_BODY(rejects_unexpected_descriptor, tc)
 
 	require_plane();
 	fixture_create(&fixture);
-	init_request(&rq, 0, "/jails/example", "", "");
+	init_request(&rq, 0, "/jails/example", "", "", "");
 	null = open("/dev/null", O_RDONLY | O_CLOEXEC);
 	ATF_REQUIRE(null >= 0);
 	out_fd = -1;
@@ -240,7 +289,7 @@ ATF_TC_BODY(rejects_short_message, tc)
 
 	require_plane();
 	fixture_create(&fixture);
-	init_request(&rq, 0, "/jails/example", "", "");
+	init_request(&rq, 0, "/jails/example", "", "", "");
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq.op) + sizeof(rq.flags),
 	    -1, &rp, NULL));
 	ATF_CHECK_EQ(EPROTO, rp.status);
@@ -260,7 +309,7 @@ ATF_TC_BODY(rejects_unknown_opcode, tc)
 
 	require_plane();
 	fixture_create(&fixture);
-	init_request(&rq, 0, "/jails/example", "", "");
+	init_request(&rq, 0, "/jails/example", "", "", "");
 	rq.op = 0x4242;
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, NULL));
 	ATF_CHECK_EQ(EINVAL, rp.status);
@@ -280,7 +329,7 @@ ATF_TC_BODY(rejects_unknown_flag_bits, tc)
 
 	require_plane();
 	fixture_create(&fixture);
-	init_request(&rq, WARDEN_F_EPHEMERAL | 0x2u, "/jails/example", "", "");
+	init_request(&rq, WARDEN_F_EPHEMERAL | 0x4u, "/jails/example", "", "", "");
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, NULL));
 	ATF_CHECK_EQ(EINVAL, rp.status);
 	fixture_destroy(&fixture);
@@ -299,7 +348,7 @@ ATF_TC_BODY(rejects_relative_path, tc)
 
 	require_plane();
 	fixture_create(&fixture);
-	init_request(&rq, 0, "relative/path", "", "");
+	init_request(&rq, 0, "relative/path", "", "", "");
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, NULL));
 	ATF_CHECK_EQ(EINVAL, rp.status);
 	fixture_destroy(&fixture);
@@ -353,7 +402,7 @@ ATF_TC_BODY(reuse_definition_mismatch_is_eexist, tc)
 	fixture_create(&fixture);
 
 	/* First ENTER establishes the persistent jail (hostname host-one). */
-	init_request(&rq, 0, root, "host-one", "");
+	init_request(&rq, 0, root, "host-one", "", "");
 	out_fd = -1;
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
 	if (rp.status != 0) {
@@ -366,7 +415,7 @@ ATF_TC_BODY(reuse_definition_mismatch_is_eexist, tc)
 		close(out_fd);
 
 	/* Same channel/label, mismatched definition -> hard EEXIST. */
-	init_request(&rq, 0, root, "host-two", "");
+	init_request(&rq, 0, root, "host-two", "", "");
 	out_fd = -1;
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
 	ATF_CHECK_MSG(rp.status == EEXIST,
@@ -401,7 +450,7 @@ ATF_TC_BODY(second_ephemeral_enter_is_ealready, tc)
 	make_jail_root(root, sizeof(root));
 	fixture_create(&fixture);
 
-	init_request(&rq, WARDEN_F_EPHEMERAL, root, "", "");
+	init_request(&rq, WARDEN_F_EPHEMERAL, root, "", "", "");
 	out_fd = -1;
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
 	if (rp.status != 0) {
@@ -414,7 +463,7 @@ ATF_TC_BODY(second_ephemeral_enter_is_ealready, tc)
 		close(out_fd);
 
 	/* Second ephemeral ENTER on the same channel is refused. */
-	init_request(&rq, WARDEN_F_EPHEMERAL, root, "", "");
+	init_request(&rq, WARDEN_F_EPHEMERAL, root, "", "", "");
 	out_fd = -1;
 	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
 	ATF_CHECK_EQ(EALREADY, rp.status);
@@ -423,6 +472,319 @@ ATF_TC_BODY(second_ephemeral_enter_is_ealready, tc)
 	/* Worker exit closes the owning descriptor, tearing the jail down. */
 	fixture_destroy(&fixture);
 	(void)rmdir(root);
+}
+
+/*
+ * The full jail lifecycle over the wire: ENTER creates the caller's persistent
+ * jail; LIST reports present==1 with the matching path/hostname; DESTROY removes
+ * it (status 0); a second LIST reports present==0; a second DESTROY is ENOENT.
+ * This is the gap this change closes — before it a persistent jail could be
+ * created but never enumerated or reclaimed.
+ */
+ATF_TC(lifecycle_list_then_destroy);
+ATF_TC_HEAD(lifecycle_list_then_destroy, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(lifecycle_list_then_destroy, tc)
+{
+	struct fixture fixture;
+	struct warden_request rq;
+	struct warden_reply rp;
+	struct warden_list_reply lr;
+	char root[PATH_MAX];
+	size_t len;
+	int out_fd;
+
+	require_plane();
+	make_jail_root(root, sizeof(root));
+	fixture_create(&fixture);
+
+	/* ENTER establishes the persistent jail (hostname host-life). */
+	init_request(&rq, 0, root, "host-life", "", "");
+	out_fd = -1;
+	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	if (rp.status != 0) {
+		fixture_destroy(&fixture);
+		(void)rmdir(root);
+		atf_tc_skip("live jail creation not available under harness: %s",
+		    strerror(rp.status));
+	}
+	if (out_fd >= 0)
+		close(out_fd);
+
+	/* LIST reports the jail present with its definition. */
+	memset(&lr, 0, sizeof(lr));
+	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
+	    sizeof(struct warden_control_request), -1, &lr, sizeof(lr), &len,
+	    NULL));
+	ATF_REQUIRE_EQ(sizeof(lr), len);
+	ATF_CHECK_EQ(0, lr.status);
+	ATF_CHECK_EQ(1, lr.present);
+	ATF_CHECK(lr.jid > 0);
+	ATF_CHECK_STREQ(root, lr.path);
+	ATF_CHECK_STREQ("host-life", lr.hostname);
+
+	/* DESTROY removes it. */
+	memset(&rp, 0, sizeof(rp));
+	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_DESTROY_JAIL,
+	    sizeof(struct warden_control_request), -1, &rp, sizeof(rp), NULL,
+	    NULL));
+	ATF_CHECK_EQ(0, rp.status);
+
+	/* A second LIST now reports no jail. */
+	memset(&lr, 0, sizeof(lr));
+	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
+	    sizeof(struct warden_control_request), -1, &lr, sizeof(lr), NULL,
+	    NULL));
+	ATF_CHECK_EQ(0, lr.status);
+	ATF_CHECK_EQ(0, lr.present);
+
+	/* A second DESTROY is ENOENT — nothing left to remove. */
+	memset(&rp, 0, sizeof(rp));
+	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_DESTROY_JAIL,
+	    sizeof(struct warden_control_request), -1, &rp, sizeof(rp), NULL,
+	    NULL));
+	ATF_CHECK_EQ(ENOENT, rp.status);
+
+	fixture_destroy(&fixture);
+	remove_named_jail(TEST_CLIENT_LABEL);
+	(void)rmdir(root);
+}
+
+/*
+ * ENTER with an ip6 address creates the jail with that address, and LIST reads
+ * it back: the ip6.addr field round-trips through create_jail (dynamic param
+ * assembly) and handle_list_jails (jail_get_ip6).  Skips where the harness cannot
+ * create a live jail with an ip6 address (e.g. no INET6, or no privilege).
+ */
+ATF_TC(enter_with_ip6_lists_back);
+ATF_TC_HEAD(enter_with_ip6_lists_back, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(enter_with_ip6_lists_back, tc)
+{
+	struct fixture fixture;
+	struct warden_request rq;
+	struct warden_reply rp;
+	struct warden_list_reply lr;
+	char root[PATH_MAX];
+	size_t len;
+	int out_fd;
+
+	require_plane();
+	make_jail_root(root, sizeof(root));
+	fixture_create(&fixture);
+
+	/* ENTER establishes a persistent jail carrying an ip6 address. */
+	init_request(&rq, 0, root, "host-v6", "", "fd00::1");
+	out_fd = -1;
+	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	if (rp.status != 0) {
+		fixture_destroy(&fixture);
+		(void)rmdir(root);
+		atf_tc_skip("live ip6 jail creation not available under harness: "
+		    "%s", strerror(rp.status));
+	}
+	if (out_fd >= 0)
+		close(out_fd);
+
+	/* LIST reports the jail with its ip6 address filled in. */
+	memset(&lr, 0, sizeof(lr));
+	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
+	    sizeof(struct warden_control_request), -1, &lr, sizeof(lr), &len,
+	    NULL));
+	ATF_REQUIRE_EQ(sizeof(lr), len);
+	ATF_CHECK_EQ(0, lr.status);
+	ATF_CHECK_EQ(1, lr.present);
+	ATF_CHECK_STREQ(root, lr.path);
+	ATF_CHECK_MSG(strcmp(lr.ip6_addr, "fd00::1") == 0,
+	    "LIST reported ip6_addr \"%s\", want \"fd00::1\"", lr.ip6_addr);
+
+	fixture_destroy(&fixture);
+	remove_named_jail(TEST_CLIENT_LABEL);
+	(void)rmdir(root);
+}
+
+/*
+ * The full-definition reuse rule, extended to ip6: once a label's jail exists
+ * with one ip6 address, a later request from that same label carrying a DIFFERENT
+ * ip6 (same path and hostname) must be refused EEXIST, never silently attached
+ * into the mismatched jail.  This is the key regression for the ip6 widening —
+ * the ip4 rule already enforced this for v4.
+ */
+ATF_TC(reuse_ip6_mismatch_is_eexist);
+ATF_TC_HEAD(reuse_ip6_mismatch_is_eexist, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(reuse_ip6_mismatch_is_eexist, tc)
+{
+	struct fixture fixture;
+	struct warden_request rq;
+	struct warden_reply rp;
+	char root[PATH_MAX];
+	int out_fd;
+
+	require_plane();
+	make_jail_root(root, sizeof(root));
+	fixture_create(&fixture);
+
+	/* First ENTER establishes the persistent jail with ip6 fd00::1. */
+	init_request(&rq, 0, root, "host-v6", "", "fd00::1");
+	out_fd = -1;
+	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	if (rp.status != 0) {
+		fixture_destroy(&fixture);
+		(void)rmdir(root);
+		atf_tc_skip("live ip6 jail creation not available under harness: "
+		    "%s", strerror(rp.status));
+	}
+	if (out_fd >= 0)
+		close(out_fd);
+
+	/* Same channel/label/path/host, mismatched ip6 -> hard EEXIST. */
+	init_request(&rq, 0, root, "host-v6", "", "fd00::2");
+	out_fd = -1;
+	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	ATF_CHECK_MSG(rp.status == EEXIST,
+	    "reuse with mismatched ip6 returned status %d (%s), want EEXIST",
+	    rp.status, strerror(rp.status));
+	ATF_CHECK_EQ(-1, out_fd);
+
+	fixture_destroy(&fixture);
+	remove_named_jail(TEST_CLIENT_LABEL);
+	(void)rmdir(root);
+}
+
+/*
+ * ENTER with WARDEN_F_VNET creates a jail with its own virtual network stack.
+ * We assert two things: the jail's "vnet" parameter reads back as JAIL_SYS_NEW,
+ * and — since vnet is part of the immutable definition — a reuse of the same
+ * path/hostname WITHOUT the vnet flag is refused EEXIST (a non-vnet duplicate
+ * differs).  Skips where the harness cannot create a vnet jail (no VIMAGE, or no
+ * privilege).
+ */
+ATF_TC(enter_with_vnet_creates_vnet_jail);
+ATF_TC_HEAD(enter_with_vnet_creates_vnet_jail, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
+{
+	struct fixture fixture;
+	struct warden_request rq;
+	struct warden_reply rp;
+	char root[PATH_MAX], name[64], vbuf[16];
+	int out_fd;
+
+	require_plane();
+	make_jail_root(root, sizeof(root));
+	fixture_create(&fixture);
+
+	/* ENTER establishes a persistent vnet jail. */
+	init_request(&rq, WARDEN_F_VNET, root, "host-vnet", "", "");
+	out_fd = -1;
+	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	if (rp.status != 0) {
+		fixture_destroy(&fixture);
+		(void)rmdir(root);
+		atf_tc_skip("live vnet jail creation not available under harness: "
+		    "%s", strerror(rp.status));
+	}
+	if (out_fd >= 0)
+		close(out_fd);
+
+	/*
+	 * The jail's vnet parameter reads back as a new (own) network stack.
+	 * "vnet" is a jailsys parameter, so it exports as the string
+	 * "new"/"inherit"/"disable" -- compare the string, not strtol().
+	 */
+	ATF_REQUIRE(warden_test_jail_name(TEST_CLIENT_LABEL, name, sizeof(name)));
+	vbuf[0] = '\0';
+	ATF_REQUIRE(jail_getv(0, "name", name, "vnet", vbuf, NULL) >= 0);
+	ATF_CHECK_MSG(strcmp(vbuf, "new") == 0,
+	    "vnet jail's vnet param = \"%s\", want \"new\"", vbuf);
+
+	/*
+	 * A reuse of the same path/hostname without the vnet flag differs in the
+	 * (immutable) definition and must be refused, proving vnet is enforced.
+	 */
+	init_request(&rq, 0, root, "host-vnet", "", "");
+	out_fd = -1;
+	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	ATF_CHECK_MSG(rp.status == EEXIST,
+	    "non-vnet reuse of a vnet jail returned status %d (%s), want EEXIST",
+	    rp.status, strerror(rp.status));
+	ATF_CHECK_EQ(-1, out_fd);
+
+	fixture_destroy(&fixture);
+	remove_named_jail(TEST_CLIENT_LABEL);
+	(void)rmdir(root);
+}
+
+/*
+ * A DESTROY/LIST with a wrong message length (here: only the opcode word, one
+ * byte short of a warden_control_request) is a soft EPROTO reply — it is decided
+ * before any jail is touched, so it needs only the channel plane.
+ */
+ATF_TC(control_rejects_short_message);
+ATF_TC_HEAD(control_rejects_short_message, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(control_rejects_short_message, tc)
+{
+	struct fixture fixture;
+	struct warden_reply rp;
+
+	require_plane();
+	fixture_create(&fixture);
+
+	memset(&rp, 0, sizeof(rp));
+	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_DESTROY_JAIL,
+	    sizeof(uint32_t), -1, &rp, sizeof(rp), NULL, NULL));
+	ATF_CHECK_EQ(EPROTO, rp.status);
+
+	memset(&rp, 0, sizeof(rp));
+	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
+	    sizeof(uint32_t), -1, &rp, sizeof(rp), NULL, NULL));
+	ATF_CHECK_EQ(EPROTO, rp.status);
+
+	fixture_destroy(&fixture);
+}
+
+/*
+ * An unexpected descriptor on a DESTROY is a terminal transport rejection, not
+ * a soft reply: warden's worker channel accepts no descriptors, so the transport
+ * tears the channel down (mirrors rejects_unexpected_descriptor for ENTER).
+ */
+ATF_TC(control_rejects_unexpected_descriptor);
+ATF_TC_HEAD(control_rejects_unexpected_descriptor, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(control_rejects_unexpected_descriptor, tc)
+{
+	struct fixture fixture;
+	struct warden_reply rp;
+	int null, out_fd;
+
+	require_plane();
+	fixture_create(&fixture);
+
+	null = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(null >= 0);
+	out_fd = -1;
+	memset(&rp, 0, sizeof(rp));
+	ATF_CHECK(control_call(&fixture, WARDEN_OP_DESTROY_JAIL,
+	    sizeof(struct warden_control_request), null, &rp, sizeof(rp), NULL,
+	    &out_fd) == -1);
+	ATF_CHECK_EQ(-1, out_fd);
+	close(null);
+
+	fixture_destroy(&fixture);
 }
 
 ATF_TP_ADD_TCS(tp)
@@ -434,6 +796,12 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rejects_unknown_flag_bits);
 	ATF_TP_ADD_TC(tp, rejects_relative_path);
 	ATF_TP_ADD_TC(tp, reuse_definition_mismatch_is_eexist);
+	ATF_TP_ADD_TC(tp, enter_with_ip6_lists_back);
+	ATF_TP_ADD_TC(tp, reuse_ip6_mismatch_is_eexist);
+	ATF_TP_ADD_TC(tp, enter_with_vnet_creates_vnet_jail);
 	ATF_TP_ADD_TC(tp, second_ephemeral_enter_is_ealready);
+	ATF_TP_ADD_TC(tp, lifecycle_list_then_destroy);
+	ATF_TP_ADD_TC(tp, control_rejects_short_message);
+	ATF_TP_ADD_TC(tp, control_rejects_unexpected_descriptor);
 	return (atf_no_error());
 }

@@ -231,6 +231,273 @@ sample_generate(void)
 }
 
 /*
+ * Mint an unkeyed-digest session descriptor for the given plain-hash algorithm.
+ * Returns the daemon's errno-style status; on success the delivered
+ * DTYPE_CRYPTO descriptor is returned through out_fd.
+ */
+static int
+digest_op(struct raw_fixture *fixture, uint32_t alg, uint32_t ttl, int *out_fd)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct cryptocmp_msg msg;
+	struct cryptocmp_digest digest;
+	struct cryptocmp_msg reply;
+	uint8_t request[sizeof(struct cryptocmp_msg) +
+	    sizeof(struct cryptocmp_digest)];
+	int fd;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.magic = CRYPTOCMP_MAGIC;
+	msg.version = CRYPTOCMP_VERSION;
+	msg.opcode = CRYPTOCMP_OP_DIGEST;
+	memset(&digest, 0, sizeof(digest));
+	digest.alg = alg;
+	digest.ttl = ttl;
+	memcpy(request, &msg, sizeof(msg));
+	memcpy(request + sizeof(msg), &digest, sizeof(digest));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = request;
+	outgoing.length = sizeof(request);
+	fd = -1;
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 1;
+	options.timeout_ms = 2000;
+	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
+	    &incoming, &options));
+	if (out_fd != NULL)
+		*out_fd = fd;
+	return (-reply.status);
+}
+
+/*
+ * Request nbytes of CSPRNG output.  Returns the daemon's errno-style status; on
+ * success the reply's declared byte count is returned through got and the bytes
+ * are copied into buf (capacity buflen).
+ */
+static int
+random_op(struct raw_fixture *fixture, uint32_t nbytes, uint8_t *buf,
+    size_t buflen, uint32_t *got)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct cryptocmp_msg msg;
+	struct cryptocmp_random request;
+	struct cryptocmp_random_reply reply;
+	uint8_t reqbuf[sizeof(struct cryptocmp_msg) +
+	    sizeof(struct cryptocmp_random)];
+
+	memset(&msg, 0, sizeof(msg));
+	msg.magic = CRYPTOCMP_MAGIC;
+	msg.version = CRYPTOCMP_VERSION;
+	msg.opcode = CRYPTOCMP_OP_RANDOM;
+	memset(&request, 0, sizeof(request));
+	request.nbytes = nbytes;
+	memcpy(reqbuf, &msg, sizeof(msg));
+	memcpy(reqbuf + sizeof(msg), &request, sizeof(request));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = reqbuf;
+	outgoing.length = sizeof(reqbuf);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	options.timeout_ms = 2000;
+	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
+	    &incoming, &options));
+	if (reply.msg.status == 0) {
+		if (got != NULL)
+			*got = reply.nbytes;
+		if (buf != NULL && reply.nbytes <= buflen)
+			memcpy(buf, reply.data, reply.nbytes);
+	}
+	return (-reply.msg.status);
+}
+
+/*
+ * An unkeyed digest is delivered as a session descriptor the client streams data
+ * through: the daemon mints a DTYPE_CRYPTO fd for the requested plain hash, and
+ * a CIOCCRYPT authentication pass over the classic NIST input "abc" reproduces
+ * the published SHA-256 vector — proving both the descriptor and its right.
+ */
+ATF_TC(digest_descriptor);
+ATF_TC_HEAD(digest_descriptor, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "An unkeyed-digest descriptor computes a known SHA-256 vector");
+}
+ATF_TC_BODY(digest_descriptor, tc)
+{
+	static const uint8_t sha256_abc[32] = {
+		0xba, 0x78, 0x16, 0xbf, 0x8f, 0x01, 0xcf, 0xea,
+		0x41, 0x41, 0x40, 0xde, 0x5d, 0xae, 0x22, 0x23,
+		0xb0, 0x03, 0x61, 0xa3, 0x96, 0x17, 0x7a, 0x9c,
+		0xb4, 0x10, 0xff, 0x61, 0xf2, 0x00, 0x15, 0xad,
+	};
+	struct raw_fixture fixture;
+	struct crypt_op cop;
+	uint8_t digest[sizeof(sha256_abc)];
+	int fd;
+
+	require_plane();
+	raw_fixture_create(&fixture, "org.test.digest");
+
+	fd = -1;
+	ATF_CHECK_EQ(0, digest_op(&fixture, CRYPTO_SHA2_256, 60, &fd));
+	ATF_REQUIRE(fd >= 0);
+	memset(&cop, 0, sizeof(cop));
+	cop.op = COP_ENCRYPT;
+	cop.len = 3;
+	cop.src = "abc";
+	cop.mac = digest;
+	memset(digest, 0, sizeof(digest));
+	ATF_REQUIRE_MSG(ioctl(fd, CIOCCRYPT, &cop) == 0,
+	    "CIOCCRYPT on digest descriptor: %s", strerror(errno));
+	ATF_CHECK_EQ(0, memcmp(digest, sha256_abc, sizeof(sha256_abc)));
+	close(fd);
+
+	raw_fixture_destroy(&fixture, 0);
+}
+
+/*
+ * CSPRNG: a request returns exactly the byte count asked for, and two draws of
+ * the same size differ (a smoke check that real entropy is flowing, not a fixed
+ * buffer).
+ */
+ATF_TC(random_bytes);
+ATF_TC_HEAD(random_bytes, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "CSPRNG returns the requested count and successive draws differ");
+}
+ATF_TC_BODY(random_bytes, tc)
+{
+	struct raw_fixture fixture;
+	uint8_t first[64], second[64];
+	uint32_t got;
+
+	require_plane();
+	raw_fixture_create(&fixture, "org.test.random");
+
+	got = 0;
+	memset(first, 0, sizeof(first));
+	ATF_CHECK_EQ(0, random_op(&fixture, sizeof(first), first, sizeof(first),
+	    &got));
+	ATF_CHECK_EQ(sizeof(first), got);
+
+	got = 0;
+	memset(second, 0, sizeof(second));
+	ATF_CHECK_EQ(0, random_op(&fixture, sizeof(second), second,
+	    sizeof(second), &got));
+	ATF_CHECK_EQ(sizeof(second), got);
+	ATF_CHECK(memcmp(first, second, sizeof(first)) != 0);
+
+	/* A single-byte and a max-size draw both honour the requested count. */
+	got = 0;
+	ATF_CHECK_EQ(0, random_op(&fixture, 1, first, sizeof(first), &got));
+	ATF_CHECK_EQ(1, got);
+
+	raw_fixture_destroy(&fixture, 0);
+}
+
+/*
+ * The digest and random handlers fail closed on the same boundaries the other
+ * ops enforce: an unsupported hash algorithm (EPROTONOSUPPORT), an over-cap byte
+ * count (EINVAL), an attached descriptor (EPROTO), and a length that does not
+ * match the opcode (EPROTO).
+ */
+ATF_TC(digest_random_malformed);
+ATF_TC_HEAD(digest_random_malformed, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "Digest/random requests are rejected fail-closed at their boundaries");
+}
+ATF_TC_BODY(digest_random_malformed, tc)
+{
+	struct raw_fixture fixture;
+	struct cryptocmp_msg msg;
+	struct cryptocmp_digest digest;
+	struct cryptocmp_random request;
+	uint8_t reqbuf[sizeof(struct cryptocmp_msg) +
+	    sizeof(struct cryptocmp_digest)];
+	int fd, status, rc, pipefd[2];
+
+	require_plane();
+	raw_fixture_create(&fixture, "org.test.dr.malformed");
+
+	/* A keyed-HMAC selector is not an unkeyed digest. */
+	fd = -1;
+	ATF_CHECK_EQ(EPROTONOSUPPORT,
+	    digest_op(&fixture, CRYPTO_SHA2_256_HMAC, 60, &fd));
+	ATF_CHECK_EQ(-1, fd);
+
+	/* An over-cap random request is rejected. */
+	ATF_CHECK_EQ(EINVAL, random_op(&fixture, CRYPTOCMP_MAX_RANDOM_BYTES + 1,
+	    NULL, 0, NULL));
+	/* A zero-length random request is rejected. */
+	ATF_CHECK_EQ(EINVAL, random_op(&fixture, 0, NULL, 0, NULL));
+
+	/* A digest request with a truncated body (header only). */
+	memset(&msg, 0, sizeof(msg));
+	msg.magic = CRYPTOCMP_MAGIC;
+	msg.version = CRYPTOCMP_VERSION;
+	msg.opcode = CRYPTOCMP_OP_DIGEST;
+	memcpy(reqbuf, &msg, sizeof(msg));
+	status = 0;
+	ATF_CHECK_EQ(0, send_raw(fixture.session, reqbuf, sizeof(msg), -1,
+	    &status));
+	ATF_CHECK_EQ(EPROTO, status);
+
+	/* A random request with a trailing byte (wrong length). */
+	msg.opcode = CRYPTOCMP_OP_RANDOM;
+	memset(&request, 0, sizeof(request));
+	request.nbytes = 16;
+	memcpy(reqbuf, &msg, sizeof(msg));
+	memcpy(reqbuf + sizeof(msg), &request, sizeof(request));
+	status = 0;
+	ATF_CHECK_EQ(0, send_raw(fixture.session, reqbuf,
+	    sizeof(msg) + sizeof(request) + 1, -1, &status));
+	ATF_CHECK_EQ(EPROTO, status);
+
+	raw_fixture_destroy(&fixture, 0);
+
+	/* An attached descriptor on a digest request must not be interpreted. */
+	raw_fixture_create(&fixture, "org.test.dr.fd");
+	ATF_REQUIRE_EQ(0, pipe(pipefd));
+	memset(&msg, 0, sizeof(msg));
+	msg.magic = CRYPTOCMP_MAGIC;
+	msg.version = CRYPTOCMP_VERSION;
+	msg.opcode = CRYPTOCMP_OP_DIGEST;
+	memset(&digest, 0, sizeof(digest));
+	digest.alg = CRYPTO_SHA2_256;
+	memcpy(reqbuf, &msg, sizeof(msg));
+	memcpy(reqbuf + sizeof(msg), &digest, sizeof(digest));
+	status = 0;
+	rc = send_raw(fixture.session, reqbuf, sizeof(reqbuf), pipefd[0],
+	    &status);
+	if (rc == 0)
+		ATF_CHECK_EQ(EPROTO, status);
+	else
+		ATF_CHECK_EQ(-1, rc);
+	close(pipefd[0]);
+	close(pipefd[1]);
+	raw_fixture_destroy_any(&fixture);
+}
+
+/*
  * Crown-jewel isolation regression: named keys are scoped to the owner label
  * bound to the unforgeable channel identity.  A key minted by one owner label is
  * invisible to a session running under a different label — lease/rotate/delete
@@ -394,6 +661,9 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, named_key_is_owner_scoped);
 	ATF_TP_ADD_TC(tp, malformed_request_is_rejected);
+	ATF_TP_ADD_TC(tp, digest_descriptor);
+	ATF_TP_ADD_TC(tp, random_bytes);
+	ATF_TP_ADD_TC(tp, digest_random_malformed);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }

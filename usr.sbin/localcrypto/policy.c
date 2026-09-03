@@ -263,3 +263,45 @@ cryptocmp_named_control_policy_validate(const struct cryptocmp_named_control *re
 	}
 	return (0);
 }
+
+/*
+ * Unkeyed digest: the algorithm must be one of the allowed plain SHA-2 hashes
+ * (the same NIST-profile family the keyed HMAC path admits, minus the key).
+ * Unknown/weak algorithms are rejected EPROTONOSUPPORT; malformed parameters
+ * (nonzero flags, an over-long ttl) fail EINVAL.  No key material is involved,
+ * so there is nothing to owner-scope.
+ */
+int
+cryptocmp_digest_policy_validate(const struct cryptocmp_digest *request)
+{
+
+	if (request == NULL || request->flags != 0 || request->ttl > 86400) {
+		errno = EINVAL;
+		return (-1);
+	}
+	switch (request->alg) {
+	case CRYPTO_SHA2_256:
+	case CRYPTO_SHA2_384:
+	case CRYPTO_SHA2_512:
+		return (0);
+	default:
+		errno = EPROTONOSUPPORT;
+		return (-1);
+	}
+}
+
+/*
+ * CSPRNG: a nonzero request bounded by CRYPTOCMP_MAX_RANDOM_BYTES.  Zero-length
+ * and over-cap requests both fail closed with EINVAL.
+ */
+int
+cryptocmp_random_policy_validate(const struct cryptocmp_random *request)
+{
+
+	if (request == NULL || request->nbytes == 0 ||
+	    request->nbytes > CRYPTOCMP_MAX_RANDOM_BYTES) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (0);
+}

@@ -217,10 +217,34 @@ ATF_TC_BODY(config_replaces_default_allowlist, tc)
 	(void)unlink(path);
 }
 
+/*
+ * STAT is gated by the SAME allow-list as ENSURE: a client may query only a
+ * module it could load.  There is no separate STAT policy — the pure decision
+ * for both operations is extension_allowed() — so the set a client may STAT is
+ * exactly the set it may ENSURE, and a non-allow-listed name is denied to STAT
+ * just as it is to ENSURE (the handler turns that into EPERM, so STAT of an
+ * unknown module leaks no loaded/not-loaded information).  This locks the
+ * "STAT gate == ENSURE gate" invariant against a future divergence.
+ */
+ATF_TC_WITHOUT_HEAD(stat_shares_ensure_allowlist_gate);
+ATF_TC_BODY(stat_shares_ensure_allowlist_gate, tc)
+{
+	struct sysext_config cfg;
+
+	sysext_config_defaults(&cfg);
+	/* Allow-listed => queryable, exactly as it is loadable. */
+	ATF_CHECK(extension_allowed(&cfg, "cryptodev"));
+	ATF_CHECK(extension_allowed(&cfg, "zfs"));
+	/* Not allow-listed => denied to STAT, exactly as to ENSURE. */
+	ATF_CHECK(!extension_allowed(&cfg, "evil"));
+	ATF_CHECK(!extension_allowed(&cfg, "kernel"));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, allowlisted_module_is_permitted);
+	ATF_TP_ADD_TC(tp, stat_shares_ensure_allowlist_gate);
 	ATF_TP_ADD_TC(tp, non_allowlisted_module_is_denied);
 	ATF_TP_ADD_TC(tp, valid_module_name_rejects_paths_accepts_dotted);
 	ATF_TP_ADD_TC(tp, valid_module_name_requires_termination);

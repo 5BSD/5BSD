@@ -305,6 +305,44 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 	ATF_CHECK_EQ(EINVAL,
 	    call_status(fx.client, &orq, sizeof(orq), NULL, 0));
 
+	/* A DESTROY with a nonzero reserved byte is EINVAL (message hygiene). */
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_DESTROY;
+	rq.lifetime = TZFSD_PERSISTENT;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	rq._reserved[2] = 0x01;
+	ATF_CHECK_EQ(EINVAL,
+	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
+
+	/* A DESTROY carrying rights (which it must not) is EINVAL. */
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_DESTROY;
+	rq.lifetime = TZFSD_PERSISTENT;
+	rq.rights = 1;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	ATF_CHECK_EQ(EINVAL,
+	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
+
+	/*
+	 * A well-formed DESTROY reaches the handler but, with no imported pool
+	 * (persistent_fd == -1 in this zeroed fixture), fails closed with ENXIO
+	 * rather than touching any ZFS state.  This proves the op is wired into
+	 * dispatch and validated without needing a live pool.
+	 */
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_DESTROY;
+	rq.lifetime = TZFSD_PERSISTENT;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	ATF_CHECK_EQ(ENXIO,
+	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
+
+	/* An attached descriptor on a DESTROY is a protocol error. */
+	nullfd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(nullfd >= 0);
+	ATF_CHECK_EQ(EPROTO,
+	    call_status(fx.client, &rq, sizeof(rq), &nullfd, 1));
+	close(nullfd);
+
 	/* And a well-formed PING round-trips green — the happy path works. */
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_PING;
@@ -336,11 +374,41 @@ ATF_TC_BODY(live_grant_over_plane_requires_pool, tc)
 	    "isolation is guarded purely by namespaces_isolate_tenants");
 }
 
+/*
+ * The persistent claim reclaim round-trip — REQUEST(persistent) grants a claim,
+ * DESTROY reclaims it (status 0), a second DESTROY of the now-absent claim
+ * replies ENOENT, and a fresh REQUEST re-creates it — plus the per-request quota
+ * override actually landing as a refquota property, both require an imported ZFS
+ * pool and the trustedzfs kernel verbs to mint and destroy real datasets.  The
+ * ATF harness does not provision a pool (and these tests deliberately avoid the
+ * anon-mount machinery), so this is deferred rather than faked: the fail-closed
+ * DESTROY framing (ENXIO/EINVAL/EPROTO without a pool) is covered over the plane
+ * in channel_validation_is_fail_closed, the quota floor purely in namespace_test
+ * (quota_floor_is_enforced), and owner-scoping in destroy_resolves_under_caller_ns.
+ * To exercise the round-trip end-to-end, run tzfsd against a real pool (see the
+ * storage bring-up runbook).
+ */
+ATF_TC(live_destroy_roundtrip_requires_pool);
+ATF_TC_HEAD(live_destroy_roundtrip_requires_pool, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "live REQUEST->DESTROY->REQUEST reclaim + quota-set needs a pool");
+}
+ATF_TC_BODY(live_destroy_roundtrip_requires_pool, tc)
+{
+
+	atf_tc_skip("requires an imported ZFS pool + trustedzfs kernel API; "
+	    "DESTROY framing is guarded over the plane by "
+	    "channel_validation_is_fail_closed and the quota floor purely by "
+	    "quota_floor_is_enforced");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, namespaces_isolate_tenants);
 	ATF_TP_ADD_TC(tp, channel_validation_is_fail_closed);
 	ATF_TP_ADD_TC(tp, live_grant_over_plane_requires_pool);
+	ATF_TP_ADD_TC(tp, live_destroy_roundtrip_requires_pool);
 	return (atf_no_error());
 }

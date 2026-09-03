@@ -26,6 +26,14 @@
 #define	TZFSD_DEFAULT_REFQUOTA	(1ULL << 30)	/* 1 GiB */
 
 /*
+ * Floor for a per-request refquota override (tzfsd_request.quota).  ZFS refquota
+ * must cover a dataset's own metadata overhead; an absurdly small ceiling makes
+ * a claim useless (even an empty dataset cannot be written).  Reject anything
+ * below this with EINVAL.
+ */
+#define	TZFSD_MIN_REFQUOTA	(1ULL << 20)	/* 1 MiB */
+
+/*
  * Per-label isolated-open policy (TZFSD_OP_OPEN), loaded from the config file's
  * "open_paths" array.  Default-deny: a client may open a path only if some entry
  * matches its unforgeable label exactly and covers the requested rights.  Exact
@@ -104,6 +112,8 @@ bool	tzfsd_test_has_dotdot_component(const char *path);
 bool	tzfsd_test_valid_request(const struct tzfsd_request *rq);
 int	tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
 	    const struct tzfsd_open_request *rq);
+int	tzfsd_test_grant(struct tzfsd_state *st, const char *client,
+	    const struct tzfsd_request *rq, char *dataset, size_t dsz);
 int	tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client);
 #endif /* TZFSD_TESTING */
 

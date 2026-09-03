@@ -27,7 +27,8 @@ and serves each client on its own
 channel.
 A client asks
 .Nm
-to ensure a named extension is loaded; the discovery
+either to ensure a named extension is loaded or to query whether one is
+currently loaded without attempting a load; the discovery
 .Em domain
 layer resolves
 .Dq Li system.SystemExtension
@@ -71,9 +72,24 @@ containing a slash, or equal to
 or
 .Dq \&.. ,
 is rejected.
-The module is loaded from the kernel module path with
+For a load request the module is loaded from the kernel module path with
 .Xr kldload 2 ;
-a module that is already present is reported as success.
+a module that is already present is reported as success, so the load path never
+needs to query and uses only the
+.Dq kldload
+gate.
+A query request instead reports whether the module is loaded, using
+.Xr kldfind 2 ,
+which exercises the
+.Dq kldstat
+gate.
+Both operations are subject to the same allow-list: a client may query only a
+module it could load, so a name that is not allow-listed is refused rather than
+answered, and a query leaks nothing about modules a client may not load.
+There is deliberately no unload operation; safe removal would require
+per-consumer module ownership that
+.Nm
+does not track.
 .Sh FILES
 .Bl -tag -width ".Pa /dev/mac_capability" -compact
 .It Pa /dev/mac_capability

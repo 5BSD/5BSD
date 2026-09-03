@@ -12,6 +12,7 @@
 
 #include <sys/param.h>
 #include <sys/socket.h>
+#include <sys/vsock.h>
 
 #include <atf-c.h>
 #include <stdbool.h>
@@ -157,9 +158,9 @@ ATF_TC_BODY(registry_full_is_refused, tc)
 }
 
 /*
- * valid_request enforces the wire contract: known op only, _reserved must be
- * zero (fail closed on unknown bits), and the port index must fall inside a
- * caller's window.
+ * valid_request enforces the wire contract for VSOCK_BIND: op known, cid must
+ * be zero (BIND scopes to the caller's label, never a wire CID), and the port
+ * index must fall inside a caller's window.  Unknown ops are refused.
  */
 ATF_TC_WITHOUT_HEAD(valid_request_enforces_wire_contract);
 ATF_TC_BODY(valid_request_enforces_wire_contract, tc)
@@ -170,21 +171,21 @@ ATF_TC_BODY(valid_request_enforces_wire_contract, tc)
 	rq.op = VMD_OP_VSOCK_BIND;
 	rq.port = 0;
 	rq.backlog = 0;
-	rq._reserved = 0;
+	rq.cid = 0;
 	ATF_CHECK(vmd_test_valid_request(&rq));
 
 	/* Highest legal index within a window is still accepted. */
 	rq.port = VMD_PORTS_PER_LABEL - 1;
 	ATF_CHECK(vmd_test_valid_request(&rq));
 
-	/* Nonzero _reserved is rejected (would map to EINVAL on the wire). */
+	/* A BIND naming a nonzero cid is rejected (would map to EINVAL). */
 	rq.port = 0;
-	rq._reserved = 1;
+	rq.cid = 1;
 	ATF_CHECK(!vmd_test_valid_request(&rq));
-	rq._reserved = 0;
+	rq.cid = 0;
 
 	/* Unknown op is rejected. */
-	rq.op = VMD_OP_VSOCK_BIND + 1;
+	rq.op = VMD_OP_VSOCK_CONNECT + 1;
 	ATF_CHECK(!vmd_test_valid_request(&rq));
 	rq.op = 0;
 	ATF_CHECK(!vmd_test_valid_request(&rq));
@@ -195,6 +196,41 @@ ATF_TC_BODY(valid_request_enforces_wire_contract, tc)
 	ATF_CHECK(!vmd_test_valid_request(&rq));
 	rq.port = 0xffffffffu;
 	ATF_CHECK(!vmd_test_valid_request(&rq));
+}
+
+/*
+ * valid_request enforces the wire contract for VSOCK_CONNECT: op known, backlog
+ * must be zero (unused by connect), cid must not be the wildcard
+ * VMADDR_CID_ANY, and — unlike BIND — port is a concrete target with no window
+ * bound (connect owns and scopes nothing).
+ */
+ATF_TC_WITHOUT_HEAD(valid_connect_enforces_wire_contract);
+ATF_TC_BODY(valid_connect_enforces_wire_contract, tc)
+{
+	struct vmd_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = VMD_OP_VSOCK_CONNECT;
+	rq.port = VMD_PORT_BASE + 3;	/* a concrete, out-of-window port */
+	rq.backlog = 0;
+	rq.cid = VMADDR_CID_LOCAL;
+	ATF_CHECK(vmd_test_valid_request(&rq));
+
+	/* Any concrete port is legal — no window-index bound applies. */
+	rq.port = 0xffffffffu;
+	ATF_CHECK(vmd_test_valid_request(&rq));
+	rq.port = VMD_PORT_BASE + 3;
+
+	/* backlog is unused by connect and MUST be zero. */
+	rq.backlog = 1;
+	ATF_CHECK(!vmd_test_valid_request(&rq));
+	rq.backlog = 0;
+
+	/* The wildcard CID is not a dialable peer. */
+	rq.cid = VMADDR_CID_ANY;
+	ATF_CHECK(!vmd_test_valid_request(&rq));
+	rq.cid = VMADDR_CID_LOCAL;
+	ATF_CHECK(vmd_test_valid_request(&rq));
 }
 
 /*
@@ -225,6 +261,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, same_label_is_deterministic);
 	ATF_TP_ADD_TC(tp, registry_full_is_refused);
 	ATF_TP_ADD_TC(tp, valid_request_enforces_wire_contract);
+	ATF_TP_ADD_TC(tp, valid_connect_enforces_wire_contract);
 	ATF_TP_ADD_TC(tp, backlog_is_clamped_and_never_negative);
 	return (atf_no_error());
 }

@@ -15,6 +15,7 @@
 #include <sys/types.h>
 
 #include <atf-c.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -167,6 +168,145 @@ ATF_TC_BODY(request_reserved_must_be_zero, tc)
 	ATF_CHECK(!tzfsd_test_valid_request(&rq));
 }
 
+/*
+ * A REQUEST may carry a nonzero quota (per-claim refquota override); it is a
+ * first-class field, not reserved space, so validation must accept it.  The
+ * floor (too-small values) is enforced later in grant(), asserted separately.
+ */
+ATF_TC_WITHOUT_HEAD(request_accepts_quota_override);
+ATF_TC_BODY(request_accepts_quota_override, tc)
+{
+	struct tzfsd_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_REQUEST;
+	rq.rights = 1;
+	rq.lifetime = TZFSD_PERSISTENT;
+	rq.quota = TZFSD_MIN_REFQUOTA;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+
+	/* 0 (use the configured default) is equally well-formed. */
+	rq.quota = 0;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+}
+
+/*
+ * TZFSD_OP_DESTROY message shape: it names a claim exactly as REQUEST does
+ * (dataset + lifetime) and must carry no rights, flags, quota, or session, and
+ * a nonzero reserved byte is rejected as ambiguous.  This is the validation
+ * half of the owner-scoped reclaim op — the handler then binds it to the
+ * caller's own namespace (see destroy_resolves_under_caller_ns).
+ */
+ATF_TC_WITHOUT_HEAD(destroy_request_shape_is_validated);
+ATF_TC_BODY(destroy_request_shape_is_validated, tc)
+{
+	struct tzfsd_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_DESTROY;
+	rq.lifetime = TZFSD_PERSISTENT;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+
+	/* CACHE shares the persistent tree and is equally destroyable. */
+	rq.lifetime = TZFSD_CACHE;
+	ATF_CHECK(tzfsd_test_valid_request(&rq));
+
+	/* Any nonzero reserved byte -> rejected. */
+	rq._reserved[1] = 0x7f;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq._reserved[1] = 0;
+
+	/* rights, flags, quota, and session must all be zero for DESTROY. */
+	rq.rights = 1;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.rights = 0;
+	rq.flags = 1;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.flags = 0;
+	rq.quota = TZFSD_MIN_REFQUOTA;
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.quota = 0;
+	rq.session[0] = 'a';
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+	rq.session[0] = '\0';
+
+	/* An unterminated dataset field is rejected (message hygiene). */
+	memset(rq.dataset, 'x', sizeof(rq.dataset));
+	ATF_CHECK(!tzfsd_test_valid_request(&rq));
+}
+
+/*
+ * grant()'s quota floor: a nonzero per-request quota below TZFSD_MIN_REFQUOTA is
+ * rejected with EINVAL before any ZFS handle is opened, so this runs purely
+ * against a zeroed state (every retained fd == -1).  quota == 0 (the default)
+ * and a sane quota fall through to the ZFS path, which is exercised only in the
+ * live provider case.
+ */
+ATF_TC_WITHOUT_HEAD(quota_floor_is_enforced);
+ATF_TC_BODY(quota_floor_is_enforced, tc)
+{
+	struct tzfsd_state st;
+	struct tzfsd_request rq;
+	char ds[TZFSD_DATASET_MAX];
+
+	memset(&st, 0, sizeof(st));
+	st.persistent_fd = st.ephemeral_fd = -1;
+	st.boot_fd = st.lease_fd = st.root_fd = -1;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_REQUEST;
+	rq.rights = 1;			/* ZH_PROPS_READ; any nonzero right */
+	rq.lifetime = TZFSD_PERSISTENT;
+	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
+
+	/* A minimal-but-nonzero quota (1 byte) is below the floor -> EINVAL. */
+	rq.quota = 1;
+	errno = 0;
+	ATF_CHECK_EQ(-1,
+	    tzfsd_test_grant(&st, "org.test.tenant", &rq, ds, sizeof(ds)));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/* One byte under the floor is still rejected. */
+	rq.quota = TZFSD_MIN_REFQUOTA - 1;
+	errno = 0;
+	ATF_CHECK_EQ(-1,
+	    tzfsd_test_grant(&st, "org.test.tenant", &rq, ds, sizeof(ds)));
+	ATF_CHECK_EQ(EINVAL, errno);
+}
+
+/*
+ * The DESTROY owner-scoping invariant, asserted at the derivation layer the
+ * handler relies on: DESTROY resolves the claim under derive_ns(caller_label),
+ * exactly as REQUEST does.  Because distinct labels derive to distinct
+ * namespaces and a dataset key may not contain '/', a caller can only ever name
+ * — and thus destroy — a claim inside its own namespace, never another label's.
+ */
+ATF_TC_WITHOUT_HEAD(destroy_resolves_under_caller_ns);
+ATF_TC_BODY(destroy_resolves_under_caller_ns, tc)
+{
+	char ns_a[TZFSD_NAME_MAX], ns_b[TZFSD_NAME_MAX];
+	char cross[TZFSD_NAME_MAX];
+
+	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantA", ns_a, sizeof(ns_a)));
+	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantB", ns_b, sizeof(ns_b)));
+	/* A DESTROY from A can never resolve into B's namespace. */
+	ATF_CHECK_MSG(strcmp(ns_a, ns_b) != 0,
+	    "two labels shared a namespace (%s); DESTROY would cross tenants",
+	    ns_a);
+
+	/*
+	 * Even armed with B's namespace string, A cannot express "B's ns / claim"
+	 * as a DESTROY dataset key: it contains '/', so valid_dataset rejects it.
+	 */
+	memset(cross, 0, sizeof(cross));
+	(void)snprintf(cross, sizeof(cross), "%.20s/claim", ns_b);
+	ATF_CHECK_MSG(!tzfsd_test_valid_dataset(cross),
+	    "a slash-bearing cross-namespace DESTROY key was accepted: %s",
+	    cross);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -175,5 +315,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, valid_dataset_accepts_only_safe_component);
 	ATF_TP_ADD_TC(tp, dotdot_is_component_wise);
 	ATF_TP_ADD_TC(tp, request_reserved_must_be_zero);
+	ATF_TP_ADD_TC(tp, request_accepts_quota_override);
+	ATF_TP_ADD_TC(tp, destroy_request_shape_is_validated);
+	ATF_TP_ADD_TC(tp, quota_floor_is_enforced);
+	ATF_TP_ADD_TC(tp, destroy_resolves_under_caller_ns);
 	return (atf_no_error());
 }

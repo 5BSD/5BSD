@@ -26,6 +26,14 @@
  * vmd runs as a root, non-capability-mode privileged provider: managing bhyve
  * and the vsock transport needs device access and a global-namespace lookup
  * (loadat/openat of the bhyve tool and its libraries), which capsicum forbids.
+ *
+ * vmd also brokers the peer side: VSOCK_CONNECT dials a concrete (cid,port) a
+ * peer advertised from its own VSOCK_BIND reply and returns the connected
+ * socket.  Connecting owns and scopes nothing — there is no registry
+ * involvement, no port window — it just reaches the peer's advertised address;
+ * the listener authorizes its own clients, exactly the client/server model.
+ * A Component in capability mode cannot connect an AF_VSOCK address itself (a
+ * global namespace), so vmd opens the socket and connect(2)s on its behalf.
  */
 
 #ifndef VMD_PROTO_H
@@ -38,6 +46,7 @@
 #define	VMD_SERVICE_NAME	"system.VM"
 
 #define	VMD_OP_VSOCK_BIND	1	/* bind+listen a vsock endpoint for me */
+#define	VMD_OP_VSOCK_CONNECT	2	/* dial a peer's advertised (cid,port) */
 
 /*
  * The per-Component vsock port window vmd hands out.  vmd hashes the caller's
@@ -58,22 +67,39 @@
 #define	VMD_PORTS_PER_LABEL	16u
 
 /*
- * Bind request.  port is the index within the caller's own window (0 ..
- * VMD_PORTS_PER_LABEL-1); vmd maps it into the label-scoped range so the wire
- * value can never name another Component's port.  backlog is the listen(2)
- * backlog (0 = default).
+ * Request.  The 16-byte layout is shared by both operations; each reads only
+ * its own fields and the unused ones MUST be zero (fail closed on stray bits).
+ *
+ * VMD_OP_VSOCK_BIND:
+ *   op      = VMD_OP_VSOCK_BIND
+ *   port    = INDEX within the caller's own window (0 .. VMD_PORTS_PER_LABEL-1);
+ *             vmd maps it into the label-scoped range so the wire value can
+ *             never name another Component's port.
+ *   backlog = listen(2) backlog (0 = default).
+ *   cid     = MUST be 0.
+ *
+ * VMD_OP_VSOCK_CONNECT:
+ *   op      = VMD_OP_VSOCK_CONNECT
+ *   port    = CONCRETE target port, as advertised by a peer's BIND reply (not a
+ *             window index — connect owns/scopes nothing, so no window bound).
+ *   backlog = MUST be 0 (unused).
+ *   cid     = target CID (e.g. VMADDR_CID_LOCAL for host-local); MUST NOT be
+ *             VMADDR_CID_ANY (0xffffffff).
  */
 struct vmd_request {
-	uint32_t	op;		/* VMD_OP_VSOCK_BIND */
-	uint32_t	port;		/* index within the caller's window */
-	uint32_t	backlog;	/* listen backlog, 0 = default */
-	uint32_t	_reserved;
+	uint32_t	op;		/* VMD_OP_VSOCK_* */
+	uint32_t	port;		/* BIND: window index; CONNECT: target port */
+	uint32_t	backlog;	/* BIND: listen backlog; CONNECT: 0 */
+	uint32_t	cid;		/* BIND: 0; CONNECT: target CID */
 };
 
 /*
- * Reply.  On status==0 the message carries one SCM descriptor: the bound,
- * listening AF_VSOCK socket the Component accept(2)s on.  cid/port report the
- * concrete (host-local) address vmd bound, for the Component to advertise.
+ * Reply.  On status==0 the message carries one SCM descriptor:
+ *   - VSOCK_BIND: the bound, listening AF_VSOCK socket the Component accept(2)s
+ *     on; cid/port report the concrete (host-local) address vmd bound, for the
+ *     Component to advertise.
+ *   - VSOCK_CONNECT: the connected AF_VSOCK socket; cid/port echo the concrete
+ *     target that was reached, for symmetry.
  */
 struct vmd_reply {
 	int32_t		status;		/* 0, or errno */

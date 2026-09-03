@@ -141,11 +141,12 @@ valid_request(const struct warden_request *rq)
 {
 
 	if (rq->op != WARDEN_OP_ENTER_JAIL ||
-	    (rq->flags & ~WARDEN_F_EPHEMERAL) != 0)
+	    (rq->flags & ~(WARDEN_F_EPHEMERAL | WARDEN_F_VNET)) != 0)
 		return (false);
 	if (memchr(rq->path, '\0', sizeof(rq->path)) == NULL ||
 	    memchr(rq->hostname, '\0', sizeof(rq->hostname)) == NULL ||
-	    memchr(rq->ip4_addr, '\0', sizeof(rq->ip4_addr)) == NULL)
+	    memchr(rq->ip4_addr, '\0', sizeof(rq->ip4_addr)) == NULL ||
+	    memchr(rq->ip6_addr, '\0', sizeof(rq->ip6_addr)) == NULL)
 		return (false);
 	if (rq->path[0] != '/')
 		return (false);
@@ -196,6 +197,55 @@ jail_get_ip4(const char *name, char *out, size_t outsz)
 }
 
 /*
+ * Fetch an existing jail's ip6.addr into out (empty string if the jail has no
+ * address).  Mirrors jail_get_ip4: a separate get with no descriptor, so an
+ * absent ip6.addr surfaces as ENOENT ("this jail has no ip6 address") rather
+ * than being misread as "jail absent".  Returns 0 on success, or an errno.
+ */
+static int
+jail_get_ip6(const char *name, char *out, size_t outsz)
+{
+
+	if (outsz == 0)
+		return (EINVAL);
+	out[0] = '\0';
+	if (jail_getv(0, "name", __DECONST(char *, name),
+	    "ip6.addr", out, NULL) < 0)
+		return (errno);
+	return (0);
+}
+
+/*
+ * Fetch an existing jail's "vnet" setting into *out (JAIL_SYS_DISABLE,
+ * JAIL_SYS_NEW, or JAIL_SYS_INHERIT).  Returns 0 on success, or an errno; a
+ * kernel built without VIMAGE has no "vnet" parameter at all, which surfaces as
+ * ENOENT — the caller treats that as "not a vnet jail", the same as disabled.
+ */
+static int
+jail_get_vnet(const char *name, int *out)
+{
+	char buf[16];
+
+	*out = JAIL_SYS_DISABLE;
+	buf[0] = '\0';
+	if (jail_getv(0, "name", __DECONST(char *, name),
+	    "vnet", buf, NULL) < 0)
+		return (errno);
+	/*
+	 * A jailsys parameter exports as the string "disable"/"new"/"inherit",
+	 * not a number -- map it back rather than strtol() (which would read 0
+	 * for every one of them).
+	 */
+	if (strcmp(buf, "new") == 0)
+		*out = JAIL_SYS_NEW;
+	else if (strcmp(buf, "inherit") == 0)
+		*out = JAIL_SYS_INHERIT;
+	else
+		*out = JAIL_SYS_DISABLE;
+	return (0);
+}
+
+/*
  * Return a non-owning descriptor for an existing jail with this name when its
  * immutable definition matches the request; -1/errno otherwise (ENOENT when
  * absent).  Lets a relaunched consumer reattach to its persistent jail.  The
@@ -205,18 +255,19 @@ jail_get_ip4(const char *name, char *out, size_t outsz)
  * process holding a separate owning descriptor (see warden_request_handler).
  *
  * Reuse is safe ONLY when the *entire* requested definition matches the existing
- * jail: path, hostname, AND ip4 address.  A consumer that reconnects must get
- * back the jail it defined, never silently attach into a differently-shaped one
- * (which would discard its isolation request — e.g. a requested ip4.addr — with
- * no error).  Any mismatch is a hard EEXIST, enforcing the immutable definition
- * the reuse contract promises.
+ * jail: path, hostname, ip4 address, ip6 address, AND vnet setting.  A consumer
+ * that reconnects must get back the jail it defined, never silently attach into a
+ * differently-shaped one (which would discard its isolation request — e.g. a
+ * requested ip6.addr or its own vnet — with no error).  Any mismatch is a hard
+ * EEXIST, enforcing the immutable definition the reuse contract promises.
  */
 static int
 existing_jail_descriptor(const char *name, const struct warden_request *rq)
 {
-	char desc[32], path[PATH_MAX], host[MAXHOSTNAMELEN], ip4[256];
+	char desc[32], path[PATH_MAX], host[MAXHOSTNAMELEN], ip4[256], ip6[256];
 	const char *want_host = rq->hostname[0] != '\0' ? rq->hostname : name;
-	int jid, iperr, fd, saved_errno;
+	bool want_vnet = (rq->flags & WARDEN_F_VNET) != 0;
+	int jid, iperr, fd, saved_errno, vnet, verr;
 
 	memset(desc, 0, sizeof(desc));
 	memset(path, 0, sizeof(path));
@@ -258,6 +309,39 @@ existing_jail_descriptor(const char *name, const struct warden_request *rq)
 		goto fail;
 	}
 
+	/* Same rule for ip6.addr: a requested/absent address must match. */
+	memset(ip6, 0, sizeof(ip6));
+	iperr = jail_get_ip6(name, ip6, sizeof(ip6));
+	if (iperr != 0 && iperr != ENOENT) {
+		errno = iperr;
+		goto fail;
+	}
+	if (rq->ip6_addr[0] != '\0') {
+		if (iperr == ENOENT || strcmp(ip6, rq->ip6_addr) != 0) {
+			errno = EEXIST;
+			goto fail;
+		}
+	} else if (iperr != ENOENT) {
+		errno = EEXIST;
+		goto fail;
+	}
+
+	/*
+	 * The vnet setting is part of the immutable definition too: a request
+	 * for an own-vnet jail must not attach into a shared-stack one, nor the
+	 * reverse.  A kernel without VIMAGE reports the "vnet" parameter as
+	 * ENOENT, which reads as "not a vnet jail" (== disabled).
+	 */
+	verr = jail_get_vnet(name, &vnet);
+	if (verr != 0 && verr != ENOENT) {
+		errno = verr;
+		goto fail;
+	}
+	if (want_vnet != (verr == 0 && vnet == JAIL_SYS_NEW)) {
+		errno = EEXIST;
+		goto fail;
+	}
+
 	if (!parse_desc_fd(desc, &fd)) {
 		errno = EPROTO;
 		goto fail;
@@ -266,8 +350,8 @@ existing_jail_descriptor(const char *name, const struct warden_request *rq)
 
 fail:
 	/*
-	 * Preserve the mismatch errno (EEXIST, or an ip4 lookup error) across
-	 * the descriptor cleanup: parse_desc_fd() does "errno = 0" before its
+	 * Preserve the mismatch errno (EEXIST, or an ip4/ip6/vnet lookup error)
+	 * across the descriptor cleanup: parse_desc_fd() does "errno = 0" before its
 	 * strtol(), which would otherwise clobber the reason to 0 and make the
 	 * caller mistake a definition conflict for a successful reuse.
 	 */
@@ -281,12 +365,18 @@ fail:
 /*
  * Create the named jail and return a descriptor whose stored credential (root,
  * from warden) authorizes the consumer's jail_attach_jd(2), or -1/errno.  Uses
- * jail_setv(3)/jailparam — the exact encoding jail(8) uses — so string params
- * (path, host.hostname, ip4.addr) and the "persist" flag are marshalled
- * correctly; note "persist" is a boolean parameter and must be given the value
- * "1" (a NULL value is a no-op in jailparam_import(3), which silently leaves the
- * jail non-persistent).  The descriptor fd is returned through the "desc"
- * parameter (jail_setv writes it there as a decimal string on success).
+ * jailparam(3) — the exact encoding jail(8) uses — so string params (path,
+ * host.hostname, ip4.addr, ip6.addr) and the boolean flags (persist, vnet) are
+ * marshalled correctly; note "persist" and "vnet" are boolean parameters and
+ * must be given the value "1" (a NULL value is a no-op in jailparam_import(3),
+ * which for "persist" would silently leave the jail non-persistent).
+ *
+ * The parameter list is assembled dynamically rather than through a fixed
+ * jail_setv() call because the optional fields (ip4.addr, ip6.addr, vnet) are
+ * independent, giving too many combinations to spell out.  This mirrors
+ * jail_setv(3) internally: jailparam_init/import each name/value pair,
+ * jailparam_set() the batch, then read the descriptor fd back out of the "desc"
+ * parameter's value (which JAIL_GET_DESC populated) as a decimal string.
  *
  * The jail is always created persist=1 so it is alive during the create->attach
  * handoff window and while it is reused: a descriptor (owning or not) only
@@ -301,19 +391,55 @@ static int
 create_jail(const char *name, const struct warden_request *rq, int *out_jid)
 {
 	const char *host = rq->hostname[0] != '\0' ? rq->hostname : name;
+	const char *pn[8];
+	char *pv[8];
+	struct jailparam jp[8];
 	char desc[32];
+	unsigned n, ninit;
 	int jid, fd;
 
 	memset(desc, 0, sizeof(desc));
-	if (rq->ip4_addr[0] != '\0')
-		jid = jail_setv(JAIL_CREATE | JAIL_GET_DESC,
-		    "name", name, "path", rq->path, "persist", "1",
-		    "host.hostname", host, "ip4.addr", rq->ip4_addr,
-		    "desc", desc, NULL);
-	else
-		jid = jail_setv(JAIL_CREATE | JAIL_GET_DESC,
-		    "name", name, "path", rq->path, "persist", "1",
-		    "host.hostname", host, "desc", desc, NULL);
+	n = 0;
+	pn[n] = "name";			pv[n++] = __DECONST(char *, name);
+	pn[n] = "path";			pv[n++] = __DECONST(char *, rq->path);
+	pn[n] = "persist";		pv[n++] = __DECONST(char *, "1");
+	pn[n] = "host.hostname";	pv[n++] = __DECONST(char *, host);
+	if (rq->ip4_addr[0] != '\0') {
+		pn[n] = "ip4.addr";
+		pv[n++] = __DECONST(char *, rq->ip4_addr);
+	}
+	if (rq->ip6_addr[0] != '\0') {
+		pn[n] = "ip6.addr";
+		pv[n++] = __DECONST(char *, rq->ip6_addr);
+	}
+	if ((rq->flags & WARDEN_F_VNET) != 0) {
+		pn[n] = "vnet";
+		/*
+		 * "vnet" is a jailsys parameter: its value is the string
+		 * "new"/"inherit"/"disable" (jailparam_import maps it to
+		 * JAIL_SYS_*), NOT a numeric "1".
+		 */
+		pv[n++] = __DECONST(char *, "new");
+	}
+	pn[n] = "desc";			pv[n++] = desc;	/* filled on success */
+
+	for (ninit = 0; ninit < n; ninit++) {
+		if (jailparam_init(&jp[ninit], pn[ninit]) < 0)
+			break;
+		if (jailparam_import(&jp[ninit], pv[ninit]) < 0) {
+			ninit++;		/* this one needs freeing too */
+			break;
+		}
+	}
+	if (ninit < n) {
+		jailparam_free(jp, ninit);
+		return (-1);
+	}
+	jid = jailparam_set(jp, n, JAIL_CREATE | JAIL_GET_DESC);
+	if (jid > 0)
+		(void)snprintf(desc, sizeof(desc), "%d",
+		    *(int *)jp[n - 1].jp_value);
+	jailparam_free(jp, n);
 	if (jid < 0)
 		return (-1);
 	/*
@@ -367,19 +493,33 @@ owning_jail_descriptor(const char *name)
  */
 static int worker_owning_fd = -1;
 
+/* Send a status-only reply (no SCM fd): ENTER errors, DESTROY, dispatch. */
+static void
+send_status(struct channel_message *m, int32_t status)
+{
+	struct warden_reply rp;
+	struct channel_outgoing out;
+
+	memset(&rp, 0, sizeof(rp));
+	rp.status = status;
+	memset(&out, 0, sizeof(out));
+	out.size = sizeof(out);
+	out.data = &rp;
+	out.length = sizeof(rp);
+	(void)channel_send_reply(m, &out);
+}
+
 /*
- * Per-client channel request handler.  arg is the connecting client's
- * unforgeable label, which both scopes the jail name and gates reachability
- * (the domain layer already restricted it to SYSTEM clients).  The reply
- * carries a non-owning jail descriptor (for the consumer's attach) on success;
- * for an ephemeral request the worker additionally retains the jail's owning
- * descriptor so the jail is torn down when the consumer exits.
+ * ENTER_JAIL: create or reuse the caller's label-scoped jail and reply with its
+ * non-owning descriptor.  arg is the connecting client's unforgeable label,
+ * which both scopes the jail name and gates reachability (the domain layer
+ * already restricted it to SYSTEM clients).  For an ephemeral request the worker
+ * additionally retains the jail's owning descriptor so the jail is torn down
+ * when the consumer exits.  This is the original handler body, unchanged.
  */
 static void
-warden_request_handler(struct channel *ch __unused, struct channel_message *m,
-    void *arg)
+handle_enter_jail(struct channel_message *m, const char *client)
 {
-	const char *client = arg;
 	const struct warden_request *rq;
 	struct warden_reply rp;
 	struct channel_outgoing out;
@@ -388,8 +528,7 @@ warden_request_handler(struct channel *ch __unused, struct channel_message *m,
 
 	memset(&rp, 0, sizeof(rp));
 
-	if (channel_message_length(m) != sizeof(*rq) ||
-	    channel_message_fd_count(m) != 0) {
+	if (channel_message_length(m) != sizeof(*rq)) {
 		rp.status = EPROTO;
 		goto reply;
 	}
@@ -472,6 +611,185 @@ reply:
 	(void)channel_send_reply(m, &out);
 	if (jd >= 0)
 		(void)close(jd);
+}
+
+/*
+ * DESTROY_JAIL: remove the caller's label-scoped jail.  Owner-scoped by
+ * construction — jail_name_from_label(client) names only the caller's own jail,
+ * never another label's — so this can never remove a jail warden created for a
+ * different consumer.  Replies ENOENT if the caller has no jail, status 0 once
+ * removed, or the failure errno.
+ *
+ * The target is normally a persistent jail (the only kind that leaks).  If it
+ * happens to be an ephemeral jail whose lifetime another worker anchors with an
+ * owning descriptor, jail_remove() still tears it down: prison_remove overrides
+ * both persist and any structural descriptor reference.
+ */
+static void
+handle_destroy_jail(struct channel_message *m, const char *client)
+{
+	char name[WARDEN_JAIL_NAME_MAX];
+	int jid;
+
+	if (channel_message_length(m) != sizeof(struct warden_control_request)) {
+		send_status(m, EPROTO);
+		return;
+	}
+	if (!jail_name_from_label(client, name, sizeof(name))) {
+		send_status(m, EINVAL);
+		return;
+	}
+	jid = jail_getid(name);
+	if (jid < 0) {
+		syslog(LOG_INFO, "DESTROY %s (client %s) -> no such jail", name,
+		    client);
+		send_status(m, ENOENT);
+		return;
+	}
+	if (jail_remove(jid) < 0) {
+		int status = errno != 0 ? errno : EIO;
+
+		syslog(LOG_ERR, "DESTROY %s (client %s) -> jail_remove: %s", name,
+		    client, strerror(status));
+		send_status(m, status);
+		return;
+	}
+	syslog(LOG_INFO, "DESTROY %s (client %s) -> removed", name, client);
+	send_status(m, 0);
+}
+
+/*
+ * LIST_JAILS: report the caller's label-scoped jail.  Owner-scoped by the same
+ * construction as DESTROY: it can only ever describe the caller's own jail.  A
+ * label owns at most one jail, so the answer is present==1 (with the definition)
+ * or present==0 (none); status is 0 for both, or an errno on a real lookup
+ * failure.
+ *
+ * This reads the definition back with jail_getv()/jail_get_ip4() — the same
+ * primitives existing_jail_descriptor() uses — but does NOT go through the
+ * descriptor ("desc") path, so it never calls parse_desc_fd() and thus never
+ * hits that helper's "errno = 0" clobber; the errno seen after a failed
+ * jail_getv() here is therefore the real lookup errno.
+ */
+static void
+handle_list_jails(struct channel_message *m, const char *client)
+{
+	struct warden_list_reply lr;
+	struct channel_outgoing out;
+	char name[WARDEN_JAIL_NAME_MAX];
+	char path[PATH_MAX], host[MAXHOSTNAMELEN], ip4[256], ip6[256];
+	int jid, iperr, iperr6;
+
+	memset(&lr, 0, sizeof(lr));
+	lr.jid = -1;
+
+	/*
+	 * A framing error is answered with the minimal status reply, not the
+	 * large warden_list_reply: an error carries no jail definition, and a
+	 * caller that sent a malformed LIST has no reason to size its receive
+	 * buffer for the full reply.
+	 */
+	if (channel_message_length(m) != sizeof(struct warden_control_request)) {
+		send_status(m, EPROTO);
+		return;
+	}
+	if (!jail_name_from_label(client, name, sizeof(name))) {
+		lr.status = EINVAL;
+		goto reply;
+	}
+
+	memset(path, 0, sizeof(path));
+	memset(host, 0, sizeof(host));
+	jid = jail_getv(0, "name", __DECONST(char *, name),
+	    "path", path, "host.hostname", host, NULL);
+	if (jid < 0) {
+		/* ENOENT is the ordinary "caller has no jail" answer. */
+		if (errno == ENOENT) {
+			lr.present = 0;
+			lr.status = 0;
+		} else {
+			lr.status = errno;
+			syslog(LOG_NOTICE, "LIST %s (client %s) -> jail_getv: %s",
+			    name, client, strerror(lr.status));
+		}
+		goto reply;
+	}
+
+	memset(ip4, 0, sizeof(ip4));
+	iperr = jail_get_ip4(name, ip4, sizeof(ip4));
+	if (iperr != 0 && iperr != ENOENT) {
+		lr.status = iperr;
+		syslog(LOG_NOTICE, "LIST %s (client %s) -> ip4: %s", name, client,
+		    strerror(iperr));
+		goto reply;
+	}
+
+	memset(ip6, 0, sizeof(ip6));
+	iperr6 = jail_get_ip6(name, ip6, sizeof(ip6));
+	if (iperr6 != 0 && iperr6 != ENOENT) {
+		lr.status = iperr6;
+		syslog(LOG_NOTICE, "LIST %s (client %s) -> ip6: %s", name, client,
+		    strerror(iperr6));
+		goto reply;
+	}
+
+	lr.status = 0;
+	lr.present = 1;
+	lr.jid = jid;
+	(void)strlcpy(lr.path, path, sizeof(lr.path));
+	(void)strlcpy(lr.hostname, host, sizeof(lr.hostname));
+	if (iperr == 0)
+		(void)strlcpy(lr.ip4_addr, ip4, sizeof(lr.ip4_addr));
+	if (iperr6 == 0)
+		(void)strlcpy(lr.ip6_addr, ip6, sizeof(lr.ip6_addr));
+	syslog(LOG_INFO, "LIST %s (client %s) -> present jid=%d", name, client,
+	    jid);
+
+reply:
+	memset(&out, 0, sizeof(out));
+	out.size = sizeof(out);
+	out.data = &lr;
+	out.length = sizeof(lr);
+	(void)channel_send_reply(m, &out);
+}
+
+/*
+ * Per-client channel request handler.  arg is the connecting client's
+ * unforgeable label.  Every op is validated fail-closed: the channel accepts no
+ * SCM fds (an attached descriptor is already a terminal transport rejection, so
+ * fd_count is never > 0 here in practice, but reject defensively), and the
+ * message must be long enough to hold at least the opcode word before it is
+ * dispatched.  ENTER requires the full warden_request; DESTROY and LIST require
+ * a warden_control_request; an unknown op is EINVAL.
+ */
+static void
+warden_request_handler(struct channel *ch __unused, struct channel_message *m,
+    void *arg)
+{
+	const char *client = arg;
+	uint32_t op;
+
+	if (channel_message_fd_count(m) != 0 ||
+	    channel_message_length(m) < sizeof(uint32_t)) {
+		send_status(m, EPROTO);
+		goto done;
+	}
+	memcpy(&op, channel_message_data(m), sizeof(op));
+	switch (op) {
+	case WARDEN_OP_ENTER_JAIL:
+		handle_enter_jail(m, client);
+		break;
+	case WARDEN_OP_DESTROY_JAIL:
+		handle_destroy_jail(m, client);
+		break;
+	case WARDEN_OP_LIST_JAILS:
+		handle_list_jails(m, client);
+		break;
+	default:
+		send_status(m, EINVAL);
+		break;
+	}
+done:
 	channel_message_free(m);
 }
 

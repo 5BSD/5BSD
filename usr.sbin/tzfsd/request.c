@@ -107,19 +107,30 @@ valid_request(const struct tzfsd_request *rq)
 		return (false);
 	switch (rq->op) {
 	case TZFSD_OP_REQUEST:
+		/* quota (0=default, else validated in grant) may be nonzero. */
 		return (rq->session[0] == '\0');
 	case TZFSD_OP_RELEASE:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
+		    rq->quota == 0 && rq->session[0] == '\0');
+	case TZFSD_OP_DESTROY:
+		/*
+		 * Identifies a claim exactly as REQUEST does (dataset + lifetime),
+		 * but carries no rights/flags/quota/session and no fd/path.
+		 */
+		return (rq->flags == 0 && rq->rights == 0 && rq->quota == 0 &&
 		    rq->session[0] == '\0');
 	case TZFSD_OP_PING:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->dataset[0] == '\0' && rq->session[0] == '\0');
+		    rq->quota == 0 && rq->dataset[0] == '\0' &&
+		    rq->session[0] == '\0');
 	case TZFSD_OP_BEGIN_SESSION:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->dataset[0] == '\0' && rq->session[0] != '\0');
+		    rq->quota == 0 && rq->dataset[0] == '\0' &&
+		    rq->session[0] != '\0');
 	default:
 		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->dataset[0] == '\0' && rq->session[0] == '\0');
+		    rq->quota == 0 && rq->dataset[0] == '\0' &&
+		    rq->session[0] == '\0');
 	}
 }
 
@@ -176,6 +187,11 @@ grant(struct tzfsd_state *st, const char *client,
 		errno = EINVAL;
 		return (-1);
 	}
+	/* A per-request quota override must be either the default (0) or sane. */
+	if (rq->quota != 0 && rq->quota < TZFSD_MIN_REFQUOTA) {
+		errno = EINVAL;
+		return (-1);
+	}
 	if (!valid_dataset(rq->dataset) ||
 	    !derive_ns(client, ns, sizeof(ns))) {
 		errno = EINVAL;
@@ -219,17 +235,25 @@ grant(struct tzfsd_state *st, const char *client,
 	}
 
 	/*
-	 * Apply the default per-claim space ceiling so no single claim can fill
-	 * the pool and starve every other tenant.  refquota is a byte-count
-	 * property (uint64), 0 == none; set on the full-rights leaf before the
-	 * ioctl ceiling is applied to the delivered handle.  Best-effort: a
-	 * pre-existing persistent claim already over the (possibly lowered)
-	 * ceiling must not be made undeliverable — the ceiling still blocks
-	 * further growth.
+	 * Apply the per-claim space ceiling so no single claim can fill the pool
+	 * and starve every other tenant.  refquota is a byte-count property
+	 * (uint64), 0 == none; set on the full-rights leaf before the ioctl
+	 * ceiling is applied to the delivered handle.  A nonzero rq->quota is this
+	 * claim's explicit ceiling (already floor-checked above) and overrides the
+	 * configured default; quota == 0 falls back to cfg->default_refquota (0 ==
+	 * no ceiling).  Best-effort: a pre-existing persistent claim already over
+	 * the (possibly lowered) ceiling must not be made undeliverable — the
+	 * ceiling still blocks further growth.
 	 */
-	if (cfg->default_refquota != 0 &&
-	    tzfs_set_prop_uint64(leaf_fd, "refquota", cfg->default_refquota) == -1)
-		syslog(LOG_WARNING, "set refquota on claim %s: %m", claim);
+	{
+		uint64_t refquota = rq->quota != 0 ? rq->quota :
+		    cfg->default_refquota;
+
+		if (refquota != 0 &&
+		    tzfs_set_prop_uint64(leaf_fd, "refquota", refquota) == -1)
+			syslog(LOG_WARNING, "set refquota=%ju on claim %s: %m",
+			    (uintmax_t)refquota, claim);
+	}
 
 	/*
 	 * Set the dataset root's owner to the requesting service so it can write
@@ -518,6 +542,52 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		(void)close(ns_fd);
 		break;
 	}
+	case TZFSD_OP_DESTROY: {
+		/*
+		 * Reclaim the caller's own persistent/cache claim.  The claim is
+		 * resolved under the CALLER's namespace (derive_ns of the connecting
+		 * label), so a caller can only ever name — and destroy — its own
+		 * storage; the persistent tree covers both PERSISTENT and CACHE.
+		 * Unlike RELEASE, an absent claim replies ENOENT rather than
+		 * idempotent success, so a caller can distinguish a real reclaim.
+		 */
+		char ns[TZFSD_NAME_MAX];
+		int ns_fd, probe;
+
+		if (rq->lifetime > TZFSD_CACHE || !valid_dataset(rq->dataset) ||
+		    !derive_ns(conn->client, ns, sizeof(ns))) {
+			rp.status = EINVAL;
+			break;
+		}
+		if (st->persistent_fd == -1) {
+			rp.status = ENXIO;
+			break;
+		}
+		ns_fd = tzfs_openat(st->persistent_fd, ns, ZH_ALL_RIGHTS,
+		    ZHF_SUBTREE);
+		if (ns_fd == -1) {
+			/* No namespace => the claim cannot exist. */
+			rp.status = errno;
+			break;
+		}
+		/*
+		 * Probe for the claim so absence is reported as ENOENT rather than
+		 * the idempotent success tzfsd_destroy_tree() would return.
+		 */
+		probe = tzfs_openat(ns_fd, rq->dataset, ZH_PROPS_READ, 0);
+		if (probe == -1) {
+			rp.status = errno;
+			(void)close(ns_fd);
+			break;
+		}
+		(void)close(probe);
+		if (tzfsd_destroy_tree(ns_fd, rq->dataset) == -1)
+			rp.status = errno;
+		else
+			syslog(LOG_INFO, "DESTROY %s/%s -> ok", ns, rq->dataset);
+		(void)close(ns_fd);
+		break;
+	}
 	case TZFSD_OP_PING:
 		rp.status = 0;
 		break;
@@ -670,6 +740,19 @@ tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
 {
 
 	return (grant_open(st, client, rq));
+}
+
+/*
+ * Drive grant() so tests can assert the storage-request argument validation
+ * (quota floor, rights/flags/lifetime bounds) that fails EINVAL before any ZFS
+ * handle is touched, without an imported pool.
+ */
+int
+tzfsd_test_grant(struct tzfsd_state *st, const char *client,
+    const struct tzfsd_request *rq, char *dataset, size_t dsz)
+{
+
+	return (grant(st, client, rq, dataset, dsz));
 }
 
 /*

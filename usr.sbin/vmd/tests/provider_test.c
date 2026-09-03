@@ -174,7 +174,20 @@ bind_request(uint32_t port, uint32_t backlog)
 	rq.op = VMD_OP_VSOCK_BIND;
 	rq.port = port;
 	rq.backlog = backlog;
-	rq._reserved = 0;
+	rq.cid = 0;
+	return (rq);
+}
+
+static struct vmd_request
+connect_request(uint32_t cid, uint32_t port)
+{
+	struct vmd_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = VMD_OP_VSOCK_CONNECT;
+	rq.port = port;
+	rq.backlog = 0;
+	rq.cid = cid;
 	return (rq);
 }
 
@@ -213,16 +226,112 @@ ATF_TC_BODY(bind_returns_accept_only_listener, tc)
 	ATF_CHECK_EQ(VMADDR_CID_LOCAL, reply.cid);
 	ATF_CHECK_EQ(fixture.base + 0, reply.port);
 
-	/* The listener is limited to accept-only (plus poll/fstat). */
+	/*
+	 * The listener is limited to accept + the data-plane rights that
+	 * accept(2) propagates to the accepted sockets (read/write/shutdown/
+	 * {get,set}sockopt/event/fstat), so accepted connections are usable,
+	 * while bind/connect/listen are withheld so it cannot be repurposed.
+	 */
 	ATF_REQUIRE_EQ(0, cap_rights_get(fd, &rights));
-	cap_rights_init(&expected, CAP_ACCEPT, CAP_EVENT, CAP_FSTAT);
+	cap_rights_init(&expected, CAP_ACCEPT, CAP_EVENT, CAP_FSTAT, CAP_READ,
+	    CAP_WRITE, CAP_SHUTDOWN, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
 	ATF_CHECK(cap_rights_contains(&expected, &rights));
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_ACCEPT));
 	ATF_CHECK(!cap_rights_is_set(&rights, CAP_BIND));
 	ATF_CHECK(!cap_rights_is_set(&rights, CAP_CONNECT));
-	ATF_CHECK(!cap_rights_is_set(&rights, CAP_READ));
-	ATF_CHECK(!cap_rights_is_set(&rights, CAP_WRITE));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_LISTEN));
 
 	close(fd);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC(connect_reaches_a_bound_listener);
+ATF_TC_HEAD(connect_reaches_a_bound_listener, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "descr",
+	    "A VSOCK_CONNECT to a peer's advertised (cid,port) delivers a live "
+	    "connected socket that carries data end-to-end to the listener, "
+	    "rights-limited to the accept-less data-plane set");
+}
+ATF_TC_BODY(connect_reaches_a_bound_listener, tc)
+{
+	struct fixture fixture;
+	struct vmd_request rq;
+	struct vmd_reply reply;
+	cap_rights_t rights, expected;
+	int listener, conn, accepted;
+	uint32_t cid, port;
+	char msg[] = "vsock-peer-ipc";
+	char buf[sizeof(msg)];
+	ssize_t n;
+
+	fixture_create(&fixture);
+
+	/* Bind a listener the way a peer would, to learn its concrete address. */
+	rq = bind_request(0, 0);
+	ATF_REQUIRE_EQ(0,
+	    call_raw(&fixture, &rq, sizeof(rq), -1, &reply, &listener));
+	if (reply.status != 0) {
+		/* No usable AF_VSOCK transport in this environment. */
+		if (listener >= 0)
+			close(listener);
+		fixture_destroy(&fixture);
+		atf_tc_skip("AF_VSOCK bind unavailable: %s",
+		    strerror(reply.status));
+	}
+	ATF_REQUIRE_MSG(listener >= 0, "bind reply carried no descriptor");
+	cid = reply.cid;
+	port = reply.port;
+
+	/* Dial that concrete (cid,port): the gap this closes. */
+	rq = connect_request(cid, port);
+	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, &conn));
+	if (reply.status != 0) {
+		close(listener);
+		if (conn >= 0)
+			close(conn);
+		fixture_destroy(&fixture);
+		atf_tc_skip("AF_VSOCK connect unavailable: %s",
+		    strerror(reply.status));
+	}
+	ATF_REQUIRE_MSG(conn >= 0, "connect reply carried no descriptor");
+	/* The reply echoes the concrete target that was reached. */
+	ATF_CHECK_EQ(cid, reply.cid);
+	ATF_CHECK_EQ(port, reply.port);
+
+	/*
+	 * The connected fd is limited to the accept-less data-plane rights:
+	 * read/write/poll/shutdown/fstat/(get,set)sockopt, and NOT accept,
+	 * bind, connect or listen.
+	 */
+	ATF_REQUIRE_EQ(0, cap_rights_get(conn, &rights));
+	cap_rights_init(&expected, CAP_READ, CAP_WRITE, CAP_EVENT,
+	    CAP_SHUTDOWN, CAP_FSTAT, CAP_GETSOCKOPT, CAP_SETSOCKOPT);
+	ATF_CHECK(cap_rights_contains(&expected, &rights));
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_READ));
+	ATF_CHECK(cap_rights_is_set(&rights, CAP_WRITE));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_ACCEPT));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_CONNECT));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_BIND));
+	ATF_CHECK(!cap_rights_is_set(&rights, CAP_LISTEN));
+
+	/* End-to-end: accept the connection and prove bytes flow across it. */
+	accepted = accept(listener, NULL, NULL);
+	ATF_REQUIRE_MSG(accepted >= 0, "accept: %s", strerror(errno));
+
+	n = write(conn, msg, sizeof(msg));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(msg), n);
+	memset(buf, 0, sizeof(buf));
+	n = read(accepted, buf, sizeof(buf));
+	ATF_REQUIRE_EQ((ssize_t)sizeof(msg), n);
+	ATF_CHECK_EQ(0, memcmp(msg, buf, sizeof(msg)));
+
+	close(accepted);
+	close(conn);
+	close(listener);
 	fixture_destroy(&fixture);
 }
 
@@ -233,8 +342,9 @@ ATF_TC_HEAD(malformed_requests_are_rejected, tc)
 	atf_tc_set_md_var(tc, "require.kmods",
 	    "mac_capability mac_capability_channel");
 	atf_tc_set_md_var(tc, "descr",
-	    "Wrong length, an unexpected descriptor, an unknown op, and a "
-	    "nonzero reserved word are all refused without binding");
+	    "Wrong length, an unexpected descriptor, an unknown op, a BIND "
+	    "naming a cid, an out-of-window port, and a CONNECT with a bad "
+	    "backlog or wildcard cid are all refused");
 }
 ATF_TC_BODY(malformed_requests_are_rejected, tc)
 {
@@ -266,14 +376,25 @@ ATF_TC_BODY(malformed_requests_are_rejected, tc)
 	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
 	ATF_CHECK_EQ(EINVAL, reply.status);
 
-	/* Nonzero reserved word: EINVAL. */
+	/* A BIND naming a nonzero cid: EINVAL. */
 	rq = bind_request(0, 0);
-	rq._reserved = 0xdeadbeefu;
+	rq.cid = 0xdeadbeefu;
 	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
 	ATF_CHECK_EQ(EINVAL, reply.status);
 
 	/* Port index outside the caller's window: EINVAL. */
 	rq = bind_request(VMD_PORTS_PER_LABEL, 0);
+	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
+	ATF_CHECK_EQ(EINVAL, reply.status);
+
+	/* A CONNECT with a nonzero backlog: EINVAL. */
+	rq = connect_request(VMADDR_CID_LOCAL, VMD_PORT_BASE);
+	rq.backlog = 1;
+	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
+	ATF_CHECK_EQ(EINVAL, reply.status);
+
+	/* A CONNECT to the wildcard CID: EINVAL. */
+	rq = connect_request(VMADDR_CID_ANY, VMD_PORT_BASE);
 	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
 	ATF_CHECK_EQ(EINVAL, reply.status);
 
@@ -284,6 +405,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, bind_returns_accept_only_listener);
+	ATF_TP_ADD_TC(tp, connect_reaches_a_bound_listener);
 	ATF_TP_ADD_TC(tp, malformed_requests_are_rejected);
 	return (atf_no_error());
 }
