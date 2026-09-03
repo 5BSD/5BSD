@@ -44,7 +44,8 @@ enum notify_opcode {
 	NOTIFY_OP_TIMER_CANCEL,
 	NOTIFY_OP_STATS,
 	NOTIFY_OP_STATE_SET,
-	NOTIFY_OP_STATE_GET
+	NOTIFY_OP_STATE_GET,
+	NOTIFY_OP_STATE_CLEAR
 };
 
 enum notify_event_type {

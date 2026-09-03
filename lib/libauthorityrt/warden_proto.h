@@ -14,10 +14,14 @@
  * This is consumer self-service, exactly like storage and module loading: a
  * program's library (service_enter_namespace(3)) — not serviced — resolves
  * warden and confines the process.  warden creates the jail rooted at the
- * requested path with JAIL_OWN_DESC and returns its owning descriptor as the
- * reply's single SCM fd; the *credential stored in that descriptor* (root, from
- * warden) is what authorizes jail_attach_jd(2), so the non-root consumer can
- * attach itself.  Self-jailing is self-confinement — a caller can only narrow
+ * requested path and returns a NON-owning descriptor as the reply's single SCM
+ * fd; the *credential stored in that descriptor* (root, from warden) is what
+ * authorizes jail_attach_jd(2), so the non-root consumer can attach itself.
+ * Closing that descriptor never removes the jail.  For an ephemeral jail
+ * (WARDEN_F_EPHEMERAL) warden instead retains a *separate* owning descriptor
+ * (JAIL_OWN_DESC) in the per-client worker; libservice attaches with the
+ * non-owning fd and closes it, and the worker's owning fd anchors the jail's
+ * lifetime.  Self-jailing is self-confinement — a caller can only narrow
  * its own process — so warden needs no per-caller token: it scopes each jail by
  * the caller's unforgeable channel label, so one consumer can never name or
  * reuse another's jail.
@@ -42,11 +46,14 @@
  * Request flags.
  *
  * WARDEN_F_EPHEMERAL — the jail's lifetime is bound to the consumer.  warden
- * creates it with an owning descriptor (JAIL_OWN_DESC) and hands that owning
- * descriptor to the consumer, which keeps it open; when the consumer exits (or
- * is killed) the descriptor closes and the jail is torn down.  Without this
- * flag the jail is persistent: it is created persist=1, reused by label across
- * consumer restarts, and outlives any single consumer.
+ * retains a separate owning descriptor (JAIL_OWN_DESC) in the per-client worker
+ * process serving this consumer; the consumer itself receives only the
+ * non-owning descriptor (for its attach).  When the consumer disconnects the
+ * worker exits, the owning descriptor closes, and the jail is torn down.  If
+ * warden cannot acquire that owning descriptor it fails the request (and removes
+ * the jail it just created) rather than silently leaving a permanent jail.
+ * Without this flag the jail is persistent: it is created persist=1, reused by
+ * label across consumer restarts, and outlives any single consumer.
  */
 #define	WARDEN_F_EPHEMERAL	0x1u
 
@@ -63,8 +70,10 @@ struct warden_request {
 };
 
 /*
- * Reply.  On status==0 the message carries exactly one SCM descriptor: the jail
- * owning descriptor (jd) the caller jail_attach_jd(2)s itself to.
+ * Reply.  On status==0 the message carries exactly one SCM descriptor: the
+ * jail's NON-owning descriptor (jd) the caller jail_attach_jd(2)s itself to.
+ * Closing it never removes the jail; an ephemeral jail is anchored instead by
+ * the owning descriptor warden's per-client worker retains (see above).
  */
 struct warden_reply {
 	int32_t		status;			/* 0, or errno */

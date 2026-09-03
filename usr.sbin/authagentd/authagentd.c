@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <libcasper.h>
@@ -38,6 +39,8 @@
 #include <libcapbundle.h>
 
 #include <authagent_proto.h>
+
+#include "authagentd_test.h"
 
 /* Our own consumer handle on the bootstrap channel, used to mint. */
 static struct service_context	*g_context;
@@ -109,9 +112,54 @@ struct client {
 	TAILQ_ENTRY(client)	entry;
 	int			fd;
 	struct channel		*chan;
+	/*
+	 * The connecting caller's identity, as stamped by serviced when it
+	 * brokered this connection (naming.c) and delivered by
+	 * service_listener_accept().  The mint gate in handle_request()
+	 * consults `rights`; `client_label` is retained for audit logging.
+	 */
+	service_rights_t	rights;
+	char			client_label[64];
 };
 static TAILQ_HEAD(, client) clients = TAILQ_HEAD_INITIALIZER(clients);
 
+/*
+ * The mint caller-gate predicate (docs/auth-agent-design.md, P1c), factored out
+ * of handle_request() so the privilege-escalation regression is unit-testable
+ * without a live plane.  A caller may ask us to mint iff serviced stamped
+ * SERVICE_RIGHTS_ADMIN on its brokered session — the bit serviced (naming.c)
+ * grants only to an ambient login-session lookup (requester==NULL) on a
+ * full-discovery (root/wheel) channel, i.e. exactly and only the login family
+ * (login/su/sshd).  Every ordinary unit, including a compromised SYSTEM unit
+ * that looks us up over its own bootstrap channel, is stamped without the admin
+ * bit and refused.  Fail closed: an unknown or empty identity (no rights) is
+ * denied.  The gate logic is identical to its former inline form.
+ */
+bool
+authagent_caller_allowed(service_rights_t rights)
+{
+
+	return (service_rights_allow(rights, SERVICE_RIGHTS_ADMIN));
+}
+
+/*
+ * The SYSTEM-vs-USER mint decision, factored for unit testing.  A principal
+ * that policy resolves as an administrator mints a full-discovery SYSTEM
+ * channel; every other principal mints a per-uid USER channel.  Pure: the
+ * caller supplies the resolved member gids and a group-name resolver, exactly
+ * as handle_request() does from Casper.
+ */
+enum service_mint_kind
+authagent_mint_kind(int policy_fd, uid_t uid, const gid_t *member_gids,
+    unsigned nmember, capbundle_group_gid_fn name2gid, void *ctx)
+{
+
+	return (capbundle_principal_is_admin_resolved(policy_fd, uid,
+	    member_gids, nmember, name2gid, ctx) ? SERVICE_MINT_SYSTEM :
+	    SERVICE_MINT_USER);
+}
+
+#ifndef AUTHAGENTD_TESTING
 static void
 client_destroy(struct client *c)
 {
@@ -126,6 +174,7 @@ client_destroy(struct client *c)
 	TAILQ_REMOVE(&clients, c, entry);
 	free(c);
 }
+#endif /* !AUTHAGENTD_TESTING */
 
 /* Track the channel's queued-output state in the kqueue write filter. */
 static void
@@ -162,6 +211,35 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	int fd = -1;
 
 	memset(&reply, 0, sizeof(reply));
+
+	/*
+	 * Caller gate — the mint boundary (docs/auth-agent-design.md, P1c).
+	 * authagentd gates the MINTER (only its own whitelisted bootstrap
+	 * channel can call serviced's SVC_OP_MINT_DOMAIN), but that says nothing
+	 * about WHO may ask us to mint.  system.authagent is a plain SYSTEM name,
+	 * so any serviced-managed SYSTEM unit could otherwise connect, send
+	 * MINT_SESSION{uid=0}, and be handed a SYSTEM admin channel — the exact
+	 * proxy escalation the serviced mint-gate was written to close.
+	 *
+	 * In this OS authority is a held right, not a name string.  serviced
+	 * (naming.c) stamps SERVICE_RIGHTS_ADMIN on a brokered session only for
+	 * an ambient login-session lookup (requester==NULL) on a SYSTEM
+	 * (full-discovery, i.e. root/wheel) channel — which is exactly, and only,
+	 * the channel the login family (login, su, sshd) reaches us over.  Every
+	 * ordinary unit — including a compromised SYSTEM unit that looks us up
+	 * over its own bootstrap channel — is stamped requester!=NULL and thus
+	 * WITHOUT the admin bit.  Gate on that right and fail closed: any caller
+	 * that does not hold SERVICE_RIGHTS_ADMIN (unknown/empty identity
+	 * included) is refused before we mint or even parse the request.
+	 */
+	if (!authagent_caller_allowed(c->rights)) {
+		syslog(LOG_AUTHPRIV | LOG_WARNING,
+		    "mint denied: caller '%.*s' lacks authenticator authority",
+		    (int)sizeof(c->client_label), c->client_label);
+		reply.status = EPERM;
+		goto send_reply;
+	}
+
 	data = channel_message_data(request);
 	len = channel_message_length(request);
 
@@ -184,9 +262,8 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 			bool forwardable =
 			    (req->flags & AUTHAGENT_FLAG_FORWARDABLE) != 0;
 			enum service_mint_kind kind =
-			    capbundle_principal_is_admin_resolved(g_policy_fd,
-			    (uid_t)req->uid, members, nmember, agent_name2gid,
-			    g_capgrp) ? SERVICE_MINT_SYSTEM : SERVICE_MINT_USER;
+			    authagent_mint_kind(g_policy_fd, (uid_t)req->uid,
+			    members, nmember, agent_name2gid, g_capgrp);
 
 			/*
 			 * A session leaf (login/su) receives the channel
@@ -214,6 +291,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		}
 	}
 
+ send_reply:
 	if (channel_send_reply(request, &(struct channel_outgoing){
 		.size = sizeof(struct channel_outgoing),
 		.data = &reply,
@@ -227,8 +305,9 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 	client_sync_events(c);
 }
 
+#ifndef AUTHAGENTD_TESTING
 static int
-client_adopt(int client_fd)
+client_adopt(int client_fd, const struct service_identity *identity)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
@@ -246,6 +325,14 @@ client_adopt(int client_fd)
 		close(client_fd);
 		return (-1);
 	}
+	/*
+	 * Retain the caller's serviced-stamped identity for the mint gate in
+	 * handle_request().  The rights bitmask carries the authenticator
+	 * authority; the label is kept for audit logging only.
+	 */
+	c->rights = identity->rights;
+	(void)strlcpy(c->client_label, identity->client_label,
+	    sizeof(c->client_label));
 	if (channel_create(client_fd, &options, &c->chan) == -1) {
 		error = errno;
 		free(c);
@@ -300,10 +387,55 @@ main(void)
 	 * -1 and the mint path falls back to the historical root-or-wheel default.
 	 * Done before cap_enter so no path is ever consulted at request time.
 	 */
-	if (service_open_isolated(g_context,
-	    "/Capabilities/Config/principal-policy.ucl", SERVICE_OPEN_READ, 0,
-	    &g_policy_fd) == -1)
+	{
+		/*
+		 * tzfsd may not be serving yet this early in boot: its manifest
+		 * might not be registered when we ask, which fails fast rather
+		 * than blocking on on-demand launch (a registered-but-not-running
+		 * provider would instead block until it checks in).  A one-shot
+		 * open would then leave g_policy_fd == -1 for the life of the
+		 * process and every mint would silently fall back to the
+		 * root-or-wheel default even when the operator configured admin
+		 * uids/groups.  Retry a bounded number of times with a short
+		 * backoff (~1s worst case) to let tzfsd come up; a definitive
+		 * answer (EACCES/EPERM — not granted) stops us at once, and so
+		 * does success.  This runs before cap_enter, so consulting the
+		 * path is still permitted.  Never fatal, and never an unbounded
+		 * block: if the policy is genuinely unavailable we log a warning
+		 * (so the fallback is observable, not silent) and proceed on the
+		 * default.
+		 */
+		unsigned attempt;
+		int last_errno = 0;
+
 		g_policy_fd = -1;
+		for (attempt = 0; attempt < 8; attempt++) {
+			if (service_open_isolated(g_context,
+			    "/Capabilities/Config/principal-policy.ucl",
+			    SERVICE_OPEN_READ, 0, &g_policy_fd) == 0)
+				break;
+			last_errno = errno;
+			g_policy_fd = -1;
+			if (errno == EACCES || errno == EPERM)
+				break;	/* definitive: not granted */
+			(void)nanosleep(&(struct timespec){
+			    .tv_sec = 0, .tv_nsec = 125 * 1000 * 1000 }, NULL);
+		}
+		/*
+		 * Make the fallback observable.  A missing policy file (ENOENT)
+		 * is the normal optional case — note it at INFO.  Anything else
+		 * (denied, or tzfsd never came up) is unexpected: warn, because
+		 * an operator-configured policy is then silently not in effect.
+		 */
+		if (g_policy_fd == -1) {
+			errno = last_errno;
+			syslog(last_errno == ENOENT ?
+			    (LOG_AUTHPRIV | LOG_INFO) :
+			    (LOG_AUTHPRIV | LOG_WARNING),
+			    "principal policy unavailable (%m); "
+			    "mint uses the root-or-wheel default");
+		}
+	}
 
 	/*
 	 * Bring up Casper before entering the sandbox so the agent can resolve
@@ -353,7 +485,7 @@ main(void)
 				syslog(LOG_WARNING, "accept: %m");
 				continue;
 			}
-			if (client_adopt(fd) == -1)
+			if (client_adopt(fd, &identity) == -1)
 				syslog(LOG_WARNING, "adopt client: %m");
 			continue;
 		}
@@ -362,6 +494,21 @@ main(void)
 			struct client *c = event.udata;
 
 			if (event.flags & EV_EOF) {
+				/*
+				 * A caller that half-closes its write end
+				 * (shutdown(SHUT_WR)) right after sending its
+				 * request shows up as EV_EOF while the request
+				 * bytes are still buffered and its read end is
+				 * still open for the reply.  Drain one dispatch
+				 * pass so the reply is produced, then flush it
+				 * best-effort before tearing the client down —
+				 * do not destroy it out from under an unanswered
+				 * request.  Only the read side can carry pending
+				 * input; a write-side EOF has nothing to drain.
+				 */
+				if (event.filter == EVFILT_READ &&
+				    channel_dispatch(c->chan) == 0)
+					(void)channel_flush(c->chan);
 				client_destroy(c);
 				continue;
 			}
@@ -382,3 +529,65 @@ main(void)
 
 	return (service_provider_quiesce_complete(provider, 0) == 0 ? 0 : 1);
 }
+#endif /* !AUTHAGENTD_TESTING */
+
+#ifdef AUTHAGENTD_TESTING
+/*
+ * Test seam.  These entry points let an ATF provider test drive the real
+ * handle_request() over a channel without standing up main()'s kqueue accept
+ * loop.  They change no runtime behaviour: the daemon binary is built without
+ * AUTHAGENTD_TESTING and never sees them.
+ */
+void
+authagentd_test_configure(struct service_context *context, cap_channel_t *pwd,
+    cap_channel_t *grp, int policy_fd)
+{
+
+	g_context = context;
+	g_cappwd = pwd;
+	g_capgrp = grp;
+	g_policy_fd = policy_fd;
+}
+
+int
+authagentd_test_serve(int fd, const struct service_identity *identity)
+{
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
+	struct client c;
+	int ready, wants;
+
+	options.max_pending_requests = 8;
+	options.max_queued_messages = 32;
+	options.max_queued_bytes = 64 * 1024;
+	options.max_queued_fds = 4;
+
+	memset(&c, 0, sizeof(c));
+	c.rights = identity->rights;
+	(void)strlcpy(c.client_label, identity->client_label,
+	    sizeof(c.client_label));
+	if (channel_create(fd, &options, &c.chan) == -1)
+		return (-1);
+	c.fd = channel_fd(c.chan);
+	if (channel_set_request_handler(c.chan, handle_request, &c) == -1) {
+		channel_destroy(c.chan);
+		return (-1);
+	}
+	for (;;) {
+		wants = channel_wants_write(c.chan);
+		if (wants == -1)
+			break;
+		ready = channel_wait(c.chan, wants, -1);
+		if (ready <= 0)
+			break;
+		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
+		    channel_flush(c.chan) == -1)
+			break;
+		if ((ready & CHANNEL_WAIT_READ) != 0 &&
+		    channel_dispatch(c.chan) == -1)
+			break;
+	}
+	channel_destroy(c.chan);
+	return (0);
+}
+#endif /* AUTHAGENTD_TESTING */

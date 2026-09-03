@@ -1,0 +1,22 @@
+# sysextd(8) configuration — the kernel-module allow-list (default-deny).
+#
+# sysextd loads kernel modules ("system extensions") on behalf of SYSTEM-domain
+# clients.  The domain gate decides who may REACH sysextd; this allow-list
+# decides WHICH modules may load.  A module whose name is not listed is refused
+# with EPERM and logged, no matter which client asks.
+#
+# This file is optional.  When it is absent, sysextd's built-in allow-list
+# stands: the exact set of extensions the base system loads on demand today
+# (cryptodev, vhid, zfs).  When present, "allowed_extensions" REPLACES that
+# built-in set — so an operator narrows or extends the policy in one place.
+# Each entry must be a single, safe module name (no "/", not "." or "..").
+#
+# NB (libucl parser pitfall): the FIRST array element must follow "[" directly,
+# with no comment line in between -- the bundled libucl mis-parses a comment as
+# the first token inside an array and rejects the whole file (EINVAL).  Per-entry
+# comments are fine once at least one element precedes them.
+allowed_extensions = [
+    "cryptodev",   # localcrypto: /dev/crypto (OCF) for the crypto provider
+    "vhid",        # blued: virtual-HID transport for the Bluetooth stack
+    "zfs",         # tzfsd: ZFS backing /Capabilities storage
+]

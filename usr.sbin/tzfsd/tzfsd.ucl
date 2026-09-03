@@ -12,6 +12,9 @@
 
 # ephemeral { sync = "disabled"; }   # sync= for ephemeral datasets
 
+# default_refquota = "1gb";          # per-claim space ceiling (bytes; 0 = off)
+                                     # so no single claim/tenant can fill the pool
+
 # Isolated-open policy (TZFSD_OP_OPEN, default-deny).  Each entry grants one
 # service label read/write/exec/lookup/ioctl on one exact absolute path (or path
 # prefix), replacing the old manifest capabilities.open declaration.  A service

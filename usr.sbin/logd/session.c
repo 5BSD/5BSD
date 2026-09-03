@@ -198,12 +198,18 @@ logcmp_session_drain_budget(struct logcmp_session *session,
 	if (more != NULL)
 		*more = false;
 	/*
-	 * A session that never promoted to a shared-memory ring carries its
-	 * records inline and has nothing to drain here; report success so an
-	 * explicit flush of an inline-only session does not fail.
+	 * FLUSH/drain are ring operations: a session with no attached ring is
+	 * not connected for draining.  Report ENOTCONN, matching
+	 * logcmp_session_detach() (which likewise rejects a ring-less session),
+	 * so the "ring operations require an attached ring" contract is uniform
+	 * and a FLUSH after DETACH is diagnosed rather than silently succeeding.
+	 * Inline delivery uses logcmp_session_submit(), which is ring-independent
+	 * and unaffected by this.
 	 */
-	if (session->ring == NULL)
-		return (0);
+	if (session->ring == NULL) {
+		errno = ENOTCONN;
+		return (-1);
+	}
 	for (drained = 0; drained < budget; drained++) {
 		length = shmring_read_record(session->ring, record, sizeof(record));
 		if (length == -1) {

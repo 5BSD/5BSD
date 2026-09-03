@@ -63,6 +63,7 @@ reserve_stdio(void)
 	}
 }
 
+#ifndef TZFSD_TESTING
 int
 main(int argc, char **argv)
 {
@@ -141,3 +142,4 @@ main(int argc, char **argv)
 
 	return (0);
 }
+#endif /* !TZFSD_TESTING */

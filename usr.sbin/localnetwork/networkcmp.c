@@ -141,6 +141,74 @@ endpoint_sockaddr(const struct networkcmp_endpoint *endpoint,
 }
 
 /*
+ * Destination constraint (N2 / SSRF defense).  A session that does not hold the
+ * internal-reach authority (NETWORKCMP_RIGHT_INTERNAL, or ADMIN) must not be
+ * able to have the broker connect to loopback, link-local, or the private
+ * RFC1918/ULA ranges — those reach other local capability endpoints and
+ * management planes.  The casper CAPNET_CONNECT limit only fixes the mode and
+ * cannot express "everything except the internal ranges" (its address limits are
+ * an allow-list, and destinations are client-supplied and dynamic), so the
+ * constraint is enforced here, fail-closed, BEFORE any connect() is issued.
+ *
+ * Returns true iff the endpoint names an internal destination.
+ */
+static bool
+endpoint_is_internal(const struct networkcmp_endpoint *endpoint)
+{
+	const uint8_t *a = endpoint->address;
+
+	if (endpoint->family == NETWORKCMP_AF_INET4) {
+		/* 0.0.0.0/8 (this host), 127/8 loopback, 169.254/16 link-local. */
+		if (a[0] == 0 || a[0] == 127)
+			return (true);
+		if (a[0] == 169 && a[1] == 254)
+			return (true);
+		/* RFC1918: 10/8, 172.16/12, 192.168/16. */
+		if (a[0] == 10)
+			return (true);
+		if (a[0] == 172 && (a[1] & 0xf0) == 16)
+			return (true);
+		if (a[0] == 192 && a[1] == 168)
+			return (true);
+		return (false);
+	}
+	if (endpoint->family == NETWORKCMP_AF_INET6) {
+		static const uint8_t loopback[16] = {
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+		static const uint8_t v4mapped[12] = {
+			0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff };
+
+		if (memcmp(a, loopback, sizeof(loopback)) == 0)
+			return (true);
+		/* fe80::/10 link-local, fec0::/10 site-local, fc00::/7 ULA. */
+		if (a[0] == 0xfe && (a[1] & 0xc0) == 0x80)
+			return (true);
+		if (a[0] == 0xfe && (a[1] & 0xc0) == 0xc0)
+			return (true);
+		if ((a[0] & 0xfe) == 0xfc)
+			return (true);
+		/* Unspecified ::/128. */
+		{
+			static const uint8_t unspecified[16] = { 0 };
+
+			if (memcmp(a, unspecified, sizeof(unspecified)) == 0)
+				return (true);
+		}
+		/* IPv4-mapped ::ffff:0:0/96 — apply the v4 rules to the mapping. */
+		if (memcmp(a, v4mapped, sizeof(v4mapped)) == 0) {
+			struct networkcmp_endpoint mapped;
+
+			memset(&mapped, 0, sizeof(mapped));
+			mapped.family = NETWORKCMP_AF_INET4;
+			memcpy(mapped.address, a + 12, 4);
+			return (endpoint_is_internal(&mapped));
+		}
+		return (false);
+	}
+	return (false);
+}
+
+/*
  * Limit a connected socket to exactly the rights a data-transfer client needs
  * before it is handed off via SCM_RIGHTS.  The client may read/write, receive
  * events, shut down, get/set socket options, query and toggle O_NONBLOCK, and
@@ -197,6 +265,14 @@ broker_connect(struct session_state *state, uint16_t opcode,
 	if ((endpoint->family == NETWORKCMP_AF_INET4 && !state->policy.ipv4) ||
 	    (endpoint->family == NETWORKCMP_AF_INET6 && !state->policy.ipv6)) {
 		errno = EAFNOSUPPORT;
+		return (-1);
+	}
+	/*
+	 * Default-deny internal destinations unless this session's authority
+	 * explicitly permits them (N2).  Fail closed before touching the network.
+	 */
+	if (!state->policy.allow_internal && endpoint_is_internal(endpoint)) {
+		errno = EACCES;
 		return (-1);
 	}
 	if (endpoint_sockaddr(endpoint, &storage, &length) == -1)
@@ -642,6 +718,11 @@ dispatch(struct channel_message *request_message,
 			close(fd);
 		return (result);
 	case NETWORKCMP_OP_RESOLVE:
+		if (!state->policy.resolve) {
+			audit_policy(state->audit, label, "resolve", EACCES);
+			return (send_reply(request_message, label, message, EACCES,
+			    NULL, 0, -1));
+		}
 		if (start_resolve(state, request_message, message) == -1) {
 			error = errno;
 			audit_policy(state->audit, label, "resolve", error);
@@ -827,6 +908,13 @@ fail:
 }
 
 #ifdef NETWORKCMP_TESTING
+bool
+networkcmp_test_endpoint_is_internal(const struct networkcmp_endpoint *endpoint)
+{
+
+	return (endpoint_is_internal(endpoint));
+}
+
 int
 networkcmp_test_serve(int fd, cap_channel_t *capnet,
     const struct networkcmp_policy *policy, const char *label)
@@ -919,7 +1007,8 @@ fail:
 }
 
 static int
-start_session(int fd, cap_channel_t *casper, const char *peer_label)
+start_session(int fd, cap_channel_t *casper, const char *peer_label,
+    service_rights_t rights)
 {
 	struct networkcmp_policy policy;
 	cap_channel_t *capnet, *resolver_capnet;
@@ -939,8 +1028,18 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label)
 		error = errno;
 		goto reject;
 	}
-	if (networkcmp_policy_default(&policy) == -1) {
+	/*
+	 * Authority is the rights serviced stamped onto this session's channel,
+	 * not a hardcoded default (N1).  Derive the immutable policy from them and
+	 * fail closed: a session that carries no network rights permits nothing,
+	 * so refuse it outright rather than brokering with an empty policy.
+	 */
+	if (networkcmp_policy_from_rights(&policy, rights) == -1) {
 		error = errno;
+		goto reject;
+	}
+	if (!networkcmp_policy_permits_any(&policy)) {
+		error = EACCES;
 		goto reject;
 	}
 	nfamilies = 0;
@@ -1099,7 +1198,8 @@ main(void)
 				continue;
 			goto fail;
 		}
-		if (start_session(fd, casper, identity.client_label) == -1)
+		if (start_session(fd, casper, identity.client_label,
+		    identity.rights) == -1)
 			syslog(LOG_WARNING, "session for %s rejected: %m",
 			    identity.client_label);
 		close(fd);

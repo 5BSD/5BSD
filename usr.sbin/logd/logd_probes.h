@@ -33,6 +33,8 @@
 	LOGD_STORAGE_ROTATE(generation, result)
 #define	LOGD_PROBE_CORRUPTION(generation, offset, error) \
 	LOGD_STORAGE_CORRUPTION(generation, offset, error)
+#define	LOGD_PROBE_QUARANTINE(generation, error) \
+	LOGD_STORAGE_QUARANTINE(generation, error)
 #define	LOGD_PROBE_QUERY(label, generation, offset, severity, length, result) \
 	LOGD_QUERY_COMPLETE(__DECONST(char *, label), generation, \
 	    offset, severity, length, result)
@@ -68,6 +70,8 @@
 	do { (void)(generation); (void)(result); } while (0)
 #define	LOGD_PROBE_CORRUPTION(generation, offset, error) \
 	do { (void)(generation); (void)(offset); (void)(error); } while (0)
+#define	LOGD_PROBE_QUARANTINE(generation, error) \
+	do { (void)(generation); (void)(error); } while (0)
 #define	LOGD_PROBE_QUERY(label, generation, offset, severity, length, result) \
 	do { (void)(label); (void)(generation); (void)(offset); \
 	    (void)(severity); (void)(length); (void)(result); } while (0)

@@ -18,6 +18,7 @@ provider logd {
 	probe storage__rotate(uint64_t generation, int result);
 	probe storage__corruption(uint64_t generation, uint64_t offset,
 	    int error);
+	probe storage__quarantine(uint64_t generation, int error);
 	probe query__complete(const char *label, uint64_t generation,
 	    uint64_t offset, uint32_t minimum_severity, uint32_t record_length,
 	    int result);

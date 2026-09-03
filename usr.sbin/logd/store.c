@@ -330,6 +330,51 @@ highest_completed_generation(int dirfd, uint64_t *generationp)
 	return (0);
 }
 
+/*
+ * Move an unrecoverable active segment aside so a single corrupt record (or a
+ * stale/rewound generation) left by an unclean shutdown does not prevent the
+ * logging plane from starting.  The segment is renamed to a unique
+ * "active.segment.corrupt.<seq>" name and preserved for post-mortem.
+ *
+ * This is the owner's policy hook, not the store's: logcmp_store_open() surfaces
+ * corruption as EILSEQ (see store.h), and the owner calls this and then reopens,
+ * which creates a fresh active segment.  Operates purely on the borrowed
+ * directory descriptor by name, so it needs no open store handle (the failed
+ * open already closed its descriptor).  ENOENT (nothing to quarantine) is
+ * success.
+ */
+int
+logcmp_store_quarantine(int dirfd)
+{
+	char name[80];
+	uintmax_t sequence;
+	int error;
+
+	for (sequence = 0;; sequence++) {
+		if (snprintf(name, sizeof(name), STORE_FILE ".corrupt.%020ju",
+		    sequence) >= (int)sizeof(name))
+			return (errno = EOVERFLOW, -1);
+		if (faccessat(dirfd, name, F_OK, AT_SYMLINK_NOFOLLOW) == -1) {
+			if (errno == ENOENT)
+				break;
+			return (-1);
+		}
+		if (sequence == UINTMAX_MAX)
+			return (errno = EEXIST, -1);
+	}
+	if (renameat(dirfd, STORE_FILE, dirfd, name) == -1) {
+		if (errno == ENOENT)
+			return (0);
+		error = errno != 0 ? errno : EIO;
+		return (errno = error, -1);
+	}
+	if (fsync(dirfd) == -1) {
+		error = errno != 0 ? errno : EIO;
+		return (errno = error, -1);
+	}
+	return (0);
+}
+
 static int
 create_active(struct logcmp_store *store, uint64_t generation)
 {
@@ -580,11 +625,31 @@ logcmp_store_open(int dirfd, uint64_t segment_limit, uint32_t max_segments,
 			goto fail;
 		store->offset = STORE_FILE_HEADER;
 	} else {
-		if (status.st_size < STORE_FILE_HEADER ||
-		    read_file_header(store->fd, &store->generation) == -1 ||
-		    store->generation <= completed_generation ||
-		    recover_tail(store->fd, status.st_size, &store->offset) == -1)
+		error = 0;
+		if (status.st_size < STORE_FILE_HEADER)
+			error = EILSEQ;
+		else if (read_file_header(store->fd, &store->generation) == -1)
+			error = errno != 0 ? errno : EILSEQ;
+		else if (store->generation <= completed_generation)
+			error = EILSEQ;
+		else if (recover_tail(store->fd, status.st_size,
+		    &store->offset) == -1)
+			error = errno != 0 ? errno : EILSEQ;
+		/*
+		 * EILSEQ here means the active segment is unrecoverable: a
+		 * complete record failing CRC/validate, a torn header, or a
+		 * stale/rewound generation.  recover_tail already truncated any
+		 * incomplete final record (the ordinary crash window), so this
+		 * is genuine corruption.  The store surfaces it as EILSEQ; the
+		 * owner decides policy (quarantine and reopen via
+		 * logcmp_store_quarantine(), per store.h) rather than the store
+		 * silently discarding data.  Real I/O errors (any other errno)
+		 * are equally fatal here.
+		 */
+		if (error != 0) {
+			errno = error;
 			goto fail;
+		}
 	}
 opened:
 	store->segment_limit = segment_limit;

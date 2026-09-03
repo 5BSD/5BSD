@@ -629,6 +629,12 @@ router_handle_request(struct router *router, struct router_session *session,
 			return (router_send_reply(session, request_message, message, 0, &state_reply,
 			    sizeof(state_reply)));
 		break;
+	case NOTIFY_OP_STATE_CLEAR:
+		topic = (const void *)(message + 1);
+		error = notify_broker_state_clear(router->broker,
+		    session->client, topic->topic, topic->topic_length) == -1 ?
+		    errno : 0;
+		break;
 	}
 	if (error != 0)
 		BSDNOTIFY_PROBE_REJECT(__DECONST(char *, session->label),
@@ -932,6 +938,11 @@ relay_authorized(const struct notify_policy *policy,
 		state_set = (const void *)(message + 1);
 		return (notify_policy_can_publish(policy, state_set->topic,
 		    state_set->topic_length));
+	case NOTIFY_OP_STATE_CLEAR:
+		*operation = "state-clear";
+		topic = (const void *)(message + 1);
+		return (notify_policy_can_publish(policy, topic->topic,
+		    topic->topic_length));
 	case NOTIFY_OP_STATE_GET:
 		*operation = "state-get";
 		topic = (const void *)(message + 1);

@@ -37,9 +37,13 @@ struct logcmp_store_cursor {
 /*
  * The directory descriptor is borrowed.  The store owns every file it opens.
  * Recovery truncates only an incomplete final record.  Any corruption inside
- * a complete record fails with EILSEQ and must be quarantined by the owner.
+ * a complete record fails with EILSEQ and must be quarantined by the owner:
+ * on EILSEQ the owner calls logcmp_store_quarantine() to move the bad active
+ * segment aside, then reopens (which starts a fresh segment), so a single
+ * corrupt record left by an unclean shutdown cannot brick the logging plane.
  */
 int	logcmp_store_open(int, uint64_t, uint32_t, struct logcmp_store **);
+int	logcmp_store_quarantine(int);
 int	logcmp_store_append(struct logcmp_store *, const char *,
 	    const struct logcmp_record *, size_t, bool);
 int	logcmp_store_flush(struct logcmp_store *);

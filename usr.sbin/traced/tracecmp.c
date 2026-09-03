@@ -278,16 +278,29 @@ handle_request(struct channel *channel __unused,
 	channel_message_free(request_message);
 }
 
+/*
+ * serve_session multiplexes two descriptors with kevent(2): the client channel
+ * and, when present, a parent-liveness descriptor.  The liveness descriptor is
+ * the worker's end of the bootstrap socketpair, which the parent keeps open for
+ * the worker's lifetime.  If traced's main process dies, that descriptor's peer
+ * closes and EVFILT_READ reports EV_EOF, letting the orphaned worker terminate
+ * itself gracefully (closing the privileged consumer) rather than serving its
+ * client forever unsupervised.  A liveness_fd of -1 (test harness) simply omits
+ * the liveness source.
+ */
 static int
-serve_session(int fd, int dtrace_fd, bool authorized, int device_error,
-    const char *client_label, service_rights_t rights, uint64_t instance_id)
+serve_session(int fd, int liveness_fd, int dtrace_fd, bool authorized,
+    int device_error, const char *client_label, service_rights_t rights,
+    uint64_t instance_id)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct worker_state state;
 	struct channel *channel;
-	int ready;
-	int loop_error, wants_write;
+	struct kevent change[3], events[3];
+	struct timespec timeout;
+	int kq, cfd, nchanges, i, ready, loop_error, wants_write;
+	int write_enabled, done;
 
 	memset(&state, 0, sizeof(state));
 	state.client_label = client_label;
@@ -302,40 +315,87 @@ serve_session(int fd, int dtrace_fd, bool authorized, int device_error,
 	if (channel_set_request_handler(channel, handle_request, &state) ==
 	    -1) {
 		channel_destroy(channel);
+		if (state.dtrace_fd >= 0)
+			close(state.dtrace_fd);
 		return (1);
 	}
-	for (;;) {
+	cfd = channel_fd(channel);
+	kq = kqueuex(KQUEUE_CLOEXEC);
+	if (kq == -1 || cfd == -1) {
+		channel_destroy(channel);
+		if (kq >= 0)
+			close(kq);
+		if (state.dtrace_fd >= 0)
+			close(state.dtrace_fd);
+		return (1);
+	}
+	nchanges = 0;
+	EV_SET(&change[nchanges++], cfd, EVFILT_READ, EV_ADD | EV_ENABLE,
+	    0, 0, NULL);
+	EV_SET(&change[nchanges++], cfd, EVFILT_WRITE, EV_ADD | EV_DISABLE,
+	    0, 0, NULL);
+	if (liveness_fd >= 0)
+		EV_SET(&change[nchanges++], liveness_fd, EVFILT_READ,
+		    EV_ADD | EV_ENABLE, 0, 0, NULL);
+	write_enabled = 0;
+	done = 0;
+	if (kevent(kq, change, nchanges, NULL, 0, NULL) == -1)
+		loop_error = errno;
+	timeout.tv_sec = TRACECMP_CLIENT_TIMEOUT_MS / 1000;
+	timeout.tv_nsec = (TRACECMP_CLIENT_TIMEOUT_MS % 1000) * 1000000L;
+	while (!done && loop_error == 0) {
 		wants_write = channel_wants_write(channel);
 		if (wants_write == -1) {
 			loop_error = errno;
 			break;
 		}
-		ready = channel_wait(channel, wants_write,
-		    TRACECMP_CLIENT_TIMEOUT_MS);
+		if (wants_write != write_enabled) {
+			EV_SET(&change[0], cfd, EVFILT_WRITE,
+			    wants_write ? EV_ENABLE : EV_DISABLE, 0, 0, NULL);
+			if (kevent(kq, change, 1, NULL, 0, NULL) == -1) {
+				loop_error = errno;
+				break;
+			}
+			write_enabled = wants_write;
+		}
+		ready = kevent(kq, NULL, 0, events, nitems(events), &timeout);
+		if (ready == -1) {
+			if (errno == EINTR)
+				continue;
+			loop_error = errno;
+			break;
+		}
 		if (ready == 0) {
 			loop_error = ETIMEDOUT;
 			break;
 		}
-		if (ready == -1) {
-			loop_error = errno;
-			break;
+		for (i = 0; i < ready; i++) {
+			if (liveness_fd >= 0 &&
+			    events[i].ident == (uintptr_t)liveness_fd) {
+				/* Parent gone: shut down gracefully. */
+				done = 1;
+				break;
+			}
+			if (events[i].ident != (uintptr_t)cfd)
+				continue;
+			if (events[i].filter == EVFILT_WRITE) {
+				if (channel_flush(channel) == -1) {
+					loop_error = errno;
+					break;
+				}
+			} else if (events[i].filter == EVFILT_READ) {
+				if (channel_dispatch(channel) == -1) {
+					loop_error = errno;
+					break;
+				}
+			}
 		}
-		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
-		    channel_flush(channel) == -1) {
-			loop_error = errno;
-			break;
-		}
-		if ((ready & CHANNEL_WAIT_READ) != 0 &&
-		    channel_dispatch(channel) == -1) {
-			loop_error = errno;
-			break;
-		}
-		if (state.terminal_error != 0) {
+		if (loop_error == 0 && state.terminal_error != 0) {
 			loop_error = state.terminal_error;
 			errno = loop_error;
-			break;
 		}
 	}
+	close(kq);
 	channel_destroy(channel);
 	if (state.dtrace_fd >= 0)
 		close(state.dtrace_fd);
@@ -353,7 +413,7 @@ tracecmp_test_serve(int fd, int dtrace_fd, bool authorized, int device_error,
 	if (fd < 0 || dtrace_fd < -1 || device_error < 0 ||
 	    client_label == NULL || client_label[0] == '\0')
 		return (errno = EINVAL, -1);
-	return (serve_session(fd, dtrace_fd, authorized, device_error,
+	return (serve_session(fd, -1, dtrace_fd, authorized, device_error,
 	    client_label, rights, 0));
 }
 #else
@@ -365,10 +425,16 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 	char byte;
 	int error;
 
+	/*
+	 * The privileged /dev/dtrace consumer descriptor is opened by the parent
+	 * before the fork, so the worker never needs root: drop privileges with
+	 * NOPRIVS.  The worker only shuffles the already-open consumer fd to the
+	 * client and drives the channel, none of which requires privilege.
+	 */
 	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
-	    SERVICE_PROTECT_NOFORK | SERVICE_PROTECT_NOIPC |
-	    SERVICE_PROTECT_NOFDRECV | SERVICE_PROTECT_NOEXEC |
-	    SERVICE_PROTECT_NOSOCK) == -1)
+	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
+	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
+	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1)
 		error = errno;
 	else {
 		service_worker_drop_inherited_authority();
@@ -379,14 +445,20 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 		return (1);
 	if (read(barrier, &byte, 1) != 1)
 		return (1);
-	close(barrier);
-	return (serve_session(fd, dtrace_fd, authorized, device_error,
+	/*
+	 * Keep the barrier descriptor open past bootstrap: it is now the
+	 * parent-liveness channel.  serve_session watches it for EV_EOF so an
+	 * orphaned worker (traced main crashed) tears itself down instead of
+	 * running forever with a privileged DTrace consumer.
+	 */
+	return (serve_session(fd, barrier, dtrace_fd, authorized, device_error,
 	    client_label, rights, instance_id));
 }
 
 static int
 start_session(int fd, int dtrace_directory, bool authorized,
-    const char *peer_label, service_rights_t rights, int *pdp, pid_t *pidp)
+    const char *peer_label, service_rights_t rights, int *pdp, pid_t *pidp,
+    int *livenessp)
 {
 	static uint64_t next_instance;
 	char byte;
@@ -397,18 +469,23 @@ start_session(int fd, int dtrace_directory, bool authorized,
 
 	instance_id = ++next_instance;
 	device_error = 0;
+	dtrace_fd = -1;
 	/*
-	 * Open the DTrace consumer fd whenever the device is available, not
-	 * only for allowlisted labels: the per-request authorization (root, or
-	 * an allowlisted label) is enforced in the worker's handle_request(),
-	 * which cannot open the sandboxed device itself.  The fd is held by the
-	 * worker and delegated only on an authorized OPEN, so an unprivileged
-	 * session merely holds an undelegated fd (bounded by the worker cap)
-	 * until it disconnects.
+	 * Open the privileged DTrace consumer only for a session that could ever
+	 * be delegated it: one holding SERVICE_RIGHTS_ADMIN or whose label is in
+	 * the allowlist.  handle_request() rejects OPEN from any other session
+	 * with EACCES before it ever inspects the consumer fd, so an unauthorized
+	 * client observes no change in behaviour while no privileged consumer
+	 * state is pinned on its behalf.  This caps consumer allocation at the
+	 * set of authorized sessions rather than every accepted connection.  The
+	 * consumer must be opened here (privileged, before the fork) because the
+	 * worker runs unprivileged inside capability mode and cannot open it.
 	 */
-	dtrace_fd = open_dtrace_consumer(dtrace_directory);
-	if (dtrace_fd == -1)
-		device_error = errno;
+	if (authorized || service_rights_allow(rights, SERVICE_RIGHTS_ADMIN)) {
+		dtrace_fd = open_dtrace_consumer(dtrace_directory);
+		if (dtrace_fd == -1)
+			device_error = errno;
+	}
 	if (socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, syncfd) == -1) {
 		error = errno;
 		if (dtrace_fd >= 0)
@@ -454,9 +531,14 @@ start_session(int fd, int dtrace_directory, bool authorized,
 	}
 	byte = 1;
 	(void)write(syncfd[0], &byte, 1);
-	close(syncfd[0]);
+	/*
+	 * Retain the parent's end of the socketpair as the worker's liveness
+	 * signal: closed only when this process (or the worker) exits.  It is
+	 * CLOFORK_LOCKED, so it does not leak into subsequently forked workers.
+	 */
 	*pdp = pd;
 	*pidp = pid;
+	*livenessp = syncfd[0];
 	audit_policy(peer_label, "session-bootstrap", 0);
 	TRACED_PROBE_SESSION_START(__DECONST(char *, peer_label),
 	    instance_id, 0);
@@ -475,6 +557,7 @@ reject:
 struct trace_worker {
 	struct trace_worker *next;
 	int pd;
+	int liveness;
 	pid_t pid;
 };
 
@@ -492,6 +575,8 @@ worker_remove(struct trace_worker **workers, struct trace_worker *worker,
 		*cursor = worker->next;
 	(void)pdwait(worker->pd, &status, WEXITED | WNOHANG, NULL, NULL);
 	close(worker->pd);
+	if (worker->liveness >= 0)
+		close(worker->liveness);
 	free(worker);
 	if (*count != 0)
 		(*count)--;
@@ -538,6 +623,8 @@ workers_shutdown(int kq, struct trace_worker **workers, size_t *count)
 		next = worker->next;
 		(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
 		close(worker->pd);
+		if (worker->liveness >= 0)
+			close(worker->liveness);
 		free(worker);
 	}
 	*workers = NULL;
@@ -610,10 +697,14 @@ main(void)
 			continue;
 		}
 		worker = calloc(1, sizeof(*worker));
+		if (worker != NULL) {
+			worker->pd = -1;
+			worker->liveness = -1;
+		}
 		if (worker == NULL || start_session(fd, dtrace_directory,
 		    tracecmp_policy_allows(&policy, identity.client_label),
 		    identity.client_label, identity.rights, &worker->pd,
-		    &worker->pid) == -1) {
+		    &worker->pid, &worker->liveness) == -1) {
 			syslog(LOG_WARNING, "session for %s rejected: %m",
 			    identity.client_label);
 			free(worker);
@@ -627,6 +718,8 @@ main(void)
 			(void)pdkill(worker->pd, SIGKILL);
 			(void)pdwait(worker->pd, &status, WEXITED, NULL, NULL);
 			close(worker->pd);
+			if (worker->liveness >= 0)
+				close(worker->liveness);
 			free(worker);
 			continue;
 		}

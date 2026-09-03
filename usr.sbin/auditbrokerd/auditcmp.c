@@ -297,6 +297,101 @@ start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 
 #endif /* !AUDITCMP_TESTING */
 
+/*
+ * Per-connection rate buckets are re-created for every worker (a fresh burst
+ * on every accept), so a caller could churn connections to bypass the limit.
+ * The parent authenticates every connection's provider label, so it enforces a
+ * second, reconnect-proof bucket keyed by that label: new connections for a
+ * label are throttled here regardless of how the caller opens and drops them.
+ * The per-session limiter (serve_session) remains as a secondary bound.
+ *
+ * The bucket table is bounded; on overflow the least-recently-active label is
+ * reclaimed.  A flooding label is by definition the most-recently-active one,
+ * so its depleted bucket is never the reclaim victim.
+ *
+ * This accounting is compiled in both the daemon and the AUDITCMP_TESTING
+ * builds so the reconnect-survival invariant can be unit-tested (see the test
+ * hooks below); the daemon's behaviour is unchanged.
+ */
+#define	AUDITCMP_ACCEPT_RATE_PER_SECOND	8
+#define	AUDITCMP_ACCEPT_RATE_BURST	16
+#define	AUDITCMP_RATE_LABELS		1024U
+
+struct label_rate {
+	bool			used;
+	char			label[sizeof(((struct service_identity *)0)->client_label)];
+	struct auditcmp_rate	rate;
+};
+
+static bool
+timespec_before(const struct timespec *a, const struct timespec *b)
+{
+
+	return (a->tv_sec < b->tv_sec ||
+	    (a->tv_sec == b->tv_sec && a->tv_nsec < b->tv_nsec));
+}
+
+static struct auditcmp_rate *
+accept_rate_for(struct label_rate *table, size_t capacity, const char *label,
+    const struct timespec *now)
+{
+	size_t i, free_idx, victim;
+
+	free_idx = capacity;
+	victim = capacity;
+	for (i = 0; i < capacity; i++) {
+		if (!table[i].used) {
+			if (free_idx == capacity)
+				free_idx = i;
+			continue;
+		}
+		if (strcmp(table[i].label, label) == 0)
+			return (&table[i].rate);
+		if (victim == capacity ||
+		    timespec_before(&table[i].rate.refill,
+		    &table[victim].rate.refill))
+			victim = i;
+	}
+	if (free_idx == capacity)
+		free_idx = victim;
+	if (free_idx == capacity ||
+	    strlcpy(table[free_idx].label, label,
+	    sizeof(table[free_idx].label)) >= sizeof(table[free_idx].label) ||
+	    auditcmp_rate_init(&table[free_idx].rate,
+	    AUDITCMP_ACCEPT_RATE_PER_SECOND, AUDITCMP_ACCEPT_RATE_BURST,
+	    now) == -1) {
+		if (free_idx != capacity)
+			table[free_idx].used = false;
+		return (NULL);
+	}
+	table[free_idx].used = true;
+	return (&table[free_idx].rate);
+}
+
+#ifdef AUDITCMP_TESTING
+/*
+ * Test hooks (no runtime path uses these): expose the parent per-label bucket
+ * table so the reconnect-survival accounting can be driven directly.  The table
+ * is opaque to callers; auditcmp_test_accept_table() allocates one sized exactly
+ * as the accept loop's, and auditcmp_test_accept_lookup() resolves a label to
+ * its persistent bucket exactly as accept_rate_for() does in main().
+ */
+struct label_rate *
+auditcmp_test_accept_table(void)
+{
+
+	return (calloc(AUDITCMP_RATE_LABELS, sizeof(struct label_rate)));
+}
+
+struct auditcmp_rate *
+auditcmp_test_accept_lookup(struct label_rate *table, const char *label,
+    const struct timespec *now)
+{
+
+	return (accept_rate_for(table, AUDITCMP_RATE_LABELS, label, now));
+}
+#endif /* AUDITCMP_TESTING */
+
 #ifndef AUDITCMP_TESTING
 #define	AUDITCMP_MAX_WORKERS	4096U
 
@@ -380,12 +475,18 @@ main(void)
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
+	struct label_rate *rate_table;
+	struct auditcmp_rate *rate;
+	struct timespec now;
 	size_t nworkers;
 	int error, fd, kq, status;
 
 	openlog("auditbrokerd", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
 	workers = NULL;
 	nworkers = 0;
+	rate_table = calloc(AUDITCMP_RATE_LABELS, sizeof(*rate_table));
+	if (rate_table == NULL)
+		err(1, "initialize");
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1 || service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -428,6 +529,22 @@ main(void)
 			close(fd);
 			continue;
 		}
+		/*
+		 * Reconnect-proof per-label admission throttle: the bucket
+		 * survives this connection, so churning connections cannot reset
+		 * the burst.
+		 */
+		rate = clock_gettime(CLOCK_MONOTONIC, &now) == -1 ? NULL :
+		    accept_rate_for(rate_table, AUDITCMP_RATE_LABELS,
+		    identity.client_label, &now);
+		if (rate == NULL || !auditcmp_rate_allow_at(rate, &now)) {
+			AUDITBROKERD_PROBE_REJECT(
+			    __DECONST(char *, identity.client_label), EAGAIN);
+			syslog(LOG_WARNING, "accept rate limit for %s",
+			    identity.client_label);
+			close(fd);
+			continue;
+		}
 		worker = calloc(1, sizeof(*worker));
 		if (worker == NULL || start_session(fd, identity.client_label,
 		    &worker->pd, &worker->pid) == -1) {
@@ -454,6 +571,7 @@ main(void)
 	workers_shutdown(kq, &workers, &nworkers);
 	status = service_provider_quiesce_complete(provider, 0);
 	close(kq);
+	free(rate_table);
 	closelog();
 	return (status == 0 ? 0 : 1);
 }

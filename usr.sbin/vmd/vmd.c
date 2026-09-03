@@ -30,6 +30,7 @@
  */
 
 #include <sys/param.h>
+#include <sys/capsicum.h>
 #include <sys/procdesc.h>
 #include <sys/socket.h>
 #include <sys/vsock.h>
@@ -50,10 +51,14 @@
 #include <libservice.h>
 
 #include "vmd_proto.h"
+#ifdef VMD_TESTING
+#include "vmd_test.h"
+#endif
 
 /* The default listen(2) backlog when the request leaves it unspecified. */
 #define	VMD_DEFAULT_BACKLOG	8
 
+#ifndef VMD_TESTING
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created.  vmd is
  * launched by serviced without a controlling terminal.
@@ -75,18 +80,11 @@ reserve_stdio(void)
 		}
 	}
 }
+#endif /* !VMD_TESTING */
 
-/*
- * Map the caller's unforgeable channel label to a stable vsock port window.
- * FNV-1a over the label, reduced into VMD_LABEL_WINDOWS windows; the caller may
- * then bind any of the VMD_PORTS_PER_LABEL ports in its own window and no other.
- * Distinct labels can collide onto the same window (a hash, not a registry), but
- * a collision only means two Components share a port range they must coordinate
- * within — it never lets one bind outside the shared window or reach a third
- * Component's window.
- */
+/* FNV-1a over the label — the home slot for a label's window in the registry. */
 static uint32_t
-label_window_base(const char *label)
+label_hash(const char *label)
 {
 	uint32_t hash = 2166136261u;
 	size_t i;
@@ -95,20 +93,95 @@ label_window_base(const char *label)
 		hash ^= (unsigned char)label[i];
 		hash *= 16777619u;
 	}
-	return (VMD_PORT_BASE +
-	    (hash % VMD_LABEL_WINDOWS) * VMD_PORTS_PER_LABEL);
+	return (hash);
 }
 
-/* op must be known and the port index must fall inside the caller's window. */
+/*
+ * Window-ownership registry, private to the single-process accept loop (each
+ * client is then served by a pdfork'd worker that only ever binds within the
+ * window the parent already resolved for it).  Slot i owns the concrete port
+ * range [VMD_PORT_BASE + i*PORTS, +PORTS); g_windows[i].label is the exactly-one
+ * full label that owns it.
+ *
+ * A bare hash (the old label_window_base) let distinct, mutually-untrusting
+ * labels that collide onto one of only 4096 windows share the same 16 concrete
+ * ports — so one Component could bind, squat, or intercept the exact (cid,port)
+ * another advertised (first-bind wins VMADDR_CID_LOCAL:port).  Keying the
+ * registry by the FULL label closes that: resolve_window hashes to a home slot
+ * then linear-probes, reusing the slot already owned by this exact label
+ * (deterministic across reconnects) or claiming the first free slot otherwise.
+ * Two distinct labels therefore never share a window, so no label can ever bind
+ * a concrete port another label's window maps to.
+ */
+struct window_owner {
+	bool	used;
+	char	label[64];
+};
+static struct window_owner g_windows[VMD_LABEL_WINDOWS];
+
+/*
+ * Resolve the caller's label to the base of the window it exclusively owns,
+ * assigning one on first contact.  Returns false only when the registry is full
+ * (more than VMD_LABEL_WINDOWS distinct labels have ever been seen).
+ */
+static bool
+resolve_window(const char *label, uint32_t *base_out)
+{
+	uint32_t home = label_hash(label) % VMD_LABEL_WINDOWS;
+	uint32_t i, idx, freeidx = VMD_LABEL_WINDOWS;
+
+	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
+		idx = (home + i) % VMD_LABEL_WINDOWS;
+		if (!g_windows[idx].used) {
+			if (freeidx == VMD_LABEL_WINDOWS)
+				freeidx = idx;
+			continue;
+		}
+		if (strcmp(g_windows[idx].label, label) == 0) {
+			*base_out = VMD_PORT_BASE + idx * VMD_PORTS_PER_LABEL;
+			return (true);
+		}
+	}
+	if (freeidx == VMD_LABEL_WINDOWS)
+		return (false);
+	g_windows[freeidx].used = true;
+	(void)strlcpy(g_windows[freeidx].label, label,
+	    sizeof(g_windows[freeidx].label));
+	*base_out = VMD_PORT_BASE + freeidx * VMD_PORTS_PER_LABEL;
+	return (true);
+}
+
+/*
+ * op must be known, the reserved word must be zero (fail closed on unknown
+ * wire bits — the client already checks the reply's _reserved), and the port
+ * index must fall inside the caller's window.
+ */
 static bool
 valid_request(const struct vmd_request *rq)
 {
 
 	if (rq->op != VMD_OP_VSOCK_BIND)
 		return (false);
+	if (rq->_reserved != 0)
+		return (false);
 	if (rq->port >= VMD_PORTS_PER_LABEL)
 		return (false);
 	return (true);
+}
+
+/*
+ * Clamp the caller-supplied listen(2) backlog to a sane range: 0 means
+ * "default", and an out-of-range uint32 must not sign-flip to a negative int.
+ */
+static int
+clamp_backlog(uint32_t backlog)
+{
+
+	if (backlog == 0)
+		return (VMD_DEFAULT_BACKLOG);
+	if (backlog > (uint32_t)SOMAXCONN)
+		return (SOMAXCONN);
+	return ((int)backlog);
 }
 
 /*
@@ -123,11 +196,18 @@ bind_vsock(uint32_t window_base, uint32_t index, uint32_t backlog,
 {
 	struct sockaddr_vm sa;
 	uint32_t port = window_base + index;
-	int s, saved;
+	int s, saved, bl, on = 1;
 
 	s = socket(AF_VSOCK, SOCK_STREAM, 0);
 	if (s == -1)
 		return (-1);
+
+	/*
+	 * Allow a restarted Component to rebind its own concrete port
+	 * deterministically instead of tripping EADDRINUSE on a listener still
+	 * lingering from the previous incarnation.
+	 */
+	(void)setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
 
 	memset(&sa, 0, sizeof(sa));
 	sa.svm_len = sizeof(sa);
@@ -136,7 +216,8 @@ bind_vsock(uint32_t window_base, uint32_t index, uint32_t backlog,
 	sa.svm_port = port;
 	if (bind(s, (struct sockaddr *)&sa, sizeof(sa)) == -1)
 		goto fail;
-	if (listen(s, backlog != 0 ? (int)backlog : VMD_DEFAULT_BACKLOG) == -1)
+	bl = clamp_backlog(backlog);
+	if (listen(s, bl) == -1)
 		goto fail;
 
 	*out_port = port;
@@ -150,20 +231,32 @@ fail:
 }
 
 /*
- * Per-client channel request handler.  arg is the connecting client's
- * unforgeable label, which scopes the port window (the domain layer already
- * restricted reachability to SYSTEM clients).  The reply carries the bound,
- * listening vsock descriptor on success.
+ * Per-client worker context: the connecting client's unforgeable label (for
+ * logging) and the concrete port window the parent's registry resolved for it.
+ * The worker only ever binds within window_base, so a Component can bind only
+ * inside the window its label exclusively owns.
+ */
+struct vmd_client_ctx {
+	char		label[64];
+	uint32_t	window_base;
+};
+
+/*
+ * Per-client channel request handler.  arg is this worker's context (label +
+ * resolved window).  The reply carries the bound, listening vsock descriptor on
+ * success — rights-limited to accept-only and made non-re-delegable.
  */
 static void
 vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
     void *arg)
 {
-	const char *client = arg;
+	const struct vmd_client_ctx *ctx = arg;
+	const char *client = ctx->label;
 	const struct vmd_request *rq;
 	struct vmd_reply rp;
 	struct channel_outgoing out;
-	uint32_t base, port = 0;
+	cap_rights_t rights;
+	uint32_t port = 0;
 	int s = -1;
 
 	memset(&rp, 0, sizeof(rp));
@@ -179,14 +272,33 @@ vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
 		goto reply;
 	}
 
-	base = label_window_base(client);
-	s = bind_vsock(base, rq->port, rq->backlog, &port);
+	s = bind_vsock(ctx->window_base, rq->port, rq->backlog, &port);
 	if (s < 0) {
 		rp.status = errno;
 		syslog(LOG_ERR, "VSOCK_BIND idx=%u (client %s) -> bind %u: %s",
-		    rq->port, client, base + rq->port, strerror(rp.status));
+		    rq->port, client, ctx->window_base + rq->port,
+		    strerror(rp.status));
 		goto reply;
 	}
+
+	/*
+	 * Harden the delivered listener: the Component only needs to accept(2)
+	 * (and poll/fstat) on it — never bind/connect/read/write it directly —
+	 * so limit its rights to accept-only, and attenuate transfer to
+	 * CAP_XFER_ONCE so the reply's own SCM_RIGHTS send consumes it to
+	 * CAP_XFER_NONE at the Component (it cannot re-delegate the listener).
+	 */
+	cap_rights_init(&rights, CAP_ACCEPT, CAP_EVENT, CAP_FSTAT);
+	if (cap_rights_limit(s, &rights) == -1 ||
+	    cap_xfer_limit(s, CAP_XFER_ONCE) == -1) {
+		rp.status = errno != 0 ? errno : EIO;
+		syslog(LOG_ERR, "VSOCK_BIND idx=%u (client %s) -> rights limit: "
+		    "%s", rq->port, client, strerror(rp.status));
+		(void)close(s);
+		s = -1;
+		goto reply;
+	}
+
 	rp.status = 0;
 	rp.cid = VMADDR_CID_LOCAL;
 	rp.port = port;
@@ -210,20 +322,22 @@ reply:
 
 /* Serve one client on its own worker channel until it closes. */
 static int
-vmd_worker(int fd, const char *client)
+vmd_worker(int fd, const char *client, uint32_t window_base)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct channel *channel = NULL;
-	char label[64];
+	struct vmd_client_ctx ctx;
 	int ready, wants_write;
 
-	(void)strlcpy(label, client, sizeof(label));
+	memset(&ctx, 0, sizeof(ctx));
+	(void)strlcpy(ctx.label, client, sizeof(ctx.label));
+	ctx.window_base = window_base;
 
 	if (channel_create(fd, &options, &channel) == -1)
 		return (1);
 	if (channel_set_request_handler(channel, vmd_request_handler,
-	    label) == -1) {
+	    &ctx) == -1) {
 		channel_destroy(channel);
 		return (1);
 	}
@@ -241,6 +355,59 @@ vmd_worker(int fd, const char *client)
 	return (0);
 }
 
+#ifdef VMD_TESTING
+/*
+ * Test entrypoints (VMD_TESTING builds only).  They wrap the exact production
+ * statics so a unit test can drive the file-scope window-ownership registry and
+ * request validation deterministically, and run the per-client request handler
+ * over a caller-supplied channel descriptor.  main()/reserve_stdio()/vmd_serve()
+ * — the pieces that need a live service_provider transport and a controlling
+ * process — are compiled out; nothing else changes.
+ */
+void
+vmd_test_registry_reset(void)
+{
+
+	memset(g_windows, 0, sizeof(g_windows));
+}
+
+uint32_t
+vmd_test_label_hash(const char *label)
+{
+
+	return (label_hash(label));
+}
+
+bool
+vmd_test_resolve_window(const char *label, uint32_t *base_out)
+{
+
+	return (resolve_window(label, base_out));
+}
+
+bool
+vmd_test_valid_request(const struct vmd_request *rq)
+{
+
+	return (valid_request(rq));
+}
+
+int
+vmd_test_clamp_backlog(uint32_t backlog)
+{
+
+	return (clamp_backlog(backlog));
+}
+
+int
+vmd_test_worker(int fd, const char *label, uint32_t window_base)
+{
+
+	return (vmd_worker(fd, label, window_base));
+}
+#endif /* VMD_TESTING */
+
+#ifndef VMD_TESTING
 /*
  * Expose system.VM and dispatch each accepted client on its own pdfork'd
  * worker.  vmd is a privileged provider: it does NOT enter capability mode (the
@@ -265,12 +432,25 @@ vmd_serve(void)
 
 	for (;;) {
 		pid_t pid;
+		uint32_t base;
 		int pd;
 
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (-1);
+		/*
+		 * Resolve (and, on first contact, exclusively assign) this
+		 * label's window here in the single-process accept loop, where
+		 * the registry is authoritative, before handing the worker a
+		 * window it alone may bind within.
+		 */
+		if (!resolve_window(id.client_label, &base)) {
+			syslog(LOG_ERR, "no free vsock window for client %s",
+			    id.client_label);
+			(void)close(fd);
+			continue;
+		}
 		pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
 		if (pid == -1) {
 			syslog(LOG_ERR, "pdfork: %m");
@@ -278,7 +458,7 @@ vmd_serve(void)
 			continue;
 		}
 		if (pid == 0)
-			_exit(vmd_worker(fd, id.client_label));
+			_exit(vmd_worker(fd, id.client_label, base));
 		(void)close(fd);
 		(void)close(pd);
 	}
@@ -315,3 +495,4 @@ main(int argc, char **argv)
 
 	return (0);
 }
+#endif /* !VMD_TESTING */

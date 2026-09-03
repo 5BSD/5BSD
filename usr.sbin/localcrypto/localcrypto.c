@@ -11,6 +11,7 @@
 #include <signal.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <unistd.h>
 #include <channel.h>
 #include <cryptodesc.h>
@@ -18,6 +19,9 @@
 #include <libservice.h>
 
 #include "policy.h"
+#ifdef LOCALCRYPTO_TESTING
+#include "localcrypto_test.h"
+#endif
 
 #define CRYPTOCMP_NAME "system.Crypto"
 static int control_fd;
@@ -214,8 +218,15 @@ reply:
 	channel_message_free(m);
 }
 
+/*
+ * The owner-scoped request/channel core.  The immutable owner label (bound to
+ * the unforgeable channel peer identity by the caller) is threaded into every
+ * named-key operation via crypto_worker::owner, so a session can only reach the
+ * keys minted under its own label.  Both the production worker and the test
+ * entrypoint drive this same path; only the surrounding sandbox setup differs.
+ */
 static int
-worker(int fd, int audit_fd, const char *owner)
+serve_session(int fd, const char *owner, struct auditcmp_client *audit)
 {
 	struct channel_options options = CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct crypto_worker state;
@@ -224,35 +235,101 @@ worker(int fd, int audit_fd, const char *owner)
 
 	memset(&state, 0, sizeof(state));
 	strlcpy(state.owner, owner, sizeof(state.owner));
+	state.audit = audit;
 	channel = NULL;
 	result = 1;
-	if (auditcmp_client_adopt(audit_fd, &state.audit) == -1 ||
-	    harden_control_descriptor() == -1)
-		goto out;
-	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
-	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
-	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
-	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1)
-		goto out;
-	service_worker_drop_inherited_authority();
-	if (cap_enter() == -1 || channel_create(fd, &options, &channel) == -1)
+	if (channel_create(fd, &options, &channel) == -1)
 		goto out;
 	if (channel_set_request_handler(channel, request, &state) == -1) {
 		goto out;
 	}
+	/*
+	 * A provider-side fault (wait/flush failure) is a meaningful error and is
+	 * reflected in the exit status; a read/dispatch break is the ordinary case
+	 * of the client disconnecting and terminates the worker cleanly.
+	 */
+	result = 0;
 	for (;;) {
 		wants_write = channel_wants_write(channel);
-		if (wants_write == -1 || (ready = channel_wait(channel,
-		    wants_write, -1)) == -1 ||
-		    ((ready & CHANNEL_WAIT_WRITE) != 0 && channel_flush(channel) == -1) ||
-		    ((ready & CHANNEL_WAIT_READ) != 0 && channel_dispatch(channel) == -1))
+		if (wants_write == -1) {
+			result = 1;
+			break;
+		}
+		ready = channel_wait(channel, wants_write, -1);
+		if (ready == -1) {
+			result = 1;
+			break;
+		}
+		if ((ready & CHANNEL_WAIT_WRITE) != 0 &&
+		    channel_flush(channel) == -1) {
+			result = 1;
+			break;
+		}
+		if ((ready & CHANNEL_WAIT_READ) != 0 &&
+		    channel_dispatch(channel) == -1)
 			break;
 	}
-	result = 0;
 out:
 	if (channel != NULL)
 		channel_destroy(channel);
-	auditcmp_client_close(state.audit);
+	return (result);
+}
+
+#ifdef LOCALCRYPTO_TESTING
+/*
+ * Test entrypoint: run the real owner-scoped serve path against a caller-owned
+ * channel descriptor with a caller-supplied owner label.  It opens and hardens
+ * the /dev/crypto control descriptor exactly as production does but omits the
+ * serviced-only sandbox wrappers (worker protect/authority-drop/cap_enter) and
+ * the audit client, which require a live plane.  Named-key ownership is enforced
+ * by the kernel key store keyed on (name, owner), so this exercises the true
+ * isolation property.
+ */
+int
+localcrypto_test_serve(int fd, const char *owner_label)
+{
+
+	if (fd < 0 || owner_label == NULL ||
+	    strnlen(owner_label, CRYPTODESC_KEY_OWNER_MAX) == 0 ||
+	    strnlen(owner_label, CRYPTODESC_KEY_OWNER_MAX) ==
+	    CRYPTODESC_KEY_OWNER_MAX)
+		return (errno = EINVAL, -1);
+	control_fd = open("/dev/crypto", O_RDWR);
+	if (control_fd < 0)
+		return (-1);
+	if (harden_control_descriptor() == -1)
+		return (1);
+	return (serve_session(fd, owner_label, NULL));
+}
+#endif /* LOCALCRYPTO_TESTING */
+
+#ifndef LOCALCRYPTO_TESTING
+static int
+worker(int fd, int audit_fd, const char *owner)
+{
+	struct auditcmp_client *audit;
+	int result;
+
+	audit = NULL;
+	if (auditcmp_client_adopt(audit_fd, &audit) == -1 ||
+	    harden_control_descriptor() == -1) {
+		auditcmp_client_close(audit);
+		return (1);
+	}
+	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
+	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
+	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1) {
+		auditcmp_client_close(audit);
+		return (1);
+	}
+	service_worker_drop_inherited_authority();
+	if (cap_enter() == -1) {
+		auditcmp_client_close(audit);
+		return (1);
+	}
+	result = serve_session(fd, owner, audit);
+	auditcmp_client_close(audit);
 	return (result);
 }
 
@@ -281,6 +358,7 @@ start_session(int fd, const char *peer_label)
 	close(pd);
 	return (0);
 }
+
 int
 main(void)
 {
@@ -291,6 +369,7 @@ main(void)
 	int fd;
 
 	setproctitle("[CRYPTO] capability component");
+	openlog("localcrypto", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 
 	/*
 	 * /dev/crypto is provided by the cryptodev module.  Ensure it is loaded
@@ -305,8 +384,16 @@ main(void)
 	service_release(ctx);
 
 	control_fd = open("/dev/crypto", O_RDWR);
+	/*
+	 * Self-harden the long-lived accept/fork parent.  It must still pdfork
+	 * workers and receive connection descriptors, so NOFORK/NOFDRECV are not
+	 * applied; NOPRIVS is safe because the /dev/crypto control descriptor is
+	 * already open (mirrors localnetwork's parent protect mask).
+	 */
 	if (control_fd < 0 || service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
+	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
+	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOEXEC) == -1 ||
 	    service_provider_expose(provider, CRYPTOCMP_NAME, &listener) == -1 ||
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
@@ -316,7 +403,10 @@ main(void)
 		id.size = sizeof(id);
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (1);
-		(void)start_session(fd, id.client_label);
+		if (start_session(fd, id.client_label) == -1)
+			syslog(LOG_WARNING, "session for %s rejected: %m",
+			    id.client_label);
 		close(fd);
 	}
 }
+#endif /* !LOCALCRYPTO_TESTING */

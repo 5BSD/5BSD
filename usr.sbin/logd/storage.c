@@ -613,10 +613,29 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 
 	if (logcmp_store_open(dirfd, segment_limit, max_segments, &store) == -1) {
 		error = errno != 0 ? errno : EIO;
-		if (error == EILSEQ)
-			LOGD_PROBE_CORRUPTION(0, 0, error);
-		(void)send_status(control_fd, STORAGE_OP_READY, error);
-		return (1);
+		/*
+		 * The store surfaces unrecoverable active-segment corruption as
+		 * EILSEQ (store.h).  As the owner, quarantine the bad segment
+		 * aside and reopen with a fresh one so a single corrupt record
+		 * from an unclean shutdown does not brick the logging plane.
+		 * The quarantined segment is preserved for post-mortem.  If the
+		 * quarantine or the reopen still fails, surface the error.
+		 */
+		if (error == EILSEQ) {
+			LOGD_PROBE_QUARANTINE(0, error);
+			if (logcmp_store_quarantine(dirfd) == 0 &&
+			    logcmp_store_open(dirfd, segment_limit, max_segments,
+			    &store) == 0)
+				error = 0;
+			else
+				error = errno != 0 ? errno : EIO;
+		}
+		if (error != 0) {
+			if (error == EILSEQ)
+				LOGD_PROBE_CORRUPTION(0, 0, error);
+			(void)send_status(control_fd, STORAGE_OP_READY, error);
+			return (1);
+		}
 	}
 	memset(sessions, 0, sizeof(sessions));
 	if (sandbox && (service_worker_protect(SERVICE_PROTECT_EXTERNAL |

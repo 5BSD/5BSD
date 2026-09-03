@@ -25,6 +25,7 @@ int	notify_publish(struct notify_client *, const char *,
 int	notify_state_set(struct notify_client *, const char *, uint64_t);
 int	notify_state_get(struct notify_client *, const char *,
 	    struct notify_state_reply *);
+int	notify_state_clear(struct notify_client *, const char *);
 ssize_t	notify_next(struct notify_client *, struct notify_event *,
 	    size_t, uint32_t);
 int	notify_timer_add(struct notify_client *, uint64_t, uint32_t,

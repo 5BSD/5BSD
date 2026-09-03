@@ -19,6 +19,13 @@
 #define	TZFSD_DEFAULT_CONF	"/Capabilities/Config/tzfsd.ucl"
 
 /*
+ * Default per-claim space ceiling (refquota, bytes).  Bounds any single claim
+ * so one tenant cannot fill the pool and starve the others; overridable via the
+ * "default_refquota" config key, 0 disables the ceiling.
+ */
+#define	TZFSD_DEFAULT_REFQUOTA	(1ULL << 30)	/* 1 GiB */
+
+/*
  * Per-label isolated-open policy (TZFSD_OP_OPEN), loaded from the config file's
  * "open_paths" array.  Default-deny: a client may open a path only if some entry
  * matches its unforgeable label exactly and covers the requested rights.  Exact
@@ -43,6 +50,7 @@ struct tzfsd_config {
 	char		ephemeral[TZFSD_MAXPATH];	/* .../ephemeral */
 	char		mountpoint[TZFSD_MAXPATH];	/* /Capabilities */
 	char		ephemeral_sync[16];		/* zfs sync= value */
+	uint64_t	default_refquota;		/* per-claim ceiling, bytes; 0=off */
 	struct tzfsd_open_policy open_policy[TZFSD_MAX_OPEN_POLICY];
 	unsigned	nopen_policy;
 };
@@ -87,5 +95,16 @@ int	tzfsd_reap_leases(struct tzfsd_state *st);
 
 /* request.c */
 int	tzfsd_serve(struct tzfsd_state *st);
+
+#ifdef TZFSD_TESTING
+/* request.c test-only accessors (see the TZFSD_TESTING block in request.c). */
+bool	tzfsd_test_derive_ns(const char *client, char *out, size_t outsz);
+bool	tzfsd_test_valid_dataset(const char *name);
+bool	tzfsd_test_has_dotdot_component(const char *path);
+bool	tzfsd_test_valid_request(const struct tzfsd_request *rq);
+int	tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
+	    const struct tzfsd_open_request *rq);
+int	tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client);
+#endif /* TZFSD_TESTING */
 
 #endif /* TZFSD_H */

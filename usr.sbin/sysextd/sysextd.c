@@ -30,11 +30,22 @@
  * held token — so root only satisfies the classical privilege underneath it.
  * modfind(2) is avoided: a kldload whose module is already present returns
  * EEXIST, which sysextd reports as success.
+ *
+ * Loading is default-deny by module name as well as by domain: sysextd carries
+ * an allow-list of module names it is permitted to load (the built-in set of
+ * on-demand modules the base system legitimately requests, overridable by an
+ * operator UCL config).  A name that passes the path-traversal check but is not
+ * on the allow-list is refused with EPERM and logged.  This closes the gap where
+ * any SYSTEM-domain client, once past the domain gate, could load ARBITRARY
+ * kernel code; the gate authorizes reaching sysextd, the allow-list authorizes
+ * WHICH kernel code may load.
  */
 
+#include <sys/param.h>
 #include <sys/types.h>
 #include <sys/linker.h>
 #include <sys/procdesc.h>
+#include <sys/stat.h>
 
 #include <err.h>
 #include <errno.h>
@@ -47,10 +58,32 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <ucl.h>
+
 #include <channel.h>
 #include <libservice.h>
 
 #include "sysext_proto.h"
+#include "sysextd.h"
+
+/*
+ * The kernel-module allow-list.  Loading is default-deny by name: only a module
+ * whose name appears here may be loaded.  The built-in defaults are the exact
+ * set of extensions the base system loads on demand today (see
+ * sysext_config_defaults); an optional operator config (SYSEXT_DEFAULT_CONF)
+ * may replace the set.  A missing config is not an error — the built-in set
+ * stands, so the control is fail-closed with no dependency on a file being
+ * present early in boot.
+ *
+ * SYSEXT_MAX_ALLOW, SYSEXT_DEFAULT_CONF and struct sysext_config are defined in
+ * sysextd.h so the unit tests share one definition.
+ */
+
+/*
+ * Populated once in main() before the accept loop, so every pdfork'd worker
+ * inherits the resolved allow-list through the fork image.
+ */
+static struct sysext_config sysext_conf;
 
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created, so a
@@ -58,6 +91,7 @@
  * later /dev/null redirect.  sysextd is launched by serviced without a
  * controlling terminal.
  */
+#ifndef SYSEXTD_TESTING
 static void
 reserve_stdio(void)
 {
@@ -75,9 +109,17 @@ reserve_stdio(void)
 		}
 	}
 }
+#endif /* !SYSEXTD_TESTING */
 
-/* A module name must be a single, safe filename component (no path, no dots). */
-static bool
+/*
+ * A module name must be a single, safe filename component: NUL-terminated
+ * within the buffer, non-empty, not "." or "..", and containing no '/' (no path
+ * traversal, no absolute path).  Embedded dots ARE permitted — real module
+ * names contain them (e.g. "if_foo.ko"-style names) — only the pure "." and
+ * ".." directory names are rejected.  This is a syntactic guard; the allow-list
+ * (extension_allowed) decides WHICH module may actually load.
+ */
+SYSEXT_STATIC bool
 valid_module_name(const char *name)
 {
 
@@ -89,6 +131,128 @@ valid_module_name(const char *name)
 	if (strchr(name, '/') != NULL)
 		return (false);
 	return (true);
+}
+
+/*
+ * The built-in allow-list: the modules the base system legitimately loads on
+ * demand through system.SystemExtension today.  Derived from the tree's
+ * service_ensure_extension(3) callers and the equivalent early-boot kldload
+ * needs:
+ *
+ *   cryptodev  localcrypto (usr.sbin/localcrypto): /dev/crypto for OCF.
+ *   vhid       blued (usr.sbin/bluetooth/blued):   virtual-HID transport.
+ *   zfs        tzfsd (usr.sbin/tzfsd):             storage backing /Capabilities.
+ *
+ * Deliberately narrow — every entry corresponds to a concrete on-demand
+ * consumer.  Do not broaden without a matching consumer.
+ */
+SYSEXT_STATIC void
+sysext_config_defaults(struct sysext_config *cfg)
+{
+	static const char *const builtin[] = { "cryptodev", "vhid", "zfs" };
+	size_t i;
+
+	memset(cfg, 0, sizeof(*cfg));
+	for (i = 0; i < nitems(builtin); i++)
+		(void)strlcpy(cfg->allow[i], builtin[i], SYSEXT_NAME_MAX);
+	cfg->nallow = nitems(builtin);
+}
+
+/* True iff name is on the resolved allow-list (exact match). */
+SYSEXT_STATIC bool
+extension_allowed(const struct sysext_config *cfg, const char *name)
+{
+	size_t i;
+
+	for (i = 0; i < cfg->nallow; i++) {
+		if (strcmp(cfg->allow[i], name) == 0)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * Overlay an operator UCL config on top of the built-in allow-list.  A missing
+ * file is not an error (the built-in set stands, fail-closed).  A present file
+ * with an "allowed_extensions" string array REPLACES the built-in set; each
+ * entry must itself be a valid single-component module name.  Any malformed or
+ * over-permissive file is rejected wholesale (EINVAL) and the built-in set is
+ * left untouched, so a bad config can never widen what may load.
+ */
+SYSEXT_STATIC int
+sysext_config_load(struct sysext_config *cfg, const char *path)
+{
+	struct sysext_config saved;
+	struct ucl_parser *p;
+	const ucl_object_t *root, *arr, *ent;
+	ucl_object_iter_t it = NULL;
+	struct stat sb;
+	int error, fd;
+	size_t count = 0;
+
+	saved = *cfg;
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd == -1)
+		return (errno == ENOENT ? 0 : -1);
+	if (fstat(fd, &sb) == -1) {
+		error = errno;
+		(void)close(fd);
+		return (errno = error, -1);
+	}
+	/* Regular, owner-owned, not group/other writable, size-bounded. */
+	if (!S_ISREG(sb.st_mode) || sb.st_size > 1024 * 1024 ||
+	    sb.st_uid != geteuid() || (sb.st_mode & (S_IWGRP | S_IWOTH)) != 0) {
+		(void)close(fd);
+		return (errno = EPERM, -1);
+	}
+	p = ucl_parser_new(UCL_PARSER_DEFAULT);
+	if (p == NULL) {
+		(void)close(fd);
+		return (errno = ENOMEM, -1);
+	}
+	if (!ucl_parser_add_fd(p, fd)) {
+		(void)close(fd);
+		ucl_parser_free(p);
+		return (errno = EINVAL, -1);
+	}
+	(void)close(fd);
+	root = ucl_parser_get_object(p);
+	if (root == NULL || ucl_object_type(root) != UCL_OBJECT) {
+		if (root != NULL)
+			ucl_object_unref(__DECONST(ucl_object_t *, root));
+		ucl_parser_free(p);
+		return (errno = EINVAL, -1);
+	}
+
+	arr = ucl_object_lookup(root, "allowed_extensions");
+	if (arr != NULL) {
+		if (ucl_object_type(arr) != UCL_ARRAY)
+			goto invalid;
+		while ((ent = ucl_object_iterate(arr, &it, true)) != NULL) {
+			const char *s;
+
+			if (count >= SYSEXT_MAX_ALLOW ||
+			    ucl_object_type(ent) != UCL_STRING ||
+			    (s = ucl_object_tostring(ent)) == NULL ||
+			    strlcpy(cfg->allow[count], s, SYSEXT_NAME_MAX) >=
+			    SYSEXT_NAME_MAX ||
+			    !valid_module_name(cfg->allow[count]))
+				goto invalid;
+			count++;
+		}
+		cfg->nallow = count;
+	}
+
+	ucl_object_unref(__DECONST(ucl_object_t *, root));
+	ucl_parser_free(p);
+	return (0);
+
+invalid:
+	error = errno != 0 ? errno : EINVAL;
+	*cfg = saved;
+	ucl_object_unref(__DECONST(ucl_object_t *, root));
+	ucl_parser_free(p);
+	return (errno = error, -1);
 }
 
 /*
@@ -130,6 +294,18 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	rq = channel_message_data(m);
 	if (rq->op != SYSEXT_OP_ENSURE || !valid_module_name(rq->name)) {
 		rp.status = EINVAL;
+		goto reply;
+	}
+	/*
+	 * Default-deny by name: even a syntactically valid module is refused
+	 * unless it is on the allow-list.  This is the boundary between "may
+	 * reach sysextd" (the domain gate) and "may load THIS kernel code".
+	 */
+	if (!extension_allowed(&sysext_conf, rq->name)) {
+		rp.status = EPERM;
+		syslog(LOG_WARNING,
+		    "ENSURE %s (client %s) -> DENIED (not on allow-list)",
+		    rq->name, client);
 		goto reply;
 	}
 
@@ -186,6 +362,25 @@ sysext_worker(int fd, const char *client)
 	return (0);
 }
 
+#ifdef SYSEXTD_TESTING
+/*
+ * Test-only serve entry point.  Installs cfg as the resolved allow-list (which
+ * every pdfork'd worker would otherwise inherit through the fork image) and
+ * runs the real per-client worker on fd, so a test drives the identical
+ * sysext_request path a production worker would.  It deliberately does NOT
+ * kldload: every case a test drives (deny, malformed) is refused before
+ * ensure_extension is reached.
+ */
+int
+sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)
+{
+
+	sysext_conf = *cfg;
+	return (sysext_worker(fd, client));
+}
+#endif /* SYSEXTD_TESTING */
+
+#ifndef SYSEXTD_TESTING
 /*
  * Expose system.SystemExtension and dispatch each accepted client on its own
  * pdfork'd worker.  service_provider_authorize_capabilities() authorizes the
@@ -239,17 +434,21 @@ sysext_serve(void)
 int
 main(int argc, char **argv)
 {
+	const char *conf = SYSEXT_DEFAULT_CONF;
 	int ch;
 
-	while ((ch = getopt(argc, argv, "")) != -1) {
+	while ((ch = getopt(argc, argv, "c:")) != -1) {
 		switch (ch) {
+		case 'c':
+			conf = optarg;
+			break;
 		default:
-			(void)fprintf(stderr, "usage: sysextd\n");
+			(void)fprintf(stderr, "usage: sysextd [-c config]\n");
 			return (1);
 		}
 	}
 	if (argc != optind) {
-		(void)fprintf(stderr, "usage: sysextd\n");
+		(void)fprintf(stderr, "usage: sysextd [-c config]\n");
 		return (1);
 	}
 
@@ -268,6 +467,19 @@ main(int argc, char **argv)
 	syslog(LOG_NOTICE, "sysextd system-extension broker");
 
 	/*
+	 * Resolve the module allow-list before serving so every pdfork'd worker
+	 * inherits it.  A missing config keeps the built-in default set (fail-
+	 * closed); a malformed config is fatal rather than served with an
+	 * unknown policy.
+	 */
+	sysext_config_defaults(&sysext_conf);
+	if (sysext_config_load(&sysext_conf, conf) == -1)
+		syslog(LOG_WARNING, "allow-list config %s unparseable (%m), "
+		    "using built-in allow-list", conf);
+	syslog(LOG_NOTICE, "allow-list: %zu module(s) permitted",
+	    sysext_conf.nallow);
+
+	/*
 	 * Serve as a socket-free service_provider: authorize the delivered
 	 * kldload/kldstat system token, expose system.SystemExtension, enter
 	 * capability mode, and dispatch each client on its own worker channel.
@@ -279,3 +491,4 @@ main(int argc, char **argv)
 
 	return (0);
 }
+#endif /* !SYSEXTD_TESTING */

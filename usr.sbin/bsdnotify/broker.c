@@ -5,6 +5,7 @@
 #include <sys/param.h>
 
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -47,6 +48,7 @@ struct broker_topic_state {
 	size_t			 topic_length;
 	uint64_t		 generation;
 	uint64_t		 state;
+	char			 owner[NOTIFY_MAX_PUBLISHER + 1];
 	char			 topic[NOTIFY_MAX_TOPIC];
 };
 
@@ -225,6 +227,33 @@ notify_broker_add(struct notify_broker *broker, const char *label,
 	return (client);
 }
 
+static void
+state_unlink(struct notify_broker *broker, struct broker_topic_state *state)
+{
+	struct broker_topic_state **cursor;
+
+	cursor = &broker->states[topic_hash(state->topic, state->topic_length)];
+	while (*cursor != NULL && *cursor != state)
+		cursor = &(*cursor)->next;
+	if (*cursor == state) {
+		*cursor = state->next;
+		broker->nstates--;
+		free(state);
+	}
+}
+
+static bool
+label_in_use(const struct notify_broker *broker, const char *label,
+    const struct notify_broker_client *except)
+{
+	const struct notify_broker_client *client;
+
+	for (client = broker->clients; client != NULL; client = client->next)
+		if (client != except && strcmp(client->label, label) == 0)
+			return (true);
+	return (false);
+}
+
 void
 notify_broker_remove(struct notify_broker *broker,
     struct notify_broker_client *client)
@@ -240,6 +269,29 @@ notify_broker_remove(struct notify_broker *broker,
 		cursor = &(*cursor)->next;
 	if (*cursor == client)
 		*cursor = client->next;
+	/*
+	 * Reclaim persistent states owned by this label once its last session
+	 * is gone, so a client cannot permanently exhaust the global state
+	 * table by setting topics and disconnecting.  States survive as long as
+	 * any session sharing the owning label remains connected.
+	 */
+	if (client->label[0] != '\0' &&
+	    !label_in_use(broker, client->label, NULL)) {
+		for (bucket = 0; bucket < nitems(broker->states); bucket++) {
+			struct broker_topic_state **state_cursor;
+			struct broker_topic_state *state;
+
+			state_cursor = &broker->states[bucket];
+			while ((state = *state_cursor) != NULL) {
+				if (strcmp(state->owner, client->label) == 0) {
+					*state_cursor = state->next;
+					broker->nstates--;
+					free(state);
+				} else
+					state_cursor = &state->next;
+			}
+		}
+	}
 	while ((subscription = client->subscriptions) != NULL) {
 		client->subscriptions = subscription->client_next;
 		bucket = topic_hash(subscription->topic,
@@ -410,6 +462,12 @@ notify_broker_state_set(struct notify_broker *broker,
 		}
 		state->topic_length = topic_length;
 		memcpy(state->topic, topic, topic_length);
+		/*
+		 * Bind ownership to the setting session's unforgeable label so
+		 * only that publisher may clear the state, and so the state can
+		 * be reclaimed when the owner disconnects.
+		 */
+		strlcpy(state->owner, publisher->label, sizeof(state->owner));
 		state->next = broker->states[bucket];
 		broker->states[bucket] = state;
 		broker->nstates++;
@@ -448,6 +506,31 @@ notify_broker_state_get(struct notify_broker *broker, const char *topic,
 	reply->router_epoch = broker->epoch;
 	reply->generation = state->generation;
 	reply->state = state->state;
+	return (0);
+}
+
+int
+notify_broker_state_clear(struct notify_broker *broker,
+    struct notify_broker_client *publisher, const char *topic,
+    size_t topic_length)
+{
+	struct broker_topic_state *state;
+
+	if (broker == NULL || publisher == NULL ||
+	    notify_validate_topic(topic, topic_length) == -1)
+		return (-1);
+	state = state_find(broker, topic, topic_length);
+	if (state == NULL) {
+		errno = ENOENT;
+		return (-1);
+	}
+	/* Owner-scoped: only the label that set the state may clear it. */
+	if (strcmp(state->owner, publisher->label) != 0) {
+		errno = EACCES;
+		return (-1);
+	}
+	state_unlink(broker, state);
+	publisher->stats.published++;
 	return (0);
 }
 

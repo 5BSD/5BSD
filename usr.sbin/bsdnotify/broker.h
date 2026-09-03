@@ -34,6 +34,8 @@ int	notify_broker_state_set(struct notify_broker *,
 	    struct notify_state_reply *);
 int	notify_broker_state_get(struct notify_broker *, const char *,
 	    size_t, struct notify_state_reply *);
+int	notify_broker_state_clear(struct notify_broker *,
+	    struct notify_broker_client *, const char *, size_t);
 uint64_t notify_broker_epoch(const struct notify_broker *);
 void	notify_broker_test_set_sequence(struct notify_broker *, uint64_t);
 int	notify_broker_timer(struct notify_broker *,

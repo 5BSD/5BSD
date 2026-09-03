@@ -152,7 +152,7 @@ notify_header_validate(const struct notify_msg *msg, size_t length,
 	    msg->magic != NOTIFY_MAGIC ||
 	    msg->version != NOTIFY_ABI_VERSION ||
 	    msg->opcode < NOTIFY_OP_HELLO ||
-	    msg->opcode > NOTIFY_OP_STATE_GET ||
+	    msg->opcode > NOTIFY_OP_STATE_CLEAR ||
 	    (msg->flags & ~NOTIFY_MSG_F_MASK) != 0 ||
 	    (role != NOTIFY_MESSAGE_REPLY && msg->status != 0) ||
 	    (role == NOTIFY_MESSAGE_REPLY &&
@@ -169,7 +169,7 @@ notify_message_init(struct notify_msg *msg, uint16_t opcode,
 {
 
 	if (msg == NULL || opcode < NOTIFY_OP_HELLO ||
-	    opcode > NOTIFY_OP_STATE_GET ||
+	    opcode > NOTIFY_OP_STATE_CLEAR ||
 	    (flags & ~NOTIFY_MSG_F_MASK) != 0) {
 		errno = EINVAL;
 		return (-1);
@@ -273,6 +273,7 @@ notify_validate_message(const struct notify_msg *msg, size_t length,
 	case NOTIFY_OP_SUBSCRIBE:
 	case NOTIFY_OP_UNSUBSCRIBE:
 	case NOTIFY_OP_STATE_GET:
+	case NOTIFY_OP_STATE_CLEAR:
 		if (payload != sizeof(*topic))
 			goto invalid;
 		topic = (const void *)(msg + 1);
@@ -823,6 +824,26 @@ notify_state_get(struct notify_client *client, const char *topic,
 	pthread_mutex_unlock(&client->lock);
 	errno = error;
 	return (result);
+}
+
+int
+notify_state_clear(struct notify_client *client, const char *topic)
+{
+	struct notify_topic_request request;
+	size_t length;
+
+	if (client == NULL || client->owner != getpid() || topic == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	length = strnlen(topic, NOTIFY_MAX_TOPIC + 1);
+	if (notify_validate_topic(topic, length) == -1)
+		return (-1);
+	memset(&request, 0, sizeof(request));
+	request.topic_length = length;
+	memcpy(request.topic, topic, length);
+	return (simple_rpc(client, NOTIFY_OP_STATE_CLEAR, &request,
+	    sizeof(request)));
 }
 
 ssize_t

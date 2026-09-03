@@ -487,6 +487,28 @@ tzfsd_layout_provision(struct tzfsd_state *st)
 		(void)close(root_fd);
 		return (-1);
 	}
+	/*
+	 * Apply the configured sync= policy to the ephemeral subtree.  sync is an
+	 * index-encoded property (like canmount): STANDARD=0, ALWAYS=1,
+	 * DISABLED=2 — set via the uint64 path (the string path panics ZFS on an
+	 * integer property).  Setting it on the ephemeral parent propagates by
+	 * inheritance to every child (boot/lease generations, per-service homes,
+	 * claims).  Best-effort: a sync miss is a durability/perf knob, not a
+	 * correctness gate for provisioning.
+	 */
+	{
+		uint64_t syncval;
+
+		if (strcmp(cfg->ephemeral_sync, "standard") == 0)
+			syncval = 0;	/* ZFS_SYNC_STANDARD */
+		else if (strcmp(cfg->ephemeral_sync, "always") == 0)
+			syncval = 1;	/* ZFS_SYNC_ALWAYS */
+		else
+			syncval = 2;	/* ZFS_SYNC_DISABLED */
+		if (tzfs_set_prop_uint64(st->ephemeral_fd, "sync", syncval) == -1)
+			syslog(LOG_WARNING, "set sync=%s on %s: %m",
+			    cfg->ephemeral_sync, cfg->ephemeral);
+	}
 	(void)close(root_fd);
 	if (reconcile_boot_generations(st) == -1) {
 		syslog(LOG_ERR, "provision current boot storage: %m");

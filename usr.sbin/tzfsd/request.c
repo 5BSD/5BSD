@@ -14,8 +14,11 @@
  */
 
 #include <sys/types.h>
+#include <sys/param.h>
 #include <sys/procdesc.h>
 #include <sys/capsicum.h>
+
+#include <dev/hid/vhid.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -68,6 +71,29 @@ all_zero(const void *buf, size_t len)
 		if (p[i] != 0)
 			return (false);
 	return (true);
+}
+
+/*
+ * Reject any literal ".." path component (a ".." sitting between slashes),
+ * while allowing legitimate names that merely embed ".." such as
+ * /dev/foo..bar.  The path is already known to be NUL-terminated and to start
+ * with '/'.  Component-wise, this mirrors config.c's absolute_path_valid().
+ */
+static bool
+has_dotdot_component(const char *path)
+{
+	const char *component = path + 1, *slash;
+	size_t n;
+
+	for (;;) {
+		slash = strchr(component, '/');
+		n = slash == NULL ? strlen(component) : (size_t)(slash - component);
+		if (n == 2 && component[0] == '.' && component[1] == '.')
+			return (true);
+		if (slash == NULL)
+			return (false);
+		component = slash + 1;
+	}
 }
 
 /* Reject malformed and ambiguous protocol messages before dispatch. */
@@ -193,6 +219,19 @@ grant(struct tzfsd_state *st, const char *client,
 	}
 
 	/*
+	 * Apply the default per-claim space ceiling so no single claim can fill
+	 * the pool and starve every other tenant.  refquota is a byte-count
+	 * property (uint64), 0 == none; set on the full-rights leaf before the
+	 * ioctl ceiling is applied to the delivered handle.  Best-effort: a
+	 * pre-existing persistent claim already over the (possibly lowered)
+	 * ceiling must not be made undeliverable — the ceiling still blocks
+	 * further growth.
+	 */
+	if (cfg->default_refquota != 0 &&
+	    tzfs_set_prop_uint64(leaf_fd, "refquota", cfg->default_refquota) == -1)
+		syslog(LOG_WARNING, "set refquota on claim %s: %m", claim);
+
+	/*
 	 * Set the dataset root's owner to the requesting service so it can write
 	 * its own storage once it mounts the handle lazily.  This runs on the
 	 * full-rights leaf (before the ioctl ceiling is applied to the delivered
@@ -266,10 +305,18 @@ grant_open(struct tzfsd_state *st, const char *client,
 		errno = EINVAL;
 		return (-1);
 	}
-	/* Absolute, NUL-terminated, no traversal component. */
+	/*
+	 * Message hygiene, symmetric with the storage path's valid_request():
+	 * reserved bytes must be zero and is_dir must be a canonical 0/1.
+	 */
+	if (!all_zero(rq->_reserved, sizeof(rq->_reserved)) || rq->is_dir > 1) {
+		errno = EINVAL;
+		return (-1);
+	}
+	/* Absolute, NUL-terminated, no ".." traversal component. */
 	if (rq->path[0] != '/' ||
 	    memchr(rq->path, '\0', sizeof(rq->path)) == NULL ||
-	    strstr(rq->path, "..") != NULL) {
+	    has_dotdot_component(rq->path)) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -319,6 +366,17 @@ grant_open(struct tzfsd_state *st, const char *client,
 	flags |= O_CLOEXEC | O_NOCTTY;
 	if (rq->is_dir)
 		flags |= O_DIRECTORY;
+	/*
+	 * The proto promises symlink safety (tzfsd_proto.h): O_NOFOLLOW refuses a
+	 * symlink at the granted leaf itself, and O_RESOLVE_BENEATH refuses any
+	 * intermediate symlink, absolute path, or ".." that would resolve outside
+	 * the retained root fd.  Capmode already blocks absolute/".." escapes, but
+	 * not an in-tree symlink pointed at a different node/type than the policy
+	 * author intended; these flags close that.  Both are compatible with the
+	 * capmode openat here — path+1 is strictly relative to root_fd with no
+	 * ".." (validated above), so resolution always stays beneath it.
+	 */
+	flags |= O_NOFOLLOW | O_RESOLVE_BENEATH;
 
 	/* Relative to the retained root fd: legal in capability mode. */
 	fd = openat(st->root_fd, rq->path + 1, flags);
@@ -341,6 +399,25 @@ grant_open(struct tzfsd_state *st, const char *client,
 		(void)close(fd);
 		errno = saved;
 		return (-1);
+	}
+	/*
+	 * A delivered CAP_IOCTL descriptor must not be able to issue every ioctl
+	 * the node supports.  The only ioctl consumer of an OP_OPEN device grant
+	 * is blued <-> /dev/vhid{,N}: VHID_CREATE on the control node, VHID_ATTACH
+	 * on a created unit, VHID_DESTROY to tear one down.  Cap the delivered fd
+	 * to exactly that set (blued narrows further per-node on its own side).
+	 */
+	if (rq->rights & TZFSD_OPEN_IOCTL) {
+		static const unsigned long vhid_ioctls[] = {
+			VHID_CREATE, VHID_ATTACH, VHID_DESTROY,
+		};
+
+		if (cap_ioctls_limit(fd, vhid_ioctls, nitems(vhid_ioctls)) == -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
 	}
 	return (fd);
 }
@@ -545,3 +622,65 @@ tzfsd_serve(struct tzfsd_state *st)
 		(void)close(pd);
 	}
 }
+
+#ifdef TZFSD_TESTING
+/*
+ * Test-only accessors.  These expose the file-private pure-logic functions and a
+ * single-channel serve entrypoint so the ATF suite can exercise the tenant-
+ * isolation and request-validation logic directly.  They add no code to the
+ * production build (the whole block is compiled out unless TZFSD_TESTING is
+ * defined) and change no runtime behavior.
+ */
+bool
+tzfsd_test_derive_ns(const char *client, char *out, size_t outsz)
+{
+
+	return (derive_ns(client, out, outsz));
+}
+
+bool
+tzfsd_test_valid_dataset(const char *name)
+{
+
+	return (valid_dataset(name));
+}
+
+bool
+tzfsd_test_has_dotdot_component(const char *path)
+{
+
+	return (has_dotdot_component(path));
+}
+
+bool
+tzfsd_test_valid_request(const struct tzfsd_request *rq)
+{
+
+	return (valid_request(rq));
+}
+
+/*
+ * Drive grant_open() so tests can assert the OPEN request's message hygiene
+ * (_reserved must be zero, is_dir must be a canonical 0/1) and the default-deny
+ * policy outcome without reaching any ZFS machinery.
+ */
+int
+tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
+    const struct tzfsd_open_request *rq)
+{
+
+	return (grant_open(st, client, rq));
+}
+
+/*
+ * Serve a single client channel to completion on the caller's own fd (no
+ * pdfork, no accept loop).  This is the plane entrypoint the provider test uses
+ * to assert fail-closed framing/validation over a real mac_capability channel.
+ */
+int
+tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client)
+{
+
+	return (tzfs_worker(st, fd, client));
+}
+#endif /* TZFSD_TESTING */

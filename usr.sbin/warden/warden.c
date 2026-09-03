@@ -41,6 +41,7 @@
 #include <limits.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -48,6 +49,7 @@
 #include <unistd.h>
 
 #include <jail.h>
+#include <sha256.h>
 
 #include <channel.h>
 #include <libservice.h>
@@ -57,6 +59,7 @@
 /* A jail name derived from a channel label: alnum plus '.', '_', '-'. */
 #define	WARDEN_JAIL_NAME_MAX	64
 
+#ifndef WARDEN_TESTING
 /*
  * Guarantee fds 0/1/2 are open before any capability handle is created.  warden
  * is launched by serviced without a controlling terminal.
@@ -78,28 +81,58 @@ reserve_stdio(void)
 		}
 	}
 }
+#endif /* !WARDEN_TESTING */
 
 /*
  * Derive a stable, safe, FLAT jail name from the caller's unforgeable channel
- * label.  Only [A-Za-z0-9_-] are kept; every other character — including '.'
- * (which the jail framework treats as a hierarchy separator, so a dotted name
- * would be created as a child of a non-existent parent jail) and the '/' in
- * "bundle/unit" — becomes '_'.  Returns false only for an empty label.
+ * label.  The name MUST be an injective function of the full label: two distinct
+ * labels must never map to the same jail name, or one consumer could land on —
+ * and reuse — another consumer's jail, defeating the "one consumer can never
+ * name or reuse another's jail" isolation invariant.
+ *
+ * A lossy sanitise-and-truncate is NOT injective: folding every non-[A-Za-z0-9_-]
+ * character to '_' collapses "a.b" and "a_b" onto one name, and truncating at
+ * WARDEN_JAIL_NAME_MAX-1 collapses every label sharing a 63-char prefix.  Both
+ * are collisions an attacker can steer.  So we derive the name from a
+ * collision-resistant hash of the *entire* label instead: "wj_" followed by the
+ * hex of the first 30 bytes (240 bits) of SHA-256(label).  That is 63 characters
+ * — within WARDEN_JAIL_NAME_MAX — uses only the jail-safe alphabet (no '.', so no
+ * accidental hierarchy), and is deterministic (same label -> same name), so a
+ * relaunched consumer still reattaches to its own jail.  Returns false only for
+ * an empty label or a buffer too small to hold a meaningful name.
  */
 static bool
 jail_name_from_label(const char *label, char *out, size_t outsz)
 {
-	size_t i;
+	static const char hex[] = "0123456789abcdef";
+	static const char prefix[] = "wj_";
+	const size_t plen = sizeof(prefix) - 1;
+	SHA256_CTX ctx;
+	uint8_t digest[SHA256_DIGEST_LENGTH];
+	size_t nbytes, i;
 
-	if (label == NULL || label[0] == '\0' || outsz == 0)
+	if (label == NULL || label[0] == '\0')
 		return (false);
-	for (i = 0; label[i] != '\0' && i < outsz - 1; i++) {
-		unsigned char c = (unsigned char)label[i];
+	/* Need room for the prefix, at least 128 bits of hash, and the NUL. */
+	if (outsz < plen + 2 * 16 + 1)
+		return (false);
 
-		out[i] = (isalnum(c) || c == '_' || c == '-') ? (char)c : '_';
+	SHA256_Init(&ctx);
+	SHA256_Update(&ctx, label, strlen(label));
+	SHA256_Final(digest, &ctx);
+
+	/* As many digest bytes as fit after the prefix, capped at the digest. */
+	nbytes = (outsz - 1 - plen) / 2;
+	if (nbytes > sizeof(digest))
+		nbytes = sizeof(digest);
+
+	memcpy(out, prefix, plen);
+	for (i = 0; i < nbytes; i++) {
+		out[plen + 2 * i] = hex[digest[i] >> 4];
+		out[plen + 2 * i + 1] = hex[digest[i] & 0x0f];
 	}
-	out[i] = '\0';
-	return (i > 0);
+	out[plen + 2 * nbytes] = '\0';
+	return (true);
 }
 
 /* Every string field must be NUL-terminated; path must be absolute. */
@@ -120,6 +153,49 @@ valid_request(const struct warden_request *rq)
 }
 
 /*
+ * Parse a jail "desc" parameter — a decimal descriptor number the kernel writes
+ * as a string — into an int fd.  A malformed or empty desc must be rejected, not
+ * silently coerced to fd 0: strtol("", ...) yields 0 with end==desc, and a
+ * trailing-junk string yields a partial value, either of which would hand back a
+ * bogus descriptor.  Returns true and stores the fd only for a fully-consumed,
+ * in-range non-negative number.
+ */
+static bool
+parse_desc_fd(const char *desc, int *out_fd)
+{
+	char *end;
+	long fd;
+
+	errno = 0;
+	fd = strtol(desc, &end, 10);
+	if (errno != 0 || end == desc || *end != '\0' || fd < 0 || fd > INT_MAX)
+		return (false);
+	*out_fd = (int)fd;
+	return (true);
+}
+
+/*
+ * Fetch an existing jail's ip4.addr into out (empty string if the jail has no
+ * address).  Returns 0 on success, or an errno.  This is a separate get with no
+ * descriptor: jailparam_get(3) reports a requested-but-absent parameter as
+ * ENOENT, so asking for ip4.addr in the main JAIL_GET_DESC call would be misread
+ * as "jail absent".  Here ENOENT unambiguously means "this jail has no ip4
+ * address", which the caller compares against whether the request asked for one.
+ */
+static int
+jail_get_ip4(const char *name, char *out, size_t outsz)
+{
+
+	if (outsz == 0)
+		return (EINVAL);
+	out[0] = '\0';
+	if (jail_getv(0, "name", __DECONST(char *, name),
+	    "ip4.addr", out, NULL) < 0)
+		return (errno);
+	return (0);
+}
+
+/*
  * Return a non-owning descriptor for an existing jail with this name when its
  * immutable definition matches the request; -1/errno otherwise (ENOENT when
  * absent).  Lets a relaunched consumer reattach to its persistent jail.  The
@@ -127,50 +203,78 @@ valid_request(const struct warden_request *rq)
  * stored credential is warden's root) but closing it never removes the jail.
  * An ephemeral jail's lifetime is instead anchored by the per-client worker
  * process holding a separate owning descriptor (see warden_request_handler).
+ *
+ * Reuse is safe ONLY when the *entire* requested definition matches the existing
+ * jail: path, hostname, AND ip4 address.  A consumer that reconnects must get
+ * back the jail it defined, never silently attach into a differently-shaped one
+ * (which would discard its isolation request — e.g. a requested ip4.addr — with
+ * no error).  Any mismatch is a hard EEXIST, enforcing the immutable definition
+ * the reuse contract promises.
  */
 static int
 existing_jail_descriptor(const char *name, const struct warden_request *rq)
 {
-	char desc[32], path[PATH_MAX];
-	char *end;
-	long fd;
-	int jid;
+	char desc[32], path[PATH_MAX], host[MAXHOSTNAMELEN], ip4[256];
+	const char *want_host = rq->hostname[0] != '\0' ? rq->hostname : name;
+	int jid, iperr, fd, saved_errno;
 
-	/*
-	 * Retrieve only "path" (and the descriptor) alongside the name key.  A
-	 * jail created without an address has no ip4.addr parameter, and
-	 * jailparam_get(3) reports a requested-but-absent parameter as ENOENT —
-	 * which would be misread here as "jail absent" and defeat reuse.  The
-	 * label already scopes the jail to this one caller, so matching the root
-	 * path is a sufficient consistency check.
-	 */
 	memset(desc, 0, sizeof(desc));
 	memset(path, 0, sizeof(path));
+	memset(host, 0, sizeof(host));
 	jid = jail_getv(JAIL_GET_DESC,
 	    "name", __DECONST(char *, name),
 	    "path", path,
+	    "host.hostname", host,
 	    "desc", desc,
 	    NULL);
 	if (jid < 0)
 		return (-1);			/* errno == ENOENT when absent */
-	if (strcmp(path, rq->path) != 0) {
+
+	/* Root path and hostname must match the request exactly. */
+	if (strcmp(path, rq->path) != 0 || strcmp(host, want_host) != 0) {
 		errno = EEXIST;
 		goto fail;
 	}
-	errno = 0;
-	fd = strtol(desc, &end, 10);
-	if (errno != 0 || end == desc || *end != '\0' || fd < 0 || fd > INT_MAX) {
+
+	/*
+	 * The ip4 address must match too: a request asking for a specific
+	 * address must not silently attach into an address-less (or
+	 * differently-addressed) jail, and a request asking for none must not
+	 * land in an addressed one.
+	 */
+	memset(ip4, 0, sizeof(ip4));
+	iperr = jail_get_ip4(name, ip4, sizeof(ip4));
+	if (iperr != 0 && iperr != ENOENT) {
+		errno = iperr;
+		goto fail;
+	}
+	if (rq->ip4_addr[0] != '\0') {
+		if (iperr == ENOENT || strcmp(ip4, rq->ip4_addr) != 0) {
+			errno = EEXIST;
+			goto fail;
+		}
+	} else if (iperr != ENOENT) {
+		errno = EEXIST;
+		goto fail;
+	}
+
+	if (!parse_desc_fd(desc, &fd)) {
 		errno = EPROTO;
 		goto fail;
 	}
-	return ((int)fd);
+	return (fd);
 
 fail:
-	if (desc[0] != '\0') {
-		fd = strtol(desc, NULL, 10);
-		if (fd >= 0 && fd <= INT_MAX)
-			(void)close((int)fd);
-	}
+	/*
+	 * Preserve the mismatch errno (EEXIST, or an ip4 lookup error) across
+	 * the descriptor cleanup: parse_desc_fd() does "errno = 0" before its
+	 * strtol(), which would otherwise clobber the reason to 0 and make the
+	 * caller mistake a definition conflict for a successful reuse.
+	 */
+	saved_errno = errno;
+	if (parse_desc_fd(desc, &fd))
+		(void)close(fd);
+	errno = saved_errno;
 	return (-1);
 }
 
@@ -194,11 +298,11 @@ fail:
  * closes when the consumer disconnects (see warden_request_handler).
  */
 static int
-create_jail(const char *name, const struct warden_request *rq)
+create_jail(const char *name, const struct warden_request *rq, int *out_jid)
 {
 	const char *host = rq->hostname[0] != '\0' ? rq->hostname : name;
 	char desc[32];
-	int jid;
+	int jid, fd;
 
 	memset(desc, 0, sizeof(desc));
 	if (rq->ip4_addr[0] != '\0')
@@ -212,7 +316,20 @@ create_jail(const char *name, const struct warden_request *rq)
 		    "host.hostname", host, "desc", desc, NULL);
 	if (jid < 0)
 		return (-1);
-	return ((int)strtol(desc, NULL, 10));
+	/*
+	 * Validate the descriptor exactly as the get paths do — a malformed or
+	 * empty "desc" must error, not silently yield fd 0.  The jail is already
+	 * created persist=1, so on a parse failure remove it rather than leak a
+	 * permanent jail with no descriptor to anchor it.
+	 */
+	if (!parse_desc_fd(desc, &fd)) {
+		(void)jail_remove(jid);
+		errno = EPROTO;
+		return (-1);
+	}
+	if (out_jid != NULL)
+		*out_jid = jid;
+	return (fd);
 }
 
 /*
@@ -227,22 +344,18 @@ static int
 owning_jail_descriptor(const char *name)
 {
 	char desc[32];
-	char *end;
-	long fd;
-	int jid;
+	int jid, fd;
 
 	memset(desc, 0, sizeof(desc));
 	jid = jail_getv(JAIL_GET_DESC | JAIL_OWN_DESC,
 	    "name", __DECONST(char *, name), "desc", desc, NULL);
 	if (jid < 0)
 		return (-1);
-	errno = 0;
-	fd = strtol(desc, &end, 10);
-	if (errno != 0 || end == desc || *end != '\0' || fd < 0 || fd > INT_MAX) {
+	if (!parse_desc_fd(desc, &fd)) {
 		errno = EPROTO;
 		return (-1);
 	}
-	return ((int)fd);
+	return (fd);
 }
 
 /*
@@ -271,7 +384,7 @@ warden_request_handler(struct channel *ch __unused, struct channel_message *m,
 	struct warden_reply rp;
 	struct channel_outgoing out;
 	char name[WARDEN_JAIL_NAME_MAX];
-	int jd = -1;
+	int jd = -1, created_jid = -1;
 
 	memset(&rp, 0, sizeof(rp));
 
@@ -287,6 +400,20 @@ warden_request_handler(struct channel *ch __unused, struct channel_message *m,
 		goto reply;
 	}
 
+	/*
+	 * worker_owning_fd is a single file-scope slot private to this worker.
+	 * If it is already set, this channel has already anchored an ephemeral
+	 * jail; a second ENTER would overwrite the slot and close the first
+	 * owning fd, tearing that jail down while the consumer is still using
+	 * it.  Reject the second ENTER instead of clobbering.
+	 */
+	if (worker_owning_fd >= 0) {
+		rp.status = EALREADY;
+		syslog(LOG_NOTICE, "ENTER (client %s) -> refused: channel "
+		    "already holds an ephemeral jail", client);
+		goto reply;
+	}
+
 	jd = existing_jail_descriptor(name, rq);
 	if (jd >= 0) {
 		syslog(LOG_INFO, "ENTER %s (client %s) -> reused jd", name,
@@ -297,7 +424,7 @@ warden_request_handler(struct channel *ch __unused, struct channel_message *m,
 		    client, strerror(rp.status));
 		goto reply;
 	} else {
-		jd = create_jail(name, rq);
+		jd = create_jail(name, rq, &created_jid);
 		if (jd < 0) {
 			rp.status = errno;
 			syslog(LOG_ERR, "ENTER %s path=%s (client %s) -> "
@@ -313,15 +440,24 @@ warden_request_handler(struct channel *ch __unused, struct channel_message *m,
 	 * For an ephemeral jail, retain its owning descriptor in this worker so
 	 * the jail is removed when the consumer disconnects (this worker exits).
 	 * The consumer still attaches with the non-owning descriptor sent below.
+	 * If acquiring the owning descriptor fails we must FAIL the request, not
+	 * silently degrade to a permanent persist=1 jail nothing reclaims: fail
+	 * closed in the safe direction (no leak).  Tear down a jail we created
+	 * here; a reused persistent jail is left as it was.
 	 */
 	if (jd >= 0 && (rq->flags & WARDEN_F_EPHEMERAL)) {
-		if (worker_owning_fd >= 0)
-			(void)close(worker_owning_fd);
 		worker_owning_fd = owning_jail_descriptor(name);
-		if (worker_owning_fd < 0)
-			syslog(LOG_WARNING, "ENTER %s (client %s) -> no owning "
-			    "descriptor, jail will not be ephemeral: %m", name,
+		if (worker_owning_fd < 0) {
+			rp.status = errno != 0 ? errno : EIO;
+			syslog(LOG_ERR, "ENTER %s (client %s) -> owning "
+			    "descriptor failed, failing request: %m", name,
 			    client);
+			if (created_jid >= 0)
+				(void)jail_remove(created_jid);
+			(void)close(jd);
+			jd = -1;
+			goto reply;
+		}
 	}
 
 reply:
@@ -372,6 +508,45 @@ warden_worker(int fd, const char *client)
 	return (0);
 }
 
+#ifdef WARDEN_TESTING
+/*
+ * Test entrypoints.  These expose the pure decision logic (name derivation,
+ * request validation, descriptor parsing) and the per-client channel worker to
+ * the ATF suite without duplicating any of it.  The daemon build never compiles
+ * this block; behavior of the shipped binary is unchanged.
+ */
+#include "warden_test.h"
+
+bool
+warden_test_jail_name(const char *label, char *out, size_t outsz)
+{
+
+	return (jail_name_from_label(label, out, outsz));
+}
+
+bool
+warden_test_valid_request(const struct warden_request *rq)
+{
+
+	return (valid_request(rq));
+}
+
+bool
+warden_test_parse_desc(const char *desc, int *out_fd)
+{
+
+	return (parse_desc_fd(desc, out_fd));
+}
+
+int
+warden_test_worker(int fd, const char *client)
+{
+
+	return (warden_worker(fd, client));
+}
+#endif /* WARDEN_TESTING */
+
+#ifndef WARDEN_TESTING
 /*
  * Expose system.Namespace and dispatch each accepted client on its own pdfork'd
  * worker.  warden is a privileged provider: it does NOT enter capability mode
@@ -446,3 +621,4 @@ main(int argc, char **argv)
 
 	return (0);
 }
+#endif /* !WARDEN_TESTING */

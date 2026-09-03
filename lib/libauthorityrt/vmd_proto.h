@@ -13,9 +13,11 @@
  * SYSTEM clients.
  *
  * Authority is the connecting channel's unforgeable label, never a wire
- * argument: vmd scopes each Component's vsock port namespace by a hash of its
- * label (VMD_PORT_BASE + a per-label offset), so one Component can never bind
- * another's port.  vmd owns the vsock transport (the /dev/vsock provider
+ * argument: vmd scopes each Component's vsock port namespace to a window it
+ * exclusively owns.  A hash of the label picks the window's home slot, but vmd
+ * keeps a registry keyed by the *full* label and relocates on hash collision, so
+ * a given concrete port range belongs to exactly one label and one Component can
+ * never bind another's port.  vmd owns the vsock transport (the /dev/vsock provider
  * authority delegated from authorityd), opens the socket on the Component's
  * behalf, binds it in the Component's scoped range, listens, and returns the
  * listening socket as the reply's single SCM fd — the same broker-holds-a-
@@ -38,8 +40,10 @@
 #define	VMD_OP_VSOCK_BIND	1	/* bind+listen a vsock endpoint for me */
 
 /*
- * The per-Component vsock port window vmd hands out.  vmd derives a window
- * offset from a hash of the caller's unforgeable label; the caller's window is
+ * The per-Component vsock port window vmd hands out.  vmd hashes the caller's
+ * unforgeable label to a home window and, via a full-label registry, assigns it
+ * a window it exclusively owns (relocating on hash collision); the caller's
+ * window is
  *
  *   [VMD_PORT_BASE + offset*VMD_PORTS_PER_LABEL,
  *    VMD_PORT_BASE + (offset+1)*VMD_PORTS_PER_LABEL)

@@ -67,6 +67,7 @@ tzfsd_config_defaults(struct tzfsd_config *cfg)
 	    sizeof(cfg->mountpoint));
 	(void)strlcpy(cfg->ephemeral_sync, "disabled",
 	    sizeof(cfg->ephemeral_sync));
+	cfg->default_refquota = TZFSD_DEFAULT_REFQUOTA;
 }
 
 static int
@@ -235,6 +236,19 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 	}
 
 	/*
+	 * Default per-claim space ceiling, in bytes (UCL size suffixes like "1gb"
+	 * are accepted and pre-multiplied by the parser).  0 disables the ceiling.
+	 */
+	if ((o = ucl_object_lookup(root, "default_refquota")) != NULL) {
+		int64_t v;
+
+		if (ucl_object_type(o) != UCL_INT ||
+		    (v = ucl_object_toint(o)) < 0)
+			goto invalid;
+		cfg->default_refquota = (uint64_t)v;
+	}
+
+	/*
 	 * Per-label isolated-open policy (default-deny).  Each entry grants one
 	 * exact absolute path to one label with a set of rights.  This is the
 	 * operator policy for TZFSD_OP_OPEN; absent = no path is openable.
@@ -264,8 +278,8 @@ tzfsd_config_load(struct tzfsd_config *cfg, const char *path)
 			    copy_string(pol->path, sizeof(pol->path), pa) == -1 ||
 			    ucl_object_type(ri) != UCL_ARRAY)
 				goto invalid;
-			/* Absolute, no traversal component. */
-			if (pol->path[0] != '/' || strstr(pol->path, "..") != NULL)
+			/* Absolute, no empty or ".." traversal component. */
+			if (!absolute_path_valid(pol->path))
 				goto invalid;
 			{
 				const ucl_object_t *px = ucl_object_lookup(ent,

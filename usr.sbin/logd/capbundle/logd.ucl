@@ -5,5 +5,12 @@ user = "capability";
 
 # Pre-exec containment: the logger holds many segment files, so a roomier
 # descriptor ceiling; no core dumps (may hold buffered log data).
-limits { nofile = 2048; nproc = 64; core = 0; }
+#
+# nproc must cover the worst-case process count when the maximum configurable
+# ingress_shards is requested, or a shard pdfork(2) fails EAGAIN partway and
+# logd never finishes starting.  Peak (during startup) is:
+#   1 main + 1 casper helper (cap_init, alive across the shard fork loop) +
+#   1 storage manager + LOGCMP_INGRESS_SHARDS_MAX (64) shard workers = 67.
+# 72 leaves headroom above that ceiling.
+limits { nofile = 2048; nproc = 72; core = 0; }
 umask = "0077";
