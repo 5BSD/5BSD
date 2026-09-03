@@ -8,40 +8,41 @@ runs a second one — a **capability plane**, in which authority is a held,
 unforgeable descriptor rather than a uid, a path, or a peer credential.
 
 That pairing is the whole idea. The traditional BSD system stays fully
-intact, so nothing you know stops working. The capability plane sits
+intact, so nothing you know stops working; the capability plane sits
 alongside it, so a service adopts the stronger model when it is ready, one
-service at a time. And 5BSD ships an **SDK** — `libservice`,
-`libcapbundle` — for writing a *capability*: a program reached by name,
-launched on demand, sandboxed by construction, and served to each client in
-its own isolated worker. [The Hybrid Model: BSD plus a Capability
-SDK](development/hybrid-model.md) shows what that looks like in code.
+service at a time.
 
-## What 5BSD is
+## Two systems, one machine
 
-A handful of decisions define the platform; the rest of this Epic is their
-consequences (laid out in full in [Architecture](architecture.md)).
+In the traditional system, a process's power comes from who it is: its uid,
+the paths it can reach, the peer credentials on its sockets. In the
+capability plane, power comes from what a process *holds*. A capability is a
+typed service with a name — `system.Filesystem`, `system.Log`,
+`system.Network` — and a program reaches one by resolving the name over a
+`libservice` channel whose identity the kernel stamps and nothing can forge.
+What the program may then do is exactly what it holds descriptors for,
+never what its uid implies. The name is the contract: swap the binary behind
+a capability and its consumers never notice.
 
-- **Authority is a held capability, not a uid.** What a process may do is
-  exactly what it holds an unforgeable descriptor for — never what its uid,
-  path, or socket peer-credential implies. See [The Authority
-  Model](security/authority-model.md).
-- **A hybrid by design.** The capability plane runs *beside* the traditional
-  BSD system, not instead of it. `capsule` can hand PID 1 back to stock
-  `init`, `serviced` coexists with `rc(8)`, and `reboot`/`halt`/signals stay
-  standard — so adoption is incremental and the machine works at every step.
-- **Reached by name, through a library.** Capabilities are typed services
-  (`system.Filesystem`, `system.Log`, `system.Network`, …) resolved by name
-  over a `libservice` channel. The name is the contract: replace the binary
-  behind a capability and its consumers never notice. No hand-rolled sockets,
-  no `getpeereid(3)`.
-- **Policy in manifests, not code.** A service ships as a **capability
-  bundle** whose manifest declares only how to launch a program; the program
-  acquires whatever authority it needs at runtime, by name, each grant scoped
-  to its own unforgeable channel label.
-- **Enforcement in the kernel, below the API.** The 5BSD kernel's
-  mandatory-access-control and capability framework gates every operation; an
-  application sees policy only as `EACCES`/`EPERM` and cannot see, map, or
-  disable the layer that produced it.
+Writing for the plane feels less exotic than that sounds, because 5BSD ships
+an **SDK** — `libservice`, `libcapbundle` — that does the heavy lifting. A
+few fixed calls turn a program into a *capability provider*: reached by
+name, launched on demand, sandboxed by construction, each client served in
+its own isolated worker. The program ships as a **capability bundle**, a
+`.cap` directory whose manifest says only how to launch it — the program
+acquires whatever authority it needs at runtime, by name, each grant scoped
+to its own unforgeable channel label. [The Hybrid Model: BSD plus a
+Capability SDK](development/hybrid-model.md) builds one end to end.
+
+None of this asks the rest of the machine to change. `capsule` — the
+capability plane's PID 1 — can hand off to stock `init`; `serviced` coexists
+with `rc(8)`; `reboot`, `halt`, and signals stay standard. Underneath both
+systems, the 5BSD kernel's mandatory-access-control and capability framework
+does the enforcing: an application sees policy only as `EACCES`/`EPERM`,
+from a layer it cannot see, map, or disable. The full set of design
+principles behind this shape is enumerated in
+[Architecture](architecture.md); the authority model itself has
+[its own chapter](security/authority-model.md).
 
 ## What the platform provides
 
@@ -54,6 +55,7 @@ cases under `tests/sys/mac_capability/`:
 |-------|--------------|
 | **MAC_CAPABILITY** | Capability-based IPC: kernel message passing where the file descriptor *is* the credential. Carries a cryptographic per-process nonce that rotates on `exec` and is inherited on `fork` — one process identity across every layer. Services are loadable modules. |
 | **MACF** | 38+ mandatory access-control hooks gating process lifecycle, memory (W^X), the descriptor layer, vnodes, mounts, and info disclosure. Policy modules are loadable; no application code can bypass them. |
+| **mac_abac** | Attribute-based access control: a loadable MACF policy module expressing policy over process and object attributes. |
 | **Capsicum** | Capability mode for process sandboxing — enter it and lose the ability to open new global resources. |
 | **vnode_claim** | Per-descriptor access control: bind an fd to a process identity so possessing it is not enough to use it. |
 | **capprotect** | Per-process integrity shields — invisible to `ps`, immune to `ptrace`/`kill`, enforced by MACF, controlled by capability. |
@@ -71,6 +73,10 @@ own section of this Epic:
   ([System Services](system/capsule.md)).
 - **TrustedZFS** — a capability-descriptor API over ZFS, brokered by `tzfsd`
   ([Storage](storage/trustedzfs.md)).
+- **OpenEndpointSecurity (OES)** — an endpoint-security event framework over
+  MACF: clients subscribe to authoritative kernel events (exec, open, close,
+  signal, …) for detection and response
+  ([Endpoint Security](security/endpoint-security.md)).
 - **WASPNest** — the virtualization stack (bhyve lineage) with modern VirtIO
   models, vsock, live migration, and nested VMX
   ([Virtualization](virtualization/overview.md)).
