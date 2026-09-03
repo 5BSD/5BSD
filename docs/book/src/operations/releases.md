@@ -89,8 +89,8 @@ troubleshooting.
 Release work is validated by booting the produced images. The serial
 console default above exists for this purpose, and the tree carries
 capsule VM boot tests exercised against release-built images
-(commits `9b148611045` "release: extend Oracle VM boot testing" and
-`495541ff50d` "release: make Oracle PID 1 VM test reproducible"). Related
+(commits `9b148611045` "release: extend Capsule VM boot testing" and
+`495541ff50d` "release: make Capsule PID 1 VM test reproducible"). Related
 hardening: `b6fff311996` makes source-tree VM images fail safely and
 `80f46b38aeb` avoids duplicate EFI fstab entries.
 

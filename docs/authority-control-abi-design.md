@@ -137,7 +137,7 @@ this SysV-compat path `kill(1, sig)`s PID 1 and is *not* converted, to keep the
 fallback `/sbin/init` binary free of any authorityd/socket dependency (it is the
 recovery init in `kern.init_path`). Under a shielded capsule, `init N`
 silently no-ops. Use `reboot(8)`/`shutdown(8)`/`halt(8)`/`authorityctl` instead;
-telinit under Authority PID 1 is unsupported.
+telinit under Capsule is unsupported.
 
 ## Emergency reboot when the event loop is wedged
 

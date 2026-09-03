@@ -40,7 +40,7 @@ this is its actual role. Not a violation.
 | # | What | Where | Why it's misplaced |
 |---|------|-------|--------------------|
 | **V1** | **Storage brokering** — the only userland-*daemon* client inside PID 1 | `authority_proto.c:47` `#include "tzfsd.h"`; `:400-455` persistent tzfsd channel + session; `MINT_STORAGE`/`DESTROY_STORAGE` forward. `Makefile:55,58` `-I.../libtzfsd`, `LIBADD=… tzfsd` | PID 1 is a tzfsd client; a storage-daemon stall can reach init. |
-| **V2** | **Module loading** — raw privileged syscall as policy | `authority_proto.c:891-893` `modfind()`/`kldload()` in `handle_ensure_kmod`; `serviced/kldmgr_client.c` + `execute.c:1214` decide *which* modules | The deleted `kldmgrd`'s job, resurrected across PID 1 + serviced. `control.c:10` already admits "kldload … here temporarily". |
+| **V2** | **Module loading** — raw privileged syscall as policy | `authority_proto.c:891-893` `modfind()`/`kldload()` in `handle_ensure_kmod`; `serviced/kldmgr_client.c` + `execute.c:1214` decide *which* modules | The module broker's job — now owned by `sysextd` (`system.SystemExtension`) — leaked back across PID 1 + serviced after the standalone in-PID1 loader was removed. `control.c:10` already admits "kldload … here temporarily". |
 | **V3** | **Jail construction** — raw privileged syscall | `authority_proto.c:682` `jail_set(iov, niov)` in `handle_create_jail`; serviced carries inline `jail_name/hostname/ip4/path` in `svc_manifest` | PID 1 assembles jailparams and creates jails — that's a jail broker's job. |
 
 ### serviced's mirror-image coupling

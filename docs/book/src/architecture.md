@@ -172,7 +172,7 @@ product stacks, each covered in its own section:
 
 | Stack | Components | Section |
 |-------|-----------|---------|
-| Init & services | `capsule` (PID 1), `authorityd`, `serviced`, `authorityctl`, and the `tzfsd`/`warden`/`sysextd`/`vmd` brokers | [System Services](system/capsule.md) |
+| Init & services | `capsule` (PID 1), `authorityd`, `serviced` (launcher), `authorityctl`, and the capability providers `tzfsd` (Filesystem), `warden` (Namespace), `sysextd` (SystemExtension), `vmd` (VM), `authagentd` (AuthAgent), `logd` (Log), `localnetwork` (Network), `traced` (Trace), `auditbrokerd` (Audit), `localcrypto` (Crypto), `bsdnotify` (Notify) | [System Services](system/capsule.md) |
 | Virtualization | WASPNest (bhyve), VirtIO models, vsock, migration | [Virtualization](virtualization/overview.md) |
 | Bluetooth | `blued`, `meshd`, `bluedctl`/`meshctl` | [Bluetooth](bluetooth/overview.md) |
 | Storage | TrustedZFS, `tzfsd`, `tzfsctl` | [Storage](storage/trustedzfs.md) |

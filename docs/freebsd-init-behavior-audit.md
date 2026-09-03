@@ -4,7 +4,7 @@
 
 This document records the complete externally meaningful behavior of the
 `init(8)` implementation in this source tree as reviewed on 2026-07-19.  It is
-the compatibility baseline for making Authority PID 1.  It describes what the
+the compatibility baseline for the Capsule PID 1 personality.  It describes what the
 code does, including obscure recovery and failure paths; it does not assume
 that every historical behavior must be copied unchanged.
 

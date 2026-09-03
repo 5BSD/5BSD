@@ -1,4 +1,4 @@
-# Authority as PID 1: Implementation TODO
+# Capsule: Implementation TODO
 
 Companion compatibility baseline:
 `docs/freebsd-init-behavior-audit.md`.  That audit is authoritative for what
@@ -77,7 +77,7 @@ Relevant source:
 
 - [ ] Authority daemonizes unless foreground mode is requested.
 - [ ] Normal Authority shutdown ends in `exit(0)`, which would panic the kernel
-      when Authority is PID 1.
+      when Capsule is PID 1.
 - [ ] Authority calls `PROC_REAP_ACQUIRE`; real init is already the permanent
       reaper, so that operation returns `EBUSY`.
 - [ ] Authority requires a pidfile under `/var/run`, even though `/var` may not be
@@ -104,7 +104,7 @@ Relevant source:
 ## Target architecture
 
 ```text
-Authority PID 1
+Capsule PID 1
 ├── early boot and recovery core
 ├── global child reaper
 ├── lifecycle/control state machine
@@ -135,7 +135,7 @@ or been deliberately retained as a compatibility service.
       with a migration path.
 - [ ] Maintain a requirement-to-test matrix keyed to the audit's numbered
       sections.
-- [ ] Document the exact Authority PID 1 state machine.
+- [ ] Document the exact Capsule PID 1 state machine.
 - [ ] Define named states at minimum:
   - `EARLY_BOOT`
   - `FILESYSTEM_BOOTSTRAP`
@@ -208,7 +208,7 @@ script while stock `init(8)` remains PID 1.
 - [ ] Startup failure reliably returns to stock init's single-user shell.
 - [ ] Stock `/etc/rc` remains selectable without reinstalling the system.
 
-## Phase 2: Introduce an Authority PID 1 personality
+## Phase 2: Introduce a Capsule PID 1 personality
 
 Add a distinct initialization path selected by `getpid() == 1`. Do not overload
 ordinary daemon mode with scattered PID checks.
@@ -329,11 +329,11 @@ ordinary daemon mode with scattered PID checks.
       Authority's required multi-user target.
 - [ ] Support autoboot and fastboot semantics.
 - [ ] Prevent `/etc/rc` from starting an ordinary daemon instance of Authority
-      when Authority is already PID 1.
+      when Capsule is already PID 1.
 - [ ] Initially let rc start every enabled legacy service.  Suppress an rc
       daemon launch only after that specific service has an approved,
       rollback-tested `serviced` replacement (plus the special case that rc
-      must not launch a second Authority when Authority is PID 1).
+      must not launch a second Capsule when Capsule is PID 1).
 - [ ] Define the boundary between the Unix compatibility world and the Authority
       capability world.
 - [ ] Ensure resource claims occur after required mounts exist but before
@@ -381,7 +381,7 @@ latter to happen atomically.
       rc.d files or independently run a second copy of the graph.
 - [ ] Initially let that stock `/etc/rc` graph start all currently enabled
       legacy services, apart from the script that would start a duplicate
-      Authority PID 1.
+      Capsule PID 1.
 - [ ] Preserve rc's two-pass discovery: base scripts run through the
       early/late divider before mounted local-startup directories are added
       and the graph is recalculated.
@@ -473,7 +473,7 @@ For every daemon, perform the following as one reviewed change:
 
 ### Exit gate
 
-- [ ] An unmodified legacy service set boots and shuts down under Authority PID 1.
+- [ ] An unmodified legacy service set boots and shuts down under Capsule PID 1.
 - [ ] A mixed system with rc-owned and `serviced`-owned daemons boots with one
       instance of every service and correct cross-world readiness ordering.
 - [ ] Mixed ownership shuts down in reverse dependency order while the
@@ -482,7 +482,7 @@ For every daemon, perform the following as one reviewed change:
 - [ ] `service(8)` remains a valid operator interface for both ownership modes.
 - [ ] The transition phase can remain in production safely for an extended
       period; completing every daemon migration is not required to deploy
-      Authority PID 1.
+      Capsule PID 1.
 
 ## Phase 7: Implement console recovery and single-user mode
 
@@ -567,7 +567,7 @@ Traditional tools currently signal PID 1:
 - [ ] Decide on a transition period for this signal ABI.
 - [ ] Extend the Authority control protocol with equivalent lifecycle operations.
 - [ ] Update `shutdown(8)`, `reboot(8)`, and `halt(8)` to prefer the Authority
-      control protocol when Authority is PID 1.
+      control protocol when Capsule is PID 1.
 - [ ] Provide a compatibility utility for System V-style init commands.
 - [ ] Authenticate control peers using kernel credentials or explicit
       capabilities.
@@ -755,7 +755,7 @@ snapshots and console access.
 
 ## Phase 14: Documentation and operator tooling
 
-- [ ] Add an Authority PID 1 mode section to `authorityd(8)`.
+- [ ] Add a Capsule PID 1 mode section to `authorityd(8)`.
 - [ ] Document loader variables and rollback procedures.
 - [ ] Document the lifecycle control protocol.
 - [ ] Update `shutdown(8)`, `reboot(8)`, and `halt(8)` manuals if their

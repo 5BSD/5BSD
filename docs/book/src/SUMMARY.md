@@ -18,6 +18,7 @@
 - [Process Protections](security/process-protections.md)
 - [Descriptor Types](security/descriptors.md)
 - [Endpoint Security (OES)](security/endpoint-security.md)
+- [auditbrokerd (BSM Audit Broker)](security/auditbrokerd.md)
 - [Cryptographic Services](security/crypto.md)
 
 # Developer Guide
@@ -50,6 +51,7 @@
 - [Capsule (PID 1)](system/capsule.md)
 - [serviced](system/serviced.md)
 - [BSDNotify](system/bsdnotify.md)
+- [localnetwork (Network Broker)](system/localnetwork.md)
 - [rc Integration](system/rc-integration.md)
 - [Service Manifests](system/manifests.md)
 
@@ -57,6 +59,7 @@
 
 - [ObservableBSD](observability/observablebsd.md)
 - [DTrace and Hardware Tracing](observability/dtrace.md)
+- [traced (DTrace Capability Broker)](observability/traced.md)
 
 # Operations
 

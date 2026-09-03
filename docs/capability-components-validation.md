@@ -38,7 +38,8 @@ broken, and 178 root-only tests skipped across 34 suites:
 - `libfilesystemcmp`, `libnetworkcmp`, `liblogcmp`, `libnotify`,
   `libtracecmp`, `libauditcmp`, `libkldmgr`, and `librebootctl`;
 - `localfilesystem`, `localnetwork`, `logd`, `bsdnotify`, `traced`,
-  `auditbrokerd`, `kldmgrd`, and `rebootd`;
+  `auditbrokerd`, and `sysextd` (reboot validation now runs through the
+  `capsule`/`authorityctl` lifecycle path, not a standalone daemon);
 - `authorityd` and `serviced`; and
 - all nine control-tool suites.
 
@@ -67,8 +68,8 @@ The per-suite result counts were:
 | bsdnotify | 25 | 0 |
 | traced | 15 | 3 |
 | auditbrokerd | 14 | 3 |
-| kldmgrd | 22 | 9 |
-| rebootd | 30 | 7 |
+| sysextd | 22 | 9 |
+| authorityctl lifecycle | 30 | 7 |
 | authorityd | 26 | 42 |
 | serviced | 16 | 71 |
 | nine control suites | 59 | 10 |
@@ -96,24 +97,25 @@ restoring `MK_DTRACE=yes`, 26 DTrace/provider, bundle, observability, and
 security contract tests passed.  This checks both compilations rather than
 allowing probe-only state or stale non-PIC archives to hide build defects.
 
-AuditCmp, kldmgrd, and rebootd have injected production-backend tests.
+AuditCmp, sysextd, and the reboot lifecycle path have injected
+production-backend tests.
 They prove that policy denial and malformed input cannot reach the privileged
 backend, exercise success and errno mapping, and cover AuditCmp rate limits,
-kldmgrd unload ordering and atomicity, and rebootd pending-state rollback.
+sysextd unload ordering and atomicity, and reboot pending-state rollback.
 Source-contract tests also enforce that privileged workers apply capprotect
 before dropping inherited service authority, so the protection lease cannot
 be closed before use.
 
-The kldmgrd backend boundary includes module enumeration. Policy denial
+The sysextd backend boundary includes module enumeration. Policy denial
 does not call `kldnext` or `kldstat`, capacity is bounded, and enumeration or
 status errors produce an error reply instead of a successful partial list.
-Rebootd holds pending state in an anonymous shared atomic mapping created
-before capability entry. Unit and fork tests prove that one worker's request
+The reboot lifecycle path holds pending state in an anonymous shared atomic
+mapping created before capability entry. Unit and fork tests prove that one worker's request
 is visible to other sessions, competing mutations fail with `EALREADY`
 without a backend call, and backend failure rolls the state back.
 
-The BsdNotify UCL policy loader and the Kldmgrd, Traced, and Rebootd
-privileged allow-list loaders now open configuration with `O_NOFOLLOW`,
+The BsdNotify UCL policy loader and the SystemExtension, Traced, and
+reboot-lifecycle privileged allow-list loaders now open configuration with `O_NOFOLLOW`,
 require a regular file with trusted ownership and no group/world write bit,
 and impose a 64 KiB input ceiling.  The line-oriented loaders also reject
 embedded NUL bytes instead of accepting a parser-dependent prefix.  Focused
@@ -250,8 +252,7 @@ doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/logd/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/bsdnotify/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/traced/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/auditbrokerd/tests/Kyuafile
-doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/kldmgrd/tests/Kyuafile
-doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/rebootd/tests/Kyuafile
+doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/authorityctl/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/authorityd/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/serviced/tests/Kyuafile
 doas kyua test -k /usr/obj/usr/src/amd64.amd64/usr.sbin/servicectl/tests/Kyuafile
@@ -354,7 +355,7 @@ Use these locations for new automation so ownership remains clear:
 | libservice worker-channel ownership and malformed replies | `lib/libservice/tests` |
 | Serviced activation, descriptor budget, and coalition lifecycle | `usr.sbin/serviced/tests` |
 | Beacon admission, routing, policy, timers, and scale | `usr.sbin/bsdnotify/tests` |
-| Sundown scheduling, durable recovery, and notifications | `usr.sbin/rebootd/tests` |
+| Reboot lifecycle scheduling, durable recovery, and notifications | `usr.sbin/authorityctl/tests` |
 | Ledger storage, privacy, loss, and crash recovery | `usr.sbin/logd/tests` |
 | Local filesystem and network end-to-end behavior | provider tests plus `usr.sbin/serviced/tests/component_integration_test.sh` |
 | Package install, upgrade, removal, and installed suites | release qualification scripts under `tools/regression/capability-components` |
@@ -382,7 +383,7 @@ package lifecycle script; this document does not imply that it exists today.
 | `BCN-003` | new fault test | Return truncated, oversized, descriptor-bearing, negative-status, `EINVAL`, and `EPROTO` control replies. Each is fatal. `ENOSPC` and `ENOMEM` are per-client rejections and must not corrupt other sessions. |
 | `BCN-004` | qualification run | Open 50,000 sessions on the scale host, split across publishers, subscribers, state users, and timers. Verify the fixed router process count, bounded memory per session, descriptor budget, fair dispatch, and clean reclamation after simultaneous disconnect. |
 | `BCN-005` | new stress test | Saturate every subscriber queue while healthy subscribers continue consuming. Publishers must not block on slow subscribers; GAP counts must be exact and monotonic, and one subscriber's death must not affect another. |
-| `BCN-006` | new identity test | Run Rebootd with runtime identity `org.5bsd.system.reboot/rebootd`. All four authorized topics must publish successfully; the former `/rebootd` identity and forged payload identities must be denied and audited. |
+| `BCN-006` | new identity test | Publish the reboot-lifecycle Beacon topics under runtime identity `org.5bsd.system.lifecycle`. All four authorized topics must publish successfully; superseded and forged payload identities must be denied and audited. |
 | `BCN-007` | new lifecycle test | Quiesce BsdNotify with active timers, pending infinite `NEXT` requests, queued publications, and half-closed clients. It must stop admission, resolve or cancel retained requests, reclaim timers, acknowledge quiesce before deadline, and leave no worker. |
 | `BCN-008` | new restart test | Crash and restart BsdNotify during publish, state update, subscription change, and timer firing. Volatile state may disappear, but clients must receive peer death, reconnect cleanly, and never receive an event attributed to the wrong router epoch. |
 
@@ -392,15 +393,15 @@ the session must fail closed and the received descriptors must be closed.
 Capability delegation requires a separate named service protocol and must not
 be added to broadcast notification operations.
 
-### Rebootd reboot lifecycle
+### Reboot lifecycle (capsule/authorityctl)
 
 | ID | Status | Test and pass criteria |
 | --- | --- | --- |
 | `SDN-001` | new end-to-end test | Request the default delayed reboot and verify `requested`, `scheduled`, and `imminent` notifications contain the correct authenticated publisher, request ID, reason, flags, and remaining deadline. The default delay must be exactly ten seconds. |
 | `SDN-002` | new race test | Race cancellation against timer expiry at every millisecond around the deadline. Exactly one terminal outcome is allowed: `cancelled`, or durable disarm followed by reboot. |
-| `SDN-003` | reboot-vm qualification | Power-cut after temporary-state sync, rename, directory sync, notification publication, durable disarm, and immediately before reboot. On boot, Rebootd must reconstruct one valid state and must never replay a completed reboot request. |
+| `SDN-003` | reboot-vm qualification | Power-cut after temporary-state sync, rename, directory sync, notification publication, durable disarm, and immediately before reboot. On boot, the reboot lifecycle path must reconstruct one valid state and must never replay a completed reboot request. |
 | `SDN-004` | new dependency test | Stop or crash BsdNotify before each notification. Reboot policy must state whether notification failure aborts or merely records degraded observability; the implementation and tests must enforce that choice without an unbounded wait. |
-| `SDN-005` | new quiesce test | Shutdown serviced while Rebootd has a pending request. Durable state, notification outcome, cancellation policy, and quiesce status must agree after restart. |
+| `SDN-005` | new quiesce test | Shutdown serviced while the reboot lifecycle path has a pending request. Durable state, notification outcome, cancellation policy, and quiesce status must agree after restart. |
 
 ### Logd logging qualification
 
@@ -494,7 +495,7 @@ they remain required runs and are not counted as passes.
 - **AuditBrokerd:** test auditd stopped, suspended, rotating, full filesystem,
   backpressured pipe, malformed record, per-identity rate exhaustion, and
   restart. Audit submission failure must not deadlock the calling daemon.
-- **Kldmgrd:** use a dedicated signed test module to cover load, duplicate load,
+- **SystemExtension (`sysextd`):** use a dedicated signed test module to cover load, duplicate load,
   dependency ordering, unload refusal, rollback, worker crash, and concurrent
   requests. Confirm that policy denial never calls the kernel backend.
 - **Authorityd:** exercise every capability service with wrong versions,

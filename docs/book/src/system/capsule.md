@@ -21,7 +21,7 @@ Both are satisfied by a **default** 5BSD install — `bsdinstall` and the VM ima
 builder select **Auto (ZFS)** by default on amd64/arm64/i386/riscv — but they
 matter for anyone partitioning manually or building a custom image:
 
-- **The `mac_capability` policy modules are loaded at boot.** Authority (PID 1)
+- **The `mac_capability` policy modules are loaded at boot.** Capsule
   opens `/dev/mac_capability` before it can do anything; without the device the
   kernel falls through `init_path` to stock `/sbin/init` and no plane comes up.
   The full stack — the `mac_capability` core plus `_channel`, `_node`,
@@ -147,7 +147,7 @@ authorityctl shutdown    # graceful authorityd shutdown (root)
 Authority's capability integrity shield (`CP_SF_SIGNAL`, plus `SIGKILL` and
 `SIGCONT` protection) denies ambient PID-based signalling of protected
 processes — and PID 1 is the most protection-worthy process on the system.
-When Authority is PID 1, the `CP_SF_SIGNAL` shield is *deferred* until the
+When Capsule is PID 1, the `CP_SF_SIGNAL` shield is *deferred* until the
 control socket is up and the converted tools have an authenticated lifecycle
 path; it is then raised, making the signal ABI unreachable
 (`usr.sbin/authorityd/mac_capability_claims.c`). Signal handlers remain
@@ -164,7 +164,7 @@ directly and touches neither socket nor init; ddb's `reboot` on the console;
 and a platform/BMC/hypervisor watchdog. PID 1 deliberately does not pet a
 software `watchdog(4)`.
 
-**Status.** `init N` (SysV telinit) is unsupported under Authority PID 1: that
+**Status.** `init N` (SysV telinit) is unsupported under Capsule: that
 compatibility path signals PID 1 and is deliberately not converted, so it
 silently no-ops under the shield — use `reboot(8)`/`shutdown(8)`/`halt(8)`.
 `docs/service-architecture-plan.md` is the authoritative pre-v1 service-manager

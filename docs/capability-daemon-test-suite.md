@@ -13,7 +13,8 @@ The scope is:
   `libcapbundle`, and every typed service library;
 - `authorityd`, `serviced`, `authorityctl`, and `servicectl`;
 - FileSystemCmp, NetworkCmp, LogCmp, Notify, TraceCmp, and AuditCmp;
-- privileged managed services such as `kldmgrd` and `rebootd`;
+- privileged managed services such as `sysextd`, and the reboot lifecycle
+  path through `capsule`/`authorityctl`;
 - capability-managed device brokers such as `blued`.
 
 The objective is not merely a green suite.  The suite must demonstrate that
@@ -144,7 +145,7 @@ normal daemon/component suite, but they are not gates for the focused
 capability-correctness runner: instrumentation failure does not imply that a
 claim, token lease, confinement boundary, or lifecycle invariant is broken.
 
-`kldmgrd` and `rebootd` component coverage:
+`sysextd` and reboot-lifecycle component coverage:
 
 - complete request-validation and client-label authorization matrices;
 - backend success and every relevant backend `errno` through injected syscall
@@ -280,8 +281,7 @@ Each program has a component matrix independent of the ten cross-stack cases.
 | `bsdnotify` | independent sessions, default-deny policy, subscriptions/timers, queue pressure, event ordering, close/reopen/fork |
 | `traced` | explicit-label policy, DTrace descriptor rights/propagation, tuned buffer defaults, unavailable device, worker confinement |
 | `auditbrokerd` | identity/rate policy, typed validation, injected audit backend, response mapping, no backend call on denial, worker confinement |
-| `kldmgrd` | label policy, request validation, injected kld backend, response mapping, no backend call on denial |
-| `rebootd` | label policy, request validation, injected reboot backend, response mapping, no backend call on denial |
+| `sysextd` | label policy, request validation, injected kld backend, response mapping, no backend call on denial |
 | `blued` | config/persistence/control protocols, virtual-HCI behavior, serviced activation, Bluetooth claim confinement and revocation |
 
 For every daemon state machine, the suite must cover every state and transition,
@@ -319,9 +319,9 @@ Required full-stack cases:
 8. Serviced crash closes or revokes subordinate authority and follows the
    declared Authorityd restart policy without preserving stale registrations or
    claims.
-9. A real privileged broker (`kldmgrd` or a non-destructive `rebootd` status
-   path) authenticates its client label end to end.  Dangerous operations stay
-   in L2 with injected backends.
+9. A real privileged broker (`sysextd`, or a non-destructive reboot-status
+   path through `capsule`/`authorityctl`) authenticates its client label end to
+   end.  Dangerous operations stay in L2 with injected backends.
 10. A virtual-HCI `blued` instance activates through serviced, receives only
     its Bluetooth claims, reaches ready, and loses controller authority after
     termination.
@@ -501,7 +501,7 @@ Exit gate: no newly modified test can report pass while its stack is alive.
 - Migrate `libservice_test:libservice_naming` first because it exercises the
   leaked-daemon failure mode.
 - Migrate Authorityd bootstrap, serviced integration, servicectl, authorityctl,
-  kldmgrd, and rebootd suites.
+  and sysextd suites.
 - Delete superseded lifecycle functions after the final caller migrates.
 
 Exit gate: killing or timing out a test body leaves no Authorityd, serviced, or
@@ -567,7 +567,7 @@ configuration and diagnostic tool suites, including `filesystemcmpctl` and
 The direct `libauthorityctl` suite adds six transport and framing passes. Clean
 `MK_DTRACE=yes` and `MK_DTRACE=no` builds passed for the affected libraries
 and providers; the non-DTrace matrix ran 255 passing unprivileged tests with
-30 privileged skips. AuditCmp, kldmgrd, and rebootd use injected production
+30 privileged skips. AuditCmp, sysextd, and the reboot lifecycle path use injected production
 backend interfaces to
 prove denial-without-side-effect, success, error mapping, and rollback without
 performing a privileged audit, module, reboot, or shutdown operation.
@@ -624,8 +624,9 @@ capability cases remain release gates because this host has no privilege
 wrapper.
 
 The public operational names are `authorityd`, `serviced`, `localfilesystem`,
-`localnetwork`, `logd`, `bsdnotify`, `traced`, `auditbrokerd`, `rebootd`,
-and `kldmgrd`. Component and typed-library names remain descriptive API names.
+`localnetwork`, `logd`, `bsdnotify`, `traced`, `auditbrokerd`, and `sysextd`;
+reboot and halt run through the `capsule` PID-1 personality and `authorityctl`
+rather than a standalone daemon. Component and typed-library names remain descriptive API names.
 The final source contract specifically prevents the rc-variable/hook mismatch
 found during the rename from recurring.
 
@@ -673,8 +674,7 @@ descriptive names so application code remains obvious.
 | `bsdnotify` | bounded publish/subscribe, state, and timer service | Code-complete; live identity-policy and capability-channel attachment qualification remain. |
 | `traced` | administrator-only DTrace capability broker | Restricted-production only; raw DTrace delegation must remain explicitly privileged until a provider-owned query API replaces it. |
 | `auditbrokerd` | rate-limited OpenBSM submission service | Code-complete; live auditd backpressure, rotation, and failure qualification remain. |
-| `rebootd` | durable reboot scheduling and Beacon publication | Code-complete; only non-destructive status paths are eligible for routine CI; real reboot recovery requires a disposable host. |
-| `kldmgrd` | policy-controlled kernel-module management | Code-complete; live load/unload rollback requires a disposable host and dedicated test module. |
+| `sysextd` | policy-controlled kernel-module management | Code-complete; live load/unload rollback requires a disposable host and dedicated test module. |
 
 “Code-complete” is not a release sign-off. It means the reviewed architecture,
 bounded resource model, typed API, sandbox transition, managed quiesce path,
@@ -689,7 +689,7 @@ The naming contract rejects stale daemon manual-page references and ties every
 public name to its `PROG`, package, bundle path, and rc boundary. Internal wire
 identifiers and typed library names such as `notify` and `logcmp` are not
 daemon aliases and remain intentionally descriptive.
-The final audit also corrected Rebootd's authenticated Beacon policy identity,
+The final audit also corrected the reboot lifecycle path's authenticated Beacon policy identity,
 Ledger's syslog tag, and every root-only provider object path; those are now
 covered by the same operational-name contract.
 

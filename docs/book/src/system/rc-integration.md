@@ -101,7 +101,7 @@ the full pattern, including fail-closed stop).
 - `sysrc`, `service <name> start|stop|status`, and rc.conf layering work
   unchanged for rc-owned services. Use `servicectl services` for the managed
   world and `authorityctl status` for the spine and claims.
-- `init 0/1/6` (SysV telinit) is unsupported under Authority PID 1; use
+- `init 0/1/6` (SysV telinit) is unsupported under Capsule; use
   `shutdown(8)`, `reboot(8)`, `halt(8)`.
 - Rollback: stock `/sbin/init` stays installed and selectable. The shipped
   `init_path` (`/boot/loader.conf.d/capsule.conf`) falls back through

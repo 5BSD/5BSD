@@ -320,7 +320,7 @@ policy *reproduce today's behavior* so nothing breaks while the mechanism moves.
   stock init). No daemon is special-cased under PID 1.
 
   *P4a — tzfsd under serviced (done first; subsumes the old "tzfsd socket" item).*
-  Today authorityd (PID 1) `posix_spawn`s tzfsd lazily on the first storage mint —
+  Today capsule `posix_spawn`s tzfsd lazily on the first storage mint —
   the lone exception to the principle. There is no real bootstrap-ordering reason
   for it: serviced reads its static bundle catalog + config from a ZFS-auto-mounted
   `/Capabilities` with no tzfsd involvement (proven at boot — serviced loads all
