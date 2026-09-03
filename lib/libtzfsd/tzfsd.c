@@ -23,6 +23,7 @@
 
 struct tzfsd_client {
 	struct service_session *session;
+	pid_t			 owner;	/* getpid() at open; fail-closed guard */
 };
 
 static struct tzfsd_client *
@@ -33,6 +34,7 @@ client_wrap(int fd)
 	c = calloc(1, sizeof(*c));
 	if (c == NULL)
 		return (NULL);
+	c->owner = getpid();
 	if (service_session_create(fd, &c->session) == -1) {
 		int saved = errno;
 
@@ -135,14 +137,14 @@ tzfsd_call(struct tzfsd_client *c, const struct tzfsd_request *rq,
 }
 
 int
-tzfsd_request(struct tzfsd_client *c, const struct tzfsd_req *req,
-    struct tzfsd_grant *out)
+tzfsd_request_quota(struct tzfsd_client *c, const struct tzfsd_req *req,
+    uint64_t quota, struct tzfsd_grant *out)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 	int handle = -1;
 
-	if (c == NULL || req == NULL || out == NULL) {
+	if (c == NULL || c->owner != getpid() || req == NULL || out == NULL) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -152,6 +154,7 @@ tzfsd_request(struct tzfsd_client *c, const struct tzfsd_req *req,
 	rq.op = TZFSD_OP_REQUEST;
 	rq.flags = req->flags;
 	rq.rights = req->rights;
+	rq.quota = quota;
 	rq.lifetime = req->lifetime;
 	rq.owner_uid = req->owner_uid;
 	rq.owner_gid = req->owner_gid;
@@ -182,12 +185,21 @@ tzfsd_request(struct tzfsd_client *c, const struct tzfsd_req *req,
 }
 
 int
+tzfsd_request(struct tzfsd_client *c, const struct tzfsd_req *req,
+    struct tzfsd_grant *out)
+{
+
+	return (tzfsd_request_quota(c, req, 0, out));
+}
+
+int
 tzfsd_release(struct tzfsd_client *c, const char *dataset)
 {
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 
-	if (c == NULL || dataset == NULL || dataset[0] == '\0') {
+	if (c == NULL || c->owner != getpid() || dataset == NULL ||
+	    dataset[0] == '\0') {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -213,7 +225,7 @@ tzfsd_ping(struct tzfsd_client *c)
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 
-	if (c == NULL) {
+	if (c == NULL || c->owner != getpid()) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -234,7 +246,7 @@ tzfsd_begin_session(struct tzfsd_client *c, const char *session)
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 
-	if (c == NULL || session == NULL ||
+	if (c == NULL || c->owner != getpid() || session == NULL ||
 	    strlen(session) != TZFSD_SESSION_MAX - 1) {
 		errno = EINVAL;
 		return (-1);
@@ -243,6 +255,35 @@ tzfsd_begin_session(struct tzfsd_client *c, const char *session)
 	rq.op = TZFSD_OP_BEGIN_SESSION;
 	if (strlcpy(rq.session, session, sizeof(rq.session)) >=
 	    sizeof(rq.session)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (tzfsd_call(c, &rq, &rp, NULL) == -1)
+		return (-1);
+	if (rp.status != 0) {
+		errno = rp.status;
+		return (-1);
+	}
+	return (0);
+}
+
+int
+tzfsd_destroy(struct tzfsd_client *c, const char *dataset, uint32_t lifetime)
+{
+	struct tzfsd_request rq;
+	struct tzfsd_reply rp;
+
+	if (c == NULL || c->owner != getpid() || dataset == NULL ||
+	    dataset[0] == '\0' ||
+	    (lifetime != TZFSD_PERSISTENT && lifetime != TZFSD_CACHE)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_DESTROY;
+	rq.lifetime = (uint8_t)lifetime;
+	if (strlcpy(rq.dataset, dataset, sizeof(rq.dataset)) >=
+	    sizeof(rq.dataset)) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}

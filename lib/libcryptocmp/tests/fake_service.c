@@ -9,6 +9,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
@@ -166,6 +167,7 @@ service_session_call(struct service_session *session,
 		struct cryptocmp_msg msg;
 		struct cryptocmp_key_reply key;
 		struct cryptocmp_named_reply named;
+		struct cryptocmp_random_reply random;
 	} response;
 	const struct cryptocmp_msg *request;
 	enum fake_service_fault fault;
@@ -205,6 +207,18 @@ service_session_call(struct service_session *session,
 	    request->opcode <= CRYPTOCMP_OP_NAMED_DELETE) {
 		length = sizeof(response.named);
 		response.named.generation = 42;
+	} else if (request->opcode == CRYPTOCMP_OP_RANDOM) {
+		uint32_t nbytes = 0;
+
+		if (outgoing->length >= sizeof(*request) +
+		    sizeof(struct cryptocmp_random))
+			nbytes = ((const struct cryptocmp_random *)
+			    (request + 1))->nbytes;
+		response.random.nbytes = status == 0 ? nbytes : 0;
+		if (status == 0)
+			memset(response.random.data, 0x5a, nbytes);
+		length = offsetof(struct cryptocmp_random_reply, data) +
+		    (status == 0 ? nbytes : 0);
 	}
 	switch (fault) {
 	case FAKE_SERVICE_FAULT_TRUNCATE:
@@ -237,7 +251,8 @@ service_session_call(struct service_session *session,
 	reply->nfds = 0;
 	wants_fd = status == 0 && (request->opcode == CRYPTOCMP_OP_GENERATE ||
 	    request->opcode == CRYPTOCMP_OP_GENERATE_KEY ||
-	    request->opcode == CRYPTOCMP_OP_NAMED_LEASE);
+	    request->opcode == CRYPTOCMP_OP_NAMED_LEASE ||
+	    request->opcode == CRYPTOCMP_OP_DIGEST);
 	if (fault == FAKE_SERVICE_FAULT_MISSING_FD)
 		wants_fd = false;
 	if (fault == FAKE_SERVICE_FAULT_UNEXPECTED_FD)

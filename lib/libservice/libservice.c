@@ -98,6 +98,7 @@ static bool service_dispatch_started;
 static int service_dispatch_error;
 static int service_supervisor_pipe[2] = { -1, -1 };
 static void service_after_fork_child(void);
+static void service_reset_cached_sessions(void);
 static int rpc(const void *, uint32_t, int *);
 static int rpc_fds(const void *, uint32_t, int *, size_t);
 
@@ -789,6 +790,7 @@ service_after_fork_child(void)
 	}
 	nactivated_token_fds = 0;
 	explicit_bzero(service_label_value, sizeof(service_label_value));
+	service_reset_cached_sessions();
 }
 
 static void
@@ -1732,6 +1734,24 @@ int
 service_storage_open(struct service_context *context, const char *name,
     int *dirfdp)
 {
+
+	/* Default (0) refquota: tzfsd applies its configured default_refquota. */
+	return (service_storage_open_quota(context, name, 0, dirfdp));
+}
+
+/*
+ * As service_storage_open(3), but bound the persistent claim's refquota to
+ * `quota` bytes (0 selects tzfsd's configured default).  A too-small quota
+ * (below the daemon's floor) is rejected by tzfsd with EINVAL.  The delivered
+ * TrustedZFS handle fd is the client's own; the daemon set CAP_XFER_ONCE, which
+ * the reply-send has already consumed to NONE at this client, so it is not re-
+ * delegable and no extra client-side attenuation is applied.  Returns 0 with
+ * *dirfdp set, or -1 with errno.
+ */
+int
+service_storage_open_quota(struct service_context *context, const char *name,
+    uint64_t quota, int *dirfdp)
+{
 	struct tzfsd_request rq;
 	struct tzfsd_reply rp;
 	struct service_message outgoing;
@@ -1771,6 +1791,7 @@ service_storage_open(struct service_context *context, const char *name,
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_REQUEST;
 	rq.rights = ZH_MOUNT;			/* ZH_PROPS_READ is implicit */
+	rq.quota = quota;			/* 0 = tzfsd's default_refquota */
 	rq.lifetime = TZFSD_PERSISTENT;
 	rq.owner_uid = getuid();
 	rq.owner_gid = getgid();
@@ -1811,6 +1832,82 @@ service_storage_open(struct service_context *context, const char *name,
 		service_storage_anchor_fds[service_storage_nanchors++] = handle;
 	/* else retain by leaving the descriptor open; it still anchors. */
 	*dirfdp = dir;
+	return (0);
+}
+
+/*
+ * Reclaim (destroy) a persistent storage claim previously granted under `name`
+ * via service_storage_open(3), freeing its pool space.  Symmetric with
+ * service_storage_open: persistent claims are never torn down implicitly, so
+ * without this the per-service tree grows without bound.  tzfsd resolves the
+ * claim under the CALLER's own namespace (from the connecting channel's
+ * unforgeable label, exactly as the open does), so a caller can never name — and
+ * thus never destroy — another label's claim.  The op carries no fd in either
+ * direction.  Returns 0 once the claim is gone, or -1 with errno (ENOENT if the
+ * caller has no such claim).
+ */
+int
+service_storage_destroy(struct service_context *context, const char *name)
+{
+	struct tzfsd_request rq;
+	struct tzfsd_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int saved;
+
+	if (name == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (strnlen(name, sizeof(rq.dataset)) >= sizeof(rq.dataset)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Shares the system.Filesystem channel with storage/config claims. */
+	if (service_storage_session == NULL) {
+		int fd;
+
+		if (service_open(TZFSD_SERVICE_NAME, &fd) == -1)
+			return (-1);
+		if (service_session_create(fd, &service_storage_session) == -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_DESTROY;
+	rq.lifetime = TZFSD_PERSISTENT;		/* rights/flags/quota/session zero */
+	if (strlcpy(rq.dataset, name, sizeof(rq.dataset)) >=
+	    sizeof(rq.dataset)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	if (service_session_call(service_storage_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp._reserved != 0 || rp.status != 0) {
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
 	return (0);
 }
 
@@ -1982,6 +2079,77 @@ service_ensure_extension(struct service_context *context, const char *module)
 }
 
 /*
+ * Query whether a named kernel extension is loaded via sysextd, without
+ * attempting a load (SYSEXT_OP_STAT).  Routed and validated exactly like
+ * service_ensure_extension: a SYSTEM-domain caller only; a denied name replies
+ * EPERM (leaking no loaded/not-loaded state).  On a completed query returns 0
+ * with *loadedp set to 1 (loaded) or 0 (not loaded); on a real failure returns
+ * -1 with errno.  The reply carries no fd in either direction.
+ */
+int
+service_extension_stat(struct service_context *context, const char *module,
+    int *loadedp)
+{
+	struct sysext_request rq;
+	struct sysext_stat_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int saved;
+
+	if (module == NULL || loadedp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*loadedp = 0;
+	if (strnlen(module, sizeof(rq.name)) >= sizeof(rq.name)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Open the system.SystemExtension channel by name once; queries share it. */
+	if (service_sysext_session == NULL) {
+		int fd;
+
+		if (service_open(SYSEXT_SERVICE_NAME, &fd) == -1)
+			return (-1);
+		if (service_session_create(fd, &service_sysext_session) == -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = SYSEXT_OP_STAT;
+	(void)strlcpy(rq.name, module, sizeof(rq.name));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	if (service_session_call(service_sysext_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp.status != 0 || (rp.loaded != 0 && rp.loaded != 1)) {
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+	*loadedp = rp.loaded;
+	return (0);
+}
+
+/*
  * Confine this process to its namespace (jail) via warden(8).  Consumer self-
  * service, uniform with storage/modules: libservice opens a system.Namespace
  * channel by name (pulling warden up on demand), asks it to create the jail
@@ -2006,6 +2174,28 @@ int
 service_enter_namespace(struct service_context *context, const char *path,
     const char *hostname, const char *ip4_addr, unsigned flags)
 {
+
+	/* Old signature: no IPv6 address; identical persistent/ephemeral flags. */
+	return (service_enter_namespace_ex(context, path, hostname, ip4_addr,
+	    "", flags));
+}
+
+/*
+ * As service_enter_namespace(3), but additionally accepts an IPv6 address
+ * (ip6_addr, "" or NULL = none) and the full SERVICE_NS_* flag set, including
+ * SERVICE_NS_VNET to give the jail its own virtual network stack (vnet=new).
+ * vnet takes no dedicated argument — pass SERVICE_NS_VNET in flags.  All other
+ * behaviour (channel caching, directory-fd drop before attach, non-owning jd
+ * attach-then-close) is identical.  The delivered jd is the client's own attach
+ * descriptor; the daemon set CAP_XFER_ONCE, consumed to NONE at the client by
+ * the reply-send, so it is not re-delegable and no extra attenuation is applied.
+ * Returns 0, or -1 with errno.
+ */
+int
+service_enter_namespace_ex(struct service_context *context, const char *path,
+    const char *hostname, const char *ip4_addr, const char *ip6_addr,
+    unsigned flags)
+{
 	struct warden_request rq;
 	struct warden_reply rp;
 	struct service_message outgoing;
@@ -2013,7 +2203,8 @@ service_enter_namespace(struct service_context *context, const char *path,
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	int jd = -1, saved;
 
-	if (path == NULL || path[0] != '/' || (flags & ~SERVICE_NS_EPHEMERAL)) {
+	if (path == NULL || path[0] != '/' ||
+	    (flags & ~(SERVICE_NS_EPHEMERAL | SERVICE_NS_VNET))) {
 		errno = EINVAL;
 		return (-1);
 	}
@@ -2021,7 +2212,9 @@ service_enter_namespace(struct service_context *context, const char *path,
 	    (hostname != NULL &&
 	    strnlen(hostname, sizeof(rq.hostname)) >= sizeof(rq.hostname)) ||
 	    (ip4_addr != NULL &&
-	    strnlen(ip4_addr, sizeof(rq.ip4_addr)) >= sizeof(rq.ip4_addr))) {
+	    strnlen(ip4_addr, sizeof(rq.ip4_addr)) >= sizeof(rq.ip4_addr)) ||
+	    (ip6_addr != NULL &&
+	    strnlen(ip6_addr, sizeof(rq.ip6_addr)) >= sizeof(rq.ip6_addr))) {
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
@@ -2050,11 +2243,15 @@ service_enter_namespace(struct service_context *context, const char *path,
 	rq.op = WARDEN_OP_ENTER_JAIL;
 	if (flags & SERVICE_NS_EPHEMERAL)
 		rq.flags |= WARDEN_F_EPHEMERAL;
+	if (flags & SERVICE_NS_VNET)
+		rq.flags |= WARDEN_F_VNET;
 	(void)strlcpy(rq.path, path, sizeof(rq.path));
 	if (hostname != NULL)
 		(void)strlcpy(rq.hostname, hostname, sizeof(rq.hostname));
 	if (ip4_addr != NULL)
 		(void)strlcpy(rq.ip4_addr, ip4_addr, sizeof(rq.ip4_addr));
+	if (ip6_addr != NULL)
+		(void)strlcpy(rq.ip6_addr, ip6_addr, sizeof(rq.ip6_addr));
 
 	memset(&outgoing, 0, sizeof(outgoing));
 	outgoing.size = sizeof(outgoing);
@@ -2115,6 +2312,149 @@ service_enter_namespace(struct service_context *context, const char *path,
 }
 
 /*
+ * Destroy the caller's namespace (jail) via warden (WARDEN_OP_DESTROY_JAIL).
+ * The jail acted on is the ONE scoped by this process's unforgeable channel
+ * label (warden derives its name), so a caller can never name another's jail.
+ * Carries no fd in either direction.  Returns 0 once the jail is gone, or -1
+ * with errno (ENOENT if the caller has no jail).
+ */
+int
+service_destroy_namespace(struct service_context *context)
+{
+	struct warden_control_request rq;
+	struct warden_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int saved;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Shares the system.Namespace channel with enter/list. */
+	if (service_namespace_session == NULL) {
+		int fd;
+
+		if (service_open(WARDEN_SERVICE_NAME, &fd) == -1)
+			return (-1);
+		if (service_session_create(fd, &service_namespace_session) ==
+		    -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = WARDEN_OP_DESTROY_JAIL;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	if (service_session_call(service_namespace_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp._reserved != 0 || rp.status != 0) {
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
+ * Report the caller's namespace (jail) via warden (WARDEN_OP_LIST_JAILS).  A
+ * label owns at most one jail, so this reports exactly zero or one: out->present
+ * is 1 with jid/path/hostname/ip4_addr/ip6_addr filled when the caller has a
+ * jail, 0 (and the other fields zeroed) when it has none.  The op is inherently
+ * owner-scoped (warden names the caller's own jail from its label).  Carries no
+ * fd in either direction.  Returns 0 (present==0 is still success), or -1 with
+ * errno on a real lookup failure.
+ */
+int
+service_namespace_info(struct service_context *context,
+    struct service_namespace_info *out)
+{
+	struct warden_control_request rq;
+	struct warden_list_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int saved;
+
+	if (out == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(out, 0, sizeof(*out));
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Shares the system.Namespace channel with enter/destroy. */
+	if (service_namespace_session == NULL) {
+		int fd;
+
+		if (service_open(WARDEN_SERVICE_NAME, &fd) == -1)
+			return (-1);
+		if (service_session_create(fd, &service_namespace_session) ==
+		    -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = WARDEN_OP_LIST_JAILS;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	if (service_session_call(service_namespace_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp._reserved != 0 || rp.status != 0 ||
+	    (rp.present != 0 && rp.present != 1)) {
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+	if (rp.present == 0)
+		return (0);
+	/* Bound every daemon-supplied string before copying it out. */
+	if (strnlen(rp.path, sizeof(rp.path)) >= sizeof(rp.path) ||
+	    strnlen(rp.hostname, sizeof(rp.hostname)) >= sizeof(rp.hostname) ||
+	    strnlen(rp.ip4_addr, sizeof(rp.ip4_addr)) >= sizeof(rp.ip4_addr) ||
+	    strnlen(rp.ip6_addr, sizeof(rp.ip6_addr)) >= sizeof(rp.ip6_addr)) {
+		errno = EPROTO;
+		return (-1);
+	}
+	out->present = 1;
+	out->jid = rp.jid;
+	(void)strlcpy(out->path, rp.path, sizeof(out->path));
+	(void)strlcpy(out->hostname, rp.hostname, sizeof(out->hostname));
+	(void)strlcpy(out->ip4_addr, rp.ip4_addr, sizeof(out->ip4_addr));
+	(void)strlcpy(out->ip6_addr, rp.ip6_addr, sizeof(out->ip6_addr));
+	return (0);
+}
+
+/*
  * Obtain a host-local vsock (VM socket) listener from vmd(8).  Consumer self-
  * service, uniform with storage/jails/modules: libservice opens a system.VM
  * channel by name (pulling vmd up on demand) and asks it to bind a listening
@@ -2131,6 +2471,34 @@ service_enter_namespace(struct service_context *context, const char *path,
  * the caller to advertise to a peer).  Returns 0, or -1 with errno.
  */
 static struct service_session *service_vm_session;
+
+/*
+ * Abandon the process-wide cached provider sessions in a fork/pdfork child.
+ * client_atfork_child() (service_client.c) already severs the underlying
+ * channels and marks them ECHILD, but these cached POINTERS live in libservice
+ * and must be dropped too: otherwise a forked child sees a stale non-NULL
+ * session, skips the re-open, and is wedged (ECHILD) forever with no retry --
+ * and the pointer would be the only thing between a child and an inherited
+ * parent-scoped channel if the backstop were ever weakened.  Nulling them lets
+ * a fresh service_acquire()+wrapper call re-establish the session under the
+ * child's own identity.  The session fds are CLOEXEC/CLOFORK-locked by the
+ * transport, and the storage anchor fds are CLOFORK-locked (already closed in
+ * the child), so we only reset our bookkeeping.  Called from
+ * service_after_fork_child(), which also runs on the
+ * service_worker_drop_inherited_authority() path -- important because pdfork(2)
+ * does not run pthread_atfork handlers.
+ */
+static void
+service_reset_cached_sessions(void)
+{
+	service_storage_session = NULL;
+	service_sysext_session = NULL;
+	service_namespace_session = NULL;
+	service_vm_session = NULL;
+	service_storage_nanchors = 0;
+	memset(service_storage_anchor_fds, 0,
+	    sizeof(service_storage_anchor_fds));
+}
 
 int
 service_vsock_listen(struct service_context *context, unsigned port,
@@ -2196,6 +2564,85 @@ service_vsock_listen(struct service_context *context, unsigned port,
 		*cidp = rp.cid;
 	if (portp != NULL)
 		*portp = rp.port;
+	*fdp = fd;
+	return (0);
+}
+
+/*
+ * Dial a peer's advertised vsock (cid,port) via vmd (VMD_OP_VSOCK_CONNECT) and
+ * return the connected AF_VSOCK socket.  Consumer self-service, symmetric with
+ * service_vsock_listen: a capability-mode process cannot connect a vsock address
+ * itself (a global namespace), so vmd opens the socket and connect(2)s on its
+ * behalf.  Connecting owns and scopes nothing — `port` is the concrete target
+ * port the peer advertised from its own listen reply (not a window index) and
+ * `cid` is the target CID (e.g. VMADDR_CID_LOCAL).  cid must not be
+ * VMADDR_CID_ANY (0xffffffff).  On success *fdp receives the close-on-exec
+ * connected descriptor.  The delivered socket is the client's own; the daemon
+ * set CAP_XFER_ONCE, consumed to NONE at this client by the reply-send, so it is
+ * not re-delegable and no extra attenuation is applied.  Returns 0, or -1 with
+ * errno.
+ */
+int
+service_vsock_connect(struct service_context *context, unsigned cid,
+    unsigned port, int *fdp)
+{
+	struct vmd_request rq;
+	struct vmd_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd = -1, saved;
+
+	/* 0xffffffff == VMADDR_CID_ANY: never a valid connect target. */
+	if (fdp == NULL || cid == 0xffffffffu) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*fdp = -1;
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Open the system.VM channel by name once; connects share it. */
+	if (service_vm_session == NULL) {
+		int cfd;
+
+		if (service_open(VMD_SERVICE_NAME, &cfd) == -1)
+			return (-1);
+		if (service_session_create(cfd, &service_vm_session) == -1) {
+			saved = errno;
+			(void)close(cfd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = VMD_OP_VSOCK_CONNECT;
+	rq.port = port;			/* concrete target port; backlog stays 0 */
+	rq.cid = cid;			/* target CID */
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 1;
+	if (service_session_call(service_vm_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(rp) || rp._reserved != 0 ||
+	    rp.status != 0 || incoming.nfds != 1) {
+		if (incoming.nfds != 0)
+			(void)close(fd);
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
 	*fdp = fd;
 	return (0);
 }

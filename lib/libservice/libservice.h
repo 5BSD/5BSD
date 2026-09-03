@@ -19,6 +19,7 @@
 
 #include <sys/types.h>
 
+#include <limits.h>	/* PATH_MAX for struct service_namespace_info */
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -219,6 +220,20 @@ const char *service_label(struct service_context *);
 int	service_storage_open(struct service_context *, const char *name,
 	    int *dirfdp);
 /*
+ * As service_storage_open(3), but bound the persistent claim's refquota to
+ * `quota` bytes (0 = tzfsd's configured default; a value below the daemon's
+ * floor is rejected with EINVAL).  service_storage_open is this with quota=0.
+ */
+int	service_storage_open_quota(struct service_context *, const char *name,
+	    uint64_t quota, int *dirfdp);
+/*
+ * Reclaim (destroy) a persistent storage claim previously granted under `name`,
+ * freeing its pool space; symmetric with service_storage_open(3).  The claim is
+ * resolved under the caller's own label-scoped namespace, so a caller can never
+ * name another's.  Returns 0, or -1 with errno (ENOENT if the claim is absent).
+ */
+int	service_storage_destroy(struct service_context *, const char *name);
+/*
  * Open this service's writable, label-scoped configuration area (the well-known
  * "config" claim under its per-service home) and return its mounted directory
  * root.  A place for configuration files outside the shared UNIX directories,
@@ -257,6 +272,15 @@ int	service_capability_open(struct service_context *, const char *name,
 int	service_ensure_extension(struct service_context *, const char *module);
 
 /*
+ * Query whether a named kernel extension is loaded (SYSEXT_OP_STAT), without
+ * attempting a load.  Routed/validated exactly like service_ensure_extension: a
+ * SYSTEM-domain caller only, a denied name fails EPERM.  On a completed query
+ * returns 0 with *loadedp set to 1 (loaded) or 0 (not); -1 with errno otherwise.
+ */
+int	service_extension_stat(struct service_context *, const char *module,
+	    int *loadedp);
+
+/*
  * Confine this process to a jail via warden (system.Namespace).  Consumer self-
  * service: libservice resolves warden by name, has it create a jail rooted at
  * `path` (scoped by this process's channel label), and jail_attach_jd(2)s the
@@ -269,8 +293,43 @@ int	service_ensure_extension(struct service_context *, const char *module);
  * down when the process exits).  Returns 0, or -1 with errno.
  */
 #define	SERVICE_NS_EPHEMERAL	0x1u	/* jail lifetime bound to the caller */
+#define	SERVICE_NS_VNET		0x2u	/* jail gets its own vnet (needs VIMAGE) */
 int	service_enter_namespace(struct service_context *, const char *path,
 	    const char *hostname, const char *ip4_addr, unsigned flags);
+/*
+ * As service_enter_namespace(3) but with an IPv6 address (ip6_addr; "" or NULL =
+ * none) and the full SERVICE_NS_* flag set, including SERVICE_NS_VNET for a
+ * jail with its own virtual network stack.  service_enter_namespace is this with
+ * ip6_addr="".  Returns 0, or -1 with errno.
+ */
+int	service_enter_namespace_ex(struct service_context *, const char *path,
+	    const char *hostname, const char *ip4_addr, const char *ip6_addr,
+	    unsigned flags);
+/*
+ * Destroy the caller's namespace (jail), scoped to the caller's own label so it
+ * can never name another's.  Returns 0, or -1 with errno (ENOENT if none).
+ */
+int	service_destroy_namespace(struct service_context *);
+
+/*
+ * The caller's namespace (jail) as reported by service_namespace_info(3).  A
+ * label owns at most one jail: present==1 with the fields filled, or present==0.
+ * An address field is empty ("") when the jail has no address of that family.
+ */
+struct service_namespace_info {
+	int	present;		/* 1 = the caller has a jail, 0 = none */
+	int	jid;			/* jail id when present */
+	char	path[PATH_MAX];		/* jail root path */
+	char	hostname[64];		/* host.hostname */
+	char	ip4_addr[64];		/* ip4.addr (empty if none) */
+	char	ip6_addr[64];		/* ip6.addr (empty if none) */
+};
+/*
+ * Report the caller's namespace (jail) into *out.  present==0 (no jail) is still
+ * a success (returns 0).  Owner-scoped.  Returns -1 with errno on real failure.
+ */
+int	service_namespace_info(struct service_context *,
+	    struct service_namespace_info *out);
 
 /*
  * Obtain a host-local vsock (VM socket) listener from vmd (system.VM).  Consumer
@@ -285,6 +344,17 @@ int	service_enter_namespace(struct service_context *, const char *path,
  */
 int	service_vsock_listen(struct service_context *, unsigned port,
 	    unsigned backlog, unsigned *cidp, unsigned *portp, int *fdp);
+
+/*
+ * Dial a peer's advertised vsock (cid,port) via vmd (system.VM) and return the
+ * connected AF_VSOCK socket — a capability-mode process cannot connect a vsock
+ * address itself.  `port` is the concrete port the peer advertised from its own
+ * service_vsock_listen reply (not a window index); `cid` is the target CID and
+ * must not be VMADDR_CID_ANY (0xffffffff).  On success *fdp receives the close-
+ * on-exec connected descriptor.  Returns 0, or -1 with errno.
+ */
+int	service_vsock_connect(struct service_context *, unsigned cid,
+	    unsigned port, int *fdp);
 
 /*
  * Return the manager-owned socket-activation listener (Phase 4) delivered under

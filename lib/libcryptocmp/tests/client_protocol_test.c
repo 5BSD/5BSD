@@ -13,6 +13,8 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <crypto/cryptodev.h>
+
 #include <cryptocmp.h>
 
 #include "fake_service.h"
@@ -187,9 +189,94 @@ ATF_TC_BODY(fork_rejects_inherited_client, tc)
 	cryptocmp_close(client);
 }
 
+ATF_TC_WITHOUT_HEAD(digest_and_random_matrix);
+ATF_TC_BODY(digest_and_random_matrix, tc)
+{
+	struct cryptocmp_client *client;
+	uint8_t buf[64];
+	int descriptor;
+	size_t i;
+
+	fake_service_reset();
+	ATF_REQUIRE_EQ(0, cryptocmp_open(&client));
+
+	/* DIGEST success: unkeyed hash session mints and delivers a fd. */
+	descriptor = -1;
+	ATF_REQUIRE_EQ(0, cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0,
+	    &descriptor));
+	ATF_REQUIRE(descriptor >= 0);
+	close(descriptor);
+	ATF_REQUIRE_EQ(0, cryptocmp_digest(client, CRYPTO_SHA2_512, 60, 0,
+	    &descriptor));
+	ATF_REQUIRE(descriptor >= 0);
+	close(descriptor);
+
+	/* DIGEST argument validation: no IPC is issued on rejection. */
+	descriptor = 99;
+	ATF_CHECK_ERRNO(EINVAL,
+	    cryptocmp_digest(NULL, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
+	descriptor = 99;
+	ATF_CHECK_ERRNO(EINVAL,
+	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, NULL) == -1);
+	descriptor = 99;
+	ATF_CHECK_ERRNO(EINVAL,
+	    cryptocmp_digest(client, CRYPTO_SHA2_256_HMAC, 0, 0, &descriptor)
+	    == -1);
+	ATF_CHECK_EQ(-1, descriptor);
+	descriptor = 99;
+	ATF_CHECK_ERRNO(EINVAL,
+	    cryptocmp_digest(client, 0, 0, 0, &descriptor) == -1);
+	ATF_CHECK_EQ(-1, descriptor);
+
+	/* DIGEST error status maps through; no fd is retained. */
+	descriptor = 99;
+	fake_service_status_next(EPERM);
+	ATF_CHECK_ERRNO(EPERM,
+	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
+	ATF_CHECK_EQ(-1, descriptor);
+
+	/* DIGEST malformed replies are rejected EPROTO and drop any fd. */
+	fake_service_fault_next(FAKE_SERVICE_FAULT_MISSING_FD);
+	descriptor = 99;
+	ATF_CHECK_ERRNO(EPROTO,
+	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
+	ATF_CHECK_EQ(-1, descriptor);
+	fake_service_fault_next(FAKE_SERVICE_FAULT_UNEXPECTED_FD);
+	fake_service_status_next(EPERM);
+	descriptor = 99;
+	ATF_CHECK_ERRNO(EPROTO,
+	    cryptocmp_digest(client, CRYPTO_SHA2_256, 0, 0, &descriptor) == -1);
+	ATF_CHECK_EQ(-1, descriptor);
+
+	/* RANDOM success: buffer is filled with exactly nbytes of output. */
+	memset(buf, 0, sizeof(buf));
+	ATF_REQUIRE_EQ(0, cryptocmp_random(client, buf, sizeof(buf)));
+	for (i = 0; i < sizeof(buf); i++)
+		ATF_CHECK_EQ(0x5a, buf[i]);
+	ATF_REQUIRE_EQ(0, cryptocmp_random(client, buf, 1));
+
+	/* RANDOM argument validation: reject before IPC and leave buf zeroed. */
+	ATF_CHECK_ERRNO(EINVAL, cryptocmp_random(NULL, buf, 16) == -1);
+	ATF_CHECK_ERRNO(EINVAL, cryptocmp_random(client, NULL, 16) == -1);
+	memset(buf, 0xff, sizeof(buf));
+	ATF_CHECK_ERRNO(EINVAL, cryptocmp_random(client, buf, 0) == -1);
+	ATF_CHECK_EQ(0xff, buf[0]);
+	ATF_CHECK_ERRNO(EINVAL,
+	    cryptocmp_random(client, buf, CRYPTOCMP_MAX_RANDOM_BYTES + 1) == -1);
+
+	/* RANDOM error status maps through and zeroes the caller buffer. */
+	memset(buf, 0xff, sizeof(buf));
+	fake_service_status_next(EPERM);
+	ATF_CHECK_ERRNO(EPERM, cryptocmp_random(client, buf, sizeof(buf)) == -1);
+	ATF_CHECK_EQ(0, buf[0]);
+
+	cryptocmp_close(client);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, successful_operation_matrix);
+	ATF_TP_ADD_TC(tp, digest_and_random_matrix);
 	ATF_TP_ADD_TC(tp, error_and_output_contracts);
 	ATF_TP_ADD_TC(tp, malformed_reply_matrix);
 	ATF_TP_ADD_TC(tp, unexpected_descriptor_is_closed);

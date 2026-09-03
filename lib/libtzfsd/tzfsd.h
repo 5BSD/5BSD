@@ -76,10 +76,30 @@ int	tzfsd_request(struct tzfsd_client *c, const struct tzfsd_req *req,
 	    struct tzfsd_grant *out);
 
 /*
+ * As tzfsd_request(), but with an explicit per-claim refquota ceiling in bytes
+ * (0 selects the daemon default; a value below the daemon's floor is rejected
+ * with EINVAL by the daemon).  tzfsd_request() is exactly this with quota == 0.
+ */
+int	tzfsd_request_quota(struct tzfsd_client *c, const struct tzfsd_req *req,
+	    uint64_t quota, struct tzfsd_grant *out);
+
+/*
  * Release (destroy) a lease claim previously granted under this dataset key.
  * Idempotent: a missing claim is success.  Returns 0 or -1/errno.
  */
 int	tzfsd_release(struct tzfsd_client *c, const char *dataset);
+
+/*
+ * Reclaim a persistent (TZFSD_PERSISTENT) or cache (TZFSD_CACHE) claim
+ * previously granted under this dataset key, freeing its pool space.  Unlike
+ * tzfsd_release() this is NOT idempotent: an absent claim returns -1/ENOENT so
+ * a caller can distinguish a real reclaim from a no-op.  lifetime must be
+ * TZFSD_PERSISTENT or TZFSD_CACHE.  The claim is resolved under the caller's own
+ * namespace (the channel's unforgeable label), so no other label's claim can be
+ * named.  Returns 0 or -1/errno.
+ */
+int	tzfsd_destroy(struct tzfsd_client *c, const char *dataset,
+	    uint32_t lifetime);
 
 /* Liveness check.  Returns 0 if tzfsd answered, -1/errno otherwise. */
 int	tzfsd_ping(struct tzfsd_client *c);

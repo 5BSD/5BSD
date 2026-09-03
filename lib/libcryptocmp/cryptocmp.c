@@ -1,11 +1,15 @@
 /*- SPDX-License-Identifier: BSD-2-Clause */
 #include <sys/types.h>
 #include <errno.h>
+#include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
+#include <crypto/cryptodev.h>
 #include <libservice.h>
 #include "cryptocmp.h"
 
@@ -106,6 +110,113 @@ cryptocmp_generate_key(struct cryptocmp_client *client,
 		return (errno = -reply.msg.status, -1);
 	memcpy(public_key, reply.public_key, sizeof(reply.public_key));
 	*descriptor = fd;
+	return (0);
+}
+
+int
+cryptocmp_digest(struct cryptocmp_client *client, uint32_t alg, uint32_t ttl,
+    uint32_t flags, int *descriptor)
+{
+	struct { struct cryptocmp_msg msg; struct cryptocmp_digest digest; } wire;
+	struct cryptocmp_msg reply;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd = -1;
+
+	if (client == NULL || descriptor == NULL || client->owner != getpid())
+		return (errno = EINVAL, -1);
+	*descriptor = -1;
+	if (alg != CRYPTO_SHA2_256 && alg != CRYPTO_SHA2_384 &&
+	    alg != CRYPTO_SHA2_512)
+		return (errno = EINVAL, -1);
+	memset(&wire, 0, sizeof(wire));
+	wire.msg.magic = CRYPTOCMP_MAGIC;
+	wire.msg.version = CRYPTOCMP_VERSION;
+	wire.msg.opcode = CRYPTOCMP_OP_DIGEST;
+	wire.digest.alg = alg;
+	wire.digest.ttl = ttl;
+	wire.digest.flags = flags;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &wire;
+	outgoing.length = sizeof(wire);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 1;
+	options.timeout_ms = 30000;
+	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(reply) || reply.magic != CRYPTOCMP_MAGIC ||
+	    reply.version != CRYPTOCMP_VERSION ||
+	    reply.opcode != CRYPTOCMP_OP_DIGEST || !valid_status(reply.status) ||
+	    incoming.nfds != (reply.status == 0 ? 1 : 0))
+		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+	if (reply.status != 0)
+		return (errno = -reply.status, -1);
+	*descriptor = fd;
+	return (0);
+}
+
+int
+cryptocmp_random(struct cryptocmp_client *client, void *buf, size_t nbytes)
+{
+	struct { struct cryptocmp_msg msg; struct cryptocmp_random random; } wire;
+	struct cryptocmp_random_reply reply;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd = -1;
+
+	if (client == NULL || buf == NULL || client->owner != getpid() ||
+	    nbytes == 0 || nbytes > CRYPTOCMP_MAX_RANDOM_BYTES)
+		return (errno = EINVAL, -1);
+	memset(buf, 0, nbytes);
+	memset(&wire, 0, sizeof(wire));
+	wire.msg.magic = CRYPTOCMP_MAGIC;
+	wire.msg.version = CRYPTOCMP_VERSION;
+	wire.msg.opcode = CRYPTOCMP_OP_RANDOM;
+	wire.random.nbytes = (uint32_t)nbytes;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &wire;
+	outgoing.length = sizeof(wire);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 0;
+	options.timeout_ms = 30000;
+	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
+		return (-1);
+	if (incoming.length < offsetof(struct cryptocmp_random_reply, data) ||
+	    reply.msg.magic != CRYPTOCMP_MAGIC ||
+	    reply.msg.version != CRYPTOCMP_VERSION ||
+	    reply.msg.opcode != CRYPTOCMP_OP_RANDOM ||
+	    !valid_status(reply.msg.status) || incoming.nfds != 0) {
+		explicit_bzero(&reply, sizeof(reply));
+		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+	}
+	if (reply.msg.status != 0) {
+		errno = -reply.msg.status;
+		explicit_bzero(&reply, sizeof(reply));
+		return (-1);
+	}
+	if (reply.nbytes != (uint32_t)nbytes ||
+	    reply.nbytes > CRYPTOCMP_MAX_RANDOM_BYTES ||
+	    incoming.length !=
+	    offsetof(struct cryptocmp_random_reply, data) + reply.nbytes) {
+		explicit_bzero(&reply, sizeof(reply));
+		return (reject_reply(-1));
+	}
+	memcpy(buf, reply.data, reply.nbytes);
+	explicit_bzero(&reply, sizeof(reply));
 	return (0);
 }
 
