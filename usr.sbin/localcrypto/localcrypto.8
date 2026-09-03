@@ -1,0 +1,125 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 3, 2026
+.Dt LOCALCRYPTO 8
+.Os
+.Sh NAME
+.Nm localcrypto
+.Nd capability-descriptor cryptography broker
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The
+.Nm
+daemon is the capability system's cryptography broker.
+It is a socket-free capability-plane service: it exposes the well-known name
+.Dq Li system.Crypto
+and serves each client on its own
+.Xr mac_capability 4
+channel.
+It mints kernel-backed crypto session
+.Em descriptors
+on request.
+The actual cryptographic work runs through the returned
+.Dv DTYPE_CRYPTO
+descriptor, so no plaintext key material is ever materialized in userspace:
+keys are minted inside the kernel behind the descriptor, and
+.Nm
+scrubs any public outputs with
+.Xr explicit_bzero 3
+before replying.
+.Pp
+.Nm
+is launched and supervised by
+.Xr serviced 8
+from the
+.Pa /Capabilities/System/Crypto.cap
+bundle; it is not started by
+.Xr init 8 ,
+and it is not intended to be run from the command line.
+.Pp
+The kernel side is provided by the
+.Xr crypto 4
+.Pq Pa /dev/crypto
+device from the
+.Sy cryptodev
+module.
+Before becoming a provider,
+.Nm
+self-serves that module by name through
+.Dq Li system.SystemExtension
+.Pq Xr sysextd 8 ,
+so it does not rely on PID 1 or
+.Xr serviced 8
+to load it.
+.Ss Operations
+A request names one operation over the client channel:
+.Bl -tag -width ".Cm GENERATE_KEY"
+.It Cm GENERATE
+Mint a symmetric or AEAD cipher and/or HMAC session and return its descriptor.
+.It Cm GENERATE_KEY
+Mint an asymmetric keypair
+.Pq X25519 for key exchange, or Ed25519 for signing
+and return its descriptor together with the public key.
+.It Cm CREATE
+Create an owner-scoped named persistent key.
+.It Cm LEASE
+Return a session descriptor for an existing named key.
+.It Cm ROTATE
+Advance a named key to a new generation.
+.It Cm DELETE
+Remove a named key.
+.El
+.Pp
+Named keys are
+.Em owner-scoped
+by the caller's unforgeable channel label: one label can never name, lease,
+rotate, or delete another label's keys.
+.Ss Parameter policy
+All request parameters are validated server-side before any descriptor is
+minted.
+The policy enforces cipher and MAC key lengths, exact IV and tag lengths per
+algorithm, AEAD cipher and MAC pairing, allowed capability rights per
+algorithm, an optional NIST-approved-profile gate, a bounded time-to-live, and
+a restricted character set for named-key names.
+An out-of-policy request is rejected without reaching the kernel.
+.Ss Worker isolation
+The long-lived accept parent hands each accepted client to its own
+.Xr pdfork 2 Ns 'd
+worker.
+A worker adopts the client channel, enters capability mode with
+.Xr cap_enter 2 ,
+and drops inherited authority.
+Its only retained kernel handle is the
+.Pa /dev/crypto
+control descriptor, which is limited to
+.Dv CAP_IOCTL
+plus a six-command ioctl allowlist covering exactly the
+descriptor-minting operations above; it can do nothing else.
+.Sh FILES
+.Bl -tag -width ".Pa /Capabilities/System/Crypto.cap" -compact
+.It Pa /dev/crypto
+kernel crypto control device
+.It Pa /Capabilities/System/Crypto.cap
+capability bundle shipping
+.Nm
+.El
+.Sh SEE ALSO
+.Xr cap_enter 2 ,
+.Xr pdfork 2 ,
+.Xr explicit_bzero 3 ,
+.Xr crypto 4 ,
+.Xr mac_capability 4 ,
+.Xr serviced 8 ,
+.Xr sysextd 8
+.Sh HISTORY
+The
+.Nm
+daemon appeared in
+.Fx 5BSD
+as the capability-descriptor cryptography broker.
+.Sh AUTHORS
+.An Kory Heard

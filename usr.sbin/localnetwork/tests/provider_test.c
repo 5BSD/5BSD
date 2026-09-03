@@ -293,6 +293,96 @@ open_loopback(int type, uint16_t *port)
 	return (fd);
 }
 
+/* Build an IPv4 networkcmp_endpoint from four address octets. */
+static void
+ipv4_endpoint(struct networkcmp_endpoint *endpoint, uint8_t a, uint8_t b,
+    uint8_t c, uint8_t d)
+{
+
+	memset(endpoint, 0, sizeof(*endpoint));
+	endpoint->family = NETWORKCMP_AF_INET4;
+	endpoint->address[0] = a;
+	endpoint->address[1] = b;
+	endpoint->address[2] = c;
+	endpoint->address[3] = d;
+}
+
+/* Build an IPv6 networkcmp_endpoint from a 16-byte address. */
+static void
+ipv6_endpoint(struct networkcmp_endpoint *endpoint, const uint8_t address[16])
+{
+
+	memset(endpoint, 0, sizeof(*endpoint));
+	endpoint->family = NETWORKCMP_AF_INET6;
+	memcpy(endpoint->address, address, 16);
+}
+
+/*
+ * N2 SSRF guard, pure classifier.  endpoint_is_internal() is the pre-connect
+ * gate that fails closed on loopback/link-local/RFC1918/ULA (and their
+ * IPv4-mapped forms) for sessions lacking internal reach.  This regression pins
+ * the range table directly; it needs no provider channel and no privilege.
+ */
+ATF_TC_WITHOUT_HEAD(endpoint_internal_ranges_are_blocked);
+ATF_TC_BODY(endpoint_internal_ranges_are_blocked, tc)
+{
+	static const uint8_t v6_loopback[16] = {
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+	static const uint8_t v6_linklocal[16] = {
+		0xfe, 0x80, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+	static const uint8_t v6_ula[16] = {
+		0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
+	static const uint8_t v6_mapped_loopback[16] = {
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 127, 0, 0, 1 };
+	static const uint8_t v6_public[16] = {
+		0x26, 0x06, 0x28, 0x00, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+	static const uint8_t v6_mapped_public[16] = {
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 93, 184, 216, 34 };
+	struct networkcmp_endpoint endpoint;
+
+	/* IPv4 internal ranges are all flagged. */
+	ipv4_endpoint(&endpoint, 127, 0, 0, 1);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv4_endpoint(&endpoint, 0, 0, 0, 0);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv4_endpoint(&endpoint, 169, 254, 1, 1);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv4_endpoint(&endpoint, 10, 0, 0, 1);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv4_endpoint(&endpoint, 172, 16, 0, 1);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv4_endpoint(&endpoint, 172, 31, 255, 254);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv4_endpoint(&endpoint, 192, 168, 1, 1);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+
+	/* IPv4 public addresses and the 172.16/12 boundaries are not flagged. */
+	ipv4_endpoint(&endpoint, 93, 184, 216, 34);
+	ATF_CHECK(!networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv4_endpoint(&endpoint, 172, 15, 0, 1);
+	ATF_CHECK(!networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv4_endpoint(&endpoint, 172, 32, 0, 1);
+	ATF_CHECK(!networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv4_endpoint(&endpoint, 8, 8, 8, 8);
+	ATF_CHECK(!networkcmp_test_endpoint_is_internal(&endpoint));
+
+	/* IPv6 loopback, link-local, ULA, and IPv4-mapped internal are flagged. */
+	ipv6_endpoint(&endpoint, v6_loopback);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv6_endpoint(&endpoint, v6_linklocal);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv6_endpoint(&endpoint, v6_ula);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv6_endpoint(&endpoint, v6_mapped_loopback);
+	ATF_CHECK(networkcmp_test_endpoint_is_internal(&endpoint));
+
+	/* IPv6 public, including an IPv4-mapped public address, is not flagged. */
+	ipv6_endpoint(&endpoint, v6_public);
+	ATF_CHECK(!networkcmp_test_endpoint_is_internal(&endpoint));
+	ipv6_endpoint(&endpoint, v6_mapped_public);
+	ATF_CHECK(!networkcmp_test_endpoint_is_internal(&endpoint));
+}
+
 ATF_TC(provider_hello);
 ATF_TC_HEAD(provider_hello, tc)
 {
@@ -661,6 +751,62 @@ ATF_TC_BODY(provider_resolver_deadline_terminates_session, tc)
 	fixture_destroy(&fixture, 1);
 }
 
+/*
+ * N2 SSRF guard over the plane.  A session that lacks internal reach must be
+ * denied a connect to loopback with EACCES BEFORE any connect is attempted, even
+ * when a live listener is bound there; a session that carries internal reach
+ * (admin-equivalent) reaches the very same peer.  This proves the guard, not a
+ * connection refusal, is what fails closed.
+ */
+ATF_TC(non_admin_connect_to_loopback_is_denied);
+ATF_TC_HEAD(non_admin_connect_to_loopback_is_denied, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "Connecting to loopback is denied without internal reach and allowed "
+	    "with it");
+}
+ATF_TC_BODY(non_admin_connect_to_loopback_is_denied, tc)
+{
+	struct networkcmp_policy policy;
+	struct fixture fixture;
+	struct networkcmp_endpoint endpoint;
+	uint16_t port;
+	int listener, accepted, fd;
+
+	/* A live loopback listener: a real connect to it would succeed. */
+	listener = open_loopback(SOCK_STREAM, &port);
+	loopback_endpoint(&endpoint, port);
+
+	/* No internal reach: the broker fails closed with EACCES and no fd. */
+	ATF_REQUIRE_EQ(0, networkcmp_policy_default(&policy));
+	policy.allow_internal = false;
+	fixture_create_policy(&fixture, &policy);
+	fd = -1;
+	ATF_CHECK_EQ(EACCES, broker_request(&fixture, NETWORKCMP_OP_CONNECT,
+	    &endpoint, &fd));
+	ATF_CHECK_EQ(-1, fd);
+	fixture_destroy(&fixture, 0);
+
+	/* Internal reach (admin-equivalent default) reaches the same peer. */
+	ATF_REQUIRE_EQ(0, networkcmp_policy_default(&policy));
+	ATF_REQUIRE(policy.allow_internal);
+	fixture_create_policy(&fixture, &policy);
+	fd = -1;
+	ATF_CHECK_EQ(0, broker_request(&fixture, NETWORKCMP_OP_CONNECT,
+	    &endpoint, &fd));
+	ATF_CHECK(fd >= 0);
+	if (fd >= 0) {
+		accepted = accept(listener, NULL, NULL);
+		ATF_CHECK(accepted >= 0);
+		if (accepted >= 0)
+			close(accepted);
+		close(fd);
+	}
+	fixture_destroy(&fixture, 0);
+	close(listener);
+}
+
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
@@ -677,6 +823,7 @@ ATF_TC_BODY(arguments, tc)
 
 ATF_TP_ADD_TCS(tp)
 {
+	ATF_TP_ADD_TC(tp, endpoint_internal_ranges_are_blocked);
 	ATF_TP_ADD_TC(tp, provider_hello);
 	ATF_TP_ADD_TC(tp, provider_connect_returns_fd);
 	ATF_TP_ADD_TC(tp, provider_udp_returns_fd);
@@ -685,6 +832,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_malformed_channel);
 	ATF_TP_ADD_TC(tp, provider_resolver_does_not_block_session);
 	ATF_TP_ADD_TC(tp, provider_resolver_deadline_terminates_session);
+	ATF_TP_ADD_TC(tp, non_admin_connect_to_loopback_is_denied);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }

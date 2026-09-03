@@ -757,6 +757,70 @@ ATF_TC_BODY(rejects_invalid_inputs, tc)
 	fixture_destroy(&fixture);
 }
 
+ATF_TC_WITHOUT_HEAD(query_is_scoped_to_caller_label);
+ATF_TC_BODY(query_is_scoped_to_caller_label, tc)
+{
+	struct logcmp_store_cursor cursor;
+	struct fixture fixture;
+	struct logcmp_store *store;
+	uint8_t record[LOGCMP_MAX_RECORD], output[LOGCMP_MAX_RECORD];
+	size_t length, output_length;
+
+	fixture_create(&fixture);
+	length = make_record(record, "scoped", LOGCMP_PRIVACY_PUBLIC,
+	    "value", LOGCMP_PRIVACY_PUBLIC);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+
+	/*
+	 * Interleave records stamped with two distinct trusted labels.  The
+	 * store binds each record to the label supplied at append time, and a
+	 * query is answered only from records whose stamped label matches the
+	 * caller's, so one label can never observe another's records.
+	 */
+	((struct logcmp_record *)(void *)record)->sequence = 1;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.a",
+	    (const void *)record, length, false));
+	((struct logcmp_record *)(void *)record)->sequence = 2;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.b",
+	    (const void *)record, length, false));
+	((struct logcmp_record *)(void *)record)->sequence = 3;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.a",
+	    (const void *)record, length, false));
+	((struct logcmp_record *)(void *)record)->sequence = 4;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.b",
+	    (const void *)record, length, false));
+
+	/* org.a observes only its own records, sequences 1 and 3. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, logcmp_store_query_next(store, "org.a", 0, &cursor,
+	    output, sizeof(output), &output_length));
+	ATF_CHECK_EQ(1, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_REQUIRE_EQ(1, logcmp_store_query_next(store, "org.a", 0, &cursor,
+	    output, sizeof(output), &output_length));
+	ATF_CHECK_EQ(3, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_CHECK_EQ(0, logcmp_store_query_next(store, "org.a", 0, &cursor,
+	    output, sizeof(output), &output_length));
+
+	/* org.b observes only its own records, sequences 2 and 4. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, logcmp_store_query_next(store, "org.b", 0, &cursor,
+	    output, sizeof(output), &output_length));
+	ATF_CHECK_EQ(2, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_REQUIRE_EQ(1, logcmp_store_query_next(store, "org.b", 0, &cursor,
+	    output, sizeof(output), &output_length));
+	ATF_CHECK_EQ(4, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_CHECK_EQ(0, logcmp_store_query_next(store, "org.b", 0, &cursor,
+	    output, sizeof(output), &output_length));
+
+	/* A label that never appended anything observes nothing. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_CHECK_EQ(0, logcmp_store_query_next(store, "org.c", 0, &cursor,
+	    output, sizeof(output), &output_length));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -779,5 +843,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, query_rejects_stale_and_invalid_cursors);
 	ATF_TP_ADD_TC(tp, query_detects_retained_segment_corruption);
 	ATF_TP_ADD_TC(tp, rejects_invalid_inputs);
+	ATF_TP_ADD_TC(tp, query_is_scoped_to_caller_label);
 	return (atf_no_error());
 }

@@ -2,7 +2,7 @@
 
 PACKAGE=authorityd
 PROG= authorityd
-MAN= authorityd.8
+MAN= authorityd.8 capsule.8
 SRCS= authorityd.c bootstrap.c mac_capability_setup.c mac_capability_claims.c mac_capability_reload.c \
 	mac_capability_status.c mac_capability_mint.c \
 	mac_capability_coal.c commands.c config.c control.c event.c \

@@ -7,9 +7,11 @@
 #include <atf-c.h>
 #include <errno.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <time.h>
 
 #include "auditcmp_rate.h"
+#include "auditcmp_test.h"
 
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
@@ -84,6 +86,50 @@ ATF_TC_BODY(saturates_at_burst, tc)
 	ATF_CHECK(!auditcmp_rate_allow_at(&rate, &now));
 }
 
+/*
+ * A1 regression: the admission limiter lives in the parent, keyed by provider
+ * label, so it must persist across connections.  Exhaust a label's parent bucket
+ * and then "reconnect" (resolve the same label again, as a fresh accept would):
+ * the bucket must be the same, still-exhausted one — the burst is NOT refilled by
+ * reconnecting.  A distinct label keeps its own independent, full bucket.
+ */
+ATF_TC_WITHOUT_HEAD(per_label_bucket_survives_reconnect);
+ATF_TC_BODY(per_label_bucket_survives_reconnect, tc)
+{
+	struct label_rate *table;
+	struct auditcmp_rate *first, *again, *other;
+	struct timespec now = { .tv_sec = 100, .tv_nsec = 0 };
+	unsigned int i;
+
+	(void)tc;
+	table = auditcmp_test_accept_table();
+	ATF_REQUIRE(table != NULL);
+
+	/* First connection for a label: AUDITCMP_ACCEPT_RATE_BURST (16) tokens. */
+	first = auditcmp_test_accept_lookup(table, "system.Log", &now);
+	ATF_REQUIRE(first != NULL);
+	for (i = 0; i < 16; i++)
+		ATF_CHECK(auditcmp_rate_allow_at(first, &now));
+	ATF_CHECK(!auditcmp_rate_allow_at(first, &now));	/* burst exhausted */
+
+	/*
+	 * Reconnecting for the same label at the same instant resolves to the
+	 * SAME bucket, which is still exhausted.  A per-session bucket would have
+	 * been re-initialised to a full burst here; the parent bucket is not.
+	 */
+	again = auditcmp_test_accept_lookup(table, "system.Log", &now);
+	ATF_CHECK_EQ(first, again);
+	ATF_CHECK(!auditcmp_rate_allow_at(again, &now));
+
+	/* A different label is isolated: its own bucket starts full. */
+	other = auditcmp_test_accept_lookup(table, "system.Network", &now);
+	ATF_REQUIRE(other != NULL);
+	ATF_CHECK(other != first);
+	ATF_CHECK(auditcmp_rate_allow_at(other, &now));
+
+	free(table);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -91,5 +137,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, burst_and_refill);
 	ATF_TP_ADD_TC(tp, fractional_and_clock_regression);
 	ATF_TP_ADD_TC(tp, saturates_at_burst);
+	ATF_TP_ADD_TC(tp, per_label_bucket_survives_reconnect);
 	return (atf_no_error());
 }

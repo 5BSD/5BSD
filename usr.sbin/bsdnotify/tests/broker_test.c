@@ -374,6 +374,112 @@ ATF_TC_BODY(sequence_exhaustion, tc)
 	notify_broker_destroy(broker);
 }
 
+ATF_TC_WITHOUT_HEAD(state_clear_is_owner_scoped);
+ATF_TC_BODY(state_clear_is_owner_scoped, tc)
+{
+	struct notify_broker_client *owner, *other;
+	struct notify_state_reply state;
+	struct notify_broker *broker;
+
+	broker = notify_broker_create();
+	ATF_REQUIRE(broker != NULL);
+	owner = notify_broker_add(broker, "org.a", 4);
+	other = notify_broker_add(broker, "org.b", 4);
+	ATF_REQUIRE(owner != NULL && other != NULL);
+
+	/* org.a establishes the state; ownership is stamped server-side. */
+	ATF_REQUIRE_EQ(0, notify_broker_state_set(broker, owner, "svc.state",
+	    9, 7, &state));
+
+	/* A different label may not clear a state it does not own. */
+	ATF_CHECK_ERRNO(EACCES, notify_broker_state_clear(broker, other,
+	    "svc.state", 9) == -1);
+	/* The denied clear leaves the state present and unchanged. */
+	ATF_REQUIRE_EQ(0, notify_broker_state_get(broker, "svc.state", 9,
+	    &state));
+	ATF_CHECK_EQ(7, state.state);
+
+	/* The owning label clears it, and the state is gone. */
+	ATF_REQUIRE_EQ(0, notify_broker_state_clear(broker, owner, "svc.state",
+	    9));
+	ATF_CHECK_ERRNO(ENOENT, notify_broker_state_get(broker, "svc.state", 9,
+	    &state) == -1);
+	notify_broker_destroy(broker);
+}
+
+ATF_TC_WITHOUT_HEAD(states_are_evicted_on_last_session_disconnect);
+ATF_TC_BODY(states_are_evicted_on_last_session_disconnect, tc)
+{
+	struct notify_broker_client *first, *second, *bystander;
+	struct notify_state_reply state;
+	struct notify_broker *broker;
+
+	broker = notify_broker_create();
+	ATF_REQUIRE(broker != NULL);
+	/* Two sessions share one owning label; a third holds a foreign label. */
+	first = notify_broker_add(broker, "org.a", 4);
+	second = notify_broker_add(broker, "org.a", 4);
+	bystander = notify_broker_add(broker, "org.b", 4);
+	ATF_REQUIRE(first != NULL && second != NULL && bystander != NULL);
+	ATF_REQUIRE_EQ(0, notify_broker_state_set(broker, first, "svc.up", 6,
+	    1, &state));
+
+	/* Dropping one of the label's sessions must not reclaim its state. */
+	notify_broker_remove(broker, first);
+	ATF_REQUIRE_EQ(0, notify_broker_state_get(broker, "svc.up", 6, &state));
+	ATF_CHECK_EQ(1, state.state);
+
+	/* A foreign label disconnecting leaves the state intact as well. */
+	notify_broker_remove(broker, bystander);
+	ATF_REQUIRE_EQ(0, notify_broker_state_get(broker, "svc.up", 6, &state));
+
+	/* The last session of the owning label going away reclaims the state. */
+	notify_broker_remove(broker, second);
+	ATF_CHECK_ERRNO(ENOENT, notify_broker_state_get(broker, "svc.up", 6,
+	    &state) == -1);
+	notify_broker_destroy(broker);
+}
+
+ATF_TC_WITHOUT_HEAD(publisher_identity_is_stamped_server_side);
+ATF_TC_BODY(publisher_identity_is_stamped_server_side, tc)
+{
+	struct notify_broker_client *alpha, *beta, *subscriber;
+	struct notify_broker *broker;
+	union event_buffer buffer;
+	struct notify_event *event;
+
+	broker = notify_broker_create();
+	event = (void *)buffer.bytes;
+	ATF_REQUIRE(broker != NULL);
+	alpha = notify_broker_add(broker, "org.alpha", 4);
+	beta = notify_broker_add(broker, "org.beta", 4);
+	subscriber = notify_broker_add(broker, "subscriber", 4);
+	ATF_REQUIRE(alpha != NULL && beta != NULL && subscriber != NULL);
+	ATF_REQUIRE_EQ(0, notify_broker_subscribe(broker, subscriber,
+	    "shared.topic", 12));
+
+	/*
+	 * The publisher is taken from the unforgeable session label, never
+	 * from caller-controlled payload: org.alpha publishing a payload that
+	 * spells "org.beta" is still attributed to org.alpha.
+	 */
+	ATF_REQUIRE_EQ(0, notify_broker_publish(broker, alpha, "shared.topic",
+	    12, "org.beta", 8));
+	ATF_REQUIRE(notify_broker_next(subscriber, event, sizeof(buffer)) > 0);
+	ATF_CHECK_EQ(strlen("org.alpha"), event->publisher_length);
+	ATF_CHECK_EQ(0, memcmp(event_publisher(event), "org.alpha",
+	    event->publisher_length));
+
+	/* A second publisher's events carry its own label, not the first's. */
+	ATF_REQUIRE_EQ(0, notify_broker_publish(broker, beta, "shared.topic",
+	    12, "x", 1));
+	ATF_REQUIRE(notify_broker_next(subscriber, event, sizeof(buffer)) > 0);
+	ATF_CHECK_EQ(strlen("org.beta"), event->publisher_length);
+	ATF_CHECK_EQ(0, memcmp(event_publisher(event), "org.beta",
+	    event->publisher_length));
+	notify_broker_destroy(broker);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -386,5 +492,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, timer_and_cleanup);
 	ATF_TP_ADD_TC(tp, fanout_and_churn);
 	ATF_TP_ADD_TC(tp, sequence_exhaustion);
+	ATF_TP_ADD_TC(tp, state_clear_is_owner_scoped);
+	ATF_TP_ADD_TC(tp, states_are_evicted_on_last_session_disconnect);
+	ATF_TP_ADD_TC(tp, publisher_identity_is_stamped_server_side);
 	return (atf_no_error());
 }

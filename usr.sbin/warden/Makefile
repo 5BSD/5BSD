@@ -40,7 +40,10 @@ CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
-LIBADD=		service channel jail
+LIBADD=		service channel jail md
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
 
 .include <bsd.prog.mk>
 

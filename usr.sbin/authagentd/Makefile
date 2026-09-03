@@ -3,7 +3,7 @@
 PACKAGE=	authagentd
 PROG=		authagentd
 PROGNAME=	AuthAgent
-MAN=
+MAN=		authagentd.8
 
 SRCS=		authagentd.c
 LIBADD=		service channel capability capbundle
@@ -39,6 +39,9 @@ AUTHAGENT_UNITDIR=	${AUTHAGENT_CAP_UNIT}
 AUTHAGENT_UNITNAME=	Unit.ucl
 AUTHAGENT_UNITPACKAGE=	authagentd
 AUTHAGENT_UNITMODE=	0444
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
 
 .include <bsd.prog.mk>
 

@@ -1,0 +1,135 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 3, 2026
+.Dt AUTHAGENTD 8
+.Os
+.Sh NAME
+.Nm authagentd
+.Nd session-mint boundary broker
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The
+.Nm
+daemon is the identity-to-capability mint boundary of the capability system.
+It is a socket-free capability-plane service: it exposes the well-known name
+.Dq Li system.authagent
+and serves each client on its own
+.Xr mac_capability 4
+channel.
+Its job is to turn the fact that
+.Dq an authenticator has verified a login for uid Ar U
+into a minted lookup channel scoped to that session.
+.Pp
+An authenticator that has established a login for a principal
+.Pq Xr login 1 , Xr su 1 , Xr sshd 8
+connects to
+.Dq Li system.authagent
+and asks for that session's capability bundle.
+.Nm
+mints the scoped session lookup channel over its own bootstrap channel to
+.Xr serviced 8
+and forwards it to the authenticator, which installs it for the new session.
+The authenticator never holds mint authority itself, and no plaintext
+credential from the login program is ever trusted as authority.
+.Pp
+.Nm
+is launched and supervised by
+.Xr serviced 8
+from the
+.Pa /Capabilities/System/AuthAgent.cap
+bundle; it is not started by
+.Xr init 8 ,
+and it is not intended to be run from the command line.
+.Ss Authoritative principal resolution
+.Nm
+does not trust the principal attributes supplied on the wire.
+A request carries only a uid.
+Before entering its sandbox
+.Nm
+opens Casper
+.Pq Xr cap_pwd 3 , Xr cap_grp 3
+channels limited to exactly the lookups it needs, then enters capability mode
+with
+.Xr cap_enter 2 .
+For each request it resolves the uid to its
+.Xr passwd 5
+entry and full group membership
+.Pq its primary group plus every group whose member list names it
+itself, so a compromised login client cannot claim admin membership it does
+not have.
+.Ss Scope policy
+The resolved principal is passed to the administrator policy in
+.Pa /Capabilities/Config/principal-policy.ucl
+to decide whether the session is minted with SYSTEM (admin) or USER scope.
+The policy file is adopted at startup as a read-only descriptor obtained from
+the filesystem daemon
+.Pq Xr tzfsd 8 ;
+nothing is declared in the manifest, and no path is consulted at request time.
+The policy is optional: when it is unavailable
+.Nm
+falls back to the historical root-or-wheel default
+.Pq uid 0 or a member of group Dq wheel is admin
+and logs a warning so the fallback is observable.
+.Ss Caller gate
+Minting is gated on a held right, not on a name.
+Only a caller holding
+.Dv SERVICE_RIGHTS_ADMIN
+on its channel may request a mint.
+.Xr serviced 8
+stamps that right on a brokered session only for an ambient login-session
+lookup over a SYSTEM (full-discovery, root-or-wheel) channel, which is exactly
+and only the channel the login family
+.Pq Xr login 1 , Xr su 1 , Xr sshd 8
+reaches
+.Nm
+over.
+Every ordinary unit, including a compromised SYSTEM unit that looks
+.Nm
+up over its own bootstrap channel, is stamped without the admin bit and is
+refused with
+.Er EPERM
+before the request is parsed or any channel is minted.
+This closes the proxy escalation in which a service would otherwise mint
+itself an admin session.
+.Pp
+The minted leaf channel is re-attenuated to
+.Dv CAP_XFER_ONCE
+before it is sent, so the reply's own descriptor pass consumes it to
+.Dv CAP_XFER_NONE
+at the login program: the session leaf receives a non-re-delegable lookup
+channel.
+A forwarding authenticator (an
+.Xr sshd 8
+monitor) may instead request a still-transferable channel and re-attenuate it
+before its single forward.
+.Sh FILES
+.Bl -tag -width ".Pa /Capabilities/Config/principal-policy.ucl" -compact
+.It Pa /Capabilities/Config/principal-policy.ucl
+optional administrator scope policy (SYSTEM vs USER)
+.It Pa /Capabilities/System/AuthAgent.cap
+capability bundle shipping
+.Nm
+.El
+.Sh SEE ALSO
+.Xr login 1 ,
+.Xr su 1 ,
+.Xr cap_enter 2 ,
+.Xr cap_grp 3 ,
+.Xr cap_pwd 3 ,
+.Xr mac_capability 4 ,
+.Xr authorityd 8 ,
+.Xr serviced 8 ,
+.Xr sshd 8
+.Sh HISTORY
+The
+.Nm
+daemon appeared in
+.Fx 5BSD
+as the session-mint boundary between authenticators and the capability
+service world.
+.Sh AUTHORS
+.An Kory Heard

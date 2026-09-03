@@ -11,8 +11,16 @@ ATF_TESTS_SH+=	bundle_test
 SRCS.policy_test=	policy_test.c auditcmp_policy.c
 CFLAGS.policy_test+=	-I${SRCTOP}/usr.sbin/auditbrokerd
 CFLAGS.policy_test+=	-I${SRCTOP}/sys
-SRCS.rate_test=	rate_test.c auditcmp_rate.c
+# rate_test drives the parent per-label admission bucket (in auditcmp.c) via the
+# AUDITCMP_TESTING hooks, so it compiles the daemon TU in its test configuration.
+SRCS.rate_test=	rate_test.c auditcmp.c auditcmp_rate.c auditcmp_submit.c
+CFLAGS.rate_test+=	-DAUDITCMP_TESTING
+CFLAGS.rate_test+=	-I${SRCTOP}/lib/libchannel
+CFLAGS.rate_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.rate_test+=	-I${SRCTOP}/usr.sbin/auditbrokerd
+CFLAGS.rate_test+=	-I${SRCTOP}/sys
+LIBADD.rate_test=	auditcmp channel service
+NO_SHARED.rate_test=	yes
 SRCS.submit_test=	submit_test.c auditcmp_submit.c
 CFLAGS.submit_test+=	-I${SRCTOP}/usr.sbin/auditbrokerd
 CFLAGS.session_test+=	-DAUDITCMP_TESTING

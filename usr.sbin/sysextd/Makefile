@@ -6,6 +6,11 @@ MAN=		sysextd.8
 
 SRCS=		sysextd.c
 
+# The kernel-module allow-list (default-deny) config, installed under
+# /Capabilities/Config; a missing file leaves sysextd's built-in allow-list.
+CONFS=		sysextd.ucl
+CONFSDIR=	/Capabilities/Config
+
 # sysextd is a serviced-supervised unit (docs/capability-authority-model.md): it
 # ships as the SystemExtension.cap capability bundle and serviced launches it,
 # rather than living at /usr/sbin and being spawned by PID 1.  The binary is the
@@ -41,8 +46,12 @@ CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
+CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
-LIBADD=		service channel
+LIBADD=		service channel ucl
+
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
 
 .include <bsd.prog.mk>
 

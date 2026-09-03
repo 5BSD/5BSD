@@ -76,39 +76,53 @@ channel_pair(int *client, int *provider)
 	ATF_REQUIRE_EQ(1, receive.nfds);
 }
 
+/*
+ * Core session fixture.  `rights` are the rights stamped onto the session's
+ * grant (SERVICE_RIGHTS_ADMIN for the admin-bypass path, SERVICE_RIGHTS_NONE for
+ * an ordinary label-scoped session).  `pin_consumer` models traced start_session:
+ * the privileged DTrace consumer is opened, and thus a raw fd is available to
+ * delegate, ONLY for a session that could ever be authorized (admin or an
+ * allowlisted label).  An unauthorized session pins no consumer, so it is created
+ * with pin_consumer == false to reflect that no privileged state exists on its
+ * behalf.
+ */
 static void
-fixture_create(struct fixture *fixture, bool authorized, int device_error)
+fixture_create_full(struct fixture *fixture, bool authorized, int device_error,
+    service_rights_t rights, bool pin_consumer)
 {
 	int client, provider, dtrace_fd;
 
 	memset(fixture, 0, sizeof(*fixture));
 	channel_pair(&client, &provider);
-	/*
-	 * The provider opens the DTrace consumer fd whenever the device is
-	 * available, independent of the label allowlist (traced start_session):
-	 * per-request authorization (root, or an allowlisted label) is enforced
-	 * in the handler, which delegates the held fd only on an authorized OPEN.
-	 */
-	dtrace_fd = device_error == 0 ?
+	dtrace_fd = (pin_consumer && device_error == 0) ?
 	    open("/dev/null", O_RDONLY | O_CLOEXEC) : -1;
-	ATF_REQUIRE(device_error != 0 || dtrace_fd >= 0);
+	ATF_REQUIRE(!pin_consumer || device_error != 0 || dtrace_fd >= 0);
 	fixture->child = fork();
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
-		/*
-		 * The session holds SERVICE_RIGHTS_ADMIN (P5): the capability
-		 * replacement for the old root bypass the tests relied on (they
-		 * run as root).  A session with the admin right obtains the raw
-		 * DTrace fd regardless of the label allowlist.
-		 */
 		_exit(tracecmp_test_serve(provider, dtrace_fd, authorized,
-		    device_error, "org.test.trace", SERVICE_RIGHTS_ADMIN));
+		    device_error, "org.test.trace", rights));
 	}
 	close(provider);
 	if (dtrace_fd >= 0)
 		close(dtrace_fd);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+}
+
+static void
+fixture_create(struct fixture *fixture, bool authorized, int device_error)
+{
+
+	/*
+	 * The session holds SERVICE_RIGHTS_ADMIN (P5): the capability replacement
+	 * for the old root bypass the tests relied on (they run as root).  A
+	 * session with the admin right obtains the raw DTrace fd regardless of the
+	 * label allowlist, so the consumer is always pinned when the device is
+	 * available.
+	 */
+	fixture_create_full(fixture, authorized, device_error,
+	    SERVICE_RIGHTS_ADMIN, true);
 }
 
 static void
@@ -277,6 +291,92 @@ ATF_TC_BODY(authorization_and_device_failures, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * traced-2 hardening: a session whose label is NOT in the allowlist and which
+ * holds no admin right must be refused OPEN with EACCES and must receive no
+ * DTrace consumer descriptor.  The provider also pins no privileged consumer on
+ * its behalf (modelled here by a fixture created without a consumer fd), so an
+ * unauthorized client cannot cause a privileged /dev/dtrace consumer to be
+ * opened or delegated.
+ */
+ATF_TC(unauthorized_open_is_denied_without_pinning_consumer);
+ATF_TC_HEAD(unauthorized_open_is_denied_without_pinning_consumer, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(unauthorized_open_is_denied_without_pinning_consumer, tc)
+{
+	union test_buffer reply;
+	struct fixture fixture;
+	struct tracecmp_hello_reply *hello;
+	struct tracecmp_stats *stats;
+	struct tracecmp_msg *message;
+	int fd;
+	size_t nfds;
+
+	fixture_create_full(&fixture, false, 0, SERVICE_RIGHTS_NONE, false);
+
+	/* HELLO must not advertise the raw-fd feature to an unauthorized peer. */
+	(void)call(fixture.session, TRACECMP_OP_HELLO, &reply, NULL, 0, &nfds);
+	message = (void *)reply.bytes;
+	hello = (void *)(message + 1);
+	ATF_CHECK_EQ(0, hello->features);
+	ATF_CHECK_EQ(0, nfds);
+
+	/* OPEN is refused EACCES with no descriptor delivered. */
+	fd = -1;
+	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, &fd, 1, &nfds);
+	ATF_CHECK_EQ(-EACCES,
+	    ((struct tracecmp_msg *)(void *)reply.bytes)->status);
+	ATF_CHECK_EQ(0, nfds);
+	ATF_CHECK_EQ(-1, fd);
+
+	(void)call(fixture.session, TRACECMP_OP_STATS, &reply, NULL, 0, &nfds);
+	message = (void *)reply.bytes;
+	stats = (void *)(message + 1);
+	ATF_CHECK_EQ(0, stats->opened);
+	ATF_CHECK_EQ(1, stats->rejected);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * The complement of the admin-bypass path (authorized_descriptor_is_one_shot):
+ * an allowlisted label with NO admin right is authorized by the label alone and
+ * is delegated the raw consumer fd on OPEN.  The harness delivers a plain fd, so
+ * the 15-ioctl cap_ioctls allowlist (applied by open_dtrace_consumer in the
+ * non-test build) is not reachable here; that limiting is deferred to a
+ * privileged, real-/dev/dtrace harness.
+ */
+ATF_TC(authorized_label_open_delivers_consumer_fd);
+ATF_TC_HEAD(authorized_label_open_delivers_consumer_fd, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(authorized_label_open_delivers_consumer_fd, tc)
+{
+	union test_buffer reply;
+	struct fixture fixture;
+	struct tracecmp_hello_reply *hello;
+	struct tracecmp_msg *message;
+	int fd;
+	size_t nfds;
+
+	fixture_create_full(&fixture, true, 0, SERVICE_RIGHTS_NONE, true);
+	(void)call(fixture.session, TRACECMP_OP_HELLO, &reply, NULL, 0, &nfds);
+	message = (void *)reply.bytes;
+	hello = (void *)(message + 1);
+	ATF_CHECK_EQ(TRACECMP_FEATURE_RAW_DTRACE_FD, hello->features);
+
+	fd = -1;
+	(void)call(fixture.session, TRACECMP_OP_OPEN, &reply, &fd, 1, &nfds);
+	ATF_CHECK_EQ(0, ((struct tracecmp_msg *)(void *)reply.bytes)->status);
+	ATF_REQUIRE_EQ(1, nfds);
+	ATF_CHECK(fd >= 0 && fcntl(fd, F_GETFD) >= 0);
+	if (fd >= 0)
+		close(fd);
+	fixture_destroy(&fixture);
+}
+
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
@@ -339,6 +439,8 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, authorized_descriptor_is_one_shot);
 	ATF_TP_ADD_TC(tp, authorization_and_device_failures);
+	ATF_TP_ADD_TC(tp, unauthorized_open_is_denied_without_pinning_consumer);
+	ATF_TP_ADD_TC(tp, authorized_label_open_delivers_consumer_fd);
 	ATF_TP_ADD_TC(tp, unexpected_descriptor_poison_session);
 	ATF_TP_ADD_TC(tp, arguments);
 	ATF_TP_ADD_TC(tp, worker_descriptors_cross_exactly_one_fork);

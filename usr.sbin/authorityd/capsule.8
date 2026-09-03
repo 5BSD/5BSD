@@ -1,0 +1,186 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 3, 2026
+.Dt CAPSULE 8
+.Os
+.Sh NAME
+.Nm capsule
+.Nd capability-plane PID 1 init personality
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+.Nm
+is the
+.Xr init 8
+replacement that brings up the capability plane as process ID 1.
+It is not a separate program: it is the PID-1
+.Em personality
+of
+.Xr authorityd 8 ,
+built from the same sources and installed as the boot copy
+.Pa /sbin/capsule .
+The daemon documentation, configuration, claims, and control interface are
+described in
+.Xr authorityd 8 ;
+this page documents only the
+.Nm
+init role.
+.Pp
+The installed loader configuration
+.Pq Pa /boot/loader.conf.d/capsule.conf
+places
+.Pa /sbin/capsule
+first in
+.Va init_path ,
+with the stock
+.Pa /sbin/init
+and the rescue init as execution fallbacks, so the kernel execs
+.Nm
+as PID 1.
+The copy lives in
+.Pa /sbin
+rather than
+.Pa /usr
+because
+.Pa /usr
+may be a separate filesystem that is not yet mounted when the kernel starts
+init.
+.Pp
+When invoked as PID 1,
+.Nm
+does not daemonize and never exits: a PID-1 exit panics the kernel, so every
+stock-init exit path becomes a logged emergency followed by a deliberate
+.Xr reboot 2
+or a drop to a recovery shell.
+.Nm
+runs a state machine ported from
+.Xr init 8
+with one additional state that brings up the
+.Xr mac_capability 4
+plane after
+.Pa /etc/rc .
+It performs the following duties:
+.Bl -bullet
+.It
+Verifies that PID 1 already holds real-init reaper status, opens
+.Pa /dev/mac_capability ,
+and brings up the capability plane.
+.It
+Starts
+.Xr serviced 8 ,
+the capability service launcher, as its first managed child under a
+process descriptor
+.Pq Xr pdfork 2 .
+.Nm
+does not run
+.Pa /etc/rc
+itself;
+.Xr serviced 8
+owns rc startup and the native capability services, and
+.Nm
+waits for it to signal boot convergence before proceeding to multi-user.
+If the plane or
+.Xr serviced 8
+cannot be brought up,
+.Nm
+enters a single-user recovery shell rather than a multi-user system with no
+service world.
+.It
+Holds the signal shield across the whole boot window.
+The
+.Dv CP_SF_SIGNAL
+capprotect flag is raised as soon as the
+.Xr mac_capability 4
+device is available, before
+.Pa /etc/rc
+runs, and re-asserted after convergence.
+With the shield up, an ambient
+.Xr kill 1
+can never reach the legacy init transition handler; lifecycle transitions
+arrive only over the capability plane.
+.It
+Acts as the system lifecycle, reboot, and halt authority.
+Reboot, halt, power-off, power-cycle, single-user, and reroot requests are
+delivered as an authorized
+.Ql system.lifecycle
+operation:
+.Xr serviced 8
+relays a request it authorized over its ADMIN-gated
+.Ql system.lifecycle
+capability to
+.Nm ,
+which applies it as a state-machine transition.
+Command-line tools such as
+.Xr reboot 8
+and
+.Xr shutdown 8
+reach this path through
+.Xr authorityctl 8 ,
+falling back to
+.Xr reboot 2 .
+.El
+.Pp
+On a plane-free boot
+.Pq loader tunable Va capability_plane Ns = Ns Qq NO ,
+.Nm
+hands PID 1 to the stock
+.Pa /sbin/init
+and the capability plane never starts; see
+.Xr authorityd 8 .
+In that mode
+.Nm
+holds no lifecycle authority.
+.Ss Divergences from stock init
+.Bl -bullet -compact
+.It
+.Cm init Ar N
+runlevel semantics
+.Pq COMPAT_SYSV_INIT
+are not accepted.
+The stock
+.Pa /sbin/init
+remains installed for that use.
+.It
+.Va init_exec
+is ignored: it is the hook that led the kernel to
+.Nm ,
+and honoring it again would exec-loop.
+.It
+Fatal errors and fatal signals reboot deliberately instead of exiting.
+.El
+.Pp
+.Nm
+is a boot program, not an interactive command; it takes no options beyond the
+boot flags the kernel forwards to PID 1
+.Pq for example Fl s No for single user .
+.Sh FILES
+.Bl -tag -width ".Pa /boot/loader.conf.d/capsule.conf" -compact
+.It Pa /sbin/capsule
+boot copy of the PID-1 program
+.It Pa /boot/loader.conf.d/capsule.conf
+loader configuration that selects
+.Nm
+as PID 1
+.It Pa /dev/mac_capability
+kernel capability device brought up at boot
+.El
+.Sh SEE ALSO
+.Xr pdfork 2 ,
+.Xr reboot 2 ,
+.Xr mac_capability 4 ,
+.Xr authorityctl 8 ,
+.Xr authorityd 8 ,
+.Xr init 8 ,
+.Xr serviced 8
+.Sh HISTORY
+The
+.Nm
+personality appeared in
+.Fx 5BSD
+as the capability-plane replacement for
+.Xr init 8 .
+.Sh AUTHORS
+.An Kory Heard

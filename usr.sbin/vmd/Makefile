@@ -6,6 +6,9 @@ MAN=		vmd.8
 
 SRCS=		vmd.c
 
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
+
 # vmd is a serviced-supervised unit: it ships as the VM.cap capability bundle
 # and serviced launches it on demand, rather than living at /usr/sbin and being
 # spawned by PID 1.  The binary is the unit's program.

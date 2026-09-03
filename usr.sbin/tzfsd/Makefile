@@ -57,6 +57,9 @@ CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
 LIBADD=		trustedzfs ucl nvpair service channel md
 
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+=	tests
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-FS_CAP_BIN
