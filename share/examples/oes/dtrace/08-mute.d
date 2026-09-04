@@ -6,6 +6,7 @@
 #endif
 
 BEGIN {
+	failed = 0;
 	printf("oes mute workflow\n");
 }
 
@@ -30,13 +31,13 @@ fbt::oes_client_unmute_path:entry
 }
 
 fbt::oes_client_is_muted:return
-/retval == 1/
+/arg1 == 1/
 {
 	muted_hit++;
 }
 
 fbt::oes_event_is_path_muted:return
-/retval == 1/
+/arg1 == 1/
 {
 	path_muted_hit++;
 }

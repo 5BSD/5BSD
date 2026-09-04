@@ -6,6 +6,7 @@
 #endif
 
 BEGIN {
+	failed = 0;
 	printf("oes open/close workflow\n");
 }
 
