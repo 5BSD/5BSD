@@ -24,13 +24,13 @@ and Binder coexist with BSD sockets on other systems.
 
 ## Core model
 
-A process opens `/dev/mac_capability` (mode 0600, root only — a broker
-connects on behalf of unprivileged processes and passes the fd via
-`SCM_RIGHTS`), issues `MAC_CAPABILITY_CONNECT` with a service name, and
-receives an instance fd. All further traffic is ioctls on that fd:
-async send/receive through bounded per-instance queues, or a synchronous
-call run in the caller's thread. Messages carry up to 32 attached fds;
-attached descriptors keep their full Capsicum rights, ioctl allowlists,
+A process opens `/dev/mac_capability` (root only — a broker connects on
+behalf of unprivileged processes and passes the fd via `SCM_RIGHTS`),
+issues `MAC_CAPABILITY_CONNECT` with a service name, and receives an
+instance fd. All further traffic is ioctls on that fd: async send/receive
+through bounded per-instance queues, or a synchronous call run in the
+caller's thread. Messages can carry attached fds; attached descriptors
+keep their full Capsicum rights, ioctl allowlists,
 and transfer/exec/fork propagation state. Instance fds are
 kqueue-integrated (`EV_EOF` on revocation) and delegable via fork, dup,
 and `SCM_RIGHTS`. Last close is a full teardown: queues drain, the
@@ -47,16 +47,45 @@ credential trailer; the `identity` service answers self and
 procdesc-targeted queries. Nonces are the subject identity for all
 capability policy — shields, isolation claims, system gates.
 
+## Fork and exec
+
+The two process transitions treat identity differently, and deliberately
+so. Across `fork()` the nonce is **inherited**: a child is the same
+principal, because fork is how a program structures itself — a provider's
+workers share their program's identity and the shields and claims keyed to
+it. Across `exec()` the nonce **rotates**: a new program image is a new
+principal, so authority keyed to the old identity never silently follows
+into foreign code. Exec is a trust boundary; fork is not.
+
+Held descriptors follow ordinary Unix inheritance across both transitions
+unless the propagation locks below say otherwise: a clofork-locked
+descriptor never reaches a child, and a cloexec-locked descriptor never
+survives into a new image. Identity policy and descriptor policy compose —
+a supervisor can let exactly one bootstrap channel cross exactly one exec,
+into a program that runs under a fresh identity.
+
 ## Channels
 
-The `channel` service provides bidirectional userspace-to-userspace
-messaging: `CHANNEL_OP_CREATE` returns two connected fds; revoking or
-closing one end delivers `ECONNRESET` to the peer. Channels give atomic
-messages, ordered descriptor attachments, reply tokens, authenticated
-credential metadata, bounded queues, and peer-death signaling; userspace
-builds on them through `libchannel`, and the **unforgeable channel
-label** stamped on each endpoint is the client identity every capability
-service keys on.
+The `channel` service is the communication primitive of the plane:
+bidirectional kernel message passing between two processes over a connected
+descriptor pair. Messages are atomic, queues are bounded, and peer death is
+signaled rather than hidden — closing or revoking one end delivers
+`ECONNRESET` to the other. Userspace drives channels through
+`libchannel(3)`.
+
+Two properties make channels a security substrate and not just a pipe.
+First, every message carries **kernel-stamped sender identity** — the
+peer's credentials and the unforgeable channel label — so a receiver never
+trusts wire data for who is speaking. Second, descriptors ride along inside
+messages under exactly the rights and transfer discipline described in this
+chapter, so delegation over a channel is as controlled as delegation
+anywhere else.
+
+Channels are also how services are reached: a named-service lookup hands
+back a channel endpoint, and every typed service protocol in this book runs
+over one. The channel is why "reached by name, scoped by label" works —
+the name gets you an endpoint, and the endpoint's kernel-stamped label is
+the identity every provider keys its policy on.
 
 ## Capability narrowing
 
@@ -70,52 +99,56 @@ Rights only ever shrink. The composable mechanisms:
 Combined, a supervisor can hand a child a send-only, non-transferable,
 single-generation handle.
 
-## Capability transfer (cap_xfer)
+## Transfer and propagation
 
-Classic descriptor passing has no limits: `SCM_RIGHTS` to
-any process, inherited by every fork, surviving every exec. For a
-capability system that is a hole — a supervisor cannot hand a worker a
-credential and be sure it stays there. `cap_xfer` closes it with
-per-descriptor, monotonically tightening limits, kept deliberately
-orthogonal to `cap_rights_t` so no `cap_rights_*` API can see or change
-them. The syscall family (600–635 in `sys/kern/syscalls.master`, all
-usable in capability mode):
+Descriptors are the capabilities, and capabilities **move**: over channels
+between processes, into children across `fork()`, into new program images
+across `exec()`. Delegation is how authority flows through the system, so
+controlling that movement is part of the security model itself. Classic
+descriptor passing has no controls at all — `SCM_RIGHTS` to any process,
+inherited by every fork, surviving every exec — and for a capability system
+that is a hole: a supervisor could not hand a worker a credential and be
+sure it stayed there. The `cap_xfer` family closes it with per-descriptor,
+one-way-tightening limits, kept deliberately orthogonal to Capsicum rights
+so no rights API can see or loosen them.
 
-- **Transfer states** — `cap_xfer_limit(2)`: `CAP_XFER_UNLIMITED`
-  (default), `CAP_XFER_ONCE`, `CAP_XFER_NONE`. An `ONCE` send is a
-  single hop that leaves **both** the sender and the receiver at `NONE`,
-  so the receiver cannot forward it again; longer chains are built by
-  re-attenuating each hop explicitly. A blocked send fails
-  `ENOTCAPABLE`.
-- **Post-transfer ceilings** — `cap_xfer_rights_limit(2)`,
-  `cap_xfer_ioctls_limit(2)`, `cap_xfer_fcntls_limit(2)`: on a
-  permitted send the receiver's rights are intersected with these
-  ceilings, so a delegate gets attenuated authority while the sender
-  keeps its own.
-- **Locked exec/fork survival** — `cap_cloexec_limit(2)` /
-  `cap_clofork_limit(2)`: classic `FD_CLOEXEC`/`FD_CLOFORK` are
-  process-settable, so a compromised program can clear them; these add
-  `LOCKED` (forced, unclearable) and `ONCE` (survive exactly one
-  exec / inherit into exactly one child, then lock). This is how
-  `serviced` injects bootstrap channels that survive its one supervised
-  exec and nothing after.
+**Transfer states** bound re-delegation. A sender can leave a descriptor
+freely transferable (the default), limit it to **one** more hop, or make it
+non-transferable. A one-hop send is consumed by the transfer itself: after
+it, both the sender's and the receiver's copies are non-transferable, so the
+recipient cannot forward what it was given — longer chains exist only if
+each hop deliberately re-grants them. The canonical use is the minted login
+session channel: the auth-agent attenuates it to one transfer, its single
+reply delivers it, and it lands at the session non-transferable.
 
-Every state only tightens — widening fails — and every
-descriptor-creating path yields `UNLIMITED`, so legacy software behaves
-identically. Enforcement lives in the `SCM_RIGHTS` path and in the
-`mac_capability` message path, which honors the same states for fds
-attached to capability messages.
+**Propagation locks** bound inheritance. Classic close-on-exec and
+close-on-fork are process-settable, so a compromised program can simply
+clear them; 5BSD adds locked variants that can never be cleared, plus a
+survive-exactly-once mode — inherit into one child, or across one exec, then
+lock. This is how `serviced` injects bootstrap channels that survive its one
+supervised exec and nothing after.
+
+**Post-transfer ceilings** narrow what arrives. A sender can stamp rights,
+ioctl, and fcntl ceilings that take effect on the descriptor *after* it
+transfers: the receiver's authority is intersected with the ceiling while
+the sender keeps its own, so a delegate always gets a weaker capability than
+its grantor held.
+
+Every one of these states only tightens — widening fails — and every
+descriptor-creating path starts unrestricted, so legacy software behaves
+identically. Together they are what makes "authority is a held descriptor"
+safe: delegation is always available, and attenuation-on-delegation is
+always enforceable. Reference: `cap_xfer_limit(2)` and its family.
 
 ## Descriptor types
 
 5BSD extends the descriptor table into a credential system. The types
-it adds (`sys/sys/file.h`), all passable and all subject to
-the `cap_xfer` controls above:
+it adds, all passable and all subject to the `cap_xfer` controls above:
 
 | Type | Represents | Key semantics |
 |---|---|---|
 | `DTYPE_MAC_CAPABILITY` | a connection to a named kernel service | the framework fd described above; narrowing via `CAP_IOCTL` allowlists |
-| `DTYPE_PROCDESC` | a process, without PIDs | 5BSD adds `pdrfork(2)`, `pdwait(2)`, `pdself(2)`, `pdcmp(2)`, `pdincapmode(2)`; holding it is sufficient authority — no ambient identity checks override capability-granted `pdkill` |
+| `DTYPE_PROCDESC` | a process, without PIDs | holding it is sufficient authority — no ambient identity checks override capability-granted `pdkill`; a family of `pd*(2)` syscalls rounds out the model |
 | `DTYPE_JAILDESC` | a jail, without JIDs | an owning descriptor removes the jail on last close; delegable jail ownership |
 | `DTYPE_ENVFD` | a named kernel-resident secret value | invisible to inspection tools; write-once sealing, capmode-only option, `explicit_bzero` on last close; can be minted `CAP_XFER_ONCE` for an exact one-hop handoff |
 | `DTYPE_ZFSHANDLE` | a TrustedZFS dataset/pool handle | rights fixed at mint; verb ioctls only narrow; see [TrustedZFS](../storage/trustedzfs.md) |
@@ -131,26 +164,16 @@ Protections](process-protections.md).
 ## Loadable service modules
 
 A service implements an async handler, a sync call, or both, plus
-optional lifecycle callbacks, and registers with
-`mac_capability_service_create()`; the framework owns descriptor
-creation, queuing, credential stamping, and teardown. Services shipped
-today, each its own module under `/usr/src/sys/dev/mac_capability/`:
-
-| Service | Purpose |
-|---|---|
-| `identity` | nonce queries (self, procdesc target) |
-| `capprotect` | per-nonce process shields (ptrace, signals, visibility, ...) |
-| `system` | gate tokens for kldload, reboot, sysctl, kenv, audit, ... |
-| `isolation` | file/dir, socket, network, vsock, and jail claims + tokens |
-| `coalition` | resource groups: enlist, terminate, deadlines, watchdogs |
-| `node` | per-process inspection/control via procdesc |
-| `accounting` | racct/rctl charge, release, rules |
-| `channel` | bidirectional process-to-process messaging |
-| `mount` | whitelisted filesystem mounting for sandboxed processes |
-
-Per-nonce authorization-entry limits, bounded queues, and fixed message
-sizes prevent a process from exhausting kernel memory by minting in a
-loop.
+optional lifecycle callbacks, and registers with the framework, which
+owns descriptor creation, queuing, credential stamping, and teardown.
+The services shipped today each ship as their own module: `identity`
+(nonce queries), `capprotect` (process shields), `system` (gate tokens
+for privileged operations), `isolation` (resource claims and tokens),
+`coalition` (resource groups), `node` (per-process inspection),
+`accounting` (resource accounting), `channel` (process-to-process
+messaging), and `mount` (whitelisted mounting for sandboxed processes).
+Per-nonce limits, bounded queues, and fixed message sizes prevent a
+process from exhausting kernel memory by minting in a loop.
 
 ## MACF hook integration
 
@@ -162,6 +185,19 @@ ptrace/signal/visibility hooks; `system` gates privileged syscalls.
 Denials and allows fire DTrace probes under the `mac_capability_*`
 providers.
 
+## mac_abac — attribute-based access control
+
+Beside the capability services sits `mac_abac`, 5BSD's label-based
+mandatory access control policy — a loadable MACF module. Security labels
+are sets of `key=value` attributes on credentials and files, and kernel
+decisions come from an ordered, first-match rule table matching subject and
+object attributes; rule sets can be prepared inactive and swapped
+atomically, so policy is replaced without an enforcement gap. Composition
+is deny-wins: `mac_abac` can further restrict Capsicum, `mac_capability`,
+and capprotect, but can never re-grant an operation another policy denied.
+
+Reference: `mac_abac(4)`, `mac_abacd(8)`, `mac_abac_ctl(8)`.
+
 ## Relationship to Capsicum
 
 `mac_capability` builds on Capsicum rather than replacing it. Instance
@@ -172,6 +208,5 @@ credentials, or re-escalate narrowed rights. Where Capsicum answers
 speaking (nonces), to whom (services), revocation, and delegation
 policy.
 
-The framework is exercised by an extensive ATF suite under
-`tests/sys/mac_capability/`. Kernel-to-kernel capability communication
-and registrar-based service naming are not provided.
+Kernel-to-kernel capability communication and registrar-based service
+naming are not provided.

@@ -87,7 +87,7 @@ decisions surface only as `EACCES`/`EPERM` on ordinary syscalls.
 
 ## Running Linux software
 
-The Linuxulator (`sys/compat/linux/`) translates Linux syscalls into native
+The Linuxulator translates Linux syscalls into native
 kernel operations *before* they execute, so the whole enforcement stack above
 polices Linux binaries with no separate "Linux hooks" to maintain.
 Enforcement below the translation boundary is the point: Linux's own
@@ -108,29 +108,21 @@ it cannot see. How 5BSD ships the Linux ABI:
   environments certify against. The reported kernel version defaults to
   5.15.0 (`compat.linux.osrelease`, per-prison writable), which satisfies the
   glibc floor checks of that generation.
-- **Coverage.** Roughly 270 syscalls are functional, including
-  `membarrier`, `vhangup`, `readahead`, `preadv2`/`pwritev2`,
-  `process_vm_readv`/`writev`, and the module-loading family (which
-  returns `EPERM` as Linux does for unprivileged callers).
-- **Capability-mediated Linux filesystems.** `linprocfs`, `linsysfs`, and
-  `fusefs` are on the mac_capability mount whitelist with per-filesystem
-  options, so Linux compatibility jails can be assembled by supervised
-  services without ambient mount privilege.
-
-The implementations follow the enforcement discipline: `process_vm_*`
-passes through `pget(PGET_CANDEBUG)` (and hence MAC debug policy), `vhangup`
-through `priv(9)` — capprotect shields and MAC policies constrain Linux
-debugging and tty revocation exactly as they do native code.
+- **Coverage.** The syscall surface that generation of userland exercises
+  is functional, and additions follow the enforcement discipline — Linux
+  debugging and tty-revocation paths pass through the same MAC policy as
+  native code.
+- **Capability-mediated Linux filesystems.** The Linux compatibility
+  filesystems are on the mac_capability mount whitelist, so Linux jails can
+  be assembled by supervised services without ambient mount privilege.
 
 ## Core kernel components
 
 ### MACF — Mandatory Access Control Framework
 
-5BSD extends MACF with 38+ new hooks covering process lifecycle (fork, exec,
-core dump, thread creation, syscall gating), memory protection (anonymous
-`mmap`, `mprotect` — W^X enforcement), the file-descriptor layer (dup,
-inherit, receive, ioctl, mmap, close), vnode operations, mount operations,
-and system-information disclosure (kernel ASLR). All hooks fire on Linux
+5BSD extends MACF with new hooks covering process lifecycle, memory
+protection (W^X enforcement), the file-descriptor layer, vnode and mount
+operations, and system-information disclosure. All hooks fire on Linux
 syscalls because the Linuxulator translates to native operations before the
 kernel executes them.
 
@@ -148,8 +140,8 @@ enables unlimited kernel services as loadable modules:
 - capprotect: MACF-backed process integrity shields
 - KernelStore: a shared, capability-gated key-value store
 
-Source: `sys/dev/mac_capability/`. Details in the
-[MAC Capability Framework](security/mac-capability.md) chapter.
+Details in the [MAC Capability Framework](security/mac-capability.md)
+chapter.
 
 ### Descriptor-level access control
 
@@ -168,40 +160,22 @@ leader-death triggers are built in.
 
 ### HWT/PT — hardware trace
 
-The machine-independent HWT framework (`sys/dev/hwt/`) with
-per-architecture backends — Intel PT on amd64 (`sys/amd64/pt/`, Intel
-CPUs only) and ARM SPE on arm64 (`sys/arm64/spe/`) — feeding the
+The machine-independent HWT framework with per-architecture backends —
+Intel PT on amd64 (Intel CPUs only) and ARM SPE on arm64 — feeding the
 [Observability](observability/observablebsd.md) stack.
 
 ## New system calls
 
-5BSD adds the following system calls (`sys/kern/syscalls.master`), all
-Capsicum-enabled:
-
-| # | Syscall | Purpose |
-|---|---------|---------|
-| 600 | `pdrfork(2)` | `rfork` returning a process descriptor |
-| 601 | `pdwait(2)` | wait on a process descriptor |
-| 602 | `renameat2(2)` | Linux-compatible rename with flags |
-| 603 | `cap_xfer_limit(2)` | per-fd transfer state (`CAP_XFER_*`) |
-| 604 | `cap_cloexec_limit(2)` | one-way close-on-exec propagation lock |
-| 605 | `cap_clofork_limit(2)` | one-way close-on-fork propagation lock |
-| 606 | `cap_xfer_rights_limit(2)` | rights ceiling applied after transfer |
-| 607 | `cap_xfer_ioctls_limit(2)` | ioctl allowlist applied after transfer |
-| 608 | `cap_xfer_fcntls_limit(2)` | fcntl allowlist applied after transfer |
-| 630 | `pdself(2)` | process descriptor for the calling process |
-| 631 | `pdcmp(2)` | compare two process descriptors |
-| 633 | `pdincapmode(2)` | query a target's capability mode via procdesc |
-| 634 | `cap_mmap_capmode(2)` | monotonic flag: fd may only be mmapped from capability mode |
-| 635 | `cap_lookup_capmode(2)` | monotonic flag: fd usable as `*at` dirfd only from capability mode |
-
-The transfer family is covered in
-[Capability Transfer](security/mac-capability.md); the procdesc
-family in [Process Protections](security/process-protections.md).
-Everything else 5BSD adds to the kernel is reachable without new
-syscalls — capability services are ioctls on `/dev/mac_capability`
-descriptors, and envfd creation goes through the specialfd path
-(`envfd(2)`).
+5BSD adds a small, Capsicum-enabled syscall surface in three families: the
+process-descriptor family (`pdrfork(2)`, `pdwait(2)`, `pdself(2)`, and
+friends — see [Process Protections](security/process-protections.md)), the
+capability transfer and propagation family (`cap_xfer_limit(2)` and
+friends — see
+[Transfer and propagation](security/mac-capability.md#transfer-and-propagation)),
+and a Linux-compatible `renameat2(2)`. Everything else 5BSD adds to the
+kernel is reachable without new syscalls — capability services are ioctls
+on `/dev/mac_capability` descriptors, and envfd creation goes through the
+specialfd path (`envfd(2)`).
 
 ## Userland stacks
 

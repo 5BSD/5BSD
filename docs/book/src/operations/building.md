@@ -133,11 +133,10 @@ doas make memstick       # memstick.img (also mini-memstick)
 doas make release        # real-release + vm-release + cloudware-release + oci-release
 ```
 
-Cloud and container variants live alongside (`Makefile.vm`, `Makefile.ec2`,
-`Makefile.azure`, `Makefile.gce`, `Makefile.oci`, `Makefile.firecracker`,
-`Makefile.vagrant`); per-target media scripts sit in `release/<arch>/`, and
-helper scripts under `release/scripts/`, notably `pkgbase-stage.lua` (which
-must list `5BSD-kernel-vbsd`).
+Cloud and container variants live alongside as per-provider Makefiles;
+per-target media scripts sit in `release/<arch>/`, and helper scripts under
+`release/scripts/`, notably `pkgbase-stage.lua` (which must list
+`5BSD-kernel-vbsd`).
 
 ### Installer media
 

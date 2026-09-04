@@ -14,7 +14,10 @@ it not by rewriting it against a strange new OS, but by using an **SDK** —
 `libservice` and `libcapbundle` — to do two small things:
 
 1. Make the program a **capability provider**: expose a named service over a
-   `libservice` channel instead of a raw socket.
+   `libservice` channel — the kernel message-passing primitive with
+   unforgeable sender identity (see
+   [Channels](../security/mac-capability.md#channels)) — instead of a raw
+   socket.
 2. Ship it as a **capability bundle**: a `.cap` directory whose manifest says
    how to launch the program — nothing more.
 

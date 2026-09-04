@@ -69,19 +69,10 @@ A unit declares **no** capabilities — there is no `capabilities {}` block, and
 eager grant syntax (`provides`, `requires`, `descriptors {}`, …) is rejected.
 The manifest says only how to launch the program; the program acquires
 whatever it needs at runtime, by name, every grant scoped to its own
-unforgeable channel label:
-
-- files, directories, devices — `service_open_isolated(3)` (tzfsd, rights-limited);
-- mutable storage — `service_storage_open(3)`, `service_storage_open_quota(3)`,
-  `service_storage_destroy(3)` (tzfsd);
-- a jail — `service_enter_namespace(3)` / `service_enter_namespace_ex(3)`,
-  `service_namespace_info(3)`, `service_destroy_namespace(3)` (warden);
-- a kernel module — `service_ensure_extension(3)`,
-  `service_extension_stat(3)` (sysextd);
-- vsock endpoints — `service_vsock_listen(3)`, `service_vsock_connect(3)` (vmd).
-
-Brokered outbound networking is its own chapter:
-[localnetwork](localnetwork.md).
+unforgeable channel label: files and devices, mutable storage (`tzfsd`),
+jails (`warden`), kernel modules (`sysextd`), and vsock endpoints (`vmd`),
+each through its `service_*(3)` call in `libservice(3)`. Brokered outbound
+networking is its own chapter: [localnetwork](localnetwork.md).
 
 ## Activation and process policy
 
@@ -107,10 +98,11 @@ ptrace/signal isolation.
 ## Validation and limits
 
 Unknown keys, duplicate keys, UCL directives, symlinked manifests, and
-over-1-MiB manifests fail closed. Key ceilings: 32 units per bundle, 256
-services system-wide, 8 IPC names per unit, 4096 bundle tree entries, 512 MiB
-per file, 2 GiB per bundle. Base bundles install in `/Capabilities/System`,
-site bundles in `/Capabilities`; every loaded object must be root-owned and
-not group/other-writable, and symlinks and special files are rejected.
-`servicectl verify` and `serviced` share the same strict parser, so validation
-and runtime loading cannot diverge.
+oversized manifests fail closed, and bundle counts and sizes are bounded
+(the ceilings are in `serviced(5)`). Base bundles install in
+`/Capabilities/System`, site bundles in `/Capabilities`; every loaded object
+must be root-owned and not group/other-writable, and symlinks and special
+files are rejected. `servicectl verify` and `serviced` share the same strict
+parser, so validation and runtime loading cannot diverge.
+
+Reference: `serviced(5)`.

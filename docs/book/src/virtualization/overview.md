@@ -29,37 +29,20 @@ support is protocol-bounded (virtio-mem hotplug, virtio-iommu translation).
 ## VirtIO device models
 
 The largest single work program is VirtIO: modern (virtio 1.4) PCI
-transport support, packed rings, multiqueue, new host device models
-(`usr.sbin/bhyve/pci_virtio_*.c`, 17 in all), and matching 5BSD guest
-drivers under `sys/dev/virtio/`. The new device models:
-
-| Device | Notes |
-| --- | --- |
-| balloon | stats, deflate-on-OOM, free-page hinting/reporting |
-| crypto | AES-CBC, SHA-256, HMAC-SHA-256, AES-GCM over an OpenSSL EVP host backend; 5BSD guest driver registers with `opencrypto(9)` |
-| fs | modern-only, up to 64 request queues, external backend over authenticated `SOCK_SEQPACKET`; guest bridges to `fusefs` |
-| gpu | unaccelerated 2D, one scanout, feeds the framebuffer console |
-| iommu | map/unmap, probe, fault queue, generated ACPI VIOT |
-| mem | memory hot-plug |
-| pmem | guest maps as NVDIMM |
-| rtc | virtio 1.4 §5.23, UTC clock, opt-in alarm |
-| sound | playback + capture bridged to `pcm(4)` |
-| vsock | see [vsock](#vsock) below |
-
-These join the pre-existing block, net, console, SCSI, 9P, input, and RNG
-models. Outside VirtIO, 5BSD also adds an **i6300esb watchdog** model
-(`pci_i6300esb.c`) — the Intel 6300ESB timer that Linux and Windows guest
-drivers already bind to, with configurable expiry action
-(`action=reset|poweroff|nmi|notify`) — and **pvclock**
-(`sys/amd64/vmm/io/vpvclock.c`), a default-off KVM-pvclock MSR
-implementation giving Linux `kvm-clock` and the 5BSD `kvm_clock(4)` driver
-a paravirtual clocksource.
+transport support, packed rings, multiqueue, a broad set of new host device
+models, and matching 5BSD guest drivers. The new models are balloon,
+crypto, filesystem (bridging to `fusefs` in the guest), GPU, IOMMU, memory
+hot-plug, pmem, RTC, sound, and vsock ([below](#vsock)), joining the
+pre-existing block, net, console, SCSI, 9P, input, and RNG models. Outside
+VirtIO, 5BSD also adds an **i6300esb watchdog** model — the Intel timer
+that Linux and Windows guest drivers already bind to, with a configurable
+expiry action — and **pvclock**, a default-off KVM-pvclock implementation
+giving Linux and 5BSD guests a paravirtual clocksource.
 
 **Packed rings and multiqueue.** Packed-ring support is implemented for
-every device model (`packed=true`, modern transport only) but kept out of
-default feature masks; on the guest side
-the shared `virtqueue.c` engine serves virtio-blk and virtio-sound.
-virtio-blk, virtio-scsi, and virtio-fs negotiate multiqueue end to end.
+every device model but kept out of default feature masks, and the
+throughput-oriented devices (block, SCSI, filesystem) negotiate multiqueue
+end to end.
 
 Two guest drivers are deliberately capability-bounded: virtio-mem does not
 online plugged pages, and virtio-iommu does not drive `busdma(9)`
@@ -71,20 +54,15 @@ path, admin virtqueue/SR-IOV grouping, device suspend, block secure erase).
 ## vsock
 
 5BSD adds a complete virtio-vsock stack: an `AF_VSOCK` socket family
-(`sys/kern/uipc_vsock.c`, family 46, documented in `vsock(4)`), a
-`virtio_vsock.ko` guest driver, and a host device model
-(`pci_virtio_vsock.c`) — giving host and guest processes a socket channel
-addressed by context ID (CID) and port with no network configuration inside
-the guest. `SOCK_STREAM` and `SOCK_SEQPACKET` are supported, with
-Linux-compatible `VMADDR_*` addressing; there is no datagram support.
-
-The device model (`-s <slot>,virtio-vsock,cid=<n>,...`, see `bhyve(8)`)
-offers two host backends: `backend=userspace` (default) maps host endpoints
-to Unix domain sockets in a directory, and `backend=kernel` attaches the VM
-to the host's own `AF_VSOCK` domain via `/dev/vsock`, so host applications
-address the guest with plain vsock sockets; multiple concurrent guests are
-supported. Checkpointing is fail-closed: a snapshot is accepted only with
-no live connection or buffered data.
+(documented in `vsock(4)`), a guest driver, and a host device model —
+giving host and guest processes a socket channel addressed by context ID
+and port with no network configuration inside the guest. Stream and
+seqpacket sockets are supported with Linux-compatible addressing; there is
+no datagram support. The device model offers two host backends — Unix
+domain sockets, or attachment to the host's own `AF_VSOCK` domain so host
+applications address the guest with plain vsock sockets — and
+checkpointing is fail-closed: a snapshot is accepted only with no live
+connection or buffered data. See `bhyve(8)`.
 
 A 5BSD *component*, though, does not open `AF_VSOCK` directly: host-side
 vsock is brokered by `vmd` (`system.VM`). A unit obtains a listener with
@@ -96,29 +74,20 @@ directly usable. `vmd` sits with the other system daemons in the
 [Service Manifests](../system/manifests.md); this chapter covers only the
 transport beneath it.
 
-vsock is among the most complete WASPNest devices, exercised by rootless
-ATF harnesses and end-to-end guest suites under `tests/sys/kern/`.
-
 ## Live migration and nested VMX
 
 Both capabilities are unexposed by default.
 
-**Live migration** (`usr.sbin/bhyve/`) speaks a versioned, CRC-checked frame
-protocol (`MIG1`) through explicit handshake, topology-validation,
-pre-copy, stop-copy, commit, and release phases, with bounded convergence
-and contract-based device eligibility. Both ends are handed an
-already-connected socket: the destination runs `bhyve -R <fd>`, the source
-issues a `migrate fd=<fd>` command over bhyve's control socket. The session
-rides on the versioned checkpoint/state model (named, checksummed state
-sections, explicit machine-type ABIs, named CPU baselines). The `-R`
+**Live migration** speaks a versioned, checksummed frame protocol through
+explicit handshake, topology-validation, pre-copy, stop-copy, commit, and
+release phases, with bounded convergence and contract-based device
+eligibility. Both ends are handed an already-connected socket, and the
+session rides on WASPNest's versioned checkpoint/state model. The receive
 listener is not authenticated, and live migration is not yet enabled for
 production use.
 
-**Nested VMX** (Intel-only) puts all VMX semantics in the kernel — VMCS12
-validation, VMCS02 construction, combined EPT, exit reflection, nested
-state serialization — behind a strict frozen-vCPU handoff transaction
-(`sys/amd64/vmm/intel/vmx_nested_instruction_handoff.c`). Exposure is
-triple-gated and default-off: the boot tunables `hw.vmm.vmx.nested` and
-`hw.vmm.vmx.nested_vpid`, plus a per-VM `nested_vmx` capability each guest
-must request. On AMD the capability is simply absent — fail-closed. Nested
-VMX remains experimental.
+**Nested VMX** (Intel-only) puts all VMX semantics in the kernel behind a
+strict frozen-vCPU handoff transaction. Exposure is triple-gated and
+default-off: two boot tunables plus a per-VM capability each guest must
+request. On AMD the capability is simply absent — fail-closed. Nested VMX
+remains experimental.

@@ -3,8 +3,8 @@
 [The Hybrid Model](hybrid-model.md) built a capability end to end; this
 chapter is the deep dive underneath it — the raw kernel services a provider
 sits on, the ISOLATION claim model, access tokens, and process hardening. The
-kernel services live under `sys/dev/mac_capability/` as loadable modules and
-are reached through file descriptors: a process opens `/dev/mac_capability`,
+kernel services are loadable modules reached through file descriptors: a
+process opens `/dev/mac_capability`,
 connects to a service by name, and receives an *instance fd* that carries
 every subsequent operation.
 
@@ -14,8 +14,7 @@ There are two paths, and which one a program uses is a design decision, not a
 convenience choice.
 
 **Managed providers never open `/dev/mac_capability`.**  `authorityd(8)` claims
-the device node itself at boot (`usr.sbin/authorityd/mac_capability_claims.c`
-always claims `/dev/mac_capability`), so a foreign-nonce open is denied by the
+the device node itself at boot, so a foreign-nonce open is denied by the
 MACF hooks.  A provider managed by `serviced(8)` never opens the device either. It is
 launched with an unforgeable service channel and acquires any capability it
 needs on demand, by name, scoped to its channel label — `serviced` mints and
@@ -37,21 +36,16 @@ if (service_provider_create(&provider) == -1 ||
 	err(1, "bootstrap");
 ```
 
-This is the exact startup sequence of the `networkcmp` peer provider daemon
-(`usr.sbin/localnetwork/networkcmp.c`), a managed service reached lazily by its
-consumers through `service_connect()`.
+This is the exact startup sequence of the in-tree managed providers, each
+reached lazily by its consumers through `service_connect()`.
 `service_provider_authorize_capabilities()` completes the provider's own
 capability-mode hardening; it does not walk a bundle-minted token set, because
 a unit declares no capabilities in its manifest and `serviced` delivers none at
 launch.  Whatever the provider needs — a filesystem path or device, mutable
 storage, a namespace, a kernel module, a vsock endpoint — it acquires at
-runtime, by name, over its own unforgeable channel:
-`service_open_isolated(3)`, `service_storage_open(3)` /
-`service_storage_open_quota(3)` / `service_storage_destroy(3)`,
-`service_enter_namespace(3)` / `service_enter_namespace_ex(3)`,
-`service_extension_stat(3)`, `service_vsock_listen(3)` /
-`service_vsock_connect(3)` — each grant scoped to the channel label rather
-than handed over in a launch bootstrap.
+runtime, by name, over its own unforgeable channel through the
+`service_*(3)` acquisition calls in `libservice(3)`, each grant scoped to
+the channel label rather than handed over in a launch bootstrap.
 
 **Supervisors connect directly.**  `authorityd(8)` and `serviced(8)` run as root
 before any claims exist, open the device, and connect by service name.  This
@@ -117,22 +111,10 @@ close(target);		/* the claim holds its own vnode reference */
 ```
 
 Claiming a directory gates lookups *into* it, so one claim protects an entire
-subtree from foreign eyes.  The other claim types follow the same call shape
-with their own request structs:
-
-- **Unix socket** — a bound socket is a vnode; open the path with `O_PATH`
-  and issue `FI_OP_CLAIM` as above.  The gated operation is `connect(2)`.
-- **Network endpoint** — `struct fi_net_request`, `FI_OP_CLAIM_NET`: an
-  in-payload domain/protocol/port-range/address (network byte order,
-  wildcards allowed) plus a direction mask (`FI_NET_BIND`, `FI_NET_CONNECT`,
-  `FI_NET_ANY`).  AF_BLUETOOTH endpoints use the same struct.
-- **vsock endpoint** — `struct fi_vsock_request`, `FI_OP_CLAIM_VSOCK`: CID
-  plus a host-byte-order port range; one claim covers both `SOCK_STREAM` and
-  `SOCK_SEQPACKET`.  `FI_VSOCK_PROVIDER` additionally authorizes a
-  `/dev/vsock` transport provider.
-- **Jail** — `struct fi_jail_request`, `FI_OP_CLAIM_JAIL`: keyed by JID,
-  name, or both, with an `FI_JAIL_*` actions mask
-  (`CREATE|GET|SET|REMOVE|ATTACH`).
+subtree from foreign eyes.  The other claim types — Unix sockets, network
+endpoints, vsock endpoints, and jails — follow the same call shape with
+their own request structs and action masks; the wire-protocol header is the
+authoritative list.
 
 ## Minting and activating access tokens
 
@@ -185,9 +167,8 @@ an instance fd kept open across exec still holds the claim.  Second, closing
 the claiming instance fd releases all of its claims, so orphaned supervisors
 cannot leave resources permanently wedged.
 
-`authorityd`'s claim path (`usr.sbin/authorityd/mac_capability_claims.c` with
-the `claims` section of `authorityd.conf(5)`) is the production reference for
-a claiming supervisor.
+`authorityd`'s claim path, configured by the `claims` section of
+`authorityd.conf(5)`, is the production reference for a claiming supervisor.
 
 ## Hardening the process
 
@@ -210,19 +191,16 @@ service_worker_drop_inherited_authority();
 cap_enter();
 ```
 
-(`usr.sbin/localnetwork/networkcmp.c` does exactly this;
-`usr.sbin/logd/logcmp.c` uses a stricter set — both its ends add
-`SERVICE_PROTECT_NOSOCK`, and its provider adds `SERVICE_PROTECT_NOFORK`.)
+(The in-tree providers do exactly this, some with stricter flag sets.)
 A supervisor-level program drives the `"capprotect"` service directly with
-`CP_OP_SHIELD` (`mac_capability_capprotect_proto.h`): `CP_SF_PROTECT` flags
-block external interference — invisibility to `ps`, foreign-nonce `ptrace`
-denial, signal immunity including root's SIGKILL — and `CP_SF_RESTRICT` flags
-limit the process itself (`CP_SF_NOFORK`, `CP_SF_NOEXEC`, `CP_SF_NOSOCK`,
-`CP_SF_NOIPC`, `CP_SF_NOPRIVS`).  Flags are refcounted per shield fd; each
-close removes only that fd's contribution.  A shield owner can mint and hand
-out tokens (`CP_OP_MINT` / `CP_OP_AUTHORIZE`) exactly as ISOLATION does.  A
-held process descriptor bypasses the signal shields — `pdkill(2)` is
-capability authority in its own right.
+`CP_OP_SHIELD`: protect-class flags block external interference —
+invisibility to `ps`, foreign-nonce `ptrace` denial, signal immunity
+including root's SIGKILL — and restrict-class flags limit the process
+itself; the full flag set is in the capprotect wire-protocol header.  Flags
+are refcounted per shield fd; each close removes only that fd's
+contribution.  A shield owner can mint and hand out tokens exactly as
+ISOLATION does.  A held process descriptor bypasses the signal shields —
+`pdkill(2)` is capability authority in its own right.
 
 **coalition** provides lifecycle containment: connecting to `"coalition"`
 creates a resource group whose lifetime is the instance fd.  Process
@@ -243,8 +221,7 @@ answers with `channel_send_reply()`, and treats peer death as a normal
 completion path — every outstanding request fails, and `channel_error()`
 returns the stable terminal errno.  After `fork()`, the child calls
 `channel_abandon()`: channel fds are locked close-on-fork, so the child owns
-bookkeeping but no live transport.  `serve_session()` in
-`usr.sbin/localnetwork/networkcmp.c` is the production loop.
+bookkeeping but no live transport.
 
 **Descriptor narrowing.**  5BSD extends Capsicum with transfer and
 inheritance limits (`sys/capsicum.h`): `cap_xfer_limit()` bounds how many
@@ -264,11 +241,11 @@ cap_clofork_limit(fd, CAP_CLOFORK_ONCE);	/* one child inherits, then locked */
 cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED);	/* never survives exec */
 ```
 
-This is the production pattern: `localnetwork`'s `harden_worker_fd()` applies
-it to every descriptor destined for its `pdfork()`ed worker, and
-`service_provider_worker_channel()` in `lib/libservice/libservice.c` locks
-one endpoint of the pair into the parent and lets the other cross into
-exactly one child.  For transferable descriptors, `cap_xfer_rights_limit()`,
+This is the production pattern: the in-tree providers apply it to every
+descriptor destined for a `pdfork()`ed worker, and
+`service_provider_worker_channel()` locks one endpoint of the pair into the
+parent and lets the other cross into exactly one child.  For transferable
+descriptors, `cap_xfer_rights_limit()`,
 `cap_xfer_ioctls_limit()`, and `cap_xfer_fcntls_limit()` cap the authority
 the *receiver* obtains without weakening the sender.  All limits are
 monotonic — apply them just before the `fork()`/send, and the recipient can

@@ -30,7 +30,9 @@ power those capabilities name — no more.
 
 ## What a capability is
 
-A capability is a **channel endpoint bound to an `(object, rights)` pair**. The
+A capability is a **channel endpoint bound to an `(object, rights)` pair**
+(channels themselves are described in
+[the framework chapter](mac-capability.md#channels)). The
 file descriptor is the credential: holding the endpoint *is* holding the
 authority, and using it *is* presenting the capability. The service on the other
 end acts on a request because of *which endpoint it arrived on* and the rights
@@ -41,9 +43,9 @@ Four operations define the model:
 - **Present** — send a request on the endpoint. The service honors it if the
   endpoint's rights permit that operation.
 - **Delegate** — hand the endpoint to another holder by passing the descriptor.
-  Whether it may be re-delegated is itself an attenuable property of the fd (see
-  the transfer controls in the [MAC Capability
-  Framework](mac-capability.md)).
+  Whether it may be re-delegated is itself an attenuable property of the fd
+  (see [Transfer and
+  propagation](mac-capability.md#transfer-and-propagation)).
 - **Attenuate** — mint a strictly weaker capability from one you hold: fewer
   rights, or a narrower object. Attenuation is one-way.
 - **Revoke** — invalidate a capability, and transitively everything minted from

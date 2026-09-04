@@ -3,63 +3,32 @@
 A program that can call `socket(2)` and `connect(2)` holds the authority to
 reach *any* address the routing table can — exactly the authority an attacker
 wants in a compromised component (the classic server-side request forgery
-pivot). `localnetwork(8)` exposes `system.Network` as a socket-free provider
-and hands a component a *connected, hardened* socket scoped to the network
-rights its session actually carries — never general-purpose networking
-privilege. Provider: `usr.sbin/localnetwork/`; client library
-`libnetworkcmp(3)`; operator CLI `networkcmpctl`.
+pivot). `localnetwork` exposes `system.Network` as a socket-free provider and
+hands a component a *connected, hardened* socket scoped to the network rights
+its session actually carries — never general-purpose networking privilege.
+It brokers name resolution, TCP connections, and connected UDP sockets —
+deliberately no listen, no bind, no raw sockets; their absence is a contract,
+not an oversight.
 
-## Three operations, stripped sockets
+A delivered socket is narrowed before the client touches it: rights-limited
+to what a network client does — send, receive, poll, shut down — and
+transfer-confined so it cannot be re-pointed elsewhere, turned into a
+listener, or handed onward (see
+[Capability Transfer](../security/mac-capability.md)).
 
-The broker exposes **RESOLVE** (bounded `getaddrinfo(3)` via Casper's
-`cap_dns`), **CONNECT** (an established TCP connection), and **UDP** (a
-*connected* datagram socket) — deliberately no listen, no bind, no raw
-sockets; inbound and raw access are a larger authority surface reserved for a
-future negotiated protocol version, so their absence is a contract, not an
-oversight.
+Policy is **derived from the rights stamped on the session** — by `serviced`
+at lookup and by the [auth-agent](../security/authority-model.md) at the
+authentication boundary — not from a table inside the daemon, so two clients
+of the same broker can have genuinely different network reach with no
+per-client configuration. Independently of those rights, a non-admin session
+is blocked from sensitive internal destination ranges — loopback,
+link-local, private networks — including addresses that resolve there via
+DNS. This is the SSRF defense: a brokered connection cannot be steered at a
+loopback or metadata address without an explicitly granted internal right.
 
-A delivered socket is narrowed before the client touches it: capability rights
-limited to read/write/event/shutdown/sockopt/`fstat`, a three-entry ioctl
-allow-list, and `CAP_XFER_ONCE` so the single admitted hop consumes the
-transfer (see [Capability Transfer](../security/mac-capability.md)). The
-client can do what a network client does — send, receive, poll, shut down —
-but cannot re-connect the socket elsewhere, turn it into a listener, or hand
-it onward.
+One honest limitation: today only the admin right is scoped (to
+administrative login sessions); the other rights are granted in full until a
+finer-grained per-component policy lands, so the broker is the complete
+mechanism awaiting stricter policy.
 
-## Rights-derived, default-deny policy
-
-A session's policy is **derived from the rights stamped on it** — the
-`NETWORKCMP_RIGHT_*` bits (`RESOLVE`, `CONNECT`, `UDP`, `INET4`, `INET6`,
-`INTERNAL`) — not from a table inside the daemon. A session carrying no
-network rights gets nothing; one granted only RESOLVE can look names up but
-not connect; `SERVICE_RIGHTS_ADMIN` is the full bypass used by the operator
-plane. Two clients of the same daemon can have genuinely different network
-reach with no per-client configuration in `localnetwork` itself.
-
-A separate constraint governs *where*: before `connect(2)`, a non-admin
-session is blocked from sensitive destination ranges — loopback, link-local,
-RFC 1918, and other internal ranges — including addresses that resolve there
-via DNS. This is the SSRF defense: a brokered connection cannot be steered at
-`127.0.0.1` or a metadata address unless the session explicitly carries
-`NETWORKCMP_RIGHT_INTERNAL` (or admin).
-
-## Where the rights come from
-
-`localnetwork` enforces `identity.rights`; it does not invent them. Rights are
-stamped by the minter — [`serviced`](serviced.md) when it hands out a session
-at lookup, and the [auth-agent](../security/authority-model.md) at the
-authentication boundary. Today the admin right is granted only to admin
-(SYSTEM-domain) login sessions; all other rights are granted in full until a
-finer-grained policy scopes them, so a provider that checks rights behaves
-exactly as one that ignores them. The broker side is the complete mechanism;
-scoping the non-admin bits per component is what will turn it into live,
-per-component network policy.
-
-## Service model
-
-`localnetwork` is an ordinary socket-free provider (see
-[Writing a Service Provider](../development/writing-components.md)): it
-publishes `system.Network` in `activation.ipc`, stays stopped until first
-lookup, and serves each client from its own capability-mode `pdfork(2)`
-worker. Consumers link `libnetworkcmp(3)` and connect lazily on first use —
-the client never opens a socket itself.
+Reference: `localnetwork(8)`, `libnetworkcmp(3)`.

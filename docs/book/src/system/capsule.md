@@ -34,9 +34,8 @@ Authority that must survive the service manager's death stays in the spine:
 reboot does not depend on `serviced` being alive, because shutdown tears
 `serviced` down. `serviced` runs as a `pdfork(2)` child supervised through its
 process descriptor. Kernel-module loading is not a PID 1 operation — it is
-brokered by `sysextd` (`system.SystemExtension`), reached at runtime with
-`service_ensure_extension(3)`; neither reboot nor module loading has a
-standalone daemon.
+brokered by `sysextd` (`system.SystemExtension`), reached at runtime by name;
+neither reboot nor module loading has a standalone daemon.
 
 ## Boot: converge or recover
 
@@ -75,12 +74,8 @@ unprivileged status query. `reboot(8)`, `halt(8)`, and `shutdown(8)` speak
 this ABI first and fall back to the traditional signal path when the socket is
 absent (classic-init systems and the pre-engine early-boot window). Lifecycle
 opcodes are rejected when `getpid() != 1`, so an ordinary `authorityd` daemon
-cannot reboot the machine.
-
-```sh
-authorityctl status      # daemon status, active claims, serviced state (any user)
-authorityctl reload      # reload config, SIGHUP serviced (root)
-```
+cannot reboot the machine. `authorityctl(8)` is the operator tool for the
+spine — status is unprivileged, everything else is root.
 
 Once the control socket is up, Capsule raises its capability integrity shield
 (`CP_SF_SIGNAL`, plus `SIGKILL`/`SIGCONT` protection) over itself and
@@ -88,9 +83,8 @@ Once the control socket is up, Capsule raises its capability integrity shield
 Kernel-internal signals (`SIGCHLD` reaping, procdesc signalling of `serviced`)
 keep working under the full shield. `init N` (SysV telinit) is a signal path
 and is deliberately not converted — it silently no-ops; use
-`shutdown(8)`/`reboot(8)`/`halt(8)`. Emergency paths when the event loop is
-wedged: `reboot -q` (direct `reboot(2)`), ddb's `reboot`, or a
-platform/BMC/hypervisor watchdog.
+`shutdown(8)`/`reboot(8)`/`halt(8)`. Direct `reboot -q`, ddb, and hardware
+watchdogs remain as last-resort emergency paths.
 
 ## Coexistence with rc
 
@@ -117,6 +111,8 @@ rc.conf layering work unchanged for rc-owned services; use `servicectl` for
 the managed world and `authorityctl status` for the spine. Rollback is a
 loader setting: `init_path="/sbin/init"` boots entirely on the classic init and rc.
 
-Timer, path, socket, calendar, queue-directory, and mount demand sources
-are provided; user-domain schedules are not. Per-script rc graph ingestion
+Demand activation covers timers, calendars, sockets, paths, and mounts;
+user-domain schedules are not provided, and per-script rc graph ingestion
 and dependency targets are deliberately absent.
+
+Reference: `capsule(8)`, `authorityd(8)`, `authorityctl(8)`.

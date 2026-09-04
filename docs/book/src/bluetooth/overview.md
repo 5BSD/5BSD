@@ -3,18 +3,16 @@
 5BSD's Bluetooth Low Energy and Bluetooth Mesh stack is two cooperating
 userland daemons over the kernel's netgraph Bluetooth layer:
 
-- **blued** (`blued(8)`, `/usr/src/usr.sbin/bluetooth/blued/`) — the host
-  daemon: HCI adapter management, ATT/GATT/SMP, central and peripheral
-  roles, ISO streams, advertising and scanning. CLI: `bluedctl(8)`.
-- **meshd** (`meshd(8)`, `/usr/src/usr.sbin/bluetooth/meshd/`) — the
-  Bluetooth Mesh node daemon: mesh security material, network/transport/
-  access layers, foundation and application models. CLI: `meshctl(8)`.
+- **blued** (`blued(8)`) — the host daemon: HCI adapter management,
+  ATT/GATT/SMP, central and peripheral roles, ISO streams, advertising and
+  scanning. CLI: `bluedctl(8)`.
+- **meshd** (`meshd(8)`) — the Bluetooth Mesh node daemon: mesh security
+  material, network/transport/access layers, foundation and application
+  models. CLI: `meshctl(8)`.
 
-Both have rc.d scripts (`blued_enable="YES"`, `meshd_enable="YES"`). Three
-in-tree libraries back them: `libble(3)` (the client library for blued's
-control protocol), `libblemesh(3)` (the mesh
-protocol engine, built from `lib/libmesh/`), and the traditional
-`libbluetooth(3)` for adapter I/O. The kernel side is netgraph (`ng_hci`,
+Both have rc.d scripts. Three in-tree libraries back them: `libble(3)` (the
+client library for blued's control protocol), `libblemesh(3)` (the mesh
+protocol engine), and the traditional `libbluetooth(3)` for adapter I/O. The kernel side is netgraph (`ng_hci`,
 `ng_l2cap`, `ng_ubt`) plus `ng_hci_virt(4)`, a virtual controller used with
 `vhcitool(8)` for hardware-free testing.
 
@@ -42,31 +40,24 @@ and resolving list), extended and periodic advertising, ISO streams
 
 Multiple adapters and multiple simultaneous connections are supported.
 Clients reach the daemon through the control socket, `libble(3)`, or
-`bluedctl(8)`, whose verb set spans scanning, connect/pair/bonds, GATT
-client and authoring transactions, accept lists, pairing agents, EATT, ISO
-setup and teardown, extended/periodic advertising and sync transfer (PAST),
-path loss, connection parameters, profile shortcuts (battery, devinfo,
-heart-rate, keyboard, and others), bond export, and event monitoring.
+`bluedctl(8)`, whose verb set spans the full stack — scanning, connections
+and pairing, GATT client and authoring transactions, ISO, advertising,
+profile shortcuts, and event monitoring.
 
 Configuration is UCL in `/etc/bluetooth/blued.conf` (annotated sample
-in-tree): `security` (IO capability, bondable, SC mode, key distribution),
-`features` (EATT, privacy, reconnect policy), `general` (logging, BTSnoop
-capture, bond database path), per-adapter and per-device blocks, and
-declarative GATT `service` blocks. SIGHUP applies every reloadable setting.
-Persistence lives under `/var/db/blued/`: bonds (LTK/IRK/CSRK), CCCD state,
-runtime GATT services, resolving-list IRKs, and HOGP report maps.
+in-tree), covering security policy, feature toggles, per-adapter and
+per-device blocks, and declarative GATT `service` blocks; SIGHUP applies
+every reloadable setting, and bonds and other pairing state persist under
+`/var/db/blued/`.
 
 ## BLE mesh
 
-libblemesh implements the Mesh Protocol 1.1 stack: mesh crypto, secure
-network and private beacons, IV Index update and Key Refresh, replay
-protection, segmentation/reassembly, heartbeats; provisioning in both
-directions (device, provisioner, and Remote Provisioning); the Relay, GATT
-Proxy, Friend, Low Power Node, and Directed Forwarding roles; Configuration
-Server and Client (including the 1.1 private-beacon/SAR/Large Composition
-Data additions) and Health foundation models; and application models from
-Generic OnOff through Sensor, Time/Scene, Scheduler, and Lighting with the
-LC controller.
+libblemesh implements the Mesh Protocol 1.1 stack: the mesh security and
+network layers, provisioning in both directions (device, provisioner, and
+Remote Provisioning), all the node roles from Relay through Friend, Low
+Power, and Directed Forwarding, the Configuration and Health foundation
+models, and the standard application models from Generic OnOff through
+Lighting.
 
 meshd is the node built on it: it holds the node's security material
 (NetKey, AppKey, IV Index, sequence, RPL), registers the foundation and
@@ -77,11 +68,8 @@ node configured with a `netkey` comes up already provisioned, without one
 it comes up unprovisioned.
 
 Operators drive it with `meshctl(8)` over a credential-checked control
-socket: provisioning over both bearers (PB-ADV and PB-GATT) with scan
-control, and a full **Config Client** — `meshctl cfg` sub-verbs cover
-composition data, AppKey/NetKey management, model binding, subscriptions,
-publication, relay/beacon/proxy/friend/TTL state, heartbeat, SAR, private
-beacons and proxy, Large Composition Data, and node reset:
+socket: provisioning over both bearers, and a full **Config Client** whose
+`cfg` sub-verbs cover remote node configuration end to end:
 
 ```sh
 meshctl cfg comp-get 0x0002

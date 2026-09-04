@@ -1,160 +1,64 @@
 # Tool Reference
 
-Operator CLIs shipped in the 5BSD base system. Synopses below are taken
-from each tool's `usage()` output in `/usr/src`.
+Operator CLIs shipped in the 5BSD base system, at a glance. Each tool's man
+page is the reference; this page only says what each one is for.
 
-## authorityctl — system lifecycle control
+## The capability plane
 
-Source: `usr.sbin/authorityctl`. Resolves `system.lifecycle` over the
-ambient discovery plane; `serviced` relays the operation to
+**authorityctl** drives system lifecycle — reboot, halt, single-user,
+reroot, status — by resolving `system.lifecycle` over the ambient discovery
+plane; `serviced` relays the operation to
 [Capsule (PID 1)](../system/capsule.md). No socket, no options — the
 caller's authority comes from the capability plane, not from reaching a
-control endpoint.
+control endpoint. The classic `reboot(8)`/`halt(8)` signal path remains
+fully supported beside it.
 
-```
-usage: authorityctl reboot|halt|poweroff|powercycle|single|reroot|rescan|
-                    catatonia|status|reload
-```
-
-`status` prints the authority's state summary; `reload` re-reads
-configuration and prints the change summary; the remaining verbs drive
-system lifecycle transitions. The classic `reboot(8)`/`halt(8)` signal path
-remains fully supported beside it.
-
-## servicectl — control serviced(8)
-
-Source: `usr.sbin/servicectl`.
-
-```
-usage: servicectl command [args]
-
-commands:
-  status              show serviced status and service list
-  services            list loaded services
-  reload              reload service bundles
-  start <label>       start a loaded service
-  stop <label>        stop a running service
-  restart <label>     stop then start a service
-  enable <bundle-id>  clear a bundle's operator-disabled state
-  disable <bundle-id> keep a bundle installed but unregistered
-  install <path.cap>  install a .cap bundle to /Capabilities/
-  verify <path.cap> [...] validate bundles and dependencies
-  deps <program>      suggest component manifest dependencies
-  bundles             list all registered bundles
-```
-
-There is no separate low-level capability administration tool:
-`/dev/mac_capability` is held exclusively by authorityd, and capability
+**servicectl** controls `serviced(8)`: status and listings, bundle install
+and verification, reload, enable/disable, and per-service start, stop, and
+restart. There is no separate low-level capability administration tool:
+`/dev/mac_capability` is held exclusively by `authorityd`, and capability
 administration goes through `authorityctl` and `servicectl`.
 
-## tzfsctl — TrustedZFS broker CLI
+**tzfsctl** is a demonstration/health tool for the `tzfsd(8)` storage
+broker — ping the broker, request and release claims — not a way to hold
+storage open.
 
-Source: `usr.sbin/tzfsctl`. A demonstration/health tool for `tzfsd(8)`,
-not a way to hold storage open.
+Small per-service CLIs round out the plane — `notifyctl`, `logctl`,
+`tracectl`, `networkcmpctl` — each speaking to its own provider through a
+separately authorized, label-scoped session.
 
-```
-tzfsctl ping
-tzfsctl request [-l persistent|cache|boot|lease] [-r rights] [-m] name
-tzfsctl release name
-```
+Reference: `authorityctl(8)`, `servicectl(8)`, `tzfsctl(8)`,
+`notifyctl(8)`.
 
-`request` prints the granted dataset and lifetime; `-m` additionally
-mounts and reports the dirfd. Rights names: `props_read, props_write,
-snapshot, snap_destroy, clone_src, create, destroy, mount`, plus
-`all`/`*`; the default is `mount,props_read`.
+## Security frameworks
 
-## bluedctl and meshctl — Bluetooth stack
+**mac_abac_ctl** manages the `mac_abac(4)` policy: enforcement mode, rules
+and atomically swappable rule sets, labels, and a kernel dry-run decision
+test. **oeslogger** streams OpenEndpointSecurity NOTIFY events as
+newline-delimited JSON (`oeslogger exec open | jq .`); AUTH (blocking)
+events are not exposed.
 
-The Bluetooth stack ships as the daemons `blued`/`meshd` with the operator
-CLIs `bluedctl` and `meshctl` (`usr.sbin/bluetooth/`). Both take
-`-s socket` (default `/var/run/blued.sock` for bluedctl) and `-i` for
-interactive mode; `bluedctl -j` selects JSON output.
+Reference: `mac_abac_ctl(8)`, `mac_abacd(8)`, `oeslogger(8)`.
 
-Common `bluedctl` operations: `scan`; `connect <addr> [public|random]`
-(async — watch `monitor`); `pair <addr>`; `discover <addr>` (GATT
-services); atomic GATT updates via `gatt-begin`/`gatt-commit`/
-`gatt-rollback`; `serve <handle> <hex>` to back a characteristic live;
-`keyboard <addr>` for end-to-end keyboard pairing; profile shortcuts
-`battery`, `devinfo`, `heart-rate`, `thermometer`, `time`, `find <addr>`.
+## Bluetooth
 
-Notable `meshctl` verbs: `status`; `create-network` (mint NetKey/AppKey/IV,
-this node as Provisioner); `provision <uuid-hex32> [elements]`;
-`key-refresh begin|advance|finish|...`; `friend`/`low-power`; and
-namespaced families `cfg` (Config Client), `df` (Directed Forwarding),
-`remote-prov`.
+The Bluetooth stack ships the daemons `blued`/`meshd` with the operator
+CLIs `bluedctl` (scanning, connections, pairing, GATT client and authoring,
+profile shortcuts, monitoring) and `meshctl` (provisioning, key management,
+a full Config Client, Directed Forwarding, Remote Provisioning). See the
+[Bluetooth](../bluetooth/overview.md) chapter.
 
-## waspnest / bhyve and bhyvectl — WASPNest hypervisor
+## Virtualization
 
-`waspnest` is a transitional symlink to `bhyve` in `/usr/sbin`, with a
-matching man-page link; the hypervisor will eventually be named waspnest
-with bhyve as the compatibility alias. Usage self-describes under
-whichever name it is invoked. Key flags: `-s slot,driver,configinfo` (PCI
-devices), `-l` (LPC), `-k config_file` / `-o var=value` (config), `-G
-port` (gdb stub), `-r file` (restore from checkpoint), `-R`
-(migrate-receive; mutually exclusive with `-r`).
+`waspnest` is a transitional alias for `bhyve(8)`, with a matching man-page
+link; the hypervisor will eventually be named waspnest with bhyve as the
+compatibility alias. `bhyvectl` drives running VMs — creation and teardown,
+statistics, capabilities, and (with snapshot support) checkpoint and
+suspend. See [WASPNest](../virtualization/overview.md).
 
-`bhyvectl` uses long options only: `--vm=<vmname>` plus operations
-including `--create`, `--destroy`, `--run`, `--get-stats`,
-`--set-mem=<MB>`, `--get-cpu-topology`, `--getcap`/`--setcap`,
-`--force-reset`, `--force-poweroff`, and (with snapshot support)
-`--checkpoint=<file>` and `--suspend=<file>`.
+## Observability
 
-## mac_abac_ctl — ABAC policy control
-
-Source: `usr.sbin/mac_abac_ctl`. Commands: `mode
-[disabled|permissive|enforcing]`, `default [allow|deny]`, `status`,
-`stats`, `limits`; `rule add|remove|load|append|list|clear|validate`;
-`label get|set|setatomic|refresh|remove`; and a `set` family for
-policy-set management — `enable`, `disable`, `swap <A> <B>` (atomic swap
-for hot-reloading policies), `move`, `clear`, `list`.
-
-## oeslogger — OpenEndpointSecurity event logger
-
-Source: `usr.sbin/oeslogger` (sources in `share/examples/oes`). Streams
-OES NOTIFY events as NDJSON.
-
-```
-usage: oeslogger [-dnp] [-m path] [-o file] [event_type ...]
-  -d       Observe this process and descendants only
-  -n       Disable automatic self and /dev/ noise mutes
-  -m path  Mute a path prefix (may be repeated)
-  -o file  Write JSON output to file (default: stdout)
-  -p       Pretty-print JSON output
-  -l       List available event names
-```
-
-With no event names it subscribes to all NOTIFY events; e.g.
-`oeslogger exec open | jq .`. AUTH (blocking) events are not exposed.
-
-## Observability: hwtlm, bsdinstruments, bsdtrace
-
-`hwtlm` (`usr.sbin/hwtlm`) — hardware telemetry with OpenTelemetry output:
-`list`, `watch [--interval s] [--duration s]`, `exec -- command` (energy
-and thermal impact of a command); `--format text|json|otel`.
-
-`bsdinstruments` (`cddl/usr.sbin/bsdinstruments`) — DTrace profiling
-templates with OpenTelemetry output: `list [--json]`, `watch [profile |
--f script.d]`, `generate` (render to D source), `probes [--provider name]
-[--regex re]`. Profiles load from `/usr/share/bsdinstruments/profiles`,
-then `/usr/local/share/...`, then `~/.bsdinstruments/profiles` (user
-wins).
-
-`bsdtrace` (`usr.sbin/bsdtrace`) — hardware-assisted execution tracing
-with Intel PT: `list`, `exec -- cmd`, `trace pid`, `decode file.pt`;
-output formats `-f text|json|profile|tree|collapsed`; requires root and
-`kldload hwt && kldload pt`. See
-[ObservableBSD](../observability/observablebsd.md).
-
-## Component control utilities
-
-Small per-component CLIs, each speaking to its serviced component:
-`notifyctl` (`configtest`, `publish`, `state-get`, `state-set`,
-`timer`, `watch`, `stats`), `logctl` (`configtest`, `emit subsystem
-category severity message`, `flush`, `stats`, `show [minimum-severity]`;
-severities `trace..fatal`), `tracectl` (`configtest [file]`), and
-`networkcmpctl` (`config`, `info`, `resolve host [service]`).
-
-`notifyctl` talks to the shared BSDNotify router through a separately
-authorized session; the service is system-wide, but topic visibility and
-publish/state/timer authority are default-deny and bound to the caller's
-serviced label. See [BSDNotify](../system/bsdnotify.md).
+`hwtlm` (hardware telemetry), `bsdinstruments` (DTrace profiling
+templates), and `bsdtrace` (Intel PT execution tracing) are covered in
+[ObservableBSD](../observability/observablebsd.md); each has its own man
+page.

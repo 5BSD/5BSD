@@ -76,10 +76,9 @@ minting for themselves.
 
 ## Capability services and global IPC
 
-A unit needs no manifest declaration to use a capability service: it links the
-matching typed library (`liblogcmp` for `system.Log`, `libnotify` for
-`system.Notify`, `libtracecmp`, `libnetworkcmp`, `libcryptocmp`, …) and
-reaches the service lazily on first use over `service_connect()`. Each
+A unit needs no manifest declaration to use a capability service: it links
+the matching typed client library and reaches the service lazily on first
+use over `service_connect()`. Each
 provider is an ordinary supervised bundle that publishes its name in
 `activation.ipc`; it stays stopped until its first lookup. Every successful
 connect yields a fresh, direct, transfer-confined session — the supervisor is
@@ -102,15 +101,9 @@ privilege-separation boundary inside the bundle.
 
 ## Administration
 
-```sh
-servicectl verify /path/to/App.cap    # side-effect-free validation
-servicectl install /path/to/App.cap   # root; staged, verified, atomic rename
-servicectl reload                     # activate the highest valid sequence
-servicectl status | services | bundles
-servicectl start|stop org.example.app/worker
-```
+`servicectl(8)` is the operator tool: side-effect-free verification, staged
+atomic installs, reload, status, and per-unit start/stop. Mutating
+operations require root. Existing sequences are never overwritten; there is
+no rollback or historical-version selection interface.
 
-The control socket is `/var/run/serviced.sock`; mutating operations require
-root; requests and replies are fixed-size and bounded. Existing sequences are
-never overwritten; there is no rollback or historical-version selection
-interface.
+Reference: `serviced(8)`, `serviced(5)`, `servicectl(8)`.
