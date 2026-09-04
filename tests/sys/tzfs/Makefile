@@ -1,4 +1,4 @@
-PACKAGE=	tests
+PACKAGE=	tzfs-tests
 TESTSDIR=	${TESTSBASE}/sys/tzfs
 
 # TODO(socket-free): tzfsd_test and libtzfsd_protocol_test drove tzfsd over its

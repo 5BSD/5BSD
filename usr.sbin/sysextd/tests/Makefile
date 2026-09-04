@@ -1,4 +1,4 @@
-PACKAGE=	tests
+PACKAGE=	sysextd-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/sysextd
 .PATH:		${SRCTOP}/usr.sbin/sysextd
 

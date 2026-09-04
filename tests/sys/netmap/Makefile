@@ -1,4 +1,4 @@
-PACKAGE=	tests
+PACKAGE=	netmap-tests
 
 TESTSDIR=	${TESTSBASE}/sys/netmap
 TEST_METADATA+=	required_user="root"

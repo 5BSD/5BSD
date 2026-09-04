@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=	tests
+PACKAGE=	bsdinstruments-tests
 
 ATF_TESTS_SH=	bsdinstruments_test
 

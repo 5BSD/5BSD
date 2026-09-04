@@ -1,0 +1,6 @@
+comment = "Tests for the TrustedZFS client library"
+
+desc = <<EOD
+ATF/Kyua Capsicum and capability-descriptor tests for libtrustedzfs.
+The test binary and debug payload are separate from the runtime system.
+EOD

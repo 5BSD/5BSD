@@ -1,0 +1,6 @@
+comment = "Tests for bsdinstruments"
+
+desc = <<EOD
+ATF/Kyua command-line and profile validation for bsdinstruments.
+The test scripts are packaged separately from the observability tool.
+EOD

@@ -1,0 +1,7 @@
+comment = "TrustedZFS and tzfsd system tests"
+
+desc = <<EOD
+ATF/Kyua kernel-handle, daemon configuration, namespace, provider, and
+hardening tests for TrustedZFS. Test binaries, scripts, and debug files are
+packaged separately from the storage runtime.
+EOD

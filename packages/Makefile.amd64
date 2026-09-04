@@ -21,3 +21,7 @@ SUBDIR.${MK_APM}+=	apm
 SUBDIR.${MK_BHYVE}+=	bhyve
 SUBDIR.${MK_BHYVE}+=	libvmmapi
 SUBDIR.${MK_PMC}+=	libipt
+.if ${MK_PMC} != "no"
+SUBDIR+=		bsdtrace
+SUBDIR.${MK_TESTS}+=	bsdtrace-tests
+.endif

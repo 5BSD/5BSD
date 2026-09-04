@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=	tests
+PACKAGE=	hwtlm-tests
 
 ATF_TESTS_SH=	hwtlm_test
 

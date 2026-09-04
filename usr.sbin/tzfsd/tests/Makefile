@@ -1,4 +1,4 @@
-PACKAGE=	tests
+PACKAGE=	tzfs-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/tzfsd
 .PATH:		${SRCTOP}/usr.sbin/tzfsd
 

@@ -1,0 +1,6 @@
+comment = "Tests for bsdtrace"
+
+desc = <<EOD
+ATF/Kyua command-line, capture, decode, and offline replay tests for bsdtrace.
+The test scripts are packaged separately from the tracing tool.
+EOD

@@ -178,11 +178,18 @@ SUBDIR.${MK_SYSCONS}+=		syscons-data
 SUBDIR.${MK_TCSH}+=		csh
 SUBDIR.${MK_TELNET}+=		telnet
 SUBDIR.${MK_TESTS}+=		tests
+.if ${MK_BLUETOOTH} != "no"
 SUBDIR.${MK_TESTS}+=		bluetooth-tests
+.endif
 .if ${MK_BHYVE} != "no"
 SUBDIR.${MK_TESTS}+=		waspnest-tests
 .endif
+SUBDIR.${MK_TESTS}+=		authagentd-tests
 SUBDIR.${MK_TESTS}+=		authorityd-tests authorityctl-tests
+.if ${MK_DTRACE} != "no"
+SUBDIR.${MK_TESTS}+=		bsdinstruments-tests
+.endif
+SUBDIR.${MK_TESTS}+=		hwtlm-tests
 SUBDIR.${MK_TESTS}+=		serviced-tests servicectl-tests
 SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
 SUBDIR.${MK_TESTS}+=		libauditcmp-tests auditbrokerd-tests
@@ -190,13 +197,18 @@ SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
 SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
 SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests
 SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests
+SUBDIR.${MK_TESTS}+=		libotelexport-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
+SUBDIR.${MK_TESTS}+=		libtrustedzfs-tests
 SUBDIR.${MK_TESTS}+=		libauthorityrt-tests libservice-tests
 SUBDIR.${MK_TESTS}+=		mac-capability-tests
 SUBDIR.${MK_TESTS}+=		mac-abac-tests oes-tests
+SUBDIR.${MK_TESTS}+=		netmap-tests
 SUBDIR.${MK_TESTS}+=		localnetwork-tests
 SUBDIR.${MK_TESTS}+=		localcrypto-tests
 SUBDIR.${MK_TESTS}+=		logd-tests bsdnotify-tests traced-tests
+SUBDIR.${MK_TESTS}+=		sysextd-tests tzfs-tests
+SUBDIR.${MK_TESTS}+=		vmd-tests warden-tests
 SUBDIR.${MK_TESTS_SUPPORT}+=	atf kyua
 SUBDIR.${MK_UNBOUND}+=		local-unbound
 SUBDIR.${MK_VI}+=		vi

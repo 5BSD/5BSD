@@ -1,3 +1,5 @@
+PACKAGE=	bluetooth-tests
+
 # SPDX-License-Identifier: BSD-2-Clause
 #
 # libFuzzer harnesses over the blued / libble / kernel-L2CAP PDU parsers that

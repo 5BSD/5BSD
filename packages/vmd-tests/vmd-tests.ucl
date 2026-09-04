@@ -1,0 +1,6 @@
+comment = "Tests for the 5BSD virtual-machine service"
+
+desc = <<EOD
+ATF/Kyua registry, request-validation, and capability-provider tests for vmd.
+The test binaries and debug files are separate from the base runtime.
+EOD

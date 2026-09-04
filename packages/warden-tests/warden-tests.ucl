@@ -1,0 +1,6 @@
+comment = "Tests for the 5BSD jail-isolation service"
+
+desc = <<EOD
+ATF/Kyua jail-name, request-validation, and capability-provider tests for
+warden. The test binaries and debug files are separate from the base runtime.
+EOD

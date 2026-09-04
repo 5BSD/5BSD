@@ -1,4 +1,4 @@
-PACKAGE=	tests
+PACKAGE=	tzfs-tests
 TESTSDIR=	${TESTSBASE}/sys/zfshandle
 SCRIPTSDIR=	${TESTSDIR}
 

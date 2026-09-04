@@ -1,0 +1,6 @@
+comment = "Tests for the 5BSD system-extension service"
+
+desc = <<EOD
+ATF/Kyua allow-list, configuration, and capability-provider tests for
+sysextd, packaged separately from the base runtime.
+EOD

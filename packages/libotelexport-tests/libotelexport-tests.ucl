@@ -1,0 +1,6 @@
+comment = "Tests for the OpenTelemetry export library"
+
+desc = <<EOD
+ATF/Kyua encoding, batching, transport, and error-path tests for
+libotelexport, including their separate debug payload.
+EOD

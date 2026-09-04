@@ -1,6 +1,6 @@
 .include <src.opts.mk>
 
-PACKAGE=	tests
+PACKAGE=	bsdtrace-tests
 
 ATF_TESTS_SH=	bsdtrace_test
 

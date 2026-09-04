@@ -1,0 +1,6 @@
+comment = "Tests for hwtlm"
+
+desc = <<EOD
+ATF/Kyua command-line and telemetry-export tests for hwtlm.
+The test scripts are packaged separately from the telemetry tool.
+EOD
