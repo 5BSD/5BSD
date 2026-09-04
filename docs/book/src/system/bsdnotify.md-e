@@ -56,11 +56,12 @@ strict-UCL checks) and completes before sandbox entry.
 The router runs in capability mode with no ambient filesystem, socket, fork,
 exec, or `SCM_RIGHTS` authority; consumer channels are non-transferable
 (`CAP_XFER_ONCE`, see
-[Capability Transfer](../security/mac-capability.md)). OpenBSM records
+[Capability Transfer](../security/capability-transfer.md)). OpenBSM records
 and a `bsdnotify` DTrace provider expose admission, publish, deliver, and
 rejection decisions — metadata only, never payload bytes.
 
 `notifyctl` validates policy files, publishes, reads/writes state, watches an
-event stream, and reports statistics. The stack is exercised by test suites
-beside their sources and the disposable harness in
+event stream, and reports statistics; the broker, transport, policy, client,
+and bundle-confinement test suites live beside their sources, and the stack is
+exercised under a WITNESS/INVARIANTS kernel by the disposable harness in
 `tools/test/capability-qemu/`.

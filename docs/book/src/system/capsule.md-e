@@ -57,6 +57,8 @@ PID 1 does not run `/etc/rc` itself and does not start getty/login until
 `serviced` signals convergence. There is deliberately no clock deadline —
 `/etc/rc` has no knowable duration (fsck, entropy waits) — recovery triggers
 only when `serviced` *permanently* fails (its restart circuit breaker trips).
+The full flow capsule → serviced → rc → native services → converge → login is
+VM-validated.
 
 Capsule keeps stock init's compatibility invariants: never daemonize, never
 exit (every exit path becomes a logged emergency and a deliberate reboot or
@@ -110,13 +112,16 @@ serviced bundle, never both — and migrates by keeping its public IPC name
 stable, proving readiness and shutdown under the new owner, then flipping
 ownership. An rc.d script for a capability-shielded daemon becomes an adapter
 that calls the daemon's authenticated control tool instead of `kill`, because
-the shield denies the generic `kill -TERM`/`kill -0` defaults.
+the shield denies the generic `kill -TERM`/`kill -0` defaults (see
+`docs/rc-integration-handbook.md` for the full pattern).
 
 Operators keep their tools: `sysrc`, `service <name> start|stop|status`, and
 rc.conf layering work unchanged for rc-owned services; use `servicectl` for
 the managed world and `authorityctl status` for the spine. Rollback is a
 loader setting: `init_path="/sbin/init"` boots entirely on stock init and rc.
 
-Timer, path, socket, calendar, queue-directory, and mount demand sources
-are provided; user-domain schedules are not. Per-script rc graph ingestion
-and dependency targets are deliberately absent.
+**Status.** Timer, path, socket, calendar, queue-directory, and mount demand
+sources are implemented; only user-domain schedules remain future work.
+Per-script rc graph ingestion and dependency targets are deliberately not
+planned (`docs/service-architecture-plan.md`). The boot, shutdown, and
+control-ABI paths above are implemented and VM-validated.

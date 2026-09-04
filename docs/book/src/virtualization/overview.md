@@ -1,113 +1,125 @@
-# WASPNest Overview
+# WASPNest
 
 WASPNest is 5BSD's virtualization stack. It is not a new hypervisor: it is
 the FreeBSD bhyve hypervisor and its `vmm(4)` kernel subsystem, extended in
 the 5BSD tree with substantially broader VirtIO device coverage, a versioned
-checkpoint/state model, live-migration machinery, experimental Intel nested
-VMX, and a ledger-driven qualification program.
+checkpoint/state model, live-migration machinery, and experimental Intel
+nested VMX.
 
-## Architecture
+The stack keeps bhyve's kernel/userspace split: the kernel `vmm` subsystem
+executes guest vCPUs on Intel VMX/EPT or AMD SVM/NPT and owns stage-2
+translation, interrupt controllers, timers, and PCI passthrough; one
+`bhyve(8)` process per VM builds the machine model, emulates devices, and
+enters Capsicum capability mode before the guest runs; `libvmmapi` wraps the
+`/dev/vmm` ioctl ABI. On the capability plane, `vmd` (`system.VM`) brokers
+host-side vsock (below); guest-facing VM management by `vmd` — launching and
+brokering bhyve VMs — is not yet provided.
 
-The stack keeps bhyve's deliberate kernel/userspace split:
+**Naming.** The hypervisor is being renamed from bhyve to WASPNest,
+deliberately gradually: today `waspnest` is a symlink to the `bhyve` binary
+with a matching man-page link, both shipped in the `bhyve` package, so
+tooling can already reference the new name. Eventually the binary will be
+`waspnest` with `bhyve` as the compatibility alias.
 
-- The kernel `vmm` subsystem (`/usr/src/sys/amd64/vmm/`, with arm64 and
-  RISC-V ports under `sys/arm64/vmm/` and `sys/riscv/vmm/`) executes guest
-  vCPUs on Intel VMX/EPT or AMD SVM/NPT, and owns stage-2 translation,
-  interrupt controllers, timers, and PCI passthrough.
-- One `bhyve(8)` userspace process per VM (`/usr/src/usr.sbin/bhyve/`) builds
-  the machine model, emulates devices, runs one pthread per vCPU plus a
-  kqueue (`mevent`) reactor, and enters Capsicum capability mode before the
-  guest runs.
-- `libvmmapi` (`/usr/src/lib/libvmmapi/`) wraps the `/dev/vmm` ioctl ABI.
-- `vmd` (`system.VM`) is the capability-plane broker for host-side vsock: a
-  component asks for a listener by name with `service_vsock_listen(3)` and
-  receives a port window scoped to its channel label, rather than opening
-  `AF_VSOCK` itself. (Brokering bhyve VMs themselves is planned.)
+**Guests.** Three guest families are supported: 5BSD (including kernels
+rebuilt with the new VirtIO drivers), stock FreeBSD (the guest interface is
+unchanged from upstream bhyve), and Linux, with Alpine as the reference
+image. Linux is the primary consumer for host models whose 5BSD guest
+support is protocol-bounded (virtio-mem hotplug, virtio-iommu translation).
 
-A code-guided tour of the whole stack is maintained in
-`/usr/src/BHYVE_ARCHITECTURE.md`.
+## VirtIO device models
 
-## Naming transition
+The largest single work program is VirtIO: modern (virtio 1.4) PCI
+transport support, packed rings, multiqueue, new host device models
+(`usr.sbin/bhyve/pci_virtio_*.c`, 17 in all), and matching 5BSD guest
+drivers under `sys/dev/virtio/`. The additions over stock bhyve:
 
-The hypervisor is being renamed from bhyve to WASPNest. The transition is
-deliberately gradual: today `waspnest` is installed as a symlink to the
-`bhyve` binary, with a matching man-page link, so packaging and tooling can
-already reference the new name (`usr.sbin/bhyve/Makefile`):
+| Device | Notes |
+| --- | --- |
+| balloon | stats, deflate-on-OOM, free-page hinting/reporting |
+| crypto | AES-CBC, SHA-256, HMAC-SHA-256, AES-GCM over an OpenSSL EVP host backend; 5BSD guest driver registers with `opencrypto(9)` |
+| fs | modern-only, up to 64 request queues, external backend over authenticated `SOCK_SEQPACKET`; guest bridges to `fusefs` |
+| gpu | unaccelerated 2D, one scanout, feeds the framebuffer console |
+| iommu | map/unmap, probe, fault queue, generated ACPI VIOT |
+| mem | memory hot-plug |
+| pmem | guest maps as NVDIMM |
+| rtc | virtio 1.4 §5.23, UTC clock, opt-in alarm |
+| sound | playback + capture bridged to `pcm(4)` |
+| vsock | see [vsock](#vsock) below |
 
-```makefile
-SYMLINKS+=	bhyve ${BINDIR}/waspnest
-MLINKS+=	bhyve.8 waspnest.8
-```
+These join the pre-existing block, net, console, SCSI, 9P, input, and RNG
+models. Outside VirtIO, 5BSD also adds an **i6300esb watchdog** model
+(`pci_i6300esb.c`) — the Intel 6300ESB timer stock Linux and Windows guest
+drivers already bind to, with configurable expiry action
+(`action=reset|poweroff|nmi|notify`) — and **pvclock**
+(`sys/amd64/vmm/io/vpvclock.c`), a default-off KVM-pvclock MSR
+implementation giving Linux `kvm-clock` and the 5BSD `kvm_clock(4)` driver
+a paravirtual clocksource.
 
-```console
-$ ls -l /usr/sbin/waspnest
-lrwxr-xr-x  1 root wheel 5 ... /usr/sbin/waspnest -> bhyve
-```
+**Packed rings and multiqueue.** Packed-ring support is implemented for
+every device model (`packed=true`, modern transport only) but kept out of
+default feature masks; on the guest side
+the shared `virtqueue.c` engine serves virtio-blk and virtio-sound.
+virtio-blk, virtio-scsi, and virtio-fs negotiate multiqueue end to end.
 
-Eventually the binary will be named `waspnest` with `bhyve` kept as the
-compatibility alias. Both names ship in the `bhyve` package. Documentation
-and test infrastructure in the tree already use the WASPNest name
-(`tests/waspnest/`, `docs/waspnest-*.md`).
+Two guest drivers are deliberately capability-bounded: virtio-mem does not
+online plugged pages, and virtio-iommu does not drive `busdma(9)`
+translation. Both are protocol-complete and default-off; their production
+consumers are Linux guests. Deliberate spec exclusions are
+fail-closed and unadvertised (`VIRTIO_F_ACCESS_PLATFORM` outside the iommu
+path, admin virtqueue/SR-IOV grouping, device suspend, block secure erase).
 
-## What 5BSD adds over stock bhyve
+## vsock
 
-The upstream-FreeBSD weaknesses called out in `BHYVE_ARCHITECTURE.md` —
-legacy-only VirtIO transports for core devices, experimental save/restore, no
-live migration, no nested virtualization, single-queue virtio-net — are the
-work program of this tree. Additions include:
+5BSD adds a complete virtio-vsock stack: an `AF_VSOCK` socket family
+(`sys/kern/uipc_vsock.c`, family 46, documented in `vsock(4)`), a
+`virtio_vsock.ko` guest driver, and a host device model
+(`pci_virtio_vsock.c`) — giving host and guest processes a socket channel
+addressed by context ID (CID) and port with no network configuration inside
+the guest. `SOCK_STREAM` and `SOCK_SEQPACKET` are supported, with
+Linux-compatible `VMADDR_*` addressing; there is no datagram support.
 
-- Modern VirtIO 1.4 PCI transport work, packed rings, multiqueue, and
-  administration virtqueues (`usr.sbin/bhyve/virtio_admin*.c`).
-- New host device models: virtio-balloon, virtio-fs, virtio-gpu,
-  virtio-iommu, virtio-mem, virtio-pmem, virtio-rtc, virtio-sound, and
-  virtio-vsock (`usr.sbin/bhyve/pci_virtio_*.c`). See
-  [VirtIO](virtio.md) and [vsock](vsock.md).
-- Matching 5BSD guest drivers, including five added in the 2026-08 driver
-  wave (sound, fs, mem, pmem, IOMMU) under `sys/dev/virtio/`.
-- A versioned checkpoint/state model (`usr.sbin/bhyve/checkpoint_*.c`,
-  `snapshot*.c`) and a live-migration session protocol
-  (`usr.sbin/bhyve/migration_session.c`). See
-  [Migration and nested VMX](migration-nested.md).
-- Experimental Intel nested VMX
-  (`sys/amd64/vmm/intel/vmx_nested_instruction_handoff.c`), default-off and
-  Intel-only.
+The device model (`-s <slot>,virtio-vsock,cid=<n>,...`, see `bhyve(8)`)
+offers two host backends: `backend=userspace` (default) maps host endpoints
+to Unix domain sockets in a directory, and `backend=kernel` attaches the VM
+to the host's own `AF_VSOCK` domain via `/dev/vsock`, so host applications
+address the guest with plain vsock sockets; multiple concurrent guests are
+supported. Checkpointing is fail-closed: a snapshot is accepted only with
+no live connection or buffered data.
 
-## Supported guests
+A 5BSD *component*, though, does not open `AF_VSOCK` directly: host-side
+vsock is brokered by `vmd` (`system.VM`). A unit obtains a listener with
+`service_vsock_listen(3)` or dials a peer with `service_vsock_connect(3)`;
+each grant is scoped to a port window on the unit's unforgeable channel
+label, and the listener carries data-plane rights so accepted sockets are
+directly usable. `vmd` sits with the other system daemons in the
+[Architecture](../architecture.md) overview and
+[Service Manifests](../system/manifests.md); this chapter covers only the
+transport beneath it.
 
-The qualification lab exercises three guest families:
+vsock is among the most complete WASPNest devices, exercised by rootless
+ATF harnesses and end-to-end guest suites under `tests/sys/kern/`.
 
-- **5BSD** guests, including kernels rebuilt from this tree with the new
-  VirtIO drivers (`tests/sys/kern/vsock_e2e/run-5bsd-auto.sh`,
-  `build-5bsd-virtio-modules.sh`).
-- **FreeBSD** guests: 5BSD is a FreeBSD fork and the guest interface is
-  unchanged, so stock FreeBSD guests run as upstream bhyve guests do; the
-  qualification lanes themselves use 5BSD and Alpine images.
-- **Linux** guests, using Alpine as the reference image
-  (`tests/sys/kern/vsock_e2e/run-alpine-auto.sh`). Linux is also the primary
-  consumer for host models whose 5BSD guest support is protocol-bounded
-  (virtio-mem memory hotplug, virtio-iommu DMA translation).
+## Live migration and nested VMX
 
-## Completion status
+Both capabilities are unexposed by default.
 
-Status: WASPNest is explicitly not feature-complete. Completion is tracked
-per requirement row in machine-readable TSV ledgers, with
-`docs/waspnest-completion-matrix.md` as the entry point. As of the 2026-08-13
-snapshot:
+**Live migration** (`usr.sbin/bhyve/`) speaks a versioned, CRC-checked frame
+protocol (`MIG1`) through explicit handshake, topology-validation,
+pre-copy, stop-copy, commit, and release phases, with bounded convergence
+and contract-based device eligibility. Both ends are handed an
+already-connected socket: the destination runs `bhyve -R <fd>`, the source
+issues a `migrate fd=<fd>` command over bhyve's control socket. The session
+rides on the versioned checkpoint/state model (named, checksummed state
+sections, explicit machine-type ABIs, named CPU baselines). The `-R`
+listener is not authenticated, and live migration is not yet enabled for
+production use.
 
-- VirtIO: 237 of 240 requirement rows are `implemented-tested` (the other 3
-  are explicit, fail-closed exclusions), but of 130 live activation rows only
-  33 are `exercised` on Linux and 8 on 5BSD — host-model evidence is not
-  live-guest evidence.
-- Non-VirtIO devices (AHCI, NVMe, e82545, HDA, xHCI, framebuffer, UART, TPM
-  CRB, pvpanic, fw_cfg, and others): host model tests exist, but all 13
-  inventory rows are still `pending` for live guest and save/restore
-  qualification.
-- Intel nested VMX: 408 of 437 requirement rows `foundation-tested-
-  experimental`, 29 `experimental-pending-live`; zero of twelve live
-  qualification groups have passed, and nested VMX stays unexposed
-  (default-off host tunable) until they do.
-
-The release gate (`docs/waspnest-completion-matrix.md`) requires every live
-row to be exercised or explicitly excluded before the project is called
-complete. The qualification process itself is described in
-[Qualification](qualification.md).
+**Nested VMX** (Intel-only) puts all VMX semantics in the kernel — VMCS12
+validation, VMCS02 construction, combined EPT, exit reflection, nested
+state serialization — behind a strict frozen-vCPU handoff transaction
+(`sys/amd64/vmm/intel/vmx_nested_instruction_handoff.c`). Exposure is
+triple-gated and default-off: the boot tunables `hw.vmm.vmx.nested` and
+`hw.vmm.vmx.nested_vpid`, plus a per-VM `nested_vmx` capability each guest
+must request. On AMD the capability is simply absent — fail-closed. Nested
+VMX remains experimental.

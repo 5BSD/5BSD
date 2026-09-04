@@ -264,14 +264,11 @@ in 5BSD.
 
 ## Where to go next
 
-- The full provider mechanics, raw kernel services, and the ISOLATION service:
-  [Writing a Service Provider](writing-components.md).
+- The full provider mechanics, raw kernel services, the ISOLATION service, and
+  process hardening: [Writing a Service Provider](writing-components.md).
 - The complete bundle/unit grammar, activation sources (timers, calendars,
   socket, path, queue), and process policy: [Capability bundle
   manifests](../system/manifests.md) and [Capability
   Bundles](../security/capability-bundles.md).
 - Why authority is a held descriptor, and how login sessions get one:
-  [The Authority Model](../security/authority-model.md) and
-  [The Authentication Boundary](../security/session-mint.md).
-- Hardening the process further: [Using Process
-  Protections](using-protections.md).
+  [The Authority Model](../security/authority-model.md).

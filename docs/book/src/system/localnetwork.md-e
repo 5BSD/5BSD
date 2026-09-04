@@ -21,7 +21,7 @@ oversight.
 A delivered socket is narrowed before the client touches it: capability rights
 limited to read/write/event/shutdown/sockopt/`fstat`, a three-entry ioctl
 allow-list, and `CAP_XFER_ONCE` so the single admitted hop consumes the
-transfer (see [Capability Transfer](../security/mac-capability.md)). The
+transfer (see [Capability Transfer](../security/capability-transfer.md)). The
 client can do what a network client does — send, receive, poll, shut down —
 but cannot re-connect the socket elsewhere, turn it into a listener, or hand
 it onward.
@@ -47,7 +47,7 @@ via DNS. This is the SSRF defense: a brokered connection cannot be steered at
 
 `localnetwork` enforces `identity.rights`; it does not invent them. Rights are
 stamped by the minter — [`serviced`](serviced.md) when it hands out a session
-at lookup, and the [auth-agent](../security/authority-model.md) at the
+at lookup, and the [auth-agent](../security/session-mint.md) at the
 authentication boundary. Today the admin right is granted only to admin
 (SYSTEM-domain) login sessions; all other rights are granted in full until a
 finer-grained policy scopes them, so a provider that checks rights behaves

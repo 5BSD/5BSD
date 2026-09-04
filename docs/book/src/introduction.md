@@ -48,8 +48,8 @@ principles behind this shape is enumerated in
 
 The security and capability core lives in the 5BSD kernel, structured as
 loadable modules over a small set of base-kernel changes — adding a
-capability *service* needs no new syscall — and exercised by ~490 ATF test
-cases under `tests/sys/mac_capability/`:
+capability *service* needs no new syscall — and exercised by an extensive
+ATF suite under `tests/sys/mac_capability/`:
 
 | Layer | What it does |
 |-------|--------------|
@@ -132,7 +132,3 @@ documentation no longer applies to that subsystem.
   section is self-contained.
 - **Builders and release engineers**: see
   [Operations](operations/building.md).
-
-Chapters marked with a *Status* note describe components that are designed or
-partially delivered; everything else describes committed, tested code in the
-source tree.

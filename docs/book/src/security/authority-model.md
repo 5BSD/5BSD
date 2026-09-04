@@ -3,20 +3,16 @@
 In 5BSD, **authority is a held capability, never an identity.** To perform an
 operation on an object you must hold a capability that names that object and
 grants that operation. Your uid, your pathname, your PID, and any signal you can
-send grant you *nothing*. This chapter describes that model and how it differs
-from the ambient authority a traditional Unix carries.
+send grant you *nothing*. This chapter describes that model, the authority
+domains a session can hold, and the one boundary where a proven identity is
+exchanged for capabilities.
 
-> **Status.** This is the architecture the system is built to, and much of it is
-> now enforced, not aspirational. The substrate — the [MAC Capability
-> Framework](mac-capability.md), [Capability Transfer](capability-transfer.md),
-> and [Capability Bundles](capability-bundles.md) — is in place, and the
-> authentication boundary is live: `login`, `su`, and `sshd` provision their
-> sessions through the [auth-agent](session-mint.md), and direct session minting
-> has been retired (see below). A few control paths still gate on a uid behind
-> the capability path (the authorityd system-lifecycle control socket keeps
-> `getpeereid(3)` by design — reboot/halt stay stock). The authoritative,
-> code-level specification is `docs/capability-authority-model.md` in the source
-> tree.
+The substrate — the [MAC Capability Framework](mac-capability.md) and
+[Capability Bundles](capability-bundles.md) — enforces this model, and the
+authentication boundary is live: `login`, `su`, and `sshd` provision their
+sessions through the auth-agent (see below). A few control paths deliberately
+gate on a uid beside the capability path (the `authorityd` system-lifecycle
+control socket keeps `getpeereid(3)` by design — reboot/halt stay stock).
 
 ## Ambient authority is the thing we removed
 
@@ -45,7 +41,8 @@ Four operations define the model:
   endpoint's rights permit that operation.
 - **Delegate** — hand the endpoint to another holder by passing the descriptor.
   Whether it may be re-delegated is itself an attenuable property of the fd (see
-  [Capability Transfer](capability-transfer.md)).
+  the transfer controls in the [MAC Capability
+  Framework](mac-capability.md)).
 - **Attenuate** — mint a strictly weaker capability from one you hold: fewer
   rights, or a narrower object. Attenuation is one-way.
 - **Revoke** — invalidate a capability, and transitively everything minted from
@@ -56,24 +53,34 @@ attenuation clears bits, and `admin` is shorthand for all of them. There is no
 "root can do anything" — `admin` on a *specific* capability is as far as power
 goes, and only its holder has it.
 
+## Authority domains
+
+The lookup channel a session holds determines what it can even *discover*.
+`serviced` scopes every channel to a domain:
+
+- **SYSTEM** — full-discovery administrative reach. Held by the plane's own
+  units and by administrator sessions.
+- **USER** — a per-uid channel resolving an allow-listed subset of system
+  names, plus that user's own services. Held by ordinary sessions.
+- **CONTROL** — a sibling of SYSTEM, not a widening of it: control-plane names
+  (starting/stopping services, storage administration) are invisible to SYSTEM
+  and USER lookups and resolve only through a held CONTROL channel. This is the
+  payoff of the model — a control capability is delegatable to an unprivileged
+  operator without making it root.
+
+Lifecycle (reboot, halt) is likewise a capability served by the plane's spine
+so it survives even the service manager's shutdown; the kernel `reboot(2)`
+remains only as a last-resort escape hatch, not an authorization path.
+
 ## The one place identity becomes capability
 
 Pure capability systems do not have authority nowhere — they have a single,
 explicit **mint boundary** where it is created, and derive everything else by
-delegation. 5BSD's boundary has three parts:
-
-1. The **kernel** `mac_capability` device, which makes endpoints unforgeable.
-2. **Capsule** (PID 1, the init personality of `authorityd`), which holds the
-   root capability at boot and delegates the initial grants.
-3. The **authentication boundary** — the *only* place an identity is exchanged
-   for capabilities. When you prove a credential, `login`/`su`/`sshd` ask a
-   small, capsicum-sandboxed **auth-agent** (`system.authagent`) to mint your
-   session's capability channel; the agent resolves the principal itself (via
-   Casper) and consults an explicit **principal → bundle policy**. The login
-   programs no longer classify the principal or hold mint authority — direct
-   minting is retired. Your shell and its children inherit the scoped capability
-   the way they inherit standard I/O. This boundary is documented in full in
-   [The Authentication Boundary](session-mint.md).
+delegation. 5BSD's boundary has three parts: the kernel `mac_capability`
+device, which makes endpoints unforgeable; **Capsule** (PID 1, the init
+personality of `authorityd`), which holds the root capability at boot and
+delegates the initial grants; and the **authentication boundary** — the only
+place a proven identity is exchanged for capabilities, described next.
 
 This is the honest analogue of what every capability system must do somewhere:
 *"this principal may hold these capabilities."* It is stated once, as policy, in
@@ -82,19 +89,55 @@ principal is still *named* by a uid, but naming is not authority: the mapping
 from that name to capabilities is policy, and no service ever re-derives power
 from the name.
 
-## Discovery, control, and lifecycle are all just capabilities
+## The authentication boundary
 
-- **Service discovery** — the lookup channel a session holds is a *discovery
-  capability*; how broad it is (all services, or a narrow set) is set by the
-  auth policy for that principal, not by whether the principal is root.
-- **Control** (starting/stopping services, storage administration) is a
-  *control capability* an admin principal holds — delegatable to an unprivileged
-  operator without making it root. This is the payoff of the model: least
-  privilege without a superuser.
-- **Lifecycle** (reboot, halt) is a *lifecycle capability* served by the spine so
-  it survives even the service manager's shutdown; `reboot` presents it. The
-  kernel `reboot(2)` remains only as a last-resort escape hatch, not an
-  authorization path.
+A login program (`login`, `su`, `sshd`) authenticates a principal and must then
+hand the session a lookup channel scoped to that principal — SYSTEM for an
+administrator, per-uid USER for everyone else. If each login program
+classified the principal and minted the channel itself, mint authority — the
+ability to conjure an admin capability for any uid — would live in three
+separate, privileged, network-facing programs.
+
+Instead that authority lives in one place: the **auth-agent** (`system.authagent`,
+the `authagentd` daemon), a small, `serviced`-managed, capsicum-sandboxed
+service. A login program, having authenticated a principal, asks the agent to
+mint the session channel for a uid. The agent:
+
+1. **Resolves the principal itself, via Casper** (`cap_pwd`/`cap_grp`). It
+   never trusts attributes sent by the caller — a compromised login program
+   must not be able to claim `wheel` membership it does not have.
+2. **Applies the principal→domain policy.**
+   `/Capabilities/Config/principal-policy.ucl` is the single config that
+   decides which domain a principal's session receives: an explicit `admin`
+   list of uids and groups gets SYSTEM; everyone else gets USER. An absent or
+   unparseable policy fails safe to the historical default — root, or a member
+   of `wheel`, is admin — so a typo can never lock out root.
+3. **Mints the scoped channel** over its own unit bootstrap channel to
+   `serviced`, re-attenuates the delivered descriptor to `CAP_XFER_ONCE` (the
+   single reply send consumes it), and returns it. The login program installs
+   it as the session leader's inherited lookup channel; the shell and its
+   descendants resolve services through it at exactly their privilege level.
+
+Two gates make the boundary exclusive:
+
+- **`serviced` refuses direct minting on any ambient lookup channel** — even
+  the SYSTEM ambient carry handed to `getty` is lookup-only for the mint
+  operation. `login`/`su`/`sshd` hold no mint authority at all; if the agent is
+  unreachable they simply carry no lookup channel (best-effort, never fatal).
+- **The agent gates its callers on `SERVICE_RIGHTS_ADMIN`** — a right
+  `serviced` stamps only on an ambient login-session lookup over a
+  full-discovery channel, i.e. exactly the login family. An ordinary SYSTEM
+  unit that connects to `system.authagent` and asks for a `{uid=0}` mint is
+  refused `EPERM`; without this gate any managed unit could proxy itself an
+  admin channel.
+
+The trusted base for the session-mint decision is `{serviced, authagentd}` —
+two components — instead of `{login, su, sshd}`. `sshd`'s
+privilege-separated monitor forwards the minted descriptor one `SCM_RIGHTS`
+hop to its session child, and only for the *authenticated* principal, never a
+uid the untrusted child chose. Single-user mode is unaffected: `init` spawns
+the recovery shell directly and the capability plane is not running, so a
+`boot -s` root shell always works.
 
 ## Where uid still lives
 
@@ -107,8 +150,6 @@ above that boundary is capabilities, and only capabilities.
 
 ## See also
 
-- [The MAC Capability Framework](mac-capability.md) — the kernel substrate.
-- [Capability Transfer](capability-transfer.md) — delegation and attenuation of
-  the descriptor.
-- [Capability Bundles](capability-bundles.md) — how a service's grants are
-  declared and delivered.
+- [The MAC Capability Framework](mac-capability.md) — the kernel substrate,
+  transfer controls, and descriptor types.
+- [Capability Bundles](capability-bundles.md) — the bundle security model.

@@ -4,11 +4,8 @@ TrustedZFS makes ZFS storage a thing a program is handed, not a place it
 goes. It adds first-class file descriptors — dataset handles (zfd) and pool
 handles (zpd) — over the ZFS management plane, so a process can be granted
 "this dataset, these operations, nothing else" as an unforgeable object.
-The dataset and pool handle API, extended verb set, library, broker consumers,
-and qualification suites are implemented. TrustedZFS supports only 64-bit
-kernels and 64-bit user ABIs; every returned descriptor is close-on-exec. Its
-disposable QEMU qualification uses a matching WITNESS/INVARIANTS kernel and 82
-cases across 13 ATF programs.
+TrustedZFS supports only 64-bit kernels and 64-bit user ABIs; every
+returned descriptor is close-on-exec.
 
 ## Why the ZFS control plane needed this
 
@@ -83,11 +80,9 @@ snapshot/snap-destroy/rollback/promote, holds and bookmarks, `ZFD_SEND` /
 fd, so "CI can clone the template into its workspace and nowhere else"
 falls out of the rights), and `ZFD_MOUNT` / `ZFD_BLKOPEN`.
 
-Cursor-free enumeration is capped at `ZFSHANDLE_ENUM_MAX_ENTRIES` (16384).
-The read-only boot tunable `vfs.zfs.trustedzfs.enum_max_entries` may lower but
-cannot raise that ceiling; oversized enumerations fail with `E2BIG` rather
-than consuming unbounded kernel memory.
-
+Cursor-free enumeration is capped at `ZFSHANDLE_ENUM_MAX_ENTRIES` (16384);
+the read-only boot tunable `vfs.zfs.trustedzfs.enum_max_entries` may lower but
+cannot raise that ceiling, and oversized enumerations fail with `E2BIG`.
 Send-once is enforced in kernel handle state, so it survives fd passing:
 `ZHF_SEND_ONCE` refuses a second successful stream across the complete
 derived/opened handle lineage (`EALREADY`);
@@ -120,47 +115,106 @@ real `DTYPE_ZFSHANDLE` (19) with full fileops, `DFLAG_PASSABLE`, and
 procstat/fstat integration: `procstat -f` shows
 `zfshandle:tank/svc/pgsql [snapshot,mount] valid`.
 
-Userland is `lib/libtrustedzfs` (`tzfs_*`, ~44 dependency-free functions,
-documented in `trustedzfs.3`), including Capsicum profiles
+Userland is `lib/libtrustedzfs` (`tzfs_*`, dependency-free, documented in
+`trustedzfs.3`), including Capsicum profiles
 (`tzfs_limit_dataset_ioctls()` / `tzfs_limit_pool_ioctls()`) applied per fd
-before handles cross a trust boundary.
-The wrappers validate pointers, flags, names, handle kinds, buffer lengths,
-and output ownership before issuing an ioctl; descriptor-returning calls
-initialize their result to `-1`, variable-buffer calls initialize outputs,
-and truncation is reported rather than silently accepted.
-
-## Observability and tests
+before handles cross a trust boundary. The wrappers validate pointers,
+flags, names, handle kinds, buffer lengths, and output ownership before
+issuing an ioctl, and truncation is reported rather than silently accepted.
 
 A `trustedzfs` SDT provider fires `mint`, `derive`, `handle-openat`,
 `op-entry`/`op-return`, `denied`, and `invalidate`, with canned scripts in
 `share/dtrace/` (`trustedzfs-handles`, `trustedzfs-denials`, and friends).
-The ATF suites live in `tests/sys/zfshandle/` — rights matrix, derive
-monotonicity and openat containment, guid pinning under rename/destroy
-races, Capsicum behavior, mounts, pool handles, security negatives, and
-the extended verbs — running against per-test file-vdev pools. Additional cases
-also exercise malformed ioctl sizes and reserved fields, output contracts and
-fd exhaustion, operation-ceiling inheritance, competing send-once users,
-concurrent anonymous-mount singleton creation, unread SCM_RIGHTS teardown with
-no calling thread, mount namespace identity races, delegation permission
-matrices, and enumeration ceilings. `tools/test/trustedzfs-qemu/` installs the
-kernel, ZFS module, libraries, broker, and tests as one payload, reboots into
-that matched state, and aggregates every case in an isolated work directory.
+The whole surface is exercised by ATF suites under `tests/sys/zfshandle/`
+and a disposable-VM harness.
 
 ## Consumers
 
-a service self-mints storage at runtime by opening `system.Filesystem`, which
-`tzfsd` scopes to the consumer's unforgeable channel label (see
-[tzfsd](tzfsd.md)); capsule uses snapshot/rollback
+A service self-mints storage at runtime by opening `system.Filesystem`
+(the `tzfsd` broker, next section); `capsule` uses snapshot/rollback
 handles plus a `bootfs`-only pool handle for boot-environment management;
 WASPNest VMs get zvol checkpoint handles, golden-image `CLONE_SRC`
 handles, and send-only migration handles; jails get subtree handles that
 replace `zfs jail`.
 
-**Status.** Not yet implemented, in scope for a later batch: encryption-key
-verbs (`load-key`/`change-key`, wants a dedicated `ZH_KEY` right),
-`zfs diff`, the `userspace`/`groupspace` accounting family, and rich
-per-dataset kqueue notes (`SNAP_CREATED`, `PROP_CHANGED`, …) — kqueue
-today delivers `INVALIDATED` readiness only.
+Not provided: encryption-key verbs (`load-key`/`change-key`), `zfs diff`,
+the `userspace`/`groupspace` accounting family, and rich per-dataset kqueue
+notes — kqueue delivers `INVALIDATED` readiness only.
 
-Sources: `docs/trustedzfs-design.md`, `sys/sys/zfshandle.h`,
-`lib/libtrustedzfs/`, `tests/sys/zfshandle/`.
+Sources: `sys/sys/zfshandle.h`, `lib/libtrustedzfs/`.
+
+## The storage broker (tzfsd)
+
+`tzfsd(8)` owns the storage plane of the capability plane. It is an ordinary
+capability bundle, launched and supervised by `serviced` (`boot` activation
+plus `ipc` activation for the name `system.Filesystem`), and it is a
+socket-free `service_provider`: each client is served on its own
+`mac_capability` channel. It retains TrustedZFS parent handles at startup,
+creates or opens application datasets on request, attenuates each returned
+handle to the requested rights, and delivers it over the channel. It never
+proxies application I/O.
+
+**Consumer self-service.** A unit does not declare storage in its manifest
+(see [Capability bundle manifests](../system/manifests.md) for the manifest
+view). It calls `service_storage_open(3)` at runtime; the library resolves
+`system.Filesystem`, `tzfsd` mints a rights-limited `zfshandle`, and the
+consumer mounts and drives the handle itself — the handle anchors the mount,
+and nothing anywhere names a ZFS path. `service_storage_open_quota(3)` is the
+same call with an explicit per-claim `refquota` ceiling in bytes (floor
+1 MiB, below it `EINVAL`; 0 selects the daemon's configured
+`default_refquota`, which defaults to 1 GiB), so no single claim can fill the
+pool. `service_storage_destroy(3)` is the symmetric owner-scoped reclaim of a
+persistent or cache claim — it frees the pool space and returns `ENOENT` if
+the claim does not exist. `lib/libtzfsd` (`tzfsd_request`,
+`tzfsd_request_quota`, `tzfsd_release`, `tzfsd_destroy`, `tzfsd_ping`,
+`tzfsd_begin_session`) is the thin client beneath these.
+
+**The label is the address.** `tzfsd` derives each client's dataset
+namespace from the unforgeable channel label — a single dataset component
+named by a hash of the label, which `serviced` stamped when it brokered the
+channel and the client can never choose. Every claim is a single-component
+child under that namespace, so a client can only ever create, open, or
+destroy storage inside its own subtree; another service's storage cannot
+even be named. At mint the claim root is `chown`ed to the requesting
+process's uid/gid (base providers run under the unprivileged `capability`
+sandbox account), so the consumer can write once it mounts the handle.
+
+**Layout and invisibility.** Everything lives under
+`<pool>/Capabilities/{persistent,ephemeral}`; ephemeral splits into
+`boot-<boottime>` and per-connection `lease-<session>` generations. The base
+dataset is set `mountpoint=none` and `canmount=off`, which propagates by
+inheritance: the whole tree is invisible to the OS's boot-time
+`zfs mount -a` and reachable only through anonymous handle-mounts.
+
+**Lifetimes.** `persistent` survives everything; `cache` is persistent but
+reclaimable by policy or `service_storage_destroy` (cache claims land in
+the persistent tree and are never auto-reclaimed);
+`boot` survives daemon restarts and is reclaimed a boot generation later;
+`lease` is bound to the client's channel and reclaimed when the connection's
+session ends. The wire protocol is small and strict — `REQUEST`, `OPEN`,
+`RELEASE`, `BEGIN_SESSION`, `PING`, `DESTROY`, fixed-size messages that
+reject unknown flags, non-zero reserved bytes, and unsafe dataset names.
+`OPEN` delivers isolated *path* descriptors (files or devices) under a
+per-label allowlist from the config file; it opens with
+`O_NOFOLLOW | O_RESOLVE_BENEATH` so a granted leaf can never be
+symlink-swapped out of its subtree, and device grants carry a Capsicum
+ioctl allowlist.
+
+**Recovery.** `tzfsd` never erases the ephemeral root at startup — that
+would turn a storage-daemon crash into application data loss. Boot
+generations are derived from `kern.boottime` and older ones reclaimed; each
+live connection owns exactly one `lease-<session>` and orphaned leases from
+prior boots are reaped; a client reconnecting after a `tzfsd` crash resumes
+its session with `BEGIN_SESSION`. Datasets with retained snapshots make
+reclamation fail visibly and leave the tree intact.
+
+**The pool.** `tzfsd` never creates a pool; it requires exactly one to be
+imported (default **`zroot`**, overridable in
+`/Capabilities/Config/tzfsd.ucl` along with `default_refquota`) and
+self-provisions `<pool>/Capabilities` on first start, exiting with
+`layout provisioning failed (is pool <name> imported?)` otherwise. ZFS is
+therefore a platform requirement: the pool must exist before the storage
+plane comes up, which is why the installer's guided Root-on-ZFS path is the
+standard 5BSD installation and a pool-less system is a degraded
+configuration in which every storage-backed capability fails until an
+operator creates a pool by hand.

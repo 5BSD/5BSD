@@ -5,7 +5,9 @@ supervised instance and supplies descriptor-based authority for service
 launches; `serviced` owns bundle discovery, boot and demand activation,
 readiness, restart policy, and the administrative control socket. It holds no
 capabilities of its own — it is a pure launcher and naming switchboard. The
-demand model is deliberately dependency-free: there is no dependency graph.
+authoritative pre-v1 target is the dependency-free demand model in
+`docs/service-architecture-plan.md`; there is no dependency graph and none is
+planned.
 
 ## Boot and registry
 
@@ -44,7 +46,7 @@ handles, so capabilities cannot see into one another's state — the isolation
 is structural. `Config/` is the one static exception: `tzfsd` and `serviced`
 run *before* the storage plane exists, so their bootstrap config (plus
 `principal-policy.ucl`, read by the
-[auth-agent](../security/authority-model.md); absent policy fails safe to
+[auth-agent](../security/session-mint.md); absent policy fails safe to
 root-or-`wheel` is admin) lives on the root dataset. The bootstrap itself
 rides inherited capability descriptors, never a named socket, so it can never
 block on an unmounted directory. Classic UNIX programs keep `/etc`, `/var`,
@@ -70,7 +72,7 @@ observed capability-mode entry. Restart policies are `never`, `always`, and
 
 Distinct from launch is **session minting** — handing an authenticated login a
 scoped session lookup channel. The only minter of session channels is the
-[auth-agent](../security/authority-model.md) (`system.authagent`), itself an
+[auth-agent](../security/session-mint.md) (`system.authagent`), itself an
 ordinary serviced-managed unit; `login`/`su`/`sshd` ask the agent rather than
 minting for themselves.
 

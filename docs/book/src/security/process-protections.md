@@ -1,140 +1,100 @@
 # Per-Process Protections
 
-5BSD layers several per-process enforcement mechanisms below the Linux
-API: **capprotect** integrity shields, **vnode_claim** descriptor
-binding, **coalitions** for coordinated resource lifecycle, and a set of
-Capsicum and process-descriptor enhancements. All of them key off the
-MAC_CAPABILITY cryptographic program nonce — a per-credential identity
-that rotates on `exec` and is inherited on `fork` — so a Linux binary is
+5BSD layers several per-process enforcement mechanisms beneath every
+application ABI — native and Linux alike: **capprotect** integrity
+shields, **coalitions** for coordinated resource lifecycle,
+**vnode_claim** descriptor binding, and the **mac_abac** attribute
+policy. The first three key off the `mac_capability` program nonce (see
+[the framework chapter](mac-capability.md)) — a per-credential identity
+that rotates on `exec` and is inherited on `fork` — so a program is
 governed by an identity it cannot read or forge.
 
 ## capprotect — integrity shields
 
-capprotect is a MAC_CAPABILITY service
-(`sys/dev/mac_capability/mac_capability_capprotect.c`) that lets a
-process shield itself, enforced by MACF hooks the shielded process — and
-every other process — cannot bypass. A shield is requested over the
-capability channel with `CP_OP_SHIELD` and is **nonce-scoped**: it
-protects the calling program identity, not a bare PID.
+capprotect is a `mac_capability` service that lets a process shield
+itself, enforced by MACF hooks the shielded process — and every other
+process — cannot bypass. A shield is requested over the capability
+channel and is **nonce-scoped**: it protects the calling program
+identity, not a bare PID.
 
-Shield flags (`sys/dev/mac_capability/mac_capability_capprotect_proto.h`)
-divide into protections and restrictions:
+Shield flags divide into outward protections — block ptrace attach,
+signals (except SIGKILL/SIGCONT), visibility in `ps`/`top`/procfs,
+non-parent `wait4`, scheduling manipulation, core dumps, and ktrace —
+and self restrictions — strip all privileges, and block fork, exec, new
+sockets, IPC, and incoming `SCM_RIGHTS`. Group aliases (`protect`,
+`restrict`, `all`) expand to their sets. Shields are **refcounted per
+flag**: additional shield descriptors for the same nonce add their own
+flags, and closing a shield fd removes only the flags that descriptor
+contributed.
 
-| Flag | Effect |
-|------|--------|
-| `CP_SF_PTRACE` | block ptrace attach |
-| `CP_SF_SIGNAL` | block signals (except SIGKILL/SIGCONT) |
-| `CP_SF_VISIBLE` | hide from ps/top/procfs |
-| `CP_SF_WAIT` | block wait4 from non-parent |
-| `CP_SF_SIGKILL` / `CP_SF_SIGCONT` | unkillable / unstoppable |
-| `CP_SF_SCHED` | block setpriority/cpuset manipulation |
-| `CP_SF_CORE` | suppress core dumps (prevent secret leakage) |
-| `CP_SF_KTRACE` | block ktrace (passive information disclosure) |
-| `CP_SF_NOPRIVS` | strip all privileges (`priv_check` returns EPERM) |
-| `CP_SF_NOFORK` / `CP_SF_NOEXEC` / `CP_SF_NOSOCK` | block fork, execve, new sockets |
-| `CP_SF_NOIPC` / `CP_SF_NOFDRECV` | block SysV/POSIX IPC, incoming SCM_RIGHTS |
-
-`CP_SF_PROTECT` and `CP_SF_RESTRICT` group these; `CP_SF_ALL` is both.
-Shields are **refcounted per flag**: additional shield descriptors for
-the same nonce add their own flags, and closing a shield fd removes only
-the flags that descriptor contributed. The service also exposes token
-minting and authorization (`CP_OP_MINT`, `CP_OP_AUTHORIZE`) and
-confinement operations (`CP_OP_CAPMODE` enters Capsicum capability mode,
-`CP_OP_CHROOT` changes the filesystem root via an attached directory fd).
-
-Shields interact with normal supervision: 5BSD's own `serviced` applies
-its shield last, after readiness signalling, and omits `CP_SF_VISIBLE`
-(which blocks syslog delivery) and `CP_SF_SIGNAL` (which blocks `pdkill`
-from its supervisor). System daemons such as `authorityd` run shielded, with
-init-integrity tests covering the configuration.
-
-## vnode_claim — per-descriptor identity binding
-
-vnode_claim attaches an ACL of allowed process identities to a file
-descriptor. Possession of the fd is no longer sufficient authority:
-
-- fds propagated via `SCM_RIGHTS` to a process outside the ACL are useless;
-- `exec` produces a new identity, revoking access;
-- a lock mode denies all operations on a descriptor;
-- batch operations cover multiple fds and processes.
-
-It is best suited to anonymous descriptors (pipes, socketpairs, shared
-memory) that have no path to re-open.
-
-**Status:** vnode_claim is a standalone module (about 2,000 lines, 20+
-tests) that is not yet integrated into the 5BSD tree. The roadmap
-migrates its private identity token to the MAC_CAPABILITY nonce so one
-identity answers capprotect, vnode_claim, and coalition questions.
+Shields interact with normal supervision: `serviced` applies its shield
+last, after readiness signalling, and omits the visibility flag (which
+blocks syslog delivery) and the signal flag (which blocks `pdkill` from
+its supervisor). A unit manifest can request a shield declaratively via
+its `protect` field — see [Capability Bundles](capability-bundles.md).
 
 ## Coalitions — capability-based resource groups
 
-A coalition (`sys/dev/mac_capability/mac_capability_coalition.c`) is a
-MAC_CAPABILITY sync service that groups kernel resources under a single
-file descriptor held by a supervisor. **Closing the coalition fd
-terminates every member.** Members are enlisted by fd type: process
-descriptors, jail descriptors, sockets, POSIX shared memory,
-MAC_CAPABILITY instances (revoked via `mac_capability_instance_revoke()`),
-and other coalitions (nesting, with cycle detection at enlist time and
-cascade termination).
+A coalition is a `mac_capability` service that groups kernel resources
+under a single file descriptor held by a supervisor. **Closing the
+coalition fd terminates every member.** Members are enlisted by fd:
+process descriptors, jail descriptors, sockets, POSIX shared memory,
+`mac_capability` instances (revoked on teardown), resource descriptors
+(TrustedZFS handles, envfds, crypto handles — teardown drives each
+family's own safe last-close path), and other coalitions (nesting, with
+cycle detection). Enlisting always requires already holding the right a
+teardown would exercise, so coalition teardown never performs a release
+the enlister could not have performed itself.
 
-The operation set (`mac_capability_coalition_proto.h`):
-
-```c
-COALITION_OP_ENLIST        /* add a member fd */
-COALITION_OP_ENLIST_SET    /* batch enlist; stops on first error */
-COALITION_OP_TERMINATE     /* kill all members now */
-COALITION_OP_GRACEFUL      /* SIGTERM -> grace period -> SIGKILL */
-COALITION_OP_SET_SIGNAL    /* choose the termination signal */
-COALITION_OP_SET_DEADLINE  /* auto-terminate after timeout_ms (0 cancels) */
-COALITION_OP_SET_WATCHDOG  /* require heartbeats; 0 disables */
-COALITION_OP_HEARTBEAT     /* supervisor liveness ping */
-COALITION_OP_SET_LEADER    /* leader death triggers termination */
-COALITION_OP_JOIN / _STAT / _RUSAGE
-```
-
-Deadlines bound a workload's lifetime; watchdogs terminate the coalition
-if the supervisor stops sending heartbeats; a designated leader (process
-exit, jail destruction, or capability revocation) triggers group
-termination. `COALITION_OP_RUSAGE` reports aggregate CPU, memory, and
-fault usage across members. DTrace SDT probes cover the lifecycle.
-Tests: `tests/sys/mac_capability/mac_capability_coalition_test.c`
-(40+ ATF tests).
-
-## Capsicum enhancements
-
-Beyond stock Capsicum, 5BSD adds descriptor-lifecycle limits in
-`sys/kern/sys_capability.c`, exported from libc at `FBSD_1.9`:
-
-- `cap_xfer_limit(fd, state)` — restrict how many times an fd may be
-  passed over `SCM_RIGHTS`: `CAP_XFER_UNLIMITED`, `_ONCE`, or
-  `_NONE`.
-- `cap_cloexec_limit(fd, state)` / `cap_clofork_limit(fd, state)` — force
-  and optionally lock close-on-exec / close-on-fork behavior
-  (`UNLOCKED` → `ONCE` → `LOCKED`, monotonically increasing rank).
-- `cap_xfer_fcntls_limit(fd, rights)` — bound the fcntl rights an fd
-  carries after transfer.
-
-Supervision code uses these to pin inherited descriptors: `authorityd` locks
-its channel end with `cap_xfer_limit(fd, CAP_XFER_NONE)` so the fd cannot
-leak to a third process.
+Beyond enlist/terminate, the service provides graceful termination
+(SIGTERM, grace period, SIGKILL), deadlines that bound a workload's
+lifetime, watchdogs that terminate the coalition if the supervisor stops
+sending heartbeats, a designated leader whose death triggers group
+termination, and aggregate rusage reporting.
 
 ## Process descriptor semantics
 
 5BSD treats a process descriptor as a true capability: holding it is
-sufficient authority. `pdkill(2)` and `pdwait` no longer apply ambient
-identity checks (`p_cansignal()`, `p_canwait()`, MAC hooks, jail and
-P_SUGID restrictions) that could override capability-granted authority —
-previously a parent could not `pdkill` its own capprotect-shielded child
-after `exec` rotated the nonce. Capsicum rights on the descriptor remain
-the sole gate, matching `procdesc_close()`, which has always delivered
-SIGKILL unconditionally.
+sufficient authority. `pdkill(2)` and `pdwait(2)` apply no ambient
+identity checks (`p_cansignal()`, jail and P_SUGID restrictions) that
+could override capability-granted authority — a parent's `pdkill` of its
+own capprotect-shielded child works even after `exec` rotates the nonce.
+Capsicum rights on the descriptor are the sole gate.
+The per-descriptor transfer, exec, and fork locks that keep such
+descriptors from leaking are covered in the [MAC Capability
+Framework](mac-capability.md).
 
-## One identity across layers
+## mac_abac — attribute-based access control
 
-The roadmap converges all of the above on the MAC_CAPABILITY nonce:
-capprotect asks "can this nonce signal/trace/see that nonce?",
-vnode_claim asks "is this nonce in this descriptor's ACL?", coalitions
-enlist all processes sharing a nonce, and nonce-keyed resource accounting
-extends `COALITION_OP_RUSAGE` system-wide. **Status:** capprotect uses
-the nonce today; nonce-based coalition enlistment and nonce accounting
-are designed but not yet built.
+`mac_abac(4)` is 5BSD's label-based mandatory access control policy, a
+loadable MACF module under `sys/security/mac_abac/`. Security labels are
+sets of `key=value` attributes — on credentials, and on vnodes via a
+system extended attribute — and kernel decisions use an ordered,
+first-match rule table: `allow`/`deny` actions over an operation mask
+(vnode, process, socket, IPC, kenv, system), subject/object attribute
+patterns, and optional context constraints (uid, gid, jail, TTY,
+Capsicum mode). Rules are grouped into sets that can be prepared
+inactive and atomically swapped, so policy is replaced without an
+enforcement gap; any load failure restores the previous table whole.
+
+`mac_abacd(8)` compiles and loads `/etc/mac_abac.conf` (UCL/JSON or a
+compact line format); `mac_abac_ctl(8)` manages rules and sets, applies
+labels (including atomic and recursive labeling), and offers a kernel
+dry-run decision test. Enforcement modes are `disabled`, `permissive`
+(log only), and `enforcing`, with a one-way lock latch that freezes the
+policy until reboot. Composition is deny-wins: `mac_abac` can further
+restrict Capsicum, `mac_capability`, and capprotect, but can never
+re-grant an operation another policy denied. The module ships in the
+`mac-abac` pkgbase package.
+
+## vnode_claim — per-descriptor identity binding
+
+vnode_claim attaches an ACL of allowed process identities to a file
+descriptor, so possession alone is no longer sufficient authority: fds
+propagated to a process outside the ACL are useless, `exec` produces a
+new identity and revokes access, and a lock mode denies all operations.
+It is best suited to anonymous descriptors (pipes, socketpairs, shared
+memory) that have no path to re-open.
+
+vnode_claim is a standalone module not yet integrated into the 5BSD
+tree.
