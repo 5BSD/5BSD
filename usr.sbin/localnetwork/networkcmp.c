@@ -39,6 +39,7 @@
 #include <networkcmp_server.h>
 
 #include "localnetwork_probes.h"
+#include "config.h"
 #include "policy.h"
 #ifdef NETWORKCMP_TESTING
 #include "networkcmp_test.h"
@@ -1008,11 +1009,12 @@ fail:
 
 static int
 start_session(int fd, cap_channel_t *casper, const char *peer_label,
-    service_rights_t rights)
+    service_rights_t rights, const struct networkcmp_config *config)
 {
 	struct networkcmp_policy policy;
 	cap_channel_t *capnet, *resolver_capnet;
 	cap_net_limit_t *limit;
+	const char *policy_source;
 	int families[2];
 	size_t nfamilies;
 	int syncfd[2], resolver_pipe[2], pd, audit_fd, child_error, error;
@@ -1029,12 +1031,16 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 		goto reject;
 	}
 	/*
-	 * Authority is the rights serviced stamped onto this session's channel,
-	 * not a hardcoded default (N1).  Derive the immutable policy from them and
-	 * fail closed: a session that carries no network rights permits nothing,
-	 * so refuse it outright rather than brokering with an empty policy.
+	 * The immutable session policy (N1).  SERVICE_RIGHTS_ADMIN on the
+	 * granted channel is the only rights-derived authority and receives the
+	 * full policy, including internal reach.  Every other session is scoped
+	 * by this provider's per-label configuration: its clients{} entry if
+	 * listed, else the configured default.  Fail closed: a policy whose
+	 * every dimension is false permits nothing, so refuse the session
+	 * outright rather than brokering with an empty policy.
 	 */
-	if (networkcmp_policy_from_rights(&policy, rights) == -1) {
+	if (networkcmp_config_session_policy(config, peer_label, rights,
+	    &policy, &policy_source) == -1) {
 		error = errno;
 		goto reject;
 	}
@@ -1042,6 +1048,8 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 		error = EACCES;
 		goto reject;
 	}
+	syslog(LOG_INFO, "session for %s: %s policy", peer_label,
+	    policy_source);
 	nfamilies = 0;
 	if (policy.ipv4)
 		families[nfamilies++] = AF_INET;
@@ -1156,16 +1164,54 @@ reject:
 	return (-1);
 }
 
+/*
+ * Locate the per-label policy config inside this unit's Config directory.
+ * The path is derived from $CAPABILITY_UNIT_DIR before capability mode; the
+ * parsed table is then held in memory and no descriptor survives.
+ */
+static int
+managed_config_path(char *path, size_t path_size)
+{
+	const char *unit_dir;
+
+	unit_dir = getenv(SERVICE_UNIT_DIR_ENV);
+	if (unit_dir == NULL || unit_dir[0] == '\0')
+		return (errno = ENOENT, -1);
+	if (snprintf(path, path_size, "%s/Config/%s", unit_dir,
+	    NETWORKCMP_CONFIG_NAME) >= (int)path_size)
+		return (errno = ENAMETOOLONG, -1);
+	return (0);
+}
+
 int
 main(void)
 {
 	cap_channel_t *casper;
+	struct networkcmp_config config;
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
+	char config_path[PATH_MAX];
 	int error, fd;
 
 	openlog("localnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	/*
+	 * Per-label policy, loaded pre-capability-mode.  FAIL-SOFT by design:
+	 * the network provider is depended on by nearly everything, so a
+	 * missing or malformed config must never brick it — the compiled-in
+	 * default policy (outbound allowed, internal denied) stays in force
+	 * and the problem is logged for the operator.
+	 */
+	networkcmp_config_defaults(&config);
+	if (managed_config_path(config_path, sizeof(config_path)) == -1) {
+		syslog(LOG_WARNING,
+		    "no unit Config directory; using built-in default network "
+		    "policy: %m");
+	} else if (networkcmp_config_load(&config, config_path) == -1) {
+		syslog(LOG_WARNING,
+		    "policy config %s rejected; using built-in default network "
+		    "policy: %m", config_path);
+	}
 	casper = cap_init();
 	if (casper == NULL)
 		goto fail;
@@ -1199,7 +1245,7 @@ main(void)
 			goto fail;
 		}
 		if (start_session(fd, casper, identity.client_label,
-		    identity.rights) == -1)
+		    identity.rights, &config) == -1)
 			syslog(LOG_WARNING, "session for %s rejected: %m",
 			    identity.client_label);
 		close(fd);

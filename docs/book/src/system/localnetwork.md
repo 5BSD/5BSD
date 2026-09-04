@@ -16,19 +16,21 @@ transfer-confined so it cannot be re-pointed elsewhere, turned into a
 listener, or handed onward (see
 [Capability Transfer](../security/mac-capability.md)).
 
-Policy is **derived from the rights stamped on the session** — by `serviced`
-at lookup and by the [auth-agent](../security/authority-model.md) at the
-authentication boundary — not from a table inside the daemon, so two clients
-of the same broker can have genuinely different network reach with no
-per-client configuration. Independently of those rights, a non-admin session
-is blocked from sensitive internal destination ranges — loopback,
-link-local, private networks — including addresses that resolve there via
-DNS. This is the SSRF defense: a brokered connection cannot be steered at a
-loopback or metadata address without an explicitly granted internal right.
+Policy is **keyed by the session's unforgeable identity**: an admin session
+(rights stamped on the channel by `serviced` and the
+[auth-agent](../security/authority-model.md)) receives full reach, and every
+other session is scoped by the broker's own per-client table. Independently
+of that, a non-admin session is blocked from sensitive internal destination
+ranges — loopback, link-local, private networks — including addresses that
+resolve there via DNS. This is the SSRF defense: a brokered connection cannot
+be steered at a loopback or metadata address without an explicitly granted
+internal right.
 
-One honest limitation: today only the admin right is scoped (to
-administrative login sessions); the other rights are granted in full until a
-finer-grained per-component policy lands, so the broker is the complete
-mechanism awaiting stricter policy.
+Per-component policy lives in the provider's own configuration, keyed by the
+component's manifest label: a `clients{}` entry can narrow any dimension
+(resolve, TCP, UDP, address family) for one label or grant it internal reach,
+while unlisted labels get the configured default — and a malformed file
+fails soft to the built-in default rather than taking the network down. See
+`localnetwork(8)` for the schema.
 
 Reference: `localnetwork(8)`, `libnetworkcmp(3)`.

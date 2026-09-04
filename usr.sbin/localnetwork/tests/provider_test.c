@@ -25,6 +25,7 @@
 #include <networkcmp.h>
 #include <networkcmp_server.h>
 
+#include "config.h"
 #include "networkcmp_test.h"
 #include "policy.h"
 
@@ -107,6 +108,38 @@ fixture_create_policy(struct fixture *fixture,
 		close(client);
 		_exit(networkcmp_test_serve(provider, NULL, policy,
 		    "org.test.network"));
+	}
+	close(provider);
+	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+}
+
+/*
+ * Serve a session for `label` under a per-client policy CONFIG (N1): the
+ * config text is parsed by the daemon's real loader and the session policy is
+ * resolved through networkcmp_config_session_policy() exactly as main() does
+ * for a non-admin session, then installed as the fixture's immutable policy.
+ */
+static void
+fixture_create_config(struct fixture *fixture, const char *config_text,
+    const char *label)
+{
+	struct networkcmp_config config;
+	struct networkcmp_policy policy;
+	const char *source;
+	int client, provider;
+
+	ATF_REQUIRE_EQ(0, networkcmp_config_parse(config_text, &config));
+	ATF_REQUIRE_EQ(0, networkcmp_config_session_policy(&config, label,
+	    SERVICE_RIGHTS_NONE, &policy, &source));
+	memset(fixture, 0, sizeof(*fixture));
+	fixture->resolver_ready = -1;
+	fixture->resolver_release = -1;
+	channel_pair(&client, &provider);
+	fixture->child = fork();
+	ATF_REQUIRE(fixture->child >= 0);
+	if (fixture->child == 0) {
+		close(client);
+		_exit(networkcmp_test_serve(provider, NULL, &policy, label));
 	}
 	close(provider);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
@@ -807,6 +840,95 @@ ATF_TC_BODY(non_admin_connect_to_loopback_is_denied, tc)
 	close(listener);
 }
 
+/*
+ * N1 per-client policy over the plane.  A session whose LABEL carries a
+ * clients{} entry denying connect is refused CONNECT with EACCES (no fd),
+ * while RESOLVE on the very same session still passes the policy gate: under
+ * NETWORKCMP_TESTING the resolver stub answers EOPNOTSUPP, so any status
+ * other than EACCES proves the request reached the resolver.  An unlisted
+ * sibling label on the same config retains the default outbound grant.
+ */
+ATF_TC(per_label_config_denies_connect_allows_resolve);
+ATF_TC_HEAD(per_label_config_denies_connect_allows_resolve, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A clients{} entry denying connect yields EACCES on CONNECT while "
+	    "RESOLVE still works, and an unlisted label keeps the default");
+}
+/* Send HELLO on the fixture session and return the negotiated features. */
+static uint32_t
+hello_features(struct fixture *fixture)
+{
+	union wire_buffer request, reply;
+	struct networkcmp_msg *message;
+	struct networkcmp_hello *hello_request;
+	struct networkcmp_hello_reply *hello;
+	size_t length;
+
+	memset(&request, 0, sizeof(request));
+	message = (void *)request.bytes;
+	ATF_REQUIRE_EQ(0, networkcmp_message_init(message,
+	    NETWORKCMP_OP_HELLO, 0));
+	hello_request = (void *)(message + 1);
+	hello_request->min_version = NETWORKCMP_ABI_VERSION;
+	hello_request->max_version = NETWORKCMP_ABI_VERSION;
+	ATF_REQUIRE_EQ(0, call(fixture, message,
+	    sizeof(*message) + sizeof(*hello_request), &reply, &length, NULL));
+	ATF_REQUIRE_EQ(0, reply_status(&reply, length, NETWORKCMP_OP_HELLO));
+	hello = (void *)(reply.bytes + sizeof(*message));
+	return (hello->features);
+}
+
+ATF_TC_BODY(per_label_config_denies_connect_allows_resolve, tc)
+{
+	static const char *config_text =
+	    "default { resolve = true; connect = true; udp = true;\n"
+	    "  inet4 = true; inet6 = true; internal = false; }\n"
+	    "clients { \"org.test.restricted\" { connect = false; } }\n";
+	struct resolve_call resolve_call;
+	struct fixture fixture;
+	struct networkcmp_endpoint endpoint;
+	pthread_t thread;
+	uint32_t features;
+	int error, fd;
+
+	/* The listed label: CONNECT denied by ITS policy, RESOLVE permitted. */
+	fixture_create_config(&fixture, config_text, "org.test.restricted");
+	features = hello_features(&fixture);
+	ATF_CHECK((features & NETWORKCMP_FEATURE_TCP) == 0);
+	ATF_CHECK((features & NETWORKCMP_FEATURE_UDP) != 0);
+	ATF_CHECK((features & NETWORKCMP_FEATURE_DNS) != 0);
+	ipv4_endpoint(&endpoint, 93, 184, 216, 34);
+	endpoint.port = 80;
+	fd = -1;
+	ATF_CHECK_EQ(EACCES, broker_request(&fixture, NETWORKCMP_OP_CONNECT,
+	    &endpoint, &fd));
+	ATF_CHECK_EQ(-1, fd);
+	memset(&resolve_call, 0, sizeof(resolve_call));
+	resolve_call.fixture = &fixture;
+	error = pthread_create(&thread, NULL, resolve_call_thread,
+	    &resolve_call);
+	ATF_REQUIRE_EQ_MSG(0, error, "pthread_create: %s", strerror(error));
+	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
+	ATF_CHECK_EQ(0, resolve_call.error);
+	/* The testing resolver stub's status — NOT a policy EACCES. */
+	ATF_CHECK_EQ(EOPNOTSUPP, resolve_call.status);
+	fixture_destroy(&fixture, 0);
+
+	/*
+	 * An unlisted sibling label under the same config keeps the default
+	 * outbound grant: TCP is negotiated again.  (A live connect proof
+	 * would need an external destination — the SSRF guard still denies
+	 * internal ranges — so the feature bit, which is derived from the
+	 * same immutable policy connect checks consult, stands in.)
+	 */
+	fixture_create_config(&fixture, config_text, "org.test.unlisted");
+	features = hello_features(&fixture);
+	ATF_CHECK((features & NETWORKCMP_FEATURE_TCP) != 0);
+	fixture_destroy(&fixture, 0);
+}
+
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
@@ -833,6 +955,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_resolver_does_not_block_session);
 	ATF_TP_ADD_TC(tp, provider_resolver_deadline_terminates_session);
 	ATF_TP_ADD_TC(tp, non_admin_connect_to_loopback_is_denied);
+	ATF_TP_ADD_TC(tp, per_label_config_denies_connect_allows_resolve);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }

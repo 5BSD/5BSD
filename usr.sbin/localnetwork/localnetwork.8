@@ -1,5 +1,5 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
-.Dd July 31, 2026
+.Dd September 4, 2026
 .Dt LOCALNETWORK 8
 .Os
 .Sh NAME
@@ -83,16 +83,78 @@ or making every later resolve return
 indefinitely.
 .Pp
 The component bootstrap carries no client-selected policy object.
-The session policy is derived once at session creation from the requesting
-unit's manifest and the administrative ceiling and is immutable thereafter;
-the client never supplies policy on a request.
-The provider-owned initial policy enables IPv4, IPv6, TCP connect, UDP connect,
-and at most 16 resolver results per session.
+The session policy is resolved once at session creation and is immutable
+thereafter; the client never supplies policy on a request.
+A session whose granted channel carries the administrative right receives the
+full policy, including internal destinations; every other session is scoped by
+the provider's per-client policy configuration described below, keyed by the
+unforgeable serviced manifest label.
 Listener authority is not part of the version 1 client API.
 Socket options are not restricted by the broker: the consumer sets them itself
 on the delivered descriptor within the delegated
 .Dv CAP_SETSOCKOPT
 right.
+.Sh POLICY CONFIGURATION
+Per-client policy is read once at startup, before capability mode, from
+.Pa Config/localnetwork.conf
+inside the provider's unit directory
+.Pq Ev CAPABILITY_UNIT_DIR ,
+that is
+.Pa /Capabilities/System/Network.cap/Units/localnetwork.unit/Config/localnetwork.conf .
+The file is UCL:
+.Bd -literal -offset indent
+default {
+	resolve = true;
+	connect = true;
+	udp = true;
+	inet4 = true;
+	inet6 = true;
+	internal = false;
+}
+clients {
+	"org.example.render" { connect = false; udp = false; }
+	"org.example.metrics" { internal = true; }
+}
+.Ed
+.Pp
+The
+.Ic default
+block applies to any client label without a
+.Ic clients
+entry; a
+.Ic clients
+entry names only the dimensions it overrides and inherits the rest from
+.Ic default .
+Every dimension is boolean:
+.Ic resolve
+(DNS),
+.Ic connect
+(TCP),
+.Ic udp
+(connected datagram),
+.Ic inet4
+and
+.Ic inet6
+(address families), and
+.Ic internal
+(loopback, link-local, and RFC1918/ULA destinations, denied by default; this
+is the SSRF guard).
+A label whose resolved policy permits no operation is refused a session with
+.Er EACCES .
+Sessions whose channel carries the administrative right bypass this table
+entirely.
+.Pp
+The shipped default equals the compiled-in policy: outbound resolve, TCP, and
+UDP over both address families permitted, internal destinations denied, and at
+most 16 resolver results per session.
+The entry schema is closed \(em an unknown key, a non-boolean value, or an
+invalid or duplicate label makes the file malformed \(em but the file-level
+failure direction is fail-soft: a missing or malformed file leaves the
+compiled-in default policy in force and logs a warning, so a bad
+configuration can never take the network provider down with it.
+The applied policy source
+.Pq admin, label, or default
+is logged at each session start.
 .Sh SECURITY
 Session creation and resolver policy decisions are recorded through OpenBSM.
 Session, resolution, and rejection paths expose DTrace probes through the
