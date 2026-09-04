@@ -17,7 +17,7 @@ opaque per-client state, AUTH and NOTIFY subscriptions, auth and flags
 responses, client caches, process/path/target-path muting, sequence counters,
 copied-message ownership, and descendants-scoped clients with deadline
 controls. This is behavioral alignment, not source or event-catalog
-compatibility: OES events are FreeBSD vnode, credential, jail, Capsicum,
+compatibility: OES events are native vnode, credential, jail, Capsicum,
 audit, socket, pipe, mount, kernel-module, sysctl, and kenv operations, and
 5BSD has no equivalent of Apple's code-signing entitlement — opening `/dev/oes`
 is privileged instead. Clients must use the versioned `oes_*` ABI and test

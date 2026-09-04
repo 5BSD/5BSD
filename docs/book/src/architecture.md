@@ -1,7 +1,9 @@
 # Architecture Overview
 
-5BSD is a capability-oriented FreeBSD 16-CURRENT derivative that runs its own
-kernel — the **5BSD kernel**. It is a hybrid: the capability plane —
+5BSD is a capability-oriented operating system that runs its own kernel —
+the **5BSD kernel**. 5BSD descends from FreeBSD but is charting its own
+course; this book documents 5BSD as it is, in its own terms. The system is
+a hybrid: the capability plane —
 authority as held, unforgeable descriptors, brokered by named services — runs
 beside the traditional BSD system, and the kernel's MAC/capability security
 stack enforces policy beneath every application ABI, the Linuxulator included.
@@ -21,11 +23,10 @@ first; the rest of the Epic is their consequences.
 - **A hybrid by design — the secure realm sits beside UNIX.** The
   capability-authority plane runs *alongside* the traditional BSD system, not as
   a replacement, so adoption is incremental and the machine stays working at
-  every step. `capsule` can hand off to stock `init`
+  every step. `capsule` can hand off to the classic `init(8)`
   (`capability_plane="NO"`), `serviced` coexists with `rc(8)`, and
-  `reboot`/`halt`/signals stay standard. FreeBSD 16 is the last base adopted
-  wholesale; the secure realm subsumes the old model over time rather than on a
-  flag day.
+  `reboot`/`halt`/signals stay standard. The secure realm subsumes the old
+  model over time rather than on a flag day.
 - **One mint boundary.** Authority is created in one explicit place —
   `capsule` at boot, and the [auth-agent](security/authority-model.md) for
   login sessions — and flows everywhere else by delegation. `login`/`su`/`sshd`
@@ -44,8 +45,8 @@ first; the rest of the Epic is their consequences.
 - **Security below the API, not inside it.** Enforcement lives beneath the
   Linux syscall boundary, on a kernel the Linux code cannot see or attack
   through the API.
-- **64-bit only** (below), and **structured for clean upstream tracking** —
-  custom kernel work is loadable modules with minimal base-system touches.
+- **64-bit only** (below), and **structured as loadable modules** —
+  custom kernel work ships as modules with minimal base-kernel touches.
 
 ## 64-bit only
 
@@ -68,7 +69,7 @@ ones: `amd64`, `arm64` (aarch64), `powerpc64`/`powerpc64le`, and `riscv64`.
       v
  Linuxulator (syscall translation)
       |
-      | FreeBSD syscalls (fork1, VOP_*, sosend, ...)
+      | native kernel operations (fork1, VOP_*, sosend, ...)
       v
  MACF enforcement ── policy modules (capprotect, mac_abac, mac_biba, ...)
       |
@@ -88,9 +89,14 @@ decisions surface only as `EACCES`/`EPERM` on ordinary syscalls.
 
 The Linuxulator (`sys/compat/linux/`) translates Linux syscalls into native
 kernel operations *before* they execute, so the whole enforcement stack above
-polices Linux binaries with no separate "Linux hooks" to maintain — the
-[Introduction](introduction.md) covers why enforcement below the translation
-boundary matters. What differs from stock FreeBSD:
+polices Linux binaries with no separate "Linux hooks" to maintain.
+Enforcement below the translation boundary is the point: Linux's own
+mechanisms — seccomp-bpf, SELinux, AppArmor, namespaces — run *inside* the
+kernel they protect, so a kernel exploit owns the security framework too.
+5BSD enforces beneath the boundary, by a MAC and capability layer the Linux
+code never touches; a Linux program does not adapt to it and cannot attack
+through it — it simply succeeds, or receives `EACCES`/`EPERM` from a layer
+it cannot see. How 5BSD ships the Linux ABI:
 
 - **Enabled by default.** `linux_common.ko` and `linux64.ko` load from
   `stand/defaults/loader.conf`, and `linux_enable`/`linux_mounts_enable`
@@ -120,7 +126,7 @@ debugging and tty revocation exactly as they do native code.
 
 ### MACF — Mandatory Access Control Framework
 
-38+ new hooks beyond stock FreeBSD, covering process lifecycle (fork, exec,
+5BSD extends MACF with 38+ new hooks covering process lifecycle (fork, exec,
 core dump, thread creation, syscall gating), memory protection (anonymous
 `mmap`, `mprotect` — W^X enforcement), the file-descriptor layer (dup,
 inherit, receive, ioctl, mmap, close), vnode operations, mount operations,
@@ -221,8 +227,7 @@ needs at runtime, by name, scoped to its unforgeable channel label (see
 ## Installing
 
 For a fresh machine or VM, build the release memstick and boot the
-installer ([Building 5BSD](operations/building.md)). For an existing
-FreeBSD 16-CURRENT pkgbase system, build local 5BSD packages, disable the
-upstream `FreeBSD-base` repository, and upgrade through `pkg`
-([Building 5BSD](operations/building.md)). MAC capability modules load
-automatically via `stand/defaults/loader.conf`.
+installer; an existing pkgbase system can migrate to the `5BSD-*` package
+sets through `pkg` — [Building 5BSD](operations/building.md) covers both.
+MAC capability modules load automatically via
+`stand/defaults/loader.conf`.

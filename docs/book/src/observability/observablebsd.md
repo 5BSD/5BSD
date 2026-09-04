@@ -78,7 +78,7 @@ bsdtrace decode -f folded trace.pt
 
 ## DTrace and hardware tracing
 
-The tools above stand on instrumentation the fork itself broadened.
+The tools above stand on instrumentation 5BSD itself broadened.
 
 **USDT coverage.** Security-relevant base userland carries USDT providers:
 `lib/libcasper` and every Casper service expose `casper`/`cap_*` providers
@@ -109,7 +109,7 @@ pieces: `hwt.ko` and `pt.ko` must be rebuilt together with a matching
 
 ## traced: brokered tracing
 
-DTrace on stock FreeBSD is an all-or-nothing privilege: opening a consumer
+DTrace is traditionally an all-or-nothing privilege: opening a consumer
 on `/dev/dtrace` requires root, and once you have it, you have kernel-wide
 introspection. `traced(8)` replaces that uid gate with a capability gate. It
 publishes `system.Trace` as a socket-free service provider (see

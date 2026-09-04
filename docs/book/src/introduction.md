@@ -1,7 +1,7 @@
 # Introduction
 
 5BSD is a capability-oriented operating system with its own kernel — the
-**5BSD kernel**, descended from FreeBSD but no longer stock. It is a BSD you
+**5BSD kernel**. It is a BSD you
 already know how to drive: `sh`, `cc`, ZFS, jails, `rc(8)`, ports and
 packages, every man page in muscle memory. And beside that familiar system
 runs a second one — a **capability plane**, in which authority is a held,
@@ -35,7 +35,7 @@ to its own unforgeable channel label. [The Hybrid Model: BSD plus a
 Capability SDK](development/hybrid-model.md) builds one end to end.
 
 None of this asks the rest of the machine to change. `capsule` — the
-capability plane's PID 1 — can hand off to stock `init`; `serviced` coexists
+capability plane's PID 1 — can hand off to the classic `init(8)`; `serviced` coexists
 with `rc(8)`; `reboot`, `halt`, and signals stay standard. Underneath both
 systems, the 5BSD kernel's mandatory-access-control and capability framework
 does the enforcing: an application sees policy only as `EACCES`/`EPERM`,
@@ -48,19 +48,11 @@ principles behind this shape is enumerated in
 
 The security and capability core lives in the 5BSD kernel, structured as
 loadable modules over a small set of base-kernel changes — adding a
-capability *service* needs no new syscall — and exercised by an extensive
-ATF suite under `tests/sys/mac_capability/`:
-
-| Layer | What it does |
-|-------|--------------|
-| **MAC_CAPABILITY** | Capability-based IPC: kernel message passing where the file descriptor *is* the credential. Carries a cryptographic per-process nonce that rotates on `exec` and is inherited on `fork` — one process identity across every layer. Services are loadable modules. |
-| **MACF** | 38+ mandatory access-control hooks gating process lifecycle, memory (W^X), the descriptor layer, vnodes, mounts, and info disclosure. Policy modules are loadable; no application code can bypass them. |
-| **mac_abac** | Attribute-based access control: a loadable MACF policy module expressing policy over process and object attributes. |
-| **Capsicum** | Capability mode for process sandboxing — enter it and lose the ability to open new global resources. |
-| **vnode_claim** | Per-descriptor access control: bind an fd to a process identity so possessing it is not enough to use it. |
-| **capprotect** | Per-process integrity shields — invisible to `ps`, immune to `ptrace`/`kill`, enforced by MACF, controlled by capability. |
-| **Coalition** | Capability-based resource groups with coordinated termination, deadlines, watchdogs, and nesting. |
-| **HWT/PT** | Hardware instruction tracing (Intel PT on amd64, ARM SPE on arm64) feeding the observability stack. |
+capability *service* needs no new syscall. Its layers — the MAC_CAPABILITY
+message-passing framework where the file descriptor *is* the credential,
+the mandatory-access-control hooks, Capsicum sandboxing, per-descriptor
+and per-process protections, coalitions, and hardware tracing — are each
+described in [Architecture](architecture.md).
 
 On top of that core, 5BSD ships its own userland stacks, each covered in its
 own section of this Epic:
@@ -77,7 +69,7 @@ own section of this Epic:
   MACF: clients subscribe to authoritative kernel events (exec, open, close,
   signal, …) for detection and response
   ([Endpoint Security](security/endpoint-security.md)).
-- **WASPNest** — the virtualization stack (bhyve lineage) with modern VirtIO
+- **WASPNest** — the virtualization stack, with modern VirtIO
   models, vsock, live migration, and nested VMX
   ([Virtualization](virtualization/overview.md)).
 - **Bluetooth** — a Bluetooth host and BLE mesh stack, `blued` and `meshd`
@@ -87,41 +79,18 @@ own section of this Epic:
 
 ## Running Linux and BSD software
 
-5BSD runs the full inherited BSD userland unchanged, and it treats the
-**Linux syscall interface as a first-class execution target** — not a
-legacy-emulation afterthought. Linux binaries call `clone()`, `mmap()`,
-`open()`, `sendmsg()`, and the Linuxulator translates each into a native BSD
-kernel operation before it executes.
-
-The point is where enforcement sits. Linux's own mechanisms — seccomp-bpf,
-SELinux, AppArmor, namespaces — run *inside* the kernel they protect, so a
-kernel exploit owns the security framework too. 5BSD enforces beneath the
-translation boundary, by the MAC and capability framework the Linux code
-never touches, on a kernel it does not know is there. A Linux program does
-not adapt to this and cannot attack through it; it simply succeeds, or
-receives `EACCES`/`EPERM` from a layer it cannot see. The same is true of
-native BSD binaries: the capability plane sits under *every* application,
-whichever ABI it was compiled for.
-
-## Relationship to FreeBSD
-
-5BSD is derived from FreeBSD 16-CURRENT, but it boots the 5BSD kernel, not a
-stock FreeBSD kernel. The inherited base — ZFS, jails, the network stack,
-`rc(8)`, ports and packages, standard userland — behaves as documented in the
-[FreeBSD Handbook](https://docs.freebsd.org/en/books/handbook/) and the
-FreeBSD manual pages. The Epic deliberately does not reiterate that material.
-
-That said, **5BSD is a separate project, not a FreeBSD distribution.** It
-plans to eject and modify significant portions of the inherited system over
-time, and **FreeBSD 16 is the last version 5BSD adopts wholesale** — later
-FreeBSD releases are sources of selectively merged improvements, not a base
-to track. The divergence is already underway: init duties have moved to
-`capsule`/`serviced`, storage is growing a capability API, and bhyve is
-becoming WASPNest. Wherever 5BSD has diverged — by adding, changing, or
-removing a subsystem — **the Epic is the source of truth**, and the FreeBSD
-documentation no longer applies to that subsystem.
+5BSD runs its complete BSD userland natively, and it treats the **Linux
+syscall interface as a first-class execution target** — not a
+legacy-emulation afterthought. Linux binaries run unmodified, translated
+into native kernel operations before they execute, with the security stack
+enforcing beneath the translation boundary — a layer the Linux code cannot
+see, adapt to, or attack. The mechanism and the reasoning live in
+[Architecture](architecture.md#running-linux-software).
 
 ## How to read this Epic
+
+The Epic is the authoritative reference for 5BSD: wherever it and any other
+documentation disagree, the Epic is the source of truth.
 
 - **Developers** extending the system: start with [The Hybrid Model: BSD plus
   a Capability SDK](development/hybrid-model.md), then the rest of the

@@ -13,8 +13,8 @@ userland daemons over the kernel's netgraph Bluetooth layer:
 Both have rc.d scripts (`blued_enable="YES"`, `meshd_enable="YES"`). Three
 in-tree libraries back them: `libble(3)` (the client library for blued's
 control protocol), `libblemesh(3)` (the mesh
-protocol engine, built from `lib/libmesh/`), and the traditional FreeBSD
-`libbluetooth` for adapter I/O. The kernel side is netgraph (`ng_hci`,
+protocol engine, built from `lib/libmesh/`), and the traditional
+`libbluetooth(3)` for adapter I/O. The kernel side is netgraph (`ng_hci`,
 `ng_l2cap`, `ng_ubt`) plus `ng_hci_virt(4)`, a virtual controller used with
 `vhcitool(8)` for hardware-free testing.
 
@@ -100,7 +100,7 @@ operator surface — `meshctl`/`bluedctl` verbs, rc.d scripts, configuration
 Testing needs no hardware: extensive ATF suites, fuzzers, and oracle
 generators that derive expected HCI encodings from the specification texts
 exercise the stack against the virtual HCI controller. `ng_hci_virt(4)`
-presents the identical upstream contract as `ng_ubt(4)`, so the whole stack
+presents the identical kernel contract as `ng_ubt(4)`, so the whole stack
 attaches to a spec-oracle emulator exactly as to real hardware.
 
 **Known limits:**

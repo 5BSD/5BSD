@@ -1,10 +1,9 @@
 # WASPNest
 
-WASPNest is 5BSD's virtualization stack. It is not a new hypervisor: it is
-the FreeBSD bhyve hypervisor and its `vmm(4)` kernel subsystem, extended in
-the 5BSD tree with substantially broader VirtIO device coverage, a versioned
-checkpoint/state model, live-migration machinery, and experimental Intel
-nested VMX.
+WASPNest is 5BSD's virtualization stack. It builds on the in-tree bhyve
+hypervisor and its `vmm(4)` kernel subsystem, adding substantially broader
+VirtIO device coverage, a versioned checkpoint/state model, live-migration
+machinery, and experimental Intel nested VMX.
 
 The stack keeps bhyve's kernel/userspace split: the kernel `vmm` subsystem
 executes guest vCPUs on Intel VMX/EPT or AMD SVM/NPT and owns stage-2
@@ -22,8 +21,8 @@ tooling can already reference the new name. Eventually the binary will be
 `waspnest` with `bhyve` as the compatibility alias.
 
 **Guests.** Three guest families are supported: 5BSD (including kernels
-rebuilt with the new VirtIO drivers), stock FreeBSD (the guest interface is
-unchanged from upstream bhyve), and Linux, with Alpine as the reference
+rebuilt with the new VirtIO drivers), other BSD guests (the classic bhyve
+guest interface is unchanged), and Linux, with Alpine as the reference
 image. Linux is the primary consumer for host models whose 5BSD guest
 support is protocol-bounded (virtio-mem hotplug, virtio-iommu translation).
 
@@ -32,7 +31,7 @@ support is protocol-bounded (virtio-mem hotplug, virtio-iommu translation).
 The largest single work program is VirtIO: modern (virtio 1.4) PCI
 transport support, packed rings, multiqueue, new host device models
 (`usr.sbin/bhyve/pci_virtio_*.c`, 17 in all), and matching 5BSD guest
-drivers under `sys/dev/virtio/`. The additions over stock bhyve:
+drivers under `sys/dev/virtio/`. The new device models:
 
 | Device | Notes |
 | --- | --- |
@@ -49,7 +48,7 @@ drivers under `sys/dev/virtio/`. The additions over stock bhyve:
 
 These join the pre-existing block, net, console, SCSI, 9P, input, and RNG
 models. Outside VirtIO, 5BSD also adds an **i6300esb watchdog** model
-(`pci_i6300esb.c`) — the Intel 6300ESB timer stock Linux and Windows guest
+(`pci_i6300esb.c`) — the Intel 6300ESB timer that Linux and Windows guest
 drivers already bind to, with configurable expiry action
 (`action=reset|poweroff|nmi|notify`) — and **pvclock**
 (`sys/amd64/vmm/io/vpvclock.c`), a default-off KVM-pvclock MSR

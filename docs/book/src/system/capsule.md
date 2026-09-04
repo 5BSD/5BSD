@@ -16,7 +16,7 @@ init_path="/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init"
 Two install-time requirements, both satisfied by a default install: the
 `mac_capability` module stack must be preloaded (it ships in the `bootloader`
 package's `loader.conf` defaults — without the device, boot falls through to
-stock `/sbin/init` and no plane comes up), and a **ZFS root pool is the
+the classic `/sbin/init` and no plane comes up), and a **ZFS root pool is the
 supported plane configuration** — on a UFS-only root,
 [`tzfsd`](../storage/trustedzfs.md) and the components that depend on managed
 storage stay stopped and the plane runs degraded.
@@ -58,7 +58,7 @@ PID 1 does not run `/etc/rc` itself and does not start getty/login until
 `/etc/rc` has no knowable duration (fsck, entropy waits) — recovery triggers
 only when `serviced` *permanently* fails (its restart circuit breaker trips).
 
-Capsule keeps stock init's compatibility invariants: never daemonize, never
+Capsule keeps the classic init(8) compatibility invariants: never daemonize, never
 exit (every exit path becomes a logged emergency and a deliberate reboot or
 recovery), reap all orphans continuously, preserve `/etc/ttys` getty
 management. Shutdown mirrors boot: revoke ttys → `/etc/rc.shutdown` (with
@@ -67,13 +67,13 @@ global `SIGTERM`/`SIGKILL` sweep → `/etc/rc.final` → `reboot(2)`.
 
 ## Control ABI and the signal shield
 
-Stock init is administered by unauthenticated signals to PID 1. Capsule
+The classic init is administered by unauthenticated signals to PID 1. Capsule
 replaces that with typed, root-authorized operations on the authenticated
 control socket `/var/run/authorityd.sock` — shutdown, reboot, halt, poweroff,
 power-cycle, single-user, reroot, ttys rescan, and catatonia, plus an
 unprivileged status query. `reboot(8)`, `halt(8)`, and `shutdown(8)` speak
 this ABI first and fall back to the traditional signal path when the socket is
-absent (stock-init systems and the pre-engine early-boot window). Lifecycle
+absent (classic-init systems and the pre-engine early-boot window). Lifecycle
 opcodes are rejected when `getpid() != 1`, so an ordinary `authorityd` daemon
 cannot reboot the machine.
 
@@ -98,9 +98,9 @@ platform/BMC/hypervisor watchdog.
 designed, stable operating mode. `serviced` runs `/bin/sh /etc/rc autoboot`
 once, init-style, as a oneshot on `/dev/console` — so rcorder metadata,
 `rc.conf` layering, `service(8)`, and every enabled rc.d script behave exactly
-as on stock FreeBSD — then scans `/Capabilities` bundles, services queued
+as they always have — then scans `/Capabilities` bundles, services queued
 demand, and reports convergence to PID 1. A non-zero `/etc/rc` exit is logged
-but does not block convergence (matching stock rc). What moved out of rc:
+but does not block convergence (matching classic rc). What moved out of rc:
 `authorityd` itself (it *is* PID 1 — there is no `rc.d/authorityd` script),
 reboot and module-load orchestration (above), native capability services
 (launched from `.cap` bundles), and lifecycle signalling of PID 1.
@@ -115,7 +115,7 @@ the shield denies the generic `kill -TERM`/`kill -0` defaults.
 Operators keep their tools: `sysrc`, `service <name> start|stop|status`, and
 rc.conf layering work unchanged for rc-owned services; use `servicectl` for
 the managed world and `authorityctl status` for the spine. Rollback is a
-loader setting: `init_path="/sbin/init"` boots entirely on stock init and rc.
+loader setting: `init_path="/sbin/init"` boots entirely on the classic init and rc.
 
 Timer, path, socket, calendar, queue-directory, and mount demand sources
 are provided; user-domain schedules are not. Per-script rc graph ingestion

@@ -9,7 +9,7 @@ returned descriptor is close-on-exec.
 
 ## Why the ZFS control plane needed this
 
-Stock ZFS administration is ambient: every operation is an ioctl on
+Classic ZFS administration is ambient: every operation is an ioctl on
 `/dev/zfs` addressed by a dataset name string, re-resolved per call and
 authorized centrally (`zfs allow`, `zfs jail`, or root). That means no
 unforgeable grants, no ZFS tooling under Capsicum (`cap_enter()` forbids
@@ -109,8 +109,8 @@ already-exported VFS primitives; `zfs_domount` needed zero changes.
 The kernel side is a shim, placed to keep OpenZFS merges cheap: a new file
 `sys/contrib/openzfs/module/os/freebsd/zfs/zfs_handle.c` plus a ~3-line
 mint intercept in `zfsdev_ioctl()`. Verbs resolve dsobj → verify guid →
-drive the existing upstream ioctl dispatch in-kernel (`FKIOCTL`, kernel
-nvlists) — upstream logic is reused, not reimplemented. The fd type is a
+drive the existing OpenZFS ioctl dispatch in-kernel (`FKIOCTL`, kernel
+nvlists) — OpenZFS logic is reused, not reimplemented. The fd type is a
 real `DTYPE_ZFSHANDLE` (19) with full fileops, `DFLAG_PASSABLE`, and
 procstat/fstat integration: `procstat -f` shows
 `zfshandle:tank/svc/pgsql [snapshot,mount] valid`.

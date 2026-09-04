@@ -5,7 +5,7 @@ get a whole, ordinary BSD system — `sh`, `cc`, ZFS, jails, `rc(8)`, ports and
 packages, the Linux ABI, every man page you already know. Nothing forces a
 program into the capability plane. A daemon written the classic way — bind a
 socket, drop privileges, log to syslog, start from `rc.d` — runs on 5BSD
-exactly as it does on FreeBSD.
+exactly as it always has.
 
 Beside that familiar system runs a second one: the **capability plane**, where
 authority is a held, unforgeable descriptor rather than a uid or a path (see
@@ -257,7 +257,7 @@ and get right by hand:
 - **Runtime, label-scoped authority** — files, storage, jails, and sockets
   acquired by name when needed, never pre-granted.
 
-And you gave up nothing on the BSD side: the same host still runs stock daemons,
+And you gave up nothing on the BSD side: the same host still runs classic daemons,
 ports, and Linux binaries next to it. That coexistence — a familiar BSD system
 you can extend, one capability at a time, with an SDK — is what "hybrid" means
 in 5BSD.

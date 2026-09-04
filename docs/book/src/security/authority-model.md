@@ -12,7 +12,8 @@ The substrate — the [MAC Capability Framework](mac-capability.md) and
 authentication boundary is live: `login`, `su`, and `sshd` provision their
 sessions through the auth-agent (see below). A few control paths deliberately
 gate on a uid beside the capability path (the `authorityd` system-lifecycle
-control socket keeps `getpeereid(3)` by design — reboot/halt stay stock).
+control socket keeps `getpeereid(3)` by design — reboot/halt keep their
+classic path).
 
 ## Ambient authority is the thing we removed
 

@@ -1,18 +1,20 @@
 # Building, Packaging, and Releasing
 
-5BSD builds like FreeBSD: `buildworld` and `buildkernel` from `/usr/src`,
-pkgbase packages from the same tree, and release media from `release/`.
+5BSD builds from one source tree: `buildworld` and `buildkernel` from
+`/usr/src`, pkgbase packages from the same tree, and release media from
+`release/`.
 This chapter is where the **5BSD kernel** referred to throughout this Epic
 is defined and built.
 
 ## Requirements
 
-- A FreeBSD or 5BSD build host
+- A 5BSD build host
 - `/usr/ports` containing at least `ports-mgmt/pkg` (the release targets
-  build `pkg` for the installer media); a sparse checkout is enough:
+  build `pkg` for the installer media); a sparse checkout of the ports tree
+  is enough:
 
 ```sh
-doas git clone --depth 1 --sparse https://git.FreeBSD.org/ports.git /usr/ports
+doas git clone --depth 1 --sparse <ports-git-url> /usr/ports
 cd /usr/ports
 doas git sparse-checkout set ports-mgmt/pkg Mk Templates Keywords
 ```
@@ -49,8 +51,8 @@ BOLT, Polly, and most of clang-tools-extra are not included).
 
 ## Pkgbase packaging
 
-5BSD distributes its base system as pkgbase packages named `5BSD-*`
-(upstream uses `FreeBSD-*`). Every base component — libraries, daemons, the
+5BSD distributes its base system as pkgbase packages named `5BSD-*`.
+Every base component — libraries, daemons, the
 kernel, tests, debug symbols — is a package, so upgrades, partial installs,
 and rollbacks all go through `pkg(8)` and boot environments.
 
@@ -76,34 +78,32 @@ make -j$(sysctl -n hw.ncpu) buildworld buildkernel KERNCONF=VBSD \
 ```
 
 The result is a signed repository under
-`/usr/obj/usr/src/repo/${ABI}/<version>` (`${ABI}` is e.g.
-`FreeBSD:16:amd64`) with the `latest` symlink updated.
+`/usr/obj/usr/src/repo/${ABI}/<version>` with the `latest` symlink updated.
 
 `PKG_CMD=/usr/local/sbin/pkg-static` is not optional. The default dynamic
-`pkg(8)` from ports tracks the newest FreeBSD `__FreeBSD_version` and may be
+`pkg(8)` from ports tracks the newest ports ABI and may be
 linked against libc symbol versions the 5BSD tree has not adopted (the
 concrete case: `fts_*@FBSD_1.9` vs the tree's `FBSD_1.5`), which kills
 packaging with an `Undefined symbol` error at signing time. `pkg-static`
 carries its own libc and is immune to the skew. **Do not** patch base libc
 to satisfy the dynamic pkg — every base binary is internally consistent;
-the mismatch is a property of the foreign tool. If you intend to move the
-tree to the newer ABI, bump `__FreeBSD_version` deliberately.
+the mismatch is a property of the foreign tool. Moving the tree to a newer
+libc ABI is a deliberate version bump, never a side effect of packaging.
 
 ### Repository configuration
 
 Base updates must come from a local 5BSD repo so `pkg upgrade` never
-replaces 5BSD packages with upstream FreeBSD ones. Sample configurations
-ship in the tree: `docs/pkg/5BSD.conf.sample` (install to
-`/usr/local/etc/pkg/repos/5BSD.conf`; `priority: 100` prefers local
-packages) and `docs/pkg/FreeBSD.conf.sample` (disables `FreeBSD-base`).
-The FreeBSD-ports repos remain enabled for third-party software.
+replaces 5BSD packages with foreign base packages. Sample configurations
+ship in the tree under `docs/pkg/`: install `5BSD.conf.sample` to
+`/usr/local/etc/pkg/repos/5BSD.conf` (`priority: 100` prefers local
+packages), and use the companion sample there to disable any foreign base
+repository. Ports repositories remain enabled for third-party software.
 
 ### Installing, migrating, upgrading
 
 Fresh installs use the USB installer, which carries an offline `5BSD-*`
-repo. Migrating a
-FreeBSD 16-CURRENT pkgbase system is a one-time operation because the
-package names differ:
+repo. Migrating an existing pkgbase system to the `5BSD-*` sets is a
+one-time operation because the package names differ:
 
 ```sh
 bectl create pre-5bsd-migration
@@ -120,8 +120,8 @@ after reboot: `uname -i` shows `VBSD` and `pkg query '%n' | head` shows
 
 ## Release engineering
 
-Release artifacts are built from `/usr/src/release` using FreeBSD's release
-framework, adapted so every image installs from 5BSD pkgbase packages and
+Release artifacts are built from `/usr/src/release` using the in-tree
+release framework; every image installs from 5BSD pkgbase packages and
 carries 5BSD branding throughout — the boot chain, loader menus, volume
 labels, installer scripts, and boot logo.
 
@@ -146,7 +146,7 @@ pkgbase repository of `5BSD-*` packages, and install `pkg` on the media, so
 `bsdinstall` performs a network-free pkgbase install. The media uses the
 UFS label `5BSD_Install`, pins `vfs.root.mountfrom` to it, and puts
 `boot_policy=strict` in the ESP loader environment so the EFI loader does
-not fall back into a resident FreeBSD boot pool. Write the image with
+not fall back into a boot pool already resident on the machine. Write the image with
 `dd if=.../memstick.img of=/dev/daX bs=1m status=progress`. For a VM,
 prefer `make cdrom` and attach the ISO; the memstick image also works
 attached as a raw boot disk (not as a CD-ROM).

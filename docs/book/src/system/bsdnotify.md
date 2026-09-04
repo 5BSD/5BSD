@@ -5,7 +5,8 @@ by `bsdnotify(8)` and consumed through `libnotify(3)`. It gives
 capability-mode services bounded exact-topic publish/subscribe, retained
 64-bit state, and monotonic timers. One broker routes sessions for the host,
 but it is not a global broadcast API: every session is identified by its
-unforgeable channel label and gets an independent, default-deny policy,
+unforgeable channel label (see
+[The Authority Model](../security/authority-model.md)) and gets an independent, default-deny policy,
 subscription set, queue, and timer namespace. The provider lives in
 `usr.sbin/bsdnotify/`, the client library in `lib/libnotify/`, and the
 operator tool in `usr.sbin/notifyctl/`.

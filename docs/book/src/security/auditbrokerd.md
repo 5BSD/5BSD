@@ -1,6 +1,6 @@
 # auditbrokerd: the BSM Audit Broker
 
-`audit(2)` writes a record into the kernel's BSM audit trail. On stock FreeBSD
+`audit(2)` writes a record into the kernel's BSM audit trail. Traditionally
 the caller must be privileged, and it may write *any* record — the event class
 and contents are entirely the caller's to state. That is unacceptable in the
 capability plane, where the point is that a component holds narrow authority

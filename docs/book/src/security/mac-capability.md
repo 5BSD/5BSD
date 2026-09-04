@@ -12,7 +12,7 @@ Model](authority-model.md).
 
 ## The problem it solves
 
-Adding a Capsicum-aware kernel service to stock FreeBSD means new
+Without this framework, adding a Capsicum-aware kernel service means new
 `CAP_*` rights bits, a new `DTYPE_*` and `struct fileops`, usually a new
 syscall, and hand-rolled queue/lifecycle code. `mac_capability`
 collapses this to one base-system change — one descriptor type
@@ -72,7 +72,7 @@ single-generation handle.
 
 ## Capability transfer (cap_xfer)
 
-Stock FreeBSD lets any descriptor travel without limit: `SCM_RIGHTS` to
+Classic descriptor passing has no limits: `SCM_RIGHTS` to
 any process, inherited by every fork, surviving every exec. For a
 capability system that is a hole — a supervisor cannot hand a worker a
 credential and be sure it stays there. `cap_xfer` closes it with
@@ -109,7 +109,7 @@ attached to capability messages.
 ## Descriptor types
 
 5BSD extends the descriptor table into a credential system. The types
-beyond stock FreeBSD (`sys/sys/file.h`), all passable and all subject to
+it adds (`sys/sys/file.h`), all passable and all subject to
 the `cap_xfer` controls above:
 
 | Type | Represents | Key semantics |

@@ -18,7 +18,7 @@ usage: authorityctl reboot|halt|poweroff|powercycle|single|reroot|rescan|
 
 `status` prints the authority's state summary; `reload` re-reads
 configuration and prints the change summary; the remaining verbs drive
-system lifecycle transitions. The stock `reboot(8)`/`halt(8)` signal path
+system lifecycle transitions. The classic `reboot(8)`/`halt(8)` signal path
 remains fully supported beside it.
 
 ## servicectl — control serviced(8)
