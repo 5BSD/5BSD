@@ -9,12 +9,14 @@
 #
 # boot = true because early consumers (storage, networking) may need a module
 # before the general service population comes up.  PID 1 owns /dev/mac_capability,
-# so sysextd does not open it: it declares the kldload/kldstat system gates below
-# and serviced delivers a matching system token (authorityd claims the gates
-# under its nonce).  service_provider_authorize_capabilities(3) authorizes that
-# token, adding sysextd's nonce to the gate's authorized set.
+# so sysextd does not open it: it declares the kldload system gate below and
+# serviced delivers a matching system token (authorityd claims the gate under
+# its nonce).  service_provider_authorize_capabilities(3) authorizes that
+# token, adding sysextd's nonce to the gate's authorized set.  Read-only module
+# queries (kldfind/kldstat) are not gated at all, so no kldstat declaration is
+# needed.
 #
-# user = root: kldload(2)/kldstat(2) perform a base priv_check(PRIV_KLD_LOAD)
+# user = root: kldload(2) performs a base priv_check(PRIV_KLD_LOAD)
 # before the mac_capability gate, so the loader must run privileged.  Root alone
 # is NOT sufficient — the gate denies even root unless it holds an authorized
 # token — so the delivered system capability below is what actually permits the
@@ -30,7 +32,7 @@ user = "root";
 privileged = true;
 
 capabilities {
-    system = ["kldload", "kldstat"];
+    system = ["kldload"];
 }
 
 limits { nofile = 1024; nproc = 128; core = 0; }

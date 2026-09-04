@@ -396,7 +396,7 @@ remaining_token_families_activate_body()
 	find_capd_service_fixture
 	start_stack
 	make_svc_bin system token-families 'capabilities {
-	    system = ["kldstat"];
+	    system = ["kldload"];
 }
 arguments = ["authorize-tokens", "token-families.out"];' \
 	    "$capd_service_fixture"

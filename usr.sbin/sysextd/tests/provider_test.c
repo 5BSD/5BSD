@@ -356,12 +356,9 @@ ATF_TC_BODY(provider_rejects_attached_descriptor, tc)
  * guaranteed present in any kernel, so the allow-list is set to exactly
  * {"kernel"} for this case and kldfind(2) must find it.
  *
- * The query itself passes through the SYS_GATE_KLDSTAT gate.  Where that gate
- * has been claimed by another nonce (a fully-booted authority plane), this
- * unprivileged test worker is not authorized to query and the handler returns
- * EPERM; the case then skips rather than failing, because it can no longer
- * observe the loaded state.  Where the gate is unclaimed (the common test-kernel
- * case) the query runs and loaded=1 is asserted.
+ * kldfind(2) is a read-only query and is not gated (module enumeration is
+ * deliberately open), so the query succeeds in any environment and loaded=1
+ * is asserted unconditionally.
  */
 ATF_TC(provider_stat_reports_loaded_module);
 ATF_TC_HEAD(provider_stat_reports_loaded_module, tc)
@@ -379,11 +376,6 @@ ATF_TC_BODY(provider_stat_reports_loaded_module, tc)
 	fixture_create_cfg(&fixture, &cfg);
 	rq = stat_request("kernel");
 	reply = call_stat(&fixture, &rq, sizeof(rq), -1);
-	if (reply.status == EPERM) {
-		fixture_destroy(&fixture);
-		atf_tc_skip("KLDSTAT gate claimed; worker not authorized to "
-		    "query in this environment");
-	}
 	ATF_CHECK_EQ(0, reply.status);
 	ATF_CHECK_EQ(1, reply.loaded);
 	fixture_destroy(&fixture);
@@ -393,8 +385,8 @@ ATF_TC_BODY(provider_stat_reports_loaded_module, tc)
  * STAT of an allow-listed module that is NOT loaded reports loaded=0, status 0
  * (a completed query, not an error).  The allow-list is set to a single made-up
  * name that no kernel has loaded, so kldfind(2) returns ENOENT and the handler
- * maps that to the not-loaded answer.  Skips if the KLDSTAT gate is claimed (see
- * above).
+ * maps that to the not-loaded answer.  kldfind is ungated, so the assertion is
+ * unconditional.
  */
 ATF_TC(provider_stat_reports_unloaded_module);
 ATF_TC_HEAD(provider_stat_reports_unloaded_module, tc)
@@ -412,11 +404,6 @@ ATF_TC_BODY(provider_stat_reports_unloaded_module, tc)
 	fixture_create_cfg(&fixture, &cfg);
 	rq = stat_request("sysext_absent_mod");
 	reply = call_stat(&fixture, &rq, sizeof(rq), -1);
-	if (reply.status == EPERM) {
-		fixture_destroy(&fixture);
-		atf_tc_skip("KLDSTAT gate claimed; worker not authorized to "
-		    "query in this environment");
-	}
 	ATF_CHECK_EQ(0, reply.status);
 	ATF_CHECK_EQ(0, reply.loaded);
 	fixture_destroy(&fixture);
@@ -426,9 +413,8 @@ ATF_TC_BODY(provider_stat_reports_unloaded_module, tc)
  * THE STAT security regression: a STAT for a module that is not on the
  * allow-list is refused with EPERM before any query — never answered with a
  * loaded/not-loaded result.  A client may STAT only a module it could ENSURE, so
- * denial leaks no information about which modules exist or are loaded.  This is
- * deterministic regardless of the KLDSTAT gate state, since the denial happens
- * before kldfind(2) is reached.  loaded stays 0 on a denial.
+ * denial leaks no information about which modules exist or are loaded.  The
+ * denial happens before kldfind(2) is reached.  loaded stays 0 on a denial.
  */
 ATF_TC(provider_stat_denies_non_allowlisted_module);
 ATF_TC_HEAD(provider_stat_denies_non_allowlisted_module, tc)

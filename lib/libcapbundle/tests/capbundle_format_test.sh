@@ -380,7 +380,7 @@ capability_contract_body()
 	cat > "$dir/Units/worker.unit/Unit.ucl" <<-'EOF'
 	activation { boot = true; }
 	capabilities {
-	    system = ["kldload", "kldunload", "kldstat", "reboot",
+	    system = ["kldload", "kldunload", "reboot",
 	        "swapon", "swapoff", "sysctl", "kenv", "acct", "audit",
 	        "kenv_read"];
 	}

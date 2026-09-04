@@ -54,9 +54,12 @@
  * kenv, acct, audit, …) is an ADMIN-plane operation reached through the
  * authenticated system.lifecycle relay, NOT a launch-time manifest delegation;
  * refuse to mint them here regardless of what a bundle declares.
+ *
+ * Module enumeration is deliberately ungated (there is no kldstat gate),
+ * so module management delegates only the two mutating operations.
  */
 #define	SVC_SYSTEM_GATE_DELEGATABLE \
-	(SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD | SYS_GATE_KLDSTAT)
+	(SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD)
 
 #include "serviced.h"
 #include "launch_limits.h"

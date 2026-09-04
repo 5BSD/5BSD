@@ -360,7 +360,6 @@ token from
 Available operations:
 .Dq kldload ,
 .Dq kldunload ,
-.Dq kldstat ,
 .Dq reboot ,
 .Dq swapon ,
 .Dq swapoff ,
@@ -445,8 +444,8 @@ Kernel-module loading is not an
 operation.
 .Xr sysextd 8
 owns it: it holds the
-.Dv SYS_GATE_KLDLOAD | SYS_GATE_KLDSTAT
-gates and exposes
+.Dv SYS_GATE_KLDLOAD
+gate and exposes
 .Dq Li system.SystemExtension
 as a socket-free service, so a service self-serves a module by name with
 .Xr service_ensure_extension 3 .
@@ -682,7 +681,7 @@ claims {
             address = "192.0.2.0/24";
         },
     ];
-    system = ["kldload", "kldunload", "kldstat",
+    system = ["kldload", "kldunload",
               "reboot", "sysctl"];
 }
 .Ed

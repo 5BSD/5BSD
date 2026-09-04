@@ -39,7 +39,8 @@
  *
  *   SYS_GATE_KLDLOAD    — kernel module loading
  *   SYS_GATE_KLDUNLOAD  — kernel module unloading
- *   SYS_GATE_KLDSTAT    — kernel module enumeration
+ *   (module enumeration — kldstat/kldfind/modfind — is deliberately
+ *    ungated: read-only kld queries are required by the DTrace toolchain)
  *   SYS_GATE_REBOOT     — system reboot/halt/poweroff
  *   SYS_GATE_SWAPON     — adding swap devices
  *   SYS_GATE_SWAPOFF    — removing swap devices
@@ -62,7 +63,11 @@
 /* Gated operation bitmask */
 #define	SYS_GATE_KLDLOAD	0x0001
 #define	SYS_GATE_KLDUNLOAD	0x0002
-#define	SYS_GATE_KLDSTAT	0x0004
+/*
+ * 0x0004 (formerly a module-enumeration gate) is RETIRED and must not be
+ * reassigned: enumeration is deliberately ungated, and a claim carrying
+ * the old bit is rejected as unknown (fail-closed).
+ */
 #define	SYS_GATE_REBOOT		0x0008
 #define	SYS_GATE_SWAPON		0x0010
 #define	SYS_GATE_SWAPOFF	0x0020
@@ -71,7 +76,7 @@
 #define	SYS_GATE_ACCT		0x0100
 #define	SYS_GATE_AUDIT		0x0200	/* auditon + auditctl */
 #define	SYS_GATE_KENV_READ	0x0400	/* kenv get + dump */
-#define	SYS_GATE_ALL		0x07ff
+#define	SYS_GATE_ALL		0x07fb	/* all known gates; 0x0004 retired */
 
 struct sys_request {
 	uint32_t	op;

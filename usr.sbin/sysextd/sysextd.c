@@ -13,9 +13,9 @@
  * user service can never reach it and therefore can never load kernel code.
  *
  * sysextd holds no /dev/mac_capability handle of its own — PID 1 owns that
- * device.  It declares the kldload/kldstat system-capability gates in its
+ * device.  It declares the kldload system-capability gate in its
  * manifest; serviced mints the matching system token (authorityd claims the
- * gates under its nonce) and delivers it as a bootstrap capability.
+ * gate under its nonce) and delivers it as a bootstrap capability.
  * service_provider_authorize_capabilities() authorizes that token, adding
  * sysextd's process nonce to the gate's authorized set.  Because the pdfork'd
  * workers share sysextd's fork-family nonce, each worker's kldload(2) passes the
@@ -32,8 +32,9 @@
  * already present returns EEXIST, which sysextd reports as success, so ENSURE
  * needs only the kldload gate.  The STAT operation, in contrast, must query
  * without loading; it uses kldfind(2) (a filename lookup that pairs with
- * kldload's filename argument), which is what exercises the SYS_GATE_KLDSTAT
- * gate the manifest declares alongside kldload.
+ * kldload's filename argument).  kldfind is a read-only query and is not
+ * gated — module enumeration is deliberately open (the DTrace toolchain
+ * depends on it) — so sysextd's manifest declares only the kldload gate.
  *
  * There is deliberately no UNLOAD operation: safe removal needs per-consumer
  * module refcounting/ownership this broker does not track, so one SYSTEM client
@@ -285,8 +286,9 @@ ensure_extension(const char *name)
  * returns the errno (and leaves *loaded 0).  kldfind(2) resolves a bare module
  * name against the loaded-file list exactly as kldload resolves it against the
  * module path (both accept the ".ko"-less name), so STAT and ENSURE agree on
- * what a name refers to.  kldfind is the query ENSURE deliberately avoids; it is
- * what exercises the SYS_GATE_KLDSTAT gate the manifest declares.
+ * what a name refers to.  kldfind is the query ENSURE deliberately avoids; it
+ * is read-only and ungated (module enumeration is deliberately open), so STAT
+ * needs no system capability at all.
  */
 static int
 stat_extension(const char *name, int *loaded)
@@ -430,8 +432,8 @@ sysext_worker(int fd, const char *client)
  * sysext_request path a production worker would.  ENSURE cases a test drives
  * (deny, malformed) are refused before ensure_extension is reached, so no
  * kldload(2) runs; STAT cases for an allow-listed name do reach kldfind(2), a
- * read-only query that loads nothing (and, where the KLDSTAT gate is claimed by
- * another nonce, is itself denied — a plane test skips that environment).
+ * read-only query that loads nothing and is not gated, so it succeeds in any
+ * environment.
  */
 int
 sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)
@@ -446,7 +448,7 @@ sysext_test_serve(int fd, const char *client, const struct sysext_config *cfg)
 /*
  * Expose system.SystemExtension and dispatch each accepted client on its own
  * pdfork'd worker.  service_provider_authorize_capabilities() authorizes the
- * delivered kldload/kldstat system token before serving.
+ * delivered kldload system token before serving.
  *
  * Unlike other capability-plane providers, sysextd does NOT enter capability
  * mode: kldload(2) resolves a bare module name against the global kernel module
@@ -543,7 +545,7 @@ main(int argc, char **argv)
 
 	/*
 	 * Serve as a socket-free service_provider: authorize the delivered
-	 * kldload/kldstat system token, expose system.SystemExtension, enter
+	 * kldload system token, expose system.SystemExtension, enter
 	 * capability mode, and dispatch each client on its own worker channel.
 	 * sysext_serve() owns the provider lifecycle and does not return on
 	 * success.

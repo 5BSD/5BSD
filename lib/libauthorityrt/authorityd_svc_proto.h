@@ -180,7 +180,7 @@ struct authority_vsock_req {
 
 /*
  * Kernel-module loading is NOT an authorityd op.  sysextd(8) owns it: it holds
- * the kldload/kldstat system-capability gates and exposes system.SystemExtension
+ * the kldload system-capability gate and exposes system.SystemExtension
  * as a socket-free provider, so a service self-serves a module by name via
  * service_ensure_extension(3).  PID 1 no longer loads kernel code.
  */

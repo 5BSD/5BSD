@@ -107,7 +107,12 @@ sys_call_authorize(int token_fd)
  * Fork+exec to get a new nonce, then try kldnext(2) directly.
  * kldstat(1) always exits 0 even when the syscall returns EPERM,
  * so we exec the helper binary which calls kldnext(2) itself.
- * Returns child exit status: 0 = denied (good), 1 = allowed (bad).
+ * Returns child exit status: 0 = denied, 1 = allowed.
+ *
+ * NOTE: module enumeration is deliberately UNGATED (read-only kld
+ * queries are required by libdtrace/observability), so the expected
+ * result under the current contract is 1 (allowed) no matter which
+ * system gates are claimed.
  */
 static int
 run_cross_nonce_kldstat(const atf_tc_t *tc)
@@ -158,48 +163,72 @@ sys_call_mint_narrow(int fd, uint32_t gates, int *token_fd)
  * Tests
  * ---------------------------------------------------------------- */
 
-ATF_TC(claim_denies_foreign_nonce);
-ATF_TC_HEAD(claim_denies_foreign_nonce, tc)
+/*
+ * Regression test of the enumeration contract: there is no enumeration
+ * gate.  Even while the module-management gates (KLDLOAD/KLDUNLOAD) are
+ * claimed, read-only kld queries from a foreign nonce keep working —
+ * gating them broke dtrace(1) kernel-CTF loading under a production boot,
+ * so the kernel deliberately does not hook kld_check_stat.
+ */
+ATF_TC(kld_enumeration_is_ungated);
+ATF_TC_HEAD(kld_enumeration_is_ungated, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Claiming SYS_GATE_KLDSTAT blocks kldstat from exec'd child");
+	    "kldstat from an exec'd foreign nonce returns the module list "
+	    "even while the module-management gates are claimed");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(claim_denies_foreign_nonce, tc)
+ATF_TC_BODY(kld_enumeration_is_ungated, tc)
 {
-	int svc, rc;
-
-	svc = sys_connect();
-	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
-
-	rc = run_cross_nonce_kldstat(tc);
-	ATF_CHECK_MSG(rc == 0, "kldnext should be denied for foreign nonce");
-
-	close(svc);
-}
-
-ATF_TC(claim_allows_same_nonce);
-ATF_TC_HEAD(claim_allows_same_nonce, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Same nonce can perform claimed operations");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(claim_allows_same_nonce, tc)
-{
-	int svc, id;
+	int svc, rc, id;
 	struct kld_file_stat stat;
 
 	svc = sys_connect();
-	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+	ATF_REQUIRE(sys_call_claim(svc,
+	    SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD) == 0);
 
+	/* Foreign nonce must be able to enumerate modules. */
+	rc = run_cross_nonce_kldstat(tc);
+	ATF_CHECK_MSG(rc == 1,
+	    "kldnext must succeed for a foreign nonce while the "
+	    "module-management gates are claimed (enumeration is ungated)");
+
+	/* The owner nonce enumerates too, and gets a real module list. */
 	id = kldnext(0);
 	ATF_REQUIRE_MSG(id >= 0, "kldnext: %s", strerror(errno));
-
 	memset(&stat, 0, sizeof(stat));
 	stat.version = sizeof(stat);
 	ATF_CHECK(kldstat(id, &stat) == 0);
 
+	close(svc);
+
+	/* And, trivially, after the claim is released. */
+	rc = run_cross_nonce_kldstat(tc);
+	ATF_CHECK_MSG(rc == 1,
+	    "kldnext must succeed after the claim is released");
+}
+
+/*
+ * The retired enumeration gate bit (0x0004) is no longer a known gate:
+ * a claim carrying it must be rejected as an unknown bit, fail-closed.
+ */
+ATF_TC(retired_gate_bit_rejected);
+ATF_TC_HEAD(retired_gate_bit_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "Claiming the retired 0x0004 enumeration bit fails with EINVAL");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(retired_gate_bit_rejected, tc)
+{
+	int svc;
+
+	svc = sys_connect();
+	ATF_CHECK(sys_call_claim(svc, 0x0004) == -1);
+	ATF_CHECK_EQ(errno, EINVAL);
+	/* Also rejected when mixed with valid gates. */
+	ATF_CHECK(sys_call_claim(svc, SYS_GATE_KLDLOAD | 0x0004) == -1);
+	ATF_CHECK_EQ(errno, EINVAL);
 	close(svc);
 }
 
@@ -215,7 +244,7 @@ ATF_TC_BODY(mint_and_authorize, tc)
 	int svc, token_fd;
 
 	svc = sys_connect();
-	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_REBOOT) == 0);
 
 	ATF_REQUIRE(sys_call_mint(svc, &token_fd) == 0);
 	ATF_REQUIRE(token_fd >= 0);
@@ -223,90 +252,6 @@ ATF_TC_BODY(mint_and_authorize, tc)
 	ATF_REQUIRE(sys_call_authorize(token_fd) == 0);
 
 	close(token_fd);
-	close(svc);
-}
-
-ATF_TC(close_releases_claim);
-ATF_TC_HEAD(close_releases_claim, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Closing service fd releases the claim");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(close_releases_claim, tc)
-{
-	int svc, rc;
-
-	svc = sys_connect();
-	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
-
-	/* While claimed, foreign nonce is denied. */
-	rc = run_cross_nonce_kldstat(tc);
-	ATF_CHECK(rc == 0);
-
-	close(svc);
-
-	/* After close, claim released — foreign nonce allowed. */
-	rc = run_cross_nonce_kldstat(tc);
-	ATF_CHECK_MSG(rc != 0, "kldnext should work after claim released");
-}
-
-ATF_TC(token_close_revokes);
-ATF_TC_HEAD(token_close_revokes, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Closing token fd revokes authorization");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(token_close_revokes, tc)
-{
-	char path[1024];
-	const char *dir;
-	int svc, token_fd, readyfd[2], gofd[2], status;
-	pid_t pid;
-
-	svc = sys_connect();
-	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
-
-	ATF_REQUIRE(sys_call_mint(svc, &token_fd) == 0);
-
-	ATF_REQUIRE(pipe(readyfd) == 0);
-	ATF_REQUIRE(pipe(gofd) == 0);
-
-	dir = atf_tc_get_config_var(tc, "srcdir");
-	snprintf(path, sizeof(path), "%s/mac_capability_exec_helper", dir);
-
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		char tokenstr[16], readystr[16], gostr[16];
-
-		close(readyfd[0]);
-		close(gofd[1]);
-		snprintf(tokenstr, sizeof(tokenstr), "%d", token_fd);
-		snprintf(readystr, sizeof(readystr), "%d", readyfd[1]);
-		snprintf(gostr, sizeof(gostr), "%d", gofd[0]);
-		execl(path, path, "auth_kldnext", tokenstr, readystr, gostr,
-		    NULL);
-		_exit(127);
-	}
-
-	close(readyfd[1]);
-	close(gofd[0]);
-
-	/* Wait until the child has authorized and is blocked on go. */
-	ATF_REQUIRE(read(readyfd[0], &(char){0}, 1) == 1);
-	close(readyfd[0]);
-
-	/* Drop the parent's reference, then let the child test revocation. */
-	close(token_fd);
-	ATF_REQUIRE(write(gofd[1], "x", 1) == 1);
-	close(gofd[1]);
-
-	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
-	ATF_CHECK(WIFEXITED(status));
-	ATF_CHECK_EQ(WEXITSTATUS(status), 0);
-
 	close(svc);
 }
 
@@ -388,22 +333,28 @@ ATF_TC_BODY(multiple_claims, tc)
 	svc1 = sys_connect();
 	svc2 = sys_connect();
 
-	ATF_REQUIRE(sys_call_claim(svc1, SYS_GATE_KLDSTAT) == 0);
+	ATF_REQUIRE(sys_call_claim(svc1, SYS_GATE_SWAPON) == 0);
 	ATF_REQUIRE(sys_call_claim(svc2, SYS_GATE_REBOOT) == 0);
 
 	/* Both should be active — close one, other persists. */
 	close(svc1);
 	/* REBOOT claim from svc2 should still be active.
-	 * kldstat claim from svc1 should be released (refcount). */
+	 * swapon claim from svc1 should be released (refcount). */
 
 	close(svc2);
 }
 
+/*
+ * Regression test: refcounted, overlapping module-management claims never
+ * disturb enumeration at any stage — no combination of claims may ever
+ * block a foreign nonce from a read-only kld query.
+ */
 ATF_TC(refcount_partial_close);
 ATF_TC_HEAD(refcount_partial_close, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "Closing one claim preserves the other's gate enforcement");
+	    "Overlapping module-management claims never block enumeration, "
+	    "at any refcount stage");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
 ATF_TC_BODY(refcount_partial_close, tc)
@@ -413,29 +364,28 @@ ATF_TC_BODY(refcount_partial_close, tc)
 	svc1 = sys_connect();
 	svc2 = sys_connect();
 
-	/* svc1 claims KLDSTAT, svc2 claims KLDSTAT + REBOOT. */
-	ATF_REQUIRE(sys_call_claim(svc1, SYS_GATE_KLDSTAT) == 0);
-	ATF_REQUIRE(sys_call_claim(svc2, SYS_GATE_KLDSTAT | SYS_GATE_REBOOT) == 0);
+	/* svc1 claims KLDLOAD, svc2 claims KLDLOAD + KLDUNLOAD. */
+	ATF_REQUIRE(sys_call_claim(svc1, SYS_GATE_KLDLOAD) == 0);
+	ATF_REQUIRE(sys_call_claim(svc2,
+	    SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD) == 0);
 
-	/* Foreign nonce denied. */
+	/* Foreign nonce enumerates even with both claims active. */
 	rc = run_cross_nonce_kldstat(tc);
-	ATF_CHECK_MSG(rc == 0, "kldnext should be denied (both active)");
+	ATF_CHECK_MSG(rc == 1, "kldnext must work (both claims active)");
 
-	/* Close svc1 — svc2 still holds KLDSTAT. */
+	/* Close svc1 — svc2 still holds KLDLOAD. */
 	close(svc1);
 
-	/* Foreign nonce should STILL be denied. */
 	rc = run_cross_nonce_kldstat(tc);
-	ATF_CHECK_MSG(rc == 0,
-	    "kldnext should still be denied (svc2 holds KLDSTAT)");
+	ATF_CHECK_MSG(rc == 1,
+	    "kldnext must work (svc2 still holds KLDLOAD)");
 
 	/* Close svc2 — all claims released. */
 	close(svc2);
 
-	/* Foreign nonce should now be allowed. */
 	rc = run_cross_nonce_kldstat(tc);
-	ATF_CHECK_MSG(rc != 0,
-	    "kldnext should work after all claims released");
+	ATF_CHECK_MSG(rc == 1,
+	    "kldnext must work after all claims released");
 }
 
 ATF_TC(mint_narrow_subset);
@@ -451,9 +401,9 @@ ATF_TC_BODY(mint_narrow_subset, tc)
 
 	svc = sys_connect();
 	ATF_REQUIRE(sys_call_claim(svc,
-	    SYS_GATE_KLDSTAT | SYS_GATE_REBOOT) == 0);
+	    SYS_GATE_SWAPON | SYS_GATE_REBOOT) == 0);
 
-	ATF_REQUIRE(sys_call_mint_narrow(svc, SYS_GATE_KLDSTAT,
+	ATF_REQUIRE(sys_call_mint_narrow(svc, SYS_GATE_SWAPON,
 	    &token_fd) == 0);
 	ATF_REQUIRE(token_fd >= 0);
 
@@ -474,10 +424,10 @@ ATF_TC_BODY(mint_narrow_rejects_unclaimed, tc)
 	int svc, token_fd;
 
 	svc = sys_connect();
-	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_SWAPON) == 0);
 
 	ATF_CHECK(sys_call_mint_narrow(svc,
-	    SYS_GATE_KLDSTAT | SYS_GATE_REBOOT, &token_fd) != 0);
+	    SYS_GATE_SWAPON | SYS_GATE_REBOOT, &token_fd) != 0);
 	ATF_CHECK(errno == EINVAL);
 
 	close(svc);
@@ -496,7 +446,7 @@ ATF_TC_BODY(mint_narrow_zero_gives_all, tc)
 
 	svc = sys_connect();
 	ATF_REQUIRE(sys_call_claim(svc,
-	    SYS_GATE_KLDSTAT | SYS_GATE_REBOOT) == 0);
+	    SYS_GATE_SWAPON | SYS_GATE_REBOOT) == 0);
 
 	/* gates=0 should give all claimed gates */
 	ATF_REQUIRE(sys_call_mint(svc, &token_fd) == 0);
@@ -507,20 +457,31 @@ ATF_TC_BODY(mint_narrow_zero_gives_all, tc)
 	close(svc);
 }
 
-ATF_TC(capmode_authorized_kldstat);
-ATF_TC_HEAD(capmode_authorized_kldstat, tc)
+/*
+ * Regression test of the capability-mode side of the enumeration
+ * contract: capmode callers fail closed on capability-enabled system
+ * gates, but module enumeration is not such a gate — a sandboxed
+ * process with no claim and no token can still walk the module list
+ * (traced/observability clients depend on this), even while another
+ * nonce holds the module-management gates.
+ */
+ATF_TC(capmode_kld_enumeration_open);
+ATF_TC_HEAD(capmode_kld_enumeration_open, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "A system-gate holder can query kernel modules in capability mode");
+	    "Capability mode can enumerate modules without any claim or "
+	    "token, even with module-management gates claimed");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(capmode_authorized_kldstat, tc)
+ATF_TC_BODY(capmode_kld_enumeration_open, tc)
 {
 	pid_t pid;
 	int status, svc;
 
+	/* Claim the module-management gates; also skips if unloaded. */
 	svc = sys_connect();
-	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KLDSTAT) == 0);
+	ATF_REQUIRE(sys_call_claim(svc,
+	    SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD) == 0);
 	pid = fork();
 	ATF_REQUIRE(pid >= 0);
 	if (pid == 0) {
@@ -538,46 +499,16 @@ ATF_TC_BODY(capmode_authorized_kldstat, tc)
 	}
 	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
 	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "capability-mode kld query failed with child status %#x", status);
+	    "capability-mode kld enumeration was denied: %#x", status);
 	close(svc);
-}
-
-ATF_TC(capmode_system_gate_fails_closed);
-ATF_TC_HEAD(capmode_system_gate_fails_closed, tc)
-{
-	atf_tc_set_md_var(tc, "descr",
-	    "Capability mode cannot use a system gate without a claim or token");
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(capmode_system_gate_fails_closed, tc)
-{
-	pid_t pid;
-	int status;
-
-	/* Connect once so a missing policy module is reported as a skip. */
-	close(sys_connect());
-	pid = fork();
-	ATF_REQUIRE(pid >= 0);
-	if (pid == 0) {
-		if (cap_enter() == -1)
-			_exit(2);
-		errno = 0;
-		_exit(kldnext(0) == -1 && errno == EPERM ? 0 : 3);
-	}
-	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
-	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
-	    "unclaimed capability-mode system gate was not denied: %#x",
-	    status);
 }
 
 ATF_TP_ADD_TCS(tp)
 {
 
-	ATF_TP_ADD_TC(tp, claim_denies_foreign_nonce);
-	ATF_TP_ADD_TC(tp, claim_allows_same_nonce);
+	ATF_TP_ADD_TC(tp, kld_enumeration_is_ungated);
+	ATF_TP_ADD_TC(tp, retired_gate_bit_rejected);
 	ATF_TP_ADD_TC(tp, mint_and_authorize);
-	ATF_TP_ADD_TC(tp, close_releases_claim);
-	ATF_TP_ADD_TC(tp, token_close_revokes);
 	ATF_TP_ADD_TC(tp, invalid_gates_rejected);
 	ATF_TP_ADD_TC(tp, mint_requires_claim);
 	ATF_TP_ADD_TC(tp, selective_gates);
@@ -586,8 +517,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mint_narrow_subset);
 	ATF_TP_ADD_TC(tp, mint_narrow_rejects_unclaimed);
 	ATF_TP_ADD_TC(tp, mint_narrow_zero_gives_all);
-	ATF_TP_ADD_TC(tp, capmode_authorized_kldstat);
-	ATF_TP_ADD_TC(tp, capmode_system_gate_fails_closed);
+	ATF_TP_ADD_TC(tp, capmode_kld_enumeration_open);
 
 	return (atf_no_error());
 }

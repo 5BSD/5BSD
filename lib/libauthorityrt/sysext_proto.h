@@ -12,9 +12,9 @@
  * to query whether one is loaded without attempting a load (SYSEXT_OP_STAT).
  * Access is gated by the domain layer — system.SystemExtension resolves only for
  * SYSTEM-domain clients, so a user service can never load kernel code.  sysextd
- * itself holds the SYS_GATE_KLDLOAD/SYS_GATE_KLDSTAT system-capability gates
- * (declared in its manifest): the kldload gate authorizes ENSURE's kldload(2),
- * and the kldstat gate authorizes STAT's kldfind(2) query.
+ * itself holds the SYS_GATE_KLDLOAD system-capability gate (declared in its
+ * manifest), which authorizes ENSURE's kldload(2).  STAT's kldfind(2) query is
+ * read-only and ungated — module enumeration is deliberately open.
  *
  * There is deliberately no UNLOAD operation.  Unloading a module safely needs
  * per-consumer refcounting / ownership that this broker does not track, so an

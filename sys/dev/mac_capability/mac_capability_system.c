@@ -16,6 +16,15 @@
  * behavior when no operation is claimed.  Capability-mode callers fail
  * closed: a matching claim owned by their nonce, or an authorization minted
  * by that owner, is required for every capability-enabled system gate.
+ *
+ * Module enumeration (kldstat/kldfind/modfind) is intentionally NOT
+ * enforced: it is read-only and required by libdtrace/observability
+ * tooling (dtrace(1) walks the kld syscalls to load kernel CTF), so
+ * gating it would silently break the observability plane for every
+ * foreign nonce, including root.  Only the mutating module operations
+ * (KLDLOAD/KLDUNLOAD) are hooked.  The former enumeration gate bit
+ * (0x0004) is retired: it is excluded from SYS_GATE_ALL, so a claim
+ * carrying it is rejected as unknown.
  */
 
 #include <sys/param.h>
@@ -223,13 +232,6 @@ sys_mac_kld_check_unload(struct ucred *cred)
 {
 
 	return (sys_check_gate(cred, SYS_GATE_KLDUNLOAD, "kldunload"));
-}
-
-static int
-sys_mac_kld_check_stat(struct ucred *cred)
-{
-
-	return (sys_check_gate(cred, SYS_GATE_KLDSTAT, "kldstat"));
 }
 
 static int
@@ -632,7 +634,6 @@ static const struct mac_capability_ops sys_ops = {
 static struct mac_policy_ops sys_mac_ops = {
 	.mpo_kld_check_load		= sys_mac_kld_check_load,
 	.mpo_kld_check_unload		= sys_mac_kld_check_unload,
-	.mpo_kld_check_stat		= sys_mac_kld_check_stat,
 	.mpo_system_check_reboot	= sys_mac_system_check_reboot,
 	.mpo_system_check_swapon	= sys_mac_system_check_swapon,
 	.mpo_system_check_swapoff	= sys_mac_system_check_swapoff,

@@ -22,7 +22,6 @@ struct gate_entry {
 static const struct gate_entry gate_names[] = {
 	{ "kldload",	SYS_GATE_KLDLOAD },
 	{ "kldunload",	SYS_GATE_KLDUNLOAD },
-	{ "kldstat",	SYS_GATE_KLDSTAT },
 	{ "reboot",	SYS_GATE_REBOOT },
 	{ "swapon",	SYS_GATE_SWAPON },
 	{ "swapoff",	SYS_GATE_SWAPOFF },

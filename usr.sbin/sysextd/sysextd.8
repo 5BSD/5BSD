@@ -53,9 +53,7 @@ device, connects to the kernel
 .Dq system
 service, and claims the
 .Dq kldload
-and
-.Dq kldstat
-gates so that its process nonce owns them.
+gate so that its process nonce owns it; the manifest declares only that gate.
 It holds that claim for its entire lifetime.
 It then exposes its service name, enters capability mode, and dispatches each
 accepted client on its own
@@ -80,9 +78,8 @@ needs to query and uses only the
 gate.
 A query request instead reports whether the module is loaded, using
 .Xr kldfind 2 ,
-which exercises the
-.Dq kldstat
-gate.
+a read-only query; module enumeration is ungated, so no capability is
+needed for it.
 Both operations are subject to the same allow-list: a client may query only a
 module it could load, so a name that is not allow-listed is refused rather than
 answered, and a query leaks nothing about modules a client may not load.
