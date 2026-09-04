@@ -26,8 +26,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 if ! kldstat -q -m oes 2>/dev/null; then
-    echo "OES module is not loaded. Load it first:"
-    echo "  kldload /path/to/oes.ko"
+    echo "OES is not loaded. Set oes_load=\"YES\" in loader.conf"
+    echo "and reboot before running this test."
     exit 1
 fi
 

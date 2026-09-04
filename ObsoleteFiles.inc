@@ -51,6 +51,9 @@
 #   xargs -n1 | sort | uniq -d;
 # done
 
+# 20260904: OES is boot-only and no longer has a load/unload DTrace example
+OLD_FILES+=usr/share/examples/oes/dtrace/00-load-unload.d
+
 # 20260830: libauthorityctl retired (authorityd getpeereid control socket
 # deleted; authorityctl(8) now speaks the capability plane, not this socket client)
 OLD_FILES+=usr/include/authorityctl.h

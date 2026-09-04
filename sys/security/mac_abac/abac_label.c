@@ -79,7 +79,7 @@ abac_label_init(void)
 /*
  * abac_label_destroy - Destroy the label subsystem
  *
- * Called during module unload.
+ * This is the MAC framework destroy callback; runtime unload is prohibited.
  *
  * NOTE: We do NOT destroy the UMA zone here because:
  * 1. Labels may still be attached to vnodes/creds that haven't been

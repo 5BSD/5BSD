@@ -3,7 +3,7 @@
 .\" Copyright (c) 2026 ABAC Project
 .\" All rights reserved.
 .\"
-.Dd March 9, 2026
+.Dd September 4, 2026
 .Dt MAC_ABAC 4
 .Os
 .Sh NAME
@@ -243,8 +243,7 @@ Administration utility.
 .Sh EXAMPLES
 Basic setup to protect against untrusted executables:
 .Bd -literal -offset indent
-# Load the module
-kldload mac_abac
+# Load mac_abac during boot using mac_abac_load="YES" in loader.conf
 
 # Set default deny policy
 mac_abac_ctl default deny
@@ -285,9 +284,7 @@ that persist across the module lifecycle.
 The module must be loaded at boot time via
 .Xr loader.conf 5
 or compiled into the kernel.
-Loading after boot with
-.Xr kldload 8
-works but is not recommended for production.
+Loading after boot is rejected.
 .Sh SECURITY CONSIDERATIONS
 .Bl -bullet
 .It

@@ -30,7 +30,8 @@ mac_abacd_prestart()
 		return 1
 	fi
 	if ! kldstat -q -m mac_abac; then
-		kldload mac_abac || return 1
+		warn "mac_abac must be loaded at boot via loader.conf"
+		return 1
 	fi
 }
 

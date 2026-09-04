@@ -1,7 +1,7 @@
 .\"-
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\"
-.Dd August 15, 2026
+.Dd September 4, 2026
 .Dt MAC_ABACD 8
 .Os
 .Sh NAME
@@ -29,6 +29,10 @@ the daemon reloads the configuration.
 .Pp
 The rc service is disabled by default because loading an enforcing policy can
 restrict system access.
+The
+.Xr mac_abac 4
+policy must be compiled into the kernel or loaded during boot before this
+service is started.
 After reviewing the policy, enable it with
 .Bd -literal -offset indent
 sysrc mac_abacd_enable=YES

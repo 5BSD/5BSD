@@ -1197,19 +1197,9 @@ abac_syscall(struct thread *td, int call, void *arg)
 /*
  * Module registration
  *
- * We use no loadtime flags (0) because:
- * 1. We want to allow loading after boot for development/testing
- * 2. We do NOT allow unloading (no UNLOADOK flag) because MAC modules
- *    with UMA zones cannot safely unload - labels may still be attached
- *    to kernel objects (vnodes, creds) when mpo_destroy is called
- *
- * Flag behavior:
- *   - MPC_LOADTIME_FLAG_NOTLATE: Cannot load after boot
- *   - MPC_LOADTIME_FLAG_UNLOADOK: Can unload at runtime
- *   - 0 (no flags): Can load after boot, cannot unload
- *
- * This follows the pattern of MAC modules that allocate per-object labels.
- * To update the module during development, reboot the VM first.
+ * ABAC must be present when the MAC framework initializes object labels.
+ * It cannot be loaded after boot, and omitting UNLOADOK prevents labels and
+ * their UMA-backed storage from outliving the policy code.
  */
 MAC_POLICY_SET(&abac_ops, mac_abac, "ABAC MAC Policy",
-    0, &abac_slot);
+    MPC_LOADTIME_FLAG_NOTLATE, &abac_slot);

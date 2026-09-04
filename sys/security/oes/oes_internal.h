@@ -536,7 +536,6 @@ void	oes_set_auth_deadline(struct oes_pending *ep, uint32_t deadline_ms);
  * Function prototypes - oes_mac.c (MAC policy integration)
  */
 int	oes_mac_init(void);
-void	oes_mac_uninit(void);
 uint64_t oes_proc_get_exec_id(struct proc *p);
 const char *oes_proc_get_exec_path(struct proc *p, uint32_t *meta_flags);
 

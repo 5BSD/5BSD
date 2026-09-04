@@ -87,11 +87,6 @@ struct oes_pipe_label {
 
 static int oes_slot;		/* MAC label slot for our data */
 static bool oes_mac_registered;	/* Track if MAC policy is registered */
-static eventhandler_tag oes_proc_fork_tag;
-static eventhandler_tag oes_proc_exit_tag;
-static eventhandler_tag oes_vfs_mounted_tag;
-static eventhandler_tag oes_vfs_unmounted_tag;
-static eventhandler_tag oes_kld_unload_tag;
 static struct mtx oes_rename_mtx;
 
 static void
@@ -1096,20 +1091,6 @@ oes_rename_cache_init(void)
 {
 	mtx_init(&oes_rename_mtx, "oes_rename", NULL, MTX_DEF);
 	LIST_INIT(&oes_rename_list);
-}
-
-static void
-oes_rename_cache_destroy(void)
-{
-	struct oes_rename_ctx *ctx, *tmp;
-
-	mtx_lock(&oes_rename_mtx);
-	LIST_FOREACH_SAFE(ctx, &oes_rename_list, er_link, tmp) {
-		LIST_REMOVE(ctx, er_link);
-		free(ctx, M_OES);
-	}
-	mtx_unlock(&oes_rename_mtx);
-	mtx_destroy(&oes_rename_mtx);
 }
 
 static void
@@ -4378,12 +4359,15 @@ static struct mac_policy_ops oes_mac_ops = {
 /*
  * MAC policy configuration - registered manually, not via MAC_POLICY_SET
  * because we're part of the oes module, not a standalone MAC policy module.
+ * The outer module handler enforces boot-only loading because OES initializes
+ * in SI_SUB_DRIVERS, after the MAC framework's late-load boundary.  Omitting
+ * UNLOADOK makes the policy non-unloadable as an additional safeguard.
  */
 static struct mac_policy_conf oes_mac_policy_conf = {
 	.mpc_name = "oes",
 	.mpc_fullname = "Endpoint Security Capabilities",
 	.mpc_ops = &oes_mac_ops,
-	.mpc_loadtime_flags = MPC_LOADTIME_FLAG_UNLOADOK,
+	.mpc_loadtime_flags = 0,
 	.mpc_field_off = &oes_slot,
 	.mpc_runtime_flags = 0,
 };
@@ -4409,61 +4393,16 @@ oes_mac_init(void)
 
 	oes_rename_cache_init();
 
-	oes_proc_fork_tag = EVENTHANDLER_REGISTER(process_fork,
+	EVENTHANDLER_REGISTER(process_fork,
 	    oes_proc_event_fork, NULL, EVENTHANDLER_PRI_LAST);
-	oes_proc_exit_tag = EVENTHANDLER_REGISTER(process_exit,
+	EVENTHANDLER_REGISTER(process_exit,
 	    oes_proc_event_exit, NULL, EVENTHANDLER_PRI_LAST);
-	oes_vfs_mounted_tag = EVENTHANDLER_REGISTER(vfs_mounted,
+	EVENTHANDLER_REGISTER(vfs_mounted,
 	    oes_vfs_event_mounted, NULL, EVENTHANDLER_PRI_LAST);
-	oes_vfs_unmounted_tag = EVENTHANDLER_REGISTER(vfs_unmounted,
+	EVENTHANDLER_REGISTER(vfs_unmounted,
 	    oes_vfs_event_unmounted, NULL, EVENTHANDLER_PRI_LAST);
-	oes_kld_unload_tag = EVENTHANDLER_REGISTER(kld_unload,
+	EVENTHANDLER_REGISTER(kld_unload,
 	    oes_kld_event_unload, NULL, EVENTHANDLER_PRI_LAST);
 
 	return (0);
-}
-
-/*
- * Uninitialize MAC policy
- *
- * Called from oes module unload. Unregisters from MAC framework.
- */
-void
-oes_mac_uninit(void)
-{
-	int error;
-
-	if (!oes_mac_registered)
-		return;
-
-	if (oes_proc_fork_tag != NULL) {
-		EVENTHANDLER_DEREGISTER(process_fork, oes_proc_fork_tag);
-		oes_proc_fork_tag = NULL;
-	}
-	if (oes_proc_exit_tag != NULL) {
-		EVENTHANDLER_DEREGISTER(process_exit, oes_proc_exit_tag);
-		oes_proc_exit_tag = NULL;
-	}
-	if (oes_vfs_mounted_tag != NULL) {
-		EVENTHANDLER_DEREGISTER(vfs_mounted, oes_vfs_mounted_tag);
-		oes_vfs_mounted_tag = NULL;
-	}
-	if (oes_vfs_unmounted_tag != NULL) {
-		EVENTHANDLER_DEREGISTER(vfs_unmounted, oes_vfs_unmounted_tag);
-		oes_vfs_unmounted_tag = NULL;
-	}
-	if (oes_kld_unload_tag != NULL) {
-		EVENTHANDLER_DEREGISTER(kld_unload, oes_kld_unload_tag);
-		oes_kld_unload_tag = NULL;
-	}
-
-	oes_rename_cache_destroy();
-
-	error = mac_policy_modevent(NULL, MOD_UNLOAD, &oes_mac_policy_conf);
-	if (error != 0)
-		OES_WARN("failed to unregister MAC policy: %d", error);
-	else {
-		oes_mac_registered = false;
-		OES_DEBUG("MAC policy unregistered");
-	}
 }

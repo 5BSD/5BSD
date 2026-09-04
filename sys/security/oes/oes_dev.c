@@ -177,7 +177,6 @@ static int	oes_ioctl_get_muted_paths(struct oes_client *ec,
 		    struct oes_get_muted_paths_args *args);
 static int	oes_ioctl_unmute_all_processes(struct oes_client *ec);
 static int	oes_ioctl_unmute_all_paths(struct oes_client *ec, bool target);
-static int	oes_dev_prepare_unload(void);
 
 /* Forward declaration for cdevpriv dtor */
 static void	oes_client_dtor(void *data);
@@ -227,7 +226,7 @@ oes_open(struct cdev *dev __unused, int oflags __unused, int devtype __unused,
 	if (error)
 		return (error);
 
-	/* Reject opens during module unload */
+	/* Reject opens until initialization has completed. */
 	OES_LOCK();
 	if (!oes_softc.sc_active) {
 		OES_UNLOCK();
@@ -1425,30 +1424,6 @@ oes_dev_uninit(void)
 	mtx_destroy(&oes_softc.sc_mtx);
 }
 
-static int
-oes_dev_prepare_unload(void)
-{
-	int error = 0;
-
-	OES_LOCK();
-	if (!oes_softc.sc_active) {
-		OES_UNLOCK();
-		return (0);
-	}
-	if (oes_softc.sc_nclients > 0) {
-		error = EBUSY;
-	} else {
-		/*
-		 * Reject opens before MAC unregister/device teardown starts.
-		 * With no clients, there is no cdevpriv state left to drain.
-		 */
-		oes_softc.sc_active = false;
-	}
-	OES_UNLOCK();
-
-	return (error);
-}
-
 /*
  * Module event handler
  */
@@ -1459,6 +1434,11 @@ oes_modevent(module_t mod, int type, void *data)
 
 	switch (type) {
 	case MOD_LOAD:
+		if (!cold) {
+			printf("oes: cannot be loaded after boot\n");
+			error = EBUSY;
+			break;
+		}
 		error = oes_dev_init();
 		if (error != 0)
 			break;
@@ -1470,11 +1450,7 @@ oes_modevent(module_t mod, int type, void *data)
 		break;
 
 	case MOD_UNLOAD:
-		error = oes_dev_prepare_unload();
-		if (error != 0)
-			break;
-		oes_mac_uninit();
-		oes_dev_uninit();
+		error = EBUSY;
 		break;
 
 	default:
