@@ -94,9 +94,16 @@ static int
 open_dtrace_directory(void)
 {
 	cap_rights_t rights;
-	int fd;
+	int fd, devdir;
 
-	fd = open("/dev/dtrace", O_RDONLY | O_DIRECTORY | O_CLOEXEC |
+	/*
+	 * Born in capability mode: serviced delivered /dev as a directory
+	 * descriptor (manifest directories = ["/dev"]); open the dtrace node
+	 * directory beneath it with openat(2) rather than a global path.
+	 */
+	if (service_resource_dir("/dev", &devdir) == -1)
+		return (-1);
+	fd = openat(devdir, "dtrace", O_RDONLY | O_DIRECTORY | O_CLOEXEC |
 	    O_NOFOLLOW);
 	if (fd == -1)
 		return (-1);
@@ -651,8 +658,21 @@ main(void)
 	kq = kqueuex(KQUEUE_CLOEXEC);
 	if (kq == -1)
 		goto fail;
-	if (tracecmp_policy_load(TRACECMP_POLICY_PATH, &policy) == -1)
-		goto fail;
+	/*
+	 * Born in capability mode: load the allow-policy from the serviced-
+	 * delivered Config descriptor (service_config_open), never /etc by path.
+	 * An absent policy is the empty policy (traced's historical behaviour when
+	 * /etc/traced.allow did not exist), so a missing descriptor is not fatal.
+	 */
+	{
+		int cfgfd;
+
+		if (service_config_open("traced.allow", &cfgfd) == 0) {
+			if (tracecmp_policy_load_fd(cfgfd, &policy) == -1)
+				goto fail;
+		} else
+			memset(&policy, 0, sizeof(policy));
+	}
 	dtrace_directory = open_dtrace_directory();
 	if (dtrace_directory == -1 && errno != ENOENT && errno != ENXIO)
 		goto fail;

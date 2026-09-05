@@ -33,6 +33,7 @@
 #define	SERVICED_MAX_ENVIRONMENT	32
 #define	SERVICED_ENVIRONMENT_MAX	1024
 #define	SERVICED_MAX_ACTIVATION_SOCKETS	4
+#define	SERVICED_MAX_RESOURCE_DIRS	8
 #define	SERVICED_DEFAULT_USER		"capability"
 #define	SERVICED_DEFAULT_GROUP		"capability"
 
@@ -162,6 +163,18 @@ struct svc_manifest {
 	/* Capability endpoints this service publishes. */
 	char		provides[SERVICED_MAX_PROVIDES][SERVICED_LABEL_MAX];
 	unsigned	nprovides;
+
+	/*
+	 * Resource directories the daemon needs delivered as descriptors (§
+	 * born-in-capability-mode).  serviced opens each absolute directory
+	 * O_DIRECTORY before the child enters capability mode and hands it down as
+	 * an inherited fd (advertised in CAPABILITY_DIR_FDS), so a born-in-capmode
+	 * daemon reaches e.g. /dev by openat(2) under the delivered fd instead of
+	 * opening a global path.  A read-only directory capability; the daemon
+	 * never names the path itself.
+	 */
+	char		resource_dirs[SERVICED_MAX_RESOURCE_DIRS][PATH_MAX];
+	unsigned	nresource_dirs;
 
 	/*
 	 * Private helper (XPC-style): launched on request by a bundle sibling via

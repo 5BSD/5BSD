@@ -413,6 +413,11 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->is_helper = s->is_helper;
 	m->user_resolvable = s->user_resolvable;
 	m->domain = s->domain;
+	m->nresource_dirs = MIN(s->nresource_dirs, SERVICED_MAX_RESOURCE_DIRS);
+	for (i = 0; i < m->nresource_dirs; i++)
+		if (manifest_copy(s->resource_dirs[i], m->resource_dirs[i],
+		    sizeof(m->resource_dirs[i])) == -1)
+			return (-1);
 	/*
 	 * A private helper's synthetic bundle-local provider name
 	 * ("helper.<bundle-id>.<unit>") is injected into provides[] at parse time

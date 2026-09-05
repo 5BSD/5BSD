@@ -14,3 +14,9 @@ umask = "0077";
 # service_open_isolated(3) — nothing is declared here.  tzfsd's own per-label
 # policy grants this service read on /Capabilities/Config/principal-policy.ucl;
 # absent/ungranted falls back to the historical root-or-wheel default.
+
+# Privileged (capmode exception): authagentd resolves passwd/group via Casper
+# (cap_init at startup, illegal in a born-in-capmode process) and is the
+# identity/mint concentration point.  The planned Identity fold makes it a
+# privileged in-process NSS resolver; privileged=true is that model's home.
+privileged = true;

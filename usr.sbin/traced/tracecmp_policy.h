@@ -20,6 +20,7 @@ struct tracecmp_policy {
 };
 
 int	tracecmp_policy_load(const char *, struct tracecmp_policy *);
+int	tracecmp_policy_load_fd(int, struct tracecmp_policy *);
 bool	tracecmp_policy_allows(const struct tracecmp_policy *, const char *);
 
 #endif

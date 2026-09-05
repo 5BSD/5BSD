@@ -32,6 +32,7 @@
  * lookup (which cap_enter(2) forbids).  service_config_open(3) uses it.
  */
 #define	SERVICE_CONFIG_FD_ENV	"CAPABILITY_CONFIG_FD"
+#define	SERVICE_DIR_FDS_ENV	"CAPABILITY_DIR_FDS"
 
 /*
  * Public process-protection flags used by service_provider_protect() and
@@ -208,6 +209,18 @@ int	service_provider_ready(struct service_provider *);
  * by path for a legacy/pre-capmode launch.  O_NOFOLLOW, no directory escape.
  */
 int	service_config_open(const char *name, int *fdp);
+
+/*
+ * Return the descriptor for a serviced-delivered resource directory declared in
+ * the unit's manifest (directories = [...]).  `path` is the absolute directory
+ * the manifest declared (e.g. "/dev"); *fdp receives its inherited, ambient
+ * read-only directory descriptor, advertised in SERVICE_DIR_FDS_ENV.  A
+ * born-in-capmode daemon uses it as the openat(2) base for the nodes it needs,
+ * never naming a global path.  Returns -1 / ENOENT when the path was not
+ * delivered.  The descriptor is borrowed (do not close); the daemon may
+ * cap_rights_limit(2) a dup of nodes it opens beneath it.
+ */
+int	service_resource_dir(const char *path, int *fdp);
 
 int	service_provider_quiescing(struct service_provider *);
 int	service_provider_quiesce_complete(struct service_provider *, int status);

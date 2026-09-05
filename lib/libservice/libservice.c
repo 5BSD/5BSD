@@ -1509,6 +1509,56 @@ service_config_open(const char *name, int *fdp)
 	return (0);
 }
 
+int
+service_resource_dir(const char *path, int *fdp)
+{
+	const char *env;
+	char *copy, *tok, *save, *eq, *end;
+	long v;
+	int found;
+
+	if (path == NULL || fdp == NULL || path[0] != '/') {
+		errno = EINVAL;
+		return (-1);
+	}
+	*fdp = -1;
+	env = getenv(SERVICE_DIR_FDS_ENV);
+	if (env == NULL || env[0] == '\0') {
+		errno = ENOENT;
+		return (-1);
+	}
+	/*
+	 * CAPABILITY_DIR_FDS is a colon-separated list of "path=fd" pairs.  Scan
+	 * for an exact path match and return the borrowed descriptor.
+	 */
+	copy = strdup(env);
+	if (copy == NULL)
+		return (-1);
+	found = -1;
+	for (tok = strtok_r(copy, ":", &save); tok != NULL;
+	    tok = strtok_r(NULL, ":", &save)) {
+		eq = strrchr(tok, '=');
+		if (eq == NULL)
+			continue;
+		*eq = '\0';
+		if (strcmp(tok, path) != 0)
+			continue;
+		errno = 0;
+		v = strtol(eq + 1, &end, 10);
+		if (errno != 0 || *end != '\0' || v < 0 || v > INT_MAX)
+			break;
+		found = (int)v;
+		break;
+	}
+	free(copy);
+	if (found < 0) {
+		errno = ENOENT;
+		return (-1);
+	}
+	*fdp = found;
+	return (0);
+}
+
 /*
  * Finalize a provider that legitimately cannot enter capability mode.  The
  * canonical case is the system-extension broker: kldload(2) needs the classic

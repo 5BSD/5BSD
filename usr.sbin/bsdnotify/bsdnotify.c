@@ -1104,11 +1104,27 @@ main(void)
 	router_session = NULL;
 	atomic_init(&watch_context.expected_exit, false);
 	atomic_init(&watch_context.exited, false);
+	/*
+	 * Born in capability mode: load the policy from the serviced-delivered
+	 * Config descriptor (service_config_open, openat under CONFIG_FD), never a
+	 * global path.  Fall back to the managed path for a legacy/pre-capmode
+	 * launch where no Config descriptor was delivered.
+	 */
 	policy_db = calloc(1, sizeof(*policy_db));
-	if (policy_db == NULL || managed_policy_path(policy_path,
-	    sizeof(policy_path)) == -1 ||
-	    notify_policy_db_load(policy_path, policy_db) == -1 ||
-	    service_provider_create(&provider) == -1 ||
+	if (policy_db == NULL)
+		goto fail;
+	{
+		int cfgfd;
+
+		if (service_config_open(NOTIFY_POLICY_NAME, &cfgfd) == 0) {
+			if (notify_policy_db_load_fd(cfgfd, policy_db) == -1)
+				goto fail;
+		} else if (managed_policy_path(policy_path,
+		    sizeof(policy_path)) == -1 ||
+		    notify_policy_db_load(policy_path, policy_db) == -1)
+			goto fail;
+	}
+	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    auditcmp_client_prepare(&audit_fd) == -1 ||
 	    service_provider_worker_channel(provider, &router_pair[0],

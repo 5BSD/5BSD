@@ -1,5 +1,8 @@
 activation { boot = true; ipc = ["system.Trace"]; }
 program = "Trace";
+# Born in capability mode: serviced delivers /dev as a directory descriptor so
+# the provider opens /dev/dtrace with openat(2), never a global path.
+directories = ["/dev"];
 restart = "on-failure";
 user = "root";
 

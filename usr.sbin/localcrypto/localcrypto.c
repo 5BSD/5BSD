@@ -468,7 +468,18 @@ main(void)
 		return (1);
 	service_release(ctx);
 
-	control_fd = open("/dev/crypto", O_RDWR);
+	/*
+	 * Born in capability mode: serviced delivered /dev as a directory
+	 * descriptor (manifest directories = ["/dev"]); open the control node
+	 * beneath it with openat(2) rather than a global path.
+	 */
+	{
+		int devdir;
+
+		if (service_resource_dir("/dev", &devdir) == -1)
+			return (1);
+		control_fd = openat(devdir, "crypto", O_RDWR);
+	}
 	/*
 	 * Self-harden the long-lived accept/fork parent.  It must still pdfork
 	 * workers and receive connection descriptors, so NOFORK/NOFDRECV are not

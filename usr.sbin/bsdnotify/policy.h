@@ -44,6 +44,7 @@ struct notify_policy_db {
 int	notify_policy_parse(const char *, struct notify_policy *);
 int	notify_policy_db_parse(const char *, struct notify_policy_db *);
 int	notify_policy_db_load(const char *, struct notify_policy_db *);
+int	notify_policy_db_load_fd(int, struct notify_policy_db *);
 const struct notify_policy *notify_policy_db_lookup(
 	    const struct notify_policy_db *, const char *);
 bool	notify_policy_can_publish(const struct notify_policy *,

@@ -369,8 +369,9 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 {
 	char user_env[128], home_env[PATH_MAX + 8];
 	char unit_dir[PATH_MAX], unit_dir_env[PATH_MAX + 32];
-	char libdir_path[PATH_MAX], libdir_fds_env[40];
+	char libdir_path[PATH_MAX], libdir_fds_env[64];
 	char config_dir_path[PATH_MAX], config_fd_env[48];
+	char dir_fds_env[1024];
 	char bootstrap_env[32];
 	char *env[SVC_MAX_ENV];
 	char *argv[SERVICED_MAX_ARGUMENTS + 2];
@@ -538,13 +539,32 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	 * survives execve(2); it is a read-only directory capability.  (rtld
 	 * honors LD_LIBRARY_PATH_FDS only for trusted, non-issetugid launches.)
 	 */
-	if (!manifest_has_env(m, "LD_LIBRARY_PATH_FDS") &&
-	    snprintf(libdir_path, sizeof(libdir_path), "%s/lib", unit_dir) <
-	    (int)sizeof(libdir_path)) {
-		fd = open(libdir_path, O_DIRECTORY | O_RDONLY);
-		if (fd >= 0) {
-			(void)snprintf(libdir_fds_env, sizeof(libdir_fds_env),
-			    "LD_LIBRARY_PATH_FDS=%d", fd);
+	if (!manifest_has_env(m, "LD_LIBRARY_PATH_FDS")) {
+		int libfd, usrlibfd, bundlefd;
+		int off;
+
+		/*
+		 * serviced provides the COMMON system library directories (/lib,
+		 * /usr/lib) as descriptors, once per launch, so rtld resolves the
+		 * program's NEEDED libraries by openat(2) in capability mode (the
+		 * born-in-capmode launch), never by global path.  LD_LIBRARY_PATH_FDS
+		 * is a colon-separated fd list, so a bundle does NOT duplicate
+		 * libc/libservice/...; it ships only its own private dylibs in lib/,
+		 * which is appended last when present.  Opened without O_CLOEXEC so the
+		 * descriptors survive fexecve(2).
+		 */
+		libfd = open("/lib", O_DIRECTORY | O_RDONLY);
+		usrlibfd = open("/usr/lib", O_DIRECTORY | O_RDONLY);
+		if (libfd >= 0 && usrlibfd >= 0) {
+			off = snprintf(libdir_fds_env, sizeof(libdir_fds_env),
+			    "LD_LIBRARY_PATH_FDS=%d:%d", libfd, usrlibfd);
+			if (off > 0 && off < (int)sizeof(libdir_fds_env) &&
+			    snprintf(libdir_path, sizeof(libdir_path), "%s/lib",
+			    unit_dir) < (int)sizeof(libdir_path) &&
+			    (bundlefd = open(libdir_path,
+			    O_DIRECTORY | O_RDONLY)) >= 0)
+				(void)snprintf(libdir_fds_env + off,
+				    sizeof(libdir_fds_env) - off, ":%d", bundlefd);
 			env[envc++] = libdir_fds_env;
 		}
 	}
@@ -565,6 +585,35 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 			    "%s=%d", SERVICE_CONFIG_FD_ENV, fd);
 			env[envc++] = config_fd_env;
 		}
+	}
+
+	/*
+	 * Deliver the manifest-declared resource directories as descriptors so a
+	 * born-in-capmode daemon reaches them by openat(2) — e.g. a /dev node — with
+	 * no global path.  serviced opens each here (still pre-capmode), without
+	 * O_CLOEXEC so it survives the exec, and advertises "path=fd" pairs (colon
+	 * separated) in CAPABILITY_DIR_FDS.  A missing directory is skipped
+	 * fail-soft; service_resource_dir(3) consumes the map.
+	 */
+	if (m->nresource_dirs > 0 && !manifest_has_env(m, SERVICE_DIR_FDS_ENV)) {
+		int off, r;
+		unsigned d;
+
+		off = snprintf(dir_fds_env, sizeof(dir_fds_env), "%s=",
+		    SERVICE_DIR_FDS_ENV);
+		for (d = 0; d < m->nresource_dirs && off > 0 &&
+		    off < (int)sizeof(dir_fds_env); d++) {
+			fd = open(m->resource_dirs[d], O_DIRECTORY | O_RDONLY);
+			if (fd < 0)
+				continue;
+			r = snprintf(dir_fds_env + off, sizeof(dir_fds_env) - off,
+			    "%s%s=%d", off > (int)strlen(SERVICE_DIR_FDS_ENV) + 1 ?
+			    ":" : "", m->resource_dirs[d], fd);
+			if (r > 0 && r < (int)sizeof(dir_fds_env) - off)
+				off += r;
+		}
+		if (off > (int)strlen(SERVICE_DIR_FDS_ENV) + 1)
+			env[envc++] = dir_fds_env;
 	}
 
 	if (m->user[0] != '\0' && !manifest_has_env(m, "USER")) {
@@ -688,8 +737,53 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 		argv[i + 1] = m->arguments[i];
 	argv[m->narguments + 1] = NULL;
 
-	execve(m->program, argv, env);
-	_exit(127);
+	/*
+	 * Launch model (the capability realm is "always in capability mode").
+	 *
+	 * A privileged provider is the sparingly-used exception: it legitimately
+	 * runs outside the sandbox because its work needs the global namespace and
+	 * classic privilege (sysextd's kldload, localsysctl's unrestricted sysctl),
+	 * so it execs normally and self-manages its authority.
+	 *
+	 * Every other realm daemon is BORN in capability mode.  serviced cap_enter(2)s
+	 * here, then execs the dynamic binary through rtld's descriptor-direct mode
+	 * ("ld-elf.so.1 -f <fd>"): rtld resolves the program's NEEDED libraries from
+	 * the delivered lib-dir descriptor (LD_LIBRARY_PATH_FDS) by openat(2), never a
+	 * path.  rtld is a static PIE, so the kernel loads no interpreter for it and
+	 * the in-capmode interpreter guard is never reached.  The daemon therefore has
+	 * no un-sandboxed instant: from its first instruction it can only use the
+	 * descriptors serviced delivered, never open a global path.
+	 */
+	if (m->privileged) {
+		execve(m->program, argv, env);
+		_exit(127);
+	}
+	{
+		char *rtld_argv[SERVICED_MAX_ARGUMENTS + 5];
+		char tgtfd_str[16];
+		int ldfd, tgtfd, ai;
+
+		/* The run-time linker: a static PIE, opened for exec by path here
+		 * (still pre-capmode) and fexecve'd after cap_enter. */
+		ldfd = open("/libexec/ld-elf.so.1", O_EXEC);
+		if (ldfd == -1)
+			_exit(126);
+		tgtfd = open(m->program, O_RDONLY);
+		if (tgtfd == -1)
+			_exit(126);
+		(void)snprintf(tgtfd_str, sizeof(tgtfd_str), "%d", tgtfd);
+		ai = 0;
+		rtld_argv[ai++] = __DECONST(char *, "ld-elf.so.1");
+		rtld_argv[ai++] = __DECONST(char *, "-f");
+		rtld_argv[ai++] = tgtfd_str;
+		for (i = 0; i < m->narguments + 1; i++)
+			rtld_argv[ai++] = argv[i];
+		rtld_argv[ai] = NULL;
+		if (cap_enter() == -1)
+			_exit(126);
+		fexecve(ldfd, rtld_argv, env);
+		_exit(127);
+	}
 }
 
 static int svc_exec_native(struct svc_runtime *svc, int kq);

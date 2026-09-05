@@ -70,18 +70,38 @@ tracecmp_policy_allows(const struct tracecmp_policy *policy,
 int
 tracecmp_policy_load(const char *path, struct tracecmp_policy *policy)
 {
+	int fd;
+
+	if (path == NULL || policy == NULL)
+		return (errno = EINVAL, -1);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd == -1) {
+		if (errno == ENOENT) {
+			memset(policy, 0, sizeof(*policy));
+			return (0);
+		}
+		return (-1);
+	}
+	return (tracecmp_policy_load_fd(fd, policy));
+}
+
+/*
+ * Load the trace policy from an already-open descriptor (takes ownership;
+ * closes it).  A born-in-capmode daemon gets this fd from service_config_open(3)
+ * over the serviced-delivered Config directory, never a global path.
+ */
+int
+tracecmp_policy_load_fd(int fd, struct tracecmp_policy *policy)
+{
 	char line[256], *entry, *comment, *raw;
 	FILE *file;
 	struct stat status;
 	size_t i, line_length;
-	int error, fd;
+	int error;
 
-	if (path == NULL || policy == NULL)
+	if (fd < 0 || policy == NULL)
 		return (errno = EINVAL, -1);
 	memset(policy, 0, sizeof(*policy));
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-	if (fd == -1)
-		return (errno == ENOENT ? 0 : -1);
 	if (fstat(fd, &status) == -1) {
 		error = errno;
 		close(fd);

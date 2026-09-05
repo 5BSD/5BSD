@@ -668,7 +668,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
 	    "protect", "limits", "umask", "band", "privileged",
-	    "resolvable_by", "domain" };
+	    "resolvable_by", "domain", "directories" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
@@ -766,6 +766,43 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		snprintf(errbuf, errlen,
 		    "domain must be \"system\" or \"user\"");
 		return (-1);
+	}
+	/*
+	 * directories — absolute resource directories serviced delivers as
+	 * descriptors (born-in-capmode).  An array of absolute path strings, no
+	 * "." / ".." traversal.
+	 */
+	v = ucl_object_lookup(root, "directories");
+	if (v != NULL) {
+		const ucl_object_t *dv;
+		ucl_object_iter_t dit = NULL;
+		unsigned ndir = 0;
+
+		if (ucl_object_type(v) != UCL_ARRAY) {
+			snprintf(errbuf, errlen, "directories must be an array");
+			return (-1);
+		}
+		while ((dv = ucl_iterate_object(v, &dit, true)) != NULL) {
+			const char *s;
+
+			if (++ndir > SERVICED_MAX_RESOURCE_DIRS) {
+				snprintf(errbuf, errlen, "too many directories "
+				    "(max %u)", SERVICED_MAX_RESOURCE_DIRS);
+				return (-1);
+			}
+			if (ucl_object_type(dv) != UCL_STRING) {
+				snprintf(errbuf, errlen,
+				    "directories entries must be strings");
+				return (-1);
+			}
+			s = ucl_object_tostring(dv);
+			if (s[0] != '/' || strstr(s, "/../") != NULL ||
+			    strlen(s) >= PATH_MAX) {
+				snprintf(errbuf, errlen, "directory must be an "
+				    "absolute path without '..' (\"%s\")", s);
+				return (-1);
+			}
+		}
 	}
 	v = ucl_object_lookup(root, "stop_timeout");
 	if (v != NULL && (ucl_object_type(v) != UCL_INT ||
@@ -1834,6 +1871,12 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 				svc->domain = SVC_MANIFEST_DOMAIN_USER;
 		}
 	}
+
+	/* Resource directories delivered as descriptors (born-in-capmode). */
+	svc->nresource_dirs = 0;
+	parse_string_array_n(root, "directories", svc->resource_dirs,
+	    sizeof(svc->resource_dirs[0]), SERVICED_MAX_RESOURCE_DIRS,
+	    &svc->nresource_dirs);
 
 	/* Management class (§5) */
 	svc->management = parse_management_class(root, path);

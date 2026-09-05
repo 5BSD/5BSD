@@ -17,3 +17,10 @@ user = "root";
 
 limits { nofile = 4096; nproc = 128; core = 0; }
 umask = "0022";
+
+# Privileged (capmode exception): tzfsd is the storage broker.  It kldload(2)s
+# zfs, opens /dev/zfs, and imports the pool -- all requiring the global
+# namespace and classic privilege, so it runs outside the sandbox.  (A later
+# refinement can load the module via sysextd and take /dev/zfs as a delivered
+# descriptor to narrow this.)
+privileged = true;

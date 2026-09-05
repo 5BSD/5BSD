@@ -36,6 +36,9 @@ struct capbundle_service {
 	char	label[CAPBUNDLE_NAME_MAX + 1];
 	char	provides[CAPBUNDLE_MAX_PROVIDES][CAPBUNDLE_NAME_MAX + 1];
 	unsigned nprovides;
+	/* Resource directories delivered as descriptors (born-in-capmode). */
+	char	resource_dirs[SERVICED_MAX_RESOURCE_DIRS][PATH_MAX];
+	unsigned nresource_dirs;
 	bool	activation_boot;
 	bool	is_helper;		/* private helper: launched on request only */
 	/*
