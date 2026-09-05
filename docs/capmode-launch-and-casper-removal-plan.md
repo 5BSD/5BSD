@@ -108,11 +108,88 @@ gated future item. Model A remains the fallback if B proves infeasible.
   rights or `auditcmp_submit` issues a capmode-disallowed syscall. Probably
   shared across daemons that audit from workers. Fix + regression test.
 
-### W6 — Framework capmode pre-flight (centralization)
-- `libservice`'s enter-capmode path prepares the realm once for every provider:
-  guarantee BIND_NOW, `tzset()`, warm NSS/locale caches (model A), and hand the
-  daemon its lazily-bound plane channels (Log, Network, Identity). Turns the
-  whole "why doesn't X work in capmode" class into a solved default.
+### W6 — Framework capmode pre-flight (centralization) — DONE (f232179e080)
+- `service_capmode_preflight()` (tzset + localtime + strerror) runs at the two
+  capmode-entry chokepoints: `service_enter_capability_mode()` (main) and
+  `service_worker_protect()` (workers, incl. pre-forked pools). dtrace-verified:
+  ZERO errno==94 across the daemons after a resolve. Fleet-wide, one place.
+- Remaining pre-flight ideas if needed later: NSS warm-up (getpwuid), BIND_NOW
+  as a build default, plane-channel hand-off.
+
+### STATUS 2026-09-05
+W5 DONE (audit commits from capmode: libbsm ECAPMODE a8d1af5705b + audit
+enabled). W6 DONE (f232179e080). W9 FIRST PASS CLEAN (zero ECAPMODE fleet-wide
+on production boot + Network/Log exercise; deeper per-daemon exercise pending).
+W12 DONE (aa2a1603678, Config/ delivered as CAPABILITY_CONFIG_FD, localnetwork
+converted). auditd enabled in test-rig image (product rc.conf default TBD).
+Remaining: W9 exhaustive per-daemon exercise; W10 (3 new capabilities); W11
+(waspnest rename — scope TBD, upstream/packaging ripple).
+
+### W9 — Capmode audit AND TEST of ALL daemons (widened W4; firm requirement)
+Every provider starts/enters capability mode, so each can silently fail a
+capmode-incompatible operation the way auditbrokerd did (audit_submit) — a path
+open, NSS/pwd lookup, `/etc` read, sysctl, or a non-capenabled syscall. For
+EACH of the 11 daemons: (1) audit — production boot with dtrace
+`syscall:::return /errno==ECAPMODE || errno==ENOTCAPABLE/ { @[execname,
+probefunc]=count() }` (and capture openat paths) to enumerate every offender;
+(2) fix per daemon (pre-open/cache before cap_enter, or route through a plane
+capability); (3) TEST — exercise each daemon's real operations on a live plane
+and confirm no capmode failures, not just that it boots. Superset of the syslog
+sweep. Kory 2026-09-05: this is required, each daemon checked + tested.
+
+### W12 — Deliver Config/ (and run dir) as descriptors, not env-var paths
+Today serviced passes the unit/bundle dir as the env var $CAPABILITY_UNIT_DIR
+(SERVICE_UNIT_DIR_ENV) and daemons open <unit>/Config/<file> BY PATH before
+cap_enter (e.g. localnetwork managed_config_path, networkcmp.c:1340). That path
+open only works pre-sandbox — it is the last thing blocking a truly born-in-
+sandbox daemon. Extend the launch contract (as W1 did for lib/): serviced opens
+the unit's Config/ dir (and the per-instance run dir) as O_DIRECTORY fds and
+delivers them (fd numbers via env, like LD_LIBRARY_PATH_FDS), and daemons
+openat(configdirfd, name) instead of getenv+open. Then a daemon needs zero path
+opens and composes with capmode dynamic exec (rtld -f). The run dir today is
+O_CLOEXEC (execute.c:149) and serviced-internal — deliver it too if daemons
+need runtime state in capmode. Kory 2026-09-05.
+
+### W11 — Rename the VMM daemon to waspnest
+Kory 2026-09-05: rename the VMM daemon to waspnest (aligns with the existing
+transitional /usr/sbin/waspnest -> bhyve symlink + man link). Confirm scope:
+the bhyve VMM binary vs. vmd (system.VM vsock broker) — clarify which "vmm
+daemon" refers to before sweeping. Tree-wide rename with the usual care
+(preserve test/historical strings; current names only in public docs).
+
+### W10 — Fill capability-coverage gaps (build-ready designs)
+Each is a full provider on the localnetwork template (provider over the lookup
+channel; per-client pdfork worker; per-label policy config in the bundle via
+service_config_open; libservice capmode pre-flight; ATF pure + plane tests;
+bundle with lib/ + Config/; man page). Build sequentially; start with Sysctl.
+
+**system.Sysctl** (retires Casper cap_sysctl): ops GET/SET by MIB name.
+Provider resolves name->MIB pre-capmode or via a cached table; enforces a
+per-label allow-list (read keys, write keys) from Config/sysctl.conf; performs
+sysctl(3) on behalf of the client (sysctl is not fully capmode-usable by name).
+Client lib libsysctlcmp: sysctlcmp_get(name,buf,&len)/sysctlcmp_set. Highest
+value, simplest — do first.
+
+**system.Identity** (retires Casper cap_pwd/cap_grp): ops PWD_BYNAME/BYUID,
+GRP_BYNAME/BYGID, GROUPLIST. Provider does getpwnam/getgrnam etc. (NSS) with
+the pre-flight warm, returns fixed-layout records; per-label policy may scope
+which lookups are allowed. Overlaps the auth-agent — reuse its plumbing.
+
+**system.Device**: op OPEN(devname, rights) -> delivers a rights-limited fd for
+a named /dev node (openat under a held /dev dir fd, cap_rights_limit before
+SCM_RIGHTS delivery), exactly the open-descriptor-delivery pattern tzfsd/open
+use. Per-label allow-list of device names + max rights. Closes the
+device-driver access gap that capmode open("/dev/..") cannot.
+
+Original gap list:
+- **system.Sysctl** — brokered sysctl-by-MIB with per-key policy (retires
+  Casper cap_sysctl). Highest value: many daemons read sysctls.
+- **system.Identity** — getpwnam/getgrnam/getgrouplist over a channel (retires
+  Casper cap_pwd/cap_grp; overlaps the auth-agent).
+- **system.Device** — open a named /dev node, deliver a rights-limited fd (the
+  open-descriptor-delivery pattern); closes the device-driver access gap that
+  capmode `open("/dev/…")` cannot.
+- Later: system.Time (settimeofday/adjtime), system.Packet (raw/BPF capture).
 
 ### W7 — Retire libcasper from daemons
 - Once `system.Network`/`Log`/`Identity` cover the needs, drop `cap_net` and
