@@ -514,6 +514,64 @@ ATF_TC_BODY(domain_bad_value_rejected, tc)
 	ATF_CHECK(strstr(err, "domain") != NULL);
 }
 
+/*
+ * directories (§born-in-capmode): resource dirs serviced delivers as fds.
+ */
+ATF_TC_WITHOUT_HEAD(directories_absent_none);
+ATF_TC_BODY(directories_absent_none, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK_EQ(0U, svc.nresource_dirs);
+}
+
+ATF_TC_WITHOUT_HEAD(directories_parse);
+ATF_TC_BODY(directories_parse, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "directories = [\"/dev\", \"/dev/dtrace\"];\n", &svc, err,
+	    sizeof(err)), "unexpected error: %s", err);
+	ATF_CHECK_EQ(2U, svc.nresource_dirs);
+	ATF_CHECK_STREQ("/dev", svc.resource_dirs[0]);
+	ATF_CHECK_STREQ("/dev/dtrace", svc.resource_dirs[1]);
+}
+
+ATF_TC_WITHOUT_HEAD(directories_relative_rejected);
+ATF_TC_BODY(directories_relative_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* A relative path is not an absolute resource directory: fail closed. */
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "directories = [\"dev\"];\n", &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "absolute") != NULL);
+}
+
+ATF_TC_WITHOUT_HEAD(directories_traversal_rejected);
+ATF_TC_BODY(directories_traversal_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "directories = [\"/dev/../etc\"];\n", &svc, err, sizeof(err)));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -549,6 +607,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, domain_system_explicit);
 	ATF_TP_ADD_TC(tp, domain_user_explicit);
 	ATF_TP_ADD_TC(tp, domain_bad_value_rejected);
+	ATF_TP_ADD_TC(tp, directories_absent_none);
+	ATF_TP_ADD_TC(tp, directories_parse);
+	ATF_TP_ADD_TC(tp, directories_relative_rejected);
+	ATF_TP_ADD_TC(tp, directories_traversal_rejected);
 
 	return (atf_no_error());
 }
