@@ -75,6 +75,23 @@ answers identically on the resolve path (provider up) and the on-demand path
 with `resolvable_by = ["user"]`; everything else stays system-only by default.
 (A finer per-uid/group policy is still future work — see §10.1.)
 
+The dual of visibility is the **operating domain** a launched unit's *own*
+lookups run in — the scope serviced applies to names the unit resolves over its
+bootstrap channel (`svc->domain`, set at launch before the unit can issue any
+request). A unit sets it with
+
+```
+domain = "user";   # or "system"
+```
+
+Absent, the bundle class decides: a base-system bundle (under
+`/Capabilities/System`) operates in the SYSTEM domain (resolves every registered
+name, as today), and an application bundle operates in the least-privilege USER
+domain. System-ness is read from the registry via the unit's own provides name,
+so it does not depend on a populated `bundle_idx`. Because a USER domain fails
+`svc_domain_may_mint`, an application unit can never mint a session domain — the
+escalation guard holds by construction.
+
 ## 4. Channels: the channel IS the authenticated principal
 
 A serviced-minted channel is **unforgeable and non-transferable** (mac_capability).

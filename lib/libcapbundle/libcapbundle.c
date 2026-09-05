@@ -412,6 +412,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->management = s->management;
 	m->is_helper = s->is_helper;
 	m->user_resolvable = s->user_resolvable;
+	m->domain = s->domain;
 	/*
 	 * A private helper's synthetic bundle-local provider name
 	 * ("helper.<bundle-id>.<unit>") is injected into provides[] at parse time

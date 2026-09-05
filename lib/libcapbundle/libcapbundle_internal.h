@@ -48,6 +48,12 @@ struct capbundle_service {
 	 */
 	bool	user_resolvable;
 	/*
+	 * Operating-domain preference (SVC_MANIFEST_DOMAIN_*) from the manifest
+	 * `domain` key.  DEFAULT (0) means the bundle-class default; serviced
+	 * resolves it to a concrete domain kind at launch.
+	 */
+	int	domain;
+	/*
 	 * Activation sources (Phase 5).  timer_interval_sec is the monotonic
 	 * period in seconds (0 = none); activation_path is an absolute path
 	 * watched via kqueue vnode events (empty = none).  Both name this unit

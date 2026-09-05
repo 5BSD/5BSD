@@ -1056,6 +1056,33 @@ static void svc_launch_advance(struct svc_runtime *svc, int kq);
 static void svc_launch_finish(struct svc_runtime *svc, int kq);
 static void svc_launch_abort(struct svc_runtime *svc, int error, int kq);
 
+/*
+ * Resolve a native unit's operating domain (§22) — the scope serviced applies
+ * to names the unit itself looks up over its bootstrap channel (handle_lookup
+ * consults svc->domain).  An explicit manifest `domain` wins; otherwise the
+ * bundle class decides: a base-system bundle (under /Capabilities/System)
+ * operates in the SYSTEM domain (resolves every name, as today), an application
+ * bundle in the least-privilege USER domain.  System-ness is read from the
+ * registry via the unit's own provides name, so it does not depend on
+ * svc->bundle_idx being populated (the boot path leaves it unset).
+ */
+static enum svc_domain_kind
+svc_native_domain(const struct svc_manifest *m)
+{
+	unsigned bi, si;
+
+	if (m->domain == SVC_MANIFEST_DOMAIN_SYSTEM)
+		return (SVC_DOMAIN_SYSTEM);
+	if (m->domain == SVC_MANIFEST_DOMAIN_USER)
+		return (SVC_DOMAIN_USER);
+	/* DEFAULT: system bundle -> SYSTEM, application bundle -> USER. */
+	if (m->nprovides > 0 &&
+	    bundle_registry_lookup(m->provides[0], &bi, &si) == 0 &&
+	    bundle_registry_is_system(bi))
+		return (SVC_DOMAIN_SYSTEM);
+	return (SVC_DOMAIN_USER);
+}
+
 static int
 svc_exec_native(struct svc_runtime *svc, int kq)
 {
@@ -1085,6 +1112,14 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	unsigned expected_tokens, i;
 
 	m = &svc->manifest;
+	/*
+	 * Resolve the operating domain (§22) before the provider can issue any
+	 * lookup or mint over its bootstrap channel.  Set authoritatively here (not
+	 * lazily per request) so the mint escalation guard, which reads svc->domain,
+	 * sees the true scope: a USER-domain unit cannot mint (svc_domain_may_mint).
+	 */
+	svc->domain.kind = svc_native_domain(m);
+	svc->domain.uid = 0;
 	memset(&minted_manifest, 0, sizeof(minted_manifest));
 	strlcpy(minted_manifest.label, m->label, sizeof(minted_manifest.label));
 	clock_gettime(CLOCK_MONOTONIC, &exec_start);

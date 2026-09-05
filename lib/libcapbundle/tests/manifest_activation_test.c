@@ -456,6 +456,64 @@ ATF_TC_BODY(resolvable_by_unknown_value_rejected, tc)
 	ATF_CHECK(strstr(err, "resolvable_by") != NULL);
 }
 
+/*
+ * domain (§22): the operating domain a unit's own lookups run in.
+ */
+ATF_TC_WITHOUT_HEAD(domain_absent_defaults);
+ATF_TC_BODY(domain_absent_defaults, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* No domain key: DEFAULT — serviced resolves it by bundle class. */
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK_EQ(SVC_MANIFEST_DOMAIN_DEFAULT, svc.domain);
+}
+
+ATF_TC_WITHOUT_HEAD(domain_system_explicit);
+ATF_TC_BODY(domain_system_explicit, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "domain = \"system\";\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK_EQ(SVC_MANIFEST_DOMAIN_SYSTEM, svc.domain);
+}
+
+ATF_TC_WITHOUT_HEAD(domain_user_explicit);
+ATF_TC_BODY(domain_user_explicit, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "domain = \"user\";\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK_EQ(SVC_MANIFEST_DOMAIN_USER, svc.domain);
+}
+
+ATF_TC_WITHOUT_HEAD(domain_bad_value_rejected);
+ATF_TC_BODY(domain_bad_value_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "domain = \"admin\";\n", &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "domain") != NULL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -487,6 +545,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, resolvable_by_system_only_stays_system);
 	ATF_TP_ADD_TC(tp, resolvable_by_bare_string_accepted);
 	ATF_TP_ADD_TC(tp, resolvable_by_unknown_value_rejected);
+	ATF_TP_ADD_TC(tp, domain_absent_defaults);
+	ATF_TP_ADD_TC(tp, domain_system_explicit);
+	ATF_TP_ADD_TC(tp, domain_user_explicit);
+	ATF_TP_ADD_TC(tp, domain_bad_value_rejected);
 
 	return (atf_no_error());
 }

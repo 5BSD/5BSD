@@ -62,6 +62,21 @@
 #define	SVC_MGMT_USER			2
 
 /*
+ * Operating domain a launched unit's OWN service lookups run in (§22).  This is
+ * the scope serviced applies to names the unit itself resolves over its
+ * bootstrap channel — distinct from resolvable_by, which controls who may
+ * resolve the unit.  A zero-initialised manifest is SVC_MANIFEST_DOMAIN_DEFAULT,
+ * so an omitted "domain" key defers to the sensible default: a base-system
+ * bundle (under /Capabilities/System) operates in the SYSTEM domain (resolves
+ * every registered name, as today), and an application bundle operates in the
+ * USER domain (least privilege — resolves only user-visible names).  An explicit
+ * "system" or "user" overrides that default.
+ */
+#define	SVC_MANIFEST_DOMAIN_DEFAULT	0
+#define	SVC_MANIFEST_DOMAIN_SYSTEM	1
+#define	SVC_MANIFEST_DOMAIN_USER	2
+
+/*
  * Scheduling band (launchd ProcessType analogue).  Governs the CPU/IO priority
  * serviced applies to the launched process.  A zero-initialised manifest is
  * SVC_BAND_STANDARD, so an omitted "band" key keeps today's neutral behaviour.
@@ -164,6 +179,13 @@ struct svc_manifest {
 	 * per-provider replacement for serviced's former hardcoded user-allow-list.
 	 */
 	bool		user_resolvable;
+
+	/*
+	 * Operating domain preference (§22): SVC_MANIFEST_DOMAIN_* from the
+	 * manifest `domain` key.  DEFAULT (absent) defers to the bundle-class
+	 * default; serviced resolves it to a concrete domain kind at launch.
+	 */
+	int		domain;
 
 	/* Capabilities to delegate */
 	uint32_t	cap_system;	/* SYS_GATE_* bitmask */

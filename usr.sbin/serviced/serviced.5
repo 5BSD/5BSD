@@ -224,6 +224,23 @@ indistinguishable from an unregistered name.
 This per-provider policy replaces the former allow-list built into
 .Nm ;
 a value is also accepted as a bare string.
+.Pp
+.Va domain
+is the operating domain the unit's OWN service lookups run in \(em the scope
+.Nm
+applies to names the unit resolves over its bootstrap channel, distinct from
+.Va resolvable_by ,
+which controls who may resolve the unit.
+It is
+.Dq system
+or
+.Dq user .
+When the key is absent the bundle class decides: a base-system bundle under
+.Pa /Capabilities/System
+operates in the SYSTEM domain (resolves every registered name, as today) and an
+application bundle operates in the least-privilege USER domain (resolves only
+user-visible names).
+A USER-domain unit cannot mint session domains.
 .Va stop_timeout
 is 1 through 300 seconds and
 .Va max_failures

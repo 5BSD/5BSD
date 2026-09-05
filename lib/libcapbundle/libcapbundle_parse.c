@@ -668,7 +668,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
 	    "protect", "limits", "umask", "band", "privileged",
-	    "resolvable_by" };
+	    "resolvable_by", "domain" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
@@ -754,6 +754,18 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 				return (-1);
 			}
 		}
+	}
+	/*
+	 * domain — the operating domain this unit's own lookups run in.  A single
+	 * string "system" or "user"; absent defers to the bundle-class default.
+	 */
+	v = ucl_object_lookup(root, "domain");
+	if (v != NULL && (ucl_object_type(v) != UCL_STRING ||
+	    (strcmp(ucl_object_tostring(v), "system") != 0 &&
+	    strcmp(ucl_object_tostring(v), "user") != 0))) {
+		snprintf(errbuf, errlen,
+		    "domain must be \"system\" or \"user\"");
+		return (-1);
 	}
 	v = ucl_object_lookup(root, "stop_timeout");
 	if (v != NULL && (ucl_object_type(v) != UCL_INT ||
@@ -1803,6 +1815,23 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 			if (ucl_object_type(rv) == UCL_STRING &&
 			    strcmp(ucl_object_tostring(rv), "user") == 0)
 				svc->user_resolvable = true;
+		}
+	}
+
+	/*
+	 * Operating-domain preference: "system"/"user" override, else DEFAULT
+	 * (resolved by serviced against the bundle class at launch).  Validated
+	 * in validate_unit_schema().
+	 */
+	svc->domain = SVC_MANIFEST_DOMAIN_DEFAULT;
+	{
+		const ucl_object_t *dv = ucl_object_lookup(root, "domain");
+
+		if (dv != NULL && ucl_object_type(dv) == UCL_STRING) {
+			if (strcmp(ucl_object_tostring(dv), "system") == 0)
+				svc->domain = SVC_MANIFEST_DOMAIN_SYSTEM;
+			else if (strcmp(ucl_object_tostring(dv), "user") == 0)
+				svc->domain = SVC_MANIFEST_DOMAIN_USER;
 		}
 	}
 
