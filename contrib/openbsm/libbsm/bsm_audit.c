@@ -236,7 +236,20 @@ au_assemble(au_record_t *rec, short event)
 	aia.ai_termid.at_type = AU_IPv4;
 	aia.ai_termid.at_addr[0] = INADDR_ANY;
 	if (audit_get_kaudit(&aia, sizeof(aia)) != 0) {
-		if (errno != ENOSYS && errno != EPERM)
+		/*
+		 * auditon(A_GETKAUDIT) is only needed to size an extended
+		 * (address-bearing) header.  It is unavailable to a privileged
+		 * capability-mode service (auditon(2) administers system-wide
+		 * policy and is deliberately not capability-enabled, so it
+		 * returns ECAPMODE).  Treat that the same as ENOSYS/EPERM and
+		 * fall back to the plain header; the record still commits via
+		 * the capability-enabled audit(2).  Mirrors audit_submit(3).
+		 */
+		if (errno != ENOSYS && errno != EPERM
+#ifdef ECAPMODE
+		    && errno != ECAPMODE
+#endif
+		    )
 			return (-1);
 #endif /* HAVE_AUDIT_SYSCALLS */
 		tot_rec_size = rec->len + AUDIT_HEADER_SIZE +
