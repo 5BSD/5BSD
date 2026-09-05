@@ -370,6 +370,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	char user_env[128], home_env[PATH_MAX + 8];
 	char unit_dir[PATH_MAX], unit_dir_env[PATH_MAX + 32];
 	char libdir_path[PATH_MAX], libdir_fds_env[40];
+	char config_dir_path[PATH_MAX], config_fd_env[48];
 	char bootstrap_env[32];
 	char *env[SVC_MAX_ENV];
 	char *argv[SERVICED_MAX_ARGUMENTS + 2];
@@ -545,6 +546,24 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 			(void)snprintf(libdir_fds_env, sizeof(libdir_fds_env),
 			    "LD_LIBRARY_PATH_FDS=%d", fd);
 			env[envc++] = libdir_fds_env;
+		}
+	}
+
+	/*
+	 * Deliver the unit's bundle Config/ directory as a descriptor so the
+	 * program can openat(2) its config files after cap_enter(2), with no
+	 * path lookup.  Opt-in by the directory existing; opened after
+	 * closefrom(2) without O_CLOEXEC so it survives execve(2).  A read-only
+	 * directory capability; service_config_open(3) consumes it.
+	 */
+	if (!manifest_has_env(m, SERVICE_CONFIG_FD_ENV) &&
+	    snprintf(config_dir_path, sizeof(config_dir_path), "%s/Config",
+	    unit_dir) < (int)sizeof(config_dir_path)) {
+		fd = open(config_dir_path, O_DIRECTORY | O_RDONLY);
+		if (fd >= 0) {
+			(void)snprintf(config_fd_env, sizeof(config_fd_env),
+			    "%s=%d", SERVICE_CONFIG_FD_ENV, fd);
+			env[envc++] = config_fd_env;
 		}
 	}
 

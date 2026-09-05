@@ -221,26 +221,19 @@ networkcmp_config_parse(const char *text, struct networkcmp_config *config)
 }
 
 int
-networkcmp_config_load(struct networkcmp_config *config, const char *path)
+networkcmp_config_load_fd(struct networkcmp_config *config, int fd)
 {
 	struct stat status;
 	char *text;
 	ssize_t amount;
 	size_t done;
-	int error, fd, result;
+	int error, result;
 
-	if (config == NULL || path == NULL) {
+	if (config == NULL || fd < 0) {
 		errno = EINVAL;
 		return (-1);
 	}
 	networkcmp_config_defaults(config);
-	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-	if (fd == -1) {
-		/* A missing file is the shipped-defaults case, not an error. */
-		if (errno == ENOENT)
-			return (0);
-		return (-1);
-	}
 	if (fstat(fd, &status) == -1)
 		goto fail;
 	if (!S_ISREG(status.st_mode)) {
@@ -303,6 +296,26 @@ fail:
 	close(fd);
 	errno = error;
 	return (-1);
+}
+
+int
+networkcmp_config_load(struct networkcmp_config *config, const char *path)
+{
+	int fd;
+
+	if (config == NULL || path == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	networkcmp_config_defaults(config);
+	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd == -1) {
+		/* A missing file is the shipped-defaults case, not an error. */
+		if (errno == ENOENT)
+			return (0);
+		return (-1);
+	}
+	return (networkcmp_config_load_fd(config, fd));
 }
 
 const struct networkcmp_policy *

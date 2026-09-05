@@ -81,6 +81,14 @@ int	networkcmp_config_parse(const char *, struct networkcmp_config *);
 int	networkcmp_config_load(struct networkcmp_config *, const char *);
 
 /*
+ * As networkcmp_config_load(), but from an already-open descriptor (which it
+ * takes ownership of and closes).  Used with service_config_open(3) so the
+ * config is read via the serviced-delivered Config directory descriptor,
+ * needing no path lookup under capability mode.
+ */
+int	networkcmp_config_load_fd(struct networkcmp_config *, int fd);
+
+/*
  * The policy for a label: its clients{} entry if listed, else the default.
  * *listed (optional) reports which.  Never returns NULL for a valid config.
  */

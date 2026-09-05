@@ -27,6 +27,13 @@
 #define	SERVICE_UNIT_DIR_ENV	"CAPABILITY_UNIT_DIR"
 
 /*
+ * Descriptor for the unit's bundle Config/ directory, delivered by serviced so
+ * a capability-mode program can openat(2) its config files without a path
+ * lookup (which cap_enter(2) forbids).  service_config_open(3) uses it.
+ */
+#define	SERVICE_CONFIG_FD_ENV	"CAPABILITY_CONFIG_FD"
+
+/*
  * Public process-protection flags used by service_provider_protect() and
  * service_worker_protect().  Keep kernel protocol details behind libservice
  * so service programs do not need mac_capability headers.
@@ -192,6 +199,16 @@ int	service_provider_enter_capability_mode(struct service_provider *);
 /* Privileged-provider alternative to enter_capability_mode (see above). */
 int	service_provider_enter_privileged(struct service_provider *);
 int	service_provider_ready(struct service_provider *);
+
+/*
+ * Open one of the unit's bundle Config/ files read-only, returning its
+ * descriptor in *fdp.  Prefers the serviced-delivered Config directory
+ * descriptor (SERVICE_CONFIG_FD_ENV) via openat(2) -- capability-mode safe and
+ * usable after cap_enter(2) -- and falls back to <CAPABILITY_UNIT_DIR>/Config/
+ * by path for a legacy/pre-capmode launch.  O_NOFOLLOW, no directory escape.
+ */
+int	service_config_open(const char *name, int *fdp);
+
 int	service_provider_quiescing(struct service_provider *);
 int	service_provider_quiesce_complete(struct service_provider *, int status);
 

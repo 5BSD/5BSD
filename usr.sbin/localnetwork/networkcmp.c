@@ -1327,25 +1327,6 @@ reject:
 	return (-1);
 }
 
-/*
- * Locate the per-label policy config inside this unit's Config directory.
- * The path is derived from $CAPABILITY_UNIT_DIR before capability mode; the
- * parsed table is then held in memory and no descriptor survives.
- */
-static int
-managed_config_path(char *path, size_t path_size)
-{
-	const char *unit_dir;
-
-	unit_dir = getenv(SERVICE_UNIT_DIR_ENV);
-	if (unit_dir == NULL || unit_dir[0] == '\0')
-		return (errno = ENOENT, -1);
-	if (snprintf(path, path_size, "%s/Config/%s", unit_dir,
-	    NETWORKCMP_CONFIG_NAME) >= (int)path_size)
-		return (errno = ENAMETOOLONG, -1);
-	return (0);
-}
-
 int
 main(void)
 {
@@ -1354,26 +1335,28 @@ main(void)
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
-	char config_path[PATH_MAX];
-	int error, fd;
+	int error, fd, cfgfd;
 
 	openlog("localnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
 	/*
-	 * Per-label policy, loaded pre-capability-mode.  FAIL-SOFT by design:
-	 * the network provider is depended on by nearly everything, so a
-	 * missing or malformed config must never brick it — the compiled-in
-	 * default policy (outbound allowed, internal denied) stays in force
-	 * and the problem is logged for the operator.
+	 * Per-label policy, loaded via the serviced-delivered Config directory
+	 * descriptor (service_config_open, openat(2) — capability-mode safe;
+	 * falls back to the $CAPABILITY_UNIT_DIR path for a legacy launch).
+	 * FAIL-SOFT by design: the network provider is depended on by nearly
+	 * everything, so a missing or malformed config must never brick it — the
+	 * compiled-in default policy (outbound allowed, internal denied) stays in
+	 * force and the problem is logged for the operator.
 	 */
 	networkcmp_config_defaults(&config);
-	if (managed_config_path(config_path, sizeof(config_path)) == -1) {
+	if (service_config_open(NETWORKCMP_CONFIG_NAME, &cfgfd) == -1) {
+		if (errno != ENOENT)
+			syslog(LOG_WARNING,
+			    "policy config unavailable; using built-in default "
+			    "network policy: %m");
+	} else if (networkcmp_config_load_fd(&config, cfgfd) == -1) {
 		syslog(LOG_WARNING,
-		    "no unit Config directory; using built-in default network "
+		    "policy config rejected; using built-in default network "
 		    "policy: %m");
-	} else if (networkcmp_config_load(&config, config_path) == -1) {
-		syslog(LOG_WARNING,
-		    "policy config %s rejected; using built-in default network "
-		    "policy: %m", config_path);
 	}
 	casper = cap_init();
 	if (casper == NULL)

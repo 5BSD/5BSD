@@ -1454,6 +1454,61 @@ service_enter_capability_mode(struct service_context *context)
 	return (0);
 }
 
+int
+service_config_open(const char *name, int *fdp)
+{
+	char path[PATH_MAX];
+	const char *env, *unit_dir;
+	char *end;
+	long v;
+	int dirfd, fd;
+
+	if (name == NULL || fdp == NULL || name[0] == '\0' ||
+	    strchr(name, '/') != NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*fdp = -1;
+
+	/*
+	 * Preferred path: openat(2) the config file under the serviced-delivered
+	 * Config directory descriptor.  Works after cap_enter(2) with no global
+	 * namespace access.
+	 */
+	env = getenv(SERVICE_CONFIG_FD_ENV);
+	if (env != NULL && env[0] != '\0') {
+		errno = 0;
+		v = strtol(env, &end, 10);
+		if (errno != 0 || *end != '\0' || v < 0 || v > INT_MAX) {
+			errno = EINVAL;
+			return (-1);
+		}
+		dirfd = (int)v;
+		fd = openat(dirfd, name, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+		if (fd == -1)
+			return (-1);
+		*fdp = fd;
+		return (0);
+	}
+
+	/* Legacy/pre-capability-mode fallback: <unit>/Config/<name> by path. */
+	unit_dir = getenv(SERVICE_UNIT_DIR_ENV);
+	if (unit_dir == NULL || unit_dir[0] == '\0') {
+		errno = ENOENT;
+		return (-1);
+	}
+	if (snprintf(path, sizeof(path), "%s/Config/%s", unit_dir, name) >=
+	    (int)sizeof(path)) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
+	fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd == -1)
+		return (-1);
+	*fdp = fd;
+	return (0);
+}
+
 /*
  * Finalize a provider that legitimately cannot enter capability mode.  The
  * canonical case is the system-extension broker: kldload(2) needs the classic
