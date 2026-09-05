@@ -40,9 +40,15 @@ fixed_string_valid(const char *text, size_t length, size_t capacity)
 		return (false);
 	for (i = 0; i < length; i++) {
 		c = (unsigned char)text[i];
+		/*
+		 * Audit subjects are service labels, which are compound and
+		 * carry '/' (e.g. "system.Network/localnetwork").  Permit it
+		 * alongside the identifier characters; the subject is the
+		 * unforgeable, kernel-stamped label, never client-supplied text.
+		 */
 		if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') ||
 		    (c >= '0' && c <= '9') || c == '.' || c == '_' ||
-		    c == '-')
+		    c == '-' || c == '/')
 			continue;
 		return (false);
 	}
