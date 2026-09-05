@@ -74,4 +74,16 @@ int	networkcmp_policy_default(struct networkcmp_policy *);
 /* True iff the policy authorizes any operation at all (else deny the session). */
 bool	networkcmp_policy_permits_any(const struct networkcmp_policy *);
 
+/*
+ * True iff the policy permits an address family (AF_INET/AF_INET6 gated by the
+ * ipv4/ipv6 dimensions; AF_UNSPEC is always permitted as a hint and is gated
+ * per-result once the resolver expands it).  This is the single source of
+ * family-policy truth: it rejects a request that pins a forbidden family and
+ * filters the resolver's per-family results, so the caller no longer leans on
+ * the cap_net(3) channel family limit to enforce ipv4/ipv6 — that limit cannot
+ * carry AF_UNSPEC and rejected every family-agnostic resolve with ENOTCAPABLE.
+ */
+bool	networkcmp_policy_family_permitted(const struct networkcmp_policy *,
+	    int af);
+
 #endif

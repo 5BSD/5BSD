@@ -452,6 +452,15 @@ resolve_perform(struct resolver_job *job)
 		error = EAFNOSUPPORT;
 		goto reject;
 	}
+	/*
+	 * A request that pins a family the policy forbids is refused here,
+	 * daemon-side, rather than leaning on the resolver channel's family
+	 * limit (which cannot admit AF_UNSPEC — see start_session).
+	 */
+	if (!networkcmp_policy_family_permitted(&job->policy, hints.ai_family)) {
+		error = EAFNOSUPPORT;
+		goto reject;
+	}
 	switch (request->socket_type) {
 	case NETWORKCMP_SOCK_ANY:
 		hints.ai_socktype = 0;
@@ -495,6 +504,15 @@ resolve_perform(struct resolver_job *job)
 		struct networkcmp_resolve_result *result;
 
 		if (ai->ai_family != AF_INET && ai->ai_family != AF_INET6)
+			continue;
+		/*
+		 * Enforce the per-label family policy on results.  An AF_UNSPEC
+		 * request is answered by the resolver with every family, so the
+		 * channel family limit cannot be the sole gate: a policy that
+		 * permits only one family must drop the other here.
+		 */
+		if (!networkcmp_policy_family_permitted(&job->policy,
+		    ai->ai_family))
 			continue;
 		result = &results[count];
 		result->endpoint.family = ai->ai_family == AF_INET ?
@@ -1015,7 +1033,7 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 	cap_channel_t *capnet, *resolver_capnet;
 	cap_net_limit_t *limit;
 	const char *policy_source;
-	int families[2];
+	int families[3];
 	size_t nfamilies;
 	int syncfd[2], resolver_pipe[2], pd, audit_fd, child_error, error;
 	pid_t pid;
@@ -1050,7 +1068,15 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 	}
 	syslog(LOG_INFO, "session for %s: %s policy", peer_label,
 	    policy_source);
+	/*
+	 * AF_UNSPEC must be admitted or cap_net(3) rejects every family-
+	 * agnostic getaddrinfo with ENOTCAPABLE (its family limit matches the
+	 * hint exactly and has no AF_UNSPEC).  The ipv4/ipv6 policy is enforced
+	 * daemon-side on the pinned request and on each result, not here, so
+	 * widening the limit does not widen what the session actually sees.
+	 */
 	nfamilies = 0;
+	families[nfamilies++] = AF_UNSPEC;
 	if (policy.ipv4)
 		families[nfamilies++] = AF_INET;
 	if (policy.ipv6)

@@ -2,6 +2,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/socket.h>
+
 #include <errno.h>
 #include <string.h>
 
@@ -47,4 +49,27 @@ networkcmp_policy_permits_any(const struct networkcmp_policy *policy)
 	if (policy == NULL)
 		return (false);
 	return (policy->allow_connect || policy->allow_udp || policy->resolve);
+}
+
+bool
+networkcmp_policy_family_permitted(const struct networkcmp_policy *policy,
+    int af)
+{
+
+	if (policy == NULL)
+		return (false);
+	switch (af) {
+	case AF_INET:
+		return (policy->ipv4);
+	case AF_INET6:
+		return (policy->ipv6);
+	case AF_UNSPEC:
+		/*
+		 * Permitted as a resolver hint; the concrete families it
+		 * expands to are gated per-result by this same predicate.
+		 */
+		return (true);
+	default:
+		return (false);
+	}
 }

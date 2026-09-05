@@ -2,6 +2,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
+#include <sys/socket.h>
+
 #include <errno.h>
 #include <string.h>
 
@@ -144,6 +146,47 @@ ATF_TC_BODY(arguments, tc)
 	ATF_CHECK_ERRNO(EINVAL, networkcmp_policy_default(NULL) == -1);
 }
 
+ATF_TC(family_permitted_gates_by_policy);
+ATF_TC_HEAD(family_permitted_gates_by_policy, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "AF_UNSPEC is always permitted (resolver hint); AF_INET/AF_INET6 "
+	    "follow the ipv4/ipv6 dimensions so a one-family policy drops the "
+	    "other; an unknown family and a NULL policy are denied");
+}
+ATF_TC_BODY(family_permitted_gates_by_policy, tc)
+{
+	struct networkcmp_policy policy;
+
+	/* Full policy: every real family and the AF_UNSPEC hint permitted. */
+	ATF_REQUIRE(networkcmp_policy_default(&policy) == 0);
+	ATF_CHECK(networkcmp_policy_family_permitted(&policy, AF_UNSPEC));
+	ATF_CHECK(networkcmp_policy_family_permitted(&policy, AF_INET));
+	ATF_CHECK(networkcmp_policy_family_permitted(&policy, AF_INET6));
+
+	/* IPv4-only: AF_INET6 result must be dropped, AF_UNSPEC still a hint. */
+	policy.ipv6 = false;
+	ATF_CHECK(networkcmp_policy_family_permitted(&policy, AF_INET));
+	ATF_CHECK(!networkcmp_policy_family_permitted(&policy, AF_INET6));
+	ATF_CHECK(networkcmp_policy_family_permitted(&policy, AF_UNSPEC));
+
+	/* IPv6-only: mirror image. */
+	ATF_REQUIRE(networkcmp_policy_default(&policy) == 0);
+	policy.ipv4 = false;
+	ATF_CHECK(!networkcmp_policy_family_permitted(&policy, AF_INET));
+	ATF_CHECK(networkcmp_policy_family_permitted(&policy, AF_INET6));
+
+	/* No families: only the AF_UNSPEC hint survives (yields no results). */
+	policy.ipv6 = false;
+	ATF_CHECK(!networkcmp_policy_family_permitted(&policy, AF_INET));
+	ATF_CHECK(!networkcmp_policy_family_permitted(&policy, AF_INET6));
+	ATF_CHECK(networkcmp_policy_family_permitted(&policy, AF_UNSPEC));
+
+	/* Unknown family and a NULL policy are denied. */
+	ATF_CHECK(!networkcmp_policy_family_permitted(&policy, AF_LOCAL));
+	ATF_CHECK(!networkcmp_policy_family_permitted(NULL, AF_UNSPEC));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, defaults);
@@ -152,5 +195,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rights_admin_grants_all);
 	ATF_TP_ADD_TC(tp, independent_initialization);
 	ATF_TP_ADD_TC(tp, arguments);
+	ATF_TP_ADD_TC(tp, family_permitted_gates_by_policy);
 	return (atf_no_error());
 }
