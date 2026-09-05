@@ -57,6 +57,8 @@ SUBDIR=	adduser \
 	logd \
 	logctl \
 	localnetwork \
+	localsysctl \
+	sysctlcmpctl \
 	networkcmpctl \
 	bsdnotify \
 	notifyctl \

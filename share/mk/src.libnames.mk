@@ -209,6 +209,7 @@ _LIBRARIES=	\
 		netgraph \
 		netmap \
 		networkcmp \
+		sysctlcmp \
 		ngatm \
 		nv \
 		nvpair \
@@ -340,6 +341,7 @@ _DP_tzfsd=	trustedzfs service channel
 _DP_service=	capability channel pthread trustedzfs
 _DP_shmring=
 _DP_networkcmp=	pthread service
+_DP_sysctlcmp=	service
 _DP_cryptocmp=	pthread service
 _DP_logcmp=	pthread service shmring
 _DP_kldmgr=	service

@@ -1,0 +1,33 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd September 5, 2026
+.Dt SYSCTLCMPCTL 8
+.Os
+.Sh NAME
+.Nm sysctlcmpctl
+.Nd command-line client for the system.Sysctl capability
+.Sh SYNOPSIS
+.Nm
+.Cm get Ar name
+.Nm
+.Cm set Ar name Ar value
+.Sh DESCRIPTION
+.Nm
+reads and writes kernel
+.Xr sysctl 3
+variables through the
+.Dq system.Sysctl
+capability provided by
+.Xr localsysctl 8 ,
+subject to the caller's per-label policy.
+.Cm get
+prints the value of
+.Ar name ;
+.Cm set
+assigns the string
+.Ar value
+to
+.Ar name .
+.Sh SEE ALSO
+.Xr sysctl 8 ,
+.Xr libsysctlcmp 3 ,
+.Xr localsysctl 8

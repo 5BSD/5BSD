@@ -1,0 +1,63 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd September 5, 2026
+.Dt LOCALSYSCTL 8
+.Os
+.Sh NAME
+.Nm localsysctl
+.Nd system.Sysctl capability provider
+.Sh DESCRIPTION
+.Nm
+is the provider for the
+.Dq system.Sysctl
+capability.
+A client holds a system.Sysctl channel and asks
+.Nm
+to read, and \(em policy permitting \(em write, kernel
+.Xr sysctl 3
+variables by name, instead of calling
+.Xr sysctl 3
+itself or forking a Casper
+.Xr cap_sysctl 3
+helper.
+.Pp
+.Nm
+is a socket-free
+.Xr service_provider
+launched on demand by
+.Xr serviced 8 ;
+it ships as the
+.Pa /Capabilities/System/Sysctl.cap
+bundle and is not spawned from
+.Pa /usr/sbin .
+Each accepted client is served on its own
+.Xr pdfork 2 Ns 'd
+worker in capability mode.
+Because
+.Xr __sysctlbyname 2
+is capability-mode enabled, the worker performs the sysctl directly after a
+per-label policy check; no Casper helper is involved.
+.Sh POLICY CONFIGURATION
+Access is scoped per label by
+.Pa Config/sysctl.conf
+in the bundle (UCL), delivered to
+.Nm
+as a directory descriptor.
+The
+.Va default
+block applies to any label without a
+.Va clients
+entry.
+.Va read
+and
+.Va write
+are lists of sysctl name prefixes (dotted-path, matched on a component
+boundary): a name is permitted if it equals or lies under a listed prefix.
+Writes are denied unless listed.
+A read of an unlisted name, or any unlisted write, is refused with
+.Er EPERM .
+A missing or malformed file falls back to the compiled-in default (a small
+safe read set, no writes) with a warning.
+.Sh SEE ALSO
+.Xr sysctl 3 ,
+.Xr libsysctlcmp 3 ,
+.Xr serviced 8

@@ -1,0 +1,63 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.Dd September 5, 2026
+.Dt LIBSYSCTLCMP 3
+.Os
+.Sh NAME
+.Nm sysctlcmp_client_open ,
+.Nm sysctlcmp_client_close ,
+.Nm sysctlcmp_get ,
+.Nm sysctlcmp_set
+.Nd client interface to the system.Sysctl capability
+.Sh LIBRARY
+.Lb libsysctlcmp
+.Sh SYNOPSIS
+.In sysctlcmp.h
+.Ft int
+.Fn sysctlcmp_client_open "struct sysctlcmp_client **clientp"
+.Ft void
+.Fn sysctlcmp_client_close "struct sysctlcmp_client *client"
+.Ft int
+.Fn sysctlcmp_get "struct sysctlcmp_client *client" "const char *name" "void *buf" "size_t *lenp"
+.Ft int
+.Fn sysctlcmp_set "struct sysctlcmp_client *client" "const char *name" "const void *value" "size_t len"
+.Sh DESCRIPTION
+These functions read and write kernel
+.Xr sysctl 3
+variables by name through the
+.Dq system.Sysctl
+capability rather than by calling
+.Xr sysctl 3
+directly, so a capability-mode program obtains sysctl access as a held
+capability, subject to the provider's per-label policy.
+.Pp
+.Fn sysctlcmp_client_open
+acquires the capability over the process's lookup channel.
+.Fn sysctlcmp_get
+reads
+.Fa name
+into
+.Fa buf ;
+.Fa *lenp
+is the buffer size on entry and the value length on return.
+If the buffer is too small the call fails with
+.Er ENOMEM
+and
+.Fa *lenp
+holds the required size.
+.Fn sysctlcmp_set
+writes
+.Fa value
+to
+.Fa name ,
+which the provider permits only when the caller's label is authorized to write
+that variable.
+.Sh RETURN VALUES
+.Rv -std sysctlcmp_client_open sysctlcmp_get sysctlcmp_set
+.Sh SEE ALSO
+.Xr sysctl 3 ,
+.Xr localsysctl 8
+.Sh SECURITY CONSIDERATIONS
+Read and write access is scoped per label by the provider; a variable not
+named in the caller's allow-list is refused with
+.Er EPERM ,
+and writes are denied by default.
