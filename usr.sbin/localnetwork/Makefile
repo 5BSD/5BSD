@@ -7,6 +7,11 @@ MAN=		localnetwork.8
 SRCS=		networkcmp.c config.c policy.c
 
 CFLAGS+=	-DWITH_CASPER
+# Full binding at load (no lazy PLT): everything the linker needs is resolved
+# during exec, before the daemon enters capability mode, so no library work
+# remains once the sandbox closes.  Pairs with bundle-local libraries resolved
+# via serviced's LD_LIBRARY_PATH_FDS delivery.
+LDFLAGS+=	-Wl,-z,now
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libnetworkcmp
