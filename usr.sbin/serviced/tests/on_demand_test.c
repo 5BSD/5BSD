@@ -585,6 +585,13 @@ struct idle_provider_ctx {
 	int			 fd;
 	struct svc_runtime	*svc;
 	int			 error;
+	/*
+	 * The svc_proto dispatch to run for each request.  Defaults to
+	 * idle_provider_request (SVC_OP_IDLE); the readiness test installs
+	 * ready_provider_request (SVC_OP_READY) to reuse this same thread.
+	 */
+	void			(*handler)(struct channel *,
+				    struct channel_message *, void *);
 };
 
 static void
@@ -616,7 +623,7 @@ idle_provider_thread(void *argument)
 	}
 	ctx->svc->control_channel = channel;
 	ctx->svc->channel_fd = channel_fd(channel);
-	if (channel_set_request_handler(channel, idle_provider_request,
+	if (channel_set_request_handler(channel, ctx->handler,
 	    ctx) == -1) {
 		ctx->error = errno;
 		ctx->svc->control_channel = NULL;
@@ -732,6 +739,7 @@ idle_run(int state, bool protocol_ready, const unsigned *seconds, size_t count,
 	memset(&provider, 0, sizeof(provider));
 	provider.fd = pair[1];
 	provider.svc = svc;
+	provider.handler = idle_provider_request;
 	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, idle_provider_thread,
 	    &provider));
 	ATF_REQUIRE_EQ(0, channel_create(pair[0], &options, &client));
@@ -800,6 +808,142 @@ ATF_TC_BODY(handle_idle_protocol, tc)
 	(void)close(kq);
 }
 
+/*
+ * handle_ready dispatch for the readiness harness: exactly what svc_request
+ * would perform for SVC_OP_READY.
+ */
+static void
+ready_provider_request(struct channel *channel, struct channel_message *message,
+    void *argument)
+{
+	struct idle_provider_ctx *ctx;
+
+	(void)channel;
+	ctx = argument;
+	handle_ready(ctx->svc, message);
+	channel_message_free(message);
+}
+
+/*
+ * Issue one SVC_OP_READY over `client` and return handle_ready's reply status.
+ */
+static int
+ready_client_request(struct channel *client)
+{
+	struct idle_client_reply reply;
+	struct svc_req_hdr request;
+	struct channel_request *pending;
+	int result, wants_write;
+
+	memset(&request, 0, sizeof(request));
+	request.op = SVC_OP_READY;
+	memset(&reply, 0, sizeof(reply));
+	reply.status = -1;
+	ATF_REQUIRE(channel_send_request(client,
+	    &(struct channel_outgoing)
+	    CHANNEL_OUTGOING_INITIALIZER(&request, sizeof(request)),
+	    idle_client_on_reply, &reply, &pending) == 0);
+	while (!reply.done) {
+		wants_write = channel_wants_write(client);
+		ATF_REQUIRE(wants_write >= 0);
+		result = channel_wait(client, wants_write, 5000);
+		ATF_REQUIRE(result > 0);
+		if ((result & CHANNEL_WAIT_WRITE) != 0)
+			ATF_REQUIRE(channel_flush(client) == 0);
+		if ((result & CHANNEL_WAIT_READ) != 0 &&
+		    channel_dispatch(client) == -1)
+			ATF_REQUIRE(reply.done);
+	}
+	ATF_CHECK_EQ(0, reply.error);
+	return (reply.status);
+}
+
+/*
+ * Drive a single SVC_OP_READY at a provider in `state` with manifest.privileged
+ * = `privileged`, over a genuine channel, and leave the resulting runtime in
+ * *svc.  nprovides == 0 so the names-claimed precondition is trivially met and
+ * the on_demand_check_ready() call handle_ready() makes is a no-op.
+ */
+static void
+ready_run(int state, bool privileged, struct svc_runtime *svc, int *status)
+{
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	struct idle_provider_ctx provider;
+	struct channel *client;
+	pthread_t thread;
+	int pair[2];
+
+	idle_channel_pair(&pair[0], &pair[1]);
+	idle_runtime_init(svc, "org.test.ready");
+	svc->state = state;
+	svc->manifest.privileged = privileged;
+	svc->manifest.nprovides = 0;
+	memset(&provider, 0, sizeof(provider));
+	provider.fd = pair[1];
+	provider.svc = svc;
+	provider.handler = ready_provider_request;
+	ATF_REQUIRE_EQ(0, pthread_create(&thread, NULL, idle_provider_thread,
+	    &provider));
+	ATF_REQUIRE_EQ(0, channel_create(pair[0], &options, &client));
+	*status = ready_client_request(client);
+	channel_destroy(client);
+	ATF_REQUIRE_EQ(0, pthread_join(thread, NULL));
+	ATF_CHECK_EQ(0, provider.error);
+}
+
+ATF_TC(handle_ready_privileged_promotion);
+ATF_TC_HEAD(handle_ready_privileged_promotion, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "SVC_OP_READY promotes a STARTING privileged provider straight to "
+	    "RUNNING (its own readiness IS the boundary, since it never enters "
+	    "capability mode), while a non-privileged provider only records "
+	    "protocol_ready and stays STARTING until capability-mode entry.  This "
+	    "is what lets an on-demand privileged provider's waiter be drained.");
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "timeout", "30");
+}
+ATF_TC_BODY(handle_ready_privileged_promotion, tc)
+{
+	struct svc_runtime svc;
+	int kq, status;
+
+	(void)tc;
+	/* handle_ready -> on_demand_check_ready reads the global serviced_kq. */
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	serviced_kq = kq;
+	pending_list = NULL;
+	npending = 0;
+
+	/*
+	 * Privileged + STARTING: SVC_OP_READY is the readiness boundary, so the
+	 * unit is promoted to RUNNING here (no NOTE_CAPMODE will ever fire).  This
+	 * is exactly what allows on_demand_check_ready() to broker a waiting
+	 * client to an on-demand privileged provider.
+	 */
+	ready_run(SVC_STATE_STARTING, true, &svc, &status);
+	ATF_CHECK_EQ(0, status);
+	ATF_CHECK_EQ(SVC_STATE_RUNNING, svc.state);
+	ATF_CHECK(svc.protocol_ready);
+
+	/*
+	 * Non-privileged + STARTING: readiness is recorded but the unit stays
+	 * STARTING; capability-mode entry (supervisor NOTE_CAPMODE) is the
+	 * authoritative boundary that moves it to RUNNING.
+	 */
+	ready_run(SVC_STATE_STARTING, false, &svc, &status);
+	ATF_CHECK_EQ(0, status);
+	ATF_CHECK_EQ(SVC_STATE_STARTING, svc.state);
+	ATF_CHECK(svc.protocol_ready);
+
+	serviced_kq = -1;
+	(void)close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, provider_incarnation);
@@ -811,5 +955,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, idle_timer_fire_stops_provider);
 	ATF_TP_ADD_TC(tp, idle_note_exit_reactivatable);
 	ATF_TP_ADD_TC(tp, handle_idle_protocol);
+	ATF_TP_ADD_TC(tp, handle_ready_privileged_promotion);
 	return (atf_no_error());
 }
