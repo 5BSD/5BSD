@@ -369,6 +369,7 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 {
 	char user_env[128], home_env[PATH_MAX + 8];
 	char unit_dir[PATH_MAX], unit_dir_env[PATH_MAX + 32];
+	char libdir_path[PATH_MAX], libdir_fds_env[40];
 	char bootstrap_env[32];
 	char *env[SVC_MAX_ENV];
 	char *argv[SERVICED_MAX_ARGUMENTS + 2];
@@ -523,6 +524,29 @@ child_exec(struct svc_manifest *m, int child_channel_fd,
 	    SERVICE_UNIT_DIR_ENV, unit_dir) >= (int)sizeof(unit_dir_env))
 		_exit(126);
 	env[envc++] = unit_dir_env;
+
+	/*
+	 * If the bundle ships its own shared libraries in <unit>/lib, deliver
+	 * that directory as a descriptor via LD_LIBRARY_PATH_FDS.  rtld(1)
+	 * consults it (openat, capability-mode-safe) ahead of the hint file and
+	 * the /lib defaults, so a bundle program resolves its NEEDED libraries
+	 * -- and any dlopen(3) after cap_enter(2) -- from its own bundle rather
+	 * than the global namespace.  Opt-in by the mere presence of the
+	 * directory; a unit without a lib/ is launched exactly as before.  The
+	 * descriptor is opened here, after closefrom(2), without O_CLOEXEC so it
+	 * survives execve(2); it is a read-only directory capability.  (rtld
+	 * honors LD_LIBRARY_PATH_FDS only for trusted, non-issetugid launches.)
+	 */
+	if (!manifest_has_env(m, "LD_LIBRARY_PATH_FDS") &&
+	    snprintf(libdir_path, sizeof(libdir_path), "%s/lib", unit_dir) <
+	    (int)sizeof(libdir_path)) {
+		fd = open(libdir_path, O_DIRECTORY | O_RDONLY);
+		if (fd >= 0) {
+			(void)snprintf(libdir_fds_env, sizeof(libdir_fds_env),
+			    "LD_LIBRARY_PATH_FDS=%d", fd);
+			env[envc++] = libdir_fds_env;
+		}
+	}
 
 	if (m->user[0] != '\0' && !manifest_has_env(m, "USER")) {
 		(void)snprintf(user_env, sizeof(user_env),
