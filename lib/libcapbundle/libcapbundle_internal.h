@@ -39,6 +39,15 @@ struct capbundle_service {
 	bool	activation_boot;
 	bool	is_helper;		/* private helper: launched on request only */
 	/*
+	 * USER-domain visibility (§22).  When set, this unit's provides names are
+	 * resolvable through a narrowed USER-domain lookup channel; when clear
+	 * (the default) the names are SYSTEM-domain only and a user session never
+	 * discovers them.  Set from the manifest `resolvable_by = ["user"]` list.
+	 * This replaces serviced's former hardcoded user-allow-list: which system
+	 * providers a user session may reach is now a per-provider manifest policy.
+	 */
+	bool	user_resolvable;
+	/*
 	 * Activation sources (Phase 5).  timer_interval_sec is the monotonic
 	 * period in seconds (0 = none); activation_path is an absolute path
 	 * watched via kqueue vnode events (empty = none).  Both name this unit

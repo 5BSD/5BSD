@@ -1,5 +1,9 @@
 activation { boot = true; ipc = ["system.Log"]; }
 program = "Log";
+# Logging is a user-facing service: a login session must reach system.Log to
+# emit records, so its name is resolvable through narrowed USER-domain lookup
+# channels (formerly serviced's hardcoded user-allow-list).
+resolvable_by = ["user"];
 restart = "on-failure";
 user = "capability";
 

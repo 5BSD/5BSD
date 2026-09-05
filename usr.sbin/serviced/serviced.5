@@ -202,6 +202,28 @@ The
 and
 .Dq user
 classes behave as today until principal-scoped authorization arrives.
+.Pp
+.Va resolvable_by
+is an optional list of the domain kinds that may resolve this unit's
+.Va ipc
+names, each
+.Dq user
+or
+.Dq system .
+.Dq system
+is always implied; listing
+.Dq user
+opts the unit's names into resolution through a narrowed USER-domain lookup
+channel, as held by a login or
+.Xr ssh 1
+session.
+When the key is absent the names are SYSTEM-only: a user session never
+discovers them and a lookup returns
+.Er ENOENT ,
+indistinguishable from an unregistered name.
+This per-provider policy replaces the former allow-list built into
+.Nm ;
+a value is also accepted as a bare string.
 .Va stop_timeout
 is 1 through 300 seconds and
 .Va max_failures

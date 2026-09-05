@@ -289,6 +289,13 @@ capbundle_svc_management_class(const struct capbundle_service *s)
 	return (s != NULL ? s->management : CAPBUNDLE_MGMT_SYSTEM);
 }
 
+bool
+capbundle_svc_user_resolvable(const struct capbundle_service *s)
+{
+
+	return (s != NULL && s->user_resolvable);
+}
+
 unsigned
 capbundle_svc_timer_interval(const struct capbundle_service *s)
 {
@@ -404,6 +411,7 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	m->restart = s->restart;
 	m->management = s->management;
 	m->is_helper = s->is_helper;
+	m->user_resolvable = s->user_resolvable;
 	/*
 	 * A private helper's synthetic bundle-local provider name
 	 * ("helper.<bundle-id>.<unit>") is injected into provides[] at parse time

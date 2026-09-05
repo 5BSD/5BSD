@@ -1,5 +1,9 @@
 activation { boot = true; ipc = ["system.Notify"]; }
 program = "Notify";
+# Notifications are user-facing: a login session must reach system.Notify, so
+# its name is resolvable through narrowed USER-domain lookup channels (formerly
+# serviced's hardcoded user-allow-list).
+resolvable_by = ["user"];
 restart = "on-failure";
 user = "capability";
 

@@ -44,8 +44,9 @@ struct serviced_state sd;
 int serviced_kq = -1;
 
 /*
- * A system-only provider name (never on the user allow-list) and the two
- * allow-listed names.  Keep these in sync with user_system_allow[] in domain.c.
+ * A system-only provider name (no USER visibility) and the two names the base
+ * system marks resolvable_by = ["user"].  The fixture stubs below model the
+ * bundle-registry visibility that svc_name_user_resolvable() consults.
  */
 #define	SYSTEM_ONLY_NAME	"system.Filesystem"
 #define	ALLOW_LOG_NAME		"system.Log"
@@ -129,6 +130,56 @@ cancel_idle_timer(struct svc_runtime *svc, int kq)
 
 	(void)svc;
 	(void)kq;
+}
+
+/*
+ * Bundle-registry / manifest fixture for svc_name_user_resolvable() (domain.c).
+ * USER-domain resolution now consults each provider's manifest visibility
+ * (resolvable_by = ["user"]) rather than a list baked into serviced; model that
+ * here without a live bundle registry.  system.Log and system.Notify are the
+ * base system's user-visible names; every other name is SYSTEM-only.  The
+ * lookup->get->service->user_resolvable call chain is synchronous and
+ * single-threaded, so a static carries the decision across it.
+ */
+static bool fixture_user_resolvable;
+
+int
+bundle_registry_lookup(const char *name, unsigned *bundle_idx,
+    unsigned *service_idx)
+{
+
+	fixture_user_resolvable = (strcmp(name, ALLOW_LOG_NAME) == 0 ||
+	    strcmp(name, ALLOW_NOTIFY_NAME) == 0);
+	*bundle_idx = 0;
+	*service_idx = 0;
+	return (0);	/* all names are "known"; visibility decides the outcome */
+}
+
+struct capbundle *
+bundle_registry_get(unsigned idx)
+{
+	static int token;
+
+	(void)idx;
+	return ((struct capbundle *)&token);
+}
+
+struct capbundle_service *
+capbundle_service(const struct capbundle *b, unsigned i)
+{
+	static int token;
+
+	(void)b;
+	(void)i;
+	return ((struct capbundle_service *)&token);
+}
+
+bool
+capbundle_svc_user_resolvable(const struct capbundle_service *s)
+{
+
+	(void)s;
+	return (fixture_user_resolvable);
 }
 
 /*

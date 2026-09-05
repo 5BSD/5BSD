@@ -70,6 +70,7 @@ unsigned	 capbundle_svc_nprovides(const struct capbundle_service *s);
  * NULL service, matching the absent-key default.
  */
 int		 capbundle_svc_management_class(const struct capbundle_service *s);
+bool		 capbundle_svc_user_resolvable(const struct capbundle_service *s);
 /*
  * Activation sources (Phase 5).  timer interval is a monotonic period in
  * seconds (0 = no timer source); activation path is an absolute path watched

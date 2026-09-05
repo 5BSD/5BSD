@@ -381,6 +381,81 @@ ATF_TC_BODY(socket_only_is_complete_activation, tc)
 	ATF_CHECK_EQ(1U, svc.nactivation_sockets);
 }
 
+/*
+ * resolvable_by (§22): USER-domain visibility of a unit's provides names.
+ */
+ATF_TC_WITHOUT_HEAD(resolvable_by_absent_defaults_system_only);
+ATF_TC_BODY(resolvable_by_absent_defaults_system_only, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* No resolvable_by key: SYSTEM-only, the least-privilege default. */
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK(!svc.user_resolvable);
+}
+
+ATF_TC_WITHOUT_HEAD(resolvable_by_user_opts_in);
+ATF_TC_BODY(resolvable_by_user_opts_in, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "resolvable_by = [\"user\"];\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK(svc.user_resolvable);
+}
+
+ATF_TC_WITHOUT_HEAD(resolvable_by_system_only_stays_system);
+ATF_TC_BODY(resolvable_by_system_only_stays_system, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* "system" is implicit; listing only it does not grant user visibility. */
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "resolvable_by = [\"system\"];\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK(!svc.user_resolvable);
+}
+
+ATF_TC_WITHOUT_HEAD(resolvable_by_bare_string_accepted);
+ATF_TC_BODY(resolvable_by_bare_string_accepted, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* A bare string is accepted as a one-element list. */
+	ATF_REQUIRE_EQ_MSG(0, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "resolvable_by = \"user\";\n", &svc, err, sizeof(err)),
+	    "unexpected error: %s", err);
+	ATF_CHECK(svc.user_resolvable);
+}
+
+ATF_TC_WITHOUT_HEAD(resolvable_by_unknown_value_rejected);
+ATF_TC_BODY(resolvable_by_unknown_value_rejected, tc)
+{
+	struct capbundle_service svc;
+	char err[256];
+
+	/* Fail closed on an unrecognized domain kind. */
+	ATF_CHECK_EQ(-1, parse_unit(
+	    "activation { boot = true; ipc = [\"system.Thing\"]; }\n"
+	    "program = \"Thing\";\n"
+	    "resolvable_by = [\"admin\"];\n", &svc, err, sizeof(err)));
+	ATF_CHECK(strstr(err, "resolvable_by") != NULL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -407,6 +482,11 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, socket_tcp_port_zero_rejected);
 	ATF_TP_ADD_TC(tp, socket_unix_with_port_rejected);
 	ATF_TP_ADD_TC(tp, socket_only_is_complete_activation);
+	ATF_TP_ADD_TC(tp, resolvable_by_absent_defaults_system_only);
+	ATF_TP_ADD_TC(tp, resolvable_by_user_opts_in);
+	ATF_TP_ADD_TC(tp, resolvable_by_system_only_stays_system);
+	ATF_TP_ADD_TC(tp, resolvable_by_bare_string_accepted);
+	ATF_TP_ADD_TC(tp, resolvable_by_unknown_value_rejected);
 
 	return (atf_no_error());
 }

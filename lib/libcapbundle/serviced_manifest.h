@@ -156,6 +156,15 @@ struct svc_manifest {
 	 */
 	bool		is_helper;
 
+	/*
+	 * USER-domain visibility (§22).  When set, this unit's provides names are
+	 * resolvable through a narrowed USER-domain lookup channel; when clear (the
+	 * default) they are SYSTEM-domain only and a user session never discovers
+	 * them.  Set from the manifest `resolvable_by = ["user"]`.  This is the
+	 * per-provider replacement for serviced's former hardcoded user-allow-list.
+	 */
+	bool		user_resolvable;
+
 	/* Capabilities to delegate */
 	uint32_t	cap_system;	/* SYS_GATE_* bitmask */
 

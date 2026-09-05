@@ -8,9 +8,10 @@
  * A domain is a scope over the reverse-DNS naming layer: it selects which
  * registered names a lookup channel may resolve.  Domains only ever NARROW.
  * The system domain (the default every serviced-launched unit holds) resolves
- * every registered name; a user domain resolves only an explicit allow-list of
- * system names plus (in future) user-scoped services, and reports every other
- * name as ENOENT — indistinguishable from an unregistered name.
+ * every registered name; a user domain resolves only names whose provider
+ * opted into user visibility (manifest resolvable_by = ["user"]) plus (in
+ * future) user-scoped services, and reports every other name as ENOENT —
+ * indistinguishable from an unregistered name.
  *
  * This file also owns the serviced-held end of minted user-domain lookup
  * channels.  SVC_OP_MINT_DOMAIN hands the caller a narrowed channel; serviced
@@ -34,23 +35,43 @@
 #include <syslog.h>
 #include <unistd.h>
 
+#include <libcapbundle.h>
+
 #include "serviced.h"
 #include "fd_budget.h"
 #include "serviced_svc_proto.h"
 
 /*
- * USER-domain system allow-list.
+ * Whether a name's provider opts into USER-domain visibility.
  *
- * The small, explicit set of system reverse-DNS names a user session may
- * resolve.  A privileged system-only provider (storage broker, module
- * management, identity minting, ...) is deliberately absent: a user domain
- * never sees it.  Extend this set consciously — every entry widens what an
- * unprivileged session can discover.
+ * The set of system names a user session may resolve is no longer a list baked
+ * into serviced: it is a per-provider manifest policy.  A unit declares
+ * `resolvable_by = ["user"]` to expose its provides names to narrowed
+ * USER-domain lookup channels; every other name stays SYSTEM-only and a user
+ * session never discovers it (reported as ENOENT, indistinguishable from an
+ * unregistered name).
+ *
+ * The decision is read from the bundle registry, which indexes every provides
+ * name to its unit manifest whether or not the provider is currently running —
+ * so this answers correctly on both the resolve path (provider up) and the
+ * on-demand path (provider still stopped).  An unknown name is not
+ * user-resolvable.
  */
-static const char *const user_system_allow[] = {
-	"system.Log",		/* logging */
-	"system.Notify",	/* notifications */
-};
+static bool
+svc_name_user_resolvable(const char *name)
+{
+	unsigned bi, si;
+	struct capbundle *b;
+	const struct capbundle_service *s;
+
+	if (name == NULL || bundle_registry_lookup(name, &bi, &si) != 0)
+		return (false);
+	b = bundle_registry_get(bi);
+	if (b == NULL)
+		return (false);
+	s = capbundle_service(b, si);
+	return (capbundle_svc_user_resolvable(s));
+}
 
 /*
  * The serviced-held ends of minted user-domain lookup channels.  Each entry is
@@ -71,22 +92,18 @@ static struct svc_lookup_channel *lookup_channels;
  * Decide whether a domain may resolve a name.  Checked before the registry is
  * consulted, so an out-of-scope name is reported exactly as an unregistered
  * one.  A NULL or SYSTEM domain resolves everything (the default authority);
- * a USER domain resolves only its allow-list (user-scoped services do not yet
- * exist).  Domains only narrow, so this only ever removes names.
+ * a USER domain resolves only names whose provider opted into user visibility
+ * (user-scoped services do not yet exist).  Domains only narrow, so this only
+ * ever removes names.
  */
 bool
 svc_domain_resolves(const struct svc_domain *domain, const char *name)
 {
-	size_t i;
 
 	if (domain == NULL || domain->kind == SVC_DOMAIN_SYSTEM)
 		return (true);
-	/* SVC_DOMAIN_USER: allow-listed system names only. */
-	for (i = 0; i < nitems(user_system_allow); i++) {
-		if (strcmp(user_system_allow[i], name) == 0)
-			return (true);
-	}
-	return (false);
+	/* SVC_DOMAIN_USER: only names whose provider opts into user visibility. */
+	return (svc_name_user_resolvable(name));
 }
 
 /*
@@ -121,7 +138,7 @@ name_is_control(const char *name)
  * registered domain is `name_domain`.  This is the structural separation: a
  * control name resolves ONLY through a CONTROL channel; a CONTROL channel
  * resolves ONLY control names; SYSTEM/USER behave as before for non-control
- * names (SYSTEM resolves all, USER by allow-list).
+ * names (SYSTEM resolves all, USER by per-provider manifest visibility).
  */
 bool
 svc_domain_permits(const struct svc_domain *chan,
@@ -463,7 +480,7 @@ out:
  * These properties let the boot/login path install it as a session leader's
  * inherited lookup channel so every descendant shares the same domain.  A
  * SYSTEM channel resolves every registered name (the channel serviced installs
- * before running /etc/rc); a USER channel resolves only the allow-list.
+ * before running /etc/rc); a USER channel resolves only user-visible names.
  * Returns 0 on success, -1 with errno set on failure.
  */
 static int

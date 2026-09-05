@@ -406,7 +406,8 @@ naming_lookup(const char *name, struct svc_runtime *requester,
 		 * out of scope and must NOT trigger a launch -- otherwise a plain
 		 * SYSTEM channel could force-launch a control provider it can
 		 * never reach (an existence/side-effect leak).  Within the service
-		 * plane, the USER allow-list still gates on-demand as before.
+		 * plane, USER visibility (manifest resolvable_by) still gates
+		 * on-demand as before.
 		 */
 		{
 			bool ctrl_name = name_is_control(name);

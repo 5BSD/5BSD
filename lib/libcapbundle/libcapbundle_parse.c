@@ -667,7 +667,8 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	    "program", "activation",
 	    "restart", "management", "capabilities", "user", "group",
 	    "stop_timeout", "max_failures", "arguments", "environment",
-	    "protect", "limits", "umask", "band", "privileged" };
+	    "protect", "limits", "umask", "band", "privileged",
+	    "resolvable_by" };
 	static const char *const activationkeys[] = { "boot", "ipc", "timer",
 	    "path", "socket", "schedule", "persistent", "queue_directory",
 	    "on_mount", "helper" };
@@ -720,6 +721,39 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		snprintf(errbuf, errlen,
 		    "management must be \"core\", \"system\", or \"user\"");
 		return (-1);
+	}
+	/*
+	 * resolvable_by — the domain kinds that may resolve this unit's provides
+	 * names.  An array of "user"/"system" strings (a bare string is also
+	 * accepted).  "system" is always implied; listing "user" opts the unit's
+	 * names into USER-domain visibility.  Absent = SYSTEM-only (the default).
+	 */
+	v = ucl_object_lookup(root, "resolvable_by");
+	if (v != NULL) {
+		const ucl_object_t *rv;
+		ucl_object_iter_t rit = NULL;
+
+		if (ucl_object_type(v) != UCL_ARRAY &&
+		    ucl_object_type(v) != UCL_STRING) {
+			snprintf(errbuf, errlen,
+			    "resolvable_by must be a string or an array of strings");
+			return (-1);
+		}
+		while ((rv = ucl_iterate_object(v, &rit, true)) != NULL) {
+			const char *s;
+
+			if (ucl_object_type(rv) != UCL_STRING) {
+				snprintf(errbuf, errlen,
+				    "resolvable_by entries must be strings");
+				return (-1);
+			}
+			s = ucl_object_tostring(rv);
+			if (strcmp(s, "user") != 0 && strcmp(s, "system") != 0) {
+				snprintf(errbuf, errlen, "resolvable_by entry must be "
+				    "\"user\" or \"system\", not \"%s\"", s);
+				return (-1);
+			}
+		}
 	}
 	v = ucl_object_lookup(root, "stop_timeout");
 	if (v != NULL && (ucl_object_type(v) != UCL_INT ||
@@ -1751,6 +1785,25 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 		const ucl_object_t *pv = ucl_object_lookup(root, "privileged");
 
 		svc->privileged = pv != NULL && ucl_object_toboolean(pv);
+	}
+
+	/*
+	 * USER-domain visibility: resolvable_by = ["user"] opts this unit's
+	 * provides names into USER-domain lookup.  Absent (or "system" only) keeps
+	 * the SYSTEM-only default.  Values are validated in validate_unit_schema().
+	 */
+	svc->user_resolvable = false;
+	{
+		const ucl_object_t *rb = ucl_object_lookup(root, "resolvable_by");
+		const ucl_object_t *rv;
+		ucl_object_iter_t rit = NULL;
+
+		while (rb != NULL &&
+		    (rv = ucl_iterate_object(rb, &rit, true)) != NULL) {
+			if (ucl_object_type(rv) == UCL_STRING &&
+			    strcmp(ucl_object_tostring(rv), "user") == 0)
+				svc->user_resolvable = true;
+		}
 	}
 
 	/* Management class (§5) */
