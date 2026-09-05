@@ -32,6 +32,7 @@
 #include <stdio.h>
 #include <syslog.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <capability.h>
@@ -1411,6 +1412,27 @@ service_provider_protect(struct service_provider *provider, uint32_t flags)
 	return (service_worker_protect(flags));
 }
 
+/*
+ * Capability-mode pre-flight.  Several libc facilities open files by path on
+ * first use, which fails (ECAPMODE) once cap_enter(2) has closed the global
+ * namespace: the timezone database (localtime(3), used for any local
+ * timestamp) and the locale / NLS message catalog (strerror(3) and %m).  Prime
+ * them here, immediately before entering capability mode, so every provider
+ * gets a warm cache and its later timestamps and error strings need no path
+ * open.  pdfork(2) workers inherit the caches from the parent's memory.  This
+ * is best-effort: a facility that still cannot be primed simply degrades (UTC
+ * timestamp, built-in English error string), never fails the caller.
+ */
+static void
+service_capmode_preflight(void)
+{
+	time_t epoch = 0;
+
+	tzset();
+	(void)localtime(&epoch);
+	(void)strerror(0);
+}
+
 int
 service_enter_capability_mode(struct service_context *context)
 {
@@ -1423,8 +1445,11 @@ service_enter_capability_mode(struct service_context *context)
 	}
 	if (service_start_dispatch() == -1 || cap_getmode(&mode) == -1)
 		return (-1);
-	if (mode == 0 && cap_enter() == -1)
-		return (-1);
+	if (mode == 0) {
+		service_capmode_preflight();
+		if (cap_enter() == -1)
+			return (-1);
+	}
 	context->entered = true;
 	return (0);
 }
@@ -2777,6 +2802,14 @@ service_worker_protect(uint32_t flags)
 {
 	struct cp_request req;
 	size_t reply_length, reply_nfds;
+
+	/*
+	 * A worker sandboxes itself here and then cap_enter(2)s.  If it was
+	 * forked before the main process primed the capmode caches (e.g. a
+	 * pre-forked worker pool), it would not have inherited them, so prime
+	 * its own before the sandbox closes.  Idempotent and cheap.
+	 */
+	service_capmode_preflight();
 
 	if (capprotect_fd < 0) {
 		errno = ENOTSUP;
