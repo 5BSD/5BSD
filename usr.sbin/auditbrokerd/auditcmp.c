@@ -482,6 +482,20 @@ main(void)
 	int error, fd, kq, status;
 
 	openlog("auditbrokerd", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
+	/*
+	 * Prime the timezone before entering capability mode.  audit_submit(3)
+	 * timestamps each record via localtime(3), which opens /etc/localtime by
+	 * path — denied (ECAPMODE) once sandboxed, so every record failed to
+	 * commit.  tzset(3) plus a warm-up localtime(3) caches the zone in memory;
+	 * workers pdfork(2)ed later inherit it, and audit(2) itself is already
+	 * capability-mode enabled, so the record then commits with no path open.
+	 */
+	{
+		time_t now_t = 0;
+
+		tzset();
+		(void)localtime(&now_t);
+	}
 	workers = NULL;
 	nworkers = 0;
 	rate_table = calloc(AUDITCMP_RATE_LABELS, sizeof(*rate_table));
