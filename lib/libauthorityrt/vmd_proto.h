@@ -43,7 +43,7 @@
 
 #include <stdint.h>
 
-#define	VMD_SERVICE_NAME	"system.VM"
+#define	VMD_SERVICE_NAME	"system.Waspnest"
 
 #define	VMD_OP_VSOCK_BIND	1	/* bind+listen a vsock endpoint for me */
 #define	VMD_OP_VSOCK_CONNECT	2	/* dial a peer's advertised (cid,port) */

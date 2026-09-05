@@ -21,7 +21,7 @@
 #include <string.h>
 
 #include "vmd_proto.h"
-#include "vmd_test.h"
+#include "waspnest_test.h"
 
 /*
  * A window base must sit on a VMD_PORTS_PER_LABEL boundary above VMD_PORT_BASE

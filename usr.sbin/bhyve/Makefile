@@ -3,19 +3,13 @@
 
 .include <src.opts.mk>
 
-# The hypervisor's primary name is waspnest; bhyve is kept as a compatibility
-# alias.  PROG stays "bhyve" so the build/source tree, DTrace object names, and
-# upstream-derived sources are untouched (preserving mergeability); PROGNAME
-# installs the binary as ${BINDIR}/waspnest and the SYMLINKS line below installs
-# ${BINDIR}/bhyve -> waspnest for compatibility.
+# bhyve is the underlying hypervisor engine and keeps its name.  The "waspnest"
+# name belongs to the VM capability daemon (system.Waspnest, usr.sbin/waspnest),
+# not to this engine binary.
 PROG=	bhyve
-PROGNAME=	waspnest
 PACKAGE=	bhyve
 
 MAN=	bhyve.8 bhyve_config.5
-
-SYMLINKS+=	waspnest ${BINDIR}/bhyve
-MLINKS+=	bhyve.8 waspnest.8
 
 BHYVE_SYSDIR?=${SRCTOP}
 

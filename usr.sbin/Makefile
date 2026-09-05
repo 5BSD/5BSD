@@ -120,7 +120,7 @@ SUBDIR=	adduser \
 	valectl \
 	vigr \
 	vipw \
-	vmd \
+	waspnest \
 	wake \
 	warden \
 	watch \

@@ -52,7 +52,7 @@
 
 #include "vmd_proto.h"
 #ifdef VMD_TESTING
-#include "vmd_test.h"
+#include "waspnest_test.h"
 #endif
 
 /* The default listen(2) backlog when the request leaves it unspecified. */

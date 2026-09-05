@@ -32,7 +32,7 @@
 #include <libservice.h>
 
 #include "vmd_proto.h"
-#include "vmd_test.h"
+#include "waspnest_test.h"
 
 #define	TEST_LABEL	"org.test.vm.provider"
 
