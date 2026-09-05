@@ -16,7 +16,6 @@
 
 #include <libcasper.h>
 #include <casper/cap_net.h>
-#include <casper/cap_syslog.h>
 #include <netinet/in.h>
 
 #include <errno.h>
@@ -39,6 +38,7 @@
 #include <libservice.h>
 #include <networkcmp.h>
 #include <networkcmp_server.h>
+#include <logcmp.h>
 
 #include "localnetwork_probes.h"
 #include "config.h"
@@ -84,7 +84,7 @@ struct resolver_job {
 struct session_state {
 	cap_channel_t		*capnet;
 	cap_channel_t		*resolver_capnet;
-	cap_channel_t		*logchan;	/* cap_syslog(3), or NULL */
+	struct net_logger	*logchan;	/* system.Log logger, or NULL */
 	struct auditcmp_client	*audit;
 	/* Immutable session policy; set once at session creation. */
 	struct networkcmp_policy policy;
@@ -298,40 +298,110 @@ broker_connect(struct session_state *state, uint16_t opcode,
 }
 
 /*
- * Emit an operator log record.  After cap_enter(2) a plain syslog(3) cannot
- * reach /var/run/log and is silently discarded, so every post-capability-mode
- * message goes through a cap_syslog(3) channel opened from Casper before the
- * daemon (and each worker) sandboxes itself.  A NULL channel — the test build,
- * or a pre-capability-mode caller — falls back to syslog(3), which still works
- * there.
+ * Operator logging goes through the plane's own log capability (system.Log),
+ * acquired lazily over the lookup channel — never a per-process Casper helper.
+ * A NULL logger (the test build, or before the capability has been acquired)
+ * falls back to syslog(3).  Held here so the same struct threads to workers.
  */
+struct net_logger {
+	struct logcmp_client	*client;
+	struct logcmp_logger	*logger;
+};
+
+#ifndef NETWORKCMP_TESTING
+static uint32_t
+net_severity(int pri)
+{
+
+	switch (pri) {
+	case LOG_EMERG:
+	case LOG_ALERT:
+	case LOG_CRIT:
+		return (LOGCMP_SEVERITY_FATAL);
+	case LOG_ERR:
+		return (LOGCMP_SEVERITY_ERROR);
+	case LOG_WARNING:
+		return (LOGCMP_SEVERITY_WARN);
+	case LOG_DEBUG:
+		return (LOGCMP_SEVERITY_DEBUG);
+	default:
+		return (LOGCMP_SEVERITY_INFO);
+	}
+}
+
+/*
+ * logcmp_emit(3) takes a finished message string, so expand the one syslog(3)
+ * conversion the callers rely on — %m — into strerror(errno) ourselves.  Other
+ * conversions are left for vsnprintf.  strerror text never contains '%'.
+ */
+static void
+net_expand_m(char *out, size_t outlen, const char *fmt, int err)
+{
+	const char *s, *m;
+	size_t o;
+
+	for (s = fmt, o = 0; *s != '\0' && o + 1 < outlen; ) {
+		if (s[0] == '%' && s[1] == 'm') {
+			m = strerror(err);
+			while (*m != '\0' && o + 1 < outlen)
+				out[o++] = *m++;
+			s += 2;
+		} else {
+			out[o++] = *s++;
+		}
+	}
+	out[o] = '\0';
+}
+#endif
+
 static void __printflike(3, 4)
-net_log(cap_channel_t *logchan, int pri, const char *fmt, ...)
+net_log(struct net_logger *nl, int pri, const char *fmt, ...)
 {
 	va_list ap;
+	int saved;
 
-	va_start(ap, fmt);
-#ifdef NETWORKCMP_TESTING
-	(void)logchan;
-	vsyslog(pri, fmt, ap);
+	saved = errno;
+#ifndef NETWORKCMP_TESTING
+	if (nl != NULL && nl->logger != NULL) {
+		struct logcmp_emit_options opt;
+		char expfmt[256], msg[512];
+
+		net_expand_m(expfmt, sizeof(expfmt), fmt, saved);
+		va_start(ap, fmt);
+		(void)vsnprintf(msg, sizeof(msg), expfmt, ap);
+		va_end(ap);
+		memset(&opt, 0, sizeof(opt));
+		opt.size = sizeof(opt);
+		opt.severity = net_severity(pri);
+		opt.kind = LOGCMP_KIND_LOG;
+		opt.message_privacy = LOGCMP_PRIVACY_PUBLIC;
+		opt.message = msg;
+		if (logcmp_emit(nl->logger, &opt) == 0) {
+			(void)logcmp_flush(nl->client);
+			errno = saved;
+			return;
+		}
+		/* Fail soft: fall through to syslog(3) if the emit failed. */
+		errno = saved;
+	}
 #else
-	if (logchan != NULL)
-		cap_vsyslog(logchan, pri, fmt, ap);
-	else
-		vsyslog(pri, fmt, ap);
+	(void)nl;
 #endif
+	va_start(ap, fmt);
+	vsyslog(pri, fmt, ap);
 	va_end(ap);
+	errno = saved;
 }
 
 static void
-audit_policy(struct auditcmp_client *audit, cap_channel_t *logchan,
+audit_policy(struct auditcmp_client *audit, struct net_logger *nl,
     const char *label, const char *operation, int error)
 {
 
 	if (audit == NULL)
 		return;
 	if (auditcmp_submit(audit, label, operation, error) == -1)
-		net_log(logchan, LOG_WARNING, "audit %s for %s failed: %m",
+		net_log(nl, LOG_WARNING, "audit %s for %s failed: %m",
 		    operation, label);
 }
 
@@ -819,7 +889,7 @@ handle_request(struct channel *channel __unused,
 
 static int
 serve_session(int fd, cap_channel_t *capnet, cap_channel_t *resolver_capnet,
-    cap_channel_t *logchan, const struct networkcmp_policy *policy,
+    struct net_logger *logchan, const struct networkcmp_policy *policy,
     struct auditcmp_client *audit, const char *label,
     const int resolver_pipe[2], uint32_t resolver_timeout_ms
 #ifdef NETWORKCMP_TESTING
@@ -1014,27 +1084,51 @@ networkcmp_test_serve_blocked_resolver_timeout(int fd, cap_channel_t *capnet,
 
 #ifndef NETWORKCMP_TESTING
 /*
- * The main process's cap_syslog(3) channel, opened from Casper before the
- * provider enters capability mode.  It carries the accept-loop and session
- * records that a post-cap_enter(2) syslog(3) would otherwise drop.  Workers do
- * not inherit it (it is CLOFORK-locked with the factory channel); each worker
- * receives its own via start_session().
+ * The main process's system.Log logger, acquired lazily on first use over the
+ * lookup channel (which the provider holds across capability mode) — never a
+ * per-process Casper helper.  Fail-soft: if logd is unreachable the record
+ * falls back to syslog(3) and the next attempt retries the acquisition.
+ * Workers acquire their own logger before dropping inherited authority.
  */
-static cap_channel_t *g_syslog;
+static struct net_logger g_log;
+
+static struct net_logger *
+main_logger(void)
+{
+
+	if (g_log.logger != NULL)
+		return (&g_log);
+	if (g_log.client == NULL && logcmp_client_open(&g_log.client) == -1)
+		return (NULL);
+	if (logcmp_logger_create(g_log.client, "localnetwork", "operator",
+	    &g_log.logger) == -1)
+		return (NULL);
+	return (&g_log);
+}
 
 static int
 worker(int fd, int barrier, cap_channel_t *capnet,
-    cap_channel_t *resolver_capnet, cap_channel_t *logchan,
+    cap_channel_t *resolver_capnet,
     const int resolver_pipe[2], const struct networkcmp_policy *policy,
     int audit_fd, const char *label)
 {
+	struct net_logger wlog;
 	struct auditcmp_client *audit;
 	char byte;
 	int error, result;
 
 	audit = NULL;
+	memset(&wlog, 0, sizeof(wlog));
 	if (auditcmp_client_adopt(audit_fd, &audit) == -1)
 		goto fail;
+	/*
+	 * Acquire the worker's system.Log logger over the lookup channel now,
+	 * BEFORE service_worker_drop_inherited_authority() closes that channel.
+	 * Fail-soft: a NULL logger just means net_log() falls back to syslog(3).
+	 */
+	if (logcmp_client_open(&wlog.client) == 0)
+		(void)logcmp_logger_create(wlog.client, "localnetwork",
+		    "worker", &wlog.logger);
 	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOEXEC) == -1)
@@ -1050,14 +1144,14 @@ worker(int fd, int barrier, cap_channel_t *capnet,
 	}
 	close(barrier);
 	barrier = -1;
-	result = serve_session(fd, capnet, resolver_capnet, logchan, policy,
+	result = serve_session(fd, capnet, resolver_capnet, &wlog, policy,
 	    audit, label, resolver_pipe, NETWORKCMP_RESOLVER_TIMEOUT_MS);
 out:
 	if (barrier >= 0)
 		close(barrier);
 	cap_close(capnet);
-	if (logchan != NULL)
-		cap_close(logchan);
+	if (wlog.client != NULL)
+		logcmp_client_close(wlog.client);
 	/* resolver_capnet and an active resolver job die atomically with _exit(). */
 	auditcmp_client_close(audit);
 	return (result);
@@ -1073,7 +1167,7 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
     service_rights_t rights, const struct networkcmp_config *config)
 {
 	struct networkcmp_policy policy;
-	cap_channel_t *capnet, *resolver_capnet, *worker_log;
+	cap_channel_t *capnet, *resolver_capnet;
 	cap_net_limit_t *limit;
 	const char *policy_source;
 	int families[3];
@@ -1086,7 +1180,6 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 	audit_fd = -1;
 	capnet = NULL;
 	resolver_capnet = NULL;
-	worker_log = NULL;
 	resolver_pipe[0] = resolver_pipe[1] = -1;
 	if (harden_worker_fd(fd) == -1) {
 		error = errno;
@@ -1110,7 +1203,7 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 		error = EACCES;
 		goto reject;
 	}
-	net_log(g_syslog, LOG_INFO, "session for %s: %s policy", peer_label,
+	net_log(main_logger(), LOG_INFO, "session for %s: %s policy", peer_label,
 	    policy_source);
 	/*
 	 * AF_UNSPEC must be admitted or cap_net(3) rejects every family-
@@ -1159,23 +1252,6 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 		error = errno;
 		goto reject;
 	}
-	/*
-	 * The worker sandboxes itself with cap_enter(2), after which syslog(3)
-	 * cannot reach the log socket.  Hand it a cap_syslog(3) channel so its
-	 * audit-submission failures remain visible.  CLOFORK_ONCE lets it cross
-	 * exactly the worker pdfork; the parent closes its copy below.
-	 */
-	worker_log = cap_service_open(casper, "system.syslog");
-	if (worker_log == NULL) {
-		error = errno;
-		goto reject;
-	}
-	cap_openlog(worker_log, "localnetwork", LOG_PID | LOG_NDELAY,
-	    LOG_DAEMON);
-	if (harden_worker_channel(worker_log) == -1) {
-		error = errno;
-		goto reject;
-	}
 	if (auditcmp_client_prepare(&audit_fd) == -1) {
 		error = errno;
 		goto reject;
@@ -1209,7 +1285,7 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 	if (pid == 0) {
 		close(syncfd[0]);
 		cap_close(casper);
-		_exit(worker(fd, syncfd[1], capnet, resolver_capnet, worker_log,
+		_exit(worker(fd, syncfd[1], capnet, resolver_capnet,
 		    resolver_pipe, &policy, audit_fd, peer_label));
 	}
 	close(audit_fd);
@@ -1218,8 +1294,6 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 	capnet = NULL;
 	cap_close(resolver_capnet);
 	resolver_capnet = NULL;
-	cap_close(worker_log);
-	worker_log = NULL;
 	close(resolver_pipe[0]);
 	close(resolver_pipe[1]);
 	resolver_pipe[0] = resolver_pipe[1] = -1;
@@ -1245,8 +1319,6 @@ reject:
 		close(resolver_pipe[0]);
 	if (resolver_pipe[1] >= 0)
 		close(resolver_pipe[1]);
-	if (worker_log != NULL)
-		cap_close(worker_log);
 	if (resolver_capnet != NULL)
 		cap_close(resolver_capnet);
 	if (capnet != NULL)
@@ -1309,16 +1381,10 @@ main(void)
 	if (harden_factory_channel(casper) == -1)
 		goto fail;
 	/*
-	 * Operator logging must survive service_provider_enter_capability_mode()
-	 * below, so route it through Casper.  Locked against fork like the
-	 * factory channel — the main process alone uses it.
+	 * Operator logging goes through system.Log (main_logger()), acquired
+	 * lazily over the lookup channel after the provider is exposed — no
+	 * Casper log helper.  Casper here serves only cap_net (DNS/connect).
 	 */
-	g_syslog = cap_service_open(casper, "system.syslog");
-	if (g_syslog == NULL)
-		goto fail;
-	cap_openlog(g_syslog, "localnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	if (harden_factory_channel(g_syslog) == -1)
-		goto fail;
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
@@ -1337,8 +1403,8 @@ main(void)
 				int status;
 
 				status = service_provider_quiesce_complete(provider, 0);
-				if (g_syslog != NULL)
-					cap_close(g_syslog);
+				if (g_log.client != NULL)
+					logcmp_client_close(g_log.client);
 				cap_close(casper);
 				closelog();
 				return (status == 0 ? 0 : 1);
@@ -1350,14 +1416,14 @@ main(void)
 		}
 		if (start_session(fd, casper, identity.client_label,
 		    identity.rights, &config) == -1)
-			net_log(g_syslog, LOG_WARNING,
+			net_log(main_logger(), LOG_WARNING,
 			    "session for %s rejected: %m",
 			    identity.client_label);
 		close(fd);
 	}
 
 fail:
-	net_log(g_syslog, LOG_ERR, "initialization or service loop: %m");
+	net_log(main_logger(), LOG_ERR, "initialization or service loop: %m");
 	return (1);
 }
 #endif
