@@ -13,7 +13,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libnetworkcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
-LIBADD=		auditcmp cap_net casper channel networkcmp pthread service ucl
+LIBADD=		auditcmp cap_net cap_syslog casper channel networkcmp pthread service ucl
 
 DIRS+=		NETWORKCMP_CAP NETWORKCMP_CAP_UNITS NETWORKCMP_CAP_UNIT \
 		NETWORKCMP_CAP_BIN NETWORKCMP_CAP_CONFIG
