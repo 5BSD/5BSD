@@ -176,6 +176,10 @@ ATF_TC_BODY(request_shapes, tc)
 	resolve->max_results = 4;
 	resolve->flags = ~NETWORKCMP_RESOLVE_F_MASK;
 	reject(msg, wire_length);
+	/* The address-selection flags are within the mask and accepted. */
+	resolve->flags = NETWORKCMP_RESOLVE_F_ADDRCONFIG |
+	    NETWORKCMP_RESOLVE_F_V4MAPPED | NETWORKCMP_RESOLVE_F_ALL;
+	ATF_CHECK_EQ(0, networkcmp_validate_message(msg, wire_length, wire_role));
 	resolve->flags = 0;
 	resolve->host_length = NETWORKCMP_NAME_MAX + 1;
 	reject(msg, wire_length);
@@ -378,8 +382,15 @@ ATF_TC_BODY(abi, tc)
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_hello));
 	ATF_CHECK_EQ(16, sizeof(struct networkcmp_hello_reply));
 	ATF_CHECK_EQ(24, sizeof(struct networkcmp_endpoint));
-	ATF_CHECK_EQ(24, sizeof(struct networkcmp_connect_request));
+	/*
+	 * connect_request grew by the connect-timeout (timeout_ms + reserved),
+	 * so it is now a distinct size from the 24-byte endpoint and
+	 * resolve_request; this pins that deliberate change against drift.
+	 */
+	ATF_CHECK_EQ(32, sizeof(struct networkcmp_connect_request));
 	ATF_CHECK_EQ(24, sizeof(struct networkcmp_resolve_request));
+	/* The resolve flag mask exposes PASSIVE..ALL (seven low bits). */
+	ATF_CHECK_EQ(0x0000007fU, NETWORKCMP_RESOLVE_F_MASK);
 	ATF_CHECK_EQ(32, sizeof(struct networkcmp_resolve_result));
 	ATF_CHECK_EQ(1, NETWORKCMP_OP_HELLO);
 	ATF_CHECK_EQ(2, NETWORKCMP_OP_RESOLVE);
@@ -474,6 +485,21 @@ ATF_TC_BODY(typed_api_arguments, tc)
 	error = networkcmp_getaddrinfo(NULL, "example.test", "443", &hints,
 	    &addresses);
 	ATF_CHECK_EQ(EAI_BADFLAGS, error);
+	ATF_CHECK_EQ(NULL, addresses);
+
+	/*
+	 * The address-selection flags are accepted, not rejected as bad flags.
+	 * With a NULL client the call cannot reach the broker, so it fails at
+	 * transport (EAI_SYSTEM) rather than EAI_BADFLAGS — which alone proves
+	 * the flags cleared the compat layer's flag gate.
+	 */
+	memset(&hints, 0, sizeof(hints));
+	hints.ai_family = AF_INET6;
+	hints.ai_flags = AI_V4MAPPED | AI_ALL | AI_ADDRCONFIG;
+	addresses = (void *)(uintptr_t)1;
+	error = networkcmp_getaddrinfo(NULL, "example.test", "443", &hints,
+	    &addresses);
+	ATF_CHECK(error != EAI_BADFLAGS);
 	ATF_CHECK_EQ(NULL, addresses);
 }
 

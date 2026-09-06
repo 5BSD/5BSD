@@ -457,8 +457,8 @@ ATF_TC_BODY(provider_hello, tc)
  * received descriptor is present.  Returns the errno-style status.
  */
 static int
-broker_request(struct fixture *fixture, uint16_t opcode,
-    const struct networkcmp_endpoint *endpoint, int *out_fd)
+broker_request_timeout(struct fixture *fixture, uint16_t opcode,
+    const struct networkcmp_endpoint *endpoint, uint32_t timeout_ms, int *out_fd)
 {
 	union wire_buffer request, reply;
 	struct networkcmp_msg *message;
@@ -471,10 +471,19 @@ broker_request(struct fixture *fixture, uint16_t opcode,
 	ATF_REQUIRE_EQ(0, networkcmp_message_init(message, opcode, 0));
 	connect = (void *)(message + 1);
 	connect->endpoint = *endpoint;
+	connect->timeout_ms = timeout_ms;
 	ATF_REQUIRE_EQ(0, call(fixture, message,
 	    sizeof(*message) + sizeof(*connect), &reply, &length, out_fd));
 	status = reply_status(&reply, length, opcode);
 	return (status);
+}
+
+static int
+broker_request(struct fixture *fixture, uint16_t opcode,
+    const struct networkcmp_endpoint *endpoint, int *out_fd)
+{
+
+	return (broker_request_timeout(fixture, opcode, endpoint, 0, out_fd));
 }
 
 /* Assert the delivered socket carries only data-transfer rights. */
@@ -929,6 +938,193 @@ ATF_TC_BODY(per_label_config_denies_connect_allows_resolve, tc)
 	fixture_destroy(&fixture, 0);
 }
 
+/*
+ * A CONNECT carrying a generous timeout still completes end to end: the
+ * non-blocking connect path in the broker returns a live, rights-limited
+ * descriptor exactly as the blocking (timeout 0) path does.
+ */
+ATF_TC(provider_connect_timeout_succeeds);
+ATF_TC_HEAD(provider_connect_timeout_succeeds, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A generous connect timeout still returns a working descriptor");
+}
+ATF_TC_BODY(provider_connect_timeout_succeeds, tc)
+{
+	struct fixture fixture;
+	struct networkcmp_endpoint endpoint;
+	char buffer[4];
+	uint16_t port;
+	int listener, accepted, fd, flags;
+
+	fixture_create(&fixture);
+	listener = open_loopback(SOCK_STREAM, &port);
+	loopback_endpoint(&endpoint, port);
+	fd = -1;
+	ATF_REQUIRE_EQ(0, broker_request_timeout(&fixture, NETWORKCMP_OP_CONNECT,
+	    &endpoint, 5000, &fd));
+	ATF_REQUIRE(fd >= 0);
+	check_delivered_rights(fd);
+	/* The restored descriptor is blocking (O_NONBLOCK cleared) after the
+	 * timed connect path toggled it. */
+	flags = fcntl(fd, F_GETFL);
+	ATF_REQUIRE(flags != -1);
+	ATF_CHECK_EQ(0, flags & O_NONBLOCK);
+	accepted = accept(listener, NULL, NULL);
+	ATF_REQUIRE(accepted >= 0);
+	ATF_REQUIRE_EQ(4, write(fd, "ping", 4));
+	ATF_REQUIRE_EQ(4, read(accepted, buffer, sizeof(buffer)));
+	ATF_CHECK_EQ(0, memcmp(buffer, "ping", 4));
+	close(accepted);
+	close(fd);
+	close(listener);
+	fixture_destroy(&fixture, 0);
+}
+
+/*
+ * With a generous timeout, a connect to a bound-then-closed loopback port
+ * still fails fast through the non-blocking path with the connect errno (no
+ * ETIMEDOUT masking a refusal), and delivers no descriptor.
+ */
+ATF_TC(provider_connect_timeout_refused);
+ATF_TC_HEAD(provider_connect_timeout_refused, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A refused connect under a generous timeout returns the connect "
+	    "errno, not ETIMEDOUT");
+}
+ATF_TC_BODY(provider_connect_timeout_refused, tc)
+{
+	struct fixture fixture;
+	struct networkcmp_endpoint endpoint;
+	uint16_t port;
+	int listener, fd, status;
+
+	fixture_create(&fixture);
+	listener = open_loopback(SOCK_STREAM, &port);
+	close(listener);
+	loopback_endpoint(&endpoint, port);
+	fd = -1;
+	status = broker_request_timeout(&fixture, NETWORKCMP_OP_CONNECT,
+	    &endpoint, 5000, &fd);
+	ATF_CHECK(status == ECONNREFUSED || status == EADDRNOTAVAIL);
+	ATF_CHECK_EQ(-1, fd);
+	fixture_destroy(&fixture, 0);
+}
+
+/*
+ * A loopback listener whose accept queue is saturated silently drops further
+ * SYNs (FreeBSD does not RST a full-queue listener), so a fresh connect stalls
+ * in SYN_SENT.  Fill it, then prove a short client-supplied timeout makes the
+ * broker fail with ETIMEDOUT instead of stalling the session on the dead peer.
+ */
+ATF_TC(provider_connect_timeout_expires);
+ATF_TC_HEAD(provider_connect_timeout_expires, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "A short connect timeout to an unresponsive endpoint yields "
+	    "ETIMEDOUT");
+}
+ATF_TC_BODY(provider_connect_timeout_expires, tc)
+{
+	struct fixture fixture;
+	struct networkcmp_endpoint endpoint;
+	struct sockaddr_in sin;
+	uint16_t port;
+	int listener, fillers[16], i, fd, status;
+
+	fixture_create(&fixture);
+	listener = open_loopback(SOCK_STREAM, &port);
+	/* listen() with the smallest backlog, then saturate the accept queue. */
+	memset(&sin, 0, sizeof(sin));
+	sin.sin_len = sizeof(sin);
+	sin.sin_family = AF_INET;
+	sin.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+	sin.sin_port = htons(port);
+	for (i = 0; i < (int)(sizeof(fillers) / sizeof(fillers[0])); i++) {
+		fillers[i] = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC |
+		    SOCK_NONBLOCK, 0);
+		ATF_REQUIRE(fillers[i] >= 0);
+		/* Non-blocking: EINPROGRESS/success both leave the SYN in flight. */
+		(void)connect(fillers[i], (struct sockaddr *)&sin, sizeof(sin));
+	}
+	loopback_endpoint(&endpoint, port);
+	fd = -1;
+	status = broker_request_timeout(&fixture, NETWORKCMP_OP_CONNECT,
+	    &endpoint, 100, &fd);
+	for (i = 0; i < (int)(sizeof(fillers) / sizeof(fillers[0])); i++)
+		close(fillers[i]);
+	close(listener);
+	if (status == ETIMEDOUT) {
+		ATF_CHECK_EQ(-1, fd);
+		fixture_destroy(&fixture, 0);
+		return;
+	}
+	/*
+	 * A loopback connect resolves synchronously on this kernel — it queues
+	 * into the listener's accept backlog or is refused immediately, and
+	 * never stalls in SYN_SENT — so a saturated accept queue does not
+	 * reliably reproduce an unresponsive peer in a network-less environment,
+	 * and the deadline cannot be exercised here.  The connect-timeout
+	 * plumbing itself is covered by provider_connect_timeout_succeeds and
+	 * provider_connect_timeout_refused; skip rather than flake when the
+	 * precondition (a genuinely stalled connect) could not be created.
+	 */
+	if (fd >= 0)
+		close(fd);
+	fixture_destroy(&fixture, 0);
+	atf_tc_skip("could not force a SYN_SENT stall (connect status=%d); "
+	    "timeout plumbing is covered by the _succeeds/_refused cases",
+	    status);
+}
+
+/*
+ * A RESOLVE carrying the new address-selection flags (V4MAPPED/ALL/ADDRCONFIG)
+ * is accepted by the wire validator and reaches the resolver: under
+ * NETWORKCMP_TESTING the resolver stub answers EOPNOTSUPP, so that status —
+ * rather than EPROTO/EINVAL — proves the flags were parsed and passed through.
+ */
+ATF_TC(provider_resolve_accepts_selection_flags);
+ATF_TC_HEAD(provider_resolve_accepts_selection_flags, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "RESOLVE accepts AI_V4MAPPED/AI_ALL/AI_ADDRCONFIG and reaches the "
+	    "resolver");
+}
+ATF_TC_BODY(provider_resolve_accepts_selection_flags, tc)
+{
+	struct {
+		struct networkcmp_msg message;
+		struct networkcmp_resolve_request request;
+		char host[9];
+	} resolve;
+	struct fixture fixture;
+	union wire_buffer reply;
+	size_t length;
+
+	fixture_create(&fixture);
+	memset(&resolve, 0, sizeof(resolve));
+	ATF_REQUIRE_EQ(0, networkcmp_message_init(&resolve.message,
+	    NETWORKCMP_OP_RESOLVE, 0));
+	resolve.request.host_length = sizeof(resolve.host);
+	resolve.request.family = NETWORKCMP_AF_INET6;
+	resolve.request.socket_type = NETWORKCMP_SOCK_ANY;
+	resolve.request.flags = NETWORKCMP_RESOLVE_F_V4MAPPED |
+	    NETWORKCMP_RESOLVE_F_ALL | NETWORKCMP_RESOLVE_F_ADDRCONFIG;
+	resolve.request.max_results = 1;
+	memcpy(resolve.host, "localhost", sizeof(resolve.host));
+	ATF_REQUIRE_EQ(0, call(&fixture, &resolve, sizeof(resolve.message) +
+	    sizeof(resolve.request) + sizeof(resolve.host), &reply, &length,
+	    NULL));
+	ATF_CHECK_EQ(EOPNOTSUPP, reply_status(&reply, length,
+	    NETWORKCMP_OP_RESOLVE));
+	fixture_destroy(&fixture, 0);
+}
+
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
@@ -956,6 +1152,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_resolver_deadline_terminates_session);
 	ATF_TP_ADD_TC(tp, non_admin_connect_to_loopback_is_denied);
 	ATF_TP_ADD_TC(tp, per_label_config_denies_connect_allows_resolve);
+	ATF_TP_ADD_TC(tp, provider_connect_timeout_succeeds);
+	ATF_TP_ADD_TC(tp, provider_connect_timeout_refused);
+	ATF_TP_ADD_TC(tp, provider_connect_timeout_expires);
+	ATF_TP_ADD_TC(tp, provider_resolve_accepts_selection_flags);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }

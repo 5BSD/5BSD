@@ -43,6 +43,15 @@ int	networkcmp_connect(struct networkcmp_client *,
 	    const struct sockaddr *address, socklen_t address_length,
 	    int *out_fd);
 /*
+ * As networkcmp_connect(), but bound the TCP handshake by timeout_ms: if the
+ * connect does not complete within the deadline the broker fails the request
+ * with ETIMEDOUT and delivers no descriptor.  timeout_ms == 0 is identical to
+ * networkcmp_connect() (fully-blocking connect with the kernel default).
+ */
+int	networkcmp_connect_ex(struct networkcmp_client *,
+	    const struct sockaddr *address, socklen_t address_length,
+	    uint32_t timeout_ms, int *out_fd);
+/*
  * Policy-check and open a connected UDP socket bound to the peer address,
  * returning the connected descriptor in *out_fd on success.  The datagram
  * socket accepts only send/recv to that peer.

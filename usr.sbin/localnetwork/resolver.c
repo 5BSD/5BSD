@@ -565,6 +565,37 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 	return (answered ? added_total : -1);
 }
 
+/*
+ * AI_V4MAPPED support (RFC 3493).  Query A records for host and append each as
+ * an IPv4-mapped IPv6 address (::ffff:a.b.c.d) to addrs, which the caller then
+ * emits as AF_INET6 results.  Returns the number appended (>=0).
+ */
+static int
+dns_query_v4mapped(const char *host, struct rslv_addr *addrs, int max, int *n,
+    char *canon, size_t canonsz)
+{
+	struct rslv_addr tmp[RSLV_MAX_RESULTS];
+	int tn = 0, i, added = 0;
+
+	(void)dns_query(host, ns_t_a, tmp, RSLV_MAX_RESULTS, &tn, canon, canonsz);
+	for (i = 0; i < tn && *n < max; i++) {
+		struct in6_addr mapped;
+
+		if (tmp[i].family != AF_INET)
+			continue;
+		memset(&mapped, 0, sizeof(mapped));
+		mapped.s6_addr[10] = 0xff;
+		mapped.s6_addr[11] = 0xff;
+		memcpy(&mapped.s6_addr[12], &tmp[i].a.v4, 4);
+		addrs[*n].family = AF_INET6;
+		memset(&addrs[*n].a, 0, sizeof(addrs[*n].a));
+		addrs[*n].a.v6 = mapped;
+		(*n)++;
+		added++;
+	}
+	return (added);
+}
+
 /* =====================================================================
  * assembly
  * ===================================================================== */
@@ -727,6 +758,23 @@ netresolve(const char *host, const char *serv, const struct addrinfo *hints,
 					(void)dns_query(host, ns_t_aaaa,
 					    addrs, RSLV_MAX_RESULTS, &naddr,
 					    canon, sizeof(canon));
+				/*
+				 * AI_V4MAPPED / AI_ALL (RFC 3493), meaningful
+				 * only for an AF_INET6 query: when no native
+				 * AAAA was found — or AI_ALL was also set —
+				 * fetch A records and append them as
+				 * IPv4-mapped IPv6.  AI_ADDRCONFIG is accepted
+				 * but is a documented no-op here: this in-process
+				 * resolver does not enumerate the host's own
+				 * configured source families, so it never
+				 * suppresses a family on that basis.
+				 */
+				if (family == AF_INET6 &&
+				    (flags & AI_V4MAPPED) != 0 &&
+				    (naddr == 0 || (flags & AI_ALL) != 0))
+					(void)dns_query_v4mapped(host, addrs,
+					    RSLV_MAX_RESULTS, &naddr, canon,
+					    sizeof(canon));
 			}
 
 			if (naddr == 0)

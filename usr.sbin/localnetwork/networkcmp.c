@@ -15,10 +15,12 @@
 #include <sys/wait.h>
 
 #include <netinet/in.h>
+#include <arpa/inet.h>
 
 #include <errno.h>
 #include <fcntl.h>
 #include <netdb.h>
+#include <poll.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -106,6 +108,27 @@ monotonic_ns(void)
 	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
 		return (0);
 	return ((uint64_t)now.tv_sec * UINT64_C(1000000000) + now.tv_nsec);
+}
+
+/*
+ * Render an endpoint as "addr:port" into buf for the connect DTrace probe.
+ * Best-effort: on failure buf is set to "?" so the probe always has a string.
+ */
+static void
+endpoint_ntop(const struct networkcmp_endpoint *endpoint, char *buf,
+    size_t buflen)
+{
+	char addr[INET6_ADDRSTRLEN];
+	int family;
+
+	family = endpoint->family == NETWORKCMP_AF_INET4 ? AF_INET :
+	    endpoint->family == NETWORKCMP_AF_INET6 ? AF_INET6 : AF_UNSPEC;
+	if (family == AF_UNSPEC ||
+	    inet_ntop(family, endpoint->address, addr, sizeof(addr)) == NULL) {
+		(void)snprintf(buf, buflen, "?");
+		return;
+	}
+	(void)snprintf(buf, buflen, "%s:%u", addr, endpoint->port);
 }
 
 static int
@@ -235,19 +258,98 @@ harden_delivered_socket(int fd)
 	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
 }
 
+/*
+ * Perform the connect on a socket this process created (legal in capability
+ * mode; the session's address/family/internal-destination policy is already
+ * enforced by broker_connect() before we get here, so the connect goes direct
+ * with no Casper cap_net proxy).
+ *
+ * timeout_ms == 0 keeps the historical fully-blocking connect(2).  A non-zero
+ * timeout drives the connect non-blocking and waits with a bounded poll(2) —
+ * the same primitive the in-process resolver uses under cap_enter — up to the
+ * deadline; on expiry it fails with ETIMEDOUT.  The socket's O_NONBLOCK state
+ * is restored before return so the delivered descriptor behaves as a normal
+ * connected socket regardless of which path ran.
+ */
 static int
 broker_perform_connect(struct session_state *state, int fd,
-    const struct sockaddr *sa, socklen_t length)
+    const struct sockaddr *sa, socklen_t length, uint32_t timeout_ms)
 {
+	struct pollfd pfd;
+	uint64_t deadline, now, remaining;
+	socklen_t errlen;
+	int flags, err, so_error, pr, wait_ms;
 
-	/*
-	 * connect(2) on a socket this process created is legal in capability
-	 * mode, and the session's address/family/internal-destination policy is
-	 * already enforced by broker_connect() before we get here -- so the
-	 * connect goes direct, with no Casper cap_net proxy.
-	 */
 	(void)state;
-	return (connect(fd, sa, length));
+	if (timeout_ms == 0)
+		return (connect(fd, sa, length));
+
+	flags = fcntl(fd, F_GETFL);
+	if (flags == -1)
+		return (-1);
+	if (fcntl(fd, F_SETFL, flags | O_NONBLOCK) == -1)
+		return (-1);
+	if (connect(fd, sa, length) == 0) {
+		/* Immediate completion (e.g. loopback): restore and deliver. */
+		return (fcntl(fd, F_SETFL, flags) == -1 ? -1 : 0);
+	}
+	if (errno != EINPROGRESS) {
+		err = errno;
+		goto fail;
+	}
+	deadline = monotonic_ns();
+	if (deadline == 0) {
+		err = EIO;
+		goto fail;
+	}
+	deadline += (uint64_t)timeout_ms * 1000000;
+	for (;;) {
+		now = monotonic_ns();
+		if (now == 0) {
+			err = EIO;
+			goto fail;
+		}
+		if (now >= deadline) {
+			err = ETIMEDOUT;
+			goto fail;
+		}
+		remaining = deadline - now;
+		wait_ms = (int)MIN((remaining + 999999) / 1000000, INT_MAX);
+		pfd.fd = fd;
+		pfd.events = POLLOUT;
+		pfd.revents = 0;
+		pr = poll(&pfd, 1, wait_ms);
+		if (pr == -1) {
+			if (errno == EINTR)
+				continue;
+			err = errno;
+			goto fail;
+		}
+		if (pr == 0) {
+			err = ETIMEDOUT;
+			goto fail;
+		}
+		break;
+	}
+	/* The connect finished; SO_ERROR carries its result. */
+	errlen = sizeof(so_error);
+	if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &errlen) == -1) {
+		err = errno;
+		goto fail;
+	}
+	if (so_error != 0) {
+		err = so_error;
+		goto fail;
+	}
+	/* Restore blocking state before the descriptor is handed back. */
+	if (fcntl(fd, F_SETFL, flags) == -1)
+		return (-1);
+	return (0);
+
+fail:
+	(void)fcntl(fd, F_SETFL, flags);
+	errno = err;
+	return (-1);
 }
 
 /*
@@ -257,7 +359,8 @@ broker_perform_connect(struct session_state *state, int fd,
  */
 static int
 broker_connect(struct session_state *state, uint16_t opcode,
-    const struct networkcmp_endpoint *endpoint, int *out_fd)
+    const struct networkcmp_endpoint *endpoint, uint32_t timeout_ms,
+    int *out_fd)
 {
 	struct sockaddr_storage storage;
 	socklen_t length;
@@ -286,8 +389,14 @@ broker_connect(struct session_state *state, uint16_t opcode,
 	fd = socket(domain, type | SOCK_CLOEXEC, 0);
 	if (fd == -1)
 		return (-1);
+	/*
+	 * The timeout bounds the TCP handshake only; a UDP "connect" merely
+	 * assigns the peer and returns immediately, so pass 0 and take the
+	 * plain blocking path for it.
+	 */
 	if (broker_perform_connect(state, fd, (const void *)&storage,
-	    length) == -1 || harden_delivered_socket(fd) == -1) {
+	    length, udp ? 0 : timeout_ms) == -1 ||
+	    harden_delivered_socket(fd) == -1) {
 		error = errno;
 		close(fd);
 		errno = error;
@@ -550,6 +659,12 @@ resolve_perform(struct resolver_job *job)
 		hints.ai_flags |= AI_NUMERICHOST;
 	if ((request->flags & NETWORKCMP_RESOLVE_F_NUMERIC_SERVICE) != 0)
 		hints.ai_flags |= AI_NUMERICSERV;
+	if ((request->flags & NETWORKCMP_RESOLVE_F_ADDRCONFIG) != 0)
+		hints.ai_flags |= AI_ADDRCONFIG;
+	if ((request->flags & NETWORKCMP_RESOLVE_F_V4MAPPED) != 0)
+		hints.ai_flags |= AI_V4MAPPED;
+	if ((request->flags & NETWORKCMP_RESOLVE_F_ALL) != 0)
+		hints.ai_flags |= AI_ALL;
 
 	LOCALNETWORK_RESOLVE_START(__DECONST(char *, job->label), job->host);
 	addresses = NULL;
@@ -785,7 +900,9 @@ dispatch(struct channel_message *request_message,
 		return (send_reply(request_message, label, message, 0, &hello,
 		    sizeof(hello), -1));
 	case NETWORKCMP_OP_CONNECT:
-	case NETWORKCMP_OP_UDP:
+	case NETWORKCMP_OP_UDP: {
+		char epbuf[INET6_ADDRSTRLEN + 8];
+
 		connect_request = (const void *)(message + 1);
 		udp = message->opcode == NETWORKCMP_OP_UDP;
 		fd = -1;
@@ -794,7 +911,11 @@ dispatch(struct channel_message *request_message,
 			error = EACCES;
 		else
 			error = broker_connect(state, message->opcode,
-			    &connect_request->endpoint, &fd) == -1 ? errno : 0;
+			    &connect_request->endpoint,
+			    connect_request->timeout_ms, &fd) == -1 ? errno : 0;
+		endpoint_ntop(&connect_request->endpoint, epbuf, sizeof(epbuf));
+		LOCALNETWORK_CONNECT_DONE(__DECONST(char *, label), epbuf,
+		    connect_request->timeout_ms, error);
 		audit_policy(state->audit, state->logchan, label, udp ? "udp" : "connect",
 		    error);
 		result = send_reply(request_message, label, message, error,
@@ -802,6 +923,7 @@ dispatch(struct channel_message *request_message,
 		if (fd >= 0)
 			close(fd);
 		return (result);
+	}
 	case NETWORKCMP_OP_RESOLVE:
 		if (!state->policy.resolve) {
 			audit_policy(state->audit, state->logchan, label, "resolve", EACCES);

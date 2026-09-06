@@ -292,7 +292,8 @@ networkcmp_validate_message(const struct networkcmp_msg *msg,
 			if (payload == expected) {
 				connect = (const void *)(msg + 1);
 				if (!networkcmp_endpoint_valid(
-				    &connect->endpoint))
+				    &connect->endpoint) ||
+				    connect->reserved != 0)
 					goto reject;
 			}
 			break;
@@ -631,7 +632,7 @@ networkcmp_sockaddr_endpoint(const struct sockaddr *sa, socklen_t salen,
 
 static int
 networkcmp_endpoint_op(struct networkcmp_client *client, uint16_t opcode,
-    const struct sockaddr *sa, socklen_t salen, int *out_fd)
+    const struct sockaddr *sa, socklen_t salen, uint32_t timeout_ms, int *out_fd)
 {
 	union networkcmp_buffer reply;
 	struct networkcmp_connect_request request;
@@ -644,6 +645,7 @@ networkcmp_endpoint_op(struct networkcmp_client *client, uint16_t opcode,
 	}
 	*out_fd = -1;
 	memset(&request, 0, sizeof(request));
+	request.timeout_ms = timeout_ms;
 	if (networkcmp_sockaddr_endpoint(sa, salen, &request.endpoint) == -1)
 		return (-1);
 	fd = -1;
@@ -666,7 +668,17 @@ networkcmp_connect(struct networkcmp_client *client,
 {
 
 	return (networkcmp_endpoint_op(client, NETWORKCMP_OP_CONNECT, address,
-	    address_length, out_fd));
+	    address_length, 0, out_fd));
+}
+
+int
+networkcmp_connect_ex(struct networkcmp_client *client,
+    const struct sockaddr *address, socklen_t address_length,
+    uint32_t timeout_ms, int *out_fd)
+{
+
+	return (networkcmp_endpoint_op(client, NETWORKCMP_OP_CONNECT, address,
+	    address_length, timeout_ms, out_fd));
 }
 
 int
@@ -675,7 +687,7 @@ networkcmp_udp(struct networkcmp_client *client, const struct sockaddr *peer,
 {
 
 	return (networkcmp_endpoint_op(client, NETWORKCMP_OP_UDP, peer,
-	    peer_length, out_fd));
+	    peer_length, 0, out_fd));
 }
 
 int
@@ -853,7 +865,8 @@ networkcmp_getaddrinfo(struct networkcmp_client *client, const char *host,
 			return (EAI_SERVICE);
 		}
 		if ((hints->ai_flags & ~(AI_PASSIVE | AI_CANONNAME |
-		    AI_NUMERICHOST | AI_NUMERICSERV)) != 0)
+		    AI_NUMERICHOST | AI_NUMERICSERV | AI_ADDRCONFIG |
+		    AI_V4MAPPED | AI_ALL)) != 0)
 			return (EAI_BADFLAGS);
 		if ((hints->ai_flags & AI_PASSIVE) != 0)
 			flags |= NETWORKCMP_RESOLVE_F_PASSIVE;
@@ -863,6 +876,12 @@ networkcmp_getaddrinfo(struct networkcmp_client *client, const char *host,
 			flags |= NETWORKCMP_RESOLVE_F_NUMERIC_HOST;
 		if ((hints->ai_flags & AI_NUMERICSERV) != 0)
 			flags |= NETWORKCMP_RESOLVE_F_NUMERIC_SERVICE;
+		if ((hints->ai_flags & AI_ADDRCONFIG) != 0)
+			flags |= NETWORKCMP_RESOLVE_F_ADDRCONFIG;
+		if ((hints->ai_flags & AI_V4MAPPED) != 0)
+			flags |= NETWORKCMP_RESOLVE_F_V4MAPPED;
+		if ((hints->ai_flags & AI_ALL) != 0)
+			flags |= NETWORKCMP_RESOLVE_F_ALL;
 	}
 	count = nitems(resolved);
 	if (networkcmp_resolve(client, host, service, family, socket_type,

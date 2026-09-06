@@ -32,7 +32,16 @@
 #define	NETWORKCMP_RESOLVE_F_CANONNAME		0x00000002U
 #define	NETWORKCMP_RESOLVE_F_NUMERIC_HOST	0x00000004U
 #define	NETWORKCMP_RESOLVE_F_NUMERIC_SERVICE	0x00000008U
-#define	NETWORKCMP_RESOLVE_F_MASK		0x0000000fU
+/*
+ * Address-selection flags (RFC 3493).  ADDRCONFIG is accepted for source
+ * compatibility but is a no-op in the in-process resolver (see resolver.c);
+ * V4MAPPED and ALL are honored: an AF_INET6 resolve may return IPv4-mapped
+ * IPv6 results, and with ALL both native AAAA and mapped A are returned.
+ */
+#define	NETWORKCMP_RESOLVE_F_ADDRCONFIG		0x00000010U
+#define	NETWORKCMP_RESOLVE_F_V4MAPPED		0x00000020U
+#define	NETWORKCMP_RESOLVE_F_ALL		0x00000040U
+#define	NETWORKCMP_RESOLVE_F_MASK		0x0000007fU
 
 /*
  * Protocol version 1 is a connection broker.  RESOLVE performs a bounded
@@ -108,9 +117,18 @@ struct networkcmp_hello_reply {
  * CONNECT and UDP carry a single fully-specified destination endpoint.  A
  * successful reply carries no payload; the connected descriptor is delivered
  * out of band via SCM_RIGHTS and the status field conveys the connect result.
+ *
+ * timeout_ms bounds a TCP CONNECT: the broker connects non-blocking and, if the
+ * handshake has not completed within the deadline, closes the socket and fails
+ * the request with ETIMEDOUT rather than stalling the session on an
+ * unresponsive host.  0 selects the historical fully-blocking connect (kernel
+ * default timeout).  UDP ignores the field — a UDP "connect" only assigns the
+ * peer and never blocks.  reserved must be zero.
  */
 struct networkcmp_connect_request {
 	struct networkcmp_endpoint endpoint;
+	uint32_t	timeout_ms;
+	uint32_t	reserved;
 };
 
 /*

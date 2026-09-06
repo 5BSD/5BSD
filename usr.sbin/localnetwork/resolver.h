@@ -17,7 +17,11 @@ int  netresolve_init(struct service_context *ctx);
  * 0 on success (*res is a malloc'd addrinfo list, free with netfreeaddrinfo),
  * or a non-zero EAI_* code.  Honors hints: ai_family (AF_INET/AF_INET6/
  * AF_UNSPEC), ai_socktype (SOCK_STREAM/SOCK_DGRAM/0=both), ai_flags
- * (AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST, AI_NUMERICSERV).
+ * (AI_PASSIVE, AI_CANONNAME, AI_NUMERICHOST, AI_NUMERICSERV, AI_V4MAPPED,
+ * AI_ALL).  AI_V4MAPPED (with AF_INET6) returns IPv4-mapped IPv6 addresses
+ * when no native AAAA exists, and AI_ALL additionally returns mapped A records
+ * alongside AAAA.  AI_ADDRCONFIG is accepted but is a no-op: this resolver does
+ * not enumerate the host's configured source-address families.
  */
 int  netresolve(const char *host, const char *serv,
      const struct addrinfo *hints, struct addrinfo **res);
