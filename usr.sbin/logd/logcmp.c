@@ -10,8 +10,6 @@
 #include <sys/socket.h>
 #include <sys/wait.h>
 
-#include <libcasper.h>
-#include <casper/cap_syslog.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -68,7 +66,6 @@ union provider_buffer {
 };
 
 struct sink_context {
-	cap_channel_t	*syslog;
 	const char	*label;
 	uint64_t	 instance;
 	struct logcmp_storage_session *storage;
@@ -123,7 +120,6 @@ struct pool_state {
 	struct worker_state *pending_tail;
 	struct auditcmp_client *audit;
 	struct logcmp_storage_session *storage;
-	cap_channel_t *syslog;
 	const struct logcmp_config *config;
 	_Atomic uint32_t *admitted;
 	uint32_t capacity;
@@ -179,21 +175,6 @@ storage_query(void *context, const char *label, uint32_t minimum_severity,
 
 	return (logcmp_storage_query_next_for(context, label, minimum_severity,
 	    cursor, record, capacity, length, timeout_ms));
-}
-
-static int
-harden_factory_channel(cap_channel_t *channel)
-{
-
-	return (service_harden_fd(cap_sock(channel), 0));
-}
-
-static int
-harden_worker_channel(cap_channel_t *channel)
-{
-
-	return (service_harden_fd(cap_sock(channel),
-	    SERVICE_HARDEN_CLOFORK_ONCE));
 }
 
 static int
@@ -317,11 +298,9 @@ syslog_sink(void *arg, const struct logcmp_record *record,
 
 	context = arg;
 	/*
-	 * Born in capability mode: logd persists the record to its own store (its
-	 * serviced-delivered, tzfsd-mounted store directory) and IS the plane's log
-	 * authority; consumers query it by name.  It no longer mirrors to legacy
-	 * syslogd via Casper cap_syslog — Casper's zygote cannot be forked from a
-	 * born-in-capmode process, and the store is the sink of record.
+	 * logd persists the record to its own store (its serviced-delivered,
+	 * tzfsd-mounted store directory) and IS the plane's log authority;
+	 * consumers query it by name.  The store is the sink of record.
 	 */
 	if (logcmp_storage_append_for(context->storage, context->label, record,
 	    sizeof(*record) + record->subsystem_length +
@@ -1048,7 +1027,6 @@ pool_add_session(struct pool_state *pool)
 	state->fallback_drain_ms = pool->config->fallback_drain_ms;
 	state->drain_batch = pool->config->drain_batch;
 	strlcpy(state->label, control.label, sizeof(state->label));
-	state->sink.syslog = pool->syslog;
 	state->sink.label = state->label;
 	state->sink.instance = control.instance;
 	state->sink.storage = pool->storage;
@@ -1114,7 +1092,7 @@ pool_add_session(struct pool_state *pool)
 }
 
 static int
-pool_worker(int control_fd, cap_channel_t *capsyslog, int audit_fd,
+pool_worker(int control_fd, int audit_fd,
     struct logcmp_storage_session *storage, const struct logcmp_config *config,
     _Atomic uint32_t *admitted, uint32_t capacity, uint32_t shard)
 {
@@ -1127,7 +1105,6 @@ pool_worker(int control_fd, cap_channel_t *capsyslog, int audit_fd,
 	memset(&pool, 0, sizeof(pool));
 	pool.control_fd = control_fd;
 	pool.storage = storage;
-	pool.syslog = capsyslog;
 	pool.config = config;
 	pool.admitted = admitted;
 	pool.capacity = capacity;
@@ -1270,12 +1247,11 @@ pool_watch(void *argument)
 }
 
 static int
-start_pool(struct pool_parent *parent, cap_channel_t *casper,
+start_pool(struct pool_parent *parent,
     int storage_control, const struct logcmp_config *config,
     _Atomic uint32_t *admitted, uint32_t capacity, uint32_t shard)
 {
 	struct logcmp_storage_session storage;
-	cap_channel_t *capsyslog;
 	int sockets[2], audit_fd, child_error, error, flags, pd;
 	ssize_t amount;
 	pid_t pid;
@@ -1284,18 +1260,11 @@ start_pool(struct pool_parent *parent, cap_channel_t *casper,
 	storage.control_fd = -1;
 	storage.producer_fds = (struct shmring_fds){ -1, -1, -1, -1 };
 	audit_fd = -1;
-	capsyslog = NULL;
 	if (logcmp_storage_attach_pool(storage_control, &storage) == -1 ||
 	    logcmp_storage_session_prepare_fork(&storage) == -1 ||
-	    (casper != NULL &&
-	    ((capsyslog = cap_service_open(casper, "system.syslog")) == NULL ||
-	    harden_worker_channel(capsyslog) == -1)) ||
 	    auditcmp_client_prepare(&audit_fd) == -1 ||
 	    socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == -1)
 		goto fail;
-	/* Born in capmode: casper NULL, capsyslog NULL, store is the only sink. */
-	if (capsyslog != NULL)
-		cap_openlog(capsyslog, "logd", LOG_PID | LOG_NDELAY, LOG_USER);
 	if (harden_worker_fd(sockets[1]) == -1)
 		goto fail_sockets;
 	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
@@ -1303,16 +1272,12 @@ start_pool(struct pool_parent *parent, cap_channel_t *casper,
 		goto fail_sockets;
 	if (pid == 0) {
 		close(sockets[0]);
-		if (casper != NULL)
-			cap_close(casper);
 		close(storage_control);
-		_exit(pool_worker(sockets[1], capsyslog, audit_fd, &storage,
+		_exit(pool_worker(sockets[1], audit_fd, &storage,
 		    config, admitted, capacity, shard));
 	}
 	close(sockets[1]);
 	logcmp_storage_session_close(&storage);
-	if (capsyslog != NULL)
-		cap_close(capsyslog);
 	close(audit_fd);
 	amount = read(sockets[0], &child_error, sizeof(child_error));
 	if (amount != sizeof(child_error) || child_error != 0) {
@@ -1365,8 +1330,6 @@ fail:
 fail_common:
 	if (audit_fd >= 0)
 		close(audit_fd);
-	if (capsyslog != NULL)
-		cap_close(capsyslog);
 	logcmp_storage_session_close(&storage);
 	return (errno = error, -1);
 }
@@ -1557,7 +1520,6 @@ int
 main(void)
 {
 	cap_rights_t rights;
-	cap_channel_t *casper;
 	struct pool_parent *pools;
 	struct service_identity identity;
 	struct service_context *context;
@@ -1600,24 +1562,7 @@ main(void)
 	pools = NULL;
 	started_pools = 0;
 	admitted = MAP_FAILED;
-	/*
-	 * Born in capability mode: do NOT init Casper — its zygote must be forked
-	 * before cap_enter, which never happened for us.  logd persists to its own
-	 * store (tzfsd delivers it pre-mounted) and no longer mirrors to syslogd, so
-	 * Casper is unnecessary.  cap_init is used only on a legacy pre-capmode launch.
-	 */
 	context = NULL;
-	{
-		unsigned capmode = 0;
-
-		(void)cap_getmode(&capmode);
-		casper = NULL;
-		if (capmode == 0) {
-			casper = cap_init();
-			if (casper == NULL || harden_factory_channel(casper) == -1)
-				goto fail;
-		}
-	}
 	if (service_acquire(&context) == -1 ||
 	    service_storage_open(context, "state", &storage_dir) == -1 ||
 	    service_provider_create(&provider) == -1 ||
@@ -1660,14 +1605,11 @@ main(void)
 	for (i = 0; i < config.ingress_shards; i++) {
 		pools[i].control_fd = -1;
 		pools[i].process_fd = -1;
-		if (start_pool(&pools[i], casper, storage_control, &config,
+		if (start_pool(&pools[i], storage_control, &config,
 		    &admitted[i], capacity + (i < remainder ? 1 : 0), i) == -1)
 			goto fail;
 		started_pools++;
 	}
-	if (casper != NULL)
-		cap_close(casper);
-	casper = NULL;
 	if (service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1 ||
@@ -1719,8 +1661,6 @@ fail:
 		(void)shutdown_storage(&storage_control, &storage_process);
 	else if (storage_process >= 0)
 		(void)shutdown_storage(&storage_control, &storage_process);
-	if (casper != NULL)
-		cap_close(casper);
 	syslog(LOG_ERR, "initialization or service loop: %m");
 	return (1);
 }
