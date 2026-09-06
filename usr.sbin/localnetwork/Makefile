@@ -4,9 +4,8 @@ PACKAGE=	localnetwork
 PROG=		localnetwork
 PROGNAME=	Network
 MAN=		localnetwork.8
-SRCS=		networkcmp.c config.c policy.c
+SRCS=		networkcmp.c config.c policy.c resolver.c
 
-CFLAGS+=	-DWITH_CASPER
 # Full binding at load (no lazy PLT): everything the linker needs is resolved
 # during exec, before the daemon enters capability mode, so no library work
 # remains once the sandbox closes.  Pairs with bundle-local libraries resolved
@@ -18,7 +17,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libnetworkcmp
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 CFLAGS+=	-I${SRCTOP}/sys
-LIBADD=		auditcmp cap_net casper channel logcmp networkcmp pthread service ucl
+LIBADD=		auditcmp channel logcmp networkcmp pthread service ucl
 CFLAGS+=	-I${SRCTOP}/lib/liblogcmp
 
 DIRS+=		NETWORKCMP_CAP NETWORKCMP_CAP_UNITS NETWORKCMP_CAP_UNIT \

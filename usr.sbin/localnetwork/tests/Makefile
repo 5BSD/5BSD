@@ -22,8 +22,8 @@ CFLAGS.config_test+=	-I${SRCTOP}/sys
 LIBADD.config_test=	ucl
 
 ATF_TESTS_C+=	provider_test
-SRCS.provider_test=	provider_test.c networkcmp.c config.c policy.c
-CFLAGS.provider_test+=	-DNETWORKCMP_TESTING -DWITH_CASPER
+SRCS.provider_test=	provider_test.c networkcmp.c config.c policy.c resolver.c
+CFLAGS.provider_test+=	-DNETWORKCMP_TESTING
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libauditcmp
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libchannel
 CFLAGS.provider_test+=	-I${SRCTOP}/lib/libnetworkcmp

@@ -106,7 +106,7 @@ fixture_create_policy(struct fixture *fixture,
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
-		_exit(networkcmp_test_serve(provider, NULL, policy,
+		_exit(networkcmp_test_serve(provider, policy,
 		    "org.test.network"));
 	}
 	close(provider);
@@ -139,7 +139,7 @@ fixture_create_config(struct fixture *fixture, const char *config_text,
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
-		_exit(networkcmp_test_serve(provider, NULL, &policy, label));
+		_exit(networkcmp_test_serve(provider, &policy, label));
 	}
 	close(provider);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
@@ -175,9 +175,9 @@ fixture_create_blocked_resolver_timeout(struct fixture *fixture,
 		close(ready[0]);
 		close(release[1]);
 		if (timeout_ms == 0)
-			_exit(networkcmp_test_serve_blocked_resolver(provider, NULL,
+			_exit(networkcmp_test_serve_blocked_resolver(provider,
 			    &policy, "org.test.network", ready[1], release[0]));
-		_exit(networkcmp_test_serve_blocked_resolver_timeout(provider, NULL,
+		_exit(networkcmp_test_serve_blocked_resolver_timeout(provider,
 		    &policy, "org.test.network", ready[1], release[0], timeout_ms));
 	}
 	close(provider);
@@ -936,11 +936,11 @@ ATF_TC_BODY(arguments, tc)
 
 	ATF_REQUIRE_EQ(0, networkcmp_policy_default(&policy));
 	ATF_CHECK_ERRNO(EINVAL,
-	    networkcmp_test_serve(-1, NULL, &policy, "org.test") == -1);
+	    networkcmp_test_serve(-1, &policy, "org.test") == -1);
 	ATF_CHECK_ERRNO(EINVAL,
-	    networkcmp_test_serve(0, NULL, NULL, "org.test") == -1);
+	    networkcmp_test_serve(0, NULL, "org.test") == -1);
 	ATF_CHECK_ERRNO(EINVAL,
-	    networkcmp_test_serve(0, NULL, &policy, "") == -1);
+	    networkcmp_test_serve(0, &policy, "") == -1);
 }
 
 ATF_TP_ADD_TCS(tp)

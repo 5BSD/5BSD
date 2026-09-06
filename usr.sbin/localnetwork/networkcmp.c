@@ -14,8 +14,6 @@
 #include <sys/time.h>
 #include <sys/wait.h>
 
-#include <libcasper.h>
-#include <casper/cap_net.h>
 #include <netinet/in.h>
 
 #include <errno.h>
@@ -27,6 +25,7 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -37,6 +36,8 @@
 #include <auditcmp_server.h>
 #include <libservice.h>
 #include <networkcmp.h>
+
+#include "resolver.h"
 #include <networkcmp_server.h>
 #include <logcmp.h>
 
@@ -61,7 +62,6 @@ union provider_buffer {
 
 struct resolver_job {
 	struct channel_message		*request_message;
-	cap_channel_t			*capnet;
 	const char			*label;
 	struct networkcmp_policy	 policy;
 	struct networkcmp_msg		 request_header;
@@ -82,8 +82,6 @@ struct resolver_job {
 };
 
 struct session_state {
-	cap_channel_t		*capnet;
-	cap_channel_t		*resolver_capnet;
 	struct net_logger	*logchan;	/* system.Log logger, or NULL */
 	struct auditcmp_client	*audit;
 	/* Immutable session policy; set once at session creation. */
@@ -242,12 +240,14 @@ broker_perform_connect(struct session_state *state, int fd,
     const struct sockaddr *sa, socklen_t length)
 {
 
-#ifdef NETWORKCMP_TESTING
+	/*
+	 * connect(2) on a socket this process created is legal in capability
+	 * mode, and the session's address/family/internal-destination policy is
+	 * already enforced by broker_connect() before we get here -- so the
+	 * connect goes direct, with no Casper cap_net proxy.
+	 */
 	(void)state;
 	return (connect(fd, sa, length));
-#else
-	return (cap_connect(state->capnet, fd, sa, length));
-#endif
 }
 
 /*
@@ -405,30 +405,7 @@ audit_policy(struct auditcmp_client *audit, struct net_logger *nl,
 		    operation, label);
 }
 
-/*
- * Casper's master channel is factory authority.  It must remain in the
- * provider and must never cross either a fork or exec boundary.
- */
 #ifndef NETWORKCMP_TESTING
-static int
-harden_factory_channel(cap_channel_t *channel)
-{
-
-	return (service_harden_fd(cap_sock(channel), 0));
-}
-
-/*
- * A limited per-session channel crosses exactly the worker pdfork.  The
- * CAP_CLOFORK_ONCE transition locks it in both processes after that fork.
- */
-static int
-harden_worker_channel(cap_channel_t *channel)
-{
-
-	return (service_harden_fd(cap_sock(channel),
-	    SERVICE_HARDEN_CLOFORK_ONCE));
-}
-
 static int
 harden_worker_fd(int fd)
 {
@@ -576,7 +553,7 @@ resolve_perform(struct resolver_job *job)
 
 	LOCALNETWORK_RESOLVE_START(__DECONST(char *, job->label), job->host);
 	addresses = NULL;
-	error = cap_getaddrinfo(job->capnet,
+	error = netresolve(
 	    request->host_length != 0 ? job->host : NULL,
 	    request->service_length != 0 ? job->service : NULL, &hints,
 	    &addresses);
@@ -640,7 +617,7 @@ resolve_perform(struct resolver_job *job)
 		memcpy(results + count, canonical, canonical_length);
 	payload_length = sizeof(*reply) + count * sizeof(*results) +
 	    canonical_length;
-	freeaddrinfo(addresses);
+	netfreeaddrinfo(addresses);
 	LOCALNETWORK_RESOLVE_DONE(__DECONST(char *, job->label), count, 0);
 	job->payload_length = payload_length;
 	return (0);
@@ -711,7 +688,6 @@ start_resolve(struct session_state *state,
 	if (job == NULL)
 		return (-1);
 	job->request_message = request_message;
-	job->capnet = state->resolver_capnet;
 	job->label = state->label;
 	job->policy = state->policy;
 	job->request_header = *message;
@@ -879,7 +855,7 @@ handle_request(struct channel *channel __unused,
 }
 
 static int
-serve_session(int fd, cap_channel_t *capnet, cap_channel_t *resolver_capnet,
+serve_session(int fd,
     struct net_logger *logchan, const struct networkcmp_policy *policy,
     struct auditcmp_client *audit, const char *label,
     const int resolver_pipe[2], uint32_t resolver_timeout_ms
@@ -907,8 +883,6 @@ serve_session(int fd, cap_channel_t *capnet, cap_channel_t *resolver_capnet,
 	state.audit = audit;
 	LOCALNETWORK_SESSION_START(__DECONST(char *, label),
 	    policy->max_results);
-	state.capnet = capnet;
-	state.resolver_capnet = resolver_capnet;
 	state.logchan = logchan;
 	state.resolver_pipe[0] = resolver_pipe[0];
 	state.resolver_pipe[1] = resolver_pipe[1];
@@ -1027,7 +1001,7 @@ networkcmp_test_endpoint_is_internal(const struct networkcmp_endpoint *endpoint)
 }
 
 int
-networkcmp_test_serve(int fd, cap_channel_t *capnet,
+networkcmp_test_serve(int fd,
     const struct networkcmp_policy *policy, const char *label)
 {
 	int resolver_pipe[2];
@@ -1036,12 +1010,12 @@ networkcmp_test_serve(int fd, cap_channel_t *capnet,
 		return (errno = EINVAL, -1);
 	if (pipe2(resolver_pipe, O_CLOEXEC | O_NONBLOCK) == -1)
 		return (-1);
-	return (serve_session(fd, capnet, capnet, NULL, policy, NULL, label,
+	return (serve_session(fd, NULL, policy, NULL, label,
 	    resolver_pipe, NETWORKCMP_RESOLVER_TIMEOUT_MS, -1, -1));
 }
 
 int
-networkcmp_test_serve_blocked_resolver(int fd, cap_channel_t *capnet,
+networkcmp_test_serve_blocked_resolver(int fd,
     const struct networkcmp_policy *policy, const char *label, int ready_fd,
     int release_fd)
 {
@@ -1052,12 +1026,12 @@ networkcmp_test_serve_blocked_resolver(int fd, cap_channel_t *capnet,
 		return (errno = EINVAL, -1);
 	if (pipe2(resolver_pipe, O_CLOEXEC | O_NONBLOCK) == -1)
 		return (-1);
-	return (serve_session(fd, capnet, capnet, NULL, policy, NULL, label,
+	return (serve_session(fd, NULL, policy, NULL, label,
 	    resolver_pipe, NETWORKCMP_RESOLVER_TIMEOUT_MS, ready_fd, release_fd));
 }
 
 int
-networkcmp_test_serve_blocked_resolver_timeout(int fd, cap_channel_t *capnet,
+networkcmp_test_serve_blocked_resolver_timeout(int fd,
     const struct networkcmp_policy *policy, const char *label, int ready_fd,
     int release_fd, uint32_t timeout_ms)
 {
@@ -1068,7 +1042,7 @@ networkcmp_test_serve_blocked_resolver_timeout(int fd, cap_channel_t *capnet,
 		return (errno = EINVAL, -1);
 	if (pipe2(resolver_pipe, O_CLOEXEC | O_NONBLOCK) == -1)
 		return (-1);
-	return (serve_session(fd, capnet, capnet, NULL, policy, NULL, label,
+	return (serve_session(fd, NULL, policy, NULL, label,
 	    resolver_pipe, timeout_ms, ready_fd, release_fd));
 }
 #endif
@@ -1098,8 +1072,7 @@ main_logger(void)
 }
 
 static int
-worker(int fd, int barrier, cap_channel_t *capnet,
-    cap_channel_t *resolver_capnet,
+worker(int fd, int barrier,
     const int resolver_pipe[2], const struct networkcmp_policy *policy,
     int audit_fd, const char *label)
 {
@@ -1132,15 +1105,13 @@ worker(int fd, int barrier, cap_channel_t *capnet,
 	}
 	close(barrier);
 	barrier = -1;
-	result = serve_session(fd, capnet, resolver_capnet, &wlog, policy,
+	result = serve_session(fd, &wlog, policy,
 	    audit, label, resolver_pipe, NETWORKCMP_RESOLVER_TIMEOUT_MS);
 out:
 	if (barrier >= 0)
 		close(barrier);
-	cap_close(capnet);
 	if (wlog.client != NULL)
 		logcmp_client_close(wlog.client);
-	/* resolver_capnet and an active resolver job die atomically with _exit(). */
 	auditcmp_client_close(audit);
 	return (result);
 fail:
@@ -1151,23 +1122,17 @@ fail:
 }
 
 static int
-start_session(int fd, cap_channel_t *casper, const char *peer_label,
+start_session(int fd, const char *peer_label,
     service_rights_t rights, const struct networkcmp_config *config)
 {
 	struct networkcmp_policy policy;
-	cap_channel_t *capnet, *resolver_capnet;
-	cap_net_limit_t *limit;
 	const char *policy_source;
-	int families[3];
-	size_t nfamilies;
 	int syncfd[2], resolver_pipe[2], pd, audit_fd, child_error, error;
 	pid_t pid;
 	char byte;
 	ssize_t n;
 
 	audit_fd = -1;
-	capnet = NULL;
-	resolver_capnet = NULL;
 	resolver_pipe[0] = resolver_pipe[1] = -1;
 	if (harden_worker_fd(fd) == -1) {
 		error = errno;
@@ -1194,52 +1159,13 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 	net_log(main_logger(), LOG_INFO, "session for %s: %s policy", peer_label,
 	    policy_source);
 	/*
-	 * AF_UNSPEC must be admitted or cap_net(3) rejects every family-
-	 * agnostic getaddrinfo with ENOTCAPABLE (its family limit matches the
-	 * hint exactly and has no AF_UNSPEC).  The ipv4/ipv6 policy is enforced
-	 * daemon-side on the pinned request and on each result, not here, so
-	 * widening the limit does not widen what the session actually sees.
+	 * No Casper cap_net channels: the worker connects with connect(2)
+	 * directly (capability-mode-legal on a socket it creates; policy is
+	 * enforced daemon-side in broker_connect) and resolves names in-process
+	 * via netresolve() over descriptors the daemon retained before entering
+	 * capability mode (the Identity fold for DNS).  The ipv4/ipv6 policy is
+	 * enforced daemon-side on each request and result, as before.
 	 */
-	nfamilies = 0;
-	families[nfamilies++] = AF_UNSPEC;
-	if (policy.ipv4)
-		families[nfamilies++] = AF_INET;
-	if (policy.ipv6)
-		families[nfamilies++] = AF_INET6;
-	capnet = cap_service_open(casper, "system.net");
-	if (capnet == NULL) {
-		error = errno;
-		goto reject;
-	}
-	/*
-	 * The broker performs connect on the client's behalf; bind, listen and
-	 * accept are not part of the version-1 client API.
-	 */
-	limit = cap_net_limit_init(capnet, CAPNET_CONNECT);
-	if (limit == NULL || cap_net_limit(limit) == -1) {
-		error = errno;
-		cap_close(capnet);
-		capnet = NULL;
-		goto reject;
-	}
-	if (harden_worker_channel(capnet) == -1) {
-		error = errno;
-		cap_close(capnet);
-		capnet = NULL;
-		goto reject;
-	}
-	resolver_capnet = cap_service_open(casper, "system.net");
-	if (resolver_capnet == NULL) {
-		error = errno;
-		goto reject;
-	}
-	limit = cap_net_limit_init(resolver_capnet, CAPNET_NAME2ADDR);
-	if (limit == NULL || cap_net_limit_name2addr_family(limit, families,
-	    nfamilies) == NULL || cap_net_limit(limit) == -1 ||
-	    harden_worker_channel(resolver_capnet) == -1) {
-		error = errno;
-		goto reject;
-	}
 	if (auditcmp_client_prepare(&audit_fd) == -1) {
 		error = errno;
 		goto reject;
@@ -1270,16 +1196,11 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 	}
 	if (pid == 0) {
 		close(syncfd[0]);
-		cap_close(casper);
-		_exit(worker(fd, syncfd[1], capnet, resolver_capnet,
+		_exit(worker(fd, syncfd[1],
 		    resolver_pipe, &policy, audit_fd, peer_label));
 	}
 	close(audit_fd);
 	audit_fd = -1;
-	cap_close(capnet);
-	capnet = NULL;
-	cap_close(resolver_capnet);
-	resolver_capnet = NULL;
 	close(resolver_pipe[0]);
 	close(resolver_pipe[1]);
 	resolver_pipe[0] = resolver_pipe[1] = -1;
@@ -1305,10 +1226,6 @@ reject:
 		close(resolver_pipe[0]);
 	if (resolver_pipe[1] >= 0)
 		close(resolver_pipe[1]);
-	if (resolver_capnet != NULL)
-		cap_close(resolver_capnet);
-	if (capnet != NULL)
-		cap_close(capnet);
 	errno = error;
 	return (-1);
 }
@@ -1316,7 +1233,6 @@ reject:
 int
 main(void)
 {
-	cap_channel_t *casper;
 	struct networkcmp_config config;
 	struct service_identity identity;
 	struct service_listener *listener;
@@ -1346,15 +1262,19 @@ main(void)
 		    "policy config rejected; using built-in default network "
 		    "policy: %m");
 	}
-	casper = cap_init();
-	if (casper == NULL)
-		goto fail;
-	if (harden_factory_channel(casper) == -1)
-		goto fail;
+	/*
+	 * Initialize the in-process resolver BEFORE entering capability mode:
+	 * parse /etc/resolv.conf and retain /etc/hosts + /etc/services
+	 * descriptors, so a sandboxed worker resolves names without Casper.
+	 * Non-fatal on failure -- numeric addresses still work; log and proceed.
+	 */
+	if (netresolve_init() == -1)
+		net_log(main_logger(), LOG_WARNING,
+		    "resolver init failed; only numeric addresses will resolve: %m");
 	/*
 	 * Operator logging goes through system.Log (main_logger()), acquired
 	 * lazily over the lookup channel after the provider is exposed — no
-	 * Casper log helper.  Casper here serves only cap_net (DNS/connect).
+	 * Casper log helper.
 	 */
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -1376,7 +1296,6 @@ main(void)
 				status = service_provider_quiesce_complete(provider, 0);
 				if (g_log.client != NULL)
 					logcmp_client_close(g_log.client);
-				cap_close(casper);
 				closelog();
 				return (status == 0 ? 0 : 1);
 			}
@@ -1385,7 +1304,7 @@ main(void)
 				continue;
 			goto fail;
 		}
-		if (start_session(fd, casper, identity.client_label,
+		if (start_session(fd, identity.client_label,
 		    identity.rights, &config) == -1)
 			net_log(main_logger(), LOG_WARNING,
 			    "session for %s rejected: %m",
