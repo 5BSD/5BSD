@@ -6,8 +6,8 @@ user = "capability";
 limits { nofile = 1024; nproc = 128; core = 0; }
 umask = "0077";
 
-# Privileged (capmode exception): localnetwork is the network broker.  It uses
-# Casper cap_net (cap_init at startup) and performs socket/bind/connect/resolve,
-# none of which a born-in-capmode process can do.  Networking is a kernel-
-# facility bridge like storage; the per-label network policy is the boundary.
-privileged = true;
+# Born in capability mode: Casper cap_net is retired.  socket(2)/connect(2) are
+# legal in capability mode, and the in-process resolver obtains resolv.conf,
+# hosts and services on demand through the filesystem provider
+# (service_open_isolated, granted by tzfsd's open policy) -- so no pre-capmode
+# window is needed.  The per-label network policy remains the boundary.

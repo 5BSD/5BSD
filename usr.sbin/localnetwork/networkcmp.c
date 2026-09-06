@@ -1237,6 +1237,7 @@ main(void)
 	struct service_identity identity;
 	struct service_listener *listener;
 	struct service_provider *provider;
+	struct service_context *ctx;
 	int error, fd, cfgfd;
 
 	openlog("localnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
@@ -1263,12 +1264,16 @@ main(void)
 		    "policy: %m");
 	}
 	/*
-	 * Initialize the in-process resolver BEFORE entering capability mode:
-	 * parse /etc/resolv.conf and retain /etc/hosts + /etc/services
-	 * descriptors, so a sandboxed worker resolves names without Casper.
-	 * Non-fatal on failure -- numeric addresses still work; log and proceed.
+	 * Acquire the bootstrap context, then initialize the in-process resolver
+	 * over it: born in capability mode, the resolver obtains /etc/resolv.conf
+	 * (parsed for nameservers), /etc/hosts and /etc/services on demand through
+	 * the filesystem provider.  Workers pdfork'd later inherit the retained
+	 * descriptors and parsed nameservers.  Non-fatal: numeric literals (and,
+	 * given hosts, local names) still resolve; log and proceed.
 	 */
-	if (netresolve_init() == -1)
+	if (service_acquire(&ctx) == -1)
+		net_log(main_logger(), LOG_WARNING, "service_acquire: %m");
+	else if (netresolve_init(ctx) == -1)
 		net_log(main_logger(), LOG_WARNING,
 		    "resolver init failed; only numeric addresses will resolve: %m");
 	/*

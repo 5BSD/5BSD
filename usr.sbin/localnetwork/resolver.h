@@ -1,12 +1,17 @@
 #ifndef _LOCALNETWORK_RESOLVER_H_
 #define _LOCALNETWORK_RESOLVER_H_
 #include <netdb.h>   /* struct addrinfo */
+
+struct service_context;
+
 /*
- * Pre-cap_enter init: res_ninit() to parse /etc/resolv.conf, and open
- * read-only /etc/hosts and /etc/services descriptors to retain across
- * cap_enter.  Call once before entering capability mode.  0, or -1+errno.
+ * Initialize the resolver.  Born in capability mode, localnetwork cannot open
+ * a path, so this obtains /etc/resolv.conf (parsed here for nameservers),
+ * /etc/hosts and /etc/services on demand through the filesystem provider via
+ * the given service context.  Call once at startup.  Returns 0 (best-effort:
+ * missing files just narrow what resolves), or -1+errno.
  */
-int  netresolve_init(void);
+int  netresolve_init(struct service_context *ctx);
 /*
  * A capability-mode-safe subset of getaddrinfo(3).  Same return convention:
  * 0 on success (*res is a malloc'd addrinfo list, free with netfreeaddrinfo),

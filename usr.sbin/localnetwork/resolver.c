@@ -30,6 +30,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+
+#include <libservice.h>
 #include "resolver.h"
 
 /* ---- retained pre-cap_enter state ------------------------------------- */
@@ -44,6 +46,15 @@ static int			g_servfd = -1;
 #define	RSLV_SERV_BUFSZ		(1024 * 1024)	/* /etc/services snapshot cap  */
 #define	RSLV_DFL_RETRANS	5	/* seconds, if g_res.retrans unset     */
 #define	RSLV_DFL_RETRY		2	/* attempts, if g_res.retry unset      */
+
+/*
+ * Nameservers parsed from the delivered /etc/resolv.conf.  Born in capability
+ * mode, we cannot let res_ninit(3) read resolv.conf by path, so we parse it
+ * ourselves and drive the query send loop from this list rather than
+ * res_getservers(3) (which would read the res_state's own, unpopulated, list).
+ */
+static union res_sockaddr_union	g_ns[RSLV_MAX_NS];
+static int			g_nns;
 
 struct rslv_addr {
 	int	family;
@@ -63,19 +74,73 @@ struct rslv_port {
  * init
  * ===================================================================== */
 int
-netresolve_init(void)
+netresolve_init(struct service_context *ctx)
 {
-
-	if (res_ninit(&g_res) == -1)
-		return (-1);
+	char buf[8192];
+	char *cursor, *line, *kw, *val, *save;
+	ssize_t r;
+	int fd;
 
 	/*
-	 * Opening hosts/services is best-effort: DNS and numeric literals
-	 * still work without them.  O_CLOEXEC so the descriptors are not
-	 * leaked across the exec of any helper.
+	 * res_ninit sets up the query machinery (id, options, retrans/retry).
+	 * Born in capability mode it cannot read /etc/resolv.conf (that open is
+	 * denied), which is fine: the state is still initialized and we supply
+	 * the nameservers ourselves below.
 	 */
-	g_hostsfd = open("/etc/hosts", O_RDONLY | O_CLOEXEC);
-	g_servfd = open("/etc/services", O_RDONLY | O_CLOEXEC);
+	(void)res_ninit(&g_res);
+
+	/*
+	 * Nameservers: parse the plane-delivered /etc/resolv.conf ourselves.
+	 * Absent/unreadable -> no nameservers (DNS is skipped; /etc/hosts and
+	 * numeric literals still resolve).
+	 */
+	g_nns = 0;
+	if (service_open_isolated(ctx, "/etc/resolv.conf", SERVICE_OPEN_READ, 0,
+	    &fd) == 0) {
+		r = pread(fd, buf, sizeof(buf) - 1, 0);
+		(void)close(fd);
+		if (r > 0) {
+			buf[r] = '\0';
+			cursor = buf;
+			while ((line = strsep(&cursor, "\n")) != NULL &&
+			    g_nns < RSLV_MAX_NS) {
+				kw = strtok_r(line, " \t", &save);
+				if (kw == NULL || strcmp(kw, "nameserver") != 0)
+					continue;
+				val = strtok_r(NULL, " \t\r", &save);
+				if (val == NULL)
+					continue;
+				memset(&g_ns[g_nns], 0, sizeof(g_ns[g_nns]));
+				if (inet_pton(AF_INET, val,
+				    &g_ns[g_nns].sin.sin_addr) == 1) {
+					g_ns[g_nns].sin.sin_family = AF_INET;
+					g_ns[g_nns].sin.sin_len =
+					    sizeof(g_ns[g_nns].sin);
+					g_ns[g_nns].sin.sin_port = htons(53);
+					g_nns++;
+				} else if (inet_pton(AF_INET6, val,
+				    &g_ns[g_nns].sin6.sin6_addr) == 1) {
+					g_ns[g_nns].sin6.sin6_family = AF_INET6;
+					g_ns[g_nns].sin6.sin6_len =
+					    sizeof(g_ns[g_nns].sin6);
+					g_ns[g_nns].sin6.sin6_port = htons(53);
+					g_nns++;
+				}
+			}
+		}
+	}
+
+	/*
+	 * hosts/services on demand through the filesystem provider (born in
+	 * capability mode, no path open).  Best-effort: DNS and numeric literals
+	 * still work without them.
+	 */
+	if (service_open_isolated(ctx, "/etc/hosts", SERVICE_OPEN_READ, 0,
+	    &g_hostsfd) == -1)
+		g_hostsfd = -1;
+	if (service_open_isolated(ctx, "/etc/services", SERVICE_OPEN_READ, 0,
+	    &g_servfd) == -1)
+		g_servfd = -1;
 	return (0);
 }
 
@@ -422,11 +487,11 @@ dns_query(const char *host, int rrtype, struct rslv_addr *addrs, int max,
 	int nsrv, qlen, attempt, s, retrans, retry, added_total = 0;
 	int answered = 0;
 
-	nsrv = res_getservers(&g_res, srv, RSLV_MAX_NS);
-	if (nsrv <= 0)
+	/* Nameservers come from the resolv.conf we parsed in netresolve_init. */
+	if (g_nns <= 0)
 		return (-1);
-	if (nsrv > RSLV_MAX_NS)
-		nsrv = RSLV_MAX_NS;
+	nsrv = g_nns;
+	memcpy(srv, g_ns, (size_t)nsrv * sizeof(srv[0]));
 
 	qlen = res_nmkquery(&g_res, ns_o_query, host, ns_c_in, rrtype, NULL,
 	    0, NULL, qbuf, (int)sizeof(qbuf));
