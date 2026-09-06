@@ -1,6 +1,6 @@
 # TrustedZFS delegatable mounts + capability-plane centralization
 
-Status: Part 1 FIXED + VM-verified (2026-09-05); Part 2 backlog pending. Owner: Kory Heard.
+Status: Part 1 FIXED + VM-verified; Part 2 #1/#2/#3/#4-helper landed + fleet-verified (2026-09-05, commits b6d7e4245d1, bdb9784b3bc); #4 rollout + #5/#7/#9 pending. Owner: Kory Heard.
 
 **Part 1 result:** the tzfsd mount-lifetime fix landed and logd is now born in
 capability mode on the real plane — `system.Log/logd running` with its storage
@@ -150,6 +150,36 @@ capmode-logging breakage seen killing logd's *error path* in the VM (`/etc/local
 `ECAPMODE`, syslog `sendto` `EBADF`).
 
 ---
+
+## Part 2 progress (2026-09-05)
+
+Landed + real-plane verified (full fleet green, 0 "exec failed"), commit
+`bdb9784b3bc`:
+- **#1 `service_harden_fd`** — adopted by logd, bsdnotify, traced, localnetwork,
+  auditbrokerd, localcrypto (helper bodies swapped in place; semantics
+  unchanged). Rights-limiting helpers (harden_file etc.) left alone.
+- **#2 `service_worker_enter_capability_mode`** — adopted at the cleanly-grouped
+  worker sites (traced, localnetwork, auditbrokerd, localcrypto, logd/storage).
+- **#3 `service_config_open_or_path`** — helper added; found to have narrow
+  applicability (most daemons fall back to *in-memory defaults*, not a config
+  path, or compute a fallback path that can itself fail — so collapsing would
+  regress the CONFIG_FD-only launch). Left those as-is.
+- **#4 `logcmp_log`/`logcmp_vlog`** — the capmode-safe syslog sink is built in
+  **liblogcmp** (not libservice: liblogcmp already depends on libservice, so the
+  reverse is circular). Root helper only; daemon adoption is follow-up.
+
+Remaining Part 2 work:
+- **#4 rollout** — switch each daemon's post-`cap_enter` `syslog()` to
+  `logcmp_log` (add liblogcmp to LIBADD where missing); per-daemon VM check.
+- **#2 leftovers** — two sites where `service_worker_protect` is fused into a
+  multi-condition `if` (logd/logcmp.c ~1165, bsdnotify ~783); refactor the
+  surrounding `if` first, then adopt.
+- **#5** `service_in_capability_mode()` helper + gate Casper on it
+  (localnetwork/authagentd); **#7** authagentd `err(1,"casper")` → fail-soft;
+  **#9** uniform `setproctitle` for born-in-capmode daemons (serviced-side).
+- Build-hygiene: auditbrokerd/tests compiles `auditcmp.c` without
+  `-I${SRCTOP}/lib/libservice`, so it reads the stale installed `libservice.h`;
+  add the include (or reinstall the header) so `make all` incl. tests is clean.
 
 ## Sequencing
 
