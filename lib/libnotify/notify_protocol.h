@@ -45,8 +45,13 @@ enum notify_opcode {
 	NOTIFY_OP_STATS,
 	NOTIFY_OP_STATE_SET,
 	NOTIFY_OP_STATE_GET,
-	NOTIFY_OP_STATE_CLEAR
+	NOTIFY_OP_STATE_CLEAR,
+	NOTIFY_OP_LIST_SUBSCRIPTIONS,
+	NOTIFY_OP_LIST_TIMERS
 };
+
+/* Newest opcode; used for wire bounds checks (keep in sync with the enum). */
+#define	NOTIFY_OP_MAX			NOTIFY_OP_LIST_TIMERS
 
 enum notify_event_type {
 	NOTIFY_EVENT_PUBLISH = 1,
@@ -157,5 +162,61 @@ struct notify_stats {
 	uint64_t	timer_events;
 	uint64_t	reserved[3];
 };
+
+/*
+ * Enumeration (LIST_SUBSCRIPTIONS / LIST_TIMERS).  A LIST request carries an
+ * opaque cursor: 0 begins a fresh enumeration and each reply hands back the
+ * cursor to resume with (0 once complete), so a session whose holdings exceed
+ * one wire message is paginated.  The reply is data-only and is always scoped
+ * by the router to the requesting session's own subscriptions/timers.
+ */
+struct notify_list_request {
+	uint32_t	cursor;
+	uint32_t	reserved;
+};
+
+struct notify_list_reply {
+	uint32_t	count;		/* entries carried in this reply */
+	uint32_t	next_cursor;	/* resume cursor; 0 when complete */
+	uint32_t	total;		/* entries held at enumeration start */
+	uint32_t	reserved;
+};
+
+struct notify_subscription_entry {
+	uint16_t	topic_length;
+	uint16_t	reserved16;
+	uint32_t	reserved32;
+	char		topic[NOTIFY_MAX_TOPIC];
+};
+
+struct notify_timer_entry {
+	uint64_t	timer_id;
+	uint32_t	interval_ms;
+	uint32_t	flags;
+	uint64_t	next_fire_ms;	/* best-effort ms until next expiry */
+};
+
+_Static_assert(sizeof(struct notify_list_request) == 8,
+    "notify list request ABI");
+_Static_assert(sizeof(struct notify_list_reply) == 16,
+    "notify list reply ABI");
+_Static_assert(sizeof(struct notify_subscription_entry) == 136,
+    "notify subscription entry ABI");
+_Static_assert(sizeof(struct notify_timer_entry) == 24,
+    "notify timer entry ABI");
+
+/*
+ * Bound on the number of entries a single LIST reply may carry.  Sized so a
+ * full page of the larger (subscription) entry still fits inside one wire
+ * message alongside both headers; timer pages are strictly smaller.
+ */
+#define	NOTIFY_LIST_MAX_ENTRIES		24U
+
+_Static_assert(sizeof(struct notify_msg) + sizeof(struct notify_list_reply) +
+    NOTIFY_LIST_MAX_ENTRIES * sizeof(struct notify_subscription_entry) <=
+    NOTIFY_MAX_MESSAGE, "notify list subscription page ABI");
+_Static_assert(sizeof(struct notify_msg) + sizeof(struct notify_list_reply) +
+    NOTIFY_LIST_MAX_ENTRIES * sizeof(struct notify_timer_entry) <=
+    NOTIFY_MAX_MESSAGE, "notify list timer page ABI");
 
 #endif

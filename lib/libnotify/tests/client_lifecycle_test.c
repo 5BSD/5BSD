@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -258,6 +259,117 @@ ATF_TC_BODY(non_event_peer_death_recovers_without_replay, tc)
 	ATF_CHECK_EQ(3, fake_service_closed());
 }
 
+static bool
+info_has_topic(const struct notify_subscription_info *info, size_t count,
+    const char *name)
+{
+	size_t i;
+
+	for (i = 0; i < count; i++)
+		if (strcmp(info[i].topic, name) == 0)
+			return (true);
+	return (false);
+}
+
+ATF_TC_WITHOUT_HEAD(list_subscriptions_and_timers);
+ATF_TC_BODY(list_subscriptions_and_timers, tc)
+{
+	struct notify_subscription_info subs[8];
+	struct notify_timer_info timers[8];
+	struct notify_client *client, *other;
+	ssize_t count;
+
+	fake_service_reset();
+	ATF_REQUIRE_EQ(0, notify_client_open(&client));
+	ATF_REQUIRE_EQ(0, notify_client_open(&other));
+
+	/* Empty to start. */
+	ATF_CHECK_EQ(0, notify_list_subscriptions(client, subs, nitems(subs)));
+	ATF_CHECK_EQ(0, notify_list_timers(client, timers, nitems(timers)));
+
+	ATF_REQUIRE_EQ(0, notify_subscribe(client, "cli.alpha"));
+	ATF_REQUIRE_EQ(0, notify_subscribe(client, "cli.beta"));
+	ATF_REQUIRE_EQ(0, notify_subscribe(client, "cli.gamma"));
+	/* A second, independent client subscribes to its own topic. */
+	ATF_REQUIRE_EQ(0, notify_subscribe(other, "other.secret"));
+
+	count = notify_list_subscriptions(client, subs, nitems(subs));
+	ATF_REQUIRE_EQ(3, count);
+	ATF_CHECK(info_has_topic(subs, count, "cli.alpha"));
+	ATF_CHECK(info_has_topic(subs, count, "cli.beta"));
+	ATF_CHECK(info_has_topic(subs, count, "cli.gamma"));
+	/* Cross-session isolation: never another client's subscription. */
+	ATF_CHECK(!info_has_topic(subs, count, "other.secret"));
+
+	/* Unsubscription is reflected. */
+	ATF_REQUIRE_EQ(0, notify_unsubscribe(client, "cli.beta"));
+	count = notify_list_subscriptions(client, subs, nitems(subs));
+	ATF_REQUIRE_EQ(2, count);
+	ATF_CHECK(!info_has_topic(subs, count, "cli.beta"));
+
+	/* Timers, likewise scoped to the calling session. */
+	ATF_REQUIRE_EQ(0, notify_timer_add(client, 100, 250, 0));
+	ATF_REQUIRE_EQ(0, notify_timer_add(client, 200, 500,
+	    NOTIFY_TIMER_F_PERIODIC));
+	count = notify_list_timers(client, timers, nitems(timers));
+	ATF_REQUIRE_EQ(2, count);
+	for (ssize_t i = 0; i < count; i++) {
+		if (timers[i].timer_id == 100) {
+			ATF_CHECK_EQ(250, timers[i].interval_ms);
+			ATF_CHECK_EQ(0, timers[i].flags);
+		} else {
+			ATF_CHECK_EQ(200, timers[i].timer_id);
+			ATF_CHECK_EQ(500, timers[i].interval_ms);
+			ATF_CHECK_EQ(NOTIFY_TIMER_F_PERIODIC, timers[i].flags);
+		}
+	}
+	ATF_CHECK_EQ(0, notify_list_timers(other, timers, nitems(timers)));
+
+	ATF_REQUIRE_EQ(0, notify_timer_cancel(client, 100));
+	count = notify_list_timers(client, timers, nitems(timers));
+	ATF_REQUIRE_EQ(1, count);
+	ATF_CHECK_EQ(200, timers[0].timer_id);
+
+	notify_client_close(client);
+	notify_client_close(other);
+}
+
+ATF_TC_WITHOUT_HEAD(list_subscriptions_paginate_and_truncate);
+ATF_TC_BODY(list_subscriptions_paginate_and_truncate, tc)
+{
+	enum { COUNT = NOTIFY_LIST_MAX_ENTRIES + 7 };
+	struct notify_subscription_info subs[COUNT];
+	struct notify_client *client;
+	char name[NOTIFY_MAX_TOPIC + 1];
+	ssize_t count;
+	size_t i;
+
+	fake_service_reset();
+	ATF_REQUIRE_EQ(0, notify_client_open(&client));
+	for (i = 0; i < COUNT; i++) {
+		(void)snprintf(name, sizeof(name), "cli.p%02zu", i);
+		ATF_REQUIRE_EQ(0, notify_subscribe(client, name));
+	}
+	/* Full enumeration reassembles every page. */
+	count = notify_list_subscriptions(client, subs, COUNT);
+	ATF_REQUIRE_EQ((ssize_t)COUNT, count);
+	for (i = 0; i < COUNT; i++) {
+		(void)snprintf(name, sizeof(name), "cli.p%02zu", i);
+		ATF_CHECK(info_has_topic(subs, count, name));
+	}
+	/* Truncation: return value reports the true total, past capacity. */
+	count = notify_list_subscriptions(client, subs, 5);
+	ATF_CHECK_EQ((ssize_t)COUNT, count);
+	/* A pure count query (NULL buffer, zero capacity) is allowed. */
+	count = notify_list_subscriptions(client, NULL, 0);
+	ATF_CHECK_EQ((ssize_t)COUNT, count);
+	/* But a NULL buffer with nonzero capacity is rejected. */
+	ATF_CHECK_ERRNO(EINVAL,
+	    notify_list_subscriptions(client, NULL, 5) == -1);
+
+	notify_client_close(client);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -268,5 +380,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, open_failure_is_retryable);
 	ATF_TP_ADD_TC(tp, malformed_replies_invalidate_session);
 	ATF_TP_ADD_TC(tp, non_event_peer_death_recovers_without_replay);
+	ATF_TP_ADD_TC(tp, list_subscriptions_and_timers);
+	ATF_TP_ADD_TC(tp, list_subscriptions_paginate_and_truncate);
 	return (atf_no_error());
 }

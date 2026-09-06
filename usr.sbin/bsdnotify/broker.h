@@ -44,5 +44,14 @@ ssize_t	notify_broker_next(struct notify_broker_client *,
 	    struct notify_event *, size_t);
 void	notify_broker_stats(const struct notify_broker_client *,
 	    struct notify_stats *);
+size_t	notify_broker_subscription_count(
+	    const struct notify_broker_client *);
+/*
+ * Return the topic of the index-th (0-based, in the client's internal list
+ * order) subscription held by client, and its length via *length.  Returns
+ * NULL if index is out of range.  Scoped strictly to the given client.
+ */
+const char *notify_broker_subscription_topic(
+	    const struct notify_broker_client *, size_t, size_t *);
 
 #endif

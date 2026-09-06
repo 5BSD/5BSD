@@ -139,6 +139,66 @@ invalid:
 	return (-1);
 }
 
+/*
+ * Validate a LIST_SUBSCRIPTIONS / LIST_TIMERS reply body.  Shared by the
+ * client (checking an incoming reply) and the daemon (checking a reply before
+ * it is sent), so both ends agree on the exact wire shape.  The entry kind is
+ * selected by opcode and the payload length must match the advertised count
+ * exactly; each entry is validated in full so a caller may trust the contents.
+ */
+static int
+validate_list_reply(uint16_t opcode, const void *body, size_t payload)
+{
+	const struct notify_list_reply *list;
+	const struct notify_subscription_entry *subs;
+	const struct notify_timer_entry *timers;
+	size_t entry_size, i;
+
+	if (payload < sizeof(*list))
+		return (-1);
+	list = body;
+	/*
+	 * next_cursor is an absolute resume offset, so it must not point past
+	 * the reported total; per-call loop-safety (that it strictly advances
+	 * the requested cursor) is enforced by the caller, which knows the
+	 * cursor it sent.
+	 */
+	if (list->reserved != 0 || list->count > NOTIFY_LIST_MAX_ENTRIES ||
+	    list->count > list->total || list->next_cursor > list->total)
+		return (-1);
+	entry_size = opcode == NOTIFY_OP_LIST_SUBSCRIPTIONS ?
+	    sizeof(*subs) : sizeof(*timers);
+	if (payload != sizeof(*list) + (size_t)list->count * entry_size)
+		return (-1);
+	if (opcode == NOTIFY_OP_LIST_SUBSCRIPTIONS) {
+		subs = (const void *)(list + 1);
+		for (i = 0; i < list->count; i++) {
+			if (subs[i].reserved16 != 0 || subs[i].reserved32 != 0 ||
+			    subs[i].topic_length == 0 ||
+			    subs[i].topic_length > sizeof(subs[i].topic) ||
+			    notify_validate_topic(subs[i].topic,
+			    subs[i].topic_length) == -1 ||
+			    memchr(subs[i].topic, '\0',
+			    subs[i].topic_length) != NULL ||
+			    memcmp(subs[i].topic + subs[i].topic_length,
+			    (char[NOTIFY_MAX_TOPIC]){}, sizeof(subs[i].topic) -
+			    subs[i].topic_length) != 0)
+				return (-1);
+		}
+	} else {
+		timers = (const void *)(list + 1);
+		for (i = 0; i < list->count; i++) {
+			if (timers[i].timer_id == 0 ||
+			    timers[i].interval_ms == 0 ||
+			    timers[i].interval_ms >
+			    NOTIFY_MAX_TIMER_INTERVAL_MS ||
+			    (timers[i].flags & ~NOTIFY_TIMER_F_MASK) != 0)
+				return (-1);
+		}
+	}
+	return (0);
+}
+
 static int
 notify_header_validate(const struct notify_msg *msg, size_t length,
     enum notify_message_role role)
@@ -152,7 +212,7 @@ notify_header_validate(const struct notify_msg *msg, size_t length,
 	    msg->magic != NOTIFY_MAGIC ||
 	    msg->version != NOTIFY_ABI_VERSION ||
 	    msg->opcode < NOTIFY_OP_HELLO ||
-	    msg->opcode > NOTIFY_OP_STATE_CLEAR ||
+	    msg->opcode > NOTIFY_OP_MAX ||
 	    (msg->flags & ~NOTIFY_MSG_F_MASK) != 0 ||
 	    (role != NOTIFY_MESSAGE_REPLY && msg->status != 0) ||
 	    (role == NOTIFY_MESSAGE_REPLY &&
@@ -169,7 +229,7 @@ notify_message_init(struct notify_msg *msg, uint16_t opcode,
 {
 
 	if (msg == NULL || opcode < NOTIFY_OP_HELLO ||
-	    opcode > NOTIFY_OP_STATE_CLEAR ||
+	    opcode > NOTIFY_OP_MAX ||
 	    (flags & ~NOTIFY_MSG_F_MASK) != 0) {
 		errno = EINVAL;
 		return (-1);
@@ -254,6 +314,12 @@ notify_validate_message(const struct notify_msg *msg, size_t length,
 		case NOTIFY_OP_STATE_SET:
 		case NOTIFY_OP_STATE_GET:
 			if (payload != sizeof(struct notify_state_reply))
+				goto invalid;
+			break;
+		case NOTIFY_OP_LIST_SUBSCRIPTIONS:
+		case NOTIFY_OP_LIST_TIMERS:
+			if (validate_list_reply(msg->opcode, msg + 1,
+			    payload) == -1)
 				goto invalid;
 			break;
 		default:
@@ -345,6 +411,17 @@ notify_validate_message(const struct notify_msg *msg, size_t length,
 			goto invalid;
 		cancel = (const void *)(msg + 1);
 		if (cancel->timer_id == 0 || cancel->reserved != 0)
+			goto invalid;
+		break;
+	}
+	case NOTIFY_OP_LIST_SUBSCRIPTIONS:
+	case NOTIFY_OP_LIST_TIMERS: {
+		const struct notify_list_request *list;
+
+		if (payload != sizeof(*list))
+			goto invalid;
+		list = (const void *)(msg + 1);
+		if (list->reserved != 0)
 			goto invalid;
 		break;
 	}
@@ -937,6 +1014,165 @@ notify_timer_cancel(struct notify_client *client, uint64_t timer_id)
 	request.timer_id = timer_id;
 	return (simple_rpc(client, NOTIFY_OP_TIMER_CANCEL, &request,
 	    sizeof(request)));
+}
+
+/*
+ * Fetch a single LIST page.  On success *header points into reply at the
+ * decoded list header and *entries at the first entry; the reply was already
+ * subjected to notify_validate_message(), so the count/size/entry invariants
+ * hold.  Enforces a strictly advancing cursor to bound pagination.
+ */
+static int
+list_page_locked(struct notify_client *client, uint16_t opcode,
+    uint32_t cursor, union notify_buffer *reply,
+    const struct notify_list_reply **header, const void **entries)
+{
+	const struct notify_msg *message;
+	const struct notify_list_reply *list;
+	struct notify_list_request request;
+	size_t payload;
+
+	memset(&request, 0, sizeof(request));
+	request.cursor = cursor;
+	if (rpc_locked(client, opcode, &request, sizeof(request), reply,
+	    &payload, 30000) == -1)
+		return (-1);
+	message = (const void *)reply->bytes;
+	list = (const void *)(message + 1);
+	/* rpc_locked validated the frame; re-check the loop-safety invariant. */
+	if (payload < sizeof(*list) ||
+	    (list->next_cursor != 0 && list->next_cursor <= cursor)) {
+		errno = EPROTO;
+		return (-1);
+	}
+	*header = list;
+	*entries = (const void *)(list + 1);
+	return (0);
+}
+
+/*
+ * Enumerate the caller's own active subscriptions.  Writes up to capacity
+ * entries into out and returns the total number the session holds (which may
+ * exceed capacity: a return value greater than capacity signals truncation).
+ * Fails closed on any protocol or transport error.
+ */
+ssize_t
+notify_list_subscriptions(struct notify_client *client,
+    struct notify_subscription_info *out, size_t capacity)
+{
+	union notify_buffer reply;
+	const struct notify_list_reply *header;
+	const struct notify_subscription_entry *entries;
+	const void *raw;
+	size_t total, i;
+	uint32_t cursor;
+	int error, result;
+
+	if (client == NULL || client->owner != getpid() ||
+	    (out == NULL && capacity != 0)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	total = 0;
+	cursor = 0;
+	result = 0;
+	error = 0;
+	pthread_mutex_lock(&client->lock);
+	if (client->channel == NULL && reconnect_locked(client) == -1) {
+		error = errno;
+		result = -1;
+	}
+	while (result == 0) {
+		if (list_page_locked(client, NOTIFY_OP_LIST_SUBSCRIPTIONS, cursor,
+		    &reply, &header, &raw) == -1) {
+			error = errno;
+			result = -1;
+			break;
+		}
+		entries = raw;
+		for (i = 0; i < header->count; i++) {
+			size_t length = entries[i].topic_length;
+
+			if (total < capacity) {
+				memcpy(out[total].topic, entries[i].topic, length);
+				out[total].topic[length] = '\0';
+			}
+			total++;
+		}
+		cursor = header->next_cursor;
+		if (cursor == 0)
+			break;
+	}
+	if (result == -1 && connection_unusable(error))
+		disconnect_locked(client);
+	pthread_mutex_unlock(&client->lock);
+	if (result == -1) {
+		errno = error;
+		return (-1);
+	}
+	return ((ssize_t)total);
+}
+
+/*
+ * Enumerate the caller's own active timers (id, interval, periodic flag and a
+ * best-effort next-fire estimate).  Same contract as
+ * notify_list_subscriptions().
+ */
+ssize_t
+notify_list_timers(struct notify_client *client,
+    struct notify_timer_info *out, size_t capacity)
+{
+	union notify_buffer reply;
+	const struct notify_list_reply *header;
+	const struct notify_timer_entry *entries;
+	const void *raw;
+	size_t total, i;
+	uint32_t cursor;
+	int error, result;
+
+	if (client == NULL || client->owner != getpid() ||
+	    (out == NULL && capacity != 0)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	total = 0;
+	cursor = 0;
+	result = 0;
+	error = 0;
+	pthread_mutex_lock(&client->lock);
+	if (client->channel == NULL && reconnect_locked(client) == -1) {
+		error = errno;
+		result = -1;
+	}
+	while (result == 0) {
+		if (list_page_locked(client, NOTIFY_OP_LIST_TIMERS, cursor,
+		    &reply, &header, &raw) == -1) {
+			error = errno;
+			result = -1;
+			break;
+		}
+		entries = raw;
+		for (i = 0; i < header->count; i++) {
+			if (total < capacity) {
+				out[total].timer_id = entries[i].timer_id;
+				out[total].interval_ms = entries[i].interval_ms;
+				out[total].flags = entries[i].flags;
+				out[total].next_fire_ms = entries[i].next_fire_ms;
+			}
+			total++;
+		}
+		cursor = header->next_cursor;
+		if (cursor == 0)
+			break;
+	}
+	if (result == -1 && connection_unusable(error))
+		disconnect_locked(client);
+	pthread_mutex_unlock(&client->lock);
+	if (result == -1) {
+		errno = error;
+		return (-1);
+	}
+	return ((ssize_t)total);
 }
 
 int

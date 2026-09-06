@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
+#include <time.h>
 #include <unistd.h>
 
 #include <auditcmp.h>
@@ -107,6 +108,8 @@ struct router_timer {
 	struct router_session	*session;
 	uint64_t		 ident;
 	uint64_t		 user_id;
+	uint64_t		 armed_at_ns;	/* CLOCK_MONOTONIC at arm time */
+	uint32_t		 interval_ms;
 	uint32_t		 flags;
 };
 
@@ -406,6 +409,14 @@ router_add_timer(struct router *router, struct router_session *session,
 	}
 	timer->user_id = user_id;
 	timer->flags = flags;
+	timer->interval_ms = interval_ms;
+	{
+		struct timespec now;
+
+		if (clock_gettime(CLOCK_MONOTONIC, &now) == 0)
+			timer->armed_at_ns = (uint64_t)now.tv_sec *
+			    UINT64_C(1000000000) + (uint64_t)now.tv_nsec;
+	}
 	event_flags = EV_ADD | EV_ENABLE;
 	if (source_type == ROUTER_EVENT_NEXT_TIMER ||
 	    (flags & NOTIFY_TIMER_F_PERIODIC) == 0)
@@ -470,6 +481,125 @@ router_deliver_pending(struct router *router)
 			router_remove_session(router, session);
 	}
 	return (0);
+}
+
+/*
+ * Best-effort estimate of the milliseconds until a user timer next fires.
+ * The absolute deadline is owned by the kernel kevent, so this is derived
+ * from the arm time and the interval: exact for a one-shot before it fires,
+ * and the position within the current period for a periodic timer.  Returns 0
+ * when the estimate is unavailable or the deadline has already elapsed.
+ */
+static uint64_t
+router_timer_remaining_ms(const struct router_timer *timer)
+{
+	struct timespec now;
+	uint64_t now_ns, elapsed_ns, interval_ns;
+
+	if (timer->interval_ms == 0 ||
+	    clock_gettime(CLOCK_MONOTONIC, &now) != 0 ||
+	    timer->armed_at_ns == 0)
+		return (0);
+	now_ns = (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+	    (uint64_t)now.tv_nsec;
+	interval_ns = (uint64_t)timer->interval_ms * UINT64_C(1000000);
+	if (now_ns <= timer->armed_at_ns)
+		return (timer->interval_ms);
+	elapsed_ns = now_ns - timer->armed_at_ns;
+	if ((timer->flags & NOTIFY_TIMER_F_PERIODIC) != 0)
+		return ((interval_ns - (elapsed_ns % interval_ns)) /
+		    UINT64_C(1000000));
+	if (elapsed_ns >= interval_ns)
+		return (0);
+	return ((interval_ns - elapsed_ns) / UINT64_C(1000000));
+}
+
+/*
+ * Enumerate the requesting session's own subscriptions.  Scoped strictly to
+ * session->client (this session's broker client): another session's topics
+ * are never visited.  The reply is paginated by the request cursor when the
+ * holdings exceed one wire message.
+ */
+static int
+router_list_subscriptions(struct router *router __unused,
+    struct router_session *session, struct channel_message *request_message,
+    const struct notify_msg *message)
+{
+	union notify_buffer buffer;
+	struct notify_list_reply *header;
+	struct notify_subscription_entry *entries;
+	const struct notify_list_request *request;
+	const char *topic;
+	size_t total, offset, emitted, length;
+
+	request = (const void *)(message + 1);
+	total = notify_broker_subscription_count(session->client);
+	offset = request->cursor;
+	memset(&buffer, 0, sizeof(buffer));
+	header = (void *)buffer.bytes;
+	entries = (void *)(header + 1);
+	emitted = 0;
+	while (offset + emitted < total && emitted < NOTIFY_LIST_MAX_ENTRIES) {
+		topic = notify_broker_subscription_topic(session->client,
+		    offset + emitted, &length);
+		if (topic == NULL || length == 0 || length > NOTIFY_MAX_TOPIC)
+			break;
+		entries[emitted].topic_length = (uint16_t)length;
+		memcpy(entries[emitted].topic, topic, length);
+		emitted++;
+	}
+	header->count = (uint32_t)emitted;
+	header->total = (uint32_t)total;
+	header->next_cursor = offset + emitted < total ?
+	    (uint32_t)(offset + emitted) : 0;
+	BSDNOTIFY_PROBE_LIST(__DECONST(char *, session->label),
+	    message->opcode, (uint64_t)emitted);
+	return (router_send_reply(session, request_message, message, 0, &buffer,
+	    sizeof(*header) + emitted * sizeof(*entries)));
+}
+
+/*
+ * Enumerate the requesting session's own timers.  Walks only session->timers,
+ * so a session sees exactly the timers it added and never another session's.
+ */
+static int
+router_list_timers(struct router *router __unused,
+    struct router_session *session,
+    struct channel_message *request_message, const struct notify_msg *message)
+{
+	union notify_buffer buffer;
+	struct notify_list_reply *header;
+	struct notify_timer_entry *entries;
+	const struct notify_list_request *request;
+	const struct router_timer *timer;
+	size_t total, offset, emitted, index;
+
+	request = (const void *)(message + 1);
+	total = session->timer_count;
+	offset = request->cursor;
+	memset(&buffer, 0, sizeof(buffer));
+	header = (void *)buffer.bytes;
+	entries = (void *)(header + 1);
+	emitted = 0;
+	index = 0;
+	for (timer = session->timers; timer != NULL && emitted <
+	    NOTIFY_LIST_MAX_ENTRIES; timer = timer->next, index++) {
+		if (index < offset)
+			continue;
+		entries[emitted].timer_id = timer->user_id;
+		entries[emitted].interval_ms = timer->interval_ms;
+		entries[emitted].flags = timer->flags & NOTIFY_TIMER_F_MASK;
+		entries[emitted].next_fire_ms = router_timer_remaining_ms(timer);
+		emitted++;
+	}
+	header->count = (uint32_t)emitted;
+	header->total = (uint32_t)total;
+	header->next_cursor = offset + emitted < total ?
+	    (uint32_t)(offset + emitted) : 0;
+	BSDNOTIFY_PROBE_LIST(__DECONST(char *, session->label),
+	    message->opcode, (uint64_t)emitted);
+	return (router_send_reply(session, request_message, message, 0, &buffer,
+	    sizeof(*header) + emitted * sizeof(*entries)));
 }
 
 static int
@@ -609,6 +739,12 @@ router_handle_request(struct router *router, struct router_session *session,
 		notify_broker_stats(session->client, &stats);
 		return (router_send_reply(session, request_message, message, 0, &stats,
 		    sizeof(stats)));
+	case NOTIFY_OP_LIST_SUBSCRIPTIONS:
+		return (router_list_subscriptions(router, session,
+		    request_message, message));
+	case NOTIFY_OP_LIST_TIMERS:
+		return (router_list_timers(router, session, request_message,
+		    message));
 	case NOTIFY_OP_STATE_SET:
 		state_set = (const void *)(message + 1);
 		error = notify_broker_state_set(router->broker,
@@ -951,6 +1087,17 @@ relay_authorized(const struct notify_policy *policy,
 	case NOTIFY_OP_TIMER_CANCEL:
 		*operation = "timer-cancel";
 		return (policy->timers);
+	case NOTIFY_OP_LIST_SUBSCRIPTIONS:
+		/*
+		 * Enumerating one's own holdings carries no topic to gate and
+		 * exposes only this session's state, so it is always permitted,
+		 * like HELLO/STATS.  Named here for consistent audit records.
+		 */
+		*operation = "list-subscriptions";
+		return (true);
+	case NOTIFY_OP_LIST_TIMERS:
+		*operation = "list-timers";
+		return (true);
 	default:
 		*operation = "request";
 		return (true);

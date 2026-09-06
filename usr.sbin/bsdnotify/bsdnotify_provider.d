@@ -10,4 +10,5 @@ provider bsdnotify {
 	probe deliver(const char *, uint32_t, int);
 	probe timer(const char *, uint64_t, int);
 	probe reject(const char *, uint16_t, int);
+	probe list(const char *, uint16_t, uint64_t);
 };

@@ -605,3 +605,29 @@ notify_broker_stats(const struct notify_broker_client *client,
 		return;
 	*stats = client->stats;
 }
+
+size_t
+notify_broker_subscription_count(const struct notify_broker_client *client)
+{
+
+	return (client != NULL ? client->subscription_count : 0);
+}
+
+const char *
+notify_broker_subscription_topic(const struct notify_broker_client *client,
+    size_t index, size_t *length)
+{
+	const struct broker_subscription *subscription;
+	size_t i;
+
+	if (client == NULL || length == NULL)
+		return (NULL);
+	i = 0;
+	for (subscription = client->subscriptions; subscription != NULL;
+	    subscription = subscription->client_next, i++)
+		if (i == index) {
+			*length = subscription->topic_length;
+			return (subscription->topic);
+		}
+	return (NULL);
+}
