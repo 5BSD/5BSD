@@ -13,4 +13,10 @@ provider tzfsd {
 	probe request__grant(uint16_t, uint8_t, int, int);
 	/* About to reply: op, final status, delivered handle fd. */
 	probe request__reply(uint16_t, int, int);
+	/*
+	 * A retired consumer label's whole persistent namespace was reclaimed:
+	 * the retired label, and the final status (0 == destroyed or already
+	 * absent, else errno).
+	 */
+	probe reclaim__label(const char *, int);
 };

@@ -37,4 +37,17 @@ int		vmd_test_clamp_backlog(uint32_t backlog);
 /* Serve one client on a provider channel built from fd, in this process. */
 int		vmd_test_worker(int fd, const char *label, uint32_t window_base);
 
+/*
+ * Capability-cleanup reclaim of one label's window (the SVC_OP_RECLAIM_LABEL
+ * push path).  Returns true iff a slot was freed; owner-scoped and idempotent.
+ */
+bool		vmd_test_reclaim(const char *label);
+
+/*
+ * Drive the reconciliation sweep with an injected liveness oracle (so a unit
+ * test needs no live serviced).  `is_live` follows service_label_is_live's
+ * contract: 0 with *live set, or -1 for an uncertain/transport failure.
+ */
+void		vmd_test_reconcile(int (*is_live)(const char *label, bool *live));
+
 #endif /* VMD_TEST_H */

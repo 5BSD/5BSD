@@ -27,6 +27,16 @@
 #endif
 
 #define CRYPTOCMP_NAME "system.Crypto"
+
+/*
+ * Upper bound on reclaim re-list rounds.  reclaim_owner() re-lists the owner's
+ * first page each round because deleting keys shifts the enumeration; the cap
+ * is a belt-and-suspenders guard so a key the kernel refuses to delete can
+ * never spin the loop forever (the no-progress check below is the primary
+ * guard).  A retired owner never holds more than a handful of keys in practice.
+ */
+#define CRYPTO_RECLAIM_MAX_ROUNDS 4096
+
 static int control_fd;
 struct crypto_worker {
 	char	owner[CRYPTODESC_KEY_OWNER_MAX];
@@ -397,6 +407,78 @@ reply:
 }
 
 /*
+ * Capability-lifecycle reclaim (docs/capability-lifecycle-cleanup.md §3.4).
+ * When serviced observes that a consumer bundle was uninstalled, it retires
+ * that bundle's label and pushes SVC_OP_RECLAIM_LABEL over the control channel;
+ * libservice's dispatcher then invokes this handler with the retired label.
+ * The named keys the consumer minted live in the kernel keystore keyed by
+ * owner==label and would otherwise leak forever (a dead label can never call
+ * NAMED_DELETE itself).  reclaim_owner(L) deletes every key owned by L using
+ * exactly the W14 owner-scoped primitives: cryptodesc_named_list(L) to
+ * enumerate, cryptodesc_named_delete(name, L) to reclaim each.  Both ioctls are
+ * owner-scoped in the kernel (keyed on (name, owner)), so a delete addressed to
+ * owner L can only ever remove L's keys — the crown-jewel owner-scoping
+ * invariant the LIST/DELETE ops already enforce is inherited unchanged.  The
+ * handler is idempotent (an already-clean or unknown label lists empty and is a
+ * no-op success) because push and the intended pull sweep can both fire for one
+ * label.
+ *
+ * We re-list from the first page (cursor 0) each round rather than walk a stable
+ * next_cursor, because deleting keys mutates the enumeration underneath a cursor
+ * walk; each round deletes the page it just listed and re-lists until the owner
+ * has no keys.  A round that lists keys but deletes none breaks the loop so a
+ * key the kernel declines to delete cannot spin forever (a partial failure is
+ * simply retried on a future retirement/sweep).
+ *
+ * RECONCILE GAP (docs/capability-lifecycle-cleanup.md §3.3): this provider
+ * implements the PUSH path ONLY.  The keystore exposes enumeration per-owner
+ * (CIOCGCRYPTONAMEDLIST is keyed on cd_owner) but has no primitive that
+ * enumerates the *distinct owners* the store holds, so [CRYPTO] cannot cheaply
+ * discover the set of labels it currently holds keys for and therefore cannot
+ * run the mark-and-sweep pull that service_label_is_live() is meant to drive
+ * (there is nothing to iterate).  A future kernel owner-enumeration primitive
+ * would close this gap and enable the sweep; until then a label retired while
+ * [CRYPTO] was down (so the push was missed) is not reclaimed.  We do NOT
+ * fabricate a reconcile.
+ */
+static void
+reclaim_owner(const char *label, void *ctx __unused)
+{
+	struct cryptodesc_named_list_entry entries[CRYPTODESC_NAMED_LIST_MAX];
+	uint64_t generation;
+	uint32_t count, next_cursor, i, reclaimed, rounds;
+	int deleted_this_round;
+
+	if (label == NULL ||
+	    strnlen(label, CRYPTODESC_KEY_OWNER_MAX) == 0 ||
+	    strnlen(label, CRYPTODESC_KEY_OWNER_MAX) == CRYPTODESC_KEY_OWNER_MAX)
+		return;
+	reclaimed = 0;
+	for (rounds = 0; rounds < CRYPTO_RECLAIM_MAX_ROUNDS; rounds++) {
+		count = 0;
+		next_cursor = 0;
+		memset(entries, 0, sizeof(entries));
+		if (cryptodesc_named_list(control_fd, label, 0, entries,
+		    CRYPTODESC_NAMED_LIST_MAX, &count, &next_cursor) != 0)
+			break;
+		if (count == 0)
+			break;
+		deleted_this_round = 0;
+		for (i = 0; i < count; i++) {
+			generation = 0;
+			if (cryptodesc_named_delete(control_fd,
+			    entries[i].cd_name, label, &generation) == 0) {
+				reclaimed++;
+				deleted_this_round = 1;
+			}
+		}
+		if (deleted_this_round == 0)
+			break;
+	}
+	CRYPTO_PROBE_RECLAIM(label, reclaimed);
+}
+
+/*
  * The owner-scoped request/channel core.  The immutable owner label (bound to
  * the unforgeable channel peer identity by the caller) is threaded into every
  * named-key operation via crypto_worker::owner, so a session can only reach the
@@ -478,6 +560,32 @@ localcrypto_test_serve(int fd, const char *owner_label)
 	if (harden_control_descriptor() == -1)
 		return (1);
 	return (serve_session(fd, owner_label, NULL));
+}
+
+/*
+ * Test entrypoint: drive the real reclaim handler against the shared kernel
+ * keystore for a caller-supplied owner label.  It opens the /dev/crypto control
+ * descriptor exactly as production does (the full ioctl surface the parent
+ * uses, not the hardened worker set) and invokes reclaim_owner(); the keystore
+ * is process-global and owner-scoped, so this reclaims precisely the keys minted
+ * under owner_label by any session and never another owner's keys.
+ */
+int
+localcrypto_test_reclaim(const char *owner_label)
+{
+
+	if (owner_label == NULL ||
+	    strnlen(owner_label, CRYPTODESC_KEY_OWNER_MAX) == 0 ||
+	    strnlen(owner_label, CRYPTODESC_KEY_OWNER_MAX) ==
+	    CRYPTODESC_KEY_OWNER_MAX)
+		return (errno = EINVAL, -1);
+	control_fd = open("/dev/crypto", O_RDWR);
+	if (control_fd < 0)
+		return (-1);
+	reclaim_owner(owner_label, NULL);
+	close(control_fd);
+	control_fd = -1;
+	return (0);
 }
 #endif /* LOCALCRYPTO_TESTING */
 
@@ -582,6 +690,15 @@ main(void)
 	    service_provider_enter_capability_mode(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (1);
+	/*
+	 * Register the capability-lifecycle reclaim handler.  serviced pushes
+	 * SVC_OP_RECLAIM_LABEL over the control channel when a consumer bundle is
+	 * uninstalled; libservice dispatches it to reclaim_owner(), which deletes
+	 * that label's named keys from the kernel keystore.  The parent's
+	 * control_fd (unhardened, full ioctl surface) backs the list+delete, and
+	 * the callback runs on the dispatch path outside the accept loop.
+	 */
+	service_set_reclaim_handler(reclaim_owner, NULL);
 	for (;;) {
 		memset(&id, 0, sizeof(id));
 		id.size = sizeof(id);

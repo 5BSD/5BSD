@@ -660,6 +660,102 @@ grant_list(struct tzfsd_state *st, const char *client,
 }
 
 /*
+ * Reclaim a retired consumer label's ENTIRE persistent namespace in one
+ * operation.  This is the seam behind the capability-cleanup reclaim callback:
+ * it derives the label's namespace component (u<hash(label)>) and destroys that
+ * whole subtree — every claim the label ever made, deepest dataset first, then
+ * the namespace dataset itself — under the daemon's retained persistent parent,
+ * reusing exactly the destroy primitive OP_DESTROY/OP_RELEASE use
+ * (tzfsd_destroy_tree).  On success *ns is left holding the namespace that was
+ * targeted (for the caller's probe/audit and for the test seam to assert
+ * owner-scoping).  Returns 0 (destroyed, or already absent — tzfsd_destroy_tree
+ * maps ENOENT to success, so this is idempotent), or -1 with errno set.
+ *
+ * Owner-scoping is inherent and total: the destroy target is ALWAYS and ONLY
+ * derive_ns(label) under st->persistent_fd.  There is no wire argument, and the
+ * namespace is a pure hash of the retired label, so reclaiming label A can never
+ * reach label B's namespace u<hash(B)>; derive_ns yields a single '/'-free
+ * component, and tzfsd_destroy_tree refuses any relname bearing a '/'.
+ */
+static int
+reclaim_namespace(struct tzfsd_state *st, const char *label, char *ns,
+    size_t nsz)
+{
+
+	if (st == NULL || !derive_ns(label, ns, nsz)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (st->persistent_fd == -1) {
+		/* No pool retained: nothing to reclaim.  Fail-safe (no touch). */
+		errno = ENXIO;
+		return (-1);
+	}
+	/*
+	 * Cache claims live under the persistent tree (see OP_DESTROY), so this
+	 * single persistent-namespace destroy reclaims them too; there is no
+	 * separate cache root to sweep.  Ephemeral lease storage is boot- and
+	 * connection-scoped (reaped at startup and on channel teardown), not
+	 * per-label bundle state, so it is intentionally out of scope here.
+	 */
+	return (tzfsd_destroy_tree(st->persistent_fd, ns));
+}
+
+/*
+ * Capability-cleanup reclaim handler (docs/capability-lifecycle-cleanup.md,
+ * docs/capability-plane-vision.md) — the tier-1 bulk reclaim.  When a consumer
+ * bundle is uninstalled its label is retired and its per-label storage can never
+ * again be reclaimed by a live consumer.  serviced detects the uninstall and
+ * pushes SVC_OP_RECLAIM_LABEL over the control channel; libservice's dispatcher
+ * — pumped by tzfsd's main process, the same path that delivers quiesce — invokes
+ * this callback while the daemon is serving.  ctx is the tzfsd_state carrying the
+ * retained persistent_fd.  We destroy the retired label's whole namespace in one
+ * operation (see reclaim_namespace).  Idempotent and fail-safe: push and a future
+ * pull sweep may both fire for one label, and a re-reclaim of an already-gone
+ * namespace is a no-op success; any failure is logged, never fatal to serving.
+ *
+ * RECONCILE GAP (push-only by construction): tzfsd keys namespaces by
+ * hash(label) and cannot reverse u<hash> back to a label, so it CANNOT run the
+ * service_label_is_live() pull sweep over the namespaces it holds — it has no way
+ * to recover a label to query from a stored namespace.  This handler is therefore
+ * push-only, which is primary and sufficient here: serviced pushes a reclaim for
+ * every uninstalled bundle.  A serviced-driven live-namespace sweep (serviced
+ * enumerating live labels and pushing a reclaim for every namespace not among
+ * them) is a possible future backstop; tzfsd cannot self-drive one.  We do NOT
+ * fake a reconcile.
+ */
+void
+tzfsd_reclaim_label(const char *label, void *ctx)
+{
+	struct tzfsd_state *st = ctx;
+	char ns[TZFSD_NAME_MAX];
+	int status;
+
+	if (reclaim_namespace(st, label, ns, sizeof(ns)) == -1) {
+		status = errno;
+		/*
+		 * A missing pool/namespace or an unnamespaceable label leaves
+		 * nothing to reclaim; a real ZFS failure is logged for the
+		 * operator but must not stop the serve loop.
+		 */
+		if (status != ENXIO && status != EINVAL)
+			syslog(LOG_WARNING, "reclaim label %s: %s",
+			    label != NULL ? label : "(null)",
+			    strerror(status));
+	} else {
+		status = 0;
+		syslog(LOG_INFO, "reclaim label %s -> namespace %s destroyed",
+		    label, ns);
+	}
+	/*
+	 * The dtrace(1)-generated probe stub takes a non-const char *; cast away
+	 * const safely (the probe only reads the string) to satisfy -Wcast-qual.
+	 */
+	TZFSD_PROBE_RECLAIM(__DECONST(char *, label != NULL ? label : ""),
+	    status);
+}
+
+/*
  * Per-client channel request handler.  arg is this worker's tzfsd_state (its
  * own copy of the retained handles, plus per-connection lease state).  The
  * reply is a fixed tzfsd_reply; a granted handle rides back as its single fd.
@@ -956,6 +1052,15 @@ tzfsd_serve(struct tzfsd_state *st)
 	struct service_provider *provider;
 	int fd;
 
+	/*
+	 * Register the capability-cleanup reclaim handler before serving.  It
+	 * fires on the control-dispatch path this main process already pumps, so
+	 * a retired label's namespace is reclaimed while tzfsd keeps serving; ctx
+	 * is the state carrying the retained persistent_fd.  Registering it up
+	 * front means no early SVC_OP_RECLAIM_LABEL push is missed.
+	 */
+	service_set_reclaim_handler(tzfsd_reclaim_label, st);
+
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_expose(provider, TZFSD_SERVICE_NAME, &listener) ==
@@ -1077,5 +1182,23 @@ tzfsd_test_grant_list(struct tzfsd_state *st, const char *client,
 {
 
 	return (grant_list(st, client, rq, rp));
+}
+
+/*
+ * Drive the reclaim seam so tests can assert the crown-jewel owner-scoping
+ * invariant — a reclaim ALWAYS targets exactly derive_ns(label) and never
+ * another label's namespace — and the fail-safe no-pool/bad-label outcomes,
+ * without an imported pool.  On return *ns holds the namespace the reclaim
+ * targeted (whenever the label was namespaceable), so a test can assert reclaim
+ * of label A computes u<hash(A)> and never label B's u<hash(B)>.  The return
+ * value / errno are reclaim_namespace()'s (0 destroyed-or-absent; -1 with EINVAL
+ * for an unnamespaceable label, ENXIO for no retained pool).
+ */
+int
+tzfsd_test_reclaim(struct tzfsd_state *st, const char *label, char *ns,
+    size_t nsz)
+{
+
+	return (reclaim_namespace(st, label, ns, nsz));
 }
 #endif /* TZFSD_TESTING */

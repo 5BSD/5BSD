@@ -1129,6 +1129,80 @@ ATF_TC_BODY(retention_prunes_by_size_never_active, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * Capability-cleanup reclaim: retiring one label's records must leave every
+ * other label's records queryable and intact, be idempotent, and never corrupt
+ * the active segment.
+ */
+ATF_TC_WITHOUT_HEAD(reclaim_drops_only_the_named_label);
+ATF_TC_BODY(reclaim_drops_only_the_named_label, tc)
+{
+	struct logcmp_store_cursor cursor;
+	struct fixture fixture;
+	struct logcmp_store *store;
+	uint8_t record[LOGCMP_MAX_RECORD], output[LOGCMP_MAX_RECORD];
+	off_t offset_before;
+	size_t length, output_length;
+
+	fixture_create(&fixture);
+	length = make_record(record, "kept", LOGCMP_PRIVACY_PUBLIC, "value",
+	    LOGCMP_PRIVACY_PUBLIC);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+
+	/* Interleave two labels so a reclaim of one must not disturb the other. */
+	((struct logcmp_record *)(void *)record)->sequence = 1;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.a",
+	    (const void *)record, length, false));
+	((struct logcmp_record *)(void *)record)->sequence = 2;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.b",
+	    (const void *)record, length, false));
+	((struct logcmp_record *)(void *)record)->sequence = 3;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.a",
+	    (const void *)record, length, false));
+	ATF_CHECK_EQ(2, logcmp_store_label_count(store, "org.a"));
+	ATF_CHECK_EQ(1, logcmp_store_label_count(store, "org.b"));
+	offset_before = logcmp_store_offset(store);
+
+	/* Reclaiming a label that never logged is a no-op success. */
+	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.never"));
+
+	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.a"));
+	/* Idempotent: a repeated reclaim still succeeds. */
+	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.a"));
+
+	/* org.a now observes nothing and reports a zero count. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_CHECK_EQ(0, logcmp_store_query_next(store, "org.a", 0, &cursor,
+	    output, sizeof(output), &output_length));
+	ATF_CHECK_EQ(0, logcmp_store_label_count(store, "org.a"));
+
+	/* org.b is untouched: both its count and its records survive. */
+	ATF_CHECK_EQ(1, logcmp_store_label_count(store, "org.b"));
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, logcmp_store_query_next(store, "org.b", 0, &cursor,
+	    output, sizeof(output), &output_length));
+	ATF_CHECK_EQ(2, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_CHECK_EQ(0, logcmp_store_query_next(store, "org.b", 0, &cursor,
+	    output, sizeof(output), &output_length));
+
+	/*
+	 * The active segment is neither rewritten nor truncated by the logical
+	 * prune, and it stays writable for live labels.
+	 */
+	ATF_CHECK_EQ(offset_before, logcmp_store_offset(store));
+	((struct logcmp_record *)(void *)record)->sequence = 4;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.b",
+	    (const void *)record, length, true));
+	ATF_CHECK_EQ(2, logcmp_store_label_count(store, "org.b"));
+
+	/* A malformed label is rejected without recording anything. */
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_reclaim_label(store, "") == -1);
+	ATF_CHECK_ERRNO(EINVAL, logcmp_store_reclaim_label(NULL, "org.a") == -1);
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1156,5 +1230,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, retention_disabled_keeps_all);
 	ATF_TP_ADD_TC(tp, retention_prunes_oldest_by_age);
 	ATF_TP_ADD_TC(tp, retention_prunes_by_size_never_active);
+	ATF_TP_ADD_TC(tp, reclaim_drops_only_the_named_label);
 	return (atf_no_error());
 }

@@ -57,7 +57,25 @@ struct logcmp_store {
 	uint8_t		privacy_key[LOGCMP_STORE_PRIVACY_KEY_SIZE];
 	size_t		nlabel_counts;
 	struct store_label_count label_counts[STORE_LABEL_COUNTERS];
+	size_t		nreclaimed;
+	char		reclaimed[LOGCMP_STORE_RECLAIMED_MAX][STORE_LABEL_MAX + 1];
 };
+
+/*
+ * A label is reclaimed when its owning bundle has been retired (see
+ * logcmp_store_reclaim_label).  The set is small and linear-scanned; a reclaimed
+ * label's records are treated as absent by every read path below.
+ */
+static bool
+label_reclaimed(const struct logcmp_store *store, const char *label)
+{
+	size_t i;
+
+	for (i = 0; i < store->nreclaimed; i++)
+		if (strcmp(store->reclaimed[i], label) == 0)
+			return (true);
+	return (false);
+}
 
 static int
 harden_file(int fd)
@@ -737,11 +755,38 @@ logcmp_store_label_count(const struct logcmp_store *store, const char *label)
 {
 	size_t i;
 
-	if (store == NULL || label == NULL)
+	if (store == NULL || label == NULL || label_reclaimed(store, label))
 		return (0);
 	for (i = 0; i < store->nlabel_counts; i++)
 		if (strcmp(store->label_counts[i].label, label) == 0)
 			return (store->label_counts[i].count);
+	return (0);
+}
+
+int
+logcmp_store_reclaim_label(struct logcmp_store *store, const char *label)
+{
+	size_t label_length;
+
+	if (store == NULL || !valid_label(label, &label_length))
+		return (errno = EINVAL, -1);
+	/*
+	 * Idempotent: the retirement push (and any future reconciliation sweep)
+	 * can both fire for the same label, and a label that never logged still
+	 * reclaims cleanly.
+	 */
+	if (label_reclaimed(store, label)) {
+		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
+		return (0);
+	}
+	if (store->nreclaimed >= LOGCMP_STORE_RECLAIMED_MAX) {
+		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, ENOSPC);
+		return (errno = ENOSPC, -1);
+	}
+	strlcpy(store->reclaimed[store->nreclaimed], label,
+	    sizeof(store->reclaimed[store->nreclaimed]));
+	store->nreclaimed++;
+	LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
 	return (0);
 }
 
@@ -889,6 +934,17 @@ logcmp_store_query_next_filtered(struct logcmp_store *store, const char *label,
 	scanned_bytes = 0;
 	scanned_records = 0;
 	scanned_segments = 0;
+	/*
+	 * A retired (reclaimed) label's records are logically gone: report EOF
+	 * without scanning.  This narrows -- never widens -- the caller's own-label
+	 * scope, so it can never expose another label's data, and it is idempotent.
+	 */
+	if (label_reclaimed(store, label)) {
+		cursor->generation = store->generation;
+		cursor->offset = (uint64_t)store->offset;
+		LOGD_PROBE_QUERY_FILTER(label, 0, 0, LOGCMP_STORE_QUERY_EOF);
+		return (LOGCMP_STORE_QUERY_EOF);
+	}
 	oldest = store->generation > store->max_segments ?
 	    store->generation - store->max_segments : 1;
 	if (cursor->generation == 0) {

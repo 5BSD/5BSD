@@ -442,6 +442,37 @@ ATF_TC_BODY(live_destroy_roundtrip_requires_pool, tc)
 	    "quota_floor_is_enforced");
 }
 
+/*
+ * The whole-namespace reclaim round-trip — REQUEST(persistent) mints several
+ * claims under one label, tzfsd_reclaim_label(label) destroys that label's
+ * ENTIRE namespace in one operation (every claim gone), a REQUEST from a second
+ * label is left completely untouched (owner-scoping proven live), and reclaiming
+ * an already-retired / never-seen label is a no-op success — all require an
+ * imported ZFS pool and the trustedzfs kernel verbs to mint and destroy real
+ * datasets.  The ATF harness does not provision a pool, so this is deferred
+ * rather than faked: the crown-jewel owner-scoping (a reclaim only ever targets
+ * derive_ns(label)) and the fail-safe bad-input / no-pool outcomes are covered
+ * purely in namespace_test (reclaim_targets_caller_namespace_only,
+ * reclaim_is_failsafe_on_bad_input).  To exercise the destroy end-to-end, run
+ * tzfsd against a real pool (see the storage bring-up runbook): create claims
+ * under label A, invoke the reclaim handler, and assert u<hash(A)> and all its
+ * children are gone while u<hash(B)> is intact.
+ */
+ATF_TC(live_reclaim_whole_namespace_requires_pool);
+ATF_TC_HEAD(live_reclaim_whole_namespace_requires_pool, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "live whole-namespace reclaim (destroy-all + owner-scoping) needs a pool");
+}
+ATF_TC_BODY(live_reclaim_whole_namespace_requires_pool, tc)
+{
+
+	atf_tc_skip("requires an imported ZFS pool + trustedzfs kernel API; "
+	    "reclaim owner-scoping is guarded purely by "
+	    "reclaim_targets_caller_namespace_only and the fail-safe paths by "
+	    "reclaim_is_failsafe_on_bad_input");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -449,5 +480,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, channel_validation_is_fail_closed);
 	ATF_TP_ADD_TC(tp, live_grant_over_plane_requires_pool);
 	ATF_TP_ADD_TC(tp, live_destroy_roundtrip_requires_pool);
+	ATF_TP_ADD_TC(tp, live_reclaim_whole_namespace_requires_pool);
 	return (atf_no_error());
 }

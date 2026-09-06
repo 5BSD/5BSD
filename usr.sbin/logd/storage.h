@@ -36,6 +36,14 @@ int	logcmp_storage_attach(int, const char *,
 int	logcmp_storage_attach_pool(int, struct logcmp_storage_session *);
 int	logcmp_storage_session_prepare_fork(struct logcmp_storage_session *);
 
+/*
+ * Capability-cleanup reclaim (docs/capability-lifecycle-cleanup.md).  Sent over
+ * the storage manager's attach-control channel -- the same channel retention is
+ * driven behind and never a per-session channel -- so the manager, which owns
+ * the store, prunes the retired label.  Idempotent on the store side.
+ */
+int	logcmp_storage_reclaim(int, const char *);
+
 /* Per-session worker API. */
 int	logcmp_storage_session_activate(struct logcmp_storage_session *);
 void	logcmp_storage_session_close(struct logcmp_storage_session *);

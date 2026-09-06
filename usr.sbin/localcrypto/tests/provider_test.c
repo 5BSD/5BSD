@@ -905,6 +905,105 @@ ATF_TC_BODY(named_key_list_paginates, tc)
 }
 
 /*
+ * Capability-lifecycle reclaim (docs/capability-lifecycle-cleanup.md).  When a
+ * consumer bundle is uninstalled its label is retired and can never call
+ * NAMED_DELETE, so serviced pushes a reclaim(label) that must delete every
+ * named key owned by that label.  This drives the handler directly (no serviced
+ * needed) against the shared kernel keystore and asserts the three invariants:
+ * reclaim(A) deletes all of A's keys; reclaim(A) never touches owner B's keys
+ * (the crown-jewel owner-scoping regression); and reclaim of an owner with no
+ * keys is an idempotent no-op.  Every op here is a data/keystore op
+ * (NAMED_CREATE + NAMED_LIST + reclaim's list+delete) with no session mint, so
+ * it runs on the TCG rig where the crypto session backend is absent.
+ */
+ATF_TC(reclaim_deletes_owner_keys);
+ATF_TC_HEAD(reclaim_deletes_owner_keys, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "reclaim(label) deletes exactly that label's named keys, idempotently");
+}
+ATF_TC_BODY(reclaim_deletes_owner_keys, tc)
+{
+	static const char *a_names[3] = {
+	    "reclaim.a.1", "reclaim.a.2", "reclaim.a.3" };
+	struct cryptocmp_named_create create;
+	struct cryptocmp_named_list_entry entries[CRYPTOCMP_NAMED_LIST_MAX];
+	struct raw_fixture owner_a, owner_b;
+	uint32_t count, next_cursor;
+	int i;
+
+	require_plane();
+	raw_fixture_create(&owner_a, "org.test.reclaim.a");
+	raw_fixture_create(&owner_b, "org.test.reclaim.b");
+
+	/* Owner A mints three keys; owner B mints one distinct key. */
+	for (i = 0; i < 3; i++) {
+		memset(&create, 0, sizeof(create));
+		strlcpy(create.name, a_names[i], sizeof(create.name));
+		create.generate = sample_generate();
+		ATF_CHECK_EQ(0, named_op(&owner_a, CRYPTOCMP_OP_NAMED_CREATE,
+		    &create, sizeof(create), NULL, NULL));
+	}
+	memset(&create, 0, sizeof(create));
+	strlcpy(create.name, "reclaim.b.keep", sizeof(create.name));
+	create.generate = sample_generate();
+	ATF_CHECK_EQ(0, named_op(&owner_b, CRYPTOCMP_OP_NAMED_CREATE, &create,
+	    sizeof(create), NULL, NULL));
+
+	/* Precondition: A has three keys, B has one. */
+	count = 0;
+	ATF_CHECK_EQ(0, list_op(&owner_a, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(3u, count);
+	count = 0;
+	ATF_CHECK_EQ(0, list_op(&owner_b, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(1u, count);
+
+	/* Retire owner A: every key owned by A is deleted. */
+	ATF_CHECK_EQ(0, localcrypto_test_reclaim("org.test.reclaim.a"));
+	count = 0xffffffffU;
+	ATF_CHECK_EQ(0, list_op(&owner_a, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(0u, count);
+
+	/* Crown-jewel: reclaim(A) never touched B's key — it is intact. */
+	count = 0;
+	next_cursor = 0xffffffffU;
+	ATF_CHECK_EQ(0, list_op(&owner_b, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(1u, count);
+	ATF_CHECK(list_find(entries, count, "reclaim.b.keep") >= 0);
+
+	/* Idempotent: a second reclaim of the now-empty A is a no-op success. */
+	ATF_CHECK_EQ(0, localcrypto_test_reclaim("org.test.reclaim.a"));
+	count = 0xffffffffU;
+	ATF_CHECK_EQ(0, list_op(&owner_a, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(0u, count);
+
+	/* Reclaim of an owner that never held a key is likewise a no-op, and
+	 * still leaves B untouched. */
+	ATF_CHECK_EQ(0, localcrypto_test_reclaim("org.test.reclaim.none"));
+	count = 0;
+	ATF_CHECK_EQ(0, list_op(&owner_b, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(1u, count);
+
+	/* A bad label is rejected without touching the keystore. */
+	ATF_CHECK_ERRNO(EINVAL, localcrypto_test_reclaim(NULL) == -1);
+	ATF_CHECK_ERRNO(EINVAL, localcrypto_test_reclaim("") == -1);
+
+	/* Clean up B's remaining key so the fixture exits clean. */
+	{
+		struct cryptocmp_named_control control;
+
+		memset(&control, 0, sizeof(control));
+		strlcpy(control.name, "reclaim.b.keep", sizeof(control.name));
+		ATF_CHECK_EQ(0, named_op(&owner_b, CRYPTOCMP_OP_NAMED_DELETE,
+		    &control, sizeof(control), NULL, NULL));
+	}
+
+	raw_fixture_destroy(&owner_b, 0);
+	raw_fixture_destroy(&owner_a, 0);
+}
+
+/*
  * The provider fails closed on malformed requests: a bad magic/version, an
  * out-of-range opcode, a length that does not match the opcode, and any attached
  * descriptor (the handler requires a zero fd count) are all rejected with EPROTO
@@ -1002,6 +1101,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, named_key_stat);
 	ATF_TP_ADD_TC(tp, named_key_list);
 	ATF_TP_ADD_TC(tp, named_key_list_paginates);
+	ATF_TP_ADD_TC(tp, reclaim_deletes_owner_keys);
 	ATF_TP_ADD_TC(tp, malformed_request_is_rejected);
 	ATF_TP_ADD_TC(tp, digest_descriptor);
 	ATF_TP_ADD_TC(tp, random_bytes);

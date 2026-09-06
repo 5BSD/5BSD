@@ -1534,6 +1534,35 @@ managed_config_path(char *path, size_t path_size)
 	return (0);
 }
 
+/*
+ * Capability-cleanup reclaim (docs/capability-lifecycle-cleanup.md).  serviced
+ * pushes SVC_OP_RECLAIM_LABEL over the provider control channel when a consumer
+ * bundle is uninstalled; libservice dispatches it to this handler on the control
+ * thread while we serve.  The persistent per-label store lives in the separate
+ * storage-manager process, so -- exactly like retention -- we route the prune
+ * through the storage control channel rather than touching the store from here.
+ * The store side is idempotent, so a repeated push, or one for a label that
+ * never logged, is a harmless no-op.  This is best-effort: a transport failure
+ * only logs, since the store prune is idempotent and safe to re-drive.
+ *
+ * RECONCILE GAP: this is PUSH-ONLY.  The store keys records by label but cannot
+ * cheaply enumerate the distinct labels it holds, so logd runs no reconciliation
+ * sweep (service_label_is_live over its own labels) to catch a retirement pushed
+ * while it was down.  A future per-label index in the store would let a periodic
+ * sweep re-derive the held-label set and reclaim any authority reports retired.
+ */
+static int logd_reclaim_control = -1;
+
+static void
+logd_reclaim_label(const char *label, void *ctx __unused)
+{
+
+	if (logd_reclaim_control < 0)
+		return;
+	if (logcmp_storage_reclaim(logd_reclaim_control, label) == -1)
+		syslog(LOG_WARNING, "capability-cleanup reclaim failed: %m");
+}
+
 int
 main(void)
 {
@@ -1612,6 +1641,13 @@ main(void)
 		goto fail;
 	close(storage_dir);
 	storage_dir = -1;
+	/*
+	 * Route serviced's retirement pushes to the storage manager, which owns
+	 * the store.  Registered before service_provider_ready() so no push can
+	 * arrive unhandled once we are servable.
+	 */
+	logd_reclaim_control = storage_control;
+	service_set_reclaim_handler(logd_reclaim_label, NULL);
 	pools = calloc(config.ingress_shards, sizeof(*pools));
 	admitted = mmap(NULL, config.ingress_shards * sizeof(*admitted),
 	    PROT_READ | PROT_WRITE, MAP_ANON | MAP_SHARED, -1, 0);

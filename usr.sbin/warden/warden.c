@@ -39,6 +39,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -55,9 +56,32 @@
 #include <libservice.h>
 
 #include "warden_proto.h"
+#include "warden_probes.h"
 
 /* A jail name derived from a channel label: alnum plus '.', '_', '-'. */
 #define	WARDEN_JAIL_NAME_MAX	64
+
+/*
+ * Owner-label bookkeeping for the capability-cleanup reconciliation sweep
+ * (docs/capability-lifecycle-cleanup.md).  warden names a jail wj_<hash(label)>,
+ * a one-way function of the owning label, so the jail name alone can NOT be
+ * reversed to the label the reconciliation sweep must query for liveness.  So
+ * warden records the owning channel label in a PRIVATE jail meta key when it
+ * creates the jail; the sweep enumerates warden's jails and reads that key back
+ * to recover the label.  The key is private meta ("meta.", hidden from inside
+ * the jail) so the confined process cannot read or steer its own owner record.
+ *
+ * A meta value the jail could nonetheless forge cannot subvert owner-scoping:
+ * the sweep only ever acts on a label L whose derived name wj_<hash(L)> equals
+ * the jail's actual (warden-assigned, immutable) name, and reclaim always keys
+ * strictly on that derived name — so a forged owner naming some OTHER label can
+ * never reach this jail or any live label's jail.
+ */
+#define	WARDEN_OWNER_META_KEY	"meta.warden_owner"
+#define	WARDEN_OWNER_META_PARAM	WARDEN_OWNER_META_KEY
+
+/* Channel labels are char[64] plane-wide (svc_label_query_req.label, etc.). */
+#define	WARDEN_LABEL_MAX	64
 
 #ifndef WARDEN_TESTING
 /*
@@ -459,6 +483,30 @@ create_jail(const char *name, const struct warden_request *rq, int *out_jid)
 }
 
 /*
+ * Record the owning channel label on a jail warden just created, in a private
+ * meta key (WARDEN_OWNER_META_KEY), so the reconciliation sweep can later recover
+ * the label from the jail and query serviced for its liveness.  Best-effort by
+ * design: a jail must be usable even where owner metadata cannot be stored (for
+ * example a kernel built without jail meta support), so a failure here is logged
+ * and swallowed — never propagated to fail the ENTER.  The only consequence of a
+ * missing record is that this jail is invisible to the pull sweep; the push
+ * reclaim path (which derives the name straight from the retired label) still
+ * reclaims it.  Setting is done as a separate JAIL_UPDATE so a meta-unsupported
+ * kernel cannot make the create itself fail.
+ */
+static void
+store_owner_label(const char *name, const char *label)
+{
+
+	if (label == NULL || label[0] == '\0')
+		return;
+	if (jail_setv(JAIL_UPDATE, "name", __DECONST(char *, name),
+	    WARDEN_OWNER_META_KEY, __DECONST(char *, label), NULL) < 0)
+		syslog(LOG_NOTICE, "jail %s: could not record owner label "
+		    "(reconcile will not see it): %m", name);
+}
+
+/*
  * Acquire an owning descriptor (JAIL_OWN_DESC) for the existing named jail.  The
  * per-client worker holds this for the life of the client connection; when the
  * consumer disconnects the worker exits, the descriptor closes, and the prison
@@ -573,6 +621,16 @@ handle_enter_jail(struct channel_message *m, const char *client)
 		}
 		syslog(LOG_INFO, "ENTER %s path=%s (client %s) -> created", name,
 		    rq->path, client);
+		/*
+		 * Record the owning label on the freshly created jail so the
+		 * reconciliation sweep can recover it (see store_owner_label).
+		 * Only for a PERSISTENT jail — the sole kind the sweep reclaims;
+		 * an ephemeral jail dies with its worker's owning descriptor and
+		 * must never be a reconcile target.  Best-effort; never fails the
+		 * ENTER.
+		 */
+		if ((rq->flags & WARDEN_F_EPHEMERAL) == 0)
+			store_owner_label(name, client);
 	}
 
 	/*
@@ -782,6 +840,178 @@ reply:
 }
 
 /*
+ * Reclaim (destroy) the single persistent jail owned by `label`, the primitive
+ * behind both the capability-cleanup push handler and the reconciliation sweep
+ * (docs/capability-lifecycle-cleanup.md).  This is exactly the DESTROY primitive
+ * applied to a retired label rather than the caller's own: it derives the jail's
+ * name from `label` (jail_name_from_label — the same injective derivation ENTER/
+ * DESTROY use) and removes that one jail.
+ *
+ * Owner-scoping is inherent and total: the target is ALWAYS and ONLY
+ * wj_<hash(label)>.  There is no wire argument and no enumeration by anything but
+ * the derived name, so reclaiming label A can never name, reach, or remove label
+ * B's jail.  Idempotent and fail-safe: an unnameable label, or a label that owns
+ * no jail, reclaims nothing and is a no-op success; a real jail_remove(2) failure
+ * is logged but not fatal (the next sweep retries).  `reason` ("push"/"sweep")
+ * only tags the USDT probe.  Returns true iff a jail was actually removed.
+ */
+static bool
+reclaim_jail(const char *label, const char *reason)
+{
+	char name[WARDEN_JAIL_NAME_MAX];
+	int jid;
+	bool removed = false;
+
+	if (!jail_name_from_label(label, name, sizeof(name))) {
+		/* An unnameable (e.g. empty) label owns nothing to reclaim. */
+		WARDEN_PROBE_RECLAIM(label != NULL ? label : "", 0, reason);
+		return (false);
+	}
+	jid = jail_getid(name);
+	if (jid < 0) {
+		/* No such jail: already clean.  Idempotent no-op success. */
+		WARDEN_PROBE_RECLAIM(label, 0, reason);
+		return (false);
+	}
+	if (jail_remove(jid) < 0)
+		syslog(LOG_ERR, "reclaim (%s): jail %s (label %s) jail_remove: "
+		    "%m", reason, name, label);
+	else {
+		removed = true;
+		syslog(LOG_INFO, "reclaim (%s): retired label %s -> jail %s "
+		    "removed", reason, label, name);
+	}
+	WARDEN_PROBE_RECLAIM(label, removed ? 1 : 0, reason);
+	return (removed);
+}
+
+#ifndef WARDEN_TESTING
+/*
+ * SVC_OP_RECLAIM_LABEL push handler (registered with
+ * service_set_reclaim_handler).  serviced pushes this over the control channel
+ * when a consumer bundle is uninstalled and its label retired; libservice
+ * dispatches it here on the control-dispatch thread the parent process pumps.
+ * We drop that label's persistent jail via reclaim_jail (owner-scoped and
+ * idempotent).  ctx is unused: warden's registry is the kernel jail table.
+ */
+static void
+warden_reclaim_handler(const char *label, void *ctx __unused)
+{
+
+	(void)reclaim_jail(label, "push");
+}
+#endif /* !WARDEN_TESTING */
+
+/*
+ * Reconciliation sweep (the pull backstop, docs/capability-lifecycle-cleanup.md).
+ * The push handler reclaims promptly, but a push fired while warden was down is
+ * lost; this sweep is the completeness guarantee.  warden enumerates its own
+ * jails (name prefix "wj_") and recovers each jail's owning label from the
+ * private owner-meta key, then asks serviced (via `is_live`) whether each label
+ * is still installed and reclaims the jail of any label that is DEFINITIVELY
+ * retired.
+ *
+ * Two hard invariants:
+ *
+ *   Owner-scoping — a recovered owner L is trusted only after cross-checking that
+ *   wj_<hash(L)> equals the jail's actual name; a jail whose stored owner does not
+ *   re-derive to it is ignored (defends against a forged meta value).  reclaim
+ *   then keys solely on wj_<hash(L)>, so only L's own jail can ever be removed.
+ *
+ *   Fail-soft on uncertainty — `is_live` returning -1 is a transport failure
+ *   (serviced down, timeout), i.e. "unknown", NOT "retired": we abort the REST of
+ *   the cycle and reclaim nothing further, retrying on the next tick.  A jail is
+ *   removed only on a definitive not-live answer.
+ *
+ * Bounded: at most WARDEN_RECONCILE_MAX labels are examined per cycle.  The
+ * liveness query is injected so unit tests can drive the sweep with no serviced.
+ */
+#define	WARDEN_RECONCILE_MAX	4096u
+
+static void
+reconcile_jails_with(int (*is_live)(const char *label, bool *live))
+{
+	static const char prefix[] = "wj_";
+	char (*snap)[WARDEN_LABEL_MAX];
+	struct jailparam jp[3];
+	char derived[WARDEN_JAIL_NAME_MAX];
+	unsigned n = 0, i;
+	int lastjid = 0, jid;
+	bool inited[3] = { false, false, false };
+
+	snap = calloc(WARDEN_RECONCILE_MAX, sizeof(*snap));
+	if (snap == NULL) {
+		syslog(LOG_WARNING, "reconcile: out of memory; skipping cycle");
+		return;
+	}
+
+	/*
+	 * Index by "lastjid" (kernel returns the next jail with jid > lastjid),
+	 * reading back each jail's "name" and owner meta.  If the owner-meta
+	 * parameter cannot even be initialised (a kernel without jail meta), no
+	 * jail carries a recoverable label, so there is nothing to reconcile —
+	 * skip the cycle cleanly rather than error.
+	 */
+	if (jailparam_init(&jp[0], "lastjid") == 0)
+		inited[0] = true;
+	if (inited[0] && jailparam_init(&jp[1], "name") == 0)
+		inited[1] = true;
+	if (inited[1] && jailparam_init(&jp[2], WARDEN_OWNER_META_PARAM) == 0)
+		inited[2] = true;
+	if (!inited[2] ||
+	    jailparam_import_raw(&jp[0], &lastjid, sizeof(lastjid)) < 0) {
+		if (inited[0])
+			jailparam_free(jp, inited[2] ? 3 : (inited[1] ? 2 : 1));
+		free(snap);
+		return;
+	}
+
+	/* Snapshot the owner labels of warden's jails (bounded). */
+	while (n < WARDEN_RECONCILE_MAX) {
+		const char *name, *owner;
+
+		jid = jailparam_get(jp, 3, 0);
+		if (jid < 0)
+			break;			/* ENOENT == no more jails */
+		lastjid = jid;
+		name = jp[1].jp_value;
+		owner = jp[2].jp_value;
+		if (name == NULL || strncmp(name, prefix, sizeof(prefix) - 1) != 0)
+			continue;		/* not one of warden's jails */
+		if (owner == NULL || owner[0] == '\0' ||
+		    strlen(owner) >= WARDEN_LABEL_MAX)
+			continue;		/* no recoverable owner label */
+		/*
+		 * Trust the recovered owner only if it re-derives to THIS jail's
+		 * name; otherwise the meta value does not match the jail warden
+		 * assigned it and must be ignored (owner-scoping / anti-forgery).
+		 */
+		if (!jail_name_from_label(owner, derived, sizeof(derived)) ||
+		    strcmp(derived, name) != 0)
+			continue;
+		(void)strlcpy(snap[n++], owner, sizeof(*snap));
+	}
+	jailparam_free(jp, 3);
+
+	/*
+	 * Query liveness and reclaim the definitively-retired.  A transport
+	 * failure aborts the remainder of the cycle (never reclaim on doubt).
+	 */
+	for (i = 0; i < n; i++) {
+		bool live = false;
+
+		if (is_live(snap[i], &live) == -1) {
+			syslog(LOG_WARNING, "reconcile: liveness query for %s "
+			    "failed: %m; skipping remainder of cycle", snap[i]);
+			break;
+		}
+		if (!live)
+			(void)reclaim_jail(snap[i], "sweep");
+	}
+	free(snap);
+}
+
+/*
  * Per-client channel request handler.  arg is the connecting client's
  * unforgeable label.  Every op is validated fail-closed: the channel accepts no
  * SCM fds (an attached descriptor is already a terminal transport rejection, so
@@ -890,9 +1120,63 @@ warden_test_worker(int fd, const char *client)
 
 	return (warden_worker(fd, client));
 }
+
+bool
+warden_test_reclaim(const char *label)
+{
+
+	return (reclaim_jail(label, "push"));
+}
+
+void
+warden_test_reconcile(int (*is_live)(const char *label, bool *live))
+{
+
+	reconcile_jails_with(is_live);
+}
 #endif /* WARDEN_TESTING */
 
 #ifndef WARDEN_TESTING
+/*
+ * Reconciliation cadence: a slow, jittered periodic sweep (the pull backstop).
+ * Hourly is ample — the push handler reclaims promptly, so the sweep only mops up
+ * jails whose owning label was retired while a push was missed (warden down).
+ * The jitter spreads sweeps across the fleet so providers do not all query
+ * serviced in lockstep.
+ */
+#define	WARDEN_RECONCILE_BASE_SECS	3600u
+#define	WARDEN_RECONCILE_JITTER_SECS	600u
+
+/* Production sweep: ask serviced for real liveness. */
+static void
+warden_reconcile(void)
+{
+
+	reconcile_jails_with(service_label_is_live);
+}
+
+/*
+ * The periodic reconciliation timer.  Runs in the parent alongside the accept
+ * loop and libservice's control-dispatch thread; sleeps a jittered ~hour, then
+ * sweeps.  reclaim_jail (push) and warden_reconcile (sweep) both act only through
+ * the kernel jail table via idempotent syscalls, so they need no shared lock.
+ */
+static void *
+reconcile_thread(void *unused __unused)
+{
+
+	for (;;) {
+		unsigned int secs;
+
+		secs = WARDEN_RECONCILE_BASE_SECS +
+		    arc4random_uniform(2u * WARDEN_RECONCILE_JITTER_SECS + 1u) -
+		    WARDEN_RECONCILE_JITTER_SECS;
+		(void)sleep(secs);
+		warden_reconcile();
+	}
+	return (NULL);
+}
+
 /*
  * Expose system.Namespace and dispatch each accepted client on its own pdfork'd
  * worker.  warden is a privileged provider: it does NOT enter capability mode
@@ -905,7 +1189,16 @@ warden_serve(void)
 	struct service_identity id;
 	struct service_listener *listener;
 	struct service_provider *provider;
-	int fd;
+	pthread_t reconciler;
+	int error, fd;
+
+	/*
+	 * Register the capability-cleanup reclaim handler before serving so no
+	 * early SVC_OP_RECLAIM_LABEL push is missed.  It fires on the control-
+	 * dispatch thread this parent process pumps; ctx is unused (warden's
+	 * registry is the kernel jail table).
+	 */
+	service_set_reclaim_handler(warden_reclaim_handler, NULL);
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -914,6 +1207,20 @@ warden_serve(void)
 	    service_provider_enter_privileged(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
+
+	/*
+	 * Backstop the push with a reconciliation sweep: one at startup (catches
+	 * anything retired while warden was down), then a jittered ~hourly timer
+	 * thread.  Best-effort — if the timer thread cannot start we still serve
+	 * and still honor pushes; we just lose the pull safety net, so log it.
+	 */
+	warden_reconcile();
+	error = pthread_create(&reconciler, NULL, reconcile_thread, NULL);
+	if (error != 0)
+		syslog(LOG_WARNING, "reconcile timer thread: %s",
+		    strerror(error));
+	else
+		(void)pthread_detach(reconciler);
 
 	for (;;) {
 		pid_t pid;

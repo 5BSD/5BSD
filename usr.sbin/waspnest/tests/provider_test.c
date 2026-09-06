@@ -524,6 +524,51 @@ ATF_TC_BODY(malformed_requests_are_rejected, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * Capability-cleanup reclaim, through the served accept path.  Two DISTINCT
+ * labels are stood up exactly as the accept loop would (fixture_create_label
+ * calls the same resolve_window the loop uses), then one label is retired.
+ * Reclaiming it frees ONLY its window: the other label's served worker still
+ * reports its own unchanged window over LIST (owner-scoping preserved), and the
+ * retired label is truly gone (a second reclaim is a no-op).
+ */
+ATF_TC(reclaim_of_one_served_label_spares_another);
+ATF_TC_HEAD(reclaim_of_one_served_label_spares_another, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "descr",
+	    "Reclaiming one served label's vsock window frees only its slot; a "
+	    "distinct label's window is spared and still reported over LIST");
+}
+ATF_TC_BODY(reclaim_of_one_served_label_spares_another, tc)
+{
+	struct fixture fa, fb;
+	struct vmd_list_reply rb;
+	struct vmd_request rq;
+
+	vmd_test_registry_reset();
+	fixture_create_label(&fa, "org.test.vm.alpha");
+	fixture_create_label(&fb, "org.test.vm.bravo");
+	ATF_REQUIRE(fa.base != fb.base);
+
+	/* Retire alpha: its window is freed, bravo's is untouched. */
+	ATF_CHECK(vmd_test_reclaim("org.test.vm.alpha"));
+	/* Idempotent: the retired label frees nothing on a repeat. */
+	ATF_CHECK(!vmd_test_reclaim("org.test.vm.alpha"));
+
+	/* bravo's served worker still reports its own, unchanged window. */
+	rq = list_request();
+	rb = call_list(&fb, &rq, sizeof(rq));
+	ATF_CHECK_EQ(0, rb.status);
+	ATF_CHECK_EQ(fb.base, rb.port_base);
+	ATF_CHECK_EQ(fb.base + VMD_PORTS_PER_LABEL, rb.port_limit);
+
+	fixture_destroy(&fb);
+	fixture_destroy(&fa);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -531,5 +576,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, connect_reaches_a_bound_listener);
 	ATF_TP_ADD_TC(tp, list_reports_only_callers_window);
 	ATF_TP_ADD_TC(tp, malformed_requests_are_rejected);
+	ATF_TP_ADD_TC(tp, reclaim_of_one_served_label_spares_another);
 	return (atf_no_error());
 }

@@ -26,4 +26,5 @@ provider logd {
 	    uint64_t matched, int result);
 	probe retention__prune(uint64_t generation, uint64_t records,
 	    uint64_t bytes, int reason);
+	probe storage__reclaim(const char *label, uint64_t reclaimed, int error);
 };

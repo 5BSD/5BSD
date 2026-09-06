@@ -388,6 +388,115 @@ ATF_TC_BODY(list_scopes_to_caller_ns, tc)
 	    "two labels shared a namespace (%s); LIST would cross tenants", ns_a);
 }
 
+/*
+ * The reclaim crown jewel, asserted at the seam the capability-cleanup handler
+ * uses: a reclaim ALWAYS targets exactly derive_ns(label) and never another
+ * label's namespace.  tzfsd_test_reclaim reports (in *ns) the namespace the
+ * reclaim resolved to, so we can assert reclaim of label A computes u<hash(A)>,
+ * reclaim of label B computes u<hash(B)>, and the two never coincide — there is
+ * no wire argument or shared target that could let retiring A destroy B's
+ * storage.  This runs against a zeroed state (persistent_fd == -1): the target
+ * namespace is computed before the (absent) pool is touched, so the reclaim
+ * returns ENXIO without any ZFS work, yet *ns still records exactly the subtree
+ * it would have destroyed.
+ */
+ATF_TC_WITHOUT_HEAD(reclaim_targets_caller_namespace_only);
+ATF_TC_BODY(reclaim_targets_caller_namespace_only, tc)
+{
+	struct tzfsd_state st;
+	char expect_a[TZFSD_NAME_MAX], expect_b[TZFSD_NAME_MAX];
+	char got_a[TZFSD_NAME_MAX], got_b[TZFSD_NAME_MAX];
+
+	memset(&st, 0, sizeof(st));
+	st.persistent_fd = st.ephemeral_fd = -1;
+	st.boot_fd = st.lease_fd = st.root_fd = -1;
+
+	/* The namespace each label's storage is confined to. */
+	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantA", expect_a,
+	    sizeof(expect_a)));
+	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantB", expect_b,
+	    sizeof(expect_b)));
+	ATF_REQUIRE_MSG(strcmp(expect_a, expect_b) != 0,
+	    "two labels shared a namespace (%s); reclaim would cross tenants",
+	    expect_a);
+
+	/*
+	 * Reclaiming A resolves to A's namespace and only A's; reclaiming B to
+	 * B's.  (ENXIO here: the zeroed state has no retained pool, so nothing is
+	 * actually destroyed — the point is which subtree was targeted.)
+	 */
+	memset(got_a, 0, sizeof(got_a));
+	errno = 0;
+	ATF_CHECK_EQ(-1, tzfsd_test_reclaim(&st, "system.TenantA", got_a,
+	    sizeof(got_a)));
+	ATF_CHECK_EQ(ENXIO, errno);
+	ATF_CHECK_STREQ(expect_a, got_a);
+
+	memset(got_b, 0, sizeof(got_b));
+	errno = 0;
+	ATF_CHECK_EQ(-1, tzfsd_test_reclaim(&st, "system.TenantB", got_b,
+	    sizeof(got_b)));
+	ATF_CHECK_EQ(ENXIO, errno);
+	ATF_CHECK_STREQ(expect_b, got_b);
+
+	/* Crown jewel: A's reclaim target is never B's namespace. */
+	ATF_CHECK_MSG(strcmp(got_a, got_b) != 0,
+	    "reclaim of A and B resolved to the same namespace (%s)", got_a);
+	ATF_CHECK_MSG(strcmp(got_a, expect_b) != 0,
+	    "reclaim of A resolved into B's namespace (%s)", got_a);
+	/* And the target is a single '/'-free component tzfsd_destroy_tree accepts. */
+	ATF_CHECK_MSG(strchr(got_a, '/') == NULL,
+	    "reclaim target %s is not a single component", got_a);
+}
+
+/*
+ * Reclaim is fail-safe: an unnamespaceable label (empty/NULL) is rejected with
+ * EINVAL and a NULL state likewise, before anything is touched; and with no
+ * retained pool a well-formed label fails closed with ENXIO rather than reaching
+ * ZFS.  No input makes the handler destroy anything it should not, or crash.
+ */
+ATF_TC_WITHOUT_HEAD(reclaim_is_failsafe_on_bad_input);
+ATF_TC_BODY(reclaim_is_failsafe_on_bad_input, tc)
+{
+	struct tzfsd_state st;
+	char ns[TZFSD_NAME_MAX];
+
+	memset(&st, 0, sizeof(st));
+	st.persistent_fd = st.ephemeral_fd = -1;
+	st.boot_fd = st.lease_fd = st.root_fd = -1;
+
+	/* An empty label can never be namespaced -> EINVAL (no default ns). */
+	errno = 0;
+	ATF_CHECK_EQ(-1, tzfsd_test_reclaim(&st, "", ns, sizeof(ns)));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/* A NULL label likewise. */
+	errno = 0;
+	ATF_CHECK_EQ(-1, tzfsd_test_reclaim(&st, NULL, ns, sizeof(ns)));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/* A NULL state (defensive) -> EINVAL, never a deref. */
+	errno = 0;
+	ATF_CHECK_EQ(-1, tzfsd_test_reclaim(NULL, "system.Tenant", ns,
+	    sizeof(ns)));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/* Well-formed label, but no retained pool -> ENXIO, no ZFS touched. */
+	errno = 0;
+	ATF_CHECK_EQ(-1, tzfsd_test_reclaim(&st, "system.Tenant", ns,
+	    sizeof(ns)));
+	ATF_CHECK_EQ(ENXIO, errno);
+
+	/*
+	 * The production callback swallows all of these (idempotent, non-fatal):
+	 * calling it directly must never crash or throw, whatever the input.
+	 */
+	tzfsd_reclaim_label("system.Tenant", &st);
+	tzfsd_reclaim_label("", &st);
+	tzfsd_reclaim_label(NULL, &st);
+	tzfsd_reclaim_label("system.Tenant", NULL);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -402,5 +511,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, destroy_resolves_under_caller_ns);
 	ATF_TP_ADD_TC(tp, list_request_hygiene_and_no_pool);
 	ATF_TP_ADD_TC(tp, list_scopes_to_caller_ns);
+	ATF_TP_ADD_TC(tp, reclaim_targets_caller_namespace_only);
+	ATF_TP_ADD_TC(tp, reclaim_is_failsafe_on_bad_input);
 	return (atf_no_error());
 }

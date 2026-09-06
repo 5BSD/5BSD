@@ -40,7 +40,17 @@ CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
-LIBADD=		service channel jail md
+# pthread: the parent runs the reclaim handler on libservice's control-dispatch
+# thread and a jittered periodic reconciliation sweep on its own timer thread.
+LIBADD=		service channel jail md pthread
+
+# Optional USDT DTrace provider (warden_provider.d -> warden_provider.h).
+# MK_DTRACE-guarded so warden builds identically with and without DTrace; the
+# probe shims in warden_probes.h no-op when WITH_DTRACE is undefined.
+.if ${MK_DTRACE} != "no"
+SRCS+=		warden_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests

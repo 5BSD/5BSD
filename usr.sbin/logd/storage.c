@@ -41,10 +41,17 @@ enum storage_operation {
 	STORAGE_OP_NOTIFY,
 	STORAGE_OP_FLUSH,
 	STORAGE_OP_QUERY,
-	STORAGE_OP_COUNT
+	STORAGE_OP_COUNT,
+	STORAGE_OP_RECLAIM
 };
 
 struct storage_count_request {
+	uint16_t label_length;
+	uint16_t reserved;
+	char label[STORAGE_LABEL_MAX + 1];
+};
+
+struct storage_reclaim_request {
 	uint16_t label_length;
 	uint16_t reserved;
 	char label[STORAGE_LABEL_MAX + 1];
@@ -133,7 +140,7 @@ message_valid(const struct storage_message *message, size_t received,
 	    message->magic == STORAGE_MAGIC &&
 	    message->version == STORAGE_VERSION &&
 	    message->operation >= STORAGE_OP_READY &&
-	    message->operation <= STORAGE_OP_COUNT &&
+	    message->operation <= STORAGE_OP_RECLAIM &&
 	    message->flags == 0 && message->reserved == 0 &&
 	    (reply || message->status == 0) &&
 	    (!reply || (message->status <= 0 && message->status >= -ELAST)));
@@ -154,7 +161,7 @@ message_error(const struct storage_message *message, size_t received)
 	if (message->version != STORAGE_VERSION)
 		return (EPROTONOSUPPORT);
 	if (message->operation < STORAGE_OP_READY ||
-	    message->operation > STORAGE_OP_COUNT)
+	    message->operation > STORAGE_OP_RECLAIM)
 		return (ENOSYS);
 	if (message->flags != 0 || message->reserved != 0 ||
 	    message->status != 0)
@@ -381,7 +388,8 @@ socket_type(int fd)
 }
 
 static int
-handle_control(int fd, struct storage_session *sessions, size_t *nsessions)
+handle_control(int fd, struct logcmp_store *store,
+    struct storage_session *sessions, size_t *nsessions)
 {
 	union storage_buffer buffer;
 	struct storage_message *message;
@@ -396,6 +404,33 @@ handle_control(int fd, struct storage_session *sessions, size_t *nsessions)
 	    nitems(received_fds), &nfds);
 	if (amount <= 0)
 		return (amount == 0 ? 1 : -1);
+	message = &buffer.wire.message;
+	/*
+	 * The attach-control channel carries two request kinds: ATTACH, which
+	 * passes the session and ring descriptors, and RECLAIM, a bare
+	 * capability-cleanup message (no descriptors).  Dispatch RECLAIM here;
+	 * any descriptors on it are unexpected and closed.  The channel stays
+	 * open for the manager's lifetime, so a failed reclaim reply never tears
+	 * the manager down -- it returns 0 like a rejected attach.
+	 */
+	if (message_valid(message, (size_t)amount, false) &&
+	    message->operation == STORAGE_OP_RECLAIM) {
+		struct storage_reclaim_request *reclaim;
+
+		for (size_t i = 0; i < nfds; i++)
+			close(received_fds[i]);
+		if (nfds != 0 || message->length != sizeof(*reclaim))
+			return (send_status(fd, STORAGE_OP_RECLAIM, EPROTO));
+		reclaim = (void *)(message + 1);
+		if (reclaim->reserved != 0 || reclaim->label_length == 0 ||
+		    reclaim->label_length > STORAGE_LABEL_MAX ||
+		    memchr(reclaim->label, '\0', reclaim->label_length) != NULL)
+			return (send_status(fd, STORAGE_OP_RECLAIM, EINVAL));
+		reclaim->label[reclaim->label_length] = '\0';
+		error = logcmp_store_reclaim_label(store, reclaim->label) == -1 ?
+		    (errno != 0 ? errno : EIO) : 0;
+		return (send_status(fd, STORAGE_OP_RECLAIM, error));
+	}
 	if (nfds == nitems(received_fds)) {
 		session_fd = received_fds[0];
 		ringfds = (struct shmring_fds){ received_fds[1], received_fds[2],
@@ -760,7 +795,7 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 			continue;
 		}
 		if ((descriptors[0].revents & POLLIN) != 0 &&
-		    handle_control(control_fd, sessions, &nsessions) != 0)
+		    handle_control(control_fd, store, sessions, &nsessions) != 0)
 			break;
 		/* The control handler may have grown sessions after poll(). */
 		if ((descriptors[0].revents & POLLIN) != 0)
@@ -1175,6 +1210,31 @@ logcmp_storage_count(struct logcmp_storage_session *session, const char *label,
 	reply = (void *)(message + 1);
 	*countp = reply->count;
 	return (0);
+}
+
+int
+logcmp_storage_reclaim(int control_fd, const char *label)
+{
+	union storage_buffer buffer;
+	struct storage_message *message;
+	struct storage_reclaim_request *request;
+	size_t length;
+
+	if (control_fd < 0 || label == NULL ||
+	    (length = strnlen(label, STORAGE_LABEL_MAX + 1)) == 0 ||
+	    length > STORAGE_LABEL_MAX)
+		return (errno = EINVAL, -1);
+	message = &buffer.wire.message;
+	message_init(message, STORAGE_OP_RECLAIM, 0, sizeof(*request));
+	request = (void *)(message + 1);
+	memset(request, 0, sizeof(*request));
+	request->label_length = (uint16_t)length;
+	memcpy(request->label, label, length);
+	if (send_packet(control_fd, &buffer,
+	    sizeof(*message) + sizeof(*request), NULL, 0) == -1)
+		return (-1);
+	return (receive_status(control_fd, STORAGE_OP_RECLAIM,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
 }
 
 int

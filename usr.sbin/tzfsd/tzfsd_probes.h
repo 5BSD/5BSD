@@ -15,6 +15,7 @@
 #define	TZFSD_PROBE_GRANT(op, del, fd, err) \
 	TZFSD_REQUEST_GRANT(op, del, fd, err)
 #define	TZFSD_PROBE_REPLY(op, status, fd)	TZFSD_REQUEST_REPLY(op, status, fd)
+#define	TZFSD_PROBE_RECLAIM(label, status)	TZFSD_RECLAIM_LABEL(label, status)
 #else
 #define	TZFSD_PROBE_MSG(len, nfds) \
 	do { (void)(len); (void)(nfds); } while (0)
@@ -24,6 +25,8 @@
 	do { (void)(op); (void)(del); (void)(fd); (void)(err); } while (0)
 #define	TZFSD_PROBE_REPLY(op, status, fd) \
 	do { (void)(op); (void)(status); (void)(fd); } while (0)
+#define	TZFSD_PROBE_RECLAIM(label, status) \
+	do { (void)(label); (void)(status); } while (0)
 #endif
 
 #endif

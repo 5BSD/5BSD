@@ -38,6 +38,7 @@
 #include <err.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <signal.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -121,6 +122,18 @@ struct window_owner {
 static struct window_owner g_windows[VMD_LABEL_WINDOWS];
 
 /*
+ * g_windows is mutated from more than one thread: the accept loop's main thread
+ * assigns slots in resolve_window, while the capability-cleanup paths free them
+ * on libservice's control-dispatch thread (the SVC_OP_RECLAIM_LABEL push handler,
+ * started by service_provider_enter_privileged) and on the reconciliation timer
+ * thread (reconcile_windows).  All three share this one process's registry, so a
+ * single mutex serializes every access to it.  pdfork(2) workers never touch
+ * g_windows (they only bind within the base the parent already resolved), so the
+ * lock lives entirely in the parent.
+ */
+static pthread_mutex_t g_windows_lock = PTHREAD_MUTEX_INITIALIZER;
+
+/*
  * Resolve the caller's label to the base of the window it exclusively owns,
  * assigning one on first contact.  Returns false only when the registry is full
  * (more than VMD_LABEL_WINDOWS distinct labels have ever been seen).
@@ -130,7 +143,9 @@ resolve_window(const char *label, uint32_t *base_out)
 {
 	uint32_t home = label_hash(label) % VMD_LABEL_WINDOWS;
 	uint32_t i, idx, freeidx = VMD_LABEL_WINDOWS;
+	bool found = false;
 
+	(void)pthread_mutex_lock(&g_windows_lock);
 	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
 		idx = (home + i) % VMD_LABEL_WINDOWS;
 		if (!g_windows[idx].used) {
@@ -140,16 +155,131 @@ resolve_window(const char *label, uint32_t *base_out)
 		}
 		if (strcmp(g_windows[idx].label, label) == 0) {
 			*base_out = VMD_PORT_BASE + idx * VMD_PORTS_PER_LABEL;
-			return (true);
+			found = true;
+			goto out;
 		}
 	}
 	if (freeidx == VMD_LABEL_WINDOWS)
-		return (false);
+		goto out;
 	g_windows[freeidx].used = true;
 	(void)strlcpy(g_windows[freeidx].label, label,
 	    sizeof(g_windows[freeidx].label));
 	*base_out = VMD_PORT_BASE + freeidx * VMD_PORTS_PER_LABEL;
-	return (true);
+	found = true;
+out:
+	(void)pthread_mutex_unlock(&g_windows_lock);
+	return (found);
+}
+
+/*
+ * Capability-cleanup reclaim of a single label's vsock window
+ * (docs/capability-lifecycle-cleanup.md).  Free ONLY the slot exclusively owned
+ * by `label` (matched by the full label, exactly the anti-squat key
+ * resolve_window assigns on), so reclaiming label A can never touch label B's
+ * window — the same owner-scoping invariant the LIST/BIND paths enforce.  A label
+ * owns at most one slot, so the first match ends the scan.  Idempotent: an
+ * unknown or already-clean label frees nothing and is a no-op success.  `reason`
+ * ("push"/"sweep") only tags the USDT probe.  Returns true iff a slot was freed.
+ */
+static bool
+reclaim_window(const char *label, const char *reason)
+{
+	uint32_t i;
+	bool freed = false;
+
+	(void)pthread_mutex_lock(&g_windows_lock);
+	for (i = 0; i < VMD_LABEL_WINDOWS; i++) {
+		if (g_windows[i].used &&
+		    strcmp(g_windows[i].label, label) == 0) {
+			g_windows[i].used = false;
+			(void)memset(g_windows[i].label, 0,
+			    sizeof(g_windows[i].label));
+			freed = true;
+			break;
+		}
+	}
+	(void)pthread_mutex_unlock(&g_windows_lock);
+
+	WASPNEST_PROBE_RECLAIM(label, freed ? 1 : 0, reason);
+	return (freed);
+}
+
+/*
+ * SVC_OP_RECLAIM_LABEL push handler (registered with
+ * service_set_reclaim_handler).  serviced pushes this over the control channel
+ * when a consumer bundle is uninstalled and its label retired; libservice
+ * dispatches it here on the control-dispatch thread the parent already pumps.
+ * This is the SAFE trigger for window reclamation — an authoritative retirement,
+ * not a mere disconnect — so freeing the slot cannot reintroduce the squatting
+ * vuln a disconnect-triggered free would.
+ */
+#ifndef VMD_TESTING
+static void
+waspnest_reclaim_handler(const char *label, void *ctx __unused)
+{
+
+	if (reclaim_window(label, "push"))
+		syslog(LOG_INFO,
+		    "reclaim (push): retired label %s -> vsock window freed",
+		    label);
+}
+#endif /* !VMD_TESTING */
+
+/*
+ * Reconciliation sweep (the pull backstop, docs/capability-lifecycle-cleanup.md).
+ * g_windows is directly enumerable — every used slot records its owning label —
+ * so mark-and-sweep: snapshot the owned labels, then ask serviced (via `is_live`)
+ * whether each is still installed, and free the slot of any label that is
+ * DEFINITIVELY retired.  This is the completeness guarantee that keeps the 4096-
+ * window table from filling with dead labels after a missed push.
+ *
+ * Fail-soft on uncertainty: `is_live` returns -1 on a transport failure (serviced
+ * down, timeout), which is "unknown", NOT "retired" — we abort the remainder of
+ * the cycle and free nothing, retrying on the next tick.  A window is freed only
+ * on a definitive not-live answer.  The liveness query is injected so unit tests
+ * can drive the sweep without a live serviced.
+ */
+static void
+reconcile_windows_with(int (*is_live)(const char *label, bool *live))
+{
+	char (*snap)[sizeof(g_windows[0].label)];
+	uint32_t i, cap, n = 0;
+
+	(void)pthread_mutex_lock(&g_windows_lock);
+	for (i = 0; i < VMD_LABEL_WINDOWS; i++)
+		if (g_windows[i].used)
+			n++;
+	if (n == 0) {
+		(void)pthread_mutex_unlock(&g_windows_lock);
+		return;
+	}
+	snap = calloc(n, sizeof(*snap));
+	if (snap == NULL) {
+		(void)pthread_mutex_unlock(&g_windows_lock);
+		syslog(LOG_WARNING, "reconcile: out of memory; skipping cycle");
+		return;
+	}
+	cap = n;
+	n = 0;
+	for (i = 0; i < VMD_LABEL_WINDOWS && n < cap; i++)
+		if (g_windows[i].used)
+			(void)strlcpy(snap[n++], g_windows[i].label,
+			    sizeof(*snap));
+	(void)pthread_mutex_unlock(&g_windows_lock);
+
+	for (i = 0; i < n; i++) {
+		bool live = false;
+
+		if (is_live(snap[i], &live) == -1) {
+			syslog(LOG_WARNING, "reconcile: liveness query for %s "
+			    "failed: %m; skipping remainder of cycle", snap[i]);
+			break;
+		}
+		if (!live && reclaim_window(snap[i], "sweep"))
+			syslog(LOG_INFO, "reconcile: retired label %s -> vsock "
+			    "window freed", snap[i]);
+	}
+	free(snap);
 }
 
 /*
@@ -538,9 +668,61 @@ vmd_test_worker(int fd, const char *label, uint32_t window_base)
 
 	return (vmd_worker(fd, label, window_base));
 }
+
+bool
+vmd_test_reclaim(const char *label)
+{
+
+	return (reclaim_window(label, "push"));
+}
+
+void
+vmd_test_reconcile(int (*is_live)(const char *label, bool *live))
+{
+
+	reconcile_windows_with(is_live);
+}
 #endif /* VMD_TESTING */
 
 #ifndef VMD_TESTING
+/*
+ * Reconciliation cadence: a slow, jittered periodic sweep (the pull backstop).
+ * Hourly is ample — a window slot is cheap and the push handler already reclaims
+ * promptly; the sweep only mops up labels retired while a push was missed.  The
+ * jitter spreads sweeps across the fleet so providers do not all query serviced
+ * in lockstep.
+ */
+#define	WASPNEST_RECONCILE_BASE_SECS	3600u
+#define	WASPNEST_RECONCILE_JITTER_SECS	600u
+
+/* Production sweep: ask serviced for real liveness. */
+static void
+reconcile_windows(void)
+{
+
+	reconcile_windows_with(service_label_is_live);
+}
+
+/*
+ * The periodic reconciliation timer.  Runs in the parent alongside the accept
+ * loop and the control-dispatch thread; sleeps a jittered ~hour, then sweeps.
+ */
+static void *
+reconcile_thread(void *unused __unused)
+{
+
+	for (;;) {
+		unsigned int secs;
+
+		secs = WASPNEST_RECONCILE_BASE_SECS +
+		    arc4random_uniform(2u * WASPNEST_RECONCILE_JITTER_SECS + 1u) -
+		    WASPNEST_RECONCILE_JITTER_SECS;
+		(void)sleep(secs);
+		reconcile_windows();
+	}
+	return (NULL);
+}
+
 /*
  * Expose system.VM and dispatch each accepted client on its own pdfork'd
  * worker.  vmd is a privileged provider: it does NOT enter capability mode (the
@@ -553,7 +735,16 @@ vmd_serve(void)
 	struct service_identity id;
 	struct service_listener *listener;
 	struct service_provider *provider;
-	int fd;
+	pthread_t reconciler;
+	int error, fd;
+
+	/*
+	 * Register the capability-cleanup reclaim handler before serving so no
+	 * early SVC_OP_RECLAIM_LABEL push is missed.  It fires on the control-
+	 * dispatch thread this parent process pumps and mutates g_windows under
+	 * g_windows_lock; ctx is unused (the registry is file scope).
+	 */
+	service_set_reclaim_handler(waspnest_reclaim_handler, NULL);
 
 	if (service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1 ||
@@ -562,6 +753,20 @@ vmd_serve(void)
 	    service_provider_enter_privileged(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
+
+	/*
+	 * Backstop the push with a reconciliation sweep: one at startup, then a
+	 * jittered ~hourly timer thread.  Best-effort — if the timer thread
+	 * cannot start we still serve and still honor pushes; we just lose the
+	 * pull safety net, so log it.
+	 */
+	reconcile_windows();
+	error = pthread_create(&reconciler, NULL, reconcile_thread, NULL);
+	if (error != 0)
+		syslog(LOG_WARNING, "reconcile timer thread: %s",
+		    strerror(error));
+	else
+		(void)pthread_detach(reconciler);
 
 	for (;;) {
 		pid_t pid;

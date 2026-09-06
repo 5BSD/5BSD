@@ -756,6 +756,76 @@ ATF_TC_BODY(query_filter_is_applied_server_side, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * Capability-cleanup reclaim over the manager's control channel: reclaiming one
+ * label makes its records unqueryable and its count zero, leaves every other
+ * label intact, is idempotent, and treats an unknown label as a no-op success.
+ */
+ATF_TC_WITHOUT_HEAD(reclaim_prunes_only_the_retired_label);
+ATF_TC_BODY(reclaim_prunes_only_the_retired_label, tc)
+{
+	struct fixture fixture;
+	struct logcmp_storage_session alpha, beta;
+	struct logcmp_store_cursor cursor;
+	uint8_t record[LOGCMP_MAX_RECORD], output[LOGCMP_MAX_RECORD];
+	uint64_t count;
+	size_t length, output_length;
+
+	fixture_create(&fixture);
+	attach_session(&fixture, "org.test.alpha", &alpha);
+	attach_session(&fixture, "org.test.beta", &beta);
+	length = make_record(record, 101);
+	ATF_REQUIRE_EQ(0, logcmp_storage_append(&alpha, (const void *)record,
+	    length));
+	((struct logcmp_record *)(void *)record)->sequence = 202;
+	ATF_REQUIRE_EQ(0, logcmp_storage_append(&beta, (const void *)record,
+	    length));
+	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&alpha, LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&beta, LOGCMP_STORAGE_TIMEOUT_MS));
+
+	/* An unknown label is a clean no-op; a malformed one is rejected. */
+	ATF_REQUIRE_EQ(0, logcmp_storage_reclaim(fixture.control_fd,
+	    "org.test.never"));
+	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_reclaim(fixture.control_fd,
+	    "") == -1);
+
+	/* Retire alpha, twice, to prove idempotency. */
+	ATF_REQUIRE_EQ(0, logcmp_storage_reclaim(fixture.control_fd,
+	    "org.test.alpha"));
+	ATF_REQUIRE_EQ(0, logcmp_storage_reclaim(fixture.control_fd,
+	    "org.test.alpha"));
+
+	/* alpha's records and count are gone. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_CHECK_EQ(LOGCMP_STORE_QUERY_EOF, logcmp_storage_query_next(&alpha, 0,
+	    &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_REQUIRE_EQ(0, logcmp_storage_count(&alpha, "org.test.alpha",
+	    strlen("org.test.alpha"), &count));
+	ATF_CHECK_EQ(0, count);
+
+	/* beta is untouched. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(LOGCMP_STORE_QUERY_RECORD, logcmp_storage_query_next(&beta,
+	    0, &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_CHECK_EQ(202, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_REQUIRE_EQ(0, logcmp_storage_count(&beta, "org.test.beta",
+	    strlen("org.test.beta"), &count));
+	ATF_CHECK_EQ(1, count);
+
+	/* beta can still append after the peer's reclaim. */
+	((struct logcmp_record *)(void *)record)->sequence = 303;
+	ATF_REQUIRE_EQ(0, logcmp_storage_append(&beta, (const void *)record,
+	    length));
+	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&beta, LOGCMP_STORAGE_TIMEOUT_MS));
+
+	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_reclaim(-1, "org.test.alpha") == -1);
+	logcmp_storage_session_close(&alpha);
+	logcmp_storage_session_close(&beta);
+	fixture_destroy(&fixture);
+}
+
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
@@ -797,6 +867,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, query_has_a_total_deadline);
 	ATF_TP_ADD_TC(tp, query_slices_are_hidden_from_clients);
 	ATF_TP_ADD_TC(tp, query_filter_is_applied_server_side);
+	ATF_TP_ADD_TC(tp, reclaim_prunes_only_the_retired_label);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }

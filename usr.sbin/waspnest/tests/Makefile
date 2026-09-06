@@ -18,11 +18,11 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
 SRCS.registry_test=	registry_test.c waspnest.c
-LIBADD.registry_test=	service channel
+LIBADD.registry_test=	service channel pthread
 NO_SHARED.registry_test=	yes
 
 SRCS.provider_test=	provider_test.c waspnest.c
-LIBADD.provider_test=	service channel
+LIBADD.provider_test=	service channel pthread
 NO_SHARED.provider_test=	yes
 
 .include <bsd.test.mk>
