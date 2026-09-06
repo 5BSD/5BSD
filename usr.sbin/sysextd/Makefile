@@ -53,6 +53,14 @@ LIBADD=		service channel ucl
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
+# Optional USDT DTrace provider (sysextd_provider.d -> sysextd_provider.h).
+# MK_DTRACE-guarded so sysextd builds identically with and without DTrace; the
+# probe shims in sysextd_probes.h no-op when WITH_DTRACE is undefined.
+.if ${MK_DTRACE} != "no"
+SRCS+=		sysextd_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-SYSEXT_CAP_BIN

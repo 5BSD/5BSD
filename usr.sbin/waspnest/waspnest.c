@@ -51,6 +51,7 @@
 #include <libservice.h>
 
 #include "vmd_proto.h"
+#include "waspnest_probes.h"
 #ifdef VMD_TESTING
 #include "waspnest_test.h"
 #endif
@@ -179,6 +180,15 @@ valid_request(const struct vmd_request *rq)
 		if (rq->backlog != 0)
 			return (false);
 		if (rq->cid == VMADDR_CID_ANY)
+			return (false);
+		return (true);
+	case VMD_OP_VSOCK_LIST:
+		/*
+		 * LIST reports the caller's own window, derived entirely from the
+		 * connecting label; it names/owns/scopes nothing, so every wire
+		 * field must be zero (fail closed on stray bits).
+		 */
+		if (rq->port != 0 || rq->backlog != 0 || rq->cid != 0)
 			return (false);
 		return (true);
 	default:
@@ -322,6 +332,35 @@ vmd_request_handler(struct channel *ch __unused, struct channel_message *m,
 	if (!valid_request(rq)) {
 		rp.status = EINVAL;
 		goto reply;
+	}
+
+	if (rq->op == VMD_OP_VSOCK_LIST) {
+		struct vmd_list_reply lrp;
+		struct channel_outgoing lout;
+
+		/*
+		 * Answer strictly from ctx->window_base — the window the parent's
+		 * registry resolved for THIS connecting label and handed the worker
+		 * at fork.  A worker only ever knows its own label's base, so LIST
+		 * can only ever report the caller's own window and never another
+		 * label's.  Data-only: no descriptor rides the reply.
+		 */
+		memset(&lrp, 0, sizeof(lrp));
+		lrp.status = 0;
+		lrp.cid = VMADDR_CID_LOCAL;
+		lrp.port_base = ctx->window_base;
+		lrp.port_limit = ctx->window_base + VMD_PORTS_PER_LABEL;
+		lrp.port_count = VMD_PORTS_PER_LABEL;
+		WASPNEST_PROBE_VSOCK_LIST(client, lrp.port_base, lrp.port_limit, 0);
+		syslog(LOG_INFO, "VSOCK_LIST (client %s) -> base=%u range=[%u,%u)",
+		    client, lrp.port_base, lrp.port_base, lrp.port_limit);
+		memset(&lout, 0, sizeof(lout));
+		lout.size = sizeof(lout);
+		lout.data = &lrp;
+		lout.length = sizeof(lrp);
+		(void)channel_send_reply(m, &lout);
+		channel_message_free(m);
+		return;
 	}
 
 	if (rq->op == VMD_OP_VSOCK_CONNECT) {

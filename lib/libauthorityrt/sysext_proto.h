@@ -34,11 +34,21 @@
 
 #define	SYSEXT_OP_ENSURE	1	/* ensure a named extension is loaded */
 #define	SYSEXT_OP_STAT		2	/* query whether an extension is loaded */
+#define	SYSEXT_OP_LIST		3	/* enumerate the allow-listed module names */
+
+/*
+ * Wire cap on the number of module names a single SYSEXT_OP_LIST reply carries.
+ * It bounds the reply and MUST be >= the daemon's allow-list capacity
+ * (SYSEXT_MAX_ALLOW in sysextd.h) so the whole allow-list fits in one reply; the
+ * daemon _Static_asserts that relationship.  The allow-list is small and fixed,
+ * so LIST is a single, bounded, unpaged reply.
+ */
+#define	SYSEXT_LIST_MAX		32	/* max names in a LIST reply */
 
 struct sysext_request {
-	uint32_t	op;			/* SYSEXT_OP_ENSURE or _STAT */
+	uint32_t	op;			/* SYSEXT_OP_ENSURE, _STAT or _LIST */
 	uint32_t	_reserved;
-	char		name[SYSEXT_NAME_MAX];	/* kernel module name */
+	char		name[SYSEXT_NAME_MAX];	/* kernel module name (unused by LIST) */
 };
 
 struct sysext_reply {
@@ -56,6 +66,22 @@ struct sysext_reply {
 struct sysext_stat_reply {
 	int32_t		status;			/* 0 on a completed query, or errno */
 	int32_t		loaded;			/* 1 if loaded, 0 if not */
+};
+
+/*
+ * Reply to SYSEXT_OP_LIST: the set of module names the allow-list permits, so a
+ * consumer can discover what it may ENSURE without STAT-probing names blindly.
+ * The allow-list is global (not per-label), so every SYSTEM-domain caller sees
+ * the same set; LIST is data-only (no descriptor) and reveals only which module
+ * NAMES may load, never any loaded/not-loaded state.  status is 0 on success
+ * (then count/names are authoritative) or an errno.  count <= SYSEXT_LIST_MAX;
+ * each names[i] is a NUL-terminated single-component module name.  This reply's
+ * wire size is deliberately distinct from sysext_reply / sysext_stat_reply.
+ */
+struct sysext_list_reply {
+	int32_t		status;			/* 0, or errno */
+	uint32_t	count;			/* number of names in names[] */
+	char		names[SYSEXT_LIST_MAX][SYSEXT_NAME_MAX];
 };
 
 #endif /* SYSEXT_PROTO_H */

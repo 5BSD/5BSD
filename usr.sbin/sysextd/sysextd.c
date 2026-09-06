@@ -74,6 +74,13 @@
 
 #include "sysext_proto.h"
 #include "sysextd.h"
+#include "sysextd_probes.h"
+
+/*
+ * A LIST reply must be able to carry the entire allow-list in one message.
+ */
+_Static_assert(SYSEXT_MAX_ALLOW <= SYSEXT_LIST_MAX,
+    "allow-list capacity must fit in a SYSEXT_OP_LIST reply");
 
 /*
  * The kernel-module allow-list.  Loading is default-deny by name: only a module
@@ -316,6 +323,7 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 	const struct sysext_request *rq;
 	struct sysext_reply rp;
 	struct sysext_stat_reply srp;
+	struct sysext_list_reply lrp;
 	struct channel_outgoing out;
 	int loaded;
 
@@ -328,8 +336,34 @@ sysext_request(struct channel *ch __unused, struct channel_message *m, void *arg
 		goto reply;
 	}
 	rq = channel_message_data(m);
-	if ((rq->op != SYSEXT_OP_ENSURE && rq->op != SYSEXT_OP_STAT) ||
-	    !valid_module_name(rq->name)) {
+	if (rq->op != SYSEXT_OP_ENSURE && rq->op != SYSEXT_OP_STAT &&
+	    rq->op != SYSEXT_OP_LIST) {
+		rp.status = EINVAL;
+		goto reply;
+	}
+	/*
+	 * LIST enumerates the module names the allow-list permits, so a consumer
+	 * can discover what it may ENSURE without STAT-probing names blindly.  It
+	 * carries no module name and is not itself gated by the allow-list (it
+	 * only reveals which names may load, never any loaded/not-loaded state);
+	 * reaching sysextd at all already required the SYSTEM-domain gate.  The
+	 * allow-list is global, not per-label, so every caller sees the same set.
+	 */
+	if (rq->op == SYSEXT_OP_LIST) {
+		size_t i;
+
+		memset(&lrp, 0, sizeof(lrp));
+		lrp.status = 0;
+		lrp.count = (uint32_t)sysext_conf.nallow;
+		for (i = 0; i < sysext_conf.nallow && i < SYSEXT_LIST_MAX; i++)
+			(void)strlcpy(lrp.names[i], sysext_conf.allow[i],
+			    SYSEXT_NAME_MAX);
+		SYSEXTD_PROBE_LIST(client, lrp.count, 0);
+		syslog(LOG_INFO, "LIST (client %s) -> %u module(s)", client,
+		    lrp.count);
+		goto list_reply;
+	}
+	if (!valid_module_name(rq->name)) {
 		rp.status = EINVAL;
 		goto reply;
 	}
@@ -384,6 +418,15 @@ stat_reply:
 	out.size = sizeof(out);
 	out.data = &srp;
 	out.length = sizeof(srp);
+	(void)channel_send_reply(m, &out);
+	channel_message_free(m);
+	return;
+
+list_reply:
+	memset(&out, 0, sizeof(out));
+	out.size = sizeof(out);
+	out.data = &lrp;
+	out.length = sizeof(lrp);
 	(void)channel_send_reply(m, &out);
 	channel_message_free(m);
 }

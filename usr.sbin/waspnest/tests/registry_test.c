@@ -184,8 +184,8 @@ ATF_TC_BODY(valid_request_enforces_wire_contract, tc)
 	ATF_CHECK(!vmd_test_valid_request(&rq));
 	rq.cid = 0;
 
-	/* Unknown op is rejected. */
-	rq.op = VMD_OP_VSOCK_CONNECT + 1;
+	/* Unknown op is rejected (past the highest known op, VMD_OP_VSOCK_LIST). */
+	rq.op = VMD_OP_VSOCK_LIST + 1;
 	ATF_CHECK(!vmd_test_valid_request(&rq));
 	rq.op = 0;
 	ATF_CHECK(!vmd_test_valid_request(&rq));
@@ -234,6 +234,40 @@ ATF_TC_BODY(valid_connect_enforces_wire_contract, tc)
 }
 
 /*
+ * valid_request enforces the wire contract for VSOCK_LIST: op known, and — since
+ * LIST owns and scopes nothing (it merely reports the caller's own window) —
+ * every other wire field (port, backlog, cid) MUST be zero.  Any stray bit is
+ * rejected (would map to EINVAL) so the request can carry no smuggled selector.
+ */
+ATF_TC_WITHOUT_HEAD(valid_list_enforces_wire_contract);
+ATF_TC_BODY(valid_list_enforces_wire_contract, tc)
+{
+	struct vmd_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = VMD_OP_VSOCK_LIST;
+	ATF_CHECK(vmd_test_valid_request(&rq));
+
+	/* A nonzero port is a stray selector: rejected. */
+	rq.port = 1;
+	ATF_CHECK(!vmd_test_valid_request(&rq));
+	rq.port = 0;
+
+	/* A nonzero backlog is unused by LIST: rejected. */
+	rq.backlog = 1;
+	ATF_CHECK(!vmd_test_valid_request(&rq));
+	rq.backlog = 0;
+
+	/* A nonzero cid is unused by LIST: rejected. */
+	rq.cid = VMADDR_CID_LOCAL;
+	ATF_CHECK(!vmd_test_valid_request(&rq));
+	rq.cid = 0;
+
+	/* Sanity: the all-zero LIST request is the only accepted shape. */
+	ATF_CHECK(vmd_test_valid_request(&rq));
+}
+
+/*
  * Backlog clamp: 0 becomes the default, an over-range uint32 is clamped to
  * SOMAXCONN, and nothing is ever handed to listen(2) as a sign-flipped negative
  * int.
@@ -262,6 +296,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, registry_full_is_refused);
 	ATF_TP_ADD_TC(tp, valid_request_enforces_wire_contract);
 	ATF_TP_ADD_TC(tp, valid_connect_enforces_wire_contract);
+	ATF_TP_ADD_TC(tp, valid_list_enforces_wire_contract);
 	ATF_TP_ADD_TC(tp, backlog_is_clamped_and_never_negative);
 	return (atf_no_error());
 }

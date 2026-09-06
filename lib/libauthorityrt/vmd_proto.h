@@ -47,6 +47,7 @@
 
 #define	VMD_OP_VSOCK_BIND	1	/* bind+listen a vsock endpoint for me */
 #define	VMD_OP_VSOCK_CONNECT	2	/* dial a peer's advertised (cid,port) */
+#define	VMD_OP_VSOCK_LIST	3	/* report MY own port window (base+range) */
 
 /*
  * The per-Component vsock port window vmd hands out.  vmd hashes the caller's
@@ -85,12 +86,20 @@
  *   backlog = MUST be 0 (unused).
  *   cid     = target CID (e.g. VMADDR_CID_LOCAL for host-local); MUST NOT be
  *             VMADDR_CID_ANY (0xffffffff).
+ *
+ * VMD_OP_VSOCK_LIST:
+ *   Reports the caller's OWN scoped port window (so a Component can discover the
+ *   concrete port range it may bind within, and the base to advertise, without
+ *   guessing).  It owns and scopes nothing new: port/backlog/cid MUST all be 0
+ *   (fail closed on stray bits).  The answer is derived entirely from the
+ *   connecting channel's unforgeable label — vmd reports only the window that
+ *   label exclusively owns and can never reveal another label's window.
  */
 struct vmd_request {
 	uint32_t	op;		/* VMD_OP_VSOCK_* */
-	uint32_t	port;		/* BIND: window index; CONNECT: target port */
-	uint32_t	backlog;	/* BIND: listen backlog; CONNECT: 0 */
-	uint32_t	cid;		/* BIND: 0; CONNECT: target CID */
+	uint32_t	port;		/* BIND: window index; CONNECT: target port; LIST: 0 */
+	uint32_t	backlog;	/* BIND: listen backlog; CONNECT/LIST: 0 */
+	uint32_t	cid;		/* BIND/LIST: 0; CONNECT: target CID */
 };
 
 /*
@@ -106,6 +115,27 @@ struct vmd_reply {
 	uint32_t	cid;		/* the host-local CID bound */
 	uint32_t	port;		/* the concrete port bound */
 	uint32_t	_reserved;
+};
+
+/*
+ * Reply to VMD_OP_VSOCK_LIST.  Data-only (no descriptor): it reports the
+ * caller's OWN exclusively-owned port window, derived from the connecting
+ * label, so a Component learns the concrete range it may bind within and the
+ * base to advertise.  The reported range is
+ *
+ *   [port_base, port_limit)  ==  [port_base, port_base + port_count)
+ *
+ * on the host-local CID.  port_count is VMD_PORTS_PER_LABEL and a window index i
+ * (as passed to VSOCK_BIND) maps to concrete port (port_base + i).  This reply's
+ * wire size is deliberately distinct from vmd_reply.  _reserved MUST be 0.
+ */
+struct vmd_list_reply {
+	int32_t		status;		/* 0, or errno */
+	uint32_t	cid;		/* VMADDR_CID_LOCAL — the window's CID */
+	uint32_t	port_base;	/* first concrete port owned (inclusive) */
+	uint32_t	port_limit;	/* one past the last owned port (exclusive) */
+	uint32_t	port_count;	/* window width == VMD_PORTS_PER_LABEL */
+	uint32_t	_reserved;	/* MUST be 0 */
 };
 
 #endif /* VMD_PROTO_H */

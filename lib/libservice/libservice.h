@@ -350,6 +350,24 @@ int	service_extension_stat(struct service_context *, const char *module,
 	    int *loadedp);
 
 /*
+ * Enumerate the module names sysextd's allow-list permits (SYSEXT_OP_LIST), so a
+ * consumer can discover what it may service_ensure_extension(3) without probing
+ * names blindly.  Routed exactly like the other extension calls: a SYSTEM-domain
+ * caller only.  The allow-list is global (not per-label), so every caller sees
+ * the same set; the reply reveals only which names may load, never any loaded/
+ * not-loaded state.  Up to `max` names are written into `names` (each a
+ * SERVICE_EXTENSION_NAME_MAX-byte NUL-terminated buffer) and their number is
+ * stored in *countp.  A buffer of SERVICE_EXTENSION_LIST_MAX entries always holds
+ * the whole list; a smaller `max` that cannot hold it fails EMSGSIZE (never a
+ * silent truncation).  Returns 0, or -1 with errno.
+ */
+#define	SERVICE_EXTENSION_NAME_MAX	64	/* == sysextd SYSEXT_NAME_MAX */
+#define	SERVICE_EXTENSION_LIST_MAX	32	/* == sysextd SYSEXT_LIST_MAX */
+int	service_extension_list(struct service_context *,
+	    char (*names)[SERVICE_EXTENSION_NAME_MAX], size_t max,
+	    size_t *countp);
+
+/*
  * Confine this process to a jail via warden (system.Namespace).  Consumer self-
  * service: libservice resolves warden by name, has it create a jail rooted at
  * `path` (scoped by this process's channel label), and jail_attach_jd(2)s the
@@ -432,6 +450,20 @@ int	service_vsock_listen(struct service_context *, unsigned port,
  */
 int	service_vsock_connect(struct service_context *, unsigned cid,
 	    unsigned port, int *fdp);
+
+/*
+ * Report the caller's OWN vsock port window from vmd (VMD_OP_VSOCK_LIST), so a
+ * Component can discover the concrete port range it may service_vsock_listen(3)
+ * within (and the base to advertise) without guessing.  Data-only: no descriptor.
+ * The answer is derived entirely from the caller's unforgeable channel label, so
+ * it can only ever be the caller's own window and never another Component's.  On
+ * success stores (when non-NULL) the host-local CID in *cidp, the first concrete
+ * port of the window in *port_basep, and the window width (VMD_PORTS_PER_LABEL)
+ * in *port_countp; a window index i passed to service_vsock_listen(3) maps to
+ * concrete port (*port_basep + i).  Returns 0, or -1 with errno.
+ */
+int	service_vsock_list(struct service_context *, unsigned *cidp,
+	    unsigned *port_basep, unsigned *port_countp);
 
 /*
  * Return the manager-owned socket-activation listener (Phase 4) delivered under

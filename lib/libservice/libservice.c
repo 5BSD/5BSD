@@ -2478,6 +2478,94 @@ service_extension_stat(struct service_context *context, const char *module,
 }
 
 /*
+ * Enumerate the module names sysextd's allow-list permits (SYSEXT_OP_LIST).
+ * Routed exactly like service_ensure_extension / service_extension_stat over the
+ * cached system.SystemExtension session: a SYSTEM-domain caller only.  The
+ * allow-list is global, so the reply is the same for every caller and carries no
+ * loaded/not-loaded state, only which names may load.  Up to `max` names are
+ * copied into `names`; the total count is stored in *countp.  Fails EMSGSIZE
+ * rather than silently truncating when the buffer cannot hold the whole list.
+ */
+int
+service_extension_list(struct service_context *context,
+    char (*names)[SERVICE_EXTENSION_NAME_MAX], size_t max, size_t *countp)
+{
+	struct sysext_request rq;
+	struct sysext_list_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	uint32_t i;
+	int saved;
+
+	_Static_assert(SERVICE_EXTENSION_NAME_MAX == SYSEXT_NAME_MAX,
+	    "public extension name size must match the sysextd wire size");
+	_Static_assert(SERVICE_EXTENSION_LIST_MAX == SYSEXT_LIST_MAX,
+	    "public extension list cap must match the sysextd wire cap");
+
+	if (names == NULL || countp == NULL || max == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*countp = 0;
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Open the system.SystemExtension channel by name once; calls share it. */
+	if (service_sysext_session == NULL) {
+		int fd;
+
+		if (service_open(SYSEXT_SERVICE_NAME, &fd) == -1)
+			return (-1);
+		if (service_session_create(fd, &service_sysext_session) == -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = SYSEXT_OP_LIST;			/* name field stays zero (unused) */
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	if (service_session_call(service_sysext_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	/* Strict reply validation: exact length, no fds, sane count. */
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp.status != 0 || rp.count > SYSEXT_LIST_MAX) {
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+	/* Fail closed rather than silently drop names the buffer cannot hold. */
+	if ((size_t)rp.count > max) {
+		errno = EMSGSIZE;
+		return (-1);
+	}
+	for (i = 0; i < rp.count; i++) {
+		/* Each name must be NUL-terminated within its field. */
+		if (memchr(rp.names[i], '\0', SYSEXT_NAME_MAX) == NULL) {
+			errno = EPROTO;
+			return (-1);
+		}
+		(void)strlcpy(names[i], rp.names[i], SERVICE_EXTENSION_NAME_MAX);
+	}
+	*countp = (size_t)rp.count;
+	return (0);
+}
+
+/*
  * Confine this process to its namespace (jail) via warden(8).  Consumer self-
  * service, uniform with storage/modules: libservice opens a system.Namespace
  * channel by name (pulling warden up on demand), asks it to create the jail
@@ -2978,6 +3066,76 @@ service_vsock_connect(struct service_context *context, unsigned cid,
 		return (-1);
 	}
 	*fdp = fd;
+	return (0);
+}
+
+/*
+ * Report the caller's OWN vsock port window from vmd (VMD_OP_VSOCK_LIST).  Data-
+ * only, symmetric with service_vsock_listen but taking and returning no
+ * descriptor: vmd answers entirely from the connecting label's exclusively-owned
+ * window, so this can only ever be the caller's own window.  Shares the cached
+ * system.VM session with listen/connect.  On success stores the host-local CID,
+ * the window's first concrete port, and its width into the non-NULL out params.
+ */
+int
+service_vsock_list(struct service_context *context, unsigned *cidp,
+    unsigned *port_basep, unsigned *port_countp)
+{
+	struct vmd_request rq;
+	struct vmd_list_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int saved;
+
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Open the system.VM channel by name once; all vsock calls share it. */
+	if (service_vm_session == NULL) {
+		int cfd;
+
+		if (service_open(VMD_SERVICE_NAME, &cfd) == -1)
+			return (-1);
+		if (service_session_create(cfd, &service_vm_session) == -1) {
+			saved = errno;
+			(void)close(cfd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = VMD_OP_VSOCK_LIST;		/* port/backlog/cid stay zero */
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&rp, 0, sizeof(rp));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	if (service_session_call(service_vm_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	/* Strict reply validation: exact length, no fds, coherent window. */
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp._reserved != 0 || rp.status != 0 ||
+	    rp.port_limit != rp.port_base + rp.port_count ||
+	    rp.port_count != VMD_PORTS_PER_LABEL) {
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+	if (cidp != NULL)
+		*cidp = rp.cid;
+	if (port_basep != NULL)
+		*port_basep = rp.port_base;
+	if (port_countp != NULL)
+		*port_countp = rp.port_count;
 	return (0);
 }
 

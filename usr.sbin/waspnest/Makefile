@@ -45,6 +45,14 @@ CFLAGS+=	-I${SRCTOP}/sys
 
 LIBADD=		service channel
 
+# Optional USDT DTrace provider (waspnest_provider.d -> waspnest_provider.h).
+# MK_DTRACE-guarded so waspnest builds identically with and without DTrace; the
+# probe shims in waspnest_probes.h no-op when WITH_DTRACE is undefined.
+.if ${MK_DTRACE} != "no"
+SRCS+=		waspnest_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-WN_CAP_BIN

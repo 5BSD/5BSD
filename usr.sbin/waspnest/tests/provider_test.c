@@ -91,27 +91,41 @@ channel_pair(int *client, int *provider)
 	ATF_REQUIRE_EQ(1, receive.nfds);
 }
 
+/*
+ * Stand up a worker serving `label` on one end of a fresh channel and a client
+ * service_session on the other, exactly as the accept loop would: resolve the
+ * label's window in the parent's registry, then hand the forked worker that
+ * base.  Does NOT reset the registry, so a test can stand up two DISTINCT labels
+ * back to back and observe their windows never alias (scoping regression).
+ */
 static void
-fixture_create(struct fixture *fixture)
+fixture_create_label(struct fixture *fixture, const char *label)
 {
 	int client, provider;
 
 	memset(fixture, 0, sizeof(*fixture));
 	require_capability_device();
 
-	/* Resolve the window the way the accept loop would before forking. */
-	vmd_test_registry_reset();
-	ATF_REQUIRE(vmd_test_resolve_window(TEST_LABEL, &fixture->base));
+	ATF_REQUIRE(vmd_test_resolve_window(label, &fixture->base));
 
 	channel_pair(&client, &provider);
 	fixture->child = fork();
 	ATF_REQUIRE(fixture->child >= 0);
 	if (fixture->child == 0) {
 		close(client);
-		_exit(vmd_test_worker(provider, TEST_LABEL, fixture->base));
+		_exit(vmd_test_worker(provider, label, fixture->base));
 	}
 	close(provider);
 	ATF_REQUIRE_EQ(0, service_session_create(client, &fixture->session));
+}
+
+static void
+fixture_create(struct fixture *fixture)
+{
+
+	/* Clean-slate registry, then the canonical single-label fixture. */
+	vmd_test_registry_reset();
+	fixture_create_label(fixture, TEST_LABEL);
 }
 
 static void
@@ -189,6 +203,45 @@ connect_request(uint32_t cid, uint32_t port)
 	rq.backlog = 0;
 	rq.cid = cid;
 	return (rq);
+}
+
+static struct vmd_request
+list_request(void)
+{
+	struct vmd_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = VMD_OP_VSOCK_LIST;
+	return (rq);
+}
+
+/*
+ * Issue one LIST request and hand back the full (fd-less) list reply.  A
+ * correctly framed reply of exactly sizeof(vmd_list_reply) is required.
+ */
+static struct vmd_list_reply
+call_list(struct fixture *fixture, const void *data, size_t length)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct vmd_list_reply reply;
+
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = data;
+	outgoing.length = length;
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	options.timeout_ms = 5000;
+	ATF_REQUIRE_EQ(0,
+	    service_session_call(fixture->session, &outgoing, &incoming, &options));
+	ATF_REQUIRE_EQ(sizeof(reply), incoming.length);
+	ATF_CHECK_EQ(0, incoming.nfds);
+	return (reply);
 }
 
 ATF_TC(bind_returns_accept_only_listener);
@@ -335,6 +388,60 @@ ATF_TC_BODY(connect_reaches_a_bound_listener, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * LIST reports the CALLER'S OWN window and only its own.  The first fixture's
+ * LIST must return the concrete range [base, base+PORTS) on the host-local CID,
+ * matching the base the parent registry resolved for its label.  A second,
+ * DISTINCT label — stood up without resetting the registry — owns a different
+ * window, and its LIST reports that different window, never the first caller's.
+ * This is the scoping invariant: a Component can never learn another's window.
+ */
+ATF_TC(list_reports_only_callers_window);
+ATF_TC_HEAD(list_reports_only_callers_window, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "require.kmods",
+	    "mac_capability mac_capability_channel");
+	atf_tc_set_md_var(tc, "descr",
+	    "VSOCK_LIST reports the caller's own port window and a distinct "
+	    "label sees a distinct window, never the caller's");
+}
+ATF_TC_BODY(list_reports_only_callers_window, tc)
+{
+	struct fixture fa, fb;
+	struct vmd_list_reply ra, rb;
+	struct vmd_request rq;
+
+	vmd_test_registry_reset();
+	fixture_create_label(&fa, "org.test.vm.alpha");
+	fixture_create_label(&fb, "org.test.vm.bravo");
+
+	/* Two distinct labels must own two distinct windows. */
+	ATF_REQUIRE(fa.base != fb.base);
+
+	rq = list_request();
+	ra = call_list(&fa, &rq, sizeof(rq));
+	ATF_CHECK_EQ(0, ra.status);
+	ATF_CHECK_EQ(VMADDR_CID_LOCAL, ra.cid);
+	ATF_CHECK_EQ(fa.base, ra.port_base);
+	ATF_CHECK_EQ(fa.base + VMD_PORTS_PER_LABEL, ra.port_limit);
+	ATF_CHECK_EQ(VMD_PORTS_PER_LABEL, ra.port_count);
+
+	rq = list_request();
+	rb = call_list(&fb, &rq, sizeof(rq));
+	ATF_CHECK_EQ(0, rb.status);
+	ATF_CHECK_EQ(fb.base, rb.port_base);
+	ATF_CHECK_EQ(fb.base + VMD_PORTS_PER_LABEL, rb.port_limit);
+
+	/* Neither caller's LIST ever reports the other's window. */
+	ATF_CHECK(ra.port_base != rb.port_base);
+	ATF_CHECK(ra.port_base != fb.base);
+	ATF_CHECK(rb.port_base != fa.base);
+
+	fixture_destroy(&fb);
+	fixture_destroy(&fa);
+}
+
 ATF_TC(malformed_requests_are_rejected);
 ATF_TC_HEAD(malformed_requests_are_rejected, tc)
 {
@@ -398,6 +505,22 @@ ATF_TC_BODY(malformed_requests_are_rejected, tc)
 	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
 	ATF_CHECK_EQ(EINVAL, reply.status);
 
+	/* A LIST of the wrong length: EPROTO before validation. */
+	rq = list_request();
+	ATF_REQUIRE_EQ(0,
+	    call_raw(&fixture, &rq, sizeof(rq) - 1, -1, &reply, NULL));
+	ATF_CHECK_EQ(EPROTO, reply.status);
+
+	/* A LIST with a stray nonzero field (LIST owns/scopes nothing): EINVAL. */
+	rq = list_request();
+	rq.port = 1;
+	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
+	ATF_CHECK_EQ(EINVAL, reply.status);
+	rq = list_request();
+	rq.cid = VMADDR_CID_LOCAL;
+	ATF_REQUIRE_EQ(0, call_raw(&fixture, &rq, sizeof(rq), -1, &reply, NULL));
+	ATF_CHECK_EQ(EINVAL, reply.status);
+
 	fixture_destroy(&fixture);
 }
 
@@ -406,6 +529,7 @@ ATF_TP_ADD_TCS(tp)
 
 	ATF_TP_ADD_TC(tp, bind_returns_accept_only_listener);
 	ATF_TP_ADD_TC(tp, connect_reaches_a_bound_listener);
+	ATF_TP_ADD_TC(tp, list_reports_only_callers_window);
 	ATF_TP_ADD_TC(tp, malformed_requests_are_rejected);
 	return (atf_no_error());
 }

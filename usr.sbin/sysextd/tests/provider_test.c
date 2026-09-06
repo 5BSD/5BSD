@@ -205,6 +205,49 @@ stat_request(const char *name)
 	return (rq);
 }
 
+static struct sysext_request
+list_request(void)
+{
+	struct sysext_request rq;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = SYSEXT_OP_LIST;
+	return (rq);
+}
+
+/*
+ * Issue one LIST request and return the full list reply (status + count +
+ * names).  data/length are sent verbatim so a test can forge a wrong length;
+ * a correctly framed reply of exactly sizeof(sysext_list_reply) is required.
+ */
+static struct sysext_list_reply
+call_list(struct fixture *fixture, const void *data, size_t length, int fd)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct sysext_list_reply reply;
+
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = data;
+	outgoing.length = length;
+	if (fd >= 0) {
+		outgoing.fds = &fd;
+		outgoing.nfds = 1;
+	}
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	options.timeout_ms = 2000;
+	ATF_REQUIRE_EQ(0,
+	    service_session_call(fixture->session, &outgoing, &incoming, &options));
+	ATF_REQUIRE_EQ(sizeof(reply), incoming.length);
+	return (reply);
+}
+
 /*
  * Issue one STAT request and return the full stat reply (status + loaded).
  * data/length describe the exact wire bytes so a test can send a wrong length;
@@ -498,6 +541,96 @@ ATF_TC_BODY(provider_stat_rejects_malformed_framing, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * LIST enumerates the allow-listed module names so a consumer can discover what
+ * it may ENSURE without STAT-probing blindly.  With a known multi-entry
+ * allow-list, LIST returns exactly that set (count and names), carries no
+ * descriptor, and is not itself gated by the allow-list (no name is supplied).
+ */
+ATF_TC(provider_list_returns_allowlist);
+ATF_TC_HEAD(provider_list_returns_allowlist, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_list_returns_allowlist, tc)
+{
+	struct sysext_config cfg;
+	struct sysext_list_reply reply;
+	struct fixture fixture;
+	struct sysext_request rq;
+
+	memset(&cfg, 0, sizeof(cfg));
+	strlcpy(cfg.allow[0], "cryptodev", SYSEXT_NAME_MAX);
+	strlcpy(cfg.allow[1], "zfs", SYSEXT_NAME_MAX);
+	strlcpy(cfg.allow[2], "if_foo.ko", SYSEXT_NAME_MAX);
+	cfg.nallow = 3;
+
+	fixture_create_cfg(&fixture, &cfg);
+	rq = list_request();
+	reply = call_list(&fixture, &rq, sizeof(rq), -1);
+	ATF_CHECK_EQ(0, reply.status);
+	ATF_REQUIRE_EQ(3, reply.count);
+	ATF_CHECK_EQ(0, strcmp(reply.names[0], "cryptodev"));
+	ATF_CHECK_EQ(0, strcmp(reply.names[1], "zfs"));
+	ATF_CHECK_EQ(0, strcmp(reply.names[2], "if_foo.ko"));
+	fixture_destroy(&fixture);
+}
+
+/*
+ * An empty allow-list is handled: LIST completes with status 0 and count 0
+ * (a valid, empty enumeration), never an error.
+ */
+ATF_TC(provider_list_empty_allowlist);
+ATF_TC_HEAD(provider_list_empty_allowlist, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_list_empty_allowlist, tc)
+{
+	struct sysext_config cfg;
+	struct sysext_list_reply reply;
+	struct fixture fixture;
+	struct sysext_request rq;
+
+	memset(&cfg, 0, sizeof(cfg));	/* nallow == 0 */
+	fixture_create_cfg(&fixture, &cfg);
+	rq = list_request();
+	reply = call_list(&fixture, &rq, sizeof(rq), -1);
+	ATF_CHECK_EQ(0, reply.status);
+	ATF_CHECK_EQ(0, reply.count);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * A LIST that is malformed fails closed: a wrong-length message and a message
+ * carrying an unexpected descriptor are both EPROTO (the length/fd check runs
+ * before the op is even dispatched, so the daemon answers with the generic
+ * fixed-size error reply — read here via call_status).
+ */
+ATF_TC(provider_list_rejects_malformed_framing);
+ATF_TC_HEAD(provider_list_rejects_malformed_framing, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(provider_list_rejects_malformed_framing, tc)
+{
+	struct fixture fixture;
+	struct sysext_request rq;
+	int fd;
+
+	fixture_create(&fixture);
+	rq = list_request();
+	/* Short by one byte. */
+	ATF_CHECK_EQ(EPROTO, call_status(&fixture, &rq, sizeof(rq) - 1, -1));
+	/* An attached descriptor on a no-descriptor interface. */
+	fd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	rq = list_request();
+	ATF_CHECK_EQ(EPROTO, call_status(&fixture, &rq, sizeof(rq), fd));
+	close(fd);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -511,5 +644,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, provider_stat_denies_non_allowlisted_module);
 	ATF_TP_ADD_TC(tp, provider_stat_rejects_unterminated_name);
 	ATF_TP_ADD_TC(tp, provider_stat_rejects_malformed_framing);
+	ATF_TP_ADD_TC(tp, provider_list_returns_allowlist);
+	ATF_TP_ADD_TC(tp, provider_list_empty_allowlist);
+	ATF_TP_ADD_TC(tp, provider_list_rejects_malformed_framing);
 	return (atf_no_error());
 }
