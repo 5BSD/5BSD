@@ -26,6 +26,7 @@
 #include "manifest_compare.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
+#include "serviced_svc_proto.h"
 
 struct svc_runtime *
 svc_by_label(const char *label)
@@ -37,6 +38,68 @@ svc_by_label(const char *label)
 			return (&sd.services[i]);
 	}
 	return (NULL);
+}
+
+/*
+ * Retire a bundle label (docs/capability-lifecycle-cleanup.md, involuntary
+ * cleanup).  The label's owning bundle has been uninstalled, so its persistent
+ * per-label state (tzfsd datasets, named keys, jails, vsock windows, log
+ * stores, retained notify state) can never be reclaimed by a live consumer.
+ *
+ * This is the low-latency PUSH half: broadcast an SVC_OP_RECLAIM_LABEL
+ * notification to every running service.  Every provider receives it; a
+ * provider that keeps state keyed by this label drops it, and a provider with
+ * no reclaim handler ignores it (libservice default).  The push is strictly
+ * best-effort — a provider that is down or restarting now is caught later by
+ * its SVC_OP_LABEL_IS_LIVE reconciliation sweep, which is the completeness
+ * guarantee.  A failed send is therefore only logged, never fatal.
+ *
+ * The notification carries no descriptor and expects no reply.  This is the
+ * ONLY originator of a retirement; it is reachable solely from the admin
+ * SCTL_OP_RECLAIM control op (driven by the pkg deinstall hook), never from a
+ * service request.  Returns the number of running providers it was pushed to.
+ */
+unsigned
+svc_retire_label(const char *label, int kq)
+{
+	struct svc_reclaim_label_msg msg;
+	unsigned i, sent;
+
+	if (label == NULL || label[0] == '\0')
+		return (0);
+
+	memset(&msg, 0, sizeof(msg));
+	msg.op = SVC_OP_RECLAIM_LABEL;
+	msg.flags = 0;
+	if (strlcpy(msg.label, label, sizeof(msg.label)) >= sizeof(msg.label)) {
+		syslog(LOG_WARNING,
+		    "reload: retired label '%s' too long to reclaim", label);
+		return (0);
+	}
+
+	syslog(LOG_INFO, "reload: retiring label '%s' (bundle uninstalled)",
+	    label);
+
+	sent = 0;
+	for (i = 0; i < sd.nservices; i++) {
+		struct svc_runtime *svc = &sd.services[i];
+
+		if (svc->state != SVC_STATE_RUNNING ||
+		    svc->control_channel == NULL)
+			continue;
+		if (svc_channel_send_event(svc, &msg, sizeof(msg), NULL, 0,
+		    kq) == -1) {
+			syslog(LOG_WARNING,
+			    "reload: reclaim(%s) push to '%s' failed: %m",
+			    label, svc->manifest.label);
+			continue;
+		}
+		sent++;
+	}
+	SERVICED_PROBE_LABEL_RETIRED(label, sent);
+	serviced_audit(AUE_SERVICED_RELOAD, getuid(), 0,
+	    "label retired: %s (reclaim pushed to %u services)", label, sent);
+	return (sent);
 }
 
 /*
@@ -232,6 +295,7 @@ supervisor_reload(int kq, char *summary, size_t sumlen)
 			    "running services unaffected\n");
 		/*
 		 * Return -1 so the caller knows no replacement state was applied.
+		 * The previous registry is still authoritative.
 		 */
 		return (-1);
 	}

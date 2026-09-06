@@ -630,6 +630,38 @@ bundle_registry_lookup(const char *name, unsigned *bundle_idx_out,
 }
 
 /*
+ * Is `label` a currently-installed bundle's manifest label?
+ *
+ * The authoritative liveness test behind SVC_OP_LABEL_IS_LIVE
+ * (docs/capability-lifecycle-cleanup.md).  A label is live iff
+ * some registered bundle declares a service with exactly that label.  This is a
+ * pure read over the active registry; an operator-disabled or uninstalled
+ * bundle is not registered and therefore is not live.  Labels are unique across
+ * the registry (enforced by registry_build_indexes), so a linear scan suffices
+ * and terminates on the first match.
+ */
+bool
+bundle_registry_label_installed(const char *label)
+{
+	unsigned bi, si;
+	struct capbundle *b;
+	struct capbundle_service *svc;
+
+	if (label == NULL || label[0] == '\0')
+		return (false);
+	for (bi = 0; bi < nbundles; bi++) {
+		b = bundles[bi].bundle;
+		for (si = 0; si < capbundle_nservices(b); si++) {
+			svc = capbundle_service(b, si);
+			if (svc != NULL &&
+			    strcmp(capbundle_svc_label(svc), label) == 0)
+				return (true);
+		}
+	}
+	return (false);
+}
+
+/*
  * Get a bundle by index.
  */
 struct capbundle *

@@ -555,6 +555,32 @@ int	service_helper_open(struct service_context *, const char *name,
 	    int *session_fd);
 
 /*
+ * Involuntary resource cleanup (docs/capability-lifecycle-cleanup.md).  A
+ * stateful provider keeps persistent state keyed by consumer bundle labels; when
+ * a bundle is uninstalled its label is retired and that state can never be
+ * reclaimed by a live consumer.  serviced drives retirement two ways, and a
+ * provider participates through these two entry points:
+ *
+ *   service_set_reclaim_handler() registers the PUSH callback.  serviced pushes
+ *   SVC_OP_RECLAIM_LABEL over the control channel when it detects a bundle was
+ *   uninstalled; libservice's dispatcher then calls fn(label, ctx) so the
+ *   provider drops that label's state.  Pass fn == NULL to clear it.  A provider
+ *   that registers none silently ignores the notification.  The callback runs on
+ *   the control-dispatch thread, outside libservice locks, and must be idempotent
+ *   (push and pull can both fire for one label).
+ *
+ *   service_label_is_live() is the PULL query the provider's own periodic
+ *   reconciliation sweep issues for each label it holds state for.  It returns 0
+ *   on a completed query with *live set (true == the label's bundle is still
+ *   installed, false == retired/unknown -> reclaim it), or -1/errno on a
+ *   transport failure (treat as unknown; do not reclaim).  Sent over the
+ *   provider's serviced bootstrap control channel.
+ */
+void	service_set_reclaim_handler(void (*fn)(const char *label, void *ctx),
+	    void *ctx);
+int	service_label_is_live(const char *label, bool *live);
+
+/*
  * Client-side connect.  service_connect_ambient() resolves a name over the
  * §21 ambient lookup channel a login session inherits (SERVICE_LOOKUP_FD),
  * for a program run from a shell that has no serviced bootstrap context.

@@ -61,6 +61,9 @@
 	DTRACE_PROBE1(serviced, svc__removed, label)
 #define	SERVICED_PROBE_SVC_CHANGED(label)	\
 	DTRACE_PROBE1(serviced, svc__changed, label)
+/* label: retired bundle label; nservices: reclaim pushes emitted */
+#define	SERVICED_PROBE_LABEL_RETIRED(label, nservices)	\
+	DTRACE_PROBE2(serviced, label__retired, label, nservices)
 
 /* Naming registry */
 #define	SERVICED_PROBE_NAMING_REGISTER(name, owner)	\

@@ -609,6 +609,40 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 		close(minted_fd);
 }
 
+/*
+ * SVC_OP_LABEL_IS_LIVE — a pure, read-only liveness query for the involuntary-
+ * cleanup pull path (docs/capability-lifecycle-cleanup.md).  A provider's
+ * reconciliation sweep asks whether a bundle label it still holds persistent
+ * state for is currently installed.  Reply status 0 == live (a currently-
+ * installed bundle carries that manifest label), ENOENT == not live (retired or
+ * never installed).  This op NEVER mutates serviced state and NEVER retires a
+ * label: retirement is driven only by serviced's own bundle-removal detection
+ * (svc_retire_label from reload), never by a service request.  Any launched
+ * service may ask — the answer reveals only installed/not, no privileged data.
+ */
+static void
+handle_label_is_live(struct svc_runtime *svc, struct channel_message *request)
+{
+	const struct svc_label_query_req *req;
+	int status;
+
+	if (channel_message_length(request) != sizeof(*req)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_LABEL_IS_LIVE,
+		    EINVAL, NULL, 0);
+		return;
+	}
+	req = channel_message_data(request);
+	if (req->flags != 0 ||
+	    strnlen(req->label, sizeof(req->label)) >= sizeof(req->label)) {
+		(void)svc_channel_reply(svc, request, SVC_OP_LABEL_IS_LIVE,
+		    EINVAL, NULL, 0);
+		return;
+	}
+	status = bundle_registry_label_installed(req->label) ? 0 : ENOENT;
+	(void)svc_channel_reply(svc, request, SVC_OP_LABEL_IS_LIVE, status,
+	    NULL, 0);
+}
+
 static void
 svc_request(struct channel *channel, struct channel_message *request,
     void *context)
@@ -667,6 +701,9 @@ svc_request(struct channel *channel, struct channel_message *request,
 		break;
 	case SVC_OP_MINT_DOMAIN:
 		handle_mint_domain(svc, request);
+		break;
+	case SVC_OP_LABEL_IS_LIVE:
+		handle_label_is_live(svc, request);
 		break;
 	default:
 		syslog(LOG_WARNING, "service %s: unknown channel op %u",

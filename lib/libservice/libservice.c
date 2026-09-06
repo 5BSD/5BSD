@@ -98,6 +98,15 @@ static pthread_t service_dispatch_thread;
 static bool service_dispatch_started;
 static int service_dispatch_error;
 static int service_supervisor_pipe[2] = { -1, -1 };
+/*
+ * Daemon-registered label-reclaim callback (docs/capability-lifecycle-cleanup.md).
+ * A stateful provider installs it with service_set_reclaim_handler(); the
+ * control-channel dispatcher invokes it when serviced pushes SVC_OP_RECLAIM_LABEL
+ * for a retired bundle label.  A single static, like the rest of the provider's
+ * libservice state; read and written under service_state_lock.
+ */
+static void (*service_reclaim_handler)(const char *label, void *ctx);
+static void *service_reclaim_handler_ctx;
 static void service_after_fork_child(void);
 static void service_reset_cached_sessions(void);
 static int rpc(const void *, uint32_t, int *);
@@ -794,6 +803,28 @@ service_after_fork_child(void)
 	service_reset_cached_sessions();
 }
 
+/*
+ * Register (or clear, with fn == NULL) this provider's label-reclaim callback.
+ * serviced pushes SVC_OP_RECLAIM_LABEL over the control channel when a bundle
+ * label is retired (its bundle was uninstalled); the dispatcher then invokes
+ * `fn(label, ctx)` so a stateful provider can drop all persistent state keyed
+ * by that label.  See docs/capability-lifecycle-cleanup.md.  A provider that
+ * never registers one silently ignores the notification (the default).  The
+ * callback runs on the provider's control-dispatch thread, outside libservice's
+ * internal locks, so it may call back into libservice (e.g. service_label_is_live).
+ */
+void
+service_set_reclaim_handler(void (*fn)(const char *label, void *ctx), void *ctx)
+    __no_lock_analysis
+{
+
+	if (pthread_mutex_lock(&service_state_lock) != 0)
+		return;
+	service_reclaim_handler = fn;
+	service_reclaim_handler_ctx = ctx;
+	(void)pthread_mutex_unlock(&service_state_lock);
+}
+
 static void
 service_control_reply(struct channel_request *request,
     struct channel_message *message, int error, void *argument)
@@ -836,7 +867,11 @@ service_control_event(struct channel *channel,
 	const struct svc_activate_name_msg *activate;
 	const struct svc_new_client_msg *notify;
 	const struct svc_quiesce_msg *quiesce;
+	const struct svc_reclaim_label_msg *reclaim;
 	struct service_listener *listener;
+	void (*reclaim_fn)(const char *, void *);
+	void *reclaim_ctx;
+	char reclaim_label[sizeof(reclaim->label)];
 	char reject_name[SERVICED_NAME_MAX + 1];
 	unsigned tail;
 	int error, fd, reject_error;
@@ -846,6 +881,9 @@ service_control_event(struct channel *channel,
 	fd = -1;
 	reject_error = 0;
 	reject_name[0] = '\0';
+	reclaim_fn = NULL;
+	reclaim_ctx = NULL;
+	reclaim_label[0] = '\0';
 	if (pthread_mutex_lock(&service_state_lock) != 0) {
 		channel_message_free(message);
 		return;
@@ -911,10 +949,32 @@ service_control_event(struct channel *channel,
 				service_listener_signal(listener);
 			}
 		}
+	} else if (channel_message_length(message) == sizeof(*reclaim) &&
+	    channel_message_fd_count(message) == 0) {
+		/*
+		 * SVC_OP_RECLAIM_LABEL (docs/capability-lifecycle-cleanup.md):
+		 * a fire-and-forget notification that a bundle label has been
+		 * retired.  Fail closed on any malformation (bad op, reserved
+		 * flags, or an unterminated label) — never invoke the handler
+		 * on a message we did not fully validate.  A registered handler
+		 * is captured here and invoked after the lock is dropped, since
+		 * it is untrusted provider code that may re-enter libservice.
+		 */
+		reclaim = channel_message_data(message);
+		if (reclaim->op == SVC_OP_RECLAIM_LABEL && reclaim->flags == 0 &&
+		    strnlen(reclaim->label, sizeof(reclaim->label)) <
+		    sizeof(reclaim->label) && service_reclaim_handler != NULL) {
+			reclaim_fn = service_reclaim_handler;
+			reclaim_ctx = service_reclaim_handler_ctx;
+			strlcpy(reclaim_label, reclaim->label,
+			    sizeof(reclaim_label));
+		}
 	}
 	(void)pthread_mutex_unlock(&service_state_lock);
 	if (reject_error != 0)
 		(void)service_name_result_reject(reject_name, reject_error);
+	if (reclaim_fn != NULL)
+		reclaim_fn(reclaim_label, reclaim_ctx);
 	channel_message_free(message);
 }
 
@@ -3377,6 +3437,57 @@ service_connect(struct service_context *context, const char *name,
 	}
 	*session_fdp = fd;
 	return (0);
+}
+
+/*
+ * Ask serviced whether a bundle label is still installed (the pull half of
+ * involuntary cleanup, docs/capability-lifecycle-cleanup.md).  A stateful
+ * provider's reconciliation sweep calls this for each label it holds persistent
+ * state for; a label that answers "not live" is a retired bundle whose state
+ * must be reclaimed.  Sent as SVC_OP_LABEL_IS_LIVE over this provider's own
+ * bootstrap control channel to serviced (the same serialized RPC path as
+ * service_connect), so it does not race the provider protocol on that channel.
+ *
+ * On a completed query returns 0 and sets *live (true == installed, false ==
+ * retired/unknown).  On a transport failure (no serviced, timeout, channel
+ * error) returns -1 with errno set and leaves *live false; the sweep should
+ * treat that as "unknown" and NOT reclaim — retire only on a definitive
+ * not-live answer.
+ */
+int
+service_label_is_live(const char *label, bool *live)
+{
+	struct svc_label_query_req req;
+
+	if (label == NULL || live == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*live = false;
+	if (label[0] == '\0' || strlen(label) >= sizeof(req.label)) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.op = SVC_OP_LABEL_IS_LIVE;
+	strlcpy(req.label, label, sizeof(req.label));
+
+	/*
+	 * rpc() maps the reply's svc_reply.status onto its return: status 0
+	 * (live) -> 0, a positive errno -> -1/errno.  serviced answers a retired
+	 * or unknown label with ENOENT, which is a completed query, not a
+	 * transport failure — surface it as *live = false, return 0.
+	 */
+	if (rpc(&req, sizeof(req), NULL) == 0) {
+		*live = true;
+		return (0);
+	}
+	if (errno == ENOENT) {
+		*live = false;
+		return (0);
+	}
+	return (-1);
 }
 
 /*

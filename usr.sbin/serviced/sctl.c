@@ -357,6 +357,44 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			}
 		}
 		break;
+	case SCTL_OP_RECLAIM:
+		/*
+		 * Retire an uninstalled bundle label
+		 * (docs/capability-lifecycle-cleanup.md): broadcast a best-effort
+		 * SVC_OP_RECLAIM_LABEL to every running provider so any that holds
+		 * persistent per-label state drops it.  The pkg deinstall hook is
+		 * the only intended caller; it runs as root over the ADMIN control
+		 * plane.  ADMIN-gated exactly like start/stop.
+		 */
+		if (!is_admin) {
+			reply->status = EPERM;
+			snprintf(summary, summary_cap,
+			    "reclaim: permission denied");
+			SERVICED_PROBE_SCTL_DENY(op, audit_uid);
+			serviced_audit(AUE_SERVICED_CTL, audit_uid, EPERM,
+			    "reclaim denied");
+		} else if (datalen == 0) {
+			reply->status = EINVAL;
+			snprintf(summary, summary_cap,
+			    "reclaim: missing bundle label");
+		} else if (datalen > sizeof(((struct svc_reclaim_label_msg *)
+		    0)->label) - 1) {
+			/* Must fit the reclaim message's label[64] with its NUL. */
+			reply->status = EINVAL;
+			snprintf(summary, summary_cap,
+			    "reclaim: bundle label too long");
+		} else {
+			unsigned sent;
+
+			sent = svc_retire_label(payload, serviced_kq);
+			reply->status = 0;
+			snprintf(summary, summary_cap,
+			    "reclaim %s: broadcast to %u providers\n",
+			    payload, sent);
+			serviced_audit(AUE_SERVICED_CTL, audit_uid, 0,
+			    "reclaim %s", payload);
+		}
+		break;
 	default:
 		reply->status = ENOTSUP;
 		snprintf(summary, summary_cap, "unknown op %u", op);
@@ -447,6 +485,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			case SCTL_OP_RELOAD:
 			case SCTL_OP_START_SVC:
 			case SCTL_OP_STOP_SVC:
+			case SCTL_OP_RECLAIM:
 				/*
 				 * Authority is the held right, not a uid; the
 				 * audit uid is (uid_t)-1 for a capability caller.

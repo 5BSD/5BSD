@@ -49,6 +49,7 @@ ATF_TESTS_C+=	launch_limits_test
 ATF_TESTS_C+=	manifest_compare_test
 ATF_TESTS_C+=	management_enforce_test
 ATF_TESTS_C+=	bundle_selection_test
+ATF_TESTS_C+=	label_lifecycle_test
 ATF_TESTS_C+=	rc_ingest_test
 ATF_TESTS_C+=	rc_adopt_test
 ATF_TESTS_C+=	activation_calendar_test
@@ -168,5 +169,21 @@ CFLAGS.management_enforce_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.management_enforce_test+=	-I${SRCTOP}/sys
 SRCS.bundle_selection_test=	bundle_selection_test.c bundle_selection.c
 CFLAGS.bundle_selection_test+=	-I${SRCTOP}/usr.sbin/serviced
+
+# label_lifecycle_test exercises the label-liveness predicate and snapshot
+# (bundle_registry.c) plus the SVC_OP_LABEL_IS_LIVE / SVC_OP_RECLAIM_LABEL wire
+# contract.  bundle_registry.c reaches libcapbundle and bundle_selection.c; the
+# empty-registry cases need no disk fixtures.  --gc-sections drops the scanning
+# paths the pure cases never call.
+SRCS.label_lifecycle_test=	label_lifecycle_test.c bundle_registry.c \
+				bundle_selection.c
+CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/lib/libchannel
+CFLAGS.label_lifecycle_test+=	-I${SRCTOP}/sys
+CFLAGS.label_lifecycle_test+=	-ffunction-sections -fdata-sections
+LDFLAGS.label_lifecycle_test+=	-Wl,--gc-sections
+LIBADD.label_lifecycle_test+=	capbundle
 
 .include <bsd.test.mk>

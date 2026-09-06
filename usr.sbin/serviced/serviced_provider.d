@@ -17,6 +17,7 @@ provider serviced {
 	probe reload(unsigned int nnew, unsigned int nchanged, unsigned int nremoved);
 	probe svc__removed(const char *label);
 	probe svc__changed(const char *label);
+	probe label__retired(const char *label, unsigned int nservices);
 
 	/* Naming registry */
 	probe naming__register(const char *name, const char *owner);

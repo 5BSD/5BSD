@@ -30,7 +30,7 @@
 
 #include <sys/types.h>
 
-#define	SERVICED_SVC_PROTO_VERSION	8
+#define	SERVICED_SVC_PROTO_VERSION	9
 
 /* Maximum reverse-domain name length. */
 #define	SERVICED_NAME_MAX		255
@@ -51,6 +51,7 @@
 #define	SVC_OP_MINT_DOMAIN	9	/* mint a narrowed (USER, uid) lookup channel */
 #define	SVC_OP_AMBIENT_HELLO	10	/* behavioral probe: is this THE lookup channel? */
 #define	SVC_OP_HELPER_OPEN	11	/* launch + connect a bundle-local private helper */
+#define	SVC_OP_LABEL_IS_LIVE	12	/* is a bundle label still installed? */
 
 /*
  * Serviced → service (notifications):
@@ -58,6 +59,7 @@
 #define	SVC_OP_ACTIVATE_NAME	127	/* initialize one reserved name */
 #define	SVC_OP_NEW_CLIENT	128	/* new client connection (pushed) */
 #define	SVC_OP_QUIESCE		129	/* stop admission and drain */
+#define	SVC_OP_RECLAIM_LABEL	130	/* retire a label's persistent state */
 
 #define	SVC_QUIESCE_REASON_STOP		1
 #define	SVC_QUIESCE_REASON_SHUTDOWN	2
@@ -68,6 +70,30 @@ struct svc_quiesce_msg {
 	uint32_t	reason;		/* SVC_QUIESCE_REASON_* */
 	uint32_t	deadline_ms;
 	uint32_t	flags;		/* reserved */
+};
+
+/*
+ * SVC_OP_RECLAIM_LABEL (notification, serviced → service)
+ *   payload: svc_reclaim_label_msg
+ *   NO descriptors, NO reply.
+ *
+ * The low-latency push half of involuntary cleanup
+ * (docs/capability-lifecycle-cleanup.md).  serviced emits this to every running
+ * provider when it detects, on a bundle re-scan, that a previously installed
+ * bundle is now GONE (uninstalled); `label` is that bundle's retired manifest
+ * label.  A stateful provider drops all persistent per-label state keyed by
+ * `label`; a provider with no reclaim handler ignores it (libservice default).
+ * It is strictly best-effort — a provider that was down when it fired is caught
+ * by the SVC_OP_LABEL_IS_LIVE pull sweep — so, like SVC_OP_NEW_CLIENT, it is a
+ * fire-and-forget notification: it carries no fd and expects no acknowledgement.
+ * Only serviced's own bundle-removal detection ever originates it; a service can
+ * never ask serviced to retire a label.  `label` is 64 bytes to match
+ * svc_new_client_msg.client_label and must be NUL-terminated with flags == 0.
+ */
+struct svc_reclaim_label_msg {
+	uint32_t	op;		/* SVC_OP_RECLAIM_LABEL */
+	uint32_t	flags;		/* reserved, must be 0 */
+	char		label[64];	/* retired bundle label */
 };
 
 struct svc_quiesce_result_req {
@@ -275,6 +301,27 @@ struct svc_lookup_req {
 	uint32_t	op;		/* SVC_OP_LOOKUP */
 	uint32_t	flags;		/* reserved, must be 0 */
 	char		name[SERVICED_NAME_MAX + 1];
+};
+
+/*
+ * SVC_OP_LABEL_IS_LIVE
+ *   req:  svc_label_query_req { .op = SVC_OP_LABEL_IS_LIVE }
+ *   reply: svc_reply { .status }   (no descriptors)
+ *
+ * A pure, read-only liveness query for the involuntary-cleanup pull path
+ * (docs/capability-lifecycle-cleanup.md).  A provider's reconciliation sweep
+ * asks serviced whether a bundle label it still holds persistent state for is
+ * currently installed.  serviced answers status == 0 when a currently-installed
+ * bundle carries that manifest label (LIVE) and status == ENOENT when it does
+ * not (retired or never installed).  This op never changes any serviced state
+ * and never retires a label — retirement is driven only by serviced's own
+ * bundle-removal detection, never by a service request.  `label` matches
+ * svc_new_client_msg.client_label (64 bytes) and must be NUL-terminated.
+ */
+struct svc_label_query_req {
+	uint32_t	op;		/* SVC_OP_LABEL_IS_LIVE */
+	uint32_t	flags;		/* reserved, must be 0 */
+	char		label[64];	/* bundle label to test */
 };
 
 /*

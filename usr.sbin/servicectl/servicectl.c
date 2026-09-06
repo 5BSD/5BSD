@@ -269,6 +269,40 @@ cmd_stop(const char *label)
 }
 
 /*
+ * reclaim <label> — retire an uninstalled bundle label
+ * (docs/capability-lifecycle-cleanup.md).  serviced broadcasts a best-effort
+ * SVC_OP_RECLAIM_LABEL to every running provider so any that holds persistent
+ * per-label state (datasets, keys, jails, vsock windows, log stores) drops it.
+ * Intended for the pkg deinstall hook, which runs as root over the ADMIN
+ * control plane; the op is ADMIN-gated by serviced.
+ */
+static int
+cmd_reclaim(const char *label)
+{
+	char summary[SERVICED_CTL_SUMMARY_MAX];
+	int error;
+
+	if (label == NULL || label[0] == '\0')
+		errx(EX_USAGE, "reclaim requires a bundle label");
+	/* Must fit the reclaim message's label[64], NUL included. */
+	if (strlen(label) > 63)
+		errx(EX_USAGE, "reclaim: bundle label too long");
+
+	summary[0] = '\0';
+	error = sctl_rpc(SCTL_OP_RECLAIM, 0, label, summary, sizeof(summary));
+	if (error != 0) {
+		warnx("reclaim: %s", summary[0] != '\0' ?
+		    summary : strerror(error));
+		return (1);
+	}
+	if (summary[0] != '\0')
+		printf("%s", summary);
+	else
+		printf("reclaim: ok\n");
+	return (0);
+}
+
+/*
  * restart = stop, then start, driving the same serviced control ops the stop
  * and start verbs use (toward service(8) parity).  serviced's stop is
  * asynchronous — the unit passes through STOPPING before it reaches STOPPED —
@@ -450,6 +484,7 @@ usage(void)
 	    "  start <label>       start a loaded service\n"
 	    "  stop <label>        stop a running service\n"
 	    "  restart <label>     stop then start a service\n"
+	    "  reclaim <label>     retire an uninstalled bundle label\n"
 	    "  enable <bundle-id>  clear a bundle's operator-disabled state\n"
 	    "  disable <bundle-id> keep a bundle installed but unregistered\n"
 	    "  install <path.cap>  install a .cap bundle to /Capabilities/\n"
@@ -499,6 +534,11 @@ main(int argc, char *argv[])
 		if (argc != 2)
 			errx(EX_USAGE, "restart requires a service label");
 		return (cmd_restart(argv[1]));
+	}
+	if (strcmp(cmd, "reclaim") == 0) {
+		if (argc != 2)
+			errx(EX_USAGE, "reclaim requires a bundle label");
+		return (cmd_reclaim(argv[1]));
 	}
 	if (strcmp(cmd, "enable") == 0) {
 		if (argc != 2)

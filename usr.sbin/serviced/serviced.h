@@ -317,6 +317,15 @@ int	supervisor_reload(int kq, char *summary, size_t sumlen);
 struct svc_runtime *svc_by_label(const char *label);
 void	svc_remove(unsigned idx);
 void	svc_reregister_kevents(int kq);
+/*
+ * Retire a bundle label (docs/capability-lifecycle-cleanup.md): push a best-
+ * effort SVC_OP_RECLAIM_LABEL notification to every running service so any
+ * provider holding persistent per-label state drops it.  Invoked by the admin
+ * SCTL_OP_RECLAIM control op (driven by the pkg deinstall hook) — never in
+ * response to a service request.  Returns the number of running providers the
+ * notification was pushed to.
+ */
+unsigned svc_retire_label(const char *label, int kq);
 
 /* bundle_registry.c — .cap bundle scanning and provides lookup */
 struct capbundle;
@@ -328,6 +337,12 @@ struct capbundle *bundle_registry_get(unsigned idx);
 bool	bundle_registry_is_system(unsigned idx);
 unsigned bundle_registry_count(void);
 void	bundle_registry_teardown(void);
+/*
+ * Liveness of a bundle manifest label over the active registry (pure read):
+ * true iff a currently-installed bundle declares a service with that label.
+ * Backs SVC_OP_LABEL_IS_LIVE (docs/capability-lifecycle-cleanup.md).
+ */
+bool	bundle_registry_label_installed(const char *label);
 
 /* startup.c — tier-based parallel service launch */
 int	startup_launch_system(int kq);
