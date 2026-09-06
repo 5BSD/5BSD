@@ -27,6 +27,7 @@
 #include <auditcmp_server.h>
 #include <channel.h>
 #include <libservice.h>
+#include <logcmp.h>
 
 #include "broker.h"
 #include "notify.h"
@@ -174,7 +175,7 @@ audit_policy(struct auditcmp_client *audit, const char *label,
 {
 
 	if (auditcmp_submit(audit, label, operation, error) == -1)
-		syslog(LOG_WARNING, "audit %s for %s failed: %m", operation,
+		logcmp_log(LOG_WARNING, "audit %s for %s failed: %m", operation,
 		    label);
 }
 
@@ -1210,7 +1211,7 @@ main(void)
 		if (watcher_error == ROUTER_ADMISSION_FATAL)
 			goto fail_router;
 		if (watcher_error == ROUTER_ADMISSION_REJECTED)
-			syslog(LOG_WARNING, "router rejected client %s: %m",
+			logcmp_log(LOG_WARNING, "router rejected client %s: %m",
 			    identity.client_label);
 	}
 
@@ -1224,7 +1225,7 @@ fail_router:
 		(void)pthread_join(watcher, NULL);
 	close(router_pd);
 fail:
-	syslog(LOG_ERR, "provider failed: %m");
+	logcmp_log(LOG_ERR, "provider failed: %m");
 	return (1);
 }
 #endif

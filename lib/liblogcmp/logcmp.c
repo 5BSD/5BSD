@@ -1505,11 +1505,25 @@ logcmp_default_ensure(void)
 	pid_t pid;
 
 	pid = getpid();
-	if (logcmp_default_pid == pid)
-		return;
-	logcmp_default_client = NULL;
-	logcmp_default_logger = NULL;
-	logcmp_default_pid = pid;
+	if (logcmp_default_pid != pid) {
+		/*
+		 * First use, or a forked child: abandon any inherited handle
+		 * (do not close a clofork-dropped fd) and start fresh for this
+		 * process.
+		 */
+		logcmp_default_client = NULL;
+		logcmp_default_logger = NULL;
+		logcmp_default_pid = pid;
+	}
+	if (logcmp_default_logger != NULL)
+		return;			/* already connected this process */
+	/*
+	 * Retry the open on every call until it succeeds, rather than giving up
+	 * permanently after one early failure: a daemon that logs before logd
+	 * is up (or during a logd restart) falls back to syslog now and starts
+	 * reaching system.Log once it is available.  Logging is not hot, so the
+	 * cost of a failed connect while logd is down is acceptable.
+	 */
 	if (logcmp_client_open(&logcmp_default_client) == -1) {
 		logcmp_default_client = NULL;
 		return;

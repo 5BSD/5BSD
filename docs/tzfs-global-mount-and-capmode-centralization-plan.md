@@ -177,6 +177,23 @@ Remaining Part 2 work:
 - **#5** `service_in_capability_mode()` helper + gate Casper on it
   (localnetwork/authagentd); **#7** authagentd `err(1,"casper")` → fail-soft;
   **#9** uniform `setproctitle` for born-in-capmode daemons (serviced-side).
+
+Update (2026-09-05, commit 5ac3304f0cb): #5 helper, #7, and #9's
+`service_set_proctitle()` helper landed; fleet re-verified green.  Findings:
+
+- **#9 has a deeper root than a missing call.** `setproctitle(3)` is
+  *ineffective* for a born-in-capability-mode daemon: serviced `cap_enter`s the
+  child before `fexecve`, so `main()` runs in capmode from instruction one, and
+  `setproctitle` locates `ps_strings` via `_elf_aux_info(AT_PS_STRINGS)` and,
+  when that is absent under the rtld `-f` direct-exec launch, falls back to a
+  `sysctlbyname("kern.ps_strings")` that capability mode blocks
+  (lib/libc/gen/setproctitle.c).  Normal-exec daemons (authagentd, localnetwork,
+  which fork a Casper zygote and so are launched conventionally) run
+  `setproctitle` pre-capmode and DO get a correct ps title.  The real fix is in
+  the launch path — ensure `AT_PS_STRINGS` reaches the program under rtld `-f`
+  (so `setproctitle` needs no sysctl in capmode), or have rtld/serviced set the
+  title.  This is a core rtld/libc change; flagged for explicit approval, not
+  done.  The `service_set_proctitle()` call is correct and harmless meanwhile.
 - Build-hygiene: auditbrokerd/tests compiles `auditcmp.c` without
   `-I${SRCTOP}/lib/libservice`, so it reads the stale installed `libservice.h`;
   add the include (or reinstall the header) so `make all` incl. tests is clean.

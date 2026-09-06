@@ -27,6 +27,7 @@
 #include <auditcmp_server.h>
 #include <channel.h>
 #include <libservice.h>
+#include <logcmp.h>
 
 #include "auditcmp_policy.h"
 #include "auditbrokerd_probes.h"
@@ -529,7 +530,7 @@ main(void)
 		}
 		if (nworkers >= AUDITCMP_MAX_WORKERS) {
 			errno = ENOSPC;
-			syslog(LOG_WARNING, "session limit for %s",
+			logcmp_log(LOG_WARNING, "session limit for %s",
 			    identity.client_label);
 			close(fd);
 			continue;
@@ -545,7 +546,7 @@ main(void)
 		if (rate == NULL || !auditcmp_rate_allow_at(rate, &now)) {
 			AUDITBROKERD_PROBE_REJECT(
 			    __DECONST(char *, identity.client_label), EAGAIN);
-			syslog(LOG_WARNING, "accept rate limit for %s",
+			logcmp_log(LOG_WARNING, "accept rate limit for %s",
 			    identity.client_label);
 			close(fd);
 			continue;
@@ -553,7 +554,7 @@ main(void)
 		worker = calloc(1, sizeof(*worker));
 		if (worker == NULL || start_session(fd, identity.client_label,
 		    &worker->pd, &worker->pid) == -1) {
-			syslog(LOG_WARNING, "session for %s: %m",
+			logcmp_log(LOG_WARNING, "session for %s: %m",
 			    identity.client_label);
 			free(worker);
 			close(fd);

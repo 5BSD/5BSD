@@ -18,6 +18,7 @@
 #include <cryptodesc.h>
 #include <cryptocmp_protocol.h>
 #include <libservice.h>
+#include <logcmp.h>
 
 #include "policy.h"
 #ifdef LOCALCRYPTO_TESTING
@@ -495,7 +496,7 @@ main(void)
 		if (service_listener_accept(listener, &id, &fd) == -1)
 			return (1);
 		if (start_session(fd, id.client_label) == -1)
-			syslog(LOG_WARNING, "session for %s rejected: %m",
+			logcmp_log(LOG_WARNING, "session for %s rejected: %m",
 			    id.client_label);
 		close(fd);
 	}

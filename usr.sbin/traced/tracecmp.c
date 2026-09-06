@@ -28,6 +28,7 @@
 
 #include <channel.h>
 #include <libservice.h>
+#include <logcmp.h>
 
 #include "tracecmp.h"
 #include <tracecmp_server.h>
@@ -705,7 +706,7 @@ main(void)
 			goto fail;
 		}
 		if (nworkers >= TRACECMP_MAX_WORKERS) {
-			syslog(LOG_WARNING, "session limit for %s",
+			logcmp_log(LOG_WARNING, "session limit for %s",
 			    identity.client_label);
 			close(fd);
 			continue;
@@ -719,7 +720,7 @@ main(void)
 		    tracecmp_policy_allows(&policy, identity.client_label),
 		    identity.client_label, identity.rights, &worker->pd,
 		    &worker->pid, &worker->liveness) == -1) {
-			syslog(LOG_WARNING, "session for %s rejected: %m",
+			logcmp_log(LOG_WARNING, "session for %s rejected: %m",
 			    identity.client_label);
 			free(worker);
 			close(fd);
@@ -758,7 +759,7 @@ fail:
 	if (kq >= 0)
 		close(kq);
 	errno = error;
-	syslog(LOG_ERR, "initialization or service loop: %m");
+	logcmp_log(LOG_ERR, "initialization or service loop: %m");
 	closelog();
 	return (1);
 }
