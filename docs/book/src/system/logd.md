@@ -56,10 +56,39 @@ unread record.
 
 A **`QUERY`** reads retained records back from the private store. It is always
 restricted to the authenticated `serviced` client label of the session — the
-protocol has no identity-override flag and no all-system view — and it takes a
-`minimum_severity` filter and an opaque cursor. Long scans are divided into
-bounded slices and resumed through the returned cursor, so one query cannot
-monopolize the storage-manager event loop; the client library hides those
-continuations behind a single overall deadline.
+protocol has no identity-override flag and no all-system view — and it takes an
+opaque cursor plus a set of filters that narrow *within* that label:
+
+- a `minimum_severity` floor;
+- a **subsystem** and/or **category** fragment, each matched either as a
+  substring (the default) or as an exact match selected per field through the
+  request's match flags — an empty fragment is "no constraint";
+- a **time range** given as `from`/`to` receive-timestamp bounds, either of
+  which may be left open (zero) for a one-sided or unbounded window.
+
+A zeroed request behaves exactly as the pre-filter protocol did — the whole
+label-scoped history, severity floor only — so the filters are strictly
+subtractive and never widen the scope. Long scans are divided into bounded
+slices and resumed through the returned cursor, so one query cannot monopolize
+the storage-manager event loop; the client library hides those continuations
+behind a single overall deadline.
+
+## Retention
+
+The store is a sequence of fixed-size segments: records append to a single
+*active* segment that rotates to a *completed* segment when it fills, capped by
+a `max_segments` ring. Two optional configuration keys layer age- and
+size-bounded retention on top of that ring:
+
+- **`retention_max_age`** — a completed segment whose newest record is older
+  than this many seconds is pruned.
+- **`retention_max_bytes`** — while the whole store (the active segment
+  included in the accounting) exceeds this size, the oldest completed segments
+  are pruned until it fits.
+
+Either key is `0` to disable that dimension, and the `0`/`0` default keeps every
+segment within the ring. Pruning only ever removes whole completed segments —
+**never the active segment** — so no partial record is dropped, and the count of
+pruned segments and records is exported through the retention DTrace probe.
 
 Reference: `logd(8)`, `liblogcmp(3)`.

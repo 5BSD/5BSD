@@ -10,6 +10,13 @@ It brokers name resolution, TCP connections, and connected UDP sockets —
 deliberately no listen, no bind, no raw sockets; their absence is a contract,
 not an oversight.
 
+A TCP `CONNECT` may carry a bounded `timeout_ms`: the broker connects
+non-blocking and, if the handshake has not completed within that deadline,
+closes the socket and fails the request with `ETIMEDOUT` rather than stalling
+the session on an unresponsive host. Zero selects the historical fully-blocking
+connect (the kernel's own default timeout); a UDP "connect" only assigns the
+peer and never blocks, so it ignores the field.
+
 A delivered socket is narrowed before the client touches it: rights-limited
 to what a network client does — send, receive, poll, shut down — and
 transfer-confined so it cannot be re-pointed elsewhere, turned into a

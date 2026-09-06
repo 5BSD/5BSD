@@ -48,8 +48,10 @@ MLINKS+=	libservice.3 service_destroy_namespace.3
 MLINKS+=	libservice.3 service_namespace_info.3
 MLINKS+=	libservice.3 service_ensure_extension.3
 MLINKS+=	libservice.3 service_extension_stat.3
+MLINKS+=	libservice.3 service_extension_list.3
 MLINKS+=	libservice.3 service_vsock_listen.3
 MLINKS+=	libservice.3 service_vsock_connect.3
+MLINKS+=	libservice.3 service_vsock_list.3
 MLINKS+=	libservice.3 service_activation_socket.3
 
 SRCS=	libservice.c service_ambient.c service_client.c

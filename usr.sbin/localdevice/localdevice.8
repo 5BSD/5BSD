@@ -95,6 +95,24 @@ pair matches no entry is refused with
 .Er EACCES ;
 the granted rights are the intersection of the wanted mask and the entry's
 maximum.
+.Ss List protocol
+A client sends a LIST request to enumerate the devices its own label is
+permitted to open.
+The enumeration is strictly scoped to the connecting channel's unforgeable
+label, never a wire argument, so a caller can only ever see its own entries; a
+label with no policy entry lists empty, preserving
+.Em default-deny .
+Each returned entry names one
+.Pa /dev
+leaf, the rights that label may be granted for it, and a flag set when the
+entry carries a per-device ioctl whitelist.
+The request carries a
+.Va cursor
+and the reply a
+.Va next_cursor ,
+so a policy larger than one reply is paged; the additive request fields must be
+zero.
+The reply mints no descriptor.
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/System/Device.cap" -compact
 .It Pa /dev
@@ -105,6 +123,21 @@ capability bundle shipping
 .It Pa /Capabilities/System/Device.cap/Units/localdevice.unit/Config/device.conf
 per-label device policy
 .El
+.Sh DTRACE PROBES
+The
+.Dq localdevice
+provider exports
+.Sy open ,
+which fires when an OPEN is resolved with the client label, the requested
+.Pa /dev
+leaf, the rights actually granted
+.Pq the request intersected with policy, zero on denial ,
+and the errno, and
+.Sy list ,
+which fires when a LIST page is produced with the client label, the requested
+cursor, the number of entries filled, and the errno.
+The errno argument is zero on success.
+Device contents are never probe arguments.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr cap_ioctls_limit 2 ,

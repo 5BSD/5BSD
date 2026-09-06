@@ -54,9 +54,13 @@ Service lifecycle library
 .Ft int
 .Fn service_extension_stat "struct service_context *context" "const char *module" "int *loadedp"
 .Ft int
+.Fn service_extension_list "struct service_context *context" "char (*names)[SERVICE_EXTENSION_NAME_MAX]" "size_t max" "size_t *countp"
+.Ft int
 .Fn service_vsock_listen "struct service_context *context" "unsigned port" "unsigned backlog" "unsigned *cidp" "unsigned *portp" "int *fdp"
 .Ft int
 .Fn service_vsock_connect "struct service_context *context" "unsigned cid" "unsigned port" "int *fdp"
+.Ft int
+.Fn service_vsock_list "struct service_context *context" "unsigned *cidp" "unsigned *port_basep" "unsigned *port_countp"
 .Ft int
 .Fn service_supervisor_fd "struct service_context *context"
 .Ft int
@@ -393,6 +397,34 @@ It is routed and validated exactly like
 a denied name fails with
 .Er EPERM .
 .Pp
+.Fn service_extension_list
+enumerates the module names
+.Xr sysextd 8 Ns 's
+allow-list permits, so a consumer can discover what it may
+.Fn service_ensure_extension
+without probing names blindly.
+It is routed exactly like the other extension calls: a
+.Dv SYSTEM Ns -domain
+caller only.
+The allow-list is global rather than per-label, so every caller sees the same
+set, and the reply reveals only which names may load, never any loaded or
+not-loaded state.
+Up to
+.Fa max
+names are written into
+.Fa names ,
+each a
+.Dv SERVICE_EXTENSION_NAME_MAX Ns -byte
+NUL-terminated buffer, with their number stored in
+.Fa countp .
+A buffer of
+.Dv SERVICE_EXTENSION_LIST_MAX
+entries always holds the whole list; a smaller
+.Fa max
+that cannot hold it fails with
+.Er EMSGSIZE
+rather than truncating silently.
+.Pp
 .Fn service_vsock_listen
 asks the
 .Dq system.VM
@@ -431,6 +463,32 @@ reply (not a window index), and
 .Fa cid
 is the target CID, which must not be
 .Dv VMADDR_CID_ANY .
+.Pp
+.Fn service_vsock_list
+reports the caller's own vsock port window from
+.Xr waspnest 8 ,
+so a component can discover the concrete port range it may
+.Fn service_vsock_listen
+within
+.Pq and the base port to advertise
+without guessing.
+It is data-only: no descriptor is delivered.
+The answer is derived entirely from the caller's unforgeable channel label, so
+it can only ever be the caller's own window and never another component's.
+On success it stores, when non-NULL, the host-local CID in
+.Fa cidp ,
+the first concrete port of the window in
+.Fa port_basep ,
+and the window width
+.Pq Dv VMD_PORTS_PER_LABEL
+in
+.Fa port_countp ;
+a window index
+.Va i
+passed to
+.Fn service_vsock_listen
+maps to concrete port
+.Pq Fa *port_basep No + Va i .
 .Pp
 .Fn service_helper_open
 launches and connects a private helper unit declared in the caller's own

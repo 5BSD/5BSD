@@ -12,6 +12,8 @@ MLINKS+=libnotify.3 notify_next.3
 MLINKS+=libnotify.3 notify_timer_add.3
 MLINKS+=libnotify.3 notify_timer_cancel.3
 MLINKS+=libnotify.3 notify_stats.3
+MLINKS+=libnotify.3 notify_list_subscriptions.3
+MLINKS+=libnotify.3 notify_list_timers.3
 MLINKS+=libnotify.3 notify_client_close.3
 
 SRCS=	notify.c

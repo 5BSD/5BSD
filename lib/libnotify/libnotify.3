@@ -13,6 +13,8 @@
 .Nm notify_timer_add ,
 .Nm notify_timer_cancel ,
 .Nm notify_stats ,
+.Nm notify_list_subscriptions ,
+.Nm notify_list_timers ,
 .Nm notify_client_close
 .Nd bounded capability-component notifications
 .Sh LIBRARY
@@ -40,6 +42,10 @@
 .Fn notify_timer_cancel "struct notify_client *client" "uint64_t timer_id"
 .Ft int
 .Fn notify_stats "struct notify_client *client" "struct notify_stats *stats"
+.Ft ssize_t
+.Fn notify_list_subscriptions "struct notify_client *client" "struct notify_subscription_info *out" "size_t capacity"
+.Ft ssize_t
+.Fn notify_list_timers "struct notify_client *client" "struct notify_timer_info *out" "size_t capacity"
 .Ft void
 .Fn notify_client_close "struct notify_client *client"
 .Sh DESCRIPTION
@@ -86,6 +92,50 @@ generation.
 returns the current router epoch, generation, and state.
 Subscribers should subscribe before reading state and query the owning typed
 service when a notification only identifies what changed.
+.Pp
+.Fn notify_list_subscriptions
+and
+.Fn notify_list_timers
+enumerate the caller's own active exact-topic subscriptions and timers into
+.Fa out ,
+which has room for
+.Fa capacity
+entries.
+Each is scoped by the router to the requesting session, so a caller can only
+observe its own state, never another session's.
+The library walks every provider page internally and returns the total number
+the session holds.
+That total may exceed
+.Fa capacity :
+a return value greater than
+.Fa capacity
+signals truncation, and only the first
+.Fa capacity
+entries were written.
+A capacity of zero is permitted with a
+.Dv NULL
+.Fa out
+to count without copying.
+.Fn notify_list_subscriptions
+fills each
+.Vt struct notify_subscription_info
+with the NUL-terminated
+.Va topic .
+.Fn notify_list_timers
+fills each
+.Vt struct notify_timer_info
+with the
+.Va timer_id ,
+.Va interval_ms ,
+the
+.Dv NOTIFY_TIMER_F_*
+.Va flags
+(periodic versus one-shot), and a best-effort
+.Va next_fire_ms
+estimate of the milliseconds until the next expiry.
+Both fail closed on any protocol or transport error, returning \-1 with
+.Va errno
+set.
 .Pp
 Every event identifies the random router epoch.
 Queue overflow produces

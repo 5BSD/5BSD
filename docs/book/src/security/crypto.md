@@ -26,6 +26,20 @@ or deleting an object invalidates every outstanding lease and its derived
 lineage. Objects do not survive reboot, and there is intentionally no import,
 export, or persistence ABI.
 
+Two read-only introspection operations let a service inspect the named objects
+it owns without minting or mutating anything. **`NAMED_STAT`** resolves one key
+by name and returns its metadata — generation, granted-rights mask, cipher/MAC
+selectors and key lengths — while delivering no descriptor and leaving the
+generation untouched; a miss (or a key deleted under the owner) is `ENOENT`.
+**`NAMED_LIST`** enumerates the owner's named keys, paginated through a resume
+cursor, returning each key's name, generation and rights but never key
+material. Both are owner-scoped on the hard invariant of every named-key
+operation: the owner is the session's unforgeable channel label, never a wire
+argument, so a caller can only ever observe keys minted under its own label.
+The kernel keystore backs both with dedicated query and enumeration ioctls, so
+introspection reads the authoritative object state rather than any userland
+cache.
+
 Limitations, honestly stated: asymmetric support is limited to X25519 key
 exchange and Ed25519 signatures, and the service is **not** a FIPS 140
 validated module — an approved-algorithms-only issuance mode is a selection

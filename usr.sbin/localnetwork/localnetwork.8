@@ -19,17 +19,20 @@ and launched only by
 The base provider is a connection broker.
 It implements bounded DNS and TCP/UDP
 .Em connect
-operations using the kernel network stack through an attenuated
-.Xr cap_net 3
-channel, and returns the resulting connected socket to the consumer rather
-than proxying its data.
+operations directly on the kernel network stack from within capability mode,
+and returns the resulting connected socket to the consumer rather than proxying
+its data.
 Each consumer receives a private capability-mode worker enlisted in its
 coalition.
 The worker cannot fork, execute, or receive unrelated descriptors.
-The Casper factory channel never crosses a fork; each attenuated resolver
-channel survives only its worker fork and is non-transferable and locked
-against exec propagation.
-The Casper channel never crosses into the consumer.
+Name resolution runs in-process: the worker resolves names itself, reading
+.Pa /etc/resolv.conf ,
+.Pa /etc/hosts ,
+and
+.Pa /etc/services
+on demand through the filesystem provider.
+No Casper channel is involved and nothing resolution-related crosses into the
+consumer.
 .Pp
 On a
 .Em connect
@@ -57,16 +60,48 @@ and its transfer state latched so it can be delivered exactly once.
 The delivered descriptor cannot bind, connect, listen, accept, or peel off.
 The consumer owns all subsequent I/O on it.
 The provider retains no socket state after delivery.
+.Pp
+A
+.Em connect
+request may carry a
+.Va timeout_ms
+bound on the connect attempt.
+A value of zero, the default, keeps the historical fully-blocking
+.Xr connect 2 ;
+a nonzero value bounds the wait, and a connect that has not completed when the
+deadline expires fails with
+.Er ETIMEDOUT .
+The bound applies to TCP
+.Em connect
+only; a
+.Em udp
+request ignores it.
 The version 1 protocol exposes only DNS, connect, and udp; protocol space for
 future userspace networking is reserved but implemented as none, and any such
 behavior requires a separately negotiated protocol version.
 .Pp
 Resolver requests cap host and service lengths, flags, address families, and
 result counts.
-They never read resolver configuration from the consumer filesystem.
-Resolution runs on a dedicated thread with a separately attenuated
-.Xr cap_net 3
-channel, so a slow resolver cannot stop socket operations on the session.
+Among the accepted resolver flags,
+.Dv AI_V4MAPPED
+and
+.Dv AI_ALL
+follow RFC 3493 for an
+.Dv AF_INET6
+query: when no native
+.Sy AAAA
+record is found, or when
+.Dv AI_ALL
+is also set,
+.Sy A
+records are fetched and appended as IPv4-mapped IPv6 addresses.
+.Dv AI_ADDRCONFIG
+is accepted but is a deliberate no-op: the in-process resolver does not
+enumerate the host's own configured source families, so it never suppresses a
+family on that basis.
+It never reads resolver configuration from the consumer filesystem.
+Resolution runs on a dedicated thread that issues its own bounded DNS queries,
+so a slow resolver cannot stop socket operations on the session.
 At most one resolution is active per private session; an overlapping request
 fails with
 .Er EBUSY .
@@ -157,10 +192,18 @@ The applied policy source
 is logged at each session start.
 .Sh SECURITY
 Session creation and resolver policy decisions are recorded through OpenBSM.
-Session, resolution, and rejection paths expose DTrace probes through the
+Session, resolution, connect, and rejection paths expose DTrace probes through
+the
 .Dq localnetwork_provider
 provider.
+The
+.Sy connect-done
+probe reports the client label, the
+.Dq addr:port
+dialed, the requested timeout in milliseconds
+.Pq zero for a blocking connect ,
+and the errno-style outcome
+.Pq zero connected, Er ETIMEDOUT No on expiry .
 .Sh SEE ALSO
-.Xr cap_net 3 ,
 .Xr libnetworkcmp 3 ,
 .Xr serviced 8

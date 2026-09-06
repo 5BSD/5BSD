@@ -38,6 +38,17 @@ restricted to the authenticated serviced client label associated with the
 session.
 The protocol has no identity override flag and no fallback to an all-system
 view.
+A query may additionally narrow the result within that own-label scope by
+subsystem and by category, each matched either as an exact string or as a
+substring, and by an event-timestamp range with a
+.Va from_ns
+lower bound and a
+.Va to_ns
+upper bound in nanoseconds; a zero bound is unset, and an inverted range
+.Pq Va from_ns No greater than a nonzero Va to_ns
+is rejected.
+These filters only further restrict the label-scoped result; they can never
+widen it beyond the session's own records.
 Long scans are divided into bounded record, byte, and segment slices so one
 query cannot monopolize the storage-manager event loop.
 The typed client hides those internal continuations while preserving one
@@ -94,8 +105,30 @@ The rate interval is at most one hour and the burst at most one million
 records.  Both rate values may be zero to disable limiting; setting only one
 to zero is invalid.
 The default retains 64 completed segments plus the active segment.
+The optional
+.Va retention_max_age ,
+a count of seconds up to one hundred years, and
+.Va retention_max_bytes ,
+a byte budget for the whole store, bound how long and how large the retained
+log may grow.
+Either value may be zero, which disables that dimension and keeps all
+segments; both default to zero, so retention pruning is off unless configured.
 Unknown keys, incorrect types, and values outside those bounds prevent
 startup.
+.Pp
+When retention is enabled the store enforces the policy by pruning completed
+segments oldest-first: first any completed segment whose age exceeds
+.Va retention_max_age ,
+then, if the whole store
+.Pq the active segment included in the byte accounting
+still exceeds
+.Va retention_max_bytes ,
+successive oldest completed segments until it no longer does.
+Only whole completed
+.Pa segment-*.log
+files are candidates; the active segment is never pruned and no partial record
+is ever dropped, since a pruned segment's records were by definition already
+outside policy.
 .Pp
 Segment rotation synchronizes both file contents and directory namespace
 changes.  On restart, the store reconstructs the next generation from
@@ -124,8 +157,19 @@ provider exports
 .Sy storage-persist ,
 .Sy storage-rotate ,
 .Sy storage-corruption ,
+.Sy query-complete ,
+.Sy query-filter ,
 and
-.Sy query-complete .
+.Sy retention-prune .
+The
+.Sy query-filter
+probe reports, per scoped query, the number of records scanned and the number
+that matched the subsystem, category, and time-range filters.
+The
+.Sy retention-prune
+probe fires once per pruned segment with its generation and the record and byte
+counts reclaimed; its reason argument is positive for a byte-budget prune and
+negative for an age prune.
 Result and error arguments are zero on success or an
 .Xr errno 2
 value on failure.

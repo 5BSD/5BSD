@@ -5,6 +5,7 @@
 .Os
 .Sh NAME
 .Nm devicecmp_open ,
+.Nm devicecmp_list ,
 .Nm devicecmp_hello
 .Nd public client for the system device broker
 .Sh LIBRARY
@@ -14,6 +15,8 @@
 .In devicecmp.h
 .Ft int
 .Fn devicecmp_open "struct service_context *ctx" "const char *name" "uint32_t want_rights" "uint32_t *granted_rights" "int *fdp"
+.Ft int
+.Fn devicecmp_list "struct service_context *ctx" "uint32_t cursor" "struct devicecmp_list_entry *entries" "uint32_t max" "uint32_t *countp" "uint32_t *next_cursor"
 .Ft int
 .Fn devicecmp_hello "struct service_context *ctx"
 .Sh DESCRIPTION
@@ -71,10 +74,50 @@ context and may be
 for a standalone caller; the provider session is opened by name once and cached
 for the process.
 .Pp
+.Fn devicecmp_list
+enumerates the devices the caller's label is permitted to open, so a consumer
+can discover its openable set without blind trial-and-error.
+The result is data-only: no descriptor is delivered.
+It is owner-scoped by the provider to the caller's own unforgeable channel
+label, never a wire argument, so a caller can only observe entries whose policy
+label equals its own; a label with no policy lists empty (returns 0 with
+.Fa *countp
+set to zero).
+.Fa cursor
+is zero for the first page or a prior call's
+.Fa *next_cursor ;
+up to
+.Fa max
+entries (capped by the provider at
+.Dv DEVICECMP_LIST_MAX
+per page) are written to
+.Fa entries ,
+with
+.Fa *countp
+set to the number filled and
+.Fa *next_cursor
+set to the cursor to re-issue for the next page
+.Pq zero on the final page .
+Each
+.Vt struct devicecmp_list_entry
+carries the device leaf
+.Va name ,
+the policy-maximum
+.Va rights
+mask for
+.Pq this label, this device ,
+and a
+.Va flags
+word whose
+.Dv DEVICECMP_LIST_FLAG_IOCTL_WHITELIST
+bit notes that a per-device ioctl whitelist further narrows a delivered
+.Dv DEVICECMP_RIGHT_IOCTL
+descriptor.
+.Pp
 .Fn devicecmp_hello
 is a liveness probe that exchanges a HELLO with the provider.
 .Sh RETURN VALUES
-.Rv -std devicecmp_open devicecmp_hello
+.Rv -std devicecmp_open devicecmp_list devicecmp_hello
 .Sh SEE ALSO
 .Xr libservice 3 ,
 .Xr localdevice 8

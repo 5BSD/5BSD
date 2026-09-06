@@ -15,6 +15,7 @@ MLINKS+=	libcryptocmp.3 cryptocmp_named_lease.3
 MLINKS+=	libcryptocmp.3 cryptocmp_named_rotate.3
 MLINKS+=	libcryptocmp.3 cryptocmp_named_delete.3
 MLINKS+=	libcryptocmp.3 cryptocmp_named_stat.3
+MLINKS+=	libcryptocmp.3 cryptocmp_named_list.3
 SRCS=	cryptocmp.c
 INCS=	cryptocmp.h cryptocmp_protocol.h
 LIBADD=	pthread service

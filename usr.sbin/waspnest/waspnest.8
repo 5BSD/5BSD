@@ -80,6 +80,15 @@ and
 .Va cid
 must name a real peer, never the wildcard
 .Dv VMADDR_CID_ANY .
+.It Sy VSOCK_LIST
+Report the caller's own port window: the host-local
+.Pq Dv VMADDR_CID_LOCAL
+CID, the window's base port, its exclusive upper bound, and the number of ports
+in it.
+The answer is drawn strictly from the window the parent's registry resolved for
+this connecting label, so a worker can only ever report its own label's window
+and never another's.
+This operation is data-only; no descriptor rides the reply.
 .El
 .Pp
 .Nm
@@ -126,6 +135,18 @@ worker.
 capability bundle shipping
 .Nm
 .El
+.Sh DTRACE PROBES
+The
+.Dq waspnest
+provider exports
+.Sy vsock-list ,
+which fires when a
+.Sy VSOCK_LIST
+request is answered with the client label and the caller's window base and
+exclusive upper-bound ports, together with the result.
+The result argument is zero on success or an
+.Xr errno 2
+value on failure.
 .Sh SEE ALSO
 .Xr pdfork 2 ,
 .Xr socket 2 ,

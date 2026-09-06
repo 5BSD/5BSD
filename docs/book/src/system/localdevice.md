@@ -45,6 +45,22 @@ A client sends an `OPEN` naming one `/dev` leaf and a wanted-rights mask
 The reply carries the granted-rights mask alongside the single delivered
 descriptor.
 
+## Discovering the permitted set
+
+`OPEN` requires the caller to already know a leaf name. A **`LIST`** lets a
+component discover the devices its own label may open without blind
+trial-and-error. It delivers no descriptor — the reply is data only: a page of
+entries, each carrying a `/dev` leaf name, the policy-maximum rights mask for
+that `(label, device)` pair, and a flag noting whether a per-device ioctl
+whitelist would further narrow a delivered `IOCTL` descriptor.
+
+Owner-scoping is the hard invariant: the walk is filtered on the connecting
+channel's unforgeable label, never a wire argument, so a caller can only ever
+observe entries whose policy label equals its own. Default-deny is preserved —
+a label with no policy entry lists empty (a zero count, not an error). Results
+are paginated through an opaque cursor (`0` for the first page), so a large
+permitted set spans several bounded replies.
+
 ## Policy
 
 Access is **default-deny**: the compiled-in policy grants nothing. An optional

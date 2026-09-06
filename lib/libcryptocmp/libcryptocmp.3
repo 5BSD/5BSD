@@ -14,7 +14,8 @@
 .Nm cryptocmp_named_lease ,
 .Nm cryptocmp_named_rotate ,
 .Nm cryptocmp_named_delete ,
-.Nm cryptocmp_named_stat
+.Nm cryptocmp_named_stat ,
+.Nm cryptocmp_named_list
 .Nd public client for the system crypto broker
 .Sh LIBRARY
 .Li libcryptocmp
@@ -43,13 +44,15 @@
 .Fn cryptocmp_named_delete "struct cryptocmp_client *client" "const char *name" "uint64_t *generationp"
 .Ft int
 .Fn cryptocmp_named_stat "struct cryptocmp_client *client" "const char *name" "struct cryptocmp_named_info *info"
+.Ft int
+.Fn cryptocmp_named_list "struct cryptocmp_client *client" "uint32_t cursor" "struct cryptocmp_named_list_entry *entries" "uint32_t max" "uint32_t *count" "uint32_t *next_cursor"
 .Sh DESCRIPTION
 The
 .Nm
 library is the client for the
 .Dv system.Crypto
 broker (interface version
-.Dv 3.2.0 ) .
+.Dv 3.3.0 ) .
 The broker mints kernel OpenCrypto session descriptors and produces random
 bytes under the caller's serviced-authenticated identity.
 Named keys are owned by the session's channel label, which is never supplied on
@@ -147,6 +150,42 @@ the granted rights mask, the cipher and MAC selectors (zero when none), and the
 cipher and MAC key lengths.
 A key absent under the caller's own label is reported with
 .Er ENOENT .
+.Pp
+.Fn cryptocmp_named_list
+enumerates the named keys minted under the caller's own label, complementing
+.Fn cryptocmp_named_stat :
+where
+.Fn cryptocmp_named_stat
+resolves one key by name, this discovers which names exist.
+Like the other named-key operations it carries no owner on the wire; the broker
+resolves the caller's own keys through the session's channel label, so a list
+can only ever enumerate keys under that label.
+The result is data-only: no descriptor is minted and no key is mutated, and
+entries never carry key material.
+.Fa cursor
+is zero to start the walk or a prior call's
+.Fa *next_cursor ;
+up to
+.Fa max
+entries (capped by the broker at
+.Dv CRYPTOCMP_NAMED_LIST_MAX
+per page) are written to
+.Fa entries ,
+with
+.Fa *count
+set to the number filled and
+.Fa *next_cursor
+set to the resume cursor
+.Pq zero once no more keys remain .
+Each
+.Vt struct cryptocmp_named_list_entry
+reports the key's
+.Va name ,
+its current
+.Va generation ,
+and its granted
+.Va rights
+mask.
 .Sh RETURN VALUES
 Functions returning
 .Vt int

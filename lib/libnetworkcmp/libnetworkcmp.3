@@ -6,6 +6,7 @@
 .Sh NAME
 .Nm networkcmp_hello ,
 .Nm networkcmp_connect ,
+.Nm networkcmp_connect_ex ,
 .Nm networkcmp_udp ,
 .Nm networkcmp_resolve ,
 .Nm networkcmp_getaddrinfo ,
@@ -29,6 +30,8 @@
 .Fn networkcmp_hello "struct networkcmp_client *client" "struct networkcmp_hello_reply *reply"
 .Ft int
 .Fn networkcmp_connect "struct networkcmp_client *client" "const struct sockaddr *address" "socklen_t address_length" "int *out_fd"
+.Ft int
+.Fn networkcmp_connect_ex "struct networkcmp_client *client" "const struct sockaddr *address" "socklen_t address_length" "uint32_t timeout_ms" "int *out_fd"
 .Ft int
 .Fn networkcmp_udp "struct networkcmp_client *client" "const struct sockaddr *peer" "socklen_t peer_length" "int *out_fd"
 .Ft int
@@ -109,6 +112,21 @@ to the broker's connect status, and leaves
 set to
 .Li -1 .
 .Pp
+.Fn networkcmp_connect_ex
+is
+.Fn networkcmp_connect
+with a client-supplied handshake deadline
+.Fa timeout_ms
+in milliseconds: the broker connects non-blocking and, if the TCP handshake does
+not complete within the deadline, fails the request with
+.Er ETIMEDOUT
+and delivers no descriptor.
+A
+.Fa timeout_ms
+of zero is identical to
+.Fn networkcmp_connect
+.Pq a fully blocking connect with the kernel default timeout .
+.Pp
 .Fn networkcmp_resolve
 implements bounded
 .Xr getaddrinfo 3 Ns -style
@@ -132,6 +150,31 @@ The resulting list must be released with
 .Fn networkcmp_freeaddrinfo ,
 not
 .Xr freeaddrinfo 3 .
+The
+.Fa hints Ns 's
+.Va ai_flags
+may combine
+.Dv AI_PASSIVE , AI_CANONNAME , AI_NUMERICHOST , AI_NUMERICSERV ,
+.Dv AI_ADDRCONFIG , AI_V4MAPPED ,
+and
+.Dv AI_ALL ;
+any other flag fails with
+.Dv EAI_BADFLAGS .
+.Dv AI_ADDRCONFIG
+is accepted for source compatibility but is a documented no-op in the in-process
+resolver.
+.Dv AI_V4MAPPED
+and
+.Dv AI_ALL
+are honored: an
+.Vt AF_INET6
+resolve may return IPv4-mapped IPv6 results, and with
+.Dv AI_ALL
+both native
+.Dv AAAA
+and mapped
+.Dv A
+results are returned.
 .Pp
 Kernel channel reply tokens correlate concurrent calls so threads cannot
 consume one another's replies.

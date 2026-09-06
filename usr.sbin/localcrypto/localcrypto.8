@@ -72,6 +72,17 @@ Return a session descriptor for an existing named key.
 Advance a named key to a new generation.
 .It Cm DELETE
 Remove a named key.
+.It Cm NAMED_LIST
+Enumerate the caller's named keys, returning each key's name, generation, and
+rights.
+The walk is resolved on the caller's own owner scope, never a wire-supplied
+owner, so one label can only ever see its own keys.
+The request carries a
+.Va cursor
+and the reply a next cursor, so more keys than fit one reply are paged; an
+out-of-range cursor is an empty page.
+No descriptor is minted, no key is mutated, and no key material leaves the
+kernel.
 .El
 .Pp
 Named keys are
@@ -107,6 +118,19 @@ kernel crypto control device
 capability bundle shipping
 .Nm
 .El
+.Sh DTRACE PROBES
+The
+.Dq crypto
+provider exports
+.Sy named-list ,
+which fires when a
+.Cm NAMED_LIST
+page is produced with the caller's owner scope, the number of entries returned,
+and the result.
+The result argument is zero on success or an
+.Xr errno 2
+value on failure.
+Key material and key names are never probe arguments.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr pdfork 2 ,

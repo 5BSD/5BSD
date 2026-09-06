@@ -18,6 +18,12 @@ with the loss count, and a broker restart surfaces as an explicit reset
 rather than a silently discontinuous stream. Payloads are hints — they must
 not carry secrets or the only copy of application state.
 
+A session can enumerate its own holdings: **`LIST_SUBSCRIPTIONS`** returns the
+topics it is subscribed to and **`LIST_TIMERS`** returns its active timers (id,
+interval, and a best-effort time to next expiry). Both are paginated through an
+opaque cursor and are always scoped by the router to the requesting session —
+there is no cross-session view.
+
 Policy ships inside the provider's bundle: a fail-closed configuration maps
 channel labels to exact publish/subscribe topic grants, and undeclared
 clients and operations are denied. The router runs in capability mode with no

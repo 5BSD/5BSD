@@ -87,6 +87,11 @@ There is deliberately no unload operation; safe removal would require
 per-consumer module ownership that
 .Nm
 does not track.
+.Pp
+A LIST request enumerates the module allow-list, returning each permitted
+module name and the count.
+The allow-list is global rather than per-label, so every caller sees the same
+set; the reply carries the whole list in one message and loads nothing.
 .Sh FILES
 .Bl -tag -width ".Pa /dev/mac_capability" -compact
 .It Pa /dev/mac_capability
@@ -95,6 +100,16 @@ kernel capability device used to claim the load gates
 capability bundle shipping
 .Nm
 .El
+.Sh DTRACE PROBES
+The
+.Dq sysextd
+provider exports
+.Sy list ,
+which fires when a LIST request is answered with the client label, the number
+of allow-listed modules reported, and the result.
+The result argument is zero on success or an
+.Xr errno 2
+value on failure.
 .Sh SEE ALSO
 .Xr kldload 2 ,
 .Xr pdfork 2 ,
