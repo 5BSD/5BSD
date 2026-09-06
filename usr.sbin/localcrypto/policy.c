@@ -283,6 +283,24 @@ cryptocmp_named_stat_policy_validate(const struct cryptocmp_named_stat *request)
 }
 
 /*
+ * Owner-scoped enumeration: the caller supplies only a resume cursor and a
+ * reserved flags field (which must be zero).  No name or owner is on the wire —
+ * the daemon scopes the walk to the session's own label — so there is nothing
+ * further to validate; any cursor is accepted and the kernel returns an empty
+ * page for an out-of-range or exhausted cursor.
+ */
+int
+cryptocmp_named_list_policy_validate(const struct cryptocmp_named_list *request)
+{
+
+	if (request == NULL || request->flags != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
  * Unkeyed digest: the algorithm must be one of the allowed plain SHA-2 hashes
  * (the same NIST-profile family the keyed HMAC path admits, minus the key).
  * Unknown/weak algorithms are rejected EPROTONOSUPPORT; malformed parameters

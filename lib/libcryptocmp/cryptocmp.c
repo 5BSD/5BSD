@@ -378,6 +378,77 @@ cryptocmp_named_stat(struct cryptocmp_client *client, const char *name,
 	return (0);
 }
 
+/*
+ * Owner-scoped enumeration of named keys.  Sends a fixed-length NAMED_LIST
+ * request for the given cursor and returns up to max of the caller's own keys
+ * through entries; the count populated is returned through count and the
+ * resume cursor (zero at the end of the walk) through next_cursor.  No owner is
+ * ever sent on the wire — the daemon scopes to the session's own label — and no
+ * descriptor is expected or accepted in the reply.  Page by re-issuing with the
+ * returned next_cursor until it is zero.
+ */
+int
+cryptocmp_named_list(struct cryptocmp_client *client, uint32_t cursor,
+    struct cryptocmp_named_list_entry *entries, uint32_t max, uint32_t *count,
+    uint32_t *next_cursor)
+{
+	struct {
+		struct cryptocmp_msg msg;
+		uint8_t payload[sizeof(struct cryptocmp_named_list)];
+	} wire;
+	struct cryptocmp_named_list request;
+	struct cryptocmp_named_list_reply reply;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	uint32_t copied;
+	int fd = -1;
+
+	if (client == NULL || entries == NULL || max == 0 || count == NULL ||
+	    next_cursor == NULL || client->owner != getpid())
+		return (errno = EINVAL, -1);
+	*count = 0;
+	*next_cursor = 0;
+	memset(entries, 0, (size_t)max * sizeof(*entries));
+	memset(&request, 0, sizeof(request));
+	request.cursor = cursor;
+	memset(&wire, 0, sizeof(wire));
+	wire.msg.magic = CRYPTOCMP_MAGIC;
+	wire.msg.version = CRYPTOCMP_VERSION;
+	wire.msg.opcode = CRYPTOCMP_OP_NAMED_LIST;
+	memcpy(wire.payload, &request, sizeof(request));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &wire;
+	outgoing.length = sizeof(wire.msg) + sizeof(request);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 0;
+	options.timeout_ms = 30000;
+	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC ||
+	    reply.msg.version != CRYPTOCMP_VERSION ||
+	    reply.msg.opcode != CRYPTOCMP_OP_NAMED_LIST ||
+	    !valid_status(reply.msg.status) || incoming.nfds != 0)
+		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+	if (reply.msg.status != 0)
+		return (errno = -reply.msg.status, -1);
+	if (reply.count > CRYPTOCMP_NAMED_LIST_MAX)
+		return (reject_reply(-1));
+	copied = reply.count;
+	if (copied > max)
+		copied = max;
+	memcpy(entries, reply.entries, (size_t)copied * sizeof(*entries));
+	*count = copied;
+	*next_cursor = reply.next_cursor;
+	return (0);
+}
+
 int
 cryptocmp_named_rotate(struct cryptocmp_client *client, const char *name,
     uint64_t *generation)

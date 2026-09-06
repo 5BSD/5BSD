@@ -24,6 +24,9 @@ int	cryptodesc_named_delete(int control_fd, const char *name,
     const char *owner, uint64_t *generation);
 int	cryptodesc_named_stat(int control_fd, const char *name,
     const char *owner, struct cryptodesc_named_stat *stat);
+int	cryptodesc_named_list(int control_fd, const char *owner, uint32_t cursor,
+    struct cryptodesc_named_list_entry *entries, uint32_t max, uint32_t *count,
+    uint32_t *next_cursor);
 int	cryptodesc_restrict(int descriptor_fd, uint32_t rights);
 int	cryptodesc_revoke(int descriptor_fd);
 int	cryptodesc_get_info(int descriptor_fd, struct cryptodesc_info *info);

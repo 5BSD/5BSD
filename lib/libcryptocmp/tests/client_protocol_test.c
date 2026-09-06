@@ -37,9 +37,11 @@ ATF_TC_BODY(successful_operation_matrix, tc)
 	struct cryptocmp_key_generate key_request;
 	struct cryptocmp_generate request;
 	struct cryptocmp_named_info info;
+	struct cryptocmp_named_list_entry entries[CRYPTOCMP_NAMED_LIST_MAX];
 	struct cryptocmp_client *client;
 	uint8_t public_key[32];
 	uint64_t generation;
+	uint32_t count, next_cursor;
 	int descriptor;
 
 	fake_service_reset();
@@ -72,7 +74,26 @@ ATF_TC_BODY(successful_operation_matrix, tc)
 	ATF_CHECK_EQ(3, info.rights);
 	ATF_CHECK_EQ(11, info.cipher);
 	ATF_CHECK_EQ(32, info.keylen);
-	ATF_CHECK_EQ(7, fake_service_calls());
+	memset(entries, 0, sizeof(entries));
+	count = 0;
+	next_cursor = 99;
+	ATF_REQUIRE_EQ(0, cryptocmp_named_list(client, 0, entries,
+	    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor));
+	ATF_CHECK_EQ(2, count);
+	ATF_CHECK_EQ(0, next_cursor);
+	ATF_CHECK_STREQ("alpha", entries[0].name);
+	ATF_CHECK_EQ(10, entries[0].generation);
+	ATF_CHECK_EQ(3, entries[0].rights);
+	ATF_CHECK_STREQ("beta", entries[1].name);
+	ATF_CHECK_EQ(11, entries[1].generation);
+	/* A max smaller than the reply count truncates to max entries. */
+	memset(entries, 0, sizeof(entries));
+	count = 0;
+	ATF_REQUIRE_EQ(0, cryptocmp_named_list(client, 0, entries, 1, &count,
+	    &next_cursor));
+	ATF_CHECK_EQ(1, count);
+	ATF_CHECK_STREQ("alpha", entries[0].name);
+	ATF_CHECK_EQ(9, fake_service_calls());
 	cryptocmp_close(client);
 	ATF_CHECK_EQ(1, fake_service_closed());
 }
@@ -83,9 +104,11 @@ ATF_TC_BODY(error_and_output_contracts, tc)
 	struct cryptocmp_key_generate key_request;
 	struct cryptocmp_generate request;
 	struct cryptocmp_named_info info;
+	struct cryptocmp_named_list_entry entries[CRYPTOCMP_NAMED_LIST_MAX];
 	struct cryptocmp_client *client;
 	uint8_t public_key[32];
 	uint64_t generation;
+	uint32_t count, next_cursor;
 	int descriptor;
 
 	fake_service_reset();
@@ -121,6 +144,15 @@ ATF_TC_BODY(error_and_output_contracts, tc)
 	    == -1);
 	ATF_CHECK_EQ(0, info.generation);
 	ATF_CHECK_EQ(0, info.rights);
+	/* A LIST error status maps through and leaves count/cursor zeroed. */
+	fake_service_status_next(EPERM);
+	memset(entries, 0xff, sizeof(entries));
+	count = 99;
+	next_cursor = 99;
+	ATF_CHECK_ERRNO(EPERM, cryptocmp_named_list(client, 0, entries,
+	    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor) == -1);
+	ATF_CHECK_EQ(0, count);
+	ATF_CHECK_EQ(0, next_cursor);
 	cryptocmp_close(client);
 }
 

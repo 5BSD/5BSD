@@ -28,6 +28,12 @@ CAP_UNITNAME=Unit.ucl
 CAP_UNITMODE=0444
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=tests
+
+.if ${MK_DTRACE} != "no"
+SRCS+=		crypto_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-CRYPTOCMP_CAP_BIN

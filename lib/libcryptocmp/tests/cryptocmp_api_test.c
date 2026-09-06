@@ -18,8 +18,10 @@ ATF_TC_BODY(argument_validation, tc)
 {
 	struct cryptocmp_generate generate;
 	struct cryptocmp_named_info info;
+	struct cryptocmp_named_list_entry entries[CRYPTOCMP_NAMED_LIST_MAX];
 	char long_name[65];
 	uint64_t generation;
+	uint32_t count, next_cursor;
 	int descriptor;
 
 	memset(&generate, 0, sizeof(generate));
@@ -44,6 +46,22 @@ ATF_TC_BODY(argument_validation, tc)
 	errno = 0;
 	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_stat(NULL, long_name, &info)
 	    == -1);
+	memset(entries, 0, sizeof(entries));
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_list(NULL, 0, entries,
+	    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor) == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_list(NULL, 0, NULL,
+	    CRYPTOCMP_NAMED_LIST_MAX, &count, &next_cursor) == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_list(NULL, 0, entries, 0,
+	    &count, &next_cursor) == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_list(NULL, 0, entries,
+	    CRYPTOCMP_NAMED_LIST_MAX, NULL, &next_cursor) == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_list(NULL, 0, entries,
+	    CRYPTOCMP_NAMED_LIST_MAX, &count, NULL) == -1);
 }
 
 ATF_TC(digest_random_argument_validation);

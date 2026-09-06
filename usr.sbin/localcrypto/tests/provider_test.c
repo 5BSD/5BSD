@@ -13,6 +13,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
@@ -223,6 +224,74 @@ stat_op(struct raw_fixture *fixture, const char *name,
 	if (reply.msg.status == 0 && info != NULL)
 		*info = reply.info;
 	return (-reply.msg.status);
+}
+
+/*
+ * Owner-scoped enumeration: send a NAMED_LIST request at the given cursor and
+ * return the daemon's errno-style status.  On success up to
+ * CRYPTOCMP_NAMED_LIST_MAX entries are copied to entries and the populated
+ * count / resume cursor are returned.  The request carries no owner (the daemon
+ * scopes to the session label) and the reply is data-only, so no fd arrives.
+ */
+static int
+list_op(struct raw_fixture *fixture, uint32_t cursor,
+    struct cryptocmp_named_list_entry *entries, uint32_t *count,
+    uint32_t *next_cursor)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct cryptocmp_msg msg;
+	struct cryptocmp_named_list req;
+	struct cryptocmp_named_list_reply reply;
+	uint8_t request[sizeof(struct cryptocmp_msg) +
+	    sizeof(struct cryptocmp_named_list)];
+	uint32_t i;
+
+	memset(&msg, 0, sizeof(msg));
+	msg.magic = CRYPTOCMP_MAGIC;
+	msg.version = CRYPTOCMP_VERSION;
+	msg.opcode = CRYPTOCMP_OP_NAMED_LIST;
+	memset(&req, 0, sizeof(req));
+	req.cursor = cursor;
+	memcpy(request, &msg, sizeof(msg));
+	memcpy(request + sizeof(msg), &req, sizeof(req));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = request;
+	outgoing.length = sizeof(request);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	options.timeout_ms = 2000;
+	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
+	    &incoming, &options));
+	if (reply.msg.status == 0) {
+		if (count != NULL)
+			*count = reply.count;
+		if (next_cursor != NULL)
+			*next_cursor = reply.next_cursor;
+		if (entries != NULL)
+			for (i = 0; i < reply.count &&
+			    i < CRYPTOCMP_NAMED_LIST_MAX; i++)
+				entries[i] = reply.entries[i];
+	}
+	return (-reply.msg.status);
+}
+
+/* Return the index of name within a NAMED_LIST result, or -1 if absent. */
+static int
+list_find(const struct cryptocmp_named_list_entry *entries, uint32_t count,
+    const char *name)
+{
+	uint32_t i;
+
+	for (i = 0; i < count; i++)
+		if (strcmp(entries[i].name, name) == 0)
+			return ((int)i);
+	return (-1);
 }
 
 /* Send an arbitrary (possibly malformed) request; return service_session_call's
@@ -685,6 +754,157 @@ ATF_TC_BODY(named_key_stat, tc)
 }
 
 /*
+ * Owner-scoped enumeration returns exactly the caller's own keys and nothing
+ * else.  Owner A mints three keys and LIST returns all three with their create
+ * generations; owner B — who minted none — sees an empty list and can never see
+ * A's keys (the owner-scoping regression); a delete under A is immediately
+ * reflected in A's subsequent LIST.
+ */
+ATF_TC(named_key_list);
+ATF_TC_HEAD(named_key_list, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "NAMED_LIST enumerates only the owner's keys and tracks deletes");
+}
+ATF_TC_BODY(named_key_list, tc)
+{
+	static const char *names[3] = {
+	    "list.key.1", "list.key.2", "list.key.3" };
+	struct cryptocmp_named_create create;
+	struct cryptocmp_named_control control;
+	struct cryptocmp_named_list_entry entries[CRYPTOCMP_NAMED_LIST_MAX];
+	struct raw_fixture owner_a, owner_b;
+	uint64_t gen[3];
+	uint32_t count, next_cursor;
+	int i, idx;
+
+	require_plane();
+	raw_fixture_create(&owner_a, "org.test.list.a");
+	raw_fixture_create(&owner_b, "org.test.list.b");
+
+	/* An owner with no keys enumerates to an empty, terminal page. */
+	count = 0xffffffffU;
+	next_cursor = 0xffffffffU;
+	ATF_CHECK_EQ(0, list_op(&owner_b, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(0u, count);
+	ATF_CHECK_EQ(0u, next_cursor);
+
+	/* Owner A mints three named keys with known profiles. */
+	for (i = 0; i < 3; i++) {
+		memset(&create, 0, sizeof(create));
+		strlcpy(create.name, names[i], sizeof(create.name));
+		create.generate = sample_generate();
+		ATF_CHECK_EQ(0, named_op(&owner_a, CRYPTOCMP_OP_NAMED_CREATE,
+		    &create, sizeof(create), &gen[i], NULL));
+	}
+
+	/* A's LIST returns exactly its three keys, with their generations. */
+	memset(entries, 0, sizeof(entries));
+	count = 0;
+	next_cursor = 0xffffffffU;
+	ATF_CHECK_EQ(0, list_op(&owner_a, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(3u, count);
+	ATF_CHECK_EQ(0u, next_cursor);
+	for (i = 0; i < 3; i++) {
+		idx = list_find(entries, count, names[i]);
+		ATF_REQUIRE_MSG(idx >= 0, "%s missing from LIST", names[i]);
+		ATF_CHECK_EQ(gen[i], entries[idx].generation);
+		ATF_CHECK_EQ((uint32_t)(CRYPTODESC_RIGHT_ENCRYPT |
+		    CRYPTODESC_RIGHT_DECRYPT), entries[idx].rights);
+	}
+
+	/* Owner B still sees nothing: A's keys are not disclosed cross-owner. */
+	count = 0xffffffffU;
+	ATF_CHECK_EQ(0, list_op(&owner_b, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(0u, count);
+
+	/* A delete under A is reflected: list.key.2 vanishes, the rest remain. */
+	memset(&control, 0, sizeof(control));
+	strlcpy(control.name, "list.key.2", sizeof(control.name));
+	ATF_CHECK_EQ(0, named_op(&owner_a, CRYPTOCMP_OP_NAMED_DELETE, &control,
+	    sizeof(control), NULL, NULL));
+	memset(entries, 0, sizeof(entries));
+	count = 0;
+	ATF_CHECK_EQ(0, list_op(&owner_a, 0, entries, &count, &next_cursor));
+	ATF_CHECK_EQ(2u, count);
+	ATF_CHECK(list_find(entries, count, "list.key.1") >= 0);
+	ATF_CHECK_EQ(-1, list_find(entries, count, "list.key.2"));
+	ATF_CHECK(list_find(entries, count, "list.key.3") >= 0);
+
+	raw_fixture_destroy(&owner_b, 0);
+	raw_fixture_destroy(&owner_a, 0);
+}
+
+/*
+ * Enumeration pages by cursor across the fixed per-reply cap.  Owner C mints
+ * more keys than a single reply can carry (CRYPTOCMP_NAMED_LIST_MAX + 2): the
+ * first page fills to the cap and hands back a nonzero resume cursor, the
+ * second page returns the remainder and terminates (next_cursor 0), and the
+ * union of the two pages is exactly the full owner-scoped set with no repeats.
+ */
+ATF_TC(named_key_list_paginates);
+ATF_TC_HEAD(named_key_list_paginates, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "NAMED_LIST pages by cursor across the per-reply cap");
+}
+ATF_TC_BODY(named_key_list_paginates, tc)
+{
+	const uint32_t total = CRYPTOCMP_NAMED_LIST_MAX + 2;
+	struct cryptocmp_named_create create;
+	struct cryptocmp_named_list_entry page1[CRYPTOCMP_NAMED_LIST_MAX];
+	struct cryptocmp_named_list_entry page2[CRYPTOCMP_NAMED_LIST_MAX];
+	struct raw_fixture owner_c;
+	uint32_t count1, count2, next_cursor, i, j, seen;
+	char name[32];
+
+	require_plane();
+	raw_fixture_create(&owner_c, "org.test.list.page");
+
+	for (i = 0; i < total; i++) {
+		memset(&create, 0, sizeof(create));
+		(void)snprintf(name, sizeof(name), "page.key.%02u", i);
+		strlcpy(create.name, name, sizeof(create.name));
+		create.generate = sample_generate();
+		ATF_CHECK_EQ(0, named_op(&owner_c, CRYPTOCMP_OP_NAMED_CREATE,
+		    &create, sizeof(create), NULL, NULL));
+	}
+
+	/* First page: filled to the cap, more remain (resume cursor nonzero). */
+	memset(page1, 0, sizeof(page1));
+	count1 = 0;
+	next_cursor = 0;
+	ATF_CHECK_EQ(0, list_op(&owner_c, 0, page1, &count1, &next_cursor));
+	ATF_CHECK_EQ((uint32_t)CRYPTOCMP_NAMED_LIST_MAX, count1);
+	ATF_CHECK(next_cursor != 0);
+
+	/* Second page: the remainder, and the walk terminates. */
+	memset(page2, 0, sizeof(page2));
+	count2 = 0;
+	ATF_CHECK_EQ(0, list_op(&owner_c, next_cursor, page2, &count2,
+	    &next_cursor));
+	ATF_CHECK_EQ(total - CRYPTOCMP_NAMED_LIST_MAX, count2);
+	ATF_CHECK_EQ(0u, next_cursor);
+
+	/* Every minted name appears exactly once across the two pages. */
+	for (i = 0; i < total; i++) {
+		(void)snprintf(name, sizeof(name), "page.key.%02u", i);
+		seen = 0;
+		for (j = 0; j < count1; j++)
+			if (strcmp(page1[j].name, name) == 0)
+				seen++;
+		for (j = 0; j < count2; j++)
+			if (strcmp(page2[j].name, name) == 0)
+				seen++;
+		ATF_CHECK_EQ_MSG(1u, seen, "%s seen %u times", name, seen);
+	}
+
+	raw_fixture_destroy(&owner_c, 0);
+}
+
+/*
  * The provider fails closed on malformed requests: a bad magic/version, an
  * out-of-range opcode, a length that does not match the opcode, and any attached
  * descriptor (the handler requires a zero fd count) are all rejected with EPROTO
@@ -780,6 +1000,8 @@ ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, named_key_is_owner_scoped);
 	ATF_TP_ADD_TC(tp, named_key_stat);
+	ATF_TP_ADD_TC(tp, named_key_list);
+	ATF_TP_ADD_TC(tp, named_key_list_paginates);
 	ATF_TP_ADD_TC(tp, malformed_request_is_rejected);
 	ATF_TP_ADD_TC(tp, digest_descriptor);
 	ATF_TP_ADD_TC(tp, random_bytes);

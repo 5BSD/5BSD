@@ -145,6 +145,35 @@ struct cryptodesc_named_stat {
 	uint32_t		cd_mackeylen;	/* out */
 };
 
+#define	CRYPTODESC_NAMED_LIST_MAX	16
+
+/*
+ * Owner-scoped enumeration of named keys.  Returns up to
+ * CRYPTODESC_NAMED_LIST_MAX entries owned by cd_owner starting at cd_cursor
+ * (a stable index into the owner-filtered set; zero starts at the beginning).
+ * cd_next_cursor is nonzero when more entries remain for the owner and should
+ * be passed back as cd_cursor to resume; zero marks the end of the walk.  No
+ * descriptor is minted and no key material leaves the kernel: each entry
+ * carries only the key's name, current generation, and granted rights.  A key
+ * is visible only under the owner label that minted it.  cd_flags is reserved
+ * and must be zero.
+ */
+struct cryptodesc_named_list_entry {
+	char			cd_name[CRYPTODESC_KEY_NAME_MAX];
+	uint64_t		cd_generation;	/* out */
+	uint32_t		cd_rights;	/* out: granted rights */
+	uint32_t		cd_pad;		/* explicit padding; zeroed */
+};
+
+struct cryptodesc_named_list {
+	char			cd_owner[CRYPTODESC_KEY_OWNER_MAX];
+	uint32_t		cd_cursor;	/* in: resume index (0 = start) */
+	uint32_t		cd_flags;	/* must be zero */
+	uint32_t		cd_count;	/* out: entries populated */
+	uint32_t		cd_next_cursor;	/* out: 0 = end, else resume */
+	struct cryptodesc_named_list_entry cd_entries[CRYPTODESC_NAMED_LIST_MAX];
+};
+
 /* Mint a kernel-generated X25519 or Ed25519 key descriptor. */
 struct cryptodesc_key_create {
 	uint32_t		cd_type;
@@ -222,5 +251,6 @@ struct cryptodesc_info {
 #define	CIOCCRYPTONAMEDDELETE	_IOWR('c', 122, struct cryptodesc_named_control)
 #define	CIOCGCRYPTODESCINFO	_IOWR('c', 123, struct cryptodesc_info)
 #define	CIOCGCRYPTONAMEDSTAT	_IOWR('c', 124, struct cryptodesc_named_stat)
+#define	CIOCGCRYPTONAMEDLIST	_IOWR('c', 125, struct cryptodesc_named_list)
 
 #endif /* !_SYS_CRYPTODESC_H_ */

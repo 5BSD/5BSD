@@ -168,6 +168,7 @@ service_session_call(struct service_session *session,
 		struct cryptocmp_key_reply key;
 		struct cryptocmp_named_reply named;
 		struct cryptocmp_named_stat_reply stat;
+		struct cryptocmp_named_list_reply list;
 		struct cryptocmp_random_reply random;
 	} response;
 	const struct cryptocmp_msg *request;
@@ -217,6 +218,19 @@ service_session_call(struct service_session *session,
 		response.stat.info.mac = 0;
 		response.stat.info.keylen = 32;
 		response.stat.info.mackeylen = 0;
+	} else if (request->opcode == CRYPTOCMP_OP_NAMED_LIST) {
+		/* Two fixed entries the client test asserts the wrapper surfaces. */
+		length = sizeof(response.list);
+		response.list.count = 2;
+		response.list.next_cursor = 0;
+		strlcpy(response.list.entries[0].name, "alpha",
+		    sizeof(response.list.entries[0].name));
+		response.list.entries[0].generation = 10;
+		response.list.entries[0].rights = 3;
+		strlcpy(response.list.entries[1].name, "beta",
+		    sizeof(response.list.entries[1].name));
+		response.list.entries[1].generation = 11;
+		response.list.entries[1].rights = 1;
 	} else if (request->opcode == CRYPTOCMP_OP_RANDOM) {
 		uint32_t nbytes = 0;
 

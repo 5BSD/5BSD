@@ -5,7 +5,7 @@
 #define CRYPTOCMP_MAGIC 0x43434d50U
 #define CRYPTOCMP_VERSION 3
 #define CRYPTOCMP_INTERFACE "system.Crypto"
-#define CRYPTOCMP_INTERFACE_VERSION "3.2.0"
+#define CRYPTOCMP_INTERFACE_VERSION "3.3.0"
 #define CRYPTOCMP_OP_GENERATE 1
 #define CRYPTOCMP_OP_GENERATE_KEY 2
 #define CRYPTOCMP_OP_NAMED_CREATE 3
@@ -15,7 +15,10 @@
 #define CRYPTOCMP_OP_DIGEST 7
 #define CRYPTOCMP_OP_RANDOM 8
 #define CRYPTOCMP_OP_NAMED_STAT 9
+#define CRYPTOCMP_OP_NAMED_LIST 10
 #define CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY 0x00000001U
+/* Maximum named-key entries returned by a single NAMED_LIST reply. */
+#define CRYPTOCMP_NAMED_LIST_MAX 16U
 /* Upper bound on a single CRYPTOCMP_OP_RANDOM request/reply payload. */
 #define CRYPTOCMP_MAX_RANDOM_BYTES 1024U
 struct cryptocmp_msg { uint32_t magic; uint16_t version, opcode; int32_t status; } __attribute__((aligned(8)));
@@ -53,4 +56,28 @@ struct cryptocmp_named_info {
 	uint32_t mackeylen;	/* MAC key length in bytes */
 };
 struct cryptocmp_named_stat_reply { struct cryptocmp_msg msg; struct cryptocmp_named_info info; };
+/*
+ * Owner-scoped enumeration of named keys.  NAMED_LIST carries NO owner on the
+ * wire — the daemon resolves the caller's own keys through the session's
+ * channel label, exactly as the other NAMED_* ops (the crown-jewel isolation
+ * invariant), so a LIST can only enumerate keys minted under its own label.
+ * The request supplies a resume cursor (zero starts the walk) and a reserved
+ * flags field (must be zero).  The reply is data-only (no descriptor): it
+ * returns up to CRYPTOCMP_NAMED_LIST_MAX entries — each the key's name,
+ * generation and rights, but never key material — and a next_cursor that is
+ * nonzero when more of the owner's keys remain and zero at the end.
+ */
+struct cryptocmp_named_list { uint32_t cursor, flags; };
+struct cryptocmp_named_list_entry {
+	char		name[64];
+	uint64_t	generation;
+	uint32_t	rights;
+	uint32_t	pad;		/* explicit padding; zeroed */
+};
+struct cryptocmp_named_list_reply {
+	struct cryptocmp_msg	msg;
+	uint32_t		count;		/* entries populated */
+	uint32_t		next_cursor;	/* 0 = end, else resume */
+	struct cryptocmp_named_list_entry entries[CRYPTOCMP_NAMED_LIST_MAX];
+};
 #endif

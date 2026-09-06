@@ -213,6 +213,45 @@ cryptodesc_named_stat(int control_fd, const char *name, const char *owner,
 	return (ioctl(control_fd, CIOCGCRYPTONAMEDSTAT, stat));
 }
 
+/*
+ * Owner-scoped enumeration of named keys.  Issues one CIOCGCRYPTONAMEDLIST for
+ * the owner at the given cursor and copies out up to max entries; the number
+ * populated is returned through count and the resume cursor (zero at the end
+ * of the walk) through next_cursor.  A caller pages by re-issuing with the
+ * returned next_cursor until it is zero.  No key material is returned.
+ */
+int
+cryptodesc_named_list(int control_fd, const char *owner, uint32_t cursor,
+    struct cryptodesc_named_list_entry *entries, uint32_t max, uint32_t *count,
+    uint32_t *next_cursor)
+{
+	struct cryptodesc_named_list list;
+	uint32_t copied;
+
+	if (control_fd < 0 || entries == NULL || max == 0 || count == NULL ||
+	    next_cursor == NULL || !named_identifier(owner, CRYPTODESC_KEY_OWNER_MAX)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*count = 0;
+	*next_cursor = 0;
+	memset(&list, 0, sizeof(list));
+	strlcpy(list.cd_owner, owner, sizeof(list.cd_owner));
+	list.cd_cursor = cursor;
+	if (ioctl(control_fd, CIOCGCRYPTONAMEDLIST, &list) == -1)
+		return (-1);
+	copied = list.cd_count;
+	if (copied > CRYPTODESC_NAMED_LIST_MAX)
+		copied = CRYPTODESC_NAMED_LIST_MAX;
+	if (copied > max)
+		copied = max;
+	memset(entries, 0, (size_t)max * sizeof(*entries));
+	memcpy(entries, list.cd_entries, (size_t)copied * sizeof(*entries));
+	*count = copied;
+	*next_cursor = list.cd_next_cursor;
+	return (0);
+}
+
 int
 cryptodesc_restrict(int descriptor_fd, uint32_t rights)
 {

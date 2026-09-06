@@ -20,5 +20,7 @@ int cryptocmp_named_rotate(struct cryptocmp_client *, const char *, uint64_t *);
 int cryptocmp_named_delete(struct cryptocmp_client *, const char *, uint64_t *);
 int cryptocmp_named_stat(struct cryptocmp_client *, const char *,
     struct cryptocmp_named_info *);
+int cryptocmp_named_list(struct cryptocmp_client *, uint32_t,
+    struct cryptocmp_named_list_entry *, uint32_t, uint32_t *, uint32_t *);
 __END_DECLS
 #endif

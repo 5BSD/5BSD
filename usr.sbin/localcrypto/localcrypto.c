@@ -21,6 +21,7 @@
 #include <logcmp.h>
 
 #include "policy.h"
+#include "crypto_probes.h"
 #ifdef LOCALCRYPTO_TESTING
 #include "localcrypto_test.h"
 #endif
@@ -43,6 +44,7 @@ harden_control_descriptor(void)
 		CIOCCRYPTONAMEDROTATE,
 		CIOCCRYPTONAMEDDELETE,
 		CIOCGCRYPTONAMEDSTAT,
+		CIOCGCRYPTONAMEDLIST,
 	};
 	cap_rights_t rights;
 
@@ -72,14 +74,18 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	const struct cryptocmp_named_lease *named_lease;
 	const struct cryptocmp_named_control *named_control;
 	const struct cryptocmp_named_stat *named_stat;
+	const struct cryptocmp_named_list *named_list;
 	const struct cryptocmp_digest *digest;
 	const struct cryptocmp_random *random_request;
 	struct cryptocmp_msg out;
 	struct cryptocmp_key_reply key_out;
 	struct cryptocmp_named_reply named_out;
 	struct cryptocmp_named_stat_reply stat_out;
+	struct cryptocmp_named_list_reply list_out;
 	struct cryptocmp_random_reply random_out;
 	struct cryptodesc_named_stat stat;
+	struct cryptodesc_named_list_entry list_entries[CRYPTODESC_NAMED_LIST_MAX];
+	uint32_t list_count, list_next_cursor;
 	struct session2_op session;
 	struct crypto_worker *worker;
 	const char *operation;
@@ -98,8 +104,12 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	memset(&key_out, 0, sizeof(key_out));
 	memset(&named_out, 0, sizeof(named_out));
 	memset(&stat_out, 0, sizeof(stat_out));
+	memset(&list_out, 0, sizeof(list_out));
 	memset(&random_out, 0, sizeof(random_out));
 	memset(&stat, 0, sizeof(stat));
+	memset(list_entries, 0, sizeof(list_entries));
+	list_count = 0;
+	list_next_cursor = 0;
 	memset(public_key, 0, sizeof(public_key));
 	generation = 0;
 	random_bytes = 0;
@@ -109,7 +119,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	    in->magic == CRYPTOCMP_MAGIC &&
 	    in->version == CRYPTOCMP_VERSION &&
 	    in->opcode >= CRYPTOCMP_OP_GENERATE &&
-	    in->opcode <= CRYPTOCMP_OP_NAMED_STAT) {
+	    in->opcode <= CRYPTOCMP_OP_NAMED_LIST) {
 		out.opcode = in->opcode;
 		if (in->opcode == CRYPTOCMP_OP_GENERATE &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*generate)) {
@@ -219,6 +229,28 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 				error = 0;
 			else
 				error = errno;
+		} else if (in->opcode == CRYPTOCMP_OP_NAMED_LIST &&
+		    channel_message_length(m) == sizeof(*in) + sizeof(*named_list)) {
+			operation = "named-list";
+			named_list = (const struct cryptocmp_named_list *)(in + 1);
+			if (cryptocmp_named_list_policy_validate(named_list) != 0) {
+				error = errno;
+				goto reply;
+			}
+			/*
+			 * Owner-scoped enumeration: resolve the walk on
+			 * worker->owner (never a wire-supplied owner) and copy
+			 * out only names/generations/rights.  No descriptor is
+			 * minted, no key is mutated, and no key material leaves
+			 * the kernel; an out-of-range cursor is an empty page.
+			 */
+			if (cryptodesc_named_list(control_fd, worker->owner,
+			    named_list->cursor, list_entries,
+			    CRYPTODESC_NAMED_LIST_MAX, &list_count,
+			    &list_next_cursor) == 0)
+				error = 0;
+			else
+				error = errno;
 		} else if (in->opcode == CRYPTOCMP_OP_DIGEST &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*digest)) {
 			operation = "digest";
@@ -285,6 +317,21 @@ reply:
 		stat_out.info.keylen = stat.cd_keylen;
 		stat_out.info.mackeylen = stat.cd_mackeylen;
 	}
+	list_out.msg = out;
+	if (error == 0 && out.opcode == CRYPTOCMP_OP_NAMED_LIST) {
+		uint32_t i;
+
+		list_out.count = list_count;
+		list_out.next_cursor = list_next_cursor;
+		for (i = 0; i < list_count && i < CRYPTOCMP_NAMED_LIST_MAX; i++) {
+			strlcpy(list_out.entries[i].name, list_entries[i].cd_name,
+			    sizeof(list_out.entries[i].name));
+			list_out.entries[i].generation =
+			    list_entries[i].cd_generation;
+			list_out.entries[i].rights = list_entries[i].cd_rights;
+		}
+	}
+	CRYPTO_PROBE_NAMED_LIST(worker->owner, list_count, error);
 	random_out.msg = out;
 	random_out.nbytes = error == 0 ? random_bytes : 0;
 	audit_operation(worker, operation, error);
@@ -313,6 +360,10 @@ reply:
 		reply_data = &stat_out;
 		reply_length = sizeof(stat_out);
 		break;
+	case CRYPTOCMP_OP_NAMED_LIST:
+		reply_data = &list_out;
+		reply_length = sizeof(list_out);
+		break;
 	case CRYPTOCMP_OP_RANDOM:
 		reply_data = &random_out;
 		reply_length = offsetof(struct cryptocmp_random_reply, data) +
@@ -339,6 +390,8 @@ reply:
 	explicit_bzero(&key_out, sizeof(key_out));
 	explicit_bzero(&named_out, sizeof(named_out));
 	explicit_bzero(&stat_out, sizeof(stat_out));
+	explicit_bzero(&list_out, sizeof(list_out));
+	explicit_bzero(list_entries, sizeof(list_entries));
 	explicit_bzero(&random_out, sizeof(random_out));
 	channel_message_free(m);
 }

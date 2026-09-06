@@ -1333,6 +1333,63 @@ cryptokey_stat(struct cryptodesc_named_stat *stat)
 	return (0);
 }
 
+/*
+ * Owner-scoped enumeration of named keys.  Walks the store under the store
+ * lock, filters strictly by owner (a foreign owner or a deleted key is never
+ * emitted), and pages the owner-filtered set by cd_cursor — a stable index
+ * into that filtered set.  At most CRYPTODESC_NAMED_LIST_MAX entries are
+ * copied out per call; cd_next_cursor is set to the resume index when more of
+ * the owner's keys remain, or zero at the end of the walk.  Like cryptokey_stat
+ * it mints no descriptor and mutates nothing: only the name, generation, and
+ * rights of each key are observed, and no key material leaves the kernel.
+ */
+static int
+cryptokey_list(struct cryptodesc_named_list *list)
+{
+	struct cryptokey_object *key;
+	uint32_t matched, emitted;
+
+	if (!cryptokey_identifier_valid(list->cd_owner, sizeof(list->cd_owner)) ||
+	    list->cd_flags != 0)
+		return (EINVAL);
+	matched = 0;
+	emitted = 0;
+	list->cd_count = 0;
+	list->cd_next_cursor = 0;
+	memset(list->cd_entries, 0, sizeof(list->cd_entries));
+	mtx_lock(&cryptokey_objects_lock);
+	TAILQ_FOREACH(key, &cryptokey_objects, next) {
+		/* Strict owner scoping: skip foreign labels and deleted keys. */
+		if (key->deleted || strcmp(key->owner, list->cd_owner) != 0)
+			continue;
+		/* Page: discard the owner-filtered entries before the cursor. */
+		if (matched < list->cd_cursor) {
+			matched++;
+			continue;
+		}
+		matched++;
+		if (emitted == CRYPTODESC_NAMED_LIST_MAX)
+			break;
+		mtx_lock(&key->lock);
+		strlcpy(list->cd_entries[emitted].cd_name, key->name,
+		    sizeof(list->cd_entries[emitted].cd_name));
+		list->cd_entries[emitted].cd_generation = key->generation;
+		list->cd_entries[emitted].cd_rights = key->rights;
+		mtx_unlock(&key->lock);
+		emitted++;
+	}
+	/*
+	 * The page filled and the walk stopped on a further owner match: hand
+	 * back a resumable cursor.  Otherwise the owner's set is exhausted and
+	 * cd_next_cursor stays zero.
+	 */
+	if (key != NULL && emitted == CRYPTODESC_NAMED_LIST_MAX)
+		list->cd_next_cursor = list->cd_cursor + emitted;
+	mtx_unlock(&cryptokey_objects_lock);
+	list->cd_count = emitted;
+	return (0);
+}
+
 static int
 cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
     struct cryptodesc_derive *derive)
@@ -2373,6 +2430,7 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	struct cryptodesc_named_lease *named_lease;
 	struct cryptodesc_named_control *named_control;
 	struct cryptodesc_named_stat *named_stat;
+	struct cryptodesc_named_list *named_list;
 	uint32_t ses;
 	int error = 0;
 	union {
@@ -2522,6 +2580,14 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		}
 		named_stat = (struct cryptodesc_named_stat *)data;
 		error = cryptokey_stat(named_stat);
+		break;
+	case CIOCGCRYPTONAMEDLIST:
+		if (!fcr->descriptor_authority) {
+			error = EPERM;
+			break;
+		}
+		named_list = (struct cryptodesc_named_list *)data;
+		error = cryptokey_list(named_list);
 		break;
 	case CIOCCRYPTAEAD:
 		caead = (struct crypt_aead *)data;
