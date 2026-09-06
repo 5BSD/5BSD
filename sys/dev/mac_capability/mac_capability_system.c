@@ -259,13 +259,29 @@ sys_mac_system_check_swapoff(struct ucred *cred, struct vnode *vp __unused,
 
 static int
 sys_mac_system_check_sysctl(struct ucred *cred,
-    struct sysctl_oid *oidp __unused, void *arg1 __unused,
+    struct sysctl_oid *oidp, void *arg1 __unused,
     int arg2 __unused, struct sysctl_req *req)
 {
 
 	/* Only gate writes, not reads. */
 	if (req == NULL || req->newptr == NULL)
 		return (0);
+	/*
+	 * setproctitle(3) sets a process's own ps(1) title by WRITING
+	 * kern.proc.args (KERN_PROC_ARGS).  The kernel handler for that node
+	 * (sysctl_kern_proc_args) already restricts a write to the calling
+	 * process itself (PGET_ISCURRENT), so titling is self-contained: it
+	 * cannot touch another process or any real kernel tunable.  Exempt it
+	 * from the sysctl gate so a born-in-capability-mode daemon shows its own
+	 * name in ps rather than the "ld-elf.so.1 -f <fd> ..." loader argv.
+	 * Every other sysctl write stays gated exactly as before.
+	 */
+	if (oidp != NULL && oidp->oid_number == KERN_PROC_ARGS) {
+		struct sysctl_oid *parent = SYSCTL_PARENT(oidp);
+
+		if (parent != NULL && parent->oid_number == KERN_PROC)
+			return (0);	/* kern.proc.args: setproctitle self-write */
+	}
 	return (sys_check_gate(cred, SYS_GATE_SYSCTL, "sysctl"));
 }
 
