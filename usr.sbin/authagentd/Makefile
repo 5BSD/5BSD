@@ -7,10 +7,9 @@ MAN=		authagentd.8
 
 SRCS=		authagentd.c
 LIBADD=		service channel capability capbundle
-# The mint decision must resolve the principal's identity authoritatively
-# inside the capsicum sandbox, so Casper is required.
-LIBADD+=	casper cap_pwd cap_grp
-CFLAGS+=	-DWITH_CASPER
+# The mint decision resolves the principal's identity authoritatively inside
+# the capsicum sandbox via in-process NSS over retained /etc/passwd and
+# /etc/group descriptors (the Identity fold) -- no Casper zygote.
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle

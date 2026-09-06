@@ -113,7 +113,7 @@ fixture_create(struct fixture *fixture, service_rights_t rights)
 		strlcpy(identity.client_label, "org.test.caller",
 		    sizeof(identity.client_label));
 		identity.rights = rights;
-		authagentd_test_configure(NULL, NULL, NULL, -1);
+		authagentd_test_configure(NULL, -1);
 		_exit(authagentd_test_serve(provider, &identity) == 0 ? 0 : 1);
 	}
 	close(provider);

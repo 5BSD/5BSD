@@ -5,7 +5,6 @@
 #include <sys/types.h>
 #include <stdbool.h>
 
-#include <libcasper.h>
 #include <libservice.h>
 #include <libcapbundle.h>
 
@@ -32,12 +31,14 @@ struct service_context;
 struct service_identity;
 
 /*
- * Install the mint/Casper state a subsequent authagentd_test_serve() serves
- * with.  A test that only exercises the caller gate or request validation may
- * leave these NULL/-1: those paths answer before any mint or lookup.
+ * Install the mint state a subsequent authagentd_test_serve() serves with.  A
+ * test that only exercises the caller gate or request validation may leave
+ * these NULL/-1: those paths answer before any mint or identity lookup.  (The
+ * identity streams are populated only by the daemon's own startup, so uid
+ * resolution in a test seam fails closed.)
  */
 void	authagentd_test_configure(struct service_context *context,
-	    cap_channel_t *pwd, cap_channel_t *grp, int policy_fd);
+	    int policy_fd);
 
 /*
  * Test seam: run exactly one client's provider session over `fd`, using

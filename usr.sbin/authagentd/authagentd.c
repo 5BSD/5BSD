@@ -21,18 +21,16 @@
 
 #include <err.h>
 #include <errno.h>
+#include <fcntl.h>
 #include <grp.h>
 #include <pwd.h>
 #include <stdbool.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <time.h>
 #include <unistd.h>
-
-#include <libcasper.h>
-#include <casper/cap_grp.h>
-#include <casper/cap_pwd.h>
 
 #include <channel.h>
 #include <libservice.h>
@@ -53,53 +51,178 @@ static int			 g_kq = -1;
  */
 static int			 g_policy_fd = -1;
 /*
- * Casper channels for authoritative passwd/group resolution inside the sandbox.
+ * In-process NSS for authoritative passwd/group resolution inside the sandbox.
  * The agent NEVER trusts principal attributes from the wire — it resolves the
  * uid to its passwd and group membership itself, so a compromised login client
  * cannot claim admin membership it does not have.
+ *
+ * The Identity fold: rather than a Casper zygote (system.pwd/system.grp), the
+ * agent retains read-only descriptors on /etc/passwd and /etc/group, opened
+ * before it enters capability mode.  Capability mode forbids opening a path,
+ * but lseek+read on an already-open descriptor is legal, so each lookup reads a
+ * fresh snapshot from the top and parses it — authoritative, Casper-free, and
+ * live (a user added to a group takes effect with no restart; unbuffered raw
+ * reads, unlike a cached stdio stream).  We only need uid/name/gid (fields
+ * 0,2,3 of passwd; 0,2,3 plus the member list of group), at the same offsets in
+ * the 7-field public passwd and 10-field master.passwd, so the parse is
+ * format-agnostic.
  */
-static cap_channel_t		*g_cappwd;
-static cap_channel_t		*g_capgrp;
+static int			 g_pwfd = -1;	/* /etc/passwd, read-only */
+static int			 g_grfd = -1;	/* /etc/group, read-only */
 
-/* Group-name -> gid for the policy engine, backed by Casper cap_grp. */
-static gid_t
-agent_name2gid(void *ctx, const char *name)
+/*
+ * Bounded per-lookup snapshots.  Two independent buffers (passwd, group), never
+ * used concurrently: the provider serves requests serially from one kqueue
+ * loop, so file-scope statics are safe and avoid large stack frames.
+ */
+#define	ID_SNAP_MAX	(128 * 1024)
+static char			 g_pwbuf[ID_SNAP_MAX];
+static char			 g_grbuf[ID_SNAP_MAX];
+
+#ifndef AUTHAGENTD_TESTING
+/*
+ * Open the identity databases before cap_enter(2).  Returns 0, or -1 with the
+ * descriptor(s) left -1 (a resolution then fails closed -> the mint is denied).
+ * Only main() calls this; the test seam leaves the descriptors -1 on purpose.
+ */
+static int
+id_open_databases(void)
 {
-	cap_channel_t *grp = ctx;
-	struct group *gr;
 
-	if (grp == NULL || (gr = cap_getgrnam(grp, name)) == NULL)
+	g_pwfd = open("/etc/passwd", O_RDONLY | O_CLOEXEC);
+	g_grfd = open("/etc/group", O_RDONLY | O_CLOEXEC);
+	if (g_pwfd == -1 || g_grfd == -1)
+		return (-1);
+	return (0);
+}
+#endif /* !AUTHAGENTD_TESTING */
+
+/*
+ * Read the retained descriptor from the top into buf as a fresh, NUL-terminated
+ * snapshot.  Returns its length, or -1.  A file larger than the buffer is
+ * truncated: a uid/group past the cap simply fails to resolve (fail-closed),
+ * never a spurious grant.
+ */
+static ssize_t
+id_snapshot(int fd, char *buf, size_t bufsz)
+{
+	size_t off = 0;
+	ssize_t n;
+
+	if (fd == -1 || lseek(fd, 0, SEEK_SET) == -1)
+		return (-1);
+	while (off < bufsz - 1) {
+		n = read(fd, buf + off, bufsz - 1 - off);
+		if (n == -1) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (n == 0)
+			break;
+		off += (size_t)n;
+	}
+	buf[off] = '\0';
+	return ((ssize_t)off);
+}
+
+/* uid -> passwd (name/uid/gid only), from /etc/passwd.  NULL if not found. */
+static struct passwd *
+id_getpwuid(uid_t uid)
+{
+	static struct passwd pw;
+	static char namebuf[MAXLOGNAME + 1];
+	char *cursor, *line, *p, *f_name, *f_uid, *f_gid;
+
+	if (id_snapshot(g_pwfd, g_pwbuf, sizeof(g_pwbuf)) == -1)
+		return (NULL);
+	cursor = g_pwbuf;
+	while ((line = strsep(&cursor, "\n")) != NULL) {
+		if (line[0] == '\0' || line[0] == '#')
+			continue;
+		p = line;
+		f_name = strsep(&p, ":");
+		(void)strsep(&p, ":");		/* password field, ignored */
+		f_uid = strsep(&p, ":");
+		f_gid = strsep(&p, ":");
+		if (f_name == NULL || f_name[0] == '\0' ||
+		    f_uid == NULL || f_gid == NULL)
+			continue;
+		if ((uid_t)strtoul(f_uid, NULL, 10) != uid)
+			continue;
+		(void)strlcpy(namebuf, f_name, sizeof(namebuf));
+		memset(&pw, 0, sizeof(pw));
+		pw.pw_name = namebuf;
+		pw.pw_uid = uid;
+		pw.pw_gid = (gid_t)strtoul(f_gid, NULL, 10);
+		return (&pw);
+	}
+	return (NULL);
+}
+
+/* Group-name -> gid for the policy engine, from /etc/group.  -1 if absent. */
+static gid_t
+agent_name2gid(void *ctx __unused, const char *name)
+{
+	char *cursor, *line, *p, *f_name, *f_gid;
+
+	if (name == NULL ||
+	    id_snapshot(g_grfd, g_grbuf, sizeof(g_grbuf)) == -1)
 		return ((gid_t)-1);
-	return (gr->gr_gid);
+	cursor = g_grbuf;
+	while ((line = strsep(&cursor, "\n")) != NULL) {
+		if (line[0] == '\0' || line[0] == '#')
+			continue;
+		p = line;
+		f_name = strsep(&p, ":");
+		(void)strsep(&p, ":");		/* password field, ignored */
+		f_gid = strsep(&p, ":");
+		if (f_name == NULL || f_gid == NULL)
+			continue;
+		if (strcmp(f_name, name) == 0)
+			return ((gid_t)strtoul(f_gid, NULL, 10));
+	}
+	return ((gid_t)-1);
 }
 
 /*
- * Resolve a principal's group membership authoritatively via Casper: its
- * primary gid plus every group whose member list names it.  cap_grp exposes no
- * getgrouplist, so scan the group database (a mint is infrequent).
+ * Resolve a principal's group membership authoritatively: its primary gid plus
+ * every group whose member list names it.  Scan /etc/group (a mint is
+ * infrequent), same as the former cap_grp enumeration.
  */
 static unsigned
 agent_member_gids(const struct passwd *pw, gid_t *out, unsigned max)
 {
-	struct group *gr;
+	char *cursor, *line, *p, *f_gid, *members, *m, *save;
+	gid_t gid;
 	unsigned n = 0;
 
 	if (max == 0)
 		return (0);
 	out[n++] = pw->pw_gid;
-	if (g_capgrp == NULL)
+	if (id_snapshot(g_grfd, g_grbuf, sizeof(g_grbuf)) == -1)
 		return (n);
-	(void)cap_setgrent(g_capgrp);	/* rewind; a bad rewind just yields none */
-	while (n < max && (gr = cap_getgrent(g_capgrp)) != NULL) {
-		char **m;
-
-		if (gr->gr_gid == pw->pw_gid)
+	cursor = g_grbuf;
+	while (n < max && (line = strsep(&cursor, "\n")) != NULL) {
+		if (line[0] == '\0' || line[0] == '#')
 			continue;
-		for (m = gr->gr_mem; m != NULL && *m != NULL; m++)
-			if (strcmp(*m, pw->pw_name) == 0) {
-				out[n++] = gr->gr_gid;
+		p = line;
+		(void)strsep(&p, ":");		/* group name, ignored */
+		(void)strsep(&p, ":");		/* password field, ignored */
+		f_gid = strsep(&p, ":");
+		members = p;			/* remainder: comma-separated */
+		if (f_gid == NULL || members == NULL)
+			continue;
+		gid = (gid_t)strtoul(f_gid, NULL, 10);
+		if (gid == pw->pw_gid)		/* primary already recorded */
+			continue;
+		for (m = strtok_r(members, ",", &save); m != NULL;
+		    m = strtok_r(NULL, ",", &save)) {
+			if (strcmp(m, pw->pw_name) == 0) {
+				out[n++] = gid;
 				break;
 			}
+		}
 	}
 	return (n);
 }
@@ -252,8 +375,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		    req->op != AUTHAGENT_OP_MINT_SESSION ||
 		    (req->flags & ~AUTHAGENT_FLAG_FORWARDABLE) != 0) {
 			reply.status = EINVAL;
-		} else if ((pw = cap_getpwuid(g_cappwd,
-		    (uid_t)req->uid)) == NULL) {
+		} else if ((pw = id_getpwuid((uid_t)req->uid)) == NULL) {
 			reply.status = ENOENT;
 		} else {
 			gid_t members[NGROUPS_MAX];
@@ -263,7 +385,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 			    (req->flags & AUTHAGENT_FLAG_FORWARDABLE) != 0;
 			enum service_mint_kind kind =
 			    authagent_mint_kind(g_policy_fd, (uid_t)req->uid,
-			    members, nmember, agent_name2gid, g_capgrp);
+			    members, nmember, agent_name2gid, NULL);
 
 			/*
 			 * A session leaf (login/su) receives the channel
@@ -440,37 +562,16 @@ main(void)
 	}
 
 	/*
-	 * Bring up Casper before entering the sandbox so the agent can resolve
-	 * a uid to its passwd and group membership authoritatively after
-	 * cap_enter — the security basis for not trusting the login client's
-	 * claims.  Limited to exactly the lookups the mint decision needs.
+	 * Open the identity databases (/etc/passwd, /etc/group) before entering
+	 * the sandbox, so the agent can resolve a uid to its passwd and group
+	 * membership authoritatively after cap_enter — the security basis for not
+	 * trusting the login client's claims.  Reading the retained descriptors is
+	 * capability-mode-legal; opening the paths would not be.  This is the
+	 * Identity fold: in-process NSS, no Casper zygote.
 	 */
 	{
-		static const char *const pwdcmds[] = { "getpwuid" };
-		static const char *const grpcmds[] = { "getgrnam",
-		    "setgrent", "getgrent" };
-		cap_channel_t *capcas = cap_init();
-
-		/*
-		 * Casper here is a local zygote (pwd/grp resolution), forked
-		 * before cap_enter -- not a capability-plane provider -- so an
-		 * acquisition failure is a bootstrap failure: log it and exit
-		 * gracefully for serviced to restart, rather than err(3) aborting
-		 * to a controlling terminal that does not exist under serviced.
-		 * (The lasting fix is the Identity fold: in-process NSS retiring
-		 * Casper entirely -- see the capability-daemon backlog.)
-		 */
-		if (capcas == NULL ||
-		    (g_cappwd = cap_service_open(capcas, "system.pwd")) ==
-		    NULL ||
-		    (g_capgrp = cap_service_open(capcas, "system.grp")) == NULL) {
-			syslog(LOG_ERR, "casper pwd/grp unavailable: %m");
-			return (1);
-		}
-		cap_close(capcas);
-		if (cap_pwd_limit_cmds(g_cappwd, pwdcmds, nitems(pwdcmds)) < 0 ||
-		    cap_grp_limit_cmds(g_capgrp, grpcmds, nitems(grpcmds)) < 0) {
-			syslog(LOG_ERR, "casper command limit: %m");
+		if (id_open_databases() == -1) {
+			syslog(LOG_ERR, "identity databases unavailable: %m");
 			return (1);
 		}
 	}
@@ -554,14 +655,16 @@ main(void)
  * AUTHAGENTD_TESTING and never sees them.
  */
 void
-authagentd_test_configure(struct service_context *context, cap_channel_t *pwd,
-    cap_channel_t *grp, int policy_fd)
+authagentd_test_configure(struct service_context *context, int policy_fd)
 {
 
 	g_context = context;
-	g_cappwd = pwd;
-	g_capgrp = grp;
 	g_policy_fd = policy_fd;
+	/*
+	 * Identity streams (g_pwf/g_grf) are left NULL in the test seam: the
+	 * provider tests drive the caller-gate and protocol paths, not live
+	 * uid resolution (which id_getpwuid then fails closed, ENOENT).
+	 */
 }
 
 int

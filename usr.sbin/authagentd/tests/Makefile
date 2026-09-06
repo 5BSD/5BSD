@@ -13,7 +13,6 @@ ATF_TESTS_C+=	provider_test
 # same flags, so they are global: the shared authagentd.c object is compiled
 # once for the directory.
 CFLAGS+=	-DAUTHAGENTD_TESTING
-CFLAGS+=	-DWITH_CASPER
 CFLAGS+=	-I${SRCTOP}/usr.sbin/authagentd
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/lib/libservice
@@ -24,6 +23,6 @@ SRCS.gate_test=			gate_test.c authagentd.c
 SRCS.mint_decision_test=	mint_decision_test.c authagentd.c
 SRCS.provider_test=		provider_test.c authagentd.c
 
-LIBADD=		service channel capability capbundle casper cap_pwd cap_grp
+LIBADD=		service channel capability capbundle
 
 .include <bsd.test.mk>
