@@ -181,27 +181,27 @@ Remaining Part 2 work:
 Update (2026-09-05, commit 5ac3304f0cb): #5 helper, #7, and #9's
 `service_set_proctitle()` helper landed; fleet re-verified green.  Findings:
 
-- **#9 has a deeper root than a missing call (verified end-to-end).** serviced
-  `cap_enter()`s the child (execute.c:782) *before* `fexecve` (execute.c:784)
-  for every non-privileged unit, so a born-in-capability-mode daemon's `main()`
-  runs in capability mode from instruction one.  `setproctitle(3)` writes the
-  process's `ps_strings` (a memory write, legal in capmode) but THEN updates the
-  kernel's cached command line — the thing `ps` actually reads — with a
-  **`sysctl(CTL_KERN, KERN_PROC, KERN_PROC_ARGS, ...)` write**
-  (lib/libc/gen/setproctitle.c:215), and a sysctl write is forbidden in
-  capability mode, so it silently no-ops.  Result: born-in-capmode daemons
-  (traced/auditbrokerd/localcrypto/bsdnotify/logd) keep the loader argv in `ps`;
-  privileged daemons (localnetwork, authagentd — both `privileged = true`, so
-  launched by normal `execve` and NOT in capmode at `main`) DO get a correct
-  title from the same `service_set_proctitle()` call.  (Earlier notes blaming
-  `AT_PS_STRINGS` were wrong: that only affects *finding* ps_strings; the
-  blocker is the KERN_PROC_ARGS sysctl write.)
-  **Correct fix:** permit a process to set its OWN args via `KERN_PROC_ARGS` in
-  capability mode (sysctl_kern_proc_args in sys/kern/kern_proc.c) — a process
-  titling itself is self-contained, not a namespace escape.  Small, targeted
-  kernel change; flagged for explicit approval, not done.  `service_set_proctitle()`
-  is correct and harmless meanwhile (the failing sysctl is ignored), and becomes
-  effective for all born-in-capmode daemons once that kernel change lands.
+- **#9 FIXED (commit 3beceb7f385), root cause verified end-to-end by dtrace.**
+  serviced `cap_enter()`s the child (execute.c:782) *before* `fexecve`
+  (execute.c:784) for every non-privileged unit, so a born-in-capability-mode
+  daemon's `main()` runs in capability mode from instruction one.
+  `setproctitle(3)` sets the ps title by *writing* `kern.proc.args`
+  (KERN_PROC_ARGS) via sysctl.  That node already carries `CTLFLAG_CAPWR` and
+  its handler restricts the write to the calling process (`PGET_ISCURRENT`), so
+  stock Capsicum permits it — the blocker was **our own MAC policy**:
+  `sys_mac_system_check_sysctl` in sys/dev/mac_capability/mac_capability_system.c
+  gates *every* sysctl write from a capability-mode cred behind
+  `SYS_GATE_SYSCTL`, returning EPERM before the handler runs.  (dtrace proof:
+  `SYSCTL kern.proc.7 err=1`, handler never entered; reads pass because the hook
+  returns 0 when `newptr==NULL`.  Normal non-capmode processes are unaffected —
+  the gate only bites capability-mode creds.  Two earlier guesses — capmode
+  sysctl framework, then `AT_PS_STRINGS` — were both wrong.)
+  **Fix:** exempt exactly `kern.proc.args` from that write gate (the handler's
+  `PGET_ISCURRENT` means it can only rename the caller itself — self-contained,
+  no tunable touched, every other sysctl write still gated).  Verified on the
+  real plane: all born-in-capmode daemons now show their own names in ps
+  (`traced`, `logd`, `auditbrokerd`, `bsdnotify`, `Crypto: [CRYPTO]…`), zero
+  `ld-elf.so.1 -f` processes, fleet still green.
 - Build-hygiene: auditbrokerd/tests compiles `auditcmp.c` without
   `-I${SRCTOP}/lib/libservice`, so it reads the stale installed `libservice.h`;
   add the include (or reinstall the header) so `make all` incl. tests is clean.
