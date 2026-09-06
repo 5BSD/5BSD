@@ -30,14 +30,7 @@ int	warden_test_worker(int fd, const char *client);
  *
  * warden_test_reclaim() drives the owner-scoped reclaim primitive for one label
  * (destroy that label's persistent jail); returns true iff a jail was removed.
- *
- * warden_test_reconcile() drives the reconciliation sweep with an injected
- * liveness oracle (matching service_label_is_live's int(*)(const char*,bool*)
- * contract: 0 with *live set, or -1 on a transport failure), so a test can
- * exercise the sweep — including its owner-scoping and fail-soft-on-uncertainty
- * behavior — without a live serviced.
  */
 bool	warden_test_reclaim(const char *label);
-void	warden_test_reconcile(int (*is_live)(const char *label, bool *live));
 
 #endif /* _WARDEN_TEST_H_ */

@@ -876,12 +876,12 @@ ATF_TC_BODY(control_rejects_unexpected_descriptor, tc)
 }
 
 /*
- * Capability-cleanup reclaim + reconcile (docs/capability-lifecycle-cleanup.md).
+ * Capability-cleanup reclaim (docs/capability-lifecycle-cleanup.md).
  *
- * These drive warden's reclaim primitive and reconciliation sweep directly (the
- * warden_test_reclaim/warden_test_reconcile seams) against real jails created
- * over the wire by the per-label worker.  The jails live in the global kernel
- * jail table, so the test process sees and can assert on them.
+ * These drive warden's reclaim primitive directly (the warden_test_reclaim seam)
+ * against real jails created over the wire by the per-label worker.  The jails
+ * live in the global kernel jail table, so the test process sees and can assert
+ * on them.
  */
 #define	TEST_LABEL_A	"org.test.warden.reclaim.a"
 #define	TEST_LABEL_B	"org.test.warden.reclaim.b"
@@ -921,21 +921,6 @@ enter_persistent_jail(struct fixture *fixture, const char *label,
 	}
 	if (out_fd >= 0)
 		close(out_fd);
-	return (true);
-}
-
-/* Read a jail's recorded owner label (empty if none / meta unsupported). */
-static bool
-jail_owner_meta(const char *label, char *out, size_t outsz)
-{
-	char name[64];
-
-	(void)outsz;
-	out[0] = '\0';
-	if (!warden_test_jail_name(label, name, sizeof(name)))
-		return (false);
-	if (jail_getv(0, "name", name, "meta.warden_owner", out, NULL) < 0)
-		return (false);
 	return (true);
 }
 
@@ -1008,140 +993,6 @@ ATF_TC_BODY(reclaim_absent_label_is_noop, tc)
 	ATF_CHECK(!warden_test_reclaim(""));
 }
 
-/* The injected liveness oracle reports one specific label retired. */
-static const char *g_retired_label;
-
-static int
-oracle_one_retired(const char *label, bool *live)
-{
-
-	*live = !(g_retired_label != NULL &&
-	    strcmp(label, g_retired_label) == 0);
-	return (0);
-}
-
-/* The injected liveness oracle always fails the query (transport error). */
-static int
-oracle_transport_error(const char *label, bool *live)
-{
-
-	(void)label;
-	*live = false;
-	errno = ECONNRESET;
-	return (-1);
-}
-
-/*
- * The reconciliation sweep reclaims a retired label's jail while leaving a live
- * label's jail intact.  Requires the kernel to record the owner label (jail
- * meta); where that is unavailable the sweep cannot recover labels, so SKIP.
- */
-ATF_TC(reconcile_reclaims_orphan_keeps_live);
-ATF_TC_HEAD(reconcile_reclaims_orphan_keeps_live, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(reconcile_reclaims_orphan_keeps_live, tc)
-{
-	struct fixture fa, fb;
-	char root_a[PATH_MAX], root_b[PATH_MAX], owner[128];
-
-	require_plane();
-	make_jail_root(root_a, sizeof(root_a));
-	make_jail_root(root_b, sizeof(root_b));
-
-	if (!enter_persistent_jail(&fa, TEST_LABEL_A, root_a, "host-a")) {
-		(void)rmdir(root_a);
-		(void)rmdir(root_b);
-		atf_tc_skip("live jail creation not available under harness");
-	}
-
-	/*
-	 * The sweep recovers the label from the jail's owner meta.  If the
-	 * kernel did not record it, reconciliation cannot see this jail — skip
-	 * rather than assert a capability the kernel lacks.
-	 */
-	if (!jail_owner_meta(TEST_LABEL_A, owner, sizeof(owner)) ||
-	    strcmp(owner, TEST_LABEL_A) != 0) {
-		fixture_destroy(&fa);
-		remove_named_jail(TEST_LABEL_A);
-		(void)rmdir(root_a);
-		(void)rmdir(root_b);
-		atf_tc_skip("jail owner meta unavailable; reconcile not testable");
-	}
-
-	if (!enter_persistent_jail(&fb, TEST_LABEL_B, root_b, "host-b")) {
-		fixture_destroy(&fa);
-		remove_named_jail(TEST_LABEL_A);
-		(void)rmdir(root_a);
-		(void)rmdir(root_b);
-		atf_tc_skip("live jail creation not available under harness");
-	}
-
-	ATF_REQUIRE(jail_exists_for(TEST_LABEL_A));
-	ATF_REQUIRE(jail_exists_for(TEST_LABEL_B));
-
-	/* A is retired, B (and everything else) is live. */
-	g_retired_label = TEST_LABEL_A;
-	warden_test_reconcile(oracle_one_retired);
-
-	ATF_CHECK_MSG(!jail_exists_for(TEST_LABEL_A),
-	    "reconcile did not reclaim the retired label's jail");
-	ATF_CHECK_MSG(jail_exists_for(TEST_LABEL_B),
-	    "reconcile wrongly reclaimed a live label's jail");
-
-	g_retired_label = NULL;
-	fixture_destroy(&fa);
-	fixture_destroy(&fb);
-	remove_named_jail(TEST_LABEL_A);
-	remove_named_jail(TEST_LABEL_B);
-	(void)rmdir(root_a);
-	(void)rmdir(root_b);
-}
-
-/*
- * Fail-soft on uncertainty: when the liveness query fails (transport error), the
- * sweep must reclaim NOTHING — a jail is destroyed only on a definitive not-live
- * answer, never on an unknown one.
- */
-ATF_TC(reconcile_transport_error_reclaims_nothing);
-ATF_TC_HEAD(reconcile_transport_error_reclaims_nothing, tc)
-{
-	atf_tc_set_md_var(tc, "require.user", "root");
-}
-ATF_TC_BODY(reconcile_transport_error_reclaims_nothing, tc)
-{
-	struct fixture fa;
-	char root_a[PATH_MAX], owner[128];
-
-	require_plane();
-	make_jail_root(root_a, sizeof(root_a));
-
-	if (!enter_persistent_jail(&fa, TEST_LABEL_A, root_a, "host-a")) {
-		(void)rmdir(root_a);
-		atf_tc_skip("live jail creation not available under harness");
-	}
-	if (!jail_owner_meta(TEST_LABEL_A, owner, sizeof(owner)) ||
-	    strcmp(owner, TEST_LABEL_A) != 0) {
-		fixture_destroy(&fa);
-		remove_named_jail(TEST_LABEL_A);
-		(void)rmdir(root_a);
-		atf_tc_skip("jail owner meta unavailable; reconcile not testable");
-	}
-
-	ATF_REQUIRE(jail_exists_for(TEST_LABEL_A));
-
-	/* Every liveness query fails -> uncertain -> reclaim nothing. */
-	warden_test_reconcile(oracle_transport_error);
-
-	ATF_CHECK_MSG(jail_exists_for(TEST_LABEL_A),
-	    "reconcile reclaimed a jail despite an uncertain (failed) query");
-
-	fixture_destroy(&fa);
-	remove_named_jail(TEST_LABEL_A);
-	(void)rmdir(root_a);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1161,7 +1012,5 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, control_rejects_unexpected_descriptor);
 	ATF_TP_ADD_TC(tp, reclaim_destroys_only_owner_jail);
 	ATF_TP_ADD_TC(tp, reclaim_absent_label_is_noop);
-	ATF_TP_ADD_TC(tp, reconcile_reclaims_orphan_keeps_live);
-	ATF_TP_ADD_TC(tp, reconcile_transport_error_reclaims_nothing);
 	return (atf_no_error());
 }

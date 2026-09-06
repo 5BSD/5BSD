@@ -15,7 +15,6 @@
 #include <sys/vsock.h>
 
 #include <atf-c.h>
-#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,41 +22,6 @@
 
 #include "vmd_proto.h"
 #include "waspnest_test.h"
-
-/*
- * Injected liveness oracles for the reconciliation sweep (vmd_test_reconcile).
- * They mimic service_label_is_live: return 0 with *live set on a completed
- * query, or -1 on a transport failure (which the sweep must treat as uncertain
- * and NOT reclaim on).
- */
-static int
-is_live_all(const char *label, bool *live)
-{
-
-	(void)label;
-	*live = true;
-	return (0);
-}
-
-/* A label containing "dead" is retired; everything else is still installed. */
-static int
-is_live_dead_marked(const char *label, bool *live)
-{
-
-	*live = (strstr(label, "dead") == NULL);
-	return (0);
-}
-
-/* Every query fails at the transport — the sweep must free nothing. */
-static int
-is_live_transport_fail(const char *label, bool *live)
-{
-
-	(void)label;
-	(void)live;
-	errno = ECONNRESET;
-	return (-1);
-}
 
 /*
  * A window base must sit on a VMD_PORTS_PER_LABEL boundary above VMD_PORT_BASE
@@ -393,58 +357,6 @@ ATF_TC_BODY(reclaim_never_frees_another_labels_slot, tc)
 	ATF_CHECK(!vmd_test_reclaim("org.test.vm.never-existed"));
 }
 
-/*
- * The reconciliation sweep frees an orphaned (retired) label's slot while
- * keeping every still-live label's slot.  Enumerate three labels, mark one
- * "dead" via the injected oracle, sweep, and assert only the dead one was freed.
- */
-ATF_TC_WITHOUT_HEAD(reconcile_frees_only_retired_labels);
-ATF_TC_BODY(reconcile_frees_only_retired_labels, tc)
-{
-	uint32_t base;
-
-	vmd_test_registry_reset();
-	ATF_REQUIRE(vmd_test_resolve_window("org.test.vm.live.one", &base));
-	ATF_REQUIRE(vmd_test_resolve_window("org.test.vm.dead.gone", &base));
-	ATF_REQUIRE(vmd_test_resolve_window("org.test.vm.live.two", &base));
-
-	vmd_test_reconcile(is_live_dead_marked);
-
-	/* The retired label's slot was freed by the sweep. */
-	ATF_CHECK(!vmd_test_reclaim("org.test.vm.dead.gone"));
-	/* Both live labels were kept (each still owns its slot). */
-	ATF_CHECK(vmd_test_reclaim("org.test.vm.live.one"));
-	ATF_CHECK(vmd_test_reclaim("org.test.vm.live.two"));
-}
-
-/*
- * Fail-soft: when the liveness query cannot complete (transport failure), the
- * sweep must free NOTHING — a window is retired only on a definitive not-live.
- * Also an all-live sweep is a pure no-op.
- */
-ATF_TC_WITHOUT_HEAD(reconcile_never_frees_on_uncertainty);
-ATF_TC_BODY(reconcile_never_frees_on_uncertainty, tc)
-{
-	uint32_t base;
-
-	vmd_test_registry_reset();
-	ATF_REQUIRE(vmd_test_resolve_window("org.test.vm.a", &base));
-	ATF_REQUIRE(vmd_test_resolve_window("org.test.vm.b", &base));
-
-	/* Transport failure: uncertain, so nothing is reclaimed. */
-	vmd_test_reconcile(is_live_transport_fail);
-	/* An all-live sweep likewise touches nothing. */
-	vmd_test_reconcile(is_live_all);
-
-	/* Both labels survived both sweeps. */
-	ATF_CHECK(vmd_test_reclaim("org.test.vm.a"));
-	ATF_CHECK(vmd_test_reclaim("org.test.vm.b"));
-
-	/* An empty-registry sweep is a no-op and does not crash. */
-	vmd_test_registry_reset();
-	vmd_test_reconcile(is_live_dead_marked);
-}
-
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -453,8 +365,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, registry_full_is_refused);
 	ATF_TP_ADD_TC(tp, reclaim_frees_slot_and_it_is_reassignable);
 	ATF_TP_ADD_TC(tp, reclaim_never_frees_another_labels_slot);
-	ATF_TP_ADD_TC(tp, reconcile_frees_only_retired_labels);
-	ATF_TP_ADD_TC(tp, reconcile_never_frees_on_uncertainty);
 	ATF_TP_ADD_TC(tp, valid_request_enforces_wire_contract);
 	ATF_TP_ADD_TC(tp, valid_connect_enforces_wire_contract);
 	ATF_TP_ADD_TC(tp, valid_list_enforces_wire_contract);

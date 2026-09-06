@@ -40,9 +40,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libservice
 CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
-# pthread: the parent runs the reclaim handler on libservice's control-dispatch
-# thread and a jittered periodic reconciliation sweep on its own timer thread.
-LIBADD=		service channel jail md pthread
+LIBADD=		service channel jail md
 
 # Optional USDT DTrace provider (warden_provider.d -> warden_provider.h).
 # MK_DTRACE-guarded so warden builds identically with and without DTrace; the

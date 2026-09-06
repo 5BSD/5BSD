@@ -44,9 +44,8 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys
 
 # pthread: the parent runs the reclaim handler on libservice's control-dispatch
-# thread and a periodic reconciliation timer thread, both serialized against the
-# accept loop by a mutex around the window registry (capability-cleanup, see
-# docs/capability-lifecycle-cleanup.md).
+# thread, serialized against the accept loop by a mutex around the window
+# registry (capability-cleanup, see docs/capability-lifecycle-cleanup.md).
 LIBADD=		service channel pthread
 
 # Optional USDT DTrace provider (waspnest_provider.d -> waspnest_provider.h).

@@ -43,11 +43,4 @@ int		vmd_test_worker(int fd, const char *label, uint32_t window_base);
  */
 bool		vmd_test_reclaim(const char *label);
 
-/*
- * Drive the reconciliation sweep with an injected liveness oracle (so a unit
- * test needs no live serviced).  `is_live` follows service_label_is_live's
- * contract: 0 with *live set, or -1 for an uncertain/transport failure.
- */
-void		vmd_test_reconcile(int (*is_live)(const char *label, bool *live));
-
 #endif /* VMD_TEST_H */
