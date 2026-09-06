@@ -34,6 +34,8 @@ logcmp_config_default(struct logcmp_config *config)
 	config->ingress_shards = LOGCMP_INGRESS_SHARDS_DEFAULT;
 	config->max_sessions = LOGCMP_MAX_SESSIONS_DEFAULT;
 	config->drain_batch = LOGCMP_DRAIN_BATCH_DEFAULT;
+	config->retention_max_age = LOGCMP_RETENTION_MAX_AGE_DEFAULT;
+	config->retention_max_bytes = LOGCMP_RETENTION_MAX_BYTES_DEFAULT;
 }
 
 static int
@@ -75,7 +77,8 @@ from_root(const ucl_object_t *root, struct logcmp_config *config)
 	static const char *const names[] = {
 		"ring_size", "fallback_drain_ms", "segment_size", "max_segments",
 		"minimum_severity", "rate_limit_interval_ms", "rate_limit_burst",
-		"ingress_shards", "max_sessions", "drain_batch"
+		"ingress_shards", "max_sessions", "drain_batch",
+		"retention_max_age", "retention_max_bytes"
 	};
 	const ucl_object_t *entry, *object;
 	ucl_object_iter_t iterator;
@@ -182,6 +185,22 @@ from_root(const ucl_object_t *root, struct logcmp_config *config)
 		    value > LOGCMP_DRAIN_BATCH_MAX)
 			return (errno = ERANGE, -1);
 		config->drain_batch = (uint32_t)value;
+	}
+	object = ucl_object_lookup(root, "retention_max_age");
+	if (object != NULL) {
+		value = ucl_object_toint(object);
+		if (value < 0 ||
+		    (uint64_t)value > LOGCMP_RETENTION_MAX_AGE_MAX)
+			return (errno = ERANGE, -1);
+		config->retention_max_age = (uint64_t)value;
+	}
+	object = ucl_object_lookup(root, "retention_max_bytes");
+	if (object != NULL) {
+		value = ucl_object_toint(object);
+		if (value < 0 ||
+		    (uint64_t)value > LOGCMP_RETENTION_MAX_BYTES_MAX)
+			return (errno = ERANGE, -1);
+		config->retention_max_bytes = (uint64_t)value;
 	}
 	if ((config->rate_limit_interval_ms == 0) !=
 	    (config->rate_limit_burst == 0))

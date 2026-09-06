@@ -15,6 +15,7 @@
 
 struct logcmp_record;
 struct logcmp_store_cursor;
+struct logcmp_query_filter;
 
 #define	LOGCMP_STORAGE_TIMEOUT_MS	5000U
 #define	LOGCMP_STORAGE_RING_SIZE		(1U << 20)
@@ -28,7 +29,8 @@ struct logcmp_storage_session {
 };
 
 /* Factory API.  start returns owned control and process descriptors. */
-int	logcmp_storage_start(int, uint64_t, uint32_t, int *, int *);
+int	logcmp_storage_start(int, uint64_t, uint32_t, uint64_t, uint64_t,
+	    int *, int *);
 int	logcmp_storage_attach(int, const char *,
 	    struct logcmp_storage_session *);
 int	logcmp_storage_attach_pool(int, struct logcmp_storage_session *);
@@ -49,9 +51,14 @@ int	logcmp_storage_query_next(struct logcmp_storage_session *, uint32_t,
 int	logcmp_storage_query_next_for(struct logcmp_storage_session *,
 	    const char *, uint32_t, struct logcmp_store_cursor *, void *, size_t,
 	    size_t *, uint32_t);
+int	logcmp_storage_query_next_filtered_for(struct logcmp_storage_session *,
+	    const char *, uint32_t, const struct logcmp_query_filter *,
+	    struct logcmp_store_cursor *, void *, size_t, size_t *, uint32_t);
 
 /* Test seam: run the same writer without kernel sandbox activation. */
-int	logcmp_storage_manager_run(int, int, uint64_t, uint32_t, bool);
-int	logcmp_storage_test_start(int, uint64_t, uint32_t, int *, pid_t *);
+int	logcmp_storage_manager_run(int, int, uint64_t, uint32_t, uint64_t,
+	    uint64_t, bool);
+int	logcmp_storage_test_start(int, uint64_t, uint32_t, uint64_t, uint64_t,
+	    int *, pid_t *);
 
 #endif

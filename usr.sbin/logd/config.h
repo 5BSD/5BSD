@@ -47,6 +47,12 @@
 #define	LOGCMP_DRAIN_BATCH_DEFAULT	256U
 #define	LOGCMP_DRAIN_BATCH_MIN		1U
 #define	LOGCMP_DRAIN_BATCH_MAX		4096U
+/* Retention: 0 disables that dimension; 0/0 default keeps every segment. */
+#define	LOGCMP_RETENTION_MAX_AGE_DEFAULT	0U
+#define	LOGCMP_RETENTION_MAX_AGE_MAX	(UINT64_C(100) * 365 * 24 * 3600)
+#define	LOGCMP_RETENTION_MAX_BYTES_DEFAULT	0U
+#define	LOGCMP_RETENTION_MAX_BYTES_MAX \
+	(LOGCMP_STORE_SEGMENT_MAX * (uint64_t)LOGCMP_STORE_SEGMENTS_MAX)
 
 struct logcmp_config {
 	uint32_t ring_size;
@@ -59,6 +65,8 @@ struct logcmp_config {
 	uint32_t ingress_shards;
 	uint32_t max_sessions;
 	uint32_t drain_batch;
+	uint64_t retention_max_age;
+	uint64_t retention_max_bytes;
 };
 
 void	logcmp_config_default(struct logcmp_config *);

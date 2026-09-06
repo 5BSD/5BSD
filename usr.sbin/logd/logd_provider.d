@@ -22,4 +22,8 @@ provider logd {
 	probe query__complete(const char *label, uint64_t generation,
 	    uint64_t offset, uint32_t minimum_severity, uint32_t record_length,
 	    int result);
+	probe query__filter(const char *label, uint64_t scanned,
+	    uint64_t matched, int result);
+	probe retention__prune(uint64_t generation, uint64_t records,
+	    uint64_t bytes, int reason);
 };

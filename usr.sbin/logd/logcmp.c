@@ -83,6 +83,7 @@ struct worker_state {
 	void			*record_context;
 	int			(*storage_flush)(void *, uint32_t);
 	int			(*storage_query)(void *, const char *, uint32_t,
+				    const struct logcmp_query_filter *,
 				    struct logcmp_store_cursor *, void *, size_t,
 				    size_t *, uint32_t);
 	void			*storage_context;
@@ -169,12 +170,14 @@ storage_flush(void *context, uint32_t timeout_ms)
 
 static int
 storage_query(void *context, const char *label, uint32_t minimum_severity,
+    const struct logcmp_query_filter *filter,
     struct logcmp_store_cursor *cursor, void *record, size_t capacity,
     size_t *length, uint32_t timeout_ms)
 {
 
-	return (logcmp_storage_query_next_for(context, label, minimum_severity,
-	    cursor, record, capacity, length, timeout_ms));
+	return (logcmp_storage_query_next_filtered_for(context, label,
+	    minimum_severity, filter, cursor, record, capacity, length,
+	    timeout_ms));
 }
 
 static int
@@ -647,14 +650,28 @@ handle_request(struct channel *channel __unused,
 		break;
 	case LOGCMP_OP_QUERY: {
 		const struct logcmp_query_request *query;
+		struct logcmp_query_filter filter;
 
 		query = (const void *)(message + 1);
 		store_cursor.generation = query->cursor.generation;
 		store_cursor.offset = query->cursor.offset;
+		/*
+		 * The filter narrows within the caller's own label only; scoping
+		 * still comes from state->sink.label passed below, never from the
+		 * request, so a filter can never reach another label's records.
+		 */
+		memset(&filter, 0, sizeof(filter));
+		filter.from_ns = query->from_ns;
+		filter.to_ns = query->to_ns;
+		filter.match_flags = query->match_flags;
+		filter.subsystem_length = query->subsystem_length;
+		filter.category_length = query->category_length;
+		filter.subsystem = query->subsystem;
+		filter.category = query->category;
 		query_length = 0;
 		query_result = state->storage_query(state->storage_context,
-		    state->sink.label, query->minimum_severity, &store_cursor,
-		    query_record,
+		    state->sink.label, query->minimum_severity, &filter,
+		    &store_cursor, query_record,
 		    sizeof(query_record), &query_length,
 		    LOGCMP_STORAGE_TIMEOUT_MS);
 		if (query_result == -1) {
@@ -754,6 +771,7 @@ test_storage_flush(void *context, uint32_t timeout_ms __unused)
 static int
 test_storage_query(void *context, const char *label __unused,
     uint32_t minimum_severity __unused,
+    const struct logcmp_query_filter *filter __unused,
     struct logcmp_store_cursor *cursor, void *record __unused,
     size_t capacity __unused, size_t *length, uint32_t timeout_ms __unused)
 {
@@ -1588,7 +1606,8 @@ main(void)
 	    cap_xfer_limit(storage_dir, CAP_XFER_NONE) == -1 ||
 	    cap_cloexec_limit(storage_dir, CAP_CLOEXEC_LOCKED) == -1 ||
 	    logcmp_storage_start(storage_dir, config.segment_size,
-	    config.max_segments,
+	    config.max_segments, config.retention_max_age,
+	    config.retention_max_bytes,
 	    &storage_control, &storage_process) == -1)
 		goto fail;
 	close(storage_dir);

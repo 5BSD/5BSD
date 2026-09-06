@@ -112,6 +112,68 @@ make_record(uint8_t *buffer, const char *message, uint32_t privacy,
 	return (cursor - buffer);
 }
 
+/*
+ * Build a record with caller-chosen subsystem, category, timestamp, severity,
+ * and sequence so filter tests can distinguish records.  subsystem/category
+ * must be valid identifiers (validated by logcmp_validate_record).
+ */
+static size_t
+make_named_record(uint8_t *buffer, uint64_t sequence, uint64_t timestamp_ns,
+    uint32_t severity, const char *subsystem, const char *category,
+    const char *message)
+{
+	struct logcmp_record *record;
+	uint8_t *cursor;
+	size_t subsystem_length, category_length, message_length;
+
+	subsystem_length = strlen(subsystem);
+	category_length = strlen(category);
+	message_length = strlen(message);
+	record = (void *)buffer;
+	memset(record, 0, sizeof(*record));
+	record->sequence = sequence;
+	record->timestamp_ns = timestamp_ns;
+	record->severity = severity;
+	record->kind = LOGCMP_KIND_LOG;
+	record->message_privacy = LOGCMP_PRIVACY_PUBLIC;
+	record->subsystem_length = (uint16_t)subsystem_length;
+	record->category_length = (uint16_t)category_length;
+	record->message_length = (uint32_t)message_length;
+	cursor = (void *)(record + 1);
+	memcpy(cursor, subsystem, subsystem_length);
+	cursor += subsystem_length;
+	memcpy(cursor, category, category_length);
+	cursor += category_length;
+	memcpy(cursor, message, message_length);
+	cursor += message_length;
+	ATF_REQUIRE_EQ(0, logcmp_validate_record(record, cursor - buffer));
+	return (cursor - buffer);
+}
+
+static int
+filtered_next(struct logcmp_store *store, const char *label, uint32_t severity,
+    uint64_t from_ns, uint64_t to_ns, uint32_t match_flags,
+    const char *subsystem, const char *category,
+    struct logcmp_store_cursor *cursor, uint8_t *output, size_t *output_length)
+{
+	struct logcmp_query_filter filter;
+
+	memset(&filter, 0, sizeof(filter));
+	filter.from_ns = from_ns;
+	filter.to_ns = to_ns;
+	filter.match_flags = match_flags;
+	if (subsystem != NULL) {
+		filter.subsystem = subsystem;
+		filter.subsystem_length = (uint16_t)strlen(subsystem);
+	}
+	if (category != NULL) {
+		filter.category = category;
+		filter.category_length = (uint16_t)strlen(category);
+	}
+	return (logcmp_store_query_next_filtered(store, label, severity, &filter,
+	    cursor, output, LOGCMP_MAX_RECORD, output_length));
+}
+
 static bool
 file_contains(int dirfd, const char *needle)
 {
@@ -821,6 +883,252 @@ ATF_TC_BODY(query_is_scoped_to_caller_label, tc)
 	fixture_destroy(&fixture);
 }
 
+ATF_TC_WITHOUT_HEAD(query_filters_subsystem_category_and_time);
+ATF_TC_BODY(query_filters_subsystem_category_and_time, tc)
+{
+	struct logcmp_store_cursor cursor;
+	struct fixture fixture;
+	struct logcmp_store *store;
+	uint8_t record[LOGCMP_MAX_RECORD], output[LOGCMP_MAX_RECORD];
+	struct logcmp_record *result;
+	size_t length, output_length;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	/* Three records for org.f with distinct subsystem/category/timestamp. */
+	length = make_named_record(record, 1, 1000, LOGCMP_SEVERITY_INFO,
+	    "auth.daemon", "login", "a");
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.f",
+	    (const void *)record, length, false));
+	length = make_named_record(record, 2, 2000, LOGCMP_SEVERITY_INFO,
+	    "net.stack", "connect", "b");
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.f",
+	    (const void *)record, length, false));
+	length = make_named_record(record, 3, 3000, LOGCMP_SEVERITY_INFO,
+	    "auth.agent", "logout", "c");
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.f",
+	    (const void *)record, length, false));
+	/* A different label with a colliding subsystem, to prove scoping. */
+	length = make_named_record(record, 99, 1000, LOGCMP_SEVERITY_INFO,
+	    "auth.daemon", "login", "x");
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.other",
+	    (const void *)record, length, false));
+	result = (void *)output;
+
+	/* Subsystem substring "auth" matches records 1 and 3, not 2. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 0, 0, "auth",
+	    NULL, &cursor, output, &output_length));
+	ATF_CHECK_EQ(1, result->sequence);
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 0, 0, "auth",
+	    NULL, &cursor, output, &output_length));
+	ATF_CHECK_EQ(3, result->sequence);
+	ATF_CHECK_EQ(0, filtered_next(store, "org.f", 0, 0, 0, 0, "auth",
+	    NULL, &cursor, output, &output_length));
+
+	/* Subsystem exact "auth.daemon" matches only record 1. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 0,
+	    LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT, "auth.daemon", NULL, &cursor,
+	    output, &output_length));
+	ATF_CHECK_EQ(1, result->sequence);
+	ATF_CHECK_EQ(0, filtered_next(store, "org.f", 0, 0, 0,
+	    LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT, "auth.daemon", NULL, &cursor,
+	    output, &output_length));
+
+	/* Category substring "log" matches login (1) and logout (3). */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 0, 0, NULL,
+	    "log", &cursor, output, &output_length));
+	ATF_CHECK_EQ(1, result->sequence);
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 0, 0, NULL,
+	    "log", &cursor, output, &output_length));
+	ATF_CHECK_EQ(3, result->sequence);
+	ATF_CHECK_EQ(0, filtered_next(store, "org.f", 0, 0, 0, 0, NULL,
+	    "log", &cursor, output, &output_length));
+
+	/* Category exact "connect" matches only record 2. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 0,
+	    LOGCMP_QUERY_MATCH_CATEGORY_EXACT, NULL, "connect", &cursor,
+	    output, &output_length));
+	ATF_CHECK_EQ(2, result->sequence);
+
+	/* Time window [1500,2500] matches only record 2. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 1500, 2500, 0, NULL,
+	    NULL, &cursor, output, &output_length));
+	ATF_CHECK_EQ(2, result->sequence);
+	ATF_CHECK_EQ(0, filtered_next(store, "org.f", 0, 1500, 2500, 0, NULL,
+	    NULL, &cursor, output, &output_length));
+
+	/* Open-ended lower bound from=2500 matches only record 3. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 2500, 0, 0, NULL,
+	    NULL, &cursor, output, &output_length));
+	ATF_CHECK_EQ(3, result->sequence);
+
+	/* Combined subsystem "auth" AND to_ns=1500 narrows to record 1. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 1500, 0, "auth",
+	    NULL, &cursor, output, &output_length));
+	ATF_CHECK_EQ(1, result->sequence);
+	ATF_CHECK_EQ(0, filtered_next(store, "org.f", 0, 0, 1500, 0, "auth",
+	    NULL, &cursor, output, &output_length));
+
+	/*
+	 * Scoping is never widened by the filter: querying org.other with a
+	 * subsystem that also occurs under org.f returns only org.other's own
+	 * record (sequence 99), never org.f's.
+	 */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.other", 0, 0, 0,
+	    LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT, "auth.daemon", NULL, &cursor,
+	    output, &output_length));
+	ATF_CHECK_EQ(99, result->sequence);
+	ATF_CHECK_EQ(0, filtered_next(store, "org.other", 0, 0, 0,
+	    LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT, "auth.daemon", NULL, &cursor,
+	    output, &output_length));
+
+	/* An empty filter is unconstrained: all three org.f records, in order. */
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 0, 0, NULL, NULL,
+	    &cursor, output, &output_length));
+	ATF_CHECK_EQ(1, result->sequence);
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 0, 0, NULL, NULL,
+	    &cursor, output, &output_length));
+	ATF_CHECK_EQ(2, result->sequence);
+	ATF_REQUIRE_EQ(1, filtered_next(store, "org.f", 0, 0, 0, 0, NULL, NULL,
+	    &cursor, output, &output_length));
+	ATF_CHECK_EQ(3, result->sequence);
+	ATF_CHECK_EQ(0, filtered_next(store, "org.f", 0, 0, 0, 0, NULL, NULL,
+	    &cursor, output, &output_length));
+
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+static void
+fill_completed_segments(struct logcmp_store *store)
+{
+	uint8_t record[LOGCMP_MAX_RECORD];
+	char message[LOGCMP_MAX_TEXT + 1];
+	size_t length;
+	unsigned i;
+
+	memset(message, 'z', sizeof(message) - 1);
+	message[sizeof(message) - 1] = '\0';
+	length = make_record(record, message, LOGCMP_PRIVACY_PUBLIC, "value",
+	    LOGCMP_PRIVACY_PUBLIC);
+	for (i = 0; i < 160; i++) {
+		((struct logcmp_record *)(void *)record)->sequence = i + 1;
+		ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.test",
+		    (const void *)record, length, false));
+	}
+}
+
+ATF_TC_WITHOUT_HEAD(retention_disabled_keeps_all);
+ATF_TC_BODY(retention_disabled_keeps_all, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	unsigned before;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	fill_completed_segments(store);
+	before = completed_segment_count(fixture.dirfd);
+	ATF_REQUIRE(before >= 3);
+	/* Default 0/0 retention: enforcement is a keep-all no-op. */
+	ATF_REQUIRE_EQ(0, logcmp_store_enforce_retention(store));
+	ATF_CHECK_EQ(before, completed_segment_count(fixture.dirfd));
+	ATF_CHECK_EQ(0, logcmp_store_pruned_segments(store));
+	/* Explicitly disabled is the same. */
+	logcmp_store_set_retention(store, 0, 0);
+	ATF_REQUIRE_EQ(0, logcmp_store_enforce_retention(store));
+	ATF_CHECK_EQ(before, completed_segment_count(fixture.dirfd));
+	ATF_CHECK_EQ(0, logcmp_store_pruned_segments(store));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC_WITHOUT_HEAD(retention_prunes_oldest_by_age);
+ATF_TC_BODY(retention_prunes_oldest_by_age, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct stat status;
+	struct timespec past[2];
+	unsigned before;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	fill_completed_segments(store);
+	before = completed_segment_count(fixture.dirfd);
+	ATF_REQUIRE(before >= 3);
+	/* Backdate only the oldest completed segment by an hour. */
+	ATF_REQUIRE_EQ(0, fstatat(fixture.dirfd,
+	    "segment-00000000000000000001.log", &status, 0));
+	past[0].tv_sec = time(NULL) - 3600;
+	past[0].tv_nsec = 0;
+	past[1] = past[0];
+	ATF_REQUIRE_EQ(0, utimensat(fixture.dirfd,
+	    "segment-00000000000000000001.log", past, 0));
+	logcmp_store_set_retention(store, 60, 0);
+	ATF_REQUIRE_EQ(0, logcmp_store_enforce_retention(store));
+	/* The aged-out oldest is gone; the next (recent) one survives. */
+	ATF_CHECK_ERRNO(ENOENT, fstatat(fixture.dirfd,
+	    "segment-00000000000000000001.log", &status, 0) == -1);
+	ATF_CHECK_EQ(0, fstatat(fixture.dirfd,
+	    "segment-00000000000000000002.log", &status, 0));
+	ATF_CHECK_EQ(1, logcmp_store_pruned_segments(store));
+	ATF_CHECK_EQ(before - 1, completed_segment_count(fixture.dirfd));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+ATF_TC_WITHOUT_HEAD(retention_prunes_by_size_never_active);
+ATF_TC_BODY(retention_prunes_by_size_never_active, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	struct stat status;
+	uint8_t record[LOGCMP_MAX_RECORD];
+	off_t active_before;
+	size_t length;
+	unsigned before;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	fill_completed_segments(store);
+	before = completed_segment_count(fixture.dirfd);
+	ATF_REQUIRE(before >= 3);
+	active_before = logcmp_store_offset(store);
+	/*
+	 * A tiny byte budget forces every completed segment to be pruned, but
+	 * the active segment is never a candidate.
+	 */
+	logcmp_store_set_retention(store, 0, 1024);
+	ATF_REQUIRE_EQ(0, logcmp_store_enforce_retention(store));
+	ATF_CHECK_EQ(0, completed_segment_count(fixture.dirfd));
+	ATF_CHECK_EQ(before, logcmp_store_pruned_segments(store));
+	ATF_CHECK(logcmp_store_pruned_records(store) > 0);
+	/* The active segment is intact and still writable. */
+	ATF_REQUIRE_EQ(0, fstatat(fixture.dirfd, "active.segment", &status, 0));
+	ATF_CHECK_EQ(active_before, logcmp_store_offset(store));
+	length = make_record(record, "after-prune", LOGCMP_PRIVACY_PUBLIC,
+	    "value", LOGCMP_PRIVACY_PUBLIC);
+	((struct logcmp_record *)(void *)record)->sequence = 1000;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, "org.test",
+	    (const void *)record, length, true));
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -844,5 +1152,9 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, query_detects_retained_segment_corruption);
 	ATF_TP_ADD_TC(tp, rejects_invalid_inputs);
 	ATF_TP_ADD_TC(tp, query_is_scoped_to_caller_label);
+	ATF_TP_ADD_TC(tp, query_filters_subsystem_category_and_time);
+	ATF_TP_ADD_TC(tp, retention_disabled_keeps_all);
+	ATF_TP_ADD_TC(tp, retention_prunes_oldest_by_age);
+	ATF_TP_ADD_TC(tp, retention_prunes_by_size_never_active);
 	return (atf_no_error());
 }

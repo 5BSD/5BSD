@@ -799,6 +799,68 @@ ATF_TC_BODY(scoped_query_cursor_and_retry, tc)
 	logcmp_client_close(client);
 }
 
+ATF_TC_WITHOUT_HEAD(query_ex_validates_and_passes_filters);
+ATF_TC_BODY(query_ex_validates_and_passes_filters, tc)
+{
+	struct logcmp_client *client;
+	struct logcmp_query_options options;
+	struct logcmp_query_cursor cursor;
+	uint8_t record[LOGCMP_MAX_RECORD];
+	char oversized[LOGCMP_MAX_SUBSYSTEM + 2];
+	size_t length;
+
+	fake_service_reset();
+	ATF_REQUIRE_EQ(0, logcmp_client_open(&client));
+
+	/* A fully specified filter still round-trips a valid request. */
+	memset(&options, 0, sizeof(options));
+	options.size = sizeof(options);
+	options.minimum_severity = LOGCMP_SEVERITY_INFO;
+	options.match_flags = LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT;
+	options.from_ns = 1;
+	options.to_ns = 100;
+	options.subsystem = "tests.fake";
+	options.category = "query";
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, logcmp_query_ex(client, &options, &cursor, record,
+	    sizeof(record), &length));
+	ATF_CHECK_EQ(77, ((struct logcmp_record *)(void *)record)->sequence);
+	ATF_CHECK_EQ(0, logcmp_validate_record((const void *)record, length));
+
+	/* An all-zero options (bar size) reproduces logcmp_query_next. */
+	memset(&options, 0, sizeof(options));
+	options.size = sizeof(options);
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(1, logcmp_query_ex(client, &options, &cursor, record,
+	    sizeof(record), &length));
+	ATF_CHECK_EQ(77, ((struct logcmp_record *)(void *)record)->sequence);
+
+	/* Bad options are rejected locally with EINVAL. */
+	memset(&options, 0, sizeof(options));
+	options.size = sizeof(options) + 1;
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_CHECK_ERRNO(EINVAL, logcmp_query_ex(client, &options, &cursor,
+	    record, sizeof(record), &length) == -1);
+	options.size = sizeof(options);
+	options.match_flags = 0x80000000U;
+	ATF_CHECK_ERRNO(EINVAL, logcmp_query_ex(client, &options, &cursor,
+	    record, sizeof(record), &length) == -1);
+	options.match_flags = 0;
+	options.from_ns = 100;
+	options.to_ns = 10;
+	ATF_CHECK_ERRNO(EINVAL, logcmp_query_ex(client, &options, &cursor,
+	    record, sizeof(record), &length) == -1);
+	options.from_ns = 0;
+	options.to_ns = 0;
+	memset(oversized, 'a', sizeof(oversized) - 1);
+	oversized[sizeof(oversized) - 1] = '\0';
+	options.subsystem = oversized;
+	ATF_CHECK_ERRNO(EINVAL, logcmp_query_ex(client, &options, &cursor,
+	    record, sizeof(record), &length) == -1);
+
+	logcmp_client_close(client);
+}
+
 ATF_TC_WITHOUT_HEAD(emit_rejects_redaction_expansion);
 ATF_TC_BODY(emit_rejects_redaction_expansion, tc)
 {
@@ -866,6 +928,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, peer_death_reconnects_without_replay);
 	ATF_TP_ADD_TC(tp, per_severity_drop_accounting);
 	ATF_TP_ADD_TC(tp, scoped_query_cursor_and_retry);
+	ATF_TP_ADD_TC(tp, query_ex_validates_and_passes_filters);
 	ATF_TP_ADD_TC(tp, emit_rejects_redaction_expansion);
 	return (atf_no_error());
 }

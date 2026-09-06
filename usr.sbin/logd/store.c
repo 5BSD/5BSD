@@ -50,6 +50,10 @@ struct logcmp_store {
 	uint64_t	segment_limit;
 	uint32_t	max_segments;
 	off_t		offset;
+	uint64_t	retention_max_age_ns;
+	uint64_t	retention_max_bytes;
+	uint64_t	pruned_segments;
+	uint64_t	pruned_records;
 	uint8_t		privacy_key[LOGCMP_STORE_PRIVACY_KEY_SIZE];
 	size_t		nlabel_counts;
 	struct store_label_count label_counts[STORE_LABEL_COUNTERS];
@@ -809,9 +813,57 @@ logcmp_store_flush(struct logcmp_store *store)
 	return (fdatasync(store->fd));
 }
 
+/*
+ * Apply the optional QUERY filter to a record whose label and severity have
+ * already been checked by the caller.  This only narrows the caller's own-label
+ * result set; it can never admit a record the label test rejected.  Empty
+ * fields are "no constraint" so a zeroed filter matches everything.
+ */
+static bool
+record_matches_filter(const struct logcmp_record *record,
+    const struct logcmp_query_filter *filter)
+{
+	const char *subsystem, *category;
+
+	if (filter == NULL)
+		return (true);
+	if (filter->from_ns != 0 && record->timestamp_ns < filter->from_ns)
+		return (false);
+	if (filter->to_ns != 0 && record->timestamp_ns > filter->to_ns)
+		return (false);
+	subsystem = (const char *)(const void *)(record + 1);
+	category = subsystem + record->subsystem_length;
+	if (filter->subsystem_length != 0) {
+		if ((filter->match_flags &
+		    LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT) != 0) {
+			if (record->subsystem_length != filter->subsystem_length ||
+			    memcmp(subsystem, filter->subsystem,
+			    filter->subsystem_length) != 0)
+				return (false);
+		} else if (record->subsystem_length < filter->subsystem_length ||
+		    memmem(subsystem, record->subsystem_length,
+		    filter->subsystem, filter->subsystem_length) == NULL)
+			return (false);
+	}
+	if (filter->category_length != 0) {
+		if ((filter->match_flags &
+		    LOGCMP_QUERY_MATCH_CATEGORY_EXACT) != 0) {
+			if (record->category_length != filter->category_length ||
+			    memcmp(category, filter->category,
+			    filter->category_length) != 0)
+				return (false);
+		} else if (record->category_length < filter->category_length ||
+		    memmem(category, record->category_length,
+		    filter->category, filter->category_length) == NULL)
+			return (false);
+	}
+	return (true);
+}
+
 int
-logcmp_store_query_next(struct logcmp_store *store, const char *label,
-    uint32_t minimum_severity, struct logcmp_store_cursor *cursor,
+logcmp_store_query_next_filtered(struct logcmp_store *store, const char *label,
+    uint32_t minimum_severity, const struct logcmp_query_filter *filter,
+    struct logcmp_store_cursor *cursor,
     void *record_buffer, size_t capacity, size_t *record_length)
 {
 	uint8_t header[STORE_RECORD_HEADER];
@@ -941,7 +993,8 @@ logcmp_store_query_next(struct logcmp_store *store, const char *label,
 			if (stored_label_length != label_length ||
 			    memcmp(body + STORE_BODY_HEADER, label, label_length) != 0 ||
 			    (minimum_severity != 0 &&
-			    record->severity < minimum_severity)) {
+			    record->severity < minimum_severity) ||
+			    !record_matches_filter(record, filter)) {
 				cursor->generation = generation;
 				cursor->offset = (uint64_t)offset;
 				if (scanned_records ==
@@ -960,6 +1013,8 @@ logcmp_store_query_next(struct logcmp_store *store, const char *label,
 			cursor->generation = generation;
 			cursor->offset = (uint64_t)offset;
 			close(fd);
+			LOGD_PROBE_QUERY_FILTER(label, scanned_records, 1,
+			    LOGCMP_STORE_QUERY_RECORD);
 			return (LOGCMP_STORE_QUERY_RECORD);
 		}
 		close(fd);
@@ -967,6 +1022,8 @@ logcmp_store_query_next(struct logcmp_store *store, const char *label,
 	}
 	cursor->generation = store->generation;
 	cursor->offset = (uint64_t)store->offset;
+	LOGD_PROBE_QUERY_FILTER(label, scanned_records, 0,
+	    LOGCMP_STORE_QUERY_EOF);
 	return (LOGCMP_STORE_QUERY_EOF);
 
 corrupt:
@@ -976,6 +1033,252 @@ corrupt:
 read_fail:
 	error = errno != 0 ? errno : EIO;
 	close(fd);
+	return (errno = error, -1);
+}
+
+int
+logcmp_store_query_next(struct logcmp_store *store, const char *label,
+    uint32_t minimum_severity, struct logcmp_store_cursor *cursor,
+    void *record_buffer, size_t capacity, size_t *record_length)
+{
+
+	return (logcmp_store_query_next_filtered(store, label, minimum_severity,
+	    NULL, cursor, record_buffer, capacity, record_length));
+}
+
+void
+logcmp_store_set_retention(struct logcmp_store *store, uint64_t max_age_s,
+    uint64_t max_bytes)
+{
+
+	if (store == NULL)
+		return;
+	store->retention_max_age_ns = max_age_s > UINT64_MAX / UINT64_C(1000000000)
+	    ? UINT64_MAX : max_age_s * UINT64_C(1000000000);
+	store->retention_max_bytes = max_bytes;
+}
+
+uint64_t
+logcmp_store_pruned_segments(const struct logcmp_store *store)
+{
+
+	return (store != NULL ? store->pruned_segments : 0);
+}
+
+uint64_t
+logcmp_store_pruned_records(const struct logcmp_store *store)
+{
+
+	return (store != NULL ? store->pruned_records : 0);
+}
+
+struct retention_entry {
+	uint64_t	generation;
+	uint64_t	mtime_ns;
+	uint64_t	size;
+};
+
+static int
+retention_entry_cmp(const void *a, const void *b)
+{
+	const struct retention_entry *ea = a, *eb = b;
+
+	if (ea->generation < eb->generation)
+		return (-1);
+	if (ea->generation > eb->generation)
+		return (1);
+	return (0);
+}
+
+/*
+ * Best-effort count of the whole records in a completed segment, for the
+ * retention__prune probe only.  Walks record headers structurally and stops at
+ * the first inconsistency or short read; it never fails the prune.
+ */
+static uint64_t
+retention_count_records(int dirfd, const char *name)
+{
+	uint8_t header[STORE_RECORD_HEADER];
+	struct stat status;
+	uint64_t records;
+	uint32_t body_length;
+	off_t offset;
+	size_t amount;
+	int fd;
+
+	fd = openat(dirfd, name, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd == -1)
+		return (0);
+	if (fstat(fd, &status) == -1 || !S_ISREG(status.st_mode)) {
+		close(fd);
+		return (0);
+	}
+	records = 0;
+	offset = STORE_FILE_HEADER;
+	while (offset < status.st_size) {
+		if (full_pread(fd, header, sizeof(header), offset, &amount) == -1 ||
+		    amount != sizeof(header) ||
+		    le32dec(header) != STORE_RECORD_MAGIC)
+			break;
+		body_length = le32dec(header + 8);
+		if (body_length < STORE_BODY_HEADER ||
+		    (uint64_t)offset + sizeof(header) + body_length >
+		    (uint64_t)status.st_size)
+			break;
+		offset += sizeof(header) + body_length;
+		records++;
+	}
+	close(fd);
+	return (records);
+}
+
+static int
+retention_prune_one(struct logcmp_store *store,
+    const struct retention_entry *entry, int reason)
+{
+	char name[64];
+	uint64_t records;
+
+	if (snprintf(name, sizeof(name), "segment-%020ju.log",
+	    (uintmax_t)entry->generation) >= (int)sizeof(name))
+		return (errno = EOVERFLOW, -1);
+	records = retention_count_records(store->dirfd, name);
+	if (unlinkat(store->dirfd, name, 0) == -1) {
+		if (errno == ENOENT)
+			return (0);
+		LOGD_PROBE_RETENTION(entry->generation, records, entry->size,
+		    reason == LOGCMP_STORE_RETENTION_AGE ? -reason : reason);
+		return (-1);
+	}
+	store->pruned_segments++;
+	store->pruned_records += records;
+	LOGD_PROBE_RETENTION(entry->generation, records, entry->size, reason);
+	return (0);
+}
+
+/*
+ * Enforce the configured retention policy.  Prunes oldest completed segments
+ * whose age exceeds retention_max_age, then, if the whole store (active segment
+ * included in the byte accounting) still exceeds retention_max_bytes, prunes
+ * oldest completed segments until it no longer does.  Never touches the active
+ * segment (only "segment-*.log" completed files are candidates) and only ever
+ * removes whole segments, so no partial record is ever dropped.  A pruned
+ * segment's records were, by definition, outside policy.
+ */
+int
+logcmp_store_enforce_retention(struct logcmp_store *store)
+{
+	struct retention_entry *entries;
+	struct dirent *entry;
+	struct stat status;
+	DIR *directory;
+	struct timespec now;
+	uint64_t generation, now_ns, total;
+	size_t count, capacity, i;
+	int duplicate, error;
+
+	if (store == NULL || store->fd < 0)
+		return (errno = EINVAL, -1);
+	if (store->retention_max_age_ns == 0 && store->retention_max_bytes == 0)
+		return (0);
+	if (clock_gettime(CLOCK_REALTIME, &now) == -1)
+		return (-1);
+	now_ns = (uint64_t)now.tv_sec * UINT64_C(1000000000) +
+	    (uint64_t)now.tv_nsec;
+	duplicate = openat(store->dirfd, ".",
+	    O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+	if (duplicate == -1)
+		return (-1);
+	directory = fdopendir(duplicate);
+	if (directory == NULL) {
+		error = errno;
+		close(duplicate);
+		return (errno = error, -1);
+	}
+	entries = NULL;
+	count = 0;
+	capacity = 0;
+	/* The active segment counts toward the store's total size. */
+	total = store->offset > 0 ? (uint64_t)store->offset : 0;
+	for (;;) {
+		errno = 0;
+		entry = readdir(directory);
+		if (entry == NULL)
+			break;
+		if (!segment_name_generation(entry->d_name, &generation) ||
+		    generation >= store->generation)
+			continue;
+		if (fstatat(store->dirfd, entry->d_name, &status,
+		    AT_SYMLINK_NOFOLLOW) == -1) {
+			if (errno == ENOENT)
+				continue;
+			error = errno;
+			goto fail;
+		}
+		if (!S_ISREG(status.st_mode))
+			continue;
+		if (count == capacity) {
+			struct retention_entry *grown;
+			size_t next = capacity == 0 ? 16 : capacity * 2;
+
+			grown = reallocarray(entries, next, sizeof(*entries));
+			if (grown == NULL) {
+				error = errno;
+				goto fail;
+			}
+			entries = grown;
+			capacity = next;
+		}
+		entries[count].generation = generation;
+		entries[count].mtime_ns = (uint64_t)status.st_mtim.tv_sec *
+		    UINT64_C(1000000000) + (uint64_t)status.st_mtim.tv_nsec;
+		entries[count].size = (uint64_t)status.st_size;
+		total += entries[count].size;
+		count++;
+	}
+	if (errno != 0) {
+		error = errno;
+		goto fail;
+	}
+	closedir(directory);
+	if (count == 0)
+		return (0);
+	qsort(entries, count, sizeof(*entries), retention_entry_cmp);
+	i = 0;
+	/* Age pass: oldest first, stop at the first segment within policy. */
+	if (store->retention_max_age_ns != 0) {
+		for (; i < count; i++) {
+			if (now_ns <= entries[i].mtime_ns ||
+			    now_ns - entries[i].mtime_ns <=
+			    store->retention_max_age_ns)
+				break;
+			if (retention_prune_one(store, &entries[i],
+			    LOGCMP_STORE_RETENTION_AGE) == -1) {
+				error = errno;
+				free(entries);
+				return (errno = error, -1);
+			}
+			total -= MIN(total, entries[i].size);
+		}
+	}
+	/* Size pass: keep pruning oldest completed segments over budget. */
+	if (store->retention_max_bytes != 0) {
+		for (; i < count && total > store->retention_max_bytes; i++) {
+			if (retention_prune_one(store, &entries[i],
+			    LOGCMP_STORE_RETENTION_SIZE) == -1) {
+				error = errno;
+				free(entries);
+				return (errno = error, -1);
+			}
+			total -= MIN(total, entries[i].size);
+		}
+	}
+	free(entries);
+	return (0);
+
+fail:
+	closedir(directory);
+	free(entries);
 	return (errno = error, -1);
 }
 

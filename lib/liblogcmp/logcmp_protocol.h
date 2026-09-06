@@ -39,6 +39,17 @@
 #define	LOGCMP_RECORD_F_NONE		0x00000000U
 #define	LOGCMP_RECORD_F_MASK		LOGCMP_RECORD_F_NONE
 
+/*
+ * QUERY filter match modes.  When a subsystem/category filter is non-empty the
+ * default is a substring match; the EXACT bit demands a full-length equality
+ * instead.  A zero-length filter is "no constraint" regardless of the bit, so a
+ * zeroed request keeps the pre-filter behaviour (back-compat).
+ */
+#define	LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT	0x00000001U
+#define	LOGCMP_QUERY_MATCH_CATEGORY_EXACT	0x00000002U
+#define	LOGCMP_QUERY_MATCH_MASK \
+	(LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT | LOGCMP_QUERY_MATCH_CATEGORY_EXACT)
+
 enum logcmp_opcode {
 	LOGCMP_OP_HELLO = 1,
 	LOGCMP_OP_ATTACH,
@@ -180,11 +191,30 @@ struct logcmp_query_cursor {
 	uint64_t	offset;
 };
 
+/*
+ * QUERY request.  minimum_severity and the caller's own label bound the scan as
+ * before; the optional filters narrow it further, still strictly within the
+ * caller's label.  A zero from_ns/to_ns is "no bound", a zero-length
+ * subsystem/category is "no constraint", and match_flags == 0 selects substring
+ * matching -- so a zeroed request behaves exactly as the pre-filter protocol.
+ * The subsystem/category fragments are fixed inline buffers so the request is a
+ * flat POD; bytes past the declared length must be zero.
+ */
 struct logcmp_query_request {
 	struct logcmp_query_cursor cursor;
 	uint32_t	minimum_severity;
+	uint32_t	match_flags;
+	uint64_t	from_ns;
+	uint64_t	to_ns;
+	uint16_t	subsystem_length;
+	uint16_t	category_length;
 	uint32_t	reserved;
+	char		subsystem[LOGCMP_MAX_SUBSYSTEM];
+	char		category[LOGCMP_MAX_CATEGORY];
 };
+
+_Static_assert(sizeof(struct logcmp_query_request) == 208,
+    "logcmp query request ABI");
 
 struct logcmp_query_reply {
 	struct logcmp_query_cursor cursor;

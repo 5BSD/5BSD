@@ -51,7 +51,7 @@ ATF_TC_BODY(abi, tc)
 	ATF_CHECK_EQ(8, sizeof(struct logcmp_attribute_wire));
 	ATF_CHECK_EQ(432, sizeof(struct logcmp_stats));
 	ATF_CHECK_EQ(16, sizeof(struct logcmp_query_cursor));
-	ATF_CHECK_EQ(24, sizeof(struct logcmp_query_request));
+	ATF_CHECK_EQ(208, sizeof(struct logcmp_query_request));
 	ATF_CHECK_EQ(24, sizeof(struct logcmp_query_reply));
 	ATF_CHECK_EQ(6, LOGCMP_OP_STATS);
 	ATF_CHECK_EQ(8, LOGCMP_OP_QUERY);

@@ -74,10 +74,17 @@ struct storage_session {
 
 struct storage_query {
 	struct logcmp_store_cursor cursor;
+	uint64_t from_ns;
+	uint64_t to_ns;
 	uint32_t minimum_severity;
+	uint32_t match_flags;
 	uint16_t label_length;
 	uint16_t reserved;
+	uint16_t subsystem_length;
+	uint16_t category_length;
 	char label[STORAGE_LABEL_MAX + 1];
+	char subsystem[LOGCMP_MAX_SUBSYSTEM];
+	char category[LOGCMP_MAX_CATEGORY];
 };
 
 struct storage_record {
@@ -525,7 +532,11 @@ handle_session(struct storage_session *session, struct logcmp_store *store)
 		    (strlen(session->label) != query->label_length ||
 		    memcmp(session->label, query->label,
 		    query->label_length) != 0)) ||
-		    query->minimum_severity > LOGCMP_SEVERITY_FATAL + 3) {
+		    query->minimum_severity > LOGCMP_SEVERITY_FATAL + 3 ||
+		    (query->match_flags & ~LOGCMP_QUERY_MATCH_MASK) != 0 ||
+		    query->subsystem_length > LOGCMP_MAX_SUBSYSTEM ||
+		    query->category_length > LOGCMP_MAX_CATEGORY ||
+		    (query->to_ns != 0 && query->from_ns > query->to_ns)) {
 			error = EINVAL;
 			(void)send_status(session->fd, STORAGE_OP_QUERY, error);
 			break;
@@ -539,9 +550,22 @@ handle_session(struct storage_session *session, struct logcmp_store *store)
 			break;
 		}
 		query->label[query->label_length] = '\0';
-		query_reply.result = logcmp_store_query_next(store, query->label,
-		    query->minimum_severity, &query_reply.cursor,
-		    query_reply.record, sizeof(query_reply.record), &record_length);
+		{
+			struct logcmp_query_filter filter;
+
+			memset(&filter, 0, sizeof(filter));
+			filter.from_ns = query->from_ns;
+			filter.to_ns = query->to_ns;
+			filter.match_flags = query->match_flags;
+			filter.subsystem_length = query->subsystem_length;
+			filter.category_length = query->category_length;
+			filter.subsystem = query->subsystem;
+			filter.category = query->category;
+			query_reply.result = logcmp_store_query_next_filtered(store,
+			    query->label, query->minimum_severity, &filter,
+			    &query_reply.cursor, query_reply.record,
+			    sizeof(query_reply.record), &record_length);
+		}
 		if ((int32_t)query_reply.result == -1) {
 			error = errno != 0 ? errno : EIO;
 			if (error == EILSEQ)
@@ -598,16 +622,38 @@ handle_session(struct storage_session *session, struct logcmp_store *store)
 	return (0);
 }
 
+/*
+ * Bounded periodic retention pass.  Runs at most once per second so age-based
+ * pruning happens even without rotations, without turning the storage loop into
+ * a directory-scanning hot path.  Best-effort: a failed pass is retried next
+ * second and never disturbs ingestion.
+ */
+static void
+maybe_enforce_retention(struct logcmp_store *store, struct timespec *last)
+{
+	struct timespec now;
+
+	if (clock_gettime(CLOCK_MONOTONIC, &now) == -1)
+		return;
+	if (last->tv_sec != 0 && now.tv_sec < last->tv_sec + 1)
+		return;
+	*last = now;
+	(void)logcmp_store_enforce_retention(store);
+}
+
 int
 logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
-    uint32_t max_segments, bool sandbox)
+    uint32_t max_segments, uint64_t retention_max_age, uint64_t retention_max_bytes,
+    bool sandbox)
 {
 	struct storage_session sessions[STORAGE_MAX_SESSIONS];
 	struct logcmp_store *store;
 	struct pollfd descriptors[STORAGE_MAX_SESSIONS + 1];
+	struct timespec retention_at;
 	size_t i, nsessions;
 	int error, result;
 	bool control_open = true;
+	bool retention_enabled;
 
 	if (logcmp_store_open(dirfd, segment_limit, max_segments, &store) == -1) {
 		error = errno != 0 ? errno : EIO;
@@ -635,6 +681,9 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 			return (1);
 		}
 	}
+	logcmp_store_set_retention(store, retention_max_age, retention_max_bytes);
+	retention_enabled = retention_max_age != 0 || retention_max_bytes != 0;
+	retention_at = (struct timespec){ 0, 0 };
 	memset(sessions, 0, sizeof(sessions));
 	if (sandbox && service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
@@ -652,6 +701,8 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 	}
 	nsessions = 0;
 	for (;;) {
+		if (retention_enabled)
+			maybe_enforce_retention(store, &retention_at);
 		/*
 		 * Finish bounded drain work before blocking.  Each session gets at
 		 * most one batch per round so a hot producer cannot monopolize the
@@ -781,7 +832,8 @@ receive_status_until(int fd, uint16_t operation,
 
 int
 logcmp_storage_test_start(int dirfd, uint64_t segment_limit,
-    uint32_t max_segments, int *control_fdp, pid_t *pidp)
+    uint32_t max_segments, uint64_t retention_max_age,
+    uint64_t retention_max_bytes, int *control_fdp, pid_t *pidp)
 {
 	int sockets[2], error;
 	pid_t pid;
@@ -805,7 +857,7 @@ logcmp_storage_test_start(int dirfd, uint64_t segment_limit,
 	if (pid == 0) {
 		close(sockets[0]);
 		_exit(logcmp_storage_manager_run(dirfd, sockets[1], segment_limit,
-		    max_segments, false));
+		    max_segments, retention_max_age, retention_max_bytes, false));
 	}
 	close(sockets[1]);
 	if (receive_status(sockets[0], STORAGE_OP_READY,
@@ -824,6 +876,7 @@ logcmp_storage_test_start(int dirfd, uint64_t segment_limit,
 
 int
 logcmp_storage_start(int dirfd, uint64_t segment_limit, uint32_t max_segments,
+    uint64_t retention_max_age, uint64_t retention_max_bytes,
     int *control_fdp, int *process_fdp)
 {
 	int sockets[2], pd, error;
@@ -856,7 +909,7 @@ logcmp_storage_start(int dirfd, uint64_t segment_limit, uint32_t max_segments,
 	if (pid == 0) {
 		close(sockets[0]);
 		_exit(logcmp_storage_manager_run(dirfd, sockets[1], segment_limit,
-		    max_segments, true));
+		    max_segments, retention_max_age, retention_max_bytes, true));
 	}
 	close(sockets[1]);
 	if (receive_status(sockets[0], STORAGE_OP_READY,
@@ -1125,8 +1178,9 @@ logcmp_storage_count(struct logcmp_storage_session *session, const char *label,
 }
 
 int
-logcmp_storage_query_next_for(struct logcmp_storage_session *session,
+logcmp_storage_query_next_filtered_for(struct logcmp_storage_session *session,
     const char *label, uint32_t minimum_severity,
+    const struct logcmp_query_filter *filter,
     struct logcmp_store_cursor *cursor, void *record, size_t capacity,
     size_t *record_length, uint32_t timeout_ms)
 {
@@ -1148,6 +1202,12 @@ logcmp_storage_query_next_for(struct logcmp_storage_session *session,
 	    capacity < sizeof(struct logcmp_record) || timeout_ms == 0 ||
 	    minimum_severity > LOGCMP_SEVERITY_FATAL + 3)
 		return (errno = EINVAL, -1);
+	if (filter != NULL &&
+	    ((filter->match_flags & ~LOGCMP_QUERY_MATCH_MASK) != 0 ||
+	    filter->subsystem_length > LOGCMP_MAX_SUBSYSTEM ||
+	    filter->category_length > LOGCMP_MAX_CATEGORY ||
+	    (filter->to_ns != 0 && filter->from_ns > filter->to_ns)))
+		return (errno = EINVAL, -1);
 	if (!session->multiplex && strcmp(session->label, label) != 0)
 		return (errno = EACCES, -1);
 	*record_length = 0;
@@ -1164,6 +1224,19 @@ again:
 	query->minimum_severity = minimum_severity;
 	query->label_length = (uint16_t)label_length;
 	memcpy(query->label, label, label_length);
+	if (filter != NULL) {
+		query->from_ns = filter->from_ns;
+		query->to_ns = filter->to_ns;
+		query->match_flags = filter->match_flags;
+		query->subsystem_length = filter->subsystem_length;
+		query->category_length = filter->category_length;
+		if (filter->subsystem_length != 0)
+			memcpy(query->subsystem, filter->subsystem,
+			    filter->subsystem_length);
+		if (filter->category_length != 0)
+			memcpy(query->category, filter->category,
+			    filter->category_length);
+	}
 	if (send_packet_until(session->control_fd, &buffer,
 	    sizeof(*message) + sizeof(*query), &deadline) == -1 ||
 	    deadline_remaining(&deadline, &remaining) == -1 ||
@@ -1204,6 +1277,18 @@ again:
 		memcpy(record, reply->record, reply->record_length);
 	*record_length = reply->record_length;
 	return ((int)reply->result);
+}
+
+int
+logcmp_storage_query_next_for(struct logcmp_storage_session *session,
+    const char *label, uint32_t minimum_severity,
+    struct logcmp_store_cursor *cursor, void *record, size_t capacity,
+    size_t *record_length, uint32_t timeout_ms)
+{
+
+	return (logcmp_storage_query_next_filtered_for(session, label,
+	    minimum_severity, NULL, cursor, record, capacity, record_length,
+	    timeout_ms));
 }
 
 int

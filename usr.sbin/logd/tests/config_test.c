@@ -30,6 +30,36 @@ ATF_TC_BODY(defaults, tc)
 	ATF_CHECK_EQ(LOGCMP_INGRESS_SHARDS_DEFAULT, config.ingress_shards);
 	ATF_CHECK_EQ(LOGCMP_MAX_SESSIONS_DEFAULT, config.max_sessions);
 	ATF_CHECK_EQ(LOGCMP_DRAIN_BATCH_DEFAULT, config.drain_batch);
+	ATF_CHECK_EQ(LOGCMP_RETENTION_MAX_AGE_DEFAULT, config.retention_max_age);
+	ATF_CHECK_EQ(LOGCMP_RETENTION_MAX_BYTES_DEFAULT,
+	    config.retention_max_bytes);
+}
+
+ATF_TC_WITHOUT_HEAD(retention_keys);
+ATF_TC_BODY(retention_keys, tc)
+{
+	struct logcmp_config config;
+
+	/* Zero is the keep-all default and must be accepted explicitly. */
+	ATF_REQUIRE_EQ(0, logcmp_config_parse(
+	    "{retention_max_age=0;retention_max_bytes=0;}", &config));
+	ATF_CHECK_EQ(0, config.retention_max_age);
+	ATF_CHECK_EQ(0, config.retention_max_bytes);
+	ATF_REQUIRE_EQ(0, logcmp_config_parse(
+	    "{retention_max_age=604800;retention_max_bytes=1073741824;}",
+	    &config));
+	ATF_CHECK_EQ(604800, config.retention_max_age);
+	ATF_CHECK_EQ(1073741824, config.retention_max_bytes);
+	/* Upper bounds accepted, over-bound and negative rejected. */
+	ATF_REQUIRE_EQ(0, logcmp_config_parse(
+	    "{retention_max_age=3153600000;}", &config));
+	ATF_CHECK_EQ(LOGCMP_RETENTION_MAX_AGE_MAX, config.retention_max_age);
+	ATF_CHECK_ERRNO(ERANGE, logcmp_config_parse(
+	    "{retention_max_age=3153600001;}", &config) == -1);
+	ATF_CHECK_ERRNO(ERANGE, logcmp_config_parse(
+	    "{retention_max_age=-1;}", &config) == -1);
+	ATF_CHECK_ERRNO(ERANGE, logcmp_config_parse(
+	    "{retention_max_bytes=-1;}", &config) == -1);
 }
 
 ATF_TC_WITHOUT_HEAD(valid_bounds);
@@ -212,6 +242,7 @@ ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, defaults);
+	ATF_TP_ADD_TC(tp, retention_keys);
 	ATF_TP_ADD_TC(tp, valid_bounds);
 	ATF_TP_ADD_TC(tp, rejects_schema_errors);
 	ATF_TP_ADD_TC(tp, rejects_limits);

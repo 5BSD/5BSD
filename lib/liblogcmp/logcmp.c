@@ -181,6 +181,25 @@ valid_identifier(const void *data, size_t length, size_t maximum)
 	return (true);
 }
 
+/*
+ * A QUERY subsystem/category filter fragment: the used bytes are printable
+ * text (a substring may be any fragment of a valid identifier, so identifier
+ * rules are not imposed here), and every byte past the declared length is zero
+ * so the fixed inline buffer carries no trailing garbage.
+ */
+static bool
+valid_query_filter(const char *data, size_t length, size_t maximum)
+{
+	size_t i;
+
+	if (length > maximum || !valid_text(data, length, true))
+		return (false);
+	for (i = length; i < maximum; i++)
+		if (data[i] != '\0')
+			return (false);
+	return (true);
+}
+
 static bool
 all_zero(const uint8_t *bytes, size_t length)
 {
@@ -490,8 +509,16 @@ logcmp_validate_message(const struct logcmp_msg *msg, size_t length,
 			goto invalid;
 		query = (const void *)(msg + 1);
 		if (query->reserved != 0 ||
+		    (query->match_flags & ~LOGCMP_QUERY_MATCH_MASK) != 0 ||
 		    query->minimum_severity > LOGCMP_SEVERITY_FATAL + 3 ||
-		    (query->cursor.generation == 0 && query->cursor.offset != 0))
+		    (query->cursor.generation == 0 && query->cursor.offset != 0) ||
+		    query->subsystem_length > LOGCMP_MAX_SUBSYSTEM ||
+		    query->category_length > LOGCMP_MAX_CATEGORY ||
+		    (query->to_ns != 0 && query->from_ns > query->to_ns) ||
+		    !valid_query_filter(query->subsystem, query->subsystem_length,
+		    LOGCMP_MAX_SUBSYSTEM) ||
+		    !valid_query_filter(query->category, query->category_length,
+		    LOGCMP_MAX_CATEGORY))
 			goto invalid;
 		break;
 	}
@@ -1384,20 +1411,32 @@ logcmp_stats(struct logcmp_client *client, struct logcmp_stats *stats)
 }
 
 int
-logcmp_query_next(struct logcmp_client *client, uint32_t minimum_severity,
+logcmp_query_ex(struct logcmp_client *client,
+    const struct logcmp_query_options *options,
     struct logcmp_query_cursor *cursor, void *record, size_t capacity,
     size_t *record_length) __no_lock_analysis
 {
 	union logcmp_buffer reply;
 	struct logcmp_query_request query;
 	struct logcmp_query_reply *wire;
+	size_t subsystem_length, category_length;
 	int error, result;
 
-	if (client == NULL || client->owner != getpid() || cursor == NULL ||
+	if (client == NULL || client->owner != getpid() || options == NULL ||
+	    options->size != sizeof(*options) || cursor == NULL ||
 	    record == NULL || record_length == NULL ||
 	    capacity < sizeof(struct logcmp_record) ||
-	    minimum_severity > LOGCMP_SEVERITY_FATAL + 3 ||
+	    options->minimum_severity > LOGCMP_SEVERITY_FATAL + 3 ||
+	    (options->match_flags & ~LOGCMP_QUERY_MATCH_MASK) != 0 ||
+	    (options->to_ns != 0 && options->from_ns > options->to_ns) ||
 	    (cursor->generation == 0 && cursor->offset != 0))
+		return (errno = EINVAL, -1);
+	subsystem_length = options->subsystem != NULL ?
+	    strnlen(options->subsystem, LOGCMP_MAX_SUBSYSTEM + 1) : 0;
+	category_length = options->category != NULL ?
+	    strnlen(options->category, LOGCMP_MAX_CATEGORY + 1) : 0;
+	if (subsystem_length > LOGCMP_MAX_SUBSYSTEM ||
+	    category_length > LOGCMP_MAX_CATEGORY)
 		return (errno = EINVAL, -1);
 	*record_length = 0;
 	error = pthread_mutex_lock(&client->lock);
@@ -1405,7 +1444,16 @@ logcmp_query_next(struct logcmp_client *client, uint32_t minimum_severity,
 		return (errno = error, -1);
 	memset(&query, 0, sizeof(query));
 	query.cursor = *cursor;
-	query.minimum_severity = minimum_severity;
+	query.minimum_severity = options->minimum_severity;
+	query.match_flags = options->match_flags;
+	query.from_ns = options->from_ns;
+	query.to_ns = options->to_ns;
+	query.subsystem_length = (uint16_t)subsystem_length;
+	query.category_length = (uint16_t)category_length;
+	if (subsystem_length != 0)
+		memcpy(query.subsystem, options->subsystem, subsystem_length);
+	if (category_length != 0)
+		memcpy(query.category, options->category, category_length);
 	if (client_ensure_connected(client) == -1)
 		result = -1;
 	else
@@ -1427,11 +1475,26 @@ logcmp_query_next(struct logcmp_client *client, uint32_t minimum_severity,
 	error = result == -1 ? errno : 0;
 	if (result == -1 && connection_unusable(error))
 		client_disconnect(client);
-	LOGCMP_PROBE_QUERY(cursor->generation, cursor->offset, minimum_severity,
-	    (uint32_t)*record_length, result == -1 ? error : result);
+	LOGCMP_PROBE_QUERY(cursor->generation, cursor->offset,
+	    options->minimum_severity, (uint32_t)*record_length,
+	    result == -1 ? error : result);
 	(void)pthread_mutex_unlock(&client->lock);
 	errno = error;
 	return (result);
+}
+
+int
+logcmp_query_next(struct logcmp_client *client, uint32_t minimum_severity,
+    struct logcmp_query_cursor *cursor, void *record, size_t capacity,
+    size_t *record_length)
+{
+	struct logcmp_query_options options;
+
+	memset(&options, 0, sizeof(options));
+	options.size = sizeof(options);
+	options.minimum_severity = minimum_severity;
+	return (logcmp_query_ex(client, &options, cursor, record, capacity,
+	    record_length));
 }
 
 /*

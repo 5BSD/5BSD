@@ -86,6 +86,37 @@ make_record(uint8_t *buffer, uint64_t sequence)
 	return (cursor - buffer);
 }
 
+static size_t
+make_named_record(uint8_t *buffer, uint64_t sequence, uint64_t timestamp_ns,
+    const char *subsystem, const char *category)
+{
+	static const char message[] = "record";
+	struct logcmp_record *record;
+	uint8_t *cursor;
+	size_t subsystem_length, category_length;
+
+	subsystem_length = strlen(subsystem);
+	category_length = strlen(category);
+	record = (void *)buffer;
+	memset(record, 0, sizeof(*record));
+	record->sequence = sequence;
+	record->timestamp_ns = timestamp_ns;
+	record->severity = LOGCMP_SEVERITY_INFO;
+	record->kind = LOGCMP_KIND_LOG;
+	record->message_privacy = LOGCMP_PRIVACY_PUBLIC;
+	record->subsystem_length = (uint16_t)subsystem_length;
+	record->category_length = (uint16_t)category_length;
+	record->message_length = sizeof(message) - 1;
+	cursor = (void *)(record + 1);
+	memcpy(cursor, subsystem, subsystem_length);
+	cursor += subsystem_length;
+	memcpy(cursor, category, category_length);
+	cursor += category_length;
+	memcpy(cursor, message, sizeof(message) - 1);
+	cursor += sizeof(message) - 1;
+	return (cursor - buffer);
+}
+
 static void
 fixture_create(struct fixture *fixture)
 {
@@ -97,7 +128,7 @@ fixture_create(struct fixture *fixture)
 	    O_RDONLY | O_DIRECTORY | O_CLOEXEC);
 	ATF_REQUIRE(fixture->dirfd >= 0);
 	ATF_REQUIRE_EQ(0, logcmp_storage_test_start(fixture->dirfd,
-	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, 0, 0,
 	    &fixture->control_fd, &fixture->manager));
 }
 
@@ -641,6 +672,90 @@ ATF_TC_BODY(query_slices_are_hidden_from_clients, tc)
 	fixture_destroy(&fixture);
 }
 
+ATF_TC_WITHOUT_HEAD(query_filter_is_applied_server_side);
+ATF_TC_BODY(query_filter_is_applied_server_side, tc)
+{
+	struct fixture fixture;
+	struct logcmp_storage_session alpha, beta;
+	struct logcmp_store_cursor cursor;
+	struct logcmp_query_filter filter;
+	uint8_t record[LOGCMP_MAX_RECORD], output[LOGCMP_MAX_RECORD];
+	size_t length, output_length;
+
+	fixture_create(&fixture);
+	attach_session(&fixture, "org.q.alpha", &alpha);
+	attach_session(&fixture, "org.q.beta", &beta);
+	/* alpha: two distinct subsystems/timestamps. */
+	length = make_named_record(record, 1, 1000, "auth.daemon", "login");
+	ATF_REQUIRE_EQ(0, logcmp_storage_append(&alpha, (const void *)record,
+	    length));
+	length = make_named_record(record, 2, 5000, "net.stack", "connect");
+	ATF_REQUIRE_EQ(0, logcmp_storage_append(&alpha, (const void *)record,
+	    length));
+	/* beta owns a colliding subsystem, to prove scoping is not widened. */
+	length = make_named_record(record, 3, 1000, "auth.daemon", "login");
+	ATF_REQUIRE_EQ(0, logcmp_storage_append(&beta, (const void *)record,
+	    length));
+	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&alpha,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&beta,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+
+	/* Subsystem substring "auth" over alpha matches only sequence 1. */
+	memset(&filter, 0, sizeof(filter));
+	filter.subsystem = "auth";
+	filter.subsystem_length = 4;
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(LOGCMP_STORE_QUERY_RECORD,
+	    logcmp_storage_query_next_filtered_for(&alpha, "org.q.alpha", 0,
+	    &filter, &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_CHECK_EQ(1, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_CHECK_EQ(LOGCMP_STORE_QUERY_EOF,
+	    logcmp_storage_query_next_filtered_for(&alpha, "org.q.alpha", 0,
+	    &filter, &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+
+	/* Time window narrows alpha to sequence 2. */
+	memset(&filter, 0, sizeof(filter));
+	filter.from_ns = 4000;
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(LOGCMP_STORE_QUERY_RECORD,
+	    logcmp_storage_query_next_filtered_for(&alpha, "org.q.alpha", 0,
+	    &filter, &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_CHECK_EQ(2, ((struct logcmp_record *)(void *)output)->sequence);
+
+	/*
+	 * The same "auth.daemon" exact filter under beta returns only beta's
+	 * own record (sequence 3) -- the filter never reaches alpha's data.
+	 */
+	memset(&filter, 0, sizeof(filter));
+	filter.subsystem = "auth.daemon";
+	filter.subsystem_length = 11;
+	filter.match_flags = LOGCMP_QUERY_MATCH_SUBSYSTEM_EXACT;
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(LOGCMP_STORE_QUERY_RECORD,
+	    logcmp_storage_query_next_filtered_for(&beta, "org.q.beta", 0,
+	    &filter, &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_CHECK_EQ(3, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_CHECK_EQ(LOGCMP_STORE_QUERY_EOF,
+	    logcmp_storage_query_next_filtered_for(&beta, "org.q.beta", 0,
+	    &filter, &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+
+	/* A cross-label filtered query is refused outright. */
+	ATF_CHECK_ERRNO(EACCES,
+	    logcmp_storage_query_next_filtered_for(&beta, "org.q.alpha", 0,
+	    &filter, &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS) == -1);
+
+	logcmp_storage_session_close(&alpha);
+	logcmp_storage_session_close(&beta);
+	fixture_destroy(&fixture);
+}
+
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
@@ -651,7 +766,7 @@ ATF_TC_BODY(arguments, tc)
 
 	length = make_record(record, 1);
 	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_test_start(-1,
-	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &fd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, 0, 0, &fd,
 	    NULL) == -1);
 	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_attach(-1, "x", &session) == -1);
 	ATF_CHECK_ERRNO(EINVAL, logcmp_storage_append(NULL,
@@ -681,6 +796,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, multiplexed_pool_preserves_identity);
 	ATF_TP_ADD_TC(tp, query_has_a_total_deadline);
 	ATF_TP_ADD_TC(tp, query_slices_are_hidden_from_clients);
+	ATF_TP_ADD_TC(tp, query_filter_is_applied_server_side);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }

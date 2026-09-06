@@ -69,6 +69,29 @@ int	logcmp_stats(struct logcmp_client *, struct logcmp_stats *);
 int	logcmp_query_next(struct logcmp_client *, uint32_t,
 	    struct logcmp_query_cursor *, void *, size_t, size_t *);
 
+/*
+ * Extended query.  Beyond minimum_severity (and the caller's own label, which
+ * always bounds the scan server-side), an optional subsystem and/or category
+ * fragment and an optional [from_ns, to_ns] time window narrow the results.
+ * subsystem/category are NUL-terminated fragments matched as substrings, or as
+ * whole-value equalities when the matching LOGCMP_QUERY_MATCH_*_EXACT bit is
+ * set; NULL or "" means no constraint.  from_ns/to_ns of 0 mean no bound.  A
+ * zeroed options struct (bar size/severity) reproduces logcmp_query_next().
+ */
+struct logcmp_query_options {
+	size_t		size;
+	uint32_t	minimum_severity;
+	uint32_t	match_flags;
+	uint64_t	from_ns;
+	uint64_t	to_ns;
+	const char	*subsystem;
+	const char	*category;
+};
+
+int	logcmp_query_ex(struct logcmp_client *,
+	    const struct logcmp_query_options *, struct logcmp_query_cursor *,
+	    void *, size_t, size_t *);
+
 __END_DECLS
 
 #endif
