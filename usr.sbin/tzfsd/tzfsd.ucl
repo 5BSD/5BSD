@@ -27,6 +27,21 @@
 open_paths = [
     { label = "system.AuthAgent/authagentd";
       path = "/Capabilities/Config/principal-policy.ucl"; rights = ["read"]; },
+    # authagentd resolves principals in-process (the Identity fold).  Born in
+    # capability mode, it opens the identity databases on demand through the
+    # filesystem provider rather than by path.
+    { label = "system.AuthAgent/authagentd"; path = "/etc/passwd";
+      rights = ["read"]; },
+    { label = "system.AuthAgent/authagentd"; path = "/etc/group";
+      rights = ["read"]; },
+    # localnetwork's in-process resolver (born in capability mode): resolver
+    # config and the hosts/services databases, read-only, on demand.
+    { label = "system.Network/localnetwork"; path = "/etc/resolv.conf";
+      rights = ["read"]; },
+    { label = "system.Network/localnetwork"; path = "/etc/hosts";
+      rights = ["read"]; },
+    { label = "system.Network/localnetwork"; path = "/etc/services";
+      rights = ["read"]; },
     # blued owns the virtual-HID devices: the /dev/vhid control node and the
     # dynamically-numbered /dev/vhidN units it creates (prefix), read/write/ioctl.
     { label = "org.5bsd.Blued/blued"; path = "/dev/vhid"; prefix = true;

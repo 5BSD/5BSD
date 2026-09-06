@@ -81,18 +81,24 @@ static char			 g_grbuf[ID_SNAP_MAX];
 
 #ifndef AUTHAGENTD_TESTING
 /*
- * Open the identity databases before cap_enter(2).  Returns 0, or -1 with the
- * descriptor(s) left -1 (a resolution then fails closed -> the mint is denied).
- * Only main() calls this; the test seam leaves the descriptors -1 on purpose.
+ * Open the identity databases.  authagentd is born in capability mode, so it
+ * cannot open a path itself; it obtains read-only, seekable (CAP_READ|CAP_SEEK,
+ * for the per-lookup pread snapshots) descriptors on demand through the
+ * filesystem provider (service_open_isolated(3)), authorized by tzfsd's
+ * per-label open policy.  Returns 0, or -1 with the descriptor(s) left -1 (a
+ * resolution then fails closed -> the mint is denied).  Only main() calls this.
  */
 static int
 id_open_databases(void)
 {
 
-	g_pwfd = open("/etc/passwd", O_RDONLY | O_CLOEXEC);
-	g_grfd = open("/etc/group", O_RDONLY | O_CLOEXEC);
-	if (g_pwfd == -1 || g_grfd == -1)
+	if (service_open_isolated(g_context, "/etc/passwd", SERVICE_OPEN_READ,
+	    0, &g_pwfd) == -1 ||
+	    service_open_isolated(g_context, "/etc/group", SERVICE_OPEN_READ,
+	    0, &g_grfd) == -1) {
+		g_pwfd = g_grfd = -1;
 		return (-1);
+	}
 	return (0);
 }
 #endif /* !AUTHAGENTD_TESTING */

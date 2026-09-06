@@ -15,8 +15,7 @@ umask = "0077";
 # policy grants this service read on /Capabilities/Config/principal-policy.ucl;
 # absent/ungranted falls back to the historical root-or-wheel default.
 
-# Privileged (capmode exception): authagentd resolves passwd/group via Casper
-# (cap_init at startup, illegal in a born-in-capmode process) and is the
-# identity/mint concentration point.  The planned Identity fold makes it a
-# privileged in-process NSS resolver; privileged=true is that model's home.
-privileged = true;
+# Born in capability mode: the Identity fold retired Casper (in-process NSS),
+# so authagentd needs no pre-capmode window.  It resolves principals from
+# /etc/passwd and /etc/group opened on demand through the filesystem provider
+# (service_open_isolated, granted by tzfsd's open policy) -- no privileged flag.
