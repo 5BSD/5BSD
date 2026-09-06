@@ -197,6 +197,23 @@ cryptodesc_named_delete(int control_fd, const char *name, const char *owner,
 }
 
 int
+cryptodesc_named_stat(int control_fd, const char *name, const char *owner,
+    struct cryptodesc_named_stat *stat)
+{
+
+	if (control_fd < 0 || stat == NULL ||
+	    !named_identifier(name, CRYPTODESC_KEY_NAME_MAX) ||
+	    !named_identifier(owner, CRYPTODESC_KEY_OWNER_MAX)) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(stat, 0, sizeof(*stat));
+	strlcpy(stat->cd_name, name, sizeof(stat->cd_name));
+	strlcpy(stat->cd_owner, owner, sizeof(stat->cd_owner));
+	return (ioctl(control_fd, CIOCGCRYPTONAMEDSTAT, stat));
+}
+
+int
 cryptodesc_restrict(int descriptor_fd, uint32_t rights)
 {
 	struct cryptodesc_restrict attenuation;

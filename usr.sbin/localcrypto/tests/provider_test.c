@@ -181,6 +181,50 @@ named_op(struct raw_fixture *fixture, uint16_t opcode, const void *payload,
 	return (-reply.msg.status);
 }
 
+/*
+ * Read-only introspection: send a NAMED_STAT request for name and return the
+ * daemon's errno-style status.  On success the key metadata is returned through
+ * info.  No descriptor is ever delivered for a STAT (the reply is data-only), so
+ * this helper never receives an fd.
+ */
+static int
+stat_op(struct raw_fixture *fixture, const char *name,
+    struct cryptocmp_named_info *info)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct cryptocmp_msg msg;
+	struct cryptocmp_named_stat req;
+	struct cryptocmp_named_stat_reply reply;
+	uint8_t request[sizeof(struct cryptocmp_msg) +
+	    sizeof(struct cryptocmp_named_stat)];
+
+	memset(&msg, 0, sizeof(msg));
+	msg.magic = CRYPTOCMP_MAGIC;
+	msg.version = CRYPTOCMP_VERSION;
+	msg.opcode = CRYPTOCMP_OP_NAMED_STAT;
+	memset(&req, 0, sizeof(req));
+	strlcpy(req.name, name, sizeof(req.name));
+	memcpy(request, &msg, sizeof(msg));
+	memcpy(request + sizeof(msg), &req, sizeof(req));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = request;
+	outgoing.length = sizeof(request);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	options.timeout_ms = 2000;
+	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
+	    &incoming, &options));
+	if (reply.msg.status == 0 && info != NULL)
+		*info = reply.info;
+	return (-reply.msg.status);
+}
+
 /* Send an arbitrary (possibly malformed) request; return service_session_call's
  * result and, when a reply arrives, its errno-style status. */
 static int
@@ -566,6 +610,81 @@ ATF_TC_BODY(named_key_is_owner_scoped, tc)
 }
 
 /*
+ * Read-only introspection is owner-scoped and non-mutating.  A key is visible to
+ * a STAT only under the owner label that minted it (a foreign label and an
+ * absent name both fail closed with ENOENT), the returned metadata matches the
+ * key's create profile, and a STAT tracks a rotate's generation bump without
+ * itself minting a descriptor or changing the key — a final delete makes the
+ * key vanish from STAT.
+ */
+ATF_TC(named_key_stat);
+ATF_TC_HEAD(named_key_stat, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "NAMED_STAT is owner-scoped, non-minting, and tracks the generation");
+}
+ATF_TC_BODY(named_key_stat, tc)
+{
+	struct cryptocmp_named_create create;
+	struct cryptocmp_named_control control;
+	struct cryptocmp_named_info info;
+	struct raw_fixture owner_a, owner_b;
+	uint64_t generation, rotated;
+
+	require_plane();
+	raw_fixture_create(&owner_a, "org.test.stat.a");
+	raw_fixture_create(&owner_b, "org.test.stat.b");
+
+	/* owner A mints a named key with a known profile. */
+	memset(&create, 0, sizeof(create));
+	strlcpy(create.name, "stat.key.1", sizeof(create.name));
+	create.generate = sample_generate();
+	ATF_CHECK_EQ(0, named_op(&owner_a, CRYPTOCMP_OP_NAMED_CREATE, &create,
+	    sizeof(create), &generation, NULL));
+
+	/* A STAT of a nonexistent name fails closed with ENOENT. */
+	ATF_CHECK_EQ(ENOENT, stat_op(&owner_a, "stat.key.absent", NULL));
+
+	/* owner A observes its key: created generation and create-time metadata. */
+	memset(&info, 0, sizeof(info));
+	ATF_CHECK_EQ(0, stat_op(&owner_a, "stat.key.1", &info));
+	ATF_CHECK_EQ(generation, info.generation);
+	ATF_CHECK_EQ((uint32_t)(CRYPTODESC_RIGHT_ENCRYPT |
+	    CRYPTODESC_RIGHT_DECRYPT), info.rights);
+	ATF_CHECK_EQ((uint32_t)CRYPTO_AES_CBC, info.cipher);
+	ATF_CHECK_EQ(0u, info.mac);
+	ATF_CHECK_EQ(32u, info.keylen);
+	ATF_CHECK_EQ(0u, info.mackeylen);
+
+	/* owner B cannot see A's key: owner-scoped miss, not a disclosure. */
+	ATF_CHECK_EQ(ENOENT, stat_op(&owner_b, "stat.key.1", NULL));
+
+	/* A rotate bumps the generation; STAT reflects it without minting. */
+	memset(&control, 0, sizeof(control));
+	strlcpy(control.name, "stat.key.1", sizeof(control.name));
+	ATF_CHECK_EQ(0, named_op(&owner_a, CRYPTOCMP_OP_NAMED_ROTATE, &control,
+	    sizeof(control), &rotated, NULL));
+	ATF_CHECK(rotated > generation);
+	memset(&info, 0, sizeof(info));
+	ATF_CHECK_EQ(0, stat_op(&owner_a, "stat.key.1", &info));
+	ATF_CHECK_EQ(rotated, info.generation);
+
+	/* Two consecutive STATs return the same generation: STAT does not mutate. */
+	memset(&info, 0, sizeof(info));
+	ATF_CHECK_EQ(0, stat_op(&owner_a, "stat.key.1", &info));
+	ATF_CHECK_EQ(rotated, info.generation);
+
+	/* After delete the key is gone from STAT. */
+	ATF_CHECK_EQ(0, named_op(&owner_a, CRYPTOCMP_OP_NAMED_DELETE, &control,
+	    sizeof(control), NULL, NULL));
+	ATF_CHECK_EQ(ENOENT, stat_op(&owner_a, "stat.key.1", NULL));
+
+	raw_fixture_destroy(&owner_b, 0);
+	raw_fixture_destroy(&owner_a, 0);
+}
+
+/*
  * The provider fails closed on malformed requests: a bad magic/version, an
  * out-of-range opcode, a length that does not match the opcode, and any attached
  * descriptor (the handler requires a zero fd count) are all rejected with EPROTO
@@ -660,6 +779,7 @@ ATF_TC_BODY(arguments, tc)
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, named_key_is_owner_scoped);
+	ATF_TP_ADD_TC(tp, named_key_stat);
 	ATF_TP_ADD_TC(tp, malformed_request_is_rejected);
 	ATF_TP_ADD_TC(tp, digest_descriptor);
 	ATF_TP_ADD_TC(tp, random_bytes);

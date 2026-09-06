@@ -265,6 +265,24 @@ cryptocmp_named_control_policy_validate(const struct cryptocmp_named_control *re
 }
 
 /*
+ * Read-only named-key introspection: the name must be a well-formed identifier
+ * and the reserved flags field must be zero.  No rights or session parameters
+ * are supplied by the caller, so there is nothing further to validate; the
+ * kernel resolves the key owner-scoped and fails closed (ENOENT) on a miss.
+ */
+int
+cryptocmp_named_stat_policy_validate(const struct cryptocmp_named_stat *request)
+{
+
+	if (request == NULL || !name_valid(request->name, sizeof(request->name)) ||
+	    request->flags != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	return (0);
+}
+
+/*
  * Unkeyed digest: the algorithm must be one of the allowed plain SHA-2 hashes
  * (the same NIST-profile family the keyed HMAC path admits, minus the key).
  * Unknown/weak algorithms are rejected EPROTONOSUPPORT; malformed parameters

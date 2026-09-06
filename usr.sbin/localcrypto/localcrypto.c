@@ -42,6 +42,7 @@ harden_control_descriptor(void)
 		CIOCGCRYPTONAMEDLEASE,
 		CIOCCRYPTONAMEDROTATE,
 		CIOCCRYPTONAMEDDELETE,
+		CIOCGCRYPTONAMEDSTAT,
 	};
 	cap_rights_t rights;
 
@@ -70,12 +71,15 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	const struct cryptocmp_named_create *named_create;
 	const struct cryptocmp_named_lease *named_lease;
 	const struct cryptocmp_named_control *named_control;
+	const struct cryptocmp_named_stat *named_stat;
 	const struct cryptocmp_digest *digest;
 	const struct cryptocmp_random *random_request;
 	struct cryptocmp_msg out;
 	struct cryptocmp_key_reply key_out;
 	struct cryptocmp_named_reply named_out;
+	struct cryptocmp_named_stat_reply stat_out;
 	struct cryptocmp_random_reply random_out;
+	struct cryptodesc_named_stat stat;
 	struct session2_op session;
 	struct crypto_worker *worker;
 	const char *operation;
@@ -93,7 +97,9 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	memset(&out, 0, sizeof(out));
 	memset(&key_out, 0, sizeof(key_out));
 	memset(&named_out, 0, sizeof(named_out));
+	memset(&stat_out, 0, sizeof(stat_out));
 	memset(&random_out, 0, sizeof(random_out));
+	memset(&stat, 0, sizeof(stat));
 	memset(public_key, 0, sizeof(public_key));
 	generation = 0;
 	random_bytes = 0;
@@ -103,7 +109,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 	    in->magic == CRYPTOCMP_MAGIC &&
 	    in->version == CRYPTOCMP_VERSION &&
 	    in->opcode >= CRYPTOCMP_OP_GENERATE &&
-	    in->opcode <= CRYPTOCMP_OP_RANDOM) {
+	    in->opcode <= CRYPTOCMP_OP_NAMED_STAT) {
 		out.opcode = in->opcode;
 		if (in->opcode == CRYPTOCMP_OP_GENERATE &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*generate)) {
@@ -194,6 +200,25 @@ request(struct channel *c __unused, struct channel_message *m, void *arg __unuse
 				error = 0;
 			else
 				error = errno;
+		} else if (in->opcode == CRYPTOCMP_OP_NAMED_STAT &&
+		    channel_message_length(m) == sizeof(*in) + sizeof(*named_stat)) {
+			operation = "named-stat";
+			named_stat = (const struct cryptocmp_named_stat *)(in + 1);
+			if (cryptocmp_named_stat_policy_validate(named_stat) != 0) {
+				error = errno;
+				goto reply;
+			}
+			/*
+			 * Read-only introspection: resolve the key owner-scoped
+			 * on worker->owner (never a wire-supplied owner) and copy
+			 * out its metadata.  No descriptor is minted and the key
+			 * is not mutated; a miss is ENOENT.
+			 */
+			if (cryptodesc_named_stat(control_fd, named_stat->name,
+			    worker->owner, &stat) == 0)
+				error = 0;
+			else
+				error = errno;
 		} else if (in->opcode == CRYPTOCMP_OP_DIGEST &&
 		    channel_message_length(m) == sizeof(*in) + sizeof(*digest)) {
 			operation = "digest";
@@ -251,6 +276,15 @@ reply:
 	key_out.msg = out;
 	named_out.msg = out;
 	named_out.generation = generation;
+	stat_out.msg = out;
+	if (error == 0 && out.opcode == CRYPTOCMP_OP_NAMED_STAT) {
+		stat_out.info.generation = stat.cd_generation;
+		stat_out.info.rights = stat.cd_rights;
+		stat_out.info.cipher = stat.cd_cipher;
+		stat_out.info.mac = stat.cd_mac;
+		stat_out.info.keylen = stat.cd_keylen;
+		stat_out.info.mackeylen = stat.cd_mackeylen;
+	}
 	random_out.msg = out;
 	random_out.nbytes = error == 0 ? random_bytes : 0;
 	audit_operation(worker, operation, error);
@@ -274,6 +308,10 @@ reply:
 	case CRYPTOCMP_OP_NAMED_DELETE:
 		reply_data = &named_out;
 		reply_length = sizeof(named_out);
+		break;
+	case CRYPTOCMP_OP_NAMED_STAT:
+		reply_data = &stat_out;
+		reply_length = sizeof(stat_out);
 		break;
 	case CRYPTOCMP_OP_RANDOM:
 		reply_data = &random_out;
@@ -300,6 +338,7 @@ reply:
 	explicit_bzero(public_key, sizeof(public_key));
 	explicit_bzero(&key_out, sizeof(key_out));
 	explicit_bzero(&named_out, sizeof(named_out));
+	explicit_bzero(&stat_out, sizeof(stat_out));
 	explicit_bzero(&random_out, sizeof(random_out));
 	channel_message_free(m);
 }

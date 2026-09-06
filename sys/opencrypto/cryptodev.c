@@ -1297,6 +1297,42 @@ cryptokey_delete(struct cryptodesc_named_control *control)
 	return (0);
 }
 
+/*
+ * Read-only named-key introspection.  Resolves the object by (name, owner)
+ * through the same owner-scoped lookup the lease/rotate/delete paths use, and
+ * copies out its metadata.  It mints no descriptor and mutates nothing: the
+ * generation is observed, never bumped, and no key material leaves the kernel.
+ * A miss, or a key concurrently marked deleted, is reported ENOENT.
+ */
+static int
+cryptokey_stat(struct cryptodesc_named_stat *stat)
+{
+	struct cryptokey_object *key;
+
+	if (!cryptokey_identifier_valid(stat->cd_name, sizeof(stat->cd_name)) ||
+	    !cryptokey_identifier_valid(stat->cd_owner, sizeof(stat->cd_owner)) ||
+	    stat->cd_flags != 0)
+		return (EINVAL);
+	key = cryptokey_lookup(stat->cd_name, stat->cd_owner);
+	if (key == NULL)
+		return (ENOENT);
+	mtx_lock(&key->lock);
+	if (key->deleted) {
+		mtx_unlock(&key->lock);
+		cryptokey_release(key);
+		return (ENOENT);
+	}
+	stat->cd_rights = key->rights;
+	stat->cd_generation = key->generation;
+	stat->cd_cipher = key->session.cipher;
+	stat->cd_mac = key->session.mac;
+	stat->cd_keylen = key->session.keylen;
+	stat->cd_mackeylen = key->session.mackeylen;
+	mtx_unlock(&key->lock);
+	cryptokey_release(key);
+	return (0);
+}
+
 static int
 cryptodesc_derive(struct thread *td, struct cryptodesc *cd,
     struct cryptodesc_derive *derive)
@@ -2336,6 +2372,7 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 	struct cryptodesc_named_create *named_create;
 	struct cryptodesc_named_lease *named_lease;
 	struct cryptodesc_named_control *named_control;
+	struct cryptodesc_named_stat *named_stat;
 	uint32_t ses;
 	int error = 0;
 	union {
@@ -2477,6 +2514,14 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		}
 		named_control = (struct cryptodesc_named_control *)data;
 		error = cryptokey_delete(named_control);
+		break;
+	case CIOCGCRYPTONAMEDSTAT:
+		if (!fcr->descriptor_authority) {
+			error = EPERM;
+			break;
+		}
+		named_stat = (struct cryptodesc_named_stat *)data;
+		error = cryptokey_stat(named_stat);
 		break;
 	case CIOCCRYPTAEAD:
 		caead = (struct crypt_aead *)data;

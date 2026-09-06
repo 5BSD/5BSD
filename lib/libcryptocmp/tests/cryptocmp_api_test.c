@@ -17,6 +17,7 @@ ATF_TC_HEAD(argument_validation, tc)
 ATF_TC_BODY(argument_validation, tc)
 {
 	struct cryptocmp_generate generate;
+	struct cryptocmp_named_info info;
 	char long_name[65];
 	uint64_t generation;
 	int descriptor;
@@ -37,6 +38,11 @@ ATF_TC_BODY(argument_validation, tc)
 	    &generation) == -1);
 	errno = 0;
 	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_delete(NULL, "", &generation)
+	    == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_stat(NULL, "", &info) == -1);
+	errno = 0;
+	ATF_REQUIRE_ERRNO(EINVAL, cryptocmp_named_stat(NULL, long_name, &info)
 	    == -1);
 }
 

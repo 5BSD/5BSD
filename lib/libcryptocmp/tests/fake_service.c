@@ -167,6 +167,7 @@ service_session_call(struct service_session *session,
 		struct cryptocmp_msg msg;
 		struct cryptocmp_key_reply key;
 		struct cryptocmp_named_reply named;
+		struct cryptocmp_named_stat_reply stat;
 		struct cryptocmp_random_reply random;
 	} response;
 	const struct cryptocmp_msg *request;
@@ -207,6 +208,15 @@ service_session_call(struct service_session *session,
 	    request->opcode <= CRYPTOCMP_OP_NAMED_DELETE) {
 		length = sizeof(response.named);
 		response.named.generation = 42;
+	} else if (request->opcode == CRYPTOCMP_OP_NAMED_STAT) {
+		/* Fixed sentinels the client test asserts the wrapper surfaces. */
+		length = sizeof(response.stat);
+		response.stat.info.generation = 42;
+		response.stat.info.rights = 3;
+		response.stat.info.cipher = 11;
+		response.stat.info.mac = 0;
+		response.stat.info.keylen = 32;
+		response.stat.info.mackeylen = 0;
 	} else if (request->opcode == CRYPTOCMP_OP_RANDOM) {
 		uint32_t nbytes = 0;
 

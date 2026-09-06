@@ -18,5 +18,7 @@ int cryptocmp_named_lease(struct cryptocmp_client *, const char *, uint32_t,
     uint32_t, uint64_t *, int *);
 int cryptocmp_named_rotate(struct cryptocmp_client *, const char *, uint64_t *);
 int cryptocmp_named_delete(struct cryptocmp_client *, const char *, uint64_t *);
+int cryptocmp_named_stat(struct cryptocmp_client *, const char *,
+    struct cryptocmp_named_info *);
 __END_DECLS
 #endif

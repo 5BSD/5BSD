@@ -5,7 +5,7 @@
 #define CRYPTOCMP_MAGIC 0x43434d50U
 #define CRYPTOCMP_VERSION 3
 #define CRYPTOCMP_INTERFACE "system.Crypto"
-#define CRYPTOCMP_INTERFACE_VERSION "3.1.0"
+#define CRYPTOCMP_INTERFACE_VERSION "3.2.0"
 #define CRYPTOCMP_OP_GENERATE 1
 #define CRYPTOCMP_OP_GENERATE_KEY 2
 #define CRYPTOCMP_OP_NAMED_CREATE 3
@@ -14,6 +14,7 @@
 #define CRYPTOCMP_OP_NAMED_DELETE 6
 #define CRYPTOCMP_OP_DIGEST 7
 #define CRYPTOCMP_OP_RANDOM 8
+#define CRYPTOCMP_OP_NAMED_STAT 9
 #define CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY 0x00000001U
 /* Upper bound on a single CRYPTOCMP_OP_RANDOM request/reply payload. */
 #define CRYPTOCMP_MAX_RANDOM_BYTES 1024U
@@ -33,4 +34,23 @@ struct cryptocmp_digest { uint32_t alg, ttl, flags; };
 /* CSPRNG: nbytes of output, bounded by CRYPTOCMP_MAX_RANDOM_BYTES. */
 struct cryptocmp_random { uint32_t nbytes; };
 struct cryptocmp_random_reply { struct cryptocmp_msg msg; uint32_t nbytes; uint8_t data[CRYPTOCMP_MAX_RANDOM_BYTES]; };
+/*
+ * Read-only named-key introspection.  NAMED_STAT resolves a named key by
+ * (owner, name) and returns its metadata WITHOUT minting a descriptor or
+ * mutating the key: no fd is delivered and the generation is unchanged.  The
+ * owner is the session's channel label (never wire-supplied), exactly as the
+ * other NAMED_* ops, so a STAT can only observe keys minted under its own
+ * label; a miss (or a key deleted under the owner) is reported ENOENT.  flags
+ * is reserved and must be zero.  The reply is data-only.
+ */
+struct cryptocmp_named_stat { char name[64]; uint32_t flags; };
+struct cryptocmp_named_info {
+	uint64_t generation;	/* current named-key generation */
+	uint32_t rights;	/* granted CRYPTODESC_RIGHT_* mask */
+	uint32_t cipher;	/* OpenCrypto cipher selector (0 if none) */
+	uint32_t mac;		/* OpenCrypto MAC selector (0 if none) */
+	uint32_t keylen;	/* cipher key length in bytes */
+	uint32_t mackeylen;	/* MAC key length in bytes */
+};
+struct cryptocmp_named_stat_reply { struct cryptocmp_msg msg; struct cryptocmp_named_info info; };
 #endif

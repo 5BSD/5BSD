@@ -14,6 +14,7 @@ int	cryptocmp_key_policy_validate(const struct cryptocmp_key_generate *);
 int	cryptocmp_named_create_policy_validate(const struct cryptocmp_named_create *);
 int	cryptocmp_named_lease_policy_validate(const struct cryptocmp_named_lease *);
 int	cryptocmp_named_control_policy_validate(const struct cryptocmp_named_control *);
+int	cryptocmp_named_stat_policy_validate(const struct cryptocmp_named_stat *);
 int	cryptocmp_digest_policy_validate(const struct cryptocmp_digest *);
 int	cryptocmp_random_policy_validate(const struct cryptocmp_random *);
 

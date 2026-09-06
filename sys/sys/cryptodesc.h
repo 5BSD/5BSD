@@ -128,6 +128,23 @@ struct cryptodesc_named_control {
 	uint64_t		cd_generation;	/* out */
 };
 
+/*
+ * Read-only introspection of a named key resolved by (cd_name, cd_owner).
+ * Returns the object's current metadata without minting a descriptor or
+ * mutating the key; a miss (or a key deleted under the owner) is ENOENT.
+ */
+struct cryptodesc_named_stat {
+	char			cd_name[CRYPTODESC_KEY_NAME_MAX];
+	char			cd_owner[CRYPTODESC_KEY_OWNER_MAX];
+	uint32_t		cd_flags;	/* must be zero */
+	uint32_t		cd_rights;	/* out: granted rights */
+	uint64_t		cd_generation;	/* out */
+	uint32_t		cd_cipher;	/* out */
+	uint32_t		cd_mac;		/* out */
+	uint32_t		cd_keylen;	/* out */
+	uint32_t		cd_mackeylen;	/* out */
+};
+
 /* Mint a kernel-generated X25519 or Ed25519 key descriptor. */
 struct cryptodesc_key_create {
 	uint32_t		cd_type;
@@ -204,5 +221,6 @@ struct cryptodesc_info {
 #define	CIOCCRYPTONAMEDROTATE	_IOWR('c', 121, struct cryptodesc_named_control)
 #define	CIOCCRYPTONAMEDDELETE	_IOWR('c', 122, struct cryptodesc_named_control)
 #define	CIOCGCRYPTODESCINFO	_IOWR('c', 123, struct cryptodesc_info)
+#define	CIOCGCRYPTONAMEDSTAT	_IOWR('c', 124, struct cryptodesc_named_stat)
 
 #endif /* !_SYS_CRYPTODESC_H_ */

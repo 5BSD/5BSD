@@ -36,6 +36,7 @@ ATF_TC_BODY(successful_operation_matrix, tc)
 {
 	struct cryptocmp_key_generate key_request;
 	struct cryptocmp_generate request;
+	struct cryptocmp_named_info info;
 	struct cryptocmp_client *client;
 	uint8_t public_key[32];
 	uint64_t generation;
@@ -65,7 +66,13 @@ ATF_TC_BODY(successful_operation_matrix, tc)
 	ATF_REQUIRE_EQ(0,
 	    cryptocmp_named_delete(client, "test", &generation));
 	ATF_CHECK_EQ(42, generation);
-	ATF_CHECK_EQ(6, fake_service_calls());
+	memset(&info, 0, sizeof(info));
+	ATF_REQUIRE_EQ(0, cryptocmp_named_stat(client, "test", &info));
+	ATF_CHECK_EQ(42, info.generation);
+	ATF_CHECK_EQ(3, info.rights);
+	ATF_CHECK_EQ(11, info.cipher);
+	ATF_CHECK_EQ(32, info.keylen);
+	ATF_CHECK_EQ(7, fake_service_calls());
 	cryptocmp_close(client);
 	ATF_CHECK_EQ(1, fake_service_closed());
 }
@@ -75,6 +82,7 @@ ATF_TC_BODY(error_and_output_contracts, tc)
 {
 	struct cryptocmp_key_generate key_request;
 	struct cryptocmp_generate request;
+	struct cryptocmp_named_info info;
 	struct cryptocmp_client *client;
 	uint8_t public_key[32];
 	uint64_t generation;
@@ -106,6 +114,13 @@ ATF_TC_BODY(error_and_output_contracts, tc)
 	fake_service_fault_next(FAKE_SERVICE_FAULT_CALL);
 	ATF_CHECK_ERRNO(ECONNRESET,
 	    cryptocmp_generate(client, &request, &descriptor) == -1);
+	/* A STAT error status maps through and leaves the out struct zeroed. */
+	fake_service_status_next(ENOENT);
+	memset(&info, 0xff, sizeof(info));
+	ATF_CHECK_ERRNO(ENOENT, cryptocmp_named_stat(client, "missing", &info)
+	    == -1);
+	ATF_CHECK_EQ(0, info.generation);
+	ATF_CHECK_EQ(0, info.rights);
 	cryptocmp_close(client);
 }
 

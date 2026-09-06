@@ -320,6 +320,64 @@ cryptocmp_named_change(struct cryptocmp_client *client, uint16_t opcode,
 	    generation, NULL));
 }
 
+/*
+ * Read-only named-key introspection.  Sends a fixed-length NAMED_STAT request
+ * for the given name and returns the key's metadata; no descriptor is expected
+ * or accepted in the reply.  A nonexistent (or foreign-owner) key resolves to
+ * ENOENT, exactly as the daemon reports it.
+ */
+int
+cryptocmp_named_stat(struct cryptocmp_client *client, const char *name,
+    struct cryptocmp_named_info *out)
+{
+	struct {
+		struct cryptocmp_msg msg;
+		uint8_t payload[sizeof(struct cryptocmp_named_stat)];
+	} wire;
+	struct cryptocmp_named_stat request;
+	struct cryptocmp_named_stat_reply reply;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	int fd = -1;
+
+	if (client == NULL || out == NULL || client->owner != getpid() ||
+	    name == NULL || strnlen(name, sizeof(request.name)) == 0 ||
+	    strnlen(name, sizeof(request.name)) == sizeof(request.name))
+		return (errno = EINVAL, -1);
+	memset(out, 0, sizeof(*out));
+	memset(&request, 0, sizeof(request));
+	strlcpy(request.name, name, sizeof(request.name));
+	memset(&wire, 0, sizeof(wire));
+	wire.msg.magic = CRYPTOCMP_MAGIC;
+	wire.msg.version = CRYPTOCMP_VERSION;
+	wire.msg.opcode = CRYPTOCMP_OP_NAMED_STAT;
+	memcpy(wire.payload, &request, sizeof(request));
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &wire;
+	outgoing.length = sizeof(wire.msg) + sizeof(request);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	incoming.fds = &fd;
+	incoming.fd_capacity = 0;
+	options.timeout_ms = 30000;
+	if (service_session_call(client->session, &outgoing, &incoming, &options) == -1)
+		return (-1);
+	if (incoming.length != sizeof(reply) || reply.msg.magic != CRYPTOCMP_MAGIC ||
+	    reply.msg.version != CRYPTOCMP_VERSION ||
+	    reply.msg.opcode != CRYPTOCMP_OP_NAMED_STAT ||
+	    !valid_status(reply.msg.status) || incoming.nfds != 0)
+		return (reject_reply(incoming.nfds != 0 ? fd : -1));
+	if (reply.msg.status != 0)
+		return (errno = -reply.msg.status, -1);
+	*out = reply.info;
+	return (0);
+}
+
 int
 cryptocmp_named_rotate(struct cryptocmp_client *client, const char *name,
     uint64_t *generation)
