@@ -4,6 +4,9 @@ TESTSDIR=	${TESTSBASE}/usr.sbin/auditbrokerd
 
 # Common daemon sources included by the tests use the public protocol API.
 CFLAGS+=	-I${SRCTOP}/lib/libauditcmp
+# auditcmp.c (shared across the test programs) uses <libservice.h>; the base
+# compile of it needs the include too, not just the per-program CFLAGS below.
+CFLAGS+=	-I${SRCTOP}/lib/libservice
 
 ATF_TESTS_C+=	policy_test rate_test submit_test
 ATF_TESTS_C+=	session_test

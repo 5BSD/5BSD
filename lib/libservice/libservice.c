@@ -1470,6 +1470,36 @@ service_harden_fd(int fd, unsigned flags)
 	return (0);
 }
 
+void
+service_set_proctitle(void)
+{
+	const char *dir, *base;
+	char name[64];
+	size_t n;
+
+	dir = getenv(SERVICE_UNIT_DIR_ENV);
+	if (dir == NULL || dir[0] == '\0') {
+		setproctitle("-%s", getprogname());
+		return;
+	}
+	base = strrchr(dir, '/');
+	base = base != NULL ? base + 1 : dir;
+	n = strlcpy(name, base, sizeof(name));
+	if (n < sizeof(name) && n >= 5 && strcmp(name + n - 5, ".unit") == 0)
+		name[n - 5] = '\0';
+	setproctitle("-%s", name);
+}
+
+bool
+service_in_capability_mode(void)
+{
+	unsigned int mode;
+
+	if (cap_getmode(&mode) == -1)
+		return (true);	/* fail-safe: assume sandboxed, skip pre-capmode work */
+	return (mode != 0);
+}
+
 int
 service_worker_enter_capability_mode(uint32_t protect_flags)
 {

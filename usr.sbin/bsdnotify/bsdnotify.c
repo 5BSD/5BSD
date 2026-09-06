@@ -777,15 +777,13 @@ router_main(int control, const struct notify_policy_db *policy_db,
 	    EV_ADD | EV_ENABLE,
 	    0, 0, &router.control_source) == -1 ||
 	    router_change(&router, router.control, EVFILT_WRITE,
-	    EV_ADD | EV_DISABLE, 0, 0, &router.control_source) == -1 ||
-	    service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	    EV_ADD | EV_DISABLE, 0, 0, &router.control_source) == -1)
+		return (1);
+	if (service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
 	    SERVICE_PROTECT_NOEXEC |
 	    SERVICE_PROTECT_NOSOCK) == -1)
-		return (1);
-	service_worker_drop_inherited_authority();
-	if (cap_enter() == -1)
 		return (1);
 	ready.status = 0;
 	if (channel_send_event(router.control_channel,
@@ -1096,6 +1094,8 @@ main(void)
 	pid_t router_pid;
 
 	openlog("bsdnotify", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
+	service_set_proctitle();
 	memset(&watch_context, 0, sizeof(watch_context));
 	watch_context.process_fd = -1;
 	watcher_started = false;

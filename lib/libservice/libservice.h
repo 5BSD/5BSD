@@ -449,6 +449,25 @@ int	service_harden_fd(int fd, unsigned flags);
 int	service_worker_enter_capability_mode(uint32_t protect_flags);
 
 /*
+ * True if the process is already in capability mode (cap_getmode(2) != 0).
+ * The one guard a daemon needs before deciding to init Casper: a born-in-
+ * capability-mode daemon cannot fork a Casper zygote (that must happen before
+ * cap_enter(2)), so it must take its capmode-native path instead.  Treats a
+ * cap_getmode failure as "in capmode" (fail-safe: skip the pre-capmode work).
+ */
+bool	service_in_capability_mode(void);
+
+/*
+ * Set a stable ps(1) title from the unit serviced launched this daemon as
+ * (CAPABILITY_UNIT_DIR basename, minus a trailing ".unit"), so a born-in-
+ * capability-mode daemon -- exec'd through /libexec/ld-elf.so.1 -- shows its
+ * own name in ps rather than "ld-elf.so.1 -f N ...".  Falls back to
+ * getprogname().  A daemon wanting a bespoke title calls setproctitle(3)
+ * directly instead of this.
+ */
+void	service_set_proctitle(void);
+
+/*
  * Every exposed global name has an independent listener and accept queue.
  * service_listener_close() consumes the listener and withdraws that name.
  */

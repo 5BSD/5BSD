@@ -1324,6 +1324,8 @@ main(void)
 	int error, fd, cfgfd;
 
 	openlog("localnetwork", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
+	service_set_proctitle();
 	/*
 	 * Per-label policy, loaded via the serviced-delivered Config directory
 	 * descriptor (service_config_open, openat(2) — capability-mode safe;

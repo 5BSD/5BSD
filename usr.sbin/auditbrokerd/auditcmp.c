@@ -471,6 +471,8 @@ main(void)
 	int error, fd, kq, status;
 
 	openlog("auditbrokerd", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
+	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
+	service_set_proctitle();
 	/*
 	 * Prime the timezone before entering capability mode.  audit_submit(3)
 	 * timestamps each record via localtime(3), which opens /etc/localtime by

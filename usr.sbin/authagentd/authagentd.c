@@ -367,6 +367,8 @@ main(void)
 	int fd;
 
 	openlog("authagentd", LOG_PID | LOG_NDELAY, LOG_AUTHPRIV);
+	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
+	service_set_proctitle();
 
 	g_kq = kqueuex(KQUEUE_CLOEXEC);
 	if (g_kq == -1 ||
@@ -449,15 +451,28 @@ main(void)
 		    "setgrent", "getgrent" };
 		cap_channel_t *capcas = cap_init();
 
+		/*
+		 * Casper here is a local zygote (pwd/grp resolution), forked
+		 * before cap_enter -- not a capability-plane provider -- so an
+		 * acquisition failure is a bootstrap failure: log it and exit
+		 * gracefully for serviced to restart, rather than err(3) aborting
+		 * to a controlling terminal that does not exist under serviced.
+		 * (The lasting fix is the Identity fold: in-process NSS retiring
+		 * Casper entirely -- see the capability-daemon backlog.)
+		 */
 		if (capcas == NULL ||
 		    (g_cappwd = cap_service_open(capcas, "system.pwd")) ==
 		    NULL ||
-		    (g_capgrp = cap_service_open(capcas, "system.grp")) == NULL)
-			err(1, "casper");
+		    (g_capgrp = cap_service_open(capcas, "system.grp")) == NULL) {
+			syslog(LOG_ERR, "casper pwd/grp unavailable: %m");
+			return (1);
+		}
 		cap_close(capcas);
 		if (cap_pwd_limit_cmds(g_cappwd, pwdcmds, nitems(pwdcmds)) < 0 ||
-		    cap_grp_limit_cmds(g_capgrp, grpcmds, nitems(grpcmds)) < 0)
-			err(1, "casper limit");
+		    cap_grp_limit_cmds(g_capgrp, grpcmds, nitems(grpcmds)) < 0) {
+			syslog(LOG_ERR, "casper command limit: %m");
+			return (1);
+		}
 	}
 
 	EV_SET(&change, service_listener_fd(listener), EVFILT_READ,

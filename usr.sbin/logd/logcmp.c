@@ -1147,14 +1147,12 @@ pool_worker(int control_fd, cap_channel_t *capsyslog, int audit_fd,
 	    EV_ADD | EV_ENABLE, NOTE_MSECONDS, config->fallback_drain_ms,
 	    &pool.timer_source) == -1 ||
 	    pool_change(&pool, LOGCMP_POOL_WORK_IDENT, EVFILT_USER,
-	    EV_ADD | EV_CLEAR, 0, 0, &pool.work_source) == -1 ||
-	    service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	    EV_ADD | EV_CLEAR, 0, 0, &pool.work_source) == -1)
+		return (1);
+	if (service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOEXEC |
 	    SERVICE_PROTECT_NOSOCK) == -1)
-		return (1);
-	service_worker_drop_inherited_authority();
-	if (cap_enter() == -1)
 		return (1);
 	error = 0;
 	if (write(control_fd, &error, sizeof(error)) != sizeof(error))
@@ -1573,6 +1571,8 @@ main(void)
 	int fd, storage_control, storage_dir, storage_process;
 
 	openlog("logd", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
+	service_set_proctitle();
 	/*
 	 * Born in capability mode: load the managed config from the serviced-
 	 * delivered Config descriptor (service_config_open), never a global path.

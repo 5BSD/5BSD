@@ -643,6 +643,8 @@ main(void)
 	int dtrace_directory, error, fd, kq, status;
 
 	openlog("traced", LOG_PID | LOG_NDELAY, LOG_DAEMON);
+	/* ps(1) shows the unit name, not the ld-elf.so.1 launcher. */
+	service_set_proctitle();
 	workers = NULL;
 	nworkers = 0;
 	dtrace_directory = -1;
