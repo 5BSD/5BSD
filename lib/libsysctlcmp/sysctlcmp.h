@@ -26,7 +26,7 @@ void	sysctlcmp_client_close(struct sysctlcmp_client *);
  * than SYSCTLCMP_MAX_VALUE (the transport cap) cannot be carried at all: it
  * fails with ENOMEM and *lenp is left unchanged.  Values are opaque bytes, as
  * from sysctl(3); the caller interprets the type.  Enumeration (name-to-next)
- * is not provided; look variables up by name.
+ * is provided separately by sysctlcmp_next().
  */
 int	sysctlcmp_get(struct sysctlcmp_client *, const char *name,
 	    void *buf, size_t *lenp);

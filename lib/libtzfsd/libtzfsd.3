@@ -3,28 +3,43 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd August 14, 2026
+.Dd September 6, 2026
 .Dt LIBTZFSD 3
 .Os
 .Sh NAME
 .Nm tzfsd_connect ,
+.Nm tzfsd_adopt ,
+.Nm tzfsd_close ,
 .Nm tzfsd_request ,
+.Nm tzfsd_request_quota ,
 .Nm tzfsd_release ,
+.Nm tzfsd_destroy ,
 .Nm tzfsd_ping ,
+.Nm tzfsd_begin_session ,
 .Nm tzfsd_mount_dir
 .Nd client interface to the tzfsd storage daemon
 .Sh LIBRARY
 .Lb libtzfsd
 .Sh SYNOPSIS
 .In tzfsd.h
-.Ft int
+.Ft struct tzfsd_client *
 .Fn tzfsd_connect "void"
+.Ft struct tzfsd_client *
+.Fn tzfsd_adopt "int channel_fd"
+.Ft void
+.Fn tzfsd_close "struct tzfsd_client *c"
 .Ft int
-.Fn tzfsd_request "int chan" "const struct tzfsd_req *req" "struct tzfsd_grant *out"
+.Fn tzfsd_request "struct tzfsd_client *c" "const struct tzfsd_req *req" "struct tzfsd_grant *out"
 .Ft int
-.Fn tzfsd_release "int chan" "const char *name"
+.Fn tzfsd_request_quota "struct tzfsd_client *c" "const struct tzfsd_req *req" "uint64_t quota" "struct tzfsd_grant *out"
 .Ft int
-.Fn tzfsd_ping "int chan"
+.Fn tzfsd_release "struct tzfsd_client *c" "const char *dataset"
+.Ft int
+.Fn tzfsd_destroy "struct tzfsd_client *c" "const char *dataset" "uint32_t lifetime"
+.Ft int
+.Fn tzfsd_ping "struct tzfsd_client *c"
+.Ft int
+.Fn tzfsd_begin_session "struct tzfsd_client *c" "const char *session"
 .Ft int
 .Fn tzfsd_mount_dir "int handle_fd" "int rdonly"
 .Sh DESCRIPTION
@@ -49,31 +64,67 @@ prefix so a program may link both this library and
 .Xr trustedzfs 3
 without collision.
 .Pp
+.Xr tzfsd 8
+is a socket-free capability-plane service: there is no daemon socket to connect
+and no channel descriptor to thread through the calls.
+A claim is reached by name through the well-known service
+.Dq Li system.Filesystem ,
+and every claim is created inside a namespace derived from the caller's own
+unforgeable channel label, so a caller can only ever name storage in its own
+subtree.
+.Pp
 .Fn tzfsd_connect
-connects the well-known daemon socket
-.Pa /var/run/tzfsd.sock
-and returns a channel descriptor, or -1 with
+opens a channel to
+.Xr tzfsd 8
+by name
+.Pq internally Fn service_open "system.Filesystem"
+and returns an opaque client handle the caller owns and must
+.Fn tzfsd_close ,
+or
+.Dv NULL
+with
 .Va errno
 set.
-A sandboxed caller handed a pre-connected channel at bootstrap skips this and
-passes that descriptor as
-.Fa chan
-to the calls below.
+.Fn tzfsd_adopt
+instead wraps an already-held storage channel descriptor
+.Pq for example one Xr serviced 8 delivered pre-scoped to a claim
+as a client handle; it consumes
+.Fa channel_fd
+on success and returns a handle, or
+.Dv NULL
+with
+.Va errno
+set.
+.Fn tzfsd_close
+releases a client handle and its channel.
 .Pp
 .Fn tzfsd_request
 asks for a handle described by
 .Fa req :
-.Bl -tag -width ".Va lifetime" -offset indent
-.It Va name
-logical claim name within the requesting bundle.
+.Bl -tag -width ".Va owner_uid" -offset indent
+.It Va dataset
+opaque single-component claim key within the caller's own namespace.
 .It Va rights
 the
 .Dv ZH_*
 mask to grant; the returned handle carries no more than these.
+.It Va flags
+.Dv ZHF_*
+.Pq Dv ZHF_SUBTREE ,
+0 for the common case.
 .It Va lifetime
-.Dv TZFSD_PERSISTENT
+one of
+.Dv TZFSD_PERSISTENT ,
+.Dv TZFSD_CACHE ,
+.Dv TZFSD_BOOT ,
 or
-.Dv TZFSD_EPHEMERAL .
+.Dv TZFSD_LEASE .
+.It Va owner_uid , Va owner_gid
+if
+.Va owner_uid
+is nonzero, the dataset root is
+.Xr chown 2 Ns 'd
+to this owner at mint time so the service can write its own storage.
 .El
 .Pp
 On success it returns 0 and fills
@@ -85,14 +136,61 @@ the caller owns and must
 and whose
 .Va dataset
 holds the resolved dataset name for audit.
+.Fn tzfsd_request_quota
+is
+.Fn tzfsd_request
+with an explicit per-claim
+.Sy refquota
+ceiling of
+.Fa quota
+bytes; 0 selects the daemon's configured default
+.Pq see Va default_refquota in Xr tzfs.conf 5 ,
+and a value below the daemon's floor is rejected with
+.Er EINVAL .
+.Fn tzfsd_request
+is exactly this with
+.Fa quota
+== 0.
 .Pp
 .Fn tzfsd_release
-destroys the ephemeral claim previously granted under
-.Fa name .
+destroys the caller's own
+.Dv TZFSD_LEASE
+claim previously granted under
+.Fa dataset .
 It is idempotent: a missing claim is success.
+.Pp
+.Fn tzfsd_destroy
+reclaims a
+.Dv TZFSD_PERSISTENT
+or
+.Dv TZFSD_CACHE
+claim previously granted under
+.Fa dataset ,
+freeing its pool space;
+.Fa lifetime
+must be
+.Dv TZFSD_PERSISTENT
+or
+.Dv TZFSD_CACHE .
+Unlike
+.Fn tzfsd_release
+it is
+.Em not
+idempotent: an absent claim returns -1 with
+.Va errno
+set to
+.Er ENOENT ,
+so a caller can distinguish a real reclaim from a no-op.
+The claim is resolved under the caller's own label-derived namespace, so no
+other label's claim can be named.
 .Pp
 .Fn tzfsd_ping
 verifies the daemon is answering.
+.Pp
+.Fn tzfsd_begin_session
+begins or resumes one service-manager lease generation named by
+.Fa session ,
+reconciling the ephemeral lease datasets against it.
 .Pp
 .Fn tzfsd_mount_dir
 mounts a granted handle and returns a directory descriptor for its root,
@@ -103,18 +201,43 @@ It is a thin wrapper over
 .Xr tzfs_mount 3
 and requires the handle to carry
 .Dv ZH_MOUNT .
+.Pp
+Programs that acquire storage through their manifest, rather than driving
+.Xr tzfsd 8
+directly, use the socket-free
+.Fn service_storage_open ,
+.Fn service_storage_open_quota ,
+.Fn service_storage_destroy ,
+and
+.Fn service_storage_list
+family in
+.Xr libservice 3 ,
+which speaks the same
+.Dq Li system.Filesystem
+protocol.
+Enumeration of a caller's own claims is provided there
+.Pq Fn service_storage_list ;
+this library does not expose a list call.
 .Sh RETURN VALUES
 .Fn tzfsd_connect
 and
+.Fn tzfsd_adopt
+return a client handle, or
+.Dv NULL
+with
+.Va errno
+set.
 .Fn tzfsd_mount_dir
-return a descriptor, or -1 with
+returns a descriptor, or -1 with
 .Va errno
 set.
 The remaining functions return 0 on success or -1 with
 .Va errno
 set to the daemon-reported error.
 .Sh SEE ALSO
+.Xr libservice 3 ,
 .Xr trustedzfs 3 ,
+.Xr tzfs.conf 5 ,
 .Xr tzfsctl 8 ,
 .Xr tzfsd 8
 .Sh AUTHORS

@@ -5,6 +5,7 @@ LIB=	tracecmp
 SHLIB_MAJOR=	1
 MAN=	libtracecmp.3
 MLINKS+=libtracecmp.3 tracecmp_open.3
+MLINKS+=libtracecmp.3 tracecmp_stats.3
 MLINKS+=libtracecmp.3 tracecmp_dtrace_open.3
 
 SRCS=	tracecmp.c

@@ -28,6 +28,9 @@
 - [Service Manifests](system/manifests.md)
 - [Notifications (bsdnotify)](system/bsdnotify.md)
 - [Networking (localnetwork)](system/localnetwork.md)
+- [Sysctl (localsysctl)](system/localsysctl.md)
+- [Devices (localdevice)](system/localdevice.md)
+- [Logging (logd)](system/logd.md)
 
 # Storage
 

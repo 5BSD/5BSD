@@ -1,0 +1,80 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 6, 2026
+.Dt LIBDEVICECMP 3
+.Os
+.Sh NAME
+.Nm devicecmp_open ,
+.Nm devicecmp_hello
+.Nd public client for the system device broker
+.Sh LIBRARY
+.Li libdevicecmp
+.Pq Fl ldevicecmp
+.Sh SYNOPSIS
+.In devicecmp.h
+.Ft int
+.Fn devicecmp_open "struct service_context *ctx" "const char *name" "uint32_t want_rights" "uint32_t *granted_rights" "int *fdp"
+.Ft int
+.Fn devicecmp_hello "struct service_context *ctx"
+.Sh DESCRIPTION
+The
+.Nm
+library is the client for the
+.Dv system.Device
+broker (interface version
+.Dv 1.0.0 ) .
+The broker opens a named
+.Pa /dev
+leaf under the caller's serviced-authenticated, per-label policy and delivers a
+rights-limited, non-forwardable descriptor, so a sandboxed component can reach a
+device node it cannot open by path itself.
+.Pp
+.Fn devicecmp_open
+opens the
+.Pa /dev
+leaf named
+.Fa name ,
+which must be a single
+.Pa /dev
+component (no
+.Ql / ,
+no leading
+.Ql \&. ,
+no
+.Ql \&.. ) .
+.Fa want_rights
+is a mask of
+.Dv DEVICECMP_RIGHT_READ , DEVICECMP_RIGHT_WRITE ,
+.Dv DEVICECMP_RIGHT_IOCTL , DEVICECMP_RIGHT_MMAP ,
+.Dv DEVICECMP_RIGHT_SEEK ,
+and
+.Dv DEVICECMP_RIGHT_EVENT .
+On success the delivered descriptor is stored in
+.Fa fdp
+(the caller closes it) and, when
+.Fa granted_rights
+is non-NULL, the rights the provider actually granted \(em
+.Fa want_rights
+intersected with the per-label policy maximum \(em are stored there.
+On failure the call returns \-1 with
+.Va errno
+set and leaves
+.Fa fdp
+set to \-1.
+The request fails closed.
+.Pp
+.Fa ctx
+is the process
+.Xr libservice 3
+context and may be
+.Dv NULL
+for a standalone caller; the provider session is opened by name once and cached
+for the process.
+.Pp
+.Fn devicecmp_hello
+is a liveness probe that exchanges a HELLO with the provider.
+.Sh RETURN VALUES
+.Rv -std devicecmp_open devicecmp_hello
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr localdevice 8

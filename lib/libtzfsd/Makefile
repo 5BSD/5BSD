@@ -11,9 +11,14 @@ INCS=		tzfsd.h
 MAN=		libtzfsd.3
 
 MLINKS+=	libtzfsd.3 tzfsd_connect.3 \
+		libtzfsd.3 tzfsd_adopt.3 \
+		libtzfsd.3 tzfsd_close.3 \
 		libtzfsd.3 tzfsd_request.3 \
+		libtzfsd.3 tzfsd_request_quota.3 \
 		libtzfsd.3 tzfsd_release.3 \
+		libtzfsd.3 tzfsd_destroy.3 \
 		libtzfsd.3 tzfsd_ping.3 \
+		libtzfsd.3 tzfsd_begin_session.3 \
 		libtzfsd.3 tzfsd_mount_dir.3
 
 # tzfsd_proto.h lives with the other capability protocols in libauthorityrt;

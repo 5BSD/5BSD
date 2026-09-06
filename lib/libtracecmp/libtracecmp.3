@@ -4,6 +4,7 @@
 .Os
 .Sh NAME
 .Nm tracecmp_open ,
+.Nm tracecmp_stats ,
 .Nm tracecmp_dtrace_open
 .Nd explicitly authorized DTrace descriptor delegation
 .Sh LIBRARY
@@ -13,6 +14,8 @@
 .In tracecmp.h
 .Ft int
 .Fn tracecmp_open "int *dtracefd"
+.Ft int
+.Fn tracecmp_stats "struct tracecmp_stats *stats"
 .Ft dtrace_hdl_t *
 .Fn tracecmp_dtrace_open "int flags" "int *errp"
 .Sh DESCRIPTION
@@ -49,6 +52,20 @@ before enabling probes to replace these defaults.
 .Fn tracecmp_open
 is the lower-level interface for consumers that deliberately manage the raw
 descriptor.
+.Pp
+.Fn tracecmp_stats
+retrieves the provider's operational counters into
+.Fa stats
+without delegating a descriptor.
+The
+.Vt struct tracecmp_stats
+reports the number of DTrace consumer descriptors the provider has
+.Va opened
+and the number of requests it has
+.Va rejected .
+It returns zero on success and \-1 on failure with
+.Va errno
+set.
 .Pp
 The provider advertises the raw-descriptor feature only for a client label
 listed explicitly in

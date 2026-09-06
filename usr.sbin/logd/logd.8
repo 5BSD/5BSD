@@ -20,15 +20,13 @@ empty to nonempty, and the worker drains the burst through
 .Xr kqueue 2 .
 A bounded periodic timer is retained only as a lost-wakeup fallback, so record
 publication requires neither polling latency nor a control message per record.
-An explicit flush drains all records published before the request, submits
-their redacted representations to the syslog capability, drains the worker's
-bounded internal storage ring, and synchronizes the LogCmp store before
-replying.  It does not claim that syslogd has committed its separate copy to
-stable storage.
-The worker enters capability mode and forwards validated records through a
-separately limited
-.Dq system.syslog
-Casper channel.  Durable records cross from the worker to the storage manager
+An explicit flush drains all records published before the request, drains the
+worker's bounded internal storage ring, and synchronizes the LogCmp store
+before replying.
+The worker runs in capability mode and is itself the plane's log authority:
+validated records are persisted only to the LogCmp store and are never mirrored
+to a separate log sink.
+Durable records cross from the worker to the storage manager
 through a second single-producer shared-memory ring; its socket carries only
 edge notifications, lifecycle control, and explicit flush barriers.
 The storage manager drains active rings in bounded round-robin batches, so a
@@ -51,8 +49,8 @@ sink.
 Clients supply a subsystem, category, normalized severity, privacy class,
 message text, an optional event timestamp, and bounded typed non-reserved
 attributes.
-The provider overwrites both receive clocks before any record reaches syslog
-or retained storage, so a client cannot forge ingestion ordering.
+The provider overwrites both receive clocks before any record reaches retained
+storage, so a client cannot forge ingestion ordering.
 Private fields are retained as the literal
 .Dq <private> .
 Private-hash fields are retained as a 128-bit hexadecimal digest keyed with a
@@ -60,14 +58,14 @@ random 256-bit storage-manager epoch key.
 The key is never written to the store and is erased when the manager exits, so
 equal values can be correlated only within one running storage epoch and
 cannot be compared across restarts.
-Neither private representation exposes its source value through syslog or a
-retained query.
+Neither private representation exposes its source value through a retained
+query.
 Ring exhaustion is explicit and observable through total and per-severity
 drop counters; it never overwrites unread records.
 Each session also has an administrator-configured fixed-window ingestion
 budget.  Records below the configured severity threshold and records beyond
-the session budget advance sequence accounting but do not reach either the
-private store or syslog.  Separate filtered and rate-limited counters make
+the session budget advance sequence accounting but do not reach the
+private store.  Separate filtered and rate-limited counters make
 these deliberate losses distinguishable from malformed records and
 client-ring exhaustion.
 .Pp
@@ -107,8 +105,8 @@ the active segment are truncated to the last checksummed boundary; corruption
 inside a complete record fails closed.
 .Sh SECURITY
 Workers cannot open files, sockets, or other sinks.
-They cannot fork or execute and neither the syslog capability nor ring
-consumer descriptors can be transferred to the client.
+They cannot fork or execute, and ring consumer descriptors cannot be
+transferred to the client.
 The global provider remains outside consumer coalitions.
 Session creation and rejected records are audited through OpenBSM.
 Lifecycle, accepted-record, drop, flush, persistence, rotation, corruption,
@@ -136,5 +134,4 @@ Record payloads and private field values are never probe arguments.
 .Xr liblogcmp 3 ,
 .Xr libshmring 3 ,
 .Xr capsicum 4 ,
-.Xr serviced 8 ,
-.Xr syslogd 8
+.Xr serviced 8

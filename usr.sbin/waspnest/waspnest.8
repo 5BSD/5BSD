@@ -3,11 +3,11 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 1, 2026
-.Dt VMD 8
+.Dd September 6, 2026
+.Dt WASPNEST 8
 .Os
 .Sh NAME
-.Nm vmd
+.Nm waspnest
 .Nd virtual-machine component
 .Sh SYNOPSIS
 .Nm
@@ -16,7 +16,8 @@ The
 .Nm
 daemon is the virtual-machine authority.
 Its eventual role is to run full virtual machines under
-.Xr bhyve 8 ;
+.Xr bhyve 8 ,
+which remains the underlying hypervisor engine;
 today it brokers
 .Em vsock
 .Pq VM socket
@@ -24,31 +25,63 @@ endpoints, a duty removed from
 .Xr serviced 8
 when the manifest capability block was removed entirely.
 It is a socket-free capability-plane service: it exposes the well-known name
-.Dq Li system.VM
+.Dq Li system.Waspnest
 and serves each client on its own
 .Xr mac_capability 4
 channel.
 The discovery
 .Em domain
 layer resolves
-.Dq Li system.VM
+.Dq Li system.Waspnest
 only for SYSTEM-domain clients.
 .Pp
 Obtaining a vsock is
 .Em consumer self-service :
 a program asks for one at runtime by calling
-.Xr service_vsock_listen 3 ,
+.Xr service_vsock_listen 3
+or
+.Xr service_vsock_connect 3 ,
 whose library resolves
 .Nm
 and drives it.
-A process in capability mode cannot bind a vsock address itself
+A process in capability mode cannot bind or connect a vsock address itself
 .Pq it names a global namespace ;
 .Nm ,
-which owns the vsock transport, binds a host-local
+which owns the vsock transport, performs the operation on the caller's behalf
+and returns the resulting descriptor:
+.Bl -tag -width ".Sy VSOCK_CONNECT"
+.It Sy VSOCK_BIND
+Bind and listen a host-local
 .Pq Dv VMADDR_CID_LOCAL
-listening
 .Dv AF_VSOCK
-socket on the caller's behalf and returns the descriptor.
+socket and return the listening descriptor to
+.Xr accept 2
+on.
+The wire
+.Va port
+is only an
+.Em index
+into the caller's own label-scoped port window, never a concrete port; the
+reply echoes the concrete host-local CID and port bound, which a peer can then
+dial.
+.It Sy VSOCK_CONNECT
+Dial a concrete
+.Pq Va cid , Va port
+a peer advertised from its own
+.Sy VSOCK_BIND
+reply and return the connected
+.Dv AF_VSOCK
+socket.
+Here
+.Va port
+is the concrete advertised port
+.Pq not a window index ,
+and
+.Va cid
+must name a real peer, never the wildcard
+.Dv VMADDR_CID_ANY .
+.El
+.Pp
 .Nm
 is never driven by
 .Xr serviced 8
@@ -69,7 +102,7 @@ port.
 is launched and supervised by
 .Xr serviced 8
 from the
-.Pa /Capabilities/System/VM.cap
+.Pa /Capabilities/System/Waspnest.cap
 bundle on demand
 .Pq the first consumer that asks for a vsock pulls it up ;
 it is not started by
@@ -88,14 +121,15 @@ Each accepted client is served on its own
 .Xr pdfork 2 Ns 'd
 worker.
 .Sh FILES
-.Bl -tag -width ".Pa /Capabilities/System/VM.cap" -compact
-.It Pa /Capabilities/System/VM.cap
+.Bl -tag -width ".Pa /Capabilities/System/Waspnest.cap" -compact
+.It Pa /Capabilities/System/Waspnest.cap
 capability bundle shipping
 .Nm
 .El
 .Sh SEE ALSO
 .Xr pdfork 2 ,
 .Xr socket 2 ,
+.Xr service_vsock_connect 3 ,
 .Xr service_vsock_listen 3 ,
 .Xr mac_capability 4 ,
 .Xr vsock 4 ,

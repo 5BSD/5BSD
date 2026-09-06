@@ -1,0 +1,159 @@
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\" Copyright (c) 2026 Kory Heard
+.Dd September 6, 2026
+.Dt LIBCRYPTOCMP 3
+.Os
+.Sh NAME
+.Nm cryptocmp_open ,
+.Nm cryptocmp_close ,
+.Nm cryptocmp_generate ,
+.Nm cryptocmp_generate_key ,
+.Nm cryptocmp_digest ,
+.Nm cryptocmp_random ,
+.Nm cryptocmp_named_create ,
+.Nm cryptocmp_named_lease ,
+.Nm cryptocmp_named_rotate ,
+.Nm cryptocmp_named_delete ,
+.Nm cryptocmp_named_stat
+.Nd public client for the system crypto broker
+.Sh LIBRARY
+.Li libcryptocmp
+.Pq Fl lcryptocmp
+.Sh SYNOPSIS
+.In cryptocmp.h
+.Ft int
+.Fn cryptocmp_open "struct cryptocmp_client **client"
+.Ft void
+.Fn cryptocmp_close "struct cryptocmp_client *client"
+.Ft int
+.Fn cryptocmp_generate "struct cryptocmp_client *client" "const struct cryptocmp_generate *params" "int *fdp"
+.Ft int
+.Fn cryptocmp_generate_key "struct cryptocmp_client *client" "const struct cryptocmp_key_generate *params" "uint8_t public_key[32]" "int *fdp"
+.Ft int
+.Fn cryptocmp_digest "struct cryptocmp_client *client" "uint32_t alg" "uint32_t ttl" "uint32_t flags" "int *fdp"
+.Ft int
+.Fn cryptocmp_random "struct cryptocmp_client *client" "void *buf" "size_t nbytes"
+.Ft int
+.Fn cryptocmp_named_create "struct cryptocmp_client *client" "const char *name" "const struct cryptocmp_generate *params" "uint64_t *generationp"
+.Ft int
+.Fn cryptocmp_named_lease "struct cryptocmp_client *client" "const char *name" "uint32_t rights" "uint32_t ttl" "uint64_t *generationp" "int *fdp"
+.Ft int
+.Fn cryptocmp_named_rotate "struct cryptocmp_client *client" "const char *name" "uint64_t *generationp"
+.Ft int
+.Fn cryptocmp_named_delete "struct cryptocmp_client *client" "const char *name" "uint64_t *generationp"
+.Ft int
+.Fn cryptocmp_named_stat "struct cryptocmp_client *client" "const char *name" "struct cryptocmp_named_info *info"
+.Sh DESCRIPTION
+The
+.Nm
+library is the client for the
+.Dv system.Crypto
+broker (interface version
+.Dv 3.2.0 ) .
+The broker mints kernel OpenCrypto session descriptors and produces random
+bytes under the caller's serviced-authenticated identity.
+Named keys are owned by the session's channel label, which is never supplied on
+the wire, so a caller can only ever observe or operate on keys minted under its
+own label.
+.Pp
+.Fn cryptocmp_open
+resolves the broker over the
+.Xr libservice 3
+lookup channel and returns a process-bound client handle in
+.Fa client .
+.Fn cryptocmp_close
+releases it.
+.Pp
+.Fn cryptocmp_generate
+mints an ephemeral symmetric-crypto session from the algorithm profile in
+.Fa params
+and returns its descriptor in
+.Fa fdp .
+The
+.Vt struct cryptocmp_generate
+profile selects the cipher, MAC, key and IV lengths, granted rights, and a
+time-to-live; a
+.Fa flags
+value of
+.Dv CRYPTOCMP_GENERATE_F_NIST_APPROVED_ONLY
+restricts the selection to NIST-approved algorithms.
+Selecting a profile is not a FIPS validation claim.
+.Pp
+.Fn cryptocmp_generate_key
+mints an ephemeral asymmetric key session, returning the public key in the
+32-byte
+.Fa public_key
+buffer and the session descriptor in
+.Fa fdp .
+.Pp
+.Fn cryptocmp_digest
+mints an ephemeral unkeyed-hash session for the OpenCrypto plain-hash selector
+.Fa alg
+(for example
+.Dv CRYPTO_SHA2_256 )
+with the given
+.Fa ttl
+and
+.Fa flags ,
+returning the descriptor in
+.Fa fdp .
+Because there is no key material, the descriptor is not owner-scoped.
+.Pp
+.Fn cryptocmp_random
+fills
+.Fa buf
+with
+.Fa nbytes
+of CSPRNG output.
+A single request is bounded by
+.Dv CRYPTOCMP_MAX_RANDOM_BYTES .
+.Pp
+.Fn cryptocmp_named_create
+creates a persistent named key
+.Fa name
+from the profile in
+.Fa params ,
+storing its initial generation number in
+.Fa generationp .
+.Fn cryptocmp_named_lease
+mints a fresh session descriptor for an existing named key with the requested
+.Fa rights
+and
+.Fa ttl ,
+returning the current generation in
+.Fa generationp
+and the descriptor in
+.Fa fdp .
+.Fn cryptocmp_named_rotate
+rotates the named key's underlying material, advancing and returning its new
+generation in
+.Fa generationp .
+.Fn cryptocmp_named_delete
+destroys the named key and returns its final generation in
+.Fa generationp .
+.Pp
+.Fn cryptocmp_named_stat
+resolves a named key by
+.Pq owner , name
+and returns its metadata in
+.Fa info
+without minting a descriptor or mutating the key: no descriptor is delivered
+and the generation is unchanged.
+The
+.Vt struct cryptocmp_named_info
+reports the current
+.Va generation ,
+the granted rights mask, the cipher and MAC selectors (zero when none), and the
+cipher and MAC key lengths.
+A key absent under the caller's own label is reported with
+.Er ENOENT .
+.Sh RETURN VALUES
+Functions returning
+.Vt int
+return zero on success and \-1 on failure with
+.Va errno
+set.
+.Sh SEE ALSO
+.Xr libservice 3 ,
+.Xr crypto 4 ,
+.Xr localcrypto 8

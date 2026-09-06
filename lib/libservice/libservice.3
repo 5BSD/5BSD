@@ -28,17 +28,35 @@ Service lifecycle library
 .Ft int
 .Fn service_helper_open "struct service_context *context" "const char *name" "int *session_fd"
 .Ft int
-.Fn service_storage_open "struct service_context *context" "const char *name" "int *dirfd"
+.Fn service_storage_open "struct service_context *context" "const char *name" "int *dirfdp"
 .Ft int
-.Fn service_open_config "struct service_context *context" "const char *name" "int *fd"
+.Fn service_storage_open_quota "struct service_context *context" "const char *name" "uint64_t quota" "int *dirfdp"
 .Ft int
-.Fn service_open_isolated "struct service_context *context" "const char *name" "int *dirfd"
+.Fn service_storage_destroy "struct service_context *context" "const char *name"
 .Ft int
-.Fn service_enter_namespace "struct service_context *context" "const char *path"
+.Fn service_storage_list "struct service_context *context" "struct service_storage_claim *claims" "size_t max" "size_t *countp" "uint32_t *cursorp"
 .Ft int
-.Fn service_ensure_extension "struct service_context *context" "const char *name"
+.Fn service_open_config "struct service_context *context" "int *dirfdp"
 .Ft int
-.Fn service_vsock_listen "struct service_context *context" "unsigned index" "int *fd"
+.Fn service_open_isolated "struct service_context *context" "const char *path" "unsigned rights" "int is_dir" "int *fdp"
+.Ft int
+.Fn service_capability_open "struct service_context *context" "const char *name" "const char *type" "int *fd"
+.Ft int
+.Fn service_enter_namespace "struct service_context *context" "const char *path" "const char *hostname" "const char *ip4_addr" "unsigned flags"
+.Ft int
+.Fn service_enter_namespace_ex "struct service_context *context" "const char *path" "const char *hostname" "const char *ip4_addr" "const char *ip6_addr" "unsigned flags"
+.Ft int
+.Fn service_destroy_namespace "struct service_context *context"
+.Ft int
+.Fn service_namespace_info "struct service_context *context" "struct service_namespace_info *out"
+.Ft int
+.Fn service_ensure_extension "struct service_context *context" "const char *module"
+.Ft int
+.Fn service_extension_stat "struct service_context *context" "const char *module" "int *loadedp"
+.Ft int
+.Fn service_vsock_listen "struct service_context *context" "unsigned port" "unsigned backlog" "unsigned *cidp" "unsigned *portp" "int *fdp"
+.Ft int
+.Fn service_vsock_connect "struct service_context *context" "unsigned cid" "unsigned port" "int *fdp"
 .Ft int
 .Fn service_supervisor_fd "struct service_context *context"
 .Ft int
@@ -177,60 +195,242 @@ asks the
 .Dq system.Filesystem
 provider
 .Pq Xr tzfsd 8
-for the storage dataset named
+for the owned, type-checked storage claim named
 .Fa name ,
 mounts the delivered rights-limited handle, and returns its directory root in
-.Fa dirfd .
+.Fa dirfdp .
 The call retains the handle for the life of the process, because the anonymous
 mount is anchored by it \(em dropping the handle would force-unmount the
 directory.
 The caller hardens the returned directory's rights itself.
 .Pp
+.Fn service_storage_open_quota
+is
+.Fn service_storage_open
+with the persistent claim's
+.Fa refquota
+bounded to
+.Fa quota
+bytes;
+.Fa quota
+of zero selects the daemon's configured default, and a value below the daemon's
+floor is rejected with
+.Er EINVAL .
+.Fn service_storage_open
+is
+.Fn service_storage_open_quota
+with
+.Fa quota
+of zero.
+.Pp
+.Fn service_storage_destroy
+reclaims and destroys the persistent storage claim previously granted under
+.Fa name ,
+freeing its pool space.
+The claim is resolved under the caller's own label-scoped namespace, so a
+caller can never name another's;
+.Er ENOENT
+is returned when the named claim is absent.
+.Pp
+.Fn service_storage_list
+enumerates the caller's own persistent and cache storage claims into
+.Fa claims ,
+storing the number written in
+.Fa countp .
+The walk is scoped to the caller's own label-derived namespace, so it can only
+ever return the caller's claims.
+Enumeration is paged: pass
+.Fa cursorp
+pointing at zero for the first page; on return
+.Fa *cursorp
+is nonzero when more claims remain (re-issue with that value) and zero after the
+last page.
+A buffer of
+.Dv SERVICE_STORAGE_LIST_MAX
+entries always holds a whole page; a smaller
+.Fa max
+that cannot hold the returned page fails with
+.Er EMSGSIZE
+rather than truncating silently.
+Each returned
+.Vt struct service_storage_claim
+carries the claim's opaque
+.Va name ,
+its
+.Va used
+bytes, and its
+.Va refquota
+ceiling in bytes
+.Pq zero when none .
+.Pp
 .Fn service_open_config
-asks the
-.Dq system.Filesystem
-provider for the read-only configuration object named
-.Fa name
-and returns a rights-limited descriptor in
-.Fa fd .
+opens this service's writable, label-scoped configuration area \(em the
+well-known
+.Dq config
+claim under its per-service home \(em and returns its mounted directory root in
+.Fa dirfdp .
+It is a thin wrapper over
+.Fn service_storage_open
+and takes no object name.
 .Pp
 .Fn service_open_isolated
-asks the
-.Dq system.Filesystem
-provider for a per-caller isolated scratch dataset named
+opens an existing filesystem
+.Fa path
+through
+.Xr tzfsd 8 Ns 's
+per-label default-deny policy and returns a Capsicum-rights-limited,
+close-on-exec descriptor in
+.Fa fdp .
+It lets a sandboxed service reach a device node, shared directory, or config
+file it cannot open by path itself, with nothing declared in the manifest.
+.Fa rights
+is a mask of
+.Dv SERVICE_OPEN_READ , SERVICE_OPEN_WRITE , SERVICE_OPEN_EXEC ,
+.Dv SERVICE_OPEN_LOOKUP ,
+and
+.Dv SERVICE_OPEN_IOCTL ;
+a non-zero
+.Fa is_dir
+requires that
+.Fa path
+be a directory.
+A path the label is not granted fails with
+.Er EACCES .
+.Pp
+.Fn service_capability_open
+opens an owned, type-checked descriptor declared by the manifest under
 .Fa name
-and returns its mounted directory root in
-.Fa dirfd .
+with interface
+.Fa type ,
+returning it in
+.Fa fd .
 .Pp
 .Fn service_enter_namespace
 asks the
 .Dq system.Namespace
 provider
 .Pq Xr warden 8
-to confine the caller in a jail rooted at
-.Fa path ;
-the caller attaches itself before exec.
+to create a jail rooted at
+.Fa path
+(scoped by this process's channel label) and attaches the calling process to it;
+the returned jail's root credential authorizes the attach, so a non-root caller
+may confine itself.
+.Fa hostname
+and
+.Fa ip4_addr
+may be
+.Dv NULL .
+.Fa flags
+is zero for a persistent jail (reused by label across restarts) or
+.Dv SERVICE_NS_EPHEMERAL
+for a jail whose lifetime is bound to the calling process.
+.Pp
+.Fn service_enter_namespace_ex
+is
+.Fn service_enter_namespace
+with an additional IPv6 address
+.Fa ip6_addr
+.Pq empty or Dv NULL for none
+and the full
+.Dv SERVICE_NS_*
+flag set, including
+.Dv SERVICE_NS_VNET
+for a jail with its own virtual network stack (requires
+.Dv VIMAGE ) .
+.Fn service_enter_namespace
+is this with
+.Fa ip6_addr
+empty.
+.Pp
+.Fn service_destroy_namespace
+destroys the caller's own jail, scoped to the caller's label so it can never
+name another's;
+.Er ENOENT
+is returned when the caller has none.
+.Pp
+.Fn service_namespace_info
+reports the caller's own jail into
+.Fa out .
+A label owns at most one jail:
+.Va out->present
+is 1 with the fields filled, or 0 when the caller has no jail (which is still a
+success).
+.Va out->flags
+carries the
+.Dv SERVICE_NS_*
+bits describing the jail \(em
+.Dv SERVICE_NS_VNET
+when it has its own virtual network stack, and
+.Dv SERVICE_NS_EPHEMERAL
+when this process's own connection is anchoring the jail's lifetime \(em so a
+consumer that lists after a restart can pass them straight back to
+.Fn service_enter_namespace_ex .
+Each address field is empty when the jail has no address of that family.
 .Pp
 .Fn service_ensure_extension
 asks the
 .Dq system.SystemExtension
 provider
 .Pq Xr sysextd 8
-to ensure the kernel system extension named
-.Fa name
-is loaded.
+to ensure the kernel extension (module) named
+.Fa module
+is loaded (success includes an already-loaded module).
+.Fa module
+must be a single, safe filename component.
+This is a
+.Dv SYSTEM Ns -domain
+caller only; the discovery domain layer makes the name unresolvable for user
+services, so it fails closed for them.
+.Pp
+.Fn service_extension_stat
+queries whether the kernel extension named
+.Fa module
+is loaded without attempting a load, setting
+.Fa *loadedp
+to 1 (loaded) or 0 (not).
+It is routed and validated exactly like
+.Fn service_ensure_extension ;
+a denied name fails with
+.Er EPERM .
 .Pp
 .Fn service_vsock_listen
 asks the
 .Dq system.VM
 provider
-.Pq Xr vmd 8
-for a bound host-local listening
+.Pq Xr waspnest 8
+to bind a host-local listening
 .Dv AF_VSOCK
-socket at
-.Fa index
-within the caller's port window and returns the descriptor in
-.Fa fd .
+socket on the caller's behalf.
+.Fa port
+is an index within the caller's own label-scoped port window
+.Pq Li 0 .. VMD_PORTS_PER_LABEL-1 ,
+so it can never name another component's port;
+.Fa backlog
+is the listen backlog (0 = default).
+On success
+.Fa fdp
+receives the close-on-exec listening descriptor to
+.Xr accept 2
+on, and
+.Fa cidp
+and
+.Fa portp ,
+when non-NULL, the concrete host-local CID and port bound.
+.Pp
+.Fn service_vsock_connect
+dials a peer's advertised vsock via
+.Xr waspnest 8
+and returns the connected
+.Dv AF_VSOCK
+socket in
+.Fa fdp .
+.Fa port
+is the concrete port the peer advertised from its own
+.Fn service_vsock_listen
+reply (not a window index), and
+.Fa cid
+is the target CID, which must not be
+.Dv VMADDR_CID_ANY .
 .Pp
 .Fn service_helper_open
 launches and connects a private helper unit declared in the caller's own
@@ -452,5 +652,5 @@ Delivery durability and remote cancellation remain service-specific.
 .Xr serviced 8 ,
 .Xr sysextd 8 ,
 .Xr tzfsd 8 ,
-.Xr vmd 8 ,
+.Xr waspnest 8 ,
 .Xr warden 8

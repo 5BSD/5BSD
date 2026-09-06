@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd August 14, 2026
+.Dd September 6, 2026
 .Dt TZFS.CONF 5
 .Os
 .Sh NAME
@@ -23,7 +23,7 @@ effective user and must not be writable by its group or by other users.
 Symbolic links, malformed input, truncated values, and invalid types are fatal
 startup errors.
 .Sh KEYS
-.Bl -tag -width ".Va ephemeral.sync"
+.Bl -tag -width ".Va default_refquota"
 .It Va pool
 Name of the ZFS pool that backs
 .Pa /Capabilities .
@@ -54,6 +54,55 @@ property applied to ephemeral datasets.
 Default
 .Ql disabled
 for throughput.
+.It Va default_refquota
+Default per-claim space ceiling, in bytes, applied as the dataset
+.Sy refquota
+so no single claim can fill the pool and starve other tenants.
+UCL size suffixes such as
+.Ql 1gb
+are accepted and pre-multiplied.
+A per-request quota override (see
+.Xr tzfsd_request_quota 3 )
+supersedes this default; a value of 0 disables the ceiling.
+Default 0
+.Pq no ceiling .
+.It Va open_paths
+Array of per-label isolated-open policy entries for the
+.Xr tzfsd 8
+OPEN operation, which lets a sandboxed service reach a device node, shared
+directory, or config file it cannot open by path itself.
+The policy is
+.Em default-deny :
+absent, no path is openable.
+Each entry is an object with the keys:
+.Bl -tag -width ".Va prefix" -offset indent
+.It Va label
+the exact client channel label the entry grants to
+.Pq required .
+.It Va path
+one absolute path
+.Pq required ;
+no empty or
+.Ql ..
+traversal component.
+.It Va rights
+a required array drawn from
+.Ql read ,
+.Ql write ,
+.Ql exec ,
+.Ql lookup ,
+and
+.Ql ioctl ;
+at least one is required.
+.It Va prefix
+optional boolean.
+When true,
+.Va path
+matches the path itself or a single trailing component
+.Pq a device unit, e.g. Pa /dev/vhid No matching Pa /dev/vhidN ,
+never a deeper subdirectory.
+When false or absent, only an exact path match is granted.
+.El
 .El
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/Config/tzfsd.ucl" -compact
@@ -67,6 +116,16 @@ with a dedicated pool:
 .Bd -literal -offset indent
 pool = "tank";
 ephemeral { sync = "standard"; }
+.Ed
+.Pp
+Cap every claim at 1 GiB by default and grant one label read access to a
+device unit family:
+.Bd -literal -offset indent
+default_refquota = 1gb;
+open_paths = [
+    { label = "system.Bluetooth"; path = "/dev/vhid"; prefix = true;
+      rights = ["read", "write", "ioctl"]; }
+]
 .Ed
 .Sh SEE ALSO
 .Xr libtzfsd 3 ,

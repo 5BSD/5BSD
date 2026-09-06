@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 1, 2026
+.Dd September 6, 2026
 .Dt WARDEN 8
 .Os
 .Sh NAME
@@ -49,13 +49,17 @@ per-caller token: because confining oneself is self-confinement,
 scopes each jail by the caller's unforgeable channel label, so one consumer
 can never name or reuse another's jail.
 .Nm
-creates the jail rooted at the requested path with
-.Dv JAIL_OWN_DESC
-and returns an owning descriptor whose stored credential
+creates the jail rooted at the requested path and returns a
+.Em non-owning
+descriptor as the reply's single
+.Dv SCM_RIGHTS
+fd.
+The credential stored in that descriptor
 .Pq root, from Nm
-authorizes the non-root consumer's own
+is what authorizes the non-root consumer's own
 .Xr jail_attach_jd 2 ,
 so the consumer attaches itself before exec.
+Closing the non-owning descriptor never removes the jail.
 .Pp
 .Nm
 is launched and supervised by
@@ -65,6 +69,89 @@ from the
 bundle; it is not started by
 .Xr init 8 ,
 and it is not intended to be run from the command line.
+.Ss Operations
+Each request is scoped to the ONE jail the caller's unforgeable channel label
+names, so no operation takes a jail name or id as a wire argument.
+.Bl -tag -width ".Sy DESTROY_JAIL"
+.It Sy ENTER_JAIL
+Create
+.Pq or reuse
+the caller's jail rooted at the requested path and return its non-owning
+descriptor
+.Pq see above .
+The request carries the jail root path
+.Pq required, absolute
+and optionally a hostname, an IPv4 address
+.Pq Va ip4_addr ,
+and an IPv6 address
+.Pq Va ip6_addr ;
+an empty address field means no address of that family.
+The hostname defaults to the derived jail name.
+.Pp
+If a matching jail already exists
+.Pq a persistent execution container reused across relaunches
+its descriptor is returned unchanged.
+Reuse is safe only when the
+.Em entire
+requested definition matches the existing jail: path, hostname, IPv4 address,
+IPv6 address, and vnet setting.
+A jail's definition is immutable, so any mismatch is a hard
+.Er EEXIST
+rather than a silent reattach into a differently shaped jail.
+.It Sy DESTROY_JAIL
+Remove the caller's jail
+.Pq Xr jail_remove 2 .
+It replies
+.Er ENOENT
+when the caller has no jail, and status 0 once the jail is gone.
+An ephemeral jail whose lifetime a worker anchors is torn down regardless.
+.It Sy LIST_JAILS
+Report the caller's jail definition: exactly zero or one jail, since a label
+owns at most one.
+When present it reports the jail id, root path, hostname, IPv4 and IPv6
+addresses, and the
+.Sy WARDEN_F_*
+flags that describe it, including
+.Sy WARDEN_F_VNET
+.Pq the jail has its own virtual network stack
+and whether the jail is ephemeral
+.Pq its lifetime anchored by this connection's worker
+versus persistent.
+.El
+.Ss Jail lifetime
+Without
+.Sy WARDEN_F_EPHEMERAL
+a jail is
+.Em persistent :
+created
+.Li persist=1 ,
+reused by label across consumer restarts, and outliving any single consumer.
+With
+.Sy WARDEN_F_EPHEMERAL
+the jail's lifetime is bound to the consumer:
+.Nm
+retains a
+.Em separate
+owning descriptor
+.Pq Dv JAIL_OWN_DESC
+in the per-client worker process, hands the consumer only the non-owning
+descriptor for its attach, and tears the jail down when the consumer
+disconnects and the worker exits.
+.Ss Virtual networking
+With
+.Sy WARDEN_F_VNET
+the jail gets its own virtual network stack
+.Pq Li vnet=new :
+an independent set of interfaces, addresses, and routing rather than a
+restricted view onto the host stack.
+It requires a
+.Sy VIMAGE
+kernel and is part of the jail's immutable definition.
+An
+.Va ip4_addr
+or
+.Va ip6_addr
+without this flag is instead the jail's address on the host stack.
 .Ss Operation
 .Nm
 runs as root and, unlike most capability-plane providers, NOT in capability
@@ -75,10 +162,6 @@ needs the classic
 privilege and resolves the jail root path against the global namespace, both of
 which capsicum forbids.
 Its authority is the caller's channel label, not the capsicum sandbox.
-A request carries the jail root path and optionally a hostname and
-IPv4 address; the jail name is derived from the caller's channel label.
-If a matching jail already exists (a persistent execution
-container reused across relaunches) its descriptor is returned unchanged.
 .Sh FILES
 .Bl -tag -width ".Pa /Capabilities/System/Namespace.cap" -compact
 .It Pa /Capabilities/System/Namespace.cap
@@ -86,8 +169,9 @@ capability bundle shipping
 .Nm
 .El
 .Sh SEE ALSO
-.Xr jail_set 2 ,
 .Xr jail_attach_jd 2 ,
+.Xr jail_remove 2 ,
+.Xr jail_set 2 ,
 .Xr pdfork 2 ,
 .Xr service_enter_namespace 3 ,
 .Xr mac_capability 4 ,
