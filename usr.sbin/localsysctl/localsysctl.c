@@ -34,8 +34,10 @@
 
 #include "config.h"
 
+#ifndef SYSCTLCMP_TESTING
 /* Loaded once in main() before the provider sandboxes; workers inherit it. */
 static struct sysctlcmp_config g_config;
+#endif
 
 struct session {
 	const char			*label;
@@ -323,6 +325,8 @@ serve_session(int fd, const char *label, const struct sysctlcmp_config *config)
 }
 
 #ifdef SYSCTLCMP_TESTING
+#include "localsysctl_test.h"
+
 int
 sysctlcmp_test_serve(int fd, const char *label,
     const struct sysctlcmp_config *config)

@@ -115,6 +115,8 @@ int	tzfsd_test_grant_open(struct tzfsd_state *st, const char *client,
 int	tzfsd_test_grant(struct tzfsd_state *st, const char *client,
 	    const struct tzfsd_request *rq, char *dataset, size_t dsz);
 int	tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client);
+int	tzfsd_test_grant_list(struct tzfsd_state *st, const char *client,
+	    const struct tzfsd_list_request *rq, struct tzfsd_list_reply *rp);
 #endif /* TZFSD_TESTING */
 
 #endif /* TZFSD_H */

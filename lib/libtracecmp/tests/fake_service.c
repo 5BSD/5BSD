@@ -113,7 +113,10 @@ service_session_call(struct service_session *session,
 {
 	struct {
 		struct tracecmp_msg msg;
-		struct tracecmp_hello_reply hello;
+		union {
+			struct tracecmp_hello_reply hello;
+			struct tracecmp_stats stats;
+		} body;
 	} response;
 	const struct tracecmp_msg *request;
 	enum fake_reply_mode selected;
@@ -148,12 +151,16 @@ service_session_call(struct service_session *session,
 		response.msg.flags = 1;
 	length = sizeof(response.msg);
 	if (request->opcode == TRACECMP_OP_HELLO) {
-		response.hello.version = TRACECMP_ABI_VERSION;
-		response.hello.features = selected == FAKE_REPLY_NO_FEATURE ? 0 :
-		    TRACECMP_FEATURE_RAW_DTRACE_FD;
+		response.body.hello.version = TRACECMP_ABI_VERSION;
+		response.body.hello.features = selected == FAKE_REPLY_NO_FEATURE ?
+		    0 : TRACECMP_FEATURE_RAW_DTRACE_FD;
 		if (selected == FAKE_REPLY_BAD_HELLO_RESERVED)
-			response.hello.reserved[0] = 1;
-		length += sizeof(response.hello);
+			response.body.hello.reserved[0] = 1;
+		length += sizeof(response.body.hello);
+	} else if (request->opcode == TRACECMP_OP_STATS) {
+		response.body.stats.opened = FAKE_STATS_OPENED;
+		response.body.stats.rejected = FAKE_STATS_REJECTED;
+		length += sizeof(response.body.stats);
 	}
 	if (reply->capacity < length) {
 		error = EMSGSIZE;

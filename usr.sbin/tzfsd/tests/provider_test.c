@@ -343,6 +343,45 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 	    call_status(fx.client, &rq, sizeof(rq), &nullfd, 1));
 	close(nullfd);
 
+	/* A LIST with an attached descriptor is a protocol error (fd-free op). */
+	nullfd = open("/dev/null", O_RDONLY | O_CLOEXEC);
+	ATF_REQUIRE(nullfd >= 0);
+	{
+		struct tzfsd_list_request lrq;
+
+		memset(&lrq, 0, sizeof(lrq));
+		lrq.op = TZFSD_OP_LIST;
+		ATF_CHECK_EQ(EPROTO,
+		    call_status(fx.client, &lrq, sizeof(lrq), &nullfd, 1));
+	}
+	close(nullfd);
+
+	/* A LIST with a nonzero flags field is EINVAL (message hygiene). */
+	{
+		struct tzfsd_list_request lrq;
+
+		memset(&lrq, 0, sizeof(lrq));
+		lrq.op = TZFSD_OP_LIST;
+		lrq.flags = 1;
+		ATF_CHECK_EQ(EINVAL,
+		    call_status(fx.client, &lrq, sizeof(lrq), NULL, 0));
+	}
+
+	/*
+	 * A well-formed LIST reaches the handler but, with no imported pool
+	 * (persistent_fd == -1 in this zeroed fixture), fails closed with ENXIO —
+	 * proving the op is wired into dispatch and scoped to the daemon's own
+	 * retained parent without a live pool.
+	 */
+	{
+		struct tzfsd_list_request lrq;
+
+		memset(&lrq, 0, sizeof(lrq));
+		lrq.op = TZFSD_OP_LIST;
+		ATF_CHECK_EQ(ENXIO,
+		    call_status(fx.client, &lrq, sizeof(lrq), NULL, 0));
+	}
+
 	/* And a well-formed PING round-trips green — the happy path works. */
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_PING;

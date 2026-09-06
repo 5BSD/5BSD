@@ -275,6 +275,34 @@ int	service_storage_open_quota(struct service_context *, const char *name,
  */
 int	service_storage_destroy(struct service_context *, const char *name);
 /*
+ * One enumerated storage claim: its opaque key plus cheap usage accounting
+ * (bytes referenced, and the refquota ceiling in bytes; refquota 0 == none).
+ * name[] is sized to match tzfsd's TZFSD_NAME_MAX so a claim key round-trips
+ * without truncation.
+ */
+struct service_storage_claim {
+	char		name[64];
+	uint64_t	used;
+	uint64_t	refquota;
+};
+/*
+ * Enumerate the caller's OWN persistent/cache storage claims (those granted via
+ * service_storage_open(3)), so a consumer that has forgotten a claim's name can
+ * still find it to service_storage_destroy(3) it.  tzfsd scopes the walk to the
+ * caller's own label-derived namespace, so this can only ever return the
+ * caller's claims and never another label's.  Up to `max` entries are written to
+ * `claims` and their number stored in *countp.  Enumeration is paged: pass
+ * *cursorp == 0 for the first page; on return *cursorp is nonzero when more
+ * claims remain (re-issue with that value) and 0 when the last page was
+ * returned.  A buffer of SERVICE_STORAGE_LIST_MAX entries always holds a whole
+ * page; a smaller `max` that cannot hold the returned page fails EMSGSIZE
+ * (never a silent truncation).  Returns 0, or -1 with errno.
+ */
+#define	SERVICE_STORAGE_LIST_MAX	32	/* claims per page (== provider) */
+int	service_storage_list(struct service_context *,
+	    struct service_storage_claim *claims, size_t max, size_t *countp,
+	    uint32_t *cursorp);
+/*
  * Open this service's writable, label-scoped configuration area (the well-known
  * "config" claim under its per-service home) and return its mounted directory
  * root.  A place for configuration files outside the shared UNIX directories,
@@ -356,14 +384,22 @@ int	service_destroy_namespace(struct service_context *);
  * The caller's namespace (jail) as reported by service_namespace_info(3).  A
  * label owns at most one jail: present==1 with the fields filled, or present==0.
  * An address field is empty ("") when the jail has no address of that family.
+ *
+ * `flags` carries the SERVICE_NS_* bits describing the jail, so a consumer that
+ * lists after a restart can pass them straight back to service_enter_namespace_ex
+ * to reconstruct a matching request: SERVICE_NS_VNET when the jail has its own
+ * virtual network stack, SERVICE_NS_EPHEMERAL when this process's own connection
+ * is anchoring the jail's lifetime (a persistent jail reused across a restart
+ * reports it clear).
  */
 struct service_namespace_info {
-	int	present;		/* 1 = the caller has a jail, 0 = none */
-	int	jid;			/* jail id when present */
-	char	path[PATH_MAX];		/* jail root path */
-	char	hostname[64];		/* host.hostname */
-	char	ip4_addr[64];		/* ip4.addr (empty if none) */
-	char	ip6_addr[64];		/* ip6.addr (empty if none) */
+	int		present;	/* 1 = the caller has a jail, 0 = none */
+	int		jid;		/* jail id when present */
+	unsigned	flags;		/* SERVICE_NS_* describing the jail */
+	char		path[PATH_MAX];	/* jail root path */
+	char		hostname[64];	/* host.hostname */
+	char		ip4_addr[64];	/* ip4.addr (empty if none) */
+	char		ip6_addr[64];	/* ip6.addr (empty if none) */
 };
 /*
  * Report the caller's namespace (jail) into *out.  present==0 (no jail) is still

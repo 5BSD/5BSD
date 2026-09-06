@@ -362,6 +362,40 @@ tracecmp_open(int *dtracefd)
 	return (result);
 }
 
+int
+tracecmp_stats(struct tracecmp_stats *stats)
+{
+	union tracecmp_buffer reply;
+	struct service_session *client;
+	int fd, error, result;
+
+	if (stats == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	memset(stats, 0, sizeof(*stats));
+	fd = -1;
+	error = service_open(TRACECMP_INTERFACE, &fd) == -1 ? errno : 0;
+	if (error != 0) {
+		errno = error;
+		return (-1);
+	}
+	if (service_session_create(fd, &client) == -1) {
+		error = errno;
+		close(fd);
+		errno = error;
+		return (-1);
+	}
+	result = rpc(client, TRACECMP_OP_STATS, &reply, NULL);
+	if (result == 0)
+		memcpy(stats, (struct tracecmp_msg *)reply.bytes + 1,
+		    sizeof(*stats));
+	error = result == -1 ? errno : 0;
+	service_session_close(client);
+	errno = error;
+	return (result);
+}
+
 dtrace_hdl_t *
 tracecmp_dtrace_open(int flags, int *errp)
 {

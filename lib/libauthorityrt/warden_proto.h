@@ -126,15 +126,25 @@ struct warden_control_request {
 
 /*
  * LIST reply.  present==1 means the caller has a jail and jid/path/hostname/
- * ip4_addr/ip6_addr describe it (an address field is empty if the jail has no
- * address of that family); present==0 means the caller has no jail.  status is 0
- * for both, or an errno on failure.
+ * ip4_addr/ip6_addr/flags describe it (an address field is empty if the jail has
+ * no address of that family); present==0 means the caller has no jail.  status is
+ * 0 for both, or an errno on failure.
+ *
+ * `flags` carries the same WARDEN_F_* bits an ENTER would use to (re)create this
+ * jail, so a consumer that LISTs after a restart can reconstruct a matching
+ * request.  WARDEN_F_VNET is set when the jail has its own virtual network stack
+ * (vnet=new); WARDEN_F_EPHEMERAL is set when this jail's lifetime is anchored by
+ * warden's per-client worker serving THIS channel (an owning descriptor is held),
+ * i.e. it is a jail this same connection created ephemerally — a persistent jail
+ * reused across a consumer restart reports the flag clear, since no worker anchors
+ * it.  (This field occupies what was a reserved word; the reply size is
+ * unchanged, so it remains distinct from warden_reply for length dispatch.)
  */
 struct warden_list_reply {
 	int32_t		status;			/* 0, or errno */
 	int32_t		present;		/* 1 = jail exists, 0 = none */
 	int32_t		jid;			/* jail id when present */
-	uint32_t	_reserved;
+	uint32_t	flags;			/* WARDEN_F_* describing the jail */
 	char		path[PATH_MAX];		/* jail root path */
 	char		hostname[64];		/* host.hostname */
 	char		ip4_addr[64];		/* ip4.addr (empty if none) */

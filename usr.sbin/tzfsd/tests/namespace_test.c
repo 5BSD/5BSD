@@ -312,6 +312,82 @@ ATF_TC_BODY(destroy_resolves_under_caller_ns, tc)
 	    cross);
 }
 
+/*
+ * TZFSD_OP_LIST message hygiene and fail-closed scoping, asserted directly
+ * against grant_list() with a zeroed state (every retained fd == -1): the
+ * additive flags/_reserved fields must be zero, an unnamespaceable caller label
+ * is rejected, and a well-formed LIST with no imported pool fails closed with
+ * ENXIO — proving the walk is gated on the daemon's own retained persistent
+ * parent (derived from the caller's label) and never touches ZFS without one.
+ */
+ATF_TC_WITHOUT_HEAD(list_request_hygiene_and_no_pool);
+ATF_TC_BODY(list_request_hygiene_and_no_pool, tc)
+{
+	struct tzfsd_state st;
+	struct tzfsd_list_request rq;
+	struct tzfsd_list_reply rp;
+
+	memset(&st, 0, sizeof(st));
+	st.persistent_fd = st.ephemeral_fd = -1;
+	st.boot_fd = st.lease_fd = st.root_fd = -1;
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_LIST;
+
+	/* A nonzero flags field is ambiguous -> EINVAL before anything is walked. */
+	memset(&rp, 0, sizeof(rp));
+	rq.flags = 1;
+	errno = 0;
+	ATF_CHECK_EQ(-1,
+	    tzfsd_test_grant_list(&st, "org.test.tenant", &rq, &rp));
+	ATF_CHECK_EQ(EINVAL, errno);
+	rq.flags = 0;
+
+	/* A nonzero reserved field is likewise rejected. */
+	memset(&rp, 0, sizeof(rp));
+	rq._reserved = 0x80;
+	errno = 0;
+	ATF_CHECK_EQ(-1,
+	    tzfsd_test_grant_list(&st, "org.test.tenant", &rq, &rp));
+	ATF_CHECK_EQ(EINVAL, errno);
+	rq._reserved = 0;
+
+	/* An empty caller label can never be namespaced -> EINVAL (no default ns). */
+	memset(&rp, 0, sizeof(rp));
+	errno = 0;
+	ATF_CHECK_EQ(-1, tzfsd_test_grant_list(&st, "", &rq, &rp));
+	ATF_CHECK_EQ(EINVAL, errno);
+
+	/*
+	 * Well-formed, but no pool imported (persistent_fd == -1): the walk is
+	 * rooted at the daemon's own retained parent, so it fails closed with
+	 * ENXIO rather than touching ZFS or another label's storage.
+	 */
+	memset(&rp, 0, sizeof(rp));
+	errno = 0;
+	ATF_CHECK_EQ(-1,
+	    tzfsd_test_grant_list(&st, "org.test.tenant", &rq, &rp));
+	ATF_CHECK_EQ(ENXIO, errno);
+}
+
+/*
+ * The LIST owner-scoping invariant, asserted at the derivation layer the
+ * handler roots its walk at: grant_list enumerates only children of
+ * derive_ns(caller_label).  Because distinct labels derive to distinct
+ * namespaces, one label's LIST can never enumerate another label's claims —
+ * there is no wire argument that could redirect the walk to a different ns.
+ */
+ATF_TC_WITHOUT_HEAD(list_scopes_to_caller_ns);
+ATF_TC_BODY(list_scopes_to_caller_ns, tc)
+{
+	char ns_a[TZFSD_NAME_MAX], ns_b[TZFSD_NAME_MAX];
+
+	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantA", ns_a, sizeof(ns_a)));
+	ATF_REQUIRE(tzfsd_test_derive_ns("system.TenantB", ns_b, sizeof(ns_b)));
+	ATF_CHECK_MSG(strcmp(ns_a, ns_b) != 0,
+	    "two labels shared a namespace (%s); LIST would cross tenants", ns_a);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -324,5 +400,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, destroy_request_shape_is_validated);
 	ATF_TP_ADD_TC(tp, quota_floor_is_enforced);
 	ATF_TP_ADD_TC(tp, destroy_resolves_under_caller_ns);
+	ATF_TP_ADD_TC(tp, list_request_hygiene_and_no_pool);
+	ATF_TP_ADD_TC(tp, list_scopes_to_caller_ns);
 	return (atf_no_error());
 }

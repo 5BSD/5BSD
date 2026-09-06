@@ -1,6 +1,9 @@
 /* SPDX-License-Identifier: BSD-2-Clause */
 #ifndef _TRACECMP_FAKE_SERVICE_H_
 #define _TRACECMP_FAKE_SERVICE_H_
+/* Provider counters the fake service reports in a STATS reply. */
+#define	FAKE_STATS_OPENED	7
+#define	FAKE_STATS_REJECTED	3
 enum fake_reply_mode { FAKE_REPLY_NORMAL, FAKE_REPLY_NO_FEATURE,
     FAKE_REPLY_BAD_OPCODE, FAKE_REPLY_MISSING_FD,
     FAKE_REPLY_UNEXPECTED_HELLO_FD, FAKE_REPLY_BAD_MAGIC,

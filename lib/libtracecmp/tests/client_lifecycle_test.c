@@ -3,6 +3,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #include <tracecmp.h>
@@ -121,6 +122,36 @@ ATF_TC_BODY(repeated_open_close, tc)
 	ATF_CHECK_EQ(32, fake_service_closed());
 }
 
+ATF_TC_WITHOUT_HEAD(stats_reports_provider_counters);
+ATF_TC_BODY(stats_reports_provider_counters, tc)
+{
+	struct tracecmp_stats stats;
+
+	fake_service_reset();
+	/* A STATS call opens a session, reads the counters, and closes it. */
+	memset(&stats, 0xff, sizeof(stats));
+	ATF_REQUIRE_EQ(0, tracecmp_stats(&stats));
+	ATF_CHECK_EQ(FAKE_STATS_OPENED, stats.opened);
+	ATF_CHECK_EQ(FAKE_STATS_REJECTED, stats.rejected);
+	ATF_CHECK_EQ(0, stats.reserved[0]);
+	ATF_CHECK_EQ(0, stats.reserved[1]);
+	ATF_CHECK_EQ(1, fake_service_created());
+	ATF_CHECK_EQ(1, fake_service_closed());
+
+	/* Fails closed on a NULL out pointer, without touching the service. */
+	ATF_CHECK_ERRNO(EINVAL, tracecmp_stats(NULL) == -1);
+	ATF_CHECK_EQ(1, fake_service_created());
+
+	/* Discovery and peer failures propagate. */
+	fake_service_fail_connect(ENOENT);
+	ATF_CHECK_ERRNO(ENOENT, tracecmp_stats(&stats) == -1);
+	ATF_CHECK_EQ(1, fake_service_created());
+	fake_service_fail_call(ECONNRESET);
+	ATF_CHECK_ERRNO(ECONNRESET, tracecmp_stats(&stats) == -1);
+	ATF_CHECK_EQ(2, fake_service_created());
+	ATF_CHECK_EQ(2, fake_service_closed());
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, independent_concurrent_sessions);
@@ -128,5 +159,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, feature_and_attachment_validation);
 	ATF_TP_ADD_TC(tp, delegated_fd_is_not_inherited);
 	ATF_TP_ADD_TC(tp, repeated_open_close);
+	ATF_TP_ADD_TC(tp, stats_reports_provider_counters);
 	return (atf_no_error());
 }

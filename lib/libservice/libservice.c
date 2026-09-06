@@ -2149,6 +2149,97 @@ service_storage_destroy(struct service_context *context, const char *name)
 }
 
 /*
+ * Enumerate the caller's own persistent/cache claims (one page per call).  The
+ * op carries no fd in either direction: tzfsd walks only the caller's own
+ * label-derived namespace and returns a data-only claim page, so this can never
+ * observe another label's storage.  Shares the system.Filesystem channel with the
+ * other storage wrappers.  Returns 0 with *countp set (and *cursorp advanced to
+ * the next page, or 0 at the end), or -1 with errno.
+ */
+int
+service_storage_list(struct service_context *context,
+    struct service_storage_claim *claims, size_t max, size_t *countp,
+    uint32_t *cursorp)
+{
+	struct tzfsd_list_request rq;
+	struct tzfsd_list_reply rp;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	uint32_t i;
+	int saved;
+
+	_Static_assert(SERVICE_STORAGE_LIST_MAX == TZFSD_LIST_MAX,
+	    "public list page size must match the tzfsd wire page size");
+
+	if (claims == NULL || countp == NULL || cursorp == NULL || max == 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	*countp = 0;
+	if (context == NULL || context != &service_default_context ||
+	    context->owner != getpid()) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	/* Shares the system.Filesystem channel with storage/config claims. */
+	if (service_storage_session == NULL) {
+		int fd;
+
+		if (service_open(TZFSD_SERVICE_NAME, &fd) == -1)
+			return (-1);
+		if (service_session_create(fd, &service_storage_session) == -1) {
+			saved = errno;
+			(void)close(fd);
+			errno = saved;
+			return (-1);
+		}
+	}
+
+	memset(&rq, 0, sizeof(rq));
+	rq.op = TZFSD_OP_LIST;
+	rq.cursor = *cursorp;			/* flags/_reserved stay zero */
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &rq;
+	outgoing.length = sizeof(rq);
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &rp;
+	incoming.capacity = sizeof(rp);
+	if (service_session_call(service_storage_session, &outgoing, &incoming,
+	    &options) == -1)
+		return (-1);
+	/* Strict reply validation: exact length, no fds, sane count. */
+	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
+	    rp._reserved != 0 || rp.status != 0 || rp.count > TZFSD_LIST_MAX) {
+		errno = rp.status != 0 ? rp.status : EPROTO;
+		return (-1);
+	}
+	/* Fail closed rather than silently drop claims the buffer cannot hold. */
+	if (rp.count > max) {
+		errno = EMSGSIZE;
+		return (-1);
+	}
+	for (i = 0; i < rp.count && (size_t)i < max; i++) {
+		/* A claim name must be NUL-terminated within its field. */
+		if (memchr(rp.entries[i].name, '\0',
+		    sizeof(rp.entries[i].name)) == NULL) {
+			errno = EPROTO;
+			return (-1);
+		}
+		(void)strlcpy(claims[i].name, rp.entries[i].name,
+		    sizeof(claims[i].name));
+		claims[i].used = rp.entries[i].used;
+		claims[i].refquota = rp.entries[i].refquota;
+	}
+	*countp = (size_t)i;
+	*cursorp = rp.next_cursor;
+	return (0);
+}
+
+/*
  * Open this service's writable configuration area and return its mounted
  * directory root.  This is the well-known "config" claim under the service's
  * label-scoped home (persistent/u<hash-of-label>/config): a place for
@@ -2610,8 +2701,8 @@ service_destroy_namespace(struct service_context *context)
 /*
  * Report the caller's namespace (jail) via warden (WARDEN_OP_LIST_JAILS).  A
  * label owns at most one jail, so this reports exactly zero or one: out->present
- * is 1 with jid/path/hostname/ip4_addr/ip6_addr filled when the caller has a
- * jail, 0 (and the other fields zeroed) when it has none.  The op is inherently
+ * is 1 with jid/path/hostname/ip4_addr/ip6_addr/flags filled when the caller has
+ * a jail, 0 (and the other fields zeroed) when it has none.  The op is inherently
  * owner-scoped (warden names the caller's own jail from its label).  Carries no
  * fd in either direction.  Returns 0 (present==0 is still success), or -1 with
  * errno on a real lookup failure.
@@ -2667,8 +2758,8 @@ service_namespace_info(struct service_context *context,
 	    &options) == -1)
 		return (-1);
 	if (incoming.length != sizeof(rp) || incoming.nfds != 0 ||
-	    rp._reserved != 0 || rp.status != 0 ||
-	    (rp.present != 0 && rp.present != 1)) {
+	    (rp.flags & ~(WARDEN_F_VNET | WARDEN_F_EPHEMERAL)) != 0 ||
+	    rp.status != 0 || (rp.present != 0 && rp.present != 1)) {
 		errno = rp.status != 0 ? rp.status : EPROTO;
 		return (-1);
 	}
@@ -2684,6 +2775,12 @@ service_namespace_info(struct service_context *context,
 	}
 	out->present = 1;
 	out->jid = rp.jid;
+	/* Map the wire WARDEN_F_* bits back to the public SERVICE_NS_* set. */
+	out->flags = 0;
+	if ((rp.flags & WARDEN_F_VNET) != 0)
+		out->flags |= SERVICE_NS_VNET;
+	if ((rp.flags & WARDEN_F_EPHEMERAL) != 0)
+		out->flags |= SERVICE_NS_EPHEMERAL;
 	(void)strlcpy(out->path, rp.path, sizeof(out->path));
 	(void)strlcpy(out->hostname, rp.hostname, sizeof(out->hostname));
 	(void)strlcpy(out->ip4_addr, rp.ip4_addr, sizeof(out->ip4_addr));

@@ -24,6 +24,7 @@
 #include <fcntl.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
 #include <unistd.h>
@@ -509,6 +510,155 @@ grant_open(struct tzfsd_state *st, const char *client,
 	return (fd);
 }
 
+/* Deterministic claim ordering so pagination windows are stable across calls. */
+static int
+claim_name_cmp(const void *ap, const void *bp)
+{
+
+	return (strcmp(*(const char *const *)ap, *(const char *const *)bp));
+}
+
+/*
+ * Enumerate the caller's own persistent/cache claims into *rp for an
+ * TZFSD_OP_LIST request.  Owner-scoping is the hard invariant: the walk is
+ * rooted at the caller's OWN namespace — derive_ns(client), the connecting
+ * channel's unforgeable label — opened under the retained persistent parent, so
+ * it can only ever see children of u<hash(client)> and never another label's
+ * claims.  There is no wire argument that could redirect it.  Fills the page
+ * [cursor, cursor+TZFSD_LIST_MAX) of the claim set (sorted for a stable window)
+ * and sets rp->next_cursor nonzero when more remain.  Per-claim usage/refquota
+ * are folded in best-effort from the same walk.  Returns 0 (rp->status left 0),
+ * or -1 with errno set.  A caller with no namespace lists empty, not an error.
+ */
+static int
+grant_list(struct tzfsd_state *st, const char *client,
+    const struct tzfsd_list_request *rq, struct tzfsd_list_reply *rp)
+{
+	struct zfd_info_args info;
+	char ns[TZFSD_NAME_MAX];
+	void *buf;
+	char **names, **claims;
+	size_t len, prefix_len, nnames, nclaims, i, idx;
+	int ns_fd, saved;
+
+	/* Additive fields must be zero (message hygiene, symmetric with the rest). */
+	if (rq->flags != 0 || rq->_reserved != 0) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (!derive_ns(client, ns, sizeof(ns))) {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (st->persistent_fd == -1) {
+		errno = ENXIO;
+		return (-1);
+	}
+
+	/*
+	 * Open the caller's OWN namespace under the persistent parent.  This — and
+	 * only this — is what the walk enumerates; it is never a wire-named parent.
+	 * An absent namespace means the caller has made no persistent claims yet:
+	 * an empty list, not an error.
+	 */
+	ns_fd = tzfs_openat(st->persistent_fd, ns, ZH_ALL_RIGHTS, ZHF_SUBTREE);
+	if (ns_fd == -1) {
+		if (errno == ENOENT)
+			return (0);	/* rp->count / next_cursor already 0 */
+		return (-1);
+	}
+	memset(&info, 0, sizeof(info));
+	if (tzfs_info(ns_fd, &info) == -1 ||
+	    tzfs_list_children(ns_fd, &buf, &len) == -1) {
+		saved = errno;
+		(void)close(ns_fd);
+		errno = saved;
+		return (-1);
+	}
+	if (tzfsd_nvl_names(buf, len, &names, &nnames) == -1) {
+		saved = errno;
+		free(buf);
+		(void)close(ns_fd);
+		errno = saved;
+		return (-1);
+	}
+	free(buf);
+
+	/*
+	 * Reduce the returned full dataset names to the immediate claim components
+	 * under this namespace (a single trailing path element — deeper descendants
+	 * of a claim are not themselves claims and are skipped).  Every retained
+	 * name must lie under info.zi_name; anything else is a kernel protocol
+	 * violation and fails closed rather than being interpreted.
+	 */
+	prefix_len = strlen(info.zi_name);
+	claims = calloc(nnames == 0 ? 1 : nnames, sizeof(*claims));
+	if (claims == NULL) {
+		saved = errno;
+		tzfsd_nvl_names_free(names, nnames);
+		(void)close(ns_fd);
+		errno = saved;
+		return (-1);
+	}
+	nclaims = 0;
+	for (i = 0; i < nnames; i++) {
+		const char *name = names[i], *rel;
+
+		if (strncmp(name, info.zi_name, prefix_len) != 0 ||
+		    name[prefix_len] != '/') {
+			free(claims);
+			tzfsd_nvl_names_free(names, nnames);
+			(void)close(ns_fd);
+			errno = EPROTO;
+			return (-1);
+		}
+		rel = name + prefix_len + 1;
+		if (strchr(rel, '/') != NULL)
+			continue;	/* a child of a claim, not a claim itself */
+		claims[nclaims++] = (char *)(uintptr_t)rel;
+	}
+	qsort(claims, nclaims, sizeof(*claims), claim_name_cmp);
+
+	/*
+	 * Emit the requested page.  cursor is an index into the sorted claim set;
+	 * a stable sort makes the window reproducible across paged calls.  For each
+	 * claim, open a read-only handle under the retained namespace fd (never a
+	 * client-named parent) and fold in usage + refquota best-effort.
+	 */
+	rp->count = 0;
+	rp->next_cursor = 0;
+	for (idx = rq->cursor; idx < nclaims && rp->count < TZFSD_LIST_MAX;
+	    idx++) {
+		struct tzfsd_claim_entry *e = &rp->entries[rp->count];
+		const char *claim = claims[idx];
+		struct zfd_stat_args stt;
+		uint64_t refquota = 0;
+		int cfd, is_string = 0;
+		uint32_t src = 0;
+
+		if (strlcpy(e->name, claim, sizeof(e->name)) >= sizeof(e->name))
+			continue;	/* claim keys are < TZFSD_NAME_MAX by construction */
+		cfd = tzfs_openat(ns_fd, claim, ZH_PROPS_READ, 0);
+		if (cfd != -1) {
+			memset(&stt, 0, sizeof(stt));
+			if (tzfs_stat(cfd, &stt) == 0)
+				e->used = stt.zs_referenced;
+			if (tzfs_get_one_prop(cfd, "refquota", NULL, 0, &refquota,
+			    &is_string, &src) == 0 && !is_string)
+				e->refquota = refquota;
+			(void)close(cfd);
+		}
+		rp->count++;
+	}
+	if (idx < nclaims)
+		rp->next_cursor = (uint32_t)idx;
+
+	free(claims);
+	tzfsd_nvl_names_free(names, nnames);
+	(void)close(ns_fd);
+	return (0);
+}
+
 /*
  * Per-client channel request handler.  arg is this worker's tzfsd_state (its
  * own copy of the retained handles, plus per-connection lease state).  The
@@ -552,6 +702,42 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 				    orq->path, orq->rights);
 			}
 			goto reply;
+		}
+	}
+
+	/*
+	 * TZFSD_OP_LIST carries its own small request struct and a distinctly
+	 * sized, fd-free reply (the caller's own claim page).  Dispatch it by its
+	 * length here — like OPEN — and send its dedicated reply inline, before the
+	 * storage-shaped request path.
+	 */
+	if (channel_message_length(m) == sizeof(struct tzfsd_list_request)) {
+		const struct tzfsd_list_request *lrq = channel_message_data(m);
+
+		if (lrq->op == TZFSD_OP_LIST) {
+			struct tzfsd_list_reply lrp;
+			struct channel_outgoing lout;
+
+			memset(&lrp, 0, sizeof(lrp));
+			if (grant_list(st, conn->client, lrq, &lrp) == -1) {
+				lrp.status = errno;
+				lrp.count = 0;
+				lrp.next_cursor = 0;
+				syslog(LOG_INFO, "LIST cursor=%u -> %s",
+				    lrq->cursor, strerror(lrp.status));
+			} else {
+				syslog(LOG_INFO, "LIST cursor=%u -> %u claim(s)%s",
+				    lrq->cursor, lrp.count,
+				    lrp.next_cursor != 0 ? " (more)" : "");
+			}
+			TZFSD_PROBE_REPLY(0, lrp.status, -1);
+			memset(&lout, 0, sizeof(lout));
+			lout.size = sizeof(lout);
+			lout.data = &lrp;
+			lout.length = sizeof(lrp);
+			(void)channel_send_reply(m, &lout);
+			channel_message_free(m);
+			return;
 		}
 	}
 
@@ -877,5 +1063,19 @@ tzfsd_test_worker(struct tzfsd_state *st, int fd, const char *client)
 {
 
 	return (tzfs_worker(st, fd, client));
+}
+
+/*
+ * Drive grant_list() so tests can assert the LIST request's message hygiene
+ * (flags/_reserved must be zero) and the fail-closed no-pool outcome (ENXIO)
+ * without an imported pool.  The owner-scoping itself is guarded at the
+ * derivation layer (derive_ns) that grant_list roots the walk at.
+ */
+int
+tzfsd_test_grant_list(struct tzfsd_state *st, const char *client,
+    const struct tzfsd_list_request *rq, struct tzfsd_list_reply *rp)
+{
+
+	return (grant_list(st, client, rq, rp));
 }
 #endif /* TZFSD_TESTING */

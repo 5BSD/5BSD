@@ -27,9 +27,9 @@
 #include <sys/param.h>		/* PATH_MAX */
 
 #define	TZFSD_PROTO_VERSION_MAJOR	0
-#define	TZFSD_PROTO_VERSION_MINOR	2
+#define	TZFSD_PROTO_VERSION_MINOR	3
 #define	TZFSD_PROTO_VERSION_PATCH	0
-#define	TZFSD_PROTO_VERSION		3
+#define	TZFSD_PROTO_VERSION		4
 
 /* The well-known name a client resolves with service_open(3) to reach tzfsd. */
 #define	TZFSD_SERVICE_NAME		"system.Filesystem"
@@ -62,6 +62,7 @@
 #define	TZFSD_OP_BEGIN_SESSION		5	/* select/reconcile lease generation */
 #define	TZFSD_OP_OPEN			6	/* open an isolated path descriptor */
 #define	TZFSD_OP_DESTROY		7	/* reclaim a persistent/cache claim */
+#define	TZFSD_OP_LIST			8	/* enumerate the caller's own claims */
 
 /*
  * TZFSD_OP_OPEN
@@ -161,6 +162,51 @@ struct tzfsd_request {
  * path or fd.  An absent claim replies ENOENT (not idempotent success, so a
  * caller can tell a real reclaim from a no-op); status 0 on success.
  */
+
+/*
+ * TZFSD_OP_LIST
+ *   req:   struct tzfsd_list_request (op, cursor; flags/_reserved zero)
+ *   reply: struct tzfsd_list_reply { .status, .count, .next_cursor, .entries }
+ *   no fd delivered (data-only reply)
+ *
+ * Enumerate the CALLER's own persistent/cache claims.  A granted storage handle
+ * is scoped to a single claim leaf, so a consumer that has forgotten a claim's
+ * name cannot DESTROY it; LIST closes that gap.  It is strictly owner-scoped:
+ * tzfsd walks only the caller's own namespace (derive_ns of the connecting
+ * channel's unforgeable label, exactly as REQUEST/DESTROY do), so a caller can
+ * never observe — let alone name — another label's claims.  Authority is the
+ * held channel's identity, never a wire argument; there is no way to ask for a
+ * different label's list.  Each entry folds in the claim's cheaply-available
+ * usage (bytes referenced) and refquota ceiling (0 == none) from the same walk.
+ *
+ * The reply carries at most TZFSD_LIST_MAX entries; when the caller has more,
+ * next_cursor is nonzero and the caller re-issues LIST with request.cursor set
+ * to it to fetch the next page.  next_cursor == 0 marks the final page.  A
+ * caller with no namespace yet lists empty (count 0), never an error.
+ */
+#define	TZFSD_LIST_MAX			32	/* claim entries per reply page */
+
+struct tzfsd_list_request {
+	uint32_t	op;		/* TZFSD_OP_LIST */
+	uint32_t	flags;		/* reserved; must be 0 */
+	uint32_t	cursor;		/* 0 = first page; else a prior next_cursor */
+	uint32_t	_reserved;	/* must be 0 */
+};
+
+/* One enumerated claim: its opaque key plus cheap usage accounting. */
+struct tzfsd_claim_entry {
+	char		name[TZFSD_NAME_MAX];	/* claim key (NUL-terminated) */
+	uint64_t	used;			/* bytes referenced */
+	uint64_t	refquota;		/* refquota ceiling, bytes; 0=none */
+};
+
+struct tzfsd_list_reply {
+	int32_t		status;		/* 0 or errno */
+	uint32_t	count;		/* entries filled in this page */
+	uint32_t	next_cursor;	/* 0 = last page; else pass back as cursor */
+	uint32_t	_reserved;
+	struct tzfsd_claim_entry entries[TZFSD_LIST_MAX];
+};
 
 /*
  * Reply for REQUEST/RELEASE/PING.  status is an errno (0 == success).  On a

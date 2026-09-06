@@ -14,6 +14,7 @@
 
 __BEGIN_DECLS
 int	tracecmp_open(int *);
+int	tracecmp_stats(struct tracecmp_stats *);
 dtrace_hdl_t *tracecmp_dtrace_open(int, int *);
 __END_DECLS
 

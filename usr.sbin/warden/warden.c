@@ -678,7 +678,7 @@ handle_list_jails(struct channel_message *m, const char *client)
 	struct channel_outgoing out;
 	char name[WARDEN_JAIL_NAME_MAX];
 	char path[PATH_MAX], host[MAXHOSTNAMELEN], ip4[256], ip6[256];
-	int jid, iperr, iperr6;
+	int jid, iperr, iperr6, vnet, verr;
 
 	memset(&lr, 0, sizeof(lr));
 	lr.jid = -1;
@@ -733,6 +733,21 @@ handle_list_jails(struct channel_message *m, const char *client)
 		goto reply;
 	}
 
+	/*
+	 * Report the jail's vnet setting so a consumer can reconstruct a matching
+	 * ENTER after a restart.  jail_get_vnet() reads the same "vnet" jailsys
+	 * parameter existing_jail_descriptor() enforces on reuse; a real lookup
+	 * error is fatal, but ENOENT means "no vnet parameter" (a kernel without
+	 * VIMAGE, or a non-vnet jail) and reads as "not a vnet jail".
+	 */
+	verr = jail_get_vnet(name, &vnet);
+	if (verr != 0 && verr != ENOENT) {
+		lr.status = verr;
+		syslog(LOG_NOTICE, "LIST %s (client %s) -> vnet: %s", name, client,
+		    strerror(verr));
+		goto reply;
+	}
+
 	lr.status = 0;
 	lr.present = 1;
 	lr.jid = jid;
@@ -742,8 +757,21 @@ handle_list_jails(struct channel_message *m, const char *client)
 		(void)strlcpy(lr.ip4_addr, ip4, sizeof(lr.ip4_addr));
 	if (iperr6 == 0)
 		(void)strlcpy(lr.ip6_addr, ip6, sizeof(lr.ip6_addr));
-	syslog(LOG_INFO, "LIST %s (client %s) -> present jid=%d", name, client,
-	    jid);
+	/*
+	 * Report the jail's shape as WARDEN_F_* bits.  WARDEN_F_VNET when the jail
+	 * owns its network stack.  WARDEN_F_EPHEMERAL when THIS worker anchors the
+	 * jail's lifetime with an owning descriptor (worker_owning_fd >= 0): that
+	 * is a jail this same channel created ephemerally.  A persistent jail
+	 * reused by a relaunched consumer has no such anchor and reports the flag
+	 * clear -- exactly the persist/ephemeral distinction the consumer needs.
+	 */
+	lr.flags = 0;
+	if (verr == 0 && vnet == JAIL_SYS_NEW)
+		lr.flags |= WARDEN_F_VNET;
+	if (worker_owning_fd >= 0)
+		lr.flags |= WARDEN_F_EPHEMERAL;
+	syslog(LOG_INFO, "LIST %s (client %s) -> present jid=%d flags=0x%x", name,
+	    client, jid, lr.flags);
 
 reply:
 	memset(&out, 0, sizeof(out));

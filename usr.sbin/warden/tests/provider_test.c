@@ -524,6 +524,12 @@ ATF_TC_BODY(lifecycle_list_then_destroy, tc)
 	ATF_CHECK(lr.jid > 0);
 	ATF_CHECK_STREQ(root, lr.path);
 	ATF_CHECK_STREQ("host-life", lr.hostname);
+	/* A plain persistent jail reports neither vnet nor ephemeral. */
+	ATF_CHECK_MSG((lr.flags & WARDEN_F_VNET) == 0,
+	    "non-vnet jail reported flags 0x%x with WARDEN_F_VNET set", lr.flags);
+	ATF_CHECK_MSG((lr.flags & WARDEN_F_EPHEMERAL) == 0,
+	    "persistent jail reported flags 0x%x with WARDEN_F_EPHEMERAL set",
+	    lr.flags);
 
 	/* DESTROY removes it. */
 	memset(&rp, 0, sizeof(rp));
@@ -601,6 +607,65 @@ ATF_TC_BODY(enter_with_ip6_lists_back, tc)
 	ATF_CHECK_STREQ(root, lr.path);
 	ATF_CHECK_MSG(strcmp(lr.ip6_addr, "fd00::1") == 0,
 	    "LIST reported ip6_addr \"%s\", want \"fd00::1\"", lr.ip6_addr);
+
+	fixture_destroy(&fixture);
+	remove_named_jail(TEST_CLIENT_LABEL);
+	(void)rmdir(root);
+}
+
+/*
+ * ENTER with an ip4 address creates the jail with that address, and LIST reads it
+ * back: the ip4.addr field round-trips through create_jail (dynamic param
+ * assembly) and handle_list_jails (jail_get_ip4).  The ip6 path had this coverage
+ * but ip4 did not; a non-vnet jail also lets LIST assert flags reports no vnet.
+ * Skips where the harness cannot create a live jail with an ip4 address.
+ */
+ATF_TC(enter_with_ip4_lists_back);
+ATF_TC_HEAD(enter_with_ip4_lists_back, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(enter_with_ip4_lists_back, tc)
+{
+	struct fixture fixture;
+	struct warden_request rq;
+	struct warden_reply rp;
+	struct warden_list_reply lr;
+	char root[PATH_MAX];
+	size_t len;
+	int out_fd;
+
+	require_plane();
+	make_jail_root(root, sizeof(root));
+	fixture_create(&fixture);
+
+	/* ENTER establishes a persistent jail carrying an ip4 address. */
+	init_request(&rq, 0, root, "host-v4", "10.99.0.1", "");
+	out_fd = -1;
+	ATF_REQUIRE_EQ(0, request(&fixture, &rq, sizeof(rq), -1, &rp, &out_fd));
+	if (rp.status != 0) {
+		fixture_destroy(&fixture);
+		(void)rmdir(root);
+		atf_tc_skip("live ip4 jail creation not available under harness: "
+		    "%s", strerror(rp.status));
+	}
+	if (out_fd >= 0)
+		close(out_fd);
+
+	/* LIST reports the jail with its ip4 address filled in and no vnet. */
+	memset(&lr, 0, sizeof(lr));
+	ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
+	    sizeof(struct warden_control_request), -1, &lr, sizeof(lr), &len,
+	    NULL));
+	ATF_REQUIRE_EQ(sizeof(lr), len);
+	ATF_CHECK_EQ(0, lr.status);
+	ATF_CHECK_EQ(1, lr.present);
+	ATF_CHECK_STREQ(root, lr.path);
+	ATF_CHECK_MSG(strcmp(lr.ip4_addr, "10.99.0.1") == 0,
+	    "LIST reported ip4_addr \"%s\", want \"10.99.0.1\"", lr.ip4_addr);
+	ATF_CHECK_MSG((lr.flags & WARDEN_F_VNET) == 0,
+	    "non-vnet ip4 jail reported flags 0x%x with WARDEN_F_VNET set",
+	    lr.flags);
 
 	fixture_destroy(&fixture);
 	remove_named_jail(TEST_CLIENT_LABEL);
@@ -707,6 +772,22 @@ ATF_TC_BODY(enter_with_vnet_creates_vnet_jail, tc)
 	ATF_CHECK_MSG(strcmp(vbuf, "new") == 0,
 	    "vnet jail's vnet param = \"%s\", want \"new\"", vbuf);
 
+	/* LIST must report the vnet nature back in flags (WARDEN_F_VNET). */
+	{
+		struct warden_list_reply lr;
+		size_t len;
+
+		memset(&lr, 0, sizeof(lr));
+		ATF_REQUIRE_EQ(0, control_call(&fixture, WARDEN_OP_LIST_JAILS,
+		    sizeof(struct warden_control_request), -1, &lr, sizeof(lr),
+		    &len, NULL));
+		ATF_REQUIRE_EQ(sizeof(lr), len);
+		ATF_CHECK_EQ(1, lr.present);
+		ATF_CHECK_MSG((lr.flags & WARDEN_F_VNET) != 0,
+		    "LIST of a vnet jail reported flags 0x%x without WARDEN_F_VNET",
+		    lr.flags);
+	}
+
 	/*
 	 * A reuse of the same path/hostname without the vnet flag differs in the
 	 * (immutable) definition and must be refused, proving vnet is enforced.
@@ -796,6 +877,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, rejects_unknown_flag_bits);
 	ATF_TP_ADD_TC(tp, rejects_relative_path);
 	ATF_TP_ADD_TC(tp, reuse_definition_mismatch_is_eexist);
+	ATF_TP_ADD_TC(tp, enter_with_ip4_lists_back);
 	ATF_TP_ADD_TC(tp, enter_with_ip6_lists_back);
 	ATF_TP_ADD_TC(tp, reuse_ip6_mismatch_is_eexist);
 	ATF_TP_ADD_TC(tp, enter_with_vnet_creates_vnet_jail);
