@@ -208,6 +208,33 @@ things stand, reach serviced. Resolution options:
       reach path at install time.
 Leaning (a): it also cleanly enables any system-context tooling to drive reclaim.
 
+**DECIDED: (a) boot-provisioned SYSTEM ambient channel — and it is half-built.**
+Capsule (PID 1) already holds a SYSTEM ambient lookup channel that authority
+mints (capsule.c `capsule_set_ambient_lookup` / `capsule_ambient_lookup_fd`,
+authority_proto.c ~334), and already carries it at `SERVICE_LOOKUP_FIXED_FD`
+(fd 3) — but ONLY into the §21 getty→login path (capsule.c ~1944, the
+getty-spawn `dup2`). So:
+  - An **admin login session** already carries a SYSTEM ambient channel at fd 3,
+    so an interactive `pkg delete` at a root shell can reach serviced *provided
+    pkg preserves fd 3 into the deinstall-script fork* (must verify; if pkg
+    sanitizes it, `servicectl` needs to re-probe `SERVICE_LOOKUP_FIXED_FD`).
+  - **Non-login system contexts** (rc, cron, boot automation) do NOT get fd 3
+    today.
+
+Remaining implementation (bounded):
+  1. Extend Capsule's ambient-channel carry from the getty-only path to the
+     general system-daemon/rc launch path (so the system context inherits the
+     SYSTEM channel at `SERVICE_LOOKUP_FIXED_FD`), OR add a fixed root-openable
+     rendezvous (a small "system ambient" cdev handing out the Capsule-held
+     channel) for contexts that don't inherit it.
+  2. Ensure the `pkg` deinstall-script fork preserves `SERVICE_LOOKUP_FIXED_FD`
+     (fd 3), or have the reclaim hook re-acquire the channel via the rendezvous.
+  3. Wire the `scripts { post-deinstall = "servicectl reclaim <label>" }` hook
+     into the capability packages' UCL descriptors.
+  4. End-to-end test: build a consumer pkg that owns a dataset + a jail + a key,
+     `pkg delete` it, confirm all three are reclaimed (needs a pkgbase
+     build/install/delete cycle).
+
 **Third-party extensibility (both directions work):**
 - Third-party **providers**: participate automatically. serviced broadcasts to
   EVERY running provider — a new `system.Foo` that holds per-label state just
