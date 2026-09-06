@@ -623,11 +623,21 @@ procdesc_close(struct file *fp, struct thread *td)
 			 * calls back into procdesc_reap().
 			 */
 			proc_reap(curthread, p, NULL, 0);
-		} else if (p == td->td_proc) {
+		} else if (td != NULL && p == td->td_proc) {
 			/*
 			 * The described process is closing the last
 			 * reference to its own procdesc.  Just detach --
 			 * do not kill or reparent.
+			 *
+			 * td is NULL when the last close comes from disposing
+			 * an un-received process descriptor queued in a unix
+			 * socket's SCM_RIGHTS (unp_discard -> closef_nothread ->
+			 * fdrop(fp, NULL)) -- e.g. a signal-killed holder tearing
+			 * the socket down.  That is never the described process
+			 * detaching itself, so it must not take this fast path
+			 * (dereferencing td->td_proc faulted); it falls through
+			 * to the kill/reparent branch below, which uses only
+			 * curthread and honours PDF_DAEMON.
 			 */
 			pd->pd_proc = NULL;
 			p->p_procdesc = NULL;
