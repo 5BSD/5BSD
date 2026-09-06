@@ -1,7 +1,28 @@
 # Capability resource lifecycle & cleanup
 
-Status: **DESIGN — for review, not yet implemented.**
+Status: **APPROVED — decisions locked 2026-09-06; implementation in progress.**
 Author: 2026-09-06.
+
+## 0. Locked decisions (review outcome)
+
+- **Home:** fold into authority/serviced — **no new daemon** (no `system.Lifecycle`).
+- **Granularity:** **bundle-label only.** A retirement fires when a bundle is
+  uninstalled from `/Capabilities`; the retired label is that bundle's manifest
+  label. Per-principal (decommissioned-user) retirement is out of scope for now.
+- **Timing:** **immediate reclaim** — no grace window. (Upgrades that reinstall
+  the same bundle re-create their own resources; we do not preserve orphaned
+  state across an uninstall.)
+- **Sweep cadence (the one item left to the implementer):** startup + an
+  hourly, jittered periodic reconciliation.
+- **Push transport:** because serviced already holds a **control channel to
+  every provider it launches**, the push is a `reclaim(label)` control-channel
+  message from serviced — NOT a bsdnotify topic. This is the literal "fold into
+  serviced": no serviced→Notify publish dependency, no per-topic publisher ACL,
+  and providers need not subscribe to Notify. The bsdnotify idea was the seed;
+  the control channel is the fold. The pull path (serviced `label_is_live`
+  query) covers providers that were down when the push fired. Sections below
+  that describe a `system.label.retired` Notify topic are **superseded** by this
+  control-channel transport.
 
 ## 1. Problem
 
