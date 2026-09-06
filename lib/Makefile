@@ -47,6 +47,7 @@ SUBDIR=	${SUBDIR_BOOTSTRAP} \
 	libcapbundle \
 	libcryptodesc \
 	libcryptocmp \
+	libdevicecmp \
 	libcapsicum \
 	libcasper \
 	libchannel \

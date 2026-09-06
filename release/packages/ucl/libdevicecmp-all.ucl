@@ -1,0 +1,6 @@
+comment = "Public DEVICE capability-component protocol library"
+
+desc = <<EOD
+The versioned client protocol for requesting rights-limited raw device
+descriptors from the [DEVICE] component (system.Device).
+EOD

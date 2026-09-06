@@ -1,0 +1,9 @@
+comment = "Public DEVICE protocol library tests"
+
+desc = <<EOD
+Client argument-validation tests for the libdevicecmp system.Device protocol.
+EOD
+
+annotations = {
+	set = "tests"
+}

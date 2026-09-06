@@ -1,0 +1,9 @@
+comment = "Capability-mode DEVICE provider"
+
+desc = <<EOD
+The [DEVICE] capability bundle, installed with its public client library.  It
+brokers raw /dev device nodes: on request it opens a named leaf beneath the
+directory descriptor serviced delivers, narrows the descriptor to exactly the
+per-label policy rights (with an optional ioctl-command whitelist), and hands it
+back over the caller's capability channel.  Default-deny.
+EOD

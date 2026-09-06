@@ -115,6 +115,7 @@ _LIBRARIES=	\
 		capbundle \
 		cryptocmp \
 		cryptodesc \
+		devicecmp \
 		archive \
 		auditcmp \
 		asn1 \
@@ -343,6 +344,7 @@ _DP_shmring=
 _DP_networkcmp=	pthread service
 _DP_sysctlcmp=	service
 _DP_cryptocmp=	pthread service
+_DP_devicecmp=	pthread service
 _DP_logcmp=	pthread service shmring
 _DP_kldmgr=	service
 _DP_notify=	pthread service

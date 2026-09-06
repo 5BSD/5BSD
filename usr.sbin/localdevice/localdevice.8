@@ -1,0 +1,124 @@
+.\"-
+.\" SPDX-License-Identifier: BSD-2-Clause
+.\"
+.\" Copyright (c) 2026 Kory Heard
+.\"
+.Dd September 6, 2026
+.Dt LOCALDEVICE 8
+.Os
+.Sh NAME
+.Nm localdevice
+.Nd capability-plane device-node broker
+.Sh SYNOPSIS
+.Nm
+.Sh DESCRIPTION
+The
+.Nm
+daemon is the capability system's provider for
+.Dq Li system.Device .
+It is a socket-free capability-plane service: it exposes the well-known name
+.Dq Li system.Device
+and serves each client on its own
+.Xr mac_capability 4
+channel.
+On request it opens a named
+.Pa /dev
+leaf, narrows the resulting descriptor to exactly the rights the per-label
+policy allows, and hands that descriptor back to the client over its channel.
+.Pp
+.Nm
+sits just below
+.Dq Li system.Filesystem :
+.Xr tzfsd 8
+brokers persistent storage, while
+.Nm
+brokers raw device nodes for the driver model.
+.Pp
+.Nm
+is launched and supervised by
+.Xr serviced 8
+from the
+.Pa /Capabilities/System/Device.cap
+bundle; it is not started by
+.Xr init 8 ,
+and it is not intended to be run from the command line.
+.Ss Born in capability mode
+.Nm
+never names a global path.
+.Xr serviced 8
+delivers
+.Pa /dev
+as an inherited directory descriptor
+.Pq manifest Li directories = ["/dev"] ,
+and
+.Nm
+opens each requested leaf beneath it with
+.Xr openat 2 .
+It enters capability mode before serving any client and forks a
+.Xr pdfork 2 Ns 'd
+worker per connection.
+.Ss Open protocol
+A client sends an OPEN request naming a single
+.Pa /dev
+leaf and a wanted-rights mask
+.Pq Dv DEVICECMP_RIGHT_READ , WRITE , IOCTL , MMAP , SEEK , EVENT .
+.Nm
+rejects any name that is empty, contains a
+.Ql / ,
+begins with a
+.Ql \&. ,
+or is
+.Ql \&.\&. :
+the name must be a single leaf component.
+The delivered descriptor is capped with
+.Xr cap_rights_limit 2
+to the granted rights
+.Pq always including Dv CAP_FSTAT ,
+optionally further restricted to a per-device
+.Xr cap_ioctls_limit 2
+command whitelist, and hardened so it can be transferred exactly once
+.Pq this delivery
+and no further.
+.Ss Policy
+Access is
+.Em default-deny .
+The compiled-in policy grants nothing; an optional
+.Pa device.conf
+file in the unit's
+.Pa Config/
+directory grants, per client label, one
+.Pa /dev
+leaf a set of rights.
+A request whose
+.Pq label , device
+pair matches no entry is refused with
+.Er EACCES ;
+the granted rights are the intersection of the wanted mask and the entry's
+maximum.
+.Sh FILES
+.Bl -tag -width ".Pa /Capabilities/System/Device.cap" -compact
+.It Pa /dev
+device directory delivered as an inherited descriptor
+.It Pa /Capabilities/System/Device.cap
+capability bundle shipping
+.Nm
+.It Pa /Capabilities/System/Device.cap/Units/localdevice.unit/Config/device.conf
+per-label device policy
+.El
+.Sh SEE ALSO
+.Xr cap_enter 2 ,
+.Xr cap_ioctls_limit 2 ,
+.Xr cap_rights_limit 2 ,
+.Xr openat 2 ,
+.Xr pdfork 2 ,
+.Xr mac_capability 4 ,
+.Xr serviced 8 ,
+.Xr tzfsd 8
+.Sh HISTORY
+The
+.Nm
+daemon appeared in
+.Fx 5BSD
+as the capability-plane device-node broker.
+.Sh AUTHORS
+.An Kory Heard

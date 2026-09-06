@@ -30,6 +30,7 @@ SUBDIR=	blocklist \
 	serviced \
 	servicectl \
 	localcrypto \
+	localdevice \
 	logd \
 	localnetwork \
 	bsdnotify \
@@ -54,6 +55,7 @@ SUBDIR=	blocklist \
 	libchannel \
 	libcryptocmp \
 	libcryptodesc \
+	libdevicecmp \
 	liblogcmp \
 	libnetworkcmp \
 	libnotify \
@@ -205,7 +207,8 @@ SUBDIR.${MK_TESTS}+=		mac-capability-tests
 SUBDIR.${MK_TESTS}+=		mac-abac-tests oes-tests
 SUBDIR.${MK_TESTS}+=		netmap-tests
 SUBDIR.${MK_TESTS}+=		localnetwork-tests
-SUBDIR.${MK_TESTS}+=		localcrypto-tests
+SUBDIR.${MK_TESTS}+=		localcrypto-tests localdevice-tests
+SUBDIR.${MK_TESTS}+=		libdevicecmp-tests
 SUBDIR.${MK_TESTS}+=		logd-tests bsdnotify-tests traced-tests
 SUBDIR.${MK_TESTS}+=		sysextd-tests tzfs-tests
 SUBDIR.${MK_TESTS}+=		vmd-tests warden-tests

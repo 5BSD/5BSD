@@ -1,0 +1,9 @@
+comment = "DEVICE capability-provider tests"
+
+desc = <<EOD
+Policy and safe-name validation tests for [DEVICE].
+EOD
+
+annotations = {
+	set = "tests"
+}

@@ -54,6 +54,8 @@ make -C "$src/lib/libtracecmp/tests" all
 make -C "$src/lib/libauditcmp/tests" all
 make -C "$src/usr.sbin/localcrypto" all
 make -C "$src/usr.sbin/localcrypto/tests" all
+make -C "$src/usr.sbin/localdevice" all
+make -C "$src/usr.sbin/localdevice/tests" all
 make -C "$src/tests/sys/opencrypto" cryptodesc_test
 make -C "$src/tests/sys/kern" envfd_test
 make -C "$src/lib/libnotify/tests" all
@@ -143,6 +145,8 @@ copy_test "$obj/lib/libcryptocmp/tests/cryptocmp_api_test"
 copy_test "$obj/lib/libcryptocmp/tests/client_protocol_test"
 copy_test "$obj/usr.sbin/localcrypto/tests/policy_test" localcrypto_policy_test
 copy_test "$obj/usr.sbin/localcrypto/tests/bundle_test" localcrypto_bundle_test
+copy_test "$obj/usr.sbin/localdevice/tests/policy_test" localdevice_policy_test
+copy_atf "$obj/usr.sbin/localdevice/tests/provider_test" device_provider_test
 copy_test "$obj/lib/libnotify/tests/notify_test"
 copy_test "$obj/lib/libnotify/tests/client_lifecycle_test" \
 	notify_client_lifecycle_test
@@ -236,6 +240,7 @@ for spec in \
     "usr.sbin/serviced/tests/capd_protocol_fixture:usr.sbin/serviced/tests/capd_protocol_fixture" \
     "usr.sbin/serviced/tests/component_fixture:usr.sbin/serviced/tests/component_fixture" \
     "usr.sbin/localcrypto/localcrypto:usr.sbin/localcrypto/localcrypto" \
+    "usr.sbin/localdevice/localdevice:usr.sbin/localdevice/localdevice" \
     "usr.sbin/localfilesystem/localfilesystem:usr.sbin/localfilesystem/localfilesystem" \
     "usr.sbin/localnetwork/localnetwork:usr.sbin/localnetwork/localnetwork" \
     "usr.sbin/logd/logd:usr.sbin/logd/logd" \
@@ -279,11 +284,13 @@ done
 # Several shell integration tests reference the configured source root.
 # Preserve that contract in the guest by staging only the files they exercise.
 mkdir -p "$payload/source/usr.sbin/localcrypto/capbundle" \
+	"$payload/source/usr.sbin/localdevice/capbundle" \
 	"$payload/source/usr.sbin/bsdnotify/capbundle" \
 	"$payload/source/usr.sbin/localfilesystem/capbundle" \
 	"$payload/source/usr.sbin/serviced" \
 	"$payload/source/lib/libnotify" \
 	"$payload/obj/usr.sbin/localcrypto" \
+	"$payload/obj/usr.sbin/localdevice" \
 	"$payload/obj/usr.sbin/bsdnotify" \
 	"$payload/obj/usr.sbin/localfilesystem" \
 	"$payload/obj/usr.sbin/servicectl/tests"
@@ -292,6 +299,11 @@ cp "$src/usr.sbin/localcrypto/Makefile" \
 	"$payload/source/usr.sbin/localcrypto/"
 cp "$src/usr.sbin/localcrypto/capbundle/crypto.ucl" \
 	"$payload/source/usr.sbin/localcrypto/capbundle/"
+cp "$src/usr.sbin/localdevice/Makefile" \
+	"$src/usr.sbin/localdevice/localdevice.c" \
+	"$payload/source/usr.sbin/localdevice/"
+cp "$src/usr.sbin/localdevice/capbundle/device.ucl" \
+	"$payload/source/usr.sbin/localdevice/capbundle/"
 cp "$src/usr.sbin/bsdnotify/Makefile" \
 	"$src/usr.sbin/bsdnotify/bsdnotify.c" \
 	"$src/usr.sbin/bsdnotify/bsdnotify_provider.d" \
@@ -316,6 +328,8 @@ cp "$src/usr.sbin/localfilesystem/capbundle/localfilesystem.ucl" \
 	"$payload/source/usr.sbin/localfilesystem/capbundle/"
 cp "$obj/usr.sbin/localcrypto/localcrypto" \
 	"$payload/obj/usr.sbin/localcrypto/"
+cp "$obj/usr.sbin/localdevice/localdevice" \
+	"$payload/obj/usr.sbin/localdevice/"
 cp "$obj/usr.sbin/bsdnotify/bsdnotify" \
 	"$payload/obj/usr.sbin/bsdnotify/"
 cp "$obj/usr.sbin/localfilesystem/localfilesystem" \
@@ -328,7 +342,8 @@ cp "$obj/usr.sbin/servicectl/tests/servicectl_test_bin" \
 mkdir -p "$payload/source/usr.sbin" "$payload/source/lib" \
     "$payload/source/packages" "$payload/source/etc"
 for path in usr.sbin/serviced usr.sbin/servicectl usr.sbin/logd \
-    usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localfilesystem \
+    usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localdevice \
+    usr.sbin/localfilesystem \
     usr.sbin/localnetwork usr.sbin/traced usr.sbin/auditbrokerd \
     lib/libcapbundle lib/libservice lib/libnotify; do
 	mkdir -p "$payload/source/$(dirname "$path")"
@@ -411,7 +426,7 @@ mkdir -p "$world/usr/share/man/man5" "$world/usr/share/man/man8" \
     "$world/usr/sbin" "$world/usr/libexec"
 : > "$work/world.meta"
 make -C "$src/usr.sbin/bluetooth/blued" all
-for daemon in localcrypto bsdnotify localfilesystem localnetwork logd \
+for daemon in localcrypto localdevice bsdnotify localfilesystem localnetwork logd \
     traced auditbrokerd bluetooth/blued; do
 	make -C "$src/usr.sbin/$daemon" install installconfig \
 	    DESTDIR="$world" -DNO_ROOT METALOG="$work/world.meta" \

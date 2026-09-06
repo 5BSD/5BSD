@@ -1,0 +1,15 @@
+# [DEVICE] is the local provider for system.Device: it opens named /dev leaves
+# on behalf of capability-plane consumers and delivers rights-limited descriptors.
+activation { boot = true; ipc = ["system.Device"]; }
+program = "Device";
+# Born in capability mode: serviced delivers /dev as a directory descriptor so
+# the provider opens each leaf with openat(2), never a global path.
+directories = ["/dev"];
+# Raw device access is a system capability: only SYSTEM-domain lookups resolve
+# system.Device (device brokering is not a user-session facility).
+resolvable_by = ["system"];
+restart = "on-failure";
+user = "capability";
+
+limits { nofile = 1024; nproc = 128; core = 0; }
+umask = "0077";

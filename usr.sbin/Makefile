@@ -30,6 +30,7 @@ SUBDIR=	adduser \
 	oeslogger \
 	fifolog \
 	localcrypto \
+	localdevice \
 	fstyp \
 	fwcontrol \
 	fwget \
