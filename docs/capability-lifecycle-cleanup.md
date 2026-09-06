@@ -172,6 +172,54 @@ anti-squat invariant.
    + plane (retire a label, assert push reclaims it; simulate a missed event,
    assert the sweep reclaims it) + VM fleet verification.
 
+## 5b. The pkg trigger + third-party extensibility (2026-09-06)
+
+**Mechanism status:** the reclaim mechanism is BUILT + VM-verified + committed —
+`servicectl reclaim <label>` (admin-gated `SCTL_OP_RECLAIM`) → serviced broadcasts
+`SVC_OP_RECLAIM_LABEL` to every running provider → each provider's registered
+handler self-decides and reclaims that label's resources (tzfsd namespace destroy,
+warden jails, localcrypto keys, waspnest window, logd records). Owner-scoped,
+idempotent, DTrace-probed, per-provider tested; live broadcast to all 11 providers
+confirmed on the plane, fleet green.
+
+**The pkg trigger (design):** a capability bundle is a pkgbase package; `pkg
+delete` removes its static files. The runtime, daemon-owned resources it left
+behind are reclaimed by a **post-deinstall hook** in the package manifest that
+runs `servicectl reclaim <label>` for the package's capability label. The hook is
+carried in the UCL package descriptor (`release/packages/ucl/<pkg>-all.ucl`),
+which `generate-ucl.lua` folds into `+MANIFEST` before `pkg create`:
+
+```
+scripts { post-deinstall = "servicectl reclaim <label> 2>/dev/null || true" }
+```
+
+**OPEN ISSUE — deinstall reach path (needs a decision before wiring):** `pkg`
+runs deinstall scripts in a plain root context with **no plane login session**,
+so it has no ambient discovery channel — and servicectl reaches
+`SERVICED_CONTROL_NAME` only over that ambient channel (the getpeereid control
+socket was retired). So `servicectl reclaim` from a bare `pkg` script cannot, as
+things stand, reach serviced. Resolution options:
+  (a) give the system/root context a fixed way to reach serviced's admin control
+      plane (a boot-provisioned ambient channel for the system context, or a
+      root-reachable control path serviced exposes) — then the hook works as-is;
+  (b) have `pkg` deinstall be performed from within an admin session that carries
+      the ambient channel (constrains how uninstall is invoked);
+  (c) a small privileged `pkg` trigger/helper that serviced provisions with a
+      reach path at install time.
+Leaning (a): it also cleanly enables any system-context tooling to drive reclaim.
+
+**Third-party extensibility (both directions work):**
+- Third-party **providers**: participate automatically. serviced broadcasts to
+  EVERY running provider — a new `system.Foo` that holds per-label state just
+  links libservice, calls `service_set_reclaim_handler()`, and implements its
+  reclaim (optionally the `label_is_live` reconcile). No serviced/CLI change. Safe:
+  the broadcast only names the retired label; each provider acts solely on its own
+  state, so it can never touch another provider's resources.
+- Third-party **consumers**: get their provider-held resources reclaimed via the
+  same post-deinstall hook (the reusable pattern documented above), AND their own
+  `pkg` deinstall script still runs for any app-specific cleanup (stock pkg
+  behavior, untouched).
+
 ## 6. Open questions for review
 
 1. **Retirement granularity** — retire at the *bundle* label only, or also
