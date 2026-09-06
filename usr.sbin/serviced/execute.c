@@ -1553,9 +1553,21 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * fork) and returns here already STARTING or, on failure, aborted back
 	 * to STOPPED with launch cleared.  Report the outcome so callers that
 	 * expect a -1 on a failed launch still get one.
+	 *
+	 * A born-in-capability-mode child may already be in capmode by the time
+	 * svc_launch_finish() samples pdincapmode(2) right after the fork; it
+	 * then drives the NOTE_CAPMODE transition synchronously, so the launch
+	 * resolves to RUNNING (not STARTING) within this call.  That is a
+	 * successful launch, not a failure — treat both STARTING (async
+	 * readiness still pending) and RUNNING (capmode reached synchronously)
+	 * as success, and report failure only when the launch actually aborted
+	 * back to STOPPED.  (Without this, a small daemon that wins the
+	 * cap_enter race is intermittently mis-logged as "failed to launch"
+	 * even though it is fully registered and serving.)
 	 */
 	svc_launch_advance(svc, kq);
-	if (svc->launch == NULL && svc->state != SVC_STATE_STARTING) {
+	if (svc->launch == NULL && svc->state != SVC_STATE_STARTING &&
+	    svc->state != SVC_STATE_RUNNING) {
 		errno = EIO;
 		return (-1);
 	}
