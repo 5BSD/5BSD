@@ -1887,7 +1887,7 @@ service_storage_open_quota(struct service_context *context, const char *name,
 	struct service_message outgoing;
 	struct service_reply incoming;
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	int handle = -1, dir, saved;
+	int handle = -1, saved;
 
 	if (dirfdp == NULL || name == NULL) {
 		errno = EINVAL;
@@ -1921,6 +1921,13 @@ service_storage_open_quota(struct service_context *context, const char *name,
 	memset(&rq, 0, sizeof(rq));
 	rq.op = TZFSD_OP_REQUEST;
 	rq.rights = ZH_MOUNT;			/* ZH_PROPS_READ is implicit */
+	/*
+	 * Ask tzfsd to mount the dataset and deliver the store directory itself.
+	 * tzfsd is privileged and outside capability mode; the ZFS mount is
+	 * forbidden in a born-in-capability-mode consumer, so the consumer must
+	 * never tzfs_mount(3) — it receives a ready directory descriptor.
+	 */
+	rq.deliver = TZFSD_DELIVER_MOUNTED;
 	rq.quota = quota;			/* 0 = tzfsd's default_refquota */
 	rq.lifetime = TZFSD_PERSISTENT;
 	rq.owner_uid = getuid();
@@ -1951,17 +1958,20 @@ service_storage_open_quota(struct service_context *context, const char *name,
 		return (-1);
 	}
 
-	dir = tzfs_mount(handle, false);
-	if (dir == -1) {
-		saved = errno != 0 ? errno : EIO;
-		(void)close(handle);
-		errno = saved;
-		return (-1);
+	/*
+	 * tzfsd already performed the mount (DELIVER_MOUNTED); the delivered
+	 * descriptor IS the mounted store directory.  Retain a dup as the claim
+	 * anchor (kept open for the process lifetime) and hand the directory to
+	 * the caller.
+	 */
+	if (service_storage_nanchors < nitems(service_storage_anchor_fds)) {
+		int anchor = fcntl(handle, F_DUPFD_CLOEXEC, 0);
+
+		if (anchor >= 0)
+			service_storage_anchor_fds[service_storage_nanchors++] =
+			    anchor;
 	}
-	if (service_storage_nanchors < nitems(service_storage_anchor_fds))
-		service_storage_anchor_fds[service_storage_nanchors++] = handle;
-	/* else retain by leaving the descriptor open; it still anchors. */
-	*dirfdp = dir;
+	*dirfdp = handle;
 	return (0);
 }
 

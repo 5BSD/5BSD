@@ -64,5 +64,6 @@ struct logcmp_config {
 void	logcmp_config_default(struct logcmp_config *);
 int	logcmp_config_parse(const char *, struct logcmp_config *);
 int	logcmp_config_load(const char *, struct logcmp_config *);
+int	logcmp_config_load_fd(int, struct logcmp_config *);
 
 #endif

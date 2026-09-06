@@ -322,28 +322,19 @@ pool_receive_fd(int socket_fd, struct pool_control_message *control, int *fd)
 }
 
 static int
-syslog_priority(uint32_t severity)
-{
-
-	if (severity >= LOGCMP_SEVERITY_FATAL)
-		return (LOG_CRIT);
-	if (severity >= LOGCMP_SEVERITY_ERROR)
-		return (LOG_ERR);
-	if (severity >= LOGCMP_SEVERITY_WARN)
-		return (LOG_WARNING);
-	if (severity >= LOGCMP_SEVERITY_INFO)
-		return (LOG_INFO);
-	return (LOG_DEBUG);
-}
-
-static int
 syslog_sink(void *arg, const struct logcmp_record *record,
-    const char *message, const char *attributes __unused)
+    const char *message __unused, const char *attributes __unused)
 {
 	struct sink_context *context;
-	const char *category, *rendered, *subsystem;
 
 	context = arg;
+	/*
+	 * Born in capability mode: logd persists the record to its own store (its
+	 * serviced-delivered, tzfsd-mounted store directory) and IS the plane's log
+	 * authority; consumers query it by name.  It no longer mirrors to legacy
+	 * syslogd via Casper cap_syslog — Casper's zygote cannot be forked from a
+	 * born-in-capmode process, and the store is the sink of record.
+	 */
 	if (logcmp_storage_append_for(context->storage, context->label, record,
 	    sizeof(*record) + record->subsystem_length +
 	    record->category_length + record->event_name_length +
@@ -352,20 +343,6 @@ syslog_sink(void *arg, const struct logcmp_record *record,
 		    record->message_length, errno != 0 ? errno : EIO);
 		return (-1);
 	}
-	subsystem = (const char *)(record + 1);
-	category = subsystem + record->subsystem_length;
-	rendered = record->message_privacy == LOGCMP_PRIVACY_PUBLIC ?
-	    message : record->message_privacy == LOGCMP_PRIVACY_PRIVATE_HASH ?
-	    "<private-hash>" : "<private>";
-	cap_syslog(context->syslog, syslog_priority(record->severity),
-	    "[service=%s instance=%ju sequence=%ju subsystem=%.*s "
-	    "category=%.*s severity=%u] %.*s",
-	    context->label, (uintmax_t)context->instance,
-	    (uintmax_t)record->sequence, (int)record->subsystem_length,
-	    subsystem, (int)record->category_length, category,
-	    record->severity,
-	    record->message_privacy == LOGCMP_PRIVACY_PUBLIC ?
-	    (int)record->message_length : (int)strlen(rendered), rendered);
 	LOGD_PROBE_RECORD(context->label, record->severity,
 	    record->message_length, 0);
 	return (0);
@@ -1326,12 +1303,15 @@ start_pool(struct pool_parent *parent, cap_channel_t *casper,
 	capsyslog = NULL;
 	if (logcmp_storage_attach_pool(storage_control, &storage) == -1 ||
 	    logcmp_storage_session_prepare_fork(&storage) == -1 ||
-	    (capsyslog = cap_service_open(casper, "system.syslog")) == NULL ||
-	    harden_worker_channel(capsyslog) == -1 ||
+	    (casper != NULL &&
+	    ((capsyslog = cap_service_open(casper, "system.syslog")) == NULL ||
+	    harden_worker_channel(capsyslog) == -1)) ||
 	    auditcmp_client_prepare(&audit_fd) == -1 ||
 	    socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == -1)
 		goto fail;
-	cap_openlog(capsyslog, "logd", LOG_PID | LOG_NDELAY, LOG_USER);
+	/* Born in capmode: casper NULL, capsyslog NULL, store is the only sink. */
+	if (capsyslog != NULL)
+		cap_openlog(capsyslog, "logd", LOG_PID | LOG_NDELAY, LOG_USER);
 	if (harden_worker_fd(sockets[1]) == -1)
 		goto fail_sockets;
 	pid = pdfork(&pd, PD_CLOEXEC | PD_DAEMON);
@@ -1339,14 +1319,16 @@ start_pool(struct pool_parent *parent, cap_channel_t *casper,
 		goto fail_sockets;
 	if (pid == 0) {
 		close(sockets[0]);
-		cap_close(casper);
+		if (casper != NULL)
+			cap_close(casper);
 		close(storage_control);
 		_exit(pool_worker(sockets[1], capsyslog, audit_fd, &storage,
 		    config, admitted, capacity, shard));
 	}
 	close(sockets[1]);
 	logcmp_storage_session_close(&storage);
-	cap_close(capsyslog);
+	if (capsyslog != NULL)
+		cap_close(capsyslog);
 	close(audit_fd);
 	amount = read(sockets[0], &child_error, sizeof(child_error));
 	if (amount != sizeof(child_error) || child_error != 0) {
@@ -1605,10 +1587,26 @@ main(void)
 	int fd, storage_control, storage_dir, storage_process;
 
 	openlog("logd", LOG_PID | LOG_NDELAY, LOG_DAEMON);
-	if (managed_config_path(config_path, sizeof(config_path)) == -1 ||
-	    logcmp_config_load(config_path, &config) == -1) {
-		syslog(LOG_ERR, "cannot load managed configuration: %m");
-		return (1);
+	/*
+	 * Born in capability mode: load the managed config from the serviced-
+	 * delivered Config descriptor (service_config_open), never a global path.
+	 * Fall back to the managed path for a legacy/pre-capmode launch.
+	 */
+	{
+		int cfgfd;
+
+		if (service_config_open(LOGCMP_CONFIG_NAME, &cfgfd) == 0) {
+			if (logcmp_config_load_fd(cfgfd, &config) == -1) {
+				syslog(LOG_ERR, "cannot load managed "
+				    "configuration: %m");
+				return (1);
+			}
+		} else if (managed_config_path(config_path,
+		    sizeof(config_path)) == -1 ||
+		    logcmp_config_load(config_path, &config) == -1) {
+			syslog(LOG_ERR, "cannot load managed configuration: %m");
+			return (1);
+		}
 	}
 	storage_control = -1;
 	storage_dir = -1;
@@ -1616,10 +1614,25 @@ main(void)
 	pools = NULL;
 	started_pools = 0;
 	admitted = MAP_FAILED;
-	casper = cap_init();
+	/*
+	 * Born in capability mode: do NOT init Casper — its zygote must be forked
+	 * before cap_enter, which never happened for us.  logd persists to its own
+	 * store (tzfsd delivers it pre-mounted) and no longer mirrors to syslogd, so
+	 * Casper is unnecessary.  cap_init is used only on a legacy pre-capmode launch.
+	 */
 	context = NULL;
-	if (casper == NULL || harden_factory_channel(casper) == -1 ||
-	    service_acquire(&context) == -1 ||
+	{
+		unsigned capmode = 0;
+
+		(void)cap_getmode(&capmode);
+		casper = NULL;
+		if (capmode == 0) {
+			casper = cap_init();
+			if (casper == NULL || harden_factory_channel(casper) == -1)
+				goto fail;
+		}
+	}
+	if (service_acquire(&context) == -1 ||
 	    service_storage_open(context, "state", &storage_dir) == -1 ||
 	    service_provider_create(&provider) == -1 ||
 	    service_provider_authorize_capabilities(provider) == -1)
@@ -1666,7 +1679,8 @@ main(void)
 			goto fail;
 		started_pools++;
 	}
-	cap_close(casper);
+	if (casper != NULL)
+		cap_close(casper);
 	casper = NULL;
 	if (service_provider_protect(provider, SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |

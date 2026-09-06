@@ -229,17 +229,32 @@ logcmp_config_parse(const char *text, struct logcmp_config *config)
 int
 logcmp_config_load(const char *path, struct logcmp_config *config)
 {
-	struct stat status;
-	char *text;
-	ssize_t amount;
-	size_t done;
-	int fd, error, result;
+	int fd;
 
 	if (path == NULL || config == NULL)
 		return (errno = EINVAL, -1);
 	fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
 	if (fd == -1)
 		return (-1);
+	return (logcmp_config_load_fd(fd, config));
+}
+
+/*
+ * Load the managed config from an already-open descriptor (takes ownership;
+ * closes it).  A born-in-capmode daemon gets this fd from service_config_open(3)
+ * over the serviced-delivered Config directory, never a global path.
+ */
+int
+logcmp_config_load_fd(int fd, struct logcmp_config *config)
+{
+	struct stat status;
+	char *text;
+	ssize_t amount;
+	size_t done;
+	int error, result;
+
+	if (fd < 0 || config == NULL)
+		return (errno = EINVAL, -1);
 	if (fstat(fd, &status) == -1)
 		goto fail;
 	if (!S_ISREG(status.st_mode)) {

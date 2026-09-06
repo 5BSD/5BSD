@@ -35,6 +35,7 @@
 #include <trustedzfs.h>
 
 #include "tzfsd.h"
+#include "tzfsd_probes.h"
 
 /*
  * Per-connection worker context: the retained-handle state (a private COW copy)
@@ -44,6 +45,15 @@
 struct tzfs_conn {
 	struct tzfsd_state	*st;
 	char			client[64];	/* == service_identity.client_label */
+	/*
+	 * A DELIVER_MOUNTED grant anchors its anonymous mount on the leaf
+	 * handle: the mount lives only while that handle stays open (closing it
+	 * force-unmounts, dooming the consumer's delivered directory fd).  Retain
+	 * the handle here for the connection's lifetime so the delivered store
+	 * stays mounted as long as the client holds its storage lease; the worker
+	 * closes it on teardown, which unmounts.  -1 == none held.
+	 */
+	int			mount_anchor_fd;
 };
 
 /* A claim name must be a single, safe path component. */
@@ -102,34 +112,42 @@ valid_request(const struct tzfsd_request *rq)
 {
 
 	if (!all_zero(rq->_reserved, sizeof(rq->_reserved)) ||
+	    rq->deliver > TZFSD_DELIVER_MOUNTED ||
 	    memchr(rq->dataset, '\0', sizeof(rq->dataset)) == NULL ||
 	    memchr(rq->session, '\0', sizeof(rq->session)) == NULL)
 		return (false);
 	switch (rq->op) {
 	case TZFSD_OP_REQUEST:
-		/* quota (0=default, else validated in grant) may be nonzero. */
+		/*
+		 * quota (0=default, else validated in grant) may be nonzero.
+		 * DELIVER_MOUNTED is only meaningful for a claim that was granted
+		 * ZH_MOUNT — tzfsd mounts it server-side and returns the dir fd.
+		 */
+		if (rq->deliver == TZFSD_DELIVER_MOUNTED &&
+		    (rq->rights & ZH_MOUNT) == 0)
+			return (false);
 		return (rq->session[0] == '\0');
 	case TZFSD_OP_RELEASE:
-		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->quota == 0 && rq->session[0] == '\0');
+		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
+		    rq->lifetime == 0 && rq->quota == 0 && rq->session[0] == '\0');
 	case TZFSD_OP_DESTROY:
 		/*
 		 * Identifies a claim exactly as REQUEST does (dataset + lifetime),
 		 * but carries no rights/flags/quota/session and no fd/path.
 		 */
-		return (rq->flags == 0 && rq->rights == 0 && rq->quota == 0 &&
-		    rq->session[0] == '\0');
+		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
+		    rq->quota == 0 && rq->session[0] == '\0');
 	case TZFSD_OP_PING:
-		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->quota == 0 && rq->dataset[0] == '\0' &&
+		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
+		    rq->lifetime == 0 && rq->quota == 0 && rq->dataset[0] == '\0' &&
 		    rq->session[0] == '\0');
 	case TZFSD_OP_BEGIN_SESSION:
-		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->quota == 0 && rq->dataset[0] == '\0' &&
+		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
+		    rq->lifetime == 0 && rq->quota == 0 && rq->dataset[0] == '\0' &&
 		    rq->session[0] != '\0');
 	default:
-		return (rq->flags == 0 && rq->rights == 0 && rq->lifetime == 0 &&
-		    rq->quota == 0 && rq->dataset[0] == '\0' &&
+		return (rq->deliver == 0 && rq->flags == 0 && rq->rights == 0 &&
+		    rq->lifetime == 0 && rq->quota == 0 && rq->dataset[0] == '\0' &&
 		    rq->session[0] == '\0');
 	}
 }
@@ -170,13 +188,20 @@ derive_ns(const char *client, char *out, size_t outsz)
  */
 static int
 grant(struct tzfsd_state *st, const char *client,
-    const struct tzfsd_request *rq, char *dataset, size_t dsz)
+    const struct tzfsd_request *rq, char *dataset, size_t dsz, int *keep_fd)
 {
 	struct tzfsd_config *cfg = &st->cfg;
 	int parent_fd, ns_fd, leaf_fd, granted;
 	const char *parent_name, *claim;
 	char parent_buf[TZFSD_MAXPATH];
 	char ns[TZFSD_NAME_MAX];
+
+	/*
+	 * On a DELIVER_MOUNTED grant this returns the leaf handle that anchors
+	 * the delivered mount; the caller must keep it open for the mount's
+	 * lifetime.  -1 for every other outcome (nothing to retain).
+	 */
+	*keep_fd = -1;
 
 	if (rq->lifetime > TZFSD_LEASE) {
 		errno = EINVAL;
@@ -253,6 +278,44 @@ grant(struct tzfsd_state *st, const char *client,
 		    tzfs_set_prop_uint64(leaf_fd, "refquota", refquota) == -1)
 			syslog(LOG_WARNING, "set refquota=%ju on claim %s: %m",
 			    (uintmax_t)refquota, claim);
+	}
+
+	/*
+	 * DELIVER_MOUNTED: the consumer is born in capability mode and cannot
+	 * perform the ZFS mount itself, so tzfsd (privileged) mounts the claim ONCE
+	 * here and returns the mounted store directory in the handle's place.  The
+	 * objset stays mounted for the claim's lifetime (RELEASE/DESTROY reclaim
+	 * it); doing the mount once — rather than the provisioning mount+unmount
+	 * below followed by a second consumer mount — avoids the double-mount that
+	 * otherwise fails EINVAL.  The delivered directory carries full rights; the
+	 * consumer narrows it (e.g. logd's cap_rights_limit on its store dir).
+	 */
+	if (rq->deliver == TZFSD_DELIVER_MOUNTED) {
+		int dfd = tzfs_mount(leaf_fd, false);
+		int saved;
+
+		if (dfd == -1 || (rq->owner_uid != 0 &&
+		    fchown(dfd, rq->owner_uid, rq->owner_gid) == -1)) {
+			saved = errno;
+			if (dfd != -1) {
+				(void)close(dfd);
+				(void)tzfs_unmount(leaf_fd);
+			}
+			(void)close(leaf_fd);
+			(void)close(ns_fd);
+			errno = saved;
+			return (-1);
+		}
+		/*
+		 * Retain leaf_fd (do NOT close it): it anchors the anonymous
+		 * mount whose root we just handed back in dfd.  Closing it here
+		 * would force-unmount and doom the consumer's delivered
+		 * directory.  The caller holds it for the connection's lifetime.
+		 */
+		*keep_fd = leaf_fd;
+		(void)close(ns_fd);
+		(void)snprintf(dataset, dsz, "%s/%s/%s", parent_name, ns, claim);
+		return (dfd);
 	}
 
 	/*
@@ -463,6 +526,9 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 
 	memset(&rp, 0, sizeof(rp));
 
+	TZFSD_PROBE_MSG((uint64_t)channel_message_length(m),
+	    channel_message_fd_count(m));
+
 	if (channel_message_fd_count(m) != 0) {
 		rp.status = EPROTO;
 		goto reply;
@@ -494,25 +560,55 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 		goto reply;
 	}
 	rq = channel_message_data(m);
-	if (!valid_request(rq)) {
-		rp.status = EINVAL;
-		goto reply;
+	{
+		int ok = valid_request(rq);
+
+		TZFSD_PROBE_VALIDATE(rq->op, rq->deliver, rq->rights,
+		    rq->lifetime, ok);
+		if (!ok) {
+			rp.status = EINVAL;
+			goto reply;
+		}
 	}
 
 	switch (rq->op) {
-	case TZFSD_OP_REQUEST:
+	case TZFSD_OP_REQUEST: {
+		int keep_fd = -1;
+
 		handle = grant(st, conn->client, rq, rp.dataset,
-		    sizeof(rp.dataset));
+		    sizeof(rp.dataset), &keep_fd);
+		TZFSD_PROBE_GRANT(rq->op, rq->deliver, handle,
+		    handle == -1 ? errno : 0);
+		/*
+		 * A DELIVER_MOUNTED grant hands back the leaf handle anchoring
+		 * the delivered mount; retain it for the connection's lifetime so
+		 * the store stays mounted while the client holds its lease.  One
+		 * live mount per connection: if a prior lease is replaced, drop
+		 * its anchor (which unmounts the old store).
+		 */
+		if (keep_fd != -1) {
+			if (conn->mount_anchor_fd != -1)
+				(void)close(conn->mount_anchor_fd);
+			conn->mount_anchor_fd = keep_fd;
+		}
 		if (handle == -1) {
 			rp.status = errno;
 			rp.dataset[0] = '\0';
 			syslog(LOG_INFO, "REQUEST claim=%s life=%u -> %s",
 			    rq->dataset, rq->lifetime, strerror(rp.status));
 		} else {
-			syslog(LOG_INFO, "REQUEST %s life=%u -> granted",
-			    rp.dataset, rq->lifetime);
+			/*
+			 * grant() returns the mounted store directory for a
+			 * DELIVER_MOUNTED request (it performed the mount) or the
+			 * dataset handle otherwise; either way we deliver it below.
+			 */
+			syslog(LOG_INFO, "REQUEST %s life=%u -> granted%s",
+			    rp.dataset, rq->lifetime,
+			    rq->deliver == TZFSD_DELIVER_MOUNTED ? " (mounted)" :
+			    "");
 		}
 		break;
+	}
 	case TZFSD_OP_RELEASE: {
 		/* Destroy the caller's own claim under its lease namespace. */
 		char ns[TZFSD_NAME_MAX];
@@ -601,6 +697,7 @@ tzfs_request(struct channel *ch __unused, struct channel_message *m, void *arg)
 	}
 
 reply:
+	TZFSD_PROBE_REPLY(0, rp.status, handle);
 	memset(&out, 0, sizeof(out));
 	out.size = sizeof(out);
 	out.data = &rp;
@@ -629,6 +726,7 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client)
 	int ready, wants_write;
 
 	conn.st = st;
+	conn.mount_anchor_fd = -1;
 	(void)strlcpy(conn.client, client, sizeof(conn.client));
 
 	if (channel_create(fd, &options, &channel) == -1)
@@ -648,6 +746,14 @@ tzfs_worker(struct tzfsd_state *st, int fd, const char *client)
 			break;
 	}
 	channel_destroy(channel);
+	/*
+	 * Drop any retained mount anchor: closing the leaf handle unmounts the
+	 * delivered store now that the client's connection is gone.  (Process
+	 * exit would do this too; explicit is clearer and lets a worker that is
+	 * reused across errors not strand a mount.)
+	 */
+	if (conn.mount_anchor_fd != -1)
+		(void)close(conn.mount_anchor_fd);
 	return (0);
 }
 
@@ -668,7 +774,7 @@ tzfsd_serve(struct tzfsd_state *st)
 	    service_provider_authorize_capabilities(provider) == -1 ||
 	    service_provider_expose(provider, TZFSD_SERVICE_NAME, &listener) ==
 	    -1 ||
-	    service_provider_enter_capability_mode(provider) == -1 ||
+	    service_provider_enter_privileged(provider) == -1 ||
 	    service_provider_ready(provider) == -1)
 		return (-1);
 
@@ -751,8 +857,14 @@ int
 tzfsd_test_grant(struct tzfsd_state *st, const char *client,
     const struct tzfsd_request *rq, char *dataset, size_t dsz)
 {
+	int keep_fd = -1;
+	int handle;
 
-	return (grant(st, client, rq, dataset, dsz));
+	handle = grant(st, client, rq, dataset, dsz, &keep_fd);
+	/* The test path validates argument handling; don't leak a retained mount. */
+	if (keep_fd != -1)
+		(void)close(keep_fd);
+	return (handle);
 }
 
 /*

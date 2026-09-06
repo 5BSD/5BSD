@@ -310,7 +310,7 @@ ATF_TC_BODY(channel_validation_is_fail_closed, tc)
 	rq.op = TZFSD_OP_DESTROY;
 	rq.lifetime = TZFSD_PERSISTENT;
 	(void)strlcpy(rq.dataset, "claim", sizeof(rq.dataset));
-	rq._reserved[2] = 0x01;
+	rq._reserved[1] = 0x01;
 	ATF_CHECK_EQ(EINVAL,
 	    call_status(fx.client, &rq, sizeof(rq), NULL, 0));
 

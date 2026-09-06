@@ -18,8 +18,3 @@ user = "capability";
 # 72 leaves headroom above that ceiling.
 limits { nofile = 2048; nproc = 72; core = 0; }
 umask = "0077";
-
-# Privileged (capmode exception): logd is the single privileged log
-# concentration point; it forwards to the syslog sink (Casper cap_syslog today,
-# direct sink later) and must run outside the sandbox to own it.
-privileged = true;

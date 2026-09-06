@@ -89,6 +89,18 @@
 	(TZFSD_OPEN_READ | TZFSD_OPEN_WRITE | TZFSD_OPEN_EXEC | \
 	 TZFSD_OPEN_LOOKUP | TZFSD_OPEN_IOCTL)
 
+/*
+ * tzfsd_request.deliver — the shape of the descriptor tzfsd returns for a
+ * ZH_MOUNT claim.  DELIVER_HANDLE (default, 0) returns the TrustedZFS dataset
+ * handle and the caller mounts it itself.  DELIVER_MOUNTED asks tzfsd — which
+ * is privileged and outside capability mode — to perform the ZFS mount and
+ * return the mounted directory descriptor, so a born-in-capability-mode
+ * consumer receives a ready store dir without ever issuing the mount (which
+ * the sandbox forbids at the VFS layer).
+ */
+#define	TZFSD_DELIVER_HANDLE		0u
+#define	TZFSD_DELIVER_MOUNTED		1u
+
 struct tzfsd_open_request {
 	uint32_t	op;		/* TZFSD_OP_OPEN */
 	uint32_t	rights;		/* TZFSD_OPEN_* mask (at least one bit) */
@@ -116,7 +128,8 @@ struct tzfsd_request {
 	uint64_t	rights;			/* ZH_* mask to grant */
 	uint64_t	quota;			/* per-claim refquota, bytes; 0=default */
 	uint8_t		lifetime;		/* TZFSD_* lifecycle */
-	uint8_t		_reserved[3];
+	uint8_t		deliver;		/* TZFSD_DELIVER_* (fd shape) */
+	uint8_t		_reserved[2];
 	uint32_t	owner_uid;		/* chown dataset root at mint; 0=skip */
 	uint32_t	owner_gid;
 	char		dataset[TZFSD_NAME_MAX]; /* opaque stable leaf key */

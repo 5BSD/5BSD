@@ -57,6 +57,11 @@ CFLAGS+=	-I${SRCTOP}/contrib/libucl/include
 
 LIBADD=		trustedzfs ucl nvpair service channel md
 
+.if ${MK_DTRACE} != "no"
+SRCS+=		tzfsd_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
+
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
 
