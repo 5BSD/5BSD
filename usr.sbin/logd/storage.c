@@ -403,9 +403,7 @@ handle_control(int fd, struct storage_session *sessions, size_t *nsessions)
 	    *nsessions >= STORAGE_MAX_SESSIONS || socket_type(session_fd) == -1 ||
 	    shmring_open(&sessions[*nsessions].ring, &ringfds,
 	    SHMRING_ROLE_CONSUMER) == -1 ||
-	    cap_xfer_limit(session_fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(session_fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(session_fd, CAP_CLOEXEC_LOCKED) == -1) {
+	    service_harden_fd(session_fd, SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
 		error = errno != 0 ? errno : EPROTO;
 		for (size_t i = 0; i < nfds; i++)
 			close(received_fds[i]);
@@ -638,11 +636,10 @@ logcmp_storage_manager_run(int dirfd, int control_fd, uint64_t segment_limit,
 		}
 	}
 	memset(sessions, 0, sizeof(sessions));
-	if (sandbox && (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	if (sandbox && service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOEXEC |
-	    SERVICE_PROTECT_NOSOCK) == -1 || (service_worker_drop_inherited_authority(),
-	    cap_enter() == -1))) {
+	    SERVICE_PROTECT_NOSOCK) == -1) {
 		error = errno != 0 ? errno : EPERM;
 		(void)send_status(control_fd, STORAGE_OP_READY, error);
 		logcmp_store_close(store);
@@ -813,9 +810,7 @@ logcmp_storage_test_start(int dirfd, uint64_t segment_limit,
 	close(sockets[1]);
 	if (receive_status(sockets[0], STORAGE_OP_READY,
 	    LOGCMP_STORAGE_TIMEOUT_MS) == -1 ||
-	    cap_xfer_limit(sockets[0], CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(sockets[0], CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(sockets[0], CAP_CLOEXEC_LOCKED) == -1) {
+	    service_harden_fd(sockets[0], 0) == -1) {
 		error = errno;
 		close(sockets[0]);
 		errno = error;
@@ -843,12 +838,8 @@ logcmp_storage_start(int dirfd, uint64_t segment_limit, uint32_t max_segments,
 	if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == -1)
 		return (-1);
 	if (cap_clofork_limit(dirfd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_xfer_limit(sockets[0], CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(sockets[0], CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(sockets[0], CAP_CLOEXEC_LOCKED) == -1 ||
-	    cap_xfer_limit(sockets[1], CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(sockets[1], CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(sockets[1], CAP_CLOEXEC_LOCKED) == -1) {
+	    service_harden_fd(sockets[0], 0) == -1 ||
+	    service_harden_fd(sockets[1], SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
 		error = errno;
 		close(sockets[0]);
 		close(sockets[1]);
@@ -870,12 +861,8 @@ logcmp_storage_start(int dirfd, uint64_t segment_limit, uint32_t max_segments,
 	close(sockets[1]);
 	if (receive_status(sockets[0], STORAGE_OP_READY,
 	    LOGCMP_STORAGE_TIMEOUT_MS) == -1 ||
-	    cap_xfer_limit(sockets[0], CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(sockets[0], CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(sockets[0], CAP_CLOEXEC_LOCKED) == -1 ||
-	    cap_xfer_limit(pd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(pd, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(pd, CAP_CLOEXEC_LOCKED) == -1) {
+	    service_harden_fd(sockets[0], 0) == -1 ||
+	    service_harden_fd(pd, 0) == -1) {
 		error = errno;
 		(void)pdkill(pd, SIGKILL);
 		while (pdwait(pd, NULL, WEXITED, NULL, NULL) == -1 && errno == EINTR)
@@ -982,9 +969,8 @@ logcmp_storage_session_prepare_fork(struct logcmp_storage_session *session)
 	descriptors[4] = session->producer_fds.tail_fd;
 	for (i = 0; i < nitems(descriptors); i++) {
 		if (descriptors[i] < 0 ||
-		    cap_xfer_limit(descriptors[i], CAP_XFER_NONE) == -1 ||
-		    cap_clofork_limit(descriptors[i], CAP_CLOFORK_ONCE) == -1 ||
-		    cap_cloexec_limit(descriptors[i], CAP_CLOEXEC_LOCKED) == -1)
+		    service_harden_fd(descriptors[i],
+		    SERVICE_HARDEN_CLOFORK_ONCE) == -1)
 			return (-1);
 	}
 	return (0);

@@ -64,9 +64,8 @@ harden_worker_descriptor(int fd, int xfer)
 	 * pdfork() child.  CAP_CLOFORK_ONCE atomically consumes that authority
 	 * and locks both resulting entries against any later fork.
 	 */
-	return (cap_xfer_limit(fd, xfer) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(fd, SERVICE_HARDEN_CLOFORK_ONCE |
+	    (xfer == CAP_XFER_ONCE ? SERVICE_HARDEN_XFER_ONCE : 0)));
 }
 
 #ifdef TRACECMP_TESTING
@@ -438,15 +437,10 @@ worker(int fd, int barrier, int dtrace_fd, bool authorized,
 	 * NOPRIVS.  The worker only shuffles the already-open consumer fd to the
 	 * client and drives the channel, none of which requires privilege.
 	 */
-	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	error = service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
-	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1)
-		error = errno;
-	else {
-		service_worker_drop_inherited_authority();
-		error = cap_enter() == -1 ? errno : 0;
-	}
+	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1 ? errno : 0;
 	if (write(barrier, &error, sizeof(error)) != sizeof(error) ||
 	    error != 0)
 		return (1);
@@ -500,9 +494,7 @@ start_session(int fd, int dtrace_directory, bool authorized,
 		goto reject;
 	}
 	if (harden_worker_descriptor(fd, CAP_XFER_NONE) == -1 ||
-	    cap_xfer_limit(syncfd[0], CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(syncfd[0], CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(syncfd[0], CAP_CLOEXEC_LOCKED) == -1 ||
+	    service_harden_fd(syncfd[0], 0) == -1 ||
 	    harden_worker_descriptor(syncfd[1], CAP_XFER_NONE) == -1) {
 		error = errno;
 		close(syncfd[0]);

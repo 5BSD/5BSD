@@ -1455,6 +1455,40 @@ service_enter_capability_mode(struct service_context *context)
 }
 
 int
+service_harden_fd(int fd, unsigned flags)
+{
+	int xfer, clofork;
+
+	xfer = (flags & SERVICE_HARDEN_XFER_ONCE) != 0 ?
+	    CAP_XFER_ONCE : CAP_XFER_NONE;
+	clofork = (flags & SERVICE_HARDEN_CLOFORK_ONCE) != 0 ?
+	    CAP_CLOFORK_ONCE : CAP_CLOFORK_LOCKED;
+	if (cap_xfer_limit(fd, xfer) == -1 ||
+	    cap_clofork_limit(fd, clofork) == -1 ||
+	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1)
+		return (-1);
+	return (0);
+}
+
+int
+service_worker_enter_capability_mode(uint32_t protect_flags)
+{
+	unsigned int mode;
+
+	if (service_worker_protect(protect_flags) == -1)
+		return (-1);
+	service_worker_drop_inherited_authority();
+	if (cap_getmode(&mode) == -1)
+		return (-1);
+	if (mode == 0) {
+		service_capmode_preflight();
+		if (cap_enter() == -1)
+			return (-1);
+	}
+	return (0);
+}
+
+int
 service_config_open(const char *name, int *fdp)
 {
 	char path[PATH_MAX];
@@ -1503,6 +1537,39 @@ service_config_open(const char *name, int *fdp)
 		return (-1);
 	}
 	fd = open(path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+	if (fd == -1)
+		return (-1);
+	*fdp = fd;
+	return (0);
+}
+
+int
+service_config_open_or_path(const char *name, const char *fallback_path,
+    int *fdp)
+{
+	int fd, saved;
+
+	if (fdp == NULL) {
+		errno = EINVAL;
+		return (-1);
+	}
+	/*
+	 * Preferred: the serviced-delivered Config descriptor (capability-mode
+	 * safe).  service_config_open already tries CONFIG_FD then
+	 * <unit>/Config/<name> by path.
+	 */
+	if (service_config_open(name, fdp) == 0)
+		return (0);
+	saved = errno;
+	if (fallback_path == NULL) {
+		errno = saved;
+		return (-1);
+	}
+	/*
+	 * Legacy/pre-capmode: the daemon's managed config path (e.g. an
+	 * /etc/<name>.conf).  Only reachable before cap_enter(2).
+	 */
+	fd = open(fallback_path, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
 	if (fd == -1)
 		return (-1);
 	*fdp = fd;

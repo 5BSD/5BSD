@@ -413,12 +413,8 @@ audit_policy(struct auditcmp_client *audit, struct net_logger *nl,
 static int
 harden_factory_channel(cap_channel_t *channel)
 {
-	int fd;
 
-	fd = cap_sock(channel);
-	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(cap_sock(channel), 0));
 }
 
 /*
@@ -428,21 +424,16 @@ harden_factory_channel(cap_channel_t *channel)
 static int
 harden_worker_channel(cap_channel_t *channel)
 {
-	int fd;
 
-	fd = cap_sock(channel);
-	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(cap_sock(channel),
+	    SERVICE_HARDEN_CLOFORK_ONCE));
 }
 
 static int
 harden_worker_fd(int fd)
 {
 
-	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(fd, SERVICE_HARDEN_CLOFORK_ONCE));
 }
 #endif
 
@@ -1129,12 +1120,9 @@ worker(int fd, int barrier, cap_channel_t *capnet,
 	if (logcmp_client_open(&wlog.client) == 0)
 		(void)logcmp_logger_create(wlog.client, "localnetwork",
 		    "worker", &wlog.logger);
-	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	if (service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOEXEC) == -1)
-		goto fail;
-	service_worker_drop_inherited_authority();
-	if (cap_enter() == -1)
 		goto fail;
 	error = 0;
 	if (write(barrier, &error, sizeof(error)) != sizeof(error) ||
@@ -1266,9 +1254,7 @@ start_session(int fd, cap_channel_t *casper, const char *peer_label,
 		error = errno;
 		goto reject;
 	}
-	if (cap_xfer_limit(syncfd[0], CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(syncfd[0], CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(syncfd[0], CAP_CLOEXEC_LOCKED) == -1 ||
+	if (service_harden_fd(syncfd[0], 0) == -1 ||
 	    harden_worker_fd(syncfd[1]) == -1) {
 		error = errno;
 		close(syncfd[0]);

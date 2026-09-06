@@ -184,32 +184,23 @@ storage_query(void *context, const char *label, uint32_t minimum_severity,
 static int
 harden_factory_channel(cap_channel_t *channel)
 {
-	int fd;
 
-	fd = cap_sock(channel);
-	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(cap_sock(channel), 0));
 }
 
 static int
 harden_worker_channel(cap_channel_t *channel)
 {
-	int fd;
 
-	fd = cap_sock(channel);
-	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(cap_sock(channel),
+	    SERVICE_HARDEN_CLOFORK_ONCE));
 }
 
 static int
 harden_worker_fd(int fd)
 {
 
-	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(fd, SERVICE_HARDEN_CLOFORK_ONCE));
 }
 
 /*
@@ -223,18 +214,15 @@ static int
 harden_worker_leaf_fd(int fd)
 {
 
-	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(fd, 0));
 }
 
 static int
 harden_transfer_fd(int fd)
 {
 
-	return (cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(fd,
+	    SERVICE_HARDEN_XFER_ONCE | SERVICE_HARDEN_CLOFORK_ONCE));
 }
 
 static int
@@ -354,9 +342,7 @@ static int
 harden_worker_fd(int fd)
 {
 
-	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(fd, SERVICE_HARDEN_CLOFORK_ONCE));
 }
 #endif
 

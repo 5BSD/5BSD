@@ -211,6 +211,17 @@ int	service_provider_ready(struct service_provider *);
 int	service_config_open(const char *name, int *fdp);
 
 /*
+ * As service_config_open(3), but if no delivered Config descriptor (and no
+ * <unit>/Config/<name>) is available, fall back to opening `fallback_path`
+ * directly (legacy/pre-capmode managed path).  Centralizes the
+ * "CONFIG_FD else open path" branch every config-consuming daemon hand-rolled;
+ * the caller always ends up with one descriptor to feed its *_load_fd().
+ * A NULL fallback_path behaves exactly like service_config_open(3).
+ */
+int	service_config_open_or_path(const char *name, const char *fallback_path,
+	    int *fdp);
+
+/*
  * Return the descriptor for a serviced-delivered resource directory declared in
  * the unit's manifest (directories = [...]).  `path` is the absolute directory
  * the manifest declared (e.g. "/dev"); *fdp receives its inherited, ambient
@@ -413,6 +424,29 @@ int	service_worker_protect(uint32_t flags);
  * descriptors are not affected.
  */
 void	service_worker_drop_inherited_authority(void);
+
+/*
+ * Channel/descriptor hardening: apply the capability-plane triple
+ * (cap_xfer_limit, cap_clofork_limit, cap_cloexec_limit) that every daemon
+ * reinvented as harden_{factory,worker,transfer}_*.  Default (flags 0) is the
+ * "held for good" channel: XFER_NONE + CLOFORK_LOCKED.  cloexec is always
+ * locked.  Returns 0, or -1 with errno.
+ *   SERVICE_HARDEN_XFER_ONCE     -- descriptor will be delegated exactly once
+ *   SERVICE_HARDEN_CLOFORK_ONCE  -- descriptor survives exactly one more fork
+ */
+#define	SERVICE_HARDEN_XFER_ONCE	0x1u
+#define	SERVICE_HARDEN_CLOFORK_ONCE	0x2u
+int	service_harden_fd(int fd, unsigned flags);
+
+/*
+ * Enter capability mode in a freshly forked worker: the standard sequence
+ * service_worker_protect(protect_flags) -> service_worker_drop_inherited_
+ * authority() -> capmode preflight (tz/NLS/errno warm) -> cap_enter().  The
+ * worker-side mirror of service_provider_enter_capability_mode(3) that six
+ * daemons hand-rolled (and which skipped the preflight).  No-op cap_enter if
+ * the process is already in capability mode.  Returns 0, or -1 with errno.
+ */
+int	service_worker_enter_capability_mode(uint32_t protect_flags);
 
 /*
  * Every exposed global name has an independent listener and accept queue.

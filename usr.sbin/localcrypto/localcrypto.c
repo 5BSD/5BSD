@@ -401,15 +401,10 @@ worker(int fd, int audit_fd, const char *owner)
 		auditcmp_client_close(audit);
 		return (1);
 	}
-	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	if (service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOPRIVS | SERVICE_PROTECT_NOFORK |
 	    SERVICE_PROTECT_NOIPC | SERVICE_PROTECT_NOFDRECV |
 	    SERVICE_PROTECT_NOEXEC | SERVICE_PROTECT_NOSOCK) == -1) {
-		auditcmp_client_close(audit);
-		return (1);
-	}
-	service_worker_drop_inherited_authority();
-	if (cap_enter() == -1) {
 		auditcmp_client_close(audit);
 		return (1);
 	}

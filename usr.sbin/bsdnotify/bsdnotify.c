@@ -182,18 +182,16 @@ static int
 harden_channel(int fd, int clofork)
 {
 
-	return (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, clofork) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(fd,
+	    clofork == CAP_CLOFORK_ONCE ? SERVICE_HARDEN_CLOFORK_ONCE : 0));
 }
 
 static int
 harden_transfer_channel(int fd)
 {
 
-	return (cap_xfer_limit(fd, CAP_XFER_ONCE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ? -1 : 0);
+	return (service_harden_fd(fd,
+	    SERVICE_HARDEN_XFER_ONCE | SERVICE_HARDEN_CLOFORK_ONCE));
 }
 #endif
 

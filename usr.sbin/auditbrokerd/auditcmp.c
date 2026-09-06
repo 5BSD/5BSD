@@ -226,15 +226,10 @@ worker(int fd, int barrier, const char *provider, int event)
 	char byte;
 	int error;
 
-	if (service_worker_protect(SERVICE_PROTECT_EXTERNAL |
+	error = service_worker_enter_capability_mode(SERVICE_PROTECT_EXTERNAL |
 	    SERVICE_PROTECT_NOFORK | SERVICE_PROTECT_NOIPC |
 	    SERVICE_PROTECT_NOFDRECV | SERVICE_PROTECT_NOEXEC |
-	    SERVICE_PROTECT_NOSOCK) == -1)
-		error = errno;
-	else {
-		service_worker_drop_inherited_authority();
-		error = cap_enter() == -1 ? errno : 0;
-	}
+	    SERVICE_PROTECT_NOSOCK) == -1 ? errno : 0;
 	if (write(barrier, &error, sizeof(error)) != sizeof(error) ||
 	    error != 0)
 		return (1);
@@ -253,17 +248,11 @@ start_session(int fd, const char *provider, int *pdp, pid_t *pidp)
 	event = auditcmp_policy_event(provider);
 	if (event == 0)
 		return (errno = EACCES, -1);
-	if (cap_xfer_limit(fd, CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(fd, CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(fd, CAP_CLOEXEC_LOCKED) == -1 ||
+	if (service_harden_fd(fd, SERVICE_HARDEN_CLOFORK_ONCE) == -1 ||
 	    socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, syncfd) == -1)
 		return (-1);
-	if (cap_xfer_limit(syncfd[0], CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(syncfd[0], CAP_CLOFORK_LOCKED) == -1 ||
-	    cap_cloexec_limit(syncfd[0], CAP_CLOEXEC_LOCKED) == -1 ||
-	    cap_xfer_limit(syncfd[1], CAP_XFER_NONE) == -1 ||
-	    cap_clofork_limit(syncfd[1], CAP_CLOFORK_ONCE) == -1 ||
-	    cap_cloexec_limit(syncfd[1], CAP_CLOEXEC_LOCKED) == -1) {
+	if (service_harden_fd(syncfd[0], 0) == -1 ||
+	    service_harden_fd(syncfd[1], SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
 		error = errno;
 		close(syncfd[0]);
 		close(syncfd[1]);

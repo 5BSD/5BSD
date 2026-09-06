@@ -8,11 +8,14 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <syslog.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -1429,4 +1432,136 @@ logcmp_query_next(struct logcmp_client *client, uint32_t minimum_severity,
 	(void)pthread_mutex_unlock(&client->lock);
 	errno = error;
 	return (result);
+}
+
+/*
+ * Capability-mode-safe syslog(3) replacement (logcmp_log / logcmp_vlog).
+ *
+ * A process-lifetime logger opened lazily on first use and keyed to the current
+ * pid, so a pdfork(2)'d worker re-establishes its own rather than reusing the
+ * parent's inherited (possibly clofork-dropped) session.  NULL means "not
+ * available" -> fall back to syslog(3).  Everything here is fail-soft: a log
+ * call never blocks, never errors out, and preserves the caller's errno (so a
+ * trailing "%m" still reports the original failure).
+ */
+static struct logcmp_client	*logcmp_default_client;
+static struct logcmp_logger	*logcmp_default_logger;
+static pid_t			 logcmp_default_pid = -1;
+
+static uint32_t
+logcmp_severity_from_priority(int priority)
+{
+
+	switch (LOG_PRI(priority)) {
+	case LOG_EMERG:
+	case LOG_ALERT:
+	case LOG_CRIT:
+		return (LOGCMP_SEVERITY_FATAL);
+	case LOG_ERR:
+		return (LOGCMP_SEVERITY_ERROR);
+	case LOG_WARNING:
+		return (LOGCMP_SEVERITY_WARN);
+	case LOG_DEBUG:
+		return (LOGCMP_SEVERITY_DEBUG);
+	default:
+		return (LOGCMP_SEVERITY_INFO);
+	}
+}
+
+/*
+ * logcmp_emit(3) takes a finished message string, so expand the one syslog(3)
+ * conversion callers rely on -- %m -> strerror(err) -- ourselves; other
+ * conversions are left for vsnprintf.  strerror text never contains '%'.
+ */
+static void
+logcmp_expand_m(char *out, size_t outlen, const char *fmt, int err)
+{
+	const char *s, *m;
+	size_t o;
+
+	for (s = fmt, o = 0; *s != '\0' && o + 1 < outlen; ) {
+		if (s[0] == '%' && s[1] == 'm') {
+			m = strerror(err);
+			while (*m != '\0' && o + 1 < outlen)
+				out[o++] = *m++;
+			s += 2;
+		} else {
+			out[o++] = *s++;
+		}
+	}
+	out[o] = '\0';
+}
+
+/*
+ * (Re)establish the process's default logger if this pid has not tried yet.
+ * On a failed open the pointers stay NULL and the pid is recorded, so we do not
+ * retry every call (the syslog fallback still delivers); a forked child re-tries
+ * because its pid differs.  A stale inherited handle is abandoned, not closed --
+ * closing a clofork-dropped descriptor would touch an unrelated fd.
+ */
+static void
+logcmp_default_ensure(void)
+{
+	pid_t pid;
+
+	pid = getpid();
+	if (logcmp_default_pid == pid)
+		return;
+	logcmp_default_client = NULL;
+	logcmp_default_logger = NULL;
+	logcmp_default_pid = pid;
+	if (logcmp_client_open(&logcmp_default_client) == -1) {
+		logcmp_default_client = NULL;
+		return;
+	}
+	if (logcmp_logger_create(logcmp_default_client, getprogname(), "log",
+	    &logcmp_default_logger) == -1) {
+		logcmp_client_close(logcmp_default_client);
+		logcmp_default_client = NULL;
+		logcmp_default_logger = NULL;
+	}
+}
+
+void
+logcmp_vlog(int priority, const char *fmt, va_list ap)
+{
+	int saved;
+
+	saved = errno;
+	logcmp_default_ensure();
+	if (logcmp_default_logger != NULL) {
+		struct logcmp_emit_options opt;
+		char expfmt[256], msg[512];
+		va_list aq;
+
+		logcmp_expand_m(expfmt, sizeof(expfmt), fmt, saved);
+		va_copy(aq, ap);
+		(void)vsnprintf(msg, sizeof(msg), expfmt, aq);
+		va_end(aq);
+		memset(&opt, 0, sizeof(opt));
+		opt.size = sizeof(opt);
+		opt.severity = logcmp_severity_from_priority(priority);
+		opt.kind = LOGCMP_KIND_LOG;
+		opt.message_privacy = LOGCMP_PRIVACY_PUBLIC;
+		opt.message = msg;
+		if (logcmp_emit(logcmp_default_logger, &opt) == 0) {
+			(void)logcmp_flush(logcmp_default_client);
+			errno = saved;
+			return;
+		}
+		/* Fail soft: fall through to syslog(3) if the emit failed. */
+	}
+	errno = saved;
+	vsyslog(priority, fmt, ap);
+	errno = saved;
+}
+
+void
+logcmp_log(int priority, const char *fmt, ...)
+{
+	va_list ap;
+
+	va_start(ap, fmt);
+	logcmp_vlog(priority, fmt, ap);
+	va_end(ap);
 }
