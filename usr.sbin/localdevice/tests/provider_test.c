@@ -147,6 +147,81 @@ set_single_policy(const char *label, const char *device, uint32_t rights)
 }
 
 /*
+ * Append one (label, device, rights) entry to a config being assembled for a
+ * multi-label scoping test.
+ */
+static void
+add_policy(struct devicecmp_config *cfg, const char *label, const char *device,
+    uint32_t rights)
+{
+	struct devicecmp_device_policy *pol;
+
+	ATF_REQUIRE(cfg->nentries < DEVICECMP_MAX_POLICY);
+	pol = &cfg->entries[cfg->nentries++];
+	memset(pol, 0, sizeof(*pol));
+	strlcpy(pol->label, label, sizeof(pol->label));
+	strlcpy(pol->device, device, sizeof(pol->device));
+	pol->rights = rights;
+	pol->nioctls = 0;
+}
+
+/*
+ * Send a DEVICECMP_OP_LIST request with the given cursor and return the daemon's
+ * errno-style status (0 on success).  On success, the page's entries are copied
+ * to entries[] (up to max), *countp gets the count, *nextp the next cursor.
+ */
+static int
+device_list(struct raw_fixture *fixture, uint32_t cursor,
+    struct devicecmp_list_entry *entries, uint32_t max, uint32_t *countp,
+    uint32_t *nextp)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct {
+		struct devicecmp_msg msg;
+		struct devicecmp_list_request body;
+	} request;
+	struct {
+		struct devicecmp_msg msg;
+		struct devicecmp_list_reply body;
+	} reply;
+	uint32_t count;
+
+	memset(&request, 0, sizeof(request));
+	request.msg.magic = DEVICECMP_MAGIC;
+	request.msg.version = DEVICECMP_ABI_VERSION;
+	request.msg.opcode = DEVICECMP_OP_LIST;
+	request.body.cursor = cursor;
+
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &request;
+	outgoing.length = sizeof(request);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	options.timeout_ms = 2000;
+	ATF_REQUIRE_EQ(0, service_session_call(fixture->session, &outgoing,
+	    &incoming, &options));
+	if (reply.msg.status == 0) {
+		ATF_REQUIRE_EQ(sizeof(reply), incoming.length);
+		count = reply.body.count;
+		ATF_REQUIRE(count <= DEVICECMP_LIST_MAX && count <= max);
+		if (entries != NULL)
+			memcpy(entries, reply.body.entries,
+			    (size_t)count * sizeof(entries[0]));
+		if (countp != NULL)
+			*countp = count;
+		if (nextp != NULL)
+			*nextp = reply.body.next_cursor;
+	}
+	return (-reply.msg.status);
+}
+
+/*
  * Send a well-formed DEVICECMP_OP_OPEN request (header + body + NUL-terminated
  * name) and return the daemon's errno-style status (0 on success, positive
  * errno on rejection).  On success the granted-rights mask is returned through
@@ -538,6 +613,229 @@ ATF_TC_BODY(malformed_request_is_rejected, tc)
 	raw_fixture_destroy_any(&attach);
 }
 
+/* Locate an entry by device name within a returned LIST page. */
+static const struct devicecmp_list_entry *
+find_entry(const struct devicecmp_list_entry *entries, uint32_t count,
+    const char *device)
+{
+	uint32_t i;
+
+	for (i = 0; i < count; i++)
+		if (strcmp(entries[i].name, device) == 0)
+			return (&entries[i]);
+	return (NULL);
+}
+
+/*
+ * LIST is label-scoped: a caller sees exactly the devices its own policy label
+ * grants — with the policy-max rights and the ioctl-whitelist flag — and never
+ * another label's devices.  This is the hard scoping invariant: the same config
+ * carries entries for two labels, but a client connected as one label lists only
+ * its own.
+ */
+ATF_TC(list_is_label_scoped);
+ATF_TC_HEAD(list_is_label_scoped, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "LIST returns only the caller-label's devices, never another's");
+}
+ATF_TC_BODY(list_is_label_scoped, tc)
+{
+	struct devicecmp_config cfg;
+	struct raw_fixture fixture;
+	struct devicecmp_list_entry entries[DEVICECMP_LIST_MAX];
+	const struct devicecmp_list_entry *e;
+	uint32_t count, next;
+
+	require_plane();
+
+	/*
+	 * org.test.dev grants two devices (one with an ioctl whitelist);
+	 * org.test.other grants a third the first label must never see.
+	 */
+	devicecmp_config_defaults(&cfg);
+	add_policy(&cfg, "org.test.dev", "null",
+	    DEVICECMP_RIGHT_READ | DEVICECMP_RIGHT_WRITE);
+	add_policy(&cfg, "org.test.other", "random", DEVICECMP_RIGHT_READ);
+	add_policy(&cfg, "org.test.dev", "zero",
+	    DEVICECMP_RIGHT_READ | DEVICECMP_RIGHT_IOCTL);
+	cfg.entries[2].nioctls = 1;
+	cfg.entries[2].ioctls[0] = 1;
+	localdevice_test_set_config(&cfg);
+
+	raw_fixture_create(&fixture, "org.test.dev");
+	count = 99;
+	next = 99;
+	memset(entries, 0, sizeof(entries));
+	ATF_CHECK_EQ(0, device_list(&fixture, 0, entries, nitems(entries),
+	    &count, &next));
+	/* Exactly org.test.dev's two devices, and the last page. */
+	ATF_CHECK_EQ(2, count);
+	ATF_CHECK_EQ(0, next);
+
+	e = find_entry(entries, count, "null");
+	ATF_REQUIRE(e != NULL);
+	ATF_CHECK_EQ(DEVICECMP_RIGHT_READ | DEVICECMP_RIGHT_WRITE, e->rights);
+	ATF_CHECK_EQ(0, e->flags);
+
+	e = find_entry(entries, count, "zero");
+	ATF_REQUIRE(e != NULL);
+	ATF_CHECK_EQ(DEVICECMP_RIGHT_READ | DEVICECMP_RIGHT_IOCTL, e->rights);
+	ATF_CHECK_EQ(DEVICECMP_LIST_FLAG_IOCTL_WHITELIST, e->flags);
+
+	/* The other label's device is never visible. */
+	ATF_CHECK(find_entry(entries, count, "random") == NULL);
+	raw_fixture_destroy(&fixture, 0);
+
+	/* Connected as the other label: only its own single device appears. */
+	localdevice_test_set_config(&cfg);
+	raw_fixture_create(&fixture, "org.test.other");
+	count = 99;
+	next = 99;
+	memset(entries, 0, sizeof(entries));
+	ATF_CHECK_EQ(0, device_list(&fixture, 0, entries, nitems(entries),
+	    &count, &next));
+	ATF_CHECK_EQ(1, count);
+	ATF_CHECK_EQ(0, next);
+	ATF_CHECK(find_entry(entries, count, "random") != NULL);
+	ATF_CHECK(find_entry(entries, count, "null") == NULL);
+	ATF_CHECK(find_entry(entries, count, "zero") == NULL);
+	raw_fixture_destroy(&fixture, 0);
+}
+
+/*
+ * A label with no policy entry lists empty (default-deny), not an error, even
+ * when the config carries entries for other labels.
+ */
+ATF_TC(list_empty_for_unpolicied_label);
+ATF_TC_HEAD(list_empty_for_unpolicied_label, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "An unpolicied label lists empty, not an error");
+}
+ATF_TC_BODY(list_empty_for_unpolicied_label, tc)
+{
+	struct raw_fixture fixture;
+	struct devicecmp_list_entry entries[DEVICECMP_LIST_MAX];
+	uint32_t count, next;
+
+	require_plane();
+	set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
+	raw_fixture_create(&fixture, "org.test.nobody");
+	count = 99;
+	next = 99;
+	ATF_CHECK_EQ(0, device_list(&fixture, 0, entries, nitems(entries),
+	    &count, &next));
+	ATF_CHECK_EQ(0, count);
+	ATF_CHECK_EQ(0, next);
+	raw_fixture_destroy(&fixture, 0);
+}
+
+/*
+ * A malformed LIST fails closed: a nonzero (reserved) flags word is EINVAL, and
+ * a LIST whose length does not match the request struct never yields a success
+ * page.
+ */
+ATF_TC(malformed_list_is_rejected);
+ATF_TC_HEAD(malformed_list_is_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr",
+	    "Malformed LIST requests are rejected fail-closed");
+}
+ATF_TC_BODY(malformed_list_is_rejected, tc)
+{
+	struct raw_fixture fixture;
+	struct {
+		struct devicecmp_msg msg;
+		struct devicecmp_list_request body;
+	} request;
+	int status;
+
+	require_plane();
+	set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
+	raw_fixture_create(&fixture, "org.test.dev");
+
+	memset(&request, 0, sizeof(request));
+	request.msg.magic = DEVICECMP_MAGIC;
+	request.msg.version = DEVICECMP_ABI_VERSION;
+	request.msg.opcode = DEVICECMP_OP_LIST;
+
+	/* Nonzero reserved flags: EINVAL. */
+	request.body.flags = 1;
+	status = 0;
+	ATF_CHECK_EQ(0, send_raw(fixture.session, &request, sizeof(request), -1,
+	    &status));
+	ATF_CHECK_EQ(EINVAL, status);
+
+	/* Nonzero reserved word: EINVAL. */
+	request.body.flags = 0;
+	request.body.reserved[0] = 7;
+	status = 0;
+	ATF_CHECK_EQ(0, send_raw(fixture.session, &request, sizeof(request), -1,
+	    &status));
+	ATF_CHECK_EQ(EINVAL, status);
+
+	/* Wrong length (header only): opcode is LIST but the body is missing,
+	 * so the LIST branch is never taken and the request is EPROTO. */
+	request.body.reserved[0] = 0;
+	status = 0;
+	ATF_CHECK_EQ(0, send_raw(fixture.session, &request,
+	    sizeof(request.msg), -1, &status));
+	ATF_CHECK_EQ(EPROTO, status);
+
+	raw_fixture_destroy(&fixture, 0);
+}
+
+/* A HELLO liveness probe over the raw session returns a valid, fd-free reply. */
+ATF_TC(hello_liveness);
+ATF_TC_HEAD(hello_liveness, tc)
+{
+	atf_tc_set_md_var(tc, "require.user", "root");
+	atf_tc_set_md_var(tc, "descr", "HELLO returns a valid liveness reply");
+}
+ATF_TC_BODY(hello_liveness, tc)
+{
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct raw_fixture fixture;
+	struct devicecmp_msg msg;
+	struct {
+		struct devicecmp_msg msg;
+		struct devicecmp_hello_reply hello;
+	} reply;
+
+	require_plane();
+	set_single_policy("org.test.dev", "null", DEVICECMP_RIGHT_READ);
+	raw_fixture_create(&fixture, "org.test.dev");
+
+	memset(&msg, 0, sizeof(msg));
+	msg.magic = DEVICECMP_MAGIC;
+	msg.version = DEVICECMP_ABI_VERSION;
+	msg.opcode = DEVICECMP_OP_HELLO;
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &msg;
+	outgoing.length = sizeof(msg);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	options.timeout_ms = 2000;
+	ATF_REQUIRE_EQ(0, service_session_call(fixture.session, &outgoing,
+	    &incoming, &options));
+	ATF_CHECK_EQ(sizeof(reply), incoming.length);
+	ATF_CHECK_EQ(0, incoming.nfds);
+	ATF_CHECK_EQ(0, reply.msg.status);
+	ATF_CHECK_EQ(DEVICECMP_OP_HELLO, reply.msg.opcode);
+	ATF_CHECK_EQ((uint32_t)DEVICECMP_ABI_VERSION, reply.hello.version);
+	raw_fixture_destroy(&fixture, 0);
+}
+
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
@@ -555,6 +853,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, ungranted_label_or_device_denied);
 	ATF_TP_ADD_TC(tp, unsafe_names_rejected);
 	ATF_TP_ADD_TC(tp, malformed_request_is_rejected);
+	ATF_TP_ADD_TC(tp, list_is_label_scoped);
+	ATF_TP_ADD_TC(tp, list_empty_for_unpolicied_label);
+	ATF_TP_ADD_TC(tp, malformed_list_is_rejected);
+	ATF_TP_ADD_TC(tp, hello_liveness);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }

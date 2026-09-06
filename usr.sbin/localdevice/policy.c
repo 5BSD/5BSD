@@ -72,6 +72,49 @@ devicecmp_policy_lookup(const struct devicecmp_config *cfg, const char *label,
 	return (0);
 }
 
+void
+devicecmp_policy_list(const struct devicecmp_config *cfg, const char *label,
+    uint32_t cursor, struct devicecmp_list_entry *out, uint32_t max,
+    uint32_t *countp, uint32_t *nextp)
+{
+	uint32_t count, matched;
+	unsigned i;
+
+	count = 0;
+	matched = 0;
+	*countp = 0;
+	*nextp = 0;
+	if (cfg == NULL || out == NULL || max == 0 ||
+	    label == NULL || label[0] == '\0')
+		return;
+	if (max > DEVICECMP_LIST_MAX)
+		max = DEVICECMP_LIST_MAX;
+	for (i = 0; i < cfg->nentries; i++) {
+		const struct devicecmp_device_policy *pol = &cfg->entries[i];
+
+		/* Label-scoped: only entries owned by this label are visible. */
+		if (strcmp(pol->label, label) != 0)
+			continue;
+		if (matched < cursor) {
+			matched++;
+			continue;
+		}
+		if (count >= max) {
+			/* More matches remain: hand back the next filtered index. */
+			*nextp = matched;
+			break;
+		}
+		memset(&out[count], 0, sizeof(out[count]));
+		strlcpy(out[count].name, pol->device, sizeof(out[count].name));
+		out[count].rights = pol->rights;
+		out[count].flags = pol->nioctls > 0 ?
+		    DEVICECMP_LIST_FLAG_IOCTL_WHITELIST : 0;
+		count++;
+		matched++;
+	}
+	*countp = count;
+}
+
 static int
 copy_string(char *destination, size_t capacity, const ucl_object_t *object)
 {

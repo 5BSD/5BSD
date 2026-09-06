@@ -26,6 +26,21 @@ int	devicecmp_open(struct service_context *ctx, const char *name,
 	    uint32_t want_rights, uint32_t *granted_rights, int *fdp);
 
 /*
+ * Enumerate the devices the caller's label is permitted to open through
+ * system.Device, so a consumer can discover its openable set without blind
+ * trial-and-error.  `cursor` is 0 for the first page or a prior call's
+ * *next_cursor; up to `max` entries (capped at DEVICECMP_LIST_MAX per call) are
+ * written to `entries`, with *countp set to the number filled and *next_cursor
+ * set to the cursor to re-issue for the next page (0 == final page).  The result
+ * is owner-scoped by the provider to the caller's own label; a label with no
+ * policy lists empty (returns 0, *countp == 0).  On failure returns -1 with
+ * errno set.  Fails closed.
+ */
+int	devicecmp_list(struct service_context *ctx, uint32_t cursor,
+	    struct devicecmp_list_entry *entries, uint32_t max,
+	    uint32_t *countp, uint32_t *next_cursor);
+
+/*
  * Liveness probe: exchange a HELLO with the provider.  Returns 0 on a valid
  * reply, -1 with errno otherwise.
  */

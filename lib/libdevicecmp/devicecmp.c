@@ -162,6 +162,88 @@ devicecmp_open(struct service_context *ctx, const char *name,
 }
 
 int
+devicecmp_list(struct service_context *ctx, uint32_t cursor,
+    struct devicecmp_list_entry *entries, uint32_t max, uint32_t *countp,
+    uint32_t *next_cursorp)
+{
+	struct {
+		struct devicecmp_msg msg;
+		struct devicecmp_list_request body;
+	} wire;
+	struct {
+		struct devicecmp_msg msg;
+		struct devicecmp_list_reply body;
+	} reply;
+	struct service_message outgoing;
+	struct service_reply incoming;
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	uint32_t count;
+
+	(void)ctx;
+	if (countp != NULL)
+		*countp = 0;
+	if (next_cursorp != NULL)
+		*next_cursorp = 0;
+	if (entries == NULL || max == 0)
+		return (errno = EINVAL, -1);
+
+	memset(&wire, 0, sizeof(wire));
+	wire.msg.magic = DEVICECMP_MAGIC;
+	wire.msg.version = DEVICECMP_ABI_VERSION;
+	wire.msg.opcode = DEVICECMP_OP_LIST;
+	wire.body.cursor = cursor;
+
+	memset(&outgoing, 0, sizeof(outgoing));
+	outgoing.size = sizeof(outgoing);
+	outgoing.data = &wire;
+	outgoing.length = sizeof(wire);
+	memset(&reply, 0, sizeof(reply));
+	memset(&incoming, 0, sizeof(incoming));
+	incoming.size = sizeof(incoming);
+	incoming.data = &reply;
+	incoming.capacity = sizeof(reply);
+	incoming.fd_capacity = 0;
+	options.timeout_ms = 30000;
+
+	if (session_call_locked(&outgoing, &incoming, &options) == -1)
+		return (-1);
+
+	/*
+	 * Strict, fail-closed reply validation.  A success reply carries the
+	 * full body; an error reply is header-only (the daemon does not amplify
+	 * a rejected request into a full-size list buffer), so accept either the
+	 * full length or a bare header, and require the header-only form to carry
+	 * a nonzero (error) status.
+	 */
+	if (reply.msg.magic != DEVICECMP_MAGIC ||
+	    reply.msg.version != DEVICECMP_ABI_VERSION ||
+	    reply.msg.opcode != DEVICECMP_OP_LIST ||
+	    !valid_status(reply.msg.status) || incoming.nfds != 0)
+		return (errno = EPROTO, -1);
+	if (incoming.length == sizeof(struct devicecmp_msg)) {
+		if (reply.msg.status == 0)
+			return (errno = EPROTO, -1);
+		return (errno = -reply.msg.status, -1);
+	}
+	if (incoming.length != sizeof(reply))
+		return (errno = EPROTO, -1);
+	if (reply.msg.status != 0)
+		return (errno = -reply.msg.status, -1);
+	count = reply.body.count;
+	if (count > DEVICECMP_LIST_MAX)
+		return (errno = EPROTO, -1);
+	if (count > max)
+		count = max;
+	memcpy(entries, reply.body.entries,
+	    (size_t)count * sizeof(entries[0]));
+	if (countp != NULL)
+		*countp = count;
+	if (next_cursorp != NULL)
+		*next_cursorp = reply.body.next_cursor;
+	return (0);
+}
+
+int
 devicecmp_hello(struct service_context *ctx)
 {
 	struct devicecmp_msg out;

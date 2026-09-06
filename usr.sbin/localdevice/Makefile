@@ -45,6 +45,12 @@ CONFSPACKAGE=localdevice
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=tests
+
+.if ${MK_DTRACE} != "no"
+SRCS+=	localdevice_provider.d
+CFLAGS+=	-I${.OBJDIR} -DWITH_DTRACE
+.endif
+
 .include <bsd.prog.mk>
 
 _proginstall: installdirs-DEVICECMP_CAP_BIN

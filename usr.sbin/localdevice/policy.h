@@ -52,6 +52,21 @@ uint32_t devicecmp_policy_lookup(const struct devicecmp_config *,
 	    const char *label, const char *device,
 	    const unsigned long **ioctlsp, unsigned *nioctlsp);
 
+/*
+ * Enumerate, into the caller-provided page, the device entries whose policy
+ * label equals `label` (label-scoped: no other label's entries are ever
+ * visible).  `cursor` is an index into this label's filtered, file-order-stable
+ * entry sequence (0 == first page); at most `max` (and at most
+ * DEVICECMP_LIST_MAX) entries are filled.  *countp receives the number filled
+ * and *nextp the cursor to re-issue for the next page (0 == final page).  A
+ * label with no matching entry yields count 0 (default-deny).  Each entry gets
+ * the policy-max rights mask and DEVICECMP_LIST_FLAG_IOCTL_WHITELIST when an
+ * ioctl whitelist applies.
+ */
+void	devicecmp_policy_list(const struct devicecmp_config *cfg,
+	    const char *label, uint32_t cursor, struct devicecmp_list_entry *out,
+	    uint32_t max, uint32_t *countp, uint32_t *nextp);
+
 /* True if name is a single, safe /dev leaf component. */
 bool	devicecmp_valid_device_name(const char *name);
 

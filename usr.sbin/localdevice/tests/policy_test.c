@@ -114,6 +114,84 @@ ATF_TC_BODY(reject_bad_config, tc)
 	    "rights=[\"read\"]; ioctls=[1]; } ]\n") == -1);
 }
 
+static void
+put(struct devicecmp_config *cfg, const char *label, const char *device,
+    uint32_t rights, unsigned nioctls)
+{
+	struct devicecmp_device_policy *pol = &cfg->entries[cfg->nentries++];
+
+	memset(pol, 0, sizeof(*pol));
+	strlcpy(pol->label, label, sizeof(pol->label));
+	strlcpy(pol->device, device, sizeof(pol->device));
+	pol->rights = rights;
+	pol->nioctls = nioctls;
+}
+
+/*
+ * devicecmp_policy_list is strictly label-scoped and paginates: it enumerates
+ * only the queried label's entries (never another label's), sets the
+ * ioctl-whitelist flag when nioctls > 0, and walks a stable window via cursor.
+ */
+ATF_TC_WITHOUT_HEAD(policy_list_scoped_and_paged);
+ATF_TC_BODY(policy_list_scoped_and_paged, tc)
+{
+	struct devicecmp_config cfg;
+	struct devicecmp_list_entry out[DEVICECMP_LIST_MAX];
+	uint32_t count, next, page1_next;
+
+	devicecmp_config_defaults(&cfg);
+	put(&cfg, "system.A", "null", DEVICECMP_RIGHT_READ, 0);
+	put(&cfg, "system.B", "random", DEVICECMP_RIGHT_READ, 0);
+	put(&cfg, "system.A", "zero",
+	    DEVICECMP_RIGHT_READ | DEVICECMP_RIGHT_IOCTL, 2);
+	put(&cfg, "system.A", "mem", DEVICECMP_RIGHT_READ, 0);
+
+	/* Full page for system.A: exactly its three entries, in file order. */
+	count = next = 99;
+	devicecmp_policy_list(&cfg, "system.A", 0, out, DEVICECMP_LIST_MAX,
+	    &count, &next);
+	ATF_CHECK_EQ(3, count);
+	ATF_CHECK_EQ(0, next);
+	ATF_CHECK(strcmp(out[0].name, "null") == 0);
+	ATF_CHECK(strcmp(out[1].name, "zero") == 0);
+	ATF_CHECK(strcmp(out[2].name, "mem") == 0);
+	ATF_CHECK_EQ(0, out[0].flags);
+	ATF_CHECK_EQ(DEVICECMP_LIST_FLAG_IOCTL_WHITELIST, out[1].flags);
+	ATF_CHECK_EQ(DEVICECMP_RIGHT_READ | DEVICECMP_RIGHT_IOCTL,
+	    out[1].rights);
+
+	/* An unpolicied label lists empty (default-deny). */
+	count = next = 99;
+	devicecmp_policy_list(&cfg, "system.Z", 0, out, DEVICECMP_LIST_MAX,
+	    &count, &next);
+	ATF_CHECK_EQ(0, count);
+	ATF_CHECK_EQ(0, next);
+
+	/* Paginate system.A with max == 2: page one yields a next cursor. */
+	count = next = 99;
+	devicecmp_policy_list(&cfg, "system.A", 0, out, 2, &count, &next);
+	ATF_CHECK_EQ(2, count);
+	ATF_CHECK_EQ(2, next);
+	ATF_CHECK(strcmp(out[0].name, "null") == 0);
+	ATF_CHECK(strcmp(out[1].name, "zero") == 0);
+	page1_next = next;
+
+	/* Page two from that cursor: the final entry, no further pages. */
+	count = next = 99;
+	devicecmp_policy_list(&cfg, "system.A", page1_next, out, 2, &count,
+	    &next);
+	ATF_CHECK_EQ(1, count);
+	ATF_CHECK_EQ(0, next);
+	ATF_CHECK(strcmp(out[0].name, "mem") == 0);
+
+	/* A cursor past the end yields an empty, final page. */
+	count = next = 99;
+	devicecmp_policy_list(&cfg, "system.A", 100, out, DEVICECMP_LIST_MAX,
+	    &count, &next);
+	ATF_CHECK_EQ(0, count);
+	ATF_CHECK_EQ(0, next);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -121,5 +199,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, default_deny);
 	ATF_TP_ADD_TC(tp, parse_and_lookup);
 	ATF_TP_ADD_TC(tp, reject_bad_config);
+	ATF_TP_ADD_TC(tp, policy_list_scoped_and_paged);
 	return (atf_no_error());
 }

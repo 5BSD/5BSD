@@ -29,6 +29,7 @@
 #include <libservice.h>
 
 #include "policy.h"
+#include "localdevice_probes.h"
 #ifdef LOCALDEVICE_TESTING
 #include "localdevice_test.h"
 #endif
@@ -147,6 +148,10 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 		struct devicecmp_msg msg;
 		struct devicecmp_hello_reply hello;
 	} hello_out;
+	struct {
+		struct devicecmp_msg msg;
+		struct devicecmp_list_reply list;
+	} list_out;
 	const void *reply_data;
 	size_t reply_length;
 	uint32_t granted;
@@ -160,6 +165,7 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 	memset(&out, 0, sizeof(out));
 	memset(&open_out, 0, sizeof(open_out));
 	memset(&hello_out, 0, sizeof(hello_out));
+	memset(&list_out, 0, sizeof(list_out));
 
 	in = channel_message_data(m);
 	if (channel_message_length(m) >= sizeof(*in) &&
@@ -192,6 +198,34 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 				fd = grant_open(worker->label, body, name,
 				    &granted);
 				error = fd >= 0 ? 0 : errno;
+				LOCALDEVICE_PROBE_OPEN(worker->label, name,
+				    granted, error);
+			}
+		} else if (in->opcode == DEVICECMP_OP_LIST &&
+		    channel_message_length(m) ==
+		    sizeof(*in) + sizeof(struct devicecmp_list_request)) {
+			const struct devicecmp_list_request *lreq;
+
+			lreq = (const struct devicecmp_list_request *)(in + 1);
+			/*
+			 * Additive fields must be zero (message hygiene).  The
+			 * enumeration is strictly label-scoped: it filters on
+			 * worker->label — the connecting channel's unforgeable
+			 * identity — never a wire argument, so a caller can only
+			 * ever see its own devices.  Default-deny holds: a label
+			 * with no policy entry lists empty.
+			 */
+			if (lreq->flags != 0 || lreq->reserved[0] != 0 ||
+			    lreq->reserved[1] != 0) {
+				error = EINVAL;
+			} else {
+				devicecmp_policy_list(&config, worker->label,
+				    lreq->cursor, list_out.list.entries,
+				    DEVICECMP_LIST_MAX, &list_out.list.count,
+				    &list_out.list.next_cursor);
+				error = 0;
+				LOCALDEVICE_PROBE_LIST(worker->label,
+				    lreq->cursor, list_out.list.count, error);
 			}
 		}
 	}
@@ -212,6 +246,22 @@ request(struct channel *c __unused, struct channel_message *m, void *arg)
 		open_out.body.rights = granted;
 		reply_data = &open_out;
 		reply_length = sizeof(open_out);
+		break;
+	case DEVICECMP_OP_LIST:
+		/*
+		 * Success carries the full fixed-size list body (client
+		 * validates the exact length).  On error reply header-only, so
+		 * a malformed or unauthorized request is never amplified into a
+		 * full-size list buffer.
+		 */
+		if (error == 0) {
+			list_out.msg = out;
+			reply_data = &list_out;
+			reply_length = sizeof(list_out);
+		} else {
+			reply_data = &out;
+			reply_length = sizeof(out);
+		}
 		break;
 	default:
 		reply_data = &out;
