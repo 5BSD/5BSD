@@ -121,13 +121,45 @@ rollout. The registration is idempotent per process.
   (adopt per-client endpoint, nonce-scoped); libservice lazy/memoized
   registration with fail-soft fallback. Unit tests for the nonce-scope decision
   and the fail-soft path.
-- **P3 — VM.** Production plane: each process's lookup channel is DISTINCT (not
-  the shared one); a concurrent-lookup stress (many units at once) shows no lost
-  replies / hangs; boot clean, crashloop 0. Confirm a born-in-capmode provider
-  can create + register its own channel.
-- **P4 — later.** Once proven, the single startup shared channel can be reduced
-  to a pure registration bootstrap; and per-thread reply reuse (Mach parity) is
-  an optional refinement.
+- **P3 — VM. DONE for realistic load; one synthetic-burst limit remains.**
+  Production plane (capsule PID1): boot clean, crashloop 0, discovery works
+  fleet-wide, each registering process gets a DISTINCT private lookup channel
+  (`adopted private ... lookup channel` per client, truss confirms the create
+  syscall fires). A graduated concurrent-lookup stress shows the real behaviour:
+  - Low concurrency and **staggered** load (even ~50ms apart, i.e. how rc
+    actually spawns clients) → **40/40 register, adopted=40, zero races.** This
+    is the win: the shared receive-queue reply-discard race is gone.
+  - A **microsecond-simultaneous burst** (≥ ~8 clients issuing their FIRST
+    lookup within the same instant) still degrades: the shared-channel bootstrap
+    serializes and serviced adopts only a fraction within the per-client window;
+    the rest fail SOFT to the inherited shared channel and can transiently
+    ENOENT. No crash, no hang — graceful degradation to pre-P2 behaviour.
+
+  Two fixes landed while characterising P3, both strict improvements:
+  1. **Churn-free registration.** `ambient_reg_send`/`ambient_reg_recv_ack` use
+     RAW `MAC_CAPABILITY_SENDMSG`/`RECVMSG` on a private dup / the private
+     endpoint instead of libchannel channel objects. Wrapping the shared fd in a
+     channel churned low-numbered descriptors (extra dup + a kqueue) and set
+     `O_NONBLOCK` on the shared file description (dups share it); those transient
+     fds recycled and COLLIDED with the fallback lookup's own channel/kqueue
+     descriptors, a use-after-close (SENDMSG on an fd a sibling teardown just
+     closed → EBADF) that failed the fallback under a burst. The raw path leaves
+     the caller's fd table pristine.
+  2. **Non-zero reply token on REGISTER.** A zero token is delivered to the
+     (absent) event handler and discarded; serviced's lookup channel is a
+     request handler, so REGISTER must carry a non-zero token.
+
+  A client-side bounded registration RETRY was tried and REVERTED: it amplifies
+  the herd on the shared bootstrap and *lowers* throughput. The residual
+  synthetic-burst limit is a serviced-side concurrent-adoption serialization, to
+  be addressed there (P4) if a real workload ever produces such a burst — the
+  capability daemon fleet does NOT (native providers hold their own per-unit
+  bootstrap channel and never touch the shared ambient channel).
+- **P4 — later.** Serviced-side: absorb a simultaneous registration burst
+  (deeper shared-channel receive window / faster batch adoption) so no client
+  falls back under an instantaneous herd. Then the single startup shared channel
+  can be reduced to a pure registration bootstrap; per-thread reply reuse (Mach
+  parity) is an optional refinement.
 
 ## Invariants / checklist
 

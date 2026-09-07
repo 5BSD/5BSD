@@ -55,6 +55,11 @@ MLINKS+=	libservice.3 service_vsock_list.3
 MLINKS+=	libservice.3 service_activation_socket.3
 
 SRCS=	libservice.c service_ambient.c service_client.c
+# USDT probes for the ambient discovery path (private-vs-fallback visibility).
+.if ${MK_DTRACE} != "no"
+SRCS+=	service_ambient_provider.d
+CFLAGS+=	-DWITH_DTRACE
+.endif
 INCS=	libservice.h
 CFLAGS+=	-I${SRCTOP}/lib/libtrustedzfs	# tzfs_mount() for service_storage_open()
 LIBADD=	capability channel pthread trustedzfs

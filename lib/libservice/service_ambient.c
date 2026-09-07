@@ -40,6 +40,7 @@
 #include "serviced_svc_proto.h"
 #include "service_bootstrap.h"
 #include "ambient_lookup.h"
+#include "service_ambient_probes.h"
 
 /*
  * Bound for the ambient HELLO handshake.  The probe must never block a login or
@@ -211,6 +212,18 @@ service_install_ambient_lookup(int fd)
  * before.  A broken registration must never break discovery or boot.
  */
 #define	AMBIENT_REG_TIMEOUT_MS	2000U
+/*
+ * Backoff between raw SENDMSG/RECVMSG retries while serviced drains a transient
+ * queue-pressure burst (a concurrent boot storm registers many lookup channels
+ * at once).  20ms keeps the bounded wait responsive without busy-spinning.
+ */
+#define	AMBIENT_REG_BACKOFF_US	20000U
+/*
+ * Reply-token stamped on the one-way REGISTER send.  Must be non-zero so the
+ * kernel/libchannel dispatch routes it to serviced's lookup-channel REQUEST
+ * handler; a zero token is delivered as an unsolicited EVENT and discarded.
+ */
+#define	AMBIENT_REG_TOKEN	1ULL
 
 /*
  * Registration state, memoized per process:
@@ -258,91 +271,71 @@ ambient_atfork_setup(void)
 	(void)pthread_atfork(NULL, NULL, ambient_atfork_child);
 }
 
-/*
- * Reply handler for the one-way registration send.  We never dispatch the
- * shared channel's inbound side, so serviced's (absent) reply is never routed
- * here; it exists only to satisfy channel_send_request()'s non-NULL contract.
- * Should a stray reply ever be delivered, release it without touching any
- * caller state.
- */
-static void
-ambient_reg_reply_ignore(struct channel_request *request,
-    struct channel_message *message, int error, void *context)
-{
-
-	(void)error;
-	(void)context;
-	if (message != NULL)
-		channel_message_free(message);
-	channel_request_release(request);
-}
 
 /*
  * Send SVC_OP_REGISTER_LOOKUP carrying `peer_fd` over the inherited shared
- * lookup channel, one-way: we drive only the OUTBOUND side to completion and
- * never receive on the shared channel (the ACK comes on the private endpoint),
- * so we cannot hit the shared receive-queue race.  Returns true once the
- * fd-bearing message has been flushed to the kernel.
+ * lookup channel, one-way: only the OUTBOUND side is driven, and the ACK is
+ * awaited on the PRIVATE endpoint (ambient_reg_recv_ack), never on the shared
+ * channel, so the shared receive-queue race is never touched.
+ *
+ * Deliberately a RAW MAC_CAPABILITY_SENDMSG on a private duplicate rather than a
+ * libchannel channel object.  Wrapping the shared fd in a channel would churn
+ * low-numbered descriptors — an extra dup, a kqueue — and set O_NONBLOCK on the
+ * shared file description (dups share it).  Those transient descriptors recycle
+ * their fd numbers across the registration endpoints and then COLLIDE with the
+ * fallback lookup's own channel/kqueue descriptors, yielding a use-after-close
+ * (a SENDMSG on an fd another teardown just closed -> EBADF) that fails the
+ * fallback under a concurrent boot storm.  A bare ioctl on a duplicate that we
+ * close immediately leaves the caller's fd table exactly as it was.  The kernel
+ * returns EAGAIN/ENOBUFS on transient TX-queue pressure even for a blocking
+ * descriptor, so a bounded backoff drains a registration burst without ever
+ * mutating the shared fd's status flags.
  */
 static bool
 ambient_reg_send(int shared_fd, int peer_fd)
 {
 	struct svc_register_lookup_req reqmsg;
-	struct channel_options options =
-	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
-	struct channel_outgoing out;
-	struct channel *channel;
-	struct channel_request *request;
-	int dupfd, waited, ready, wants;
+	struct mac_capability_sendmsg_args send;
+	int dupfd, waited;
 	bool ok;
 
 	dupfd = fcntl(shared_fd, F_DUPFD_CLOEXEC, 0);
 	if (dupfd == -1)
 		return (false);
-	if (channel_create(dupfd, &options, &channel) == -1) {
-		(void)close(dupfd);
-		return (false);
-	}
 
 	memset(&reqmsg, 0, sizeof(reqmsg));
 	reqmsg.op = SVC_OP_REGISTER_LOOKUP;
 	reqmsg.flags = 0;
-	memset(&out, 0, sizeof(out));
-	out.size = sizeof(out);
-	out.data = &reqmsg;
-	out.length = sizeof(reqmsg);
-	out.fds = &peer_fd;
-	out.nfds = 1;
+	memset(&send, 0, sizeof(send));
+	send.payload = &reqmsg;
+	send.payload_len = sizeof(reqmsg);
+	send.fds = &peer_fd;
+	send.nfds = 1;
+	/*
+	 * A NON-ZERO token routes this as a REQUEST to serviced's lookup-channel
+	 * request handler; token 0 would be delivered to the (absent) event
+	 * handler and silently discarded.  serviced never replies on the shared
+	 * channel for a register (it ACKs on the adopted private endpoint), so
+	 * the token is never echoed and any non-zero value serves — it only
+	 * selects the request dispatch path.
+	 */
+	send.reply_token = AMBIENT_REG_TOKEN;
 
 	ok = false;
-	request = NULL;
-	if (channel_send_request(channel, &out, ambient_reg_reply_ignore, NULL,
-	    &request) == 0) {
-		/*
-		 * Usually the fd-bearing message goes out inline; drive a bounded
-		 * flush loop only for the rare queued case.  We NEVER dispatch the
-		 * inbound side, so no reply is ever read on the shared channel.
-		 */
-		ok = true;
-		waited = 0;
-		while ((wants = channel_wants_write(channel)) == 1 &&
-		    waited < (int)AMBIENT_REG_TIMEOUT_MS) {
-			ready = channel_wait(channel, 1, 200);
-			if (ready < 0) {
-				ok = false;
-				break;
-			}
-			waited += 200;
-			if (channel_flush(channel) == -1) {
-				ok = false;
-				break;
-			}
+	waited = 0;
+	for (;;) {
+		if (ioctl(dupfd, MAC_CAPABILITY_SENDMSG, &send) == 0) {
+			ok = true;
+			break;
 		}
-		if (channel_wants_write(channel) == 1)
-			ok = false;
+		if ((errno != EAGAIN && errno != ENOBUFS) ||
+		    waited >= (int)AMBIENT_REG_TIMEOUT_MS)
+			break;
+		(void)usleep(AMBIENT_REG_BACKOFF_US);
+		waited += (int)(AMBIENT_REG_BACKOFF_US / 1000U);
 	}
 
-	channel_destroy(channel);
+	(void)close(dupfd);
 	return (ok);
 }
 
@@ -350,39 +343,48 @@ ambient_reg_send(int shared_fd, int peer_fd)
  * Receive and validate serviced's ACK on the private endpoint.  serviced pushes
  * it as an unsolicited event on the channel it adopted, so only this process
  * (the sole holder of `private_fd`) can read it — no shared queue, no race.
- * Bounded so a silent serviced cannot stall the caller.  private_fd is borrowed.
+ *
+ * Also a RAW MAC_CAPABILITY_RECVMSG rather than a channel object, for the same
+ * fd-hygiene reason as ambient_reg_send.  The endpoint is ours alone, so setting
+ * O_NONBLOCK on it is isolated (it shares no file description with the shared
+ * channel) and lets us bound the wait with a backoff; a blocking descriptor
+ * could otherwise stall on a silent serviced.  private_fd is borrowed.
  */
 static bool
 ambient_reg_recv_ack(int private_fd)
 {
 	struct svc_register_lookup_ack ack;
-	struct service_reply reply = {
-		.size = sizeof(reply),
-		.data = &ack,
-		.capacity = sizeof(ack),
-	};
-	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
-	struct service_session *session;
-	int dupfd;
+	struct mac_capability_recvmsg_args recv;
+	int flags, waited;
 	bool ok;
 
-	dupfd = fcntl(private_fd, F_DUPFD_CLOEXEC, 0);
-	if (dupfd == -1)
-		return (false);
-	if (service_session_create(dupfd, &session) == -1) {
-		(void)close(dupfd);
-		return (false);
+	flags = fcntl(private_fd, F_GETFL);
+	if (flags != -1)
+		(void)fcntl(private_fd, F_SETFL, flags | O_NONBLOCK);
+
+	ok = false;
+	waited = 0;
+	for (;;) {
+		memset(&ack, 0, sizeof(ack));
+		memset(&recv, 0, sizeof(recv));
+		recv.payload = &ack;
+		recv.payload_len = sizeof(ack);
+		recv.fds = NULL;
+		recv.nfds = 0;
+		if (ioctl(private_fd, MAC_CAPABILITY_RECVMSG, &recv) == 0) {
+			if (recv.payload_len == sizeof(ack) &&
+			    ack.op == SVC_OP_REGISTER_LOOKUP &&
+			    ack.status == 0 &&
+			    ack.magic == SVC_REGISTER_LOOKUP_MAGIC)
+				ok = true;
+			break;
+		}
+		if (errno != EAGAIN || waited >= (int)AMBIENT_REG_TIMEOUT_MS)
+			break;
+		(void)usleep(AMBIENT_REG_BACKOFF_US);
+		waited += (int)(AMBIENT_REG_BACKOFF_US / 1000U);
 	}
 
-	memset(&ack, 0, sizeof(ack));
-	options.timeout_ms = AMBIENT_REG_TIMEOUT_MS;
-	ok = false;
-	if (service_session_receive_event(session, &reply, &options) == 0 &&
-	    reply.length == sizeof(ack) && ack.op == SVC_OP_REGISTER_LOOKUP &&
-	    ack.status == 0 && ack.magic == SVC_REGISTER_LOOKUP_MAGIC)
-		ok = true;
-
-	service_session_close(session);
 	return (ok);
 }
 
@@ -435,20 +437,28 @@ service_ambient_lookup_channel(void) __no_lock_analysis
 
 	pair[0] = -1;
 	pair[1] = -1;
+	pair[0] = -1;
+	pair[1] = -1;
 	create_errno = 0;
 	if (mac_capability_channel_create(pair) == -1)
 		create_errno = errno != 0 ? errno : ENOSYS;
+	SERVICE_AMBIENT_PROBE_REG_CREATE(create_errno);
 
 	send_ok = false;
 	ack_ok = false;
 	if (create_errno == 0) {
 		send_ok = ambient_reg_send(shared, pair[1]);
-		if (send_ok)
+		SERVICE_AMBIENT_PROBE_REG_SEND(send_ok ? 1 : 0);
+		if (send_ok) {
 			ack_ok = ambient_reg_recv_ack(pair[0]);
+			SERVICE_AMBIENT_PROBE_REG_ACK(ack_ok ? 1 : 0);
+		}
 	}
 
 	if (service_ambient_reg_decide(create_errno, send_ok, ack_ok) ==
 	    SERVICE_AMBIENT_USE_PRIVATE) {
+		SERVICE_AMBIENT_PROBE_REG_RESULT(1, create_errno,
+		    send_ok ? 1 : 0, ack_ok ? 1 : 0);
 		/*
 		 * Keep our end (pair[0]) as the private lookup fd; close the peer
 		 * (serviced holds its own duplicate).  Close-on-exec so an exec'd
@@ -462,6 +472,8 @@ service_ambient_lookup_channel(void) __no_lock_analysis
 		result = ambient_priv_fd;
 	} else {
 		/* Fail-soft: discard the pair, use the inherited shared channel. */
+		SERVICE_AMBIENT_PROBE_REG_RESULT(0, create_errno,
+		    send_ok ? 1 : 0, ack_ok ? 1 : 0);
 		if (pair[0] >= 0)
 			(void)close(pair[0]);
 		if (pair[1] >= 0)
