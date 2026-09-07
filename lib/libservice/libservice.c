@@ -51,6 +51,7 @@
 #include "service_private.h"
 #include "service_bootstrap.h"
 #include "serviced_svc_proto.h"
+#include "reclaim_msg.h"
 
 _Static_assert(SERVICE_PROTECT_PTRACE == CP_SF_PTRACE, "capprotect ABI");
 _Static_assert(SERVICE_PROTECT_SIGNAL == CP_SF_SIGNAL, "capprotect ABI");
@@ -961,9 +962,8 @@ service_control_event(struct channel *channel,
 		 * it is untrusted provider code that may re-enter libservice.
 		 */
 		reclaim = channel_message_data(message);
-		if (reclaim->op == SVC_OP_RECLAIM_LABEL && reclaim->flags == 0 &&
-		    strnlen(reclaim->label, sizeof(reclaim->label)) <
-		    sizeof(reclaim->label) && service_reclaim_handler != NULL) {
+		if (service_reclaim_msg_valid(reclaim, sizeof(*reclaim)) &&
+		    service_reclaim_handler != NULL) {
 			reclaim_fn = service_reclaim_handler;
 			reclaim_ctx = service_reclaim_handler_ctx;
 			strlcpy(reclaim_label, reclaim->label,

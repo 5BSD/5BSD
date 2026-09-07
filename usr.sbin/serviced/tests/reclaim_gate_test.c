@@ -29,7 +29,9 @@
 #include <stdint.h>
 
 #include "serviced_svc_proto.h"		/* SVC_OP_* opcode bands */
+#include "serviced.h"			/* SVC_STATE_* */
 #include "sctl_gate.h"
+#include "reclaim_gate.h"
 
 /*
  * Guard 1 — the operator reclaim op is admin-gated: a non-admin caller is
@@ -95,11 +97,74 @@ ATF_TC_BODY(reclaim_label_is_not_an_inbound_request_op, tc)
 		    inbound_request_ops[i]);
 }
 
+/*
+ * Guard 3 — the operator reclaim label must be non-empty and fit the reclaim
+ * notification's fixed label[] field with room for its NUL.  This pins the
+ * length edges sctl.c's SCTL_OP_RECLAIM handler enforces via
+ * svc_reclaim_label_len_ok().
+ */
+ATF_TC_WITHOUT_HEAD(reclaim_label_len_edges);
+ATF_TC_BODY(reclaim_label_len_edges, tc)
+{
+	const size_t fieldsz =
+	    sizeof(((struct svc_reclaim_label_msg *)0)->label);
+
+	/* Empty label: nothing to reclaim => invalid (sctl.c EINVAL). */
+	ATF_CHECK_MSG(!svc_reclaim_label_len_ok(0),
+	    "a zero-length reclaim label must be rejected");
+
+	/* Minimum valid label. */
+	ATF_CHECK_MSG(svc_reclaim_label_len_ok(1),
+	    "a one-byte reclaim label must be accepted");
+
+	/* Longest label that still leaves room for the NUL. */
+	ATF_CHECK_MSG(svc_reclaim_label_len_ok(fieldsz - 1),
+	    "a label of field size minus one must be accepted");
+
+	/* Exactly the field size: no room for the NUL => invalid. */
+	ATF_CHECK_MSG(!svc_reclaim_label_len_ok(fieldsz),
+	    "a label filling the whole field (no NUL room) must be rejected");
+
+	/* Absurdly long => invalid. */
+	ATF_CHECK_MSG(!svc_reclaim_label_len_ok(fieldsz + 4096),
+	    "an oversized reclaim label must be rejected");
+}
+
+/*
+ * Guard 4 — the reclaim notification fans out to RUNNING providers with a live
+ * control channel only.  This pins the per-service skip in
+ * reload.c svc_retire_label() via svc_reclaim_notify_target().
+ */
+ATF_TC_WITHOUT_HEAD(reclaim_notify_target_selection);
+ATF_TC_BODY(reclaim_notify_target_selection, tc)
+{
+
+	/* RUNNING with a channel is the only case that receives the push. */
+	ATF_CHECK_MSG(svc_reclaim_notify_target(SVC_STATE_RUNNING, true),
+	    "a RUNNING service with a control channel must be a target");
+
+	/* RUNNING but no channel: skipped. */
+	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_RUNNING, false),
+	    "a RUNNING service without a control channel must be skipped");
+
+	/* Any non-RUNNING state, even with a channel: skipped. */
+	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_STOPPED, true),
+	    "a STOPPED service must be skipped");
+	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_STARTING, true),
+	    "a STARTING service must be skipped");
+	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_STOPPING, true),
+	    "a STOPPING service must be skipped");
+	ATF_CHECK_MSG(!svc_reclaim_notify_target(SVC_STATE_DONE, true),
+	    "a DONE service must be skipped");
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, reclaim_op_admin_gated);
 	ATF_TP_ADD_TC(tp, reclaim_label_is_not_an_inbound_request_op);
+	ATF_TP_ADD_TC(tp, reclaim_label_len_edges);
+	ATF_TP_ADD_TC(tp, reclaim_notify_target_selection);
 
 	return (atf_no_error());
 }

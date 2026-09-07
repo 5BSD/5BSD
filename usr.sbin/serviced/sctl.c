@@ -42,6 +42,7 @@
 #include "authorityd_ctl.h"
 #include "fd_budget.h"
 #include "management.h"
+#include "reclaim_gate.h"
 #include "sctl_gate.h"
 #include "serviced_probes.h"
 
@@ -374,16 +375,21 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			SERVICED_PROBE_SCTL_DENY(op, audit_uid);
 			serviced_audit(AUE_SERVICED_CTL, audit_uid, EPERM,
 			    "reclaim denied");
-		} else if (datalen == 0) {
+		} else if (!svc_reclaim_label_len_ok(datalen)) {
+			/*
+			 * Label must be non-empty and fit the reclaim message's
+			 * label[64] with its NUL (svc_reclaim_label_len_ok):
+			 * an empty label has nothing to reclaim, an oversized
+			 * one cannot be carried.  Distinguish the two for the
+			 * operator, but both are EINVAL.
+			 */
 			reply->status = EINVAL;
-			snprintf(summary, summary_cap,
-			    "reclaim: missing bundle label");
-		} else if (datalen > sizeof(((struct svc_reclaim_label_msg *)
-		    0)->label) - 1) {
-			/* Must fit the reclaim message's label[64] with its NUL. */
-			reply->status = EINVAL;
-			snprintf(summary, summary_cap,
-			    "reclaim: bundle label too long");
+			if (datalen == 0)
+				snprintf(summary, summary_cap,
+				    "reclaim: missing bundle label");
+			else
+				snprintf(summary, summary_cap,
+				    "reclaim: bundle label too long");
 		} else {
 			unsigned sent;
 

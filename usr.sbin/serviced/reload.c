@@ -24,6 +24,7 @@
 #include "serviced.h"
 #include "management.h"
 #include "manifest_compare.h"
+#include "reclaim_gate.h"
 #include "serviced_audit.h"
 #include "serviced_probes.h"
 #include "serviced_svc_proto.h"
@@ -84,8 +85,8 @@ svc_retire_label(const char *label, int kq)
 	for (i = 0; i < sd.nservices; i++) {
 		struct svc_runtime *svc = &sd.services[i];
 
-		if (svc->state != SVC_STATE_RUNNING ||
-		    svc->control_channel == NULL)
+		if (!svc_reclaim_notify_target(svc->state,
+		    svc->control_channel != NULL))
 			continue;
 		if (svc_channel_send_event(svc, &msg, sizeof(msg), NULL, 0,
 		    kq) == -1) {
