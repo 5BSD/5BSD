@@ -148,6 +148,14 @@ tzfsd_request_quota(struct tzfsd_client *c, const struct tzfsd_req *req,
 		errno = EINVAL;
 		return (-1);
 	}
+	if (req->dataset[0] == '\0') {
+		errno = EINVAL;
+		return (-1);
+	}
+	if (memchr(req->dataset, '\0', sizeof(req->dataset)) == NULL) {
+		errno = ENAMETOOLONG;
+		return (-1);
+	}
 	out->handle_fd = -1;
 	out->dataset[0] = '\0';
 	memset(&rq, 0, sizeof(rq));

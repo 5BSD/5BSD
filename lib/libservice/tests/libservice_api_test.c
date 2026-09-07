@@ -275,7 +275,8 @@ session_provider_thread(void *argument)
 }
 
 static int
-install_bootstrap(const struct service_bootstrap *bootstrap, size_t size)
+install_bootstrap(const struct service_bootstrap *bootstrap, size_t size,
+    bool retain_write_authority)
 {
 	struct envfd_create_options options =
 	    ENVFD_CREATE_OPTIONS_INITIALIZER(size);
@@ -297,9 +298,10 @@ install_bootstrap(const struct service_bootstrap *bootstrap, size_t size)
 	}
 	/* Match serviced's immutable bootstrap descriptor contract exactly. */
 	cap_rights_init(&rights, CAP_READ, CAP_FSTAT, CAP_IOCTL);
-	if (cap_rights_limit(SERVICE_BOOTSTRAP_FD, &rights) == -1 ||
+	if (!retain_write_authority &&
+	    (cap_rights_limit(SERVICE_BOOTSTRAP_FD, &rights) == -1 ||
 	    cap_ioctls_limit(SERVICE_BOOTSTRAP_FD,
-	    (const unsigned long[]){ ENVFD_GETINFO }, 1) == -1)
+	    (const unsigned long[]){ ENVFD_GETINFO }, 1) == -1))
 		return (-1);
 	return (0);
 }
@@ -428,7 +430,8 @@ run_bootstrap_case(enum bootstrap_case test_case, int expected_errno)
 					close(fd);
 			} else if (install_bootstrap(&bootstrap,
 			    test_case == BOOTSTRAP_TRUNCATED ? 1 :
-			    sizeof(bootstrap)) == -1)
+			    sizeof(bootstrap),
+			    test_case == BOOTSTRAP_WRITABLE) == -1)
 				_exit(3);
 			if (test_case == BOOTSTRAP_BAD_CHANNEL) {
 				cap_rights_init(&rights, CAP_READ, CAP_FSTAT,
@@ -486,7 +489,7 @@ ATF_TC_BODY(shared_context, tc)
 		close(SERVICE_BOOTSTRAP_FD);
 		valid_empty_bootstrap(&bootstrap);
 		if (setenv(SERVICE_BOOTSTRAP_ENV, "5", 1) == -1 ||
-		    install_bootstrap(&bootstrap, sizeof(bootstrap)) == -1)
+		    install_bootstrap(&bootstrap, sizeof(bootstrap), false) == -1)
 			_exit(2);
 		if (service_acquire(&first) == -1 ||
 		    service_acquire(&second) == -1 || first != second)
@@ -575,7 +578,7 @@ run_named_directory_bootstrap(bool excessive_rights)
 		strlcpy(bootstrap.capabilities[0].type, "directory",
 		    sizeof(bootstrap.capabilities[0].type));
 		if (setenv(SERVICE_BOOTSTRAP_ENV, "5", 1) == -1 ||
-		    install_bootstrap(&bootstrap, sizeof(bootstrap)) == -1)
+		    install_bootstrap(&bootstrap, sizeof(bootstrap), false) == -1)
 			_exit(3);
 		if (excessive_rights) {
 			errno = 0;
@@ -1059,7 +1062,7 @@ idle_shutdown_child(int child_fd, unsigned seconds, bool expect_success)
 	close(SERVICE_BOOTSTRAP_FD);
 	valid_empty_bootstrap(&bootstrap);
 	if (setenv(SERVICE_BOOTSTRAP_ENV, "5", 1) == -1 ||
-	    install_bootstrap(&bootstrap, sizeof(bootstrap)) == -1)
+	    install_bootstrap(&bootstrap, sizeof(bootstrap), false) == -1)
 		_exit(2);
 	if (service_acquire(&context) == -1)
 		_exit(3);

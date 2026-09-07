@@ -236,7 +236,15 @@ responder_stop(struct responder *r)
 	r->stop = 1;
 	(void)pthread_join(r->thread, NULL);
 	channel_destroy(r->chan);
-	r->chan = NULL;
+}
+
+static void
+isolate_ambient_lookup(void)
+{
+
+	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
+	if (close(SERVICE_LOOKUP_FIXED_FD) == -1)
+		ATF_REQUIRE_EQ(EBADF, errno);
 }
 
 /* ------------------------------------------------------------------ */
@@ -247,8 +255,8 @@ ATF_TC_WITHOUT_HEAD(absent_env_returns_minus1);
 ATF_TC_BODY(absent_env_returns_minus1, tc)
 {
 
-	/* No SERVICE_LOOKUP_FD in the environment: discovery yields nothing. */
-	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
+	/* No environment or fixed descriptor: discovery yields nothing. */
+	isolate_ambient_lookup();
 	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
 }
 
@@ -256,6 +264,7 @@ ATF_TC_WITHOUT_HEAD(malformed_env_returns_minus1);
 ATF_TC_BODY(malformed_env_returns_minus1, tc)
 {
 
+	isolate_ambient_lookup();
 	/* A non-numeric or out-of-range value is rejected, not misparsed. */
 	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, "not-a-number", 1));
 	ATF_CHECK_EQ(-1, service_ambient_lookup_fd());
@@ -276,6 +285,7 @@ ATF_TC_BODY(non_channel_fd_rejected, tc)
 	 * before any handshake: discovery must not hand back an arbitrary
 	 * inherited fd.
 	 */
+	isolate_ambient_lookup();
 	ATF_REQUIRE_EQ(0, pipe(pfd));
 	(void)snprintf(buf, sizeof(buf), "%d", pfd[0]);
 	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, buf, 1));

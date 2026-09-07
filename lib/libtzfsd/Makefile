@@ -31,4 +31,7 @@ CFLAGS+=	-I${SRCTOP}/lib/libchannel
 CFLAGS+=	-I${SRCTOP}/sys		# sys/zfshandle.h (via trustedzfs.h)
 LIBADD=		trustedzfs service channel
 
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+= tests
+
 .include <bsd.lib.mk>

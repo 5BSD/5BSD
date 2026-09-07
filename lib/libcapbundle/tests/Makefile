@@ -49,4 +49,12 @@ LDFLAGS.api_test+=	-Wl,-rpath,${OBJTOP}/lib/libcapbundle
 SCRIPTS+=	servicectl
 SCRIPTSDIR_servicectl=	${TESTSDIR}
 
+.if ${.OBJDIR} !=	${.CURDIR}
+${.OBJDIR}/servicectl: ${.CURDIR}/servicectl
+	${CP} ${.ALLSRC} ${.TARGET}
+
+all: ${.OBJDIR}/servicectl
+CLEANFILES+=	servicectl
+.endif
+
 .include <bsd.test.mk>

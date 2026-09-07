@@ -11,4 +11,7 @@ CFLAGS+=	-I${SRCTOP}/sys
 
 LIBADD=		tzfsd trustedzfs
 
+HAS_TESTS=
+SUBDIR.${MK_TESTS}+= tests
+
 .include <bsd.prog.mk>

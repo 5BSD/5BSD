@@ -77,23 +77,30 @@ main(int argc, char **argv)
 {
 	struct sysctlcmp_client *client;
 	unsigned char buf[8192];
+	bool valid;
 	size_t len;
 
-	if (argc < 2)
+	valid = argc >= 2 &&
+	    ((strcmp(argv[1], "get") == 0 && argc == 3) ||
+	    (strcmp(argv[1], "set") == 0 && argc == 4) ||
+	    (strcmp(argv[1], "fmt") == 0 && argc == 3) ||
+	    (strcmp(argv[1], "descr") == 0 && argc == 3) ||
+	    (strcmp(argv[1], "list") == 0 && (argc == 2 || argc == 3)));
+	if (!valid)
 		usage();
 	if (sysctlcmp_client_open(&client) == -1)
 		err(EX_UNAVAILABLE, "open system.Sysctl");
 
-	if (strcmp(argv[1], "get") == 0 && argc >= 3) {
+	if (strcmp(argv[1], "get") == 0) {
 		len = sizeof(buf);
 		if (sysctlcmp_get(client, argv[2], buf, &len) == -1)
 			err(EX_UNAVAILABLE, "get %s", argv[2]);
 		print_value(buf, len);
-	} else if (strcmp(argv[1], "set") == 0 && argc >= 4) {
+	} else if (strcmp(argv[1], "set") == 0) {
 		if (sysctlcmp_set(client, argv[2], argv[3],
 		    strlen(argv[3]) + 1) == -1)
 			err(EX_UNAVAILABLE, "set %s", argv[2]);
-	} else if (strcmp(argv[1], "fmt") == 0 && argc >= 3) {
+	} else if (strcmp(argv[1], "fmt") == 0) {
 		unsigned int kind;
 		char fmt[64];
 
@@ -101,7 +108,7 @@ main(int argc, char **argv)
 		if (sysctlcmp_oidfmt(client, argv[2], &kind, fmt, &len) == -1)
 			err(EX_UNAVAILABLE, "fmt %s", argv[2]);
 		printf("kind=0x%x fmt=%s\n", kind, fmt);
-	} else if (strcmp(argv[1], "descr") == 0 && argc >= 3) {
+	} else if (strcmp(argv[1], "descr") == 0) {
 		len = sizeof(buf);
 		if (sysctlcmp_describe(client, argv[2], (char *)buf, &len) == -1)
 			err(EX_UNAVAILABLE, "descr %s", argv[2]);
@@ -109,7 +116,11 @@ main(int argc, char **argv)
 	} else if (strcmp(argv[1], "list") == 0) {
 		char name[256];
 
-		name[0] = '\0';			/* start from the root */
+		if (argc == 3) {
+			if (strlcpy(name, argv[2], sizeof(name)) >= sizeof(name))
+				errx(EX_USAGE, "list start name is too long");
+		} else
+			name[0] = '\0';		/* start from the root */
 		for (;;) {
 			len = sizeof(name);
 			if (sysctlcmp_next(client, name, name, &len) == -1) {

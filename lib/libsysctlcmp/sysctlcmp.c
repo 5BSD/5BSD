@@ -235,6 +235,10 @@ read_value_op(struct sysctlcmp_client *client, uint16_t opcode,
 		errno = ENOMEM;
 		return (-1);
 	}
+	if (body->value_length == 0) {
+		*lenp = 0;
+		return (0);
+	}
 	memcpy(buf, (const uint8_t *)(body + 1) + body->name_length,
 	    body->value_length);
 	*lenp = body->value_length;
@@ -253,18 +257,36 @@ int
 sysctlcmp_describe(struct sysctlcmp_client *client, const char *name,
     char *buf, size_t *lenp)
 {
+	int error;
 
-	return (read_value_op(client, SYSCTLCMP_OP_DESCR, name, buf, lenp));
+	if (read_value_op(client, SYSCTLCMP_OP_DESCR, name, buf, lenp) == -1)
+		return (-1);
+	if (*lenp == 0 || buf[*lenp - 1] != '\0') {
+		error = EPROTO;
+		(void)service_session_fail(client->session, error);
+		errno = error;
+		return (-1);
+	}
+	return (0);
 }
 
 int
 sysctlcmp_next(struct sysctlcmp_client *client, const char *name,
     char *buf, size_t *lenp)
 {
+	int error;
 
 	/* An empty name starts enumeration from the root. */
-	return (read_value_op(client, SYSCTLCMP_OP_NEXT,
-	    name != NULL ? name : "", buf, lenp));
+	if (read_value_op(client, SYSCTLCMP_OP_NEXT,
+	    name != NULL ? name : "", buf, lenp) == -1)
+		return (-1);
+	if (*lenp == 0 || buf[*lenp - 1] != '\0') {
+		error = EPROTO;
+		(void)service_session_fail(client->session, error);
+		errno = error;
+		return (-1);
+	}
+	return (0);
 }
 
 int
@@ -284,17 +306,23 @@ sysctlcmp_oidfmt(struct sysctlcmp_client *client, const char *name,
 	if (read_value_op(client, SYSCTLCMP_OP_OIDFMT, name, raw, &rawlen) == -1)
 		return (-1);
 	if (rawlen < sizeof(*of)) {
+		(void)service_session_fail(client->session, EPROTO);
 		errno = EPROTO;
 		return (-1);
 	}
 	of = (const void *)raw;
-	*kindp = of->kind;
 	fmtlen = rawlen - sizeof(*of);		/* includes trailing NUL */
+	if (fmtlen == 0 || of->fmt[fmtlen - 1] != '\0') {
+		(void)service_session_fail(client->session, EPROTO);
+		errno = EPROTO;
+		return (-1);
+	}
 	if (fmtlen > *fmtlenp) {
 		*fmtlenp = fmtlen;
 		errno = ENOMEM;
 		return (-1);
 	}
+	*kindp = of->kind;
 	memcpy(fmt, of->fmt, fmtlen);
 	*fmtlenp = fmtlen;
 	return (0);

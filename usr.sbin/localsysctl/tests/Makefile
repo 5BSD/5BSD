@@ -1,4 +1,4 @@
-PACKAGE=	tests
+PACKAGE=	libsysctlcmp-tests
 TESTSDIR=	${TESTSBASE}/usr.sbin/localsysctl
 
 .PATH: ${.CURDIR}/..

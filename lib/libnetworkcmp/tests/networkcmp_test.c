@@ -11,9 +11,11 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include "networkcmp.h"
 #include "networkcmp_server.h"
+#include "service_bootstrap.h"
 
 union message_buffer {
 	max_align_t align;
@@ -98,25 +100,27 @@ ATF_TC(component_binding);
 ATF_TC_HEAD(component_binding, tc)
 {
 	atf_tc_set_md_var(tc, "descr",
-	    "NetworkCmp opens only its injected local authority descriptor");
+	    "NetworkCmp requires bootstrap or ambient service authority");
 }
 ATF_TC_BODY(component_binding, tc)
 {
 	struct networkcmp_client *client;
 
-	errno = 0;
-	ATF_REQUIRE_EQ(0, setenv("NETWORKCMP", "", 1));
-	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));
-	ATF_CHECK_EQ(EBADF, errno);
-	ATF_REQUIRE_EQ(0, unsetenv("NETWORKCMP"));
+	/* Isolate this case from the test runner's ambient login channel. */
+	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_BOOTSTRAP_ENV));
+	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
+	(void)close(SERVICE_BOOTSTRAP_FD);
+	(void)close(SERVICE_LOOKUP_FIXED_FD);
 
 	errno = 0;
 	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));
-	ATF_CHECK_EQ(EBADF, errno);
-	errno = 0;
+	ATF_CHECK_EQ(ENOENT, errno);
+
+	/* The retired ad-hoc selector cannot inject authority. */
 	ATF_REQUIRE_EQ(0, setenv("NETWORKCMP", "egress", 1));
+	errno = 0;
 	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));
-	ATF_CHECK_EQ(EBADF, errno);
+	ATF_CHECK_EQ(ENOENT, errno);
 	ATF_REQUIRE_EQ(0, unsetenv("NETWORKCMP"));
 }
 

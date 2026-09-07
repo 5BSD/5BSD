@@ -68,25 +68,25 @@ naming_register_and_lookup_body()
 {
 	require_ambient_control
 	prepare_paths
-	install_naming_fixture org.test.ls-provider \
+	install_naming_fixture org.test.serviced-ls-provider \
 	    'activation { ipc = ["org.test.ls-provider"]; }
 arguments = ["provider", "provider-registered.result", "provider.result"];'
-	install_naming_fixture org.test.ls-client \
+	install_naming_fixture org.test.serviced-ls-client \
 	    'arguments = ["client", "client.result"];'
 	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
-	    "${APPS_DIR}/org.test.ls-client.cap/Units/ls-client.unit/Unit.ucl"
+	    "${APPS_DIR}/org.test.serviced-ls-client.cap/Units/serviced-ls-client.unit/Unit.ucl"
 	start_stack
 	wait_naming_result provider-registered.result
 	wait_naming_result client.result
 	wait_naming_result provider.result
 	atf_check -s exit:0 -o match:'greeting=hello confined=yes$' cat client.result
 	atf_check -s exit:0 \
-	    -o match:'client_label=org.test.ls-client/[^ ]* message=world confined=yes$' \
+	    -o match:'client_label=org.test.serviced-ls-client/[^ ]* message=world confined=yes$' \
 	    cat provider.result
 	servicectl status > naming-status.result
-	atf_check -s exit:0 -o match:'org.test.ls-provider.*conns=1' \
+	atf_check -s exit:0 -o match:'org.test.serviced-ls-provider.*conns=1' \
 	    cat naming-status.result
-	atf_check -s exit:0 -o not-match:'org.test.ls-client/ls-client running.*conns=[1-9]' \
+	atf_check -s exit:0 -o not-match:'org.test.serviced-ls-client/serviced-ls-client running.*conns=[1-9]' \
 	    cat naming-status.result
 	finish_naming_stack
 }
@@ -137,17 +137,17 @@ naming_auto_unregister_on_exit_body()
 	# unactivated reservation, not a live registration.  So drive a real
 	# registration with a client, then kill the provider and confirm the
 	# now-live name is auto-unregistered on its owner's exit.
-	install_naming_fixture org.test.ls-provider \
+	install_naming_fixture org.test.serviced-ls-provider \
 	    'restart = "never"; activation { ipc = ["org.test.ls-provider"]; }
 arguments = ["provider", "provider-registered.result", "provider.result"];'
-	install_naming_fixture org.test.ls-client \
+	install_naming_fixture org.test.serviced-ls-client \
 	    'arguments = ["client", "client.result"];'
 	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' \
-	    "${APPS_DIR}/org.test.ls-client.cap/Units/ls-client.unit/Unit.ucl"
+	    "${APPS_DIR}/org.test.serviced-ls-client.cap/Units/serviced-ls-client.unit/Unit.ucl"
 	start_stack
 	wait_naming_result provider.result
 	provider_pid=$(servicectl status |
-	    sed -n 's/.*org.test.ls-provider\/ls-provider running  *pid \([0-9][0-9]*\).*/\1/p')
+	    sed -n 's/.*org.test.serviced-ls-provider\/serviced-ls-provider running  *pid \([0-9][0-9]*\).*/\1/p')
 	case "$provider_pid" in
 	''|*[!0-9]*) atf_fail "could not determine the provider PID" ;;
 	esac

@@ -17,6 +17,7 @@
 #include <sys/types.h>
 
 #include <err.h>
+#include <errno.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -69,7 +70,7 @@ authctl_call(uint32_t op, bool show)
 	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
 	struct ctl_request req;
 	char rbuf[sizeof(struct ctl_reply) + SERVICED_CTL_SUMMARY_MAX];
-	const struct ctl_reply *rpl;
+	struct ctl_reply rpl;
 	int fd;
 
 	if (service_open(SERVICED_LIFECYCLE_NAME, &fd) != 0)
@@ -99,19 +100,22 @@ authctl_call(uint32_t op, bool show)
 		service_session_close(session);
 		err(EX_UNAVAILABLE, "authority request");
 	}
-	if (reply.length < sizeof(struct ctl_reply)) {
+	if (reply.length < sizeof(rpl)) {
 		service_session_close(session);
 		errx(EX_PROTOCOL, "short authority reply");
 	}
-	rpl = (const struct ctl_reply *)rbuf;
-	if (show && rpl->flags > 0 &&
-	    (size_t)rpl->flags <= SERVICED_CTL_SUMMARY_MAX &&
-	    reply.length >= sizeof(struct ctl_reply) + rpl->flags)
-		(void)fwrite(rbuf + sizeof(struct ctl_reply), 1, rpl->flags,
-		    stdout);
+	memcpy(&rpl, rbuf, sizeof(rpl));
+	if (rpl.flags > SERVICED_CTL_SUMMARY_MAX ||
+	    reply.length != sizeof(rpl) + (size_t)rpl.flags ||
+	    rpl.status > ELAST) {
+		service_session_close(session);
+		errx(EX_PROTOCOL, "malformed authority reply");
+	}
+	if (show && rpl.flags > 0)
+		(void)fwrite(rbuf + sizeof(rpl), 1, rpl.flags, stdout);
 
 	service_session_close(session);
-	return ((int)rpl->status);
+	return ((int)rpl.status);
 }
 
 int

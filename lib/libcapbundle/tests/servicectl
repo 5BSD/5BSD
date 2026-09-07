@@ -4,6 +4,11 @@
 #
 # Keep object-tree libcapbundle tests paired with a matching servicectl ABI.
 
+helper_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+test_root=$(CDPATH= cd -- "$helper_dir/../../.." && pwd)
+if [ -x "$test_root/usr.sbin/servicectl/tests/servicectl_test_bin" ]; then
+	exec "$test_root/usr.sbin/servicectl/tests/servicectl_test_bin" "$@"
+fi
 if [ -n "${TEST_OBJTOP:-}" ]; then
 	if [ -x "${TEST_OBJTOP}/usr.sbin/servicectl/tests/servicectl_test_bin" ];
 	then

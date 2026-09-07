@@ -57,7 +57,9 @@ security_contract_body()
 {
 	require_srctree
 	source="@SRCTOP@/usr.sbin/bsdnotify/bsdnotify.c"
-	for token in cap_enter SERVICE_PROTECT_NOFDRECV CAP_XFER_ONCE \
+	for token in service_worker_enter_capability_mode \
+	    service_provider_enter_capability_mode SERVICE_PROTECT_NOFDRECV \
+	    SERVICE_HARDEN_XFER_ONCE \
 	    auditcmp_client_prepare auditcmp_client_adopt auditcmp_submit \
 	    service_listener_accept EVFILT_TIMER
 	do
@@ -145,7 +147,7 @@ atf_test_case worker_channel_contract
 worker_channel_contract_head()
 {
 	atf_set "descr" \
-	    "Beacon uses an unnamed capability channel and per-hop session attenuation (CAP_XFER_ONCE before the worker forward) without raw SCM_RIGHTS"
+	    "Beacon uses an unnamed capability channel and per-hop session attenuation (SERVICE_HARDEN_XFER_ONCE before the worker forward) without raw SCM_RIGHTS"
 }
 worker_channel_contract_body()
 {
@@ -154,10 +156,10 @@ worker_channel_contract_body()
 	atf_check -s exit:0 -o match:'service_provider_worker_channel' \
 	    grep service_provider_worker_channel "${source}"
 	# The router forward is attenuated per hop: bsdnotify tightens the
-	# session to CAP_XFER_ONCE before handing it on, so the router lands at
-	# CAP_XFER_NONE without any kernel-baked multi-hop transfer budget.
-	atf_check -s exit:0 -o match:'CAP_XFER_ONCE' \
-	    grep CAP_XFER_ONCE "${source}"
+	# session with SERVICE_HARDEN_XFER_ONCE before handing it on, so the
+	# router lands at CAP_XFER_NONE without a kernel-baked multi-hop budget.
+	atf_check -s exit:0 -o match:'SERVICE_HARDEN_XFER_ONCE' \
+	    grep SERVICE_HARDEN_XFER_ONCE "${source}"
 	atf_check -s exit:0 -o match:'SERVICE_PROTECT_NOFDRECV' \
 	    grep SERVICE_PROTECT_NOFDRECV "${source}"
 	atf_check -s exit:0 -o match:'router_admission_classify' \

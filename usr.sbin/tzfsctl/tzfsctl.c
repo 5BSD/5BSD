@@ -49,7 +49,8 @@ parse_rights(const char *s)
 
 	if (strcmp(s, "all") == 0 || strcmp(s, "*") == 0)
 		return (ZH_ALL_RIGHTS);
-	(void)strlcpy(buf, s, sizeof(buf));
+	if (strlcpy(buf, s, sizeof(buf)) >= sizeof(buf))
+		errx(1, "rights list is too long");
 	p = buf;
 	while ((tok = strsep(&p, ",")) != NULL) {
 		if (*tok == '\0')
@@ -99,9 +100,13 @@ cmd_request(struct tzfsd_client *chan, int argc, char **argv)
 	}
 	if (optind >= argc)
 		errx(1, "request: missing name");
+	if (optind + 1 != argc)
+		errx(1, "request: too many names");
 
 	memset(&req, 0, sizeof(req));
-	(void)strlcpy(req.dataset, argv[optind], sizeof(req.dataset));
+	if (strlcpy(req.dataset, argv[optind], sizeof(req.dataset)) >=
+	    sizeof(req.dataset))
+		errx(1, "request: dataset name is too long");
 	req.rights = parse_rights(rights);
 	req.lifetime = lifetime;
 	if (domount)
@@ -114,12 +119,13 @@ cmd_request(struct tzfsd_client *chan, int argc, char **argv)
 	if (domount) {
 		int dir = tzfsd_mount_dir(grant.handle_fd, 0);
 
-		if (dir == -1)
+		if (dir == -1) {
 			warn("mount");
-		else {
-			printf("mounted (dirfd %d)\n", dir);
-			(void)close(dir);
+			(void)close(grant.handle_fd);
+			return (-1);
 		}
+		printf("mounted (dirfd %d)\n", dir);
+		(void)close(dir);
 	}
 	(void)close(grant.handle_fd);
 	return (0);
@@ -128,8 +134,8 @@ cmd_request(struct tzfsd_client *chan, int argc, char **argv)
 static int
 cmd_release(struct tzfsd_client *chan, int argc, char **argv)
 {
-	if (argc < 2)
-		errx(1, "release: missing name");
+	if (argc != 2)
+		errx(1, "release: expected one name");
 	if (tzfsd_release(chan, argv[1]) == -1)
 		err(1, "release %s", argv[1]);
 	printf("released %s\n", argv[1]);
@@ -147,6 +153,15 @@ main(int argc, char **argv)
 		    "release> [args]\n");
 		return (1);
 	}
+	if (strcmp(argv[1], "ping") == 0 && argc != 2)
+		errx(1, "ping: too many arguments");
+	if (strcmp(argv[1], "release") == 0 && argc != 3)
+		errx(1, "release: expected one name");
+	if (strcmp(argv[1], "ping") != 0 &&
+	    strcmp(argv[1], "request") != 0 &&
+	    strcmp(argv[1], "release") != 0)
+		errx(1, "unknown command: %s", argv[1]);
+
 	chan = tzfsd_connect();
 	if (chan == NULL)
 		err(1, "connect %s", TZFSD_SERVICE_NAME);
@@ -156,10 +171,8 @@ main(int argc, char **argv)
 		printf("%s\n", rc == 0 ? "ok" : "no response");
 	} else if (strcmp(argv[1], "request") == 0)
 		rc = cmd_request(chan, argc - 1, argv + 1);
-	else if (strcmp(argv[1], "release") == 0)
-		rc = cmd_release(chan, argc - 1, argv + 1);
 	else
-		errx(1, "unknown command: %s", argv[1]);
+		rc = cmd_release(chan, argc - 1, argv + 1);
 
 	tzfsd_close(chan);
 	return (rc == 0 ? 0 : 1);

@@ -10,6 +10,7 @@ require_srctree()
 	    atf_skip "source tree (@SRCTOP@) required for contract checks"
 }
 
+
 atf_test_case manifest cleanup
 manifest_head()
 {
@@ -61,7 +62,7 @@ atf_test_case kernel_security_contract
 kernel_security_contract_head()
 {
 	atf_set "descr" \
-	    "Kernel worker uses an attenuated network broker in capability mode"
+	    "Capability-mode worker uses in-process DNS and attenuated sockets"
 }
 
 atf_test_case observability_contract
@@ -95,37 +96,25 @@ kernel_security_contract_body()
 {
 	require_srctree
 	source="@SRCTOP@/usr.sbin/localnetwork/networkcmp.c"
+	resolver="@SRCTOP@/usr.sbin/localnetwork/resolver.c"
 
-	atf_check -s exit:0 -o match:'NETWORKCMP_FEATURE_DNS' \
-	    grep NETWORKCMP_FEATURE_DNS "${source}"
-	atf_check -s exit:0 -o match:'cap_getaddrinfo' \
-	    grep cap_getaddrinfo "${source}"
-	atf_check -s exit:0 -o match:'CAPNET_NAME2ADDR' \
-	    grep CAPNET_NAME2ADDR "${source}"
-	atf_check -s exit:0 -o match:'CAPNET_CONNECT' \
-	    grep CAPNET_CONNECT "${source}"
-	atf_check -s exit:0 -o match:'CAPNET_BIND' \
-	    grep CAPNET_BIND "${source}"
-	atf_check -s exit:0 -o match:'cap_connect' \
-	    grep cap_connect "${source}"
-	atf_check -s exit:0 -o match:'cap_bind' \
-	    grep cap_bind "${source}"
-	atf_check -s exit:0 -o match:'socket' \
-	    grep -F 'socket(' "${source}"
-	atf_check -s exit:0 -o match:'CAP_XFER_NONE' \
-	    grep CAP_XFER_NONE "${source}"
-	atf_check -s exit:0 -o match:'CAP_CLOFORK_ONCE' \
-	    grep CAP_CLOFORK_ONCE "${source}"
-	atf_check -s exit:0 -o match:'CAP_CLOFORK_LOCKED' \
-	    grep CAP_CLOFORK_LOCKED "${source}"
-	atf_check -s exit:0 -o match:'CAP_CLOEXEC_LOCKED' \
-	    grep CAP_CLOEXEC_LOCKED "${source}"
-	atf_check -s exit:0 -o match:'cap_enter' \
-	    grep cap_enter "${source}"
-	for token in auditcmp_client_prepare auditcmp_client_adopt auditcmp_submit
+	for token in NETWORKCMP_FEATURE_DNS endpoint_is_internal broker_connect \
+	    broker_perform_connect harden_delivered_socket CAP_XFER_ONCE \
+	    CAP_CLOFORK_ONCE CAP_CLOEXEC_LOCKED service_harden_fd \
+	    service_worker_enter_capability_mode \
+	    service_provider_enter_capability_mode auditcmp_client_prepare \
+	    auditcmp_client_adopt auditcmp_submit
 	do
 		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${source}"
 	done
+	atf_check -s exit:0 -o match:'socket' grep -F 'socket(' "${source}"
+	atf_check -s exit:0 -o match:'netresolve' grep -F 'netresolve(' "${source}"
+	for token in service_open_isolated hosts_lookup dns_query
+	do
+		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${resolver}"
+	done
+	atf_check -s exit:1 -o empty -e empty \
+	    grep -E 'cap_getaddrinfo|cap_connect[(]|cap_bind[(]' "${source}"
 	atf_check -s exit:1 -o empty -e empty grep 'audit_submit(' "${source}"
 }
 

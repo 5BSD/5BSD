@@ -5,13 +5,8 @@
 # Clean-break Bundle.ucl/Unit.ucl contract tests.  Each matrix row is an
 # independent parser invocation so one rejection cannot mask another.
 
-# Resolve servicectl through the co-located helper, which uses the object-tree
-# binary when TEST_OBJTOP is set and otherwise the installed /usr/sbin one.  This
-# keeps the test runnable both in-tree and from an installed /usr/tests.
-servicetcl()
-{
-	"$(atf_get_srcdir)/servicectl" "$@"
-}
+# Invoke the co-located helper as a real program: atf_check(1) executes its
+# command directly and cannot call a shell function.
 
 setup_work()
 {
@@ -48,7 +43,7 @@ make_bundle()
 verify_ok()
 {
 	atf_check -s exit:0 -o match:'Verification: PASSED' \
-	    servicetcl verify "$1"
+	    "$(atf_get_srcdir)/servicectl" verify "$1"
 }
 
 verify_bad()
@@ -56,7 +51,7 @@ verify_bad()
 	pattern=$1
 	shift
 	atf_check -s exit:1 -o ignore -e match:"$pattern" \
-	    servicetcl verify "$1"
+	    "$(atf_get_srcdir)/servicectl" verify "$1"
 }
 
 cleanup_work()
@@ -77,7 +72,7 @@ valid_contract_body()
 	    -o match:'Sequence: 7' \
 	    -o match:'org.test.good/worker' \
 	    -o match:'activation: boot' \
-	    servicetcl verify "$dir"
+	    "$(atf_get_srcdir)/servicectl" verify "$dir"
 }
 valid_contract_cleanup() { cleanup_work; }
 
@@ -93,24 +88,24 @@ protect_policy_body()
 	printf '%s\n' 'activation { boot = true; }
 protect = ["ptrace", "noprivs", "nofork"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x601' \
-	    servicetcl verify "$dir"
+	    "$(atf_get_srcdir)/servicectl" verify "$dir"
 
 	# The "protect" group alias expands to the full outward set (0x1ff).
 	printf '%s\n' 'activation { boot = true; }
 protect = ["protect"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x1ff' \
-	    servicetcl verify "$dir"
+	    "$(atf_get_srcdir)/servicectl" verify "$dir"
 
 	# Unknown flag names are ignored (still verifies), known ones still apply.
 	printf '%s\n' 'activation { boot = true; }
 protect = ["visible", "bogus"];' > "$unit"
 	atf_check -s exit:0 -o match:'protect: 0x4' \
-	    servicetcl verify "$dir"
+	    "$(atf_get_srcdir)/servicectl" verify "$dir"
 
 	# No protect stanza: nothing printed.
 	printf '%s\n' 'activation { boot = true; }' > "$unit"
 	atf_check -s exit:0 -o not-match:'protect:' \
-	    servicetcl verify "$dir"
+	    "$(atf_get_srcdir)/servicectl" verify "$dir"
 }
 protect_policy_cleanup() { cleanup_work; }
 
@@ -328,7 +323,7 @@ multi_unit_order_body()
 	    -o match:'org.test.multi/gamma' \
 	    -o match:'org.test.multi/alpha' \
 	    -o match:'org.test.multi/beta' \
-	    servicetcl verify "$dir"
+	    "$(atf_get_srcdir)/servicectl" verify "$dir"
 }
 multi_unit_order_cleanup() { cleanup_work; }
 
@@ -366,7 +361,7 @@ process_policy_matrix_body()
 		dir=$(make_bundle "bad-process-$i")
 		printf '%s\n' 'activation { boot = true; }' "$declaration" > \
 		    "$dir/Units/worker.unit/Unit.ucl"
-		verify_bad 'restart|timeout|failures|arguments|environment|module|invalid' "$dir"
+		verify_bad 'restart|timeout|failures|arguments|environment|module|invalid|unknown key' "$dir"
 	done
 }
 process_policy_matrix_cleanup() { cleanup_work; }
@@ -387,7 +382,7 @@ capability_contract_body()
 	EOF
 	atf_check -s exit:0 \
 	    -o match:'capabilities: system=0x' \
-	    servicetcl verify "$dir"
+	    "$(atf_get_srcdir)/servicectl" verify "$dir"
 }
 capability_contract_cleanup() { cleanup_work; }
 

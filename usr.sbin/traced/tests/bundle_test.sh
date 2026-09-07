@@ -94,18 +94,23 @@ security_contract_body()
 {
 	require_srctree
 	source="@SRCTOP@/usr.sbin/traced/tracecmp.c"
-	for token in CAP_XFER_ONCE CAP_CLOFORK_LOCKED cap_enter \
+	for token in CAP_XFER_ONCE CAP_CLOFORK_LOCKED \
+	    service_worker_enter_capability_mode \
+	    service_provider_enter_capability_mode \
 	    SERVICE_PROTECT_NOFORK \
 	    AUE_TRACECMP_POLICY TRACED_PROBE_REJECT \
-	    TRACECMP_POLICY_PATH cap_ioctls_limit \
+	    cap_ioctls_limit \
 	    raw-dtrace-fd-delegated AU_DEFAUDITID TRACECMP_CLIENT_TIMEOUT_MS
 	do
 		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${source}"
 	done
-	for forbidden in DTRACEIOC_REPLICATE SERVICE_PROTECT_NOPRIVS
+	for forbidden in DTRACEIOC_REPLICATE
 	do
 		atf_check -s exit:1 -o empty grep -F "${forbidden}" "${source}"
 	done
+	atf_check -s exit:0 -o match:'TRACECMP_POLICY_PATH' \
+	    grep TRACECMP_POLICY_PATH \
+	    "@SRCTOP@/usr.sbin/traced/tracecmp_policy.h"
 }
 
 atf_init_test_cases()

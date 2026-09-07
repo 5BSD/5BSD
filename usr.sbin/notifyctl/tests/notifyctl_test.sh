@@ -73,7 +73,7 @@ arguments_body()
 	    'state-set a' 'state-set a b c' 'watch' 'watch a b c' \
 	    'timer' 'timer 1' 'timer 1 2 3 4 5' 'stats extra' unknown; do
 		atf_check -s exit:64 -e match:'usage: notifyctl' \
-		    "$notifyctl" $command
+		    env -u SERVICE_LOOKUP_FD "$notifyctl" $command 3>&-
 	done
 }
 
@@ -178,14 +178,15 @@ operation_failures_body()
 unavailable_body()
 {
 	notifyctl="$(atf_get_srcdir)/notifyctl_test_bin"
-	atf_check -s exit:69 -e match:'open system.Notify' "$notifyctl" stats
+	atf_check -s exit:69 -e match:'open system.Notify' \
+	    env -u SERVICE_LOOKUP_FD "$notifyctl" stats 3>&-
 	for command in 'publish org.5bsd.test.changed value' \
 	    'state-get org.5bsd.test.changed' \
 	    'state-set org.5bsd.test.changed 18446744073709551615' \
 	    'timer 99 10 3 25' \
 	    'watch org.5bsd.test.changed 1'; do
 		atf_check -s exit:69 -e match:'open system.Notify' \
-		    "$notifyctl" $command
+		    env -u SERVICE_LOOKUP_FD "$notifyctl" $command 3>&-
 	done
 }
 

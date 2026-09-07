@@ -42,7 +42,9 @@ security_contract_body()
 	syscalls="@SRCTOP@/sys/kern/syscalls.master"
 	wrappers="@SRCTOP@/contrib/openbsm/libbsm/bsm_wrappers.c"
 	for token in auditcmp_policy_event SERVICE_PROTECT_NOFORK \
-	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOSOCK cap_enter \
+	    SERVICE_PROTECT_NOFDRECV SERVICE_PROTECT_NOSOCK \
+	    service_worker_enter_capability_mode \
+	    service_provider_enter_capability_mode \
 	    AUDITCMP_RATE_PER_SECOND
 	do
 		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${source}"

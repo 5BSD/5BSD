@@ -21,7 +21,8 @@ atf_test_case unavailable
 unavailable_body()
 {
 	tool="$(atf_get_srcdir)/networkcmpctl_test_bin"
-	atf_check -s exit:69 -e match:'open system.Network' "$tool" info
+	atf_check -s exit:69 -e match:'open system.Network' \
+	    env -u SERVICE_LOOKUP_FD "$tool" info 3>&-
 }
 
 atf_test_case successful_commands
