@@ -25,6 +25,7 @@
 #include <sys/param.h>
 #include <sys/systm.h>
 #include <sys/file.h>
+#include <sys/filedesc.h>
 #include <sys/kernel.h>
 #include <sys/lock.h>
 #include <sys/malloc.h>
@@ -34,7 +35,14 @@
 #include <sys/proc.h>
 #include <sys/queue.h>
 #include <sys/sdt.h>
+#include <sys/syscall.h>
+#include <sys/sysent.h>
 #include <sys/ucred.h>
+
+#include <bsm/audit_kevents.h>
+
+/* From sys/syscallsubr.h — declared directly to avoid dragging vnode.h. */
+int	kern_close(struct thread *td, int fd);
 
 #include "mac_capability.h"
 #include "mac_capability_channel_proto.h"
@@ -65,6 +73,30 @@ channel_free(struct mac_capability_cap_channel *cp)
 
 	mtx_destroy(&cp->cp_mtx);
 	free(cp, M_MAC_CAPABILITY_CHANNEL);
+}
+
+/*
+ * Allocate a channel_pair struct connecting two endpoints and publish it
+ * as the private data of both.  Refcount is 2 — one per endpoint — so the
+ * last endpoint to detach (channel_revoke) frees the struct.  Neither
+ * endpoint is tied to any service instance beyond the bearer "channel"
+ * service itself; the pair carries no badge/authority.
+ */
+static struct mac_capability_cap_channel *
+channel_pair_link(struct mac_capability_instance *a,
+    struct mac_capability_instance *b)
+{
+	struct mac_capability_cap_channel *cp;
+
+	cp = malloc(sizeof(*cp), M_MAC_CAPABILITY_CHANNEL, M_WAITOK | M_ZERO);
+	mtx_init(&cp->cp_mtx, "mac_capability_channel", NULL, MTX_DEF);
+	cp->cp_a = a;
+	cp->cp_b = b;
+	cp->cp_refcnt = 2;	/* one per endpoint */
+
+	mac_capability_instance_set_priv(a, cp);
+	mac_capability_instance_set_priv(b, cp);
+	return (cp);
 }
 
 static struct mac_capability_service *channel_svc;
@@ -119,14 +151,7 @@ channel_handler(struct mac_capability_instance *s, const struct mac_capability_m
 		}
 		peer = peer_fp->f_data;
 
-		cp = malloc(sizeof(*cp), M_MAC_CAPABILITY_CHANNEL, M_WAITOK | M_ZERO);
-		mtx_init(&cp->cp_mtx, "mac_capability_channel", NULL, MTX_DEF);
-		cp->cp_a = s;
-		cp->cp_b = peer;
-		cp->cp_refcnt = 2;	/* one per endpoint */
-
-		mac_capability_instance_set_priv(s, cp);
-		mac_capability_instance_set_priv(peer, cp);
+		cp = channel_pair_link(s, peer);
 
 		error = mac_capability_reply(s, mac_capability_msg_token(msg), NULL, 0,
 		    &peer_fp, NULL, 1);
@@ -252,6 +277,115 @@ static const struct mac_capability_ops channel_ops = {
 	.co_revoke = channel_revoke,
 	.co_txdrain = channel_txdrain,
 };
+
+/*
+ * Create a fresh, self-owned pair of two connected channel endpoints with
+ * NO service connection.  Both endpoints are bearer "channel" instances
+ * whose private data is pre-linked (channel_pair_link), so the unconnected
+ * CHANNEL_OP_CREATE path in channel_handler is unreachable: they can only
+ * forward messages to each other.  Grants no authority — this is the
+ * socketpair(2)-equivalent primitive.
+ *
+ * On success the caller owns one reference on *fpa and *fpb and must
+ * finstall()+fdrop() (or fdrop()) each.
+ */
+static int
+mac_capability_channel_pair(struct thread *td, struct file **fpa,
+    struct file **fpb)
+{
+	struct file *fa, *fb;
+	uint64_t badge_a, badge_b;
+	int error;
+
+	badge_a = atomic_fetchadd_64(&channel_next_badge, 1);
+	error = mac_capability_mint_fp(channel_svc, badge_a, &fa);
+	if (error != 0)
+		return (error);
+
+	badge_b = atomic_fetchadd_64(&channel_next_badge, 1);
+	error = mac_capability_mint_fp(channel_svc, badge_b, &fb);
+	if (error != 0) {
+		/*
+		 * fa is a minted channel instance with no cp yet.  Dropping
+		 * the only reference closes it; channel_revoke sees priv ==
+		 * NULL and returns without touching a cp — no leak.
+		 */
+		fdrop(fa, td);
+		return (error);
+	}
+
+	(void)channel_pair_link(fa->f_data, fb->f_data);
+
+	*fpa = fa;
+	*fpb = fb;
+	return (0);
+}
+
+/*
+ * SYF_CAPENABLED syscall: create a self-owned connected channel pair and
+ * return both fds via fds[2].  Ungated — like socketpair(2).  Works inside
+ * cap_enter(): no path lookups, no ambient fd assumptions.
+ */
+struct mac_capability_channel_create_args {
+	int	*fds;
+};
+
+static int
+mac_capability_channel_create(struct thread *td, void *uap_)
+{
+	struct mac_capability_channel_create_args *uap = uap_;
+	struct file *fa, *fb;
+	int fds[2];
+	int error;
+
+	if (channel_svc == NULL)
+		return (ENOSYS);
+
+	error = mac_capability_channel_pair(td, &fa, &fb);
+	if (error != 0)
+		return (error);
+
+	error = finstall(td, fa, &fds[0], 0, NULL);
+	if (error != 0) {
+		/* Nothing installed; drop both mint references. */
+		fdrop(fa, td);
+		fdrop(fb, td);
+		return (error);
+	}
+	error = finstall(td, fb, &fds[1], 0, NULL);
+	/* finstall took its own table references; drop the mint references. */
+	fdrop(fa, td);
+	fdrop(fb, td);
+	if (error != 0) {
+		/* fds[0] is installed in the table; unwind it. */
+		(void)kern_close(td, fds[0]);
+		return (error);
+	}
+
+	error = copyout(fds, uap->fds, sizeof(fds));
+	if (error != 0) {
+		(void)kern_close(td, fds[0]);
+		(void)kern_close(td, fds[1]);
+		return (error);
+	}
+	td->td_retval[0] = 0;
+	return (0);
+}
+
+static struct sysent mac_capability_channel_create_sysent = {
+	.sy_narg =	1,
+	.sy_call =	(sy_call_t *)mac_capability_channel_create,
+	.sy_auevent =	AUE_NULL,
+	.sy_flags =	SYF_CAPENABLED,
+	.sy_thrcnt =	SY_THR_STATIC_KLD,
+};
+
+static int mac_capability_channel_create_offset = NO_SYSCALL;
+
+SYSCALL_MODULE(mac_capability_channel_create,
+    &mac_capability_channel_create_offset,
+    &mac_capability_channel_create_sysent,
+    NULL, NULL);
 
 static int
 mac_capability_channel_modevent(module_t mod __unused, int type, void *unused __unused)

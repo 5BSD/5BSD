@@ -146,7 +146,7 @@ if command -v kyua >/dev/null 2>&1; then
 	kyua report
 else
 	# Fallback: enumerate tests from all test binaries.
-	ATF_TEST_BINS="mac_capability_test mac_capability_coalition_test mac_capability_isolation_test mac_capability_identity_test mac_capability_node_test mac_capability_accounting_test mac_capability_procdesc_test mac_capability_mount_test mac_capability_system_test"
+	ATF_TEST_BINS="mac_capability_test mac_capability_coalition_test mac_capability_isolation_test mac_capability_identity_test mac_capability_node_test mac_capability_accounting_test mac_capability_procdesc_test mac_capability_mount_test mac_capability_system_test mac_capability_channel_test"
 	for testbin in $ATF_TEST_BINS; do
 		testbin_path="${SCRIPT_DIR}/${testbin}"
 		[ -x "$testbin_path" ] || continue

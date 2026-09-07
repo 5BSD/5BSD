@@ -121,6 +121,16 @@ int	channel_message_borrow_fd(const struct channel_message *, size_t);
 int	channel_message_take_fd(struct channel_message *, size_t);
 void	channel_message_free(struct channel_message *);
 
+/*
+ * Create a fresh, self-owned pair of two connected mac_capability channel
+ * endpoints (no service connection, no authority — the socketpair(2)
+ * equivalent).  fds[0] and fds[1] are the two ends; a message sent on
+ * either is delivered to the other, kernel-stamped with the sender's
+ * cred nonce.  Works inside cap_enter().  Returns 0 on success, or -1
+ * with errno (ENOSYS when the kernel lacks the syscall — fail soft).
+ */
+int	mac_capability_channel_create(int fds[2]);
+
 int	channel_request_cancel(struct channel_request *);
 int	channel_request_status(const struct channel_request *);
 void	channel_request_release(struct channel_request *);

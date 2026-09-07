@@ -5,7 +5,7 @@ LIB=	channel
 SHLIB_MAJOR=	1
 MAN=	libchannel.3
 INCS=	channel.h
-SRCS=	channel.c
+SRCS=	channel.c channel_syscall.c
 
 HAS_TESTS=
 SUBDIR.${MK_TESTS}+=	tests
