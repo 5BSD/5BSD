@@ -101,7 +101,7 @@ SYSCTL_NODE(_kern, OID_AUTO, mac_capability_system,
     CTLFLAG_RW | CTLFLAG_MPSAFE, 0, "mac_capability system gates");
 SYSCTL_UINT(_kern_mac_capability_system, OID_AUTO, max_auth, CTLFLAG_RW,
     &sys_max_auth, 0,
-    "Maximum authorization entries per nonce (0 = unlimited)");
+    "Maximum total authorization entries across all nonces (0 = unlimited)");
 SYSCTL_UINT(_kern_mac_capability_system, OID_AUTO, auth_count, CTLFLAG_RD,
     __DEVOLATILE(u_int *, &sys_auth_count), 0,
     "Current number of authorization entries");
@@ -286,21 +286,27 @@ sys_mac_system_check_sysctl(struct ucred *cred,
 	if (req == NULL || req->newptr == NULL)
 		return (0);
 	/*
-	 * setproctitle(3) sets a process's own ps(1) title by WRITING
-	 * kern.proc.args (KERN_PROC_ARGS).  The kernel handler for that node
-	 * (sysctl_kern_proc_args) already restricts a write to the calling
-	 * process itself (PGET_ISCURRENT), so titling is self-contained: it
-	 * cannot touch another process or any real kernel tunable.  Exempt it
-	 * from the sysctl gate so a born-in-capability-mode daemon shows its own
-	 * name in ps rather than the "ld-elf.so.1 -f <fd> ..." loader argv.
-	 * Every other sysctl write stays gated exactly as before.
+	 * The SYSCTL gate scopes PRIVILEGED, security-relevant writes.  An OID
+	 * flagged CTLFLAG_ANYBODY is writable by any user by the kernel's own
+	 * policy and is never a privileged tunable, so it is not gate-worthy:
+	 *
+	 *  - the CTL_SYSCTL magic resolution nodes (NAME2OID/NAME/NEXT/OIDFMT/
+	 *    OIDDESCR/OIDLABEL) are CTLFLAG_ANYBODY and pass their query input via
+	 *    the "new" buffer, so sysctlbyname(3)/sysctlnametomib(3) name lookups
+	 *    look like writes but change no state -- gating them would break
+	 *    sysctl name resolution for every foreign nonce whenever the SYSCTL
+	 *    gate is claimed;
+	 *  - kern.proc.args (setproctitle(3)) is CTLFLAG_ANYBODY and self-scoped
+	 *    by its handler (PGET_ISCURRENT), so a born-in-capability-mode daemon
+	 *    can still set its own ps(1) title.
+	 *
+	 * Every other (non-ANYBODY) write is already restricted by the kernel to
+	 * PRIV_SYSCTL_WRITE holders; those privileged writes are exactly what the
+	 * gate scopes, and they stay gated.  (Finer, config-driven per-OID
+	 * isolation of specific sysctls is a separate, planned refinement.)
 	 */
-	if (oidp != NULL && oidp->oid_number == KERN_PROC_ARGS) {
-		struct sysctl_oid *parent = SYSCTL_PARENT(oidp);
-
-		if (parent != NULL && parent->oid_number == KERN_PROC)
-			return (0);	/* kern.proc.args: setproctitle self-write */
-	}
+	if (oidp != NULL && (oidp->oid_kind & CTLFLAG_ANYBODY) != 0)
+		return (0);
 	return (sys_check_gate(cred, SYS_GATE_SYSCTL, "sysctl"));
 }
 
@@ -563,22 +569,31 @@ sys_call(struct mac_capability_instance *s,
 				priv->sp_active = true;
 				mtx_unlock(&sys_lock);
 				free(sa, M_MAC_CAPABILITY_SYS);
+				SDT_PROBE6(mac_capability_system, , , state,
+				    (uintptr_t)"authorize-dedup", priv->sp_owner,
+				    caller_nonce, priv->sp_gates,
+				    curthread->td_proc->p_pid, 0);
 				return (0);
 			}
 		}
-		/* Limit check: count entries for this accessor nonce. */
-		if (sys_max_auth != 0) {
-			u_int count = 0;
-
-			LIST_FOREACH(existing, &sys_auths, sa_link) {
-				if (existing->sa_accessor == caller_nonce)
-					count++;
-			}
-			if (count >= sys_max_auth) {
-				mtx_unlock(&sys_lock);
-				free(sa, M_MAC_CAPABILITY_SYS);
-				return (ENOSPC);
-			}
+		/*
+		 * Global limit: bound the TOTAL number of authorization entries,
+		 * not merely this accessor's.  A per-accessor cap is defeated by an
+		 * attacker that fork+execs to rotate its nonce cheaply and authorizes
+		 * under many distinct nonces, growing sys_auths (and the per-gate
+		 * scan in sys_check_gate) without bound.  The global cap bounds both
+		 * kernel memory and that scan.  O(1) via the sys_auth_count maintained
+		 * under sys_lock at every insert/remove (0 = unlimited).
+		 */
+		if (sys_max_auth != 0 &&
+		    atomic_load_int(&sys_auth_count) >= sys_max_auth) {
+			mtx_unlock(&sys_lock);
+			free(sa, M_MAC_CAPABILITY_SYS);
+			SDT_PROBE6(mac_capability_system, , , state,
+			    (uintptr_t)"authorize-nospc", priv->sp_owner,
+			    caller_nonce, priv->sp_gates,
+			    curthread->td_proc->p_pid, ENOSPC);
+			return (ENOSPC);
 		}
 
 		sa->sa_accessor = caller_nonce;
