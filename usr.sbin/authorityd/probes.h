@@ -103,6 +103,8 @@
 	DTRACE_PROBE2(authorityd, ipc__reply, op, status)
 #define	AUTHORITYD_PROBE_IPC_DISPATCH_DONE(op, status, duration_ns)	\
 	DTRACE_PROBE3(authorityd, ipc__dispatch__done, op, status, duration_ns)
+#define	AUTHORITYD_PROBE_IPC_NONCE_MISMATCH(got, expected)	\
+	DTRACE_PROBE2(authorityd, ipc__nonce__mismatch, got, expected)
 
 /* Bootstrap — serviced lifecycle */
 #define	AUTHORITYD_PROBE_BOOTSTRAP_START(pid)	\
@@ -115,6 +117,47 @@
 /* Connection tracking */
 #define	AUTHORITYD_PROBE_CONN_COUNT(nconns)	\
 	DTRACE_PROBE1(authorityd, conn__count, nconns)
+
+/*
+ * Capsule — PID 1 boot/handoff/shutdown.  Only meaningful when authorityd
+ * runs as PID 1 (capsule.c); no-ops without DTrace exactly like the probes
+ * above, since DTRACE_PROBE* expand to nothing when the .d provider is not
+ * compiled in (MK_DTRACE=no).
+ */
+#define	AUTHORITYD_PROBE_CAPSULE_HANDOFF(kenv_value)	\
+	DTRACE_PROBE1(authorityd, capsule__handoff, kenv_value)
+#define	AUTHORITYD_PROBE_CAPSULE_TRANSITION(state)	\
+	DTRACE_PROBE1(authorityd, capsule__transition, state)
+#define	AUTHORITYD_PROBE_CAPSULE_REAPER_STATUS(flags, ok)	\
+	DTRACE_PROBE2(authorityd, capsule__reaper__status, flags, ok)
+#define	AUTHORITYD_PROBE_CAPSULE_MAC_UP()	\
+	DTRACE_PROBE(authorityd, capsule__mac__up)
+#define	AUTHORITYD_PROBE_CAPSULE_MAC_FAIL()	\
+	DTRACE_PROBE(authorityd, capsule__mac__fail)
+#define	AUTHORITYD_PROBE_CAPSULE_SHIELD_RAISE()	\
+	DTRACE_PROBE(authorityd, capsule__shield__raise)
+#define	AUTHORITYD_PROBE_CAPSULE_SHIELD_FAIL()	\
+	DTRACE_PROBE(authorityd, capsule__shield__fail)
+#define	AUTHORITYD_PROBE_CAPSULE_ENGINE_UP(serviced_pid)	\
+	DTRACE_PROBE1(authorityd, capsule__engine__up, serviced_pid)
+#define	AUTHORITYD_PROBE_CAPSULE_CONVERGE()	\
+	DTRACE_PROBE(authorityd, capsule__converge)
+#define	AUTHORITYD_PROBE_CAPSULE_CONVERGE_FAIL()	\
+	DTRACE_PROBE(authorityd, capsule__converge__fail)
+#define	AUTHORITYD_PROBE_CAPSULE_AMBIENT_INSTALL(fd, replaced)	\
+	DTRACE_PROBE2(authorityd, capsule__ambient__install, fd, replaced)
+#define	AUTHORITYD_PROBE_CAPSULE_AMBIENT_FAIL(error)	\
+	DTRACE_PROBE1(authorityd, capsule__ambient__fail, error)
+#define	AUTHORITYD_PROBE_CAPSULE_AMBIENT_CARRY(fd)	\
+	DTRACE_PROBE1(authorityd, capsule__ambient__carry, fd)
+#define	AUTHORITYD_PROBE_CAPSULE_LIFECYCLE(op, howto, reboot, trans)	\
+	DTRACE_PROBE4(authorityd, capsule__lifecycle, op, howto, reboot, trans)
+#define	AUTHORITYD_PROBE_CAPSULE_WORLD_STOP()	\
+	DTRACE_PROBE(authorityd, capsule__world__stop)
+#define	AUTHORITYD_PROBE_CAPSULE_WORLD_KILL()	\
+	DTRACE_PROBE(authorityd, capsule__world__kill)
+#define	AUTHORITYD_PROBE_CAPSULE_WORLD_STOPPED()	\
+	DTRACE_PROBE(authorityd, capsule__world__stopped)
 
 /* Errors */
 #define	AUTHORITYD_PROBE_ERROR(subsys, msg)	\

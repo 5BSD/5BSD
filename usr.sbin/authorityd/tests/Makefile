@@ -49,4 +49,17 @@ CFLAGS.req_validate_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.req_validate_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.req_validate_test+=	-I${SRCTOP}/usr.sbin/authorityd
 
+# Capsule PID-1 unit tests exercise the pure decision/hygiene helpers factored
+# out of capsule.c (capsule_ambient.h, capsule_lifecycle.h, capsule_plane.h) —
+# header-only, no PID-1 state machine or daemon objects linked.
+ATF_TESTS_C+=	capsule_ambient_test
+CFLAGS.capsule_ambient_test+=	-I${SRCTOP}/usr.sbin/authorityd
+
+ATF_TESTS_C+=	capsule_lifecycle_test
+CFLAGS.capsule_lifecycle_test+=	-I${SRCTOP}/usr.sbin/authorityd
+CFLAGS.capsule_lifecycle_test+=	-I${SRCTOP}/lib/libauthorityrt
+
+ATF_TESTS_C+=	capsule_plane_test
+CFLAGS.capsule_plane_test+=	-I${SRCTOP}/usr.sbin/authorityd
+
 .include <bsd.test.mk>

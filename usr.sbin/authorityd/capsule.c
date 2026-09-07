@@ -101,7 +101,11 @@
 #include "authorityd.h"
 #include "authorityd_ctl.h"
 #include "capsule.h"
+#include "capsule_ambient.h"	/* capsule_ambient_pin (§21 fd hygiene) */
+#include "capsule_lifecycle.h"	/* capsule_lifecycle_decide/_permits */
+#include "capsule_plane.h"	/* capsule_plane_disabled */
 #include "mac_capability_priv.h"
+#include "probes.h"		/* AUTHORITYD_PROBE_CAPSULE_* USDT probes */
 #include "service_bootstrap.h"	/* SERVICE_LOOKUP_FIXED_FD (§21 getty carry) */
 
 #define	_PATH_INITLOG		"/var/log/init.log"
@@ -167,6 +171,7 @@ static bool devfs = false;
 static char *init_path_argv0;
 
 static void transition(state_t) __dead2;
+static const char *get_current_state(void);
 static state_t requested_transition;
 static state_t current_state = death_single;
 
@@ -313,12 +318,11 @@ capsule_main(int argc, char *argv[])
 	 * boot can still drop to single user.
 	 */
 	if (kenv(KENV_GET, "capability_plane", kenv_value, sizeof(kenv_value)) >
-	    0 && (strcasecmp(kenv_value, "NO") == 0 ||
-	    strcasecmp(kenv_value, "off") == 0 ||
-	    strcmp(kenv_value, "0") == 0)) {
+	    0 && capsule_plane_disabled(kenv_value)) {
 		char *stock_argv[3];
 		int n = 0;
 
+		AUTHORITYD_PROBE_CAPSULE_HANDOFF(kenv_value);
 		warning("capability_plane=%s: handing PID 1 to /sbin/init "
 		    "(plane-free boot)", kenv_value);
 		stock_argv[n++] = __DECONST(char *, "/sbin/init");
@@ -607,8 +611,10 @@ transition(state_t s)
 {
 
 	current_state = s;
-	for (;;)
+	for (;;) {
+		AUTHORITYD_PROBE_CAPSULE_TRANSITION(get_current_state());
 		current_state = (state_t) (*current_state)();
+	}
 }
 
 /*
@@ -1104,10 +1110,12 @@ capsule_await_convergence(void)
 	BOOTTRACE("awaiting serviced convergence");
 	for (;;) {
 		if (authority_proto_is_ready()) {
+			AUTHORITYD_PROBE_CAPSULE_CONVERGE();
 			BOOTTRACE("serviced converged");
 			return (0);
 		}
 		if (bootstrap_has_given_up()) {
+			AUTHORITYD_PROBE_CAPSULE_CONVERGE_FAIL();
 			warning("serviced permanently failed before convergence");
 			return (-1);
 		}
@@ -1159,8 +1167,13 @@ capsule_assert_signal_shield(void)
 	 * whole boot window; gating on capsule_engine_up short-circuited that early
 	 * raise and left CP_SF_SIGNAL down until convergence.  Idempotent.
 	 */
-	if (capsule_mac_up && apply_signal_shield() == -1)
-		warning("signal shield not raised; signal ABI stays open");
+	if (capsule_mac_up) {
+		if (apply_signal_shield() == -1) {
+			AUTHORITYD_PROBE_CAPSULE_SHIELD_FAIL();
+			warning("signal shield not raised; signal ABI stays open");
+		} else
+			AUTHORITYD_PROBE_CAPSULE_SHIELD_RAISE();
+	}
 }
 
 static void
@@ -1196,19 +1209,27 @@ capsule_engine_start(void)
 
 			memset(&rs, 0, sizeof(rs));
 			if (procctl(P_PID, getpid(), PROC_REAP_STATUS,
-			    &rs) == -1)
+			    &rs) == -1) {
+				AUTHORITYD_PROBE_CAPSULE_REAPER_STATUS(0, 0);
 				warning("PROC_REAP_STATUS: %m");
-			else if ((rs.rs_flags & REAPER_STATUS_OWNED) == 0 ||
-			    (rs.rs_flags & REAPER_STATUS_REALINIT) == 0)
+			} else if ((rs.rs_flags & REAPER_STATUS_OWNED) == 0 ||
+			    (rs.rs_flags & REAPER_STATUS_REALINIT) == 0) {
+				AUTHORITYD_PROBE_CAPSULE_REAPER_STATUS(
+				    rs.rs_flags, 0);
 				warning("PID 1 lacks real-init reaper "
 				    "status (flags %#x)", rs.rs_flags);
+			} else
+				AUTHORITYD_PROBE_CAPSULE_REAPER_STATUS(
+				    rs.rs_flags, 1);
 		}
 
 		if (mac_capability_setup() == -1) {
+			AUTHORITYD_PROBE_CAPSULE_MAC_FAIL();
 			emergency("mac_capability unavailable; "
 			    "capability world disabled");
 			return;
 		}
+		AUTHORITYD_PROBE_CAPSULE_MAC_UP();
 		capsule_mac_up = true;
 	}
 
@@ -1223,6 +1244,7 @@ capsule_engine_start(void)
 
 	od.running = true;
 	capsule_engine_up = true;
+	AUTHORITYD_PROBE_CAPSULE_ENGINE_UP(bootstrap_pid());
 	syslog(LOG_INFO, "authority engine started; serviced pid %jd",
 	    (intmax_t)bootstrap_pid());
 	BOOTTRACE("authority engine started");
@@ -1238,63 +1260,59 @@ capsule_engine_start(void)
 static void
 capsule_lifecycle_apply(int op)
 {
-	bool to_death;
+	struct capsule_lc_action a;
+	bool to_death, catatonia_ok;
 
 	/* States from which a shutdown request runs the full death
 	 * path (rc.shutdown etc.); otherwise the minimal one.  Matches
 	 * transition_handler(). */
 	to_death = (current_state == read_ttys || current_state == multi_user ||
 	    current_state == clean_ttys || current_state == catatonia);
+	catatonia_ok = (current_state == runcom || current_state == read_ttys ||
+	    current_state == clean_ttys || current_state == multi_user ||
+	    current_state == catatonia);
+
+	a = capsule_lifecycle_decide(op, to_death, catatonia_ok);
+	if (!a.valid) {
+		warning("unknown lifecycle op %d", op);
+		return;
+	}
 
 	/*
 	 * Assign howto/Reboot outright (never |=): unlike the signal
 	 * handler, which fires once and tears down immediately, a control
 	 * request could arrive after a prior one, and OR-accumulated
 	 * flags from an un-torn-down earlier request would corrupt the
-	 * reboot mode.
+	 * reboot mode.  The decision table sets set_howto/set_reboot so an
+	 * op leaves fields it does not own untouched (e.g. SINGLE clears
+	 * Reboot but keeps howto).
 	 */
-	switch (op) {
-	case CTL_OP_POWEROFF:
-		howto = RB_HALT | RB_POWEROFF;
-		Reboot = true;
-		requested_transition = to_death ? death : death_single;
+	if (a.set_howto)
+		howto = a.howto;
+	if (a.set_reboot)
+		Reboot = a.reboot;
+	switch (a.trans) {
+	case CAPSULE_LC_DEATH:
+		requested_transition = death;
 		break;
-	case CTL_OP_HALT:
-		howto = RB_HALT;
-		Reboot = true;
-		requested_transition = to_death ? death : death_single;
+	case CAPSULE_LC_DEATH_SINGLE:
+		requested_transition = death_single;
 		break;
-	case CTL_OP_POWERCYCLE:
-		howto = RB_POWERCYCLE;
-		Reboot = true;
-		requested_transition = to_death ? death : death_single;
-		break;
-	case CTL_OP_REBOOT:
-		howto = RB_AUTOBOOT;
-		Reboot = true;
-		requested_transition = to_death ? death : death_single;
-		break;
-	case CTL_OP_SINGLE:
-		Reboot = false;
-		requested_transition = to_death ? death : death_single;
-		break;
-	case CTL_OP_REROOT:
+	case CAPSULE_LC_REROOT:
 		requested_transition = reroot;
 		break;
-	case CTL_OP_RESCAN:
-		if (to_death)
-			requested_transition = clean_ttys;
+	case CAPSULE_LC_CLEAN_TTYS:
+		requested_transition = clean_ttys;
 		break;
-	case CTL_OP_CATATONIA:
-		if (current_state == runcom || current_state == read_ttys ||
-		    current_state == clean_ttys ||
-		    current_state == multi_user || current_state == catatonia)
-			requested_transition = catatonia;
+	case CAPSULE_LC_CATATONIA:
+		requested_transition = catatonia;
 		break;
-	default:
-		warning("unknown lifecycle op %d", op);
+	case CAPSULE_LC_NONE:
 		break;
 	}
+
+	AUTHORITYD_PROBE_CAPSULE_LIFECYCLE(op, howto, (int)Reboot,
+	    (int)a.trans);
 }
 
 /*
@@ -1311,7 +1329,7 @@ int
 capsule_lifecycle(int op)
 {
 
-	if (getpid() != 1)
+	if (!capsule_lifecycle_permits(getpid()))
 		return (EPERM);
 	capsule_lifecycle_apply(op);
 	return (0);
@@ -1384,6 +1402,7 @@ capsule_world_stop(void)
 	if (capsule_kq < 0)
 		return;
 
+	AUTHORITYD_PROBE_CAPSULE_WORLD_STOP();
 	BOOTTRACE("stopping capability world");
 	od.shutting_down = true;
 	bootstrap_stop();
@@ -1410,6 +1429,7 @@ capsule_world_stop(void)
 	}
 
 	if (!bootstrap_is_stopped()) {
+		AUTHORITYD_PROBE_CAPSULE_WORLD_KILL();
 		warning("serviced did not stop in %d seconds; killing",
 		    WORLD_WATCH);
 		bootstrap_signal(SIGKILL);
@@ -1430,6 +1450,7 @@ capsule_world_stop(void)
 	}
 
 	capsule_engine_up = false;
+	AUTHORITYD_PROBE_CAPSULE_WORLD_STOPPED();
 	BOOTTRACE("capability world stopped");
 }
 
@@ -1855,28 +1876,17 @@ start_window_system(session_t *sp)
 int
 capsule_set_ambient_lookup(int fd)
 {
-
+	bool replaced = (capsule_ambient_lookup_fd >= 0);
 	int saved;
 
-	if (fd < 0) {
-		errno = EBADF;
-		return (-1);
-	}
-	if (cap_clofork_limit(fd, CAP_CLOFORK_UNLOCKED) == -1) {
+	if (capsule_ambient_pin(&capsule_ambient_lookup_fd, fd) == -1) {
 		saved = errno;
-		(void)close(fd);
+		AUTHORITYD_PROBE_CAPSULE_AMBIENT_FAIL(saved);
 		errno = saved;
 		return (-1);
 	}
-	if (fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
-		saved = errno;
-		(void)close(fd);
-		errno = saved;
-		return (-1);
-	}
-	if (capsule_ambient_lookup_fd >= 0)
-		(void)close(capsule_ambient_lookup_fd);
-	capsule_ambient_lookup_fd = fd;
+	AUTHORITYD_PROBE_CAPSULE_AMBIENT_INSTALL(capsule_ambient_lookup_fd,
+	    (int)replaced);
 	return (0);
 }
 
@@ -1941,12 +1951,15 @@ start_getty(session_t *sp)
 	 * logging.  Best-effort -- a dup2/fcntl failure must never stop getty,
 	 * so we ignore errors and fall through to execve regardless.
 	 */
-	if (capsule_ambient_lookup_fd >= 0 &&
-	    capsule_ambient_lookup_fd != SERVICE_LOOKUP_FIXED_FD) {
-		if (dup2(capsule_ambient_lookup_fd, SERVICE_LOOKUP_FIXED_FD) != -1)
+	if (capsule_ambient_lookup_fd >= 0) {
+		AUTHORITYD_PROBE_CAPSULE_AMBIENT_CARRY(capsule_ambient_lookup_fd);
+		if (capsule_ambient_lookup_fd != SERVICE_LOOKUP_FIXED_FD) {
+			if (dup2(capsule_ambient_lookup_fd,
+			    SERVICE_LOOKUP_FIXED_FD) != -1)
+				(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
+		} else
 			(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
-	} else if (capsule_ambient_lookup_fd == SERVICE_LOOKUP_FIXED_FD)
-		(void)fcntl(SERVICE_LOOKUP_FIXED_FD, F_SETFD, 0);
+	}
 	execve(sp->se_getty_argv[0], sp->se_getty_argv, env);
 	stall("can't exec getty '%s' for port %s: %m",
 		sp->se_getty_argv[0], sp->se_device);

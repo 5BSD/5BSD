@@ -54,6 +54,7 @@ provider authorityd {
 	probe ipc__recv(uint32_t op);
 	probe ipc__reply(uint32_t op, int status);
 	probe ipc__dispatch__done(uint32_t op, int status, uint64_t duration_ns);
+	probe ipc__nonce__mismatch(uint64_t got, uint64_t expected);
 
 	/* Bootstrap — serviced lifecycle from authorityd's perspective */
 	probe bootstrap__start(pid_t pid);
@@ -62,6 +63,30 @@ provider authorityd {
 
 	/* Connection tracking */
 	probe conn__count(unsigned int nconns);
+
+	/*
+	 * Capsule — PID 1 boot/handoff/shutdown.  These fire only when
+	 * authorityd runs as PID 1 (the Capsule personality, capsule.c);
+	 * the daemon-mode probes above never fire in that context, so this
+	 * is the sole observability surface for a live plane's init path.
+	 */
+	probe capsule__handoff(const char *kenv_value);		/* CAPLANE_OFF -> /sbin/init */
+	probe capsule__transition(const char *state);		/* state-machine entry */
+	probe capsule__reaper__status(uint32_t flags, int ok);	/* real-init reaper verify */
+	probe capsule__mac__up();				/* mac_capability_setup ok */
+	probe capsule__mac__fail();				/* mac_capability_setup failed */
+	probe capsule__shield__raise();				/* signal shield raised */
+	probe capsule__shield__fail();				/* signal shield not raised */
+	probe capsule__engine__up(pid_t serviced_pid);		/* engine up, serviced live */
+	probe capsule__converge();				/* serviced converged */
+	probe capsule__converge__fail();			/* serviced permanently failed */
+	probe capsule__ambient__install(int fd, int replaced);	/* §21 lookup channel pinned */
+	probe capsule__ambient__fail(int error);		/* §21 pin rejected/failed */
+	probe capsule__ambient__carry(int fd);			/* per-getty dup2 carry */
+	probe capsule__lifecycle(int op, int howto, int reboot, int trans);
+	probe capsule__world__stop();				/* graceful serviced stop begin */
+	probe capsule__world__kill();				/* SIGKILL escalation */
+	probe capsule__world__stopped();			/* capability world down */
 
 	/* Errors */
 	probe error(const char *subsys, const char *msg);

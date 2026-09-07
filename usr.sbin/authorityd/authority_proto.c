@@ -422,6 +422,8 @@ proto_dispatch_one(void)
 		    "authority_proto: nonce mismatch (got 0x%jx, expected 0x%jx)",
 		    (uintmax_t)ra.trailer.nonce,
 		    (uintmax_t)serviced_nonce);
+		AUTHORITYD_PROBE_IPC_NONCE_MISMATCH(ra.trailer.nonce,
+		    serviced_nonce);
 		proto_reply(EACCES, ra.reply_token, NULL, 0);
 		if (recv_fd >= 0)
 			(void)close(recv_fd);
