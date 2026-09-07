@@ -1,0 +1,30 @@
+shmringbench
+============
+
+This developer benchmark measures libshmring's sustained SPSC record and
+stream throughput, then measures an idle record cycle using the same Unix
+datagram signaling pattern as liblogcmp. It reports signal syscall and complete
+idle-cycle p50/p95/p99 latency. Results are informational: qualification gates
+should compare repeated runs on pinned, otherwise-idle target hardware rather
+than impose a machine-independent pass/fail threshold.
+
+Build and run from the source tree:
+
+    make -C /usr/src/lib/libshmring/tests shmringbench
+    /usr/obj/usr/src/$(uname -p).$(uname -p)/lib/libshmring/tests/shmringbench
+
+Optional arguments select the record count and payload size:
+
+    shmringbench 5000000 256
+
+For live workloads, run these in separate terminals and stop with Ctrl-C:
+
+    doas bsdinstruments watch shmring-traffic
+    doas bsdinstruments watch component-ipc
+    doas bsdinstruments watch logd-performance
+
+The profiles summarize operation and byte counts, backpressure/errors,
+consumer-arm races, notification coalescing, channel depth, log batching,
+persistence, drops, and flush latency. Enabling high-frequency DTrace probes
+has measurable observer cost, so use shmringbench without tracing for baseline
+numbers and trace a separate run for attribution.

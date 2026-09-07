@@ -36,11 +36,24 @@ struct shmring_config {
 	uint64_t	high_watermark;
 };
 
+/*
+ * The consumer alone writes this object.  The producer receives only mmap
+ * read rights, preserving ownership of the consumer cursor and wake epoch.
+ */
+struct shmring_tail_state {
+	_Atomic uint64_t position;
+	_Atomic uint64_t wake_epoch;
+};
+
+_Static_assert(__atomic_always_lock_free(sizeof(uint64_t), NULL),
+    "libshmring requires lock-free 64-bit atomics");
+
 struct shmring {
 	const struct shmring_config *config;
 	uint8_t		*data;
 	_Atomic uint64_t *head;
-	_Atomic uint64_t *tail;
+	struct shmring_tail_state *tail;
+	uint64_t	observed_wake_epoch;
 	size_t		config_len;
 	size_t		capacity;
 	uint32_t	role;
@@ -67,6 +80,58 @@ is_power_of_two(size_t value)
 {
 
 	return (value != 0 && (value & (value - 1)) == 0);
+}
+
+static int	ring_usage(const struct shmring *ring, uint64_t *usedp);
+
+int
+shmring_consumer_arm(struct shmring *ring)
+{
+	uint64_t epoch, used;
+
+	if (!ring_is_current(ring))
+		return (-1);
+	if (ring->role != SHMRING_ROLE_CONSUMER) {
+		errno = EINVAL;
+		return (-1);
+	}
+	epoch = atomic_load_explicit(&ring->tail->wake_epoch,
+	    memory_order_relaxed);
+	if (epoch == UINT64_MAX) {
+		errno = EOVERFLOW;
+		return (-1);
+	}
+	/* Publish the new sleep generation before checking for raced data. */
+	atomic_store_explicit(&ring->tail->wake_epoch, epoch + 1,
+	    memory_order_release);
+	atomic_thread_fence(memory_order_seq_cst);
+	if (ring_usage(ring, &used) == -1)
+		return (-1);
+	SHMRING_PROBE_CONSUMER_ARM(epoch + 1, used != 0, 0);
+	return (used != 0);
+}
+
+int
+shmring_producer_wakeup_needed(struct shmring *ring)
+{
+	uint64_t epoch;
+
+	if (!ring_is_current(ring))
+		return (-1);
+	if (ring->role != SHMRING_ROLE_PRODUCER) {
+		errno = EINVAL;
+		return (-1);
+	}
+	atomic_thread_fence(memory_order_seq_cst);
+	epoch = atomic_load_explicit(&ring->tail->wake_epoch,
+	    memory_order_acquire);
+	if (epoch == ring->observed_wake_epoch) {
+		SHMRING_PROBE_PRODUCER_WAKEUP(epoch, 0, 0);
+		return (0);
+	}
+	ring->observed_wake_epoch = epoch;
+	SHMRING_PROBE_PRODUCER_WAKEUP(epoch, 1, 0);
+	return (1);
 }
 
 static void
@@ -221,7 +286,8 @@ shmring_create_with_options(const struct shmring_options *options,
 	originals[0] = create_object("shmring-config", sizeof(config));
 	originals[1] = create_object("shmring-data", capacity);
 	originals[2] = create_object("shmring-head", sizeof(uint64_t));
-	originals[3] = create_object("shmring-tail", sizeof(uint64_t));
+	originals[3] = create_object("shmring-tail",
+	    sizeof(struct shmring_tail_state));
 	for (i = 0; i < SHMRING_NFDS; i++) {
 		if (originals[i] == -1)
 			goto fail;
@@ -435,7 +501,8 @@ shmring_open(struct shmring **ringp, const struct shmring_fds *fds,
 	ring->capacity = (size_t)ring->config->capacity;
 	if (object_has_size(fds->data_fd, ring->capacity) == -1 ||
 	    object_has_size(fds->head_fd, sizeof(uint64_t)) == -1 ||
-	    object_has_size(fds->tail_fd, sizeof(uint64_t)) == -1 ||
+	    object_has_size(fds->tail_fd,
+	    sizeof(struct shmring_tail_state)) == -1 ||
 	    object_has_seals(fds->data_fd, F_SEAL_GROW | F_SEAL_SHRINK |
 	    F_SEAL_SEAL) == -1 ||
 	    object_has_seals(fds->head_fd, F_SEAL_GROW | F_SEAL_SHRINK |
@@ -586,7 +653,7 @@ ring_usage(const struct shmring *ring, uint64_t *usedp)
 	uint64_t head, tail;
 
 	head = atomic_load_explicit(ring->head, memory_order_acquire);
-	tail = atomic_load_explicit(ring->tail, memory_order_acquire);
+	tail = atomic_load_explicit(&ring->tail->position, memory_order_acquire);
 	if (head < tail || head - tail > ring->capacity) {
 		errno = EPROTO;
 		SHMRING_PROBE_CORRUPT(head, tail, ring->capacity);
@@ -654,7 +721,7 @@ shmring_write(struct shmring *ring, const void *buf, size_t len)
 		return (-1);
 	}
 	head = atomic_load_explicit(ring->head, memory_order_relaxed);
-	tail = atomic_load_explicit(ring->tail, memory_order_acquire);
+	tail = atomic_load_explicit(&ring->tail->position, memory_order_acquire);
 	if (head < tail || head - tail > ring->capacity) {
 		errno = EPROTO;
 		SHMRING_PROBE_CORRUPT(head, tail, ring->capacity);
@@ -693,7 +760,7 @@ shmring_read(struct shmring *ring, void *buf, size_t len)
 		return (-1);
 	}
 	head = atomic_load_explicit(ring->head, memory_order_acquire);
-	tail = atomic_load_explicit(ring->tail, memory_order_relaxed);
+	tail = atomic_load_explicit(&ring->tail->position, memory_order_relaxed);
 	if (head < tail || head - tail > ring->capacity) {
 		errno = EPROTO;
 		SHMRING_PROBE_CORRUPT(head, tail, ring->capacity);
@@ -712,7 +779,8 @@ shmring_read(struct shmring *ring, void *buf, size_t len)
 		return (-1);
 	}
 	ring_copy_out(ring, tail, buf, count);
-	atomic_store_explicit(ring->tail, tail + count, memory_order_release);
+	atomic_store_explicit(&ring->tail->position, tail + count,
+	    memory_order_release);
 	SHMRING_PROBE_READ(SHMRING_MODE_STREAM, len, count, 0);
 	return ((ssize_t)count);
 }
@@ -732,7 +800,7 @@ shmring_write_record(struct shmring *ring, const void *buf, size_t len)
 		return (-1);
 	}
 	head = atomic_load_explicit(ring->head, memory_order_relaxed);
-	tail = atomic_load_explicit(ring->tail, memory_order_acquire);
+	tail = atomic_load_explicit(&ring->tail->position, memory_order_acquire);
 	if (head < tail || head - tail > ring->capacity) {
 		errno = EPROTO;
 		SHMRING_PROBE_CORRUPT(head, tail, ring->capacity);
@@ -772,7 +840,7 @@ shmring_read_record(struct shmring *ring, void *buf, size_t bufsz)
 		return (-1);
 	}
 	head = atomic_load_explicit(ring->head, memory_order_acquire);
-	tail = atomic_load_explicit(ring->tail, memory_order_relaxed);
+	tail = atomic_load_explicit(&ring->tail->position, memory_order_relaxed);
 	if (head < tail || head - tail > ring->capacity) {
 		errno = EPROTO;
 		SHMRING_PROBE_CORRUPT(head, tail, ring->capacity);
@@ -805,7 +873,8 @@ shmring_read_record(struct shmring *ring, void *buf, size_t bufsz)
 		return (-1);
 	}
 	ring_copy_out(ring, tail + sizeof(record_len), buf, record_len);
-	atomic_store_explicit(ring->tail, tail + needed, memory_order_release);
+	atomic_store_explicit(&ring->tail->position, tail + needed,
+	    memory_order_release);
 	SHMRING_PROBE_READ(SHMRING_MODE_RECORD, bufsz, record_len, 0);
 	return ((ssize_t)record_len);
 }

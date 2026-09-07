@@ -1,6 +1,6 @@
 .\" SPDX-License-Identifier: BSD-2-Clause
 .\" Copyright (c) 2026 Kory Heard
-.Dd July 31, 2026
+.Dd September 7, 2026
 .Dt LIBSHMRING 3
 .Os
 .Sh NAME
@@ -12,7 +12,9 @@
 .Nm shmring_write_record ,
 .Nm shmring_read_record ,
 .Nm shmring_readable ,
-.Nm shmring_writable
+.Nm shmring_writable ,
+.Nm shmring_consumer_arm ,
+.Nm shmring_producer_wakeup_needed
 .Nd capability-safe shared-memory transport rings
 .Sh LIBRARY
 .Li libshmring
@@ -76,10 +78,26 @@ Optional low and high watermarks are immutable policy hints carried with the
 ring and must be ordered within its capacity.
 They do not themselves perform notification or flow control.
 .Pp
-The library does not provide wakeups.
-Users should send edge notifications over a kqueueable
-.Xr libservice 3
-channel after publishing data or freeing space.
+The library does not create or own a kernel wakeup object.
+For lost-wakeup-free edge notification, a consumer calls
+.Fn shmring_consumer_arm
+immediately before blocking on an out-of-band, kqueueable descriptor.
+A return value of one means data raced with the arm and the consumer must keep
+draining; zero means it may block.
+After successfully publishing data, the producer calls
+.Fn shmring_producer_wakeup_needed
+and signals the descriptor only when that function returns one.
+This coalesces a burst to at most one signal per consumer sleep generation.
+Both functions return -1 on error.
+.Pp
+The SPSC data path uses compile-time-guaranteed lock-free 64-bit atomics and
+bounded copies.
+After setup it takes no internal locks, allocates no memory, and performs no
+blocking I/O.
+A full or empty ring returns
+.Er EAGAIN ;
+progress and scheduling remain the responsibility of the two endpoints, so
+lock-free does not mean wait-free.
 .Pp
 .Fn shmring_readable
 and
@@ -94,7 +112,7 @@ failure.
 The
 .Ql shmring
 DTrace provider exposes creation and mapping with shape and mode, plus read,
-write, close, and invariant-violation probes.
+write, consumer-arm, producer-wakeup, close, and invariant-violation probes.
 .Sh SEE ALSO
 .Xr cap_enter 2 ,
 .Xr fork 2 ,

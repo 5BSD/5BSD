@@ -13,7 +13,7 @@ require_srctree()
 atf_test_case manifest cleanup
 manifest_head()
 {
-	atf_set "descr" "Ledger is a verified system .cap bundle"
+	atf_set "descr" "logd is a verified system .cap bundle"
 }
 manifest_body()
 {
@@ -51,20 +51,20 @@ manifest_cleanup()
 atf_test_case security_contract
 security_contract_head()
 {
-	atf_set "descr" "Ledger is sandboxed, audited, traced, and sink-limited"
+	atf_set "descr" "logd is sandboxed, audited, traced, and sink-limited"
 }
 
 atf_test_case observability_contract
 observability_contract_head()
 {
-	atf_set "descr" "Ledger exposes lifecycle, batching, wake, flush, and loss probes"
+	atf_set "descr" "logd exposes lifecycle, batching, wake, flush, and loss probes"
 }
 
 atf_test_case bounded_pool_contract
 bounded_pool_contract_head()
 {
 	atf_set "descr" \
-	    "Ledger uses fixed configurable shards and no per-client worker fork"
+	    "logd uses fixed configurable shards and no per-client worker fork"
 }
 bounded_pool_contract_body()
 {
@@ -72,7 +72,7 @@ bounded_pool_contract_body()
 	source="@SRCTOP@/usr.sbin/logd/logcmp.c"
 	config="@SRCTOP@/usr.sbin/logd/capbundle/logd.conf"
 	for token in pool_worker dispatch_to_pool logcmp_storage_attach_pool \
-	    logcmp_session_drain_budget CAP_XFER_ONCE; do
+	    logcmp_session_drain_budget SERVICE_HARDEN_XFER_ONCE; do
 		atf_check -s exit:0 -o ignore grep "${token}" "${source}"
 	done
 	atf_check -s exit:1 -o empty -e empty grep '^start_session(' "${source}"
@@ -110,12 +110,14 @@ security_contract_body()
 	source="@SRCTOP@/usr.sbin/logd/logcmp.c"
 
 	for token in SERVICE_PROTECT_NOFORK SERVICE_PROTECT_NOSOCK \
-	    CAP_XFER_NONE CAP_CLOFORK_ONCE CAP_CLOEXEC_LOCKED cap_enter \
-	    system.syslog auditcmp_client_prepare auditcmp_client_adopt \
-	    auditcmp_submit
+	    CAP_XFER_NONE CAP_CLOFORK_ONCE CAP_CLOEXEC_LOCKED \
+	    service_worker_enter_capability_mode \
+	    service_provider_enter_capability_mode auditcmp_client_prepare \
+	    auditcmp_client_adopt auditcmp_submit
 	do
 		atf_check -s exit:0 -o match:"${token}" grep "${token}" "${source}"
 	done
+	atf_check -s exit:1 -o empty -e empty grep 'system.syslog' "${source}"
 	atf_check -s exit:1 -o empty -e empty grep 'audit_submit(' "${source}"
 	atf_check -s exit:0 -o match:'probe record__drop' \
 	    grep 'probe record__drop' \

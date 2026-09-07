@@ -663,30 +663,21 @@ client_publish_record(struct logcmp_client *client,
 			error = 0;
 		}
 	} else {
-		bool was_empty;
-		ssize_t readable;
+		int notify;
 
-		readable = shmring_readable(client->ring);
-		if (readable == -1) {
-			result = -1;
-			error = errno;
-			if (error == EPROTO)
-				client_disconnect(client);
-			goto done;
-		}
-		was_empty = readable == 0;
 		result = shmring_write_record(client->ring, record, length);
 		error = errno;
 		if (result == -1 && error == EAGAIN &&
 		    client->ring_shape == SHMRING_SHAPE_COMPACT_SPSC &&
 		    client->limits.ring_size >= SHMRING_BULK_MIN_CAPACITY &&
 		    client_promote_ring(client) == 0) {
-			was_empty = true;
 			result = shmring_write_record(client->ring, record, length);
 			error = errno;
 		}
-		if (result == 0 && was_empty) {
-			if (logcmp_wakeup_signal(client->wake_fd, true) == -1) {
+		if (result == 0) {
+			notify = shmring_producer_wakeup_needed(client->ring);
+			if (notify == -1 || (notify != 0 &&
+			    logcmp_wakeup_signal(client->wake_fd, true) == -1)) {
 				int wake_error;
 
 				wake_error = errno;
@@ -701,15 +692,12 @@ client_publish_record(struct logcmp_client *client,
 				error = 0;
 			} else {
 				error = 0;
-				LOGCMP_PROBE_WAKE(record->sequence, 0);
+				if (notify != 0)
+					LOGCMP_PROBE_WAKE(record->sequence, 0);
 			}
-		} else if (result == 0) {
-			/* The pending edge or fallback timer covers this burst. */
-			error = 0;
 		} else if (error == EPROTO)
 			client_disconnect(client);
 	}
-done:
 	LOGCMP_PROBE_ENQUEUE(record->sequence, length,
 	    result == 0 ? 0 : error);
 	errno = error;
@@ -1504,8 +1492,9 @@ logcmp_query_next(struct logcmp_client *client, uint32_t minimum_severity,
  * pid, so a pdfork(2)'d worker re-establishes its own rather than reusing the
  * parent's inherited (possibly clofork-dropped) session.  NULL means "not
  * available" -> fall back to syslog(3).  Everything here is fail-soft: a log
- * call never blocks, never errors out, and preserves the caller's errno (so a
- * trailing "%m" still reports the original failure).
+ * call never reports an error and preserves the caller's errno.  Successful
+ * emits are batched; callers needing a durability boundary use logcmp_flush(3)
+ * through the explicit client API.
  */
 static struct logcmp_client	*logcmp_default_client;
 static struct logcmp_logger	*logcmp_default_logger;
@@ -1622,7 +1611,6 @@ logcmp_vlog(int priority, const char *fmt, va_list ap)
 		opt.message_privacy = LOGCMP_PRIVACY_PUBLIC;
 		opt.message = msg;
 		if (logcmp_emit(logcmp_default_logger, &opt) == 0) {
-			(void)logcmp_flush(logcmp_default_client);
 			errno = saved;
 			return;
 		}

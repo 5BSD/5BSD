@@ -327,6 +327,8 @@ attach_ring(struct service_session *session,
 		errno = EPROTO;
 		goto fail;
 	}
+	if (shmring_consumer_arm(session->ring) == -1)
+		goto fail;
 	pthread_mutex_lock(&lock);
 	corrupt = corrupt_next_ring;
 	corrupt_next_ring = false;
@@ -367,6 +369,7 @@ drain_ring(struct service_session *session)
 {
 	uint8_t record[LOGCMP_MAX_RECORD];
 	ssize_t length;
+	int armed;
 
 	if (session->ring == NULL)
 		return (errno = ENOTCONN, -1);
@@ -374,8 +377,16 @@ drain_ring(struct service_session *session)
 		return (-1);
 	for (;;) {
 		length = shmring_read_record(session->ring, record, sizeof(record));
-		if (length == -1)
-			return (errno == EAGAIN ? 0 : -1);
+		if (length == -1) {
+			if (errno != EAGAIN)
+				return (-1);
+			armed = shmring_consumer_arm(session->ring);
+			if (armed == -1)
+				return (-1);
+			if (armed == 0)
+				return (0);
+			continue;
+		}
 		if (logcmp_validate_record((const void *)record, (size_t)length) == -1)
 			return (-1);
 		pthread_mutex_lock(&lock);

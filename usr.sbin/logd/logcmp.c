@@ -391,7 +391,7 @@ drain_session(struct worker_state *state, const char *operation)
 {
 	uint64_t before, filtered, rate_limited, records;
 	bool more;
-	int error;
+	int armed, error;
 
 	before = state->session.stats.accepted;
 	filtered = state->session.stats.provider_filtered;
@@ -400,6 +400,12 @@ drain_session(struct worker_state *state, const char *operation)
 	if (logcmp_session_drain_budget(&state->session, trusted_sink, state,
 	    state->drain_batch != 0 ? state->drain_batch : SIZE_MAX,
 	    &more) == 0) {
+		if (!more && state->session.ring != NULL) {
+			armed = shmring_consumer_arm(state->session.ring);
+			if (armed == -1)
+				goto failed;
+			more = armed != 0;
+		}
 		state->drain_pending = more;
 		records = state->session.stats.accepted - before;
 		LOGD_PROBE_BATCH(state->sink.label, state->sink.instance,
@@ -412,6 +418,7 @@ drain_session(struct worker_state *state, const char *operation)
 			    state->session.stats.last_sequence, EDQUOT);
 		return (0);
 	}
+failed:
 	error = errno != 0 ? errno : EPROTO;
 	records = state->session.stats.accepted - before;
 	LOGD_PROBE_BATCH(state->sink.label, state->sink.instance,
@@ -596,8 +603,11 @@ handle_request(struct channel *channel __unused,
 		attached = true;
 		if (attach_wakeup(state, request_message) == -1)
 			error = errno != 0 ? errno : EPROTO;
-		else
+		else {
 			wake_attached = true;
+			if (drain_session(state, "initial-arm") == -1)
+				error = errno != 0 ? errno : EPROTO;
+		}
 		if (error != 0) {
 			if (wake_attached)
 				close_wakeup(state);

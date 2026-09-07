@@ -12,7 +12,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define	SHMRING_ABI_VERSION	2
+#define	SHMRING_ABI_VERSION	3
 #define	SHMRING_MIN_CAPACITY	4096
 #define	SHMRING_MAX_CAPACITY	(1U << 30)
 #define	SHMRING_NFDS		4
@@ -80,6 +80,15 @@ size_t	shmring_low_watermark(const struct shmring *ring);
 size_t	shmring_high_watermark(const struct shmring *ring);
 ssize_t	shmring_readable(const struct shmring *ring);
 ssize_t	shmring_writable(const struct shmring *ring);
+
+/*
+ * Lost-wakeup-free edge notification handshake.  A consumer arms immediately
+ * before sleeping; a return value of 1 means data raced with the arm and it
+ * must keep draining.  After publishing, a producer signals its out-of-band
+ * wakeup descriptor only when shmring_producer_wakeup_needed() returns 1.
+ */
+int	shmring_consumer_arm(struct shmring *ring);
+int	shmring_producer_wakeup_needed(struct shmring *ring);
 
 ssize_t	shmring_write(struct shmring *ring, const void *buf, size_t len);
 ssize_t	shmring_read(struct shmring *ring, void *buf, size_t len);

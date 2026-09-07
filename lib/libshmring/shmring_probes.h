@@ -24,6 +24,10 @@
 	DTRACE_PROBE4(shmring, write, mode, requested, completed, result)
 #define	SHMRING_PROBE_READ(mode, requested, completed, result) \
 	DTRACE_PROBE4(shmring, read, mode, requested, completed, result)
+#define	SHMRING_PROBE_CONSUMER_ARM(epoch, readable, result) \
+	DTRACE_PROBE3(shmring, consumer__arm, epoch, readable, result)
+#define	SHMRING_PROBE_PRODUCER_WAKEUP(epoch, needed, result) \
+	DTRACE_PROBE3(shmring, producer__wakeup, epoch, needed, result)
 #define	SHMRING_PROBE_CORRUPT(head, tail, cap) \
 	DTRACE_PROBE3(shmring, corrupt, head, tail, cap)
 #endif

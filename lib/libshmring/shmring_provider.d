@@ -8,5 +8,7 @@ provider shmring {
 	    int result);
 	probe read(uint32_t mode, uint64_t requested, uint64_t completed,
 	    int result);
+	probe consumer__arm(uint64_t epoch, int readable, int result);
+	probe producer__wakeup(uint64_t epoch, int needed, int result);
 	probe corrupt(uint64_t head, uint64_t tail, uint64_t capacity);
 };

@@ -432,16 +432,16 @@ clients.
 | `RNG-004` | partial | Lazy attach failure, bulk promotion failure, promotion-flush failure, promotion peer-death, ambiguous detach failure, broken wakeup after ring commit, repeated attach descriptor cleanup, and corrupt-ring terminal recovery are deterministic.  Add injected compact and bulk memfd/sealing/mmap failures and final explicit-flush failure.  A committed record must never become retryable; an uncommitted record must return an exact error; all descriptors and mappings must return to baseline. |
 | `RNG-005` | new process test | Open and close many LogCmp handles in one process before and after promotion, race final close with emit/flush under the documented ownership rules, fork at each ring state, and prove one process session and ring are shared without child authority reuse. |
 | `RNG-006` | scale qualification | Connect 50,000 clients with 90% idle and at most 10% active on 8--16 KiB compact rings.  Measure resident/wired memory, VM objects, descriptors, promotion rate, and teardown.  After the `RNG-008` metadata optimization, the target is approximately 60 MiB of shared ring memory for 5,000 active 8 KiB clients plus one control page each, not multi-gigabyte eager allocation. |
-| `RNG-007` | future implementation | Implement trusted internal multiplexed rings only for fixed Ledger worker shards, with source/session IDs, bounded producer slots, reservation/commit recovery, producer-death tests, and no writable mapping in unrelated clients. |
+| `RNG-007` | future implementation | Implement trusted internal multiplexed rings only for fixed logd worker shards, with source/session IDs, bounded producer slots, reservation/commit recovery, producer-death tests, and no writable mapping in unrelated clients. |
 | `RNG-008` | future optimization | Copy and unmap sealed configuration after validation and combine producer-owned head metadata with the producer-writable data object while preserving a separately protected consumer tail.  Prove page and VM-object reductions with `procstat` and reject every forged geometry/permission combination. |
+| `RNG-009` | implemented | `shmring_test:wakeup_handshake` covers both orderings of the empty-ring race. The consumer-owned epoch remains read-only to the producer, and a sequentially consistent StoreLoad fence makes it impossible for both the consumer's post-arm head check and the producer's epoch check to miss. Logd uses the handshake on both ingress and storage rings; periodic scans remain recovery, not normal signaling. |
+| `RNG-010` | developer benchmark | `lib/libshmring/tests/shmringbench` reports sustained record and stream throughput plus p50/p95/p99 Unix-datagram signal and complete idle-cycle latency. The `shmring-traffic`, `component-ipc`, and `logd-performance` bsdinstruments profiles attribute live backpressure, wake coalescing, queue depth, batching, persistence, drops, and flush latency. Hardware qualification still requires repeated pinned runs and does not pass from one development-host sample. |
 
-Focused object-tree validation on July 31, 2026 passed all 14 libshmring
-cases, all 29 liblogcmp cases, and 56 of 59 Ledger cases; the remaining three
-Ledger cases were root-skipped.  These focused counts supplement rather than
-replace the complete-suite release matrix below.
-The root-only Ledger and Roadrunner provider cases were attempted during the
-final review, but this qualification host has neither `doas` nor `sudo`;
-they remain required runs and are not counted as passes.
+Focused object-tree validation on September 7, 2026 passed all 15 libshmring
+cases, all 30 liblogcmp cases, and 71 of 74 logd cases; the remaining three
+logd cases require root privileges and were skipped.  These focused counts
+supplement rather than replace the complete-suite release matrix below and
+the root/VM qualification run remains required.
 
 ### LocalFilesystem filesystem qualification
 

@@ -394,7 +394,7 @@ handle_control(int fd, struct logcmp_store *store,
 	union storage_buffer buffer;
 	struct storage_message *message;
 	struct shmring_fds ringfds;
-	int received_fds[SHMRING_NFDS + 1], session_fd, error;
+	int received_fds[SHMRING_NFDS + 1], session_fd, arm_result, error;
 	size_t nfds;
 	ssize_t amount;
 
@@ -445,7 +445,8 @@ handle_control(int fd, struct logcmp_store *store,
 	    *nsessions >= STORAGE_MAX_SESSIONS || socket_type(session_fd) == -1 ||
 	    shmring_open(&sessions[*nsessions].ring, &ringfds,
 	    SHMRING_ROLE_CONSUMER) == -1 ||
-	    service_harden_fd(session_fd, SERVICE_HARDEN_CLOFORK_ONCE) == -1) {
+	    service_harden_fd(session_fd, SERVICE_HARDEN_CLOFORK_ONCE) == -1 ||
+	    (arm_result = shmring_consumer_arm(sessions[*nsessions].ring)) == -1) {
 		error = errno != 0 ? errno : EPROTO;
 		for (size_t i = 0; i < nfds; i++)
 			close(received_fds[i]);
@@ -462,6 +463,7 @@ handle_control(int fd, struct logcmp_store *store,
 	sessions[*nsessions].fd = session_fd;
 	memcpy(sessions[*nsessions].label, message + 1, message->length);
 	sessions[*nsessions].label[message->length] = '\0';
+	sessions[*nsessions].pending = arm_result != 0;
 	sessions[*nsessions].multiplex = strcmp(sessions[*nsessions].label,
 	    STORAGE_MULTIPLEX_LABEL) == 0;
 	(*nsessions)++;
@@ -475,14 +477,23 @@ drain_storage_session(struct storage_session *session,
 	struct storage_record envelope;
 	size_t drained;
 	ssize_t length;
+	int armed;
 
 	if (pending != NULL)
 		*pending = false;
-	for (drained = 0; drained < budget; drained++) {
+	for (drained = 0; drained < budget;) {
 		length = shmring_read_record(session->ring, &envelope,
 		    sizeof(envelope));
-		if (length == -1)
-			return (errno == EAGAIN ? 0 : -1);
+		if (length == -1) {
+			if (errno != EAGAIN)
+				return (-1);
+			armed = shmring_consumer_arm(session->ring);
+			if (armed == -1)
+				return (-1);
+			if (armed == 0)
+				return (0);
+			continue;
+		}
 		if ((size_t)length < offsetof(struct storage_record, record) ||
 		    envelope.version != STORAGE_RECORD_VERSION ||
 		    envelope.label_length == 0 ||
@@ -503,6 +514,7 @@ drain_storage_session(struct storage_session *session,
 		    (const void *)envelope.record, envelope.record_length,
 		    false) == -1)
 			return (-1);
+		drained++;
 	}
 	/* The exact-boundary case may cause one harmless extra drain turn. */
 	if (pending != NULL)
@@ -1100,7 +1112,7 @@ logcmp_storage_append_for(struct logcmp_storage_session *session,
 {
 	struct storage_record envelope;
 	struct storage_message message;
-	bool was_empty;
+	int notify;
 	size_t label_length;
 
 	if (session == NULL || session->control_fd < 0 || session->ring == NULL ||
@@ -1121,11 +1133,13 @@ logcmp_storage_append_for(struct logcmp_storage_session *session,
 	envelope.record_length = (uint32_t)length;
 	memcpy(envelope.label, label, label_length);
 	memcpy(envelope.record, record, length);
-	was_empty = shmring_readable(session->ring) == 0;
 	if (shmring_write_record(session->ring, &envelope,
 	    offsetof(struct storage_record, record) + length) == -1)
 		return (-1);
-	if (was_empty) {
+	notify = shmring_producer_wakeup_needed(session->ring);
+	if (notify == -1)
+		return (-1);
+	if (notify != 0) {
 		message_init(&message, STORAGE_OP_NOTIFY, 0, 0);
 		if (send_packet(session->control_fd, &message, sizeof(message),
 		    NULL, 0) == -1 && errno != EAGAIN && errno != EWOULDBLOCK &&

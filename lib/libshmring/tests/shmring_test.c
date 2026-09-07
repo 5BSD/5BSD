@@ -644,6 +644,58 @@ ATF_TC_BODY(shapes_and_watermarks, tc)
 	    shmring_create_with_options(&options, &pfds, &cfds) == -1);
 }
 
+ATF_TC(wakeup_handshake);
+ATF_TC_HEAD(wakeup_handshake, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "consumer arming closes both sides of the empty-ring wakeup race");
+}
+ATF_TC_BODY(wakeup_handshake, tc)
+{
+	struct shmring_fds pfds, cfds;
+	struct shmring *producer, *consumer;
+	char value;
+
+	(void)tc;
+	ATF_REQUIRE_EQ(0, shmring_create(4096, SHMRING_MODE_RECORD, 64, 1,
+	    &pfds, &cfds));
+	ATF_REQUIRE_EQ(0, shmring_open(&producer, &pfds,
+	    SHMRING_ROLE_PRODUCER));
+	ATF_REQUIRE_EQ(0, shmring_open(&consumer, &cfds,
+	    SHMRING_ROLE_CONSUMER));
+
+	ATF_CHECK_ERRNO(EINVAL, shmring_consumer_arm(producer) == -1);
+	ATF_CHECK_ERRNO(EINVAL,
+	    shmring_producer_wakeup_needed(consumer) == -1);
+	ATF_CHECK_EQ(0, shmring_producer_wakeup_needed(producer));
+
+	/* Consumer arms first: the following publish requests exactly one edge. */
+	ATF_REQUIRE_EQ(0, shmring_consumer_arm(consumer));
+	ATF_REQUIRE_EQ(0, shmring_write_record(producer, "a", 1));
+	ATF_CHECK_EQ(1, shmring_producer_wakeup_needed(producer));
+	ATF_CHECK_EQ(0, shmring_producer_wakeup_needed(producer));
+	ATF_REQUIRE_EQ(1, shmring_read_record(consumer, &value, sizeof(value)));
+	ATF_CHECK_EQ('a', value);
+
+	/* Producer wins the empty-to-armed race: the recheck finds its record. */
+	ATF_REQUIRE_EQ(0, shmring_write_record(producer, "b", 1));
+	ATF_CHECK_EQ(0, shmring_producer_wakeup_needed(producer));
+	ATF_CHECK_EQ(1, shmring_consumer_arm(consumer));
+	ATF_REQUIRE_EQ(1, shmring_read_record(consumer, &value, sizeof(value)));
+	ATF_CHECK_EQ('b', value);
+
+	/* A new idle generation restores one-edge notification. */
+	ATF_REQUIRE_EQ(0, shmring_consumer_arm(consumer));
+	ATF_REQUIRE_EQ(0, shmring_write_record(producer, "c", 1));
+	ATF_CHECK_EQ(1, shmring_producer_wakeup_needed(producer));
+	ATF_CHECK_EQ(0, shmring_producer_wakeup_needed(producer));
+
+	shmring_close(producer);
+	shmring_close(consumer);
+	shmring_fds_close(&pfds);
+	shmring_fds_close(&cfds);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 	ATF_TP_ADD_TC(tp, stream);
@@ -660,5 +712,6 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, concurrent);
 	ATF_TP_ADD_TC(tp, fork_revocation);
 	ATF_TP_ADD_TC(tp, shapes_and_watermarks);
+	ATF_TP_ADD_TC(tp, wakeup_handshake);
 	return (atf_no_error());
 }

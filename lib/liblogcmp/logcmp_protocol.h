@@ -8,9 +8,9 @@
 #include <stdint.h>
 
 #define	LOGCMP_INTERFACE		"system.Log"
-#define	LOGCMP_INTERFACE_VERSION	"5.0.0"
+#define	LOGCMP_INTERFACE_VERSION	"6.0.0"
 #define	LOGCMP_MAGIC			0x4c4f4743U	/* "LOGC" */
-#define	LOGCMP_ABI_VERSION		5
+#define	LOGCMP_ABI_VERSION		6
 #define	LOGCMP_MAX_MESSAGE		8192
 #define	LOGCMP_MAX_RECORD		4096
 #define	LOGCMP_MAX_TEXT			2048
