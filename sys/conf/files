@@ -5323,6 +5323,27 @@ security/mac_abac/abac_system.c	optional mac_abac
 security/mac_abac/abac_sysv.c	optional mac_abac
 security/mac_abac/abac_vnode.c	optional mac_abac
 security/mac_abac/mac_abac.c	optional mac_abac
+#
+# mac_capability: the 5BSD capability plane (TCB).  MANDATORY — compiled
+# statically into every kernel (standard, never a loadable module and never
+# compile-out).  A 5BSD kernel cannot come up without the capability plane;
+# these depend on the MAC framework (options MAC), which is likewise required.
+# The core (core/dev/kern/label) provides the framework + /dev/mac_capability;
+# the remaining files are the per-subsystem MAC policies that register at boot.
+#
+dev/mac_capability/mac_capability_core.c	standard
+dev/mac_capability/mac_capability_dev.c		standard
+dev/mac_capability/mac_capability_kern.c	standard
+dev/mac_capability/mac_capability_label.c	standard
+dev/mac_capability/mac_capability_system.c	standard
+dev/mac_capability/mac_capability_identity.c	standard
+dev/mac_capability/mac_capability_channel.c	standard
+dev/mac_capability/mac_capability_mount.c	standard
+dev/mac_capability/mac_capability_capprotect.c	standard
+dev/mac_capability/mac_capability_accounting.c	standard
+dev/mac_capability/mac_capability_coalition.c	standard
+dev/mac_capability/mac_capability_node.c	standard
+dev/mac_capability/mac_capability_isolation.c	standard
 security/mac_biba/mac_biba.c	optional mac_biba
 security/mac_bsdextended/mac_bsdextended.c	optional mac_bsdextended
 security/mac_bsdextended/ugidfw_system.c	optional mac_bsdextended

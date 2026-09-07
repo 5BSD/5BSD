@@ -110,6 +110,7 @@ int	kern_cap_xfer_fcntls_limit(struct thread *td, int fd,
 int	kern_cap_cloexec_limit(struct thread *td, int fd, int state);
 int	kern_cap_clofork_limit(struct thread *td, int fd, int state);
 int	kern_chdir(struct thread *td, const char *path, enum uio_seg pathseg);
+int	kern_chroot(struct thread *td, struct vnode *vp);
 int	kern_clock_getcpuclockid2(struct thread *td, id_t id, int which,
 	    clockid_t *clk_id);
 int	kern_clock_getres(struct thread *td, clockid_t clock_id,

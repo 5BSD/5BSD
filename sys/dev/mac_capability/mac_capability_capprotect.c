@@ -67,7 +67,7 @@
 #include "mac_capability.h"
 #include "mac_capability_label.h"
 
-int	kern_chroot(struct thread *td, struct vnode *vp);
+#include <sys/syscallsubr.h>	/* kern_chroot() */
 #include "mac_capability_capprotect_proto.h"
 
 MALLOC_DEFINE(M_MAC_CAPABILITY_CP, "mac_capability_cp", "mac_capability capability protection");

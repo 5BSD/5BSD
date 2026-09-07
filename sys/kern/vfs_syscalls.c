@@ -986,8 +986,12 @@ SYSCTL_INT(_security_bsd, OID_AUTO, unprivileged_chroot, CTLFLAG_RW,
 
 /*
  * Takes locked vnode, unlocks it before returning.
+ *
+ * Exported (prototype in <sys/syscallsubr.h>): the mac_capability capprotect
+ * policy chroots a thread to a capability-owned vnode, and that policy is now
+ * compiled statically into the kernel, so this helper must be a global symbol.
  */
-static int
+int
 kern_chroot(struct thread *td, struct vnode *vp)
 {
 	struct proc *p;
