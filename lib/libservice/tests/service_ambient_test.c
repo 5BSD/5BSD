@@ -243,8 +243,8 @@ isolate_ambient_lookup(void)
 {
 
 	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
-	if (close(SERVICE_LOOKUP_FIXED_FD) == -1)
-		ATF_REQUIRE_EQ(EBADF, errno);
+	if (service_ambient_lookup_fd() == SERVICE_LOOKUP_FIXED_FD)
+		(void)close(SERVICE_LOOKUP_FIXED_FD);
 }
 
 /* ------------------------------------------------------------------ */

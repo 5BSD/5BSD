@@ -11,7 +11,7 @@ ATF_TESTS_C+=	tzfsd_config_test
 
 SRCS.tzfsd_config_test=	tzfsd_config_test.c config.c
 CFLAGS.tzfsd_config_test+=	-I${SRCTOP}/usr.sbin/tzfsd
-CFLAGS.tzfsd_config_test+=	-I${SRCTOP}/lib/liboraclert
+CFLAGS.tzfsd_config_test+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.tzfsd_config_test+=	-I${SRCTOP}/contrib/libucl/include
 LIBADD.tzfsd_config_test+=	ucl
 .PATH:	${SRCTOP}/usr.sbin/tzfsd

@@ -63,8 +63,8 @@ static int
 run_rc_bootstrap(int kqunused)
 {
 	static struct svc_runtime rc;	/* static: stable kevent udata */
-	struct kevent events[16];
-	int nev, i;
+	struct kevent event;
+	int nev;
 
 	(void)kqunused;
 
@@ -166,22 +166,22 @@ run_rc_bootstrap(int kqunused)
 	 * (SERVICE_LOOKUP_FD, installed above) and may make synchronous
 	 * capability lookups — which serviced itself answers on serviced_kq — so
 	 * a private-kqueue wait would deadlock any rc child that blocks on a
-	 * lookup that rc then waits on.  Each kevent() drains the whole ready
-	 * batch and serviced_dispatch_event() consumes every event, so no
+	 * lookup that rc then waits on.  Each kevent() retrieves one ready event and
+	 * serviced_dispatch_event() consumes it before another is dequeued, so no
 	 * level-triggered source can starve rc's EVFILT_PROCDESC exit (the
 	 * starvation the old dedicated kqueue guarded against).  sd.running
 	 * clears if SIGTERM or authority loss arrives mid-rc.
 	 */
 	while (rc.state == SVC_STATE_STARTING && sd.running) {
-		nev = kevent(serviced_kq, NULL, 0, events, 16, NULL);
+		nev = kevent(serviced_kq, NULL, 0, &event, 1, NULL);
 		if (nev == -1) {
 			if (errno == EINTR)
 				continue;
 			syslog(LOG_ERR, "startup: kevent during /etc/rc: %m");
 			break;
 		}
-		for (i = 0; i < nev; i++)
-			serviced_dispatch_event(&events[i]);
+		if (nev == 1)
+			serviced_dispatch_event(&event);
 	}
 
 	if (rc.state == SVC_STATE_DONE) {
@@ -197,18 +197,27 @@ run_rc_bootstrap(int kqunused)
  * Launch all system services in parallel.
  *
  * 1. Scan bundle registry for non-on-demand services
- * 2. Fill svc_runtime array with manifests from bundles
+ * 2. Fill svc_runtime array with entries from bundles
  * 3. Launch every service with no ordering
  */
 int
 startup_launch_system(int kq)
 {
-	struct svc_manifest *manifests;
+	struct startup_entry {
+		struct svc_manifest manifest;
+		unsigned bundle_idx;
+		unsigned service_idx;
+	} *entries;
 	unsigned nmanifests, i, bi, si;
 	unsigned launched;
 	struct capbundle *b;
 	struct capbundle_service *asvc;
 	struct timespec start_ts;
+	const char *skip_rc_env;
+	bool skip_rc;
+
+	skip_rc_env = getenv("SERVICED_SKIP_RC");
+	skip_rc = skip_rc_env != NULL && skip_rc_env[0] == '1';
 
 	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 
@@ -226,19 +235,15 @@ startup_launch_system(int kq)
 	 * runlevel state from inside a test.  The same environment channel
 	 * that overrides the bundle directories opts out of rc ownership.
 	 */
-	{
-		const char *skip_rc = getenv("SERVICED_SKIP_RC");
+	if (skip_rc)
+		syslog(LOG_INFO,
+		    "startup: /etc/rc skipped by environment");
+	else
+		(void)run_rc_bootstrap(kq);
 
-		if (skip_rc != NULL && skip_rc[0] == '1')
-			syslog(LOG_INFO,
-			    "startup: /etc/rc skipped by environment");
-		else
-			(void)run_rc_bootstrap(kq);
-	}
-
-	/* Collect all non-on-demand service manifests from bundles. */
-	manifests = calloc(SERVICED_MAX_SERVICES, sizeof(*manifests));
-	if (manifests == NULL) {
+	/* Collect all non-on-demand service entries from bundles. */
+	entries = calloc(SERVICED_MAX_SERVICES, sizeof(*entries));
+	if (entries == NULL) {
 		syslog(LOG_ERR, "startup: calloc: %m");
 		return (-1);
 	}
@@ -270,13 +275,15 @@ startup_launch_system(int kq)
 
 			/* Fill svc_manifest from bundle service. */
 			if (capbundle_svc_fill_manifest(asvc,
-			    &manifests[nmanifests]) == -1) {
+			    &entries[nmanifests].manifest) == -1) {
 				syslog(LOG_WARNING,
 				    "startup: skipping invalid bundle service "
 				    "'%s'", capbundle_svc_label(asvc));
 				continue;
 			}
-			log_loaded_manifest(&manifests[nmanifests]);
+			log_loaded_manifest(&entries[nmanifests].manifest);
+			entries[nmanifests].bundle_idx = bi;
+			entries[nmanifests].service_idx = si;
 			nmanifests++;
 		}
 	}
@@ -286,15 +293,17 @@ startup_launch_system(int kq)
 	sd.services = calloc(SERVICED_MAX_SERVICES, sizeof(*sd.services));
 	if (sd.services == NULL) {
 		syslog(LOG_ERR, "startup: calloc services: %m");
-		free(manifests);
+		free(entries);
 		return (-1);
 	}
 
 	syslog(LOG_INFO, "startup: %u services loaded", nmanifests);
 
-	/* Copy manifests into runtime slots. */
+	/* Copy entries into runtime slots. */
 	for (i = 0; i < nmanifests; i++) {
-		sd.services[i].manifest = manifests[i];
+		sd.services[i].manifest = entries[i].manifest;
+		sd.services[i].bundle_idx = entries[i].bundle_idx;
+		sd.services[i].bundle_svc_idx = entries[i].service_idx;
 		svc_runtime_init_fds(&sd.services[i]);
 		sd.services[i].state = SVC_STATE_STOPPED;
 		strlcpy(sd.services[i].launched_by, "system",
@@ -302,7 +311,7 @@ startup_launch_system(int kq)
 		clock_gettime(CLOCK_MONOTONIC, &sd.services[i].launch_time);
 	}
 	sd.nservices = nmanifests;
-	free(manifests);
+	free(entries);
 
 	/*
 	 * Curated rc adoption (§8): serviced natively supervises a small
@@ -315,7 +324,8 @@ startup_launch_system(int kq)
 	 * adopted service is <name>_enable="NO" in the image so /etc/rc skips
 	 * it, and svc_exec_rc uses service(8) "onestart" (ignores the rcvar).
 	 */
-	(void)rc_adopt_register(kq);
+	if (!skip_rc)
+		(void)rc_adopt_register(kq);
 
 	/*
 	 * Launch every service in parallel with no startup ordering.
@@ -345,6 +355,10 @@ startup_launch_system(int kq)
 		uint64_t dur_ms;
 
 		clock_gettime(CLOCK_MONOTONIC, &end_ts);
+		if (end_ts.tv_nsec < start_ts.tv_nsec) {
+			end_ts.tv_sec--;
+			end_ts.tv_nsec += 1000000000L;
+		}
 		dur_ms = (uint64_t)(end_ts.tv_sec - start_ts.tv_sec) * 1000 +
 		    (uint64_t)(end_ts.tv_nsec - start_ts.tv_nsec) / 1000000;
 		syslog(LOG_INFO, "startup: complete in %llu ms",

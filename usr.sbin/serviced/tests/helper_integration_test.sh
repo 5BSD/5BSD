@@ -15,14 +15,6 @@ if [ ! -r "${helpers}" ]; then
 fi
 . "${helpers}"
 
-# serviced chdir's every launched unit into its per-instance runtime container
-# (/Capabilities/Run/<leaf>, leaf = label with '/' and '.' folded to '_'), and
-# the fixture writes a relative result name into that cwd through a descriptor
-# opened before cap_enter.  Result files therefore land in the container, not
-# the test work directory; read them back from these absolute paths.
-PARENT_RESULT="/Capabilities/Run/org_test_helper_parent/helper-parent.out"
-PROBE_RESULT="/Capabilities/Run/org_test_helper_probe/helper-probe.out"
-
 # Install a two-unit bundle sharing one bundle_id: a boot-start parent and an
 # on-demand private helper.  The helper name resolution keys off a shared
 # bundle_id, so both units MUST live in the same .cap.
@@ -53,6 +45,7 @@ install_helper_bundle()
 	cat > "${dir}/Units/parent.unit/Unit.ucl" <<-UCL
 	activation { boot = true; }
 	restart = "never";
+	directories = ["${WORK}"];
 	${parent_args}
 	UCL
 	cp "${fixture}" "${dir}/Units/parent.unit/bin/parent"
@@ -61,6 +54,7 @@ install_helper_bundle()
 	cat > "${dir}/Units/probe.unit/Unit.ucl" <<-UCL
 	${helper_ucl}
 	restart = "never";
+	directories = ["${WORK}"];
 	arguments = ["helper-provider", "helper-probe.out"];
 	UCL
 	cp "${fixture}" "${dir}/Units/probe.unit/bin/probe"
@@ -85,32 +79,36 @@ launch_and_connect_head()
 }
 launch_and_connect_body()
 {
+	local parent_result probe_result
+
 	require_mac_capability
 	find_capd_service_fixture
 	start_stack
+	parent_result="${WORK}/helper-parent.out"
+	probe_result="${WORK}/helper-probe.out"
 	install_helper_bundle "org.test.helper" \
 	    "arguments = [\"helper-open\", \"probe\", \"helper-parent.out\"];" \
 	    'activation { helper = true; }'
 	reload_stack
 
-	wait_for_file "${PARENT_RESULT}" 20 ||
+	wait_for_file "${parent_result}" 20 ||
 	    atf_fail "parent did not complete helper_open"
 	atf_check -s exit:0 -o match:'helper_open=ok' \
-	    cat "${PARENT_RESULT}"
+	    cat "${parent_result}"
 	atf_check -s exit:0 -o match:'received=pong' \
-	    grep 'received=pong' "${PARENT_RESULT}"
+	    grep 'received=pong' "${parent_result}"
 	# The delivered client endpoint must be transfer-confined (CAP_XFER_NONE).
 	atf_check -s exit:0 -o match:'confined=1' \
-	    grep 'confined=1' "${PARENT_RESULT}"
+	    grep 'confined=1' "${parent_result}"
 
 	# The helper itself launched on demand and exposed exactly its synthetic
 	# bundle-local name.
-	wait_for_file "${PROBE_RESULT}" 20 ||
+	wait_for_file "${probe_result}" 20 ||
 	    atf_fail "helper did not launch and expose"
 	atf_check -s exit:0 -o match:'helper=exposed' \
-	    grep 'helper=exposed' "${PROBE_RESULT}"
+	    grep 'helper=exposed' "${probe_result}"
 	atf_check -s exit:0 -o match:'name=helper.org.test.helper.probe' \
-	    grep 'name=helper.org.test.helper.probe' "${PROBE_RESULT}"
+	    grep 'name=helper.org.test.helper.probe' "${probe_result}"
 	stop_stack
 }
 launch_and_connect_cleanup()
@@ -127,24 +125,28 @@ open_undeclared_head()
 }
 open_undeclared_body()
 {
+	local parent_result probe_result
+
 	require_mac_capability
 	find_capd_service_fixture
 	start_stack
+	parent_result="${WORK}/helper-parent.out"
+	probe_result="${WORK}/helper-probe.out"
 	# The parent asks for a helper unit ("ghost") that is not in the bundle.
 	install_helper_bundle "org.test.helper" \
 	    "arguments = [\"helper-open\", \"ghost\", \"helper-parent.out\"];" \
 	    'activation { helper = true; }'
 	reload_stack
 
-	wait_for_file "${PARENT_RESULT}" 20 ||
+	wait_for_file "${parent_result}" 20 ||
 	    atf_fail "parent did not record its failed helper_open"
 	atf_check -s exit:0 -o match:'helper_open=failed' \
-	    grep 'helper_open=failed' "${PARENT_RESULT}"
+	    grep 'helper_open=failed' "${parent_result}"
 	# No such synthetic name -> on-demand resolution reports ENOENT (2).
 	atf_check -s exit:0 -o match:'errno=2' \
-	    grep 'errno=2' "${PARENT_RESULT}"
+	    grep 'errno=2' "${parent_result}"
 	# The declared helper must NOT have been launched.
-	atf_check -s exit:1 -o empty -e empty test -s "${PROBE_RESULT}"
+	atf_check -s exit:1 -o empty -e empty test -s "${probe_result}"
 	stop_stack
 }
 open_undeclared_cleanup()

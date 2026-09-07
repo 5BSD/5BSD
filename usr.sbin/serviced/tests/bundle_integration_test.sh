@@ -320,7 +320,6 @@ dtrace_probes_body() {
 	local bundle i serviced_pid
 
 	prepare_paths
-	printf 'probe target\n' > "${WORK}/dtrace-token-target"
 
 	# USDT -Z accepts an initially unmatched description but does not attach
 	# it retroactively when a provider registers.  Start an empty stack first,
@@ -351,9 +350,8 @@ dtrace_probes_body() {
 	    dtrace -l -n "serviced${serviced_pid}:::startup-done"
 
 	dtrace -n 'BEGIN { printf("CONSUMER_READY\n"); }' \
-	    -n "serviced${serviced_pid}:::cap-service { printf(\"SVC_CAP %s %s %d\\n\", copyinstr(arg0), copyinstr(arg1), arg2); }" \
-	    -n "authorityd${daemon_pid}:::mint-file { printf(\"FILE %s 0x%x %d\\n\", copyinstr(arg0), arg1, arg2); }" \
-	    -n "authorityd${daemon_pid}:::service-delegate { printf(\"SERVICE %s %d\\n\", copyinstr(arg0), arg1); }" \
+	    -n "serviced${serviced_pid}:::cap-mint { printf(\"SVC_CAP %s %s %d\\n\", copyinstr(arg0), copyinstr(arg1), arg2); }" \
+	    -n "authorityd${daemon_pid}:::mint-system { printf(\"SYSTEM 0x%x %d\\n\", arg0, arg1); }" \
 	    -o "${WORK}/dtrace.out" 2>"${WORK}/dtrace.err" &
 	DTRACE_PID=$!
 	printf '%s\n' "$DTRACE_PID" > "${WORK}/dtrace.pid"
@@ -371,7 +369,7 @@ dtrace_probes_body() {
 
 	bundle=$(create_system_bundle "Traced" "org.test.trace" "traced" \
 	    "org.test.trace.svc" \
-	    "capabilities { files = [ { path = \"${WORK}/dtrace-token-target\"; actions = [\"read\"]; } ]; services = [\"identity\"]; }")
+	    "capabilities { system = [\"kldload\"]; }")
 	sed -i '' -e 's/ipc = \[[^]]*\]; //' -e 's/arguments = \["compat-ready", "[^"]*"\];/arguments = ["compat-ready"];/' "${bundle}/Units/traced.unit/Unit.ucl"
 	atf_check -s exit:0 -o ignore \
 	    servicectl reload
@@ -384,9 +382,8 @@ dtrace_probes_body() {
 	# consumer exits.  This provides a bounded, event-based completion point.
 	i=0
 	while [ "$i" -lt 100 ]; do
-		if grep -q 'FILE.*dtrace-token-target' "${WORK}/dtrace.out" 2>/dev/null &&
-		    grep -q 'SERVICE identity 0' "${WORK}/dtrace.out" 2>/dev/null &&
-	    grep -q 'SVC_CAP org.test.trace/traced identity 0' \
+		if grep -q 'SYSTEM 0x1 0' "${WORK}/dtrace.out" 2>/dev/null &&
+		    grep -q 'SVC_CAP org.test.trace/traced system 0' \
 		    "${WORK}/dtrace.out" 2>/dev/null; then
 			break
 		fi
@@ -394,9 +391,8 @@ dtrace_probes_body() {
 		i=$((i + 1))
 		sleep 0.1
 	done
-	if ! grep -q 'FILE.*dtrace-token-target' "${WORK}/dtrace.out" 2>/dev/null ||
-	    ! grep -q 'SERVICE identity 0' "${WORK}/dtrace.out" 2>/dev/null ||
-	    ! grep -q 'SVC_CAP org.test.trace/traced identity 0' \
+	if ! grep -q 'SYSTEM 0x1 0' "${WORK}/dtrace.out" 2>/dev/null ||
+	    ! grep -q 'SVC_CAP org.test.trace/traced system 0' \
 	    "${WORK}/dtrace.out" 2>/dev/null; then
 		cat "${WORK}/dtrace.err" >&2
 		cat "${WORK}/dtrace.out" >&2
@@ -407,11 +403,9 @@ dtrace_probes_body() {
 	DTRACE_PID=
 	rm -f "${WORK}/dtrace.pid"
 
-	atf_check -s exit:0 -o match:"FILE.*dtrace-token-target" \
+	atf_check -s exit:0 -o match:"SYSTEM 0x1 0" \
 	    cat "${WORK}/dtrace.out"
-	atf_check -s exit:0 -o match:"SERVICE identity 0" \
-	    cat "${WORK}/dtrace.out"
-	atf_check -s exit:0 -o match:"SVC_CAP org.test.trace/traced identity 0" \
+	atf_check -s exit:0 -o match:"SVC_CAP org.test.trace/traced system 0" \
 	    cat "${WORK}/dtrace.out"
 }
 dtrace_probes_cleanup() {
@@ -830,7 +824,7 @@ multiple_provides_secondary_activation_head() {
 }
 multiple_provides_secondary_activation_body() {
 	require_ambient_control
-	local bundle first second p1 p2
+	local bundle first lookup_pid second p1 p2
 
 	prepare_paths
 	build_lookup_client
@@ -839,6 +833,7 @@ multiple_provides_secondary_activation_body() {
 	second="org.test.multi.secondary"
 	bundle=$(make_svc_bin user multi-provider \
 	    "activation { ipc = [\"${first}\", \"${second}\"]; }
+resolvable_by = [\"user\"];
 arguments = [\"multi-provider\", \"${first}\", \"${second}\",
 		    \"${WORK}/multi-registered.out\", \"${WORK}/multi-routed.out\"];
 restart = \"on-failure\";" "${capd_service_fixture}")
@@ -887,7 +882,7 @@ multiple_provides_failure_isolated_head() {
 	require_authority_stack_kmods
 }
 multiple_provides_failure_isolated_body() {
-	local bundle first second
+	local bundle first lookup_pid second
 
 	prepare_paths
 	build_lookup_client
@@ -896,16 +891,22 @@ multiple_provides_failure_isolated_body() {
 	second="org.test.partial.secondary"
 	bundle=$(make_svc_bin user partial-provider \
 	    "activation { ipc = [\"${first}\", \"${second}\"]; }
+resolvable_by = [\"user\"];
 arguments = [\"partial-provider\", \"${first}\",
 		    \"${WORK}/partial-ready.out\"];
 restart = \"never\";" "${capd_service_fixture}")
 
 	start_stack
+	# ipc activation is demand-driven; trigger the primary name before waiting
+	# for the provider to run and reject its incomplete provides set.
+	run_lookup_client "${first}" 10 &
+	lookup_pid=$!
 	wait_for_file "${WORK}/partial-ready.out" 5 ||
 	    atf_fail "provider did not report its rejected readiness"
+	wait "${lookup_pid}" || true
 	atf_check -s exit:0 -o match:'process_ready=0' \
 	    grep process_ready "${WORK}/partial-ready.out"
-	atf_check -s exit:0 -o match:'ready_errno=71' \
+	atf_check -s exit:0 -o match:'ready_errno=92' \
 	    grep ready_errno "${WORK}/partial-ready.out"
 	atf_check -s exit:0 -o match:'readiness rejected' \
 	    grep "readiness rejected" "${logfile}"

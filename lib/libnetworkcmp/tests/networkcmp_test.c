@@ -109,8 +109,8 @@ ATF_TC_BODY(component_binding, tc)
 	/* Isolate this case from the test runner's ambient login channel. */
 	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_BOOTSTRAP_ENV));
 	ATF_REQUIRE_EQ(0, unsetenv(SERVICE_LOOKUP_ENV));
-	(void)close(SERVICE_BOOTSTRAP_FD);
-	(void)close(SERVICE_LOOKUP_FIXED_FD);
+	if (service_ambient_lookup_fd() == SERVICE_LOOKUP_FIXED_FD)
+		(void)close(SERVICE_LOOKUP_FIXED_FD);
 
 	errno = 0;
 	ATF_CHECK_EQ(-1, networkcmp_client_open(&client));

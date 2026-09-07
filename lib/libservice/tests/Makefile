@@ -1,6 +1,11 @@
 PACKAGE=	libservice-tests
 TESTSDIR=	${TESTSBASE}/lib/libservice
-NO_SHARED=
+NO_SHARED=	no
+NO_SHARED.capd_test_guardian=	yes
+NO_SHARED.libservice_api_test=	yes
+NO_SHARED.service_ambient_test=	yes
+NO_SHARED.reclaim_msg_test=	yes
+NO_SHARED.ambient_lookup_test=	yes
 
 .PATH: ${SRCTOP}/usr.sbin/authorityd/tests
 

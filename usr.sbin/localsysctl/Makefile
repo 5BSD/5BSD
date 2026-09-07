@@ -43,6 +43,7 @@ CAP_UNITPACKAGE=	runtime
 CONFS=		capbundle/sysctl.conf
 CONFSDIR=	${SYSCTL_CAP_CONFIG}
 CONFSNAME_capbundle/sysctl.conf=	sysctl.conf
+CONFSDIRPACKAGE=	runtime
 CONFSPACKAGE=	runtime
 
 HAS_TESTS=

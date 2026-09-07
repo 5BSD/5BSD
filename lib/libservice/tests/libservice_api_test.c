@@ -568,7 +568,7 @@ run_named_directory_bootstrap(bool excessive_rights)
 		    CAP_UNLINKAT, CAP_RENAMEAT_SOURCE, CAP_RENAMEAT_TARGET);
 		if (!excessive_rights &&
 		    (cap_rights_limit(6, &rights) == -1 ||
-		    cap_fcntls_limit(6, 0) == -1))
+		    cap_fcntls_limit(6, CAP_FCNTL_GETFL | CAP_FCNTL_SETFL) == -1))
 			_exit(2);
 		valid_empty_bootstrap(&bootstrap);
 		bootstrap.ncapabilities = 1;
@@ -1044,7 +1044,8 @@ idle_serviced_peer(int fd, struct idle_capture *capture)
 }
 
 static pid_t
-idle_shutdown_child(int child_fd, unsigned seconds, bool expect_success)
+idle_shutdown_child(int child_fd, int peer_fd, unsigned seconds,
+    bool expect_success)
 {
 	struct service_bootstrap bootstrap;
 	struct service_context *context;
@@ -1055,6 +1056,7 @@ idle_shutdown_child(int child_fd, unsigned seconds, bool expect_success)
 	ATF_REQUIRE(child >= 0);
 	if (child != 0)
 		return (child);
+	close(peer_fd);
 	if (dup2(child_fd, 3) != 3)
 		_exit(1);
 	if (child_fd != 3)
@@ -1096,7 +1098,7 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 
 	/* Arm form: seconds == 30 travels on the wire verbatim. */
 	capability_channel_pair(&channel[0], &channel[1]);
-	child = idle_shutdown_child(channel[0], 30, true);
+	child = idle_shutdown_child(channel[0], channel[1], 30, true);
 	close(channel[0]);
 	memset(&capture, 0, sizeof(capture));
 	idle_serviced_peer(channel[1], &capture);
@@ -1111,7 +1113,7 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 
 	/* Cancel form: seconds == 0. */
 	capability_channel_pair(&channel[0], &channel[1]);
-	child = idle_shutdown_child(channel[0], 0, true);
+	child = idle_shutdown_child(channel[0], channel[1], 0, true);
 	close(channel[0]);
 	memset(&capture, 0, sizeof(capture));
 	idle_serviced_peer(channel[1], &capture);
@@ -1126,7 +1128,7 @@ ATF_TC_BODY(service_idle_shutdown_wire, tc)
 
 	/* Dead channel: the serviced end is closed before the request lands. */
 	capability_channel_pair(&channel[0], &channel[1]);
-	child = idle_shutdown_child(channel[0], 30, false);
+	child = idle_shutdown_child(channel[0], channel[1], 30, false);
 	close(channel[0]);
 	close(channel[1]);
 	ATF_REQUIRE(waitpid(child, &status, 0) == child);
@@ -1169,6 +1171,23 @@ ATF_TC_BODY(capability_rights_algebra, tc)
 	ATF_CHECK(!service_epoch_live(7, 8));
 }
 
+ATF_TC_WITHOUT_HEAD(resource_directory_colon_path);
+ATF_TC_BODY(resource_directory_colon_path, tc)
+{
+	int fd;
+
+	(void)tc;
+	ATF_REQUIRE(setenv(SERVICE_DIR_FDS_ENV,
+	    "/tmp/kyua.test:resource=37:/var/data=41", 1) == 0);
+	ATF_CHECK_EQ(0, service_resource_dir("/tmp/kyua.test:resource", &fd));
+	ATF_CHECK_EQ(37, fd);
+	ATF_CHECK_EQ(0, service_resource_dir("/var/data", &fd));
+	ATF_CHECK_EQ(41, fd);
+	errno = 0;
+	ATF_CHECK_EQ(-1, service_resource_dir("/tmp/kyua.test", &fd));
+	ATF_CHECK_EQ(ENOENT, errno);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1176,6 +1195,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, bootstrap_validation);
 	ATF_TP_ADD_TC(tp, shared_context);
 	ATF_TP_ADD_TC(tp, named_directory_bootstrap);
+	ATF_TP_ADD_TC(tp, resource_directory_colon_path);
 	ATF_TP_ADD_TC(tp, api_rejects_invalid_descriptors_and_arguments);
 	ATF_TP_ADD_TC(tp, service_session_lifecycle);
 	ATF_TP_ADD_TC(tp, service_session_payload_and_attachment_lifecycle);

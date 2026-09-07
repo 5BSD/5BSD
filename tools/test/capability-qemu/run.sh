@@ -40,52 +40,35 @@ test -f "$kernel_obj/kernel" || {
 # Dependency order matters: a client library linked before its dependency's
 # object directory is populated silently falls back to the installed copy,
 # recording the wrong soname.
-for library in libcapability libchannel libshmring liboraclert libservice \
+if [ "${CAPABILITY_VM_SKIP_BUILD:-no}" != yes ]; then
+for library in libcapability libchannel libshmring libauthorityrt libservice \
     libcapbundle libtrustedzfs libtzfsd libauditcmp libcryptocmp \
-    libfilesystemcmp liblogcmp libnetworkcmp libnotify libtracecmp; do
+    libsysctlcmp liblogcmp libnetworkcmp libnotify libtracecmp; do
 	make -C "$src/lib/$library" all
 done
 
-make -C "$src/lib/libcryptocmp/tests" all
-make -C "$src/lib/libcapability/tests" all
-make -C "$src/lib/libnetworkcmp/tests" all
-make -C "$src/lib/liblogcmp/tests" all
-make -C "$src/lib/libtracecmp/tests" all
-make -C "$src/lib/libauditcmp/tests" all
-make -C "$src/usr.sbin/localcrypto" all
-make -C "$src/usr.sbin/localcrypto/tests" all
-make -C "$src/usr.sbin/localdevice" all
-make -C "$src/usr.sbin/localdevice/tests" all
+for tests in \
+    lib/libauditcmp lib/libauthorityrt lib/libcapability lib/libcapbundle \
+    lib/libcryptocmp lib/liblogcmp lib/libnetworkcmp lib/libnotify \
+    lib/libservice lib/libshmring lib/libsysctlcmp lib/libtracecmp \
+    lib/libtrustedzfs lib/libtzfsd; do
+	make -C "$src/$tests/tests" all
+done
+for component in \
+    usr.sbin/auditbrokerd usr.sbin/authorityctl usr.sbin/authorityd \
+    usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localdevice \
+    usr.sbin/localnetwork usr.sbin/localsysctl usr.sbin/logctl \
+    usr.sbin/logd usr.sbin/networkcmpctl usr.sbin/notifyctl \
+    usr.sbin/servicectl usr.sbin/serviced usr.sbin/sysctlcmpctl \
+    usr.sbin/tracectl usr.sbin/traced usr.sbin/tzfsctl usr.sbin/tzfsd; do
+	make -C "$src/$component" all
+	make -C "$src/$component/tests" all
+done
 make -C "$src/tests/sys/opencrypto" cryptodesc_test
 make -C "$src/tests/sys/kern" envfd_test
-make -C "$src/lib/libnotify/tests" all
-make -C "$src/usr.sbin/bsdnotify" all
-make -C "$src/usr.sbin/bsdnotify/tests" all
-make -C "$src/usr.sbin/notifyctl/tests" all
-make -C "$src/lib/libfilesystemcmp/tests" all
-make -C "$src/usr.sbin/localfilesystem" all
-make -C "$src/usr.sbin/localfilesystem/tests" all
-make -C "$src/usr.sbin/filesystemcmpctl/tests" all
-make -C "$src/usr.sbin/servicectl/tests" servicectl_test_bin
-make -C "$src/lib/libtrustedzfs/tests" all
 make -C "$src/tests/sys/zfshandle" all
 make -C "$src/tests/sys/tzfs" all
-make -C "$src/lib/libcapbundle/tests" all
-make -C "$src/lib/libservice/tests" all
-make -C "$src/usr.sbin/oracled" all
-make -C "$src/usr.sbin/serviced" all
-make -C "$src/usr.sbin/servicectl" all
-make -C "$src/usr.sbin/logd" all
-make -C "$src/usr.sbin/localnetwork" all
-make -C "$src/usr.sbin/traced" all
-make -C "$src/usr.sbin/auditbrokerd" all
-make -C "$src/usr.sbin/tzfsd" all
-make -C "$src/usr.sbin/serviced/tests" all
-make -C "$src/usr.sbin/servicectl/tests" all
-make -C "$src/usr.sbin/logd/tests" all
-make -C "$src/usr.sbin/localnetwork/tests" all
-make -C "$src/usr.sbin/traced/tests" all
-make -C "$src/usr.sbin/auditbrokerd/tests" all
+fi
 
 qemu_libdir=${QEMU_LIBDIR:-$(dirname "$(dirname "$qemu")")/lib}
 if [ -f "$qemu_libdir/libfdt.so.1" ]; then
@@ -96,6 +79,10 @@ fi
 work=${CAPABILITY_VM_WORKDIR:-$(mktemp -d /tmp/capability-qemu.XXXXXX)}
 payload=$work/payload
 iso=$work/capability-tests.iso
+if [ -e "$payload" ] || [ -e "$iso" ]; then
+	echo "CAPABILITY_VM_WORKDIR already contains a staged payload: $work" >&2
+	exit 73
+fi
 mkdir -p "$payload/tests"
 : > "$payload/test-programs"
 
@@ -157,13 +144,17 @@ copy_test "$obj/usr.sbin/bsdnotify/tests/policy_test" notify_policy_test
 copy_test "$obj/usr.sbin/bsdnotify/tests/bundle_test" notify_bundle_test
 copy_test "$obj/usr.sbin/notifyctl/tests/notifyctl_test"
 cp "$obj/usr.sbin/notifyctl/tests/notifyctl_test_bin" \
-	"$obj/usr.sbin/notifyctl/tests/notifyctl_success_bin" \
-	"$obj/usr.sbin/notifyctl/tests/valid.conf" \
-	"$obj/usr.sbin/notifyctl/tests/invalid.conf" "$payload/tests/"
-copy_test "$obj/lib/libfilesystemcmp/tests/filesystemcmp_test"
-copy_test "$obj/lib/libfilesystemcmp/tests/path_test" filesystem_path_test
-copy_test "$obj/lib/libfilesystemcmp/tests/client_lifecycle_test" \
-	filesystem_client_lifecycle_test
+	"$obj/usr.sbin/notifyctl/tests/notifyctl_success_bin" "$payload/tests/"
+sed -i "" \
+	-e 's,)/valid\.conf,)/notifyctl-valid.conf,g' \
+	-e 's,)/invalid\.conf,)/notifyctl-invalid.conf,g' \
+	"$payload/tests/notifyctl_test"
+cp "$obj/usr.sbin/notifyctl/tests/valid.conf" \
+	"$payload/tests/notifyctl-valid.conf"
+cp "$obj/usr.sbin/notifyctl/tests/invalid.conf" \
+	"$payload/tests/notifyctl-invalid.conf"
+copy_test "$obj/lib/libsysctlcmp/tests/sysctlcmp_test"
+copy_test "$obj/lib/libsysctlcmp/tests/client_strings_test"
 for spec in \
     "lib/libnetworkcmp/tests/networkcmp_test:networkcmp_api_test" \
     "lib/libnetworkcmp/tests/client_lifecycle_test:networkcmp_client_lifecycle_test" \
@@ -178,35 +169,63 @@ do
 	to=${spec#*:}
 	copy_test "$obj/$from" "$to"
 done
-for name in scratch_test disk_test store_test provider_test; do
-	copy_test "$obj/usr.sbin/localfilesystem/tests/$name" \
-	    "filesystem_$name"
-done
-copy_test "$obj/usr.sbin/localfilesystem/tests/bundle_test" \
-	filesystem_bundle_test
-copy_test "$obj/usr.sbin/filesystemcmpctl/tests/filesystemcmpctl_test"
-cp "$obj/usr.sbin/filesystemcmpctl/tests/filesystemcmpctl_test_bin" \
-	"$obj/usr.sbin/filesystemcmpctl/tests/filesystemcmpctl_success_bin" \
+copy_test "$obj/usr.sbin/localsysctl/tests/config_test" localsysctl_config_test
+copy_test "$obj/usr.sbin/localsysctl/tests/provider_test" localsysctl_provider_test
+copy_test "$obj/usr.sbin/sysctlcmpctl/tests/sysctlcmpctl_test"
+cp "$obj/usr.sbin/sysctlcmpctl/tests/sysctlcmpctl_success_bin" \
 	"$payload/tests/"
 copy_test "$obj/tests/sys/tzfs/tzfsd_config_test"
+copy_test "$obj/lib/libauthorityrt/tests/claim_parse_test"
+copy_test "$obj/lib/libshmring/tests/shmring_test"
+copy_test "$obj/lib/libtzfsd/tests/tzfsd_test" libtzfsd_test
+copy_test "$obj/usr.sbin/tzfsd/tests/namespace_test" tzfsd_namespace_test
+copy_test "$obj/usr.sbin/tzfsd/tests/provider_test" tzfsd_provider_test
+copy_test "$obj/usr.sbin/authorityctl/tests/authorityctl_test"
+cp "$obj/usr.sbin/authorityctl/tests/authorityctl_test_bin" \
+	"$obj/usr.sbin/authorityctl/tests/authorityctl_success_bin" \
+	"$payload/tests/"
+copy_test "$obj/usr.sbin/networkcmpctl/tests/networkcmpctl_test"
+cp "$obj/usr.sbin/networkcmpctl/tests/networkcmpctl_test_bin" \
+	"$obj/usr.sbin/networkcmpctl/tests/networkcmpctl_success_bin" \
+	"$payload/tests/"
+copy_test "$obj/usr.sbin/logctl/tests/logctl_test"
+cp "$obj/usr.sbin/logctl/tests/logctl_test_bin" \
+	"$obj/usr.sbin/logctl/tests/logctl_success_bin" "$payload/tests/"
+sed -i "" \
+	-e 's,)/valid\.conf,)/logctl-valid.conf,g' \
+	-e 's,)/invalid\.conf,)/logctl-invalid.conf,g' \
+	"$payload/tests/logctl_test"
+cp "$obj/usr.sbin/logctl/tests/valid.conf" \
+	"$payload/tests/logctl-valid.conf"
+cp "$obj/usr.sbin/logctl/tests/invalid.conf" \
+	"$payload/tests/logctl-invalid.conf"
+copy_test "$obj/usr.sbin/tracectl/tests/tracectl_test"
+cp "$obj/usr.sbin/tracectl/tests/tracectl_test_bin" "$payload/tests/"
+copy_test "$obj/usr.sbin/tzfsctl/tests/tzfsctl_test"
+cp "$obj/usr.sbin/tzfsctl/tests/tzfsctl_success_bin" "$payload/tests/"
 
 # Bundle, bootstrap, service-manager, and control-plane qualification.
-for name in api_test storage_key_test; do
+for name in api_test manifest_activation_test management_test \
+    principal_policy_test manifest_policy_test sysctl_isolate_test; do
 	copy_atf "$obj/lib/libcapbundle/tests/$name" "capbundle_$name"
 done
 copy_atf "$obj/lib/libcapbundle/tests/capbundle_format_test"
-copy_atf "$obj/lib/libservice/tests/libservice_api_test"
-copy_atf "$obj/lib/libservice/tests/libservice_test"
-for name in fd_budget_test launch_limits_test manifest_compare_test \
-    bundle_selection_test storage_lifecycle_test on_demand_test rc_ingest_test \
-    serviced_integration_test bundle_integration_test component_integration_test \
-    component_examples_test serviced_svc_test serviced_naming_test \
-    serviced_dynamic_claims_test; do
+cp "$obj/lib/libcapbundle/tests/servicectl" "$payload/tests/"
+for name in libservice_api_test libservice_test service_ambient_test \
+    reclaim_msg_test ambient_lookup_test; do
+	copy_atf "$obj/lib/libservice/tests/$name"
+done
+for name in activation_test domain_test on_demand_test fd_budget_test \
+    launch_limits_test manifest_compare_test management_enforce_test \
+    bundle_selection_test label_lifecycle_test rc_ingest_test rc_adopt_test \
+    activation_calendar_test ambient_hygiene_test sctl_gate_test \
+    reclaim_gate_test register_lookup_gate_test reclaim_bridge_test \
+    serviced_naming_test serviced_svc_test serviced_integration_test \
+    serviced_dynamic_claims_test bundle_integration_test helper_integration_test \
+    service_reachability_test; do
 	copy_atf "$obj/usr.sbin/serviced/tests/$name"
 done
 copy_atf "$obj/usr.sbin/servicectl/tests/servicectl_test"
-copy_atf "$obj/usr.sbin/servicectl/tests/transport_test" \
-    servicectl_transport_test
 copy_atf "$obj/usr.sbin/logd/tests/provider_test" logd_provider_test
 copy_atf "$obj/usr.sbin/logd/tests/bundle_test" logd_bundle_test
 for name in config_test session_test store_test storage_test; do
@@ -216,7 +235,7 @@ copy_atf "$obj/usr.sbin/localnetwork/tests/provider_test" \
     network_provider_test
 copy_atf "$obj/usr.sbin/localnetwork/tests/bundle_test" \
     network_bundle_test
-for name in session_test io_test policy_test; do
+for name in config_test policy_test; do
 	copy_atf "$obj/usr.sbin/localnetwork/tests/$name" "network_$name"
 done
 copy_atf "$obj/usr.sbin/traced/tests/session_test" trace_session_test
@@ -230,18 +249,19 @@ done
 # paths.  Keep helpers out of tests/ so the ATF enumerator never mistakes one
 # for a test program.
 for spec in \
-    "usr.sbin/oracled/oracled:usr.sbin/oracled/oracled" \
+    "usr.sbin/authorityd/authorityd:usr.sbin/authorityd/authorityd" \
+    "usr.sbin/authorityctl/authorityctl:usr.sbin/authorityctl/authorityctl" \
     "usr.sbin/serviced/serviced:usr.sbin/serviced/serviced" \
     "usr.sbin/tzfsd/tzfsd:usr.sbin/tzfsd/tzfsd" \
     "usr.sbin/servicectl/servicectl:usr.sbin/servicectl/servicectl" \
     "usr.sbin/servicectl/tests/servicectl_test_bin:usr.sbin/servicectl/tests/servicectl_test_bin" \
     "usr.sbin/serviced/tests/capd_test_guardian:usr.sbin/serviced/tests/capd_test_guardian" \
-    "usr.sbin/serviced/tests/capd_service_fixture:usr.sbin/serviced/tests/capd_service_fixture" \
+    "lib/libservice/tests/capd_service_fixture:usr.sbin/serviced/tests/capd_service_fixture" \
     "usr.sbin/serviced/tests/capd_protocol_fixture:usr.sbin/serviced/tests/capd_protocol_fixture" \
-    "usr.sbin/serviced/tests/component_fixture:usr.sbin/serviced/tests/component_fixture" \
+    "usr.sbin/serviced/tests/service_probe:usr.sbin/serviced/tests/service_probe" \
     "usr.sbin/localcrypto/localcrypto:usr.sbin/localcrypto/localcrypto" \
     "usr.sbin/localdevice/localdevice:usr.sbin/localdevice/localdevice" \
-    "usr.sbin/localfilesystem/localfilesystem:usr.sbin/localfilesystem/localfilesystem" \
+    "usr.sbin/localsysctl/localsysctl:usr.sbin/localsysctl/localsysctl" \
     "usr.sbin/localnetwork/localnetwork:usr.sbin/localnetwork/localnetwork" \
     "usr.sbin/logd/logd:usr.sbin/logd/logd" \
     "usr.sbin/bsdnotify/bsdnotify:usr.sbin/bsdnotify/bsdnotify" \
@@ -252,13 +272,13 @@ do
 	to=${spec#*:}
 	copy_obj_helper "$obj/$from" "$to"
 done
-for helper in capd_test_guardian capd_service_fixture capd_protocol_fixture \
-    component_fixture; do
+for helper in capd_test_guardian capd_protocol_fixture service_probe; do
 	cp "$obj/usr.sbin/serviced/tests/$helper" "$payload/tests/$helper"
 done
-for helper in deps_network_fixture deps_both_fixture servicectl_test_bin; do
-	cp "$obj/usr.sbin/servicectl/tests/$helper" "$payload/tests/$helper"
-done
+cp "$obj/lib/libservice/tests/capd_service_fixture" \
+    "$payload/tests/capd_service_fixture"
+cp "$obj/usr.sbin/servicectl/tests/servicectl_test_bin" \
+    "$payload/tests/"
 cp "$obj/usr.sbin/serviced/tests/test_helpers.sh" \
     "$obj/usr.sbin/serviced/tests/capd_test_harness.sh" \
     "$payload/tests/"
@@ -268,7 +288,7 @@ for name in \
 	zfshandle_rights_test zfshandle_derive_test zfshandle_pin_test \
 	zfshandle_phase2_test zfshandle_mount_test zfshandle_pool_test \
 	zfshandle_security_test zfshandle_verbs_test zfshandle_negative_test \
-	zfshandle_hardening_test tzfsd_test libtzfsd_protocol_test
+	zfshandle_hardening_test
 do
 	case "$name" in
 	trustedzfs_capsicum_test)
@@ -286,13 +306,13 @@ done
 mkdir -p "$payload/source/usr.sbin/localcrypto/capbundle" \
 	"$payload/source/usr.sbin/localdevice/capbundle" \
 	"$payload/source/usr.sbin/bsdnotify/capbundle" \
-	"$payload/source/usr.sbin/localfilesystem/capbundle" \
+	"$payload/source/usr.sbin/localsysctl/capbundle" \
 	"$payload/source/usr.sbin/serviced" \
 	"$payload/source/lib/libnotify" \
 	"$payload/obj/usr.sbin/localcrypto" \
 	"$payload/obj/usr.sbin/localdevice" \
 	"$payload/obj/usr.sbin/bsdnotify" \
-	"$payload/obj/usr.sbin/localfilesystem" \
+	"$payload/obj/usr.sbin/localsysctl" \
 	"$payload/obj/usr.sbin/servicectl/tests"
 cp "$src/usr.sbin/localcrypto/Makefile" \
 	"$src/usr.sbin/localcrypto/localcrypto.c" \
@@ -321,19 +341,16 @@ cp "$src/lib/libnotify/notify.c" \
 	"$payload/source/lib/libnotify/"
 cp "$src/usr.sbin/serviced/naming.c" "$src/usr.sbin/serviced/svc_proto.c" \
 	"$payload/source/usr.sbin/serviced/"
-cp "$src/usr.sbin/localfilesystem/filesystemcmp.c" \
-	"$src/usr.sbin/localfilesystem/localfilesystem_provider.d" \
-	"$payload/source/usr.sbin/localfilesystem/"
-cp "$src/usr.sbin/localfilesystem/capbundle/localfilesystem.ucl" \
-	"$payload/source/usr.sbin/localfilesystem/capbundle/"
+cp "$src/usr.sbin/localsysctl/capbundle/localsysctl.ucl" \
+	"$payload/source/usr.sbin/localsysctl/capbundle/"
 cp "$obj/usr.sbin/localcrypto/localcrypto" \
 	"$payload/obj/usr.sbin/localcrypto/"
 cp "$obj/usr.sbin/localdevice/localdevice" \
 	"$payload/obj/usr.sbin/localdevice/"
 cp "$obj/usr.sbin/bsdnotify/bsdnotify" \
 	"$payload/obj/usr.sbin/bsdnotify/"
-cp "$obj/usr.sbin/localfilesystem/localfilesystem" \
-	"$payload/obj/usr.sbin/localfilesystem/"
+cp "$obj/usr.sbin/localsysctl/localsysctl" \
+	"$payload/obj/usr.sbin/localsysctl/"
 cp "$obj/usr.sbin/servicectl/tests/servicectl_test_bin" \
 	"$payload/obj/usr.sbin/servicectl/tests/"
 
@@ -343,7 +360,7 @@ mkdir -p "$payload/source/usr.sbin" "$payload/source/lib" \
     "$payload/source/packages" "$payload/source/etc"
 for path in usr.sbin/serviced usr.sbin/servicectl usr.sbin/logd \
     usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localdevice \
-    usr.sbin/localfilesystem \
+    usr.sbin/localsysctl \
     usr.sbin/localnetwork usr.sbin/traced usr.sbin/auditbrokerd \
     lib/libcapbundle lib/libservice lib/libnotify; do
 	mkdir -p "$payload/source/$(dirname "$path")"
@@ -368,7 +385,7 @@ for path in \
     lib/Makefile \
     lib/libauditcmp \
     lib/libchannel \
-    lib/libfilesystemcmp \
+    lib/libsysctlcmp \
     lib/libnetworkcmp \
     lib/liboraclectl \
     lib/libshmring \
@@ -382,9 +399,9 @@ for path in \
     sys/security/audit/audit_syscalls.c \
     usr.sbin/bluetooth/blued/Makefile \
     usr.sbin/bluetooth/blued/blued.ucl \
-    usr.sbin/oracled/Makefile \
-    usr.sbin/oracled/oracled.conf \
-    usr.sbin/oracled/oracled.conf.5; do
+    usr.sbin/authorityd/Makefile \
+    usr.sbin/authorityd/authorityd.conf \
+    usr.sbin/authorityd/authorityd.conf.5; do
 	[ -e "$src/$path" ] || continue
 	mkdir -p "$payload/source/$(dirname "$path")"
 	cp -R "$src/$path" "$payload/source/$(dirname "$path")/"
@@ -394,7 +411,7 @@ done
 # linked managers and provider fixtures use the same ABI as the test payload.
 mkdir -p "$payload/libs"
 for library in libauditcmp libcapability libcapbundle libchannel libcryptocmp \
-    libfilesystemcmp liblogcmp libnetworkcmp libnotify liboraclert libservice \
+    libsysctlcmp liblogcmp libnetworkcmp libnotify libauthorityrt libservice \
     libshmring libtracecmp libtrustedzfs libtzfsd; do
 	dir=$(make -C "$src/lib/$library" -V .OBJDIR)
 	# Stage only the current major.  After an SHLIB_MAJOR bump the object
@@ -426,7 +443,7 @@ mkdir -p "$world/usr/share/man/man5" "$world/usr/share/man/man8" \
     "$world/usr/sbin" "$world/usr/libexec"
 : > "$work/world.meta"
 make -C "$src/usr.sbin/bluetooth/blued" all
-for daemon in localcrypto localdevice bsdnotify localfilesystem localnetwork logd \
+for daemon in localcrypto localdevice bsdnotify localsysctl localnetwork logd \
     traced auditbrokerd bluetooth/blued; do
 	make -C "$src/usr.sbin/$daemon" install installconfig \
 	    DESTDIR="$world" -DNO_ROOT METALOG="$work/world.meta" \
@@ -437,6 +454,8 @@ cp -R "$world/Capabilities/System" "$payload/capabilities/"
 
 cp "$src/tools/test/capability-qemu/guest-install.sh" \
 	"$src/tools/test/capability-qemu/guest-run.sh" "$payload/"
+cp "$src/usr.sbin/authorityd/capsule.conf" \
+	"$src/usr.sbin/authorityd/authorityd.conf" "$payload/"
 
 # Kyua is part of the guest base system.  Generate a suite definition so the
 # guest gets its user, kmod, timeout, isolation, and cleanup semantics instead
@@ -456,7 +475,7 @@ cp "$src/tools/test/capability-qemu/guest-install.sh" \
 sonames="$work/sonames.txt"
 : > "$sonames"
 for library in libauditcmp libcapability libcapbundle libchannel libcryptocmp \
-    libfilesystemcmp liblogcmp libnetworkcmp libnotify liboraclert libservice \
+    libsysctlcmp liblogcmp libnetworkcmp libnotify libauthorityrt libservice \
     libshmring libtracecmp libtrustedzfs libtzfsd; do
 	dir=$(make -C "$src/lib/$library" -V .OBJDIR)
 	printf '%s %s\n' "$library" "$(readlink "$dir/$library.so")" >> "$sonames"

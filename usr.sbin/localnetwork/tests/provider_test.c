@@ -727,8 +727,8 @@ ATF_TC_BODY(provider_resolver_does_not_block_session, tc)
 	listener = open_loopback(SOCK_STREAM, &port);
 	loopback_endpoint(&endpoint, port);
 	fd = -1;
-	ATF_CHECK_EQ(0, broker_request(&fixture, NETWORKCMP_OP_CONNECT,
-	    &endpoint, &fd));
+	ATF_CHECK_EQ(0, broker_request_timeout(&fixture,
+	    NETWORKCMP_OP_CONNECT, &endpoint, 1000, &fd));
 	ATF_CHECK(fd >= 0);
 	if (fd >= 0)
 		close(fd);

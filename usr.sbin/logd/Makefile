@@ -41,6 +41,7 @@ CAP_UNITMODE=	0444
 CONFS=		capbundle/logd.conf
 CONFSDIR=	${LOGCMP_CAP_CONFIG}
 CONFSNAME_capbundle/logd.conf=	logd.conf
+CONFSDIRPACKAGE=	logd
 CONFSPACKAGE=	logd
 
 HAS_TESTS=

@@ -37,11 +37,24 @@ if [ -f "$payload/obj/usr.sbin/serviced/serviced" ]; then
 	# through PATH lookups.
 	rm -f /usr/sbin/serviced
 fi
-if [ -f "$payload/obj/usr.sbin/oracled/oracled" ]; then
-	install -m 555 "$payload/obj/usr.sbin/oracled/oracled" /usr/sbin/oracled
+if [ -f "$payload/obj/usr.sbin/authorityd/authorityd" ]; then
+	install -m 555 "$payload/obj/usr.sbin/authorityd/authorityd" /usr/sbin/authorityd
 	# PID 1 is the same program installed under /sbin; a stale init would
 	# keep the old shutdown ordering and world supervision.
-	install -m 555 "$payload/obj/usr.sbin/oracled/oracled" /sbin/oracle-init
+	install -m 555 "$payload/obj/usr.sbin/authorityd/authorityd" /sbin/capsule
+	install -m 444 "$payload/authorityd.conf" /etc/authorityd.conf
+	mkdir -p /boot/loader.conf.d
+	install -m 444 "$payload/capsule.conf" \
+	    /boot/loader.conf.d/capsule.conf
+	rm -f /boot/loader.conf.d/oracle-init.conf
+	if [ -f /boot/loader.conf ]; then
+		sed -i "" -e 's,^init_path=.*,init_path="/sbin/capsule:/sbin/init:/sbin/init.bak:/rescue/init",' \
+		    /boot/loader.conf
+	fi
+fi
+if [ -f "$payload/obj/usr.sbin/authorityctl/authorityctl" ]; then
+	install -m 555 "$payload/obj/usr.sbin/authorityctl/authorityctl" \
+	    /usr/sbin/authorityctl
 fi
 if [ -f "$payload/obj/usr.sbin/servicectl/servicectl" ]; then
 	install -m 555 "$payload/obj/usr.sbin/servicectl/servicectl" \

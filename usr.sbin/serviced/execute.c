@@ -1221,22 +1221,22 @@ static void svc_launch_abort(struct svc_runtime *svc, int error, int kq);
  * bundle class decides: a base-system bundle (under /Capabilities/System)
  * operates in the SYSTEM domain (resolves every name, as today), an application
  * bundle in the least-privilege USER domain.  System-ness is read from the
- * registry via the unit's own provides name, so it does not depend on
- * svc->bundle_idx being populated (the boot path leaves it unset).
+ * runtime slot's bundle origin, which startup, activation, on-demand launch,
+ * and reload all preserve, even for units that provide no names.
  */
 static enum svc_domain_kind
-svc_native_domain(const struct svc_manifest *m)
+svc_native_domain(const struct svc_runtime *svc)
 {
-	unsigned bi, si;
+	const struct svc_manifest *m;
+
+	m = &svc->manifest;
 
 	if (m->domain == SVC_MANIFEST_DOMAIN_SYSTEM)
 		return (SVC_DOMAIN_SYSTEM);
 	if (m->domain == SVC_MANIFEST_DOMAIN_USER)
 		return (SVC_DOMAIN_USER);
-	/* DEFAULT: system bundle -> SYSTEM, application bundle -> USER. */
-	if (m->nprovides > 0 &&
-	    bundle_registry_lookup(m->provides[0], &bi, &si) == 0 &&
-	    bundle_registry_is_system(bi))
+	/* DEFAULT follows the bundle that owns this runtime slot. */
+	if (bundle_registry_is_system(svc->bundle_idx))
 		return (SVC_DOMAIN_SYSTEM);
 	return (SVC_DOMAIN_USER);
 }
@@ -1276,7 +1276,7 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 	 * lazily per request) so the mint escalation guard, which reads svc->domain,
 	 * sees the true scope: a USER-domain unit cannot mint (svc_domain_may_mint).
 	 */
-	svc->domain.kind = svc_native_domain(m);
+	svc->domain.kind = svc_native_domain(svc);
 	svc->domain.uid = 0;
 	memset(&minted_manifest, 0, sizeof(minted_manifest));
 	strlcpy(minted_manifest.label, m->label, sizeof(minted_manifest.label));

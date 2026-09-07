@@ -203,11 +203,11 @@ serviced_dispatch_event(struct kevent *kev)
 static void
 event_loop(void)
 {
-	struct kevent events[16];
-	int i, n;
+	struct kevent event;
+	int n;
 
 	while (sd.running) {
-		n = kevent(serviced_kq, NULL, 0, events, 16, NULL);
+		n = kevent(serviced_kq, NULL, 0, &event, 1, NULL);
 		if (n == -1) {
 			if (errno == EINTR)
 				continue;
@@ -215,8 +215,8 @@ event_loop(void)
 			break;
 		}
 
-		for (i = 0; i < n; i++)
-			serviced_dispatch_event(&events[i]);
+		if (n == 1)
+			serviced_dispatch_event(&event);
 	}
 }
 
@@ -577,24 +577,18 @@ main(int argc, char *argv[])
 		supervisor_stop(serviced_kq);
 	SERVICED_PROBE_SHUTDOWN_START(sd.nservices);
 	{
-		struct kevent sevents[8];
+		struct kevent sevent;
 		struct timespec drain_start;
-		int w, si, sn;
+		int w, sn;
 
 		clock_gettime(CLOCK_MONOTONIC, &drain_start);
 
 		w = 0;
 		while (!supervisor_is_stopped() && w < 600) {  /* 60 seconds */
-			sn = kevent(serviced_kq, NULL, 0, sevents, 8,
+			sn = kevent(serviced_kq, NULL, 0, &sevent, 1,
 			    &(struct timespec){.tv_sec = 0, .tv_nsec = 100000000});
-			if (sn > 0) {
-				for (si = 0; si < sn; si++) {
-					if (sevents[si].filter == EVFILT_PROCDESC)
-						supervisor_handle_procdesc(&sevents[si]);
-					else if (sevents[si].filter == EVFILT_TIMER)
-						supervisor_handle_timer(&sevents[si]);
-				}
-			}
+			if (sn == 1)
+				serviced_dispatch_event(&sevent);
 			w++;
 		}
 		{

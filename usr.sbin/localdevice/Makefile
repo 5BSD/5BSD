@@ -41,6 +41,7 @@ CAP_UNITPACKAGE=localdevice
 CONFS=capbundle/device.conf
 CONFSNAME=device.conf
 CONFSDIR=${DEVICECMP_CAP_CONFIG}
+CONFSDIRPACKAGE=localdevice
 CONFSPACKAGE=localdevice
 
 HAS_TESTS=

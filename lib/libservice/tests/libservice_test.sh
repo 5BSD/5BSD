@@ -53,6 +53,7 @@ units = ["${unit}"];
 EOF
 	cat >"${dir}/Units/${unit}.unit/Unit.ucl" <<EOF
 activation { boot = true; ipc = ["${label}"]; }
+directories = ["${CAPD_WORK}"];
 ${extra}
 EOF
 }
@@ -144,7 +145,7 @@ naming_exchange_confines_endpoints_body()
 	atf_check -s exit:0 \
 	    -o match:'event=exchange greeting=hello confined=yes$' cat "$client"
 	atf_check -s exit:0 \
-	    -o match:'event=exchange client_label=org.test.ls-client/[^ ]* message=world confined=yes$' \
+	    -o match:'event=exchange client_label=org.test.ls-client/[^ ]* message=world provider_sendable=yes$' \
 	    cat "$provider"
 	capd_stop_stack || atf_fail "Authority stack did not stop cleanly"
 }
@@ -303,7 +304,7 @@ atf_test_case supervisor_death_is_observable cleanup
 supervisor_death_is_observable_head()
 {
 	atf_set "descr" \
-	    "a managed process receives a pollable terminal event when serviced dies"
+	    "Authority restarts a crashed serviced and removes its orphaned services"
 	atf_set "require.user" "root"
 	capd_require_stack_kmods
 	atf_set "timeout" "45"
@@ -313,8 +314,8 @@ supervisor_death_is_observable_body()
 	local i ready result serviced_pid
 
 	find_service_fixture
-	# This test alone induces a manager crash to prove supervisor loss is
-	# observable; drop the shield's ambient-SIGKILL denial for it only, so
+	# This test alone induces a manager crash to verify Authority recovery and
+	# orphan cleanup; drop the shield's ambient-SIGKILL denial for it only, so
 	# procdesc_is_only_signal_authority still verifies the default shield.
 	export SERVICED_TEST_SHIELD_NO_SIGKILL=1
 	capd_stack_prepare
@@ -340,11 +341,32 @@ supervisor_death_is_observable_body()
 	case "$serviced_pid" in
 	''|*[!0-9]*) atf_fail "could not identify the supervised serviced PID" ;;
 	esac
+	service_pid=$(pgrep -P "$serviced_pid" | head -n 1)
+	case "$service_pid" in
+	""|*[!0-9]*) atf_fail "could not identify the managed service PID" ;;
+	esac
 	kill -KILL "$serviced_pid" ||
 	    atf_fail "could not terminate serviced"
-	wait_for_result "$result"
-	atf_check -s exit:0 -o match:'supervisor_lost=1' cat "$result"
-	atf_check -s exit:0 -o match:'errno=[1-9][0-9]*' cat "$result"
+	i=0
+	while kill -0 "$service_pid" 2>/dev/null && [ "$i" -lt 100 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if kill -0 "$service_pid" 2>/dev/null; then
+		capd_dump_diagnostics
+		atf_fail "managed service survived its supervisor crash"
+	fi
+	i=0
+	while [ "$(grep -c "bootstrap: started serviced pid" "$CAPD_LOG")" -lt 2 ] &&
+	    [ "$i" -lt 150 ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	if [ "$(grep -c "bootstrap: started serviced pid" "$CAPD_LOG")" -lt 2 ]; then
+		capd_dump_diagnostics
+		atf_fail "Authority did not restart serviced"
+	fi
+	capd_stop_stack || atf_fail "restarted Authority stack did not stop cleanly"
 }
 supervisor_death_is_observable_cleanup()
 {

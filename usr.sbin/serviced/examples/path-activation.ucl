@@ -21,8 +21,7 @@ activation {
 restart = "never";
 stop_timeout = 10;
 
-capabilities {
-    # The unit still needs its own authority to read what changed; the watch
-    # itself grants nothing to the activated process.
-    paths = ["/var/spool/incoming"];
-}
+# The watch itself grants nothing to the activated process.  Pre-open the
+# directory as an explicit descriptor capability so the unit can inspect it
+# after entering capability mode.
+directories = ["/var/spool/incoming"];

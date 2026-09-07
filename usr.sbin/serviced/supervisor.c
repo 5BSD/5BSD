@@ -701,8 +701,9 @@ svc_rc_graceful_stop(struct svc_runtime *svc, int kq)
 }
 
 /*
- * Gracefully stop a single service: SIGTERM via pdkill,
- * then kqueue timer-driven SIGKILL if still alive.
+ * Gracefully stop a single service: signal the tracked leader through its
+ * process descriptor, sweep the whole coalition with the same signal, then use
+ * the kqueue timer as a final SIGKILL backstop.
  */
 void
 svc_graceful_stop(struct svc_runtime *svc, int kq)
@@ -758,19 +759,14 @@ svc_graceful_stop(struct svc_runtime *svc, int kq)
 		    "(protocol_ready=%d)", svc->manifest.label,
 		    svc->protocol_ready);
 
-	if (svc->coalition_fd >= 0) {
-		if (mac_cap_coalition_graceful(svc->coalition_fd, SIGTERM,
-		    (unsigned)svc->manifest.stop_timeout * 1000) == -1) {
-			syslog(LOG_WARNING,
-			    "service %s: coalition graceful: %m",
-			    svc->manifest.label);
-			if (svc->pd_fd >= 0)
-				pdkill(svc->pd_fd, SIGTERM);
-		}
-	} else {
-		if (svc->pd_fd >= 0)
-			pdkill(svc->pd_fd, SIGTERM);
-	}
+	if (svc->pd_fd >= 0 && pdkill(svc->pd_fd, SIGTERM) == -1)
+		syslog(LOG_WARNING, "service %s: process descriptor SIGTERM: %m",
+		    svc->manifest.label);
+	if (svc->coalition_fd >= 0 &&
+	    mac_cap_coalition_graceful(svc->coalition_fd, SIGTERM,
+	    (unsigned)svc->manifest.stop_timeout * 1000) == -1)
+		syslog(LOG_WARNING, "service %s: coalition graceful: %m",
+		    svc->manifest.label);
 }
 
 void
@@ -785,8 +781,14 @@ svc_quiesce_complete(struct svc_runtime *svc, int status, int kq)
 	if (status != 0)
 		syslog(LOG_WARNING, "service %s: quiesce completed with %s",
 		    svc->manifest.label, strerror(status));
-	if (svc->pd_fd >= 0)
-		(void)pdkill(svc->pd_fd, SIGTERM);
+	if (svc->pd_fd >= 0 && pdkill(svc->pd_fd, SIGTERM) == -1)
+		syslog(LOG_WARNING, "service %s: process descriptor SIGTERM: %m",
+		    svc->manifest.label);
+	if (svc->coalition_fd >= 0 &&
+	    mac_cap_coalition_graceful(svc->coalition_fd, SIGTERM,
+	    (unsigned)svc->manifest.stop_timeout * 1000) == -1)
+		syslog(LOG_WARNING, "service %s: coalition graceful: %m",
+		    svc->manifest.label);
 	svc_channel_sync_events(svc, kq);
 }
 

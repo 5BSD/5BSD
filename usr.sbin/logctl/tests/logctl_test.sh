@@ -8,14 +8,16 @@ configtest_head()
 configtest_body()
 {
 	logctl="$(atf_get_srcdir)/logctl_test_bin"
+	cp "$(atf_get_srcdir)/valid.conf" valid.conf
+	cp "$(atf_get_srcdir)/invalid.conf" invalid.conf
 	atf_check -s exit:0 -o match:'ring_size=1048576 fallback_drain_ms=25' \
-	    "$logctl" configtest "$(atf_get_srcdir)/valid.conf"
+	    "$logctl" configtest valid.conf
 	atf_check -s exit:0 -o match:'segment_size=16777216' \
-	    "$logctl" configtest "$(atf_get_srcdir)/valid.conf"
+	    "$logctl" configtest valid.conf
 	atf_check -s exit:0 -o match:'max_segments=64' \
-	    "$logctl" configtest "$(atf_get_srcdir)/valid.conf"
+	    "$logctl" configtest valid.conf
 	atf_check -s exit:65 -e match:invalid.conf \
-	    "$logctl" configtest "$(atf_get_srcdir)/invalid.conf"
+	    "$logctl" configtest invalid.conf
 }
 
 atf_test_case config_errors

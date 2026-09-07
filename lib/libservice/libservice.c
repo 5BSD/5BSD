@@ -81,12 +81,14 @@ struct service_context {
 	bool	privileged;	/* provider stays out of capability mode */
 };
 struct service_provider {
+	struct service_provider	*next;
 	struct service_context	*context;
 	pid_t			 owner;
 	bool			 quiescing;
 	bool			 quiesce_complete;
 };
 static struct service_context service_default_context;
+static struct service_provider *service_providers;
 static pthread_mutex_t service_init_lock = PTHREAD_MUTEX_INITIALIZER;
 static bool service_init_attempted;
 static int service_init_error;
@@ -761,6 +763,7 @@ service_after_fork_child(void)
 	service_supervisor_pipe[1] = -1;
 	service_dispatch_started = false;
 	service_dispatch_error = ENOTCONN;
+	service_providers = NULL;
 	for (listener = service_listeners; listener != NULL;
 	    listener = listener->next) {
 		for (i = 0; i < listener->count; i++)
@@ -942,6 +945,9 @@ service_control_event(struct channel *channel,
 		    quiesce->deadline_ms != 0 &&
 		    quiesce->reason >= SVC_QUIESCE_REASON_STOP &&
 		    quiesce->reason <= SVC_QUIESCE_REASON_RELOAD) {
+			for (struct service_provider *provider = service_providers;
+			    provider != NULL; provider = provider->next)
+				provider->quiescing = true;
 			for (listener = service_listeners; listener != NULL;
 			    listener = listener->next) {
 				listener->provider->quiescing = true;
@@ -1367,9 +1373,10 @@ service_provider_valid(const struct service_provider *provider)
 }
 
 int
-service_provider_create(struct service_provider **providerp)
+service_provider_create(struct service_provider **providerp) __no_lock_analysis
 {
 	struct service_provider *provider;
+	int error;
 
 	if (providerp == NULL) {
 		errno = EINVAL;
@@ -1383,7 +1390,17 @@ service_provider_create(struct service_provider **providerp)
 		free(provider);
 		return (-1);
 	}
+	error = pthread_mutex_lock(&service_state_lock);
+	if (error != 0) {
+		service_release(provider->context);
+		free(provider);
+		errno = error;
+		return (-1);
+	}
 	provider->owner = getpid();
+	provider->next = service_providers;
+	service_providers = provider;
+	(void)pthread_mutex_unlock(&service_state_lock);
 	*providerp = provider;
 	return (0);
 }
@@ -1392,12 +1409,23 @@ void
 service_provider_destroy(struct service_provider *provider) __no_lock_analysis
 {
 	struct service_listener *listener;
+	struct service_provider **cursor;
 	int saved_errno;
 
 	if (provider == NULL)
 		return;
 	saved_errno = errno;
 	if (service_provider_valid(provider)) {
+		if (pthread_mutex_lock(&service_state_lock) == 0) {
+			for (cursor = &service_providers; *cursor != NULL;
+			    cursor = &(*cursor)->next) {
+				if (*cursor == provider) {
+					*cursor = provider->next;
+					break;
+				}
+			}
+			(void)pthread_mutex_unlock(&service_state_lock);
+		}
 		for (;;) {
 			if (pthread_mutex_lock(&service_state_lock) != 0)
 				break;
@@ -1669,10 +1697,10 @@ service_config_open_or_path(const char *name, const char *fallback_path,
 int
 service_resource_dir(const char *path, int *fdp)
 {
-	const char *env;
-	char *copy, *tok, *save, *eq, *end;
-	long v;
-	int found;
+	const char *candidate, *end, *env;
+	char *number_end;
+	size_t pathlen;
+	long value;
 
 	if (path == NULL || fdp == NULL || path[0] != '/') {
 		errno = EINVAL;
@@ -1685,35 +1713,30 @@ service_resource_dir(const char *path, int *fdp)
 		return (-1);
 	}
 	/*
-	 * CAPABILITY_DIR_FDS is a colon-separated list of "path=fd" pairs.  Scan
-	 * for an exact path match and return the borrowed descriptor.
+	 * Match the caller-supplied path before interpreting separators.  A
+	 * resource path may itself contain ':', so tokenizing the complete
+	 * environment value at colons would split a valid path (Kyua test work
+	 * directories routinely contain one).  A mapping starts at the beginning
+	 * of the value or immediately after a separator and ends in "=<fd>".
 	 */
-	copy = strdup(env);
-	if (copy == NULL)
-		return (-1);
-	found = -1;
-	for (tok = strtok_r(copy, ":", &save); tok != NULL;
-	    tok = strtok_r(NULL, ":", &save)) {
-		eq = strrchr(tok, '=');
-		if (eq == NULL)
+	pathlen = strlen(path);
+	for (candidate = env; (candidate = strstr(candidate, path)) != NULL;
+	    candidate++) {
+		if ((candidate != env && candidate[-1] != ':') ||
+		    candidate[pathlen] != '=')
 			continue;
-		*eq = '\0';
-		if (strcmp(tok, path) != 0)
-			continue;
+		end = candidate + pathlen + 1;
 		errno = 0;
-		v = strtol(eq + 1, &end, 10);
-		if (errno != 0 || *end != '\0' || v < 0 || v > INT_MAX)
-			break;
-		found = (int)v;
-		break;
+		value = strtol(end, &number_end, 10);
+		if (errno != 0 || number_end == end ||
+		    (*number_end != '\0' && *number_end != ':') ||
+		    value < 0 || value > INT_MAX)
+			continue;
+		*fdp = (int)value;
+		return (0);
 	}
-	free(copy);
-	if (found < 0) {
-		errno = ENOENT;
-		return (-1);
-	}
-	*fdp = found;
-	return (0);
+	errno = ENOENT;
+	return (-1);
 }
 
 /*

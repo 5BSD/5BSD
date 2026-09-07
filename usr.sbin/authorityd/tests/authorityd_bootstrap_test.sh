@@ -198,7 +198,8 @@ bootstrap_starts_serviced_body()
 	atf_check -s exit:0 -o ignore grep "bootstrap: started serviced" "$logfile"
 
 	# Verify authorityd is still healthy.
-	atf_check -s exit:0 -o match:"running" authorityctl -s "$sockpath" status
+	capd_authority_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Authority status request failed"
 }
 bootstrap_starts_serviced_cleanup()
 {
@@ -224,7 +225,8 @@ bootstrap_channel_ping_body()
 	fi
 
 	atf_check -s exit:0 -o match:"ok" cat serviced-ping-ok.out
-	atf_check -s exit:0 -o match:"running" authorityctl -s "$sockpath" status
+	capd_authority_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Authority status request failed"
 }
 bootstrap_channel_ping_cleanup()
 {
@@ -250,8 +252,8 @@ control_reload_reaches_serviced_body()
 		cat "$logfile" 2>/dev/null
 		atf_fail "serviced did not start"
 	fi
-	atf_check -s exit:0 -o match:"reload:" \
-	    authorityctl -s "$sockpath" reload
+	capd_authority_ctl "$sockpath" reload | grep -q "reload:" ||
+	    atf_fail "Authority reload request failed"
 	if ! wait_for_file serviced-reload.out; then
 		cat "$logfile" 2>/dev/null
 		atf_fail "serviced did not receive the forwarded reload"
@@ -352,7 +354,8 @@ bootstrap_restart_on_crash_body()
 	    grep "bootstrap: serviced exited" "$logfile"
 
 	# Verify authorityd is still alive.
-	atf_check -s exit:0 -o match:"running" authorityctl -s "$sockpath" status
+	capd_authority_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Authority status request failed"
 }
 bootstrap_restart_on_crash_cleanup()
 {
@@ -377,7 +380,8 @@ bootstrap_clean_shutdown_body()
 		atf_skip "serviced did not start"
 	fi
 
-	atf_check -s exit:0 -o ignore authorityctl -s "$sockpath" shutdown
+	capd_authority_ctl "$sockpath" shutdown >/dev/null ||
+	    atf_fail "Authority shutdown request failed"
 	wait_for_authenticated_shutdown
 
 	atf_check -s exit:0 -o ignore \
@@ -431,8 +435,8 @@ ambient_signals_denied_control_shutdown_allowed_body()
 			atf_fail "signal helper failed for $operation (status $signal_status)"
 			;;
 		esac
-		atf_check -s exit:0 -o match:"running" \
-		    authorityctl -s "$sockpath" status
+		capd_authority_ctl "$sockpath" status | grep -q running ||
+		    atf_fail "Authority status request failed"
 	done
 
 	# Configuration cannot turn the mandatory shields back off.
@@ -444,8 +448,8 @@ ambient_signals_denied_control_shutdown_allowed_body()
 	    grep "integrity.sigcont=false ignored" "$logfile"
 
 	# service(8) uses this authenticated control path, not kill(2).
-	atf_check -s exit:0 -o match:"shutdown initiated" \
-	    authorityctl -s "$sockpath" shutdown
+	capd_authority_ctl "$sockpath" shutdown | grep -q "shutdown initiated" ||
+	    atf_fail "Authority shutdown request failed"
 	wait_for_authenticated_shutdown
 	atf_check -s exit:0 test ! -e "$pidfile"
 }
@@ -487,7 +491,8 @@ EOF
 	    grep "no service_manager configured" "$logfile"
 
 	# Daemon should still be healthy.
-	atf_check -s exit:0 -o match:"running" authorityctl -s "$sockpath" status
+	capd_authority_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Authority status request failed"
 }
 bootstrap_no_service_manager_cleanup()
 {

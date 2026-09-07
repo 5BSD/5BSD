@@ -92,8 +92,8 @@ reload_stack()
 	if [ ! -S "$sockpath" ]; then
 		atf_fail "Authority control socket is unavailable for reload"
 	fi
-	atf_check -s exit:0 -o ignore \
-	    authorityctl -s "$sockpath" reload
+	capd_authority_ctl "$sockpath" reload >/dev/null ||
+	    atf_fail "Authority reload request failed"
 }
 
 stop_stack()
@@ -115,7 +115,7 @@ stop_stack()
 		read -r target <"$pidfile" || target=
 	fi
 	if [ -S "$sockpath" ]; then
-		authorityctl -s "$sockpath" shutdown >/dev/null 2>&1 || true
+		capd_authority_ctl "$sockpath" shutdown >/dev/null 2>&1 || true
 	fi
 	case "$target" in
 	''|*[!0-9]*) return 0 ;;
@@ -256,7 +256,8 @@ write_test_bundle()
 	*) normalized="${activation}
 ${normalized}" ;;
 	esac
-	printf '%s\n' "$normalized" > "$dir/Units/$prog.unit/Unit.ucl"
+	printf 'directories = ["%s"];\n%s\n' "$WORK" "$normalized" > \
+	    "$dir/Units/$prog.unit/Unit.ucl"
 }
 
 # Build ./ready_svc, a libservice service program that enters capability mode
@@ -264,11 +265,10 @@ ${normalized}" ;;
 # it to SVC_STATE_RUNNING.  A plain /bin/sh script that sleeps never crosses
 # that boundary and therefore remains STARTING.
 #
-# Behaviour: enter the sandbox and report ready, then
-# write "<name>.ready" in the CWD (the test work dir — authorityd runs foreground
-# so services inherit WORK as their CWD), then block.  The fixture pre-opens
-# that directory, so marker creation remains descriptor-relative after
-# cap_enter().  The 200ms pause closes the race where the marker appears before
+# Behaviour: enter the sandbox and report ready, then write "<name>.ready"
+# through the test-work-directory capability declared by write_test_bundle(),
+# then block.  This remains descriptor-relative for services born in capmode.
+# The 200ms pause closes the race where the marker appears before
 # serviced has processed NOTE_CAPMODE and flipped the service to RUNNING.
 #
 # The ready-file basename is argv[1] when supplied, else basename(argv[0]) — so a
@@ -295,7 +295,7 @@ create_system_bundle()
 	# Install the libservice ready-reporting helper as the program so the
 	# service reaches RUNNING (a plain shell script never reports ready and
 	# stays STARTING — see build_ready_svc).  It writes "<prog>.ready" in
-	# its CWD (= WORK), which the tests wait_for_file on.
+	# through the declared WORK directory capability, which the tests wait for.
 	build_ready_svc
 	cp ready_svc "${dir}/Units/${prog}.unit/bin/${prog}"
 	chmod 755 "${dir}/Units/${prog}.unit/bin/${prog}"
@@ -336,58 +336,41 @@ create_user_bundle_custom()
 	write_test_bundle "$dir" "org.test.${name}" "$prog" "$ucl_content" \
 	    'activation { boot = true; }'
 
-	printf '#!/bin/sh\nexec sleep 3600\n' > \
-	    "$dir/Units/$prog.unit/bin/$prog"
+	find_capd_service_fixture
+	cp "$capd_service_fixture" "$dir/Units/$prog.unit/bin/$prog"
 	chmod 755 "$dir/Units/$prog.unit/bin/$prog"
+	printf 'arguments = ["lifecycle-no-ready"];\n' >> \
+	    "$dir/Units/$prog.unit/Unit.ucl"
 
 	echo "${dir}"
 }
 
-# Create a single-unit .cap bundle in a test registry.
+# Create a plane-native single-unit fixture bundle.  Service units are launched
+# through rtld descriptor-direct mode after cap_enter(2), so test units must be
+# dynamic ELF programs rather than interpreter scripts.
 #
-# Runtime identity is explicit and independent from provides[].
-#
-# Usage: make_svc <system|user> <label> <ucl_extra> <body-line>...
-#   <ucl_extra>  extra manifest fields as a UCL fragment, e.g.
-#                'restart = "never";' or 'user = "nobody"; stop_timeout = 2;'
-#                (may be empty "").
-#   <body-line>  one or more lines of the service script.  IMPORTANT: expand
-#                ${WORK} at CALL time (double-quote the arg) so an absolute
-#                path bakes into the script — services run with a minimal env
-#                and do NOT inherit WORK.  Escape runtime shell vars (e.g. \$\$).
-make_svc()
+# Usage: make_fixture_svc <system|user> <label> <ucl_extra> <scenario> [arg ...]
+make_fixture_svc()
 {
-	local scope="$1" label="$2" extra="$3"
-	local base bid dir unit
+	local scope="$1" label="$2" extra="$3" unit dir arg sep escaped
 	shift 3
-	if [ "$scope" = system ]; then
-		base="${APPS_DIR}"
-	else
-		base="${USER_APPS_DIR}"
-	fi
-	case "$label" in
-	*.*)
-		# A dotted label is a complete bundle id; the unit takes the
-		# last component.  Splitting the id off the label collides
-		# distinct bundles onto one bundle_id.
-		bid=$label
-		unit=${label##*.}
-		;;
-	*)
-		bid="org.test.${label}"
-		unit=$label
-		;;
-	esac
-	dir="${base}/${label}.cap"
-	write_test_bundle "$dir" "$bid" "$unit" "$extra" \
-	    'activation { boot = true; }'
-	printf '%s\n' "$@" > "$dir/Units/$unit.unit/bin/$unit"
-	chmod 755 "$dir/Units/$unit.unit/bin/$unit"
-	echo "${dir}"
+	find_capd_service_fixture
+	dir=$(make_svc_bin "$scope" "$label" "$extra" \
+	    "$capd_service_fixture")
+	unit=${label##*.}
+	sep=
+	printf 'arguments = [' >> "$dir/Units/$unit.unit/Unit.ucl"
+	for arg in "$@"; do
+		escaped=$(printf '%s' "$arg" | sed 's/\\/\\\\/g; s/"/\\"/g')
+		printf '%s"%s"' "$sep" "$escaped" >> \
+		    "$dir/Units/$unit.unit/Unit.ucl"
+		sep=', '
+	done
+	printf '];\n' >> "$dir/Units/$unit.unit/Unit.ucl"
+	echo "$dir"
 }
 
-# Like make_svc, but installs a pre-built <binary> (e.g. a cc-compiled
-# helper) as the service program instead of an inline shell script.
+# Install a pre-built dynamic ELF service program.
 #
 # Usage: make_svc_bin <system|user> <label> <ucl_extra> <binary-path>
 make_svc_bin()
@@ -481,6 +464,19 @@ run_lookup_client()
 		return 1
 	fi
 	grep -q '^rc=0$' "$result"
+}
+
+# Wait for a supervised PID to disappear.  Authority shutdown is asynchronous:
+# its control acknowledgement can precede serviced stop-timeout escalation.
+wait_for_pid_exit()
+{
+	local pid="$1" max="${2:-50}" i=0
+
+	while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$max" ]; do
+		i=$((i + 1))
+		sleep 0.1
+	done
+	! kill -0 "$pid" 2>/dev/null
 }
 
 # Start the stack expecting it to fail (for negative tests).

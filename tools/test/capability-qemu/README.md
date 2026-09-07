@@ -1,18 +1,39 @@
 # Capability descriptor QEMU verification
 
-`run.sh` packages the Crypto descriptor, EnvFD, libnotify/BsdNotify,
-filesystem and network components, service-manager/control-plane, bundle
-parser, typed bootstrap, provider, CLI, and TrustedZFS regression
-programs with matching managers, private libraries, kernel, and modules. It
-boots the supplied raw amd64 image with QEMU's `-snapshot` option, so kernel,
+`run.sh` packages the Crypto descriptor, EnvFD, shared-memory ring,
+libnotify/BsdNotify, sysctl and network components, current control tools,
+service-manager/control-plane, bundle parser, typed bootstrap, provider, and
+TrustedZFS regression programs with matching managers, private libraries,
+kernel, and modules. It boots the supplied raw amd64 image with QEMU's `-snapshot` option, so kernel,
 library, and test writes disappear when QEMU exits.
+
+Run the harness from a built source tree with an amd64 raw image:
+
+```sh
+doas env QEMU_BIN=/path/to/qemu-system-x86_64 \
+    tools/test/capability-qemu/run.sh /path/to/5bsd.raw
+```
+
+`CAPABILITY_VM_SKIP_BUILD=yes` reuses existing objects for staging-only
+iterations. `CAPABILITY_KERNEL_OBJ`, `OBJTOP`, `QEMU_ACCEL`, `QEMU_MEMORY`,
+`QEMU_CPUS`, `QEMU_DATADIR`, and `CAPABILITY_VM_WORKDIR` override their
+corresponding defaults. `QEMU_DATADIR` selects the firmware directory for a
+custom QEMU build.
 
 The harness deliberately keeps installation and execution as separate guest
 steps: the replacement kernel, ZFS module, and cryptodev module must all start
 from the same clean boot.  The installer selects single-user mode for that
 second boot so raw provider-transport tests run before init claims
-`/dev/mac_capability` for the system-wide supervisor.  At the shell prompt,
-mount the root filesystem writable, mount the payload CD, and run:
+`/dev/mac_capability` for the system-wide supervisor. At the first boot, log
+in as root, mount the payload CD, and install it:
+
+```sh
+mkdir -p /mnt
+mount -t cd9660 /dev/cd0 /mnt
+sh /mnt/guest-install.sh /mnt
+```
+
+The installer reboots into single-user mode. Accept `/bin/sh`, then run:
 
 ```sh
 mount -uw /

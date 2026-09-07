@@ -28,14 +28,9 @@ crash_recovery_restarts_body()
 	start_stack
 
 	# Service that crashes first time, succeeds second time
-	make_svc system crasher 'restart = "on-failure";' \
-	    '#!/bin/sh' \
-	    "if [ -f ${WORK}/crash-count.out ]; then" \
-	    "    echo \"restarted\" > ${WORK}/crash-restarted.out" \
-	    '    exec sleep 30' \
-	    'fi' \
-	    "echo \"first\" > ${WORK}/crash-count.out" \
-	    'exit 1'
+	make_fixture_svc system crasher 'restart = "on-failure";' \
+	    lifecycle-restart-once "${WORK}/crash-count.out" \
+	    "${WORK}/crash-restarted.out" 1 restarted
 	reload_stack
 
 	if ! wait_for_file crash-restarted.out; then
@@ -66,9 +61,9 @@ circuit_breaker_stops_restarts_body()
 {
 	start_stack
 
-	make_svc system fastcrash 'restart = "on-failure"; max_failures = 3;' \
-	    '#!/bin/sh' \
-	    'exit 1'
+	make_fixture_svc system fastcrash \
+	    'restart = "on-failure"; max_failures = 3;' \
+	    lifecycle-exit "${WORK}/fastcrash.pid" 1
 	reload_stack
 
 	# Wait for circuit breaker message in log
@@ -95,7 +90,7 @@ circuit_breaker_stops_restarts_cleanup()
 atf_test_case graceful_shutdown_sigterm cleanup
 graceful_shutdown_sigterm_head()
 {
-	atf_set "descr" "Service receives SIGTERM on graceful shutdown"
+	atf_set "descr" "Listenerless service acknowledges quiesce and receives SIGTERM on shutdown"
 	atf_set "require.user" "root"
 	require_authority_stack_kmods
 }
@@ -103,11 +98,9 @@ graceful_shutdown_sigterm_body()
 {
 	start_stack
 
-	make_svc system trapper '' \
-	    '#!/bin/sh' \
-	    "trap 'echo \"got-sigterm\" > ${WORK}/sigterm-marker.out; exit 0' TERM" \
-	    "echo \"ready\" > ${WORK}/trapper-ready.out" \
-	    'while true; do sleep 1; done'
+	make_fixture_svc system trapper '' \
+	    lifecycle-term "${WORK}/trapper-ready.out" \
+	    "${WORK}/sigterm-marker.out"
 	reload_stack
 
 	if ! wait_for_file trapper-ready.out; then
@@ -115,9 +108,10 @@ graceful_shutdown_sigterm_body()
 		atf_fail "service did not start"
 	fi
 
+	atf_check -s exit:0 -o match:"handler=yes blocked=0" cat trapper-ready.out
 	# Shut down the stack — this sends SIGTERM to services
-	atf_check -s exit:0 -o match:"shutdown initiated" \
-	    authorityctl -s "$sockpath" shutdown
+	capd_authority_ctl "$sockpath" shutdown | grep -q "shutdown initiated" ||
+	    atf_fail "Authority shutdown request failed"
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
 
@@ -174,8 +168,8 @@ procdesc_is_only_signal_authority_body()
 	# capprotect signal check.  Waiting for socket removal first gives this
 	# asynchronous path a hard diagnostic deadline instead of hanging in
 	# wait(1) if shutdown regresses.
-	atf_check -s exit:0 -o match:"shutdown initiated" \
-	    authorityctl -s "$sockpath" shutdown
+	capd_authority_ctl "$sockpath" shutdown | grep -q "shutdown initiated" ||
+	    atf_fail "Authority shutdown request failed"
 	i=0
 	while [ -S "$sockpath" ] && [ "$i" -lt 350 ]; do
 		i=$((i + 1))
@@ -218,10 +212,8 @@ reload_adds_service_body()
 	start_stack
 
 	# Start with no services, then add one
-	make_svc system hello '' \
-	    '#!/bin/sh' \
-	    "echo \"hello\" > ${WORK}/hello-started.out" \
-	    'exec sleep 30'
+	make_fixture_svc system hello '' \
+	    lifecycle-hold - "${WORK}/hello-started.out" hello
 	reload_stack
 
 	if ! wait_for_file hello-started.out; then
@@ -251,10 +243,8 @@ reload_removes_service_head()
 reload_removes_service_body()
 {
 	prepare_paths
-	make_svc system removeme '' \
-	    '#!/bin/sh' \
-	    "echo \"running\" > ${WORK}/removeme-running.out" \
-	    'exec sleep 30'
+	make_fixture_svc system removeme '' \
+	    lifecycle-hold - "${WORK}/removeme-running.out" running
 	write_config
 	start_stack
 
@@ -319,10 +309,8 @@ audit_records_best_effort_body()
 
 	# A control command (reload) emits AUE_SERVICED_CTL; starting a
 	# service emits AUE_SERVICED_SVC_EXEC.
-	make_svc system audsvc '' \
-	    '#!/bin/sh' \
-	    "echo run > ${WORK}/audsvc.out" \
-	    'sleep 30'
+	make_fixture_svc system audsvc '' \
+	    lifecycle-hold - "${WORK}/audsvc.out" run
 	reload_stack
 	if ! wait_for_file "${WORK}/audsvc.out" 5; then
 		cat "$logfile" 2>/dev/null

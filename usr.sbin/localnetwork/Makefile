@@ -47,6 +47,7 @@ CAP_UNITMODE=	0444
 CONFS=		capbundle/localnetwork.conf
 CONFSDIR=	${NETWORKCMP_CAP_CONFIG}
 CONFSNAME_capbundle/localnetwork.conf=	localnetwork.conf
+CONFSDIRPACKAGE=	localnetwork
 CONFSPACKAGE=	localnetwork
 
 HAS_TESTS=

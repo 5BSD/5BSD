@@ -6,6 +6,7 @@
 
 #include <sys/capsicum.h>
 #include <sys/param.h>
+#include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 
@@ -33,6 +34,10 @@ static struct service_provider *fixture_service_provider;
 
 static char result_cwd[PATH_MAX];
 static int result_dir_fd = -1;
+
+static const char *result_relative(const char *);
+static FILE *result_fopen(const char *, const char *);
+static int read_counter(const char *, long *);
 
 static int
 fixture_service_initialize(void)
@@ -415,10 +420,41 @@ legacy_name_result(const char *name, int status)
 	return (legacy_status_request(&result, sizeof(result)));
 }
 
+static int
+prepare_result_resource(void)
+{
+	const char *env, *eq;
+	size_t length;
+	int fd;
+
+	env = getenv(SERVICE_DIR_FDS_ENV);
+	if (env == NULL || env[0] == '\0')
+		return (-1);
+	/*
+	 * Test bundles declare one writable result directory.  Find its mapping
+	 * by testing complete path prefixes instead of splitting on ':', which
+	 * is a valid pathname byte and appears in Kyua work-directory names.
+	 */
+	for (eq = strchr(env, '='); eq != NULL; eq = strchr(eq + 1, '=')) {
+		length = (size_t)(eq - env);
+		if (length == 0 || length >= sizeof(result_cwd))
+			continue;
+		memcpy(result_cwd, env, length);
+		result_cwd[length] = '\0';
+		if (service_resource_dir(result_cwd, &fd) == -1)
+			continue;
+		result_dir_fd = fd;
+		return (0);
+	}
+	return (-1);
+}
+
 static void
 prepare_results(void)
 {
 
+	if (prepare_result_resource() == 0)
+		return;
 	if (getcwd(result_cwd, sizeof(result_cwd)) == NULL)
 		err(1, "getcwd");
 	result_dir_fd = open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -431,15 +467,9 @@ write_result(const char *path, const char *format, ...)
 {
 	va_list ap;
 	FILE *out;
-	const char *relative;
 	int fd;
 
-	relative = path;
-	if (path[0] == '/' &&
-	    strncmp(path, result_cwd, strlen(result_cwd)) == 0 &&
-	    path[strlen(result_cwd)] == '/')
-		relative = path + strlen(result_cwd) + 1;
-	fd = openat(result_dir_fd, relative,
+	fd = openat(result_dir_fd, result_relative(path),
 	    O_WRONLY | O_CREAT | O_TRUNC, 0600);
 	if (fd == -1)
 		err(1, "openat %s", path);
@@ -455,10 +485,12 @@ write_result(const char *path, const char *format, ...)
 }
 
 /*
- * Record a failure reason into the scenario's result file before exiting.
+ * Record a failure reason into the scenario's result file before holding.
  * Service-launched fixtures have no visible stderr (serviced discards it), so
- * err()/errx() diagnostics are lost; this surfaces the reason to the test.
+ * err()/errx() diagnostics are lost; this surfaces the reason to the test
+ * while keeping the runtime container alive.
  */
+static void hold(void) __dead2;
 static void fixture_fail(const char *result, const char *fmt, ...) __dead2;
 static void
 fixture_fail(const char *result, const char *fmt, ...)
@@ -473,31 +505,26 @@ fixture_fail(const char *result, const char *fmt, ...)
 	va_end(ap);
 	write_result(result, "event=fixture-error errno=%d detail=%s\n",
 	    saved_errno, detail);
-	_exit(1);
+	hold();
 }
 
-static void hold(void) __dead2;
 static void
 hold(void)
 {
+	bool quiesce_completed;
 
-	for (;;)
-		pause();
-}
-
-static void
-require_confined_endpoint(int fd)
-{
-
-	/*
-	 * A delivered client endpoint has been attenuated to CAP_XFER_NONE: the
-	 * single delivery send consumed its CAP_XFER_ONCE budget.  cap_xfer_limit
-	 * only tightens, so trying to raise it back toward CAP_XFER_UNLIMITED must
-	 * fail with ENOTCAPABLE.
-	 */
-	errno = 0;
-	if (cap_xfer_limit(fd, CAP_XFER_UNLIMITED) != -1 || errno != ENOTCAPABLE)
-		errx(1, "peer endpoint is not transfer-confined");
+	quiesce_completed = false;
+	for (;;) {
+		if (!quiesce_completed && fixture_service_provider != NULL &&
+		    service_provider_quiescing(fixture_service_provider) == 1) {
+			if (service_provider_quiesce_complete(
+			    fixture_service_provider, 0) == -1)
+				err(1, "service_provider_quiesce_complete");
+			quiesce_completed = true;
+		}
+		if (poll(NULL, 0, 10) == -1 && errno != EINTR)
+			err(1, "poll");
+	}
 }
 
 struct accept_result {
@@ -520,6 +547,7 @@ struct mux_provider {
 	struct channel_message	*requests[3];
 	size_t			 count;
 	int			 error;
+	bool			 terminal;
 };
 
 static void
@@ -529,8 +557,17 @@ mux_request(struct channel *channel __unused,
 	struct mux_provider *provider;
 
 	provider = argument;
-	if (provider->count == nitems(provider->requests) ||
-	    channel_message_fd_count(message) != 0 ||
+	if (provider->count == nitems(provider->requests)) {
+		if (channel_message_fd_count(message) == 0 &&
+		    channel_message_length(message) == 5 &&
+		    strcmp(channel_message_data(message), "late") == 0)
+			provider->terminal = true;
+		else
+			provider->error = EPROTO;
+		channel_message_free(message);
+		return;
+	}
+	if (channel_message_fd_count(message) != 0 ||
 	    channel_message_length(message) == 0 ||
 	    ((const char *)channel_message_data(message))
 	    [channel_message_length(message) - 1] != '\0') {
@@ -645,6 +682,12 @@ scenario_mux_provider(const char *result)
 		poll_result = channel_wait(channel, 1, 5000);
 		if (poll_result <= 0 || channel_flush(channel) == -1)
 			err(1, "mux flush");
+	}
+	while (!provider.terminal) {
+		poll_result = channel_wait(channel, 0, 5000);
+		if (poll_result <= 0 || channel_dispatch(channel) == -1 ||
+		    provider.error != 0)
+			err(1, "mux terminal request");
 	}
 	channel_destroy(channel);
 	write_result(result,
@@ -765,14 +808,16 @@ scenario_provider(const char *registered, const char *result)
 	}
 	client = accepted.fd;
 	strlcpy(label, accepted.label, sizeof(label));
-	require_confined_endpoint(client);
+	if (cap_xfer_limit(client, CAP_XFER_UNLIMITED) == -1)
+		fixture_fail(result, "provider endpoint is not sendable errno=%d",
+		    errno);
 	if (fixture_event_send(client, "hello", 6) == -1)
 		err(1, "channel_send_event");
 	n = fixture_event_recv(client, message, sizeof(message));
 	if (n == -1)
 		err(1, "channel_dispatch");
 	write_result(result,
-	    "CAPD-TEST/1 event=exchange client_label=%s message=%.*s confined=yes\n",
+	    "CAPD-TEST/1 event=exchange client_label=%s message=%.*s provider_sendable=yes\n",
 	    label, (int)n, message);
 	close(client);
 	hold();
@@ -789,8 +834,12 @@ scenario_client(const char *result)
 		err(1, "service initialization");
 	peer = fixture_service_connect("org.test.ls-provider");
 	if (peer == -1)
-		err(1, "service_lookup");
-	require_confined_endpoint(peer);
+		fixture_fail(result, "service_lookup errno=%d", errno);
+	errno = 0;
+	if (cap_xfer_limit(peer, CAP_XFER_UNLIMITED) != -1 ||
+	    errno != ENOTCAPABLE)
+		fixture_fail(result, "peer endpoint transfer limit errno=%d",
+		    errno);
 	n = fixture_event_recv(peer, message, sizeof(message));
 	if (n == -1) {
 		write_result(result, "event=exchange error=recv errno=%d\n",
@@ -1167,7 +1216,7 @@ scenario_capability_services(const char *result)
 	if (getenv(SERVICE_BOOTSTRAP_ENV) == NULL ||
 	    strcmp(getenv(SERVICE_BOOTSTRAP_ENV), "5") != 0)
 		errx(1, "bootstrap environment descriptor discovery missing");
-	out = fopen(result, "w");
+	out = result_fopen(result, "w");
 	if (out == NULL)
 		err(1, "fopen %s", result);
 	for (i = 0; i < nitems(names); i++) {
@@ -1390,21 +1439,12 @@ scenario_crash_once(const char *statefile, const char *ready_name,
 	struct service_listener *listener;
 	char path[256];
 	long count;
-	FILE *sf;
 
 	count = 0;
-	sf = fopen(statefile, "r");
-	if (sf != NULL) {
-		if (fscanf(sf, "%ld", &count) != 1)
-			count = 0;
-		fclose(sf);
-	}
+	if (read_counter(statefile, &count) == -1 && errno != ENOENT)
+		err(1, "read counter %s", statefile);
 	count++;
-	sf = fopen(statefile, "w");
-	if (sf != NULL) {
-		fprintf(sf, "%ld\n", count);
-		fclose(sf);
-	}
+	write_result(statefile, "%ld\n", count);
 	if (count <= 1)
 		_exit(1);
 	if (fixture_service_initialize() == -1)
@@ -1477,7 +1517,7 @@ scenario_compat_lookup(void)
 	for (char *p = result_path; *p != '\0'; p++)
 		if (*p == '/')
 			*p = '.';
-	input = fopen(target_path, "r");
+	input = result_fopen(target_path, "r");
 	if (input == NULL)
 		err(1, "fopen %s", target_path);
 	if (fgets(target, sizeof(target), input) == NULL)
@@ -1580,6 +1620,9 @@ scenario_worker_channel(const char *result)
 			_exit(12);
 		if (fixture_event_send(worker_fd, "worker", 7) == -1)
 			_exit(13);
+		received = fixture_event_recv(worker_fd, message, sizeof(message));
+		if (received != 4 || strcmp(message, "ack") != 0)
+			_exit(14);
 		close(worker_fd);
 		_exit(0);
 	}
@@ -1591,6 +1634,9 @@ scenario_worker_channel(const char *result)
 		fixture_fail(result, "worker-channel payload mismatch "
 		    "received=%zd msg=%.*s", received,
 		    received > 0 ? (int)received : 0, message);
+	if (fixture_event_send(provider_fd, "ack", 4) == -1)
+		fixture_fail(result, "worker-channel acknowledgement errno=%d",
+		    errno);
 	if (waitpid(child, &status, 0) != child || !WIFEXITED(status) ||
 	    WEXITSTATUS(status) != 0)
 		fixture_fail(result, "worker child failed: status=%#x", status);
@@ -1622,24 +1668,15 @@ scenario_idle(const char *name, const char *seconds_str, const char *prefix)
 	const char *errstr;
 	unsigned seconds;
 	long count;
-	FILE *sf;
 
 	if (snprintf(statefile, sizeof(statefile), "%s.count", prefix) >=
 	    (int)sizeof(statefile))
 		errx(1, "idle statefile path too long");
 	count = 0;
-	sf = fopen(statefile, "r");
-	if (sf != NULL) {
-		if (fscanf(sf, "%ld", &count) != 1)
-			count = 0;
-		fclose(sf);
-	}
+	if (read_counter(statefile, &count) == -1 && errno != ENOENT)
+		err(1, "read counter %s", statefile);
 	count++;
-	sf = fopen(statefile, "w");
-	if (sf != NULL) {
-		fprintf(sf, "%ld\n", count);
-		fclose(sf);
-	}
+	write_result(statefile, "%ld\n", count);
 	seconds = (unsigned)strtonum(seconds_str, 0, 3600, &errstr);
 	if (errstr != NULL)
 		errx(1, "idle seconds '%s': %s", seconds_str, errstr);
@@ -1747,8 +1784,11 @@ scenario_helper_open(const char *name, const char *result)
 	ssize_t n;
 	int confined, fd, saved_errno;
 
-	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
-		fixture_fail(result, "helper-open init errno=%d", errno);
+	write_result(result, "helper_open=starting\nname=%s\n", name);
+	if (fixture_service_initialize() == -1)
+		fixture_fail(result, "helper-open initialize errno=%d", errno);
+	if (fixture_service_ready() == -1)
+		fixture_fail(result, "helper-open ready errno=%d", errno);
 	/*
 	 * Breadcrumb: record that the parent launched and reported ready before
 	 * attempting the open.  Every later path overwrites this and then holds,
@@ -1845,6 +1885,241 @@ scenario_sendable_provider(const char *name, const char *result)
 	/* Hold the endpoint open past the fire-and-forget send. */
 	hold();
 }
+static const char *
+result_relative(const char *path)
+{
+	const char *base;
+
+	/*
+	 * Managed fixtures receive one writable result directory.  Absolute test
+	 * arguments name files in that directory, but the path spelling can differ
+	 * from serviced's descriptor-map spelling (for example through Kyua
+	 * aliases).  Constrain every absolute result to its basename under the held
+	 * directory rather than attempting forbidden global lookup in capmode.
+	 */
+	if (path[0] == '/') {
+		base = strrchr(path, '/');
+		return (base + 1);
+	}
+	return (path);
+}
+
+static FILE *
+result_fopen(const char *path, const char *mode)
+{
+	int fd, flags;
+
+	if (strcmp(mode, "r") == 0)
+		flags = O_RDONLY | O_CLOEXEC;
+	else if (strcmp(mode, "w") == 0)
+		flags = O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC;
+	else {
+		errno = EINVAL;
+		return (NULL);
+	}
+	fd = openat(result_dir_fd, result_relative(path), flags, 0600);
+	if (fd == -1)
+		return (NULL);
+	return (fdopen(fd, mode));
+}
+
+static int
+scenario_lifecycle_exit(const char *marker, const char *status_text)
+{
+	const char *errstr;
+	int status;
+
+	status = (int)strtonum(status_text, 0, 125, &errstr);
+	if (errstr != NULL)
+		errx(64, "exit status %s: %s", status_text, errstr);
+	write_result(marker, "%jd\n", (intmax_t)getpid());
+	return (status);
+}
+
+static int
+read_counter(const char *path, long *value)
+{
+	FILE *input;
+	int fd;
+
+	fd = openat(result_dir_fd, result_relative(path), O_RDONLY | O_CLOEXEC);
+	if (fd == -1)
+		return (-1);
+	input = fdopen(fd, "r");
+	if (input == NULL) {
+		close(fd);
+		return (-1);
+	}
+	if (fscanf(input, "%ld", value) != 1) {
+		fclose(input);
+		errno = EINVAL;
+		return (-1);
+	}
+	return (fclose(input));
+}
+
+static int
+scenario_lifecycle_restart_once(const char *state, const char *marker,
+    const char *first_status_text, const char *content)
+{
+	const char *errstr;
+	long count;
+	int first_status;
+
+	first_status = (int)strtonum(first_status_text, 0, 125, &errstr);
+	if (errstr != NULL)
+		errx(64, "first exit status %s: %s", first_status_text, errstr);
+	count = 0;
+	if (read_counter(state, &count) == -1 && errno != ENOENT)
+		err(1, "read counter %s", state);
+	count++;
+	write_result(state, "%ld\n", count);
+	if (count == 1)
+		return (first_status);
+	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		err(1, "restart fixture readiness");
+	if (strcmp(content, "pid") == 0)
+		write_result(marker, "%jd\n", (intmax_t)getpid());
+	else
+		write_result(marker, "%s\n", content);
+	hold();
+}
+
+static int
+scenario_lifecycle_hold(const char *pid_marker, const char *ready_marker,
+    const char *content)
+{
+
+	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		err(1, "hold fixture readiness");
+	if (strcmp(pid_marker, "-") != 0)
+		write_result(pid_marker, "%jd\n", (intmax_t)getpid());
+	if (strcmp(ready_marker, "-") != 0)
+		write_result(ready_marker, "%s\n", content);
+	hold();
+}
+
+static int
+scenario_lifecycle_ignore_term(const char *pid_marker)
+{
+
+	if (signal(SIGTERM, SIG_IGN) == SIG_ERR ||
+	    fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		err(1, "ignore-term fixture readiness");
+	write_result(pid_marker, "%jd\n", (intmax_t)getpid());
+	hold();
+}
+
+static int
+scenario_lifecycle_subtree(const char *parent_marker,
+    const char *child_marker)
+{
+	pid_t child;
+
+	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		err(1, "subtree fixture readiness");
+	child = fork();
+	if (child == -1)
+		err(1, "fork subtree child");
+	if (child == 0)
+		hold();
+	write_result(child_marker, "%jd\n", (intmax_t)child);
+	write_result(parent_marker, "%jd\n", (intmax_t)getpid());
+	hold();
+}
+
+static int term_result_fd = -1;
+
+static void
+record_term(int signal_number __unused)
+{
+	static const char message[] = "got-sigterm\n";
+
+	if (term_result_fd >= 0)
+		(void)write(term_result_fd, message, sizeof(message) - 1);
+	_exit(0);
+}
+
+static int
+scenario_lifecycle_term(const char *ready_marker, const char *term_marker)
+{
+	struct sigaction action;
+	sigset_t mask;
+
+	term_result_fd = openat(result_dir_fd, result_relative(term_marker),
+	    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+	memset(&action, 0, sizeof(action));
+	action.sa_handler = record_term;
+	sigemptyset(&action.sa_mask);
+	if (term_result_fd == -1 || sigaction(SIGTERM, &action, NULL) == -1 ||
+	    fixture_service_initialize() == -1 || fixture_service_ready() == -1 ||
+	    sigaction(SIGTERM, NULL, &action) == -1 ||
+	    sigprocmask(SIG_SETMASK, NULL, &mask) == -1)
+		err(1, "term fixture readiness");
+	write_result(ready_marker, "ready pid=%jd handler=%s blocked=%d\n",
+	    (intmax_t)getpid(), action.sa_handler == record_term ? "yes" : "no",
+	    sigismember(&mask, SIGTERM));
+	hold();
+}
+extern char **environ;
+
+static int
+scenario_lifecycle_environment(const char *result)
+{
+	FILE *output;
+	char **entry;
+	int fd;
+
+	fd = openat(result_dir_fd, result_relative(result),
+	    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0600);
+	if (fd == -1 || (output = fdopen(fd, "w")) == NULL)
+		err(1, "open environment result");
+	for (entry = environ; *entry != NULL; entry++)
+		fprintf(output, "%s\n", *entry);
+	if (fclose(output) == EOF)
+		err(1, "close environment result");
+	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		err(1, "environment fixture readiness");
+	hold();
+}
+
+static int
+scenario_lifecycle_rlimit(const char *result)
+{
+	struct rlimit limit;
+	rlim_t inherited;
+
+	if (getrlimit(RLIMIT_NOFILE, &limit) == -1)
+		err(1, "getrlimit");
+	inherited = limit.rlim_cur;
+	limit.rlim_cur = 256;
+	if (setrlimit(RLIMIT_NOFILE, &limit) == -1 ||
+	    getrlimit(RLIMIT_NOFILE, &limit) == -1)
+		err(1, "lower RLIMIT_NOFILE");
+	write_result(result, "%ju\n%ju\n", (uintmax_t)inherited,
+	    (uintmax_t)limit.rlim_cur);
+	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		err(1, "rlimit fixture readiness");
+	hold();
+}
+
+static int
+scenario_lifecycle_identity(const char *result)
+{
+
+	write_result(result, "%ju\n%ju\n", (uintmax_t)geteuid(),
+	    (uintmax_t)getegid());
+	if (fixture_service_initialize() == -1 || fixture_service_ready() == -1)
+		err(1, "identity fixture readiness");
+	hold();
+}
+
+static int
+scenario_lifecycle_no_ready(void)
+{
+
+	hold();
+}
 
 static void
 usage(void)
@@ -1884,6 +2159,18 @@ usage(void)
 	    "       capd_service_fixture idle-provider name seconds prefix\n"
 	    "       capd_service_fixture idle-cancel name seconds ready\n"
 	    "       capd_service_fixture helper-provider result\n"
+	    "       capd_service_fixture lifecycle-exit marker status\n"
+	    "       capd_service_fixture lifecycle-restart-once state marker "
+	    "status content\n"
+	    "       capd_service_fixture lifecycle-hold pid-marker "
+	    "ready-marker content\n"
+	    "       capd_service_fixture lifecycle-ignore-term pid-marker\n"
+	    "       capd_service_fixture lifecycle-subtree parent child\n"
+	    "       capd_service_fixture lifecycle-term ready term\n"
+	    "       capd_service_fixture lifecycle-environment result\n"
+	    "       capd_service_fixture lifecycle-rlimit result\n"
+	    "       capd_service_fixture lifecycle-identity result\n"
+	    "       capd_service_fixture lifecycle-no-ready\n"
 	    "       capd_service_fixture helper-open name result\n");
 	exit(64);
 }
@@ -1969,5 +2256,26 @@ main(int argc, char **argv)
 		return (scenario_connect(argv[2], argv[3]));
 	if (argc == 4 && strcmp(argv[1], "sendable-provider") == 0)
 		return (scenario_sendable_provider(argv[2], argv[3]));
+	if (argc == 4 && strcmp(argv[1], "lifecycle-exit") == 0)
+		return (scenario_lifecycle_exit(argv[2], argv[3]));
+	if (argc == 6 && strcmp(argv[1], "lifecycle-restart-once") == 0)
+		return (scenario_lifecycle_restart_once(argv[2], argv[3],
+		    argv[4], argv[5]));
+	if (argc == 5 && strcmp(argv[1], "lifecycle-hold") == 0)
+		return (scenario_lifecycle_hold(argv[2], argv[3], argv[4]));
+	if (argc == 3 && strcmp(argv[1], "lifecycle-ignore-term") == 0)
+		return (scenario_lifecycle_ignore_term(argv[2]));
+	if (argc == 4 && strcmp(argv[1], "lifecycle-subtree") == 0)
+		return (scenario_lifecycle_subtree(argv[2], argv[3]));
+	if (argc == 4 && strcmp(argv[1], "lifecycle-term") == 0)
+		return (scenario_lifecycle_term(argv[2], argv[3]));
+	if (argc == 3 && strcmp(argv[1], "lifecycle-environment") == 0)
+		return (scenario_lifecycle_environment(argv[2]));
+	if (argc == 3 && strcmp(argv[1], "lifecycle-rlimit") == 0)
+		return (scenario_lifecycle_rlimit(argv[2]));
+	if (argc == 3 && strcmp(argv[1], "lifecycle-identity") == 0)
+		return (scenario_lifecycle_identity(argv[2]));
+	if (argc == 2 && strcmp(argv[1], "lifecycle-no-ready") == 0)
+		return (scenario_lifecycle_no_ready());
 	usage();
 }

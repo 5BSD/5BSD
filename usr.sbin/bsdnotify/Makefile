@@ -41,6 +41,7 @@ CAP_UNITMODE=	0444
 CONFS=		capbundle/bsdnotify.conf
 CONFSDIR=	${NOTIFY_CAP_CONFIG}
 CONFSNAME_capbundle/bsdnotify.conf=	bsdnotify.conf
+CONFSDIRPACKAGE=	bsdnotify
 CONFSPACKAGE=	bsdnotify
 
 HAS_TESTS=

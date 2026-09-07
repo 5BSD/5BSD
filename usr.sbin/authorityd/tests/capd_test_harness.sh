@@ -140,6 +140,45 @@ EOF
 	export SERVICED_SKIP_RC=1
 }
 
+# Test-only access to authorityd's private root control socket.  The public
+# authorityctl(8) intentionally uses the capability plane and has no socket
+# override, while isolated stack tests must address their own daemon instance.
+capd_authority_ctl()
+{
+	local op reply status verb
+
+	reply=".capd-control-reply.$$"
+	verb=$2
+	case "$verb" in
+	shutdown) op=1 ;;
+	status) op=2 ;;
+	reload) op=3 ;;
+	*) return 64 ;;
+	esac
+	{
+		printf '\001\000\000\000'
+		printf "\\$(printf '%03o' "$op")\\000\\000\\000"
+		printf '\000\000\000\000\000\000\000\000'
+	} | nc -U "$1" >"$reply" || {
+		rm -f "$reply"
+		return 1
+	}
+	status=$(od -A n -t u4 -N 4 "$reply" | awk '{ print $1 }')
+	if [ "$status" != 0 ]; then
+		rm -f "$reply"
+		return 1
+	fi
+	case "$verb" in
+	shutdown) echo "authorityd: shutdown initiated" ;;
+	status)
+		echo "authorityd: running"
+		dd if="$reply" bs=16 skip=1 2>/dev/null
+		;;
+	reload) dd if="$reply" bs=16 skip=1 2>/dev/null ;;
+	esac
+	rm -f "$reply"
+}
+
 capd_dump_diagnostics()
 {
 	if [ -n "${CAPD_GUARDIAN_SOCKET:-}" ] &&
@@ -149,9 +188,8 @@ capd_dump_diagnostics()
 		    2>/dev/null || true
 	fi
 	if [ -n "${CAPD_AUTHORITY_SOCKET:-}" ] &&
-	    [ -S "$CAPD_AUTHORITY_SOCKET" ] &&
-	    command -v authorityctl >/dev/null 2>&1; then
-		authorityctl -s "$CAPD_AUTHORITY_SOCKET" status 2>/dev/null || true
+	    [ -S "$CAPD_AUTHORITY_SOCKET" ]; then
+		capd_authority_ctl "$CAPD_AUTHORITY_SOCKET" status 2>/dev/null || true
 	fi
 	if [ -n "${CAPD_LOG:-}" ] && [ -r "$CAPD_LOG" ]; then
 		tail -100 "$CAPD_LOG" >&2
@@ -210,6 +248,10 @@ capd_start_stack()
 {
 	local i
 
+	# A test-local Authority stack must never replay the host's rc(8).
+	# Some suites provide their own readable config and bypass prepare().
+	export SERVICED_SKIP_RC=1
+
 	capd_require_device
 	capd_find_guardian
 	capd_find_serviced
@@ -261,17 +303,15 @@ capd_stop_stack()
 			wait "$capd_guardian_pid" 2>/dev/null || true
 			capd_guardian_pid=
 		fi
-		if [ -S "$CAPD_AUTHORITY_SOCKET" ] &&
-		    command -v authorityctl >/dev/null 2>&1; then
-			authorityctl -s "$CAPD_AUTHORITY_SOCKET" shutdown \
+		if [ -S "$CAPD_AUTHORITY_SOCKET" ]; then
+			capd_authority_ctl "$CAPD_AUTHORITY_SOCKET" shutdown \
 			    >/dev/null 2>&1 || true
 		fi
 		return 0
 	fi
 	graceful=0
-	if [ -S "$CAPD_AUTHORITY_SOCKET" ] &&
-	    command -v authorityctl >/dev/null 2>&1; then
-		if authorityctl -s "$CAPD_AUTHORITY_SOCKET" shutdown \
+	if [ -S "$CAPD_AUTHORITY_SOCKET" ]; then
+		if capd_authority_ctl "$CAPD_AUTHORITY_SOCKET" shutdown \
 		    >/dev/null 2>&1; then
 			graceful=1
 		fi
@@ -309,9 +349,8 @@ capd_cleanup_stack()
 
 	capd_paths_init
 	capd_find_guardian
-	if [ -S "$CAPD_AUTHORITY_SOCKET" ] &&
-	    command -v authorityctl >/dev/null 2>&1; then
-		authorityctl -s "$CAPD_AUTHORITY_SOCKET" shutdown \
+	if [ -S "$CAPD_AUTHORITY_SOCKET" ]; then
+		capd_authority_ctl "$CAPD_AUTHORITY_SOCKET" shutdown \
 		    >/dev/null 2>&1 || true
 	fi
 	# Judge the guardian by liveness, never by socket-file existence:

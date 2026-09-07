@@ -185,7 +185,8 @@ sysctl_op(struct service_session *session, uint16_t opcode, const char *name,
 	incoming.size = sizeof(incoming);
 	incoming.data = reply;
 	incoming.capacity = sizeof(reply);
-	options.timeout_ms = 2000;
+	/* Match the public client's deadline; NEXT may walk the full sysctl tree. */
+	options.timeout_ms = 5000;
 	ATF_REQUIRE_EQ(0, service_session_call(session, &outgoing, &incoming,
 	    &options));
 	rmsg = (const void *)reply;

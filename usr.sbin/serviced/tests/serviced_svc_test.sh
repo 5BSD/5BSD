@@ -21,8 +21,8 @@ assert_stack_alive()
 		cat "$logfile" 2>/dev/null
 		atf_fail "authorityd exited unexpectedly"
 	fi
-	atf_check -s exit:0 -o match:"running" \
-	    authorityctl -s "$sockpath" status
+	capd_authority_ctl "$sockpath" status | grep -q running ||
+	    atf_fail "Authority status request failed"
 }
 
 # ===================================================================
@@ -39,10 +39,8 @@ restart_never_no_restart_head()
 restart_never_no_restart_body()
 {
 	prepare_paths
-	make_svc system exit0 'restart = "never";' \
-	    '#!/bin/sh' \
-	    "echo \$\$ > ${WORK}/exit0.pid" \
-	    'exit 0'
+	make_fixture_svc system exit0 'restart = "never";' \
+	    lifecycle-exit "${WORK}/exit0.pid" 0
 
 	start_stack
 	if ! wait_for_file exit0.pid; then
@@ -75,10 +73,8 @@ restart_on_failure_ignores_clean_head()
 restart_on_failure_ignores_clean_body()
 {
 	prepare_paths
-	make_svc system clean-exit 'restart = "on-failure";' \
-	    '#!/bin/sh' \
-	    "echo \$\$ > ${WORK}/clean.pid" \
-	    'exit 0'
+	make_fixture_svc system clean-exit 'restart = "on-failure";' \
+	    lifecycle-exit "${WORK}/clean.pid" 0
 
 	start_stack
 	if ! wait_for_file clean.pid; then
@@ -111,14 +107,9 @@ restart_on_failure_restarts_on_error_head()
 restart_on_failure_restarts_on_error_body()
 {
 	prepare_paths
-	make_svc system fail-once 'restart = "on-failure";' \
-	    '#!/bin/sh' \
-	    "if [ ! -f ${WORK}/fail-once.ran ]; then" \
-	    "    touch ${WORK}/fail-once.ran" \
-	    '    exit 1' \
-	    'fi' \
-	    "echo \$\$ > ${WORK}/fail-once-restarted.pid" \
-	    'sleep 60'
+	make_fixture_svc system fail-once 'restart = "on-failure";' \
+	    lifecycle-restart-once "${WORK}/fail-once.ran" \
+	    "${WORK}/fail-once-restarted.pid" 1 pid
 
 	start_stack
 	if ! sh -c "i=0; while [ ! -s fail-once-restarted.pid ] && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; test -s fail-once-restarted.pid"; then
@@ -151,14 +142,9 @@ restart_always_restarts_clean_head()
 restart_always_restarts_clean_body()
 {
 	prepare_paths
-	make_svc system exit0-always 'restart = "always";' \
-	    '#!/bin/sh' \
-	    "if [ ! -f ${WORK}/exit0-always.ran ]; then" \
-	    "    touch ${WORK}/exit0-always.ran" \
-	    '    exit 0' \
-	    'fi' \
-	    "echo \$\$ > ${WORK}/exit0-always-restarted.pid" \
-	    'sleep 60'
+	make_fixture_svc system exit0-always 'restart = "always";' \
+	    lifecycle-restart-once "${WORK}/exit0-always.ran" \
+	    "${WORK}/exit0-always-restarted.pid" 0 pid
 
 	start_stack
 	if ! sh -c "i=0; while [ ! -s exit0-always-restarted.pid ] && [ \$i -lt 200 ]; do i=\$((i + 1)); sleep 0.1; done; test -s exit0-always-restarted.pid"; then
@@ -189,9 +175,8 @@ circuit_breaker_disables_head()
 circuit_breaker_disables_body()
 {
 	prepare_paths
-	make_svc system crash 'restart = "always"; max_failures = 3;' \
-	    '#!/bin/sh' \
-	    'exit 1'
+	make_fixture_svc system crash 'restart = "always"; max_failures = 3;' \
+	    lifecycle-exit "${WORK}/crash.pid" 1
 
 	start_stack
 	if ! sh -c "i=0; while ! grep -q 'service [^ ]*crash[^ ]*: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service [^ ]*crash[^ ]*: started pid' '$logfile'"; then
@@ -223,11 +208,8 @@ shutdown_kills_sigterm_ignorer_body()
 	local svc_pid
 
 	prepare_paths
-	make_svc system ignore-term 'stop_timeout = 1;' \
-	    '#!/bin/sh' \
-	    "echo \$\$ > ${WORK}/ignore-term.pid" \
-	    'trap "" TERM' \
-	    'while :; do sleep 1; done'
+	make_fixture_svc system ignore-term 'stop_timeout = 1;' \
+	    lifecycle-ignore-term "${WORK}/ignore-term.pid"
 
 	start_stack
 	if ! wait_for_file ignore-term.pid; then
@@ -236,10 +218,14 @@ shutdown_kills_sigterm_ignorer_body()
 	fi
 	svc_pid=$(cat ignore-term.pid)
 
-	atf_check -s exit:0 -o ignore authorityctl -s "$sockpath" shutdown
+	capd_authority_ctl "$sockpath" shutdown >/dev/null ||
+	    atf_fail "Authority shutdown request failed"
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
-	atf_check -s not-exit:0 -e ignore kill -0 "$svc_pid"
+	wait_for_pid_exit "$svc_pid" || {
+		cat "$logfile" 2>/dev/null
+		atf_fail "SIGTERM-ignoring service survived shutdown"
+	}
 }
 shutdown_kills_sigterm_ignorer_cleanup()
 {
@@ -265,12 +251,9 @@ shutdown_kills_subtree_body()
 	local child_pid
 
 	prepare_paths
-	make_svc system subtree 'stop_timeout = 1;' \
-	    '#!/bin/sh' \
-	    'sleep 60 &' \
-	    "echo \$! > ${WORK}/subtree-child.pid" \
-	    "echo \$\$ > ${WORK}/subtree-parent.pid" \
-	    'wait'
+	make_fixture_svc system subtree 'stop_timeout = 1;' \
+	    lifecycle-subtree "${WORK}/subtree-parent.pid" \
+	    "${WORK}/subtree-child.pid"
 
 	start_stack
 	if ! wait_for_file subtree-child.pid; then
@@ -279,11 +262,18 @@ shutdown_kills_subtree_body()
 	fi
 	child_pid=$(cat subtree-child.pid)
 
-	atf_check -s exit:0 -o ignore authorityctl -s "$sockpath" shutdown
+	capd_authority_ctl "$sockpath" shutdown >/dev/null ||
+	    atf_fail "Authority shutdown request failed"
 	wait "$daemon_pid" 2>/dev/null || true
 	daemon_pid=
-	atf_check -s not-exit:0 -e ignore kill -0 "$child_pid"
-	atf_check -s not-exit:0 -e ignore kill -0 "$(cat subtree-parent.pid)"
+	wait_for_pid_exit "$child_pid" || {
+		cat "$logfile" 2>/dev/null
+		atf_fail "service child survived shutdown"
+	}
+	wait_for_pid_exit "$(cat subtree-parent.pid)" || {
+		cat "$logfile" 2>/dev/null
+		atf_fail "service parent survived shutdown"
+	}
 }
 shutdown_kills_subtree_cleanup()
 {
@@ -390,10 +380,8 @@ service_environment_minimal_head()
 service_environment_minimal_body()
 {
 	prepare_paths
-	make_svc system env-probe '' \
-	    '#!/bin/sh' \
-	    "env | sort > ${WORK}/env-probe.out" \
-	    'sleep 20'
+	make_fixture_svc system env-probe '' \
+	    lifecycle-environment "${WORK}/env-probe.out"
 
 	export SHOULD_NOT_LEAK=secret
 	start_stack
@@ -433,12 +421,8 @@ service_descriptor_limit_inheritance_body()
 {
 	require_ambient_control
 	prepare_paths
-	make_svc system fd-limit '' \
-	    '#!/bin/sh' \
-	    "ulimit -n > ${WORK}/fd-limit.out" \
-	    'ulimit -S -n 256' \
-	    "ulimit -n >> ${WORK}/fd-limit.out" \
-	    'sleep 20'
+	make_fixture_svc system fd-limit '' \
+	    lifecycle-rlimit "${WORK}/fd-limit.out"
 
 	start_stack
 	if ! wait_for_file fd-limit.out; then
@@ -490,11 +474,8 @@ service_runs_as_user_head()
 service_runs_as_user_body()
 {
 	prepare_paths
-	make_svc system whoami 'user = "nobody"; group = "nogroup";' \
-	    '#!/bin/sh' \
-	    "id -un > ${WORK}/whoami-svc.out" \
-	    "id -gn >> ${WORK}/whoami-svc.out" \
-	    'sleep 60'
+	make_fixture_svc system whoami 'user = "nobody"; group = "nogroup";' \
+	    lifecycle-identity "${WORK}/whoami-svc.out"
 	touch whoami-svc.out
 	chmod 666 whoami-svc.out
 
@@ -503,8 +484,12 @@ service_runs_as_user_body()
 		cat "$logfile" 2>/dev/null
 		atf_fail "service did not write output"
 	fi
-	atf_check -s exit:0 -o match:"nobody" head -1 whoami-svc.out
-	atf_check -s exit:0 -o match:"nogroup" tail -1 whoami-svc.out
+	expected_uid=$(id -u nobody)
+	expected_gid=$(pw groupshow nogroup | cut -d: -f3)
+	[ "$(head -1 whoami-svc.out)" = "$expected_uid" ] ||
+	    atf_fail "service did not run as nobody"
+	[ "$(tail -1 whoami-svc.out)" = "$expected_gid" ] ||
+	    atf_fail "service did not run with group nogroup"
 	assert_stack_alive
 }
 service_runs_as_user_cleanup()
@@ -528,10 +513,8 @@ control_reload_body()
 	start_stack
 
 	# Add a new bundle after startup.
-	make_svc system new-svc '' \
-	    '#!/bin/sh' \
-	    "echo \$\$ > ${WORK}/new-svc.pid" \
-	    'sleep 60'
+	make_fixture_svc system new-svc '' \
+	    lifecycle-hold "${WORK}/new-svc.pid" - running
 
 	# Use Authority's authenticated control endpoint; ambient SIGHUP is shielded.
 	reload_stack
@@ -564,9 +547,8 @@ restart_backoff_head()
 restart_backoff_body()
 {
 	prepare_paths
-	make_svc system fastcrash 'restart = "always";' \
-	    '#!/bin/sh' \
-	    'exit 1'
+	make_fixture_svc system fastcrash 'restart = "always";' \
+	    lifecycle-exit "${WORK}/fastcrash.pid" 1
 
 	start_stack
 	if ! sh -c "i=0; while ! grep -q 'service [^ ]*fastcrash[^ ]*: started pid' '$logfile' && [ \$i -lt 50 ]; do i=\$((i + 1)); sleep 0.1; done; grep -q 'service [^ ]*fastcrash[^ ]*: started pid' '$logfile'"; then
