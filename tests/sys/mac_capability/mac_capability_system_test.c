@@ -13,11 +13,13 @@
 #include <sys/types.h>
 #include <sys/capsicum.h>
 #include <sys/ioctl.h>
+#include <sys/kenv.h>
 #include <sys/linker.h>
 #include <sys/wait.h>
 
 #include <errno.h>
 #include <fcntl.h>
+#include <kenv.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -503,6 +505,137 @@ ATF_TC_BODY(capmode_kld_enumeration_open, tc)
 	close(svc);
 }
 
+/* A short, reversible kenv variable used only to probe the KENV gate. */
+#define	KENV_PROBE_NAME	"mac_cap_gate_probe"
+
+/*
+ * Fork+exec the helper so it runs under a fresh nonce, claims SYS_GATE_KENV,
+ * and blocks holding that claim.  Because SYS_OP_CLAIM inserts at the head of
+ * the claim list, the child's claim is enumerated BEFORE the parent's — the
+ * exact ordering that once made sys_check_gate wrongly deny the parent.
+ * Returns the child pid via *pidp and the "release" write-end via *releasep;
+ * the caller must write one byte to *releasep and waitpid(*pidp) to clean up.
+ */
+static void
+plant_foreign_kenv_claim(const atf_tc_t *tc, pid_t *pidp, int *releasep)
+{
+	char path[1024], readyarg[16], goarg[16];
+	const char *dir;
+	int ready[2], go[2];
+	pid_t pid;
+	char b;
+
+	dir = atf_tc_get_config_var(tc, "srcdir");
+	snprintf(path, sizeof(path), "%s/mac_capability_exec_helper", dir);
+	ATF_REQUIRE(pipe(ready) == 0);
+	ATF_REQUIRE(pipe(go) == 0);
+
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		snprintf(readyarg, sizeof(readyarg), "%d", ready[1]);
+		snprintf(goarg, sizeof(goarg), "%d", go[0]);
+		(void)close(ready[0]);
+		(void)close(go[1]);
+		execl(path, path, "claim_hold", "0x80" /* SYS_GATE_KENV */,
+		    readyarg, goarg, NULL);
+		_exit(127);
+	}
+	(void)close(ready[1]);
+	(void)close(go[0]);
+	/* Wait until the child has actually claimed the gate. */
+	ATF_REQUIRE_MSG(read(ready[0], &b, 1) == 1,
+	    "foreign claim helper never reported ready");
+	(void)close(ready[0]);
+	*pidp = pid;
+	*releasep = go[1];
+}
+
+/*
+ * Regression for the sys_check_gate first-match early-deny bug: a caller that
+ * owns its OWN covering claim must be allowed even when a DIFFERENT nonce's
+ * claim on the same gate is enumerated first.  The parent claims KENV, a
+ * foreign nonce then claims KENV (landing at the list head), and the parent's
+ * own kenv(KENV_SET) must still succeed — before the fix it returned EPERM
+ * because the loop decided on the foreign head claim and never reached the
+ * parent's.
+ */
+ATF_TC(own_claim_not_shadowed_by_foreign);
+ATF_TC_HEAD(own_claim_not_shadowed_by_foreign, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a nonce that owns a covering claim is allowed even when another "
+	    "nonce's claim on the same gate is enumerated first");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(own_claim_not_shadowed_by_foreign, tc)
+{
+	char value[] = "1";
+	int svc, rel, status;
+	pid_t pid;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KENV) == 0);
+
+	/* A foreign nonce claims the same gate, ahead of ours in the list. */
+	plant_foreign_kenv_claim(tc, &pid, &rel);
+
+	/* Our own claim must still admit our kenv write. */
+	errno = 0;
+	ATF_CHECK_MSG(kenv(KENV_SET, KENV_PROBE_NAME, value,
+	    (int)sizeof(value)) == 0,
+	    "own KENV claim was shadowed by a foreign claim: %s",
+	    strerror(errno));
+
+	/* Release the helper and clean up the probe variable. */
+	ATF_REQUIRE(write(rel, "g", 1) == 1);
+	(void)close(rel);
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	(void)kenv(KENV_UNSET, KENV_PROBE_NAME, NULL, 0);
+	close(svc);
+}
+
+/*
+ * Positive enforcement: while a gate is claimed, a foreign nonce holding
+ * neither a claim nor an authorization is DENIED the gated operation.  Proves
+ * sys_check_gate actually enforces (not merely fails open) — the companion to
+ * the shadowing regression above.
+ */
+ATF_TC(unclaimed_foreign_nonce_denied);
+ATF_TC_HEAD(unclaimed_foreign_nonce_denied, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a foreign nonce with no claim and no authorization is denied a "
+	    "gated kenv write while the gate is claimed");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(unclaimed_foreign_nonce_denied, tc)
+{
+	char path[1024];
+	const char *dir;
+	int svc, status;
+	pid_t pid;
+
+	svc = sys_connect();
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_KENV) == 0);
+
+	dir = atf_tc_get_config_var(tc, "srcdir");
+	snprintf(path, sizeof(path), "%s/mac_capability_exec_helper", dir);
+	pid = fork();
+	ATF_REQUIRE(pid >= 0);
+	if (pid == 0) {
+		execl(path, path, "kenv_set", NULL);
+		_exit(127);
+	}
+	ATF_REQUIRE(waitpid(pid, &status, 0) == pid);
+	ATF_CHECK_MSG(WIFEXITED(status) && WEXITSTATUS(status) == 0,
+	    "unclaimed foreign nonce was NOT denied the gated kenv write "
+	    "(status %#x)", status);
+	/* In case the write slipped through, do not leave the probe behind. */
+	(void)kenv(KENV_UNSET, KENV_PROBE_NAME, NULL, 0);
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -518,6 +651,8 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, mint_narrow_rejects_unclaimed);
 	ATF_TP_ADD_TC(tp, mint_narrow_zero_gives_all);
 	ATF_TP_ADD_TC(tp, capmode_kld_enumeration_open);
+	ATF_TP_ADD_TC(tp, own_claim_not_shadowed_by_foreign);
+	ATF_TP_ADD_TC(tp, unclaimed_foreign_nonce_denied);
 
 	return (atf_no_error());
 }

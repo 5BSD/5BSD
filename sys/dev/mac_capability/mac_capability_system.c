@@ -168,41 +168,60 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 
 	mtx_lock(&sys_lock);
 
-	/* Check if any claim covers this gate. */
+	/*
+	 * Scan ALL claims covering this gate before deciding — never make a
+	 * terminal allow/deny on the first match.  A single gate may be claimed
+	 * by more than one nonce; the caller is allowed if it owns ANY covering
+	 * claim, or holds an authorization from the owner of ANY covering claim.
+	 * Deciding on the first-enumerated claim alone (as this once did) would
+	 * spuriously DENY a caller that owns, or is authorized against, a
+	 * covering claim that happens to appear later in the list.
+	 */
+	bool gate_claimed = false;
+
 	LIST_FOREACH(sc, &sys_claims, sc_link) {
 		if (!(sc->sc_gates & gate))
 			continue;
-		/* Same nonce — always allow. */
-		if (caller_nonce != 0 &&
-		    caller_nonce == sc->sc_nonce) {
+		gate_claimed = true;
+		/* Same nonce — the caller owns a covering claim. */
+		if (caller_nonce != 0 && caller_nonce == sc->sc_nonce) {
 			mtx_unlock(&sys_lock);
+			SDT_PROBE3(mac_capability_system, , , allow, name,
+			    sc->sc_nonce, caller_nonce);
 			return (0);
 		}
 		/*
-		 * Unlabeled (nonce 0) processes are denied when a
-		 * gate is claimed -- they have no identity to authorize.
+		 * Foreign nonce — an authorization from THIS owner for the gate
+		 * suffices.  A labeled caller may still own or be authorized
+		 * against a later claim, so keep scanning on no match here; an
+		 * unlabeled (nonce 0) caller has no identity to match or
+		 * authorize and can only be denied, but that denial waits until
+		 * the whole list confirms no covering claim admits it.
 		 */
-		if (caller_nonce == 0) {
-			mtx_unlock(&sys_lock);
-			SDT_PROBE3(mac_capability_system, , , deny, name,
-			    sc->sc_nonce, (uint64_t)0);
-			return (EPERM);
-		}
-		/* Foreign nonce — check authorization. */
-		LIST_FOREACH(sa, &sys_auths, sa_link) {
-			if (sa->sa_accessor == caller_nonce &&
-			    sa->sa_owner == sc->sc_nonce &&
-			    (sa->sa_gates & gate)) {
-				mtx_unlock(&sys_lock);
-				SDT_PROBE3(mac_capability_system, , , allow,
-				    name, sc->sc_nonce, caller_nonce);
-				return (0);
+		if (caller_nonce != 0) {
+			LIST_FOREACH(sa, &sys_auths, sa_link) {
+				if (sa->sa_accessor == caller_nonce &&
+				    sa->sa_owner == sc->sc_nonce &&
+				    (sa->sa_gates & gate)) {
+					mtx_unlock(&sys_lock);
+					SDT_PROBE3(mac_capability_system, , ,
+					    allow, name, sc->sc_nonce,
+					    caller_nonce);
+					return (0);
+				}
 			}
 		}
-		/* Denied. */
+	}
+
+	if (gate_claimed) {
+		/*
+		 * The gate is claimed, but no covering claim is owned by the
+		 * caller and no authorization admits it (an unlabeled caller
+		 * lands here too).  Deny.
+		 */
 		mtx_unlock(&sys_lock);
 		SDT_PROBE3(mac_capability_system, , , deny, name,
-		    sc->sc_nonce, caller_nonce);
+		    (uint64_t)0, caller_nonce);
 		return (EPERM);
 	}
 
