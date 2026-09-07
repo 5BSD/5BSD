@@ -110,10 +110,13 @@ rollout. The registration is idempotent per process.
 
 ## Phases
 
-- **P1 — kernel syscall.** Add `mac_capability_channel_create` (SYF_CAPENABLED)
-  wired to the existing channel-pair creator; regen sysent + libc stub. Kernel
-  ATF test: create a pair, send/recv both directions, both ends carry the
-  caller's nonce, works under `cap_enter()`. VM (CAPLANE_OFF harness).
+- **P1 — kernel syscall. DONE (58c6e69638a), VM-verified 16/16.** Added
+  `mac_capability_channel_create(fds[2])` via SYSCALL_MODULE in the
+  mac_capability_channel module (dynamic number, SYF_CAPENABLED honored — no
+  base syscalls.master/buildkernel needed). Ungated, no authority (bearer
+  endpoints, cp pre-linked so the privileged branch is unreachable). libchannel
+  helper resolves the number via modfind/modstat, fail-soft ENOSYS. Full
+  adversarial/negative/stress/lifecycle suite passes under CAPLANE_OFF.
 - **P2 — registration + libservice.** `SVC_OP_REGISTER_LOOKUP` in serviced
   (adopt per-client endpoint, nonce-scoped); libservice lazy/memoized
   registration with fail-soft fallback. Unit tests for the nonce-scope decision
