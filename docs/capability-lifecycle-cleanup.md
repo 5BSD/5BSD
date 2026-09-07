@@ -53,6 +53,46 @@ Two cleanup cases:
    resources are **orphaned and leak forever**. This is the gap this design
    closes.
 
+## 1a. Do you need a delete hook? (program-author guidance)
+
+If you write a capability program (a bundle/provider), decide which of two cases
+you are in — it determines whether uninstall needs a delete hook:
+
+**Case A — ephemeral / held-resource programs: NO delete hook needed.**
+Everything you hold is bound to your running process or an open descriptor and
+is released by the kernel/authority when your service stops:
+
+- an fd you opened, a channel/token delivered to you, a `SYS_OP_CLAIM` /
+  isolation claim bound to a held instance fd, a vsock listener, etc.
+
+When your unit stops (including because its bundle was uninstalled and serviced
+tore it down), those go away on their own. Example: **`localsysctl`'s sysctl
+isolation** — the authority owns the scoped `SYS_GATE_SYSCTL` claim and
+reference-counts it against the delivering service; when `localsysctl` stops,
+serviced releases that auto-claim (refcount → 0) and the delivered token fd
+closes, so the isolation lifts automatically. No pkg hook, no reclaim handler.
+(Requirement: the auto-claim **must** be refcount-released on service teardown —
+verify this is wired; a leaked authority claim would isolate an OID with no
+writer.)
+
+**Case B — persistent-state programs: you need BOTH of two things.**
+If you create state that OUTLIVES your process — a zfs dataset, a file, a jail,
+a named kernel key, a per-label log store, retained topic state — the kernel
+won't reclaim it when you stop, so uninstall must drive it explicitly. You need:
+
+1. a **provider-side reclaim handler** — `service_set_reclaim_handler(3)` — that
+   destroys your persistent per-label state when told a label is being
+   reclaimed; **and**
+2. a **pkg delete hook** — `scripts { post-deinstall = "servicectl reclaim
+   <label>" }` in the bundle's UCL descriptor — so uninstalling the package
+   triggers the reclaim broadcast (see §5b for the reach-path).
+
+Neither alone suffices: (1) without (2) is never triggered on uninstall; (2)
+without (1) reaches your provider but it does nothing. The providers in §1's
+table are all Case B.
+
+If in doubt: hold nothing persistent (Case A) and you owe nothing at uninstall.
+
 ## 2. Why not UNIX as the management plane
 
 These resources deliberately live **outside** the UNIX namespace: tzfsd datasets
