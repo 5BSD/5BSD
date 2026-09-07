@@ -49,6 +49,25 @@ int	mac_capability_release_net(const struct ort_net_claim *nc);
 int	mac_capability_release_vsock(const struct ort_vsock_claim *vc);
 int	mac_capability_release_system_gates(uint32_t gates);
 
+/*
+ * Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2).
+ *
+ * A standing, scoped SYS_GATE_SYSCTL claim owned by the authority on a
+ * dedicated "system" connection, refcounted independently of the coarse
+ * gate machinery.  claim relays the OPAQUE marshalled sys_sysctl_oidset the
+ * caller supplied into the kernel SYS_OP_CLAIM's OID-set trailer (bounds check
+ * only; never interpreting OIDs); mint returns a SYSCTL token fd scoped to that
+ * claim; release drops one reference (closing the connection, and thus the
+ * claim, at zero) and returns 1 if a scoped claim was held, 0 otherwise (so the
+ * caller can fall back to the coarse release path); sweep force-drops the whole
+ * standing claim when serviced exits.
+ */
+int	mac_capability_claim_system_sysctl(const void *oidset,
+	    size_t oidset_len);
+int	mac_capability_mint_system_sysctl_token(void);
+int	mac_capability_release_system_sysctl(void);
+void	mac_capability_sweep_system_sysctl(void);
+
 /* --- Shared inline helpers for claim comparison/formatting --- */
 
 static inline void

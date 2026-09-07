@@ -53,9 +53,46 @@ claimed subset), **config-driven** (localsysctl supplies the set), and
   current coarse behavior (gate all privileged writes). New claimers pass an OID
   set to get the scoped behavior. No existing claimer changes meaning.
 
+## Ownership: the authority owns the claim (device constraint)
+
+VM verification of the first Phase 2 attempt exposed a hard constraint the unit
+tests could not: **`/dev/mac_capability` is isolated to the authority's nonce**,
+so a provider cannot open it and cannot issue `SYS_OP_CLAIM` itself. Only
+Capsule/authorityd can. Providers receive capabilities as **delivered tokens at
+launch** (the sysextd precedent: manifest declares a gate → serviced asks the
+authority to mint a token → provider calls `service_provider_authorize_
+capabilities()` to add its nonce to the gate's authorized set).
+
+Therefore the per-OID SYSCTL claim is **owned by the authority**, and
+`localsysctl` is a **delivered-token writer**, not the claim owner:
+
+1. **`localsysctl`'s manifest (`Unit.ucl`) declares the isolate OID-name list**
+   (system security policy → manifest, per the manifest-vs-code principle).
+2. **serviced** (launch orchestrator) reads it, resolves names→MIBs
+   (`sysctlnametomib`), marshals the `sys_sysctl_oidset`, and requests the
+   authority mint a SYSCTL token **carrying that opaque OID-set payload**
+   (extending `AUTHORITY_OP_MINT_SYSTEM`). serviced's blanket refusal to
+   delegate `SYS_GATE_SYSCTL` at launch is relaxed *only* for this
+   manifest-declared, OID-scoped case.
+3. **The authority stays generic**: `handle_mint_system` → `auto_claim_system`
+   → `mac_capability_claim_system_gate_bits` relays the *opaque* OID payload
+   into a scoped kernel `SYS_OP_CLAIM` under the authority's nonce, then mints
+   the token. The authority never interprets sysctl specifics — so the same
+   generic relay serves future namespaces (kenv/IPC).
+4. **`localsysctl` authorizes the delivered token** (existing
+   `service_provider_authorize_capabilities()`) → its nonce becomes the
+   authorized writer. It does NOT open the device.
+
+Result: the authority owns the *scoped* per-OID claim; `localsysctl` is the
+sole non-authority writer; foreign nonces are denied; only the configured
+subset is isolated. The kernel layer (Phase 1) is unchanged — it already
+supports the scoped claim and the owner/token decision.
+
 ## API surface
 
-Three layers. Everyday clients touch only Layer 2.
+Three layers. Everyday clients touch only Layer 2.  (NOTE: per the ownership
+model above, the Layer-1 claim is issued by the *authority* on the provider's
+behalf via the delivered-token path — not by the provider opening the device.)
 
 ### Layer 1 — kernel isolation API (only the broker, `localsysctl`, uses it)
 
@@ -193,6 +230,22 @@ first), then:
 
 This reuses the existing claim/mint/authorize/revoke machinery unchanged; only
 the "does this gate apply to this OID" test becomes set-aware.
+
+## Uninstall / lifecycle
+
+sysctl isolation is **Case A** in `docs/capability-lifecycle-cleanup.md` §1a
+(ephemeral / held-resource): the authority owns the scoped `SYS_GATE_SYSCTL`
+claim and reference-counts it against the delivering service (`localsysctl`),
+and `localsysctl` holds the delivered token. When `localsysctl` stops —
+including because its bundle was uninstalled and serviced tore it down —
+serviced releases that auto-claim (refcount → 0) and the token fd closes, so the
+isolation lifts on its own. **No pkg delete hook and no reclaim handler are
+required** for the isolation itself.
+
+Requirement (verify in every phase): the authority auto-claim for SYSCTL **must**
+be refcount-released on service teardown, exactly as the coarse sysextd path is.
+A leaked claim would leave an OID isolated with no live writer. (localsysctl's
+per-label ACL config is static bundle content that pkg removes normally.)
 
 ## Phases
 

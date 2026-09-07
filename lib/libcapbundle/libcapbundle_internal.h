@@ -76,6 +76,14 @@ struct capbundle_service {
 	int	restart;
 	int	management;		/* SVC_MGMT_* (default SVC_MGMT_SYSTEM) */
 	uint32_t cap_system;		/* SYS_GATE_* bitmask */
+	/*
+	 * Per-OID sysctl isolation set (docs/capability-sysctl-isolation.md,
+	 * Phase 2).  Dotted sysctl OID names; only meaningful with the "sysctl"
+	 * gate.  Copied verbatim into svc_manifest by fill_manifest.
+	 */
+	char	sysctl_isolate[SERVICED_MAX_SYSCTL_ISOLATE]
+		    [SERVICED_SYSCTL_NAME_MAX];
+	unsigned n_sysctl_isolate;
 	uint32_t protect_flags;		/* capprotect CP_SF_* bitmask */
 
 	/* User/group for privilege drop */

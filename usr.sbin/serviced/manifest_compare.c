@@ -29,6 +29,7 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	    a->max_failures != b->max_failures ||
 	    a->nprovides != b->nprovides ||
 	    a->cap_system != b->cap_system ||
+	    a->n_sysctl_isolate != b->n_sysctl_isolate ||
 	    a->protect_flags != b->protect_flags ||
 	    a->privileged != b->privileged ||
 	    a->timer_interval_sec != b->timer_interval_sec ||
@@ -68,6 +69,14 @@ serviced_manifest_equal(const struct svc_manifest *a,
 	/* Compare only populated entries; unused trailing bytes are irrelevant. */
 	for (i = 0; i < a->nprovides; i++)
 		if (strcmp(a->provides[i], b->provides[i]) != 0)
+			return (false);
+	/*
+	 * Per-OID sysctl isolation set (Phase 2): a changed isolate list must be
+	 * detected on reload so the provider is restarted with the new scoped
+	 * SYSCTL token, or the change is silently dropped.
+	 */
+	for (i = 0; i < a->n_sysctl_isolate; i++)
+		if (strcmp(a->sysctl_isolate[i], b->sysctl_isolate[i]) != 0)
 			return (false);
 	return (true);
 }

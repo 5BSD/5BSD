@@ -32,6 +32,18 @@
 #include "probes.h"
 #include "mac_capability_priv.h"
 
+/*
+ * Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2):
+ * the standing scoped SYS_GATE_SYSCTL claim's dedicated connection and its
+ * independent reference count.  Kept on a connection SEPARATE from the coarse
+ * mac_capability_system_fd so the kernel's per-connection claim bookkeeping
+ * (which refs a gate only once per connection and overwrites sp_gates) can ref
+ * SYS_GATE_SYSCTL into the authority's per-nonce claim and satisfy the scoped
+ * mint, regardless of what the coarse connection has already claimed.
+ */
+static int	sysctl_scoped_fd = -1;
+static unsigned	sysctl_scoped_refcount;
+
 /* --- Static helpers --- */
 
 static void
@@ -423,4 +435,136 @@ mac_capability_claim_system_gate_bits(uint32_t gates)
 
 	syslog(LOG_INFO, "system: claimed gates 0x%x", gates);
 	return (0);
+}
+
+/*
+ * --- Per-OID sysctl isolation (Phase 2) ---
+ *
+ * The authority owns the scoped SYSCTL claim; localsysctl is a delivered-token
+ * writer (it never opens the device).  oidset points at the OPAQUE marshalled
+ * sys_sysctl_oidset serviced built from the manifest isolate list; the authority
+ * bounds-checks its length and relays the bytes into the kernel SYS_OP_CLAIM's
+ * OID-set trailer under its own nonce, never interpreting sysctl specifics.
+ */
+int
+mac_capability_claim_system_sysctl(const void *oidset, size_t oidset_len)
+{
+	uint8_t buf[sizeof(struct sys_request) +
+	    AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX];
+	struct sys_request *req;
+
+	if (oidset == NULL || oidset_len == 0 ||
+	    oidset_len > AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX)
+		return (-1);
+
+	if (sysctl_scoped_fd == -1) {
+		sysctl_scoped_fd = mac_capability_svc_connect("system");
+		if (sysctl_scoped_fd == -1)
+			return (-1);
+		if (mac_capability_confine_authority_fd(sysctl_scoped_fd,
+		    "system") == -1) {
+			close(sysctl_scoped_fd);
+			sysctl_scoped_fd = -1;
+			return (-1);
+		}
+	}
+
+	req = (struct sys_request *)buf;
+	memset(req, 0, sizeof(*req));
+	req->op = SYS_OP_CLAIM;
+	req->gates = SYS_GATE_SYSCTL;
+	memcpy(buf + sizeof(*req), oidset, oidset_len);
+
+	if (mac_capability_do_call(sysctl_scoped_fd, buf,
+	    sizeof(*req) + oidset_len, NULL, 0) == -1) {
+		syslog(LOG_WARNING, "system: scoped sysctl claim: %m");
+		/*
+		 * If nothing was held yet, this dedicated connection never
+		 * created a claim; drop it so a later attempt reconnects fresh.
+		 */
+		if (sysctl_scoped_refcount == 0) {
+			close(sysctl_scoped_fd);
+			sysctl_scoped_fd = -1;
+		}
+		return (-1);
+	}
+
+	sysctl_scoped_refcount++;
+	syslog(LOG_INFO, "system: scoped sysctl claim (refs=%u)",
+	    sysctl_scoped_refcount);
+	return (0);
+}
+
+/*
+ * Mint a token scoped to the standing SYSCTL claim.  The dedicated connection's
+ * claim gates cover SYS_GATE_SYSCTL, so SYS_OP_MINT on it yields a SYSCTL token
+ * whose owner is the authority nonce; localsysctl authorizes it to its own nonce
+ * via service_provider_authorize_capabilities(3).  Returns the token fd or -1.
+ */
+int
+mac_capability_mint_system_sysctl_token(void)
+{
+	struct sys_request req;
+	int token_fd;
+
+	if (sysctl_scoped_fd == -1) {
+		syslog(LOG_WARNING, "system: scoped sysctl mint: no claim");
+		return (-1);
+	}
+	token_fd = -1;
+	memset(&req, 0, sizeof(req));
+	req.op = SYS_OP_MINT;
+	req.gates = SYS_GATE_SYSCTL;
+	if (mac_capability_do_call_fds(sysctl_scoped_fd, &req, sizeof(req),
+	    NULL, 0, NULL, 0, &token_fd, 1) == -1) {
+		syslog(LOG_WARNING, "system: scoped sysctl mint: %m");
+		return (-1);
+	}
+	return (token_fd);
+}
+
+/*
+ * Drop one reference on the standing scoped SYSCTL claim.  At zero, release the
+ * claim (SYS_OP_RELEASE with an empty payload releases the whole SYSCTL gate for
+ * this owner) and close the dedicated connection.  Returns 1 if a scoped claim
+ * was held (so the caller need not run the coarse release for SYS_GATE_SYSCTL),
+ * 0 if nothing scoped was held.
+ */
+int
+mac_capability_release_system_sysctl(void)
+{
+
+	if (sysctl_scoped_refcount == 0)
+		return (0);
+	sysctl_scoped_refcount--;
+	if (sysctl_scoped_refcount == 0 && sysctl_scoped_fd != -1) {
+		struct sys_request req;
+
+		memset(&req, 0, sizeof(req));
+		req.op = SYS_OP_RELEASE;
+		req.gates = SYS_GATE_SYSCTL;
+		(void)mac_capability_do_call(sysctl_scoped_fd, &req,
+		    sizeof(req), NULL, 0);
+		(void)close(sysctl_scoped_fd);
+		sysctl_scoped_fd = -1;
+		syslog(LOG_INFO, "system: released scoped sysctl claim");
+	}
+	return (1);
+}
+
+/*
+ * Force-drop the standing scoped SYSCTL claim (serviced exit sweep).  Closing
+ * the dedicated connection revokes the claim in the kernel.
+ */
+void
+mac_capability_sweep_system_sysctl(void)
+{
+
+	if (sysctl_scoped_fd != -1) {
+		(void)close(sysctl_scoped_fd);
+		sysctl_scoped_fd = -1;
+		syslog(LOG_INFO,
+		    "system: sweep released scoped sysctl claim");
+	}
+	sysctl_scoped_refcount = 0;
 }

@@ -14,6 +14,7 @@
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
+#include <dev/mac_capability/mac_capability_system_proto.h>
 
 #include <errno.h>
 #include <fcntl.h>
@@ -252,6 +253,42 @@ authority_mint_system(int channel_fd, uint32_t gates)
 	fill_system_req(&req, AUTHORITY_OP_MINT_SYSTEM, gates);
 	status = authority_rpc(channel_fd, &req, sizeof(req), &token_fd, 1,
 	    NULL);
+	return (check_status_fd(status, token_fd));
+}
+
+/*
+ * Mint a system gate token carrying an optional opaque OID-set payload
+ * (docs/capability-sysctl-isolation.md, Phase 2).  The payload — a marshalled
+ * sys_sysctl_oidset built by the caller (execute.c) from the manifest isolate
+ * list — is appended verbatim after the fixed authority_system_req header; the
+ * authority relays it into a scoped kernel SYS_OP_CLAIM without interpreting it.
+ * A NULL/zero payload is exactly authority_mint_system() (coarse), unchanged.
+ * Returns the token fd on success, -1 (errno set) on failure.
+ */
+int
+authority_mint_system_scoped(int channel_fd, uint32_t gates,
+    const void *oid_payload, size_t payload_len)
+{
+	struct authority_system_req req;
+	int token_fd, status;
+
+	if (payload_len == 0 || oid_payload == NULL)
+		return (authority_mint_system(channel_fd, gates));
+
+	if (payload_len > AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX) {
+		errno = EINVAL;
+		return (-1);
+	}
+
+	{
+		uint8_t buf[AUTHORITY_MINT_SYSTEM_REQ_MAX];
+
+		fill_system_req(&req, AUTHORITY_OP_MINT_SYSTEM, gates);
+		memcpy(buf, &req, sizeof(req));
+		memcpy(buf + sizeof(req), oid_payload, payload_len);
+		status = authority_rpc(channel_fd, buf,
+		    (uint32_t)(sizeof(req) + payload_len), &token_fd, 1, NULL);
+	}
 	return (check_status_fd(status, token_fd));
 }
 

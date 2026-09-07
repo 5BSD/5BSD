@@ -200,11 +200,47 @@ struct authority_service_req {
  *
  * Mints a system gate token.  authorityd dynamically claims gates not already
  * held and reference-counts service ownership before minting.
+ *
+ * OPTIONAL TRAILING PAYLOAD (per-OID sysctl isolation, Phase 2 —
+ * docs/capability-sysctl-isolation.md).  An AUTHORITY_OP_MINT_SYSTEM request
+ * MAY carry an opaque byte payload immediately after the fixed
+ * authority_system_req header; the authority detects it by
+ *     req_len > sizeof(struct authority_system_req)
+ * exactly as the kernel detects the SYSCTL OID-set on SYS_OP_CLAIM.  The fixed
+ * header is unchanged (compatibility floor): a request with no trailing bytes
+ * is the historical coarse mint.
+ *
+ * The payload is a marshalled struct sys_sysctl_oidset (see
+ * <dev/mac_capability/mac_capability_system_proto.h>): serviced resolves the
+ * manifest `isolate` OID names to MIBs and builds it.  The authority treats the
+ * bytes as OPAQUE — it bounds-checks the length and relays them verbatim into
+ * the kernel SYS_OP_CLAIM's OID-set trailer under its own nonce (a scoped
+ * claim), never interpreting sysctl specifics.  This keeps the same generic
+ * relay usable for future scoped namespaces.  A trailing payload is only valid
+ * when gates == SYS_GATE_SYSCTL; any other gates alongside a payload are
+ * rejected EINVAL.
  */
 struct authority_system_req {
 	uint32_t	op;		/* AUTHORITY_OP_MINT_SYSTEM / CLAIM / RELEASE */
 	uint32_t	gates;		/* SYS_GATE_* bitmask */
+	/* optional opaque sys_sysctl_oidset payload follows (MINT_SYSTEM only) */
 };
+
+/*
+ * Upper bound on the opaque MINT_SYSTEM payload (a sys_sysctl_oidset with up to
+ * SYS_SYSCTL_MAXOIDS entries).  Defined in terms of the kernel wire struct so
+ * the authority's receive buffer and bounds check track the kernel cap.  Only
+ * compilation units that include the kernel system proto header (which defines
+ * SYS_SYSCTL_MAXOIDS / struct sys_sysctl_oid) can use this.
+ */
+#ifdef SYS_SYSCTL_MAXOIDS
+#define	AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX				\
+	(sizeof(uint32_t) + (size_t)SYS_SYSCTL_MAXOIDS *		\
+	    sizeof(struct sys_sysctl_oid))
+#define	AUTHORITY_MINT_SYSTEM_REQ_MAX					\
+	(sizeof(struct authority_system_req) +				\
+	    AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX)
+#endif
 
 /*
  * AUTHORITY_OP_CREATE_CHANNEL

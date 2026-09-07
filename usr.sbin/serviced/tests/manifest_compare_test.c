@@ -80,11 +80,40 @@ ATF_TC_BODY(authority_changes, tc)
 	CHECK_CHANGE(b.protect_flags++);
 }
 
+/*
+ * Per-OID sysctl isolation set (Phase 2): a change to the isolate list — its
+ * count OR any name — must be detected so reload restarts the provider with a
+ * fresh scoped SYSCTL token.  Equal lists must still compare equal.
+ */
+ATF_TC_WITHOUT_HEAD(sysctl_isolate_changes);
+ATF_TC_BODY(sysctl_isolate_changes, tc)
+{
+	struct svc_manifest a, b;
+
+	/* Count change. */
+	CHECK_CHANGE(b.n_sysctl_isolate++);
+
+	/* Name change with equal count. */
+	a = sample_manifest();
+	a.n_sysctl_isolate = 1;
+	strlcpy(a.sysctl_isolate[0], "kern.maxfiles",
+	    sizeof(a.sysctl_isolate[0]));
+	b = a;
+	strlcpy(b.sysctl_isolate[0], "vm.overcommit",
+	    sizeof(b.sysctl_isolate[0]));
+	ATF_CHECK(!serviced_manifest_equal(&a, &b));
+
+	/* Identical non-empty lists compare equal. */
+	b = a;
+	ATF_CHECK(serviced_manifest_equal(&a, &b));
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
 	ATF_TP_ADD_TC(tp, equal_and_unused_tail);
 	ATF_TP_ADD_TC(tp, identity_and_execution_changes);
 	ATF_TP_ADD_TC(tp, authority_changes);
+	ATF_TP_ADD_TC(tp, sysctl_isolate_changes);
 	return (atf_no_error());
 }

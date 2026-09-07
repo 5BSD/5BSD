@@ -676,7 +676,7 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 	static const char *const pathkeys[] = { "path" };
 	static const char *const limitskeys[] = { "memory", "cpu", "nproc",
 	    "nofile", "stack", "fsize", "core" };
-	static const char *const capkeys[] = { "system" };
+	static const char *const capkeys[] = { "system", "isolate" };
 	const ucl_object_t *caps, *arr, *v, *x;
 	ucl_object_iter_t it;
 	unsigned n;
@@ -1222,6 +1222,66 @@ validate_unit_schema(const ucl_object_t *root, char *errbuf, size_t errlen)
 		n++;
 	}
 
+	/*
+	 * capabilities.isolate — per-OID sysctl isolation set (Phase 2).  Must be
+	 * an array of non-empty, bounded strings, capped at SERVICED_MAX_SYSCTL_
+	 * ISOLATE, and only meaningful alongside the "sysctl" gate.  Names are not
+	 * resolved here (that is serviced's launch-time sysctlnametomib job); this
+	 * only enforces shape and the gate coupling, fail-closed.
+	 */
+	arr = ucl_object_lookup(caps, "isolate");
+	if (arr != NULL) {
+		bool sysctl_gated = false;
+		const ucl_object_t *sysarr;
+		ucl_object_iter_t sit;
+
+		if (ucl_object_type(arr) != UCL_ARRAY) {
+			snprintf(errbuf, errlen,
+			    "capabilities.isolate must be an array");
+			return (-1);
+		}
+		if (ucl_array_size(arr) > SERVICED_MAX_SYSCTL_ISOLATE) {
+			snprintf(errbuf, errlen,
+			    "capabilities.isolate has too many entries (max %u)",
+			    (unsigned)SERVICED_MAX_SYSCTL_ISOLATE);
+			return (-1);
+		}
+		sysarr = ucl_object_lookup(caps, "system");
+		sit = NULL;
+		while (sysarr != NULL &&
+		    (v = ucl_object_iterate(sysarr, &sit, true)) != NULL) {
+			if (ucl_object_type(v) == UCL_STRING &&
+			    strcmp(ucl_object_tostring(v), "sysctl") == 0)
+				sysctl_gated = true;
+		}
+		if (!sysctl_gated) {
+			snprintf(errbuf, errlen, "capabilities.isolate requires "
+			    "the \"sysctl\" system gate");
+			return (-1);
+		}
+		it = NULL;
+		while ((v = ucl_object_iterate(arr, &it, true)) != NULL) {
+			const char *s;
+
+			if (ucl_object_type(v) != UCL_STRING) {
+				snprintf(errbuf, errlen,
+				    "capabilities.isolate entries must be strings");
+				return (-1);
+			}
+			s = ucl_object_tostring(v);
+			if (s[0] == '\0') {
+				snprintf(errbuf, errlen,
+				    "capabilities.isolate entry must not be empty");
+				return (-1);
+			}
+			if (strlen(s) >= SERVICED_SYSCTL_NAME_MAX) {
+				snprintf(errbuf, errlen, "capabilities.isolate "
+				    "OID name '%s' too long", s);
+				return (-1);
+			}
+		}
+	}
+
 	return (0);
 }
 
@@ -1375,6 +1435,30 @@ parse_cap_system(const ucl_object_t *obj, const char *path)
 		}
 	}
 	return (mask);
+}
+
+/*
+ * Per-OID sysctl isolation set (docs/capability-sysctl-isolation.md, Phase 2).
+ *
+ * Parses capabilities.isolate = ["kern.foo", ...] into svc->sysctl_isolate.
+ * The list is only meaningful when the "sysctl" system gate is declared; that
+ * relationship is enforced by validate_unit_schema() and again at launch, not
+ * here.  Names are copied verbatim (serviced resolves them to MIBs via
+ * sysctlnametomib(3) at launch); over-long names and entries beyond the cap are
+ * dropped by parse_string_array_n's bounds, matching every other list field.
+ */
+static void
+parse_cap_sysctl_isolate(const ucl_object_t *obj, struct capbundle_service *svc)
+{
+	const ucl_object_t *caps;
+
+	svc->n_sysctl_isolate = 0;
+	caps = ucl_object_lookup(obj, "capabilities");
+	if (caps == NULL)
+		return;
+	parse_string_array_n(caps, "isolate", svc->sysctl_isolate,
+	    sizeof(svc->sysctl_isolate[0]), SERVICED_MAX_SYSCTL_ISOLATE,
+	    &svc->n_sysctl_isolate);
 }
 
 /*
@@ -1925,6 +2009,9 @@ capbundle_parse_unit_ucl(const char *path, const char *unit_path,
 
 	/* System capabilities */
 	svc->cap_system = parse_cap_system(root, path);
+
+	/* Per-OID sysctl isolation set (Phase 2). */
+	parse_cap_sysctl_isolate(root, svc);
 
 	/* Launcher-applied protection policy */
 	svc->protect_flags = parse_protect_flags(root, path);

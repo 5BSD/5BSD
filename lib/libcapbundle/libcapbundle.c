@@ -407,6 +407,13 @@ capbundle_svc_fill_manifest(const struct capbundle_service *s,
 	}
 
 	m->cap_system = s->cap_system;
+	/* Per-OID sysctl isolation set (Phase 2). */
+	m->n_sysctl_isolate = MIN(s->n_sysctl_isolate,
+	    SERVICED_MAX_SYSCTL_ISOLATE);
+	for (i = 0; i < m->n_sysctl_isolate; i++)
+		if (manifest_copy(s->sysctl_isolate[i], m->sysctl_isolate[i],
+		    sizeof(m->sysctl_isolate[i])) == -1)
+			return (-1);
 	m->protect_flags = s->protect_flags;
 	m->restart = s->restart;
 	m->management = s->management;

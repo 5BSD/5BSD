@@ -23,6 +23,7 @@
 
 #include <dev/mac_capability/mac_capability_ioctl.h>
 #include <dev/mac_capability/mac_capability_isolation_proto.h>
+#include <dev/mac_capability/mac_capability_system_proto.h>
 
 #include <fcntl.h>
 
@@ -176,9 +177,11 @@ static void
 handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct authority_system_req *req;
-	int token_fd;
+	const void *oidset;
+	size_t oidset_len;
+	int token_fd, err;
 
-	if (len != sizeof(*req)) {
+	if (len < sizeof(*req)) {
 		proto_reply(EINVAL, reply_token, NULL, 0);
 		return;
 	}
@@ -188,14 +191,48 @@ handle_mint_system(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
-	{
-		int err;
+	/*
+	 * Optional trailing opaque OID-set payload (Phase 2), detected by
+	 * len > sizeof(*req).  It is only valid for a single SYS_GATE_SYSCTL
+	 * token; the authority relays the bytes into a scoped kernel claim under
+	 * its own nonce without interpreting them (bounds check only).
+	 */
+	oidset = NULL;
+	oidset_len = 0;
+	if (len > sizeof(*req)) {
+		oidset = (const uint8_t *)payload + sizeof(*req);
+		oidset_len = (size_t)len - sizeof(*req);
+	}
 
-		if (auto_claim_system(req->gates, &err) != 0) {
-			AUTHORITYD_PROBE_MINT_SYSTEM(req->gates, err);
-			proto_reply(err, reply_token, NULL, 0);
+	if (oidset_len > 0) {
+		if (req->gates != SYS_GATE_SYSCTL ||
+		    oidset_len > AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX) {
+			proto_reply(EINVAL, reply_token, NULL, 0);
 			return;
 		}
+		if (mac_capability_claim_system_sysctl(oidset, oidset_len) != 0) {
+			AUTHORITYD_PROBE_MINT_SYSTEM(req->gates, EIO);
+			proto_reply(EIO, reply_token, NULL, 0);
+			return;
+		}
+		token_fd = mac_capability_mint_system_sysctl_token();
+		if (token_fd == -1) {
+			(void)mac_capability_release_system_sysctl();
+			AUTHORITYD_PROBE_MINT_SYSTEM(req->gates, EIO);
+			proto_reply(EIO, reply_token, NULL, 0);
+			return;
+		}
+		AUTHORITYD_PROBE_MINT_SYSTEM(req->gates, 0);
+		proto_reply(0, reply_token, &token_fd, 1);
+		close(token_fd);
+		return;
+	}
+
+	/* Coarse (historical) system-gate mint. */
+	if (auto_claim_system(req->gates, &err) != 0) {
+		AUTHORITYD_PROBE_MINT_SYSTEM(req->gates, err);
+		proto_reply(err, reply_token, NULL, 0);
+		return;
 	}
 
 	token_fd = mac_capability_mint_system_token(req->gates);
@@ -383,6 +420,12 @@ proto_dispatch_one(void)
 		struct authority_system_req system;
 		struct authority_service_req service;
 		struct authority_req_hdr hdr;
+		/*
+		 * A scoped MINT_SYSTEM request (Phase 2) carries an opaque
+		 * OID-set payload after the fixed header; size the receive
+		 * buffer to the maximum so the payload is never truncated.
+		 */
+		uint8_t		raw[AUTHORITY_MINT_SYSTEM_REQ_MAX];
 	} buf;
 	uint32_t op;
 	int recv_fd = -1;

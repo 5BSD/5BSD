@@ -265,6 +265,8 @@ int	mac_cap_protect(int capprotect_fd, int pd_fd, uint32_t flags);
 
 /* authority_client.c — channel protocol client to authorityd */
 int	authority_mint_system(int channel_fd, uint32_t gates);
+int	authority_mint_system_scoped(int channel_fd, uint32_t gates,
+	    const void *oid_payload, size_t payload_len);
 int	authority_create_channel(int channel_fd, int *our_end, int *child_end);
 int	authority_create_coalition(int channel_fd);
 int	authority_send_ready(int channel_fd);

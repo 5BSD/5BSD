@@ -375,7 +375,7 @@ void
 handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 {
 	const struct authority_system_req *req;
-	uint32_t release_bits;
+	uint32_t gates, release_bits;
 	unsigned bit;
 
 	if (len != sizeof(*req)) {
@@ -389,7 +389,28 @@ handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
-	if (req->gates & od.cfg.claim_system_policy) {
+	gates = req->gates;
+
+	/*
+	 * Per-OID sysctl isolation (Phase 2) is a standing scoped claim the
+	 * authority owns on a dedicated connection, refcounted separately from
+	 * the coarse gate machinery.  Drop one reference here and remove the bit
+	 * before the coarse path runs.  If no scoped claim is held (the bit came
+	 * from a historical coarse SYSCTL mint) the bit stays for the coarse
+	 * path below.
+	 */
+	if ((gates & SYS_GATE_SYSCTL) != 0 &&
+	    mac_capability_release_system_sysctl() != 0) {
+		gates &= ~SYS_GATE_SYSCTL;
+		if (gates == 0) {
+			AUTHORITYD_PROBE_DYN_RELEASE_SYSTEM(req->gates,
+			    SYS_GATE_SYSCTL, 0);
+			proto_reply(0, reply_token, NULL, 0);
+			return;
+		}
+	}
+
+	if (gates & od.cfg.claim_system_policy) {
 		syslog(LOG_NOTICE,
 		    "authority_proto: release_system denied (manifest): 0x%x",
 		    req->gates);
@@ -398,7 +419,7 @@ handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 		return;
 	}
 
-	if ((req->gates & od.cfg.claim_system_service) != req->gates) {
+	if ((gates & od.cfg.claim_system_service) != gates) {
 		AUTHORITYD_PROBE_DYN_RELEASE_SYSTEM(req->gates, 0, ENOENT);
 		proto_reply(ENOENT, reply_token, NULL, 0);
 		return;
@@ -406,7 +427,7 @@ handle_release_system(const void *payload, uint32_t len, uint64_t reply_token)
 
 	release_bits = 0;
 	for (bit = 0; bit < AUTHORITYD_SYSTEM_GATE_NBITS; bit++) {
-		if (!(req->gates & (1U << bit)))
+		if (!(gates & (1U << bit)))
 			continue;
 		if (od.cfg.claim_system_refcount[bit] == 0)
 			continue;
@@ -494,4 +515,7 @@ sweep_dynamic_claims(void)
 		    "authority_proto: sweep released system gates 0x%x",
 		    release_gates);
 	}
+
+	/* Drop the standing scoped SYSCTL claim (Phase 2), if any. */
+	mac_capability_sweep_system_sysctl();
 }

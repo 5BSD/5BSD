@@ -11,5 +11,19 @@ user = "root";
 # by the per-label sysctl policy (sysctl.conf), not by a sandbox.
 privileged = true;
 
+# Per-OID sysctl isolation (docs/capability-sysctl-isolation.md, Phase 2).  The
+# "sysctl" gate plus a non-empty `isolate` list makes serviced ask the authority
+# to mint a SYSCTL token scoped to exactly these OIDs; localsysctl authorizes the
+# delivered token (service_provider_authorize_capabilities) and becomes the sole
+# non-authority writer of them.  Any OTHER privileged process's direct
+# __sysctl(2) write to an isolated OID is denied by the kernel — it must go
+# through system.Sysctl SET, brokered per the per-label sysctl.conf ACL.  Every
+# sysctl NOT listed here stays directly writable (normal PRIV_SYSCTL_WRITE).
+# Extend this list to bring more tunables under the broker.
+capabilities {
+	system = ["sysctl"];
+	isolate = ["kern.maxfiles"];
+}
+
 limits { nofile = 1024; nproc = 128; core = 0; }
 umask = "0077";

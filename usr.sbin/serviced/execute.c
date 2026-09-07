@@ -26,6 +26,7 @@
 #include <sys/procdesc.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
 #include <sys/wait.h>
 
 #include <dirent.h>
@@ -104,6 +105,51 @@ _Static_assert(SERVICED_LABEL_MAX <= SERVICE_BOOTSTRAP_LABEL_MAX,
     "bootstrap label is too small");
 
 #define	SERVICED_RUN_DIR	"/Capabilities/Run"
+
+/*
+ * Marshal a manifest's per-OID sysctl isolation list into a packed
+ * sys_sysctl_oidset (docs/capability-sysctl-isolation.md, Phase 2).  Each
+ * `isolate` name is resolved to a MIB via sysctlnametomib(3); an unresolved
+ * name is skipped with a warning (a single bad OID never fails the whole set)
+ * and the set is capped at SYS_SYSCTL_MAXOIDS.  Writes the packed oidset into
+ * buf, sets *outlen to its byte length, and returns the number of OIDs marshalled
+ * (0 if none resolved — the caller then refuses rather than delegate coarsely).
+ * buf must be at least AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX bytes.
+ */
+static unsigned
+svc_marshal_sysctl_oidset(const struct svc_manifest *m, void *buf, size_t bufsz,
+    size_t *outlen)
+{
+	struct sys_sysctl_oidset *oset = buf;
+	unsigned i, n;
+
+	*outlen = 0;
+	if (bufsz < AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX)
+		return (0);
+	n = 0;
+	for (i = 0; i < m->n_sysctl_isolate && n < SYS_SYSCTL_MAXOIDS; i++) {
+		int mib[SYS_OID_MAXDEPTH];
+		size_t depth = nitems(mib);
+		size_t d;
+
+		if (sysctlnametomib(m->sysctl_isolate[i], mib, &depth) == -1) {
+			syslog(LOG_WARNING, "svc_exec %s: sysctl isolate OID "
+			    "'%s' unresolved: %m; skipping", m->label,
+			    m->sysctl_isolate[i]);
+			continue;
+		}
+		oset->oids[n].depth = (uint32_t)depth;
+		memset(oset->oids[n].mib, 0, sizeof(oset->oids[n].mib));
+		for (d = 0; d < depth && d < SYS_OID_MAXDEPTH; d++)
+			oset->oids[n].mib[d] = mib[d];
+		n++;
+	}
+	if (n == 0)
+		return (0);
+	oset->noids = n;
+	*outlen = sizeof(uint32_t) + (size_t)n * sizeof(struct sys_sysctl_oid);
+	return (n);
+}
 
 /*
  * Fold a unit label into a single path component: '/' and '.' become '_'.
@@ -1437,17 +1483,49 @@ svc_exec_native(struct svc_runtime *svc, int kq)
 
 	if (m->cap_system != 0) {
 		int tfd;
+		/*
+		 * Per-OID sysctl isolation (docs/capability-sysctl-isolation.md,
+		 * Phase 2) is the one extension to the module-only delegation
+		 * rule.  It is admitted ONLY in the scoped form: cap_system is
+		 * exactly SYS_GATE_SYSCTL and the manifest carries a non-empty
+		 * isolate list.  A bare sysctl gate (no isolate set) would be a
+		 * coarse "isolate every privileged write" claim and stays
+		 * refused; sysctl mixed with any other gate also stays refused
+		 * (the scoped token the authority mints is single-gate).
+		 */
+		bool sysctl_scoped = (m->cap_system == SYS_GATE_SYSCTL) &&
+		    m->n_sysctl_isolate > 0;
 
-		if ((m->cap_system & ~SVC_SYSTEM_GATE_DELEGATABLE) != 0) {
+		if (!sysctl_scoped &&
+		    (m->cap_system & ~SVC_SYSTEM_GATE_DELEGATABLE) != 0) {
 			syslog(LOG_ERR, "svc_exec %s: refusing non-module "
-			    "system gates %#x (only module management is "
-			    "delegatable at launch)", m->label,
+			    "system gates %#x (only module management, and "
+			    "per-OID sysctl isolation, are delegatable at "
+			    "launch)", m->label,
 			    m->cap_system & ~SVC_SYSTEM_GATE_DELEGATABLE);
 			SERVICED_PROBE_CAP_MINT(m->label, "system", -1);
 			goto fail_tokens;
 		}
-		tfd = authority_mint_system(sd.authority_channel_fd,
-		    m->cap_system);
+
+		if (sysctl_scoped) {
+			uint8_t payload[AUTHORITY_MINT_SYSTEM_PAYLOAD_MAX];
+			size_t plen;
+
+			if (svc_marshal_sysctl_oidset(m, payload,
+			    sizeof(payload), &plen) == 0) {
+				syslog(LOG_ERR, "svc_exec %s: no sysctl isolate "
+				    "OID resolved; refusing coarse sysctl "
+				    "delegation", m->label);
+				SERVICED_PROBE_CAP_MINT(m->label, "system", -1);
+				goto fail_tokens;
+			}
+			tfd = authority_mint_system_scoped(
+			    sd.authority_channel_fd, m->cap_system, payload,
+			    plen);
+		} else {
+			tfd = authority_mint_system(sd.authority_channel_fd,
+			    m->cap_system);
+		}
 
 		if (tfd == -1) {
 			syslog(LOG_ERR, "svc_exec %s: failed to mint "
