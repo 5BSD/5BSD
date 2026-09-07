@@ -42,6 +42,7 @@
 #include "authorityd_ctl.h"
 #include "fd_budget.h"
 #include "management.h"
+#include "sctl_gate.h"
 #include "serviced_probes.h"
 
 /* Module-private state. */
@@ -229,7 +230,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 			break;
 		}
 		/* SCTL_OP_RELOAD */
-		if (!is_admin) {
+		if (sctl_op_requires_admin(op) && !is_admin) {
 			reply->status = EPERM;
 			snprintf(summary, summary_cap,
 			    "reload: permission denied");
@@ -250,7 +251,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 		}
 		break;
 	case SCTL_OP_START_SVC:
-		if (!is_admin) {
+		if (sctl_op_requires_admin(op) && !is_admin) {
 			reply->status = EPERM;
 			snprintf(summary, summary_cap,
 			    "start: permission denied");
@@ -298,7 +299,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 		}
 		break;
 	case SCTL_OP_STOP_SVC:
-		if (!is_admin) {
+		if (sctl_op_requires_admin(op) && !is_admin) {
 			reply->status = EPERM;
 			snprintf(summary, summary_cap,
 			    "stop: permission denied");
@@ -366,7 +367,7 @@ sctl_execute_op(uint32_t op, const char *payload, uint32_t datalen,
 		 * the only intended caller; it runs as root over the ADMIN control
 		 * plane.  ADMIN-gated exactly like start/stop.
 		 */
-		if (!is_admin) {
+		if (sctl_op_requires_admin(op) && !is_admin) {
 			reply->status = EPERM;
 			snprintf(summary, summary_cap,
 			    "reclaim: permission denied");
@@ -473,7 +474,7 @@ sctl_cap_request(struct channel *ch __unused, struct channel_message *request,
 			snprintf(summary, sizeof(summary),
 			    "invalid control request encoding");
 		} else {
-			bool is_admin = (c->cap_rights & SVC_RIGHTS_ADMIN) != 0;
+			bool is_admin = sctl_rights_is_admin(c->cap_rights);
 
 			memcpy(payload, (const char *)data + sizeof(*req),
 			    req->datalen);
@@ -550,7 +551,7 @@ sctl_authority_request(struct channel *ch __unused,
 		if (req->version != CTL_VERSION || req->flags != 0 ||
 		    req->datalen != 0) {
 			reply.status = EINVAL;
-		} else if ((c->cap_rights & SVC_RIGHTS_ADMIN) == 0) {
+		} else if (!sctl_rights_is_admin(c->cap_rights)) {
 			reply.status = EPERM;
 		} else {
 			switch (req->op) {

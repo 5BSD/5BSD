@@ -30,6 +30,16 @@ provider serviced {
 	probe sctl__cmd__done(uint32_t op, uid_t uid, int status, uint64_t duration_ns);
 	probe sctl__deny(uint32_t op, uid_t uid);
 
+	/* Session-mint boundary (SVC_OP_MINT_DOMAIN, svc_proto.c) */
+	probe mint__domain(const char *label, const char *kind, uid_t uid,
+	    int result);
+	probe mint__deny(const char *label, uint32_t domain, int error);
+
+	/* Minted ambient/domain lookup channel (domain.c) */
+	probe domain__lookup(const char *name, const char *kind, uid_t uid);
+	probe domain__lookup__deny(const char *name, const char *kind,
+	    int error);
+
 	/* Per-service capability acquisition */
 	probe cap__mint(const char *label, const char *type, int result);
 	probe cap__service(const char *label, const char *name, int result);

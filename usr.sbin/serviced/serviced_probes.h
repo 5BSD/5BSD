@@ -83,6 +83,18 @@
 #define	SERVICED_PROBE_SCTL_DENY(op, uid)	\
 	DTRACE_PROBE2(serviced, sctl__deny, op, uid)
 
+/* Session-mint boundary (SVC_OP_MINT_DOMAIN, svc_proto.c) */
+#define	SERVICED_PROBE_MINT_DOMAIN(label, kind, uid, result)	\
+	DTRACE_PROBE4(serviced, mint__domain, label, kind, uid, result)
+#define	SERVICED_PROBE_MINT_DENY(label, domain, error)	\
+	DTRACE_PROBE3(serviced, mint__deny, label, domain, error)
+
+/* Minted ambient/domain lookup channel (domain.c) */
+#define	SERVICED_PROBE_DOMAIN_LOOKUP(name, kind, uid)	\
+	DTRACE_PROBE3(serviced, domain__lookup, name, kind, uid)
+#define	SERVICED_PROBE_DOMAIN_LOOKUP_DENY(name, kind, error)	\
+	DTRACE_PROBE3(serviced, domain__lookup__deny, name, kind, error)
+
 /* Per-service capability acquisition */
 #define	SERVICED_PROBE_CAP_MINT(label, type, result)	\
 	DTRACE_PROBE3(serviced, cap__mint, label, type, result)

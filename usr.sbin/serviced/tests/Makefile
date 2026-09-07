@@ -54,6 +54,8 @@ ATF_TESTS_C+=	rc_ingest_test
 ATF_TESTS_C+=	rc_adopt_test
 ATF_TESTS_C+=	activation_calendar_test
 ATF_TESTS_C+=	ambient_hygiene_test
+ATF_TESTS_C+=	sctl_gate_test
+ATF_TESTS_C+=	reclaim_gate_test
 BINDIR=		${TESTSDIR}
 
 # rc_ingest.c is compiled into BOTH rc_ingest_test and rc_adopt_test.  A source
@@ -63,6 +65,13 @@ BINDIR=		${TESTSDIR}
 # authorityrt.h from libauthorityrt) must be global.
 CFLAGS+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS+=	-I${SRCTOP}/lib/libauthorityrt
+# management.c is now shared by management_enforce_test and sctl_gate_test; a
+# source in more than one test program builds once with the common CFLAGS (the
+# per-program CFLAGS.<prog> do not reach a shared object), so the include paths
+# management.c needs (serviced.h + management.h in the serviced dir, and the
+# kernel headers serviced.h pulls in) must be global.
+CFLAGS+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS+=	-I${SRCTOP}/sys
 
 # rc_ingest_test compiles the parser directly (pure logic, no daemon deps).
 # rc_ingest.c comes from the serviced source dir via .PATH above; referencing
@@ -99,6 +108,22 @@ CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libauthorityrt
 # ambient_hygiene.h (SEC-1 regression) — header-only, no daemon objects.
 SRCS.ambient_hygiene_test=	ambient_hygiene_test.c
 CFLAGS.ambient_hygiene_test+=	-I${SRCTOP}/usr.sbin/serviced
+
+# sctl_gate_test exercises the pure control-plane authorization predicates
+# (sctl_gate.h) plus the management-class gate (management.c, shared with
+# management_enforce_test — its include paths are global, above).  No daemon
+# event loop.  management.c comes from the serviced source dir via .PATH.
+SRCS.sctl_gate_test=	sctl_gate_test.c management.c
+CFLAGS.sctl_gate_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.sctl_gate_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.sctl_gate_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.sctl_gate_test+=	-I${SRCTOP}/sys
+
+# reclaim_gate_test is header-only: the sctl_gate.h predicates plus the wire
+# opcode-band invariants from serviced_svc_proto.h.  No daemon objects.
+SRCS.reclaim_gate_test=	reclaim_gate_test.c
+CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/lib/libauthorityrt
 
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice

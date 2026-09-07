@@ -39,6 +39,7 @@
 
 #include "serviced.h"
 #include "fd_budget.h"
+#include "serviced_probes.h"
 #include "serviced_svc_proto.h"
 
 /*
@@ -348,12 +349,15 @@ lookup_channel_request(struct channel *channel,
 	struct svc_lookup_channel *lc;
 	const struct svc_lookup_req *req;
 	const uint32_t *opp;
+	const char *kindstr;
 	uint32_t op;
 	bool sendable;
 	int client_fd, error;
 
 	(void)channel;
 	lc = context;
+	kindstr = lc->domain.kind == SVC_DOMAIN_SYSTEM ? "system" :
+	    lc->domain.kind == SVC_DOMAIN_CONTROL ? "control" : "user";
 	if (channel_message_fd_count(request) != 0 ||
 	    channel_message_length(request) < sizeof(op)) {
 		lookup_channel_reply(request, EINVAL, NULL, 0);
@@ -455,12 +459,16 @@ lookup_channel_request(struct channel *channel,
 		/*
 		 * EACCES means out-of-scope for this channel's domain: fail fast
 		 * (no on-demand) and report ENOENT so the client cannot tell an
-		 * out-of-scope name from an unregistered one.
+		 * out-of-scope name from an unregistered one.  The probe records
+		 * the TRUE error (EACCES) the wire masks, so tracing can see the
+		 * out-of-scope refusal the client is deliberately not told about.
 		 */
+		SERVICED_PROBE_DOMAIN_LOOKUP_DENY(req->name, kindstr, error);
 		lookup_channel_reply(request, error == EACCES ? ENOENT : error,
 		    NULL, 0);
 		goto out;
 	}
+	SERVICED_PROBE_DOMAIN_LOOKUP(req->name, kindstr, lc->domain.uid);
 	lookup_channel_reply_ex(request, 0, &client_fd, 1, !sendable);
 	close(client_fd);
 out:

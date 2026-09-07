@@ -529,6 +529,7 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 {
 	const struct svc_mint_domain_req *req;
 	enum svc_domain_kind kind;
+	const char *kindstr;
 	int minted_fd, error;
 	bool resend;
 
@@ -571,12 +572,14 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 		serviced_audit(AUE_SERVICED_COMPONENT, getuid(), EPERM,
 		    "mint domain refused: %s is not the mint boundary",
 		    svc->manifest.label);
+		SERVICED_PROBE_MINT_DENY(svc->manifest.label, req->domain, EPERM);
 		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
 		    EPERM, NULL, 0);
 		return;
 	}
 	/* Domains only narrow: a non-system caller may not mint at all. */
 	if (!svc_domain_may_mint(&svc->domain)) {
+		SERVICED_PROBE_MINT_DENY(svc->manifest.label, req->domain, EPERM);
 		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
 		    EPERM, NULL, 0);
 		return;
@@ -588,8 +591,10 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 	 * the privilege boundary that must hold even if that policy widens.
 	 */
 	if (svc_mint_domain_kind(&svc->domain, req->domain, &kind) == -1) {
+		error = errno != 0 ? errno : EPERM;
+		SERVICED_PROBE_MINT_DENY(svc->manifest.label, req->domain, error);
 		(void)svc_channel_reply(svc, request, SVC_OP_MINT_DOMAIN,
-		    errno != 0 ? errno : EPERM, NULL, 0);
+		    error, NULL, 0);
 		return;
 	}
 	if (domain_mint_session_channel(kind, (uid_t)req->uid, &minted_fd,
@@ -597,11 +602,13 @@ handle_mint_domain(struct svc_runtime *svc, struct channel_message *request)
 		error = errno != 0 ? errno : EIO;
 	else
 		error = 0;
+	kindstr = kind == SVC_DOMAIN_SYSTEM ? "system" :
+	    kind == SVC_DOMAIN_CONTROL ? "control" : "user";
 	serviced_audit(AUE_SERVICED_COMPONENT, getuid(), error,
 	    "mint %s-domain channel svc=%s uid=%u",
-	    kind == SVC_DOMAIN_SYSTEM ? "system" :
-	    kind == SVC_DOMAIN_CONTROL ? "control" : "user",
-	    svc->manifest.label, (unsigned)req->uid);
+	    kindstr, svc->manifest.label, (unsigned)req->uid);
+	SERVICED_PROBE_MINT_DOMAIN(svc->manifest.label, kindstr,
+	    (uid_t)req->uid, error);
 	(void)svc_channel_reply_ex(svc, request, SVC_OP_MINT_DOMAIN, error,
 	    error == 0 ? &minted_fd : NULL, error == 0 ? 1 : 0,
 	    /*cap_xfer=*/!resend);
