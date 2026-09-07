@@ -268,37 +268,125 @@ cmd_stop(const char *label)
 	return (0);
 }
 
+/* Read exactly n bytes; 0 on success, -1 on error/short close (errno set). */
+static int
+read_full(int fd, void *buf, size_t n)
+{
+	char *p = buf;
+	size_t off = 0;
+	ssize_t r;
+
+	while (off < n) {
+		r = read(fd, p + off, n - off);
+		if (r == -1) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		if (r == 0) {
+			errno = EPIPE;
+			return (-1);
+		}
+		off += (size_t)r;
+	}
+	return (0);
+}
+
+/* Write exactly n bytes; 0 on success, -1 on error. */
+static int
+write_full(int fd, const void *buf, size_t n)
+{
+	const char *p = buf;
+	size_t off = 0;
+	ssize_t w;
+
+	while (off < n) {
+		w = write(fd, p + off, n - off);
+		if (w == -1) {
+			if (errno == EINTR)
+				continue;
+			return (-1);
+		}
+		off += (size_t)w;
+	}
+	return (0);
+}
+
 /*
  * reclaim <label> — retire an uninstalled bundle label
- * (docs/capability-lifecycle-cleanup.md).  serviced broadcasts a best-effort
+ * (docs/capability-lifecycle-cleanup.md §5b).  serviced broadcasts a best-effort
  * SVC_OP_RECLAIM_LABEL to every running provider so any that holds persistent
  * per-label state (datasets, keys, jails, vsock windows, log stores) drops it.
- * Intended for the pkg deinstall hook, which runs as root over the ADMIN
- * control plane; the op is ADMIN-gated by serviced.
+ *
+ * This verb is driven by the pkg(8) post-deinstall hook, which runs in a plain
+ * root context with NO inherited ambient discovery channel — so it cannot reach
+ * SERVICED_CONTROL_NAME the way the other verbs do.  It therefore uses the
+ * dedicated, root-gated reclaim UNIX socket (SERVICED_RECLAIM_SOCK), the sole
+ * deliberate UNIX->plane bridge (see serviced_ctl.h / reclaim_bridge.c).  The
+ * server gates on getpeereid(2) euid == 0, so this must run as root.  (The
+ * separate SCTL_OP_RECLAIM ambient-channel path still exists in serviced for an
+ * admin login session; this CLI deliberately uses the socket so it works from a
+ * pkg deinstall fork.)
  */
 static int
 cmd_reclaim(const char *label)
 {
-	char summary[SERVICED_CTL_SUMMARY_MAX];
-	int error;
+	struct sockaddr_un sun;
+	struct serviced_reclaim_req req;
+	struct serviced_reclaim_reply reply;
+	int fd, error;
 
 	if (label == NULL || label[0] == '\0')
 		errx(EX_USAGE, "reclaim requires a bundle label");
-	/* Must fit the reclaim message's label[64], NUL included. */
-	if (strlen(label) > 63)
+	/* Must fit the reclaim request's label[], NUL included. */
+	if (strlen(label) >= sizeof(req.label))
 		errx(EX_USAGE, "reclaim: bundle label too long");
 
-	summary[0] = '\0';
-	error = sctl_rpc(SCTL_OP_RECLAIM, 0, label, summary, sizeof(summary));
-	if (error != 0) {
-		warnx("reclaim: %s", summary[0] != '\0' ?
-		    summary : strerror(error));
+	fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+	if (fd == -1)
+		err(EX_OSERR, "reclaim: socket");
+
+	memset(&sun, 0, sizeof(sun));
+	sun.sun_family = AF_UNIX;
+	if (strlcpy(sun.sun_path, SERVICED_RECLAIM_SOCK, sizeof(sun.sun_path)) >=
+	    sizeof(sun.sun_path)) {
+		(void)close(fd);
+		errx(EX_SOFTWARE, "reclaim: socket path too long");
+	}
+	if (connect(fd, (struct sockaddr *)&sun, sizeof(sun)) == -1) {
+		error = errno;
+		(void)close(fd);
+		errno = error;
+		err(EX_UNAVAILABLE,
+		    "reclaim: cannot reach serviced reclaim socket %s "
+		    "(is serviced running, and are you root?)",
+		    SERVICED_RECLAIM_SOCK);
+	}
+
+	memset(&req, 0, sizeof(req));
+	req.version = SERVICED_RECLAIM_VERSION;
+	(void)strlcpy(req.label, label, sizeof(req.label));
+
+	if (write_full(fd, &req, sizeof(req)) == -1) {
+		error = errno;
+		(void)close(fd);
+		errno = error;
+		err(EX_IOERR, "reclaim: sending request");
+	}
+	if (read_full(fd, &reply, sizeof(reply)) == -1) {
+		error = errno;
+		(void)close(fd);
+		errno = error;
+		err(EX_IOERR, "reclaim: reading reply");
+	}
+	(void)close(fd);
+
+	if (reply.status != 0) {
+		warnx("reclaim: %s", strerror((int)reply.status));
 		return (1);
 	}
-	if (summary[0] != '\0')
-		printf("%s", summary);
-	else
-		printf("reclaim: ok\n");
+	printf("reclaim %s: broadcast to %u providers\n", label,
+	    reply.providers_notified);
 	return (0);
 }
 

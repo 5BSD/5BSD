@@ -63,4 +63,55 @@ struct sctl_reply {
 	uint32_t	flags;		/* summary text length */
 } __packed;
 
+/*
+ * ----------------------------------------------------------------------------
+ * Label-reclaim bridge (docs/capability-lifecycle-cleanup.md §5b).
+ *
+ * The SOLE deliberate UNIX-domain socket serviced binds.  Its ONLY function is
+ * to let a UNIX (non-plane) context — specifically a pkg(8) post-deinstall
+ * script, which runs in a plain root context with no inherited ambient
+ * discovery channel — trigger a bundle-label reclaim.  A pkg deinstall fork
+ * has no ambient lookup fd (pkg preserves SERVICE_LOOKUP_FD in the environment
+ * but closes the inherited descriptor), so it cannot reach serviced's
+ * SERVICED_CONTROL_NAME plane; this socket is the bridge.
+ *
+ * It grants NO new authority: root can already drive `servicectl reclaim` over
+ * the ambient control channel from an admin login session (SCTL_OP_RECLAIM,
+ * ADMIN-gated).  The socket is root-gated by getpeereid(2) (euid == 0); the
+ * worst case it enables is a root-only DoS reclaiming a still-live label — a
+ * capability root already holds by other means.  It performs reclaim and
+ * nothing else: one fixed request in, one fixed reply out, connection closed.
+ *
+ * serviced runs as uid 976 (capability:capability), so the socket node is
+ * owned by 976 and chmod'd 0600.  root (pkg) can still connect — DAC
+ * permission bits never restrict a privileged (uid 0) process — while any
+ * other uid is refused at connect(2) by the 0600 mode AND, decisively, by the
+ * getpeereid(2) euid == 0 gate on the server side.
+ * ----------------------------------------------------------------------------
+ */
+#define	SERVICED_RECLAIM_SOCK		"/var/run/serviced-reclaim.sock"
+#define	SERVICED_RECLAIM_VERSION	1
+#define	SERVICED_RECLAIM_LABEL_MAX	64	/* matches svc_reclaim_label_msg */
+
+/*
+ * Reclaim request: a fixed-size struct carrying one bundle label.  version
+ * lets the wire contract evolve; label must be NUL-terminated within the field
+ * and non-empty.
+ */
+struct serviced_reclaim_req {
+	uint32_t	version;	/* SERVICED_RECLAIM_VERSION */
+	char		label[SERVICED_RECLAIM_LABEL_MAX];
+} __packed;
+
+/*
+ * Reclaim reply: status is 0 on success or a positive errno (EPERM if the peer
+ * was not root, EINVAL for a malformed request); providers_notified is the
+ * count of running providers the SVC_OP_RECLAIM_LABEL push reached (meaningful
+ * only when status == 0).
+ */
+struct serviced_reclaim_reply {
+	int32_t		status;		/* 0 = ok, else errno */
+	uint32_t	providers_notified;
+} __packed;
+
 #endif /* SERVICED_CTL_H */

@@ -256,47 +256,62 @@ which `generate-ucl.lua` folds into `+MANIFEST` before `pkg create`:
 scripts { post-deinstall = "servicectl reclaim <label> 2>/dev/null || true" }
 ```
 
-**OPEN ISSUE — deinstall reach path (needs a decision before wiring):** `pkg`
-runs deinstall scripts in a plain root context with **no plane login session**,
-so it has no ambient discovery channel — and servicectl reaches
-`SERVICED_CONTROL_NAME` only over that ambient channel (the getpeereid control
-socket was retired). So `servicectl reclaim` from a bare `pkg` script cannot, as
-things stand, reach serviced. Resolution options:
-  (a) give the system/root context a fixed way to reach serviced's admin control
-      plane (a boot-provisioned ambient channel for the system context, or a
-      root-reachable control path serviced exposes) — then the hook works as-is;
-  (b) have `pkg` deinstall be performed from within an admin session that carries
-      the ambient channel (constrains how uninstall is invoked);
-  (c) a small privileged `pkg` trigger/helper that serviced provisions with a
-      reach path at install time.
-Leaning (a): it also cleanly enables any system-context tooling to drive reclaim.
+**The deinstall reach path — the problem.** `pkg` runs deinstall scripts in a
+plain root context with **no plane login session**, so it has no ambient
+discovery channel. The everyday `servicectl reclaim` reaches
+`SERVICED_CONTROL_NAME` only over that ambient channel (the old getpeereid
+control socket was retired), and a `pkg` deinstall fork does not have one: `pkg`
+preserves the `SERVICE_LOOKUP_FD` *environment variable* but **closes the
+inherited descriptor** (verified). So `servicectl reclaim` driven purely over
+the ambient plane cannot reach serviced from a bare `pkg` script.
 
-**DECIDED: (a) boot-provisioned SYSTEM ambient channel — and it is half-built.**
-Capsule (PID 1) already holds a SYSTEM ambient lookup channel that authority
-mints (capsule.c `capsule_set_ambient_lookup` / `capsule_ambient_lookup_fd`,
-authority_proto.c ~334), and already carries it at `SERVICE_LOOKUP_FIXED_FD`
-(fd 3) — but ONLY into the §21 getty→login path (capsule.c ~1944, the
-getty-spawn `dup2`). So:
-  - An **admin login session** already carries a SYSTEM ambient channel at fd 3,
-    so an interactive `pkg delete` at a root shell can reach serviced *provided
-    pkg preserves fd 3 into the deinstall-script fork* (must verify; if pkg
-    sanitizes it, `servicectl` needs to re-probe `SERVICE_LOOKUP_FIXED_FD`).
-  - **Non-login system contexts** (rc, cron, boot automation) do NOT get fd 3
-    today.
+**DECIDED (owner's explicit call): a single dedicated, root-gated UNIX socket —
+the reclaim bridge.** serviced binds ONE AF_UNIX `SOCK_STREAM` listener at
+`SERVICED_RECLAIM_SOCK` = `/var/run/serviced-reclaim.sock` whose ONLY function
+is to let a UNIX (pkg) context trigger a label reclaim. It is documented as the
+**sole deliberate UNIX→plane bridge** on the system. This supersedes the earlier
+"boot-provisioned SYSTEM ambient channel / carry fd 3 into pkg" plan: no Capsule
+ambient-carry change is needed.
+
+Why it is safe / grants no new authority:
+  - Root can *already* drive `servicectl reclaim` via the ambient ADMIN control
+    channel from an admin login session (`SCTL_OP_RECLAIM`, ADMIN-gated). The
+    socket adds no capability root does not already hold.
+  - It is **root-gated**: on each connection serviced calls `getpeereid(2)` and
+    requires `euid == 0`; any other peer is refused (`EPERM`) and the connection
+    closed. The worst case it enables is a **root-only DoS** that reclaims a
+    still-live label.
+  - It does **reclaim and nothing else**: one fixed request in
+    (`struct serviced_reclaim_req` = `{ uint32_t version; char label[64]; }`),
+    one fixed reply out
+    (`struct serviced_reclaim_reply` = `{ int32_t status; uint32_t
+    providers_notified; }`), connection closed. There is no other op.
+  - **Ownership/permissions:** serviced runs as uid 976
+    (capability:capability), so the socket node is owned by 976 and chmod'd
+    `0600`. root (pkg) still connects — DAC bits never restrict a uid-0 process
+    — while any other uid is refused at `connect(2)` by the mode AND, decisively,
+    by the `getpeereid` euid == 0 gate. The mode is defense in depth; the
+    getpeereid gate is the authority.
+  - It reuses the existing authorized broadcast: a valid, authorized request
+    calls `svc_retire_label()` (the same `SVC_OP_RECLAIM_LABEL` fan-out the
+    ambient `SCTL_OP_RECLAIM` path uses), which runs in serviced's own context.
+  - Fail-soft: if the socket cannot be created at startup, serviced logs a
+    warning and runs normally (reclaim stays reachable over the ambient ADMIN
+    plane); the listener is brought up after `/etc/rc` so `/var/run` exists.
+
+Where it lives: path + wire structs in `lib/libauthorityrt/serviced_ctl.h`;
+listener + accept/getpeereid/serve in `usr.sbin/serviced/reclaim_bridge.c`
+(pure predicates `reclaim_peer_is_authorized()`/`reclaim_req_valid()` in
+`reclaim_bridge.h`, unit-tested in `tests/reclaim_bridge_test.c`); the CLI verb
+`servicectl reclaim <label>` connects the socket (the ambient `SCTL_OP_RECLAIM`
+handler is retained unchanged as a second path for admin-login callers).
 
 Remaining implementation (bounded):
-  1. Extend Capsule's ambient-channel carry from the getty-only path to the
-     general system-daemon/rc launch path (so the system context inherits the
-     SYSTEM channel at `SERVICE_LOOKUP_FIXED_FD`), OR add a fixed root-openable
-     rendezvous (a small "system ambient" cdev handing out the Capsule-held
-     channel) for contexts that don't inherit it.
-  2. Ensure the `pkg` deinstall-script fork preserves `SERVICE_LOOKUP_FIXED_FD`
-     (fd 3), or have the reclaim hook re-acquire the channel via the rendezvous.
-  3. Wire the `scripts { post-deinstall = "servicectl reclaim <label>" }` hook
+  1. Wire the `scripts { post-deinstall = "servicectl reclaim <label>" }` hook
      into the capability packages' UCL descriptors.
-  4. End-to-end test: build a consumer pkg that owns a dataset + a jail + a key,
+  2. End-to-end test: build a consumer pkg that owns a dataset + a jail + a key,
      `pkg delete` it, confirm all three are reclaimed (needs a pkgbase
-     build/install/delete cycle).
+     build/install/delete cycle, and that the deinstall runs as root).
 
 **Third-party extensibility (both directions work):**
 - Third-party **providers**: participate automatically. serviced broadcasts to

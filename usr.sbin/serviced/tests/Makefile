@@ -56,6 +56,7 @@ ATF_TESTS_C+=	activation_calendar_test
 ATF_TESTS_C+=	ambient_hygiene_test
 ATF_TESTS_C+=	sctl_gate_test
 ATF_TESTS_C+=	reclaim_gate_test
+ATF_TESTS_C+=	reclaim_bridge_test
 BINDIR=		${TESTSDIR}
 
 # rc_ingest.c is compiled into BOTH rc_ingest_test and rc_adopt_test.  A source
@@ -124,6 +125,20 @@ CFLAGS.sctl_gate_test+=	-I${SRCTOP}/sys
 SRCS.reclaim_gate_test=	reclaim_gate_test.c
 CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/lib/libauthorityrt
+
+# reclaim_bridge_test exercises the reclaim-socket authorization/validation
+# predicates (reclaim_bridge.h) and the accept-side serve routine
+# (reclaim_bridge.c) over a real socketpair with a mock action.  reclaim_bridge.c
+# comes from the serviced source dir via the .PATH above; --gc-sections drops the
+# listener/accept/init paths (and the svc_retire_label/cap_* references they
+# carry) that the pure serve() test never calls, so no daemon objects link.
+SRCS.reclaim_bridge_test=	reclaim_bridge_test.c reclaim_bridge.c
+CFLAGS.reclaim_bridge_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.reclaim_bridge_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.reclaim_bridge_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.reclaim_bridge_test+=	-I${SRCTOP}/sys
+CFLAGS.reclaim_bridge_test+=	-ffunction-sections -fdata-sections
+LDFLAGS.reclaim_bridge_test+=	-Wl,--gc-sections
 
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice

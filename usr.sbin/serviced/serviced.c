@@ -45,6 +45,7 @@
 #include "serviced.h"
 #include "serviced_audit.h"
 #include "fd_budget.h"
+#include "reclaim_bridge.h"
 #include "serviced_probes.h"
 
 struct serviced_state sd;
@@ -122,6 +123,18 @@ serviced_dispatch_event(struct kevent *kev)
 			sd.running = false;
 			supervisor_stop(serviced_kq);
 		}
+		return;
+	}
+
+	/*
+	 * Label-reclaim bridge listener (docs/capability-lifecycle-cleanup.md
+	 * §5b) — the sole deliberate UNIX socket.  Its listener fd carries
+	 * udata == NULL, so it is routed by fd identity here, before the generic
+	 * udata-keyed channel handling below.
+	 */
+	if (kev->filter == EVFILT_READ &&
+	    reclaim_bridge_is_listener((int)kev->ident)) {
+		reclaim_bridge_accept(serviced_kq);
 		return;
 	}
 
@@ -526,6 +539,17 @@ main(int argc, char *argv[])
 	(void)activation_register_all(serviced_kq);
 
 	/*
+	 * Bring up the label-reclaim bridge (docs/capability-lifecycle-cleanup.md
+	 * §5b) — the sole deliberate UNIX socket, whose only function is to let a
+	 * pkg(8) post-deinstall script (a plain root context with no ambient
+	 * discovery channel) trigger a bundle-label reclaim.  Done AFTER
+	 * startup_launch_system() so /etc/rc has set up /var/run.  Strictly
+	 * best-effort: a setup failure is logged and serviced runs normally
+	 * (reclaim stays reachable over the ambient ADMIN control plane).
+	 */
+	(void)reclaim_bridge_init(serviced_kq);
+
+	/*
 	 * Control is served entirely over the capability discovery plane: an
 	 * admin login mints a system.serviced / system.lifecycle channel via
 	 * naming_lookup, and serviced adopts the provider end with
@@ -588,6 +612,7 @@ main(int argc, char *argv[])
 	domain_channel_teardown();
 	supervisor_teardown_state();
 	bundle_registry_teardown();
+	reclaim_bridge_teardown();
 	sctl_teardown();
 	serviced_fd_budget_fini();
 
