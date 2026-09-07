@@ -1,6 +1,10 @@
 # Capability sysctl isolation
 
-Status: design + Phase 1. Author: Kory Heard. 2026-09-06.
+Status: Phases 1 & 2 DONE + VM-verified (production plane). Phase 3's broker
+SET-on-behalf is proven by the Phase 2 e2e (foreign direct write to an isolated
+OID denied; write via `sysctlcmpctl` through the daemon succeeds), so Phase 3
+carries no new mechanism — only optional non-root-client test coverage and
+broadening the isolate list. Author: Kory Heard. 2026-09-06.
 
 ## Problem
 
