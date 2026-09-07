@@ -62,6 +62,7 @@
 	(SYS_GATE_KLDLOAD | SYS_GATE_KLDUNLOAD)
 
 #include "serviced.h"
+#include "ambient_hygiene.h"
 #include "launch_limits.h"
 #include "rc_adopt.h"
 #include "fd_budget.h"
@@ -935,6 +936,7 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 	if (pid == 0) {
 		sigset_t mask;
 		int nullfd, lookup_fd;
+		bool drop_ambient;
 
 		/*
 		 * stdio.  Ordinary commands get /dev/null.  The rc bootstrap
@@ -981,8 +983,22 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 		 * pdfork at its parent number; SERVICE_LOOKUP_FD in the inherited
 		 * environment already names it.  closefrom cannot skip a middle
 		 * fd, so close around it explicitly.
+		 *
+		 * SECURITY: the SYSTEM ambient lookup channel confers the admin
+		 * bypass — a lookup with requester==NULL on a SYSTEM domain grants
+		 * SVC_RIGHTS_ALL, including SVC_RIGHTS_ADMIN, and resolves the
+		 * self-served control names (naming.c naming_lookup /
+		 * naming_lookup_self_control).  It must therefore NEVER survive a
+		 * transition into an unprivileged uid, exactly as login(1)/su(1)
+		 * close or re-provision it rather than let a user shell inherit it.
+		 * A oneshot/RC unit that drops to a non-root user (manifest user=/
+		 * group=) consequently gets NO ambient channel: it is closed with
+		 * the rest of the table and SERVICE_LOOKUP_FD is unset so no stale
+		 * number is named.  Units that stay root (rc, the want_console
+		 * bootstrap) keep it — root is the admin principal by the model.
 		 */
-		lookup_fd = serviced_ambient_lookup_fd;
+		lookup_fd = svc_exec_ambient_spare_fd(have_creds, uid,
+		    serviced_ambient_lookup_fd, &drop_ambient);
 		if (lookup_fd > STDERR_FILENO) {
 			int scan;
 
@@ -991,6 +1007,8 @@ svc_exec_command(struct svc_runtime *svc, int kq, char *argv[], bool for_stop)
 				(void)close(scan);
 		} else
 			closefrom(STDERR_FILENO + 1);
+		if (drop_ambient)
+			(void)unsetenv(SERVICE_LOOKUP_ENV);
 		if (have_creds) {
 			if (setgroups(ngroups, groups) == -1 ||
 			    setgid(gid) == -1 || setuid(uid) == -1)

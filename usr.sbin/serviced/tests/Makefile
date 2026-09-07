@@ -53,6 +53,7 @@ ATF_TESTS_C+=	label_lifecycle_test
 ATF_TESTS_C+=	rc_ingest_test
 ATF_TESTS_C+=	rc_adopt_test
 ATF_TESTS_C+=	activation_calendar_test
+ATF_TESTS_C+=	ambient_hygiene_test
 BINDIR=		${TESTSDIR}
 
 # rc_ingest.c is compiled into BOTH rc_ingest_test and rc_adopt_test.  A source
@@ -93,6 +94,11 @@ SRCS.activation_calendar_test=	activation_calendar_test.c activation_calendar.c
 CFLAGS.activation_calendar_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libcapbundle
 CFLAGS.activation_calendar_test+=	-I${SRCTOP}/lib/libauthorityrt
+
+# ambient_hygiene_test exercises the pure launch-hygiene predicate in
+# ambient_hygiene.h (SEC-1 regression) — header-only, no daemon objects.
+SRCS.ambient_hygiene_test=	ambient_hygiene_test.c
+CFLAGS.ambient_hygiene_test+=	-I${SRCTOP}/usr.sbin/serviced
 
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libauthorityrt
 CFLAGS.capd_protocol_fixture+=	-I${SRCTOP}/lib/libservice
