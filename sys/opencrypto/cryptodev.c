@@ -2541,6 +2541,21 @@ crypto_ioctl(struct cdev *dev, u_long cmd, caddr_t data, int flag,
 		key_create = (struct cryptodesc_key_create *)data;
 		error = cryptodesc_mint_key(td, key_create);
 		break;
+	/*
+	 * SECURITY INVARIANT for the whole named-key (CIOC*NAMED*) family: these
+	 * ops trust the `cd_owner` supplied in the request struct as the key's
+	 * owner (create/lease/rotate/delete/stat/list all key on it).  The kernel
+	 * does NOT bind owner to the opening fd — it relies entirely on
+	 * `descriptor_authority` being held by exactly one userland component
+	 * (localcrypto, the system.Crypto provider), which always passes the true
+	 * per-request owner it derived from the caller's unforgeable channel label.
+	 * As long as localcrypto is the SOLE holder of descriptor_authority, an
+	 * attacker cannot reach these ops to forge a cd_owner.  If descriptor_
+	 * authority is ever granted to more than localcrypto, owner MUST be bound to
+	 * the fd at open time instead of trusted per-call, or a second holder could
+	 * name any owner (lease is the strongest such primitive — it mints a usable
+	 * descriptor for an arbitrary named owner).
+	 */
 	case CIOCGCRYPTONAMEDKEY:
 		if (!fcr->descriptor_authority) {
 			error = EPERM;

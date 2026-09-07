@@ -182,6 +182,29 @@ warden jails, localcrypto keys, waspnest window, logd records). Owner-scoped,
 idempotent, DTrace-probed, per-provider tested; live broadcast to all 11 providers
 confirmed on the plane, fleet green.
 
+**Reclaim is PUSH-ONLY (updated after the 2026-09-06 security review).** The
+adversarial review found a HIGH data-safety bug in the pull/reconcile *sweeps*
+(warden/waspnest): they treated an operator-*disabled* (still-installed) bundle
+as not-live and destroyed its jail/window, because `bundle_registry_label_installed`
+conflates "disabled" with "uninstalled". Fix (commit f19cdb4008b): the warden and
+waspnest reconcile sweeps were REMOVED — all providers are now push-only, matching
+tzfsd/localcrypto/logd. The `label_is_live` query and `service_label_is_live(3)`
+remain as dormant API. Consequence: a provider that is *down* during the push
+leaks its share (recoverable — re-run `servicectl reclaim`), rather than risking
+destruction of a live bundle's data. A SAFE backstop can be re-added later, but it
+MUST use an *installed-on-disk*, fail-safe-to-live liveness source (return "live"
+for a disabled-but-present bundle and for an empty/suspect registry), NOT the
+active-registry check that caused the HIGH. The §3.3 pull-path text below is
+retained as design rationale but is not the current implementation.
+
+The cross-label isolation invariant and the reclaim trust boundary (admin-gating,
+serviced-sole-originator, validated fail-closed dispatch, pure-read label_is_live,
+fail-soft client) were reviewed and confirmed correct. One MEDIUM remains open in
+logd: its reclaimed-labels tombstone set is capped/monotonic, so after many
+lifetime retirements reclaims fail and a *reused* label name could read the prior
+owner's records — fix direction is a durable/larger tombstone or a physical
+per-label prune.
+
 **The pkg trigger (design):** a capability bundle is a pkgbase package; `pkg
 delete` removes its static files. The runtime, daemon-owned resources it left
 behind are reclaimed by a **post-deinstall hook** in the package manifest that
