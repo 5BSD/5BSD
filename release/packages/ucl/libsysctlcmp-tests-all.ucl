@@ -1,0 +1,10 @@
+comment = "SysctlCmp protocol tests"
+
+desc = <<EOD
+ABI, malformed-frame, descriptor-cardinality, typed-discovery, endpoint, and
+public SysctlCmp client API tests.
+EOD
+
+annotations = {
+	set = "tests"
+}

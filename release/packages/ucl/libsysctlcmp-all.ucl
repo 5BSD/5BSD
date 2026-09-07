@@ -1,0 +1,6 @@
+comment = "Public SysctlCmp protocol library"
+
+desc = <<EOD
+The typed injected-component API and versioned protocol for capability-sandboxed
+userspace access to the kernel sysctl namespace brokered by a provider daemon.
+EOD

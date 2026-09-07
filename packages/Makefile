@@ -58,6 +58,7 @@ SUBDIR=	blocklist \
 	libdevicecmp \
 	liblogcmp \
 	libnetworkcmp \
+	libsysctlcmp \
 	libnotify \
 	libauthorityrt \
 	libservice \
@@ -197,7 +198,7 @@ SUBDIR.${MK_TESTS}+=		libcapability-tests libcapbundle-tests
 SUBDIR.${MK_TESTS}+=		libauditcmp-tests auditbrokerd-tests
 SUBDIR.${MK_TESTS}+=		libchannel-tests libshmring-tests
 SUBDIR.${MK_TESTS}+=		libcryptocmp-tests libcryptodesc-tests
-SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests
+SUBDIR.${MK_TESTS}+=		libnetworkcmp-tests libsysctlcmp-tests
 SUBDIR.${MK_TESTS}+=		liblogcmp-tests libnotify-tests
 SUBDIR.${MK_TESTS}+=		libotelexport-tests
 SUBDIR.${MK_TESTS}+=		libtracecmp-tests
@@ -211,7 +212,7 @@ SUBDIR.${MK_TESTS}+=		localcrypto-tests localdevice-tests
 SUBDIR.${MK_TESTS}+=		libdevicecmp-tests
 SUBDIR.${MK_TESTS}+=		logd-tests bsdnotify-tests traced-tests
 SUBDIR.${MK_TESTS}+=		sysextd-tests tzfs-tests
-SUBDIR.${MK_TESTS}+=		vmd-tests warden-tests
+SUBDIR.${MK_TESTS}+=		warden-tests
 SUBDIR.${MK_TESTS_SUPPORT}+=	atf kyua
 SUBDIR.${MK_UNBOUND}+=		local-unbound
 SUBDIR.${MK_VI}+=		vi
