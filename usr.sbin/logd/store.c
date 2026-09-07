@@ -38,9 +38,29 @@
 
 #define	STORE_LABEL_COUNTERS	128U
 
+/* Durable per-label reclaim floor (see logcmp_store_reclaim_label). */
+#define	STORE_RECLAIM_FILE	"reclaim.meta"
+#define	STORE_RECLAIM_TMP	"reclaim.meta.tmp"
+#define	STORE_RECLAIM_MAGIC	0x4c52434dU	/* LRCM */
+#define	STORE_RECLAIM_HEADER	20U		/* magic4 ver2 rsvd2 count8 crc4 */
+#define	STORE_RECLAIM_ENTRY	20U		/* len2 rsvd2 gen8 off8 + label */
+#define	STORE_RECLAIM_MAX	1048576U	/* sanity bound on persisted count */
+
 struct store_label_count {
 	char		label[STORE_LABEL_MAX + 1];
 	uint64_t	count;
+};
+
+/*
+ * A reclaim floor is the label's end-of-write position (generation, offset) at
+ * the moment its bundle was retired.  Every record of that label at or below the
+ * floor is treated as absent; a record written afterwards (a reused label name)
+ * lies strictly above it and stays visible to its new owner.
+ */
+struct store_reclaim {
+	uint64_t	generation;
+	uint64_t	offset;
+	char		label[STORE_LABEL_MAX + 1];
 };
 
 struct logcmp_store {
@@ -58,23 +78,23 @@ struct logcmp_store {
 	size_t		nlabel_counts;
 	struct store_label_count label_counts[STORE_LABEL_COUNTERS];
 	size_t		nreclaimed;
-	char		reclaimed[LOGCMP_STORE_RECLAIMED_MAX][STORE_LABEL_MAX + 1];
+	size_t		reclaimed_capacity;
+	struct store_reclaim *reclaimed;
 };
 
 /*
- * A label is reclaimed when its owning bundle has been retired (see
- * logcmp_store_reclaim_label).  The set is small and linear-scanned; a reclaimed
- * label's records are treated as absent by every read path below.
+ * Find the reclaim floor for a label, if any.  A reclaimed label's records at or
+ * below (*genp, *offp) are treated as absent by every read path below.
  */
-static bool
-label_reclaimed(const struct logcmp_store *store, const char *label)
+static struct store_reclaim *
+reclaim_find(const struct logcmp_store *store, const char *label)
 {
 	size_t i;
 
 	for (i = 0; i < store->nreclaimed; i++)
-		if (strcmp(store->reclaimed[i], label) == 0)
-			return (true);
-	return (false);
+		if (strcmp(store->reclaimed[i].label, label) == 0)
+			return (&store->reclaimed[i]);
+	return (NULL);
 }
 
 static int
@@ -593,6 +613,218 @@ logcmp_record_redact(const struct logcmp_record *record, size_t length,
 	return (0);
 }
 
+/*
+ * Record (or advance) a label's reclaim floor in the in-memory set, growing it
+ * as needed.  The set is dynamically sized, so an unbounded number of distinct
+ * lifetime reclaims never silently leaves a retired label's records visible.
+ */
+static int
+reclaim_set(struct logcmp_store *store, const char *label, uint64_t generation,
+    uint64_t offset)
+{
+	struct store_reclaim *entry, *grown;
+	size_t capacity;
+
+	entry = reclaim_find(store, label);
+	if (entry != NULL) {
+		if (generation > entry->generation ||
+		    (generation == entry->generation && offset > entry->offset)) {
+			entry->generation = generation;
+			entry->offset = offset;
+		}
+		return (0);
+	}
+	if (store->nreclaimed == store->reclaimed_capacity) {
+		capacity = store->reclaimed_capacity == 0 ? 16 :
+		    store->reclaimed_capacity * 2;
+		grown = reallocarray(store->reclaimed, capacity, sizeof(*grown));
+		if (grown == NULL)
+			return (-1);
+		store->reclaimed = grown;
+		store->reclaimed_capacity = capacity;
+	}
+	entry = &store->reclaimed[store->nreclaimed];
+	memset(entry, 0, sizeof(*entry));
+	strlcpy(entry->label, label, sizeof(entry->label));
+	entry->generation = generation;
+	entry->offset = offset;
+	store->nreclaimed++;
+	return (0);
+}
+
+/*
+ * Persist the reclaim floor set atomically: write a fresh, CRC-protected image
+ * to a temporary file, fdatasync it, rename it over the live file, then fsync
+ * the directory.  Routed only from the store owner (the storage manager), so it
+ * never races another writer.  A crash mid-rename leaves either the old image or
+ * none, never a torn one; the CRC catches media damage on the next open.
+ */
+static int
+write_reclaim_meta(struct logcmp_store *store)
+{
+	uint8_t header[STORE_RECLAIM_HEADER];
+	struct iovec iov;
+	uint8_t *image, *cursor;
+	size_t total, i;
+	uint32_t crc;
+	int fd, error;
+
+	total = STORE_RECLAIM_HEADER;
+	for (i = 0; i < store->nreclaimed; i++)
+		total += STORE_RECLAIM_ENTRY + strlen(store->reclaimed[i].label);
+	total += sizeof(uint32_t);	/* trailing body CRC */
+	image = malloc(total);
+	if (image == NULL)
+		return (-1);
+	memset(header, 0, sizeof(header));
+	le32enc(header, STORE_RECLAIM_MAGIC);
+	le16enc(header + 4, STORE_VERSION);
+	le16enc(header + 6, 0);
+	le64enc(header + 8, (uint64_t)store->nreclaimed);
+	le32enc(header + 16, crc32c_update(0, header, 16));
+	memcpy(image, header, sizeof(header));
+	cursor = image + STORE_RECLAIM_HEADER;
+	for (i = 0; i < store->nreclaimed; i++) {
+		size_t label_length = strlen(store->reclaimed[i].label);
+
+		le16enc(cursor, (uint16_t)label_length);
+		le16enc(cursor + 2, 0);
+		le64enc(cursor + 4, store->reclaimed[i].generation);
+		le64enc(cursor + 12, store->reclaimed[i].offset);
+		memcpy(cursor + STORE_RECLAIM_ENTRY, store->reclaimed[i].label,
+		    label_length);
+		cursor += STORE_RECLAIM_ENTRY + label_length;
+	}
+	crc = crc32c_update(0, image + STORE_RECLAIM_HEADER,
+	    (size_t)(cursor - (image + STORE_RECLAIM_HEADER)));
+	le32enc(cursor, crc);
+	fd = openat(store->dirfd, STORE_RECLAIM_TMP,
+	    O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC | O_NOFOLLOW, 0600);
+	if (fd == -1) {
+		error = errno;
+		free(image);
+		return (errno = error, -1);
+	}
+	iov.iov_base = image;
+	iov.iov_len = total;
+	if (full_writev(fd, &iov, 1) == -1 || fdatasync(fd) == -1) {
+		error = errno != 0 ? errno : EIO;
+		close(fd);
+		free(image);
+		(void)unlinkat(store->dirfd, STORE_RECLAIM_TMP, 0);
+		return (errno = error, -1);
+	}
+	free(image);
+	if (close(fd) == -1) {
+		error = errno != 0 ? errno : EIO;
+		(void)unlinkat(store->dirfd, STORE_RECLAIM_TMP, 0);
+		return (errno = error, -1);
+	}
+	if (renameat(store->dirfd, STORE_RECLAIM_TMP, store->dirfd,
+	    STORE_RECLAIM_FILE) == -1 || fsync(store->dirfd) == -1) {
+		error = errno != 0 ? errno : EIO;
+		(void)unlinkat(store->dirfd, STORE_RECLAIM_TMP, 0);
+		return (errno = error, -1);
+	}
+	return (0);
+}
+
+/*
+ * Load the durable reclaim floor set on open.  A missing file is a fresh store.
+ * A present-but-damaged file fails the open with EILSEQ: the store deliberately
+ * fails closed rather than silently forgetting a reclaim, which would re-expose a
+ * retired label's records (and, on a reused name, leak them cross-tenant).
+ */
+static int
+read_reclaim_meta(struct logcmp_store *store)
+{
+	uint8_t header[STORE_RECLAIM_HEADER];
+	struct stat status;
+	uint8_t *image;
+	uint64_t count, i;
+	size_t amount, remaining;
+	const uint8_t *cursor, *body_end;
+	int fd, error;
+
+	fd = openat(store->dirfd, STORE_RECLAIM_FILE,
+	    O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+	if (fd == -1)
+		return (errno == ENOENT ? 0 : -1);
+	if (fstat(fd, &status) == -1 || !S_ISREG(status.st_mode)) {
+		error = errno != 0 ? errno : EILSEQ;
+		close(fd);
+		return (errno = error, -1);
+	}
+	if (status.st_size < (off_t)(STORE_RECLAIM_HEADER + sizeof(uint32_t)) ||
+	    full_pread(fd, header, sizeof(header), 0, &amount) == -1 ||
+	    amount != sizeof(header) ||
+	    le32dec(header) != STORE_RECLAIM_MAGIC ||
+	    le16dec(header + 4) != STORE_VERSION || le16dec(header + 6) != 0 ||
+	    le32dec(header + 16) != crc32c_update(0, header, 16)) {
+		close(fd);
+		return (errno = EILSEQ, -1);
+	}
+	count = le64dec(header + 8);
+	remaining = (size_t)status.st_size - STORE_RECLAIM_HEADER;
+	if (count > STORE_RECLAIM_MAX ||
+	    count > (remaining - sizeof(uint32_t)) / STORE_RECLAIM_ENTRY) {
+		close(fd);
+		return (errno = EILSEQ, -1);
+	}
+	image = malloc(remaining);
+	if (image == NULL) {
+		error = errno;
+		close(fd);
+		return (errno = error, -1);
+	}
+	if (full_pread(fd, image, remaining, STORE_RECLAIM_HEADER, &amount) == -1) {
+		error = errno != 0 ? errno : EIO;
+		close(fd);
+		free(image);
+		return (errno = error, -1);
+	}
+	close(fd);
+	if (amount != remaining || crc32c_update(0, image,
+	    remaining - sizeof(uint32_t)) != le32dec(image + remaining -
+	    sizeof(uint32_t))) {
+		free(image);
+		return (errno = EILSEQ, -1);
+	}
+	cursor = image;
+	body_end = image + remaining - sizeof(uint32_t);
+	for (i = 0; i < count; i++) {
+		char label[STORE_LABEL_MAX + 1];
+		size_t label_length, ignore;
+
+		if ((size_t)(body_end - cursor) < STORE_RECLAIM_ENTRY)
+			goto corrupt;
+		label_length = le16dec(cursor);
+		if (le16dec(cursor + 2) != 0 || label_length == 0 ||
+		    label_length > STORE_LABEL_MAX ||
+		    (size_t)(body_end - cursor) < STORE_RECLAIM_ENTRY + label_length)
+			goto corrupt;
+		memcpy(label, cursor + STORE_RECLAIM_ENTRY, label_length);
+		label[label_length] = '\0';
+		if (!valid_label(label, &ignore))
+			goto corrupt;
+		if (reclaim_set(store, label, le64dec(cursor + 4),
+		    le64dec(cursor + 12)) == -1) {
+			error = errno != 0 ? errno : ENOMEM;
+			free(image);
+			return (errno = error, -1);
+		}
+		cursor += STORE_RECLAIM_ENTRY + label_length;
+	}
+	if (cursor != body_end)
+		goto corrupt;
+	free(image);
+	return (0);
+
+corrupt:
+	free(image);
+	return (errno = EILSEQ, -1);
+}
+
 int
 logcmp_store_open(int dirfd, uint64_t segment_limit, uint32_t max_segments,
     struct logcmp_store **storep)
@@ -676,7 +908,7 @@ logcmp_store_open(int dirfd, uint64_t segment_limit, uint32_t max_segments,
 opened:
 	store->segment_limit = segment_limit;
 	store->max_segments = max_segments;
-	if (prune_segments(store) == -1)
+	if (prune_segments(store) == -1 || read_reclaim_meta(store) == -1)
 		goto fail;
 	*storep = store;
 	return (0);
@@ -686,6 +918,7 @@ fail:
 	if (store->fd >= 0)
 		close(store->fd);
 	explicit_bzero(store->privacy_key, sizeof(store->privacy_key));
+	free(store->reclaimed);
 	free(store);
 	errno = error;
 	return (-1);
@@ -750,12 +983,32 @@ store_label_bump(struct logcmp_store *store, const char *label)
 	store->nlabel_counts++;
 }
 
+/*
+ * Drop a label's in-run persisted-record counter on reclaim.  The count seeds an
+ * attaching session's accepted counter, so a reused label name must start from
+ * zero rather than inherit the retired owner's total.  The slot is compacted out
+ * so the bounded counter table is not consumed by long-dead labels.
+ */
+static void
+store_label_reset(struct logcmp_store *store, const char *label)
+{
+	size_t i;
+
+	for (i = 0; i < store->nlabel_counts; i++)
+		if (strcmp(store->label_counts[i].label, label) == 0) {
+			store->label_counts[i] =
+			    store->label_counts[store->nlabel_counts - 1];
+			store->nlabel_counts--;
+			return;
+		}
+}
+
 uint64_t
 logcmp_store_label_count(const struct logcmp_store *store, const char *label)
 {
 	size_t i;
 
-	if (store == NULL || label == NULL || label_reclaimed(store, label))
+	if (store == NULL || label == NULL)
 		return (0);
 	for (i = 0; i < store->nlabel_counts; i++)
 		if (strcmp(store->label_counts[i].label, label) == 0)
@@ -766,26 +1019,37 @@ logcmp_store_label_count(const struct logcmp_store *store, const char *label)
 int
 logcmp_store_reclaim_label(struct logcmp_store *store, const char *label)
 {
+	struct store_reclaim *entry;
 	size_t label_length;
 
 	if (store == NULL || !valid_label(label, &label_length))
 		return (errno = EINVAL, -1);
 	/*
-	 * Idempotent: the retirement push (and any future reconciliation sweep)
-	 * can both fire for the same label, and a label that never logged still
-	 * reclaims cleanly.
+	 * The floor is the label's current end-of-write position.  Every record
+	 * of this label written so far lies at or below it and becomes invisible;
+	 * a later write under a reused name lands strictly above it and stays
+	 * visible to the new owner.  Idempotent: a repeat reclaim (or one for a
+	 * label that never logged) at worst re-advances the floor to the same
+	 * position, which is already fully persisted below.
 	 */
-	if (label_reclaimed(store, label)) {
+	entry = reclaim_find(store, label);
+	if (entry != NULL && entry->generation == store->generation &&
+	    entry->offset == (uint64_t)store->offset) {
 		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
 		return (0);
 	}
-	if (store->nreclaimed >= LOGCMP_STORE_RECLAIMED_MAX) {
-		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, ENOSPC);
-		return (errno = ENOSPC, -1);
+	if (reclaim_set(store, label, store->generation,
+	    (uint64_t)store->offset) == -1) {
+		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed,
+		    errno != 0 ? errno : ENOMEM);
+		return (errno = errno != 0 ? errno : ENOMEM, -1);
 	}
-	strlcpy(store->reclaimed[store->nreclaimed], label,
-	    sizeof(store->reclaimed[store->nreclaimed]));
-	store->nreclaimed++;
+	store_label_reset(store, label);
+	if (write_reclaim_meta(store) == -1) {
+		LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed,
+		    errno != 0 ? errno : EIO);
+		return (-1);
+	}
 	LOGD_PROBE_RECLAIM(label, (uint64_t)store->nreclaimed, 0);
 	return (0);
 }
@@ -915,6 +1179,7 @@ logcmp_store_query_next_filtered(struct logcmp_store *store, const char *label,
 	uint8_t body[STORE_BODY_HEADER + STORE_LABEL_MAX + LOGCMP_MAX_RECORD];
 	const struct logcmp_record *record;
 	struct stat status;
+	const struct store_reclaim *floor;
 	uint64_t file_generation, generation, oldest;
 	uint32_t body_length;
 	char name[64];
@@ -935,16 +1200,13 @@ logcmp_store_query_next_filtered(struct logcmp_store *store, const char *label,
 	scanned_records = 0;
 	scanned_segments = 0;
 	/*
-	 * A retired (reclaimed) label's records are logically gone: report EOF
-	 * without scanning.  This narrows -- never widens -- the caller's own-label
-	 * scope, so it can never expose another label's data, and it is idempotent.
+	 * A reclaimed label carries a floor position.  Its records at or below the
+	 * floor are logically gone and are skipped per-record below; records above
+	 * the floor (written under a reused label name by a new owner) stay
+	 * visible.  This narrows -- never widens -- the caller's own-label scope, so
+	 * it can never expose another label's data, and it is idempotent.
 	 */
-	if (label_reclaimed(store, label)) {
-		cursor->generation = store->generation;
-		cursor->offset = (uint64_t)store->offset;
-		LOGD_PROBE_QUERY_FILTER(label, 0, 0, LOGCMP_STORE_QUERY_EOF);
-		return (LOGCMP_STORE_QUERY_EOF);
-	}
+	floor = reclaim_find(store, label);
 	oldest = store->generation > store->max_segments ?
 	    store->generation - store->max_segments : 1;
 	if (cursor->generation == 0) {
@@ -1048,6 +1310,9 @@ logcmp_store_query_next_filtered(struct logcmp_store *store, const char *label,
 			scanned_bytes += body_length;
 			if (stored_label_length != label_length ||
 			    memcmp(body + STORE_BODY_HEADER, label, label_length) != 0 ||
+			    (floor != NULL && (generation < floor->generation ||
+			    (generation == floor->generation &&
+			    (uint64_t)offset <= floor->offset))) ||
 			    (minimum_severity != 0 &&
 			    record->severity < minimum_severity) ||
 			    !record_matches_filter(record, filter)) {
@@ -1361,5 +1626,6 @@ logcmp_store_close(struct logcmp_store *store)
 	if (store->fd >= 0)
 		close(store->fd);
 	explicit_bzero(store->privacy_key, sizeof(store->privacy_key));
+	free(store->reclaimed);
 	free(store);
 }

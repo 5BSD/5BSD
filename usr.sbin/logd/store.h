@@ -45,7 +45,6 @@ struct logcmp_query_filter {
 #define	LOGCMP_STORE_SEGMENTS_DEFAULT	64U
 #define	LOGCMP_STORE_SEGMENTS_MIN	1U
 #define	LOGCMP_STORE_SEGMENTS_MAX	1024U
-#define	LOGCMP_STORE_RECLAIMED_MAX	128U
 
 /* Internal query results.  CONTINUE yields the storage event loop fairly. */
 #define	LOGCMP_STORE_QUERY_EOF		0
@@ -94,20 +93,33 @@ int	logcmp_store_enforce_retention(struct logcmp_store *);
  * Involuntary capability cleanup (docs/capability-lifecycle-cleanup.md).  When a
  * consumer bundle's label is retired, drop that label's records from the store.
  *
- * Mechanism: this is a *logical* prune.  The label is recorded in a bounded
- * reclaimed-labels set that the query path and the per-label count treat as
- * empty, so the label's records become invisible immediately.  It is
- * owner-scoped (only the named label is affected, exactly like the QUERY
- * own-label scoping), idempotent (a repeated reclaim, or one for a label that
- * never wrote, is a no-op success), and never rewrites, corrupts, or drops any
- * other label's records or the active segment.  A per-label physical excision
- * from the shared segment files would have to rewrite live segments and risk
- * corrupting other labels' records, so it is deliberately not done here: the
- * reclaimed records' bytes are released physically as their whole segments age
- * out through the existing retention path (logcmp_store_enforce_retention).
+ * Mechanism: a durable per-label reclaim *high-water mark* (an install epoch
+ * expressed as a write position).  Records are appended in strictly monotonic
+ * (generation, offset) order, so reclaim records the label's current
+ * end-of-write position as its floor and the read paths treat any of that
+ * label's records at or below the floor as absent.  Because the floor is a
+ * position and not a name-membership bit, a label name later reused by a new
+ * bundle writes strictly above the floor: the new owner sees only its own
+ * records and can NEVER read the prior owner's still-present records (the
+ * cross-tenant invariant), and a fresh reclaim of the reused name simply
+ * advances the floor again.  The floor set is persisted with the store (a
+ * compact, CRC-protected "reclaim.meta" rewritten atomically), so the invariant
+ * holds across a close/reopen.  It is owner-scoped (only the named label's read
+ * results are affected, exactly like the QUERY own-label scoping), idempotent (a
+ * repeated reclaim, or one for a label that never wrote, is a no-op success),
+ * and never rewrites, corrupts, or drops any other label's records or the active
+ * segment.  A per-label physical excision from the shared segment files would
+ * have to rewrite live segments and risk corrupting other labels' records, so it
+ * is deliberately not done here: the reclaimed records' bytes are released
+ * physically as their whole segments age out through the existing retention path
+ * (logcmp_store_enforce_retention).
  *
- * Returns 0 on success (including the idempotent no-op), or -1 with errno set to
- * EINVAL for a malformed label or ENOSPC if the reclaimed set is full.
+ * The floor set is dynamically grown, so there is no fixed cap that could
+ * silently leave a retired label's records visible.  Returns 0 on success
+ * (including the idempotent no-op), or -1 with errno set to EINVAL for a
+ * malformed label, ENOMEM if the floor set cannot grow, or an I/O errno if the
+ * durable metadata cannot be written (the in-memory floor still applies for the
+ * current run; the caller may re-drive, which is idempotent).
  */
 int	logcmp_store_reclaim_label(struct logcmp_store *, const char *);
 uint64_t logcmp_store_pruned_segments(const struct logcmp_store *);

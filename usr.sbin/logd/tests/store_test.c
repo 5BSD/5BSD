@@ -1203,6 +1203,252 @@ ATF_TC_BODY(reclaim_drops_only_the_named_label, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * Query a label to EOF and return how many of its records are visible, checking
+ * each returned record carries the caller's label scope (via its recovered
+ * sequence being one the caller wrote).  Used by the reclaim invariant tests.
+ */
+static unsigned
+count_visible(struct logcmp_store *store, const char *label,
+    uint64_t *last_sequence)
+{
+	struct logcmp_store_cursor cursor;
+	uint8_t output[LOGCMP_MAX_RECORD];
+	size_t output_length;
+	unsigned seen;
+	int result;
+
+	memset(&cursor, 0, sizeof(cursor));
+	seen = 0;
+	for (;;) {
+		result = logcmp_store_query_next(store, label, 0, &cursor, output,
+		    sizeof(output), &output_length);
+		ATF_REQUIRE(result >= 0);
+		if (result == LOGCMP_STORE_QUERY_EOF)
+			break;
+		if (result == LOGCMP_STORE_QUERY_CONTINUE)
+			continue;
+		ATF_REQUIRE_EQ(LOGCMP_STORE_QUERY_RECORD, result);
+		if (last_sequence != NULL)
+			*last_sequence =
+			    ((struct logcmp_record *)(void *)output)->sequence;
+		seen++;
+	}
+	return (seen);
+}
+
+static void
+append_seq(struct logcmp_store *store, const char *label, uint64_t sequence)
+{
+	uint8_t record[LOGCMP_MAX_RECORD];
+	size_t length;
+
+	length = make_record(record, "payload", LOGCMP_PRIVACY_PUBLIC, "value",
+	    LOGCMP_PRIVACY_PUBLIC);
+	((struct logcmp_record *)(void *)record)->sequence = sequence;
+	ATF_REQUIRE_EQ(0, logcmp_store_append(store, label, (const void *)record,
+	    length, false));
+}
+
+/*
+ * Invariant, part (a): reclaiming far MORE than the retired fixed cap of 128
+ * distinct labels in one run must never fail with a would-leave-records-visible
+ * error, and every reclaimed label must query empty.  A control label the sweep
+ * never touches stays fully visible.
+ */
+ATF_TC_WITHOUT_HEAD(reclaim_scales_past_the_old_fixed_cap);
+ATF_TC_BODY(reclaim_scales_past_the_old_fixed_cap, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	char label[64];
+	unsigned i;
+	const unsigned tenants = 300;	/* > the old 128-entry cap */
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MAX, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+
+	append_seq(store, "org.control", 1);
+	for (i = 0; i < tenants; i++) {
+		snprintf(label, sizeof(label), "org.tenant.%04u", i);
+		append_seq(store, label, 1000 + i);
+	}
+	for (i = 0; i < tenants; i++) {
+		snprintf(label, sizeof(label), "org.tenant.%04u", i);
+		/* Every reclaim succeeds; none returns a failure code. */
+		ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, label));
+	}
+	for (i = 0; i < tenants; i++) {
+		snprintf(label, sizeof(label), "org.tenant.%04u", i);
+		ATF_CHECK_EQ(0, count_visible(store, label, NULL));
+		ATF_CHECK_EQ(0, logcmp_store_label_count(store, label));
+	}
+	/* The untouched control label is entirely unaffected. */
+	ATF_CHECK_EQ(1, count_visible(store, "org.control", NULL));
+	ATF_CHECK_EQ(1, logcmp_store_label_count(store, "org.control"));
+
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * Cross-tenant invariant: after label "L" (owner A) is reclaimed, records
+ * written under a REUSED "L" (owner B) are the only ones a query for L returns.
+ * A's records must never resurface.  Proven both live and across a store
+ * close/reopen, which is where the in-memory reclaimed set of the old design
+ * silently dropped the reclaim.
+ */
+ATF_TC_WITHOUT_HEAD(reused_label_never_reads_prior_tenant);
+ATF_TC_BODY(reused_label_never_reads_prior_tenant, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	uint64_t last;
+	unsigned i;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MAX, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+
+	/* Owner A writes three records under "org.shared". */
+	for (i = 0; i < 3; i++)
+		append_seq(store, "org.shared", 100 + i);
+	ATF_REQUIRE_EQ(3, count_visible(store, "org.shared", NULL));
+
+	/* The bundle is retired. */
+	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.shared"));
+	ATF_CHECK_EQ(0, count_visible(store, "org.shared", NULL));
+
+	/* serviced reuses the name for owner B, who writes two records. */
+	append_seq(store, "org.shared", 900);
+	append_seq(store, "org.shared", 901);
+	last = 0;
+	ATF_CHECK_EQ(2, count_visible(store, "org.shared", &last));
+	ATF_CHECK_EQ(901, last);
+	ATF_CHECK_EQ(2, logcmp_store_label_count(store, "org.shared"));
+
+	/* Across a restart the floor persists: still exactly B's two records. */
+	logcmp_store_close(store);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MAX, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	last = 0;
+	ATF_CHECK_EQ(2, count_visible(store, "org.shared", &last));
+	ATF_CHECK_EQ(901, last);
+
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * Restart durability, part (b): a reclaim survives close/reopen.  After
+ * reopening, the retired label's old records stay invisible, and reclaiming
+ * again (idempotent) is still a clean success.
+ */
+ATF_TC_WITHOUT_HEAD(reclaim_survives_close_and_reopen);
+ATF_TC_BODY(reclaim_survives_close_and_reopen, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MAX, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+
+	append_seq(store, "org.retired", 1);
+	append_seq(store, "org.retired", 2);
+	append_seq(store, "org.kept", 3);
+	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.retired"));
+	ATF_CHECK_EQ(0, count_visible(store, "org.retired", NULL));
+	ATF_CHECK_EQ(1, count_visible(store, "org.kept", NULL));
+	logcmp_store_close(store);
+
+	/* Reopen: the floor was persisted, so the retired label stays empty. */
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MAX, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	ATF_CHECK_EQ(0, count_visible(store, "org.retired", NULL));
+	/* A peer written before the reclaim is untouched by it. */
+	ATF_CHECK_EQ(1, count_visible(store, "org.kept", NULL));
+	/* Idempotent re-drive after a restart still succeeds. */
+	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.retired"));
+	ATF_CHECK_EQ(0, count_visible(store, "org.retired", NULL));
+
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * A reclaim floor holds even when the label's records straddle a rotated
+ * (completed) segment and the active one: reclaim after both are written hides
+ * everything, and a reused name writing into the new active segment is visible.
+ */
+ATF_TC_WITHOUT_HEAD(reclaim_floor_spans_rotated_segments);
+ATF_TC_BODY(reclaim_floor_spans_rotated_segments, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	uint64_t generation_before;
+	unsigned i;
+
+	fixture_create(&fixture);
+	/* A small segment limit forces rotation across the run. */
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+
+	generation_before = logcmp_store_generation(store);
+	/* Enough records to overflow a 64 KiB segment and rotate at least once. */
+	for (i = 0; i < 800; i++)
+		append_seq(store, "org.big", 1 + i);
+	ATF_REQUIRE(logcmp_store_generation(store) > generation_before);
+	ATF_CHECK_EQ(800, count_visible(store, "org.big", NULL));
+
+	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.big"));
+	ATF_CHECK_EQ(0, count_visible(store, "org.big", NULL));
+
+	/* Reuse writes above the floor, into the current active segment. */
+	append_seq(store, "org.big", 999999);
+	ATF_CHECK_EQ(1, count_visible(store, "org.big", NULL));
+
+	logcmp_store_close(store);
+	fixture_destroy(&fixture);
+}
+
+/*
+ * A corrupt reclaim metadata file must fail the open closed (EILSEQ) rather than
+ * silently forgetting the reclaim and re-exposing a retired label's records.
+ */
+ATF_TC_WITHOUT_HEAD(corrupt_reclaim_meta_fails_closed);
+ATF_TC_BODY(corrupt_reclaim_meta_fails_closed, tc)
+{
+	struct fixture fixture;
+	struct logcmp_store *store;
+	uint8_t byte;
+	int fd;
+
+	fixture_create(&fixture);
+	ATF_REQUIRE_EQ(0, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MAX, LOGCMP_STORE_SEGMENTS_DEFAULT, &store));
+	append_seq(store, "org.retired", 1);
+	ATF_REQUIRE_EQ(0, logcmp_store_reclaim_label(store, "org.retired"));
+	logcmp_store_close(store);
+
+	/* Flip a payload byte to break the metadata body CRC. */
+	fd = openat(fixture.dirfd, "reclaim.meta", O_RDWR | O_CLOEXEC);
+	ATF_REQUIRE(fd >= 0);
+	ATF_REQUIRE_EQ(1, pread(fd, &byte, 1, 24));
+	byte ^= 0xff;
+	ATF_REQUIRE_EQ(1, pwrite(fd, &byte, 1, 24));
+	close(fd);
+
+	ATF_CHECK_ERRNO(EILSEQ, logcmp_store_open(fixture.dirfd,
+	    LOGCMP_STORE_SEGMENT_MAX, LOGCMP_STORE_SEGMENTS_DEFAULT,
+	    &store) == -1);
+
+	/* Remove the poisoned metadata so fixture teardown's reopen is clean. */
+	ATF_REQUIRE_EQ(0, unlinkat(fixture.dirfd, "reclaim.meta", 0));
+	fixture_destroy(&fixture);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1231,5 +1477,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, retention_prunes_oldest_by_age);
 	ATF_TP_ADD_TC(tp, retention_prunes_by_size_never_active);
 	ATF_TP_ADD_TC(tp, reclaim_drops_only_the_named_label);
+	ATF_TP_ADD_TC(tp, reclaim_scales_past_the_old_fixed_cap);
+	ATF_TP_ADD_TC(tp, reused_label_never_reads_prior_tenant);
+	ATF_TP_ADD_TC(tp, reclaim_survives_close_and_reopen);
+	ATF_TP_ADD_TC(tp, reclaim_floor_spans_rotated_segments);
+	ATF_TP_ADD_TC(tp, corrupt_reclaim_meta_fails_closed);
 	return (atf_no_error());
 }

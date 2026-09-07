@@ -152,6 +152,26 @@ remove_files(int dirfd)
 	closedir(directory);
 }
 
+/*
+ * Stop the storage manager and start a fresh one on the same directory,
+ * modelling a logd restart.  The manager exits once its control channel is
+ * closed and no sessions remain, so the caller must close every session first.
+ */
+static void
+fixture_restart(struct fixture *fixture)
+{
+	int status;
+
+	close(fixture->control_fd);
+	fixture->control_fd = -1;
+	ATF_REQUIRE_EQ(fixture->manager, waitpid(fixture->manager, &status, 0));
+	ATF_REQUIRE(WIFEXITED(status));
+	ATF_REQUIRE_EQ(0, WEXITSTATUS(status));
+	ATF_REQUIRE_EQ(0, logcmp_storage_test_start(fixture->dirfd,
+	    LOGCMP_STORE_SEGMENT_MIN, LOGCMP_STORE_SEGMENTS_DEFAULT, 0, 0,
+	    &fixture->control_fd, &fixture->manager));
+}
+
 static void
 fixture_destroy(struct fixture *fixture)
 {
@@ -826,6 +846,83 @@ ATF_TC_BODY(reclaim_prunes_only_the_retired_label, tc)
 	fixture_destroy(&fixture);
 }
 
+/*
+ * End-to-end cross-tenant + restart invariant over the real control channel and
+ * manager process: after label "L" is reclaimed and the manager is restarted on
+ * the same directory, a NEW owner reusing "L" reads only its own records and can
+ * never see the retired owner's.  This is the security-relevant path the durable
+ * reclaim floor protects.
+ */
+ATF_TC_WITHOUT_HEAD(reused_label_across_restart_is_isolated);
+ATF_TC_BODY(reused_label_across_restart_is_isolated, tc)
+{
+	struct fixture fixture;
+	struct logcmp_storage_session owner;
+	struct logcmp_store_cursor cursor;
+	uint8_t record[LOGCMP_MAX_RECORD], output[LOGCMP_MAX_RECORD];
+	uint64_t count;
+	size_t length, output_length;
+	unsigned i;
+
+	fixture_create(&fixture);
+
+	/* Owner A writes three records under org.shared, then it is retired. */
+	attach_session(&fixture, "org.shared", &owner);
+	for (i = 0; i < 3; i++) {
+		length = make_record(record, 100 + i);
+		ATF_REQUIRE_EQ(0, logcmp_storage_append(&owner,
+		    (const void *)record, length));
+	}
+	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&owner, LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_REQUIRE_EQ(0, logcmp_storage_reclaim(fixture.control_fd,
+	    "org.shared"));
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_CHECK_EQ(LOGCMP_STORE_QUERY_EOF, logcmp_storage_query_next(&owner, 0,
+	    &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	logcmp_storage_session_close(&owner);
+
+	/* Restart the manager on the same directory. */
+	fixture_restart(&fixture);
+
+	/* Owner B reuses the name: A's records stay invisible across the restart. */
+	attach_session(&fixture, "org.shared", &owner);
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_CHECK_EQ(LOGCMP_STORE_QUERY_EOF, logcmp_storage_query_next(&owner, 0,
+	    &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_REQUIRE_EQ(0, logcmp_storage_count(&owner, "org.shared",
+	    strlen("org.shared"), &count));
+	ATF_CHECK_EQ(0, count);
+
+	/* B's own records are visible and are the only ones returned. */
+	length = make_record(record, 900);
+	ATF_REQUIRE_EQ(0, logcmp_storage_append(&owner, (const void *)record,
+	    length));
+	length = make_record(record, 901);
+	ATF_REQUIRE_EQ(0, logcmp_storage_append(&owner, (const void *)record,
+	    length));
+	ATF_REQUIRE_EQ(0, logcmp_storage_flush(&owner, LOGCMP_STORAGE_TIMEOUT_MS));
+	memset(&cursor, 0, sizeof(cursor));
+	ATF_REQUIRE_EQ(LOGCMP_STORE_QUERY_RECORD, logcmp_storage_query_next(&owner,
+	    0, &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_CHECK_EQ(900, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_REQUIRE_EQ(LOGCMP_STORE_QUERY_RECORD, logcmp_storage_query_next(&owner,
+	    0, &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_CHECK_EQ(901, ((struct logcmp_record *)(void *)output)->sequence);
+	ATF_CHECK_EQ(LOGCMP_STORE_QUERY_EOF, logcmp_storage_query_next(&owner, 0,
+	    &cursor, output, sizeof(output), &output_length,
+	    LOGCMP_STORAGE_TIMEOUT_MS));
+	ATF_REQUIRE_EQ(0, logcmp_storage_count(&owner, "org.shared",
+	    strlen("org.shared"), &count));
+	ATF_CHECK_EQ(2, count);
+
+	logcmp_storage_session_close(&owner);
+	fixture_destroy(&fixture);
+}
+
 ATF_TC_WITHOUT_HEAD(arguments);
 ATF_TC_BODY(arguments, tc)
 {
@@ -868,6 +965,7 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, query_slices_are_hidden_from_clients);
 	ATF_TP_ADD_TC(tp, query_filter_is_applied_server_side);
 	ATF_TP_ADD_TC(tp, reclaim_prunes_only_the_retired_label);
+	ATF_TP_ADD_TC(tp, reused_label_across_restart_is_isolated);
 	ATF_TP_ADD_TC(tp, arguments);
 	return (atf_no_error());
 }
