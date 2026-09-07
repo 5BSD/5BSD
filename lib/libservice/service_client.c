@@ -1240,9 +1240,16 @@ service_connect_ambient(const char *name, int *session_fdp)
 		errno = ENAMETOOLONG;
 		return (-1);
 	}
-	/* No ambient lookup channel -> not reachable this way. */
-	return (service_lookup_over_channel(service_ambient_lookup_fd(), name,
-	    session_fdp));
+	/*
+	 * Resolve over this process's PRIVATE lookup channel — registered lazily
+	 * on first use and memoized (docs/capability-ambient-lookup-per-process.md
+	 * P2) — so replies land only in this process's own queue and never race a
+	 * sibling on the shared discovery endpoint.  Fail-soft: if registration
+	 * was unavailable this returns the inherited shared fd, exactly as before.
+	 * -1 (no ambient channel) makes service_lookup_over_channel report ENOENT.
+	 */
+	return (service_lookup_over_channel(service_ambient_lookup_channel(),
+	    name, session_fdp));
 }
 
 /*

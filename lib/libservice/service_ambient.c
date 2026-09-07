@@ -27,15 +27,19 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
 
+#include <channel.h>
+
 #include "libservice.h"
 #include "serviced_svc_proto.h"
 #include "service_bootstrap.h"
+#include "ambient_lookup.h"
 
 /*
  * Bound for the ambient HELLO handshake.  The probe must never block a login or
@@ -189,4 +193,282 @@ service_install_ambient_lookup(int fd)
 	if (setenv(SERVICE_LOOKUP_ENV, buf, 1) == -1)
 		return (-1);
 	return (0);
+}
+
+/*
+ * Per-process private lookup channel (docs/capability-ambient-lookup-per-process.md
+ * P2).  The inherited SERVICE_LOOKUP_FD is ONE shared endpoint whose single
+ * kernel receive queue races: a sibling process can pump the queue and discard
+ * a reply meant for another, hanging the other until timeout.  To escape it a
+ * process creates its OWN connected channel pair, hands serviced one end via
+ * SVC_OP_REGISTER_LOOKUP over the shared channel (a one-way send — no reply is
+ * awaited there, so the racy shared receive is never touched), and thereafter
+ * does every lookup on its private end, whose queue only it holds.
+ *
+ * Everything here is best-effort and memoized once per process: if the create
+ * syscall is missing, the send fails, or no ACK arrives before the bounded
+ * timeout, the process falls back to the inherited shared channel exactly as
+ * before.  A broken registration must never break discovery or boot.
+ */
+#define	AMBIENT_REG_TIMEOUT_MS	2000U
+
+/*
+ * Registration state, memoized per process:
+ *   AMBIENT_PENDING   not yet resolved (or no reachable channel yet — retry)
+ *   AMBIENT_PRIVATE   registered: use ambient_priv_fd, our own endpoint
+ *   AMBIENT_FALLBACK  registration is not going to work here (old kernel, or a
+ *                     send/ACK failure): use the inherited shared channel, and
+ *                     — crucially — re-resolve it LIVE on every call, exactly as
+ *                     the pre-P2 code did, so we never memoize a transient
+ *                     "serviced not up yet" into a permanent -1.
+ */
+enum ambient_state {
+	AMBIENT_PENDING = 0,
+	AMBIENT_PRIVATE,
+	AMBIENT_FALLBACK,
+};
+
+static pthread_mutex_t ambient_priv_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_once_t ambient_atfork_once = PTHREAD_ONCE_INIT;
+static enum ambient_state ambient_priv_state;	/* AMBIENT_PENDING == 0 */
+static int ambient_priv_fd = -1;		/* our private endpoint when PRIVATE */
+
+/*
+ * A forked child must not keep the parent's private endpoint — sharing it would
+ * re-create the very cross-process race we escaped.  Drop it and re-arm so the
+ * child registers its OWN channel on next ambient use.  The private endpoint is
+ * close-on-exec, so the exec case re-registers automatically (fresh memory);
+ * this handles fork-without-exec.
+ */
+static void
+ambient_atfork_child(void)
+{
+
+	if (ambient_priv_state == AMBIENT_PRIVATE && ambient_priv_fd >= 0)
+		(void)close(ambient_priv_fd);
+	ambient_priv_fd = -1;
+	ambient_priv_state = AMBIENT_PENDING;
+	(void)pthread_mutex_init(&ambient_priv_lock, NULL);
+}
+
+static void
+ambient_atfork_setup(void)
+{
+
+	(void)pthread_atfork(NULL, NULL, ambient_atfork_child);
+}
+
+/*
+ * Reply handler for the one-way registration send.  We never dispatch the
+ * shared channel's inbound side, so serviced's (absent) reply is never routed
+ * here; it exists only to satisfy channel_send_request()'s non-NULL contract.
+ * Should a stray reply ever be delivered, release it without touching any
+ * caller state.
+ */
+static void
+ambient_reg_reply_ignore(struct channel_request *request,
+    struct channel_message *message, int error, void *context)
+{
+
+	(void)error;
+	(void)context;
+	if (message != NULL)
+		channel_message_free(message);
+	channel_request_release(request);
+}
+
+/*
+ * Send SVC_OP_REGISTER_LOOKUP carrying `peer_fd` over the inherited shared
+ * lookup channel, one-way: we drive only the OUTBOUND side to completion and
+ * never receive on the shared channel (the ACK comes on the private endpoint),
+ * so we cannot hit the shared receive-queue race.  Returns true once the
+ * fd-bearing message has been flushed to the kernel.
+ */
+static bool
+ambient_reg_send(int shared_fd, int peer_fd)
+{
+	struct svc_register_lookup_req reqmsg;
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	struct channel_outgoing out;
+	struct channel *channel;
+	struct channel_request *request;
+	int dupfd, waited, ready, wants;
+	bool ok;
+
+	dupfd = fcntl(shared_fd, F_DUPFD_CLOEXEC, 0);
+	if (dupfd == -1)
+		return (false);
+	if (channel_create(dupfd, &options, &channel) == -1) {
+		(void)close(dupfd);
+		return (false);
+	}
+
+	memset(&reqmsg, 0, sizeof(reqmsg));
+	reqmsg.op = SVC_OP_REGISTER_LOOKUP;
+	reqmsg.flags = 0;
+	memset(&out, 0, sizeof(out));
+	out.size = sizeof(out);
+	out.data = &reqmsg;
+	out.length = sizeof(reqmsg);
+	out.fds = &peer_fd;
+	out.nfds = 1;
+
+	ok = false;
+	request = NULL;
+	if (channel_send_request(channel, &out, ambient_reg_reply_ignore, NULL,
+	    &request) == 0) {
+		/*
+		 * Usually the fd-bearing message goes out inline; drive a bounded
+		 * flush loop only for the rare queued case.  We NEVER dispatch the
+		 * inbound side, so no reply is ever read on the shared channel.
+		 */
+		ok = true;
+		waited = 0;
+		while ((wants = channel_wants_write(channel)) == 1 &&
+		    waited < (int)AMBIENT_REG_TIMEOUT_MS) {
+			ready = channel_wait(channel, 1, 200);
+			if (ready < 0) {
+				ok = false;
+				break;
+			}
+			waited += 200;
+			if (channel_flush(channel) == -1) {
+				ok = false;
+				break;
+			}
+		}
+		if (channel_wants_write(channel) == 1)
+			ok = false;
+	}
+
+	channel_destroy(channel);
+	return (ok);
+}
+
+/*
+ * Receive and validate serviced's ACK on the private endpoint.  serviced pushes
+ * it as an unsolicited event on the channel it adopted, so only this process
+ * (the sole holder of `private_fd`) can read it — no shared queue, no race.
+ * Bounded so a silent serviced cannot stall the caller.  private_fd is borrowed.
+ */
+static bool
+ambient_reg_recv_ack(int private_fd)
+{
+	struct svc_register_lookup_ack ack;
+	struct service_reply reply = {
+		.size = sizeof(reply),
+		.data = &ack,
+		.capacity = sizeof(ack),
+	};
+	struct service_call_options options = SERVICE_CALL_OPTIONS_INITIALIZER;
+	struct service_session *session;
+	int dupfd;
+	bool ok;
+
+	dupfd = fcntl(private_fd, F_DUPFD_CLOEXEC, 0);
+	if (dupfd == -1)
+		return (false);
+	if (service_session_create(dupfd, &session) == -1) {
+		(void)close(dupfd);
+		return (false);
+	}
+
+	memset(&ack, 0, sizeof(ack));
+	options.timeout_ms = AMBIENT_REG_TIMEOUT_MS;
+	ok = false;
+	if (service_session_receive_event(session, &reply, &options) == 0 &&
+	    reply.length == sizeof(ack) && ack.op == SVC_OP_REGISTER_LOOKUP &&
+	    ack.status == 0 && ack.magic == SVC_REGISTER_LOOKUP_MAGIC)
+		ok = true;
+
+	service_session_close(session);
+	return (ok);
+}
+
+/*
+ * The effective ambient lookup fd for this process: its private lookup channel
+ * once registration has succeeded, otherwise the inherited shared channel.
+ * Registration is attempted once, lazily, and memoized (including the fail-soft
+ * fallback, so a failed attempt is never retried).  The returned fd is BORROWED
+ * — callers dup it — and is -1 when the process has no ambient channel at all.
+ */
+int
+service_ambient_lookup_channel(void) __no_lock_analysis
+{
+	int shared, pair[2], create_errno, result;
+	bool send_ok, ack_ok;
+
+	(void)pthread_once(&ambient_atfork_once, ambient_atfork_setup);
+
+	if (pthread_mutex_lock(&ambient_priv_lock) != 0) {
+		/* Cannot memoize; degrade to the inherited shared channel. */
+		return (service_ambient_lookup_fd());
+	}
+	if (ambient_priv_state == AMBIENT_PRIVATE) {
+		result = ambient_priv_fd;
+		(void)pthread_mutex_unlock(&ambient_priv_lock);
+		return (result);
+	}
+	if (ambient_priv_state == AMBIENT_FALLBACK) {
+		/*
+		 * Registration is known not to work here; resolve the inherited
+		 * shared channel LIVE (never memoize its value) so a channel that
+		 * only becomes reachable later is still found — exactly the pre-P2
+		 * behavior.
+		 */
+		(void)pthread_mutex_unlock(&ambient_priv_lock);
+		return (service_ambient_lookup_fd());
+	}
+
+	/* AMBIENT_PENDING: find the inherited shared channel we register over. */
+	shared = service_ambient_lookup_fd();
+	if (shared < 0) {
+		/*
+		 * No reachable ambient channel yet.  Stay PENDING (do NOT memoize)
+		 * so a later call retries once serviced/login has installed one —
+		 * matching the pre-P2 re-probe-every-call behavior.
+		 */
+		(void)pthread_mutex_unlock(&ambient_priv_lock);
+		return (-1);
+	}
+
+	pair[0] = -1;
+	pair[1] = -1;
+	create_errno = 0;
+	if (mac_capability_channel_create(pair) == -1)
+		create_errno = errno != 0 ? errno : ENOSYS;
+
+	send_ok = false;
+	ack_ok = false;
+	if (create_errno == 0) {
+		send_ok = ambient_reg_send(shared, pair[1]);
+		if (send_ok)
+			ack_ok = ambient_reg_recv_ack(pair[0]);
+	}
+
+	if (service_ambient_reg_decide(create_errno, send_ok, ack_ok) ==
+	    SERVICE_AMBIENT_USE_PRIVATE) {
+		/*
+		 * Keep our end (pair[0]) as the private lookup fd; close the peer
+		 * (serviced holds its own duplicate).  Close-on-exec so an exec'd
+		 * child re-registers instead of inheriting a shared endpoint.
+		 */
+		(void)fcntl(pair[0], F_SETFD, FD_CLOEXEC);
+		if (pair[1] >= 0)
+			(void)close(pair[1]);
+		ambient_priv_fd = pair[0];
+		ambient_priv_state = AMBIENT_PRIVATE;
+		result = ambient_priv_fd;
+	} else {
+		/* Fail-soft: discard the pair, use the inherited shared channel. */
+		if (pair[0] >= 0)
+			(void)close(pair[0]);
+		if (pair[1] >= 0)
+			(void)close(pair[1]);
+		ambient_priv_state = AMBIENT_FALLBACK;
+		result = shared;
+	}
+	(void)pthread_mutex_unlock(&ambient_priv_lock);
+	return (result);
 }

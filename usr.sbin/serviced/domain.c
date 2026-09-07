@@ -24,6 +24,9 @@
 #include <sys/param.h>
 #include <sys/capsicum.h>
 #include <sys/event.h>
+#include <sys/ioctl.h>
+
+#include <dev/mac_capability/mac_capability_ioctl.h>
 
 #include <channel.h>
 #include <errno.h>
@@ -41,6 +44,7 @@
 #include "fd_budget.h"
 #include "serviced_probes.h"
 #include "serviced_svc_proto.h"
+#include "register_lookup_gate.h"
 
 /*
  * Whether a name's provider opts into USER-domain visibility.
@@ -88,6 +92,11 @@ struct svc_lookup_channel {
 };
 
 static struct svc_lookup_channel *lookup_channels;
+
+static void lookup_channel_request(struct channel *channel,
+    struct channel_message *request, void *context);
+static struct svc_lookup_channel *lookup_channel_adopt(int serviced_end,
+    enum svc_domain_kind kind, uid_t uid, int kq);
 
 /*
  * Decide whether a domain may resolve a name.  Checked before the registry is
@@ -338,6 +347,119 @@ lookup_channel_reply(struct channel_message *request, int status, int *fds,
 }
 
 /*
+ * Whether a descriptor is an open mac_capability channel.  A cheap GETINFO gate
+ * used before adopting a client-supplied endpoint as a private lookup channel:
+ * a non-channel fd (a pipe, a socket, a regular file) fails GETINFO and is
+ * rejected.  It does not — and need not — prove the fd is one end of a pair the
+ * caller made: adoption grants no authority beyond the arriving channel's own
+ * domain, so a self-connected or unrelated channel would only ever serve the
+ * caller its own scope.
+ */
+static bool
+fd_is_mac_capability_channel(int fd)
+{
+	struct mac_capability_info_args info;
+
+	if (fd < 0)
+		return (false);
+	memset(&info, 0, sizeof(info));
+	return (ioctl(fd, MAC_CAPABILITY_GETINFO, &info) == 0);
+}
+
+/*
+ * Handle SVC_OP_REGISTER_LOOKUP arriving on the lookup channel `lc`
+ * (docs/capability-ambient-lookup-per-process.md, P2).  The request carries
+ * exactly one descriptor: an endpoint of a channel pair the client created for
+ * itself.  serviced adopts it as a private per-client lookup channel scoped to
+ * `lc`'s domain — the domain of the channel the request ARRIVED on, never a
+ * wire value — so the client gets its current discovery scope privately, never
+ * a wider one.  On success serviced pushes an ACK on the ADOPTED (private)
+ * channel; nothing is ever replied on the arriving shared channel, so the
+ * client never receives on the shared queue and cannot hit the reply-discard
+ * race.  A malformed or non-channel request is rejected silently (the fd is
+ * closed, no adoption); the client falls back on its own lookup timeout.
+ *
+ * Does NOT free `request` (the caller's out: path does) but consumes every
+ * attached descriptor.
+ */
+static void
+lookup_channel_register(struct svc_lookup_channel *lc,
+    struct channel_message *request)
+{
+	const struct svc_register_lookup_req *req;
+	struct svc_lookup_channel *adopted;
+	struct svc_register_lookup_ack ack;
+	enum svc_domain_kind adopt_kind;
+	size_t nfds, i;
+	uint32_t flags;
+	int fd, extra, error;
+
+	nfds = channel_message_fd_count(request);
+	flags = 0;
+	if (channel_message_length(request) == sizeof(*req)) {
+		req = channel_message_data(request);
+		flags = req->flags;
+	}
+
+	/*
+	 * Take the (expected single) descriptor first so every rejection path
+	 * closes it, and drain any extras a malformed request over-attached so
+	 * none leak.  The shape check below rejects any count other than one.
+	 */
+	fd = nfds >= 1 ? channel_message_take_fd(request, 0) : -1;
+	for (i = 1; i < nfds; i++) {
+		extra = channel_message_take_fd(request, i);
+		if (extra >= 0)
+			(void)close(extra);
+	}
+
+	error = svc_register_lookup_check(channel_message_length(request), nfds,
+	    fd_is_mac_capability_channel(fd), flags, lc->domain.kind,
+	    &adopt_kind);
+	if (error != 0)
+		goto reject;
+
+	/* Two endpoints of accounting: the adopted fd and the channel's dup. */
+	if (serviced_fd_budget_check(2, "registered lookup channel") == -1) {
+		error = errno != 0 ? errno : ENFILE;
+		goto reject;
+	}
+
+	adopted = lookup_channel_adopt(fd, adopt_kind, lc->domain.uid,
+	    serviced_kq);
+	if (adopted == NULL) {
+		/* adopt closed/owns fd on both success and failure. */
+		syslog(LOG_WARNING,
+		    "domain: adopt registered lookup channel: %m");
+		return;
+	}
+
+	ack.op = SVC_OP_REGISTER_LOOKUP;
+	ack.status = 0;
+	ack.magic = SVC_REGISTER_LOOKUP_MAGIC;
+	if (channel_send_event(adopted->channel,
+	    &(struct channel_outgoing){
+		.size = sizeof(struct channel_outgoing),
+		.data = &ack,
+		.length = sizeof(ack),
+		.fds = NULL,
+		.nfds = 0
+	    }) == -1)
+		syslog(LOG_WARNING, "domain: register-lookup ack: %m");
+	lookup_channel_sync_events(adopted, serviced_kq);
+	syslog(LOG_INFO, "domain: adopted private %s lookup channel",
+	    adopt_kind == SVC_DOMAIN_SYSTEM ? "system" :
+	    adopt_kind == SVC_DOMAIN_CONTROL ? "control" : "user");
+	return;
+
+reject:
+	if (fd >= 0)
+		(void)close(fd);
+	syslog(LOG_NOTICE, "domain: reject register-lookup: %s",
+	    strerror(error));
+}
+
+/*
  * Request handler for a minted user-domain channel.  It serves only
  * SVC_OP_LOOKUP, scoped to the channel's domain; every other operation is
  * refused.  There is no backing unit, so the lookup carries a NULL requester.
@@ -358,13 +480,29 @@ lookup_channel_request(struct channel *channel,
 	lc = context;
 	kindstr = lc->domain.kind == SVC_DOMAIN_SYSTEM ? "system" :
 	    lc->domain.kind == SVC_DOMAIN_CONTROL ? "control" : "user";
-	if (channel_message_fd_count(request) != 0 ||
-	    channel_message_length(request) < sizeof(op)) {
+	if (channel_message_length(request) < sizeof(op)) {
 		lookup_channel_reply(request, EINVAL, NULL, 0);
 		goto out;
 	}
 	opp = channel_message_data(request);
 	memcpy(&op, opp, sizeof(op));
+	if (op == SVC_OP_REGISTER_LOOKUP) {
+		/*
+		 * The only op that carries a descriptor.  It adopts that
+		 * descriptor as a private per-client lookup channel and ACKs on
+		 * the ADOPTED channel — never here on the arriving (shared)
+		 * channel, which is exactly what keeps the client off the shared
+		 * receive queue (the reply-discard race).  Consumes the attached
+		 * fd; out: frees the request message.
+		 */
+		lookup_channel_register(lc, request);
+		goto out;
+	}
+	/* Every other op carries no descriptor. */
+	if (channel_message_fd_count(request) != 0) {
+		lookup_channel_reply(request, EINVAL, NULL, 0);
+		goto out;
+	}
 	if (op == SVC_OP_MINT_DOMAIN) {
 		/*
 		 * Direct minting over an ambient lookup channel is RETIRED (P1c).
@@ -491,30 +629,40 @@ out:
  * before running /etc/rc); a USER channel resolves only user-visible names.
  * Returns 0 on success, -1 with errno set on failure.
  */
-static int
-domain_mint_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd, int kq)
+/*
+ * Adopt a serviced-held channel endpoint as a lookup channel scoped to
+ * (kind, uid): wrap it, dispatch its requests through lookup_channel_request(),
+ * register it for read readiness on the event loop, and link it into the
+ * lookup_channels list.  This is the shared core of BOTH the mint path
+ * (domain_mint_channel(), which creates the pair itself) and the
+ * adopt-received-fd path (lookup_channel_register(), which is handed a
+ * client-made endpoint over SVC_OP_REGISTER_LOOKUP).
+ *
+ * Takes ownership of serviced_end: on success it is owned by the returned lc
+ * (channel_create() holds its own duplicate); on failure it is closed and NULL
+ * is returned with errno set.  The caller owns fd-budget accounting and (mint
+ * path) the peer endpoint.
+ */
+static struct svc_lookup_channel *
+lookup_channel_adopt(int serviced_end, enum svc_domain_kind kind, uid_t uid,
+    int kq)
 {
 	struct channel_options options =
 	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_PROVIDER);
 	struct svc_lookup_channel *lc;
 	struct kevent change;
-	int serviced_end, client_end, error;
+	int error;
 
-	*out_fd = -1;
-	/* Two endpoints plus one queued attachment on each. */
-	if (serviced_fd_budget_check(4, "user-domain lookup channel") == -1)
-		return (-1);
 	lc = calloc(1, sizeof(*lc));
-	if (lc == NULL)
-		return (-1);
-	lc->fd = -1;
-
-	if (mac_cap_create_channel(&serviced_end, &client_end) != 0) {
-		error = errno != 0 ? errno : EIO;
-		free(lc);
+	if (lc == NULL) {
+		error = errno;
+		(void)close(serviced_end);
 		errno = error;
-		return (-1);
+		return (NULL);
 	}
+	lc->fd = -1;
+	lc->domain.kind = kind;
+	lc->domain.uid = uid;
 
 	options.max_pending_requests = 64;
 	options.max_queued_messages = 256;
@@ -522,31 +670,58 @@ domain_mint_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd, int kq)
 	options.max_queued_fds = 256;
 	if (channel_create(serviced_end, &options, &lc->channel) == -1) {
 		error = errno;
-		close(serviced_end);
-		close(client_end);
+		(void)close(serviced_end);
 		free(lc);
 		errno = error;
-		return (-1);
+		return (NULL);
 	}
+	/* channel_create() consumed serviced_end (owns its own duplicate). */
 	lc->fd = channel_fd(lc->channel);
-	lc->domain.kind = kind;
-	lc->domain.uid = uid;
 	if (channel_set_request_handler(lc->channel, lookup_channel_request,
 	    lc) == -1) {
 		error = errno;
 		channel_destroy(lc->channel);
-		close(client_end);
 		free(lc);
 		errno = error;
-		return (-1);
+		return (NULL);
 	}
 
 	EV_SET(&change, lc->fd, EVFILT_READ, EV_ADD, 0, 0, lc);
 	if (kevent(kq, &change, 1, NULL, 0, NULL) == -1) {
 		error = errno;
 		channel_destroy(lc->channel);
-		close(client_end);
 		free(lc);
+		errno = error;
+		return (NULL);
+	}
+
+	lc->next = lookup_channels;
+	lookup_channels = lc;
+	return (lc);
+}
+
+static int
+domain_mint_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd, int kq)
+{
+	struct svc_lookup_channel *lc;
+	int serviced_end, client_end, error;
+
+	*out_fd = -1;
+	/* Two endpoints plus one queued attachment on each. */
+	if (serviced_fd_budget_check(4, "user-domain lookup channel") == -1)
+		return (-1);
+
+	if (mac_cap_create_channel(&serviced_end, &client_end) != 0) {
+		error = errno != 0 ? errno : EIO;
+		errno = error;
+		return (-1);
+	}
+
+	lc = lookup_channel_adopt(serviced_end, kind, uid, kq);
+	if (lc == NULL) {
+		error = errno;
+		/* adopt consumed/closed serviced_end; close the peer. */
+		(void)close(client_end);
 		errno = error;
 		return (-1);
 	}
@@ -559,16 +734,11 @@ domain_mint_channel(enum svc_domain_kind kind, uid_t uid, int *out_fd, int kq)
 	 */
 	if (svc_fd_make_ambient(client_end) == -1) {
 		error = errno;
-		EV_SET(&change, lc->fd, EVFILT_READ, EV_DELETE, 0, 0, NULL);
-		(void)kevent(kq, &change, 1, NULL, 0, NULL);
 		lookup_channel_close(lc);
-		close(client_end);
+		(void)close(client_end);
 		errno = error;
 		return (-1);
 	}
-
-	lc->next = lookup_channels;
-	lookup_channels = lc;
 
 	if (kind == SVC_DOMAIN_USER)
 		syslog(LOG_INFO,

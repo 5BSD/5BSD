@@ -41,8 +41,9 @@ ATF_TC_BODY(proto_contract, tc)
 	struct svc_reclaim_label_msg r;
 	struct svc_new_client_msg nc;
 
-	ATF_CHECK_EQ(9, SERVICED_SVC_PROTO_VERSION);
+	ATF_CHECK_EQ(10, SERVICED_SVC_PROTO_VERSION);
 	ATF_CHECK_EQ(12u, (unsigned)SVC_OP_LABEL_IS_LIVE);
+	ATF_CHECK_EQ(13u, (unsigned)SVC_OP_REGISTER_LOOKUP);
 	ATF_CHECK_EQ(130u, (unsigned)SVC_OP_RECLAIM_LABEL);
 
 	/* Query and reclaim labels match the client_label width exactly. */

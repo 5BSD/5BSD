@@ -8,6 +8,7 @@ ATF_TESTS_SH+=	libservice_test
 ATF_TESTS_C+=	libservice_api_test
 ATF_TESTS_C+=	service_ambient_test
 ATF_TESTS_C+=	reclaim_msg_test
+ATF_TESTS_C+=	ambient_lookup_test
 
 PROGS+=		capd_service_fixture
 PROGS+=		capd_test_guardian
@@ -42,6 +43,10 @@ CFLAGS.libservice_api_test+=	-I${SRCTOP}/sys
 # objects, no live plane, no LIBADD beyond the ATF runtime.
 CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libservice
 CFLAGS.reclaim_msg_test+=	-I${SRCTOP}/lib/libauthorityrt
+
+# ambient_lookup_test is header-only: the pure fail-soft registration decision
+# in ambient_lookup.h.  No daemon objects, no live plane, no LIBADD beyond ATF.
+CFLAGS.ambient_lookup_test+=	-I${SRCTOP}/lib/libservice
 
 ${PACKAGE}FILES+=	capd_test_harness.sh
 

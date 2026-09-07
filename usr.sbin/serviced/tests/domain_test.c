@@ -30,12 +30,14 @@
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 #include <channel.h>
 
 #include "libservice.h"
+#include "service_bootstrap.h"
 
 #include "../domain.c"
 #include "../naming.c"
@@ -913,16 +915,17 @@ count_domain_entries(enum svc_domain_kind kind, uid_t uid, bool match_uid)
 	return (n);
 }
 
-ATF_TC(system_channel_mints_both);
-ATF_TC_HEAD(system_channel_mints_both, tc)
+ATF_TC(direct_mint_over_ambient_retired);
+ATF_TC_HEAD(direct_mint_over_ambient_retired, tc)
 {
 
 	atf_tc_set_md_var(tc, "descr",
-	    "a SYSTEM lookup channel may mint BOTH a SYSTEM channel and a USER "
-	    "channel; the minted USER channel records the requested uid");
+	    "direct SVC_OP_MINT_DOMAIN over the ambient lookup channel is RETIRED "
+	    "(P1c): login/su mint session channels via the auth-agent, not here, "
+	    "so serviced refuses the direct mint with EPERM");
 	atf_tc_set_md_var(tc, "require.user", "root");
 }
-ATF_TC_BODY(system_channel_mints_both, tc)
+ATF_TC_BODY(direct_mint_over_ambient_retired, tc)
 {
 	struct pump_ctx ctx;
 	pthread_t pump;
@@ -945,31 +948,30 @@ ATF_TC_BODY(system_channel_mints_both, tc)
 	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
 
 	/*
-	 * Drive the real client (service_mint_session_domain) against the real
-	 * mint handler (lookup_channel_request, pumped above).  A SYSTEM channel
-	 * is authorized to mint a SYSTEM (admin) channel — the root/wheel session
-	 * case (§6) — and a USER channel for a target uid.
+	 * Direct minting over the ambient lookup channel is RETIRED (P1c,
+	 * domain.c lookup_channel_request): the auth-agent (system.authagent) is
+	 * the single mint boundary, and login/su reach it via
+	 * service_mint_session_via_agent — they can no longer mint their own
+	 * session channel directly over the ambient carry.  serviced therefore
+	 * refuses SVC_OP_MINT_DOMAIN on a lookup channel with EPERM.  Assert the
+	 * refusal (both the SYSTEM and USER kinds) so a regression that re-opens
+	 * the direct-mint path is caught, and confirm no channel was minted.
 	 */
 	sysfd = -1;
-	ATF_CHECK_EQ(0, service_mint_session_domain(minted_fd,
-	    SERVICE_MINT_SYSTEM, 0, &sysfd));
-	ATF_CHECK(sysfd >= 0);
+	ATF_CHECK(service_mint_session_domain(minted_fd, SERVICE_MINT_SYSTEM, 0,
+	    &sysfd) != 0);
+	ATF_CHECK(sysfd < 0);
 
 	userfd = -1;
-	ATF_CHECK_EQ(0, service_mint_session_domain(minted_fd,
-	    SERVICE_MINT_USER, 7777, &userfd));
-	ATF_CHECK(userfd >= 0);
+	ATF_CHECK(service_mint_session_domain(minted_fd, SERVICE_MINT_USER, 7777,
+	    &userfd) != 0);
+	ATF_CHECK(userfd < 0);
 
 	ctx.stop = 1;
 	(void)pthread_join(pump, NULL);
 
-	/*
-	 * The recorded domains: the minted USER channel is tagged {USER, 7777},
-	 * and there are now at least two SYSTEM channels (the ambient one plus the
-	 * freshly minted admin channel).
-	 */
-	ATF_CHECK(count_domain_entries(SVC_DOMAIN_USER, 7777, true) >= 1);
-	ATF_CHECK(count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false) >= 2);
+	/* Nothing was minted: no USER {7777} channel, and no second SYSTEM one. */
+	ATF_CHECK(count_domain_entries(SVC_DOMAIN_USER, 7777, true) == 0);
 
 	if (sysfd >= 0)
 		close(sysfd);
@@ -1040,6 +1042,348 @@ ATF_TC_BODY(user_channel_mints_neither, tc)
 	close(kq);
 }
 
+/* ------------------------------------------------------------------ */
+/* P2: private per-process lookup channel (SVC_OP_REGISTER_LOOKUP).    */
+/* ------------------------------------------------------------------ */
+
+/*
+ * Reply handler for the test's one-way registration sends.  The test never
+ * dispatches the shared channel's inbound side, so it exists only to satisfy
+ * channel_send_request()'s non-NULL contract.
+ */
+static void
+reg_reply_ignore(struct channel_request *request,
+    struct channel_message *message, int error, void *context)
+{
+
+	(void)error;
+	(void)context;
+	if (message != NULL)
+		channel_message_free(message);
+	channel_request_release(request);
+}
+
+/*
+ * Raw one-way SVC_OP_REGISTER_LOOKUP send over a shared lookup channel, so a
+ * test can drive the serviced-side adopt handler directly with an arbitrary
+ * (including malformed) descriptor set and assert whether it adopts.  Returns 0
+ * once the message is flushed.
+ */
+static int
+register_send_raw(int shared_fd, int *fds, size_t nfds)
+{
+	struct svc_register_lookup_req reqmsg;
+	struct channel_options options =
+	    CHANNEL_OPTIONS_INITIALIZER(CHANNEL_ROLE_CLIENT);
+	struct channel_outgoing out;
+	struct channel *channel;
+	struct channel_request *request;
+	int dupfd, tries;
+
+	dupfd = fcntl(shared_fd, F_DUPFD_CLOEXEC, 0);
+	if (dupfd == -1)
+		return (-1);
+	if (channel_create(dupfd, &options, &channel) == -1) {
+		(void)close(dupfd);
+		return (-1);
+	}
+	memset(&reqmsg, 0, sizeof(reqmsg));
+	reqmsg.op = SVC_OP_REGISTER_LOOKUP;
+	memset(&out, 0, sizeof(out));
+	out.size = sizeof(out);
+	out.data = &reqmsg;
+	out.length = sizeof(reqmsg);
+	out.fds = fds;
+	out.nfds = nfds;
+	request = NULL;
+	if (channel_send_request(channel, &out, reg_reply_ignore, NULL,
+	    &request) == -1) {
+		channel_destroy(channel);
+		return (-1);
+	}
+	for (tries = 0; channel_wants_write(channel) == 1 && tries < 50;
+	    tries++) {
+		if (channel_wait(channel, 1, 100) < 0)
+			break;
+		if (channel_flush(channel) == -1)
+			break;
+	}
+	channel_destroy(channel);
+	return (0);
+}
+
+/* Skip cleanly if the ungated channel-create syscall (P1) is not loaded. */
+static void
+require_channel_create_syscall(const atf_tc_t *tc)
+{
+	int probe[2];
+
+	(void)tc;
+	if (mac_capability_channel_create(probe) == -1) {
+		if (errno == ENOSYS)
+			atf_tc_skip("mac_capability_channel_create syscall "
+			    "unavailable (P1 module not loaded)");
+		return;		/* a transient failure — let the test proceed */
+	}
+	(void)close(probe[0]);
+	(void)close(probe[1]);
+}
+
+/*
+ * The end-to-end positive path: a process registers its OWN private lookup
+ * channel over the inherited SYSTEM channel, gets a DISTINCT fd back, and its
+ * lookups resolve on that private channel with the same SYSTEM scope.  Drives
+ * the real client (service_ambient_lookup_channel / service_connect_ambient)
+ * against the real serviced adopt handler.
+ */
+ATF_TC(register_private_system_channel_resolves);
+ATF_TC_HEAD(register_private_system_channel_resolves, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "a process registers a private SYSTEM lookup channel, receives a "
+	    "DISTINCT endpoint, and resolves a system-only name over it");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(register_private_system_channel_resolves, tc)
+{
+	struct svc_runtime provider;
+	struct pump_ctx ctx;
+	pthread_t pump;
+	char envbuf[16];
+	int minted_fd, kq, before, priv, sfd;
+
+	require_channel_create_syscall(tc);
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	serviced_kq = kq;
+
+	minted_fd = -1;
+	if (domain_mint_system_channel(&minted_fd, kq) == -1) {
+		if (errno == ENODEV)
+			atf_tc_skip("mac_capability channel device unavailable");
+		atf_tc_fail("domain_mint_system_channel: %s", strerror(errno));
+	}
+	provider_register(&provider, SYSTEM_ONLY_NAME);
+	before = count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false);
+
+	ctx.kq = kq;
+	ctx.stop = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
+
+	/* Advertise the inherited shared channel exactly as boot/login does. */
+	ATF_REQUIRE(snprintf(envbuf, sizeof(envbuf), "%d", minted_fd) <
+	    (int)sizeof(envbuf));
+	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, envbuf, 1));
+
+	/* First ambient use registers a private channel and memoizes it. */
+	priv = service_ambient_lookup_channel();
+	ATF_REQUIRE_MSG(priv >= 0, "expected an ambient channel");
+	ATF_CHECK_MSG(priv != minted_fd,
+	    "the effective lookup fd must be the DISTINCT private endpoint, "
+	    "not the inherited shared fd");
+
+	/* A lookup over the private channel resolves the system-only name. */
+	sfd = -1;
+	ATF_CHECK_EQ(0, service_connect_ambient(SYSTEM_ONLY_NAME, &sfd));
+	ATF_CHECK(sfd >= 0);
+	if (sfd >= 0)
+		(void)close(sfd);
+
+	ctx.stop = 1;
+	(void)pthread_join(pump, NULL);
+
+	/* Exactly one private SYSTEM channel was adopted (in addition to the
+	 * shared one). */
+	ATF_CHECK_EQ(before + 1,
+	    count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false));
+
+	naming_remove_owner(&provider);
+	domain_channel_teardown();
+	(void)close(minted_fd);
+	(void)close(kq);
+}
+
+/*
+ * Adoption never widens scope: registering over a USER channel yields a private
+ * USER channel that STILL hides a system-only name (ENOENT), the exact opposite
+ * of the SYSTEM case above.  This is the security invariant end-to-end.
+ */
+ATF_TC(register_private_user_channel_hides);
+ATF_TC_HEAD(register_private_user_channel_hides, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "a private channel registered over a USER channel keeps USER scope: "
+	    "a system-only name stays hidden (ENOENT), never widened to SYSTEM");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(register_private_user_channel_hides, tc)
+{
+	struct svc_runtime provider;
+	struct pump_ctx ctx;
+	pthread_t pump;
+	char envbuf[16];
+	int minted_fd, kq, before, priv, sfd;
+
+	require_channel_create_syscall(tc);
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	serviced_kq = kq;
+
+	minted_fd = -1;
+	if (domain_mint_user_channel(4321, &minted_fd, kq) == -1) {
+		if (errno == ENODEV)
+			atf_tc_skip("mac_capability channel device unavailable");
+		atf_tc_fail("domain_mint_user_channel: %s", strerror(errno));
+	}
+	provider_register(&provider, SYSTEM_ONLY_NAME);
+	before = count_domain_entries(SVC_DOMAIN_USER, 4321, true);
+
+	ctx.kq = kq;
+	ctx.stop = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
+
+	ATF_REQUIRE(snprintf(envbuf, sizeof(envbuf), "%d", minted_fd) <
+	    (int)sizeof(envbuf));
+	ATF_REQUIRE_EQ(0, setenv(SERVICE_LOOKUP_ENV, envbuf, 1));
+
+	priv = service_ambient_lookup_channel();
+	ATF_REQUIRE_MSG(priv >= 0, "expected an ambient channel");
+	ATF_CHECK_MSG(priv != minted_fd,
+	    "the effective lookup fd must be the DISTINCT private endpoint");
+
+	/* The system-only name is invisible to the USER-scoped private channel. */
+	sfd = -1;
+	ATF_CHECK_EQ(-1, service_connect_ambient(SYSTEM_ONLY_NAME, &sfd));
+	ATF_CHECK_EQ(ENOENT, errno);
+	ATF_CHECK_EQ(-1, sfd);
+
+	ctx.stop = 1;
+	(void)pthread_join(pump, NULL);
+
+	/* The adopted private channel is tagged {USER, 4321}, not widened. */
+	ATF_CHECK_EQ(before + 1,
+	    count_domain_entries(SVC_DOMAIN_USER, 4321, true));
+	ATF_CHECK_EQ(0, count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false));
+
+	naming_remove_owner(&provider);
+	domain_channel_teardown();
+	(void)close(minted_fd);
+	(void)close(kq);
+}
+
+/*
+ * The adopt handler rejects a non-channel descriptor: a REGISTER_LOOKUP whose
+ * attached fd is a pipe (GETINFO fails) adopts NOTHING.  Drives the real
+ * handler over a raw send.
+ */
+ATF_TC(register_non_channel_fd_rejected);
+ATF_TC_HEAD(register_non_channel_fd_rejected, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "a REGISTER_LOOKUP carrying a non-channel fd (a pipe) is rejected: "
+	    "no private channel is adopted");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(register_non_channel_fd_rejected, tc)
+{
+	struct pump_ctx ctx;
+	pthread_t pump;
+	int minted_fd, kq, before, p[2];
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	serviced_kq = kq;
+
+	minted_fd = -1;
+	if (domain_mint_system_channel(&minted_fd, kq) == -1) {
+		if (errno == ENODEV)
+			atf_tc_skip("mac_capability channel device unavailable");
+		atf_tc_fail("domain_mint_system_channel: %s", strerror(errno));
+	}
+	before = count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false);
+
+	ctx.kq = kq;
+	ctx.stop = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
+
+	ATF_REQUIRE_EQ(0, pipe(p));
+	ATF_REQUIRE_EQ(0, register_send_raw(minted_fd, &p[0], 1));
+	usleep(400000);			/* let the handler dispatch + reject */
+
+	ctx.stop = 1;
+	(void)pthread_join(pump, NULL);
+	ATF_CHECK_EQ_MSG(before,
+	    count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false),
+	    "a non-channel fd must not be adopted as a lookup channel");
+
+	(void)close(p[0]);
+	(void)close(p[1]);
+	domain_channel_teardown();
+	(void)close(minted_fd);
+	(void)close(kq);
+}
+
+/*
+ * The adopt handler rejects a REGISTER_LOOKUP that over-attaches descriptors:
+ * even when both are genuine channels, an nfds != 1 request adopts NOTHING (the
+ * count is the discriminator, so a client cannot smuggle extra endpoints).
+ */
+ATF_TC(register_multi_fd_rejected);
+ATF_TC_HEAD(register_multi_fd_rejected, tc)
+{
+
+	atf_tc_set_md_var(tc, "descr",
+	    "a REGISTER_LOOKUP carrying more than one descriptor is rejected: "
+	    "no private channel is adopted");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(register_multi_fd_rejected, tc)
+{
+	struct pump_ctx ctx;
+	pthread_t pump;
+	int minted_fd, kq, before, two[2];
+
+	kq = kqueue();
+	ATF_REQUIRE(kq >= 0);
+	serviced_kq = kq;
+
+	minted_fd = -1;
+	if (domain_mint_system_channel(&minted_fd, kq) == -1) {
+		if (errno == ENODEV)
+			atf_tc_skip("mac_capability channel device unavailable");
+		atf_tc_fail("domain_mint_system_channel: %s", strerror(errno));
+	}
+	before = count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false);
+
+	ctx.kq = kq;
+	ctx.stop = 0;
+	ATF_REQUIRE_EQ(0, pthread_create(&pump, NULL, domain_pump_thread, &ctx));
+
+	/* Two genuine channels (dups of the shared endpoint): rejected on count. */
+	two[0] = fcntl(minted_fd, F_DUPFD_CLOEXEC, 0);
+	two[1] = fcntl(minted_fd, F_DUPFD_CLOEXEC, 0);
+	ATF_REQUIRE(two[0] >= 0 && two[1] >= 0);
+	ATF_REQUIRE_EQ(0, register_send_raw(minted_fd, two, 2));
+	usleep(400000);
+
+	ctx.stop = 1;
+	(void)pthread_join(pump, NULL);
+	ATF_CHECK_EQ_MSG(before,
+	    count_domain_entries(SVC_DOMAIN_SYSTEM, 0, false),
+	    "a multi-fd register request must not be adopted");
+
+	(void)close(two[0]);
+	(void)close(two[1]);
+	domain_channel_teardown();
+	(void)close(minted_fd);
+	(void)close(kq);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -1054,10 +1398,14 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, user_scope_hides_registered_name);
 	ATF_TP_ADD_TC(tp, minted_channel_user_scoped);
 	ATF_TP_ADD_TC(tp, minted_system_channel_scoped);
-	ATF_TP_ADD_TC(tp, system_channel_mints_both);
+	ATF_TP_ADD_TC(tp, direct_mint_over_ambient_retired);
 	ATF_TP_ADD_TC(tp, user_channel_mints_neither);
 	ATF_TP_ADD_TC(tp, hello_ack_over_user_channel);
 	ATF_TP_ADD_TC(tp, hello_ack_over_system_channel);
 	ATF_TP_ADD_TC(tp, unknown_op_over_lookup_channel_enotsup);
+	ATF_TP_ADD_TC(tp, register_private_system_channel_resolves);
+	ATF_TP_ADD_TC(tp, register_private_user_channel_hides);
+	ATF_TP_ADD_TC(tp, register_non_channel_fd_rejected);
+	ATF_TP_ADD_TC(tp, register_multi_fd_rejected);
 	return (atf_no_error());
 }

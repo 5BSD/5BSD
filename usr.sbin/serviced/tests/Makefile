@@ -56,6 +56,7 @@ ATF_TESTS_C+=	activation_calendar_test
 ATF_TESTS_C+=	ambient_hygiene_test
 ATF_TESTS_C+=	sctl_gate_test
 ATF_TESTS_C+=	reclaim_gate_test
+ATF_TESTS_C+=	register_lookup_gate_test
 ATF_TESTS_C+=	reclaim_bridge_test
 BINDIR=		${TESTSDIR}
 
@@ -125,6 +126,15 @@ CFLAGS.sctl_gate_test+=	-I${SRCTOP}/sys
 SRCS.reclaim_gate_test=	reclaim_gate_test.c
 CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/usr.sbin/serviced
 CFLAGS.reclaim_gate_test+=	-I${SRCTOP}/lib/libauthorityrt
+
+# register_lookup_gate_test is header-only: the pure adoption/scope predicate in
+# register_lookup_gate.h (which pulls serviced.h for enum svc_domain_kind and
+# the wire struct from serviced_svc_proto.h).  No daemon objects, no live plane.
+SRCS.register_lookup_gate_test=	register_lookup_gate_test.c
+CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/usr.sbin/serviced
+CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/lib/libcapbundle
+CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/lib/libauthorityrt
+CFLAGS.register_lookup_gate_test+=	-I${SRCTOP}/sys
 
 # reclaim_bridge_test exercises the reclaim-socket authorization/validation
 # predicates (reclaim_bridge.h) and the accept-side serve routine

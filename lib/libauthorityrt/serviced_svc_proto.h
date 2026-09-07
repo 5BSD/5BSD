@@ -30,7 +30,14 @@
 
 #include <sys/types.h>
 
-#define	SERVICED_SVC_PROTO_VERSION	9
+/*
+ * Bump whenever the wire contract below changes.  serviced, libservice, and the
+ * capability daemons are always built and run together (never mixed versions):
+ * a bump is a hard "rebuild every peer" marker, not a negotiated compatibility
+ * knob.  v10 added SVC_OP_REGISTER_LOOKUP (per-process private lookup channels,
+ * docs/capability-ambient-lookup-per-process.md P2).
+ */
+#define	SERVICED_SVC_PROTO_VERSION	10
 
 /* Maximum reverse-domain name length. */
 #define	SERVICED_NAME_MAX		255
@@ -52,6 +59,7 @@
 #define	SVC_OP_AMBIENT_HELLO	10	/* behavioral probe: is this THE lookup channel? */
 #define	SVC_OP_HELPER_OPEN	11	/* launch + connect a bundle-local private helper */
 #define	SVC_OP_LABEL_IS_LIVE	12	/* is a bundle label still installed? */
+#define	SVC_OP_REGISTER_LOOKUP	13	/* adopt a caller-created private lookup channel */
 
 /*
  * Serviced → service (notifications):
@@ -196,6 +204,49 @@ struct svc_ambient_hello_req {
 struct svc_ambient_hello_reply {
 	int32_t		status;		/* 0 on a genuine lookup channel */
 	uint32_t	magic;		/* SVC_AMBIENT_HELLO_MAGIC when status == 0 */
+};
+
+/*
+ * SVC_OP_REGISTER_LOOKUP  (docs/capability-ambient-lookup-per-process.md, P2)
+ *   req:  svc_register_lookup_req { .op = SVC_OP_REGISTER_LOOKUP, .flags = 0 }
+ *         + EXACTLY ONE descriptor: one endpoint of a self-owned
+ *           mac_capability channel pair the caller created with
+ *           mac_capability_channel_create(2).
+ *   NO reply on the arriving (shared) channel.
+ *   ACK: svc_register_lookup_ack, pushed as an EVENT on the ADOPTED channel
+ *        (the private endpoint the caller kept), never on the shared channel.
+ *
+ * The Darwin model of unsharing the ambient discovery channel: instead of
+ * every process sharing serviced's one SYSTEM ambient lookup endpoint (whose
+ * single receive queue races — a sibling can pump and discard another's reply),
+ * a process creates its OWN connected pair (a, b), sends `b` to serviced ONCE
+ * over the inherited shared channel with this op, and thereafter does every
+ * lookup on `a`.  Replies land only in this process's private queue, so the
+ * reply-discard race cannot occur.
+ *
+ * The send is one-way on the shared channel: the caller awaits NO reply there,
+ * so it never receives on the shared queue and cannot hit the race.  serviced
+ * adopts `b` as a fresh per-client svc_lookup_channel scoped to the ARRIVING
+ * channel's domain — derived from the channel the request came in on, NEVER a
+ * wire argument, so a client can never register a wider (SYSTEM) scope than the
+ * channel it already holds.  serviced validates the attached descriptor is a
+ * mac_capability channel (GETINFO) and that exactly one is attached; any other
+ * shape is rejected and the descriptor closed (no adoption).  On success
+ * serviced pushes the ACK on the adopted channel; the caller reads it on `a`
+ * and switches its lookups to `a`.  Registration is strictly best-effort: a
+ * caller that gets no ACK falls back to the shared channel exactly as before.
+ */
+#define	SVC_REGISTER_LOOKUP_MAGIC	0x524c4b41U	/* "RLKA" */
+
+struct svc_register_lookup_req {
+	uint32_t	op;		/* SVC_OP_REGISTER_LOOKUP */
+	uint32_t	flags;		/* reserved, must be 0 */
+};
+
+struct svc_register_lookup_ack {
+	uint32_t	op;		/* SVC_OP_REGISTER_LOOKUP */
+	int32_t		status;		/* 0 on successful adoption */
+	uint32_t	magic;		/* SVC_REGISTER_LOOKUP_MAGIC when status == 0 */
 };
 
 /*

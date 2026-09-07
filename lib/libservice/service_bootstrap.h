@@ -107,8 +107,19 @@ _Static_assert(sizeof(struct service_bootstrap) == 3456,
  * its number in SERVICE_LOOKUP_ENV so descendants inherit it.  The descriptor
  * is left at its own number.  Returns 0 on success, -1 (errno set) on failure.
  */
+/*
+ * service_ambient_lookup_channel() is the discovery-path entry the ambient
+ * client uses (service_connect_ambient): it returns this process's PRIVATE
+ * lookup channel once it has lazily registered one with serviced
+ * (docs/capability-ambient-lookup-per-process.md P2), and otherwise the
+ * inherited shared fd exactly as service_ambient_lookup_fd() would.  The result
+ * is borrowed and memoized once per process; -1 means no ambient channel at
+ * all.  login/su and native providers do not use it — they keep their own
+ * per-session/per-unit channels.
+ */
 __BEGIN_DECLS
 int	service_ambient_lookup_fd(void);
+int	service_ambient_lookup_channel(void);
 int	service_install_ambient_lookup(int fd);
 __END_DECLS
 
