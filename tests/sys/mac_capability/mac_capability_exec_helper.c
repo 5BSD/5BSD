@@ -23,6 +23,12 @@
  *               Returns 3 on connect/claim failure, 0 once released.
  *   kenv_set     Try kenv(KENV_SET) under this nonce with no claim/auth.
  *               Returns 1 if allowed, 0 if denied (EPERM).
+ *   sysctl_named <name>
+ *               Read the named integer sysctl then write it back to its own
+ *               value, under this (foreign) nonce.  Returns 5 if resolution/
+ *               read failed (name lookup wrongly gated), 1 if the write was
+ *               allowed, 0 if the write was denied.  Used to probe per-OID
+ *               SYSCTL isolation.
  */
 
 #include <sys/types.h>
@@ -253,6 +259,23 @@ main(int argc, char **argv)
 		if (write(writefd, &nonce, sizeof(nonce)) != (ssize_t)sizeof(nonce))
 			return (4);
 		return (0);
+	}
+
+	if (argc == 3 && strcmp(argv[1], "sysctl_named") == 0) {
+		int val;
+		size_t sz = sizeof(val);
+
+		/*
+		 * Per-OID isolation probe under a fresh (foreign) nonce.  Read
+		 * the named integer OID (also exercises name resolution, which
+		 * must never be gated) then write it back to its own value.
+		 * Exit 5 if resolution/read failed (a bug: name lookup gated),
+		 * 1 if the write was allowed, 0 if the write was denied.
+		 */
+		if (sysctlbyname(argv[2], &val, &sz, NULL, 0) != 0)
+			return (5);
+		return (sysctlbyname(argv[2], NULL, NULL, &val,
+		    sizeof(val)) == 0 ? 1 : 0);
 	}
 
 	if (argc != 2)

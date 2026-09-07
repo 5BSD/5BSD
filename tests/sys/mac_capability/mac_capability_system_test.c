@@ -272,6 +272,92 @@ exec_child_nonce(const atf_tc_t *tc, uint64_t *out)
 	return (0);
 }
 
+/*
+ * Two benign, reversible RW integer sysctls used to probe per-OID isolation:
+ * each is read and written back to its own value, so an allowed write mutates
+ * nothing.  X is the isolated OID under test; Y is a different privileged OID
+ * used to prove isolation is per-OID (Y must stay directly writable while only
+ * X is isolated).
+ */
+#define	SYSCTL_OID_X	"kern.maxfiles"
+#define	SYSCTL_OID_Y	"kern.maxfilesperproc"
+
+/*
+ * Build and issue a SYS_OP_CLAIM / SYS_OP_RELEASE carrying a SYSCTL OID set,
+ * resolving each name to its MIB via sysctlnametomib(3).  op selects claim
+ * (additive union) vs release (subtractive).  Returns the ioctl result.
+ */
+static int
+sysctl_oids_call(int fd, uint32_t op, const char * const *names, u_int nnames)
+{
+	struct mac_capability_call_args ca;
+	struct sys_request *req;
+	struct sys_sysctl_oidset *oset;
+	unsigned char *buf;
+	size_t len;
+	u_int i, j;
+	int rc;
+
+	len = sizeof(struct sys_request) + sizeof(uint32_t) +
+	    (size_t)nnames * sizeof(struct sys_sysctl_oid);
+	buf = malloc(len);
+	if (buf == NULL)
+		return (-1);
+	memset(buf, 0, len);
+	req = (struct sys_request *)buf;
+	req->op = op;
+	req->gates = SYS_GATE_SYSCTL;
+	oset = (struct sys_sysctl_oidset *)(buf + sizeof(struct sys_request));
+	oset->noids = nnames;
+	for (i = 0; i < nnames; i++) {
+		int mib[CTL_MAXNAME];
+		size_t depth = CTL_MAXNAME;
+
+		if (sysctlnametomib(names[i], mib, &depth) != 0) {
+			free(buf);
+			return (-1);
+		}
+		oset->oids[i].depth = (uint32_t)depth;
+		for (j = 0; j < depth; j++)
+			oset->oids[i].mib[j] = mib[j];
+	}
+	memset(&ca, 0, sizeof(ca));
+	ca.req = buf;
+	ca.req_len = len;
+	ca.reply_len = 0;
+	rc = ioctl(fd, MAC_CAPABILITY_CALL, &ca);
+	free(buf);
+	return (rc);
+}
+
+/*
+ * Fork+exec the helper under a fresh (foreign) nonce to read+write-back the
+ * named integer sysctl.  Returns the child exit status: 0 = write denied
+ * (isolated), 1 = write allowed, 5 = name resolution/read was gated (a bug),
+ * -1 on harness failure.
+ */
+static int
+run_foreign_sysctl_write(const atf_tc_t *tc, const char *name)
+{
+	char path[1024];
+	const char *dir;
+	pid_t pid;
+	int status;
+
+	dir = atf_tc_get_config_var(tc, "srcdir");
+	snprintf(path, sizeof(path), "%s/mac_capability_exec_helper", dir);
+	pid = fork();
+	if (pid < 0)
+		return (-1);
+	if (pid == 0) {
+		execl(path, path, "sysctl_named", name, NULL);
+		_exit(127);
+	}
+	if (waitpid(pid, &status, 0) != pid || !WIFEXITED(status))
+		return (-1);
+	return (WEXITSTATUS(status));
+}
+
 /* ----------------------------------------------------------------
  * Tests
  * ---------------------------------------------------------------- */
@@ -976,6 +1062,162 @@ ATF_TC_BODY(auth_entries_globally_capped, tc)
 	close(svc);
 }
 
+/*
+ * Per-OID isolation: a SYSCTL claim listing ONLY OID X isolates exactly X.  A
+ * foreign nonce is DENIED a direct write to X but ALLOWED a write to a
+ * different privileged OID Y — the coarse gate would have denied both.  Name
+ * resolution stays ungated (the helper reports 5 if resolving/reading the OID
+ * failed, which must not happen).
+ */
+ATF_TC(sysctl_isolation_scopes_to_listed_oid);
+ATF_TC_HEAD(sysctl_isolation_scopes_to_listed_oid, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a scoped SYSCTL claim listing only OID X denies a foreign write "
+	    "to X but allows a foreign write to a different privileged OID Y");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sysctl_isolation_scopes_to_listed_oid, tc)
+{
+	const char *only_x[] = { SYSCTL_OID_X };
+	int svc, rc;
+
+	svc = sys_connect();
+	ATF_REQUIRE_MSG(sysctl_oids_call(svc, SYS_OP_CLAIM, only_x, 1) == 0,
+	    "scoped SYSCTL claim of %s failed: %s", SYSCTL_OID_X,
+	    strerror(errno));
+
+	rc = run_foreign_sysctl_write(tc, SYSCTL_OID_X);
+	ATF_CHECK_MSG(rc != 5,
+	    "name resolution of the isolated OID %s was gated", SYSCTL_OID_X);
+	ATF_CHECK_MSG(rc == 0,
+	    "foreign write to the isolated OID %s must be denied (rc=%d)",
+	    SYSCTL_OID_X, rc);
+
+	rc = run_foreign_sysctl_write(tc, SYSCTL_OID_Y);
+	ATF_CHECK_MSG(rc == 1,
+	    "foreign write to the non-isolated OID %s must be allowed (rc=%d)",
+	    SYSCTL_OID_Y, rc);
+
+	close(svc);
+}
+
+/*
+ * Back-compat regression: an EMPTY-set (coarse) SYSCTL claim still gates a
+ * foreign write to ANY privileged OID — an empty set isolates everything,
+ * exactly as the old all-or-nothing gate did.  Both X and Y are denied.
+ */
+ATF_TC(sysctl_coarse_claim_gates_all_oids);
+ATF_TC_HEAD(sysctl_coarse_claim_gates_all_oids, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "an empty-set (coarse) SYSCTL claim gates a foreign write to every "
+	    "privileged OID, preserving the historical all-or-nothing behavior");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sysctl_coarse_claim_gates_all_oids, tc)
+{
+	int svc, rc;
+
+	svc = sys_connect();
+	/* No OID payload => coarse: isolate all privileged sysctl writes. */
+	ATF_REQUIRE(sys_call_claim(svc, SYS_GATE_SYSCTL) == 0);
+
+	rc = run_foreign_sysctl_write(tc, SYSCTL_OID_X);
+	ATF_CHECK_MSG(rc == 0,
+	    "coarse claim must deny foreign write to %s (rc=%d)",
+	    SYSCTL_OID_X, rc);
+	rc = run_foreign_sysctl_write(tc, SYSCTL_OID_Y);
+	ATF_CHECK_MSG(rc == 0,
+	    "coarse claim must deny foreign write to %s (rc=%d)",
+	    SYSCTL_OID_Y, rc);
+
+	close(svc);
+}
+
+/*
+ * Runtime-editable set: two additive CLAIM calls (same fd) each add a
+ * different OID; both end up isolated.  A subtractive RELEASE of one OID then
+ * leaves the other still isolated (the removed OID becomes directly writable
+ * again).
+ */
+ATF_TC(sysctl_isolation_union_and_subtract);
+ATF_TC_HEAD(sysctl_isolation_union_and_subtract, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "additive CLAIMs union OIDs into the isolated set and a subtractive "
+	    "RELEASE removes one, leaving the other isolated");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sysctl_isolation_union_and_subtract, tc)
+{
+	const char *only_x[] = { SYSCTL_OID_X };
+	const char *only_y[] = { SYSCTL_OID_Y };
+	int svc, rc;
+
+	svc = sys_connect();
+
+	/* Add X, then add Y — additive union grows the isolated set. */
+	ATF_REQUIRE(sysctl_oids_call(svc, SYS_OP_CLAIM, only_x, 1) == 0);
+	ATF_REQUIRE(sysctl_oids_call(svc, SYS_OP_CLAIM, only_y, 1) == 0);
+
+	/* Both are now isolated: foreign writes to X and Y are denied. */
+	rc = run_foreign_sysctl_write(tc, SYSCTL_OID_X);
+	ATF_CHECK_MSG(rc == 0, "X must be isolated after union (rc=%d)", rc);
+	rc = run_foreign_sysctl_write(tc, SYSCTL_OID_Y);
+	ATF_CHECK_MSG(rc == 0, "Y must be isolated after union (rc=%d)", rc);
+
+	/* Subtract X — it becomes directly writable again; Y stays isolated. */
+	ATF_REQUIRE(sysctl_oids_call(svc, SYS_OP_RELEASE, only_x, 1) == 0);
+	rc = run_foreign_sysctl_write(tc, SYSCTL_OID_X);
+	ATF_CHECK_MSG(rc == 1,
+	    "X must be writable again after subtractive release (rc=%d)", rc);
+	rc = run_foreign_sysctl_write(tc, SYSCTL_OID_Y);
+	ATF_CHECK_MSG(rc == 0,
+	    "Y must remain isolated after X is released (rc=%d)", rc);
+
+	close(svc);
+}
+
+/*
+ * Fail-closed parsing: a SYSCTL claim whose OID-set payload is malformed
+ * (here, noids larger than the cap) is rejected with EINVAL and creates no
+ * claim.  A well-formed single-OID claim then succeeds on the same fd.
+ */
+ATF_TC(sysctl_malformed_oidset_rejected);
+ATF_TC_HEAD(sysctl_malformed_oidset_rejected, tc)
+{
+	atf_tc_set_md_var(tc, "descr",
+	    "a malformed SYSCTL OID-set payload is rejected with EINVAL");
+	atf_tc_set_md_var(tc, "require.user", "root");
+}
+ATF_TC_BODY(sysctl_malformed_oidset_rejected, tc)
+{
+	struct mac_capability_call_args ca;
+	struct sys_request *req;
+	struct sys_sysctl_oidset *oset;
+	unsigned char buf[sizeof(struct sys_request) + sizeof(uint32_t)];
+	int svc;
+
+	svc = sys_connect();
+
+	/* noids claims a value but no OID entries follow (length mismatch). */
+	memset(buf, 0, sizeof(buf));
+	req = (struct sys_request *)buf;
+	req->op = SYS_OP_CLAIM;
+	req->gates = SYS_GATE_SYSCTL;
+	oset = (struct sys_sysctl_oidset *)(buf + sizeof(struct sys_request));
+	oset->noids = SYS_SYSCTL_MAXOIDS + 1;	/* over cap */
+	memset(&ca, 0, sizeof(ca));
+	ca.req = buf;
+	ca.req_len = sizeof(buf);
+	ca.reply_len = 0;
+	ATF_CHECK(ioctl(svc, MAC_CAPABILITY_CALL, &ca) == -1);
+	ATF_CHECK_EQ(errno, EINVAL);
+
+	close(svc);
+}
+
 ATF_TP_ADD_TCS(tp)
 {
 
@@ -997,6 +1239,10 @@ ATF_TP_ADD_TCS(tp)
 	ATF_TP_ADD_TC(tp, sysctl_gate_scopes_writes_not_name_lookup);
 	ATF_TP_ADD_TC(tp, auth_entries_globally_capped);
 	ATF_TP_ADD_TC(tp, nonce_identity_fork_preserve_exec_rotate);
+	ATF_TP_ADD_TC(tp, sysctl_isolation_scopes_to_listed_oid);
+	ATF_TP_ADD_TC(tp, sysctl_coarse_claim_gates_all_oids);
+	ATF_TP_ADD_TC(tp, sysctl_isolation_union_and_subtract);
+	ATF_TP_ADD_TC(tp, sysctl_malformed_oidset_rejected);
 
 	return (atf_no_error());
 }

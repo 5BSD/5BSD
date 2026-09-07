@@ -53,6 +53,7 @@
 #define _DEV_MAC_CAPABILITY_MAC_CAPABILITY_SYSTEM_PROTO_H_
 
 #include <sys/types.h>
+#include <sys/sysctl.h>	/* CTL_MAXNAME */
 
 /* Service operations */
 #define	SYS_OP_CLAIM		1
@@ -81,6 +82,47 @@
 struct sys_request {
 	uint32_t	op;
 	uint32_t	gates;		/* SYS_GATE_* bitmask */
+} __packed;
+
+/*
+ * Per-OID sysctl isolation (Phase 1).
+ *
+ * A SYS_OP_CLAIM whose gates include SYS_GATE_SYSCTL MAY append a
+ * sys_sysctl_oidset immediately after the fixed sys_request header.  The kernel
+ * detects the payload by req_len > sizeof(struct sys_request):
+ *
+ *   - No payload (req_len == sizeof(struct sys_request)) => COARSE mode: the
+ *     SYSCTL gate isolates EVERY privileged sysctl write, exactly as today.
+ *   - A payload is present => SCOPED mode: only the OIDs listed in the set are
+ *     isolated; every other sysctl stays directly writable (subject to the
+ *     kernel's own PRIV_SYSCTL_WRITE check).
+ *
+ * An isolated OID is named by its MIB (the int[] array, e.g. the mib for
+ * kern.maxfiles), bounded by CTL_MAXNAME.  The kernel compares the accessed
+ * OID's MIB (reconstructed by walking SYSCTL_PARENT from the leaf) against the
+ * claimed set by exact int-array compare.
+ *
+ * Full CLAIM payload with OIDs, on the wire:
+ *
+ *     struct sys_request		(op = SYS_OP_CLAIM, gates has SYS_GATE_SYSCTL)
+ *     struct sys_sysctl_oidset	(noids, followed by noids sys_sysctl_oid)
+ *
+ * so the total length is
+ *     sizeof(struct sys_request) + sizeof(uint32_t) +
+ *         noids * sizeof(struct sys_sysctl_oid)
+ * and the kernel validates req_len against that exactly (fail-closed).
+ */
+#define	SYS_OID_MAXDEPTH	CTL_MAXNAME	/* 24 */
+#define	SYS_SYSCTL_MAXOIDS	64		/* per-claim isolated-OID cap */
+
+struct sys_sysctl_oid {
+	uint32_t	depth;			/* 1..SYS_OID_MAXDEPTH */
+	int		mib[SYS_OID_MAXDEPTH];
+} __packed;
+
+struct sys_sysctl_oidset {
+	uint32_t		noids;		/* 1..SYS_SYSCTL_MAXOIDS */
+	struct sys_sysctl_oid	oids[];		/* noids entries */
 } __packed;
 
 #endif /* _DEV_MAC_CAPABILITY_MAC_CAPABILITY_SYSTEM_PROTO_H_ */

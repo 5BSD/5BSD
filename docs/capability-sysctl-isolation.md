@@ -53,6 +53,57 @@ claimed subset), **config-driven** (localsysctl supplies the set), and
   current coarse behavior (gate all privileged writes). New claimers pass an OID
   set to get the scoped behavior. No existing claimer changes meaning.
 
+## API surface
+
+Three layers. Everyday clients touch only Layer 2.
+
+### Layer 1 — kernel isolation API (only the broker, `localsysctl`, uses it)
+
+Declares *what the secure realm controls*. The isolated OID set is
+**runtime-editable**, not a one-shot list:
+
+- **`SYS_OP_CLAIM { gates: SYS_GATE_SYSCTL, oids: [mib...] }`** — **additive**:
+  UNION the supplied OIDs into the caller-nonce's SYSCTL isolation set (create
+  it on first claim). Call again with more OIDs to grow the set at runtime.
+  Dedup exact-MIB matches. An empty `oids` on a SYSCTL claim = **coarse**
+  (isolate every privileged write), the back-compat default. The total set size
+  is capped at `SYS_SYSCTL_MAXOIDS`; a union that would exceed it is rejected
+  fail-closed without partial application.
+- **`SYS_OP_RELEASE { gates: SYS_GATE_SYSCTL, oids: [mib...] }`** —
+  **subtractive**: remove exactly those OIDs; an empty `oids` releases the whole
+  SYSCTL claim (current RELEASE behavior).
+
+So the set is live-editable: claim `kern.foo`, add `kern.bar` later, release
+`kern.foo` — each a separate call, no fixed list.
+
+### Layer 2 — daemon broker API (what clients use; the simple default)
+
+Because `localsysctl` owns the kernel isolation claim, it is the only nonce that
+can write the isolated OIDs directly; everyone else goes through it and the
+daemon **performs the operation on the client's behalf**. `localsysctl` already
+has this shape (`system.Sysctl`):
+
+- **`SYSCTL_OP_GET(name) -> value`**
+- **`SYSCTL_OP_SET(name, value) -> status`** — the daemon checks the caller's
+  per-label `sysctl.conf` ACL, then performs the write itself (same-nonce, so the
+  kernel admits it) and returns the result. The client never calls `__sysctl(2)`
+  on an isolated OID and never handles a token.
+- enumerate / describe (already present).
+
+This is the "keep it simple" path: a client that wants to set an isolated sysctl
+just calls `system.Sysctl` SET.
+
+### Layer 3 — token delegation (optional, advanced escape hatch)
+
+Keep `SYS_OP_MINT` / `SYS_OP_AUTHORIZE`, extended to narrow a token to specific
+OIDs, for the rare case where a trusted subsystem must write an isolated OID
+directly at high frequency without a daemon round-trip. Not the default; the
+broker covers the common case.
+
+**Default posture:** clients use the broker (Layer 2); the broker keeps its
+isolated set with incremental claims (Layer 1); tokens (Layer 3) are an optional
+optimization.
+
 ## OID identity
 
 An isolated OID is named by its **MIB** (the `int[]` array, e.g. the mib for
@@ -106,14 +157,22 @@ struct sys_claim {
         ...
         uint32_t         sc_gates;
         u_int            sc_gate_refs[32];
-        /* SYSCTL per-OID isolation (NULL/0 => coarse: gate all writes) */
-        struct sys_sysctl_oid *sc_sysctl_oids;
-        u_int            sc_nsysctl_oids;
+        struct sys_sysctl_oid *sc_sysctl_oids;   /* MAXOIDS-sized backing store */
+        u_int            sc_nsysctl_oids;         /* entries in use */
+        bool             sc_sysctl_scoped;        /* see below */
 };
 ```
 
-Allocated with the claim, freed on `sys_revoke`. `sc_nsysctl_oids == 0` means
-coarse mode for this claim (current behavior).
+Because the set is runtime-editable (subtractive RELEASE can empty it), a bare
+`sc_nsysctl_oids == 0` is ambiguous — coarse (isolate all) vs. scoped-then-
+emptied (isolate nothing). A `sc_sysctl_scoped` flag disambiguates:
+`!sc_sysctl_scoped` => COARSE (isolate every privileged write, the back-compat
+default); `sc_sysctl_scoped` => SCOPED, isolating exactly the `sc_nsysctl_oids`
+listed MIBs (possibly zero). The backing store is allocated `SYS_SYSCTL_MAXOIDS`
+entries up front so a union runs under `sys_lock` without sleeping, and is freed
+on whole-claim release / `sys_revoke`. A payload CLAIM on a currently-coarse
+claim promotes it to scoped (narrowing from all to the listed set); to return to
+coarse, release and re-claim.
 
 ## Hook algorithm (Phase 1)
 

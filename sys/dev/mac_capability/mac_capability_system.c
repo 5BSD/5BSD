@@ -76,6 +76,22 @@ struct sys_claim {
 	uint64_t		sc_nonce;
 	uint32_t		sc_gates;
 	u_int			sc_gate_refs[32];
+	/*
+	 * SYSCTL per-OID isolation (Phase 1).  NULL/0 => COARSE mode: the
+	 * SYSCTL gate isolates every privileged sysctl write (current
+	 * behavior).  Non-NULL => SCOPED: only the listed OID MIBs are
+	 * isolated.  Allocated with the claim, freed on revoke/release.
+	 */
+	struct sys_sysctl_oid	*sc_sysctl_oids;
+	u_int			sc_nsysctl_oids;
+	/*
+	 * SCOPED once any OID set has been established for this owner.  When
+	 * false the SYSCTL gate (if held) is COARSE and isolates every OID.
+	 * When true, only the OIDs in sc_sysctl_oids are isolated — even if
+	 * that set has been subtracted down to empty (isolates nothing), which
+	 * is deliberately distinct from coarse.
+	 */
+	bool			sc_sysctl_scoped;
 };
 
 struct sys_auth {
@@ -141,6 +157,140 @@ sys_no_claims(void)
 {
 
 	return (atomic_load_int(&sys_active_claims) == 0);
+}
+
+/* Exact MIB equality of two isolated-OID descriptors. */
+static __inline bool
+sys_oid_equal(const struct sys_sysctl_oid *a, const struct sys_sysctl_oid *b)
+{
+
+	return (a->depth == b->depth &&
+	    memcmp(a->mib, b->mib, (size_t)a->depth * sizeof(int)) == 0);
+}
+
+/* Is descriptor o already present in the first n entries of set? */
+static bool
+sys_oidset_contains(const struct sys_sysctl_oid *set, u_int n,
+    const struct sys_sysctl_oid *o)
+{
+	u_int i;
+
+	for (i = 0; i < n; i++)
+		if (sys_oid_equal(&set[i], o))
+			return (true);
+	return (false);
+}
+
+/*
+ * Parse the optional trailing sys_sysctl_oidset payload of a CLAIM/RELEASE
+ * request, fail-closed.  No payload (reqlen == sizeof(sys_request)) yields
+ * (*outp = NULL, *noutp = 0, return 0).  A well-formed payload yields a
+ * freshly malloc'd, alignment-safe copy of the OID array (caller frees).  Any
+ * malformation (short header, out-of-range noids/depth, length mismatch)
+ * returns EINVAL and allocates nothing.
+ */
+static int
+sys_parse_oidset(const void *req, size_t reqlen, struct sys_sysctl_oid **outp,
+    u_int *noutp)
+{
+	const struct sys_sysctl_oidset *oset;
+	struct sys_sysctl_oid *arr;
+	uint32_t noids;
+	size_t need;
+	u_int i;
+
+	*outp = NULL;
+	*noutp = 0;
+	if (reqlen <= sizeof(struct sys_request))
+		return (0);			/* no payload => coarse */
+	if (reqlen < sizeof(struct sys_request) + sizeof(uint32_t))
+		return (EINVAL);
+	oset = (const struct sys_sysctl_oidset *)((const char *)req +
+	    sizeof(struct sys_request));
+	memcpy(&noids, &oset->noids, sizeof(noids));
+	if (noids < 1 || noids > SYS_SYSCTL_MAXOIDS)
+		return (EINVAL);
+	need = sizeof(struct sys_request) + sizeof(uint32_t) +
+	    (size_t)noids * sizeof(struct sys_sysctl_oid);
+	if (reqlen != need)
+		return (EINVAL);
+	arr = malloc((size_t)noids * sizeof(struct sys_sysctl_oid),
+	    M_MAC_CAPABILITY_SYS, M_WAITOK);
+	memcpy(arr, oset->oids, (size_t)noids * sizeof(struct sys_sysctl_oid));
+	for (i = 0; i < noids; i++) {
+		if (arr[i].depth < 1 || arr[i].depth > SYS_OID_MAXDEPTH) {
+			free(arr, M_MAC_CAPABILITY_SYS);
+			return (EINVAL);
+		}
+	}
+	*outp = arr;
+	*noutp = noids;
+	return (0);
+}
+
+/*
+ * Additively UNION the descriptors in add[0..nadd) into sc's isolated-OID set,
+ * de-duplicating exact MIB matches (both against the existing set and within
+ * add itself).  All-or-nothing: if applying the union would push the total set
+ * size past SYS_SYSCTL_MAXOIDS, nothing is added and ENOSPC is returned.  sc
+ * must already be scoped with backing storage of at least SYS_SYSCTL_MAXOIDS
+ * entries.
+ */
+static int
+sys_oidset_union(struct sys_claim *sc, const struct sys_sysctl_oid *add,
+    u_int nadd)
+{
+	bool isnew[SYS_SYSCTL_MAXOIDS];
+	u_int i, j, newcount;
+
+	mtx_assert(&sys_lock, MA_OWNED);
+	newcount = 0;
+	for (i = 0; i < nadd; i++) {
+		isnew[i] = true;
+		if (sys_oidset_contains(sc->sc_sysctl_oids, sc->sc_nsysctl_oids,
+		    &add[i])) {
+			isnew[i] = false;
+			continue;
+		}
+		for (j = 0; j < i; j++) {
+			if (isnew[j] && sys_oid_equal(&add[j], &add[i])) {
+				isnew[i] = false;
+				break;
+			}
+		}
+		if (isnew[i])
+			newcount++;
+	}
+	if (sc->sc_nsysctl_oids + newcount > SYS_SYSCTL_MAXOIDS)
+		return (ENOSPC);
+	for (i = 0; i < nadd; i++) {
+		if (isnew[i])
+			sc->sc_sysctl_oids[sc->sc_nsysctl_oids++] = add[i];
+	}
+	return (0);
+}
+
+/*
+ * Subtractively remove from sc's isolated-OID set every entry matching any
+ * descriptor in rm[0..nrm).  The set may become empty (isolates nothing);
+ * because sc stays scoped, that is distinct from coarse.
+ */
+static void
+sys_oidset_subtract(struct sys_claim *sc, const struct sys_sysctl_oid *rm,
+    u_int nrm)
+{
+	u_int i, w;
+
+	mtx_assert(&sys_lock, MA_OWNED);
+	w = 0;
+	for (i = 0; i < sc->sc_nsysctl_oids; i++) {
+		if (sys_oidset_contains(rm, nrm, &sc->sc_sysctl_oids[i]))
+			continue;
+		if (w != i)
+			sc->sc_sysctl_oids[w] = sc->sc_sysctl_oids[i];
+		w++;
+	}
+	sc->sc_nsysctl_oids = w;
 }
 
 /*
@@ -234,6 +384,120 @@ sys_check_gate(struct ucred *cred, uint32_t gate, const char *name)
 	return (0);
 }
 
+/*
+ * Does this claim isolate the accessed sysctl OID (mib,depth)?
+ *
+ * True iff the claim covers SYS_GATE_SYSCTL AND either it is COARSE
+ * (!sc_sysctl_scoped => isolates every OID, the back-compat case) or the
+ * (mib,depth) exactly matches one of its stored OID MIBs.  This is the
+ * SYSCTL-gate analogue of the plain "sc->sc_gates & gate" covering test used
+ * by sys_check_gate; a never-scoped SYSCTL claim reduces to exactly that test,
+ * so a coarse SYSCTL claim behaves identically to the old gate.
+ */
+static bool
+sys_claim_isolates_oid(const struct sys_claim *sc, const int *mib, u_int depth)
+{
+	u_int i;
+
+	mtx_assert(&sys_lock, MA_OWNED);
+	if ((sc->sc_gates & SYS_GATE_SYSCTL) == 0)
+		return (false);
+	if (!sc->sc_sysctl_scoped)
+		return (true);		/* coarse: isolates all OIDs */
+	for (i = 0; i < sc->sc_nsysctl_oids; i++) {
+		if (sc->sc_sysctl_oids[i].depth == depth &&
+		    memcmp(sc->sc_sysctl_oids[i].mib, mib,
+			(size_t)depth * sizeof(int)) == 0)
+			return (true);
+	}
+	return (false);
+}
+
+/*
+ * SYSCTL-gate decision, per-OID aware.  This is a faithful copy of
+ * sys_check_gate's structure with a single substitution: the per-claim
+ * "covering" test is sys_claim_isolates_oid(sc, mib, depth) instead of
+ * (sc->sc_gates & gate).  Everything else — the sys_no_claims()/!capmode fast
+ * path, nonce-0 handling, same-nonce allow, foreign-authorization allow (the
+ * auth must carry SYS_GATE_SYSCTL), the "claimed but not admitted => EPERM",
+ * the capmode fail-closed tail, and the allow/deny SDT probes — is identical.
+ *
+ * Back-compat: with only COARSE SYSCTL claims present, sys_claim_isolates_oid
+ * returns (sc->sc_gates & SYS_GATE_SYSCTL) for every OID, so this function
+ * makes byte-identical decisions to sys_check_gate(cred, SYS_GATE_SYSCTL).
+ */
+static int
+sys_check_sysctl(struct ucred *cred, const int *mib, u_int depth,
+    const char *name)
+{
+	struct sys_claim *sc;
+	struct sys_auth *sa;
+	uint64_t caller_nonce;
+	bool capmode;
+
+	capmode = (cred->cr_flags & CRED_FLAG_CAPMODE) != 0;
+	if (sys_no_claims() && !capmode)
+		return (0);
+
+	caller_nonce = mac_capability_proc_nonce(cred);
+	if (sys_no_claims()) {
+		SDT_PROBE3(mac_capability_system, , , deny, name,
+		    (uint64_t)0, caller_nonce);
+		return (EPERM);
+	}
+
+	mtx_lock(&sys_lock);
+
+	/*
+	 * Scan ALL claims that isolate this OID before deciding — same
+	 * discipline as sys_check_gate (never make a terminal allow/deny on
+	 * the first match).
+	 */
+	bool gate_claimed = false;
+
+	LIST_FOREACH(sc, &sys_claims, sc_link) {
+		if (!sys_claim_isolates_oid(sc, mib, depth))
+			continue;
+		gate_claimed = true;
+		/* Same nonce — the caller owns a covering claim. */
+		if (caller_nonce != 0 && caller_nonce == sc->sc_nonce) {
+			mtx_unlock(&sys_lock);
+			SDT_PROBE3(mac_capability_system, , , allow, name,
+			    sc->sc_nonce, caller_nonce);
+			return (0);
+		}
+		/* Foreign nonce — an authorization from THIS owner suffices. */
+		if (caller_nonce != 0) {
+			LIST_FOREACH(sa, &sys_auths, sa_link) {
+				if (sa->sa_accessor == caller_nonce &&
+				    sa->sa_owner == sc->sc_nonce &&
+				    (sa->sa_gates & SYS_GATE_SYSCTL)) {
+					mtx_unlock(&sys_lock);
+					SDT_PROBE3(mac_capability_system, , ,
+					    allow, name, sc->sc_nonce,
+					    caller_nonce);
+					return (0);
+				}
+			}
+		}
+	}
+
+	if (gate_claimed) {
+		mtx_unlock(&sys_lock);
+		SDT_PROBE3(mac_capability_system, , , deny, name,
+		    (uint64_t)0, caller_nonce);
+		return (EPERM);
+	}
+
+	mtx_unlock(&sys_lock);
+	if (capmode) {
+		SDT_PROBE3(mac_capability_system, , , deny, name,
+		    (uint64_t)0, caller_nonce);
+		return (EPERM);
+	}
+	return (0);
+}
+
 /* ----------------------------------------------------------------
  * MACF hooks
  * ---------------------------------------------------------------- */
@@ -302,12 +566,35 @@ sys_mac_system_check_sysctl(struct ucred *cred,
 	 *
 	 * Every other (non-ANYBODY) write is already restricted by the kernel to
 	 * PRIV_SYSCTL_WRITE holders; those privileged writes are exactly what the
-	 * gate scopes, and they stay gated.  (Finer, config-driven per-OID
-	 * isolation of specific sysctls is a separate, planned refinement.)
+	 * gate scopes, and they stay gated — but only for the specific OIDs the
+	 * claim isolates (a coarse claim isolates them all; see sys_check_sysctl).
 	 */
 	if (oidp != NULL && (oidp->oid_kind & CTLFLAG_ANYBODY) != 0)
 		return (0);
-	return (sys_check_gate(cred, SYS_GATE_SYSCTL, "sysctl"));
+
+	/*
+	 * Reconstruct the accessed OID's MIB by walking SYSCTL_PARENT from the
+	 * leaf to the root.  The walk yields the numbers leaf-first; reverse
+	 * them into root-first MIB order (the same order userland resolves with
+	 * sysctlnametomib(3)).  Bounded by SYS_OID_MAXDEPTH == CTL_MAXNAME, so a
+	 * pathological over-deep chain is simply truncated (it then matches no
+	 * scoped entry — fail-safe — and is still gated by any coarse claim).
+	 * The sysctl lock is held across MAC hooks, so the parent chain is
+	 * stable during the walk.
+	 */
+	{
+		int rev[SYS_OID_MAXDEPTH], mib[SYS_OID_MAXDEPTH];
+		struct sysctl_oid *o;
+		u_int depth, i;
+
+		depth = 0;
+		for (o = oidp; o != NULL && depth < SYS_OID_MAXDEPTH;
+		    o = SYSCTL_PARENT(o))
+			rev[depth++] = o->oid_number;
+		for (i = 0; i < depth; i++)
+			mib[i] = rev[depth - 1 - i];
+		return (sys_check_sysctl(cred, mib, depth, "sysctl"));
+	}
 }
 
 static int
@@ -417,7 +704,10 @@ sys_call(struct mac_capability_instance *s,
 
 	switch (sr->op) {
 	case SYS_OP_CLAIM: {
-		struct sys_claim *sc, *existing;
+		struct sys_claim *sc, *existing, *target;
+		struct sys_sysctl_oid *incoming, *storage;
+		u_int nincoming;
+		int error;
 
 			if (sr->gates == 0 || (sr->gates & ~SYS_GATE_ALL) != 0) {
 				SDT_PROBE6(mac_capability_system, , , state, (uintptr_t)"claim-error",
@@ -426,39 +716,125 @@ sys_call(struct mac_capability_instance *s,
 				return (EINVAL);
 			}
 
-			sc = malloc(sizeof(*sc), M_MAC_CAPABILITY_SYS, M_WAITOK);
+			/*
+			 * Parse the optional SYSCTL OID-set payload (fail-closed).
+			 * A payload is only meaningful on a SYSCTL claim; carrying
+			 * one without the SYSCTL gate is malformed.
+			 */
+			incoming = NULL;
+			storage = NULL;
+			nincoming = 0;
+			error = sys_parse_oidset(req, reqlen, &incoming, &nincoming);
+			if (error != 0) {
+				SDT_PROBE6(mac_capability_system, , , state,
+				    (uintptr_t)"claim-error", caller_nonce,
+				    caller_nonce, sr->gates,
+				    curthread->td_proc->p_pid, error);
+				return (error);
+			}
+			if (nincoming > 0 && (sr->gates & SYS_GATE_SYSCTL) == 0) {
+				free(incoming, M_MAC_CAPABILITY_SYS);
+				return (EINVAL);
+			}
+
+			sc = malloc(sizeof(*sc), M_MAC_CAPABILITY_SYS,
+			    M_WAITOK | M_ZERO);
 			sc->sc_nonce = caller_nonce;
-			sc->sc_gates = 0;
-			memset(sc->sc_gate_refs, 0, sizeof(sc->sc_gate_refs));
+			/*
+			 * Fixed-cap backing storage for a scoped set, allocated
+			 * up front (before the lock) so the union can run under
+			 * sys_lock without sleeping.  Freed below if unused.
+			 */
+			if (nincoming > 0)
+				storage = malloc(SYS_SYSCTL_MAXOIDS *
+				    sizeof(struct sys_sysctl_oid),
+				    M_MAC_CAPABILITY_SYS, M_WAITOK | M_ZERO);
 
 		mtx_lock(&sys_lock);
-		if (priv->sp_is_token || priv->sp_active) {
+		if (priv->sp_is_token) {
 			mtx_unlock(&sys_lock);
 			free(sc, M_MAC_CAPABILITY_SYS);
-			return (priv->sp_active ? 0 : EINVAL);
+			free(storage, M_MAC_CAPABILITY_SYS);
+			free(incoming, M_MAC_CAPABILITY_SYS);
+			return (EINVAL);
 		}
-		/* Check for existing claim from same nonce. */
+		/*
+		 * A re-CLAIM on an already-active instance is historically a
+		 * no-op success — UNLESS it carries an OID payload, in which
+		 * case it is a runtime edit (additive union) of this owner's
+		 * scoped set and must be applied.
+		 */
+		if (priv->sp_active && nincoming == 0) {
+			mtx_unlock(&sys_lock);
+			free(sc, M_MAC_CAPABILITY_SYS);
+			free(storage, M_MAC_CAPABILITY_SYS);
+			return (0);
+		}
+		/* Find any existing claim from this nonce. */
+		target = NULL;
 			LIST_FOREACH(existing, &sys_claims, sc_link) {
 				if (existing->sc_nonce == caller_nonce) {
-					sys_claim_ref_gates(existing, sr->gates);
-					priv->sp_gates = sr->gates;
-					priv->sp_owner = caller_nonce;
-					priv->sp_active = true;
-				mtx_unlock(&sys_lock);
-				free(sc, M_MAC_CAPABILITY_SYS);
-				SDT_PROBE6(mac_capability_system, , , state,
-				    "claim-ref", caller_nonce, caller_nonce,
-				    sr->gates, curthread->td_proc->p_pid, 0);
-				return (0);
+					target = existing;
+					break;
 				}
 			}
-			sys_claim_ref_gates(sc, sr->gates);
-			LIST_INSERT_HEAD(&sys_claims, sc, sc_link);
-			atomic_add_int(&sys_active_claims, 1);
+		if (target != NULL) {
+			if (nincoming > 0) {
+				if (!target->sc_sysctl_scoped) {
+					target->sc_sysctl_oids = storage;
+					storage = NULL;
+					target->sc_nsysctl_oids = 0;
+					target->sc_sysctl_scoped = true;
+				}
+				error = sys_oidset_union(target, incoming,
+				    nincoming);
+				if (error != 0) {
+					mtx_unlock(&sys_lock);
+					free(sc, M_MAC_CAPABILITY_SYS);
+					free(storage, M_MAC_CAPABILITY_SYS);
+					free(incoming, M_MAC_CAPABILITY_SYS);
+					return (error);
+				}
+			}
+			/* Ref gates for this instance only once. */
+			if (!priv->sp_active) {
+				sys_claim_ref_gates(target, sr->gates);
+				priv->sp_gates = sr->gates;
+				priv->sp_owner = caller_nonce;
+				priv->sp_active = true;
+			}
+			mtx_unlock(&sys_lock);
+			free(sc, M_MAC_CAPABILITY_SYS);
+			free(storage, M_MAC_CAPABILITY_SYS);
+			free(incoming, M_MAC_CAPABILITY_SYS);
+			SDT_PROBE6(mac_capability_system, , , state,
+			    "claim-ref", caller_nonce, caller_nonce,
+			    sr->gates, curthread->td_proc->p_pid, 0);
+			return (0);
+		}
+		/* No existing claim: sc becomes the owner's claim. */
+		if (nincoming > 0) {
+			sc->sc_sysctl_oids = storage;
+			storage = NULL;
+			sc->sc_nsysctl_oids = 0;
+			sc->sc_sysctl_scoped = true;
+			error = sys_oidset_union(sc, incoming, nincoming);
+			if (error != 0) {
+				mtx_unlock(&sys_lock);
+				free(sc->sc_sysctl_oids, M_MAC_CAPABILITY_SYS);
+				free(sc, M_MAC_CAPABILITY_SYS);
+				free(incoming, M_MAC_CAPABILITY_SYS);
+				return (error);
+			}
+		}
+		sys_claim_ref_gates(sc, sr->gates);
+		LIST_INSERT_HEAD(&sys_claims, sc, sc_link);
+		atomic_add_int(&sys_active_claims, 1);
 		priv->sp_gates = sr->gates;
 		priv->sp_owner = caller_nonce;
 		priv->sp_active = true;
 		mtx_unlock(&sys_lock);
+		free(incoming, M_MAC_CAPABILITY_SYS);
 		SDT_PROBE6(mac_capability_system, , , state, (uintptr_t)"claim",
 		    caller_nonce, caller_nonce, sr->gates,
 		    curthread->td_proc->p_pid, 0);
@@ -467,12 +843,52 @@ sys_call(struct mac_capability_instance *s,
 
 	case SYS_OP_RELEASE: {
 		struct sys_claim *sc;
+		struct sys_sysctl_oid *rm;
+		u_int nrm;
+		int error;
+
+		/* Parse the optional SYSCTL OID-set payload (fail-closed). */
+		rm = NULL;
+		nrm = 0;
+		error = sys_parse_oidset(req, reqlen, &rm, &nrm);
+		if (error != 0)
+			return (error);
+		if (nrm > 0 && (sr->gates & SYS_GATE_SYSCTL) == 0) {
+			free(rm, M_MAC_CAPABILITY_SYS);
+			return (EINVAL);
+		}
 
 		mtx_lock(&sys_lock);
 		if (!priv->sp_active || priv->sp_is_token) {
 			mtx_unlock(&sys_lock);
+			free(rm, M_MAC_CAPABILITY_SYS);
 			return (EINVAL);
 		}
+
+		if (nrm > 0) {
+			/*
+			 * Subtractive OID edit: remove exactly these OIDs from
+			 * the owner's scoped set.  This does NOT release the
+			 * whole SYSCTL claim; the set may shrink to empty (then
+			 * isolates nothing, but stays scoped, i.e. not coarse).
+			 */
+			LIST_FOREACH(sc, &sys_claims, sc_link) {
+				if (sc->sc_nonce == priv->sp_owner) {
+					if (sc->sc_sysctl_scoped)
+						sys_oidset_subtract(sc, rm, nrm);
+					break;
+				}
+			}
+			mtx_unlock(&sys_lock);
+			free(rm, M_MAC_CAPABILITY_SYS);
+			SDT_PROBE6(mac_capability_system, , , state,
+			    (uintptr_t)"release-oids", priv->sp_owner,
+			    caller_nonce, sr->gates,
+			    curthread->td_proc->p_pid, 0);
+			return (0);
+		}
+
+		/* Empty payload: release the whole claim (historical). */
 			LIST_FOREACH(sc, &sys_claims, sc_link) {
 				if (sc->sc_nonce == priv->sp_owner) {
 					sys_claim_unref_gates(sc, priv->sp_gates);
@@ -480,6 +896,8 @@ sys_call(struct mac_capability_instance *s,
 						LIST_REMOVE(sc, sc_link);
 						atomic_subtract_int(
 						    &sys_active_claims, 1);
+					free(sc->sc_sysctl_oids,
+					    M_MAC_CAPABILITY_SYS);
 					free(sc, M_MAC_CAPABILITY_SYS);
 				}
 				break;
@@ -659,6 +1077,8 @@ sys_revoke(struct mac_capability_instance *s, uint64_t badge __unused,
 						LIST_REMOVE(sc, sc_link);
 						atomic_subtract_int(
 						    &sys_active_claims, 1);
+					free(sc->sc_sysctl_oids,
+					    M_MAC_CAPABILITY_SYS);
 					free(sc, M_MAC_CAPABILITY_SYS);
 				}
 				break;
