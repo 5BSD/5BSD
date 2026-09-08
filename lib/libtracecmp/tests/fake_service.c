@@ -107,6 +107,15 @@ service_session_close(struct service_session *session)
 }
 
 int
+service_session_fail(struct service_session *session, int error)
+{
+
+	if (session == NULL || error <= 0)
+		return (errno = EINVAL, -1);
+	return (0);
+}
+
+int
 service_session_call(struct service_session *session,
     const struct service_message *outgoing, struct service_reply *reply,
     const struct service_call_options *options __unused)

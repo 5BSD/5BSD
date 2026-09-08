@@ -199,6 +199,7 @@ rpc(struct service_session *client, uint16_t opcode,
 	    message->opcode != opcode) {
 		if (incoming.nfds != 0 && returned_fd != NULL)
 			close(*returned_fd);
+		(void)service_session_fail(client, EPROTO);
 		TRACECMP_PROBE_REJECT(received_opcode, EPROTO);
 		errno = EPROTO;
 		return (-1);
