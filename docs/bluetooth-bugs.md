@@ -525,11 +525,17 @@ compaction, cfg-client expected-status opcodes, bearer kqueue generation tagging
     (swaps `ac->mtu` to `bearer_mtu`); the client side does not. The receive buffer is already
     65535, only the `rsplen` argument is wrong.
 
-57. **[P3] ctl_iso.c:103-105 — ctl ISO CIG validation rejects spec-legal RTN values 0x10-0x1E**
-    `ctl_iso_cig_request_valid` rejects RTN_C_To_P/RTN_P_To_C > 0x0F, but RTN in LE Set CIG
-    Parameters is a full octet (blued's own BIG path accepts ≤0x1E at ctl_iso.c:128 and
-    hci_misc.c:1060). A CIG request with RTN 0x14 (legal, accepted for a BIG) gets
-    IPC_ERR_INVAL. Configuration-only, no corruption.
+57. **[P3] ctl_iso.c:103-105 — ctl ISO CIG validation bound on RTN_C_To_P/RTN_P_To_C**
+    `ctl_iso_cig_request_valid` originally rejected RTN_C_To_P/RTN_P_To_C > 0x0F; round 2
+    widened the bound to 0x1E. **Correction:** the round-2 justification ("blued's own BIG path
+    accepts ≤0x1E") was invalid — LE Create BIG (§7.8.103) is a different command from LE Set
+    CIG Parameters (§7.8.97) and its RTN range says nothing about the CIG one. The real §7.8.97
+    range could not be settled from in-tree sources: `ng_hci.h` documents the record layout but
+    explicitly defers the struct and all field ranges, and no in-tree spec table covers it. The
+    0x1E bound is kept as the current behaviour, the cross-command justification is removed from
+    the code comment, and `hci_le_set_cig_params()` now applies the same per-record validation
+    the ctl plane does (it previously validated nothing per record). Configuration-only, no
+    corruption; revisit against the Core Spec text.
 
 *Round 2 clean (ISO/EATT lens): iso.c refcounts/bit shifts, ctl_iso.c payload offsets & reply
 buffer sizing, ISO HCI encoders vs Core 6.3 ranges, blued_le_meta.h CIS/BIG event layouts,

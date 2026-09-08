@@ -40,15 +40,16 @@ Everything below is missing-validation / conformance, not a crypto error.
   - Scenario: attacker pairing at equal-or-greater security distributes a *victim's* identity address, overwriting the victim's stored bond → victim lockout (DoS) + attacker occupies identity/resolving-list slot.
   - Fix: verify the claimed identity resolves under the just-distributed IRK; refuse to overwrite a bond whose IRK differs.
 
-### S-M3 — now FIXED (BlueZ/Linux convention implemented)
+### S-M3 — SETTLED (BlueZ/Linux convention implemented and pinned by an external vector)
 
-- [x] **S-M3 — ATT Signed Write CMAC convention diverged from BlueZ/Linux (signed-write interop break)** ✅ FIXED. Root-caused from BlueZ `bt_crypto_sign_att` + Linux `net/bluetooth/smp.c aes_cmac`: the correct convention reverses BOTH the CSRK and the *entire* `att-data||SignCounter_le32` message into MSB order for RFC-4493 CMAC, then reverses the 128-bit MAC back and takes its low 8 octets. The old code did neither the message-swap nor the output-reversal. **Note:** the agent's stubbed `SMP_SIGNWRITE_BLUEZ_BYTEORDER` flag was itself incomplete (swapped the message but NOT the output) — enabling it would have been a *different* wrong answer, which is exactly why "just flip it" was unsafe. Fixed in `smp_crypto.c smp_verify_signature` (build flag removed); test oracle `reference_signature` reimplemented independently to the same convention; test peer `btpeer.c` generator updated to match.
-  - ⚠️ **Residual (honest):** the in-repo tests are self-consistent by construction (generator + verifier share the convention), so their passing proves internal consistency, NOT interop. Final confirmation still wants a smoke test against a real Android/Linux/BlueZ central issuing a signed write — but the code now matches the documented reference-stack algorithm rather than a local interpretation.
-  - Location: `blued/smp_crypto.c:580-623` (`smp_verify_signature`).
-  - Verified in code: swaps the CSRK but CMACs the message stream **unswapped**, compares MAC bytes [8..15]. BlueZ (`shared/crypto.c`) and Linux kernel byte-reverse the whole `msg||counter_le` buffer before CMAC and transmit MSB 8 octets LSB-first.
-  - Caveat: **no official Signed Write test vector on disk**; in-tree test `smp_crypto_test.c:213` + PDU oracle were derived from this same interpretation, so the passing test is self-referential and cannot confirm interop.
-  - Action before fixing: validate against a BlueZ-generated signature or SIG sample data. If confirmed, byte-reverse the message buffer before CMAC.
-  - ⚠️ STATUS: behavior INTENTIONALLY unchanged. Block comment + `TODO(S-M3)` added; `#ifdef SMP_SIGNWRITE_BLUEZ_BYTEORDER` selects the byte-reversed variant, default OFF. **Needs a BlueZ capture to decide.**
+- [x] **S-M3 — ATT Signed Write CMAC convention diverged from BlueZ/Linux (signed-write interop break)** ✅ FIXED and independently confirmed. Root-caused from BlueZ `bt_crypto_sign_att` + Linux `net/bluetooth/smp.c aes_cmac`: the correct convention reverses BOTH the CSRK and the *entire* `att-data||SignCounter_le32` message into MSB order for RFC-4493 CMAC, then reverses the 128-bit MAC back to LSB order and transmits its **high** 8 octets — which are the RFC 4493 **most-significant** half `T[0..7]`, byte-reversed. (Earlier revisions of this entry said "low 8 octets"; that described the *post-reversal buffer index*, not the truncation rule, and read as the opposite of what the code does. The settled statement is: **wire MAC = reverse(T[0..7])**, i.e. RFC 4493 MSB truncation sent LSB-first, which is exactly `mac_lsb + 8` in `smp_verify_signature`.) The old code did neither the message-swap nor the output-reversal. **Note:** the stubbed `SMP_SIGNWRITE_BLUEZ_BYTEORDER` flag was itself incomplete (swapped the message but NOT the output) — enabling it would have been a *different* wrong answer, which is why "just flip it" was unsafe. Fixed in `smp_crypto.c smp_verify_signature` (build flag removed); test peer `btpeer.c` generator updated to match.
+  - **Settled convention:** `MAC_wire[0..7] = reverse(AES-CMAC(reverse(CSRK), reverse(att_data || SignCounter_le32))[0..7])`.
+  - **External known-answer vector** (pins the truncation half independently of any in-tree oracle) — `smp_crypto_test:test_smp_verify_signature_rfc4493_kat`. Derived from RFC 4493 Example 2 (Mlen = 16), re-computed on this box with `openssl dgst -mac cmac -macopt cipher:aes-128-cbc -macopt hexkey:2b7e151628aed2a6abf7158809cf4f3c` over `M`:
+    - `K = 2b7e1516 28aed2a6 abf71588 09cf4f3c`, `M = 6bc1bee2 2e409f96 e93d7e11 7393172a`, `T = 070a16b4 6b4d4144 f79bdd9d d04a287c`.
+    - Inputs are chosen so the signing construction's internal reversal reproduces `M` exactly: `CSRK = reverse(K)`; `att_data = reverse(M)[0..11]`; `SignCounter = 0x6bc1bee2` (its little-endian encoding is `reverse(M)[12..15]`).
+    - Expected wire signature `= reverse(T[0..7]) = 44 41 4d 6b b4 16 0a 07`. The test also asserts that `reverse(T[8..15]) = 7c 28 4a d0 9d dd 9b f7` (the wrong, LSB half) does **not** verify, so a future half-swap regression fails loudly.
+  - ⚠️ **Residual (honest):** the KAT pins the algorithm and the truncation half against RFC 4493 + OpenSSL, not against a captured BlueZ frame. A smoke test with a real Android/Linux/BlueZ central issuing a signed write remains the only true end-to-end interop proof; nothing further is expected to change.
+  - Location: `blued/smp_crypto.c` (`smp_verify_signature`); oracle `smp_crypto_test.c reference_signature()` (now cross-checked against the KAT rather than trusted alone); emulated peer `tests/.../btpeer.c`.
 
 ### MINOR (conformance / hardening — none bypass encryption or leak keys)
 
@@ -146,8 +147,8 @@ Environment: session runs under Linuxulator/GNU userland; ATF/libatf not install
 **Feature-level decision (not a patch):**
 - `P-C1` — Directed Forwarding is non-interoperable end-to-end. Recommend **gating/disabling DF** rather than patching in this pass; it needs a rebuild against the real §3.6.8 message tables.
 
-**Deferred pending external validation:**
-- `S-M3` — signed-write CMAC byte-order — needs a BlueZ capture before touching.
+**Settled with an external vector:**
+- `S-M3` — signed-write CMAC byte-order — SETTLED. Wire MAC = `reverse(T[0..7])` (RFC 4493 MSB truncation, sent LSB-first); pinned by the RFC 4493 Example 2 known-answer vector in `smp_crypto_test:test_smp_verify_signature_rfc4493_kat`, re-derived with OpenSSL CMAC independently of `reference_signature()`. Only a live BlueZ-capture smoke test remains.
 
 **Privacy batch:** `H-H5`, `H-H6`, `H-H7` (peer-RPA resolution + RPA rotation defeated by mesh scan).
 
