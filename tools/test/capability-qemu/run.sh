@@ -260,6 +260,7 @@ for spec in \
     "usr.sbin/tzfsd/tzfsd:usr.sbin/tzfsd/tzfsd" \
     "usr.sbin/servicectl/servicectl:usr.sbin/servicectl/servicectl" \
     "usr.sbin/servicectl/tests/servicectl_test_bin:usr.sbin/servicectl/tests/servicectl_test_bin" \
+    "usr.sbin/servicectl/tests/servicectl_success_bin:usr.sbin/servicectl/tests/servicectl_success_bin" \
     "usr.sbin/serviced/tests/capd_test_guardian:usr.sbin/serviced/tests/capd_test_guardian" \
     "lib/libservice/tests/capd_service_fixture:usr.sbin/serviced/tests/capd_service_fixture" \
     "usr.sbin/serviced/tests/capd_protocol_fixture:usr.sbin/serviced/tests/capd_protocol_fixture" \
@@ -284,6 +285,7 @@ done
 cp "$obj/lib/libservice/tests/capd_service_fixture" \
     "$payload/tests/capd_service_fixture"
 cp "$obj/usr.sbin/servicectl/tests/servicectl_test_bin" \
+    "$obj/usr.sbin/servicectl/tests/servicectl_success_bin" \
     "$payload/tests/"
 cp "$obj/usr.sbin/serviced/tests/test_helpers.sh" \
     "$obj/usr.sbin/serviced/tests/capd_test_harness.sh" \
@@ -358,6 +360,7 @@ cp "$obj/usr.sbin/bsdnotify/bsdnotify" \
 cp "$obj/usr.sbin/localsysctl/localsysctl" \
 	"$payload/obj/usr.sbin/localsysctl/"
 cp "$obj/usr.sbin/servicectl/tests/servicectl_test_bin" \
+    "$obj/usr.sbin/servicectl/tests/servicectl_success_bin" \
 	"$payload/obj/usr.sbin/servicectl/tests/"
 
 # Source-backed shell assertions and generated helpers used by the expanded
