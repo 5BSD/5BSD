@@ -894,7 +894,19 @@ ether_demux(struct ifnet *ifp, struct mbuf *m)
 	/* Strip off Ethernet header. */
 	m_adj(m, ETHER_HDR_LEN);
 
-	netisr_dispatch(isr, m);
+#ifdef INET6
+	/*
+	 * IPv6 Router Advertisement processing can add an address, acquire
+	 * sleepable locks, and invoke sleepable address-event handlers.  Drivers
+	 * such as vtnet may call us directly from an interrupt thread while
+	 * holding their receive-queue mutex.  Defer only that unsafe IPv6 case;
+	 * keep the direct path for IPv4 and sleep-capable receive contexts.
+	 */
+	if (__predict_false(isr == NETISR_IPV6 && !THREAD_CAN_SLEEP()))
+		(void)netisr_queue(isr, m);
+	else
+#endif
+		(void)netisr_dispatch(isr, m);
 	return;
 
 discard:
