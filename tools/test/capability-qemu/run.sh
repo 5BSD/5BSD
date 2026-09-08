@@ -55,7 +55,8 @@ for tests in \
 	make -C "$src/$tests/tests" all
 done
 for component in \
-    usr.sbin/auditbrokerd usr.sbin/authorityctl usr.sbin/authorityd \
+    usr.sbin/auditbrokerd usr.sbin/authagentd usr.sbin/authorityctl \
+    usr.sbin/authorityd \
     usr.sbin/bsdnotify usr.sbin/localcrypto usr.sbin/localdevice \
     usr.sbin/localnetwork usr.sbin/localsysctl usr.sbin/logctl \
     usr.sbin/logd usr.sbin/networkcmpctl usr.sbin/notifyctl \
@@ -244,6 +245,9 @@ copy_atf "$obj/usr.sbin/traced/tests/policy_test" trace_policy_test
 for name in policy_test rate_test submit_test session_test bundle_test; do
 	copy_atf "$obj/usr.sbin/auditbrokerd/tests/$name" "audit_$name"
 done
+for name in gate_test identity_test mint_decision_test provider_test; do
+	copy_atf "$obj/usr.sbin/authagentd/tests/$name" "authagent_$name"
+done
 
 # The shell integration programs locate these helpers by their source-build
 # paths.  Keep helpers out of tests/ so the ATF enumerator never mistakes one
@@ -266,6 +270,7 @@ for spec in \
     "usr.sbin/logd/logd:usr.sbin/logd/logd" \
     "usr.sbin/bsdnotify/bsdnotify:usr.sbin/bsdnotify/bsdnotify" \
     "usr.sbin/traced/traced:usr.sbin/traced/traced" \
+    "usr.sbin/authagentd/authagentd:usr.sbin/authagentd/authagentd" \
     "usr.sbin/auditbrokerd/auditbrokerd:usr.sbin/auditbrokerd/auditbrokerd"
 do
 	from=${spec%%:*}
@@ -444,7 +449,7 @@ mkdir -p "$world/usr/share/man/man5" "$world/usr/share/man/man8" \
 : > "$work/world.meta"
 make -C "$src/usr.sbin/bluetooth/blued" all
 for daemon in localcrypto localdevice bsdnotify localsysctl localnetwork logd \
-    traced auditbrokerd bluetooth/blued; do
+    traced auditbrokerd authagentd bluetooth/blued; do
 	make -C "$src/usr.sbin/$daemon" install installconfig \
 	    DESTDIR="$world" -DNO_ROOT METALOG="$work/world.meta" \
 	    INSTALL="install -U -M $work/world.meta -D $world" >/dev/null

@@ -3,7 +3,7 @@
 .\"
 .\" Copyright (c) 2026 Kory Heard
 .\"
-.Dd September 3, 2026
+.Dd September 7, 2026
 .Dt AUTHAGENTD 8
 .Os
 .Sh NAME
@@ -48,12 +48,15 @@ and it is not intended to be run from the command line.
 .Nm
 does not trust the principal attributes supplied on the wire.
 A request carries only a uid.
-Before entering its sandbox
+Before entering its sandbox,
 .Nm
-opens Casper
-.Pq Xr cap_pwd 3 , Xr cap_grp 3
-channels limited to exactly the lookups it needs, then enters capability mode
-with
+obtains read-only descriptors for
+.Pa /etc/passwd
+and
+.Pa /etc/group
+from
+.Xr tzfsd 8 ,
+then enters capability mode with
 .Xr cap_enter 2 .
 For each request it resolves the uid to its
 .Xr passwd 5
@@ -118,8 +121,6 @@ capability bundle shipping
 .Xr login 1 ,
 .Xr su 1 ,
 .Xr cap_enter 2 ,
-.Xr cap_grp 3 ,
-.Xr cap_pwd 3 ,
 .Xr mac_capability 4 ,
 .Xr authorityd 8 ,
 .Xr serviced 8 ,

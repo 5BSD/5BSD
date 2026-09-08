@@ -26,6 +26,7 @@
 #include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <syslog.h>
@@ -91,13 +92,19 @@ static char			 g_grbuf[ID_SNAP_MAX];
 static int
 id_open_databases(void)
 {
+	int error;
 
 	if (service_open_isolated(g_context, "/etc/passwd", SERVICE_OPEN_READ,
 	    0, &g_pwfd) == -1 ||
 	    service_open_isolated(g_context, "/etc/group", SERVICE_OPEN_READ,
 	    0, &g_grfd) == -1) {
+		error = errno;
+		if (g_pwfd >= 0)
+			close(g_pwfd);
+		if (g_grfd >= 0)
+			close(g_grfd);
 		g_pwfd = g_grfd = -1;
-		return (-1);
+		return (errno = error, -1);
 	}
 	return (0);
 }
@@ -105,18 +112,21 @@ id_open_databases(void)
 
 /*
  * Read the retained descriptor from the top into buf as a fresh, NUL-terminated
- * snapshot.  Returns its length, or -1.  A file larger than the buffer is
- * truncated: a uid/group past the cap simply fails to resolve (fail-closed),
- * never a spurious grant.
+ * snapshot.  Returns its length, or -1.  An oversized file is rejected in
+ * full so a truncated final record can never become a valid identity.
  */
 static ssize_t
 id_snapshot(int fd, char *buf, size_t bufsz)
 {
-	size_t off = 0;
+	char extra;
+	size_t off;
 	ssize_t n;
 
-	if (fd == -1 || lseek(fd, 0, SEEK_SET) == -1)
+	if (fd == -1 || buf == NULL || bufsz < 2)
+		return (errno = EINVAL, -1);
+	if (lseek(fd, 0, SEEK_SET) == -1)
 		return (-1);
+	off = 0;
 	while (off < bufsz - 1) {
 		n = read(fd, buf + off, bufsz - 1 - off);
 		if (n == -1) {
@@ -128,8 +138,39 @@ id_snapshot(int fd, char *buf, size_t bufsz)
 			break;
 		off += (size_t)n;
 	}
+	if (off == bufsz - 1) {
+		do {
+			n = read(fd, &extra, sizeof(extra));
+		} while (n == -1 && errno == EINTR);
+		if (n == -1)
+			return (-1);
+		if (n != 0)
+			return (errno = EOVERFLOW, -1);
+	}
 	buf[off] = '\0';
 	return ((ssize_t)off);
+}
+
+/* Parse a canonical unsigned decimal uid/gid without signs or whitespace. */
+static bool
+id_parse_number(const char *text, uintmax_t maximum, uintmax_t *valuep)
+{
+	uintmax_t value;
+	unsigned int digit;
+
+	if (text == NULL || text[0] == '\0' || valuep == NULL)
+		return (false);
+	value = 0;
+	for (; *text != '\0'; text++) {
+		if (*text < '0' || *text > '9')
+			return (false);
+		digit = (unsigned int)(*text - '0');
+		if (value > (maximum - digit) / 10)
+			return (false);
+		value = value * 10 + digit;
+	}
+	*valuep = value;
+	return (true);
 }
 
 /* uid -> passwd (name/uid/gid only), from /etc/passwd.  NULL if not found. */
@@ -139,6 +180,7 @@ id_getpwuid(uid_t uid)
 	static struct passwd pw;
 	static char namebuf[MAXLOGNAME + 1];
 	char *cursor, *line, *p, *f_name, *f_uid, *f_gid;
+	uintmax_t parsed_uid, parsed_gid;
 
 	if (id_snapshot(g_pwfd, g_pwbuf, sizeof(g_pwbuf)) == -1)
 		return (NULL);
@@ -152,15 +194,17 @@ id_getpwuid(uid_t uid)
 		f_uid = strsep(&p, ":");
 		f_gid = strsep(&p, ":");
 		if (f_name == NULL || f_name[0] == '\0' ||
-		    f_uid == NULL || f_gid == NULL)
+		    strlen(f_name) > MAXLOGNAME ||
+		    !id_parse_number(f_uid, UID_MAX, &parsed_uid) ||
+		    !id_parse_number(f_gid, GID_MAX, &parsed_gid))
 			continue;
-		if ((uid_t)strtoul(f_uid, NULL, 10) != uid)
+		if ((uid_t)parsed_uid != uid)
 			continue;
 		(void)strlcpy(namebuf, f_name, sizeof(namebuf));
 		memset(&pw, 0, sizeof(pw));
 		pw.pw_name = namebuf;
 		pw.pw_uid = uid;
-		pw.pw_gid = (gid_t)strtoul(f_gid, NULL, 10);
+		pw.pw_gid = (gid_t)parsed_gid;
 		return (&pw);
 	}
 	return (NULL);
@@ -171,6 +215,7 @@ static gid_t
 agent_name2gid(void *ctx __unused, const char *name)
 {
 	char *cursor, *line, *p, *f_name, *f_gid;
+	uintmax_t parsed_gid;
 
 	if (name == NULL ||
 	    id_snapshot(g_grfd, g_grbuf, sizeof(g_grbuf)) == -1)
@@ -183,10 +228,11 @@ agent_name2gid(void *ctx __unused, const char *name)
 		f_name = strsep(&p, ":");
 		(void)strsep(&p, ":");		/* password field, ignored */
 		f_gid = strsep(&p, ":");
-		if (f_name == NULL || f_gid == NULL)
+		if (f_name == NULL || f_name[0] == '\0' ||
+		    !id_parse_number(f_gid, GID_MAX, &parsed_gid))
 			continue;
 		if (strcmp(f_name, name) == 0)
-			return ((gid_t)strtoul(f_gid, NULL, 10));
+			return ((gid_t)parsed_gid);
 	}
 	return ((gid_t)-1);
 }
@@ -200,11 +246,13 @@ static unsigned
 agent_member_gids(const struct passwd *pw, gid_t *out, unsigned max)
 {
 	char *cursor, *line, *p, *f_gid, *members, *m, *save;
+	uintmax_t parsed_gid;
 	gid_t gid;
-	unsigned n = 0;
+	unsigned n;
 
-	if (max == 0)
+	if (pw == NULL || out == NULL || max == 0)
 		return (0);
+	n = 0;
 	out[n++] = pw->pw_gid;
 	if (id_snapshot(g_grfd, g_grbuf, sizeof(g_grbuf)) == -1)
 		return (n);
@@ -217,9 +265,10 @@ agent_member_gids(const struct passwd *pw, gid_t *out, unsigned max)
 		(void)strsep(&p, ":");		/* password field, ignored */
 		f_gid = strsep(&p, ":");
 		members = p;			/* remainder: comma-separated */
-		if (f_gid == NULL || members == NULL)
+		if (members == NULL ||
+		    !id_parse_number(f_gid, GID_MAX, &parsed_gid))
 			continue;
-		gid = (gid_t)strtoul(f_gid, NULL, 10);
+		gid = (gid_t)parsed_gid;
 		if (gid == pw->pw_gid)		/* primary already recorded */
 			continue;
 		for (m = strtok_r(members, ",", &save); m != NULL;
@@ -276,7 +325,7 @@ authagent_caller_allowed(service_rights_t rights)
  * that policy resolves as an administrator mints a full-discovery SYSTEM
  * channel; every other principal mints a per-uid USER channel.  Pure: the
  * caller supplies the resolved member gids and a group-name resolver, exactly
- * as handle_request() does from Casper.
+ * as handle_request() does from the retained identity databases.
  */
 enum service_mint_kind
 authagent_mint_kind(int policy_fd, uid_t uid, const gid_t *member_gids,
@@ -430,6 +479,7 @@ handle_request(struct channel *ch __unused, struct channel_message *request,
 		syslog(LOG_WARNING, "reply: %m");
 	if (fd >= 0)
 		close(fd);
+	channel_message_free(request);
 	client_sync_events(c);
 }
 
@@ -667,10 +717,53 @@ authagentd_test_configure(struct service_context *context, int policy_fd)
 	g_context = context;
 	g_policy_fd = policy_fd;
 	/*
-	 * Identity streams (g_pwf/g_grf) are left NULL in the test seam: the
-	 * provider tests drive the caller-gate and protocol paths, not live
+	 * Identity descriptors stay at -1 unless a parser test configures them.
+	 * Provider tests drive the caller gate and protocol paths, not live
 	 * uid resolution (which id_getpwuid then fails closed, ENOENT).
 	 */
+}
+
+void
+authagentd_test_identity_configure(int passwd_fd, int group_fd)
+{
+
+	g_pwfd = passwd_fd;
+	g_grfd = group_fd;
+}
+
+int
+authagentd_test_resolve_identity(uid_t uid, char *name, size_t namesz,
+    gid_t *primary_gid, gid_t *member_gids, unsigned max_members,
+    unsigned *nmember)
+{
+	struct passwd *pw;
+
+	if (name == NULL || namesz == 0 || primary_gid == NULL ||
+	    member_gids == NULL || max_members == 0 || nmember == NULL)
+		return (errno = EINVAL, -1);
+	errno = 0;
+	pw = id_getpwuid(uid);
+	if (pw == NULL)
+		return (errno = errno != 0 ? errno : ENOENT, -1);
+	if (strlcpy(name, pw->pw_name, namesz) >= namesz)
+		return (errno = ERANGE, -1);
+	*primary_gid = pw->pw_gid;
+	*nmember = agent_member_gids(pw, member_gids, max_members);
+	return (0);
+}
+
+int
+authagentd_test_name2gid(const char *name, gid_t *gidp)
+{
+	gid_t gid;
+
+	if (name == NULL || gidp == NULL)
+		return (errno = EINVAL, -1);
+	gid = agent_name2gid(NULL, name);
+	if (gid == (gid_t)-1)
+		return (errno = ENOENT, -1);
+	*gidp = gid;
+	return (0);
 }
 
 int

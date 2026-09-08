@@ -10,15 +10,15 @@
  * the dimension serviced would otherwise control.
  *
  * COVERAGE NOTE.  The caller-gate (EPERM) and request-validation (EINVAL) paths
- * answer BEFORE any mint or Casper lookup, so they are driven here end-to-end
- * with no serviced/Casper state (authagentd_test_configure(NULL, NULL, NULL,
- * -1)).  In particular the non-ADMIN caller -> EPERM assertion IS driven over
- * the plane here, because the fixture supplies the identity.  The happy-path
+ * answer BEFORE any mint or identity lookup, so they are driven here end-to-end
+ * with no serviced or identity state (authagentd_test_configure(NULL, -1)).
+ * In particular, the non-ADMIN caller -> EPERM assertion is driven over the
+ * plane here because the fixture supplies the identity.  The happy-path
  * mint (returns a session fd) and the unknown-uid ENOENT case require a live
- * serviced bootstrap channel and Casper cap_pwd; those belong to the
- * capd_test_harness stack (a .sh integration test) and are not attempted from
- * this self-contained C provider.  The pure gate_test covers the escalation
- * predicate a second way, independent of the plane.
+ * serviced bootstrap channel and live identity descriptors; those belong to
+ * the capd_test_harness stack (a .sh integration test) and are not attempted
+ * from this self-contained C provider.  The pure gate_test covers the
+ * escalation predicate a second way, independent of the plane.
  *
  * These tests require /dev/mac_capability and so run only under a live plane
  * (a VM); in a sandbox without the device they are compile-only.
@@ -93,8 +93,8 @@ channel_pair(int *client, int *provider)
 
 /*
  * Bring up authagentd's provider session for one connection, stamping the
- * child's view of the caller with `rights`.  The mint/Casper state is left
- * empty: every test here answers before those are consulted.
+ * child's view of the caller with the supplied rights.  The mint and identity
+ * state are left empty: every test here answers before those are consulted.
  */
 static void
 fixture_create(struct fixture *fixture, service_rights_t rights)
@@ -240,7 +240,7 @@ ATF_TC_BODY(zero_rights_caller_is_denied_eperm, tc)
  * An ADMIN caller sending a malformed request is rejected EINVAL: a bad
  * version, a bad op, reserved flag bits set, a short body, or an unexpected
  * attached descriptor.  Validation runs after the gate but before any mint, so
- * these need no serviced/Casper state.
+ * these need no serviced or identity state.
  */
 ATF_TC(admin_caller_malformed_request_is_einval);
 ATF_TC_HEAD(admin_caller_malformed_request_is_einval, tc)

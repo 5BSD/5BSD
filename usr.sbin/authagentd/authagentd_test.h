@@ -4,6 +4,7 @@
 
 #include <sys/types.h>
 #include <stdbool.h>
+#include <stddef.h>
 
 #include <libservice.h>
 #include <libcapbundle.h>
@@ -20,7 +21,7 @@ bool	authagent_caller_allowed(service_rights_t rights);
 /*
  * The SYSTEM-vs-USER mint decision, factored for unit testing.  Pure: the
  * caller supplies the resolved member gids and a group-name resolver, exactly
- * as handle_request() does from Casper.
+ * as handle_request() does from the retained identity databases.
  */
 enum service_mint_kind authagent_mint_kind(int policy_fd, uid_t uid,
 	    const gid_t *member_gids, unsigned nmember,
@@ -31,14 +32,18 @@ struct service_context;
 struct service_identity;
 
 /*
- * Install the mint state a subsequent authagentd_test_serve() serves with.  A
- * test that only exercises the caller gate or request validation may leave
- * these NULL/-1: those paths answer before any mint or identity lookup.  (The
- * identity streams are populated only by the daemon's own startup, so uid
- * resolution in a test seam fails closed.)
+ * Install the mint state a subsequent authagentd_test_serve() uses.  Tests
+ * exercising only the caller gate or request validation may leave the context
+ * NULL and policy fd -1 because those paths answer before minting or identity
+ * lookup.  Parser tests install synthetic identity descriptors separately.
  */
 void	authagentd_test_configure(struct service_context *context,
 	    int policy_fd);
+void	authagentd_test_identity_configure(int passwd_fd, int group_fd);
+int	authagentd_test_resolve_identity(uid_t uid, char *name, size_t namesz,
+	    gid_t *primary_gid, gid_t *member_gids, unsigned max_members,
+	    unsigned *nmember);
+int	authagentd_test_name2gid(const char *name, gid_t *gidp);
 
 /*
  * Test seam: run exactly one client's provider session over `fd`, using
