@@ -35,6 +35,7 @@
 
 #include <sys/capsicum.h>
 
+#include <ctype.h>
 #include <err.h>
 #include <errno.h>
 #include <poll.h>
@@ -305,6 +306,9 @@ parse_hex_value(const char *text, uint8_t *out, size_t capacity,
 		char *end;
 		unsigned long value;
 
+		if (!isxdigit((unsigned char)byte[0]) ||
+		    !isxdigit((unsigned char)byte[1]))
+			return (-1);
 		errno = 0;
 		value = strtoul(byte, &end, 16);
 		if (errno != 0 || *end != '\0')
@@ -1446,13 +1450,32 @@ struct profile_state {
 
 static void
 profile_discover_cb(const ble_addr_t *addr __unused,
-    const ble_service_t *services __unused, int service_count __unused,
+    const ble_service_t *services, int service_count,
     const ble_characteristic_t *characteristics, int characteristic_count,
     void *arg)
 {
 	struct profile_state *ps = arg;
+	uint16_t start = 0, end = 0;
+	bool svc_found = false;
 
+	for (int i = 0; i < service_count; i++) {
+		if (services[i].uuid.uuid16 == ps->target_svc) {
+			start = services[i].start_handle;
+			end = services[i].end_handle;
+			svc_found = true;
+			break;
+		}
+	}
+	if (!svc_found) {
+		printf("ERROR: service 0x%04X not found\n", ps->target_svc);
+		ps->done = true;
+		ps->ret = 1;
+		return;
+	}
 	for (int i = 0; i < characteristic_count; i++) {
+		if (characteristics[i].handle < start ||
+		    characteristics[i].handle > end)
+			continue;
 		if (characteristics[i].uuid.uuid16 == ps->target_chr) {
 			ps->found_handle = characteristics[i].handle;
 			break;
@@ -1523,6 +1546,10 @@ run_profile_read(ble_ctx_t *ctx, const char *addr, uint16_t svc_uuid,
 		}
 	}
 
+	if (!ps.done) {
+		warnx("operation timed out");
+		return (1);
+	}
 	return (ps.ret);
 }
 
@@ -1620,7 +1647,7 @@ mon_passkey_display_cb(const ble_addr_t *addr, uint32_t passkey,
 	ble_addr_str(addr, astr);
 	if (json_mode)
 		printf("{\"event\":\"passkey_display\",\"addr\":\"%s\","
-		    "\"passkey\":%06u}\n", astr, passkey);
+		    "\"passkey\":\"%06u\"}\n", astr, passkey);
 	else
 		printf("PASSKEY      %s  enter this on the device: %06u\n",
 		    astr, passkey);
@@ -1648,7 +1675,7 @@ mon_numcmp_cb(const ble_addr_t *addr, uint32_t value, void *arg __unused)
 
 	ble_addr_str(addr, astr);
 	if (json_mode)
-		printf("{\"event\":\"numcmp\",\"addr\":\"%s\",\"value\":%06u}\n",
+		printf("{\"event\":\"numcmp\",\"addr\":\"%s\",\"value\":\"%06u\"}\n",
 		    astr, value);
 	else
 		printf("CONFIRM      %s  does the device show %06u? reply: "
@@ -1751,25 +1778,6 @@ struct serve_state {
 	uint16_t	vlen;
 };
 
-static int
-parse_hex_bytes(const char *hex, uint8_t *out, size_t maxlen, uint16_t *outlen)
-{
-	size_t n = strlen(hex);
-	size_t i;
-
-	if (n % 2 != 0 || n / 2 > maxlen)
-		return (-1);
-	for (i = 0; i < n; i += 2) {
-		unsigned int b;
-
-		if (sscanf(hex + i, "%2x", &b) != 1)
-			return (-1);
-		out[i / 2] = (uint8_t)b;
-	}
-	*outlen = (uint16_t)(n / 2);
-	return (0);
-}
-
 static void
 serve_read_cb(uint16_t handle, uint16_t offset, void *arg)
 {
@@ -1803,17 +1811,20 @@ serve_mode(ble_ctx_t *ctx, const char *handle_str, const char *hex)
 {
 	struct serve_state ss;
 	struct pollfd pfd;
-	unsigned int h;
+	unsigned long h;
+	char *end;
 
 	memset(&ss, 0, sizeof(ss));
 	ss.ctx = ctx;
-	if (sscanf(handle_str, "0x%x", &h) != 1 &&
-	    sscanf(handle_str, "%x", &h) != 1) {
+	errno = 0;
+	h = strtoul(handle_str, &end, 16);
+	if (handle_str[0] == '\0' || *end != '\0' || errno != 0 ||
+	    h == 0 || h > UINT16_MAX) {
 		warnx("serve: invalid handle");
 		return (EX_USAGE);
 	}
 	ss.handle = (uint16_t)h;
-	if (parse_hex_bytes(hex, ss.value, sizeof(ss.value), &ss.vlen) != 0) {
+	if (parse_hex_value(hex, ss.value, sizeof(ss.value), &ss.vlen) != 0) {
 		warnx("serve: invalid hex value");
 		return (EX_USAGE);
 	}
@@ -1914,7 +1925,7 @@ kbd_passkey_input_cb(const ble_addr_t *addr, void *arg)
 {
 	struct kbd_state *ks = arg;
 	char astr[18], line[32];
-	unsigned long pk;
+	uint32_t pk32;
 
 	ble_addr_str(addr, astr);
 	if (strcasecmp(astr, ks->addr) != 0)
@@ -1926,8 +1937,14 @@ kbd_passkey_input_cb(const ble_addr_t *addr, void *arg)
 		ks->ret = EX_ERR;
 		return;
 	}
-	pk = strtoul(line, NULL, 10);
-	if (ble_passkey_reply(ks->ctx, addr, (uint32_t)pk) < 0) {
+	line[strcspn(line, "\n")] = '\0';
+	if (parse_u32(line, 0, 999999, &pk32) != 0) {
+		warnx("invalid passkey (must be 0-999999)");
+		ks->done = true;
+		ks->ret = EX_ERR;
+		return;
+	}
+	if (ble_passkey_reply(ks->ctx, addr, pk32) < 0) {
 		warnx("passkey reply failed: %s", ble_strerror(ks->ctx));
 		ks->done = true;
 		ks->ret = EX_ERR;
@@ -1990,7 +2007,11 @@ keyboard_flow(ble_ctx_t *ctx, const char *addr_str)
 
 	memset(&ks, 0, sizeof(ks));
 	ks.ctx = ctx;
-	strlcpy(ks.addr, addr_str, sizeof(ks.addr));
+	if (ble_addr_parse(addr_str, 0, &addr) != 0) {
+		warnx("keyboard: invalid address: %s", addr_str);
+		return (EX_USAGE);
+	}
+	ble_addr_str(&addr, ks.addr);
 	ks.ret = EX_TIMEOUT;
 
 	ble_on_connected(ctx, kbd_connected_cb, &ks);
@@ -2001,10 +2022,6 @@ keyboard_flow(ble_ctx_t *ctx, const char *addr_str)
 
 	printf("Connecting to %s ...\n", ks.addr);
 	fflush(stdout);
-	if (ble_addr_parse(addr_str, 0, &addr) != 0) {
-		warnx("keyboard: invalid address: %s", addr_str);
-		return (EX_USAGE);
-	}
 	if (ble_connect(ctx, &addr, kbd_connect_ack_cb, &ks) < 0) {
 		warnx("connect: %s", ble_strerror(ctx));
 		print_error_hint(ble_errno(ctx));
@@ -2057,7 +2074,7 @@ static const struct {
 	 * eatt-* and profile shortcuts were added, to keep `help` consistent
 	 * with dispatch.
 	 */
-	{ "scan",		"",			"Scan for BLE devices (~5s)" },
+	{ "scan",		"",			"Scan for BLE devices (Ctrl-C to stop)" },
 	{ "list",		"",			"List connected devices" },
 	{ "status",		"",			"Daemon status summary" },
 	{ "adapters",		"",			"List HCI adapters" },
@@ -2352,7 +2369,11 @@ main(int argc, char *argv[])
 		int qret = handle_structured_query(ctx, argc, argv);
 
 		if (qret != 0) {
-			ret = qret < 0 ? map_exit_code(ble_errno(ctx)) : 0;
+			if (qret < 0)
+				ret = ble_errno(ctx) != BLE_ERR_NONE ?
+				    map_exit_code(ble_errno(ctx)) : EX_ERR;
+			else
+				ret = 0;
 			ble_close(ctx);
 			return (ret);
 		}
@@ -2361,7 +2382,11 @@ main(int argc, char *argv[])
 		int tret = handle_typed_command(ctx, argc, argv);
 
 		if (tret != 0) {
-			ret = tret < 0 ? map_exit_code(ble_errno(ctx)) : 0;
+			if (tret < 0)
+				ret = ble_errno(ctx) != BLE_ERR_NONE ?
+				    map_exit_code(ble_errno(ctx)) : EX_ERR;
+			else
+				ret = 0;
 			ble_close(ctx);
 			return (ret);
 		}

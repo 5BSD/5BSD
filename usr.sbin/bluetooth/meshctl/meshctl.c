@@ -43,7 +43,8 @@
 
 #define	MESHCTL_DEFAULT_SOCK	"/var/run/meshd.sock"
 #define	MESHCTL_LINE_MAX	1024
-#define	MESHCTL_REPLY_MAX	2048
+/* Daemon reply max 2047 + '\n' + NUL — see MESHD_CTL_REPLY_MAX in meshd.h. */
+#define	MESHCTL_REPLY_MAX	2050
 
 /* One documented verb: name, argument sketch and a one-line description. */
 struct verb {
@@ -368,6 +369,7 @@ meshctl_readline(int fd, char *buf, size_t bufsz)
 	for (;;) {
 		if (off + 1 >= bufsz) {
 			buf[off] = '\0';
+			errno = EMSGSIZE;
 			return (-1);
 		}
 		r = read(fd, buf + off, 1);
